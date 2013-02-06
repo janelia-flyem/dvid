@@ -7,10 +7,11 @@ import (
 	"os"
 	_ "path/filepath"
 
+	"dvid/cli"
 	"dvid/server"
 )
 
-var options server.Options
+var options cli.Options
 var foo string
 
 var showHelp bool
@@ -22,16 +23,7 @@ const helpMessage = `
 dvid is a distributed, versioned image datastore
 
 usage: dvid [options] <command>
-
-Version control commands:
-
-  init                      Initialize a datastore in current directory.
-  add <filenames glob>      Add images.  Specify top left corner with optional x,y,z flags.
-  commit <message>          Commit additions.  Message can be on command-line with
-                              leading and ending quotes, or you can specify a file
-                              name, which will have its contents used as a message.
-  ls                        List image versions in datastore.
-
+` + cli.HelpMessage + `
 Utility commands:
 
   serve                     Launch HTTP server for datastore.
@@ -55,7 +47,7 @@ func init() {
 }
 
 func main() {
-	//	programName := filepath.Base(os.Args[0])
+	//  programName := filepath.Base(os.Args[0])
 	flag.Parse()
 
 	webAddr := fmt.Sprintf("localhost:%d", httpPort)
@@ -65,8 +57,8 @@ func main() {
 		switch command {
 		case "serve":
 			server.ServeHttp(webAddr)
-		case "init", "add", "commit":
-			server.DoCommand(command, flag.Args(), options)
+		case "init", "add", "commit", "log":
+			cli.DoCommand(flag.Args(), options)
 		default:
 			showHelp = true
 		}

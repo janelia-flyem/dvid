@@ -4,18 +4,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"time"
 )
-
-// Options that could accompany commands from command line interface or web server
-type Options struct {
-	// Directory is the path to a DVID datastore directory
-	Directory string
-
-	// Origin (top, left corner) of a subvolume within a datastore volume space
-	OriginX int
-	OriginY int
-	OriginZ int
-}
 
 // Handler for main page
 func mainHandler(w http.ResponseWriter, r *http.Request) {
@@ -32,11 +22,18 @@ func apiHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintln(w, "<p>Processing", url, "</p>")
 }
 
-// Listen and serve HTTP requests using address.
+// Listen and serve HTTP requests using address and don't let stay-alive
+// connections hog goroutines for more than an hour.
+// See for discussion: 
+// http://stackoverflow.com/questions/10971800/golang-http-server-leaving-open-goroutines
 func ServeHttp(addr string) {
-	log.Printf("Starting http server for DVID at %s...", addr)
+	log.Printf("Starting http server for DVID at %s...\n", addr)
+
+	src := &http.Server{
+		Addr:        addr,
+		ReadTimeout: 1 * time.Hour,
+	}
 	http.HandleFunc("/", mainHandler)
 	http.HandleFunc("/api/", apiHandler)
-
-	http.ListenAndServe(addr, nil)
+	src.ListenAndServe()
 }
