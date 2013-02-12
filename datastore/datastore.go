@@ -83,7 +83,7 @@ func (config *Config) WriteJson(filename string) {
 // using default parameters.  Also datastore configuration is stored both
 // in the datastore as well as in a human-readable JSON file in the
 // datastore directory.
-func InitDatastore(directory string, config *Config, create bool) {
+func InitDatastore(directory string, config *Config, create bool) (uuid UUID) {
 	config.checkSupported()
 	dbOptions := keyvalue.GetKeyValueOptions()
 	dbOptions.SetLRUCacheSize(100 * Mega)
@@ -95,6 +95,12 @@ func InitDatastore(directory string, config *Config, create bool) {
 	db.Close()
 	filename := filepath.Join(directory, ConfigFilename)
 	config.WriteJson(filename)
+
+	// Initialize the versioning system
+	uuid = NewUUID() // This will be the HEAD
+
+	// Put config data and current head data into datastore.
+	return
 }
 
 func (config *Config) checkSupported() {

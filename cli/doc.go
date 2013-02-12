@@ -6,8 +6,6 @@ In the following documentation, the type of brackets designate
 a "--path" option that sets the datastore directory, otherwise the
 datastore directory is assumed to be the current directory.
 
-Initializing a DVID Datastore
-
 	init <config file>
 
 Initialize a datastore in current or optionally specified directory using 
@@ -19,7 +17,9 @@ directed acyclic graph (DAG).
 Commands on Established DVID Datastore
 
 The following commands assume there is a running DVID server at 
-localhost:4000 or an optionally specified url/port.  
+localhost:4000 or an optionally specified url/port.  Generally, you *should*
+specify a UUID if there's any possibility of another user interacting
+with the same DVID datastore.
 
 	child [UUID]
 
@@ -36,7 +36,7 @@ the "child" command.
 	filename holds voxels at (x, y, 10) and each filename increases the
 	z-coordinate by 1:
 
-	add grayscale8 /path/to/images/*.png z=10
+	add grayscale8 "/path/to/images/*.png" uuid=f8e037 z=10
 
 Add data specified by the filenames glob (e.g., "*.png") into the current HEAD
 node or the node specified by an optional UUID.  The <datatype name> should
