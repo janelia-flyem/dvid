@@ -6,8 +6,9 @@ import (
 	"fmt"
 )
 
-// VHash values identify unique nodes in a datastore's DAG and
-// should be a universally unique identifier:
+// UUID values identify unique nodes in a datastore's DAG.
+// We need universally unique identifiers to prevent collisions
+// during creation of child nodes by distributed DVIDs:
 // http://en.wikipedia.org/wiki/Universally_unique_identifier
 type UUID uuid.UUID
 

@@ -3,7 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
-	_ "log"
+	"log"
 	"os"
 	_ "path/filepath"
 
@@ -17,6 +17,7 @@ import (
 var showHelp bool
 var showHelp2 bool
 
+var datastoreDir string
 var httpPort int
 
 const helpMessage = `
@@ -33,6 +34,12 @@ func init() {
 	flag.BoolVar(&showHelp2, "help", false, "Show help message")
 
 	flag.IntVar(&httpPort, "port", 4000, "Default port number for server")
+
+	currentDir, err := os.Getwd()
+	if err != nil {
+		log.Fatalln("Could not get current directory:", err)
+	}
+	flag.StringVar(&datastoreDir, "path", currentDir, "DVID datastore directory")
 }
 
 func main() {
@@ -47,7 +54,7 @@ func main() {
 		case "serve":
 			server.ServeHttp(webAddr)
 		case "init", "child", "add", "lock", "log", "clone":
-			err := cli.DoCommand(flag.Args())
+			err := cli.DoCommand(datastoreDir, flag.Args())
 			if err != nil {
 				showHelp = true
 			}

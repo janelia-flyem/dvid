@@ -9,7 +9,8 @@
     "Datatypes": [
         {
             "Name": "grayscale8",
-            "Url": "github.com/janelia-flyem/dvid/datatype/grayscale8"
+            "Url": "github.com/janelia-flyem/dvid/datatype/grayscale8",
+            "IsolateData": true
         }
     ]
 }

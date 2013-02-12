@@ -1,16 +1,25 @@
 /*
 Package cli supports command line level interaction with DVID.
 
-Commands assume there is a running DVID server at localhost:4000 or a url
-specified by options.  In the following documentation, the type of brackets
-designate <required parameter> and [optional parameter].
+In the following documentation, the type of brackets designate 
+<required parameter> and [optional parameter].  All commands accept
+a "--path" option that sets the datastore directory, otherwise the
+datastore directory is assumed to be the current directory.
 
-	init <config file>     
+Initializing a DVID Datastore
 
-Initialize a datastore in current directory using parameters in config file.
-The config file specifies volume extents, resolution, and the supported
-data types.  Returns a UUID representing the intial volume version, i.e., an 
-unlocked root node in the version directed acyclic graph (DAG).
+	init <config file>
+
+Initialize a datastore in current or optionally specified directory using 
+parameters in <config file>.  The config file specifies volume extents, 
+resolution, and the supported data types.  Returns a UUID representing 
+the intial volume version,  i.e., an unlocked root node in the version 
+directed acyclic graph (DAG).
+
+Commands on Established DVID Datastore
+
+The following commands assume there is a running DVID server at 
+localhost:4000 or an optionally specified url/port.  
 
 	child [UUID]
 
@@ -22,6 +31,12 @@ create a child off an unlocked node.  You must "lock" a node before using
 the "child" command.
 
 	add <datatype name> <filenames glob> [uuid=UUID] [params]
+
+	Example adding series of XY images where lexicographically smallest
+	filename holds voxels at (x, y, 10) and each filename increases the
+	z-coordinate by 1:
+
+	add grayscale8 /path/to/images/*.png z=10
 
 Add data specified by the filenames glob (e.g., "*.png") into the current HEAD
 node or the node specified by an optional UUID.  The <datatype name> should

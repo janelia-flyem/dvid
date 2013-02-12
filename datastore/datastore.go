@@ -37,7 +37,7 @@ type Config struct {
 	VoxelResUnits string
 
 	// Data types supported
-	Datatypes []datatype.FormatId
+	Datatypes []datatype.Format
 }
 
 // ReadJson reads in a Config from a JSON file with errors leading to
@@ -102,7 +102,7 @@ func (config *Config) checkSupported() {
 		log.Fatalln("Error: DVID was not compiled with any data type support!")
 	}
 	for _, format := range config.Datatypes {
-		_, found := datatype.Supported[format]
+		_, found := datatype.Supported[format.Url]
 		if !found {
 			log.Fatalf("Error: DVID was not compiled with support for data type %s (%s)\n",
 				format.Name, format.Url)
