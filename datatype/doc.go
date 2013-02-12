@@ -13,5 +13,4 @@ Data types are declared in the main dvid.go file under imports.  An example:
 	)	
 
 */
-
 package datatype

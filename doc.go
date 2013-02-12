@@ -1,4 +1,4 @@
-/*
+/* 
 
 DVID is a distributed, versioned image datastore that uses leveldb for data storage and 
 a Go language layer that provides http and command-line access.
@@ -33,5 +33,4 @@ testing the product, so the C++ leveldb implementation will be tough to beat in 
 uptime and performance.
 
 */
-
-package dvid
+package main

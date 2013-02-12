@@ -5,5 +5,4 @@ retrieval of supported data types, versioning, and maintenance of
 volume configuration data like volume extents and resolution.
 
 */
-
 package datastore
