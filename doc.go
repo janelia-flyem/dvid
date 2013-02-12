@@ -1,5 +1,4 @@
 /* 
-
 DVID is a distributed, versioned image datastore that uses leveldb for data storage and 
 a Go language layer that provides http and command-line access.
 
@@ -31,6 +30,5 @@ Go code can be cross-compiled to Linux, Windows, and Mac targets.  It would also
 inspection of issues.  However, there is no substitute for having large numbers of users 
 testing the product, so the C++ leveldb implementation will be tough to beat in terms of 
 uptime and performance.
-
 */
 package main

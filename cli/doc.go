@@ -1,5 +1,4 @@
 /*
-
 Package cli supports command line level interaction with DVID.
 
 Commands assume there is a running DVID server at localhost:4000 or a url
@@ -40,6 +39,5 @@ a node is locked, it can be used with the "child" command.
 	help add <datatype name>
 
 Returns a help message for adding data for this particular datatype.
-
 */
 package cli

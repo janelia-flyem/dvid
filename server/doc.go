@@ -1,5 +1,4 @@
 /*
-
 Package server provides an HTTP interface to DVID operations.  The server can
 be accessed via a web browser or through a HTTP API.  For web browser access,
 the goal is to provide a GUI for monitoring and performing a subset of operations
@@ -20,6 +19,5 @@ Examples of planned browser-based features in order of likely implementation:
     This could be extended to allow interactive editing and n-dimensional visualization.
 
   • Query remote DVID servers regarding the state of their volume.
-
 */
 package server
