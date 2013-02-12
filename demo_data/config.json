@@ -1,0 +1,15 @@
+{
+    "VolumeX": 200,
+    "VolumeY": 300,
+    "VolumeZ": 400,
+    "VoxelResX": 10.0,
+    "VoxelResY": 10.0,
+    "VoxelResZ": 10.0,
+    "VoxelResUnits": "nanometers",
+    "Datatypes": [
+        {
+            "Name": "grayscale8",
+            "Url": "github.com/janelia-flyem/dvid/datatype/grayscale8"
+        }
+    ]
+}

@@ -3,16 +3,16 @@ package main
 import (
 	"flag"
 	"fmt"
-	"log"
+	_ "log"
 	"os"
 	_ "path/filepath"
 
-	"dvid/cli"
-	"dvid/server"
-)
+	"github.com/janelia-flyem/dvid/cli"
+	"github.com/janelia-flyem/dvid/server"
 
-var options cli.Options
-var foo string
+	// Declare the data types this DVID executable will support
+	_ "github.com/janelia-flyem/dvid/datatype/grayscale8"
+)
 
 var showHelp bool
 var showHelp2 bool
@@ -23,10 +23,9 @@ const helpMessage = `
 dvid is a distributed, versioned image datastore
 
 usage: dvid [options] <command>
-` + cli.HelpMessage + `
-Utility commands:
 
-  serve                     Launch HTTP server for datastore.
+Use "serve" command to launch DVID server.  Then launch a web browser and
+visit the main page ("localhost:4000" by default) and surf documentation.
 `
 
 func init() {
@@ -34,16 +33,6 @@ func init() {
 	flag.BoolVar(&showHelp2, "help", false, "Show help message")
 
 	flag.IntVar(&httpPort, "port", 4000, "Default port number for server")
-
-	flag.IntVar(&options.OriginX, "x", 0, "X-coordinate in datastore space")
-	flag.IntVar(&options.OriginY, "y", 0, "Y-coordinate in datastore space")
-	flag.IntVar(&options.OriginZ, "z", 0, "Z-coordinate in datastore space")
-
-	currentDir, err := os.Getwd()
-	options.Directory = currentDir
-	if err != nil {
-		log.Fatalln("Could not get current directory:", err)
-	}
 }
 
 func main() {
@@ -57,8 +46,11 @@ func main() {
 		switch command {
 		case "serve":
 			server.ServeHttp(webAddr)
-		case "init", "add", "commit", "log":
-			cli.DoCommand(flag.Args(), options)
+		case "init", "child", "add", "lock", "log", "clone":
+			err := cli.DoCommand(flag.Args())
+			if err != nil {
+				showHelp = true
+			}
 		default:
 			showHelp = true
 		}
