@@ -5,6 +5,20 @@ import (
 	"strings"
 )
 
+// This message is used for all data types to explain options.
+const helpMessage = `
+    DVID data type information
+
+    name: %s 
+    url: %s 
+
+    The following set options are available on the command line:
+
+        uuid=<UUID>    Example: uuid=3f7a088
+
+        rpc=<address>  Example: rpc=my.server.com:1234
+`
+
 type UrlString string
 
 // Datatype uniquely identifies a DVID-supported data type and how it is arranged
@@ -24,6 +38,12 @@ type Datatype struct {
 	IsolateData bool
 }
 
+// CommandData packages data that are transmitted as part of commands
+type CommandData struct {
+	Text string
+	Data [][]byte
+}
+
 // TypeService is an interface for operations using arbitrary data types.
 type TypeService interface {
 	GetName() string
@@ -31,10 +51,10 @@ type TypeService interface {
 	GetIsolateData() bool
 
 	// Help returns a string explaining how to use a data type's service
-	Help() string
+	Help(textHelp string) string
 
 	// Do implements commands specific to a data type
-	Do(uuid UUID, command string, args []string) error
+	Do(uuid UUID, command string, args []string, reply *CommandData) error
 
 	// Returns standard error response for unknown commands
 	UnknownCommand(command string) error
@@ -56,17 +76,8 @@ func (datatype *Datatype) GetIsolateData() bool {
 	return datatype.IsolateData
 }
 
-func (datatype *Datatype) Help() string {
-	helpMessage := `
-	DVID data type information
-
-	name: %s 
-	 url: %s 
-
-	This data type currently does not have a help message explaining
-	its supported operations.
-	`
-	return fmt.Sprintf(helpMessage, datatype.GetName(), datatype.GetUrl())
+func (datatype *Datatype) Help(typeHelp string) string {
+	return fmt.Sprintf(helpMessage+typeHelp, datatype.GetName(), datatype.GetUrl())
 }
 
 func (datatype *Datatype) UnknownCommand(command string) error {

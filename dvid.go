@@ -21,24 +21,29 @@ var showTypes bool
 const helpMessage = `
 dvid is a distributed, versioned image datastore
 
-   usage: dvid [options] <command>
+	usage: dvid [options] <command>
 
 Commands that can be performed without a running server:
 
-	init
-	serve
+	init <json config filename> [dir=/path/to/datastore/dir]
+	serve [dir=/path/to/datastore/dir] [web=...] [rpc=...]
 
 Commands that require connection to a running server:
 
-	branch
+	help
+	branch 
 	lock
 	types
 	log
 	pull
 	push
 
+All of the commands above can include optional settings of the form:
+	rpc=foo.com:1234  (Specifies the DVID server.)
+	uuid=3efa87       (Specifies the image version within that datastore.)
+
 There are also supported data type-specific commands that depend on 
-the server configuration.
+the server configuration.  Use "dvid help" to get server-side help.
 
 For further information, launch the DVID server (enter "dvid serve"), then use
 a web browser to visit the DVID web server ("localhost:4000" by default).
@@ -94,7 +99,7 @@ func DoCommand(cmd *server.Command) error {
 		}
 
 		// Send command to server synchronously
-		var reply server.Param
+		var reply datastore.CommandData
 		err = client.Call("RpcConnection.Do", &cmd, &reply)
 		if err != nil {
 			return fmt.Errorf("RPC error for '%s': %s", cmd, err.Error())

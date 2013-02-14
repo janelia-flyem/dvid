@@ -112,7 +112,7 @@ func (config *Config) VerifyCompiledTypes() error {
 
 // SupportedTypeChart returns a chart (names/urls) of data types supported by this datastore
 func (config *Config) SupportedTypeChart() string {
-	var text string = "\nData types supported by this DVID datastore\n\n"
+	var text string = "\nData types supported by this DVID datastore:\n\n"
 	writeLine := func(name string, url UrlString) {
 		text += fmt.Sprintf("%15s   %s\n", name, url)
 	}
@@ -120,7 +120,8 @@ func (config *Config) SupportedTypeChart() string {
 	for _, datatype := range config.Datatypes {
 		writeLine(datatype.Name, datatype.Url)
 	}
-	return text + "\n"
+	text += "\nUse the 'dvid <data type name> help' command for type-specific help.\n"
+	return text
 }
 
 // IsSupportedType returns true if given data type name is supported by this datastore

@@ -9,11 +9,36 @@ import (
 	"github.com/janelia-flyem/dvid/datastore"
 )
 
-// Param packages data that are transmitted as part of commands
-type Param struct {
-	Text string
-	Data [][]byte
-}
+const helpMessage = `
+dvid is a distributed, versioned image datastore
+
+   usage: dvid [options] <command>
+
+Commands executed locally:
+
+	init <json config filename> [dir=/path/to/datastore/dir]
+	serve [dir=/path/to/datastore/dir] [web=...] [rpc=...]
+
+Commands executed on the server (%s):
+
+	help  [command you are running]
+	branch
+	lock
+	types
+	log
+	pull
+	push
+
+All of the commands above can include optional settings of the form:
+	rpc=foo.com:1234  (Specifies the DVID server.)
+	uuid=3efa87       (Specifies the image version within that datastore.)
+
+%s
+For further information, use a web browser to visit the server for this
+datastore:  
+
+	http://%s
+`
 
 // Command supports command-based interaction with DVID
 type Command struct {
@@ -21,7 +46,7 @@ type Command struct {
 	Args []string
 
 	// Param allows commands to attach input data
-	Param
+	datastore.CommandData
 }
 
 func (cmd Command) String() string {
@@ -34,7 +59,7 @@ func (cmd Command) GetParameter(key string) (value string, found bool) {
 	if len(cmd.Args) > 1 {
 		for _, param := range cmd.Args[1:] {
 			elems := strings.Split(param, "=")
-			if len(elems) == 2 && elems[0] != key {
+			if len(elems) == 2 && elems[0] == key {
 				value = elems[1]
 				found = true
 				return
@@ -80,7 +105,9 @@ func (cmd Command) GetDatastoreDir() string {
 
 // GetUuid returns the UUID corresponding to the string supplied by a "uuid=..."
 // argument or if that's missing, the UUID for the head node.  
-func (cmd Command) GetUuid(dataService *datastore.Service) (uuid datastore.UUID, err error) {
+func (cmd Command) GetUuid(dataService *datastore.Service) (uuid datastore.UUID,
+	err error) {
+
 	uuidString, found := cmd.GetParameter("uuid")
 	if found {
 		uuid, err = dataService.GetUuidFromString(uuidString)
@@ -93,14 +120,9 @@ func (cmd Command) GetUuid(dataService *datastore.Service) (uuid datastore.UUID,
 // The following command implementations assume dataService is non-nil, hence their
 // unexported nature.
 
-func (cmd Command) datatypeDo(reply *Param) error {
-	// Make sure we have at least a command in addition to the data type name
-	if len(cmd.Args[1:]) < 1 {
-		return fmt.Errorf("Must have at least a command in addition to data type!")
-	}
-
-	// Get the TypeService for this data type.
-	typeUrl, err := dataService.GetSupportedTypeUrl(cmd.Args[0])
+func (cmd Command) datatypeDo(reply *datastore.CommandData) error {
+	// Get the TypeService for this data type.  Let user know if it's not supported.
+	typeUrl, err := runningService.data.GetSupportedTypeUrl(cmd.Args[0])
 	if err != nil {
 		return err
 	}
@@ -109,14 +131,26 @@ func (cmd Command) datatypeDo(reply *Param) error {
 		return fmt.Errorf("Support for data type not compiled in: %s [%s]",
 			cmd.Args[0], typeUrl)
 	}
-	uuid, err := cmd.GetUuid(dataService)
+
+	// Make sure we have at least a command in addition to the data type name
+	if len(cmd.Args[1:]) < 1 {
+		return fmt.Errorf("Must have at least a command in addition to data type!")
+	}
+
+	uuid, err := cmd.GetUuid(runningService.data)
 	if err != nil {
 		return err
 	}
-	return typeService.Do(uuid, cmd.Args[1], cmd.Args[2:])
+	return typeService.Do(uuid, cmd.Args[1], cmd.Args[2:], reply)
 }
 
-func (cmd Command) types(reply *Param) error {
-	reply.Text = dataService.Config.SupportedTypeChart()
+func (cmd Command) help(reply *datastore.CommandData) error {
+	reply.Text = fmt.Sprintf(helpMessage, runningService.RpcAddress,
+		runningService.data.SupportedTypeChart(), runningService.WebAddress)
+	return nil
+}
+
+func (cmd Command) types(reply *datastore.CommandData) error {
+	reply.Text = runningService.data.SupportedTypeChart()
 	return nil
 }

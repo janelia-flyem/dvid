@@ -10,6 +10,16 @@ import (
 
 const repoUrl = "github.com/janelia-flyem/dvid/datatype/grayscale8"
 
+const helpMessage = `
+    Grayscale8 Data Type Commands:
+
+        dvid grayscale8   add  <plane>  <origin>   <image filename glob>
+
+    <plane>: xy, xz, or yz
+    <origin>: 3d coordinate in the format (x,y,z).  Gives coordinate of top upper left voxel.
+    <image filename glob>: filenames of images, e.g., foo-xy-*.png
+`
+
 type Datatype struct {
 	datastore.Datatype
 }
@@ -25,10 +35,14 @@ func init() {
 }
 
 // Do acts as a switchboard for grayscale8 commands
-func (datatype *Datatype) Do(uuid datastore.UUID, command string, args []string) error {
+func (datatype *Datatype) Do(uuid datastore.UUID, command string, args []string,
+	reply *datastore.CommandData) error {
+
 	switch command {
 	case "add":
 		return datatype.Add(args)
+	case "help":
+		reply.Text = datatype.Help(helpMessage)
 	default:
 		return datatype.UnknownCommand(command)
 	}
