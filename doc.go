@@ -16,6 +16,79 @@ User-defined data types can be added to DVID.  Standard data types (8-bit graysc
 64-bit label data, and label-to-label maps) will be included with the base DVID installation,
 although their packaging is identical to any other user-defined data type.
 
+Standard DVID commands that can be performed without a running server
+
+In the following documentation, the type of brackets designate 
+<required parameter> and [optional parameter].
+
+	dvid init <JSON config file> [dir=/path/to/datastore]
+
+Initialize a datastore (in current or optionally specified directory) using 
+parameters in <JSON config file>.  The config file specifies volume extents, 
+resolution, and the supported data types.  Returns a UUID representing 
+the intial volume version,  i.e., an unlocked root node in the version 
+directed acyclic graph (DAG).
+
+	dvid serve [dir=/path/to/datastore] [web=localhost:4000] [rpc=:6000]
+
+Starts a DVID server that maintains exclusive control over the datastore.
+Creates both web and rpc servers that can accept connections from web browsers
+and independent DVID commands as below.
+
+
+Standard DVID commands that require connection to a running server
+
+The following commands assume there is a running DVID rpc server at 
+localhost:6000 or an optionally specified url/port.  Each command also
+accepts a "uuid=..." option, and if there's any possibility of
+another user interacting with the same DVID datastore, you *should* specify 
+a UUID.
+
+	dvid branch [uuid=...] [rpc=localhost:6000]
+
+Create a child of the current HEAD node or the node specified by the optional
+UUID.  This automatically creates an unlocked node that you can use to add 
+data and sets the current datastore HEAD to this unlocked node.  Returns the 
+UUID of the child node.  Note: This command will fail if you attempt to 
+create a child off an unlocked node.  You must "lock" a node before using
+the "child" command.
+
+	dvid lock [uuid=...] [rpc=localhost:6000]
+
+Locks the current HEAD node or the node specified by an optional UUID.  Once
+a node is locked, it can be used with the "child" command.
+
+	dvid types [rpc=localhost:6000]
+
+The 'types' command lists all supported data types for this DVID datastore.
+You can also use the "--types" option to list all data types that have been
+compiled into your current DVID executable.
+
+	dvid pull  (TODO)
+	dvid push  (TODO)
+
+
+DVID commands available through supported data types
+
+You can specify a data type name followed by a type-specific command:
+
+	dvid <data type> <type command> <parameters> [uuid=...] [rpc=localhost:6000]
+
+For example, the "grayscale8" data type supports the "add" command to insert
+2d images to the DVID datastore:
+
+	dvid grayscale8 add xy (1,2,23) /path/to/images/*.png
+
+The above example inserts a series of XY images where the lexicographically 
+smallest filename holds voxels at (x+1, y+2, 23) and each following image increases
+the z-coordinate by 1.  The image data is inserted into the current HEAD node
+or the node specified via the "--uuid=..." option.  Attempts to add data to a
+locked node will result in an error.
+
+	dvid <datatype> help [rpc=localhost:6000]
+
+Returns a help message for all commands specific to this data type.
+
 Dependencies
 
 DVID uses a key-value datastore as its back end.  We use one of two implementations of 

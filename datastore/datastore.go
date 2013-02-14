@@ -3,12 +3,13 @@ package datastore
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"log"
 	"os"
 	"path/filepath"
 
-	"github.com/janelia-flyem/dvid/datatype"
 	"github.com/janelia-flyem/dvid/keyvalue"
 )
 
@@ -36,8 +37,16 @@ type Config struct {
 	// Units of resolution, e.g., "nanometers"
 	VoxelResUnits string
 
+	// Block size
+	BlockX int
+	BlockY int
+	BlockZ int
+
+	// The UUID of the current HEAD node
+	Head UUID
+
 	// Data types supported
-	Datatypes []datatype.Format
+	Datatypes []TypeService
 }
 
 // ReadJson reads in a Config from a JSON file with errors leading to
@@ -62,7 +71,7 @@ func ReadJsonConfig(filename string) (config *Config) {
 }
 
 // WriteJson writes a Config to a JSON file.
-func (config *Config) WriteJson(filename string) {
+func (config *Config) WriteJsonConfig(filename string) {
 	file, err := os.Create(filename)
 	if err != nil {
 		log.Fatalf("Error: Failed to create JSON config file: %s [%s]\n",
@@ -79,12 +88,34 @@ func (config *Config) WriteJson(filename string) {
 	file.Close()
 }
 
-// InitDatastore opens and optionally creates a key-value datastore
-// using default parameters.  Also datastore configuration is stored both
-// in the datastore as well as in a human-readable JSON file in the
-// datastore directory.
-func InitDatastore(directory string, config *Config, create bool) (uuid UUID) {
-	config.checkSupported()
+// VerifySupportedTypes will return an error if any required data type in the datastore 
+// configuration was not compiled into DVID executable.
+func (config *Config) VerifySupportedTypes() error {
+	if SupportedTypes == nil {
+		return fmt.Errorf("DVID was not compiled with any data type support!")
+	}
+	var errMsg string
+	for _, datatype := range config.Datatypes {
+		_, found := SupportedTypes[datatype.GetUrl()]
+		if !found {
+			errMsg += fmt.Sprintf("DVID was not compiled with support for data type %s [%s]\n",
+				datatype.GetName(), datatype.GetUrl())
+		}
+	}
+	if errMsg != "" {
+		return errors.New(errMsg)
+	}
+	return nil
+}
+
+// Init creates a key-value datastore using default parameters.  Datastore 
+// configuration is stored in the datastore and in a human-readable JSON file
+// in the datastore directory.
+func Init(directory string, config *Config, create bool) (uuid UUID) {
+	err := config.VerifySupportedTypes()
+	if err != nil {
+		log.Fatalln(err.Error())
+	}
 	dbOptions := keyvalue.GetKeyValueOptions()
 	dbOptions.SetLRUCacheSize(100 * Mega)
 	dbOptions.SetBloomFilterBitsPerKey(10)
@@ -94,7 +125,7 @@ func InitDatastore(directory string, config *Config, create bool) (uuid UUID) {
 	}
 	db.Close()
 	filename := filepath.Join(directory, ConfigFilename)
-	config.WriteJson(filename)
+	config.WriteJsonConfig(filename)
 
 	// Initialize the versioning system
 	uuid = NewUUID() // This will be the HEAD
@@ -103,15 +134,37 @@ func InitDatastore(directory string, config *Config, create bool) (uuid UUID) {
 	return
 }
 
-func (config *Config) checkSupported() {
-	if datatype.Supported == nil {
-		log.Fatalln("Error: DVID was not compiled with any data type support!")
+// Service encapsulates an open DVID datastore, available for operations.
+type Service struct {
+	// The datastore configuration for this open DVID datastore,
+	// including the supported data types
+	Config
+
+	// The underlying leveldb
+	keyvalue.KeyValueDB
+}
+
+// Open opens a DVID datastore at the given directory and returns
+// a Service that allows operations on that datastore.
+func Open(directory string) (service *Service, err error) {
+	// Read this datastore's configuration
+	config := ReadJsonConfig(filepath.Join(directory, ConfigFilename))
+
+	// Open the datastore
+	dbOptions := keyvalue.GetKeyValueOptions()
+	dbOptions.SetLRUCacheSize(100 * Mega)
+	dbOptions.SetBloomFilterBitsPerKey(10)
+	create := false
+	db, err := keyvalue.OpenLeveldb(directory, create, dbOptions)
+	if err != nil {
+		err = fmt.Errorf("Error opening datastore (%s): %s\n", directory, err)
+	} else {
+		service = &Service{*config, db}
 	}
-	for _, format := range config.Datatypes {
-		_, found := datatype.Supported[format.Url]
-		if !found {
-			log.Fatalf("Error: DVID was not compiled with support for data type %s (%s)\n",
-				format.Name, format.Url)
-		}
-	}
+	return
+}
+
+// Close closes a DVID datastore.
+func (service *Service) Close() {
+	service.Close()
 }
