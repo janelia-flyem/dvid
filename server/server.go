@@ -6,7 +6,6 @@ import (
 	"net"
 	"net/http"
 	"net/rpc"
-	"strings"
 	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
@@ -15,72 +14,62 @@ import (
 const DefaultWebAddress = "localhost:4000"
 const DefaultRpcAddress = "localhost:6000"
 
-// Command is a type exported via the rpc server
-type Command struct {
-	// Args lists the elements of the command where Args[0] is the command string
-	Args []string
-}
+// dataService holds the currently opened DVID datastore.  A DVID process can
+// only handle one DVID datastore.
+var dataService *datastore.Service
 
-func (cmd Command) String() string {
-	return strings.Join(cmd.Args, " ")
-}
+// RpcConnection will export all of its functions for rpc access.
+type RpcConnection struct{}
 
-// GetParameter scans a command for any "key=value" argument and returns
-// the value of the passed 'key'.
-func (cmd Command) GetParameter(key string) (value string, found bool) {
-	if len(cmd.Args) > 1 {
-		for _, param := range cmd.Args[1:] {
-			elems := strings.Split(param, "=")
-			if len(elems) == 2 && elems[0] != key {
-				value = elems[1]
-				found = true
-				return
-			}
-		}
+// Do acts as a switchboard for remote command execution
+func (c *RpcConnection) Do(cmd *Command, reply *Param) error {
+	if reply == nil {
+		fmt.Println("reply is nil coming in!")
+		return nil
 	}
-	return
-}
+	if len(cmd.Args) == 0 {
+		return fmt.Errorf("Server error: got empty command!")
+	}
+	if dataService == nil {
+		return fmt.Errorf("Datastore not open!  Cannot execute command: %s", *cmd)
+	}
 
-func (cmd *Command) Do(args *Command, reply *string) error {
-	// TODO FIX BELOW
-	// Handle builtin commands
 	switch cmd.Args[0] {
-	case "branch", "lock", "types", "log", "pull", "push":
-		return fmt.Errorf("Command '%s' has not been implemented yet", cmd.Args[0])
+	// Handle builtin commands
+	case "types":
+		return cmd.Types(reply)
+	case "branch", "lock", "log", "pull", "push":
+		reply.Text = fmt.Sprintf("Server would have processed '%s'", cmd)
 	default:
 		// Check if this is a supported data type name
+		reply.Text = fmt.Sprintf("Server would have checked commands for '%s'", cmd.Args[0])
 
 		// If it's not supported, return error.
-		return fmt.Errorf("Command is not built-in command or supported data type: %s", cmd)
+		//return fmt.Errorf("Command is not built-in command or supported data type: %s", cmd)
 	}
-}
-
-// Handler for main page
-func mainHandler(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintln(w, "<h1>DVID Server Main Page</h1>")
-}
-
-// Handler for API commands through HTTP
-func apiHandler(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintln(w, "<h1>DVID Server API Handler ...</h1>")
-
-	const lenPath = len("/api/")
-	url := r.URL.Path[lenPath:]
-
-	fmt.Fprintln(w, "<p>Processing", url, "</p>")
+	return nil
 }
 
 // Serve opens a datastore then creates both web and rpc servers for the datastore
-func Serve(datastoreDir, webAddress, rpcAddress string) error {
+func Serve(datastoreDir, webAddress, rpcAddress string) (err error) {
+
+	// Make sure we don't already have an open datastore.
+	if dataService != nil {
+		return fmt.Errorf("Cannot create new server.  " +
+			"A DVID process can serve only one datastore.")
+	}
 
 	// Get exclusive ownership of a DVID datastore
-	dataService, err := datastore.Open(datastoreDir)
+	log.Println("Getting exclusive ownership of datastore at:", datastoreDir)
+
+	dataService, err = datastore.Open(datastoreDir)
 	if err != nil {
 		log.Fatalln(err.Error())
 	}
 
 	// Make sure we can support the datastore's types with our current DVID executable
-	err = dataService.Config.VerifySupportedTypes()
+	log.Println("Verifying datastore's supported types were compiled into DVID...")
+	err = dataService.Config.VerifyCompiledTypes()
 	if err != nil {
 		log.Fatalln(err.Error())
 	}
@@ -103,7 +92,7 @@ func Serve(datastoreDir, webAddress, rpcAddress string) error {
 // http://stackoverflow.com/questions/10971800/golang-http-server-leaving-open-goroutines
 func ServeHttp(address string, dataService *datastore.Service) {
 
-	fmt.Printf("Web server listening at %s ...\n", address)
+	log.Printf("Web server listening at %s ...\n", address)
 
 	if address == "" {
 		address = DefaultWebAddress
@@ -120,13 +109,13 @@ func ServeHttp(address string, dataService *datastore.Service) {
 // Listen and serve RPC requests using address.
 func ServeRpc(address string, dataService *datastore.Service) error {
 
-	fmt.Printf("Rpc server listening at %s ...\n", address)
+	log.Printf("Rpc server listening at %s ...\n", address)
 
 	if address == "" {
 		address = DefaultRpcAddress
 	}
-	rpcCommand := new(Command)
-	rpc.Register(rpcCommand)
+	c := new(RpcConnection)
+	rpc.Register(c)
 	rpc.HandleHTTP()
 	listener, err := net.Listen("tcp", address)
 	if err != nil {

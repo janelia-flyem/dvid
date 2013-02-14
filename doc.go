@@ -8,13 +8,19 @@ Documentation can be found nicely formatted at http://godoc.org/github.com/janel
 
 Philosophy
 
-DVID is a lightweight image datastore that gains much of its power by allowing distributed
-versioning, allowing you to process subvolumes of data and push resulting changes to a
+DVID is an image datastore that gains much of its power by coupling a lightweight,
+embedded storage (via Google's leveldb project) to distributed versioning, 
+allowing you to process subvolumes of data and push resulting changes to a
 larger DVID volume.  
 
-User-defined data types can be added to DVID.  Standard data types (8-bit grayscale images,
-64-bit label data, and label-to-label maps) will be included with the base DVID installation,
-although their packaging is identical to any other user-defined data type.
+User-defined data types can be added to DVID.  Standard data types (8-bit grayscale 
+images, 64-bit label data, and label-to-label maps) will be included with the base 
+DVID installation, although their packaging is identical to any other user-defined 
+data type.
+
+Although DVID operations can be run from the command line by knowledgeable users,
+we assume that clients will build upon DVID layers to hide the complexity from
+users.
 
 Standard DVID commands that can be performed without a running server
 
@@ -29,7 +35,7 @@ resolution, and the supported data types.  Returns a UUID representing
 the intial volume version,  i.e., an unlocked root node in the version 
 directed acyclic graph (DAG).
 
-	dvid serve [dir=/path/to/datastore] [web=localhost:4000] [rpc=:6000]
+	dvid serve [dir=/path/to/datastore] [web=localhost:4000] [rpc=localhost:6000]
 
 Starts a DVID server that maintains exclusive control over the datastore.
 Creates both web and rpc servers that can accept connections from web browsers
@@ -82,7 +88,7 @@ For example, the "grayscale8" data type supports the "add" command to insert
 The above example inserts a series of XY images where the lexicographically 
 smallest filename holds voxels at (x+1, y+2, 23) and each following image increases
 the z-coordinate by 1.  The image data is inserted into the current HEAD node
-or the node specified via the "--uuid=..." option.  Attempts to add data to a
+or the node specified via the "uuid=..." option.  Attempts to add data to a
 locked node will result in an error.
 
 	dvid <datatype> help [rpc=localhost:6000]

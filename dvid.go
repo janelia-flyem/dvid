@@ -5,11 +5,10 @@ import (
 	"fmt"
 	"log"
 	"net/rpc"
-	"os"
-	"strings"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/server"
+	"github.com/janelia-flyem/dvid/terminal"
 
 	// Declare the data types this DVID executable will support
 	_ "github.com/janelia-flyem/dvid/datatype/grayscale8"
@@ -38,7 +37,8 @@ Commands that require connection to a running server:
 	pull
 	push
 
-` + datastore.SupportedTypeHelp() + `
+There are also supported data type-specific commands that depend on 
+the server configuration.
 
 For further information, launch the DVID server (enter "dvid serve"), then use
 a web browser to visit the DVID web server ("localhost:4000" by default).
@@ -57,39 +57,23 @@ func main() {
 		fmt.Println(datastore.SupportedTypeChart())
 	}
 
-	if showHelp || showHelp2 || flag.NArg() == 0 {
+	if showHelp || showHelp2 {
 		fmt.Println(helpMessage)
 		fmt.Println("\nOptions:")
 		flag.PrintDefaults()
+	} else if flag.NArg() == 0 {
+		terminal.Shell()
 	} else {
-		command := Command{flag.Args()}
-		if err := command.Do(); err != nil {
+		command := &server.Command{Args: flag.Args()}
+		if err := DoCommand(command); err != nil {
 			fmt.Println(err.Error())
 		}
 	}
 }
 
-type Command struct {
-	server.Command
-}
-
-// DatastoreDir returns a directory specified in the arguments via "dir=..." or
-// defaults to the current directory.
-func (cmd Command) DatastoreDir() string {
-	datastoreDir, found := cmd.GetParameter("dir")
-	if !found {
-		currentDir, err := os.Getwd()
-		if err != nil {
-			log.Fatalln("Could not get current directory:", err)
-		}
-		return currentDir
-	}
-	return datastoreDir
-}
-
-// Do serves as a switchboard for commands and handles some common needs like
-// converting a UUID string into a real UUID.
-func (cmd Command) Do() error {
+// DoCommand serves as a switchboard for commands, handling local ones and
+// sending via rpc those commands that need a running server.
+func DoCommand(cmd *server.Command) error {
 	if len(cmd.Args) == 0 {
 		return fmt.Errorf("Blank command!")
 	}
@@ -98,31 +82,37 @@ func (cmd Command) Do() error {
 
 	// Handle commands that don't require server connection
 	case "init":
-		return command.Init()
+		return DoInit(cmd)
 	case "serve":
-		return command.Serve()
+		return DoServe(cmd)
 
 	default:
 		// Setup the server connection
-		client, err := rpc.DialHTTP("tcp", rpcAddress)
+		client, err := rpc.DialHTTP("tcp", cmd.GetRpcAddress())
 		if err != nil {
-			return fmt.Errorf("Could not establish rpc connection: %s", err)
+			return fmt.Errorf("Could not establish rpc connection: %s", err.Error())
 		}
 
-		// Send command to server
+		// Send command to server synchronously
+		var reply server.Param
+		err = client.Call("RpcConnection.Do", &cmd, &reply)
+		if err != nil {
+			return fmt.Errorf("RPC error for '%s': %s", cmd, err.Error())
+		}
+		fmt.Println(reply.Text)
 	}
 	return nil
 }
 
-// Init performs the "init" command, creating a new DVID datastore.
-func (cmd Command) Init() error {
+// DoInit performs the "init" command, creating a new DVID datastore.
+func DoInit(cmd *server.Command) error {
 
 	if len(cmd.Args) != 1 {
 		return fmt.Errorf("Poorly structured 'init' command: %s", cmd)
 	}
 	configFile := cmd.Args[0]
 	config := datastore.ReadJsonConfig(configFile)
-	datastoreDir := cmd.DatastoreDir()
+	datastoreDir := cmd.GetDatastoreDir()
 
 	log.Println("Initializing datastore at", datastoreDir)
 	create := true
@@ -132,12 +122,12 @@ func (cmd Command) Init() error {
 	return nil
 }
 
-// Serve opens a datastore then creates both web and rpc servers for the datastore
-func (cmd Command) Serve(args []string) error {
+// DoServe opens a datastore then creates both web and rpc servers for the datastore
+func DoServe(cmd *server.Command) error {
 
-	webAddress, _ := cmd.GetParameter("web")
-	rpcAddress, _ := cmd.GetParameter("rpc")
-	datastoreDir := cmd.DatastoreDir()
+	webAddress := cmd.GetWebAddress()
+	rpcAddress := cmd.GetRpcAddress()
+	datastoreDir := cmd.GetDatastoreDir()
 
 	if err := server.Serve(datastoreDir, webAddress, rpcAddress); err != nil {
 		return err

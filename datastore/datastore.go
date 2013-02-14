@@ -13,6 +13,8 @@ import (
 	"github.com/janelia-flyem/dvid/keyvalue"
 )
 
+const Version = "0.1"
+
 const Kilo = 1 << 10
 const Mega = 1 << 20
 const Giga = 1 << 30
@@ -46,7 +48,7 @@ type Config struct {
 	Head UUID
 
 	// Data types supported
-	Datatypes []TypeService
+	Datatypes []Datatype
 }
 
 // ReadJson reads in a Config from a JSON file with errors leading to
@@ -88,18 +90,18 @@ func (config *Config) WriteJsonConfig(filename string) {
 	file.Close()
 }
 
-// VerifySupportedTypes will return an error if any required data type in the datastore 
+// VerifyCompiledTypes will return an error if any required data type in the datastore 
 // configuration was not compiled into DVID executable.
-func (config *Config) VerifySupportedTypes() error {
+func (config *Config) VerifyCompiledTypes() error {
 	if SupportedTypes == nil {
 		return fmt.Errorf("DVID was not compiled with any data type support!")
 	}
 	var errMsg string
 	for _, datatype := range config.Datatypes {
-		_, found := SupportedTypes[datatype.GetUrl()]
+		_, found := SupportedTypes[datatype.Url]
 		if !found {
 			errMsg += fmt.Sprintf("DVID was not compiled with support for data type %s [%s]\n",
-				datatype.GetName(), datatype.GetUrl())
+				datatype.Name, datatype.Url)
 		}
 	}
 	if errMsg != "" {
@@ -108,11 +110,24 @@ func (config *Config) VerifySupportedTypes() error {
 	return nil
 }
 
+// SupportedTypeChart returns a chart (names/urls) of data types supported by this datastore
+func (config *Config) SupportedTypeChart() string {
+	var text string = "\nData types supported by this DVID datastore\n\n"
+	writeLine := func(name string, url UrlString) {
+		text += fmt.Sprintf("%15s   %s\n", name, url)
+	}
+	writeLine("Name", "Url")
+	for _, datatype := range config.Datatypes {
+		writeLine(datatype.Name, datatype.Url)
+	}
+	return text + "\n"
+}
+
 // Init creates a key-value datastore using default parameters.  Datastore 
 // configuration is stored in the datastore and in a human-readable JSON file
 // in the datastore directory.
 func Init(directory string, config *Config, create bool) (uuid UUID) {
-	err := config.VerifySupportedTypes()
+	err := config.VerifyCompiledTypes()
 	if err != nil {
 		log.Fatalln(err.Error())
 	}

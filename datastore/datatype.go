@@ -101,12 +101,6 @@ func VerifySupportedTypeName(name string) error {
 	return nil
 }
 
-// SupportedTypeHelp returns all the help messages for each supported data type
-// that is both compiled into DVID and available with the current open datastore.
-func SupportedTypeHelp() string {
-	return "No help here!\n"
-}
-
 // SupportedTypeNames returns a list of data type names supported by this DVID
 func SupportedTypeNames() string {
 	var names []string
@@ -140,17 +134,15 @@ func SupportedTypeChart() string {
 
 // RegisterDatatype registers a data type for DVID use.
 func RegisterDatatype(datatype TypeService) {
-	fmt.Printf("Registering data type datatype: %s (%s)\n",
-		datatype.GetName(), datatype.GetUrl())
 	if SupportedTypes == nil {
 		SupportedTypes = make(map[UrlString]TypeService)
 	}
 	SupportedTypes[datatype.GetUrl()] = datatype
 }
 
-// GetService returns a supported data type's service or an error if name is not supported 
+// GetTypeService returns a supported data type's service or an error if name is not supported 
 // or ambiguous.
-func GetService(name string) (service TypeService, err error) {
+func GetTypeService(name string) (service TypeService, err error) {
 	for _, datatype := range SupportedTypes {
 		if name == datatype.GetName() {
 			if service != nil {
