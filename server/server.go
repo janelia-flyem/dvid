@@ -18,6 +18,12 @@ const DefaultRpcAddress = "localhost:6000"
 // only handle one DVID datastore.
 var dataService *datastore.Service
 
+// DataService returns the currently opened DVID datastore service or nil if
+// this DVID executable is not serving data.
+func DataService() *datastore.Service {
+	return dataService
+}
+
 // RpcConnection will export all of its functions for rpc access.
 type RpcConnection struct{}
 
@@ -31,26 +37,24 @@ func (c *RpcConnection) Do(cmd *Command, reply *Param) error {
 		return fmt.Errorf("Server error: got empty command!")
 	}
 	if dataService == nil {
-		return fmt.Errorf("Datastore not open!  Cannot execute command: %s", *cmd)
+		return fmt.Errorf("Datastore not open!  Cannot execute command.")
 	}
 
 	switch cmd.Args[0] {
 	// Handle builtin commands
 	case "types":
-		return cmd.Types(reply)
+		return cmd.types(reply)
 	case "branch", "lock", "log", "pull", "push":
 		reply.Text = fmt.Sprintf("Server would have processed '%s'", cmd)
 	default:
-		// Check if this is a supported data type name
-		reply.Text = fmt.Sprintf("Server would have checked commands for '%s'", cmd.Args[0])
-
-		// If it's not supported, return error.
-		//return fmt.Errorf("Command is not built-in command or supported data type: %s", cmd)
+		// Assume this is the command for a supported data type
+		return cmd.datatypeDo(reply)
 	}
 	return nil
 }
 
-// Serve opens a datastore then creates both web and rpc servers for the datastore
+// Serve opens a datastore then creates both web and rpc servers for the datastore.
+// This function must be called for DataService() to be non-nil.
 func Serve(datastoreDir, webAddress, rpcAddress string) (err error) {
 
 	// Make sure we don't already have an open datastore.

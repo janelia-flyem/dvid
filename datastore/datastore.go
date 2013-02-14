@@ -123,6 +123,27 @@ func (config *Config) SupportedTypeChart() string {
 	return text + "\n"
 }
 
+// IsSupportedType returns true if given data type name is supported by this datastore
+func (config *Config) IsSupportedType(name string) bool {
+	for _, datatype := range config.Datatypes {
+		if name == datatype.Name {
+			return true
+		}
+	}
+	return false
+}
+
+func (config *Config) GetSupportedTypeUrl(name string) (url UrlString, err error) {
+	for _, datatype := range config.Datatypes {
+		if name == datatype.Name {
+			url = datatype.Url
+			return
+		}
+	}
+	err = fmt.Errorf("Data type '%s' not supported by opened datastore.", name)
+	return
+}
+
 // Init creates a key-value datastore using default parameters.  Datastore 
 // configuration is stored in the datastore and in a human-readable JSON file
 // in the datastore directory.
@@ -182,4 +203,21 @@ func Open(directory string) (service *Service, err error) {
 // Close closes a DVID datastore.
 func (service *Service) Close() {
 	service.Close()
+}
+
+// GetUuidFromString returns a UUID given its string representation.  Partial
+// matches are accepted as long as they are unique for a datastore.  So if
+// a datastore has nodes with UUID strings 3FA22..., 7CD11..., and 836EE..., 
+// we can still find a match even if given the minimum 3 letters.  (We don't
+// allow UUID strings of less than 3 letters just to prevent mistakes.)
+func (service *Service) GetUuidFromString(s string) (uuid UUID, err error) {
+	// TODO -- Implement this once we have DAG.
+	uuid, err = UUIDfromString(s)
+	return
+}
+
+func (service *Service) GetHeadUuid() (uuid UUID, err error) {
+	// TODO -- Implement this once we have DAG.
+	uuid = NewUUID()
+	return
 }

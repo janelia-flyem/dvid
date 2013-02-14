@@ -70,7 +70,7 @@ func (datatype *Datatype) Help() string {
 }
 
 func (datatype *Datatype) UnknownCommand(command string) error {
-	return fmt.Errorf("Unknown command: %s [%s] does not support '%s' command",
+	return fmt.Errorf("Unknown command.  Data type '%s' [%s] does not support '%s' command.",
 		datatype.GetName(), datatype.GetUrl(), command)
 }
 
