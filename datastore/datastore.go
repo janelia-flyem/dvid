@@ -13,16 +13,18 @@ import (
 	"github.com/janelia-flyem/dvid/keyvalue"
 )
 
-const Version = "0.1"
+const (
+	Version = "0.1"
 
-const Kilo = 1 << 10
-const Mega = 1 << 20
-const Giga = 1 << 30
-const Tera = 1 << 40
+	Kilo = 1 << 10
+	Mega = 1 << 20
+	Giga = 1 << 30
+	Tera = 1 << 40
 
-// ConfigFilename is name of JSON file with datastore configuration data
-// just for human inspection.
-const ConfigFilename = "dvid-config.json"
+	// ConfigFilename is name of JSON file with datastore configuration data
+	// just for human inspection.
+	ConfigFilename = "dvid-config.json"
+)
 
 // Config holds the essential configuration data for a datastore instance.
 type Config struct {
@@ -141,7 +143,7 @@ func (config *Config) GetSupportedTypeUrl(name string) (url UrlString, err error
 			return
 		}
 	}
-	err = fmt.Errorf("Data type '%s' not supported by opened datastore.", name)
+	err = fmt.Errorf("data type '%s' not supported by opened datastore.", name)
 	return
 }
 

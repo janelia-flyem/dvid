@@ -74,16 +74,16 @@ func Serve(datastoreDir, webAddress, rpcAddress string) (err error) {
 // http://stackoverflow.com/questions/10971800/golang-http-server-leaving-open-goroutines
 func (service *Service) ServeHttp(address string) {
 
-	log.Printf("Web server listening at %s ...\n", address)
-
 	if address == "" {
 		address = DefaultWebAddress
 	}
+	service.WebAddress = address
+	log.Printf("Web server listening at %s ...\n", address)
+
 	src := &http.Server{
 		Addr:        address,
 		ReadTimeout: 1 * time.Hour,
 	}
-	service.WebAddress = address
 
 	http.HandleFunc("/", mainHandler)
 	http.HandleFunc("/api/", apiHandler)
@@ -93,12 +93,11 @@ func (service *Service) ServeHttp(address string) {
 // Listen and serve RPC requests using address.
 func (service *Service) ServeRpc(address string) error {
 
-	log.Printf("Rpc server listening at %s ...\n", address)
-
 	if address == "" {
 		address = DefaultRpcAddress
 	}
 	service.RpcAddress = address
+	log.Printf("Rpc server listening at %s ...\n", address)
 
 	c := new(RpcConnection)
 	rpc.Register(c)
@@ -108,36 +107,5 @@ func (service *Service) ServeRpc(address string) error {
 		return err
 	}
 	http.Serve(listener, nil)
-	return nil
-}
-
-// RpcConnection will export all of its functions for rpc access.
-type RpcConnection struct{}
-
-// Do acts as a switchboard for remote command execution
-func (c *RpcConnection) Do(cmd *Command, reply *datastore.CommandData) error {
-	if reply == nil {
-		fmt.Println("reply is nil coming in!")
-		return nil
-	}
-	if len(cmd.Args) == 0 {
-		return fmt.Errorf("Server error: got empty command!")
-	}
-	if runningService.data == nil {
-		return fmt.Errorf("Datastore not open!  Cannot execute command.")
-	}
-
-	switch cmd.Args[0] {
-	// Handle builtin commands
-	case "types":
-		return cmd.types(reply)
-	case "help":
-		return cmd.help(reply)
-	case "branch", "lock", "log", "pull", "push":
-		reply.Text = fmt.Sprintf("Server would have processed '%s'", cmd)
-	default:
-		// Assume this is the command for a supported data type
-		return cmd.datatypeDo(reply)
-	}
 	return nil
 }

@@ -3,6 +3,8 @@ package datastore
 import (
 	"fmt"
 	"strings"
+
+	"github.com/janelia-flyem/dvid/command"
 )
 
 // This message is used for all data types to explain options.
@@ -38,12 +40,6 @@ type Datatype struct {
 	IsolateData bool
 }
 
-// CommandData packages data that are transmitted as part of commands
-type CommandData struct {
-	Text string
-	Data [][]byte
-}
-
 // TypeService is an interface for operations using arbitrary data types.
 type TypeService interface {
 	GetName() string
@@ -54,10 +50,10 @@ type TypeService interface {
 	Help(textHelp string) string
 
 	// Do implements commands specific to a data type
-	Do(uuid UUID, command string, args []string, reply *CommandData) error
+	Do(uuid UUID, cmd *command.Command, input *command.Packet, reply *command.Packet) error
 
 	// Returns standard error response for unknown commands
-	UnknownCommand(command string) error
+	UnknownCommand(cmd *command.Command) error
 }
 
 // The following functions supply standard operations necessary across all supported
@@ -80,9 +76,9 @@ func (datatype *Datatype) Help(typeHelp string) string {
 	return fmt.Sprintf(helpMessage+typeHelp, datatype.GetName(), datatype.GetUrl())
 }
 
-func (datatype *Datatype) UnknownCommand(command string) error {
+func (datatype *Datatype) UnknownCommand(cmd *command.Command) error {
 	return fmt.Errorf("Unknown command.  Data type '%s' [%s] does not support '%s' command.",
-		datatype.GetName(), datatype.GetUrl(), command)
+		datatype.GetName(), datatype.GetUrl(), cmd.TypeCommand())
 }
 
 // SupportedTypes is the set of registered data types held as a global variable 

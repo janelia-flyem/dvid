@@ -4,8 +4,8 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"net/rpc"
 
+	"github.com/janelia-flyem/dvid/command"
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/terminal"
@@ -69,7 +69,7 @@ func main() {
 	} else if flag.NArg() == 0 {
 		terminal.Shell()
 	} else {
-		command := &server.Command{Args: flag.Args()}
+		command := &command.Command{Args: flag.Args()}
 		if err := DoCommand(command); err != nil {
 			fmt.Println(err.Error())
 		}
@@ -78,44 +78,32 @@ func main() {
 
 // DoCommand serves as a switchboard for commands, handling local ones and
 // sending via rpc those commands that need a running server.
-func DoCommand(cmd *server.Command) error {
+func DoCommand(cmd *command.Command) error {
 	if len(cmd.Args) == 0 {
 		return fmt.Errorf("Blank command!")
 	}
 
-	switch cmd.Args[0] {
-
+	switch cmd.Name() {
 	// Handle commands that don't require server connection
 	case "init":
 		return DoInit(cmd)
 	case "serve":
 		return DoServe(cmd)
-
+	// Send everything else to server via DVID terminal
 	default:
-		// Setup the server connection
-		client, err := rpc.DialHTTP("tcp", cmd.GetRpcAddress())
-		if err != nil {
-			return fmt.Errorf("Could not establish rpc connection: %s", err.Error())
-		}
-
-		// Send command to server synchronously
-		var reply datastore.CommandData
-		err = client.Call("RpcConnection.Do", &cmd, &reply)
-		if err != nil {
-			return fmt.Errorf("RPC error for '%s': %s", cmd, err.Error())
-		}
-		fmt.Println(reply.Text)
+		return terminal.Send(cmd)
 	}
 	return nil
 }
 
 // DoInit performs the "init" command, creating a new DVID datastore.
-func DoInit(cmd *server.Command) error {
+func DoInit(cmd *command.Command) error {
 
 	if len(cmd.Args) != 1 {
 		return fmt.Errorf("Poorly structured 'init' command: %s", cmd)
 	}
-	configFile := cmd.Args[0]
+	var configFile string
+	cmd.SetCommandArgs(&configFile)
 	config := datastore.ReadJsonConfig(configFile)
 	datastoreDir := cmd.GetDatastoreDir()
 
@@ -128,10 +116,10 @@ func DoInit(cmd *server.Command) error {
 }
 
 // DoServe opens a datastore then creates both web and rpc servers for the datastore
-func DoServe(cmd *server.Command) error {
+func DoServe(cmd *command.Command) error {
 
-	webAddress := cmd.GetWebAddress()
-	rpcAddress := cmd.GetRpcAddress()
+	webAddress, _ := cmd.GetSetting(command.KeyWeb)
+	rpcAddress, _ := cmd.GetSetting(command.KeyRpc)
 	datastoreDir := cmd.GetDatastoreDir()
 
 	if err := server.Serve(datastoreDir, webAddress, rpcAddress); err != nil {

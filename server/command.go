@@ -2,10 +2,8 @@ package server
 
 import (
 	"fmt"
-	"log"
-	"os"
-	"strings"
 
+	"github.com/janelia-flyem/dvid/command"
 	"github.com/janelia-flyem/dvid/datastore"
 )
 
@@ -40,75 +38,55 @@ datastore:
 	http://%s
 `
 
-// Command supports command-based interaction with DVID
+// RpcConnection will export all of its functions for rpc access.
+type RpcConnection struct{}
+
+// Do acts as a switchboard for remote command execution
+func (c *RpcConnection) Do(cmd *Command, reply *command.Packet) error {
+	if reply == nil {
+		fmt.Println("reply is nil coming in!")
+		return nil
+	}
+	if len(cmd.Args) == 0 {
+		return fmt.Errorf("Server error: got empty command!")
+	}
+	if runningService.data == nil {
+		return fmt.Errorf("Datastore not open!  Cannot execute command.")
+	}
+
+	switch cmd.Name() {
+	// Handle builtin commands
+	case "types":
+		return cmd.types(reply)
+	case "help":
+		return cmd.help(reply)
+	case "branch", "lock", "log", "pull", "push":
+		reply.Text = fmt.Sprintf("Server would have processed '%s'", cmd)
+	default:
+		// Assume this is the command for a supported data type
+		return cmd.datatypeDo(reply)
+	}
+	return nil
+}
+
+// Command supports command-based interaction with DVID.  It extends the standard
+// command package Command by bundling a packet used for input data since Go's
+// rpc convention is to pass a single struct for input.  Once we pass the data
+// through the rpc connection, we unpack the command and input packet to pass
+// it to data types-specific handling.
 type Command struct {
-	// Args lists the elements of the command where Args[0] is the command string
-	Args []string
+	command.Command
 
-	// Param allows commands to attach input data
-	datastore.CommandData
+	command.Packet
 }
 
-func (cmd Command) String() string {
-	return strings.Join(cmd.Args, " ")
-}
-
-// GetParameter scans a command for any "key=value" argument and returns
-// the value of the passed 'key'.
-func (cmd Command) GetParameter(key string) (value string, found bool) {
-	if len(cmd.Args) > 1 {
-		for _, param := range cmd.Args[1:] {
-			elems := strings.Split(param, "=")
-			if len(elems) == 2 && elems[0] == key {
-				value = elems[1]
-				found = true
-				return
-			}
-		}
-	}
-	return
-}
-
-// GetRpcAddress returns the address set by a "rpc=..." argument or if that is 
-// missing, the default rpc address.
-func (cmd Command) GetRpcAddress() string {
-	address, found := cmd.GetParameter("rpc")
-	if !found {
-		return DefaultRpcAddress
-	}
-	return address
-}
-
-// GetWebAddress returns the address set by a "web=..." argument or if that is 
-// missing, the default web address.
-func (cmd Command) GetWebAddress() string {
-	address, found := cmd.GetParameter("web")
-	if !found {
-		return DefaultWebAddress
-	}
-	return address
-}
-
-// GetDatastoreDir returns a directory specified in the arguments via "dir=..." or
-// defaults to the current directory.
-func (cmd Command) GetDatastoreDir() string {
-	datastoreDir, found := cmd.GetParameter("dir")
-	if !found {
-		currentDir, err := os.Getwd()
-		if err != nil {
-			log.Fatalln("Could not get current directory:", err)
-		}
-		return currentDir
-	}
-	return datastoreDir
-}
 
 // GetUuid returns the UUID corresponding to the string supplied by a "uuid=..."
 // argument or if that's missing, the UUID for the head node.  
-func (cmd Command) GetUuid(dataService *datastore.Service) (uuid datastore.UUID,
+func (cmd *Command) GetUuid(dataService *datastore.Service) (uuid datastore.UUID,
 	err error) {
 
-	uuidString, found := cmd.GetParameter("uuid")
+	uuidString, found := cmd.GetSetting(command.KeyUuid)
 	if found {
 		uuid, err = dataService.GetUuidFromString(uuidString)
 	} else {
@@ -120,37 +98,38 @@ func (cmd Command) GetUuid(dataService *datastore.Service) (uuid datastore.UUID,
 // The following command implementations assume dataService is non-nil, hence their
 // unexported nature.
 
-func (cmd Command) datatypeDo(reply *datastore.CommandData) error {
+func (cmd *Command) datatypeDo(reply *command.Packet) error {
 	// Get the TypeService for this data type.  Let user know if it's not supported.
-	typeUrl, err := runningService.data.GetSupportedTypeUrl(cmd.Args[0])
+	typeUrl, err := runningService.data.GetSupportedTypeUrl(cmd.Name())
 	if err != nil {
-		return err
+		return fmt.Errorf("Command '%s' invalid and %s", cmd.Name(), err.Error())
 	}
 	typeService, found := datastore.SupportedTypes[typeUrl]
 	if !found {
 		return fmt.Errorf("Support for data type not compiled in: %s [%s]",
-			cmd.Args[0], typeUrl)
+			cmd.Name(), typeUrl)
 	}
 
 	// Make sure we have at least a command in addition to the data type name
-	if len(cmd.Args[1:]) < 1 {
-		return fmt.Errorf("Must have at least a command in addition to data type!")
+	if len(cmd.Args) < 2 {
+		return fmt.Errorf("Must give a command in addition to data type!  Try '%s help'.",
+			cmd.Name())
 	}
 
 	uuid, err := cmd.GetUuid(runningService.data)
 	if err != nil {
 		return err
 	}
-	return typeService.Do(uuid, cmd.Args[1], cmd.Args[2:], reply)
+	return typeService.Do(uuid, &cmd.Command, &cmd.Packet, reply)
 }
 
-func (cmd Command) help(reply *datastore.CommandData) error {
+func (cmd *Command) help(reply *command.Packet) error {
 	reply.Text = fmt.Sprintf(helpMessage, runningService.RpcAddress,
 		runningService.data.SupportedTypeChart(), runningService.WebAddress)
 	return nil
 }
 
-func (cmd Command) types(reply *datastore.CommandData) error {
+func (cmd *Command) types(reply *command.Packet) error {
 	reply.Text = runningService.data.SupportedTypeChart()
 	return nil
 }

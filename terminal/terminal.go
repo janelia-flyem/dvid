@@ -3,9 +3,11 @@ package terminal
 import (
 	"bufio"
 	"fmt"
+	"net/rpc"
 	"os"
 	"strings"
 
+	"github.com/janelia-flyem/dvid/command"
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/server"
 )
@@ -13,20 +15,27 @@ import (
 const helpMessage = `
 DVID Terminal Help
 
+  Use 'q' or 'quit' to exit.
+
   set address <DVID rpc address>
   set node <UUID>
 `
 
 // Global variables to store DVID states and connection info
 var head datastore.UUID
-var rpcAddress string = server.DefaultRpcAddress
+var rpcAddress string
+var client *rpc.Client
 
-func prompt(message string) (in string) {
+func init() {
+	rpcAddress = server.DefaultRpcAddress
+}
+
+func prompt(message string) *command.Command {
 	fmt.Print(message)
 	reader := bufio.NewReader(os.Stdin)
 	line, _ := reader.ReadString('\n')
-	in = strings.TrimSpace(line)
-	return
+	line = strings.TrimSpace(line)
+	return &command.Command{strings.Split(line, " ")} 
 }
 
 // Shell takes commands and processes them in an endless loop.
@@ -36,15 +45,42 @@ func Shell() {
 	// Command-line loop
 	takeCommands := true
 	for takeCommands {
-		command := prompt("DVID> ")
-		switch command {
+		cmd := prompt("DVID> ")
+		switch cmd.Name() {
 		case "help", "h":
 			fmt.Printf(helpMessage)
 		case "quit", "q":
 			takeCommands = false
 		default:
-			fmt.Println("\nUnable to execute command!\n")
-			fmt.Printf(helpMessage)
+			Send(cmd)
 		}
 	}
+}
+
+func Send(cmd *command.Command) (err error) {
+	// Change rpc if encoded in command
+	address, rpcOverriden := cmd.GetSetting(command.KeyRpc)
+	if rpcOverriden {
+		rpcAddress = address
+	}
+
+	// If we haven't already established a connection, make one.
+	if client == nil {
+		client, err = rpc.DialHTTP("tcp", rpcAddress)
+		if err != nil {
+			err = fmt.Errorf("Could not establish rpc connection: %s", err.Error())
+			return
+		}
+	}
+
+	// Send command to server synchronously
+	var input, reply command.Packet
+	serverCmd := server.Command{*cmd, input}
+	err = client.Call("RpcConnection.Do", &serverCmd, &reply)
+	if err != nil {
+		err = fmt.Errorf("RPC error for '%s': %s", cmd, err.Error())
+		return
+	}
+	fmt.Println(reply.Text)
+	return
 }
