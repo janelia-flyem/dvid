@@ -23,6 +23,7 @@ var setKeys = map[string]bool{
 
 // Packet packages data that are transmitted as part of commands
 type Packet struct {
+
 	Text string
 	Data [][]byte
 }
@@ -109,7 +110,6 @@ func (cmd *Command) SetDatatypeArgs(targets ...*string) (overflow []string) {
 
 func setArgs(args []string, startPos int, targets ...*string) (overflow []string) {
 	overflow = make([]string, 0, len(args))
-	log.Println("len(args) =", len(args))
 	for _, target := range targets {
 		*target = ""
 	}
@@ -125,7 +125,6 @@ func setArgs(args []string, startPos int, targets ...*string) (overflow []string
 			if !optionalSet {
 				if curTarget >= numTargets {
 					overflow = append(overflow, arg)
-					log.Println("done")
 				} else {
 					*(targets[curTarget]) = arg
 				}

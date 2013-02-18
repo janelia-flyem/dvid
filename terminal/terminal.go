@@ -35,7 +35,7 @@ func prompt(message string) *command.Command {
 	reader := bufio.NewReader(os.Stdin)
 	line, _ := reader.ReadString('\n')
 	line = strings.TrimSpace(line)
-	return &command.Command{strings.Split(line, " ")} 
+	return &command.Command{strings.Split(line, " ")}
 }
 
 // Shell takes commands and processes them in an endless loop.
@@ -52,7 +52,10 @@ func Shell() {
 		case "quit", "q":
 			takeCommands = false
 		default:
-			Send(cmd)
+			err := Send(cmd)
+			if err != nil {
+				fmt.Println(err.Error())
+			}
 		}
 	}
 }
