@@ -20,7 +20,7 @@ func NewUUID() UUID {
 // UUIDfromString returns a UUID from its hexadecimal string representation
 func UUIDfromString(s string) (u UUID, err error) {
 	bytes, err := hex.DecodeString(s)
-	if err != nil {
+	if err == nil {
 		u = UUID(bytes)
 	}
 	return
@@ -30,7 +30,7 @@ func UUIDfromString(s string) (u UUID, err error) {
 // hexidecimal string or "" if the uuid is invalid.
 func (u UUID) String() string {
 	if u == nil || len(u) != 16 {
-		return ""
+		return "<invalid uuid>"
 	}
 	return fmt.Sprintf("%032x", []byte(u))
 }

@@ -17,66 +17,6 @@ type Sizes struct {
 	leveldb.Sizes
 }
 
-type goReadOptions struct {
-	opt.ReadOptions
-}
-
-// GetReadOptions returns a specific implementation of ReadOptions
-func GetReadOptions() (ro ReadOptions) {
-	ro = &goReadOptions{}
-	return
-}
-
-type goWriteOptions struct {
-	opt.WriteOptions
-}
-
-// GetWriteOptions returns a specific implementation of ReadOptions
-func GetWriteOptions() (wo WriteOptions) {
-	wo = &goWriteOptions{}
-	return
-}
-
-type goBatch struct {
-	leveldb.Batch
-}
-
-// GetWriteBatch returns an implementation that allows batch writes
-func GetWriteBatch() (batch WriteBatch) {
-	batch = &goBatch{}
-	return
-}
-
-type goKeyValueOptions struct {
-	opt.Options
-	nLRUCacheBytes  int
-	bloomBitsPerKey int
-}
-
-// GetKeyValueOptions returns an implementation of KeyValueOptions
-func GetKeyValueOptions() (opts KeyValueOptions) {
-	opts = &goKeyValueOptions{
-		Options:        opt.Options{},
-		nLRUCacheBytes: DefaultCacheSize,
-	}
-	return
-}
-
-// GoLDB is a pure go implementation of the KeyValueDB interface
-type GoLDB struct {
-	// Directory of datastore
-	directory string
-
-	// Leveldb options at time of Open()
-	opts goKeyValueOptions
-
-	// File I/O abstraction
-	desc *descriptor.FileDesc
-
-	// Leveldb connection
-	ldb *leveldb.DB
-}
-
 // Open will open and possibly create a datastore at the given directory.
 func OpenLeveldb(path string, create bool, kvOpts KeyValueOptions) (db KeyValueDB, err error) {
 	leveldb_desc, err := descriptor.OpenFile(path)
@@ -105,13 +45,73 @@ func OpenLeveldb(path string, create bool, kvOpts KeyValueOptions) (db KeyValueD
 	if err != nil {
 		return
 	}
-	db = &GoLDB{
+	db = &goLDB{
 		directory: path,
 		opts:      *opts, // We want a copy at time of Open()
 		desc:      leveldb_desc,
 		ldb:       leveldb_db,
 	}
 	return
+}
+
+// GetReadOptions returns a specific implementation of ReadOptions
+func GetReadOptions() (ro ReadOptions) {
+	ro = &goReadOptions{}
+	return
+}
+
+// GetWriteOptions returns a specific implementation of ReadOptions
+func GetWriteOptions() (wo WriteOptions) {
+	wo = &goWriteOptions{}
+	return
+}
+
+// GetWriteBatch returns an implementation that allows batch writes
+func GetWriteBatch() (batch WriteBatch) {
+	batch = &goBatch{}
+	return
+}
+
+// GetKeyValueOptions returns an implementation of KeyValueOptions
+func GetKeyValueOptions() (opts KeyValueOptions) {
+	opts = &goKeyValueOptions{
+		Options:        opt.Options{},
+		nLRUCacheBytes: DefaultCacheSize,
+	}
+	return
+}
+
+// GoLDB is a pure go implementation of the KeyValueDB interface
+type goLDB struct {
+	// Directory of datastore
+	directory string
+
+	// Leveldb options at time of Open()
+	opts goKeyValueOptions
+
+	// File I/O abstraction
+	desc *descriptor.FileDesc
+
+	// Leveldb connection
+	ldb *leveldb.DB
+}
+
+type goReadOptions struct {
+	opt.ReadOptions
+}
+
+type goWriteOptions struct {
+	opt.WriteOptions
+}
+
+type goBatch struct {
+	leveldb.Batch
+}
+
+type goKeyValueOptions struct {
+	opt.Options
+	nLRUCacheBytes  int
+	bloomBitsPerKey int
 }
 
 func (ro *goReadOptions) SetVerifyChecksums(on bool) {
@@ -219,31 +219,31 @@ func (opts *goKeyValueOptions) GetBloomFilterBitsPerKey() (bitsPerKey int) {
 }
 
 // Close closes the leveldb and then the I/O abstraction for leveldb.
-func (db *GoLDB) Close() {
+func (db *goLDB) Close() {
 	db.ldb.Close()
 	db.desc.Close()
 }
 
 // Get returns a value given a key.
-func (db *GoLDB) Get(k Key, ro ReadOptions) (v Value, err error) {
+func (db *goLDB) Get(k Key, ro ReadOptions) (v Value, err error) {
 	v, err = db.ldb.Get(k, &(ro.(*goReadOptions).ReadOptions))
 	return
 }
 
 // Put writes a value with given key.
-func (db *GoLDB) Put(k Key, v Value, wo WriteOptions) (err error) {
+func (db *goLDB) Put(k Key, v Value, wo WriteOptions) (err error) {
 	err = db.ldb.Put(k, v, &(wo.(*goWriteOptions).WriteOptions))
 	return
 }
 
 // Delete removes a value with given key.
-func (db *GoLDB) Delete(k Key, wo WriteOptions) (err error) {
+func (db *goLDB) Delete(k Key, wo WriteOptions) (err error) {
 	err = db.ldb.Delete(k, &(wo.(*goWriteOptions).WriteOptions))
 	return
 }
 
 // Write allows you to batch a series of key/value puts.
-func (db *GoLDB) Write(batch WriteBatch, wo WriteOptions) (err error) {
+func (db *goLDB) Write(batch WriteBatch, wo WriteOptions) (err error) {
 	err = db.ldb.Write(&(batch.(*goBatch).Batch),
 		&(wo.(*goWriteOptions).WriteOptions))
 	return
@@ -251,7 +251,7 @@ func (db *GoLDB) Write(batch WriteBatch, wo WriteOptions) (err error) {
 
 // GetApproximateSizes returns the approximate number of bytes of
 // file system space used by one or more key ranges.
-func (db *GoLDB) GetApproximateSizes(ranges Ranges) (sizes Sizes, err error) {
+func (db *goLDB) GetApproximateSizes(ranges Ranges) (sizes Sizes, err error) {
 	sizes.Sizes, err = db.ldb.GetApproximateSizes([]leveldb.Range(ranges))
 	return
 }

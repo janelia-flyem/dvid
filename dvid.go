@@ -25,26 +25,11 @@ dvid is a distributed, versioned image datastore
 
 Commands that can be performed without a running server:
 
-	init <json config filename> [dir=/path/to/datastore/dir]
+	init [config=/path/to/json/config] [dir=/path/to/datastore/dir]
 	serve [dir=/path/to/datastore/dir] [web=...] [rpc=...]
+`
 
-Commands that require connection to a running server:
-
-	help
-	branch 
-	lock
-	types
-	log
-	pull
-	push
-
-All of the commands above can include optional settings of the form:
-	rpc=foo.com:1234  (Specifies the DVID server.)
-	uuid=3efa87       (Specifies the image version within that datastore.)
-
-There are also supported data type-specific commands that depend on 
-the server configuration.  Use "dvid help" to get server-side help.
-
+const helpServerMessage = `
 For further information, launch the DVID server (enter "dvid serve"), then use
 a web browser to visit the DVID web server ("localhost:4000" by default).
 `
@@ -60,12 +45,16 @@ func main() {
 
 	if showTypes {
 		fmt.Println(datastore.SupportedTypeChart())
-	}
-
-	if showHelp || showHelp2 {
+	} else if showHelp || showHelp2 {
+		// Print local DVID help
 		fmt.Println(helpMessage)
 		fmt.Println("\nOptions:")
 		flag.PrintDefaults()
+		// Print server DVID help if available
+		err := DoCommand(&command.Command{Args: []string{"help"}})
+		if err != nil {
+			fmt.Println(helpServerMessage)
+		}
 	} else if flag.NArg() == 0 {
 		terminal.Shell()
 	} else {
@@ -98,20 +87,13 @@ func DoCommand(cmd *command.Command) error {
 
 // DoInit performs the "init" command, creating a new DVID datastore.
 func DoInit(cmd *command.Command) error {
-
-	if len(cmd.Args) != 1 {
-		return fmt.Errorf("Poorly structured 'init' command: %s", cmd)
-	}
-	var configFile string
-	cmd.SetCommandArgs(&configFile)
-	config := datastore.ReadJsonConfig(configFile)
+	configFile, _ := cmd.GetSetting(command.KeyConfigFile)
 	datastoreDir := cmd.GetDatastoreDir()
 
 	log.Println("Initializing datastore at", datastoreDir)
 	create := true
-	uuid := datastore.Init(datastoreDir, config, create)
+	uuid := datastore.Init(datastoreDir, configFile, create)
 	fmt.Println("Root node UUID:", uuid)
-	// TODO -- This should be stored in datastore
 	return nil
 }
 

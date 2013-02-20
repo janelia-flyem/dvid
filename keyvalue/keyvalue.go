@@ -1,6 +1,7 @@
 package keyvalue
 
 import (
+	"fmt"
 	_ "log"
 )
 
@@ -18,6 +19,14 @@ const DefaultCacheSize = 1 * Giga
 
 type Key []byte
 type Value []byte
+
+func (key Key) String() string {
+	return fmt.Sprintf("%x", []byte(key))
+}
+
+func (value Value) String() string {
+	return fmt.Sprintf("%x", []byte(value))
+}
 
 // ReadOptions provides an interface to leveldb read options
 type ReadOptions interface {

@@ -27,11 +27,12 @@ Standard DVID commands that can be performed without a running server
 In the following documentation, the type of brackets designate 
 <required parameter> and [optional parameter].
 
-	dvid init <JSON config file> [dir=/path/to/datastore]
+	dvid init [config=/path/to/json/config] [dir=/path/to/datastore/dir]
 
 Initialize a datastore (in current or optionally specified directory) using 
-parameters in <JSON config file>.  The config file specifies volume extents, 
-resolution, and the supported data types.  Returns a UUID representing 
+parameters in <JSON config file>.  If the optional JSON config file is not provided,
+DVID will prompt the user for configuration data.  Configuration includes volume extents, 
+resolution, resolution unit, and the supported data types.  Returns a UUID representing 
 the intial volume version,  i.e., an unlocked root node in the version 
 directed acyclic graph (DAG).
 
@@ -80,10 +81,10 @@ You can specify a data type name followed by a type-specific command:
 
 	dvid <data type> <type command> <parameters> [uuid=...] [rpc=localhost:6000]
 
-For example, the "grayscale8" data type supports the "add" command to insert
-2d images to the DVID datastore:
+For example, the "grayscale8" data type supports the "server_load" command to insert
+2d images to the DVID datastore on the server side:
 
-	dvid grayscale8 add xy (1,2,23) /path/to/images/*.png
+	dvid grayscale8 server_load  xy  1,2,23  /path/to/images/*.png
 
 The above example inserts a series of XY images where the lexicographically 
 smallest filename holds voxels at (x+1, y+2, 23) and each following image increases

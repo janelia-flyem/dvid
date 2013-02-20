@@ -15,10 +15,10 @@ import (
 const helpMessage = `
 DVID Terminal Help
 
-  Use 'q' or 'quit' to exit.
+	Use 'q' or 'quit' to exit.
 
-  set address <DVID rpc address>
-  set node <UUID>
+	set address <DVID rpc address>
+	set node <UUID>
 `
 
 // Global variables to store DVID states and connection info
@@ -47,8 +47,11 @@ func Shell() {
 	for takeCommands {
 		cmd := prompt("DVID> ")
 		switch cmd.Name() {
+		case "":
+			fmt.Println("Enter 'help' to see commands")
 		case "help", "h":
 			fmt.Printf(helpMessage)
+			Send(&command.Command{Args: []string{"help"}})
 		case "quit", "q":
 			takeCommands = false
 		default:

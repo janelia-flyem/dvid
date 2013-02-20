@@ -1,6 +1,7 @@
 package command
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"strings"
@@ -12,20 +13,47 @@ const (
 	KeyRpc          = "rpc"
 	KeyWeb          = "web"
 	KeyDatastoreDir = "dir"
+	KeyConfigFile   = "config"
 )
 
 var setKeys = map[string]bool{
-	"uuid": true,
-	"rpc":  true,
-	"web":  true,
-	"dir": 	true,
+	"uuid":   true,
+	"rpc":    true,
+	"web":    true,
+	"dir":    true,
+	"config": true,
+}
+
+// A 3d coordinate in string format "x,y,z"
+type CoordStr struct {
+	string
+}
+
+const coordStrFormat = "%d,%d,%d"
+
+// GetCoord parses a CoordStr and returns a 3d coordinate or error
+func (cs CoordStr) GetCoord() (x, y, z int, err error) {
+	_, err = fmt.Sscanf(cs.string, coordStrFormat, &x, &y, &z)
+	return
+}
+
+// MakeCoordStr makes a CoordStr out of a 3d coordinate
+func MakeCoordStr(x, y, z int) CoordStr {
+	return CoordStr{fmt.Sprintf(coordStrFormat, x, y, z)}
 }
 
 // Packet packages data that are transmitted as part of commands
 type Packet struct {
-
+	// Description of data
 	Text string
-	Data [][]byte
+
+	// 3d offset
+	Offset [3]int
+
+	// 3d size of data
+	Size [3]int
+
+	Data []uint8
 }
 
 // Command supports command-based interaction with DVID
@@ -87,7 +115,6 @@ func (cmd *Command) GetDatastoreDir() string {
 	return datastoreDir
 }
 
-
 // SetCommandArgs sets a variadic argument set of string pointers to data
 // command arguments, ignoring setting arguments of the form "<key>=<value>".  
 // If there aren't enough arguments to set a target, the target is set to the 
@@ -134,4 +161,3 @@ func setArgs(args []string, startPos int, targets ...*string) (overflow []string
 	}
 	return
 }
-

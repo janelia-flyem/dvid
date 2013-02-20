@@ -1,14 +1,14 @@
 {
-    "VolumeX": 200,
-    "VolumeY": 300,
-    "VolumeZ": 400,
+    "VolumeMaxX": 250,
+    "VolumeMaxY": 275,
+    "VolumeMaxZ": 300,
     "VoxelResX": 10.0,
     "VoxelResY": 10.0,
     "VoxelResZ": 10.0,
     "VoxelResUnits": "nanometers",
-    "BlockX": 16,
-    "BlockY": 16,
-    "BlockZ": 16,
+    "BlockMaxX": 16,
+    "BlockMaxY": 16,
+    "BlockMaxZ": 16,
     "Datatypes": [
         {
             "Name": "grayscale8",

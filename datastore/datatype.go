@@ -1,8 +1,21 @@
+/*
+	This file contains code useful for arbitrary data types supported in DVID.
+	It includes the base Datatype struct which are embedded in user-supplied
+	data types as well as useful functions like image loading likely to be used
+	by many data types.
+*/
+
 package datastore
 
 import (
 	"fmt"
+	"os"
 	"strings"
+
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 
 	"github.com/janelia-flyem/dvid/command"
 )
@@ -20,6 +33,14 @@ const helpMessage = `
 
         rpc=<address>  Example: rpc=my.server.com:1234
 `
+
+var DefaultDataTypes = []Datatype{
+	{
+		Name:        "grayscale8",
+		Url:         "github.com/janelia-flyem/dvid/datatype/grayscale8",
+		IsolateData: true,
+	},
+}
 
 type UrlString string
 
@@ -50,7 +71,7 @@ type TypeService interface {
 	Help(textHelp string) string
 
 	// Do implements commands specific to a data type
-	Do(uuid UUID, cmd *command.Command, input *command.Packet, reply *command.Packet) error
+	Do(uuidNum int, cmd *command.Command, input *command.Packet, reply *command.Packet) error
 
 	// Returns standard error response for unknown commands
 	UnknownCommand(cmd *command.Command) error
@@ -126,11 +147,11 @@ func SupportedTypeUrls() string {
 	return strings.Join(urls, ", ")
 }
 
-// SupportedTypeChart returns a chart (names/urls) of data types supported by this DVID
+// SupportedTypeChart returns a chart (names/urls) of data types compiled into this DVID
 func SupportedTypeChart() string {
 	var text string = "\nData types compiled into this DVID\n\n"
 	writeLine := func(name string, url UrlString) {
-		text += fmt.Sprintf("%15s   %s\n", name, url)
+		text += fmt.Sprintf("%-15s   %s\n", name, url)
 	}
 	writeLine("Name", "Url")
 	for _, datatype := range SupportedTypes {
@@ -167,5 +188,19 @@ func GetTypeService(name string) (service TypeService, err error) {
 			"Data type (%s) is unsupported.  DVID has been compiled with these data types: %s",
 			name, SupportedTypeNames())
 	}
+	return
+}
+
+/***** Image Utilities ******/
+
+func LoadImage(filename string) (img image.Image, format string, err error) {
+	var file *os.File
+	file, err = os.Open(filename)
+	if err != nil {
+		err = fmt.Errorf("Unable to open image (%s).  Is this visible to server process?",
+			filename)
+		return
+	}
+	img, format, err = image.Decode(file)
 	return
 }

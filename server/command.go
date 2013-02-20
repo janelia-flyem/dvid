@@ -8,15 +8,6 @@ import (
 )
 
 const helpMessage = `
-dvid is a distributed, versioned image datastore
-
-   usage: dvid [options] <command>
-
-Commands executed locally:
-
-	init <json config filename> [dir=/path/to/datastore/dir]
-	serve [dir=/path/to/datastore/dir] [web=...] [rpc=...]
-
 Commands executed on the server (%s):
 
 	help  [command you are running]
@@ -80,17 +71,18 @@ type Command struct {
 	command.Packet
 }
 
+// GetUuidNum returns the UUID index corresponding to the string supplied by a 
+// "uuid=..." argument.  Note that this UUID index is datastore-specific.
+func (cmd *Command) GetUuidNum(dataService *datastore.Service) (uuidNum int, err error) {
 
-// GetUuid returns the UUID corresponding to the string supplied by a "uuid=..."
-// argument or if that's missing, the UUID for the head node.  
-func (cmd *Command) GetUuid(dataService *datastore.Service) (uuid datastore.UUID,
-	err error) {
-
+	fmt.Println("GetUuid() cmd =", cmd)
 	uuidString, found := cmd.GetSetting(command.KeyUuid)
+	fmt.Println("  uuidstring =", uuidString, found)
 	if found {
-		uuid, err = dataService.GetUuidFromString(uuidString)
+		uuidNum, err = dataService.GetUuidFromString(uuidString)
+		fmt.Println("  after found, uuidNum=", uuidNum, err)
 	} else {
-		uuid, err = dataService.GetHeadUuid()
+		err = fmt.Errorf("UUID must be supplied with 'uuid=...' to identify image version!")
 	}
 	return
 }
@@ -116,11 +108,12 @@ func (cmd *Command) datatypeDo(reply *command.Packet) error {
 			cmd.Name())
 	}
 
-	uuid, err := cmd.GetUuid(runningService.data)
+	uuidNum, err := cmd.GetUuidNum(runningService.data)
 	if err != nil {
+		reply.Text = fmt.Sprintf("Could not get uuid from command: %s", cmd)
 		return err
 	}
-	return typeService.Do(uuid, &cmd.Command, &cmd.Packet, reply)
+	return typeService.Do(uuidNum, &cmd.Command, &cmd.Packet, reply)
 }
 
 func (cmd *Command) help(reply *command.Packet) error {
