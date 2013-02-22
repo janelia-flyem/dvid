@@ -17,7 +17,7 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 
-	_ "github.com/janelia-flyem/dvid"
+	_ "github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/command"
 )
 

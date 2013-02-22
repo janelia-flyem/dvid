@@ -68,14 +68,14 @@ else ()
     
     # Build DVID with C++ leveldb library support
     add_custom_target (dvid ALL
-        ${BUILDEM_ENV_STRING} ${GO_ENV} go install -v dvid/dvid.go 
+        ${BUILDEM_ENV_STRING} ${GO_ENV} go install -v dvid.go 
         WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
         DEPENDS     ${golang_NAME} ${leveldb_NAME} levigo
         COMMENT     "Compiled and installed dvid executable.")
 
     # Build DVID with pure Go leveldb implementation
     add_custom_target (dvid-go ALL
-        ${BUILDEM_ENV_STRING} ${GO_ENV} go install -v -tags 'purego' dvid/dvid.go 
+        ${BUILDEM_ENV_STRING} ${GO_ENV} go install -v -tags 'purego' dvid.go 
         WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
         DEPENDS     ${golang_NAME} goleveldb
         COMMENT     "Compiled and installed dvid pure Go executable, dvid-go.")

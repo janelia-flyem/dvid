@@ -4,7 +4,7 @@ import (
 	"fmt"
 	_ "log"
 
-	"github.com/janelia-flyem/dvid"
+	"github.com/janelia-flyem/dvid/dvid"
 )
 
 // This file defines a number of interfaces and common types among leveldb

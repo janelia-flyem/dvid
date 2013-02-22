@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/janelia-flyem/dvid"
+	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/keyvalue"
 )
 

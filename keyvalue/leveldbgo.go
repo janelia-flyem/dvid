@@ -3,7 +3,7 @@
 package keyvalue
 
 import (
-	"github.com/janelia-flyem/dvid"
+	"github.com/janelia-flyem/dvid/dvid"
 
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/cache"

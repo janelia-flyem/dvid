@@ -6,7 +6,7 @@
 package datastore
 
 import (
-	"github.com/janelia-flyem/dvid"
+	"github.com/janelia-flyem/dvid/dvid"
 )
 
 type cachedData struct {

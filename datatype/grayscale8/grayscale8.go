@@ -8,7 +8,7 @@ import (
 	_ "strconv"
 	_ "strings"
 
-	"github.com/janelia-flyem/dvid"
+	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/command"
 	"github.com/janelia-flyem/dvid/datastore"
 )

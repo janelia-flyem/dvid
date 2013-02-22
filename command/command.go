@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/janelia-flyem/dvid"
+	"github.com/janelia-flyem/dvid/dvid"
 )
 
 // Keys for setting various parameters within the command line via "key=value" arguments.

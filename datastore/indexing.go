@@ -9,7 +9,7 @@ import (
 	"encoding/binary"
 	"log"
 
-	"github.com/janelia-flyem/dvid"
+	"github.com/janelia-flyem/dvid/dvid"
 )
 
 // SpatialIndex represents a n-dimensional coordinate according to some
