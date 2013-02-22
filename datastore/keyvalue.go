@@ -21,26 +21,27 @@ import (
 	separates general categories of data.  It also allows some headroom to
 	create different versions of datastore layout.
 
-	Global data blobs (one item per datastore, e.g., Config):
+		Global data blobs (one item per datastore, e.g., Config):
 
-	     0   Data Type Prefix 
-	   |---|------------------|
+		  0   Data Type Prefix 
+		|---|------------------|
 
-	Global lists (many items per datastore):
+		Global lists (many items per datastore):
 
-	     0   Data Type Prefix   Type-specific key
-	   |---|------------------|-------------------|
+		  0   Data Type Prefix   Type-specific key
+		|---|------------------|-------------------|
 
-	Versioned block data that are "isolated" so that sequential reads and writes
-	don't have any other data types interleaved within the read/write blocks:
+		Versioned block data that are "isolated" so that sequential reads and writes
+		don't have any other data types interleaved within the read/write blocks:
 
-	     1     UUID     0   Data Type Prefix     Spatial Key      Type-specific key
-	   |---|----------|---|------------------|------------------|-------------------|
+		  1     UUID     0   Data Type Prefix     Spatial Key      Type-specific key
+		|---|----------|---|------------------|------------------|-------------------|
 
-	Versioned block data that are not "isolated", e.g., different data types within a block:
+		Versioned block data that are not "isolated", e.g., different data types 
+		within a block:
 
-	     1     UUID     1     Spatial Key      Data Type Prefix   Type-specific key
-	   |---|----------|---|------------------|------------------|-------------------|
+		  1     UUID     1     Spatial Key      Data Type Prefix   Type-specific key
+		|---|----------|---|------------------|------------------|-------------------|
 
 */
 type Key keyvalue.Key

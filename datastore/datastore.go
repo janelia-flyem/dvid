@@ -1,7 +1,6 @@
 package datastore
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -10,19 +9,14 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
+	"github.com/janelia-flyem/dvid"
 	"github.com/janelia-flyem/dvid/keyvalue"
 )
 
 const (
 	Version = "0.1"
-
-	Kilo = 1 << 10
-	Mega = 1 << 20
-	Giga = 1 << 30
-	Tera = 1 << 40
 
 	// ConfigFilename is name of JSON file with datastore configuration data
 	// just for human inspection.
@@ -33,22 +27,19 @@ const (
 // is private to package datastore.
 type configData struct {
 	// Volume extents
-	VolumeMaxX int
-	VolumeMaxY int
-	VolumeMaxZ int
+	VolumeMax dvid.VoxelCoord
 
 	// Relative resolution of voxels in volume
-	VoxelResX float32
-	VoxelResY float32
-	VoxelResZ float32
+	VoxelRes dvid.VoxelResolution
 
 	// Units of resolution, e.g., "nanometers"
-	VoxelResUnits string
+	VoxelResUnits dvid.VoxelResolutionUnits
 
 	// Block size
-	BlockMaxX int
-	BlockMaxY int
-	BlockMaxZ int
+	BlockMax dvid.VoxelCoord
+
+	// Spatial indexing scheme
+	Indexing SpatialIndexScheme
 
 	// Data types supported
 	Datatypes []Datatype
@@ -69,7 +60,7 @@ func Init(directory string, configFile string, create bool) (uuid UUID) {
 		log.Fatalln(err.Error())
 	}
 	dbOptions := keyvalue.GetKeyValueOptions()
-	dbOptions.SetLRUCacheSize(100 * Mega)
+	dbOptions.SetLRUCacheSize(100 * dvid.Mega)
 	dbOptions.SetBloomFilterBitsPerKey(10)
 	db, err := keyvalue.OpenLeveldb(directory, create, dbOptions)
 	if err != nil {
@@ -99,6 +90,12 @@ func Init(directory string, configFile string, create bool) (uuid UUID) {
 
 	db.Close()
 	return
+}
+
+// BlockNumVoxels returns the # of voxels within a block.  Block size should
+// be immutable during the course of a datastore's lifetime.
+func (config *configData) BlockNumVoxels() int {
+	return int(config.BlockMax[0] * config.BlockMax[1] * config.BlockMax[2])
 }
 
 // VerifyCompiledTypes will return an error if any required data type in the datastore 
@@ -158,43 +155,16 @@ func (config *configData) GetSupportedTypeUrl(name string) (url UrlString, err e
 
 // promptConfig prompts the user to enter configuration data.
 func promptConfig() (config *configData) {
-
-	prompt := func(message, defaultValue string) string {
-		fmt.Print(message + " [" + defaultValue + "]: ")
-		reader := bufio.NewReader(os.Stdin)
-		line, _ := reader.ReadString('\n')
-		line = strings.TrimSpace(line)
-		if line == "" {
-			return defaultValue
-		}
-		return line
-	}
-
 	config = new(configData)
+	pVolumeMax := &(config.VolumeMax)
+	pVolumeMax.Prompt("# voxels", "250")
+	pVoxelRes := &(config.VoxelRes)
+	pVoxelRes.Prompt("Voxel resolution", "10.0")
+	config.VoxelResUnits = dvid.VoxelResolutionUnits(dvid.Prompt("Units of resolution", "nanometer"))
+	pBlockMax := &(config.BlockMax)
+	pBlockMax.Prompt("Size of blocks", "16")
 
-	// Volume extents
-	config.VolumeMaxX, _ = strconv.Atoi(prompt("# voxels in X", "250"))
-	config.VolumeMaxY, _ = strconv.Atoi(prompt("# voxels in Y", "250"))
-	config.VolumeMaxZ, _ = strconv.Atoi(prompt("# voxels in Z", "250"))
-
-	// Relative resolution of voxels in volume
-	var res float64
-	res, _ = strconv.ParseFloat(prompt("Voxel resolution in X", "1.0"), 32)
-	config.VoxelResX = float32(res)
-	res, _ = strconv.ParseFloat(prompt("Voxel resolution in Y", "1.0"), 32)
-	config.VoxelResY = float32(res)
-	res, _ = strconv.ParseFloat(prompt("Voxel resolution in Z", "1.0"), 32)
-	config.VoxelResZ = float32(res)
-
-	// Units of resolution, e.g., "nanometers"
-	config.VoxelResUnits = prompt("Units of resolution", "nanometers")
-
-	// Block size
-	config.BlockMaxX, _ = strconv.Atoi(prompt("Size of blocks in X", "16"))
-	config.BlockMaxY, _ = strconv.Atoi(prompt("Size of blocks in Y", "16"))
-	config.BlockMaxZ, _ = strconv.Atoi(prompt("Size of blocks in Z", "16"))
-
-	// Data types supported
+	config.Indexing = SIndexZXY
 	config.Datatypes = DefaultDataTypes
 	return
 }
@@ -212,6 +182,7 @@ func readJsonConfig(filename string) (config *configData) {
 	dec := json.NewDecoder(file)
 	config = new(configData)
 	err = dec.Decode(&config)
+	config.Indexing = SIndexZXY
 	if err == io.EOF {
 		log.Fatalf("Error: No data in JSON config file: %s [%s]\n", filename, err)
 	} else if err != nil {
@@ -244,6 +215,102 @@ type kvdb struct {
 	keyvalue.KeyValueDB
 }
 
+// VersionService encapsulates both an open DVID datastore, the version that
+// should be operated upon, and a block-level cache to improve conversion to
+// the datastore's block values.  It is the main unit of service for operations.
+type VersionService struct {
+	Service
+
+	// The datastore-specific UUID index for the version we are operating upon
+	uuidNum int
+
+	// Caching for blocks
+	blocks blockCache
+}
+
+func MakeVersionService(service *Service, uuidNum int) *VersionService {
+	return &VersionService{
+		*service,
+		uuidNum,
+		nil,
+	}
+}
+
+func (vs *VersionService) InitializeBlockCache(capacity ...int) {
+	if vs.blocks == nil {
+		switch len(capacity) {
+		case 0:
+			vs.blocks = make(blockCache)
+			log.Println("datastore: Block cache map created with default size.")
+		case 1:
+			vs.blocks = make(blockCache, capacity[0])
+			log.Printf("datastore: Block cache map created with %d entries\n", capacity[0])
+		default:
+			log.Printf("datastore: Error!  InitializeBlockCache(%s) called incorrectly!",
+				capacity)
+			vs.blocks = make(blockCache)
+			log.Println("datastore: Block cache map created with default size.")
+		}
+	}
+}
+
+// PrepareBlock makes sure the cache has a block at a given spatial index and
+// is ready for operations on its data.
+func (vs *VersionService) InitializeBlock(si SpatialIndex, bytesPerVoxel int) {
+	// Make sure the block cache exists.
+	vs.InitializeBlockCache()
+
+	// Make sure the block for given spatial index exists.
+	block, found := vs.blocks[si]
+	if !found {
+		block.offset = vs.OffsetToBlock(si)
+		numBytes := vs.BlockNumVoxels() * bytesPerVoxel
+		block.data = make([]byte, numBytes, numBytes)
+		block.dirty = make([]bool, vs.BlockNumVoxels(), vs.BlockNumVoxels())
+		vs.blocks[si] = block
+	}
+}
+
+// Write all subvolume data that overlaps the block with the given spatial index.
+func (vs *VersionService) WriteBlock(si SpatialIndex, subvol *dvid.Subvolume) {
+	// Get min and max voxel coordinates of this block
+	minBlockVoxel := vs.OffsetToBlock(si)
+	maxBlockVoxel := minBlockVoxel.AddSize(vs.BlockMax)
+
+	// Get min and max voxel coordinates of the entire subvolume
+	minSubvolVoxel := subvol.Offset
+	maxSubvolVoxel := minSubvolVoxel.AddSize(subvol.Size)
+
+	// Bound the start and end voxel coordinates of the subvolume by the block limits.
+	start := minSubvolVoxel.BoundMin(minBlockVoxel)
+	end := maxSubvolVoxel.BoundMax(maxBlockVoxel)
+
+	// Get the block corresponding to the spatial index.
+	block := vs.blocks[si]
+
+	// Traverse the data from start to end voxel coordinates and write to the block.
+	// TODO -- Optimize the inner loop and see if we actually get faster :)  Currently,
+	// the code tries to make it very clear what transformations are happening.
+	for z := start[2]; z <= end[2]; z++ {
+		for y := start[1]; y <= end[1]; y++ {
+			for x := start[0]; x <= end[0]; x++ {
+				coord := dvid.VoxelCoord{x, y, z}
+				i := subvol.VoxelCoordToDataIndex(coord)
+				b := vs.VoxelCoordToBlockIndex(coord)
+				bI := b * subvol.BytesPerVoxel // index into block.data
+				if !block.dirty[b] {
+					block.numDirty++
+				}
+				block.dirty[b] = true
+				for n := 0; n < subvol.BytesPerVoxel; n++ {
+					block.data[bI+n] = subvol.Data[i+n]
+				}
+			}
+		}
+	}
+	vs.blocks[si] = block
+}
+
 // Service encapsulates an open DVID datastore, available for operations.
 type Service struct {
 	// The datastore configuration for this open DVID datastore,
@@ -253,8 +320,8 @@ type Service struct {
 	// The globals cache
 	cachedData
 
-	// The underlying leveldb which is private since we want to create a
-	// simplified interface and deal with DVID-specific keys.
+	// The underlying leveldb which is private since we want to create an object
+	// interface (e.g., cache object or UUID map) and hide DVID-specific keys.
 	kvdb
 }
 
@@ -263,7 +330,7 @@ type Service struct {
 func Open(directory string) (service *Service, err error) {
 	// Open the datastore
 	dbOptions := keyvalue.GetKeyValueOptions()
-	dbOptions.SetLRUCacheSize(100 * Mega)
+	dbOptions.SetLRUCacheSize(100 * dvid.Mega)
 	dbOptions.SetBloomFilterBitsPerKey(10)
 	create := false
 	db, err := keyvalue.OpenLeveldb(directory, create, dbOptions)
@@ -278,7 +345,6 @@ func Open(directory string) (service *Service, err error) {
 	if err != nil {
 		return
 	}
-	fmt.Println("Retrieved configuration:\n", *config)
 
 	// Read this datastore's cached globals
 	cache := new(cachedData)
@@ -286,7 +352,6 @@ func Open(directory string) (service *Service, err error) {
 	if err != nil {
 		return
 	}
-	fmt.Println("Retrieved globals cache:\n", *cache)
 
 	service = &Service{*config, *cache, kvdb{db}}
 	return

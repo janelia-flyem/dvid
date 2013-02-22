@@ -17,6 +17,7 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 
+	_ "github.com/janelia-flyem/dvid"
 	"github.com/janelia-flyem/dvid/command"
 )
 
@@ -71,7 +72,8 @@ type TypeService interface {
 	Help(textHelp string) string
 
 	// Do implements commands specific to a data type
-	Do(uuidNum int, cmd *command.Command, input *command.Packet, reply *command.Packet) error
+	Do(versionService *VersionService, cmd *command.Command,
+		input, reply *command.Packet) error
 
 	// Returns standard error response for unknown commands
 	UnknownCommand(cmd *command.Command) error

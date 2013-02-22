@@ -3,19 +3,16 @@ package keyvalue
 import (
 	"fmt"
 	_ "log"
+
+	"github.com/janelia-flyem/dvid"
 )
 
 // This file defines a number of interfaces and common types among leveldb
 // implementations.  Some types are defined in the associated implementation
 // Go files, e.g., leveldbgo.go and levigo.go.
 
-const Kilo = 1 << 10
-const Mega = 1 << 20
-const Giga = 1 << 30
-const Tera = 1 << 40
-
 // Default size of leveldb cache
-const DefaultCacheSize = 1 * Giga
+const DefaultCacheSize = 1 * dvid.Giga
 
 type Key []byte
 type Value []byte

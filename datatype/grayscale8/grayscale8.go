@@ -3,10 +3,12 @@ package grayscale8
 import (
 	"fmt"
 	"image"
+	"log"
 	"reflect"
 	_ "strconv"
 	_ "strings"
 
+	"github.com/janelia-flyem/dvid"
 	"github.com/janelia-flyem/dvid/command"
 	"github.com/janelia-flyem/dvid/datastore"
 )
@@ -16,28 +18,31 @@ const repoUrl = "github.com/janelia-flyem/dvid/datatype/grayscale8"
 const helpMessage = `
     Grayscale8 Data Type Server-side Commands:
 
-        grayscale8  server_load  <plane>  <origin>  <image filename glob>
+        grayscale8  server-add  <origin>  <image filename glob> [plane=<plane>]
 
-    <plane>: xy, xz, or yz
     <origin>: 3d coordinate in the format "x,y,z".  Gives coordinate of top upper left voxel.
     <image filename glob>: filenames of images, e.g., foo-xy-*.png
+    <plane>: xy (default), xz, or yz
 
     Note that the image filename glob MUST BE absolute file paths that are visible to
     the server.  
 
-    The 'server_load' command is meant for mass ingestion of large data files, and
+    The 'server-add' command is meant for mass ingestion of large data files, and
     it is inappropriate to read gigabytes of data just to send it over the network to
     a local DVID.
 
-    If you want to send local data to a remote DVID, use PUT via the HTTP API.
+    If you want to send local data to a remote DVID, use POST via the HTTP API.
 
     ------------------
 
     Grayscale8 Data Type HTTP API
 
-    PUT /grayscale8/<plane>/<origin>
-    GET /grayscale8/<plane>/<extent>
+    POST /grayscale8/<origin>/<size>
+    GET /grayscale8/<origin>/<size>
 `
+
+// Grayscale8 has one byte/voxel
+const BytesPerVoxel = 1
 
 type Datatype struct {
 	datastore.Datatype
@@ -54,12 +59,12 @@ func init() {
 }
 
 // Do acts as a switchboard for grayscale8 commands
-func (datatype *Datatype) Do(uuidNum int, cmd *command.Command,
-	input *command.Packet, reply *command.Packet) error {
+func (datatype *Datatype) Do(versionService *datastore.VersionService,
+	cmd *command.Command, input, reply *command.Packet) error {
 
 	switch cmd.TypeCommand() {
-	case "server_load":
-		return datatype.ServerLoad(uuidNum, cmd, input, reply)
+	case "server-add":
+		return datatype.ServerAdd(versionService, cmd, input, reply)
 	case "help":
 		reply.Text = datatype.Help(helpMessage)
 	default:
@@ -78,7 +83,8 @@ func loadImage(filename string) (grayImage *image.Gray, err error) {
 	case *image.Gray:
 		// pass
 	default:
-		err = fmt.Errorf("Illegal image (%s) for grayscale8: Pixels aren't 8-bit grayscale = %s",
+		err = fmt.Errorf(
+			"Illegal image (%s) for grayscale8: Pixels aren't 8-bit grayscale = %s",
 			filename, reflect.TypeOf(img))
 		return
 	}
@@ -86,26 +92,29 @@ func loadImage(filename string) (grayImage *image.Gray, err error) {
 	return
 }
 
-// ServerLoad stores a series of 2d images specified as an image filename glob
+// ServerAdd stores a series of 2d images specified as an image filename glob
 // that is visible to the server.  This is a mechanism for fast ingestion
 // of large quantities of data, so we don't want to pass all the data over
 // the network just for client/server communication.  Aside from loading the images,
-// most of the work is delegated to the "add" function that will also be called
+// most of the work is delegated to the Add function that will also be called
 // via the REST API.
-func (datatype *Datatype) ServerLoad(uuidNum int, cmd *command.Command,
-	input *command.Packet, reply *command.Packet) error {
+func (datatype *Datatype) ServerAdd(versionService *datastore.VersionService,
+	cmd *command.Command, input, reply *command.Packet) error {
 
-	var planeStr string
 	var originStr command.CoordStr
-	filenames := cmd.SetDatatypeArgs(&planeStr, &originStr.string)
-	x, y, z, err := originStr.GetCoord()
+	filenames := cmd.SetDatatypeArgs(&originStr.string)
+	coord, err := originStr.GetCoord()
 	if err != nil {
 		return fmt.Errorf("Badly formatted origin (should be 'x,y,z'): %s", cmd)
 	}
+	planeStr, found := cmd.GetSetting(command.KeyPlane)
+	if !found {
+		planeStr = "xy"
+	}
 
-	fmt.Println("uuidNum:", uuidNum)
-	fmt.Println("plane:", planeStr)
-	fmt.Println("origin:", x, y, z)
+	log.Printf("")
+	log.Println("plane:", planeStr)
+	log.Println("origin:", coord)
 	if len(filenames) >= 1 {
 		fmt.Printf("filenames: %s [%d more]\n", filenames[0], len(filenames)-1)
 	}
@@ -120,25 +129,26 @@ func (datatype *Datatype) ServerLoad(uuidNum int, cmd *command.Command,
 		if err != nil {
 			lastErr = err
 		} else {
-			imagePacket := command.Packet{
-				Text:   planeStr,
-				Offset: [3]int{x, y, z},
-				Size: [3]int{
-					grayImage.Bounds().Max.X - grayImage.Bounds().Min.X,
-					grayImage.Bounds().Max.Y - grayImage.Bounds().Min.Y,
+			imagePacket := command.Packet{dvid.Subvolume{
+				Text:   filename,
+				Offset: coord,
+				Size: dvid.VoxelCoord{
+					int32(grayImage.Bounds().Max.X - grayImage.Bounds().Min.X),
+					int32(grayImage.Bounds().Max.Y - grayImage.Bounds().Min.Y),
 					1,
 				},
-				Data: grayImage.Pix,
-			}
+				BytesPerVoxel: BytesPerVoxel,
+				Data:          grayImage.Pix,
+			}}
 			var addReply command.Packet
-			err = datatype.Add(uuidNum, &imagePacket, &addReply)
+			err = datatype.Add(versionService, &imagePacket, &addReply)
 			if err == nil {
 				numSuccessful++
 			} else {
 				lastErr = err
 			}
 		}
-		z += 1
+		coord = coord.Add(dvid.VoxelCoord{0, 0, 1})
 	}
 	if lastErr != nil {
 		return fmt.Errorf("Error: %d of %d images successfully added [%s]\n",
@@ -148,17 +158,50 @@ func (datatype *Datatype) ServerLoad(uuidNum int, cmd *command.Command,
 }
 
 // Add stores a single image volume into the datastore.
-func (datatype *Datatype) Add(uuidNum int, input, reply *command.Packet) error {
+func (datatype *Datatype) Add(vs *datastore.VersionService,
+	input, reply *command.Packet) error {
 
-	fmt.Println("uuidNum:", uuidNum)
-	fmt.Println("plane:", input.Text)
-	fmt.Printf("origin: (%d, %d, %d)\n", input.Offset[0], input.Offset[1], input.Offset[2])
-	fmt.Printf("  size: %d x %d x %d\n", input.Size[0], input.Size[1], input.Size[2])
+	log.Println("grayscale8.Add(): Processing ", input)
 
-	// Make sure we have buffer of blocks allocated to handle this set of images.
-	//spindices := GetSpatialIndices()
+	// Compute the top left corner voxel within the offset's containing block
+	startBlockVoxel := vs.BlockVoxel(input.Offset)
 
-	// When the buffer is filled, do a batch put.
+	// Compute the bottom right corner voxel in block voxel space
+	endBlockVoxel := startBlockVoxel.Add(input.Size)
+
+	// Compute the maximum number of blocks that are traversed by this subvolume
+	nBlocks := vs.BlockCoord(endBlockVoxel)
+	numSpIndices := int((nBlocks[0] + 1) * (nBlocks[1] + 1) * (nBlocks[2] + 1))
+
+	// If our current service doesn't have block cache, allocate it.
+	vs.InitializeBlockCache(numSpIndices)
+
+	// Iterate through all blocks traversed by this input data, allocating blocks on 
+	// cache if needed.  Keep list of blocks traversed by their spatial index string.
+	blocksTraversed := make([]datastore.SpatialIndex, 0, numSpIndices)
+
+	startVoxel := input.Offset
+	endVoxel := startVoxel.Add(input.Size)
+
+	startBlockCoord := vs.BlockCoord(startVoxel)
+	endBlockCoord := vs.BlockCoord(endVoxel)
+	for z := startBlockCoord[2]; z <= endBlockCoord[2]; z++ {
+		for y := startBlockCoord[1]; y <= endBlockCoord[1]; y++ {
+			for x := startBlockCoord[0]; x <= endBlockCoord[0]; x++ {
+				spatialIndex := vs.SpatialIndex(dvid.BlockCoord{x, y, z})
+				vs.InitializeBlock(spatialIndex, BytesPerVoxel)
+				blocksTraversed = append(blocksTraversed, spatialIndex)
+			}
+		}
+	}
+	log.Printf("grayscale8.Add(): Found %d blocks traversed by this input\n",
+		len(blocksTraversed))
+
+	// Iterate through our list of blocks, writing input data into each block.
+	for _, spatialIndex := range blocksTraversed {
+		// TODO -- Make concurrent by doing "go vs.WriteBlock(...)"?
+		vs.WriteBlock(spatialIndex, &input.Subvolume)
+	}
 
 	return nil
 }

@@ -5,6 +5,10 @@
 
 package datastore
 
+import (
+	"github.com/janelia-flyem/dvid"
+)
+
 type cachedData struct {
 	// The default version of the datastore
 	Head UUID
@@ -15,11 +19,10 @@ type cachedData struct {
 	Uuids map[string]int
 }
 
-// blockBuffer will be allocated to datastore block size (nx x ny x nz x # bytes/voxel)
-// on initialization.  A running count of # of bytes overwritten lets us know when
-// we can write the block.
-type blockBuffer struct {
-	data         map[string][]byte
-	dirty        map[string][]byte
-	writtenBytes int
+type block struct {
+	offset   dvid.VoxelCoord
+	data     []byte
+	dirty    []bool
+	numDirty int
 }
+type blockCache map[SpatialIndex]block

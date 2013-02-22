@@ -3,12 +3,13 @@
 package keyvalue
 
 import (
+	"github.com/janelia-flyem/dvid"
+
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/cache"
 	"github.com/syndtr/goleveldb/leveldb/descriptor"
 	"github.com/syndtr/goleveldb/leveldb/filter"
 	"github.com/syndtr/goleveldb/leveldb/opt"
-	_ "log"
 )
 
 type Ranges []leveldb.Range
@@ -30,8 +31,8 @@ func OpenLeveldb(path string, create bool, kvOpts KeyValueOptions) (db KeyValueD
 	opts.Options.Flag |= opt.OFCreateIfMissing
 
 	// Create the LRU cache
-	if opts.nLRUCacheBytes < 8*Mega {
-		opts.nLRUCacheBytes = 8 * Mega
+	if opts.nLRUCacheBytes < 8*dvid.Mega {
+		opts.nLRUCacheBytes = 8 * dvid.Mega
 	}
 	opts.Options.BlockCache = cache.NewLRUCache(opts.nLRUCacheBytes)
 

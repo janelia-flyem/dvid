@@ -5,6 +5,8 @@ import (
 	"log"
 	"os"
 	"strings"
+
+	"github.com/janelia-flyem/dvid"
 )
 
 // Keys for setting various parameters within the command line via "key=value" arguments.
@@ -14,6 +16,7 @@ const (
 	KeyWeb          = "web"
 	KeyDatastoreDir = "dir"
 	KeyConfigFile   = "config"
+	KeyPlane        = "plane"
 )
 
 var setKeys = map[string]bool{
@@ -22,6 +25,12 @@ var setKeys = map[string]bool{
 	"web":    true,
 	"dir":    true,
 	"config": true,
+	"plane":  true,
+}
+
+// Packet packages data for command input and output
+type Packet struct {
+	dvid.Subvolume
 }
 
 // A 3d coordinate in string format "x,y,z"
@@ -32,28 +41,16 @@ type CoordStr struct {
 const coordStrFormat = "%d,%d,%d"
 
 // GetCoord parses a CoordStr and returns a 3d coordinate or error
-func (cs CoordStr) GetCoord() (x, y, z int, err error) {
-	_, err = fmt.Sscanf(cs.string, coordStrFormat, &x, &y, &z)
+func (cs CoordStr) GetCoord() (coord dvid.VoxelCoord, err error) {
+	//var x, y, z int
+	_, err = fmt.Sscanf(cs.string, coordStrFormat, &coord[0], &coord[1], &coord[2])
+	//coord = dvid.VoxelCoord{int32(x), int32(y), int32(z)}
 	return
 }
 
 // MakeCoordStr makes a CoordStr out of a 3d coordinate
-func MakeCoordStr(x, y, z int) CoordStr {
-	return CoordStr{fmt.Sprintf(coordStrFormat, x, y, z)}
-}
-
-// Packet packages data that are transmitted as part of commands
-type Packet struct {
-	// Description of data
-	Text string
-
-	// 3d offset
-	Offset [3]int
-
-	// 3d size of data
-	Size [3]int
-
-	Data []uint8
+func MakeCoordStr(coord dvid.VoxelCoord) CoordStr {
+	return CoordStr{fmt.Sprintf(coordStrFormat, coord[0], coord[1], coord[2])}
 }
 
 // Command supports command-based interaction with DVID
