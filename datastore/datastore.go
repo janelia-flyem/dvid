@@ -268,6 +268,7 @@ func (vs *VersionService) InitializeBlock(si SpatialIndex, bytesPerVoxel int) {
 		block.data = make([]byte, numBytes, numBytes)
 		block.dirty = make([]bool, vs.BlockNumVoxels(), vs.BlockNumVoxels())
 		vs.blocks[si] = block
+		log.Printf("InitializeBlock(%s).  Blocks in cache: %d\n", si, len(vs.blocks))
 	}
 }
 

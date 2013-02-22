@@ -7,6 +7,8 @@ package datastore
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/hex"
+	_ "fmt"
 	"log"
 
 	"github.com/janelia-flyem/dvid/dvid"
@@ -31,6 +33,27 @@ const (
 	// Diagonal indexing within 2d plane, z separate
 	SIndexXYDiagonal
 )
+
+// BlockCoord decodes a spatial index into a block coordinate
+func (si SpatialIndex) BlockCoord(s *Service) (coord dvid.BlockCoord) {
+	buf := bytes.NewBufferString(string(si))
+	switch s.Indexing {
+	case SIndexZXY:
+		for i := 2; i >= 0; i-- {
+			err := binary.Read(buf, binary.LittleEndian, &coord[i])
+			if err != nil {
+				log.Fatalln("BlockCoord(): error in SIndexZXY decoding: ", err.Error())
+			}
+		}
+	default:
+		log.Fatalf("BlockCoord(%d): Unsupported spatial indexing scheme!\n", s.Indexing)
+	}
+	return
+}
+
+func (si SpatialIndex) String() string {
+	return hex.EncodeToString([]byte(si))
+}
 
 // BlockCoord returns the coordinate of the block containing a given voxel coordinate.
 // Since block sizes can vary among datastores, this function requires a datastore.Service.
@@ -67,7 +90,8 @@ func (s *Service) SpatialIndex(coord dvid.BlockCoord) (si SpatialIndex) {
 		for i := 2; i >= 0; i-- {
 			err := binary.Write(buf, binary.LittleEndian, coord[i])
 			if err != nil {
-				log.Fatalf("SpatialIndex(%s): error in SIndexZXY encoding: %s\n", coord, err.Error())
+				log.Fatalf("SpatialIndex(%s): error in SIndexZXY encoding: %s\n",
+					coord, err.Error())
 			}
 		}
 		si = SpatialIndex(buf.String())
@@ -84,22 +108,5 @@ func (s *Service) OffsetToBlock(si SpatialIndex) (coord dvid.VoxelCoord) {
 	coord[0] = blockCoord[0] * s.BlockMax[0]
 	coord[1] = blockCoord[1] * s.BlockMax[1]
 	coord[2] = blockCoord[2] * s.BlockMax[2]
-	return
-}
-
-// BlockCoord decodes a spatial index into a block coordinate
-func (si SpatialIndex) BlockCoord(s *Service) (coord dvid.BlockCoord) {
-	buf := bytes.NewBufferString(string(si))
-	switch s.Indexing {
-	case SIndexZXY:
-		for i := 2; i >= 0; i-- {
-			err := binary.Read(buf, binary.LittleEndian, &coord[i])
-			if err != nil {
-				log.Fatalln("BlockCoord(): error in SIndexZXY decoding: ", err.Error())
-			}
-		}
-	default:
-		log.Fatalf("BlockCoord(%d): Unsupported spatial indexing scheme!\n", s.Indexing)
-	}
 	return
 }
