@@ -62,18 +62,21 @@ const (
 	keyPrefixDAG
 )
 
+// BlockKey returns a DVID-specific Key given datastore-specific indices for
+// the UUID and data type, and the spatial index and whether the block is "isolated"
+// in the key space.
 func BlockKey(uuidIndex, spatialIndex []byte, keyDatatype byte, isolated bool) (key Key) {
-	var keyIsolated byte
-	if isolated {
-		keyIsolated = 0
-	} else {
-		keyIsolated = 1
-	}
 	key = append(key, keyFamilyBlock)
 	key = append(key, uuidIndex...)
-	key = append(key, keyIsolated)
-	key = append(key, spatialIndex...)
-	key = append(key, keyDatatype)
+	if isolated {
+		key = append(key, byte(0))
+		key = append(key, keyDatatype)
+		key = append(key, spatialIndex...)
+	} else {
+		key = append(key, byte(1))
+		key = append(key, spatialIndex...)
+		key = append(key, keyDatatype)
+	}
 	return
 }
 

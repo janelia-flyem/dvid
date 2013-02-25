@@ -41,7 +41,7 @@ func (c *RpcConnection) Do(cmd *Command, reply *command.Packet) error {
 	if len(cmd.Args) == 0 {
 		return fmt.Errorf("Server error: got empty command!")
 	}
-	if runningService.data == nil {
+	if runningService.Service == nil {
 		return fmt.Errorf("Datastore not open!  Cannot execute command.")
 	}
 
@@ -51,6 +51,8 @@ func (c *RpcConnection) Do(cmd *Command, reply *command.Packet) error {
 		return cmd.types(reply)
 	case "help":
 		return cmd.help(reply)
+	case "version":
+		return cmd.version(reply)
 	case "branch", "lock", "log", "pull", "push":
 		reply.Text = fmt.Sprintf("Server would have processed '%s'", cmd)
 	default:
@@ -90,11 +92,11 @@ func (cmd *Command) GetUuidNum(dataService *datastore.Service) (uuidNum int16, e
 
 func (cmd *Command) datatypeDo(reply *command.Packet) error {
 	// Get the TypeService for this data type.  Let user know if it's not supported.
-	typeUrl, err := runningService.data.GetSupportedTypeUrl(cmd.Name())
+	typeUrl, err := runningService.GetSupportedTypeUrl(cmd.Name())
 	if err != nil {
 		return fmt.Errorf("Command '%s' invalid and %s", cmd.Name(), err.Error())
 	}
-	typeService, found := datastore.SupportedTypes[typeUrl]
+	typeService, found := datastore.CompiledTypes[typeUrl]
 	if !found {
 		return fmt.Errorf("Support for data type not compiled in: %s [%s]",
 			cmd.Name(), typeUrl)
@@ -106,22 +108,27 @@ func (cmd *Command) datatypeDo(reply *command.Packet) error {
 			cmd.Name())
 	}
 
-	uuidNum, err := cmd.GetUuidNum(runningService.data)
+	uuidNum, err := cmd.GetUuidNum(runningService.Service)
 	if err != nil {
 		reply.Text = fmt.Sprintf("Could not get uuid from command: %s", cmd)
 		return err
 	}
-	versionService := datastore.MakeVersionService(runningService.data, uuidNum)
+	versionService := datastore.MakeVersionService(runningService.Service, uuidNum)
 	return typeService.Do(versionService, &cmd.Command, &cmd.Packet, reply)
 }
 
 func (cmd *Command) help(reply *command.Packet) error {
 	reply.Text = fmt.Sprintf(helpMessage, runningService.RpcAddress,
-		runningService.data.SupportedTypeChart(), runningService.WebAddress)
+		runningService.SupportedTypeChart(), runningService.WebAddress)
+	return nil
+}
+
+func (cmd *Command) version(reply *command.Packet) error {
+	reply.Text = fmt.Sprintf("%s\n%s", runningService.Version())
 	return nil
 }
 
 func (cmd *Command) types(reply *command.Packet) error {
-	reply.Text = runningService.data.SupportedTypeChart()
+	reply.Text = runningService.SupportedTypeChart()
 	return nil
 }

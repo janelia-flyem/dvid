@@ -1,8 +1,6 @@
 package grayscale8
 
 import (
-	"bytes"
-	"encoding/binary"
 	"fmt"
 	"image"
 	"log"
@@ -14,6 +12,8 @@ import (
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 )
+
+const Version = "0.5"
 
 const repoUrl = "github.com/janelia-flyem/dvid/datatype/grayscale8"
 
@@ -51,13 +51,13 @@ type Datatype struct {
 }
 
 func init() {
-	datastore.RegisterDatatype(&Datatype{
-		datastore.Datatype{
-			Name:        "grayscale8",
-			Url:         repoUrl,
-			IsolateData: true,
-		},
-	})
+	datatype := datastore.MakeDatatype("grayscale8", Version, repoUrl, true)
+	datastore.RegisterDatatype(&Datatype{*datatype})
+}
+
+// Return the embedded Datatype if desired
+func (datatype *Datatype) BaseDatatype() datastore.Datatype {
+	return datatype.Datatype
 }
 
 // Do acts as a switchboard for grayscale8 commands
@@ -166,24 +166,19 @@ func (datatype *Datatype) Add(vs *datastore.VersionService,
 	log.Println("grayscale8.Add(): Processing ", input)
 
 	// Translate UUID index into bytes
-	buf := new(bytes.Buffer)
-	err := binary.Write(buf, binary.LittleEndian, vs.UuidNum())
-	if err != nil {
-		return fmt.Errorf("Error encoding binary uuid %d: %s", vs.UuidNum(), err.Error())
-	}
-	uuidIndex := buf.Bytes()
+	uuidBytes := vs.UuidBytes()
 
 	// Determine the index of this datatype for this particular datastore.
 	var datatypeIndex int8 = -1
 	for i, d := range vs.Datatypes {
-		if d.Url == datatype.GetUrl() {
+		if d.Url() == datatype.Url() {
 			datatypeIndex = int8(i)
 			break
 		}
 	}
 	if datatypeIndex < 0 {
 		return fmt.Errorf("Could not match datatype (%s) to supported data types!",
-			datatype.GetUrl())
+			datatype.Url())
 	}
 
 	// Iterate through all blocks traversed by this input data.
@@ -197,10 +192,8 @@ func (datatype *Datatype) Add(vs *datastore.VersionService,
 			for x := startBlockCoord[0]; x <= endBlockCoord[0]; x++ {
 				blockCoord := dvid.BlockCoord{x, y, z}
 				spatialIndex := vs.SpatialIndex(blockCoord)
-				//
-				// NEXT -- Figure out how to determine BlockKey
-				blockKey := datastore.BlockKey(uuidIndex, []byte(spatialIndex),
-					byte(datatypeIndex), datatype.IsolateData)
+				blockKey := datastore.BlockKey(uuidBytes, []byte(spatialIndex),
+					byte(datatypeIndex), datatype.IsolateData())
 				vs.WriteBlock(&datastore.BlockRequest{
 					blockCoord,
 					blockKey,
@@ -209,6 +202,5 @@ func (datatype *Datatype) Add(vs *datastore.VersionService,
 			}
 		}
 	}
-
 	return nil
 }

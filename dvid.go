@@ -44,7 +44,7 @@ func main() {
 	flag.Parse()
 
 	if showTypes {
-		fmt.Println(datastore.SupportedTypeChart())
+		fmt.Println(datastore.CompiledTypeChart())
 	} else if showHelp || showHelp2 {
 		// Print local DVID help
 		fmt.Println(helpMessage)

@@ -2,6 +2,7 @@ package datastore
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,7 +17,7 @@ import (
 )
 
 const (
-	Version = "0.1"
+	Version = "0.2"
 
 	// ConfigFilename is name of JSON file with datastore configuration data
 	// just for human inspection.
@@ -49,16 +50,22 @@ type configData struct {
 // configuration is stored in the datastore and in a human-readable JSON file
 // in the datastore directory.
 func Init(directory string, configFile string, create bool) (uuid UUID) {
+	// Initialize the configuration
 	var config *configData
 	if configFile == "" {
 		config = promptConfig()
 	} else {
 		config = readJsonConfig(configFile)
 	}
+	config.Datatypes = CompiledTypesList()
+
+	// Verify the data types
 	err := config.VerifyCompiledTypes()
 	if err != nil {
 		log.Fatalln(err.Error())
 	}
+
+	// Create the leveldb
 	dbOptions := keyvalue.GetKeyValueOptions()
 	dbOptions.SetLRUCacheSize(100 * dvid.Mega)
 	dbOptions.SetBloomFilterBitsPerKey(10)
@@ -99,17 +106,18 @@ func (config *configData) BlockNumVoxels() int {
 }
 
 // VerifyCompiledTypes will return an error if any required data type in the datastore 
-// configuration was not compiled into DVID executable.
+// configuration was not compiled into DVID executable.  Check is done by more exact
+// URL and not the data type name.
 func (config *configData) VerifyCompiledTypes() error {
-	if SupportedTypes == nil {
+	if CompiledTypes == nil {
 		return fmt.Errorf("DVID was not compiled with any data type support!")
 	}
 	var errMsg string
 	for _, datatype := range config.Datatypes {
-		_, found := SupportedTypes[datatype.Url]
+		_, found := CompiledTypes[datatype.Url()]
 		if !found {
 			errMsg += fmt.Sprintf("DVID was not compiled with support for data type %s [%s]\n",
-				datatype.Name, datatype.Url)
+				datatype.Name(), datatype.Url())
 		}
 	}
 	if errMsg != "" {
@@ -126,16 +134,31 @@ func (config *configData) SupportedTypeChart() string {
 	}
 	writeLine("Name", "Url")
 	for _, datatype := range config.Datatypes {
-		writeLine(datatype.Name, datatype.Url)
+		writeLine(datatype.Name(), datatype.Url())
 	}
 	text += "\nUse the '<data type name> help' command for type-specific help.\n"
 	return text
 }
 
+// Version returns a chart of version identifiers for data types and and DVID's datastore
+func (config *configData) Version() string {
+	var text string
+	writeLine := func(name, version string) {
+		text += fmt.Sprintf("%-15s   %s\n", name, version)
+	}
+	writeLine("Name", "Version")
+	writeLine("DVID datastore", Version)
+	for _, datatype := range config.Datatypes {
+		writeLine(datatype.Name(), datatype.Version())
+	}
+	return text
+}
+
+// IsSupportedType returns true if given data type name is supported by this datastore
 // IsSupportedType returns true if given data type name is supported by this datastore
 func (config *configData) IsSupportedType(name string) bool {
 	for _, datatype := range config.Datatypes {
-		if name == datatype.Name {
+		if name == datatype.Name() {
 			return true
 		}
 	}
@@ -144,8 +167,8 @@ func (config *configData) IsSupportedType(name string) bool {
 
 func (config *configData) GetSupportedTypeUrl(name string) (url UrlString, err error) {
 	for _, datatype := range config.Datatypes {
-		if name == datatype.Name {
-			url = datatype.Url
+		if name == datatype.Name() {
+			url = datatype.Url()
 			return
 		}
 	}
@@ -165,7 +188,6 @@ func promptConfig() (config *configData) {
 	pBlockMax.Prompt("Size of blocks", "16")
 
 	config.Indexing = SIndexZXY
-	config.Datatypes = DefaultDataTypes
 	return
 }
 
@@ -235,6 +257,15 @@ func MakeVersionService(service *Service, uuidNum int16) *VersionService {
 		*service,
 		uuidNum,
 	}
+}
+
+func (vs *VersionService) UuidBytes() []byte {
+	buf := new(bytes.Buffer)
+	err := binary.Write(buf, binary.LittleEndian, vs.uuidNum)
+	if err != nil {
+		log.Printf("ERROR encoding binary uuid %d: %s", vs.uuidNum, err.Error())
+	}
+	return buf.Bytes()
 }
 
 // Service encapsulates an open DVID datastore, available for operations.
