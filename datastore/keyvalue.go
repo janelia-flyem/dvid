@@ -1,6 +1,8 @@
 /*
 	This file contains constants and functions needed to compose keys and handle
-	the interface with the underlying key/value datastore.
+	the interface with the underlying key/value datastore.  If a datastore package
+	type needs to be stored in the datastore using a DVID-specific key, its put and 
+	get functions should be in this file.
 */
 
 package datastore
@@ -12,6 +14,7 @@ import (
 	_ "log"
 	"reflect"
 
+	_ "github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/keyvalue"
 )
 
@@ -59,25 +62,46 @@ const (
 	keyPrefixDAG
 )
 
-func (db kvdb) put(key Key, object interface{}) error {
+func BlockKey(uuidIndex, spatialIndex []byte, keyDatatype byte, isolated bool) (key Key) {
+	var keyIsolated byte
+	if isolated {
+		keyIsolated = 0
+	} else {
+		keyIsolated = 1
+	}
+	key = append(key, keyFamilyBlock)
+	key = append(key, uuidIndex...)
+	key = append(key, keyIsolated)
+	key = append(key, spatialIndex...)
+	key = append(key, keyDatatype)
+	return
+}
+
+// putValue handles serialization of Go value and storage into the key/value datastore.
+func (db kvdb) putValue(key Key, object interface{}) error {
 	var buffer bytes.Buffer
 	enc := gob.NewEncoder(&buffer)
 	err := enc.Encode(object)
 	if err != nil {
 		return fmt.Errorf("Error serializing %s: %s", reflect.TypeOf(object), err.Error())
 	}
-	wo := keyvalue.GetWriteOptions()
-	return db.KeyValueDB.Put(keyvalue.Key(key), buffer.Bytes(), wo)
+	return db.putBytes(key, buffer.Bytes())
 }
 
-func (db kvdb) get(key Key, object interface{}) error {
-	ro := keyvalue.GetReadOptions()
-	value, err := db.KeyValueDB.Get(keyvalue.Key(key), ro)
+// putBytes handles storage of bytes into the key/value datastore.
+func (db kvdb) putBytes(key Key, data []byte) error {
+	wo := keyvalue.GetWriteOptions()
+	return db.KeyValueDB.Put(keyvalue.Key(key), data, wo)
+}
+
+// getValue handles deserialization of Go value and retrieval from the key/value datastore.
+func (db kvdb) getValue(key Key, object interface{}) error {
+	data, err := db.getBytes(key)
 	if err != nil {
 		return err
 	}
 
-	buffer := bytes.NewBuffer(value)
+	buffer := bytes.NewBuffer(data)
 	dec := gob.NewDecoder(buffer)
 	err = dec.Decode(object)
 	if err != nil {
@@ -86,18 +110,28 @@ func (db kvdb) get(key Key, object interface{}) error {
 	return nil
 }
 
+// getBytes handles retrieval from the key/value datastore.
+func (db kvdb) getBytes(key Key) (data []byte, err error) {
+	ro := keyvalue.GetReadOptions()
+	value, err := db.KeyValueDB.Get(keyvalue.Key(key), ro)
+	data = value
+	return
+}
+
+// DVID types are assigned keys and delegated to the type-agnostic get/put functions above
+
 func (cache *cachedData) put(db kvdb) error {
-	return db.put(Key{keyFamilyGlobal, keyPrefixCache}, *cache)
+	return db.putValue(Key{keyFamilyGlobal, keyPrefixCache}, *cache)
 }
 
 func (cache *cachedData) get(db kvdb) error {
-	return db.get(Key{keyFamilyGlobal, keyPrefixCache}, cache)
+	return db.getValue(Key{keyFamilyGlobal, keyPrefixCache}, cache)
 }
 
 func (config *configData) put(db kvdb) error {
-	return db.put(Key{keyFamilyGlobal, keyPrefixConfig}, *config)
+	return db.putValue(Key{keyFamilyGlobal, keyPrefixConfig}, *config)
 }
 
 func (config *configData) get(db kvdb) error {
-	return db.get(Key{keyFamilyGlobal, keyPrefixConfig}, config)
+	return db.getValue(Key{keyFamilyGlobal, keyPrefixConfig}, config)
 }

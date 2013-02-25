@@ -43,9 +43,12 @@ type VoxelResolution [3]float32
 // The description of the units of voxel resolution, e.g., "nanometer"
 type VoxelResolutionUnits string
 
-// Subvolume packages the location, extent, and data of a rectangular box of voxels.
-// The "Sub" prefix emphasizes that the data is usually a smaller portion of the
-// volume held by the DVID datastore.
+// Subvolume packages the location, extent, and data of a data type corresponding
+// to a rectangular box of voxels.  The "Sub" prefix emphasizes that the data is 
+// usually a smaller portion of the volume held by the DVID datastore.  Although
+// this type usually holds voxel values, it's possible to transmit other types
+// of data that is associated with this region of the volume, e.g., a region
+// adjacency graph or a serialized label->label map.
 type Subvolume struct {
 	// Description of data
 	Text string
@@ -58,7 +61,8 @@ type Subvolume struct {
 
 	// Number of bytes per voxel.  Frequently, we don't need to know the underlying
 	// data format but we do need to know what constitutes a voxel when iterating
-	// through subvolume data slices.
+	// through subvolume data slices.  If BytesPerVoxel is the empty value (0),
+	// processing can assume that
 	BytesPerVoxel int
 
 	// The data itself.  Go image data is usually held in []uint8.
@@ -116,6 +120,10 @@ func (c VoxelCoord) Div(x VoxelCoord) (result VoxelCoord) {
 	result[1] = c[1] / x[1]
 	result[2] = c[2] / x[2]
 	return
+}
+
+func (c VoxelCoord) String() string {
+	return fmt.Sprintf("(%d,%d,%d)", c[0], c[1], c[2])
 }
 
 // BoundMin returns a voxel coordinate where each of its elements
@@ -203,6 +211,10 @@ func (c BlockCoord) Sub(x BlockCoord) (result BlockCoord) {
 	result[1] = c[1] - x[1]
 	result[2] = c[2] - x[2]
 	return
+}
+
+func (c BlockCoord) String() string {
+	return fmt.Sprintf("(%d,%d,%d)", c[0], c[1], c[2])
 }
 
 // BoundMin returns a block coordinate where each of its elements

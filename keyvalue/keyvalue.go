@@ -1,3 +1,9 @@
+/*
+	This file defines a number of interfaces and common types among leveldb
+	implementations.  Some types are defined in the associated implementation
+	Go files, e.g., leveldbgo.go and levigo.go.
+*/
+
 package keyvalue
 
 import (
@@ -6,10 +12,6 @@ import (
 
 	"github.com/janelia-flyem/dvid/dvid"
 )
-
-// This file defines a number of interfaces and common types among leveldb
-// implementations.  Some types are defined in the associated implementation
-// Go files, e.g., leveldbgo.go and levigo.go.
 
 // Default size of leveldb cache
 const DefaultCacheSize = 1 * dvid.Giga

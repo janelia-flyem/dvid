@@ -17,8 +17,8 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 
-	_ "github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/command"
+	_ "github.com/janelia-flyem/dvid/dvid"
 )
 
 // This message is used for all data types to explain options.
@@ -72,8 +72,7 @@ type TypeService interface {
 	Help(textHelp string) string
 
 	// Do implements commands specific to a data type
-	Do(versionService *VersionService, cmd *command.Command,
-		input, reply *command.Packet) error
+	Do(vs *VersionService, cmd *command.Command, input, reply *command.Packet) error
 
 	// Returns standard error response for unknown commands
 	UnknownCommand(cmd *command.Command) error

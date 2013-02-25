@@ -17,12 +17,12 @@ DVID Terminal Help
 
 	Use 'q' or 'quit' to exit.
 
-	set address <DVID rpc address>
-	set node <UUID>
+	address [DVID rpc address]  - sets or returns DVID server address
+	version [UUID] - sets or returns the UUID for the image version
 `
 
 // Global variables to store DVID states and connection info
-var head datastore.UUID
+var version string
 var rpcAddress string
 var client *rpc.Client
 
@@ -54,6 +54,20 @@ func Shell() {
 			Send(&command.Command{Args: []string{"help"}})
 		case "quit", "q":
 			takeCommands = false
+		case "address":
+			if len(cmd.Args) > 1 {
+				rpcAddress := cmd.Args[1]
+				fmt.Printf("Set rpc address to %s\n", rpcAddress)
+			} else {
+				fmt.Printf("Current rpc address: %s\n", rpcAddress)
+			}
+		case "version":
+			if len(cmd.Args) > 1 {
+				version := cmd.Args[1]
+				fmt.Printf("Set version to %s\n", version)
+			} else {
+				fmt.Printf("Current version: %s\n", version)
+			}
 		default:
 			err := Send(cmd)
 			if err != nil {

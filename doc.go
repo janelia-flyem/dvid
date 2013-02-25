@@ -84,7 +84,7 @@ You can specify a data type name followed by a type-specific command:
 For example, the "grayscale8" data type supports the "server_load" command to insert
 2d images to the DVID datastore on the server side:
 
-	dvid grayscale8 server_load  xy  1,2,23  /path/to/images/*.png
+	dvid grayscale8 server-add  1,2,23  /path/to/images/*.png
 
 The above example inserts a series of XY images where the lexicographically 
 smallest filename holds voxels at (x+1, y+2, 23) and each following image increases

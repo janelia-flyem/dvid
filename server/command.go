@@ -73,7 +73,7 @@ type Command struct {
 
 // GetUuidNum returns the UUID index corresponding to the string supplied by a 
 // "uuid=..." argument.  Note that this UUID index is datastore-specific.
-func (cmd *Command) GetUuidNum(dataService *datastore.Service) (uuidNum int, err error) {
+func (cmd *Command) GetUuidNum(dataService *datastore.Service) (uuidNum int16, err error) {
 
 	fmt.Println("GetUuid() cmd =", cmd)
 	uuidString, found := cmd.GetSetting(command.KeyUuid)
@@ -81,8 +81,6 @@ func (cmd *Command) GetUuidNum(dataService *datastore.Service) (uuidNum int, err
 	if found {
 		uuidNum, err = dataService.GetUuidFromString(uuidString)
 		fmt.Println("  after found, uuidNum=", uuidNum, err)
-	} else {
-		err = fmt.Errorf("UUID must be supplied with 'uuid=...' to identify image version!")
 	}
 	return
 }

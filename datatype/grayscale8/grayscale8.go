@@ -1,6 +1,8 @@
 package grayscale8
 
 import (
+	"bytes"
+	"encoding/binary"
 	"fmt"
 	"image"
 	"log"
@@ -8,9 +10,9 @@ import (
 	_ "strconv"
 	_ "strings"
 
-	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/command"
 	"github.com/janelia-flyem/dvid/datastore"
+	"github.com/janelia-flyem/dvid/dvid"
 )
 
 const repoUrl = "github.com/janelia-flyem/dvid/datatype/grayscale8"
@@ -163,23 +165,28 @@ func (datatype *Datatype) Add(vs *datastore.VersionService,
 
 	log.Println("grayscale8.Add(): Processing ", input)
 
-	// Compute the top left corner voxel within the offset's containing block
-	startBlockVoxel := vs.BlockVoxel(input.Offset)
+	// Translate UUID index into bytes
+	buf := new(bytes.Buffer)
+	err := binary.Write(buf, binary.LittleEndian, vs.UuidNum())
+	if err != nil {
+		return fmt.Errorf("Error encoding binary uuid %d: %s", vs.UuidNum(), err.Error())
+	}
+	uuidIndex := buf.Bytes()
 
-	// Compute the bottom right corner voxel in block voxel space
-	endBlockVoxel := startBlockVoxel.Add(input.Size)
+	// Determine the index of this datatype for this particular datastore.
+	var datatypeIndex int8 = -1
+	for i, d := range vs.Datatypes {
+		if d.Url == datatype.GetUrl() {
+			datatypeIndex = int8(i)
+			break
+		}
+	}
+	if datatypeIndex < 0 {
+		return fmt.Errorf("Could not match datatype (%s) to supported data types!",
+			datatype.GetUrl())
+	}
 
-	// Compute the maximum number of blocks that are traversed by this subvolume
-	nBlocks := vs.BlockCoord(endBlockVoxel)
-	numSpIndices := int((nBlocks[0] + 1) * (nBlocks[1] + 1) * (nBlocks[2] + 1))
-
-	// If our current service doesn't have block cache, allocate it.
-	vs.InitializeBlockCache(numSpIndices)
-
-	// Iterate through all blocks traversed by this input data, allocating blocks on 
-	// cache if needed.  Keep list of blocks traversed by their spatial index string.
-	blocksTraversed := make([]datastore.SpatialIndex, 0, numSpIndices)
-
+	// Iterate through all blocks traversed by this input data.
 	startVoxel := input.Offset
 	endVoxel := startVoxel.Add(input.Size)
 
@@ -188,19 +195,19 @@ func (datatype *Datatype) Add(vs *datastore.VersionService,
 	for z := startBlockCoord[2]; z <= endBlockCoord[2]; z++ {
 		for y := startBlockCoord[1]; y <= endBlockCoord[1]; y++ {
 			for x := startBlockCoord[0]; x <= endBlockCoord[0]; x++ {
-				spatialIndex := vs.SpatialIndex(dvid.BlockCoord{x, y, z})
-				vs.InitializeBlock(spatialIndex, BytesPerVoxel)
-				blocksTraversed = append(blocksTraversed, spatialIndex)
+				blockCoord := dvid.BlockCoord{x, y, z}
+				spatialIndex := vs.SpatialIndex(blockCoord)
+				//
+				// NEXT -- Figure out how to determine BlockKey
+				blockKey := datastore.BlockKey(uuidIndex, []byte(spatialIndex),
+					byte(datatypeIndex), datatype.IsolateData)
+				vs.WriteBlock(&datastore.BlockRequest{
+					blockCoord,
+					blockKey,
+					&input.Subvolume,
+				})
 			}
 		}
-	}
-	log.Printf("grayscale8.Add(): Found %d blocks traversed by this input\n",
-		len(blocksTraversed))
-
-	// Iterate through our list of blocks, writing input data into each block.
-	for _, spatialIndex := range blocksTraversed {
-		// TODO -- Make concurrent by doing "go vs.WriteBlock(...)"?
-		vs.WriteBlock(spatialIndex, &input.Subvolume)
 	}
 
 	return nil
