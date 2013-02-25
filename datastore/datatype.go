@@ -41,29 +41,25 @@ type UrlString string
 // within a DVID datastore instance.
 type Datatype struct {
 	// Name describes a data type & may not be as unique (e.g., "grayscale")
-	name string
+	Name string
 
 	// Url specifies the unique package name that fulfills the DVID Data interface
-	url UrlString
+	Url UrlString
 
 	// Version describes the version identifier of this data type code
-	version string
+	Version string
 
 	// IsolateData should be false (default) to place this data type next to
 	// other data types within a block, so for a given block we can quickly
 	// retrieve a variety of data types across the block's voxels.  If IsolateData
 	// is true, we optimize for retrieving this data type independently, e.g., all 
 	// the label->label maps across blocks to make a subvolume map on the fly.
-	isolateData bool
+	IsolateData bool
 }
 
 // TypeService is an interface for operations using arbitrary data types.
 type TypeService interface {
 	BaseDatatype() Datatype
-	Name() string
-	Url() UrlString
-	Version() string
-	IsolateData() bool
 
 	// Help returns a string explaining how to use a data type's service
 	Help(textHelp string) string
@@ -83,38 +79,13 @@ func (datatype *Datatype) BaseDatatype() Datatype {
 	return *datatype
 }
 
-func (datatype *Datatype) Name() string {
-	return datatype.name
-}
-
-func (datatype *Datatype) Url() UrlString {
-	return datatype.url
-}
-
-func (datatype *Datatype) Version() string {
-	return datatype.version
-}
-
-func (datatype *Datatype) IsolateData() bool {
-	return datatype.isolateData
-}
-
 func (datatype *Datatype) Help(typeHelp string) string {
-	return fmt.Sprintf(helpMessage+typeHelp, datatype.name, datatype.url)
+	return fmt.Sprintf(helpMessage+typeHelp, datatype.Name, datatype.Url)
 }
 
 func (datatype *Datatype) UnknownCommand(cmd *command.Command) error {
 	return fmt.Errorf("Unknown command.  Data type '%s' [%s] does not support '%s' command.",
-		datatype.name, datatype.url, cmd.TypeCommand())
-}
-
-func MakeDatatype(name, version string, url UrlString, isolateData bool) *Datatype {
-	return &Datatype{
-		name:        name,
-		version:     version,
-		url:         url,
-		isolateData: isolateData,
-	}
+		datatype.Name, datatype.Url, cmd.TypeCommand())
 }
 
 // CompiledTypes is the set of registered data types compiled into DVID and
@@ -131,7 +102,7 @@ func VerifyCompiledTypeName(name string) error {
 	// Verify this data type was compiled into DVID
 	var found bool
 	for _, datatype := range CompiledTypes {
-		if name == datatype.Name() {
+		if name == datatype.BaseDatatype().Name {
 			found = true
 			break
 		}
@@ -154,7 +125,7 @@ func CompiledTypesList() (datatypes []Datatype) {
 func CompiledTypeNames() string {
 	var names []string
 	for _, datatype := range CompiledTypes {
-		names = append(names, datatype.Name())
+		names = append(names, datatype.BaseDatatype().Name)
 	}
 	return strings.Join(names, ", ")
 }
@@ -176,7 +147,7 @@ func CompiledTypeChart() string {
 	}
 	writeLine("Name", "Url")
 	for _, datatype := range CompiledTypes {
-		writeLine(datatype.Name(), datatype.Url())
+		writeLine(datatype.BaseDatatype().Name, datatype.BaseDatatype().Url)
 	}
 	return text + "\n"
 }
@@ -186,17 +157,17 @@ func RegisterDatatype(datatype TypeService) {
 	if CompiledTypes == nil {
 		CompiledTypes = make(map[UrlString]TypeService)
 	}
-	CompiledTypes[datatype.Url()] = datatype
+	CompiledTypes[datatype.BaseDatatype().Url] = datatype
 }
 
 // GetTypeService returns a supported data type's service or an error if name is not supported 
 // or ambiguous.
 func GetTypeService(name string) (service TypeService, err error) {
 	for _, datatype := range CompiledTypes {
-		if name == datatype.Name() {
+		if name == datatype.BaseDatatype().Name {
 			if service != nil {
 				err = fmt.Errorf("Given data type (%s) is ambiguous.  Supporting '%s' and '%s'",
-					name, service.Name(), datatype.Name())
+					name, service.BaseDatatype().Name, datatype.BaseDatatype().Name)
 				service = nil
 				return
 			} else {

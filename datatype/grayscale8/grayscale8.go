@@ -51,8 +51,12 @@ type Datatype struct {
 }
 
 func init() {
-	datatype := datastore.MakeDatatype("grayscale8", Version, repoUrl, true)
-	datastore.RegisterDatatype(&Datatype{*datatype})
+	datastore.RegisterDatatype(&Datatype{datastore.Datatype{
+		Name:        "grayscale8",
+		Version:     Version,
+		Url:         repoUrl,
+		IsolateData: true,
+	}})
 }
 
 // Return the embedded Datatype if desired
@@ -171,14 +175,14 @@ func (datatype *Datatype) Add(vs *datastore.VersionService,
 	// Determine the index of this datatype for this particular datastore.
 	var datatypeIndex int8 = -1
 	for i, d := range vs.Datatypes {
-		if d.Url() == datatype.Url() {
+		if d.Url == datatype.Url {
 			datatypeIndex = int8(i)
 			break
 		}
 	}
 	if datatypeIndex < 0 {
 		return fmt.Errorf("Could not match datatype (%s) to supported data types!",
-			datatype.Url())
+			datatype.Url)
 	}
 
 	// Iterate through all blocks traversed by this input data.
@@ -193,7 +197,7 @@ func (datatype *Datatype) Add(vs *datastore.VersionService,
 				blockCoord := dvid.BlockCoord{x, y, z}
 				spatialIndex := vs.SpatialIndex(blockCoord)
 				blockKey := datastore.BlockKey(uuidBytes, []byte(spatialIndex),
-					byte(datatypeIndex), datatype.IsolateData())
+					byte(datatypeIndex), datatype.IsolateData)
 				vs.WriteBlock(&datastore.BlockRequest{
 					blockCoord,
 					blockKey,

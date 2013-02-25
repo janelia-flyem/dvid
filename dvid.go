@@ -25,6 +25,7 @@ dvid is a distributed, versioned image datastore
 
 Commands that can be performed without a running server:
 
+	version
 	init [config=/path/to/json/config] [dir=/path/to/datastore/dir]
 	serve [dir=/path/to/datastore/dir] [web=...] [rpc=...]
 `
@@ -78,6 +79,8 @@ func DoCommand(cmd *command.Command) error {
 		return DoInit(cmd)
 	case "serve":
 		return DoServe(cmd)
+	case "version":
+		fmt.Println(datastore.Versions())
 	// Send everything else to server via DVID terminal
 	default:
 		return terminal.Send(cmd)

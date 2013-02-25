@@ -72,8 +72,8 @@ func blockHandler(channelNum int) {
 		vs := req.vs
 		si := vs.SpatialIndex(req.br.Coord)
 		subvol := req.br.Subvol
-		log.Printf("blockHandler(%d) handling block coord %s\n", channelNum,
-			req.br.Coord)
+		//log.Printf("blockHandler(%d) handling block coord %s\n", channelNum,
+		//	req.br.Coord)
 
 		// Get the block data
 		data, err := vs.kvdb.getBytes(req.br.BlockKey)
@@ -116,6 +116,12 @@ func blockHandler(channelNum int) {
 					}
 				}
 			}
+		}
+
+		// PUT the block
+		err = vs.kvdb.putBytes(req.br.BlockKey, data)
+		if err != nil {
+			log.Printf("ERROR blockHandler(%d): unable to write block!\n", channelNum)
 		}
 
 	} // request loop

@@ -46,6 +46,20 @@ type configData struct {
 	Datatypes []Datatype
 }
 
+// Versions returns a chart of version identifiers for data types and and DVID's datastore
+func Versions() string {
+	var text string
+	writeLine := func(name, version string) {
+		text += fmt.Sprintf("%-15s   %s\n", name, version)
+	}
+	writeLine("Name", "Version")
+	writeLine("DVID datastore", Version)
+	for _, datatype := range CompiledTypes {
+		writeLine(datatype.BaseDatatype().Name, datatype.BaseDatatype().Version)
+	}
+	return text
+}
+
 // Init creates a key-value datastore using default parameters.  Datastore 
 // configuration is stored in the datastore and in a human-readable JSON file
 // in the datastore directory.
@@ -114,10 +128,10 @@ func (config *configData) VerifyCompiledTypes() error {
 	}
 	var errMsg string
 	for _, datatype := range config.Datatypes {
-		_, found := CompiledTypes[datatype.Url()]
+		_, found := CompiledTypes[datatype.BaseDatatype().Url]
 		if !found {
 			errMsg += fmt.Sprintf("DVID was not compiled with support for data type %s [%s]\n",
-				datatype.Name(), datatype.Url())
+				datatype.BaseDatatype().Name, datatype.BaseDatatype().Url)
 		}
 	}
 	if errMsg != "" {
@@ -134,7 +148,7 @@ func (config *configData) SupportedTypeChart() string {
 	}
 	writeLine("Name", "Url")
 	for _, datatype := range config.Datatypes {
-		writeLine(datatype.Name(), datatype.Url())
+		writeLine(datatype.BaseDatatype().Name, datatype.BaseDatatype().Url)
 	}
 	text += "\nUse the '<data type name> help' command for type-specific help.\n"
 	return text
@@ -149,7 +163,7 @@ func (config *configData) Version() string {
 	writeLine("Name", "Version")
 	writeLine("DVID datastore", Version)
 	for _, datatype := range config.Datatypes {
-		writeLine(datatype.Name(), datatype.Version())
+		writeLine(datatype.BaseDatatype().Name, datatype.BaseDatatype().Version)
 	}
 	return text
 }
@@ -158,7 +172,7 @@ func (config *configData) Version() string {
 // IsSupportedType returns true if given data type name is supported by this datastore
 func (config *configData) IsSupportedType(name string) bool {
 	for _, datatype := range config.Datatypes {
-		if name == datatype.Name() {
+		if name == datatype.BaseDatatype().Name {
 			return true
 		}
 	}
@@ -167,8 +181,8 @@ func (config *configData) IsSupportedType(name string) bool {
 
 func (config *configData) GetSupportedTypeUrl(name string) (url UrlString, err error) {
 	for _, datatype := range config.Datatypes {
-		if name == datatype.Name() {
-			url = datatype.Url()
+		if name == datatype.BaseDatatype().Name {
+			url = datatype.BaseDatatype().Url
 			return
 		}
 	}
@@ -210,6 +224,7 @@ func readJsonConfig(filename string) (config *configData) {
 	} else if err != nil {
 		log.Fatalf("Error: Reading JSON config file (%s): %s\n", filename, err)
 	}
+	fmt.Println("Read config:", *config)
 	return
 }
 

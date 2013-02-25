@@ -1,18 +1,26 @@
 {
-    "VolumeMaxX": 250,
-    "VolumeMaxY": 275,
-    "VolumeMaxZ": 300,
-    "VoxelResX": 10.0,
-    "VoxelResY": 10.0,
-    "VoxelResZ": 10.0,
+    "VolumeMax": [
+        500,
+        500,
+        500
+    ],
+    "VoxelRes": [
+        10.0,
+        10.0,
+        10.0
+    ],
     "VoxelResUnits": "nanometers",
-    "BlockMaxX": 16,
-    "BlockMaxY": 16,
-    "BlockMaxZ": 16,
+    "BlockMax": [
+        16,
+        16,
+        16
+    ],
+    "Indexing": 0,
     "Datatypes": [
         {
             "Name": "grayscale8",
             "Url": "github.com/janelia-flyem/dvid/datatype/grayscale8",
+            "Version": "0.5",
             "IsolateData": true
         }
     ]
