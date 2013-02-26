@@ -127,7 +127,7 @@ func (cmd *Command) help(reply *command.Packet) error {
 }
 
 func (cmd *Command) version(reply *command.Packet) error {
-	reply.Text = fmt.Sprintf("%s\n%s", runningService.Version())
+	reply.Text = fmt.Sprintf("%s\n%s", runningService.Versions())
 	return nil
 }
 

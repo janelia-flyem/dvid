@@ -6,7 +6,6 @@
 package datastore
 
 import (
-	"fmt"
 	"log"
 
 	"github.com/janelia-flyem/dvid/dvid"
@@ -44,7 +43,7 @@ type request struct {
 	br *BlockRequest
 }
 
-const NumBlockHandlers = 1
+const NumBlockHandlers = 10
 
 // Number of block write requests that can be buffered on each block handler
 // before sender is blocked.
@@ -57,7 +56,7 @@ var blockChannels BlockChannels
 func init() {
 	blockChannels = make(BlockChannels, NumBlockHandlers, NumBlockHandlers)
 	for channelNum, _ := range blockChannels {
-		blockChannels[channelNum] = make(chan request) //, BlockHandlerBufferSize)
+		blockChannels[channelNum] = make(chan request, BlockHandlerBufferSize)
 		go blockHandler(channelNum)
 	}
 }
@@ -71,8 +70,6 @@ func (vs *VersionService) ProcessBlock(br *BlockRequest) error {
 	channelN := (br.Coord[0]*2 + br.Coord[1]*3 + br.Coord[2]*5) % NumBlockHandlers
 
 	// Package the write block data and send it down the chosen channel
-	log.Printf("Processing Block %s via blockHandler %d: %s\n",
-		br.Subvol.Text, channelN, br.Coord)
 	blockChannels[channelN] <- request{vs, br}
 	return nil
 }
@@ -92,11 +89,10 @@ func blockHandler(channelNum int) {
 		// Get the block data
 		data := make([]byte, vs.BlockNumVoxels(), vs.BlockNumVoxels())
 		blockBytes, err := vs.kvdb.getBytes(req.br.BlockKey)
-		if err != nil {
-			log.Printf("blockHandler(%d): Bad get on block %s\n", channelNum, req.br.Coord)
-		} else {
+		if err == nil {
 			copy(data, blockBytes)
 		}
+		// If we have error, like key not present, we just use empty values for block.
 
 		dataBytes := vs.BlockNumVoxels() * subvol.BytesPerVoxel
 		if dataBytes != len(data) {

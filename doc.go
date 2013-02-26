@@ -109,13 +109,14 @@ leveldb initially:
   • C++ leveldb plus levigo Go bindings.  This is a more industrial-strength solution and 
     would be the preferred installation for production runs at Janelia.
   • Pure Go leveldb implementations.
-	  • syndtr's rewrite from C++ version (https://github.com/syndtr/goleveldb)
-	  • nigel tao's implementation still in progress (http://code.google.com/p/leveldb-go)
+	  • Suryandaru Triandana's rewrite from C++ version (https://github.com/syndtr/goleveldb)
+	  • Nigel Tao's implementation still in progress (http://code.google.com/p/leveldb-go)
 
 A pure Go leveldb implementation would greatly simplify cross-platform development since 
 Go code can be cross-compiled to Linux, Windows, and Mac targets.  It would also allow simpler 
 inspection of issues.  However, there is no substitute for having large numbers of users 
 testing the product, so the C++ leveldb implementation will be tough to beat in terms of 
-uptime and performance.
+uptime and performance.   We might also look at sqlite4's LSM system as a third key-value
+datastore.
 */
 package main

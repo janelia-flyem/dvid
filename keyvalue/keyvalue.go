@@ -13,8 +13,35 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 )
 
-// Default size of leveldb cache
-const DefaultCacheSize = 1 * dvid.Giga
+const (
+	// Default size of LRU cache that caches frequently used uncompressed blocks.
+	DefaultCacheSize = 1 * dvid.Giga
+
+	// Default # bits for Bloom Filter.  The filter reduces the number of unnecessary
+	// disk reads needed for Get() calls by a large factor.
+	DefaultBloomBits = 10
+
+	// Number of open files that can be used by the datastore.  You may need to
+	// increase this if your datastore has a large working set (budget one open
+	// file per 2MB of working set).
+	DefaultMaxOpenFiles = 1000
+
+	// Approximate size of user data packed per block.  Note that the
+	// block size specified here corresponds to uncompressed data.  The
+	// actual size of the unit read from disk may be smaller if
+	// compression is enabled.  This parameter can be changed dynamically.
+	DefaultBlockSize = 1 * dvid.Mega
+
+	// Amount of data to build up in memory (backed by an unsorted log
+	// on disk) before converting to a sorted on-disk file.
+	//
+	// Larger values increase performance, especially during bulk loads.
+	// Up to two write buffers may be held in memory at the same time,
+	// so you may wish to adjust this parameter to control memory usage.
+	// Also, a larger write buffer will result in a longer recovery time
+	// the next time the database is opened.
+	DefaultWriteBufferSize = 500 * dvid.Mega
+)
 
 type Key []byte
 type Value []byte
@@ -55,7 +82,8 @@ type WriteOptions interface {
 	SetSync(on bool)
 }
 
-// writeBatch provides an interface to a batch write.
+// WriteBatch provides an interface to a batch write.
+// See "Atomic Updates" in http://leveldb.googlecode.com/svn/trunk/doc/index.html
 type WriteBatch interface {
 
 	// Delete removes from the batch a put using the given key.
@@ -64,8 +92,11 @@ type WriteBatch interface {
 	// Put adds to the batch a put using the given key/value.
 	Put(k Key, v Value)
 
-	// Reset clears the contents of a batch
-	Reset()
+	// Clear clears the contents of a write batch
+	Clear()
+
+	// Close closes a write batch
+	Close()
 }
 
 // KeyValueOptions allows setting of a number of key/value datastore

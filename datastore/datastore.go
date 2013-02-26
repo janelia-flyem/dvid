@@ -54,6 +54,7 @@ func Versions() string {
 	}
 	writeLine("Name", "Version")
 	writeLine("DVID datastore", Version)
+	writeLine("Leveldb", keyvalue.Version)
 	for _, datatype := range CompiledTypes {
 		writeLine(datatype.BaseDatatype().Name, datatype.BaseDatatype().Version)
 	}
@@ -89,9 +90,7 @@ func Init(directory string, configFile string, create bool) (uuid UUID) {
 	}
 
 	// Create the leveldb
-	dbOptions := keyvalue.GetKeyValueOptions()
-	dbOptions.SetLRUCacheSize(100 * dvid.Mega)
-	dbOptions.SetBloomFilterBitsPerKey(10)
+	dbOptions := keyvalue.NewKeyValueOptions()
 	db, err := keyvalue.OpenLeveldb(directory, create, dbOptions)
 	if err != nil {
 		log.Fatalf("Error opening datastore (%s): %s\n", directory, err.Error())
@@ -165,13 +164,14 @@ func (config *configData) SupportedTypeChart() string {
 }
 
 // Version returns a chart of version identifiers for data types and and DVID's datastore
-func (config *configData) Version() string {
+func (config *configData) Versions() string {
 	var text string
 	writeLine := func(name, version string) {
 		text += fmt.Sprintf("%-15s   %s\n", name, version)
 	}
 	writeLine("Name", "Version")
 	writeLine("DVID datastore", Version)
+	writeLine("Leveldb", keyvalue.Version)
 	for _, datatype := range config.Datatypes {
 		writeLine(datatype.BaseDatatype().Name, datatype.BaseDatatype().Version)
 	}
@@ -310,9 +310,7 @@ type Service struct {
 // a Service that allows operations on that datastore.
 func Open(directory string) (service *Service, err error) {
 	// Open the datastore
-	dbOptions := keyvalue.GetKeyValueOptions()
-	dbOptions.SetLRUCacheSize(100 * dvid.Mega)
-	dbOptions.SetBloomFilterBitsPerKey(10)
+	dbOptions := keyvalue.NewKeyValueOptions()
 	create := false
 	db, err := keyvalue.OpenLeveldb(directory, create, dbOptions)
 	if err != nil {

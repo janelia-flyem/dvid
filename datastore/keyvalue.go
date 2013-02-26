@@ -93,7 +93,7 @@ func (db kvdb) putValue(key Key, object interface{}) error {
 
 // putBytes handles storage of bytes into the key/value datastore.
 func (db kvdb) putBytes(key Key, data []byte) error {
-	wo := keyvalue.GetWriteOptions()
+	wo := keyvalue.NewWriteOptions()
 	return db.KeyValueDB.Put(keyvalue.Key(key), data, wo)
 }
 
@@ -115,7 +115,7 @@ func (db kvdb) getValue(key Key, object interface{}) error {
 
 // getBytes handles retrieval from the key/value datastore.
 func (db kvdb) getBytes(key Key) (data []byte, err error) {
-	ro := keyvalue.GetReadOptions()
+	ro := keyvalue.NewReadOptions()
 	value, err := db.KeyValueDB.Get(keyvalue.Key(key), ro)
 	data = value
 	return
