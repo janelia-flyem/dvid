@@ -27,6 +27,11 @@ Standard DVID commands that can be performed without a running server
 In the following documentation, the type of brackets designate 
 <required parameter> and [optional parameter].
 
+	dvid version
+
+Prints the version number of the DVID datastore software and the version of each
+supported data type.
+
 	dvid init [config=/path/to/json/config] [dir=/path/to/datastore/dir]
 
 Initialize a datastore (in current or optionally specified directory) using 
@@ -51,6 +56,12 @@ accepts a "uuid=..." option, and if there's any possibility of
 another user interacting with the same DVID datastore, you *should* specify 
 a UUID.
 
+	dvid types [rpc=localhost:6000]
+
+The 'types' command lists all supported data types for this DVID datastore.
+You can also use the "--types" option to list all data types that have been
+compiled into your current DVID executable.
+
 	dvid branch [uuid=...] [rpc=localhost:6000]
 
 Create a child of the current HEAD node or the node specified by the optional
@@ -64,12 +75,6 @@ the "child" command.
 
 Locks the current HEAD node or the node specified by an optional UUID.  Once
 a node is locked, it can be used with the "child" command.
-
-	dvid types [rpc=localhost:6000]
-
-The 'types' command lists all supported data types for this DVID datastore.
-You can also use the "--types" option to list all data types that have been
-compiled into your current DVID executable.
 
 	dvid pull  (TODO)
 	dvid push  (TODO)

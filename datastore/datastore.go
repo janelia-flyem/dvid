@@ -73,6 +73,15 @@ func Init(directory string, configFile string, create bool) (uuid UUID) {
 	}
 	config.Datatypes = CompiledTypesList()
 
+	log.Println("Initializing datastore at", directory)
+	log.Printf("Volume size: %d x %d x %d\n",
+		config.VolumeMax[0], config.VolumeMax[1], config.VolumeMax[2])
+	log.Printf("Voxel resolution: %4.1f x %4.1f x %4.1f %s\n",
+		config.VoxelRes[0], config.VoxelRes[1], config.VoxelRes[2], config.VoxelResUnits)
+	log.Printf("Block size: %d x %d x %d voxels\n",
+		config.BlockMax[0], config.BlockMax[1], config.BlockMax[2])
+	log.Println(config.SupportedTypeChart())
+
 	// Verify the data types
 	err := config.VerifyCompiledTypes()
 	if err != nil {
@@ -116,7 +125,8 @@ func Init(directory string, configFile string, create bool) (uuid UUID) {
 // BlockNumVoxels returns the # of voxels within a block.  Block size should
 // be immutable during the course of a datastore's lifetime.
 func (config *configData) BlockNumVoxels() int {
-	return int(config.BlockMax[0] * config.BlockMax[1] * config.BlockMax[2])
+	x := int(config.BlockMax[0] * config.BlockMax[1] * config.BlockMax[2])
+	return x
 }
 
 // VerifyCompiledTypes will return an error if any required data type in the datastore 
@@ -143,14 +153,14 @@ func (config *configData) VerifyCompiledTypes() error {
 // SupportedTypeChart returns a chart (names/urls) of data types supported by this datastore
 func (config *configData) SupportedTypeChart() string {
 	var text string = "\nData types supported by this DVID datastore:\n\n"
-	writeLine := func(name string, url UrlString) {
-		text += fmt.Sprintf("%-15s   %s\n", name, url)
+	writeLine := func(name, version string, url UrlString) {
+		text += fmt.Sprintf("%-15s  %-8s %s\n", name, version, url)
 	}
-	writeLine("Name", "Url")
+	writeLine("Name", "Version", "Url")
 	for _, datatype := range config.Datatypes {
-		writeLine(datatype.BaseDatatype().Name, datatype.BaseDatatype().Url)
+		writeLine(datatype.BaseDatatype().Name, datatype.BaseDatatype().Version,
+			datatype.BaseDatatype().Url)
 	}
-	text += "\nUse the '<data type name> help' command for type-specific help.\n"
 	return text
 }
 
@@ -224,7 +234,6 @@ func readJsonConfig(filename string) (config *configData) {
 	} else if err != nil {
 		log.Fatalf("Error: Reading JSON config file (%s): %s\n", filename, err)
 	}
-	fmt.Println("Read config:", *config)
 	return
 }
 

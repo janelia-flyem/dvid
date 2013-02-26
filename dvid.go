@@ -3,7 +3,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"log"
 
 	"github.com/janelia-flyem/dvid/command"
 	"github.com/janelia-flyem/dvid/datastore"
@@ -93,7 +92,6 @@ func DoInit(cmd *command.Command) error {
 	configFile, _ := cmd.GetSetting(command.KeyConfigFile)
 	datastoreDir := cmd.GetDatastoreDir()
 
-	log.Println("Initializing datastore at", datastoreDir)
 	create := true
 	uuid := datastore.Init(datastoreDir, configFile, create)
 	fmt.Println("Root node UUID:", uuid)

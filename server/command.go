@@ -23,6 +23,9 @@ All of the commands above can include optional settings of the form:
 	uuid=3efa87       (Specifies the image version within that datastore.)
 
 %s
+
+Use "<data type name> help" to get data type-specific help.
+
 For further information, use a web browser to visit the server for this
 datastore:  
 

@@ -146,8 +146,8 @@ func (datatype *Datatype) ServerAdd(versionService *datastore.VersionService,
 				BytesPerVoxel: BytesPerVoxel,
 				Data:          grayImage.Pix,
 			}}
-			var addReply command.Packet
-			err = datatype.Add(versionService, &imagePacket, &addReply)
+			err = datatype.ProcessBlocks(versionService, datastore.PutOp,
+				&(imagePacket.Subvolume))
 			if err == nil {
 				numSuccessful++
 			} else {
@@ -163,11 +163,11 @@ func (datatype *Datatype) ServerAdd(versionService *datastore.VersionService,
 	return nil
 }
 
-// Add stores a single image volume into the datastore.
-func (datatype *Datatype) Add(vs *datastore.VersionService,
-	input, reply *command.Packet) error {
+// ProcessBlocks processes all the blocks pertinent to a single image subvolume
+func (datatype *Datatype) ProcessBlocks(vs *datastore.VersionService,
+	op datastore.OpType, subvol *dvid.Subvolume) error {
 
-	log.Println("grayscale8.Add(): Processing ", input)
+	log.Printf("grayscale8.ProcessBlocks(OpType %d): %s\n", int(op), subvol)
 
 	// Translate UUID index into bytes
 	uuidBytes := vs.UuidBytes()
@@ -186,8 +186,8 @@ func (datatype *Datatype) Add(vs *datastore.VersionService,
 	}
 
 	// Iterate through all blocks traversed by this input data.
-	startVoxel := input.Offset
-	endVoxel := startVoxel.Add(input.Size)
+	startVoxel := subvol.Offset
+	endVoxel := startVoxel.Add(subvol.Size)
 
 	startBlockCoord := vs.BlockCoord(startVoxel)
 	endBlockCoord := vs.BlockCoord(endVoxel)
@@ -198,10 +198,11 @@ func (datatype *Datatype) Add(vs *datastore.VersionService,
 				spatialIndex := vs.SpatialIndex(blockCoord)
 				blockKey := datastore.BlockKey(uuidBytes, []byte(spatialIndex),
 					byte(datatypeIndex), datatype.IsolateData)
-				vs.WriteBlock(&datastore.BlockRequest{
-					blockCoord,
-					blockKey,
-					&input.Subvolume,
+				vs.ProcessBlock(&datastore.BlockRequest{
+					Op:       op,
+					Coord:    blockCoord,
+					BlockKey: blockKey,
+					Subvol:   subvol,
 				})
 			}
 		}
