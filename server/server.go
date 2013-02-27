@@ -6,13 +6,22 @@ import (
 	"net"
 	"net/http"
 	"net/rpc"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
+	"github.com/janelia-flyem/dvid/dvid"
 )
 
+// The default URL of the DVID web server
 const DefaultWebAddress = "localhost:4000"
+
+// The default RPC address of the DVID RPC server
 const DefaultRpcAddress = "localhost:6000"
+
+// The name of the server error log, stored in the datastore directory.
+const ErrorLogFilename = "dvid-errors.log"
 
 // runningService is a global variable that holds the currently running
 // datastore service.  One DVID process can handle only one open DVID
@@ -49,6 +58,14 @@ func Serve(datastoreDir, webAddress, rpcAddress string) (err error) {
 		log.Fatalln(err.Error())
 	}
 
+	// Register an error logger that appends to a file in this datastore directory.
+	errorLog := filepath.Join(datastoreDir, ErrorLogFilename)
+	file, err := os.OpenFile(errorLog, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Fatalf("Unable to open error logging file (%s): %s\n", errorLog, err.Error())
+	}
+	dvid.SetErrorLoggingFile(file)
+
 	// Make sure we can support the datastore's types with our current DVID executable
 	log.Println("Verifying datastore's supported types were compiled into DVID...")
 	err = runningService.VerifyCompiledTypes()
@@ -78,7 +95,7 @@ func (service *Service) ServeHttp(address string) {
 		address = DefaultWebAddress
 	}
 	service.WebAddress = address
-	log.Printf("Web server listening at %s ...\n", address)
+	dvid.Log(dvid.Debug, "Web server listening at %s ...\n", address)
 
 	src := &http.Server{
 		Addr:        address,
@@ -97,7 +114,7 @@ func (service *Service) ServeRpc(address string) error {
 		address = DefaultRpcAddress
 	}
 	service.RpcAddress = address
-	log.Printf("Rpc server listening at %s ...\n", address)
+	dvid.Log(dvid.Debug, "Rpc server listening at %s ...\n", address)
 
 	c := new(RpcConnection)
 	rpc.Register(c)

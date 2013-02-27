@@ -6,6 +6,7 @@ import (
 
 	"github.com/janelia-flyem/dvid/command"
 	"github.com/janelia-flyem/dvid/datastore"
+	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/terminal"
 
@@ -16,6 +17,9 @@ import (
 var showHelp bool
 var showHelp2 bool
 var showTypes bool
+
+var runDebug bool
+var runBenchmark bool
 
 const helpMessage = `
 dvid is a distributed, versioned image datastore
@@ -38,10 +42,20 @@ func init() {
 	flag.BoolVar(&showHelp, "h", false, "Show help message")
 	flag.BoolVar(&showHelp2, "help", false, "Show help message")
 	flag.BoolVar(&showTypes, "types", false, "Show compiled DVID data types")
+
+	flag.BoolVar(&runDebug, "debug", false, "Run in debug mode.  Verbose.")
+	flag.BoolVar(&runBenchmark, "benchmark", false, "Run in benchmarking mode.")
 }
 
 func main() {
 	flag.Parse()
+
+	if runDebug {
+		dvid.Mode = dvid.Debug
+	}
+	if runBenchmark {
+		dvid.Mode = dvid.Benchmark
+	}
 
 	if showTypes {
 		fmt.Println(datastore.CompiledTypeChart())

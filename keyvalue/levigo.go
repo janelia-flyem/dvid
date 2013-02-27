@@ -4,7 +4,8 @@ package keyvalue
 
 import (
 	"fmt"
-	"log"
+
+	"github.com/janelia-flyem/dvid/dvid"
 
 	"github.com/jmhodges/levigo"
 )
@@ -192,7 +193,7 @@ func NewKeyValueOptions() (opts KeyValueOptions) {
 // the next time the database is opened.
 func (opts *goKeyValueOptions) SetWriteBufferSize(nBytes int) {
 	if nBytes != opts.writeBufferSize {
-		log.Printf("Write buffer set to %d bytes.\n", nBytes)
+		dvid.Log(dvid.Debug, "Write buffer set to %d bytes.\n", nBytes)
 		opts.Options.SetWriteBufferSize(nBytes)
 		opts.writeBufferSize = nBytes
 	}
@@ -225,7 +226,7 @@ func (opts *goKeyValueOptions) GetMaxOpenFiles() (nFiles int) {
 // compression is enabled.  This parameter can be changed dynamically.
 func (opts *goKeyValueOptions) SetBlockSize(nBytes int) {
 	if nBytes != opts.blockSize {
-		log.Printf("Block size set to %d bytes.\n", nBytes)
+		dvid.Log(dvid.Debug, "Block size set to %d bytes.\n", nBytes)
 		opts.Options.SetBlockSize(nBytes)
 		opts.blockSize = nBytes
 	}
@@ -243,7 +244,7 @@ func (opts *goKeyValueOptions) SetLRUCacheSize(nBytes int) {
 		if opts.cache != nil {
 			opts.cache.Close()
 		}
-		log.Printf("LRU cache size set to %d bytes.\n", nBytes)
+		dvid.Log(dvid.Debug, "LRU cache size set to %d bytes.\n", nBytes)
 		opts.cache = levigo.NewLRUCache(nBytes)
 		opts.nLRUCacheBytes = nBytes
 		opts.Options.SetCache(opts.cache)

@@ -74,14 +74,14 @@ func Init(directory string, configFile string, create bool) (uuid UUID) {
 	}
 	config.Datatypes = CompiledTypesList()
 
-	log.Println("Initializing datastore at", directory)
-	log.Printf("Volume size: %d x %d x %d\n",
+	fmt.Println("\nInitializing datastore at", directory)
+	fmt.Printf("Volume size: %d x %d x %d\n",
 		config.VolumeMax[0], config.VolumeMax[1], config.VolumeMax[2])
-	log.Printf("Voxel resolution: %4.1f x %4.1f x %4.1f %s\n",
+	fmt.Printf("Voxel resolution: %4.1f x %4.1f x %4.1f %s\n",
 		config.VoxelRes[0], config.VoxelRes[1], config.VoxelRes[2], config.VoxelResUnits)
-	log.Printf("Block size: %d x %d x %d voxels\n",
+	fmt.Printf("Block size: %d x %d x %d voxels\n",
 		config.BlockMax[0], config.BlockMax[1], config.BlockMax[2])
-	log.Println(config.SupportedTypeChart())
+	fmt.Println(config.SupportedTypeChart())
 
 	// Verify the data types
 	err := config.VerifyCompiledTypes()
@@ -287,7 +287,7 @@ func (vs *VersionService) UuidBytes() []byte {
 	buf := new(bytes.Buffer)
 	err := binary.Write(buf, binary.LittleEndian, vs.uuidNum)
 	if err != nil {
-		log.Printf("ERROR encoding binary uuid %d: %s", vs.uuidNum, err.Error())
+		log.Fatalf("ERROR encoding binary uuid %d: %s", vs.uuidNum, err.Error())
 	}
 	return buf.Bytes()
 }

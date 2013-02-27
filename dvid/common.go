@@ -7,6 +7,8 @@ package dvid
 import (
 	"bufio"
 	"fmt"
+	"io"
+	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -18,6 +20,52 @@ const (
 	Giga = 1 << 30
 	Tera = 1 << 40
 )
+
+type ModeFlag uint
+
+const (
+	Debug ModeFlag = iota
+	Benchmark
+)
+
+// Mode is a global variable set to the run modes of this DVID process
+var Mode ModeFlag
+
+// Log prints a message via log.Print() depending on the Mode of DVID
+func Log(modes ModeFlag, p ...interface{}) {
+	if ((modes&Debug) != 0 && Mode == Debug) || ((modes&Benchmark) != 0 && Mode == Benchmark) {
+		log.Print(p...)
+	}
+}
+
+// Fmt prints a message via fmt.Print() depending on the Mode of DVID
+func Fmt(modes ModeFlag, p ...interface{}) {
+	if ((modes&Debug) != 0 && Mode == Debug) || ((modes&Benchmark) != 0 && Mode == Benchmark) {
+		fmt.Print(p...)
+	}
+}
+
+// Error prints a message to the Error Log File, which is useful to mark potential issues
+// but not ones that should crash the DVID server.  Basically, you should opt to crash
+// the server if a mistake can propagate and corrupt data.  If not, you can use this function.
+// Note that Error logging to a file only occurs if DVID is running as a server, otherwise
+// this function will print to stdout.
+func Error(p ...interface{}) {
+	if errorLogger == nil {
+		log.Print(p...)
+	} else {
+		errorLogger.Print(p...)
+	}
+}
+
+// SetErrorLoggingFile creates an error logger to the given file for this DVID process.
+func SetErrorLoggingFile(out io.Writer) {
+	errorLogger = log.New(out, "", log.Ldate|log.Ltime|log.Llongfile)
+	errorLogger.Println("Starting error logging for DVID")
+}
+
+// The global, unexported error logger for DVID
+var errorLogger *log.Logger
 
 // Notes:
 //   Whenever the units of a type are different, e.g., voxel coordinate versus

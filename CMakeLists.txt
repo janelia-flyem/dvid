@@ -51,31 +51,31 @@ else ()
     include (golang)
 
     set (GO_FLAGS   CGO_CFLAGS="-I${BUILDEM_INCLUDE_DIR}";CGO_LDFLAGS="-L${BUILDEM_LIB_DIR};-lsnappy")
-    add_custom_target (snappy-go ALL
+    add_custom_target (snappy-go
         ${BUILDEM_ENV_STRING} ${GO_FLAGS} go get code.google.com/p/snappy-go/snappy
         DEPENDS     ${golang_NAME} ${snappy_NAME}
         COMMENT     "Added Go bindings to snappy [code.google.com/p/snappy-go/snappy]")
     
-    add_custom_target (levigo ALL
+    add_custom_target (levigo
         ${BUILDEM_ENV_STRING} ${GO_FLAGS} go get github.com/jmhodges/levigo
         DEPENDS     ${golang_NAME} ${leveldb_NAME}
         COMMENT     "Added Go bindings to leveldb [github.com/jmhodges/levigo]")
     
-    add_custom_target (goleveldb ALL
+    add_custom_target (goleveldb
         ${BUILDEM_ENV_STRING} go get github.com/syndtr/goleveldb/leveldb
         DEPENDS     ${golang_NAME} snappy-go
         COMMENT     "Added pure Go implementation of leveldb")
     
     # Build DVID with C++ leveldb library support
-    add_custom_target (dvid ALL
-        ${BUILDEM_ENV_STRING} ${GO_ENV} go install -v dvid.go 
+    add_custom_target (dvid
+        ${BUILDEM_ENV_STRING} ${GO_ENV} ${GO_FLAGS} go build -o ${BUILDEM_BIN_DIR}/dvid -a -v dvid.go 
         WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
         DEPENDS     ${golang_NAME} ${leveldb_NAME} levigo
         COMMENT     "Compiled and installed dvid executable.")
 
     # Build DVID with pure Go leveldb implementation
-    add_custom_target (dvid-go ALL
-        ${BUILDEM_ENV_STRING} ${GO_ENV} go install -v -tags 'purego' dvid.go 
+    add_custom_target (dvid-go
+        ${BUILDEM_ENV_STRING} ${GO_ENV} go build -o ${BUILDEM_BIN_DIR}/dvid-go -a -v -tags 'purego' dvid.go 
         WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
         DEPENDS     ${golang_NAME} goleveldb
         COMMENT     "Compiled and installed dvid pure Go executable, dvid-go.")

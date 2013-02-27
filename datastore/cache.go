@@ -6,8 +6,6 @@
 package datastore
 
 import (
-	"log"
-
 	"github.com/janelia-flyem/dvid/dvid"
 )
 
@@ -96,7 +94,7 @@ func blockHandler(channelNum int) {
 
 		dataBytes := vs.BlockNumVoxels() * subvol.BytesPerVoxel
 		if dataBytes != len(data) {
-			log.Printf("ERROR blockHandler(%d): retrieved block has %d bytes not %d bytes\n",
+			dvid.Error("ERROR blockHandler(%d): retrieved block has %d bytes not %d bytes\n",
 				channelNum, len(data), dataBytes)
 			continue
 		}
@@ -143,7 +141,7 @@ func blockHandler(channelNum int) {
 			// PUT the block
 			err = vs.kvdb.putBytes(req.br.BlockKey, data)
 			if err != nil {
-				log.Printf("ERROR blockHandler(%d): unable to write block!\n", channelNum)
+				dvid.Error("ERROR blockHandler(%d): unable to write block!\n", channelNum)
 			}
 		}
 

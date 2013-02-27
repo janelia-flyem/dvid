@@ -5,6 +5,7 @@ import (
 
 	"github.com/janelia-flyem/dvid/command"
 	"github.com/janelia-flyem/dvid/datastore"
+	"github.com/janelia-flyem/dvid/dvid"
 )
 
 const helpMessage = `
@@ -38,7 +39,7 @@ type RpcConnection struct{}
 // Do acts as a switchboard for remote command execution
 func (c *RpcConnection) Do(cmd *Command, reply *command.Packet) error {
 	if reply == nil {
-		fmt.Println("reply is nil coming in!")
+		dvid.Log(dvid.Debug, "reply is nil coming in!\n")
 		return nil
 	}
 	if len(cmd.Args) == 0 {
@@ -80,12 +81,12 @@ type Command struct {
 // "uuid=..." argument.  Note that this UUID index is datastore-specific.
 func (cmd *Command) GetUuidNum(dataService *datastore.Service) (uuidNum int16, err error) {
 
-	fmt.Println("GetUuid() cmd =", cmd)
+	dvid.Log(dvid.Debug, "GetUuid() cmd = %s\n", cmd)
 	uuidString, found := cmd.GetSetting(command.KeyUuid)
-	fmt.Println("  uuidstring =", uuidString, found)
+	dvid.Log(dvid.Debug, "  uuidstring = %s; found = %s\n", uuidString, found)
 	if found {
 		uuidNum, err = dataService.GetUuidFromString(uuidString)
-		fmt.Println("  after found, uuidNum=", uuidNum, err)
+		dvid.Log(dvid.Debug, "  after found, uuidNum = %s; err = %s\n", uuidNum, err)
 	}
 	return
 }

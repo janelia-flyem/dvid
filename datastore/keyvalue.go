@@ -14,7 +14,7 @@ import (
 	_ "log"
 	"reflect"
 
-	_ "github.com/janelia-flyem/dvid/dvid"
+	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/keyvalue"
 )
 
@@ -86,7 +86,10 @@ func (db kvdb) putValue(key Key, object interface{}) error {
 	enc := gob.NewEncoder(&buffer)
 	err := enc.Encode(object)
 	if err != nil {
-		return fmt.Errorf("Error serializing %s: %s", reflect.TypeOf(object), err.Error())
+		errorText := fmt.Sprintf("Error serializing %s: %s",
+			reflect.TypeOf(object), err.Error())
+		dvid.Error(errorText)
+		return fmt.Errorf(errorText)
 	}
 	return db.putBytes(key, buffer.Bytes())
 }
@@ -108,7 +111,10 @@ func (db kvdb) getValue(key Key, object interface{}) error {
 	dec := gob.NewDecoder(buffer)
 	err = dec.Decode(object)
 	if err != nil {
-		return fmt.Errorf("Error deserializing %s: %s", reflect.TypeOf(object), err.Error())
+		errorText := fmt.Sprintf("Error deserializing %s: %s",
+			reflect.TypeOf(object), err.Error())
+		dvid.Error(errorText)
+		return fmt.Errorf(errorText)
 	}
 	return nil
 }
