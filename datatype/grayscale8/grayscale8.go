@@ -3,10 +3,8 @@ package grayscale8
 import (
 	"fmt"
 	"image"
-	"log"
 	"reflect"
-	_ "strconv"
-	_ "strings"
+	"sync"
 
 	"github.com/janelia-flyem/dvid/command"
 	"github.com/janelia-flyem/dvid/datastore"
@@ -46,9 +44,19 @@ const helpMessage = `
 // Grayscale8 has one byte/voxel
 const BytesPerVoxel = 1
 
+// Grayscale8 Datatype simply embeds the datastore's Datatype to create a unique type
+// (grayscale8.Datatype) with grayscale functions.
 type Datatype struct {
 	datastore.Datatype
 }
+
+// BlockProcessor is a grayscale8 mutex to group all block requests for a particular
+// subvolume.  This lock is necessary to prevent concurrent subvolume requests from
+// interleaving block-level requests, possibly allowing returned subvolumes to show
+// partial results.  For example, if we do concurrent PUT and GET of the same
+// subvolume, some of the blocks processed during the GET would pick up partial PUT
+// block processing.  See processBlocks() function in code.
+var BlockProcessor sync.Mutex
 
 func init() {
 	datastore.RegisterDatatype(&Datatype{datastore.Datatype{
@@ -118,16 +126,15 @@ func (datatype *Datatype) ServerAdd(versionService *datastore.VersionService,
 		planeStr = "xy"
 	}
 
-	log.Printf("")
-	log.Println("plane:", planeStr)
-	log.Println("origin:", coord)
+	dvid.Log(dvid.Debug, "plane: %s\n", planeStr)
+	dvid.Log(dvid.Debug, "origin: %s\n", coord)
 	if len(filenames) >= 1 {
-		fmt.Printf("filenames: %s [%d more]\n", filenames[0], len(filenames)-1)
+		dvid.Log(dvid.Debug, "filenames: %s [%d more]\n", filenames[0], len(filenames)-1)
 	}
 
 	// Load each image and use "Add" function that would normally be called when
 	// adding []byte after unpacking from image file.
-	// TODO -- test parallel version by packaging below as Goroutine.
+	var wg sync.WaitGroup
 	numSuccessful := 0
 	var lastErr error
 	for _, filename := range filenames {
@@ -146,8 +153,8 @@ func (datatype *Datatype) ServerAdd(versionService *datastore.VersionService,
 				BytesPerVoxel: BytesPerVoxel,
 				Data:          grayImage.Pix,
 			}}
-			err = datatype.ProcessBlocks(versionService, datastore.PutOp,
-				&(imagePacket.Subvolume))
+			err = datatype.processBlocks(versionService, datastore.PutOp,
+				&(imagePacket.Subvolume), &wg)
 			if err == nil {
 				numSuccessful++
 			} else {
@@ -160,14 +167,28 @@ func (datatype *Datatype) ServerAdd(versionService *datastore.VersionService,
 		return fmt.Errorf("Error: %d of %d images successfully added [%s]\n",
 			numSuccessful, len(filenames), lastErr.Error())
 	}
+	go monitorCompletion(&wg, "server-add processing completed")
 	return nil
 }
 
-// ProcessBlocks processes all the blocks pertinent to a single image subvolume
-func (datatype *Datatype) ProcessBlocks(vs *datastore.VersionService,
-	op datastore.OpType, subvol *dvid.Subvolume) error {
+func monitorCompletion(wg *sync.WaitGroup, message string) {
+	wg.Wait()
+	fmt.Println(message)
+}
 
-	log.Printf("grayscale8.ProcessBlocks(OpType %d): %s\n", int(op), subvol)
+// TODO --
+func (datatype *Datatype) GetVolume(vs *datastore.VersionService,
+	subvol *dvid.Subvolume) error {
+
+	//datatype.processBlocks(vs, datastore.GetOp, subvol, nil)
+	return nil
+}
+
+// processBlocks processes all the blocks pertinent to a single image subvolume
+func (datatype *Datatype) processBlocks(vs *datastore.VersionService,
+	op datastore.OpType, subvol *dvid.Subvolume, wg *sync.WaitGroup) error {
+
+	dvid.Log(dvid.Debug, "grayscale8.ProcessBlocks(OpType %d): %s\n", int(op), subvol)
 
 	// Translate UUID index into bytes
 	uuidBytes := vs.UuidBytes()
@@ -186,11 +207,15 @@ func (datatype *Datatype) ProcessBlocks(vs *datastore.VersionService,
 	}
 
 	// Iterate through all blocks traversed by this input data.
+	// Do this under a package-wide block.
 	startVoxel := subvol.Offset
 	endVoxel := startVoxel.Add(subvol.Size)
 
 	startBlockCoord := vs.BlockCoord(startVoxel)
 	endBlockCoord := vs.BlockCoord(endVoxel)
+
+	BlockProcessor.Lock() // ----- Group all ProcessBlock() for a goroutine
+
 	for z := startBlockCoord[2]; z <= endBlockCoord[2]; z++ {
 		for y := startBlockCoord[1]; y <= endBlockCoord[1]; y++ {
 			for x := startBlockCoord[0]; x <= endBlockCoord[0]; x++ {
@@ -198,14 +223,17 @@ func (datatype *Datatype) ProcessBlocks(vs *datastore.VersionService,
 				spatialIndex := vs.SpatialIndex(blockCoord)
 				blockKey := datastore.BlockKey(uuidBytes, []byte(spatialIndex),
 					byte(datatypeIndex), datatype.IsolateData)
-				vs.ProcessBlock(&datastore.BlockRequest{
-					Op:       op,
-					Coord:    blockCoord,
-					BlockKey: blockKey,
-					Subvol:   subvol,
-				})
+				if wg != nil {
+					wg.Add(1)
+				}
+				blockRequest := datastore.NewBlockRequest(op, blockCoord,
+					blockKey, subvol, wg)
+				vs.ProcessBlock(blockRequest)
 			}
 		}
 	}
+
+	BlockProcessor.Unlock()
+
 	return nil
 }

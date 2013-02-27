@@ -6,6 +6,8 @@
 package datastore
 
 import (
+	"sync"
+
 	"github.com/janelia-flyem/dvid/dvid"
 )
 
@@ -28,12 +30,30 @@ const (
 
 type OpResult string
 
-// BlockRequest encapsulates the essential data needed to write blocks to the datastore.
+// BlockRequest encapsulates the essential data needed to process blocks in the datastore.
+// Blocks are the units of Map/Reduce operations on a DVID volume.
+// Each block handler receives BlockRequests through a channel.
 type BlockRequest struct {
-	Op       OpType
-	Coord    dvid.BlockCoord
-	BlockKey Key
-	Subvol   *dvid.Subvolume
+	op       OpType
+	coord    dvid.BlockCoord
+	blockKey Key
+	subvol   *dvid.Subvolume
+
+	// Let's us notify requestor when all blocks are done.
+	wg *sync.WaitGroup
+}
+
+// NewBlockRequest manufactures a BlockRequest for use by datastore block processors.
+func NewBlockRequest(op OpType, coord dvid.BlockCoord, blockKey Key, subvol *dvid.Subvolume,
+	wg *sync.WaitGroup) *BlockRequest {
+
+	return &BlockRequest{
+		op:       op,
+		coord:    coord,
+		blockKey: blockKey,
+		subvol:   subvol,
+		wg:       wg,
+	}
 }
 
 type request struct {
@@ -41,11 +61,12 @@ type request struct {
 	br *BlockRequest
 }
 
-const NumBlockHandlers = 10
+// NumBlockHandlers sets the number of processors we have for our "map" operation.
+const NumBlockHandlers = 1
 
 // Number of block write requests that can be buffered on each block handler
 // before sender is blocked.
-const BlockHandlerBufferSize = 1000
+const BlockHandlerBufferSize = 100000
 
 type BlockChannels []chan request
 
@@ -59,13 +80,15 @@ func init() {
 	}
 }
 
+var NumSent, NumReceived int
+
 // WriteBlock accepts all requests to process blocks using data from a given subvolume,
 // and sends the request to a block handler goroutine.
 func (vs *VersionService) ProcessBlock(br *BlockRequest) error {
 	// Try to spread block coordinates out among block handlers to get most out of
 	// our concurrent processing.  However, we may want a handler to receive similar
 	// spatial indices and be better able to batch them for sequential writes.
-	channelN := (br.Coord[0]*2 + br.Coord[1]*3 + br.Coord[2]*5) % NumBlockHandlers
+	channelN := (br.coord[0]*2 + br.coord[1]*3 + br.coord[2]*5) % NumBlockHandlers
 
 	// Package the write block data and send it down the chosen channel
 	blockChannels[channelN] <- request{vs, br}
@@ -78,19 +101,16 @@ func blockHandler(channelNum int) {
 	for {
 		req := <-blockChannels[channelNum]
 		vs := req.vs
-		si := vs.SpatialIndex(req.br.Coord)
-		subvol := req.br.Subvol
+		si := vs.SpatialIndex(req.br.coord)
+		subvol := req.br.subvol
 
-		//log.Printf("blockHandler(%d) handling block coord %s\n", channelNum,
-		//	req.br.Coord)
-
-		// Get the block data
+		// Get the block data.  If we have error, like key not present,
+		// just use empty values for block.
 		data := make([]byte, vs.BlockNumVoxels(), vs.BlockNumVoxels())
-		blockBytes, err := vs.kvdb.getBytes(req.br.BlockKey)
+		blockBytes, err := vs.kvdb.getBytes(req.br.blockKey)
 		if err == nil {
 			copy(data, blockBytes)
 		}
-		// If we have error, like key not present, we just use empty values for block.
 
 		dataBytes := vs.BlockNumVoxels() * subvol.BytesPerVoxel
 		if dataBytes != len(data) {
@@ -121,7 +141,7 @@ func blockHandler(channelNum int) {
 					i := subvol.VoxelCoordToDataIndex(voxelCoord)
 					b := vs.VoxelCoordToBlockIndex(voxelCoord)
 					bI := b * subvol.BytesPerVoxel // index into block.data
-					switch req.br.Op {
+					switch req.br.op {
 					case GetOp:
 						for n := 0; n < subvol.BytesPerVoxel; n++ {
 							subvol.Data[i+n] = data[bI+n]
@@ -135,14 +155,19 @@ func blockHandler(channelNum int) {
 			}
 		}
 
-		switch req.br.Op {
+		switch req.br.op {
 		case GetOp:
 		case PutOp:
 			// PUT the block
-			err = vs.kvdb.putBytes(req.br.BlockKey, data)
+			err = vs.kvdb.putBytes(req.br.blockKey, data)
 			if err != nil {
 				dvid.Error("ERROR blockHandler(%d): unable to write block!\n", channelNum)
 			}
+		}
+
+		// Notify the requestor that this block is done.
+		if req.br.wg != nil {
+			req.br.wg.Done()
 		}
 
 	} // request loop

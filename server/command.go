@@ -117,7 +117,7 @@ func (cmd *Command) datatypeDo(reply *command.Packet) error {
 		reply.Text = fmt.Sprintf("Could not get uuid from command: %s", cmd)
 		return err
 	}
-	versionService := datastore.MakeVersionService(runningService.Service, uuidNum)
+	versionService := datastore.NewVersionService(runningService.Service, uuidNum)
 	return typeService.Do(versionService, &cmd.Command, &cmd.Packet, reply)
 }
 

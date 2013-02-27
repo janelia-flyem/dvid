@@ -15,7 +15,7 @@ import (
 
 const (
 	// Default size of LRU cache that caches frequently used uncompressed blocks.
-	DefaultCacheSize = 1 * dvid.Giga
+	DefaultCacheSize = 500 * dvid.Mega
 
 	// Default # bits for Bloom Filter.  The filter reduces the number of unnecessary
 	// disk reads needed for Get() calls by a large factor.
@@ -30,17 +30,19 @@ const (
 	// block size specified here corresponds to uncompressed data.  The
 	// actual size of the unit read from disk may be smaller if
 	// compression is enabled.  This parameter can be changed dynamically.
-	DefaultBlockSize = 1 * dvid.Mega
+	DefaultBlockSize = 4 * dvid.Kilo //1 * dvid.Mega
 
 	// Amount of data to build up in memory (backed by an unsorted log
-	// on disk) before converting to a sorted on-disk file.
+	// on disk) before converting to a sorted on-disk file.  Increasing
+	// this value will automatically increase the size of the datastore
+	// compared to the actual stored data.
 	//
 	// Larger values increase performance, especially during bulk loads.
 	// Up to two write buffers may be held in memory at the same time,
 	// so you may wish to adjust this parameter to control memory usage.
 	// Also, a larger write buffer will result in a longer recovery time
 	// the next time the database is opened.
-	DefaultWriteBufferSize = 500 * dvid.Mega
+	DefaultWriteBufferSize = 100 * dvid.Mega //500 * dvid.Mega
 )
 
 type Key []byte

@@ -276,7 +276,8 @@ func (vs *VersionService) UuidNum() int16 {
 	return vs.uuidNum
 }
 
-func MakeVersionService(service *Service, uuidNum int16) *VersionService {
+// NewVersionService packages a Service and a UUID representing a version
+func NewVersionService(service *Service, uuidNum int16) *VersionService {
 	return &VersionService{
 		*service,
 		uuidNum,
@@ -366,7 +367,7 @@ func (service *Service) GetUuidFromString(s string) (uuidNum int16, err error) {
 	numMatches := 0
 	for key, uuidNum := range service.Uuids {
 		hexString := UUID(key).String()
-		fmt.Printf("Checking %s against %s\n", s, hexString)
+		dvid.Fmt(dvid.Debug, "Checking %s against %s\n", s, hexString)
 		if strings.HasPrefix(hexString, s) {
 			numMatches++
 			lastMatch = uuidNum
