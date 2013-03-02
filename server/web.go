@@ -18,7 +18,7 @@ func planeHandler(w http.ResponseWriter, r *http.Request) {
 // Handler for presentation files
 func mainHandler(w http.ResponseWriter, r *http.Request) {
 	filename := filepath.Join(runningService.WebClientPath, r.URL.Path)
-	fmt.Printf("http request: %s -> %s\n", r.URL.Path, filename)
+	dvid.Log(dvid.Debug, "http request: %s -> %s\n", r.URL.Path, filename)
 	http.ServeFile(w, r, filename)
 }
 
