@@ -1,0 +1,3 @@
+[submodule "webclient/leapjs"]
+	path = webclient/leapjs
+	url = git@github.com:leapmotion/leapjs.git

@@ -5,6 +5,7 @@ import (
 	"image"
 	"reflect"
 	"sync"
+	"time"
 
 	"github.com/janelia-flyem/dvid/command"
 	"github.com/janelia-flyem/dvid/datastore"
@@ -67,9 +68,35 @@ func init() {
 	}})
 }
 
-// Return the embedded Datatype if desired
+// BaseDatatype returns the embedded Datatype if desired
 func (datatype *Datatype) BaseDatatype() datastore.Datatype {
 	return datatype.Datatype
+}
+
+// BytesPerVoxel returns the # of bytes per voxel for grayscale8
+func (datatype *Datatype) BytesPerVoxel() int {
+	return BytesPerVoxel
+}
+
+// GetSlice returns an image.Image for grayscale8, which is necessarily
+// a single slice.
+func (datatype *Datatype) GetSlice(v *dvid.Subvolume, planeStr string) image.Image {
+	var r image.Rectangle
+	switch planeStr {
+	case "xy":
+		r = image.Rect(0, 0, int(v.Size[0]), int(v.Size[1]))
+	case "xz":
+		r = image.Rect(0, 0, int(v.Size[0]), int(v.Size[2]))
+	case "yz":
+		r = image.Rect(0, 0, int(v.Size[1]), int(v.Size[2]))
+	default:
+		fmt.Println("Bad plane:", planeStr)
+		return nil
+	}
+	sliceBytes := r.Dx() * r.Dy() * BytesPerVoxel
+	data := make([]byte, sliceBytes, sliceBytes)
+	copy(data, v.Data)
+	return &image.Gray{data, 1 * r.Dx(), r}
 }
 
 // Do acts as a switchboard for grayscale8 commands
@@ -117,6 +144,9 @@ func (datatype *Datatype) ServerAdd(versionService *datastore.VersionService,
 
 	var originStr command.CoordStr
 	filenames := cmd.SetDatatypeArgs(&originStr.string)
+	if len(filenames) == 0 {
+		return fmt.Errorf("Need to include at least one file to add: %s", cmd)
+	}
 	coord, err := originStr.GetCoord()
 	if err != nil {
 		return fmt.Errorf("Badly formatted origin (should be 'x,y,z'): %s", cmd)
@@ -126,11 +156,17 @@ func (datatype *Datatype) ServerAdd(versionService *datastore.VersionService,
 		planeStr = "xy"
 	}
 
+	startTime := time.Now()
+
 	dvid.Log(dvid.Debug, "plane: %s\n", planeStr)
 	dvid.Log(dvid.Debug, "origin: %s\n", coord)
-	if len(filenames) >= 1 {
-		dvid.Log(dvid.Debug, "filenames: %s [%d more]\n", filenames[0], len(filenames)-1)
+	var addedFiles string
+	if len(filenames) == 1 {
+		addedFiles = filenames[0]
+	} else {
+		addedFiles = fmt.Sprintf("filenames: %s [%d more]", filenames[0], len(filenames)-1)
 	}
+	dvid.Log(dvid.Debug, addedFiles+"\n")
 
 	// Load each image and use "Add" function that would normally be called when
 	// adding []byte after unpacking from image file.
@@ -167,20 +203,18 @@ func (datatype *Datatype) ServerAdd(versionService *datastore.VersionService,
 		return fmt.Errorf("Error: %d of %d images successfully added [%s]\n",
 			numSuccessful, len(filenames), lastErr.Error())
 	}
-	go monitorCompletion(&wg, "server-add processing completed")
+	go dvid.WaitToComplete(&wg, startTime, "RPC server-add (%s) completed", addedFiles)
 	return nil
 }
 
-func monitorCompletion(wg *sync.WaitGroup, message string) {
-	wg.Wait()
-	fmt.Println(message)
-}
-
-// TODO --
+// GetVolume breaks a subvolume GET into blocks, processes the blocks using
+// multiple handler, and then returns when all blocks have been processed.
 func (datatype *Datatype) GetVolume(vs *datastore.VersionService,
 	subvol *dvid.Subvolume) error {
 
-	//datatype.processBlocks(vs, datastore.GetOp, subvol, nil)
+	var wg sync.WaitGroup
+	datatype.processBlocks(vs, datastore.GetOp, subvol, &wg)
+	dvid.WaitToComplete(&wg, time.Now(), "GET subvolume (%s) completed", subvol)
 	return nil
 }
 

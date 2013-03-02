@@ -18,7 +18,7 @@ import (
 	_ "image/png"
 
 	"github.com/janelia-flyem/dvid/command"
-	_ "github.com/janelia-flyem/dvid/dvid"
+	"github.com/janelia-flyem/dvid/dvid"
 )
 
 // This message is used for all data types to explain options.
@@ -61,11 +61,16 @@ type Datatype struct {
 type TypeService interface {
 	BaseDatatype() Datatype
 
+	BytesPerVoxel() int
+
 	// Help returns a string explaining how to use a data type's service
 	Help(textHelp string) string
 
 	// Do implements commands specific to a data type
 	Do(vs *VersionService, cmd *command.Command, input, reply *command.Packet) error
+
+	GetVolume(vs *VersionService, subvol *dvid.Subvolume) error
+	GetSlice(subvol *dvid.Subvolume, planeStr string) image.Image
 
 	// Returns standard error response for unknown commands
 	UnknownCommand(cmd *command.Command) error
@@ -194,5 +199,9 @@ func LoadImage(filename string) (img image.Image, format string, err error) {
 		return
 	}
 	img, format, err = image.Decode(file)
+	if err != nil {
+		return
+	}
+	err = file.Close()
 	return
 }

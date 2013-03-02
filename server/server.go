@@ -12,6 +12,8 @@ import (
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
+
+	"bitbucket.org/tebeka/nrsc"
 )
 
 // The default URL of the DVID web server
@@ -26,7 +28,10 @@ const ErrorLogFilename = "dvid-errors.log"
 // runningService is a global variable that holds the currently running
 // datastore service.  One DVID process can handle only one open DVID
 // datastore.  (Leveldb is an embedded library with one process access.)
-var runningService = Service{nil, DefaultWebAddress, DefaultRpcAddress}
+var runningService = Service{
+	WebAddress: DefaultWebAddress,
+	RpcAddress: DefaultRpcAddress,
+}
 
 // Service holds information on the servers attached to a DVID datastore.
 type Service struct {
@@ -36,13 +41,16 @@ type Service struct {
 	// The address of the web server
 	WebAddress string
 
+	// The path to the DVID web client
+	WebClientPath string
+
 	// The address of the rpc server
 	RpcAddress string
 }
 
 // Serve opens a datastore then creates both web and rpc servers for the datastore.
 // This function must be called for DataService() to be non-nil.
-func Serve(datastoreDir, webAddress, rpcAddress string) (err error) {
+func Serve(datastoreDir, webAddress, webClientDir, rpcAddress string) (err error) {
 
 	// Make sure we don't already have an open datastore.
 	if runningService.Service != nil {
@@ -74,7 +82,7 @@ func Serve(datastoreDir, webAddress, rpcAddress string) (err error) {
 	}
 
 	// Launch the web server
-	go runningService.ServeHttp(webAddress)
+	go runningService.ServeHttp(webAddress, webClientDir)
 
 	// Launch the rpc server
 	err = runningService.ServeRpc(rpcAddress)
@@ -89,12 +97,13 @@ func Serve(datastoreDir, webAddress, rpcAddress string) (err error) {
 // connections hog goroutines for more than an hour.
 // See for discussion: 
 // http://stackoverflow.com/questions/10971800/golang-http-server-leaving-open-goroutines
-func (service *Service) ServeHttp(address string) {
+func (service *Service) ServeHttp(address, clientDir string) {
 
 	if address == "" {
 		address = DefaultWebAddress
 	}
 	service.WebAddress = address
+	service.WebClientPath = clientDir
 	dvid.Log(dvid.Debug, "Web server listening at %s ...\n", address)
 
 	src := &http.Server{
@@ -102,8 +111,24 @@ func (service *Service) ServeHttp(address string) {
 		ReadTimeout: 1 * time.Hour,
 	}
 
-	http.HandleFunc("/", mainHandler)
 	http.HandleFunc("/api/", apiHandler)
+	if clientDir == "" {
+		err := nrsc.Handle("/")
+		if err != nil {
+			fmt.Println("ERROR with nrsc trying to serve web pages:", err.Error())
+			fmt.Println("\nPlease use the full path to the DVID executable",
+				"if you plan on using the embedded web pages.\n",
+				"Otherwise, you can use the -webclient=PATH to explicitly specify",
+				"the location of your web client pages.\n")
+			os.Exit(1)
+
+		} else {
+			dvid.Log(dvid.Debug, "Serving web pages through embedded data in exe!\n")
+		}
+	} else {
+		http.HandleFunc("/", mainHandler)
+		dvid.Log(dvid.Debug, "Serving web pages from %s\n", clientDir)
+	}
 	src.ListenAndServe()
 }
 

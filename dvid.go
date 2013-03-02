@@ -21,6 +21,8 @@ var showTypes bool
 var runDebug bool
 var runBenchmark bool
 
+var clientDir string
+
 const helpMessage = `
 dvid is a distributed, versioned image datastore
 
@@ -45,6 +47,9 @@ func init() {
 
 	flag.BoolVar(&runDebug, "debug", false, "Run in debug mode.  Verbose.")
 	flag.BoolVar(&runBenchmark, "benchmark", false, "Run in benchmarking mode.")
+
+	flag.StringVar(&clientDir, "webclient", "",
+		"Path to web client directory.  Leave unset for default pages.")
 }
 
 func main() {
@@ -72,6 +77,8 @@ func main() {
 	} else if flag.NArg() == 0 {
 		terminal.Shell()
 	} else {
+		dvid.Fmt(dvid.Debug, "Running in Debug mode\n")
+		dvid.Fmt(dvid.Benchmark, "Running in Benchmark mode\n")
 		command := &command.Command{Args: flag.Args()}
 		if err := DoCommand(command); err != nil {
 			fmt.Println(err.Error())
@@ -119,7 +126,7 @@ func DoServe(cmd *command.Command) error {
 	rpcAddress, _ := cmd.GetSetting(command.KeyRpc)
 	datastoreDir := cmd.GetDatastoreDir()
 
-	if err := server.Serve(datastoreDir, webAddress, rpcAddress); err != nil {
+	if err := server.Serve(datastoreDir, webAddress, clientDir, rpcAddress); err != nil {
 		return err
 	}
 	return nil

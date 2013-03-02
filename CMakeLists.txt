@@ -56,6 +56,11 @@ else ()
         DEPENDS     ${golang_NAME} ${snappy_NAME}
         COMMENT     "Added Go bindings to snappy [code.google.com/p/snappy-go/snappy]")
     
+    add_custom_target (nrsc
+        ${BUILDEM_ENV_STRING} go get bitbucket.org/tebeka/nrsc
+        DEPENDS     ${golang_NAME}
+        COMMENT     "Added nrsc tool for adding zip file to go executable")
+    
     add_custom_target (levigo
         ${BUILDEM_ENV_STRING} ${GO_FLAGS} go get github.com/jmhodges/levigo
         DEPENDS     ${golang_NAME} ${leveldb_NAME}
@@ -67,18 +72,30 @@ else ()
         COMMENT     "Added pure Go implementation of leveldb")
     
     # Build DVID with C++ leveldb library support
-    add_custom_target (dvid
+    add_custom_target (dvid-exe
         ${BUILDEM_ENV_STRING} ${GO_ENV} ${GO_FLAGS} go build -o ${BUILDEM_BIN_DIR}/dvid -v dvid.go 
         WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
-        DEPENDS     ${golang_NAME} ${leveldb_NAME} levigo
+        DEPENDS     ${golang_NAME} ${leveldb_NAME} nrsc levigo
         COMMENT     "Compiled and installed dvid executable.")
 
     # Build DVID with pure Go leveldb implementation
-    add_custom_target (dvid-go
+    add_custom_target (dvid-go-exe
         ${BUILDEM_ENV_STRING} ${GO_ENV} go build -o ${BUILDEM_BIN_DIR}/dvid-go -v -tags 'purego' dvid.go 
         WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
-        DEPENDS     ${golang_NAME} goleveldb
+        DEPENDS     ${golang_NAME} nrsc goleveldb
         COMMENT     "Compiled and installed dvid pure Go executable, dvid-go.")
+
+   # Embed web client into exe
+   set (NRSC_SCRIPT "$ENV{GOPATH}/src/bitbucket.org/tebeka/nrsc/nrsc")
+   add_custom_target (dvid
+        ${NRSC_SCRIPT} ${BUILDEM_BIN_DIR}/dvid ${CMAKE_CURRENT_SOURCE_DIR}/webclient
+        DEPENDS dvid-exe
+        COMMENT     "Added files in ${CMAKE_CURRENT_SOURCE_DIR}/webclient to dvid executable")
+   
+   add_custom_target (dvid-go
+        ${NRSC_SCRIPT} ${BUILDEM_BIN_DIR}/dvid-go ${CMAKE_CURRENT_SOURCE_DIR}/webclient
+        DEPENDS dvid-go-exe
+        COMMENT     "Added files in ${CMAKE_CURRENT_SOURCE_DIR}/webclient to dvid-go executable")
 
 
     ###############################################################################

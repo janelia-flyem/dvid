@@ -6,9 +6,26 @@
 package datastore
 
 import (
+	"log"
+	"os"
+	"os/signal"
 	"sync"
+	"time"
 
 	"github.com/janelia-flyem/dvid/dvid"
+)
+
+// Constants that allow tuning of DVID for a particular target computer.
+const (
+	// NumBlockHandlers sets the number of processors we have for our "map" operation.
+	NumBlockHandlers = 8
+
+	// Number of block write requests that can be buffered on each block handler
+	// before sender is blocked.  
+	// This constant * sizeof(request struct) * NumBlockHandlers
+	// should be a reasonable number for the target DVID computer.
+	// The request struct contains two pointers.
+	BlockHandlerBufferSize = 100000
 )
 
 type cachedData struct {
@@ -37,6 +54,7 @@ type BlockRequest struct {
 	op       OpType
 	coord    dvid.BlockCoord
 	blockKey Key
+	modified time.Time
 	subvol   *dvid.Subvolume
 
 	// Let's us notify requestor when all blocks are done.
@@ -61,16 +79,12 @@ type request struct {
 	br *BlockRequest
 }
 
-// NumBlockHandlers sets the number of processors we have for our "map" operation.
-const NumBlockHandlers = 1
-
-// Number of block write requests that can be buffered on each block handler
-// before sender is blocked.
-const BlockHandlerBufferSize = 100000
-
 type BlockChannels []chan request
 
-var blockChannels BlockChannels
+var (
+	blockChannels BlockChannels
+	ctrl_c        chan os.Signal
+)
 
 func init() {
 	blockChannels = make(BlockChannels, NumBlockHandlers, NumBlockHandlers)
@@ -78,9 +92,18 @@ func init() {
 		blockChannels[channelNum] = make(chan request, BlockHandlerBufferSize)
 		go blockHandler(channelNum)
 	}
-}
 
-var NumSent, NumReceived int
+	// Capture ctrl+c and handle graceful flushing of cache.
+	ctrl_c = make(chan os.Signal, 1)
+	go func() {
+		for sig := range ctrl_c {
+			log.Printf("Captured %v.  Flushing cache to datastore...\n", sig)
+			log.Println("Shutting down...")
+			os.Exit(1)
+		}
+	}()
+	signal.Notify(ctrl_c, os.Interrupt)
+}
 
 // WriteBlock accepts all requests to process blocks using data from a given subvolume,
 // and sends the request to a block handler goroutine.

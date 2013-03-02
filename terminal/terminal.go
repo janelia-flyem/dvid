@@ -6,6 +6,7 @@ import (
 	"net/rpc"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/janelia-flyem/dvid/command"
 	"github.com/janelia-flyem/dvid/datastore"
@@ -94,6 +95,7 @@ func Send(cmd *command.Command) (err error) {
 	}
 
 	// Send command to server synchronously
+	startTime := time.Now()
 	var input, reply command.Packet
 	serverCmd := server.Command{*cmd, input}
 	err = client.Call("RpcConnection.Do", &serverCmd, &reply)
@@ -101,6 +103,7 @@ func Send(cmd *command.Command) (err error) {
 		err = fmt.Errorf("RPC error for '%s': %s", cmd, err.Error())
 		return
 	}
+	fmt.Printf("%s [OK Response]: %s\n", cmd.Name(), time.Since(startTime))
 	fmt.Println(reply.Text)
 	return
 }

@@ -12,6 +12,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 )
 
 const (
@@ -24,7 +26,8 @@ const (
 type ModeFlag uint
 
 const (
-	Debug ModeFlag = iota
+	Normal ModeFlag = iota
+	Debug
 	Benchmark
 )
 
@@ -34,14 +37,22 @@ var Mode ModeFlag
 // Log prints a message via log.Print() depending on the Mode of DVID
 func Log(modes ModeFlag, p ...interface{}) {
 	if ((modes&Debug) != 0 && Mode == Debug) || ((modes&Benchmark) != 0 && Mode == Benchmark) {
-		log.Print(p...)
+		if len(p) == 0 {
+			log.Println("No message")
+		} else {
+			log.Printf(p[0].(string), p[1:]...)
+		}
 	}
 }
 
 // Fmt prints a message via fmt.Print() depending on the Mode of DVID
 func Fmt(modes ModeFlag, p ...interface{}) {
 	if ((modes&Debug) != 0 && Mode == Debug) || ((modes&Benchmark) != 0 && Mode == Benchmark) {
-		fmt.Print(p...)
+		if len(p) == 0 {
+			fmt.Println("No message")
+		} else {
+			fmt.Printf(p[0].(string), p[1:]...)
+		}
 	}
 }
 
@@ -52,9 +63,17 @@ func Fmt(modes ModeFlag, p ...interface{}) {
 // this function will print to stdout.
 func Error(p ...interface{}) {
 	if errorLogger == nil {
-		log.Print(p...)
+		if len(p) == 0 {
+			log.Println("No message")
+		} else {
+			log.Printf(p[0].(string), p[1:]...)
+		}
 	} else {
-		errorLogger.Print(p...)
+		if len(p) == 0 {
+			errorLogger.Println("No message")
+		} else {
+			errorLogger.Printf(p[0].(string), p[1:]...)
+		}
 	}
 }
 
@@ -66,6 +85,20 @@ func SetErrorLoggingFile(out io.Writer) {
 
 // The global, unexported error logger for DVID
 var errorLogger *log.Logger
+
+// Wait for WaitGroup then print message including time for operation.
+// The last arguments are fmt.Printf arguments and should not include the
+// newline since one is added in this function.
+func WaitToComplete(wg *sync.WaitGroup, startTime time.Time, p ...interface{}) {
+	wg.Wait()
+	if len(p) == 0 {
+		log.Fatalln("Illegal call to WaitToComplete(): No message arguments!")
+	}
+	format := p[0].(string) + ": %s\n"
+	args := p[1:]
+	args = append(args, time.Since(startTime))
+	fmt.Printf(format, args...)
+}
 
 // Notes:
 //   Whenever the units of a type are different, e.g., voxel coordinate versus
@@ -91,6 +124,23 @@ type VoxelResolution [3]float32
 // The description of the units of voxel resolution, e.g., "nanometer"
 type VoxelResolutionUnits string
 
+// SliceType describes the orientation of a rectangle of voxels in 3d space.
+type SliceType byte
+
+const (
+	// SliceXY describes a rectangle of voxels that share a z-coord
+	SliceXY SliceType = iota
+
+	// SliceXZ describes a rectangle of voxels that share a y-coord
+	SliceXZ
+
+	// SliceYZ describes a rectangle of voxels that share a x-coord
+	SliceYZ
+
+	// SliceArb describes a rectangle of voxels angled in the 3d volume
+	SliceArb
+)
+
 // Subvolume packages the location, extent, and data of a data type corresponding
 // to a rectangular box of voxels.  The "Sub" prefix emphasizes that the data is 
 // usually a smaller portion of the volume held by the DVID datastore.  Although
@@ -115,6 +165,16 @@ type Subvolume struct {
 
 	// The data itself.  Go image data is usually held in []uint8.
 	Data []uint8
+}
+
+func (p *Subvolume) NonZeroBytes(message string) {
+	nonZeros := 0
+	for _, b := range p.Data {
+		if b != 0 {
+			nonZeros++
+		}
+	}
+	fmt.Printf("%s> Number of non-zeros: %d\n", message, nonZeros)
 }
 
 func (p *Subvolume) String() string {

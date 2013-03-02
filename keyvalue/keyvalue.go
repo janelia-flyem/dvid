@@ -30,7 +30,7 @@ const (
 	// block size specified here corresponds to uncompressed data.  The
 	// actual size of the unit read from disk may be smaller if
 	// compression is enabled.  This parameter can be changed dynamically.
-	DefaultBlockSize = 4 * dvid.Kilo //1 * dvid.Mega
+	DefaultBlockSize = 256 * dvid.Kilo
 
 	// Amount of data to build up in memory (backed by an unsorted log
 	// on disk) before converting to a sorted on-disk file.  Increasing
@@ -42,7 +42,7 @@ const (
 	// so you may wish to adjust this parameter to control memory usage.
 	// Also, a larger write buffer will result in a longer recovery time
 	// the next time the database is opened.
-	DefaultWriteBufferSize = 100 * dvid.Mega //500 * dvid.Mega
+	DefaultWriteBufferSize = 100 * dvid.Mega
 )
 
 type Key []byte
