@@ -4,7 +4,6 @@ import (
 	"flag"
 	"fmt"
 
-	"github.com/janelia-flyem/dvid/command"
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
@@ -79,7 +78,7 @@ func main() {
 	} else {
 		dvid.Fmt(dvid.Debug, "Running in Debug mode\n")
 		dvid.Fmt(dvid.Benchmark, "Running in Benchmark mode\n")
-		command := &command.Command{Args: flag.Args()}
+		command := &dvid.Command(flag.Args())
 		if err := DoCommand(command); err != nil {
 			fmt.Println(err.Error())
 		}
@@ -88,7 +87,7 @@ func main() {
 
 // DoCommand serves as a switchboard for commands, handling local ones and
 // sending via rpc those commands that need a running server.
-func DoCommand(cmd *command.Command) error {
+func DoCommand(cmd *dvid.Command) error {
 	if len(cmd.Args) == 0 {
 		return fmt.Errorf("Blank command!")
 	}
@@ -109,7 +108,7 @@ func DoCommand(cmd *command.Command) error {
 }
 
 // DoInit performs the "init" command, creating a new DVID datastore.
-func DoInit(cmd *command.Command) error {
+func DoInit(cmd *dvid.Command) error {
 	configFile, _ := cmd.GetSetting(command.KeyConfigFile)
 	datastoreDir := cmd.GetDatastoreDir()
 
@@ -120,10 +119,10 @@ func DoInit(cmd *command.Command) error {
 }
 
 // DoServe opens a datastore then creates both web and rpc servers for the datastore
-func DoServe(cmd *command.Command) error {
+func DoServe(cmd *dvid.Command) error {
 
-	webAddress, _ := cmd.GetSetting(command.KeyWeb)
-	rpcAddress, _ := cmd.GetSetting(command.KeyRpc)
+	webAddress, _ := cmd.GetSetting(dvid.KeyWeb)
+	rpcAddress, _ := cmd.GetSetting(dvid.KeyRpc)
 	datastoreDir := cmd.GetDatastoreDir()
 
 	if err := server.Serve(datastoreDir, webAddress, clientDir, rpcAddress); err != nil {

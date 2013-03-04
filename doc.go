@@ -35,7 +35,7 @@ supported data type.
 	dvid init [config=/path/to/json/config] [dir=/path/to/datastore/dir]
 
 Initialize a datastore (in current or optionally specified directory) using 
-parameters in <JSON config file>.  If the optional JSON config file is not provided,
+arguments in <JSON config file>.  If the optional JSON config file is not provided,
 DVID will prompt the user for configuration data.  Configuration includes volume extents, 
 resolution, resolution unit, and the supported data types.  Returns a UUID representing 
 the intial volume version,  i.e., an unlocked root node in the version 
@@ -84,7 +84,7 @@ DVID commands available through supported data types
 
 You can specify a data type name followed by a type-specific command:
 
-	dvid <data type> <type command> <parameters> [uuid=...] [rpc=localhost:6000]
+	dvid <data type> <type command> <arguments> [uuid=...] [rpc=localhost:6000]
 
 For example, the "grayscale8" data type supports the "server_load" command to insert
 2d images to the DVID datastore on the server side:

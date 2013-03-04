@@ -14,16 +14,26 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 
 	"bitbucket.org/tebeka/nrsc"
+
+	"code.google.com/p/go.net/websocket"
 )
 
-// The default URL of the DVID web server
-const DefaultWebAddress = "localhost:4000"
+const (
+	// The default URL of the DVID web server
+	DefaultWebAddress = "localhost:4000"
 
-// The default RPC address of the DVID RPC server
-const DefaultRpcAddress = "localhost:6000"
+	// The default RPC address of the DVID RPC server
+	DefaultRpcAddress = "localhost:6000"
 
-// The name of the server error log, stored in the datastore directory.
-const ErrorLogFilename = "dvid-errors.log"
+	// The relative URL path to our Level 2 REST API
+	RestApiPath = "/api/"
+
+	// The relative URL path to our WebSocket handler
+	WebSocketPath = "/socket/"
+
+	// The name of the server error log, stored in the datastore directory.
+	ErrorLogFilename = "dvid-errors.log"
+)
 
 // runningService is a global variable that holds the currently running
 // datastore service.  One DVID process can handle only one open DVID
@@ -104,14 +114,22 @@ func (service *Service) ServeHttp(address, clientDir string) {
 	}
 	service.WebAddress = address
 	service.WebClientPath = clientDir
-	dvid.Log(dvid.Debug, "Web server listening at %s ...\n", address)
+	fmt.Printf("Web server listening at %s ...\n", address)
+	fmt.Printf("WebSocket available at %s%s\n", address, WebSocketPath)
 
 	src := &http.Server{
 		Addr:        address,
 		ReadTimeout: 1 * time.Hour,
 	}
 
-	http.HandleFunc("/api/", apiHandler)
+	// Handle Level 2 REST API.
+	http.HandleFunc(RestApiPath, apiHandler)
+
+	// Handle Websocket API.
+	http.Handle(WebSocketPath, websocket.Handler(socketHandler))
+
+	// Handle everything else either through serving embedded files
+	// via nrsc or loading files from a specified web client directory.
 	if clientDir == "" {
 		err := nrsc.Handle("/")
 		if err != nil {
@@ -129,6 +147,8 @@ func (service *Service) ServeHttp(address, clientDir string) {
 		http.HandleFunc("/", mainHandler)
 		dvid.Log(dvid.Debug, "Serving web pages from %s\n", clientDir)
 	}
+
+	// Serve it up!
 	src.ListenAndServe()
 }
 

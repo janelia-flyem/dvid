@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/janelia-flyem/dvid/command"
 	"github.com/janelia-flyem/dvid/datastore"
+	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 )
 
@@ -31,12 +31,12 @@ func init() {
 	rpcAddress = server.DefaultRpcAddress
 }
 
-func prompt(message string) *command.Command {
+func prompt(message string) dvid.Command {
 	fmt.Print(message)
 	reader := bufio.NewReader(os.Stdin)
 	line, _ := reader.ReadString('\n')
 	line = strings.TrimSpace(line)
-	return &command.Command{strings.Split(line, " ")}
+	return dvid.Command(strings.Split(line, " "))
 }
 
 // Shell takes commands and processes them in an endless loop.
@@ -52,19 +52,19 @@ func Shell() {
 			fmt.Println("Enter 'help' to see commands")
 		case "help", "h":
 			fmt.Printf(helpMessage)
-			Send(&command.Command{Args: []string{"help"}})
+			Send(dvid.Command([]string{"help"}))
 		case "quit", "q":
 			takeCommands = false
 		case "address":
-			if len(cmd.Args) > 1 {
-				rpcAddress := cmd.Args[1]
+			if len(cmd) > 1 {
+				cmd.SetCommandArgs(&rpcAddress)
 				fmt.Printf("Set rpc address to %s\n", rpcAddress)
 			} else {
 				fmt.Printf("Current rpc address: %s\n", rpcAddress)
 			}
 		case "version":
-			if len(cmd.Args) > 1 {
-				version := cmd.Args[1]
+			if len(cmd) > 1 {
+				cmd.SetCommandArgs(&version)
 				fmt.Printf("Set version to %s\n", version)
 			} else {
 				fmt.Printf("Current version: %s\n", version)
@@ -78,9 +78,9 @@ func Shell() {
 	}
 }
 
-func Send(cmd *command.Command) (err error) {
+func Send(cmd dvid.Command) (err error) {
 	// Change rpc if encoded in command
-	address, rpcOverriden := cmd.GetSetting(command.KeyRpc)
+	address, rpcOverriden := cmd.GetSetting(dvid.KeyRpc)
 	if rpcOverriden {
 		rpcAddress = address
 	}
@@ -96,14 +96,13 @@ func Send(cmd *command.Command) (err error) {
 
 	// Send command to server synchronously
 	startTime := time.Now()
-	var input, reply command.Packet
-	serverCmd := server.Command{*cmd, input}
-	err = client.Call("RpcConnection.Do", &serverCmd, &reply)
+	var reply dvid.Response
+	err = client.Call("RpcConnection.Do", &cmd, &reply)
 	if err != nil {
 		err = fmt.Errorf("RPC error for '%s': %s", cmd, err.Error())
 		return
 	}
 	fmt.Printf("%s [OK Response]: %s\n", cmd.Name(), time.Since(startTime))
-	fmt.Println(reply.Text)
+	fmt.Println(reply.Text())
 	return
 }

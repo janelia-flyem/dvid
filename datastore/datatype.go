@@ -17,7 +17,6 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 
-	"github.com/janelia-flyem/dvid/command"
 	"github.com/janelia-flyem/dvid/dvid"
 )
 
@@ -67,13 +66,16 @@ type TypeService interface {
 	Help(textHelp string) string
 
 	// Do implements commands specific to a data type
-	Do(vs *VersionService, cmd *command.Command, input, reply *command.Packet) error
+	Do(vs *VersionService, cmd dvid.Request, input, reply dvid.Response) error
 
-	GetVolume(vs *VersionService, subvol *dvid.Subvolume) error
-	GetSlice(subvol *dvid.Subvolume, planeStr string) image.Image
+	// GET a subvolume for a specific image volume version
+	//GetVolume(vs *VersionService, subvol *dvid.Subvolume) error
+
+	// GET a slice for a specific image volume version
+	//GetSlice(vs *VersionService, slice dvid.Slice) (image.Image, error)
 
 	// Returns standard error response for unknown commands
-	UnknownCommand(cmd *command.Command) error
+	UnknownCommand(cmd dvid.Request) error
 }
 
 // The following functions supply standard operations necessary across all supported
@@ -88,7 +90,7 @@ func (datatype *Datatype) Help(typeHelp string) string {
 	return fmt.Sprintf(helpMessage+typeHelp, datatype.Name, datatype.Url)
 }
 
-func (datatype *Datatype) UnknownCommand(cmd *command.Command) error {
+func (datatype *Datatype) UnknownCommand(cmd dvid.Request) error {
 	return fmt.Errorf("Unknown command.  Data type '%s' [%s] does not support '%s' command.",
 		datatype.Name, datatype.Url, cmd.TypeCommand())
 }

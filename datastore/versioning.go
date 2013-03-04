@@ -30,7 +30,7 @@ func UUIDfromString(s string) (u UUID, err error) {
 // hexidecimal string or "" if the uuid is invalid.
 func (u UUID) String() string {
 	if u == nil || len(u) != 16 {
-		return "<invalid uuid>"
+		return ""
 	}
 	return fmt.Sprintf("%032x", []byte(u))
 }

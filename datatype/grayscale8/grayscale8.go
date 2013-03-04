@@ -7,7 +7,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/janelia-flyem/dvid/command"
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 )
@@ -38,8 +37,25 @@ const helpMessage = `
 
     Grayscale8 Data Type HTTP API
 
-    POST /grayscale8/<origin>/<size>
-    GET /grayscale8/<origin>/<size>
+    POST /api/<uuid>/grayscale8/<volume>/<offset>/<size>[/<normal>]
+    GET  /api/<uuid>/grayscale8/<volume>/<offset>/<size>[/<normal>]
+
+    Parameters:
+    <uuid> = Hexadecimal number, as many digits as necessary to uniquely identify
+       the UUID among nodes in this database.
+    <volume> = "xy", "xz", "yz", "arb", "vol"
+    <offset> = x,y,z
+    <size> = dx,dy,dz (if <volume> is "vol")
+             dx,dy    (if <volume> is not "vol")
+    <normal> = x,y,z if <volume> is "arb"
+
+    Examples:
+
+    GET /api/c66e0/grayscale8/xy/0,125,135/250,240
+
+    Returns an image with width 250 pixels, height 240 pixels that were taken
+    from the XY plane with the upper left pixel sitting at (0,125,135) in 
+    the image volume space.
 `
 
 // Grayscale8 has one byte/voxel
@@ -78,34 +94,16 @@ func (datatype *Datatype) BytesPerVoxel() int {
 	return BytesPerVoxel
 }
 
-// GetSlice returns an image.Image for grayscale8, which is necessarily
-// a single slice.
-func (datatype *Datatype) GetSlice(v *dvid.Subvolume, planeStr string) image.Image {
-	var r image.Rectangle
-	switch planeStr {
-	case "xy":
-		r = image.Rect(0, 0, int(v.Size[0]), int(v.Size[1]))
-	case "xz":
-		r = image.Rect(0, 0, int(v.Size[0]), int(v.Size[2]))
-	case "yz":
-		r = image.Rect(0, 0, int(v.Size[1]), int(v.Size[2]))
-	default:
-		fmt.Println("Bad plane:", planeStr)
-		return nil
-	}
-	sliceBytes := r.Dx() * r.Dy() * BytesPerVoxel
-	data := make([]byte, sliceBytes, sliceBytes)
-	copy(data, v.Data)
-	return &image.Gray{data, 1 * r.Dx(), r}
-}
-
 // Do acts as a switchboard for grayscale8 commands
 func (datatype *Datatype) Do(versionService *datastore.VersionService,
-	cmd *command.Command, input, reply *command.Packet) error {
+	cmd dvid.Request, input, reply dvid.Response) error {
 
 	switch cmd.TypeCommand() {
 	case "server-add":
 		return datatype.ServerAdd(versionService, cmd, input, reply)
+	case "get":
+		// verify vol type
+		return datatype.Get(versionService, cmd, input, reply)
 	case "help":
 		reply.Text = datatype.Help(helpMessage)
 	default:
@@ -133,21 +131,22 @@ func loadImage(filename string) (grayImage *image.Gray, err error) {
 	return
 }
 
-// ServerAdd stores a series of 2d images specified as an image filename glob
-// that is visible to the server.  This is a mechanism for fast ingestion
-// of large quantities of data, so we don't want to pass all the data over
-// the network just for client/server communication.  Aside from loading the images,
-// most of the work is delegated to the Add function that will also be called
-// via the REST API.
+// ServerAdd does a server-side PUT of a series of 2d grayscale8 images.
+// The images are specified as a filename glob that must be visible to the server.  
+// This is a mechanism for fast ingestion of large quantities of data, 
+// so we don't want to pass all the data over the network using PutSlice().
+//
+// Aside from loading the images, most of the work is delegated to PutSlice(),
+// which is used for the REST API.
 func (datatype *Datatype) ServerAdd(versionService *datastore.VersionService,
 	cmd *command.Command, input, reply *command.Packet) error {
 
-	var originStr command.CoordStr
-	filenames := cmd.SetDatatypeArgs(&originStr.string)
+	var originStr string
+	filenames := cmd.SetDatatypeArgs(&originStr)
 	if len(filenames) == 0 {
 		return fmt.Errorf("Need to include at least one file to add: %s", cmd)
 	}
-	coord, err := originStr.GetCoord()
+	coord, err := dvid.CoordStr(originStr).VoxelCoord()
 	if err != nil {
 		return fmt.Errorf("Badly formatted origin (should be 'x,y,z'): %s", cmd)
 	}
@@ -168,8 +167,7 @@ func (datatype *Datatype) ServerAdd(versionService *datastore.VersionService,
 	}
 	dvid.Log(dvid.Debug, addedFiles+"\n")
 
-	// Load each image and use "Add" function that would normally be called when
-	// adding []byte after unpacking from image file.
+	// Load each image and delegate to PUT function.
 	var wg sync.WaitGroup
 	numSuccessful := 0
 	var lastErr error
@@ -205,6 +203,26 @@ func (datatype *Datatype) ServerAdd(versionService *datastore.VersionService,
 	}
 	go dvid.WaitToComplete(&wg, startTime, "RPC server-add (%s) completed", addedFiles)
 	return nil
+}
+
+// GetSlice returns an image.Image for grayscale8
+func (datatype *Datatype) GetSlice(v *dvid.Subvolume, planeStr string) image.Image {
+	var r image.Rectangle
+	switch planeStr {
+	case "xy":
+		r = image.Rect(0, 0, int(v.Size[0]), int(v.Size[1]))
+	case "xz":
+		r = image.Rect(0, 0, int(v.Size[0]), int(v.Size[2]))
+	case "yz":
+		r = image.Rect(0, 0, int(v.Size[1]), int(v.Size[2]))
+	default:
+		fmt.Println("Bad plane:", planeStr)
+		return nil
+	}
+	sliceBytes := r.Dx() * r.Dy() * BytesPerVoxel
+	data := make([]byte, sliceBytes, sliceBytes)
+	copy(data, v.Data)
+	return &image.Gray{data, 1 * r.Dx(), r}
 }
 
 // GetVolume breaks a subvolume GET into blocks, processes the blocks using

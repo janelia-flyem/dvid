@@ -9,7 +9,16 @@ import (
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
+
+	"code.google.com/p/go.net/websocket"
 )
+
+func socketHandler(c *websocket.Conn) {
+	var s string
+	fmt.Fscan(c, &s)
+	dvid.Log(dvid.Debug, "socket received: %s\n", s)
+	fmt.Fprint(c, "DVID received socket communication:", s, "\n")
+}
 
 func planeHandler(w http.ResponseWriter, r *http.Request) {
 
@@ -22,65 +31,106 @@ func mainHandler(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, filename)
 }
 
+func badRequest(w http.ResponseWriter, r *http.Request, err string) {
+	errorMsg := fmt.Sprintf("ERROR using REST API: %s (%s).", err, r.URL.Path)
+	errorMsg += "  Use 'dvid help' to get proper API request format.\n"
+	dvid.Error(errorMsg)
+	http.Error(w, errorMsg, http.StatusBadRequest)
+}
+
 // Handler for API commands through HTTP
 func apiHandler(w http.ResponseWriter, r *http.Request) {
-	const lenPath = len("/api/")
+	const lenPath = len(RestApiPath)
 	url := r.URL.Path[lenPath:]
 
-	var offset, size dvid.VoxelCoord
-	var sx, sy int32
+	// Break URL request into arguments
 	parts := strings.Split(url, "/")
-	uuidStr := parts[0]
-	//op := parts[1]
-	datatype := parts[1]
-	fmt.Sscanf(parts[2], "%d,%d,%d", &offset[0], &offset[1], &offset[2])
-	planeStr := parts[3]
-	fmt.Sscanf(parts[4], "%d,%d", &sx, &sy)
-
-	switch planeStr {
-	case "xy":
-		size = dvid.VoxelCoord{sx, sy, 1}
-	case "xz":
-		size = dvid.VoxelCoord{sx, 1, sy}
-	case "yz":
-		size = dvid.VoxelCoord{1, sx, sy}
+	if len(parts) != 5 {
+		badRequest(w, r, "Poorly formed request")
+		return
 	}
 
-	/**
-	fmt.Fprintln(w, "<h1>DVID Server API Handler ...</h1>")
+	uuidNum, err := runningService.GetUuidFromString(parts[0])
+	versionService := datastore.NewVersionService(runningService.Service, uuidNum)
 
-	fmt.Fprintln(w, "<p>Processing", url, "</p>")
-	fmt.Fprintf(w, "<p>Op: %s</p>\n", op)
-	fmt.Fprintf(w, "<p>Datatype: %s</p>\n", datatype)
-	fmt.Fprintf(w, "<p>Offset: %s</p>\n", offset)
-	fmt.Fprintf(w, "<p>Size: %s</p>\n", size)
-	**/
-	// Get the image
-
+	// Given a data type abbreviated name (e.g., 'grayscale8'), get the type's service,
+	// which is an interface for doing operations
+	datatype := parts[1]
 	typeService, err := datastore.GetTypeService(datatype)
 	if err != nil {
 		fmt.Println("Error getting typeService:", err.Error())
 		return
 	}
 
-	numBytes := int(sx*sy) * typeService.BytesPerVoxel()
-	subvol := dvid.Subvolume{
-		Text:          url,
-		Offset:        offset,
-		Size:          size,
-		BytesPerVoxel: typeService.BytesPerVoxel(),
-		Data:          make([]byte, numBytes, numBytes),
+	volumeStr := strings.ToLower(parts[2])
+	offsetStr := dvid.PointStr(parts[3])
+	sizeStr := dvid.PointStr(parts[4])
+	var normalStr dvid.VectorStr
+	if len(parts) > 5 {
+		normalStr = dvid.VectorStr(parts[5])
 	}
 
-	uuidNum, err := runningService.GetUuidFromString(uuidStr)
+	offset, err := offsetStr.VoxelCoord()
+	if err != nil {
+		badRequest(w, r, fmt.Sprintf("Unable to parse Offset as 'x,y,z', got '%s'", offsetStr))
+		return
+	}
 
-	versionService := datastore.NewVersionService(runningService.Service, uuidNum)
+	// Package Subvolume requests
+	if volumeStr == "vol" {
+		size, err := sizeStr.VoxelCoord()
+		if err != nil {
+			badRequest(w, r, fmt.Sprintf("Unable to parse Size as 'x,y,z', got '%s'", sizeStr))
+			return
+		}
+		numBytes := size.Mag() * typeService.BytesPerVoxel()
+		subvol := dvid.Subvolume{
+			Text:          url,
+			Offset:        offset,
+			Size:          size,
+			BytesPerVoxel: typeService.BytesPerVoxel(),
+			Data:          make([]byte, numBytes, numBytes),
+		}
+		cmd := 
 
-	err = typeService.GetVolume(versionService, &subvol)
+		err = typeService.GetVolume(versionService, &subvol)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		// TODO -- Return a subvolume using some kind of container
 
-	subvol.NonZeroBytes("After GetVolume()")
+	} else { // Package Slice requests
 
-	// Write the image to requestor
-	w.Header().Set("Content-type", "image/png")
-	png.Encode(w, typeService.GetSlice(&subvol, planeStr))
+		size, err := sizeStr.Point2d()
+		if err != nil {
+			badRequest(w, r, fmt.Sprintf("Unable to parse Size as 'x,y', got '%s'", sizeStr))
+			return
+		}
+
+		var slice dvid.Slice
+		switch strings.ToLower(parts[3]) {
+		case "xy":
+			slice = dvid.NewSliceXY(&offset, &size)
+		case "xz":
+			slice = dvid.NewSliceXZ(&offset, &size)
+		case "yz":
+			slice = dvid.NewSliceYZ(&offset, &size)
+		case "arb":
+			normal, err := normalStr.Vector3d()
+			if err != nil {
+				badRequest(w, r, fmt.Sprintf("Unable to parse normal as 'x,y,z', got '%s'",
+					normalStr))
+				return
+			}
+			slice = dvid.NewSliceArb(&offset, &size, &normal)
+		default:
+			badRequest(w, r, fmt.Sprintf("Illegal slice plane specification (%s)", parts[3]))
+			return
+		}
+
+		// Write the image to requestor
+		w.Header().Set("Content-type", "image/png")
+		png.Encode(w, typeService.GetSlice(&slice))
+	}
 }

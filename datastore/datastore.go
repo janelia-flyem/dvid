@@ -61,7 +61,7 @@ func Versions() string {
 	return text
 }
 
-// Init creates a key-value datastore using default parameters.  Datastore 
+// Init creates a key-value datastore using default arguments.  Datastore 
 // configuration is stored in the datastore and in a human-readable JSON file
 // in the datastore directory.
 func Init(directory string, configFile string, create bool) (uuid UUID) {
@@ -342,12 +342,12 @@ func (service *Service) Close() {
 	service.Close()
 }
 
-// GetUuidNumFromString returns a UUID index given its string representation.  
+// GetUUIDFromString returns a UUID index given its string representation.  
 // Partial matches are accepted as long as they are unique for a datastore.  So if
 // a datastore has nodes with UUID strings 3FA22..., 7CD11..., and 836EE..., 
 // we can still find a match even if given the minimum 3 letters.  (We don't
 // allow UUID strings of less than 3 letters just to prevent mistakes.)
-func (service *Service) GetUuidFromString(s string) (uuidNum int16, err error) {
+func (service *Service) GetUUIDFromString(s string) (uuidNum int16, err error) {
 	// Valid hex decode requires pairs of characters
 	if len(s)%2 == 0 {
 		var uuid UUID
