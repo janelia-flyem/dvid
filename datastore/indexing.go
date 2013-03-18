@@ -8,7 +8,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/hex"
-	_ "fmt"
+	"fmt"
 	"log"
 
 	"github.com/janelia-flyem/dvid/dvid"
@@ -24,8 +24,8 @@ type SpatialIndexScheme byte
 
 // Types of spatial indexing
 const (
-	// Simple indexing on Z, then X, then Y
-	SIndexZXY SpatialIndexScheme = iota
+	// Simple indexing on Z, then Y, then X
+	SIndexZYX SpatialIndexScheme = iota
 
 	// Hilbert curve
 	SIndexHilbert
@@ -34,79 +34,109 @@ const (
 	SIndexXYDiagonal
 )
 
-// BlockCoord decodes a spatial index into a block coordinate
-func (si SpatialIndex) BlockCoord(s *Service) (coord dvid.BlockCoord) {
-	buf := bytes.NewBufferString(string(si))
-	switch s.Indexing {
-	case SIndexZXY:
-		for i := 2; i >= 0; i-- {
-			err := binary.Read(buf, binary.LittleEndian, &coord[i])
-			if err != nil {
-				log.Fatalln("BlockCoord(): error in SIndexZXY decoding: ", err.Error())
-			}
-		}
+// MakeSpatialIndex returns a string encoding a coordinate depending on the
+// spatial index scheme of the data type.
+func MakeSpatialIndex(t TypeService, coord dvid.BlockCoord) SpatialIndex {
+	// Create buffer for spatial index
+	index := make([]byte, 12, 12)
+	switch t.SpatialIndexing() {
+	case SIndexZYX:
+		binary.LittleEndian.PutUint32(index[:4], uint32(coord[2]))
+		binary.LittleEndian.PutUint32(index[4:8], uint32(coord[1]))
+		binary.LittleEndian.PutUint32(index[8:], uint32(coord[0]))
 	default:
-		log.Fatalf("BlockCoord(%d): Unsupported spatial indexing scheme!\n", s.Indexing)
+		panic(fmt.Sprintf("MakeSpatialIndex: Unsupported spatial indexing scheme (%d)!",
+			t.SpatialIndexing()))
 	}
-	return
+	return SpatialIndex(index)
 }
 
-func (si SpatialIndex) String() string {
-	return hex.EncodeToString([]byte(si))
-}
-
-// BlockCoord returns the coordinate of the block containing a given voxel coordinate.
-// Since block sizes can vary among datastores, this function requires a datastore.Service.
-func (s *Service) BlockCoord(vc dvid.VoxelCoord) (bc dvid.BlockCoord) {
-	bc[0] = vc[0] / s.BlockMax[0]
-	bc[1] = vc[1] / s.BlockMax[1]
-	bc[2] = vc[2] / s.BlockMax[2]
-	return
-}
-
-// BlockVoxel returns the voxel coordinate within a containing block for the given voxel 
-// coordinate.
-func (s *Service) BlockVoxel(vc dvid.VoxelCoord) (bc dvid.VoxelCoord) {
-	bc[0] = vc[0] % s.BlockMax[0]
-	bc[1] = vc[1] % s.BlockMax[1]
-	bc[2] = vc[2] % s.BlockMax[2]
-	return
-}
-
-// VoxelCoordToBlockIndex returns an index into a block's data that corresponds to
-// a given voxel coordinate.  Note that the index is NOT multiplied by BytesPerVoxel
-// but gives the element number, since we also want to set dirty flags.
-func (s *Service) VoxelCoordToBlockIndex(vc dvid.VoxelCoord) (index int) {
-	bv := s.BlockVoxel(vc)
-	index = int(bv[2]*s.BlockMax[0]*s.BlockMax[1] + bv[1]*s.BlockMax[0] + bv[0])
-	return
-}
-
-// SpatialIndex encodes a block coord into a spatial index
-func (s *Service) SpatialIndex(coord dvid.BlockCoord) (si SpatialIndex) {
-	buf := new(bytes.Buffer)
-	switch s.Indexing {
-	case SIndexZXY:
-		for i := 2; i >= 0; i-- {
-			err := binary.Write(buf, binary.LittleEndian, coord[i])
-			if err != nil {
-				log.Fatalf("SpatialIndex(%s): error in SIndexZXY encoding: %s\n",
-					coord, err.Error())
-			}
-		}
-		si = SpatialIndex(buf.String())
+// BlockCoord decodes a spatial index into a block coordinate
+func (si SpatialIndex) BlockCoord(t TypeService) (coord dvid.BlockCoord) {
+	switch t.SpatialIndexing() {
+	case SIndexZYX:
+		coord[2] = binary.LittleEndian.Uint32([]byte(si[0:4]))
+		coord[1] = binary.LittleEndian.Uint32([]byte(si[4:8]))
+		coord[0] = binary.LittleEndian.Uint32([]byte(si[8:12]))
 	default:
-		log.Fatalf("SpatialIndex(%s): Unsupported spatial indexing scheme!\n", coord)
+		panic(fmt.Sprintf("BlockCoord: Unsupported spatial indexing scheme (%d)!",
+			t.SpatialIndexing()))
 	}
 	return
 }
 
 // OffsetToBlock returns the voxel coordinate at the top left corner of the block
 // corresponding to the spatial index.
-func (s *Service) OffsetToBlock(si SpatialIndex) (coord dvid.VoxelCoord) {
-	blockCoord := si.BlockCoord(s)
-	coord[0] = blockCoord[0] * s.BlockMax[0]
-	coord[1] = blockCoord[1] * s.BlockMax[1]
-	coord[2] = blockCoord[2] * s.BlockMax[2]
+func (si SpatialIndex) OffsetToBlock(t TypeService) (coord dvid.VoxelCoord) {
+	blockCoord := si.BlockCoord(t)
+	blockSize := t.BlockSize()
+	coord[0] = blockCoord[0] * blockSize[0]
+	coord[1] = blockCoord[1] * blockSize[1]
+	coord[2] = blockCoord[2] * blockSize[2]
 	return
+}
+
+// Hash returns an integer [0, n) where the returned values should be reasonably
+// spread among the range of returned values. 
+func (si SpatialIndex) Hash(t TypeService, n int) int {
+	switch t.SpatialIndexing() {
+	case SIndexZYX:
+		z := binary.LittleEndian.Uint32([]byte(si[0:4]))
+		y := binary.LittleEndian.Uint32([]byte(si[4:8]))
+		x := binary.LittleEndian.Uint32([]byte(si[8:12]))
+		// Make sure that any scans along x, y, or z directions will 
+		// cause distribution to different handlers. 
+		return (x + y + z) % n
+	default:
+		panic(fmt.Sprintf("BlockCoord: Unsupported spatial indexing scheme (%d)!",
+			t.SpatialIndexing()))
+	}
+	return 0
+}
+
+func (si SpatialIndex) String() string {
+	return hex.EncodeToString([]byte(si))
+}
+
+// SpatialIterator is a function that returns a sequence of spatial keys and ends with nil. 
+type SpatialIterator func() []byte
+
+// Iterator returns a SpatialIterator for a given data type and volume to traverse.
+func NewSpatialIterator(t TypeService, v dvid.Volume) SpatialIterator {
+	// Create buffer for spatial key
+	spatialKey := make([]byte, 12, 12)
+
+	// Setup traversal
+	startVoxel := v.Origin()
+	endVoxel := v.EndVoxel()
+	switch t.SpatialIndexing() {
+	case SIndexZYX:
+		// Returns a closure that iterates in x, then y, then z
+		startBlockCoord := startVoxel.BlockCoord(t.BlockSize())
+		endBlockCoord := endVoxel.BlockCoord(t.BlockSize())
+		z := startBlockCoord[2]
+		y := startBlockCoord[1]
+		x := startBlockCoord[0]
+		return func() []byte {
+			if z > endBlockCoord[2] {
+				return nil
+			}
+			binary.LittleEndian.PutUint32(spatialKey[:4], uint32(z))
+			binary.LittleEndian.PutUint32(spatialKey[4:8], uint32(y))
+			binary.LittleEndian.PutUint32(spatialKey[8:], uint32(x))
+			x++
+			if x > endBlockCoord[0] {
+				x = startBlockCoord[0]
+				y++
+			}
+			if y > endBlockCoord[1] {
+				y = startBlockCoord[1]
+				z++
+			}
+			return spatialKey
+		}
+	default:
+		panic(fmt.Sprintf("Unimplemented Iterator called for spatial index scheme: %s",
+			t.SpatialIndexing()))
+	}
 }

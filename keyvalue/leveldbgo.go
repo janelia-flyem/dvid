@@ -106,6 +106,13 @@ func (db *goLDB) GetApproximateSizes(ranges Ranges) (sizes Sizes, err error) {
 	return
 }
 
+// NewIterator returns a read-only Iterator. 
+func (db *goLDB) NewIterator(ro ReadOptions) (it Iterator, err error) {
+	it = db.ldb.NewIterator(ro.(*goReadOptions).ReadOptions)
+	err = nil
+	return
+}
+
 // --- Read Options -----
 
 type goReadOptions struct {

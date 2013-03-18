@@ -6,17 +6,26 @@
 package datastore
 
 import (
+	"fmt"
 	"log"
 	"os"
-	"os/signal"
 	"sync"
 	"time"
 
+	"github.com/janelia-flyem/dvid/cache"
 	"github.com/janelia-flyem/dvid/dvid"
+	"github.com/janelia-flyem/dvid/keyvalue"
 )
 
 // Constants that allow tuning of DVID for a particular target computer.
 const (
+	// Default size of LRU cache for DVID data blocks in MB.  The larger this number,
+	// the fewer disk accesses you'll need.
+	DefaultCacheMBytes = 512
+
+	// Default number of block handlers to use per data type. 
+	DefaultNumBlockHandlers = 8
+
 	// NumBlockHandlers sets the number of processors we have for our "map" operation.
 	NumBlockHandlers = 8
 
@@ -28,7 +37,7 @@ const (
 	BlockHandlerBufferSize = 100000
 )
 
-type cachedData struct {
+type uuidData struct {
 	// The default version of the datastore
 	Head UUID
 
@@ -47,106 +56,88 @@ const (
 
 type OpResult string
 
-// BlockRequest encapsulates the essential data needed to process blocks in the datastore.
-// Blocks are the units of Map/Reduce operations on a DVID volume.
-// Each block handler receives BlockRequests through a channel.
-type BlockRequest struct {
-	op       OpType
-	coord    dvid.BlockCoord
-	blockKey Key
-	modified time.Time
-	subvol   *dvid.Subvolume
-
-	// Let's us notify requestor when all blocks are done.
-	wg *sync.WaitGroup
+// Block is an interface for data that is held within DVID blocks, which are the
+// fundamental value in each key/value pair.  A Block is usually voxel-oriented data
+// but can contain graph or other kinds of data as well.  
+type Block interface {
 }
 
-// NewBlockRequest manufactures a BlockRequest for use by datastore block processors.
-func NewBlockRequest(op OpType, coord dvid.BlockCoord, blockKey Key, subvol *dvid.Subvolume,
-	wg *sync.WaitGroup) *BlockRequest {
+// Each data type has a pool of channels to communicate with block handlers. 
+type BlockChannels map[string]([]chan Block)
 
-	return &BlockRequest{
-		op:       op,
-		coord:    coord,
-		blockKey: blockKey,
-		subvol:   subvol,
-		wg:       wg,
-	}
+// Global variable that holds the LRU cache for DVID instance. 
+var dataCache *cache.LRUCache
+
+// Initialize the LRU cache
+func InitDataCache(numBytes int) {
+	dataCache = cache.NewLRUCache(numBytes)
 }
 
-type request struct {
-	vs *VersionService
-	br *BlockRequest
+// GetCachedBlock returns data for a given DVID Block if it's in the cache.
+// Since the block key includes a UUID, this function can be used to access
+// any image versions cached blocks. 
+func GetCachedBlock(blockKey keyvalue.Key) (data keyvalue.Value, found bool) {
+	data, found = dataCache.Get(string(blockKey))
+	// TODO -- keep statistics on hits for web client
+	return
 }
 
-type BlockChannels []chan request
+// SetCachedBlock places a key/value pair into the DVID data cache. 
+func SetCachedBlock(blockKey keyvalue.Key, data keyvalue.Value) {
+	dataCache.Set(string(blockKey), data)
+	// TODO -- keep stats on sets
+}
 
-var (
-	blockChannels BlockChannels
-	ctrl_c        chan os.Signal
-)
-
-func init() {
-	blockChannels = make(BlockChannels, NumBlockHandlers, NumBlockHandlers)
-	for channelNum, _ := range blockChannels {
-		blockChannels[channelNum] = make(chan request, BlockHandlerBufferSize)
-		go blockHandler(channelNum)
-	}
-
-	// Capture ctrl+c and handle graceful flushing of cache.
-	ctrl_c = make(chan os.Signal, 1)
-	go func() {
-		for sig := range ctrl_c {
-			log.Printf("Captured %v.  Flushing cache to datastore...\n", sig)
-			log.Println("Shutting down...")
-			os.Exit(1)
+// ReserveBlockHandlers makes sure we have block handler goroutines for each
+// data type and each image version.  This makes sure that operations on a
+// specific block can only be performed by the same handler. 
+func (vs *VersionService) ReserveBlockHandlers(typeName string, numHandlers int) {
+	// Do we have channels and handlers for this type and image version?
+	_, found := vs.channels[typeName]
+	if !found {
+		// Create channels and handlers
+		channels := make([]chan Block, 0, numHandlers)
+		for i := 0; i < numHandlers; i++ {
+			channel := make(chan Block, BlockHandlerBufferSize)
+			channels = append(channels, channel)
+			go vs.blockHandler(channel)
+			// TODO -- keep stats on # of handlers
 		}
-	}()
-	signal.Notify(ctrl_c, os.Interrupt)
+		vs.channels[typeName] = channels
+	}
 }
 
-// WriteBlock accepts all requests to process blocks using data from a given subvolume,
-// and sends the request to a block handler goroutine.
-func (vs *VersionService) ProcessBlock(br *BlockRequest) error {
-	// Try to spread block coordinates out among block handlers to get most out of
-	// our concurrent processing.  However, we may want a handler to receive similar
-	// spatial indices and be better able to batch them for sequential writes.
-	channelN := (br.coord[0]*2 + br.coord[1]*3 + br.coord[2]*5) % NumBlockHandlers
+// ProcessBlock sends each block through a channel to its handler.  Since channel
+// assignment is determined solely by the block key, the same block will always
+// be sent to the same handler.
+func (vs *VersionService) ProcessBlock(block Block) {
+	// Make sure we have channels to handlers for this block's data type.
+	channels, found := vs.channels[block.TypeName()]
+	if !found {
+		vs.ReserveBlockHandlers(block.TypeName(), DefaultNumBlockHandlers)
+		channels, found = vs.channels[block.TypeName()]
+	}
 
-	// Package the write block data and send it down the chosen channel
-	blockChannels[channelN] <- request{vs, br}
-	return nil
+	// Try to spread sequential block keys out among different block handlers to get 
+	// most out of our concurrent processing.
+	channelNum := block.spatialKey.Hash(block.TypeService, len(channels))
+
+	// Send the block
+	channels[channelNum] <- block
 }
 
-// blockHandler is a goroutine that fulfills block write requests sent on the given
-// channel number.
-func blockHandler(channelNum int) {
+// blockHandler is a goroutine that fulfills block-level requests sent on a channel.
+func (vs *VersionService) blockHandler(channel chan Block) {
 	for {
-		req := <-blockChannels[channelNum]
-		vs := req.vs
-		si := vs.SpatialIndex(req.br.coord)
-		subvol := req.br.subvol
-
-		// Get the block data.  If we have error, like key not present,
-		// just use empty values for block.
-		data := make([]byte, vs.BlockNumVoxels(), vs.BlockNumVoxels())
-		blockBytes, err := vs.kvdb.getBytes(req.br.blockKey)
-		if err == nil {
-			copy(data, blockBytes)
-		}
-
-		dataBytes := vs.BlockNumVoxels() * subvol.BytesPerVoxel
-		if dataBytes != len(data) {
-			dvid.Error("ERROR blockHandler(%d): retrieved block has %d bytes not %d bytes\n",
-				channelNum, len(data), dataBytes)
-			continue
-		}
+		block := <-channel
 
 		// Get min and max voxel coordinates of this block
+		si := vs.SpatialIndex(req.br.coord)
 		minBlockVoxel := vs.OffsetToBlock(si)
 		maxBlockVoxel := minBlockVoxel.AddSize(vs.BlockMax)
 
 		// Get min and max voxel coordinates of the entire subvolume
+		subvol := req.br.subvol
 		minSubvolVoxel := subvol.Offset
 		maxSubvolVoxel := minSubvolVoxel.AddSize(subvol.Size)
 

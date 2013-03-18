@@ -61,7 +61,6 @@ type Service struct {
 // Serve opens a datastore then creates both web and rpc servers for the datastore.
 // This function must be called for DataService() to be non-nil.
 func Serve(datastoreDir, webAddress, webClientDir, rpcAddress string) (err error) {
-
 	// Make sure we don't already have an open datastore.
 	if runningService.Service != nil {
 		return fmt.Errorf("Cannot create new server.  " +
@@ -108,7 +107,6 @@ func Serve(datastoreDir, webAddress, webClientDir, rpcAddress string) (err error
 // See for discussion: 
 // http://stackoverflow.com/questions/10971800/golang-http-server-leaving-open-goroutines
 func (service *Service) ServeHttp(address, clientDir string) {
-
 	if address == "" {
 		address = DefaultWebAddress
 	}
@@ -154,7 +152,6 @@ func (service *Service) ServeHttp(address, clientDir string) {
 
 // Listen and serve RPC requests using address.
 func (service *Service) ServeRpc(address string) error {
-
 	if address == "" {
 		address = DefaultRpcAddress
 	}

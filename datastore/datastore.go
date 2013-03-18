@@ -11,22 +11,22 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/keyvalue"
 )
 
 const (
-	Version = "0.2"
+	Version = "0.3"
 
 	// ConfigFilename is name of JSON file with datastore configuration data
 	// just for human inspection.
 	ConfigFilename = "dvid-config.json"
 )
 
-// configData holds the essential configuration data for a datastore instance and therefore
-// is private to package datastore.
-type configData struct {
+// initConfig holds the essential configuration data AT INIT TIME for a datastore instance. 
+type initConfig struct {
 	// Volume extents
 	VolumeMax dvid.VoxelCoord
 
@@ -35,20 +35,43 @@ type configData struct {
 
 	// Units of resolution, e.g., "nanometers"
 	VoxelResUnits dvid.VoxelResolutionUnits
+}
 
-	// Block size
-	BlockMax dvid.VoxelCoord
+// DataTypeIndex is a unique id for a type within a DVID instance.
+type DataTypeIndex uint16
 
-	// Spatial indexing scheme
-	Indexing SpatialIndexScheme
+func (index DataTypeIndex) ToKey() []byte {
+	buf := new(bytes.Buffer)
+	err := binary.Write(buf, binary.LittleEndian, index)
+	if err != nil {
+		log.Fatalf("Unable to convert DataTypeIndex (%d) to []byte!\n", index)
+	}
+	return buf.Bytes()
+}
 
-	// Data types supported
-	Datatypes []Datatype
+type DatastoreType struct {
+	TypeService
+
+	// A unique id for the type within this DVID datastore instance. Used to construct keys.
+	DataIndexBytes []byte
+}
+
+// runtimeConfig holds the essential configuration data AT RUN TIME for a datastore instance. 
+type runtimeConfig struct {
+	// Data supported.  This is a map of a user-defined name like "grayscale8" with
+	// the supporting data type "voxel8"
+	DataNames map[string]DatastoreType
+}
+
+// Shutdown handles graceful cleanup of datastore before exiting DVID.
+func Shutdown() {
+	log.Println("TODO -- Datastore would cleanup cache here...\n")
 }
 
 // Versions returns a chart of version identifiers for data types and and DVID's datastore
+// fixed at compile-time for this DVID executable
 func Versions() string {
-	var text string
+	var text string = "\nCompile-time version information for this DVID executable:\n\n"
 	writeLine := func(name, version string) {
 		text += fmt.Sprintf("%-15s   %s\n", name, version)
 	}
@@ -56,7 +79,7 @@ func Versions() string {
 	writeLine("DVID datastore", Version)
 	writeLine("Leveldb", keyvalue.Version)
 	for _, datatype := range CompiledTypes {
-		writeLine(datatype.BaseDatatype().Name, datatype.BaseDatatype().Version)
+		writeLine(datatype.Name(), datatype.Version())
 	}
 	return text
 }
@@ -66,28 +89,18 @@ func Versions() string {
 // in the datastore directory.
 func Init(directory string, configFile string, create bool) (uuid UUID) {
 	// Initialize the configuration
-	var config *configData
+	var config *initConfig
 	if configFile == "" {
 		config = promptConfig()
 	} else {
 		config = readJsonConfig(configFile)
 	}
-	config.Datatypes = CompiledTypesList()
 
 	fmt.Println("\nInitializing datastore at", directory)
 	fmt.Printf("Volume size: %d x %d x %d\n",
 		config.VolumeMax[0], config.VolumeMax[1], config.VolumeMax[2])
 	fmt.Printf("Voxel resolution: %4.1f x %4.1f x %4.1f %s\n",
 		config.VoxelRes[0], config.VoxelRes[1], config.VoxelRes[2], config.VoxelResUnits)
-	fmt.Printf("Block size: %d x %d x %d voxels\n",
-		config.BlockMax[0], config.BlockMax[1], config.BlockMax[2])
-	fmt.Println(config.SupportedTypeChart())
-
-	// Verify the data types
-	err := config.VerifyCompiledTypes()
-	if err != nil {
-		log.Fatalln(err.Error())
-	}
 
 	// Create the leveldb
 	dbOptions := keyvalue.NewKeyValueOptions()
@@ -100,15 +113,23 @@ func Init(directory string, configFile string, create bool) (uuid UUID) {
 	filename := filepath.Join(directory, ConfigFilename)
 	config.writeJsonConfig(filename)
 
-	// Put config data
+	// Put initial config data
 	err = config.put(kvdb{db})
 	if err != nil {
 		log.Fatalf("Error writing configuration to datastore: %s\n", err.Error())
 	}
 
+	// Put empty runtime configuration
+	rconfig := new(runtimeConfig)
+	err = rconfig.put(kvdb{db})
+	if err != nil {
+		err = fmt.Errorf("Error writing blank runtime configuration: %s", err.Error())
+		return
+	}
+
 	// Put cached global variables
 	uuid = NewUUID()
-	globals := cachedData{
+	globals := uuidData{
 		Head:  uuid,
 		Uuids: map[string]int16{string(uuid): 1},
 	}
@@ -121,26 +142,19 @@ func Init(directory string, configFile string, create bool) (uuid UUID) {
 	return
 }
 
-// BlockNumVoxels returns the # of voxels within a block.  Block size should
-// be immutable during the course of a datastore's lifetime.
-func (config *configData) BlockNumVoxels() int {
-	x := int(config.BlockMax[0] * config.BlockMax[1] * config.BlockMax[2])
-	return x
-}
-
 // VerifyCompiledTypes will return an error if any required data type in the datastore 
 // configuration was not compiled into DVID executable.  Check is done by more exact
 // URL and not the data type name.
-func (config *configData) VerifyCompiledTypes() error {
+func (config *runtimeConfig) VerifyCompiledTypes() error {
 	if CompiledTypes == nil {
 		return fmt.Errorf("DVID was not compiled with any data type support!")
 	}
 	var errMsg string
-	for _, datatype := range config.Datatypes {
-		_, found := CompiledTypes[datatype.BaseDatatype().Url]
+	for name, datatype := range config.DataNames {
+		_, found := CompiledTypes[datatype.Url()]
 		if !found {
 			errMsg += fmt.Sprintf("DVID was not compiled with support for data type %s [%s]\n",
-				datatype.BaseDatatype().Name, datatype.BaseDatatype().Url)
+				datatype.Name(), datatype.Url())
 		}
 	}
 	if errMsg != "" {
@@ -149,22 +163,25 @@ func (config *configData) VerifyCompiledTypes() error {
 	return nil
 }
 
-// SupportedTypeChart returns a chart (names/urls) of data types supported by this datastore
-func (config *configData) SupportedTypeChart() string {
-	var text string = "\nData types supported by this DVID datastore:\n\n"
-	writeLine := func(name, version string, url UrlString) {
-		text += fmt.Sprintf("%-15s  %-8s %s\n", name, version, url)
+// DataChart returns a chart of data set names and their types for this runtime configuration. 
+func (config *runtimeConfig) DataChart() string {
+	var text string
+	if config.DataNames == nil {
+		return "No data types has been added to this datastore.\n"
 	}
-	writeLine("Name", "Version", "Url")
-	for _, datatype := range config.Datatypes {
-		writeLine(datatype.BaseDatatype().Name, datatype.BaseDatatype().Version,
-			datatype.BaseDatatype().Url)
+	writeLine := func(name, version string, url UrlString) {
+		text += fmt.Sprintf("%-15s  %-15s  %s\n", name, version, url)
+	}
+	writeLine("Name", "Type Name", "Url")
+	for name, datatype := range config.DataNames {
+		writeLine(name, datatype.Name()+" ("+datatype.Version()+")", datatype.Url())
 	}
 	return text
 }
 
-// Version returns a chart of version identifiers for data types and and DVID's datastore
-func (config *configData) Versions() string {
+// Version returns a chart of version identifiers for compile-time DVID datastore
+// and the runtime data types.
+func (config *runtimeConfig) Versions() string {
 	var text string
 	writeLine := func(name, version string) {
 		text += fmt.Sprintf("%-15s   %s\n", name, version)
@@ -172,52 +189,26 @@ func (config *configData) Versions() string {
 	writeLine("Name", "Version")
 	writeLine("DVID datastore", Version)
 	writeLine("Leveldb", keyvalue.Version)
-	for _, datatype := range config.Datatypes {
-		writeLine(datatype.BaseDatatype().Name, datatype.BaseDatatype().Version)
+	for _, datatype := range config.DataNames {
+		writeLine(datatype.Name(), datatype.Version())
 	}
 	return text
 }
 
-// IsSupportedType returns true if given data type name is supported by this datastore
-// IsSupportedType returns true if given data type name is supported by this datastore
-func (config *configData) IsSupportedType(name string) bool {
-	for _, datatype := range config.Datatypes {
-		if name == datatype.BaseDatatype().Name {
-			return true
-		}
-	}
-	return false
-}
-
-func (config *configData) GetSupportedTypeUrl(name string) (url UrlString, err error) {
-	for _, datatype := range config.Datatypes {
-		if name == datatype.BaseDatatype().Name {
-			url = datatype.BaseDatatype().Url
-			return
-		}
-	}
-	err = fmt.Errorf("data type '%s' not supported by opened datastore.", name)
-	return
-}
-
 // promptConfig prompts the user to enter configuration data.
-func promptConfig() (config *configData) {
-	config = new(configData)
+func promptConfig() (config *initConfig) {
+	config = new(initConfig)
 	pVolumeMax := &(config.VolumeMax)
 	pVolumeMax.Prompt("# voxels", "250")
 	pVoxelRes := &(config.VoxelRes)
 	pVoxelRes.Prompt("Voxel resolution", "10.0")
 	config.VoxelResUnits = dvid.VoxelResolutionUnits(dvid.Prompt("Units of resolution", "nanometer"))
-	pBlockMax := &(config.BlockMax)
-	pBlockMax.Prompt("Size of blocks", "16")
-
-	config.Indexing = SIndexZXY
 	return
 }
 
 // readJsonConfig reads in a Config from a JSON file with errors leading to
 // termination of program.
-func readJsonConfig(filename string) (config *configData) {
+func readJsonConfig(filename string) (config *initConfig) {
 	var file *os.File
 	file, err := os.Open(filename)
 	if err != nil {
@@ -226,9 +217,8 @@ func readJsonConfig(filename string) (config *configData) {
 	}
 	defer file.Close()
 	dec := json.NewDecoder(file)
-	config = new(configData)
+	config = new(initConfig)
 	err = dec.Decode(&config)
-	config.Indexing = SIndexZXY
 	if err == io.EOF {
 		log.Fatalf("Error: No data in JSON config file: %s [%s]\n", filename, err)
 	} else if err != nil {
@@ -238,7 +228,7 @@ func readJsonConfig(filename string) (config *configData) {
 }
 
 // writeJsonConfig writes a Config to a JSON file.
-func (config *configData) writeJsonConfig(filename string) {
+func (config *initConfig) writeJsonConfig(filename string) {
 	file, err := os.Create(filename)
 	if err != nil {
 		log.Fatalf("Error: Failed to create JSON config file: %s [%s]\n",
@@ -261,46 +251,16 @@ type kvdb struct {
 	keyvalue.KeyValueDB
 }
 
-// VersionService encapsulates both an open DVID datastore and the version that
-// should be operated upon.  It is the main unit of service for operations.
-type VersionService struct {
-	Service
-
-	// The datastore-specific UUID index for the version we are operating upon
-	uuidNum int16
-}
-
-// UuidNum is the datastore-specific UUID index.  We assume we'll have no more
-// than 32,000 image versions.
-func (vs *VersionService) UuidNum() int16 {
-	return vs.uuidNum
-}
-
-// NewVersionService packages a Service and a UUID representing a version
-func NewVersionService(service *Service, uuidNum int16) *VersionService {
-	return &VersionService{
-		*service,
-		uuidNum,
-	}
-}
-
-func (vs *VersionService) UuidBytes() []byte {
-	buf := new(bytes.Buffer)
-	err := binary.Write(buf, binary.LittleEndian, vs.uuidNum)
-	if err != nil {
-		log.Fatalf("ERROR encoding binary uuid %d: %s", vs.uuidNum, err.Error())
-	}
-	return buf.Bytes()
-}
-
 // Service encapsulates an open DVID datastore, available for operations.
 type Service struct {
 	// The datastore configuration for this open DVID datastore,
 	// including the supported data types
-	configData
+	initConfig
 
-	// The globals cache
-	cachedData
+	runtimeConfig
+
+	// Holds map of all UUIDs in datastore
+	uuidData
 
 	// The underlying leveldb which is private since we want to create an object
 	// interface (e.g., cache object or UUID map) and hide DVID-specific keys.
@@ -315,31 +275,96 @@ func Open(directory string) (service *Service, err error) {
 	create := false
 	db, err := keyvalue.OpenLeveldb(directory, create, dbOptions)
 	if err != nil {
-		err = fmt.Errorf("Error opening datastore (%s): %s\n", directory, err)
+		err = fmt.Errorf("Error opening datastore (%s): %s", directory, err.Error())
 		return
 	}
 
 	// Read this datastore's configuration
-	config := new(configData)
-	err = config.get(kvdb{db})
+	iconfig := new(initConfig)
+	err = iconfig.get(kvdb{db})
+	if err != nil {
+		err = fmt.Errorf("Error reading initial configuration: %s", err.Error())
+		return
+	}
+	rconfig := new(runtimeConfig)
+	err = rconfig.get(kvdb{db})
+	if err != nil {
+		err = fmt.Errorf("Error reading runtime configuration: %s", err.Error())
+		return
+	}
+
+	// Read this datastore's UUIDs
+	uuids := new(uuidData)
+	err = uuids.get(kvdb{db})
 	if err != nil {
 		return
 	}
 
-	// Read this datastore's cached globals
-	cache := new(cachedData)
-	err = cache.get(kvdb{db})
-	if err != nil {
-		return
-	}
-
-	service = &Service{*config, *cache, kvdb{db}}
+	service = &Service{*iconfig, *rconfig, *uuids, kvdb{db}}
 	return
 }
 
 // Close closes a DVID datastore.
 func (service *Service) Close() {
 	service.Close()
+}
+
+// SupportedDataChart returns a chart (names/urls) of data referenced by this datastore
+func (service *Service) SupportedDataChart() string {
+	header := "\nData types currently referenced within this DVID datastore:\n\n"
+	return header + service.runtimeConfig.DataChart()
+}
+
+// TypeService returns a type-specific service given an identifier that should be
+// specific to a DVID instance
+func (service *Service) TypeService(name string) (typeService TypeService, err error) {
+	for dataname, datatype := range service.DataNames {
+		if name == dataname {
+			typeService = service.DataNames[dataname]
+			return
+		}
+	}
+	err = fmt.Errorf("Data type '%s' has not been added yet in opened datastore.", name)
+	return
+}
+
+// NewDataSet registers a data set name of a given data type with this datastore.  
+func (service *Service) NewDataSet(dataSetName, dataTypeName string) error {
+	// Check if this is a valid data type
+	typeService, err := service.TypeService(dataTypeName)
+	if err != nil {
+		return err
+	}
+	// Check if we already have this registered
+	foundTypeService, found := service.DataNames[dataSetName]
+	if found {
+		if typeService.Url() != foundTypeService.Url() {
+			return fmt.Errorf("Data set name '%s' already has type '%s' not '%s'",
+				dataSetName, foundTypeService.Url(), typeService.Url())
+		}
+		return nil
+	}
+	// Add it and store updated runtimeConfig to datastore.
+	var lock sync.Mutex
+	lock.Lock()
+	index := DataTypeIndex(len(service.DataNames) + 1)
+	if index > 65500 {
+		return fmt.Errorf("Only 65500 distinct data sets allowed per DVID instance.")
+	}
+	service.DataNames[dataSetName] = DatastoreType{typeService, index.ToKey()}
+	err = service.runtimeConfig.put(service.kvdb)
+	lock.Unlock()
+	return err
+}
+
+// DataIndexBytes returns bytes that uniquely identify (within the current datastore)
+// the given data type name.   Returns nil if type name was not found. 
+func (service *Service) DataIndexBytes(name string) []byte {
+	dtype, found := service.DataNames[name]
+	if found {
+		return dtype.DataIndexBytes
+	}
+	return nil
 }
 
 // GetUUIDFromString returns a UUID index given its string representation.  
@@ -387,4 +412,68 @@ func (service *Service) GetUUIDFromString(s string) (uuidNum int16, err error) {
 // considered the most current.
 func (service *Service) GetHeadUuid() UUID {
 	return service.Head
+}
+
+// VersionService encapsulates both an open DVID datastore and the version that
+// should be operated upon.  It is the main unit of service for operations.
+type VersionService struct {
+	Service
+
+	// The datastore-specific UUID index for the version we are operating upon
+	uuidNum int16
+
+	// Channels for the block handlers
+	channels BlockChannels
+}
+
+// NewVersionService packages a Service and a UUID representing a version
+func NewVersionService(service *Service, uuidNum int16) *VersionService {
+	return &VersionService{
+		*service,
+		uuidNum,
+		make(BlockChannels),
+	}
+}
+
+// UuidNum is the datastore-specific UUID index.  We assume we'll have no more
+// than 32,000 image versions.
+func (vs *VersionService) UuidNum() int16 {
+	return vs.uuidNum
+}
+
+// UuidBytes returns a sequence of bytes encoding the UUID for this version service. 
+func (vs *VersionService) UuidBytes() []byte {
+	buf := new(bytes.Buffer)
+	err := binary.Write(buf, binary.LittleEndian, vs.uuidNum)
+	if err != nil {
+		log.Fatalf("ERROR encoding binary uuid %d: %s", vs.uuidNum, err.Error())
+	}
+	return buf.Bytes()
+}
+
+func (vs *VersionService) DatatypeKey() []byte {
+	// Determine the index of this datatype for this particular datastore.
+	var datatypeIndex int8 = -1
+	for i, d := range vs.Datatypes {
+		if d.Url == data.TypeUrl() {
+			datatypeIndex = int8(i)
+			break
+		}
+	}
+	if datatypeIndex < 0 {
+		return fmt.Errorf("Could not match datatype (%s) to supported data types!",
+			datatype.Url)
+	}
+	datatypeKey := byte(datatypeIndex)
+}
+
+// Request adds a datastore version service to a DVID request. 
+type Request struct {
+	svc *VersionService
+	dvid.Request
+}
+
+// VersionService returns the version service associated with this datastore request. 
+func (r *Request) VersionService() *VersionService {
+	return r.svc
 }

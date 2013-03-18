@@ -21,6 +21,8 @@ const (
 	KeyDatastoreDir = "dir"
 	KeyConfigFile   = "config"
 	KeyPlane        = "plane"
+	KeyOffset       = "offset"
+	KeySize         = "size"
 )
 
 var setKeys = map[string]bool{
@@ -32,15 +34,9 @@ var setKeys = map[string]bool{
 	"plane":  true,
 }
 
-// Request supports requests to DVID.  It extends the standard
-// command package Command by bundling a packet used for input data since Go's
-// rpc convention is to pass a single struct for input.  Once we pass the data
-// through the rpc connection, we unpack the command and input packet to pass
-// it to data types-specific handling.
-//
-// Since input and reply payloads are different depending on the command, we
-// use an interface and have different types (SliceCommand, SubvolCommand, etc)
-// that fulfill that interface.
+// Request supports requests to the DVID server.  Since input and reply payloads 
+// are different depending on the command, we frequently extend the basic Request
+// type and include different payloads, e.g., SliceRequest, SubvolRequest, etc. 
 type Request interface {
 	// Name returns the command or data type of the request.
 	// If it is a data type, we use TypeCommand() to get the type-specific command.
@@ -52,23 +48,9 @@ type Request interface {
 	// String returns the full command with its arguments.
 	String() string
 
-	// GetSetting scans a command for any "key=value" argument and returns
-	// the value of the passed 'key'.
-	GetSetting(key string) (value string, found bool)
-
-	// SetCommandArgs sets a variadic argument set of string pointers to data
-	// command arguments, ignoring setting arguments of the form "<key>=<value>".  
-	// If there aren't enough arguments to set a target, the target is set to the 
-	// empty string.  It returns an 'overflow' slice that has all arguments
-	// beyond those needed for targets.
-	SetCommandArgs(targets ...*string) (overflow []string)
-
-	// SetDatatypeArgs sets a variadic argument set of string pointers to data
-	// type-specific command arguments, ignoring setting arguments of the form 
-	// "<key>=<value>".  If there aren't enough arguments to set a target, the 
-	// target is set to the empty string.    It returns an 'overflow' slice 
-	// that has all arguments beyond those needed for targets.
-	SetDatatypeArgs(targets ...*string) (overflow []string)
+	// Parameter returns a value for a given key.
+	// All requests have named parameters determined by the command.
+	Parameter(key string) (value string, found bool)
 }
 
 // Response abstracts possible DVID responses to a Request.
@@ -76,29 +58,20 @@ type Response interface {
 	// ContentType classifies the type of payload and in some cases
 	// is identical to HTTP response content type, e.g., "image/png".
 	ContentType() string
+	SetContentType(contentType string)
 
 	// Text is some response string.
 	Text() string
+	SetText(text string)
 
 	// Status classifies the response.
 	Status() string
+	SetStatus(status string)
 }
 
-// SubvolCommand fulfills a Request interface and uses Subvol for input.
-type SubvolCommand struct {
-	Command
-	Subvolume
-}
-
-// SliceCommand fulfills a Request interface and uses SliceVoxels for input.
-type SliceCommand struct {
-	Command
-	SliceVoxels
-}
-
-// Command fulfills a Request interface for command-based interaction with DVID.
+// Command fulfills a Request interface for command-line interaction with DVID.
 // The first item in the string slice is the command, which may be "help"
-// or the name of DVID data type ("grayscale8").  If the first item is the name
+// or the name of DVID data name ("grayscale8").  If the first item is the name
 // of a data type, the second item will have a type-specific command like "get".
 // The other arguments are command arguments or optional settings of the form
 // "<key>=<value>".
@@ -126,9 +99,9 @@ func (cmd Command) TypeCommand() string {
 	return cmd[1]
 }
 
-// GetSetting scans a command for any "key=value" argument and returns
+// Parameter scans a command for any "key=value" argument and returns
 // the value of the passed 'key'.
-func (cmd Command) GetSetting(key string) (value string, found bool) {
+func (cmd Command) Parameter(key string) (value string, found bool) {
 	if len(cmd) > 1 {
 		for _, arg := range cmd[1:] {
 			elems := strings.Split(arg, "=")
@@ -142,10 +115,10 @@ func (cmd Command) GetSetting(key string) (value string, found bool) {
 	return
 }
 
-// GetDatastoreDir returns a directory specified in the arguments via "dir=..." or
+// DatastoreDir returns a directory specified in the arguments via "dir=..." or
 // defaults to the current directory.
-func (cmd Command) GetDatastoreDir() string {
-	datastoreDir, found := cmd.GetSetting(KeyDatastoreDir)
+func (cmd Command) DatastoreDir() string {
+	datastoreDir, found := cmd.Parameter(KeyDatastoreDir)
 	if !found {
 		currentDir, err := os.Getwd()
 		if err != nil {
@@ -156,27 +129,27 @@ func (cmd Command) GetDatastoreDir() string {
 	return datastoreDir
 }
 
-// SetCommandArgs sets a variadic argument set of string pointers to data
+// CommandArgs sets a variadic argument set of string pointers to data
 // command arguments, ignoring setting arguments of the form "<key>=<value>".  
 // If there aren't enough arguments to set a target, the target is set to the 
 // empty string.  It returns an 'overflow' slice that has all arguments
 // beyond those needed for targets.
-func (cmd Command) SetCommandArgs(targets ...*string) (overflow []string) {
-	overflow = setArgs(cmd, 1, targets...)
+func (cmd Command) CommandArgs(targets ...*string) (overflow []string) {
+	overflow = getArgs(cmd, 1, targets...)
 	return
 }
 
-// SetDatatypeArgs sets a variadic argument set of string pointers to data
+// DatatypeArgs sets a variadic argument set of string pointers to data
 // type-specific command arguments, ignoring setting arguments of the form 
 // "<key>=<value>".  If there aren't enough arguments to set a target, the 
 // target is set to the empty string.    It returns an 'overflow' slice 
 // that has all arguments beyond those needed for targets.
-func (cmd Command) SetDatatypeArgs(targets ...*string) (overflow []string) {
-	overflow = setArgs(cmd, 2, targets...)
+func (cmd Command) DatatypeArgs(targets ...*string) (overflow []string) {
+	overflow = getArgs(cmd, 2, targets...)
 	return
 }
 
-func setArgs(cmd Command, startPos int, targets ...*string) (overflow []string) {
+func getArgs(cmd Command, startPos int, targets ...*string) (overflow []string) {
 	overflow = make([]string, 0, len(cmd))
 	for _, target := range targets {
 		*target = ""
@@ -214,23 +187,17 @@ func NewSimpleResponse(ctype, text, status string) Response {
 	return &SimpleResponse{ctype, text, status}
 }
 
-func (r *SimpleResponse) ContentType() string {
-	return r.ctype
-}
+func (r *SimpleResponse) ContentType() string { return r.ctype }
 
-func (r *SimpleResponse) Text() string {
-	return r.text
-}
+func (r *SimpleResponse) Text() string { return r.text }
 
-func (r *SimpleResponse) Status() string {
-	return r.status
-}
+func (r *SimpleResponse) Status() string { return r.status }
 
-// SliceResponse is a Response with SliceVoxels payload
-type SliceResponse struct {
-	SimpleResponse
-	SliceVoxels
-}
+func (r *SimpleResponse) SetContentType(ctype string) { r.ctype = ctype }
+
+func (r *SimpleResponse) SetText(text string) { r.text = text }
+
+func (r *SimpleResponse) SetStatus(status string) { r.status = status }
 
 // PointStr is a n-dimensional coordinate in string format "x,y,z,..."
 // where each coordinate is a 32-bit integer.

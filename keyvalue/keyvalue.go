@@ -15,7 +15,7 @@ import (
 
 const (
 	// Default size of LRU cache that caches frequently used uncompressed blocks.
-	DefaultCacheSize = 500 * dvid.Mega
+	DefaultCacheSize = 10 * dvid.Mega
 
 	// Default # bits for Bloom Filter.  The filter reduces the number of unnecessary
 	// disk reads needed for Get() calls by a large factor.
@@ -54,6 +54,11 @@ func (key Key) String() string {
 
 func (value Value) String() string {
 	return fmt.Sprintf("%x", []byte(value))
+}
+
+// Size returns the # of bytes in this Value.
+func (value Value) Size() int {
+	return len(value)
 }
 
 // ReadOptions provides an interface to leveldb read options
@@ -99,6 +104,42 @@ type WriteBatch interface {
 
 	// Close closes a write batch
 	Close()
+}
+
+// Iterator provides an interface to a read-only iterator that allows
+// easy sequential scanning of key/value pairs.  
+type Iterator interface {
+
+	// Close deallocates the iterator and freeing any underlying struct. 
+	Close()
+
+	// GetError returns any error that occured during iteration. 
+	GetError() error
+
+	// Key returns a copy of the key for current iterator position. 
+	Key() Key
+
+	// Next moves the iterator to the next sequential key. 
+	Next()
+
+	// Prev moves the iterator to the previous sequential key. 
+	Prev()
+
+	// Seek moves the iterator to the position of the given key. 
+	Seek(key Key)
+
+	// SeekToFirst moves the iterator to the first key in the datastore. 
+	SeekToFirst()
+
+	// SeekToLast moves the iterator to the last key in the datastore. 
+	SeekToLast()
+
+	// Valid returns false if the iterator has iterated before the first key
+	// or past the last key. 
+	Valid() bool
+
+	// Value returns a copy of the value for current iterator position. 
+	Value() Value
 }
 
 // KeyValueOptions allows setting of a number of key/value datastore
@@ -153,4 +194,7 @@ type KeyValueDB interface {
 	// GetApproximateSizes returns the approximate number of bytes of
 	// file system space used by one or more key ranges.
 	GetApproximateSizes(ranges Ranges) (sizes Sizes, err error)
+
+	// NewIterator returns a read-only Iterator. 
+	NewIterator(ro ReadOptions) (it Iterator, err error)
 }

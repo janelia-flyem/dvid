@@ -95,6 +95,31 @@ func (db *goLDB) GetApproximateSizes(ranges Ranges) (sizes Sizes, err error) {
 	return
 }
 
+// NewIterator returns a read-only Iterator. 
+func (db *goLDB) NewIterator(ro ReadOptions) (it Iterator, err error) {
+	it = goIterator{db.ldb.NewIterator(ro.(*goReadOptions).ReadOptions)}
+	err = nil
+	return
+}
+
+// --- Iterator ---
+
+type goIterator struct {
+	*levigo.Iterator
+}
+
+func (it goIterator) Key() Key {
+	return Key(it.Iterator.Key())
+}
+
+func (it goIterator) Seek(key Key) {
+	it.Iterator.Seek([]byte(key))
+}
+
+func (it goIterator) Value() Value {
+	return it.Iterator.Value()
+}
+
 // --- Read Options -----
 
 type goReadOptions struct {

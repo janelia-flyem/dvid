@@ -3,6 +3,8 @@ package main
 import (
 	"flag"
 	"fmt"
+	"os/signal"
+	"runtime/pprof"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -13,19 +15,52 @@ import (
 	_ "github.com/janelia-flyem/dvid/datatype/grayscale8"
 )
 
-var showHelp bool
-var showHelp2 bool
-var showTypes bool
+var (
+	// Display usage if true.
+	showHelp = flag.Bool("help", false, "")
 
-var runDebug bool
-var runBenchmark bool
+	// List the supported data types if true.
+	showTypes = flag.Bool("types", false, "")
 
-var clientDir string
+	// Run in debug mode if true.
+	runDebug = flag.Bool("debug", false, "")
+
+	// Run in benchmark mode if true.
+	runBenchmark = flag.Bool("benchmark", false, "")
+
+	// Profile CPU usage using standard gotest system. 
+	cpuprofile = flag.String("cpuprofile", "", "")
+
+	// Profile memory usage using standard gotest system. 
+	memprofile = flag.String("memprofile", "", "")
+
+	// Path to web client directory.  Leave unset for default pages.
+	clientDir = flag.String("webclient", "", "")
+
+	// Number of logical CPUs to use for DVID.  
+	useCPU = flag.Int("numcpu", 0, "")
+
+	// Size of DVID data cache
+	cacheMBytes = flag.Int("cache", datastore.DefaultCacheMBytes, "")
+)
 
 const helpMessage = `
 dvid is a distributed, versioned image datastore
 
-	usage: dvid [options] <command>
+Usage: dvid [options] <command>
+
+      -numcpu     =number   Number of logical CPUs to use for DVID.
+      -cache      =number   Megabytes of LRU cache for blocks.  (Default: %d MB)
+      -webclient  =string   Path to web client directory.  Leave unset for default pages.
+      -cpuprofile =string   Write CPU profile to this file.
+      -memprofile =string   Write memory profile to this file on ctrl-C.
+      -types      (flag)    Show compiled DVID data types
+      -debug      (flag)    Run in debug mode.  Verbose.
+      -benchmark  (flag)    Run in benchmarking mode. 
+  -h, -help       (flag)    Show help message
+
+  For profiling, please refer to this excellent article:
+  http://blog.golang.org/2011/06/profiling-go-programs.html
 
 Commands that can be performed without a running server:
 
@@ -39,41 +74,89 @@ For further information, launch the DVID server (enter "dvid serve"), then use
 a web browser to visit the DVID web server ("localhost:4000" by default).
 `
 
-func init() {
-	flag.BoolVar(&showHelp, "h", false, "Show help message")
-	flag.BoolVar(&showHelp2, "help", false, "Show help message")
-	flag.BoolVar(&showTypes, "types", false, "Show compiled DVID data types")
+var usage = func() {
+	// Print local DVID help
+	fmt.Printf(helpMessage, datastore.DefaultCacheMBytes)
 
-	flag.BoolVar(&runDebug, "debug", false, "Run in debug mode.  Verbose.")
-	flag.BoolVar(&runBenchmark, "benchmark", false, "Run in benchmarking mode.")
-
-	flag.StringVar(&clientDir, "webclient", "",
-		"Path to web client directory.  Leave unset for default pages.")
+	// Print server DVID help if available
+	err := DoCommand(&command.Command{Args: []string{"help"}})
+	if err != nil {
+		fmt.Println(helpServerMessage)
+	}
 }
 
 func main() {
+	flag.BoolVar(showHelp, "h", false, "Show help message")
+	flag.Usage = usage
 	flag.Parse()
 
-	if runDebug {
+	if *help {
+		flag.Usage()
+		os.Exit(0)
+	}
+	if *showTypes {
+		fmt.Println(datastore.CompiledTypeChart())
+		os.Exit(0)
+	}
+
+	if *runDebug {
 		dvid.Mode = dvid.Debug
 	}
-	if runBenchmark {
+	if *runBenchmark {
 		dvid.Mode = dvid.Benchmark
 	}
 
-	if showTypes {
-		fmt.Println(datastore.CompiledTypeChart())
-	} else if showHelp || showHelp2 {
-		// Print local DVID help
-		fmt.Println(helpMessage)
-		fmt.Println("\nOptions:")
-		flag.PrintDefaults()
-		// Print server DVID help if available
-		err := DoCommand(&command.Command{Args: []string{"help"}})
+	if *cpuprofile != "" {
+		f, err := os.Create(*cpuprofile)
 		if err != nil {
-			fmt.Println(helpServerMessage)
+			log.Fatal(err)
 		}
-	} else if flag.NArg() == 0 {
+		pprof.StartCPUProfile(f)
+		defer pprof.StopCPUProfile()
+	}
+
+	// Determine numer of logical CPUs on local machine and unless overridden, use
+	// all of them.
+	numCPU := runtime.NumCPU()
+	dvidCPU := numCPU
+	if *useCPU != 0 {
+		dvidCPU = *useCPU
+	}
+	runtime.GOMAXPROCS(dvidCPU)
+	log.Printf("Using %d of %d logical CPUs for DVID.\n", dvidCPU, numCPU)
+
+	// Setup the DVID data cache.
+	cacheBytes := *cacheMBytes * dvid.Mega
+	log.Printf("Using %d MB for DVID data cache.\n", *cacheMBytes)
+	datastore.InitDataCache(cacheBytes)
+
+	// Capture ctrl+c and handle graceful shutdown (flushing of cache, etc.)
+	ctrl_c := make(chan os.Signal, 1)
+	go func() {
+		for sig := range ctrl_c {
+			log.Printf("Captured %v.  Shutting down...\n", sig)
+			if *memprofile != "" {
+				log.Printf("Storing memory profiling to %s...\n", *memprofile)
+				f, err := os.Create(*memprofile)
+				if err != nil {
+					log.Fatal(err)
+				}
+				pprof.WriteHeapProfile(f)
+				f.Close()
+			}
+			log.Println("Flushing cache to datastore...\n")
+			datastore.Shutdown()
+			if *cpuprofile != "" {
+				log.Printf("Stopping CPU profiling to %s...\n", *cpuprofile)
+				pprof.StopCPUProfile()
+			}
+			os.Exit(1)
+		}
+	}()
+	signal.Notify(ctrl_c, os.Interrupt)
+
+	// If we have no arguments, run in terminal mode, else execute command.
+	if flag.NArg() == 0 {
 		terminal.Shell()
 	} else {
 		dvid.Fmt(dvid.Debug, "Running in Debug mode\n")
@@ -109,8 +192,8 @@ func DoCommand(cmd *dvid.Command) error {
 
 // DoInit performs the "init" command, creating a new DVID datastore.
 func DoInit(cmd *dvid.Command) error {
-	configFile, _ := cmd.GetSetting(command.KeyConfigFile)
-	datastoreDir := cmd.GetDatastoreDir()
+	configFile, _ := cmd.Parameter(command.KeyConfigFile)
+	datastoreDir := cmd.DatastoreDir()
 
 	create := true
 	uuid := datastore.Init(datastoreDir, configFile, create)
@@ -121,9 +204,9 @@ func DoInit(cmd *dvid.Command) error {
 // DoServe opens a datastore then creates both web and rpc servers for the datastore
 func DoServe(cmd *dvid.Command) error {
 
-	webAddress, _ := cmd.GetSetting(dvid.KeyWeb)
-	rpcAddress, _ := cmd.GetSetting(dvid.KeyRpc)
-	datastoreDir := cmd.GetDatastoreDir()
+	webAddress, _ := cmd.Parameter(dvid.KeyWeb)
+	rpcAddress, _ := cmd.Parameter(dvid.KeyRpc)
+	datastoreDir := cmd.DatastoreDir()
 
 	if err := server.Serve(datastoreDir, webAddress, clientDir, rpcAddress); err != nil {
 		return err
