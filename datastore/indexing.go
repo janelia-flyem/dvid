@@ -5,11 +5,9 @@
 package datastore
 
 import (
-	"bytes"
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
-	"log"
 
 	"github.com/janelia-flyem/dvid/dvid"
 )
@@ -55,9 +53,9 @@ func MakeSpatialIndex(t TypeService, coord dvid.BlockCoord) SpatialIndex {
 func (si SpatialIndex) BlockCoord(t TypeService) (coord dvid.BlockCoord) {
 	switch t.SpatialIndexing() {
 	case SIndexZYX:
-		coord[2] = binary.LittleEndian.Uint32([]byte(si[0:4]))
-		coord[1] = binary.LittleEndian.Uint32([]byte(si[4:8]))
-		coord[0] = binary.LittleEndian.Uint32([]byte(si[8:12]))
+		coord[2] = int32(binary.LittleEndian.Uint32([]byte(si[0:4])))
+		coord[1] = int32(binary.LittleEndian.Uint32([]byte(si[4:8])))
+		coord[0] = int32(binary.LittleEndian.Uint32([]byte(si[8:12])))
 	default:
 		panic(fmt.Sprintf("BlockCoord: Unsupported spatial indexing scheme (%d)!",
 			t.SpatialIndexing()))
@@ -86,7 +84,7 @@ func (si SpatialIndex) Hash(t TypeService, n int) int {
 		x := binary.LittleEndian.Uint32([]byte(si[8:12]))
 		// Make sure that any scans along x, y, or z directions will 
 		// cause distribution to different handlers. 
-		return (x + y + z) % n
+		return int(x+y+z) % n
 	default:
 		panic(fmt.Sprintf("BlockCoord: Unsupported spatial indexing scheme (%d)!",
 			t.SpatialIndexing()))
@@ -102,18 +100,18 @@ func (si SpatialIndex) String() string {
 type SpatialIterator func() []byte
 
 // Iterator returns a SpatialIterator for a given data type and volume to traverse.
-func NewSpatialIterator(t TypeService, v dvid.Volume) SpatialIterator {
+func NewSpatialIterator(data DataStruct) SpatialIterator {
 	// Create buffer for spatial key
 	spatialKey := make([]byte, 12, 12)
 
 	// Setup traversal
-	startVoxel := v.Origin()
-	endVoxel := v.EndVoxel()
-	switch t.SpatialIndexing() {
+	startVoxel := data.Origin()
+	endVoxel := data.EndVoxel()
+	switch data.SpatialIndexing() {
 	case SIndexZYX:
 		// Returns a closure that iterates in x, then y, then z
-		startBlockCoord := startVoxel.BlockCoord(t.BlockSize())
-		endBlockCoord := endVoxel.BlockCoord(t.BlockSize())
+		startBlockCoord := startVoxel.BlockCoord(data.BlockSize())
+		endBlockCoord := endVoxel.BlockCoord(data.BlockSize())
 		z := startBlockCoord[2]
 		y := startBlockCoord[1]
 		x := startBlockCoord[0]
@@ -137,6 +135,7 @@ func NewSpatialIterator(t TypeService, v dvid.Volume) SpatialIterator {
 		}
 	default:
 		panic(fmt.Sprintf("Unimplemented Iterator called for spatial index scheme: %s",
-			t.SpatialIndexing()))
+			data.SpatialIndexing()))
 	}
+	return nil
 }

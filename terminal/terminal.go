@@ -57,14 +57,14 @@ func Shell() {
 			takeCommands = false
 		case "address":
 			if len(cmd) > 1 {
-				cmd.SetCommandArgs(&rpcAddress)
+				cmd.CommandArgs(1, &rpcAddress)
 				fmt.Printf("Set rpc address to %s\n", rpcAddress)
 			} else {
 				fmt.Printf("Current rpc address: %s\n", rpcAddress)
 			}
 		case "version":
 			if len(cmd) > 1 {
-				cmd.SetCommandArgs(&version)
+				cmd.CommandArgs(1, &version)
 				fmt.Printf("Set version to %s\n", version)
 			} else {
 				fmt.Printf("Current version: %s\n", version)
@@ -80,7 +80,7 @@ func Shell() {
 
 func Send(cmd dvid.Command) (err error) {
 	// Change rpc if encoded in command
-	address, rpcOverriden := cmd.GetSetting(dvid.KeyRpc)
+	address, rpcOverriden := cmd.Parameter(dvid.KeyRpc)
 	if rpcOverriden {
 		rpcAddress = address
 	}

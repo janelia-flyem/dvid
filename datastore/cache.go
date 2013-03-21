@@ -7,13 +7,11 @@ package datastore
 
 import (
 	"fmt"
-	"log"
-	"os"
+	_ "log"
+	_ "os"
 	"sync"
-	"time"
 
 	"github.com/janelia-flyem/dvid/cache"
-	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/keyvalue"
 )
 
@@ -54,30 +52,64 @@ const (
 	PutOp
 )
 
+func (op OpType) String() string {
+	switch op {
+	case GetOp:
+		return "GET"
+	case PutOp:
+		return "PUT"
+	}
+	return fmt.Sprintf("Illegal Op (%d)", op)
+}
+
 type OpResult string
 
-// Block is an interface for data that is held within DVID blocks, which are the
-// fundamental value in each key/value pair.  A Block is usually voxel-oriented data
-// but can contain graph or other kinds of data as well.  
-type Block interface {
+// Block is the unit of get/put for each data type.  We typically decompose a
+// larger structure (DataStruct) into Blocks, process each Block separately
+// by a handler assigned for each spatial index, and then let the requestor 
+// know when all the processing is done via a sync.WaitGroup.
+type BlockRequest struct {
+	// The larger data structure that we're going to fill in using blocks.
+	// This should be filled with a pointer to the struct for memory reasons.
+	DataStruct
+
+	// Block holds the data for a block
+	Block keyvalue.Value
+
+	// Parameters for this particular block
+	Op         OpType
+	SpatialKey SpatialIndex
+	BlockKey   keyvalue.Key
+
+	// Let's us notify requestor when all blocks are done.
+	Wait *sync.WaitGroup
+
+	// Include a WriteBatch so PUT ops can be batched
+	WriteBatch keyvalue.WriteBatch
 }
 
 // Each data type has a pool of channels to communicate with block handlers. 
-type BlockChannels map[string]([]chan Block)
+type BlockChannels map[string]([]chan *BlockRequest)
+
+// DiskAccess is a mutex to make sure we don't have goroutines simultaneously trying
+// to access the key-value database on disk.
+// TODO: Reexamine this in the context of parallel disk drives during cluster use.
+var DiskAccess sync.Mutex
 
 // Global variable that holds the LRU cache for DVID instance. 
 var dataCache *cache.LRUCache
 
 // Initialize the LRU cache
-func InitDataCache(numBytes int) {
+func InitDataCache(numBytes uint64) {
 	dataCache = cache.NewLRUCache(numBytes)
 }
 
 // GetCachedBlock returns data for a given DVID Block if it's in the cache.
 // Since the block key includes a UUID, this function can be used to access
 // any image versions cached blocks. 
-func GetCachedBlock(blockKey keyvalue.Key) (data keyvalue.Value, found bool) {
-	data, found = dataCache.Get(string(blockKey))
+func GetCachedBlock(blockKey keyvalue.Key) (value keyvalue.Value, found bool) {
+	data, found := dataCache.Get(string(blockKey))
+	value = data.(keyvalue.Value)
 	// TODO -- keep statistics on hits for web client
 	return
 }
@@ -91,98 +123,104 @@ func SetCachedBlock(blockKey keyvalue.Key, data keyvalue.Value) {
 // ReserveBlockHandlers makes sure we have block handler goroutines for each
 // data type and each image version.  This makes sure that operations on a
 // specific block can only be performed by the same handler. 
-func (vs *VersionService) ReserveBlockHandlers(typeName string, numHandlers int) {
+func (vs *VersionService) ReserveBlockHandlers(t TypeService) {
 	// Do we have channels and handlers for this type and image version?
-	_, found := vs.channels[typeName]
+	_, found := vs.channels[t.TypeName()]
 	if !found {
 		// Create channels and handlers
-		channels := make([]chan Block, 0, numHandlers)
-		for i := 0; i < numHandlers; i++ {
-			channel := make(chan Block, BlockHandlerBufferSize)
+		channels := make([]chan *BlockRequest, 0, t.NumBlockHandlers())
+		for i := 0; i < t.NumBlockHandlers(); i++ {
+			channel := make(chan *BlockRequest, BlockHandlerBufferSize)
 			channels = append(channels, channel)
-			go vs.blockHandler(channel)
+			go func() {
+				for {
+					block := <-channel
+					block.DataStruct.BlockHandler(block)
+				}
+			}()
 			// TODO -- keep stats on # of handlers
 		}
-		vs.channels[typeName] = channels
+		vs.channels[t.TypeName()] = channels
 	}
 }
 
-// ProcessBlock sends each block through a channel to its handler.  Since channel
-// assignment is determined solely by the block key, the same block will always
-// be sent to the same handler.
-func (vs *VersionService) ProcessBlock(block Block) {
-	// Make sure we have channels to handlers for this block's data type.
-	channels, found := vs.channels[block.TypeName()]
+// MapBlocks breaks down a DataStruct into a sequence of blocks that can be
+// efficiently read from the key-value database.
+// Phase 1: Time leveldb built-in LRU cache and write buffer. (current)
+// Phase 2: Minimize leveldb built-in LRU cache and use DVID LRU cache with
+//   periodic and on-demand writes. 
+// TODO -- Examine possible interleaving of block-level requests across MapBlocks()
+//   calls and its impact on GET requests fulfilled while some blocks are still being
+//   modified.
+func (vs *VersionService) MapBlocks(op OpType, data DataStruct, wg *sync.WaitGroup,
+	writeBatch keyvalue.WriteBatch) error {
+
+	// Get components of the block key
+	uuidBytes := vs.UuidBytes()
+	datatypeBytes := vs.DataIndexBytes(data.TypeName())
+
+	// Make sure we have Block Handlers for this data type.
+	vs.ReserveBlockHandlers(data)
+	channels, found := vs.channels[data.TypeName()]
 	if !found {
-		vs.ReserveBlockHandlers(block.TypeName(), DefaultNumBlockHandlers)
-		channels, found = vs.channels[block.TypeName()]
+		return fmt.Errorf("Error in reserving block handlers in MapBlocks() for %s!",
+			data.TypeName())
 	}
 
-	// Try to spread sequential block keys out among different block handlers to get 
-	// most out of our concurrent processing.
-	channelNum := block.spatialKey.Hash(block.TypeService, len(channels))
+	// Traverse blocks, get key/values if not in cache, and put block in queue for handler.
+	ro := keyvalue.NewReadOptions()
+	db_it, err := vs.kvdb.NewIterator(ro)
+	defer db_it.Close()
+	if err != nil {
+		return err
+	}
+	spatial_it := NewSpatialIterator(data)
+	start := true
+	var value keyvalue.Value
 
-	// Send the block
-	channels[channelNum] <- block
-}
-
-// blockHandler is a goroutine that fulfills block-level requests sent on a channel.
-func (vs *VersionService) blockHandler(channel chan Block) {
+	DiskAccess.Lock()
 	for {
-		block := <-channel
+		spatialBytes := spatial_it()
+		if spatialBytes == nil {
+			break
+		}
+		blockKey := BlockKey(uuidBytes, spatialBytes, datatypeBytes, data.IsolatedKeys())
 
-		// Get min and max voxel coordinates of this block
-		si := vs.SpatialIndex(req.br.coord)
-		minBlockVoxel := vs.OffsetToBlock(si)
-		maxBlockVoxel := minBlockVoxel.AddSize(vs.BlockMax)
+		// Phase 2: Is this block in the cache?
+		// value, found := GetCachedBlock(blockKey)
 
-		// Get min and max voxel coordinates of the entire subvolume
-		subvol := req.br.subvol
-		minSubvolVoxel := subvol.Offset
-		maxSubvolVoxel := minSubvolVoxel.AddSize(subvol.Size)
-
-		// Bound the start and end voxel coordinates of the subvolume by the block limits.
-		start := minSubvolVoxel.BoundMin(minBlockVoxel)
-		end := maxSubvolVoxel.BoundMax(maxBlockVoxel)
-
-		// Traverse the data from start to end voxel coordinates and write to the block.
-		// TODO -- Optimize the inner loop and see if we actually get faster :)  Currently,
-		// the code tries to make it very clear what transformations are happening.
-		for z := start[2]; z <= end[2]; z++ {
-			for y := start[1]; y <= end[1]; y++ {
-				for x := start[0]; x <= end[0]; x++ {
-					voxelCoord := dvid.VoxelCoord{x, y, z}
-					i := subvol.VoxelCoordToDataIndex(voxelCoord)
-					b := vs.VoxelCoordToBlockIndex(voxelCoord)
-					bI := b * subvol.BytesPerVoxel // index into block.data
-					switch req.br.op {
-					case GetOp:
-						for n := 0; n < subvol.BytesPerVoxel; n++ {
-							subvol.Data[i+n] = data[bI+n]
-						}
-					case PutOp:
-						for n := 0; n < subvol.BytesPerVoxel; n++ {
-							data[bI+n] = subvol.Data[i+n]
-						}
-					}
-				}
-			}
+		// Pull from the datastore
+		if start || string(db_it.Key()) != string(blockKey) {
+			db_it.Seek(blockKey)
+			start = false
+		}
+		if db_it.Valid() {
+			value = db_it.Value()
+			SetCachedBlock(blockKey, value)
+		} else {
+			break
 		}
 
-		switch req.br.op {
-		case GetOp:
-		case PutOp:
-			// PUT the block
-			err = vs.kvdb.putBytes(req.br.blockKey, data)
-			if err != nil {
-				dvid.Error("ERROR blockHandler(%d): unable to write block!\n", channelNum)
-			}
+		// Advance the database iterator
+		db_it.Next()
+
+		// Initialize the block request
+		req := &BlockRequest{
+			DataStruct: data,
+			Block:      value,
+			Op:         op,
+			SpatialKey: SpatialIndex(spatialBytes),
+			BlockKey:   blockKey,
+			Wait:       wg,
+			WriteBatch: writeBatch,
 		}
 
-		// Notify the requestor that this block is done.
-		if req.br.wg != nil {
-			req.br.wg.Done()
-		}
-
-	} // request loop
+		// Try to spread sequential block keys among different block handlers to get 
+		// most out of our concurrent processing.
+		wg.Add(1)
+		channelNum := req.SpatialKey.Hash(data, len(channels))
+		channels[channelNum] <- req
+	}
+	DiskAccess.Unlock()
+	return nil
 }

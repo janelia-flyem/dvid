@@ -15,7 +15,7 @@ import (
 
 const (
 	// Default size of LRU cache that caches frequently used uncompressed blocks.
-	DefaultCacheSize = 10 * dvid.Mega
+	DefaultCacheSize = 500 * dvid.Mega
 
 	// Default # bits for Bloom Filter.  The filter reduces the number of unnecessary
 	// disk reads needed for Get() calls by a large factor.

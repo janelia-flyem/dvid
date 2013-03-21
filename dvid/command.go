@@ -35,8 +35,8 @@ var setKeys = map[string]bool{
 }
 
 // Request supports requests to the DVID server.  Since input and reply payloads 
-// are different depending on the command, we frequently extend the basic Request
-// type and include different payloads, e.g., SliceRequest, SubvolRequest, etc. 
+// are different depending on the command, we can extend the basic Request
+// type and include different payloads, e.g., SliceRequest, SubvolumeRequest, etc. 
 type Request interface {
 	// Name returns the command or data type of the request.
 	// If it is a data type, we use TypeCommand() to get the type-specific command.
@@ -51,6 +51,11 @@ type Request interface {
 	// Parameter returns a value for a given key.
 	// All requests have named parameters determined by the command.
 	Parameter(key string) (value string, found bool)
+
+	// CommandArgs sets a variadic argument set of string pointers to data
+	// command arguments, ignoring setting arguments of the form "<key>=<value>".  
+	// See Command.CommandArgs for more information.
+	CommandArgs(startPos int, targets ...*string) (overflow []string)
 }
 
 // Response abstracts possible DVID responses to a Request.
@@ -134,18 +139,23 @@ func (cmd Command) DatastoreDir() string {
 // If there aren't enough arguments to set a target, the target is set to the 
 // empty string.  It returns an 'overflow' slice that has all arguments
 // beyond those needed for targets.
-func (cmd Command) CommandArgs(targets ...*string) (overflow []string) {
-	overflow = getArgs(cmd, 1, targets...)
-	return
-}
-
-// DatatypeArgs sets a variadic argument set of string pointers to data
-// type-specific command arguments, ignoring setting arguments of the form 
-// "<key>=<value>".  If there aren't enough arguments to set a target, the 
-// target is set to the empty string.    It returns an 'overflow' slice 
-// that has all arguments beyond those needed for targets.
-func (cmd Command) DatatypeArgs(targets ...*string) (overflow []string) {
-	overflow = getArgs(cmd, 2, targets...)
+//
+// Example: Given the command string "add param1 param2 42 data/*.png"
+// 
+//   var s1, s2, s3, s4 string
+//   filenames := CommandArgs(0, &s1, &s2, &s3, &s4)
+//   fmt.Println(filenames)
+//   fmt.Println(s1)
+//   fmt.Println(s2, s3)
+//   fmt.Println(s4)
+//
+//   Would print out:
+//      ["data/foo-1.png", "data/foo-2.png", "data/foo-3.png"] 
+//      add
+//      param1 param2 
+//      42
+func (cmd Command) CommandArgs(startPos int, targets ...*string) (overflow []string) {
+	overflow = getArgs(cmd, startPos, targets...)
 	return
 }
 

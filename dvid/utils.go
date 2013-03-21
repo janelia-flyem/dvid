@@ -2,13 +2,20 @@ package dvid
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"os"
 	"strings"
 	"sync"
 	"time"
+
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 )
 
 const (
@@ -28,6 +35,9 @@ const (
 
 // Mode is a global variable set to the run modes of this DVID process.
 var Mode ModeFlag
+
+// The global, unexported error logger for DVID.
+var errorLogger *log.Logger
 
 // Log prints a message via log.Print() depending on the Mode of DVID.
 func Log(modes ModeFlag, p ...interface{}) {
@@ -77,19 +87,25 @@ func SetErrorLoggingFile(out io.Writer) {
 	errorLogger.Println("Starting error logging for DVID")
 }
 
-// The global, unexported error logger for DVID.
-var errorLogger *log.Logger
-
 // Wait for WaitGroup then print message including time for operation.
 // The last arguments are fmt.Printf arguments and should not include the
 // newline since one is added in this function.
 func WaitToComplete(wg *sync.WaitGroup, startTime time.Time, p ...interface{}) {
 	wg.Wait()
+	ElapsedTime(startTime, p...)
+}
+
+// ElapsedTime prints the time elapsed from the start time with Printf arguments afterwards.
+// Example:  ElapsedTime(startTime, "Time since launch of %s", funcName)
+func ElapsedTime(startTime time.Time, p ...interface{}) {
+	var format string
+	var args []interface{}
 	if len(p) == 0 {
-		log.Fatalln("Illegal call to WaitToComplete(): No message arguments!")
+		format = "%s\n"
+	} else {
+		format = p[0].(string) + ": %s\n"
+		args = append(args, p[1:])
 	}
-	format := p[0].(string) + ": %s\n"
-	args := p[1:]
 	args = append(args, time.Since(startTime))
 	fmt.Printf(format, args...)
 }
@@ -106,4 +122,75 @@ func Prompt(message, defaultValue string) string {
 		return defaultValue
 	}
 	return line
+}
+
+/***** Image Utilities ******/
+
+// ImageData returns the underlying pixel data for an image or an error if
+// the image doesn't have the requisite []uint8 pixel data.
+func ImageData(img image.Image) (data []uint8, stride int, err error) {
+	switch typedImg := img.(type) {
+	case *image.Alpha:
+		data = typedImg.Pix
+		stride = typedImg.Stride
+	case *image.Alpha16:
+		data = typedImg.Pix
+		stride = typedImg.Stride
+	case *image.Gray:
+		data = typedImg.Pix
+		stride = typedImg.Stride
+	case *image.Gray16:
+		data = typedImg.Pix
+		stride = typedImg.Stride
+	case *image.NRGBA:
+		data = typedImg.Pix
+		stride = typedImg.Stride
+	case *image.NRGBA64:
+		data = typedImg.Pix
+		stride = typedImg.Stride
+	case *image.Paletted:
+		data = typedImg.Pix
+		stride = typedImg.Stride
+	case *image.RGBA:
+		data = typedImg.Pix
+		stride = typedImg.Stride
+	case *image.RGBA64:
+		data = typedImg.Pix
+		stride = typedImg.Stride
+	default:
+		err = fmt.Errorf("Illegal image type called ImageData(): %T", typedImg)
+	}
+	return
+}
+
+// ImageFromFile returns an image and its format name given a file name.
+func ImageFromFile(filename string) (img image.Image, format string, err error) {
+	var file *os.File
+	file, err = os.Open(filename)
+	if err != nil {
+		err = fmt.Errorf("Unable to open image (%s).  Is this visible to server process?",
+			filename)
+		return
+	}
+	img, format, err = image.Decode(file)
+	if err != nil {
+		return
+	}
+	err = file.Close()
+	return
+}
+
+// ImageFromPost returns and image and its format name given a key to a POST request.
+// The image should be the first file in a POSTed form.
+func ImageFromPost(r *http.Request, key string) (img image.Image, format string, err error) {
+	f, _, err := r.FormFile(key)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	var buf bytes.Buffer
+	io.Copy(&buf, f)
+	img, format, err = image.Decode(&buf)
+	return
 }

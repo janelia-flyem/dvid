@@ -7,7 +7,6 @@ package server
 import (
 	"fmt"
 
-	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 )
 
@@ -15,17 +14,21 @@ const helpMessage = `
 Commands executed on the server (%s):
 
 	help  [command you are running]
-	branch
-	lock
+	version
 	types
+	dataset <dataset name> <data type name>   (example: "dataset mygrayscale grayscale8")
+
+	(Commands on roadmap)
 	log
-	pull
-	push
-	archive
+	add <uuid> <dataset name> <local filename glob>
+	branch <uuid>
+	lock <uuid>
+	pull <remote dvid address> <uuid> [<extents>]
+	push <remote dvid address> <uuid> [<extents>]
+	archive <uuid>
 
 All of the commands above can include optional settings of the form:
 	rpc=foo.com:1234  (Specifies the DVID server.)
-	uuid=3efa87       (Specifies the image version within that datastore.)
 
 %s
 
@@ -55,19 +58,22 @@ func (c *RpcConnection) Do(cmd dvid.Request, reply dvid.Response) error {
 
 	switch cmd.Name() {
 	// Handle builtin commands
-	case "types":
-		reply.(*dvid.SimpleResponse).Text = runningService.SupportedDataChart()
 	case "help":
-		reply.(*dvid.SimpleResponse).Text = fmt.Sprintf(helpMessage,
+		reply.SetText(fmt.Sprintf(helpMessage,
 			runningService.RpcAddress, runningService.SupportedDataChart(),
-			runningService.WebAddress)
+			runningService.WebAddress))
+	case "types":
+		reply.SetText(runningService.SupportedDataChart())
 	case "version":
-		reply.(*dvid.SimpleResponse).Text = fmt.Sprintf(
-			"%s\n%s", runningService.Versions())
+		reply.SetText(fmt.Sprintf("%s\n%s", runningService.Versions()))
+	case "dataset":
+		var dataSetName, typeName string
+		cmd.CommandArgs(1, &dataSetName, &typeName)
+		return runningService.NewDataSet(dataSetName, typeName)
 	case "branch":
 		return branch(cmd.(*dvid.Command), reply.(*dvid.SimpleResponse))
-	case "lock", "log", "pull", "push":
-		reply.Text = fmt.Sprintf("Server would have processed '%s'", cmd)
+	case "lock", "log", "pull", "push", "archive":
+		reply.SetText(fmt.Sprintf("Server would have processed '%s'", cmd))
 	default:
 		// Assume this is the command for a supported data type
 		return datatypeDo(cmd, reply)
@@ -95,31 +101,11 @@ func datatypeDo(cmd dvid.Request, reply dvid.Response) error {
 	}
 
 	// Make sure we have at least a command in addition to the data type name
-	if cmd.TypeCommand == "" {
+	if cmd.TypeCommand() == "" {
 		return fmt.Errorf("Must give a command in addition to data type!  Try '%s help'.",
 			cmd.Name())
 	}
 
-	// Get the UUID from command arguments
-	var uuidNum int
-	dvid.Log(dvid.Debug, "GetUuid() cmd = %s\n", cmd)
-	uuidString, found := cmd.GetSetting(command.KeyUuid)
-	dvid.Log(dvid.Debug, "  uuidstring = %s; found = %s\n", uuidString, found)
-	if found {
-		uuidNum, err = runningService.Service.GetUUIDFromString(uuidString)
-		dvid.Log(dvid.Debug, "  after found, uuidNum = %s; err = %s\n", uuidNum, err)
-	}
-	if err != nil {
-		reply.Text = fmt.Sprintf("Could not get uuid from command: %s", cmd)
-		return err
-	}
-
 	// Send the command to the data type
-	return typeService.DoRPC(
-		&datastore.Request{
-			svc: datastore.NewVersionService(runningService.Service, uuidNum),
-			cmd,
-		},
-		reply,
-	)
+	return typeService.DoRPC(cmd, reply, runningService.Service)
 }

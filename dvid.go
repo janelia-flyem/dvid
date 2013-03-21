@@ -3,7 +3,10 @@ package main
 import (
 	"flag"
 	"fmt"
+	"log"
+	"os"
 	"os/signal"
+	"runtime"
 	"runtime/pprof"
 
 	"github.com/janelia-flyem/dvid/datastore"
@@ -41,7 +44,7 @@ var (
 	useCPU = flag.Int("numcpu", 0, "")
 
 	// Size of DVID data cache
-	cacheMBytes = flag.Int("cache", datastore.DefaultCacheMBytes, "")
+	cacheMBytes = flag.Uint64("cache", datastore.DefaultCacheMBytes, "")
 )
 
 const helpMessage = `
@@ -79,7 +82,7 @@ var usage = func() {
 	fmt.Printf(helpMessage, datastore.DefaultCacheMBytes)
 
 	// Print server DVID help if available
-	err := DoCommand(&command.Command{Args: []string{"help"}})
+	err := DoCommand(dvid.Command([]string{"help"}))
 	if err != nil {
 		fmt.Println(helpServerMessage)
 	}
@@ -90,7 +93,7 @@ func main() {
 	flag.Usage = usage
 	flag.Parse()
 
-	if *help {
+	if *showHelp {
 		flag.Usage()
 		os.Exit(0)
 	}
@@ -161,7 +164,7 @@ func main() {
 	} else {
 		dvid.Fmt(dvid.Debug, "Running in Debug mode\n")
 		dvid.Fmt(dvid.Benchmark, "Running in Benchmark mode\n")
-		command := &dvid.Command(flag.Args())
+		command := dvid.Command(flag.Args())
 		if err := DoCommand(command); err != nil {
 			fmt.Println(err.Error())
 		}
@@ -170,8 +173,8 @@ func main() {
 
 // DoCommand serves as a switchboard for commands, handling local ones and
 // sending via rpc those commands that need a running server.
-func DoCommand(cmd *dvid.Command) error {
-	if len(cmd.Args) == 0 {
+func DoCommand(cmd dvid.Command) error {
+	if len(cmd) == 0 {
 		return fmt.Errorf("Blank command!")
 	}
 
@@ -191,8 +194,8 @@ func DoCommand(cmd *dvid.Command) error {
 }
 
 // DoInit performs the "init" command, creating a new DVID datastore.
-func DoInit(cmd *dvid.Command) error {
-	configFile, _ := cmd.Parameter(command.KeyConfigFile)
+func DoInit(cmd dvid.Command) error {
+	configFile, _ := cmd.Parameter(dvid.KeyConfigFile)
 	datastoreDir := cmd.DatastoreDir()
 
 	create := true
@@ -202,13 +205,13 @@ func DoInit(cmd *dvid.Command) error {
 }
 
 // DoServe opens a datastore then creates both web and rpc servers for the datastore
-func DoServe(cmd *dvid.Command) error {
+func DoServe(cmd dvid.Command) error {
 
 	webAddress, _ := cmd.Parameter(dvid.KeyWeb)
 	rpcAddress, _ := cmd.Parameter(dvid.KeyRpc)
 	datastoreDir := cmd.DatastoreDir()
 
-	if err := server.Serve(datastoreDir, webAddress, clientDir, rpcAddress); err != nil {
+	if err := server.Serve(datastoreDir, webAddress, *clientDir, rpcAddress); err != nil {
 		return err
 	}
 	return nil

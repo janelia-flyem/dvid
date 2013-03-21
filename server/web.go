@@ -7,12 +7,10 @@ package server
 
 import (
 	"fmt"
-	"image/png"
 	"net/http"
 	"path/filepath"
 	"strings"
 
-	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 
 	"code.google.com/p/go.net/websocket"
@@ -48,9 +46,6 @@ func mainHandler(w http.ResponseWriter, r *http.Request) {
 //    
 func apiHandler(w http.ResponseWriter, r *http.Request) {
 
-	// Get the action (GET, POST)
-	action := strings.ToLower(r.Method)
-
 	// Break URL request into arguments
 	const lenPath = len(RestApiPath)
 	url := r.URL.Path[lenPath:]
@@ -82,10 +77,11 @@ func apiHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	default:
 		// Pass type-specific requests to the type service
-		typeService, err := datastore.TypeService(parts[0])
+		dataSetName := parts[0]
+		typeService, err := runningService.TypeService(dataSetName)
 		if err != nil {
-			msg := fmt.Sprintf("Could not match data type '%s' [%s]", dataName, err.Error())
-			badRequest(w, r, msg)
+			badRequest(w, r, fmt.Sprintf("Could not find data set '%s' in datastore [%s]",
+				dataSetName, err.Error()))
 			return
 		}
 		typeService.DoHTTP(w, r, runningService.Service, RestApiPath)

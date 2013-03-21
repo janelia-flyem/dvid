@@ -6,8 +6,10 @@ package dvid
 
 import (
 	"fmt"
+	"image"
 	"math"
 	"strconv"
+	"strings"
 )
 
 // Notes:
@@ -29,13 +31,13 @@ func (c VoxelCoord) Add(x VoxelCoord) (result VoxelCoord) {
 	return
 }
 
-// AddSize returns a voxel coordinate that is moved by the x vector
-// minus one.  If x is the size of a box, this has the effect of
+// AddSize returns a voxel coordinate that is moved by the s vector
+// minus one.  If s is the size of a box, this has the effect of
 // returning the maximum voxel coordinate still within the box.
-func (c VoxelCoord) AddSize(x VoxelCoord) (result VoxelCoord) {
-	result[0] = c[0] + x[0] - 1
-	result[1] = c[1] + x[1] - 1
-	result[2] = c[2] + x[2] - 1
+func (c VoxelCoord) AddSize(s Point3d) (result VoxelCoord) {
+	result[0] = c[0] + s[0] - 1
+	result[1] = c[1] + s[1] - 1
+	result[2] = c[2] + s[2] - 1
 	return
 }
 
@@ -108,7 +110,7 @@ func (c VoxelCoord) BoundMax(x VoxelCoord) (result VoxelCoord) {
 }
 
 // BlockCoord returns the coordinate of the block containing the voxel coordinate.
-func (c VoxelCoord) BlockCoord(blockSize VoxelCoord) (bc BlockCoord) {
+func (c VoxelCoord) BlockCoord(blockSize Point3d) (bc BlockCoord) {
 	bc[0] = c[0] / blockSize[0]
 	bc[1] = c[1] / blockSize[1]
 	bc[2] = c[2] / blockSize[2]
@@ -117,7 +119,7 @@ func (c VoxelCoord) BlockCoord(blockSize VoxelCoord) (bc BlockCoord) {
 
 // BlockVoxel returns the voxel coordinate within a containing block for the given voxel 
 // coordinate.
-func (c VoxelCoord) BlockVoxel(blockSize VoxelCoord) (bc VoxelCoord) {
+func (c VoxelCoord) BlockVoxel(blockSize Point3d) (bc VoxelCoord) {
 	bc[0] = c[0] % blockSize[0]
 	bc[1] = c[1] % blockSize[1]
 	bc[2] = c[2] % blockSize[2]
@@ -127,7 +129,7 @@ func (c VoxelCoord) BlockVoxel(blockSize VoxelCoord) (bc VoxelCoord) {
 // ToBlockIndex returns an index into a block's data that corresponds to
 // a given voxel coordinate.  Note that the index is NOT multiplied by BytesPerVoxel
 // but gives the element number, since we also want to set dirty flags.
-func (c VoxelCoord) ToBlockIndex(blockSize VoxelCoord) (index int) {
+func (c VoxelCoord) ToBlockIndex(blockSize Point3d) (index int) {
 	bv := c.BlockVoxel(blockSize)
 	index = int(bv[2]*blockSize[0]*blockSize[1] + bv[1]*blockSize[0] + bv[0])
 	return
@@ -275,7 +277,7 @@ func (shape DataShape) String() string {
 // String for specifying a slice orientation or subvolume
 type DataShapeString string
 
-var dataShapeStrings = map[DataShapeString]DataShape{
+var dataShapeStrings = map[string]DataShape{
 	"xy":  XY,
 	"xz":  XZ,
 	"yz":  YZ,
@@ -294,70 +296,155 @@ func ListDataShapes() (shapes []string) {
 
 // DataShape returns the data shape constant associated with the string.
 func (s DataShapeString) DataShape() (shape DataShape, err error) {
-	shape, found := dataShapeStrings[s]
+	shape, found := dataShapeStrings[strings.ToLower(string(s))]
 	if !found {
 		err = fmt.Errorf("Unknown data shape specification (%s)", s)
 	}
 	return
 }
 
-// Point2d is a 2d point, each coordinate a 32-bit int.
+// Point2d is a 2d point.
 type Point2d [2]int32
+
+func SizeFromRect(rect image.Rectangle) (size Point2d) {
+	size[0] = int32(rect.Dx())
+	size[1] = int32(rect.Dy())
+	return
+}
+
+// Point3d is a 3d point.
+type Point3d [3]int32
 
 // Vector3d is a floating point 3d vector.
 type Vector3d [3]float32
 
-// DataShaper is the interface that wraps a DataShape method
-type DataShaper interface {
+// Geometry describes the shape, size, and position of data in the DVID volume.
+type Geometry interface {
+	// DataShape describes the shape of the data.
 	DataShape() DataShape
+
+	// Origin returns the offset to the voxel at the top left corner of the data.
+	Origin() VoxelCoord
+
+	// Size returns the width, height, and depth as a Point3d. 
+	Size() Point3d
+
+	// NumVoxels returns the number of voxels within this space. 
+	NumVoxels() int
+
+	// EndVoxel returns the last voxel coordinate usually traversed so that
+	// iteration from Origin->EndVoxel will visit all the voxels.
+	EndVoxel() VoxelCoord
+
 	String() string
 }
 
-type Volume interface {
-	Origin() VoxelCoord
-	TopRight() VoxelCoord
-	BottomLeft() VoxelCoord
-	EndVoxel() VoxelCoord
+// Subvolume describes the Geometry for a rectangular box of voxels.  The "Sub" prefix 
+// emphasizes that the data is usually a smaller portion of the volume held by the 
+// DVID datastore.  Note that the 3d coordinate system is a Right-Hand system
+// and works with OpenGL.  The origin is considered the top left corner of an XY slice.  
+// X increases as you move from left to right.  Y increases as you move down from the origin.  
+// Z increases as you add more slices deeper than the current slice.
+type Subvolume struct {
+	// 3d offset
+	origin VoxelCoord
+
+	// 3d size of data
+	size Point3d
 }
 
-// Slice holds a 2d slice of voxels that sits in 3d space.
-// It can be oriented in XY, XZ, YZ, and Arbitrary.  Although slightly
-// counter-intuitive, a slice is a volume of thickness 1 and additional
-// information on its orientation.
-//
-// Note that the 3d coordinate system is a Right-Hand system
-// and works with OpenGL.  The origin is considered the top left
-// corner of an XY slice.  X increases as you move from left to right.
-// Y increases as you move down from the origin.  Z increases as you
-// add more slices deeper than the current slice.
-type Slice interface {
-	// A Slice has data with a particular orientation relative to volume. 
-	DataShaper
+func (s *Subvolume) DataShape() DataShape {
+	return Vol
+}
 
-	// A Slice is a Volume of single voxel thickness in one dimension. 
-	Volume
+func (s *Subvolume) Origin() VoxelCoord {
+	return s.origin
+}
 
-	// Origin returns the coordinate of top left corner. 
-	Origin() VoxelCoord
+func (s *Subvolume) Size() Point3d {
+	return s.size
+}
 
-	// Size returns the width and height as a Point2d. 
-	Size() Point2d
+func (s *Subvolume) NumVoxels() int {
+	if s == nil {
+		return 0
+	}
+	return int(s.size[0] * s.size[1] * s.size[2])
+}
 
-	// NumVoxels returns the number of voxels within this slice. 
-	NumVoxels() int
+func (s *Subvolume) EndVoxel() VoxelCoord {
+	return s.origin.AddSize(s.size)
+}
+
+func (s *Subvolume) String() string {
+	return fmt.Sprintf("Subvolume (%d x %d x %d) at offset (%d, %d, %d)",
+		s.size[0], s.size[1], s.size[2], s.origin[0], s.origin[1], s.origin[2])
+}
+
+func NewSubvolume(origin VoxelCoord, size Point3d) Geometry {
+	return &Subvolume{origin, size}
+}
+
+func (s *Subvolume) TopRight() VoxelCoord {
+	tr := s.origin
+	tr[0] += s.size[0] - 1
+	return tr
+}
+
+func (s *Subvolume) BottomLeft() VoxelCoord {
+	tr := s.origin
+	tr[1] += s.size[1] - 1
+	tr[2] += s.size[2] - 1
+	return tr
+}
+
+// NewSlice returns a Geometry object for a XY, XZ, or YZ slice given the data's
+// orientation, offset, and size.
+func NewSlice(shape DataShape, offset VoxelCoord, size Point2d) (slice Geometry, err error) {
+	switch shape {
+	case XY:
+		slice = NewSliceXY(offset, size)
+	case XZ:
+		slice = NewSliceXZ(offset, size)
+	case YZ:
+		slice = NewSliceYZ(offset, size)
+	case Arb:
+		err = fmt.Errorf("Arbitrary slices not supported yet.")
+	default:
+		err = fmt.Errorf("Illegal slice plane specification (%s)", shape)
+	}
+	return
+}
+
+// NewSliceFromStrings returns a Geometry object for a XY, XZ, or YZ slice given 
+// string representations of shape ("xy"), offset ("0,10,20"), and size ("250,250").
+func NewSliceFromStrings(shapeStr, offsetStr, sizeStr string) (slice Geometry, err error) {
+	shape, err := DataShapeString(shapeStr).DataShape()
+	if err != nil {
+		return
+	}
+	offset, err := PointStr(offsetStr).VoxelCoord()
+	if err != nil {
+		return
+	}
+	size, err := PointStr(sizeStr).Point2d()
+	if err != nil {
+		return
+	}
+	return NewSlice(shape, offset, size)
 }
 
 // SliceData specifies a rectangle in 3d space that is orthogonal to an axis.
 type SliceData struct {
 	origin VoxelCoord
-	size   Point2d
+	size   Point3d
 }
 
 func (s *SliceData) Origin() VoxelCoord {
 	return s.origin
 }
 
-func (s *SliceData) Size() Point2d {
+func (s *SliceData) Size() Point3d {
 	return s.size
 }
 
@@ -377,6 +464,10 @@ func (s *SliceXY) DataShape() DataShape {
 	return XY
 }
 
+func (s *SliceXY) EndVoxel() VoxelCoord {
+	return VoxelCoord{s.origin[0] + s.size[0], s.origin[1] + s.size[1], s.origin[2]}
+}
+
 func (s *SliceXY) String() string {
 	return fmt.Sprintf("XY Slice with offset %s and size %s", s.origin, s.size)
 }
@@ -393,12 +484,8 @@ func (s *SliceXY) Normal() Vector3d {
 	return Vector3d{0.0, 0.0, 1.0}
 }
 
-func (s *SliceXY) EndVoxel() VoxelCoord {
-	return VoxelCoord{s.origin[0] + s.size[0], s.origin[1] + s.size[1], s.origin[2]}
-}
-
-func NewSliceXY(origin VoxelCoord, size Point2d) Slice {
-	return &SliceXY{SliceData{origin, size}}
+func NewSliceXY(origin VoxelCoord, size Point2d) Geometry {
+	return &SliceXY{SliceData{origin, Point3d{size[0], size[1], 1}}}
 }
 
 // SliceXZ is a slice in the XZ plane.
@@ -408,6 +495,10 @@ type SliceXZ struct {
 
 func (s *SliceXZ) DataShape() DataShape {
 	return XZ
+}
+
+func (s *SliceXZ) EndVoxel() VoxelCoord {
+	return VoxelCoord{s.origin[0] + s.size[0], s.origin[1], s.origin[2] + s.size[1]}
 }
 
 func (s *SliceXZ) String() string {
@@ -426,12 +517,8 @@ func (s *SliceXZ) Normal() Vector3d {
 	return Vector3d{0.0, 1.0, 0.0}
 }
 
-func (s *SliceXZ) EndVoxel() VoxelCoord {
-	return VoxelCoord{s.origin[0] + s.size[0], s.origin[1], s.origin[2] + s.size[1]}
-}
-
-func NewSliceXZ(origin VoxelCoord, size Point2d) Slice {
-	return &SliceXZ{SliceData{origin, size}}
+func NewSliceXZ(origin VoxelCoord, size Point2d) Geometry {
+	return &SliceXZ{SliceData{origin, Point3d{size[0], size[1], 1}}}
 }
 
 // SliceYZ is a slice in the YZ plane.
@@ -441,6 +528,10 @@ type SliceYZ struct {
 
 func (s *SliceYZ) DataShape() DataShape {
 	return YZ
+}
+
+func (s *SliceYZ) EndVoxel() VoxelCoord {
+	return VoxelCoord{s.origin[0], s.origin[1] + s.size[0], s.origin[2] + s.size[1]}
 }
 
 func (s *SliceYZ) String() string {
@@ -459,12 +550,8 @@ func (s *SliceYZ) Normal() Vector3d {
 	return Vector3d{1.0, 0.0, 0.0}
 }
 
-func (s *SliceYZ) EndVoxel() VoxelCoord {
-	return VoxelCoord{s.origin[0], s.origin[1] + s.size[0], s.origin[2] + s.size[1]}
-}
-
-func NewSliceYZ(origin VoxelCoord, size Point2d) Slice {
-	return &SliceYZ{SliceData{origin, size}}
+func NewSliceYZ(origin VoxelCoord, size Point2d) Geometry {
+	return &SliceYZ{SliceData{origin, Point3d{size[0], size[1], 1}}}
 }
 
 // SliceArb is an arbitray slice in 3d space.
@@ -476,6 +563,24 @@ type SliceArb struct {
 
 func (s *SliceArb) DataShape() DataShape {
 	return Arb
+}
+
+func (s *SliceArb) Origin() VoxelCoord {
+	return s.origin
+}
+
+func (s *SliceArb) Size() Point3d {
+	dx := s.topRight.Distance(s.origin)
+	dy := s.bottomLeft.Distance(s.origin)
+	return Point3d{dx, dy, 1}
+}
+
+func (s *SliceArb) NumVoxels() int {
+	if s == nil {
+		return 0
+	}
+	size := s.Size()
+	return int(size[0] * size[1])
 }
 
 func (s *SliceArb) String() string {
@@ -491,28 +596,10 @@ func (s *SliceArb) BottomLeft() VoxelCoord {
 	return s.bottomLeft
 }
 
-func (s *SliceArb) Size() Point2d {
-	dx := s.topRight.Distance(s.origin)
-	dy := s.bottomLeft.Distance(s.origin)
-	return Point2d{dx, dy}
-}
-
-func (s *SliceArb) NumVoxels() int {
-	if s == nil {
-		return 0
-	}
-	size := s.Size()
-	return int(size[0] * size[1])
-}
-
-func (s *SliceArb) Origin() VoxelCoord {
-	return s.origin
-}
-
 func (s *SliceArb) EndVoxel() VoxelCoord {
 	return VoxelCoord{s.topRight[0], s.bottomLeft[1], s.bottomLeft[2]}
 }
 
-func NewSliceArb(origin, topRight, bottomLeft VoxelCoord) Slice {
+func NewSliceArb(origin, topRight, bottomLeft VoxelCoord) Geometry {
 	return &SliceArb{origin, topRight, bottomLeft}
 }
