@@ -90,6 +90,10 @@ func Serve(datastoreDir, webAddress, webClientDir, rpcAddress string) (err error
 		log.Fatalln(err.Error())
 	}
 
+	// Launch block handlers as goroutines for all compiled types.
+	for _, datatype := range datastore.CompiledTypes {
+		datastore.ReserveBlockHandlers(datatype)
+	}
 	// Launch the web server
 	go runningService.ServeHttp(webAddress, webClientDir)
 

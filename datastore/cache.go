@@ -94,43 +94,36 @@ type BlockRequest struct {
 // Each data type has a pool of channels to communicate with block handlers. 
 type BlockChannels map[string]([]chan *BlockRequest)
 
-// DiskAccess is a mutex to make sure we don't have goroutines simultaneously trying
-// to access the key-value database on disk.
-// TODO: Reexamine this in the context of parallel disk drives during cluster use.
-var DiskAccess sync.Mutex
+var (
+	// HandlerChannels are map from data type names to a pool of block handler
+	// goroutines.  See the function ReserveBlockHandlers.
+	HandlerChannels BlockChannels
 
-// Global variable that holds the LRU cache for DVID instance. 
-var dataCache *cache.LRUCache
+	// DiskAccess is a mutex to make sure we don't have goroutines simultaneously trying
+	// to access the key-value database on disk.
+	// TODO: Reexamine this in the context of parallel disk drives during cluster use.
+	DiskAccess sync.Mutex
 
-// Initialize the LRU cache
-func InitDataCache(numBytes uint64) {
-	dataCache = cache.NewLRUCache(numBytes)
-}
+	// Global variable that holds the LRU cache for DVID instance.
+	// TODO -- Not currently used but present for future tuning.
+	dataCache *cache.LRUCache
+)
 
-// GetCachedBlock returns data for a given DVID Block if it's in the cache.
-// Since the block key includes a UUID, this function can be used to access
-// any image versions cached blocks. 
-func GetCachedBlock(blockKey keyvalue.Key) (value keyvalue.Value, found bool) {
-	data, found := dataCache.Get(string(blockKey))
-	value = data.(keyvalue.Value)
-	// TODO -- keep statistics on hits for web client
-	return
-}
-
-// SetCachedBlock places a key/value pair into the DVID data cache. 
-func SetCachedBlock(blockKey keyvalue.Key, data keyvalue.Value) {
-	dataCache.Set(string(blockKey), data)
-	// TODO -- keep stats on sets
+func init() {
+	HandlerChannels = make(BlockChannels)
 }
 
 // ReserveBlockHandlers makes sure we have block handler goroutines for each
-// data type and each image version.  This makes sure that operations on a
-// specific block can only be performed by the same handler. 
-func (vs *VersionService) ReserveBlockHandlers(t TypeService) {
+// data type.  Blocks are routed to the same handler each time, so concurrent
+// access to a block by multiple requests funneled sequentially into a handler.
+func ReserveBlockHandlers(t TypeService) {
+	var channelMapAccess sync.Mutex
+	channelMapAccess.Lock()
 	// Do we have channels and handlers for this type and image version?
-	channels, found := vs.channels[t.TypeName()]
+	_, found := HandlerChannels[t.TypeName()]
 	if !found {
-		// Create channels and handlers
+		log.Printf("Starting %d block handlers for data type '%s'...\n",
+			t.NumBlockHandlers(), t.TypeName())
 		channels := make([]chan *BlockRequest, 0, t.NumBlockHandlers())
 		for i := 0; i < t.NumBlockHandlers(); i++ {
 			channel := make(chan *BlockRequest, BlockHandlerBufferSize)
@@ -149,10 +142,9 @@ func (vs *VersionService) ReserveBlockHandlers(t TypeService) {
 			}(i, channel)
 			// TODO -- keep stats on # of handlers
 		}
-		vs.channels[t.TypeName()] = channels
-	} else {
-		dvid.Log(dvid.Debug, "Found %d block handlers for %s.", len(channels), t.TypeName())
+		HandlerChannels[t.TypeName()] = channels
 	}
+	channelMapAccess.Unlock()
 }
 
 // MapBlocks breaks down a DataStruct into a sequence of blocks that can be
@@ -170,8 +162,7 @@ func (vs *VersionService) MapBlocks(op OpType, data DataStruct, wg *sync.WaitGro
 	datatypeBytes := vs.DataIndexBytes(data.TypeName())
 
 	// Make sure we have Block Handlers for this data type.
-	vs.ReserveBlockHandlers(data)
-	channels, found := vs.channels[data.TypeName()]
+	channels, found := HandlerChannels[data.TypeName()]
 	if !found {
 		return fmt.Errorf("Error in reserving block handlers in MapBlocks() for %s!",
 			data.TypeName())
@@ -196,7 +187,7 @@ func (vs *VersionService) MapBlocks(op OpType, data DataStruct, wg *sync.WaitGro
 			break
 		}
 		blockKey := BlockKey(uuidBytes, spatialBytes, datatypeBytes, data.IsolatedKeys())
-		dvid.Fmt(dvid.Debug, "Iterating on block key %s\n", blockKey)
+		//dvid.Fmt(dvid.Debug, "Iterating on block key %s\n", blockKey)
 
 		// Phase 2: Is this block in the cache?
 		// value, found := GetCachedBlock(blockKey)
@@ -204,26 +195,26 @@ func (vs *VersionService) MapBlocks(op OpType, data DataStruct, wg *sync.WaitGro
 		// Pull from the datastore
 		if start || db_it.Valid() && string(db_it.Key()) != string(blockKey) {
 			if start {
-				dvid.Fmt(dvid.Debug, "Seeking to key %s...\n", blockKey)
+				//dvid.Fmt(dvid.Debug, "Seeking to key %s...\n", blockKey)
 			} else {
-				dvid.Fmt(dvid.Debug, "Seeking to key %s from %s...\n", blockKey,
-					string(db_it.Key()))
+				//dvid.Fmt(dvid.Debug, "Seeking to key %s from %s...\n", blockKey,
+				//	string(db_it.Key()))
 			}
 			db_it.Seek(blockKey)
 			start = false
 		}
 		if db_it.Valid() {
 			value = db_it.Value()
-			dvid.Fmt(dvid.Debug, "Found valid value with length %d bytes\n", len(value))
+			//dvid.Fmt(dvid.Debug, "Found valid value with length %d bytes\n", len(value))
 			// Advance the database iterator
 			db_it.Next()
 			//SetCachedBlock(blockKey, value)
 		} else {
 			if op == GetOp {
-				dvid.Fmt(dvid.Debug, "Invalid iterator on GET: Skipping\n")
+				//dvid.Fmt(dvid.Debug, "Invalid iterator on GET: Skipping\n")
 				continue
 			} else {
-				dvid.Fmt(dvid.Debug, "Invalid iterator on PUT: Allocating data for block\n")
+				//dvid.Fmt(dvid.Debug, "Invalid iterator on PUT: Allocating data for block\n")
 				value = make(keyvalue.Value, data.BlockBytes(), data.BlockBytes())
 			}
 		}
@@ -251,3 +242,26 @@ func (vs *VersionService) MapBlocks(op OpType, data DataStruct, wg *sync.WaitGro
 	DiskAccess.Unlock()
 	return nil
 }
+
+/**
+// Initialize the LRU cache
+func InitDataCache(numBytes uint64) {
+	dataCache = cache.NewLRUCache(numBytes)
+}
+
+// GetCachedBlock returns data for a given DVID Block if it's in the cache.
+// Since the block key includes a UUID, this function can be used to access
+// any image versions cached blocks. 
+func GetCachedBlock(blockKey keyvalue.Key) (value keyvalue.Value, found bool) {
+	data, found := dataCache.Get(string(blockKey))
+	value = data.(keyvalue.Value)
+	// TODO -- keep statistics on hits for web client
+	return
+}
+
+// SetCachedBlock places a key/value pair into the DVID data cache. 
+func SetCachedBlock(blockKey keyvalue.Key, data keyvalue.Value) {
+	dataCache.Set(string(blockKey), data)
+	// TODO -- keep stats on sets
+}
+**/

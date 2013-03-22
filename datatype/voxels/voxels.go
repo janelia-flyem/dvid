@@ -503,8 +503,6 @@ func (v *Voxels) BlockHandler(req *datastore.BlockRequest) {
 	maxDataVoxel := v.EndVoxel()
 	beg := minDataVoxel.BoundMin(minBlockVoxel)
 	end := maxDataVoxel.BoundMax(maxBlockVoxel)
-	beg = beg.Sub(v.Origin())
-	end = end.Sub(v.Origin())
 
 	// Calculate the strides
 	dtype := v.TypeService.(*Datatype)
@@ -514,12 +512,19 @@ func (v *Voxels) BlockHandler(req *datastore.BlockRequest) {
 	data := req.DataStruct.Data()
 	//dataSize := v.Size()
 
-	// Index into the block byte buffer
-	block := []uint8(req.Block)
-	blockXY := blockSize[0] * blockSize[1] * bytesPerVoxel
-	blockX := blockSize[0] * bytesPerVoxel
+	// Compute block coord matching beg's DVID volume space voxel coord
+	blockBeg := beg.Sub(minBlockVoxel)
 
-	var blockI int32 = beg[2]*blockXY + beg[1]*blockX + beg[0]
+	// Compute index into the block byte buffer, blockI
+	block := []uint8(req.Block)
+	blockX := blockSize[0] * bytesPerVoxel
+	blockXY := blockSize[1] * blockX
+	blockI := blockBeg[2]*blockXY + blockBeg[1]*blockX + blockBeg[0]
+
+	// Adjust the DVID volume voxel coordinates for the data so that (0,0,0)
+	// is where we expect this slice/subvolume's data to begin.
+	beg = beg.Sub(v.Origin())
+	end = end.Sub(v.Origin())
 
 	// For each geometry, traverse the data slice/subvolume and read/write from
 	// the block data depending on the op.
@@ -534,13 +539,13 @@ func (v *Voxels) BlockHandler(req *datastore.BlockRequest) {
 	case dvid.XY:
 		dataI := (beg[1]*v.Width() + beg[0]) * bytesPerVoxel
 		for y := beg[1]; y <= end[1]; y++ {
-			run := end[0] - beg[0]
+			run := end[0] - beg[0] + 1
 			bytes := run * bytesPerVoxel
 			switch req.Op {
 			case datastore.GetOp:
-				copy(data[dataI:dataI+bytes+1], block[blockI:blockI+bytes+1])
+				copy(data[dataI:dataI+bytes], block[blockI:blockI+bytes])
 			case datastore.PutOp:
-				copy(block[blockI:blockI+bytes+1], data[dataI:dataI+bytes+1])
+				copy(block[blockI:blockI+bytes], data[dataI:dataI+bytes])
 			}
 			blockI += blockSize[0] * bytesPerVoxel
 			dataI += v.Width() * bytesPerVoxel
@@ -548,30 +553,32 @@ func (v *Voxels) BlockHandler(req *datastore.BlockRequest) {
 	case dvid.XZ:
 		dataI := (beg[2]*v.Width() + beg[0]) * bytesPerVoxel
 		for y := beg[2]; y <= end[2]; y++ {
-			run := end[0] - beg[0]
+			run := end[0] - beg[0] + 1
 			bytes := run * bytesPerVoxel
 			switch req.Op {
 			case datastore.GetOp:
-				copy(data[dataI:dataI+bytes+1], block[blockI:blockI+bytes+1])
+				copy(data[dataI:dataI+bytes], block[blockI:blockI+bytes])
 			case datastore.PutOp:
-				copy(block[blockI:blockI+bytes+1], data[dataI:dataI+bytes+1])
+				copy(block[blockI:blockI+bytes], data[dataI:dataI+bytes])
 			}
 			blockI += blockSize[0] * blockSize[1] * bytesPerVoxel
 			dataI += v.Width() * bytesPerVoxel
 		}
 	case dvid.YZ:
-		dataI := (beg[2]*v.Width() + beg[0]) * bytesPerVoxel
 		for y := beg[2]; y <= end[2]; y++ {
-			run := end[0] - beg[0]
-			bytes := run * bytesPerVoxel
-			switch req.Op {
-			case datastore.GetOp:
-				copy(data[dataI:dataI+bytes+1], block[blockI:blockI+bytes+1])
-			case datastore.PutOp:
-				copy(block[blockI:blockI+bytes+1], data[dataI:dataI+bytes+1])
+			dataI := (y*v.Width() + beg[1]) * bytesPerVoxel
+			for x := beg[1]; x <= end[1]; x++ {
+				blockI := blockBeg[2]*blockXY + blockBeg[1]*blockX + blockBeg[0]
+				switch req.Op {
+				case datastore.GetOp:
+					copy(data[dataI:dataI+bytesPerVoxel], block[blockI:blockI+bytesPerVoxel])
+				case datastore.PutOp:
+					copy(block[blockI:blockI+bytesPerVoxel], data[dataI:dataI+bytesPerVoxel])
+				}
+				blockBeg[1]++
+				dataI += bytesPerVoxel
 			}
-			blockI += blockSize[0] * blockSize[1] * bytesPerVoxel
-			dataI += v.Width() * bytesPerVoxel
+			blockBeg[2]++
 		}
 	default:
 	}
@@ -581,7 +588,7 @@ func (v *Voxels) BlockHandler(req *datastore.BlockRequest) {
 		wo := keyvalue.NewWriteOptions()
 		req.DB.Put(req.BlockKey, req.Block, wo)
 	} else {
-		dvid.PrintNonZero("After block GET", []byte(req.DataStruct.Data()))
+		//		dvid.PrintNonZero("After block GET", []byte(req.DataStruct.Data()))
 	}
 
 	// Notify the requestor that this block is done.
