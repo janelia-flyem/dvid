@@ -194,3 +194,13 @@ func ImageFromPost(r *http.Request, key string) (img image.Image, format string,
 	img, format, err = image.Decode(&buf)
 	return
 }
+
+func PrintNonZero(message string, value []byte) {
+	nonzero := 0
+	for _, b := range value {
+		if b != 0 {
+			nonzero++
+		}
+	}
+	fmt.Printf("%s> non-zero voxels: %d of %d bytes\n", message, nonzero, len(value))
+}

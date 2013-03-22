@@ -334,8 +334,22 @@ type Geometry interface {
 	// Origin returns the offset to the voxel at the top left corner of the data.
 	Origin() VoxelCoord
 
-	// Size returns the width, height, and depth as a Point3d. 
+	// Size returns the size as a Point3d that shows the extent in each dimension.
 	Size() Point3d
+
+	// Width is defined as size along different axis per shape:
+	//   x for Vol, XY, and XZ shapes
+	//   y for the YZ shape.
+	Width() int32
+
+	// Height is defined as size along different axis per shape:
+	//   y for Vol, XY shapes
+	//   z for XZ, YZ
+	Height() int32
+
+	// Depth is defined as 1 for XY, XZ, YZ, and Arb shapes.  Depth returns
+	// the size along z for Vol shapes.
+	Depth() int32
 
 	// NumVoxels returns the number of voxels within this space. 
 	NumVoxels() int
@@ -371,6 +385,18 @@ func (s *Subvolume) Origin() VoxelCoord {
 
 func (s *Subvolume) Size() Point3d {
 	return s.size
+}
+
+func (s *Subvolume) Width() int32 {
+	return s.size[0]
+}
+
+func (s *Subvolume) Height() int32 {
+	return s.size[1]
+}
+
+func (s *Subvolume) Depth() int32 {
+	return s.size[2]
 }
 
 func (s *Subvolume) NumVoxels() int {
@@ -456,11 +482,19 @@ func (s *SliceData) Size() Point3d {
 	return s.size
 }
 
+func (s *SliceData) Depth() int32 {
+	return 1
+}
+
+func (s *SliceData) EndVoxel() VoxelCoord {
+	return s.origin.AddSize(s.size)
+}
+
 func (s *SliceData) NumVoxels() int {
 	if s == nil {
 		return 0
 	}
-	return int(s.size[0] * s.size[1])
+	return int(s.size[0] * s.size[1] * s.size[2])
 }
 
 // SliceXY is a slice in the XY plane.
@@ -472,24 +506,28 @@ func (s *SliceXY) DataShape() DataShape {
 	return XY
 }
 
-func (s *SliceXY) EndVoxel() VoxelCoord {
-	return VoxelCoord{s.origin[0] + s.size[0], s.origin[1] + s.size[1], s.origin[2]}
-}
-
 func (s *SliceXY) String() string {
 	return fmt.Sprintf("XY Slice with offset %s and size %s", s.origin, s.size)
 }
 
 func (s *SliceXY) TopRight() VoxelCoord {
-	return VoxelCoord{s.origin[0] + s.size[0], s.origin[1], s.origin[2]}
+	return VoxelCoord{s.origin[0] + s.size[0] - 1, s.origin[1], s.origin[2]}
 }
 
 func (s *SliceXY) BottomLeft() VoxelCoord {
-	return VoxelCoord{s.origin[0], s.origin[1] + s.size[1], s.origin[2]}
+	return VoxelCoord{s.origin[0], s.origin[1] + s.size[1] - 1, s.origin[2]}
 }
 
 func (s *SliceXY) Normal() Vector3d {
 	return Vector3d{0.0, 0.0, 1.0}
+}
+
+func (s *SliceXY) Width() int32 {
+	return s.size[0]
+}
+
+func (s *SliceXY) Height() int32 {
+	return s.size[1]
 }
 
 func NewSliceXY(origin VoxelCoord, size Point2d) Geometry {
@@ -505,28 +543,32 @@ func (s *SliceXZ) DataShape() DataShape {
 	return XZ
 }
 
-func (s *SliceXZ) EndVoxel() VoxelCoord {
-	return VoxelCoord{s.origin[0] + s.size[0], s.origin[1], s.origin[2] + s.size[1]}
-}
-
 func (s *SliceXZ) String() string {
 	return fmt.Sprintf("XZ Slice with offset %s and size %s", s.origin, s.size)
 }
 
 func (s *SliceXZ) TopRight() VoxelCoord {
-	return VoxelCoord{s.origin[0] + s.size[0], s.origin[1], s.origin[2]}
+	return VoxelCoord{s.origin[0] + s.size[0] - 1, s.origin[1], s.origin[2]}
 }
 
 func (s *SliceXZ) BottomLeft() VoxelCoord {
-	return VoxelCoord{s.origin[0], s.origin[1], s.origin[2] + s.size[1]}
+	return VoxelCoord{s.origin[0], s.origin[1], s.origin[2] + s.size[2] - 1}
 }
 
 func (s *SliceXZ) Normal() Vector3d {
 	return Vector3d{0.0, 1.0, 0.0}
 }
 
+func (s *SliceXZ) Width() int32 {
+	return s.size[0]
+}
+
+func (s *SliceXZ) Height() int32 {
+	return s.size[2]
+}
+
 func NewSliceXZ(origin VoxelCoord, size Point2d) Geometry {
-	return &SliceXZ{SliceData{origin, Point3d{size[0], size[1], 1}}}
+	return &SliceXZ{SliceData{origin, Point3d{size[0], 1, size[1]}}}
 }
 
 // SliceYZ is a slice in the YZ plane.
@@ -538,28 +580,32 @@ func (s *SliceYZ) DataShape() DataShape {
 	return YZ
 }
 
-func (s *SliceYZ) EndVoxel() VoxelCoord {
-	return VoxelCoord{s.origin[0], s.origin[1] + s.size[0], s.origin[2] + s.size[1]}
-}
-
 func (s *SliceYZ) String() string {
 	return fmt.Sprintf("YZ Slice with offset %s and size %s", s.origin, s.size)
 }
 
 func (s *SliceYZ) TopRight() VoxelCoord {
-	return VoxelCoord{s.origin[0], s.origin[1] + s.size[0], s.origin[2]}
+	return VoxelCoord{s.origin[0], s.origin[1] + s.size[1] - 1, s.origin[2]}
 }
 
 func (s *SliceYZ) BottomLeft() VoxelCoord {
-	return VoxelCoord{s.origin[0], s.origin[1], s.origin[2] + s.size[1]}
+	return VoxelCoord{s.origin[0], s.origin[1], s.origin[2] + s.size[2] - 1}
 }
 
 func (s *SliceYZ) Normal() Vector3d {
 	return Vector3d{1.0, 0.0, 0.0}
 }
 
+func (s *SliceYZ) Width() int32 {
+	return s.size[1]
+}
+
+func (s *SliceYZ) Height() int32 {
+	return s.size[2]
+}
+
 func NewSliceYZ(origin VoxelCoord, size Point2d) Geometry {
-	return &SliceYZ{SliceData{origin, Point3d{size[0], size[1], 1}}}
+	return &SliceYZ{SliceData{origin, Point3d{1, size[0], size[1]}}}
 }
 
 // SliceArb is an arbitray slice in 3d space.
@@ -581,6 +627,18 @@ func (s *SliceArb) Size() Point3d {
 	dx := s.topRight.Distance(s.origin)
 	dy := s.bottomLeft.Distance(s.origin)
 	return Point3d{dx, dy, 1}
+}
+
+func (s *SliceArb) Width() int32 {
+	return s.Size()[0]
+}
+
+func (s *SliceArb) Height() int32 {
+	return s.Size()[1]
+}
+
+func (s *SliceArb) Depth() int32 {
+	return 1
 }
 
 func (s *SliceArb) NumVoxels() int {

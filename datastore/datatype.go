@@ -87,6 +87,9 @@ type TypeService interface {
 	// BlockSize returns the block size for this data type
 	BlockSize() dvid.Point3d
 
+	// BlockBytes returns the number of bytes in block data buffer
+	BlockBytes() int
+
 	// SpatialIndexing returns the spatial indexing scheme employed by this data type
 	SpatialIndexing() SpatialIndexScheme
 

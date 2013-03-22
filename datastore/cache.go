@@ -7,7 +7,7 @@ package datastore
 
 import (
 	"fmt"
-	_ "log"
+	"log"
 	_ "os"
 	"sync"
 
@@ -71,10 +71,10 @@ type OpResult string
 // know when all the processing is done via a sync.WaitGroup.
 type BlockRequest struct {
 	// The larger data structure that we're going to fill in using blocks.
-	// This should be filled with a pointer to the struct for memory reasons.
+	// This may be a slice and thinner than the blocks it intersects.
 	DataStruct
 
-	// Block holds the data for a block
+	// Block holds the data for a block, a small rectangular volume of voxels.
 	Block keyvalue.Value
 
 	// Parameters for this particular block
@@ -85,8 +85,10 @@ type BlockRequest struct {
 	// Let's us notify requestor when all blocks are done.
 	Wait *sync.WaitGroup
 
+	DB keyvalue.KeyValueDB
+
 	// Include a WriteBatch so PUT ops can be batched
-	WriteBatch keyvalue.WriteBatch
+	//WriteBatch keyvalue.WriteBatch
 }
 
 // Each data type has a pool of channels to communicate with block handlers. 
@@ -126,7 +128,7 @@ func SetCachedBlock(blockKey keyvalue.Key, data keyvalue.Value) {
 // specific block can only be performed by the same handler. 
 func (vs *VersionService) ReserveBlockHandlers(t TypeService) {
 	// Do we have channels and handlers for this type and image version?
-	_, found := vs.channels[t.TypeName()]
+	channels, found := vs.channels[t.TypeName()]
 	if !found {
 		// Create channels and handlers
 		channels := make([]chan *BlockRequest, 0, t.NumBlockHandlers())
@@ -138,13 +140,18 @@ func (vs *VersionService) ReserveBlockHandlers(t TypeService) {
 					i+1, t.TypeName())
 				for {
 					block := <-c
-					dvid.Fmt(dvid.Debug, "Block %x  ", block.SpatialKey)
+					if block == nil {
+						log.Fatalln("Received nil block in block handler!")
+					}
+					//dvid.Fmt(dvid.Debug, "Running handler on block %x...\n", block.SpatialKey)
 					block.DataStruct.BlockHandler(block)
 				}
 			}(i, channel)
 			// TODO -- keep stats on # of handlers
 		}
 		vs.channels[t.TypeName()] = channels
+	} else {
+		dvid.Log(dvid.Debug, "Found %d block handlers for %s.", len(channels), t.TypeName())
 	}
 }
 
@@ -156,8 +163,7 @@ func (vs *VersionService) ReserveBlockHandlers(t TypeService) {
 // TODO -- Examine possible interleaving of block-level requests across MapBlocks()
 //   calls and its impact on GET requests fulfilled while some blocks are still being
 //   modified.
-func (vs *VersionService) MapBlocks(op OpType, data DataStruct, wg *sync.WaitGroup,
-	writeBatch keyvalue.WriteBatch) error {
+func (vs *VersionService) MapBlocks(op OpType, data DataStruct, wg *sync.WaitGroup) error {
 
 	// Get components of the block key
 	uuidBytes := vs.UuidBytes()
@@ -182,6 +188,7 @@ func (vs *VersionService) MapBlocks(op OpType, data DataStruct, wg *sync.WaitGro
 	start := true
 	var value keyvalue.Value
 
+	dvid.Fmt(dvid.Debug, "Mapping blocks for %s\n", data)
 	DiskAccess.Lock()
 	for {
 		spatialBytes := spatial_it()
@@ -189,24 +196,37 @@ func (vs *VersionService) MapBlocks(op OpType, data DataStruct, wg *sync.WaitGro
 			break
 		}
 		blockKey := BlockKey(uuidBytes, spatialBytes, datatypeBytes, data.IsolatedKeys())
+		dvid.Fmt(dvid.Debug, "Iterating on block key %s\n", blockKey)
 
 		// Phase 2: Is this block in the cache?
 		// value, found := GetCachedBlock(blockKey)
 
 		// Pull from the datastore
-		if start || string(db_it.Key()) != string(blockKey) {
+		if start || db_it.Valid() && string(db_it.Key()) != string(blockKey) {
+			if start {
+				dvid.Fmt(dvid.Debug, "Seeking to key %s...\n", blockKey)
+			} else {
+				dvid.Fmt(dvid.Debug, "Seeking to key %s from %s...\n", blockKey,
+					string(db_it.Key()))
+			}
 			db_it.Seek(blockKey)
 			start = false
 		}
 		if db_it.Valid() {
 			value = db_it.Value()
-			SetCachedBlock(blockKey, value)
+			dvid.Fmt(dvid.Debug, "Found valid value with length %d bytes\n", len(value))
+			// Advance the database iterator
+			db_it.Next()
+			//SetCachedBlock(blockKey, value)
 		} else {
-			break
+			if op == GetOp {
+				dvid.Fmt(dvid.Debug, "Invalid iterator on GET: Skipping\n")
+				continue
+			} else {
+				dvid.Fmt(dvid.Debug, "Invalid iterator on PUT: Allocating data for block\n")
+				value = make(keyvalue.Value, data.BlockBytes(), data.BlockBytes())
+			}
 		}
-
-		// Advance the database iterator
-		db_it.Next()
 
 		// Initialize the block request
 		req := &BlockRequest{
@@ -216,13 +236,16 @@ func (vs *VersionService) MapBlocks(op OpType, data DataStruct, wg *sync.WaitGro
 			SpatialKey: SpatialIndex(spatialBytes),
 			BlockKey:   blockKey,
 			Wait:       wg,
-			WriteBatch: writeBatch,
+			DB:         vs.kvdb,
+			//WriteBatch: writeBatch,
 		}
 
 		// Try to spread sequential block keys among different block handlers to get 
 		// most out of our concurrent processing.
 		wg.Add(1)
 		channelNum := req.SpatialKey.Hash(data, len(channels))
+		dvid.Fmt(dvid.Debug, "Sending block request %s down channel %d\n",
+			data, channelNum)
 		channels[channelNum] <- req
 	}
 	DiskAccess.Unlock()

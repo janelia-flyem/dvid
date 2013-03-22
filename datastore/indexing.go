@@ -101,12 +101,10 @@ type SpatialIterator func() []byte
 
 // Iterator returns a SpatialIterator for a given data type and volume to traverse.
 func NewSpatialIterator(data DataStruct) SpatialIterator {
-	// Create buffer for spatial key
-	spatialKey := make([]byte, 12, 12)
-
 	// Setup traversal
 	startVoxel := data.Origin()
 	endVoxel := data.EndVoxel()
+
 	switch data.SpatialIndexing() {
 	case SIndexZYX:
 		// Returns a closure that iterates in x, then y, then z
@@ -116,9 +114,11 @@ func NewSpatialIterator(data DataStruct) SpatialIterator {
 		y := startBlockCoord[1]
 		x := startBlockCoord[0]
 		return func() []byte {
+			//dvid.Fmt(dvid.Debug, "SpatialIterator: start at (%d,%d,%d)\n", x, y, z)
 			if z > endBlockCoord[2] {
 				return nil
 			}
+			spatialKey := make([]byte, 12, 12)
 			binary.LittleEndian.PutUint32(spatialKey[:4], uint32(z))
 			binary.LittleEndian.PutUint32(spatialKey[4:8], uint32(y))
 			binary.LittleEndian.PutUint32(spatialKey[8:], uint32(x))
