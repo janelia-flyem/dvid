@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	"github.com/janelia-flyem/dvid/cache"
+	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/keyvalue"
 )
 
@@ -132,12 +133,15 @@ func (vs *VersionService) ReserveBlockHandlers(t TypeService) {
 		for i := 0; i < t.NumBlockHandlers(); i++ {
 			channel := make(chan *BlockRequest, BlockHandlerBufferSize)
 			channels = append(channels, channel)
-			go func() {
+			go func(i int, c chan *BlockRequest) {
+				dvid.Log(dvid.Debug, "Starting block handler %d for %s...",
+					i+1, t.TypeName())
 				for {
-					block := <-channel
+					block := <-c
+					dvid.Fmt(dvid.Debug, "Block %x  ", block.SpatialKey)
 					block.DataStruct.BlockHandler(block)
 				}
-			}()
+			}(i, channel)
 			// TODO -- keep stats on # of handlers
 		}
 		vs.channels[t.TypeName()] = channels

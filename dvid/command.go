@@ -34,47 +34,15 @@ var setKeys = map[string]bool{
 	"plane":  true,
 }
 
-// Request supports requests to the DVID server.  Since input and reply payloads 
-// are different depending on the command, we can extend the basic Request
-// type and include different payloads, e.g., SliceRequest, SubvolumeRequest, etc. 
-type Request interface {
-	// Name returns the command or data type of the request.
-	// If it is a data type, we use TypeCommand() to get the type-specific command.
-	Name() string
-
-	// TypeCommand returns the name of a type-specific command, e.g., "get".
-	TypeCommand() string
-
-	// String returns the full command with its arguments.
-	String() string
-
-	// Parameter returns a value for a given key.
-	// All requests have named parameters determined by the command.
-	Parameter(key string) (value string, found bool)
-
-	// CommandArgs sets a variadic argument set of string pointers to data
-	// command arguments, ignoring setting arguments of the form "<key>=<value>".  
-	// See Command.CommandArgs for more information.
-	CommandArgs(startPos int, targets ...*string) (overflow []string)
+// Response provides a few string fields to pass information back from
+// a remote operation.
+type Response struct {
+	ContentType string
+	Text        string
+	Status      string
 }
 
-// Response abstracts possible DVID responses to a Request.
-type Response interface {
-	// ContentType classifies the type of payload and in some cases
-	// is identical to HTTP response content type, e.g., "image/png".
-	ContentType() string
-	SetContentType(contentType string)
-
-	// Text is some response string.
-	Text() string
-	SetText(text string)
-
-	// Status classifies the response.
-	Status() string
-	SetStatus(status string)
-}
-
-// Command fulfills a Request interface for command-line interaction with DVID.
+// Command supports command-line interaction with DVID.
 // The first item in the string slice is the command, which may be "help"
 // or the name of DVID data name ("grayscale8").  If the first item is the name
 // of a data type, the second item will have a type-specific command like "get".
@@ -185,29 +153,6 @@ func getArgs(cmd Command, startPos int, targets ...*string) (overflow []string) 
 	}
 	return
 }
-
-// SimpleResponse is the simplest type to fulfill the Response interface.
-type SimpleResponse struct {
-	ctype  string
-	text   string
-	status string
-}
-
-func NewSimpleResponse(ctype, text, status string) Response {
-	return &SimpleResponse{ctype, text, status}
-}
-
-func (r *SimpleResponse) ContentType() string { return r.ctype }
-
-func (r *SimpleResponse) Text() string { return r.text }
-
-func (r *SimpleResponse) Status() string { return r.status }
-
-func (r *SimpleResponse) SetContentType(ctype string) { r.ctype = ctype }
-
-func (r *SimpleResponse) SetText(text string) { r.text = text }
-
-func (r *SimpleResponse) SetStatus(status string) { r.status = status }
 
 // PointStr is a n-dimensional coordinate in string format "x,y,z,..."
 // where each coordinate is a 32-bit integer.

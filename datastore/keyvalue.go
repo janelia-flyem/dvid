@@ -157,10 +157,33 @@ func (config *initConfig) get(db kvdb) error {
 	return db.getValue(keyvalue.Key{keyFamilyGlobal, keyInitConfig}, config)
 }
 
+type rconfig struct {
+	TypeUrl        UrlString
+	DataIndexBytes []byte
+}
+
 func (config *runtimeConfig) put(db kvdb) error {
-	return db.putValue(keyvalue.Key{keyFamilyGlobal, keyRuntimeConfig}, *config)
+	c := make(map[string]rconfig)
+	for key, value := range config.dataNames {
+		c[key] = rconfig{value.TypeService.TypeUrl(), value.dataIndexBytes}
+	}
+	return db.putValue(keyvalue.Key{keyFamilyGlobal, keyRuntimeConfig}, c)
 }
 
 func (config *runtimeConfig) get(db kvdb) error {
-	return db.getValue(keyvalue.Key{keyFamilyGlobal, keyRuntimeConfig}, config)
+	config.dataNames = map[string]datastoreType{}
+	c := make(map[string]rconfig)
+	err := db.getValue(keyvalue.Key{keyFamilyGlobal, keyRuntimeConfig}, &c)
+	if err != nil {
+		return err
+	}
+	for key, value := range c {
+		dtype, found := CompiledTypes[value.TypeUrl]
+		if !found {
+			return fmt.Errorf("Data set in datastore no longer present in DVID executable: %s",
+				value.TypeUrl)
+		}
+		config.dataNames[key] = datastoreType{dtype, value.DataIndexBytes}
+	}
+	return nil
 }

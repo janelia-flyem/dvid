@@ -1,5 +1,7 @@
 /*
-	Package voxels implements DVID support for data using voxels as elements
+	Package voxels implements DVID support for data using voxels as elements.
+	A number of data types will embed this package and customize it using the
+	"NumChannels" and "BytesPerVoxel" fields.
 */
 package voxels
 
@@ -34,8 +36,8 @@ Server-side commands for datasets with voxels data type:
 
 Arguments:
 
-	dataset name: the name of a dataset created using the "dataset" command.
-	uuid: hexidecimal string with enough characters to uniquely identify a version node.
+    dataset name: the name of a dataset created using the "dataset" command.
+    uuid: hexidecimal string with enough characters to uniquely identify a version node.
     image filename glob: filenames of images, e.g., foo-xy-*.png
     origin: 3d coordinate in the format "x,y,z".  Gives coordinate of top upper left voxel.
     plane: xy (default), xz, or yz.
@@ -48,13 +50,7 @@ Arguments:
 
     $ dvid mygrayscale server-add 3f8c 0,0,100 /absolute/path/to/data/*.png 
 
-Arguments:
-
-	dataset name: the name of a dataset created using the "dataset" command.
-	uuid: hexidecimal string with enough characters to uniquely identify a version node.
-    image filename glob: filenames of images, e.g., foo-xy-*.png
-    origin: 3d coordinate in the format "x,y,z".  Gives coordinate of top upper left voxel.
-    plane: xy (default), xz, or yz.
+Arguments: same as #1
 
     NOTE: The image filename glob MUST BE absolute file paths that are visible to
     the server.  The 'server-add' command is meant for mass ingestion of large data files, 
@@ -67,7 +63,7 @@ HTTP API for datasets with voxels data type:
 
 The voxel data type supports the following Level 2 REST HTTP API calls.
 
-	1) Adding different voxel data sets
+    1) Adding different voxel data sets
 	
         POST /api/data/<voxel type>/<data set name>
 
@@ -123,6 +119,7 @@ const DefaultNumBlockHandlers = 8
 var DefaultBlockMax dvid.Point3d = dvid.Point3d{16, 16, 16}
 
 // Register this data type with the DVID datastore.
+/*
 func init() {
 	datastore.RegisterDatatype(&Datatype{
 		Datatype: datastore.Datatype{
@@ -131,8 +128,11 @@ func init() {
 			Indexing:    datastore.SIndexZYX,
 			IsolateData: true,
 		},
+		NumChannels:   1,
+		BytesPerVoxel: 1,
 	})
 }
+*/
 
 // Datatype embeds the datastore's Datatype to create a unique type
 // with voxel functions.  Refinements of general voxel types can be implemented 
@@ -257,6 +257,13 @@ func (v *Voxels) BlockHandler(req *datastore.BlockRequest) {
 	// If this is a PUT, place the modified block data into the batch write.
 	if req.Op == datastore.PutOp {
 		req.WriteBatch.Put(req.BlockKey, req.Block)
+		hit := 0
+		for _, b := range req.Block {
+			if b > 0 {
+				hit++
+			}
+		}
+		fmt.Printf("Block %x  -- hits %d\n", req.BlockKey, hit)
 	}
 
 	// Notify the requestor that this block is done.
@@ -348,7 +355,7 @@ func (dtype *Datatype) ProcessSlice(vs *datastore.VersionService, op datastore.O
 }
 
 // Do acts as a switchboard for RPC commands. 
-func (dtype *Datatype) DoRPC(request dvid.Request, reply dvid.Response,
+func (dtype *Datatype) DoRPC(request datastore.Request, reply *datastore.Response,
 	service *datastore.Service) error {
 
 	switch request.TypeCommand() {
@@ -357,7 +364,7 @@ func (dtype *Datatype) DoRPC(request dvid.Request, reply dvid.Response,
 	//	case "get":
 	//		return dtype.Get(request, reply)
 	case "help":
-		reply.SetText(dtype.Help(HelpMessage))
+		reply.Text = dtype.Help(HelpMessage)
 	default:
 		return dtype.UnknownCommand(request)
 	}
@@ -427,7 +434,7 @@ func (dtype *Datatype) DoHTTP(w http.ResponseWriter, r *http.Request,
 			w.Header().Set("Content-type", "image/png")
 			png.Encode(w, img)
 		}
-		dvid.ElapsedTime(startTime, "%s %s %s", op, dtype.TypeName(), slice)
+		dvid.ElapsedTime(dvid.Normal, startTime, "%s %s %s", op, dtype.TypeName(), slice)
 	case dvid.Arb:
 		badRequest(w, r, "DVID does not yet support arbitrary planes.")
 	case dvid.Vol:
@@ -458,7 +465,7 @@ func badRequest(w http.ResponseWriter, r *http.Request, err string) {
 // The image filename glob MUST BE absolute file paths that are visible to the server.
 // This function is meant for mass ingestion of large data files, and it is inappropriate 
 // to read gigabytes of data just to send it over the network to a local DVID.
-func (dtype *Datatype) ServerAdd(request dvid.Request, reply dvid.Response,
+func (dtype *Datatype) ServerAdd(request datastore.Request, reply *datastore.Response,
 	service *datastore.Service) error {
 
 	startTime := time.Now()
@@ -502,13 +509,16 @@ func (dtype *Datatype) ServerAdd(request dvid.Request, reply dvid.Response,
 	numSuccessful := 0
 	var lastErr error
 	for _, filename := range filenames {
+		startTime := time.Now()
 		img, _, err := dvid.ImageFromFile(filename)
 		if err != nil {
 			lastErr = err
 		} else {
 			size := dvid.SizeFromRect(img.Bounds())
 			slice, err := dvid.NewSlice(dataShape, offset, size)
-			_, err = dtype.ProcessSlice(vs, datastore.GetOp, slice, img)
+			_, err = dtype.ProcessSlice(vs, datastore.PutOp, slice, img)
+			dvid.ElapsedTime(dvid.Normal, startTime, "%s %s %s",
+				datastore.PutOp, dtype.TypeName(), slice)
 			if err == nil {
 				numSuccessful++
 			} else {
@@ -521,7 +531,7 @@ func (dtype *Datatype) ServerAdd(request dvid.Request, reply dvid.Response,
 		return fmt.Errorf("Error: %d of %d images successfully added [%s]\n",
 			numSuccessful, len(filenames), lastErr.Error())
 	}
-	dvid.ElapsedTime(startTime, "RPC server-add (%s) completed", addedFiles)
+	dvid.ElapsedTime(dvid.Normal, startTime, "RPC server-add (%s) completed", addedFiles)
 	//go dvid.WaitToComplete(&wg, startTime, "RPC server-add (%s) completed", addedFiles)
 	return nil
 }

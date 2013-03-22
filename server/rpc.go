@@ -7,6 +7,7 @@ package server
 import (
 	"fmt"
 
+	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 )
 
@@ -14,12 +15,13 @@ const helpMessage = `
 Commands executed on the server (%s):
 
 	help  [command you are running]
+	log
 	version
 	types
 	dataset <dataset name> <data type name>   (example: "dataset mygrayscale grayscale8")
+	comment <uuid> "..."
 
 	(Commands on roadmap)
-	log
 	add <uuid> <dataset name> <local filename glob>
 	branch <uuid>
 	lock <uuid>
@@ -44,7 +46,7 @@ datastore:
 type RpcConnection struct{}
 
 // Do acts as a switchboard for remote command execution
-func (c *RpcConnection) Do(cmd dvid.Request, reply dvid.Response) error {
+func (c *RpcConnection) Do(cmd datastore.Request, reply *datastore.Response) error {
 	if reply == nil {
 		dvid.Log(dvid.Debug, "reply is nil coming in!\n")
 		return nil
@@ -59,21 +61,25 @@ func (c *RpcConnection) Do(cmd dvid.Request, reply dvid.Response) error {
 	switch cmd.Name() {
 	// Handle builtin commands
 	case "help":
-		reply.SetText(fmt.Sprintf(helpMessage,
+		reply.Text = fmt.Sprintf(helpMessage,
 			runningService.RpcAddress, runningService.SupportedDataChart(),
-			runningService.WebAddress))
+			runningService.WebAddress)
 	case "types":
-		reply.SetText(runningService.SupportedDataChart())
+		reply.Text = runningService.SupportedDataChart()
 	case "version":
-		reply.SetText(fmt.Sprintf("%s\n%s", runningService.Versions()))
+		reply.Text = fmt.Sprintf("%s\n%s", runningService.Versions())
+	case "log":
+		reply.Text = runningService.LogInfo()
 	case "dataset":
 		var dataSetName, typeName string
 		cmd.CommandArgs(1, &dataSetName, &typeName)
-		return runningService.NewDataSet(dataSetName, typeName)
-	case "branch":
-		return branch(cmd.(*dvid.Command), reply.(*dvid.SimpleResponse))
-	case "lock", "log", "pull", "push", "archive":
-		reply.SetText(fmt.Sprintf("Server would have processed '%s'", cmd))
+		err := runningService.NewDataSet(dataSetName, typeName)
+		if err != nil {
+			return err
+		}
+		reply.Text = fmt.Sprintf("Added data set '%s' of type '%s'", dataSetName, typeName)
+	case "branch", "lock", "pull", "push", "archive":
+		reply.Text = fmt.Sprintf("Server would have processed '%s'", cmd)
 	default:
 		// Assume this is the command for a supported data type
 		return datatypeDo(cmd, reply)
@@ -85,19 +91,22 @@ func (c *RpcConnection) Do(cmd dvid.Request, reply dvid.Response) error {
 // By default, we copy all key/values for the parent UUID since we optimize
 // for speed and not for size of datastore.  (Size can be decreased byte
 // running 'archive' command on a UUID.)
-func branch(cmd *dvid.Command, reply *dvid.SimpleResponse) error {
-
+func branch(cmd datastore.Request, reply *datastore.Response) error {
 	return nil
 }
 
 // The following command implementations assume dataService is non-nil, hence their
 // unexported nature.
 
-func datatypeDo(cmd dvid.Request, reply dvid.Response) error {
-	// Get the TypeService for this data type.  Let user know if it's not supported.
-	typeService, err := runningService.TypeService(cmd.Name())
+func datatypeDo(cmd datastore.Request, reply *datastore.Response) error {
+	// Get the TypeService for this data set name.  Let user know if it's not supported.
+	typeService, err := runningService.DataSetService(cmd.Name())
 	if err != nil {
-		return fmt.Errorf("Command '%s' invalid: %s", cmd.Name(), err.Error())
+		// See if the user is addressing a data type name, not a data set name.
+		typeService, err = runningService.TypeService(cmd.Name())
+		if err != nil {
+			return fmt.Errorf("Command '%s' is neither a data set or data type name!", cmd.Name())
+		}
 	}
 
 	// Make sure we have at least a command in addition to the data type name

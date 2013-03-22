@@ -16,6 +16,7 @@ import (
 
 	// Declare the data types this DVID executable will support
 	_ "github.com/janelia-flyem/dvid/datatype/grayscale8"
+	_ "github.com/janelia-flyem/dvid/datatype/rgba8"
 )
 
 var (
@@ -121,17 +122,18 @@ func main() {
 	// Determine numer of logical CPUs on local machine and unless overridden, use
 	// all of them.
 	numCPU := runtime.NumCPU()
-	dvidCPU := numCPU
+	var dvidCPU int
 	if *useCPU != 0 {
 		dvidCPU = *useCPU
+	} else if flag.NArg() >= 1 && flag.Args()[0] == "serve" {
+		dvidCPU = numCPU
+	} else {
+		dvidCPU = 1
 	}
 	runtime.GOMAXPROCS(dvidCPU)
-	log.Printf("Using %d of %d logical CPUs for DVID.\n", dvidCPU, numCPU)
-
-	// Setup the DVID data cache.
-	cacheBytes := *cacheMBytes * dvid.Mega
-	log.Printf("Using %d MB for DVID data cache.\n", *cacheMBytes)
-	datastore.InitDataCache(cacheBytes)
+	if dvidCPU > 1 {
+		log.Printf("Using %d of %d logical CPUs for DVID.\n", dvidCPU, numCPU)
+	}
 
 	// Capture ctrl+c and handle graceful shutdown (flushing of cache, etc.)
 	ctrl_c := make(chan os.Signal, 1)

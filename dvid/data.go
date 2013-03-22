@@ -306,6 +306,10 @@ func (s DataShapeString) DataShape() (shape DataShape, err error) {
 // Point2d is a 2d point.
 type Point2d [2]int32
 
+func (pt Point2d) String() string {
+	return fmt.Sprintf("(%d, %d)", pt[0], pt[1])
+}
+
 func SizeFromRect(rect image.Rectangle) (size Point2d) {
 	size[0] = int32(rect.Dx())
 	size[1] = int32(rect.Dy())
@@ -314,6 +318,10 @@ func SizeFromRect(rect image.Rectangle) (size Point2d) {
 
 // Point3d is a 3d point.
 type Point3d [3]int32
+
+func (pt Point3d) String() string {
+	return fmt.Sprintf("(%d, %d, %d)", pt[0], pt[1], pt[2])
+}
 
 // Vector3d is a floating point 3d vector.
 type Vector3d [3]float32

@@ -78,7 +78,7 @@ func apiHandler(w http.ResponseWriter, r *http.Request) {
 	default:
 		// Pass type-specific requests to the type service
 		dataSetName := parts[0]
-		typeService, err := runningService.TypeService(dataSetName)
+		typeService, err := runningService.DataSetService(dataSetName)
 		if err != nil {
 			badRequest(w, r, fmt.Sprintf("Could not find data set '%s' in datastore [%s]",
 				dataSetName, err.Error()))

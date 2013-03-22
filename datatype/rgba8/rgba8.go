@@ -1,7 +1,7 @@
 /*
-	Package grayscale8 implements DVID support for 8-bit grayscale images.
+	Package rgba8 implements DVID support for 8-bit RGBA images.
 */
-package grayscale8
+package rgba8
 
 import (
 	"github.com/janelia-flyem/dvid/datastore"
@@ -11,10 +11,8 @@ import (
 
 const Version = "0.6"
 
-const RepoUrl = "github.com/janelia-flyem/dvid/datatype/grayscale8"
+const RepoUrl = "github.com/janelia-flyem/dvid/datatype/rgba8"
 
-// Grayscale8 Datatype simply embeds voxels.Datatype to create a unique type
-// (grayscale8.Datatype) with grayscale functions.
 type Datatype struct {
 	voxels.Datatype
 }
@@ -26,12 +24,12 @@ func init() {
 	datastore.RegisterDatatype(&Datatype{
 		voxels.Datatype{
 			Datatype: datastore.Datatype{
-				DatatypeID:  datastore.MakeDatatypeID("grayscale8", RepoUrl, Version),
+				DatatypeID:  datastore.MakeDatatypeID("rgba8", RepoUrl, Version),
 				BlockMax:    DefaultBlockMax,
 				Indexing:    datastore.SIndexZYX,
 				IsolateData: true,
 			},
-			NumChannels:   1,
+			NumChannels:   4,
 			BytesPerVoxel: 1,
 		},
 	})

@@ -40,8 +40,8 @@ var Mode ModeFlag
 var errorLogger *log.Logger
 
 // Log prints a message via log.Print() depending on the Mode of DVID.
-func Log(modes ModeFlag, p ...interface{}) {
-	if ((modes&Debug) != 0 && Mode == Debug) || ((modes&Benchmark) != 0 && Mode == Benchmark) {
+func Log(mode ModeFlag, p ...interface{}) {
+	if mode == Mode {
 		if len(p) == 0 {
 			log.Println("No message")
 		} else {
@@ -51,8 +51,8 @@ func Log(modes ModeFlag, p ...interface{}) {
 }
 
 // Fmt prints a message via fmt.Print() depending on the Mode of DVID.
-func Fmt(modes ModeFlag, p ...interface{}) {
-	if ((modes&Debug) != 0 && Mode == Debug) || ((modes&Benchmark) != 0 && Mode == Benchmark) {
+func Fmt(mode ModeFlag, p ...interface{}) {
+	if mode == Mode {
 		if len(p) == 0 {
 			fmt.Println("No message")
 		} else {
@@ -92,22 +92,22 @@ func SetErrorLoggingFile(out io.Writer) {
 // newline since one is added in this function.
 func WaitToComplete(wg *sync.WaitGroup, startTime time.Time, p ...interface{}) {
 	wg.Wait()
-	ElapsedTime(startTime, p...)
+	ElapsedTime(Normal, startTime, p...)
 }
 
 // ElapsedTime prints the time elapsed from the start time with Printf arguments afterwards.
-// Example:  ElapsedTime(startTime, "Time since launch of %s", funcName)
-func ElapsedTime(startTime time.Time, p ...interface{}) {
-	var format string
+// Example:  ElapsedTime(dvid.Debug, startTime, "Time since launch of %s", funcName)
+func ElapsedTime(modes ModeFlag, startTime time.Time, p ...interface{}) {
 	var args []interface{}
 	if len(p) == 0 {
-		format = "%s\n"
+		args = append(args, "%s\n")
 	} else {
-		format = p[0].(string) + ": %s\n"
-		args = append(args, p[1:])
+		format := p[0].(string) + ": %s\n"
+		args = append(args, format)
+		args = append(args, p[1:]...)
 	}
 	args = append(args, time.Since(startTime))
-	fmt.Printf(format, args...)
+	Fmt(modes, args...)
 }
 
 // Prompt returns a string entered by the user after displaying message.

@@ -54,6 +54,20 @@ type DataStruct interface {
 	Data() []uint8
 }
 
+// Request supports requests to the DVID server.  Since input and reply payloads 
+// are different depending on the command, we use DataStruct interfaces for the
+// payloads. 
+type Request struct {
+	dvid.Command
+	DataStruct
+}
+
+// Response supports responses from DVID.
+type Response struct {
+	dvid.Response
+	DataStruct
+}
+
 // TypeID provides methods for determining the identity of a data type.
 type TypeID interface {
 	// TypeName describes a data type and may not be unique.
@@ -87,13 +101,13 @@ type TypeService interface {
 	Help(textHelp string) string
 
 	// Do handles RPC commands specific to a data type
-	DoRPC(request dvid.Request, reply dvid.Response, s *Service) error
+	DoRPC(request Request, reply *Response, s *Service) error
 
 	// DoHTTP handles HTTP requests specific to a data type
 	DoHTTP(w http.ResponseWriter, r *http.Request, s *Service, apiPrefixURL string)
 
 	// Returns standard error response for unknown commands
-	UnknownCommand(request dvid.Request) error
+	UnknownCommand(request Request) error
 }
 
 // RegisterDatatype registers a data type for DVID use.
@@ -166,7 +180,7 @@ func (datatype *Datatype) Help(typeHelp string) string {
 	return fmt.Sprintf(helpMessage+typeHelp, datatype.Name, datatype.Url)
 }
 
-func (datatype *Datatype) UnknownCommand(request dvid.Request) error {
+func (datatype *Datatype) UnknownCommand(request Request) error {
 	return fmt.Errorf("Unknown command.  Data type '%s' [%s] does not support '%s' command.",
 		datatype.Name, datatype.Url, request.TypeCommand())
 }
