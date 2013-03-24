@@ -131,7 +131,7 @@ func main() {
 		dvidCPU = 1
 	}
 	runtime.GOMAXPROCS(dvidCPU)
-	if dvidCPU > 1 {
+	if dvidCPU > 1 || *useCPU != 0 {
 		log.Printf("Using %d of %d logical CPUs for DVID.\n", dvidCPU, numCPU)
 	}
 

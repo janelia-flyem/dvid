@@ -39,9 +39,9 @@ func MakeSpatialIndex(t TypeService, coord dvid.BlockCoord) SpatialIndex {
 	index := make([]byte, 12, 12)
 	switch t.SpatialIndexing() {
 	case SIndexZYX:
-		binary.LittleEndian.PutUint32(index[:4], uint32(coord[2]))
+		binary.LittleEndian.PutUint32(index[0:4], uint32(coord[2]))
 		binary.LittleEndian.PutUint32(index[4:8], uint32(coord[1]))
-		binary.LittleEndian.PutUint32(index[8:], uint32(coord[0]))
+		binary.LittleEndian.PutUint32(index[8:12], uint32(coord[0]))
 	default:
 		panic(fmt.Sprintf("MakeSpatialIndex: Unsupported spatial indexing scheme (%d)!",
 			t.SpatialIndexing()))
@@ -104,6 +104,7 @@ func NewSpatialIterator(data DataStruct) SpatialIterator {
 	// Setup traversal
 	startVoxel := data.Origin()
 	endVoxel := data.EndVoxel()
+	fmt.Printf("NewSpatialIterator: %s -> %s\n", startVoxel, endVoxel)
 
 	switch data.SpatialIndexing() {
 	case SIndexZYX:

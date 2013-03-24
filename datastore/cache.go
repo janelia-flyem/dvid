@@ -177,67 +177,62 @@ func (vs *VersionService) MapBlocks(op OpType, data DataStruct, wg *sync.WaitGro
 	}
 	spatial_it := NewSpatialIterator(data)
 	start := true
-	var value keyvalue.Value
 
 	dvid.Fmt(dvid.Debug, "Mapping blocks for %s\n", data)
 	DiskAccess.Lock()
-	for {
-		spatialBytes := spatial_it()
-		if spatialBytes == nil {
-			break
-		}
-		blockKey := BlockKey(uuidBytes, spatialBytes, datatypeBytes, data.IsolatedKeys())
-		//dvid.Fmt(dvid.Debug, "Iterating on block key %s\n", blockKey)
-
-		// Phase 2: Is this block in the cache?
-		// value, found := GetCachedBlock(blockKey)
-
-		// Pull from the datastore
-		if start || db_it.Valid() && string(db_it.Key()) != string(blockKey) {
-			if start {
-				//dvid.Fmt(dvid.Debug, "Seeking to key %s...\n", blockKey)
-			} else {
-				//dvid.Fmt(dvid.Debug, "Seeking to key %s from %s...\n", blockKey,
-				//	string(db_it.Key()))
+	switch op {
+	case PutOp, GetOp:
+		keysFound := 0
+		totalKeys := 0
+		for {
+			spatialBytes := spatial_it()
+			if spatialBytes == nil {
+				break
 			}
-			db_it.Seek(blockKey)
-			start = false
-		}
-		if db_it.Valid() {
-			value = db_it.Value()
-			//dvid.Fmt(dvid.Debug, "Found valid value with length %d bytes\n", len(value))
-			// Advance the database iterator
-			db_it.Next()
-			//SetCachedBlock(blockKey, value)
-		} else {
-			if op == GetOp {
-				//dvid.Fmt(dvid.Debug, "Invalid iterator on GET: Skipping\n")
-				continue
-			} else {
-				//dvid.Fmt(dvid.Debug, "Invalid iterator on PUT: Allocating data for block\n")
-				value = make(keyvalue.Value, data.BlockBytes(), data.BlockBytes())
+			blockKey := BlockKey(uuidBytes, spatialBytes, datatypeBytes, data.IsolatedKeys())
+			totalKeys++
+
+			// Pull from the datastore
+			if start || (db_it.Valid() && string(db_it.Key()) < string(blockKey)) {
+				db_it.Seek(blockKey)
+				start = false
 			}
-		}
+			var value keyvalue.Value
+			if db_it.Valid() && string(db_it.Key()) == string(blockKey) {
+				keysFound++
+				value = db_it.Value()
+				db_it.Next()
+			} else {
+				if op == PutOp {
+					value = make(keyvalue.Value, data.BlockBytes(), data.BlockBytes())
+				} else {
+					continue // If have no value, simple use zero value of slice/subvolume.
+				}
+			}
 
-		// Initialize the block request
-		req := &BlockRequest{
-			DataStruct: data,
-			Block:      value,
-			Op:         op,
-			SpatialKey: SpatialIndex(spatialBytes),
-			BlockKey:   blockKey,
-			Wait:       wg,
-			DB:         vs.kvdb,
-			//WriteBatch: writeBatch,
-		}
+			// Initialize the block request
+			req := &BlockRequest{
+				DataStruct: data,
+				Block:      value,
+				Op:         op,
+				SpatialKey: SpatialIndex(spatialBytes),
+				BlockKey:   blockKey,
+				Wait:       wg,
+				DB:         vs.kvdb,
+				//WriteBatch: writeBatch,
+			}
 
-		// Try to spread sequential block keys among different block handlers to get 
-		// most out of our concurrent processing.
-		wg.Add(1)
-		channelNum := req.SpatialKey.Hash(data, len(channels))
-		dvid.Fmt(dvid.Debug, "Sending block request %s down channel %d\n",
-			data, channelNum)
-		channels[channelNum] <- req
+			// Try to spread sequential block keys among different block handlers to get 
+			// most out of our concurrent processing.
+			wg.Add(1)
+			channelNum := req.SpatialKey.Hash(data, len(channels))
+			//dvid.Fmt(dvid.Debug, "Sending %s block %s request %s down channel %d\n",
+			//	op, SpatialIndex(spatialBytes).BlockCoord(data), data, channelNum)
+			channels[channelNum] <- req
+		}
+		fmt.Printf("%s: Found %d of %d keys in database.\n", op, keysFound, totalKeys)
+	default:
+		return fmt.Errorf("Illegal operation (%d) asked for in MapBlocks()", op)
 	}
 	DiskAccess.Unlock()
 	return nil
