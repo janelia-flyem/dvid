@@ -104,7 +104,6 @@ func NewSpatialIterator(data DataStruct) SpatialIterator {
 	// Setup traversal
 	startVoxel := data.Origin()
 	endVoxel := data.EndVoxel()
-	fmt.Printf("NewSpatialIterator: %s -> %s\n", startVoxel, endVoxel)
 
 	switch data.SpatialIndexing() {
 	case SIndexZYX:

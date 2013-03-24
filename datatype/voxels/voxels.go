@@ -212,8 +212,6 @@ func (dtype *Datatype) ProcessSlice(vs *datastore.VersionService, op datastore.O
 		TypeService: dtype,
 		data:        data,
 	}
-	fmt.Printf("slice: %s\n", slice)
-	//dvid.PrintNonZero("Process Slice", []byte(data))
 	var wg sync.WaitGroup
 	err = vs.MapBlocks(op, voxels, &wg)
 	if err != nil {
@@ -523,7 +521,6 @@ func (v *Voxels) BlockHandler(req *datastore.BlockRequest) {
 	block := []uint8(req.Block)
 	blockX := blockSize[0] * bytesPerVoxel
 	blockXY := blockSize[1] * blockX
-	blockI := blockBeg[2]*blockXY + blockBeg[1]*blockX + blockBeg[0]
 
 	// Adjust the DVID volume voxel coordinates for the data so that (0,0,0)
 	// is where we expect this slice/subvolume's data to begin.
@@ -541,47 +538,23 @@ func (v *Voxels) BlockHandler(req *datastore.BlockRequest) {
 
 	switch req.DataShape() {
 	case dvid.XY:
-		blockHits := 0
-		dataHits := 0
-		totalBytes := int32(0)
 		//fmt.Printf("XY Block handled: %s->%s for key %s\n", begVolCoord, endVolCoord, req.SpatialKey)
+		blockI := blockBeg[2]*blockXY + blockBeg[1]*blockX + blockBeg[0]
 		dataI := (beg[1]*dataSize[0] + beg[0]) * bytesPerVoxel
 		for y := beg[1]; y <= end[1]; y++ {
 			run := end[0] - beg[0] + 1
 			bytes := run * bytesPerVoxel
-			totalBytes += bytes
 			switch req.Op {
 			case datastore.GetOp:
 				copy(data[dataI:dataI+bytes], block[blockI:blockI+bytes])
 			case datastore.PutOp:
 				copy(block[blockI:blockI+bytes], data[dataI:dataI+bytes])
 			}
-
-			for i := int32(0); i < bytes; i++ {
-				vx := begVolCoord[0] + i
-				vy := y + v.Origin()[1]
-				if block[blockI+i] > 0 {
-					blockHits++
-				}
-				if data[dataI+i] > 0 {
-					dataHits++
-				}
-				if block[blockI+i] > 0 && (vx < 125 || vx > 375 || vy < 125 || vy > 375) {
-					fmt.Printf("ERROR: data %s->%s, x %d, y %d, block[blockI]=%d\n",
-						begVolCoord, endVolCoord, vx, vy, int(block[blockI+i]))
-				}
-				if data[dataI+i] > 0 && (vx < 125 || vx > 375 || vy < 125 || vy > 375) {
-					fmt.Printf("ERROR: data %s->%s, x %d, y %d, data[dataI]=%d\n",
-						begVolCoord, endVolCoord, vx, vy, int(data[dataI+i]))
-				}
-			}
-
 			blockI += blockSize[0] * bytesPerVoxel
 			dataI += dataSize[0] * bytesPerVoxel
 		}
-		dvid.Fmt(dvid.Debug, "Handled block: %s->%s  hits on %d bytes: block %d, data %d\n",
-			beg, end, totalBytes, blockHits, dataHits)
 	case dvid.XZ:
+		blockI := blockBeg[2]*blockXY + blockBeg[1]*blockX + blockBeg[0]
 		dataI := (beg[2]*v.Width() + beg[0]) * bytesPerVoxel
 		for y := beg[2]; y <= end[2]; y++ {
 			run := end[0] - beg[0] + 1
@@ -596,20 +569,21 @@ func (v *Voxels) BlockHandler(req *datastore.BlockRequest) {
 			dataI += v.Width() * bytesPerVoxel
 		}
 	case dvid.YZ:
+		bx, bz := blockBeg[0], blockBeg[2]
 		for y := beg[2]; y <= end[2]; y++ {
 			dataI := (y*v.Width() + beg[1]) * bytesPerVoxel
+			blockI := bz*blockXY + blockBeg[1]*blockX + bx
 			for x := beg[1]; x <= end[1]; x++ {
-				blockI := blockBeg[2]*blockXY + blockBeg[1]*blockX + blockBeg[0]
 				switch req.Op {
 				case datastore.GetOp:
 					copy(data[dataI:dataI+bytesPerVoxel], block[blockI:blockI+bytesPerVoxel])
 				case datastore.PutOp:
 					copy(block[blockI:blockI+bytesPerVoxel], data[dataI:dataI+bytesPerVoxel])
 				}
-				blockBeg[1]++
+				blockI += blockX
 				dataI += bytesPerVoxel
 			}
-			blockBeg[2]++
+			bz++
 		}
 	default:
 	}

@@ -182,15 +182,12 @@ func (vs *VersionService) MapBlocks(op OpType, data DataStruct, wg *sync.WaitGro
 	DiskAccess.Lock()
 	switch op {
 	case PutOp, GetOp:
-		keysFound := 0
-		totalKeys := 0
 		for {
 			spatialBytes := spatial_it()
 			if spatialBytes == nil {
 				break
 			}
 			blockKey := BlockKey(uuidBytes, spatialBytes, datatypeBytes, data.IsolatedKeys())
-			totalKeys++
 
 			// Pull from the datastore
 			if start || (db_it.Valid() && string(db_it.Key()) < string(blockKey)) {
@@ -199,7 +196,6 @@ func (vs *VersionService) MapBlocks(op OpType, data DataStruct, wg *sync.WaitGro
 			}
 			var value keyvalue.Value
 			if db_it.Valid() && string(db_it.Key()) == string(blockKey) {
-				keysFound++
 				value = db_it.Value()
 				db_it.Next()
 			} else {
@@ -230,7 +226,6 @@ func (vs *VersionService) MapBlocks(op OpType, data DataStruct, wg *sync.WaitGro
 			//	op, SpatialIndex(spatialBytes).BlockCoord(data), data, channelNum)
 			channels[channelNum] <- req
 		}
-		fmt.Printf("%s: Found %d of %d keys in database.\n", op, keysFound, totalKeys)
 	default:
 		return fmt.Errorf("Illegal operation (%d) asked for in MapBlocks()", op)
 	}
