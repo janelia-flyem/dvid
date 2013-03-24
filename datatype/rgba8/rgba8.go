@@ -1,5 +1,6 @@
 /*
-	Package rgba8 implements DVID support for 8-bit RGBA images.
+	Package rgba8 implements DVID support for 8-bit RGBA images.  It simply
+	wraps the voxels package, setting NumChannels (4) and BytesPerVoxel(1).
 */
 package rgba8
 

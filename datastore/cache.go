@@ -11,7 +11,6 @@ import (
 	_ "os"
 	"sync"
 
-	"github.com/janelia-flyem/dvid/cache"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/keyvalue"
 )
@@ -103,10 +102,6 @@ var (
 	// to access the key-value database on disk.
 	// TODO: Reexamine this in the context of parallel disk drives during cluster use.
 	DiskAccess sync.Mutex
-
-	// Global variable that holds the LRU cache for DVID instance.
-	// TODO -- Not currently used but present for future tuning.
-	dataCache *cache.LRUCache
 )
 
 func init() {
@@ -232,26 +227,3 @@ func (vs *VersionService) MapBlocks(op OpType, data DataStruct, wg *sync.WaitGro
 	DiskAccess.Unlock()
 	return nil
 }
-
-/**
-// Initialize the LRU cache
-func InitDataCache(numBytes uint64) {
-	dataCache = cache.NewLRUCache(numBytes)
-}
-
-// GetCachedBlock returns data for a given DVID Block if it's in the cache.
-// Since the block key includes a UUID, this function can be used to access
-// any image versions cached blocks. 
-func GetCachedBlock(blockKey keyvalue.Key) (value keyvalue.Value, found bool) {
-	data, found := dataCache.Get(string(blockKey))
-	value = data.(keyvalue.Value)
-	// TODO -- keep statistics on hits for web client
-	return
-}
-
-// SetCachedBlock places a key/value pair into the DVID data cache. 
-func SetCachedBlock(blockKey keyvalue.Key, data keyvalue.Value) {
-	dataCache.Set(string(blockKey), data)
-	// TODO -- keep stats on sets
-}
-**/

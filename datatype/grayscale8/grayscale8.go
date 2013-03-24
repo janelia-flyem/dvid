@@ -1,5 +1,6 @@
 /*
-	Package grayscale8 implements DVID support for 8-bit grayscale images.
+	Package grayscale8 implements DVID support for 8-bit grayscale images.  It simply
+	wraps the voxels package, setting NumChannels (1) and BytesPerVoxel(1).
 */
 package grayscale8
 

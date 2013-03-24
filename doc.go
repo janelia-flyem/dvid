@@ -18,7 +18,7 @@ images, 64-bit label data, and label-to-label maps) will be included with the ba
 DVID installation, although their packaging is identical to any other user-defined 
 data type.
 
-Although DVID operations can be run from the command line by knowledgeable users,
+DVID operations can be run from the command line by knowledgeable users, but
 we assume that clients will build upon DVID layers to hide the complexity from
 users.
 
@@ -56,11 +56,28 @@ accepts a "uuid=..." option, and if there's any possibility of
 another user interacting with the same DVID datastore, you *should* specify 
 a UUID.
 
+    dvid log [rpc=localhost:6000]
+
+Prints information on the provenance of the image volume, particularly the UUIDs for
+each version.
+
 	dvid types [rpc=localhost:6000]
 
 The 'types' command lists all supported data types for this DVID datastore.
 You can also use the "--types" option to list all data types that have been
 compiled into your current DVID executable.
+
+    dvid dataset <dataset name> <data type name>
+
+Creates a new dataset for thie DVID datastore, e.g., "dvid dataset mygrayscale grayscale8". 
+You must have datasets and their type defined before you can add or retrieve data.
+
+Commands on roadmap but not yet implemented
+
+    dvid comment <uuid> "..."
+
+Appends a note to the provenance field of a version node.  These comments can be
+reviewed using the "log" command.
 
 	dvid branch [uuid=...] [rpc=localhost:6000]
 
@@ -76,41 +93,46 @@ the "child" command.
 Locks the current HEAD node or the node specified by an optional UUID.  Once
 a node is locked, it can be used with the "child" command.
 
-	dvid pull  (TODO)
-	dvid push  (TODO)
+	dvid pull <remote dvid address> <uuid> [extents]
+	dvid push <remote dvid address> <uuid> [extents]
 
+The push and pull commands allow syncing of two DVID instances with respect to
+a version node.
+
+	dvid archive <uuid>
+
+Compacts a version, removing all denormalized data and making sure normalized
+data uses deltas from parents if possible.
 
 DVID commands available through supported data types
 
-You can specify a data type name followed by a type-specific command:
+You can specify a data set name followed by a type-specific command:
 
-	dvid <data type> <type command> <arguments> [uuid=...] [rpc=localhost:6000]
+	dvid <data set name> <type command> <arguments> [uuid=...] [rpc=localhost:6000]
 
-For example, the "grayscale8" data type supports the "server_load" command to insert
-2d images to the DVID datastore on the server side:
+For example, the "grayscale8" data type supports the "server-add" command to insert
+2d images to the DVID datastore on the server side.  Assuming a dataset called
+"mygrayscale" with grayscale8 data type has been added to a DVID instance, we 
+could do the following:
 
-	dvid grayscale8 server-add  1,2,23  /path/to/images/*.png
+	dvid mygrayscale server-add 3f80a 1,2,23 /path/to/images/*.png
 
 The above example inserts a series of XY images where the lexicographically 
-smallest filename holds voxels at (x+1, y+2, 23) and each following image increases
-the z-coordinate by 1.  The image data is inserted into the current HEAD node
-or the node specified via the "uuid=..." option.  Attempts to add data to a
-locked node will result in an error.
+smallest filename holds voxels offset from (x+1, y+2, 23) and each following image 
+increases the z-coordinate by 1.  The image data is inserted into the specified version
+node with UUID beginning with "3f80a".
 
-	dvid <datatype> help [rpc=localhost:6000]
+	dvid <data set name> help [rpc=localhost:6000]
 
-Returns a help message for all commands specific to this data type.
+Returns a help message for all commands specific to this data set's type.
 
 Dependencies
 
-DVID uses a key-value datastore as its back end.  We use one of two implementations of 
-leveldb initially:
-
-  • C++ leveldb plus levigo Go bindings.  This is a more industrial-strength solution and 
-    would be the preferred installation for production runs at Janelia.
-  • Pure Go leveldb implementations.
-	  • Suryandaru Triandana's rewrite from C++ version (https://github.com/syndtr/goleveldb)
-	  • Nigel Tao's implementation still in progress (http://code.google.com/p/leveldb-go)
+DVID uses a key-value datastore as its back end.  We currently use Google's C++ leveldb 
+plus the levigo Go bindings.  We can easily add pure Go leveldb implementations and
+initially attempted use of Suryandaru Triandana's rewrite from C++ version 
+(https://github.com/syndtr/goleveldb).  We are keeping tabs on Nigel Tao's implementation 
+still in progress (http://code.google.com/p/leveldb-go).
 
 A pure Go leveldb implementation would greatly simplify cross-platform development since 
 Go code can be cross-compiled to Linux, Windows, and Mac targets.  It would also allow simpler 

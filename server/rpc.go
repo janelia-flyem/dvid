@@ -19,9 +19,9 @@ Commands executed on the server (%s):
 	version
 	types
 	dataset <dataset name> <data type name>   (example: "dataset mygrayscale grayscale8")
-	comment <uuid> "..."
 
 	(Commands on roadmap)
+	comment <uuid> "..."
 	add <uuid> <dataset name> <local filename glob>
 	branch <uuid>
 	lock <uuid>
