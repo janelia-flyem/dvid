@@ -4,18 +4,17 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"image"
+	"image/jpeg"
+	"image/png"
 	"io"
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
-
-	"image"
-	_ "image/gif"
-	_ "image/jpeg"
-	_ "image/png"
 )
 
 const (
@@ -32,6 +31,10 @@ const (
 	Debug
 	Benchmark
 )
+
+// DefaultJPEGQuality is the quality of images returned if requesting JPEG images
+// and an explicit Quality amount is omitted.
+const DefaultJPEGQuality = 80
 
 // Mode is a global variable set to the run modes of this DVID process.
 var Mode ModeFlag
@@ -159,6 +162,30 @@ func ImageData(img image.Image) (data []uint8, stride int, err error) {
 		stride = typedImg.Stride
 	default:
 		err = fmt.Errorf("Illegal image type called ImageData(): %T", typedImg)
+	}
+	return
+}
+
+// WriteImageHttp writes an image to a HTTP response writer using a format and optional
+// compression strength specified in a string, e.g., "png", "jpg:80".
+func WriteImageHttp(w http.ResponseWriter, img image.Image, formatStr string) (err error) {
+	format := strings.Split(formatStr, ":")
+	var compression int = DefaultJPEGQuality
+	if len(format) > 1 {
+		compression, err = strconv.Atoi(format[1])
+		if err != nil {
+			return err
+		}
+	}
+	switch format[0] {
+	case "", "png":
+		w.Header().Set("Content-type", "image/png")
+		png.Encode(w, img)
+	case "jpg", "jpeg":
+		w.Header().Set("Content-type", "image/jpeg")
+		jpeg.Encode(w, img, &jpeg.Options{Quality: compression})
+	default:
+		err = fmt.Errorf("Illegal image format requested: %s", format[0])
 	}
 	return
 }

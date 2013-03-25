@@ -72,7 +72,9 @@ compiled into your current DVID executable.
 Creates a new dataset for thie DVID datastore, e.g., "dvid dataset mygrayscale grayscale8". 
 You must have datasets and their type defined before you can add or retrieve data.
 
+
 Commands on roadmap but not yet implemented
+
 
     dvid comment <uuid> "..."
 

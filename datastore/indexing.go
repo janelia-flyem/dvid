@@ -25,10 +25,10 @@ const (
 	// Simple indexing on Z, then Y, then X
 	SIndexZYX SpatialIndexScheme = iota
 
-	// Hilbert curve
+	// TODO -- Hilbert curve
 	SIndexHilbert
 
-	// Diagonal indexing within 2d plane, z separate
+	// TODO -- Diagonal indexing within 2d plane, z separate
 	SIndexXYDiagonal
 )
 

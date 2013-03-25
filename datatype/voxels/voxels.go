@@ -8,7 +8,6 @@ package voxels
 import (
 	"fmt"
 	"image"
-	"image/png"
 	_ "log"
 	"net/http"
 	"strings"
@@ -88,7 +87,7 @@ The voxel data type supports the following Level 2 REST HTTP API calls.
 
     If <data shape> is "arb":
 
-        GET  /api/<data set name>/<uuid>/<data shape>/<offset>/<top right>/<bottom left>[/<format>]
+        GET  /api/<data set name>/<uuid>/<data shape>/<offset>/<tr>/<bl>[/<format>]
 
     Parameters:
     <data set name> = Data set name that is of type voxel, e.g., "rgb8" or "labels16"
@@ -98,9 +97,10 @@ The voxel data type supports the following Level 2 REST HTTP API calls.
     <offset> = x,y,z
     <size> = dx,dy,dz (if <volume> is "vol")
              dx,dy    (if <volume> is not "vol")
-	<format> = "png", "jpg", "hdf5" (default: "png")
-	<top right> = x,y,z of top right corner of arbitrary slice
-	<bottom left> = x,y,z of bottom left corner of arbitrary slice
+	<format> = "png", "jpg", "hdf5" (default: "png")  
+       Jpeg allows lossy quality setting, e.g., "jpg:80"
+	<tr> = x,y,z of top right corner of arbitrary slice
+	<bl> = x,y,z of bottom left corner of arbitrary slice
 
     Examples:
 
@@ -299,7 +299,6 @@ func (dtype *Datatype) DoHTTP(w http.ResponseWriter, r *http.Request,
 
 	switch dataShape {
 	case dvid.XY, dvid.XZ, dvid.YZ:
-		//var postedImg image.Image
 		slice, err := dvid.NewSliceFromStrings(parts[2], parts[3], parts[4])
 		if err != nil {
 			badRequest(w, r, err.Error())
@@ -319,8 +318,14 @@ func (dtype *Datatype) DoHTTP(w http.ResponseWriter, r *http.Request,
 				badRequest(w, r, err.Error())
 				return
 			}
-			w.Header().Set("Content-type", "image/png")
-			png.Encode(w, img)
+			var formatStr string
+			if len(parts) >= 6 {
+				formatStr = parts[5]
+			}
+			err = dvid.WriteImageHttp(w, img, formatStr)
+			if err != nil {
+				badRequest(w, r, err.Error())
+			}
 		}
 		dvid.ElapsedTime(dvid.Normal, startTime, "%s %s %s", op, dtype.TypeName(), slice)
 	case dvid.Arb:
