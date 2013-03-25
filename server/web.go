@@ -30,11 +30,26 @@ func badRequest(w http.ResponseWriter, r *http.Request, err string) {
 	http.Error(w, errorMsg, http.StatusBadRequest)
 }
 
+const webClientUnavailableMessage = `
+DVID Web Client Unavailable!  To make the web client available, you have two choices:
+
+1) Invoke the DVID server using the full path to the DVID executable to use
+   the built-in web client.
+
+2) Specify a path to web pages that implement a web client via the "-webclient=PATH"
+   option to dvid.
+   Example: dvid -webclient=/path/to/html/files serve dir=/path/to/db"
+`
+
 // Handler for presentation files
 func mainHandler(w http.ResponseWriter, r *http.Request) {
-	filename := filepath.Join(runningService.WebClientPath, r.URL.Path)
-	dvid.Log(dvid.Debug, "http request: %s -> %s\n", r.URL.Path, filename)
-	http.ServeFile(w, r, filename)
+	if runningService.WebClientPath != "" {
+		filename := filepath.Join(runningService.WebClientPath, r.URL.Path)
+		dvid.Log(dvid.Debug, "http request: %s -> %s\n", r.URL.Path, filename)
+		http.ServeFile(w, r, filename)
+	} else {
+		fmt.Fprintf(w, webClientUnavailableMessage)
+	}
 }
 
 // Handler for API commands.

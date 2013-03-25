@@ -52,7 +52,7 @@ type Service struct {
 	WebAddress string
 
 	// The path to the DVID web client
-	WebClientPath string
+	WebClientPath      string
 
 	// The address of the rpc server
 	RpcAddress string
@@ -136,14 +136,11 @@ func (service *Service) ServeHttp(address, clientDir string) {
 		err := nrsc.Handle("/")
 		if err != nil {
 			fmt.Println("ERROR with nrsc trying to serve web pages:", err.Error())
-			fmt.Println("\nPlease use the full path to the DVID executable",
-				"if you plan on using the embedded web pages.\n",
-				"Otherwise, you can use the -webclient=PATH to explicitly specify",
-				"the location of your web client pages.\n")
-			os.Exit(1)
-
+			fmt.Println(webClientUnavailableMessage)
+			fmt.Println("HTTP server will be started without webclient...\n")
+			http.HandleFunc("/", mainHandler)
 		} else {
-			dvid.Log(dvid.Debug, "Serving web pages through embedded data in exe!\n")
+			dvid.Log(dvid.Debug, "Serving built-in DVID web client...\n")
 		}
 	} else {
 		http.HandleFunc("/", mainHandler)
