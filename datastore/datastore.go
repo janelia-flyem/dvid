@@ -267,15 +267,32 @@ type Service struct {
 	kvdb
 }
 
+type OpenErrorType int
+
+const (
+	ErrorOpening OpenErrorType = iota
+	ErrorInitConfig
+	ErrorRuntimeConfig
+	ErrorUUIDs
+)
+
+type OpenError struct {
+	error
+	ErrorType OpenErrorType
+}
+
 // Open opens a DVID datastore at the given directory and returns
 // a Service that allows operations on that datastore.
-func Open(directory string) (s *Service, err error) {
+func Open(directory string) (s *Service, openErr *OpenError) {
 	// Open the datastore
 	dbOptions := keyvalue.NewKeyValueOptions()
 	create := false
 	db, err := keyvalue.OpenLeveldb(directory, create, dbOptions)
 	if err != nil {
-		err = fmt.Errorf("Error opening datastore (%s): %s", directory, err.Error())
+		openErr = &OpenError{
+			fmt.Errorf("Error opening datastore (%s): %s", directory, err.Error()),
+			ErrorOpening,
+		}
 		return
 	}
 
@@ -283,13 +300,19 @@ func Open(directory string) (s *Service, err error) {
 	iconfig := new(initConfig)
 	err = iconfig.get(kvdb{db})
 	if err != nil {
-		err = fmt.Errorf("Error reading initial configuration: %s", err.Error())
+		openErr = &OpenError{
+			fmt.Errorf("Error reading initial configuration: %s", err.Error()),
+			ErrorInitConfig,
+		}
 		return
 	}
 	rconfig := new(runtimeConfig)
 	err = rconfig.get(kvdb{db})
 	if err != nil {
-		err = fmt.Errorf("Error reading runtime configuration: %s", err.Error())
+		openErr = &OpenError{
+			fmt.Errorf("Error reading runtime configuration: %s", err.Error()),
+			ErrorRuntimeConfig,
+		}
 		return
 	}
 
@@ -297,6 +320,10 @@ func Open(directory string) (s *Service, err error) {
 	uuids := new(uuidData)
 	err = uuids.get(kvdb{db})
 	if err != nil {
+		openErr = &OpenError{
+			err,
+			ErrorUUIDs,
+		}
 		return
 	}
 

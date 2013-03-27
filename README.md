@@ -17,8 +17,12 @@ manually by:
 2. Add the following Go packages using "go get":
 
     go get code.google.com/p/snappy-go/snappy
+
     go get bitbucket.org/tebeka/nrsc
+
     go get code.google.com/p/go-uuid/uuid
+
     go get code.google.com/p/go.net/websocket
+    
     go get github.com/jmhodges/levigo
     

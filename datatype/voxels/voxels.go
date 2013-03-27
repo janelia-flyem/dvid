@@ -114,7 +114,7 @@ The voxel data type supports the following Level 2 REST HTTP API calls.
 
 // DefaultNumBlockHandlers specifies the number of block handlers for this data type
 // for each image version. 
-const DefaultNumBlockHandlers = 1
+const DefaultNumBlockHandlers = 8
 
 // DefaultBlockMax specifies the default size for each block of this data type.
 var DefaultBlockMax dvid.Point3d = dvid.Point3d{16, 16, 16}

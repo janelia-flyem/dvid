@@ -46,6 +46,9 @@ var (
 
 	// Size of DVID data cache
 	cacheMBytes = flag.Uint64("cache", datastore.DefaultCacheMBytes, "")
+
+	// Number of seconds to wait trying to get exclusive access to DVID datastore.
+	timeout = flag.Int("timeout", 0, "")
 )
 
 const helpMessage = `
@@ -55,6 +58,7 @@ Usage: dvid [options] <command>
 
       -numcpu     =number   Number of logical CPUs to use for DVID.
       -cache      =number   Megabytes of LRU cache for blocks.  (Default: %d MB)
+      -timeout    =number   Seconds to wait trying to get exclusive access to datastore.
       -webclient  =string   Path to web client directory.  Leave unset for default pages.
       -cpuprofile =string   Write CPU profile to this file.
       -memprofile =string   Write memory profile to this file on ctrl-C.
@@ -94,6 +98,18 @@ func main() {
 	flag.Usage = usage
 	flag.Parse()
 
+	if *runDebug {
+		dvid.Mode = dvid.Debug
+		fmt.Println("Running in Debug mode...")
+	}
+	if *runBenchmark {
+		dvid.Mode = dvid.Benchmark
+		fmt.Println("Running in Benchmark mode...")
+	}
+	if *timeout != 0 {
+		server.TimeoutSecs = *timeout
+	}
+
 	if *showHelp {
 		flag.Usage()
 		os.Exit(0)
@@ -101,13 +117,6 @@ func main() {
 	if *showTypes {
 		fmt.Println(datastore.CompiledTypeChart())
 		os.Exit(0)
-	}
-
-	if *runDebug {
-		dvid.Mode = dvid.Debug
-	}
-	if *runBenchmark {
-		dvid.Mode = dvid.Benchmark
 	}
 
 	if *cpuprofile != "" {
@@ -164,8 +173,6 @@ func main() {
 	if flag.NArg() == 0 {
 		terminal.Shell()
 	} else {
-		dvid.Fmt(dvid.Debug, "Running in Debug mode\n")
-		dvid.Fmt(dvid.Benchmark, "Running in Benchmark mode\n")
 		command := dvid.Command(flag.Args())
 		if err := DoCommand(command); err != nil {
 			fmt.Println(err.Error())

@@ -43,6 +43,10 @@ var runningService = Service{
 	RpcAddress: DefaultRpcAddress,
 }
 
+
+// Timeout in seconds for waiting to open a datastore for exclusive access.
+var TimeoutSecs int = 0
+
 // Service holds information on the servers attached to a DVID datastore.
 type Service struct {
 	// The currently opened DVID datastore
@@ -58,9 +62,71 @@ type Service struct {
 	RpcAddress string
 }
 
+// ServerlessDo runs a command locally, opening and closing a datastore
+// as necessary.
+func ServerlessDo(request datastore.Request, reply *datastore.Response) error {
+	datastoreDir := request.DatastoreDir()
+
+	// Make sure we don't already have an open datastore.
+	if runningService.Service != nil {
+		return fmt.Errorf("Cannot do concurrent requests on different datastores.")
+	}
+
+	// Get exclusive ownership of a DVID datastore.  Wait if allowed and necessary.
+	dvid.Fmt(dvid.Debug, "Getting exclusive ownership of datastore at: %s\n", datastoreDir)
+	startTime := time.Now()
+	for {
+		var err *datastore.OpenError
+		runningService.Service, err = datastore.Open(datastoreDir)
+		if err != nil {
+			if TimeoutSecs == 0 || err.ErrorType != datastore.ErrorOpening {
+				return err
+			}
+			dvid.Fmt(dvid.Debug, "Waiting a second for exclusive datastore access...\n")
+			time.Sleep(1 * time.Second)
+			elapsed := time.Since(startTime).Seconds()
+			if elapsed > float64(TimeoutSecs) {
+				return fmt.Errorf("Unable to obtain exclusive access of datastore (%s) in %d seconds",
+					datastoreDir, TimeoutSecs)
+			}
+		} else {
+			break
+		}
+	}
+
+	// Register an error logger that appends to a file in this datastore directory.
+	errorLog := filepath.Join(datastoreDir, ErrorLogFilename)
+	file, err := os.OpenFile(errorLog, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Fatalf("Unable to open error logging file (%s): %s\n", errorLog, err.Error())
+	}
+	dvid.SetErrorLoggingFile(file)
+
+	// Make sure we can support the datastore's types with our current DVID executable
+	log.Println("Verifying datastore's supported types were compiled into DVID...")
+	err = runningService.VerifyCompiledTypes()
+	if err != nil {
+		log.Fatalln(err.Error())
+	}
+
+	// Launch block handlers as goroutines for all compiled types.
+	for _, datatype := range datastore.CompiledTypes {
+		datastore.ReserveBlockHandlers(datatype)
+	}
+
+	// Issue local command
+	var localConnect RpcConnection
+	err = localConnect.Do(request, reply)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // Serve opens a datastore then creates both web and rpc servers for the datastore.
 // This function must be called for DataService() to be non-nil.
-func Serve(datastoreDir, webAddress, webClientDir, rpcAddress string) (err error) {
+func Serve(datastoreDir, webAddress, webClientDir, rpcAddress string) error {
 	// Make sure we don't already have an open datastore.
 	if runningService.Service != nil {
 		return fmt.Errorf("Cannot create new server.  " +
@@ -70,9 +136,10 @@ func Serve(datastoreDir, webAddress, webClientDir, rpcAddress string) (err error
 	// Get exclusive ownership of a DVID datastore
 	log.Println("Getting exclusive ownership of datastore at:", datastoreDir)
 
-	runningService.Service, err = datastore.Open(datastoreDir)
-	if err != nil {
-		log.Fatalln(err.Error())
+	var openErr *datastore.OpenError
+	runningService.Service, openErr = datastore.Open(datastoreDir)
+	if openErr != nil {
+		log.Fatalln(openErr.Error())
 	}
 
 	// Register an error logger that appends to a file in this datastore directory.
