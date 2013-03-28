@@ -2,7 +2,7 @@
 	Package labels32 implements DVID support for 32-bit label images.  It simply
 	wraps the voxels package, setting NumChannels (1) and BytesPerVoxel(4).
 */
-package rgba8
+package labels32
 
 import (
 	"github.com/janelia-flyem/dvid/datastore"
