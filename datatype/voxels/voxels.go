@@ -172,8 +172,10 @@ func (dtype *Datatype) ProcessSlice(vs *datastore.VersionService, op datastore.O
 	slice dvid.Geometry, inputImg image.Image) (outputImg image.Image, err error) {
 
 	// Setup the data buffer
-	numBytes := dtype.BytesPerVoxel * dtype.NumChannels * slice.NumVoxels()
+	bytesPerVoxel := dtype.BytesPerVoxel * dtype.NumChannels 
+	numBytes := bytesPerVoxel * slice.NumVoxels()
 	var data []uint8
+	var stride int32
 	//var batch keyvalue.WriteBatch
 
 	switch op {
@@ -183,24 +185,14 @@ func (dtype *Datatype) ProcessSlice(vs *datastore.VersionService, op datastore.O
 		//batch = keyvalue.NewWriteBatch()
 		//defer batch.Close()
 
-		fmt.Printf("Input image: %d x %d\n", inputImg.Bounds().Dx(), inputImg.Bounds().Dy())
-
 		// Use input image bytes as data buffer.
-		var stride int
 		data, stride, err = dvid.ImageData(inputImg)
 		if err != nil {
 			return
 		}
-		expectedStride := dtype.NumChannels * dtype.BytesPerVoxel * int(slice.Width())
-		if stride != expectedStride {
-			typeInfo := fmt.Sprintf("(%s: %d channels, %d bytes/voxel, %s pixels)",
-				dtype.TypeName(), dtype.NumChannels, dtype.BytesPerVoxel, slice.Size())
-			err = fmt.Errorf("Input image does not match data type: stride bytes = %d for type %s",
-				stride, typeInfo)
-			return
-		}
 	case datastore.GetOp:
 		data = make([]uint8, numBytes, numBytes)
+		stride = slice.Width() * int32(bytesPerVoxel)
 	default:
 		err = fmt.Errorf("Illegal operation (%d) in ProcessSlice()", op)
 		return
@@ -211,6 +203,7 @@ func (dtype *Datatype) ProcessSlice(vs *datastore.VersionService, op datastore.O
 		Geometry:    slice,
 		TypeService: dtype,
 		data:        data,
+		stride:		 stride,
 	}
 	var wg sync.WaitGroup
 	err = vs.MapBlocks(op, voxels, &wg)
@@ -404,11 +397,6 @@ func (dtype *Datatype) ServerAdd(request datastore.Request, reply *datastore.Res
 	for _, filename := range filenames {
 		startTime := time.Now()
 		img, _, err := dvid.ImageFromFile(filename)
-
-		// DEBUG
-		dataImg, _, _ := dvid.ImageData(img)
-		dvid.PrintNonZero(filename, []byte(dataImg))
-
 		if err != nil {
 			lastErr = err
 		} else {
@@ -443,10 +431,17 @@ type Voxels struct {
 
 	// The data itself
 	data []uint8
+
+	// The stride for 2d iteration
+	stride int32
 }
 
 func (v *Voxels) Data() []uint8 {
 	return v.data
+}
+
+func (v *Voxels) Stride() int32 {
+	return v.stride
 }
 
 func (v *Voxels) String() string {
@@ -521,10 +516,6 @@ func (v *Voxels) BlockHandler(req *datastore.BlockRequest) {
 	dtype := v.TypeService.(*Datatype)
 	bytesPerVoxel := int32(dtype.NumChannels * dtype.BytesPerVoxel)
 
-	// Get useful data values
-	data := req.DataStruct.Data()
-	dataSize := v.Size()
-
 	// Compute block coord matching beg's DVID volume space voxel coord
 	blockBeg := begVolCoord.Sub(minBlockVoxel)
 
@@ -547,11 +538,13 @@ func (v *Voxels) BlockHandler(req *datastore.BlockRequest) {
 	//dvid.Fmt(dvid.Debug, "Block buffer size: %d bytes\n", len(block))
 	//dvid.Fmt(dvid.Debug, "Data buffer size: %d bytes\n", len(data))
 
+	data := req.DataStruct.Data()
+
 	switch req.DataShape() {
 	case dvid.XY:
 		//fmt.Printf("XY Block handled: %s->%s for key %s\n", begVolCoord, endVolCoord, req.SpatialKey)
 		blockI := blockBeg[2]*blockXY + blockBeg[1]*blockX + blockBeg[0]
-		dataI := (beg[1]*dataSize[0] + beg[0]) * bytesPerVoxel
+		dataI := beg[1]*v.Stride() + beg[0]*bytesPerVoxel
 		for y := beg[1]; y <= end[1]; y++ {
 			run := end[0] - beg[0] + 1
 			bytes := run * bytesPerVoxel
@@ -562,11 +555,11 @@ func (v *Voxels) BlockHandler(req *datastore.BlockRequest) {
 				copy(block[blockI:blockI+bytes], data[dataI:dataI+bytes])
 			}
 			blockI += blockSize[0] * bytesPerVoxel
-			dataI += dataSize[0] * bytesPerVoxel
+			dataI += v.Stride()
 		}
 	case dvid.XZ:
 		blockI := blockBeg[2]*blockXY + blockBeg[1]*blockX + blockBeg[0]
-		dataI := (beg[2]*v.Width() + beg[0]) * bytesPerVoxel
+		dataI := beg[2]*v.Stride() + beg[0]*bytesPerVoxel
 		for y := beg[2]; y <= end[2]; y++ {
 			run := end[0] - beg[0] + 1
 			bytes := run * bytesPerVoxel
@@ -577,12 +570,12 @@ func (v *Voxels) BlockHandler(req *datastore.BlockRequest) {
 				copy(block[blockI:blockI+bytes], data[dataI:dataI+bytes])
 			}
 			blockI += blockSize[0] * blockSize[1] * bytesPerVoxel
-			dataI += v.Width() * bytesPerVoxel
+			dataI += v.Stride()
 		}
 	case dvid.YZ:
 		bx, bz := blockBeg[0], blockBeg[2]
 		for y := beg[2]; y <= end[2]; y++ {
-			dataI := (y*v.Width() + beg[1]) * bytesPerVoxel
+			dataI := y*v.Stride() + beg[1]*bytesPerVoxel
 			blockI := bz*blockXY + blockBeg[1]*blockX + bx
 			for x := beg[1]; x <= end[1]; x++ {
 				switch req.Op {

@@ -131,35 +131,35 @@ func Prompt(message, defaultValue string) string {
 
 // ImageData returns the underlying pixel data for an image or an error if
 // the image doesn't have the requisite []uint8 pixel data.
-func ImageData(img image.Image) (data []uint8, stride int, err error) {
+func ImageData(img image.Image) (data []uint8, stride int32, err error) {
 	switch typedImg := img.(type) {
 	case *image.Alpha:
 		data = typedImg.Pix
-		stride = typedImg.Stride
+		stride = int32(typedImg.Stride)
 	case *image.Alpha16:
 		data = typedImg.Pix
-		stride = typedImg.Stride
+		stride = int32(typedImg.Stride)
 	case *image.Gray:
 		data = typedImg.Pix
-		stride = typedImg.Stride
+		stride = int32(typedImg.Stride)
 	case *image.Gray16:
 		data = typedImg.Pix
-		stride = typedImg.Stride
+		stride = int32(typedImg.Stride)
 	case *image.NRGBA:
 		data = typedImg.Pix
-		stride = typedImg.Stride
+		stride = int32(typedImg.Stride)
 	case *image.NRGBA64:
 		data = typedImg.Pix
-		stride = typedImg.Stride
+		stride = int32(typedImg.Stride)
 	case *image.Paletted:
 		data = typedImg.Pix
-		stride = typedImg.Stride
+		stride = int32(typedImg.Stride)
 	case *image.RGBA:
 		data = typedImg.Pix
-		stride = typedImg.Stride
+		stride = int32(typedImg.Stride)
 	case *image.RGBA64:
 		data = typedImg.Pix
-		stride = typedImg.Stride
+		stride = int32(typedImg.Stride)
 	default:
 		err = fmt.Errorf("Illegal image type called ImageData(): %T", typedImg)
 	}

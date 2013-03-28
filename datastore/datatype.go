@@ -52,6 +52,11 @@ type DataStruct interface {
 
 	// The data itself.  Go image data is usually held in []uint8.
 	Data() []uint8
+
+	// Stride gives the increment in bytes between vertically adjacent pixels if
+	// the Data() is a 2d image.  This is necessary because the Data might not
+	// be packed only with image data but might including padding or metadata.
+	Stride() int32
 }
 
 // Request supports requests to the DVID server.  Since input and reply payloads 
