@@ -62,6 +62,14 @@ type Service struct {
 	RpcAddress string
 }
 
+// Shutdown handles graceful cleanup of server functions before exiting DVID.
+func Shutdown() {
+	if runningService.Service != nil {
+		datastore.Shutdown()
+		runningService.Service.Close()
+	}
+}
+
 // ServerlessDo runs a command locally, opening and closing a datastore
 // as necessary.
 func ServerlessDo(request datastore.Request, reply *datastore.Response) error {
@@ -93,6 +101,7 @@ func ServerlessDo(request datastore.Request, reply *datastore.Response) error {
 			break
 		}
 	}
+	defer Shutdown()
 
 	// Register an error logger that appends to a file in this datastore directory.
 	errorLog := filepath.Join(datastoreDir, ErrorLogFilename)
@@ -109,9 +118,13 @@ func ServerlessDo(request datastore.Request, reply *datastore.Response) error {
 		log.Fatalln(err.Error())
 	}
 
-	// Launch block handlers as goroutines for all compiled types.
-	for _, datatype := range datastore.CompiledTypes {
-		datastore.ReserveBlockHandlers(datatype)
+	// If it's not a builtin command, launch block handlers as goroutines for all compiled types.
+	switch request.Name() {
+	case "help", "types", "version", "log", "dataset", "branch", "lock":
+	default:
+		for _, datatype := range datastore.CompiledTypes {
+			datastore.ReserveBlockHandlers(datatype)
+		}
 	}
 
 	// Issue local command

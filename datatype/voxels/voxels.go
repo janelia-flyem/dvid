@@ -477,6 +477,10 @@ func (v *Voxels) SliceImage(z int) (img image.Image, err error) {
 			img = &image.Gray{v.data[beg:end], 1 * r.Dx(), r}
 		case 2:
 			img = &image.Gray16{v.data[beg:end], 2 * r.Dx(), r}
+		case 4:
+			img = &image.RGBA{v.data[beg:end], 4 * r.Dx(), r}
+		case 8:
+			img = &image.RGBA64{v.data[beg:end], 8 * r.Dx(), r}
 		default:
 			err = unsupported()
 		}
@@ -484,6 +488,8 @@ func (v *Voxels) SliceImage(z int) (img image.Image, err error) {
 		switch dtype.BytesPerVoxel {
 		case 1:
 			img = &image.RGBA{v.data[beg:end], 4 * r.Dx(), r}
+		case 2:
+			img = &image.RGBA64{v.data[beg:end], 8 * r.Dx(), r}
 		default:
 			err = unsupported()
 		}

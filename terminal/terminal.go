@@ -96,14 +96,14 @@ func Send(cmd dvid.Command) (err error) {
 	var reply datastore.Response
 	request := datastore.Request{Command: cmd}
 	if client != nil {
-		fmt.Printf("Issuing RPC command %s...\n", cmd)
+		fmt.Printf("Running remote command '%s'...\n", cmd)
 		err = client.Call("RpcConnection.Do", request, &reply)
 		if err != nil {
 			err = fmt.Errorf("RPC error for '%s': %s", cmd, err.Error())
 			return
 		}
 	} else {
-		fmt.Printf("Issuing local command %s...\n", cmd)
+		fmt.Printf("Running local command '%s'...\n", cmd)
 		err = server.ServerlessDo(request, &reply)
 		if err != nil {
 			err = fmt.Errorf("Error for '%s': %s", cmd, err.Error())

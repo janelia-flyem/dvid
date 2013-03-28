@@ -17,6 +17,8 @@ import (
 	// Declare the data types this DVID executable will support
 	_ "github.com/janelia-flyem/dvid/datatype/grayscale8"
 	_ "github.com/janelia-flyem/dvid/datatype/rgba8"
+	_ "github.com/janelia-flyem/dvid/datatype/labels32"
+	_ "github.com/janelia-flyem/dvid/datatype/labels64"
 )
 
 var (
@@ -158,12 +160,11 @@ func main() {
 				pprof.WriteHeapProfile(f)
 				f.Close()
 			}
-			log.Println("Flushing cache to datastore...\n")
-			datastore.Shutdown()
 			if *cpuprofile != "" {
 				log.Printf("Stopping CPU profiling to %s...\n", *cpuprofile)
 				pprof.StopCPUProfile()
 			}
+			server.Shutdown()
 			os.Exit(1)
 		}
 	}()

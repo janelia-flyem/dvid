@@ -3,12 +3,9 @@ package datastore
 import (
 	"bytes"
 	"encoding/binary"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -25,16 +22,12 @@ const (
 	ConfigFilename = "dvid-config.json"
 )
 
-// initConfig holds configuration data set at init time for a datastore instance. 
+// initConfig defines the extent and resolution of the volume served by a DVID
+// datastore instance at init time.   Modifying these values after init is
+// a bad idea since spatial indexing for all keys might have to be modified
+// if the underlying volume extents and resolution are changed.
 type initConfig struct {
-	// Volume extents
-	VolumeMax dvid.VoxelCoord
-
-	// Relative resolution of voxels in volume
-	VoxelRes dvid.VoxelResolution
-
-	// Units of resolution, e.g., "nanometers"
-	VoxelResUnits dvid.VoxelResolutionUnits
+	dvid.Volume
 }
 
 // DataTypeIndex is a unique id for a type within a DVID instance.
@@ -208,41 +201,20 @@ func promptConfig() (config *initConfig) {
 
 // readJsonConfig reads in a Config from a JSON file with errors leading to
 // termination of program.
-func readJsonConfig(filename string) (config *initConfig) {
-	var file *os.File
-	file, err := os.Open(filename)
+func readJsonConfig(filename string) *initConfig {
+	vol, err := dvid.ReadVolumeJSON(filename)
 	if err != nil {
-		log.Fatalf("Error: Failed to open JSON config file: %s [%s]\n",
-			filename, err)
+		log.Fatalf(err.Error())
 	}
-	defer file.Close()
-	dec := json.NewDecoder(file)
-	config = new(initConfig)
-	err = dec.Decode(&config)
-	if err == io.EOF {
-		log.Fatalf("Error: No data in JSON config file: %s [%s]\n", filename, err)
-	} else if err != nil {
-		log.Fatalf("Error: Reading JSON config file (%s): %s\n", filename, err)
-	}
-	return
+	return &initConfig{*vol}
 }
 
 // writeJsonConfig writes a Config to a JSON file.
 func (config *initConfig) writeJsonConfig(filename string) {
-	file, err := os.Create(filename)
+	err := config.WriteJSON(filename)
 	if err != nil {
-		log.Fatalf("Error: Failed to create JSON config file: %s [%s]\n",
-			filename, err)
+		log.Fatalf(err.Error())
 	}
-	m, err := json.Marshal(config)
-	if err != nil {
-		log.Fatalf("Error in writing JSON config file: %s [%s]\n",
-			filename, err)
-	}
-	var buf bytes.Buffer
-	json.Indent(&buf, m, "", "    ")
-	buf.WriteTo(file)
-	file.Close()
 }
 
 // kvdb is a private wrapper around the underlying key/value datastore and provides
@@ -333,7 +305,7 @@ func Open(directory string) (s *Service, openErr *OpenError) {
 
 // Close closes a DVID datastore.
 func (s *Service) Close() {
-	s.Close()
+	s.kvdb.Close()
 }
 
 // KeyValueDB returns the key value database used by the DVID datastore.

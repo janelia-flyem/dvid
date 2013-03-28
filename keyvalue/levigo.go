@@ -56,11 +56,23 @@ func OpenLeveldb(path string, create bool, kvOpts KeyValueOptions) (db KeyValueD
 
 // Close closes the leveldb and then the I/O abstraction for leveldb.
 func (db *goLDB) Close() {
-	db.ldb.Close()
-	db.opts.Options.Close()
-	db.opts.filter.Close()
-	db.opts.cache.Close()
-	db.opts.env.Close()
+	if db != nil {
+		if db.ldb != nil {
+			db.ldb.Close()
+		}
+		if db.opts.Options != nil {
+			db.opts.Options.Close()
+		}
+		if db.opts.filter != nil {
+			db.opts.filter.Close()
+		}
+		if db.opts.cache != nil {
+			db.opts.cache.Close()
+		}
+		if db.opts.env != nil {
+			db.opts.env.Close()
+		}
+	}
 }
 
 // Get returns a value given a key.
@@ -187,7 +199,7 @@ type goKeyValueOptions struct {
 }
 
 // NewKeyValueOptions returns an implementation of KeyValueOptions
-func NewKeyValueOptions() (opts KeyValueOptions) {
+func NewKeyValueOptions() KeyValueOptions {
 	pOpt := &goKeyValueOptions{
 		Options: levigo.NewOptions(),
 		env:     levigo.NewDefaultEnv(),
@@ -203,9 +215,7 @@ func NewKeyValueOptions() (opts KeyValueOptions) {
 	pOpt.SetParanoidChecks(false)
 	//opts.SetBlockRestartInterval(8)
 	pOpt.SetCompression(levigo.SnappyCompression)
-	opts = pOpt
-
-	return
+	return pOpt
 }
 
 // Amount of data to build up in memory (backed by an unsorted log

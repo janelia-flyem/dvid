@@ -5,9 +5,13 @@
 package dvid
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"image"
+	"io"
 	"math"
+	"os"
 	"strconv"
 	"strings"
 )
@@ -236,6 +240,57 @@ func (res *VoxelResolution) Prompt(message, defaultValue string) {
 		}
 		res[i] = float32(f)
 	}
+}
+
+// Volume defines the extent and resolution of a volume.
+type Volume struct {
+	// Volume extents
+	VolumeMax VoxelCoord
+
+	// Relative resolution of voxels in volume
+	VoxelRes VoxelResolution
+
+	// Units of resolution, e.g., "nanometers"
+	VoxelResUnits VoxelResolutionUnits
+}
+
+// ReadVolumeJSON reads in a Volume from a JSON file.
+func ReadVolumeJSON(filename string) (vol *Volume, err error) {
+	var file *os.File
+	file, err = os.Open(filename)
+	if err != nil {
+		err = fmt.Errorf("Failed to open JSON Volume file: %s [%s]", filename, err)
+		return
+	}
+	defer file.Close()
+	dec := json.NewDecoder(file)
+	vol = new(Volume)
+	err = dec.Decode(&vol)
+	if err == io.EOF {
+		err = fmt.Errorf("No data in JSON Volume file: %s [%s]", filename, err)
+		return
+	} else if err != nil {
+		err = fmt.Errorf("Error reading JSON Volume file (%s): %s", filename, err)
+		return
+	}
+	return
+}
+
+// WriteJSON writes a Volume to a JSON file.
+func (vol *Volume) WriteJSON(filename string) error {
+	file, err := os.Create(filename)
+	if err != nil {
+		return fmt.Errorf("Failed to create JSON Volume file: %s [%s]", filename, err)
+	}
+	defer file.Close()
+	m, err := json.Marshal(vol)
+	if err != nil {
+		return fmt.Errorf("Error in writing JSON config file: %s [%s]", filename, err)
+	}
+	var buf bytes.Buffer
+	json.Indent(&buf, m, "", "    ")
+	buf.WriteTo(file)
+	return nil
 }
 
 // DataShape describes the way data is positioned in 3d space
@@ -669,3 +724,4 @@ func (s *SliceArb) EndVoxel() VoxelCoord {
 func NewSliceArb(origin, topRight, bottomLeft VoxelCoord) Geometry {
 	return &SliceArb{origin, topRight, bottomLeft}
 }
+
