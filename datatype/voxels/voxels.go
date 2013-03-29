@@ -156,6 +156,8 @@ func (dtype *Datatype) NumBlockHandlers() int {
 // BlockBytes returns the number of bytes within this data type's block data.
 func (dtype *Datatype) BlockBytes() int {
 	numVoxels := int(dtype.BlockMax[0] * dtype.BlockMax[1] * dtype.BlockMax[2])
+	fmt.Printf("BlockBytes(): type %s, block %s, %d bytes, %d channels\n",
+		dtype.TypeName(), dtype.BlockMax, dtype.NumChannels, dtype.BytesPerVoxel)
 	return numVoxels * dtype.NumChannels * dtype.BytesPerVoxel
 }
 
@@ -168,8 +170,11 @@ func (dtype *Datatype) BlockBytes() int {
 // assurance that modified blocks for a slice are written to disk.   Adjacent slices
 // will usually intersect the same block so its more efficient to only write blocks
 // that haven't been touched for some small amount of time.
-func (dtype *Datatype) ProcessSlice(vs *datastore.VersionService, op datastore.OpType,
-	slice dvid.Geometry, inputImg image.Image) (outputImg image.Image, err error) {
+func (dtype *Datatype) ProcessSlice(dataSetName datastore.DataSetString, vs *datastore.VersionService, 
+	op datastore.OpType, slice dvid.Geometry, inputImg image.Image) (outputImg image.Image, err error) {
+
+	fmt.Printf("Processing slice of %s (%s)\n", dataSetName, dtype.TypeName())
+	fmt.Printf("Bytes per voxel: %d bytes, %d channels\n", dtype.BytesPerVoxel, dtype.NumChannels)
 
 	// Setup the data buffer
 	bytesPerVoxel := dtype.BytesPerVoxel * dtype.NumChannels 
@@ -190,6 +195,14 @@ func (dtype *Datatype) ProcessSlice(vs *datastore.VersionService, op datastore.O
 		if err != nil {
 			return
 		}
+	    expectedStride := int32(dtype.NumChannels * dtype.BytesPerVoxel) * slice.Width()
+	    if stride < expectedStride {
+	      typeInfo := fmt.Sprintf("(%s: %d channels, %d bytes/voxel, %s pixels)",
+	        dtype.TypeName(), dtype.NumChannels, dtype.BytesPerVoxel, slice.Size())
+	      err = fmt.Errorf("Input image has too little data (stride bytes = %d) for type %s",
+	        stride, typeInfo)
+	      return
+	    }
 	case datastore.GetOp:
 		data = make([]uint8, numBytes, numBytes)
 		stride = slice.Width() * int32(bytesPerVoxel)
@@ -200,6 +213,7 @@ func (dtype *Datatype) ProcessSlice(vs *datastore.VersionService, op datastore.O
 
 	// Do the mapping from slice to blocks
 	voxels := &Voxels{
+		dataSetName: dataSetName,
 		Geometry:    slice,
 		TypeService: dtype,
 		data:        data,
@@ -275,6 +289,8 @@ func (dtype *Datatype) DoHTTP(w http.ResponseWriter, r *http.Request,
 	url := r.URL.Path[len(apiPrefixURL):]
 	parts := strings.Split(url, "/")
 
+	dataSetName := datastore.DataSetString(parts[0])
+
 	// Get the datastore service corresponding to given version
 	vs, err := datastore.NewVersionService(service, parts[1])
 	if err != nil {
@@ -304,9 +320,13 @@ func (dtype *Datatype) DoHTTP(w http.ResponseWriter, r *http.Request,
 				badRequest(w, r, err.Error())
 				return
 			}
-			_, err = dtype.ProcessSlice(vs, datastore.PutOp, slice, postedImg)
+			_, err = dtype.ProcessSlice(dataSetName, vs, datastore.PutOp, slice, postedImg)
+			if err != nil {
+				badRequest(w, r, err.Error())
+				return
+			}
 		} else {
-			img, err := dtype.ProcessSlice(vs, op, slice, nil)
+			img, err := dtype.ProcessSlice(dataSetName, vs, op, slice, nil)
 			if err != nil {
 				badRequest(w, r, err.Error())
 				return
@@ -357,11 +377,12 @@ func (dtype *Datatype) ServerAdd(request datastore.Request, reply *datastore.Res
 	startTime := time.Now()
 
 	// Parse the request
-	var dataSetName, cmdStr, uuidStr, offsetStr string
-	filenames := request.CommandArgs(0, &dataSetName, &cmdStr, &uuidStr, &offsetStr)
+	var setName, cmdStr, uuidStr, offsetStr string
+	filenames := request.CommandArgs(0, &setName, &cmdStr, &uuidStr, &offsetStr)
 	if len(filenames) == 0 {
 		return fmt.Errorf("Need to include at least one file to add: %s", request)
 	}
+	dataSetName := datastore.DataSetString(setName)
 
 	vs, err := datastore.NewVersionService(service, uuidStr)
 	if err != nil {
@@ -402,7 +423,7 @@ func (dtype *Datatype) ServerAdd(request datastore.Request, reply *datastore.Res
 		} else {
 			size := dvid.SizeFromRect(img.Bounds())
 			slice, err := dvid.NewSlice(dataShape, offset, size)
-			_, err = dtype.ProcessSlice(vs, datastore.PutOp, slice, img)
+			_, err = dtype.ProcessSlice(dataSetName, vs, datastore.PutOp, slice, img)
 			dvid.ElapsedTime(dvid.Normal, startTime, "%s %s %s",
 				datastore.PutOp, dtype.TypeName(), slice)
 			if err == nil {
@@ -426,6 +447,9 @@ func (dtype *Datatype) ServerAdd(request datastore.Request, reply *datastore.Res
 // The Voxels data is eventually broken down into blocks for processing, and each
 // block is handled by the BlockHandler() defined in this package.
 type Voxels struct {
+	// Which data set does this belong to?
+	dataSetName datastore.DataSetString
+
 	dvid.Geometry
 	datastore.TypeService
 
@@ -434,6 +458,10 @@ type Voxels struct {
 
 	// The stride for 2d iteration
 	stride int32
+}
+
+func (v *Voxels) DataSetName() datastore.DataSetString {
+	return v.dataSetName
 }
 
 func (v *Voxels) Data() []uint8 {
@@ -534,11 +562,11 @@ func (v *Voxels) BlockHandler(req *datastore.BlockRequest) {
 
 	// TODO -- If data shape is Arbitrary plane, we need different looping.
 
+	data := req.DataStruct.Data()
+
 	//dvid.Fmt(dvid.Debug, "Block start: %s\n", blockBeg)
 	//dvid.Fmt(dvid.Debug, "Block buffer size: %d bytes\n", len(block))
 	//dvid.Fmt(dvid.Debug, "Data buffer size: %d bytes\n", len(data))
-
-	data := req.DataStruct.Data()
 
 	switch req.DataShape() {
 	case dvid.XY:

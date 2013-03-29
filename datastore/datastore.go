@@ -30,6 +30,11 @@ type initConfig struct {
 	dvid.Volume
 }
 
+// DataSetString is a string that is the name of a DVID data set. 
+// This gets its own type for documentation and also provide static error checks
+// to prevent conflation of type name from data set name.
+type DataSetString string
+
 // DataTypeIndex is a unique id for a type within a DVID instance.
 type DataTypeIndex uint16
 
@@ -51,9 +56,9 @@ type datastoreType struct {
 
 // runtimeConfig holds editable configuration data for a datastore instance. 
 type runtimeConfig struct {
-	// Data supported.  This is a map of a user-defined name like "grayscale8" with
-	// the supporting data type "voxel8"
-	dataNames map[string]datastoreType
+	// Data supported.  This is a map of a user-defined name like "fib_data" with
+	// the supporting data type "grayscale8"
+	dataNames map[DataSetString]datastoreType
 }
 
 // Shutdown handles graceful cleanup of datastore before exiting DVID.
@@ -162,7 +167,7 @@ func (config *runtimeConfig) DataChart() string {
 	if len(config.dataNames) == 0 {
 		return "  No data sets have been added to this datastore.\n  Use 'dvid dataset ...'"
 	}
-	writeLine := func(name, version string, url UrlString) {
+	writeLine := func(name DataSetString, version string, url UrlString) {
 		text += fmt.Sprintf("%-15s  %-25s  %s\n", name, version, url)
 	}
 	writeLine("Name", "Type Name", "Url")
@@ -325,14 +330,14 @@ func (s *Service) SupportedDataChart() string {
 
 // DataSetService returns a type-specific service given a dataset name that should be
 // specific to a DVID instance.
-func (s *Service) DataSetService(dataSetName string) (typeService TypeService, err error) {
-	for name, _ := range s.dataNames {
-		if dataSetName == name {
-			typeService = s.dataNames[name]
+func (s *Service) DataSetService(name DataSetString) (typeService TypeService, err error) {
+	for key, _ := range s.dataNames {
+		if name == key {
+			typeService = s.dataNames[key]
 			return
 		}
 	}
-	err = fmt.Errorf("Data set '%s' was not in opened datastore.", dataSetName)
+	err = fmt.Errorf("Data set '%s' was not in opened datastore.", name)
 	return
 }
 
@@ -350,18 +355,18 @@ func (s *Service) TypeService(typeName string) (typeService TypeService, err err
 }
 
 // NewDataSet registers a data set name of a given data type with this datastore.  
-func (s *Service) NewDataSet(dataSetName, typeName string) error {
+func (s *Service) NewDataSet(name DataSetString, typeName string) error {
 	// Check if this is a valid data type
 	typeService, err := s.TypeService(typeName)
 	if err != nil {
 		return err
 	}
 	// Check if we already have this registered
-	foundTypeService, found := s.dataNames[dataSetName]
+	foundTypeService, found := s.dataNames[name]
 	if found {
 		if typeService.TypeUrl() != foundTypeService.TypeUrl() {
 			return fmt.Errorf("Data set name '%s' already has type '%s' not '%s'",
-				dataSetName, foundTypeService.TypeUrl(), typeService.TypeUrl())
+				name, foundTypeService.TypeUrl(), typeService.TypeUrl())
 		}
 		return nil
 	}
@@ -373,22 +378,24 @@ func (s *Service) NewDataSet(dataSetName, typeName string) error {
 		return fmt.Errorf("Only 65500 distinct data sets allowed per DVID instance.")
 	}
 	if s.dataNames == nil {
-		s.dataNames = make(map[string]datastoreType)
+		s.dataNames = make(map[DataSetString]datastoreType)
 	}
-	s.dataNames[dataSetName] = datastoreType{typeService, index.ToKey()}
+	s.dataNames[name] = datastoreType{typeService, index.ToKey()}
 	err = s.runtimeConfig.put(s.kvdb)
 	lock.Unlock()
 	return err
 }
 
 // DataIndexBytes returns bytes that uniquely identify (within the current datastore)
-// the given data type name.   Returns nil if type name was not found. 
-func (s *Service) DataIndexBytes(name string) []byte {
+// the given data set name.   Returns nil if data set name was not found. 
+func (s *Service) DataIndexBytes(name DataSetString) (index []byte, err error) {
 	dtype, found := s.dataNames[name]
 	if found {
-		return dtype.dataIndexBytes
+		index = dtype.dataIndexBytes
+		return
 	}
-	return nil
+	err = fmt.Errorf("Dataset name '%s' not registered for this datastore!", name)
+	return
 }
 
 // LogInfo returns provenance information on the version.

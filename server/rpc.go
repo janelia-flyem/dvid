@@ -6,6 +6,7 @@ package server
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -19,6 +20,7 @@ Commands executed on the server (%s):
 	version
 	types
 	dataset <dataset name> <data type name>   (example: "dataset mygrayscale grayscale8")
+	shutdown
 
 	(Commands on roadmap)
 	comment <uuid> "..."
@@ -71,13 +73,17 @@ func (c *RpcConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 	case "log":
 		reply.Text = runningService.LogInfo()
 	case "dataset":
-		var dataSetName, typeName string
-		cmd.CommandArgs(1, &dataSetName, &typeName)
+		var dataName, typeName string
+		cmd.CommandArgs(1, &dataName, &typeName)
+		dataSetName := datastore.DataSetString(dataName)
 		err := runningService.NewDataSet(dataSetName, typeName)
 		if err != nil {
 			return err
 		}
 		reply.Text = fmt.Sprintf("Added data set '%s' of type '%s'", dataSetName, typeName)
+	case "shutdown":
+		Shutdown()
+		os.Exit(0)
 	case "branch", "lock", "pull", "push", "archive":
 		reply.Text = fmt.Sprintf("Server would have processed '%s'", cmd)
 	default:
@@ -100,7 +106,8 @@ func branch(cmd datastore.Request, reply *datastore.Response) error {
 
 func datatypeDo(cmd datastore.Request, reply *datastore.Response) error {
 	// Get the TypeService for this data set name.  Let user know if it's not supported.
-	typeService, err := runningService.DataSetService(cmd.Name())
+	dataSetName := datastore.DataSetString(cmd.Name())
+	typeService, err := runningService.DataSetService(dataSetName)
 	if err != nil {
 		// See if the user is addressing a data type name, not a data set name.
 		typeService, err = runningService.TypeService(cmd.Name())

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 
 	"code.google.com/p/go.net/websocket"
@@ -82,7 +83,7 @@ func apiHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		dataType := parts[1]
-		dataSetName := parts[2]
+		dataSetName := datastore.DataSetString(parts[2])
 		err := runningService.NewDataSet(dataSetName, dataType)
 		if err != nil {
 			msg := fmt.Sprintf("Could not add data set '%s' of type '%s': %s",
@@ -92,7 +93,7 @@ func apiHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	default:
 		// Pass type-specific requests to the type service
-		dataSetName := parts[0]
+		dataSetName := datastore.DataSetString(parts[0])
 		typeService, err := runningService.DataSetService(dataSetName)
 		if err != nil {
 			badRequest(w, r, fmt.Sprintf("Could not find data set '%s' in datastore [%s]",

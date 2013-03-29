@@ -31,14 +31,6 @@ const helpMessage = `
 
 type UrlString string
 
-type DataFormat string
-
-const (
-	PNG DataFormat = "png"
-	JPG            = "jpg"
-	HDF            = "hdf5"
-)
-
 // DataStruct is an interface to structs that know their shape and data and is
 // the unit of transfer between DVID and clients. Slices of various orientation 
 // and subvolumes should satisfy this interface.
@@ -49,6 +41,9 @@ type DataStruct interface {
 	// BlockHandler processes each block of this DataStruct in a hopefully
 	// efficient manner.
 	BlockHandler(r *BlockRequest)
+
+	// The data set this data belongs to.
+	DataSetName() DataSetString
 
 	// The data itself.  Go image data is usually held in []uint8.
 	Data() []uint8

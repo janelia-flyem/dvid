@@ -163,7 +163,7 @@ type rconfig struct {
 }
 
 func (config *runtimeConfig) put(db kvdb) error {
-	c := make(map[string]rconfig)
+	c := make(map[DataSetString]rconfig)
 	for key, value := range config.dataNames {
 		c[key] = rconfig{value.TypeService.TypeUrl(), value.dataIndexBytes}
 	}
@@ -171,8 +171,8 @@ func (config *runtimeConfig) put(db kvdb) error {
 }
 
 func (config *runtimeConfig) get(db kvdb) error {
-	config.dataNames = map[string]datastoreType{}
-	c := make(map[string]rconfig)
+	config.dataNames = map[DataSetString]datastoreType{}
+	c := make(map[DataSetString]rconfig)
 	err := db.getValue(keyvalue.Key{keyFamilyGlobal, keyRuntimeConfig}, &c)
 	if err != nil {
 		return err

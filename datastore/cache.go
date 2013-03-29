@@ -154,7 +154,10 @@ func (vs *VersionService) MapBlocks(op OpType, data DataStruct, wg *sync.WaitGro
 
 	// Get components of the block key
 	uuidBytes := vs.UuidBytes()
-	datatypeBytes := vs.DataIndexBytes(data.TypeName())
+	datatypeBytes, err := vs.DataIndexBytes(data.DataSetName())
+	if err != nil {
+		return err
+	}
 
 	// Make sure we have Block Handlers for this data type.
 	channels, found := HandlerChannels[data.TypeName()]
@@ -192,6 +195,7 @@ func (vs *VersionService) MapBlocks(op OpType, data DataStruct, wg *sync.WaitGro
 			var value keyvalue.Value
 			if db_it.Valid() && string(db_it.Key()) == string(blockKey) {
 				value = db_it.Value()
+				fmt.Printf("Retrieved block of %d bytes\n", len(value))
 				db_it.Next()
 			} else {
 				if op == PutOp {

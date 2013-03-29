@@ -165,7 +165,7 @@ func main() {
 				pprof.StopCPUProfile()
 			}
 			server.Shutdown()
-			os.Exit(1)
+			os.Exit(0)
 		}
 	}()
 	signal.Notify(ctrl_c, os.Interrupt)
@@ -176,7 +176,8 @@ func main() {
 	} else {
 		command := dvid.Command(flag.Args())
 		if err := DoCommand(command); err != nil {
-			fmt.Println(err.Error())
+			fmt.Printf(err.Error())
+			os.Exit(1)
 		}
 	}
 }

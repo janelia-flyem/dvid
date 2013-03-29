@@ -142,9 +142,13 @@ func ImageData(img image.Image) (data []uint8, stride int32, err error) {
 	case *image.Gray:
 		data = typedImg.Pix
 		stride = int32(typedImg.Stride)
+		Fmt(Debug, "Gray Image: stride %d, Pix len %d, bounds %s\n", 
+			stride, len(data), img.Bounds())
 	case *image.Gray16:
 		data = typedImg.Pix
 		stride = int32(typedImg.Stride)
+		Fmt(Debug, "Gray16 Image: stride %d, Pix len %d, bounds %s\n", 
+			stride, len(data), img.Bounds())
 	case *image.NRGBA:
 		data = typedImg.Pix
 		stride = int32(typedImg.Stride)
@@ -154,12 +158,18 @@ func ImageData(img image.Image) (data []uint8, stride int32, err error) {
 	case *image.Paletted:
 		data = typedImg.Pix
 		stride = int32(typedImg.Stride)
+		Fmt(Debug, "Paletted Image: stride %d, Pix len %d, bounds %s\n", 
+			stride, len(data), img.Bounds())
 	case *image.RGBA:
 		data = typedImg.Pix
 		stride = int32(typedImg.Stride)
+		Fmt(Debug, "RGBA Image: stride %d, Pix len %d, bounds %s\n", 
+			stride, len(data), img.Bounds())
 	case *image.RGBA64:
 		data = typedImg.Pix
 		stride = int32(typedImg.Stride)
+		Fmt(Debug, "RGBA64 Image: stride %d, Pix len %d, bounds %s\n", 
+			stride, len(data), img.Bounds())
 	default:
 		err = fmt.Errorf("Illegal image type called ImageData(): %T", typedImg)
 	}
