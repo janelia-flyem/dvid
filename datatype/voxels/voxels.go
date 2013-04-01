@@ -156,8 +156,6 @@ func (dtype *Datatype) NumBlockHandlers() int {
 // BlockBytes returns the number of bytes within this data type's block data.
 func (dtype *Datatype) BlockBytes() int {
 	numVoxels := int(dtype.BlockMax[0] * dtype.BlockMax[1] * dtype.BlockMax[2])
-	fmt.Printf("BlockBytes(): type %s, block %s, %d bytes, %d channels\n",
-		dtype.TypeName(), dtype.BlockMax, dtype.NumChannels, dtype.BytesPerVoxel)
 	return numVoxels * dtype.NumChannels * dtype.BytesPerVoxel
 }
 
@@ -170,14 +168,11 @@ func (dtype *Datatype) BlockBytes() int {
 // assurance that modified blocks for a slice are written to disk.   Adjacent slices
 // will usually intersect the same block so its more efficient to only write blocks
 // that haven't been touched for some small amount of time.
-func (dtype *Datatype) ProcessSlice(dataSetName datastore.DataSetString, vs *datastore.VersionService, 
+func (dtype *Datatype) ProcessSlice(dataSetName datastore.DataSetString, vs *datastore.VersionService,
 	op datastore.OpType, slice dvid.Geometry, inputImg image.Image) (outputImg image.Image, err error) {
 
-	fmt.Printf("Processing slice of %s (%s)\n", dataSetName, dtype.TypeName())
-	fmt.Printf("Bytes per voxel: %d bytes, %d channels\n", dtype.BytesPerVoxel, dtype.NumChannels)
-
 	// Setup the data buffer
-	bytesPerVoxel := dtype.BytesPerVoxel * dtype.NumChannels 
+	bytesPerVoxel := dtype.BytesPerVoxel * dtype.NumChannels
 	numBytes := bytesPerVoxel * slice.NumVoxels()
 	var data []uint8
 	var stride int32
@@ -195,14 +190,14 @@ func (dtype *Datatype) ProcessSlice(dataSetName datastore.DataSetString, vs *dat
 		if err != nil {
 			return
 		}
-	    expectedStride := int32(dtype.NumChannels * dtype.BytesPerVoxel) * slice.Width()
-	    if stride < expectedStride {
-	      typeInfo := fmt.Sprintf("(%s: %d channels, %d bytes/voxel, %s pixels)",
-	        dtype.TypeName(), dtype.NumChannels, dtype.BytesPerVoxel, slice.Size())
-	      err = fmt.Errorf("Input image has too little data (stride bytes = %d) for type %s",
-	        stride, typeInfo)
-	      return
-	    }
+		expectedStride := int32(dtype.NumChannels*dtype.BytesPerVoxel) * slice.Width()
+		if stride < expectedStride {
+			typeInfo := fmt.Sprintf("(%s: %d channels, %d bytes/voxel, %s pixels)",
+				dtype.TypeName(), dtype.NumChannels, dtype.BytesPerVoxel, slice.Size())
+			err = fmt.Errorf("Input image has too little data (stride bytes = %d) for type %s",
+				stride, typeInfo)
+			return
+		}
 	case datastore.GetOp:
 		data = make([]uint8, numBytes, numBytes)
 		stride = slice.Width() * int32(bytesPerVoxel)
@@ -217,7 +212,7 @@ func (dtype *Datatype) ProcessSlice(dataSetName datastore.DataSetString, vs *dat
 		Geometry:    slice,
 		TypeService: dtype,
 		data:        data,
-		stride:		 stride,
+		stride:      stride,
 	}
 	var wg sync.WaitGroup
 	err = vs.MapBlocks(op, voxels, &wg)
@@ -340,7 +335,8 @@ func (dtype *Datatype) DoHTTP(w http.ResponseWriter, r *http.Request,
 				badRequest(w, r, err.Error())
 			}
 		}
-		dvid.ElapsedTime(dvid.Normal, startTime, "%s %s %s", op, dtype.TypeName(), slice)
+		dvid.ElapsedTime(dvid.Normal, startTime, "%s %s (%s) %s", op, dataSetName,
+			dtype.TypeName(), slice)
 	case dvid.Arb:
 		badRequest(w, r, "DVID does not yet support arbitrary planes.")
 	case dvid.Vol:
@@ -364,9 +360,9 @@ func badRequest(w http.ResponseWriter, r *http.Request, err string) {
 //
 //	dataset name: the name of a dataset created using the "dataset" command.
 //	uuid: hexidecimal string with enough characters to uniquely identify a version node.
-//  origin: 3d coordinate in the format "x,y,z".  Gives coordinate of top upper left voxel.
-//  image filename glob: filenames of images, e.g., foo-xy-*.png
-//  plane: xy (default), xz, or yz.
+//	origin: 3d coordinate in the format "x,y,z".  Gives coordinate of top upper left voxel.
+//	image filename glob: filenames of images, e.g., foo-xy-*.png
+//	plane: xy (default), xz, or yz.
 //
 // The image filename glob MUST BE absolute file paths that are visible to the server.
 // This function is meant for mass ingestion of large data files, and it is inappropriate 
@@ -411,12 +407,12 @@ func (dtype *Datatype) ServerAdd(request datastore.Request, reply *datastore.Res
 		return err
 	}
 
-	// Load each image and delegate to PUT function.
-	//var wg sync.WaitGroup
+	// Load each image and do map/reduce computation on blocks of the image.
+	// We prefer to load the images sequentially instead of in parallel to
 	numSuccessful := 0
 	var lastErr error
 	for _, filename := range filenames {
-		startTime := time.Now()
+		sliceTime := time.Now()
 		img, _, err := dvid.ImageFromFile(filename)
 		if err != nil {
 			lastErr = err
@@ -424,7 +420,7 @@ func (dtype *Datatype) ServerAdd(request datastore.Request, reply *datastore.Res
 			size := dvid.SizeFromRect(img.Bounds())
 			slice, err := dvid.NewSlice(dataShape, offset, size)
 			_, err = dtype.ProcessSlice(dataSetName, vs, datastore.PutOp, slice, img)
-			dvid.ElapsedTime(dvid.Normal, startTime, "%s %s %s",
+			dvid.ElapsedTime(dvid.Debug, sliceTime, "%s %s %s",
 				datastore.PutOp, dtype.TypeName(), slice)
 			if err == nil {
 				numSuccessful++
@@ -439,7 +435,6 @@ func (dtype *Datatype) ServerAdd(request datastore.Request, reply *datastore.Res
 			numSuccessful, len(filenames), lastErr.Error())
 	}
 	dvid.ElapsedTime(dvid.Normal, startTime, "RPC server-add (%s) completed", addedFiles)
-	//go dvid.WaitToComplete(&wg, startTime, "RPC server-add (%s) completed", addedFiles)
 	return nil
 }
 

@@ -195,7 +195,6 @@ func (vs *VersionService) MapBlocks(op OpType, data DataStruct, wg *sync.WaitGro
 			var value keyvalue.Value
 			if db_it.Valid() && string(db_it.Key()) == string(blockKey) {
 				value = db_it.Value()
-				fmt.Printf("Retrieved block of %d bytes\n", len(value))
 				db_it.Next()
 			} else {
 				if op == PutOp {

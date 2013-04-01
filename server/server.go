@@ -43,7 +43,6 @@ var runningService = Service{
 	RpcAddress: DefaultRpcAddress,
 }
 
-
 // Timeout in seconds for waiting to open a datastore for exclusive access.
 var TimeoutSecs int = 0
 
@@ -56,7 +55,7 @@ type Service struct {
 	WebAddress string
 
 	// The path to the DVID web client
-	WebClientPath      string
+	WebClientPath string
 
 	// The address of the rpc server
 	RpcAddress string

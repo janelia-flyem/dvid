@@ -88,7 +88,7 @@ func Send(cmd dvid.Command) (err error) {
 	if client == nil {
 		client, err = rpc.DialHTTP("tcp", rpcAddress)
 		if err != nil {
-			client = nil  // Close connection if any error and try serverless mode.
+			client = nil // Close connection if any error and try serverless mode.
 		}
 	}
 
@@ -96,20 +96,22 @@ func Send(cmd dvid.Command) (err error) {
 	var reply datastore.Response
 	request := datastore.Request{Command: cmd}
 	if client != nil {
-		fmt.Printf("Running remote command '%s'...\n", cmd)
+		dvid.Fmt(dvid.Debug, "Running remote command '%s'...\n", cmd)
 		err = client.Call("RpcConnection.Do", request, &reply)
 		if err != nil {
 			err = fmt.Errorf("RPC error for '%s': %s", cmd, err.Error())
 			return
 		}
 	} else {
-		fmt.Printf("Running local command '%s'...\n", cmd)
+		dvid.Fmt(dvid.Debug, "Running local command '%s'...\n", cmd)
 		err = server.ServerlessDo(request, &reply)
 		if err != nil {
 			err = fmt.Errorf("Error for '%s': %s", cmd, err.Error())
 			return
 		}
 	}
-	fmt.Println(reply.Text)
+	if reply.Text != "" {
+		fmt.Println(reply.Text)
+	}
 	return
 }
