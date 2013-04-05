@@ -7,6 +7,7 @@ package server
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -81,9 +82,24 @@ func (c *RpcConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 			return err
 		}
 		reply.Text = fmt.Sprintf("Added data set '%s' of type '%s'", dataSetName, typeName)
+	case "dataset-delete":
+		// Temporary command while we debug system
+		var dataName string
+		cmd.CommandArgs(1, &dataName)
+		dataSetName := datastore.DataSetString(dataName)
+		err := runningService.DeleteDataSet(dataSetName)
+		if err != nil {
+			return err
+		}
+		reply.Text = fmt.Sprintf("Deleted data set '%s' ", dataSetName)
 	case "shutdown":
 		Shutdown()
-		os.Exit(0)
+		// Make this process shutdown in a second to allow time for RPC to finish.
+		// TODO -- Better way to do this?
+		go func() {
+			time.Sleep(1 * time.Second)
+			os.Exit(0)
+		}()
 	case "branch", "lock", "pull", "push", "archive":
 		reply.Text = fmt.Sprintf("Server would have processed '%s'", cmd)
 	default:

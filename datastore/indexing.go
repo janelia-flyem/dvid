@@ -25,12 +25,29 @@ const (
 	// Simple indexing on Z, then Y, then X
 	SIndexZYX SpatialIndexScheme = iota
 
+	// TODO -- Morton (Z-order) curve
+	SIndexMorton
+
 	// TODO -- Hilbert curve
 	SIndexHilbert
 
 	// TODO -- Diagonal indexing within 2d plane, z separate
 	SIndexXYDiagonal
 )
+
+func (scheme SpatialIndexScheme) String() string {
+	switch scheme {
+	case SIndexZYX:
+		return "ZYX Indexing"
+	case SIndexMorton:
+		return "Morton/Z-order Indexing"
+	case SIndexHilbert:
+		return "Hilbert Indexing"
+	case SIndexXYDiagonal:
+		return "Diagonal indexing within XY, then Z"
+	}
+	return "Unknown Indexing Scheme"
+}
 
 // MakeSpatialIndex returns a string encoding a coordinate depending on the
 // spatial index scheme of the data type.

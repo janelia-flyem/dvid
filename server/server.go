@@ -117,12 +117,12 @@ func ServerlessDo(request datastore.Request, reply *datastore.Response) error {
 		log.Fatalln(err.Error())
 	}
 
-	// If it's not a builtin command, launch block handlers as goroutines for all compiled types.
+	// If it's not a builtin command, launch block handlers as goroutines for all data sets.
 	switch request.Name() {
 	case "help", "types", "version", "log", "dataset", "branch", "lock":
 	default:
-		for _, datatype := range datastore.CompiledTypes {
-			datastore.ReserveBlockHandlers(datatype)
+		for name, dtype := range runningService.DataSets() {
+			datastore.ReserveBlockHandlers(name, dtype)
 		}
 	}
 
@@ -170,8 +170,8 @@ func Serve(datastoreDir, webAddress, webClientDir, rpcAddress string) error {
 	}
 
 	// Launch block handlers as goroutines for all compiled types.
-	for _, datatype := range datastore.CompiledTypes {
-		datastore.ReserveBlockHandlers(datatype)
+	for name, dtype := range runningService.DataSets() {
+		datastore.ReserveBlockHandlers(name, dtype)
 	}
 	// Launch the web server
 	go runningService.ServeHttp(webAddress, webClientDir)

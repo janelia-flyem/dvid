@@ -3,6 +3,7 @@ package datastore
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -341,8 +342,12 @@ func (s *Service) DataSetService(name DataSetString) (typeService TypeService, e
 	return
 }
 
-// TypeService returns a type-specific service given a type name that should be
-// specific to a DVID instance.
+// DataSets returns a map from data set name to type-specific services.
+func (s *Service) DataSets() map[DataSetString]datastoreType {
+	return s.dataNames
+}
+
+// TypeService returns a type-specific service given a type name.
 func (s *Service) TypeService(typeName string) (typeService TypeService, err error) {
 	for _, dtype := range CompiledTypes {
 		if typeName == dtype.TypeName() {
@@ -382,6 +387,28 @@ func (s *Service) NewDataSet(name DataSetString, typeName string) error {
 	}
 	s.dataNames[name] = datastoreType{typeService, index.ToKey()}
 	err = s.runtimeConfig.put(s.kvdb)
+	ReserveBlockHandlers(name, s.dataNames[name])
+	lock.Unlock()
+	return err
+}
+
+// DeleteDataSet deletes a data set from the datastore and is considered
+// a DANGEROUS operation.  Only to be used during debugging and development.
+// TODO -- Deleted dataset data should also be expunged. 
+func (s *Service) DeleteDataSet(name DataSetString) error {
+	// Find the data set
+	_, found := s.dataNames[name]
+	if !found {
+		return fmt.Errorf("Data set '%s' not present in DVID datastore.", name)
+	}
+	// Delete it and store updated runtimeConfig to datastore.
+	var lock sync.Mutex
+	lock.Lock()
+	delete(s.dataNames, name)
+	// Remove load stat cache
+	delete(loadLastSec, name)
+	err := s.runtimeConfig.put(s.kvdb)
+	// Should halt ReserveBlockHandlers(name, s.dataNames[name])
 	lock.Unlock()
 	return err
 }
@@ -452,6 +479,44 @@ func (s *Service) GetUUIDFromString(str string) (uuidNum int16, err error) {
 // considered the most current.
 func (s *Service) GetHeadUuid() UUID {
 	return s.Head
+}
+
+// TypeInfo contains data type information reformatted for easy consumption by clients.
+type TypeInfo struct {
+	Name            string
+	Url             string
+	Version         string
+	BlockSize       dvid.Point3d
+	SpatialIndexing string
+	Help            string
+}
+
+// DataJSON returns configuration data in JSON format.
+func (s *Service) ConfigJSON() (jsonStr string, err error) {
+	datasets := make(map[DataSetString]TypeInfo)
+	for name, dtype := range s.dataNames {
+		datasets[name] = TypeInfo{
+			Name:            dtype.TypeName(),
+			Url:             string(dtype.TypeUrl()),
+			Version:         dtype.TypeVersion(),
+			BlockSize:       dtype.BlockSize(),
+			SpatialIndexing: dtype.SpatialIndexing().String(),
+			Help:            dtype.Help(),
+		}
+	}
+	data := struct {
+		Volume   dvid.Volume
+		DataSets map[DataSetString]TypeInfo
+	}{
+		s.initConfig.Volume,
+		datasets,
+	}
+	m, err := json.Marshal(data)
+	if err != nil {
+		return
+	}
+	jsonStr = string(m)
+	return
 }
 
 // VersionService encapsulates both an open DVID datastore and the version that

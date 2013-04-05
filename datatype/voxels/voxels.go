@@ -254,7 +254,7 @@ func (dtype *Datatype) DoRPC(request datastore.Request, reply *datastore.Respons
 	//	case "get":
 	//		return dtype.Get(request, reply)
 	case "help":
-		reply.Text = dtype.Help(HelpMessage)
+		reply.Text = HelpMessage
 	default:
 		return dtype.UnknownCommand(request)
 	}

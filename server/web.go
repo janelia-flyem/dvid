@@ -53,29 +53,19 @@ func mainHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// Handler for API commands.
-// We assume all DVID API commands target the URLs /api/<command or data set name>/... 
-// Built-in commands are:
-//    data  -- POST will add a named data set for a given data type
+//       GET /api/data
+//       GET /api/data/versions
+//       GET /api/data/datasets
+//       (POST will add a named data set for a given data type.)
 //       POST /api/data/<data type>/<data set name>
-//    cache -- returns LRU cache status
-//    
-func apiHandler(w http.ResponseWriter, r *http.Request) {
-
+func handleDataRequest(w http.ResponseWriter, r *http.Request) {
 	// Break URL request into arguments
 	const lenPath = len(RestApiPath)
 	url := r.URL.Path[lenPath:]
 	parts := strings.Split(url, "/")
-	if len(parts) == 0 {
-		badRequest(w, r, "Poorly formed request")
-		return
-	}
-
-	// Handle the requests
-	switch parts[0] {
-	case "cache":
-		fmt.Fprintf(w, "<p>TODO -- return LRU Cache statistics</p>\n")
-	case "data":
+	action := strings.ToLower(r.Method)
+	if action == "post" {
+		// Handle setting of data sets
 		if len(parts) != 3 {
 			msg := fmt.Sprintf("Bad data set creation format (%s).  Try something like '%s' instead.",
 				url, "POST /api/data/grayscale8/grayscale")
@@ -91,6 +81,49 @@ func apiHandler(w http.ResponseWriter, r *http.Request) {
 			badRequest(w, r, msg)
 			return
 		}
+	} else {
+		jsonStr, err := runningService.ConfigJSON()
+		if err != nil {
+			badRequest(w, r, err.Error())
+		} else {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintf(w, jsonStr)
+		}
+	}
+}
+
+// Handler for API commands.
+// We assume all DVID API commands target the URLs /api/<command or data set name>/... 
+// Built-in commands are:
+//    
+//    data  -- Datastore volume, version and data set data, always cached so fast to retrieve.
+//    load  -- Load (# of pending block requests) on block handlers for each data set.
+//    cache -- returns LRU cache status
+//    
+func apiHandler(w http.ResponseWriter, r *http.Request) {
+	// Break URL request into arguments
+	const lenPath = len(RestApiPath)
+	url := r.URL.Path[lenPath:]
+	parts := strings.Split(url, "/")
+	if len(parts) == 0 {
+		badRequest(w, r, "Poorly formed request")
+		return
+	}
+
+	// Handle the requests
+	switch parts[0] {
+	case "cache":
+		fmt.Fprintf(w, "<p>TODO -- return LRU Cache statistics</p>\n")
+	case "data":
+		handleDataRequest(w, r)
+	case "load":
+		jsonStr, err := datastore.BlockLoadJSON()
+		if err != nil {
+			badRequest(w, r, err.Error())
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, jsonStr)
 	default:
 		// Pass type-specific requests to the type service
 		dataSetName := datastore.DataSetString(parts[0])

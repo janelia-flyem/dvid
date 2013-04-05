@@ -6,10 +6,12 @@
 package datastore
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	_ "os"
 	"sync"
+	"time"
 
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/keyvalue"
@@ -91,7 +93,14 @@ type BlockRequest struct {
 }
 
 // Each data type has a pool of channels to communicate with block handlers. 
-type BlockChannels map[string]([]chan *BlockRequest)
+type BlockChannels map[DataSetString]([]chan *BlockRequest)
+
+// Track requested/completed block ops
+type loadStruct struct {
+	Requests  int
+	Completed int
+}
+type loadMap map[DataSetString]loadStruct
 
 var (
 	// HandlerChannels are map from data type names to a pool of block handler
@@ -102,30 +111,70 @@ var (
 	// to access the key-value database on disk.
 	// TODO: Reexamine this in the context of parallel disk drives during cluster use.
 	DiskAccess sync.Mutex
+
+	// Monitor the requested and completed block ops
+	loadLastSec    loadMap
+	loadAccess     sync.RWMutex
+	doneChannel    chan DataSetString
+	requestChannel chan DataSetString
 )
 
 func init() {
 	HandlerChannels = make(BlockChannels)
+	loadLastSec = make(loadMap)
+	doneChannel = make(chan DataSetString)
+	requestChannel = make(chan DataSetString)
+	go loadMonitor()
+}
+
+// Monitors the # of requests/done on block handlers per data set.
+func loadMonitor() {
+	secondTick := time.Tick(1 * time.Second)
+	requests := make(map[DataSetString]int)
+	completed := make(map[DataSetString]int)
+	for {
+		select {
+		case name := <-doneChannel:
+			completed[name]++
+		case name := <-requestChannel:
+			requests[name]++
+		case <-secondTick:
+			loadAccess.RLock()
+			for name, _ := range loadLastSec {
+				loadLastSec[name] = loadStruct{
+					Requests:  requests[name],
+					Completed: completed[name],
+				}
+				requests[name] = 0
+				completed[name] = 0
+			}
+			loadAccess.RUnlock()
+		}
+	}
 }
 
 // ReserveBlockHandlers makes sure we have block handler goroutines for each
-// data type.  Blocks are routed to the same handler each time, so concurrent
+// data set.  Blocks are routed to the same handler each time, so concurrent
 // access to a block by multiple requests funneled sequentially into a handler.
-func ReserveBlockHandlers(t TypeService) {
+func ReserveBlockHandlers(name DataSetString, t TypeService) {
+	loadAccess.Lock()
+	loadLastSec[name] = loadStruct{}
+	loadAccess.Unlock()
+
 	var channelMapAccess sync.Mutex
 	channelMapAccess.Lock()
 	// Do we have channels and handlers for this type and image version?
-	_, found := HandlerChannels[t.TypeName()]
+	_, found := HandlerChannels[name]
 	if !found {
-		log.Printf("Starting %d block handlers for data type '%s'...\n",
-			t.NumBlockHandlers(), t.TypeName())
+		log.Printf("Starting %d block handlers for data set '%s' (%s)...\n",
+			t.NumBlockHandlers(), name, t.TypeName())
 		channels := make([]chan *BlockRequest, 0, t.NumBlockHandlers())
 		for i := 0; i < t.NumBlockHandlers(); i++ {
 			channel := make(chan *BlockRequest, BlockHandlerBufferSize)
 			channels = append(channels, channel)
 			go func(i int, c chan *BlockRequest) {
 				dvid.Log(dvid.Debug, "Starting block handler %d for %s...",
-					i+1, t.TypeName())
+					i+1, name)
 				for {
 					block := <-c
 					if block == nil {
@@ -133,13 +182,26 @@ func ReserveBlockHandlers(t TypeService) {
 					}
 					//dvid.Fmt(dvid.Debug, "Running handler on block %x...\n", block.SpatialKey)
 					block.DataStruct.BlockHandler(block)
+					doneChannel <- name
 				}
 			}(i, channel)
 			// TODO -- keep stats on # of handlers
 		}
-		HandlerChannels[t.TypeName()] = channels
+		HandlerChannels[name] = channels
 	}
 	channelMapAccess.Unlock()
+}
+
+// BlockLoadJSON returns a JSON description of the block requests for each dataset.
+func BlockLoadJSON() (jsonStr string, err error) {
+	loadAccess.RLock()
+	m, err := json.Marshal(loadLastSec)
+	loadAccess.RUnlock()
+	if err != nil {
+		return
+	}
+	jsonStr = string(m)
+	return
 }
 
 // MapBlocks breaks down a DataStruct into a sequence of blocks that can be
@@ -160,10 +222,10 @@ func (vs *VersionService) MapBlocks(op OpType, data DataStruct, wg *sync.WaitGro
 	}
 
 	// Make sure we have Block Handlers for this data type.
-	channels, found := HandlerChannels[data.TypeName()]
+	channels, found := HandlerChannels[data.DataSetName()]
 	if !found {
 		return fmt.Errorf("Error in reserving block handlers in MapBlocks() for %s!",
-			data.TypeName())
+			data.DataSetName())
 	}
 
 	// Traverse blocks, get key/values if not in cache, and put block in queue for handler.
@@ -223,6 +285,7 @@ func (vs *VersionService) MapBlocks(op OpType, data DataStruct, wg *sync.WaitGro
 			//dvid.Fmt(dvid.Debug, "Sending %s block %s request %s down channel %d\n",
 			//	op, SpatialIndex(spatialBytes).BlockCoord(data), data, channelNum)
 			channels[channelNum] <- req
+			requestChannel <- data.DataSetName()
 		}
 	default:
 		return fmt.Errorf("Illegal operation (%d) asked for in MapBlocks()", op)

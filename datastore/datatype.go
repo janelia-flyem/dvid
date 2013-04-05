@@ -101,7 +101,7 @@ type TypeService interface {
 	NumBlockHandlers() int
 
 	// Help returns a string explaining how to use a data type's service
-	Help(textHelp string) string
+	Help() string
 
 	// Do handles RPC commands specific to a data type
 	DoRPC(request Request, reply *Response, s *Service) error
@@ -179,8 +179,8 @@ func (datatype *Datatype) IsolatedKeys() bool {
 	return datatype.IsolateData
 }
 
-func (datatype *Datatype) Help(typeHelp string) string {
-	return fmt.Sprintf(helpMessage+typeHelp, datatype.Name, datatype.Url)
+func (datatype *Datatype) Help() string {
+	return fmt.Sprintf(helpMessage, datatype.Name, datatype.Url)
 }
 
 func (datatype *Datatype) UnknownCommand(request Request) error {
