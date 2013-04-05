@@ -9,9 +9,31 @@ Documentation is [available here](http://godoc.org/github.com/janelia-flyem/dvid
 
 ## Build Process
 
-DVID uses the [buildem system](http://https://github.com/janelia-flyem/buildem#readme) to automatically
-download and build leveldb, Go language support, and all required Go packages.  This can be done
-manually by:
+DVID uses the [buildem system](http://https://github.com/janelia-flyem/buildem#readme) to 
+automatically download and build leveldb, Go language support, and all required Go packages.  
+
+To build DVID using buildem, do the following steps:
+
+    % cd /path/to/dvid/dir
+    % mkdir build
+    % cmake -D BUILDEM_DIR=/path/to/buildem/dir ..
+
+If you haven't built with that buildem directory before, do the additional steps:
+
+    % make
+    % cmake -D BUILDEM_DIR=/path/to/buildem/dir ..
+
+To build DVID, assuming you are still in the CMake build directory from above:
+
+    % make dvid
+
+This will install a DVID executable 'dvid' in the buildem bin directory.
+
+To build DVID executable without built-in web client:
+
+    % make dvid-exe
+
+DVID can be built manually, without buildem, by the following steps:
 
 1. Build shared leveldb libraries from [Google's repo](https://code.google.com/p/leveldb/).
 2. Add the following Go packages using "go get":
