@@ -724,4 +724,3 @@ func (s *SliceArb) EndVoxel() VoxelCoord {
 func NewSliceArb(origin, topRight, bottomLeft VoxelCoord) Geometry {
 	return &SliceArb{origin, topRight, bottomLeft}
 }
-

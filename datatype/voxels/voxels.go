@@ -267,6 +267,9 @@ func (dtype *Datatype) DoHTTP(w http.ResponseWriter, r *http.Request,
 
 	startTime := time.Now()
 
+	// Allow cross-origin resource sharing.
+	w.Header().Add("Access-Control-Allow-Origin", "*")
+
 	// Get the action (GET, POST)
 	action := strings.ToLower(r.Method)
 	var op datastore.OpType

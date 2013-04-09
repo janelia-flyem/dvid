@@ -69,7 +69,6 @@ const (
 const (
 	keyInitConfig byte = iota
 	keyRuntimeConfig
-	keyUUIDs
 	keyDAG
 )
 
@@ -141,12 +140,12 @@ func (db kvdb) getBytes(key keyvalue.Key) (data []byte, err error) {
 
 // DVID types are assigned keys and delegated to the type-agnostic get/put functions above
 
-func (uuids *uuidData) put(db kvdb) error {
-	return db.putValue(keyvalue.Key{keyFamilyGlobal, keyUUIDs}, *uuids)
+func (dag *VersionDAG) put(db kvdb) error {
+	return db.putValue(keyvalue.Key{keyFamilyGlobal, keyDAG}, *dag)
 }
 
-func (uuids *uuidData) get(db kvdb) error {
-	return db.getValue(keyvalue.Key{keyFamilyGlobal, keyUUIDs}, uuids)
+func (dag *VersionDAG) get(db kvdb) error {
+	return db.getValue(keyvalue.Key{keyFamilyGlobal, keyDAG}, dag)
 }
 
 func (config *initConfig) put(db kvdb) error {

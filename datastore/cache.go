@@ -1,6 +1,5 @@
 /*
-	This file holds caching and buffering for datastore operation.  It includes caches for
-	UUIDs and block write buffers common to data types.
+	This file holds caching and buffering for datastore operation.
 */
 
 package datastore
@@ -36,16 +35,6 @@ const (
 	// The request struct contains two pointers.
 	BlockHandlerBufferSize = 100000
 )
-
-type uuidData struct {
-	// The default version of the datastore
-	Head UUID
-
-	// Holds all UUIDs in open datastore.  When we construct keys, use the smaller
-	// unique int per datastore instead of the full 16 byte value.  This can save
-	// 14 bytes per key.
-	Uuids map[string]int16
-}
 
 type OpType uint8
 
@@ -205,7 +194,9 @@ func BlockLoadJSON() (jsonStr string, err error) {
 }
 
 // MapBlocks breaks down a DataStruct into a sequence of blocks that can be
-// efficiently read from the key-value database.
+// efficiently read from the key-value database.  It then passes those blocks
+// to datatype-specific block handlers that read from preallocated channels.
+//
 // Phase 1: Time leveldb built-in LRU cache and write buffer. (current)
 // Phase 2: Minimize leveldb built-in LRU cache and use DVID LRU cache with
 //   periodic and on-demand writes. 
