@@ -219,22 +219,9 @@ func (dtype *Datatype) ProcessSlice(dataSetName datastore.DataSetString, vs *dat
 	if err != nil {
 		return
 	}
-
-	// Wait for all block handling to finish, then handle result. 
+	// Wait for all map block processing.
 	wg.Wait()
-	switch op {
-	case datastore.PutOp:
-		/*
-			// Store image using batch write.
-			wo := keyvalue.NewWriteOptions()
-			datastore.DiskAccess.Lock()
-			err = vs.KeyValueDB().Write(batch, wo)
-			datastore.DiskAccess.Unlock()
-			if err != nil {
-				return
-			}
-		*/
-	case datastore.GetOp:
+	if op == datastore.GetOp {
 		// Write the image to requestor
 		outputImg, err = voxels.SliceImage(0)
 		if err != nil {
@@ -568,8 +555,9 @@ func (v *Voxels) BlockHandler(req *datastore.BlockRequest) {
 
 	switch req.DataShape() {
 	case dvid.XY:
-		//fmt.Printf("XY Block handled: %s->%s for key %s\n", begVolCoord, endVolCoord, req.SpatialKey)
-		blockI := blockBeg[2]*blockXY + blockBeg[1]*blockX + blockBeg[0]
+		fmt.Printf("XY Block: %s->%s, blockXY %d, blockX %d, blockBeg %s\n",
+			begVolCoord, endVolCoord, blockXY, blockX, blockBeg)
+		blockI := blockBeg[2]*blockXY + blockBeg[1]*blockX + blockBeg[0]*bytesPerVoxel
 		dataI := beg[1]*v.Stride() + beg[0]*bytesPerVoxel
 		for y := beg[1]; y <= end[1]; y++ {
 			run := end[0] - beg[0] + 1
@@ -584,7 +572,7 @@ func (v *Voxels) BlockHandler(req *datastore.BlockRequest) {
 			dataI += v.Stride()
 		}
 	case dvid.XZ:
-		blockI := blockBeg[2]*blockXY + blockBeg[1]*blockX + blockBeg[0]
+		blockI := blockBeg[2]*blockXY + blockBeg[1]*blockX + blockBeg[0]*bytesPerVoxel
 		dataI := beg[2]*v.Stride() + beg[0]*bytesPerVoxel
 		for y := beg[2]; y <= end[2]; y++ {
 			run := end[0] - beg[0] + 1
@@ -602,7 +590,7 @@ func (v *Voxels) BlockHandler(req *datastore.BlockRequest) {
 		bx, bz := blockBeg[0], blockBeg[2]
 		for y := beg[2]; y <= end[2]; y++ {
 			dataI := y*v.Stride() + beg[1]*bytesPerVoxel
-			blockI := bz*blockXY + blockBeg[1]*blockX + bx
+			blockI := bz*blockXY + blockBeg[1]*blockX + bx*bytesPerVoxel
 			for x := beg[1]; x <= end[1]; x++ {
 				switch req.Op {
 				case datastore.GetOp:

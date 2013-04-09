@@ -271,7 +271,9 @@ func (vs *VersionService) MapBlocks(op OpType, data DataStruct, wg *sync.WaitGro
 
 			// Try to spread sequential block keys among different block handlers to get 
 			// most out of our concurrent processing.
-			wg.Add(1)
+			if wg != nil {
+				wg.Add(1)
+			}
 			channelNum := req.SpatialKey.Hash(data, len(channels))
 			//dvid.Fmt(dvid.Debug, "Sending %s block %s request %s down channel %d\n",
 			//	op, SpatialIndex(spatialBytes).BlockCoord(data), data, channelNum)
