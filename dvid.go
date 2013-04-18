@@ -16,9 +16,9 @@ import (
 
 	// Declare the data types this DVID executable will support
 	_ "github.com/janelia-flyem/dvid/datatype/grayscale8"
-	_ "github.com/janelia-flyem/dvid/datatype/rgba8"
 	_ "github.com/janelia-flyem/dvid/datatype/labels32"
 	_ "github.com/janelia-flyem/dvid/datatype/labels64"
+	_ "github.com/janelia-flyem/dvid/datatype/rgba8"
 )
 
 var (
@@ -74,7 +74,7 @@ Usage: dvid [options] <command>
 
 Commands that can be performed without a running server:
 
-	version
+	about
 	init [config=/path/to/json/config] [dir=/path/to/datastore/dir]
 	serve [dir=/path/to/datastore/dir] [web=...] [rpc=...]
 `
@@ -176,7 +176,7 @@ func main() {
 	} else {
 		command := dvid.Command(flag.Args())
 		if err := DoCommand(command); err != nil {
-			fmt.Printf(err.Error())
+			fmt.Println(err.Error())
 			os.Exit(1)
 		}
 	}
@@ -195,7 +195,7 @@ func DoCommand(cmd dvid.Command) error {
 		return DoInit(cmd)
 	case "serve":
 		return DoServe(cmd)
-	case "version":
+	case "about":
 		fmt.Println(datastore.Versions())
 	// Send everything else to server via DVID terminal
 	default:

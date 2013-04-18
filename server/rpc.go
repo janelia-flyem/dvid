@@ -17,8 +17,8 @@ const helpMessage = `
 Commands executed on the server (%s):
 
 	help  [command you are running]
+	about
 	log
-	version
 	types
 	dataset <dataset name> <data type name>   (example: "dataset mygrayscale grayscale8")
 	shutdown
@@ -69,8 +69,8 @@ func (c *RpcConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 			runningService.WebAddress)
 	case "types":
 		reply.Text = runningService.SupportedDataChart()
-	case "version":
-		reply.Text = fmt.Sprintf("%s\n%s", runningService.Versions())
+	case "about":
+		reply.Text = fmt.Sprintf("%s\n", runningService.About())
 	case "log":
 		reply.Text = runningService.LogInfo()
 	case "dataset":
@@ -128,7 +128,8 @@ func datatypeDo(cmd datastore.Request, reply *datastore.Response) error {
 		// See if the user is addressing a data type name, not a data set name.
 		typeService, err = runningService.TypeService(cmd.Name())
 		if err != nil {
-			return fmt.Errorf("Command '%s' is neither a data set or data type name!", cmd.Name())
+			return fmt.Errorf("Command '%s' is neither a data set or data type name!",
+				cmd.Name())
 		}
 	}
 

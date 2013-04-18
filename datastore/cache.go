@@ -229,7 +229,7 @@ func (vs *VersionService) MapBlocks(op OpType, data DataStruct, wg *sync.WaitGro
 	spatial_it := NewSpatialIterator(data)
 	start := true
 
-	dvid.Fmt(dvid.Debug, "Mapping blocks for %s\n", data)
+	//dvid.Fmt(dvid.Debug, "Mapping blocks for %s\n", data)
 	DiskAccess.Lock()
 	switch op {
 	case PutOp, GetOp:

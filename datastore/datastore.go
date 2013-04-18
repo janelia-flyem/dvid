@@ -174,9 +174,9 @@ func (config *runtimeConfig) DataChart() string {
 	return text
 }
 
-// Version returns a chart of version identifiers for compile-time DVID datastore
+// About returns a chart of the code versions of compile-time DVID datastore
 // and the runtime data types.
-func (config *runtimeConfig) Versions() string {
+func (config *runtimeConfig) About() string {
 	var text string
 	writeLine := func(name, version string) {
 		text += fmt.Sprintf("%-15s   %s\n", name, version)
@@ -437,7 +437,7 @@ type TypeInfo struct {
 	Help            string
 }
 
-// DataJSON returns configuration data in JSON format.
+// ConfigJSON returns configuration data in JSON format.
 func (s *Service) ConfigJSON() (jsonStr string, err error) {
 	datasets := make(map[DataSetString]TypeInfo)
 	for name, dtype := range s.dataNames {
@@ -458,6 +458,16 @@ func (s *Service) ConfigJSON() (jsonStr string, err error) {
 		datasets,
 	}
 	m, err := json.Marshal(data)
+	if err != nil {
+		return
+	}
+	jsonStr = string(m)
+	return
+}
+
+// VersionsJSON returns the version DAG data in JSON format.
+func (s *Service) VersionsJSON() (jsonStr string, err error) {
+	m, err := json.Marshal(s.VersionDAG)
 	if err != nil {
 		return
 	}

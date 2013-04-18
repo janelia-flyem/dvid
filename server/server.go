@@ -209,7 +209,7 @@ func (service *Service) ServeHttp(address, clientDir string) {
 	// Handle Websocket API.
 	http.Handle(WebSocketPath, websocket.Handler(socketHandler))
 
-	// Handle everything else either through serving embedded files
+	// Handle static files through serving embedded files
 	// via nrsc or loading files from a specified web client directory.
 	if clientDir == "" {
 		err := nrsc.Handle("/")
@@ -219,7 +219,7 @@ func (service *Service) ServeHttp(address, clientDir string) {
 			fmt.Println("HTTP server will be started without webclient...\n")
 			http.HandleFunc("/", mainHandler)
 		} else {
-			dvid.Log(dvid.Debug, "Serving built-in DVID web client...\n")
+			fmt.Println("Serving web client from embedded files...")
 		}
 	} else {
 		http.HandleFunc("/", mainHandler)

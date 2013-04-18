@@ -27,7 +27,7 @@ Standard DVID commands that can be performed without a running server
 In the following documentation, the type of brackets designate 
 <required parameter> and [optional parameter].
 
-	dvid version
+	dvid about
 
 Prints the version number of the DVID datastore software and the version of each
 supported data type.

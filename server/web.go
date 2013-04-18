@@ -42,10 +42,19 @@ DVID Web Client Unavailable!  To make the web client available, you have two cho
    Example: dvid -webclient=/path/to/html/files serve dir=/path/to/db"
 `
 
+// Index file redirection.
+func indexHandler(w http.ResponseWriter, r *http.Request) {
+	http.Redirect(w, r, "/index.html", http.StatusMovedPermanently)
+}
+
 // Handler for presentation files
 func mainHandler(w http.ResponseWriter, r *http.Request) {
 	if runningService.WebClientPath != "" {
-		filename := filepath.Join(runningService.WebClientPath, r.URL.Path)
+		path := "index.html"
+		if r.URL.Path != "/" {
+			path = r.URL.Path
+		}
+		filename := filepath.Join(runningService.WebClientPath, path)
 		dvid.Log(dvid.Debug, "http request: %s -> %s\n", r.URL.Path, filename)
 		http.ServeFile(w, r, filename)
 	} else {
@@ -96,7 +105,8 @@ func handleDataRequest(w http.ResponseWriter, r *http.Request) {
 // We assume all DVID API commands target the URLs /api/<command or data set name>/... 
 // Built-in commands are:
 //    
-//    data  -- Datastore volume, version and data set data, always cached so fast to retrieve.
+//    data  -- Datastore volume and data set configuration.
+//    versions -- Datastore versions DAG including UUIDs for each node.
 //    load  -- Load (# of pending block requests) on block handlers for each data set.
 //    cache -- returns LRU cache status
 //    
@@ -116,6 +126,14 @@ func apiHandler(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "<p>TODO -- return LRU Cache statistics</p>\n")
 	case "data":
 		handleDataRequest(w, r)
+	case "versions":
+		jsonStr, err := runningService.VersionsJSON()
+		if err != nil {
+			badRequest(w, r, err.Error())
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, jsonStr)
 	case "load":
 		jsonStr, err := datastore.BlockLoadJSON()
 		if err != nil {

@@ -168,8 +168,9 @@ func (dtype *Datatype) BlockBytes() int {
 // assurance that modified blocks for a slice are written to disk.   Adjacent slices
 // will usually intersect the same block so its more efficient to only write blocks
 // that haven't been touched for some small amount of time.
-func (dtype *Datatype) ProcessSlice(dataSetName datastore.DataSetString, vs *datastore.VersionService,
-	op datastore.OpType, slice dvid.Geometry, inputImg image.Image) (outputImg image.Image, err error) {
+func (dtype *Datatype) ProcessSlice(dataSetName datastore.DataSetString,
+	vs *datastore.VersionService, op datastore.OpType, slice dvid.Geometry,
+	inputImg image.Image) (outputImg image.Image, err error) {
 
 	// Setup the data buffer
 	bytesPerVoxel := dtype.BytesPerVoxel * dtype.NumChannels
@@ -320,6 +321,7 @@ func (dtype *Datatype) DoHTTP(w http.ResponseWriter, r *http.Request,
 			if len(parts) >= 6 {
 				formatStr = parts[5]
 			}
+			//dvid.ElapsedTime(dvid.Normal, startTime, "%s %s upto image formatting", op, slice)
 			err = dvid.WriteImageHttp(w, img, formatStr)
 			if err != nil {
 				badRequest(w, r, err.Error())
@@ -555,8 +557,8 @@ func (v *Voxels) BlockHandler(req *datastore.BlockRequest) {
 
 	switch req.DataShape() {
 	case dvid.XY:
-		fmt.Printf("XY Block: %s->%s, blockXY %d, blockX %d, blockBeg %s\n",
-			begVolCoord, endVolCoord, blockXY, blockX, blockBeg)
+		//fmt.Printf("XY Block: %s->%s, blockXY %d, blockX %d, blockBeg %s\n",
+		//	begVolCoord, endVolCoord, blockXY, blockX, blockBeg)
 		blockI := blockBeg[2]*blockXY + blockBeg[1]*blockX + blockBeg[0]*bytesPerVoxel
 		dataI := beg[1]*v.Stride() + beg[0]*bytesPerVoxel
 		for y := beg[1]; y <= end[1]; y++ {
