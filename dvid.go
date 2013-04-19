@@ -12,7 +12,6 @@ import (
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
-	"github.com/janelia-flyem/dvid/terminal"
 
 	// Declare the data types this DVID executable will support
 	_ "github.com/janelia-flyem/dvid/datatype/grayscale8"
@@ -43,6 +42,12 @@ var (
 	// Path to web client directory.  Leave unset for default pages.
 	clientDir = flag.String("webclient", "", "")
 
+	// Address for rpc communication.
+	rpcAddress = flag.String("rpc", server.DefaultRpcAddress, "")
+
+	// Address for http communication
+	httpAddress = flag.String("http", server.DefaultWebAddress, "")
+
 	// Number of logical CPUs to use for DVID.  
 	useCPU = flag.Int("numcpu", 0, "")
 
@@ -62,6 +67,8 @@ Usage: dvid [options] <command>
       -cache      =number   Megabytes of LRU cache for blocks.  (Default: %d MB)
       -timeout    =number   Seconds to wait trying to get exclusive access to datastore.
       -webclient  =string   Path to web client directory.  Leave unset for default pages.
+      -rpc        =string   Address for RPC communication.
+      -http       =string   Address for HTTP communication.
       -cpuprofile =string   Write CPU profile to this file.
       -memprofile =string   Write memory profile to this file on ctrl-C.
       -types      (flag)    Show compiled DVID data types
@@ -76,7 +83,7 @@ Commands that can be performed without a running server:
 
 	about
 	init [config=/path/to/json/config] [dir=/path/to/datastore/dir]
-	serve [dir=/path/to/datastore/dir] [web=...] [rpc=...]
+	serve [dir=/path/to/datastore/dir]
 `
 
 const helpServerMessage = `
@@ -172,6 +179,7 @@ func main() {
 
 	// If we have no arguments, run in terminal mode, else execute command.
 	if flag.NArg() == 0 {
+		terminal := server.NewTerminal(*rpcAddress)
 		terminal.Shell()
 	} else {
 		command := dvid.Command(flag.Args())
@@ -199,6 +207,7 @@ func DoCommand(cmd dvid.Command) error {
 		fmt.Println(datastore.Versions())
 	// Send everything else to server via DVID terminal
 	default:
+		terminal := server.NewTerminal(*rpcAddress)
 		return terminal.Send(cmd)
 	}
 	return nil
@@ -218,11 +227,9 @@ func DoInit(cmd dvid.Command) error {
 // DoServe opens a datastore then creates both web and rpc servers for the datastore
 func DoServe(cmd dvid.Command) error {
 
-	webAddress, _ := cmd.Parameter(dvid.KeyWeb)
-	rpcAddress, _ := cmd.Parameter(dvid.KeyRpc)
 	datastoreDir := cmd.DatastoreDir()
 
-	if err := server.Serve(datastoreDir, webAddress, *clientDir, rpcAddress); err != nil {
+	if err := server.Serve(datastoreDir, *httpAddress, *clientDir, *rpcAddress); err != nil {
 		return err
 	}
 	return nil

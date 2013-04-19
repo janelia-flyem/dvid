@@ -16,8 +16,6 @@ import (
 // Keys for setting various arguments within the command line via "key=value" strings.
 const (
 	KeyUuid         = "uuid"
-	KeyRpc          = "rpc"
-	KeyWeb          = "web"
 	KeyDatastoreDir = "dir"
 	KeyConfigFile   = "config"
 	KeyPlane        = "plane"
@@ -27,8 +25,6 @@ const (
 
 var setKeys = map[string]bool{
 	"uuid":   true,
-	"rpc":    true,
-	"web":    true,
 	"dir":    true,
 	"config": true,
 	"plane":  true,

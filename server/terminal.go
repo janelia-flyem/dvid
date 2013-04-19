@@ -1,4 +1,4 @@
-package terminal
+package server
 
 import (
 	"bufio"
@@ -9,26 +9,15 @@ import (
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/janelia-flyem/dvid/server"
 )
 
-const helpMessage = `
+const shellHelp = `
 DVID Terminal Help
 
 	Use 'q' or 'quit' to exit.
 
-	address [DVID rpc address]  - sets or returns DVID server address
 	version [UUID] - sets or returns the UUID for the image version
 `
-
-// Global variables to store DVID states and connection info
-var version string
-var rpcAddress string
-var client *rpc.Client
-
-func init() {
-	rpcAddress = server.DefaultRpcAddress
-}
 
 func prompt(message string) dvid.Command {
 	fmt.Print(message)
@@ -38,8 +27,31 @@ func prompt(message string) dvid.Command {
 	return dvid.Command(strings.Split(line, " "))
 }
 
+// Terminal provides a stateful client for DVID interaction.  Unlike using 
+// DVID commands from the shell, terminal use keeps several DVID values 
+// (e.g., rpc address, image version UUID) in memory and provides them
+// automatically to the DVID server.
+type Terminal struct {
+	rpcAddress string
+	version    string
+	client     *rpc.Client
+}
+
+// NewTerminal returns a terminal with an RPC connection to the given
+// rpcAddress.
+func NewTerminal(rpcAddress string) *Terminal {
+	client, err := rpc.DialHTTP("tcp", rpcAddress)
+	if err != nil {
+		client = nil // Close connection if any error and try serverless mode.
+	}
+	return &Terminal{
+		rpcAddress: rpcAddress,
+		client:     client,
+	}
+}
+
 // Shell takes commands and processes them in an endless loop.
-func Shell() {
+func (terminal *Terminal) Shell() {
 	fmt.Printf("\nDVID %s Terminal\n\n", datastore.Version)
 
 	// Command-line loop
@@ -50,26 +62,19 @@ func Shell() {
 		case "":
 			fmt.Println("Enter 'help' to see commands")
 		case "help", "h":
-			fmt.Printf(helpMessage)
-			Send(dvid.Command([]string{"help"}))
+			fmt.Printf(shellHelp)
+			terminal.Send(dvid.Command([]string{"help"}))
 		case "quit", "q":
 			takeCommands = false
-		case "address":
-			if len(cmd) > 1 {
-				cmd.CommandArgs(1, &rpcAddress)
-				fmt.Printf("Set rpc address to %s\n", rpcAddress)
-			} else {
-				fmt.Printf("Current rpc address: %s\n", rpcAddress)
-			}
 		case "version":
 			if len(cmd) > 1 {
-				cmd.CommandArgs(1, &version)
-				fmt.Printf("Set version to %s\n", version)
+				cmd.CommandArgs(1, &(terminal.version))
+				fmt.Printf("Set version to %s\n", terminal.version)
 			} else {
-				fmt.Printf("Current version: %s\n", version)
+				fmt.Printf("Current version: %s\n", terminal.version)
 			}
 		default:
-			err := Send(cmd)
+			err := terminal.Send(cmd)
 			if err != nil {
 				fmt.Println(err.Error())
 			}
@@ -77,34 +82,21 @@ func Shell() {
 	}
 }
 
-func Send(cmd dvid.Command) (err error) {
-	// Change rpc if encoded in command
-	address, rpcOverriden := cmd.Parameter(dvid.KeyRpc)
-	if rpcOverriden {
-		rpcAddress = address
-	}
-
-	// If we haven't already established a connection, make one.
-	if client == nil {
-		client, err = rpc.DialHTTP("tcp", rpcAddress)
-		if err != nil {
-			client = nil // Close connection if any error and try serverless mode.
-		}
-	}
-
-	// Fulfill command either by remote or local call.
+// Send transmits an RPC command if a server is available or else it
+// runs the command in serverless mode.
+func (terminal *Terminal) Send(cmd dvid.Command) (err error) {
 	var reply datastore.Response
 	request := datastore.Request{Command: cmd}
-	if client != nil {
+	if terminal.client != nil {
 		dvid.Fmt(dvid.Debug, "Running remote command '%s'...\n", cmd)
-		err = client.Call("RpcConnection.Do", request, &reply)
+		err = terminal.client.Call("RpcConnection.Do", request, &reply)
 		if err != nil {
 			err = fmt.Errorf("RPC error for '%s': %s", cmd, err.Error())
 			return
 		}
 	} else {
 		dvid.Fmt(dvid.Debug, "Running local command '%s'...\n", cmd)
-		err = server.ServerlessDo(request, &reply)
+		err = ServerlessDo(request, &reply)
 		if err != nil {
 			err = fmt.Errorf("Error for '%s': %s", cmd, err.Error())
 			return

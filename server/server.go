@@ -14,22 +14,17 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 
 	"bitbucket.org/tebeka/nrsc"
-
-	"code.google.com/p/go.net/websocket"
 )
 
 const (
 	// The default URL of the DVID web server
-	DefaultWebAddress = "localhost:4000"
+	DefaultWebAddress = "localhost:8000"
 
 	// The default RPC address of the DVID RPC server
-	DefaultRpcAddress = "localhost:6000"
+	DefaultRpcAddress = "localhost:8001"
 
 	// The relative URL path to our Level 2 REST API
 	RestApiPath = "/api/"
-
-	// The relative URL path to our WebSocket handler
-	WebSocketPath = "/socket/"
 
 	// The name of the server error log, stored in the datastore directory.
 	ErrorLogFilename = "dvid-errors.log"
@@ -196,7 +191,6 @@ func (service *Service) ServeHttp(address, clientDir string) {
 	service.WebAddress = address
 	service.WebClientPath = clientDir
 	fmt.Printf("Web server listening at %s ...\n", address)
-	fmt.Printf("WebSocket available at %s%s\n", address, WebSocketPath)
 
 	src := &http.Server{
 		Addr:        address,
@@ -205,9 +199,6 @@ func (service *Service) ServeHttp(address, clientDir string) {
 
 	// Handle Level 2 REST API.
 	http.HandleFunc(RestApiPath, apiHandler)
-
-	// Handle Websocket API.
-	http.Handle(WebSocketPath, websocket.Handler(socketHandler))
 
 	// Handle static files through serving embedded files
 	// via nrsc or loading files from a specified web client directory.

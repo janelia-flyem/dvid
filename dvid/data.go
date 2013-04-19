@@ -470,10 +470,6 @@ func (s *Subvolume) String() string {
 		s.size[0], s.size[1], s.size[2], s.origin[0], s.origin[1], s.origin[2])
 }
 
-func NewSubvolume(origin VoxelCoord, size Point3d) Geometry {
-	return &Subvolume{origin, size}
-}
-
 func (s *Subvolume) TopRight() VoxelCoord {
 	tr := s.origin
 	tr[0] += s.size[0] - 1
@@ -485,6 +481,10 @@ func (s *Subvolume) BottomLeft() VoxelCoord {
 	tr[1] += s.size[1] - 1
 	tr[2] += s.size[2] - 1
 	return tr
+}
+
+func NewSubvolume(origin VoxelCoord, size Point3d) Geometry {
+	return &Subvolume{origin, size}
 }
 
 // NewSlice returns a Geometry object for a XY, XZ, or YZ slice given the data's
