@@ -159,6 +159,11 @@ func (s PointStr) VoxelCoord() (coord VoxelCoord, err error) {
 	return
 }
 
+func (s PointStr) Point3d() (coord Point3d, err error) {
+	_, err = fmt.Sscanf(string(s), "%d,%d,%d", &coord[0], &coord[1], &coord[2])
+	return
+}
+
 func (s PointStr) Point2d() (point Point2d, err error) {
 	_, err = fmt.Sscanf(string(s), "%d,%d", &point[0], &point[1])
 	return
