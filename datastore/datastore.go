@@ -63,7 +63,7 @@ type runtimeConfig struct {
 
 // Shutdown handles graceful cleanup of datastore before exiting DVID.
 func Shutdown() {
-	log.Println("TODO -- Datastore would cleanup cache here...\n")
+	dvid.Fmt(dvid.Debug, "TODO -- Datastore would cleanup cache here...\n")
 }
 
 // Versions returns a chart of version identifiers for data types and and DVID's datastore

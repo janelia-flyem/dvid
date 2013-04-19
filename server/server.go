@@ -106,7 +106,7 @@ func ServerlessDo(request datastore.Request, reply *datastore.Response) error {
 	dvid.SetErrorLoggingFile(file)
 
 	// Make sure we can support the datastore's types with our current DVID executable
-	log.Println("Verifying datastore's supported types were compiled into DVID...")
+	dvid.Fmt(dvid.Debug, "Verifying datastore's supported types were compiled into DVID...\n")
 	err = runningService.VerifyCompiledTypes()
 	if err != nil {
 		log.Fatalln(err.Error())

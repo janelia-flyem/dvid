@@ -13,16 +13,7 @@ import (
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
-
-	"code.google.com/p/go.net/websocket"
 )
-
-func socketHandler(c *websocket.Conn) {
-	var s string
-	fmt.Fscan(c, &s)
-	dvid.Log(dvid.Debug, "socket received: %s\n", s)
-	fmt.Fprint(c, "DVID received socket communication:", s, "\n")
-}
 
 func badRequest(w http.ResponseWriter, r *http.Request, err string) {
 	errorMsg := fmt.Sprintf("ERROR using REST API: %s (%s).", err, r.URL.Path)

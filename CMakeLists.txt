@@ -66,11 +66,6 @@ else ()
         DEPENDS     ${golang_NAME}
         COMMENT     "Added Go uuid package [code.google.com/p/go-uuid/uuid]")
     
-    add_custom_target (websocket
-        ${BUILDEM_ENV_STRING} ${GO_FLAGS} go get code.google.com/p/go.net/websocket
-        DEPENDS     ${golang_NAME}
-        COMMENT     "Added Go websocket support [code.google.com/p/go.net/websocket]")
-    
     add_custom_target (levigo
         ${BUILDEM_ENV_STRING} ${GO_FLAGS} go get github.com/jmhodges/levigo
         DEPENDS     ${golang_NAME} ${leveldb_NAME}
@@ -85,14 +80,14 @@ else ()
     add_custom_target (dvid-exe
         ${BUILDEM_ENV_STRING} ${GO_ENV} ${GO_FLAGS} go build -o ${BUILDEM_BIN_DIR}/dvid -v dvid.go 
         WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
-        DEPENDS     ${golang_NAME} ${leveldb_NAME} snappy-go nrsc uuid websocket levigo
+        DEPENDS     ${golang_NAME} ${leveldb_NAME} snappy-go nrsc uuid levigo
         COMMENT     "Compiled and installed dvid executable.")
 
     # Build DVID with pure Go leveldb implementation
     add_custom_target (dvid-go-exe
         ${BUILDEM_ENV_STRING} ${GO_ENV} go build -o ${BUILDEM_BIN_DIR}/dvid-go -v -tags 'purego' dvid.go 
         WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
-        DEPENDS     ${golang_NAME} snappy-go nrsc uuid websocket goleveldb
+        DEPENDS     ${golang_NAME} snappy-go nrsc uuid goleveldb
         COMMENT     "Compiled and installed dvid pure Go executable, dvid-go.")
 
    # Embed web client into exe

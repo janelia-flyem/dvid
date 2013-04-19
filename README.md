@@ -44,7 +44,5 @@ DVID can be built manually, without buildem, by the following steps:
 
     go get code.google.com/p/go-uuid/uuid
 
-    go get code.google.com/p/go.net/websocket
-    
     go get github.com/jmhodges/levigo
     
