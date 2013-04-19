@@ -14,7 +14,7 @@ import (
 )
 
 const helpMessage = `
-Commands executed on the server (%s):
+Commands executed on the server (rpc address = %s):
 
 	help  [command you are running]
 	about
