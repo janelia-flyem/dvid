@@ -6,6 +6,7 @@
 package voxels
 
 import (
+	"bytes"
 	"fmt"
 	"image"
 	_ "log"
@@ -17,9 +18,11 @@ import (
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/keyvalue"
+
+	"github.com/ugorji/go-msgpack"
 )
 
-const Version = "0.6"
+const Version = "0.7"
 
 const RepoUrl = "github.com/janelia-flyem/dvid/datatype/voxels"
 
@@ -159,15 +162,86 @@ func (dtype *Datatype) BlockBytes() int {
 	return numVoxels * dtype.NumChannels * dtype.BytesPerVoxel
 }
 
+// Process subvolume and slice function
+//
+// TODO -- Writing all blocks for a subvolume/slice is likely wasteful although it does
+// provide assurance that modified blocks are written to disk.   Adjacent slices
+// will usually intersect the same block so its more efficient to only write blocks
+// that haven't been touched for some small amount of time.  On the other hand, block
+// sizes might make seek times less important and leveldb also has a configurable
+// write cache.
+
+// ProcessSubvolume breaks a subvolume into constituent blocks and processes the blocks
+// concurrently via MapBlocks(), then waiting until all blocks have
+// completed before returning.  An subvolume is returned if the op is a GetOp.
+// If the op is a PutOp, we write sequentially all modified blocks.
+func (dtype *Datatype) ProcessSubvolume(dataSetName datastore.DataSetString,
+	vs *datastore.VersionService, op datastore.OpType, subvol *dvid.Subvolume,
+	inputImg image.Image) (encodedVol dvid.MsgPackData, err error) {
+
+	// Setup the data buffer
+	bytesPerVoxel := dtype.BytesPerVoxel * dtype.NumChannels
+	numBytes := bytesPerVoxel * subvol.NumVoxels()
+	var data []uint8
+	//var batch keyvalue.WriteBatch
+
+	switch op {
+	case datastore.PutOp:
+		// Setup write batch to maximize sequential writes and exploit
+		// leveldb write buffer.
+		//batch = keyvalue.NewWriteBatch()
+		//defer batch.Close()
+
+	case datastore.GetOp:
+		data = make([]uint8, numBytes, numBytes)
+	default:
+		err = fmt.Errorf("Illegal operation (%d) in ProcessSubvolume()", op)
+		return
+	}
+
+	// Do the mapping from subvol to blocks
+	voxels := &Voxels{
+		dataSetName: dataSetName,
+		Geometry:    subvol,
+		TypeService: dtype,
+		data:        data,
+	}
+	var wg sync.WaitGroup
+	err = vs.MapBlocks(op, voxels, &wg)
+	if err != nil {
+		return
+	}
+	// Wait for all map block processing.
+	wg.Wait()
+	if op == datastore.GetOp {
+		startTime := time.Now()
+		var buffer bytes.Buffer
+		enc := msgpack.NewEncoder(&buffer)
+		err = enc.Encode(struct {
+			DataSetName string
+			Offset      dvid.VoxelCoord
+			Size        dvid.Point3d
+			//			Data        []byte
+		}{
+			string(dataSetName),
+			subvol.Origin(),
+			subvol.Size(),
+			//			[]byte(data),
+		})
+		if err != nil {
+			return
+		}
+		encodedVol = dvid.MsgPackData(buffer.Bytes())
+		dvid.ElapsedTime(dvid.Normal, startTime, "Encoded %s in %d bytes", subvol,
+			len(encodedVol))
+	}
+	return
+}
+
 // ProcessSlice breaks a slice into constituent blocks and processes the blocks
 // concurrently via MapBlocks(), then waiting until all blocks have
 // completed before returning.  An image is returned if the op is a GetOp.
 // If the op is a PutOp, we write sequentially all modified blocks.
-//
-// TODO -- Writing all blocks for a slice is likely wasteful although it does provide
-// assurance that modified blocks for a slice are written to disk.   Adjacent slices
-// will usually intersect the same block so its more efficient to only write blocks
-// that haven't been touched for some small amount of time.
 func (dtype *Datatype) ProcessSlice(dataSetName datastore.DataSetString,
 	vs *datastore.VersionService, op datastore.OpType, slice dvid.Geometry,
 	inputImg image.Image) (outputImg image.Image, err error) {
@@ -249,9 +323,9 @@ func (dtype *Datatype) DoRPC(request datastore.Request, reply *datastore.Respons
 	return nil
 }
 
-// DoHTTP handls all incoming HTTP requests for this data type. 
+// DoHTTP handles all incoming HTTP requests for this data type. 
 func (dtype *Datatype) DoHTTP(w http.ResponseWriter, r *http.Request,
-	service *datastore.Service, apiPrefixURL string) {
+	service *datastore.Service, apiPrefixURL string) error {
 
 	startTime := time.Now()
 
@@ -267,8 +341,7 @@ func (dtype *Datatype) DoHTTP(w http.ResponseWriter, r *http.Request,
 	case "post":
 		op = datastore.PutOp
 	default:
-		badRequest(w, r, "Can only handle GET or POST HTTP verbs")
-		return
+		return fmt.Errorf("Can only handle GET or POST HTTP verbs")
 	}
 
 	// Break URL request into arguments
@@ -280,42 +353,36 @@ func (dtype *Datatype) DoHTTP(w http.ResponseWriter, r *http.Request,
 	// Get the datastore service corresponding to given version
 	vs, err := datastore.NewVersionService(service, parts[1])
 	if err != nil {
-		badRequest(w, r, err.Error())
-		return
+		return err
 	}
 
 	// Get the data shape. 
 	shapeStr := dvid.DataShapeString(parts[2])
 	dataShape, err := shapeStr.DataShape()
 	if err != nil {
-		badRequest(w, r, fmt.Sprintf("Bad data shape given '%s'", shapeStr))
-		return
+		return fmt.Errorf("Bad data shape given '%s'", shapeStr)
 	}
 
 	switch dataShape {
 	case dvid.XY, dvid.XZ, dvid.YZ:
 		slice, err := dvid.NewSliceFromStrings(parts[2], parts[3], parts[4])
 		if err != nil {
-			badRequest(w, r, err.Error())
-			return
+			return err
 		}
 		if op == datastore.PutOp {
 			// TODO -- Put in format checks for POSTed image.
 			postedImg, _, err := dvid.ImageFromPost(r, "image")
 			if err != nil {
-				badRequest(w, r, err.Error())
-				return
+				return err
 			}
 			_, err = dtype.ProcessSlice(dataSetName, vs, datastore.PutOp, slice, postedImg)
 			if err != nil {
-				badRequest(w, r, err.Error())
-				return
+				return err
 			}
 		} else {
 			img, err := dtype.ProcessSlice(dataSetName, vs, op, slice, nil)
 			if err != nil {
-				badRequest(w, r, err.Error())
-				return
+				return err
 			}
 			var formatStr string
 			if len(parts) >= 6 {
@@ -324,23 +391,35 @@ func (dtype *Datatype) DoHTTP(w http.ResponseWriter, r *http.Request,
 			//dvid.ElapsedTime(dvid.Normal, startTime, "%s %s upto image formatting", op, slice)
 			err = dvid.WriteImageHttp(w, img, formatStr)
 			if err != nil {
-				badRequest(w, r, err.Error())
+				return err
 			}
 		}
 		dvid.ElapsedTime(dvid.Normal, startTime, "%s %s (%s) %s", op, dataSetName,
 			dtype.TypeName(), slice)
-	case dvid.Arb:
-		badRequest(w, r, "DVID does not yet support arbitrary planes.")
 	case dvid.Vol:
-		badRequest(w, r, "DVID does not yet support volumes via HTTP API.  Use slices.")
+		subvol, err := dvid.NewSubvolumeFromStrings(parts[3], parts[4])
+		if err != nil {
+			return err
+		}
+		if op == datastore.GetOp {
+			data, err := dtype.ProcessSubvolume(dataSetName, vs, op, subvol, nil)
+			if err != nil {
+				return err
+			}
+			dvid.Fmt(dvid.Normal, "MessagePack data: %d bytes\n", len(data))
+			err = data.WriteHTTP(w)
+			if err != nil {
+				return err
+			}
+		} else {
+			return fmt.Errorf("DVID does not yet support POST of subvolume data.")
+		}
+		dvid.ElapsedTime(dvid.Normal, startTime, "%s %s (%s) %s", op, dataSetName,
+			dtype.TypeName(), subvol)
+	case dvid.Arb:
+		return fmt.Errorf("DVID does not yet support arbitrary planes.")
 	}
-}
-
-func badRequest(w http.ResponseWriter, r *http.Request, err string) {
-	errorMsg := fmt.Sprintf("ERROR using REST API: %s (%s).", err, r.URL.Path)
-	errorMsg += "  Use 'dvid help' to get proper API request format.\n"
-	dvid.Error(errorMsg)
-	http.Error(w, errorMsg, http.StatusBadRequest)
+	return nil
 }
 
 // ServerAdd adds a sequence of image files to an image version.  The request
@@ -443,7 +522,8 @@ type Voxels struct {
 	// The data itself
 	data []uint8
 
-	// The stride for 2d iteration
+	// The stride for 2d iteration.  For 3d subvolumes, we don't reuse standard Go
+	// images but maintain fully packed data slices, so stride isn't necessary.
 	stride int32
 }
 
@@ -547,8 +627,6 @@ func (v *Voxels) BlockHandler(req *datastore.BlockRequest) {
 	// For each geometry, traverse the data slice/subvolume and read/write from
 	// the block data depending on the op.
 
-	// TODO -- If data shape is Arbitrary plane, we need different looping.
-
 	data := req.DataStruct.Data()
 
 	//dvid.Fmt(dvid.Debug, "Block start: %s\n", blockBeg)
@@ -605,6 +683,8 @@ func (v *Voxels) BlockHandler(req *datastore.BlockRequest) {
 			}
 			bz++
 		}
+	case dvid.Vol:
+
 	default:
 	}
 

@@ -166,6 +166,23 @@ func ImageData(img image.Image) (data []uint8, stride int32, err error) {
 	return
 }
 
+// ImageFromFile returns an image and its format name given a file name.
+func ImageFromFile(filename string) (img image.Image, format string, err error) {
+	var file *os.File
+	file, err = os.Open(filename)
+	if err != nil {
+		err = fmt.Errorf("Unable to open image (%s).  Is this visible to server process?",
+			filename)
+		return
+	}
+	img, format, err = image.Decode(file)
+	if err != nil {
+		return
+	}
+	err = file.Close()
+	return
+}
+
 // WriteImageHttp writes an image to a HTTP response writer using a format and optional
 // compression strength specified in a string, e.g., "png", "jpg:80".
 func WriteImageHttp(w http.ResponseWriter, img image.Image, formatStr string) (err error) {
@@ -187,23 +204,6 @@ func WriteImageHttp(w http.ResponseWriter, img image.Image, formatStr string) (e
 	default:
 		err = fmt.Errorf("Illegal image format requested: %s", format[0])
 	}
-	return
-}
-
-// ImageFromFile returns an image and its format name given a file name.
-func ImageFromFile(filename string) (img image.Image, format string, err error) {
-	var file *os.File
-	file, err = os.Open(filename)
-	if err != nil {
-		err = fmt.Errorf("Unable to open image (%s).  Is this visible to server process?",
-			filename)
-		return
-	}
-	img, format, err = image.Decode(file)
-	if err != nil {
-		return
-	}
-	err = file.Close()
 	return
 }
 

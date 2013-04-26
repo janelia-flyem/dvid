@@ -107,7 +107,7 @@ type TypeService interface {
 	DoRPC(request Request, reply *Response, s *Service) error
 
 	// DoHTTP handles HTTP requests specific to a data type
-	DoHTTP(w http.ResponseWriter, r *http.Request, s *Service, apiPrefixURL string)
+	DoHTTP(w http.ResponseWriter, r *http.Request, s *Service, apiPrefixURL string) error
 
 	// Returns standard error response for unknown commands
 	UnknownCommand(request Request) error

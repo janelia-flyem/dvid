@@ -9,7 +9,7 @@ Documentation is [available here](http://godoc.org/github.com/janelia-flyem/dvid
 
 ## Build Process
 
-DVID uses the [buildem system](http://https://github.com/janelia-flyem/buildem#readme) to 
+DVID uses the [buildem system](http://github.com/janelia-flyem/buildem#readme) to 
 automatically download and build leveldb, Go language support, and all required Go packages.  
 
 To build DVID using buildem, do the following steps:

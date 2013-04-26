@@ -15,8 +15,8 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 )
 
-func badRequest(w http.ResponseWriter, r *http.Request, err string) {
-	errorMsg := fmt.Sprintf("ERROR using REST API: %s (%s).", err, r.URL.Path)
+func badRequest(w http.ResponseWriter, r *http.Request, message string) {
+	errorMsg := fmt.Sprintf("ERROR using REST API: %s (%s).", message, r.URL.Path)
 	errorMsg += "  Use 'dvid help' to get proper API request format.\n"
 	dvid.Error(errorMsg)
 	http.Error(w, errorMsg, http.StatusBadRequest)
@@ -142,6 +142,9 @@ func apiHandler(w http.ResponseWriter, r *http.Request) {
 				dataSetName, err.Error()))
 			return
 		}
-		typeService.DoHTTP(w, r, runningService.Service, RestApiPath)
+		err = typeService.DoHTTP(w, r, runningService.Service, RestApiPath)
+		if err != nil {
+			badRequest(w, r, err.Error())
+		}
 	}
 }

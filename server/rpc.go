@@ -32,9 +32,6 @@ Commands executed on the server (rpc address = %s):
 	push <remote dvid address> <uuid> [<extents>]
 	archive <uuid>
 
-All of the commands above can include optional settings of the form:
-	rpc=foo.com:1234  (Specifies the DVID server.)
-
 %s
 
 Use "<data type name> help" to get data type-specific help.

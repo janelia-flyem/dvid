@@ -76,6 +76,11 @@ else ()
         DEPENDS     ${golang_NAME} snappy-go
         COMMENT     "Added pure Go implementation of leveldb")
     
+    add_custom_target (messagepack
+        ${BUILDEM_ENV_STRING} go get github.com/ugorji/go-msgpack
+        DEPENDS     ${golang_NAME}
+        COMMENT     "Added pure Go implementation of MessagePack")
+    
     # Build DVID with C++ leveldb library support
     add_custom_target (dvid-exe
         ${BUILDEM_ENV_STRING} ${GO_ENV} ${GO_FLAGS} go build -o ${BUILDEM_BIN_DIR}/dvid -v dvid.go 

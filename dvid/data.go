@@ -483,8 +483,24 @@ func (s *Subvolume) BottomLeft() VoxelCoord {
 	return tr
 }
 
-func NewSubvolume(origin VoxelCoord, size Point3d) Geometry {
+// NewSubvolume returns a Subvolume given a subvolume's origin and size.
+func NewSubvolume(origin VoxelCoord, size Point3d) *Subvolume {
 	return &Subvolume{origin, size}
+}
+
+// NewSubvolumeFromStrings returns a Subvolume given string representations of
+// origin ("0,10,20") and size ("250,250,250").
+func NewSubvolumeFromStrings(originStr, sizeStr string) (subvol *Subvolume, err error) {
+	origin, err := PointStr(originStr).VoxelCoord()
+	if err != nil {
+		return
+	}
+	size, err := PointStr(sizeStr).Point3d()
+	if err != nil {
+		return
+	}
+	subvol = NewSubvolume(origin, size)
+	return
 }
 
 // NewSlice returns a Geometry object for a XY, XZ, or YZ slice given the data's
