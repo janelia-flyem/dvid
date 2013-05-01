@@ -6,7 +6,6 @@
 package voxels
 
 import (
-	"bytes"
 	"fmt"
 	"image"
 	_ "log"
@@ -18,8 +17,9 @@ import (
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/keyvalue"
+	"github.com/janelia-flyem/dvid/server"
 
-	"github.com/ugorji/go-msgpack"
+	"code.google.com/p/goprotobuf/proto"
 )
 
 const Version = "0.7"
@@ -177,7 +177,7 @@ func (dtype *Datatype) BlockBytes() int {
 // If the op is a PutOp, we write sequentially all modified blocks.
 func (dtype *Datatype) ProcessSubvolume(dataSetName datastore.DataSetString,
 	vs *datastore.VersionService, op datastore.OpType, subvol *dvid.Subvolume,
-	inputImg image.Image) (encodedVol dvid.MsgPackData, err error) {
+	inputImg image.Image) (encodedVol *server.Subvolume, err error) {
 
 	// Setup the data buffer
 	bytesPerVoxel := dtype.BytesPerVoxel * dtype.NumChannels
@@ -215,25 +215,21 @@ func (dtype *Datatype) ProcessSubvolume(dataSetName datastore.DataSetString,
 	wg.Wait()
 	if op == datastore.GetOp {
 		startTime := time.Now()
-		var buffer bytes.Buffer
-		enc := msgpack.NewEncoder(&buffer)
-		err = enc.Encode(struct {
-			DataSetName string
-			Offset      dvid.VoxelCoord
-			Size        dvid.Point3d
-			//			Data        []byte
-		}{
-			string(dataSetName),
-			subvol.Origin(),
-			subvol.Size(),
-			//			[]byte(data),
-		})
-		if err != nil {
-			return
+		encodedVol = &server.Subvolume{
+			Dataset: proto.String(string(dataSetName)),
+			Offset: &server.Point3D{
+				X: proto.Int32(subvol.Origin()[0]),
+				Y: proto.Int32(subvol.Origin()[1]),
+				Z: proto.Int32(subvol.Origin()[2]),
+			},
+			Size: &server.Point3D{
+				X: proto.Int32(subvol.Size()[0]),
+				Y: proto.Int32(subvol.Size()[1]),
+				Z: proto.Int32(subvol.Size()[2]),
+			},
+			Data: []byte(data),
 		}
-		encodedVol = dvid.MsgPackData(buffer.Bytes())
-		dvid.ElapsedTime(dvid.Normal, startTime, "Encoded %s in %d bytes", subvol,
-			len(encodedVol))
+		dvid.ElapsedTime(dvid.Normal, startTime, "Retrieved %s", subvol)
 	}
 	return
 }
@@ -402,15 +398,25 @@ func (dtype *Datatype) DoHTTP(w http.ResponseWriter, r *http.Request,
 			return err
 		}
 		if op == datastore.GetOp {
-			data, err := dtype.ProcessSubvolume(dataSetName, vs, op, subvol, nil)
+			pb, err := dtype.ProcessSubvolume(dataSetName, vs, op, subvol, nil)
 			if err != nil {
 				return err
 			}
-			dvid.Fmt(dvid.Normal, "MessagePack data: %d bytes\n", len(data))
-			err = data.WriteHTTP(w)
+			data, err := proto.Marshal(pb)
 			if err != nil {
 				return err
 			}
+			w.Header().Set("Content-type", "application/x-protobuf")
+			n, err := w.Write(data)
+			if err != nil {
+				return err
+			}
+			dvid.Fmt(dvid.Normal, "Wrote to client protobuf data: %d bytes\n", n)
+			testSubvol := &server.Subvolume{}
+			err = proto.Unmarshal(data, testSubvol)
+			fmt.Printf("   Orig subvol size: %s\n", subvol.Size())
+			fmt.Printf("Decoded subvol size: %s\n", testSubvol.Size)
+
 		} else {
 			return fmt.Errorf("DVID does not yet support POST of subvolume data.")
 		}
