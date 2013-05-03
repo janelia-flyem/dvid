@@ -88,19 +88,24 @@ else ()
         ${BUILDEM_ENV_STRING} go get github.com/syndtr/goleveldb/leveldb
         DEPENDS     ${golang_NAME} snappy-go
         COMMENT     "Added pure Go implementation of leveldb")
+
+    add_custom_target (goprotobuf
+        ${BUILDEM_ENV_STRING} go get code.google.com/p/goprotobuf/proto
+        DEPENDS     ${golang_NAME}
+        COMMENT    "Add Go protobuf support")
     
     # Build DVID with C++ leveldb library support
     add_custom_target (dvid-exe
         ${BUILDEM_ENV_STRING} ${GO_ENV} ${GO_FLAGS} go build -o ${BUILDEM_BIN_DIR}/dvid -v dvid.go 
         WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
-        DEPENDS     ${golang_NAME} ${leveldb_NAME} snappy-go nrsc uuid levigo
+        DEPENDS     ${golang_NAME} ${leveldb_NAME} snappy-go nrsc uuid levigo goprotobuf
         COMMENT     "Compiled and installed dvid executable.")
 
     # Build DVID with pure Go leveldb implementation
     add_custom_target (dvid-go-exe
         ${BUILDEM_ENV_STRING} ${GO_ENV} go build -o ${BUILDEM_BIN_DIR}/dvid-go -v -tags 'purego' dvid.go 
         WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
-        DEPENDS     ${golang_NAME} snappy-go nrsc uuid goleveldb
+        DEPENDS     ${golang_NAME} snappy-go nrsc uuid goleveldb goprotobuf
         COMMENT     "Compiled and installed dvid pure Go executable, dvid-go.")
 
    # Embed web client into exe
