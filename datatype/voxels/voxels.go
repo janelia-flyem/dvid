@@ -179,6 +179,8 @@ func (dtype *Datatype) ProcessSubvolume(dataSetName datastore.DataSetString,
 	vs *datastore.VersionService, op datastore.OpType, subvol *dvid.Subvolume,
 	inputImg image.Image) (encodedVol *server.Subvolume, err error) {
 
+	startTime := time.Now()
+
 	// Setup the data buffer
 	bytesPerVoxel := dtype.BytesPerVoxel * dtype.NumChannels
 	numBytes := bytesPerVoxel * subvol.NumVoxels()
@@ -214,22 +216,19 @@ func (dtype *Datatype) ProcessSubvolume(dataSetName datastore.DataSetString,
 	// Wait for all map block processing.
 	wg.Wait()
 	if op == datastore.GetOp {
-		startTime := time.Now()
+		dvid.PrintNonZero("ProcessSubvolume()", []byte(data))
 		encodedVol = &server.Subvolume{
 			Dataset: proto.String(string(dataSetName)),
-			Offset: &server.Point3D{
-				X: proto.Int32(subvol.Origin()[0]),
-				Y: proto.Int32(subvol.Origin()[1]),
-				Z: proto.Int32(subvol.Origin()[2]),
-			},
-			Size: &server.Point3D{
-				X: proto.Int32(subvol.Size()[0]),
-				Y: proto.Int32(subvol.Size()[1]),
-				Z: proto.Int32(subvol.Size()[2]),
-			},
-			Data: []byte(data),
+			OffsetX: proto.Int32(subvol.Origin()[0]),
+			OffsetY: proto.Int32(subvol.Origin()[1]),
+			OffsetZ: proto.Int32(subvol.Origin()[2]),
+			SizeX:   proto.Uint32(uint32(subvol.Size()[0])),
+			SizeY:   proto.Uint32(uint32(subvol.Size()[1])),
+			SizeZ:   proto.Uint32(uint32(subvol.Size()[2])),
+			Data:    []byte(data),
 		}
-		dvid.ElapsedTime(dvid.Normal, startTime, "Retrieved %s", subvol)
+		dvid.ElapsedTime(dvid.Normal, startTime, "Retrieved %s.  Data has %d bytes",
+			subvol, len(data))
 	}
 	return
 }
@@ -407,16 +406,10 @@ func (dtype *Datatype) DoHTTP(w http.ResponseWriter, r *http.Request,
 				return err
 			}
 			w.Header().Set("Content-type", "application/x-protobuf")
-			n, err := w.Write(data)
+			_, err = w.Write(data)
 			if err != nil {
 				return err
 			}
-			dvid.Fmt(dvid.Normal, "Wrote to client protobuf data: %d bytes\n", n)
-			testSubvol := &server.Subvolume{}
-			err = proto.Unmarshal(data, testSubvol)
-			fmt.Printf("   Orig subvol size: %s\n", subvol.Size())
-			fmt.Printf("Decoded subvol size: %s\n", testSubvol.Size)
-
 		} else {
 			return fmt.Errorf("DVID does not yet support POST of subvolume data.")
 		}
@@ -622,8 +615,8 @@ func (v *Voxels) BlockHandler(req *datastore.BlockRequest) {
 
 	// Compute index into the block byte buffer, blockI
 	block := []uint8(req.Block)
-	blockX := blockSize[0] * bytesPerVoxel
-	blockXY := blockSize[1] * blockX
+	blockNumX := blockSize[0] * bytesPerVoxel
+	blockNumXY := blockSize[1] * blockNumX
 
 	// Adjust the DVID volume voxel coordinates for the data so that (0,0,0)
 	// is where we expect this slice/subvolume's data to begin.
@@ -635,6 +628,7 @@ func (v *Voxels) BlockHandler(req *datastore.BlockRequest) {
 
 	data := req.DataStruct.Data()
 
+	//fmt.Printf("Data %s -> %s, Orig %s -> %s\n", beg, end, begVolCoord, endVolCoord)
 	//dvid.Fmt(dvid.Debug, "Block start: %s\n", blockBeg)
 	//dvid.Fmt(dvid.Debug, "Block buffer size: %d bytes\n", len(block))
 	//dvid.Fmt(dvid.Debug, "Data buffer size: %d bytes\n", len(data))
@@ -643,7 +637,7 @@ func (v *Voxels) BlockHandler(req *datastore.BlockRequest) {
 	case dvid.XY:
 		//fmt.Printf("XY Block: %s->%s, blockXY %d, blockX %d, blockBeg %s\n",
 		//	begVolCoord, endVolCoord, blockXY, blockX, blockBeg)
-		blockI := blockBeg[2]*blockXY + blockBeg[1]*blockX + blockBeg[0]*bytesPerVoxel
+		blockI := blockBeg[2]*blockNumXY + blockBeg[1]*blockNumX + blockBeg[0]*bytesPerVoxel
 		dataI := beg[1]*v.Stride() + beg[0]*bytesPerVoxel
 		for y := beg[1]; y <= end[1]; y++ {
 			run := end[0] - beg[0] + 1
@@ -658,7 +652,7 @@ func (v *Voxels) BlockHandler(req *datastore.BlockRequest) {
 			dataI += v.Stride()
 		}
 	case dvid.XZ:
-		blockI := blockBeg[2]*blockXY + blockBeg[1]*blockX + blockBeg[0]*bytesPerVoxel
+		blockI := blockBeg[2]*blockNumXY + blockBeg[1]*blockNumX + blockBeg[0]*bytesPerVoxel
 		dataI := beg[2]*v.Stride() + beg[0]*bytesPerVoxel
 		for y := beg[2]; y <= end[2]; y++ {
 			run := end[0] - beg[0] + 1
@@ -676,7 +670,7 @@ func (v *Voxels) BlockHandler(req *datastore.BlockRequest) {
 		bx, bz := blockBeg[0], blockBeg[2]
 		for y := beg[2]; y <= end[2]; y++ {
 			dataI := y*v.Stride() + beg[1]*bytesPerVoxel
-			blockI := bz*blockXY + blockBeg[1]*blockX + bx*bytesPerVoxel
+			blockI := bz*blockNumXY + blockBeg[1]*blockNumX + bx*bytesPerVoxel
 			for x := beg[1]; x <= end[1]; x++ {
 				switch req.Op {
 				case datastore.GetOp:
@@ -684,12 +678,32 @@ func (v *Voxels) BlockHandler(req *datastore.BlockRequest) {
 				case datastore.PutOp:
 					copy(block[blockI:blockI+bytesPerVoxel], data[dataI:dataI+bytesPerVoxel])
 				}
-				blockI += blockX
+				blockI += blockNumX
 				dataI += bytesPerVoxel
 			}
 			bz++
 		}
 	case dvid.Vol:
+		dataNumX := req.DataStruct.Width() * bytesPerVoxel
+		dataNumXY := req.DataStruct.Height() * dataNumX
+		blockZ := blockBeg[2]
+		for dataZ := beg[2]; dataZ <= end[2]; dataZ++ {
+			blockY := blockBeg[1]
+			for dataY := beg[1]; dataY <= end[1]; dataY++ {
+				blockI := blockZ*blockNumXY + blockY*blockNumX + blockBeg[0]*bytesPerVoxel
+				dataI := dataZ*dataNumXY + dataY*dataNumX + beg[0]*bytesPerVoxel
+				run := end[0] - beg[0] + 1
+				bytes := run * bytesPerVoxel
+				switch req.Op {
+				case datastore.GetOp:
+					copy(data[dataI:dataI+bytes], block[blockI:blockI+bytes])
+				case datastore.PutOp:
+					copy(block[blockI:blockI+bytes], data[dataI:dataI+bytes])
+				}
+				blockY++
+			}
+			blockZ++
+		}
 
 	default:
 	}

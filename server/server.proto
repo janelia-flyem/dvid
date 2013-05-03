@@ -1,12 +1,10 @@
-message Point3d {
-    required int32 x = 1;
-    required int32 y = 2;
-    required int32 z = 3;
-}
-
 message Subvolume {
     required string dataset = 1;
-    required Point3d offset = 2;
-    required Point3d size = 3;
-    optional bytes data = 4;
+    required int32 offsetX = 2;
+    required int32 offsetY = 3;
+    required int32 offsetZ = 4;
+    required uint32 sizeX = 5;
+    required uint32 sizeY = 6;
+    required uint32 sizeZ = 7;
+    optional bytes data = 8;
 }
