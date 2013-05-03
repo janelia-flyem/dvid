@@ -42,6 +42,19 @@ if (NOT EXISTS ${BUILDEM_REPO_DIR}/python.cmake)
 else ()
     ###############################################################################
 
+    # Download the DVID webclient from its separate repository
+    message ("Installing buildem repo...")
+    ExternalProject_Add(dvid-webclient
+        PREFIX ${BUILDEM_DIR}
+        GIT_REPOSITORY http://github.com/janelia-flyem/dvid-webclient.git
+        UPDATE_COMMAND ""
+        PATCH_COMMAND ""
+        CONFIGURE_COMMAND "" 
+        BUILD_COMMAND ""
+        INSTALL_COMMAND ""
+    )
+    set (WEBCLIENT_DIR ${BUILDEM_DIR}/src/dvid-webclient)
+
     # Use modules from the downloaded buildem
     set (CMAKE_MODULE_PATH ${BUILDEM_REPO_DIR})
     message("Using cmake modules from ${BUILDEM_REPO_DIR}")
@@ -93,9 +106,9 @@ else ()
    # Embed web client into exe
    set (NRSC_SCRIPT "$ENV{GOPATH}/src/bitbucket.org/tebeka/nrsc/nrsc")
    add_custom_target (dvid
-        ${NRSC_SCRIPT} ${BUILDEM_BIN_DIR}/dvid ${CMAKE_CURRENT_SOURCE_DIR}/webclient
-        DEPENDS dvid-exe
-        COMMENT     "Added files in ${CMAKE_CURRENT_SOURCE_DIR}/webclient to dvid executable")
+        ${NRSC_SCRIPT} ${BUILDEM_BIN_DIR}/dvid ${WEBCLIENT_DIR}
+        DEPENDS dvid-exe dvid-webclient
+        COMMENT     "Added webclient in ${WEBCLIENT_DIR} to dvid executable")
    
    add_custom_target (dvid-go
         ${NRSC_SCRIPT} ${BUILDEM_BIN_DIR}/dvid-go ${CMAKE_CURRENT_SOURCE_DIR}/webclient
