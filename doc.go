@@ -3,6 +3,7 @@ DVID is a distributed, versioned image datastore that uses leveldb for data stor
 a Go language layer that provides http and command-line access.
 
 	NOTE: This system is still in development and not ready for use.
+	Significant changes are still being made to interfaces.
 
 Documentation can be found nicely formatted at http://godoc.org/github.com/janelia-flyem/dvid
 

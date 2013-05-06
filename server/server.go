@@ -1,13 +1,16 @@
 package server
 
 import (
+	"compress/gzip"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
 	"net/rpc"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
@@ -30,16 +33,24 @@ const (
 	ErrorLogFilename = "dvid-errors.log"
 )
 
-// runningService is a global variable that holds the currently running
-// datastore service.  One DVID process can handle only one open DVID
-// datastore.  (Leveldb is an embedded library with one process access.)
-var runningService = Service{
-	WebAddress: DefaultWebAddress,
-	RpcAddress: DefaultRpcAddress,
-}
+var (
+	// runningService is a global variable that holds the currently running
+	// datastore service.  One DVID process can handle only one open DVID
+	// datastore.  (Leveldb is an embedded library with one process access.)
+	runningService = Service{
+		WebAddress: DefaultWebAddress,
+		RpcAddress: DefaultRpcAddress,
+	}
 
-// Timeout in seconds for waiting to open a datastore for exclusive access.
-var TimeoutSecs int = 0
+	// Timeout in seconds for waiting to open a datastore for exclusive access.
+	TimeoutSecs int = 0
+
+	// GzipAPI turns on gzip compression on REST API responses.
+	// For high bandwidth networks or local use, it is better to leave gzip
+	// off because delay due to compression is frequently higher than gains
+	// from decreased response size.
+	GzipAPI = false
+)
 
 // Service holds information on the servers attached to a DVID datastore.
 type Service struct {
@@ -198,7 +209,12 @@ func (service *Service) ServeHttp(address, clientDir string) {
 	}
 
 	// Handle Level 2 REST API.
-	http.HandleFunc(RestApiPath, apiHandler)
+	if GzipAPI {
+		fmt.Println("HTTP server will return gzip values if permitted by browser.")
+		http.HandleFunc(RestApiPath, makeGzipHandler(apiHandler))
+	} else {
+		http.HandleFunc(RestApiPath, apiHandler)
+	}
 
 	// Handle static files through serving embedded files
 	// via nrsc or loading files from a specified web client directory.
@@ -238,4 +254,29 @@ func (service *Service) ServeRpc(address string) error {
 	}
 	http.Serve(listener, nil)
 	return nil
+}
+
+// Nod to Andrew Gerrand for simple gzip solution:
+// See https://groups.google.com/forum/m/?fromgroups#!topic/golang-nuts/eVnTcMwNVjM
+type gzipResponseWriter struct {
+	io.Writer
+	http.ResponseWriter
+}
+
+func (w gzipResponseWriter) Write(b []byte) (int, error) {
+	return w.Writer.Write(b)
+}
+
+func makeGzipHandler(fn http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			fn(w, r)
+			return
+		}
+		dvid.Log(dvid.Debug, "Responding to request with gzip\n")
+		w.Header().Set("Content-Encoding", "gzip")
+		gz := gzip.NewWriter(w)
+		defer gz.Close()
+		fn(gzipResponseWriter{Writer: gz, ResponseWriter: w}, r)
+	}
 }

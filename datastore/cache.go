@@ -144,7 +144,8 @@ func loadMonitor() {
 
 // ReserveBlockHandlers makes sure we have block handler goroutines for each
 // data set.  Blocks are routed to the same handler each time, so concurrent
-// access to a block by multiple requests funneled sequentially into a handler.
+// access to a block by multiple requests are funneled sequentially into a 
+// channel reserved for that block's handler.
 func ReserveBlockHandlers(name DataSetString, t TypeService) {
 	loadAccess.Lock()
 	loadLastSec[name] = loadStruct{}
@@ -253,7 +254,7 @@ func (vs *VersionService) MapBlocks(op OpType, data DataStruct, wg *sync.WaitGro
 				if op == PutOp {
 					value = make(keyvalue.Value, data.BlockBytes(), data.BlockBytes())
 				} else {
-					continue // If have no value, simple use zero value of slice/subvolume.
+					continue // If have no value, simply use zero value of slice/subvolume.
 				}
 			}
 

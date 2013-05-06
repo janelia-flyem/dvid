@@ -15,13 +15,6 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 )
 
-func badRequest(w http.ResponseWriter, r *http.Request, message string) {
-	errorMsg := fmt.Sprintf("ERROR using REST API: %s (%s).", message, r.URL.Path)
-	errorMsg += "  Use 'dvid help' to get proper API request format.\n"
-	dvid.Error(errorMsg)
-	http.Error(w, errorMsg, http.StatusBadRequest)
-}
-
 const webClientUnavailableMessage = `
 DVID Web Client Unavailable!  To make the web client available, you have two choices:
 
@@ -32,6 +25,13 @@ DVID Web Client Unavailable!  To make the web client available, you have two cho
    option to dvid.
    Example: dvid -webclient=/path/to/html/files serve dir=/path/to/db"
 `
+
+func badRequest(w http.ResponseWriter, r *http.Request, message string) {
+	errorMsg := fmt.Sprintf("ERROR using REST API: %s (%s).", message, r.URL.Path)
+	errorMsg += "  Use 'dvid help' to get proper API request format.\n"
+	dvid.Error(errorMsg)
+	http.Error(w, errorMsg, http.StatusBadRequest)
+}
 
 // Index file redirection.
 func indexHandler(w http.ResponseWriter, r *http.Request) {

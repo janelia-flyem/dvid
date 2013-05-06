@@ -24,6 +24,9 @@ var (
 	// Display usage if true.
 	showHelp = flag.Bool("help", false, "")
 
+	// HTTP REST API returns gzip data by default
+	gzip = flag.Bool("gzip", false, "")
+
 	// List the supported data types if true.
 	showTypes = flag.Bool("types", false, "")
 
@@ -71,6 +74,7 @@ Usage: dvid [options] <command>
       -http       =string   Address for HTTP communication.
       -cpuprofile =string   Write CPU profile to this file.
       -memprofile =string   Write memory profile to this file on ctrl-C.
+      -gzip       (flag)    Turn gzip compression on for REST API.
       -types      (flag)    Show compiled DVID data types
       -debug      (flag)    Run in debug mode.  Verbose.
       -benchmark  (flag)    Run in benchmarking mode. 
@@ -88,7 +92,7 @@ Commands that can be performed without a running server:
 
 const helpServerMessage = `
 For further information, launch the DVID server (enter "dvid serve"), then use
-a web browser to visit the DVID web server ("localhost:4000" by default).
+a web browser to visit the DVID web server ("%s" by default).
 `
 
 var usage = func() {
@@ -98,7 +102,7 @@ var usage = func() {
 	// Print server DVID help if available
 	err := DoCommand(dvid.Command([]string{"help"}))
 	if err != nil {
-		fmt.Println(helpServerMessage)
+		fmt.Printf(helpServerMessage, server.DefaultWebAddress)
 	}
 }
 
@@ -117,6 +121,9 @@ func main() {
 	}
 	if *timeout != 0 {
 		server.TimeoutSecs = *timeout
+	}
+	if *gzip {
+		server.GzipAPI = true
 	}
 
 	if *showHelp {
@@ -217,7 +224,6 @@ func DoCommand(cmd dvid.Command) error {
 func DoInit(cmd dvid.Command) error {
 	configFile, _ := cmd.Parameter(dvid.KeyConfigFile)
 	datastoreDir := cmd.DatastoreDir()
-
 	create := true
 	uuid := datastore.Init(datastoreDir, configFile, create)
 	fmt.Println("Root node UUID:", uuid)
@@ -226,9 +232,7 @@ func DoInit(cmd dvid.Command) error {
 
 // DoServe opens a datastore then creates both web and rpc servers for the datastore
 func DoServe(cmd dvid.Command) error {
-
 	datastoreDir := cmd.DatastoreDir()
-
 	if err := server.Serve(datastoreDir, *httpAddress, *clientDir, *rpcAddress); err != nil {
 		return err
 	}
