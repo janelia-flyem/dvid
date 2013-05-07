@@ -429,12 +429,12 @@ func (s *Service) GetHeadUuid() UUID {
 
 // TypeInfo contains data type information reformatted for easy consumption by clients.
 type TypeInfo struct {
-	Name            string
-	Url             string
-	Version         string
-	BlockSize       dvid.Point3d
-	SpatialIndexing string
-	Help            string
+	Name        string
+	Url         string
+	Version     string
+	BlockSize   dvid.Point3d
+	IndexScheme string
+	Help        string
 }
 
 // ConfigJSON returns configuration data in JSON format.
@@ -442,12 +442,12 @@ func (s *Service) ConfigJSON() (jsonStr string, err error) {
 	datasets := make(map[DataSetString]TypeInfo)
 	for name, dtype := range s.dataNames {
 		datasets[name] = TypeInfo{
-			Name:            dtype.TypeName(),
-			Url:             string(dtype.TypeUrl()),
-			Version:         dtype.TypeVersion(),
-			BlockSize:       dtype.BlockSize(),
-			SpatialIndexing: dtype.SpatialIndexing().String(),
-			Help:            dtype.Help(),
+			Name:        dtype.TypeName(),
+			Url:         string(dtype.TypeUrl()),
+			Version:     dtype.TypeVersion(),
+			BlockSize:   dtype.BlockSize(),
+			IndexScheme: dtype.IndexScheme().String(),
+			Help:        dtype.Help(),
 		}
 	}
 	data := struct {

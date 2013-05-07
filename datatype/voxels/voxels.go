@@ -129,7 +129,7 @@ func init() {
 		Datatype: datastore.Datatype{
 			DatatypeID:  datastore.MakeDatatypeID("voxels", RepoUrl, Version),
 			BlockMax:    DefaultBlockMax,
-			Indexing:    datastore.SIndexZYX,
+			Indexing:    datastore.SchemeIndexZYX,
 			IsolateData: true,
 		},
 		NumChannels:   1,
@@ -596,7 +596,7 @@ func (v *Voxels) BlockHandler(req *datastore.BlockRequest) {
 
 	// Compute the bounding voxel coordinates for this block.
 	blockSize := v.BlockSize()
-	minBlockVoxel := req.SpatialKey.OffsetToBlock(v)
+	minBlockVoxel := req.IndexKey.OffsetToBlock(v)
 	maxBlockVoxel := minBlockVoxel.AddSize(blockSize)
 
 	// Compute the bound voxel coordinates for the data slice/subvolume and adjust

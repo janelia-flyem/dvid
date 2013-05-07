@@ -59,6 +59,9 @@ type OpResult string
 // larger structure (DataStruct) into Blocks, process each Block separately
 // by a handler assigned for each spatial index, and then let the requestor 
 // know when all the processing is done via a sync.WaitGroup.
+//
+// TODO -- Generalize "Op" since we don't care what Op is as long as the type
+// can do it.  So want pass along from type's parsing of request to block handler.
 type BlockRequest struct {
 	// The larger data structure that we're going to fill in using blocks.
 	// This may be a slice and thinner than the blocks it intersects.
@@ -68,9 +71,9 @@ type BlockRequest struct {
 	Block keyvalue.Value
 
 	// Parameters for this particular block
-	Op         OpType
-	SpatialKey SpatialIndex
-	BlockKey   keyvalue.Key
+	Op       OpType
+	IndexKey Index
+	BlockKey keyvalue.Key
 
 	// Let's us notify requestor when all blocks are done.
 	Wait *sync.WaitGroup
@@ -170,7 +173,7 @@ func ReserveBlockHandlers(name DataSetString, t TypeService) {
 					if block == nil {
 						log.Fatalln("Received nil block in block handler!")
 					}
-					//dvid.Fmt(dvid.Debug, "Running handler on block %x...\n", block.SpatialKey)
+					//dvid.Fmt(dvid.Debug, "Running handler on block %x...\n", block.IndexKey)
 					block.DataStruct.BlockHandler(block)
 					doneChannel <- name
 				}
@@ -192,98 +195,4 @@ func BlockLoadJSON() (jsonStr string, err error) {
 	}
 	jsonStr = string(m)
 	return
-}
-
-// MapBlocks breaks down a DataStruct into a sequence of blocks that can be
-// efficiently read from the key-value database.  It then passes those blocks
-// to datatype-specific block handlers that read from preallocated channels.
-//
-// Phase 1: Time leveldb built-in LRU cache and write buffer. (current)
-// Phase 2: Minimize leveldb built-in LRU cache and use DVID LRU cache with
-//   periodic and on-demand writes. 
-// TODO -- Examine possible interleaving of block-level requests across MapBlocks()
-//   calls and its impact on GET requests fulfilled while some blocks are still being
-//   modified.
-func (vs *VersionService) MapBlocks(op OpType, data DataStruct, wg *sync.WaitGroup) error {
-
-	// Get components of the block key
-	uuidBytes := vs.UuidBytes()
-	datatypeBytes, err := vs.DataIndexBytes(data.DataSetName())
-	if err != nil {
-		return err
-	}
-
-	// Make sure we have Block Handlers for this data type.
-	channels, found := HandlerChannels[data.DataSetName()]
-	if !found {
-		return fmt.Errorf("Error in reserving block handlers in MapBlocks() for %s!",
-			data.DataSetName())
-	}
-
-	// Traverse blocks, get key/values if not in cache, and put block in queue for handler.
-	ro := keyvalue.NewReadOptions()
-	db_it, err := vs.kvdb.NewIterator(ro)
-	defer db_it.Close()
-	if err != nil {
-		return err
-	}
-	spatial_it := NewSpatialIterator(data)
-	start := true
-
-	//dvid.Fmt(dvid.Debug, "Mapping blocks for %s\n", data)
-	DiskAccess.Lock()
-	switch op {
-	case PutOp, GetOp:
-		for {
-			spatialBytes := spatial_it()
-			if spatialBytes == nil {
-				break
-			}
-			blockKey := BlockKey(uuidBytes, spatialBytes, datatypeBytes, data.IsolatedKeys())
-
-			// Pull from the datastore
-			if start || (db_it.Valid() && string(db_it.Key()) < string(blockKey)) {
-				db_it.Seek(blockKey)
-				start = false
-			}
-			var value keyvalue.Value
-			if db_it.Valid() && string(db_it.Key()) == string(blockKey) {
-				value = db_it.Value()
-				db_it.Next()
-			} else {
-				if op == PutOp {
-					value = make(keyvalue.Value, data.BlockBytes(), data.BlockBytes())
-				} else {
-					continue // If have no value, simply use zero value of slice/subvolume.
-				}
-			}
-
-			// Initialize the block request
-			req := &BlockRequest{
-				DataStruct: data,
-				Block:      value,
-				Op:         op,
-				SpatialKey: SpatialIndex(spatialBytes),
-				BlockKey:   blockKey,
-				Wait:       wg,
-				DB:         vs.kvdb,
-				//WriteBatch: writeBatch,
-			}
-
-			// Try to spread sequential block keys among different block handlers to get 
-			// most out of our concurrent processing.
-			if wg != nil {
-				wg.Add(1)
-			}
-			channelNum := req.SpatialKey.Hash(data, len(channels))
-			//dvid.Fmt(dvid.Debug, "Sending %s block %s request %s down channel %d\n",
-			//	op, SpatialIndex(spatialBytes).BlockCoord(data), data, channelNum)
-			channels[channelNum] <- req
-			requestChannel <- data.DataSetName()
-		}
-	default:
-		return fmt.Errorf("Illegal operation (%d) asked for in MapBlocks()", op)
-	}
-	DiskAccess.Unlock()
-	return nil
 }

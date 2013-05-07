@@ -27,7 +27,7 @@ func init() {
 			Datatype: datastore.Datatype{
 				DatatypeID:  datastore.MakeDatatypeID("rgba8", RepoUrl, Version),
 				BlockMax:    DefaultBlockMax,
-				Indexing:    datastore.SIndexZYX,
+				Indexing:    datastore.SchemeIndexZYX,
 				IsolateData: true,
 			},
 			NumChannels:   4,
