@@ -95,7 +95,8 @@ func handleDataRequest(w http.ResponseWriter, r *http.Request) {
 // Handler for API commands.
 // We assume all DVID API commands target the URLs /api/<command or data set name>/... 
 // Built-in commands are:
-//    
+// 
+//    about -- Return "about" data of components and versions.   
 //    data  -- Datastore volume and data set configuration.
 //    versions -- Datastore versions DAG including UUIDs for each node.
 //    load  -- Load (# of pending block requests) on block handlers for each data set.
@@ -113,6 +114,14 @@ func apiHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Handle the requests
 	switch parts[0] {
+	case "about":
+		jsonStr, err := runningService.AboutJSON()
+		if err != nil {
+			badRequest(w, r, err.Error())
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, jsonStr)
 	case "cache":
 		fmt.Fprintf(w, "<p>TODO -- return LRU Cache statistics</p>\n")
 	case "data":

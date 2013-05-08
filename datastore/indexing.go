@@ -63,8 +63,7 @@ func MakeIndex(t TypeService, coord dvid.BlockCoord) Index {
 		binary.LittleEndian.PutUint32(index[4:8], uint32(coord[1]))
 		binary.LittleEndian.PutUint32(index[8:12], uint32(coord[0]))
 	default:
-		panic(fmt.Sprintf("MakeIndex: Unsupported spatial indexing scheme (%d)!",
-			t.IndexScheme()))
+		panic(fmt.Sprintf("MakeIndex: Unsupported indexing scheme (%d)!", t.IndexScheme()))
 	}
 	return Index(index)
 }
@@ -152,7 +151,7 @@ func NewIndexIterator(data DataStruct) IndexIterator {
 			return indexKey
 		}
 	default:
-		panic(fmt.Sprintf("Unimplemented Iterator called for spatial index scheme: %s",
+		panic(fmt.Sprintf("Unimplemented IndexIterator called for index scheme: %s",
 			data.IndexScheme()))
 	}
 	return nil

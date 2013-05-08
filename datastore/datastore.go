@@ -190,6 +190,23 @@ func (config *runtimeConfig) About() string {
 	return text
 }
 
+// AboutJSON returns the components and versions of DVID software.
+func (config *runtimeConfig) AboutJSON() (jsonStr string, err error) {
+	data := map[string]string{
+		"DVID datastore": Version,
+		"Leveldb":        keyvalue.Version,
+	}
+	for _, datatype := range config.dataNames {
+		data[datatype.TypeName()] = datatype.TypeVersion()
+	}
+	m, err := json.Marshal(data)
+	if err != nil {
+		return
+	}
+	jsonStr = string(m)
+	return
+}
+
 // promptConfig prompts the user to enter configuration data.
 func promptConfig() (config *initConfig) {
 	config = new(initConfig)

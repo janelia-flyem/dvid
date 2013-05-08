@@ -39,6 +39,7 @@ func OpenLeveldb(path string, create bool, kvOpts KeyValueOptions) (db KeyValueD
 
 	goOpts.Options.SetCreateIfMissing(create)
 	goOpts.Options.SetErrorIfExists(create)
+	goOpts.Options.SetCompression(levigo.SnappyCompression)
 
 	var leveldb_db *levigo.DB
 	leveldb_db, err = levigo.Open(path, goOpts.Options)
