@@ -603,8 +603,8 @@ func (v *Voxels) BlockHandler(req *datastore.BlockRequest) {
 	// to our block bounds.
 	minDataVoxel := v.Origin()
 	maxDataVoxel := v.EndVoxel()
-	begVolCoord := minDataVoxel.BoundMin(minBlockVoxel)
-	endVolCoord := maxDataVoxel.BoundMax(maxBlockVoxel)
+	begVolCoord := minDataVoxel.Max(minBlockVoxel)
+	endVolCoord := maxDataVoxel.Min(maxBlockVoxel)
 
 	// Calculate the strides
 	dtype := v.TypeService.(*Datatype)
@@ -655,6 +655,7 @@ func (v *Voxels) BlockHandler(req *datastore.BlockRequest) {
 		blockI := blockBeg[2]*blockNumXY + blockBeg[1]*blockNumX + blockBeg[0]*bytesPerVoxel
 		dataI := beg[2]*v.Stride() + beg[0]*bytesPerVoxel
 		for y := beg[2]; y <= end[2]; y++ {
+			//fmt.Printf("XZ> y(%d) -> BlockI: %d, dataI: %d\n", y, blockI, dataI)
 			run := end[0] - beg[0] + 1
 			bytes := run * bytesPerVoxel
 			switch req.Op {

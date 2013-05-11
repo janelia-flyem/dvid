@@ -66,15 +66,12 @@ func (c VoxelCoord) Div(x VoxelCoord) (result VoxelCoord) {
 	return
 }
 
+// Distance returns the integer distance (rounding down) between two voxel coordinates.
 func (c VoxelCoord) Distance(x VoxelCoord) int32 {
 	dx := c[0] - x[0]
 	dy := c[1] - x[1]
 	dz := c[2] - x[2]
 	return int32(math.Sqrt(float64(dx*dx + dy*dy + dz*dz)))
-}
-
-func (c VoxelCoord) Mag() int {
-	return int(c[0] * c[1] * c[2])
 }
 
 func (c VoxelCoord) String() string {
@@ -83,7 +80,7 @@ func (c VoxelCoord) String() string {
 
 // BoundMin returns a voxel coordinate where each of its elements
 // are not smaller than the corresponding element in x.
-func (c VoxelCoord) BoundMin(x VoxelCoord) (result VoxelCoord) {
+func (c VoxelCoord) Max(x VoxelCoord) (result VoxelCoord) {
 	result = c
 	if c[0] < x[0] {
 		result[0] = x[0]
@@ -99,7 +96,7 @@ func (c VoxelCoord) BoundMin(x VoxelCoord) (result VoxelCoord) {
 
 // BoundMax returns a voxel coordinate where each of its elements
 // are not greater than the corresponding element in x.
-func (c VoxelCoord) BoundMax(x VoxelCoord) (result VoxelCoord) {
+func (c VoxelCoord) Min(x VoxelCoord) (result VoxelCoord) {
 	result = c
 	if c[0] > x[0] {
 		result[0] = x[0]
@@ -183,7 +180,7 @@ func (c BlockCoord) String() string {
 
 // BoundMin returns a block coordinate where each of its elements
 // are not smaller than the corresponding element in x.
-func (c BlockCoord) BoundMin(x BlockCoord) (result BlockCoord) {
+func (c BlockCoord) Max(x BlockCoord) (result BlockCoord) {
 	result = c
 	if c[0] < x[0] {
 		result[0] = x[0]
@@ -199,7 +196,7 @@ func (c BlockCoord) BoundMin(x BlockCoord) (result BlockCoord) {
 
 // BoundMax returns a block coordinate where each of its elements
 // are not greater than the corresponding element in x.
-func (c BlockCoord) BoundMax(x BlockCoord) (result BlockCoord) {
+func (c BlockCoord) Min(x BlockCoord) (result BlockCoord) {
 	result = c
 	if c[0] > x[0] {
 		result[0] = x[0]

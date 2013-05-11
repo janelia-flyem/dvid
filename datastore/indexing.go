@@ -54,7 +54,7 @@ func (scheme IndexScheme) String() string {
 
 // MakeIndex returns a string encoding a subdivision depending on the
 // index scheme of the data type.
-func MakeIndex(t TypeService, coord dvid.BlockCoord) Index {
+func MakeIndex(t TypeService, coord dvid.BlockCoord) []byte {
 	// Create buffer for index
 	index := make([]byte, 12, 12)
 	switch t.IndexScheme() {
@@ -65,7 +65,7 @@ func MakeIndex(t TypeService, coord dvid.BlockCoord) Index {
 	default:
 		panic(fmt.Sprintf("MakeIndex: Unsupported indexing scheme (%d)!", t.IndexScheme()))
 	}
-	return Index(index)
+	return index
 }
 
 // BlockCoord decodes a spatial index into a block coordinate
@@ -135,10 +135,7 @@ func NewIndexIterator(data DataStruct) IndexIterator {
 			if z > endBlockCoord[2] {
 				return nil
 			}
-			indexKey := make([]byte, 12, 12)
-			binary.LittleEndian.PutUint32(indexKey[:4], uint32(z))
-			binary.LittleEndian.PutUint32(indexKey[4:8], uint32(y))
-			binary.LittleEndian.PutUint32(indexKey[8:], uint32(x))
+			indexKey := MakeIndex(data, dvid.BlockCoord{x, y, z})
 			x++
 			if x > endBlockCoord[0] {
 				x = startBlockCoord[0]

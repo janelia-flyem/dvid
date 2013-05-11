@@ -257,7 +257,7 @@ func (vs *VersionService) MapBlocks(op OpType, data DataStruct, wg *sync.WaitGro
 		return err
 	}
 	index_it := NewIndexIterator(data)
-	start := true
+	seek := true
 
 	//dvid.Fmt(dvid.Debug, "Mapping blocks for %s\n", data)
 	DiskAccess.Lock()
@@ -269,20 +269,26 @@ func (vs *VersionService) MapBlocks(op OpType, data DataStruct, wg *sync.WaitGro
 				break
 			}
 			blockKey := BlockKey(uuidBytes, indexBytes, datatypeBytes, data.IsolatedKeys())
+			//fmt.Printf("db_it.Key(): %s    blockKey: %s\n", string(db_it.Key()), string(blockKey))
 
 			// Pull from the datastore
-			if start || (db_it.Valid() && string(db_it.Key()) < string(blockKey)) {
+			if seek || db_it.Valid() {
+				//fmt.Printf("Seek\n")
 				db_it.Seek(blockKey)
-				start = false
+				seek = false
 			}
 			var value keyvalue.Value
 			if db_it.Valid() && string(db_it.Key()) == string(blockKey) {
+				//fmt.Printf("Got value\n")
 				value = db_it.Value()
 				db_it.Next()
 			} else {
+				seek = true
 				if op == PutOp {
 					value = make(keyvalue.Value, data.BlockBytes(), data.BlockBytes())
 				} else {
+					dvid.Fmt(dvid.Debug, "Zeroing out %s block %s since no key/value found\n",
+						op, Index(indexBytes).BlockCoord(data))
 					continue // If have no value, simply use zero value of slice/subvolume.
 				}
 			}
@@ -306,7 +312,7 @@ func (vs *VersionService) MapBlocks(op OpType, data DataStruct, wg *sync.WaitGro
 			}
 			channelNum := req.IndexKey.Hash(data, len(channels))
 			//dvid.Fmt(dvid.Debug, "Sending %s block %s request %s down channel %d\n",
-			//	op, SpatialIndex(spatialBytes).BlockCoord(data), data, channelNum)
+			//	op, Index(indexBytes).BlockCoord(data), data, channelNum)
 			channels[channelNum] <- req
 			requestChannel <- data.DataSetName()
 		}

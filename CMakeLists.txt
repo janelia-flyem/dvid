@@ -63,40 +63,46 @@ else ()
     include (leveldb)
     include (golang)
 
-    set (GO_FLAGS   CGO_CFLAGS="-I${BUILDEM_INCLUDE_DIR}";CGO_LDFLAGS="-L${BUILDEM_LIB_DIR};-lsnappy")
+    set (CGO_FLAGS   CGO_CFLAGS="-I${BUILDEM_INCLUDE_DIR}";CGO_LDFLAGS="-L${BUILDEM_LIB_DIR};-lsnappy")
+
+    add_custom_target (gocheck
+        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go get ${GO_GET} launchpad.net/gocheck
+        DEPENDS     ${golang_NAME}
+        COMMENT     "Added gocheck for Go testing")
+    
     add_custom_target (snappy-go
-        ${BUILDEM_ENV_STRING} ${GO_FLAGS} go get code.google.com/p/snappy-go/snappy
+        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go get ${GO_GET} code.google.com/p/snappy-go/snappy
         DEPENDS     ${golang_NAME} ${snappy_NAME}
         COMMENT     "Added Go bindings to snappy [code.google.com/p/snappy-go/snappy]")
     
     add_custom_target (nrsc
-        ${BUILDEM_ENV_STRING} go get bitbucket.org/tebeka/nrsc
+        ${BUILDEM_ENV_STRING} go get ${GO_GET} bitbucket.org/tebeka/nrsc
         DEPENDS     ${golang_NAME}
         COMMENT     "Added nrsc tool for adding zip file to go executable")
     
     add_custom_target (uuid
-        ${BUILDEM_ENV_STRING} ${GO_FLAGS} go get code.google.com/p/go-uuid/uuid
+        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go get ${GO_GET} code.google.com/p/go-uuid/uuid
         DEPENDS     ${golang_NAME}
         COMMENT     "Added Go uuid package [code.google.com/p/go-uuid/uuid]")
     
     add_custom_target (levigo
-        ${BUILDEM_ENV_STRING} ${GO_FLAGS} go get github.com/jmhodges/levigo
+        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go get ${GO_GET} github.com/jmhodges/levigo
         DEPENDS     ${golang_NAME} ${leveldb_NAME}
         COMMENT     "Added Go bindings to leveldb [github.com/jmhodges/levigo]")
     
     add_custom_target (goleveldb
-        ${BUILDEM_ENV_STRING} go get github.com/syndtr/goleveldb/leveldb
+        ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/syndtr/goleveldb/leveldb
         DEPENDS     ${golang_NAME} snappy-go
         COMMENT     "Added pure Go implementation of leveldb")
 
     add_custom_target (goprotobuf
-        ${BUILDEM_ENV_STRING} go get code.google.com/p/goprotobuf/proto
+        ${BUILDEM_ENV_STRING} go get ${GO_GET} code.google.com/p/goprotobuf/proto
         DEPENDS     ${golang_NAME}
         COMMENT    "Add Go protobuf support")
     
     # Build DVID with C++ leveldb library support
     add_custom_target (dvid-exe
-        ${BUILDEM_ENV_STRING} ${GO_ENV} ${GO_FLAGS} go build -o ${BUILDEM_BIN_DIR}/dvid -v dvid.go 
+        ${BUILDEM_ENV_STRING} ${GO_ENV} ${CGO_FLAGS} go build -o ${BUILDEM_BIN_DIR}/dvid -v dvid.go 
         WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
         DEPENDS     ${golang_NAME} ${leveldb_NAME} snappy-go nrsc uuid levigo goprotobuf
         COMMENT     "Compiled and installed dvid executable.")

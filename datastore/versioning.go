@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"code.google.com/p/go-uuid/uuid"
-	"github.com/janelia-flyem/dvid/dvid"
 )
 
 // UUID is a 32 character hexidecimal string ("" if invalid) that uniquely identifies
@@ -92,7 +91,6 @@ func (dag *VersionDAG) VersionIdFromString(str string) (id VersionId, err error)
 	var lastMatch VersionId
 	numMatches := 0
 	for uuid, id := range dag.VersionMap {
-		dvid.Fmt(dvid.Debug, "Checking %s against %s\n", str, uuid)
 		if strings.HasPrefix(string(uuid), str) {
 			numMatches++
 			lastMatch = id
