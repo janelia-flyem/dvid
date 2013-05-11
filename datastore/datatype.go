@@ -269,11 +269,9 @@ func (vs *VersionService) MapBlocks(op OpType, data DataStruct, wg *sync.WaitGro
 				break
 			}
 			blockKey := BlockKey(uuidBytes, indexBytes, datatypeBytes, data.IsolatedKeys())
-			//fmt.Printf("db_it.Key(): %s    blockKey: %s\n", string(db_it.Key()), string(blockKey))
 
 			// Pull from the datastore
-			if seek || db_it.Valid() {
-				//fmt.Printf("Seek\n")
+			if seek || (db_it.Valid() && string(db_it.Key()) != string(blockKey)) {
 				db_it.Seek(blockKey)
 				seek = false
 			}
@@ -287,8 +285,6 @@ func (vs *VersionService) MapBlocks(op OpType, data DataStruct, wg *sync.WaitGro
 				if op == PutOp {
 					value = make(keyvalue.Value, data.BlockBytes(), data.BlockBytes())
 				} else {
-					dvid.Fmt(dvid.Debug, "Zeroing out %s block %s since no key/value found\n",
-						op, Index(indexBytes).BlockCoord(data))
 					continue // If have no value, simply use zero value of slice/subvolume.
 				}
 			}

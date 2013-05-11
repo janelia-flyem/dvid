@@ -35,15 +35,34 @@ type VersionId int16
 // VersionNode contains all information for a node in the version DAG like its parents,
 // children, and provenance.
 type VersionNode struct {
-	Id         UUID
-	Index      VersionId
-	Locked     bool
-	Parents    []UUID
-	Children   []UUID
-	Note       string
+	// Id is a globally unique id.
+	Id UUID
+
+	// Index is a unique id per datastore.
+	Index VersionId
+
+	// Locked nodes are read-only and can be branched.
+	Locked bool
+
+	// Archived nodes only have delta blocks from its parents, and earlier parents
+	// in the parent list have priority in determining the delta.
+	Archived bool
+
+	// Parents is an ordered list of parent nodes.
+	Parents []UUID
+
+	// Children is a list of child nodes.
+	Children []UUID
+
+	// Note holds general information on this node.
+	Note string
+
+	// Provenance describes the operations performed between the locking of
+	// this node's parents and its current state.
 	Provenance string
-	Created    time.Time
-	Updated    time.Time
+
+	Created time.Time
+	Updated time.Time
 }
 
 // VersionDAG is the directed acyclic graph of VersionNode and an index by UUID into

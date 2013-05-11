@@ -38,7 +38,7 @@ func indexHandler(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/index.html", http.StatusMovedPermanently)
 }
 
-// Handler for presentation files
+// Handler for web client
 func mainHandler(w http.ResponseWriter, r *http.Request) {
 	if runningService.WebClientPath != "" {
 		path := "index.html"
@@ -46,7 +46,7 @@ func mainHandler(w http.ResponseWriter, r *http.Request) {
 			path = r.URL.Path
 		}
 		filename := filepath.Join(runningService.WebClientPath, path)
-		dvid.Log(dvid.Debug, "http request: %s -> %s\n", r.URL.Path, filename)
+		dvid.Fmt(dvid.Debug, "Web client: %s -> %s\n", r.URL.Path, filename)
 		http.ServeFile(w, r, filename)
 	} else {
 		fmt.Fprintf(w, webClientUnavailableMessage)

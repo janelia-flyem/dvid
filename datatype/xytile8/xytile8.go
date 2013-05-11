@@ -2,6 +2,10 @@
 	Package xytile8 implements DVID support for 8-bit grayscale images laid out
 	in an XY-oriented tile.  It simply wraps the voxels package, setting 
 	NumChannels (1) and BytesPerVoxel(1), and using a tile-shaped block size.
+
+	By setting XY higher and Z very low, we are optimizing for a XY access pattern.
+	Trying to read/write YZ slices, in particular, will be slow because every
+	single block will require a seek.
 */
 package xytile8
 
