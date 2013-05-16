@@ -190,7 +190,10 @@ type Datatype struct {
 	// Spatial indexing scheme
 	Indexing IndexScheme
 
-	// isolateData should be false (default) to place this data type next to
+	// A list of interface requirements for the backend datastore
+	Requirements keyvalue.Requirements
+
+	// IsolateData should be false (default) to place this data type next to
 	// other data types within a block, so for a given block we can quickly
 	// retrieve a variety of data types across the block's voxels.  If IsolateData
 	// is true, we optimize for retrieving this data type independently, e.g., all 

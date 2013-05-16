@@ -15,51 +15,8 @@ import (
 )
 
 const (
-	Version = "0.4"
-
-	// ConfigFilename is name of JSON file with datastore configuration data
-	// just for human inspection.
-	ConfigFilename = "dvid-config.json"
+	Version = "0.5"
 )
-
-// initConfig defines the extent and resolution of the volume served by a DVID
-// datastore instance at init time.   Modifying these values after init is
-// a bad idea since spatial indexing for all keys might have to be modified
-// if the underlying volume extents and resolution are changed.
-type initConfig struct {
-	dvid.Volume
-}
-
-// DataSetString is a string that is the name of a DVID data set. 
-// This gets its own type for documentation and also provide static error checks
-// to prevent conflation of type name from data set name.
-type DataSetString string
-
-// DataTypeIndex is a unique id for a type within a DVID instance.
-type DataTypeIndex uint16
-
-func (index DataTypeIndex) ToKey() []byte {
-	buf := new(bytes.Buffer)
-	err := binary.Write(buf, binary.LittleEndian, index)
-	if err != nil {
-		log.Fatalf("Unable to convert DataTypeIndex (%d) to []byte!\n", index)
-	}
-	return buf.Bytes()
-}
-
-type datastoreType struct {
-	TypeService
-
-	// A unique id for the type within this DVID datastore instance. Used to construct keys.
-	dataIndexBytes []byte
-}
-
-// runtimeConfig holds editable configuration data for a datastore instance. 
-type runtimeConfig struct {
-	// Data supported.  This is a map of a user-defined name like "fib_data" with
-	// the supporting data type "grayscale8"
-	dataNames map[DataSetString]datastoreType
-}
 
 // Shutdown handles graceful cleanup of datastore before exiting DVID.
 func Shutdown() {
@@ -75,7 +32,7 @@ func Versions() string {
 	}
 	writeLine("Name", "Version")
 	writeLine("DVID datastore", Version)
-	writeLine("Leveldb", keyvalue.Version)
+	writeLine("Storage driver", storage.Version)
 	for _, datatype := range CompiledTypes {
 		writeLine(datatype.TypeName(), datatype.TypeVersion())
 	}
@@ -83,15 +40,16 @@ func Versions() string {
 }
 
 // Init creates a key-value datastore using default arguments.  Datastore 
-// configuration is stored in the datastore and in a human-readable JSON file
-// in the datastore directory.
+// configuration is stored as key/values in the datastore and also in a 
+// human-readable config file in the datastore directory.
 func Init(directory string, configFile string, create bool) (uuid UUID) {
 	// Initialize the configuration
-	var config *initConfig
+	var ic *initConfig
+	var rc *runtimeConfig
 	if configFile == "" {
-		config = promptConfig()
+		ic = initByPrompt()
 	} else {
-		config = readJsonConfig(configFile)
+		ic, rc, err = initByJson(configFile)
 	}
 
 	fmt.Println("\nInitializing datastore at", directory)
@@ -100,9 +58,9 @@ func Init(directory string, configFile string, create bool) (uuid UUID) {
 	fmt.Printf("Voxel resolution: %4.1f x %4.1f x %4.1f %s\n",
 		config.VoxelRes[0], config.VoxelRes[1], config.VoxelRes[2], config.VoxelResUnits)
 
-	// Create the leveldb
-	dbOptions := keyvalue.NewKeyValueOptions()
-	db, err := keyvalue.OpenLeveldb(directory, create, dbOptions)
+	// Initialize the backend database
+	dbOptions := storage.Options{}
+	db, err := storage.NewDataHandler(directory, create, dbOptions)
 	if err != nil {
 		log.Fatalf("Error opening datastore (%s): %s\n", directory, err.Error())
 	}
@@ -112,14 +70,14 @@ func Init(directory string, configFile string, create bool) (uuid UUID) {
 	config.writeJsonConfig(filename)
 
 	// Put initial config data
-	err = config.put(kvdb{db})
+	err = config.put(db)
 	if err != nil {
 		log.Fatalf("Error writing configuration to datastore: %s\n", err.Error())
 	}
 
 	// Put empty runtime configuration
 	rconfig := new(runtimeConfig)
-	err = rconfig.put(kvdb{db})
+	err = rconfig.put(db)
 	if err != nil {
 		err = fmt.Errorf("Error writing blank runtime configuration: %s", err.Error())
 		return
@@ -127,7 +85,7 @@ func Init(directory string, configFile string, create bool) (uuid UUID) {
 
 	// Put initial version DAG
 	dag := NewVersionDAG()
-	err = dag.put(kvdb{db})
+	err = dag.put(db)
 	if err != nil {
 		log.Fatalf("Error writing initial version DAG to datastore: %s\n", err.Error())
 	}
@@ -183,7 +141,7 @@ func (config *runtimeConfig) About() string {
 	}
 	writeLine("Name", "Version")
 	writeLine("DVID datastore", Version)
-	writeLine("Leveldb", keyvalue.Version)
+	writeLine("Leveldb", storage.Version)
 	for _, datatype := range config.dataNames {
 		writeLine(datatype.TypeName(), datatype.TypeVersion())
 	}
@@ -193,8 +151,8 @@ func (config *runtimeConfig) About() string {
 // AboutJSON returns the components and versions of DVID software.
 func (config *runtimeConfig) AboutJSON() (jsonStr string, err error) {
 	data := map[string]string{
-		"DVID datastore": Version,
-		"Leveldb":        keyvalue.Version,
+		"DVID datastore":  Version,
+		"Backend storage": storage.Version,
 	}
 	for _, datatype := range config.dataNames {
 		data[datatype.TypeName()] = datatype.TypeVersion()
@@ -207,55 +165,17 @@ func (config *runtimeConfig) AboutJSON() (jsonStr string, err error) {
 	return
 }
 
-// promptConfig prompts the user to enter configuration data.
-func promptConfig() (config *initConfig) {
-	config = new(initConfig)
-	pVolumeMax := &(config.VolumeMax)
-	pVolumeMax.Prompt("# voxels", "250")
-	pVoxelRes := &(config.VoxelRes)
-	pVoxelRes.Prompt("Voxel resolution", "10.0")
-	config.VoxelResUnits = dvid.VoxelResolutionUnits(dvid.Prompt("Units of resolution", "nanometer"))
-	return
-}
-
-// readJsonConfig reads in a Config from a JSON file with errors leading to
-// termination of program.
-func readJsonConfig(filename string) *initConfig {
-	vol, err := dvid.ReadVolumeJSON(filename)
-	if err != nil {
-		log.Fatalf(err.Error())
-	}
-	return &initConfig{*vol}
-}
-
-// writeJsonConfig writes a Config to a JSON file.
-func (config *initConfig) writeJsonConfig(filename string) {
-	err := config.WriteJSON(filename)
-	if err != nil {
-		log.Fatalf(err.Error())
-	}
-}
-
-// kvdb is a private wrapper around the underlying key/value datastore and provides
-// a number of functions for DVID-specific types.
-type kvdb struct {
-	keyvalue.KeyValueDB
-}
-
 // Service encapsulates an open DVID datastore, available for operations.
 type Service struct {
-	// The datastore configuration for this open DVID datastore,
-	// including the supported data types
 	initConfig
-
 	runtimeConfig
 
 	// Holds all version data including map of UUIDs to nodes
 	VersionDAG
 
-	// The underlying leveldb which is private since we want to create an object
+	// The backend storage which is private since we want to create an object
 	// interface (e.g., cache object or UUID map) and hide DVID-specific keys.
-	kvdb
+	db storage.DataHandler
 }
 
 type OpenErrorType int
@@ -276,9 +196,9 @@ type OpenError struct {
 // a Service that allows operations on that datastore.
 func Open(directory string) (s *Service, openErr *OpenError) {
 	// Open the datastore
-	dbOptions := keyvalue.NewKeyValueOptions()
+	dbOptions := storage.Options{}
 	create := false
-	db, err := keyvalue.OpenLeveldb(directory, create, dbOptions)
+	db, err := storage.NewDataHandler(directory, create, dbOptions)
 	if err != nil {
 		openErr = &OpenError{
 			fmt.Errorf("Error opening datastore (%s): %s", directory, err.Error()),
@@ -289,7 +209,7 @@ func Open(directory string) (s *Service, openErr *OpenError) {
 
 	// Read this datastore's configuration
 	iconfig := new(initConfig)
-	err = iconfig.get(kvdb{db})
+	err = iconfig.get(db)
 	if err != nil {
 		openErr = &OpenError{
 			fmt.Errorf("Error reading initial configuration: %s", err.Error()),
@@ -298,7 +218,7 @@ func Open(directory string) (s *Service, openErr *OpenError) {
 		return
 	}
 	rconfig := new(runtimeConfig)
-	err = rconfig.get(kvdb{db})
+	err = rconfig.get(db)
 	if err != nil {
 		openErr = &OpenError{
 			fmt.Errorf("Error reading runtime configuration: %s", err.Error()),
@@ -309,7 +229,7 @@ func Open(directory string) (s *Service, openErr *OpenError) {
 
 	// Read this datastore's Version DAG
 	dag := new(VersionDAG)
-	err = dag.get(kvdb{db})
+	err = dag.get(db)
 	if err != nil {
 		openErr = &OpenError{
 			err,
@@ -318,18 +238,18 @@ func Open(directory string) (s *Service, openErr *OpenError) {
 		return
 	}
 
-	s = &Service{*iconfig, *rconfig, *dag, kvdb{db}}
+	s = &Service{*iconfig, *rconfig, *dag, db}
 	return
 }
 
 // Close closes a DVID datastore.
 func (s *Service) Close() {
-	s.kvdb.Close()
+	s.db.Close()
 }
 
-// KeyValueDB returns the key value database used by the DVID datastore.
-func (s *Service) KeyValueDB() keyvalue.KeyValueDB {
-	return s.kvdb
+// DataHandler returns the backend data handler used by this DVID instance.
+func (s *Service) DataHandler() storage.DataHandler {
+	return s.db
 }
 
 // SupportedDataChart returns a chart (names/urls) of data referenced by this datastore
@@ -399,7 +319,7 @@ func (s *Service) NewDataSet(name DataSetString, typeName string) error {
 		s.dataNames = make(map[DataSetString]datastoreType)
 	}
 	s.dataNames[name] = datastoreType{typeService, index.ToKey()}
-	err = s.runtimeConfig.put(s.kvdb)
+	err = s.runtimeConfig.put(s.db)
 	ReserveBlockHandlers(name, s.dataNames[name])
 	lock.Unlock()
 	return err
@@ -420,7 +340,7 @@ func (s *Service) DeleteDataSet(name DataSetString) error {
 	delete(s.dataNames, name)
 	// Remove load stat cache
 	delete(loadLastSec, name)
-	err := s.runtimeConfig.put(s.kvdb)
+	err := s.runtimeConfig.put(s.db)
 	// Should halt ReserveBlockHandlers(name, s.dataNames[name])
 	lock.Unlock()
 	return err

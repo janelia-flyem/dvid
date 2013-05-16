@@ -85,6 +85,11 @@ else ()
         DEPENDS     ${golang_NAME}
         COMMENT     "Added Go uuid package [code.google.com/p/go-uuid/uuid]")
     
+    add_custom_target (config
+        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go get ${GO_GET} github.com/robfig/config
+        DEPENDS     ${golang_NAME}
+        COMMENT     "Added ini config file handler [github.com/robfig/config]")
+    
     add_custom_target (levigo
         ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go get ${GO_GET} github.com/jmhodges/levigo
         DEPENDS     ${golang_NAME} ${leveldb_NAME}
@@ -102,14 +107,16 @@ else ()
     
     # Build DVID with C++ leveldb library support
     add_custom_target (dvid-exe
-        ${BUILDEM_ENV_STRING} ${GO_ENV} ${CGO_FLAGS} go build -o ${BUILDEM_BIN_DIR}/dvid -v dvid.go 
+        ${BUILDEM_ENV_STRING} ${GO_ENV} ${CGO_FLAGS} go build -o ${BUILDEM_BIN_DIR}/dvid 
+            -v -tags 'levigo' dvid.go 
         WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
         DEPENDS     ${golang_NAME} ${leveldb_NAME} snappy-go nrsc uuid levigo goprotobuf
         COMMENT     "Compiled and installed dvid executable.")
 
     # Build DVID with pure Go leveldb implementation
     add_custom_target (dvid-go-exe
-        ${BUILDEM_ENV_STRING} ${GO_ENV} go build -o ${BUILDEM_BIN_DIR}/dvid-go -v -tags 'purego' dvid.go 
+        ${BUILDEM_ENV_STRING} ${GO_ENV} go build -o ${BUILDEM_BIN_DIR}/dvid-go 
+            -v -tags 'goleveldb' dvid.go 
         WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
         DEPENDS     ${golang_NAME} snappy-go nrsc uuid goleveldb goprotobuf
         COMMENT     "Compiled and installed dvid pure Go executable, dvid-go.")

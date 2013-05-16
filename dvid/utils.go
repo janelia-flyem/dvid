@@ -3,6 +3,7 @@ package dvid
 import (
 	"bufio"
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"image"
 	"image/jpeg"
@@ -222,6 +223,7 @@ func ImageFromPost(r *http.Request, key string) (img image.Image, format string,
 	return
 }
 
+// PrintNonZero prints the number of non-zero bytes in a slice of bytes.
 func PrintNonZero(message string, value []byte) {
 	nonzero := 0
 	for _, b := range value {
@@ -230,4 +232,44 @@ func PrintNonZero(message string, value []byte) {
 		}
 	}
 	fmt.Printf("%s> non-zero voxels: %d of %d bytes\n", message, nonzero, len(value))
+}
+
+// WriteJSONFile writes an arbitrary but exportable Go object to a JSON file.
+func WriteJSONFile(filename string, value interface{}) error {
+	file, err := os.Create(filename)
+	if err != nil {
+		return fmt.Errorf("Failed to create JSON file: %s [%s]", filename, err)
+	}
+	defer file.Close()
+	m, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Errorf("Error in writing JSON file: %s [%s]", filename, err)
+	}
+	var buf bytes.Buffer
+	json.Indent(&buf, m, "", "    ")
+	buf.WriteTo(file)
+	return nil
+}
+
+// ReadJSONFile returns a map[string]interface{} with decoded JSON from a file.
+// If a file is not organized as a JSON object, an error will be returned.
+func ReadJSONFile(filename string) (value map[string]interface{}, err error) {
+	var file *os.File
+	file, err = os.Open(filename)
+	if err != nil {
+		return
+	}
+	defer file.Close()
+
+	dec := json.NewDecoder(file)
+	var i interface{}
+	err = dec.Unmarshall(i)
+	if err == io.EOF {
+		err = fmt.Errorf("No data in JSON file (%s): [%s]", filename, err)
+	} else if err != nil {
+		err = fmt.Errorf("Error reading JSON file (%s): %s", filename, err)
+	} else {
+		value, err = i.(map[string]interface{})
+	}
+	return
 }

@@ -251,28 +251,6 @@ type Volume struct {
 	VoxelResUnits VoxelResolutionUnits
 }
 
-// ReadVolumeJSON reads in a Volume from a JSON file.
-func ReadVolumeJSON(filename string) (vol *Volume, err error) {
-	var file *os.File
-	file, err = os.Open(filename)
-	if err != nil {
-		err = fmt.Errorf("Failed to open JSON Volume file: %s [%s]", filename, err)
-		return
-	}
-	defer file.Close()
-	dec := json.NewDecoder(file)
-	vol = new(Volume)
-	err = dec.Decode(&vol)
-	if err == io.EOF {
-		err = fmt.Errorf("No data in JSON Volume file: %s [%s]", filename, err)
-		return
-	} else if err != nil {
-		err = fmt.Errorf("Error reading JSON Volume file (%s): %s", filename, err)
-		return
-	}
-	return
-}
-
 // WriteJSON writes a Volume to a JSON file.
 func (vol *Volume) WriteJSON(filename string) error {
 	file, err := os.Create(filename)

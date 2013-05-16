@@ -711,8 +711,7 @@ func (v *Voxels) BlockHandler(req *datastore.BlockRequest) {
 
 	// If this is a PUT, place the modified block data into the database.
 	if req.Op == datastore.PutOp {
-		wo := keyvalue.NewWriteOptions()
-		req.DB.Put(req.BlockKey, req.Block, wo)
+		req.DB.Put(req.BlockKey, req.Block)
 	}
 
 	// Notify the requestor that this block is done.

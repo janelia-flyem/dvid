@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/janelia-flyem/dvid/keyvalue"
+	"github.com/janelia-flyem/dvid/storage"
 )
 
 // Constants that allow tuning of DVID for a particular target computer.
@@ -68,20 +68,17 @@ type BlockRequest struct {
 	DataStruct
 
 	// Block holds the data for a block, a small rectangular volume of voxels.
-	Block keyvalue.Value
+	Block storage.Value
 
 	// Parameters for this particular block
 	Op       OpType
 	IndexKey Index
-	BlockKey keyvalue.Key
+	BlockKey storage.Key
 
 	// Let's us notify requestor when all blocks are done.
 	Wait *sync.WaitGroup
 
-	DB keyvalue.KeyValueDB
-
-	// Include a WriteBatch so PUT ops can be batched
-	//WriteBatch keyvalue.WriteBatch
+	DB storage.DataHandler
 }
 
 // Each data type has a pool of channels to communicate with block handlers. 
