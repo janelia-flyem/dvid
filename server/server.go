@@ -127,7 +127,7 @@ func ServerlessDo(request datastore.Request, reply *datastore.Response) error {
 	switch request.Name() {
 	case "help", "types", "version", "log", "dataset", "branch", "lock":
 	default:
-		for name, dtype := range runningService.DataSets() {
+		for name, dtype := range runningService.Datasets() {
 			datastore.ReserveBlockHandlers(name, dtype)
 		}
 	}
@@ -176,7 +176,7 @@ func Serve(datastoreDir, webAddress, webClientDir, rpcAddress string) error {
 	}
 
 	// Launch block handlers as goroutines for all compiled types.
-	for name, dtype := range runningService.DataSets() {
+	for name, dtype := range runningService.Datasets() {
 		datastore.ReserveBlockHandlers(name, dtype)
 	}
 	// Launch the web server

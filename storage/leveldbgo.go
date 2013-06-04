@@ -1,5 +1,9 @@
 // +build goleveldb
 
+/*
+	TODO: Update this driver to work with new storage API.  Currently broken.
+*/
+
 package keyvalue
 
 import (

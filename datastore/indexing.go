@@ -1,5 +1,5 @@
 /*
-	This file supports indexing of blocks uing a variety of schemes.
+	This file supports indexing using a variety of schemes.
 */
 
 package datastore
@@ -7,149 +7,115 @@ package datastore
 import (
 	"encoding/binary"
 	"encoding/hex"
-	"fmt"
+	_ "fmt"
 
 	"github.com/janelia-flyem/dvid/dvid"
 )
 
-// Index encodes partitioning of a dataset, typically using some sort of
-// spatiotemporal indexing scheme.  For example, Z-curves map n-D space to
-// a 1-D index.
-type Index string
+// BlockIndex is an abtraction for datatype-specific block representations.
+// For example, a voxels data type would have a 3d block coordinate.  Block
+// indices do *not* have to be 3d coordinates but can be optimized for
+// a data type's internal data structure.
+type BlockIndex interface {
+	// MakeIndex returns a one-dimensional index.
+	MakeIndex() Index
 
-// IndexScheme represents a particular indexing scheme.  Indexing schemes
-// should try to maximize sequential reads/writes when used as part of a key.
-type IndexScheme byte
-
-// Types of indexing
-const (
-	// Simple indexing on Z, then Y, then X
-	SchemeIndexZYX IndexScheme = iota
-
-	// TODO -- Morton (Z-order) curve
-	SchemeIndexMorton
-
-	// TODO -- Hilbert curve
-	SchemeIndexHilbert
-
-	// TODO -- Diagonal indexing within 2d plane, z separate
-	SchemeIndexXYDiagonal
-
-	// TODO -- Spatiotemporal indexing that handles time as well as 3/4D
-)
-
-func (scheme IndexScheme) String() string {
-	switch scheme {
-	case SchemeIndexZYX:
-		return "ZYX Indexing"
-	case SchemeIndexMorton:
-		return "Morton/Z-order Indexing"
-	case SchemeIndexHilbert:
-		return "Hilbert Indexing"
-	case SchemeIndexXYDiagonal:
-		return "Diagonal indexing within XY, then Z"
-	}
-	return "Unknown Indexing Scheme"
+	// String returns a human-readable representation of the block index.
+	String() string
 }
 
-// MakeIndex returns a string encoding a subdivision depending on the
-// index scheme of the data type.
-func MakeIndex(t TypeService, coord dvid.BlockCoord) []byte {
-	// Create buffer for index
-	index := make([]byte, 12, 12)
-	switch t.IndexScheme() {
-	case SchemeIndexZYX:
-		binary.LittleEndian.PutUint32(index[0:4], uint32(coord[2]))
-		binary.LittleEndian.PutUint32(index[4:8], uint32(coord[1]))
-		binary.LittleEndian.PutUint32(index[8:12], uint32(coord[0]))
-	default:
-		panic(fmt.Sprintf("MakeIndex: Unsupported indexing scheme (%d)!", t.IndexScheme()))
-	}
-	return index
+// Index is a one-dimensional index, typically constructed using some sort of
+// spatiotemporal indexing scheme.  For example, Z-curves map n-D space to a 1-D index.
+// It is assumed that implementations for this interface are castable to []byte.
+type Index interface {
+	// Bytes gives a slice of bytes.
+	Bytes() []byte
+
+	// InvertIndex returns a block representation given a one-dimensional Index.
+	// It is the inverse of MakeIndex().
+	InvertIndex() BlockIndex
+
+	// Hash provides a consistent mapping from an Index to an integer (0,n]
+	Hash(n int) int
+
+	// Scheme returns a string describing the indexing scheme.
+	Scheme() string
+
+	// String returns a hexadecimal string representation
+	String() string
 }
 
-// BlockCoord decodes a spatial index into a block coordinate
-func (i Index) BlockCoord(t TypeService) (coord dvid.BlockCoord) {
-	switch t.IndexScheme() {
-	case SchemeIndexZYX:
-		coord[2] = int32(binary.LittleEndian.Uint32([]byte(i[0:4])))
-		coord[1] = int32(binary.LittleEndian.Uint32([]byte(i[4:8])))
-		coord[0] = int32(binary.LittleEndian.Uint32([]byte(i[8:12])))
-	default:
-		panic(fmt.Sprintf("BlockCoord: Unsupported indexing scheme (%d)!", t.IndexScheme()))
-	}
-	return
+// IndexIterator is a function that returns a sequence of indices and ends with nil. 
+type IndexIterator func() Index
+
+// IndexIteratorMakers can make new IndexIterators.
+type IndexIteratorMaker interface {
+	NewIndexIterator() IndexIterator
 }
 
-// OffsetToBlock returns the voxel coordinate at the top left corner of the block
-// corresponding to the index.
-func (i Index) OffsetToBlock(t TypeService) (coord dvid.VoxelCoord) {
-	blockCoord := i.BlockCoord(t)
-	blockSize := t.BlockSize()
-	coord[0] = blockCoord[0] * blockSize[0]
-	coord[1] = blockCoord[1] * blockSize[1]
-	coord[2] = blockCoord[2] * blockSize[2]
-	return
+// --- Standard implementations of above interfaces
+
+type indexType []byte
+
+func (i indexType) String() string {
+	return hex.EncodeToString([]byte(i))
+}
+
+func (i indexType) Bytes() []byte {
+	return i
+}
+
+// IndexZYX implements the Index interface and provides simple indexing on Z, 
+// then Y, then X.
+type IndexZYX indexType
+
+// InvertIndex decodes a spatial index into a block coordinate
+func (i IndexZYX) InvertIndex() BlockIndex {
+	var coord dvid.BlockCoord
+	coord[2] = int32(binary.LittleEndian.Uint32([]byte(i[0:4])))
+	coord[1] = int32(binary.LittleEndian.Uint32([]byte(i[4:8])))
+	coord[0] = int32(binary.LittleEndian.Uint32([]byte(i[8:12])))
+	return coord
 }
 
 // Hash returns an integer [0, n) where the returned values should be reasonably
 // spread among the range of returned values. 
-func (i Index) Hash(t TypeService, n int) int {
-	switch t.IndexScheme() {
-	case SchemeIndexZYX:
-		z := binary.LittleEndian.Uint32([]byte(i[0:4]))
-		y := binary.LittleEndian.Uint32([]byte(i[4:8]))
-		x := binary.LittleEndian.Uint32([]byte(i[8:12]))
-		// Make sure that any scans along x, y, or z directions will 
-		// cause distribution to different handlers. 
-		return int(x+y+z) % n
-	default:
-		panic(fmt.Sprintf("BlockCoord: Unsupported indexing scheme (%d)!", t.IndexScheme()))
-	}
-	return 0
+func (i IndexZYX) Hash(n int) int {
+	z := binary.LittleEndian.Uint32([]byte(i[0:4]))
+	y := binary.LittleEndian.Uint32([]byte(i[4:8]))
+	x := binary.LittleEndian.Uint32([]byte(i[8:12]))
+	// Make sure that any scans along x, y, or z directions will 
+	// cause distribution to different handlers. 
+	return int(x+y+z) % n
 }
 
-func (i Index) String() string {
-	return hex.EncodeToString([]byte(i))
+func (i IndexZYX) Scheme() string {
+	return "ZYX Indexing"
 }
 
-// IndexIterator is a function that returns a sequence of indices and ends with nil. 
-type IndexIterator func() []byte
+// TODO -- Morton (Z-order) curve
+type IndexMorton indexType
 
-// Iterator returns a NewIndexIterator for a given data type and volume to traverse.
-func NewIndexIterator(data DataStruct) IndexIterator {
-	// Setup traversal
-	startVoxel := data.Origin()
-	endVoxel := data.EndVoxel()
+func (i IndexMorton) Scheme() string {
+	return "Morton/Z-order Indexing"
+}
 
-	switch data.IndexScheme() {
-	case SchemeIndexZYX:
-		// Returns a closure that iterates in x, then y, then z
-		startBlockCoord := startVoxel.BlockCoord(data.BlockSize())
-		endBlockCoord := endVoxel.BlockCoord(data.BlockSize())
-		z := startBlockCoord[2]
-		y := startBlockCoord[1]
-		x := startBlockCoord[0]
-		return func() []byte {
-			//dvid.Fmt(dvid.Debug, "IndexIterator: start at (%d,%d,%d)\n", x, y, z)
-			if z > endBlockCoord[2] {
-				return nil
-			}
-			indexKey := MakeIndex(data, dvid.BlockCoord{x, y, z})
-			x++
-			if x > endBlockCoord[0] {
-				x = startBlockCoord[0]
-				y++
-			}
-			if y > endBlockCoord[1] {
-				y = startBlockCoord[1]
-				z++
-			}
-			return indexKey
-		}
-	default:
-		panic(fmt.Sprintf("Unimplemented IndexIterator called for index scheme: %s",
-			data.IndexScheme()))
-	}
-	return nil
+// TODO -- Hilbert curve
+type IndexHilbert indexType
+
+func (i IndexHilbert) Scheme() string {
+	return "Hilbert Indexing"
+}
+
+// BlockZYX implements the BlockIndex interface and provides blocking of
+// a 3d coordinate space.
+type BlockZYX dvid.BlockCoord
+
+func (bc *BlockZYX) MakeIndex() Index {
+	// Create buffer for index
+	index := make(IndexZYX, 12, 12)
+	binary.LittleEndian.PutUint32(index[0:4], uint32(coord[2]))
+	binary.LittleEndian.PutUint32(index[4:8], uint32(coord[1]))
+	binary.LittleEndian.PutUint32(index[8:12], uint32(coord[0]))
+	return index
 }

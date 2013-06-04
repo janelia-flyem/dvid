@@ -9,6 +9,7 @@ import (
 	"image/jpeg"
 	"image/png"
 	"io"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
@@ -260,16 +261,24 @@ func ReadJSONFile(filename string) (value map[string]interface{}, err error) {
 		return
 	}
 	defer file.Close()
+	var fileBytes []byte
+	fileBytes, err = ioutil.ReadAll(file)
+	if err != nil {
+		return
+	}
 
-	dec := json.NewDecoder(file)
 	var i interface{}
-	err = dec.Unmarshall(i)
+	err = json.Unmarshal(fileBytes, i)
 	if err == io.EOF {
 		err = fmt.Errorf("No data in JSON file (%s): [%s]", filename, err)
 	} else if err != nil {
 		err = fmt.Errorf("Error reading JSON file (%s): %s", filename, err)
 	} else {
-		value, err = i.(map[string]interface{})
+		var ok bool
+		value, ok = i.(map[string]interface{})
+		if !ok {
+			err = fmt.Errorf("JSON file %s top level is not a valid JSON object!", filename)
+		}
 	}
 	return
 }

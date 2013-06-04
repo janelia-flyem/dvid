@@ -3,9 +3,8 @@
 package storage
 
 import (
-	"fmt"
-
 	"github.com/janelia-flyem/dvid/dvid"
+	"log"
 
 	"github.com/jmhodges/levigo"
 )
@@ -80,8 +79,11 @@ type goLDB struct {
 	// Directory of datastore
 	directory string
 
+	// Settings for the leveldb
+	settings map[string]interface{}
+
 	// Options at time of Open()
-	options *Options
+	options *leveldbOptions
 
 	// Leveldb connection
 	ldb *levigo.DB
@@ -89,15 +91,16 @@ type goLDB struct {
 
 // NewDataHandler returns a leveldb backend.
 func NewDataHandler(path string, create bool, options *Options) (db DataHandler, err error) {
-	options.initBySettings(create)
-	leveldb_db, err := levigo.Open(path, options.options)
+	ldbOptions := options.initBySettings(create)
+	ldbDB, err := levigo.Open(path, options.ldb().Options)
 	if err != nil {
 		return
 	}
 	db = &goLDB{
 		directory: path,
-		options:   options,
-		ldb:       leveldb_db,
+		settings:  options.Settings,
+		options:   ldbOptions,
+		ldb:       ldbDB,
 	}
 	return
 }
@@ -110,7 +113,7 @@ func (db *goLDB) ProvidesIterator() bool { return true }
 func (db *goLDB) IsBulkIniter() bool     { return true }
 func (db *goLDB) IsBulkLoader() bool     { return true }
 func (db *goLDB) IsBatcher() bool        { return true }
-func (db *goLDB) GetOptions() *Options   { return db.options }
+func (db *goLDB) GetOptions() *Options   { return &Options{db.settings, db.options} }
 
 // ---- KeyValueDB interface -----
 
@@ -142,27 +145,23 @@ func (db *goLDB) Close() {
 }
 
 // Get returns a value given a key.
-func (db *goLDB) Get(k Key) (v Value, err error) {
-	v, err = db.ldb.Get(db.options.ReadOptions, k)
+func (db *goLDB) Get(k Key) (v []byte, err error) {
+	ro := db.options.ReadOptions
+	v, err = db.ldb.Get(ro, k.Bytes())
 	return
 }
 
 // Put writes a value with given key.
-func (db *goLDB) Put(k Key, v Value) (err error) {
-	err = db.ldb.Put(db.options.WriteOptions, k, v)
+func (db *goLDB) Put(k Key, v []byte) (err error) {
+	wo := db.options.WriteOptions
+	err = db.ldb.Put(wo, k.Bytes(), v)
 	return
 }
 
 // Delete removes a value with given key.
 func (db *goLDB) Delete(k Key) (err error) {
-	err = db.ldb.Delete(db.options.WriteOptions, k)
-	return
-}
-
-// NewIterator returns a read-only Iterator. 
-func (db *goLDB) NewIterator() (it Iterator, err error) {
-	it = goIterator{db.ldb.NewIterator(db.options.ReadOptions)}
-	err = nil
+	wo := db.options.WriteOptions
+	err = db.ldb.Delete(wo, k.Bytes())
 	return
 }
 
@@ -174,7 +173,17 @@ func (db *goLDB) GetApproximateSizes(ranges Ranges) (sizes Sizes, err error) {
 	return
 }
 
+// --- IteratorMaker interface ---
+
+func (db *goLDB) NewIterator() (it Iterator, err error) {
+	ro := levigo.NewReadOptions()
+	ro.SetFillCache(false)
+	it = &goIterator{db.ldb.NewIterator(ro)}
+	return
+}
+
 // --- Iterator interface ---
+
 // The embedded levigo.Iterator handles all other interface requirements
 // except for the ones below, which mainly handle typing conversion between
 // Key, Value and []byte.
@@ -183,60 +192,44 @@ type goIterator struct {
 	*levigo.Iterator
 }
 
-func (it goIterator) Key() Key {
-	return Key(it.Iterator.Key())
+func (it goIterator) Key() []byte {
+	return it.Iterator.Key()
 }
 
 func (it goIterator) Seek(key Key) {
-	it.Iterator.Seek([]byte(key))
+	it.Iterator.Seek(key.Bytes())
 }
 
-func (it goIterator) Value() Value {
+func (it goIterator) Value() []byte {
 	return it.Iterator.Value()
 }
 
-// --- Read Options -----
-
-// NewReadOptions returns a specific implementation of ReadOptions
-func NewReadOptions() (ro ReadOptions) {
-	ro = &goReadOptions{levigo.NewReadOptions()}
-	return
-}
-
-func (ro *goReadOptions) SetDontFillCache(on bool) {
-	ro.ReadOptions.SetFillCache(!on)
-}
-
-// --- Write Options -----
-
-type goWriteOptions struct {
-	*levigo.WriteOptions
-}
-
-// --- Write Batch ----
+// --- Batcher interface ----
 
 type goBatch struct {
 	*levigo.WriteBatch
-}
-
-// Write allows you to batch a series of key/value puts.
-func (db *goLDB) Write(batch WriteBatch) (err error) {
-	err = db.ldb.Write(db.options.WriteOptions, batch.(*goBatch).WriteBatch)
-	return
+	wo  *levigo.WriteOptions
+	ldb *levigo.DB
 }
 
 // NewWriteBatch returns an implementation that allows batch writes
-func NewWriteBatch() (batch WriteBatch) {
-	batch = &goBatch{levigo.NewWriteBatch()}
+func (db *goLDB) NewBatchWrite() Batch {
+	return &goBatch{levigo.NewWriteBatch(), db.options.WriteOptions, db.ldb}
+}
+
+// --- Batch interface ---
+
+func (batch *goBatch) Write() (err error) {
+	err = batch.ldb.Write(batch.wo, batch.WriteBatch)
 	return
 }
 
 func (batch *goBatch) Delete(k Key) {
-	batch.Delete(k)
+	batch.WriteBatch.Delete(k.Bytes())
 }
 
-func (batch *goBatch) Put(k Key, v Value) {
-	batch.Put(k, v)
+func (batch *goBatch) Put(k Key, v []byte) {
+	batch.WriteBatch.Put(k.Bytes(), v)
 }
 
 // --- Options ----
@@ -259,8 +252,17 @@ type leveldbOptions struct {
 	env    *levigo.Env
 }
 
+// Cast the generic options interface{} to a leveldbOptions struct.
+func (opt *Options) ldb() *leveldbOptions {
+	ldbOptions, ok := opt.options.(*leveldbOptions)
+	if !ok {
+		log.Fatalf("getLeveldbOptions() -- bad cast!\n")
+	}
+	return ldbOptions
+}
+
 // Initialize Options using the settings.
-func (opt *Options) initBySettings(create bool) {
+func (opt *Options) initBySettings(create bool) *leveldbOptions {
 	ldbOptions := &leveldbOptions{
 		Options:      levigo.NewOptions(),
 		ReadOptions:  levigo.NewReadOptions(),
@@ -274,32 +276,32 @@ func (opt *Options) initBySettings(create bool) {
 	ldbOptions.Options.SetErrorIfExists(create)
 
 	// Create associated data structures with default values
-	bloomBits, found := opt.Settings["BloomFilterBitsPerKey"]
-	if !found {
+	bloomBits, ok := opt.IntSetting("BloomFilterBitsPerKey")
+	if !ok {
 		bloomBits = DefaultBloomBits
 	}
 	ldbOptions.SetBloomFilterBitsPerKey(bloomBits)
 
-	cacheSize, found := opt.Settings["CacheSize"]
-	if !found {
+	cacheSize, ok := opt.IntSetting("CacheSize")
+	if !ok {
 		cacheSize = DefaultCacheSize
 	}
 	ldbOptions.SetLRUCacheSize(cacheSize)
 
-	writeBufferSize, found := opt.Settings["WriteBufferSize"]
-	if !found {
+	writeBufferSize, ok := opt.IntSetting("WriteBufferSize")
+	if !ok {
 		writeBufferSize = DefaultWriteBufferSize
 	}
 	ldbOptions.SetWriteBufferSize(writeBufferSize)
 
-	maxOpenFiles, found := opt.Settings["MaxOpenFiles"]
-	if !found {
+	maxOpenFiles, ok := opt.IntSetting("MaxOpenFiles")
+	if !ok {
 		maxOpenFiles = DefaultMaxOpenFiles
 	}
 	ldbOptions.SetMaxOpenFiles(maxOpenFiles)
 
-	blockSize, found := opt.Settings["BlockSize"]
-	if !found {
+	blockSize, ok := opt.IntSetting("BlockSize")
+	if !ok {
 		blockSize = DefaultBlockSize
 	}
 	ldbOptions.SetBlockSize(blockSize)
@@ -308,6 +310,8 @@ func (opt *Options) initBySettings(create bool) {
 	ldbOptions.SetParanoidChecks(false)
 	//ldbOptions.SetBlockRestartInterval(8)
 	ldbOptions.SetCompression(levigo.SnappyCompression)
+
+	return ldbOptions
 }
 
 // Amount of data to build up in memory (backed by an unsorted log
@@ -364,7 +368,7 @@ func (opts *leveldbOptions) GetBlockSize() (nBytes int) {
 	return
 }
 
-// SetCache sets the size of the LRU cache that caches frequently used 
+// SetCache sets the size of the LRU cache that caches frequently used
 // uncompressed blocks.
 func (opts *leveldbOptions) SetLRUCacheSize(nBytes int) {
 	if nBytes != opts.nLRUCacheBytes {

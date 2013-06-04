@@ -73,8 +73,8 @@ func handleDataRequest(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		dataType := parts[1]
-		dataSetName := datastore.DataSetString(parts[2])
-		err := runningService.NewDataSet(dataSetName, dataType)
+		dataSetName := datastore.DatasetString(parts[2])
+		err := runningService.NewDataset(dataSetName, dataType)
 		if err != nil {
 			msg := fmt.Sprintf("Could not add data set '%s' of type '%s': %s",
 				dataSetName, dataType, err.Error())
@@ -144,14 +144,14 @@ func apiHandler(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, jsonStr)
 	default:
 		// Pass type-specific requests to the type service
-		dataSetName := datastore.DataSetString(parts[0])
-		typeService, err := runningService.DataSetService(dataSetName)
+		datasetName := datastore.DatasetString(parts[0])
+		datasetService, err := runningService.DatasetService(datasetName)
 		if err != nil {
 			badRequest(w, r, fmt.Sprintf("Could not find data set '%s' in datastore [%s]",
-				dataSetName, err.Error()))
+				datasetName, err.Error()))
 			return
 		}
-		err = typeService.DoHTTP(w, r, runningService.Service, RestApiPath)
+		err = datasetService.DoHTTP(w, r, RestApiPath)
 		if err != nil {
 			badRequest(w, r, err.Error())
 		}

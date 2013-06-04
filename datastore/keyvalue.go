@@ -1,8 +1,5 @@
 /*
-	This file contains constants and functions needed to compose keys and handle
-	the interface with the underlying key/value datastore.  If a datastore package
-	type needs to be stored in the datastore using a DVID-specific key, its put and 
-	get functions should be in this file.
+	This file supports key and value handling for the storage layer.
 */
 
 package datastore
@@ -15,7 +12,7 @@ import (
 	"reflect"
 
 	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/janelia-flyem/dvid/keyvalue"
+	_ "github.com/janelia-flyem/dvid/storage"
 )
 
 /*
@@ -71,6 +68,24 @@ const (
 	keyRuntimeConfig
 	keyDAG
 )
+
+// HexString returns a hexadecimal representation of the value bytes.
+func HexString(value Value) string {
+	b, err := value.Serialize()
+	if err != nil {
+		log.Fatalf("Serialization of %s failed: %s\n", value, err)
+	}
+	return fmt.Sprintf("%x", b)
+}
+
+// Size returns the # of bytes in this Value.
+func Size(value Value) int {
+	b, err := value.Serialize()
+	if err != nil {
+		log.Fatalf("Serialization of %s failed: %s\n", value, err)
+	}
+	return len(b)
+}
 
 // BlockKey returns a DVID-specific Key given datastore-specific indices for
 // the UUID and data type, and the spatial index and whether the block is "isolated"
@@ -162,16 +177,16 @@ type rconfig struct {
 }
 
 func (config *runtimeConfig) put(db kvdb) error {
-	c := make(map[DataSetString]rconfig)
-	for key, value := range config.dataNames {
-		c[key] = rconfig{value.TypeService.TypeUrl(), value.dataIndexBytes}
+	c := make(map[DatasetString]rconfig)
+	for key, value := range config.datasets {
+		c[key] = rconfig{value.TypeService.DatatypeUrl(), value.dataIndexBytes}
 	}
 	return db.putValue(keyvalue.Key{keyFamilyGlobal, keyRuntimeConfig}, c)
 }
 
 func (config *runtimeConfig) get(db kvdb) error {
-	config.dataNames = map[DataSetString]datastoreType{}
-	c := make(map[DataSetString]rconfig)
+	config.datasets = map[DatasetString]datastoreType{}
+	c := make(map[DatasetString]rconfig)
 	err := db.getValue(keyvalue.Key{keyFamilyGlobal, keyRuntimeConfig}, &c)
 	if err != nil {
 		return err
@@ -182,7 +197,7 @@ func (config *runtimeConfig) get(db kvdb) error {
 			return fmt.Errorf("Data set in datastore no longer present in DVID executable: %s",
 				value.TypeUrl)
 		}
-		config.dataNames[key] = datastoreType{dtype, value.DataIndexBytes}
+		config.datasets[key] = datastoreType{dtype, value.DataIndexBytes}
 	}
 	return nil
 }

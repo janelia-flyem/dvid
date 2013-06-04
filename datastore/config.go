@@ -6,16 +6,11 @@
 package datastore
 
 import (
-	"bytes"
-	"encoding/binary"
-	"errors"
 	"fmt"
 	"log"
-	"path/filepath"
-	"sync"
 
 	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/janelia-flyem/dvid/storage"
+	_ "github.com/janelia-flyem/dvid/storage"
 )
 
 const (
@@ -32,35 +27,51 @@ type initConfig struct {
 	dvid.Volume
 }
 
-// DataSetString is a string that is the name of a DVID data set. 
+// DatasetString is a string that is the name of a DVID data set. 
 // This gets its own type for documentation and also provide static error checks
 // to prevent conflation of type name from data set name.
-type DataSetString string
+type DatasetString string
 
-// DataTypeIndex is a unique id for a type within a DVID instance.
-type DataTypeIndex uint16
-
-func (index DataTypeIndex) ToKey() []byte {
-	buf := new(bytes.Buffer)
-	err := binary.Write(buf, binary.LittleEndian, index)
-	if err != nil {
-		log.Fatalf("Unable to convert DataTypeIndex (%d) to []byte!\n", index)
-	}
-	return buf.Bytes()
-}
-
-type datastoreType struct {
-	TypeService
-
-	// A unique id for the type within this DVID datastore instance. Used to construct keys.
-	dataIndexBytes []byte
-}
+// DatasetID is a unique id for a dataset within a DVID instance.
+type DatasetID dvid.LocalID
 
 // runtimeConfig holds editable configuration data for a datastore instance. 
 type runtimeConfig struct {
 	// Data supported.  This is a map of a user-defined name like "fib_data" with
 	// the supporting data type "grayscale8"
-	dataNames map[DataSetString]datastoreType
+	datasets map[DatasetString]Dataset
+}
+
+// rconfig is a local struct used for explicit export of runtime configurations
+type rconfig struct {
+	TypeUrl        UrlString
+	DataIndexBytes []byte
+}
+
+func (config *runtimeConfig) Serialize() (s Serialization, err error) {
+	c := make(map[DatasetString]rconfig)
+	for key, value := range config.datasets {
+		c[key] = rconfig{value.TypeService.DatatypeUrl(), value.dataIndexBytes}
+	}
+	return db.putValue(keyvalue.Key{keyFamilyGlobal, keyRuntimeConfig}, c)
+}
+
+func (config *runtimeConfig) get(db kvdb) error {
+	config.datasets = map[DatasetString]datastoreType{}
+	c := make(map[DatasetString]rconfig)
+	err := db.getValue(keyvalue.Key{keyFamilyGlobal, keyRuntimeConfig}, &c)
+	if err != nil {
+		return err
+	}
+	for key, value := range c {
+		dtype, found := CompiledTypes[value.TypeUrl]
+		if !found {
+			return fmt.Errorf("Data set in datastore no longer present in DVID executable: %s",
+				value.TypeUrl)
+		}
+		config.datasets[key] = datastoreType{dtype, value.DataIndexBytes}
+	}
+	return nil
 }
 
 // MarshalJSON fulfills the Marshaler interface for JSON output.
@@ -68,7 +79,7 @@ func (rc *runtimeConfig) MarshalJSON() (b []byte, err error) {
 	if rc == nil {
 		b = []byte("{}")
 	} else {
-		b, err = json.Marshal(rc.dataNames)
+		b, err = json.Marshal(rc.datasets)
 	}
 	return
 }
@@ -78,7 +89,77 @@ func (rc *runtimeConfig) UnmarshalJSON(jsonText []byte) error {
 	if rc == nil {
 		return fmt.Errorf("Error, can't unmarshall to a nil runtimeConfig!")
 	}
-	err := json.Unmarshal(jsonText, rc.dataNames)
+	err := json.Unmarshal(jsonText, rc.datasets)
+	return
+}
+
+// VerifyCompiledTypes will return an error if any required data type in the datastore 
+// configuration was not compiled into DVID executable.  Check is done by more exact
+// URL and not the data type name.
+func (config *runtimeConfig) VerifyCompiledTypes() error {
+	if CompiledTypes == nil {
+		return fmt.Errorf("DVID was not compiled with any data type support!")
+	}
+	var errMsg string
+	for _, datatype := range config.datasets {
+		_, found := CompiledTypes[datatype.DatatypeUrl()]
+		if !found {
+			errMsg += fmt.Sprintf("DVID was not compiled with support for data type %s [%s]\n",
+				datatype.DatatypeName(), datatype.DatatypeUrl())
+		}
+	}
+	if errMsg != "" {
+		return errors.New(errMsg)
+	}
+	return nil
+}
+
+// DataChart returns a chart of data set names and their types for this runtime configuration. 
+func (config *runtimeConfig) DataChart() string {
+	var text string
+	if len(config.datasets) == 0 {
+		return "  No data sets have been added to this datastore.\n  Use 'dvid dataset ...'"
+	}
+	writeLine := func(name DatasetString, version string, url UrlString) {
+		text += fmt.Sprintf("%-15s  %-25s  %s\n", name, version, url)
+	}
+	writeLine("Name", "Type Name", "Url")
+	for name, datatype := range config.datasets {
+		writeLine(name, datatype.DatatypeName()+" ("+datatype.DatatypeVersion()+")", datatype.DatatypeUrl())
+	}
+	return text
+}
+
+// About returns a chart of the code versions of compile-time DVID datastore
+// and the runtime data types.
+func (config *runtimeConfig) About() string {
+	var text string
+	writeLine := func(name, version string) {
+		text += fmt.Sprintf("%-15s   %s\n", name, version)
+	}
+	writeLine("Name", "Version")
+	writeLine("DVID datastore", Version)
+	writeLine("Leveldb", storage.Version)
+	for _, datatype := range config.datasets {
+		writeLine(datatype.DatatypeName(), datatype.DatatypeVersion())
+	}
+	return text
+}
+
+// AboutJSON returns the components and versions of DVID software.
+func (config *runtimeConfig) AboutJSON() (jsonStr string, err error) {
+	data := map[string]string{
+		"DVID datastore":  Version,
+		"Backend storage": storage.Version,
+	}
+	for _, datatype := range config.datasets {
+		data[datatype.DatatypeName()] = datatype.DatatypeVersion()
+	}
+	m, err := json.Marshal(data)
+	if err != nil {
+		return
+	}
+	jsonStr = string(m)
 	return
 }
 
@@ -124,12 +205,12 @@ type TypeInfo struct {
 
 // ConfigJSON returns configuration data in JSON format.
 func (s *Service) ConfigJSON() (jsonStr string, err error) {
-	datasets := make(map[DataSetString]TypeInfo)
-	for name, dtype := range s.dataNames {
+	datasets := make(map[DatasetString]TypeInfo)
+	for name, dtype := range s.datasets {
 		datasets[name] = TypeInfo{
-			Name:        dtype.TypeName(),
-			Url:         string(dtype.TypeUrl()),
-			Version:     dtype.TypeVersion(),
+			Name:        dtype.DatatypeName(),
+			Url:         string(dtype.DatatypeUrl()),
+			Version:     dtype.DatatypeVersion(),
 			BlockSize:   dtype.BlockSize(),
 			IndexScheme: dtype.IndexScheme().String(),
 			Help:        dtype.Help(),
@@ -137,22 +218,12 @@ func (s *Service) ConfigJSON() (jsonStr string, err error) {
 	}
 	data := struct {
 		Volume   dvid.Volume
-		DataSets map[DataSetString]TypeInfo
+		Datasets map[DatasetString]TypeInfo
 	}{
 		s.initConfig.Volume,
 		datasets,
 	}
 	m, err := json.Marshal(data)
-	if err != nil {
-		return
-	}
-	jsonStr = string(m)
-	return
-}
-
-// VersionsJSON returns the version DAG data in JSON format.
-func (s *Service) VersionsJSON() (jsonStr string, err error) {
-	m, err := json.Marshal(s.VersionDAG)
 	if err != nil {
 		return
 	}

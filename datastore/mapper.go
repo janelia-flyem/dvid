@@ -1,5 +1,6 @@
 /*
-	This file holds caching and buffering for datastore operation.
+	Mapper is a component for map/reduce operations that you can add to 
+	data types to implement block-level concurrency.
 */
 
 package datastore
@@ -16,12 +17,23 @@ import (
 	"github.com/janelia-flyem/dvid/storage"
 )
 
+// Operation provides an abstract interface to datatype-specific operations.
+// Each data type will implement operations that are mostly opaque at this level.
+type Operation interface {
+	TypeService
+	Data() interface{}
+	DatasetName() DatasetString
+	WaitGroup() *sync.WaitGroup
+}
+
+// Mapper administrates map/reduce operations for data types.
+type Mapper struct {
+	op         Operation
+	blockChans []chan *BlockRequest
+}
+
 // Constants that allow tuning of DVID for a particular target computer.
 const (
-	// Default size of LRU cache for DVID data blocks in MB.  The larger this number,
-	// the fewer disk accesses you'll need.
-	DefaultCacheMBytes = 512
-
 	// Default number of block handlers to use per data type. 
 	DefaultNumBlockHandlers = 8
 
@@ -36,24 +48,7 @@ const (
 	BlockHandlerBufferSize = 100000
 )
 
-type OpType uint8
-
-const (
-	GetOp OpType = iota
-	PutOp
-)
-
-func (op OpType) String() string {
-	switch op {
-	case GetOp:
-		return "GET"
-	case PutOp:
-		return "PUT"
-	}
-	return fmt.Sprintf("Illegal Op (%d)", op)
-}
-
-type OpResult string
+// Mapper can delegate
 
 // Block is the unit of get/put for each data type.  We typically decompose a
 // larger structure (DataStruct) into Blocks, process each Block separately
@@ -82,14 +77,14 @@ type BlockRequest struct {
 }
 
 // Each data type has a pool of channels to communicate with block handlers. 
-type BlockChannels map[DataSetString]([]chan *BlockRequest)
+type BlockChannels map[DatasetString]([]chan *BlockRequest)
 
 // Track requested/completed block ops
 type loadStruct struct {
 	Requests  int
 	Completed int
 }
-type loadMap map[DataSetString]loadStruct
+type loadMap map[DatasetString]loadStruct
 
 var (
 	// HandlerChannels are map from data type names to a pool of block handler
@@ -104,23 +99,23 @@ var (
 	// Monitor the requested and completed block ops
 	loadLastSec    loadMap
 	loadAccess     sync.RWMutex
-	doneChannel    chan DataSetString
-	requestChannel chan DataSetString
+	doneChannel    chan DatasetString
+	requestChannel chan DatasetString
 )
 
 func init() {
 	HandlerChannels = make(BlockChannels)
 	loadLastSec = make(loadMap)
-	doneChannel = make(chan DataSetString)
-	requestChannel = make(chan DataSetString)
+	doneChannel = make(chan DatasetString)
+	requestChannel = make(chan DatasetString)
 	go loadMonitor()
 }
 
 // Monitors the # of requests/done on block handlers per data set.
 func loadMonitor() {
 	secondTick := time.Tick(1 * time.Second)
-	requests := make(map[DataSetString]int)
-	completed := make(map[DataSetString]int)
+	requests := make(map[DatasetString]int)
+	completed := make(map[DatasetString]int)
 	for {
 		select {
 		case name := <-doneChannel:
@@ -146,7 +141,7 @@ func loadMonitor() {
 // data set.  Blocks are routed to the same handler each time, so concurrent
 // access to a block by multiple requests are funneled sequentially into a 
 // channel reserved for that block's handler.
-func ReserveBlockHandlers(name DataSetString, t TypeService) {
+func ReserveBlockHandlers(t TypeService, name DatasetString, numHandlers int) {
 	loadAccess.Lock()
 	loadLastSec[name] = loadStruct{}
 	loadAccess.Unlock()
@@ -157,8 +152,8 @@ func ReserveBlockHandlers(name DataSetString, t TypeService) {
 	_, found := HandlerChannels[name]
 	if !found {
 		log.Printf("Starting %d block handlers for data set '%s' (%s)...\n",
-			t.NumBlockHandlers(), name, t.TypeName())
-		channels := make([]chan *BlockRequest, 0, t.NumBlockHandlers())
+			t.NumBlockHandlers(), name, t.DatatypeName())
+		channels := make([]chan *BlockRequest, 0, numHandlers)
 		for i := 0; i < t.NumBlockHandlers(); i++ {
 			channel := make(chan *BlockRequest, BlockHandlerBufferSize)
 			channels = append(channels, channel)
@@ -192,4 +187,96 @@ func BlockLoadJSON() (jsonStr string, err error) {
 	}
 	jsonStr = string(m)
 	return
+}
+
+// MapBlocks breaks down a DataStruct into a sequence of blocks that can be
+// handled concurrently by datatype-specific block handers.  Each block handler
+// is assigned the same blocks based on its index.
+//
+// Phase 1: Time leveldb built-in LRU cache and write buffer. (current)
+// Phase 2: Minimize leveldb built-in LRU cache and use DVID LRU cache with
+//   periodic and on-demand writes. 
+// TODO -- Examine possible interleaving of block-level requests across MapBlocks()
+//   calls and its impact on GET requests fulfilled while some blocks are still being
+//   modified.
+func (op *Operation) MapBlocks(data DataStruct) error {
+
+	// Get compressed dataset index
+	datasetBytes, err := vs.DataIndexBytes(data.DatasetName())
+	if err != nil {
+		return err
+	}
+
+	// Make sure we have Block Handlers for this data type.
+	channels, found := HandlerChannels[data.DatasetName()]
+	if !found {
+		return fmt.Errorf("Error in reserving block handlers in MapBlocks() for %s!",
+			data.DatasetName())
+	}
+
+	// Traverse blocks, get key/values if not in cache, and put block in queue for handler.
+	ro := keyvalue.NewReadOptions()
+	kvIterator, err := vs.kvdb.NewIterator(ro)
+	defer kvIterator.Close()
+	if err != nil {
+		return err
+	}
+	indexIterator := NewZYXIterator(data)
+	seek := true
+
+	//dvid.Fmt(dvid.Debug, "Mapping blocks for %s\n", data)
+	DiskAccess.Lock()
+	for {
+		index := indexIterator()
+		if index == nil {
+			break
+		}
+		key := storage.Key{
+			DatasetKey: data.DatasetName(),
+			VersionKey: op.VersionBytes(),
+			CompressedDataset: datasetBytes,
+		}
+		// blockKey := BlockKey(uuidBytes, indexBytes, datatypeBytes, data.IsolatedKeys())
+
+		// Pull from the datastore
+		if seek || (kvIterator.Valid() && string(kvIterator.Key()) != key.Bytes()) {
+			kvIterator.Seek(key)
+			seek = false
+		}
+		var value keyvalue.Value
+		if kvIterator.Valid() && string(kvIterator.Key()) == key.Bytes() {
+			value = kvIterator.Value()
+			kvIterator.Next()
+		} else {
+			seek = true
+			if op.LoopOnNoKey {
+				continue
+			}
+		}
+
+		// Initialize the block request
+		req := &BlockRequest{
+			DataStruct: data,
+			Block:      value,
+			Op:         op,
+			IndexKey:   Index(indexBytes),
+			BlockKey:   blockKey,
+			Wait:       wg,
+			DB:         vs.kvdb,
+			//WriteBatch: writeBatch,
+		}
+
+		// Try to spread sequential block keys among different block handlers to get 
+		// most out of our concurrent processing.
+		if op.wg != nil {
+			op.wg.Add(1)
+		}
+		channelNum := req.IndexKey.Hash(data, len(channels))
+		//dvid.Fmt(dvid.Debug, "Sending %s block %s request %s down channel %d\n",
+		//	op, Index(indexBytes).BlockCoord(data), data, channelNum)
+		channels[channelNum] <- req
+		requestChannel <- data.DatasetName()
+	}
+	DiskAccess.Unlock()
+	return nil
 }

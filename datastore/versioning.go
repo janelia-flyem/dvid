@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/janelia-flyem/dvid/dvid"
+
 	"code.google.com/p/go-uuid/uuid"
 )
 
@@ -27,10 +29,10 @@ func NewUUID() UUID {
 	return UUID(fmt.Sprintf("%032x", []byte(u)))
 }
 
-// VersionId is a unique id that corresponds to one UUID in a datastore.  We limit the
-// number of versions that can be present in a datastore to int16 and use that more compact 
+// VersionID is a unique id that corresponds to one UUID in a datastore.  We limit the
+// number of versions that can be present in a datastore and use that more compact 
 // index compared to the full 16 byte UUID for construction of keys.
-type VersionId int16
+type VersionID dvid.LocalID
 
 // VersionNode contains all information for a node in the version DAG like its parents,
 // children, and provenance.
@@ -39,7 +41,7 @@ type VersionNode struct {
 	Id UUID
 
 	// Index is a unique id per datastore.
-	Index VersionId
+	Index VersionID
 
 	// Locked nodes are read-only and can be branched.
 	Locked bool
@@ -70,7 +72,7 @@ type VersionNode struct {
 type VersionDAG struct {
 	Head       UUID
 	Nodes      []VersionNode
-	VersionMap map[UUID]VersionId
+	VersionMap map[UUID]VersionID
 }
 
 // NewVersionDAG creates a version DAG and initializes the first unlocked node,
@@ -88,7 +90,7 @@ func NewVersionDAG() *VersionDAG {
 		Updated: t,
 	}
 	dag.Nodes = append(dag.Nodes, node)
-	dag.VersionMap = map[UUID]VersionId{dag.Head: 0}
+	dag.VersionMap = map[UUID]VersionID{dag.Head: 0}
 	return &dag
 }
 
@@ -101,13 +103,13 @@ func (dag *VersionDAG) LogInfo() string {
 	return text
 }
 
-// VersionIdFromString returns a UUID index given its string representation.  
+// VersionIDFromString returns a UUID index given its string representation.  
 // Partial matches are accepted as long as they are unique for a datastore.  So if
 // a datastore has nodes with UUID strings 3FA22..., 7CD11..., and 836EE..., 
 // we can still find a match even if given the minimum 3 letters.  (We don't
 // allow UUID strings of less than 3 letters just to prevent mistakes.)
-func (dag *VersionDAG) VersionIdFromString(str string) (id VersionId, err error) {
-	var lastMatch VersionId
+func (dag *VersionDAG) VersionIDFromString(str string) (id VersionID, err error) {
+	var lastMatch VersionID
 	numMatches := 0
 	for uuid, id := range dag.VersionMap {
 		if strings.HasPrefix(string(uuid), str) {

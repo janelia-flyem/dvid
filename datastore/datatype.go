@@ -11,10 +11,9 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"sync"
 
 	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/janelia-flyem/dvid/keyvalue"
+	"github.com/janelia-flyem/dvid/storage"
 )
 
 // This message is used for all data types to explain options.
@@ -23,95 +22,74 @@ const helpMessage = `
 
     name: %s 
     url: %s 
-
-    The following set options are available on the command line:
-
-        uuid=<UUID>    Example: uuid=3f7a088
-
-        rpc=<address>  Example: rpc=my.server.com:1234
 `
 
 type UrlString string
 
-// DataStruct is an interface to structs that know their shape and data and is
-// the unit of transfer between DVID and clients. Slices of various orientation 
-// and subvolumes should satisfy this interface.
-type DataStruct interface {
-	dvid.Geometry
-	TypeService
-
-	// BlockHandler processes a block of data.
-	BlockHandler(r *BlockRequest)
-
-	// The data set this data belongs to.
-	DataSetName() DataSetString
-
-	// The data itself.  Go image data is usually held in []uint8.
-	Data() []uint8
-
-	// Stride gives the increment in bytes between vertically adjacent pixels if
-	// the Data() is a 2d image.  This is necessary because the Data might not
-	// be packed only with image data but might including padding or metadata.
-	Stride() int32
-}
-
 // Request supports requests to the DVID server.  Since input and reply payloads 
-// are different depending on the command, we use DataStruct interfaces for the
-// payloads. 
+// are different depending on the command and the data type, we use an ArbitraryInput
+// (empty interface) for the payload.
 type Request struct {
 	dvid.Command
-	DataStruct
+	Input ArbitraryInput
 }
+type ArbitraryInput interface{}
 
 // Response supports responses from DVID.
 type Response struct {
 	dvid.Response
-	DataStruct
+	Output ArbitraryOutput
 }
+type ArbitraryOutput interface{}
 
 // TypeID provides methods for determining the identity of a data type.
 type TypeID interface {
 	// TypeName describes a data type and may not be unique.
-	TypeName() string
+	DatatypeName() string
 
 	// TypeUrl returns the unique package name that fulfills the DVID Data interface
-	TypeUrl() UrlString
+	DatatypeUrl() UrlString
 
 	// TypeVersion describes the version identifier of this data type code
-	TypeVersion() string
+	DatatypeVersion() string
 }
 
 // TypeService is an interface for operations using arbitrary data types.
 type TypeService interface {
 	TypeID
 
-	// BlockSize returns the block size for this data type
-	BlockSize() dvid.Point3d
-
-	// BlockBytes returns the number of bytes in block data buffer
-	BlockBytes() int
-
-	// IndexScheme returns the index scheme employed by this data type
-	IndexScheme() IndexScheme
-
-	// IsolatedKeys returns true if this type's data keys should be grouped by itself.
-	IsolatedKeys() bool
-
-	// The number of block handlers (goroutines) spawned for this data type for each
-	// image version. 
-	NumBlockHandlers() int
-
 	// Help returns a string explaining how to use a data type's service
 	Help() string
 
-	// Do handles RPC commands specific to a data type
-	DoRPC(request Request, reply *Response, s *Service) error
-
-	// DoHTTP handles HTTP requests specific to a data type
-	DoHTTP(w http.ResponseWriter, r *http.Request, s *Service, apiPrefixURL string) error
+	// Create a Dataset of this data type
+	NewDataset(name DatasetString, s *Service, config ArbitraryConfig, id []byte) DatasetService
 
 	// Returns standard error response for unknown commands
 	UnknownCommand(request Request) error
+}
+type ArbitraryConfig interface{}
+
+// DatasetService is an interface for operations on arbitrary datasets that
+// use a supported TypeService.  Block handlers can be allocated at this level,
+// so an implementation can own a number of goroutines.
+//
+// DatasetService operations are completely type-specific, and each datatype
+// handles operations through RPC (DoRPC) and HTTP (DoHTTP).
+// TODO -- Add SPDY as wrapper to HTTP.
+type DatasetService interface {
+	TypeService
+
+	// Handle iteration through a dataset in abstract way
+	NewIndexIterator(extents interface{}) IndexIterator
+
+	// DoRPC handles command line and RPC commands specific to a data type
+	DoRPC(request Request, reply *Response) error
+
+	// DoHTTP handles HTTP requests specific to a data type
+	DoHTTP(w http.ResponseWriter, r *http.Request, apiPrefixURL string) error
+
+	// Shutdown closes any cache and halts any block handlers for this data set.
+	Shutdown()
 }
 
 // CompiledTypes is the set of registered data types compiled into DVID and
@@ -122,7 +100,7 @@ var CompiledTypes map[UrlString]TypeService
 func CompiledTypeNames() string {
 	var names []string
 	for _, datatype := range CompiledTypes {
-		names = append(names, datatype.TypeName())
+		names = append(names, datatype.DatatypeName())
 	}
 	return strings.Join(names, ", ")
 }
@@ -144,7 +122,7 @@ func CompiledTypeChart() string {
 	}
 	writeLine("Name", "Url")
 	for _, datatype := range CompiledTypes {
-		writeLine(datatype.TypeName(), datatype.TypeUrl())
+		writeLine(datatype.DatatypeName(), datatype.DatatypeUrl())
 	}
 	return text + "\n"
 }
@@ -154,14 +132,14 @@ func RegisterDatatype(t TypeService) {
 	if CompiledTypes == nil {
 		CompiledTypes = make(map[UrlString]TypeService)
 	}
-	CompiledTypes[t.TypeUrl()] = t
+	CompiledTypes[t.DatatypeUrl()] = t
 }
 
 // DatatypeID uniquely identifies a DVID-supported data type and provides a 
 // shorthand name.
 type DatatypeID struct {
 	// Name describes a data type and may not be unique.
-	Name string
+	TypeName string
 
 	// Url specifies the unique package name that fulfills the DVID Data interface
 	Url UrlString
@@ -174,24 +152,19 @@ func MakeDatatypeID(name string, url UrlString, version string) DatatypeID {
 	return DatatypeID{name, url, version}
 }
 
-func (id DatatypeID) TypeName() string { return id.Name }
+func (id DatatypeID) DatatypeName() string { return id.TypeName }
 
-func (id DatatypeID) TypeUrl() UrlString { return id.Url }
+func (id DatatypeID) DatatypeUrl() UrlString { return id.Url }
 
-func (id DatatypeID) TypeVersion() string { return id.Version }
+func (id DatatypeID) DatatypeVersion() string { return id.Version }
 
-// Datatype adds instance-specific information on how a data type is being used.
+// Datatype is the base struct that satisfies a TypeService and can be embedded
+// in other data types.
 type Datatype struct {
 	DatatypeID
 
-	// Block size
-	BlockMax dvid.Point3d
-
-	// Spatial indexing scheme
-	Indexing IndexScheme
-
 	// A list of interface requirements for the backend datastore
-	Requirements keyvalue.Requirements
+	Requirements storage.Requirements
 
 	// IsolateData should be false (default) to place this data type next to
 	// other data types within a block, so for a given block we can quickly
@@ -205,13 +178,7 @@ type Datatype struct {
 // data types and are centralized here for DRY reasons.  Each supported data type
 // embeds the datastore.Datatype type and gets these functions for free.
 
-func (datatype *Datatype) BlockSize() dvid.Point3d {
-	return datatype.BlockMax
-}
-
-func (datatype *Datatype) IndexScheme() IndexScheme {
-	return datatype.Indexing
-}
+// Types must add a NewDataset() function...
 
 func (datatype *Datatype) IsolatedKeys() bool {
 	return datatype.IsolateData
@@ -226,98 +193,17 @@ func (datatype *Datatype) UnknownCommand(request Request) error {
 		datatype.Name, datatype.Url, request.TypeCommand())
 }
 
-// MapBlocks breaks down a DataStruct into a sequence of blocks that can be
-// handled concurrently by datatype-specific block handers.  Each block handler
-// is assigned the same blocks based on its index.
-//
-// Phase 1: Time leveldb built-in LRU cache and write buffer. (current)
-// Phase 2: Minimize leveldb built-in LRU cache and use DVID LRU cache with
-//   periodic and on-demand writes. 
-// TODO -- Examine possible interleaving of block-level requests across MapBlocks()
-//   calls and its impact on GET requests fulfilled while some blocks are still being
-//   modified.
-func (vs *VersionService) MapBlocks(op OpType, data DataStruct, wg *sync.WaitGroup) error {
+// Dataset extends a Datatype and allows setting dataset-specific properties
+// like resolution in given units, etc.  This allows us to have multimodal images that
+// vary in resolution but can still use the same underlying voxel algorithms.
+type Dataset struct {
+	*Datatype
+	name  DatasetString
+	props interface{}
 
-	// Get components of the block key
-	uuidBytes := vs.UuidBytes()
-	datatypeBytes, err := vs.DataIndexBytes(data.DataSetName())
-	if err != nil {
-		return err
-	}
+	// A unique key component for this dataset within the current DVID instance. 
+	datasetKey []byte
 
-	// Make sure we have Block Handlers for this data type.
-	channels, found := HandlerChannels[data.DataSetName()]
-	if !found {
-		return fmt.Errorf("Error in reserving block handlers in MapBlocks() for %s!",
-			data.DataSetName())
-	}
-
-	// Traverse blocks, get key/values if not in cache, and put block in queue for handler.
-	ro := keyvalue.NewReadOptions()
-	db_it, err := vs.kvdb.NewIterator(ro)
-	defer db_it.Close()
-	if err != nil {
-		return err
-	}
-	index_it := NewIndexIterator(data)
-	seek := true
-
-	//dvid.Fmt(dvid.Debug, "Mapping blocks for %s\n", data)
-	DiskAccess.Lock()
-	switch op {
-	case PutOp, GetOp:
-		for {
-			indexBytes := index_it()
-			if indexBytes == nil {
-				break
-			}
-			blockKey := BlockKey(uuidBytes, indexBytes, datatypeBytes, data.IsolatedKeys())
-
-			// Pull from the datastore
-			if seek || (db_it.Valid() && string(db_it.Key()) != string(blockKey)) {
-				db_it.Seek(blockKey)
-				seek = false
-			}
-			var value keyvalue.Value
-			if db_it.Valid() && string(db_it.Key()) == string(blockKey) {
-				//fmt.Printf("Got value\n")
-				value = db_it.Value()
-				db_it.Next()
-			} else {
-				seek = true
-				if op == PutOp {
-					value = make(keyvalue.Value, data.BlockBytes(), data.BlockBytes())
-				} else {
-					continue // If have no value, simply use zero value of slice/subvolume.
-				}
-			}
-
-			// Initialize the block request
-			req := &BlockRequest{
-				DataStruct: data,
-				Block:      value,
-				Op:         op,
-				IndexKey:   Index(indexBytes),
-				BlockKey:   blockKey,
-				Wait:       wg,
-				DB:         vs.kvdb,
-				//WriteBatch: writeBatch,
-			}
-
-			// Try to spread sequential block keys among different block handlers to get 
-			// most out of our concurrent processing.
-			if wg != nil {
-				wg.Add(1)
-			}
-			channelNum := req.IndexKey.Hash(data, len(channels))
-			//dvid.Fmt(dvid.Debug, "Sending %s block %s request %s down channel %d\n",
-			//	op, Index(indexBytes).BlockCoord(data), data, channelNum)
-			channels[channelNum] <- req
-			requestChannel <- data.DataSetName()
-		}
-	default:
-		return fmt.Errorf("Illegal operation (%d) asked for in MapBlocks()", op)
-	}
-	DiskAccess.Unlock()
-	return nil
+	// Each dataset has a pointer to the storage service it uses.
+	store *Service
 }

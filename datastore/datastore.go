@@ -1,21 +1,18 @@
 package datastore
 
 import (
-	"bytes"
-	"encoding/binary"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"path/filepath"
 	"sync"
 
 	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/janelia-flyem/dvid/keyvalue"
+	"github.com/janelia-flyem/dvid/storage"
 )
 
 const (
-	Version = "0.5"
+	Version = "0.6"
 )
 
 // Shutdown handles graceful cleanup of datastore before exiting DVID.
@@ -34,7 +31,7 @@ func Versions() string {
 	writeLine("DVID datastore", Version)
 	writeLine("Storage driver", storage.Version)
 	for _, datatype := range CompiledTypes {
-		writeLine(datatype.TypeName(), datatype.TypeVersion())
+		writeLine(datatype.DatatypeName(), datatype.DatatypeVersion())
 	}
 	return text
 }
@@ -92,76 +89,6 @@ func Init(directory string, configFile string, create bool) (uuid UUID) {
 
 	db.Close()
 	uuid = dag.Head
-	return
-}
-
-// VerifyCompiledTypes will return an error if any required data type in the datastore 
-// configuration was not compiled into DVID executable.  Check is done by more exact
-// URL and not the data type name.
-func (config *runtimeConfig) VerifyCompiledTypes() error {
-	if CompiledTypes == nil {
-		return fmt.Errorf("DVID was not compiled with any data type support!")
-	}
-	var errMsg string
-	for _, datatype := range config.dataNames {
-		_, found := CompiledTypes[datatype.TypeUrl()]
-		if !found {
-			errMsg += fmt.Sprintf("DVID was not compiled with support for data type %s [%s]\n",
-				datatype.TypeName(), datatype.TypeUrl())
-		}
-	}
-	if errMsg != "" {
-		return errors.New(errMsg)
-	}
-	return nil
-}
-
-// DataChart returns a chart of data set names and their types for this runtime configuration. 
-func (config *runtimeConfig) DataChart() string {
-	var text string
-	if len(config.dataNames) == 0 {
-		return "  No data sets have been added to this datastore.\n  Use 'dvid dataset ...'"
-	}
-	writeLine := func(name DataSetString, version string, url UrlString) {
-		text += fmt.Sprintf("%-15s  %-25s  %s\n", name, version, url)
-	}
-	writeLine("Name", "Type Name", "Url")
-	for name, datatype := range config.dataNames {
-		writeLine(name, datatype.TypeName()+" ("+datatype.TypeVersion()+")", datatype.TypeUrl())
-	}
-	return text
-}
-
-// About returns a chart of the code versions of compile-time DVID datastore
-// and the runtime data types.
-func (config *runtimeConfig) About() string {
-	var text string
-	writeLine := func(name, version string) {
-		text += fmt.Sprintf("%-15s   %s\n", name, version)
-	}
-	writeLine("Name", "Version")
-	writeLine("DVID datastore", Version)
-	writeLine("Leveldb", storage.Version)
-	for _, datatype := range config.dataNames {
-		writeLine(datatype.TypeName(), datatype.TypeVersion())
-	}
-	return text
-}
-
-// AboutJSON returns the components and versions of DVID software.
-func (config *runtimeConfig) AboutJSON() (jsonStr string, err error) {
-	data := map[string]string{
-		"DVID datastore":  Version,
-		"Backend storage": storage.Version,
-	}
-	for _, datatype := range config.dataNames {
-		data[datatype.TypeName()] = datatype.TypeVersion()
-	}
-	m, err := json.Marshal(data)
-	if err != nil {
-		return
-	}
-	jsonStr = string(m)
 	return
 }
 
@@ -262,12 +189,12 @@ func (s *Service) SupportedDataChart() string {
 
 // LogInfo returns information on versions and 
 
-// DataSetService returns a type-specific service given a dataset name that should be
+// DatasetService returns a type-specific service given a dataset name that should be
 // specific to a DVID instance.
-func (s *Service) DataSetService(name DataSetString) (typeService TypeService, err error) {
-	for key, _ := range s.dataNames {
+func (s *Service) DatasetService(name DatasetString) (typeService TypeService, err error) {
+	for key, _ := range s.datasets {
 		if name == key {
-			typeService = s.dataNames[key]
+			typeService = s.datasets[key]
 			return
 		}
 	}
@@ -275,15 +202,15 @@ func (s *Service) DataSetService(name DataSetString) (typeService TypeService, e
 	return
 }
 
-// DataSets returns a map from data set name to type-specific services.
-func (s *Service) DataSets() map[DataSetString]datastoreType {
-	return s.dataNames
+// Datasets returns a map from data set name to type-specific services.
+func (s *Service) Datasets() map[DatasetString]Dataset {
+	return s.datasets
 }
 
 // TypeService returns a type-specific service given a type name.
 func (s *Service) TypeService(typeName string) (typeService TypeService, err error) {
 	for _, dtype := range CompiledTypes {
-		if typeName == dtype.TypeName() {
+		if typeName == dtype.DatatypeName() {
 			typeService = dtype
 			return
 		}
@@ -292,66 +219,69 @@ func (s *Service) TypeService(typeName string) (typeService TypeService, err err
 	return
 }
 
-// NewDataSet registers a data set name of a given data type with this datastore.  
-func (s *Service) NewDataSet(name DataSetString, typeName string) error {
+// NewDataset registers a data set name of a given data type with this datastore.
+// TODO -- Will have to pass in initialization parameters like block size,
+// block resolution, units, etc.  Then, within the data type, for each dataset
+// we create a blocksize that's tailored for this DVID instance's volume, after
+// taking into account units, resolution, etc. 
+func (s *Service) NewDataset(name DatasetString, typeName string) error {
 	// Check if this is a valid data type
 	typeService, err := s.TypeService(typeName)
 	if err != nil {
 		return err
 	}
 	// Check if we already have this registered
-	foundTypeService, found := s.dataNames[name]
+	foundTypeService, found := s.datasets[name]
 	if found {
-		if typeService.TypeUrl() != foundTypeService.TypeUrl() {
+		if typeService.DatatypeUrl() != foundTypeService.DatatypeUrl() {
 			return fmt.Errorf("Data set name '%s' already has type '%s' not '%s'",
-				name, foundTypeService.TypeUrl(), typeService.TypeUrl())
+				name, foundTypeService.DatatypeUrl(), typeService.DatatypeUrl())
 		}
 		return nil
 	}
 	// Add it and store updated runtimeConfig to datastore.
 	var lock sync.Mutex
 	lock.Lock()
-	index := DataTypeIndex(len(s.dataNames) + 1)
-	if index > 65500 {
+	id := DatasetID(len(s.datasets) + 1)
+	if id > 65500 {
 		return fmt.Errorf("Only 65500 distinct data sets allowed per DVID instance.")
 	}
-	if s.dataNames == nil {
-		s.dataNames = make(map[DataSetString]datastoreType)
+	if s.datasets == nil {
+		s.datasets = make(map[DatasetString]Dataset)
 	}
-	s.dataNames[name] = datastoreType{typeService, index.ToKey()}
+	s.datasets[name] = typeService.NewDataset(name, s, nil, id.Bytes())
 	err = s.runtimeConfig.put(s.db)
-	ReserveBlockHandlers(name, s.dataNames[name])
 	lock.Unlock()
 	return err
 }
 
-// DeleteDataSet deletes a data set from the datastore and is considered
+// DeleteDataset deletes a data set from the datastore and is considered
 // a DANGEROUS operation.  Only to be used during debugging and development.
 // TODO -- Deleted dataset data should also be expunged. 
-func (s *Service) DeleteDataSet(name DataSetString) error {
+func (s *Service) DeleteDataset(name DatasetString) error {
 	// Find the data set
-	_, found := s.dataNames[name]
+	_, found := s.datasets[name]
 	if !found {
 		return fmt.Errorf("Data set '%s' not present in DVID datastore.", name)
 	}
 	// Delete it and store updated runtimeConfig to datastore.
 	var lock sync.Mutex
 	lock.Lock()
-	delete(s.dataNames, name)
+	s.datasets[name].Shutdown()
+	delete(s.datasets, name)
 	// Remove load stat cache
 	delete(loadLastSec, name)
 	err := s.runtimeConfig.put(s.db)
-	// Should halt ReserveBlockHandlers(name, s.dataNames[name])
 	lock.Unlock()
 	return err
 }
 
 // DataIndexBytes returns bytes that uniquely identify (within the current datastore)
 // the given data set name.   Returns nil if data set name was not found. 
-func (s *Service) DataIndexBytes(name DataSetString) (index []byte, err error) {
-	dtype, found := s.dataNames[name]
+func (s *Service) DatasetBytes(name DatasetString) (b []byte, err error) {
+	dset, found := s.datasets[name]
 	if found {
-		index = dtype.dataIndexBytes
+		b = dset.datasetKey
 		return
 	}
 	err = fmt.Errorf("Dataset name '%s' not registered for this datastore!", name)
@@ -364,41 +294,15 @@ func (s *Service) GetHeadUuid() UUID {
 	return s.Head
 }
 
-// TypeInfo contains data type information reformatted for easy consumption by clients.
-type TypeInfo struct {
-	Name        string
-	Url         string
-	Version     string
-	BlockSize   dvid.Point3d
-	IndexScheme string
-	Help        string
-}
-
-// ConfigJSON returns configuration data in JSON format.
-func (s *Service) ConfigJSON() (jsonStr string, err error) {
-	datasets := make(map[DataSetString]TypeInfo)
-	for name, dtype := range s.dataNames {
-		datasets[name] = TypeInfo{
-			Name:        dtype.TypeName(),
-			Url:         string(dtype.TypeUrl()),
-			Version:     dtype.TypeVersion(),
-			BlockSize:   dtype.BlockSize(),
-			IndexScheme: dtype.IndexScheme().String(),
-			Help:        dtype.Help(),
-		}
-	}
-	data := struct {
-		Volume   dvid.Volume
-		DataSets map[DataSetString]TypeInfo
-	}{
-		s.initConfig.Volume,
-		datasets,
-	}
-	m, err := json.Marshal(data)
+// VersionBytes returns a slice of bytes representing the VersionID corresponding
+// to the supplied UUID string.  The UUID string can be incomplete as long as it
+// contains a unique prefix of a valid UUID.
+func (s *Service) VersionBytes(uuidStr string) (b []byte, err error) {
+	id, err := s.VersionIDFromString(uuidStr)
 	if err != nil {
 		return
 	}
-	jsonStr = string(m)
+	b = id.Bytes()
 	return
 }
 
@@ -410,43 +314,4 @@ func (s *Service) VersionsJSON() (jsonStr string, err error) {
 	}
 	jsonStr = string(m)
 	return
-}
-
-// VersionService encapsulates both an open DVID datastore and the version that
-// should be operated upon.  It is the main unit of service for operations.
-type VersionService struct {
-	*Service
-
-	// The datastore-specific UUID index for the version we are operating upon
-	versionId VersionId
-
-	// Channels for the block handlers
-	channels BlockChannels
-}
-
-// NewVersionService returns a VersionService given a UUID string that has enough
-// characters to uniquely identify a version in the datastore.
-func NewVersionService(s *Service, uuidStr string) (vs *VersionService, err error) {
-	id, err := s.VersionIdFromString(uuidStr)
-	if err != nil {
-		return
-	}
-	vs = &VersionService{s, id, make(BlockChannels)}
-	return
-}
-
-// VersionId is the datastore-specific version index.  We assume we'll have no more
-// than 32,000 image versions.
-func (vs *VersionService) VersionId() VersionId {
-	return vs.versionId
-}
-
-// UuidBytes returns a sequence of bytes encoding the UUID for this version service. 
-func (vs *VersionService) UuidBytes() []byte {
-	buf := new(bytes.Buffer)
-	err := binary.Write(buf, binary.LittleEndian, vs.versionId)
-	if err != nil {
-		log.Fatalf("ERROR encoding binary uuid %d: %s", vs.versionId, err.Error())
-	}
-	return buf.Bytes()
 }

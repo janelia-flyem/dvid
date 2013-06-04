@@ -56,20 +56,16 @@ var (
 	// Number of logical CPUs to use for DVID.  
 	useCPU = flag.Int("numcpu", 0, "")
 
-	// Size of DVID data cache
-	cacheMBytes = flag.Uint64("cache", datastore.DefaultCacheMBytes, "")
-
 	// Number of seconds to wait trying to get exclusive access to DVID datastore.
 	timeout = flag.Int("timeout", 0, "")
 )
 
 const helpMessage = `
-dvid is a distributed, versioned image datastore
+dvid is a distributed, versioned image-oriented datastore
 
 Usage: dvid [options] <command>
 
       -numcpu     =number   Number of logical CPUs to use for DVID.
-      -cache      =number   Megabytes of LRU cache for blocks.  (Default: %d MB)
       -timeout    =number   Seconds to wait trying to get exclusive access to datastore.
       -webclient  =string   Path to web client directory.  Leave unset for default pages.
       -rpc        =string   Address for RPC communication.
@@ -99,7 +95,7 @@ a web browser to visit the DVID web server ("%s" by default).
 
 var usage = func() {
 	// Print local DVID help
-	fmt.Printf(helpMessage, datastore.DefaultCacheMBytes)
+	fmt.Printf(helpMessage)
 
 	// Print server DVID help if available
 	err := DoCommand(dvid.Command([]string{"help"}))
@@ -162,10 +158,10 @@ func main() {
 		log.Printf("Using %d of %d logical CPUs for DVID.\n", dvidCPU, numCPU)
 	}
 
-	// Capture ctrl+c and handle graceful shutdown (flushing of cache, etc.)
-	ctrl_c := make(chan os.Signal, 1)
+	// Capture ctrl+c and other interrupts.  Then handle graceful shutdown.
+	stopSig := make(chan os.Signal)
 	go func() {
-		for sig := range ctrl_c {
+		for sig := range stopSig {
 			log.Printf("Captured %v.  Shutting down...\n", sig)
 			if *memprofile != "" {
 				log.Printf("Storing memory profiling to %s...\n", *memprofile)
@@ -184,7 +180,7 @@ func main() {
 			os.Exit(0)
 		}
 	}()
-	signal.Notify(ctrl_c, os.Interrupt)
+	signal.Notify(stop_ch, os.Interrupt, os.Kill)
 
 	// If we have no arguments, run in terminal mode, else execute command.
 	if flag.NArg() == 0 {

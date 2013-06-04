@@ -6,15 +6,32 @@ package dvid
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"image"
-	"io"
+	"log"
 	"math"
 	"os"
 	"strconv"
 	"strings"
 )
+
+// LocalID is a unique id for some data in a DVID instance.  This unique id is presumably
+// a much smaller representation than the actual data (e.g., a version UUID or dataset
+// description) and can be represented with fewer bytes in keys.
+type LocalID uint16
+
+// Bytes returns a sequence of bytes encoding this LocalID.
+func (id LocalID) Bytes() []byte {
+	buf := new(bytes.Buffer)
+	err := binary.Write(buf, binary.LittleEndian, id)
+	if err != nil {
+		log.Fatalf("ERROR encoding local id %d to bytes: %s", id, err.Error())
+	}
+	return buf.Bytes()
+}
+
 
 // Notes:
 //   Whenever the units of a type are different, e.g., voxel coordinate versus

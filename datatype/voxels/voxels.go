@@ -16,8 +16,8 @@ import (
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/janelia-flyem/dvid/keyvalue"
 	"github.com/janelia-flyem/dvid/server"
+	"github.com/janelia-flyem/dvid/storage"
 
 	"code.google.com/p/goprotobuf/proto"
 )
@@ -122,23 +122,7 @@ const DefaultNumBlockHandlers = 8
 // DefaultBlockMax specifies the default size for each block of this data type.
 var DefaultBlockMax dvid.Point3d = dvid.Point3d{16, 16, 16}
 
-// We don't init() this data type because it's like an abstract base class.
-/*
-func init() {
-	datastore.RegisterDatatype(&Datatype{
-		Datatype: datastore.Datatype{
-			DatatypeID:  datastore.MakeDatatypeID("voxels", RepoUrl, Version),
-			BlockMax:    DefaultBlockMax,
-			Indexing:    datastore.SchemeIndexZYX,
-			IsolateData: true,
-		},
-		NumChannels:   1,
-		BytesPerVoxel: 1,
-	})
-}
-*/
-
-// Datatype embeds the datastore's Datatype to create a unique type
+/// Datatype embeds the datastore's Datatype to create a unique type
 // with voxel functions.  Refinements of general voxel types can be implemented 
 // by embedding this type, choosing appropriate # of channels and bytes/voxel,
 // overriding functions as needed, and calling datastore.RegisterDatatype().
@@ -148,18 +132,264 @@ type Datatype struct {
 	BytesPerVoxel int
 }
 
-// The following two functions must be defined to fulfill the TypeService interface.
+// NewDatatype returns a pointer to a new voxels Datatype with default values set.
+func NewDatatype() (dtype *Datatype) {
+	dtype = new(Datatype)
+	dtype.NumChannels = 1
+	dtype.BytesPerVoxel = 1
+	dtype.Requirements = storage.Requirements{
+		Iterator:      true,
+		JSONDatastore: false,
+		BulkIniter:    false,
+		BulkLoader:    false,
+		Batcher:       false,
+	}
+}
 
-// NumBlockHandlers returns the number of block handler goroutines that are launched
-// for this data type per image version.
-func (dtype *Datatype) NumBlockHandlers() int {
-	return DefaultNumBlockHandlers
+// Dataset embeds the datastore's Dataset so we can set voxel-specific properties.
+type Dataset datastore.Dataset
+
+// DatasetProps encapsulates what we need to clarify per voxel dataset.
+type DatasetProps struct {
+	// Block size for this dataset
+	BlockSize dvid.BlockCoord
+
+	// Relative resolution of voxels in volume
+	VoxelRes dvid.VoxelResolution
+
+	// Units of resolution, e.g., "nanometers"
+	VoxelResUnits dvid.VoxelResolutionUnits
+}
+
+// --- TypeService interface ---
+
+// NewDataset returns a pointer to a new voxels Dataset with default values.
+// TODO -- Allow dataset-specific configuration
+func (dtype *Datatype) NewDataset(name DatasetString, s *datastore.Service, config interface{},
+	id []byte) *Dataset {
+
+	return &Dataset{
+		Datatype: dtype,
+		name: name,
+		props: &DatasetProps{
+			BlockSize:     DefaultBlockMax,
+			VoxelRes:      dvid.VoxelResolution{1.0, 1.0, 1.0},
+			VoxelResUnits: "nanometers",
+		},
+		datasetKey: id,
+		store: s,
+	}
 }
 
 // BlockBytes returns the number of bytes within this data type's block data.
 func (dtype *Datatype) BlockBytes() int {
 	numVoxels := int(dtype.BlockMax[0] * dtype.BlockMax[1] * dtype.BlockMax[2])
 	return numVoxels * dtype.NumChannels * dtype.BytesPerVoxel
+}
+
+// --- DatasetService interface ---
+
+// Do acts as a switchboard for RPC commands. 
+func (dset *Dataset) DoRPC(request datastore.Request, reply *datastore.Response) error {
+	switch request.TypeCommand() {
+	case "server-add":
+		return dset.ServerAdd(request, reply)
+	//	case "get":
+	//		return dtype.Get(request, reply)
+	case "help":
+		reply.Text = HelpMessage
+	default:
+		return dtype.UnknownCommand(request)
+	}
+	return nil
+}
+
+// DoHTTP handles all incoming HTTP requests for this dataset. 
+func (dset *Dataset) DoHTTP(w http.ResponseWriter, r *http.Request, apiURL string) error {
+	startTime := time.Now()
+
+	// Allow cross-origin resource sharing.
+	w.Header().Add("Access-Control-Allow-Origin", "*")
+
+	// Get the action (GET, POST)
+	action := strings.ToLower(r.Method)
+	var op OpType
+	switch action {
+	case "get":
+		op = GetOp
+	case "post":
+		op = PutOp
+	default:
+		return fmt.Errorf("Can only handle GET or POST HTTP verbs")
+	}
+
+	// Break URL request into arguments
+	url := r.URL.Path[len(apiURL):]
+	parts := strings.Split(url, "/")
+
+	// Setup the Operation using the correct version
+	versionStr := parts[1]
+	versionBytes, err := dset.store.VersionBytes(versionStr)
+	if err != nil {
+		return err
+	}
+	operation = dset.makeOperation(versionBytes, op)
+
+	// Get the data shape. 
+	shapeStr := dvid.DataShapeString(parts[2])
+	dataShape, err := shapeStr.DataShape()
+	if err != nil {
+		return fmt.Errorf("Bad data shape given '%s'", shapeStr)
+	}
+
+	switch dataShape {
+	case dvid.XY, dvid.XZ, dvid.YZ:
+		slice, err := dvid.NewSliceFromStrings(parts[2], parts[3], parts[4])
+		if err != nil {
+			return err
+		}
+		if op == PutOp {
+			// TODO -- Put in format checks for POSTed image.
+			postedImg, _, err := dvid.ImageFromPost(r, "image")
+			if err != nil {
+				return err
+			}
+			_, err = dtype.ProcessSlice(operation, slice, postedImg)
+			if err != nil {
+				return err
+			}
+		} else {
+			img, err := dtype.ProcessSlice(operation, slice, nil)
+			if err != nil {
+				return err
+			}
+			var formatStr string
+			if len(parts) >= 6 {
+				formatStr = parts[5]
+			}
+			//dvid.ElapsedTime(dvid.Normal, startTime, "%s %s upto image formatting", op, slice)
+			err = dvid.WriteImageHttp(w, img, formatStr)
+			if err != nil {
+				return err
+			}
+		}
+		dvid.ElapsedTime(dvid.Normal, startTime, "%s %s (%s) %s", op, dataSetName,
+			dtype.DatatypeName(), slice)
+	case dvid.Vol:
+		subvol, err := dvid.NewSubvolumeFromStrings(parts[3], parts[4])
+		if err != nil {
+			return err
+		}
+		if op == GetOp {
+			pb, err := dtype.ProcessSubvolume(operation, subvol, nil)
+			if err != nil {
+				return err
+			}
+			data, err := proto.Marshal(pb)
+			if err != nil {
+				return err
+			}
+			w.Header().Set("Content-type", "application/x-protobuf")
+			_, err = w.Write(data)
+			if err != nil {
+				return err
+			}
+		} else {
+			return fmt.Errorf("DVID does not yet support POST of subvolume data.")
+		}
+		dvid.ElapsedTime(dvid.Normal, startTime, "%s %s (%s) %s", op, dataSetName,
+			dtype.DatatypeName(), subvol)
+	case dvid.Arb:
+		return fmt.Errorf("DVID does not yet support arbitrary planes.")
+	}
+	return nil
+}
+
+// NewIndexIterator returns an IndexIterator closure.  The closure for this voxels data
+// type uses VoxelCoord, BlockCoord, and returns an IndexZYX.
+func (dset *Dataset) NewIndexIterator(extents interface{}) IndexIterator {
+	data, ok := extents.(dvid.Geometry)
+	if !ok {
+		log.Fatalf("Received bad data (%s) for NewIndexIterator for %s", abstractData, *dset)
+	}
+	blockSize := dset.Props.(*DatasetProps).BlockSize
+
+	// Setup traversal
+	startVoxel := data.Origin()
+	endVoxel := data.EndVoxel()
+
+	// Returns a closure that iterates in x, then y, then z
+	startBlockCoord := startVoxel.BlockCoord(blockSize)
+	endBlockCoord := endVoxel.BlockCoord(blockSize)
+	z := startBlockCoord[2]
+	y := startBlockCoord[1]
+	x := startBlockCoord[0]
+	return func() Index {
+		//dvid.Fmt(dvid.Debug, "IndexIterator: start at (%d,%d,%d)\n", x, y, z)
+		if z > endBlockCoord[2] {
+			return nil
+		}
+		// Convert an n-D block coordinate into a 1-D index
+		index := datastore.BlockZYX{x, y, z}.MakeIndex()
+		x++
+		if x > endBlockCoord[0] {
+			x = startBlockCoord[0]
+			y++
+		}
+		if y > endBlockCoord[1] {
+			y = startBlockCoord[1]
+			z++
+		}
+		return index
+	}
+}
+
+// --- datastore.Operation interface ----
+
+// Operation holds type-specific data for operations and can be used to 
+// map blocks to handlers.
+type Operation struct {
+	*Dataset
+	version []byte
+	op      OpType
+	wg      *sync.WaitGroup
+}
+
+type OpType uint8
+
+const (
+	GetOp OpType = iota
+	PutOp
+)
+
+func (op OpType) String() string {
+	switch op {
+	case GetOp:
+		return "GET"
+	case PutOp:
+		return "PUT"
+	}
+	return fmt.Sprintf("Illegal Op (%d)", op)
+}
+
+func (dset *Dataset) makeOperation(version []byte, op OpType) *Operation {
+	return &Operation{dset, version, op, new(sync.WaitGroup)}
+}
+
+func (pOp *Operation) VersionBytes() []byte {
+	return pOp.version
+}
+
+func (pOp *Operation) Data() interface{} {
+	return pOp.data
+}
+
+func (pOp *Operation) DatasetName() datastore.DatasetString {
+	return pOp.dataset
+}
+
+func (pOp *Operation) WaitGroup() *sync.WaitGroup {
+	return pOp.wg
 }
 
 // Process subvolume and slice function
@@ -175,9 +405,8 @@ func (dtype *Datatype) BlockBytes() int {
 // concurrently via MapBlocks(), then waiting until all blocks have
 // completed before returning.  An subvolume is returned if the op is a GetOp.
 // If the op is a PutOp, we write sequentially all modified blocks.
-func (dtype *Datatype) ProcessSubvolume(dataSetName datastore.DataSetString,
-	vs *datastore.VersionService, op datastore.OpType, subvol *dvid.Subvolume,
-	inputImg image.Image) (encodedVol *server.Subvolume, err error) {
+func (dset *Dataset) ProcessSubvolume(op *Operation, subvol *dvid.Subvolume) (
+	encodedVol *server.Subvolume, err error) {
 
 	startTime := time.Now()
 
@@ -187,15 +416,14 @@ func (dtype *Datatype) ProcessSubvolume(dataSetName datastore.DataSetString,
 	var data []uint8
 	//var batch keyvalue.WriteBatch
 
-	switch op {
-	case datastore.PutOp:
+	switch op.op {
+	case PutOp:
 		// Setup write batch to maximize sequential writes and exploit
 		// leveldb write buffer.
 		//batch = keyvalue.NewWriteBatch()
 		//defer batch.Close()
-
-	case datastore.GetOp:
-		data = make([]uint8, numBytes, numBytes)
+	case GetOp:
+		// supported op
 	default:
 		err = fmt.Errorf("Illegal operation (%d) in ProcessSubvolume()", op)
 		return
@@ -203,10 +431,8 @@ func (dtype *Datatype) ProcessSubvolume(dataSetName datastore.DataSetString,
 
 	// Do the mapping from subvol to blocks
 	voxels := &Voxels{
-		dataSetName: dataSetName,
-		Geometry:    subvol,
-		TypeService: dtype,
-		data:        data,
+		Geometry: subvol,
+		data:     data,
 	}
 	var wg sync.WaitGroup
 	err = vs.MapBlocks(op, voxels, &wg)
@@ -215,7 +441,7 @@ func (dtype *Datatype) ProcessSubvolume(dataSetName datastore.DataSetString,
 	}
 	// Wait for all map block processing.
 	wg.Wait()
-	if op == datastore.GetOp {
+	if op == GetOp {
 		dvid.PrintNonZero("ProcessSubvolume()", []byte(data))
 		encodedVol = &server.Subvolume{
 			Dataset: proto.String(string(dataSetName)),
@@ -237,8 +463,7 @@ func (dtype *Datatype) ProcessSubvolume(dataSetName datastore.DataSetString,
 // concurrently via MapBlocks(), then waiting until all blocks have
 // completed before returning.  An image is returned if the op is a GetOp.
 // If the op is a PutOp, we write sequentially all modified blocks.
-func (dtype *Datatype) ProcessSlice(dataSetName datastore.DataSetString,
-	vs *datastore.VersionService, op datastore.OpType, slice dvid.Geometry,
+func (dset *Dataset) ProcessSlice(op *Operation, slice dvid.Geometry,
 	inputImg image.Image) (outputImg image.Image, err error) {
 
 	// Setup the data buffer
@@ -249,7 +474,7 @@ func (dtype *Datatype) ProcessSlice(dataSetName datastore.DataSetString,
 	//var batch keyvalue.WriteBatch
 
 	switch op {
-	case datastore.PutOp:
+	case PutOp:
 		// Setup write batch to maximize sequential writes and exploit
 		// leveldb write buffer.
 		//batch = keyvalue.NewWriteBatch()
@@ -263,12 +488,12 @@ func (dtype *Datatype) ProcessSlice(dataSetName datastore.DataSetString,
 		expectedStride := int32(dtype.NumChannels*dtype.BytesPerVoxel) * slice.Width()
 		if stride < expectedStride {
 			typeInfo := fmt.Sprintf("(%s: %d channels, %d bytes/voxel, %s pixels)",
-				dtype.TypeName(), dtype.NumChannels, dtype.BytesPerVoxel, slice.Size())
+				dtype.DatatypeName(), dtype.NumChannels, dtype.BytesPerVoxel, slice.Size())
 			err = fmt.Errorf("Input image has too little data (stride bytes = %d) for type %s",
 				stride, typeInfo)
 			return
 		}
-	case datastore.GetOp:
+	case GetOp:
 		data = make([]uint8, numBytes, numBytes)
 		stride = slice.Width() * int32(bytesPerVoxel)
 	default:
@@ -291,7 +516,7 @@ func (dtype *Datatype) ProcessSlice(dataSetName datastore.DataSetString,
 	}
 	// Wait for all map block processing.
 	wg.Wait()
-	if op == datastore.GetOp {
+	if op == GetOp {
 		// Write the image to requestor
 		outputImg, err = voxels.SliceImage(0)
 		if err != nil {
@@ -299,126 +524,6 @@ func (dtype *Datatype) ProcessSlice(dataSetName datastore.DataSetString,
 		}
 	}
 	return
-}
-
-// Do acts as a switchboard for RPC commands. 
-func (dtype *Datatype) DoRPC(request datastore.Request, reply *datastore.Response,
-	service *datastore.Service) error {
-
-	switch request.TypeCommand() {
-	case "server-add":
-		return dtype.ServerAdd(request, reply, service)
-	//	case "get":
-	//		return dtype.Get(request, reply)
-	case "help":
-		reply.Text = HelpMessage
-	default:
-		return dtype.UnknownCommand(request)
-	}
-	return nil
-}
-
-// DoHTTP handles all incoming HTTP requests for this data type. 
-func (dtype *Datatype) DoHTTP(w http.ResponseWriter, r *http.Request,
-	service *datastore.Service, apiPrefixURL string) error {
-
-	startTime := time.Now()
-
-	// Allow cross-origin resource sharing.
-	w.Header().Add("Access-Control-Allow-Origin", "*")
-
-	// Get the action (GET, POST)
-	action := strings.ToLower(r.Method)
-	var op datastore.OpType
-	switch action {
-	case "get":
-		op = datastore.GetOp
-	case "post":
-		op = datastore.PutOp
-	default:
-		return fmt.Errorf("Can only handle GET or POST HTTP verbs")
-	}
-
-	// Break URL request into arguments
-	url := r.URL.Path[len(apiPrefixURL):]
-	parts := strings.Split(url, "/")
-
-	dataSetName := datastore.DataSetString(parts[0])
-
-	// Get the datastore service corresponding to given version
-	vs, err := datastore.NewVersionService(service, parts[1])
-	if err != nil {
-		return err
-	}
-
-	// Get the data shape. 
-	shapeStr := dvid.DataShapeString(parts[2])
-	dataShape, err := shapeStr.DataShape()
-	if err != nil {
-		return fmt.Errorf("Bad data shape given '%s'", shapeStr)
-	}
-
-	switch dataShape {
-	case dvid.XY, dvid.XZ, dvid.YZ:
-		slice, err := dvid.NewSliceFromStrings(parts[2], parts[3], parts[4])
-		if err != nil {
-			return err
-		}
-		if op == datastore.PutOp {
-			// TODO -- Put in format checks for POSTed image.
-			postedImg, _, err := dvid.ImageFromPost(r, "image")
-			if err != nil {
-				return err
-			}
-			_, err = dtype.ProcessSlice(dataSetName, vs, datastore.PutOp, slice, postedImg)
-			if err != nil {
-				return err
-			}
-		} else {
-			img, err := dtype.ProcessSlice(dataSetName, vs, op, slice, nil)
-			if err != nil {
-				return err
-			}
-			var formatStr string
-			if len(parts) >= 6 {
-				formatStr = parts[5]
-			}
-			//dvid.ElapsedTime(dvid.Normal, startTime, "%s %s upto image formatting", op, slice)
-			err = dvid.WriteImageHttp(w, img, formatStr)
-			if err != nil {
-				return err
-			}
-		}
-		dvid.ElapsedTime(dvid.Normal, startTime, "%s %s (%s) %s", op, dataSetName,
-			dtype.TypeName(), slice)
-	case dvid.Vol:
-		subvol, err := dvid.NewSubvolumeFromStrings(parts[3], parts[4])
-		if err != nil {
-			return err
-		}
-		if op == datastore.GetOp {
-			pb, err := dtype.ProcessSubvolume(dataSetName, vs, op, subvol, nil)
-			if err != nil {
-				return err
-			}
-			data, err := proto.Marshal(pb)
-			if err != nil {
-				return err
-			}
-			w.Header().Set("Content-type", "application/x-protobuf")
-			_, err = w.Write(data)
-			if err != nil {
-				return err
-			}
-		} else {
-			return fmt.Errorf("DVID does not yet support POST of subvolume data.")
-		}
-		dvid.ElapsedTime(dvid.Normal, startTime, "%s %s (%s) %s", op, dataSetName,
-			dtype.TypeName(), subvol)
-	case dvid.Arb:
-		return fmt.Errorf("DVID does not yet support arbitrary planes.")
-	}
-	return nil
 }
 
 // ServerAdd adds a sequence of image files to an image version.  The request
@@ -437,7 +542,7 @@ func (dtype *Datatype) DoHTTP(w http.ResponseWriter, r *http.Request,
 // The image filename glob MUST BE absolute file paths that are visible to the server.
 // This function is meant for mass ingestion of large data files, and it is inappropriate 
 // to read gigabytes of data just to send it over the network to a local DVID.
-func (dtype *Datatype) ServerAdd(request datastore.Request, reply *datastore.Response,
+func (dset *Dataset) ServerAdd(request datastore.Request, reply *datastore.Response,
 	service *datastore.Service) error {
 
 	startTime := time.Now()
@@ -448,7 +553,7 @@ func (dtype *Datatype) ServerAdd(request datastore.Request, reply *datastore.Res
 	if len(filenames) == 0 {
 		return fmt.Errorf("Need to include at least one file to add: %s", request)
 	}
-	dataSetName := datastore.DataSetString(setName)
+	dataSetName := datastore.DatasetString(setName)
 
 	vs, err := datastore.NewVersionService(service, uuidStr)
 	if err != nil {
@@ -491,7 +596,7 @@ func (dtype *Datatype) ServerAdd(request datastore.Request, reply *datastore.Res
 			slice, err := dvid.NewSlice(dataShape, offset, size)
 			_, err = dtype.ProcessSlice(dataSetName, vs, datastore.PutOp, slice, img)
 			dvid.ElapsedTime(dvid.Debug, sliceTime, "%s %s %s",
-				datastore.PutOp, dtype.TypeName(), slice)
+				datastore.PutOp, dtype.DatatypeName(), slice)
 			if err == nil {
 				numSuccessful++
 			} else {
@@ -513,7 +618,7 @@ func (dtype *Datatype) ServerAdd(request datastore.Request, reply *datastore.Res
 // block is handled by the BlockHandler() defined in this package.
 type Voxels struct {
 	// Which data set does this belong to?
-	dataSetName datastore.DataSetString
+	dataSetName datastore.DatasetString
 
 	dvid.Geometry
 	datastore.TypeService
@@ -524,10 +629,6 @@ type Voxels struct {
 	// The stride for 2d iteration.  For 3d subvolumes, we don't reuse standard Go
 	// images but maintain fully packed data slices, so stride isn't necessary.
 	stride int32
-}
-
-func (v *Voxels) DataSetName() datastore.DataSetString {
-	return v.dataSetName
 }
 
 func (v *Voxels) Data() []uint8 {
@@ -541,7 +642,7 @@ func (v *Voxels) Stride() int32 {
 func (v *Voxels) String() string {
 	size := v.Size()
 	return fmt.Sprintf("%s %s of size %d x %d x %d @ %s",
-		v.TypeName(), v.DataShape(), size[0], size[1], size[2], v.Origin())
+		v.DatatypeName(), v.DataShape(), size[0], size[1], size[2], v.Origin())
 }
 
 // SliceImage returns an image.Image for the z-th slice of the volume.
@@ -588,6 +689,17 @@ func (v *Voxels) SliceImage(z int) (img image.Image, err error) {
 	return
 }
 
+// OffsetToBlock returns the voxel coordinate at the top left corner of the block
+// corresponding to the index.
+func (i IndexZYX) OffsetToBlock() (coord dvid.VoxelCoord) {
+	blockCoord := i.InvertIndex()
+	blockSize := t.BlockSize()
+	coord[0] = blockCoord[0] * blockSize[0]
+	coord[1] = blockCoord[1] * blockSize[1]
+	coord[2] = blockCoord[2] * blockSize[2]
+	return
+}
+
 // BlockHandler processes a block of data as part of a request.  The BlockRequest
 // holds data (the larger structure, e.g., plane or subvolume) that cuts across
 // this particular block (a small rectangular volume of voxels).  The data may be
@@ -614,7 +726,14 @@ func (v *Voxels) BlockHandler(req *datastore.BlockRequest) {
 	blockBeg := begVolCoord.Sub(minBlockVoxel)
 
 	// Compute index into the block byte buffer, blockI
-	block := []uint8(req.Block)
+	var block []uint8
+	if req.Block == nil {
+		// Create a zero value block
+		blockBytes := req.DataStruct.BlockBytes()
+		block = make([]uint8, blockBytes, blockBytes)
+	} else {
+		block = []uint8(req.Block)
+	}
 	blockNumX := blockSize[0] * bytesPerVoxel
 	blockNumXY := blockSize[1] * blockNumX
 
@@ -643,9 +762,9 @@ func (v *Voxels) BlockHandler(req *datastore.BlockRequest) {
 			run := end[0] - beg[0] + 1
 			bytes := run * bytesPerVoxel
 			switch req.Op {
-			case datastore.GetOp:
+			case GetOp:
 				copy(data[dataI:dataI+bytes], block[blockI:blockI+bytes])
-			case datastore.PutOp:
+			case PutOp:
 				copy(block[blockI:blockI+bytes], data[dataI:dataI+bytes])
 			}
 			blockI += blockSize[0] * bytesPerVoxel
@@ -659,9 +778,9 @@ func (v *Voxels) BlockHandler(req *datastore.BlockRequest) {
 			run := end[0] - beg[0] + 1
 			bytes := run * bytesPerVoxel
 			switch req.Op {
-			case datastore.GetOp:
+			case GetOp:
 				copy(data[dataI:dataI+bytes], block[blockI:blockI+bytes])
-			case datastore.PutOp:
+			case PutOp:
 				copy(block[blockI:blockI+bytes], data[dataI:dataI+bytes])
 			}
 			blockI += blockSize[0] * blockSize[1] * bytesPerVoxel
@@ -674,9 +793,9 @@ func (v *Voxels) BlockHandler(req *datastore.BlockRequest) {
 			blockI := bz*blockNumXY + blockBeg[1]*blockNumX + bx*bytesPerVoxel
 			for x := beg[1]; x <= end[1]; x++ {
 				switch req.Op {
-				case datastore.GetOp:
+				case GetOp:
 					copy(data[dataI:dataI+bytesPerVoxel], block[blockI:blockI+bytesPerVoxel])
-				case datastore.PutOp:
+				case PutOp:
 					copy(block[blockI:blockI+bytesPerVoxel], data[dataI:dataI+bytesPerVoxel])
 				}
 				blockI += blockNumX
@@ -696,9 +815,9 @@ func (v *Voxels) BlockHandler(req *datastore.BlockRequest) {
 				run := end[0] - beg[0] + 1
 				bytes := run * bytesPerVoxel
 				switch req.Op {
-				case datastore.GetOp:
+				case GetOp:
 					copy(data[dataI:dataI+bytes], block[blockI:blockI+bytes])
-				case datastore.PutOp:
+				case PutOp:
 					copy(block[blockI:blockI+bytes], data[dataI:dataI+bytes])
 				}
 				blockY++
@@ -710,7 +829,7 @@ func (v *Voxels) BlockHandler(req *datastore.BlockRequest) {
 	}
 
 	// If this is a PUT, place the modified block data into the database.
-	if req.Op == datastore.PutOp {
+	if req.Op == PutOp {
 		req.DB.Put(req.BlockKey, req.Block)
 	}
 

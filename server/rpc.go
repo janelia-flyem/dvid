@@ -73,8 +73,8 @@ func (c *RpcConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 	case "dataset":
 		var dataName, typeName string
 		cmd.CommandArgs(1, &dataName, &typeName)
-		dataSetName := datastore.DataSetString(dataName)
-		err := runningService.NewDataSet(dataSetName, typeName)
+		dataSetName := datastore.DatasetString(dataName)
+		err := runningService.NewDataset(dataSetName, typeName)
 		if err != nil {
 			return err
 		}
@@ -83,8 +83,8 @@ func (c *RpcConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 		// Temporary command while we debug system
 		var dataName string
 		cmd.CommandArgs(1, &dataName)
-		dataSetName := datastore.DataSetString(dataName)
-		err := runningService.DeleteDataSet(dataSetName)
+		dataSetName := datastore.DatasetString(dataName)
+		err := runningService.DeleteDataset(dataSetName)
 		if err != nil {
 			return err
 		}
@@ -119,8 +119,8 @@ func branch(cmd datastore.Request, reply *datastore.Response) error {
 
 func datatypeDo(cmd datastore.Request, reply *datastore.Response) error {
 	// Get the TypeService for this data set name.  Let user know if it's not supported.
-	dataSetName := datastore.DataSetString(cmd.Name())
-	typeService, err := runningService.DataSetService(dataSetName)
+	dataSetName := datastore.DatasetString(cmd.Name())
+	typeService, err := runningService.DatasetService(dataSetName)
 	if err != nil {
 		// See if the user is addressing a data type name, not a data set name.
 		typeService, err = runningService.TypeService(cmd.Name())
