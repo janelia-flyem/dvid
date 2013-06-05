@@ -150,13 +150,13 @@ func RegisterDatatype(t TypeService) {
 // DatatypeID uniquely identifies a DVID-supported data type and provides a
 // shorthand name.
 type DatatypeID struct {
-	// Name describes a data type and may not be unique.
+	// TypeName describes a data type and may not be unique.
 	Name string
 
-	// Url specifies the unique package name that fulfills the DVID Data interface
+	// TypeUrl specifies the unique package name that fulfills the DVID Data interface
 	Url UrlString
 
-	// Version describes the version identifier of this data type code
+	// TypeVersion describes the version identifier of this data type code
 	Version string
 }
 
@@ -207,23 +207,25 @@ func (datatype *Datatype) UnknownCommand(request Request) error {
 
 // DatasetID identifies a dataset within a DVID instance.
 type DatasetID struct {
-	Name    DatasetString
-	LocalID dvid.LocalID
+	SetName    DatasetString
+	SetLocalID dvid.LocalID
 }
 
-func (id DatasetID) DatasetName() DatasetString { return id.Name }
+func (id DatasetID) DatasetName() DatasetString { return id.SetName }
 
-func (id DatasetID) DatasetLocalID() dvid.LocalID { return id.LocalID }
+func (id DatasetID) DatasetLocalID() dvid.LocalID { return id.SetLocalID }
 
 // Dataset is an instance of a data type and has an associated datastore.
 type Dataset struct {
-	TypeService
 	DatasetID
+
+	// The data type that provides its implementation
+	datatype TypeService
 
 	// Each dataset has a pointer to the storage service it uses.
 	store *Service
 }
 
-func BaseDataset(t TypeService, id DatasetID, s *Service) *Dataset {
-	return &Dataset{t, id, s}
+func BaseDataset(s *Service, id DatasetID, t TypeService) *Dataset {
+	return &Dataset{id, t, s}
 }

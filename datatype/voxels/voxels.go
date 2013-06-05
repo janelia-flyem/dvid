@@ -155,7 +155,7 @@ func (dtype *Datatype) Serialize() (s dvid.Serialization, err error) {
 // NewDataset returns a pointer to a new voxels Dataset with default values.
 func (dtype *Datatype) NewDataset(s *datastore.Service, id datastore.DatasetID, config dvid.Config) *Dataset {
 	dataset := &Dataset{
-		Dataset: datastore.BaseDataset(dtype, id, s),
+		Dataset: datastore.BaseDataset(s, id, dtype),
 	}
 	dataset.BlockSize = DefaultBlockMax
 	if obj, found := config["BlockSize"]; found {
