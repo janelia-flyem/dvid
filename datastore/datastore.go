@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"path/filepath"
 	"sync"
 
 	"github.com/janelia-flyem/dvid/dvid"
@@ -36,24 +35,11 @@ func Versions() string {
 	return text
 }
 
-// Init creates a key-value datastore using default arguments.  Datastore 
-// configuration is stored as key/values in the datastore and also in a 
+// Init creates a key-value datastore using default arguments.  Datastore
+// configuration is stored as key/values in the datastore and also in a
 // human-readable config file in the datastore directory.
-func Init(directory string, configFile string, create bool) (uuid UUID) {
-	// Initialize the configuration
-	var ic *initConfig
-	var rc *runtimeConfig
-	if configFile == "" {
-		ic = initByPrompt()
-	} else {
-		ic, rc, err = initByJson(configFile)
-	}
-
+func Init(directory string, create bool) (uuid UUID) {
 	fmt.Println("\nInitializing datastore at", directory)
-	fmt.Printf("Volume size: %d x %d x %d\n",
-		config.VolumeMax[0], config.VolumeMax[1], config.VolumeMax[2])
-	fmt.Printf("Voxel resolution: %4.1f x %4.1f x %4.1f %s\n",
-		config.VoxelRes[0], config.VoxelRes[1], config.VoxelRes[2], config.VoxelResUnits)
 
 	// Initialize the backend database
 	dbOptions := storage.Options{}
@@ -62,19 +48,9 @@ func Init(directory string, configFile string, create bool) (uuid UUID) {
 		log.Fatalf("Error opening datastore (%s): %s\n", directory, err.Error())
 	}
 
-	// Store the configuration in a human-readable JSON
-	filename := filepath.Join(directory, ConfigFilename)
-	config.writeJsonConfig(filename)
-
-	// Put initial config data
-	err = config.put(db)
-	if err != nil {
-		log.Fatalf("Error writing configuration to datastore: %s\n", err.Error())
-	}
-
 	// Put empty runtime configuration
 	rconfig := new(runtimeConfig)
-	err = rconfig.put(db)
+	err = rconfig.Put(db)
 	if err != nil {
 		err = fmt.Errorf("Error writing blank runtime configuration: %s", err.Error())
 		return
@@ -82,7 +58,7 @@ func Init(directory string, configFile string, create bool) (uuid UUID) {
 
 	// Put initial version DAG
 	dag := NewVersionDAG()
-	err = dag.put(db)
+	err = dag.Put(db)
 	if err != nil {
 		log.Fatalf("Error writing initial version DAG to datastore: %s\n", err.Error())
 	}
@@ -94,7 +70,6 @@ func Init(directory string, configFile string, create bool) (uuid UUID) {
 
 // Service encapsulates an open DVID datastore, available for operations.
 type Service struct {
-	initConfig
 	runtimeConfig
 
 	// Holds all version data including map of UUIDs to nodes
@@ -109,7 +84,6 @@ type OpenErrorType int
 
 const (
 	ErrorOpening OpenErrorType = iota
-	ErrorInitConfig
 	ErrorRuntimeConfig
 	ErrorVersionDAG
 )
@@ -135,17 +109,8 @@ func Open(directory string) (s *Service, openErr *OpenError) {
 	}
 
 	// Read this datastore's configuration
-	iconfig := new(initConfig)
-	err = iconfig.get(db)
-	if err != nil {
-		openErr = &OpenError{
-			fmt.Errorf("Error reading initial configuration: %s", err.Error()),
-			ErrorInitConfig,
-		}
-		return
-	}
 	rconfig := new(runtimeConfig)
-	err = rconfig.get(db)
+	err = rconfig.Get(db)
 	if err != nil {
 		openErr = &OpenError{
 			fmt.Errorf("Error reading runtime configuration: %s", err.Error()),
@@ -156,7 +121,7 @@ func Open(directory string) (s *Service, openErr *OpenError) {
 
 	// Read this datastore's Version DAG
 	dag := new(VersionDAG)
-	err = dag.get(db)
+	err = dag.Get(db)
 	if err != nil {
 		openErr = &OpenError{
 			err,
@@ -165,7 +130,7 @@ func Open(directory string) (s *Service, openErr *OpenError) {
 		return
 	}
 
-	s = &Service{*iconfig, *rconfig, *dag, db}
+	s = &Service{*rconfig, *dag, db}
 	return
 }
 
@@ -187,7 +152,7 @@ func (s *Service) SupportedDataChart() string {
 	return text
 }
 
-// LogInfo returns information on versions and 
+// LogInfo returns information on versions and
 
 // DatasetService returns a type-specific service given a dataset name that should be
 // specific to a DVID instance.
@@ -223,7 +188,7 @@ func (s *Service) TypeService(typeName string) (typeService TypeService, err err
 // TODO -- Will have to pass in initialization parameters like block size,
 // block resolution, units, etc.  Then, within the data type, for each dataset
 // we create a blocksize that's tailored for this DVID instance's volume, after
-// taking into account units, resolution, etc. 
+// taking into account units, resolution, etc.
 func (s *Service) NewDataset(name DatasetString, typeName string) error {
 	// Check if this is a valid data type
 	typeService, err := s.TypeService(typeName)
@@ -240,24 +205,24 @@ func (s *Service) NewDataset(name DatasetString, typeName string) error {
 		return nil
 	}
 	// Add it and store updated runtimeConfig to datastore.
+	id := DatasetID(len(s.datasets) + 1)
+	if id >= 0xFFFE {
+		return fmt.Errorf("Too many distinct data sets are in this DVID instance: %d", id)
+	}
 	var lock sync.Mutex
 	lock.Lock()
-	id := DatasetID(len(s.datasets) + 1)
-	if id > 65500 {
-		return fmt.Errorf("Only 65500 distinct data sets allowed per DVID instance.")
-	}
 	if s.datasets == nil {
 		s.datasets = make(map[DatasetString]Dataset)
 	}
 	s.datasets[name] = typeService.NewDataset(name, s, nil, id.Bytes())
-	err = s.runtimeConfig.put(s.db)
+	err = s.runtimeConfig.Put(s.db)
 	lock.Unlock()
 	return err
 }
 
 // DeleteDataset deletes a data set from the datastore and is considered
 // a DANGEROUS operation.  Only to be used during debugging and development.
-// TODO -- Deleted dataset data should also be expunged. 
+// TODO -- Deleted dataset data should also be expunged.
 func (s *Service) DeleteDataset(name DatasetString) error {
 	// Find the data set
 	_, found := s.datasets[name]
@@ -271,13 +236,13 @@ func (s *Service) DeleteDataset(name DatasetString) error {
 	delete(s.datasets, name)
 	// Remove load stat cache
 	delete(loadLastSec, name)
-	err := s.runtimeConfig.put(s.db)
+	err := s.runtimeConfig.Put(s.db)
 	lock.Unlock()
 	return err
 }
 
 // DataIndexBytes returns bytes that uniquely identify (within the current datastore)
-// the given data set name.   Returns nil if data set name was not found. 
+// the given data set name.   Returns nil if data set name was not found.
 func (s *Service) DatasetBytes(name DatasetString) (b []byte, err error) {
 	dset, found := s.datasets[name]
 	if found {

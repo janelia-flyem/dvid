@@ -10,7 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"image"
-	"log"
+	_ "log"
 	"math"
 	"os"
 	"strconv"
@@ -24,14 +24,23 @@ type LocalID uint16
 
 // Bytes returns a sequence of bytes encoding this LocalID.
 func (id LocalID) Bytes() []byte {
-	buf := new(bytes.Buffer)
-	err := binary.Write(buf, binary.LittleEndian, id)
-	if err != nil {
-		log.Fatalf("ERROR encoding local id %d to bytes: %s", id, err.Error())
-	}
-	return buf.Bytes()
+	buf := make([]byte, 2, 2)
+	binary.LittleEndian.PutUint16(buf, uint16(id))
+	return buf
 }
 
+// GetLocalID parses a slice of bytes into a LocalID.
+func GetLocalID(b []byte) (id LocalID, err error) {
+	if len(b) != 2 {
+		err = fmt.Errorf("Illegal slice size (%d) supplied to GetLocalID()", len(b))
+		return
+	}
+	id = LocalID(binary.LittleEndian.Uint16(b))
+	return
+}
+
+// Config is a map of keyword to arbitrary data to specify configurations via keyword.
+type Config map[string]interface{}
 
 // Notes:
 //   Whenever the units of a type are different, e.g., voxel coordinate versus
@@ -135,7 +144,7 @@ func (c VoxelCoord) BlockCoord(blockSize Point3d) (bc BlockCoord) {
 	return
 }
 
-// BlockVoxel returns the voxel coordinate within a containing block for the given voxel 
+// BlockVoxel returns the voxel coordinate within a containing block for the given voxel
 // coordinate.
 func (c VoxelCoord) BlockVoxel(blockSize Point3d) (bc VoxelCoord) {
 	bc[0] = c[0] % blockSize[0]
@@ -154,7 +163,7 @@ func (c VoxelCoord) ToBlockIndex(blockSize Point3d) (index int) {
 }
 
 // Prompt asks the user to enter components of a voxel coordinate
-// with empty entries returning the numerical equivalent of defaultValue. 
+// with empty entries returning the numerical equivalent of defaultValue.
 func (c *VoxelCoord) Prompt(message, defaultValue string) {
 	axes := [3]string{"X", "Y", "Z"}
 	var coord int64
@@ -227,7 +236,7 @@ func (c BlockCoord) Min(x BlockCoord) (result BlockCoord) {
 	return
 }
 
-// VoxelResolution holds the relative resolutions along each dimension.  Since 
+// VoxelResolution holds the relative resolutions along each dimension.  Since
 // voxel resolutions should be fixed for the lifetime of a datastore, we assume
 // there is one base unit of resolution (e.g., nanometers) and all resolutions
 // are based on that.
@@ -237,7 +246,7 @@ type VoxelResolution [3]float32
 type VoxelResolutionUnits string
 
 // Prompt asks the user to enter components of a voxel's resolution
-// with empty entries returning the numerical equivalent of defaultValue. 
+// with empty entries returning the numerical equivalent of defaultValue.
 func (res *VoxelResolution) Prompt(message, defaultValue string) {
 	axes := [3]string{"X", "Y", "Z"}
 	var f float64
@@ -398,7 +407,7 @@ type Geometry interface {
 	// the size along z for Vol shapes.
 	Depth() int32
 
-	// NumVoxels returns the number of voxels within this space. 
+	// NumVoxels returns the number of voxels within this space.
 	NumVoxels() int
 
 	// EndVoxel returns the last voxel coordinate usually traversed so that
@@ -408,11 +417,11 @@ type Geometry interface {
 	String() string
 }
 
-// Subvolume describes the Geometry for a rectangular box of voxels.  The "Sub" prefix 
-// emphasizes that the data is usually a smaller portion of the volume held by the 
+// Subvolume describes the Geometry for a rectangular box of voxels.  The "Sub" prefix
+// emphasizes that the data is usually a smaller portion of the volume held by the
 // DVID datastore.  Note that the 3d coordinate system is a Right-Hand system
-// and works with OpenGL.  The origin is considered the top left corner of an XY slice.  
-// X increases as you move from left to right.  Y increases as you move down from the origin.  
+// and works with OpenGL.  The origin is considered the top left corner of an XY slice.
+// X increases as you move from left to right.  Y increases as you move down from the origin.
 // Z increases as you add more slices deeper than the current slice.
 type Subvolume struct {
 	// 3d offset
@@ -513,7 +522,7 @@ func NewSlice(shape DataShape, offset VoxelCoord, size Point2d) (slice Geometry,
 	return
 }
 
-// NewSliceFromStrings returns a Geometry object for a XY, XZ, or YZ slice given 
+// NewSliceFromStrings returns a Geometry object for a XY, XZ, or YZ slice given
 // string representations of shape ("xy"), offset ("0,10,20"), and size ("250,250").
 func NewSliceFromStrings(shapeStr, offsetStr, sizeStr string) (slice Geometry, err error) {
 	shape, err := DataShapeString(shapeStr).DataShape()

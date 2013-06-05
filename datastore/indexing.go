@@ -5,6 +5,7 @@
 package datastore
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/hex"
 	_ "fmt"
@@ -45,7 +46,7 @@ type Index interface {
 	String() string
 }
 
-// IndexIterator is a function that returns a sequence of indices and ends with nil. 
+// IndexIterator is a function that returns a sequence of indices and ends with nil.
 type IndexIterator func() Index
 
 // IndexIteratorMakers can make new IndexIterators.
@@ -65,7 +66,7 @@ func (i indexType) Bytes() []byte {
 	return i
 }
 
-// IndexZYX implements the Index interface and provides simple indexing on Z, 
+// IndexZYX implements the Index interface and provides simple indexing on Z,
 // then Y, then X.
 type IndexZYX indexType
 
@@ -79,13 +80,13 @@ func (i IndexZYX) InvertIndex() BlockIndex {
 }
 
 // Hash returns an integer [0, n) where the returned values should be reasonably
-// spread among the range of returned values. 
+// spread among the range of returned values.
 func (i IndexZYX) Hash(n int) int {
 	z := binary.LittleEndian.Uint32([]byte(i[0:4]))
 	y := binary.LittleEndian.Uint32([]byte(i[4:8]))
 	x := binary.LittleEndian.Uint32([]byte(i[8:12]))
-	// Make sure that any scans along x, y, or z directions will 
-	// cause distribution to different handlers. 
+	// Make sure that any scans along x, y, or z directions will
+	// cause distribution to different handlers.
 	return int(x+y+z) % n
 }
 
@@ -111,11 +112,18 @@ func (i IndexHilbert) Scheme() string {
 // a 3d coordinate space.
 type BlockZYX dvid.BlockCoord
 
-func (bc *BlockZYX) MakeIndex() Index {
-	// Create buffer for index
-	index := make(IndexZYX, 12, 12)
-	binary.LittleEndian.PutUint32(index[0:4], uint32(coord[2]))
-	binary.LittleEndian.PutUint32(index[4:8], uint32(coord[1]))
-	binary.LittleEndian.PutUint32(index[8:12], uint32(coord[0]))
-	return index
+// MakeIndex returns a 1d Index from a 3d ZYX coordinate.
+func (bc BlockZYX) MakeIndex() (i Index, err error) {
+	buf := new(bytes.Buffer)
+	err = binary.Write(buf, binary.BigEndian, bc[2])
+	if err != nil {
+		return
+	}
+	err = binary.Write(buf, binary.BigEndian, bc[1])
+	if err != nil {
+		return
+	}
+	err = binary.Write(buf, binary.BigEndian, bc[0])
+	i = buf.Bytes()
+	return
 }

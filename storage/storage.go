@@ -13,55 +13,48 @@
 package storage
 
 import (
+	_ "encoding/binary"
 	"fmt"
 	"log"
+
+	"github.com/janelia-flyem/dvid/dvid"
+)
+
+const (
+	KeyDatasetGlobal dvid.LocalID = 0
+	KeyVersionGlobal dvid.LocalID = 0
 )
 
 /*
-	Key holds DVID-centric data like version (UUID), data set, and block
+	Key holds DVID-centric data like version (UUID), data set, and index
 	identifiers and that follow a convention of how to collapse those
-	identifiers into a []byte.  Ideally, we'd like to keep Key within
+	identifiers into a []byte key.  Ideally, we'd like to keep Key within
 	the datastore package and have storage independent of DVID concepts,
 	but in order to optimize the layout of data in some backend databases,
 	the backend drivers need the additional DVID information.  For example,
 	Couchbase allows configuration at the bucket level (RAM cache, CPUs)
-	and a dataset should be placed within a bucket.
-	data within the key space.  The first byte of the key is a prefix that
-	separates general categories of data.  It also allows some headroom to
-	create different versions of datastore layout.
+	and datasets could be placed in different buckets.
 
-	If compressed key components are provided, those are used when
-	constructing keys to minimize key size.
+	Keys have the following components:
+
+	1) Dataset: The DVID instance-specific data index where the 0 index is
+	     a global dataset like DVID configuration data.
+	2) Version: The DVID instance-specific version index that is
+	     fewer bytes than a complete UUID.
+	3) Index: The datatype-specific index (e.g., spatiotemporal) that allows
+	     partitioning of the data.
 */
 type Key struct {
-	DatasetKey []byte
-	VersionKey []byte
-	BlockKey   []byte
-
-	CompressedVersion []byte
-	CompressedDataset []byte
-	CompressedBlock   []byte
+	Dataset dvid.LocalID
+	Version dvid.LocalID
+	Index   []byte
 }
 
-// Bytes returns a compressed Key as a slice of bytes.  If compressed key components
-// are not empty, they are used instead of the full string key components.
+// Bytes returns a slice of bytes derived from the concatenation of the key elements.
 func (key *Key) Bytes() (b []byte) {
-	b = []byte{}
-	if key.CompressedDataset != nil {
-		b = append(b, key.CompressedDataset...)
-	} else {
-		b = append(b, key.DatasetKey...)
-	}
-	if key.CompressedVersion != nil {
-		b = append(b, key.CompressedVersion...)
-	} else {
-		b = append(b, key.VersionKey...)
-	}
-	if key.CompressedBlock != nil {
-		b = append(b, key.CompressedBlock...)
-	} else {
-		b = append(b, key.BlockKey...)
-	}
+	b = key.Dataset.Bytes()
+	b = append(b, key.Version.Bytes()...)
+	b = append(b, key.Index...)
 	return
 }
 
@@ -115,7 +108,7 @@ type Requirements struct {
 
 // DataHandler implementations can fulfill a variety of interfaces.  Other parts
 // of DVID, most notably the data type implementations, need to know what's available.
-// Data types can throw a warning at init time if the backend doesn't support required 
+// Data types can throw a warning at init time if the backend doesn't support required
 // interfaces, or they can choose to implement multiple ways of handling data.
 type DataHandler interface {
 	// All backends must supply basic key/value store.
@@ -185,41 +178,41 @@ type BulkLoader interface {
 
 // IteratorMakers are backends that support Iterators.
 type IteratorMaker interface {
-	// NewIterator returns a read-only Iterator. 
+	// NewIterator returns a read-only Iterator.
 	NewIterator() (it Iterator, err error)
 }
 
 // Iterator provides an interface to a read-only iterator that allows
-// easy sequential scanning of key/value pairs.  
+// easy sequential scanning of key/value pairs.
 type Iterator interface {
-	// Close deallocates the iterator and freeing any underlying struct. 
+	// Close deallocates the iterator and freeing any underlying struct.
 	Close()
 
-	// GetError returns any error that occured during iteration. 
+	// GetError returns any error that occured during iteration.
 	GetError() error
 
-	// Key returns a copy of the key for current iterator position. 
+	// Key returns a copy of the key for current iterator position.
 	Key() []byte
 
-	// Next moves the iterator to the next sequential key. 
+	// Next moves the iterator to the next sequential key.
 	Next()
 
-	// Prev moves the iterator to the previous sequential key. 
+	// Prev moves the iterator to the previous sequential key.
 	Prev()
 
-	// Seek moves the iterator to the position of the given key. 
+	// Seek moves the iterator to the position of the given key.
 	Seek(key Key)
 
-	// SeekToFirst moves the iterator to the first key in the datastore. 
+	// SeekToFirst moves the iterator to the first key in the datastore.
 	SeekToFirst()
 
-	// SeekToLast moves the iterator to the last key in the datastore. 
+	// SeekToLast moves the iterator to the last key in the datastore.
 	SeekToLast()
 
 	// Valid returns false if the iterator has iterated before the first key
-	// or past the last key. 
+	// or past the last key.
 	Valid() bool
 
-	// Value returns a copy of the value for current iterator position. 
+	// Value returns a copy of the value for current iterator position.
 	Value() []byte
 }

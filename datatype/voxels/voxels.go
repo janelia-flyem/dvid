@@ -116,14 +116,14 @@ The voxel data type supports the following Level 2 REST HTTP API calls.
 `
 
 // DefaultNumBlockHandlers specifies the number of block handlers for this data type
-// for each image version. 
+// for each image version.
 const DefaultNumBlockHandlers = 8
 
 // DefaultBlockMax specifies the default size for each block of this data type.
 var DefaultBlockMax dvid.Point3d = dvid.Point3d{16, 16, 16}
 
 /// Datatype embeds the datastore's Datatype to create a unique type
-// with voxel functions.  Refinements of general voxel types can be implemented 
+// with voxel functions.  Refinements of general voxel types can be implemented
 // by embedding this type, choosing appropriate # of channels and bytes/voxel,
 // overriding functions as needed, and calling datastore.RegisterDatatype().
 type Datatype struct {
@@ -146,11 +146,42 @@ func NewDatatype() (dtype *Datatype) {
 	}
 }
 
-// Dataset embeds the datastore's Dataset so we can set voxel-specific properties.
-type Dataset datastore.Dataset
+func (dtype *Datatype) Serialize() (s dvid.Serialization, err error) {
+	return
+}
 
-// DatasetProps encapsulates what we need to clarify per voxel dataset.
-type DatasetProps struct {
+// --- TypeService interface ---
+
+// NewDataset returns a pointer to a new voxels Dataset with default values.
+func (dtype *Datatype) NewDataset(s *datastore.Service, id datastore.DatasetID, config dvid.Config) *Dataset {
+	dataset := &Dataset{
+		Dataset: datastore.BaseDataset(dtype, id, s),
+	}
+	dataset.BlockSize = DefaultBlockMax
+	if obj, found := config["BlockSize"]; found {
+		if blockSize, ok := obj.(dvid.BlockCoord); ok {
+			dataset.BlockSize = blockSize
+		}
+	}
+	dataset.VoxelRes = dvid.VoxelResolution{1.0, 1.0, 1.0}
+	if obj, found := config["VoxelRes"]; found {
+		if voxelRes, ok := obj.(dvid.VoxelResolution); ok {
+			dataset.VoxelRes = voxelRes
+		}
+	}
+	dataset.VoxelResUnits = "nanometers"
+	if obj, found := config["VoxelResUnits"]; found {
+		if res, ok := obj.(dvid.VoxelResolutionUnits); ok {
+			dataset.VoxelResUnits = res
+		}
+	}
+	return dataset
+}
+
+// Dataset embeds the datastore's Dataset and extends it with voxel-specific properties.
+type Dataset struct {
+	*datastore.Dataset
+
 	// Block size for this dataset
 	BlockSize dvid.BlockCoord
 
@@ -161,35 +192,13 @@ type DatasetProps struct {
 	VoxelResUnits dvid.VoxelResolutionUnits
 }
 
-// --- TypeService interface ---
-
-// NewDataset returns a pointer to a new voxels Dataset with default values.
-// TODO -- Allow dataset-specific configuration
-func (dtype *Datatype) NewDataset(name DatasetString, s *datastore.Service, config interface{},
-	id []byte) *Dataset {
-
-	return &Dataset{
-		Datatype: dtype,
-		name: name,
-		props: &DatasetProps{
-			BlockSize:     DefaultBlockMax,
-			VoxelRes:      dvid.VoxelResolution{1.0, 1.0, 1.0},
-			VoxelResUnits: "nanometers",
-		},
-		datasetKey: id,
-		store: s,
-	}
-}
-
-// BlockBytes returns the number of bytes within this data type's block data.
-func (dtype *Datatype) BlockBytes() int {
-	numVoxels := int(dtype.BlockMax[0] * dtype.BlockMax[1] * dtype.BlockMax[2])
-	return numVoxels * dtype.NumChannels * dtype.BytesPerVoxel
-}
-
 // --- DatasetService interface ---
 
-// Do acts as a switchboard for RPC commands. 
+func (dset *Dataset) Serialize() (s dvid.Serialization, err error) {
+	return
+}
+
+// Do acts as a switchboard for RPC commands.
 func (dset *Dataset) DoRPC(request datastore.Request, reply *datastore.Response) error {
 	switch request.TypeCommand() {
 	case "server-add":
@@ -204,7 +213,7 @@ func (dset *Dataset) DoRPC(request datastore.Request, reply *datastore.Response)
 	return nil
 }
 
-// DoHTTP handles all incoming HTTP requests for this dataset. 
+// DoHTTP handles all incoming HTTP requests for this dataset.
 func (dset *Dataset) DoHTTP(w http.ResponseWriter, r *http.Request, apiURL string) error {
 	startTime := time.Now()
 
@@ -235,7 +244,7 @@ func (dset *Dataset) DoHTTP(w http.ResponseWriter, r *http.Request, apiURL strin
 	}
 	operation = dset.makeOperation(versionBytes, op)
 
-	// Get the data shape. 
+	// Get the data shape.
 	shapeStr := dvid.DataShapeString(parts[2])
 	dataShape, err := shapeStr.DataShape()
 	if err != nil {
@@ -346,7 +355,7 @@ func (dset *Dataset) NewIndexIterator(extents interface{}) IndexIterator {
 
 // --- datastore.Operation interface ----
 
-// Operation holds type-specific data for operations and can be used to 
+// Operation holds type-specific data for operations and can be used to
 // map blocks to handlers.
 type Operation struct {
 	*Dataset
@@ -531,7 +540,7 @@ func (dset *Dataset) ProcessSlice(op *Operation, slice dvid.Geometry,
 //
 // <dataset name> server-add <uuid> <origin> <image filename glob> [plane=<plane>]
 //
-// Example request string: "mygrayscale server-add 3f8c 0,0,100 /absolute/path/to/data/*.png" 
+// Example request string: "mygrayscale server-add 3f8c 0,0,100 /absolute/path/to/data/*.png"
 //
 //	dataset name: the name of a dataset created using the "dataset" command.
 //	uuid: hexidecimal string with enough characters to uniquely identify a version node.
@@ -540,7 +549,7 @@ func (dset *Dataset) ProcessSlice(op *Operation, slice dvid.Geometry,
 //	plane: xy (default), xz, or yz.
 //
 // The image filename glob MUST BE absolute file paths that are visible to the server.
-// This function is meant for mass ingestion of large data files, and it is inappropriate 
+// This function is meant for mass ingestion of large data files, and it is inappropriate
 // to read gigabytes of data just to send it over the network to a local DVID.
 func (dset *Dataset) ServerAdd(request datastore.Request, reply *datastore.Response,
 	service *datastore.Service) error {

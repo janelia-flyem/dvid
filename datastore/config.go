@@ -1,16 +1,16 @@
 /*
 	This file handles configuration info for a DVID datastore and its serialization
-	to files as well as the backend key/value datastore itself.
+	to files as well as the keys to be used to store values in the key/value store.
 */
 
 package datastore
 
 import (
 	"fmt"
-	"log"
+	_ "log"
 
 	"github.com/janelia-flyem/dvid/dvid"
-	_ "github.com/janelia-flyem/dvid/storage"
+	"github.com/janelia-flyem/dvid/storage"
 )
 
 const (
@@ -19,49 +19,82 @@ const (
 	ConfigFilename = "dvid-config.json"
 )
 
-// initConfig defines the extent and resolution of the volume served by a DVID
-// datastore instance at init time.   Modifying these values after init is
-// a bad idea since spatial indexing for all keys might have to be modified
-// if the underlying volume extents and resolution are changed.
-type initConfig struct {
-	dvid.Volume
-}
+var (
+	// KeyConfig is the key for a DVID configuration
+	KeyConfig = storage.Key{
+		Dataset: storage.KeyDatasetGlobal,
+		Version: storage.KeyVersionGlobal,
+		Index:   []byte{0x01},
+	}
 
-// DatasetString is a string that is the name of a DVID data set. 
-// This gets its own type for documentation and also provide static error checks
-// to prevent conflation of type name from data set name.
-type DatasetString string
+	// KeyVersionDAG is the key for a Version DAG.
+	KeyVersionDAG = storage.Key{
+		Dataset: storage.KeyDatasetGlobal,
+		Version: storage.KeyVersionGlobal,
+		Index:   []byte{0x02},
+	}
+)
 
-// DatasetID is a unique id for a dataset within a DVID instance.
-type DatasetID dvid.LocalID
-
-// runtimeConfig holds editable configuration data for a datastore instance. 
+// runtimeConfig holds editable configuration data for a datastore instance.
 type runtimeConfig struct {
 	// Data supported.  This is a map of a user-defined name like "fib_data" with
 	// the supporting data type "grayscale8"
-	datasets map[DatasetString]Dataset
+	datasets map[DatasetString]DatasetService
+
+	// Always incremented counter that provides local dataset ID so we can use
+	// smaller # of bytes (dvid.LocalID size) instead of full identifier.
+	newDatasetID dvid.LocalID
 }
 
 // rconfig is a local struct used for explicit export of runtime configurations
+// that uses more global identification of data types via URL.
 type rconfig struct {
-	TypeUrl        UrlString
-	DataIndexBytes []byte
+	TypeUrl   UrlString
+	DatasetID dvid.LocalID
 }
 
-func (config *runtimeConfig) Serialize() (s Serialization, err error) {
+// Get retrieves a configuration from a KeyValueDB.
+func (config *runtimeConfig) Get(db storage.KeyValueDB) (err error) {
+	// Get data
+	var data []byte
+	data, err = db.Get(KeyConfig)
+	if err != nil {
+		return
+	}
+
+	// Deserialize into object
+	err = config.Deserialize(dvid.Serialization(data))
+	return
+}
+
+// Put stores a configuration into a KeyValueDB.
+func (config *runtimeConfig) Put(db storage.KeyValueDB) (err error) {
+	// Get serialization
+	var serialization dvid.Serialization
+	serialization, err = config.Serialize()
+
+	// Put data
+	return db.Put(KeyConfig, []byte(serialization))
+}
+
+// Serialize returns a serialization of configuration with Snappy compression and
+// CRC32 checksum.
+func (config *runtimeConfig) Serialize() (s dvid.Serialization, err error) {
+	var buf bytes.Buffer
+
 	c := make(map[DatasetString]rconfig)
 	for key, value := range config.datasets {
-		c[key] = rconfig{value.TypeService.DatatypeUrl(), value.dataIndexBytes}
+		c[key] = rconfig{value.TypeService.DatatypeUrl(), value.DatasetLocalID()}
 	}
-	return db.putValue(keyvalue.Key{keyFamilyGlobal, keyRuntimeConfig}, c)
+	return dvid.Serialize(c, dvid.Snappy, dvid.CRC32)
 }
 
-func (config *runtimeConfig) get(db kvdb) error {
-	config.datasets = map[DatasetString]datastoreType{}
-	c := make(map[DatasetString]rconfig)
-	err := db.getValue(keyvalue.Key{keyFamilyGlobal, keyRuntimeConfig}, &c)
+// Deserialize converts a serialization to a runtime configuration.
+func (config *runtimeConfig) Deserialize(s dvid.Serialization) (err error) {
+	var c map[DatasetString]rconfig
+	c, err = dvid.Deserialize(s)
 	if err != nil {
-		return err
+		return
 	}
 	for key, value := range c {
 		dtype, found := CompiledTypes[value.TypeUrl]
@@ -71,7 +104,7 @@ func (config *runtimeConfig) get(db kvdb) error {
 		}
 		config.datasets[key] = datastoreType{dtype, value.DataIndexBytes}
 	}
-	return nil
+	return
 }
 
 // MarshalJSON fulfills the Marshaler interface for JSON output.
@@ -93,7 +126,7 @@ func (rc *runtimeConfig) UnmarshalJSON(jsonText []byte) error {
 	return
 }
 
-// VerifyCompiledTypes will return an error if any required data type in the datastore 
+// VerifyCompiledTypes will return an error if any required data type in the datastore
 // configuration was not compiled into DVID executable.  Check is done by more exact
 // URL and not the data type name.
 func (config *runtimeConfig) VerifyCompiledTypes() error {
@@ -114,7 +147,7 @@ func (config *runtimeConfig) VerifyCompiledTypes() error {
 	return nil
 }
 
-// DataChart returns a chart of data set names and their types for this runtime configuration. 
+// DataChart returns a chart of data set names and their types for this runtime configuration.
 func (config *runtimeConfig) DataChart() string {
 	var text string
 	if len(config.datasets) == 0 {
@@ -163,44 +196,12 @@ func (config *runtimeConfig) AboutJSON() (jsonStr string, err error) {
 	return
 }
 
-// initByPrompt prompts the user to enter configuration data.
-func initByPrompt() (config *initConfig) {
-	config = new(initConfig)
-	pVolumeMax := &(config.VolumeMax)
-	pVolumeMax.Prompt("# voxels", "250")
-	pVoxelRes := &(config.VoxelRes)
-	pVoxelRes.Prompt("Voxel resolution", "10.0")
-	config.VoxelResUnits = dvid.VoxelResolutionUnits(dvid.Prompt("Units of resolution", "nanometer"))
-	return
-}
-
-// initByJson reads in a Config from a JSON file with errors leading to
-// termination of program.
-func initByJson(filename string) (ic *initConfig, rc *runtimeConfig, err error) {
-	json, err := dvid.ReadJSON(filename)
-	if err != nil {
-		return
-	}
-
-	return &initConfig{*vol}
-}
-
-// writeJsonConfig writes a Config to a JSON file.
-func (config *initConfig) writeJsonConfig(filename string) {
-	err := config.WriteJSON(filename)
-	if err != nil {
-		log.Fatalf(err.Error())
-	}
-}
-
 // TypeInfo contains data type information reformatted for easy consumption by clients.
 type TypeInfo struct {
-	Name        string
-	Url         string
-	Version     string
-	BlockSize   dvid.Point3d
-	IndexScheme string
-	Help        string
+	Name    string
+	Url     string
+	Version string
+	Help    string
 }
 
 // ConfigJSON returns configuration data in JSON format.
@@ -208,19 +209,15 @@ func (s *Service) ConfigJSON() (jsonStr string, err error) {
 	datasets := make(map[DatasetString]TypeInfo)
 	for name, dtype := range s.datasets {
 		datasets[name] = TypeInfo{
-			Name:        dtype.DatatypeName(),
-			Url:         string(dtype.DatatypeUrl()),
-			Version:     dtype.DatatypeVersion(),
-			BlockSize:   dtype.BlockSize(),
-			IndexScheme: dtype.IndexScheme().String(),
-			Help:        dtype.Help(),
+			Name:    dtype.DatatypeName(),
+			Url:     string(dtype.DatatypeUrl()),
+			Version: dtype.DatatypeVersion(),
+			Help:    dtype.Help(),
 		}
 	}
 	data := struct {
-		Volume   dvid.Volume
 		Datasets map[DatasetString]TypeInfo
 	}{
-		s.initConfig.Volume,
 		datasets,
 	}
 	m, err := json.Marshal(data)

@@ -29,19 +29,14 @@ func NewUUID() UUID {
 	return UUID(fmt.Sprintf("%032x", []byte(u)))
 }
 
-// VersionID is a unique id that corresponds to one UUID in a datastore.  We limit the
-// number of versions that can be present in a datastore and use that more compact 
-// index compared to the full 16 byte UUID for construction of keys.
-type VersionID dvid.LocalID
-
 // VersionNode contains all information for a node in the version DAG like its parents,
 // children, and provenance.
 type VersionNode struct {
 	// Id is a globally unique id.
-	Id UUID
+	GlobalID UUID
 
-	// Index is a unique id per datastore.
-	Index VersionID
+	// VersionID is a DVID instance-specific id per datastore.
+	VersionID dvid.LocalID
 
 	// Locked nodes are read-only and can be branched.
 	Locked bool
@@ -70,27 +65,31 @@ type VersionNode struct {
 // VersionDAG is the directed acyclic graph of VersionNode and an index by UUID into
 // the graph.
 type VersionDAG struct {
+	// NewID keeps track of the VersionID for any new version.
+	NewID dvid.LocalID
+
 	Head       UUID
 	Nodes      []VersionNode
-	VersionMap map[UUID]VersionID
+	VersionMap map[UUID]dvid.LocalID
 }
 
 // NewVersionDAG creates a version DAG and initializes the first unlocked node,
 // assigning its UUID.
 func NewVersionDAG() *VersionDAG {
 	dag := VersionDAG{
+		NewID: 0,
 		Head:  NewUUID(),
 		Nodes: []VersionNode{},
 	}
 	t := time.Now()
 	node := VersionNode{
-		Id:      dag.Head,
-		Index:   0,
-		Created: t,
-		Updated: t,
+		GlobalID:  dag.Head,
+		VersionID: 0,
+		Created:   t,
+		Updated:   t,
 	}
 	dag.Nodes = append(dag.Nodes, node)
-	dag.VersionMap = map[UUID]VersionID{dag.Head: 0}
+	dag.VersionMap = map[UUID]dvid.LocalID{dag.Head: 0}
 	return &dag
 }
 
@@ -98,18 +97,24 @@ func NewVersionDAG() *VersionDAG {
 func (dag *VersionDAG) LogInfo() string {
 	text := "Versions:\n"
 	for _, node := range dag.Nodes {
-		text += fmt.Sprintf("%s  (%d)\n", node.Id, node.Index)
+		text += fmt.Sprintf("%s  (%d)\n", node.GlobalID, node.VersionID)
 	}
 	return text
 }
 
-// VersionIDFromString returns a UUID index given its string representation.  
+// NewVersion creates a new version node with the given parents.
+func (dag *VersionDAG) NewVersion(parents []dvid.LocalID) (node *VersionNode, err error) {
+	// TODO -- Implement
+	return
+}
+
+// VersionIDFromString returns a UUID index given its string representation.
 // Partial matches are accepted as long as they are unique for a datastore.  So if
-// a datastore has nodes with UUID strings 3FA22..., 7CD11..., and 836EE..., 
+// a datastore has nodes with UUID strings 3FA22..., 7CD11..., and 836EE...,
 // we can still find a match even if given the minimum 3 letters.  (We don't
 // allow UUID strings of less than 3 letters just to prevent mistakes.)
-func (dag *VersionDAG) VersionIDFromString(str string) (id VersionID, err error) {
-	var lastMatch VersionID
+func (dag *VersionDAG) VersionIDFromString(str string) (id dvid.LocalID, err error) {
+	var lastMatch dvid.LocalID
 	numMatches := 0
 	for uuid, id := range dag.VersionMap {
 		if strings.HasPrefix(string(uuid), str) {

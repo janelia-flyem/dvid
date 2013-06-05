@@ -26,7 +26,7 @@ const helpMessage = `
 
 type UrlString string
 
-// Request supports requests to the DVID server.  Since input and reply payloads 
+// Request supports requests to the DVID server.  Since input and reply payloads
 // are different depending on the command and the data type, we use an ArbitraryInput
 // (empty interface) for the payload.
 type Request struct {
@@ -62,12 +62,16 @@ type TypeService interface {
 	Help() string
 
 	// Create a Dataset of this data type
-	NewDataset(name DatasetString, s *Service, config ArbitraryConfig, id []byte) DatasetService
+	NewDataset(s *Service, id DatasetID, config dvid.Config) DatasetService
 
 	// Returns standard error response for unknown commands
 	UnknownCommand(request Request) error
 }
-type ArbitraryConfig interface{}
+
+// DatasetString is a string that is the name of a DVID data set.
+// This gets its own type for documentation and also provide static error checks
+// to prevent conflation of type name from data set name.
+type DatasetString string
 
 // DatasetService is an interface for operations on arbitrary datasets that
 // use a supported TypeService.  Block handlers can be allocated at this level,
@@ -78,6 +82,14 @@ type ArbitraryConfig interface{}
 // TODO -- Add SPDY as wrapper to HTTP.
 type DatasetService interface {
 	TypeService
+
+	// DatasetName returns the name of the dataset.
+	DatasetName() DatasetString
+
+	// DatasetLocalID returns a DVID instance-specific id for this dataset,
+	// which can be held in a relatively small number of bytes and is useful
+	// as a key component.
+	DatasetLocalID() dvid.LocalID
 
 	// Handle iteration through a dataset in abstract way
 	NewIndexIterator(extents interface{}) IndexIterator
@@ -96,7 +108,7 @@ type DatasetService interface {
 // held as a global variable initialized at runtime.
 var CompiledTypes map[UrlString]TypeService
 
-// CompiledTypeNames returns a list of data type names compiled into this DVID. 
+// CompiledTypeNames returns a list of data type names compiled into this DVID.
 func CompiledTypeNames() string {
 	var names []string
 	for _, datatype := range CompiledTypes {
@@ -105,7 +117,7 @@ func CompiledTypeNames() string {
 	return strings.Join(names, ", ")
 }
 
-// CompiledTypeUrls returns a list of data type urls supported by this DVID. 
+// CompiledTypeUrls returns a list of data type urls supported by this DVID.
 func CompiledTypeUrls() string {
 	var urls []string
 	for url, _ := range CompiledTypes {
@@ -114,7 +126,7 @@ func CompiledTypeUrls() string {
 	return strings.Join(urls, ", ")
 }
 
-// CompiledTypeChart returns a chart (names/urls) of data types compiled into this DVID. 
+// CompiledTypeChart returns a chart (names/urls) of data types compiled into this DVID.
 func CompiledTypeChart() string {
 	var text string = "\nData types compiled into this DVID\n\n"
 	writeLine := func(name string, url UrlString) {
@@ -135,11 +147,11 @@ func RegisterDatatype(t TypeService) {
 	CompiledTypes[t.DatatypeUrl()] = t
 }
 
-// DatatypeID uniquely identifies a DVID-supported data type and provides a 
+// DatatypeID uniquely identifies a DVID-supported data type and provides a
 // shorthand name.
 type DatatypeID struct {
 	// Name describes a data type and may not be unique.
-	TypeName string
+	Name string
 
 	// Url specifies the unique package name that fulfills the DVID Data interface
 	Url UrlString
@@ -152,7 +164,7 @@ func MakeDatatypeID(name string, url UrlString, version string) DatatypeID {
 	return DatatypeID{name, url, version}
 }
 
-func (id DatatypeID) DatatypeName() string { return id.TypeName }
+func (id DatatypeID) DatatypeName() string { return id.Name }
 
 func (id DatatypeID) DatatypeUrl() UrlString { return id.Url }
 
@@ -169,7 +181,7 @@ type Datatype struct {
 	// IsolateData should be false (default) to place this data type next to
 	// other data types within a block, so for a given block we can quickly
 	// retrieve a variety of data types across the block's voxels.  If IsolateData
-	// is true, we optimize for retrieving this data type independently, e.g., all 
+	// is true, we optimize for retrieving this data type independently, e.g., all
 	// the label->label maps across blocks to make a subvolume map on the fly.
 	IsolateData bool
 }
@@ -193,17 +205,25 @@ func (datatype *Datatype) UnknownCommand(request Request) error {
 		datatype.Name, datatype.Url, request.TypeCommand())
 }
 
-// Dataset extends a Datatype and allows setting dataset-specific properties
-// like resolution in given units, etc.  This allows us to have multimodal images that
-// vary in resolution but can still use the same underlying voxel algorithms.
-type Dataset struct {
-	*Datatype
-	name  DatasetString
-	props interface{}
+// DatasetID identifies a dataset within a DVID instance.
+type DatasetID struct {
+	Name    DatasetString
+	LocalID dvid.LocalID
+}
 
-	// A unique key component for this dataset within the current DVID instance. 
-	datasetKey []byte
+func (id DatasetID) DatasetName() DatasetString { return id.Name }
+
+func (id DatasetID) DatasetLocalID() dvid.LocalID { return id.LocalID }
+
+// Dataset is an instance of a data type and has an associated datastore.
+type Dataset struct {
+	TypeService
+	DatasetID
 
 	// Each dataset has a pointer to the storage service it uses.
 	store *Service
+}
+
+func BaseDataset(t TypeService, id DatasetID, s *Service) *Dataset {
+	return &Dataset{t, id, s}
 }
