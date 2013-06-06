@@ -43,7 +43,7 @@ func Init(directory string, create bool) (uuid UUID) {
 
 	// Initialize the backend database
 	dbOptions := storage.Options{}
-	db, err := storage.NewDataHandler(directory, create, dbOptions)
+	db, err := storage.NewDataHandler(directory, create, &dbOptions)
 	if err != nil {
 		log.Fatalf("Error opening datastore (%s): %s\n", directory, err.Error())
 	}
@@ -99,7 +99,7 @@ func Open(directory string) (s *Service, openErr *OpenError) {
 	// Open the datastore
 	dbOptions := storage.Options{}
 	create := false
-	db, err := storage.NewDataHandler(directory, create, dbOptions)
+	db, err := storage.NewDataHandler(directory, create, &dbOptions)
 	if err != nil {
 		openErr = &OpenError{
 			fmt.Errorf("Error opening datastore (%s): %s", directory, err.Error()),
@@ -157,19 +157,14 @@ func (s *Service) SupportedDataChart() string {
 // DatasetService returns a type-specific service given a dataset name that should be
 // specific to a DVID instance.
 func (s *Service) DatasetService(name DatasetString) (typeService TypeService, err error) {
-	for key, _ := range s.datasets {
+	for key, _ := range s.Datasets {
 		if name == key {
-			typeService = s.datasets[key]
+			typeService = s.Datasets[key]
 			return
 		}
 	}
 	err = fmt.Errorf("Data set '%s' was not in opened datastore.", name)
 	return
-}
-
-// Datasets returns a map from data set name to type-specific services.
-func (s *Service) Datasets() map[DatasetString]Dataset {
-	return s.datasets
 }
 
 // TypeService returns a type-specific service given a type name.
@@ -189,14 +184,14 @@ func (s *Service) TypeService(typeName string) (typeService TypeService, err err
 // block resolution, units, etc.  Then, within the data type, for each dataset
 // we create a blocksize that's tailored for this DVID instance's volume, after
 // taking into account units, resolution, etc.
-func (s *Service) NewDataset(name DatasetString, typeName string) error {
+func (s *Service) NewDataset(name DatasetString, typeName string, config dvid.Config) error {
 	// Check if this is a valid data type
 	typeService, err := s.TypeService(typeName)
 	if err != nil {
 		return err
 	}
 	// Check if we already have this registered
-	foundTypeService, found := s.datasets[name]
+	foundTypeService, found := s.Datasets[name]
 	if found {
 		if typeService.DatatypeUrl() != foundTypeService.DatatypeUrl() {
 			return fmt.Errorf("Data set name '%s' already has type '%s' not '%s'",
@@ -205,16 +200,17 @@ func (s *Service) NewDataset(name DatasetString, typeName string) error {
 		return nil
 	}
 	// Add it and store updated runtimeConfig to datastore.
-	id := DatasetID(len(s.datasets) + 1)
-	if id >= 0xFFFE {
-		return fmt.Errorf("Too many distinct data sets are in this DVID instance: %d", id)
+	s.NewLocalID++
+	if s.NewLocalID >= 0xFFFE {
+		return fmt.Errorf("Too many distinct data sets are in this DVID instance: %d",
+			s.NewLocalID)
 	}
 	var lock sync.Mutex
 	lock.Lock()
-	if s.datasets == nil {
-		s.datasets = make(map[DatasetString]Dataset)
+	if s.Datasets == nil {
+		s.Datasets = make(map[DatasetString]DatasetService)
 	}
-	s.datasets[name] = typeService.NewDataset(name, s, nil, id.Bytes())
+	s.Datasets[name] = typeService.NewDataset(DatasetID{name, s.NewLocalID}, config)
 	err = s.runtimeConfig.Put(s.db)
 	lock.Unlock()
 	return err
@@ -225,32 +221,20 @@ func (s *Service) NewDataset(name DatasetString, typeName string) error {
 // TODO -- Deleted dataset data should also be expunged.
 func (s *Service) DeleteDataset(name DatasetString) error {
 	// Find the data set
-	_, found := s.datasets[name]
+	_, found := s.Datasets[name]
 	if !found {
 		return fmt.Errorf("Data set '%s' not present in DVID datastore.", name)
 	}
 	// Delete it and store updated runtimeConfig to datastore.
 	var lock sync.Mutex
 	lock.Lock()
-	s.datasets[name].Shutdown()
-	delete(s.datasets, name)
+	s.Datasets[name].Shutdown()
+	delete(s.Datasets, name)
 	// Remove load stat cache
 	delete(loadLastSec, name)
 	err := s.runtimeConfig.Put(s.db)
 	lock.Unlock()
 	return err
-}
-
-// DataIndexBytes returns bytes that uniquely identify (within the current datastore)
-// the given data set name.   Returns nil if data set name was not found.
-func (s *Service) DatasetBytes(name DatasetString) (b []byte, err error) {
-	dset, found := s.datasets[name]
-	if found {
-		b = dset.datasetKey
-		return
-	}
-	err = fmt.Errorf("Dataset name '%s' not registered for this datastore!", name)
-	return
 }
 
 // GetHeadUuid returns the UUID of the HEAD node, i.e., the version that is

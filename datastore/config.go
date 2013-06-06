@@ -6,6 +6,7 @@
 package datastore
 
 import (
+	"encoding/json"
 	"fmt"
 	_ "log"
 
@@ -39,18 +40,11 @@ var (
 type runtimeConfig struct {
 	// Data supported.  This is a map of a user-defined name like "fib_data" with
 	// the supporting data type "grayscale8"
-	datasets map[DatasetString]DatasetService
+	Datasets map[DatasetString]DatasetService
 
 	// Always incremented counter that provides local dataset ID so we can use
 	// smaller # of bytes (dvid.LocalID size) instead of full identifier.
-	newDatasetID dvid.LocalID
-}
-
-// rconfig is a local struct used for explicit export of runtime configurations
-// that uses more global identification of data types via URL.
-type rconfig struct {
-	TypeUrl   UrlString
-	DatasetID dvid.LocalID
+	NewLocalID dvid.LocalID
 }
 
 // Get retrieves a configuration from a KeyValueDB.
@@ -80,49 +74,24 @@ func (config *runtimeConfig) Put(db storage.KeyValueDB) (err error) {
 // Serialize returns a serialization of configuration with Snappy compression and
 // CRC32 checksum.
 func (config *runtimeConfig) Serialize() (s dvid.Serialization, err error) {
-	var buf bytes.Buffer
-
-	c := make(map[DatasetString]rconfig)
-	for key, value := range config.datasets {
-		c[key] = rconfig{value.TypeService.DatatypeUrl(), value.DatasetLocalID()}
-	}
-	return dvid.Serialize(c, dvid.Snappy, dvid.CRC32)
+	return dvid.Serialize(config, dvid.Snappy, dvid.CRC32)
 }
 
-// Deserialize converts a serialization to a runtime configuration.
+// Deserialize converts a serialization to a runtime configuration and checks to
+// make sure the data types are available.
+// TODO -- Handle versions of data types.
 func (config *runtimeConfig) Deserialize(s dvid.Serialization) (err error) {
-	var c map[DatasetString]rconfig
-	c, err = dvid.Deserialize(s)
+	var obj interface{}
+	obj, err = dvid.Deserialize(s)
 	if err != nil {
 		return
 	}
-	for key, value := range c {
-		dtype, found := CompiledTypes[value.TypeUrl]
-		if !found {
-			return fmt.Errorf("Data set in datastore no longer present in DVID executable: %s",
-				value.TypeUrl)
-		}
-		config.datasets[key] = datastoreType{dtype, value.DataIndexBytes}
-	}
-	return
-}
-
-// MarshalJSON fulfills the Marshaler interface for JSON output.
-func (rc *runtimeConfig) MarshalJSON() (b []byte, err error) {
-	if rc == nil {
-		b = []byte("{}")
+	var ok bool
+	if config, ok = obj.(*runtimeConfig); !ok {
+		err = fmt.Errorf("Deserialize() can't make a runtimeConfig!")
 	} else {
-		b, err = json.Marshal(rc.datasets)
+		err = config.VerifyCompiledTypes()
 	}
-	return
-}
-
-// UnmarshallJSON fulfills the Unmarshaler interface for JSON input.
-func (rc *runtimeConfig) UnmarshalJSON(jsonText []byte) error {
-	if rc == nil {
-		return fmt.Errorf("Error, can't unmarshall to a nil runtimeConfig!")
-	}
-	err := json.Unmarshal(jsonText, rc.datasets)
 	return
 }
 
@@ -134,15 +103,15 @@ func (config *runtimeConfig) VerifyCompiledTypes() error {
 		return fmt.Errorf("DVID was not compiled with any data type support!")
 	}
 	var errMsg string
-	for _, datatype := range config.datasets {
+	for name, datatype := range config.Datasets {
 		_, found := CompiledTypes[datatype.DatatypeUrl()]
 		if !found {
-			errMsg += fmt.Sprintf("DVID was not compiled with support for data type %s [%s]\n",
-				datatype.DatatypeName(), datatype.DatatypeUrl())
+			errMsg += fmt.Sprintf("DVID was not compiled with support for %s, data type %s [%s]\n",
+				name, datatype.DatatypeName(), datatype.DatatypeUrl())
 		}
 	}
 	if errMsg != "" {
-		return errors.New(errMsg)
+		return fmt.Errorf(errMsg)
 	}
 	return nil
 }
@@ -150,15 +119,15 @@ func (config *runtimeConfig) VerifyCompiledTypes() error {
 // DataChart returns a chart of data set names and their types for this runtime configuration.
 func (config *runtimeConfig) DataChart() string {
 	var text string
-	if len(config.datasets) == 0 {
+	if len(config.Datasets) == 0 {
 		return "  No data sets have been added to this datastore.\n  Use 'dvid dataset ...'"
 	}
 	writeLine := func(name DatasetString, version string, url UrlString) {
 		text += fmt.Sprintf("%-15s  %-25s  %s\n", name, version, url)
 	}
 	writeLine("Name", "Type Name", "Url")
-	for name, datatype := range config.datasets {
-		writeLine(name, datatype.DatatypeName()+" ("+datatype.DatatypeVersion()+")", datatype.DatatypeUrl())
+	for name, dtype := range config.Datasets {
+		writeLine(name, dtype.DatatypeName()+" ("+dtype.DatatypeVersion()+")", dtype.DatatypeUrl())
 	}
 	return text
 }
@@ -173,8 +142,8 @@ func (config *runtimeConfig) About() string {
 	writeLine("Name", "Version")
 	writeLine("DVID datastore", Version)
 	writeLine("Leveldb", storage.Version)
-	for _, datatype := range config.datasets {
-		writeLine(datatype.DatatypeName(), datatype.DatatypeVersion())
+	for _, dtype := range config.Datasets {
+		writeLine(dtype.DatatypeName(), dtype.DatatypeVersion())
 	}
 	return text
 }
@@ -185,7 +154,7 @@ func (config *runtimeConfig) AboutJSON() (jsonStr string, err error) {
 		"DVID datastore":  Version,
 		"Backend storage": storage.Version,
 	}
-	for _, datatype := range config.datasets {
+	for _, datatype := range config.Datasets {
 		data[datatype.DatatypeName()] = datatype.DatatypeVersion()
 	}
 	m, err := json.Marshal(data)
@@ -205,9 +174,9 @@ type TypeInfo struct {
 }
 
 // ConfigJSON returns configuration data in JSON format.
-func (s *Service) ConfigJSON() (jsonStr string, err error) {
+func (config *runtimeConfig) ConfigJSON() (jsonStr string, err error) {
 	datasets := make(map[DatasetString]TypeInfo)
-	for name, dtype := range s.datasets {
+	for name, dtype := range config.Datasets {
 		datasets[name] = TypeInfo{
 			Name:    dtype.DatatypeName(),
 			Url:     string(dtype.DatatypeUrl()),

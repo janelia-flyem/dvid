@@ -18,8 +18,6 @@ import (
 	_ "github.com/janelia-flyem/dvid/datatype/labels32"
 	_ "github.com/janelia-flyem/dvid/datatype/labels64"
 	_ "github.com/janelia-flyem/dvid/datatype/rgba8"
-	_ "github.com/janelia-flyem/dvid/datatype/xytile32"
-	_ "github.com/janelia-flyem/dvid/datatype/xytile8"
 )
 
 var (
@@ -38,10 +36,10 @@ var (
 	// Run in benchmark mode if true.
 	runBenchmark = flag.Bool("benchmark", false, "")
 
-	// Profile CPU usage using standard gotest system. 
+	// Profile CPU usage using standard gotest system.
 	cpuprofile = flag.String("cpuprofile", "", "")
 
-	// Profile memory usage using standard gotest system. 
+	// Profile memory usage using standard gotest system.
 	memprofile = flag.String("memprofile", "", "")
 
 	// Path to web client directory.  Leave unset for default pages.
@@ -53,7 +51,7 @@ var (
 	// Address for http communication
 	httpAddress = flag.String("http", server.DefaultWebAddress, "")
 
-	// Number of logical CPUs to use for DVID.  
+	// Number of logical CPUs to use for DVID.
 	useCPU = flag.Int("numcpu", 0, "")
 
 	// Number of seconds to wait trying to get exclusive access to DVID datastore.

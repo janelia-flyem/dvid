@@ -146,16 +146,12 @@ func NewDatatype() (dtype *Datatype) {
 	}
 }
 
-func (dtype *Datatype) Serialize() (s dvid.Serialization, err error) {
-	return
-}
-
 // --- TypeService interface ---
 
 // NewDataset returns a pointer to a new voxels Dataset with default values.
-func (dtype *Datatype) NewDataset(s *datastore.Service, id datastore.DatasetID, config dvid.Config) *Dataset {
+func (dtype *Datatype) NewDataset(id datastore.DatasetID, config dvid.Config) *Dataset {
 	dataset := &Dataset{
-		Dataset: datastore.BaseDataset(s, id, dtype),
+		Dataset: datastore.BaseDataset(id, dtype),
 	}
 	dataset.BlockSize = DefaultBlockMax
 	if obj, found := config["BlockSize"]; found {
@@ -193,10 +189,6 @@ type Dataset struct {
 }
 
 // --- DatasetService interface ---
-
-func (dset *Dataset) Serialize() (s dvid.Serialization, err error) {
-	return
-}
 
 // Do acts as a switchboard for RPC commands.
 func (dset *Dataset) DoRPC(request datastore.Request, reply *datastore.Response) error {

@@ -13,13 +13,13 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 )
 
-// BlockIndex is an abtraction for datatype-specific block representations.
+// ChunkIndex represents an index to a datatype-specific partition of data.
 // For example, a voxels data type would have a 3d block coordinate.  Block
 // indices do *not* have to be 3d coordinates but can be optimized for
 // a data type's internal data structure.
-type BlockIndex interface {
+type ChunkIndex interface {
 	// MakeIndex returns a one-dimensional index.
-	MakeIndex() Index
+	MakeIndex() (Index, error)
 
 	// String returns a human-readable representation of the block index.
 	String() string
@@ -32,9 +32,9 @@ type Index interface {
 	// Bytes gives a slice of bytes.
 	Bytes() []byte
 
-	// InvertIndex returns a block representation given a one-dimensional Index.
+	// InvertIndex returns a chunk index given a one-dimensional Index.
 	// It is the inverse of MakeIndex().
-	InvertIndex() BlockIndex
+	InvertIndex() ChunkIndex
 
 	// Hash provides a consistent mapping from an Index to an integer (0,n]
 	Hash(n int) int
@@ -56,27 +56,24 @@ type IndexIteratorMaker interface {
 
 // --- Standard implementations of above interfaces
 
-type indexType []byte
+// IndexZYX implements the Index interface and provides simple indexing on Z,
+// then Y, then X.
+type IndexZYX []byte
 
-func (i indexType) String() string {
+func (i IndexZYX) String() string {
 	return hex.EncodeToString([]byte(i))
 }
 
-func (i indexType) Bytes() []byte {
+func (i IndexZYX) Bytes() []byte {
 	return i
 }
 
-// IndexZYX implements the Index interface and provides simple indexing on Z,
-// then Y, then X.
-type IndexZYX indexType
-
 // InvertIndex decodes a spatial index into a block coordinate
-func (i IndexZYX) InvertIndex() BlockIndex {
-	var coord dvid.BlockCoord
-	coord[2] = int32(binary.LittleEndian.Uint32([]byte(i[0:4])))
-	coord[1] = int32(binary.LittleEndian.Uint32([]byte(i[4:8])))
-	coord[0] = int32(binary.LittleEndian.Uint32([]byte(i[8:12])))
-	return coord
+func (i IndexZYX) InvertIndex() ChunkIndex {
+	z := int32(binary.LittleEndian.Uint32([]byte(i[0:4])))
+	y := int32(binary.LittleEndian.Uint32([]byte(i[4:8])))
+	x := int32(binary.LittleEndian.Uint32([]byte(i[8:12])))
+	return BlockZYX{dvid.BlockCoord{x, y, z}}
 }
 
 // Hash returns an integer [0, n) where the returned values should be reasonably
@@ -95,14 +92,14 @@ func (i IndexZYX) Scheme() string {
 }
 
 // TODO -- Morton (Z-order) curve
-type IndexMorton indexType
+type IndexMorton []byte
 
 func (i IndexMorton) Scheme() string {
 	return "Morton/Z-order Indexing"
 }
 
 // TODO -- Hilbert curve
-type IndexHilbert indexType
+type IndexHilbert []byte
 
 func (i IndexHilbert) Scheme() string {
 	return "Hilbert Indexing"
@@ -110,20 +107,22 @@ func (i IndexHilbert) Scheme() string {
 
 // BlockZYX implements the BlockIndex interface and provides blocking of
 // a 3d coordinate space.
-type BlockZYX dvid.BlockCoord
+type BlockZYX struct {
+	dvid.BlockCoord
+}
 
 // MakeIndex returns a 1d Index from a 3d ZYX coordinate.
 func (bc BlockZYX) MakeIndex() (i Index, err error) {
 	buf := new(bytes.Buffer)
-	err = binary.Write(buf, binary.BigEndian, bc[2])
+	err = binary.Write(buf, binary.BigEndian, bc.BlockCoord[2])
 	if err != nil {
 		return
 	}
-	err = binary.Write(buf, binary.BigEndian, bc[1])
+	err = binary.Write(buf, binary.BigEndian, bc.BlockCoord[1])
 	if err != nil {
 		return
 	}
-	err = binary.Write(buf, binary.BigEndian, bc[0])
-	i = buf.Bytes()
+	err = binary.Write(buf, binary.BigEndian, bc.BlockCoord[0])
+	i = IndexZYX(buf.Bytes())
 	return
 }

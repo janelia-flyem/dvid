@@ -9,7 +9,6 @@ package datastore
 
 import (
 	"fmt"
-	"net/http"
 	"strings"
 
 	"github.com/janelia-flyem/dvid/dvid"
@@ -25,22 +24,6 @@ const helpMessage = `
 `
 
 type UrlString string
-
-// Request supports requests to the DVID server.  Since input and reply payloads
-// are different depending on the command and the data type, we use an ArbitraryInput
-// (empty interface) for the payload.
-type Request struct {
-	dvid.Command
-	Input ArbitraryInput
-}
-type ArbitraryInput interface{}
-
-// Response supports responses from DVID.
-type Response struct {
-	dvid.Response
-	Output ArbitraryOutput
-}
-type ArbitraryOutput interface{}
 
 // TypeID provides methods for determining the identity of a data type.
 type TypeID interface {
@@ -62,46 +45,7 @@ type TypeService interface {
 	Help() string
 
 	// Create a Dataset of this data type
-	NewDataset(s *Service, id DatasetID, config dvid.Config) DatasetService
-
-	// Returns standard error response for unknown commands
-	UnknownCommand(request Request) error
-}
-
-// DatasetString is a string that is the name of a DVID data set.
-// This gets its own type for documentation and also provide static error checks
-// to prevent conflation of type name from data set name.
-type DatasetString string
-
-// DatasetService is an interface for operations on arbitrary datasets that
-// use a supported TypeService.  Block handlers can be allocated at this level,
-// so an implementation can own a number of goroutines.
-//
-// DatasetService operations are completely type-specific, and each datatype
-// handles operations through RPC (DoRPC) and HTTP (DoHTTP).
-// TODO -- Add SPDY as wrapper to HTTP.
-type DatasetService interface {
-	TypeService
-
-	// DatasetName returns the name of the dataset.
-	DatasetName() DatasetString
-
-	// DatasetLocalID returns a DVID instance-specific id for this dataset,
-	// which can be held in a relatively small number of bytes and is useful
-	// as a key component.
-	DatasetLocalID() dvid.LocalID
-
-	// Handle iteration through a dataset in abstract way
-	NewIndexIterator(extents interface{}) IndexIterator
-
-	// DoRPC handles command line and RPC commands specific to a data type
-	DoRPC(request Request, reply *Response) error
-
-	// DoHTTP handles HTTP requests specific to a data type
-	DoHTTP(w http.ResponseWriter, r *http.Request, apiPrefixURL string) error
-
-	// Shutdown closes any cache and halts any block handlers for this data set.
-	Shutdown()
+	NewDataset(id DatasetID, config dvid.Config) DatasetService
 }
 
 // CompiledTypes is the set of registered data types compiled into DVID and
@@ -150,13 +94,13 @@ func RegisterDatatype(t TypeService) {
 // DatatypeID uniquely identifies a DVID-supported data type and provides a
 // shorthand name.
 type DatatypeID struct {
-	// TypeName describes a data type and may not be unique.
+	// Data type name and may not be unique.
 	Name string
 
-	// TypeUrl specifies the unique package name that fulfills the DVID Data interface
+	// The unique package name that fulfills the DVID Data interface
 	Url UrlString
 
-	// TypeVersion describes the version identifier of this data type code
+	// The version identifier of this data type code
 	Version string
 }
 
@@ -164,11 +108,11 @@ func MakeDatatypeID(name string, url UrlString, version string) DatatypeID {
 	return DatatypeID{name, url, version}
 }
 
-func (id DatatypeID) DatatypeName() string { return id.Name }
+func (id *DatatypeID) DatatypeName() string { return id.Name }
 
-func (id DatatypeID) DatatypeUrl() UrlString { return id.Url }
+func (id *DatatypeID) DatatypeUrl() UrlString { return id.Url }
 
-func (id DatatypeID) DatatypeVersion() string { return id.Version }
+func (id *DatatypeID) DatatypeVersion() string { return id.Version }
 
 // Datatype is the base struct that satisfies a TypeService and can be embedded
 // in other data types.
@@ -177,13 +121,6 @@ type Datatype struct {
 
 	// A list of interface requirements for the backend datastore
 	Requirements storage.Requirements
-
-	// IsolateData should be false (default) to place this data type next to
-	// other data types within a block, so for a given block we can quickly
-	// retrieve a variety of data types across the block's voxels.  If IsolateData
-	// is true, we optimize for retrieving this data type independently, e.g., all
-	// the label->label maps across blocks to make a subvolume map on the fly.
-	IsolateData bool
 }
 
 // The following functions supply standard operations necessary across all supported
@@ -192,40 +129,6 @@ type Datatype struct {
 
 // Types must add a NewDataset() function...
 
-func (datatype *Datatype) IsolatedKeys() bool {
-	return datatype.IsolateData
-}
-
 func (datatype *Datatype) Help() string {
 	return fmt.Sprintf(helpMessage, datatype.Name, datatype.Url)
-}
-
-func (datatype *Datatype) UnknownCommand(request Request) error {
-	return fmt.Errorf("Unknown command.  Data type '%s' [%s] does not support '%s' command.",
-		datatype.Name, datatype.Url, request.TypeCommand())
-}
-
-// DatasetID identifies a dataset within a DVID instance.
-type DatasetID struct {
-	SetName    DatasetString
-	SetLocalID dvid.LocalID
-}
-
-func (id DatasetID) DatasetName() DatasetString { return id.SetName }
-
-func (id DatasetID) DatasetLocalID() dvid.LocalID { return id.SetLocalID }
-
-// Dataset is an instance of a data type and has an associated datastore.
-type Dataset struct {
-	DatasetID
-
-	// The data type that provides its implementation
-	datatype TypeService
-
-	// Each dataset has a pointer to the storage service it uses.
-	store *Service
-}
-
-func BaseDataset(s *Service, id DatasetID, t TypeService) *Dataset {
-	return &Dataset{id, t, s}
 }

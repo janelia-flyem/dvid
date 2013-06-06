@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/janelia-flyem/dvid/dvid"
+	"github.com/janelia-flyem/dvid/storage"
 
 	"code.google.com/p/go-uuid/uuid"
 )
@@ -105,6 +106,50 @@ func (dag *VersionDAG) LogInfo() string {
 // NewVersion creates a new version node with the given parents.
 func (dag *VersionDAG) NewVersion(parents []dvid.LocalID) (node *VersionNode, err error) {
 	// TODO -- Implement
+	return
+}
+
+// Get retrieves a configuration from a KeyValueDB.
+func (dag *VersionDAG) Get(db storage.KeyValueDB) (err error) {
+	// Get data
+	var data []byte
+	data, err = db.Get(KeyVersionDAG)
+	if err != nil {
+		return
+	}
+
+	// Deserialize into object
+	err = config.Deserialize(dvid.Serialization(data))
+	return
+}
+
+// Put stores a configuration into a KeyValueDB.
+func (dag *VersionDAG) Put(db storage.KeyValueDB) (err error) {
+	// Get serialization
+	var serialization dvid.Serialization
+	serialization, err = config.Serialize()
+
+	// Put data
+	return db.Put(KeyVersionDAG, []byte(serialization))
+}
+
+// Serialize returns a serialization of VersionDAG with Snappy compression and
+// CRC32 checksum.
+func (dag *VersionDAG) Serialize() (s dvid.Serialization, err error) {
+	return dvid.Serialize(dag, dvid.Snappy, dvid.CRC32)
+}
+
+// Deserialize converts a serialization to a VersionDAG
+func (dag *VersionDAG) Deserialize(s dvid.Serialization) (err error) {
+	var obj interface{}
+	obj, err = dvid.Deserialize(s)
+	if err != nil {
+		return
+	}
+	var ok bool
+	if dag, ok = obj.(*VersionDAG); !ok {
+		err = fmt.Errorf("Deserialize() can't make a VersionDAG!")
+	}
 	return
 }
 
