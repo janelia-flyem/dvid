@@ -82,7 +82,7 @@ Usage: dvid [options] <command>
 Commands that can be performed without a running server:
 
 	about
-	init [config=/path/to/json/config] [dir=/path/to/datastore/dir]
+	init [dir=/path/to/datastore/dir]
 	serve [dir=/path/to/datastore/dir]
 `
 

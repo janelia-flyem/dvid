@@ -81,17 +81,11 @@ func (config *runtimeConfig) Serialize() (s dvid.Serialization, err error) {
 // make sure the data types are available.
 // TODO -- Handle versions of data types.
 func (config *runtimeConfig) Deserialize(s dvid.Serialization) (err error) {
-	var obj interface{}
-	obj, err = dvid.Deserialize(s)
+	err = dvid.Deserialize(s, config)
 	if err != nil {
 		return
 	}
-	var ok bool
-	if config, ok = obj.(*runtimeConfig); !ok {
-		err = fmt.Errorf("Deserialize() can't make a runtimeConfig!")
-	} else {
-		err = config.VerifyCompiledTypes()
-	}
+	err = config.VerifyCompiledTypes()
 	return
 }
 

@@ -141,15 +141,7 @@ func (dag *VersionDAG) Serialize() (s dvid.Serialization, err error) {
 
 // Deserialize converts a serialization to a VersionDAG
 func (dag *VersionDAG) Deserialize(s dvid.Serialization) (err error) {
-	var obj interface{}
-	obj, err = dvid.Deserialize(s)
-	if err != nil {
-		return
-	}
-	var ok bool
-	if dag, ok = obj.(*VersionDAG); !ok {
-		err = fmt.Errorf("Deserialize() can't make a VersionDAG!")
-	}
+	err = dvid.Deserialize(s, dag)
 	return
 }
 

@@ -109,7 +109,7 @@ func SerializeData(data []byte, compress Compression, checksum Checksum) (s Seri
 		crcChecksum := crc32.ChecksumIEEE(byteData)
 		err = binary.Write(&buffer, binary.LittleEndian, crcChecksum)
 	default:
-		err = fmt.Errorf("Illegal checksum (%s) in serializing %s", checksum)
+		err = fmt.Errorf("Illegal checksum (%s) in serialize.SerializeData()", checksum)
 	}
 	if err == nil {
 		// Note the actual data is written last, after any checksum so we don't have to
@@ -161,18 +161,8 @@ func DeserializeData(s Serialization, uncompress bool) (data []byte, compress Co
 		return
 	}
 
-	// Uncompress if needed
-	switch compress {
-	case Uncompressed:
-		data = buffer.Bytes()
-	case Snappy:
-		data, err = snappy.Decode(nil, buffer.Bytes())
-	default:
-		err = fmt.Errorf("Illegal compressiont format (%d) in deserialization", compress)
-	}
-	if err != nil {
-		return
-	}
+	// Get the possibly compressed data.
+	data = buffer.Bytes()
 
 	// Perform any requested checksum
 	switch checksum {
@@ -182,11 +172,23 @@ func DeserializeData(s Serialization, uncompress bool) (data []byte, compress Co
 			err = fmt.Errorf("Bad checksum.  Stored %x got %x", storedCrc32, crcChecksum)
 		}
 	}
+
+	// Uncompress if needed
+	switch compress {
+	case Uncompressed:
+	case Snappy:
+		data, err = snappy.Decode(nil, data)
+	default:
+		err = fmt.Errorf("Illegal compressiont format (%d) in deserialization", compress)
+	}
+	if err != nil {
+		return
+	}
 	return
 }
 
 // Deserializes a Go object using Gob encoding
-func Deserialize(s Serialization) (object interface{}, err error) {
+func Deserialize(s Serialization, object interface{}) (err error) {
 	// Get the bytes for the Gob-encoded object
 	var data []byte
 	data, _, err = DeserializeData(s, true)
