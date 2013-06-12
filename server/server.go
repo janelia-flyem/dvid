@@ -24,10 +24,10 @@ const (
 	DefaultWebAddress = "localhost:8000"
 
 	// The default RPC address of the DVID RPC server
-	DefaultRpcAddress = "localhost:8001"
+	DefaultRPCAddress = "localhost:8001"
 
 	// The relative URL path to our Level 2 REST API
-	RestApiPath = "/api/"
+	APIPath = "/api/"
 
 	// The name of the server error log, stored in the datastore directory.
 	ErrorLogFilename = "dvid-errors.log"
@@ -35,11 +35,11 @@ const (
 
 var (
 	// runningService is a global variable that holds the currently running
-	// datastore service.  One DVID process can handle only one open DVID
-	// datastore.  (Leveldb is an embedded library with one process access.)
+	// datastore service.
 	runningService = Service{
 		WebAddress: DefaultWebAddress,
-		RpcAddress: DefaultRpcAddress,
+		WebAPIPath: APIPath,
+		RPCAddress: DefaultRPCAddress,
 	}
 
 	// Timeout in seconds for waiting to open a datastore for exclusive access.
@@ -63,15 +63,24 @@ type Service struct {
 	// The path to the DVID web client
 	WebClientPath string
 
+	// The path to the DVID web API
+	WebAPIPath string
+
 	// The address of the rpc server
-	RpcAddress string
+	RPCAddress string
+}
+
+// DataService returns the current datastore service.  One DVID process
+// is assigned to one datastore service, although it may be possible to have
+// multiple (polyglot) persistence backends attached to that one service.
+func DataService() *Service {
+	return &runningService
 }
 
 // Shutdown handles graceful cleanup of server functions before exiting DVID.
 func Shutdown() {
 	if runningService.Service != nil {
-		datastore.Shutdown()
-		runningService.Service.Close()
+		runningService.Service.Shutdown()
 	}
 }
 
@@ -116,24 +125,15 @@ func ServerlessDo(request datastore.Request, reply *datastore.Response) error {
 	}
 	dvid.SetErrorLoggingFile(file)
 
-	// Make sure we can support the datastore's types with our current DVID executable
-	dvid.Fmt(dvid.Debug, "Verifying datastore's supported types were compiled into DVID...\n")
-	err = runningService.VerifyCompiledTypes()
-	if err != nil {
-		log.Fatalln(err.Error())
-	}
-
-	// If it's not a builtin command, launch block handlers as goroutines for all data sets.
+	// If it's not a builtin command, launch data handlers as goroutines for all data sets.
 	switch request.Name() {
 	case "help", "types", "version", "log", "dataset", "branch", "lock":
 	default:
-		for name, dtype := range runningService.Datasets() {
-			datastore.ReserveBlockHandlers(name, dtype)
-		}
+		runningService.StartChunkHandlers()
 	}
 
 	// Issue local command
-	var localConnect RpcConnection
+	var localConnect RPCConnection
 	err = localConnect.Do(request, reply)
 	if err != nil {
 		return err
@@ -168,17 +168,9 @@ func Serve(datastoreDir, webAddress, webClientDir, rpcAddress string) error {
 	}
 	dvid.SetErrorLoggingFile(file)
 
-	// Make sure we can support the datastore's types with our current DVID executable
-	log.Println("Verifying datastore's supported types were compiled into DVID...")
-	err = runningService.VerifyCompiledTypes()
-	if err != nil {
-		log.Fatalln(err.Error())
-	}
-
 	// Launch block handlers as goroutines for all compiled types.
-	for name, dtype := range runningService.Datasets() {
-		datastore.ReserveBlockHandlers(name, dtype)
-	}
+	runningService.StartChunkHandlers()
+
 	// Launch the web server
 	go runningService.ServeHttp(webAddress, webClientDir)
 
@@ -193,7 +185,7 @@ func Serve(datastoreDir, webAddress, webClientDir, rpcAddress string) error {
 
 // Listen and serve HTTP requests using address and don't let stay-alive
 // connections hog goroutines for more than an hour.
-// See for discussion: 
+// See for discussion:
 // http://stackoverflow.com/questions/10971800/golang-http-server-leaving-open-goroutines
 func (service *Service) ServeHttp(address, clientDir string) {
 	if address == "" {
@@ -211,9 +203,9 @@ func (service *Service) ServeHttp(address, clientDir string) {
 	// Handle Level 2 REST API.
 	if GzipAPI {
 		fmt.Println("HTTP server will return gzip values if permitted by browser.")
-		http.HandleFunc(RestApiPath, makeGzipHandler(apiHandler))
+		http.HandleFunc(service.WebAPIPath, makeGzipHandler(apiHandler))
 	} else {
-		http.HandleFunc(RestApiPath, apiHandler)
+		http.HandleFunc(service.WebAPIPath, apiHandler)
 	}
 
 	// Handle static files through serving embedded files
@@ -240,12 +232,12 @@ func (service *Service) ServeHttp(address, clientDir string) {
 // Listen and serve RPC requests using address.
 func (service *Service) ServeRpc(address string) error {
 	if address == "" {
-		address = DefaultRpcAddress
+		address = DefaultRPCAddress
 	}
-	service.RpcAddress = address
+	service.RPCAddress = address
 	dvid.Log(dvid.Debug, "Rpc server listening at %s ...\n", address)
 
-	c := new(RpcConnection)
+	c := new(RPCConnection)
 	rpc.Register(c)
 	rpc.HandleHTTP()
 	listener, err := net.Listen("tcp", address)

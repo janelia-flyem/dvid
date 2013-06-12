@@ -46,7 +46,7 @@ var (
 	clientDir = flag.String("webclient", "", "")
 
 	// Address for rpc communication.
-	rpcAddress = flag.String("rpc", server.DefaultRpcAddress, "")
+	rpcAddress = flag.String("rpc", server.DefaultRPCAddress, "")
 
 	// Address for http communication
 	httpAddress = flag.String("http", server.DefaultWebAddress, "")
@@ -178,7 +178,7 @@ func main() {
 			os.Exit(0)
 		}
 	}()
-	signal.Notify(stop_ch, os.Interrupt, os.Kill)
+	signal.Notify(stopSig, os.Interrupt, os.Kill)
 
 	// If we have no arguments, run in terminal mode, else execute command.
 	if flag.NArg() == 0 {
@@ -218,10 +218,9 @@ func DoCommand(cmd dvid.Command) error {
 
 // DoInit performs the "init" command, creating a new DVID datastore.
 func DoInit(cmd dvid.Command) error {
-	configFile, _ := cmd.Parameter(dvid.KeyConfigFile)
 	datastoreDir := cmd.DatastoreDir()
 	create := true
-	uuid := datastore.Init(datastoreDir, configFile, create)
+	uuid := datastore.Init(datastoreDir, create)
 	fmt.Println("Root node UUID:", uuid)
 	return nil
 }

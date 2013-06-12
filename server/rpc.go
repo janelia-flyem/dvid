@@ -42,11 +42,11 @@ datastore:
 	http://%s
 `
 
-// RpcConnection will export all of its functions for rpc access.
-type RpcConnection struct{}
+// RPCConnection will export all of its functions for rpc access.
+type RPCConnection struct{}
 
 // Do acts as a switchboard for remote command execution
-func (c *RpcConnection) Do(cmd datastore.Request, reply *datastore.Response) error {
+func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) error {
 	if reply == nil {
 		dvid.Log(dvid.Debug, "reply is nil coming in!\n")
 		return nil
@@ -62,7 +62,7 @@ func (c *RpcConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 	// Handle builtin commands
 	case "help":
 		reply.Text = fmt.Sprintf(helpMessage,
-			runningService.RpcAddress, runningService.SupportedDataChart(),
+			runningService.RPCAddress, runningService.SupportedDataChart(),
 			runningService.WebAddress)
 	case "types":
 		reply.Text = runningService.SupportedDataChart()
@@ -74,7 +74,7 @@ func (c *RpcConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 		var dataName, typeName string
 		cmd.CommandArgs(1, &dataName, &typeName)
 		dataSetName := datastore.DatasetString(dataName)
-		err := runningService.NewDataset(dataSetName, typeName)
+		err := runningService.NewDataset(dataSetName, typeName, dvid.Config{})
 		if err != nil {
 			return err
 		}
@@ -101,7 +101,7 @@ func (c *RpcConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 		reply.Text = fmt.Sprintf("Server would have processed '%s'", cmd)
 	default:
 		// Assume this is the command for a supported data type
-		return datatypeDo(cmd, reply)
+		return datasetDo(cmd, reply)
 	}
 	return nil
 }
@@ -117,17 +117,12 @@ func branch(cmd datastore.Request, reply *datastore.Response) error {
 // The following command implementations assume dataService is non-nil, hence their
 // unexported nature.
 
-func datatypeDo(cmd datastore.Request, reply *datastore.Response) error {
-	// Get the TypeService for this data set name.  Let user know if it's not supported.
-	dataSetName := datastore.DatasetString(cmd.Name())
-	typeService, err := runningService.DatasetService(dataSetName)
+func datasetDo(cmd datastore.Request, reply *datastore.Response) error {
+	// Get the DatasetService for this data set name.  Let user know if it's not supported.
+	datasetName := datastore.DatasetString(cmd.Name())
+	dataset, err := runningService.DatasetService(datasetName)
 	if err != nil {
-		// See if the user is addressing a data type name, not a data set name.
-		typeService, err = runningService.TypeService(cmd.Name())
-		if err != nil {
-			return fmt.Errorf("Command '%s' is neither a data set or data type name!",
-				cmd.Name())
-		}
+		return fmt.Errorf("Command '%s' is not a registered data set ", cmd.Name())
 	}
 
 	// Make sure we have at least a command in addition to the data type name
@@ -137,5 +132,5 @@ func datatypeDo(cmd datastore.Request, reply *datastore.Response) error {
 	}
 
 	// Send the command to the data type
-	return typeService.DoRPC(cmd, reply, runningService.Service)
+	return dataset.DoRPC(cmd, reply)
 }

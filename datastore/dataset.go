@@ -52,20 +52,24 @@ type DatasetService interface {
 	// as a key component.
 	DatasetLocalID() dvid.LocalID
 
-	// Handle iteration through a dataset in abstract way
+	// NumChunkHandlers returns the number of chunk handlers that should be
+	// used for this dataset.
+	NumChunkHandlers() int
+
+	// ChunkHandler processes a chunk of data in a mapped operation.
+	ChunkHandler(op *ChunkOp)
+
+	// Handle iteration through a dataset in abstract way.
 	NewIndexIterator(extents interface{}) IndexIterator
 
 	// DoRPC handles command line and RPC commands specific to a data type
 	DoRPC(request Request, reply *Response) error
 
 	// DoHTTP handles HTTP requests specific to a data type
-	DoHTTP(w http.ResponseWriter, r *http.Request, apiPrefixURL string) error
+	DoHTTP(w http.ResponseWriter, r *http.Request) error
 
 	// Returns standard error response for unknown commands
-	UnknownCommand(request Request) error
-
-	// Shutdown closes any cache and halts any block handlers for this data set.
-	Shutdown()
+	UnknownCommand(r Request) error
 }
 
 // DatasetID identifies a dataset within a DVID instance.

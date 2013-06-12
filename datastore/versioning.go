@@ -119,7 +119,7 @@ func (dag *VersionDAG) Get(db storage.KeyValueDB) (err error) {
 	}
 
 	// Deserialize into object
-	err = config.Deserialize(dvid.Serialization(data))
+	err = dag.Deserialize(dvid.Serialization(data))
 	return
 }
 
@@ -127,7 +127,7 @@ func (dag *VersionDAG) Get(db storage.KeyValueDB) (err error) {
 func (dag *VersionDAG) Put(db storage.KeyValueDB) (err error) {
 	// Get serialization
 	var serialization dvid.Serialization
-	serialization, err = config.Serialize()
+	serialization, err = dag.Serialize()
 
 	// Put data
 	return db.Put(KeyVersionDAG, []byte(serialization))

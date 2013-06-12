@@ -22,16 +22,11 @@ type Datatype struct {
 var DefaultBlockMax dvid.Point3d = dvid.Point3d{16, 16, 16}
 
 func init() {
-	datastore.RegisterDatatype(&Datatype{
-		voxels.Datatype{
-			Datatype: datastore.Datatype{
-				DatatypeID:  datastore.MakeDatatypeID("rgba8", RepoUrl, Version),
-				BlockMax:    DefaultBlockMax,
-				Indexing:    datastore.SchemeIndexZYX,
-				IsolateData: true,
-			},
-			NumChannels:   4,
-			BytesPerVoxel: 1,
-		},
-	})
+	rgba := voxels.NewDatatype()
+	rgba.DatatypeID = datastore.MakeDatatypeID("rgba8", RepoUrl, Version)
+	rgba.NumChannels = 4
+	rgba.BytesPerVoxel = 1
+
+	// Data types must be registered with the datastore to be used.
+	datastore.RegisterDatatype(rgba)
 }

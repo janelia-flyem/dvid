@@ -185,6 +185,21 @@ func ImageFromFile(filename string) (img image.Image, format string, err error) 
 	return
 }
 
+// ImageFromPost returns and image and its format name given a key to a POST request.
+// The image should be the first file in a POSTed form.
+func ImageFromPost(r *http.Request, key string) (img image.Image, format string, err error) {
+	f, _, err := r.FormFile(key)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	var buf bytes.Buffer
+	io.Copy(&buf, f)
+	img, format, err = image.Decode(&buf)
+	return
+}
+
 // WriteImageHttp writes an image to a HTTP response writer using a format and optional
 // compression strength specified in a string, e.g., "png", "jpg:80".
 func WriteImageHttp(w http.ResponseWriter, img image.Image, formatStr string) (err error) {
@@ -206,21 +221,6 @@ func WriteImageHttp(w http.ResponseWriter, img image.Image, formatStr string) (e
 	default:
 		err = fmt.Errorf("Illegal image format requested: %s", format[0])
 	}
-	return
-}
-
-// ImageFromPost returns and image and its format name given a key to a POST request.
-// The image should be the first file in a POSTed form.
-func ImageFromPost(r *http.Request, key string) (img image.Image, format string, err error) {
-	f, _, err := r.FormFile(key)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-
-	var buf bytes.Buffer
-	io.Copy(&buf, f)
-	img, format, err = image.Decode(&buf)
 	return
 }
 

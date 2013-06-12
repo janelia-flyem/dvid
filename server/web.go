@@ -1,6 +1,6 @@
 /*
 	This file supports the DVID REST API, breaking down URLs into
-	commands and massaging attached data into appropriate data types. 
+	commands and massaging attached data into appropriate data types.
 */
 
 package server
@@ -60,7 +60,7 @@ func mainHandler(w http.ResponseWriter, r *http.Request) {
 //       POST /api/data/<data type>/<data set name>
 func handleDataRequest(w http.ResponseWriter, r *http.Request) {
 	// Break URL request into arguments
-	const lenPath = len(RestApiPath)
+	lenPath := len(runningService.WebAPIPath)
 	url := r.URL.Path[lenPath:]
 	parts := strings.Split(url, "/")
 	action := strings.ToLower(r.Method)
@@ -74,7 +74,7 @@ func handleDataRequest(w http.ResponseWriter, r *http.Request) {
 		}
 		dataType := parts[1]
 		dataSetName := datastore.DatasetString(parts[2])
-		err := runningService.NewDataset(dataSetName, dataType)
+		err := runningService.NewDataset(dataSetName, dataType, dvid.Config{})
 		if err != nil {
 			msg := fmt.Sprintf("Could not add data set '%s' of type '%s': %s",
 				dataSetName, dataType, err.Error())
@@ -93,18 +93,18 @@ func handleDataRequest(w http.ResponseWriter, r *http.Request) {
 }
 
 // Handler for API commands.
-// We assume all DVID API commands target the URLs /api/<command or data set name>/... 
+// We assume all DVID API commands target the URLs /api/<command or data set name>/...
 // Built-in commands are:
-// 
-//    about -- Return "about" data of components and versions.   
+//
+//    about -- Return "about" data of components and versions.
 //    data  -- Datastore volume and data set configuration.
 //    versions -- Datastore versions DAG including UUIDs for each node.
 //    load  -- Load (# of pending block requests) on block handlers for each data set.
 //    cache -- returns LRU cache status
-//    
+//
 func apiHandler(w http.ResponseWriter, r *http.Request) {
 	// Break URL request into arguments
-	const lenPath = len(RestApiPath)
+	lenPath := len(runningService.WebAPIPath)
 	url := r.URL.Path[lenPath:]
 	parts := strings.Split(url, "/")
 	if len(parts) == 0 {
@@ -135,7 +135,7 @@ func apiHandler(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, jsonStr)
 	case "load":
-		jsonStr, err := datastore.BlockLoadJSON()
+		jsonStr, err := datastore.ChunkLoadJSON()
 		if err != nil {
 			badRequest(w, r, err.Error())
 			return
@@ -151,7 +151,7 @@ func apiHandler(w http.ResponseWriter, r *http.Request) {
 				datasetName, err.Error()))
 			return
 		}
-		err = datasetService.DoHTTP(w, r, RestApiPath)
+		err = datasetService.DoHTTP(w, r)
 		if err != nil {
 			badRequest(w, r, err.Error())
 		}

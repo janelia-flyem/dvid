@@ -8,7 +8,7 @@ package voxels
 import (
 	"fmt"
 	"image"
-	_ "log"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -115,9 +115,9 @@ The voxel data type supports the following Level 2 REST HTTP API calls.
     by the type of data associated with the data set name 'myvoxels'
 `
 
-// DefaultNumBlockHandlers specifies the number of block handlers for this data type
-// for each image version.
-const DefaultNumBlockHandlers = 8
+// DefaultNumChunkHandlers specifies the number of chunk handlers for each dataset
+// of this data type.
+const DefaultNumChunkHandlers = 8
 
 // DefaultBlockMax specifies the default size for each block of this data type.
 var DefaultBlockMax dvid.Point3d = dvid.Point3d{16, 16, 16}
@@ -144,18 +144,19 @@ func NewDatatype() (dtype *Datatype) {
 		BulkLoader:    false,
 		Batcher:       false,
 	}
+	return
 }
 
 // --- TypeService interface ---
 
 // NewDataset returns a pointer to a new voxels Dataset with default values.
-func (dtype *Datatype) NewDataset(id datastore.DatasetID, config dvid.Config) *Dataset {
+func (dtype *Datatype) NewDataset(id datastore.DatasetID, config dvid.Config) datastore.DatasetService {
 	dataset := &Dataset{
 		Dataset: datastore.BaseDataset(id, dtype),
 	}
 	dataset.BlockSize = DefaultBlockMax
 	if obj, found := config["BlockSize"]; found {
-		if blockSize, ok := obj.(dvid.BlockCoord); ok {
+		if blockSize, ok := obj.(dvid.Point3d); ok {
 			dataset.BlockSize = blockSize
 		}
 	}
@@ -179,7 +180,7 @@ type Dataset struct {
 	*datastore.Dataset
 
 	// Block size for this dataset
-	BlockSize dvid.BlockCoord
+	BlockSize dvid.Point3d
 
 	// Relative resolution of voxels in volume
 	VoxelRes dvid.VoxelResolution
@@ -188,7 +189,26 @@ type Dataset struct {
 	VoxelResUnits dvid.VoxelResolutionUnits
 }
 
+// Returns total number of bytes across all channels for a voxel.
+func (dset *Dataset) BytesPerVoxel() int32 {
+	// Make sure the dataset here has a pointer to a Datatype of this package.
+	dtype, ok := dset.Datatype.(*Datatype)
+	if !ok {
+		log.Fatalf("Illegal datatype %s for dataset %s",
+			dset.Datatype, dset.DatasetName())
+	}
+	return int32(dtype.BytesPerVoxel * dtype.NumChannels)
+}
+
+func (dset *Dataset) TypeService() datastore.TypeService {
+	return dset.Dataset.Datatype
+}
+
 // --- DatasetService interface ---
+
+func (dset *Dataset) NumChunkHandlers() int {
+	return DefaultNumChunkHandlers
+}
 
 // Do acts as a switchboard for RPC commands.
 func (dset *Dataset) DoRPC(request datastore.Request, reply *datastore.Response) error {
@@ -200,14 +220,17 @@ func (dset *Dataset) DoRPC(request datastore.Request, reply *datastore.Response)
 	case "help":
 		reply.Text = HelpMessage
 	default:
-		return dtype.UnknownCommand(request)
+		return dset.UnknownCommand(request)
 	}
 	return nil
 }
 
 // DoHTTP handles all incoming HTTP requests for this dataset.
-func (dset *Dataset) DoHTTP(w http.ResponseWriter, r *http.Request, apiURL string) error {
+func (dset *Dataset) DoHTTP(w http.ResponseWriter, r *http.Request) error {
 	startTime := time.Now()
+
+	// Get the running datastore service from this DVID instance.
+	dataService := server.DataService()
 
 	// Allow cross-origin resource sharing.
 	w.Header().Add("Access-Control-Allow-Origin", "*")
@@ -225,16 +248,18 @@ func (dset *Dataset) DoHTTP(w http.ResponseWriter, r *http.Request, apiURL strin
 	}
 
 	// Break URL request into arguments
-	url := r.URL.Path[len(apiURL):]
+	url := r.URL.Path[len(dataService.WebAPIPath):]
 	parts := strings.Split(url, "/")
 
-	// Setup the Operation using the correct version
-	versionStr := parts[1]
-	versionBytes, err := dset.store.VersionBytes(versionStr)
+	// First part is dataset name
+	datasetName := datastore.DatasetString(parts[0])
+
+	// Get the version ID from a uniquely identifiable string
+	uuidStr := parts[1]
+	versionID, err := dataService.VersionIDFromString(uuidStr)
 	if err != nil {
 		return err
 	}
-	operation = dset.makeOperation(versionBytes, op)
 
 	// Get the data shape.
 	shapeStr := dvid.DataShapeString(parts[2])
@@ -243,27 +268,61 @@ func (dset *Dataset) DoHTTP(w http.ResponseWriter, r *http.Request, apiURL strin
 		return fmt.Errorf("Bad data shape given '%s'", shapeStr)
 	}
 
+	// Setup chosen operation
+	var operation *Operation
+	bytesPerVoxel := dset.BytesPerVoxel()
+
 	switch dataShape {
 	case dvid.XY, dvid.XZ, dvid.YZ:
 		slice, err := dvid.NewSliceFromStrings(parts[2], parts[3], parts[4])
 		if err != nil {
 			return err
 		}
+		numBytes := int64(bytesPerVoxel) * slice.NumVoxels()
+		stride := slice.Width() * bytesPerVoxel
 		if op == PutOp {
 			// TODO -- Put in format checks for POSTed image.
 			postedImg, _, err := dvid.ImageFromPost(r, "image")
 			if err != nil {
 				return err
 			}
-			_, err = dtype.ProcessSlice(operation, slice, postedImg)
-			if err != nil {
+			if data, actualStride, err := dvid.ImageData(postedImg); err != nil {
 				return err
+			} else {
+				if actualStride < stride {
+					return fmt.Errorf("Too little data in input image (%d stride bytes)", stride)
+				}
+				operation = dset.makeOp(&Voxels{slice, data, stride}, versionID, op)
 			}
 		} else {
-			img, err := dtype.ProcessSlice(operation, slice, nil)
-			if err != nil {
-				return err
-			}
+			data := make([]uint8, numBytes, numBytes)
+			operation = dset.makeOp(&Voxels{slice, data, stride}, versionID, op)
+		}
+	case dvid.Vol:
+		subvol, err := dvid.NewSubvolumeFromStrings(parts[3], parts[4])
+		if err != nil {
+			return err
+		}
+		numBytes := int64(bytesPerVoxel) * subvol.NumVoxels()
+		if op == GetOp {
+			data := make([]uint8, numBytes, numBytes)
+			operation = dset.makeOp(&Voxels{subvol, data, 0}, versionID, op)
+		} else {
+			return fmt.Errorf("DVID does not yet support POST of subvolume data.")
+		}
+	case dvid.Arb:
+		return fmt.Errorf("DVID does not yet support arbitrary planes.")
+	}
+
+	// Perform operation using mapping
+	operation.Map()
+	operation.Wait()
+
+	// If it's a get, return result.
+	if op == GetOp {
+		switch dataShape {
+		case dvid.XY, dvid.XZ, dvid.YZ:
+			img, err := dset.SliceImage(operation.data, 0)
 			var formatStr string
 			if len(parts) >= 6 {
 				formatStr = parts[5]
@@ -273,20 +332,20 @@ func (dset *Dataset) DoHTTP(w http.ResponseWriter, r *http.Request, apiURL strin
 			if err != nil {
 				return err
 			}
-		}
-		dvid.ElapsedTime(dvid.Normal, startTime, "%s %s (%s) %s", op, dataSetName,
-			dtype.DatatypeName(), slice)
-	case dvid.Vol:
-		subvol, err := dvid.NewSubvolumeFromStrings(parts[3], parts[4])
-		if err != nil {
-			return err
-		}
-		if op == GetOp {
-			pb, err := dtype.ProcessSubvolume(operation, subvol, nil)
-			if err != nil {
-				return err
+		case dvid.Vol:
+			dvid.PrintNonZero("ProcessSubvolume()", []byte(operation.data.data))
+			// server.Subvolume is a thrift-defined data structure
+			encodedVol := &server.Subvolume{
+				Dataset: proto.String(string(datasetName)),
+				OffsetX: proto.Int32(operation.data.Geometry.Origin()[0]),
+				OffsetY: proto.Int32(operation.data.Geometry.Origin()[1]),
+				OffsetZ: proto.Int32(operation.data.Geometry.Origin()[2]),
+				SizeX:   proto.Uint32(uint32(operation.data.Geometry.Size()[0])),
+				SizeY:   proto.Uint32(uint32(operation.data.Geometry.Size()[1])),
+				SizeZ:   proto.Uint32(uint32(operation.data.Geometry.Size()[2])),
+				Data:    []byte(operation.data.data),
 			}
-			data, err := proto.Marshal(pb)
+			data, err := proto.Marshal(encodedVol)
 			if err != nil {
 				return err
 			}
@@ -295,25 +354,22 @@ func (dset *Dataset) DoHTTP(w http.ResponseWriter, r *http.Request, apiURL strin
 			if err != nil {
 				return err
 			}
-		} else {
-			return fmt.Errorf("DVID does not yet support POST of subvolume data.")
 		}
-		dvid.ElapsedTime(dvid.Normal, startTime, "%s %s (%s) %s", op, dataSetName,
-			dtype.DatatypeName(), subvol)
-	case dvid.Arb:
-		return fmt.Errorf("DVID does not yet support arbitrary planes.")
 	}
+	dvid.ElapsedTime(dvid.Normal, startTime, "%s %s (%s) %s", op, operation.DatasetName(),
+		operation.DatatypeName(), operation.data.Geometry)
+
 	return nil
 }
 
 // NewIndexIterator returns an IndexIterator closure.  The closure for this voxels data
 // type uses VoxelCoord, BlockCoord, and returns an IndexZYX.
-func (dset *Dataset) NewIndexIterator(extents interface{}) IndexIterator {
+func (dset *Dataset) NewIndexIterator(extents interface{}) datastore.IndexIterator {
 	data, ok := extents.(dvid.Geometry)
 	if !ok {
-		log.Fatalf("Received bad data (%s) for NewIndexIterator for %s", abstractData, *dset)
+		log.Fatalf("Received bad extents (%s) for NewIndexIterator for %s", extents, *dset)
 	}
-	blockSize := dset.Props.(*DatasetProps).BlockSize
+	blockSize := dset.BlockSize
 
 	// Setup traversal
 	startVoxel := data.Origin()
@@ -325,13 +381,16 @@ func (dset *Dataset) NewIndexIterator(extents interface{}) IndexIterator {
 	z := startBlockCoord[2]
 	y := startBlockCoord[1]
 	x := startBlockCoord[0]
-	return func() Index {
+	return func() datastore.Index {
 		//dvid.Fmt(dvid.Debug, "IndexIterator: start at (%d,%d,%d)\n", x, y, z)
 		if z > endBlockCoord[2] {
 			return nil
 		}
 		// Convert an n-D block coordinate into a 1-D index
-		index := datastore.BlockZYX{x, y, z}.MakeIndex()
+		index, err := datastore.BlockZYX{dvid.BlockCoord{x, y, z}}.MakeIndex()
+		if err != nil {
+			log.Fatalf("Bad BlockZYX.MakeIndex() for block coord (%d,%d,%d)", x, y, z)
+		}
 		x++
 		if x > endBlockCoord[0] {
 			x = startBlockCoord[0]
@@ -345,284 +404,9 @@ func (dset *Dataset) NewIndexIterator(extents interface{}) IndexIterator {
 	}
 }
 
-// --- datastore.Operation interface ----
-
-// Operation holds type-specific data for operations and can be used to
-// map blocks to handlers.
-type Operation struct {
-	*Dataset
-	version []byte
-	op      OpType
-	wg      *sync.WaitGroup
-}
-
-type OpType uint8
-
-const (
-	GetOp OpType = iota
-	PutOp
-)
-
-func (op OpType) String() string {
-	switch op {
-	case GetOp:
-		return "GET"
-	case PutOp:
-		return "PUT"
-	}
-	return fmt.Sprintf("Illegal Op (%d)", op)
-}
-
-func (dset *Dataset) makeOperation(version []byte, op OpType) *Operation {
-	return &Operation{dset, version, op, new(sync.WaitGroup)}
-}
-
-func (pOp *Operation) VersionBytes() []byte {
-	return pOp.version
-}
-
-func (pOp *Operation) Data() interface{} {
-	return pOp.data
-}
-
-func (pOp *Operation) DatasetName() datastore.DatasetString {
-	return pOp.dataset
-}
-
-func (pOp *Operation) WaitGroup() *sync.WaitGroup {
-	return pOp.wg
-}
-
-// Process subvolume and slice function
-//
-// TODO -- Writing all blocks for a subvolume/slice is likely wasteful although it does
-// provide assurance that modified blocks are written to disk.   Adjacent slices
-// will usually intersect the same block so its more efficient to only write blocks
-// that haven't been touched for some small amount of time.  On the other hand, block
-// sizes might make seek times less important and leveldb also has a configurable
-// write cache.
-
-// ProcessSubvolume breaks a subvolume into constituent blocks and processes the blocks
-// concurrently via MapBlocks(), then waiting until all blocks have
-// completed before returning.  An subvolume is returned if the op is a GetOp.
-// If the op is a PutOp, we write sequentially all modified blocks.
-func (dset *Dataset) ProcessSubvolume(op *Operation, subvol *dvid.Subvolume) (
-	encodedVol *server.Subvolume, err error) {
-
-	startTime := time.Now()
-
-	// Setup the data buffer
-	bytesPerVoxel := dtype.BytesPerVoxel * dtype.NumChannels
-	numBytes := bytesPerVoxel * subvol.NumVoxels()
-	var data []uint8
-	//var batch keyvalue.WriteBatch
-
-	switch op.op {
-	case PutOp:
-		// Setup write batch to maximize sequential writes and exploit
-		// leveldb write buffer.
-		//batch = keyvalue.NewWriteBatch()
-		//defer batch.Close()
-	case GetOp:
-		// supported op
-	default:
-		err = fmt.Errorf("Illegal operation (%d) in ProcessSubvolume()", op)
-		return
-	}
-
-	// Do the mapping from subvol to blocks
-	voxels := &Voxels{
-		Geometry: subvol,
-		data:     data,
-	}
-	var wg sync.WaitGroup
-	err = vs.MapBlocks(op, voxels, &wg)
-	if err != nil {
-		return
-	}
-	// Wait for all map block processing.
-	wg.Wait()
-	if op == GetOp {
-		dvid.PrintNonZero("ProcessSubvolume()", []byte(data))
-		encodedVol = &server.Subvolume{
-			Dataset: proto.String(string(dataSetName)),
-			OffsetX: proto.Int32(subvol.Origin()[0]),
-			OffsetY: proto.Int32(subvol.Origin()[1]),
-			OffsetZ: proto.Int32(subvol.Origin()[2]),
-			SizeX:   proto.Uint32(uint32(subvol.Size()[0])),
-			SizeY:   proto.Uint32(uint32(subvol.Size()[1])),
-			SizeZ:   proto.Uint32(uint32(subvol.Size()[2])),
-			Data:    []byte(data),
-		}
-		dvid.ElapsedTime(dvid.Normal, startTime, "Retrieved %s.  Data has %d bytes",
-			subvol, len(data))
-	}
-	return
-}
-
-// ProcessSlice breaks a slice into constituent blocks and processes the blocks
-// concurrently via MapBlocks(), then waiting until all blocks have
-// completed before returning.  An image is returned if the op is a GetOp.
-// If the op is a PutOp, we write sequentially all modified blocks.
-func (dset *Dataset) ProcessSlice(op *Operation, slice dvid.Geometry,
-	inputImg image.Image) (outputImg image.Image, err error) {
-
-	// Setup the data buffer
-	bytesPerVoxel := dtype.BytesPerVoxel * dtype.NumChannels
-	numBytes := bytesPerVoxel * slice.NumVoxels()
-	var data []uint8
-	var stride int32
-	//var batch keyvalue.WriteBatch
-
-	switch op {
-	case PutOp:
-		// Setup write batch to maximize sequential writes and exploit
-		// leveldb write buffer.
-		//batch = keyvalue.NewWriteBatch()
-		//defer batch.Close()
-
-		// Use input image bytes as data buffer.
-		data, stride, err = dvid.ImageData(inputImg)
-		if err != nil {
-			return
-		}
-		expectedStride := int32(dtype.NumChannels*dtype.BytesPerVoxel) * slice.Width()
-		if stride < expectedStride {
-			typeInfo := fmt.Sprintf("(%s: %d channels, %d bytes/voxel, %s pixels)",
-				dtype.DatatypeName(), dtype.NumChannels, dtype.BytesPerVoxel, slice.Size())
-			err = fmt.Errorf("Input image has too little data (stride bytes = %d) for type %s",
-				stride, typeInfo)
-			return
-		}
-	case GetOp:
-		data = make([]uint8, numBytes, numBytes)
-		stride = slice.Width() * int32(bytesPerVoxel)
-	default:
-		err = fmt.Errorf("Illegal operation (%d) in ProcessSlice()", op)
-		return
-	}
-
-	// Do the mapping from slice to blocks
-	voxels := &Voxels{
-		dataSetName: dataSetName,
-		Geometry:    slice,
-		TypeService: dtype,
-		data:        data,
-		stride:      stride,
-	}
-	var wg sync.WaitGroup
-	err = vs.MapBlocks(op, voxels, &wg)
-	if err != nil {
-		return
-	}
-	// Wait for all map block processing.
-	wg.Wait()
-	if op == GetOp {
-		// Write the image to requestor
-		outputImg, err = voxels.SliceImage(0)
-		if err != nil {
-			return
-		}
-	}
-	return
-}
-
-// ServerAdd adds a sequence of image files to an image version.  The request
-// contains arguments as follows:
-//
-// <dataset name> server-add <uuid> <origin> <image filename glob> [plane=<plane>]
-//
-// Example request string: "mygrayscale server-add 3f8c 0,0,100 /absolute/path/to/data/*.png"
-//
-//	dataset name: the name of a dataset created using the "dataset" command.
-//	uuid: hexidecimal string with enough characters to uniquely identify a version node.
-//	origin: 3d coordinate in the format "x,y,z".  Gives coordinate of top upper left voxel.
-//	image filename glob: filenames of images, e.g., foo-xy-*.png
-//	plane: xy (default), xz, or yz.
-//
-// The image filename glob MUST BE absolute file paths that are visible to the server.
-// This function is meant for mass ingestion of large data files, and it is inappropriate
-// to read gigabytes of data just to send it over the network to a local DVID.
-func (dset *Dataset) ServerAdd(request datastore.Request, reply *datastore.Response,
-	service *datastore.Service) error {
-
-	startTime := time.Now()
-
-	// Parse the request
-	var setName, cmdStr, uuidStr, offsetStr string
-	filenames := request.CommandArgs(0, &setName, &cmdStr, &uuidStr, &offsetStr)
-	if len(filenames) == 0 {
-		return fmt.Errorf("Need to include at least one file to add: %s", request)
-	}
-	dataSetName := datastore.DatasetString(setName)
-
-	vs, err := datastore.NewVersionService(service, uuidStr)
-	if err != nil {
-		return err
-	}
-
-	var addedFiles string
-	if len(filenames) == 1 {
-		addedFiles = filenames[0]
-	} else {
-		addedFiles = fmt.Sprintf("filenames: %s [%d more]", filenames[0], len(filenames)-1)
-	}
-	dvid.Log(dvid.Debug, addedFiles+"\n")
-
-	shapeStr, found := request.Parameter(dvid.KeyPlane)
-	if !found {
-		shapeStr = "xy"
-	}
-	dataShape, err := dvid.DataShapeString(shapeStr).DataShape()
-	if err != nil {
-		return err
-	}
-
-	offset, err := dvid.PointStr(offsetStr).VoxelCoord()
-	if err != nil {
-		return err
-	}
-
-	// Load each image and do map/reduce computation on blocks of the image.
-	// We prefer to load the images sequentially instead of in parallel to
-	numSuccessful := 0
-	var lastErr error
-	for _, filename := range filenames {
-		sliceTime := time.Now()
-		img, _, err := dvid.ImageFromFile(filename)
-		if err != nil {
-			lastErr = err
-		} else {
-			size := dvid.SizeFromRect(img.Bounds())
-			slice, err := dvid.NewSlice(dataShape, offset, size)
-			_, err = dtype.ProcessSlice(dataSetName, vs, datastore.PutOp, slice, img)
-			dvid.ElapsedTime(dvid.Debug, sliceTime, "%s %s %s",
-				datastore.PutOp, dtype.DatatypeName(), slice)
-			if err == nil {
-				numSuccessful++
-			} else {
-				lastErr = err
-			}
-		}
-		offset = offset.Add(dvid.VoxelCoord{0, 0, 1})
-	}
-	if lastErr != nil {
-		return fmt.Errorf("Error: %d of %d images successfully added [%s]\n",
-			numSuccessful, len(filenames), lastErr.Error())
-	}
-	dvid.ElapsedTime(dvid.Normal, startTime, "RPC server-add (%s) completed", addedFiles)
-	return nil
-}
-
-// Voxels implements the DataStruct interface for a rectangular blocks of voxels.
-// The Voxels data is eventually broken down into blocks for processing, and each
-// block is handled by the BlockHandler() defined in this package.
+// Voxels represents subvolumes or slices.
 type Voxels struct {
-	// Which data set does this belong to?
-	dataSetName datastore.DatasetString
-
 	dvid.Geometry
-	datastore.TypeService
 
 	// The data itself
 	data []uint8
@@ -632,28 +416,23 @@ type Voxels struct {
 	stride int32
 }
 
-func (v *Voxels) Data() []uint8 {
-	return v.data
-}
-
-func (v *Voxels) Stride() int32 {
-	return v.stride
-}
-
 func (v *Voxels) String() string {
 	size := v.Size()
-	return fmt.Sprintf("%s %s of size %d x %d x %d @ %s",
-		v.DatatypeName(), v.DataShape(), size[0], size[1], size[2], v.Origin())
+	return fmt.Sprintf("%s of size %d x %d x %d @ %s",
+		v.DataShape(), size[0], size[1], size[2], v.Origin())
 }
 
 // SliceImage returns an image.Image for the z-th slice of the volume.
-func (v *Voxels) SliceImage(z int) (img image.Image, err error) {
-	dtype := v.TypeService.(*Datatype)
+func (dset *Dataset) SliceImage(v *Voxels, z int) (img image.Image, err error) {
+	dtype, ok := dset.Datatype.(*Datatype)
+	if !ok {
+		err = fmt.Errorf("Dataset %s does not have type of voxels.Datatype!", dset.DatasetName())
+	}
 	unsupported := func() error {
 		return fmt.Errorf("DVID doesn't support images with %d bytes/voxel and %d channels",
 			dtype.BytesPerVoxel, dtype.NumChannels)
 	}
-	sliceBytes := int(v.Width()*v.Height()) * dtype.BytesPerVoxel * dtype.NumChannels
+	sliceBytes := int(v.Width() * v.Height() * int32(dset.BytesPerVoxel()))
 	beg := z * sliceBytes
 	end := beg + sliceBytes
 	if end > len(v.data) {
@@ -690,110 +469,272 @@ func (v *Voxels) SliceImage(z int) (img image.Image, err error) {
 	return
 }
 
-// OffsetToBlock returns the voxel coordinate at the top left corner of the block
-// corresponding to the index.
-func (i IndexZYX) OffsetToBlock() (coord dvid.VoxelCoord) {
-	blockCoord := i.InvertIndex()
-	blockSize := t.BlockSize()
-	coord[0] = blockCoord[0] * blockSize[0]
-	coord[1] = blockCoord[1] * blockSize[1]
-	coord[2] = blockCoord[2] * blockSize[2]
-	return
+// --- datastore.Operation interface ----
+
+// Operation holds type-specific data for operations and can be used to
+// map blocks to handlers.
+type Operation struct {
+	*Dataset
+	data      *Voxels
+	versionID dvid.LocalID
+	op        OpType
+	wg        *sync.WaitGroup
 }
 
-// BlockHandler processes a block of data as part of a request.  The BlockRequest
-// holds data (the larger structure, e.g., plane or subvolume) that cuts across
-// this particular block (a small rectangular volume of voxels).  The data may be
-// thinner, wider, and longer than the block, depending on the data shape (XY, XZ, etc)
-func (v *Voxels) BlockHandler(req *datastore.BlockRequest) {
+type OpType uint8
+
+const (
+	GetOp OpType = iota
+	PutOp
+)
+
+func (op OpType) String() string {
+	switch op {
+	case GetOp:
+		return "GET"
+	case PutOp:
+		return "PUT"
+	}
+	return fmt.Sprintf("Illegal Op (%d)", op)
+}
+
+func (dset *Dataset) makeOp(data *Voxels, versionID dvid.LocalID, op OpType) *Operation {
+	return &Operation{dset, data, versionID, op, new(sync.WaitGroup)}
+}
+
+func (pOp *Operation) IndexIterator() datastore.IndexIterator {
+	return pOp.NewIndexIterator(pOp.data)
+}
+
+func (pOp *Operation) IsReadOnly() bool {
+	if pOp.op == GetOp {
+		return true
+	}
+	return false
+}
+
+func (pOp *Operation) DatastoreService() *datastore.Service {
+	s := server.DataService()
+	return s.Service
+}
+
+func (pOp *Operation) DatasetService() datastore.DatasetService {
+	return pOp.Dataset
+}
+
+func (pOp *Operation) VersionLocalID() dvid.LocalID {
+	return pOp.versionID
+}
+
+func (pOp *Operation) Map() {
+	datastore.Map(pOp)
+}
+
+func (pOp *Operation) WaitAdd() {
+	if pOp.wg != nil {
+		pOp.wg.Add(1)
+	}
+}
+
+func (pOp *Operation) Wait() {
+	pOp.wg.Wait()
+}
+
+// ServerAdd adds a sequence of image files to an image version.  The request
+// contains arguments as follows:
+//
+// <dataset name> server-add <uuid> <origin> <image filename glob> [plane=<plane>]
+//
+// Example request string: "mygrayscale server-add 3f8c 0,0,100 /absolute/path/to/data/*.png"
+//
+//	dataset name: the name of a dataset created using the "dataset" command.
+//	uuid: hexidecimal string with enough characters to uniquely identify a version node.
+//	origin: 3d coordinate in the format "x,y,z".  Gives coordinate of top upper left voxel.
+//	image filename glob: filenames of images, e.g., foo-xy-*.png
+//	plane: xy (default), xz, or yz.
+//
+// The image filename glob MUST BE absolute file paths that are visible to the server.
+// This function is meant for mass ingestion of large data files, and it is inappropriate
+// to read gigabytes of data just to send it over the network to a local DVID.
+func (dset *Dataset) ServerAdd(request datastore.Request, reply *datastore.Response) error {
+
+	startTime := time.Now()
+
+	// Get the running datastore service from this DVID instance.
+	service := server.DataService()
+
+	// Parse the request
+	var setName, cmdStr, uuidStr, offsetStr string
+	filenames := request.CommandArgs(0, &setName, &cmdStr, &uuidStr, &offsetStr)
+	if len(filenames) == 0 {
+		return fmt.Errorf("Need to include at least one file to add: %s", request)
+	}
+
+	// Get the version ID from a uniquely identifiable string
+	versionID, err := service.VersionIDFromString(uuidStr)
+	if err != nil {
+		return err
+	}
+
+	// Get origin
+	offset, err := dvid.PointStr(offsetStr).VoxelCoord()
+	if err != nil {
+		return err
+	}
+
+	// Get list of files to add
+	var addedFiles string
+	if len(filenames) == 1 {
+		addedFiles = filenames[0]
+	} else {
+		addedFiles = fmt.Sprintf("filenames: %s [%d more]", filenames[0], len(filenames)-1)
+	}
+	dvid.Log(dvid.Debug, addedFiles+"\n")
+
+	// Get optional plane
+	shapeStr, found := request.Parameter(dvid.KeyPlane)
+	if !found {
+		shapeStr = "xy"
+	}
+	dataShape, err := dvid.DataShapeString(shapeStr).DataShape()
+	if err != nil {
+		return err
+	}
+
+	// Load each image and do map/reduce computation on blocks of the image.
+	bytesPerVoxel := dset.BytesPerVoxel()
+
+	numSuccessful := 0
+	var lastErr error
+	for _, filename := range filenames {
+		sliceTime := time.Now()
+		img, _, err := dvid.ImageFromFile(filename)
+		if err != nil {
+			lastErr = err
+		} else {
+			size := dvid.SizeFromRect(img.Bounds())
+			slice, err := dvid.NewSlice(dataShape, offset, size)
+			stride := slice.Width() * bytesPerVoxel
+
+			var operation *Operation
+			if data, actualStride, err := dvid.ImageData(img); err != nil {
+				return err
+			} else {
+				if actualStride < stride {
+					return fmt.Errorf("Too little data in input image (%d stride bytes)", stride)
+				}
+				operation = dset.makeOp(&Voxels{slice, data, stride}, versionID, PutOp)
+			}
+
+			operation.Map()
+			operation.Wait() // TODO -- Move this out of loop so we don't wait at each image load
+
+			dvid.ElapsedTime(dvid.Debug, sliceTime, "%s server-add %s", dset.DatasetName(), slice)
+			if err == nil {
+				numSuccessful++
+			} else {
+				lastErr = err
+			}
+		}
+		offset = offset.Add(dvid.VoxelCoord{0, 0, 1})
+	}
+	if lastErr != nil {
+		return fmt.Errorf("Error: %d of %d images successfully added [%s]\n",
+			numSuccessful, len(filenames), lastErr.Error())
+	}
+	dvid.ElapsedTime(dvid.Normal, startTime, "RPC server-add (%s) completed", addedFiles)
+	return nil
+}
+
+// ChunkHandler processes a chunk of data as part of a mapped operation.  The data may be
+// thinner, wider, and longer than the chunk, depending on the data shape (XY, XZ, etc)
+func (dset *Dataset) ChunkHandler(chunkOp *datastore.ChunkOp) {
+
+	operation := chunkOp.Operation.(*Operation)
+	voxels := operation.data
+	index := datastore.IndexZYX(chunkOp.Key.Index)
 
 	// Compute the bounding voxel coordinates for this block.
-	blockSize := v.BlockSize()
-	minBlockVoxel := req.IndexKey.OffsetToBlock(v)
+	blockSize := dset.BlockSize
+	minBlockVoxel := index.OffsetToBlock(blockSize)
 	maxBlockVoxel := minBlockVoxel.AddSize(blockSize)
 
 	// Compute the bound voxel coordinates for the data slice/subvolume and adjust
 	// to our block bounds.
-	minDataVoxel := v.Origin()
-	maxDataVoxel := v.EndVoxel()
+	minDataVoxel := voxels.Origin()
+	maxDataVoxel := voxels.EndVoxel()
 	begVolCoord := minDataVoxel.Max(minBlockVoxel)
 	endVolCoord := maxDataVoxel.Min(maxBlockVoxel)
 
 	// Calculate the strides
-	dtype := v.TypeService.(*Datatype)
+	dtype := dset.TypeService().(*Datatype)
 	bytesPerVoxel := int32(dtype.NumChannels * dtype.BytesPerVoxel)
 
 	// Compute block coord matching beg's DVID volume space voxel coord
 	blockBeg := begVolCoord.Sub(minBlockVoxel)
 
 	// Compute index into the block byte buffer, blockI
-	var block []uint8
-	if req.Block == nil {
-		// Create a zero value block
-		blockBytes := req.DataStruct.BlockBytes()
-		block = make([]uint8, blockBytes, blockBytes)
-	} else {
-		block = []uint8(req.Block)
-	}
+	block := []uint8(chunkOp.Chunk)
 	blockNumX := blockSize[0] * bytesPerVoxel
 	blockNumXY := blockSize[1] * blockNumX
 
 	// Adjust the DVID volume voxel coordinates for the data so that (0,0,0)
 	// is where we expect this slice/subvolume's data to begin.
-	beg := begVolCoord.Sub(v.Origin())
-	end := endVolCoord.Sub(v.Origin())
+	beg := begVolCoord.Sub(voxels.Origin())
+	end := endVolCoord.Sub(voxels.Origin())
 
 	// For each geometry, traverse the data slice/subvolume and read/write from
 	// the block data depending on the op.
 
-	data := req.DataStruct.Data()
+	//data := req.DataStruct.Data()
+	data := voxels.data
 
 	//fmt.Printf("Data %s -> %s, Orig %s -> %s\n", beg, end, begVolCoord, endVolCoord)
 	//dvid.Fmt(dvid.Debug, "Block start: %s\n", blockBeg)
 	//dvid.Fmt(dvid.Debug, "Block buffer size: %d bytes\n", len(block))
 	//dvid.Fmt(dvid.Debug, "Data buffer size: %d bytes\n", len(data))
 
-	switch req.DataShape() {
+	switch voxels.DataShape() {
 	case dvid.XY:
 		//fmt.Printf("XY Block: %s->%s, blockXY %d, blockX %d, blockBeg %s\n",
 		//	begVolCoord, endVolCoord, blockXY, blockX, blockBeg)
 		blockI := blockBeg[2]*blockNumXY + blockBeg[1]*blockNumX + blockBeg[0]*bytesPerVoxel
-		dataI := beg[1]*v.Stride() + beg[0]*bytesPerVoxel
+		dataI := beg[1]*voxels.stride + beg[0]*bytesPerVoxel
 		for y := beg[1]; y <= end[1]; y++ {
 			run := end[0] - beg[0] + 1
 			bytes := run * bytesPerVoxel
-			switch req.Op {
+			switch operation.op {
 			case GetOp:
 				copy(data[dataI:dataI+bytes], block[blockI:blockI+bytes])
 			case PutOp:
 				copy(block[blockI:blockI+bytes], data[dataI:dataI+bytes])
 			}
 			blockI += blockSize[0] * bytesPerVoxel
-			dataI += v.Stride()
+			dataI += voxels.stride
 		}
 	case dvid.XZ:
 		blockI := blockBeg[2]*blockNumXY + blockBeg[1]*blockNumX + blockBeg[0]*bytesPerVoxel
-		dataI := beg[2]*v.Stride() + beg[0]*bytesPerVoxel
+		dataI := beg[2]*voxels.stride + beg[0]*bytesPerVoxel
 		for y := beg[2]; y <= end[2]; y++ {
 			//fmt.Printf("XZ> y(%d) -> BlockI: %d, dataI: %d\n", y, blockI, dataI)
 			run := end[0] - beg[0] + 1
 			bytes := run * bytesPerVoxel
-			switch req.Op {
+			switch operation.op {
 			case GetOp:
 				copy(data[dataI:dataI+bytes], block[blockI:blockI+bytes])
 			case PutOp:
 				copy(block[blockI:blockI+bytes], data[dataI:dataI+bytes])
 			}
 			blockI += blockSize[0] * blockSize[1] * bytesPerVoxel
-			dataI += v.Stride()
+			dataI += voxels.stride
 		}
 	case dvid.YZ:
 		bx, bz := blockBeg[0], blockBeg[2]
 		for y := beg[2]; y <= end[2]; y++ {
-			dataI := y*v.Stride() + beg[1]*bytesPerVoxel
+			dataI := y*voxels.stride + beg[1]*bytesPerVoxel
 			blockI := bz*blockNumXY + blockBeg[1]*blockNumX + bx*bytesPerVoxel
 			for x := beg[1]; x <= end[1]; x++ {
-				switch req.Op {
+				switch operation.op {
 				case GetOp:
 					copy(data[dataI:dataI+bytesPerVoxel], block[blockI:blockI+bytesPerVoxel])
 				case PutOp:
@@ -805,8 +746,8 @@ func (v *Voxels) BlockHandler(req *datastore.BlockRequest) {
 			bz++
 		}
 	case dvid.Vol:
-		dataNumX := req.DataStruct.Width() * bytesPerVoxel
-		dataNumXY := req.DataStruct.Height() * dataNumX
+		dataNumX := voxels.Width() * bytesPerVoxel
+		dataNumXY := voxels.Height() * dataNumX
 		blockZ := blockBeg[2]
 		for dataZ := beg[2]; dataZ <= end[2]; dataZ++ {
 			blockY := blockBeg[1]
@@ -815,7 +756,7 @@ func (v *Voxels) BlockHandler(req *datastore.BlockRequest) {
 				dataI := dataZ*dataNumXY + dataY*dataNumX + beg[0]*bytesPerVoxel
 				run := end[0] - beg[0] + 1
 				bytes := run * bytesPerVoxel
-				switch req.Op {
+				switch operation.op {
 				case GetOp:
 					copy(data[dataI:dataI+bytes], block[blockI:blockI+bytes])
 				case PutOp:
@@ -830,12 +771,13 @@ func (v *Voxels) BlockHandler(req *datastore.BlockRequest) {
 	}
 
 	// If this is a PUT, place the modified block data into the database.
-	if req.Op == PutOp {
-		req.DB.Put(req.BlockKey, req.Block)
+	if operation.op == PutOp {
+		db := operation.DatastoreService().KeyValueDB()
+		db.Put(chunkOp.Key, chunkOp.Chunk)
 	}
 
 	// Notify the requestor that this block is done.
-	if req.Wait != nil {
-		req.Wait.Done()
+	if operation.wg != nil {
+		operation.wg.Done()
 	}
 }

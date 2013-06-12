@@ -1,15 +1,15 @@
 /*
-	Mapper is a component for map/reduce operations that you can add to 
+	Mapper is a component for map/reduce operations that you can add to
 	data types to implement block-level concurrency.
 */
 
 package datastore
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log"
-	_ "os"
 	"sync"
 	"time"
 
@@ -20,64 +20,49 @@ import (
 // Operation provides an abstract interface to datatype-specific operations.
 // Each data type will implement operations that are mostly opaque at this level.
 type Operation interface {
-	TypeService
-	Data() interface{}
-	DatasetName() DatasetString
-	WaitGroup() *sync.WaitGroup
-}
+	DatasetService
 
-// Mapper administrates map/reduce operations for data types.
-type Mapper struct {
-	op         Operation
-	blockChans []chan *BlockRequest
+	DatastoreService() *Service
+
+	VersionLocalID() dvid.LocalID
+
+	// Does this operation only read data?
+	IsReadOnly() bool
+
+	// Returns an IndexIterator that steps through all chunks for this operation.
+	IndexIterator() IndexIterator
+
+	// Map traverses chunks in an operation and maps it to dataset-specific chunk handlers.
+	// Types that implement the Operation interface can use datastore.Map() to fulfill
+	// this method or implement their own mapping scheme.
+	Map()
+
+	// WaitAdd increments an internal WaitGroup
+	WaitAdd()
+
+	// Wait blocks until the operation is complete
+	Wait()
 }
 
 // Constants that allow tuning of DVID for a particular target computer.
 const (
-	// Default number of block handlers to use per data type. 
-	DefaultNumBlockHandlers = 8
+	// Default number of block handlers to use per dataset.
+	DefaultNumChunkHandlers = 8
 
-	// NumBlockHandlers sets the number of processors we have for our "map" operation.
-	NumBlockHandlers = 8
-
-	// Number of block write requests that can be buffered on each block handler
-	// before sender is blocked.  
-	// This constant * sizeof(request struct) * NumBlockHandlers
-	// should be a reasonable number for the target DVID computer.
-	// The request struct contains two pointers.
-	BlockHandlerBufferSize = 100000
+	// Number of chunk write requests that can be buffered on each block handler
+	// before sender is blocked.
+	ChunkHandlerBufferSize = 100000
 )
 
-// Mapper can delegate
-
-// Block is the unit of get/put for each data type.  We typically decompose a
-// larger structure (DataStruct) into Blocks, process each Block separately
-// by a handler assigned for each spatial index, and then let the requestor 
-// know when all the processing is done via a sync.WaitGroup.
-//
-// TODO -- Generalize "Op" since we don't care what Op is as long as the type
-// can do it.  So want pass along from type's parsing of request to block handler.
-type BlockRequest struct {
-	// The larger data structure that we're going to fill in using blocks.
-	// This may be a slice and thinner than the blocks it intersects.
-	DataStruct
-
-	// Block holds the data for a block, a small rectangular volume of voxels.
-	Block storage.Value
-
-	// Parameters for this particular block
-	Op       OpType
-	IndexKey Index
-	BlockKey storage.Key
-
-	// Let's us notify requestor when all blocks are done.
-	Wait *sync.WaitGroup
-
-	DB storage.DataHandler
+type ChunkOp struct {
+	Operation
+	Chunk    []byte
+	Key      storage.Key
+	shutdown bool
 }
 
-// Each data type has a pool of channels to communicate with block handlers. 
-type BlockChannels map[DatasetString]([]chan *BlockRequest)
+// Each dataset has a pool of channels to communicate with gouroutine handlers.
+type ChunkChannels map[DatasetString]([]chan *ChunkOp)
 
 // Track requested/completed block ops
 type loadStruct struct {
@@ -87,9 +72,7 @@ type loadStruct struct {
 type loadMap map[DatasetString]loadStruct
 
 var (
-	// HandlerChannels are map from data type names to a pool of block handler
-	// goroutines.  See the function ReserveBlockHandlers.
-	HandlerChannels BlockChannels
+	chunkChannels ChunkChannels
 
 	// DiskAccess is a mutex to make sure we don't have goroutines simultaneously trying
 	// to access the key-value database on disk.
@@ -104,7 +87,7 @@ var (
 )
 
 func init() {
-	HandlerChannels = make(BlockChannels)
+	chunkChannels = make(ChunkChannels)
 	loadLastSec = make(loadMap)
 	doneChannel = make(chan DatasetString)
 	requestChannel = make(chan DatasetString)
@@ -137,48 +120,77 @@ func loadMonitor() {
 	}
 }
 
-// ReserveBlockHandlers makes sure we have block handler goroutines for each
-// data set.  Blocks are routed to the same handler each time, so concurrent
-// access to a block by multiple requests are funneled sequentially into a 
-// channel reserved for that block's handler.
-func ReserveBlockHandlers(t TypeService, name DatasetString, numHandlers int) {
+// StartChunkHandlers starts goroutines that handle chunks for every dataset in
+// the service.
+func (s *Service) StartChunkHandlers() {
+	for _, dataset := range s.Datasets {
+		startChunkHandlers(dataset)
+	}
+}
+
+// startChunkHandler makes sure we have chunk handler goroutines for each
+// data set.  Chunks are routed to the same handler each time, so concurrent
+// access to a chunk by multiple requests are funneled sequentially into a
+// channel reserved for that chunk's handler.
+func startChunkHandlers(dataset DatasetService) {
+	datasetName := dataset.DatasetName()
+
 	loadAccess.Lock()
-	loadLastSec[name] = loadStruct{}
+	loadLastSec[datasetName] = loadStruct{}
 	loadAccess.Unlock()
 
 	var channelMapAccess sync.Mutex
 	channelMapAccess.Lock()
 	// Do we have channels and handlers for this type and image version?
-	_, found := HandlerChannels[name]
+	_, found := chunkChannels[datasetName]
 	if !found {
 		log.Printf("Starting %d block handlers for data set '%s' (%s)...\n",
-			t.NumBlockHandlers(), name, t.DatatypeName())
-		channels := make([]chan *BlockRequest, 0, numHandlers)
-		for i := 0; i < t.NumBlockHandlers(); i++ {
-			channel := make(chan *BlockRequest, BlockHandlerBufferSize)
+			dataset.NumChunkHandlers(), datasetName, dataset.DatatypeName)
+		channels := make([]chan *ChunkOp, 0, dataset.NumChunkHandlers())
+		for i := 0; i < dataset.NumChunkHandlers(); i++ {
+			channel := make(chan *ChunkOp, ChunkHandlerBufferSize)
 			channels = append(channels, channel)
-			go func(i int, c chan *BlockRequest) {
-				dvid.Log(dvid.Debug, "Starting block handler %d for %s...",
-					i+1, name)
+			go func(i int, c chan *ChunkOp) {
+				dvid.Log(dvid.Debug, "Starting chunk handler %d for %s...",
+					i+1, datasetName)
 				for {
-					block := <-c
-					if block == nil {
-						log.Fatalln("Received nil block in block handler!")
+					chunkOp := <-c
+					if chunkOp == nil {
+						log.Fatalln("Received nil chunk in chunk handler!")
+					}
+					if chunkOp.shutdown {
+						dvid.Log(dvid.Debug, "Shutting down chunk handler %d for %s...",
+							i+1, datasetName)
+						break
 					}
 					//dvid.Fmt(dvid.Debug, "Running handler on block %x...\n", block.IndexKey)
-					block.DataStruct.BlockHandler(block)
-					doneChannel <- name
+					dataset.ChunkHandler(chunkOp)
+					doneChannel <- datasetName
 				}
 			}(i, channel)
 			// TODO -- keep stats on # of handlers
 		}
-		HandlerChannels[name] = channels
+		chunkChannels[datasetName] = channels
 	}
 	channelMapAccess.Unlock()
 }
 
-// BlockLoadJSON returns a JSON description of the block requests for each dataset.
-func BlockLoadJSON() (jsonStr string, err error) {
+func stopChunkHandlers(dataset DatasetService) {
+	// Remove load stat cache
+	loadAccess.Lock()
+	delete(loadLastSec, dataset.DatasetName())
+	loadAccess.Unlock()
+
+	// Send shutdown op to all handlers for this dataset
+	var haltOp ChunkOp
+	haltOp.shutdown = true
+	for _, c := range chunkChannels[dataset.DatasetName()] {
+		c <- &haltOp
+	}
+}
+
+// ChunkLoadJSON returns a JSON description of the chunk op requests for each dataset.
+func ChunkLoadJSON() (jsonStr string, err error) {
 	loadAccess.RLock()
 	m, err := json.Marshal(loadLastSec)
 	loadAccess.RUnlock()
@@ -189,39 +201,35 @@ func BlockLoadJSON() (jsonStr string, err error) {
 	return
 }
 
-// MapBlocks breaks down a DataStruct into a sequence of blocks that can be
-// handled concurrently by datatype-specific block handers.  Each block handler
-// is assigned the same blocks based on its index.
-//
-// Phase 1: Time leveldb built-in LRU cache and write buffer. (current)
-// Phase 2: Minimize leveldb built-in LRU cache and use DVID LRU cache with
-//   periodic and on-demand writes. 
-// TODO -- Examine possible interleaving of block-level requests across MapBlocks()
-//   calls and its impact on GET requests fulfilled while some blocks are still being
-//   modified.
-func (op *Operation) MapBlocks(data DataStruct) error {
+// Map performs any sequential read, then breaks down an operation by sending chunks
+// across a range of datatype-specific handlers that concurrently process the data.
+// Each handler is assigned the same chunks based on its index.
+func Map(op Operation) error {
 
-	// Get compressed dataset index
-	datasetBytes, err := vs.DataIndexBytes(data.DatasetName())
+	datasetID := op.DatasetLocalID()
+	versionID := op.VersionLocalID()
+
+	// Make sure our backend database can handle necessary interfaces
+	service := op.DatastoreService()
+	itermaker, err := service.IteratorMaker()
 	if err != nil {
 		return err
 	}
 
-	// Make sure we have Block Handlers for this data type.
-	channels, found := HandlerChannels[data.DatasetName()]
+	// Make sure we have Chunk Handlers for this dataset.
+	channels, found := chunkChannels[op.DatasetName()]
 	if !found {
 		return fmt.Errorf("Error in reserving block handlers in MapBlocks() for %s!",
-			data.DatasetName())
+			op.DatasetName())
 	}
 
-	// Traverse blocks, get key/values if not in cache, and put block in queue for handler.
-	ro := keyvalue.NewReadOptions()
-	kvIterator, err := vs.kvdb.NewIterator(ro)
+	// Traverse chunks, get key/values if not in cache, and put chunk op in queue for handler.
+	kvIterator, err := itermaker.NewIterator()
 	defer kvIterator.Close()
 	if err != nil {
 		return err
 	}
-	indexIterator := NewZYXIterator(data)
+	indexIterator := op.IndexIterator()
 	seek := true
 
 	//dvid.Fmt(dvid.Debug, "Mapping blocks for %s\n", data)
@@ -231,51 +239,36 @@ func (op *Operation) MapBlocks(data DataStruct) error {
 		if index == nil {
 			break
 		}
-		key := storage.Key{
-			DatasetKey: data.DatasetName(),
-			VersionKey: op.VersionBytes(),
-			CompressedDataset: datasetBytes,
-		}
-		// blockKey := BlockKey(uuidBytes, indexBytes, datatypeBytes, data.IsolatedKeys())
+		key := storage.Key{datasetID, versionID, index.Bytes()}
 
 		// Pull from the datastore
-		if seek || (kvIterator.Valid() && string(kvIterator.Key()) != key.Bytes()) {
+		if seek || (kvIterator.Valid() && !bytes.Equal(kvIterator.Key(), key.Bytes())) {
 			kvIterator.Seek(key)
 			seek = false
 		}
-		var value keyvalue.Value
-		if kvIterator.Valid() && string(kvIterator.Key()) == key.Bytes() {
+		var value []byte
+		if kvIterator.Valid() && bytes.Equal(kvIterator.Key(), key.Bytes()) {
 			value = kvIterator.Value()
 			kvIterator.Next()
 		} else {
 			seek = true
-			if op.LoopOnNoKey {
-				continue
+			// If this is a put, don't continue since we need to write this key.
+			// If this is a get, we have no value for this key so continue.
+			if op.IsReadOnly() {
+				continue // Simply uses zero value
 			}
 		}
 
-		// Initialize the block request
-		req := &BlockRequest{
-			DataStruct: data,
-			Block:      value,
-			Op:         op,
-			IndexKey:   Index(indexBytes),
-			BlockKey:   blockKey,
-			Wait:       wg,
-			DB:         vs.kvdb,
-			//WriteBatch: writeBatch,
-		}
-
-		// Try to spread sequential block keys among different block handlers to get 
+		// Try to spread sequential block keys among different block handlers to get
 		// most out of our concurrent processing.
-		if op.wg != nil {
-			op.wg.Add(1)
-		}
-		channelNum := req.IndexKey.Hash(data, len(channels))
+		op.WaitAdd()
+		channelNum := index.Hash(len(channels))
+
 		//dvid.Fmt(dvid.Debug, "Sending %s block %s request %s down channel %d\n",
 		//	op, Index(indexBytes).BlockCoord(data), data, channelNum)
-		channels[channelNum] <- req
-		requestChannel <- data.DatasetName()
+
+		channels[channelNum] <- &ChunkOp{op, value, key, false}
+		requestChannel <- op.DatasetName()
 	}
 	DiskAccess.Unlock()
 	return nil

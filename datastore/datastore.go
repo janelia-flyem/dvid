@@ -14,11 +14,6 @@ const (
 	Version = "0.6"
 )
 
-// Shutdown handles graceful cleanup of datastore before exiting DVID.
-func Shutdown() {
-	dvid.Fmt(dvid.Debug, "TODO -- Datastore would cleanup cache here...\n")
-}
-
 // Versions returns a chart of version identifiers for data types and and DVID's datastore
 // fixed at compile-time for this DVID executable
 func Versions() string {
@@ -119,6 +114,18 @@ func Open(directory string) (s *Service, openErr *OpenError) {
 		return
 	}
 
+	// Verify that the runtime configuration can be supported by this DVID's
+	// compiled-in data types.
+	dvid.Fmt(dvid.Debug, "Verifying datastore's supported types were compiled into DVID...\n")
+	err = rconfig.VerifyCompiledTypes()
+	if err != nil {
+		openErr = &OpenError{
+			fmt.Errorf("Datasets are not fully supported by this DVID: %s", err.Error()),
+			ErrorRuntimeConfig,
+		}
+		return
+	}
+
 	// Read this datastore's Version DAG
 	dag := new(VersionDAG)
 	err = dag.Get(db)
@@ -134,14 +141,48 @@ func Open(directory string) (s *Service, openErr *OpenError) {
 	return
 }
 
-// Close closes a DVID datastore.
-func (s *Service) Close() {
+// Shutdown closes a DVID datastore.
+func (s *Service) Shutdown() {
+	// Close all dataset handlers
+	for _, dataset := range s.Datasets {
+		stopChunkHandlers(dataset)
+	}
+
+	// Close the backend database
 	s.db.Close()
 }
 
-// DataHandler returns the backend data handler used by this DVID instance.
-func (s *Service) DataHandler() storage.DataHandler {
+// KeyValueDB returns a a key-value database interface.
+func (s *Service) KeyValueDB() storage.KeyValueDB {
 	return s.db
+}
+
+// IteratorMaker returns an interface that can create a new iterator.
+func (s *Service) IteratorMaker() (db storage.IteratorMaker, err error) {
+	if s.db.ProvidesIterator() {
+		var ok bool
+		db, ok = s.db.(storage.IteratorMaker)
+		if !ok {
+			err = fmt.Errorf("DVID backend says it supports iterators but does not!")
+		}
+	} else {
+		err = fmt.Errorf("DVID backend database does not provide iterator support")
+	}
+	return
+}
+
+// Batcher returns an interface that can create a new batch write.
+func (s *Service) Batcher() (db storage.Batcher, err error) {
+	if s.db.IsBatcher() {
+		var ok bool
+		db, ok = s.db.(storage.Batcher)
+		if !ok {
+			err = fmt.Errorf("DVID backend says it supports batch write but does not!")
+		}
+	} else {
+		err = fmt.Errorf("DVID backend database does not support batch write")
+	}
+	return
 }
 
 // SupportedDataChart returns a chart (names/urls) of data referenced by this datastore
@@ -156,10 +197,10 @@ func (s *Service) SupportedDataChart() string {
 
 // DatasetService returns a type-specific service given a dataset name that should be
 // specific to a DVID instance.
-func (s *Service) DatasetService(name DatasetString) (typeService TypeService, err error) {
+func (s *Service) DatasetService(name DatasetString) (datasetService DatasetService, err error) {
 	for key, _ := range s.Datasets {
 		if name == key {
-			typeService = s.Datasets[key]
+			datasetService = s.Datasets[key]
 			return
 		}
 	}
@@ -221,17 +262,15 @@ func (s *Service) NewDataset(name DatasetString, typeName string, config dvid.Co
 // TODO -- Deleted dataset data should also be expunged.
 func (s *Service) DeleteDataset(name DatasetString) error {
 	// Find the data set
-	_, found := s.Datasets[name]
+	dataset, found := s.Datasets[name]
 	if !found {
 		return fmt.Errorf("Data set '%s' not present in DVID datastore.", name)
 	}
 	// Delete it and store updated runtimeConfig to datastore.
 	var lock sync.Mutex
 	lock.Lock()
-	s.Datasets[name].Shutdown()
+	stopChunkHandlers(dataset)
 	delete(s.Datasets, name)
-	// Remove load stat cache
-	delete(loadLastSec, name)
 	err := s.runtimeConfig.Put(s.db)
 	lock.Unlock()
 	return err

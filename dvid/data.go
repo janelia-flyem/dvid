@@ -408,7 +408,7 @@ type Geometry interface {
 	Depth() int32
 
 	// NumVoxels returns the number of voxels within this space.
-	NumVoxels() int
+	NumVoxels() int64
 
 	// EndVoxel returns the last voxel coordinate usually traversed so that
 	// iteration from Origin->EndVoxel will visit all the voxels.
@@ -455,11 +455,11 @@ func (s *Subvolume) Depth() int32 {
 	return s.size[2]
 }
 
-func (s *Subvolume) NumVoxels() int {
+func (s *Subvolume) NumVoxels() int64 {
 	if s == nil {
 		return 0
 	}
-	return int(s.size[0] * s.size[1] * s.size[2])
+	return int64(s.size[0]) * int64(s.size[1]) * int64(s.size[2])
 }
 
 func (s *Subvolume) EndVoxel() VoxelCoord {
@@ -562,11 +562,11 @@ func (s *SliceData) EndVoxel() VoxelCoord {
 	return s.origin.AddSize(s.size)
 }
 
-func (s *SliceData) NumVoxels() int {
+func (s *SliceData) NumVoxels() int64 {
 	if s == nil {
 		return 0
 	}
-	return int(s.size[0] * s.size[1] * s.size[2])
+	return int64(s.size[0]) * int64(s.size[1]) * int64(s.size[2])
 }
 
 // SliceXY is a slice in the XY plane.
@@ -713,12 +713,12 @@ func (s *SliceArb) Depth() int32 {
 	return 1
 }
 
-func (s *SliceArb) NumVoxels() int {
+func (s *SliceArb) NumVoxels() int64 {
 	if s == nil {
 		return 0
 	}
 	size := s.Size()
-	return int(size[0] * size[1])
+	return int64(size[0]) * int64(size[1])
 }
 
 func (s *SliceArb) String() string {

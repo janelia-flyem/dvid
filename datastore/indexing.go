@@ -14,7 +14,7 @@ import (
 )
 
 // ChunkIndex represents an index to a datatype-specific partition of data.
-// For example, a voxels data type would have a 3d block coordinate.  Block
+// For example, a voxels data type would have a 3d block coordinate.  Chunk
 // indices do *not* have to be 3d coordinates but can be optimized for
 // a data type's internal data structure.
 type ChunkIndex interface {
@@ -89,6 +89,18 @@ func (i IndexZYX) Hash(n int) int {
 
 func (i IndexZYX) Scheme() string {
 	return "ZYX Indexing"
+}
+
+// OffsetToBlock returns the voxel coordinate at the top left corner of the block
+// corresponding to the index.
+func (i IndexZYX) OffsetToBlock(blockSize dvid.Point3d) (coord dvid.VoxelCoord) {
+	z := int32(binary.LittleEndian.Uint32([]byte(i[0:4])))
+	y := int32(binary.LittleEndian.Uint32([]byte(i[4:8])))
+	x := int32(binary.LittleEndian.Uint32([]byte(i[8:12])))
+	coord[0] = x * blockSize[0]
+	coord[1] = y * blockSize[1]
+	coord[2] = z * blockSize[2]
+	return
 }
 
 // TODO -- Morton (Z-order) curve
