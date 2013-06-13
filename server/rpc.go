@@ -122,7 +122,16 @@ func datasetDo(cmd datastore.Request, reply *datastore.Response) error {
 	datasetName := datastore.DatasetString(cmd.Name())
 	dataset, err := runningService.DatasetService(datasetName)
 	if err != nil {
-		return fmt.Errorf("Command '%s' is not a registered data set ", cmd.Name())
+		if cmd.TypeCommand() == "help" {
+			datatype, err := runningService.TypeService(cmd.Name())
+			if err != nil {
+				return err
+			}
+			fmt.Println(datatype.Help())
+			return nil
+		} else {
+			return fmt.Errorf("Command '%s' is not a registered data set ", cmd.Name())
+		}
 	}
 
 	// Make sure we have at least a command in addition to the data type name

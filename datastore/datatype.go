@@ -50,7 +50,7 @@ type TypeService interface {
 
 // CompiledTypes is the set of registered data types compiled into DVID and
 // held as a global variable initialized at runtime.
-var CompiledTypes map[UrlString]TypeService
+var CompiledTypes = map[UrlString]TypeService{}
 
 // CompiledTypeNames returns a list of data type names compiled into this DVID.
 func CompiledTypeNames() string {

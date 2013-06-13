@@ -63,6 +63,12 @@ else ()
     include (leveldb)
     include (golang)
 
+    # The name of the backend should be the same as the tag used for conditional build
+    # (see "// +build levigo" in storage/levigo.go) and the custom_target name for the
+    # dependencies.
+    set (DVID_BACKEND levigo)
+    set (DVID_GO      github.com/janelia-flyem/dvid)
+
     set (CGO_FLAGS   CGO_CFLAGS="-I${BUILDEM_INCLUDE_DIR}";CGO_LDFLAGS="-L${BUILDEM_LIB_DIR};-lsnappy")
 
     add_custom_target (gocheck
@@ -105,21 +111,21 @@ else ()
         DEPENDS     ${golang_NAME}
         COMMENT    "Add Go protobuf support")
     
-    # Build DVID with C++ leveldb library support
+    # Build DVID with chosen backend
     add_custom_target (dvid-exe
         ${BUILDEM_ENV_STRING} ${GO_ENV} ${CGO_FLAGS} go build -o ${BUILDEM_BIN_DIR}/dvid 
-            -v -tags 'levigo' dvid.go 
+            -v -tags '${DVID_BACKEND}' dvid.go 
         WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
-        DEPENDS     ${golang_NAME} ${leveldb_NAME} snappy-go nrsc uuid levigo goprotobuf
+        DEPENDS     ${golang_NAME} ${leveldb_NAME} snappy-go nrsc uuid ${DVID_BACKEND} goprotobuf
         COMMENT     "Compiled and installed dvid executable.")
 
     # Build DVID with pure Go leveldb implementation
-    add_custom_target (dvid-go-exe
-        ${BUILDEM_ENV_STRING} ${GO_ENV} go build -o ${BUILDEM_BIN_DIR}/dvid-go 
-            -v -tags 'goleveldb' dvid.go 
-        WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
-        DEPENDS     ${golang_NAME} snappy-go nrsc uuid goleveldb goprotobuf
-        COMMENT     "Compiled and installed dvid pure Go executable, dvid-go.")
+    #add_custom_target (dvid-go-exe
+    #    ${BUILDEM_ENV_STRING} ${GO_ENV} go build -o ${BUILDEM_BIN_DIR}/dvid-go 
+    #        -v -tags 'goleveldb' dvid.go 
+    #    WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
+    #    DEPENDS     ${golang_NAME} snappy-go nrsc uuid goleveldb goprotobuf
+    #    COMMENT     "Compiled and installed dvid pure Go executable, dvid-go.")
 
    # Embed web client into exe
    set (NRSC_SCRIPT "$ENV{GOPATH}/src/bitbucket.org/tebeka/nrsc/nrsc")
@@ -128,10 +134,14 @@ else ()
         DEPENDS dvid-exe dvid-webclient
         COMMENT     "Added webclient in ${WEBCLIENT_DIR} to dvid executable")
    
-   add_custom_target (dvid-go
-        ${NRSC_SCRIPT} ${BUILDEM_BIN_DIR}/dvid-go ${CMAKE_CURRENT_SOURCE_DIR}/webclient
-        DEPENDS dvid-go-exe
-        COMMENT     "Added files in ${CMAKE_CURRENT_SOURCE_DIR}/webclient to dvid-go executable")
+   #add_custom_target (dvid-go
+   #     ${NRSC_SCRIPT} ${BUILDEM_BIN_DIR}/dvid-go ${CMAKE_CURRENT_SOURCE_DIR}/webclient
+   #     DEPENDS dvid-go-exe
+   #     COMMENT     "Added files in ${CMAKE_CURRENT_SOURCE_DIR}/webclient to dvid-go executable")
+
+   # Add testing
+   add_custom_target (test
+        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go test -tags '${DVID_BACKEND}' ${DVID_GO}/dvid ${DVID_GO}/datastore)
 
 
     ###############################################################################

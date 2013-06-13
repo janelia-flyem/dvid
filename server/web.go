@@ -60,7 +60,7 @@ func mainHandler(w http.ResponseWriter, r *http.Request) {
 //       POST /api/data/<data type>/<data set name>
 func handleDataRequest(w http.ResponseWriter, r *http.Request) {
 	// Break URL request into arguments
-	lenPath := len(runningService.WebAPIPath)
+	lenPath := len(WebAPIPath)
 	url := r.URL.Path[lenPath:]
 	parts := strings.Split(url, "/")
 	action := strings.ToLower(r.Method)
@@ -104,7 +104,7 @@ func handleDataRequest(w http.ResponseWriter, r *http.Request) {
 //
 func apiHandler(w http.ResponseWriter, r *http.Request) {
 	// Break URL request into arguments
-	lenPath := len(runningService.WebAPIPath)
+	lenPath := len(WebAPIPath)
 	url := r.URL.Path[lenPath:]
 	parts := strings.Split(url, "/")
 	if len(parts) == 0 {

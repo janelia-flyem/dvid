@@ -27,7 +27,7 @@ const (
 	DefaultRPCAddress = "localhost:8001"
 
 	// The relative URL path to our Level 2 REST API
-	APIPath = "/api/"
+	WebAPIPath = "/api/"
 
 	// The name of the server error log, stored in the datastore directory.
 	ErrorLogFilename = "dvid-errors.log"
@@ -38,7 +38,6 @@ var (
 	// datastore service.
 	runningService = Service{
 		WebAddress: DefaultWebAddress,
-		WebAPIPath: APIPath,
 		RPCAddress: DefaultRPCAddress,
 	}
 
@@ -62,9 +61,6 @@ type Service struct {
 
 	// The path to the DVID web client
 	WebClientPath string
-
-	// The path to the DVID web API
-	WebAPIPath string
 
 	// The address of the rpc server
 	RPCAddress string
@@ -203,9 +199,9 @@ func (service *Service) ServeHttp(address, clientDir string) {
 	// Handle Level 2 REST API.
 	if GzipAPI {
 		fmt.Println("HTTP server will return gzip values if permitted by browser.")
-		http.HandleFunc(service.WebAPIPath, makeGzipHandler(apiHandler))
+		http.HandleFunc(WebAPIPath, makeGzipHandler(apiHandler))
 	} else {
-		http.HandleFunc(service.WebAPIPath, apiHandler)
+		http.HandleFunc(WebAPIPath, apiHandler)
 	}
 
 	// Handle static files through serving embedded files

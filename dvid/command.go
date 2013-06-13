@@ -51,21 +51,21 @@ func (cmd Command) String() string {
 	return strings.Join([]string(cmd), " ")
 }
 
-// Name returns the first argument which is assumed to be the name of the command.
+// Name returns the first argument of the command (in lower case) which is assumed to
+// be the name of the command.
 func (cmd Command) Name() string {
 	if len(cmd) == 0 {
 		return ""
 	}
-	return cmd[0]
+	return strings.ToLower(cmd[0])
 }
 
-// TypeCommand returns the name of a type-specific command assuming this command 
-// is for a supported data type.
+// TypeCommand returns the name of a type-specific command (in lower case).
 func (cmd Command) TypeCommand() string {
 	if len(cmd) < 2 {
 		return ""
 	}
-	return cmd[1]
+	return strings.ToLower(cmd[1])
 }
 
 // Parameter scans a command for any "key=value" argument and returns
@@ -99,13 +99,13 @@ func (cmd Command) DatastoreDir() string {
 }
 
 // CommandArgs sets a variadic argument set of string pointers to data
-// command arguments, ignoring setting arguments of the form "<key>=<value>".  
-// If there aren't enough arguments to set a target, the target is set to the 
+// command arguments, ignoring setting arguments of the form "<key>=<value>".
+// If there aren't enough arguments to set a target, the target is set to the
 // empty string.  It returns an 'overflow' slice that has all arguments
 // beyond those needed for targets.
 //
 // Example: Given the command string "add param1 param2 42 data/*.png"
-// 
+//
 //   var s1, s2, s3, s4 string
 //   filenames := CommandArgs(0, &s1, &s2, &s3, &s4)
 //   fmt.Println(filenames)
@@ -114,9 +114,9 @@ func (cmd Command) DatastoreDir() string {
 //   fmt.Println(s4)
 //
 //   Would print out:
-//      ["data/foo-1.png", "data/foo-2.png", "data/foo-3.png"] 
+//      ["data/foo-1.png", "data/foo-2.png", "data/foo-3.png"]
 //      add
-//      param1 param2 
+//      param1 param2
 //      42
 func (cmd Command) CommandArgs(startPos int, targets ...*string) (overflow []string) {
 	overflow = getArgs(cmd, startPos, targets...)

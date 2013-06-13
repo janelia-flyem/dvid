@@ -47,7 +47,7 @@ func Init(directory string, create bool) (uuid UUID) {
 	rconfig := new(runtimeConfig)
 	err = rconfig.Put(db)
 	if err != nil {
-		err = fmt.Errorf("Error writing blank runtime configuration: %s", err.Error())
+		log.Fatalf("Error writing blank runtime configuration: %s", err.Error())
 		return
 	}
 
@@ -136,7 +136,7 @@ func Open(directory string) (s *Service, openErr *OpenError) {
 		}
 		return
 	}
-
+	fmt.Printf("DatastoreService successfully opened: %s\n", directory)
 	s = &Service{*rconfig, *dag, db}
 	return
 }
@@ -188,7 +188,7 @@ func (s *Service) Batcher() (db storage.Batcher, err error) {
 // SupportedDataChart returns a chart (names/urls) of data referenced by this datastore
 func (s *Service) SupportedDataChart() string {
 	text := CompiledTypeChart()
-	text += "Data types currently referenced within this DVID datastore:\n\n"
+	text += "Datasets currently referenced within this DVID datastore:\n\n"
 	text += s.runtimeConfig.DataChart()
 	return text
 }

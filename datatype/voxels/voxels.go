@@ -175,6 +175,10 @@ func (dtype *Datatype) NewDataset(id datastore.DatasetID, config dvid.Config) da
 	return dataset
 }
 
+func (dtype *Datatype) Help() string {
+	return HelpMessage
+}
+
 // Dataset embeds the datastore's Dataset and extends it with voxel-specific properties.
 type Dataset struct {
 	*datastore.Dataset
@@ -248,7 +252,7 @@ func (dset *Dataset) DoHTTP(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	// Break URL request into arguments
-	url := r.URL.Path[len(dataService.WebAPIPath):]
+	url := r.URL.Path[len(server.WebAPIPath):]
 	parts := strings.Split(url, "/")
 
 	// First part is dataset name

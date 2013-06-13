@@ -93,9 +93,6 @@ func (config *runtimeConfig) Deserialize(s dvid.Serialization) (err error) {
 // configuration was not compiled into DVID executable.  Check is done by more exact
 // URL and not the data type name.
 func (config *runtimeConfig) VerifyCompiledTypes() error {
-	if CompiledTypes == nil {
-		return fmt.Errorf("DVID was not compiled with any data type support!")
-	}
 	var errMsg string
 	for name, datatype := range config.Datasets {
 		_, found := CompiledTypes[datatype.DatatypeUrl()]
@@ -135,7 +132,7 @@ func (config *runtimeConfig) About() string {
 	}
 	writeLine("Name", "Version")
 	writeLine("DVID datastore", Version)
-	writeLine("Leveldb", storage.Version)
+	writeLine("Storage backend", storage.Version)
 	for _, dtype := range config.Datasets {
 		writeLine(dtype.DatatypeName(), dtype.DatatypeVersion())
 	}
@@ -146,7 +143,7 @@ func (config *runtimeConfig) About() string {
 func (config *runtimeConfig) AboutJSON() (jsonStr string, err error) {
 	data := map[string]string{
 		"DVID datastore":  Version,
-		"Backend storage": storage.Version,
+		"Storage backend": storage.Version,
 	}
 	for _, datatype := range config.Datasets {
 		data[datatype.DatatypeName()] = datatype.DatatypeVersion()
