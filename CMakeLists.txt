@@ -140,8 +140,14 @@ else ()
    #     COMMENT     "Added files in ${CMAKE_CURRENT_SOURCE_DIR}/webclient to dvid-go executable")
 
    # Add testing
+   add_custom_target (test-build
+        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go test -i -tags '${DVID_BACKEND}' 
+            ${DVID_GO}/test ${DVID_GO}/dvid ${DVID_GO}/datastore)
+
    add_custom_target (test
-        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go test -tags '${DVID_BACKEND}' ${DVID_GO}/dvid ${DVID_GO}/datastore)
+        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go test -tags '${DVID_BACKEND}' 
+            ${DVID_GO}/test ${DVID_GO}/dvid ${DVID_GO}/datastore
+        DEPENDS test-build)
 
 
     ###############################################################################

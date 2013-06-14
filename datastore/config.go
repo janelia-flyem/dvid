@@ -66,6 +66,9 @@ func (config *runtimeConfig) Put(db storage.KeyValueDB) (err error) {
 	// Get serialization
 	var serialization dvid.Serialization
 	serialization, err = config.Serialize()
+	if err != nil {
+		return
+	}
 
 	// Put data
 	return db.Put(KeyConfig, []byte(serialization))

@@ -6,6 +6,7 @@
 package voxels
 
 import (
+	"encoding/gob"
 	"fmt"
 	"image"
 	"log"
@@ -121,6 +122,11 @@ const DefaultNumChunkHandlers = 8
 
 // DefaultBlockMax specifies the default size for each block of this data type.
 var DefaultBlockMax dvid.Point3d = dvid.Point3d{16, 16, 16}
+
+func init() {
+	gob.Register(&Datatype{})
+	gob.Register(&Dataset{})
+}
 
 /// Datatype embeds the datastore's Datatype to create a unique type
 // with voxel functions.  Refinements of general voxel types can be implemented

@@ -16,6 +16,8 @@ type DataSuite struct {
 
 var _ = Suite(&DataSuite{})
 
+// This will setup a new datastore and open it up, keeping the UUID and
+// service pointer in the DataSuite.
 func (suite *DataSuite) SetUpSuite(c *C) {
 	// Make a temporary testing directory that will be auto-deleted after testing.
 	suite.dir = c.MkDir()
