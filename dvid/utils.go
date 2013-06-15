@@ -200,6 +200,16 @@ func ImageFromPost(r *http.Request, key string) (img image.Image, format string,
 	return
 }
 
+// ImageGrayFromData returns a Gray image given data and image size.
+func ImageGrayFromData(data []uint8, nx, ny int) (img *image.Gray) {
+	img = &image.Gray{
+		Pix:    data,
+		Stride: nx,
+		Rect:   image.Rect(0, 0, nx, ny),
+	}
+	return
+}
+
 // WriteImageHttp writes an image to a HTTP response writer using a format and optional
 // compression strength specified in a string, e.g., "png", "jpg:80".
 func WriteImageHttp(w http.ResponseWriter, img image.Image, formatStr string) (err error) {

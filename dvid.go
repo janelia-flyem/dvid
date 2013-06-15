@@ -227,9 +227,12 @@ func DoInit(cmd dvid.Command) error {
 
 // DoServe opens a datastore then creates both web and rpc servers for the datastore
 func DoServe(cmd dvid.Command) error {
-	datastoreDir := cmd.DatastoreDir()
-	if err := server.Serve(datastoreDir, *httpAddress, *clientDir, *rpcAddress); err != nil {
+	if service, err := server.OpenDatastore(cmd.DatastoreDir()); err != nil {
 		return err
+	} else {
+		if err := service.Serve(*httpAddress, *clientDir, *rpcAddress); err != nil {
+			return err
+		}
 	}
 	return nil
 }

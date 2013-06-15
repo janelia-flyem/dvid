@@ -56,6 +56,9 @@ type Service struct {
 	// The currently opened DVID datastore
 	*datastore.Service
 
+	// Error log directory
+	ErrorLogDir string
+
 	// The address of the web server
 	WebAddress string
 
@@ -138,13 +141,13 @@ func ServerlessDo(request datastore.Request, reply *datastore.Response) error {
 	return nil
 }
 
-// Serve opens a datastore then creates both web and rpc servers for the datastore.
-// This function must be called for DataService() to be non-nil.
-func Serve(datastoreDir, webAddress, webClientDir, rpcAddress string) error {
+// OpenDatastore returns a Server service.  Only one datastore can be opened
+// for any server.
+func OpenDatastore(datastoreDir string) (service *Service, err error) {
 	// Make sure we don't already have an open datastore.
 	if runningService.Service != nil {
-		return fmt.Errorf("Cannot create new server.  " +
-			"A DVID process can serve only one datastore.")
+		err = fmt.Errorf("Cannot create new server. A DVID process can serve only one datastore.")
+		return
 	}
 
 	// Get exclusive ownership of a DVID datastore
@@ -153,19 +156,28 @@ func Serve(datastoreDir, webAddress, webClientDir, rpcAddress string) error {
 	var openErr *datastore.OpenError
 	runningService.Service, openErr = datastore.Open(datastoreDir)
 	if openErr != nil {
-		log.Fatalln(openErr.Error())
+		err = openErr
+		return
 	}
+	runningService.ErrorLogDir = datastoreDir
 
+	// Launch block handlers as goroutines for all compiled types.
+	runningService.StartChunkHandlers()
+
+	service = &runningService
+	return
+}
+
+// Serve opens a datastore then creates both web and rpc servers for the datastore.
+// This function must be called for DataService() to be non-nil.
+func (service *Service) Serve(webAddress, webClientDir, rpcAddress string) error {
 	// Register an error logger that appends to a file in this datastore directory.
-	errorLog := filepath.Join(datastoreDir, ErrorLogFilename)
+	errorLog := filepath.Join(service.ErrorLogDir, ErrorLogFilename)
 	file, err := os.OpenFile(errorLog, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
 		log.Fatalf("Unable to open error logging file (%s): %s\n", errorLog, err.Error())
 	}
 	dvid.SetErrorLoggingFile(file)
-
-	// Launch block handlers as goroutines for all compiled types.
-	runningService.StartChunkHandlers()
 
 	// Launch the web server
 	go runningService.ServeHttp(webAddress, webClientDir)

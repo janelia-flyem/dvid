@@ -145,6 +145,16 @@ func (dag *VersionDAG) Deserialize(s dvid.Serialization) (err error) {
 	return
 }
 
+// VersionIDFromUUID returns a local version ID given a UUID.  This method does
+// not do partial matching, unlike VersionIDFromString().
+func (dag *VersionDAG) VersionIDFromUUID(uuid UUID) (id dvid.LocalID, err error) {
+	id, found := dag.VersionMap[uuid]
+	if !found {
+		err = fmt.Errorf("VersionIDFromUUID(): Illegal UUID (%s) not found in Version DAG", uuid)
+	}
+	return
+}
+
 // VersionIDFromString returns a UUID index given its string representation.
 // Partial matches are accepted as long as they are unique for a datastore.  So if
 // a datastore has nodes with UUID strings 3FA22..., 7CD11..., and 836EE...,

@@ -70,18 +70,18 @@ func (i IndexZYX) Bytes() []byte {
 
 // InvertIndex decodes a spatial index into a block coordinate
 func (i IndexZYX) InvertIndex() ChunkIndex {
-	z := int32(binary.LittleEndian.Uint32([]byte(i[0:4])))
-	y := int32(binary.LittleEndian.Uint32([]byte(i[4:8])))
-	x := int32(binary.LittleEndian.Uint32([]byte(i[8:12])))
+	z := int32(binary.BigEndian.Uint32([]byte(i[0:4])))
+	y := int32(binary.BigEndian.Uint32([]byte(i[4:8])))
+	x := int32(binary.BigEndian.Uint32([]byte(i[8:12])))
 	return BlockZYX{dvid.BlockCoord{x, y, z}}
 }
 
 // Hash returns an integer [0, n) where the returned values should be reasonably
 // spread among the range of returned values.
 func (i IndexZYX) Hash(n int) int {
-	z := binary.LittleEndian.Uint32([]byte(i[0:4]))
-	y := binary.LittleEndian.Uint32([]byte(i[4:8]))
-	x := binary.LittleEndian.Uint32([]byte(i[8:12]))
+	z := binary.BigEndian.Uint32([]byte(i[0:4]))
+	y := binary.BigEndian.Uint32([]byte(i[4:8]))
+	x := binary.BigEndian.Uint32([]byte(i[8:12]))
 	// Make sure that any scans along x, y, or z directions will
 	// cause distribution to different handlers.
 	return int(x+y+z) % n
@@ -94,9 +94,9 @@ func (i IndexZYX) Scheme() string {
 // OffsetToBlock returns the voxel coordinate at the top left corner of the block
 // corresponding to the index.
 func (i IndexZYX) OffsetToBlock(blockSize dvid.Point3d) (coord dvid.VoxelCoord) {
-	z := int32(binary.LittleEndian.Uint32([]byte(i[0:4])))
-	y := int32(binary.LittleEndian.Uint32([]byte(i[4:8])))
-	x := int32(binary.LittleEndian.Uint32([]byte(i[8:12])))
+	z := int32(binary.BigEndian.Uint32([]byte(i[0:4])))
+	y := int32(binary.BigEndian.Uint32([]byte(i[4:8])))
+	x := int32(binary.BigEndian.Uint32([]byte(i[8:12])))
 	coord[0] = x * blockSize[0]
 	coord[1] = y * blockSize[1]
 	coord[2] = z * blockSize[2]

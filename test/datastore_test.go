@@ -11,7 +11,7 @@ import (
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
-	_ "github.com/janelia-flyem/dvid/server"
+	"github.com/janelia-flyem/dvid/server"
 
 	// Declare the data types this DVID executable will support
 	_ "github.com/janelia-flyem/dvid/datatype/grayscale8"
@@ -25,7 +25,7 @@ func Test(t *testing.T) { TestingT(t) }
 
 type DataSuite struct {
 	dir     string
-	service *datastore.Service
+	service *server.Service
 	head    datastore.UUID
 }
 
@@ -47,7 +47,7 @@ func (suite *DataSuite) SetUpSuite(c *C) {
 
 	// Open the datastore
 	var err error
-	suite.service, err = datastore.Open(suite.dir)
+	suite.service, err = server.OpenDatastore(suite.dir)
 	c.Assert(err, IsNil)
 }
 

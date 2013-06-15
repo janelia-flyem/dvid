@@ -12,6 +12,7 @@ import (
 	_ "github.com/janelia-flyem/dvid/datatype/labels32"
 	_ "github.com/janelia-flyem/dvid/datatype/labels64"
 	_ "github.com/janelia-flyem/dvid/datatype/rgba8"
+	"github.com/janelia-flyem/dvid/datatype/voxels"
 )
 
 // Data from which to construct repeatable 3d images where adjacent voxels have different values.
@@ -23,13 +24,14 @@ var zdata = []byte{'\x5C', '\x89', '\x40', '\x13'}
 func MakeSlice(ox, oy, oz, nx, ny int) []byte {
 	slice := make([]byte, nx*ny, nx*ny)
 	i := 0
+	modz := oz % 4
 	for y := 0; y < ny; y++ {
 		sy := y + oy
 		mody := sy % 4
 		sx := ox
-		for x := 0; x < ox; x++ {
+		for x := 0; x < nx; x++ {
 			modx := sx % 4
-			slice[i] = xdata[modx] ^ ydata[mody] ^ zdata[oz]
+			slice[i] = xdata[modx] ^ ydata[mody] ^ zdata[modz]
 			i++
 			sx++
 		}
@@ -50,7 +52,122 @@ func MakeVolume(ox, oy, oz, nx, ny, nz int) []byte {
 	return volume
 }
 
-func (suite *DataSuite) TestGrayscale8(c *C) {
+func (suite *DataSuite) TestXYSliceGrayscale8(c *C) {
 	err := suite.service.NewDataset("grayscale", "grayscale8", dvid.Config{})
 	c.Assert(err, IsNil)
+
+	dset, err := suite.service.DatasetService("grayscale")
+	c.Assert(err, IsNil)
+
+	grayscale, ok := dset.(*voxels.Dataset)
+	if !ok {
+		c.Errorf("Can't cast grayscale8 data service into grayscale8.Dataset\n")
+	}
+
+	// Create a fake 100x100 8-bit grayscale image
+	nx := 100
+	ny := 100
+	ox, oy, oz := 3, 10, 14
+	data := []uint8(MakeSlice(ox, oy, oz, nx, ny))
+	img := dvid.ImageGrayFromData(data, nx, ny)
+
+	slice := dvid.NewSliceXY(dvid.VoxelCoord{int32(ox), int32(oy), int32(oz)},
+		dvid.Point2d{int32(nx), int32(ny)})
+
+	// Store it into datastore at head version
+	versionID, err := suite.service.VersionIDFromUUID(suite.head)
+	c.Assert(err, IsNil)
+
+	err = grayscale.PutImage(versionID, img, slice)
+	c.Assert(err, IsNil)
+
+	// Read the stored image
+	retrieved, err := grayscale.GetImage(versionID, slice)
+	c.Assert(err, IsNil)
+
+	// Make sure the retrieved image matches the original
+	c.Assert(img.Rect, DeepEquals, retrieved.Bounds())
+	retrievedData, _, err := dvid.ImageData(retrieved)
+	c.Assert(err, IsNil)
+	c.Assert(data, DeepEquals, retrievedData)
+}
+
+func (suite *DataSuite) TestXZSliceGrayscale8(c *C) {
+	err := suite.service.NewDataset("grayscale", "grayscale8", dvid.Config{})
+	c.Assert(err, IsNil)
+
+	dset, err := suite.service.DatasetService("grayscale")
+	c.Assert(err, IsNil)
+
+	grayscale, ok := dset.(*voxels.Dataset)
+	if !ok {
+		c.Errorf("Can't cast grayscale8 data service into grayscale8.Dataset\n")
+	}
+
+	// Create a fake 100x100 8-bit grayscale image
+	nx := 100
+	ny := 100
+	ox, oy, oz := 31, 10, 14
+	data := []uint8(MakeSlice(ox, oy, oz, nx, ny))
+	img := dvid.ImageGrayFromData(data, nx, ny)
+
+	slice := dvid.NewSliceXZ(dvid.VoxelCoord{int32(ox), int32(oy), int32(oz)},
+		dvid.Point2d{int32(nx), int32(ny)})
+
+	// Store it into datastore at head version
+	versionID, err := suite.service.VersionIDFromUUID(suite.head)
+	c.Assert(err, IsNil)
+
+	err = grayscale.PutImage(versionID, img, slice)
+	c.Assert(err, IsNil)
+
+	// Read the stored image
+	retrieved, err := grayscale.GetImage(versionID, slice)
+	c.Assert(err, IsNil)
+
+	// Make sure the retrieved image matches the original
+	c.Assert(img.Rect, DeepEquals, retrieved.Bounds())
+	retrievedData, _, err := dvid.ImageData(retrieved)
+	c.Assert(err, IsNil)
+	c.Assert(data, DeepEquals, retrievedData)
+}
+
+func (suite *DataSuite) TestYZSliceGrayscale8(c *C) {
+	err := suite.service.NewDataset("grayscale", "grayscale8", dvid.Config{})
+	c.Assert(err, IsNil)
+
+	dset, err := suite.service.DatasetService("grayscale")
+	c.Assert(err, IsNil)
+
+	grayscale, ok := dset.(*voxels.Dataset)
+	if !ok {
+		c.Errorf("Can't cast grayscale8 data service into grayscale8.Dataset\n")
+	}
+
+	// Create a fake 100x100 8-bit grayscale image
+	nx := 100
+	ny := 100
+	ox, oy, oz := 13, 40, 99
+	data := []uint8(MakeSlice(ox, oy, oz, nx, ny))
+	img := dvid.ImageGrayFromData(data, nx, ny)
+
+	slice := dvid.NewSliceYZ(dvid.VoxelCoord{int32(ox), int32(oy), int32(oz)},
+		dvid.Point2d{int32(nx), int32(ny)})
+
+	// Store it into datastore at head version
+	versionID, err := suite.service.VersionIDFromUUID(suite.head)
+	c.Assert(err, IsNil)
+
+	err = grayscale.PutImage(versionID, img, slice)
+	c.Assert(err, IsNil)
+
+	// Read the stored image
+	retrieved, err := grayscale.GetImage(versionID, slice)
+	c.Assert(err, IsNil)
+
+	// Make sure the retrieved image matches the original
+	c.Assert(img.Rect, DeepEquals, retrieved.Bounds())
+	retrievedData, _, err := dvid.ImageData(retrieved)
+	c.Assert(err, IsNil)
+	c.Assert(data, DeepEquals, retrievedData)
 }

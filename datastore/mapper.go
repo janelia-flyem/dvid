@@ -35,7 +35,7 @@ type Operation interface {
 	// Map traverses chunks in an operation and maps it to dataset-specific chunk handlers.
 	// Types that implement the Operation interface can use datastore.Map() to fulfill
 	// this method or implement their own mapping scheme.
-	Map()
+	Map() error
 
 	// WaitAdd increments an internal WaitGroup
 	WaitAdd()
@@ -124,15 +124,15 @@ func loadMonitor() {
 // the service.
 func (s *Service) StartChunkHandlers() {
 	for _, dataset := range s.Datasets {
-		startChunkHandlers(dataset)
+		StartDatasetChunkHandlers(dataset)
 	}
 }
 
-// startChunkHandler makes sure we have chunk handler goroutines for each
+// StartDatasetChunkHandlers makes sure we have chunk handler goroutines for each
 // data set.  Chunks are routed to the same handler each time, so concurrent
 // access to a chunk by multiple requests are funneled sequentially into a
 // channel reserved for that chunk's handler.
-func startChunkHandlers(dataset DatasetService) {
+func StartDatasetChunkHandlers(dataset DatasetService) {
 	datasetName := dataset.DatasetName()
 
 	loadAccess.Lock()
@@ -143,9 +143,12 @@ func startChunkHandlers(dataset DatasetService) {
 	channelMapAccess.Lock()
 	// Do we have channels and handlers for this type and image version?
 	_, found := chunkChannels[datasetName]
-	if !found {
+	if found {
+		log.Printf("Already have chunk handlers for data set '%s' (%s)\n",
+			datasetName, dataset.DatatypeName())
+	} else {
 		log.Printf("Starting %d block handlers for data set '%s' (%s)...\n",
-			dataset.NumChunkHandlers(), datasetName, dataset.DatatypeName)
+			dataset.NumChunkHandlers(), datasetName, dataset.DatatypeName())
 		channels := make([]chan *ChunkOp, 0, dataset.NumChunkHandlers())
 		for i := 0; i < dataset.NumChunkHandlers(); i++ {
 			channel := make(chan *ChunkOp, ChunkHandlerBufferSize)
@@ -211,6 +214,9 @@ func Map(op Operation) error {
 
 	// Make sure our backend database can handle necessary interfaces
 	service := op.DatastoreService()
+	if service == nil {
+		return fmt.Errorf("Operation could not return datastore service!")
+	}
 	itermaker, err := service.IteratorMaker()
 	if err != nil {
 		return err
@@ -250,6 +256,7 @@ func Map(op Operation) error {
 		if kvIterator.Valid() && bytes.Equal(kvIterator.Key(), key.Bytes()) {
 			value = kvIterator.Value()
 			kvIterator.Next()
+			fmt.Printf("Found key: value = %d bytes\n", len(value))
 		} else {
 			seek = true
 			// If this is a put, don't continue since we need to write this key.
@@ -257,6 +264,7 @@ func Map(op Operation) error {
 			if op.IsReadOnly() {
 				continue // Simply uses zero value
 			}
+			fmt.Printf("Not found key: no value\n")
 		}
 
 		// Try to spread sequential block keys among different block handlers to get

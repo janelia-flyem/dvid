@@ -90,7 +90,7 @@ type Dataset struct {
 	Datatype TypeService
 }
 
-func BaseDataset(id DatasetID, t TypeService) *Dataset {
+func NewDataset(id DatasetID, t TypeService) *Dataset {
 	return &Dataset{id, t}
 }
 
