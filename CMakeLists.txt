@@ -59,14 +59,24 @@ else ()
     set (CMAKE_MODULE_PATH ${BUILDEM_REPO_DIR})
     message("Using cmake modules from ${BUILDEM_REPO_DIR}")
 
-    # Download and compile dependencies
-    include (leveldb)
-    include (golang)
+    # Download and compile dependencies.
+    # NOTE: To prevent build of Go, you can set the environment variable CI_ENV.  This is
+    #  particularly useful when using a continuous integration system with its own reasonable
+    #  Go toolset.
+    if (DEFINED ENV{CI_ENV})
+        message("Building under $ENV{CI_ENV} continuous integration system.  Using standard Go.")
+        set (golang_NAME "")
+    else ()
+        message("Including Go language build...")
+        include (golang)
+    endif ()
 
     # The name of the backend should be the same as the tag used for conditional build
     # (see "// +build levigo" in storage/levigo.go) and the custom_target name for the
     # dependencies.
     set (DVID_BACKEND levigo)
+    include (leveldb)
+
     set (DVID_GO      github.com/janelia-flyem/dvid)
 
     set (CGO_FLAGS   CGO_CFLAGS="-I${BUILDEM_INCLUDE_DIR}";CGO_LDFLAGS="-L${BUILDEM_LIB_DIR};-lsnappy")
@@ -117,6 +127,7 @@ else ()
             -v -tags '${DVID_BACKEND}' dvid.go 
         WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
         DEPENDS     ${golang_NAME} ${leveldb_NAME} snappy-go nrsc uuid ${DVID_BACKEND} goprotobuf
+                    gocheck
         COMMENT     "Compiled and installed dvid executable.")
 
     # Build DVID with pure Go leveldb implementation
