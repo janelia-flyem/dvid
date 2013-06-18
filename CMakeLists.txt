@@ -71,11 +71,13 @@ else ()
         include (golang)
     endif ()
 
+    include (protobuf)
+    include (leveldb)
+
     # The name of the backend should be the same as the tag used for conditional build
     # (see "// +build levigo" in storage/levigo.go) and the custom_target name for the
     # dependencies.
     set (DVID_BACKEND levigo)
-    include (leveldb)
 
     set (DVID_GO      github.com/janelia-flyem/dvid)
 
@@ -118,7 +120,7 @@ else ()
 
     add_custom_target (goprotobuf
         ${BUILDEM_ENV_STRING} go get ${GO_GET} code.google.com/p/goprotobuf/proto
-        DEPENDS     ${golang_NAME}
+        DEPENDS     ${golang_NAME} ${protobuf}
         COMMENT    "Add Go protobuf support")
     
     # Build DVID with chosen backend

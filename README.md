@@ -6,7 +6,7 @@ DVID: Distributed, Versioned Image Datastore
 [![Build Status](https://drone.io/github.com/janelia-flyem/dvid/status.png)](https://drone.io/github.com/janelia-flyem/dvid/latest)
 
 DVID is a distributed, versioned image datastore written in Go that supports different
-storage backends (e.g., leveldb).
+storage backends, a Level 2 REST HTTP API, and command-line access.
 
 Documentation is [available here](http://godoc.org/github.com/janelia-flyem/dvid).
 

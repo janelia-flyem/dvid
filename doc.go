@@ -1,6 +1,6 @@
 /*
-DVID is a distributed, versioned image datastore that uses leveldb for data storage and
-a Go language layer that provides http and command-line access.
+DVID is a distributed, versioned image datastore written in Go that supports different
+storage backends, a Level 2 REST HTTP API, and command-line access.
 
 	NOTE: This system is still in development and not ready for use.
 	Significant changes are still being made to interfaces.
@@ -9,12 +9,12 @@ Documentation can be found nicely formatted at http://godoc.org/github.com/janel
 
 Philosophy
 
-DVID is an image datastore that gains much of its power by coupling lightweight,
-embedded storage (via Google's leveldb project) to distributed versioning,
-allowing you to process subvolumes of data and push resulting changes to a
-larger DVID volume.  Because a DVID instance is lightweight, DVID can scale out
-by deploying large numbers of DVID instances, each handling a subvolume.  DVID
-can also scale up by swapping its default embedded key/value datastore with a
+DVID is an image datastore that gains much of its power by coupling an abstracted
+database backend (typically lightweight, embedded storage like Google's leveldb project)
+to distributed versioning, allowing you to process subvolumes of data and push
+resulting changes to a larger DVID volume.  Because a DVID instance is lightweight,
+DVID can scale out by deploying large numbers of DVID instances, each handling a subvolume.
+DVID can also scale up by swapping its default embedded key/value datastore with a
 cluster-ready system like Cassandra.
 
 User-defined data types can be added to DVID.  Standard data types (8-bit grayscale
