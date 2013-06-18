@@ -3,7 +3,10 @@ DVID: Distributed, Versioned Image Datastore
 
 *Status: In development, not ready for use.*
 
-DVID is a distributed, versioned image datastore that uses leveldb for data storage and a Go language layer that provides http and command-line access.
+[![Build Status](https://drone.io/github.com/janelia-flyem/dvid/status.png)](https://drone.io/github.com/janelia-flyem/dvid/latest)
+
+DVID is a distributed, versioned image datastore written in Go that supports different
+storage backends (e.g., leveldb).
 
 Documentation is [available here](http://godoc.org/github.com/janelia-flyem/dvid).
 
@@ -33,16 +36,7 @@ To build DVID executable without built-in web client:
 
     % make dvid-exe
 
-DVID can be built manually, without buildem, by the following steps:
+Tests are run with gocheck:
 
-1. Build shared leveldb libraries from [Google's repo](https://code.google.com/p/leveldb/).
-2. Add the following Go packages using "go get":
+    % make test
 
-    go get code.google.com/p/snappy-go/snappy
-
-    go get bitbucket.org/tebeka/nrsc
-
-    go get code.google.com/p/go-uuid/uuid
-
-    go get github.com/jmhodges/levigo
-    
