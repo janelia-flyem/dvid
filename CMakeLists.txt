@@ -120,7 +120,7 @@ else ()
 
     add_custom_target (goprotobuf
         ${BUILDEM_ENV_STRING} go get ${GO_GET} code.google.com/p/goprotobuf/proto
-        DEPENDS     ${golang_NAME} ${protobuf}
+        DEPENDS     ${golang_NAME} ${protobuf_NAME}
         COMMENT    "Add Go protobuf support")
     
     # Build DVID with chosen backend
