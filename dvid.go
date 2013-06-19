@@ -19,8 +19,6 @@ import (
 	_ "github.com/janelia-flyem/dvid/datatype/labels32"
 	_ "github.com/janelia-flyem/dvid/datatype/labels64"
 	_ "github.com/janelia-flyem/dvid/datatype/rgba8"
-
-	_ "github.com/DocSavage/dvid/datatype/raveler"
 )
 
 var (
