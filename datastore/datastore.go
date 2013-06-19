@@ -136,7 +136,7 @@ func Open(directory string) (s *Service, openErr *OpenError) {
 		}
 		return
 	}
-	fmt.Printf("DatastoreService successfully opened: %s\n", directory)
+	fmt.Printf("\nDatastoreService successfully opened: %s\n", directory)
 	s = &Service{*rconfig, *dag, db}
 	return
 }

@@ -27,26 +27,28 @@ func prompt(message string) dvid.Command {
 	return dvid.Command(strings.Split(line, " "))
 }
 
-// Terminal provides a stateful client for DVID interaction.  Unlike using 
-// DVID commands from the shell, terminal use keeps several DVID values 
+// Terminal provides a stateful client for DVID interaction.  Unlike using
+// DVID commands from the shell, terminal use keeps several DVID values
 // (e.g., rpc address, image version UUID) in memory and provides them
 // automatically to the DVID server.
 type Terminal struct {
-	rpcAddress string
-	version    string
-	client     *rpc.Client
+	datastoreDir string
+	rpcAddress   string
+	version      string
+	client       *rpc.Client
 }
 
 // NewTerminal returns a terminal with an RPC connection to the given
 // rpcAddress.
-func NewTerminal(rpcAddress string) *Terminal {
+func NewTerminal(datastoreDir, rpcAddress string) *Terminal {
 	client, err := rpc.DialHTTP("tcp", rpcAddress)
 	if err != nil {
 		client = nil // Close connection if any error and try serverless mode.
 	}
 	return &Terminal{
-		rpcAddress: rpcAddress,
-		client:     client,
+		datastoreDir: datastoreDir,
+		rpcAddress:   rpcAddress,
+		client:       client,
 	}
 }
 
@@ -96,7 +98,7 @@ func (terminal *Terminal) Send(cmd dvid.Command) (err error) {
 		}
 	} else {
 		dvid.Fmt(dvid.Debug, "Running local command '%s'...\n", cmd)
-		err = ServerlessDo(request, &reply)
+		err = ServerlessDo(terminal.datastoreDir, request, &reply)
 		if err != nil {
 			err = fmt.Errorf("Error for '%s': %s", cmd, err.Error())
 			return

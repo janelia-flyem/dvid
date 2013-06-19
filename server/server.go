@@ -85,9 +85,7 @@ func Shutdown() {
 
 // ServerlessDo runs a command locally, opening and closing a datastore
 // as necessary.
-func ServerlessDo(request datastore.Request, reply *datastore.Response) error {
-	datastoreDir := request.DatastoreDir()
-
+func ServerlessDo(datastoreDir string, request datastore.Request, reply *datastore.Response) error {
 	// Make sure we don't already have an open datastore.
 	if runningService.Service != nil {
 		return fmt.Errorf("Cannot do concurrent requests on different datastores.")

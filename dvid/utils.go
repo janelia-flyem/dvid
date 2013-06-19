@@ -89,7 +89,6 @@ func Error(p ...interface{}) {
 // SetErrorLoggingFile creates an error logger to the given file for this DVID process.
 func SetErrorLoggingFile(out io.Writer) {
 	errorLogger = log.New(out, "", log.Ldate|log.Ltime|log.Llongfile)
-	errorLogger.Println("Starting error logging for DVID")
 }
 
 // Wait for WaitGroup then print message including time for operation.

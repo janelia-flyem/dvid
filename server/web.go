@@ -22,8 +22,8 @@ DVID Web Client Unavailable!  To make the web client available, you have two cho
    the built-in web client.
 
 2) Specify a path to web pages that implement a web client via the "-webclient=PATH"
-   option to dvid.
-   Example: dvid -webclient=/path/to/html/files serve dir=/path/to/db"
+   option to dvid.  Example: 
+   % dvid -webclient=/path/to/html/files -datastore=/path/to/db serve
 `
 
 func badRequest(w http.ResponseWriter, r *http.Request, message string) {

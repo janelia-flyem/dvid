@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"runtime"
 	"runtime/pprof"
+	"strings"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -51,6 +52,9 @@ var (
 	// Address for http communication
 	httpAddress = flag.String("http", server.DefaultWebAddress, "")
 
+	// Path to datastore directory.
+	datastoreDir = flag.String("datastore", currentDir(), "")
+
 	// Number of logical CPUs to use for DVID.
 	useCPU = flag.Int("numcpu", 0, "")
 
@@ -63,13 +67,14 @@ dvid is a distributed, versioned image-oriented datastore
 
 Usage: dvid [options] <command>
 
-      -numcpu     =number   Number of logical CPUs to use for DVID.
-      -timeout    =number   Seconds to wait trying to get exclusive access to datastore.
+      -datastore  =string   Path to DVID datastore directory (default: current directory).
       -webclient  =string   Path to web client directory.  Leave unset for default pages.
       -rpc        =string   Address for RPC communication.
       -http       =string   Address for HTTP communication.
       -cpuprofile =string   Write CPU profile to this file.
       -memprofile =string   Write memory profile to this file on ctrl-C.
+      -numcpu     =number   Number of logical CPUs to use for DVID.
+      -timeout    =number   Seconds to wait trying to get exclusive access to datastore.
       -gzip       (flag)    Turn gzip compression on for REST API.
       -types      (flag)    Show compiled DVID data types
       -debug      (flag)    Run in debug mode.  Verbose.
@@ -82,8 +87,9 @@ Usage: dvid [options] <command>
 Commands that can be performed without a running server:
 
 	about
-	init [dir=/path/to/datastore/dir]
-	serve [dir=/path/to/datastore/dir]
+	help
+	init 
+	serve
 `
 
 const helpServerMessage = `
@@ -102,10 +108,22 @@ var usage = func() {
 	}
 }
 
+func currentDir() string {
+	currentDir, err := os.Getwd()
+	if err != nil {
+		log.Fatalln("Could not get current directory:", err)
+	}
+	return currentDir
+}
+
 func main() {
 	flag.BoolVar(showHelp, "h", false, "Show help message")
 	flag.Usage = usage
 	flag.Parse()
+
+	if flag.NArg() >= 1 && strings.ToLower(flag.Args()[0]) == "help" {
+		*showHelp = true
+	}
 
 	if *runDebug {
 		dvid.Mode = dvid.Debug
@@ -182,7 +200,7 @@ func main() {
 
 	// If we have no arguments, run in terminal mode, else execute command.
 	if flag.NArg() == 0 {
-		terminal := server.NewTerminal(*rpcAddress)
+		terminal := server.NewTerminal(*datastoreDir, *rpcAddress)
 		terminal.Shell()
 	} else {
 		command := dvid.Command(flag.Args())
@@ -210,7 +228,7 @@ func DoCommand(cmd dvid.Command) error {
 		fmt.Println(datastore.Versions())
 	// Send everything else to server via DVID terminal
 	default:
-		terminal := server.NewTerminal(*rpcAddress)
+		terminal := server.NewTerminal(*datastoreDir, *rpcAddress)
 		return terminal.Send(cmd)
 	}
 	return nil
@@ -218,16 +236,15 @@ func DoCommand(cmd dvid.Command) error {
 
 // DoInit performs the "init" command, creating a new DVID datastore.
 func DoInit(cmd dvid.Command) error {
-	datastoreDir := cmd.DatastoreDir()
 	create := true
-	uuid := datastore.Init(datastoreDir, create)
+	uuid := datastore.Init(*datastoreDir, create)
 	fmt.Println("Root node UUID:", uuid)
 	return nil
 }
 
 // DoServe opens a datastore then creates both web and rpc servers for the datastore
 func DoServe(cmd dvid.Command) error {
-	if service, err := server.OpenDatastore(cmd.DatastoreDir()); err != nil {
+	if service, err := server.OpenDatastore(*datastoreDir); err != nil {
 		return err
 	} else {
 		if err := service.Serve(*httpAddress, *clientDir, *rpcAddress); err != nil {

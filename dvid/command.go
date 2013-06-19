@@ -8,26 +8,18 @@ package dvid
 
 import (
 	"fmt"
-	"log"
-	"os"
 	"strings"
 )
 
 // Keys for setting various arguments within the command line via "key=value" strings.
 const (
-	KeyUuid         = "uuid"
-	KeyDatastoreDir = "dir"
-	KeyConfigFile   = "config"
-	KeyPlane        = "plane"
-	KeyOffset       = "offset"
-	KeySize         = "size"
+	KeyUuid  = "uuid"
+	KeyPlane = "plane"
 )
 
 var setKeys = map[string]bool{
-	"uuid":   true,
-	"dir":    true,
-	"config": true,
-	"plane":  true,
+	"plane": true,
+	"uuid":  true,
 }
 
 // Response provides a few string fields to pass information back from
@@ -82,20 +74,6 @@ func (cmd Command) Parameter(key string) (value string, found bool) {
 		}
 	}
 	return
-}
-
-// DatastoreDir returns a directory specified in the arguments via "dir=..." or
-// defaults to the current directory.
-func (cmd Command) DatastoreDir() string {
-	datastoreDir, found := cmd.Parameter(KeyDatastoreDir)
-	if !found {
-		currentDir, err := os.Getwd()
-		if err != nil {
-			log.Fatalln("Could not get current directory:", err)
-		}
-		return currentDir
-	}
-	return datastoreDir
 }
 
 // CommandArgs sets a variadic argument set of string pointers to data
