@@ -13,7 +13,7 @@ const (
 	Version = "github.com/jmhodges/levigo"
 
 	// Default size of LRU cache that caches frequently used uncompressed blocks.
-	DefaultCacheSize = 500 * dvid.Mega
+	DefaultCacheSize = 768 * dvid.Mega
 
 	// Default # bits for Bloom Filter.  The filter reduces the number of unnecessary
 	// disk reads needed for Get() calls by a large factor.
@@ -309,7 +309,13 @@ func (opt *Options) initBySettings(create bool) *leveldbOptions {
 	ldbOptions.SetInfoLog(nil)
 	ldbOptions.SetParanoidChecks(false)
 	//ldbOptions.SetBlockRestartInterval(8)
-	ldbOptions.SetCompression(levigo.SnappyCompression)
+
+	// Don't bother with compression on leveldb side because it will
+	// be selectively applied on DVID side.  We may way to return and
+	// then transmit Snappy-compressed data without ever decompressing
+	// on this side.
+	//ldbOptions.SetCompression(levigo.SnappyCompression)
+	ldbOptions.SetCompression(levigo.NoCompression)
 
 	return ldbOptions
 }

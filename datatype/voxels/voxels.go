@@ -238,6 +238,8 @@ func (dset *Dataset) DoRPC(request datastore.Request, reply *datastore.Response)
 
 // DoHTTP handles all incoming HTTP requests for this dataset.
 func (dset *Dataset) DoHTTP(w http.ResponseWriter, r *http.Request) error {
+	startTime := time.Now()
+
 	// Get the running datastore service from this DVID instance.
 	dataService := server.DataService()
 
@@ -292,6 +294,8 @@ func (dset *Dataset) DoHTTP(w http.ResponseWriter, r *http.Request) error {
 			}
 		} else {
 			img, err := dset.GetImage(versionID, slice)
+			data, _, _ := dvid.ImageData(img)
+			dvid.PrintNonZero("GetImage", data)
 
 			var formatStr string
 			if len(parts) >= 6 {
@@ -325,6 +329,7 @@ func (dset *Dataset) DoHTTP(w http.ResponseWriter, r *http.Request) error {
 		return fmt.Errorf("DVID does not yet support arbitrary planes.")
 	}
 
+	dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: %s", r.Method, dataShape)
 	return nil
 }
 
@@ -348,7 +353,6 @@ func (dset *Dataset) NewIndexIterator(extents interface{}) datastore.IndexIterat
 	y := startBlockCoord[1]
 	x := startBlockCoord[0]
 	return func() datastore.Index {
-		fmt.Printf("IndexIterator: start at (%d,%d,%d)\n", x, y, z)
 		if z > endBlockCoord[2] {
 			return nil
 		}
@@ -595,7 +599,7 @@ func (dset *Dataset) ServerAdd(request datastore.Request, reply *datastore.Respo
 		return fmt.Errorf("Error: %d of %d images successfully added [%s]\n",
 			numSuccessful, len(filenames), lastErr.Error())
 	}
-	dvid.ElapsedTime(dvid.Normal, startTime, "RPC server-add (%s) completed", addedFiles)
+	dvid.ElapsedTime(dvid.Debug, startTime, "RPC server-add (%s) completed", addedFiles)
 	return nil
 }
 
@@ -680,7 +684,10 @@ func (dset *Dataset) GetVolume(versionID dvid.LocalID, vol dvid.Geometry) (data 
 // thinner, wider, and longer than the chunk, depending on the data shape (XY, XZ, etc)
 func (dset *Dataset) ChunkHandler(chunkOp *datastore.ChunkOp) {
 
-	operation := chunkOp.Operation.(*Operation)
+	operation, ok := chunkOp.Operation.(*Operation)
+	if !ok {
+		log.Fatalf("Illegal operation passed to ChunkHandler() for dataset %s", operation.DatasetName())
+	}
 	voxels := operation.data
 	index := datastore.IndexZYX(chunkOp.Key.Index)
 
@@ -706,7 +713,7 @@ func (dset *Dataset) ChunkHandler(chunkOp *datastore.ChunkOp) {
 	// Allocate the block buffer if PUT or use passed-in chunk if GET
 	blockBytes := int(blockSize[0] * blockSize[1] * blockSize[2] * bytesPerVoxel)
 	var block []uint8
-	if operation.op == GetOp {
+	if chunkOp.Chunk != nil {
 		block = []uint8(chunkOp.Chunk)
 		if len(block) != blockBytes {
 			log.Fatalf("Retrieved block for dataset '%s' is %d bytes, not %d block size!\n",
@@ -727,19 +734,17 @@ func (dset *Dataset) ChunkHandler(chunkOp *datastore.ChunkOp) {
 
 	// For each geometry, traverse the data slice/subvolume and read/write from
 	// the block data depending on the op.
-
-	//data := req.DataStruct.Data()
 	data := voxels.data
 
 	// fmt.Printf("Data %s -> %s, Orig %s -> %s\n", beg, end, begVolCoord, endVolCoord)
-	// fmt.Printf("Block start: %s\n", blockBeg)
-	// fmt.Printf("Block buffer size: %d bytes\n", len(block))
-	// fmt.Printf("Data buffer size: %d bytes\n", len(data))
+	//fmt.Printf("Block start: %s\n", blockBeg)
+	//fmt.Printf("Block buffer size: %d bytes\n", len(block))
+	//fmt.Printf("Data buffer size: %d bytes\n", len(data))
 
 	switch voxels.DataShape() {
 	case dvid.XY:
-		//		fmt.Printf("XY Block: %s->%s, blockXY %d, blockX %d, blockBeg %s\n",
-		//			begVolCoord, endVolCoord, blockNumXY, blockNumX, blockBeg)
+		//fmt.Printf("XY Block: %s->%s, blockXY %d, blockX %d, blockBeg %s\n",
+		//	begVolCoord, endVolCoord, blockNumXY, blockNumX, blockBeg)
 		blockI := blockBeg[2]*blockNumXY + blockBeg[1]*blockNumX + blockBeg[0]*bytesPerVoxel
 		dataI := beg[1]*voxels.stride + beg[0]*bytesPerVoxel
 		for y := beg[1]; y <= end[1]; y++ {
@@ -754,11 +759,11 @@ func (dset *Dataset) ChunkHandler(chunkOp *datastore.ChunkOp) {
 			blockI += blockSize[0] * bytesPerVoxel
 			dataI += voxels.stride
 		}
+		//dvid.PrintNonZero("After copy", data)
 	case dvid.XZ:
 		blockI := blockBeg[2]*blockNumXY + blockBeg[1]*blockNumX + blockBeg[0]*bytesPerVoxel
 		dataI := beg[2]*voxels.stride + beg[0]*bytesPerVoxel
 		for y := beg[2]; y <= end[2]; y++ {
-			//fmt.Printf("XZ> y(%d) -> BlockI: %d, dataI: %d\n", y, blockI, dataI)
 			run := end[0] - beg[0] + 1
 			bytes := run * bytesPerVoxel
 			switch operation.op {
@@ -815,7 +820,11 @@ func (dset *Dataset) ChunkHandler(chunkOp *datastore.ChunkOp) {
 	// If this is a PUT, place the modified block data into the database.
 	if operation.op == PutOp {
 		db := operation.DatastoreService().KeyValueDB()
-		db.Put(chunkOp.Key, block)
+		serialization, err := dvid.SerializeData([]byte(block), dvid.Snappy, dvid.CRC32)
+		if err != nil {
+			fmt.Printf("Unable to serialize block: %s\n", err.Error())
+		}
+		db.Put(chunkOp.Key, serialization)
 	}
 
 	// Notify the requestor that this block is done.

@@ -254,9 +254,12 @@ func Map(op Operation) error {
 		}
 		var value []byte
 		if kvIterator.Valid() && bytes.Equal(kvIterator.Key(), key.Bytes()) {
-			value = kvIterator.Value()
+			serialization := kvIterator.Value()
+			value, _, err = dvid.DeserializeData(serialization, true)
+			if err != nil {
+				return err
+			}
 			kvIterator.Next()
-			fmt.Printf("Found key: value = %d bytes\n", len(value))
 		} else {
 			seek = true
 			// If this is a put, don't continue since we need to write this key.
@@ -264,7 +267,6 @@ func Map(op Operation) error {
 			if op.IsReadOnly() {
 				continue // Simply uses zero value
 			}
-			fmt.Printf("Not found key: no value\n")
 		}
 
 		// Try to spread sequential block keys among different block handlers to get
