@@ -43,7 +43,10 @@ type Terminal struct {
 func NewTerminal(datastoreDir, rpcAddress string) *Terminal {
 	client, err := rpc.DialHTTP("tcp", rpcAddress)
 	if err != nil {
+		fmt.Printf("Did not find DVID server for RPC at %s: %s\n", rpcAddress, err.Error())
 		client = nil // Close connection if any error and try serverless mode.
+	} else {
+		fmt.Printf("Found DVID server for RPC at %s\n", rpcAddress)
 	}
 	return &Terminal{
 		datastoreDir: datastoreDir,
@@ -91,7 +94,7 @@ func (terminal *Terminal) Send(cmd dvid.Command) (err error) {
 	request := datastore.Request{Command: cmd}
 	if terminal.client != nil {
 		dvid.Fmt(dvid.Debug, "Running remote command '%s'...\n", cmd)
-		err = terminal.client.Call("RpcConnection.Do", request, &reply)
+		err = terminal.client.Call("RPCConnection.Do", request, &reply)
 		if err != nil {
 			err = fmt.Errorf("RPC error for '%s': %s", cmd, err.Error())
 			return
