@@ -36,16 +36,13 @@ In the following documentation, the type of brackets designate
 Prints the version number of the DVID datastore software and the version of each
 supported data type.
 
-	dvid init [dir=/path/to/datastore/dir]
+	dvid [-datastore=/path/to/db] init
 
-Initialize a datastore (in current or optionally specified directory) using
-arguments in <JSON config file>.  If the optional JSON config file is not provided,
-DVID will prompt the user for configuration data.  Configuration includes volume extents,
-resolution, resolution unit, and the supported data types.  Returns a UUID representing
-the intial volume version,  i.e., an unlocked root node in the version
+Initializes a datastore in the current or optionally specified directory. Returns a UUID
+representing the intial volume version,  i.e., an unlocked root node in the version
 directed acyclic graph (DAG).
 
-	dvid serve [dir=/path/to/datastore]
+	dvid [-datastore=/path/to/db] [-webclient=/path/to/webclient] serve
 
 Starts a DVID server that maintains exclusive control over the datastore.
 Creates both web and rpc servers that can accept connections from web browsers
@@ -138,11 +135,7 @@ initially attempted use of Suryandaru Triandana's rewrite from C++ version
 (https://github.com/syndtr/goleveldb).  We are keeping tabs on Nigel Tao's implementation
 still in progress (http://code.google.com/p/leveldb-go).
 
-A pure Go leveldb implementation would greatly simplify cross-platform development since
-Go code can be cross-compiled to Linux, Windows, and Mac targets.  It would also allow simpler
-inspection of issues.  However, there is no substitute for having large numbers of users
-testing the product, so the C++ leveldb implementation will be tough to beat in terms of
-uptime and performance.   We might also look at sqlite4's LSM system as a third key-value
-datastore.
+DVID tries to be agnostic about its backend database, and we will be experimenting with
+a number of other databases like couchbase and lightning MDB.
 */
 package main
