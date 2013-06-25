@@ -6,7 +6,7 @@
 package test
 
 import (
-	. "github.com/DocSavage/gocheck"
+	. "github.com/janelia-flyem/go/gocheck"
 	"testing"
 
 	"github.com/janelia-flyem/dvid/datastore"

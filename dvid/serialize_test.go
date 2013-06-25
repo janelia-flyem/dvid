@@ -1,7 +1,7 @@
 package dvid
 
 import (
-	. "github.com/DocSavage/gocheck"
+	. "github.com/janelia-flyem/go/gocheck"
 	_ "testing"
 )
 

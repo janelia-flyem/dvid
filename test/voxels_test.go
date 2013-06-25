@@ -1,7 +1,7 @@
 package test
 
 import (
-	. "github.com/DocSavage/gocheck"
+	. "github.com/janelia-flyem/go/gocheck"
 
 	_ "github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
