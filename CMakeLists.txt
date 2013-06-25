@@ -96,9 +96,14 @@ else ()
         WORKING_DIRECTORY $ENV{GOPATH}/src/github.com/janelia-flyem/go
         COMMENT     "Updated required Go packages")
     
+    add_custom_target (emdata
+        ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/DocSavage/emdata
+        DEPENDS     ${golang_NAME}
+        COMMENT     "Added emdata package from DocSavage repo")
+    
     add_custom_target (extensions
         ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go get ${GO_GET} github.com/DocSavage/dvid
-        DEPENDS     ${golang_NAME}
+        DEPENDS     ${golang_NAME} emdata
         COMMENT     "Added DVID extensions from DocSavage repo")
     
     #add_custom_target (snappy-go
