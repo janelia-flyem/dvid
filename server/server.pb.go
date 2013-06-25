@@ -4,7 +4,7 @@
 
 package server
 
-import proto "code.google.com/p/goprotobuf/proto"
+import proto "github.com/janelia-flyem/go/goprotobuf/proto"
 import json "encoding/json"
 import math "math"
 

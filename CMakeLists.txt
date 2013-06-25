@@ -78,63 +78,64 @@ else ()
     # (see "// +build levigo" in storage/levigo.go) and the custom_target name for the
     # dependencies.
     set (DVID_BACKEND levigo)
+    set (DVID_BACKEND_DEPEND ${leveldb_NAME})
 
     set (DVID_GO      github.com/janelia-flyem/dvid)
 
     set (CGO_FLAGS   CGO_CFLAGS="-I${BUILDEM_INCLUDE_DIR}";CGO_LDFLAGS="-L${BUILDEM_LIB_DIR};-lsnappy")
 
-    add_custom_target (gocheck
-        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go get ${GO_GET} github.com/DocSavage/gocheck
-        DEPENDS     ${golang_NAME}
-        COMMENT     "Added gocheck for Go testing")
+    add_custom_target (gopackages
+        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go get ${GO_GET} github.com/janelia-flyem/go
+        DEPENDS     ${golang_NAME} ${protobuf_NAME}
+        COMMENT     "Added go package dependencies for janelia-flyem projects")
     
     add_custom_target (extensions
         ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go get ${GO_GET} github.com/DocSavage/dvid
         DEPENDS     ${golang_NAME}
         COMMENT     "Added DVID extensions from DocSavage repo")
     
-    add_custom_target (snappy-go
-        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go get ${GO_GET} code.google.com/p/snappy-go/snappy
-        DEPENDS     ${golang_NAME} ${snappy_NAME}
-        COMMENT     "Added Go bindings to snappy [code.google.com/p/snappy-go/snappy]")
+    #add_custom_target (snappy-go
+    #    ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go get ${GO_GET} code.google.com/p/snappy-go/snappy
+    #    DEPENDS     ${golang_NAME} ${snappy_NAME}
+    #    COMMENT     "Added Go bindings to snappy [code.google.com/p/snappy-go/snappy]")
     
-    add_custom_target (nrsc
-        ${BUILDEM_ENV_STRING} go get ${GO_GET} bitbucket.org/tebeka/nrsc
-        DEPENDS     ${golang_NAME}
-        COMMENT     "Added nrsc tool for adding zip file to go executable")
+    #add_custom_target (nrsc
+    #    ${BUILDEM_ENV_STRING} go get ${GO_GET} bitbucket.org/tebeka/nrsc
+    #    DEPENDS     ${golang_NAME}
+    #    COMMENT     "Added nrsc tool for adding zip file to go executable")
     
-    add_custom_target (uuid
-        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go get ${GO_GET} code.google.com/p/go-uuid/uuid
-        DEPENDS     ${golang_NAME}
-        COMMENT     "Added Go uuid package [code.google.com/p/go-uuid/uuid]")
+    #add_custom_target (uuid
+    #    ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go get ${GO_GET} code.google.com/p/go-uuid/uuid
+    #    DEPENDS     ${golang_NAME}
+    #    COMMENT     "Added Go uuid package [code.google.com/p/go-uuid/uuid]")
     
-    add_custom_target (config
-        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go get ${GO_GET} github.com/robfig/config
-        DEPENDS     ${golang_NAME}
-        COMMENT     "Added ini config file handler [github.com/robfig/config]")
+    #add_custom_target (config
+    #    ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go get ${GO_GET} github.com/robfig/config
+    #    DEPENDS     ${golang_NAME}
+    #    COMMENT     "Added ini config file handler [github.com/robfig/config]")
     
-    add_custom_target (levigo
-        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go get ${GO_GET} github.com/jmhodges/levigo
-        DEPENDS     ${golang_NAME} ${leveldb_NAME}
-        COMMENT     "Added Go bindings to leveldb [github.com/jmhodges/levigo]")
+    #add_custom_target (levigo
+    #    ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go get ${GO_GET} github.com/jmhodges/levigo
+    #    DEPENDS     ${golang_NAME} ${leveldb_NAME}
+    #    COMMENT     "Added Go bindings to leveldb [github.com/jmhodges/levigo]")
+    
+    #add_custom_target (goprotobuf
+    #    ${BUILDEM_ENV_STRING} go get ${GO_GET} code.google.com/p/goprotobuf/proto
+    #    DEPENDS     ${golang_NAME} ${protobuf_NAME}
+    #    COMMENT    "Add Go protobuf support")
     
     add_custom_target (goleveldb
         ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/syndtr/goleveldb/leveldb
         DEPENDS     ${golang_NAME} snappy-go
         COMMENT     "Added pure Go implementation of leveldb")
 
-    add_custom_target (goprotobuf
-        ${BUILDEM_ENV_STRING} go get ${GO_GET} code.google.com/p/goprotobuf/proto
-        DEPENDS     ${golang_NAME} ${protobuf_NAME}
-        COMMENT    "Add Go protobuf support")
-    
     # Build DVID with chosen backend
     add_custom_target (dvid-exe
         ${BUILDEM_ENV_STRING} ${GO_ENV} ${CGO_FLAGS} go build -o ${BUILDEM_BIN_DIR}/dvid 
             -v -tags '${DVID_BACKEND}' dvid.go 
         WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
-        DEPENDS     ${golang_NAME} ${leveldb_NAME} snappy-go nrsc uuid ${DVID_BACKEND} goprotobuf
-                    gocheck extensions
+        DEPENDS     ${golang_NAME} ${snappy_NAME} ${DVID_BACKEND_DEPEND}
+                    gopackages extensions
         COMMENT     "Compiled and installed dvid executable.")
 
     # Build DVID with pure Go leveldb implementation
@@ -146,7 +147,7 @@ else ()
     #    COMMENT     "Compiled and installed dvid pure Go executable, dvid-go.")
 
    # Embed web client into exe
-   set (NRSC_SCRIPT "$ENV{GOPATH}/src/bitbucket.org/tebeka/nrsc/nrsc")
+   set (NRSC_SCRIPT "$ENV{GOPATH}/src/janelia-flyem/go/nrsc/nrsc")
    add_custom_target (dvid
         ${NRSC_SCRIPT} ${BUILDEM_BIN_DIR}/dvid ${WEBCLIENT_DIR}
         DEPENDS dvid-exe dvid-webclient

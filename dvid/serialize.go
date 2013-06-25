@@ -12,7 +12,7 @@ import (
 	"hash/crc32"
 	_ "log"
 
-	"code.google.com/p/snappy-go/snappy"
+	"github.com/janelia-flyem/go/snappy-go/snappy"
 )
 
 // Serialization should be a slice of bytes.

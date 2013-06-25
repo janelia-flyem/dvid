@@ -20,7 +20,7 @@ import (
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
 
-	"code.google.com/p/goprotobuf/proto"
+	"github.com/janelia-flyem/go/goprotobuf/proto"
 )
 
 const Version = "0.7"

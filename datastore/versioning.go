@@ -12,7 +12,7 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
 
-	"code.google.com/p/go-uuid/uuid"
+	"github.com/janelia-flyem/go/go-uuid/uuid"
 )
 
 // UUID is a 32 character hexidecimal string ("" if invalid) that uniquely identifies

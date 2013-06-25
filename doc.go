@@ -133,7 +133,7 @@ DVID uses a key-value datastore as its back end.  We currently use Google's C++ 
 plus the levigo Go bindings.  We can easily add pure Go leveldb implementations and
 initially attempted use of Suryandaru Triandana's rewrite from C++ version
 (https://github.com/syndtr/goleveldb).  We are keeping tabs on Nigel Tao's implementation
-still in progress (http://code.google.com/p/leveldb-go).
+still in progress (http://github.com/janelia-flyem/go/leveldb-go).
 
 DVID tries to be agnostic about its backend database, and we will be experimenting with
 a number of other databases like couchbase and lightning MDB.
