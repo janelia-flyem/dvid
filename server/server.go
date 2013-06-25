@@ -16,7 +16,7 @@ import (
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 
-	"bitbucket.org/tebeka/nrsc"
+	"github.com/janelia-flyem/go/nrsc"
 )
 
 const (

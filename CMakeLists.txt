@@ -84,10 +84,17 @@ else ()
 
     set (CGO_FLAGS   CGO_CFLAGS="-I${BUILDEM_INCLUDE_DIR}";CGO_LDFLAGS="-L${BUILDEM_LIB_DIR};-lsnappy")
 
-    add_custom_target (gopackages
+    add_custom_target (gopackages-install
         ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go get ${GO_GET} github.com/janelia-flyem/go
         DEPENDS     ${golang_NAME} ${protobuf_NAME}
         COMMENT     "Added go package dependencies for janelia-flyem projects")
+
+    add_custom_target (gopackages
+        git submodule init
+        COMMAND     git submodule update
+        DEPENDS     gopackages-install
+        WORKING_DIRECTORY $ENV{GOPATH}/src/github.com/janelia-flyem/go
+        COMMENT     "Updated required Go packages")
     
     add_custom_target (extensions
         ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go get ${GO_GET} github.com/DocSavage/dvid
@@ -147,7 +154,7 @@ else ()
     #    COMMENT     "Compiled and installed dvid pure Go executable, dvid-go.")
 
    # Embed web client into exe
-   set (NRSC_SCRIPT "$ENV{GOPATH}/src/janelia-flyem/go/nrsc/nrsc")
+   set (NRSC_SCRIPT "$ENV{GOPATH}/src/github.com/janelia-flyem/go/nrsc/nrsc")
    add_custom_target (dvid
         ${NRSC_SCRIPT} ${BUILDEM_BIN_DIR}/dvid ${WEBCLIENT_DIR}
         DEPENDS dvid-exe dvid-webclient
