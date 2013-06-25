@@ -88,6 +88,11 @@ else ()
         DEPENDS     ${golang_NAME}
         COMMENT     "Added gocheck for Go testing")
     
+    add_custom_target (extensions
+        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go get ${GO_GET} github.com/DocSavage/dvid
+        DEPENDS     ${golang_NAME}
+        COMMENT     "Added DVID extensions from DocSavage repo")
+    
     add_custom_target (snappy-go
         ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go get ${GO_GET} code.google.com/p/snappy-go/snappy
         DEPENDS     ${golang_NAME} ${snappy_NAME}
@@ -129,7 +134,7 @@ else ()
             -v -tags '${DVID_BACKEND}' dvid.go 
         WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
         DEPENDS     ${golang_NAME} ${leveldb_NAME} snappy-go nrsc uuid ${DVID_BACKEND} goprotobuf
-                    gocheck
+                    gocheck extensions
         COMMENT     "Compiled and installed dvid executable.")
 
     # Build DVID with pure Go leveldb implementation
