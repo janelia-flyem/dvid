@@ -1,7 +1,7 @@
 package dvid
 
 import (
-	. "launchpad.net/gocheck"
+	. "github.com/DocSavage/gocheck"
 	"testing"
 )
 

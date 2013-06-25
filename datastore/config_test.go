@@ -1,7 +1,7 @@
 package datastore
 
 import (
-	. "launchpad.net/gocheck"
+	. "github.com/DocSavage/gocheck"
 	_ "testing"
 )
 

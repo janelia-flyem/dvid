@@ -1,7 +1,7 @@
 package test
 
 import (
-	. "launchpad.net/gocheck"
+	. "github.com/DocSavage/gocheck"
 
 	_ "github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"

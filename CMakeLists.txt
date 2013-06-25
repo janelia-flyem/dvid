@@ -84,7 +84,7 @@ else ()
     set (CGO_FLAGS   CGO_CFLAGS="-I${BUILDEM_INCLUDE_DIR}";CGO_LDFLAGS="-L${BUILDEM_LIB_DIR};-lsnappy")
 
     add_custom_target (gocheck
-        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go get ${GO_GET} launchpad.net/gocheck
+        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go get ${GO_GET} github.com/DocSavage/gocheck
         DEPENDS     ${golang_NAME}
         COMMENT     "Added gocheck for Go testing")
     
