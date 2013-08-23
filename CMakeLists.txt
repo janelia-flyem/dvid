@@ -77,13 +77,26 @@ else ()
     # The name of the backend should be the same as the tag used for conditional build
     # (see "// +build levigo" in storage/levigo.go) and the custom_target name for the
     # dependencies.
+
     set (DVID_BACKEND levigo)
     set (DVID_BACKEND_DEPEND ${leveldb_NAME})
+
+    # set (DVID_BACKEND couchbase)
+    # set (DVID_BACKEND_DEPEND "")   # Assume manual install
 
     set (DVID_GO      github.com/janelia-flyem/dvid)
 
     set (CGO_FLAGS   CGO_CFLAGS="-I${BUILDEM_INCLUDE_DIR}";CGO_LDFLAGS="-L${BUILDEM_LIB_DIR};-lsnappy")
 
+    # Packages include:
+    #   code.google.com/p/snappy-go/snappy
+    #   code.google.com/p/go-uuid/uuid
+    #   code.google.com/p/goprotobuf/proto
+    #   bitbucket.org/tebeka/nrsc
+    #   github.com/couchbaselabs/go-couchbase
+    #   github.com/jmhodges/levigo
+    #   github.com/robfig/config
+    #
     add_custom_target (gopackages-install
         ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go get ${GO_GET} github.com/janelia-flyem/go
         DEPENDS     ${golang_NAME} ${protobuf_NAME}
@@ -105,36 +118,6 @@ else ()
         ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go get ${GO_GET} github.com/DocSavage/dvid
         DEPENDS     ${golang_NAME} emdata
         COMMENT     "Added DVID extensions from DocSavage repo")
-    
-    #add_custom_target (snappy-go
-    #    ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go get ${GO_GET} code.google.com/p/snappy-go/snappy
-    #    DEPENDS     ${golang_NAME} ${snappy_NAME}
-    #    COMMENT     "Added Go bindings to snappy [code.google.com/p/snappy-go/snappy]")
-    
-    #add_custom_target (nrsc
-    #    ${BUILDEM_ENV_STRING} go get ${GO_GET} bitbucket.org/tebeka/nrsc
-    #    DEPENDS     ${golang_NAME}
-    #    COMMENT     "Added nrsc tool for adding zip file to go executable")
-    
-    #add_custom_target (uuid
-    #    ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go get ${GO_GET} code.google.com/p/go-uuid/uuid
-    #    DEPENDS     ${golang_NAME}
-    #    COMMENT     "Added Go uuid package [code.google.com/p/go-uuid/uuid]")
-    
-    #add_custom_target (config
-    #    ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go get ${GO_GET} github.com/robfig/config
-    #    DEPENDS     ${golang_NAME}
-    #    COMMENT     "Added ini config file handler [github.com/robfig/config]")
-    
-    #add_custom_target (levigo
-    #    ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go get ${GO_GET} github.com/jmhodges/levigo
-    #    DEPENDS     ${golang_NAME} ${leveldb_NAME}
-    #    COMMENT     "Added Go bindings to leveldb [github.com/jmhodges/levigo]")
-    
-    #add_custom_target (goprotobuf
-    #    ${BUILDEM_ENV_STRING} go get ${GO_GET} code.google.com/p/goprotobuf/proto
-    #    DEPENDS     ${golang_NAME} ${protobuf_NAME}
-    #    COMMENT    "Add Go protobuf support")
     
     add_custom_target (goleveldb
         ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/syndtr/goleveldb/leveldb

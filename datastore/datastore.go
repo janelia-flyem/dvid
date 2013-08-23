@@ -40,7 +40,7 @@ func Init(directory string, create bool) (uuid UUID) {
 	dbOptions := storage.Options{}
 	db, err := storage.NewDataHandler(directory, create, &dbOptions)
 	if err != nil {
-		log.Fatalf("Error opening datastore (%s): %s\n", directory, err.Error())
+		log.Fatalf("Error initializing datastore (%s): %s\n", directory, err.Error())
 	}
 
 	// Put empty runtime configuration
@@ -88,16 +88,16 @@ type OpenError struct {
 	ErrorType OpenErrorType
 }
 
-// Open opens a DVID datastore at the given directory and returns
+// Open opens a DVID datastore at the given path (directory, url, etc) and returns
 // a Service that allows operations on that datastore.
-func Open(directory string) (s *Service, openErr *OpenError) {
+func Open(path string) (s *Service, openErr *OpenError) {
 	// Open the datastore
 	dbOptions := storage.Options{}
 	create := false
-	db, err := storage.NewDataHandler(directory, create, &dbOptions)
+	db, err := storage.NewDataHandler(path, create, &dbOptions)
 	if err != nil {
 		openErr = &OpenError{
-			fmt.Errorf("Error opening datastore (%s): %s", directory, err.Error()),
+			fmt.Errorf("Error opening datastore (%s): %s", path, err.Error()),
 			ErrorOpening,
 		}
 		return
@@ -136,7 +136,7 @@ func Open(directory string) (s *Service, openErr *OpenError) {
 		}
 		return
 	}
-	fmt.Printf("\nDatastoreService successfully opened: %s\n", directory)
+	fmt.Printf("\nDatastoreService successfully opened: %s\n", path)
 	s = &Service{*rconfig, *dag, db}
 	return
 }
@@ -195,16 +195,16 @@ func (s *Service) SupportedDataChart() string {
 
 // LogInfo returns information on versions and
 
-// DatasetService returns a type-specific service given a dataset name that should be
-// specific to a DVID instance.
-func (s *Service) DatasetService(name DatasetString) (datasetService DatasetService, err error) {
-	for key, _ := range s.Datasets {
+// DataService returns a type-specific service given a data name that should be
+// specific to a DVID server.
+func (s *Service) DataService(name DataString) (dataService DataService, err error) {
+	for key, _ := range s.Data {
 		if name == key {
-			datasetService = s.Datasets[key]
+			dataService = s.Data[key]
 			return
 		}
 	}
-	err = fmt.Errorf("Data set '%s' was not in opened datastore.", name)
+	err = fmt.Errorf("Data '%s' was not in opened datastore.", name)
 	return
 }
 
@@ -220,19 +220,19 @@ func (s *Service) TypeService(typeName string) (typeService TypeService, err err
 	return
 }
 
-// NewDataset registers a data set name of a given data type with this datastore.
+// NewData registers a data set name of a given data type with this datastore.
 // TODO -- Will have to pass in initialization parameters like block size,
 // block resolution, units, etc.  Then, within the data type, for each dataset
 // we create a blocksize that's tailored for this DVID instance's volume, after
 // taking into account units, resolution, etc.
-func (s *Service) NewDataset(name DatasetString, typeName string, config dvid.Config) error {
+func (s *Service) NewData(name DataString, typeName string, config dvid.Config) error {
 	// Check if this is a valid data type
 	typeService, err := s.TypeService(typeName)
 	if err != nil {
 		return err
 	}
 	// Check if we already have this registered
-	foundTypeService, found := s.Datasets[name]
+	foundTypeService, found := s.Data[name]
 	if found {
 		if typeService.DatatypeUrl() != foundTypeService.DatatypeUrl() {
 			return fmt.Errorf("Data set name '%s' already has type '%s' not '%s'",
@@ -248,29 +248,29 @@ func (s *Service) NewDataset(name DatasetString, typeName string, config dvid.Co
 	}
 	var lock sync.Mutex
 	lock.Lock()
-	if s.Datasets == nil {
-		s.Datasets = make(map[DatasetString]DatasetService)
+	if s.Data == nil {
+		s.Data = make(map[DataString]DataService)
 	}
-	s.Datasets[name] = typeService.NewDataset(DatasetID{name, s.NewLocalID}, config)
+	s.Data[name] = typeService.NewData(DataID{name, s.NewLocalID}, config)
 	err = s.runtimeConfig.Put(s.db)
 	lock.Unlock()
 	return err
 }
 
-// DeleteDataset deletes a data set from the datastore and is considered
+// DeleteData deletes data from the datastore and is considered
 // a DANGEROUS operation.  Only to be used during debugging and development.
 // TODO -- Deleted dataset data should also be expunged.
-func (s *Service) DeleteDataset(name DatasetString) error {
+func (s *Service) DeleteData(name DataString) error {
 	// Find the data set
-	dataset, found := s.Datasets[name]
+	data, found := s.Data[name]
 	if !found {
-		return fmt.Errorf("Data set '%s' not present in DVID datastore.", name)
+		return fmt.Errorf("Data '%s' not present in DVID datastore.", name)
 	}
 	// Delete it and store updated runtimeConfig to datastore.
 	var lock sync.Mutex
 	lock.Lock()
-	stopChunkHandlers(dataset)
-	delete(s.Datasets, name)
+	stopChunkHandlers(data)
+	delete(s.Data, name)
 	err := s.runtimeConfig.Put(s.db)
 	lock.Unlock()
 	return err

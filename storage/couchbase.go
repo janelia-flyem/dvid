@@ -1,4 +1,33 @@
-// +build levigo
+// +build couchbase
+
+/*
+	Couchbase-specific issues:
+
+	1) Keys are not arbitrary sequences of bytes and impose memory requirements:
+	(http://www.couchbase.com/docs/couchbase-devguide-2.1.0/couchbase-keys.html)
+		- Keys are strings, typically enclosed by quotes for any given SDK.
+		- No spaces are allowed in a key.
+		- Separators and identifiers are allowed, such as underscore: 'person_93847'.
+		- A key must be unique within a bucket; if you attempt to store the same key in a bucket,
+		   it will either overwrite the value or return an error in the case of add().
+		- Maximum key size is 250 bytes. Couchbase Server stores all keys in RAM and does not
+		   remove these keys to free up space in RAM. Take this into consideration when you select
+		   keys and key length for your application.
+
+	2) There is a hierarchy of addressibility:  server -> pools -> buckets.
+
+	The first point can lead to issues.  See the following:
+	http://www.couchbase.com/docs/couchbase-devguide-2.1.0/couchbase-keys.html
+
+	Key size is important.  If you consider the size of keys stored for tens or hundreds
+	of millions of records. One hundred million keys which are 70 Bytes each plus meta data
+	at 54 Bytes each will require about 23 GB of RAM for document meta data. As of Couchbase
+	Server 2.0.1, metadata is 60 Bytes and as of Couchbase Server 2.1.0 it is 54 Bytes.
+
+	Since Couchbase keys cannot have spaces and presumably need to be alphanumeric, we
+	simply use hexadecimal representation for keys.  This can double the # of bytes
+	needed to represent a key.  TODO -- choose a better key representation.
+*/
 
 package storage
 
@@ -6,250 +35,111 @@ import (
 	"log"
 
 	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/janelia-flyem/go/levigo"
+	"github.com/janelia-flyem/go/go-couchbase"
 )
 
 const (
-	Version = "github.com/janelia-flyem/go/levigo"
+	Version = "github.com/janelia-flyem/go/go-couchbase"
 
-	// Default size of LRU cache that caches frequently used uncompressed blocks.
-	DefaultCacheSize = 768 * dvid.Mega
-
-	// Default # bits for Bloom Filter.  The filter reduces the number of unnecessary
-	// disk reads needed for Get() calls by a large factor.
-	DefaultBloomBits = 10
-
-	// Number of open files that can be used by the datastore.  You may need to
-	// increase this if your datastore has a large working set (budget one open
-	// file per 2MB of working set).
-	DefaultMaxOpenFiles = 1000
-
-	// Approximate size of user data packed per block.  Note that the
-	// block size specified here corresponds to uncompressed data.  The
-	// actual size of the unit read from disk may be smaller if
-	// compression is enabled.  This parameter can be changed dynamically.
-	DefaultBlockSize = 256 * dvid.Kilo
-
-	// Amount of data to build up in memory (backed by an unsorted log
-	// on disk) before converting to a sorted on-disk file.  Increasing
-	// this value will automatically increase the size of the datastore
-	// compared to the actual stored data.
-	//
-	// Larger values increase performance, especially during bulk loads.
-	// Up to two write buffers may be held in memory at the same time,
-	// so you may wish to adjust this parameter to control memory usage.
-	// Also, a larger write buffer will result in a longer recovery time
-	// the next time the database is opened.
-	DefaultWriteBufferSize = 100 * dvid.Mega
-
-	// Write Options
-
-	// If Sync=true, the write will be flushed from the operating system
-	// buffer cache is considered complete.  If set, writes will be slower.
-	//
-	// If Sync=false, and the machine crashes, some recent
-	// writes may be lost.  Note that if it is just the process that
-	// crashes (i.e., the machine does not reboot), no writes will be
-	// lost even if Sync=false.
-	//
-	// In other words, a DB write with sync==false has similar
-	// crash semantics as the "write()" system call.  A DB write
-	// with sync==true has similar crash semantics to a "write()"
-	// system call followed by "fsync()".
-	DefaultSync = false
-
-	// Read Options
-
-	// If true, all data read from underlying storage will be verified
-	// against coresponding checksums, thereby making reads slower.
-	DefaultVerifyChecksums = false
-
-	// If true, iteration caching will be disabled.  This might be of
-	// use during bulk scans.
-	DefaultDontFillCache = false
+	// TODO -- Add couchbase-specific constants
 )
 
 type Ranges []levigo.Range
 
 type Sizes []uint64
 
-// --- The Leveldb Implementation must satisfy a DataHandler interface ----
+// --- The Couchbase Implementation must satisfy a DataHandler interface ----
 
-type goLDB struct {
-	// Directory of datastore
-	directory string
+type goCouch struct {
+	// url of datastore
+	url string
 
-	// Settings for the leveldb
-	settings map[string]interface{}
-
-	// Options at time of Open()
-	options *leveldbOptions
-
-	// Leveldb connection
-	ldb *levigo.DB
+	// couchbase client
+	client *couchbase.Client
+	pool   *couchbase.Pool
+	bucket *couchbase.Bucket
 }
 
-// NewDataHandler returns a leveldb backend.
-func NewDataHandler(path string, create bool, options *Options) (db DataHandler, err error) {
-	ldbOptions := options.initBySettings(create)
-	ldbDB, err := levigo.Open(path, options.ldb().Options)
+// NewDataHandler returns a couchbase backend.
+func NewDataHandler(url string, create bool, options *Options) (db DataHandler, err error) {
+	if create {
+		err = fmt.Errorf("Couchbase must be manually installed and configured.  'init' unavailable.")
+		return
+	}
+	client, err := couchbase.Connect(url)
 	if err != nil {
 		return
 	}
-	db = &goLDB{
-		directory: path,
-		settings:  options.Settings,
-		options:   ldbOptions,
-		ldb:       ldbDB,
+	// TODO -- Optimize pool and bucket depending on volumes and versions
+	pool, err := client.GetPool("default")
+	if err != nil {
+		return
+	}
+	bucket, err := pool.GetBucket("default")
+	if err != nil {
+		return
+	}
+	db = &goCouch{
+		url:    url,
+		client: &client,
+		pool:   &pool,
+		bucket: bucket,
 	}
 	return
 }
 
 // --- DataHandler interface ----
 
-func (db *goLDB) IsKeyValueDB() bool    { return true }
-func (db *goLDB) IsJSONDatastore() bool { return false }
-func (db *goLDB) IsBulkIniter() bool    { return true }
-func (db *goLDB) IsBulkLoader() bool    { return true }
-func (db *goLDB) GetOptions() *Options  { return &Options{db.settings, db.options} }
+func (db *goCouch) IsKeyValueDB() bool     { return true }
+func (db *goCouch) IsJSONDatastore() bool  { return true }
+func (db *goCouch) ProvidesIterator() bool { return true }
+func (db *goCouch) IsBulkIniter() bool     { return true }
+func (db *goCouch) IsBulkLoader() bool     { return true }
+func (db *goCouch) IsBatcher() bool        { return true }
+func (db *goCouch) GetOptions() *Options   { return &Options{} }
 
 // ---- KeyValueDB interface -----
 
-// Close closes the leveldb and then the I/O abstraction for leveldb.
-func (db *goLDB) Close() {
+// Close closes the couchbase bucket
+func (db *goCouch) Close() {
 	if db != nil {
-		if db.ldb != nil {
-			db.ldb.Close()
-		}
-		if db.options.Options != nil {
-			db.options.Options.Close()
-		}
-		if db.options.ReadOptions != nil {
-			db.options.ReadOptions.Close()
-		}
-		if db.options.WriteOptions != nil {
-			db.options.WriteOptions.Close()
-		}
-		if db.options.filter != nil {
-			db.options.filter.Close()
-		}
-		if db.options.cache != nil {
-			db.options.cache.Close()
-		}
-		if db.options.env != nil {
-			db.options.env.Close()
+		if db.bucket != nil {
+			db.bucket.Close()
 		}
 	}
 }
 
 // Get returns a value given a key.
-func (db *goLDB) Get(k Key) (v []byte, err error) {
-	ro := db.options.ReadOptions
-	v, err = db.ldb.Get(ro, k.Bytes())
+func (db *goCouch) Get(k Key) (v []byte, err error) {
+	v, err = db.bucket.GetRaw(k.String())
 	return
 }
 
 // Put writes a value with given key.
-func (db *goLDB) Put(k Key, v []byte) (err error) {
-	wo := db.options.WriteOptions
-	err = db.ldb.Put(wo, k.Bytes(), v)
+func (db *goCouch) Put(k Key, v []byte) (err error) {
+	// Expiration time set to 0 (permanent)
+	err = db.bucket.SetRaw(k.String(), 0, v)
 	return
 }
 
 // Delete removes a value with given key.
-func (db *goLDB) Delete(k Key) (err error) {
-	wo := db.options.WriteOptions
-	err = db.ldb.Delete(wo, k.Bytes())
+func (db *goCouch) Delete(k Key) (err error) {
+	err = db.bucket.Delete(k.String())
 	return
-}
-
-// GetApproximateSizes returns the approximate number of bytes of
-// file system space used by one or more key ranges.
-func (db *goLDB) GetApproximateSizes(ranges Ranges) (sizes Sizes, err error) {
-	sizes = db.ldb.GetApproximateSizes([]levigo.Range(ranges))
-	err = nil
-	return
-}
-
-// --- Mapper interface ---
-
-// Map performs a batch read for an operation and sends the chunks to
-// datatype-specific handlers.
-func (db *goLDB) Map(op Operation) error {
-
-	datasetID := op.DatasetLocalID()
-	versionID := op.VersionLocalID()
-	channels := op.ChunkChannels()
-
-	// Traverse chunks, get key/values if not in cache,
-	// and put chunk op in queue for handler.
-	kvIterator, err := db.NewIterator()
-	defer kvIterator.Close()
-	if err != nil {
-		return err
-	}
-	indexIterator := op.IndexIterator()
-	seek := true
-
-	//dvid.Fmt(dvid.Debug, "Mapping blocks for %s\n", data)
-	DiskAccess.Lock()
-	for {
-		index := indexIterator()
-		if index == nil {
-			break
-		}
-		key := storage.Key{datasetID, versionID, index.Bytes()}
-
-		// Pull from the datastore
-		if seek || (kvIterator.Valid() && !bytes.Equal(kvIterator.Key(), key.Bytes())) {
-			kvIterator.Seek(key)
-			seek = false
-		}
-		var value []byte
-		if kvIterator.Valid() && bytes.Equal(kvIterator.Key(), key.Bytes()) {
-			serialization := kvIterator.Value()
-			value, _, err = dvid.DeserializeData(serialization, true)
-			if err != nil {
-				return err
-			}
-			kvIterator.Next()
-		} else {
-			seek = true
-			if !op.MapOnAbsentKey() {
-				continue // Simply uses zero value
-			}
-		}
-
-		// Try to spread sequential block keys among different block handlers to get
-		// most out of our concurrent processing.
-		op.WaitAdd()
-		channelNum := index.Hash(len(channels))
-
-		//dvid.Fmt(dvid.Debug, "Sending %s block %s request %s down channel %d\n",
-		//	op, Index(indexBytes).BlockCoord(data), data, channelNum)
-
-		channels[channelNum] <- &OpChunk{op, value, key, false}
-		requestChannel <- datasetID
-	}
-	DiskAccess.Unlock()
-	return nil
 }
 
 // --- IteratorMaker interface ---
 
-func (db *goLDB) NewIterator() (it Iterator, err error) {
+func (db *goCouch) NewIterator() (it Iterator, err error) {
 	ro := levigo.NewReadOptions()
 	ro.SetFillCache(false)
 	it = &goIterator{db.ldb.NewIterator(ro)}
 	return
 }
 
-// The embedded levigo.Iterator handles all other interface requirements
-// except for the ones below, which mainly handle typing conversion between
-// Key, Value and []byte.
+// --- Iterator interface ---
 
 type goIterator struct {
-	*levigo.Iterator
 }
 
 func (it goIterator) Key() []byte {
@@ -273,7 +163,7 @@ type goBatch struct {
 }
 
 // NewWriteBatch returns an implementation that allows batch writes
-func (db *goLDB) NewBatchWrite() Batch {
+func (db *goCouch) NewBatchWrite() Batch {
 	return &goBatch{levigo.NewWriteBatch(), db.options.WriteOptions, db.ldb}
 }
 

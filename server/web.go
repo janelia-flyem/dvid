@@ -106,6 +106,7 @@ func apiHandler(w http.ResponseWriter, r *http.Request) {
 	// Break URL request into arguments
 	lenPath := len(WebAPIPath)
 	url := r.URL.Path[lenPath:]
+	dvid.Fmt(dvid.Debug, "API request received: %s\n", url)
 	parts := strings.Split(url, "/")
 	if len(parts) == 0 {
 		badRequest(w, r, "Poorly formed request")

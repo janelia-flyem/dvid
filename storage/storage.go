@@ -5,6 +5,10 @@
 	a way to query which interfaces are implemented by a given DVID instance's
 	backend.
 
+	Each backend database must implement the following:
+
+		NewDataHandler(path string, create bool, options Options) (DataHandler, error)
+
 	While Key data has a number of components so key space can be managed
 	more efficiently by the backend storage, values are simply []byte at
 	this level.  We assume serialization/deserialization occur above the
@@ -21,8 +25,15 @@ import (
 )
 
 const (
-	KeyDatasetGlobal dvid.LocalID = 0
+	KeyDataGlobal    dvid.LocalID = 0
 	KeyVersionGlobal dvid.LocalID = 0
+)
+
+var (
+	// DiskAccess is a mutex to make sure we don't have goroutines simultaneously trying
+	// to access the key-value database on disk.
+	// TODO: Reexamine this in the context of parallel disk drives during cluster use.
+	DiskAccess sync.Mutex
 )
 
 /*
@@ -30,32 +41,40 @@ const (
 	identifiers and that follow a convention of how to collapse those
 	identifiers into a []byte key.  Ideally, we'd like to keep Key within
 	the datastore package and have storage independent of DVID concepts,
-	but in order to optimize the layout of data in some backend databases,
+	but in order to optimize the layout of data in some storage engines,
 	the backend drivers need the additional DVID information.  For example,
 	Couchbase allows configuration at the bucket level (RAM cache, CPUs)
 	and datasets could be placed in different buckets.
 
 	Keys have the following components:
 
-	1) Dataset: The DVID instance-specific data index where the 0 index is
+	1) Data: The DVID server-specific data index where the 0 index is
 	     a global dataset like DVID configuration data.
-	2) Version: The DVID instance-specific version index that is
+	2) Version: The DVID server-specific version index that is
 	     fewer bytes than a complete UUID.
 	3) Index: The datatype-specific index (e.g., spatiotemporal) that allows
 	     partitioning of the data.
 */
 type Key struct {
-	Dataset dvid.LocalID
+	Data    dvid.LocalID
 	Version dvid.LocalID
 	Index   []byte
 }
 
 // Bytes returns a slice of bytes derived from the concatenation of the key elements.
 func (key *Key) Bytes() (b []byte) {
-	b = key.Dataset.Bytes()
+	b = key.Data.Bytes()
 	b = append(b, key.Version.Bytes()...)
 	b = append(b, key.Index...)
 	return
+}
+
+// Bytes returns a string derived from the concatenation of the key elements.
+func (key *Key) BytesString() string {
+	b = key.Data.Bytes()
+	b = append(b, key.Version.Bytes()...)
+	b = append(b, key.Index...)
+	return string(b)
 }
 
 // String returns a hexadecimal representation of the bytes encoding a key
@@ -94,17 +113,53 @@ func (opt *Options) IntSetting(key string) (setting int, ok bool) {
 	return
 }
 
+// OpChunk is the unit of data passed from datastore to datatype-specific
+// chunk handlers.
+type OpChunk struct {
+	Operation
+	Chunk    []byte
+	Key      storage.Key
+	shutdown bool
+}
+
+// Each key can be hashed onto a consistent chunk channel within the slice of channels.
+type OpChunkChannels ([]chan *OpChunk)
+
+// Operation provides an abstract interface for a mapping, which performs
+// a batch read of keys and sends chunks (or nil values if keys don't exist)
+// to the data chunk handler.
+type Operation interface {
+	// ChunkChannels returns the array of channels available for this op's dataset.
+	ChunkChannels() OpChunkChannels
+
+	// DataLocalID returns a DVID instance-specific id for this data.  The id
+	// can be held in a relatively small number of bytes and is a key component.
+	DataLocalID() dvid.LocalID
+
+	// The version node on which we are performing the operation.
+	VersionLocalID() dvid.LocalID
+
+	// Should we map, i.e., send chunks to handlers over channel, if a given
+	// chunk key is absent?  This tends to be true for PUT operations and
+	// false for GET operations if absent keys resolve to empty chunk values.
+	MapOnAbsentKey() bool
+
+	// Returns an IndexIterator that steps through all chunks for this operation.
+	IndexIterator() IndexIterator
+
+	// WaitAdd increments the wait queue for the operation.
+	WaitAdd()
+
+	// Wait blocks until the operation is complete.
+	Wait()
+}
+
 // Requirements lists required backend interfaces for a type.
 type Requirements struct {
-	Iterator      bool
 	JSONDatastore bool
 	BulkIniter    bool
 	BulkLoader    bool
-	Batcher       bool
 }
-
-// Each backend database must implement the following:
-// NewDataHandler(path string, create bool, options Options) (DataHandler, error)
 
 // DataHandler implementations can fulfill a variety of interfaces.  Other parts
 // of DVID, most notably the data type implementations, need to know what's available.
@@ -114,12 +169,14 @@ type DataHandler interface {
 	// All backends must supply basic key/value store.
 	KeyValueDB
 
+	// All backends must allow mapping of an operation by sending chunks of data
+	// down channel to datatype-specific handlers.
+	Map(op Operation)
+
 	// Let clients know which interfaces are available with this backend.
-	ProvidesIterator() bool
 	IsJSONDatastore() bool
 	IsBulkIniter() bool
 	IsBulkLoader() bool
-	IsBatcher() bool
 
 	GetOptions() *Options
 }
@@ -174,45 +231,4 @@ type BulkIniter interface {
 // amount of data.  For some key-value databases, this requires keys to
 // be presorted.
 type BulkLoader interface {
-}
-
-// IteratorMakers are backends that support Iterators.
-type IteratorMaker interface {
-	// NewIterator returns a read-only Iterator.
-	NewIterator() (it Iterator, err error)
-}
-
-// Iterator provides an interface to a read-only iterator that allows
-// easy sequential scanning of key/value pairs.
-type Iterator interface {
-	// Close deallocates the iterator and freeing any underlying struct.
-	Close()
-
-	// GetError returns any error that occured during iteration.
-	GetError() error
-
-	// Key returns a copy of the key for current iterator position.
-	Key() []byte
-
-	// Next moves the iterator to the next sequential key.
-	Next()
-
-	// Prev moves the iterator to the previous sequential key.
-	Prev()
-
-	// Seek moves the iterator to the position of the given key.
-	Seek(key Key)
-
-	// SeekToFirst moves the iterator to the first key in the datastore.
-	SeekToFirst()
-
-	// SeekToLast moves the iterator to the last key in the datastore.
-	SeekToLast()
-
-	// Valid returns false if the iterator has iterated before the first key
-	// or past the last key.
-	Valid() bool
-
-	// Value returns a copy of the value for current iterator position.
-	Value() []byte
 }

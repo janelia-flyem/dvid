@@ -46,7 +46,7 @@ func NewTerminal(datastoreDir, rpcAddress string) *Terminal {
 		fmt.Printf("Did not find DVID server for RPC at %s: %s\n", rpcAddress, err.Error())
 		client = nil // Close connection if any error and try serverless mode.
 	} else {
-		fmt.Printf("Found DVID server for RPC at %s\n", rpcAddress)
+		dvid.Fmt(dvid.Debug, "Found DVID server for RPC at %s\n", rpcAddress)
 	}
 	return &Terminal{
 		datastoreDir: datastoreDir,

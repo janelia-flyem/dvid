@@ -439,10 +439,10 @@ func (dset *Dataset) SliceImage(v *Voxels, z int) (img image.Image, err error) {
 	return
 }
 
-// --- datastore.Operation interface ----
+// --- storage.Operation interface ----
 
 // Operation holds type-specific data for operations and can be used to
-// map blocks to handlers.
+// map chunks to chunk handler channels.
 type Operation struct {
 	*Dataset
 	data      *Voxels
@@ -476,28 +476,15 @@ func (pOp *Operation) IndexIterator() datastore.IndexIterator {
 	return pOp.NewIndexIterator(pOp.data)
 }
 
-func (pOp *Operation) IsReadOnly() bool {
+func (pOp *Operation) MapOnAbsentKey() bool {
 	if pOp.op == GetOp {
-		return true
+		return false
 	}
-	return false
-}
-
-func (pOp *Operation) DatastoreService() *datastore.Service {
-	s := server.DataService()
-	return s.Service
-}
-
-func (pOp *Operation) DatasetService() datastore.DatasetService {
-	return pOp.Dataset
+	return true
 }
 
 func (pOp *Operation) VersionLocalID() dvid.LocalID {
 	return pOp.versionID
-}
-
-func (pOp *Operation) Map() error {
-	return datastore.Map(pOp)
 }
 
 func (pOp *Operation) WaitAdd() {
@@ -593,7 +580,7 @@ func (dset *Dataset) ServerAdd(request datastore.Request, reply *datastore.Respo
 				lastErr = err
 			}
 		}
-		offset = offset.Add(dvid.VoxelCoord{0, 0, 1})
+		offset = offset.Add(Coord{0, 0, 1})
 	}
 	if lastErr != nil {
 		return fmt.Errorf("Error: %d of %d images successfully added [%s]\n",

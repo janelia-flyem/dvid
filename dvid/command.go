@@ -7,7 +7,6 @@
 package dvid
 
 import (
-	"fmt"
 	"strings"
 )
 
@@ -17,10 +16,15 @@ const (
 	KeyPlane = "plane"
 )
 
-var setKeys = map[string]bool{
-	"plane": true,
-	"uuid":  true,
-}
+var (
+	// Channel for graceful shutdown of goroutines
+	HaltChannel chan bool
+
+	setKeys = map[string]bool{
+		"plane": true,
+		"uuid":  true,
+	}
+)
 
 // Response provides a few string fields to pass information back from
 // a remote operation.
@@ -125,33 +129,5 @@ func getArgs(cmd Command, startPos int, targets ...*string) (overflow []string) 
 			}
 		}
 	}
-	return
-}
-
-// PointStr is a n-dimensional coordinate in string format "x,y,z,..."
-// where each coordinate is a 32-bit integer.
-type PointStr string
-
-func (s PointStr) VoxelCoord() (coord VoxelCoord, err error) {
-	_, err = fmt.Sscanf(string(s), "%d,%d,%d", &coord[0], &coord[1], &coord[2])
-	return
-}
-
-func (s PointStr) Point3d() (coord Point3d, err error) {
-	_, err = fmt.Sscanf(string(s), "%d,%d,%d", &coord[0], &coord[1], &coord[2])
-	return
-}
-
-func (s PointStr) Point2d() (point Point2d, err error) {
-	_, err = fmt.Sscanf(string(s), "%d,%d", &point[0], &point[1])
-	return
-}
-
-// VectorStr is a n-dimensional coordinate in string format "x,y,z,....""
-// where each coordinate is a 32-bit float.
-type VectorStr string
-
-func (s VectorStr) Vector3d() (v Vector3d, err error) {
-	_, err = fmt.Sscanf(string(s), "%f,%f,%f", &v[0], &v[1], &v[2])
 	return
 }

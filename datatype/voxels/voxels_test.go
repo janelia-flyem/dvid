@@ -1,7 +1,8 @@
-package test
+package voxels
 
 import (
 	. "github.com/janelia-flyem/go/gocheck"
+	_ "testing"
 
 	_ "github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -71,8 +72,8 @@ func (suite *DataSuite) TestXYSliceGrayscale8(c *C) {
 	data := []uint8(MakeSlice(ox, oy, oz, nx, ny))
 	img := dvid.ImageGrayFromData(data, nx, ny)
 
-	slice := dvid.NewSliceXY(dvid.VoxelCoord{int32(ox), int32(oy), int32(oz)},
-		dvid.Point2d{int32(nx), int32(ny)})
+	slice := voxels.NewSliceXY(voxels.Coord{int32(ox), int32(oy), int32(oz)},
+		voxels.Point2d{int32(nx), int32(ny)})
 
 	// Store it into datastore at head version
 	versionID, err := suite.service.VersionIDFromUUID(suite.head)
@@ -111,8 +112,8 @@ func (suite *DataSuite) TestXZSliceGrayscale8(c *C) {
 	data := []uint8(MakeSlice(ox, oy, oz, nx, ny))
 	img := dvid.ImageGrayFromData(data, nx, ny)
 
-	slice := dvid.NewSliceXZ(dvid.VoxelCoord{int32(ox), int32(oy), int32(oz)},
-		dvid.Point2d{int32(nx), int32(ny)})
+	slice := voxels.NewSliceXZ(voxels.Coord{int32(ox), int32(oy), int32(oz)},
+		voxels.Point2d{int32(nx), int32(ny)})
 
 	// Store it into datastore at head version
 	versionID, err := suite.service.VersionIDFromUUID(suite.head)
@@ -151,8 +152,8 @@ func (suite *DataSuite) TestYZSliceGrayscale8(c *C) {
 	data := []uint8(MakeSlice(ox, oy, oz, nx, ny))
 	img := dvid.ImageGrayFromData(data, nx, ny)
 
-	slice := dvid.NewSliceYZ(dvid.VoxelCoord{int32(ox), int32(oy), int32(oz)},
-		dvid.Point2d{int32(nx), int32(ny)})
+	slice := voxels.NewSliceYZ(voxels.Coord{int32(ox), int32(oy), int32(oz)},
+		voxels.Point2d{int32(nx), int32(ny)})
 
 	// Store it into datastore at head version
 	versionID, err := suite.service.VersionIDFromUUID(suite.head)
