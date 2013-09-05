@@ -75,7 +75,7 @@ type Sizes []uint64
 
 // --- The Leveldb Implementation must satisfy a DataHandler interface ----
 
-type goLDB struct {
+type LevelDB struct {
 	// Directory of datastore
 	directory string
 
@@ -89,14 +89,14 @@ type goLDB struct {
 	ldb *levigo.DB
 }
 
-// NewDataHandler returns a leveldb backend.
-func NewDataHandler(path string, create bool, options *Options) (db DataHandler, err error) {
+// NewStore returns a leveldb backend.
+func NewStore(path string, create bool, options *Options) (store *LevelDB, err error) {
 	ldbOptions := options.initBySettings(create)
 	ldbDB, err := levigo.Open(path, options.ldb().Options)
 	if err != nil {
 		return
 	}
-	db = &goLDB{
+	store = &LevelDB{
 		directory: path,
 		settings:  options.Settings,
 		options:   ldbOptions,
@@ -105,18 +105,18 @@ func NewDataHandler(path string, create bool, options *Options) (db DataHandler,
 	return
 }
 
-// --- DataHandler interface ----
+// ---- DataHandler interface ----
 
-func (db *goLDB) IsKeyValueDB() bool    { return true }
-func (db *goLDB) IsJSONDatastore() bool { return false }
-func (db *goLDB) IsBulkIniter() bool    { return true }
-func (db *goLDB) IsBulkLoader() bool    { return true }
-func (db *goLDB) GetOptions() *Options  { return &Options{db.settings, db.options} }
+func (db *LevelDB) IsBatcher() bool    { return true }
+func (db *LevelDB) IsBulkIniter() bool { return true }
+func (db *LevelDB) IsBulkWriter() bool { return true }
+
+func (db *LevelDB) GetOptions() *Options { return &Options{db.settings, db.options} }
 
 // ---- KeyValueDB interface -----
 
 // Close closes the leveldb and then the I/O abstraction for leveldb.
-func (db *goLDB) Close() {
+func (db *LevelDB) Close() {
 	if db != nil {
 		if db.ldb != nil {
 			db.ldb.Close()
@@ -143,125 +143,76 @@ func (db *goLDB) Close() {
 }
 
 // Get returns a value given a key.
-func (db *goLDB) Get(k Key) (v []byte, err error) {
+func (db *LevelDB) Get(k *Key) (v []byte, err error) {
 	ro := db.options.ReadOptions
 	v, err = db.ldb.Get(ro, k.Bytes())
 	return
 }
 
+// GetRange returns a range of values spanning (kStart, kEnd) keys.
+func (db *LevelDB) GetRange(kStart, kEnd *Key) (values []KeyValue, err error) {
+	ro := levigo.NewReadOptions()
+	ro.SetFillCache(false)
+	it := db.ldb.NewIterator(ro)
+	defer it.Close()
+
+	values = []KeyValue{}
+	it.Seek(kStart.Bytes())
+	for it = it; it.Valid(); it.Next() {
+		var key *Key
+		key, err = kStart.BytesToKey(it.Key())
+		if err != nil {
+			return
+		}
+		values = append(values, KeyValue{key, it.Value()})
+	}
+	err = it.GetError()
+	return
+}
+
+// SendRange sends a range of key/value pairs to the specified channels using
+// each key's Index.Hash() to determine the precise channel.
+func (db *LevelDB) SendRange(kStart, kEnd *Key, mapOp *MapOp) (err error) {
+	ro := levigo.NewReadOptions()
+	ro.SetFillCache(false)
+	it := db.ldb.NewIterator(ro)
+	defer it.Close()
+
+	it.Seek(kStart.Bytes())
+	for it = it; it.Valid(); it.Next() {
+		var key *Key
+		key, err = kStart.BytesToKey(it.Key())
+		if err != nil {
+			return
+		}
+		num := key.Index.Hash(len(mapOp.Channels))
+
+		if mapOp.Wg != nil {
+			mapOp.Wg.Add(1)
+		}
+		mapOp.Channels[num] <- &Chunk{mapOp.ChunkOp, KeyValue{key, it.Value()}}
+	}
+	err = it.GetError()
+	return
+}
+
 // Put writes a value with given key.
-func (db *goLDB) Put(k Key, v []byte) (err error) {
+func (db *LevelDB) Put(k *Key, v []byte) (err error) {
 	wo := db.options.WriteOptions
 	err = db.ldb.Put(wo, k.Bytes(), v)
 	return
 }
 
+// Put key-value pairs that have already been sorted in sequential key order.
+func (db *LevelDB) PutRange(values []KeyValue) (err error) {
+	return
+}
+
 // Delete removes a value with given key.
-func (db *goLDB) Delete(k Key) (err error) {
+func (db *LevelDB) Delete(k *Key) (err error) {
 	wo := db.options.WriteOptions
 	err = db.ldb.Delete(wo, k.Bytes())
 	return
-}
-
-// GetApproximateSizes returns the approximate number of bytes of
-// file system space used by one or more key ranges.
-func (db *goLDB) GetApproximateSizes(ranges Ranges) (sizes Sizes, err error) {
-	sizes = db.ldb.GetApproximateSizes([]levigo.Range(ranges))
-	err = nil
-	return
-}
-
-// --- Mapper interface ---
-
-// Map performs a batch read for an operation and sends the chunks to
-// datatype-specific handlers.
-func (db *goLDB) Map(op Operation) error {
-
-	datasetID := op.DatasetLocalID()
-	versionID := op.VersionLocalID()
-	channels := op.ChunkChannels()
-
-	// Traverse chunks, get key/values if not in cache,
-	// and put chunk op in queue for handler.
-	kvIterator, err := db.NewIterator()
-	defer kvIterator.Close()
-	if err != nil {
-		return err
-	}
-	indexIterator := op.IndexIterator()
-	seek := true
-
-	//dvid.Fmt(dvid.Debug, "Mapping blocks for %s\n", data)
-	DiskAccess.Lock()
-	for {
-		index := indexIterator()
-		if index == nil {
-			break
-		}
-		key := storage.Key{datasetID, versionID, index.Bytes()}
-
-		// Pull from the datastore
-		if seek || (kvIterator.Valid() && !bytes.Equal(kvIterator.Key(), key.Bytes())) {
-			kvIterator.Seek(key)
-			seek = false
-		}
-		var value []byte
-		if kvIterator.Valid() && bytes.Equal(kvIterator.Key(), key.Bytes()) {
-			serialization := kvIterator.Value()
-			value, _, err = dvid.DeserializeData(serialization, true)
-			if err != nil {
-				return err
-			}
-			kvIterator.Next()
-		} else {
-			seek = true
-			if !op.MapOnAbsentKey() {
-				continue // Simply uses zero value
-			}
-		}
-
-		// Try to spread sequential block keys among different block handlers to get
-		// most out of our concurrent processing.
-		op.WaitAdd()
-		channelNum := index.Hash(len(channels))
-
-		//dvid.Fmt(dvid.Debug, "Sending %s block %s request %s down channel %d\n",
-		//	op, Index(indexBytes).BlockCoord(data), data, channelNum)
-
-		channels[channelNum] <- &OpChunk{op, value, key, false}
-		requestChannel <- datasetID
-	}
-	DiskAccess.Unlock()
-	return nil
-}
-
-// --- IteratorMaker interface ---
-
-func (db *goLDB) NewIterator() (it Iterator, err error) {
-	ro := levigo.NewReadOptions()
-	ro.SetFillCache(false)
-	it = &goIterator{db.ldb.NewIterator(ro)}
-	return
-}
-
-// The embedded levigo.Iterator handles all other interface requirements
-// except for the ones below, which mainly handle typing conversion between
-// Key, Value and []byte.
-
-type goIterator struct {
-	*levigo.Iterator
-}
-
-func (it goIterator) Key() []byte {
-	return it.Iterator.Key()
-}
-
-func (it goIterator) Seek(key Key) {
-	it.Iterator.Seek(key.Bytes())
-}
-
-func (it goIterator) Value() []byte {
-	return it.Iterator.Value()
 }
 
 // --- Batcher interface ----
@@ -272,23 +223,23 @@ type goBatch struct {
 	ldb *levigo.DB
 }
 
-// NewWriteBatch returns an implementation that allows batch writes
-func (db *goLDB) NewBatchWrite() Batch {
+// NewBatch returns an implementation that allows batch writes
+func (db *LevelDB) NewBatch() Batch {
 	return &goBatch{levigo.NewWriteBatch(), db.options.WriteOptions, db.ldb}
 }
 
 // --- Batch interface ---
 
-func (batch *goBatch) Write() (err error) {
+func (batch *goBatch) Commit() (err error) {
 	err = batch.ldb.Write(batch.wo, batch.WriteBatch)
 	return
 }
 
-func (batch *goBatch) Delete(k Key) {
+func (batch *goBatch) Delete(k *Key) {
 	batch.WriteBatch.Delete(k.Bytes())
 }
 
-func (batch *goBatch) Put(k Key, v []byte) {
+func (batch *goBatch) Put(k *Key, v []byte) {
 	batch.WriteBatch.Put(k.Bytes(), v)
 }
 

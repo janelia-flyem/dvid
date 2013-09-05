@@ -54,15 +54,15 @@ func MakeVolume(ox, oy, oz, nx, ny, nz int) []byte {
 }
 
 func (suite *DataSuite) TestXYSliceGrayscale8(c *C) {
-	err := suite.service.NewDataset("grayscale", "grayscale8", dvid.Config{})
+	err := suite.service.NewData("grayscale", "grayscale8", dvid.Config{})
 	c.Assert(err, IsNil)
 
-	dset, err := suite.service.DatasetService("grayscale")
+	dset, err := suite.service.DataService("grayscale")
 	c.Assert(err, IsNil)
 
-	grayscale, ok := dset.(*voxels.Dataset)
+	grayscale, ok := dset.(*voxels.Data)
 	if !ok {
-		c.Errorf("Can't cast grayscale8 data service into grayscale8.Dataset\n")
+		c.Errorf("Can't cast grayscale8 data service into grayscale8.Data\n")
 	}
 
 	// Create a fake 100x100 8-bit grayscale image
@@ -94,15 +94,15 @@ func (suite *DataSuite) TestXYSliceGrayscale8(c *C) {
 }
 
 func (suite *DataSuite) TestXZSliceGrayscale8(c *C) {
-	err := suite.service.NewDataset("grayscale", "grayscale8", dvid.Config{})
+	err := suite.service.NewData("grayscale", "grayscale8", dvid.Config{})
 	c.Assert(err, IsNil)
 
-	dset, err := suite.service.DatasetService("grayscale")
+	dset, err := suite.service.DataService("grayscale")
 	c.Assert(err, IsNil)
 
-	grayscale, ok := dset.(*voxels.Dataset)
+	grayscale, ok := dset.(*voxels.Data)
 	if !ok {
-		c.Errorf("Can't cast grayscale8 data service into grayscale8.Dataset\n")
+		c.Errorf("Can't cast grayscale8 data service into grayscale8.Data\n")
 	}
 
 	// Create a fake 100x100 8-bit grayscale image
@@ -134,15 +134,15 @@ func (suite *DataSuite) TestXZSliceGrayscale8(c *C) {
 }
 
 func (suite *DataSuite) TestYZSliceGrayscale8(c *C) {
-	err := suite.service.NewDataset("grayscale", "grayscale8", dvid.Config{})
+	err := suite.service.NewData("grayscale", "grayscale8", dvid.Config{})
 	c.Assert(err, IsNil)
 
-	dset, err := suite.service.DatasetService("grayscale")
+	dset, err := suite.service.DataService("grayscale")
 	c.Assert(err, IsNil)
 
-	grayscale, ok := dset.(*voxels.Dataset)
+	grayscale, ok := dset.(*voxels.Data)
 	if !ok {
-		c.Errorf("Can't cast grayscale8 data service into grayscale8.Dataset\n")
+		c.Errorf("Can't cast grayscale8 data service into grayscale8.Data\n")
 	}
 
 	// Create a fake 100x100 8-bit grayscale image

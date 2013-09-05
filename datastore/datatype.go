@@ -6,8 +6,11 @@ package datastore
 
 import (
 	"fmt"
+	"log"
 	"net/http"
+	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
@@ -43,7 +46,7 @@ type TypeService interface {
 	Help() string
 
 	// Create Data that is an instance of this data type
-	NewData(id DatasetID, config dvid.Config) DatasetService
+	NewData(id DataID, config dvid.Config) DataService
 }
 
 // CompiledTypes is the set of registered data types compiled into DVID and
@@ -149,13 +152,13 @@ type Response struct {
 
 type ArbitraryOutput interface{}
 
-// DataString is a string that is the name of a DVID data set.
+// DataString is a string that is the name of DVID data.
 // This gets its own type for documentation and also provide static error checks
 // to prevent conflation of type name from data name.
 type DataString string
 
-// DataService is an interface for operations on arbitrary datas that
-// use a supported TypeService.  Block handlers can be allocated at this level,
+// DataService is an interface for operations on arbitrary data that
+// use a supported TypeService.  Chunk handlers are allocated at this level,
 // so an implementation can own a number of goroutines.
 //
 // DataService operations are completely type-specific, and each datatype
@@ -172,12 +175,6 @@ type DataService interface {
 	// as a key component.
 	DataLocalID() dvid.LocalID
 
-	// ChunkHandler processes a chunk of data in a mapped operation.
-	ChunkHandler(op *ChunkOp)
-
-	// Handle iteration through a data in abstract way.
-	NewIndexIterator(extents interface{}) IndexIterator
-
 	// DoRPC handles command line and RPC commands specific to a data type
 	DoRPC(request Request, reply *Response) error
 
@@ -186,6 +183,21 @@ type DataService interface {
 
 	// Returns standard error response for unknown commands
 	UnknownCommand(r Request) error
+}
+
+// ChunkHandlers have a set of channels on which the storage engine can send them
+// chunks of data for processing.  They are goroutines assigned to each data, and
+// each chunk location is always sent to the same handler via a hash of its Index.
+type ChunkHandler interface {
+	ChannelSpecs() (number, bufferSize int)
+
+	StartChunkHandlers()
+
+	StopChunkHandlers()
+
+	ChunkChannels() []storage.ChunkChannel
+
+	ProcessChunk(*storage.Chunk)
 }
 
 // DataID identifies data within a DVID server.
@@ -204,10 +216,13 @@ type Data struct {
 
 	// Underlying implementation of this data is a Datatype
 	Datatype TypeService
+
+	// Data can be chunked and mapped over channels for processing.
+	Channels []storage.ChunkChannel
 }
 
 func NewData(id DataID, t TypeService) *Data {
-	return &Data{id, t}
+	return &Data{DataID: id, Datatype: t}
 }
 
 func (d *Data) UnknownCommand(request Request) error {
@@ -231,150 +246,93 @@ func (d *Data) NewData(id DataID, config dvid.Config) DataService {
 	return d.Datatype.NewData(id, config)
 }
 
-// Constants that allow tuning of DVID for a particular target computer.
-const (
-	// Default number of block handlers to use per data.
-	DefaultNumChunkHandlers = 8
+// ---- ChunkHandler interface ----
 
-	// Number of chunk write requests that can be buffered on each block handler
+const (
+	// Number of chunks that can be buffered on each channel
 	// before sender is blocked.
-	ChunkHandlerBufferSize = 100000
+	ChannelBufferSize = 1000
 )
+
+/*
+// Handler encapsulates the pool of chunk channels for data-specific handlers.
+type Handler struct {
+	channels []storage.ChunkChannel
+	haltchan chan bool
+}
 
 // Each data has a pool of channels to communicate with gouroutine handlers.
-type ChunkChannels map[DataString]([]chan *ChunkOp)
-
-// Track requested/completed block ops
-type loadStruct struct {
-	Requests  int
-	Completed int
-}
-type loadMap map[DataString]loadStruct
-
-var (
-	chunkChannels ChunkChannels
-
-	// Monitor the requested and completed block ops
-	loadLastSec    loadMap
-	loadAccess     sync.RWMutex
-	doneChannel    chan DataString
-	requestChannel chan DataString
-)
+var dataHandlers map[DataString]Handler
 
 func init() {
-	chunkChannels = make(ChunkChannels)
-	loadLastSec = make(loadMap)
-	doneChannel = make(chan DataString)
-	requestChannel = make(chan DataString)
-	go loadMonitor()
+	dataHandlers = make(map[DataString]Handler)
 }
+*/
 
-// Monitors the # of requests/done on block handlers per data set.
-func loadMonitor() {
-	secondTick := time.Tick(1 * time.Second)
-	requests := make(map[DataString]int)
-	completed := make(map[DataString]int)
-	for {
-		select {
-		case name := <-doneChannel:
-			completed[name]++
-		case name := <-requestChannel:
-			requests[name]++
-		case <-secondTick:
-			loadAccess.RLock()
-			for name, _ := range loadLastSec {
-				loadLastSec[name] = loadStruct{
-					Requests:  requests[name],
-					Completed: completed[name],
-				}
-				requests[name] = 0
-				completed[name] = 0
-			}
-			loadAccess.RUnlock()
-		}
+// HaltOp is an empty struct to signal chunk handlers to quit.
+type HaltOp struct{}
+
+// HaltChunk returns a chunk with a HaltOp
+func HaltChunk() *storage.Chunk {
+	return &storage.Chunk{
+		ChunkOp: storage.ChunkOp{Op: HaltOp{}},
 	}
 }
 
-// StartChunkHandlers starts goroutines that handle chunks for every data in
-// the service.
-func (s *Service) StartChunkHandlers() {
-	for _, data := range s.Datas {
-		StartDataChunkHandlers(data)
-	}
+// ChannelSpecs returns the default number of chunk channels/handlers and
+// the buffer size of a channel.
+func (d *Data) ChannelSpecs() (number, bufferSize int) {
+	return runtime.NumCPU(), ChannelBufferSize
 }
 
-// StartDataChunkHandlers makes sure we have chunk handler goroutines for each
-// data set.  Chunks are routed to the same handler each time, so concurrent
-// access to a chunk by multiple requests are funneled sequentially into a
-// channel reserved for that chunk's handler.
-func StartDataChunkHandlers(data DataService) {
-	dataName := data.DataName()
+// StartChunkHandlers starts goroutines that handle chunks for this data.
+func (d *Data) StartChunkHandlers() {
+	dataName := d.DataName()
+	StartMonitor(dataName)
 
-	loadAccess.Lock()
-	loadLastSec[dataName] = loadStruct{}
-	loadAccess.Unlock()
-
-	var channelMapAccess sync.Mutex
-	channelMapAccess.Lock()
-	// Do we have channels and handlers for this type and image version?
-	_, found := chunkChannels[dataName]
-	if found {
+	var mapAccess sync.Mutex
+	mapAccess.Lock()
+	if d.Channels != nil {
 		log.Printf("Already have chunk handlers for data set '%s' (%s)\n",
-			dataName, data.DatatypeName())
+			dataName, d.DatatypeName())
 	} else {
-		log.Printf("Starting %d block handlers for data set '%s' (%s)...\n",
-			data.NumChunkHandlers(), dataName, data.DatatypeName())
-		channels := make([]chan *ChunkOp, 0, data.NumChunkHandlers())
-		for i := 0; i < data.NumChunkHandlers(); i++ {
-			channel := make(chan *ChunkOp, ChunkHandlerBufferSize)
+		numHandlers, bufferSize := d.ChannelSpecs()
+		log.Printf("Starting %d chunk handlers for data '%s' (%s)...\n",
+			numHandlers, dataName, d.DatatypeName())
+		channels := make([]storage.ChunkChannel, 0, numHandlers)
+		for i := 0; i < numHandlers; i++ {
+			channel := make(storage.ChunkChannel, bufferSize)
 			channels = append(channels, channel)
-			go func(i int, c chan *ChunkOp) {
+			go func(i int, c storage.ChunkChannel) {
 				dvid.Log(dvid.Debug, "Starting chunk handler %d for %s...",
 					i+1, dataName)
 				for {
-					chunkOp := <-c
-					if chunkOp == nil {
-						log.Fatalln("Received nil chunk in chunk handler!")
-					}
-					if chunkOp.shutdown {
+					chunk := <-c
+					switch chunk.Op.(type) {
+					case *storage.Chunk:
+						d.ProcessChunk(chunk)
+						DoneChannel <- dataName
+					case HaltOp:
 						dvid.Log(dvid.Debug, "Shutting down chunk handler %d for %s...",
 							i+1, dataName)
 						break
 					}
-					//dvid.Fmt(dvid.Debug, "Running handler on block %x...\n", block.IndexKey)
-					data.ChunkHandler(chunkOp)
-					doneChannel <- dataName
 				}
 			}(i, channel)
-			// TODO -- keep stats on # of handlers
 		}
-		chunkChannels[dataName] = channels
+		d.Channels = channels
 	}
-	channelMapAccess.Unlock()
+	mapAccess.Unlock()
 }
 
-func stopChunkHandlers(data DataService) {
-	// Remove load stat cache
-	loadAccess.Lock()
-	delete(loadLastSec, data.DataName())
-	loadAccess.Unlock()
-
-	// Send shutdown op to all handlers for this data
-	var haltOp ChunkOp
-	haltOp.shutdown = true
-	for _, c := range chunkChannels[data.DataName()] {
-		c <- &haltOp
+// StopChunkHandlers halts the goroutines handling chunks for this data.
+func (d *Data) StopChunkHandlers() {
+	for _, channel := range d.Channels {
+		channel <- HaltChunk()
 	}
+	StopMonitor(d.DataName())
 }
 
-// ChunkLoadJSON returns a JSON description of the chunk op requests for each data.
-func ChunkLoadJSON() (jsonStr string, err error) {
-	loadAccess.RLock()
-	m, err := json.Marshal(loadLastSec)
-	loadAccess.RUnlock()
-	if err != nil {
-		return
-	}
-	jsonStr = string(m)
-	return
+func (d *Data) ProcessChunk(chunk *storage.Chunk) {
+	// Should be implemented by type.
 }

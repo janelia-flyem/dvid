@@ -25,14 +25,14 @@ var (
 	KeyConfig = storage.Key{
 		Data:    storage.KeyDataGlobal,
 		Version: storage.KeyVersionGlobal,
-		Index:   []byte{0x01},
+		Index:   dvid.IndexUint8(1),
 	}
 
 	// KeyVersionDAG is the key for a Version DAG.
 	KeyVersionDAG = storage.Key{
 		Data:    storage.KeyDataGlobal,
 		Version: storage.KeyVersionGlobal,
-		Index:   []byte{0x02},
+		Index:   dvid.IndexUint8(2),
 	}
 )
 
@@ -51,7 +51,7 @@ type runtimeConfig struct {
 func (config *runtimeConfig) Get(db storage.KeyValueDB) (err error) {
 	// Get data
 	var data []byte
-	data, err = db.Get(KeyConfig)
+	data, err = db.Get(&KeyConfig)
 	if err != nil {
 		return
 	}
@@ -71,7 +71,7 @@ func (config *runtimeConfig) Put(db storage.KeyValueDB) (err error) {
 	}
 
 	// Put data
-	return db.Put(KeyConfig, []byte(serialization))
+	return db.Put(&KeyConfig, []byte(serialization))
 }
 
 // Serialize returns a serialization of configuration with Snappy compression and

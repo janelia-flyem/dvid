@@ -15,6 +15,7 @@ import (
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
+	"github.com/janelia-flyem/dvid/storage"
 
 	"github.com/janelia-flyem/go/nrsc"
 )
@@ -74,6 +75,14 @@ type Service struct {
 // multiple (polyglot) persistence backends attached to that one service.
 func DataService() *Service {
 	return &runningService
+}
+
+// KeyValueDB returns the current key-value datastore or nil if it's not available.
+func KeyValueDB() storage.KeyValueDB {
+	if runningService.Service == nil {
+		return nil
+	}
+	return runningService.KeyValueDB()
 }
 
 // Shutdown handles graceful cleanup of server functions before exiting DVID.

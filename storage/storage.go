@@ -1,25 +1,25 @@
 /*
-	Package storage provides a unified interface to a number of datastore
-	implementations.  Since each datastore has different capabilities, this
-	package defines a number of interfaces and the DataHandler interface provides
-	a way to query which interfaces are implemented by a given DVID instance's
-	backend.
+	Package storage provides a unified interface to a number of storage engines.
+	Since each storage engine has different capabilities, this package defines a
+	number of interfaces and the DataHandler interface provides a way to query
+	which interfaces are implemented by a given storage engine.
 
-	Each backend database must implement the following:
+	Each storage engine must implement the following:
 
 		NewDataHandler(path string, create bool, options Options) (DataHandler, error)
 
 	While Key data has a number of components so key space can be managed
-	more efficiently by the backend storage, values are simply []byte at
+	more efficiently by the storage engine, values are simply []byte at
 	this level.  We assume serialization/deserialization occur above the
 	storage level.
 */
 package storage
 
 import (
-	_ "encoding/binary"
+	"bytes"
 	"fmt"
 	"log"
+	"sync"
 
 	"github.com/janelia-flyem/dvid/dvid"
 )
@@ -27,13 +27,6 @@ import (
 const (
 	KeyDataGlobal    dvid.LocalID = 0
 	KeyVersionGlobal dvid.LocalID = 0
-)
-
-var (
-	// DiskAccess is a mutex to make sure we don't have goroutines simultaneously trying
-	// to access the key-value database on disk.
-	// TODO: Reexamine this in the context of parallel disk drives during cluster use.
-	DiskAccess sync.Mutex
 )
 
 /*
@@ -48,39 +41,88 @@ var (
 
 	Keys have the following components:
 
-	1) Data: The DVID server-specific data index where the 0 index is
-	     a global dataset like DVID configuration data.
+	1) Data: The DVID server-specific data index where index 0 is
+	     a global dataset like DVID configuration data.  Index 1 might be
+	     something like a grayscale (uint8) data set, etc.
 	2) Version: The DVID server-specific version index that is
 	     fewer bytes than a complete UUID.
-	3) Index: The datatype-specific index (e.g., spatiotemporal) that allows
-	     partitioning of the data.
+	3) Index: The datatype-specific (usually spatiotemporal) index that allows
+	     partitioning of the data.  In the case of voxels, this could be a
+	     (x, y, z) coordinate packed into a slice of bytes.
 */
 type Key struct {
 	Data    dvid.LocalID
 	Version dvid.LocalID
-	Index   []byte
+	Index   dvid.Index
+}
+
+// BytesToKey returns a Key given a slice of bytes
+func (key *Key) BytesToKey(b []byte) (*Key, error) {
+	data, len := dvid.LocalIDFromBytes(b)
+	version, _ := dvid.LocalIDFromBytes(b[len:])
+	index, err := key.Index.IndexFromBytes(b[2*len:])
+	return &Key{data, version, index}, err
 }
 
 // Bytes returns a slice of bytes derived from the concatenation of the key elements.
 func (key *Key) Bytes() (b []byte) {
 	b = key.Data.Bytes()
 	b = append(b, key.Version.Bytes()...)
-	b = append(b, key.Index...)
+	b = append(b, key.Index.Bytes()...)
 	return
 }
 
 // Bytes returns a string derived from the concatenation of the key elements.
 func (key *Key) BytesString() string {
-	b = key.Data.Bytes()
-	b = append(b, key.Version.Bytes()...)
-	b = append(b, key.Index...)
-	return string(b)
+	return string(key.Bytes())
 }
 
 // String returns a hexadecimal representation of the bytes encoding a key
 // so it is readable on a terminal.
 func (key *Key) String() string {
 	return fmt.Sprintf("%x", key.Bytes())
+}
+
+// KeyValue stores a key-value pair.
+type KeyValue struct {
+	k *Key
+	v []byte
+}
+
+func (kv *KeyValue) GetKey() *Key     { return kv.k }
+func (kv *KeyValue) GetValue() []byte { return kv.v }
+
+// KeyValues is a slice of key-value pairs that can be sorted.
+type KeyValues []KeyValue
+
+func (kv KeyValues) Len() int      { return len(kv) }
+func (kv KeyValues) Swap(i, j int) { kv[i], kv[j] = kv[j], kv[i] }
+func (kv KeyValues) Less(i, j int) bool {
+	return bytes.Compare(kv[i].k.Bytes(), kv[j].k.Bytes()) <= 0
+}
+
+// ChunkOp is a type-specific operation with an optional WaitGroup to
+// sync mapping before reduce.
+type ChunkOp struct {
+	Op interface{}
+	Wg *sync.WaitGroup
+}
+
+// Chunk is the unit passed down channels to chunk handlers.
+type Chunk struct {
+	ChunkOp
+	KeyValue
+}
+
+// ChunkChannel is a channel for chunks to be sent to chunk handlers.
+type ChunkChannel chan *Chunk
+
+// MapOp is an operation that maps chunks across channels to handlers.
+// It encapsulates a type-specific operation, chunk channels, and a WaitGroup
+// to optionally sync the reduce phase.
+type MapOp struct {
+	ChunkOp
+	Channels []ChunkChannel
 }
 
 // Options encapsulates settings passed in as well as database-specific environments
@@ -113,52 +155,11 @@ func (opt *Options) IntSetting(key string) (setting int, ok bool) {
 	return
 }
 
-// OpChunk is the unit of data passed from datastore to datatype-specific
-// chunk handlers.
-type OpChunk struct {
-	Operation
-	Chunk    []byte
-	Key      storage.Key
-	shutdown bool
-}
-
-// Each key can be hashed onto a consistent chunk channel within the slice of channels.
-type OpChunkChannels ([]chan *OpChunk)
-
-// Operation provides an abstract interface for a mapping, which performs
-// a batch read of keys and sends chunks (or nil values if keys don't exist)
-// to the data chunk handler.
-type Operation interface {
-	// ChunkChannels returns the array of channels available for this op's dataset.
-	ChunkChannels() OpChunkChannels
-
-	// DataLocalID returns a DVID instance-specific id for this data.  The id
-	// can be held in a relatively small number of bytes and is a key component.
-	DataLocalID() dvid.LocalID
-
-	// The version node on which we are performing the operation.
-	VersionLocalID() dvid.LocalID
-
-	// Should we map, i.e., send chunks to handlers over channel, if a given
-	// chunk key is absent?  This tends to be true for PUT operations and
-	// false for GET operations if absent keys resolve to empty chunk values.
-	MapOnAbsentKey() bool
-
-	// Returns an IndexIterator that steps through all chunks for this operation.
-	IndexIterator() IndexIterator
-
-	// WaitAdd increments the wait queue for the operation.
-	WaitAdd()
-
-	// Wait blocks until the operation is complete.
-	Wait()
-}
-
 // Requirements lists required backend interfaces for a type.
 type Requirements struct {
-	JSONDatastore bool
-	BulkIniter    bool
-	BulkLoader    bool
+	BulkIniter bool
+	BulkWriter bool
+	Batcher    bool
 }
 
 // DataHandler implementations can fulfill a variety of interfaces.  Other parts
@@ -166,54 +167,56 @@ type Requirements struct {
 // Data types can throw a warning at init time if the backend doesn't support required
 // interfaces, or they can choose to implement multiple ways of handling data.
 type DataHandler interface {
-	// All backends must supply basic key/value store.
 	KeyValueDB
 
-	// All backends must allow mapping of an operation by sending chunks of data
-	// down channel to datatype-specific handlers.
-	Map(op Operation)
-
-	// Let clients know which interfaces are available with this backend.
-	IsJSONDatastore() bool
+	IsBatcher() bool
 	IsBulkIniter() bool
-	IsBulkLoader() bool
+	IsBulkWriter() bool
 
 	GetOptions() *Options
 }
 
-// KeyValueDB provides an interface to a number of key/value
-// implementations, e.g., C++ or Go leveldb libraries.
+// KeyValueDB provides an interface to the simplest storage API: a key/value store.
 type KeyValueDB interface {
 	// Closes datastore.
 	Close()
 
 	// Get returns a value given a key.
-	Get(k Key) (v []byte, err error)
+	Get(k *Key) (v []byte, err error)
+
+	// GetRange returns a range of values spanning (kStart, kEnd) keys.
+	GetRange(kStart, kEnd *Key) (values []KeyValue, err error)
+
+	// SendRange sends a range of key/value pairs to type-specific chunk handlers
+	// via channels within the MapOp struct.
+	SendRange(kStart, kEnd *Key, mapOp *MapOp) (err error)
 
 	// Put writes a value with given key.
-	Put(k Key, v []byte) (err error)
+	Put(k *Key, v []byte) (err error)
 
-	// Delete removes an entry given key
-	Delete(k Key) (err error)
+	// Put key-value pairs that have already been sorted in sequential key order.
+	PutRange(values []KeyValue) (err error)
+
+	// Delete removes an entry given key.
+	Delete(k *Key) (err error)
 }
 
-// Batchers are backends that allow batching a series of operations into an atomic unit.
-// For some backends, this may also improve throughput.
+// Batchers allow batching operations into an atomic update or transaction.
 // For example: "Atomic Updates" in http://leveldb.googlecode.com/svn/trunk/doc/index.html
 type Batcher interface {
-	NewBatchWrite() Batch
+	NewBatch() Batch
 }
 
-// Batch implements an atomic batch write or transaction.
+// Batch groups operations into a transaction.
 type Batch interface {
-	// Write commits a batch of operations.
-	Write() (err error)
+	// Commits a batch of operations.
+	Commit() (err error)
 
 	// Delete removes from the batch a put using the given key.
-	Delete(k Key)
+	Delete(k *Key)
 
 	// Put adds to the batch a put using the given key/value.
-	Put(k Key, v []byte)
+	Put(k *Key, v []byte)
 
 	// Clear clears the contents of a write batch
 	Clear()
@@ -223,12 +226,12 @@ type Batch interface {
 }
 
 // BulkIniters can employ even more aggressive optimization in loading large
-// data since they can assume a blank database.
+// data since they can assume an uninitialized blank database.
 type BulkIniter interface {
 }
 
-// BulkLoaders employ some sort of optimization to efficiently load large
+// BulkWriter employ some sort of optimization to efficiently write large
 // amount of data.  For some key-value databases, this requires keys to
 // be presorted.
-type BulkLoader interface {
+type BulkWriter interface {
 }

@@ -2,7 +2,6 @@ package voxels
 
 import (
 	"bytes"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"image"
@@ -11,6 +10,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/janelia-flyem/dvid/dvid"
 )
 
 // Notes:
@@ -141,7 +142,7 @@ func (c *Coord) Prompt(message, defaultValue string) {
 	var err error
 	for i, axis := range axes {
 		for {
-			input := Prompt(message+" along "+axis, defaultValue)
+			input := dvid.Prompt(message+" along "+axis, defaultValue)
 			coord, err = strconv.ParseInt(input, 0, 32)
 			if err != nil {
 				fmt.Printf("\n--> Error.  Can't convert '%s' into a 32-bit int!\n", input)
@@ -252,7 +253,7 @@ func (res *VoxelResolution) Prompt(message, defaultValue string) {
 	var err error
 	for i, axis := range axes {
 		for {
-			input := Prompt(message+" along "+axis, defaultValue)
+			input := dvid.Prompt(message+" along "+axis, defaultValue)
 			f, err = strconv.ParseFloat(input, 32)
 			if err != nil {
 				fmt.Printf("\n--> Error!  Can't convert '%s' into a 32-bit float!\n", input)

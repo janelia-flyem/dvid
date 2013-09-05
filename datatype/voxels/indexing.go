@@ -14,48 +14,47 @@ import (
 
 // IndexZYX implements the Index interface and provides simple indexing on Z,
 // then Y, then X.
-type IndexZYX []byte
+type IndexZYX BlockCoord
 
 func (i IndexZYX) String() string {
-	return hex.EncodeToString([]byte(i))
+	return hex.EncodeToString(i.Bytes())
 }
 
+// Bytes returns a byte representation of the Index.
 func (i IndexZYX) Bytes() []byte {
-	return i
-}
-
-// InvertIndex decodes a spatial index into a block coordinate
-func (i IndexZYX) InvertIndex() dvid.ChunkIndex {
-	z := int32(binary.BigEndian.Uint32([]byte(i[0:4])))
-	y := int32(binary.BigEndian.Uint32([]byte(i[4:8])))
-	x := int32(binary.BigEndian.Uint32([]byte(i[8:12])))
-	return BlockZYX{BlockCoord{x, y, z}}
+	buf := new(bytes.Buffer)
+	binary.Write(buf, binary.BigEndian, i[2])
+	binary.Write(buf, binary.BigEndian, i[1])
+	binary.Write(buf, binary.BigEndian, i[0])
+	return buf.Bytes()
 }
 
 // Hash returns an integer [0, n) where the returned values should be reasonably
-// spread among the range of returned values.
+// spread among the range of returned values.  This implementation makes sure
+// that any range query along x, y, or z direction will map to different handlers.
 func (i IndexZYX) Hash(n int) int {
-	z := binary.BigEndian.Uint32([]byte(i[0:4]))
-	y := binary.BigEndian.Uint32([]byte(i[4:8]))
-	x := binary.BigEndian.Uint32([]byte(i[8:12]))
-	// Make sure that any scans along x, y, or z directions will
-	// cause distribution to different handlers.
-	return int(x+y+z) % n
+	return int(i[0]+i[1]+i[2]) % n
 }
 
 func (i IndexZYX) Scheme() string {
 	return "ZYX Indexing"
 }
 
+// IndexFromBytes returns an index from bytes.  The passed Index is used just
+// to choose the appropriate byte decoding scheme.
+func (i IndexZYX) IndexFromBytes(b []byte) (dvid.Index, error) {
+	z := int32(binary.BigEndian.Uint32(b[0:4]))
+	y := int32(binary.BigEndian.Uint32(b[4:8]))
+	x := int32(binary.BigEndian.Uint32(b[8:12]))
+	return IndexZYX{x, y, z}, nil
+}
+
 // OffsetToBlock returns the voxel coordinate at the top left corner of the block
 // corresponding to the index.
 func (i IndexZYX) OffsetToBlock(blockSize Point3d) (coord Coord) {
-	z := int32(binary.BigEndian.Uint32([]byte(i[0:4])))
-	y := int32(binary.BigEndian.Uint32([]byte(i[4:8])))
-	x := int32(binary.BigEndian.Uint32([]byte(i[8:12])))
-	coord[0] = x * blockSize[0]
-	coord[1] = y * blockSize[1]
-	coord[2] = z * blockSize[2]
+	coord[0] = i[0] * blockSize[0]
+	coord[1] = i[1] * blockSize[1]
+	coord[2] = i[2] * blockSize[2]
 	return
 }
 
@@ -71,26 +70,4 @@ type IndexHilbert []byte
 
 func (i IndexHilbert) Scheme() string {
 	return "Hilbert Indexing"
-}
-
-// BlockZYX implements the BlockIndex interface and provides blocking of
-// a 3d coordinate space.
-type BlockZYX struct {
-	BlockCoord
-}
-
-// MakeIndex returns a 1d Index from a 3d ZYX coordinate.
-func (bc BlockZYX) MakeIndex() (i dvid.Index, err error) {
-	buf := new(bytes.Buffer)
-	err = binary.Write(buf, binary.BigEndian, bc.BlockCoord[2])
-	if err != nil {
-		return
-	}
-	err = binary.Write(buf, binary.BigEndian, bc.BlockCoord[1])
-	if err != nil {
-		return
-	}
-	err = binary.Write(buf, binary.BigEndian, bc.BlockCoord[0])
-	i = IndexZYX(buf.Bytes())
-	return
 }

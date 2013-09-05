@@ -113,7 +113,7 @@ func (dag *VersionDAG) NewVersion(parents []dvid.LocalID) (node *VersionNode, er
 func (dag *VersionDAG) Get(db storage.KeyValueDB) (err error) {
 	// Get data
 	var data []byte
-	data, err = db.Get(KeyVersionDAG)
+	data, err = db.Get(&KeyVersionDAG)
 	if err != nil {
 		return
 	}
@@ -130,7 +130,7 @@ func (dag *VersionDAG) Put(db storage.KeyValueDB) (err error) {
 	serialization, err = dag.Serialize()
 
 	// Put data
-	return db.Put(KeyVersionDAG, []byte(serialization))
+	return db.Put(&KeyVersionDAG, []byte(serialization))
 }
 
 // Serialize returns a serialization of VersionDAG with Snappy compression and

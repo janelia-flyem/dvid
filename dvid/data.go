@@ -6,7 +6,6 @@ package dvid
 
 import (
 	"encoding/binary"
-	"fmt"
 )
 
 // LocalID is a unique id for some data in a DVID instance.  This unique id is presumably
@@ -14,21 +13,19 @@ import (
 // description) and can be represented with fewer bytes in keys.
 type LocalID uint16
 
+const sizeOfLocalID = 2
+
 // Bytes returns a sequence of bytes encoding this LocalID.
 func (id LocalID) Bytes() []byte {
-	buf := make([]byte, 2, 2)
+	buf := make([]byte, sizeOfLocalID, sizeOfLocalID)
 	binary.LittleEndian.PutUint16(buf, uint16(id))
 	return buf
 }
 
-// GetLocalID parses a slice of bytes into a LocalID.
-func GetLocalID(b []byte) (id LocalID, err error) {
-	if len(b) != 2 {
-		err = fmt.Errorf("Illegal slice size (%d) supplied to GetLocalID()", len(b))
-		return
-	}
-	id = LocalID(binary.LittleEndian.Uint16(b))
-	return
+// LocalIDFromBytes returns a LocalID from the start of the slice and the number of bytes used.
+// Note: No error checking is done to ensure byte slice has sufficient bytes for LocalID.
+func LocalIDFromBytes(b []byte) (id LocalID, length int) {
+	return LocalID(binary.LittleEndian.Uint16(b)), sizeOfLocalID
 }
 
 // Config is a map of keyword to arbitrary data to specify configurations via keyword.

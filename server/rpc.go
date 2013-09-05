@@ -73,8 +73,8 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 	case "dataset":
 		var dataName, typeName string
 		cmd.CommandArgs(1, &dataName, &typeName)
-		dataSetName := datastore.DatasetString(dataName)
-		err := runningService.NewDataset(dataSetName, typeName, dvid.Config{})
+		dataSetName := datastore.DataString(dataName)
+		err := runningService.NewData(dataSetName, typeName, dvid.Config{})
 		if err != nil {
 			return err
 		}
@@ -83,8 +83,8 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 		// Temporary command while we debug system
 		var dataName string
 		cmd.CommandArgs(1, &dataName)
-		dataSetName := datastore.DatasetString(dataName)
-		err := runningService.DeleteDataset(dataSetName)
+		dataSetName := datastore.DataString(dataName)
+		err := runningService.DeleteData(dataSetName)
 		if err != nil {
 			return err
 		}
@@ -118,9 +118,9 @@ func branch(cmd datastore.Request, reply *datastore.Response) error {
 // unexported nature.
 
 func datasetDo(cmd datastore.Request, reply *datastore.Response) error {
-	// Get the DatasetService for this data set name.  Let user know if it's not supported.
-	datasetName := datastore.DatasetString(cmd.Name())
-	dataset, err := runningService.DatasetService(datasetName)
+	// Get the DataService for this data set name.  Let user know if it's not supported.
+	datasetName := datastore.DataString(cmd.Name())
+	dataset, err := runningService.DataService(datasetName)
 	if err != nil {
 		if cmd.TypeCommand() == "help" {
 			datatype, err := runningService.TypeService(cmd.Name())

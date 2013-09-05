@@ -38,7 +38,7 @@ func Init(directory string, create bool) (uuid UUID) {
 
 	// Initialize the backend database
 	dbOptions := storage.Options{}
-	db, err := storage.NewDataHandler(directory, create, &dbOptions)
+	db, err := storage.NewStore(directory, create, &dbOptions)
 	if err != nil {
 		log.Fatalf("Error initializing datastore (%s): %s\n", directory, err.Error())
 	}
@@ -94,7 +94,7 @@ func Open(path string) (s *Service, openErr *OpenError) {
 	// Open the datastore
 	dbOptions := storage.Options{}
 	create := false
-	db, err := storage.NewDataHandler(path, create, &dbOptions)
+	db, err := storage.NewStore(path, create, &dbOptions)
 	if err != nil {
 		openErr = &OpenError{
 			fmt.Errorf("Error opening datastore (%s): %s", path, err.Error()),
@@ -120,7 +120,7 @@ func Open(path string) (s *Service, openErr *OpenError) {
 	err = rconfig.VerifyCompiledTypes()
 	if err != nil {
 		openErr = &OpenError{
-			fmt.Errorf("Datasets are not fully supported by this DVID: %s", err.Error()),
+			fmt.Errorf("Data are not fully supported by this DVID server: %s", err.Error()),
 			ErrorRuntimeConfig,
 		}
 		return
@@ -143,32 +143,31 @@ func Open(path string) (s *Service, openErr *OpenError) {
 
 // Shutdown closes a DVID datastore.
 func (s *Service) Shutdown() {
-	// Close all dataset handlers
-	for _, dataset := range s.Datasets {
-		stopChunkHandlers(dataset)
+	for _, data := range s.Data {
+		chunkHandler, ok := data.(ChunkHandler)
+		if ok {
+			chunkHandler.StopChunkHandlers()
+		}
 	}
 
 	// Close the backend database
 	s.db.Close()
 }
 
+// StartChunkHandlers stars all the chunk handlers for the currently registered
+// data in this service.
+func (s *Service) StartChunkHandlers() {
+	for _, data := range s.Data {
+		chunkHandler, ok := data.(ChunkHandler)
+		if ok {
+			chunkHandler.StartChunkHandlers()
+		}
+	}
+}
+
 // KeyValueDB returns a a key-value database interface.
 func (s *Service) KeyValueDB() storage.KeyValueDB {
 	return s.db
-}
-
-// IteratorMaker returns an interface that can create a new iterator.
-func (s *Service) IteratorMaker() (db storage.IteratorMaker, err error) {
-	if s.db.ProvidesIterator() {
-		var ok bool
-		db, ok = s.db.(storage.IteratorMaker)
-		if !ok {
-			err = fmt.Errorf("DVID backend says it supports iterators but does not!")
-		}
-	} else {
-		err = fmt.Errorf("DVID backend database does not provide iterator support")
-	}
-	return
 }
 
 // Batcher returns an interface that can create a new batch write.
@@ -188,7 +187,7 @@ func (s *Service) Batcher() (db storage.Batcher, err error) {
 // SupportedDataChart returns a chart (names/urls) of data referenced by this datastore
 func (s *Service) SupportedDataChart() string {
 	text := CompiledTypeChart()
-	text += "Datasets currently referenced within this DVID datastore:\n\n"
+	text += "Data currently referenced within this DVID datastore:\n\n"
 	text += s.runtimeConfig.DataChart()
 	return text
 }
@@ -269,7 +268,10 @@ func (s *Service) DeleteData(name DataString) error {
 	// Delete it and store updated runtimeConfig to datastore.
 	var lock sync.Mutex
 	lock.Lock()
-	stopChunkHandlers(data)
+	chunkHandler, ok := data.(ChunkHandler)
+	if ok {
+		chunkHandler.StopChunkHandlers()
+	}
 	delete(s.Data, name)
 	err := s.runtimeConfig.Put(s.db)
 	lock.Unlock()

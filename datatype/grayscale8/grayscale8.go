@@ -7,7 +7,6 @@ package grayscale8
 import (
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/voxels"
-	"github.com/janelia-flyem/dvid/dvid"
 )
 
 const Version = "0.6"
@@ -21,7 +20,7 @@ type Datatype struct {
 }
 
 // DefaultBlockMax specifies the default size for each block of this data type.
-var DefaultBlockMax dvid.Point3d = dvid.Point3d{16, 16, 16}
+var DefaultBlockMax voxels.Point3d = voxels.Point3d{16, 16, 16}
 
 func init() {
 	grayscale := voxels.NewDatatype()
