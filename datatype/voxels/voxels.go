@@ -29,92 +29,92 @@ const Version = "0.7"
 const RepoUrl = "github.com/janelia-flyem/dvid/datatype/voxels"
 
 const HelpMessage = `
-Server-side commands for datasets with voxels data type:
+API for datatypes derived from voxels (github.com/janelia-flyem/dvid/datatype/voxels)
+=====================================================================================
 
-1) Add local files to an image version
+Command-line:
 
-    <dataset name> add <uuid> <origin> <image filename glob> [plane=<plane>]
+$ dvid node <UUID> <data name> load local  <plane> <offset> <image glob>
+$ dvid node <UUID> <data name> load remote <plane> <offset> <image glob>
 
-    Example: 
-
-    $ dvid mygrayscale add 3f8c 0,0,100 data/*.png 
-
-Arguments:
-
-    dataset name: the name of a dataset created using the "dataset" command.
-    uuid: hexidecimal string with enough characters to uniquely identify a version node.
-    image filename glob: filenames of images, e.g., foo-xy-*.png
-    origin: 3d coordinate in the format "x,y,z".  Gives coordinate of top upper left voxel.
-    plane: xy (default), xz, or yz.
-
-2) Add files accessible to server to an image version
-
-    <dataset name> server-add <uuid> <origin> <image filename glob> [plane=<plane>]
+    Adds image data to a version node when the server can see the local files ("local")
+    or when the server must be sent the files via rpc ("remote").
 
     Example: 
 
-    $ dvid mygrayscale server-add 3f8c 0,0,100 /absolute/path/to/data/*.png 
+    $ dvid node 3f8c mygrayscale load local 0,0,100 xy data/*.png
 
-Arguments: same as #1
+    Arguments:
 
-    NOTE: The image filename glob MUST BE absolute file paths that are visible to
-    the server.  The 'server-add' command is meant for mass ingestion of large data files, 
-    and it is inappropriate to read gigabytes of data just to send it over the network to
-    a local DVID.
+    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    data name     Name of data to add.
+    plane         One of "xy", "xz", or "yz".
+    offset        3d coordinate in the format "x,y,z".  Gives coordinate of top upper left voxel.
+    image glob    Filenames of images, e.g., foo-xy-*.png
 	
     ------------------
 
-HTTP API for datasets with voxels data type:
+HTTP API (Level 2 REST):
 
-The voxel data type supports the following Level 2 REST HTTP API calls.
+GET  /api/node/<UUID>/<data name>/<plane>/<offset>/<size>[/<format>]
+POST /api/node/<UUID>/<data name>/<plane>/<offset>/<size>[/<format>]
 
-    1) Adding different voxel data sets
-	
-        POST /api/data/<voxel type>/<data set name>
+    Retrieves or puts orthogonal plane image data to named data within a version node.
 
-    Parameters:
-    <voxel type> = the abbreviated data type name, e.g., "grayscale8"
-    <data set name> = name of a data set of this type, e.g., "mygrayscale"
+    Example: 
 
-    Examples:
+    GET /api/node/3f8c/grayscale/xy/0,0,100/200,200/jpg:80
 
-        POST /api/data/grayscale8/mygrayscale
+    Arguments:
 
-    Adds a data set name "rgb8" that uses the voxels data type at 8 bits/voxel
-    and with 3 channels.
+    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    data name     Name of data to add.
+    plane         One of "xy" (default), "xz", or "yz"
+    offset        3d coordinate in the format "x,y,z".  Gives coordinate of top upper left voxel.
+    size          Size in pixels in the format "dx,dy".
+	format        "png", "jpg" (default: "png")
+                    jpg allows lossy quality setting, e.g., "jpg:80"
 
-    2) Storing and retrieving voxel data for a particular voxel data set
+(TO DO)
 
-    If <data shape> is "xy", "xz", "yz", or "vol"
+GET  /api/node/<UUID>/<data name>/vol/<offset>/<size>[/<format>]
+POST /api/node/<UUID>/<data name>/vol/<offset>/<size>[/<format>]
 
-        POST /api/<data set name>/<uuid>/<data shape>/<offset>/<size>
-        GET  /api/<data set name>/<uuid>/<data shape>/<offset>/<size>[/<format>]
+    Retrieves or puts 3d image volume to named data within a version node.
 
-    If <data shape> is "arb":
+    Example: 
 
-        GET  /api/<data set name>/<uuid>/<data shape>/<offset>/<tr>/<bl>[/<format>]
+    GET /api/node/3f8c/grayscale/vol/0,0,100/200,200,200
 
-    Parameters:
-    <data set name> = Data set name that is of type voxel, e.g., "rgb8" or "labels16"
-    <uuid> = Hexadecimal number, as many digits as necessary to uniquely identify
-       the UUID among nodes in this database.
-    <data shape> = "xy", "xz", "yz", "arb", "vol"
-    <offset> = x,y,z
-    <size> = dx,dy,dz (if <volume> is "vol")
-             dx,dy    (if <volume> is not "vol")
-	<format> = "png", "jpg", "hdf5" (default: "png")  
-       Jpeg allows lossy quality setting, e.g., "jpg:80"
-	<tr> = x,y,z of top right corner of arbitrary slice
-	<bl> = x,y,z of bottom left corner of arbitrary slice
+    Arguments:
 
-    Examples:
+    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    data name     Name of data to add.
+    offset        3d coordinate in the format "x,y,z".  Gives coordinate of top upper left voxel.
+    size          Size in voxels in the format "dx,dy,dz"
+	format        "sparse", "dense" (default: "dense")
+                    Voxels returned are in thrift-encoded data structures.
+                    See particular data type implementation for more detail.
 
-        GET /api/myvoxels/c66e0/xy/0,125,135/250,240
 
-    Returns a PNG image with width 250 pixels, height 240 pixels that were taken
-    from the XY plane with the upper left pixel sitting at (0,125,135) in 
-    the image volume space.  The # bits/voxel and the # of channels are determined
-    by the type of data associated with the data set name 'myvoxels'
+GET  /api/node/<UUID>/<data name>/arb/<center>/<normal>/<size>[/<format>]
+
+    Retrieves non-orthogonal (arbitrarily oriented planar) image data of named data 
+    within a version node.
+
+    Example: 
+
+    GET /api/node/3f8c/grayscale/xy/200,200/2.0,1.3,1/100,100/jpg:80
+
+    Arguments:
+
+    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    data name     Name of data to add.
+    center        3d coordinate in the format "x,y,z".  Gives 3d coord of center pixel.
+    normal        3d vector in the format "nx,ny,nz".  Gives normal vector of image.
+    size          Size in pixels in the format "dx,dy".
+	format        "png", "jpg" (default: "png")  
+                    jpg allows lossy quality setting, e.g., "jpg:80"
 `
 
 // DefaultBlockMax specifies the default size for each block of this data type.
@@ -140,7 +140,7 @@ func NewDatatype() (dtype *Datatype) {
 	dtype = new(Datatype)
 	dtype.NumChannels = 1
 	dtype.BytesPerVoxel = 1
-	dtype.Requirements = storage.Requirements{
+	dtype.Requirements = &storage.Requirements{
 		BulkIniter: false,
 		BulkWriter: false,
 		Batcher:    false,
@@ -151,14 +151,22 @@ func NewDatatype() (dtype *Datatype) {
 // --- TypeService interface ---
 
 // NewData returns a pointer to a new Voxels with default values.
-func (dtype *Datatype) NewData(id datastore.DataID, config dvid.Config) datastore.DataService {
-	data := &Data{
-		Data: datastore.NewData(id, dtype),
+func (dtype *Datatype) NewData(id *datastore.DataID, config dvid.Config) (
+	service datastore.DataService, err error) {
+
+	var basedata *datastore.Data
+	basedata, err = datastore.NewData(id, dtype, config)
+	if err != nil {
+		return
 	}
+	data := &Data{Data: basedata}
 	data.BlockSize = DefaultBlockMax
 	if obj, found := config["BlockSize"]; found {
 		if blockSize, ok := obj.(Point3d); ok {
 			data.BlockSize = blockSize
+		} else {
+			err = fmt.Errorf("BlockSize configuration is not a 3d point!")
+			return
 		}
 	}
 	data.VoxelRes = VoxelResolution{1.0, 1.0, 1.0}
@@ -174,7 +182,8 @@ func (dtype *Datatype) NewData(id datastore.DataID, config dvid.Config) datastor
 		}
 	}
 	data.StartChunkHandlers()
-	return data
+	service = data
+	return
 }
 
 func (dtype *Datatype) Help() string {
@@ -198,29 +207,29 @@ type Data struct {
 // Returns total number of bytes across all channels for a voxel.
 func (d *Data) BytesPerVoxel() int32 {
 	// Make sure the dataset here has a pointer to a Datatype of this package.
-	dtype, ok := d.Datatype.(*Datatype)
+	dtype, ok := d.TypeService.(*Datatype)
 	if !ok {
-		log.Fatalf("Illegal datatype %s for dataset %s",
-			d.Datatype, d.DataName())
+		log.Fatalf("Data %s does not have type of voxels.Datatype!", d.DataName())
 	}
 	return int32(dtype.BytesPerVoxel * dtype.NumChannels)
-}
-
-func (d *Data) TypeService() datastore.TypeService {
-	return d.Data.Datatype
 }
 
 // --- DataService interface ---
 
 // Do acts as a switchboard for RPC commands.
 func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error {
-	switch request.TypeCommand() {
-	case "server-add":
-		return d.ServerAdd(request, reply)
-	//	case "get":
-	//		return dtype.Get(request, reply)
-	case "help":
-		reply.Text = HelpMessage
+	if request.TypeCommand() != "load" {
+		return d.UnknownCommand(request)
+	}
+	if len(request.Command) < 7 {
+		return fmt.Errorf("Poorly formatted load command.  See command-line help.")
+	}
+	source := request.Command[3]
+	switch source {
+	case "local":
+		d.LoadLocal(request, reply)
+	case "remote":
+		return fmt.Errorf("load remote not yet implemented")
 	default:
 		return d.UnknownCommand(request)
 	}
@@ -228,11 +237,8 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 }
 
 // DoHTTP handles all incoming HTTP requests for this dataset.
-func (d *Data) DoHTTP(w http.ResponseWriter, r *http.Request) error {
+func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Request) error {
 	startTime := time.Now()
-
-	// Get the running datastore service from this DVID instance.
-	dataService := server.DataService()
 
 	// Allow cross-origin resource sharing.
 	w.Header().Add("Access-Control-Allow-Origin", "*")
@@ -253,9 +259,10 @@ func (d *Data) DoHTTP(w http.ResponseWriter, r *http.Request) error {
 	url := r.URL.Path[len(server.WebAPIPath):]
 	parts := strings.Split(url, "/")
 
-	// Get the version ID from a uniquely identifiable string
-	uuidStr := parts[1]
-	versionID, err := dataService.VersionIDFromString(uuidStr)
+	// Get the running datastore service from this DVID instance.
+	service := server.DatastoreService()
+
+	_, versionID, err := service.LocalIDFromUUID(uuid)
 	if err != nil {
 		return err
 	}
@@ -269,7 +276,8 @@ func (d *Data) DoHTTP(w http.ResponseWriter, r *http.Request) error {
 
 	switch dataShape {
 	case XY, XZ, YZ:
-		slice, err := NewSliceFromStrings(parts[2], parts[3], parts[4])
+		offsetStr, sizeStr := parts[3], parts[4]
+		slice, err := NewSliceFromStrings(shapeStr, offsetStr, sizeStr)
 		if err != nil {
 			return err
 		}
@@ -279,12 +287,12 @@ func (d *Data) DoHTTP(w http.ResponseWriter, r *http.Request) error {
 			if err != nil {
 				return err
 			}
-			err = d.PutImage(versionID, postedImg, slice)
+			err = d.putImage(versionID, postedImg, slice)
 			if err != nil {
 				return err
 			}
 		} else {
-			img, err := d.GetImage(versionID, slice)
+			img, err := d.getImage(versionID, slice)
 			data, _, _ := dvid.ImageData(img)
 			dvid.PrintNonZero("GetImage", data)
 
@@ -299,13 +307,15 @@ func (d *Data) DoHTTP(w http.ResponseWriter, r *http.Request) error {
 			}
 		}
 	case Vol:
-		_, err := NewSubvolumeFromStrings(parts[3], parts[4])
+		offsetStr, sizeStr := parts[3], parts[4]
+		_, err := NewSubvolumeFromStrings(offsetStr, sizeStr)
 		if err != nil {
 			return err
 		}
 		if op == GetOp {
+			return fmt.Errorf("DVID does not yet support GET of thrift-encoded volume data")
 			/*
-				if data, err := d.GetVolume(versionID, subvol); err != nil {
+				if data, err := d.GetVolume(uuidStr, subvol); err != nil {
 					return err
 				} else {
 					w.Header().Set("Content-type", "application/x-protobuf")
@@ -316,7 +326,7 @@ func (d *Data) DoHTTP(w http.ResponseWriter, r *http.Request) error {
 				}
 			*/
 		} else {
-			return fmt.Errorf("DVID does not yet support POST of subvolume data.")
+			return fmt.Errorf("DVID does not yet support POST of thrift-encoded volume data")
 		}
 	case Arb:
 		return fmt.Errorf("DVID does not yet support arbitrary planes.")
@@ -361,7 +371,7 @@ const (
 
 // SliceImage returns an image.Image for the z-th slice of the volume.
 func (d *Data) SliceImage(v *Voxels, z int) (img image.Image, err error) {
-	dtype, ok := d.Datatype.(*Datatype)
+	dtype, ok := d.TypeService.(*Datatype)
 	if !ok {
 		err = fmt.Errorf("Data %s does not have type of voxels.Datatype!", d.DataName())
 	}
@@ -406,38 +416,46 @@ func (d *Data) SliceImage(v *Voxels, z int) (img image.Image, err error) {
 	return
 }
 
-// ServerAdd adds a sequence of image files to an image version.  The request
-// contains arguments as follows:
+// LoadLocal adds image data to a version node.  Command-line usage is as follows:
 //
-// <dataset name> server-add <uuid> <origin> <image filename glob> [plane=<plane>]
+// $ dvid node <UUID> <data name> load local  <plane> <offset> <image glob>
+// $ dvid node <UUID> <data name> load remote <plane> <offset> <image glob>
 //
-// Example request string: "mygrayscale server-add 3f8c 0,0,100 /absolute/path/to/data/*.png"
+//     Adds image data to a version node when the server can see the local files ("local")
+//     or when the server must be sent the files via rpc ("remote").
 //
-//	dataset name: the name of a dataset created using the "dataset" command.
-//	uuid: hexidecimal string with enough characters to uniquely identify a version node.
-//	origin: 3d coordinate in the format "x,y,z".  Gives coordinate of top upper left voxel.
-//	image filename glob: filenames of images, e.g., foo-xy-*.png
-//	plane: xy (default), xz, or yz.
+//     Example:
+//
+//     $ dvid node 3f8c mygrayscale load local 0,0,100 data/*.png xy
+//
+//     Arguments:
+//
+//     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+//     data name     Name of data to add.
+//     offset        3d coordinate in the format "x,y,z".  Gives coordinate of top upper left voxel.
+//     plane         One of "xy", "xz", or "yz".
+//     image glob    Filenames of images, e.g., foo-xy-*.png
 //
 // The image filename glob MUST BE absolute file paths that are visible to the server.
 // This function is meant for mass ingestion of large data files, and it is inappropriate
 // to read gigabytes of data just to send it over the network to a local DVID.
-func (d *Data) ServerAdd(request datastore.Request, reply *datastore.Response) error {
+func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) error {
 
 	startTime := time.Now()
 
 	// Get the running datastore service from this DVID instance.
-	service := server.DataService()
+	service := server.DatastoreService()
 
 	// Parse the request
-	var setName, cmdStr, uuidStr, offsetStr string
-	filenames := request.CommandArgs(0, &setName, &cmdStr, &uuidStr, &offsetStr)
+	var uuidStr, dataName, cmdStr, sourceStr, planeStr, offsetStr string
+	filenames := request.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &sourceStr,
+		&planeStr, &offsetStr)
 	if len(filenames) == 0 {
 		return fmt.Errorf("Need to include at least one file to add: %s", request)
 	}
 
 	// Get the version ID from a uniquely identifiable string
-	versionID, err := service.VersionIDFromString(uuidStr)
+	_, versionID, err := service.LocalIDFromString(uuidStr)
 	if err != nil {
 		return err
 	}
@@ -457,12 +475,8 @@ func (d *Data) ServerAdd(request datastore.Request, reply *datastore.Response) e
 	}
 	dvid.Log(dvid.Debug, addedFiles+"\n")
 
-	// Get optional plane
-	shapeStr, found := request.Parameter(dvid.KeyPlane)
-	if !found {
-		shapeStr = "xy"
-	}
-	dataShape, err := DataShapeString(shapeStr).DataShape()
+	// Get plane
+	plane, err := DataShapeString(planeStr).DataShape()
 	if err != nil {
 		return err
 	}
@@ -478,9 +492,9 @@ func (d *Data) ServerAdd(request datastore.Request, reply *datastore.Response) e
 			lastErr = err
 		} else {
 			size := SizeFromRect(img.Bounds())
-			slice, err := NewSlice(dataShape, offset, size)
+			slice, err := NewSlice(plane, offset, size)
 
-			err = d.PutImage(versionID, img, slice)
+			err = d.putImage(versionID, img, slice)
 
 			dvid.ElapsedTime(dvid.Debug, sliceTime, "%s server-add %s", d.DataName(), slice)
 			if err == nil {
@@ -499,8 +513,8 @@ func (d *Data) ServerAdd(request datastore.Request, reply *datastore.Response) e
 	return nil
 }
 
-// GetImage retrieves a 2d image from a version node given a geometry of voxels.
-func (d *Data) GetImage(vID dvid.LocalID, slice Geometry) (img image.Image, err error) {
+// getImage retrieves a 2d image from a version node given a geometry of voxels.
+func (d *Data) getImage(versionID dvid.LocalID, slice Geometry) (img image.Image, err error) {
 	db := server.KeyValueDB()
 	if db == nil {
 		err = fmt.Errorf("Did not find a working key-value datastore to get image!")
@@ -512,19 +526,18 @@ func (d *Data) GetImage(vID dvid.LocalID, slice Geometry) (img image.Image, err 
 
 	numBytes := int64(bytesPerVoxel) * slice.NumVoxels()
 	data := make([]uint8, numBytes, numBytes)
-	dataID := d.DataLocalID()
 
 	voxels := Voxels{slice, data, stride}
 
 	wg := new(sync.WaitGroup)
 	op := Operation{
 		data: &voxels,
-		vID:  vID,
+		vID:  versionID,
 		op:   PutOp,
 		wg:   wg,
 	}
 	chunkOp := storage.ChunkOp{&op, wg}
-	mapOp := storage.MapOp{chunkOp, d.Channels}
+	mapOp := storage.MapOp{chunkOp, d.ChunkChannels()}
 
 	blockSize := d.BlockSize
 
@@ -540,8 +553,8 @@ func (d *Data) GetImage(vID dvid.LocalID, slice Geometry) (img image.Image, err 
 			// We know for voxels indexing, x span is a contiguous range.
 			i0 := IndexZYX{startBlockCoord[0], y, z}
 			i1 := IndexZYX{endBlockCoord[0], y, z}
-			startKey := &storage.Key{dataID, vID, i0}
-			endKey := &storage.Key{dataID, vID, i1}
+			startKey := &storage.Key{d.DatasetID, d.ID, versionID, i0}
+			endKey := &storage.Key{d.DatasetID, d.ID, versionID, i1}
 
 			// Send the entire range of key/value pairs to ProcessChunk()
 			err = db.SendRange(startKey, endKey, &mapOp)
@@ -554,8 +567,8 @@ func (d *Data) GetImage(vID dvid.LocalID, slice Geometry) (img image.Image, err 
 	return
 }
 
-// PutImage adds a 2d image within given geometry to a version node.
-func (d *Data) PutImage(vID dvid.LocalID, img image.Image, slice Geometry) error {
+// Adds a 2d image within given geometry to a version node.
+func (d *Data) putImage(versionID dvid.LocalID, img image.Image, slice Geometry) error {
 	db := server.KeyValueDB()
 	if db == nil {
 		return fmt.Errorf("Did not find a working key-value datastore to put image!")
@@ -571,17 +584,17 @@ func (d *Data) PutImage(vID dvid.LocalID, img image.Image, slice Geometry) error
 	if actualStride < stride {
 		return fmt.Errorf("Too little data in input image (%d stride bytes)", stride)
 	}
-	dataID := d.DataLocalID()
+
 	voxels := Voxels{slice, data, stride}
 
 	op := Operation{
 		data: &voxels,
-		vID:  vID,
+		vID:  versionID,
 		op:   PutOp,
 		wg:   nil,
 	}
 	chunkOp := storage.ChunkOp{&op, nil}
-	mapOp := storage.MapOp{chunkOp, d.Channels}
+	mapOp := storage.MapOp{chunkOp, d.ChunkChannels()}
 
 	blockSize := d.BlockSize
 
@@ -597,8 +610,8 @@ func (d *Data) PutImage(vID dvid.LocalID, img image.Image, slice Geometry) error
 			// We know for voxels indexing, x span is a contiguous range.
 			i0 := IndexZYX{startBlockCoord[0], y, z}
 			i1 := IndexZYX{endBlockCoord[0], y, z}
-			startKey := &storage.Key{dataID, vID, i0}
-			endKey := &storage.Key{dataID, vID, i1}
+			startKey := &storage.Key{d.DatasetID, d.ID, versionID, i0}
+			endKey := &storage.Key{d.DatasetID, d.ID, versionID, i1}
 
 			// Send the entire range of key/value pairs to ProcessChunk()
 			err := db.SendRange(startKey, endKey, &mapOp)
@@ -684,7 +697,10 @@ func (d *Data) ProcessChunk(chunk *storage.Chunk) {
 	endVolCoord := maxDataVoxel.Min(maxBlockVoxel)
 
 	// Calculate the strides
-	dtype := d.TypeService().(*Datatype)
+	dtype, ok := d.TypeService.(*Datatype)
+	if !ok {
+		log.Fatalf("Illegal data used for ProcessChunk [not voxels.Datatype]: %s\n", *d)
+	}
 	bytesPerVoxel := int32(dtype.NumChannels * dtype.BytesPerVoxel)
 
 	// Compute block coord matching beg's DVID volume space voxel coord

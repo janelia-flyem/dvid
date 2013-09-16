@@ -15,11 +15,11 @@ import (
 	"github.com/janelia-flyem/dvid/server"
 
 	// Declare the data types this DVID executable will support
+	// _ "github.com/DocSavage/dvid/datatype/raveler"
 	_ "github.com/janelia-flyem/dvid/datatype/grayscale8"
 	_ "github.com/janelia-flyem/dvid/datatype/labels32"
 	_ "github.com/janelia-flyem/dvid/datatype/labels64"
 	_ "github.com/janelia-flyem/dvid/datatype/rgba8"
-	_ "github.com/DocSavage/dvid/datatype/raveler"
 )
 
 var (
@@ -95,7 +95,7 @@ Commands that can be performed without a running server:
 
 const helpServerMessage = `
 For further information, launch the DVID server (enter "dvid serve"), then use
-a web browser to visit the DVID web server ("%s" by default).
+a web browser to visit the DVID web server (%q by default).
 `
 
 var usage = func() {

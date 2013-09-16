@@ -15,13 +15,10 @@ import (
 	"github.com/janelia-flyem/go/snappy-go/snappy"
 )
 
-// Serialization should be a slice of bytes.
-type Serialization []byte
-
 // Serializable can be serialized to and deserialized from bytes.
 type Serializable interface {
-	Serialize() (Serialization, error)
-	Deserialize(Serialization) error
+	Serialize() ([]byte, error)
+	Deserialize([]byte) error
 }
 
 // Compression is the format of compression for storing data
@@ -78,7 +75,7 @@ func DecodeSerializationFormat(s SerializationFormat) (compress Compression, che
 }
 
 // Serialize a slice of bytes using optional compression, checksum
-func SerializeData(data []byte, compress Compression, checksum Checksum) (s Serialization, err error) {
+func SerializeData(data []byte, compress Compression, checksum Checksum) (s []byte, err error) {
 	var buffer bytes.Buffer
 
 	// Store the requested compression and checksum
@@ -116,14 +113,14 @@ func SerializeData(data []byte, compress Compression, checksum Checksum) (s Seri
 		// worry about length when deserializing.
 		_, err = buffer.Write(byteData)
 		if err == nil {
-			s = Serialization(buffer.Bytes())
+			s = buffer.Bytes()
 		}
 	}
 	return
 }
 
 // Serializes an arbitrary Go object using Gob encoding and optional compression, checksum
-func Serialize(object interface{}, compress Compression, checksum Checksum) (s Serialization, err error) {
+func Serialize(object interface{}, compress Compression, checksum Checksum) (s []byte, err error) {
 	var buffer bytes.Buffer
 	enc := gob.NewEncoder(&buffer)
 	err = enc.Encode(object)
@@ -136,7 +133,7 @@ func Serialize(object interface{}, compress Compression, checksum Checksum) (s S
 
 // DeserializeData deserializes a slice of bytes using stored compression, checksum.
 // If uncompress parameter is false, the data is not uncompressed.
-func DeserializeData(s Serialization, uncompress bool) (data []byte, compress Compression, err error) {
+func DeserializeData(s []byte, uncompress bool) (data []byte, compress Compression, err error) {
 	buffer := bytes.NewBuffer(s)
 
 	// Get the stored compression and checksum
@@ -188,7 +185,7 @@ func DeserializeData(s Serialization, uncompress bool) (data []byte, compress Co
 }
 
 // Deserializes a Go object using Gob encoding
-func Deserialize(s Serialization, object interface{}) (err error) {
+func Deserialize(s []byte, object interface{}) (err error) {
 	// Get the bytes for the Gob-encoded object
 	var data []byte
 	data, _, err = DeserializeData(s, true)

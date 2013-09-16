@@ -523,9 +523,9 @@ func NewSlice(shape DataShape, offset Coord, size Point2d) (slice Geometry, err 
 }
 
 // NewSliceFromStrings returns a Geometry object for a XY, XZ, or YZ slice given
-// string representations of shape ("xy"), offset ("0,10,20"), and size ("250,250").
-func NewSliceFromStrings(shapeStr, offsetStr, sizeStr string) (slice Geometry, err error) {
-	shape, err := DataShapeString(shapeStr).DataShape()
+// a data shape string, offset ("0,10,20"), and size ("250,250").
+func NewSliceFromStrings(str DataShapeString, offsetStr, sizeStr string) (slice Geometry, err error) {
+	shape, err := str.DataShape()
 	if err != nil {
 		return
 	}

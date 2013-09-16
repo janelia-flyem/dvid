@@ -51,7 +51,45 @@ func (suite *DataSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (suite *DataSuite) TestNewDataset(c *C) {
-	err := suite.service.NewDataset("grayscale", "grayscale8", dvid.Config{})
+func (suite *DataSuite) TestDataOps(c *C) {
+	dataset1, err := suite.service.NewDataset()
 	c.Assert(err, IsNil)
+
+	root1 := dataset1.Root()
+
+	err = dataset1.NewData(root1, "grayscale", "grayscale8", dvid.Config{})
+	c.Assert(err, IsNil)
+
+	err = dataset1.NewData(root1, "labels", "labels64", dvid.Config{})
+	c.Assert(err, IsNil)
+
+	child1, err := dataset1.NewChild(root1)
+	// Should be an error because we have not locked previous node before making a child.
+	c.Assert(err, NotNil)
+
+	err = dataset1.Lock(root1)
+	c.Assert(err, IsNil)
+
+	child1, err = dataset1.NewChild(root1)
+	c.Assert(err, IsNil)
+
+	// Add a second Dataset
+	dataset2, err := suite.service.NewDataset()
+	c.Assert(err, IsNil)
+
+	root2 := dataset2.Root()
+	c.Assert(root1, Not(Equals), root2)
+
+	err = dataset2.NewData(root2, "labels2", "labels64", dvid.Config{})
+	c.Assert(err, IsNil)
+
+	err = dataset2.NewData(root2, "grayscale2", "grayscale8", dvid.Config{})
+	c.Assert(err, IsNil)
+
+	err = dataset2.Lock(root2)
+	c.Assert(err, IsNil)
+
+	child2, err = dataset2.NewChild(root2)
+	c.Assert(err, IsNil)
+
 }

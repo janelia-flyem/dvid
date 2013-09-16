@@ -57,7 +57,7 @@ func (suite *DataSuite) TestXYSliceGrayscale8(c *C) {
 	err := suite.service.NewData("grayscale", "grayscale8", dvid.Config{})
 	c.Assert(err, IsNil)
 
-	dset, err := suite.service.DataService("grayscale")
+	dset, err := suite.service.DatastoreService("grayscale")
 	c.Assert(err, IsNil)
 
 	grayscale, ok := dset.(*voxels.Data)
@@ -76,7 +76,7 @@ func (suite *DataSuite) TestXYSliceGrayscale8(c *C) {
 		voxels.Point2d{int32(nx), int32(ny)})
 
 	// Store it into datastore at head version
-	versionID, err := suite.service.VersionIDFromUUID(suite.head)
+	datasetID, versionID, err := suite.service.VersionIDFromUUID(suite.head)
 	c.Assert(err, IsNil)
 
 	err = grayscale.PutImage(versionID, img, slice)

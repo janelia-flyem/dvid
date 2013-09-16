@@ -70,11 +70,11 @@ type Service struct {
 	RPCAddress string
 }
 
-// DataService returns the current datastore service.  One DVID process
+// DatastoreService returns the current datastore service.  One DVID process
 // is assigned to one datastore service, although it may be possible to have
 // multiple (polyglot) persistence backends attached to that one service.
-func DataService() *Service {
-	return &runningService
+func DatastoreService() *datastore.Service {
+	return runningService.Service
 }
 
 // KeyValueDB returns the current key-value datastore or nil if it's not available.
@@ -131,13 +131,6 @@ func ServerlessDo(datastoreDir string, request datastore.Request, reply *datasto
 	}
 	dvid.SetErrorLoggingFile(file)
 
-	// If it's not a builtin command, launch data handlers as goroutines for all data sets.
-	switch request.Name() {
-	case "help", "types", "version", "log", "dataset", "branch", "lock":
-	default:
-		runningService.StartChunkHandlers()
-	}
-
 	// Issue local command
 	var localConnect RPCConnection
 	err = localConnect.Do(request, reply)
@@ -168,15 +161,12 @@ func OpenDatastore(datastoreDir string) (service *Service, err error) {
 	}
 	runningService.ErrorLogDir = datastoreDir
 
-	// Launch block handlers as goroutines for all compiled types.
-	runningService.StartChunkHandlers()
-
 	service = &runningService
 	return
 }
 
 // Serve opens a datastore then creates both web and rpc servers for the datastore.
-// This function must be called for DataService() to be non-nil.
+// This function must be called for DatastoreService() to be non-nil.
 func (service *Service) Serve(webAddress, webClientDir, rpcAddress string) error {
 	// Register an error logger that appends to a file in this datastore directory.
 	errorLog := filepath.Join(service.ErrorLogDir, ErrorLogFilename)

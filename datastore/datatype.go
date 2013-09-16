@@ -28,7 +28,7 @@ type UrlString string
 
 // TypeID provides methods for determining the identity of a data type.
 type TypeID interface {
-	// TypeName describes a data type and may not be unique.
+	// TypeName is an abbreviated type name.
 	DatatypeName() string
 
 	// TypeUrl returns the unique package name that fulfills the DVID Data interface
@@ -46,7 +46,7 @@ type TypeService interface {
 	Help() string
 
 	// Create Data that is an instance of this data type
-	NewData(id DataID, config dvid.Config) DataService
+	NewData(id *DataID, config dvid.Config) (service DataService, err error)
 }
 
 // CompiledTypes is the set of registered data types compiled into DVID and
@@ -92,6 +92,20 @@ func RegisterDatatype(t TypeService) {
 	CompiledTypes[t.DatatypeUrl()] = t
 }
 
+// TypeServiceByName returns a type-specific service given a type name.
+func TypeServiceByName(typeName string) (typeService TypeService, err error) {
+	for _, dtype := range CompiledTypes {
+		if typeName == dtype.DatatypeName() {
+			typeService = dtype
+			return
+		}
+	}
+	err = fmt.Errorf("Data type '%s' is not supported in current DVID executable", typeName)
+	return
+}
+
+// ---- TypeService Implementation ----
+
 // DatatypeID uniquely identifies a DVID-supported data type and provides a
 // shorthand name.
 type DatatypeID struct {
@@ -105,8 +119,8 @@ type DatatypeID struct {
 	Version string
 }
 
-func MakeDatatypeID(name string, url UrlString, version string) DatatypeID {
-	return DatatypeID{name, url, version}
+func MakeDatatypeID(name string, url UrlString, version string) *DatatypeID {
+	return &DatatypeID{name, url, version}
 }
 
 func (id *DatatypeID) DatatypeName() string { return id.Name }
@@ -118,10 +132,10 @@ func (id *DatatypeID) DatatypeVersion() string { return id.Version }
 // Datatype is the base struct that satisfies a TypeService and can be embedded
 // in other data types.
 type Datatype struct {
-	DatatypeID
+	*DatatypeID
 
 	// A list of interface requirements for the backend datastore
-	Requirements storage.Requirements
+	Requirements *storage.Requirements
 }
 
 // The following functions supply standard operations necessary across all supported
@@ -170,16 +184,21 @@ type DataService interface {
 	// DataName returns the name of the data (e.g., grayscale data that is grayscale8 data type).
 	DataName() DataString
 
-	// DataLocalID returns a DVID instance-specific id for this data,
-	// which can be held in a relatively small number of bytes and is useful
-	// as a key component.
+	// DatasetLocalID returns a DVID instance-specific id for this dataset, which
+	// can be held in a relatively small number of bytes and is a key component.
+	DatasetLocalID() dvid.LocalID32
+
+	// DataLocalID returns a DVID instance-specific id for this data.
 	DataLocalID() dvid.LocalID
+
+	// IsVersioned returns true if this data can be mutated across versions.
+	IsVersioned() bool
 
 	// DoRPC handles command line and RPC commands specific to a data type
 	DoRPC(request Request, reply *Response) error
 
 	// DoHTTP handles HTTP requests specific to a data type
-	DoHTTP(w http.ResponseWriter, r *http.Request) error
+	DoHTTP(uuid UUID, w http.ResponseWriter, r *http.Request) error
 
 	// Returns standard error response for unknown commands
 	UnknownCommand(r Request) error
@@ -200,74 +219,60 @@ type ChunkHandler interface {
 	ProcessChunk(*storage.Chunk)
 }
 
+// ---- DataService and ChunkHandler implementation ----
+
 // DataID identifies data within a DVID server.
 type DataID struct {
-	Name    DataString
-	LocalID dvid.LocalID
+	Name      DataString
+	ID        dvid.LocalID
+	DatasetID dvid.LocalID32
 }
 
 func (id DataID) DataName() DataString { return id.Name }
 
-func (id DataID) DataLocalID() dvid.LocalID { return id.LocalID }
+func (id DataID) DataLocalID() dvid.LocalID { return id.ID }
 
-// Data is an instance of a data type and has an associated datastore.
+func (id DataID) DatasetLocalID() dvid.LocalID32 { return id.DatasetID }
+
+// Data is an instance of a data type with some identifiers and it satisfies
+// a ChunkHandler interface.  Each Data is dataset-specific.
 type Data struct {
-	DataID
+	*DataID
+	TypeService
 
-	// Underlying implementation of this data is a Datatype
-	Datatype TypeService
+	// If false (default), we allow changes along nodes.
+	unversioned bool
 
 	// Data can be chunked and mapped over channels for processing.
-	Channels []storage.ChunkChannel
+	channels []storage.ChunkChannel
 }
 
-func NewData(id DataID, t TypeService) *Data {
-	return &Data{DataID: id, Datatype: t}
+// NewData returns a base data struct and sets the versioning depending on config.
+func NewData(id *DataID, t TypeService, config dvid.Config) (data *Data, err error) {
+	data = &Data{DataID: id, TypeService: t}
+	var versioned bool
+	versioned, err = config.IsVersioned()
+	if err != nil {
+		return
+	}
+	data.unversioned = !versioned
+	return
+}
+
+func (d *Data) IsVersioned() bool {
+	return !d.unversioned
 }
 
 func (d *Data) UnknownCommand(request Request) error {
 	return fmt.Errorf("Unknown command.  Data type '%s' [%s] does not support '%s' command.",
-		d.Name, d.Datatype.DatatypeName(), request.TypeCommand())
-}
-
-// Forward the TypeService interface calls to the embedded Datatype.  Datatype
-// is not simply embedded because of potential conflicts in Name, etc, between
-// Data and Datatype.  Prefer finer control.
-
-func (d *Data) DatatypeName() string { return d.Datatype.DatatypeName() }
-
-func (d *Data) DatatypeUrl() UrlString { return d.Datatype.DatatypeUrl() }
-
-func (d *Data) DatatypeVersion() string { return d.Datatype.DatatypeVersion() }
-
-func (d *Data) Help() string { return d.Datatype.Help() }
-
-func (d *Data) NewData(id DataID, config dvid.Config) DataService {
-	return d.Datatype.NewData(id, config)
+		d.Name, d.DatatypeName(), request.TypeCommand())
 }
 
 // ---- ChunkHandler interface ----
 
-const (
-	// Number of chunks that can be buffered on each channel
-	// before sender is blocked.
-	ChannelBufferSize = 1000
-)
-
-/*
-// Handler encapsulates the pool of chunk channels for data-specific handlers.
-type Handler struct {
-	channels []storage.ChunkChannel
-	haltchan chan bool
-}
-
-// Each data has a pool of channels to communicate with gouroutine handlers.
-var dataHandlers map[DataString]Handler
-
-func init() {
-	dataHandlers = make(map[DataString]Handler)
-}
-*/
+// Number of chunks that can be buffered on each channel
+// before sender is blocked.
+const ChannelBufferSize = 1000
 
 // HaltOp is an empty struct to signal chunk handlers to quit.
 type HaltOp struct{}
@@ -285,17 +290,21 @@ func (d *Data) ChannelSpecs() (number, bufferSize int) {
 	return runtime.NumCPU(), ChannelBufferSize
 }
 
+// ChunkChannels returns a slice of channels to communicate with chunk handlers.
+func (d *Data) ChunkChannels() []storage.ChunkChannel {
+	return d.channels
+}
+
 // StartChunkHandlers starts goroutines that handle chunks for this data.
 func (d *Data) StartChunkHandlers() {
-	dataName := d.DataName()
-	StartMonitor(dataName)
-
+	// Lock this function to prevent interleaved StartChunkHandlers()
 	var mapAccess sync.Mutex
 	mapAccess.Lock()
-	if d.Channels != nil {
-		log.Printf("Already have chunk handlers for data set '%s' (%s)\n",
-			dataName, d.DatatypeName())
-	} else {
+	defer mapAccess.Unlock()
+
+	dataName := d.DataName()
+	StartMonitor(dataName)
+	if d.channels == nil {
 		numHandlers, bufferSize := d.ChannelSpecs()
 		log.Printf("Starting %d chunk handlers for data '%s' (%s)...\n",
 			numHandlers, dataName, d.DatatypeName())
@@ -320,19 +329,19 @@ func (d *Data) StartChunkHandlers() {
 				}
 			}(i, channel)
 		}
-		d.Channels = channels
+		d.channels = channels
 	}
-	mapAccess.Unlock()
 }
 
 // StopChunkHandlers halts the goroutines handling chunks for this data.
 func (d *Data) StopChunkHandlers() {
-	for _, channel := range d.Channels {
+	for _, channel := range d.channels {
 		channel <- HaltChunk()
 	}
 	StopMonitor(d.DataName())
 }
 
+// ProcessChunk should be implemented by each type if that type supports map/reduce
+// operations on chunks.  See datatype/voxels package.
 func (d *Data) ProcessChunk(chunk *storage.Chunk) {
-	// Should be implemented by type.
 }

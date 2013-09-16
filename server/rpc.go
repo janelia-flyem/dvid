@@ -16,25 +16,23 @@ import (
 const helpMessage = `
 Commands executed on the server (rpc address = %s):
 
-	help  [command you are running]
+	help
 	about
-	log
-	types
-	dataset <dataset name> <data type name>   (example: "dataset mygrayscale grayscale8")
 	shutdown
 
-	(Commands on roadmap)
-	comment <uuid> "..."
-	add <uuid> <dataset name> <local filename glob>
-	branch <uuid>
-	lock <uuid>
-	pull <remote dvid address> <uuid> [<extents>]
-	push <remote dvid address> <uuid> [<extents>]
-	archive <uuid>
+	types
+	datasets info
+    datasets new         (returns UUID of dataset's root node)
 
+	dataset <UUID> versioned <datatype name> <data name>
+	dataset <UUID> unversioned <datatype name> <data name>
+
+	dataset <UUID> <data name> help
+
+	node <UUID> lock
+	node <UUID> branch   (returns UUID of new child node)
+    node <UUID> <data name> <type-specific commands>
 %s
-
-Use "<data type name> help" to get data type-specific help.
 
 For further information, use a web browser to visit the server for this
 datastore:  
@@ -59,36 +57,15 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 	}
 
 	switch cmd.Name() {
-	// Handle builtin commands
+
 	case "help":
 		reply.Text = fmt.Sprintf(helpMessage,
 			runningService.RPCAddress, runningService.SupportedDataChart(),
 			runningService.WebAddress)
-	case "types":
-		reply.Text = runningService.SupportedDataChart()
+
 	case "about":
 		reply.Text = fmt.Sprintf("%s\n", runningService.About())
-	case "log":
-		reply.Text = runningService.LogInfo()
-	case "dataset":
-		var dataName, typeName string
-		cmd.CommandArgs(1, &dataName, &typeName)
-		dataSetName := datastore.DataString(dataName)
-		err := runningService.NewData(dataSetName, typeName, dvid.Config{})
-		if err != nil {
-			return err
-		}
-		reply.Text = fmt.Sprintf("Added data set '%s' of type '%s'", dataSetName, typeName)
-	case "dataset-delete":
-		// Temporary command while we debug system
-		var dataName string
-		cmd.CommandArgs(1, &dataName)
-		dataSetName := datastore.DataString(dataName)
-		err := runningService.DeleteData(dataSetName)
-		if err != nil {
-			return err
-		}
-		reply.Text = fmt.Sprintf("Deleted data set '%s' ", dataSetName)
+
 	case "shutdown":
 		Shutdown()
 		// Make this process shutdown in a second to allow time for RPC to finish.
@@ -97,49 +74,102 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 			time.Sleep(1 * time.Second)
 			os.Exit(0)
 		}()
-	case "branch", "lock", "pull", "push", "archive":
-		reply.Text = fmt.Sprintf("Server would have processed '%s'", cmd)
-	default:
-		// Assume this is the command for a supported data type
-		return datasetDo(cmd, reply)
-	}
-	return nil
-}
 
-// Branch creates a new version, returning a UUID for the new version.
-// By default, we copy all key/values for the parent UUID since we optimize
-// for speed and not for size of datastore.  (Size can be decreased byte
-// running 'archive' command on a UUID.)
-func branch(cmd datastore.Request, reply *datastore.Response) error {
-	return nil
-}
+	case "types":
+		reply.Text = runningService.SupportedDataChart()
 
-// The following command implementations assume dataService is non-nil, hence their
-// unexported nature.
-
-func datasetDo(cmd datastore.Request, reply *datastore.Response) error {
-	// Get the DataService for this data set name.  Let user know if it's not supported.
-	datasetName := datastore.DataString(cmd.Name())
-	dataset, err := runningService.DataService(datasetName)
-	if err != nil {
-		if cmd.TypeCommand() == "help" {
-			datatype, err := runningService.TypeService(cmd.Name())
+	case "datasets":
+		var subcommand string
+		cmd.CommandArgs(2, &subcommand)
+		switch subcommand {
+		case "info":
+			jsonStr, err := runningService.Datasets.JSON()
 			if err != nil {
 				return err
 			}
-			fmt.Println(datatype.Help())
-			return nil
-		} else {
-			return fmt.Errorf("Command '%s' is not a registered data set ", cmd.Name())
+			reply.Text = jsonStr
+		case "new":
+			dataset, err := runningService.NewDataset()
+			if err != nil {
+				return err
+			}
+			reply.Text = string(dataset.RootUUID())
+		default:
+			return fmt.Errorf("Unknown command: %q", cmd)
 		}
-	}
 
-	// Make sure we have at least a command in addition to the data type name
-	if cmd.TypeCommand() == "" {
-		return fmt.Errorf("Must give a command in addition to data type!  Try '%s help'.",
-			cmd.Name())
-	}
+	case "dataset":
+		var uuidStr, descriptor, typename, dataname string
+		cmd.CommandArgs(1, &uuidStr, &descriptor)
+		switch descriptor {
+		case "versioned", "unversioned":
+			cmd.CommandArgs(3, &typename, &dataname)
+			err := newData(uuidStr, typename, dataname, descriptor == "versioned")
+			if err != nil {
+				return err
+			}
+			reply.Text = fmt.Sprintf("Data %q [%s] added to node %s", dataname, typename, uuidStr)
+		default:
+			// Must be data name.
+			var subcommand string
+			cmd.CommandArgs(3, &subcommand)
+			if subcommand != "help" {
+				return fmt.Errorf("Unknown command: %q", cmd)
+			}
+			reply.Text = fmt.Sprintf("TODO -- Implement help for data %s in node %s", descriptor, uuidStr)
+		}
 
-	// Send the command to the data type
-	return dataset.DoRPC(cmd, reply)
+	case "node":
+		var uuidStr, descriptor string
+		cmd.CommandArgs(1, &uuidStr, &descriptor)
+		dataset, uuid, err := runningService.DatasetFromString(uuidStr)
+		if err != nil {
+			return err
+		}
+		switch descriptor {
+		case "lock":
+			err := dataset.Lock(uuid)
+			if err != nil {
+				return err
+			}
+		case "branch":
+			newuuid, err := dataset.NewChild(uuid)
+			if err != nil {
+				return err
+			}
+			reply.Text = string(newuuid)
+
+		default:
+			dataname := datastore.DataString(descriptor)
+			var subcommand string
+			cmd.CommandArgs(3, &subcommand)
+			if subcommand == "help" {
+				typeservice, err := dataset.TypeServiceForData(dataname)
+				if err != nil {
+					return err
+				}
+				reply.Text = typeservice.Help()
+				return nil
+			}
+			data, err := dataset.Data(dataname)
+			if err != nil {
+				return err
+			}
+			return data.DoRPC(cmd, reply)
+		}
+
+	default:
+		return fmt.Errorf("Unknown command: '%s'", cmd)
+	}
+	return nil
+}
+
+// Adds new data to a dataset specified by a UUID string.
+func newData(uuidStr, typename, dataname string, versioned bool) error {
+	dataset, uuid, err := runningService.DatasetFromString(uuidStr)
+	if err != nil {
+		return err
+	}
+	config := dvid.Config{"versioned": versioned}
+	return dataset.NewData(uuid, datastore.DataString(dataname), typename, config)
 }

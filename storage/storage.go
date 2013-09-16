@@ -25,8 +25,9 @@ import (
 )
 
 const (
-	KeyDataGlobal    dvid.LocalID = 0
-	KeyVersionGlobal dvid.LocalID = 0
+	KeyDatasetGlobal dvid.LocalID32 = 0
+	KeyDataGlobal    dvid.LocalID   = 0
+	KeyVersionGlobal dvid.LocalID   = 0
 )
 
 /*
@@ -41,16 +42,16 @@ const (
 
 	Keys have the following components:
 
-	1) Data: The DVID server-specific data index where index 0 is
-	     a global dataset like DVID configuration data.  Index 1 might be
-	     something like a grayscale (uint8) data set, etc.
-	2) Version: The DVID server-specific version index that is
-	     fewer bytes than a complete UUID.
-	3) Index: The datatype-specific (usually spatiotemporal) index that allows
+	1) Dataset: The DVID server-specific 32-bit ID for a dataset.
+	2) Data: The DVID server-specific data index that is unique per dataset.
+	3) Version: The DVID server-specific version index that is
+	     fewer bytes than a complete UUID and unique per dataset.
+	4) Index: The datatype-specific (usually spatiotemporal) index that allows
 	     partitioning of the data.  In the case of voxels, this could be a
 	     (x, y, z) coordinate packed into a slice of bytes.
 */
 type Key struct {
+	Dataset dvid.LocalID32
 	Data    dvid.LocalID
 	Version dvid.LocalID
 	Index   dvid.Index
@@ -58,15 +59,19 @@ type Key struct {
 
 // BytesToKey returns a Key given a slice of bytes
 func (key *Key) BytesToKey(b []byte) (*Key, error) {
-	data, len := dvid.LocalIDFromBytes(b)
-	version, _ := dvid.LocalIDFromBytes(b[len:])
-	index, err := key.Index.IndexFromBytes(b[2*len:])
-	return &Key{data, version, index}, err
+	dataset, start := dvid.LocalID32FromBytes(b)
+	data, length := dvid.LocalIDFromBytes(b[start:])
+	start += length
+	version, _ := dvid.LocalIDFromBytes(b[start:])
+	start += length
+	index, err := key.Index.IndexFromBytes(b[start:])
+	return &Key{dataset, data, version, index}, err
 }
 
 // Bytes returns a slice of bytes derived from the concatenation of the key elements.
 func (key *Key) Bytes() (b []byte) {
-	b = key.Data.Bytes()
+	b = key.Dataset.Bytes()
+	b = append(b, key.Data.Bytes()...)
 	b = append(b, key.Version.Bytes()...)
 	b = append(b, key.Index.Bytes()...)
 	return

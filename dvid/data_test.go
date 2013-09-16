@@ -13,7 +13,7 @@ type MySuite struct{}
 var _ = Suite(&MySuite{})
 
 func (s *MySuite) TestLocalID(c *C) {
-	id := LocalID{41}
+	id := LocalID(41)
 	b := id.Bytes()
 	id2, length := LocalIDFromBytes(b)
 
