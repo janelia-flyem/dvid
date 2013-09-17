@@ -6,7 +6,6 @@ package datastore
 
 import (
 	"fmt"
-	"log"
 
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
@@ -35,24 +34,21 @@ func Versions() string {
 // Init creates a key-value datastore using default arguments.  Datastore
 // configuration is stored as key/values in the datastore and also in a
 // human-readable config file in the datastore directory.
-func Init(directory string, create bool) (uuid UUID) {
+func Init(directory string, create bool) error {
 	fmt.Println("\nInitializing datastore at", directory)
 
 	// Initialize the backend database
 	dbOptions := storage.Options{}
 	db, err := storage.NewStore(directory, create, &dbOptions)
+	defer db.Close()
 	if err != nil {
-		log.Fatalf("Error initializing datastore (%s): %s\n", directory, err.Error())
+		return fmt.Errorf("Error initializing datastore (%s): %s\n", directory, err.Error())
 	}
 
 	// Put empty Datasets
 	datasets := new(Datasets)
 	err = datasets.Put(db)
-	if err != nil {
-		log.Fatalf("Error writing blank Datasets: %s", err.Error())
-		return
-	}
-	return
+	return err
 }
 
 // Service encapsulates an open DVID datastore, available for operations.

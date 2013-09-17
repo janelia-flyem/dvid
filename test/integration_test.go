@@ -38,58 +38,59 @@ func (suite *DataSuite) SetUpSuite(c *C) {
 	suite.dir = c.MkDir()
 
 	// Create a new datastore.
-	suite.head = datastore.Init(suite.dir, true)
-	if len(suite.head) == 0 {
-		c.Errorf("Initialization of test datastore resulted in zero length UUID")
-	} else {
-		c.Logf("Test datastore initialized with head UUID = %s\n", suite.head)
-	}
+	err := datastore.Init(suite.dir, true)
+	c.Assert(err, IsNil)
 
 	// Open the datastore
-	var err error
 	suite.service, err = server.OpenDatastore(suite.dir)
 	c.Assert(err, IsNil)
 }
 
-func (suite *DataSuite) TestDataOps(c *C) {
+func (suite *DataSuite) TestVersionedDataOps(c *C) {
 	dataset1, err := suite.service.NewDataset()
 	c.Assert(err, IsNil)
 
-	root1 := dataset1.Root()
+	config := dvid.Config{}
+	config["versioned"] = true
 
-	err = dataset1.NewData(root1, "grayscale", "grayscale8", dvid.Config{})
+	err = dataset1.NewData(dataset1.Root, "grayscale", "grayscale8", config)
 	c.Assert(err, IsNil)
 
-	err = dataset1.NewData(root1, "labels", "labels64", dvid.Config{})
+	err = dataset1.NewData(dataset1.Root, "labels", "labels64", config)
 	c.Assert(err, IsNil)
 
-	child1, err := dataset1.NewChild(root1)
+	child1, err := dataset1.NewChild(dataset1.Root)
 	// Should be an error because we have not locked previous node before making a child.
 	c.Assert(err, NotNil)
 
-	err = dataset1.Lock(root1)
+	err = dataset1.Lock(dataset1.Root)
 	c.Assert(err, IsNil)
 
-	child1, err = dataset1.NewChild(root1)
+	child1, err = dataset1.NewChild(dataset1.Root)
 	c.Assert(err, IsNil)
 
 	// Add a second Dataset
 	dataset2, err := suite.service.NewDataset()
 	c.Assert(err, IsNil)
 
-	root2 := dataset2.Root()
-	c.Assert(root1, Not(Equals), root2)
+	root2 := dataset2.RootUUID()
+	c.Assert(dataset1.Root, Not(Equals), root2)
 
-	err = dataset2.NewData(root2, "labels2", "labels64", dvid.Config{})
+	err = dataset2.NewData(root2, "labels2", "labels64", config)
 	c.Assert(err, IsNil)
 
-	err = dataset2.NewData(root2, "grayscale2", "grayscale8", dvid.Config{})
+	err = dataset2.NewData(root2, "grayscale2", "grayscale8", config)
 	c.Assert(err, IsNil)
 
 	err = dataset2.Lock(root2)
 	c.Assert(err, IsNil)
 
-	child2, err = dataset2.NewChild(root2)
+	child2, err := dataset2.NewChild(root2)
 	c.Assert(err, IsNil)
 
+	c.Assert(child1, Not(Equals), child2)
+}
+
+func (suite *DataSuite) TearDownSuite(c *C) {
+	suite.service.Shutdown()
 }

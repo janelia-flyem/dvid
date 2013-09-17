@@ -79,7 +79,7 @@ func (dsets *Datasets) NewDataset() (dset *Dataset, err error) {
 	}
 	dsets.NewDatasetID++
 	dsets.Datasets = append(dsets.Datasets, dset)
-	dsets.versionMap[dset.Head] = dset
+	dsets.versionMap[dset.Root] = dset
 
 	dsets.writeLock.Unlock()
 	return
@@ -145,15 +145,15 @@ func (dsets *Datasets) Put(db storage.KeyValueDB) error {
 // Serialize returns a serialization of Datasets with Snappy compression and
 // CRC32 checksum.
 func (dsets *Datasets) Serialize() ([]byte, error) {
-	return dvid.Serialize(dsets.Datasets, dvid.Snappy, dvid.CRC32)
+	return dvid.Serialize(dsets, dvid.Snappy, dvid.CRC32)
 }
 
 // Deserialize converts a serialization to Datasets
 func (dsets *Datasets) Deserialize(s []byte) error {
 	dsets.Datasets = []*Dataset{}
-	err := dvid.Deserialize(s, dsets.Datasets)
+	err := dvid.Deserialize(s, dsets)
 	if err != nil {
-		return err
+		return fmt.Errorf("Error in deserializing datasets: %s", err.Error())
 	}
 	dsets.versionMap = make(map[UUID]*Dataset)
 	for _, dset := range dsets.Datasets {
@@ -344,7 +344,7 @@ type Dataset struct {
 
 // RootUUID returns the UUID of the root node of this Dataset's version DAG.
 func (dset *Dataset) RootUUID() UUID {
-	return dset.Head
+	return dset.Root
 }
 
 func (dset *Dataset) Versions() []UUID {
@@ -398,6 +398,9 @@ func (dset *Dataset) NewData(u UUID, name DataString, typeName string, config dv
 		dataservice, err = typeService.NewData(dataID, config)
 		if err != nil {
 			return err
+		}
+		if dset.nameMap == nil {
+			dset.nameMap = make(map[DataString]DataService)
 		}
 		dset.nameMap[name] = dataservice
 	}
@@ -513,7 +516,7 @@ func (n *Node) AddData(data *NodeData) {
 // VersionDAG is the directed acyclic graph of NodeVersion and an index by UUID into
 // the graph.
 type VersionDAG struct {
-	Head  UUID
+	Root  UUID
 	Nodes map[UUID]*Node
 
 	// These maps are used to efficiently lookup UUID and data names.
@@ -529,19 +532,19 @@ type VersionDAG struct {
 // assigning its UUID.
 func NewVersionDAG() *VersionDAG {
 	dag := VersionDAG{
-		Head:       NewUUID(),
+		Root:       NewUUID(),
 		Nodes:      make(map[UUID]*Node),
 		VersionMap: make(map[UUID]dvid.LocalID),
 	}
 	t := time.Now()
 	version := &NodeVersion{
-		GlobalID:  dag.Head,
+		GlobalID:  dag.Root,
 		VersionID: 0,
 		Created:   t,
 		Updated:   t,
 	}
-	dag.Nodes[dag.Head] = &Node{NodeVersion: version}
-	dag.VersionMap[dag.Head] = 0
+	dag.Nodes[dag.Root] = &Node{NodeVersion: version}
+	dag.VersionMap[dag.Root] = 0
 	dag.NewVersionID = 1
 	return &dag
 }
