@@ -11,7 +11,6 @@ import (
 	"image"
 	"log"
 	"net/http"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -465,8 +464,7 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 		return err
 	}
 
-	// Load each image and do map/reduce computation on blocks of the image.
-
+	// Load and PUT each image.
 	numSuccessful := 0
 	var lastErr error
 	for _, filename := range filenames {
@@ -480,7 +478,7 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 
 			err = d.PutImage(versionID, img, slice)
 
-			dvid.ElapsedTime(dvid.Debug, sliceTime, "%s server-add %s", d.DataName(), slice)
+			dvid.ElapsedTime(dvid.Debug, sliceTime, "%s load local %s", d.DataName(), slice)
 			if err == nil {
 				numSuccessful++
 			} else {
@@ -493,7 +491,7 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 		return fmt.Errorf("Error: %d of %d images successfully added [%s]\n",
 			numSuccessful, len(filenames), lastErr.Error())
 	}
-	dvid.ElapsedTime(dvid.Debug, startTime, "RPC server-add (%s) completed", addedFiles)
+	dvid.ElapsedTime(dvid.Debug, startTime, "RPC load local (%s) completed", addedFiles)
 	return nil
 }
 
@@ -518,7 +516,6 @@ func (d *Data) GetImage(versionID dvid.LocalID, slice Geometry) (img image.Image
 		err = fmt.Errorf("Did not find a working key-value datastore to get image!")
 		return
 	}
-
 	bytesPerVoxel := d.BytesPerVoxel()
 	stride := slice.Width() * bytesPerVoxel
 
@@ -605,6 +602,11 @@ func (d *Data) PutImage(versionID dvid.LocalID, img image.Image, slice Geometry)
 	startVoxel := slice.Origin()
 	endVoxel := slice.EndVoxel()
 
+	// We only want one PUT on given version for given data to prevent interleaved
+	// chunk PUTs that could potentially overwrite slice modifications.
+	versionMutex := datastore.VersionMutex(d, versionID)
+	versionMutex.Lock()
+
 	// Map: Iterate in x, then y, then z
 	startBlockCoord := startVoxel.BlockCoord(blockSize)
 	endBlockCoord := endVoxel.BlockCoord(blockSize)
@@ -653,11 +655,15 @@ func (d *Data) PutImage(versionID dvid.LocalID, img image.Image, slice Geometry)
 				} else {
 					kv = storage.KeyValue{K: key}
 				}
+				// TODO -- Pass batch write via chunkOp and group all PUTs
+				// together at once.  Should increase write speed, particularly
+				// since the PUTs are using mostly sequential keys.
 				go d.ProcessChunk(&storage.Chunk{chunkOp, kv})
 			}
 		}
 	}
 	wg.Wait()
+	versionMutex.Unlock()
 
 	return nil
 }
@@ -697,17 +703,6 @@ func (d *Data) GetVolume(versionID dvid.LocalID, vol Geometry) (data []byte, err
 	return
 }
 */
-// ---- ChunkHandler interface ----
-
-const ChannelBufferSize = 1000
-
-// ChannelSpecs returns the number of chunk channels/handlers and
-// the buffer size of a channel for Voxel data types.
-func (d *Data) ChannelSpecs() (number, bufferSize int) {
-	return runtime.NumCPU(), ChannelBufferSize
-}
-
-// StartChunkHandlers and StopChunkHandlers are inherited from embedded datastore.Data.
 
 // ProcessChunk processes a chunk of data as part of a mapped operation.  The data may be
 // thinner, wider, and longer than the chunk, depending on the data shape (XY, XZ, etc).

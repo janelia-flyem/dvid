@@ -25,6 +25,33 @@ var KeyDatasets = storage.Key{
 	Index:   dvid.IndexUint8(1),
 }
 
+type nodeID struct {
+	Dataset dvid.LocalID32
+	Data    dvid.LocalID
+	Version dvid.LocalID
+}
+
+// Map of mutexes at the granularity of dataset/data/version
+var versionMutexes map[nodeID]*sync.Mutex
+
+func init() {
+	versionMutexes = make(map[nodeID]*sync.Mutex)
+}
+
+func VersionMutex(data DataService, versionID dvid.LocalID) (vmutex *sync.Mutex) {
+	var mutex sync.Mutex
+	mutex.Lock()
+	id := nodeID{data.DatasetLocalID(), data.DataLocalID(), versionID}
+	var found bool
+	vmutex, found = versionMutexes[id]
+	if !found {
+		vmutex = new(sync.Mutex)
+		versionMutexes[id] = vmutex
+	}
+	mutex.Unlock()
+	return
+}
+
 // Datasets are group of Dataset available within the datastore.
 type Datasets struct {
 	Datasets []*Dataset
@@ -508,7 +535,8 @@ type VersionDAG struct {
 	Root  UUID
 	Nodes map[UUID]*Node
 
-	// These maps are used to efficiently lookup UUID and data names.
+	// VersionMap is used to accelerate mapping global UUID to DVID server-specific
+	// and smaller ID for a version.
 	VersionMap map[UUID]dvid.LocalID
 
 	NewVersionID dvid.LocalID
