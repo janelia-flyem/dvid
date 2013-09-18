@@ -5,15 +5,36 @@ DVID: Distributed, Versioned Image Datastore
 
 [![Build Status](https://drone.io/github.com/janelia-flyem/dvid/status.png)](https://drone.io/github.com/janelia-flyem/dvid/latest)
 
-DVID is a distributed, versioned image datastore written in Go that supports different
+DVID is a distributed, versioned image-oriented datastore written in Go that supports different
 storage backends, a Level 2 REST HTTP API, and command-line access.
 
 Documentation is [available here](http://godoc.org/github.com/janelia-flyem/dvid).
 
+## Philosophy
+
+DVID gains much of its power by assuming a key-value persistence layer, allowing pluggable
+storage engines, and creating conventions of how to organize key space for arbitrary
+type-specific indexing and distributed versioning.
+
+User-defined data types can be added to DVID.  Standard data types (8-bit grayscale
+images, 64-bit label data, and label-to-label maps) will be included with the base
+DVID installation, although their packaging is identical to any other user-defined
+data type.
+
+DVID operations can be run from the command line by knowledgeable users, but
+we assume that clients will build upon DVID layers to hide the complexity from
+users.  DVID currently uses a Level 2 REST HTTP API and plans to incorporate
+Apache Thrift APIs.
+
+
 ## Build Process
 
-DVID uses the [buildem system](http://github.com/janelia-flyem/buildem#readme) to 
-automatically download and build leveldb, Go language support, and all required Go packages.  
+DVID uses the [buildem system](http://github.com/janelia-flyem/buildem#readme) to automatically 
+download and build the specified storage engine (e.g., leveldb), Go language support, and all 
+required Go packages.
+
+You may choose a storage engine via the CMake variables DVID_BACKEND and DVID_BACKEND_DEPEND
+in the CMakeLists.txt file.
 
 To build DVID using buildem, do the following steps:
 

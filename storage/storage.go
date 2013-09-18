@@ -25,30 +25,30 @@ import (
 )
 
 /*
-	Key holds DVID-centric data like version (UUID), data set, and index
-	identifiers and that follow a convention of how to collapse those
+	Key holds DVID-centric data like shortened version/UUID, data set, and
+	index identifiers and that follow a convention of how to collapse those
 	identifiers into a []byte key.  Ideally, we'd like to keep Key within
 	the datastore package and have storage independent of DVID concepts,
 	but in order to optimize the layout of data in some storage engines,
 	the backend drivers need the additional DVID information.  For example,
 	Couchbase allows configuration at the bucket level (RAM cache, CPUs)
 	and datasets could be placed in different buckets.
-
-	Keys have the following components:
-
-	1) Dataset: The DVID server-specific 32-bit ID for a dataset.
-	2) Data: The DVID server-specific data index that is unique per dataset.
-	3) Version: The DVID server-specific version index that is
-	     fewer bytes than a complete UUID and unique per dataset.
-	4) Index: The datatype-specific (usually spatiotemporal) index that allows
-	     partitioning of the data.  In the case of voxels, this could be a
-	     (x, y, z) coordinate packed into a slice of bytes.
 */
 type Key struct {
+	// The DVID server-specific 32-bit ID for a dataset.
 	Dataset dvid.LocalID32
-	Data    dvid.LocalID
+
+	// The DVID server-specific data index that is unique per dataset.
+	Data dvid.LocalID
+
+	// The DVID server-specific version index that is fewer bytes than a
+	// complete UUID and unique per dataset.
 	Version dvid.LocalID
-	Index   dvid.Index
+
+	// The datatype-specific (usually spatiotemporal) index that allows partitioning
+	// of the data.  In the case of voxels, this could be a (x, y, z) coordinate
+	// packed into a slice of bytes.
+	Index dvid.Index
 }
 
 // BytesToKey returns a Key given a slice of bytes

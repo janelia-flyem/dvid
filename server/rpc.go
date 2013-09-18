@@ -22,7 +22,7 @@ Commands executed on the server (rpc address = %s):
 
 	types
 	datasets info
-    datasets new         (returns UUID of dataset's root node)
+	datasets new         (returns UUID of dataset's root node)
 
 	dataset <UUID> versioned <datatype name> <data name>
 	dataset <UUID> unversioned <datatype name> <data name>
@@ -31,7 +31,8 @@ Commands executed on the server (rpc address = %s):
 
 	node <UUID> lock
 	node <UUID> branch   (returns UUID of new child node)
-    node <UUID> <data name> <type-specific commands>
+	node <UUID> <data name> <type-specific commands>
+
 %s
 
 For further information, use a web browser to visit the server for this
@@ -74,13 +75,15 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 			time.Sleep(1 * time.Second)
 			os.Exit(0)
 		}()
+		reply.Text = fmt.Sprintf("DVID server at %s has been halted.",
+			runningService.RPCAddress)
 
 	case "types":
 		reply.Text = runningService.SupportedDataChart()
 
 	case "datasets":
 		var subcommand string
-		cmd.CommandArgs(2, &subcommand)
+		cmd.CommandArgs(1, &subcommand)
 		switch subcommand {
 		case "info":
 			jsonStr, err := runningService.Datasets.JSON()
@@ -95,7 +98,7 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 			}
 			reply.Text = string(dataset.RootUUID())
 		default:
-			return fmt.Errorf("Unknown command: %q", cmd)
+			return fmt.Errorf("Unknown datasets command: %q", subcommand)
 		}
 
 	case "dataset":

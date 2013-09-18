@@ -91,6 +91,7 @@ Commands that can be performed without a running server:
 	help
 	init 
 	serve
+
 `
 
 const helpServerMessage = `
