@@ -24,12 +24,6 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 )
 
-const (
-	KeyDatasetGlobal dvid.LocalID32 = 0
-	KeyDataGlobal    dvid.LocalID   = 0
-	KeyVersionGlobal dvid.LocalID   = 0
-)
-
 /*
 	Key holds DVID-centric data like version (UUID), data set, and index
 	identifiers and that follow a convention of how to collapse those
@@ -90,12 +84,15 @@ func (key *Key) String() string {
 
 // KeyValue stores a key-value pair.
 type KeyValue struct {
-	k *Key
-	v []byte
+	K *Key
+	V []byte
 }
 
-func (kv *KeyValue) GetKey() *Key     { return kv.k }
-func (kv *KeyValue) GetValue() []byte { return kv.v }
+// Deserialize returns a key-value pair where the value has been deserialized.
+func (kv KeyValue) Deserialize(uncompress bool) (KeyValue, error) {
+	value, _, err := dvid.DeserializeData(kv.V, uncompress)
+	return KeyValue{kv.K, value}, err
+}
 
 // KeyValues is a slice of key-value pairs that can be sorted.
 type KeyValues []KeyValue
@@ -103,7 +100,7 @@ type KeyValues []KeyValue
 func (kv KeyValues) Len() int      { return len(kv) }
 func (kv KeyValues) Swap(i, j int) { kv[i], kv[j] = kv[j], kv[i] }
 func (kv KeyValues) Less(i, j int) bool {
-	return bytes.Compare(kv[i].k.Bytes(), kv[j].k.Bytes()) <= 0
+	return bytes.Compare(kv[i].K.Bytes(), kv[j].K.Bytes()) <= 0
 }
 
 // ChunkOp is a type-specific operation with an optional WaitGroup to
@@ -115,19 +112,8 @@ type ChunkOp struct {
 
 // Chunk is the unit passed down channels to chunk handlers.
 type Chunk struct {
-	ChunkOp
+	*ChunkOp
 	KeyValue
-}
-
-// ChunkChannel is a channel for chunks to be sent to chunk handlers.
-type ChunkChannel chan *Chunk
-
-// MapOp is an operation that maps chunks across channels to handlers.
-// It encapsulates a type-specific operation, chunk channels, and a WaitGroup
-// to optionally sync the reduce phase.
-type MapOp struct {
-	ChunkOp
-	Channels []ChunkChannel
 }
 
 // Options encapsulates settings passed in as well as database-specific environments
@@ -192,9 +178,8 @@ type KeyValueDB interface {
 	// GetRange returns a range of values spanning (kStart, kEnd) keys.
 	GetRange(kStart, kEnd *Key) (values []KeyValue, err error)
 
-	// SendRange sends a range of key/value pairs to type-specific chunk handlers
-	// via channels within the MapOp struct.
-	SendRange(kStart, kEnd *Key, mapOp *MapOp) (err error)
+	// ProcessRange sends a range of key/value pairs to type-specific chunk handlers.
+	ProcessRange(kStart, kEnd *Key, op *ChunkOp, f func(*Chunk)) (err error)
 
 	// Put writes a value with given key.
 	Put(k *Key, v []byte) (err error)

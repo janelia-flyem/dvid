@@ -47,6 +47,7 @@ func Init(directory string, create bool) error {
 
 	// Put empty Datasets
 	datasets := new(Datasets)
+	datasets.NewDatasetID = dvid.KeyDatasetStart
 	err = datasets.Put(db)
 	return err
 }
@@ -118,9 +119,6 @@ func Open(path string) (s *Service, openErr *OpenError) {
 
 // Shutdown closes a DVID datastore.
 func (s *Service) Shutdown() {
-	s.StopChunkHandlers()
-
-	// Close the backend database
 	s.db.Close()
 }
 

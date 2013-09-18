@@ -143,7 +143,7 @@ func NewDatatype() (dtype *Datatype) {
 	dtype.Requirements = &storage.Requirements{
 		BulkIniter: false,
 		BulkWriter: false,
-		Batcher:    false,
+		Batcher:    true,
 	}
 	return
 }
@@ -181,7 +181,6 @@ func (dtype *Datatype) NewData(id *datastore.DataID, config dvid.Config) (
 			data.VoxelResUnits = res
 		}
 	}
-	data.StartChunkHandlers()
 	service = data
 	return
 }
@@ -287,12 +286,12 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 			if err != nil {
 				return err
 			}
-			err = d.putImage(versionID, postedImg, slice)
+			err = d.PutImage(versionID, postedImg, slice)
 			if err != nil {
 				return err
 			}
 		} else {
-			img, err := d.getImage(versionID, slice)
+			img, err := d.GetImage(versionID, slice)
 			data, _, _ := dvid.ImageData(img)
 			dvid.PrintNonZero("GetImage", data)
 
@@ -353,21 +352,6 @@ func (v *Voxels) String() string {
 	return fmt.Sprintf("%s of size %d x %d x %d @ %s",
 		v.DataShape(), size[0], size[1], size[2], v.Origin())
 }
-
-// Operation holds Voxel-specific data for processing chunks.
-type Operation struct {
-	data *Voxels
-	vID  dvid.LocalID
-	op   OpType
-	wg   *sync.WaitGroup
-}
-
-type OpType int
-
-const (
-	GetOp OpType = iota
-	PutOp
-)
 
 // SliceImage returns an image.Image for the z-th slice of the volume.
 func (d *Data) SliceImage(v *Voxels, z int) (img image.Image, err error) {
@@ -494,7 +478,7 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 			size := SizeFromRect(img.Bounds())
 			slice, err := NewSlice(plane, offset, size)
 
-			err = d.putImage(versionID, img, slice)
+			err = d.PutImage(versionID, img, slice)
 
 			dvid.ElapsedTime(dvid.Debug, sliceTime, "%s server-add %s", d.DataName(), slice)
 			if err == nil {
@@ -513,8 +497,22 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 	return nil
 }
 
-// getImage retrieves a 2d image from a version node given a geometry of voxels.
-func (d *Data) getImage(versionID dvid.LocalID, slice Geometry) (img image.Image, err error) {
+// Operation holds Voxel-specific data for processing chunks.
+type Operation struct {
+	data *Voxels
+	vID  dvid.LocalID
+	op   OpType
+}
+
+type OpType int
+
+const (
+	GetOp OpType = iota
+	PutOp
+)
+
+// GetImage retrieves a 2d image from a version node given a geometry of voxels.
+func (d *Data) GetImage(versionID dvid.LocalID, slice Geometry) (img image.Image, err error) {
 	db := server.KeyValueDB()
 	if db == nil {
 		err = fmt.Errorf("Did not find a working key-value datastore to get image!")
@@ -529,15 +527,13 @@ func (d *Data) getImage(versionID dvid.LocalID, slice Geometry) (img image.Image
 
 	voxels := Voxels{slice, data, stride}
 
-	wg := new(sync.WaitGroup)
 	op := Operation{
 		data: &voxels,
 		vID:  versionID,
-		op:   PutOp,
-		wg:   wg,
+		op:   GetOp,
 	}
-	chunkOp := storage.ChunkOp{&op, wg}
-	mapOp := storage.MapOp{chunkOp, d.ChunkChannels()}
+	wg := new(sync.WaitGroup)
+	chunkOp := &storage.ChunkOp{&op, wg}
 
 	blockSize := d.BlockSize
 
@@ -548,6 +544,7 @@ func (d *Data) getImage(versionID dvid.LocalID, slice Geometry) (img image.Image
 	// Map: Iterate in x, then y, then z
 	startBlockCoord := startVoxel.BlockCoord(blockSize)
 	endBlockCoord := endVoxel.BlockCoord(blockSize)
+	fmt.Printf("GetImage from startBlockCoord %s -> endBlockCoord %s\n", startBlockCoord, endBlockCoord)
 	for z := startBlockCoord[2]; z <= endBlockCoord[2]; z++ {
 		for y := startBlockCoord[1]; y <= endBlockCoord[1]; y++ {
 			// We know for voxels indexing, x span is a contiguous range.
@@ -557,7 +554,11 @@ func (d *Data) getImage(versionID dvid.LocalID, slice Geometry) (img image.Image
 			endKey := &storage.Key{d.DatasetID, d.ID, versionID, i1}
 
 			// Send the entire range of key/value pairs to ProcessChunk()
-			err = db.SendRange(startKey, endKey, &mapOp)
+			err = db.ProcessRange(startKey, endKey, chunkOp, d.ProcessChunk)
+			if err != nil {
+				err = fmt.Errorf("Unable to GET data %s: %s", d.DataName(), err.Error())
+				return
+			}
 		}
 	}
 
@@ -567,8 +568,11 @@ func (d *Data) getImage(versionID dvid.LocalID, slice Geometry) (img image.Image
 	return
 }
 
-// Adds a 2d image within given geometry to a version node.
-func (d *Data) putImage(versionID dvid.LocalID, img image.Image, slice Geometry) error {
+// PutImage adds a 2d image within given geometry to a version node.   Since chunk sizes
+// are larger than a 2d slice, this also requires integrating this image into current
+// chunks before writing result back out, so it's a PUT for nonexistant keys and GET/PUT
+// for existing keys.
+func (d *Data) PutImage(versionID dvid.LocalID, img image.Image, slice Geometry) error {
 	db := server.KeyValueDB()
 	if db == nil {
 		return fmt.Errorf("Did not find a working key-value datastore to put image!")
@@ -587,14 +591,13 @@ func (d *Data) putImage(versionID dvid.LocalID, img image.Image, slice Geometry)
 
 	voxels := Voxels{slice, data, stride}
 
+	wg := new(sync.WaitGroup)
 	op := Operation{
 		data: &voxels,
 		vID:  versionID,
 		op:   PutOp,
-		wg:   nil,
 	}
-	chunkOp := storage.ChunkOp{&op, nil}
-	mapOp := storage.MapOp{chunkOp, d.ChunkChannels()}
+	chunkOp := &storage.ChunkOp{&op, wg}
 
 	blockSize := d.BlockSize
 
@@ -605,6 +608,7 @@ func (d *Data) putImage(versionID dvid.LocalID, img image.Image, slice Geometry)
 	// Map: Iterate in x, then y, then z
 	startBlockCoord := startVoxel.BlockCoord(blockSize)
 	endBlockCoord := endVoxel.BlockCoord(blockSize)
+	fmt.Printf("PutImage from startBlockCoord %s -> endBlockCoord %s\n", startBlockCoord, endBlockCoord)
 	for z := startBlockCoord[2]; z <= endBlockCoord[2]; z++ {
 		for y := startBlockCoord[1]; y <= endBlockCoord[1]; y++ {
 			// We know for voxels indexing, x span is a contiguous range.
@@ -613,13 +617,48 @@ func (d *Data) putImage(versionID dvid.LocalID, img image.Image, slice Geometry)
 			startKey := &storage.Key{d.DatasetID, d.ID, versionID, i0}
 			endKey := &storage.Key{d.DatasetID, d.ID, versionID, i1}
 
-			// Send the entire range of key/value pairs to ProcessChunk()
-			err := db.SendRange(startKey, endKey, &mapOp)
+			// GET all the chunks for this range.
+			keyvalues, err := db.GetRange(startKey, endKey)
 			if err != nil {
-				return fmt.Errorf("Unable to PUT to data %s", d.DataName())
+				return fmt.Errorf("Error in reading data during PUT %s: %s",
+					d.DataName(), err.Error())
+			}
+
+			// Send all data to chunk handlers for this range.
+			var kv, oldkv storage.KeyValue
+			numOldkv := len(keyvalues)
+			v := 0
+			if numOldkv > 0 {
+				oldkv = keyvalues[v]
+			}
+			wg.Add(int(endBlockCoord[0]-startBlockCoord[0]) + 1)
+			for x := startBlockCoord[0]; x <= endBlockCoord[0]; x++ {
+				i := IndexZYX{x, y, z}
+				key := &storage.Key{d.DatasetID, d.ID, versionID, i}
+				// Check for this key among old key-value pairs and if so,
+				// send the old value into chunk handler.
+				if oldkv.K != nil {
+					zyx := oldkv.K.Index.(IndexZYX)
+					if zyx[0] == x {
+						kv = oldkv
+						v++
+						if v < numOldkv {
+							oldkv = keyvalues[v]
+						} else {
+							oldkv.K = nil
+						}
+					} else {
+						kv = storage.KeyValue{K: key}
+					}
+				} else {
+					kv = storage.KeyValue{K: key}
+				}
+				go d.ProcessChunk(&storage.Chunk{chunkOp, kv})
 			}
 		}
 	}
+	wg.Wait()
+
 	return nil
 }
 
@@ -671,7 +710,7 @@ func (d *Data) ChannelSpecs() (number, bufferSize int) {
 // StartChunkHandlers and StopChunkHandlers are inherited from embedded datastore.Data.
 
 // ProcessChunk processes a chunk of data as part of a mapped operation.  The data may be
-// thinner, wider, and longer than the chunk, depending on the data shape (XY, XZ, etc)
+// thinner, wider, and longer than the chunk, depending on the data shape (XY, XZ, etc).
 func (d *Data) ProcessChunk(chunk *storage.Chunk) {
 
 	operation, ok := chunk.Op.(*Operation)
@@ -679,7 +718,7 @@ func (d *Data) ProcessChunk(chunk *storage.Chunk) {
 		log.Fatalf("Illegal operation passed to ProcessChunk() for data %s\n", d.DataName())
 	}
 	voxels := operation.data
-	index, ok := chunk.GetKey().Index.(IndexZYX)
+	index, ok := chunk.K.Index.(IndexZYX)
 	if !ok {
 		log.Fatalf("Indexing for Voxel Chunk was not IndexZYX in data %s!\n", d.DataName())
 	}
@@ -702,21 +741,28 @@ func (d *Data) ProcessChunk(chunk *storage.Chunk) {
 		log.Fatalf("Illegal data used for ProcessChunk [not voxels.Datatype]: %s\n", *d)
 	}
 	bytesPerVoxel := int32(dtype.NumChannels * dtype.BytesPerVoxel)
+	blockBytes := int(blockSize[0] * blockSize[1] * blockSize[2] * bytesPerVoxel)
 
 	// Compute block coord matching beg's DVID volume space voxel coord
 	blockBeg := begVolCoord.Sub(minBlockVoxel)
 
-	// Allocate the block buffer if PUT or use passed-in chunk if GET
-	blockBytes := int(blockSize[0] * blockSize[1] * blockSize[2] * bytesPerVoxel)
+	// Initialize the block buffer using the chunk of data.  For voxels, this chunk of
+	// data needs to be uncompressed and deserialized.
 	var block []uint8
-	if chunk != nil {
-		block = []uint8(chunk.GetValue())
+	if chunk == nil || chunk.V == nil {
+		block = make([]uint8, blockBytes)
+	} else {
+		// Deserialize
+		data, _, err := dvid.DeserializeData(chunk.V, true)
+		if err != nil {
+			log.Fatalf("Unable to deserialize chunk from dataset '%s': %s\n",
+				d.DataName(), err.Error())
+		}
+		block = []uint8(data)
 		if len(block) != blockBytes {
 			log.Fatalf("Retrieved block for dataset '%s' is %d bytes, not %d block size!\n",
 				d.DataName(), len(block), blockBytes)
 		}
-	} else {
-		block = make([]uint8, blockBytes)
 	}
 
 	// Compute index into the block byte buffer, blockI
@@ -732,10 +778,10 @@ func (d *Data) ProcessChunk(chunk *storage.Chunk) {
 	// the block data depending on the op.
 	data := voxels.data
 
-	// fmt.Printf("Data %s -> %s, Orig %s -> %s\n", beg, end, begVolCoord, endVolCoord)
-	//fmt.Printf("Block start: %s\n", blockBeg)
-	//fmt.Printf("Block buffer size: %d bytes\n", len(block))
-	//fmt.Printf("Data buffer size: %d bytes\n", len(data))
+	fmt.Printf("Data %s -> %s, Orig %s -> %s\n", beg, end, begVolCoord, endVolCoord)
+	fmt.Printf("Block start: %s\n", blockBeg)
+	fmt.Printf("Block buffer size: %d bytes\n", len(block))
+	fmt.Printf("Data buffer size: %d bytes\n", len(data))
 
 	switch voxels.DataShape() {
 	case XY:
@@ -820,11 +866,11 @@ func (d *Data) ProcessChunk(chunk *storage.Chunk) {
 		if err != nil {
 			fmt.Printf("Unable to serialize block: %s\n", err.Error())
 		}
-		db.Put(chunk.GetKey(), serialization)
+		db.Put(chunk.K, serialization)
 	}
 
-	// Notify the requestor that this block is done.
-	if operation.wg != nil {
-		operation.wg.Done()
+	// Notify the requestor that this chunk is done.
+	if chunk.Wg != nil {
+		chunk.Wg.Done()
 	}
 }

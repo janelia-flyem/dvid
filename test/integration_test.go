@@ -46,6 +46,10 @@ func (suite *DataSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 }
 
+func (suite *DataSuite) TearDownSuite(c *C) {
+	suite.service.Shutdown()
+}
+
 func (suite *DataSuite) TestVersionedDataOps(c *C) {
 	dataset1, err := suite.service.NewDataset()
 	c.Assert(err, IsNil)
@@ -89,8 +93,4 @@ func (suite *DataSuite) TestVersionedDataOps(c *C) {
 	c.Assert(err, IsNil)
 
 	c.Assert(child1, Not(Equals), child2)
-}
-
-func (suite *DataSuite) TearDownSuite(c *C) {
-	suite.service.Shutdown()
 }

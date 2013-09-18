@@ -20,9 +20,8 @@ import (
 
 // KeyDatasets is the key for storing Datasets information.
 var KeyDatasets = storage.Key{
-	Dataset: storage.KeyDatasetGlobal,
-	Data:    storage.KeyDataGlobal,
-	Version: storage.KeyVersionGlobal,
+	Dataset: dvid.KeyDatasetGlobal,
+	Data:    dvid.KeyDataDVID,
 	Index:   dvid.IndexUint8(1),
 }
 
@@ -39,18 +38,6 @@ type Datasets struct {
 	versionMap map[UUID]*Dataset
 
 	writeLock sync.Mutex
-}
-
-// StopChunkHandlers halts the chunk handlers for all data in this dataset.
-func (dsets *Datasets) StopChunkHandlers() {
-	for _, dset := range dsets.Datasets {
-		for _, dataservice := range dset.AvailableData() {
-			handler, ok := dataservice.(ChunkHandler)
-			if ok {
-				handler.StopChunkHandlers()
-			}
-		}
-	}
 }
 
 // Data returns a service for data of a given name under a Dataset.
@@ -77,6 +64,8 @@ func (dsets *Datasets) NewDataset() (dset *Dataset, err error) {
 		VersionDAG: NewVersionDAG(),
 		DatasetID:  dsets.NewDatasetID,
 	}
+	dset.NewDataID = dvid.KeyDataStart
+
 	dsets.NewDatasetID++
 	dsets.Datasets = append(dsets.Datasets, dset)
 	dsets.versionMap[dset.Root] = dset

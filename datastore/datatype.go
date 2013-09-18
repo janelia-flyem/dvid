@@ -6,11 +6,8 @@ package datastore
 
 import (
 	"fmt"
-	"log"
 	"net/http"
-	"runtime"
 	"strings"
-	"sync"
 
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
@@ -204,21 +201,6 @@ type DataService interface {
 	UnknownCommand(r Request) error
 }
 
-// ChunkHandlers have a set of channels on which the storage engine can send them
-// chunks of data for processing.  They are goroutines assigned to each data, and
-// each chunk location is always sent to the same handler via a hash of its Index.
-type ChunkHandler interface {
-	ChannelSpecs() (number, bufferSize int)
-
-	StartChunkHandlers()
-
-	StopChunkHandlers()
-
-	ChunkChannels() []storage.ChunkChannel
-
-	ProcessChunk(*storage.Chunk)
-}
-
 // ---- DataService and ChunkHandler implementation ----
 
 // DataID identifies data within a DVID server.
@@ -242,9 +224,6 @@ type Data struct {
 
 	// If false (default), we allow changes along nodes.
 	unversioned bool
-
-	// Data can be chunked and mapped over channels for processing.
-	channels []storage.ChunkChannel
 }
 
 // NewData returns a base data struct and sets the versioning depending on config.
@@ -266,82 +245,4 @@ func (d *Data) IsVersioned() bool {
 func (d *Data) UnknownCommand(request Request) error {
 	return fmt.Errorf("Unknown command.  Data type '%s' [%s] does not support '%s' command.",
 		d.Name, d.DatatypeName(), request.TypeCommand())
-}
-
-// ---- ChunkHandler interface ----
-
-// Number of chunks that can be buffered on each channel
-// before sender is blocked.
-const ChannelBufferSize = 1000
-
-// HaltOp is an empty struct to signal chunk handlers to quit.
-type HaltOp struct{}
-
-// HaltChunk returns a chunk with a HaltOp
-func HaltChunk() *storage.Chunk {
-	return &storage.Chunk{
-		ChunkOp: storage.ChunkOp{Op: HaltOp{}},
-	}
-}
-
-// ChannelSpecs returns the default number of chunk channels/handlers and
-// the buffer size of a channel.
-func (d *Data) ChannelSpecs() (number, bufferSize int) {
-	return runtime.NumCPU(), ChannelBufferSize
-}
-
-// ChunkChannels returns a slice of channels to communicate with chunk handlers.
-func (d *Data) ChunkChannels() []storage.ChunkChannel {
-	return d.channels
-}
-
-// StartChunkHandlers starts goroutines that handle chunks for this data.
-func (d *Data) StartChunkHandlers() {
-	// Lock this function to prevent interleaved StartChunkHandlers()
-	var mapAccess sync.Mutex
-	mapAccess.Lock()
-	defer mapAccess.Unlock()
-
-	dataName := d.DataName()
-	StartMonitor(dataName)
-	if d.channels == nil {
-		numHandlers, bufferSize := d.ChannelSpecs()
-		log.Printf("Starting %d chunk handlers for data '%s' (%s)...\n",
-			numHandlers, dataName, d.DatatypeName())
-		channels := make([]storage.ChunkChannel, 0, numHandlers)
-		for i := 0; i < numHandlers; i++ {
-			channel := make(storage.ChunkChannel, bufferSize)
-			channels = append(channels, channel)
-			go func(i int, c storage.ChunkChannel) {
-				dvid.Log(dvid.Debug, "Starting chunk handler %d for %s...",
-					i+1, dataName)
-				for {
-					chunk := <-c
-					switch chunk.Op.(type) {
-					case *storage.Chunk:
-						d.ProcessChunk(chunk)
-						DoneChannel <- dataName
-					case HaltOp:
-						dvid.Log(dvid.Debug, "Shutting down chunk handler %d for %s...",
-							i+1, dataName)
-						break
-					}
-				}
-			}(i, channel)
-		}
-		d.channels = channels
-	}
-}
-
-// StopChunkHandlers halts the goroutines handling chunks for this data.
-func (d *Data) StopChunkHandlers() {
-	for _, channel := range d.channels {
-		channel <- HaltChunk()
-	}
-	StopMonitor(d.DataName())
-}
-
-// ProcessChunk should be implemented by each type if that type supports map/reduce
-// operations on chunks.  See datatype/voxels package.
-func (d *Data) ProcessChunk(chunk *storage.Chunk) {
 }

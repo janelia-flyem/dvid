@@ -3,6 +3,8 @@
 package storage
 
 import (
+	"bytes"
+	"fmt"
 	"log"
 
 	"github.com/janelia-flyem/dvid/dvid"
@@ -149,51 +151,75 @@ func (db *LevelDB) Get(k *Key) (v []byte, err error) {
 	return
 }
 
-// GetRange returns a range of values spanning (kStart, kEnd) keys.
+// GetRange returns a range of values spanning (kStart, kEnd) keys.  These key-value
+// pairs will be sorted in ascending key order.
 func (db *LevelDB) GetRange(kStart, kEnd *Key) (values []KeyValue, err error) {
 	ro := levigo.NewReadOptions()
 	ro.SetFillCache(false)
 	it := db.ldb.NewIterator(ro)
 	defer it.Close()
 
+	fmt.Printf("GetRange %s -> %s\n", *kStart, *kEnd)
 	values = []KeyValue{}
 	it.Seek(kStart.Bytes())
-	for it = it; it.Valid(); it.Next() {
-		var key *Key
-		key, err = kStart.BytesToKey(it.Key())
-		if err != nil {
+	endBytes := kEnd.Bytes()
+	for {
+		if it.Valid() {
+			if bytes.Compare(it.Key(), endBytes) > 0 {
+				return
+			}
+			fmt.Printf("GetRange it.Key() = %x [len %d] %s\n", it.Key(), len(it.Key()), it.Valid())
+			var key *Key
+			key, err = kStart.BytesToKey(it.Key())
+			if err != nil {
+				return
+			}
+			values = append(values, KeyValue{key, it.Value()})
+			it.Next()
+		} else {
+			err = it.GetError()
 			return
 		}
-		values = append(values, KeyValue{key, it.Value()})
 	}
-	err = it.GetError()
-	return
 }
 
-// SendRange sends a range of key/value pairs to the specified channels using
-// each key's Index.Hash() to determine the precise channel.
-func (db *LevelDB) SendRange(kStart, kEnd *Key, mapOp *MapOp) (err error) {
+// ProcessRange sends a range of key-value pairs to chunk handlers.
+func (db *LevelDB) ProcessRange(kStart, kEnd *Key, op *ChunkOp, f func(*Chunk)) (err error) {
 	ro := levigo.NewReadOptions()
 	ro.SetFillCache(false)
 	it := db.ldb.NewIterator(ro)
 	defer it.Close()
 
+	fmt.Printf("ProcessRange %s -> %s\n", *kStart, *kEnd)
+	endBytes := kEnd.Bytes()
 	it.Seek(kStart.Bytes())
-	for it = it; it.Valid(); it.Next() {
-		var key *Key
-		key, err = kStart.BytesToKey(it.Key())
-		if err != nil {
-			return
-		}
-		num := key.Index.Hash(len(mapOp.Channels))
+	for {
+		if it.Valid() {
+			if bytes.Compare(it.Key(), endBytes) > 0 {
+				return nil
+			}
+			// Send to channel
+			fmt.Printf("ProcessRange it.Key() = %x [len %d] %s\n", it.Key(), len(it.Key()), it.Valid())
+			var key *Key
+			key, err = kStart.BytesToKey(it.Key())
+			if err != nil {
+				return
+			}
 
-		if mapOp.Wg != nil {
-			mapOp.Wg.Add(1)
+			if op.Wg != nil {
+				op.Wg.Add(1)
+			}
+			chunk := &Chunk{
+				op,
+				KeyValue{key, it.Value()},
+			}
+			go f(chunk)
+
+			it.Next()
+		} else {
+			return it.GetError()
 		}
-		mapOp.Channels[num] <- &Chunk{mapOp.ChunkOp, KeyValue{key, it.Value()}}
 	}
-	err = it.GetError()
-	return
 }
 
 // Put writes a value with given key.
@@ -203,7 +229,7 @@ func (db *LevelDB) Put(k *Key, v []byte) (err error) {
 	return
 }
 
-// Put key-value pairs that have already been sorted in sequential key order.
+// PutRange puts key/value pairs that have been sorted in sequential key order.
 func (db *LevelDB) PutRange(values []KeyValue) (err error) {
 	return
 }
@@ -241,6 +267,14 @@ func (batch *goBatch) Delete(k *Key) {
 
 func (batch *goBatch) Put(k *Key, v []byte) {
 	batch.WriteBatch.Put(k.Bytes(), v)
+}
+
+func (batch *goBatch) Clear() {
+	batch.WriteBatch.Clear()
+}
+
+func (batch *goBatch) Close() {
+	batch.WriteBatch.Close()
 }
 
 // --- Options ----

@@ -160,7 +160,7 @@ else ()
 
    add_custom_target (test
         ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go test -tags '${DVID_BACKEND}' 
-            ${DVID_GO}/test ${DVID_GO}/dvid ${DVID_GO}/datastore
+            ${DVID_GO}/...
         DEPENDS test-build)
 
 
