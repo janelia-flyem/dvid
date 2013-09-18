@@ -1,5 +1,5 @@
 /*
-	Package labels64 implements DVID support for 64-bit label images.  It simply
+	Package labels64 tailors the voxels data type for 64-bit label images.  It simply
 	wraps the voxels package, setting NumChannels (1) and BytesPerVoxel(8).
 */
 package labels64

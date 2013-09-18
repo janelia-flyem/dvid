@@ -1,5 +1,5 @@
 /*
-	Package labels32 implements DVID support for 32-bit label images.  It simply
+	Package labels32 tailors the voxels data type for 32-bit label images.  It simply
 	wraps the voxels package, setting NumChannels (1) and BytesPerVoxel(4).
 */
 package labels32
