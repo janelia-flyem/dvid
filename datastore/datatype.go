@@ -43,7 +43,7 @@ type TypeService interface {
 	Help() string
 
 	// Create Data that is an instance of this data type
-	NewData(id *DataID, config dvid.Config) (service DataService, err error)
+	NewDataService(id *DataID, config dvid.Config) (service DataService, err error)
 }
 
 // CompiledTypes is the set of registered data types compiled into DVID and
@@ -226,8 +226,8 @@ type Data struct {
 	unversioned bool
 }
 
-// NewData returns a base data struct and sets the versioning depending on config.
-func NewData(id *DataID, t TypeService, config dvid.Config) (data *Data, err error) {
+// NewDataService returns a base data struct and sets the versioning depending on config.
+func NewDataService(id *DataID, t TypeService, config dvid.Config) (data *Data, err error) {
 	data = &Data{DataID: id, TypeService: t}
 	var versioned bool
 	versioned, err = config.IsVersioned()

@@ -131,7 +131,7 @@ func (dsets *Datasets) newData(u UUID, name DataString, typeName string, config 
 	}
 
 	// Construct new data
-	return dset.NewData(u, name, typeName, config)
+	return dset.NewData(name, typeName, config)
 }
 
 // Get retrieves Datasets from a KeyValueDB.
@@ -223,13 +223,8 @@ func (dsets *Datasets) DatasetFromString(str string) (dataset *Dataset, u UUID, 
 func (dsets *Datasets) Datatypes() map[UrlString]TypeService {
 	typemap := make(map[UrlString]TypeService)
 	for _, dset := range dsets.Datasets {
-		for _, node := range dset.Nodes {
-			for _, nodeData := range node.Data {
-				typeservice, ok := nodeData.DataService.(TypeService)
-				if ok {
-					typemap[nodeData.DatatypeUrl()] = typeservice
-				}
-			}
+		for _, dataservice := range dset.nameMap {
+			typemap[dataservice.DatatypeUrl()] = dataservice
 		}
 	}
 	return typemap
@@ -282,7 +277,14 @@ type Dataset struct {
 	nameMap map[DataString]DataService
 }
 
-func (dset *Dataset) TypeServiceForData(name DataString) (t TypeService, err error) {
+// AvailableData returns a map of all data present in a version DAG where the
+// key is the data name.
+func (dset *Dataset) AvailableData() map[DataString]DataService {
+	return dset.nameMap
+}
+
+// TypeService returns the TypeService underlying data of a given name.
+func (dset *Dataset) TypeService(name DataString) (t TypeService, err error) {
 	data, found := dset.nameMap[name]
 	if !found {
 		err = fmt.Errorf("Cannot get type of unknown data '%s'", name)
@@ -292,7 +294,8 @@ func (dset *Dataset) TypeServiceForData(name DataString) (t TypeService, err err
 	return
 }
 
-func (dset *Dataset) Data(name DataString) (dataservice DataService, err error) {
+// DataService returns a DataService for data of a given name.
+func (dset *Dataset) DataService(name DataString) (dataservice DataService, err error) {
 	var found bool
 	dataservice, found = dset.nameMap[name]
 	if !found {
@@ -302,51 +305,34 @@ func (dset *Dataset) Data(name DataString) (dataservice DataService, err error) 
 	return
 }
 
-// NewData adds a new, named instance of a data type to a node.  Settings can be passed
+// NewData adds a new, named instance of a data type to dataset.  Settings can be passed
 // via the 'config' argument.  For example, config["versioned"] will specify whether
 // the data is mutable across nodes in the version DAG or is simply unversioned.
-func (dset *Dataset) NewData(u UUID, name DataString, typeName string, config dvid.Config) error {
+func (dset *Dataset) NewData(name DataString, typeName string, config dvid.Config) error {
+	// Only allow unique data names per dataset.
+	dataservice, found := dset.nameMap[name]
+	if found {
+		return fmt.Errorf("Data named '%s' already exists in dataset %s", name, dset.Root)
+	}
+
+	// Create new data for this dataset.
 	typeService, err := TypeServiceByName(typeName)
 	if err != nil {
 		return fmt.Errorf("No data type '%s' found [%s]", typeName, err)
 	}
 
-	// Get the node in this dataset's version DAG.
-	node, found := dset.Nodes[u]
-	if !found {
-		return fmt.Errorf("Could not add data '%s' to nonexistant node %s", name, u)
-	}
-
-	// Lock dataset during changes.
 	dset.mapLock.Lock()
 	defer dset.mapLock.Unlock()
 
-	// Reuse data if already in the dataset, else make a new one.
-	var dataservice DataService
-	dataservice, found = dset.nameMap[name]
-	if !found {
-		dataID := &DataID{name, dset.NewDataID, dset.DatasetID}
-		dataservice, err = typeService.NewData(dataID, config)
-		if err != nil {
-			return err
-		}
-		if dset.nameMap == nil {
-			dset.nameMap = make(map[DataString]DataService)
-		}
-		dset.nameMap[name] = dataservice
+	dataID := &DataID{name, dset.NewDataID, dset.DatasetID}
+	dataservice, err = typeService.NewDataService(dataID, config)
+	if err != nil {
+		return err
 	}
-
-	// Add this data to the specified node.
-	avail := DataComplete
-	if dataservice.IsVersioned() {
-		// TODO -- Allow delta compression on versioned nodes.
-		// avail = DataDelta
-	} else {
-		// If we are unversioned, just alias all data to Root UUID.
-		// This works well for things like write-once, read-many grayscale images.
-		avail = DataRoot
+	if dset.nameMap == nil {
+		dset.nameMap = make(map[DataString]DataService)
 	}
-	node.AddData(&NodeData{dataservice, avail})
+	dset.nameMap[name] = dataservice
 	return nil
 }
 
@@ -374,7 +360,7 @@ const (
 	DataComplete DataAvail = iota
 
 	// For any range query, we must also traverse this node's ancestors in the DAG
-	// up to any NodeComplete ancestor.
+	// up to any NodeComplete ancestor.  Used if a node is marked as archived.
 	DataDelta
 
 	// Queries are redirected to Root since this is unversioned.
@@ -383,12 +369,6 @@ const (
 	// Data has been explicitly deleted at this node and is no longer available.
 	DataDeleted
 )
-
-// NodeData describes Data and its availability within a node of the version DAG.
-type NodeData struct {
-	DataService
-	Avail DataAvail
-}
 
 // NodeVersion contains all information for a node in the version DAG like its parents,
 // children, and provenance.
@@ -428,20 +408,14 @@ type Node struct {
 	*NodeVersion
 	*NodeText
 
-	Data []*NodeData
+	// Avail is used for data compression/deltas in version DAG, depending on
+	// type of data (e.g., versioned) and whether nodes are archived or not.
+	// If there is no map or data availability is not explicitly set, we use
+	// the default for that data, e.g., DataComplete if versioned or DataRoot
+	// if unversioned.
+	Avail map[DataString]DataAvail
 
 	writeLock sync.Mutex
-}
-
-// AddData adds data to a node
-func (n *Node) AddData(data *NodeData) {
-	n.writeLock.Lock()
-	if n.Data == nil {
-		n.Data = []*NodeData{data}
-	} else {
-		n.Data = append(n.Data, data)
-	}
-	n.writeLock.Unlock()
 }
 
 // VersionDAG is the directed acyclic graph of NodeVersion and an index by UUID into
@@ -543,16 +517,4 @@ func (dag *VersionDAG) Versions() []UUID {
 		uuids = append(uuids, u)
 	}
 	return uuids
-}
-
-// AvailableData returns a map of all data present in a version DAG where the
-// key is the data name.
-func (dag *VersionDAG) AvailableData() map[DataString]DataService {
-	datamap := make(map[DataString]DataService)
-	for _, node := range dag.Nodes {
-		for _, data := range node.Data {
-			datamap[data.DataName()] = data.DataService
-		}
-	}
-	return datamap
 }

@@ -150,11 +150,11 @@ func NewDatatype() (dtype *Datatype) {
 // --- TypeService interface ---
 
 // NewData returns a pointer to a new Voxels with default values.
-func (dtype *Datatype) NewData(id *datastore.DataID, config dvid.Config) (
+func (dtype *Datatype) NewDataService(id *datastore.DataID, config dvid.Config) (
 	service datastore.DataService, err error) {
 
 	var basedata *datastore.Data
-	basedata, err = datastore.NewData(id, dtype, config)
+	basedata, err = datastore.NewDataService(id, dtype, config)
 	if err != nil {
 		return
 	}
@@ -223,6 +223,7 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 		return fmt.Errorf("Poorly formatted load command.  See command-line help.")
 	}
 	source := request.Command[3]
+	fmt.Printf("Request: %s\n", request.Command)
 	switch source {
 	case "local":
 		d.LoadLocal(request, reply)
@@ -415,8 +416,8 @@ func (d *Data) SliceImage(v *Voxels, z int) (img image.Image, err error) {
 //
 //     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
 //     data name     Name of data to add.
-//     offset        3d coordinate in the format "x,y,z".  Gives coordinate of top upper left voxel.
 //     plane         One of "xy", "xz", or "yz".
+//     offset        3d coordinate in the format "x,y,z".  Gives coordinate of top upper left voxel.
 //     image glob    Filenames of images, e.g., foo-xy-*.png
 //
 // The image filename glob MUST BE absolute file paths that are visible to the server.

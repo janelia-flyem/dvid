@@ -1,7 +1,5 @@
 /*
-	The test package allows testing of all supplied data types and the datastore.
-	Because data types are initialized via module inits, we cannot test them within
-	the datastore package without dependency cycles.
+	The test package tests a variety of data types in an integrated fashion.
 */
 package test
 
