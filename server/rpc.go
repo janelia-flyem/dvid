@@ -13,8 +13,7 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 )
 
-const helpMessage = `
-Commands executed on the server (rpc address = %s):
+const helpMessage = `Commands executed on the server (rpc address = %s):
 
 	help
 	about
@@ -86,17 +85,17 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 		cmd.CommandArgs(1, &subcommand)
 		switch subcommand {
 		case "info":
-			jsonStr, err := runningService.Datasets.StringJSON()
+			jsonStr, err := runningService.DatasetsJSON()
 			if err != nil {
 				return err
 			}
 			reply.Text = jsonStr
 		case "new":
-			dataset, err := runningService.NewDataset()
+			uuid, _, err := runningService.NewDataset()
 			if err != nil {
 				return err
 			}
-			reply.Text = string(dataset.Root)
+			reply.Text = string(uuid)
 		default:
 			return fmt.Errorf("Unknown datasets command: %q", subcommand)
 		}
@@ -104,39 +103,48 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 	case "dataset":
 		var uuidStr, descriptor, typename, dataname string
 		cmd.CommandArgs(1, &uuidStr, &descriptor)
+		uuid, _, _, err := runningService.NodeIDFromString(uuidStr)
+		if err != nil {
+			return err
+		}
 		switch descriptor {
 		case "versioned", "unversioned":
 			cmd.CommandArgs(3, &typename, &dataname)
-			err := newData(uuidStr, typename, dataname, descriptor == "versioned")
+			err = runningService.NewData(uuid, typename, dataname, descriptor == "versioned")
 			if err != nil {
 				return err
 			}
 			reply.Text = fmt.Sprintf("Data %q [%s] added to node %s", dataname, typename, uuidStr)
 		default:
-			// Must be data name.
+			dataname := datastore.DataString(descriptor)
 			var subcommand string
 			cmd.CommandArgs(3, &subcommand)
-			if subcommand != "help" {
+			dataservice, err := runningService.DataService(uuid, dataname)
+			if err != nil {
+				return err
+			}
+			if subcommand == "help" {
+				reply.Text = dataservice.Help()
+			} else {
 				return fmt.Errorf("Unknown command: %q", cmd)
 			}
-			reply.Text = fmt.Sprintf("TODO -- Implement help for data %s in node %s", descriptor, uuidStr)
 		}
 
 	case "node":
 		var uuidStr, descriptor string
 		cmd.CommandArgs(1, &uuidStr, &descriptor)
-		dataset, uuid, err := runningService.DatasetFromString(uuidStr)
+		uuid, _, _, err := runningService.NodeIDFromString(uuidStr)
 		if err != nil {
 			return err
 		}
 		switch descriptor {
 		case "lock":
-			err := dataset.Lock(uuid)
+			err := runningService.Lock(uuid)
 			if err != nil {
 				return err
 			}
 		case "branch":
-			newuuid, err := dataset.NewChild(uuid)
+			newuuid, err := runningService.NewVersion(uuid)
 			if err != nil {
 				return err
 			}
@@ -146,33 +154,19 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 			dataname := datastore.DataString(descriptor)
 			var subcommand string
 			cmd.CommandArgs(3, &subcommand)
-			if subcommand == "help" {
-				typeservice, err := dataset.TypeServiceForData(dataname)
-				if err != nil {
-					return err
-				}
-				reply.Text = typeservice.Help()
-				return nil
-			}
-			data, err := dataset.Data(dataname)
+			dataservice, err := runningService.DataService(uuid, dataname)
 			if err != nil {
 				return err
 			}
-			return data.DoRPC(cmd, reply)
+			if subcommand == "help" {
+				reply.Text = dataservice.Help()
+				return nil
+			}
+			return dataservice.DoRPC(cmd, reply)
 		}
 
 	default:
 		return fmt.Errorf("Unknown command: '%s'", cmd)
 	}
 	return nil
-}
-
-// Adds new data to a dataset specified by a UUID string.
-func newData(uuidStr, typename, dataname string, versioned bool) error {
-	dataset, uuid, err := runningService.DatasetFromString(uuidStr)
-	if err != nil {
-		return err
-	}
-	config := dvid.Config{"versioned": versioned}
-	return dataset.NewData(uuid, datastore.DataString(dataname), typename, config)
 }

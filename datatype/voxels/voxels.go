@@ -438,7 +438,7 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 	}
 
 	// Get the version ID from a uniquely identifiable string
-	_, versionID, err := service.LocalIDFromString(uuidStr)
+	_, _, versionID, err := service.NodeIDFromString(uuidStr)
 	if err != nil {
 		return err
 	}

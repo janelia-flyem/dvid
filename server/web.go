@@ -155,7 +155,7 @@ func datasetsRequest(w http.ResponseWriter, r *http.Request) {
 
 	switch parts[0] {
 	case "info":
-		jsonStr, err := runningService.Datasets.StringJSON()
+		jsonStr, err := runningService.DatasetsJSON()
 		if err != nil {
 			badRequest(w, r, err.Error())
 			return
@@ -167,12 +167,12 @@ func datasetsRequest(w http.ResponseWriter, r *http.Request) {
 			badRequest(w, r, "New dataset requests must be made with HTTP POST method")
 			return
 		}
-		dataset, err := runningService.NewDataset()
+		root, _, err := runningService.NewDataset()
 		if err != nil {
 			badRequest(w, r, err.Error())
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, "{%q: %q}", "Root", dataset.Root)
+		fmt.Fprintf(w, "{%q: %q}", "Root", root)
 	default:
 		badRequest(w, r, WebAPIPath+"/datasets/ must be followed with 'info' or 'new'")
 	}
@@ -191,6 +191,11 @@ func datasetRequest(w http.ResponseWriter, r *http.Request) {
 
 	// Get particular dataset for this UUID
 	uuidStr := parts[0]
+	uuid, _, _, err := runningService.NodeIDFromString(uuidStr)
+	if err != nil {
+		badRequest(w, r, err.Error())
+		return
+	}
 
 	// Handle the dataset command.
 	switch parts[1] {
@@ -206,7 +211,7 @@ func datasetRequest(w http.ResponseWriter, r *http.Request) {
 		typename := parts[2]
 		dataname := parts[3]
 
-		err := newData(uuidStr, typename, dataname, parts[1] == "versioned")
+		err = runningService.NewData(uuid, typename, dataname, parts[1] == "versioned")
 		if err != nil {
 			badRequest(w, r, err.Error())
 			return
@@ -214,23 +219,18 @@ func datasetRequest(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, "{%q: 'Added %s [%s] to node %s'}", "result", dataname, typename, uuidStr)
 	default:
-		dataset, _, err := runningService.DatasetFromString(uuidStr)
-		if err != nil {
-			badRequest(w, r, err.Error())
-			return
-		}
 		if len(parts) != 3 || parts[2] != "help" {
 			badRequest(w, r, "Bad dataset request made.  Visit /api/help for help.")
 			return
 		}
 		dataname := datastore.DataString(parts[1])
-		typeservice, err := dataset.TypeServiceForData(dataname)
+		dataservice, err := runningService.DataService(uuid, dataname)
 		if err != nil {
 			badRequest(w, r, err.Error())
 			return
 		}
 		w.Header().Set("Content-Type", "text/plain")
-		fmt.Fprintln(w, typeservice.Help())
+		fmt.Fprintln(w, dataservice.Help())
 	}
 }
 
@@ -246,7 +246,7 @@ func nodeRequest(w http.ResponseWriter, r *http.Request) {
 
 	// Get particular dataset for this UUID
 	uuidStr := parts[0]
-	dataset, uuid, err := runningService.DatasetFromString(uuidStr)
+	uuid, _, _, err := runningService.NodeIDFromString(uuidStr)
 	if err != nil {
 		badRequest(w, r, err.Error())
 		return
@@ -255,7 +255,7 @@ func nodeRequest(w http.ResponseWriter, r *http.Request) {
 	// Handle the dataset command.
 	switch parts[1] {
 	case "lock":
-		err := dataset.Lock(uuid)
+		err := runningService.Lock(uuid)
 		if err != nil {
 			badRequest(w, r, err.Error())
 		} else {
@@ -264,7 +264,7 @@ func nodeRequest(w http.ResponseWriter, r *http.Request) {
 		}
 
 	case "branch":
-		newuuid, err := dataset.NewChild(uuid)
+		newuuid, err := runningService.NewVersion(uuid)
 		if err != nil {
 			badRequest(w, r, err.Error())
 		} else {
@@ -274,7 +274,7 @@ func nodeRequest(w http.ResponseWriter, r *http.Request) {
 
 	default:
 		dataname := datastore.DataString(parts[1])
-		dataservice, err := dataset.Data(dataname)
+		dataservice, err := runningService.DataService(uuid, dataname)
 		if err != nil {
 			badRequest(w, r, err.Error())
 		}

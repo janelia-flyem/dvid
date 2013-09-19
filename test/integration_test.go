@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/janelia-flyem/dvid/datastore"
-	"github.com/janelia-flyem/dvid/dvid"
+	_ "github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 
 	// Declare the data types this DVID executable will support
@@ -51,45 +51,42 @@ func (suite *DataSuite) TearDownSuite(c *C) {
 }
 
 func (suite *DataSuite) TestVersionedDataOps(c *C) {
-	dataset1, err := suite.service.NewDataset()
+	root1, _, err := suite.service.NewDataset()
 	c.Assert(err, IsNil)
 
-	config := dvid.Config{}
-	config["versioned"] = true
-
-	err = dataset1.NewData(dataset1.Root, "grayscale", "grayscale8", config)
+	versioned := true
+	err = suite.service.NewData(root1, "grayscale8", "grayscale", versioned)
 	c.Assert(err, IsNil)
 
-	err = dataset1.NewData(dataset1.Root, "labels", "labels64", config)
+	err = suite.service.NewData(root1, "labels64", "labels", versioned)
 	c.Assert(err, IsNil)
 
-	child1, err := dataset1.NewChild(dataset1.Root)
+	child1, err := suite.service.NewVersion(root1)
 	// Should be an error because we have not locked previous node before making a child.
 	c.Assert(err, NotNil)
 
-	err = dataset1.Lock(dataset1.Root)
+	err = suite.service.Lock(root1)
 	c.Assert(err, IsNil)
 
-	child1, err = dataset1.NewChild(dataset1.Root)
+	child1, err = suite.service.NewVersion(root1)
 	c.Assert(err, IsNil)
 
 	// Add a second Dataset
-	dataset2, err := suite.service.NewDataset()
+	root2, _, err := suite.service.NewDataset()
 	c.Assert(err, IsNil)
 
-	root2 := dataset2.Root
-	c.Assert(dataset1.Root, Not(Equals), root2)
+	c.Assert(root1, Not(Equals), root2)
 
-	err = dataset2.NewData(root2, "labels2", "labels64", config)
+	err = suite.service.NewData(root2, "labels64", "labels2", versioned)
 	c.Assert(err, IsNil)
 
-	err = dataset2.NewData(root2, "grayscale2", "grayscale8", config)
+	err = suite.service.NewData(root2, "grayscale8", "grayscale2", versioned)
 	c.Assert(err, IsNil)
 
-	err = dataset2.Lock(root2)
+	err = suite.service.Lock(root2)
 	c.Assert(err, IsNil)
 
-	child2, err := dataset2.NewChild(root2)
+	child2, err := suite.service.NewVersion(root2)
 	c.Assert(err, IsNil)
 
 	c.Assert(child1, Not(Equals), child2)

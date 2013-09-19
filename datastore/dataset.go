@@ -67,24 +67,27 @@ type Datasets struct {
 	writeLock sync.Mutex
 }
 
-// Data returns a service for data of a given name under a Dataset.
-func (dsets *Datasets) Data(u UUID, name DataString) (dataService DataService, err error) {
+// DataService returns a service for data of a given name under a Dataset.
+func (dsets *Datasets) DataService(u UUID, name DataString) (dataservice DataService, err error) {
 	// Determine the dataset that contains the node with this UUID
 	dataset, found := dsets.versionMap[u]
 	if !found {
 		err = fmt.Errorf("No node with UUID %s found", u)
 		return
 	}
-	dataService, found = dataset.nameMap[name]
+	dataservice, found = dataset.nameMap[name]
 	if !found {
 		err = fmt.Errorf("No data named '%s' at node with UUID %s", name, u)
 	}
 	return
 }
 
-// NewDataset creates a new Dataset, which constitutes a version DAG and allows storing
+// NOTE: Alterations of Datasets should be approached through datastore.Service since it
+// will coordinate persistence of in-memory Datasets as well as multiple storage engines.
+
+// newDataset creates a new Dataset, which constitutes a version DAG and allows storing
 // arbitrary data within the nodes of the DAG.
-func (dsets *Datasets) NewDataset() (dset *Dataset, err error) {
+func (dsets *Datasets) newDataset() (dset *Dataset, err error) {
 	dsets.writeLock.Lock()
 	defer dsets.writeLock.Unlock()
 
@@ -100,9 +103,9 @@ func (dsets *Datasets) NewDataset() (dset *Dataset, err error) {
 	return
 }
 
-// NewChild creates a new child node off a LOCKED parent node.  Will return
+// newChild creates a new child node off a LOCKED parent node.  Will return
 // an error if the parent node has not been locked.
-func (dsets *Datasets) NewChild(parent UUID) (u UUID, err error) {
+func (dsets *Datasets) newChild(parent UUID) (u UUID, err error) {
 	// Find the Dataset with this UUID
 	dset, found := dsets.versionMap[parent]
 	if !found {
@@ -111,7 +114,7 @@ func (dsets *Datasets) NewChild(parent UUID) (u UUID, err error) {
 	}
 
 	// Create the child in this Dataset's DAG
-	u, err = dset.VersionDAG.NewChild(parent)
+	u, err = dset.VersionDAG.newChild(parent)
 	if err != nil {
 		return
 	}
@@ -119,8 +122,8 @@ func (dsets *Datasets) NewChild(parent UUID) (u UUID, err error) {
 	return
 }
 
-// NewData registers a new instance of a given data type within a dataset.
-func (dsets *Datasets) NewData(u UUID, name DataString, typeName string, config dvid.Config) error {
+// newData registers a new instance of a given data type within a dataset.
+func (dsets *Datasets) newData(u UUID, name DataString, typeName string, config dvid.Config) error {
 	// Find the Dataset with this UUID
 	dset, found := dsets.versionMap[u]
 	if !found {
@@ -214,35 +217,6 @@ func (dsets *Datasets) DatasetFromString(str string) (dataset *Dataset, u UUID, 
 	return
 }
 
-// LocalIDFromUUID when supplied a UUID string, returns smaller sized local IDs that identify a
-// dataset and a version.
-func (dsets *Datasets) LocalIDFromUUID(u UUID) (datasetID dvid.LocalID32, versionID dvid.LocalID, err error) {
-	var dataset *Dataset
-	dataset, err = dsets.DatasetFromUUID(u)
-	if err != nil {
-		return
-	}
-	datasetID = dataset.DatasetID
-	var found bool
-	versionID, found = dataset.VersionMap[u]
-	if !found {
-		err = fmt.Errorf("UUID (%s) not found in dataset", u)
-	}
-	return
-}
-
-// LocalIDFromString when supplied a UUID string, returns smaller sized local IDs that identify a
-// dataset and a version.  Partial matches are allowed, similar to DatasetFromString.
-func (dsets *Datasets) LocalIDFromString(str string) (datasetID dvid.LocalID32, versionID dvid.LocalID, err error) {
-	dset, u, err := dsets.DatasetFromString(str)
-	if err != nil {
-		return
-	}
-	datasetID = dset.DatasetID
-	versionID = dset.VersionMap[u]
-	return
-}
-
 // Datatypes returns a map of all unique data types where the key is the
 // unique URL identifying the data type.  Since type names can collide
 // across datasets, we do not return the abbreviated data type names.
@@ -280,59 +254,6 @@ func (dsets *Datasets) VerifyCompiledTypes() error {
 		return fmt.Errorf(errMsg)
 	}
 	return nil
-}
-
-// About returns a chart of the code versions of compile-time DVID datastore
-// and the runtime data types.
-func (dsets *Datasets) About() string {
-	var text string
-	writeLine := func(name, version string) {
-		text += fmt.Sprintf("%-15s   %s\n", name, version)
-	}
-	writeLine("Name", "Version")
-	writeLine("DVID datastore", Version)
-	writeLine("Storage backend", storage.Version)
-	for _, dtype := range dsets.Datatypes() {
-		writeLine(dtype.DatatypeName(), dtype.DatatypeVersion())
-	}
-	return text
-}
-
-// AboutJSON returns the components and versions of DVID software.
-func (dsets *Datasets) AboutJSON() (jsonStr string, err error) {
-	data := map[string]string{
-		"DVID datastore":  Version,
-		"Storage backend": storage.Version,
-	}
-	for _, dtype := range dsets.Datatypes() {
-		data[dtype.DatatypeName()] = dtype.DatatypeVersion()
-	}
-	m, err := json.Marshal(data)
-	if err != nil {
-		return
-	}
-	jsonStr = string(m)
-	return
-}
-
-// DataChart returns a text chart of data names and their types for this DVID server.
-func (dsets *Datasets) DataChart() string {
-	var text string
-	if len(dsets.Datasets) == 0 {
-		return "  No datasets have been added to this datastore.\n"
-	}
-	writeLine := func(name DataString, version string, url UrlString) {
-		text += fmt.Sprintf("%-15s  %-25s  %s\n", name, version, url)
-	}
-	for num, dset := range dsets.Datasets {
-		text += fmt.Sprintf("\nDataset %d (UUID = %s):\n\n", num+1, dset.Root)
-		writeLine("Name", "Type Name", "Url")
-		for name, data := range dset.AvailableData() {
-			writeLine(name, data.DatatypeName()+" ("+data.DatatypeVersion()+")",
-				data.DatatypeUrl())
-		}
-	}
-	return text
 }
 
 // StringJSON returns a JSON-encoded string of exportable Datasets information.
@@ -542,7 +463,6 @@ type VersionDAG struct {
 // NewVersionDAG creates a version DAG and initializes the first unlocked node,
 // assigning its UUID.
 func NewVersionDAG() *VersionDAG {
-	fmt.Println("NewVersionDAG()")
 	dag := VersionDAG{
 		Root:       NewUUID(),
 		Nodes:      make(map[UUID]*Node),
@@ -572,16 +492,16 @@ func (dag *VersionDAG) Lock(u UUID) error {
 	return nil
 }
 
-// NewChild creates a new child node off a LOCKED parent node.  Will return
+// newChild creates a new child node off a LOCKED parent node.  Will return
 // an error if the parent node has not been locked.
-func (dag *VersionDAG) NewChild(parent UUID) (u UUID, err error) {
+func (dag *VersionDAG) newChild(parent UUID) (u UUID, err error) {
 	node, found := dag.Nodes[parent]
 	if !found {
 		err = fmt.Errorf("No node found with UUID %s", parent)
 		return
 	}
 	if !node.Locked {
-		err = fmt.Errorf("NewChild() cannot be called on an unlocked node %s", parent)
+		err = fmt.Errorf("Cannot create a child of an unlocked node %s", parent)
 		return
 	}
 
@@ -604,7 +524,6 @@ func (dag *VersionDAG) NewChild(parent UUID) (u UUID, err error) {
 	dag.Nodes[u] = &Node{NodeVersion: version}
 	dag.NewVersionID++
 	dag.mapLock.Unlock()
-	fmt.Println("Leaving VersionDAG.NewChild()")
 	return
 }
 

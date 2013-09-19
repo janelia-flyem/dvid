@@ -79,16 +79,15 @@ func MakeVolume(ox, oy, oz, nx, ny, nz int) []byte {
 
 func (suite *DataSuite) sliceTest(c *C, slice voxels.Geometry) {
 	// Create a new dataset
-	dataset, err := suite.service.NewDataset()
+	root, _, err := suite.service.NewDataset()
 	c.Assert(err, IsNil)
 
 	// Add grayscale data
-	config := dvid.Config{}
-	config["versioned"] = true
-	err = dataset.NewData(dataset.Root, "grayscale", "grayscale8", config)
+	versioned := true
+	err = suite.service.NewData(root, "grayscale8", "grayscale", versioned)
 	c.Assert(err, IsNil)
 
-	dataservice, err := dataset.Data("grayscale")
+	dataservice, err := suite.service.DataService(root, "grayscale")
 	c.Assert(err, IsNil)
 
 	grayscale, ok := dataservice.(*voxels.Data)
@@ -105,9 +104,7 @@ func (suite *DataSuite) sliceTest(c *C, slice voxels.Geometry) {
 	img := dvid.ImageGrayFromData(data, nx, ny)
 
 	// Store it into datastore at root
-	_, versionID, err := suite.service.LocalIDFromUUID(dataset.Root)
-	c.Assert(err, IsNil)
-
+	_, versionID, err := suite.service.LocalIDFromUUID(root)
 	err = grayscale.PutImage(versionID, img, slice)
 	c.Assert(err, IsNil)
 

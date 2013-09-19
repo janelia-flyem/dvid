@@ -26,10 +26,13 @@ func (suite *DataSuite) TestDatasetPersistence(c *C) {
 	service, err := Open(dir)
 	c.Assert(err, IsNil)
 
-	_, err = service.NewDataset()
+	_, _, err = service.NewDataset()
 	c.Assert(err, IsNil)
 
-	oldJSON, err := service.StringJSON()
+	_, _, err = service.NewDataset()
+	c.Assert(err, IsNil)
+
+	oldJSON, err := service.DatasetsJSON()
 	c.Assert(err, IsNil)
 
 	service.Shutdown()
@@ -38,8 +41,10 @@ func (suite *DataSuite) TestDatasetPersistence(c *C) {
 	service2, err := Open(dir)
 	c.Assert(err, IsNil)
 
-	newJSON, err := service2.StringJSON()
+	newJSON, err := service2.DatasetsJSON()
 	c.Assert(err, IsNil)
+
+	c.Assert(service2.datasets.Datasets, HasLen, 2)
 
 	c.Assert(newJSON, DeepEquals, oldJSON)
 }

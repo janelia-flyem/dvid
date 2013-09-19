@@ -5,6 +5,7 @@
 package datastore
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/janelia-flyem/dvid/dvid"
@@ -52,9 +53,12 @@ func Init(directory string, create bool) error {
 	return err
 }
 
-// Service encapsulates an open DVID datastore, available for operations.
+// Service couples an open DVID storage engine and DVID datasets.  If more than one
+// storage engine is used by a DVID server, e.g., polyglot persistence where graphs
+// are managed by a graph database and key-value by a key-value database, this would
+// be the level at which the storage engines are integrated.
 type Service struct {
-	*Datasets
+	datasets *Datasets
 
 	// The backend storage which is private since we want to create an object
 	// interface (e.g., cache object or UUID map) and hide DVID-specific keys.
@@ -117,18 +121,128 @@ func Open(path string) (s *Service, openErr *OpenError) {
 	return
 }
 
-func (s *Service) NewDataset() (dataset *Dataset, err error) {
-	dataset, err = s.Datasets.NewDataset()
+// DatasetsJSON returns a JSON-encoded string of exportable datasets information.
+func (s *Service) DatasetsJSON() (stringJSON string, err error) {
+	if s.datasets == nil {
+		stringJSON = "{}"
+		return
+	}
+	return s.datasets.StringJSON()
+}
+
+// NOTE: Alterations of Datasets should invoke persistence to the key-value database.
+// All interaction with datasets at the datastore.Service level should be using
+// opaque UUID or the shortened datasetID.
+
+// NewDataset creates a new dataset.
+func (s *Service) NewDataset() (root UUID, datasetID dvid.LocalID32, err error) {
+	if s.datasets == nil {
+		err = fmt.Errorf("Datastore service has no datasets available")
+		return
+	}
+	var dataset *Dataset
+	dataset, err = s.datasets.newDataset()
 	if err != nil {
 		return
 	}
-	err = s.Datasets.Put(s.db)
+	err = s.datasets.Put(s.db)
+	if err != nil {
+		return
+	}
+	root = dataset.Root
+	datasetID = dataset.DatasetID
 	return
+}
+
+// NewVersions creates a new version (child node) off of a LOCKED parent node.
+// Will return an error if the parent node has not been locked.
+func (s *Service) NewVersion(parent UUID) (u UUID, err error) {
+	if s.datasets == nil {
+		err = fmt.Errorf("Datastore service has no datasets available")
+		return
+	}
+	u, err = s.datasets.newChild(parent)
+	if err != nil {
+		return
+	}
+	err = s.datasets.Put(s.db)
+	return
+}
+
+// NewData adds data of given name and type to a dataset specified by a UUID.
+func (s *Service) NewData(u UUID, typename, dataname string, versioned bool) error {
+	if s.datasets == nil {
+		return fmt.Errorf("Datastore service has no datasets available")
+	}
+	config := dvid.Config{"versioned": versioned}
+	return s.datasets.newData(u, DataString(dataname), typename, config)
+}
+
+// Locks the node with the given UUID.
+func (s *Service) Lock(u UUID) error {
+	if s.datasets == nil {
+		return fmt.Errorf("Datastore service has no datasets available")
+	}
+	dataset, err := s.datasets.DatasetFromUUID(u)
+	if err != nil {
+		return err
+	}
+	return dataset.Lock(u)
+}
+
+// LocalIDFromUUID when supplied a UUID string, returns smaller sized local IDs that identify a
+// dataset and a version.
+func (s *Service) LocalIDFromUUID(u UUID) (datasetID dvid.LocalID32, versionID dvid.LocalID, err error) {
+	if s.datasets == nil {
+		err = fmt.Errorf("Datastore service has no datasets available")
+		return
+	}
+	var dataset *Dataset
+	dataset, err = s.datasets.DatasetFromUUID(u)
+	if err != nil {
+		return
+	}
+	datasetID = dataset.DatasetID
+	var found bool
+	versionID, found = dataset.VersionMap[u]
+	if !found {
+		err = fmt.Errorf("UUID (%s) not found in dataset", u)
+	}
+	return
+}
+
+// NodeIDFromString when supplied a UUID string, returns the matched UUID as well as
+// more compact local IDs that identify the dataset and a version.  Partial matches
+// are allowed, similar to DatasetFromString.
+func (s *Service) NodeIDFromString(str string) (globalID UUID, datasetID dvid.LocalID32,
+	versionID dvid.LocalID, err error) {
+
+	if s.datasets == nil {
+		err = fmt.Errorf("Datastore service has no datasets available")
+		return
+	}
+	dataset, u, err := s.datasets.DatasetFromString(str)
+	if err != nil {
+		return
+	}
+	globalID = u
+	datasetID = dataset.DatasetID
+	versionID = dataset.VersionMap[u]
+	return
+}
+
+// DataService returns a service for data of a given name and version
+func (s *Service) DataService(u UUID, name DataString) (dataservice DataService, err error) {
+	if s.datasets == nil {
+		err = fmt.Errorf("Datastore service has no datasets available")
+		return
+	}
+	return s.datasets.DataService(u, name)
 }
 
 // Shutdown closes a DVID datastore.
 func (s *Service) Shutdown() {
-	s.Datasets.Put(s.db)
+	s.datasets.Put(s.db)
 	s.db.Close()
 }
 
@@ -156,5 +270,62 @@ func (s *Service) SupportedDataChart() string {
 	text := CompiledTypeChart()
 	text += "Data currently referenced within this DVID datastore:\n\n"
 	text += s.DataChart()
+	return text
+}
+
+// About returns a chart of the code versions of compile-time DVID datastore
+// and the runtime data types.
+func (s *Service) About() string {
+	var text string
+	writeLine := func(name, version string) {
+		text += fmt.Sprintf("%-15s   %s\n", name, version)
+	}
+	writeLine("Name", "Version")
+	writeLine("DVID datastore", Version)
+	writeLine("Storage backend", storage.Version)
+	if s.datasets != nil {
+		for _, dtype := range s.datasets.Datatypes() {
+			writeLine(dtype.DatatypeName(), dtype.DatatypeVersion())
+		}
+	}
+	return text
+}
+
+// AboutJSON returns the components and versions of DVID software.
+func (s *Service) AboutJSON() (jsonStr string, err error) {
+	data := map[string]string{
+		"DVID datastore":  Version,
+		"Storage backend": storage.Version,
+	}
+	if s.datasets != nil {
+		for _, dtype := range s.datasets.Datatypes() {
+			data[dtype.DatatypeName()] = dtype.DatatypeVersion()
+		}
+	}
+	m, err := json.Marshal(data)
+	if err != nil {
+		return
+	}
+	jsonStr = string(m)
+	return
+}
+
+// DataChart returns a text chart of data names and their types for this DVID server.
+func (s *Service) DataChart() string {
+	var text string
+	if s.datasets == nil || len(s.datasets.Datasets) == 0 {
+		return "  No datasets have been added to this datastore.\n"
+	}
+	writeLine := func(name DataString, version string, url UrlString) {
+		text += fmt.Sprintf("%-15s  %-25s  %s\n", name, version, url)
+	}
+	for num, dset := range s.datasets.Datasets {
+		text += fmt.Sprintf("\nDataset %d (UUID = %s):\n\n", num+1, dset.Root)
+		writeLine("Name", "Type Name", "Url")
+		for name, data := range dset.AvailableData() {
+			writeLine(name, data.DatatypeName()+" ("+data.DatatypeVersion()+")",
+				data.DatatypeUrl())
+		}
+	}
 	return text
 }

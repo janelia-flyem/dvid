@@ -7,11 +7,11 @@ import (
 	"log"
 
 	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/jmhodges/levigo"
+	"github.com/janelia-flyem/go/levigo"
 )
 
 const (
-	Version = "github.com/jmhodges/levigo"
+	Version = "github.com/janelia-flyem/go/levigo"
 
 	// Default size of LRU cache that caches frequently used uncompressed blocks.
 	DefaultCacheSize = 768 * dvid.Mega

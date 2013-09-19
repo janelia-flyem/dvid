@@ -119,11 +119,6 @@ else ()
         DEPENDS     ${golang_NAME} emdata
         COMMENT     "Added DVID extensions from DocSavage repo")
     
-    add_custom_target (levigo
-        ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/jmhodges/levigo
-        DEPENDS     ${golang_NAME} snappy-go
-        COMMENT     "Added levigo, Go driver for leveldb")
-
     add_custom_target (goleveldb
         ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/syndtr/goleveldb/leveldb
         DEPENDS     ${golang_NAME} snappy-go
