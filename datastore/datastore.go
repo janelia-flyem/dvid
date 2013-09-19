@@ -117,8 +117,19 @@ func Open(path string) (s *Service, openErr *OpenError) {
 	return
 }
 
+func (s *Service) NewDataset() (dataset *Dataset, err error) {
+	dataset, err = s.Datasets.NewDataset()
+	if err != nil {
+		return
+	}
+	//err = s.Datasets.Put(s.db)
+	return
+}
+
 // Shutdown closes a DVID datastore.
 func (s *Service) Shutdown() {
+	//s.Datasets.Put(s.db)
+	s.Shutdown()
 	s.db.Close()
 }
 

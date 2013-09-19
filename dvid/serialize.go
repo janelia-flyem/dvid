@@ -171,15 +171,14 @@ func DeserializeData(s []byte, uncompress bool) (data []byte, compress Compressi
 	}
 
 	// Uncompress if needed
-	switch compress {
-	case Uncompressed:
-	case Snappy:
-		data, err = snappy.Decode(nil, data)
-	default:
-		err = fmt.Errorf("Illegal compressiont format (%d) in deserialization", compress)
-	}
-	if err != nil {
-		return
+	if uncompress {
+		switch compress {
+		case Uncompressed:
+		case Snappy:
+			data, err = snappy.Decode(nil, data)
+		default:
+			err = fmt.Errorf("Illegal compressiont format (%d) in deserialization", compress)
+		}
 	}
 	return
 }

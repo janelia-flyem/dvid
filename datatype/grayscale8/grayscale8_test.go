@@ -41,21 +41,21 @@ func (suite *DataSuite) TearDownSuite(c *C) {
 }
 
 // Data from which to construct repeatable 3d images where adjacent voxels have different values.
-var xdata = []byte{'\x01', '\x07', '\xAF', '\xFF'}
-var ydata = []byte{'\x33', '\xB2', '\x77', '\xD0'}
-var zdata = []byte{'\x5C', '\x89', '\x40', '\x13'}
+var xdata = []byte{'\x01', '\x07', '\xAF', '\xFF', '\x70'}
+var ydata = []byte{'\x33', '\xB2', '\x77', '\xD0', '\x4F'}
+var zdata = []byte{'\x5C', '\x89', '\x40', '\x13', '\xCA'}
 
 // Make a 2d slice of bytes with top left corner at (ox,oy,oz) and size (nx,ny)
 func MakeSlice(ox, oy, oz, nx, ny int) []byte {
 	slice := make([]byte, nx*ny, nx*ny)
 	i := 0
-	modz := oz % 4
+	modz := oz % len(zdata)
 	for y := 0; y < ny; y++ {
 		sy := y + oy
-		mody := sy % 4
+		mody := sy % len(ydata)
 		sx := ox
 		for x := 0; x < nx; x++ {
-			modx := sx % 4
+			modx := sx % len(xdata)
 			slice[i] = xdata[modx] ^ ydata[mody] ^ zdata[modz]
 			i++
 			sx++
@@ -125,16 +125,15 @@ func (suite *DataSuite) sliceTest(c *C, slice voxels.Geometry) {
 func (suite *DataSuite) TestXYSliceGrayscale8(c *C) {
 	nx := 10
 	ny := 10
-	ox, oy, oz := 3, 3, 14
+	ox, oy, oz := 3, 13, 24
 	slice := voxels.NewSliceXY(voxels.Coord{int32(ox), int32(oy), int32(oz)},
 		voxels.Point2d{int32(nx), int32(ny)})
 	suite.sliceTest(c, slice)
 }
 
-/*
 func (suite *DataSuite) TestXZSliceGrayscale8(c *C) {
-	nx := 100
-	ny := 100
+	nx := 10
+	ny := 10
 	ox, oy, oz := 31, 10, 14
 	slice := voxels.NewSliceXZ(voxels.Coord{int32(ox), int32(oy), int32(oz)},
 		voxels.Point2d{int32(nx), int32(ny)})
@@ -142,11 +141,10 @@ func (suite *DataSuite) TestXZSliceGrayscale8(c *C) {
 }
 
 func (suite *DataSuite) TestYZSliceGrayscale8(c *C) {
-	nx := 100
-	ny := 100
+	nx := 10
+	ny := 10
 	ox, oy, oz := 13, 40, 99
 	slice := voxels.NewSliceYZ(voxels.Coord{int32(ox), int32(oy), int32(oz)},
 		voxels.Point2d{int32(nx), int32(ny)})
 	suite.sliceTest(c, slice)
 }
-*/

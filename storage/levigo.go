@@ -4,8 +4,8 @@ package storage
 
 import (
 	"bytes"
-	"fmt"
 	"log"
+	"fmt"
 
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/go/levigo"
@@ -159,7 +159,6 @@ func (db *LevelDB) GetRange(kStart, kEnd *Key) (values []KeyValue, err error) {
 	it := db.ldb.NewIterator(ro)
 	defer it.Close()
 
-	fmt.Printf("GetRange %s -> %s\n", *kStart, *kEnd)
 	values = []KeyValue{}
 	it.Seek(kStart.Bytes())
 	endBytes := kEnd.Bytes()
@@ -168,7 +167,6 @@ func (db *LevelDB) GetRange(kStart, kEnd *Key) (values []KeyValue, err error) {
 			if bytes.Compare(it.Key(), endBytes) > 0 {
 				return
 			}
-			fmt.Printf("GetRange it.Key() = %x [len %d] %s\n", it.Key(), len(it.Key()), it.Valid())
 			var key *Key
 			key, err = kStart.BytesToKey(it.Key())
 			if err != nil {
@@ -190,7 +188,6 @@ func (db *LevelDB) ProcessRange(kStart, kEnd *Key, op *ChunkOp, f func(*Chunk)) 
 	it := db.ldb.NewIterator(ro)
 	defer it.Close()
 
-	fmt.Printf("ProcessRange %s -> %s\n", *kStart, *kEnd)
 	endBytes := kEnd.Bytes()
 	it.Seek(kStart.Bytes())
 	for {
@@ -199,7 +196,6 @@ func (db *LevelDB) ProcessRange(kStart, kEnd *Key, op *ChunkOp, f func(*Chunk)) 
 				return nil
 			}
 			// Send to channel
-			fmt.Printf("ProcessRange it.Key() = %x [len %d] %s\n", it.Key(), len(it.Key()), it.Valid())
 			var key *Key
 			key, err = kStart.BytesToKey(it.Key())
 			if err != nil {
@@ -213,7 +209,8 @@ func (db *LevelDB) ProcessRange(kStart, kEnd *Key, op *ChunkOp, f func(*Chunk)) 
 				op,
 				KeyValue{key, it.Value()},
 			}
-			go f(chunk)
+			fmt.Printf("ProcessRange key %s\n", *chunk.KeyValue.K)
+			//go f(chunk)
 
 			it.Next()
 		} else {

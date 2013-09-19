@@ -658,6 +658,7 @@ func (d *Data) PutImage(versionID dvid.LocalID, img image.Image, slice Geometry)
 				// TODO -- Pass batch write via chunkOp and group all PUTs
 				// together at once.  Should increase write speed, particularly
 				// since the PUTs are using mostly sequential keys.
+				fmt.Printf("PUT Process Chunk key %s\n", kv.K)
 				go d.ProcessChunk(&storage.Chunk{chunkOp, kv})
 			}
 		}
@@ -773,10 +774,10 @@ func (d *Data) ProcessChunk(chunk *storage.Chunk) {
 	// the block data depending on the op.
 	data := voxels.data
 
-	fmt.Printf("Data %s -> %s, Orig %s -> %s\n", beg, end, begVolCoord, endVolCoord)
-	fmt.Printf("Block start: %s\n", blockBeg)
-	fmt.Printf("Block buffer size: %d bytes\n", len(block))
-	fmt.Printf("Data buffer size: %d bytes\n", len(data))
+	//fmt.Printf("Data %s -> %s, Orig %s -> %s\n", beg, end, begVolCoord, endVolCoord)
+	//fmt.Printf("Block start: %s\n", blockBeg)
+	//fmt.Printf("Block buffer size: %d bytes\n", len(block))
+	//fmt.Printf("Data buffer size: %d bytes\n", len(data))
 
 	switch voxels.DataShape() {
 	case XY:

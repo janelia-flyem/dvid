@@ -86,6 +86,7 @@ func (dsets *Datasets) Data(u UUID, name DataString) (dataService DataService, e
 // arbitrary data within the nodes of the DAG.
 func (dsets *Datasets) NewDataset() (dset *Dataset, err error) {
 	dsets.writeLock.Lock()
+	defer dsets.writeLock.Unlock()
 
 	dset = &Dataset{
 		VersionDAG: NewVersionDAG(),
@@ -96,8 +97,6 @@ func (dsets *Datasets) NewDataset() (dset *Dataset, err error) {
 	dsets.NewDatasetID++
 	dsets.Datasets = append(dsets.Datasets, dset)
 	dsets.versionMap[dset.Root] = dset
-
-	dsets.writeLock.Unlock()
 	return
 }
 
@@ -148,6 +147,10 @@ func (dsets *Datasets) Get(db storage.KeyValueDB) (err error) {
 // Put stores Datasets into a KeyValueDB, overwriting whatever was there before.
 // This assumes only one Dataservice for a given datastore.
 func (dsets *Datasets) Put(db storage.KeyValueDB) error {
+	var mutex sync.Mutex
+	mutex.Lock()
+	defer mutex.Unlock()
+
 	// Get serialization
 	serialization, err := dsets.Serialize()
 	if err != nil {
@@ -427,9 +430,9 @@ func (dset *Dataset) NewData(u UUID, name DataString, typeName string, config dv
 		// TODO -- Allow delta compression on versioned nodes.
 		// avail = DataDelta
 	} else {
-		// If we are unversioned, just alias all data to one UUID.
+		// If we are unversioned, just alias all data to Root UUID.
 		// This works well for things like write-once, read-many grayscale images.
-		avail = DataAliased
+		avail = DataRoot
 	}
 	node.AddData(&NodeData{dataservice, avail})
 	return nil
@@ -462,8 +465,8 @@ const (
 	// up to any NodeComplete ancestor.
 	DataDelta
 
-	// Queries are redirected to another node based on UUID.
-	DataAliased
+	// Queries are redirected to Root since this is unversioned.
+	DataRoot
 
 	// Data has been explicitly deleted at this node and is no longer available.
 	DataDeleted
