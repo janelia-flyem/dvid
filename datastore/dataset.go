@@ -325,7 +325,7 @@ func (dsets *Datasets) DataChart() string {
 		text += fmt.Sprintf("%-15s  %-25s  %s\n", name, version, url)
 	}
 	for num, dset := range dsets.Datasets {
-		text += fmt.Sprintf("\nDataset %d (UUID = %s):\n\n", num+1, dset.RootUUID())
+		text += fmt.Sprintf("\nDataset %d (UUID = %s):\n\n", num+1, dset.Root)
 		writeLine("Name", "Type Name", "Url")
 		for name, data := range dset.AvailableData() {
 			writeLine(name, data.DatatypeName()+" ("+data.DatatypeVersion()+")",
@@ -335,8 +335,8 @@ func (dsets *Datasets) DataChart() string {
 	return text
 }
 
-// JSON returns JSON-encoded exportable Datasets information.
-func (dsets *Datasets) JSON() (jsonStr string, err error) {
+// StringJSON returns a JSON-encoded string of exportable Datasets information.
+func (dsets *Datasets) StringJSON() (jsonStr string, err error) {
 	m, err := json.Marshal(dsets)
 	if err != nil {
 		return
@@ -359,15 +359,6 @@ type Dataset struct {
 
 	// private fields must be recreated when loading from disk, etc.
 	nameMap map[DataString]DataService
-}
-
-// RootUUID returns the UUID of the root node of this Dataset's version DAG.
-func (dset *Dataset) RootUUID() UUID {
-	return dset.Root
-}
-
-func (dset *Dataset) Versions() []UUID {
-	return dset.Versions()
 }
 
 func (dset *Dataset) TypeServiceForData(name DataString) (t TypeService, err error) {
@@ -551,6 +542,7 @@ type VersionDAG struct {
 // NewVersionDAG creates a version DAG and initializes the first unlocked node,
 // assigning its UUID.
 func NewVersionDAG() *VersionDAG {
+	fmt.Println("NewVersionDAG()")
 	dag := VersionDAG{
 		Root:       NewUUID(),
 		Nodes:      make(map[UUID]*Node),
@@ -612,6 +604,7 @@ func (dag *VersionDAG) NewChild(parent UUID) (u UUID, err error) {
 	dag.Nodes[u] = &Node{NodeVersion: version}
 	dag.NewVersionID++
 	dag.mapLock.Unlock()
+	fmt.Println("Leaving VersionDAG.NewChild()")
 	return
 }
 

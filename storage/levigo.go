@@ -5,14 +5,13 @@ package storage
 import (
 	"bytes"
 	"log"
-	"fmt"
 
 	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/janelia-flyem/go/levigo"
+	"github.com/jmhodges/levigo"
 )
 
 const (
-	Version = "github.com/janelia-flyem/go/levigo"
+	Version = "github.com/jmhodges/levigo"
 
 	// Default size of LRU cache that caches frequently used uncompressed blocks.
 	DefaultCacheSize = 768 * dvid.Mega
@@ -209,8 +208,7 @@ func (db *LevelDB) ProcessRange(kStart, kEnd *Key, op *ChunkOp, f func(*Chunk)) 
 				op,
 				KeyValue{key, it.Value()},
 			}
-			fmt.Printf("ProcessRange key %s\n", *chunk.KeyValue.K)
-			//go f(chunk)
+			go f(chunk)
 
 			it.Next()
 		} else {

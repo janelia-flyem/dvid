@@ -77,7 +77,7 @@ func (suite *DataSuite) TestVersionedDataOps(c *C) {
 	dataset2, err := suite.service.NewDataset()
 	c.Assert(err, IsNil)
 
-	root2 := dataset2.RootUUID()
+	root2 := dataset2.Root
 	c.Assert(dataset1.Root, Not(Equals), root2)
 
 	err = dataset2.NewData(root2, "labels2", "labels64", config)

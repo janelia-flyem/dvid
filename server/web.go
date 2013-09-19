@@ -155,7 +155,7 @@ func datasetsRequest(w http.ResponseWriter, r *http.Request) {
 
 	switch parts[0] {
 	case "info":
-		jsonStr, err := runningService.Datasets.JSON()
+		jsonStr, err := runningService.Datasets.StringJSON()
 		if err != nil {
 			badRequest(w, r, err.Error())
 			return
@@ -172,7 +172,7 @@ func datasetsRequest(w http.ResponseWriter, r *http.Request) {
 			badRequest(w, r, err.Error())
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, "{%q: %q}", "Root", dataset.RootUUID())
+		fmt.Fprintf(w, "{%q: %q}", "Root", dataset.Root)
 	default:
 		badRequest(w, r, WebAPIPath+"/datasets/ must be followed with 'info' or 'new'")
 	}

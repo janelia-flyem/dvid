@@ -86,7 +86,7 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 		cmd.CommandArgs(1, &subcommand)
 		switch subcommand {
 		case "info":
-			jsonStr, err := runningService.Datasets.JSON()
+			jsonStr, err := runningService.Datasets.StringJSON()
 			if err != nil {
 				return err
 			}
@@ -96,7 +96,7 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 			if err != nil {
 				return err
 			}
-			reply.Text = string(dataset.RootUUID())
+			reply.Text = string(dataset.Root)
 		default:
 			return fmt.Errorf("Unknown datasets command: %q", subcommand)
 		}

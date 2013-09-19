@@ -122,14 +122,13 @@ func (s *Service) NewDataset() (dataset *Dataset, err error) {
 	if err != nil {
 		return
 	}
-	//err = s.Datasets.Put(s.db)
+	err = s.Datasets.Put(s.db)
 	return
 }
 
 // Shutdown closes a DVID datastore.
 func (s *Service) Shutdown() {
-	//s.Datasets.Put(s.db)
-	s.Shutdown()
+	s.Datasets.Put(s.db)
 	s.db.Close()
 }
 

@@ -14,7 +14,6 @@ func (suite *DataSuite) TestNewDAG(c *C) {
 	c.Assert(dag.VersionMap, HasLen, 1)
 }
 
-/*
 // Make sure Datasets configuration persists even after shutdown.
 func (suite *DataSuite) TestDatasetPersistence(c *C) {
 	dir := c.MkDir()
@@ -30,7 +29,7 @@ func (suite *DataSuite) TestDatasetPersistence(c *C) {
 	_, err = service.NewDataset()
 	c.Assert(err, IsNil)
 
-	oldJSON, err := service.JSON()
+	oldJSON, err := service.StringJSON()
 	c.Assert(err, IsNil)
 
 	service.Shutdown()
@@ -39,9 +38,8 @@ func (suite *DataSuite) TestDatasetPersistence(c *C) {
 	service2, err := Open(dir)
 	c.Assert(err, IsNil)
 
-	newJSON, err := service2.JSON()
+	newJSON, err := service2.StringJSON()
 	c.Assert(err, IsNil)
 
 	c.Assert(newJSON, DeepEquals, oldJSON)
 }
-*/

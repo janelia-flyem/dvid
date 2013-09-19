@@ -123,8 +123,8 @@ func (suite *DataSuite) sliceTest(c *C, slice voxels.Geometry) {
 }
 
 func (suite *DataSuite) TestXYSliceGrayscale8(c *C) {
-	nx := 10
-	ny := 10
+	nx := 100
+	ny := 100
 	ox, oy, oz := 3, 13, 24
 	slice := voxels.NewSliceXY(voxels.Coord{int32(ox), int32(oy), int32(oz)},
 		voxels.Point2d{int32(nx), int32(ny)})
@@ -132,8 +132,8 @@ func (suite *DataSuite) TestXYSliceGrayscale8(c *C) {
 }
 
 func (suite *DataSuite) TestXZSliceGrayscale8(c *C) {
-	nx := 10
-	ny := 10
+	nx := 100
+	ny := 100
 	ox, oy, oz := 31, 10, 14
 	slice := voxels.NewSliceXZ(voxels.Coord{int32(ox), int32(oy), int32(oz)},
 		voxels.Point2d{int32(nx), int32(ny)})
@@ -141,8 +141,8 @@ func (suite *DataSuite) TestXZSliceGrayscale8(c *C) {
 }
 
 func (suite *DataSuite) TestYZSliceGrayscale8(c *C) {
-	nx := 10
-	ny := 10
+	nx := 100
+	ny := 100
 	ox, oy, oz := 13, 40, 99
 	slice := voxels.NewSliceYZ(voxels.Coord{int32(ox), int32(oy), int32(oz)},
 		voxels.Point2d{int32(nx), int32(ny)})
