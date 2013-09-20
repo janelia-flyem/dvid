@@ -10,6 +10,7 @@ import (
 	"net/rpc"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -42,6 +43,14 @@ var (
 		RPCAddress: DefaultRPCAddress,
 	}
 
+	// MaxChunkHandlers sets the maximum number of chunk handlers (goroutines) that
+	// can be spawned as part of this server.
+	MaxChunkHandlers = 10 * runtime.NumCPU()
+
+	// HandlerToken is buffered channel to limit spawning of goroutines.
+	// See ProcessChunk() in datatype/voxels for example.
+	HandlerToken = make(chan int, MaxChunkHandlers)
+
 	// Timeout in seconds for waiting to open a datastore for exclusive access.
 	TimeoutSecs int = 0
 
@@ -68,6 +77,12 @@ type Service struct {
 
 	// The address of the rpc server
 	RPCAddress string
+}
+
+func init() {
+	for i := 0; i < MaxChunkHandlers; i++ {
+		HandlerToken <- 1
+	}
 }
 
 // DatastoreService returns the current datastore service.  One DVID process

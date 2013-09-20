@@ -23,9 +23,10 @@ import (
 	// "github.com/janelia-flyem/go/goprotobuf/proto"
 )
 
-const Version = "0.7"
-
-const RepoUrl = "github.com/janelia-flyem/dvid/datatype/voxels"
+const (
+	Version = "0.7"
+	RepoUrl = "github.com/janelia-flyem/dvid/datatype/voxels"
+)
 
 const HelpMessage = `
 API for datatypes derived from voxels (github.com/janelia-flyem/dvid/datatype/voxels)
@@ -606,6 +607,7 @@ func (d *Data) PutImage(versionID dvid.LocalID, img image.Image, slice Geometry)
 	// chunk PUTs that could potentially overwrite slice modifications.
 	versionMutex := datastore.VersionMutex(d, versionID)
 	versionMutex.Lock()
+	defer versionMutex.Unlock()
 
 	// Map: Iterate in x, then y, then z
 	startBlockCoord := startVoxel.BlockCoord(blockSize)
@@ -657,12 +659,11 @@ func (d *Data) PutImage(versionID dvid.LocalID, img image.Image, slice Geometry)
 				// TODO -- Pass batch write via chunkOp and group all PUTs
 				// together at once.  Should increase write speed, particularly
 				// since the PUTs are using mostly sequential keys.
-				go d.ProcessChunk(&storage.Chunk{chunkOp, kv})
+				d.ProcessChunk(&storage.Chunk{chunkOp, kv})
 			}
 		}
 	}
 	wg.Wait()
-	versionMutex.Unlock()
 
 	return nil
 }
@@ -705,8 +706,15 @@ func (d *Data) GetVolume(versionID dvid.LocalID, vol Geometry) (data []byte, err
 
 // ProcessChunk processes a chunk of data as part of a mapped operation.  The data may be
 // thinner, wider, and longer than the chunk, depending on the data shape (XY, XZ, etc).
+// Only some multiple of the # of CPU cores can be used for chunk handling before
+// it waits for chunk processing to abate via the buffered server.HandlerToken channel.
 func (d *Data) ProcessChunk(chunk *storage.Chunk) {
+	<-server.HandlerToken
+	go d.processChunk(chunk)
+	server.HandlerToken <- 1
+}
 
+func (d *Data) processChunk(chunk *storage.Chunk) {
 	operation, ok := chunk.Op.(*Operation)
 	if !ok {
 		log.Fatalf("Illegal operation passed to ProcessChunk() for data %s\n", d.DataName())

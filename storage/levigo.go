@@ -208,7 +208,7 @@ func (db *LevelDB) ProcessRange(kStart, kEnd *Key, op *ChunkOp, f func(*Chunk)) 
 				op,
 				KeyValue{key, it.Value()},
 			}
-			go f(chunk)
+			f(chunk)
 
 			it.Next()
 		} else {
