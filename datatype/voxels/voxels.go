@@ -711,7 +711,6 @@ func (d *Data) GetVolume(versionID dvid.LocalID, vol Geometry) (data []byte, err
 func (d *Data) ProcessChunk(chunk *storage.Chunk) {
 	<-server.HandlerToken
 	go d.processChunk(chunk)
-	server.HandlerToken <- 1
 }
 
 func (d *Data) processChunk(chunk *storage.Chunk) {
@@ -875,4 +874,7 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 	if chunk.Wg != nil {
 		chunk.Wg.Done()
 	}
+
+    // After processing a chunk, return the token.
+    server.HandlerToken <- 1
 }
