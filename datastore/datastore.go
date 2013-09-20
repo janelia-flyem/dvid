@@ -175,7 +175,11 @@ func (s *Service) NewData(u UUID, typename, dataname string, versioned bool) err
 		return fmt.Errorf("Datastore service has no datasets available")
 	}
 	config := dvid.Config{"versioned": versioned}
-	return s.datasets.newData(u, DataString(dataname), typename, config)
+	err := s.datasets.newData(u, DataString(dataname), typename, config)
+	if err != nil {
+		return err
+	}
+	return s.datasets.Put(s.db)
 }
 
 // Locks the node with the given UUID.
@@ -322,7 +326,7 @@ func (s *Service) DataChart() string {
 	for num, dset := range s.datasets.Datasets {
 		text += fmt.Sprintf("\nDataset %d (UUID = %s):\n\n", num+1, dset.Root)
 		writeLine("Name", "Type Name", "Url")
-		for name, data := range dset.AvailableData() {
+		for name, data := range dset.DataMap {
 			writeLine(name, data.DatatypeName()+" ("+data.DatatypeVersion()+")",
 				data.DatatypeUrl())
 		}

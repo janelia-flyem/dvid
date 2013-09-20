@@ -96,14 +96,22 @@ func (terminal *Terminal) Send(cmd dvid.Command) (err error) {
 		dvid.Fmt(dvid.Debug, "Running remote command '%s'...\n", cmd)
 		err = terminal.client.Call("RPCConnection.Do", request, &reply)
 		if err != nil {
-			err = fmt.Errorf("RPC error for '%s': %s", cmd, err.Error())
+			if dvid.Mode == dvid.Debug {
+				err = fmt.Errorf("RPC error for '%s': %s", cmd, err.Error())
+			} else {
+				err = fmt.Errorf("RPC error: %s", err.Error())
+			}
 			return
 		}
 	} else {
 		dvid.Fmt(dvid.Debug, "Running local command '%s'...\n", cmd)
 		err = ServerlessDo(terminal.datastoreDir, request, &reply)
 		if err != nil {
-			err = fmt.Errorf("Error for '%s': %s", cmd, err.Error())
+			if dvid.Mode == dvid.Debug {
+				err = fmt.Errorf("Error for '%s': %s", cmd, err.Error())
+			} else {
+				err = fmt.Errorf("Error: %s", err.Error())
+			}
 			return
 		}
 	}

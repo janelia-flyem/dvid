@@ -75,7 +75,7 @@ func (dsets *Datasets) DataService(u UUID, name DataString) (dataservice DataSer
 		err = fmt.Errorf("No node with UUID %s found", u)
 		return
 	}
-	dataservice, found = dataset.nameMap[name]
+	dataservice, found = dataset.DataMap[name]
 	if !found {
 		err = fmt.Errorf("No data named '%s' at node with UUID %s", name, u)
 	}
@@ -144,6 +144,14 @@ func (dsets *Datasets) Get(db storage.KeyValueDB) (err error) {
 
 	// Deserialize into object
 	err = dsets.Deserialize(data)
+
+	// Initialize the versionMap cache
+	dsets.versionMap = make(map[UUID]*Dataset)
+	for _, dset := range dsets.Datasets {
+		for u, _ := range dset.VersionMap {
+			dsets.versionMap[u] = dset
+		}
+	}
 	return
 }
 
@@ -223,7 +231,7 @@ func (dsets *Datasets) DatasetFromString(str string) (dataset *Dataset, u UUID, 
 func (dsets *Datasets) Datatypes() map[UrlString]TypeService {
 	typemap := make(map[UrlString]TypeService)
 	for _, dset := range dsets.Datasets {
-		for _, dataservice := range dset.nameMap {
+		for _, dataservice := range dset.DataMap {
 			typemap[dataservice.DatatypeUrl()] = dataservice
 		}
 	}
@@ -236,8 +244,7 @@ func (dsets *Datasets) Datatypes() map[UrlString]TypeService {
 func (dsets *Datasets) VerifyCompiledTypes() error {
 	var errMsg string
 	for _, dset := range dsets.Datasets {
-		datamap := dset.AvailableData()
-		for name, data := range datamap {
+		for name, data := range dset.DataMap {
 			_, found := CompiledTypes[data.DatatypeUrl()]
 			if !found {
 				errMsg += fmt.Sprintf("DVID not compiled with support for %s, data type %s [%s]\n",
@@ -273,19 +280,14 @@ type Dataset struct {
 	// DatasetID is the 32-bit identifier that is DVID server-specific.
 	DatasetID dvid.LocalID32
 
-	// private fields must be recreated when loading from disk, etc.
-	nameMap map[DataString]DataService
-}
-
-// AvailableData returns a map of all data present in a version DAG where the
-// key is the data name.
-func (dset *Dataset) AvailableData() map[DataString]DataService {
-	return dset.nameMap
+	// DataMap keeps the dataset-specific names for instances of data types
+	// in this dataset.
+	DataMap map[DataString]DataService
 }
 
 // TypeService returns the TypeService underlying data of a given name.
 func (dset *Dataset) TypeService(name DataString) (t TypeService, err error) {
-	data, found := dset.nameMap[name]
+	data, found := dset.DataMap[name]
 	if !found {
 		err = fmt.Errorf("Cannot get type of unknown data '%s'", name)
 		return
@@ -297,7 +299,7 @@ func (dset *Dataset) TypeService(name DataString) (t TypeService, err error) {
 // DataService returns a DataService for data of a given name.
 func (dset *Dataset) DataService(name DataString) (dataservice DataService, err error) {
 	var found bool
-	dataservice, found = dset.nameMap[name]
+	dataservice, found = dset.DataMap[name]
 	if !found {
 		err = fmt.Errorf("Cannot find data '%s'", name)
 		return
@@ -310,7 +312,7 @@ func (dset *Dataset) DataService(name DataString) (dataservice DataService, err 
 // the data is mutable across nodes in the version DAG or is simply unversioned.
 func (dset *Dataset) NewData(name DataString, typeName string, config dvid.Config) error {
 	// Only allow unique data names per dataset.
-	dataservice, found := dset.nameMap[name]
+	dataservice, found := dset.DataMap[name]
 	if found {
 		return fmt.Errorf("Data named '%s' already exists in dataset %s", name, dset.Root)
 	}
@@ -329,10 +331,10 @@ func (dset *Dataset) NewData(name DataString, typeName string, config dvid.Confi
 	if err != nil {
 		return err
 	}
-	if dset.nameMap == nil {
-		dset.nameMap = make(map[DataString]DataService)
+	if dset.DataMap == nil {
+		dset.DataMap = make(map[DataString]DataService)
 	}
-	dset.nameMap[name] = dataservice
+	dset.DataMap[name] = dataservice
 	return nil
 }
 

@@ -58,10 +58,10 @@ func (cmd Command) Name() string {
 
 // TypeCommand returns the name of a type-specific command (in lower case).
 func (cmd Command) TypeCommand() string {
-	if len(cmd) < 2 {
+	if len(cmd) < 4 {
 		return ""
 	}
-	return strings.ToLower(cmd[1])
+	return strings.ToLower(cmd[3])
 }
 
 // Parameter scans a command for any "key=value" argument and returns

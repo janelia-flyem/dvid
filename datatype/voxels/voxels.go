@@ -41,7 +41,7 @@ $ dvid node <UUID> <data name> load remote <plane> <offset> <image glob>
 
     Example: 
 
-    $ dvid node 3f8c mygrayscale load local 0,0,100 xy data/*.png
+    $ dvid node 3f8c mygrayscale load local xy 0,0,100 data/*.png
 
     Arguments:
 
@@ -222,11 +222,10 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 	if len(request.Command) < 7 {
 		return fmt.Errorf("Poorly formatted load command.  See command-line help.")
 	}
-	source := request.Command[3]
-	fmt.Printf("Request: %s\n", request.Command)
+	source := request.Command[4]
 	switch source {
 	case "local":
-		d.LoadLocal(request, reply)
+		return d.LoadLocal(request, reply)
 	case "remote":
 		return fmt.Errorf("load remote not yet implemented")
 	default:
@@ -267,7 +266,7 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 	}
 
 	// Get the data shape.
-	shapeStr := DataShapeString(parts[2])
+	shapeStr := DataShapeString(parts[3])
 	dataShape, err := shapeStr.DataShape()
 	if err != nil {
 		return fmt.Errorf("Bad data shape given '%s'", shapeStr)
@@ -275,7 +274,7 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 
 	switch dataShape {
 	case XY, XZ, YZ:
-		offsetStr, sizeStr := parts[3], parts[4]
+		offsetStr, sizeStr := parts[4], parts[5]
 		slice, err := NewSliceFromStrings(shapeStr, offsetStr, sizeStr)
 		if err != nil {
 			return err
@@ -296,8 +295,8 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 			dvid.PrintNonZero("GetImage", data)
 
 			var formatStr string
-			if len(parts) >= 6 {
-				formatStr = parts[5]
+			if len(parts) >= 7 {
+				formatStr = parts[6]
 			}
 			//dvid.ElapsedTime(dvid.Normal, startTime, "%s %s upto image formatting", op, slice)
 			err = dvid.WriteImageHttp(w, img, formatStr)
@@ -306,7 +305,7 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 			}
 		}
 	case Vol:
-		offsetStr, sizeStr := parts[3], parts[4]
+		offsetStr, sizeStr := parts[4], parts[5]
 		_, err := NewSubvolumeFromStrings(offsetStr, sizeStr)
 		if err != nil {
 			return err
@@ -410,7 +409,7 @@ func (d *Data) SliceImage(v *Voxels, z int) (img image.Image, err error) {
 //
 //     Example:
 //
-//     $ dvid node 3f8c mygrayscale load local 0,0,100 data/*.png xy
+//     $ dvid node 3f8c mygrayscale load local xy 0,0,100 data/*.png
 //
 //     Arguments:
 //
@@ -424,7 +423,6 @@ func (d *Data) SliceImage(v *Voxels, z int) (img image.Image, err error) {
 // This function is meant for mass ingestion of large data files, and it is inappropriate
 // to read gigabytes of data just to send it over the network to a local DVID.
 func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) error {
-
 	startTime := time.Now()
 
 	// Get the running datastore service from this DVID instance.
@@ -441,13 +439,13 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 	// Get the version ID from a uniquely identifiable string
 	_, _, versionID, err := service.NodeIDFromString(uuidStr)
 	if err != nil {
-		return err
+		return fmt.Errorf("Could not find node with UUID %s: %s", uuidStr, err.Error())
 	}
 
 	// Get origin
 	offset, err := PointStr(offsetStr).Coord()
 	if err != nil {
-		return err
+		return fmt.Errorf("Illegal offset specification: %s: %s", offsetStr, err.Error())
 	}
 
 	// Get list of files to add
@@ -462,6 +460,7 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 	// Get plane
 	plane, err := DataShapeString(planeStr).DataShape()
 	if err != nil {
+		fmt.Println("GetPlane")
 		return err
 	}
 
@@ -473,6 +472,7 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 		img, _, err := dvid.ImageFromFile(filename)
 		if err != nil {
 			lastErr = err
+			fmt.Printf("Error %s\n", err.Error())
 		} else {
 			size := SizeFromRect(img.Bounds())
 			slice, err := NewSlice(plane, offset, size)
@@ -542,7 +542,6 @@ func (d *Data) GetImage(versionID dvid.LocalID, slice Geometry) (img image.Image
 	// Map: Iterate in x, then y, then z
 	startBlockCoord := startVoxel.BlockCoord(blockSize)
 	endBlockCoord := endVoxel.BlockCoord(blockSize)
-	fmt.Printf("GetImage from startBlockCoord %s -> endBlockCoord %s\n", startBlockCoord, endBlockCoord)
 	for z := startBlockCoord[2]; z <= endBlockCoord[2]; z++ {
 		for y := startBlockCoord[1]; y <= endBlockCoord[1]; y++ {
 			// We know for voxels indexing, x span is a contiguous range.
@@ -611,7 +610,6 @@ func (d *Data) PutImage(versionID dvid.LocalID, img image.Image, slice Geometry)
 	// Map: Iterate in x, then y, then z
 	startBlockCoord := startVoxel.BlockCoord(blockSize)
 	endBlockCoord := endVoxel.BlockCoord(blockSize)
-	fmt.Printf("PutImage from startBlockCoord %s -> endBlockCoord %s\n", startBlockCoord, endBlockCoord)
 	for z := startBlockCoord[2]; z <= endBlockCoord[2]; z++ {
 		for y := startBlockCoord[1]; y <= endBlockCoord[1]; y++ {
 			// We know for voxels indexing, x span is a contiguous range.
@@ -659,7 +657,6 @@ func (d *Data) PutImage(versionID dvid.LocalID, img image.Image, slice Geometry)
 				// TODO -- Pass batch write via chunkOp and group all PUTs
 				// together at once.  Should increase write speed, particularly
 				// since the PUTs are using mostly sequential keys.
-				fmt.Printf("PUT Process Chunk key %s\n", kv.K)
 				go d.ProcessChunk(&storage.Chunk{chunkOp, kv})
 			}
 		}
