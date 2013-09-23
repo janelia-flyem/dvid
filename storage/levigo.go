@@ -147,6 +147,7 @@ func (db *LevelDB) Close() {
 func (db *LevelDB) Get(k *Key) (v []byte, err error) {
 	ro := db.options.ReadOptions
 	v, err = db.ldb.Get(ro, k.Bytes())
+	bytesRead <- len(v)
 	return
 }
 
@@ -163,6 +164,8 @@ func (db *LevelDB) GetRange(kStart, kEnd *Key) (values []KeyValue, err error) {
 	endBytes := kEnd.Bytes()
 	for {
 		if it.Valid() {
+			value := it.Value()
+			bytesRead <- len(value)
 			if bytes.Compare(it.Key(), endBytes) > 0 {
 				return
 			}
@@ -171,7 +174,7 @@ func (db *LevelDB) GetRange(kStart, kEnd *Key) (values []KeyValue, err error) {
 			if err != nil {
 				return
 			}
-			values = append(values, KeyValue{key, it.Value()})
+			values = append(values, KeyValue{key, value})
 			it.Next()
 		} else {
 			err = it.GetError()
@@ -191,6 +194,8 @@ func (db *LevelDB) ProcessRange(kStart, kEnd *Key, op *ChunkOp, f func(*Chunk)) 
 	it.Seek(kStart.Bytes())
 	for {
 		if it.Valid() {
+			value := it.Value()
+			bytesRead <- len(value)
 			if bytes.Compare(it.Key(), endBytes) > 0 {
 				return nil
 			}
@@ -206,7 +211,7 @@ func (db *LevelDB) ProcessRange(kStart, kEnd *Key, op *ChunkOp, f func(*Chunk)) 
 			}
 			chunk := &Chunk{
 				op,
-				KeyValue{key, it.Value()},
+				KeyValue{key, value},
 			}
 			f(chunk)
 
@@ -221,6 +226,7 @@ func (db *LevelDB) ProcessRange(kStart, kEnd *Key, op *ChunkOp, f func(*Chunk)) 
 func (db *LevelDB) Put(k *Key, v []byte) (err error) {
 	wo := db.options.WriteOptions
 	err = db.ldb.Put(wo, k.Bytes(), v)
+	bytesWritten <- len(v)
 	return
 }
 

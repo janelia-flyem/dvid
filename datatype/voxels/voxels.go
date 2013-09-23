@@ -714,6 +714,11 @@ func (d *Data) ProcessChunk(chunk *storage.Chunk) {
 }
 
 func (d *Data) processChunk(chunk *storage.Chunk) {
+	defer func() {
+		// After processing a chunk, return the token.
+		server.HandlerToken <- 1
+	}()
+
 	operation, ok := chunk.Op.(*Operation)
 	if !ok {
 		log.Fatalf("Illegal operation passed to ProcessChunk() for data %s\n", d.DataName())
@@ -874,7 +879,4 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 	if chunk.Wg != nil {
 		chunk.Wg.Done()
 	}
-
-    // After processing a chunk, return the token.
-    server.HandlerToken <- 1
 }

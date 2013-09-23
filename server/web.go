@@ -6,6 +6,7 @@
 package server
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
+	"github.com/janelia-flyem/dvid/storage"
 )
 
 const webClientUnavailableMessage = `
@@ -74,11 +76,8 @@ func indexHandler(w http.ResponseWriter, r *http.Request) {
 // Handler for web client
 func mainHandler(w http.ResponseWriter, r *http.Request) {
 	if runningService.WebClientPath != "" {
-		path := "index.html"
-		if r.URL.Path != "/" {
-			path = r.URL.Path
-		}
-		filename := filepath.Join(runningService.WebClientPath, path)
+		consoleFile := strings.TrimPrefix(r.URL.Path, "/console/")
+		filename := filepath.Join(runningService.WebClientPath, consoleFile)
 		dvid.Fmt(dvid.Debug, "Web client: %s -> %s\n", r.URL.Path, filename)
 		http.ServeFile(w, r, filename)
 	} else {
@@ -93,7 +92,6 @@ func apiHandler(w http.ResponseWriter, r *http.Request) {
 	// Break URL request into arguments
 	lenPath := len(WebAPIPath)
 	url := r.URL.Path[lenPath:]
-	dvid.Fmt(dvid.Debug, "API request received: %s\n", url)
 	parts := strings.Split(url, "/")
 	if len(parts) == 0 {
 		badRequest(w, r, "Poorly formed request")
@@ -106,6 +104,8 @@ func apiHandler(w http.ResponseWriter, r *http.Request) {
 		helpRequest(w, r)
 	case "about":
 		aboutRequest(w, r)
+	case "load":
+		loadRequest(w, r)
 	case "datasets":
 		datasetsRequest(w, r)
 	case "dataset":
@@ -133,13 +133,19 @@ func aboutRequest(w http.ResponseWriter, r *http.Request) {
 }
 
 func loadRequest(w http.ResponseWriter, r *http.Request) {
-	jsonStr, err := datastore.ChunkLoadJSON()
+	m, err := json.Marshal(map[string]int{
+		"bytes read":      storage.BytesReadPerSec,
+		"bytes written":   storage.BytesWrittenPerSec,
+		"GET requests":    storage.GetsPerSec,
+		"PUT requests":    storage.PutsPerSec,
+		"handlers active": MaxChunkHandlers - len(HandlerToken),
+	})
 	if err != nil {
 		badRequest(w, r, err.Error())
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, jsonStr)
+	fmt.Fprintf(w, string(m))
 }
 
 func datasetsRequest(w http.ResponseWriter, r *http.Request) {

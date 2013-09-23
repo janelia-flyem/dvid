@@ -142,9 +142,8 @@ else ()
     #    COMMENT     "Compiled and installed dvid pure Go executable, dvid-go.")
 
    # Embed web client into exe
-   set (NRSC_SCRIPT "$ENV{GOPATH}/src/github.com/janelia-flyem/go/nrsc/nrsc")
    add_custom_target (dvid
-        ${NRSC_SCRIPT} ${BUILDEM_BIN_DIR}/dvid ${WEBCLIENT_DIR}
+        ${BUILDEM_BIN_DIR}/nrsc ${BUILDEM_BIN_DIR}/dvid ${WEBCLIENT_DIR}
         DEPENDS dvid-exe dvid-webclient
         COMMENT     "Added webclient in ${WEBCLIENT_DIR} to dvid executable")
    
