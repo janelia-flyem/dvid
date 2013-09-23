@@ -27,6 +27,12 @@ var (
 
 	bytesRead    chan int
 	bytesWritten chan int
+
+	// Current tallies up to a second.
+	curBytesReadPerSec    int
+	curBytesWrittenPerSec int
+	curGetsPerSec         int
+	curPutsPerSec         int
 )
 
 func init() {
@@ -43,17 +49,21 @@ func loadMonitor() {
 	for {
 		select {
 		case b := <-bytesRead:
-			BytesReadPerSec += b
-			GetsPerSec++
+			curBytesReadPerSec += b
+			curGetsPerSec++
 		case b := <-bytesWritten:
-			BytesWrittenPerSec += b
-			PutsPerSec++
+			curBytesWrittenPerSec += b
+			curPutsPerSec++
 		case <-secondTick:
 			access.Lock()
-			BytesReadPerSec = 0
-			BytesWrittenPerSec = 0
-			GetsPerSec = 0
-			PutsPerSec = 0
+			BytesReadPerSec = curBytesReadPerSec
+			BytesWrittenPerSec = curBytesWrittenPerSec
+			curBytesReadPerSec = 0
+			curBytesWrittenPerSec = 0
+			GetsPerSec = curGetsPerSec
+			PutsPerSec = curPutsPerSec
+			curGetsPerSec = 0
+			curPutsPerSec = 0
 			access.Unlock()
 		}
 	}

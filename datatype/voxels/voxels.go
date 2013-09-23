@@ -125,10 +125,13 @@ func init() {
 	gob.Register(&Data{})
 }
 
-/// Datatype embeds the datastore's Datatype to create a unique type
+// Datatype embeds the datastore's Datatype to create a unique type
 // with voxel functions.  Refinements of general voxel types can be implemented
 // by embedding this type, choosing appropriate # of channels and bytes/voxel,
 // overriding functions as needed, and calling datastore.RegisterDatatype().
+// Note that these fields are invariant for all instances of this type.  Fields
+// that can change depending on the type of data (e.g., resolution) should be
+// in the Data type.
 type Datatype struct {
 	datastore.Datatype
 	NumChannels   int
@@ -201,6 +204,10 @@ type Data struct {
 
 	// Units of resolution, e.g., "nanometers"
 	VoxelResUnits VoxelResolutionUnits
+
+	// Maximum extents of this volume.
+
+	// Available extents of this volume.
 }
 
 // Returns total number of bytes across all channels for a voxel.

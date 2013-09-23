@@ -47,6 +47,12 @@ var (
 		RPCAddress: DefaultRPCAddress,
 	}
 
+	// ActiveHandlers is maximum number of active handlers over last second.
+	ActiveHandlers int
+
+	// Running tally of active handlers up to the last second
+	curActiveHandlers int
+
 	// MaxChunkHandlers sets the maximum number of chunk handlers (goroutines) that
 	// can be spawned as part of this server.
 	MaxChunkHandlers = 50 * runtime.NumCPU()
@@ -56,7 +62,7 @@ var (
 	HandlerToken = make(chan int, MaxChunkHandlers)
 
 	// Timeout in seconds for waiting to open a datastore for exclusive access.
-	TimeoutSecs int = 0
+	TimeoutSecs int
 
 	// GzipAPI turns on gzip compression on REST API responses.
 	// For high bandwidth networks or local use, it is better to leave gzip
@@ -87,6 +93,23 @@ func init() {
 	for i := 0; i < MaxChunkHandlers; i++ {
 		HandlerToken <- 1
 	}
+	// Monitor the handler token load, resetting every second.
+	loadCheckTimer := time.Tick(10 * time.Millisecond)
+	ticks := 0
+	go func() {
+		for {
+			<-loadCheckTimer
+			ticks = (ticks + 1) % 100
+			if ticks == 0 {
+				ActiveHandlers = curActiveHandlers
+				curActiveHandlers = 0
+			}
+			numHandlers := MaxChunkHandlers - len(HandlerToken)
+			if numHandlers > curActiveHandlers {
+				curActiveHandlers = numHandlers
+			}
+		}
+	}()
 }
 
 // DatastoreService returns the current datastore service.  One DVID process

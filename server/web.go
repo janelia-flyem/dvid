@@ -138,7 +138,7 @@ func loadRequest(w http.ResponseWriter, r *http.Request) {
 		"bytes written":   storage.BytesWrittenPerSec,
 		"GET requests":    storage.GetsPerSec,
 		"PUT requests":    storage.PutsPerSec,
-		"handlers active": MaxChunkHandlers - len(HandlerToken),
+		"handlers active": ActiveHandlers,
 	})
 	if err != nil {
 		badRequest(w, r, err.Error())

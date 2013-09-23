@@ -113,3 +113,9 @@ func (i IndexUint8) Scheme() string {
 func (i IndexUint8) IndexFromBytes(b []byte) (Index, error) {
 	return IndexUint8(b[0]), nil
 }
+
+// IndexRange defines a range of indices.  Since an Index is one-dimensional, a minimum
+// and maximum Index defines a range.
+type IndexRange struct {
+	Minimum, Maximum Index
+}

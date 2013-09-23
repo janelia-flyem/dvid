@@ -163,6 +163,19 @@ type Response struct {
 
 type ArbitraryOutput interface{}
 
+// Subsetter is a type that can tell us its range of Index and how much it has
+// actually available in this server.  It's used to implement limited cloning,
+// e.g., only cloning a quarter of an image volume.
+type Subsetter interface {
+	// MaximumExtents returns a range of indices for which data is available at
+	// some DVID server.
+	MaximumExtents() dvid.IndexRange
+
+	// AvailableExtents returns a range of indices for which data is available
+	// at this DVID server.  It is the currently available extents.
+	AvailableExtents() dvid.IndexRange
+}
+
 // DataString is a string that is the name of DVID data.
 // This gets its own type for documentation and also provide static error checks
 // to prevent conflation of type name from data name.
@@ -201,7 +214,7 @@ type DataService interface {
 	UnknownCommand(r Request) error
 }
 
-// ---- DataService and ChunkHandler implementation ----
+// ---- DataService implementation ----
 
 // DataID identifies data within a DVID server.
 type DataID struct {
@@ -217,7 +230,7 @@ func (id DataID) DataLocalID() dvid.LocalID { return id.ID }
 func (id DataID) DatasetLocalID() dvid.LocalID32 { return id.DatasetID }
 
 // Data is an instance of a data type with some identifiers and it satisfies
-// a ChunkHandler interface.  Each Data is dataset-specific.
+// a DataService interface.  Each Data is dataset-specific.
 type Data struct {
 	*DataID
 	TypeService
