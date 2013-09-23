@@ -71,7 +71,6 @@ else ()
         include (golang)
     endif ()
 
-    include (protobuf)
     include (leveldb)
 
     # The name of the backend should be the same as the tag used for conditional build
@@ -91,7 +90,6 @@ else ()
     # Packages include:
     #   code.google.com/p/snappy-go/snappy
     #   code.google.com/p/go-uuid/uuid
-    #   code.google.com/p/goprotobuf/proto
     #   bitbucket.org/tebeka/nrsc
     #   github.com/couchbaselabs/go-couchbase
     #   github.com/jmhodges/levigo
@@ -99,7 +97,7 @@ else ()
     #
     add_custom_target (gopackages-install
         ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go get ${GO_GET} github.com/janelia-flyem/go
-        DEPENDS     ${golang_NAME} ${protobuf_NAME}
+        DEPENDS     ${golang_NAME}
         COMMENT     "Added go package dependencies for janelia-flyem projects")
 
     add_custom_target (gopackages
@@ -138,7 +136,7 @@ else ()
     #    ${BUILDEM_ENV_STRING} ${GO_ENV} go build -o ${BUILDEM_BIN_DIR}/dvid-go 
     #        -v -tags 'goleveldb' dvid.go 
     #    WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
-    #    DEPENDS     ${golang_NAME} snappy-go nrsc uuid goleveldb goprotobuf
+    #    DEPENDS     ${golang_NAME} snappy-go nrsc uuid goleveldb
     #    COMMENT     "Compiled and installed dvid pure Go executable, dvid-go.")
 
    # Embed web client into exe

@@ -19,8 +19,6 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
-
-	// "github.com/janelia-flyem/go/goprotobuf/proto"
 )
 
 const (
