@@ -1,6 +1,6 @@
 /*
 	Package rgba8 tailors the voxels data type for 8-bit RGBA images.  It simply
-	wraps the voxels package, setting NumChannels (4) and BytesPerVoxel(1).
+	wraps the voxels package, setting ChannelsInterleaved (4) and BytesPerVoxel(1).
 */
 package rgba8
 
@@ -23,7 +23,7 @@ var DefaultBlockMax voxels.Point3d = voxels.Point3d{16, 16, 16}
 func init() {
 	rgba := voxels.NewDatatype()
 	rgba.DatatypeID = datastore.MakeDatatypeID("rgba8", RepoUrl, Version)
-	rgba.NumChannels = 4
+	rgba.ChannelsInterleaved = 4
 	rgba.BytesPerVoxel = 1
 
 	// Data types must be registered with the datastore to be used.

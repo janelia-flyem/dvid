@@ -388,7 +388,7 @@ type Geometry interface {
 	DataShape() DataShape
 
 	// Origin returns the offset to the voxel at the top left corner of the data.
-	Origin() Coord
+	StartVoxel() Coord
 
 	// Size returns the size as a Point3d that shows the extent in each dimension.
 	Size() Point3d
@@ -435,7 +435,7 @@ func (s *Subvolume) DataShape() DataShape {
 	return Vol
 }
 
-func (s *Subvolume) Origin() Coord {
+func (s *Subvolume) StartVoxel() Coord {
 	return s.origin
 }
 
@@ -546,7 +546,7 @@ type SliceData struct {
 	size   Point3d
 }
 
-func (s *SliceData) Origin() Coord {
+func (s *SliceData) StartVoxel() Coord {
 	return s.origin
 }
 
@@ -691,7 +691,7 @@ func (s *SliceArb) DataShape() DataShape {
 	return Arb
 }
 
-func (s *SliceArb) Origin() Coord {
+func (s *SliceArb) StartVoxel() Coord {
 	return s.origin
 }
 

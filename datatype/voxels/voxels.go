@@ -1,7 +1,7 @@
 /*
 	Package voxels implements DVID support for data using voxels as elements.
 	A number of data types will embed this package and customize it using the
-	"NumChannels" and "BytesPerVoxel" fields.
+	"ChannelsInterleaved" and "BytesPerVoxel" fields.
 */
 package voxels
 
@@ -123,6 +123,37 @@ func init() {
 	gob.Register(&Data{})
 }
 
+// Operation holds Voxel-specific data for processing chunks.
+type Operation struct {
+	data *Voxels
+	op   OpType
+}
+
+type OpType int
+
+const (
+	GetOp OpType = iota
+	PutOp
+)
+
+// Voxels represents subvolumes or slices.
+type Voxels struct {
+	Geometry
+
+	// The data itself
+	data []uint8
+
+	// The stride for 2d iteration.  For 3d subvolumes, we don't reuse standard Go
+	// images but maintain fully packed data slices, so stride isn't necessary.
+	stride int32
+}
+
+func (v *Voxels) String() string {
+	size := v.Size()
+	return fmt.Sprintf("%s of size %d x %d x %d @ %s",
+		v.DataShape(), size[0], size[1], size[2], v.StartVoxel())
+}
+
 // Datatype embeds the datastore's Datatype to create a unique type
 // with voxel functions.  Refinements of general voxel types can be implemented
 // by embedding this type, choosing appropriate # of channels and bytes/voxel,
@@ -132,14 +163,14 @@ func init() {
 // in the Data type.
 type Datatype struct {
 	datastore.Datatype
-	NumChannels   int
-	BytesPerVoxel int
+	ChannelsInterleaved int
+	BytesPerVoxel       int
 }
 
 // NewDatatype returns a pointer to a new voxels Datatype with default values set.
 func NewDatatype() (dtype *Datatype) {
 	dtype = new(Datatype)
-	dtype.NumChannels = 1
+	dtype.ChannelsInterleaved = 1
 	dtype.BytesPerVoxel = 1
 	dtype.Requirements = &storage.Requirements{
 		BulkIniter: false,
@@ -215,7 +246,7 @@ func (d *Data) BytesPerVoxel() int32 {
 	if !ok {
 		log.Fatalf("Data %s does not have type of voxels.Datatype!", d.DataName())
 	}
-	return int32(dtype.BytesPerVoxel * dtype.NumChannels)
+	return int32(dtype.BytesPerVoxel * dtype.ChannelsInterleaved)
 }
 
 // --- DataService interface ---
@@ -340,24 +371,6 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 	return nil
 }
 
-// Voxels represents subvolumes or slices.
-type Voxels struct {
-	Geometry
-
-	// The data itself
-	data []uint8
-
-	// The stride for 2d iteration.  For 3d subvolumes, we don't reuse standard Go
-	// images but maintain fully packed data slices, so stride isn't necessary.
-	stride int32
-}
-
-func (v *Voxels) String() string {
-	size := v.Size()
-	return fmt.Sprintf("%s of size %d x %d x %d @ %s",
-		v.DataShape(), size[0], size[1], size[2], v.Origin())
-}
-
 // SliceImage returns an image.Image for the z-th slice of the volume.
 func (d *Data) SliceImage(v *Voxels, z int) (img image.Image, err error) {
 	dtype, ok := d.TypeService.(*Datatype)
@@ -366,7 +379,7 @@ func (d *Data) SliceImage(v *Voxels, z int) (img image.Image, err error) {
 	}
 	unsupported := func() error {
 		return fmt.Errorf("DVID doesn't support images with %d bytes/voxel and %d channels",
-			dtype.BytesPerVoxel, dtype.NumChannels)
+			dtype.BytesPerVoxel, dtype.ChannelsInterleaved)
 	}
 	sliceBytes := int(v.Width() * v.Height() * int32(d.BytesPerVoxel()))
 	beg := z * sliceBytes
@@ -376,7 +389,7 @@ func (d *Data) SliceImage(v *Voxels, z int) (img image.Image, err error) {
 		return
 	}
 	r := image.Rect(0, 0, int(v.Width()), int(v.Height()))
-	switch dtype.NumChannels {
+	switch dtype.ChannelsInterleaved {
 	case 1:
 		switch dtype.BytesPerVoxel {
 		case 1:
@@ -502,20 +515,6 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 	return nil
 }
 
-// Operation holds Voxel-specific data for processing chunks.
-type Operation struct {
-	data *Voxels
-	vID  dvid.LocalID
-	op   OpType
-}
-
-type OpType int
-
-const (
-	GetOp OpType = iota
-	PutOp
-)
-
 // GetImage retrieves a 2d image from a version node given a geometry of voxels.
 func (d *Data) GetImage(versionID dvid.LocalID, slice Geometry) (img image.Image, err error) {
 	db := server.KeyValueDB()
@@ -530,19 +529,14 @@ func (d *Data) GetImage(versionID dvid.LocalID, slice Geometry) (img image.Image
 	data := make([]uint8, numBytes, numBytes)
 
 	voxels := Voxels{slice, data, stride}
-
-	op := Operation{
-		data: &voxels,
-		vID:  versionID,
-		op:   GetOp,
-	}
+	op := Operation{&voxels, GetOp}
 	wg := new(sync.WaitGroup)
 	chunkOp := &storage.ChunkOp{&op, wg}
 
 	blockSize := d.BlockSize
 
 	// Setup traversal
-	startVoxel := slice.Origin()
+	startVoxel := slice.StartVoxel()
 	endVoxel := slice.EndVoxel()
 
 	// Map: Iterate in x, then y, then z
@@ -593,19 +587,14 @@ func (d *Data) PutImage(versionID dvid.LocalID, img image.Image, slice Geometry)
 	}
 
 	voxels := Voxels{slice, data, stride}
-
+	op := Operation{&voxels, PutOp}
 	wg := new(sync.WaitGroup)
-	op := Operation{
-		data: &voxels,
-		vID:  versionID,
-		op:   PutOp,
-	}
 	chunkOp := &storage.ChunkOp{&op, wg}
 
 	blockSize := d.BlockSize
 
 	// Setup traversal
-	startVoxel := slice.Origin()
+	startVoxel := slice.StartVoxel()
 	endVoxel := slice.EndVoxel()
 
 	// We only want one PUT on given version for given data to prevent interleaved
@@ -692,9 +681,9 @@ func (d *Data) GetVolume(versionID dvid.LocalID, vol Geometry) (data []byte, err
 	// server.Subvolume is a thrift-defined data structure
 	encodedVol := &server.Subvolume{
 		Data:    proto.String(string(d.DataName())),
-		OffsetX: proto.Int32(operation.data.Geometry.Origin()[0]),
-		OffsetY: proto.Int32(operation.data.Geometry.Origin()[1]),
-		OffsetZ: proto.Int32(operation.data.Geometry.Origin()[2]),
+		OffsetX: proto.Int32(operation.data.Geometry.StartVoxel()[0]),
+		OffsetY: proto.Int32(operation.data.Geometry.StartVoxel()[1]),
+		OffsetZ: proto.Int32(operation.data.Geometry.StartVoxel()[2]),
 		SizeX:   proto.Uint32(uint32(operation.data.Geometry.Size()[0])),
 		SizeY:   proto.Uint32(uint32(operation.data.Geometry.Size()[1])),
 		SizeZ:   proto.Uint32(uint32(operation.data.Geometry.Size()[2])),
@@ -741,7 +730,7 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 
 	// Compute the bound voxel coordinates for the data slice/subvolume and adjust
 	// to our block bounds.
-	minDataVoxel := voxels.Origin()
+	minDataVoxel := voxels.StartVoxel()
 	maxDataVoxel := voxels.EndVoxel()
 	begVolCoord := minDataVoxel.Max(minBlockVoxel)
 	endVolCoord := maxDataVoxel.Min(maxBlockVoxel)
@@ -751,7 +740,7 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 	if !ok {
 		log.Fatalf("Illegal data used for ProcessChunk [not voxels.Datatype]: %s\n", *d)
 	}
-	bytesPerVoxel := int32(dtype.NumChannels * dtype.BytesPerVoxel)
+	bytesPerVoxel := int32(dtype.ChannelsInterleaved * dtype.BytesPerVoxel)
 	blockBytes := int(blockSize[0] * blockSize[1] * blockSize[2] * bytesPerVoxel)
 
 	// Compute block coord matching beg's DVID volume space voxel coord
@@ -782,8 +771,8 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 
 	// Adjust the DVID volume voxel coordinates for the data so that (0,0,0)
 	// is where we expect this slice/subvolume's data to begin.
-	beg := begVolCoord.Sub(voxels.Origin())
-	end := endVolCoord.Sub(voxels.Origin())
+	beg := begVolCoord.Sub(voxels.StartVoxel())
+	end := endVolCoord.Sub(voxels.StartVoxel())
 
 	// For each geometry, traverse the data slice/subvolume and read/write from
 	// the block data depending on the op.

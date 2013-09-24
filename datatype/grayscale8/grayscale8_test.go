@@ -98,7 +98,7 @@ func (suite *DataSuite) sliceTest(c *C, slice voxels.Geometry) {
 	// Create a fake 100x100 8-bit grayscale image
 	nx := int(slice.Width())
 	ny := int(slice.Height())
-	origin := slice.Origin()
+	origin := slice.StartVoxel()
 	ox, oy, oz := int(origin[0]), int(origin[1]), int(origin[2])
 	data := []uint8(MakeSlice(ox, oy, oz, nx, ny))
 	img := dvid.ImageGrayFromData(data, nx, ny)

@@ -1,6 +1,6 @@
 /*
 	Package labels64 tailors the voxels data type for 64-bit label images.  It simply
-	wraps the voxels package, setting NumChannels (1) and BytesPerVoxel(8).
+	wraps the voxels package, setting ChannelsInterleaved (1) and BytesPerVoxel(8).
 */
 package labels64
 
@@ -23,7 +23,7 @@ var DefaultBlockMax voxels.Point3d = voxels.Point3d{16, 16, 16}
 func init() {
 	labels := voxels.NewDatatype()
 	labels.DatatypeID = datastore.MakeDatatypeID("labels64", RepoUrl, Version)
-	labels.NumChannels = 1
+	labels.ChannelsInterleaved = 1
 	labels.BytesPerVoxel = 8
 
 	// Data types must be registered with the datastore to be used.

@@ -1,6 +1,6 @@
 /*
 	Package grayscale8 tailors the voxels data type for 8-bit grayscale images.  It simply
-	wraps the voxels package, setting NumChannels (1) and BytesPerVoxel(1).
+	wraps the voxels package, setting ChannelsInterleaved (1) and BytesPerVoxel(1).
 */
 package grayscale8
 
@@ -25,7 +25,7 @@ var DefaultBlockMax voxels.Point3d = voxels.Point3d{16, 16, 16}
 func init() {
 	grayscale := voxels.NewDatatype()
 	grayscale.DatatypeID = datastore.MakeDatatypeID("grayscale8", RepoUrl, Version)
-	grayscale.NumChannels = 1
+	grayscale.ChannelsInterleaved = 1
 	grayscale.BytesPerVoxel = 1
 
 	// Data types must be registered with the datastore to be used.
