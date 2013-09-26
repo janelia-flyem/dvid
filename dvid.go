@@ -19,6 +19,7 @@ import (
 	_ "github.com/janelia-flyem/dvid/datatype/grayscale8"
 	_ "github.com/janelia-flyem/dvid/datatype/labels32"
 	_ "github.com/janelia-flyem/dvid/datatype/labels64"
+	_ "github.com/janelia-flyem/dvid/datatype/multichan16"
 	_ "github.com/janelia-flyem/dvid/datatype/rgba8"
 )
 

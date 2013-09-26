@@ -12,6 +12,16 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 )
 
+// ZYXIndexer adds access to X, Y, Z coordinates to an index.
+type ZYXIndexer interface {
+	dvid.Index
+
+	OffsetToBlock(blockSize Point3d) Coord
+	X() int32
+	Y() int32
+	Z() int32
+}
+
 // IndexZYX implements the Index interface and provides simple indexing on Z,
 // then Y, then X.
 type IndexZYX BlockCoord
@@ -49,6 +59,8 @@ func (i IndexZYX) IndexFromBytes(b []byte) (dvid.Index, error) {
 	return IndexZYX{x, y, z}, nil
 }
 
+// ------- ZYXIndexer interface ----------
+
 // OffsetToBlock returns the voxel coordinate at the top left corner of the block
 // corresponding to the index.
 func (i IndexZYX) OffsetToBlock(blockSize Point3d) (coord Coord) {
@@ -56,6 +68,18 @@ func (i IndexZYX) OffsetToBlock(blockSize Point3d) (coord Coord) {
 	coord[1] = i[1] * blockSize[1]
 	coord[2] = i[2] * blockSize[2]
 	return
+}
+
+func (i IndexZYX) X() int32 {
+	return i[0]
+}
+
+func (i IndexZYX) Y() int32 {
+	return i[1]
+}
+
+func (i IndexZYX) Z() int32 {
+	return i[2]
 }
 
 // TODO -- Morton (Z-order) curve

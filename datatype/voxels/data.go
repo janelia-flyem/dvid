@@ -390,6 +390,10 @@ type Geometry interface {
 	// Origin returns the offset to the voxel at the top left corner of the data.
 	StartVoxel() Coord
 
+	// EndVoxel returns the last voxel coordinate usually traversed so that
+	// iteration from Origin->EndVoxel will visit all the voxels.
+	EndVoxel() Coord
+
 	// Size returns the size as a Point3d that shows the extent in each dimension.
 	Size() Point3d
 
@@ -409,10 +413,6 @@ type Geometry interface {
 
 	// NumVoxels returns the number of voxels within this space.
 	NumVoxels() int64
-
-	// EndVoxel returns the last voxel coordinate usually traversed so that
-	// iteration from Origin->EndVoxel will visit all the voxels.
-	EndVoxel() Coord
 
 	String() string
 }

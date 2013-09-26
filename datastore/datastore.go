@@ -7,6 +7,7 @@ package datastore
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
@@ -63,6 +64,9 @@ type Service struct {
 	// The backend storage which is private since we want to create an object
 	// interface (e.g., cache object or UUID map) and hide DVID-specific keys.
 	db storage.DataHandler
+
+	// Channel for marking the datasets as dirty.
+	DirtyDatasets chan bool
 }
 
 type OpenErrorType int
@@ -117,8 +121,50 @@ func Open(path string) (s *Service, openErr *OpenError) {
 	}
 
 	fmt.Printf("\nDatastoreService successfully opened: %s\n", path)
-	s = &Service{datasets, db}
+	s = &Service{datasets, db, nil}
+	s.DirtyDatasets = make(chan bool, 10000)
+
+	// Start a goroutine that periodically persists datasets.
+	go s.periodicallySave()
+
 	return
+}
+
+// Shutdown closes a DVID datastore.
+func (s *Service) Shutdown() {
+	if s.DirtyDatasets != nil {
+		s.DirtyDatasets <- false // Signal dataset persistence goroutine to stop.
+	}
+	s.datasets.Put(s.db)
+	s.db.Close()
+}
+
+func drain(c chan bool) (quit bool) {
+	for {
+		select {
+		case noquit := <-c:
+			if !noquit {
+				return true
+			}
+			continue
+		default:
+			return false
+		}
+	}
+}
+
+func (s *Service) periodicallySave() {
+	saveTick := time.Tick(1 * time.Second)
+	for {
+		<-saveTick
+		if len(s.DirtyDatasets) > 0 {
+			quit := drain(s.DirtyDatasets)
+			if quit {
+				break
+			}
+			s.datasets.Put(s.db)
+		}
+	}
 }
 
 // DatasetsJSON returns a JSON-encoded string of exportable datasets information.
@@ -145,12 +191,9 @@ func (s *Service) NewDataset() (root UUID, datasetID dvid.LocalID32, err error) 
 	if err != nil {
 		return
 	}
-	err = s.datasets.Put(s.db)
-	if err != nil {
-		return
-	}
 	root = dataset.Root
 	datasetID = dataset.DatasetID
+	s.DirtyDatasets <- true
 	return
 }
 
@@ -165,7 +208,7 @@ func (s *Service) NewVersion(parent UUID) (u UUID, err error) {
 	if err != nil {
 		return
 	}
-	err = s.datasets.Put(s.db)
+	s.DirtyDatasets <- true
 	return
 }
 
@@ -179,7 +222,8 @@ func (s *Service) NewData(u UUID, typename, dataname string, versioned bool) err
 	if err != nil {
 		return err
 	}
-	return s.datasets.Put(s.db)
+	s.DirtyDatasets <- true
+	return nil
 }
 
 // Locks the node with the given UUID.
@@ -242,12 +286,6 @@ func (s *Service) DataService(u UUID, name DataString) (dataservice DataService,
 		return
 	}
 	return s.datasets.DataService(u, name)
-}
-
-// Shutdown closes a DVID datastore.
-func (s *Service) Shutdown() {
-	s.datasets.Put(s.db)
-	s.db.Close()
 }
 
 // KeyValueDB returns a a key-value database interface.

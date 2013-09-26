@@ -11,6 +11,7 @@ import (
 	"image"
 	"log"
 	"net/http"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -70,7 +71,7 @@ POST /api/node/<UUID>/<data name>/<plane>/<offset>/<size>[/<format>]
     plane         One of "xy" (default), "xz", or "yz"
     offset        3d coordinate in the format "x,y,z".  Gives coordinate of top upper left voxel.
     size          Size in pixels in the format "dx,dy".
-	format        "png", "jpg" (default: "png")
+    format        "png", "jpg" (default: "png")
                     jpg allows lossy quality setting, e.g., "jpg:80"
 
 (TO DO)
@@ -90,7 +91,7 @@ POST /api/node/<UUID>/<data name>/vol/<offset>/<size>[/<format>]
     data name     Name of data to add.
     offset        3d coordinate in the format "x,y,z".  Gives coordinate of top upper left voxel.
     size          Size in voxels in the format "dx,dy,dz"
-	format        "sparse", "dense" (default: "dense")
+    format        "sparse", "dense" (default: "dense")
                     Voxels returned are in thrift-encoded data structures.
                     See particular data type implementation for more detail.
 
@@ -111,7 +112,7 @@ GET  /api/node/<UUID>/<data name>/arb/<center>/<normal>/<size>[/<format>]
     center        3d coordinate in the format "x,y,z".  Gives 3d coord of center pixel.
     normal        3d vector in the format "nx,ny,nz".  Gives normal vector of image.
     size          Size in pixels in the format "dx,dy".
-	format        "png", "jpg" (default: "png")  
+    format        "png", "jpg" (default: "png")  
                     jpg allows lossy quality setting, e.g., "jpg:80"
 `
 
@@ -125,8 +126,8 @@ func init() {
 
 // Operation holds Voxel-specific data for processing chunks.
 type Operation struct {
-	data *Voxels
-	op   OpType
+	VoxelHandler
+	OpType
 }
 
 type OpType int
@@ -136,9 +137,40 @@ const (
 	PutOp
 )
 
+func (o OpType) String() string {
+	switch o {
+	case GetOp:
+		return "Get Op"
+	case PutOp:
+		return "Put Op"
+	default:
+		return "Illegal Op"
+	}
+}
+
+// Voxels provide the shape and data of a set of voxels as well as some 3d indexing.
+type VoxelHandler interface {
+	Geometry
+
+	BytesPerVoxel() int32
+
+	ChannelsInterleaved() int32
+
+	Data() []uint8
+
+	Stride() int32
+
+	BlockIndex(blockX, blockY, blockZ int32) ZYXIndexer
+}
+
+// -------  VoxelHandler interface implementation -------------
+
 // Voxels represents subvolumes or slices.
 type Voxels struct {
 	Geometry
+
+	channelsInterleaved int32
+	bytesPerVoxel       int32
 
 	// The data itself
 	data []uint8
@@ -154,6 +186,26 @@ func (v *Voxels) String() string {
 		v.DataShape(), size[0], size[1], size[2], v.StartVoxel())
 }
 
+func (v *Voxels) Data() []uint8 {
+	return v.data
+}
+
+func (v *Voxels) Stride() int32 {
+	return v.stride
+}
+
+func (v *Voxels) BlockIndex(x, y, z int32) ZYXIndexer {
+	return IndexZYX{x, y, z}
+}
+
+func (v *Voxels) BytesPerVoxel() int32 {
+	return v.bytesPerVoxel
+}
+
+func (v *Voxels) ChannelsInterleaved() int32 {
+	return v.channelsInterleaved
+}
+
 // Datatype embeds the datastore's Datatype to create a unique type
 // with voxel functions.  Refinements of general voxel types can be implemented
 // by embedding this type, choosing appropriate # of channels and bytes/voxel,
@@ -163,8 +215,8 @@ func (v *Voxels) String() string {
 // in the Data type.
 type Datatype struct {
 	datastore.Datatype
-	ChannelsInterleaved int
-	BytesPerVoxel       int
+	ChannelsInterleaved int32
+	BytesPerVoxel       int32
 }
 
 // NewDatatype returns a pointer to a new voxels Datatype with default values set.
@@ -239,14 +291,42 @@ type Data struct {
 	// Available extents of this volume.
 }
 
-// Returns total number of bytes across all channels for a voxel.
-func (d *Data) BytesPerVoxel() int32 {
+func (d *Data) getVoxelSpecs() (bytesPerVoxel, channelsInterleaved int32, err error) {
 	// Make sure the dataset here has a pointer to a Datatype of this package.
 	dtype, ok := d.TypeService.(*Datatype)
 	if !ok {
-		log.Fatalf("Data %s does not have type of voxels.Datatype!", d.DataName())
+		err = fmt.Errorf("Data %s does not have type of voxels.Datatype: %s",
+			d.DataName(), reflect.TypeOf(d.TypeService))
+		return
 	}
-	return int32(dtype.BytesPerVoxel * dtype.ChannelsInterleaved)
+	bytesPerVoxel = dtype.BytesPerVoxel
+	channelsInterleaved = dtype.ChannelsInterleaved
+	return
+}
+
+func (d *Data) ImageToVoxels(img image.Image, slice Geometry) (VoxelHandler, error) {
+	bytesPerVoxel, channelsInterleaved, err := d.getVoxelSpecs()
+	if err != nil {
+		return nil, err
+	}
+	stride := slice.Width() * bytesPerVoxel
+
+	data, actualStride, err := dvid.ImageData(img)
+	if err != nil {
+		return nil, err
+	}
+	if actualStride < stride {
+		return nil, fmt.Errorf("Too little data in input image (%d stride bytes)", stride)
+	}
+
+	voxels := &Voxels{
+		Geometry:            slice,
+		channelsInterleaved: channelsInterleaved,
+		bytesPerVoxel:       bytesPerVoxel,
+		data:                data,
+		stride:              stride,
+	}
+	return voxels, nil
 }
 
 // --- DataService interface ---
@@ -322,15 +402,31 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 			if err != nil {
 				return err
 			}
-			err = d.PutImage(versionID, postedImg, slice)
+			v, err := d.ImageToVoxels(postedImg, slice)
+			if err != nil {
+				return err
+			}
+			err = d.PutImage(versionID, v)
 			if err != nil {
 				return err
 			}
 		} else {
-			img, err := d.GetImage(versionID, slice)
-			data, _, _ := dvid.ImageData(img)
-			dvid.PrintNonZero("GetImage", data)
-
+			bytesPerVoxel, channelsInterleaved, err := d.getVoxelSpecs()
+			if err != nil {
+				return err
+			}
+			numBytes := int64(bytesPerVoxel) * slice.NumVoxels()
+			v := &Voxels{
+				Geometry:            slice,
+				channelsInterleaved: channelsInterleaved,
+				bytesPerVoxel:       bytesPerVoxel,
+				data:                make([]uint8, numBytes),
+				stride:              slice.Width() * bytesPerVoxel,
+			}
+			img, err := d.GetImage(versionID, v)
+			if err != nil {
+				return err
+			}
 			var formatStr string
 			if len(parts) >= 7 {
 				formatStr = parts[6]
@@ -371,44 +467,41 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 	return nil
 }
 
-// SliceImage returns an image.Image for the z-th slice of the volume.
-func (d *Data) SliceImage(v *Voxels, z int) (img image.Image, err error) {
-	dtype, ok := d.TypeService.(*Datatype)
-	if !ok {
-		err = fmt.Errorf("Data %s does not have type of voxels.Datatype!", d.DataName())
-	}
+// SliceImage returns an image.Image for the z-th slice of the voxel data.
+func (d *Data) SliceImage(v VoxelHandler, z int) (img image.Image, err error) {
 	unsupported := func() error {
-		return fmt.Errorf("DVID doesn't support images with %d bytes/voxel and %d channels",
-			dtype.BytesPerVoxel, dtype.ChannelsInterleaved)
+		return fmt.Errorf("DVID doesn't support %d bytes/voxel and %d interleaved channels",
+			v.BytesPerVoxel(), v.ChannelsInterleaved())
 	}
-	sliceBytes := int(v.Width() * v.Height() * int32(d.BytesPerVoxel()))
+	sliceBytes := int(v.Width() * v.Height() * v.BytesPerVoxel())
 	beg := z * sliceBytes
 	end := beg + sliceBytes
-	if end > len(v.data) {
+	data := v.Data()
+	if end > len(data) {
 		err = fmt.Errorf("SliceImage() called with z = %d greater than %s", z, v)
 		return
 	}
 	r := image.Rect(0, 0, int(v.Width()), int(v.Height()))
-	switch dtype.ChannelsInterleaved {
+	switch v.ChannelsInterleaved() {
 	case 1:
-		switch dtype.BytesPerVoxel {
+		switch v.BytesPerVoxel() {
 		case 1:
-			img = &image.Gray{v.data[beg:end], 1 * r.Dx(), r}
+			img = &image.Gray{data[beg:end], 1 * r.Dx(), r}
 		case 2:
-			img = &image.Gray16{v.data[beg:end], 2 * r.Dx(), r}
+			img = &image.Gray16{data[beg:end], 2 * r.Dx(), r}
 		case 4:
-			img = &image.RGBA{v.data[beg:end], 4 * r.Dx(), r}
+			img = &image.RGBA{data[beg:end], 4 * r.Dx(), r}
 		case 8:
-			img = &image.RGBA64{v.data[beg:end], 8 * r.Dx(), r}
+			img = &image.RGBA64{data[beg:end], 8 * r.Dx(), r}
 		default:
 			err = unsupported()
 		}
 	case 4:
-		switch dtype.BytesPerVoxel {
+		switch v.BytesPerVoxel() {
 		case 1:
-			img = &image.RGBA{v.data[beg:end], 4 * r.Dx(), r}
+			img = &image.RGBA{data[beg:end], 4 * r.Dx(), r}
 		case 2:
-			img = &image.RGBA64{v.data[beg:end], 8 * r.Dx(), r}
+			img = &image.RGBA64{data[beg:end], 8 * r.Dx(), r}
 		default:
 			err = unsupported()
 		}
@@ -485,68 +578,57 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 
 	// Load and PUT each image.
 	numSuccessful := 0
-	var lastErr error
 	for _, filename := range filenames {
 		sliceTime := time.Now()
 		img, _, err := dvid.ImageFromFile(filename)
 		if err != nil {
-			lastErr = err
-			fmt.Printf("Error %s\n", err.Error())
-		} else {
-			size := SizeFromRect(img.Bounds())
-			slice, err := NewSlice(plane, offset, size)
-
-			err = d.PutImage(versionID, img, slice)
-
-			dvid.ElapsedTime(dvid.Debug, sliceTime, "%s load local %s", d.DataName(), slice)
-			if err == nil {
-				numSuccessful++
-			} else {
-				lastErr = err
-			}
+			return fmt.Errorf("Error after %d images successfully added: %s", err.Error())
 		}
+		size := SizeFromRect(img.Bounds())
+		slice, err := NewSlice(plane, offset, size)
+		if err != nil {
+			return fmt.Errorf("Unable to determine slice: %s", err.Error())
+		}
+		v, err := d.ImageToVoxels(img, slice)
+		if err != nil {
+			return err
+		}
+		err = d.PutImage(versionID, v)
+		if err != nil {
+			return err
+		}
+		dvid.ElapsedTime(dvid.Debug, sliceTime, "%s load local %s", d.DataName(), slice)
+		numSuccessful++
 		offset = offset.Add(Coord{0, 0, 1})
-	}
-	if lastErr != nil {
-		return fmt.Errorf("Error: %d of %d images successfully added [%s]\n",
-			numSuccessful, len(filenames), lastErr.Error())
 	}
 	dvid.ElapsedTime(dvid.Debug, startTime, "RPC load local (%s) completed", addedFiles)
 	return nil
 }
 
 // GetImage retrieves a 2d image from a version node given a geometry of voxels.
-func (d *Data) GetImage(versionID dvid.LocalID, slice Geometry) (img image.Image, err error) {
+func (d *Data) GetImage(versionID dvid.LocalID, v VoxelHandler) (img image.Image, err error) {
 	db := server.KeyValueDB()
 	if db == nil {
 		err = fmt.Errorf("Did not find a working key-value datastore to get image!")
 		return
 	}
-	bytesPerVoxel := d.BytesPerVoxel()
-	stride := slice.Width() * bytesPerVoxel
 
-	numBytes := int64(bytesPerVoxel) * slice.NumVoxels()
-	data := make([]uint8, numBytes, numBytes)
-
-	voxels := Voxels{slice, data, stride}
-	op := Operation{&voxels, GetOp}
+	op := Operation{v, GetOp}
 	wg := new(sync.WaitGroup)
 	chunkOp := &storage.ChunkOp{&op, wg}
 
-	blockSize := d.BlockSize
-
 	// Setup traversal
-	startVoxel := slice.StartVoxel()
-	endVoxel := slice.EndVoxel()
+	startVoxel := v.StartVoxel()
+	endVoxel := v.EndVoxel()
 
 	// Map: Iterate in x, then y, then z
-	startBlockCoord := startVoxel.BlockCoord(blockSize)
-	endBlockCoord := endVoxel.BlockCoord(blockSize)
+	startBlockCoord := startVoxel.BlockCoord(d.BlockSize)
+	endBlockCoord := endVoxel.BlockCoord(d.BlockSize)
 	for z := startBlockCoord[2]; z <= endBlockCoord[2]; z++ {
 		for y := startBlockCoord[1]; y <= endBlockCoord[1]; y++ {
 			// We know for voxels indexing, x span is a contiguous range.
-			i0 := IndexZYX{startBlockCoord[0], y, z}
-			i1 := IndexZYX{endBlockCoord[0], y, z}
+			i0 := v.BlockIndex(startBlockCoord[0], y, z)
+			i1 := v.BlockIndex(endBlockCoord[0], y, z)
 			startKey := &storage.Key{d.DatasetID, d.ID, versionID, i0}
 			endKey := &storage.Key{d.DatasetID, d.ID, versionID, i1}
 
@@ -561,7 +643,7 @@ func (d *Data) GetImage(versionID dvid.LocalID, slice Geometry) (img image.Image
 
 	// Reduce: Grab the resulting 2d image.
 	wg.Wait()
-	img, err = d.SliceImage(&voxels, 0)
+	img, err = d.SliceImage(v, 0)
 	return
 }
 
@@ -569,33 +651,21 @@ func (d *Data) GetImage(versionID dvid.LocalID, slice Geometry) (img image.Image
 // are larger than a 2d slice, this also requires integrating this image into current
 // chunks before writing result back out, so it's a PUT for nonexistant keys and GET/PUT
 // for existing keys.
-func (d *Data) PutImage(versionID dvid.LocalID, img image.Image, slice Geometry) error {
+func (d *Data) PutImage(versionID dvid.LocalID, v VoxelHandler) error {
 	db := server.KeyValueDB()
 	if db == nil {
 		return fmt.Errorf("Did not find a working key-value datastore to put image!")
 	}
 
-	bytesPerVoxel := d.BytesPerVoxel()
-	stride := slice.Width() * bytesPerVoxel
-
-	data, actualStride, err := dvid.ImageData(img)
-	if err != nil {
-		return err
-	}
-	if actualStride < stride {
-		return fmt.Errorf("Too little data in input image (%d stride bytes)", stride)
-	}
-
-	voxels := Voxels{slice, data, stride}
-	op := Operation{&voxels, PutOp}
+	op := Operation{v, PutOp}
 	wg := new(sync.WaitGroup)
 	chunkOp := &storage.ChunkOp{&op, wg}
 
 	blockSize := d.BlockSize
 
 	// Setup traversal
-	startVoxel := slice.StartVoxel()
-	endVoxel := slice.EndVoxel()
+	startVoxel := v.StartVoxel()
+	endVoxel := v.EndVoxel()
 
 	// We only want one PUT on given version for given data to prevent interleaved
 	// chunk PUTs that could potentially overwrite slice modifications.
@@ -609,8 +679,8 @@ func (d *Data) PutImage(versionID dvid.LocalID, img image.Image, slice Geometry)
 	for z := startBlockCoord[2]; z <= endBlockCoord[2]; z++ {
 		for y := startBlockCoord[1]; y <= endBlockCoord[1]; y++ {
 			// We know for voxels indexing, x span is a contiguous range.
-			i0 := IndexZYX{startBlockCoord[0], y, z}
-			i1 := IndexZYX{endBlockCoord[0], y, z}
+			i0 := v.BlockIndex(startBlockCoord[0], y, z)
+			i1 := v.BlockIndex(endBlockCoord[0], y, z)
 			startKey := &storage.Key{d.DatasetID, d.ID, versionID, i0}
 			endKey := &storage.Key{d.DatasetID, d.ID, versionID, i1}
 
@@ -624,23 +694,23 @@ func (d *Data) PutImage(versionID dvid.LocalID, img image.Image, slice Geometry)
 			// Send all data to chunk handlers for this range.
 			var kv, oldkv storage.KeyValue
 			numOldkv := len(keyvalues)
-			v := 0
+			oldI := 0
 			if numOldkv > 0 {
-				oldkv = keyvalues[v]
+				oldkv = keyvalues[oldI]
 			}
 			wg.Add(int(endBlockCoord[0]-startBlockCoord[0]) + 1)
 			for x := startBlockCoord[0]; x <= endBlockCoord[0]; x++ {
-				i := IndexZYX{x, y, z}
+				i := v.BlockIndex(x, y, z)
 				key := &storage.Key{d.DatasetID, d.ID, versionID, i}
 				// Check for this key among old key-value pairs and if so,
 				// send the old value into chunk handler.
 				if oldkv.K != nil {
-					zyx := oldkv.K.Index.(IndexZYX)
-					if zyx[0] == x {
+					zyx := oldkv.K.Index.(ZYXIndexer)
+					if zyx.X() == x {
 						kv = oldkv
-						v++
-						if v < numOldkv {
-							oldkv = keyvalues[v]
+						oldI++
+						if oldI < numOldkv {
+							oldkv = keyvalues[oldI]
 						} else {
 							oldkv.K = nil
 						}
@@ -713,12 +783,13 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 		server.HandlerToken <- 1
 	}()
 
-	operation, ok := chunk.Op.(*Operation)
+	//dvid.PrintNonZero("processChunk", chunk.V)
+
+	op, ok := chunk.Op.(*Operation)
 	if !ok {
 		log.Fatalf("Illegal operation passed to ProcessChunk() for data %s\n", d.DataName())
 	}
-	voxels := operation.data
-	index, ok := chunk.K.Index.(IndexZYX)
+	index, ok := chunk.K.Index.(ZYXIndexer)
 	if !ok {
 		log.Fatalf("Indexing for Voxel Chunk was not IndexZYX in data %s!\n", d.DataName())
 	}
@@ -730,17 +801,13 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 
 	// Compute the bound voxel coordinates for the data slice/subvolume and adjust
 	// to our block bounds.
-	minDataVoxel := voxels.StartVoxel()
-	maxDataVoxel := voxels.EndVoxel()
+	minDataVoxel := op.StartVoxel()
+	maxDataVoxel := op.EndVoxel()
 	begVolCoord := minDataVoxel.Max(minBlockVoxel)
 	endVolCoord := maxDataVoxel.Min(maxBlockVoxel)
 
 	// Calculate the strides
-	dtype, ok := d.TypeService.(*Datatype)
-	if !ok {
-		log.Fatalf("Illegal data used for ProcessChunk [not voxels.Datatype]: %s\n", *d)
-	}
-	bytesPerVoxel := int32(dtype.ChannelsInterleaved * dtype.BytesPerVoxel)
+	bytesPerVoxel := op.ChannelsInterleaved() * op.BytesPerVoxel()
 	blockBytes := int(blockSize[0] * blockSize[1] * blockSize[2] * bytesPerVoxel)
 
 	// Compute block coord matching beg's DVID volume space voxel coord
@@ -771,59 +838,59 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 
 	// Adjust the DVID volume voxel coordinates for the data so that (0,0,0)
 	// is where we expect this slice/subvolume's data to begin.
-	beg := begVolCoord.Sub(voxels.StartVoxel())
-	end := endVolCoord.Sub(voxels.StartVoxel())
+	beg := begVolCoord.Sub(op.StartVoxel())
+	end := endVolCoord.Sub(op.StartVoxel())
 
 	// For each geometry, traverse the data slice/subvolume and read/write from
 	// the block data depending on the op.
-	data := voxels.data
+	data := op.Data()
 
 	//fmt.Printf("Data %s -> %s, Orig %s -> %s\n", beg, end, begVolCoord, endVolCoord)
 	//fmt.Printf("Block start: %s\n", blockBeg)
 	//fmt.Printf("Block buffer size: %d bytes\n", len(block))
 	//fmt.Printf("Data buffer size: %d bytes\n", len(data))
 
-	switch voxels.DataShape() {
+	switch op.DataShape() {
 	case XY:
 		//fmt.Printf("XY Block: %s->%s, blockXY %d, blockX %d, blockBeg %s\n",
 		//	begVolCoord, endVolCoord, blockNumXY, blockNumX, blockBeg)
 		blockI := blockBeg[2]*blockNumXY + blockBeg[1]*blockNumX + blockBeg[0]*bytesPerVoxel
-		dataI := beg[1]*voxels.stride + beg[0]*bytesPerVoxel
+		dataI := beg[1]*op.Stride() + beg[0]*bytesPerVoxel
 		for y := beg[1]; y <= end[1]; y++ {
 			run := end[0] - beg[0] + 1
 			bytes := run * bytesPerVoxel
-			switch operation.op {
+			switch op.OpType {
 			case GetOp:
 				copy(data[dataI:dataI+bytes], block[blockI:blockI+bytes])
 			case PutOp:
 				copy(block[blockI:blockI+bytes], data[dataI:dataI+bytes])
 			}
 			blockI += blockSize[0] * bytesPerVoxel
-			dataI += voxels.stride
+			dataI += op.Stride()
 		}
 		//dvid.PrintNonZero("After copy", data)
 	case XZ:
 		blockI := blockBeg[2]*blockNumXY + blockBeg[1]*blockNumX + blockBeg[0]*bytesPerVoxel
-		dataI := beg[2]*voxels.stride + beg[0]*bytesPerVoxel
+		dataI := beg[2]*op.Stride() + beg[0]*bytesPerVoxel
 		for y := beg[2]; y <= end[2]; y++ {
 			run := end[0] - beg[0] + 1
 			bytes := run * bytesPerVoxel
-			switch operation.op {
+			switch op.OpType {
 			case GetOp:
 				copy(data[dataI:dataI+bytes], block[blockI:blockI+bytes])
 			case PutOp:
 				copy(block[blockI:blockI+bytes], data[dataI:dataI+bytes])
 			}
 			blockI += blockSize[0] * blockSize[1] * bytesPerVoxel
-			dataI += voxels.stride
+			dataI += op.Stride()
 		}
 	case YZ:
 		bx, bz := blockBeg[0], blockBeg[2]
 		for y := beg[2]; y <= end[2]; y++ {
-			dataI := y*voxels.stride + beg[1]*bytesPerVoxel
+			dataI := y*op.Stride() + beg[1]*bytesPerVoxel
 			blockI := bz*blockNumXY + blockBeg[1]*blockNumX + bx*bytesPerVoxel
 			for x := beg[1]; x <= end[1]; x++ {
-				switch operation.op {
+				switch op.OpType {
 				case GetOp:
 					copy(data[dataI:dataI+bytesPerVoxel], block[blockI:blockI+bytesPerVoxel])
 				case PutOp:
@@ -835,8 +902,8 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 			bz++
 		}
 	case Vol:
-		dataNumX := voxels.Width() * bytesPerVoxel
-		dataNumXY := voxels.Height() * dataNumX
+		dataNumX := op.Width() * bytesPerVoxel
+		dataNumXY := op.Height() * dataNumX
 		blockZ := blockBeg[2]
 		for dataZ := beg[2]; dataZ <= end[2]; dataZ++ {
 			blockY := blockBeg[1]
@@ -845,7 +912,7 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 				dataI := dataZ*dataNumXY + dataY*dataNumX + beg[0]*bytesPerVoxel
 				run := end[0] - beg[0] + 1
 				bytes := run * bytesPerVoxel
-				switch operation.op {
+				switch op.OpType {
 				case GetOp:
 					copy(data[dataI:dataI+bytes], block[blockI:blockI+bytes])
 				case PutOp:
@@ -859,8 +926,10 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 	default:
 	}
 
+	//dvid.PrintNonZero(op.OpType.String(), block)
+
 	// If this is a PUT, place the modified block data into the database.
-	if operation.op == PutOp {
+	if op.OpType == PutOp {
 		db := server.KeyValueDB()
 		serialization, err := dvid.SerializeData([]byte(block), dvid.Snappy, dvid.CRC32)
 		if err != nil {

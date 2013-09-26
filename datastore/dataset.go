@@ -75,9 +75,9 @@ func (dsets *Datasets) DataService(u UUID, name DataString) (dataservice DataSer
 		err = fmt.Errorf("No node with UUID %s found", u)
 		return
 	}
-	dataservice, found = dataset.DataMap[name]
-	if !found {
-		err = fmt.Errorf("No data named '%s' at node with UUID %s", name, u)
+	dataservice, err = dataset.DataService(name)
+	if err != nil {
+		err = fmt.Errorf("No data named '%s' at node with UUID %s: %s", name, u, err.Error())
 	}
 	return
 }
@@ -281,14 +281,16 @@ type Dataset struct {
 	DatasetID dvid.LocalID32
 
 	// DataMap keeps the dataset-specific names for instances of data types
-	// in this dataset.
+	// in this dataset.  Although this is public, access should be through
+	// the DataService(name) function to also match possible prefix data names,
+	// e.g., multichannel types.
 	DataMap map[DataString]DataService
 }
 
 // TypeService returns the TypeService underlying data of a given name.
 func (dset *Dataset) TypeService(name DataString) (t TypeService, err error) {
-	data, found := dset.DataMap[name]
-	if !found {
+	data, err := dset.DataService(name)
+	if err != nil {
 		err = fmt.Errorf("Cannot get type of unknown data '%s'", name)
 		return
 	}
@@ -301,6 +303,12 @@ func (dset *Dataset) DataService(name DataString) (dataservice DataService, err 
 	var found bool
 	dataservice, found = dset.DataMap[name]
 	if !found {
+		// Also allow numerical suffixes on names.
+		for basename, service := range dset.DataMap {
+			if strings.HasPrefix(string(name), string(basename)) {
+				return service, nil
+			}
+		}
 		err = fmt.Errorf("Cannot find data '%s'", name)
 		return
 	}
@@ -312,6 +320,8 @@ func (dset *Dataset) DataService(name DataString) (dataservice DataService, err 
 // the data is mutable across nodes in the version DAG or is simply unversioned.
 func (dset *Dataset) NewData(name DataString, typeName string, config dvid.Config) error {
 	// Only allow unique data names per dataset.
+	// TODO -- Do more elaborate check that prevents prefixing data names using
+	// data types that allow different suffixes, e.g., multichannel data.
 	dataservice, found := dset.DataMap[name]
 	if found {
 		return fmt.Errorf("Data named '%s' already exists in dataset %s", name, dset.Root)

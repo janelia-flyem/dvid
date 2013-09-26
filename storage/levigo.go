@@ -4,6 +4,7 @@ package storage
 
 import (
 	"bytes"
+	_ "fmt"
 	"log"
 
 	"github.com/janelia-flyem/dvid/dvid"
@@ -162,6 +163,7 @@ func (db *LevelDB) GetRange(kStart, kEnd *Key) (values []KeyValue, err error) {
 	values = []KeyValue{}
 	it.Seek(kStart.Bytes())
 	endBytes := kEnd.Bytes()
+	//	fmt.Printf("levigo.GetRange: %x -> %x\n", kStart.Bytes(), endBytes)
 	for {
 		if it.Valid() {
 			value := it.Value()
@@ -169,6 +171,7 @@ func (db *LevelDB) GetRange(kStart, kEnd *Key) (values []KeyValue, err error) {
 			if bytes.Compare(it.Key(), endBytes) > 0 {
 				return
 			}
+			//			fmt.Printf("          Valid: %x\n", it.Key())
 			var key *Key
 			key, err = kStart.BytesToKey(it.Key())
 			if err != nil {
@@ -192,6 +195,7 @@ func (db *LevelDB) ProcessRange(kStart, kEnd *Key, op *ChunkOp, f func(*Chunk)) 
 
 	endBytes := kEnd.Bytes()
 	it.Seek(kStart.Bytes())
+	//	fmt.Printf("levigo.ProcessRange: %x -> %x\n", kStart.Bytes(), endBytes)
 	for {
 		if it.Valid() {
 			value := it.Value()
@@ -199,6 +203,7 @@ func (db *LevelDB) ProcessRange(kStart, kEnd *Key, op *ChunkOp, f func(*Chunk)) 
 			if bytes.Compare(it.Key(), endBytes) > 0 {
 				return nil
 			}
+			//			fmt.Printf("              Valid: %x\n", it.Key())
 			// Send to channel
 			var key *Key
 			key, err = kStart.BytesToKey(it.Key())

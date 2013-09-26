@@ -55,7 +55,7 @@ var (
 
 	// MaxChunkHandlers sets the maximum number of chunk handlers (goroutines) that
 	// can be spawned as part of this server.
-	MaxChunkHandlers = 50 * runtime.NumCPU()
+	MaxChunkHandlers = 10 * runtime.NumCPU()
 
 	// HandlerToken is buffered channel to limit spawning of goroutines.
 	// See ProcessChunk() in datatype/voxels for example.
