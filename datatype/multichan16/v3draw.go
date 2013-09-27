@@ -70,10 +70,11 @@ func (V3DRawMarshaler) UnmarshalV3DRaw(reader io.Reader) ([]*Channel, error) {
 	for c = 0; c < int32(numChannels); c++ {
 		v3draw[c] = &Channel{
 			Geometry:      volume,
-			channelNum:    c,
+			channelNum:    c + 1,
 			bytesPerVoxel: int32(bytesPerVoxel),
 			data:          make([]uint8, bytesPerChannel, bytesPerChannel),
 			stride:        int32(width * bytesPerVoxel),
+			byteOrder:     byteOrder,
 		}
 	}
 
@@ -83,7 +84,7 @@ func (V3DRawMarshaler) UnmarshalV3DRaw(reader io.Reader) ([]*Channel, error) {
 			return nil, fmt.Errorf("Error reading data for channel %d: %s", c, err.Error())
 		}
 		if dvid.Mode == dvid.Debug {
-			chanStr := fmt.Sprintf("Channel %d", c)
+			chanStr := fmt.Sprintf("Channel %d", v3draw[c].channelNum)
 			dvid.PrintNonZero(chanStr, v3draw[c].data)
 		}
 	}

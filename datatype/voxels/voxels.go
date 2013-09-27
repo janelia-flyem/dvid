@@ -6,6 +6,7 @@
 package voxels
 
 import (
+	"encoding/binary"
 	"encoding/gob"
 	"fmt"
 	"image"
@@ -154,6 +155,8 @@ type VoxelHandler interface {
 
 	BytesPerVoxel() int32
 
+	ByteOrder() binary.ByteOrder
+
 	ChannelsInterleaved() int32
 
 	Data() []uint8
@@ -178,6 +181,8 @@ type Voxels struct {
 	// The stride for 2d iteration.  For 3d subvolumes, we don't reuse standard Go
 	// images but maintain fully packed data slices, so stride isn't necessary.
 	stride int32
+
+	byteOrder binary.ByteOrder
 }
 
 func (v *Voxels) String() string {
@@ -204,6 +209,10 @@ func (v *Voxels) BytesPerVoxel() int32 {
 
 func (v *Voxels) ChannelsInterleaved() int32 {
 	return v.channelsInterleaved
+}
+
+func (v *Voxels) ByteOrder() binary.ByteOrder {
+	return v.byteOrder
 }
 
 // Datatype embeds the datastore's Datatype to create a unique type
@@ -285,6 +294,9 @@ type Data struct {
 
 	// Units of resolution, e.g., "nanometers"
 	VoxelResUnits VoxelResolutionUnits
+
+	// The endianness of this loaded data.
+	ByteOrder binary.ByteOrder
 
 	// Maximum extents of this volume.
 
@@ -468,6 +480,10 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 }
 
 // SliceImage returns an image.Image for the z-th slice of the voxel data.
+// TODO -- Create more comprehensive handling of endianness and encoding of
+// multibytes/voxel data into appropriate images.  Suggest using Thrift or
+// cross-platform serialization than standard image formats for anything above
+// 16-bits/voxel.
 func (d *Data) SliceImage(v VoxelHandler, z int) (img image.Image, err error) {
 	unsupported := func() error {
 		return fmt.Errorf("DVID doesn't support %d bytes/voxel and %d interleaved channels",
@@ -488,7 +504,11 @@ func (d *Data) SliceImage(v VoxelHandler, z int) (img image.Image, err error) {
 		case 1:
 			img = &image.Gray{data[beg:end], 1 * r.Dx(), r}
 		case 2:
-			img = &image.Gray16{data[beg:end], 2 * r.Dx(), r}
+			bigendian, err := littleToBigEndian(v, data[beg:end])
+			if err != nil {
+				return nil, err
+			}
+			img = &image.Gray16{bigendian, 2 * r.Dx(), r}
 		case 4:
 			img = &image.RGBA{data[beg:end], 4 * r.Dx(), r}
 		case 8:
@@ -661,8 +681,6 @@ func (d *Data) PutImage(versionID dvid.LocalID, v VoxelHandler) error {
 	wg := new(sync.WaitGroup)
 	chunkOp := &storage.ChunkOp{&op, wg}
 
-	blockSize := d.BlockSize
-
 	// Setup traversal
 	startVoxel := v.StartVoxel()
 	endVoxel := v.EndVoxel()
@@ -674,8 +692,8 @@ func (d *Data) PutImage(versionID dvid.LocalID, v VoxelHandler) error {
 	defer versionMutex.Unlock()
 
 	// Map: Iterate in x, then y, then z
-	startBlockCoord := startVoxel.BlockCoord(blockSize)
-	endBlockCoord := endVoxel.BlockCoord(blockSize)
+	startBlockCoord := startVoxel.BlockCoord(d.BlockSize)
+	endBlockCoord := endVoxel.BlockCoord(d.BlockSize)
 	for z := startBlockCoord[2]; z <= endBlockCoord[2]; z++ {
 		for y := startBlockCoord[1]; y <= endBlockCoord[1]; y++ {
 			// We know for voxels indexing, x span is a contiguous range.

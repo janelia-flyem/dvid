@@ -2,6 +2,7 @@ package voxels
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"image"
@@ -13,6 +14,39 @@ import (
 
 	"github.com/janelia-flyem/dvid/dvid"
 )
+
+// Handler conversion of little to big endian for voxels larger than 1 byte.
+func littleToBigEndian(v VoxelHandler, data []uint8) (bigendian []uint8, err error) {
+	if v.ByteOrder() == nil || v.ByteOrder() == binary.BigEndian || v.BytesPerVoxel() == 1 {
+		return data, nil
+	}
+	pixels := int(v.Width() * v.Height() * v.ChannelsInterleaved())
+	sliceBytes := pixels * int(v.BytesPerVoxel())
+	bigendian = make([]uint8, sliceBytes)
+	switch v.BytesPerVoxel() {
+	case 2:
+		beg := 0
+		for i := 0; i < pixels; i++ {
+			bigendian[beg], bigendian[beg+1] = data[beg+1], data[beg]
+			beg += 2
+		}
+	case 4:
+		beg := 0
+		for i := 0; i < pixels; i++ {
+			value := binary.LittleEndian.Uint32(data[beg : beg+4])
+			binary.BigEndian.PutUint32(bigendian[beg:beg+4], value)
+			beg += 4
+		}
+	case 8:
+		beg := 0
+		for i := 0; i < pixels; i++ {
+			value := binary.LittleEndian.Uint64(data[beg : beg+8])
+			binary.BigEndian.PutUint64(bigendian[beg:beg+8], value)
+			beg += 8
+		}
+	}
+	return
+}
 
 // Notes:
 //   Whenever the units of a type are different, e.g., voxel coordinate versus

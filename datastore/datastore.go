@@ -153,6 +153,9 @@ func drain(c chan bool) (quit bool) {
 	}
 }
 
+// Saves the datasets at most once per second.
+// TODO -- Separate datasets into their own key/value pair once we start
+// managing larger # of datasets.
 func (s *Service) periodicallySave() {
 	saveTick := time.Tick(1 * time.Second)
 	for {
@@ -162,6 +165,7 @@ func (s *Service) periodicallySave() {
 			if quit {
 				break
 			}
+			dvid.Fmt(dvid.Debug, "Saving datasets after change...\n")
 			s.datasets.Put(s.db)
 		}
 	}

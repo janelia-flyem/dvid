@@ -9,11 +9,13 @@
 
 	Specific channels of multichan16 data are addressed by adding a numerical suffix to the
 	data name.  For example, if we have "mydata" multichan16 data, we reference channel 1
-	as "mydata1" and channel 2 as "mydata2".
+	as "mydata1" and channel 2 as "mydata2".  Up to the first 3 channels are composited
+	into a RGBA volume that is addressible using "mydata" or "mydata0".
 */
 package multichan16
 
 import (
+	"encoding/binary"
 	"encoding/gob"
 	"fmt"
 	"net/http"
@@ -157,6 +159,8 @@ type Channel struct {
 	// The stride for 2d iteration.  For 3d subvolumes, we don't reuse standard Go
 	// images but maintain fully packed data slices, so stride isn't necessary.
 	stride int32
+
+	byteOrder binary.ByteOrder
 }
 
 func (c *Channel) String() string {
@@ -184,6 +188,10 @@ func (c *Channel) BytesPerVoxel() int32 {
 
 func (c *Channel) ChannelsInterleaved() int32 {
 	return 1
+}
+
+func (c *Channel) ByteOrder() binary.ByteOrder {
+	return c.byteOrder
 }
 
 type Datatype struct {
@@ -276,19 +284,24 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 	}
 
 	// Get the data name and parse out the channel number or see if composite is required.
+	var channelNum int32
 	channumStr := strings.TrimPrefix(parts[2], string(d.Name))
-	n, err := strconv.ParseInt(channumStr, 10, 32)
-	if err != nil {
-		return fmt.Errorf("Error parsing channel number from data name '%s': %s",
-			parts[2], err.Error())
+	if len(channumStr) == 0 {
+		channelNum = 0
+	} else {
+		n, err := strconv.ParseInt(channumStr, 10, 32)
+		if err != nil {
+			return fmt.Errorf("Error parsing channel number from data name '%s': %s",
+				parts[2], err.Error())
+		}
+		if int(n) > d.NumChannels {
+			minChannelName := fmt.Sprintf("%s1", d.DataName())
+			maxChannelName := fmt.Sprintf("%s%d", d.DataName(), d.NumChannels)
+			return fmt.Errorf("Data only has %d channels.  Use names '%s' -> '%s'", d.NumChannels,
+				minChannelName, maxChannelName)
+		}
+		channelNum = int32(n)
 	}
-	if int(n) >= d.NumChannels {
-		minChannelName := fmt.Sprintf("%s0", d.DataName())
-		maxChannelName := fmt.Sprintf("%s%d", d.DataName(), d.NumChannels-1)
-		return fmt.Errorf("Data only has %d channels.  Use names '%s' -> '%s'", d.NumChannels,
-			minChannelName, maxChannelName)
-	}
-	channelNum := int32(n)
 
 	// Get the data shape.
 	shapeStr := voxels.DataShapeString(parts[3])
@@ -307,13 +320,20 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 		if op == voxels.PutOp {
 			return fmt.Errorf("DVID does not yet support POST of slices into multichannel data")
 		} else {
-			numBytes := 2 * slice.NumVoxels()
+			var bytesPerVoxel int32
+			if channelNum == 0 {
+				bytesPerVoxel = 4
+			} else {
+				bytesPerVoxel = 2
+			}
+			numBytes := int64(bytesPerVoxel) * slice.NumVoxels()
 			channel := &Channel{
 				Geometry:      slice,
 				channelNum:    channelNum,
-				bytesPerVoxel: 2,
+				bytesPerVoxel: bytesPerVoxel,
 				data:          make([]uint8, numBytes),
-				stride:        slice.Width() * 2,
+				stride:        slice.Width() * bytesPerVoxel,
+				byteOrder:     d.ByteOrder,
 			}
 			img, err := d.GetImage(versionID, channel)
 			var formatStr string
@@ -334,17 +354,6 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 		}
 		if op == voxels.GetOp {
 			return fmt.Errorf("DVID does not yet support GET of thrift-encoded volume data")
-			/*
-				if data, err := d.GetVolume(uuidStr, subvol); err != nil {
-					return err
-				} else {
-					w.Header().Set("Content-type", "application/x-protobuf")
-					_, err = w.Write(data)
-					if err != nil {
-						return err
-					}
-				}
-			*/
 		} else {
 			return fmt.Errorf("DVID does not yet support POST of thrift-encoded volume data")
 		}
@@ -391,21 +400,106 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 		return err
 	}
 
+	// Store the metadata
+	d.NumChannels = len(channels)
+	if d.NumChannels > 0 {
+		d.ByteOrder = channels[0].byteOrder
+		reply.Text += fmt.Sprintf(" (%d x %d x %d)", channels[0].Width(),
+			channels[0].Height(), channels[0].Depth())
+	}
+	service.DirtyDatasets <- true
+
 	// PUT each channel of the file into the datastore using a separate data name.
 	for _, channel := range channels {
+		dvid.Fmt(dvid.Debug, "Processing channel %d... \n", channel.channelNum)
 		err = d.PutImage(versionID, channel)
 		if err != nil {
 			return err
 		}
 	}
-	d.NumChannels = len(channels)
-	service.DirtyDatasets <- true
+
+	// Create a RGB composite from the first 3 channels.  This is considered to be channel 0
+	// or can be accessed with the base data name.
+	dvid.Fmt(dvid.Debug, "Creating composite image from channels...\n")
+	err = d.storeComposite(versionID, channels)
+	if err != nil {
+		return err
+	}
+
 	dvid.ElapsedTime(dvid.Debug, startTime, "RPC load local '%s' completed", filename)
 	reply.Text = fmt.Sprintf("Loaded %s into data '%s': found %d channels",
 		d.DataName(), filename, d.NumChannels)
-	if d.NumChannels > 0 {
-		reply.Text += fmt.Sprintf(" (%d x %d x %d)", channels[0].Width(),
-			channels[0].Height(), channels[0].Depth())
-	}
 	return nil
+}
+
+// Create a RGB interleaved volume.
+func (d *Data) storeComposite(versionID dvid.LocalID, channels []*Channel) error {
+	// Setup the composite Channel
+	geom := channels[0].Geometry
+	pixels := int(geom.Width() * geom.Height() * geom.Depth())
+	composite := &Channel{
+		Geometry:      geom,
+		channelNum:    0,
+		bytesPerVoxel: 4, // RGBA
+		data:          make([]uint8, pixels*4),
+		stride:        geom.Width(),
+	}
+
+	// Get the min/max of each channel.
+	numChannels := len(channels)
+	if numChannels > 3 {
+		numChannels = 3
+	}
+	var min, max [3]uint16
+	min[0] = uint16(0xFFFF)
+	min[1] = uint16(0xFFFF)
+	min[2] = uint16(0xFFFF)
+	for c := 0; c < numChannels; c++ {
+		channel := channels[c]
+		data := channel.Data()
+		beg := 0
+		for i := 0; i < pixels; i++ {
+			value := d.ByteOrder.Uint16(data[beg : beg+2])
+			if value < min[c] {
+				min[c] = value
+			}
+			if value > max[c] {
+				max[c] = value
+			}
+			beg += 2
+		}
+	}
+
+	// Do second pass, normalizing each channel and storing it into the appropriate byte.
+	compdata := composite.data
+	for c := 0; c < numChannels; c++ {
+		channel := channels[c]
+		window := int(max[c] - min[c])
+		if window == 0 {
+			window = 1
+		}
+		data := channel.Data()
+		beg := 0
+		begC := c // Channel 0 -> R, Channel 1 -> G, Channel 2 -> B
+		for i := 0; i < pixels; i++ {
+			value := d.ByteOrder.Uint16(data[beg : beg+2])
+			normalized := 255 * int(value-min[c]) / window
+			if normalized > 255 {
+				normalized = 255
+			}
+			compdata[begC] = uint8(normalized)
+			beg += 2
+			begC += 4
+		}
+	}
+
+	// Set the alpha channel to 255.
+	alphaI := 3
+	for i := 0; i < pixels; i++ {
+		compdata[alphaI] = 255
+		alphaI += 4
+	}
+
+	// Store the result
+	return d.PutImage(versionID, composite)
 }
