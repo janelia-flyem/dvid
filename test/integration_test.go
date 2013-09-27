@@ -89,3 +89,42 @@ func (suite *DataSuite) TestVersionedDataOps(c *C) {
 
 	c.Assert(child1, Not(Equals), child2)
 }
+
+// Make sure Datasets configuration persists even after shutdown.
+func (suite *DataSuite) TestDatasetPersistence(c *C) {
+	dir := c.MkDir()
+
+	// Create a new datastore.
+	err := datastore.Init(dir, true)
+	c.Assert(err, IsNil)
+
+	// Open the datastore
+	service, err := datastore.Open(dir)
+	c.Assert(err, IsNil)
+
+	root, _, err := service.NewDataset()
+	c.Assert(err, IsNil)
+
+	err = service.NewData(root, "grayscale8", "node1image", false)
+	c.Assert(err, IsNil)
+
+	root, _, err = service.NewDataset()
+	c.Assert(err, IsNil)
+
+	err = service.NewData(root, "grayscale8", "node2image", false)
+	c.Assert(err, IsNil)
+
+	oldJSON, err := service.DatasetsJSON()
+	c.Assert(err, IsNil)
+
+	service.Shutdown()
+
+	// Open using different service
+	service2, err := datastore.Open(dir)
+	c.Assert(err, IsNil)
+
+	newJSON, err := service2.DatasetsJSON()
+	c.Assert(err, IsNil)
+
+	c.Assert(newJSON, DeepEquals, oldJSON)
+}
