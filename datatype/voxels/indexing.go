@@ -8,8 +8,10 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/hex"
+	"fmt"
 
 	"github.com/janelia-flyem/dvid/dvid"
+	"github.com/janelia-flyem/dvid/storage"
 )
 
 // ZYXIndexer adds access to X, Y, Z coordinates to an index.
@@ -20,6 +22,19 @@ type ZYXIndexer interface {
 	X() int32
 	Y() int32
 	Z() int32
+}
+
+// KeyToZYXIndexer takes a Key and returns an implementation of a ZYXIndexer if possible.
+func KeyToZYXIndexer(key storage.Key) (ZYXIndexer, error) {
+	datakey, ok := key.(*storage.DataKey)
+	if !ok {
+		return nil, fmt.Errorf("Can't convert Key (%s) to DataKey", key)
+	}
+	zyx, ok := datakey.Index.(ZYXIndexer)
+	if !ok {
+		return nil, fmt.Errorf("Can't convert DataKey.Index (%s) to ZYXIndexer", datakey.Index)
+	}
+	return zyx, nil
 }
 
 // IndexZYX implements the Index interface and provides simple indexing on Z,

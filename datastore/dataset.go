@@ -18,13 +18,6 @@ import (
 	"github.com/janelia-flyem/go/go-uuid/uuid"
 )
 
-// KeyDatasets is the key for storing Datasets information.
-var KeyDatasets = storage.Key{
-	Dataset: dvid.KeyDatasetGlobal,
-	Data:    dvid.KeyDataDVID,
-	Index:   dvid.IndexUint8(1),
-}
-
 type nodeID struct {
 	Dataset dvid.LocalID32
 	Data    dvid.LocalID
@@ -50,6 +43,35 @@ func VersionMutex(data DataService, versionID dvid.LocalID) (vmutex *sync.Mutex)
 	}
 	mutex.Unlock()
 	return
+}
+
+// DatasetsKey is an implementation of storage.Key for Datasets persistence
+type DatasetsKey struct{}
+
+func (k DatasetsKey) KeyType() storage.KeyType {
+	return storage.KeyDatasets
+}
+
+func (k DatasetsKey) BytesToKey(b []byte) (storage.Key, error) {
+	if len(b) < 1 {
+		return nil, fmt.Errorf("Malformed DatasetsKey bytes (too few): %x", b)
+	}
+	if b[0] != byte(storage.KeyDatasets) {
+		return nil, fmt.Errorf("Cannot convert %s Key Type into DatasetsKey", storage.KeyType(b[0]))
+	}
+	return &DatasetsKey{}, nil
+}
+
+func (k DatasetsKey) Bytes() []byte {
+	return []byte{byte(storage.KeyDatasets)}
+}
+
+func (k DatasetsKey) BytesString() string {
+	return string(k.Bytes())
+}
+
+func (k DatasetsKey) String() string {
+	return fmt.Sprintf("%x", k.Bytes())
 }
 
 // Datasets are group of Dataset available within the datastore.
@@ -84,115 +106,6 @@ func (dsets *Datasets) DataService(u UUID, name DataString) (dataservice DataSer
 
 // NOTE: Alterations of Datasets should be approached through datastore.Service since it
 // will coordinate persistence of in-memory Datasets as well as multiple storage engines.
-
-// newDataset creates a new Dataset, which constitutes a version DAG and allows storing
-// arbitrary data within the nodes of the DAG.
-func (dsets *Datasets) newDataset() (dset *Dataset, err error) {
-	dsets.writeLock.Lock()
-	defer dsets.writeLock.Unlock()
-
-	dset = &Dataset{
-		VersionDAG: NewVersionDAG(),
-		DatasetID:  dsets.NewDatasetID,
-	}
-	dset.NewDataID = dvid.KeyDataStart
-
-	dsets.NewDatasetID++
-	dsets.Datasets = append(dsets.Datasets, dset)
-	dsets.versionMap[dset.Root] = dset
-	return
-}
-
-// newChild creates a new child node off a LOCKED parent node.  Will return
-// an error if the parent node has not been locked.
-func (dsets *Datasets) newChild(parent UUID) (u UUID, err error) {
-	// Find the Dataset with this UUID
-	dset, found := dsets.versionMap[parent]
-	if !found {
-		err = fmt.Errorf("No node found with UUID %s", parent)
-		return
-	}
-
-	// Create the child in this Dataset's DAG
-	u, err = dset.VersionDAG.newChild(parent)
-	if err != nil {
-		return
-	}
-	dsets.versionMap[u] = dset
-	return
-}
-
-// newData registers a new instance of a given data type within a dataset.
-func (dsets *Datasets) newData(u UUID, name DataString, typeName string, config dvid.Config) error {
-	// Find the Dataset with this UUID
-	dset, found := dsets.versionMap[u]
-	if !found {
-		return fmt.Errorf("No node found with UUID %s", u)
-	}
-
-	// Construct new data
-	return dset.NewData(name, typeName, config)
-}
-
-// Get retrieves Datasets from a KeyValueDB.
-func (dsets *Datasets) Get(db storage.KeyValueDB) (err error) {
-	var data []byte
-	data, err = db.Get(&KeyDatasets)
-	if err != nil {
-		return
-	}
-
-	// Deserialize into object
-	err = dsets.Deserialize(data)
-
-	// Initialize the versionMap cache
-	dsets.versionMap = make(map[UUID]*Dataset)
-	for _, dset := range dsets.Datasets {
-		for u, _ := range dset.VersionMap {
-			dsets.versionMap[u] = dset
-		}
-	}
-	return
-}
-
-// Put stores Datasets into a KeyValueDB, overwriting whatever was there before.
-// This assumes only one Dataservice for a given datastore.
-func (dsets *Datasets) Put(db storage.KeyValueDB) error {
-	var mutex sync.Mutex
-	mutex.Lock()
-	defer mutex.Unlock()
-
-	// Get serialization
-	serialization, err := dsets.Serialize()
-	if err != nil {
-		return err
-	}
-
-	// Put data
-	return db.Put(&KeyDatasets, serialization)
-}
-
-// Serialize returns a serialization of Datasets with Snappy compression and
-// CRC32 checksum.
-func (dsets *Datasets) Serialize() ([]byte, error) {
-	return dvid.Serialize(dsets, dvid.Snappy, dvid.CRC32)
-}
-
-// Deserialize converts a serialization to Datasets
-func (dsets *Datasets) Deserialize(s []byte) error {
-	dsets.Datasets = []*Dataset{}
-	err := dvid.Deserialize(s, dsets)
-	if err != nil {
-		return fmt.Errorf("Error in deserializing datasets: %s", err.Error())
-	}
-	dsets.versionMap = make(map[UUID]*Dataset)
-	for _, dset := range dsets.Datasets {
-		for _, u := range dset.Versions() {
-			dsets.versionMap[u] = dset
-		}
-	}
-	return nil
-}
 
 // DatasetFromUUID returns a dataset given a UUID.
 func (dsets *Datasets) DatasetFromUUID(u UUID) (dataset *Dataset, err error) {
@@ -266,6 +179,114 @@ func (dsets *Datasets) StringJSON() (jsonStr string, err error) {
 	}
 	jsonStr = string(m)
 	return
+}
+
+// newDataset creates a new Dataset, which constitutes a version DAG and allows storing
+// arbitrary data within the nodes of the DAG.
+func (dsets *Datasets) newDataset() (dset *Dataset, err error) {
+	dsets.writeLock.Lock()
+	defer dsets.writeLock.Unlock()
+
+	dset = &Dataset{
+		VersionDAG: NewVersionDAG(),
+		DatasetID:  dsets.NewDatasetID,
+	}
+	dsets.NewDatasetID++
+
+	dsets.Datasets = append(dsets.Datasets, dset)
+	dsets.versionMap[dset.Root] = dset
+	return
+}
+
+// newChild creates a new child node off a LOCKED parent node.  Will return
+// an error if the parent node has not been locked.
+func (dsets *Datasets) newChild(parent UUID) (u UUID, err error) {
+	// Find the Dataset with this UUID
+	dset, found := dsets.versionMap[parent]
+	if !found {
+		err = fmt.Errorf("No node found with UUID %s", parent)
+		return
+	}
+
+	// Create the child in this Dataset's DAG
+	u, err = dset.VersionDAG.newChild(parent)
+	if err != nil {
+		return
+	}
+	dsets.versionMap[u] = dset
+	return
+}
+
+// newData registers a new instance of a given data type within a dataset.
+func (dsets *Datasets) newData(u UUID, name DataString, typeName string, config dvid.Config) error {
+	// Find the Dataset with this UUID
+	dset, found := dsets.versionMap[u]
+	if !found {
+		return fmt.Errorf("No node found with UUID %s", u)
+	}
+
+	// Construct new data
+	return dset.NewData(name, typeName, config)
+}
+
+// Get retrieves Datasets from a KeyValueDB.
+func (dsets *Datasets) Get(db storage.KeyValueDB) (err error) {
+	var data []byte
+	data, err = db.Get(&DatasetsKey{})
+	if err != nil {
+		return
+	}
+
+	// Deserialize into object
+	err = dsets.Deserialize(data)
+
+	// Initialize the versionMap cache
+	dsets.versionMap = make(map[UUID]*Dataset)
+	for _, dset := range dsets.Datasets {
+		for u, _ := range dset.VersionMap {
+			dsets.versionMap[u] = dset
+		}
+	}
+	return
+}
+
+// Put stores Datasets into a KeyValueDB, overwriting whatever was there before.
+// This assumes only one Dataservice for a given datastore.
+func (dsets *Datasets) Put(db storage.KeyValueDB) error {
+	var mutex sync.Mutex
+	mutex.Lock()
+	defer mutex.Unlock()
+
+	// Get serialization
+	serialization, err := dsets.Serialize()
+	if err != nil {
+		return err
+	}
+
+	// Put data
+	return db.Put(&DatasetsKey{}, serialization)
+}
+
+// Serialize returns a serialization of Datasets with Snappy compression and
+// CRC32 checksum.
+func (dsets *Datasets) Serialize() ([]byte, error) {
+	return dvid.Serialize(dsets, dvid.Snappy, dvid.CRC32)
+}
+
+// Deserialize converts a serialization to Datasets
+func (dsets *Datasets) Deserialize(s []byte) error {
+	dsets.Datasets = []*Dataset{}
+	err := dvid.Deserialize(s, dsets)
+	if err != nil {
+		return fmt.Errorf("Error in deserializing datasets: %s", err.Error())
+	}
+	dsets.versionMap = make(map[UUID]*Dataset)
+	for _, dset := range dsets.Datasets {
+		for _, u := range dset.Versions() {
+			dsets.versionMap[u] = dset
+		}
+	}
+	return nil
 }
 
 // Dataset is a set of Data with an associated version DAG.

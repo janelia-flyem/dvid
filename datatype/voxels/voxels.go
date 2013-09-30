@@ -649,8 +649,8 @@ func (d *Data) GetImage(versionID dvid.LocalID, v VoxelHandler) (img image.Image
 			// We know for voxels indexing, x span is a contiguous range.
 			i0 := v.BlockIndex(startBlockCoord[0], y, z)
 			i1 := v.BlockIndex(endBlockCoord[0], y, z)
-			startKey := &storage.Key{d.DatasetID, d.ID, versionID, i0}
-			endKey := &storage.Key{d.DatasetID, d.ID, versionID, i1}
+			startKey := &storage.DataKey{d.DatasetID, d.ID, versionID, i0}
+			endKey := &storage.DataKey{d.DatasetID, d.ID, versionID, i1}
 
 			// Send the entire range of key/value pairs to ProcessChunk()
 			err = db.ProcessRange(startKey, endKey, chunkOp, d.ProcessChunk)
@@ -699,8 +699,8 @@ func (d *Data) PutImage(versionID dvid.LocalID, v VoxelHandler) error {
 			// We know for voxels indexing, x span is a contiguous range.
 			i0 := v.BlockIndex(startBlockCoord[0], y, z)
 			i1 := v.BlockIndex(endBlockCoord[0], y, z)
-			startKey := &storage.Key{d.DatasetID, d.ID, versionID, i0}
-			endKey := &storage.Key{d.DatasetID, d.ID, versionID, i1}
+			startKey := &storage.DataKey{d.DatasetID, d.ID, versionID, i0}
+			endKey := &storage.DataKey{d.DatasetID, d.ID, versionID, i1}
 
 			// GET all the chunks for this range.
 			keyvalues, err := db.GetRange(startKey, endKey)
@@ -719,11 +719,14 @@ func (d *Data) PutImage(versionID dvid.LocalID, v VoxelHandler) error {
 			wg.Add(int(endBlockCoord[0]-startBlockCoord[0]) + 1)
 			for x := startBlockCoord[0]; x <= endBlockCoord[0]; x++ {
 				i := v.BlockIndex(x, y, z)
-				key := &storage.Key{d.DatasetID, d.ID, versionID, i}
+				key := &storage.DataKey{d.DatasetID, d.ID, versionID, i}
 				// Check for this key among old key-value pairs and if so,
 				// send the old value into chunk handler.
 				if oldkv.K != nil {
-					zyx := oldkv.K.Index.(ZYXIndexer)
+					zyx, err := KeyToZYXIndexer(oldkv.K)
+					if err != nil {
+						return err
+					}
 					if zyx.X() == x {
 						kv = oldkv
 						oldI++
@@ -807,9 +810,9 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 	if !ok {
 		log.Fatalf("Illegal operation passed to ProcessChunk() for data %s\n", d.DataName())
 	}
-	index, ok := chunk.K.Index.(ZYXIndexer)
-	if !ok {
-		log.Fatalf("Indexing for Voxel Chunk was not IndexZYX in data %s!\n", d.DataName())
+	index, err := KeyToZYXIndexer(chunk.K)
+	if err != nil {
+		log.Fatalf("Data %s: %s\n", d.DataName(), err.Error())
 	}
 
 	// Compute the bounding voxel coordinates for this block.

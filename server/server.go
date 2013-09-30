@@ -90,6 +90,7 @@ type Service struct {
 }
 
 func init() {
+	dvid.MaxHandlers = MaxChunkHandlers
 	for i := 0; i < MaxChunkHandlers; i++ {
 		HandlerToken <- 1
 	}

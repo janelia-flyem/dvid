@@ -145,7 +145,7 @@ func (db *LevelDB) Close() {
 }
 
 // Get returns a value given a key.
-func (db *LevelDB) Get(k *Key) (v []byte, err error) {
+func (db *LevelDB) Get(k Key) (v []byte, err error) {
 	ro := db.options.ReadOptions
 	v, err = db.ldb.Get(ro, k.Bytes())
 	bytesRead <- len(v)
@@ -154,7 +154,7 @@ func (db *LevelDB) Get(k *Key) (v []byte, err error) {
 
 // GetRange returns a range of values spanning (kStart, kEnd) keys.  These key-value
 // pairs will be sorted in ascending key order.
-func (db *LevelDB) GetRange(kStart, kEnd *Key) (values []KeyValue, err error) {
+func (db *LevelDB) GetRange(kStart, kEnd Key) (values []KeyValue, err error) {
 	ro := levigo.NewReadOptions()
 	ro.SetFillCache(false)
 	it := db.ldb.NewIterator(ro)
@@ -172,7 +172,7 @@ func (db *LevelDB) GetRange(kStart, kEnd *Key) (values []KeyValue, err error) {
 				return
 			}
 			//			fmt.Printf("          Valid: %x\n", it.Key())
-			var key *Key
+			var key Key
 			key, err = kStart.BytesToKey(it.Key())
 			if err != nil {
 				return
@@ -187,7 +187,7 @@ func (db *LevelDB) GetRange(kStart, kEnd *Key) (values []KeyValue, err error) {
 }
 
 // ProcessRange sends a range of key-value pairs to chunk handlers.
-func (db *LevelDB) ProcessRange(kStart, kEnd *Key, op *ChunkOp, f func(*Chunk)) (err error) {
+func (db *LevelDB) ProcessRange(kStart, kEnd Key, op *ChunkOp, f func(*Chunk)) (err error) {
 	ro := levigo.NewReadOptions()
 	ro.SetFillCache(false)
 	it := db.ldb.NewIterator(ro)
@@ -205,7 +205,7 @@ func (db *LevelDB) ProcessRange(kStart, kEnd *Key, op *ChunkOp, f func(*Chunk)) 
 			}
 			//			fmt.Printf("              Valid: %x\n", it.Key())
 			// Send to channel
-			var key *Key
+			var key Key
 			key, err = kStart.BytesToKey(it.Key())
 			if err != nil {
 				return
@@ -228,7 +228,7 @@ func (db *LevelDB) ProcessRange(kStart, kEnd *Key, op *ChunkOp, f func(*Chunk)) 
 }
 
 // Put writes a value with given key.
-func (db *LevelDB) Put(k *Key, v []byte) (err error) {
+func (db *LevelDB) Put(k Key, v []byte) (err error) {
 	wo := db.options.WriteOptions
 	err = db.ldb.Put(wo, k.Bytes(), v)
 	bytesWritten <- len(v)
@@ -241,7 +241,7 @@ func (db *LevelDB) PutRange(values []KeyValue) (err error) {
 }
 
 // Delete removes a value with given key.
-func (db *LevelDB) Delete(k *Key) (err error) {
+func (db *LevelDB) Delete(k Key) (err error) {
 	wo := db.options.WriteOptions
 	err = db.ldb.Delete(wo, k.Bytes())
 	return
@@ -267,11 +267,11 @@ func (batch *goBatch) Commit() (err error) {
 	return
 }
 
-func (batch *goBatch) Delete(k *Key) {
+func (batch *goBatch) Delete(k Key) {
 	batch.WriteBatch.Delete(k.Bytes())
 }
 
-func (batch *goBatch) Put(k *Key, v []byte) {
+func (batch *goBatch) Put(k Key, v []byte) {
 	batch.WriteBatch.Put(k.Bytes(), v)
 }
 

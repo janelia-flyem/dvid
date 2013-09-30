@@ -49,7 +49,6 @@ func Init(directory string, create bool) error {
 
 	// Put empty Datasets
 	datasets := new(Datasets)
-	datasets.NewDatasetID = dvid.KeyDatasetStart
 	err = datasets.Put(db)
 	return err
 }
@@ -340,8 +339,10 @@ func (s *Service) About() string {
 // AboutJSON returns the components and versions of DVID software.
 func (s *Service) AboutJSON() (jsonStr string, err error) {
 	data := map[string]string{
-		"DVID datastore":  Version,
-		"Storage backend": storage.Version,
+		"DVID datastore":   Version,
+		"Storage backend":  storage.Version,
+		"Cores":            fmt.Sprintf("%d", dvid.NumCPU),
+		"Maximum handlers": fmt.Sprintf("%d", dvid.MaxHandlers),
 	}
 	if s.datasets != nil {
 		for _, dtype := range s.datasets.Datatypes() {

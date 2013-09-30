@@ -1,5 +1,5 @@
 /*
-	This file defines the key spaces and base indexing schemes used within DVID.
+	This file defines the base identification and indexing schemes used within DVID.
 */
 
 package dvid
@@ -7,17 +7,6 @@ package dvid
 import (
 	"encoding/binary"
 	"fmt"
-)
-
-// Define a few constants for dataset component of keys
-const (
-	KeyDatasetGlobal LocalID32 = iota
-	KeyDatasetStart
-)
-
-const (
-	KeyDataDVID LocalID = iota
-	KeyDataStart
 )
 
 // LocalID is a unique id for some data in a DVID instance.  This unique id is presumably

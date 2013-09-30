@@ -164,17 +164,16 @@ func main() {
 	// Determine numer of logical CPUs on local machine and unless overridden, use
 	// all of them.
 	numCPU := runtime.NumCPU()
-	var dvidCPU int
 	if *useCPU != 0 {
-		dvidCPU = *useCPU
+		dvid.NumCPU = *useCPU
 	} else if flag.NArg() >= 1 && flag.Args()[0] == "serve" {
-		dvidCPU = numCPU
+		dvid.NumCPU = numCPU
 	} else {
-		dvidCPU = 1
+		dvid.NumCPU = 1
 	}
-	runtime.GOMAXPROCS(dvidCPU)
-	if dvidCPU > 1 || *useCPU != 0 {
-		log.Printf("Using %d of %d logical CPUs for DVID.\n", dvidCPU, numCPU)
+	runtime.GOMAXPROCS(dvid.NumCPU)
+	if dvid.NumCPU > 1 || *useCPU != 0 {
+		log.Printf("Using %d of %d logical CPUs for DVID.\n", dvid.NumCPU, numCPU)
 	}
 
 	// Capture ctrl+c and other interrupts.  Then handle graceful shutdown.

@@ -38,11 +38,19 @@ const (
 // and an explicit Quality amount is omitted.
 const DefaultJPEGQuality = 80
 
-// Mode is a global variable set to the run modes of this DVID process.
-var Mode ModeFlag
+var (
+	// NumCPU is the number of cores available to this DVID server.
+	NumCPU int
 
-// The global, unexported error logger for DVID.
-var errorLogger *log.Logger
+	// MaxHandlers is the maximum number of chunk handlers that will be spawned.
+	MaxHandlers int
+
+	// Mode is a global variable set to the run modes of this DVID process.
+	Mode ModeFlag
+
+	// The global, unexported error logger for DVID.
+	errorLogger *log.Logger
+)
 
 // Log prints a message via log.Print() depending on the Mode of DVID.
 func Log(mode ModeFlag, p ...interface{}) {
