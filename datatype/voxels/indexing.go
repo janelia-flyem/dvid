@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"fmt"
 
+	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
 )
@@ -26,7 +27,7 @@ type ZYXIndexer interface {
 
 // KeyToZYXIndexer takes a Key and returns an implementation of a ZYXIndexer if possible.
 func KeyToZYXIndexer(key storage.Key) (ZYXIndexer, error) {
-	datakey, ok := key.(*storage.DataKey)
+	datakey, ok := key.(*datastore.DataKey)
 	if !ok {
 		return nil, fmt.Errorf("Can't convert Key (%s) to DataKey", key)
 	}

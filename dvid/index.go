@@ -20,6 +20,9 @@ type LocalID32 uint32
 const (
 	sizeOfLocalID   = 2
 	sizeOfLocalID32 = 4
+
+	MaxLocalID   = 0xFFFF
+	MaxLocalID32 = 0xFFFFFFFF
 )
 
 // Bytes returns a sequence of bytes encoding this LocalID.

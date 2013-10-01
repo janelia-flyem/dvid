@@ -42,8 +42,8 @@ type TypeService interface {
 	// Help returns a string explaining how to use a data type's service
 	Help() string
 
-	// Create Data that is an instance of this data type
-	NewDataService(id *DataID, config dvid.Config) (service DataService, err error)
+	// Create Data that is an instance of this data type in the given Dataset
+	NewDataService(dset *Dataset, id *DataID, config dvid.Config) (service DataService, err error)
 }
 
 // CompiledTypes is the set of registered data types compiled into DVID and
@@ -196,10 +196,10 @@ type DataService interface {
 
 	// DatasetLocalID returns a DVID instance-specific id for this dataset, which
 	// can be held in a relatively small number of bytes and is a key component.
-	DatasetLocalID() dvid.LocalID32
+	DatasetID() DatasetLocalID
 
-	// DataLocalID returns a DVID instance-specific id for this data.
-	DataLocalID() dvid.LocalID
+	// LocalID returns a DVID instance-specific id for this data.
+	LocalID() DataLocalID
 
 	// IsVersioned returns true if this data can be mutated across versions.
 	IsVersioned() bool
@@ -218,16 +218,16 @@ type DataService interface {
 
 // DataID identifies data within a DVID server.
 type DataID struct {
-	Name      DataString
-	ID        dvid.LocalID
-	DatasetID dvid.LocalID32
+	Name   DataString
+	ID     DataLocalID
+	DsetID DatasetLocalID
 }
 
 func (id DataID) DataName() DataString { return id.Name }
 
-func (id DataID) DataLocalID() dvid.LocalID { return id.ID }
+func (id DataID) LocalID() DataLocalID { return id.ID }
 
-func (id DataID) DatasetLocalID() dvid.LocalID32 { return id.DatasetID }
+func (id DataID) DatasetID() DatasetLocalID { return id.DsetID }
 
 // Data is an instance of a data type with some identifiers and it satisfies
 // a DataService interface.  Each Data is dataset-specific.

@@ -244,8 +244,8 @@ func NewDatatype() (dtype *Datatype) {
 // --- TypeService interface ---
 
 // NewData returns a pointer to a new Voxels with default values.
-func (dtype *Datatype) NewDataService(id *datastore.DataID, config dvid.Config) (
-	service datastore.DataService, err error) {
+func (dtype *Datatype) NewDataService(dset *datastore.Dataset, id *datastore.DataID,
+	config dvid.Config) (service datastore.DataService, err error) {
 
 	var basedata *datastore.Data
 	basedata, err = datastore.NewDataService(id, dtype, config)
@@ -626,7 +626,7 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 }
 
 // GetImage retrieves a 2d image from a version node given a geometry of voxels.
-func (d *Data) GetImage(versionID dvid.LocalID, v VoxelHandler) (img image.Image, err error) {
+func (d *Data) GetImage(versionID datastore.VersionLocalID, v VoxelHandler) (img image.Image, err error) {
 	db := server.KeyValueDB()
 	if db == nil {
 		err = fmt.Errorf("Did not find a working key-value datastore to get image!")
@@ -649,8 +649,8 @@ func (d *Data) GetImage(versionID dvid.LocalID, v VoxelHandler) (img image.Image
 			// We know for voxels indexing, x span is a contiguous range.
 			i0 := v.BlockIndex(startBlockCoord[0], y, z)
 			i1 := v.BlockIndex(endBlockCoord[0], y, z)
-			startKey := &storage.DataKey{d.DatasetID, d.ID, versionID, i0}
-			endKey := &storage.DataKey{d.DatasetID, d.ID, versionID, i1}
+			startKey := &datastore.DataKey{d.DsetID, d.ID, versionID, i0}
+			endKey := &datastore.DataKey{d.DsetID, d.ID, versionID, i1}
 
 			// Send the entire range of key/value pairs to ProcessChunk()
 			err = db.ProcessRange(startKey, endKey, chunkOp, d.ProcessChunk)
@@ -671,7 +671,7 @@ func (d *Data) GetImage(versionID dvid.LocalID, v VoxelHandler) (img image.Image
 // are larger than a 2d slice, this also requires integrating this image into current
 // chunks before writing result back out, so it's a PUT for nonexistant keys and GET/PUT
 // for existing keys.
-func (d *Data) PutImage(versionID dvid.LocalID, v VoxelHandler) error {
+func (d *Data) PutImage(versionID datastore.VersionLocalID, v VoxelHandler) error {
 	db := server.KeyValueDB()
 	if db == nil {
 		return fmt.Errorf("Did not find a working key-value datastore to put image!")
@@ -699,8 +699,8 @@ func (d *Data) PutImage(versionID dvid.LocalID, v VoxelHandler) error {
 			// We know for voxels indexing, x span is a contiguous range.
 			i0 := v.BlockIndex(startBlockCoord[0], y, z)
 			i1 := v.BlockIndex(endBlockCoord[0], y, z)
-			startKey := &storage.DataKey{d.DatasetID, d.ID, versionID, i0}
-			endKey := &storage.DataKey{d.DatasetID, d.ID, versionID, i1}
+			startKey := &datastore.DataKey{d.DsetID, d.ID, versionID, i0}
+			endKey := &datastore.DataKey{d.DsetID, d.ID, versionID, i1}
 
 			// GET all the chunks for this range.
 			keyvalues, err := db.GetRange(startKey, endKey)
@@ -719,7 +719,7 @@ func (d *Data) PutImage(versionID dvid.LocalID, v VoxelHandler) error {
 			wg.Add(int(endBlockCoord[0]-startBlockCoord[0]) + 1)
 			for x := startBlockCoord[0]; x <= endBlockCoord[0]; x++ {
 				i := v.BlockIndex(x, y, z)
-				key := &storage.DataKey{d.DatasetID, d.ID, versionID, i}
+				key := &datastore.DataKey{d.DsetID, d.ID, versionID, i}
 				// Check for this key among old key-value pairs and if so,
 				// send the old value into chunk handler.
 				if oldkv.K != nil {

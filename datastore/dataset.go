@@ -19,9 +19,9 @@ import (
 )
 
 type nodeID struct {
-	Dataset dvid.LocalID32
-	Data    dvid.LocalID
-	Version dvid.LocalID
+	Dataset DatasetLocalID
+	Data    DataLocalID
+	Version VersionLocalID
 }
 
 // Map of mutexes at the granularity of dataset/data/version
@@ -31,10 +31,10 @@ func init() {
 	versionMutexes = make(map[nodeID]*sync.Mutex)
 }
 
-func VersionMutex(data DataService, versionID dvid.LocalID) (vmutex *sync.Mutex) {
+func VersionMutex(data DataService, versionID VersionLocalID) (vmutex *sync.Mutex) {
 	var mutex sync.Mutex
 	mutex.Lock()
-	id := nodeID{data.DatasetLocalID(), data.DataLocalID(), versionID}
+	id := nodeID{data.DatasetID(), data.LocalID(), versionID}
 	var found bool
 	vmutex, found = versionMutexes[id]
 	if !found {
@@ -45,46 +45,17 @@ func VersionMutex(data DataService, versionID dvid.LocalID) (vmutex *sync.Mutex)
 	return
 }
 
-// DatasetsKey is an implementation of storage.Key for Datasets persistence
-type DatasetsKey struct{}
-
-func (k DatasetsKey) KeyType() storage.KeyType {
-	return storage.KeyDatasets
-}
-
-func (k DatasetsKey) BytesToKey(b []byte) (storage.Key, error) {
-	if len(b) < 1 {
-		return nil, fmt.Errorf("Malformed DatasetsKey bytes (too few): %x", b)
-	}
-	if b[0] != byte(storage.KeyDatasets) {
-		return nil, fmt.Errorf("Cannot convert %s Key Type into DatasetsKey", storage.KeyType(b[0]))
-	}
-	return &DatasetsKey{}, nil
-}
-
-func (k DatasetsKey) Bytes() []byte {
-	return []byte{byte(storage.KeyDatasets)}
-}
-
-func (k DatasetsKey) BytesString() string {
-	return string(k.Bytes())
-}
-
-func (k DatasetsKey) String() string {
-	return fmt.Sprintf("%x", k.Bytes())
-}
-
-// Datasets are group of Dataset available within the datastore.
+// Datasets holds information on all the Dataset available.
 type Datasets struct {
-	Datasets []*Dataset
+	// Keep list of Dataset.  Could be much smaller than mapUUID which contains
+	// all versions of all Dataset.
+	list []*Dataset
 
-	// Always incremented counter that provides local dataset ID so we can use
-	// smaller # of bytes (dvid.LocalID size) instead of full identifier.
-	NewDatasetID dvid.LocalID32
+	// Efficiently maps all UUIDs to the version DAG from which it came.
+	mapUUID map[UUID]*Dataset
 
-	// Efficiently maps UUIDs to the version DAG from which it came.
-	// Not persisted to disk and must be recreated when loading from disk.
-	versionMap map[UUID]*Dataset
+	// Counter that provides the local ID of the next new dataset.
+	newDatasetID DatasetLocalID
 
 	writeLock sync.Mutex
 }
@@ -92,7 +63,7 @@ type Datasets struct {
 // DataService returns a service for data of a given name under a Dataset.
 func (dsets *Datasets) DataService(u UUID, name DataString) (dataservice DataService, err error) {
 	// Determine the dataset that contains the node with this UUID
-	dataset, found := dsets.versionMap[u]
+	dataset, found := dsets.mapUUID[u]
 	if !found {
 		err = fmt.Errorf("No node with UUID %s found", u)
 		return
@@ -109,7 +80,7 @@ func (dsets *Datasets) DataService(u UUID, name DataString) (dataservice DataSer
 
 // DatasetFromUUID returns a dataset given a UUID.
 func (dsets *Datasets) DatasetFromUUID(u UUID) (dataset *Dataset, err error) {
-	dataset, found := dsets.versionMap[u]
+	dataset, found := dsets.mapUUID[u]
 	if !found {
 		err = fmt.Errorf("DatasetFromUUID(): Illegal UUID (%s) not found", u)
 	}
@@ -123,7 +94,7 @@ func (dsets *Datasets) DatasetFromUUID(u UUID) (dataset *Dataset, err error) {
 // allow UUID strings of less than 3 letters just to prevent mistakes.)
 func (dsets *Datasets) DatasetFromString(str string) (dataset *Dataset, u UUID, err error) {
 	numMatches := 0
-	for dsetUUID, dset := range dsets.versionMap {
+	for dsetUUID, dset := range dsets.mapUUID {
 		if strings.HasPrefix(string(dsetUUID), str) {
 			numMatches++
 			dataset = dset
@@ -143,7 +114,7 @@ func (dsets *Datasets) DatasetFromString(str string) (dataset *Dataset, u UUID, 
 // across datasets, we do not return the abbreviated data type names.
 func (dsets *Datasets) Datatypes() map[UrlString]TypeService {
 	typemap := make(map[UrlString]TypeService)
-	for _, dset := range dsets.Datasets {
+	for _, dset := range dsets.list {
 		for _, dataservice := range dset.DataMap {
 			typemap[dataservice.DatatypeUrl()] = dataservice
 		}
@@ -156,7 +127,7 @@ func (dsets *Datasets) Datatypes() map[UrlString]TypeService {
 // URL and not the data type name.
 func (dsets *Datasets) VerifyCompiledTypes() error {
 	var errMsg string
-	for _, dset := range dsets.Datasets {
+	for _, dset := range dsets.list {
 		for name, data := range dset.DataMap {
 			_, found := CompiledTypes[data.DatatypeUrl()]
 			if !found {
@@ -171,16 +142,6 @@ func (dsets *Datasets) VerifyCompiledTypes() error {
 	return nil
 }
 
-// StringJSON returns a JSON-encoded string of exportable Datasets information.
-func (dsets *Datasets) StringJSON() (jsonStr string, err error) {
-	m, err := json.Marshal(dsets)
-	if err != nil {
-		return
-	}
-	jsonStr = string(m)
-	return
-}
-
 // newDataset creates a new Dataset, which constitutes a version DAG and allows storing
 // arbitrary data within the nodes of the DAG.
 func (dsets *Datasets) newDataset() (dset *Dataset, err error) {
@@ -189,12 +150,11 @@ func (dsets *Datasets) newDataset() (dset *Dataset, err error) {
 
 	dset = &Dataset{
 		VersionDAG: NewVersionDAG(),
-		DatasetID:  dsets.NewDatasetID,
+		DatasetID:  dsets.newDatasetID,
 	}
-	dsets.NewDatasetID++
-
-	dsets.Datasets = append(dsets.Datasets, dset)
-	dsets.versionMap[dset.Root] = dset
+	dsets.newDatasetID++
+	dsets.list = append(dsets.list, dset)
+	dsets.mapUUID[dset.Root] = dset
 	return
 }
 
@@ -202,7 +162,7 @@ func (dsets *Datasets) newDataset() (dset *Dataset, err error) {
 // an error if the parent node has not been locked.
 func (dsets *Datasets) newChild(parent UUID) (u UUID, err error) {
 	// Find the Dataset with this UUID
-	dset, found := dsets.versionMap[parent]
+	dset, found := dsets.mapUUID[parent]
 	if !found {
 		err = fmt.Errorf("No node found with UUID %s", parent)
 		return
@@ -213,80 +173,111 @@ func (dsets *Datasets) newChild(parent UUID) (u UUID, err error) {
 	if err != nil {
 		return
 	}
-	dsets.versionMap[u] = dset
+	dsets.list = append(dsets.list, dset)
+	dsets.mapUUID[u] = dset
 	return
 }
 
-// newData registers a new instance of a given data type within a dataset.
-func (dsets *Datasets) newData(u UUID, name DataString, typeName string, config dvid.Config) error {
-	// Find the Dataset with this UUID
-	dset, found := dsets.versionMap[u]
-	if !found {
-		return fmt.Errorf("No node found with UUID %s", u)
-	}
+// -- Datasets Serialization and Deserialization ---
 
-	// Construct new data
-	return dset.NewData(name, typeName, config)
+type serializableDatasets struct {
+	DatasetsUUID []UUID
+	NewDatasetID DatasetLocalID
 }
 
-// Get retrieves Datasets from a KeyValueDB.
-func (dsets *Datasets) Get(db storage.KeyValueDB) (err error) {
+func (dsets *Datasets) serializableStruct() (sdata *serializableDatasets) {
+	sdata = &serializableDatasets{
+		DatasetsUUID: []UUID{},
+		NewDatasetID: dsets.newDatasetID,
+	}
+	for _, dset := range dsets.list {
+		sdata.DatasetsUUID = append(sdata.DatasetsUUID, dset.Root)
+	}
+	return
+}
+
+// Serialize returns a serialization of Datasets with Snappy compression and
+// CRC32 checksum.
+func (dsets *Datasets) serialize() ([]byte, error) {
+	return dvid.Serialize(dsets.serializableStruct(), dvid.Snappy, dvid.CRC32)
+}
+
+// Deserialize converts a serialization to Datasets
+func (dsets *Datasets) deserialize(s []byte) (*serializableDatasets, error) {
+	deserialization := new(serializableDatasets)
+	err := dvid.Deserialize(s, deserialization)
+	if err != nil {
+		return nil, fmt.Errorf("Error in deserializing datasets: %s", err.Error())
+	}
+	return deserialization, nil
+}
+
+// MarshalJSON implements the json.Marshaler interface for Datasets.
+func (dsets *Datasets) MarshalJSON() (m []byte, err error) {
+	return json.Marshal(dsets.serializableStruct())
+}
+
+// Load retrieves Datasets and all referenced Dataset from the KeyValueDB.
+func (dsets *Datasets) Load(db storage.KeyValueDB) (err error) {
+	// Get the the map of all UUIDs to local dataset IDs
 	var data []byte
 	data, err = db.Get(&DatasetsKey{})
 	if err != nil {
 		return
 	}
+	deserialization, err := dsets.deserialize(data)
+	if err != nil {
+		return err
+	}
 
-	// Deserialize into object
-	err = dsets.Deserialize(data)
+	// Get every Dataset (range query)
+	keyvalues, err := db.GetRange(MinDatasetKey(), MaxDatasetKey())
+	if err != nil {
+		return err
+	}
 
-	// Initialize the versionMap cache
-	dsets.versionMap = make(map[UUID]*Dataset)
-	for _, dset := range dsets.Datasets {
-		for u, _ := range dset.VersionMap {
-			dsets.versionMap[u] = dset
+	// Check our expected # of Dataset == actually loaded # of Dataset.
+	if len(keyvalues) != len(deserialization.DatasetsUUID) {
+		return fmt.Errorf("Stored Datasets does not agree with the # of Dataset entries: %d vs %d",
+			len(deserialization.DatasetsUUID), len(keyvalues))
+	}
+	if int(deserialization.NewDatasetID) < len(keyvalues) {
+		return fmt.Errorf("Unexpected stored new dataset ID %d < current # datasets (%d)!",
+			deserialization.NewDatasetID, len(keyvalues))
+	}
+	dsets.newDatasetID = deserialization.NewDatasetID
+
+	// Reconstruct the Datasets by associating UUIDs.
+	dsets.list = []*Dataset{}
+	dsets.mapUUID = make(map[UUID]*Dataset)
+	for _, value := range keyvalues {
+		dataset := new(Dataset)
+		err := dvid.Deserialize(value.V, dataset)
+		if err != nil {
+			return err
+		}
+		dsets.list = append(dsets.list, dataset)
+		for u, _ := range dataset.Nodes {
+			dsets.mapUUID[u] = dataset
 		}
 	}
 	return
 }
 
 // Put stores Datasets into a KeyValueDB, overwriting whatever was there before.
-// This assumes only one Dataservice for a given datastore.
 func (dsets *Datasets) Put(db storage.KeyValueDB) error {
 	var mutex sync.Mutex
 	mutex.Lock()
 	defer mutex.Unlock()
 
 	// Get serialization
-	serialization, err := dsets.Serialize()
+	serialization, err := dsets.serialize()
 	if err != nil {
 		return err
 	}
 
 	// Put data
 	return db.Put(&DatasetsKey{}, serialization)
-}
-
-// Serialize returns a serialization of Datasets with Snappy compression and
-// CRC32 checksum.
-func (dsets *Datasets) Serialize() ([]byte, error) {
-	return dvid.Serialize(dsets, dvid.Snappy, dvid.CRC32)
-}
-
-// Deserialize converts a serialization to Datasets
-func (dsets *Datasets) Deserialize(s []byte) error {
-	dsets.Datasets = []*Dataset{}
-	err := dvid.Deserialize(s, dsets)
-	if err != nil {
-		return fmt.Errorf("Error in deserializing datasets: %s", err.Error())
-	}
-	dsets.versionMap = make(map[UUID]*Dataset)
-	for _, dset := range dsets.Datasets {
-		for _, u := range dset.Versions() {
-			dsets.versionMap[u] = dset
-		}
-	}
-	return nil
 }
 
 // Dataset is a set of Data with an associated version DAG.
@@ -299,7 +290,7 @@ type Dataset struct {
 	Alias string
 
 	// DatasetID is the 32-bit identifier that is DVID server-specific.
-	DatasetID dvid.LocalID32
+	DatasetID DatasetLocalID
 
 	// DataMap keeps the dataset-specific names for instances of data types
 	// in this dataset.  Although this is public, access should be through
@@ -336,10 +327,30 @@ func (dset *Dataset) DataService(name DataString) (dataservice DataService, err 
 	return
 }
 
-// NewData adds a new, named instance of a data type to dataset.  Settings can be passed
+func (dset *Dataset) Key() storage.Key {
+	return &DatasetKey{dset.DatasetID}
+}
+
+// Put stores a Dataset into a KeyValueDB, overwriting whatever was there before.
+func (dset *Dataset) Put(db storage.KeyValueDB) error {
+	var mutex sync.Mutex
+	mutex.Lock()
+	defer mutex.Unlock()
+
+	// Get serialization
+	serialization, err := dvid.Serialize(dset, dvid.Snappy, dvid.CRC32)
+	if err != nil {
+		return err
+	}
+
+	// Put data
+	return db.Put(dset.Key(), serialization)
+}
+
+// newData adds a new, named instance of a data type to dataset.  Settings can be passed
 // via the 'config' argument.  For example, config["versioned"] will specify whether
 // the data is mutable across nodes in the version DAG or is simply unversioned.
-func (dset *Dataset) NewData(name DataString, typeName string, config dvid.Config) error {
+func (dset *Dataset) newData(name DataString, typeName string, config dvid.Config) error {
 	// Only allow unique data names per dataset.
 	// TODO -- Do more elaborate check that prevents prefixing data names using
 	// data types that allow different suffixes, e.g., multichannel data.
@@ -358,7 +369,7 @@ func (dset *Dataset) NewData(name DataString, typeName string, config dvid.Confi
 	defer dset.mapLock.Unlock()
 
 	dataID := &DataID{name, dset.NewDataID, dset.DatasetID}
-	dataservice, err = typeService.NewDataService(dataID, config)
+	dataservice, err = typeService.NewDataService(dset, dataID, config)
 	if err != nil {
 		return err
 	}
@@ -410,7 +421,7 @@ type NodeVersion struct {
 	GlobalID UUID
 
 	// VersionID is a Dataset-specific id for each UUID, so we can compress the UUIDs.
-	VersionID dvid.LocalID
+	VersionID VersionLocalID
 
 	// Locked nodes are read-only and can be branched.
 	Locked bool
@@ -459,10 +470,10 @@ type VersionDAG struct {
 
 	// VersionMap is used to accelerate mapping global UUID to DVID server-specific
 	// and smaller ID for a version.
-	VersionMap map[UUID]dvid.LocalID
+	VersionMap map[UUID]VersionLocalID
 
-	NewVersionID dvid.LocalID
-	NewDataID    dvid.LocalID
+	NewVersionID VersionLocalID
+	NewDataID    DataLocalID
 
 	mapLock sync.Mutex
 }
@@ -473,7 +484,7 @@ func NewVersionDAG() *VersionDAG {
 	dag := VersionDAG{
 		Root:       NewUUID(),
 		Nodes:      make(map[UUID]*Node),
-		VersionMap: make(map[UUID]dvid.LocalID),
+		VersionMap: make(map[UUID]VersionLocalID),
 	}
 	t := time.Now()
 	version := &NodeVersion{

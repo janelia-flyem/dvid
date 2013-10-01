@@ -7,7 +7,6 @@ package datastore
 import (
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
@@ -63,9 +62,6 @@ type Service struct {
 	// The backend storage which is private since we want to create an object
 	// interface (e.g., cache object or UUID map) and hide DVID-specific keys.
 	db storage.DataHandler
-
-	// Channel for marking the datasets as dirty.
-	DirtyDatasets chan bool
 }
 
 type OpenErrorType int
@@ -98,10 +94,10 @@ func Open(path string) (s *Service, openErr *OpenError) {
 
 	// Read this datastore's configuration
 	datasets := new(Datasets)
-	err = datasets.Get(db)
+	err = datasets.Load(db)
 	if err != nil {
 		openErr = &OpenError{
-			fmt.Errorf("Error reading datasets information: %s", err.Error()),
+			fmt.Errorf("Error reading datasets: %s", err.Error()),
 			ErrorDatasets,
 		}
 		return
@@ -120,54 +116,13 @@ func Open(path string) (s *Service, openErr *OpenError) {
 	}
 
 	fmt.Printf("\nDatastoreService successfully opened: %s\n", path)
-	s = &Service{datasets, db, nil}
-	s.DirtyDatasets = make(chan bool, 10000)
-
-	// Start a goroutine that periodically persists datasets.
-	go s.periodicallySave()
-
+	s = &Service{datasets, db}
 	return
 }
 
 // Shutdown closes a DVID datastore.
 func (s *Service) Shutdown() {
-	if s.DirtyDatasets != nil {
-		s.DirtyDatasets <- false // Signal dataset persistence goroutine to stop.
-	}
-	s.datasets.Put(s.db)
 	s.db.Close()
-}
-
-func drain(c chan bool) (quit bool) {
-	for {
-		select {
-		case noquit := <-c:
-			if !noquit {
-				return true
-			}
-			continue
-		default:
-			return false
-		}
-	}
-}
-
-// Saves the datasets at most once per second.
-// TODO -- Separate datasets into their own key/value pair once we start
-// managing larger # of datasets.
-func (s *Service) periodicallySave() {
-	saveTick := time.Tick(1 * time.Second)
-	for {
-		<-saveTick
-		if len(s.DirtyDatasets) > 0 {
-			quit := drain(s.DirtyDatasets)
-			if quit {
-				break
-			}
-			dvid.Fmt(dvid.Debug, "Saving datasets after change...\n")
-			s.datasets.Put(s.db)
-		}
-	}
 }
 
 // DatasetsJSON returns a JSON-encoded string of exportable datasets information.
@@ -176,7 +131,12 @@ func (s *Service) DatasetsJSON() (stringJSON string, err error) {
 		stringJSON = "{}"
 		return
 	}
-	return s.datasets.StringJSON()
+	var bytesJSON []byte
+	bytesJSON, err = s.datasets.MarshalJSON()
+	if err != nil {
+		return
+	}
+	return string(bytesJSON), nil
 }
 
 // NOTE: Alterations of Datasets should invoke persistence to the key-value database.
@@ -184,7 +144,7 @@ func (s *Service) DatasetsJSON() (stringJSON string, err error) {
 // opaque UUID or the shortened datasetID.
 
 // NewDataset creates a new dataset.
-func (s *Service) NewDataset() (root UUID, datasetID dvid.LocalID32, err error) {
+func (s *Service) NewDataset() (root UUID, datasetID DatasetLocalID, err error) {
 	if s.datasets == nil {
 		err = fmt.Errorf("Datastore service has no datasets available")
 		return
@@ -194,9 +154,13 @@ func (s *Service) NewDataset() (root UUID, datasetID dvid.LocalID32, err error) 
 	if err != nil {
 		return
 	}
+	err = s.datasets.Put(s.db)
+	if err != nil {
+		return
+	}
+	err = dataset.Put(s.db)
 	root = dataset.Root
 	datasetID = dataset.DatasetID
-	s.DirtyDatasets <- true
 	return
 }
 
@@ -207,12 +171,7 @@ func (s *Service) NewVersion(parent UUID) (u UUID, err error) {
 		err = fmt.Errorf("Datastore service has no datasets available")
 		return
 	}
-	u, err = s.datasets.newChild(parent)
-	if err != nil {
-		return
-	}
-	s.DirtyDatasets <- true
-	return
+	return s.datasets.newChild(parent)
 }
 
 // NewData adds data of given name and type to a dataset specified by a UUID.
@@ -221,12 +180,15 @@ func (s *Service) NewData(u UUID, typename, dataname string, versioned bool) err
 		return fmt.Errorf("Datastore service has no datasets available")
 	}
 	config := dvid.Config{"versioned": versioned}
-	err := s.datasets.newData(u, DataString(dataname), typename, config)
+	dataset, err := s.datasets.DatasetFromUUID(u)
 	if err != nil {
 		return err
 	}
-	s.DirtyDatasets <- true
-	return nil
+	err = dataset.newData(DataString(dataname), typename, config)
+	if err != nil {
+		return err
+	}
+	return dataset.Put(s.db)
 }
 
 // Locks the node with the given UUID.
@@ -238,12 +200,16 @@ func (s *Service) Lock(u UUID) error {
 	if err != nil {
 		return err
 	}
-	return dataset.Lock(u)
+	err = dataset.Lock(u)
+	if err != nil {
+		return err
+	}
+	return dataset.Put(s.db)
 }
 
 // LocalIDFromUUID when supplied a UUID string, returns smaller sized local IDs that identify a
 // dataset and a version.
-func (s *Service) LocalIDFromUUID(u UUID) (datasetID dvid.LocalID32, versionID dvid.LocalID, err error) {
+func (s *Service) LocalIDFromUUID(u UUID) (dID DatasetLocalID, vID VersionLocalID, err error) {
 	if s.datasets == nil {
 		err = fmt.Errorf("Datastore service has no datasets available")
 		return
@@ -253,9 +219,9 @@ func (s *Service) LocalIDFromUUID(u UUID) (datasetID dvid.LocalID32, versionID d
 	if err != nil {
 		return
 	}
-	datasetID = dataset.DatasetID
+	dID = dataset.DatasetID
 	var found bool
-	versionID, found = dataset.VersionMap[u]
+	vID, found = dataset.VersionMap[u]
 	if !found {
 		err = fmt.Errorf("UUID (%s) not found in dataset", u)
 	}
@@ -265,20 +231,20 @@ func (s *Service) LocalIDFromUUID(u UUID) (datasetID dvid.LocalID32, versionID d
 // NodeIDFromString when supplied a UUID string, returns the matched UUID as well as
 // more compact local IDs that identify the dataset and a version.  Partial matches
 // are allowed, similar to DatasetFromString.
-func (s *Service) NodeIDFromString(str string) (globalID UUID, datasetID dvid.LocalID32,
-	versionID dvid.LocalID, err error) {
+func (s *Service) NodeIDFromString(str string) (u UUID, dID DatasetLocalID,
+	vID VersionLocalID, err error) {
 
 	if s.datasets == nil {
 		err = fmt.Errorf("Datastore service has no datasets available")
 		return
 	}
-	dataset, u, err := s.datasets.DatasetFromString(str)
+	var dataset *Dataset
+	dataset, u, err = s.datasets.DatasetFromString(str)
 	if err != nil {
 		return
 	}
-	globalID = u
-	datasetID = dataset.DatasetID
-	versionID = dataset.VersionMap[u]
+	dID = dataset.DatasetID
+	vID = dataset.VersionMap[u]
 	return
 }
 
@@ -360,13 +326,13 @@ func (s *Service) AboutJSON() (jsonStr string, err error) {
 // DataChart returns a text chart of data names and their types for this DVID server.
 func (s *Service) DataChart() string {
 	var text string
-	if s.datasets == nil || len(s.datasets.Datasets) == 0 {
+	if s.datasets == nil || len(s.datasets.list) == 0 {
 		return "  No datasets have been added to this datastore.\n"
 	}
 	writeLine := func(name DataString, version string, url UrlString) {
 		text += fmt.Sprintf("%-15s  %-25s  %s\n", name, version, url)
 	}
-	for num, dset := range s.datasets.Datasets {
+	for num, dset := range s.datasets.list {
 		text += fmt.Sprintf("\nDataset %d (UUID = %s):\n\n", num+1, dset.Root)
 		writeLine("Name", "Type Name", "Url")
 		for name, data := range dset.DataMap {

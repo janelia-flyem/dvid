@@ -201,16 +201,19 @@ type Datatype struct {
 // --- TypeService interface ---
 
 // NewData returns a pointer to a new Voxels with default values.
-func (dtype *Datatype) NewDataService(id *datastore.DataID, config dvid.Config) (
-	service datastore.DataService, err error) {
+func (dtype *Datatype) NewDataService(dset *datastore.Dataset, id *datastore.DataID,
+	config dvid.Config) (service datastore.DataService, err error) {
 
 	var voxelservice datastore.DataService
-	voxelservice, err = dtype.Datatype.NewDataService(id, config)
+	voxelservice, err = dtype.Datatype.NewDataService(dset, id, config)
 	if err != nil {
 		return
 	}
 	basedata := voxelservice.(*voxels.Data)
-	data := &Data{Data: *basedata}
+	data := &Data{
+		Data:    *basedata,
+		dataset: dset,
+	}
 	data.BlockSize = DefaultBlockMax
 	data.TypeService = typeService
 	service = data
@@ -224,6 +227,10 @@ func (dtype *Datatype) Help() string {
 // Data of multichan16 type embeds voxels and extends it with channels.
 type Data struct {
 	voxels.Data
+
+	// Pointer to the owning Dataset so we can force Put() if we modify
+	// data properties based on loaded data, e.g., initialize NumChannels.
+	dataset *datastore.Dataset
 
 	// Number of channels for this data.  The names are referenced by
 	// adding a number onto the data name, e.g., mydata1, mydata2, etc.
@@ -407,7 +414,7 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 		reply.Text += fmt.Sprintf(" (%d x %d x %d)", channels[0].Width(),
 			channels[0].Height(), channels[0].Depth())
 	}
-	service.DirtyDatasets <- true
+	d.dataset.Put(service.KeyValueDB())
 
 	// PUT each channel of the file into the datastore using a separate data name.
 	for _, channel := range channels {
@@ -433,7 +440,7 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 }
 
 // Create a RGB interleaved volume.
-func (d *Data) storeComposite(versionID dvid.LocalID, channels []*Channel) error {
+func (d *Data) storeComposite(versionID datastore.VersionLocalID, channels []*Channel) error {
 	// Setup the composite Channel
 	geom := channels[0].Geometry
 	pixels := int(geom.Width() * geom.Height() * geom.Depth())

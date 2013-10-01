@@ -15,12 +15,6 @@ import (
 	"github.com/janelia-flyem/go/snappy-go/snappy"
 )
 
-// Serializable can be serialized to and deserialized from bytes.
-type Serializable interface {
-	Serialize() ([]byte, error)
-	Deserialize([]byte) error
-}
-
 // Compression is the format of compression for storing data
 type Compression uint8
 
