@@ -125,14 +125,28 @@ func (s *Service) Shutdown() {
 	s.db.Close()
 }
 
-// DatasetsJSON returns a JSON-encoded string of exportable datasets information.
-func (s *Service) DatasetsJSON() (stringJSON string, err error) {
+// DatasetsListJSON returns JSON of a list of datasets.
+func (s *Service) DatasetsListJSON() (stringJSON string, err error) {
 	if s.datasets == nil {
 		stringJSON = "{}"
 		return
 	}
 	var bytesJSON []byte
 	bytesJSON, err = s.datasets.MarshalJSON()
+	if err != nil {
+		return
+	}
+	return string(bytesJSON), nil
+}
+
+// DatasetsAllJSON returns JSON of a list of datasets.
+func (s *Service) DatasetsAllJSON() (stringJSON string, err error) {
+	if s.datasets == nil {
+		stringJSON = "{}"
+		return
+	}
+	var bytesJSON []byte
+	bytesJSON, err = s.datasets.AllJSON()
 	if err != nil {
 		return
 	}
@@ -201,6 +215,19 @@ func (s *Service) Lock(u UUID) error {
 		return err
 	}
 	err = dataset.Lock(u)
+	if err != nil {
+		return err
+	}
+	return dataset.Put(s.db)
+}
+
+// SaveDataset forces this service to persist the dataset with given UUID.
+// It is useful when modifying datasets internally.
+func (s *Service) SaveDataset(u UUID) error {
+	if s.datasets == nil {
+		return fmt.Errorf("Datastore service has no datasets available")
+	}
+	dataset, err := s.datasets.DatasetFromUUID(u)
 	if err != nil {
 		return err
 	}

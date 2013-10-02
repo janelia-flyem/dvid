@@ -211,8 +211,8 @@ func (dtype *Datatype) NewDataService(dset *datastore.Dataset, id *datastore.Dat
 	}
 	basedata := voxelservice.(*voxels.Data)
 	data := &Data{
-		Data:    *basedata,
-		dataset: dset,
+		Data:        *basedata,
+		datasetUUID: dset.Root,
 	}
 	data.BlockSize = DefaultBlockMax
 	data.TypeService = typeService
@@ -228,13 +228,13 @@ func (dtype *Datatype) Help() string {
 type Data struct {
 	voxels.Data
 
-	// Pointer to the owning Dataset so we can force Put() if we modify
-	// data properties based on loaded data, e.g., initialize NumChannels.
-	dataset *datastore.Dataset
-
 	// Number of channels for this data.  The names are referenced by
 	// adding a number onto the data name, e.g., mydata1, mydata2, etc.
 	NumChannels int
+
+	// Pointer to the owning Dataset so we can force Put() if we modify
+	// data properties based on loaded data, e.g., initialize NumChannels.
+	datasetUUID datastore.UUID
 }
 
 // --- DataService interface ---
@@ -414,7 +414,10 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 		reply.Text += fmt.Sprintf(" (%d x %d x %d)", channels[0].Width(),
 			channels[0].Height(), channels[0].Depth())
 	}
-	d.dataset.Put(service.KeyValueDB())
+	err = service.SaveDataset(d.datasetUUID)
+	if err != nil {
+		return err
+	}
 
 	// PUT each channel of the file into the datastore using a separate data name.
 	for _, channel := range channels {

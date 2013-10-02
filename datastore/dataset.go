@@ -212,9 +212,19 @@ func (dsets *Datasets) deserialize(s []byte) (*serializableDatasets, error) {
 	return deserialization, nil
 }
 
-// MarshalJSON implements the json.Marshaler interface for Datasets.
+// MarshalJSON returns the JSON of just the list of Dataset.
 func (dsets *Datasets) MarshalJSON() (m []byte, err error) {
 	return json.Marshal(dsets.serializableStruct())
+}
+
+// AllJSON returns JSON of all the datasets information.
+func (dsets *Datasets) AllJSON() (m []byte, err error) {
+	data := struct {
+		Datasets []*Dataset
+	}{
+		dsets.list,
+	}
+	return json.Marshal(data)
 }
 
 // Load retrieves Datasets and all referenced Dataset from the KeyValueDB.

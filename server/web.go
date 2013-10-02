@@ -39,9 +39,11 @@ and the returned format will be in JSON except for "help" which returns HTML.
     GET /api/about
     GET /api/load
 
-    GET /api/datasets/info
+    GET /api/datasets/list
+    GET /api/datasets/all
     POST /api/datasets/new  (Returns JSON like {"Root": "My Root UUID"})
 
+    GET /api/dataset/<UUID>/info 
     GET /api/dataset/<UUID>/<data name>/help  (Returns type-specific help)
 
     POST /api/dataset/<UUID>/versioned/<datatype name>/<data name>
@@ -155,13 +157,21 @@ func datasetsRequest(w http.ResponseWriter, r *http.Request) {
 	action := strings.ToLower(r.Method)
 
 	if len(parts) != 1 {
-		badRequest(w, r, WebAPIPath+"/datasets/ must be followed with 'info' or 'new'")
+		badRequest(w, r, WebAPIPath+"datasets/ must be followed with 'list', 'all' or 'new'")
 		return
 	}
 
 	switch parts[0] {
-	case "info":
-		jsonStr, err := runningService.DatasetsJSON()
+	case "list":
+		jsonStr, err := runningService.DatasetsListJSON()
+		if err != nil {
+			badRequest(w, r, err.Error())
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, jsonStr)
+	case "all":
+		jsonStr, err := runningService.DatasetsAllJSON()
 		if err != nil {
 			badRequest(w, r, err.Error())
 			return

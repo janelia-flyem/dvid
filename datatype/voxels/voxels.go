@@ -123,6 +123,8 @@ var DefaultBlockMax Point3d = Point3d{16, 16, 16}
 func init() {
 	gob.Register(&Datatype{})
 	gob.Register(&Data{})
+	gob.Register(&binary.LittleEndian)
+	gob.Register(&binary.BigEndian)
 }
 
 // Operation holds Voxel-specific data for processing chunks.

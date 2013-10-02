@@ -85,7 +85,7 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 		cmd.CommandArgs(1, &subcommand)
 		switch subcommand {
 		case "info":
-			jsonStr, err := runningService.DatasetsJSON()
+			jsonStr, err := runningService.DatasetsListJSON()
 			if err != nil {
 				return err
 			}
