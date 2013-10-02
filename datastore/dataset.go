@@ -160,9 +160,10 @@ func (dsets *Datasets) newDataset() (dset *Dataset, err error) {
 
 // newChild creates a new child node off a LOCKED parent node.  Will return
 // an error if the parent node has not been locked.
-func (dsets *Datasets) newChild(parent UUID) (u UUID, err error) {
+func (dsets *Datasets) newChild(parent UUID) (dset *Dataset, u UUID, err error) {
 	// Find the Dataset with this UUID
-	dset, found := dsets.mapUUID[parent]
+	var found bool
+	dset, found = dsets.mapUUID[parent]
 	if !found {
 		err = fmt.Errorf("No node found with UUID %s", parent)
 		return
@@ -173,7 +174,6 @@ func (dsets *Datasets) newChild(parent UUID) (u UUID, err error) {
 	if err != nil {
 		return
 	}
-	dsets.list = append(dsets.list, dset)
 	dsets.mapUUID[u] = dset
 	return
 }
@@ -547,9 +547,10 @@ func (dag *VersionDAG) newChild(parent UUID) (u UUID, err error) {
 		VersionID: dag.NewVersionID,
 		Created:   t,
 		Updated:   t,
-		Parents:   []UUID{u},
+		Parents:   []UUID{parent},
 	}
 	dag.Nodes[u] = &Node{NodeVersion: version}
+	dag.VersionMap[u] = version.VersionID
 	dag.NewVersionID++
 	dag.mapLock.Unlock()
 	return

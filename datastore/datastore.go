@@ -185,7 +185,13 @@ func (s *Service) NewVersion(parent UUID) (u UUID, err error) {
 		err = fmt.Errorf("Datastore service has no datasets available")
 		return
 	}
-	return s.datasets.newChild(parent)
+	var dataset *Dataset
+	dataset, u, err = s.datasets.newChild(parent)
+	if err != nil {
+		return
+	}
+	err = dataset.Put(s.db)
+	return
 }
 
 // NewData adds data of given name and type to a dataset specified by a UUID.

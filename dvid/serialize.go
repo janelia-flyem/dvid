@@ -113,7 +113,10 @@ func SerializeData(data []byte, compress Compression, checksum Checksum) (s []by
 	return
 }
 
-// Serializes an arbitrary Go object using Gob encoding and optional compression, checksum
+// Serializes an arbitrary Go object using Gob encoding and optional compression, checksum.
+// If your object is []byte, you should preferentially use SerializeData since the Gob encoding
+// process adds some overhead in performance as well as size of wire format to describe the
+// transmitted types.
 func Serialize(object interface{}, compress Compression, checksum Checksum) (s []byte, err error) {
 	var buffer bytes.Buffer
 	enc := gob.NewEncoder(&buffer)

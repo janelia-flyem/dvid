@@ -15,6 +15,7 @@ import (
 	_ "github.com/janelia-flyem/dvid/datatype/grayscale8"
 	_ "github.com/janelia-flyem/dvid/datatype/labels32"
 	_ "github.com/janelia-flyem/dvid/datatype/labels64"
+	_ "github.com/janelia-flyem/dvid/datatype/multichan16"
 	_ "github.com/janelia-flyem/dvid/datatype/rgba8"
 )
 
@@ -114,7 +115,19 @@ func (suite *DataSuite) TestDatasetPersistence(c *C) {
 	err = service.NewData(root, "grayscale8", "node2image", false)
 	c.Assert(err, IsNil)
 
-	oldJSON, err := service.DatasetsJSON()
+	err = service.NewData(root, "multichan16", "node2multichan", false)
+	c.Assert(err, IsNil)
+
+	err = service.NewData(root, "labels32", "node2labels32", false)
+	c.Assert(err, IsNil)
+
+	err = service.NewData(root, "labels64", "node2labels64", false)
+	c.Assert(err, IsNil)
+
+	err = service.NewData(root, "rgba8", "node2rgba8", false)
+	c.Assert(err, IsNil)
+
+	oldJSON, err := service.DatasetsAllJSON()
 	c.Assert(err, IsNil)
 
 	service.Shutdown()
@@ -123,7 +136,7 @@ func (suite *DataSuite) TestDatasetPersistence(c *C) {
 	service2, err := datastore.Open(dir)
 	c.Assert(err, IsNil)
 
-	newJSON, err := service2.DatasetsJSON()
+	newJSON, err := service2.DatasetsAllJSON()
 	c.Assert(err, IsNil)
 
 	c.Assert(newJSON, DeepEquals, oldJSON)
