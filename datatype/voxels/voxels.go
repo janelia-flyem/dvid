@@ -34,6 +34,28 @@ API for datatypes derived from voxels (github.com/janelia-flyem/dvid/datatype/vo
 
 Command-line:
 
+$ dvid dataset <UUID> new <versioning> <type name> <data name> <settings...>
+
+	Adds newly named data of the 'type name' to dataset with specified UUID.
+
+	Example:
+
+	$ dvid dataset 3f8c new versioned grayscale8 mygrayscale BlockSize=32 VoxelRes=1.5,1.0,1.5
+
+    Arguments:
+
+    UUID           Hexidecimal string with enough characters to uniquely identify a version node.
+    versioning     "versioned" or "unversioned"
+    type name      Data type name, e.g., "grayscale8"
+    data name      Name of data to create, e.g., "mygrayscale"
+    settings       Configuration settings in "key=value" format separated by spaces.
+
+    Configuration Settings
+
+    BlockSize      Size in pixels  (default: %s)
+    VoxelRes       Resolution of voxels (default: 1.0, 1.0, 1.0)
+    VoxelResUnits  String of units (default: "nanometers")
+
 $ dvid node <UUID> <data name> load local  <plane> <offset> <image glob>
 $ dvid node <UUID> <data name> load remote <plane> <offset> <image glob>
 
@@ -256,32 +278,45 @@ func (dtype *Datatype) NewDataService(dset *datastore.Dataset, id *datastore.Dat
 	}
 	data := &Data{Data: basedata}
 	data.BlockSize = DefaultBlockMax
-	if obj, found := config["BlockSize"]; found {
-		if blockSize, ok := obj.(Point3d); ok {
-			data.BlockSize = blockSize
-		} else {
-			err = fmt.Errorf("BlockSize configuration is not a 3d point!")
+	var s string
+	var found bool
+	s, found, err = config.GetString("BlockSize")
+	if err != nil {
+		return
+	}
+	if found {
+		data.BlockSize, err = PointStr(s).Point3d()
+		if err != nil {
+			err = fmt.Errorf("BlockSize setting is not a 3d point: %s [%s]", s, err.Error())
 			return
 		}
 	}
 	data.VoxelRes = VoxelResolution{1.0, 1.0, 1.0}
-	if obj, found := config["VoxelRes"]; found {
-		if voxelRes, ok := obj.(VoxelResolution); ok {
-			data.VoxelRes = voxelRes
+	s, found, err = config.GetString("VoxelRes")
+	if err != nil {
+		return
+	}
+	if found {
+		data.VoxelRes, err = VectorStr(s).VoxelResolution()
+		if err != nil {
+			err = fmt.Errorf("VoxelRes setting is not a 3d vector: %s [%s]", s, err.Error())
+			return
 		}
 	}
 	data.VoxelResUnits = "nanometers"
-	if obj, found := config["VoxelResUnits"]; found {
-		if res, ok := obj.(VoxelResolutionUnits); ok {
-			data.VoxelResUnits = res
-		}
+	s, found, err = config.GetString("VoxelResUnits")
+	if err != nil {
+		return
+	}
+	if found {
+		data.VoxelResUnits = VoxelResolutionUnits(s)
 	}
 	service = data
 	return
 }
 
 func (dtype *Datatype) Help() string {
-	return HelpMessage
+	return fmt.Sprintf(HelpMessage, DefaultBlockMax)
 }
 
 // Data embeds the datastore's Data and extends it with voxel-specific properties.
@@ -301,8 +336,10 @@ type Data struct {
 	ByteOrder binary.ByteOrder
 
 	// Maximum extents of this volume.
+	MaxIndex dvid.Index
 
 	// Available extents of this volume.
+	MinIndex dvid.Index
 }
 
 func (d *Data) getVoxelSpecs() (bytesPerVoxel, channelsInterleaved int32, err error) {

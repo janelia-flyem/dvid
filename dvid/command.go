@@ -7,24 +7,71 @@
 package dvid
 
 import (
+	"fmt"
 	"strings"
 )
 
-// Keys for setting various arguments within the command line via "key=value" strings.
-const (
-	KeyUuid  = "uuid"
-	KeyPlane = "plane"
-)
+// Config is a map of keyword to arbitrary data to specify configurations via keyword.
+type Config map[string]interface{}
 
-var (
-	// Channel for graceful shutdown of goroutines
-	HaltChannel chan bool
+func NewConfig() Config {
+	return make(Config)
+}
 
-	setKeys = map[string]bool{
-		"plane": true,
-		"uuid":  true,
+// IsVersioned returns true if we want this data versioned.
+func (c Config) IsVersioned() (versioned bool, err error) {
+	if c == nil {
+		err = fmt.Errorf("Config data structure has not been initialized")
+		return
 	}
-)
+	param, ok := c["versioned"]
+	if !ok {
+		err = fmt.Errorf("No 'versioned' key in DVID configuration")
+		return
+	}
+	versioned, ok = param.(bool)
+	if !ok {
+		err = fmt.Errorf("Illegal 'versioned' value in DVID configuration")
+	}
+	return
+}
+
+func (c Config) SetVersioned(versioned bool) {
+	if c == nil {
+		c = make(map[string]interface{})
+	}
+	c["versioned"] = versioned
+}
+
+// GetString returns a string value of the given key.  If setting of key is not
+// a string, returns an error.
+func (c Config) GetString(key string) (s string, found bool, err error) {
+	var param interface{}
+	if param, found = c[key]; found {
+		var ok bool
+		s, ok = param.(string)
+		if !ok {
+			err = fmt.Errorf("Setting for '%s' was not a string: %s", key, param)
+		}
+		return
+	}
+	return
+}
+
+// GetInt returns an int value of the given key.  If setting of key is not
+// an int, returns an error.
+func (c Config) GetInt(key string) (i int, found bool, err error) {
+	var param interface{}
+	if param, found = c[key]; found {
+		var ok bool
+		i, ok = param.(int)
+		if !ok {
+			err = fmt.Errorf("Setting for '%s' was not an int: %s", key, param)
+		}
+		return
+	}
+	return
+}
 
 // Response provides a few string fields to pass information back from
 // a remote operation.
@@ -64,9 +111,9 @@ func (cmd Command) TypeCommand() string {
 	return strings.ToLower(cmd[3])
 }
 
-// Parameter scans a command for any "key=value" argument and returns
+// Setting scans a command for any "key=value" argument and returns
 // the value of the passed 'key'.
-func (cmd Command) Parameter(key string) (value string, found bool) {
+func (cmd Command) Setting(key string) (value string, found bool) {
 	if len(cmd) > 1 {
 		for _, arg := range cmd[1:] {
 			elems := strings.Split(arg, "=")
@@ -78,6 +125,21 @@ func (cmd Command) Parameter(key string) (value string, found bool) {
 		}
 	}
 	return
+}
+
+// Settings scans a command for any "key=value" argument and returns
+// a Config, which is a map of key/value data.
+func (cmd Command) Settings() Config {
+	config := make(Config)
+	if len(cmd) > 1 {
+		for _, arg := range cmd[1:] {
+			elems := strings.Split(arg, "=")
+			if len(elems) == 2 {
+				config[elems[0]] = elems[1]
+			}
+		}
+	}
+	return config
 }
 
 // CommandArgs sets a variadic argument set of string pointers to data
@@ -114,12 +176,8 @@ func getArgs(cmd Command, startPos int, targets ...*string) (overflow []string) 
 		numTargets := len(targets)
 		curTarget := 0
 		for _, arg := range cmd[startPos:] {
-			optionalSet := false
 			elems := strings.Split(arg, "=")
-			if len(elems) == 2 {
-				_, optionalSet = setKeys[elems[0]]
-			}
-			if !optionalSet {
+			if len(elems) != 2 {
 				if curTarget >= numTargets {
 					overflow = append(overflow, arg)
 				} else {

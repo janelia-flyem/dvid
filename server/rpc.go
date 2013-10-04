@@ -23,8 +23,8 @@ const helpMessage = `Commands executed on the server (rpc address = %s):
 	datasets info
 	datasets new         (returns UUID of dataset's root node)
 
-	dataset <UUID> versioned <datatype name> <data name>
-	dataset <UUID> unversioned <datatype name> <data name>
+	dataset <UUID> new versioned <datatype name> <data name> <datatype-specific config>...
+	dataset <UUID> new unversioned <datatype name> <data name> <datatype-specific config>...
 
 	dataset <UUID> <data name> help
 
@@ -101,29 +101,31 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 		}
 
 	case "dataset":
-		var uuidStr, descriptor, typename, dataname string
-		cmd.CommandArgs(1, &uuidStr, &descriptor)
+		var uuidStr, subcommand, versioning, typename, dataname string
+		cmd.CommandArgs(1, &uuidStr, &subcommand)
 		uuid, _, _, err := runningService.NodeIDFromString(uuidStr)
 		if err != nil {
 			return err
 		}
-		switch descriptor {
-		case "versioned", "unversioned":
-			cmd.CommandArgs(3, &typename, &dataname)
-			err = runningService.NewData(uuid, typename, dataname, descriptor == "versioned")
+		switch subcommand {
+		case "new":
+			cmd.CommandArgs(4, &versioning, &typename, &dataname)
+			config := cmd.Settings()
+			config.SetVersioned(versioning == "versioned")
+			err = runningService.NewData(uuid, typename, dataname, config)
 			if err != nil {
 				return err
 			}
 			reply.Text = fmt.Sprintf("Data %q [%s] added to node %s", dataname, typename, uuidStr)
 		default:
-			dataname := datastore.DataString(descriptor)
-			var subcommand string
-			cmd.CommandArgs(3, &subcommand)
+			dataname := datastore.DataString(subcommand)
 			dataservice, err := runningService.DataService(uuid, dataname)
 			if err != nil {
 				return err
 			}
-			if subcommand == "help" {
+			var subcommand2 string
+			cmd.CommandArgs(4, &subcommand2)
+			if subcommand2 == "help" {
 				reply.Text = dataservice.Help()
 			} else {
 				return fmt.Errorf("Unknown command: %q", cmd)

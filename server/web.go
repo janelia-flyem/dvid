@@ -48,6 +48,7 @@ and the returned format will be in JSON except for "help" which returns HTML.
 
     POST /api/dataset/<UUID>/versioned/<datatype name>/<data name>
     POST /api/dataset/<UUID>/unversioned/<datatype name>/<data name>
+        Type-specific configuration settings should be sent via JSON.
 
     POST /api/node/<UUID>/lock
     POST /api/node/<UUID>/branch
@@ -226,8 +227,8 @@ func datasetRequest(w http.ResponseWriter, r *http.Request) {
 		}
 		typename := parts[2]
 		dataname := parts[3]
-
-		err = runningService.NewData(uuid, typename, dataname, parts[1] == "versioned")
+		config := dvid.Config{"versioned": (parts[1] == "versioned")}
+		err = runningService.NewData(uuid, typename, dataname, config)
 		if err != nil {
 			badRequest(w, r, err.Error())
 			return

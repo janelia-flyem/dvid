@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/janelia-flyem/dvid/datastore"
-	_ "github.com/janelia-flyem/dvid/dvid"
+	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 
 	// Declare the data types this DVID executable will support
@@ -53,11 +53,13 @@ func (suite *DataSuite) TestVersionedDataOps(c *C) {
 	root1, _, err := suite.service.NewDataset()
 	c.Assert(err, IsNil)
 
-	versioned := true
-	err = suite.service.NewData(root1, "grayscale8", "grayscale", versioned)
+	config := dvid.NewConfig()
+	config.SetVersioned(true)
+
+	err = suite.service.NewData(root1, "grayscale8", "grayscale", config)
 	c.Assert(err, IsNil)
 
-	err = suite.service.NewData(root1, "labels64", "labels", versioned)
+	err = suite.service.NewData(root1, "labels64", "labels", config)
 	c.Assert(err, IsNil)
 
 	child1, err := suite.service.NewVersion(root1)
@@ -76,10 +78,10 @@ func (suite *DataSuite) TestVersionedDataOps(c *C) {
 
 	c.Assert(root1, Not(Equals), root2)
 
-	err = suite.service.NewData(root2, "labels64", "labels2", versioned)
+	err = suite.service.NewData(root2, "labels64", "labels2", config)
 	c.Assert(err, IsNil)
 
-	err = suite.service.NewData(root2, "grayscale8", "grayscale2", versioned)
+	err = suite.service.NewData(root2, "grayscale8", "grayscale2", config)
 	c.Assert(err, IsNil)
 
 	err = suite.service.Lock(root2)
@@ -106,25 +108,28 @@ func (suite *DataSuite) TestDatasetPersistence(c *C) {
 	root, _, err := service.NewDataset()
 	c.Assert(err, IsNil)
 
-	err = service.NewData(root, "grayscale8", "node1image", false)
+	config := dvid.NewConfig()
+	config.SetVersioned(false)
+
+	err = service.NewData(root, "grayscale8", "node1image", config)
 	c.Assert(err, IsNil)
 
 	root, _, err = service.NewDataset()
 	c.Assert(err, IsNil)
 
-	err = service.NewData(root, "grayscale8", "node2image", false)
+	err = service.NewData(root, "grayscale8", "node2image", config)
 	c.Assert(err, IsNil)
 
-	err = service.NewData(root, "multichan16", "node2multichan", false)
+	err = service.NewData(root, "multichan16", "node2multichan", config)
 	c.Assert(err, IsNil)
 
-	err = service.NewData(root, "labels32", "node2labels32", false)
+	err = service.NewData(root, "labels32", "node2labels32", config)
 	c.Assert(err, IsNil)
 
-	err = service.NewData(root, "labels64", "node2labels64", false)
+	err = service.NewData(root, "labels64", "node2labels64", config)
 	c.Assert(err, IsNil)
 
-	err = service.NewData(root, "rgba8", "node2rgba8", false)
+	err = service.NewData(root, "rgba8", "node2rgba8", config)
 	c.Assert(err, IsNil)
 
 	oldJSON, err := service.DatasetsAllJSON()

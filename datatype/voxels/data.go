@@ -270,6 +270,11 @@ func (s VectorStr) Vector3d() (v Vector3d, err error) {
 	return
 }
 
+func (s VectorStr) VoxelResolution() (v VoxelResolution, err error) {
+	_, err = fmt.Sscanf(string(s), "%f,%f,%f", &v[0], &v[1], &v[2])
+	return
+}
+
 // VoxelResolution holds the relative resolutions along each dimension.  Since
 // voxel resolutions should be fixed for the lifetime of a datastore, we assume
 // there is one base unit of resolution (e.g., nanometers) and all resolutions

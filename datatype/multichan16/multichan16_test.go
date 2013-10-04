@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/janelia-flyem/dvid/datastore"
+	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 )
 
@@ -65,7 +66,10 @@ func (s *DataSuite) TestDatasetPersistence(c *C) {
 	child1_1, err := service.NewVersion(child1)
 	c.Assert(err, IsNil)
 
-	err = service.NewData(child1_1, "multichan16", "test", true)
+	config := dvid.NewConfig()
+	config.SetVersioned(true)
+
+	err = service.NewData(child1_1, "multichan16", "test", config)
 	c.Assert(err, IsNil)
 
 	// Go into the dataset and modify the above data so we can make sure it persist.

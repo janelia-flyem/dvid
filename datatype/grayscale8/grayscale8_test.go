@@ -83,8 +83,10 @@ func (suite *DataSuite) sliceTest(c *C, slice voxels.Geometry) {
 	c.Assert(err, IsNil)
 
 	// Add grayscale data
-	versioned := true
-	err = suite.service.NewData(root, "grayscale8", "grayscale", versioned)
+	config := dvid.NewConfig()
+	config.SetVersioned(true)
+
+	err = suite.service.NewData(root, "grayscale8", "grayscale", config)
 	c.Assert(err, IsNil)
 
 	dataservice, err := suite.service.DataService(root, "grayscale")

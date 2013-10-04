@@ -168,7 +168,7 @@ func (s *Service) NewDataset() (root UUID, datasetID DatasetLocalID, err error) 
 	if err != nil {
 		return
 	}
-	err = s.datasets.Put(s.db)
+	err = s.datasets.Put(s.db) // Need to persist change to list of Dataset
 	if err != nil {
 		return
 	}
@@ -195,11 +195,10 @@ func (s *Service) NewVersion(parent UUID) (u UUID, err error) {
 }
 
 // NewData adds data of given name and type to a dataset specified by a UUID.
-func (s *Service) NewData(u UUID, typename, dataname string, versioned bool) error {
+func (s *Service) NewData(u UUID, typename, dataname string, config dvid.Config) error {
 	if s.datasets == nil {
 		return fmt.Errorf("Datastore service has no datasets available")
 	}
-	config := dvid.Config{"versioned": versioned}
 	dataset, err := s.datasets.DatasetFromUUID(u)
 	if err != nil {
 		return err
