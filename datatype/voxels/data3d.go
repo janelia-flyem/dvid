@@ -20,7 +20,7 @@ func littleToBigEndian(v VoxelHandler, data []uint8) (bigendian []uint8, err err
 	if v.ByteOrder() == nil || v.ByteOrder() == binary.BigEndian || v.BytesPerVoxel() == 1 {
 		return data, nil
 	}
-	pixels := int(v.Width() * v.Height() * v.ChannelsInterleaved())
+	pixels := int(v.Width() * v.Height())
 	sliceBytes := pixels * int(v.BytesPerVoxel())
 	bigendian = make([]uint8, sliceBytes)
 	switch v.BytesPerVoxel() {
@@ -373,11 +373,15 @@ func (shape DataShape) String() string {
 type DataShapeString string
 
 var dataShapeStrings = map[string]DataShape{
-	"xy":  XY,
-	"xz":  XZ,
-	"yz":  YZ,
-	"arb": Arb,
-	"vol": Vol,
+	"xy":    XY,
+	"xz":    XZ,
+	"yz":    YZ,
+	"vol":   Vol,
+	"arb":   Arb,
+	"0,1":   XY,
+	"0,2":   XZ,
+	"1,2":   YZ,
+	"0,1,2": Vol,
 }
 
 // ListDataShapes returns a slice of shape names

@@ -1,44 +1,11 @@
-package grayscale8
+package voxels
 
 import (
 	. "github.com/janelia-flyem/go/gocheck"
-	"testing"
+	_ "testing"
 
-	"github.com/janelia-flyem/dvid/datastore"
-	"github.com/janelia-flyem/dvid/datatype/voxels"
 	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/janelia-flyem/dvid/server"
 )
-
-// Hook up gocheck into the "go test" runner.
-func Test(t *testing.T) { TestingT(t) }
-
-type DataSuite struct {
-	dir     string
-	service *server.Service
-	head    datastore.UUID
-}
-
-var _ = Suite(&DataSuite{})
-
-// This will setup a new datastore and open it up, keeping the UUID and
-// service pointer in the DataSuite.
-func (suite *DataSuite) SetUpSuite(c *C) {
-	// Make a temporary testing directory that will be auto-deleted after testing.
-	suite.dir = c.MkDir()
-
-	// Create a new datastore.
-	err := datastore.Init(suite.dir, true)
-	c.Assert(err, IsNil)
-
-	// Open the datastore
-	suite.service, err = server.OpenDatastore(suite.dir)
-	c.Assert(err, IsNil)
-}
-
-func (suite *DataSuite) TearDownSuite(c *C) {
-	suite.service.Shutdown()
-}
 
 // Data from which to construct repeatable 3d images where adjacent voxels have different values.
 var xdata = []byte{'\x01', '\x07', '\xAF', '\xFF', '\x70'}
@@ -77,7 +44,7 @@ func MakeVolume(ox, oy, oz, nx, ny, nz int) []byte {
 	return volume
 }
 
-func (suite *DataSuite) sliceTest(c *C, slice voxels.Geometry) {
+func (suite *DataSuite) sliceTest(c *C, slice Geometry) {
 	// Create a new dataset
 	root, _, err := suite.service.NewDataset()
 	c.Assert(err, IsNil)
@@ -92,9 +59,9 @@ func (suite *DataSuite) sliceTest(c *C, slice voxels.Geometry) {
 	dataservice, err := suite.service.DataService(root, "grayscale")
 	c.Assert(err, IsNil)
 
-	grayscale, ok := dataservice.(*voxels.Data)
+	grayscale, ok := dataservice.(*Data)
 	if !ok {
-		c.Errorf("Can't cast grayscale data service into voxels.Data\n")
+		c.Errorf("Can't cast grayscale data service into Data\n")
 	}
 
 	// Create a fake 100x100 8-bit grayscale image
@@ -108,7 +75,7 @@ func (suite *DataSuite) sliceTest(c *C, slice voxels.Geometry) {
 	// Store it into datastore at root
 	_, versionID, err := suite.service.LocalIDFromUUID(root)
 	c.Assert(err, IsNil)
-	v, err := grayscale.ImageToVoxels(img, slice)
+	v, err := grayscale.newVoxels(slice, img)
 	c.Assert(err, IsNil)
 
 	err = grayscale.PutImage(versionID, v)
@@ -129,8 +96,8 @@ func (suite *DataSuite) TestXYSliceGrayscale8(c *C) {
 	nx := 100
 	ny := 100
 	ox, oy, oz := 3, 13, 24
-	slice := voxels.NewSliceXY(voxels.Coord{int32(ox), int32(oy), int32(oz)},
-		voxels.Point2d{int32(nx), int32(ny)})
+	slice := NewSliceXY(Coord{int32(ox), int32(oy), int32(oz)},
+		Point2d{int32(nx), int32(ny)})
 	suite.sliceTest(c, slice)
 }
 
@@ -138,8 +105,8 @@ func (suite *DataSuite) TestXZSliceGrayscale8(c *C) {
 	nx := 100
 	ny := 100
 	ox, oy, oz := 31, 10, 14
-	slice := voxels.NewSliceXZ(voxels.Coord{int32(ox), int32(oy), int32(oz)},
-		voxels.Point2d{int32(nx), int32(ny)})
+	slice := NewSliceXZ(Coord{int32(ox), int32(oy), int32(oz)},
+		Point2d{int32(nx), int32(ny)})
 	suite.sliceTest(c, slice)
 }
 
@@ -147,7 +114,7 @@ func (suite *DataSuite) TestYZSliceGrayscale8(c *C) {
 	nx := 100
 	ny := 100
 	ox, oy, oz := 13, 40, 99
-	slice := voxels.NewSliceYZ(voxels.Coord{int32(ox), int32(oy), int32(oz)},
-		voxels.Point2d{int32(nx), int32(ny)})
+	slice := NewSliceYZ(Coord{int32(ox), int32(oy), int32(oz)},
+		Point2d{int32(nx), int32(ny)})
 	suite.sliceTest(c, slice)
 }

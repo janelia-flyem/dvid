@@ -46,6 +46,77 @@ type TypeService interface {
 	NewDataService(dset *Dataset, id *DataID, config dvid.Config) (service DataService, err error)
 }
 
+// Subsetter is a type that can tell us its range of Index and how much it has
+// actually available in this server.  It's used to implement limited cloning,
+// e.g., only cloning a quarter of an image volume.
+type Subsetter interface {
+	// MaximumExtents returns a range of indices for which data is available at
+	// some DVID server.
+	MaximumExtents() dvid.IndexRange
+
+	// AvailableExtents returns a range of indices for which data is available
+	// at this DVID server.  It is the currently available extents.
+	AvailableExtents() dvid.IndexRange
+}
+
+// DataString is a string that is the name of DVID data.
+// This gets its own type for documentation and also provide static error checks
+// to prevent conflation of type name from data name.
+type DataString string
+
+// DataService is an interface for operations on arbitrary data that
+// use a supported TypeService.  Chunk handlers are allocated at this level,
+// so an implementation can own a number of goroutines.
+//
+// DataService operations are completely type-specific, and each datatype
+// handles operations through RPC (DoRPC) and HTTP (DoHTTP).
+// TODO -- Add SPDY as wrapper to HTTP.
+type DataService interface {
+	TypeService
+
+	// DataName returns the name of the data (e.g., grayscale data that is grayscale8 data type).
+	DataName() DataString
+
+	// DatasetLocalID returns a DVID instance-specific id for this dataset, which
+	// can be held in a relatively small number of bytes and is a key component.
+	DatasetID() DatasetLocalID
+
+	// LocalID returns a DVID instance-specific id for this data.
+	LocalID() DataLocalID
+
+	// IsVersioned returns true if this data can be mutated across versions.
+	IsVersioned() bool
+
+	// DoRPC handles command line and RPC commands specific to a data type
+	DoRPC(request Request, reply *Response) error
+
+	// DoHTTP handles HTTP requests specific to a data type
+	DoHTTP(uuid UUID, w http.ResponseWriter, r *http.Request) error
+
+	// Returns standard error response for unknown commands
+	UnknownCommand(r Request) error
+}
+
+// Request supports requests to the DVID server.  Since input and reply payloads
+// are different depending on the command and the data type, we use an ArbitraryInput
+// (empty interface) for the payload.
+type Request struct {
+	dvid.Command
+	Input ArbitraryInput
+}
+
+type ArbitraryInput interface{}
+
+// Response supports responses from DVID.
+type Response struct {
+	dvid.Response
+	Output ArbitraryOutput
+}
+
+type ArbitraryOutput interface{}
+
+// --- Base implementation and some functions using above types and interfaces -----
+
 // CompiledTypes is the set of registered data types compiled into DVID and
 // held as a global variable initialized at runtime.
 var CompiledTypes = map[UrlString]TypeService{}
@@ -143,75 +214,6 @@ type Datatype struct {
 
 func (datatype *Datatype) Help() string {
 	return fmt.Sprintf(helpMessage, datatype.Name, datatype.Url)
-}
-
-// Request supports requests to the DVID server.  Since input and reply payloads
-// are different depending on the command and the data type, we use an ArbitraryInput
-// (empty interface) for the payload.
-type Request struct {
-	dvid.Command
-	Input ArbitraryInput
-}
-
-type ArbitraryInput interface{}
-
-// Response supports responses from DVID.
-type Response struct {
-	dvid.Response
-	Output ArbitraryOutput
-}
-
-type ArbitraryOutput interface{}
-
-// Subsetter is a type that can tell us its range of Index and how much it has
-// actually available in this server.  It's used to implement limited cloning,
-// e.g., only cloning a quarter of an image volume.
-type Subsetter interface {
-	// MaximumExtents returns a range of indices for which data is available at
-	// some DVID server.
-	MaximumExtents() dvid.IndexRange
-
-	// AvailableExtents returns a range of indices for which data is available
-	// at this DVID server.  It is the currently available extents.
-	AvailableExtents() dvid.IndexRange
-}
-
-// DataString is a string that is the name of DVID data.
-// This gets its own type for documentation and also provide static error checks
-// to prevent conflation of type name from data name.
-type DataString string
-
-// DataService is an interface for operations on arbitrary data that
-// use a supported TypeService.  Chunk handlers are allocated at this level,
-// so an implementation can own a number of goroutines.
-//
-// DataService operations are completely type-specific, and each datatype
-// handles operations through RPC (DoRPC) and HTTP (DoHTTP).
-// TODO -- Add SPDY as wrapper to HTTP.
-type DataService interface {
-	TypeService
-
-	// DataName returns the name of the data (e.g., grayscale data that is grayscale8 data type).
-	DataName() DataString
-
-	// DatasetLocalID returns a DVID instance-specific id for this dataset, which
-	// can be held in a relatively small number of bytes and is a key component.
-	DatasetID() DatasetLocalID
-
-	// LocalID returns a DVID instance-specific id for this data.
-	LocalID() DataLocalID
-
-	// IsVersioned returns true if this data can be mutated across versions.
-	IsVersioned() bool
-
-	// DoRPC handles command line and RPC commands specific to a data type
-	DoRPC(request Request, reply *Response) error
-
-	// DoHTTP handles HTTP requests specific to a data type
-	DoHTTP(uuid UUID, w http.ResponseWriter, r *http.Request) error
-
-	// Returns standard error response for unknown commands
-	UnknownCommand(r Request) error
 }
 
 // ---- DataService implementation ----

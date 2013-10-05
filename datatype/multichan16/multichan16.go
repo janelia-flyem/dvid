@@ -130,12 +130,9 @@ var (
 )
 
 func init() {
-	dtype := &Datatype{voxels.NewDatatype()}
+	dtype := &Datatype{voxels.NewDatatype(1, 2)}
 	dtype.DatatypeID = datastore.MakeDatatypeID("multichan16", RepoUrl, Version)
 	// See doc for package on why channels are segregated instead of interleaved.
-	dtype.ChannelsInterleaved = 1
-	dtype.BytesPerVoxel = 2
-
 	// Data types must be registered with the datastore to be used.
 	datastore.RegisterDatatype(dtype)
 	typeService = dtype
@@ -184,6 +181,10 @@ func (c *Channel) BlockIndex(x, y, z int32) voxels.ZYXIndexer {
 
 func (c *Channel) BytesPerVoxel() int32 {
 	return c.bytesPerVoxel
+}
+
+func (c *Channel) VoxelFormat() (channels, bytesPerChannel int32) {
+	return 1, c.bytesPerVoxel
 }
 
 func (c *Channel) ChannelsInterleaved() int32 {

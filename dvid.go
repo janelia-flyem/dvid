@@ -15,12 +15,7 @@ import (
 	"github.com/janelia-flyem/dvid/server"
 
 	// Declare the data types this DVID executable will support
-	// _ "github.com/DocSavage/dvid/datatype/raveler"
-	_ "github.com/janelia-flyem/dvid/datatype/grayscale8"
-	_ "github.com/janelia-flyem/dvid/datatype/labels32"
-	_ "github.com/janelia-flyem/dvid/datatype/labels64"
-	_ "github.com/janelia-flyem/dvid/datatype/multichan16"
-	_ "github.com/janelia-flyem/dvid/datatype/rgba8"
+	_ "github.com/janelia-flyem/dvid/datatype/voxels"
 )
 
 var (

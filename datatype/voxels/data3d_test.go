@@ -3,16 +3,42 @@ package voxels
 import (
 	. "github.com/janelia-flyem/go/gocheck"
 	"testing"
+
+	"github.com/janelia-flyem/dvid/datastore"
+	"github.com/janelia-flyem/dvid/server"
 )
 
 // Hook up gocheck into the "go test" runner.
 func Test(t *testing.T) { TestingT(t) }
 
-type MySuite struct{}
+type DataSuite struct {
+	dir     string
+	service *server.Service
+	head    datastore.UUID
+}
 
-var _ = Suite(&MySuite{})
+var _ = Suite(&DataSuite{})
 
-func (s *MySuite) TestCoord(c *C) {
+// This will setup a new datastore and open it up, keeping the UUID and
+// service pointer in the DataSuite.
+func (suite *DataSuite) SetUpSuite(c *C) {
+	// Make a temporary testing directory that will be auto-deleted after testing.
+	suite.dir = c.MkDir()
+
+	// Create a new datastore.
+	err := datastore.Init(suite.dir, true)
+	c.Assert(err, IsNil)
+
+	// Open the datastore
+	suite.service, err = server.OpenDatastore(suite.dir)
+	c.Assert(err, IsNil)
+}
+
+func (suite *DataSuite) TearDownSuite(c *C) {
+	suite.service.Shutdown()
+}
+
+func (s *DataSuite) TestCoord(c *C) {
 	a := Coord{10, 21, 837821}
 	b := Coord{78312, -200, 40123}
 	result := a.Add(b)
@@ -70,7 +96,7 @@ func (s *MySuite) TestCoord(c *C) {
 	c.Assert(result, Equals, Coord{11, 3, 0})
 }
 
-func (s *MySuite) TestBlockCoord(c *C) {
+func (s *DataSuite) TestBlockCoord(c *C) {
 	a := BlockCoord{123, 8191, 32001}
 	b := BlockCoord{2980, 617, 99}
 	result := a.Add(b)

@@ -1,7 +1,5 @@
 /*
 	Package voxels implements DVID support for data using voxels as elements.
-	A number of data types will embed this package and customize it using the
-	"ChannelsInterleaved" and "BytesPerVoxel" fields.
 */
 package voxels
 
@@ -12,7 +10,6 @@ import (
 	"image"
 	"log"
 	"net/http"
-	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -24,13 +21,13 @@ import (
 )
 
 const (
-	Version = "0.7"
+	Version = "0.8"
 	RepoUrl = "github.com/janelia-flyem/dvid/datatype/voxels"
 )
 
 const HelpMessage = `
-API for datatypes derived from voxels (github.com/janelia-flyem/dvid/datatype/voxels)
-=====================================================================================
+API for 'voxels' datatype (github.com/janelia-flyem/dvid/datatype/voxels)
+=========================================================================
 
 Command-line:
 
@@ -70,7 +67,8 @@ $ dvid node <UUID> <data name> load remote <plane> <offset> <image glob>
 
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add.
-    plane         One of "xy", "xz", or "yz".
+    dims          The axes of data extraction in form "i,j,k,..."  Example: "0,2" can be XZ.
+                    Slice strings ("xy", "xz", or "yz") are also accepted.
     offset        3d coordinate in the format "x,y,z".  Gives coordinate of top upper left voxel.
     image glob    Filenames of images, e.g., foo-xy-*.png
 	
@@ -78,55 +76,63 @@ $ dvid node <UUID> <data name> load remote <plane> <offset> <image glob>
 
 HTTP API (Level 2 REST):
 
-GET  /api/node/<UUID>/<data name>/<plane>/<offset>/<size>[/<format>]
-POST /api/node/<UUID>/<data name>/<plane>/<offset>/<size>[/<format>]
+GET  /api/node/<UUID>/<data name>/info
+POST /api/node/<UUID>/<data name>/info
 
-    Retrieves or puts orthogonal plane image data to named data within a version node.
+    Retrieves or puts data properties.
 
     Example: 
 
-    GET /api/node/3f8c/grayscale/xy/0,0,100/200,200/jpg:80
+    GET /api/node/3f8c/grayscale/info
+
+    Returns JSON with configuration settings.
 
     Arguments:
 
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add.
-    plane         One of "xy" (default), "xz", or "yz"
-    offset        3d coordinate in the format "x,y,z".  Gives coordinate of top upper left voxel.
-    size          Size in pixels in the format "dx,dy".
-    format        "png", "jpg" (default: "png")
+
+
+GET  /api/node/<UUID>/<data name>/<dims>/<size>/<offset>[/<format>]
+POST /api/node/<UUID>/<data name>/<dims>/<size>/<offset>[/<format>]
+
+    Retrieves or puts voxel data.
+
+    Example: 
+
+    GET /api/node/3f8c/grayscale/0,1/512,256/0,0,100/jpg:80
+
+    Returns an XY slice (0th and 1st dimensions) with width (x) of 512 voxels and
+    height (y) of 256 voxels with offset (0,0,100) in JPG format with quality 80.
+    The example offset assumes the "grayscale" data in version node "3f8c" is 3d.
+    The "Content-type" of the HTTP response should agree with the requested format.
+    For example, returned PNGs will have "Content-type" of "image/png", and returned
+    nD thrift-encoded data will be "application/x-thrift".
+
+    Arguments:
+
+    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    data name     Name of data to add.
+    dims          The axes of data extraction in form "i,j,k,..."  Example: "0,2" can be XZ.
+                    Slice strings ("xy", "xz", or "yz") are also accepted.
+    size          Size in voxels along each dimension specified in <dims>.
+    offset        Gives coordinate of first voxel using dimensionality of data.
+    format        Valid formats depend on the dimensionality of the request and formats
+                    available in server implementation.
+                  2D: "png", "jpg" (default: "png")
                     jpg allows lossy quality setting, e.g., "jpg:80"
+                  nD: "thrift" (default: "thrift")
 
 (TO DO)
 
-GET  /api/node/<UUID>/<data name>/vol/<offset>/<size>[/<format>]
-POST /api/node/<UUID>/<data name>/vol/<offset>/<size>[/<format>]
-
-    Retrieves or puts 3d image volume to named data within a version node.
-
-    Example: 
-
-    GET /api/node/3f8c/grayscale/vol/0,0,100/200,200,200
-
-    Arguments:
-
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
-    data name     Name of data to add.
-    offset        3d coordinate in the format "x,y,z".  Gives coordinate of top upper left voxel.
-    size          Size in voxels in the format "dx,dy,dz"
-    format        "sparse", "dense" (default: "dense")
-                    Voxels returned are in thrift-encoded data structures.
-                    See particular data type implementation for more detail.
-
-
 GET  /api/node/<UUID>/<data name>/arb/<center>/<normal>/<size>[/<format>]
 
-    Retrieves non-orthogonal (arbitrarily oriented planar) image data of named data 
+    Retrieves non-orthogonal (arbitrarily oriented planar) image data of named 3d data 
     within a version node.
 
     Example: 
 
-    GET /api/node/3f8c/grayscale/xy/200,200/2.0,1.3,1/100,100/jpg:80
+    GET /api/node/3f8c/grayscale/arb/200,200/2.0,1.3,1/100,100/jpg:80
 
     Arguments:
 
@@ -177,11 +183,11 @@ func (o OpType) String() string {
 type VoxelHandler interface {
 	Geometry
 
+	VoxelFormat() (channels, bytesPerChannel int32)
+
 	BytesPerVoxel() int32
 
 	ByteOrder() binary.ByteOrder
-
-	ChannelsInterleaved() int32
 
 	Data() []uint8
 
@@ -196,8 +202,8 @@ type VoxelHandler interface {
 type Voxels struct {
 	Geometry
 
-	channelsInterleaved int32
-	bytesPerVoxel       int32
+	channels        int32
+	bytesPerChannel int32
 
 	// The data itself
 	data []uint8
@@ -227,12 +233,12 @@ func (v *Voxels) BlockIndex(x, y, z int32) ZYXIndexer {
 	return IndexZYX{x, y, z}
 }
 
-func (v *Voxels) BytesPerVoxel() int32 {
-	return v.bytesPerVoxel
+func (v *Voxels) VoxelFormat() (channels, bytesPerChannel int32) {
+	return v.channels, v.bytesPerChannel
 }
 
-func (v *Voxels) ChannelsInterleaved() int32 {
-	return v.channelsInterleaved
+func (v *Voxels) BytesPerVoxel() int32 {
+	return v.channels * v.bytesPerChannel
 }
 
 func (v *Voxels) ByteOrder() binary.ByteOrder {
@@ -248,15 +254,19 @@ func (v *Voxels) ByteOrder() binary.ByteOrder {
 // in the Data type.
 type Datatype struct {
 	datastore.Datatype
-	ChannelsInterleaved int32
-	BytesPerVoxel       int32
+
+	// channels specifies the # channels interleaved within a voxel.
+	channels int32
+
+	// bytesPerChannel gives the # of bytes/channel/voxel
+	bytesPerChannel int32
 }
 
 // NewDatatype returns a pointer to a new voxels Datatype with default values set.
-func NewDatatype() (dtype *Datatype) {
+func NewDatatype(channelsPerVoxel, bytesPerChannel int32) (dtype *Datatype) {
 	dtype = new(Datatype)
-	dtype.ChannelsInterleaved = 1
-	dtype.BytesPerVoxel = 1
+	dtype.channels = channelsPerVoxel
+	dtype.bytesPerChannel = bytesPerChannel
 	dtype.Requirements = &storage.Requirements{
 		BulkIniter: false,
 		BulkWriter: false,
@@ -276,7 +286,12 @@ func (dtype *Datatype) NewDataService(dset *datastore.Dataset, id *datastore.Dat
 	if err != nil {
 		return
 	}
-	data := &Data{Data: basedata}
+	data := &Data{
+		Data:             basedata,
+		ChannelsPerVoxel: dtype.channels,
+		BytesPerChannel:  dtype.bytesPerChannel,
+	}
+
 	data.BlockSize = DefaultBlockMax
 	var s string
 	var found bool
@@ -323,6 +338,12 @@ func (dtype *Datatype) Help() string {
 type Data struct {
 	*datastore.Data
 
+	// ChannelsPerVoxel specifies the # channels interleaved within a voxel.
+	ChannelsPerVoxel int32
+
+	// BytesPerChannel gives the # of bytes/channel/voxel
+	BytesPerChannel int32
+
 	// Block size for this dataset
 	BlockSize Point3d
 
@@ -342,40 +363,31 @@ type Data struct {
 	MinIndex dvid.Index
 }
 
-func (d *Data) getVoxelSpecs() (bytesPerVoxel, channelsInterleaved int32, err error) {
-	// Make sure the dataset here has a pointer to a Datatype of this package.
-	dtype, ok := d.TypeService.(*Datatype)
-	if !ok {
-		err = fmt.Errorf("Data %s does not have type of voxels.Datatype: %s",
-			d.DataName(), reflect.TypeOf(d.TypeService))
-		return
-	}
-	bytesPerVoxel = dtype.BytesPerVoxel
-	channelsInterleaved = dtype.ChannelsInterleaved
-	return
-}
-
-func (d *Data) ImageToVoxels(img image.Image, slice Geometry) (VoxelHandler, error) {
-	bytesPerVoxel, channelsInterleaved, err := d.getVoxelSpecs()
-	if err != nil {
-		return nil, err
-	}
-	stride := slice.Width() * bytesPerVoxel
-
-	data, actualStride, err := dvid.ImageData(img)
-	if err != nil {
-		return nil, err
-	}
-	if actualStride < stride {
-		return nil, fmt.Errorf("Too little data in input image (%d stride bytes)", stride)
-	}
+// If img is passed in, newVoxels will initialize the VoxelHandler with data from the image.
+// Otherwise, it will allocate a zero buffer of appropriate size.
+func (d *Data) newVoxels(geom Geometry, img image.Image) (VoxelHandler, error) {
+	bytesPerVoxel := d.ChannelsPerVoxel * d.BytesPerChannel
+	stride := geom.Width() * bytesPerVoxel
 
 	voxels := &Voxels{
-		Geometry:            slice,
-		channelsInterleaved: channelsInterleaved,
-		bytesPerVoxel:       bytesPerVoxel,
-		data:                data,
-		stride:              stride,
+		Geometry:        geom,
+		channels:        d.ChannelsPerVoxel,
+		bytesPerChannel: d.BytesPerChannel,
+		stride:          stride,
+	}
+
+	if img == nil {
+		voxels.data = make([]uint8, int64(bytesPerVoxel)*geom.NumVoxels())
+	} else {
+		var actualStride int32
+		var err error
+		voxels.data, actualStride, err = dvid.ImageData(img)
+		if err != nil {
+			return nil, err
+		}
+		if actualStride < stride {
+			return nil, fmt.Errorf("Too little data in input image (%d stride bytes)", stride)
+		}
 	}
 	return voxels, nil
 }
@@ -442,7 +454,7 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 
 	switch dataShape {
 	case XY, XZ, YZ:
-		offsetStr, sizeStr := parts[4], parts[5]
+		sizeStr, offsetStr := parts[4], parts[5]
 		slice, err := NewSliceFromStrings(shapeStr, offsetStr, sizeStr)
 		if err != nil {
 			return err
@@ -453,7 +465,7 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 			if err != nil {
 				return err
 			}
-			v, err := d.ImageToVoxels(postedImg, slice)
+			v, err := d.newVoxels(slice, postedImg)
 			if err != nil {
 				return err
 			}
@@ -462,17 +474,9 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 				return err
 			}
 		} else {
-			bytesPerVoxel, channelsInterleaved, err := d.getVoxelSpecs()
+			v, err := d.newVoxels(slice, nil)
 			if err != nil {
 				return err
-			}
-			numBytes := int64(bytesPerVoxel) * slice.NumVoxels()
-			v := &Voxels{
-				Geometry:            slice,
-				channelsInterleaved: channelsInterleaved,
-				bytesPerVoxel:       bytesPerVoxel,
-				data:                make([]uint8, numBytes),
-				stride:              slice.Width() * bytesPerVoxel,
 			}
 			img, err := d.GetImage(versionID, v)
 			if err != nil {
@@ -489,7 +493,7 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 			}
 		}
 	case Vol:
-		offsetStr, sizeStr := parts[4], parts[5]
+		sizeStr, offsetStr := parts[4], parts[5]
 		_, err := NewSubvolumeFromStrings(offsetStr, sizeStr)
 		if err != nil {
 			return err
@@ -525,8 +529,8 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 // 16-bits/voxel.
 func (d *Data) SliceImage(v VoxelHandler, z int) (img image.Image, err error) {
 	unsupported := func() error {
-		return fmt.Errorf("DVID doesn't support %d bytes/voxel and %d interleaved channels",
-			v.BytesPerVoxel(), v.ChannelsInterleaved())
+		return fmt.Errorf("DVID doesn't support images for %d channels and %d bytes/channel",
+			d.ChannelsPerVoxel, d.BytesPerChannel)
 	}
 	sliceBytes := int(v.Width() * v.Height() * v.BytesPerVoxel())
 	beg := z * sliceBytes
@@ -537,9 +541,9 @@ func (d *Data) SliceImage(v VoxelHandler, z int) (img image.Image, err error) {
 		return
 	}
 	r := image.Rect(0, 0, int(v.Width()), int(v.Height()))
-	switch v.ChannelsInterleaved() {
+	switch d.ChannelsPerVoxel {
 	case 1:
-		switch v.BytesPerVoxel() {
+		switch d.BytesPerChannel {
 		case 1:
 			img = &image.Gray{data[beg:end], 1 * r.Dx(), r}
 		case 2:
@@ -556,7 +560,7 @@ func (d *Data) SliceImage(v VoxelHandler, z int) (img image.Image, err error) {
 			err = unsupported()
 		}
 	case 4:
-		switch v.BytesPerVoxel() {
+		switch d.BytesPerChannel {
 		case 1:
 			img = &image.RGBA{data[beg:end], 4 * r.Dx(), r}
 		case 2:
@@ -648,7 +652,7 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 		if err != nil {
 			return fmt.Errorf("Unable to determine slice: %s", err.Error())
 		}
-		v, err := d.ImageToVoxels(img, slice)
+		v, err := d.newVoxels(slice, img)
 		if err != nil {
 			return err
 		}
@@ -867,7 +871,7 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 	endVolCoord := maxDataVoxel.Min(maxBlockVoxel)
 
 	// Calculate the strides
-	bytesPerVoxel := op.ChannelsInterleaved() * op.BytesPerVoxel()
+	bytesPerVoxel := op.BytesPerVoxel()
 	blockBytes := int(blockSize[0] * blockSize[1] * blockSize[2] * bytesPerVoxel)
 
 	// Compute block coord matching beg's DVID volume space voxel coord
