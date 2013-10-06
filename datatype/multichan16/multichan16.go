@@ -62,65 +62,29 @@ $ dvid node <UUID> <data name> load remote <V3D raw filename>
 
 HTTP API (Level 2 REST):
 
-GET  /api/node/<UUID>/<data name>/<plane>/<offset>/<size>[/<format>]
-POST /api/node/<UUID>/<data name>/<plane>/<offset>/<size>[/<format>]
+GET  /api/node/<UUID>/<data name>/<dims>/<size>/<offset>[/<format>]
+POST /api/node/<UUID>/<data name>/<dims>/<size>/<offset>[/<format>]
 
-    Retrieves or puts orthogonal plane image data to named data within a version node.
+    Retrieves or puts orthogonal plane image data to named multichannel 16-bit data.
 
     Example: 
 
-    GET /api/node/3f8c/mydata2/xy/0,0,100/200,200/jpg:80  (channel 2 of mydata)
+    GET /api/node/3f8c/mydata2/xy/200,200/0,0,100/jpg:80  (channel 2 of mydata)
 
     Arguments:
 
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
     data name     Name of data.  Optionally add a numerical suffix for the channel number.
-    plane         One of "xy" (default), "xz", or "yz"
-    offset        3d coordinate in the format "x,y,z".  Gives coordinate of top upper left voxel.
+    dims          The axes of data extraction in form "i,j,k,..."  Example: "0,2" can be XZ.
+                    Slice strings ("xy", "xz", or "yz") are also accepted.
     size          Size in pixels in the format "dx,dy".
-    format        "png", "jpg" (default: "png")
-                    jpg allows lossy quality setting, e.g., "jpg:80"
-
-(TO DO)
-
-GET  /api/node/<UUID>/<data name>/vol/<offset>/<size>[/<format>]
-POST /api/node/<UUID>/<data name>/vol/<offset>/<size>[/<format>]
-
-    Retrieves or puts 3d image volume to named data within a version node.
-
-    Example: 
-
-    GET /api/node/3f8c/mydata2/vol/0,0,100/200,200,200
-
-    Arguments:
-
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
-    data name     Name of data.  Optionally add a numerical suffix for the channel number.
     offset        3d coordinate in the format "x,y,z".  Gives coordinate of top upper left voxel.
-    size          Size in voxels in the format "dx,dy,dz"
-    format        "sparse", "dense" (default: "dense")
-                    Voxels returned are in thrift-encoded data structures.
-                    See particular data type implementation for more detail.
-
-
-GET  /api/node/<UUID>/<data name>/arb/<center>/<normal>/<size>[/<format>]
-
-    Retrieves non-orthogonal (arbitrarily oriented planar) image data of named data 
-    within a version node.
-
-    Example: 
-
-    GET /api/node/3f8c/mydata2/xy/200,200/2.0,1.3,1/100,100/jpg:80
-
-    Arguments:
-
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
-    data name     Name of data.  Optionally add a numerical suffix for the channel number.
-    center        3d coordinate in the format "x,y,z".  Gives 3d coord of center pixel.
-    normal        3d vector in the format "nx,ny,nz".  Gives normal vector of image.
-    size          Size in pixels in the format "dx,dy".
-    format        "png", "jpg" (default: "png")  
+    format        Valid formats depend on the dimensionality of the request and formats
+                    available in server implementation.
+                  2D: "png", "jpg" (default: "png")
                     jpg allows lossy quality setting, e.g., "jpg:80"
+                  nD: "thrift" (default: "thrift")
+
 `
 
 // DefaultBlockMax specifies the default size for each block of this data type.
@@ -144,11 +108,16 @@ func init() {
 // -------  VoxelHandler interface implementation -------------
 
 // Channel is an image volumes that fulfills the voxels.VoxelHandler interface.
+// The term "channels" is used to reflect RGBA channels that are interleaved in
+// a voxel compared to "Channel", which is entirely different data in multichannel
+// images.  Perhaps we should use different names...
 type Channel struct {
 	voxels.Geometry
 
-	channelNum    int32
-	bytesPerVoxel int32
+	channelNum int32
+
+	channels        int32
+	bytesPerChannel int32
 
 	// The data itself
 	data []uint8
@@ -180,15 +149,11 @@ func (c *Channel) BlockIndex(x, y, z int32) voxels.ZYXIndexer {
 }
 
 func (c *Channel) BytesPerVoxel() int32 {
-	return c.bytesPerVoxel
+	return c.channels * c.bytesPerChannel
 }
 
 func (c *Channel) VoxelFormat() (channels, bytesPerChannel int32) {
-	return 1, c.bytesPerVoxel
-}
-
-func (c *Channel) ChannelsInterleaved() int32 {
-	return 1
+	return c.channels, c.bytesPerChannel
 }
 
 func (c *Channel) ByteOrder() binary.ByteOrder {
@@ -320,7 +285,7 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 
 	switch dataShape {
 	case voxels.XY, voxels.XZ, voxels.YZ:
-		offsetStr, sizeStr := parts[4], parts[5]
+		sizeStr, offsetStr := parts[4], parts[5]
 		slice, err := voxels.NewSliceFromStrings(shapeStr, offsetStr, sizeStr)
 		if err != nil {
 			return err
@@ -328,20 +293,23 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 		if op == voxels.PutOp {
 			return fmt.Errorf("DVID does not yet support POST of slices into multichannel data")
 		} else {
-			var bytesPerVoxel int32
+			var channels, bytesPerChannel int32
 			if channelNum == 0 {
-				bytesPerVoxel = 4
+				bytesPerChannel = 1
+				channels = 4
 			} else {
-				bytesPerVoxel = 2
+				channels = 1
+				bytesPerChannel = 2
 			}
-			numBytes := int64(bytesPerVoxel) * slice.NumVoxels()
+			numBytes := int64(channels*bytesPerChannel) * slice.NumVoxels()
 			channel := &Channel{
-				Geometry:      slice,
-				channelNum:    channelNum,
-				bytesPerVoxel: bytesPerVoxel,
-				data:          make([]uint8, numBytes),
-				stride:        slice.Width() * bytesPerVoxel,
-				byteOrder:     d.ByteOrder,
+				Geometry:        slice,
+				channelNum:      channelNum,
+				channels:        channels,
+				bytesPerChannel: bytesPerChannel,
+				data:            make([]uint8, numBytes),
+				stride:          slice.Width() * channels * bytesPerChannel,
+				byteOrder:       d.ByteOrder,
 			}
 			img, err := d.GetImage(versionID, channel)
 			var formatStr string
@@ -355,7 +323,7 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 			}
 		}
 	case voxels.Vol:
-		offsetStr, sizeStr := parts[4], parts[5]
+		sizeStr, offsetStr := parts[4], parts[5]
 		_, err := voxels.NewSubvolumeFromStrings(offsetStr, sizeStr)
 		if err != nil {
 			return err
@@ -412,8 +380,13 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 	d.NumChannels = len(channels)
 	if d.NumChannels > 0 {
 		d.ByteOrder = channels[0].byteOrder
+		reply.Text = fmt.Sprintf("Loaded %s into data '%s': found %d channels",
+			d.DataName(), filename, d.NumChannels)
 		reply.Text += fmt.Sprintf(" (%d x %d x %d)", channels[0].Width(),
 			channels[0].Height(), channels[0].Depth())
+	} else {
+		reply.Text = fmt.Sprintf("Found no channels in file %s", filename)
+		return nil
 	}
 	err = service.SaveDataset(d.datasetUUID)
 	if err != nil {
@@ -438,8 +411,6 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 	}
 
 	dvid.ElapsedTime(dvid.Debug, startTime, "RPC load local '%s' completed", filename)
-	reply.Text = fmt.Sprintf("Loaded %s into data '%s': found %d channels",
-		d.DataName(), filename, d.NumChannels)
 	return nil
 }
 
@@ -449,11 +420,12 @@ func (d *Data) storeComposite(versionID datastore.VersionLocalID, channels []*Ch
 	geom := channels[0].Geometry
 	pixels := int(geom.Width() * geom.Height() * geom.Depth())
 	composite := &Channel{
-		Geometry:      geom,
-		channelNum:    0,
-		bytesPerVoxel: 4, // RGBA
-		data:          make([]uint8, pixels*4),
-		stride:        geom.Width(),
+		Geometry:        geom,
+		channelNum:      0,
+		channels:        4,
+		bytesPerChannel: 1,
+		data:            make([]uint8, pixels*4),
+		stride:          geom.Width(),
 	}
 
 	// Get the min/max of each channel.

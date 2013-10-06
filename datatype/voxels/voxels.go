@@ -528,11 +528,12 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 // cross-platform serialization than standard image formats for anything above
 // 16-bits/voxel.
 func (d *Data) SliceImage(v VoxelHandler, z int) (img image.Image, err error) {
+	channels, bytesPerChannel := v.VoxelFormat()
 	unsupported := func() error {
 		return fmt.Errorf("DVID doesn't support images for %d channels and %d bytes/channel",
-			d.ChannelsPerVoxel, d.BytesPerChannel)
+			channels, bytesPerChannel)
 	}
-	sliceBytes := int(v.Width() * v.Height() * v.BytesPerVoxel())
+	sliceBytes := int(v.Width() * v.Height() * channels * bytesPerChannel)
 	beg := z * sliceBytes
 	end := beg + sliceBytes
 	data := v.Data()
@@ -541,9 +542,9 @@ func (d *Data) SliceImage(v VoxelHandler, z int) (img image.Image, err error) {
 		return
 	}
 	r := image.Rect(0, 0, int(v.Width()), int(v.Height()))
-	switch d.ChannelsPerVoxel {
+	switch channels {
 	case 1:
-		switch d.BytesPerChannel {
+		switch bytesPerChannel {
 		case 1:
 			img = &image.Gray{data[beg:end], 1 * r.Dx(), r}
 		case 2:
@@ -560,7 +561,7 @@ func (d *Data) SliceImage(v VoxelHandler, z int) (img image.Image, err error) {
 			err = unsupported()
 		}
 	case 4:
-		switch d.BytesPerChannel {
+		switch bytesPerChannel {
 		case 1:
 			img = &image.RGBA{data[beg:end], 4 * r.Dx(), r}
 		case 2:

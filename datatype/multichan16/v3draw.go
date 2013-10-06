@@ -62,19 +62,20 @@ func (V3DRawMarshaler) UnmarshalV3DRaw(reader io.Reader) ([]*Channel, error) {
 	}
 
 	// Allocate the V3DRaw struct for the # channels
-	bytesPerChannel := int(bytesPerVoxel * width * height * depth)
+	totalBytes := int(bytesPerVoxel * width * height * depth)
 	size := voxels.Point3d{int32(width), int32(height), int32(depth)}
 	volume := voxels.NewSubvolume(voxels.Coord{0, 0, 0}, size)
 	v3draw := make([]*Channel, numChannels, numChannels)
 	var c int32
 	for c = 0; c < int32(numChannels); c++ {
 		v3draw[c] = &Channel{
-			Geometry:      volume,
-			channelNum:    c + 1,
-			bytesPerVoxel: int32(bytesPerVoxel),
-			data:          make([]uint8, bytesPerChannel, bytesPerChannel),
-			stride:        int32(width * bytesPerVoxel),
-			byteOrder:     byteOrder,
+			Geometry:        volume,
+			channelNum:      c + 1,
+			channels:        1,
+			bytesPerChannel: int32(bytesPerVoxel),
+			data:            make([]uint8, totalBytes, totalBytes),
+			stride:          int32(width * bytesPerVoxel),
+			byteOrder:       byteOrder,
 		}
 	}
 

@@ -109,7 +109,7 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 		}
 		switch subcommand {
 		case "new":
-			cmd.CommandArgs(4, &versioning, &typename, &dataname)
+			cmd.CommandArgs(3, &versioning, &typename, &dataname)
 			config := cmd.Settings()
 			config.SetVersioned(versioning == "versioned")
 			err = runningService.NewData(uuid, typename, dataname, config)
@@ -124,7 +124,7 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 				return err
 			}
 			var subcommand2 string
-			cmd.CommandArgs(4, &subcommand2)
+			cmd.CommandArgs(3, &subcommand2)
 			if subcommand2 == "help" {
 				reply.Text = dataservice.Help()
 			} else {
