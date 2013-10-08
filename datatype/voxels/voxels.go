@@ -155,8 +155,10 @@ GET  /api/node/<UUID>/<data name>/arb/<center>/<normal>/<size>[/<format>]
 var DefaultBlockMax Point3d = Point3d{16, 16, 16}
 
 func init() {
+	// Need to register types that will be used to fulfill interfaces.
 	gob.Register(&Datatype{})
 	gob.Register(&Data{})
+	gob.Register(&IndexZYX{})
 	gob.Register(&binary.LittleEndian)
 	gob.Register(&binary.BigEndian)
 }

@@ -124,8 +124,10 @@ func init() {
 	datastore.RegisterDatatype(dtype)
 	typeService = dtype
 
+	// Need to register types that will be used to fulfill interfaces.
 	gob.Register(&Datatype{})
 	gob.Register(&Data{})
+	gob.Register(&IndexCZYX{})
 }
 
 // -------  VoxelHandler interface implementation -------------
