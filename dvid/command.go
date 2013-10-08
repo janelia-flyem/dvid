@@ -47,7 +47,8 @@ func (c Config) SetVersioned(versioned bool) {
 // a string, returns an error.
 func (c Config) GetString(key string) (s string, found bool, err error) {
 	var param interface{}
-	if param, found = c[key]; found {
+	lowerkey := strings.ToLower(key)
+	if param, found = c[lowerkey]; found {
 		var ok bool
 		s, ok = param.(string)
 		if !ok {
@@ -62,7 +63,8 @@ func (c Config) GetString(key string) (s string, found bool, err error) {
 // an int, returns an error.
 func (c Config) GetInt(key string) (i int, found bool, err error) {
 	var param interface{}
-	if param, found = c[key]; found {
+	lowerkey := strings.ToLower(key)
+	if param, found = c[lowerkey]; found {
 		var ok bool
 		i, ok = param.(int)
 		if !ok {
@@ -112,7 +114,7 @@ func (cmd Command) TypeCommand() string {
 }
 
 // Setting scans a command for any "key=value" argument and returns
-// the value of the passed 'key'.
+// the value of the passed 'key'.  Key is case sensitive for this function.
 func (cmd Command) Setting(key string) (value string, found bool) {
 	if len(cmd) > 1 {
 		for _, arg := range cmd[1:] {
@@ -128,14 +130,16 @@ func (cmd Command) Setting(key string) (value string, found bool) {
 }
 
 // Settings scans a command for any "key=value" argument and returns
-// a Config, which is a map of key/value data.
+// a Config, which is a map of key/value data.  All keys are converted
+// to lower case for case-insensitive matching.
 func (cmd Command) Settings() Config {
 	config := make(Config)
 	if len(cmd) > 1 {
 		for _, arg := range cmd[1:] {
 			elems := strings.Split(arg, "=")
 			if len(elems) == 2 {
-				config[elems[0]] = elems[1]
+				lowerkey := strings.ToLower(elems[0])
+				config[lowerkey] = elems[1]
 			}
 		}
 	}

@@ -47,6 +47,8 @@ func VersionMutex(data DataService, versionID VersionLocalID) (vmutex *sync.Mute
 
 // Datasets holds information on all the Dataset available.
 type Datasets struct {
+	writeLock sync.Mutex // guards the fields below
+
 	// Keep list of Dataset.  Could be much smaller than mapUUID which contains
 	// all versions of all Dataset.
 	list []*Dataset
@@ -56,8 +58,6 @@ type Datasets struct {
 
 	// Counter that provides the local ID of the next new dataset.
 	newDatasetID DatasetLocalID
-
-	writeLock sync.Mutex
 }
 
 // DataService returns a service for data of a given name under a Dataset.
@@ -337,6 +337,12 @@ func (dset *Dataset) DataService(name DataString) (dataservice DataService, err 
 	return
 }
 
+// MarshalJSON returns the JSON of this Dataset's properties and version DAG.
+func (dset *Dataset) MarshalJSON() (m []byte, err error) {
+	return json.Marshal(dset)
+}
+
+// Key returns a Key for this Dataset
 func (dset *Dataset) Key() storage.Key {
 	return &DatasetKey{dset.DatasetID}
 }
@@ -485,7 +491,7 @@ type VersionDAG struct {
 	NewVersionID VersionLocalID
 	NewDataID    DataLocalID
 
-	mapLock sync.Mutex
+	mapLock sync.Mutex // guards the VersionDAG maps
 }
 
 // NewVersionDAG creates a version DAG and initializes the first unlocked node,

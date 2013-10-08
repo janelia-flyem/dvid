@@ -44,11 +44,10 @@ and the returned format will be in JSON except for "help" which returns HTML.
     POST /api/datasets/new  (Returns JSON like {"Root": "My Root UUID"})
 
     GET /api/dataset/<UUID>/info 
-    GET /api/dataset/<UUID>/<data name>/help  (Returns type-specific help)
-
-    POST /api/dataset/<UUID>/versioned/<datatype name>/<data name>
-    POST /api/dataset/<UUID>/unversioned/<datatype name>/<data name>
+    POST /api/dataset/<UUID>/new/<datatype name>/<data name>
         Type-specific configuration settings should be sent via JSON.
+
+    GET /api/dataset/<UUID>/<data name>/<type-specific commands>
 
     POST /api/node/<UUID>/lock
     POST /api/node/<UUID>/branch
@@ -64,7 +63,7 @@ func WebAPIHelp() string {
 	return webAPIHelp
 }
 
-func badRequest(w http.ResponseWriter, r *http.Request, message string) {
+func BadRequest(w http.ResponseWriter, r *http.Request, message string) {
 	errorMsg := fmt.Sprintf("ERROR using REST API: %s (%s).", message, r.URL.Path)
 	errorMsg += "  Use 'dvid help' to get proper API request format.\n"
 	dvid.Error(errorMsg)
@@ -97,7 +96,7 @@ func apiHandler(w http.ResponseWriter, r *http.Request) {
 	url := r.URL.Path[lenPath:]
 	parts := strings.Split(url, "/")
 	if len(parts) == 0 {
-		badRequest(w, r, "Poorly formed request")
+		BadRequest(w, r, "Poorly formed request")
 		return
 	}
 
@@ -116,7 +115,7 @@ func apiHandler(w http.ResponseWriter, r *http.Request) {
 	case "node":
 		nodeRequest(w, r)
 	default:
-		badRequest(w, r, "Request not in API")
+		BadRequest(w, r, "Request not in API")
 	}
 }
 
@@ -128,7 +127,7 @@ func helpRequest(w http.ResponseWriter, r *http.Request) {
 func aboutRequest(w http.ResponseWriter, r *http.Request) {
 	jsonStr, err := runningService.AboutJSON()
 	if err != nil {
-		badRequest(w, r, err.Error())
+		BadRequest(w, r, err.Error())
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -144,7 +143,7 @@ func loadRequest(w http.ResponseWriter, r *http.Request) {
 		"handlers active": int(100 * ActiveHandlers / MaxChunkHandlers),
 	})
 	if err != nil {
-		badRequest(w, r, err.Error())
+		BadRequest(w, r, err.Error())
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -158,7 +157,7 @@ func datasetsRequest(w http.ResponseWriter, r *http.Request) {
 	action := strings.ToLower(r.Method)
 
 	if len(parts) != 1 {
-		badRequest(w, r, WebAPIPath+"datasets/ must be followed with 'list', 'all' or 'new'")
+		BadRequest(w, r, WebAPIPath+"datasets/ must be followed with 'list', 'all' or 'new'")
 		return
 	}
 
@@ -166,7 +165,7 @@ func datasetsRequest(w http.ResponseWriter, r *http.Request) {
 	case "list":
 		jsonStr, err := runningService.DatasetsListJSON()
 		if err != nil {
-			badRequest(w, r, err.Error())
+			BadRequest(w, r, err.Error())
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -174,24 +173,24 @@ func datasetsRequest(w http.ResponseWriter, r *http.Request) {
 	case "all":
 		jsonStr, err := runningService.DatasetsAllJSON()
 		if err != nil {
-			badRequest(w, r, err.Error())
+			BadRequest(w, r, err.Error())
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, jsonStr)
 	case "new":
 		if action != "post" {
-			badRequest(w, r, "New dataset requests must be made with HTTP POST method")
+			BadRequest(w, r, "Datasets 'new' request must be made with HTTP POST method")
 			return
 		}
 		root, _, err := runningService.NewDataset()
 		if err != nil {
-			badRequest(w, r, err.Error())
+			BadRequest(w, r, err.Error())
 		}
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, "{%q: %q}", "Root", root)
 	default:
-		badRequest(w, r, WebAPIPath+"/datasets/ must be followed with 'info' or 'new'")
+		BadRequest(w, r, WebAPIPath+"/datasets/ must be followed with 'info' or 'new'")
 	}
 }
 
@@ -202,7 +201,7 @@ func datasetRequest(w http.ResponseWriter, r *http.Request) {
 	action := strings.ToLower(r.Method)
 
 	if len(parts) < 3 || len(parts) > 4 {
-		badRequest(w, r, "Bad dataset request made.  Visit /api/help for help.")
+		BadRequest(w, r, "Bad dataset request made.  Visit /api/help for help.")
 		return
 	}
 
@@ -210,44 +209,61 @@ func datasetRequest(w http.ResponseWriter, r *http.Request) {
 	uuidStr := parts[0]
 	uuid, _, _, err := runningService.NodeIDFromString(uuidStr)
 	if err != nil {
-		badRequest(w, r, err.Error())
+		BadRequest(w, r, err.Error())
 		return
 	}
 
-	// Handle the dataset command.
-	switch parts[1] {
-	case "versioned", "unversioned":
+	// Handle query of dataset properties
+	if parts[1] == "info" {
+		jsonStr, err := runningService.DatasetJSON(uuid)
+		if err != nil {
+			BadRequest(w, r, err.Error())
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, jsonStr)
+		return
+	}
+
+	// Handle creation of new data in dataset via POST.
+	if parts[1] == "new" {
 		if action != "post" {
-			badRequest(w, r, "Creation a data instance for a node requires HTTP POST.")
+			BadRequest(w, r, "Dataset 'new' request must be made with HTTP POST method")
 			return
 		}
 		if len(parts) != 4 {
-			badRequest(w, r, "Bad dataset request made.  Visit /api/help for help.")
+			BadRequest(w, r, "Bad URL: Expecting /api/dataset/<UUID>/new/<datatype name>/<data name>")
 			return
 		}
 		typename := parts[2]
 		dataname := parts[3]
-		config := dvid.Config{"versioned": (parts[1] == "versioned")}
+		decoder := json.NewDecoder(r.Body)
+		var config dvid.Config
+		err = decoder.Decode(&config)
+		if err != nil {
+			BadRequest(w, r, fmt.Sprintf("Error decoding POSTed JSON config for 'new': %s", err.Error()))
+			return
+		}
 		err = runningService.NewData(uuid, typename, dataname, config)
 		if err != nil {
-			badRequest(w, r, err.Error())
+			BadRequest(w, r, err.Error())
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, "{%q: 'Added %s [%s] to node %s'}", "result", dataname, typename, uuidStr)
-	default:
-		if len(parts) != 3 || parts[2] != "help" {
-			badRequest(w, r, "Bad dataset request made.  Visit /api/help for help.")
-			return
-		}
-		dataname := datastore.DataString(parts[1])
-		dataservice, err := runningService.DataService(uuid, dataname)
-		if err != nil {
-			badRequest(w, r, err.Error())
-			return
-		}
-		w.Header().Set("Content-Type", "text/plain")
-		fmt.Fprintln(w, dataservice.Help())
+		return
+	}
+
+	// Forward all other commands to the data service.
+	dataname := datastore.DataString(parts[1])
+	dataservice, err := runningService.DataService(uuid, dataname)
+	if err != nil {
+		BadRequest(w, r, err.Error())
+		return
+	}
+	err = dataservice.DoHTTP(uuid, w, r)
+	if err != nil {
+		BadRequest(w, r, err.Error())
 	}
 }
 
@@ -257,7 +273,7 @@ func nodeRequest(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(url, "/")
 
 	if len(parts) < 2 {
-		badRequest(w, r, "Bad node request made.  Visit /api/help for help.")
+		BadRequest(w, r, "Bad node request made.  Visit /api/help for help.")
 		return
 	}
 
@@ -265,7 +281,7 @@ func nodeRequest(w http.ResponseWriter, r *http.Request) {
 	uuidStr := parts[0]
 	uuid, _, _, err := runningService.NodeIDFromString(uuidStr)
 	if err != nil {
-		badRequest(w, r, err.Error())
+		BadRequest(w, r, err.Error())
 		return
 	}
 
@@ -274,7 +290,7 @@ func nodeRequest(w http.ResponseWriter, r *http.Request) {
 	case "lock":
 		err := runningService.Lock(uuid)
 		if err != nil {
-			badRequest(w, r, err.Error())
+			BadRequest(w, r, err.Error())
 		} else {
 			w.Header().Set("Content-Type", "text/plain")
 			fmt.Fprintln(w, "Lock on node %s successful.", uuidStr)
@@ -283,7 +299,7 @@ func nodeRequest(w http.ResponseWriter, r *http.Request) {
 	case "branch":
 		newuuid, err := runningService.NewVersion(uuid)
 		if err != nil {
-			badRequest(w, r, err.Error())
+			BadRequest(w, r, err.Error())
 		} else {
 			w.Header().Set("Content-Type", "application/json")
 			fmt.Fprintf(w, "{%q: %q}", "Branch", newuuid)
@@ -293,11 +309,11 @@ func nodeRequest(w http.ResponseWriter, r *http.Request) {
 		dataname := datastore.DataString(parts[1])
 		dataservice, err := runningService.DataService(uuid, dataname)
 		if err != nil {
-			badRequest(w, r, err.Error())
+			BadRequest(w, r, err.Error())
 		}
 		err = dataservice.DoHTTP(uuid, w, r)
 		if err != nil {
-			badRequest(w, r, err.Error())
+			BadRequest(w, r, err.Error())
 		}
 	}
 }

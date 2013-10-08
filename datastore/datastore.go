@@ -153,6 +153,24 @@ func (s *Service) DatasetsAllJSON() (stringJSON string, err error) {
 	return string(bytesJSON), nil
 }
 
+// DatasetJSON returns JSON for a particular dataset referenced by a uuid.
+func (s *Service) DatasetJSON(root UUID) (stringJSON string, err error) {
+	if s.datasets == nil {
+		stringJSON = "{}"
+		return
+	}
+	dataset, err := s.datasets.DatasetFromUUID(root)
+	if err != nil {
+		return "{}", err
+	}
+	var bytesJSON []byte
+	bytesJSON, err = dataset.MarshalJSON()
+	if err != nil {
+		return
+	}
+	return string(bytesJSON), nil
+}
+
 // NOTE: Alterations of Datasets should invoke persistence to the key-value database.
 // All interaction with datasets at the datastore.Service level should be using
 // opaque UUID or the shortened datasetID.

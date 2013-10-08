@@ -55,7 +55,9 @@ func LocalID32FromBytes(b []byte) (id LocalID32, length int) {
 // spatiotemporal indexing scheme.  For example, Z-curves map n-D space to a 1-D index.
 // It is assumed that implementations for this interface are castable to []byte.
 type Index interface {
-	// Bytes returns a byte representation of the Index.
+	// Bytes returns a byte representation of the Index.  Integer components of
+	// the Index should probably be serialized in big endian for improved
+	// lexicographic ordering.
 	Bytes() []byte
 
 	// BytesToIndex returns an Index from a byte representation

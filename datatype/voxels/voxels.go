@@ -6,6 +6,7 @@ package voxels
 import (
 	"encoding/binary"
 	"encoding/gob"
+	"encoding/json"
 	"fmt"
 	"image"
 	"log"
@@ -31,24 +32,24 @@ API for 'voxels' datatype (github.com/janelia-flyem/dvid/datatype/voxels)
 
 Command-line:
 
-$ dvid dataset <UUID> new <versioning> <type name> <data name> <settings...>
+$ dvid dataset <UUID> new <type name> <data name> <settings...>
 
 	Adds newly named data of the 'type name' to dataset with specified UUID.
 
 	Example:
 
-	$ dvid dataset 3f8c new versioned grayscale8 mygrayscale BlockSize=32 VoxelRes=1.5,1.0,1.5
+	$ dvid dataset 3f8c new grayscale8 mygrayscale BlockSize=32 VoxelRes=1.5,1.0,1.5
 
     Arguments:
 
     UUID           Hexidecimal string with enough characters to uniquely identify a version node.
-    versioning     "versioned" or "unversioned"
     type name      Data type name, e.g., "grayscale8"
     data name      Name of data to create, e.g., "mygrayscale"
     settings       Configuration settings in "key=value" format separated by spaces.
 
-    Configuration Settings
+    Configuration Settings (case-insensitive keys)
 
+    Versioned      "true" or "false" (default)
     BlockSize      Size in pixels  (default: %s)
     VoxelRes       Resolution of voxels (default: 1.0, 1.0, 1.0)
     VoxelResUnits  String of units (default: "nanometers")
@@ -76,6 +77,11 @@ $ dvid node <UUID> <data name> load remote <plane> <offset> <image glob>
 
 HTTP API (Level 2 REST):
 
+GET  /api/node/<UUID>/<data name>/help
+
+	Returns data-specific help message.
+
+
 GET  /api/node/<UUID>/<data name>/info
 POST /api/node/<UUID>/<data name>/info
 
@@ -90,7 +96,7 @@ POST /api/node/<UUID>/<data name>/info
     Arguments:
 
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
-    data name     Name of data to add.
+    data name     Name of voxels data.
 
 
 GET  /api/node/<UUID>/<data name>/<dims>/<size>/<offset>[/<format>]
@@ -230,7 +236,7 @@ func (v *Voxels) Stride() int32 {
 }
 
 func (v *Voxels) BlockIndex(x, y, z int32) ZYXIndexer {
-	return IndexZYX{x, y, z}
+	return &IndexZYX{x, y, z}
 }
 
 func (v *Voxels) VoxelFormat() (channels, bytesPerChannel int32) {
@@ -356,11 +362,14 @@ type Data struct {
 	// The endianness of this loaded data.
 	ByteOrder binary.ByteOrder
 
-	// Maximum extents of this volume.
-	MaxIndex dvid.Index
+	// Maximum extents of data stored
+	MinIndex ZYXIndexer
+	MaxIndex ZYXIndexer
+}
 
-	// Available extents of this volume.
-	MinIndex dvid.Index
+// MarshalJSON returns the JSON for this Data's configuration
+func (d *Data) MarshalJSON() (m []byte, err error) {
+	return json.Marshal(d)
 }
 
 // If img is passed in, newVoxels will initialize the VoxelHandler with data from the image.
@@ -443,6 +452,24 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 	_, versionID, err := service.LocalIDFromUUID(uuid)
 	if err != nil {
 		return err
+	}
+
+	// Process help and info.
+	switch parts[3] {
+	case "help":
+		w.Header().Set("Content-Type", "text/plain")
+		fmt.Fprintln(w, d.Help())
+		return nil
+	case "info":
+		m, err := d.MarshalJSON()
+		if err != nil {
+			server.BadRequest(w, r, err.Error())
+			return err
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, string(m))
+		return nil
+	default:
 	}
 
 	// Get the data shape.
@@ -745,6 +772,18 @@ func (d *Data) PutImage(versionID datastore.VersionLocalID, v VoxelHandler) erro
 			i1 := v.BlockIndex(endBlockCoord[0], y, z)
 			startKey := &datastore.DataKey{d.DsetID, d.ID, versionID, i0}
 			endKey := &datastore.DataKey{d.DsetID, d.ID, versionID, i1}
+
+			// Expand stored extents if necessary.
+			if d.MinIndex == nil {
+				d.MinIndex = i0
+			} else {
+				d.MinIndex.ExtendMin(i0)
+			}
+			if d.MaxIndex == nil {
+				d.MaxIndex = i1
+			} else {
+				d.MaxIndex.ExtendMax(i1)
+			}
 
 			// GET all the chunks for this range.
 			keyvalues, err := db.GetRange(startKey, endKey)

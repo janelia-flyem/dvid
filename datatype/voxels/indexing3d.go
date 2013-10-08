@@ -23,6 +23,12 @@ type ZYXIndexer interface {
 	X() int32
 	Y() int32
 	Z() int32
+
+	// ExtendMin sets this ZYXIndexer to the minimum of its value and the passed one.
+	ExtendMin(ZYXIndexer)
+
+	// ExtendMax sets this ZYXIndexer to the maximum of its value and the passed one.
+	ExtendMax(ZYXIndexer)
 }
 
 // KeyToZYXIndexer takes a Key and returns an implementation of a ZYXIndexer if possible.
@@ -84,6 +90,30 @@ func (i IndexZYX) OffsetToBlock(blockSize Point3d) (coord Coord) {
 	coord[1] = i[1] * blockSize[1]
 	coord[2] = i[2] * blockSize[2]
 	return
+}
+
+func (i *IndexZYX) ExtendMin(izyx ZYXIndexer) {
+	if i[0] > izyx.X() {
+		i[0] = izyx.X()
+	}
+	if i[1] > izyx.Y() {
+		i[1] = izyx.Y()
+	}
+	if i[2] > izyx.Z() {
+		i[2] = izyx.Z()
+	}
+}
+
+func (i *IndexZYX) ExtendMax(izyx ZYXIndexer) {
+	if i[0] < izyx.X() {
+		i[0] = izyx.X()
+	}
+	if i[1] < izyx.Y() {
+		i[1] = izyx.Y()
+	}
+	if i[2] < izyx.Z() {
+		i[2] = izyx.Z()
+	}
 }
 
 func (i IndexZYX) X() int32 {

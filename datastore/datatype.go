@@ -238,7 +238,7 @@ type Data struct {
 	TypeService
 
 	// If false (default), we allow changes along nodes.
-	unversioned bool
+	Unversioned bool
 }
 
 // NewDataService returns a base data struct and sets the versioning depending on config.
@@ -249,12 +249,12 @@ func NewDataService(id *DataID, t TypeService, config dvid.Config) (data *Data, 
 	if err != nil {
 		return
 	}
-	data.unversioned = !versioned
+	data.Unversioned = !versioned
 	return
 }
 
 func (d *Data) IsVersioned() bool {
-	return !d.unversioned
+	return !d.Unversioned
 }
 
 func (d *Data) UnknownCommand(request Request) error {

@@ -17,6 +17,7 @@ package multichan16
 import (
 	"encoding/binary"
 	"encoding/gob"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -61,6 +62,28 @@ $ dvid node <UUID> <data name> load remote <V3D raw filename>
     ------------------
 
 HTTP API (Level 2 REST):
+
+GET  /api/node/<UUID>/<data name>/help
+
+	Returns data-specific help message.
+
+
+GET  /api/node/<UUID>/<data name>/info
+POST /api/node/<UUID>/<data name>/info
+
+    Retrieves or puts data properties.
+
+    Example: 
+
+    GET /api/node/3f8c/multichan16/info
+
+    Returns JSON with configuration settings.
+
+    Arguments:
+
+    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    data name     Name of multichan16 data.
+
 
 GET  /api/node/<UUID>/<data name>/<dims>/<size>/<offset>[/<format>]
 POST /api/node/<UUID>/<data name>/<dims>/<size>/<offset>[/<format>]
@@ -145,7 +168,7 @@ func (c *Channel) Stride() int32 {
 
 // BlockIndex returns a channel-specific ZYXIndexer
 func (c *Channel) BlockIndex(x, y, z int32) voxels.ZYXIndexer {
-	return IndexCZYX{c.channelNum, voxels.BlockCoord{x, y, z}}
+	return &IndexCZYX{c.channelNum, voxels.BlockCoord{x, y, z}}
 }
 
 func (c *Channel) BytesPerVoxel() int32 {
@@ -203,6 +226,11 @@ type Data struct {
 	datasetUUID datastore.UUID
 }
 
+// MarshalJSON returns the JSON for this Data's configuration
+func (d *Data) MarshalJSON() (m []byte, err error) {
+	return json.Marshal(d)
+}
+
 // --- DataService interface ---
 
 // Do acts as a switchboard for RPC commands.
@@ -254,6 +282,24 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 	_, versionID, err := service.LocalIDFromUUID(uuid)
 	if err != nil {
 		return err
+	}
+
+	// Process help and info.
+	switch parts[3] {
+	case "help":
+		w.Header().Set("Content-Type", "text/plain")
+		fmt.Fprintln(w, d.Help())
+		return nil
+	case "info":
+		m, err := d.MarshalJSON()
+		if err != nil {
+			server.BadRequest(w, r, err.Error())
+			return err
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, string(m))
+		return nil
+	default:
 	}
 
 	// Get the data name and parse out the channel number or see if composite is required.
