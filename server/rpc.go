@@ -20,6 +20,8 @@ const RPCHelpMessage = `Commands executed on the server (rpc address = %s):
 	shutdown
 
 	types
+	types <datatype name> help
+
 	datasets info
 	datasets new         (returns UUID of dataset's root node)
 
@@ -78,7 +80,20 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 			runningService.RPCAddress)
 
 	case "types":
-		reply.Text = runningService.SupportedDataChart()
+		if len(cmd.Command) == 1 {
+			reply.Text = runningService.SupportedDataChart()
+		} else {
+			if len(cmd.Command) != 3 || cmd.Command[2] != "help" {
+				return fmt.Errorf("Unknown types command: %q", cmd.Command)
+			}
+			var typename string
+			cmd.CommandArgs(1, &typename)
+			typeservice, err := datastore.TypeServiceByName(typename)
+			if err != nil {
+				return err
+			}
+			reply.Text = typeservice.Help()
+		}
 
 	case "datasets":
 		var subcommand string
