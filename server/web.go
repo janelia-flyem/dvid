@@ -39,8 +39,8 @@ and the returned format will be in JSON except for "help" which returns HTML.
     GET /api/about
     GET /api/load
 
+    GET /api/datasets/info
     GET /api/datasets/list
-    GET /api/datasets/all
     POST /api/datasets/new  (Returns JSON like {"Root": "My Root UUID"})
 
     GET /api/dataset/<UUID>/info 
@@ -152,8 +152,12 @@ func datasetsRequest(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(url, "/")
 	action := strings.ToLower(r.Method)
 
+	badRequest := func() {
+		BadRequest(w, r, WebAPIPath+"datasets/ must be followed with 'info', 'list' or 'new'")
+	}
+
 	if len(parts) != 1 {
-		BadRequest(w, r, WebAPIPath+"datasets/ must be followed with 'list', 'all' or 'new'")
+		badRequest()
 		return
 	}
 
@@ -166,7 +170,7 @@ func datasetsRequest(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, jsonStr)
-	case "all":
+	case "info":
 		jsonStr, err := runningService.DatasetsAllJSON()
 		if err != nil {
 			BadRequest(w, r, err.Error())
@@ -186,7 +190,7 @@ func datasetsRequest(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, "{%q: %q}", "Root", root)
 	default:
-		BadRequest(w, r, WebAPIPath+"/datasets/ must be followed with 'info' or 'new'")
+		badRequest()
 	}
 }
 
@@ -196,7 +200,7 @@ func datasetRequest(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(url, "/")
 	action := strings.ToLower(r.Method)
 
-	if len(parts) < 3 || len(parts) > 4 {
+	if len(parts) < 2 || len(parts) > 4 {
 		BadRequest(w, r, "Bad dataset request made.  Visit /api/help for help.")
 		return
 	}

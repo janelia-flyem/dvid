@@ -15,7 +15,9 @@ import (
 type Config map[string]interface{}
 
 func NewConfig() Config {
-	return make(Config)
+	c := make(Config)
+	c["versioned"] = "false"
+	return c
 }
 
 // IsVersioned returns true if we want this data versioned.
@@ -24,23 +26,35 @@ func (c Config) IsVersioned() (versioned bool, err error) {
 		err = fmt.Errorf("Config data structure has not been initialized")
 		return
 	}
-	param, ok := c["versioned"]
-	if !ok {
-		err = fmt.Errorf("No 'versioned' key in DVID configuration")
-		return
+	param, found := c["versioned"]
+	if !found {
+		c["versioned"] = "false"
+		return false, nil
 	}
-	versioned, ok = param.(bool)
+	s, ok := param.(string)
 	if !ok {
-		err = fmt.Errorf("Illegal 'versioned' value in DVID configuration")
+		return false, fmt.Errorf("'versioned' in DVID configuration must be 'true' or 'false'")
 	}
-	return
+	switch s {
+	case "true":
+		return true, nil
+	case "false":
+		return false, nil
+	default:
+		return false, fmt.Errorf(
+			"'versioned' in DVID configuration must be 'true' or 'false', not '%s'", s)
+	}
 }
 
 func (c Config) SetVersioned(versioned bool) {
 	if c == nil {
 		c = make(map[string]interface{})
 	}
-	c["versioned"] = versioned
+	if versioned {
+		c["versioned"] = "true"
+	} else {
+		c["versioned"] = "false"
+	}
 }
 
 // GetString returns a string value of the given key.  If setting of key is not

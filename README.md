@@ -13,10 +13,9 @@ Documentation is [available here](http://godoc.org/github.com/janelia-flyem/dvid
 Command-line and REST API documentation is currently distributed over data types and can be 
 found in help constants:
 
-[general commands and HTTP API](http://godoc.org/github.com/janelia-flyem/dvid/server#pkg-constants)
-
-[voxels HTTP API](http://godoc.org/github.com/janelia-flyem/dvid/datatype/voxels#pkg-constants)
-[multichan16 HTTP API](http://godoc.org/github.com/janelia-flyem/dvid/datatype/multichan16#pkg-constants)
+* [general commands and HTTP API](http://godoc.org/github.com/janelia-flyem/dvid/server#pkg-constants)
+* [voxels HTTP API](http://godoc.org/github.com/janelia-flyem/dvid/datatype/voxels#pkg-constants)
+* [multichan16 HTTP API](http://godoc.org/github.com/janelia-flyem/dvid/datatype/multichan16#pkg-constants)
 
 ## Philosophy
 

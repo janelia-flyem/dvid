@@ -558,17 +558,17 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 // multibytes/voxel data into appropriate images.  Suggest using Thrift or
 // cross-platform serialization than standard image formats for anything above
 // 16-bits/voxel.
-func (d *Data) SliceImage(v VoxelHandler, z int) (img image.Image, err error) {
+func (d *Data) SliceImage(v VoxelHandler, z int32) (img image.Image, err error) {
 	channels, bytesPerChannel := v.VoxelFormat()
 	unsupported := func() error {
 		return fmt.Errorf("DVID doesn't support images for %d channels and %d bytes/channel",
 			channels, bytesPerChannel)
 	}
-	sliceBytes := int(v.Width() * v.Height() * channels * bytesPerChannel)
+	sliceBytes := v.Width() * v.Height() * channels * bytesPerChannel
 	beg := z * sliceBytes
 	end := beg + sliceBytes
 	data := v.Data()
-	if end > len(data) {
+	if int(end) > len(data) {
 		err = fmt.Errorf("SliceImage() called with z = %d greater than %s", z, v)
 		return
 	}
