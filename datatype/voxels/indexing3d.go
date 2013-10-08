@@ -9,6 +9,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"reflect"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -39,7 +40,8 @@ func KeyToZYXIndexer(key storage.Key) (ZYXIndexer, error) {
 	}
 	zyx, ok := datakey.Index.(ZYXIndexer)
 	if !ok {
-		return nil, fmt.Errorf("Can't convert DataKey.Index (%s) to ZYXIndexer", datakey.Index)
+		return nil, fmt.Errorf("Can't convert DataKey.Index (%s) to ZYXIndexer",
+			reflect.TypeOf(datakey.Index))
 	}
 	return zyx, nil
 }
@@ -78,7 +80,7 @@ func (i IndexZYX) IndexFromBytes(b []byte) (dvid.Index, error) {
 	z := int32(binary.BigEndian.Uint32(b[0:4]))
 	y := int32(binary.BigEndian.Uint32(b[4:8]))
 	x := int32(binary.BigEndian.Uint32(b[8:12]))
-	return IndexZYX{x, y, z}, nil
+	return &IndexZYX{x, y, z}, nil
 }
 
 // ------- ZYXIndexer interface ----------

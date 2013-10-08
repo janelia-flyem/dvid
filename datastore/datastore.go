@@ -163,12 +163,8 @@ func (s *Service) DatasetJSON(root UUID) (stringJSON string, err error) {
 	if err != nil {
 		return "{}", err
 	}
-	var bytesJSON []byte
-	bytesJSON, err = dataset.MarshalJSON()
-	if err != nil {
-		return
-	}
-	return string(bytesJSON), nil
+	stringJSON, err = dataset.JSONString()
+	return
 }
 
 // NOTE: Alterations of Datasets should invoke persistence to the key-value database.

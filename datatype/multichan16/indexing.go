@@ -52,7 +52,7 @@ func (i IndexCZYX) IndexFromBytes(b []byte) (dvid.Index, error) {
 	z := int32(binary.BigEndian.Uint32(b[4:8]))
 	y := int32(binary.BigEndian.Uint32(b[8:12]))
 	x := int32(binary.BigEndian.Uint32(b[12:16]))
-	return IndexCZYX{c, voxels.BlockCoord{x, y, z}}, nil
+	return &IndexCZYX{c, voxels.BlockCoord{x, y, z}}, nil
 }
 
 // ------- voxels.ZYXIndexer interface ----------

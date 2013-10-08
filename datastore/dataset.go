@@ -337,9 +337,13 @@ func (dset *Dataset) DataService(name DataString) (dataservice DataService, err 
 	return
 }
 
-// MarshalJSON returns the JSON of this Dataset's properties and version DAG.
-func (dset *Dataset) MarshalJSON() (m []byte, err error) {
-	return json.Marshal(dset)
+// JSONString returns the JSON for this Data's configuration
+func (dset *Dataset) JSONString() (jsonStr string, err error) {
+	m, err := json.Marshal(dset)
+	if err != nil {
+		return "", err
+	}
+	return string(m), nil
 }
 
 // Key returns a Key for this Dataset

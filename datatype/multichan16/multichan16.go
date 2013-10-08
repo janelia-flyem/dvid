@@ -226,9 +226,13 @@ type Data struct {
 	datasetUUID datastore.UUID
 }
 
-// MarshalJSON returns the JSON for this Data's configuration
-func (d *Data) MarshalJSON() (m []byte, err error) {
-	return json.Marshal(d)
+// JSONString returns the JSON for this Data's configuration
+func (d *Data) JSONString() (jsonStr string, err error) {
+	m, err := json.Marshal(d)
+	if err != nil {
+		return "", err
+	}
+	return string(m), nil
 }
 
 // --- DataService interface ---
@@ -291,13 +295,13 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 		fmt.Fprintln(w, d.Help())
 		return nil
 	case "info":
-		m, err := d.MarshalJSON()
+		jsonStr, err := d.JSONString()
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
 			return err
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, string(m))
+		fmt.Fprintf(w, jsonStr)
 		return nil
 	default:
 	}
