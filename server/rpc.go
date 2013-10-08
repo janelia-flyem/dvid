@@ -13,7 +13,7 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 )
 
-const helpMessage = `Commands executed on the server (rpc address = %s):
+const RPCHelpMessage = `Commands executed on the server (rpc address = %s):
 
 	help
 	about
@@ -59,7 +59,7 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 	switch cmd.Name() {
 
 	case "help":
-		reply.Text = fmt.Sprintf(helpMessage,
+		reply.Text = fmt.Sprintf(RPCHelpMessage,
 			runningService.RPCAddress, runningService.SupportedDataChart(),
 			runningService.WebAddress)
 

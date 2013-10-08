@@ -28,7 +28,7 @@ DVID Web Client Unavailable!  To make the web client available, you have two cho
    % dvid -webclient=/path/to/html/files -datastore=/path/to/db serve
 `
 
-const webAPIHelp = `
+const WebAPIHelp = `
 DVID's HTTP API is a Level 2 REST API that roughly translates the dvid terminal
 commands into URL form.
 
@@ -59,10 +59,6 @@ To examine the data type-specific API commands available, use GET /api/dataset/.
 shown above.
 `
 
-func WebAPIHelp() string {
-	return webAPIHelp
-}
-
 func BadRequest(w http.ResponseWriter, r *http.Request, message string) {
 	errorMsg := fmt.Sprintf("ERROR using REST API: %s (%s).", message, r.URL.Path)
 	errorMsg += "  Use 'dvid help' to get proper API request format.\n"
@@ -89,7 +85,7 @@ func mainHandler(w http.ResponseWriter, r *http.Request) {
 
 // Handler for API commands.  Results come back in JSON.
 // We assume all DVID API commands have URLs with prefix /api/...
-// See webAPIHelp for expected calling URLs and HTTP verbs.
+// See WebAPIHelp for expected calling URLs and HTTP verbs.
 func apiHandler(w http.ResponseWriter, r *http.Request) {
 	// Break URL request into arguments
 	lenPath := len(WebAPIPath)
@@ -121,7 +117,7 @@ func apiHandler(w http.ResponseWriter, r *http.Request) {
 
 func helpRequest(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html")
-	fmt.Fprintf(w, webAPIHelp)
+	fmt.Fprintf(w, WebAPIHelp)
 }
 
 func aboutRequest(w http.ResponseWriter, r *http.Request) {
