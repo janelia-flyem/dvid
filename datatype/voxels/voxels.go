@@ -298,6 +298,7 @@ func (dtype *Datatype) NewDataService(dset *datastore.Dataset, id *datastore.Dat
 		Data:             basedata,
 		ChannelsPerVoxel: dtype.channels,
 		BytesPerChannel:  dtype.bytesPerChannel,
+		datasetUUID:      dset.Root,
 	}
 
 	data.BlockSize = DefaultBlockMax
@@ -367,6 +368,10 @@ type Data struct {
 	// Maximum extents of data stored
 	MinIndex ZYXIndexer
 	MaxIndex ZYXIndexer
+
+	// Pointer to the owning Dataset so we can force Put() if we modify
+	// data properties based on loaded data, e.g., index extents.
+	datasetUUID datastore.UUID
 }
 
 // JSONString returns the JSON for this Data's configuration
@@ -376,6 +381,11 @@ func (d *Data) JSONString() (jsonStr string, err error) {
 		return "", err
 	}
 	return string(m), nil
+}
+
+func (d *Data) DatasetDirty() error {
+	service := server.DatastoreService()
+	return service.SaveDataset(d.datasetUUID)
 }
 
 // If img is passed in, newVoxels will initialize the VoxelHandler with data from the image.
@@ -768,6 +778,14 @@ func (d *Data) PutImage(versionID datastore.VersionLocalID, v VoxelHandler) erro
 	versionMutex.Lock()
 	defer versionMutex.Unlock()
 
+	// Keep track of changing extents and mark dataset as dirty if changed.
+	var extentChanged bool
+	defer func() {
+		if extentChanged {
+			d.DatasetDirty()
+		}
+	}()
+
 	// Map: Iterate in x, then y, then z
 	startBlockCoord := startVoxel.BlockCoord(d.BlockSize)
 	endBlockCoord := endVoxel.BlockCoord(d.BlockSize)
@@ -782,13 +800,15 @@ func (d *Data) PutImage(versionID datastore.VersionLocalID, v VoxelHandler) erro
 			// Expand stored extents if necessary.
 			if d.MinIndex == nil {
 				d.MinIndex = i0
+				extentChanged = true
 			} else {
-				d.MinIndex.ExtendMin(i0)
+				extentChanged = d.MinIndex.ExtendMin(i0)
 			}
 			if d.MaxIndex == nil {
 				d.MaxIndex = i1
+				extentChanged = true
 			} else {
-				d.MaxIndex.ExtendMax(i1)
+				extentChanged = d.MaxIndex.ExtendMax(i1)
 			}
 
 			// GET all the chunks for this range.

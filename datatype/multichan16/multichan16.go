@@ -201,13 +201,11 @@ func (dtype *Datatype) NewDataService(dset *datastore.Dataset, id *datastore.Dat
 		return
 	}
 	basedata := voxelservice.(*voxels.Data)
-	data := &Data{
-		Data:        *basedata,
-		datasetUUID: dset.Root,
+	basedata.BlockSize = DefaultBlockMax
+	basedata.TypeService = typeService
+	service = &Data{
+		Data: *basedata,
 	}
-	data.BlockSize = DefaultBlockMax
-	data.TypeService = typeService
-	service = data
 	return
 }
 
@@ -222,10 +220,6 @@ type Data struct {
 	// Number of channels for this data.  The names are referenced by
 	// adding a number onto the data name, e.g., mydata1, mydata2, etc.
 	NumChannels int
-
-	// Pointer to the owning Dataset so we can force Put() if we modify
-	// data properties based on loaded data, e.g., initialize NumChannels.
-	datasetUUID datastore.UUID
 }
 
 // JSONString returns the JSON for this Data's configuration
@@ -440,8 +434,7 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 		reply.Text = fmt.Sprintf("Found no channels in file %s", filename)
 		return nil
 	}
-	err = service.SaveDataset(d.datasetUUID)
-	if err != nil {
+	if err := d.DatasetDirty(); err != nil {
 		return err
 	}
 

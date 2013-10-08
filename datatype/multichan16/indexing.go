@@ -78,26 +78,34 @@ func (i IndexCZYX) Z() int32 {
 	return i.BlockCoord[2]
 }
 
-func (i *IndexCZYX) ExtendMin(izyx voxels.ZYXIndexer) {
+func (i *IndexCZYX) ExtendMin(izyx voxels.ZYXIndexer) (changed bool) {
 	if i.BlockCoord[0] > izyx.X() {
 		i.BlockCoord[0] = izyx.X()
+		changed = true
 	}
 	if i.BlockCoord[1] > izyx.Y() {
 		i.BlockCoord[1] = izyx.Y()
+		changed = true
 	}
 	if i.BlockCoord[2] > izyx.Z() {
 		i.BlockCoord[2] = izyx.Z()
+		changed = true
 	}
+	return
 }
 
-func (i *IndexCZYX) ExtendMax(izyx voxels.ZYXIndexer) {
+func (i *IndexCZYX) ExtendMax(izyx voxels.ZYXIndexer) (changed bool) {
 	if i.BlockCoord[0] < izyx.X() {
 		i.BlockCoord[0] = izyx.X()
+		changed = true
 	}
 	if i.BlockCoord[1] < izyx.Y() {
 		i.BlockCoord[1] = izyx.Y()
+		changed = true
 	}
 	if i.BlockCoord[2] < izyx.Z() {
 		i.BlockCoord[2] = izyx.Z()
+		changed = true
 	}
+	return
 }
