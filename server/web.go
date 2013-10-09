@@ -310,6 +310,7 @@ func nodeRequest(w http.ResponseWriter, r *http.Request) {
 		dataservice, err := runningService.DataService(uuid, dataname)
 		if err != nil {
 			BadRequest(w, r, err.Error())
+			return
 		}
 		err = dataservice.DoHTTP(uuid, w, r)
 		if err != nil {

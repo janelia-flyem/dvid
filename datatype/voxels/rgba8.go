@@ -13,7 +13,7 @@ func init() {
 	rgba := NewDatatype(4, 1)
 	rgba.DatatypeID = &datastore.DatatypeID{
 		Name:    "rgba8",
-		Url:     "github.com/janelia-flyem/dvid/voxels/rgba8.go",
+		Url:     "github.com/janelia-flyem/dvid/datatype/voxels/rgba8.go",
 		Version: "0.6",
 	}
 	datastore.RegisterDatatype(rgba)

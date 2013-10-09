@@ -13,7 +13,7 @@ func init() {
 	labels := NewDatatype(1, 4)
 	labels.DatatypeID = &datastore.DatatypeID{
 		Name:    "labels32",
-		Url:     "github.com/janelia-flyem/dvid/voxels/labels32.go",
+		Url:     "github.com/janelia-flyem/dvid/datatype/voxels/labels32.go",
 		Version: "0.6",
 	}
 	datastore.RegisterDatatype(labels)

@@ -419,7 +419,7 @@ func (d *Data) newVoxels(geom Geometry, img image.Image) (VoxelHandler, error) {
 
 // --- DataService interface ---
 
-// Do acts as a switchboard for RPC commands.
+// DoRPC acts as a switchboard for RPC commands.
 func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error {
 	if request.TypeCommand() != "load" {
 		return d.UnknownCommand(request)

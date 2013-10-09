@@ -89,6 +89,22 @@ func (c Config) GetInt(key string) (i int, found bool, err error) {
 	return
 }
 
+// GetInt32 returns an int32 value of the given key.  If setting of key is not
+// an int32, returns an error.
+func (c Config) GetInt32(key string) (i int32, found bool, err error) {
+	var param interface{}
+	lowerkey := strings.ToLower(key)
+	if param, found = c[lowerkey]; found {
+		var ok bool
+		i, ok = param.(int32)
+		if !ok {
+			err = fmt.Errorf("Setting for '%s' was not an int32: %s", key, param)
+		}
+		return
+	}
+	return
+}
+
 // Response provides a few string fields to pass information back from
 // a remote operation.
 type Response struct {
