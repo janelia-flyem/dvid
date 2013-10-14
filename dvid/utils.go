@@ -1,20 +1,13 @@
 package dvid
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"image"
-	"image/jpeg"
-	"image/png"
 	"io"
 	"io/ioutil"
 	"log"
-	"net/http"
 	"os"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 )
@@ -33,10 +26,6 @@ const (
 	Debug
 	Benchmark
 )
-
-// DefaultJPEGQuality is the quality of images returned if requesting JPEG images
-// and an explicit Quality amount is omitted.
-const DefaultJPEGQuality = 80
 
 var (
 	// NumCPU is the number of cores available to this DVID server.
@@ -120,136 +109,6 @@ func ElapsedTime(mode ModeFlag, startTime time.Time, p ...interface{}) {
 	}
 	args = append(args, time.Since(startTime))
 	Fmt(mode, args...)
-}
-
-// Prompt returns a string entered by the user after displaying message.
-// If the user just hits ENTER (or enters an empty string), then the
-// defaultValue is returned.
-func Prompt(message, defaultValue string) string {
-	fmt.Print(message + " [" + defaultValue + "]: ")
-	reader := bufio.NewReader(os.Stdin)
-	line, _ := reader.ReadString('\n')
-	line = strings.TrimSpace(line)
-	if line == "" {
-		return defaultValue
-	}
-	return line
-}
-
-/***** Image Utilities ******/
-
-// ImageData returns the underlying pixel data for an image or an error if
-// the image doesn't have the requisite []uint8 pixel data.
-func ImageData(img image.Image) (data []uint8, stride int32, err error) {
-	switch typedImg := img.(type) {
-	case *image.Alpha:
-		data = typedImg.Pix
-		stride = int32(typedImg.Stride)
-	case *image.Alpha16:
-		data = typedImg.Pix
-		stride = int32(typedImg.Stride)
-	case *image.Gray:
-		data = typedImg.Pix
-		stride = int32(typedImg.Stride)
-	case *image.Gray16:
-		data = typedImg.Pix
-		stride = int32(typedImg.Stride)
-	case *image.NRGBA:
-		data = typedImg.Pix
-		stride = int32(typedImg.Stride)
-	case *image.NRGBA64:
-		data = typedImg.Pix
-		stride = int32(typedImg.Stride)
-	case *image.Paletted:
-		data = typedImg.Pix
-		stride = int32(typedImg.Stride)
-	case *image.RGBA:
-		data = typedImg.Pix
-		stride = int32(typedImg.Stride)
-	case *image.RGBA64:
-		data = typedImg.Pix
-		stride = int32(typedImg.Stride)
-	default:
-		err = fmt.Errorf("Illegal image type called ImageData(): %T", typedImg)
-	}
-	return
-}
-
-// ImageFromFile returns an image and its format name given a file name.
-func ImageFromFile(filename string) (img image.Image, format string, err error) {
-	var file *os.File
-	file, err = os.Open(filename)
-	if err != nil {
-		err = fmt.Errorf("Unable to open image (%s).  Is this visible to server process?",
-			filename)
-		return
-	}
-	img, format, err = image.Decode(file)
-	if err != nil {
-		return
-	}
-	err = file.Close()
-	return
-}
-
-// ImageFromPost returns and image and its format name given a key to a POST request.
-// The image should be the first file in a POSTed form.
-func ImageFromPost(r *http.Request, key string) (img image.Image, format string, err error) {
-	f, _, err := r.FormFile(key)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-
-	var buf bytes.Buffer
-	io.Copy(&buf, f)
-	img, format, err = image.Decode(&buf)
-	return
-}
-
-// ImageGrayFromData returns a Gray image given data and image size.
-func ImageGrayFromData(data []uint8, nx, ny int) (img *image.Gray) {
-	img = &image.Gray{
-		Pix:    data,
-		Stride: nx,
-		Rect:   image.Rect(0, 0, nx, ny),
-	}
-	return
-}
-
-// WriteImageHttp writes an image to a HTTP response writer using a format and optional
-// compression strength specified in a string, e.g., "png", "jpg:80".
-func WriteImageHttp(w http.ResponseWriter, img image.Image, formatStr string) (err error) {
-	format := strings.Split(formatStr, ":")
-	var compression int = DefaultJPEGQuality
-	if len(format) > 1 {
-		compression, err = strconv.Atoi(format[1])
-		if err != nil {
-			return err
-		}
-	}
-	switch format[0] {
-	case "", "png":
-		w.Header().Set("Content-type", "image/png")
-		png.Encode(w, img)
-	case "jpg", "jpeg":
-		w.Header().Set("Content-type", "image/jpeg")
-		jpeg.Encode(w, img, &jpeg.Options{Quality: compression})
-	default:
-		err = fmt.Errorf("Illegal image format requested: %s", format[0])
-	}
-	return
-}
-
-// PrintNonZero prints the number of non-zero bytes in a slice of bytes.
-func PrintNonZero(message string, value []byte) {
-	nonzero := 0
-	for _, b := range value {
-		if b != 0 {
-			nonzero++
-		}
-	}
-	fmt.Printf("%s> non-zero voxels: %d of %d bytes\n", message, nonzero, len(value))
 }
 
 // WriteJSONFile writes an arbitrary but exportable Go object to a JSON file.

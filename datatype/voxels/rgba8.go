@@ -1,6 +1,6 @@
 /*
 	Data type rgba8 tailors the voxels data type for 8-bit RGBA images.  It simply
-	wraps the voxels package, setting Channels (4) and BytesPerChannel(1).
+	wraps the voxels package, setting Channels (4) and BytesPerValue(1).
 */
 
 package voxels

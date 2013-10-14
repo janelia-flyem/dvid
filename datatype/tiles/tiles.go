@@ -97,7 +97,7 @@ GET  /api/node/<UUID>/<data name>/info
     data name     Name of tiles data.
 
 
-GET  /api/node/<UUID>/<data name>/tile/<plane>/<scaling>/<tile coord>[/<format>]
+GET  /api/node/<UUID>/<data name>/tile/<dims>/<scaling>/<tile coord>[/<format>]
 
     Retrieves tile of named data within a version node.
 
@@ -109,15 +109,17 @@ GET  /api/node/<UUID>/<data name>/tile/<plane>/<scaling>/<tile coord>[/<format>]
 
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add.
-    plane         One of "xy" (default), "xz", or "yz"
+    dims          The axes of data extraction in form "i,j,k,..."  Example: "0,2" can be XZ.
+                    Slice strings ("xy", "xz", or "yz") are also accepted.
+    scaling       Value from 0 (original resolution) to N where each step is downres by 2.
     tile coord    The tile coordinate in "x,y,z" format.  See discussion of scaling above.
     format        "png", "jpg" (default: "png")
                     jpg allows lossy quality setting, e.g., "jpg:80"
 
 
-GET  /api/node/<UUID>/<data name>/image/<plane>/<size>/<offset>[/<format>]
+GET  /api/node/<UUID>/<data name>/image/<dims>/<size>/<offset>[/<format>]
 
-    Retrieves image of named data within a version node.
+    Retrieves image of named data within a version node using the precomputed tiles.
 
     Example: 
 
@@ -127,7 +129,8 @@ GET  /api/node/<UUID>/<data name>/image/<plane>/<size>/<offset>[/<format>]
 
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add.
-    plane         One of "xy" (default), "xz", or "yz"
+    dims          The axes of data extraction in form "i,j,k,..."  Example: "0,2" can be XZ.
+                    Slice strings ("xy", "xz", or "yz") are also accepted.
     tile coord    The tile coordinate in "x,y,z" format.  See discussion of scaling above.
     format        "png", "jpg" (default: "png")
                     jpg allows lossy quality setting, e.g., "jpg:80"
@@ -332,6 +335,7 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 		} else {
 			img, err := d.GetTile(versionID, planeStr, scalingStr, coordStr)
 			if err != nil {
+				server.BadRequest(w, r, err.Error())
 				return err
 			}
 			if img == nil {
@@ -345,17 +349,21 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 			//dvid.ElapsedTime(dvid.Normal, startTime, "%s %s upto image formatting", op, slice)
 			err = dvid.WriteImageHttp(w, img, formatStr)
 			if err != nil {
+				server.BadRequest(w, r, err.Error())
 				return err
 			}
 			dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: tile %s", r.Method, planeStr)
 		}
 
 	case "image":
-		return fmt.Errorf("DVID does not yet support stitched images from tiles.")
+		err = fmt.Errorf("DVID does not yet support stitched images from tiles.")
 	default:
-		return fmt.Errorf("Illegal request for tiles data.  See 'help' for REST API")
+		err = fmt.Errorf("Illegal request for tiles data.  See 'help' for REST API")
 	}
-
+	if err != nil {
+		server.BadRequest(w, r, err.Error())
+		return err
+	}
 	return nil
 }
 
@@ -370,7 +378,7 @@ func (d *Data) GetTile(versionID datastore.VersionLocalID, planeStr, scalingStr,
 	}
 
 	// Construct the index for this tile
-	plane := voxels.DataShapeString(planeStr)
+	plane := dvid.DataShapeString(planeStr)
 	shape, err := plane.DataShape()
 	if err != nil {
 		return nil, fmt.Errorf("Illegal tile plane: %s (%s)", planeStr, err.Error())
@@ -379,11 +387,11 @@ func (d *Data) GetTile(versionID datastore.VersionLocalID, planeStr, scalingStr,
 	if err != nil {
 		return nil, fmt.Errorf("Illegal tile scale: %s (%s)", scalingStr, err.Error())
 	}
-	point3d, err := voxels.PointStr(coordStr).Point3d()
+	point, err := dvid.StringToPoint(coordStr, "_")
 	if err != nil {
 		return nil, fmt.Errorf("Illegal tile coordinate: %s (%s)", coordStr, err.Error())
 	}
-	index := &IndexTile{shape, uint8(scaling), []int32{point3d[0], point3d[1], point3d[2]}}
+	index := &IndexTile{shape, uint8(scaling), point}
 
 	// Retrieve the tile from datastore
 	key := &datastore.DataKey{d.DatasetID(), d.ID, versionID, index}
@@ -391,25 +399,21 @@ func (d *Data) GetTile(versionID datastore.VersionLocalID, planeStr, scalingStr,
 	if err != nil {
 		return nil, err
 	}
-	gray := image.NewGray(image.Rect(0, 0, int(d.Size), int(d.Size)))
-	err = dvid.Deserialize(data, gray)
-	img = gray
+	err = dvid.Deserialize(data, img)
 	return
 }
 
 // Subvolume is a tile-sized 3d subvolume that allows us to efficiently reconstruct tiles.
 // This struct should fulfill the VoxelHandler interface.
 type Subvolume struct {
-	voxels.Geometry
+	dvid.Geometry
 
 	source *voxels.Data
 	data   []uint8
 }
 
 func (v *Subvolume) String() string {
-	size := v.Size()
-	return fmt.Sprintf("Subvolume %s of size %d x %d x %d @ %s",
-		v.DataShape(), size[0], size[1], size[2], v.StartVoxel())
+	return fmt.Sprintf("Subvolume %s of size %s @ offset %s", v.DataShape(), v.Size(), v.StartPoint())
 }
 
 func (v *Subvolume) Data() []uint8 {
@@ -417,19 +421,20 @@ func (v *Subvolume) Data() []uint8 {
 }
 
 func (v *Subvolume) Stride() int32 {
-	return v.Width() * v.BytesPerVoxel()
+	return v.Size().Value(0) * v.BytesPerVoxel()
 }
 
-func (v *Subvolume) BlockIndex(x, y, z int32) voxels.ZYXIndexer {
-	return &voxels.IndexZYX{x, y, z}
+func (v *Subvolume) PointIndexer(p dvid.Point) dvid.PointIndexer {
+	index := dvid.IndexZYX(p.(dvid.Point3d))
+	return &index
 }
 
 func (v *Subvolume) VoxelFormat() (channels, bytesPerChannel int32) {
-	return v.source.ChannelsPerVoxel, v.source.BytesPerChannel
+	return v.source.ValuesPerVoxel, v.source.BytesPerValue
 }
 
 func (v *Subvolume) BytesPerVoxel() int32 {
-	return v.source.ChannelsPerVoxel * v.source.BytesPerChannel
+	return v.source.ValuesPerVoxel * v.source.BytesPerValue
 }
 
 func (v *Subvolume) ByteOrder() binary.ByteOrder {
@@ -516,8 +521,8 @@ func (d *Data) convertSubvol(src *voxels.Data, versionID datastore.VersionLocalI
 		for y := startBlockCoord[1]; y <= endBlockCoord[1]; y++ {
 			// We know for voxels indexing, x span is a contiguous range.
 			// might not be true if we go to Z-curve.
-			i0 := subvolume.BlockIndex(startBlockCoord[0], y, z)
-			i1 := subvolume.BlockIndex(endBlockCoord[0], y, z)
+			i0 := subvolume.PointIndexer(dvid.Point3d{startBlockCoord[0], y, z})
+			i1 := subvolume.PointIndexer(dvid.Point3d{endBlockCoord[0], y, z})
 			startKey := &datastore.DataKey{src.DsetID, src.ID, versionID, i0}
 			endKey := &datastore.DataKey{src.DsetID, src.ID, versionID, i1}
 
@@ -536,13 +541,13 @@ func (d *Data) convertSubvol(src *voxels.Data, versionID datastore.VersionLocalI
 					return fmt.Errorf("Illegal key (not DataKey) returned for data %s",
 						src.DataName())
 				}
-				zyxIndex, ok := datakey.Index.(voxels.ZYXIndexer)
+				zyxIndex, ok := datakey.Index.(voxels.PointIndexer)
 				if !ok {
-					return fmt.Errorf("Illegal index (not ZYXIndexer) returned for data %s",
+					return fmt.Errorf("Illegal index (not PointIndexer) returned for data %s",
 						src.DataName())
 				}
 				minBlockVoxel := zyxIndex.OffsetToBlock(src.BlockSize)
-				maxBlockVoxel := minBlockVoxel.AddSize(src.BlockSize)
+				maxBlockVoxel := minBlockVoxel.Add(src.BlockSize.Sub(Point3d{1, 1, 1}))
 
 				// Compute the bound voxel coordinates for the subvolume and adjust
 				// to our block bounds.
@@ -554,8 +559,6 @@ func (d *Data) convertSubvol(src *voxels.Data, versionID datastore.VersionLocalI
 				// is where we expect this subvolume's data to begin.
 				beg := begVolCoord.Sub(startVoxel)
 				end := endVolCoord.Sub(startVoxel)
-
-				fmt.Printf("Writing %s -> %s\n", beg, end)
 
 				// Deserialize the data
 				data, _, err := dvid.DeserializeData(kv.V, true)

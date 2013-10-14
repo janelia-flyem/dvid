@@ -67,7 +67,7 @@ func (suite *DataSuite) sliceTest(c *C, slice Geometry) {
 	// Create a fake 100x100 8-bit grayscale image
 	nx := int(slice.Width())
 	ny := int(slice.Height())
-	origin := slice.StartVoxel()
+	origin := slice.StartPoint()
 	ox, oy, oz := int(origin[0]), int(origin[1]), int(origin[2])
 	data := []uint8(MakeSlice(ox, oy, oz, nx, ny))
 	img := dvid.ImageGrayFromData(data, nx, ny)
@@ -75,7 +75,7 @@ func (suite *DataSuite) sliceTest(c *C, slice Geometry) {
 	// Store it into datastore at root
 	_, versionID, err := suite.service.LocalIDFromUUID(root)
 	c.Assert(err, IsNil)
-	v, err := grayscale.newVoxels(slice, img)
+	v, err := grayscale.NewVoxelHandler(slice, img)
 	c.Assert(err, IsNil)
 
 	err = grayscale.PutImage(versionID, v)

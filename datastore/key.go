@@ -7,6 +7,7 @@ package datastore
 
 import (
 	"fmt"
+	"reflect"
 
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
@@ -159,6 +160,20 @@ type DataKey struct {
 	// of the data.  In the case of voxels, this could be a (x, y, z) coordinate
 	// packed into a slice of bytes.
 	Index dvid.Index
+}
+
+// KeyToPointIndexer takes a Key and returns an implementation of a PointIndexer if possible.
+func KeyToPointIndexer(key storage.Key) (dvid.PointIndexer, error) {
+	datakey, ok := key.(*DataKey)
+	if !ok {
+		return nil, fmt.Errorf("Can't convert Key (%s) to DataKey", key)
+	}
+	zyx, ok := datakey.Index.(dvid.PointIndexer)
+	if !ok {
+		return nil, fmt.Errorf("Can't convert DataKey.Index (%s) to PointIndexer",
+			reflect.TypeOf(datakey.Index))
+	}
+	return zyx, nil
 }
 
 // ------ Key Interface ----------

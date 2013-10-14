@@ -5,9 +5,19 @@
 package dvid
 
 import (
+	"bytes"
 	"encoding/binary"
+	"encoding/gob"
+	"encoding/hex"
 	"fmt"
 )
+
+func init() {
+	// Register types that may fulfill interface for Gob
+	gob.Register(IndexUint8(0))
+	gob.Register(&IndexZYX{})
+	gob.Register(&IndexCZYX{})
+}
 
 // LocalID is a unique id for some data in a DVID instance.  This unique id is presumably
 // a much smaller representation than the actual data (e.g., a version UUID or dataset
@@ -73,13 +83,38 @@ type Index interface {
 	String() string
 }
 
-// IndexIterator is a function that returns a sequence of indices and ends with nil.
-type IndexIterator func() Index
+// PointIndexer adds Point access to an index.
+type PointIndexer interface {
+	Index
 
-// IndexIteratorMakers can make new IndexIterators.
-type IndexIteratorMaker interface {
-	NewIndexIterator() IndexIterator
+	// Value returns the index point's value for the specified dimension without checking dim bounds.
+	Value(dim uint8) int32
+
+	// ChunkPoint returns the first point within a chunk.  For example, if a chunk
+	// is a block of voxels, then the ChunkPoint is the point corresponding to the
+	// first voxel in the block.
+	ChunkPoint(size Point) Point
+
+	// ExtendMin sets this PointIndexer to the minimum of its value and the passed one.
+	ExtendMin(PointIndexer) (changed bool)
+
+	// ExtendMax sets this PointIndexer to the maximum of its value and the passed one.
+	ExtendMax(PointIndexer) (changed bool)
 }
+
+// IndexIterator is a function that returns a sequence of indices and ends with nil.
+type IndexIterator interface {
+	Valid() bool
+	IndexSpan() (beg, end Index, err error)
+	NextSpan()
+}
+
+// IndexRange defines the extent of data via minimum and maximum indices.
+type IndexRange struct {
+	Minimum, Maximum Index
+}
+
+// ---- Index Implementations --------
 
 // IndexUint8 satisfies an Index interface with an 8-bit unsigned integer index.
 type IndexUint8 uint8
@@ -108,8 +143,230 @@ func (i IndexUint8) IndexFromBytes(b []byte) (Index, error) {
 	return IndexUint8(b[0]), nil
 }
 
-// IndexRange defines a range of indices.  Since an Index is one-dimensional, a minimum
-// and maximum Index defines a range.
-type IndexRange struct {
-	Minimum, Maximum Index
+// IndexZYX implements the Index interface and provides simple indexing on Z,
+// then Y, then X.
+type IndexZYX Point3d
+
+func (i IndexZYX) String() string {
+	return hex.EncodeToString(i.Bytes())
+}
+
+// Bytes returns a byte representation of the Index.
+func (i IndexZYX) Bytes() []byte {
+	buf := new(bytes.Buffer)
+	binary.Write(buf, binary.BigEndian, i[2])
+	binary.Write(buf, binary.BigEndian, i[1])
+	binary.Write(buf, binary.BigEndian, i[0])
+	return buf.Bytes()
+}
+
+// Hash returns an integer [0, n) where the returned values should be reasonably
+// spread among the range of returned values.  This implementation makes sure
+// that any range query along x, y, or z direction will map to different handlers.
+func (i IndexZYX) Hash(n int) int {
+	return int(i[0]+i[1]+i[2]) % n
+}
+
+func (i IndexZYX) Scheme() string {
+	return "ZYX Indexing"
+}
+
+// IndexFromBytes returns an index from bytes.  The passed Index is used just
+// to choose the appropriate byte decoding scheme.
+func (i IndexZYX) IndexFromBytes(b []byte) (Index, error) {
+	z := int32(binary.BigEndian.Uint32(b[0:4]))
+	y := int32(binary.BigEndian.Uint32(b[4:8]))
+	x := int32(binary.BigEndian.Uint32(b[8:12]))
+	return &IndexZYX{x, y, z}, nil
+}
+
+// ------- PointIndexer interface ----------
+
+// Value returns the value at the specified dimension for this index.
+func (i IndexZYX) Value(dim uint8) int32 {
+	return i[dim]
+}
+
+// ChunkPoint returns the voxel coordinate at the top left corner of the chunk
+// corresponding to the index.
+func (i IndexZYX) ChunkPoint(size Point) Point {
+	size3d := size.(Point3d)
+	return Point3d{
+		i[0] * size3d[0],
+		i[1] * size3d[1],
+		i[2] * size3d[2],
+	}
+}
+
+func (i *IndexZYX) ExtendMin(idx PointIndexer) (changed bool) {
+	if i[0] > idx.Value(0) {
+		i[0] = idx.Value(0)
+		changed = true
+	}
+	if i[1] > idx.Value(1) {
+		i[1] = idx.Value(1)
+		changed = true
+	}
+	if i[2] > idx.Value(2) {
+		i[2] = idx.Value(2)
+		changed = true
+	}
+	return
+}
+
+func (i *IndexZYX) ExtendMax(idx PointIndexer) (changed bool) {
+	if i[0] < idx.Value(0) {
+		i[0] = idx.Value(0)
+		changed = true
+	}
+	if i[1] < idx.Value(1) {
+		i[1] = idx.Value(1)
+		changed = true
+	}
+	if i[2] < idx.Value(2) {
+		i[2] = idx.Value(2)
+		changed = true
+	}
+	return
+}
+
+// ----- IndexIterator implementation ------------
+type IndexZYXIterator struct {
+	geom     Geometry
+	x, y, z  int32
+	begBlock Point3d
+	endBlock Point3d
+	endBytes []byte
+}
+
+// NewIndexZYXIterator returns an IndexIterator that iterates over XYZ space.
+func NewIndexZYXIterator(geom Geometry, start, end Point3d) *IndexZYXIterator {
+	return &IndexZYXIterator{
+		geom:     geom,
+		x:        start[0],
+		y:        start[1],
+		z:        start[2],
+		begBlock: start,
+		endBlock: end,
+		endBytes: IndexZYX(end).Bytes(),
+	}
+}
+
+func (it *IndexZYXIterator) Valid() bool {
+	cursorBytes := IndexZYX{it.x, it.y, it.z}.Bytes()
+	if bytes.Compare(cursorBytes, it.endBytes) > 0 {
+		return false
+	}
+	return true
+}
+
+func (it *IndexZYXIterator) IndexSpan() (beg, end Index, err error) {
+	beg = IndexZYX{it.begBlock[0], it.y, it.z}
+	end = IndexZYX{it.endBlock[0], it.y, it.z}
+	return
+}
+
+func (it *IndexZYXIterator) NextSpan() {
+	it.x = it.begBlock[0]
+	it.y += 1
+	if it.y >= it.endBlock[1] {
+		it.y = it.begBlock[1]
+		it.z += 1
+	}
+}
+
+// IndexCZYX implements the Index interface and provides simple indexing on "channel" C,
+// then Z, then Y, then X.  Since IndexZYX is embedded, we get PointIndexer interface.
+type IndexCZYX struct {
+	Channel int32
+	IndexZYX
+}
+
+func (i IndexCZYX) String() string {
+	return hex.EncodeToString(i.Bytes())
+}
+
+// Bytes returns a byte representation of the Index.
+func (i IndexCZYX) Bytes() []byte {
+	buf := new(bytes.Buffer)
+	binary.Write(buf, binary.BigEndian, i.Channel)
+	buf.Write(i.IndexZYX.Bytes())
+	return buf.Bytes()
+}
+
+func (i IndexCZYX) Scheme() string {
+	return "CZYX Indexing"
+}
+
+// IndexFromBytes returns an index from bytes.  The passed Index is used just
+// to choose the appropriate byte decoding scheme.
+func (i IndexCZYX) IndexFromBytes(b []byte) (Index, error) {
+	c := int32(binary.BigEndian.Uint16(b[0:4]))
+	index, err := i.IndexFromBytes(b[4:])
+	if err != nil {
+		return nil, err
+	}
+	return &IndexCZYX{c, index.(IndexZYX)}, nil
+}
+
+// ----- IndexIterator implementation ------------
+type IndexCZYXIterator struct {
+	channel  int32
+	geom     Geometry
+	x, y, z  int32
+	begBlock Point3d
+	endBlock Point3d
+	endBytes []byte
+}
+
+// NewIndexCZYXIterator returns an IndexIterator that iterates over XYZ space for a C.
+func NewIndexCZYXIterator(channel int32, geom Geometry, start, end Point3d) *IndexCZYXIterator {
+	endIndex := IndexCZYX{channel, IndexZYX{end[0], end[1], end[2]}}
+	return &IndexCZYXIterator{
+		channel:  channel,
+		geom:     geom,
+		x:        start[0],
+		y:        start[1],
+		z:        start[2],
+		begBlock: start,
+		endBlock: end,
+		endBytes: endIndex.Bytes(),
+	}
+}
+
+func (it *IndexCZYXIterator) Valid() bool {
+	cursorBytes := IndexCZYX{it.channel, IndexZYX{it.x, it.y, it.z}}.Bytes()
+	if bytes.Compare(cursorBytes, it.endBytes) > 0 {
+		return false
+	}
+	return true
+}
+
+func (it *IndexCZYXIterator) IndexSpan() (beg, end Index, err error) {
+	beg = IndexCZYX{it.channel, IndexZYX{it.begBlock[0], it.y, it.z}}
+	end = IndexCZYX{it.channel, IndexZYX{it.endBlock[0], it.y, it.z}}
+	return
+}
+
+func (it *IndexCZYXIterator) NextSpan() {
+	it.x = it.begBlock[0]
+	it.y += 1
+	if it.y >= it.endBlock[1] {
+		it.y = it.begBlock[1]
+		it.z += 1
+	}
+}
+
+// TODO -- Morton (Z-order) curve
+type IndexMorton []byte
+
+func (i IndexMorton) Scheme() string {
+	return "Morton/Z-order Indexing"
+}
+
+// TODO -- Hilbert curve
+type IndexHilbert []byte
+
+func (i IndexHilbert) Scheme() string {
+	return "Hilbert Indexing"
 }

@@ -1,6 +1,6 @@
 /*
 	Data type labels32 tailors the voxels data type for 32-bit label images.  It simply
-	wraps the voxels package, setting Channels (1) and BytesPerChannel(4).
+	wraps the voxels package, setting Channels (1) and BytesPerValue(4).
 */
 
 package voxels

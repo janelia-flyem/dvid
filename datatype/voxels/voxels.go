@@ -152,13 +152,12 @@ GET  /api/node/<UUID>/<data name>/arb/<center>/<normal>/<size>[/<format>]
 `
 
 // DefaultBlockMax specifies the default size for each block of this data type.
-var DefaultBlockMax Point3d = Point3d{16, 16, 16}
+var DefaultBlockMax = dvid.Point3d{16, 16, 16}
 
 func init() {
 	// Need to register types that will be used to fulfill interfaces.
 	gob.Register(&Datatype{})
 	gob.Register(&Data{})
-	gob.Register(&IndexZYX{})
 	gob.Register(&binary.LittleEndian)
 	gob.Register(&binary.BigEndian)
 }
@@ -189,9 +188,9 @@ func (o OpType) String() string {
 
 // Voxels provide the shape and data of a set of voxels as well as some 3d indexing.
 type VoxelHandler interface {
-	Geometry
+	dvid.Geometry
 
-	VoxelFormat() (channels, bytesPerChannel int32)
+	VoxelFormat() (channels, bytesPerValue int32)
 
 	BytesPerVoxel() int32
 
@@ -201,17 +200,44 @@ type VoxelHandler interface {
 
 	Stride() int32
 
-	BlockIndex(blockX, blockY, blockZ int32) ZYXIndexer
+	Index(p dvid.Point) dvid.Index
+
+	IndexIterator(chunkSize dvid.Point) (dvid.IndexIterator, error)
+}
+
+// Handler conversion of little to big endian for voxels larger than 1 byte.
+func littleToBigEndian(v VoxelHandler, data []uint8) (bigendian []uint8, err error) {
+	if v.ByteOrder() == nil || v.ByteOrder() == binary.BigEndian || v.BytesPerVoxel() == 1 {
+		return data, nil
+	}
+	bigendian = make([]uint8, len(data))
+	switch v.BytesPerVoxel() {
+	case 2:
+		for beg := 0; beg < len(data)-1; beg += 2 {
+			bigendian[beg], bigendian[beg+1] = data[beg+1], data[beg]
+		}
+	case 4:
+		for beg := 0; beg < len(data)-3; beg += 4 {
+			value := binary.LittleEndian.Uint32(data[beg : beg+4])
+			binary.BigEndian.PutUint32(bigendian[beg:beg+4], value)
+		}
+	case 8:
+		for beg := 0; beg < len(data)-7; beg += 8 {
+			value := binary.LittleEndian.Uint64(data[beg : beg+8])
+			binary.BigEndian.PutUint64(bigendian[beg:beg+8], value)
+		}
+	}
+	return
 }
 
 // -------  VoxelHandler interface implementation -------------
 
 // Voxels represents subvolumes or slices.
 type Voxels struct {
-	Geometry
+	dvid.Geometry
 
-	channels        int32
-	bytesPerChannel int32
+	valuesPerVoxel int32
+	bytesPerValue  int32
 
 	// The data itself
 	data []uint8
@@ -223,10 +249,25 @@ type Voxels struct {
 	byteOrder binary.ByteOrder
 }
 
+// NewVoxels returns a Voxels struct from given parameters.
+func NewVoxels(geom dvid.Geometry, valuesPerVoxel, bytesPerValue int32, data []uint8,
+	byteOrder binary.ByteOrder) *Voxels {
+
+	bytesPerVoxel := valuesPerVoxel * bytesPerValue
+	stride := geom.Size().Value(0) * bytesPerVoxel
+	return &Voxels{
+		Geometry:       geom,
+		valuesPerVoxel: valuesPerVoxel,
+		bytesPerValue:  bytesPerValue,
+		data:           data,
+		stride:         stride,
+		byteOrder:      byteOrder,
+	}
+}
+
 func (v *Voxels) String() string {
 	size := v.Size()
-	return fmt.Sprintf("%s of size %d x %d x %d @ %s",
-		v.DataShape(), size[0], size[1], size[2], v.StartVoxel())
+	return fmt.Sprintf("%s of size %s @ %s", v.DataShape(), size, v.StartPoint())
 }
 
 func (v *Voxels) Data() []uint8 {
@@ -237,25 +278,46 @@ func (v *Voxels) Stride() int32 {
 	return v.stride
 }
 
-func (v *Voxels) BlockIndex(x, y, z int32) ZYXIndexer {
-	return &IndexZYX{x, y, z}
-}
-
-func (v *Voxels) VoxelFormat() (channels, bytesPerChannel int32) {
-	return v.channels, v.bytesPerChannel
+func (v *Voxels) VoxelFormat() (valuesPerVoxel, bytesPerValue int32) {
+	return v.valuesPerVoxel, v.bytesPerValue
 }
 
 func (v *Voxels) BytesPerVoxel() int32 {
-	return v.channels * v.bytesPerChannel
+	return v.valuesPerVoxel * v.bytesPerValue
 }
 
 func (v *Voxels) ByteOrder() binary.ByteOrder {
 	return v.byteOrder
 }
 
+func (v *Voxels) Index(p dvid.Point) dvid.Index {
+	index := dvid.IndexZYX(p.(dvid.Point3d))
+	return &index
+}
+
+// IndexIterator returns an iterator that can move across the voxel geometry,
+// generating indices or index spans.
+func (v *Voxels) IndexIterator(chunkSize dvid.Point) (dvid.IndexIterator, error) {
+	// Setup traversal
+	begVoxel, ok := v.StartPoint().(dvid.Chunkable)
+	if !ok {
+		return nil, fmt.Errorf("VoxelHandler StartPoint() cannot handle Chunkable points.")
+	}
+	endVoxel, ok := v.EndPoint().(dvid.Chunkable)
+	if !ok {
+		return nil, fmt.Errorf("VoxelHandler EndPoint() cannot handle Chunkable points.")
+	}
+
+	blockSize := chunkSize.(dvid.Point3d)
+	begBlock := begVoxel.ChunkPoint(blockSize).(dvid.Point3d)
+	endBlock := endVoxel.ChunkPoint(blockSize).(dvid.Point3d)
+
+	return dvid.NewIndexZYXIterator(v.Geometry, begBlock, endBlock), nil
+}
+
 // Datatype embeds the datastore's Datatype to create a unique type
 // with voxel functions.  Refinements of general voxel types can be implemented
-// by embedding this type, choosing appropriate # of channels and bytes/voxel,
+// by embedding this type, choosing appropriate # of values and bytes/value,
 // overriding functions as needed, and calling datastore.RegisterDatatype().
 // Note that these fields are invariant for all instances of this type.  Fields
 // that can change depending on the type of data (e.g., resolution) should be
@@ -263,18 +325,19 @@ func (v *Voxels) ByteOrder() binary.ByteOrder {
 type Datatype struct {
 	datastore.Datatype
 
-	// channels specifies the # channels interleaved within a voxel.
-	channels int32
+	// The number of values associated with a voxel.
+	// For example, a RGBA color has four values.
+	valuesPerVoxel int32
 
-	// bytesPerChannel gives the # of bytes/channel/voxel
-	bytesPerChannel int32
+	// bytesPerValue gives the # of bytes/value/voxel
+	bytesPerValue int32
 }
 
 // NewDatatype returns a pointer to a new voxels Datatype with default values set.
-func NewDatatype(channelsPerVoxel, bytesPerChannel int32) (dtype *Datatype) {
+func NewDatatype(valuesPerVoxel, bytesPerValue int32) (dtype *Datatype) {
 	dtype = new(Datatype)
-	dtype.channels = channelsPerVoxel
-	dtype.bytesPerChannel = bytesPerChannel
+	dtype.valuesPerVoxel = valuesPerVoxel
+	dtype.bytesPerValue = bytesPerValue
 	dtype.Requirements = &storage.Requirements{
 		BulkIniter: false,
 		BulkWriter: false,
@@ -295,13 +358,12 @@ func (dtype *Datatype) NewDataService(dset *datastore.Dataset, id *datastore.Dat
 		return
 	}
 	data := &Data{
-		Data:             basedata,
-		ChannelsPerVoxel: dtype.channels,
-		BytesPerChannel:  dtype.bytesPerChannel,
-		datasetUUID:      dset.Root,
+		Data:           basedata,
+		ValuesPerVoxel: dtype.valuesPerVoxel,
+		BytesPerValue:  dtype.bytesPerValue,
+		datasetUUID:    dset.Root,
 	}
 
-	data.BlockSize = DefaultBlockMax
 	var s string
 	var found bool
 	s, found, err = config.GetString("BlockSize")
@@ -309,31 +371,30 @@ func (dtype *Datatype) NewDataService(dset *datastore.Dataset, id *datastore.Dat
 		return
 	}
 	if found {
-		data.BlockSize, err = PointStr(s).Point3d()
+		data.BlockSize, err = dvid.StringToPoint(s, ",")
 		if err != nil {
-			err = fmt.Errorf("BlockSize setting is not a 3d point: %s [%s]", s, err.Error())
 			return
 		}
 	}
-	data.VoxelRes = VoxelResolution{1.0, 1.0, 1.0}
 	s, found, err = config.GetString("VoxelRes")
 	if err != nil {
 		return
 	}
 	if found {
-		data.VoxelRes, err = VectorStr(s).VoxelResolution()
+		data.VoxelRes, err = dvid.StringToNdFloat32(s, ",")
 		if err != nil {
-			err = fmt.Errorf("VoxelRes setting is not a 3d vector: %s [%s]", s, err.Error())
 			return
 		}
 	}
-	data.VoxelResUnits = "nanometers"
 	s, found, err = config.GetString("VoxelResUnits")
 	if err != nil {
 		return
 	}
 	if found {
-		data.VoxelResUnits = VoxelResolutionUnits(s)
+		data.VoxelResUnits, err = dvid.StringToNdString(s, ",")
+		if err != nil {
+			return
+		}
 	}
 	service = data
 	return
@@ -347,27 +408,27 @@ func (dtype *Datatype) Help() string {
 type Data struct {
 	*datastore.Data
 
-	// ChannelsPerVoxel specifies the # channels interleaved within a voxel.
-	ChannelsPerVoxel int32
+	// ValuesPerVoxel specifies the # values interleaved within a voxel.
+	ValuesPerVoxel int32
 
-	// BytesPerChannel gives the # of bytes/channel/voxel
-	BytesPerChannel int32
+	// BytesPerValue gives the # of bytes/value/voxel
+	BytesPerValue int32
 
 	// Block size for this dataset
-	BlockSize Point3d
+	BlockSize dvid.Point
 
-	// Relative resolution of voxels in volume
-	VoxelRes VoxelResolution
+	// Resolution of voxels in volume
+	VoxelRes dvid.NdFloat32
 
 	// Units of resolution, e.g., "nanometers"
-	VoxelResUnits VoxelResolutionUnits
+	VoxelResUnits dvid.NdString
 
 	// The endianness of this loaded data.
 	ByteOrder binary.ByteOrder
 
 	// Maximum extents of data stored
-	MinIndex ZYXIndexer
-	MaxIndex ZYXIndexer
+	MinIndex dvid.PointIndexer
+	MaxIndex dvid.PointIndexer
 
 	// Pointer to the owning Dataset so we can force Put() if we modify
 	// data properties based on loaded data, e.g., index extents.
@@ -390,15 +451,16 @@ func (d *Data) DatasetDirty() error {
 
 // If img is passed in, newVoxels will initialize the VoxelHandler with data from the image.
 // Otherwise, it will allocate a zero buffer of appropriate size.
-func (d *Data) newVoxels(geom Geometry, img image.Image) (VoxelHandler, error) {
-	bytesPerVoxel := d.ChannelsPerVoxel * d.BytesPerChannel
-	stride := geom.Width() * bytesPerVoxel
+func (d *Data) NewVoxelHandler(geom dvid.Geometry, img image.Image) (VoxelHandler, error) {
+	bytesPerVoxel := d.ValuesPerVoxel * d.BytesPerValue
+	stride := geom.Size().Value(0) * bytesPerVoxel
 
 	voxels := &Voxels{
-		Geometry:        geom,
-		channels:        d.ChannelsPerVoxel,
-		bytesPerChannel: d.BytesPerChannel,
-		stride:          stride,
+		Geometry:       geom,
+		valuesPerVoxel: d.ValuesPerVoxel,
+		bytesPerValue:  d.BytesPerValue,
+		stride:         stride,
+		byteOrder:      d.ByteOrder,
 	}
 
 	if img == nil {
@@ -489,16 +551,16 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 	}
 
 	// Get the data shape.
-	shapeStr := DataShapeString(parts[3])
+	shapeStr := dvid.DataShapeString(parts[3])
 	dataShape, err := shapeStr.DataShape()
 	if err != nil {
 		return fmt.Errorf("Bad data shape given '%s'", shapeStr)
 	}
 
-	switch dataShape {
-	case XY, XZ, YZ:
+	switch dataShape.ShapeDimensions() {
+	case 2:
 		sizeStr, offsetStr := parts[4], parts[5]
-		slice, err := NewSliceFromStrings(shapeStr, offsetStr, sizeStr)
+		slice, err := dvid.NewSliceFromStrings(shapeStr, offsetStr, sizeStr)
 		if err != nil {
 			return err
 		}
@@ -508,7 +570,7 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 			if err != nil {
 				return err
 			}
-			v, err := d.newVoxels(slice, postedImg)
+			v, err := d.NewVoxelHandler(slice, postedImg)
 			if err != nil {
 				return err
 			}
@@ -517,7 +579,7 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 				return err
 			}
 		} else {
-			v, err := d.newVoxels(slice, nil)
+			v, err := d.NewVoxelHandler(slice, nil)
 			if err != nil {
 				return err
 			}
@@ -535,9 +597,9 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 				return err
 			}
 		}
-	case Vol:
+	case 3:
 		sizeStr, offsetStr := parts[4], parts[5]
-		_, err := NewSubvolumeFromStrings(offsetStr, sizeStr)
+		_, err := dvid.NewSubvolumeFromStrings(offsetStr, sizeStr)
 		if err != nil {
 			return err
 		}
@@ -557,8 +619,8 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 		} else {
 			return fmt.Errorf("DVID does not yet support POST of thrift-encoded volume data")
 		}
-	case Arb:
-		return fmt.Errorf("DVID does not yet support arbitrary planes.")
+	default:
+		return fmt.Errorf("DVID currently supports shapes of only 2 and 3 dimensions")
 	}
 
 	dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: %s", r.Method, dataShape)
@@ -571,12 +633,14 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 // cross-platform serialization than standard image formats for anything above
 // 16-bits/voxel.
 func (d *Data) SliceImage(v VoxelHandler, z int32) (img image.Image, err error) {
-	channels, bytesPerChannel := v.VoxelFormat()
+	channels, bytesPerValue := v.VoxelFormat()
 	unsupported := func() error {
 		return fmt.Errorf("DVID doesn't support images for %d channels and %d bytes/channel",
-			channels, bytesPerChannel)
+			channels, bytesPerValue)
 	}
-	sliceBytes := v.Width() * v.Height() * channels * bytesPerChannel
+	width := v.Size().Value(0)
+	height := v.Size().Value(1)
+	sliceBytes := width * height * channels * bytesPerValue
 	beg := z * sliceBytes
 	end := beg + sliceBytes
 	data := v.Data()
@@ -584,10 +648,10 @@ func (d *Data) SliceImage(v VoxelHandler, z int32) (img image.Image, err error) 
 		err = fmt.Errorf("SliceImage() called with z = %d greater than %s", z, v)
 		return
 	}
-	r := image.Rect(0, 0, int(v.Width()), int(v.Height()))
+	r := image.Rect(0, 0, int(width), int(height))
 	switch channels {
 	case 1:
-		switch bytesPerChannel {
+		switch bytesPerValue {
 		case 1:
 			img = &image.Gray{data[beg:end], 1 * r.Dx(), r}
 		case 2:
@@ -604,7 +668,7 @@ func (d *Data) SliceImage(v VoxelHandler, z int32) (img image.Image, err error) 
 			err = unsupported()
 		}
 	case 4:
-		switch bytesPerChannel {
+		switch bytesPerValue {
 		case 1:
 			img = &image.RGBA{data[beg:end], 4 * r.Dx(), r}
 		case 2:
@@ -661,8 +725,8 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 		return fmt.Errorf("Could not find node with UUID %s: %s", uuidStr, err.Error())
 	}
 
-	// Get origin
-	offset, err := PointStr(offsetStr).Coord()
+	// Get offset
+	offset, err := dvid.StringToPoint(offsetStr, ",")
 	if err != nil {
 		return fmt.Errorf("Illegal offset specification: %s: %s", offsetStr, err.Error())
 	}
@@ -677,7 +741,7 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 	dvid.Log(dvid.Debug, addedFiles+"\n")
 
 	// Get plane
-	plane, err := DataShapeString(planeStr).DataShape()
+	plane, err := dvid.DataShapeString(planeStr).DataShape()
 	if err != nil {
 		fmt.Println("GetPlane")
 		return err
@@ -691,12 +755,11 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 		if err != nil {
 			return fmt.Errorf("Error after %d images successfully added: %s", err.Error())
 		}
-		size := SizeFromRect(img.Bounds())
-		slice, err := NewSlice(plane, offset, size)
+		slice, err := dvid.NewOrthogSlice(plane, offset, dvid.RectSize(img.Bounds()))
 		if err != nil {
 			return fmt.Errorf("Unable to determine slice: %s", err.Error())
 		}
-		v, err := d.newVoxels(slice, img)
+		v, err := d.NewVoxelHandler(slice, img)
 		if err != nil {
 			return err
 		}
@@ -706,7 +769,7 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 		}
 		dvid.ElapsedTime(dvid.Debug, sliceTime, "%s load local %s", d.DataName(), slice)
 		numSuccessful++
-		offset = offset.Add(Coord{0, 0, 1})
+		offset = offset.Add(dvid.Point3d{0, 0, 1})
 	}
 	dvid.ElapsedTime(dvid.Debug, startTime, "RPC load local (%s) completed", addedFiles)
 	return nil
@@ -724,28 +787,22 @@ func (d *Data) GetImage(versionID datastore.VersionLocalID, v VoxelHandler) (img
 	wg := new(sync.WaitGroup)
 	chunkOp := &storage.ChunkOp{&op, wg}
 
-	// Setup traversal
-	startVoxel := v.StartVoxel()
-	endVoxel := v.EndVoxel()
-
-	// Map: Iterate in x, then y, then z
-	startBlockCoord := startVoxel.BlockCoord(d.BlockSize)
-	endBlockCoord := endVoxel.BlockCoord(d.BlockSize)
-	for z := startBlockCoord[2]; z <= endBlockCoord[2]; z++ {
-		for y := startBlockCoord[1]; y <= endBlockCoord[1]; y++ {
-			// We know for voxels indexing, x span is a contiguous range.
-			i0 := v.BlockIndex(startBlockCoord[0], y, z)
-			i1 := v.BlockIndex(endBlockCoord[0], y, z)
-			startKey := &datastore.DataKey{d.DsetID, d.ID, versionID, i0}
-			endKey := &datastore.DataKey{d.DsetID, d.ID, versionID, i1}
-
-			// Send the entire range of key/value pairs to ProcessChunk()
-			err = db.ProcessRange(startKey, endKey, chunkOp, d.ProcessChunk)
-			if err != nil {
-				err = fmt.Errorf("Unable to GET data %s: %s", d.DataName(), err.Error())
-				return
-			}
+	for it, err := v.IndexIterator(d.BlockSize); err == nil && it.Valid(); it.NextSpan() {
+		indexBeg, indexEnd, err := it.IndexSpan()
+		if err != nil {
+			return nil, err
 		}
+		startKey := &datastore.DataKey{d.DsetID, d.ID, versionID, indexBeg}
+		endKey := &datastore.DataKey{d.DsetID, d.ID, versionID, indexEnd}
+
+		// Send the entire range of key/value pairs to ProcessChunk()
+		err = db.ProcessRange(startKey, endKey, chunkOp, d.ProcessChunk)
+		if err != nil {
+			return nil, fmt.Errorf("Unable to GET data %s: %s", d.DataName(), err.Error())
+		}
+	}
+	if err != nil {
+		return
 	}
 
 	// Reduce: Grab the resulting 2d image.
@@ -768,10 +825,6 @@ func (d *Data) PutImage(versionID datastore.VersionLocalID, v VoxelHandler) erro
 	wg := new(sync.WaitGroup)
 	chunkOp := &storage.ChunkOp{&op, wg}
 
-	// Setup traversal
-	startVoxel := v.StartVoxel()
-	endVoxel := v.EndVoxel()
-
 	// We only want one PUT on given version for given data to prevent interleaved
 	// chunk PUTs that could potentially overwrite slice modifications.
 	versionMutex := datastore.VersionMutex(d, versionID)
@@ -786,75 +839,79 @@ func (d *Data) PutImage(versionID datastore.VersionLocalID, v VoxelHandler) erro
 		}
 	}()
 
-	// Map: Iterate in x, then y, then z
-	startBlockCoord := startVoxel.BlockCoord(d.BlockSize)
-	endBlockCoord := endVoxel.BlockCoord(d.BlockSize)
-	for z := startBlockCoord[2]; z <= endBlockCoord[2]; z++ {
-		for y := startBlockCoord[1]; y <= endBlockCoord[1]; y++ {
-			// We know for voxels indexing, x span is a contiguous range.
-			i0 := v.BlockIndex(startBlockCoord[0], y, z)
-			i1 := v.BlockIndex(endBlockCoord[0], y, z)
-			startKey := &datastore.DataKey{d.DsetID, d.ID, versionID, i0}
-			endKey := &datastore.DataKey{d.DsetID, d.ID, versionID, i1}
+	// Iterate through index space for this data.
+	for it, err := v.IndexIterator(d.BlockSize); err == nil && it.Valid(); it.NextSpan() {
+		i0, i1, err := it.IndexSpan()
+		if err != nil {
+			return err
+		}
+		indexBeg := i0.(dvid.PointIndexer)
+		indexEnd := i1.(dvid.PointIndexer)
 
-			// Expand stored extents if necessary.
-			if d.MinIndex == nil {
-				d.MinIndex = i0
-				extentChanged = true
-			} else {
-				extentChanged = d.MinIndex.ExtendMin(i0)
-			}
-			if d.MaxIndex == nil {
-				d.MaxIndex = i1
-				extentChanged = true
-			} else {
-				extentChanged = d.MaxIndex.ExtendMax(i1)
-			}
+		begX := indexBeg.Value(0)
+		endX := indexEnd.Value(0)
 
-			// GET all the chunks for this range.
-			keyvalues, err := db.GetRange(startKey, endKey)
-			if err != nil {
-				return fmt.Errorf("Error in reading data during PUT %s: %s",
-					d.DataName(), err.Error())
-			}
+		// Expand stored extents if necessary.
+		if d.MinIndex == nil {
+			d.MinIndex = indexBeg
+			extentChanged = true
+		} else {
+			extentChanged = d.MinIndex.ExtendMin(indexBeg)
+		}
+		if d.MaxIndex == nil {
+			d.MaxIndex = indexEnd
+			extentChanged = true
+		} else {
+			extentChanged = d.MaxIndex.ExtendMax(indexEnd)
+		}
 
-			// Send all data to chunk handlers for this range.
-			var kv, oldkv storage.KeyValue
-			numOldkv := len(keyvalues)
-			oldI := 0
-			if numOldkv > 0 {
-				oldkv = keyvalues[oldI]
-			}
-			wg.Add(int(endBlockCoord[0]-startBlockCoord[0]) + 1)
-			for x := startBlockCoord[0]; x <= endBlockCoord[0]; x++ {
-				i := v.BlockIndex(x, y, z)
-				key := &datastore.DataKey{d.DsetID, d.ID, versionID, i}
-				// Check for this key among old key-value pairs and if so,
-				// send the old value into chunk handler.
-				if oldkv.K != nil {
-					zyx, err := KeyToZYXIndexer(oldkv.K)
-					if err != nil {
-						return err
-					}
-					if zyx.X() == x {
-						kv = oldkv
-						oldI++
-						if oldI < numOldkv {
-							oldkv = keyvalues[oldI]
-						} else {
-							oldkv.K = nil
-						}
+		startKey := &datastore.DataKey{d.DsetID, d.ID, versionID, indexBeg}
+		endKey := &datastore.DataKey{d.DsetID, d.ID, versionID, indexEnd}
+
+		// GET all the chunks for this range.
+		keyvalues, err := db.GetRange(startKey, endKey)
+		if err != nil {
+			return fmt.Errorf("Error in reading data during PUT %s: %s",
+				d.DataName(), err.Error())
+		}
+
+		// Send all data to chunk handlers for this range.
+		var kv, oldkv storage.KeyValue
+		numOldkv := len(keyvalues)
+		oldI := 0
+		if numOldkv > 0 {
+			oldkv = keyvalues[oldI]
+		}
+		wg.Add(int(endX-begX) + 1)
+		p := dvid.Point3d{begX, indexBeg.Value(1), indexBeg.Value(2)}
+		for x := begX; x <= endX; x++ {
+			p[0] = x
+			key := &datastore.DataKey{d.DsetID, d.ID, versionID, v.Index(p)}
+			// Check for this key among old key-value pairs and if so,
+			// send the old value into chunk handler.
+			if oldkv.K != nil {
+				indexer, err := datastore.KeyToPointIndexer(oldkv.K)
+				if err != nil {
+					return err
+				}
+				if indexer.Value(0) == x {
+					kv = oldkv
+					oldI++
+					if oldI < numOldkv {
+						oldkv = keyvalues[oldI]
 					} else {
-						kv = storage.KeyValue{K: key}
+						oldkv.K = nil
 					}
 				} else {
 					kv = storage.KeyValue{K: key}
 				}
-				// TODO -- Pass batch write via chunkOp and group all PUTs
-				// together at once.  Should increase write speed, particularly
-				// since the PUTs are using mostly sequential keys.
-				d.ProcessChunk(&storage.Chunk{chunkOp, kv})
+			} else {
+				kv = storage.KeyValue{K: key}
 			}
+			// TODO -- Pass batch write via chunkOp and group all PUTs
+			// together at once.  Should increase write speed, particularly
+			// since the PUTs are using mostly sequential keys.
+			d.ProcessChunk(&storage.Chunk{chunkOp, kv})
 		}
 	}
 	wg.Wait()
@@ -881,9 +938,9 @@ func (d *Data) GetVolume(versionID dvid.LocalID, vol Geometry) (data []byte, err
 	// server.Subvolume is a thrift-defined data structure
 	encodedVol := &server.Subvolume{
 		Data:    proto.String(string(d.DataName())),
-		OffsetX: proto.Int32(operation.data.Geometry.StartVoxel()[0]),
-		OffsetY: proto.Int32(operation.data.Geometry.StartVoxel()[1]),
-		OffsetZ: proto.Int32(operation.data.Geometry.StartVoxel()[2]),
+		OffsetX: proto.Int32(operation.data.Geometry.StartPoint()[0]),
+		OffsetY: proto.Int32(operation.data.Geometry.StartPoint()[1]),
+		OffsetZ: proto.Int32(operation.data.Geometry.StartPoint()[2]),
 		SizeX:   proto.Uint32(uint32(operation.data.Geometry.Size()[0])),
 		SizeY:   proto.Uint32(uint32(operation.data.Geometry.Size()[1])),
 		SizeZ:   proto.Uint32(uint32(operation.data.Geometry.Size()[2])),
@@ -919,20 +976,20 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 	if !ok {
 		log.Fatalf("Illegal operation passed to ProcessChunk() for data %s\n", d.DataName())
 	}
-	index, err := KeyToZYXIndexer(chunk.K)
+	index, err := datastore.KeyToPointIndexer(chunk.K)
 	if err != nil {
 		log.Fatalf("Data %s: %s\n", d.DataName(), err.Error())
 	}
 
 	// Compute the bounding voxel coordinates for this block.
-	blockSize := d.BlockSize
-	minBlockVoxel := index.OffsetToBlock(blockSize)
-	maxBlockVoxel := minBlockVoxel.AddSize(blockSize)
+	blockSize := d.BlockSize.(dvid.Point3d)
+	minBlockVoxel := index.ChunkPoint(blockSize)
+	maxBlockVoxel := minBlockVoxel.Add(blockSize.Sub(dvid.Point3d{1, 1, 1}))
 
 	// Compute the bound voxel coordinates for the data slice/subvolume and adjust
 	// to our block bounds.
-	minDataVoxel := op.StartVoxel()
-	maxDataVoxel := op.EndVoxel()
+	minDataVoxel := op.StartPoint()
+	maxDataVoxel := op.EndPoint()
 	begVolCoord := minDataVoxel.Max(minBlockVoxel)
 	endVolCoord := maxDataVoxel.Min(maxBlockVoxel)
 
@@ -941,7 +998,7 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 	blockBytes := int(blockSize[0] * blockSize[1] * blockSize[2] * bytesPerVoxel)
 
 	// Compute block coord matching beg's DVID volume space voxel coord
-	blockBeg := begVolCoord.Sub(minBlockVoxel)
+	blockBeg := begVolCoord.Sub(minBlockVoxel).(dvid.Point3d)
 
 	// Initialize the block buffer using the chunk of data.  For voxels, this chunk of
 	// data needs to be uncompressed and deserialized.
@@ -968,8 +1025,8 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 
 	// Adjust the DVID volume voxel coordinates for the data so that (0,0,0)
 	// is where we expect this slice/subvolume's data to begin.
-	beg := begVolCoord.Sub(op.StartVoxel())
-	end := endVolCoord.Sub(op.StartVoxel())
+	beg := begVolCoord.Sub(op.StartPoint()).(dvid.Point3d)
+	end := endVolCoord.Sub(op.StartPoint()).(dvid.Point3d)
 
 	// For each geometry, traverse the data slice/subvolume and read/write from
 	// the block data depending on the op.
@@ -980,8 +1037,8 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 	//fmt.Printf("Block buffer size: %d bytes\n", len(block))
 	//fmt.Printf("Data buffer size: %d bytes\n", len(data))
 
-	switch op.DataShape() {
-	case XY:
+	switch {
+	case op.DataShape().Equals(dvid.XY):
 		//fmt.Printf("XY Block: %s->%s, blockXY %d, blockX %d, blockBeg %s\n",
 		//	begVolCoord, endVolCoord, blockNumXY, blockNumX, blockBeg)
 		blockI := blockBeg[2]*blockNumXY + blockBeg[1]*blockNumX + blockBeg[0]*bytesPerVoxel
@@ -999,7 +1056,7 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 			dataI += op.Stride()
 		}
 		//dvid.PrintNonZero("After copy", data)
-	case XZ:
+	case op.DataShape().Equals(dvid.XZ):
 		blockI := blockBeg[2]*blockNumXY + blockBeg[1]*blockNumX + blockBeg[0]*bytesPerVoxel
 		dataI := beg[2]*op.Stride() + beg[0]*bytesPerVoxel
 		for y := beg[2]; y <= end[2]; y++ {
@@ -1014,7 +1071,7 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 			blockI += blockSize[0] * blockSize[1] * bytesPerVoxel
 			dataI += op.Stride()
 		}
-	case YZ:
+	case op.DataShape().Equals(dvid.YZ):
 		bx, bz := blockBeg[0], blockBeg[2]
 		for y := beg[2]; y <= end[2]; y++ {
 			dataI := y*op.Stride() + beg[1]*bytesPerVoxel
@@ -1031,9 +1088,9 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 			}
 			bz++
 		}
-	case Vol:
-		dataNumX := op.Width() * bytesPerVoxel
-		dataNumXY := op.Height() * dataNumX
+	case op.DataShape().Equals(dvid.Vol3d):
+		dataNumX := op.Size().Value(0) * bytesPerVoxel
+		dataNumXY := op.Size().Value(1) * dataNumX
 		blockZ := blockBeg[2]
 		for dataZ := beg[2]; dataZ <= end[2]; dataZ++ {
 			blockY := blockBeg[1]

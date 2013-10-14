@@ -63,30 +63,27 @@ func (V3DRawMarshaler) UnmarshalV3DRaw(reader io.Reader) ([]*Channel, error) {
 
 	// Allocate the V3DRaw struct for the # channels
 	totalBytes := int(bytesPerVoxel * width * height * depth)
-	size := voxels.Point3d{int32(width), int32(height), int32(depth)}
-	volume := voxels.NewSubvolume(voxels.Coord{0, 0, 0}, size)
+	size := dvid.Point3d{int32(width), int32(height), int32(depth)}
+	volume := dvid.NewSubvolume(dvid.Point3d{0, 0, 0}, size)
 	v3draw := make([]*Channel, numChannels, numChannels)
 	var c int32
 	for c = 0; c < int32(numChannels); c++ {
+		data := make([]uint8, totalBytes, totalBytes)
+		v := voxels.NewVoxels(volume, 1, int32(bytesPerVoxel), data, byteOrder)
 		v3draw[c] = &Channel{
-			Geometry:        volume,
-			channelNum:      c + 1,
-			channels:        1,
-			bytesPerChannel: int32(bytesPerVoxel),
-			data:            make([]uint8, totalBytes, totalBytes),
-			stride:          int32(width * bytesPerVoxel),
-			byteOrder:       byteOrder,
+			Voxels:     v,
+			channelNum: c + 1,
 		}
 	}
 
 	// Read in the data for each channel
 	for c = 0; c < int32(numChannels); c++ {
-		if err := binary.Read(reader, byteOrder, v3draw[c].data); err != nil {
+		if err := binary.Read(reader, byteOrder, v3draw[c].Data()); err != nil {
 			return nil, fmt.Errorf("Error reading data for channel %d: %s", c, err.Error())
 		}
 		if dvid.Mode == dvid.Debug {
 			chanStr := fmt.Sprintf("Channel %d", v3draw[c].channelNum)
-			dvid.PrintNonZero(chanStr, v3draw[c].data)
+			dvid.PrintNonZero(chanStr, v3draw[c].Data())
 		}
 	}
 	return v3draw, nil

@@ -15,7 +15,6 @@
 package multichan16
 
 import (
-	"encoding/binary"
 	"encoding/gob"
 	"encoding/json"
 	"fmt"
@@ -112,7 +111,7 @@ POST /api/node/<UUID>/<data name>/<dims>/<size>/<offset>[/<format>]
 
 // DefaultBlockMax specifies the default size for each block of this data type.
 var (
-	DefaultBlockMax voxels.Point3d = voxels.Point3d{16, 16, 16}
+	DefaultBlockMax = dvid.Point3d{16, 16, 16}
 	typeService     datastore.TypeService
 )
 
@@ -127,64 +126,48 @@ func init() {
 	// Need to register types that will be used to fulfill interfaces.
 	gob.Register(&Datatype{})
 	gob.Register(&Data{})
-	gob.Register(&IndexCZYX{})
 }
 
 // -------  VoxelHandler interface implementation -------------
 
-// Channel is an image volumes that fulfills the voxels.VoxelHandler interface.
-// The term "channels" is used to reflect RGBA channels that are interleaved in
-// a voxel compared to "Channel", which is entirely different data in multichannel
-// images.  Perhaps we should use different names...
+// Channel is an image volume that fulfills the voxels.VoxelHandler interface.
 type Channel struct {
-	voxels.Geometry
+	*voxels.Voxels
 
 	channelNum int32
-
-	channels        int32
-	bytesPerChannel int32
-
-	// The data itself
-	data []uint8
-
-	// The stride for 2d iteration.  For 3d subvolumes, we don't reuse standard Go
-	// images but maintain fully packed data slices, so stride isn't necessary.
-	stride int32
-
-	byteOrder binary.ByteOrder
 }
 
 func (c *Channel) String() string {
-	size := c.Size()
-	return fmt.Sprintf("Channel of size %d x %d x %d @ %s",
-		size[0], size[1], size[2], c.StartVoxel())
+	return fmt.Sprintf("Channel %d of size %s @ offset %s", c.channelNum, c.Size(), c.StartPoint())
 }
 
-func (c *Channel) Data() []uint8 {
-	return c.data
+// Index returns a channel-specific Index
+func (c *Channel) Index(p dvid.Point) dvid.Index {
+	index := dvid.IndexCZYX{c.channelNum, dvid.IndexZYX(p.(dvid.Point3d))}
+	return &index
 }
 
-func (c *Channel) Stride() int32 {
-	return c.stride
+// IndexIterator returns an iterator that can move across the voxel geometry,
+// generating indices or index spans.
+func (c *Channel) IndexIterator(chunkSize dvid.Point) (dvid.IndexIterator, error) {
+	// Setup traversal
+	begVoxel, ok := c.StartPoint().(dvid.Chunkable)
+	if !ok {
+		return nil, fmt.Errorf("VoxelHandler StartPoint() cannot handle Chunkable points.")
+	}
+	endVoxel, ok := c.EndPoint().(dvid.Chunkable)
+	if !ok {
+		return nil, fmt.Errorf("VoxelHandler EndPoint() cannot handle Chunkable points.")
+	}
+
+	blockSize := chunkSize.(dvid.Point3d)
+	begBlock := begVoxel.ChunkPoint(blockSize).(dvid.Point3d)
+	endBlock := endVoxel.ChunkPoint(blockSize).(dvid.Point3d)
+
+	return dvid.NewIndexCZYXIterator(c.channelNum, c.Geometry, begBlock, endBlock), nil
 }
 
-// BlockIndex returns a channel-specific ZYXIndexer
-func (c *Channel) BlockIndex(x, y, z int32) voxels.ZYXIndexer {
-	return &IndexCZYX{c.channelNum, voxels.BlockCoord{x, y, z}}
-}
-
-func (c *Channel) BytesPerVoxel() int32 {
-	return c.channels * c.bytesPerChannel
-}
-
-func (c *Channel) VoxelFormat() (channels, bytesPerChannel int32) {
-	return c.channels, c.bytesPerChannel
-}
-
-func (c *Channel) ByteOrder() binary.ByteOrder {
-	return c.byteOrder
-}
-
+// Datatype just uses voxels data type by composition.
 type Datatype struct {
 	*voxels.Datatype
 }
@@ -193,20 +176,19 @@ type Datatype struct {
 
 // NewData returns a pointer to a new Voxels with default values.
 func (dtype *Datatype) NewDataService(dset *datastore.Dataset, id *datastore.DataID,
-	config dvid.Config) (service datastore.DataService, err error) {
+	config dvid.Config) (datastore.DataService, error) {
 
-	var voxelservice datastore.DataService
-	voxelservice, err = dtype.Datatype.NewDataService(dset, id, config)
+	voxelservice, err := dtype.Datatype.NewDataService(dset, id, config)
 	if err != nil {
-		return
+		return nil, err
 	}
 	basedata := voxelservice.(*voxels.Data)
 	basedata.BlockSize = DefaultBlockMax
 	basedata.TypeService = typeService
-	service = &Data{
+	service := &Data{
 		Data: *basedata,
 	}
-	return
+	return service, nil
 }
 
 func (dtype *Datatype) Help() string {
@@ -223,7 +205,7 @@ type Data struct {
 }
 
 // JSONString returns the JSON for this Data's configuration
-func (d *Data) JSONString() (jsonStr string, err error) {
+func (d *Data) JSONString() (string, error) {
 	m, err := json.Marshal(d)
 	if err != nil {
 		return "", err
@@ -323,39 +305,35 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 	}
 
 	// Get the data shape.
-	shapeStr := voxels.DataShapeString(parts[3])
+	shapeStr := dvid.DataShapeString(parts[3])
 	dataShape, err := shapeStr.DataShape()
 	if err != nil {
 		return fmt.Errorf("Bad data shape given '%s'", shapeStr)
 	}
 
-	switch dataShape {
-	case voxels.XY, voxels.XZ, voxels.YZ:
+	switch dataShape.ShapeDimensions() {
+	case 2:
 		sizeStr, offsetStr := parts[4], parts[5]
-		slice, err := voxels.NewSliceFromStrings(shapeStr, offsetStr, sizeStr)
+		slice, err := dvid.NewSliceFromStrings(shapeStr, offsetStr, sizeStr)
 		if err != nil {
 			return err
 		}
 		if op == voxels.PutOp {
 			return fmt.Errorf("DVID does not yet support POST of slices into multichannel data")
 		} else {
-			var channels, bytesPerChannel int32
+			var valuesPerVoxel, bytesPerValue int32
 			if channelNum == 0 {
-				bytesPerChannel = 1
-				channels = 4
+				valuesPerVoxel = 4
+				bytesPerValue = 1
 			} else {
-				channels = 1
-				bytesPerChannel = 2
+				valuesPerVoxel = 1
+				bytesPerValue = 2
 			}
-			numBytes := int64(channels*bytesPerChannel) * slice.NumVoxels()
+			data := make([]uint8, int(slice.NumVoxels()))
+			v := voxels.NewVoxels(slice, valuesPerVoxel, bytesPerValue, data, d.ByteOrder)
 			channel := &Channel{
-				Geometry:        slice,
-				channelNum:      channelNum,
-				channels:        channels,
-				bytesPerChannel: bytesPerChannel,
-				data:            make([]uint8, numBytes),
-				stride:          slice.Width() * channels * bytesPerChannel,
-				byteOrder:       d.ByteOrder,
+				Voxels:     v,
+				channelNum: channelNum,
 			}
 			img, err := d.GetImage(versionID, channel)
 			var formatStr string
@@ -368,9 +346,9 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 				return err
 			}
 		}
-	case voxels.Vol:
+	case 3:
 		sizeStr, offsetStr := parts[4], parts[5]
-		_, err := voxels.NewSubvolumeFromStrings(offsetStr, sizeStr)
+		_, err := dvid.NewSubvolumeFromStrings(offsetStr, sizeStr)
 		if err != nil {
 			return err
 		}
@@ -379,8 +357,8 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 		} else {
 			return fmt.Errorf("DVID does not yet support POST of thrift-encoded volume data")
 		}
-	case voxels.Arb:
-		return fmt.Errorf("DVID does not yet support arbitrary planes.")
+	default:
+		return fmt.Errorf("DVID does not yet support nD volumes")
 	}
 
 	dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: %s", r.Method, dataShape)
@@ -425,11 +403,10 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 	// Store the metadata
 	d.NumChannels = len(channels)
 	if d.NumChannels > 0 {
-		d.ByteOrder = channels[0].byteOrder
+		d.ByteOrder = channels[0].ByteOrder()
 		reply.Text = fmt.Sprintf("Loaded %s into data '%s': found %d channels",
 			d.DataName(), filename, d.NumChannels)
-		reply.Text += fmt.Sprintf(" (%d x %d x %d)", channels[0].Width(),
-			channels[0].Height(), channels[0].Depth())
+		reply.Text += fmt.Sprintf(" %s", channels[0])
 	} else {
 		reply.Text = fmt.Sprintf("Found no channels in file %s", filename)
 		return nil
@@ -463,14 +440,10 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 func (d *Data) storeComposite(versionID datastore.VersionLocalID, channels []*Channel) error {
 	// Setup the composite Channel
 	geom := channels[0].Geometry
-	pixels := int(geom.Width() * geom.Height() * geom.Depth())
+	pixels := int(geom.NumVoxels())
 	composite := &Channel{
-		Geometry:        geom,
-		channelNum:      0,
-		channels:        4,
-		bytesPerChannel: 1,
-		data:            make([]uint8, pixels*4),
-		stride:          geom.Width(),
+		Voxels:     voxels.NewVoxels(geom, 4, 1, make([]uint8, pixels*4), d.ByteOrder),
+		channelNum: channels[0].channelNum,
 	}
 
 	// Get the min/max of each channel.
@@ -499,7 +472,7 @@ func (d *Data) storeComposite(versionID datastore.VersionLocalID, channels []*Ch
 	}
 
 	// Do second pass, normalizing each channel and storing it into the appropriate byte.
-	compdata := composite.data
+	compdata := composite.Voxels.Data()
 	for c := 0; c < numChannels; c++ {
 		channel := channels[c]
 		window := int(max[c] - min[c])
