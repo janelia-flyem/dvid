@@ -2,17 +2,10 @@ package dvid
 
 import (
 	. "github.com/janelia-flyem/go/gocheck"
-	"testing"
+	_ "testing"
 )
 
-// Hook up gocheck into the "go test" runner.
-func Test(t *testing.T) { TestingT(t) }
-
-type MySuite struct{}
-
-var _ = Suite(&MySuite{})
-
-func (s *MySuite) TestLocalID(c *C) {
+func (s *DataSuite) TestLocalID(c *C) {
 	id := LocalID(41)
 	b := id.Bytes()
 	id2, length := LocalIDFromBytes(b)
@@ -21,7 +14,7 @@ func (s *MySuite) TestLocalID(c *C) {
 	c.Assert(length, Equals, sizeOfLocalID)
 }
 
-func (suite *MySuite) TestSerialize(c *C) {
+func (suite *DataSuite) TestSerialize(c *C) {
 	stringObj := "Hi there!"
 	var returnObj string
 

@@ -2,10 +2,42 @@ package voxels
 
 import (
 	. "github.com/janelia-flyem/go/gocheck"
-	_ "testing"
+	"testing"
 
+	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
+	"github.com/janelia-flyem/dvid/server"
 )
+
+// Hook up gocheck into the "go test" runner.
+func Test(t *testing.T) { TestingT(t) }
+
+type DataSuite struct {
+	dir     string
+	service *server.Service
+	head    datastore.UUID
+}
+
+var _ = Suite(&DataSuite{})
+
+// This will setup a new datastore and open it up, keeping the UUID and
+// service pointer in the DataSuite.
+func (suite *DataSuite) SetUpSuite(c *C) {
+	// Make a temporary testing directory that will be auto-deleted after testing.
+	suite.dir = c.MkDir()
+
+	// Create a new datastore.
+	err := datastore.Init(suite.dir, true)
+	c.Assert(err, IsNil)
+
+	// Open the datastore
+	suite.service, err = server.OpenDatastore(suite.dir)
+	c.Assert(err, IsNil)
+}
+
+func (suite *DataSuite) TearDownSuite(c *C) {
+	suite.service.Shutdown()
+}
 
 // Data from which to construct repeatable 3d images where adjacent voxels have different values.
 var xdata = []byte{'\x01', '\x07', '\xAF', '\xFF', '\x70'}
@@ -13,16 +45,16 @@ var ydata = []byte{'\x33', '\xB2', '\x77', '\xD0', '\x4F'}
 var zdata = []byte{'\x5C', '\x89', '\x40', '\x13', '\xCA'}
 
 // Make a 2d slice of bytes with top left corner at (ox,oy,oz) and size (nx,ny)
-func MakeSlice(ox, oy, oz, nx, ny int) []byte {
-	slice := make([]byte, nx*ny, nx*ny)
+func MakeSlice(offset dvid.Point3d, size dvid.Point2d) []byte {
+	slice := make([]byte, size[0]*size[1], size[0]*size[1])
 	i := 0
-	modz := oz % len(zdata)
-	for y := 0; y < ny; y++ {
-		sy := y + oy
-		mody := sy % len(ydata)
-		sx := ox
-		for x := 0; x < nx; x++ {
-			modx := sx % len(xdata)
+	modz := offset[2] % int32(len(zdata))
+	for y := int32(0); y < size[1]; y++ {
+		sy := y + offset[1]
+		mody := sy % int32(len(ydata))
+		sx := offset[0]
+		for x := int32(0); x < size[0]; x++ {
+			modx := sx % int32(len(xdata))
 			slice[i] = xdata[modx] ^ ydata[mody] ^ zdata[modz]
 			i++
 			sx++
@@ -32,19 +64,21 @@ func MakeSlice(ox, oy, oz, nx, ny int) []byte {
 }
 
 // Make a 3d volume of bytes with top left corner at (ox,oy,oz) and size (nx, ny, nz)
-func MakeVolume(ox, oy, oz, nx, ny, nz int) []byte {
-	sliceBytes := nx * ny
-	volumeBytes := sliceBytes * nz
+func MakeVolume(offset, size dvid.Point3d) []byte {
+	sliceBytes := size[0] * size[1]
+	volumeBytes := sliceBytes * size[2]
 	volume := make([]byte, volumeBytes, volumeBytes)
-	i := 0
-	for z := oz; z < oz+nz; z++ {
-		copy(volume[i:i+sliceBytes], MakeSlice(ox, oy, z, nx, ny))
+	var i int32
+	size2d := dvid.Point2d{size[0], size[1]}
+	for z := offset[2]; z < offset[2]+size[2]; z++ {
+		offset[2] = z
+		copy(volume[i:i+sliceBytes], MakeSlice(offset, size2d))
 		i += sliceBytes
 	}
 	return volume
 }
 
-func (suite *DataSuite) sliceTest(c *C, slice Geometry) {
+func (suite *DataSuite) sliceTest(c *C, slice dvid.Geometry) {
 	// Create a new dataset
 	root, _, err := suite.service.NewDataset()
 	c.Assert(err, IsNil)
@@ -65,12 +99,11 @@ func (suite *DataSuite) sliceTest(c *C, slice Geometry) {
 	}
 
 	// Create a fake 100x100 8-bit grayscale image
-	nx := int(slice.Width())
-	ny := int(slice.Height())
-	origin := slice.StartPoint()
-	ox, oy, oz := int(origin[0]), int(origin[1]), int(origin[2])
-	data := []uint8(MakeSlice(ox, oy, oz, nx, ny))
-	img := dvid.ImageGrayFromData(data, nx, ny)
+	nx := slice.Size().Value(0)
+	ny := slice.Size().Value(1)
+	offset := slice.StartPoint().(dvid.Point3d)
+	data := []uint8(MakeSlice(offset, dvid.Point2d{nx, ny}))
+	img := dvid.ImageGrayFromData(data, int(nx), int(ny))
 
 	// Store it into datastore at root
 	_, versionID, err := suite.service.LocalIDFromUUID(root)
@@ -93,28 +126,25 @@ func (suite *DataSuite) sliceTest(c *C, slice Geometry) {
 }
 
 func (suite *DataSuite) TestXYSliceGrayscale8(c *C) {
-	nx := 100
-	ny := 100
-	ox, oy, oz := 3, 13, 24
-	slice := NewSliceXY(Coord{int32(ox), int32(oy), int32(oz)},
-		Point2d{int32(nx), int32(ny)})
+	offset := dvid.Point3d{3, 13, 24}
+	size := dvid.Point2d{100, 100}
+	slice, err := dvid.NewOrthogSlice(dvid.XY, offset, size)
+	c.Assert(err, IsNil)
 	suite.sliceTest(c, slice)
 }
 
 func (suite *DataSuite) TestXZSliceGrayscale8(c *C) {
-	nx := 100
-	ny := 100
-	ox, oy, oz := 31, 10, 14
-	slice := NewSliceXZ(Coord{int32(ox), int32(oy), int32(oz)},
-		Point2d{int32(nx), int32(ny)})
+	offset := dvid.Point3d{31, 10, 14}
+	size := dvid.Point2d{100, 100}
+	slice, err := dvid.NewOrthogSlice(dvid.XZ, offset, size)
+	c.Assert(err, IsNil)
 	suite.sliceTest(c, slice)
 }
 
 func (suite *DataSuite) TestYZSliceGrayscale8(c *C) {
-	nx := 100
-	ny := 100
-	ox, oy, oz := 13, 40, 99
-	slice := NewSliceYZ(Coord{int32(ox), int32(oy), int32(oz)},
-		Point2d{int32(nx), int32(ny)})
+	offset := dvid.Point3d{13, 40, 99}
+	size := dvid.Point2d{100, 100}
+	slice, err := dvid.NewOrthogSlice(dvid.YZ, offset, size)
+	c.Assert(err, IsNil)
 	suite.sliceTest(c, slice)
 }

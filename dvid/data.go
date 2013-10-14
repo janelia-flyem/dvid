@@ -1,12 +1,19 @@
 package dvid
 
 import (
+	"encoding/gob"
 	"fmt"
 	"image"
 	"math"
 	"strconv"
 	"strings"
 )
+
+func init() {
+	// Need to register types that will be used to fulfill interfaces.
+	gob.Register(&Point3d{})
+	gob.Register(&Point2d{})
+}
 
 // Point is an interface for n-dimensional points.   Types that implement the
 // interface can optimize for particular dimensionality.

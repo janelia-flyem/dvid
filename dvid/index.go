@@ -65,6 +65,9 @@ func LocalID32FromBytes(b []byte) (id LocalID32, length int) {
 // spatiotemporal indexing scheme.  For example, Z-curves map n-D space to a 1-D index.
 // It is assumed that implementations for this interface are castable to []byte.
 type Index interface {
+	// PtrToDup returns a duplicate Index that can be modified (implemented with *SomeType)
+	PtrToDup() Index
+
 	// Bytes returns a byte representation of the Index.  Integer components of
 	// the Index should probably be serialized in big endian for improved
 	// lexicographic ordering.
@@ -119,6 +122,11 @@ type IndexRange struct {
 // IndexUint8 satisfies an Index interface with an 8-bit unsigned integer index.
 type IndexUint8 uint8
 
+func (i IndexUint8) PtrToDup() Index {
+	dup := i
+	return &dup
+}
+
 func (i IndexUint8) String() string {
 	return fmt.Sprintf("%x", i)
 }
@@ -146,6 +154,11 @@ func (i IndexUint8) IndexFromBytes(b []byte) (Index, error) {
 // IndexZYX implements the Index interface and provides simple indexing on Z,
 // then Y, then X.
 type IndexZYX Point3d
+
+func (i IndexZYX) PtrToDup() Index {
+	dup := i
+	return &dup
+}
 
 func (i IndexZYX) String() string {
 	return hex.EncodeToString(i.Bytes())
@@ -280,6 +293,10 @@ func (it *IndexZYXIterator) NextSpan() {
 type IndexCZYX struct {
 	Channel int32
 	IndexZYX
+}
+
+func (i IndexCZYX) PtrToDup() Index {
+	return &IndexCZYX{i.Channel, i.IndexZYX}
 }
 
 func (i IndexCZYX) String() string {

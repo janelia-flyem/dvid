@@ -151,8 +151,14 @@ GET  /api/node/<UUID>/<data name>/arb/<center>/<normal>/<size>[/<format>]
                     jpg allows lossy quality setting, e.g., "jpg:80"
 `
 
-// DefaultBlockMax specifies the default size for each block of this data type.
-var DefaultBlockMax = dvid.Point3d{16, 16, 16}
+var (
+	// DefaultBlockSize specifies the default size for each block of this data type.
+	DefaultBlockSize = dvid.Point3d{16, 16, 16}
+
+	DefaultVoxelRes = dvid.NdFloat32{10.0, 10.0, 10.0}
+
+	DefaultVoxelResUnits = dvid.NdString{"nanometers", "nanometers", "nanometers"}
+)
 
 func init() {
 	// Need to register types that will be used to fulfill interfaces.
@@ -375,6 +381,8 @@ func (dtype *Datatype) NewDataService(dset *datastore.Dataset, id *datastore.Dat
 		if err != nil {
 			return
 		}
+	} else {
+		data.BlockSize = DefaultBlockSize
 	}
 	s, found, err = config.GetString("VoxelRes")
 	if err != nil {
@@ -385,6 +393,8 @@ func (dtype *Datatype) NewDataService(dset *datastore.Dataset, id *datastore.Dat
 		if err != nil {
 			return
 		}
+	} else {
+		data.VoxelRes = DefaultVoxelRes
 	}
 	s, found, err = config.GetString("VoxelResUnits")
 	if err != nil {
@@ -395,13 +405,15 @@ func (dtype *Datatype) NewDataService(dset *datastore.Dataset, id *datastore.Dat
 		if err != nil {
 			return
 		}
+	} else {
+		data.VoxelResUnits = DefaultVoxelResUnits
 	}
 	service = data
 	return
 }
 
 func (dtype *Datatype) Help() string {
-	return fmt.Sprintf(HelpMessage, DefaultBlockMax)
+	return fmt.Sprintf(HelpMessage, DefaultBlockSize)
 }
 
 // Data embeds the datastore's Data and extends it with voxel-specific properties.
@@ -845,8 +857,8 @@ func (d *Data) PutImage(versionID datastore.VersionLocalID, v VoxelHandler) erro
 		if err != nil {
 			return err
 		}
-		indexBeg := i0.(dvid.PointIndexer)
-		indexEnd := i1.(dvid.PointIndexer)
+		indexBeg := i0.PtrToDup().(dvid.PointIndexer)
+		indexEnd := i1.PtrToDup().(dvid.PointIndexer)
 
 		begX := indexBeg.Value(0)
 		endX := indexEnd.Value(0)
