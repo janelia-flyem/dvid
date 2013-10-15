@@ -202,7 +202,7 @@ and enter the following URL:
     
 You should see a small grayscale image appear in your browser.  It will be 250 x 250 pixels, taken
 from data in the XY plane using an offset of (100,100,2600).  Note that when we did the "load local"
-we specified "0,0,2600".  This loaded the first image with (100,100,2600) as an offset.
+we specified "100,100,2600".  This loaded the first image with (100,100,2600) as an offset.
 
 Change the Z offset to 2800 to see a different portion of the volume:
 
