@@ -8,6 +8,7 @@ package dvid
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -74,34 +75,14 @@ func (c Config) GetString(key string) (s string, found bool, err error) {
 }
 
 // GetInt returns an int value of the given key.  If setting of key is not
-// an int, returns an error.
+// parseable as an int, returns an error.
 func (c Config) GetInt(key string) (i int, found bool, err error) {
-	var param interface{}
-	lowerkey := strings.ToLower(key)
-	if param, found = c[lowerkey]; found {
-		var ok bool
-		i, ok = param.(int)
-		if !ok {
-			err = fmt.Errorf("Setting for '%s' was not an int: %s", key, param)
-		}
+	var s string
+	s, found, err = c.GetString(key)
+	if err != nil || !found {
 		return
 	}
-	return
-}
-
-// GetInt32 returns an int32 value of the given key.  If setting of key is not
-// an int32, returns an error.
-func (c Config) GetInt32(key string) (i int32, found bool, err error) {
-	var param interface{}
-	lowerkey := strings.ToLower(key)
-	if param, found = c[lowerkey]; found {
-		var ok bool
-		i, ok = param.(int32)
-		if !ok {
-			err = fmt.Errorf("Setting for '%s' was not an int32: %s", key, param)
-		}
-		return
-	}
+	i, err = strconv.Atoi(s)
 	return
 }
 

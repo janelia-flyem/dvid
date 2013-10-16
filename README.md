@@ -17,6 +17,7 @@ found in help constants:
 * [general commands and HTTP API](http://godoc.org/github.com/janelia-flyem/dvid/server#pkg-constants)
 * [voxels HTTP API](http://godoc.org/github.com/janelia-flyem/dvid/datatype/voxels#pkg-constants)
 * [multichan16 HTTP API](http://godoc.org/github.com/janelia-flyem/dvid/datatype/multichan16#pkg-constants)
+* [tiles HTTP API](http://godoc.org/github.com/janelia-flyem/dvid/datatype/tiles#pkg-constants)
 
 ## Philosophy
 
@@ -198,20 +199,58 @@ You might have noticed a few HTTP API calls listed in the grayscale8 help text. 
 use one of these to look at slices of data orthogonal to the volume axes.  Launch a web browser
 and enter the following URL:
 
-    localhost:8000/api/node/c7/mygrayscale/xy/250,250/100,100,2600
+    localhost:8000/api/node/c7/mygrayscale/xy/250_250/100_100_2600
     
 You should see a small grayscale image appear in your browser.  It will be 250 x 250 pixels, taken
 from data in the XY plane using an offset of (100,100,2600).  Note that when we did the "load local"
-we specified "100,100,2600".  This loaded the first image with (100,100,2600) as an offset.
+we specified "100,100,2600".  This loaded the first image with (100,100,2600) as an offset.  Also 
+note the HTTP APIs replace the comma separator with an underscore because commas are reserved URI
+characters.
 
 Change the Z offset to 2800 to see a different portion of the volume:
 
-    localhost:8000/api/node/c7/mygrayscale/xy/250,250/100,100,2800
+    localhost:8000/api/node/c7/mygrayscale/xy/250_250/100_100_2800
 
 We can see the extent of the loaded image using the following resectioning:
 
-    localhost:8000/api/node/c7/mygrayscale/xz/500,500/0,0,2500
+    localhost:8000/api/node/c7/mygrayscale/xz/500_500/0_0_2500
 
 A larger 500 x 500 pixel image should now appear in the browser with black areas surrounding your
 loaded data.  This is a slice along XZ, an orientation not present in the originally loaded
 XY images.
+
+### Adding multi-scale tiles
+
+Let's precompute multi-scale XY, XZ, and YZ tiles for our grayscale image.  First, we add an
+instance of a tiles data type under our previous dataset UUID:
+
+    % dvid dataset c7 new tiles mytiles source=mygrayscale TileSize=128
+
+Note that we set type-specific parameters, "source" to "mygrayscale", which is the name of the
+data we wish to tile, and "TileSize" to "128", which causes all future tile generation to be 128x128
+pixels.  Now that we have tiles data, we generate the tiles using this command:
+
+    % dvid node c7 mytiles generate
+
+This will kick off the tile precomputation (about 30 seconds on my MacBook Pro).  Since our
+loaded grayscale is 250 x 250 x 250, we have two different scales of tiles.  The original
+scale is "0" and can be accessed through the tiles HTTP API.  Visit this URL in your browser:
+
+    localhost:8000/api/node/c7/mytiles/tile/xy/0/0_0_0
+
+This will return a 128x128 pixel tile, basically the upper left quadrant of the first slice of our
+test data.  By replacing the "0_0_0" (0,0,0) portion with "1_0_0", you can see the upper right
+quadrant (tile x=1, y=0) of the first 250x250 image.  Tile space has its origin in the upper left
+corner.
+
+We can zoom out a bit by going to scale "1" where returned tiles have reduced the size of the
+original image (via bicubic interpolation) by 2.
+
+    localhost:8000/api/node/c7/mytiles/tile/xy/1/0_0_0
+
+The above URL will return a 128x128 pixel tile that covers the original 250x250 image so you see
+a bit of black space at the edges.   DVID automatically creates as many scales as necessary
+until one tile fits the source image extents.  In this test case, we only need two scales because
+at scale "1", our specified tile size can cover the original data.
+
+As an exercise, look at the XZ and YZ tiles as well.

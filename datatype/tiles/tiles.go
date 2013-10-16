@@ -139,7 +139,7 @@ GET  /api/node/<UUID>/<data name>/image/<dims>/<size>/<offset>[/<format>]
 
 `
 
-const DefaultTileSize = 128
+const DefaultTileSize = 512
 
 func init() {
 	tiles := NewDatatype()
@@ -206,37 +206,38 @@ func NewDatatype() (dtype *Datatype) {
 
 // NewData returns a pointer to new tile data with default values.
 func (dtype *Datatype) NewDataService(dset *datastore.Dataset, id *datastore.DataID,
-	config dvid.Config) (dataservice datastore.DataService, err error) {
+	config dvid.Config) (datastore.DataService, error) {
 
 	// Make sure we have a valid DataService source
 	s, found, e := config.GetString("Source")
 	if e != nil || !found {
-		err = fmt.Errorf("Cannot make tiles data without valid 'Source' setting")
-		return
+		return nil, fmt.Errorf("Cannot make tiles data without valid 'Source' setting")
 	}
 	sourcename := datastore.DataString(s)
-	var source datastore.DataService
-	source, err = dset.DataService(sourcename)
+	source, err := dset.DataService(sourcename)
 	if err != nil {
-		return
+		return nil, err
 	}
 
 	// Initialize the tiles data
-	var basedata *datastore.Data
-	basedata, err = datastore.NewDataService(id, dtype, config)
+	basedata, err := datastore.NewDataService(id, dtype, config)
 	if err != nil {
-		return
+		return nil, err
 	}
 	data := &Data{
 		Data:   basedata,
 		Source: source,
 	}
-	data.Size, found, e = config.GetInt32("TileSize")
-	if e != nil || !found {
+	tilesize, found, err := config.GetInt("TileSize")
+	if err != nil {
+		dvid.Log(dvid.Normal, "Error in trying to set TileSize: %s\n", e.Error())
 		data.Size = DefaultTileSize
+	} else if !found {
+		data.Size = DefaultTileSize
+	} else {
+		data.Size = int32(tilesize)
 	}
-	dataservice = data
-	return
+	return data, nil
 }
 
 func (dtype *Datatype) Help() string {
