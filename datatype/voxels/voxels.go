@@ -106,7 +106,7 @@ POST /api/node/<UUID>/<data name>/<dims>/<size>/<offset>[/<format>]
 
     Example: 
 
-    GET /api/node/3f8c/grayscale/0,1/512,256/0,0,100/jpg:80
+    GET /api/node/3f8c/grayscale/0_1/512_256/0_0_100/jpg:80
 
     Returns an XY slice (0th and 1st dimensions) with width (x) of 512 voxels and
     height (y) of 256 voxels with offset (0,0,100) in JPG format with quality 80.
@@ -119,7 +119,7 @@ POST /api/node/<UUID>/<data name>/<dims>/<size>/<offset>[/<format>]
 
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add.
-    dims          The axes of data extraction in form "i,j,k,..."  Example: "0,2" can be XZ.
+    dims          The axes of data extraction in form "i_j_k,..."  Example: "0_2" can be XZ.
                     Slice strings ("xy", "xz", or "yz") are also accepted.
     size          Size in voxels along each dimension specified in <dims>.
     offset        Gives coordinate of first voxel using dimensionality of data.
@@ -138,15 +138,15 @@ GET  /api/node/<UUID>/<data name>/arb/<center>/<normal>/<size>[/<format>]
 
     Example: 
 
-    GET /api/node/3f8c/grayscale/arb/200,200/2.0,1.3,1/100,100/jpg:80
+    GET /api/node/3f8c/grayscale/arb/200_200/2.0_1.3_1/100_100/jpg:80
 
     Arguments:
 
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add.
-    center        3d coordinate in the format "x,y,z".  Gives 3d coord of center pixel.
-    normal        3d vector in the format "nx,ny,nz".  Gives normal vector of image.
-    size          Size in pixels in the format "dx,dy".
+    center        3d coordinate in the format "x_y_z".  Gives 3d coord of center pixel.
+    normal        3d vector in the format "nx_ny_nz".  Gives normal vector of image.
+    size          Size in pixels in the format "dx_dy".
     format        "png", "jpg" (default: "png")  
                     jpg allows lossy quality setting, e.g., "jpg:80"
 `
@@ -297,8 +297,7 @@ func (v *Voxels) ByteOrder() binary.ByteOrder {
 }
 
 func (v *Voxels) Index(p dvid.Point) dvid.Index {
-	index := dvid.IndexZYX(p.(dvid.Point3d))
-	return &index
+	return dvid.IndexZYX(p.(dvid.Point3d))
 }
 
 // IndexIterator returns an iterator that can move across the voxel geometry,
@@ -313,10 +312,8 @@ func (v *Voxels) IndexIterator(chunkSize dvid.Point) (dvid.IndexIterator, error)
 	if !ok {
 		return nil, fmt.Errorf("VoxelHandler EndPoint() cannot handle Chunkable points.")
 	}
-
-	blockSize := chunkSize.(dvid.Point3d)
-	begBlock := begVoxel.ChunkPoint(blockSize).(dvid.Point3d)
-	endBlock := endVoxel.ChunkPoint(blockSize).(dvid.Point3d)
+	begBlock := begVoxel.Chunk(chunkSize).(dvid.Point3d)
+	endBlock := endVoxel.Chunk(chunkSize).(dvid.Point3d)
 
 	return dvid.NewIndexZYXIterator(v.Geometry, begBlock, endBlock), nil
 }
@@ -367,7 +364,7 @@ func (dtype *Datatype) NewDataService(dset *datastore.Dataset, id *datastore.Dat
 		Data:           basedata,
 		ValuesPerVoxel: dtype.valuesPerVoxel,
 		BytesPerValue:  dtype.bytesPerValue,
-		datasetUUID:    dset.Root,
+		DatasetUUID:    dset.Root,
 	}
 
 	var s string
@@ -444,7 +441,7 @@ type Data struct {
 
 	// Pointer to the owning Dataset so we can force Put() if we modify
 	// data properties based on loaded data, e.g., index extents.
-	datasetUUID datastore.UUID
+	DatasetUUID datastore.UUID
 }
 
 // JSONString returns the JSON for this Data's configuration
@@ -458,7 +455,7 @@ func (d *Data) JSONString() (jsonStr string, err error) {
 
 func (d *Data) DatasetDirty() error {
 	service := server.DatastoreService()
-	return service.SaveDataset(d.datasetUUID)
+	return service.SaveDataset(d.DatasetUUID)
 }
 
 // If img is passed in, newVoxels will initialize the VoxelHandler with data from the image.
@@ -572,7 +569,7 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 	switch dataShape.ShapeDimensions() {
 	case 2:
 		sizeStr, offsetStr := parts[4], parts[5]
-		slice, err := dvid.NewSliceFromStrings(shapeStr, offsetStr, sizeStr)
+		slice, err := dvid.NewSliceFromStrings(shapeStr, offsetStr, sizeStr, "_")
 		if err != nil {
 			return err
 		}
@@ -611,7 +608,7 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 		}
 	case 3:
 		sizeStr, offsetStr := parts[4], parts[5]
-		_, err := dvid.NewSubvolumeFromStrings(offsetStr, sizeStr)
+		_, err := dvid.NewSubvolumeFromStrings(offsetStr, sizeStr, "_")
 		if err != nil {
 			return err
 		}
@@ -847,7 +844,10 @@ func (d *Data) PutImage(versionID datastore.VersionLocalID, v VoxelHandler) erro
 	var extentChanged bool
 	defer func() {
 		if extentChanged {
-			d.DatasetDirty()
+			err := d.DatasetDirty()
+			if err != nil {
+				dvid.Log(dvid.Normal, "Error in trying to save dataset on change: %s\n", err.Error())
+			}
 		}
 	}()
 
@@ -857,24 +857,31 @@ func (d *Data) PutImage(versionID datastore.VersionLocalID, v VoxelHandler) erro
 		if err != nil {
 			return err
 		}
-		indexBeg := i0.PtrToDup().(dvid.PointIndexer)
-		indexEnd := i1.PtrToDup().(dvid.PointIndexer)
+		indexBeg := i0.Duplicate().(dvid.PointIndexer)
+		indexEnd := i1.Duplicate().(dvid.PointIndexer)
 
 		begX := indexBeg.Value(0)
 		endX := indexEnd.Value(0)
 
 		// Expand stored extents if necessary.
+		var changed bool
 		if d.MinIndex == nil {
 			d.MinIndex = indexBeg
 			extentChanged = true
 		} else {
-			extentChanged = d.MinIndex.ExtendMin(indexBeg)
+			d.MinIndex, changed = d.MinIndex.Min(indexBeg)
+			if changed {
+				extentChanged = true
+			}
 		}
 		if d.MaxIndex == nil {
 			d.MaxIndex = indexEnd
 			extentChanged = true
 		} else {
-			extentChanged = d.MaxIndex.ExtendMax(indexEnd)
+			d.MaxIndex, changed = d.MaxIndex.Max(indexEnd)
+			if changed {
+				extentChanged = true
+			}
 		}
 
 		startKey := &datastore.DataKey{d.DsetID, d.ID, versionID, indexBeg}
@@ -995,8 +1002,9 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 
 	// Compute the bounding voxel coordinates for this block.
 	blockSize := d.BlockSize.(dvid.Point3d)
-	minBlockVoxel := index.ChunkPoint(blockSize)
+	minBlockVoxel := index.PointInChunk(blockSize)
 	maxBlockVoxel := minBlockVoxel.Add(blockSize.Sub(dvid.Point3d{1, 1, 1}))
+	//fmt.Printf("MinBlockVoxel: %s, MaxBlockVoxel: %s\n", minBlockVoxel, maxBlockVoxel)
 
 	// Compute the bound voxel coordinates for the data slice/subvolume and adjust
 	// to our block bounds.
@@ -1004,6 +1012,8 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 	maxDataVoxel := op.EndPoint()
 	begVolCoord := minDataVoxel.Max(minBlockVoxel)
 	endVolCoord := maxDataVoxel.Min(maxBlockVoxel)
+	//fmt.Printf("minDataVoxel: %s, maxDataVoxel: %s\n", minDataVoxel, maxDataVoxel)
+	//fmt.Printf("begVolCoord: %s, endVolCoord: %s\n", begVolCoord, endVolCoord)
 
 	// Calculate the strides
 	bytesPerVoxel := op.BytesPerVoxel()

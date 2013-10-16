@@ -54,21 +54,23 @@ type DataShape struct {
 	shape []uint8
 }
 
+const DataShapeBytes = 7
+
 // BytesToDataShape recovers a DataShape from a series of bytes.
 func BytesToDataShape(b []byte) (s DataShape, err error) {
 	if b == nil {
 		err = fmt.Errorf("Cannot convert nil to DataShape!")
 		return
 	}
-	if len(b) != 6 {
+	if len(b) != DataShapeBytes {
 		err = fmt.Errorf("Cannot convert %d bytes to DataShape", len(b))
 		return
 	}
 	s = DataShape{dims: uint8(b[0])}
-	n := int(s.dims)
-	s.shape = make([]uint8, n)
-	for i := 0; i < n; i++ {
-		s.shape[i] = b[i+1]
+	shapeLen := int(b[1])
+	s.shape = make([]uint8, shapeLen)
+	for i := 0; i < shapeLen; i++ {
+		s.shape[i] = b[i+2]
 	}
 	return
 }
@@ -76,26 +78,26 @@ func BytesToDataShape(b []byte) (s DataShape, err error) {
 // Bytes returns a fixed length byte representation that can be used for keys.
 // Up to 5-d shapes can be used.
 func (s DataShape) Bytes() []byte {
-	b := make([]byte, 6)
+	b := make([]byte, DataShapeBytes)
 	b[0] = byte(s.dims)
-	n := int(s.dims)
-	for i := 0; i < n; i++ {
-		b[i+1] = s.shape[i]
+	b[1] = byte(len(s.shape))
+	for i := 0; i < len(s.shape); i++ {
+		b[i+2] = s.shape[i]
 	}
 	return b
 }
 
 // TotalDimensions returns the full dimensionality of space within which there is this DataShape.
-func (s DataShape) TotalDimensions() uint8 {
-	return s.dims
+func (s DataShape) TotalDimensions() int8 {
+	return int8(s.dims)
 }
 
 // ShapeDimensions returns the number of dimensions for this shape.
-func (s DataShape) ShapeDimensions() uint8 {
+func (s DataShape) ShapeDimensions() int8 {
 	if s.shape == nil {
 		return 0
 	}
-	return uint8(len(s.shape))
+	return int8(len(s.shape))
 }
 
 // Duplicate returns a duplicate of the DataShape.
@@ -184,17 +186,16 @@ type Subvolume struct {
 
 // NewSubvolumeFromStrings returns a Subvolume given string representations of
 // offset ("0,10,20") and size ("250,250,250").
-func NewSubvolumeFromStrings(offsetStr, sizeStr string) (v *Subvolume, err error) {
-	offset, err := StringToPoint(offsetStr, ",")
+func NewSubvolumeFromStrings(offsetStr, sizeStr, sep string) (*Subvolume, error) {
+	offset, err := StringToPoint(offsetStr, sep)
 	if err != nil {
-		return
+		return nil, err
 	}
-	size, err := StringToPoint(sizeStr, ",")
+	size, err := StringToPoint(sizeStr, sep)
 	if err != nil {
-		return
+		return nil, err
 	}
-	v = NewSubvolume(offset, size)
-	return
+	return NewSubvolume(offset, size), nil
 }
 
 // NewSubvolume returns a Subvolume given a subvolume's origin and size.
@@ -226,7 +227,7 @@ func (s *Subvolume) StartPoint() Point {
 }
 
 func (s *Subvolume) EndPoint() Point {
-	return s.offset.Add(s.size.Sub(Point3d{-1, -1, -1}))
+	return s.offset.Add(s.size.Sub(Point3d{1, 1, 1}))
 }
 
 func (s *Subvolume) String() string {
@@ -244,17 +245,17 @@ type OrthogSlice struct {
 
 // NewSliceFromStrings returns a Geometry object for a XY, XZ, or YZ slice given
 // a data shape string, offset ("0,10,20"), and size ("250,250").
-func NewSliceFromStrings(str DataShapeString, offsetStr, sizeStr string) (slice Geometry, err error) {
+func NewSliceFromStrings(str DataShapeString, offsetStr, sizeStr, sep string) (Geometry, error) {
 	shape, err := str.DataShape()
 	if err != nil {
-		return
+		return nil, err
 	}
-	offset, err := StringToPoint(offsetStr, ",")
+	offset, err := StringToPoint(offsetStr, sep)
 	if err != nil {
-		return
+		return nil, err
 	}
 	// Enforce that size string is 2d since this is supposed to be a slice.
-	ndstring, err := StringToNdString(sizeStr, ",")
+	ndstring, err := StringToNdString(sizeStr, sep)
 	if err != nil {
 		return nil, err
 	}
@@ -285,8 +286,8 @@ func NewOrthogSlice(s DataShape, offset Point, size Point2d) (Geometry, error) {
 			yDim, s.dims)
 	}
 	settings := map[uint8]int32{
-		xDim: size[0],
-		yDim: size[1],
+		xDim: offset.Value(xDim) + size[0] - 1,
+		yDim: offset.Value(yDim) + size[1] - 1,
 	}
 	geom := &OrthogSlice{
 		shape:    s,

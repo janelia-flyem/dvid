@@ -11,8 +11,8 @@ import (
 
 func init() {
 	// Need to register types that will be used to fulfill interfaces.
-	gob.Register(&Point3d{})
-	gob.Register(&Point2d{})
+	gob.Register(Point3d{})
+	gob.Register(Point2d{})
 }
 
 // Point is an interface for n-dimensional points.   Types that implement the
@@ -45,6 +45,9 @@ type Point interface {
 	// Div returns the division of the receiver by the passed point.
 	Div(Point) Point
 
+	// Mult returns the multiplication of the receiver by the passed point.
+	Mult(Point) Point
+
 	// Max returns a Point where each of its elements are the maximum of two points' elements.
 	Max(Point) Point
 
@@ -62,13 +65,14 @@ type Chunkable interface {
 	Point
 
 	// Chunk returns a point in chunk space, which partitions the underlying point space.
-	// One Chunk point maps to many different points.
+	// For example, a chunk could be a tile (or a subvolume/block) and this returns the
+	// tile's coordinate in tile space.
 	Chunk(size Point) Point
 
-	// ChunkPoint returns a point in a particular chunk's space.  For example, if a chunk
-	// is a block of voxels, then the ChunkPoint is a particular point in the block assuming
-	// the first point in the block is a zero Point.
-	ChunkPoint(size Point) Point
+	// PointInChunk returns a point in a particular chunk's space.  For example, if a chunk
+	// is a block of voxels, then the returned point is in that block coordinate space with
+	// the first voxel in the block as the origin or zero point.
+	PointInChunk(size Point) Point
 }
 
 // --- Implementations of the above interfaces in 2d and 3d ---------
@@ -156,6 +160,15 @@ func (p Point2d) Div(x Point) (result Point) {
 	}
 }
 
+// Mult returns the multiplication of the receiver by the passed point.
+func (p Point2d) Mult(x Point) (result Point) {
+	p2 := x.(Point2d)
+	return Point2d{
+		p[0] * p2[0],
+		p[1] * p2[1],
+	}
+}
+
 // Max returns a Point where each of its elements are the maximum of two points' elements.
 func (p Point2d) Max(x Point) Point {
 	p2 := x.(Point2d)
@@ -198,19 +211,17 @@ func (pt Point2d) String() string {
 
 // Chunk returns the chunk space coordinate of the chunk containing the point.
 func (p Point2d) Chunk(size Point) Point {
-	size3d := size.(Point2d)
 	return Point2d{
-		p[0] / size3d[0],
-		p[1] / size3d[1],
+		p[0] / size.Value(0),
+		p[1] / size.Value(1),
 	}
 }
 
 // ChunkPoint returns a point in containing block space for the given point.
-func (p Point2d) ChunkPoint(size Point) Point {
-	size3d := size.(Point2d)
+func (p Point2d) PointInChunk(size Point) Point {
 	return Point2d{
-		p[0] % size3d[0],
-		p[1] % size3d[1],
+		p[0] % size.Value(0),
+		p[1] % size.Value(1),
 	}
 }
 
@@ -294,6 +305,16 @@ func (p Point3d) Div(x Point) (result Point) {
 	}
 }
 
+// Div returns the multiplication of the receiver by the passed point.
+func (p Point3d) Mult(x Point) (result Point) {
+	p2 := x.(Point3d)
+	return Point3d{
+		p[0] * p2[0],
+		p[1] * p2[1],
+		p[2] * p2[2],
+	}
+}
+
 // Max returns a Point where each of its elements are the maximum of two points' elements.
 func (p Point3d) Max(x Point) Point {
 	p2 := x.(Point3d)
@@ -352,7 +373,7 @@ func (p Point3d) Chunk(size Point) Point {
 }
 
 // ChunkPoint returns a point in containing block space for the given point.
-func (p Point3d) ChunkPoint(size Point) Point {
+func (p Point3d) PointInChunk(size Point) Point {
 	size3d := size.(Point3d)
 	return Point3d{
 		p[0] % size3d[0],
@@ -376,8 +397,8 @@ func SliceToPoint(coord []int32) (p Point, err error) {
 }
 
 // Parse a string of format "%d,%d,%d,..." into a Point
-func StringToPoint(str, seperator string) (p Point, err error) {
-	elems := strings.Split(str, seperator)
+func StringToPoint(str, separator string) (p Point, err error) {
+	elems := strings.Split(str, separator)
 	switch len(elems) {
 	case 0, 1:
 		return nil, fmt.Errorf("Cannot convert '%s' into a Point.", str)
@@ -397,8 +418,8 @@ func StringToPoint(str, seperator string) (p Point, err error) {
 type NdFloat32 []float32
 
 // Parse a string of format "%f,%f,%f,..." into a slice of float32.
-func StringToNdFloat32(str, seperator string) (nd NdFloat32, err error) {
-	elems := strings.Split(str, seperator)
+func StringToNdFloat32(str, separator string) (nd NdFloat32, err error) {
+	elems := strings.Split(str, separator)
 	nd = make(NdFloat32, len(elems))
 	var f float64
 	for i, elem := range elems {
@@ -415,8 +436,8 @@ func StringToNdFloat32(str, seperator string) (nd NdFloat32, err error) {
 type NdString []string
 
 // Parse a string of format "%f,%f,%f,..." into a slice of float32.
-func StringToNdString(str, seperator string) (nd NdString, err error) {
-	return NdString(strings.Split(str, seperator)), nil
+func StringToNdString(str, separator string) (nd NdString, err error) {
+	return NdString(strings.Split(str, separator)), nil
 }
 
 func (n NdString) Point2d() (p Point2d, err error) {

@@ -19,6 +19,11 @@ import (
 	"strings"
 )
 
+func init() {
+	// Need to register types that will be used to fulfill interfaces.
+	gob.Register(&Image{})
+}
+
 // DefaultJPEGQuality is the quality of images returned if requesting JPEG images
 // and an explicit Quality amount is omitted.
 const DefaultJPEGQuality = 80
@@ -93,6 +98,34 @@ func (img *Image) Set(src image.Image) error {
 		return fmt.Errorf("No valid image type received by image.Set(): %s", reflect.TypeOf(src))
 	}
 	return nil
+}
+
+// SubImage returns an image representing the portion of the image p visible through r.
+// The returned image shares pixels with the original image.
+func (img *Image) SubImage(r image.Rectangle) (*Image, error) {
+	result := new(Image)
+	result.Which = img.Which
+	switch img.Which {
+	case 0:
+		result.Gray = img.Gray.SubImage(r).(*image.Gray)
+	case 1:
+		result.Gray16 = img.Gray16.SubImage(r).(*image.Gray16)
+	case 2:
+		result.RGBA = img.RGBA.SubImage(r).(*image.RGBA)
+	case 3:
+		result.RGBA64 = img.RGBA64.SubImage(r).(*image.RGBA64)
+	case 4:
+		result.Alpha = img.Alpha.SubImage(r).(*image.Alpha)
+	case 5:
+		result.Alpha16 = img.Alpha16.SubImage(r).(*image.Alpha16)
+	case 6:
+		result.NRGBA = img.NRGBA.SubImage(r).(*image.NRGBA)
+	case 7:
+		result.NRGBA64 = img.NRGBA64.SubImage(r).(*image.NRGBA64)
+	default:
+		return nil, fmt.Errorf("Unsupported image type %d asked for SubImage()", img.Which)
+	}
+	return result, nil
 }
 
 // Register all the image types for gob decoding.

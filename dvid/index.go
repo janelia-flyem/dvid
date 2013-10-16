@@ -15,8 +15,8 @@ import (
 func init() {
 	// Register types that may fulfill interface for Gob
 	gob.Register(IndexUint8(0))
-	gob.Register(&IndexZYX{})
-	gob.Register(&IndexCZYX{})
+	gob.Register(IndexZYX{})
+	gob.Register(IndexCZYX{})
 }
 
 // LocalID is a unique id for some data in a DVID instance.  This unique id is presumably
@@ -65,8 +65,8 @@ func LocalID32FromBytes(b []byte) (id LocalID32, length int) {
 // spatiotemporal indexing scheme.  For example, Z-curves map n-D space to a 1-D index.
 // It is assumed that implementations for this interface are castable to []byte.
 type Index interface {
-	// PtrToDup returns a duplicate Index that can be modified (implemented with *SomeType)
-	PtrToDup() Index
+	// Duplicate returns a duplicate Index
+	Duplicate() Index
 
 	// Bytes returns a byte representation of the Index.  Integer components of
 	// the Index should probably be serialized in big endian for improved
@@ -96,13 +96,13 @@ type PointIndexer interface {
 	// ChunkPoint returns the first point within a chunk.  For example, if a chunk
 	// is a block of voxels, then the ChunkPoint is the point corresponding to the
 	// first voxel in the block.
-	ChunkPoint(size Point) Point
+	PointInChunk(size Point) Point
 
-	// ExtendMin sets this PointIndexer to the minimum of its value and the passed one.
-	ExtendMin(PointIndexer) (changed bool)
+	// Min returns a PointIndexer that is the minimum of its value and the passed one.
+	Min(PointIndexer) (min PointIndexer, changed bool)
 
-	// ExtendMax sets this PointIndexer to the maximum of its value and the passed one.
-	ExtendMax(PointIndexer) (changed bool)
+	// Max returns a PointIndexer that is the maximum of its value and the passed one.
+	Max(PointIndexer) (max PointIndexer, changed bool)
 }
 
 // IndexIterator is a function that returns a sequence of indices and ends with nil.
@@ -122,9 +122,8 @@ type IndexRange struct {
 // IndexUint8 satisfies an Index interface with an 8-bit unsigned integer index.
 type IndexUint8 uint8
 
-func (i IndexUint8) PtrToDup() Index {
-	dup := i
-	return &dup
+func (i IndexUint8) Duplicate() Index {
+	return i
 }
 
 func (i IndexUint8) String() string {
@@ -155,9 +154,9 @@ func (i IndexUint8) IndexFromBytes(b []byte) (Index, error) {
 // then Y, then X.
 type IndexZYX Point3d
 
-func (i IndexZYX) PtrToDup() Index {
+func (i IndexZYX) Duplicate() Index {
 	dup := i
-	return &dup
+	return dup
 }
 
 func (i IndexZYX) String() string {
@@ -202,7 +201,7 @@ func (i IndexZYX) Value(dim uint8) int32 {
 
 // ChunkPoint returns the voxel coordinate at the top left corner of the chunk
 // corresponding to the index.
-func (i IndexZYX) ChunkPoint(size Point) Point {
+func (i IndexZYX) PointInChunk(size Point) Point {
 	size3d := size.(Point3d)
 	return Point3d{
 		i[0] * size3d[0],
@@ -211,36 +210,42 @@ func (i IndexZYX) ChunkPoint(size Point) Point {
 	}
 }
 
-func (i *IndexZYX) ExtendMin(idx PointIndexer) (changed bool) {
-	if i[0] > idx.Value(0) {
-		i[0] = idx.Value(0)
+// Min returns a PointIndexer that is the minimum of its value and the passed one.
+func (i IndexZYX) Min(idx PointIndexer) (PointIndexer, bool) {
+	var changed bool
+	min := i
+	if min[0] > idx.Value(0) {
+		min[0] = idx.Value(0)
 		changed = true
 	}
-	if i[1] > idx.Value(1) {
-		i[1] = idx.Value(1)
+	if min[1] > idx.Value(1) {
+		min[1] = idx.Value(1)
 		changed = true
 	}
-	if i[2] > idx.Value(2) {
-		i[2] = idx.Value(2)
+	if min[2] > idx.Value(2) {
+		min[2] = idx.Value(2)
 		changed = true
 	}
-	return
+	return min, changed
 }
 
-func (i *IndexZYX) ExtendMax(idx PointIndexer) (changed bool) {
-	if i[0] < idx.Value(0) {
-		i[0] = idx.Value(0)
+// Max returns a PointIndexer that is the maximum of its value and the passed one.
+func (i IndexZYX) Max(idx PointIndexer) (PointIndexer, bool) {
+	var changed bool
+	max := i
+	if max[0] < idx.Value(0) {
+		max[0] = idx.Value(0)
 		changed = true
 	}
-	if i[1] < idx.Value(1) {
-		i[1] = idx.Value(1)
+	if max[1] < idx.Value(1) {
+		max[1] = idx.Value(1)
 		changed = true
 	}
-	if i[2] < idx.Value(2) {
-		i[2] = idx.Value(2)
+	if max[2] < idx.Value(2) {
+		max[2] = idx.Value(2)
 		changed = true
 	}
-	return
+	return max, changed
 }
 
 // ----- IndexIterator implementation ------------
@@ -282,7 +287,7 @@ func (it *IndexZYXIterator) IndexSpan() (beg, end Index, err error) {
 func (it *IndexZYXIterator) NextSpan() {
 	it.x = it.begBlock[0]
 	it.y += 1
-	if it.y >= it.endBlock[1] {
+	if it.y > it.endBlock[1] {
 		it.y = it.begBlock[1]
 		it.z += 1
 	}
@@ -295,8 +300,9 @@ type IndexCZYX struct {
 	IndexZYX
 }
 
-func (i IndexCZYX) PtrToDup() Index {
-	return &IndexCZYX{i.Channel, i.IndexZYX}
+func (i IndexCZYX) Duplicate() Index {
+	dup := i
+	return dup
 }
 
 func (i IndexCZYX) String() string {
@@ -368,7 +374,7 @@ func (it *IndexCZYXIterator) IndexSpan() (beg, end Index, err error) {
 func (it *IndexCZYXIterator) NextSpan() {
 	it.x = it.begBlock[0]
 	it.y += 1
-	if it.y >= it.endBlock[1] {
+	if it.y > it.endBlock[1] {
 		it.y = it.begBlock[1]
 		it.z += 1
 	}

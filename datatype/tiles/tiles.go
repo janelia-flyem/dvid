@@ -20,6 +20,8 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
+
+	"github.com/janelia-flyem/go/resize"
 )
 
 const (
@@ -103,16 +105,16 @@ GET  /api/node/<UUID>/<data name>/tile/<dims>/<scaling>/<tile coord>[/<format>]
 
     Example: 
 
-    GET /api/node/3f8c/mytiles/tile/xy/0/10,10,20/jpg:80
+    GET /api/node/3f8c/mytiles/tile/xy/0/10_10_20/jpg:80
 
     Arguments:
 
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add.
-    dims          The axes of data extraction in form "i,j,k,..."  Example: "0,2" can be XZ.
+    dims          The axes of data extraction in form "i_j_k,..."  Example: "0_2" can be XZ.
                     Slice strings ("xy", "xz", or "yz") are also accepted.
     scaling       Value from 0 (original resolution) to N where each step is downres by 2.
-    tile coord    The tile coordinate in "x,y,z" format.  See discussion of scaling above.
+    tile coord    The tile coordinate in "x_y_z" format.  See discussion of scaling above.
     format        "png", "jpg" (default: "png")
                     jpg allows lossy quality setting, e.g., "jpg:80"
 
@@ -123,21 +125,21 @@ GET  /api/node/<UUID>/<data name>/image/<dims>/<size>/<offset>[/<format>]
 
     Example: 
 
-    GET /api/node/3f8c/mytiles/image/xy/512,256/0,0,100/jpg:80
+    GET /api/node/3f8c/mytiles/image/xy/512_256/0_0_100/jpg:80
 
     Arguments:
 
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add.
-    dims          The axes of data extraction in form "i,j,k,..."  Example: "0,2" can be XZ.
+    dims          The axes of data extraction in form "i_j_k,..."  Example: "0_2" can be XZ.
                     Slice strings ("xy", "xz", or "yz") are also accepted.
-    tile coord    The tile coordinate in "x,y,z" format.  See discussion of scaling above.
+    tile coord    The tile coordinate in "x_y_z" format.  See discussion of scaling above.
     format        "png", "jpg" (default: "png")
                     jpg allows lossy quality setting, e.g., "jpg:80"
 
 `
 
-const DefaultTileSize = 256
+const DefaultTileSize = 128
 
 func init() {
 	tiles := NewDatatype()
@@ -255,6 +257,10 @@ type Data struct {
 
 	// Size in pixels.  All tiles are square.
 	Size int32
+
+	// MaxScale is the maximum scaling computed for the tiles.  The maximum scaling
+	// is sufficient to show the longest dimension as one tile.
+	MaxScale uint8
 }
 
 // JSONString returns the JSON for this Data's configuration
@@ -369,12 +375,11 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 
 // GetTile retrieves a tile.
 func (d *Data) GetTile(versionID datastore.VersionLocalID, planeStr, scalingStr, coordStr string) (
-	img image.Image, err error) {
+	image.Image, error) {
 
 	db := server.KeyValueDB()
 	if db == nil {
-		err = fmt.Errorf("Did not find a working key-value datastore to get image!")
-		return
+		return nil, fmt.Errorf("Did not find a working key-value datastore to get image!")
 	}
 
 	// Construct the index for this tile
@@ -392,15 +397,24 @@ func (d *Data) GetTile(versionID datastore.VersionLocalID, planeStr, scalingStr,
 		return nil, fmt.Errorf("Illegal tile coordinate: %s (%s)", coordStr, err.Error())
 	}
 	index := &IndexTile{shape, uint8(scaling), point}
+	//fmt.Printf("Point %s, Index: %s\n", point, index)
 
 	// Retrieve the tile from datastore
 	key := &datastore.DataKey{d.DatasetID(), d.ID, versionID, index}
 	data, err := db.Get(key)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("Could not find tile in datastore: %s", err.Error())
 	}
-	err = dvid.Deserialize(data, img)
-	return
+	if data == nil {
+		return nil, nil // Not found
+	}
+	//fmt.Printf("Retrieved tile for key %s: %d bytes\n", key, len(data))
+	var img dvid.Image
+	err = dvid.Deserialize(data, &img)
+	if err != nil {
+		return nil, fmt.Errorf("Error deserializing tile: %s", err.Error())
+	}
+	return img.Get(), nil
 }
 
 // Subvolume is a tile-sized 3d subvolume that allows us to efficiently reconstruct tiles.
@@ -441,6 +455,121 @@ func (v *Subvolume) ByteOrder() binary.ByteOrder {
 	return v.source.ByteOrder
 }
 
+type keyFunc func(scaling uint8, tileX, tileY int32) *datastore.DataKey
+
+// pow2 returns the power of 2 with the passed exponent.
+func pow2(exp uint8) int {
+	pow := 1
+	for i := uint8(1); i <= exp; i++ {
+		pow *= 2
+	}
+	return pow
+}
+
+// log2 returns the power of 2 necessary to cover the given value.
+func log2(value int32) uint8 {
+	var exp uint8
+	pow := int32(1)
+	for {
+		if pow >= value {
+			return exp
+		}
+		pow *= 2
+		exp++
+	}
+}
+
+// Construct all tiles for an image with offset and put in datastore.  This function assumes
+// the image and offset are in the XY plane.  It also assumes that img has dimensions that
+// are a multiple of tile size so generated tiles are full-sized even along edges.
+// Returns the # of extracted tiles.
+func (d *Data) extractTiles(img image.Image, off dvid.Point2d, f keyFunc, scaling uint8) error {
+	db := server.KeyValueDB()
+
+	// The reduction factor is 2^scaling.
+	reduction := pow2(scaling)
+	var downres image.Image
+	if scaling == 0 {
+		downres = img
+	} else {
+		width := uint(img.Bounds().Dx() / reduction)
+		height := uint(img.Bounds().Dy() / reduction)
+		downres = resize.Resize(width, height, img, resize.Bicubic)
+	}
+
+	// Determine the bounds in tile space for this scale.
+	offset := dvid.Point2d{
+		off[0] / int32(reduction),
+		off[1] / int32(reduction),
+	}
+	imgSize := dvid.RectSize(downres.Bounds())
+	lastPt := dvid.Point2d{offset[0] + imgSize[0] - 1, offset[1] + imgSize[1] - 1}
+	tileBegX := offset[0] / d.Size
+	tileEndX := lastPt[0] / d.Size
+	tileBegY := offset[1] / d.Size
+	tileEndY := lastPt[1] / d.Size
+
+	//fmt.Printf("Image %d x %d, downres %d x %d\n",
+	//	img.Bounds().Dx(), img.Bounds().Dy(), downres.Bounds().Dx(), downres.Bounds().Dy())
+	//fmt.Printf("Tiling at scaling %d, offset %s (reduced %d): tile %d,%d -> %d,%d\n",
+	//	scaling, off, offset, tileBegX, tileBegY, tileEndX, tileEndY)
+
+	// Split image into tiles and store into datastore.
+	src := new(dvid.Image)
+	src.Set(downres)
+	y0 := tileBegY * d.Size
+	y1 := y0 + d.Size
+	for ty := tileBegY; ty <= tileEndY; ty++ {
+		x0 := tileBegX * d.Size
+		x1 := x0 + d.Size
+		for tx := tileBegX; tx <= tileEndX; tx++ {
+			tileRect := image.Rect(int(x0), int(y0), int(x1), int(y1))
+			tile, err := src.SubImage(tileRect)
+			if err != nil {
+				return err
+			}
+			key := f(scaling, tx, ty)
+			serialization, err := dvid.Serialize(tile, dvid.Snappy, dvid.CRC32)
+			if err != nil {
+				return err
+			}
+			//fmt.Printf("Writing tile %s for scaling %d (%d,%d) (%s): %d bytes\n",
+			//	tileRect, scaling, tx, ty, key, len(serialization))
+			err = db.Put(key, serialization)
+			if err != nil {
+				return err
+			}
+
+			x0 += d.Size
+			x1 += d.Size
+		}
+		y0 += d.Size
+		y1 += d.Size
+	}
+	return nil
+}
+
+func (d *Data) getXYKeyFunc(versionID datastore.VersionLocalID, z int32) keyFunc {
+	return func(scaling uint8, tileX, tileY int32) *datastore.DataKey {
+		index := IndexTile{dvid.XY, scaling, dvid.Point3d{tileX, tileY, z}}
+		return &datastore.DataKey{d.DatasetID(), d.ID, versionID, index}
+	}
+}
+
+func (d *Data) getXZKeyFunc(versionID datastore.VersionLocalID, y int32) keyFunc {
+	return func(scaling uint8, tileX, tileY int32) *datastore.DataKey {
+		index := IndexTile{dvid.XZ, scaling, dvid.Point3d{tileX, y, tileY}}
+		return &datastore.DataKey{d.DatasetID(), d.ID, versionID, index}
+	}
+}
+
+func (d *Data) getYZKeyFunc(versionID datastore.VersionLocalID, x int32) keyFunc {
+	return func(scaling uint8, tileX, tileY int32) *datastore.DataKey {
+		index := IndexTile{dvid.YZ, scaling, dvid.Point3d{x, tileX, tileY}}
+		return &datastore.DataKey{d.DatasetID(), d.ID, versionID, index}
+	}
+}
+
 func (d *Data) ConstructTiles(versionID datastore.VersionLocalID) error {
 	// Make sure the source is valid voxels data.
 	src, ok := d.Source.(*voxels.Data)
@@ -448,176 +577,139 @@ func (d *Data) ConstructTiles(versionID datastore.VersionLocalID) error {
 		return fmt.Errorf("Cannot construct tiles for non-voxels data: %s", src.DataName())
 	}
 
-	// Iterate through tile-sized subvolume cubes that span the known extents
-	// of the source data.
-	subvolXMin := src.MinIndex.X() * src.BlockSize[0] / d.Size
-	subvolXMax := ((src.MaxIndex.X()+1)*src.BlockSize[0] - 1) / d.Size
-	subvolYMin := src.MinIndex.Y() * src.BlockSize[1] / d.Size
-	subvolYMax := ((src.MaxIndex.Y()+1)*src.BlockSize[1] - 1) / d.Size
-	subvolZMin := src.MinIndex.Z() * src.BlockSize[2] / d.Size
-	subvolZMax := ((src.MaxIndex.Z()+1)*src.BlockSize[2] - 1) / d.Size
-
-	fmt.Printf("Source extents: (%d,%d,%d) -> (%d,%d,%d)\n",
-		src.MinIndex.X(), src.MinIndex.Y(), src.MinIndex.Z(),
-		src.MaxIndex.X(), src.MaxIndex.Y(), src.MaxIndex.Z())
-
-	for z := subvolZMin; z <= subvolZMax; z++ {
-		for y := subvolYMin; y <= subvolYMax; y++ {
-			for x := subvolXMin; x <= subvolXMax; x++ {
-				err := d.convertSubvol(src, versionID, [3]int32{x, y, z})
-				if err != nil {
-					return err
-				}
-			}
-		}
+	// Get voxel extents of volume.
+	minPt := dvid.Point3d{
+		src.MinIndex.Value(0) * src.BlockSize.Value(0),
+		src.MinIndex.Value(1) * src.BlockSize.Value(1),
+		src.MinIndex.Value(2) * src.BlockSize.Value(2),
+	}
+	maxPt := dvid.Point3d{
+		(src.MaxIndex.Value(0)+1)*src.BlockSize.Value(0) - 1,
+		(src.MaxIndex.Value(1)+1)*src.BlockSize.Value(1) - 1,
+		(src.MaxIndex.Value(2)+1)*src.BlockSize.Value(2) - 1,
 	}
 
-	return nil
-}
+	// Determine covering volume size that is multiple of tile size.
+	tileSize := dvid.Point3d{d.Size, d.Size, d.Size}
+	tileMinPt := minPt.Div(tileSize)
+	tileMaxPt := maxPt.Div(tileSize)
+	coverMinPt := tileMinPt.Mult(tileSize)
+	coverMaxPt := dvid.Point3d{
+		(tileMaxPt.Value(0)+1)*d.Size - 1,
+		(tileMaxPt.Value(1)+1)*d.Size - 1,
+		(tileMaxPt.Value(2)+1)*d.Size - 1,
+	}
 
-// convertSubvol initializes scale-level 0 tiles (source voxels) from source data
-// efficiently.  Conversion occurs by reading in all blocks for a tile-sized 3d subvolume.
-// This assumes that we are constructing tiles in the 3 orthogonal orientations where
-// each orientation has the same TileSize x TileSize pixels.
-func (d *Data) convertSubvol(src *voxels.Data, versionID datastore.VersionLocalID, v [3]int32) error {
+	// Determine maximum scale levels based on the longest dimension.
+	tilesInX := tileMaxPt.Value(0) - tileMinPt.Value(0) + 1
+	tilesInY := tileMaxPt.Value(1) - tileMinPt.Value(1) + 1
+	tilesInZ := tileMaxPt.Value(2) - tileMinPt.Value(2) + 1
+
+	maxAnyDim := tilesInX
+	if maxAnyDim < tilesInY {
+		maxAnyDim = tilesInY
+	}
+	if maxAnyDim < tilesInZ {
+		maxAnyDim = tilesInZ
+	}
+	d.MaxScale = log2(maxAnyDim)
+
+	// Handle XY Tiling.
 	startTime := time.Now()
-
-	db := server.KeyValueDB()
-
-	// Determine the voxel extents encompassed by this subvolume.
-	tileSize := int32(d.Size)
-	x0, y0, z0 := v[0]*tileSize, v[1]*tileSize, v[2]*tileSize
-	x1, y1, z1 := x0+tileSize-1, y0+tileSize-1, z0+tileSize-1
-	startVoxel := voxels.Coord{x0, y0, z0}
-	endVoxel := voxels.Coord{x1, y1, z1}
-
-	// Allocate the subvolume buffer
-	geom := voxels.NewSubvolume(startVoxel, voxels.Point3d{tileSize, tileSize, tileSize})
-	subvolume := &Subvolume{
-		Geometry: geom,
-		source:   src,
+	var img image.Image
+	offset := coverMinPt.Duplicate().(dvid.Point3d)
+	size := dvid.Point2d{
+		coverMaxPt[0] - offset[0] + 1,
+		coverMaxPt[1] - offset[1] + 1,
 	}
-	bytesPerVoxel := subvolume.BytesPerVoxel()
-	blockBytes := int(src.BlockSize[0] * src.BlockSize[1] * src.BlockSize[2] * bytesPerVoxel)
-	totalBytes := geom.NumVoxels() * int64(bytesPerVoxel)
-	subvolume.data = make([]uint8, totalBytes, totalBytes)
-
-	dataNumX := tileSize * bytesPerVoxel
-	dataNumXY := tileSize * dataNumX
-
-	blockNumX := src.BlockSize[0] * bytesPerVoxel
-	blockNumXY := src.BlockSize[1] * blockNumX
-
-	fmt.Printf("Buffer bytesPerVoxel %d, totalBytes %d\n", bytesPerVoxel, totalBytes)
-	fmt.Printf("convertSubvol: %s\n", geom)
-
-	// Create a subvolume data that handles the VoxelHandler interface
-	// Be as efficient as possible in range queries, getting values for subvolume.
-	// Map: Iterate in x, then y, then z
-	buffer := []byte(subvolume.data)
-	startBlockCoord := startVoxel.BlockCoord(src.BlockSize)
-	endBlockCoord := endVoxel.BlockCoord(src.BlockSize)
-	for z := startBlockCoord[2]; z <= endBlockCoord[2]; z++ {
-		for y := startBlockCoord[1]; y <= endBlockCoord[1]; y++ {
-			// We know for voxels indexing, x span is a contiguous range.
-			// might not be true if we go to Z-curve.
-			i0 := subvolume.PointIndexer(dvid.Point3d{startBlockCoord[0], y, z})
-			i1 := subvolume.PointIndexer(dvid.Point3d{endBlockCoord[0], y, z})
-			startKey := &datastore.DataKey{src.DsetID, src.ID, versionID, i0}
-			endKey := &datastore.DataKey{src.DsetID, src.ID, versionID, i1}
-
-			// GET all the chunks for this range.
-			keyvalues, err := db.GetRange(startKey, endKey)
+	for z := minPt[2]; z <= maxPt[2]; z++ {
+		offset[2] = z
+		slice, err := dvid.NewOrthogSlice(dvid.XY, offset, size)
+		if err != nil {
+			return err
+		}
+		v, err := src.NewVoxelHandler(slice, nil)
+		if err != nil {
+			return err
+		}
+		img, err = src.GetImage(versionID, v)
+		if err != nil {
+			return err
+		}
+		// Iterate through the different scales, extracting tiles at each resolution.
+		extractOffset := dvid.Point2d{offset[0], offset[1]}
+		for scaling := uint8(0); scaling <= d.MaxScale; scaling++ {
+			err := d.extractTiles(img, extractOffset, d.getXYKeyFunc(versionID, z), scaling)
 			if err != nil {
-				return fmt.Errorf("Error in reading data during ConstructTiles %s: %s",
-					src.DataName(), err.Error())
+				return err
 			}
-
-			// Store the values in subvolume buffer.
-			for _, kv := range keyvalues {
-				// Get the block's voxel extent
-				datakey, ok := kv.K.(*datastore.DataKey)
-				if !ok {
-					return fmt.Errorf("Illegal key (not DataKey) returned for data %s",
-						src.DataName())
-				}
-				zyxIndex, ok := datakey.Index.(voxels.PointIndexer)
-				if !ok {
-					return fmt.Errorf("Illegal index (not PointIndexer) returned for data %s",
-						src.DataName())
-				}
-				minBlockVoxel := zyxIndex.OffsetToBlock(src.BlockSize)
-				maxBlockVoxel := minBlockVoxel.Add(src.BlockSize.Sub(Point3d{1, 1, 1}))
-
-				// Compute the bound voxel coordinates for the subvolume and adjust
-				// to our block bounds.
-				begVolCoord := startVoxel.Max(minBlockVoxel)
-				endVolCoord := endVoxel.Min(maxBlockVoxel)
-				blockBeg := begVolCoord.Sub(minBlockVoxel)
-
-				// Adjust the voxel coordinates for the data so that (0,0,0)
-				// is where we expect this subvolume's data to begin.
-				beg := begVolCoord.Sub(startVoxel)
-				end := endVolCoord.Sub(startVoxel)
-
-				// Deserialize the data
-				data, _, err := dvid.DeserializeData(kv.V, true)
-				if err != nil {
-					return fmt.Errorf("Unable to deserialize chunk from dataset '%s': %s\n",
-						d.DataName(), err.Error())
-				}
-				block := []uint8(data)
-				if len(block) != blockBytes {
-					return fmt.Errorf("Retrieved block for '%s' is %d bytes, not block size of %d!\n",
-						d.DataName(), len(block), blockBytes)
-				}
-
-				// Store the data into the buffer.
-				blockZ := blockBeg[2]
-				for dataZ := beg[2]; dataZ <= end[2]; dataZ++ {
-					blockY := blockBeg[1]
-					for dataY := beg[1]; dataY <= end[1]; dataY++ {
-						blockI := blockZ*blockNumXY + blockY*blockNumX + blockBeg[0]*bytesPerVoxel
-						dataI := dataZ*dataNumXY + dataY*dataNumX + beg[0]*bytesPerVoxel
-						run := end[0] - beg[0] + 1
-						bytes := run * bytesPerVoxel
-						copy(buffer[dataI:dataI+bytes], block[blockI:blockI+bytes])
-						blockY++
-					}
-					blockZ++
-				}
-			}
-		}
-	} // Block iteration in z over the subvolume.
-
-	// Store all the XY images in this subvolume.
-	// nx := x1 - x0 + 1
-	// ny := y1 - y0 + 1
-	nz := z1 - z0 + 1
-	plane := voxels.XY
-	scaling := uint8(0)
-	for z := int32(0); z < nz; z++ {
-		img, err := src.SliceImage(subvolume, z)
-		if err != nil {
-			return err
-		}
-		index := &IndexTile{plane, scaling, []int32{v[0], v[1], z}}
-		key := &datastore.DataKey{d.DatasetID(), d.ID, versionID, index}
-		serialization, err := dvid.Serialize(img, dvid.Snappy, dvid.CRC32)
-		if err != nil {
-			return err
-		}
-		err = db.Put(key, serialization)
-		if err != nil {
-			return err
 		}
 	}
+	dvid.ElapsedTime(dvid.Debug, startTime, "Generated XY Tiles")
 
-	// Store all the XZ images in this subvolume.
+	// Handle XZ Tiling.
+	startTime = time.Now()
+	offset = coverMinPt.Duplicate().(dvid.Point3d)
+	size = dvid.Point2d{
+		coverMaxPt[0] - offset[0] + 1,
+		coverMaxPt[2] - offset[2] + 1,
+	}
+	for y := minPt[1]; y <= maxPt[1]; y++ {
+		offset[1] = y
+		slice, err := dvid.NewOrthogSlice(dvid.XZ, offset, size)
+		if err != nil {
+			return err
+		}
+		v, err := src.NewVoxelHandler(slice, nil)
+		if err != nil {
+			return err
+		}
+		img, err = src.GetImage(versionID, v)
+		if err != nil {
+			return err
+		}
+		// Iterate through the different scales, extracting tiles at each resolution.
+		extractOffset := dvid.Point2d{offset[0], offset[2]}
+		for scaling := uint8(0); scaling <= d.MaxScale; scaling++ {
+			err := d.extractTiles(img, extractOffset, d.getXZKeyFunc(versionID, y), scaling)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	dvid.ElapsedTime(dvid.Debug, startTime, "Generated XZ Tiles")
 
-	// Store all the YZ images in this subvolume.
+	// Handle YZ Tiling.
+	startTime = time.Now()
+	offset = coverMinPt.Duplicate().(dvid.Point3d)
+	size = dvid.Point2d{
+		coverMaxPt[1] - offset[1] + 1,
+		coverMaxPt[2] - offset[2] + 1,
+	}
+	for x := minPt[0]; x <= maxPt[0]; x++ {
+		offset[0] = x
+		slice, err := dvid.NewOrthogSlice(dvid.YZ, offset, size)
+		if err != nil {
+			return err
+		}
+		v, err := src.NewVoxelHandler(slice, nil)
+		if err != nil {
+			return err
+		}
+		img, err = src.GetImage(versionID, v)
+		if err != nil {
+			return err
+		}
+		// Iterate through the different scales, extracting tiles at each resolution.
+		extractOffset := dvid.Point2d{offset[1], offset[2]}
+		for scaling := uint8(0); scaling <= d.MaxScale; scaling++ {
+			err := d.extractTiles(img, extractOffset, d.getYZKeyFunc(versionID, x), scaling)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	dvid.ElapsedTime(dvid.Debug, startTime, "Generated YZ Tiles")
 
-	dvid.ElapsedTime(dvid.Debug, startTime, "Generate tiles in subvolume (%d,%d,%d)",
-		v[0], v[1], v[2])
 	return nil
 }

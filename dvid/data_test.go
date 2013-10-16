@@ -66,7 +66,7 @@ func (s *DataSuite) TestPoint3d(c *C) {
 	g = d.Chunk(blockSize)
 	c.Assert(g, Equals, Point3d{5, 7, 678})
 
-	result = d.ChunkPoint(blockSize)
+	result = d.PointInChunk(blockSize)
 	c.Assert(result, Equals, Point3d{11, 3, 0})
 }
 

@@ -97,10 +97,10 @@ POST /api/node/<UUID>/<data name>/<dims>/<size>/<offset>[/<format>]
 
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
     data name     Name of data.  Optionally add a numerical suffix for the channel number.
-    dims          The axes of data extraction in form "i,j,k,..."  Example: "0,2" can be XZ.
+    dims          The axes of data extraction in form "i_j_k,..."  Example: "0_2" can be XZ.
                     Slice strings ("xy", "xz", or "yz") are also accepted.
-    size          Size in pixels in the format "dx,dy".
-    offset        3d coordinate in the format "x,y,z".  Gives coordinate of top upper left voxel.
+    size          Size in pixels in the format "dx_dy".
+    offset        3d coordinate in the format "x_y_z".  Gives coordinate of top upper left voxel.
     format        Valid formats depend on the dimensionality of the request and formats
                     available in server implementation.
                   2D: "png", "jpg" (default: "png")
@@ -143,8 +143,7 @@ func (c *Channel) String() string {
 
 // Index returns a channel-specific Index
 func (c *Channel) Index(p dvid.Point) dvid.Index {
-	index := dvid.IndexCZYX{c.channelNum, dvid.IndexZYX(p.(dvid.Point3d))}
-	return &index
+	return dvid.IndexCZYX{c.channelNum, dvid.IndexZYX(p.(dvid.Point3d))}
 }
 
 // IndexIterator returns an iterator that can move across the voxel geometry,
@@ -161,8 +160,8 @@ func (c *Channel) IndexIterator(chunkSize dvid.Point) (dvid.IndexIterator, error
 	}
 
 	blockSize := chunkSize.(dvid.Point3d)
-	begBlock := begVoxel.ChunkPoint(blockSize).(dvid.Point3d)
-	endBlock := endVoxel.ChunkPoint(blockSize).(dvid.Point3d)
+	begBlock := begVoxel.Chunk(blockSize).(dvid.Point3d)
+	endBlock := endVoxel.Chunk(blockSize).(dvid.Point3d)
 
 	return dvid.NewIndexCZYXIterator(c.channelNum, c.Geometry, begBlock, endBlock), nil
 }
@@ -314,7 +313,7 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 	switch dataShape.ShapeDimensions() {
 	case 2:
 		sizeStr, offsetStr := parts[4], parts[5]
-		slice, err := dvid.NewSliceFromStrings(shapeStr, offsetStr, sizeStr)
+		slice, err := dvid.NewSliceFromStrings(shapeStr, offsetStr, sizeStr, "_")
 		if err != nil {
 			return err
 		}
@@ -348,7 +347,7 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 		}
 	case 3:
 		sizeStr, offsetStr := parts[4], parts[5]
-		_, err := dvid.NewSubvolumeFromStrings(offsetStr, sizeStr)
+		_, err := dvid.NewSubvolumeFromStrings(offsetStr, sizeStr, "_")
 		if err != nil {
 			return err
 		}

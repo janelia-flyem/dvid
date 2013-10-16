@@ -21,6 +21,10 @@ type IndexTile struct {
 	coord   dvid.Point
 }
 
+func (i IndexTile) Duplicate() dvid.Index {
+	return IndexTile{i.plane.Duplicate(), i.scaling, i.coord.Duplicate()}
+}
+
 func (i IndexTile) String() string {
 	return hex.EncodeToString(i.Bytes())
 }
@@ -29,9 +33,10 @@ func (i IndexTile) String() string {
 func (i IndexTile) Bytes() []byte {
 	buf := bytes.NewBuffer(i.plane.Bytes())
 	buf.WriteByte(byte(i.scaling))
-	buf.WriteByte(byte(i.plane.ShapeDimensions()))
-	for dim := i.plane.ShapeDimensions() - 1; dim >= 0; dim-- {
-		binary.Write(buf, binary.BigEndian, i.coord.Value(dim))
+	buf.WriteByte(byte(i.coord.NumDims()))
+	numDims := int(i.coord.NumDims())
+	for dim := numDims - 1; dim >= 0; dim-- {
+		binary.Write(buf, binary.BigEndian, i.coord.Value(uint8(dim)))
 	}
 	return buf.Bytes()
 }
@@ -54,17 +59,17 @@ func (i IndexTile) Scheme() string {
 // IndexFromBytes returns an index from bytes.  The passed Index is used just
 // to choose the appropriate byte decoding scheme.
 func (i IndexTile) IndexFromBytes(b []byte) (dvid.Index, error) {
-	if len(b) < 20 {
+	if len(b) < 21 {
 		return nil, fmt.Errorf("Illegal IndexTile: too few bytes (%d)", len(b))
 	}
-	dims := int(b[7])
+	dims := int(b[dvid.DataShapeBytes+1])
 	coord := make([]int32, dims)
 	for dim := dims - 1; dim >= 0; dim-- {
-		i := 8 + 4*dim
+		i := dvid.DataShapeBytes + 2 + 4*dim
 		j := i + 4
 		coord[dim] = int32(binary.BigEndian.Uint32(b[i:j]))
 	}
-	dataShape, err := dvid.BytesToDataShape(b[0:6])
+	dataShape, err := dvid.BytesToDataShape(b[0:dvid.DataShapeBytes])
 	if err != nil {
 		return nil, err
 	}
@@ -74,7 +79,7 @@ func (i IndexTile) IndexFromBytes(b []byte) (dvid.Index, error) {
 	}
 	index := &IndexTile{
 		plane:   dataShape,
-		scaling: uint8(b[6]),
+		scaling: uint8(b[dvid.DataShapeBytes]),
 		coord:   point,
 	}
 	return index, nil
