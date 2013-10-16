@@ -5,7 +5,6 @@
 package tiles
 
 import (
-	"encoding/binary"
 	"encoding/gob"
 	"encoding/json"
 	"fmt"
@@ -416,44 +415,6 @@ func (d *Data) GetTile(versionID datastore.VersionLocalID, planeStr, scalingStr,
 		return nil, fmt.Errorf("Error deserializing tile: %s", err.Error())
 	}
 	return img.Get(), nil
-}
-
-// Subvolume is a tile-sized 3d subvolume that allows us to efficiently reconstruct tiles.
-// This struct should fulfill the VoxelHandler interface.
-type Subvolume struct {
-	dvid.Geometry
-
-	source *voxels.Data
-	data   []uint8
-}
-
-func (v *Subvolume) String() string {
-	return fmt.Sprintf("Subvolume %s of size %s @ offset %s", v.DataShape(), v.Size(), v.StartPoint())
-}
-
-func (v *Subvolume) Data() []uint8 {
-	return v.data
-}
-
-func (v *Subvolume) Stride() int32 {
-	return v.Size().Value(0) * v.BytesPerVoxel()
-}
-
-func (v *Subvolume) PointIndexer(p dvid.Point) dvid.PointIndexer {
-	index := dvid.IndexZYX(p.(dvid.Point3d))
-	return &index
-}
-
-func (v *Subvolume) VoxelFormat() (channels, bytesPerChannel int32) {
-	return v.source.ValuesPerVoxel, v.source.BytesPerValue
-}
-
-func (v *Subvolume) BytesPerVoxel() int32 {
-	return v.source.ValuesPerVoxel * v.source.BytesPerValue
-}
-
-func (v *Subvolume) ByteOrder() binary.ByteOrder {
-	return v.source.ByteOrder
 }
 
 type keyFunc func(scaling uint8, tileX, tileY int32) *datastore.DataKey
