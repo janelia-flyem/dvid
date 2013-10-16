@@ -39,6 +39,33 @@ func (suite *DataSuite) TearDownSuite(c *C) {
 	suite.service.Shutdown()
 }
 
+// Make sure new grayscale8 data have different IDs.
+func (suite *DataSuite) TestNewDataDifferent(c *C) {
+	// Create a new dataset
+	root, _, err := suite.service.NewDataset()
+	c.Assert(err, IsNil)
+
+	// Add grayscale data
+	config := dvid.NewConfig()
+	config.SetVersioned(true)
+
+	err = suite.service.NewData(root, "grayscale8", "image1", config)
+	c.Assert(err, IsNil)
+
+	dataservice1, err := suite.service.DataService(root, "image1")
+	c.Assert(err, IsNil)
+
+	err = suite.service.NewData(root, "grayscale8", "image2", config)
+	c.Assert(err, IsNil)
+
+	dataservice2, err := suite.service.DataService(root, "image2")
+	c.Assert(err, IsNil)
+
+	c.Assert(dataservice1.DatasetID(), Equals, dataservice2.DatasetID())
+
+	c.Assert(dataservice1.LocalID(), Not(Equals), dataservice2.LocalID())
+}
+
 // Data from which to construct repeatable 3d images where adjacent voxels have different values.
 var xdata = []byte{'\x01', '\x07', '\xAF', '\xFF', '\x70'}
 var ydata = []byte{'\x33', '\xB2', '\x77', '\xD0', '\x4F'}

@@ -389,6 +389,7 @@ func (dset *Dataset) newData(name DataString, typeName string, config dvid.Confi
 	defer dset.mapLock.Unlock()
 
 	dataID := &DataID{name, dset.NewDataID, dset.DatasetID}
+	dset.NewDataID++
 	dataservice, err = typeService.NewDataService(dset, dataID, config)
 	if err != nil {
 		return err

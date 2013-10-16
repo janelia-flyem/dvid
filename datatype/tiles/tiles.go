@@ -118,6 +118,7 @@ GET  /api/node/<UUID>/<data name>/tile/<dims>/<scaling>/<tile coord>[/<format>]
                     jpg allows lossy quality setting, e.g., "jpg:80"
 
 
+(TODO)
 GET  /api/node/<UUID>/<data name>/image/<dims>/<size>/<offset>[/<format>]
 
     Retrieves image of named data within a version node using the precomputed tiles.

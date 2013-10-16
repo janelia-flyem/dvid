@@ -53,3 +53,15 @@ func (s *DataSuite) TestDatasetPersistence(c *C) {
 
 	c.Assert(newJSON, DeepEquals, oldJSON)
 }
+
+// Make sure each new dataset has a different local ID.
+func (s *DataSuite) TestNewDatasetDifferent(c *C) {
+	root1, datasetID1, err := s.service.NewDataset()
+	c.Assert(err, IsNil)
+
+	root2, datasetID2, err := s.service.NewDataset()
+	c.Assert(err, IsNil)
+
+	c.Assert(datasetID1, Not(Equals), datasetID2)
+	c.Assert(root1, Not(Equals), root2)
+}
