@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/janelia-flyem/dvid/datastore"
@@ -141,6 +142,7 @@ func loadRequest(w http.ResponseWriter, r *http.Request) {
 func aboutJSON() (jsonStr string, err error) {
 	data := map[string]string{
 		"Cores":           fmt.Sprintf("%d", dvid.NumCPU),
+		"Maximum Cores":   fmt.Sprintf("%d", runtime.NumCPU()),
 		"DVID datastore":  datastore.Version,
 		"Storage backend": storage.Version,
 	}

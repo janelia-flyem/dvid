@@ -55,7 +55,7 @@ $ dvid dataset <UUID> new tiles <data name> <settings...>
     TileSize       Size in pixels  (default: %s)
 
 
-$ dvid node <UUID> <data name> generate
+$ dvid node <UUID> <data name> generate <settings>
 
 	Generates multiresolution XY, XZ, and YZ tiles from Source to dataset with specified UUID.
 
@@ -65,16 +65,22 @@ $ dvid node <UUID> <data name> generate
 
     Arguments:
 
-    UUID           Hexidecimal string with enough characters to uniquely identify a version node.
-    data name      Name of data to create, e.g., "mygrayscale"
-    settings       Configuration settings in "key=value" format separated by spaces.
+    UUID            Hexidecimal string with enough characters to uniquely identify a version node.
+    data name       Name of data to create, e.g., "mygrayscale"
+    settings        Configuration settings in "key=value" format separated by spaces.
 
     Configuration Settings (case-insensitive keys)
 
-    Versioned      "true" or "false" (default)
-    Source         Name of data source (required)
-    TileSize       Size in pixels  (default: %s)
-	
+	interpolation   One of the following methods of interpolation:
+	                   NearestNeighbor (Nearest-Neighbor)
+	                   Bilinear
+	                   Bicubic
+	                   MitchellNetravali (Mitchell-Netravali)
+	                   Lanczos2Lut (Lanczos resampling with a=2 using a look-up table)
+	                   Lanczos2  (Same as above but without look-up table for fast computation)
+	                   Lanczos3Lut (Lanczos resampling with a=3 using a look-up table)
+	                   Lanczos3  (Same as above but without look-up table for fast computation)
+
     ------------------
 
 HTTP API (Level 2 REST):
@@ -287,7 +293,8 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 	if err != nil {
 		return err
 	}
-	return d.ConstructTiles(versionID)
+	config := request.Settings()
+	return d.ConstructTiles(versionID, config)
 }
 
 // DoHTTP handles all incoming HTTP requests for this dataset.
@@ -418,6 +425,36 @@ func (d *Data) GetTile(versionID datastore.VersionLocalID, planeStr, scalingStr,
 	return img.Get(), nil
 }
 
+func interpConfig(config dvid.Config) (resize.InterpolationFunction, error) {
+	s, found, err := config.GetString("interpolation")
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return resize.Bicubic, nil
+	}
+	switch s {
+	case "NearestNeighbor":
+		return resize.NearestNeighbor, nil
+	case "Bilinear":
+		return resize.Bilinear, nil
+	case "Bicubic":
+		return resize.Bicubic, nil
+	case "MitchellNetravali":
+		return resize.MitchellNetravali, nil
+	case "Lanczos2Lut":
+		return resize.Lanczos2Lut, nil
+	case "Lanczos2":
+		return resize.Lanczos2, nil
+	case "Lanczos3Lut":
+		return resize.Lanczos3Lut, nil
+	case "Lanczos3":
+		return resize.Lanczos3, nil
+	default:
+		return nil, fmt.Errorf("Unrecognized interpolation specified '%s'", s)
+	}
+}
+
 type keyFunc func(scaling uint8, tileX, tileY int32) *datastore.DataKey
 
 // pow2 returns the power of 2 with the passed exponent.
@@ -446,7 +483,9 @@ func log2(value int32) uint8 {
 // the image and offset are in the XY plane.  It also assumes that img has dimensions that
 // are a multiple of tile size so generated tiles are full-sized even along edges.
 // Returns the # of extracted tiles.
-func (d *Data) extractTiles(img image.Image, off dvid.Point2d, f keyFunc, scaling uint8) error {
+func (d *Data) extractTiles(img image.Image, interp resize.InterpolationFunction,
+	off dvid.Point2d, f keyFunc, scaling uint8) error {
+
 	db := server.KeyValueDB()
 
 	// The reduction factor is 2^scaling.
@@ -457,7 +496,7 @@ func (d *Data) extractTiles(img image.Image, off dvid.Point2d, f keyFunc, scalin
 	} else {
 		width := uint(img.Bounds().Dx() / reduction)
 		height := uint(img.Bounds().Dy() / reduction)
-		downres = resize.Resize(width, height, img, resize.Bicubic)
+		downres = resize.Resize(width, height, img, interp)
 	}
 
 	// Determine the bounds in tile space for this scale.
@@ -533,7 +572,7 @@ func (d *Data) getYZKeyFunc(versionID datastore.VersionLocalID, x int32) keyFunc
 	}
 }
 
-func (d *Data) ConstructTiles(versionID datastore.VersionLocalID) error {
+func (d *Data) ConstructTiles(versionID datastore.VersionLocalID, config dvid.Config) error {
 	// Make sure the source is valid voxels data.
 	src, ok := d.Source.(*voxels.Data)
 	if !ok {
@@ -577,6 +616,12 @@ func (d *Data) ConstructTiles(versionID datastore.VersionLocalID) error {
 	}
 	d.MaxScale = log2(maxAnyDim)
 
+	// Get type of interpolation
+	interp, err := interpConfig(config)
+	if err != nil {
+		return err
+	}
+
 	// Handle XY Tiling.
 	startTime := time.Now()
 	var img image.Image
@@ -602,8 +647,9 @@ func (d *Data) ConstructTiles(versionID datastore.VersionLocalID) error {
 		}
 		// Iterate through the different scales, extracting tiles at each resolution.
 		extractOffset := dvid.Point2d{offset[0], offset[1]}
+		keyF := d.getXYKeyFunc(versionID, z)
 		for scaling := uint8(0); scaling <= d.MaxScale; scaling++ {
-			err := d.extractTiles(img, extractOffset, d.getXYKeyFunc(versionID, z), scaling)
+			err := d.extractTiles(img, interp, extractOffset, keyF, scaling)
 			if err != nil {
 				return err
 			}
@@ -636,8 +682,9 @@ func (d *Data) ConstructTiles(versionID datastore.VersionLocalID) error {
 		}
 		// Iterate through the different scales, extracting tiles at each resolution.
 		extractOffset := dvid.Point2d{offset[0], offset[2]}
+		keyF := d.getXZKeyFunc(versionID, y)
 		for scaling := uint8(0); scaling <= d.MaxScale; scaling++ {
-			err := d.extractTiles(img, extractOffset, d.getXZKeyFunc(versionID, y), scaling)
+			err := d.extractTiles(img, interp, extractOffset, keyF, scaling)
 			if err != nil {
 				return err
 			}
@@ -670,8 +717,9 @@ func (d *Data) ConstructTiles(versionID datastore.VersionLocalID) error {
 		}
 		// Iterate through the different scales, extracting tiles at each resolution.
 		extractOffset := dvid.Point2d{offset[1], offset[2]}
+		keyF := d.getYZKeyFunc(versionID, x)
 		for scaling := uint8(0); scaling <= d.MaxScale; scaling++ {
-			err := d.extractTiles(img, extractOffset, d.getYZKeyFunc(versionID, x), scaling)
+			err := d.extractTiles(img, interp, extractOffset, keyF, scaling)
 			if err != nil {
 				return err
 			}
