@@ -586,6 +586,7 @@ func (d *Data) ConstructTiles(versionID datastore.VersionLocalID) error {
 		coverMaxPt[1] - offset[1] + 1,
 	}
 	for z := minPt[2]; z <= maxPt[2]; z++ {
+		sliceTime := time.Now()
 		offset[2] = z
 		slice, err := dvid.NewOrthogSlice(dvid.XY, offset, size)
 		if err != nil {
@@ -607,8 +608,9 @@ func (d *Data) ConstructTiles(versionID datastore.VersionLocalID) error {
 				return err
 			}
 		}
+		dvid.ElapsedTime(dvid.Debug, sliceTime, "XY Tile @ Z = %d", z)
 	}
-	dvid.ElapsedTime(dvid.Debug, startTime, "Generated XY Tiles")
+	dvid.ElapsedTime(dvid.Debug, startTime, "Total time to generate XY Tiles")
 
 	// Handle XZ Tiling.
 	startTime = time.Now()
@@ -618,6 +620,7 @@ func (d *Data) ConstructTiles(versionID datastore.VersionLocalID) error {
 		coverMaxPt[2] - offset[2] + 1,
 	}
 	for y := minPt[1]; y <= maxPt[1]; y++ {
+		sliceTime := time.Now()
 		offset[1] = y
 		slice, err := dvid.NewOrthogSlice(dvid.XZ, offset, size)
 		if err != nil {
@@ -639,8 +642,9 @@ func (d *Data) ConstructTiles(versionID datastore.VersionLocalID) error {
 				return err
 			}
 		}
+		dvid.ElapsedTime(dvid.Debug, sliceTime, "XZ Tile @ Y = %d", y)
 	}
-	dvid.ElapsedTime(dvid.Debug, startTime, "Generated XZ Tiles")
+	dvid.ElapsedTime(dvid.Debug, startTime, "Total time to generate XZ Tiles")
 
 	// Handle YZ Tiling.
 	startTime = time.Now()
@@ -650,6 +654,7 @@ func (d *Data) ConstructTiles(versionID datastore.VersionLocalID) error {
 		coverMaxPt[2] - offset[2] + 1,
 	}
 	for x := minPt[0]; x <= maxPt[0]; x++ {
+		sliceTime := time.Now()
 		offset[0] = x
 		slice, err := dvid.NewOrthogSlice(dvid.YZ, offset, size)
 		if err != nil {
@@ -671,8 +676,9 @@ func (d *Data) ConstructTiles(versionID datastore.VersionLocalID) error {
 				return err
 			}
 		}
+		dvid.ElapsedTime(dvid.Debug, sliceTime, "YZ Tile @ X = %d", x)
 	}
-	dvid.ElapsedTime(dvid.Debug, startTime, "Generated YZ Tiles")
+	dvid.ElapsedTime(dvid.Debug, startTime, "Total time to generate YZ Tiles")
 
 	return nil
 }
