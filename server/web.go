@@ -36,8 +36,10 @@ Commands that set or create data use POST.  Commands that return data use GET,
 and the returned format will be in JSON except for "help" which returns HTML.
 
     GET /api/help
-    GET /api/about
     GET /api/load
+
+    GET /api/server/info
+    GET /api/server/types
 
     GET /api/datasets/info
     GET /api/datasets/list
@@ -100,10 +102,10 @@ func apiHandler(w http.ResponseWriter, r *http.Request) {
 	switch parts[0] {
 	case "help":
 		helpRequest(w, r)
-	case "about":
-		aboutRequest(w, r)
 	case "load":
 		loadRequest(w, r)
+	case "server":
+		serverRequest(w, r)
 	case "datasets":
 		datasetsRequest(w, r)
 	case "dataset":
@@ -120,16 +122,6 @@ func helpRequest(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, WebAPIHelp)
 }
 
-func aboutRequest(w http.ResponseWriter, r *http.Request) {
-	jsonStr, err := runningService.AboutJSON()
-	if err != nil {
-		BadRequest(w, r, err.Error())
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, jsonStr)
-}
-
 func loadRequest(w http.ResponseWriter, r *http.Request) {
 	m, err := json.Marshal(map[string]int{
 		"bytes read":      storage.BytesReadPerSec,
@@ -144,6 +136,56 @@ func loadRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, string(m))
+}
+
+func aboutJSON() (jsonStr string, err error) {
+	data := map[string]string{
+		"Cores":           fmt.Sprintf("%d", dvid.NumCPU),
+		"DVID datastore":  datastore.Version,
+		"Storage backend": storage.Version,
+	}
+	m, err := json.Marshal(data)
+	if err != nil {
+		return
+	}
+	jsonStr = string(m)
+	return
+}
+
+func serverRequest(w http.ResponseWriter, r *http.Request) {
+	lenPath := len(WebAPIPath + "server/")
+	url := r.URL.Path[lenPath:]
+	parts := strings.Split(url, "/")
+
+	badRequest := func() {
+		BadRequest(w, r, WebAPIPath+"server/ must be followed with 'info' or 'types'")
+	}
+
+	if len(parts) != 1 {
+		badRequest()
+		return
+	}
+
+	switch parts[0] {
+	case "info":
+		jsonStr, err := aboutJSON()
+		if err != nil {
+			BadRequest(w, r, err.Error())
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, jsonStr)
+	case "types":
+		jsonStr, err := runningService.TypesJSON()
+		if err != nil {
+			BadRequest(w, r, err.Error())
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, jsonStr)
+	default:
+		badRequest()
+	}
 }
 
 func datasetsRequest(w http.ResponseWriter, r *http.Request) {

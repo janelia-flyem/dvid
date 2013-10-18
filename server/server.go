@@ -54,7 +54,7 @@ var (
 	curActiveHandlers int
 
 	// MaxChunkHandlers sets the maximum number of chunk handlers (goroutines) that
-	// can be spawned as part of this server.
+	// can be multiplexed onto available cores.  (See -numcpu setting in dvid.go)
 	MaxChunkHandlers = runtime.NumCPU()
 
 	// HandlerToken is buffered channel to limit spawning of goroutines.
@@ -90,10 +90,11 @@ type Service struct {
 }
 
 func init() {
-	dvid.MaxHandlers = MaxChunkHandlers
+	// Initialize the number of handler tokens available.
 	for i := 0; i < MaxChunkHandlers; i++ {
 		HandlerToken <- 1
 	}
+
 	// Monitor the handler token load, resetting every second.
 	loadCheckTimer := time.Tick(10 * time.Millisecond)
 	ticks := 0

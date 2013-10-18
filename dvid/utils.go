@@ -31,9 +31,6 @@ var (
 	// NumCPU is the number of cores available to this DVID server.
 	NumCPU int
 
-	// MaxHandlers is the maximum number of chunk handlers that will be spawned.
-	MaxHandlers int
-
 	// Mode is a global variable set to the run modes of this DVID process.
 	Mode ModeFlag
 
