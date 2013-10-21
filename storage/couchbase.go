@@ -48,7 +48,7 @@ type Ranges []levigo.Range
 
 type Sizes []uint64
 
-// --- The Couchbase Implementation must satisfy a DataHandler interface ----
+// --- The Couchbase Implementation must satisfy a Engine interface ----
 
 type goCouch struct {
 	// url of datastore
@@ -60,8 +60,8 @@ type goCouch struct {
 	bucket *couchbase.Bucket
 }
 
-// NewDataHandler returns a couchbase backend.
-func NewDataHandler(url string, create bool, options *Options) (db DataHandler, err error) {
+// NewEngine returns a couchbase backend.
+func NewEngine(url string, create bool, options *Options) (db Engine, err error) {
 	if create {
 		err = fmt.Errorf("Couchbase must be manually installed and configured.  'init' unavailable.")
 		return
@@ -88,7 +88,7 @@ func NewDataHandler(url string, create bool, options *Options) (db DataHandler, 
 	return
 }
 
-// --- DataHandler interface ----
+// --- Engine interface ----
 
 func (db *goCouch) IsKeyValueDB() bool     { return true }
 func (db *goCouch) IsJSONDatastore() bool  { return true }

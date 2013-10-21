@@ -121,12 +121,12 @@ func DatastoreService() *datastore.Service {
 	return runningService.Service
 }
 
-// KeyValueDB returns the current key-value datastore or nil if it's not available.
-func KeyValueDB() storage.KeyValueDB {
+// StorageEngine returns the default storage engine or nil if it's not available.
+func StorageEngine() storage.Engine {
 	if runningService.Service == nil {
 		return nil
 	}
-	return runningService.KeyValueDB()
+	return runningService.StorageEngine()
 }
 
 // Shutdown handles graceful cleanup of server functions before exiting DVID.

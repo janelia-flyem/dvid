@@ -786,7 +786,7 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 
 // GetImage retrieves a 2d image from a version node given a geometry of voxels.
 func (d *Data) GetImage(versionID datastore.VersionLocalID, v VoxelHandler) (img image.Image, err error) {
-	db := server.KeyValueDB()
+	db := server.StorageEngine()
 	if db == nil {
 		err = fmt.Errorf("Did not find a working key-value datastore to get image!")
 		return
@@ -825,7 +825,7 @@ func (d *Data) GetImage(versionID datastore.VersionLocalID, v VoxelHandler) (img
 // chunks before writing result back out, so it's a PUT for nonexistant keys and GET/PUT
 // for existing keys.
 func (d *Data) PutImage(versionID datastore.VersionLocalID, v VoxelHandler) error {
-	db := server.KeyValueDB()
+	db := server.StorageEngine()
 	if db == nil {
 		return fmt.Errorf("Did not find a working key-value datastore to put image!")
 	}
@@ -1139,7 +1139,7 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 
 	// If this is a PUT, place the modified block data into the database.
 	if op.OpType == PutOp {
-		db := server.KeyValueDB()
+		db := server.StorageEngine()
 		serialization, err := dvid.SerializeData([]byte(block), dvid.Snappy, dvid.CRC32)
 		if err != nil {
 			fmt.Printf("Unable to serialize block: %s\n", err.Error())

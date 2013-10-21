@@ -50,7 +50,7 @@ const (
 	DefaultWriteBufferSize = 100 * dvid.Mega
 )
 
-// --- The Leveldb Implementation that must fulfill a DataHandler interface ----
+// --- The Leveldb Implementation that must fulfill a Engine interface ----
 
 type Ranges []leveldb.Range
 
@@ -72,12 +72,12 @@ type goLDB struct {
 	ldb *leveldb.DB
 }
 
-func NewDataHandler(path string, create bool, options Options) (db DataHandler, err error) {
+func NewEngine(path string, create bool, options Options) (db Engine, err error) {
 	// Initialize the options needed for this datastore.
 }
 
 // Open will open and possibly create a datastore at the given directory.
-func OpenLeveldb(path string, create bool, kvOpts Options) (db DataHandler, err error) {
+func OpenLeveldb(path string, create bool, kvOpts Options) (db Engine, err error) {
 	goOpts := kvOpts.(*goKeyValueOptions)
 	if goOpts == nil {
 		err = fmt.Errorf("Nil pointer passed in as key-value options to Openleveldb()!")
@@ -146,7 +146,7 @@ func (db *goLDB) GetApproximateSizes(ranges Ranges) (sizes Sizes, err error) {
 	return
 }
 
-// NewIterator returns a read-only Iterator. 
+// NewIterator returns a read-only Iterator.
 func (db *goLDB) NewIterator(ro ReadOptions) (it Iterator, err error) {
 	it = db.ldb.NewIterator(ro.(*goReadOptions).ReadOptions)
 	err = nil
@@ -336,7 +336,7 @@ func (opts *goKeyValueOptions) GetBlockSize() (nBytes int) {
 	return
 }
 
-// SetCache sets the size of the LRU cache that caches frequently used 
+// SetCache sets the size of the LRU cache that caches frequently used
 // uncompressed blocks.  NOTE: For goleveldb, this is basically
 // ignored until I figure out how its being used with the namespace
 // concept.

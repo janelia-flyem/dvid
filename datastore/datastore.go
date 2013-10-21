@@ -61,7 +61,7 @@ type Service struct {
 
 	// The backend storage which is private since we want to create an object
 	// interface (e.g., cache object or UUID map) and hide DVID-specific keys.
-	db storage.DataHandler
+	db storage.Engine
 }
 
 type OpenErrorType int
@@ -303,8 +303,8 @@ func (s *Service) DataService(u UUID, name DataString) (dataservice DataService,
 	return s.datasets.DataService(u, name)
 }
 
-// KeyValueDB returns a a key-value database interface.
-func (s *Service) KeyValueDB() storage.KeyValueDB {
+// StorageEngine returns a a key-value database interface.
+func (s *Service) StorageEngine() storage.Engine {
 	return s.db
 }
 

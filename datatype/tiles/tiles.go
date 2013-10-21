@@ -385,7 +385,7 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 func (d *Data) GetTile(versionID datastore.VersionLocalID, planeStr, scalingStr, coordStr string) (
 	image.Image, error) {
 
-	db := server.KeyValueDB()
+	db := server.StorageEngine()
 	if db == nil {
 		return nil, fmt.Errorf("Did not find a working key-value datastore to get image!")
 	}
@@ -486,7 +486,7 @@ func log2(value int32) uint8 {
 func (d *Data) extractTiles(img image.Image, interp resize.InterpolationFunction,
 	off dvid.Point2d, f keyFunc, scaling uint8) error {
 
-	db := server.KeyValueDB()
+	db := server.StorageEngine()
 
 	// The reduction factor is 2^scaling.
 	reduction := pow2(scaling)

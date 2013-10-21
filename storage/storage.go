@@ -1,12 +1,12 @@
 /*
 	Package storage provides a unified interface to a number of storage engines.
 	Since each storage engine has different capabilities, this package defines a
-	number of interfaces and the DataHandler interface provides a way to query
+	number of interfaces and the Engine interface provides a way to query
 	which interfaces are implemented by a given storage engine.
 
 	Each storage engine must implement the following:
 
-		NewDataHandler(path string, create bool, options Options) (DataHandler, error)
+		NewEngine(path string, create bool, options Options) (Engine, error)
 */
 package storage
 
@@ -65,11 +65,11 @@ type Requirements struct {
 	Batcher    bool
 }
 
-// DataHandler implementations can fulfill a variety of interfaces.  Other parts
+// Engine implementations can fulfill a variety of interfaces.  Other parts
 // of DVID, most notably the data type implementations, need to know what's available.
 // Data types can throw a warning at init time if the backend doesn't support required
 // interfaces, or they can choose to implement multiple ways of handling data.
-type DataHandler interface {
+type Engine interface {
 	KeyValueDB
 
 	IsBatcher() bool
@@ -94,13 +94,13 @@ type KeyValueDB interface {
 	ProcessRange(kStart, kEnd Key, op *ChunkOp, f func(*Chunk)) (err error)
 
 	// Put writes a value with given key.
-	Put(k Key, v []byte) (err error)
+	Put(k Key, v []byte) error
 
 	// Put key-value pairs that have already been sorted in sequential key order.
-	PutRange(values []KeyValue) (err error)
+	PutRange(values []KeyValue) error
 
 	// Delete removes an entry given key.
-	Delete(k Key) (err error)
+	Delete(k Key) error
 }
 
 // Batchers allow batching operations into an atomic update or transaction.
@@ -112,7 +112,7 @@ type Batcher interface {
 // Batch groups operations into a transaction.
 type Batch interface {
 	// Commits a batch of operations.
-	Commit() (err error)
+	Commit() error
 
 	// Delete removes from the batch a put using the given key.
 	Delete(k Key)
