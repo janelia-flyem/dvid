@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"runtime/pprof"
 	"strings"
+	"syscall"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -177,7 +178,7 @@ func main() {
 	stopSig := make(chan os.Signal)
 	go func() {
 		for sig := range stopSig {
-			log.Printf("Captured %v.  Shutting down...\n", sig)
+			log.Printf("Stop signal captured: %q.  Shutting down...\n", sig)
 			if *memprofile != "" {
 				log.Printf("Storing memory profiling to %s...\n", *memprofile)
 				f, err := os.Create(*memprofile)
@@ -195,7 +196,7 @@ func main() {
 			os.Exit(0)
 		}
 	}()
-	signal.Notify(stopSig, os.Interrupt, os.Kill)
+	signal.Notify(stopSig, os.Interrupt, os.Kill, syscall.SIGTERM)
 
 	// If we have no arguments, run in terminal mode, else execute command.
 	if flag.NArg() == 0 {
