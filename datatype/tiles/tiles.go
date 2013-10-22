@@ -71,6 +71,10 @@ $ dvid node <UUID> <data name> generate <settings>
 
     Configuration Settings (case-insensitive keys)
 
+    planes          List of one or more planes separated by semicolon.  Each plane can be
+                       designated using either axis number ("0,1") or xyz nomenclature ("xy").
+                       Example:  planes=0,1;yz
+
 	interpolation   One of the following methods of interpolation:
 	                   NearestNeighbor (Nearest-Neighbor)
 	                   Bilinear
@@ -622,111 +626,122 @@ func (d *Data) ConstructTiles(versionID datastore.VersionLocalID, config dvid.Co
 		return err
 	}
 
-	// Handle XY Tiling.
-	startTime := time.Now()
-	var img image.Image
-	offset := coverMinPt.Duplicate().(dvid.Point3d)
-	size := dvid.Point2d{
-		coverMaxPt[0] - offset[0] + 1,
-		coverMaxPt[1] - offset[1] + 1,
+	// Get the planes we should tile.
+	planes, err := config.GetShapes("planes", ";")
+	if planes == nil {
+		// If no planes are specified, construct tiles for 3 orthogonal planes.
+		planes = []dvid.DataShape{dvid.XY, dvid.XZ, dvid.YZ}
 	}
-	for z := minPt[2]; z <= maxPt[2]; z++ {
-		sliceTime := time.Now()
-		offset[2] = z
-		slice, err := dvid.NewOrthogSlice(dvid.XY, offset, size)
-		if err != nil {
-			return err
-		}
-		v, err := src.NewVoxelHandler(slice, nil)
-		if err != nil {
-			return err
-		}
-		img, err = src.GetImage(versionID, v)
-		if err != nil {
-			return err
-		}
-		// Iterate through the different scales, extracting tiles at each resolution.
-		extractOffset := dvid.Point2d{offset[0], offset[1]}
-		keyF := d.getXYKeyFunc(versionID, z)
-		for scaling := uint8(0); scaling <= d.MaxScale; scaling++ {
-			err := d.extractTiles(img, interp, extractOffset, keyF, scaling)
-			if err != nil {
-				return err
-			}
-		}
-		dvid.ElapsedTime(dvid.Debug, sliceTime, "XY Tile @ Z = %d", z)
-	}
-	dvid.ElapsedTime(dvid.Debug, startTime, "Total time to generate XY Tiles")
 
-	// Handle XZ Tiling.
-	startTime = time.Now()
-	offset = coverMinPt.Duplicate().(dvid.Point3d)
-	size = dvid.Point2d{
-		coverMaxPt[0] - offset[0] + 1,
-		coverMaxPt[2] - offset[2] + 1,
-	}
-	for y := minPt[1]; y <= maxPt[1]; y++ {
-		sliceTime := time.Now()
-		offset[1] = y
-		slice, err := dvid.NewOrthogSlice(dvid.XZ, offset, size)
-		if err != nil {
-			return err
-		}
-		v, err := src.NewVoxelHandler(slice, nil)
-		if err != nil {
-			return err
-		}
-		img, err = src.GetImage(versionID, v)
-		if err != nil {
-			return err
-		}
-		// Iterate through the different scales, extracting tiles at each resolution.
-		extractOffset := dvid.Point2d{offset[0], offset[2]}
-		keyF := d.getXZKeyFunc(versionID, y)
-		for scaling := uint8(0); scaling <= d.MaxScale; scaling++ {
-			err := d.extractTiles(img, interp, extractOffset, keyF, scaling)
-			if err != nil {
-				return err
-			}
-		}
-		dvid.ElapsedTime(dvid.Debug, sliceTime, "XZ Tile @ Y = %d", y)
-	}
-	dvid.ElapsedTime(dvid.Debug, startTime, "Total time to generate XZ Tiles")
+	for _, plane := range planes {
+		var img image.Image
+		startTime := time.Now()
+		offset := coverMinPt.Duplicate().(dvid.Point3d)
 
-	// Handle YZ Tiling.
-	startTime = time.Now()
-	offset = coverMinPt.Duplicate().(dvid.Point3d)
-	size = dvid.Point2d{
-		coverMaxPt[1] - offset[1] + 1,
-		coverMaxPt[2] - offset[2] + 1,
-	}
-	for x := minPt[0]; x <= maxPt[0]; x++ {
-		sliceTime := time.Now()
-		offset[0] = x
-		slice, err := dvid.NewOrthogSlice(dvid.YZ, offset, size)
-		if err != nil {
-			return err
-		}
-		v, err := src.NewVoxelHandler(slice, nil)
-		if err != nil {
-			return err
-		}
-		img, err = src.GetImage(versionID, v)
-		if err != nil {
-			return err
-		}
-		// Iterate through the different scales, extracting tiles at each resolution.
-		extractOffset := dvid.Point2d{offset[1], offset[2]}
-		keyF := d.getYZKeyFunc(versionID, x)
-		for scaling := uint8(0); scaling <= d.MaxScale; scaling++ {
-			err := d.extractTiles(img, interp, extractOffset, keyF, scaling)
-			if err != nil {
-				return err
-			}
-		}
-		dvid.ElapsedTime(dvid.Debug, sliceTime, "YZ Tile @ X = %d", x)
-	}
-	dvid.ElapsedTime(dvid.Debug, startTime, "Total time to generate YZ Tiles")
+		switch {
 
+		case plane.Equals(dvid.XY):
+			size := dvid.Point2d{
+				coverMaxPt[0] - offset[0] + 1,
+				coverMaxPt[1] - offset[1] + 1,
+			}
+			for z := minPt[2]; z <= maxPt[2]; z++ {
+				sliceTime := time.Now()
+				offset[2] = z
+				slice, err := dvid.NewOrthogSlice(dvid.XY, offset, size)
+				if err != nil {
+					return err
+				}
+				v, err := src.NewVoxelHandler(slice, nil)
+				if err != nil {
+					return err
+				}
+				img, err = src.GetImage(versionID, v)
+				if err != nil {
+					return err
+				}
+				// Iterate through the different scales, extracting tiles at each resolution.
+				extractOffset := dvid.Point2d{offset[0], offset[1]}
+				keyF := d.getXYKeyFunc(versionID, z)
+				for scaling := uint8(0); scaling <= d.MaxScale; scaling++ {
+					err := d.extractTiles(img, interp, extractOffset, keyF, scaling)
+					if err != nil {
+						return err
+					}
+				}
+				dvid.ElapsedTime(dvid.Debug, sliceTime, "XY Tile @ Z = %d", z)
+			}
+			dvid.ElapsedTime(dvid.Debug, startTime, "Total time to generate XY Tiles")
+
+		case plane.Equals(dvid.XZ):
+			size := dvid.Point2d{
+				coverMaxPt[0] - offset[0] + 1,
+				coverMaxPt[2] - offset[2] + 1,
+			}
+			for y := minPt[1]; y <= maxPt[1]; y++ {
+				sliceTime := time.Now()
+				offset[1] = y
+				slice, err := dvid.NewOrthogSlice(dvid.XZ, offset, size)
+				if err != nil {
+					return err
+				}
+				v, err := src.NewVoxelHandler(slice, nil)
+				if err != nil {
+					return err
+				}
+				img, err = src.GetImage(versionID, v)
+				if err != nil {
+					return err
+				}
+				// Iterate through the different scales, extracting tiles at each resolution.
+				extractOffset := dvid.Point2d{offset[0], offset[2]}
+				keyF := d.getXZKeyFunc(versionID, y)
+				for scaling := uint8(0); scaling <= d.MaxScale; scaling++ {
+					err := d.extractTiles(img, interp, extractOffset, keyF, scaling)
+					if err != nil {
+						return err
+					}
+				}
+				dvid.ElapsedTime(dvid.Debug, sliceTime, "XZ Tile @ Y = %d", y)
+			}
+			dvid.ElapsedTime(dvid.Debug, startTime, "Total time to generate XZ Tiles")
+
+		case plane.Equals(dvid.YZ):
+			size := dvid.Point2d{
+				coverMaxPt[1] - offset[1] + 1,
+				coverMaxPt[2] - offset[2] + 1,
+			}
+			for x := minPt[0]; x <= maxPt[0]; x++ {
+				sliceTime := time.Now()
+				offset[0] = x
+				slice, err := dvid.NewOrthogSlice(dvid.YZ, offset, size)
+				if err != nil {
+					return err
+				}
+				v, err := src.NewVoxelHandler(slice, nil)
+				if err != nil {
+					return err
+				}
+				img, err = src.GetImage(versionID, v)
+				if err != nil {
+					return err
+				}
+				// Iterate through the different scales, extracting tiles at each resolution.
+				extractOffset := dvid.Point2d{offset[1], offset[2]}
+				keyF := d.getYZKeyFunc(versionID, x)
+				for scaling := uint8(0); scaling <= d.MaxScale; scaling++ {
+					err := d.extractTiles(img, interp, extractOffset, keyF, scaling)
+					if err != nil {
+						return err
+					}
+				}
+				dvid.ElapsedTime(dvid.Debug, sliceTime, "YZ Tile @ X = %d", x)
+			}
+			dvid.ElapsedTime(dvid.Debug, startTime, "Total time to generate YZ Tiles")
+
+		default:
+			dvid.Log(dvid.Normal, "Skipping request to tile '%s'.  Unsupported.", plane)
+		}
+	}
 	return nil
 }

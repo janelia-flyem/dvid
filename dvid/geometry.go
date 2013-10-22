@@ -139,6 +139,31 @@ func (s DataShape) String() string {
 	}
 }
 
+// DataShapes are a slice of DataShape.
+type DataShapes []DataShape
+
+// GetShapes returns DataShapes from a string where each shape specification
+// is delimited by a separator.  If the key is not found, nil is returned.
+func (c Config) GetShapes(key, separator string) ([]DataShape, error) {
+	s, found, err := c.GetString(key)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, nil
+	}
+	parts := strings.Split(s, separator)
+	shapes := []DataShape{}
+	for _, part := range parts {
+		shape, err := DataShapeString(part).DataShape()
+		if err != nil {
+			return nil, err
+		}
+		shapes = append(shapes, shape)
+	}
+	return shapes, nil
+}
+
 // String for specifying a slice orientation or subvolume
 type DataShapeString string
 
@@ -153,6 +178,10 @@ var dataShapeStrings = map[string]DataShape{
 	"0_2":   XZ,
 	"1_2":   YZ,
 	"0_1_2": Vol3d,
+	"0,1":   XY,
+	"0,2":   XZ,
+	"1,2":   YZ,
+	"0,1,2": Vol3d,
 }
 
 // ListDataShapes returns a slice of shape names
