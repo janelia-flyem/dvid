@@ -6,6 +6,7 @@ package server
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"time"
 
@@ -72,6 +73,7 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 		Shutdown()
 		// Make this process shutdown in a second to allow time for RPC to finish.
 		// TODO -- Better way to do this?
+		log.Printf("DVID server halted due to 'shutdown' command.")
 		go func() {
 			time.Sleep(1 * time.Second)
 			os.Exit(0)
