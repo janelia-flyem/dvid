@@ -6,6 +6,7 @@ package dvid
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/gob"
 	"fmt"
 	"image"
@@ -32,15 +33,11 @@ const DefaultJPEGQuality = 80
 // a generic image.Image interface.  Suggested by Rob Pike in golang-nuts:
 // see https://groups.google.com/d/msg/golang-dev/_t4pqoeuflE/DbqSf41wr5EJ
 type Image struct {
-	Which   int
-	Gray    *image.Gray
-	Gray16  *image.Gray16
-	RGBA    *image.RGBA
-	RGBA64  *image.RGBA64
-	Alpha   *image.Alpha
-	Alpha16 *image.Alpha16
-	NRGBA   *image.NRGBA
-	NRGBA64 *image.NRGBA64
+	Which  uint8
+	Gray   *image.Gray
+	Gray16 *image.Gray16
+	RGBA   *image.RGBA
+	RGBA64 *image.RGBA64
 }
 
 // Get returns an image.Image from the union struct.
@@ -54,14 +51,6 @@ func (img Image) Get() image.Image {
 		return img.RGBA
 	case 3:
 		return img.RGBA64
-	case 4:
-		return img.Alpha
-	case 5:
-		return img.Alpha16
-	case 6:
-		return img.NRGBA
-	case 7:
-		return img.NRGBA64
 	default:
 		return nil
 	}
@@ -82,18 +71,6 @@ func (img *Image) Set(src image.Image) error {
 	case *image.RGBA64:
 		img.Which = 3
 		img.RGBA64 = s
-	case *image.Alpha:
-		img.Which = 4
-		img.Alpha = s
-	case *image.Alpha16:
-		img.Which = 5
-		img.Alpha16 = s
-	case *image.NRGBA:
-		img.Which = 6
-		img.NRGBA = s
-	case *image.NRGBA64:
-		img.Which = 7
-		img.NRGBA64 = s
 	default:
 		return fmt.Errorf("No valid image type received by image.Set(): %s", reflect.TypeOf(src))
 	}
@@ -114,30 +91,161 @@ func (img *Image) SubImage(r image.Rectangle) (*Image, error) {
 		result.RGBA = img.RGBA.SubImage(r).(*image.RGBA)
 	case 3:
 		result.RGBA64 = img.RGBA64.SubImage(r).(*image.RGBA64)
-	case 4:
-		result.Alpha = img.Alpha.SubImage(r).(*image.Alpha)
-	case 5:
-		result.Alpha16 = img.Alpha16.SubImage(r).(*image.Alpha16)
-	case 6:
-		result.NRGBA = img.NRGBA.SubImage(r).(*image.NRGBA)
-	case 7:
-		result.NRGBA64 = img.NRGBA64.SubImage(r).(*image.NRGBA64)
 	default:
 		return nil, fmt.Errorf("Unsupported image type %d asked for SubImage()", img.Which)
 	}
 	return result, nil
 }
 
+// Serialize writes compact byte slice representing image data.
+func (img *Image) Serialize(compress Compression, checksum Checksum) ([]byte, error) {
+	var buffer bytes.Buffer
+	err := buffer.WriteByte(byte(img.Which))
+	if err != nil {
+		return nil, err
+	}
+
+	var stride, bytesPerPixel int
+	var rect image.Rectangle
+	var pix, src []uint8
+	var pixOffset func(x, y int) int
+
+	switch img.Which {
+	case 0:
+		stride = img.Gray.Stride
+		rect = img.Gray.Rect
+		bytesPerPixel = 1
+		src = img.Gray.Pix
+		pixOffset = img.Gray.PixOffset
+
+	case 1:
+		stride = img.Gray16.Stride
+		rect = img.Gray16.Rect
+		bytesPerPixel = 2
+		src = img.Gray16.Pix
+		pixOffset = img.Gray16.PixOffset
+
+	case 2:
+		stride = img.RGBA.Stride
+		rect = img.RGBA.Rect
+		bytesPerPixel = 4
+		src = img.RGBA.Pix
+		pixOffset = img.RGBA.PixOffset
+
+	case 3:
+		stride = img.RGBA64.Stride
+		rect = img.RGBA64.Rect
+		bytesPerPixel = 8
+		src = img.RGBA64.Pix
+		pixOffset = img.RGBA64.PixOffset
+	}
+
+	// Make sure the byte slice is compact and not harboring any offsets
+	if stride == bytesPerPixel*rect.Dx() && rect.Min.X == 0 && rect.Min.Y == 0 {
+		pix = src
+	} else {
+		dx := rect.Dx()
+		dy := rect.Dy()
+		rowbytes := bytesPerPixel * dx
+		totbytes := rowbytes * dy
+		pix = make([]uint8, totbytes)
+		dstI := 0
+		for y := rect.Min.Y; y < rect.Min.Y; y++ {
+			srcI := pixOffset(rect.Min.X, y)
+			copy(pix[dstI:dstI+rowbytes], src[srcI:srcI+rowbytes])
+			dstI += rowbytes
+		}
+		stride = rowbytes
+		rect = image.Rect(0, 0, dx, dy)
+	}
+
+	err = binary.Write(&buffer, binary.LittleEndian, int32(stride))
+	if err != nil {
+		return nil, err
+	}
+	err = binary.Write(&buffer, binary.LittleEndian, int32(rect.Dx()))
+	if err != nil {
+		return nil, err
+	}
+	err = binary.Write(&buffer, binary.LittleEndian, int32(rect.Dy()))
+	if err != nil {
+		return nil, err
+	}
+	_, err = buffer.Write(pix)
+	if err != nil {
+		return nil, err
+	}
+
+	return SerializeData(buffer.Bytes(), compress, checksum)
+}
+
+// Deserialze deserializes an Image from a byte slice.
+func (img *Image) Deserialize(b []byte) error {
+	if img == nil {
+		return fmt.Errorf("Error attempting to deserialize into nil Image")
+	}
+
+	buffer := bytes.NewBuffer(b)
+
+	// Get the image type.
+	imageType, err := buffer.ReadByte()
+	if err != nil {
+		return err
+	}
+	img.Which = uint8(imageType)
+
+	// Get the stride and sizes.
+	var stride int32
+	err = binary.Read(buffer, binary.LittleEndian, &stride)
+	if err != nil {
+		return err
+	}
+
+	var dx, dy int32
+	err = binary.Read(buffer, binary.LittleEndian, &dx)
+	if err != nil {
+		return err
+	}
+	err = binary.Read(buffer, binary.LittleEndian, &dy)
+	if err != nil {
+		return err
+	}
+	rect := image.Rect(0, 0, int(dx), int(dy))
+
+	data, _, err := DeserializeData(buffer.Bytes(), true)
+	if err != nil {
+		return err
+	}
+
+	switch img.Which {
+	case 0:
+		img.Gray.Stride = int(stride)
+		img.Gray.Rect = rect
+		img.Gray.Pix = []uint8(data)
+
+	case 1:
+		img.Gray16.Stride = int(stride)
+		img.Gray16.Rect = rect
+		img.Gray16.Pix = []uint8(data)
+
+	case 2:
+		img.RGBA.Stride = int(stride)
+		img.RGBA.Rect = rect
+		img.RGBA.Pix = []uint8(data)
+
+	case 3:
+		img.RGBA64.Stride = int(stride)
+		img.RGBA64.Rect = rect
+		img.RGBA64.Pix = []uint8(data)
+	}
+	return nil
+}
+
 // Register all the image types for gob decoding.
 func init() {
 	gob.Register(&Image{})
-	gob.Register(&image.Alpha{})
-	gob.Register(&image.Alpha16{})
 	gob.Register(&image.Gray{})
 	gob.Register(&image.Gray16{})
-	gob.Register(&image.NRGBA{})
-	gob.Register(&image.NRGBA64{})
-	gob.Register(&image.Paletted{})
 	gob.Register(&image.RGBA{})
 	gob.Register(&image.RGBA64{})
 }
@@ -146,25 +254,10 @@ func init() {
 // the image doesn't have the requisite []uint8 pixel data.
 func ImageData(img image.Image) (data []uint8, stride int32, err error) {
 	switch typedImg := img.(type) {
-	case *image.Alpha:
-		data = typedImg.Pix
-		stride = int32(typedImg.Stride)
-	case *image.Alpha16:
-		data = typedImg.Pix
-		stride = int32(typedImg.Stride)
 	case *image.Gray:
 		data = typedImg.Pix
 		stride = int32(typedImg.Stride)
 	case *image.Gray16:
-		data = typedImg.Pix
-		stride = int32(typedImg.Stride)
-	case *image.NRGBA:
-		data = typedImg.Pix
-		stride = int32(typedImg.Stride)
-	case *image.NRGBA64:
-		data = typedImg.Pix
-		stride = int32(typedImg.Stride)
-	case *image.Paletted:
 		data = typedImg.Pix
 		stride = int32(typedImg.Stride)
 	case *image.RGBA:

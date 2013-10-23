@@ -71,14 +71,18 @@ else ()
         include (golang)
     endif ()
 
-    include (leveldb)
 
     # The name of the backend should be the same as the tag used for conditional build
     # (see "// +build levigo" in storage/levigo.go) and the custom_target name for the
     # dependencies.
 
+    include (leveldb)
     set (DVID_BACKEND levigo)
     set (DVID_BACKEND_DEPEND ${leveldb_NAME})
+
+    # include (lmdb)
+    # set (DVID_BACKEND lmdb)
+    # set (DVID_BACKEND_DEPEND ${lmdb_NAME})
 
     # set (DVID_BACKEND couchbase)
     # set (DVID_BACKEND_DEPEND "")   # Assume manual install

@@ -41,10 +41,10 @@ func Init(directory string, create bool) error {
 	// Initialize the backend database
 	dbOptions := storage.Options{}
 	db, err := storage.NewStore(directory, create, &dbOptions)
-	defer db.Close()
 	if err != nil {
 		return fmt.Errorf("Error initializing datastore (%s): %s\n", directory, err.Error())
 	}
+	defer db.Close()
 
 	// Put empty Datasets
 	datasets := new(Datasets)

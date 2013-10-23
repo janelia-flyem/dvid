@@ -5,11 +5,13 @@
 package tiles
 
 import (
+	"encoding/binary"
 	"encoding/gob"
 	"encoding/json"
 	"fmt"
 	"image"
 	"net/http"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -421,8 +423,8 @@ func (d *Data) GetTile(versionID datastore.VersionLocalID, planeStr, scalingStr,
 		return nil, nil // Not found
 	}
 	//fmt.Printf("Retrieved tile for key %s: %d bytes\n", key, len(data))
-	var img dvid.Image
-	err = dvid.Deserialize(data, &img)
+	img := new(dvid.Image)
+	err = img.Deserialize(data)
 	if err != nil {
 		return nil, fmt.Errorf("Error deserializing tile: %s", err.Error())
 	}
@@ -483,10 +485,85 @@ func log2(value int32) uint8 {
 	}
 }
 
+// Reformats an image.RGBA64 into another image type depending on the source image's type.
+// Also compacts the pixel array if offsets and larger amount of data is used than needed
+// when doing conversion from RGBA64.
+func (d *Data) reformatToSource(colorImg, src image.Image) (image.Image, error) {
+
+	srcRect := colorImg.Bounds()
+	dx := srcRect.Dx()
+	dy := srcRect.Dy()
+	dstRect := image.Rect(0, 0, dx, dy)
+	switch srcImg := src.(type) {
+	case *image.RGBA64:
+		return colorImg, nil // No change needed
+	case *image.RGBA:
+		dst := image.NewRGBA(dstRect)
+		dstI := 0
+		for y := srcRect.Min.Y; y < srcRect.Max.Y; y++ {
+			for x := srcRect.Min.X; x < srcRect.Max.X; x++ {
+				srcI := srcImg.PixOffset(x, y)
+				dst.Pix[dstI] = srcImg.Pix[srcI+1]
+				dstI++
+				dst.Pix[dstI] = srcImg.Pix[srcI+3]
+				dstI++
+				dst.Pix[dstI] = srcImg.Pix[srcI+5]
+				dstI++
+				dst.Pix[dstI] = srcImg.Pix[srcI+7]
+				dstI++
+			}
+		}
+		return dst, nil
+	case *image.Gray:
+		dst := image.NewGray(dstRect)
+		dstI := 0
+		for y := srcRect.Min.Y; y < srcRect.Max.Y; y++ {
+			for x := srcRect.Min.X; x < srcRect.Max.X; x++ {
+				srcI := srcImg.PixOffset(x, y)
+				dst.Pix[dstI] = srcImg.Pix[srcI+1]
+				dstI++
+			}
+		}
+		return dst, nil
+	case *image.Gray16:
+		// Get endianness from source voxels.
+		srcVoxels, ok := d.Source.(*voxels.Data)
+		if !ok {
+			return nil, fmt.Errorf("Cannot construct tiles for non-voxels data: %s",
+				srcVoxels.DataName())
+		}
+		wantBigEndian := (srcVoxels.ByteOrder == binary.BigEndian)
+
+		dst := image.NewGray(dstRect)
+		dstI := 0
+		for y := srcRect.Min.Y; y < srcRect.Max.Y; y++ {
+			for x := srcRect.Min.X; x < srcRect.Max.X; x++ {
+				srcI := srcImg.PixOffset(x, y)
+				if wantBigEndian {
+					dst.Pix[dstI] = srcImg.Pix[srcI]
+					dstI++
+					dst.Pix[dstI+1] = srcImg.Pix[srcI+1]
+					dstI++
+				} else {
+					dst.Pix[dstI+1] = srcImg.Pix[srcI]
+					dstI++
+					dst.Pix[dstI] = srcImg.Pix[srcI+1]
+					dstI++
+				}
+			}
+		}
+		return dst, nil
+	default:
+		return nil, fmt.Errorf("Cannot modify resized %s into %s",
+			reflect.TypeOf(colorImg), reflect.TypeOf(src))
+	}
+}
+
 // Construct all tiles for an image with offset and put in datastore.  This function assumes
 // the image and offset are in the XY plane.  It also assumes that img has dimensions that
 // are a multiple of tile size so generated tiles are full-sized even along edges.
 // Returns the # of extracted tiles.
+// TODO: Currently only returns 8-bit grayscale tiles.
 func (d *Data) extractTiles(img image.Image, interp resize.InterpolationFunction,
 	off dvid.Point2d, f keyFunc, scaling uint8) error {
 
@@ -500,7 +577,14 @@ func (d *Data) extractTiles(img image.Image, interp resize.InterpolationFunction
 	} else {
 		width := uint(img.Bounds().Dx() / reduction)
 		height := uint(img.Bounds().Dy() / reduction)
-		downres = resize.Resize(width, height, img, interp)
+		// TODO -- Change resize to be more efficient in handling 8 and 16-bit grays
+		//         rather than converting everything to RGBA.
+		colorImg := resize.Resize(width, height, img, interp)
+		var err error
+		downres, err = d.reformatToSource(colorImg, img)
+		if err != nil {
+			return err
+		}
 	}
 
 	// Determine the bounds in tile space for this scale.
@@ -515,10 +599,10 @@ func (d *Data) extractTiles(img image.Image, interp resize.InterpolationFunction
 	tileBegY := offset[1] / d.Size
 	tileEndY := lastPt[1] / d.Size
 
-	//fmt.Printf("Image %d x %d, downres %d x %d\n",
-	//	img.Bounds().Dx(), img.Bounds().Dy(), downres.Bounds().Dx(), downres.Bounds().Dy())
-	//fmt.Printf("Tiling at scaling %d, offset %s (reduced %d): tile %d,%d -> %d,%d\n",
-	//	scaling, off, offset, tileBegX, tileBegY, tileEndX, tileEndY)
+	fmt.Printf("Image %d x %d, downres %d x %d\n",
+		img.Bounds().Dx(), img.Bounds().Dy(), downres.Bounds().Dx(), downres.Bounds().Dy())
+	fmt.Printf("Tiling at scaling %d, offset %s (reduced %d): tile %d,%d -> %d,%d\n",
+		scaling, off, offset, tileBegX, tileBegY, tileEndX, tileEndY)
 
 	// Split image into tiles and store into datastore.
 	src := new(dvid.Image)
@@ -534,13 +618,14 @@ func (d *Data) extractTiles(img image.Image, interp resize.InterpolationFunction
 			if err != nil {
 				return err
 			}
-			key := f(scaling, tx, ty)
-			serialization, err := dvid.Serialize(tile, dvid.Snappy, dvid.CRC32)
+			serialization, err := tile.Serialize(dvid.Snappy, dvid.CRC32)
 			if err != nil {
 				return err
 			}
+
 			//fmt.Printf("Writing tile %s for scaling %d (%d,%d) (%s): %d bytes\n",
 			//	tileRect, scaling, tx, ty, key, len(serialization))
+			key := f(scaling, tx, ty)
 			err = db.Put(key, serialization)
 			if err != nil {
 				return err

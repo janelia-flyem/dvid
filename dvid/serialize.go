@@ -117,15 +117,14 @@ func SerializeData(data []byte, compress Compression, checksum Checksum) (s []by
 // If your object is []byte, you should preferentially use SerializeData since the Gob encoding
 // process adds some overhead in performance as well as size of wire format to describe the
 // transmitted types.
-func Serialize(object interface{}, compress Compression, checksum Checksum) (s []byte, err error) {
+func Serialize(object interface{}, compress Compression, checksum Checksum) ([]byte, error) {
 	var buffer bytes.Buffer
 	enc := gob.NewEncoder(&buffer)
-	err = enc.Encode(object)
+	err := enc.Encode(object)
 	if err != nil {
-		return
+		return nil, err
 	}
-	s, err = SerializeData(buffer.Bytes(), compress, checksum)
-	return
+	return SerializeData(buffer.Bytes(), compress, checksum)
 }
 
 // DeserializeData deserializes a slice of bytes using stored compression, checksum.
@@ -181,17 +180,15 @@ func DeserializeData(s []byte, uncompress bool) (data []byte, compress Compressi
 }
 
 // Deserializes a Go object using Gob encoding
-func Deserialize(s []byte, object interface{}) (err error) {
+func Deserialize(s []byte, object interface{}) error {
 	// Get the bytes for the Gob-encoded object
-	var data []byte
-	data, _, err = DeserializeData(s, true)
+	data, _, err := DeserializeData(s, true)
 	if err != nil {
-		return
+		return err
 	}
 
 	// Decode the bytes
 	buffer := bytes.NewBuffer(data)
 	dec := gob.NewDecoder(buffer)
-	err = dec.Decode(object)
-	return
+	return dec.Decode(object)
 }
