@@ -1,6 +1,8 @@
 package dvid
 
 import (
+	"image"
+
 	. "github.com/janelia-flyem/go/gocheck"
 )
 
@@ -34,6 +36,38 @@ func (suite *DataSuite) TestSlice(c *C) {
 	size := Point2d{100, 100}
 	data := []uint8(makeSlice(offset, size))
 	goImg := ImageGrayFromData(data, int(size[0]), int(size[1]))
+
+	// Create a serializable image and test its de/serialization.
+	var img Image
+	err := img.Set(goImg)
+	c.Assert(err, IsNil)
+
+	serialization, err := img.Serialize(Snappy, CRC32)
+	c.Assert(err, IsNil)
+	c.Assert(serialization, Not(Equals), nil)
+
+	newImg := new(Image)
+	err = newImg.Deserialize(serialization)
+	c.Assert(err, IsNil)
+
+	c.Assert(newImg.Which, Equals, uint8(0))
+	c.Assert(newImg.Gray, DeepEquals, goImg)
+}
+
+func (suite *DataSuite) TestOffsetSlice(c *C) {
+	// Create a fake 100x100 8-bit white grayscale image
+	// within a larger 200x200 black image.
+	goImg := &image.Gray{
+		Pix:    make([]uint8, 200*200),
+		Stride: 200,
+		Rect:   image.Rect(0, 0, 200, 200),
+	}
+	for y := 50; y <= 150; y++ {
+		for x := 50; x <= 150; x++ {
+			i := goImg.PixOffset(x, y)
+			goImg.Pix[i] = 255
+		}
+	}
 
 	// Create a serializable image and test its de/serialization.
 	var img Image

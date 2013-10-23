@@ -153,7 +153,7 @@ func (img *Image) Serialize(compress Compression, checksum Checksum) ([]byte, er
 		totbytes := rowbytes * dy
 		pix = make([]uint8, totbytes)
 		dstI := 0
-		for y := rect.Min.Y; y < rect.Min.Y; y++ {
+		for y := rect.Min.Y; y < rect.Max.Y; y++ {
 			srcI := pixOffset(rect.Min.X, y)
 			copy(pix[dstI:dstI+rowbytes], src[srcI:srcI+rowbytes])
 			dstI += rowbytes
@@ -219,34 +219,36 @@ func (img *Image) Deserialize(b []byte) error {
 		return err
 	}
 	rect := image.Rect(0, 0, int(dx), int(dy))
+	pix := []uint8(buffer.Bytes())
+	PrintNonZero("Right after deserializing", []byte(pix))
 
 	switch img.Which {
 	case 0:
 		img.Gray = &image.Gray{
 			Stride: int(stride),
 			Rect:   rect,
-			Pix:    []uint8(buffer.Bytes()),
+			Pix:    pix,
 		}
 
 	case 1:
 		img.Gray16 = &image.Gray16{
 			Stride: int(stride),
 			Rect:   rect,
-			Pix:    []uint8(buffer.Bytes()),
+			Pix:    pix,
 		}
 
 	case 2:
 		img.RGBA = &image.RGBA{
 			Stride: int(stride),
 			Rect:   rect,
-			Pix:    []uint8(buffer.Bytes()),
+			Pix:    pix,
 		}
 
 	case 3:
 		img.RGBA64 = &image.RGBA64{
 			Stride: int(stride),
 			Rect:   rect,
-			Pix:    []uint8(buffer.Bytes()),
+			Pix:    pix,
 		}
 	}
 	return nil
