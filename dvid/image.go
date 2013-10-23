@@ -188,7 +188,12 @@ func (img *Image) Deserialize(b []byte) error {
 		return fmt.Errorf("Error attempting to deserialize into nil Image")
 	}
 
-	buffer := bytes.NewBuffer(b)
+	data, _, err := DeserializeData(b, true)
+	if err != nil {
+		return err
+	}
+
+	buffer := bytes.NewBuffer(data)
 
 	// Get the image type.
 	imageType, err := buffer.ReadByte()
@@ -215,31 +220,34 @@ func (img *Image) Deserialize(b []byte) error {
 	}
 	rect := image.Rect(0, 0, int(dx), int(dy))
 
-	data, _, err := DeserializeData(buffer.Bytes(), true)
-	if err != nil {
-		return err
-	}
-
 	switch img.Which {
 	case 0:
-		img.Gray.Stride = int(stride)
-		img.Gray.Rect = rect
-		img.Gray.Pix = []uint8(data)
+		img.Gray = &image.Gray{
+			Stride: int(stride),
+			Rect:   rect,
+			Pix:    []uint8(buffer.Bytes()),
+		}
 
 	case 1:
-		img.Gray16.Stride = int(stride)
-		img.Gray16.Rect = rect
-		img.Gray16.Pix = []uint8(data)
+		img.Gray16 = &image.Gray16{
+			Stride: int(stride),
+			Rect:   rect,
+			Pix:    []uint8(buffer.Bytes()),
+		}
 
 	case 2:
-		img.RGBA.Stride = int(stride)
-		img.RGBA.Rect = rect
-		img.RGBA.Pix = []uint8(data)
+		img.RGBA = &image.RGBA{
+			Stride: int(stride),
+			Rect:   rect,
+			Pix:    []uint8(buffer.Bytes()),
+		}
 
 	case 3:
-		img.RGBA64.Stride = int(stride)
-		img.RGBA64.Rect = rect
-		img.RGBA64.Pix = []uint8(data)
+		img.RGBA64 = &image.RGBA64{
+			Stride: int(stride),
+			Rect:   rect,
+			Pix:    []uint8(buffer.Bytes()),
+		}
 	}
 	return nil
 }

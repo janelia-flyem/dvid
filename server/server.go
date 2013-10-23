@@ -142,6 +142,7 @@ func Shutdown() {
 			log.Printf("Waiting for %d chunk handlers to finish...\n", active)
 		} else {
 			log.Println("No chunk handlers active...")
+			return
 		}
 		time.Sleep(1 * time.Second)
 	}
