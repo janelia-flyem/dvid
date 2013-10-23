@@ -599,10 +599,10 @@ func (d *Data) extractTiles(img image.Image, interp resize.InterpolationFunction
 	tileBegY := offset[1] / d.Size
 	tileEndY := lastPt[1] / d.Size
 
-	fmt.Printf("Image %d x %d, downres %d x %d\n",
-		img.Bounds().Dx(), img.Bounds().Dy(), downres.Bounds().Dx(), downres.Bounds().Dy())
-	fmt.Printf("Tiling at scaling %d, offset %s (reduced %d): tile %d,%d -> %d,%d\n",
-		scaling, off, offset, tileBegX, tileBegY, tileEndX, tileEndY)
+	//fmt.Printf("Image %d x %d, downres %d x %d\n",
+	//	img.Bounds().Dx(), img.Bounds().Dy(), downres.Bounds().Dx(), downres.Bounds().Dy())
+	//fmt.Printf("Tiling at scaling %d, offset %s (reduced %d): tile %d,%d -> %d,%d\n",
+	//	scaling, off, offset, tileBegX, tileBegY, tileEndX, tileEndY)
 
 	// Split image into tiles and store into datastore.
 	src := new(dvid.Image)
@@ -730,6 +730,11 @@ func (d *Data) ConstructTiles(versionID datastore.VersionLocalID, config dvid.Co
 				coverMaxPt[0] - offset[0] + 1,
 				coverMaxPt[1] - offset[1] + 1,
 			}
+			maxTiles := tilesInX
+			if maxTiles < tilesInY {
+				maxTiles = tilesInY
+			}
+			maxScale := log2(maxTiles)
 			for z := minPt[2]; z <= maxPt[2]; z++ {
 				sliceTime := time.Now()
 				offset[2] = z
@@ -748,7 +753,7 @@ func (d *Data) ConstructTiles(versionID datastore.VersionLocalID, config dvid.Co
 				// Iterate through the different scales, extracting tiles at each resolution.
 				extractOffset := dvid.Point2d{offset[0], offset[1]}
 				keyF := d.getXYKeyFunc(versionID, z)
-				for scaling := uint8(0); scaling <= d.MaxScale; scaling++ {
+				for scaling := uint8(0); scaling <= maxScale; scaling++ {
 					err := d.extractTiles(img, interp, extractOffset, keyF, scaling)
 					if err != nil {
 						return err
@@ -763,6 +768,11 @@ func (d *Data) ConstructTiles(versionID datastore.VersionLocalID, config dvid.Co
 				coverMaxPt[0] - offset[0] + 1,
 				coverMaxPt[2] - offset[2] + 1,
 			}
+			maxTiles := tilesInX
+			if maxTiles < tilesInZ {
+				maxTiles = tilesInZ
+			}
+			maxScale := log2(maxTiles)
 			for y := minPt[1]; y <= maxPt[1]; y++ {
 				sliceTime := time.Now()
 				offset[1] = y
@@ -781,7 +791,7 @@ func (d *Data) ConstructTiles(versionID datastore.VersionLocalID, config dvid.Co
 				// Iterate through the different scales, extracting tiles at each resolution.
 				extractOffset := dvid.Point2d{offset[0], offset[2]}
 				keyF := d.getXZKeyFunc(versionID, y)
-				for scaling := uint8(0); scaling <= d.MaxScale; scaling++ {
+				for scaling := uint8(0); scaling <= maxScale; scaling++ {
 					err := d.extractTiles(img, interp, extractOffset, keyF, scaling)
 					if err != nil {
 						return err
@@ -796,6 +806,11 @@ func (d *Data) ConstructTiles(versionID datastore.VersionLocalID, config dvid.Co
 				coverMaxPt[1] - offset[1] + 1,
 				coverMaxPt[2] - offset[2] + 1,
 			}
+			maxTiles := tilesInZ
+			if maxTiles < tilesInY {
+				maxTiles = tilesInY
+			}
+			maxScale := log2(maxTiles)
 			for x := minPt[0]; x <= maxPt[0]; x++ {
 				sliceTime := time.Now()
 				offset[0] = x
@@ -814,7 +829,7 @@ func (d *Data) ConstructTiles(versionID datastore.VersionLocalID, config dvid.Co
 				// Iterate through the different scales, extracting tiles at each resolution.
 				extractOffset := dvid.Point2d{offset[1], offset[2]}
 				keyF := d.getYZKeyFunc(versionID, x)
-				for scaling := uint8(0); scaling <= d.MaxScale; scaling++ {
+				for scaling := uint8(0); scaling <= maxScale; scaling++ {
 					err := d.extractTiles(img, interp, extractOffset, keyF, scaling)
 					if err != nil {
 						return err

@@ -130,9 +130,20 @@ func StorageEngine() storage.Engine {
 }
 
 // Shutdown handles graceful cleanup of server functions before exiting DVID.
+// This may not be so graceful if the chunk handler uses cgo since the interrupt
+// may be caught during cgo execution.
 func Shutdown() {
 	if runningService.Service != nil {
 		runningService.Service.Shutdown()
+	}
+	for {
+		active := MaxChunkHandlers - len(HandlerToken)
+		if active > 0 {
+			log.Printf("Waiting for %d chunk handlers to finish...\n", active)
+		} else {
+			log.Println("No chunk handlers active...")
+		}
+		time.Sleep(1 * time.Second)
 	}
 }
 

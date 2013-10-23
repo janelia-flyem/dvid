@@ -10,6 +10,7 @@ import (
 	"runtime/pprof"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -193,6 +194,7 @@ func main() {
 				pprof.StopCPUProfile()
 			}
 			server.Shutdown()
+			time.Sleep(1 * time.Second)
 			os.Exit(0)
 		}
 	}()
