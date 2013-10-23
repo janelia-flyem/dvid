@@ -18,6 +18,9 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+
+	"github.com/janelia-flyem/go/go.image/bmp"
+	"github.com/janelia-flyem/go/go.image/tiff"
 )
 
 func init() {
@@ -332,6 +335,12 @@ func WriteImageHttp(w http.ResponseWriter, img image.Image, formatStr string) (e
 	case "jpg", "jpeg":
 		w.Header().Set("Content-type", "image/jpeg")
 		jpeg.Encode(w, img, &jpeg.Options{Quality: compression})
+	case "tiff", "tif":
+		w.Header().Set("Content-type", "image/tiff")
+		tiff.Encode(w, img, &tiff.Options{Compression: tiff.Deflate})
+	case "bmp":
+		w.Header().Set("Content-type", "image/bmp")
+		bmp.Encode(w, img)
 	default:
 		err = fmt.Errorf("Illegal image format requested: %s", format[0])
 	}
