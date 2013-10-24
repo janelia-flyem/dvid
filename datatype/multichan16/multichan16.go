@@ -174,10 +174,10 @@ type Datatype struct {
 // --- TypeService interface ---
 
 // NewData returns a pointer to a new Voxels with default values.
-func (dtype *Datatype) NewDataService(dset *datastore.Dataset, id *datastore.DataID,
-	config dvid.Config) (datastore.DataService, error) {
+func (dtype *Datatype) NewDataService(id *datastore.DataID, config dvid.Config) (
+	datastore.DataService, error) {
 
-	voxelservice, err := dtype.Datatype.NewDataService(dset, id, config)
+	voxelservice, err := dtype.Datatype.NewDataService(id, config)
 	if err != nil {
 		return nil, err
 	}
@@ -257,14 +257,6 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 	url := r.URL.Path[len(server.WebAPIPath):]
 	parts := strings.Split(url, "/")
 
-	// Get the running datastore service from this DVID instance.
-	service := server.DatastoreService()
-
-	_, versionID, err := service.LocalIDFromUUID(uuid)
-	if err != nil {
-		return err
-	}
-
 	// Process help and info.
 	switch parts[3] {
 	case "help":
@@ -334,7 +326,7 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 				Voxels:     v,
 				channelNum: channelNum,
 			}
-			img, err := d.GetImage(versionID, channel)
+			img, err := d.GetImage(uuid, channel)
 			var formatStr string
 			if len(parts) >= 7 {
 				formatStr = parts[6]
@@ -377,7 +369,7 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 	_ = request.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &sourceStr, &filename)
 
 	// Get the version ID from a uniquely identifiable string
-	_, _, versionID, err := service.NodeIDFromString(uuidStr)
+	uuid, _, _, err := service.NodeIDFromString(uuidStr)
 	if err != nil {
 		return fmt.Errorf("Could not find node with UUID %s: %s", uuidStr, err.Error())
 	}
@@ -410,14 +402,14 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 		reply.Text = fmt.Sprintf("Found no channels in file %s", filename)
 		return nil
 	}
-	if err := d.DatasetDirty(); err != nil {
+	if err := service.SaveDataset(uuid); err != nil {
 		return err
 	}
 
 	// PUT each channel of the file into the datastore using a separate data name.
 	for _, channel := range channels {
 		dvid.Fmt(dvid.Debug, "Processing channel %d... \n", channel.channelNum)
-		err = d.PutImage(versionID, channel)
+		err = d.PutImage(uuid, channel)
 		if err != nil {
 			return err
 		}
@@ -426,7 +418,7 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 	// Create a RGB composite from the first 3 channels.  This is considered to be channel 0
 	// or can be accessed with the base data name.
 	dvid.Fmt(dvid.Debug, "Creating composite image from channels...\n")
-	err = d.storeComposite(versionID, channels)
+	err = d.storeComposite(uuid, channels)
 	if err != nil {
 		return err
 	}
@@ -436,7 +428,7 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 }
 
 // Create a RGB interleaved volume.
-func (d *Data) storeComposite(versionID datastore.VersionLocalID, channels []*Channel) error {
+func (d *Data) storeComposite(uuid datastore.UUID, channels []*Channel) error {
 	// Setup the composite Channel
 	geom := channels[0].Geometry
 	pixels := int(geom.NumVoxels())
@@ -501,5 +493,5 @@ func (d *Data) storeComposite(versionID datastore.VersionLocalID, channels []*Ch
 	}
 
 	// Store the result
-	return d.PutImage(versionID, composite)
+	return d.PutImage(uuid, composite)
 }

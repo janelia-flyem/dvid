@@ -192,6 +192,19 @@ func (o OpType) String() string {
 	}
 }
 
+func getSourceVoxels(uuid datastore.UUID, name datastore.DataString) (*voxels.Data, error) {
+	service := server.DatastoreService()
+	source, err := service.DataService(uuid, name)
+	if err != nil {
+		return nil, err
+	}
+	data, ok := source.(*voxels.Data)
+	if !ok {
+		return nil, fmt.Errorf("Cannot construct tiles for non-voxels data: %s", name)
+	}
+	return data, nil
+}
+
 // Datatype embeds the datastore's Datatype to create a unique type
 // with tile functions.  Refinements of general tile types can be implemented
 // by embedding this type, choosing appropriate # of channels and bytes/voxel,
@@ -217,18 +230,14 @@ func NewDatatype() (dtype *Datatype) {
 // --- TypeService interface ---
 
 // NewData returns a pointer to new tile data with default values.
-func (dtype *Datatype) NewDataService(dset *datastore.Dataset, id *datastore.DataID,
-	config dvid.Config) (datastore.DataService, error) {
+func (dtype *Datatype) NewDataService(id *datastore.DataID, config dvid.Config) (
+	datastore.DataService, error) {
 
 	// Make sure we have a valid DataService source
-	s, found, e := config.GetString("Source")
-	if e != nil || !found {
+	name, found, err := config.GetString("Source")
+	sourcename := datastore.DataString(name)
+	if err != nil || !found {
 		return nil, fmt.Errorf("Cannot make tiles data without valid 'Source' setting")
-	}
-	sourcename := datastore.DataString(s)
-	source, err := dset.DataService(sourcename)
-	if err != nil {
-		return nil, err
 	}
 
 	// Initialize the tiles data
@@ -238,11 +247,11 @@ func (dtype *Datatype) NewDataService(dset *datastore.Dataset, id *datastore.Dat
 	}
 	data := &Data{
 		Data:   basedata,
-		Source: source,
+		Source: sourcename,
 	}
 	tilesize, found, err := config.GetInt("TileSize")
 	if err != nil {
-		dvid.Log(dvid.Normal, "Error in trying to set TileSize: %s\n", e.Error())
+		dvid.Log(dvid.Normal, "Error in trying to set TileSize: %s\n", err.Error())
 		data.Size = DefaultTileSize
 	} else if !found {
 		data.Size = DefaultTileSize
@@ -266,7 +275,7 @@ type Data struct {
 	*datastore.Data
 
 	// Source of the data for these tiles.
-	Source datastore.DataService
+	Source datastore.DataString
 
 	// Size in pixels.  All tiles are square.
 	Size int32
@@ -294,16 +303,11 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 	}
 	var uuidStr string
 	request.Command.CommandArgs(1, &uuidStr)
-	service := server.DatastoreService()
-	_, _, versionID, err := service.NodeIDFromString(uuidStr)
-	if err != nil {
-		return err
-	}
 	config := request.Settings()
-	return d.ConstructTiles(versionID, config)
+	return d.ConstructTiles(uuidStr, config)
 }
 
-// DoHTTP handles all incoming HTTP requests for this dataset.
+// DoHTTP handles all incoming HTTP requests for this data.
 func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Request) error {
 	startTime := time.Now()
 
@@ -631,11 +635,16 @@ func (d *Data) getYZKeyFunc(versionID datastore.VersionLocalID, x int32) keyFunc
 	}
 }
 
-func (d *Data) ConstructTiles(versionID datastore.VersionLocalID, config dvid.Config) error {
-	// Make sure the source is valid voxels data.
-	src, ok := d.Source.(*voxels.Data)
-	if !ok {
-		return fmt.Errorf("Cannot construct tiles for non-voxels data: %s", src.DataName())
+func (d *Data) ConstructTiles(uuidStr string, config dvid.Config) error {
+	service := server.DatastoreService()
+	uuid, _, versionID, err := service.NodeIDFromString(uuidStr)
+	if err != nil {
+		return err
+	}
+
+	src, err := getSourceVoxels(uuid, d.Source)
+	if err != nil {
+		return err
 	}
 
 	// Get voxel extents of volume.
@@ -649,7 +658,7 @@ func (d *Data) ConstructTiles(versionID datastore.VersionLocalID, config dvid.Co
 		(src.MaxIndex.Value(1)+1)*src.BlockSize.Value(1) - 1,
 		(src.MaxIndex.Value(2)+1)*src.BlockSize.Value(2) - 1,
 	}
-	fmt.Printf("MinIndex: %s, MaxIndex: %s\n", src.MinIndex, src.MaxIndex)
+	fmt.Printf("MinIndex Z: %d, MaxIndex Z: %d\n", src.MinIndex.Value(2), src.MaxIndex.Value(2))
 	fmt.Printf("minPt: %s, maxPt: %s, blockSize: %s\n", minPt, maxPt, src.BlockSize)
 
 	// Determine covering volume size that is multiple of tile size.
@@ -720,7 +729,7 @@ func (d *Data) ConstructTiles(versionID datastore.VersionLocalID, config dvid.Co
 				if err != nil {
 					return err
 				}
-				img, err = src.GetImage(versionID, v)
+				img, err = src.GetImage(uuid, v)
 				if err != nil {
 					return err
 				}
@@ -760,7 +769,7 @@ func (d *Data) ConstructTiles(versionID datastore.VersionLocalID, config dvid.Co
 				if err != nil {
 					return err
 				}
-				img, err = src.GetImage(versionID, v)
+				img, err = src.GetImage(uuid, v)
 				if err != nil {
 					return err
 				}
@@ -800,7 +809,7 @@ func (d *Data) ConstructTiles(versionID datastore.VersionLocalID, config dvid.Co
 				if err != nil {
 					return err
 				}
-				img, err = src.GetImage(versionID, v)
+				img, err = src.GetImage(uuid, v)
 				if err != nil {
 					return err
 				}

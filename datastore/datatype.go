@@ -43,7 +43,7 @@ type TypeService interface {
 	Help() string
 
 	// Create Data that is an instance of this data type in the given Dataset
-	NewDataService(dset *Dataset, id *DataID, config dvid.Config) (service DataService, err error)
+	NewDataService(id *DataID, config dvid.Config) (service DataService, err error)
 }
 
 // Subsetter is a type that can tell us its range of Index and how much it has

@@ -390,7 +390,7 @@ func (dset *Dataset) newData(name DataString, typeName string, config dvid.Confi
 
 	dataID := &DataID{name, dset.NewDataID, dset.DatasetID}
 	dset.NewDataID++
-	dataservice, err = typeService.NewDataService(dset, dataID, config)
+	dataservice, err = typeService.NewDataService(dataID, config)
 	if err != nil {
 		return err
 	}

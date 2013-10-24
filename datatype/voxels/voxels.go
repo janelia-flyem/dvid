@@ -352,8 +352,8 @@ func NewDatatype(valuesPerVoxel, bytesPerValue int32) (dtype *Datatype) {
 // --- TypeService interface ---
 
 // NewData returns a pointer to a new Voxels with default values.
-func (dtype *Datatype) NewDataService(dset *datastore.Dataset, id *datastore.DataID,
-	config dvid.Config) (service datastore.DataService, err error) {
+func (dtype *Datatype) NewDataService(id *datastore.DataID, config dvid.Config) (
+	service datastore.DataService, err error) {
 
 	var basedata *datastore.Data
 	basedata, err = datastore.NewDataService(id, dtype, config)
@@ -364,7 +364,6 @@ func (dtype *Datatype) NewDataService(dset *datastore.Dataset, id *datastore.Dat
 		Data:           basedata,
 		ValuesPerVoxel: dtype.valuesPerVoxel,
 		BytesPerValue:  dtype.bytesPerValue,
-		DatasetUUID:    dset.Root,
 	}
 
 	var s string
@@ -438,10 +437,6 @@ type Data struct {
 	// Maximum extents of data stored
 	MinIndex dvid.PointIndexer
 	MaxIndex dvid.PointIndexer
-
-	// Pointer to the owning Dataset so we can force Put() if we modify
-	// data properties based on loaded data, e.g., index extents.
-	DatasetUUID datastore.UUID
 }
 
 // JSONString returns the JSON for this Data's configuration
@@ -451,11 +446,6 @@ func (d *Data) JSONString() (jsonStr string, err error) {
 		return "", err
 	}
 	return string(m), nil
-}
-
-func (d *Data) DatasetDirty() error {
-	service := server.DatastoreService()
-	return service.SaveDataset(d.DatasetUUID)
 }
 
 // If img is passed in, newVoxels will initialize the VoxelHandler with data from the image.
@@ -510,7 +500,7 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 	return nil
 }
 
-// DoHTTP handles all incoming HTTP requests for this dataset.
+// DoHTTP handles all incoming HTTP requests for this data.
 func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Request) error {
 	startTime := time.Now()
 
@@ -532,14 +522,6 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 	// Break URL request into arguments
 	url := r.URL.Path[len(server.WebAPIPath):]
 	parts := strings.Split(url, "/")
-
-	// Get the running datastore service from this DVID instance.
-	service := server.DatastoreService()
-
-	_, versionID, err := service.LocalIDFromUUID(uuid)
-	if err != nil {
-		return err
-	}
 
 	// Process help and info.
 	switch parts[3] {
@@ -583,7 +565,7 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 			if err != nil {
 				return err
 			}
-			err = d.PutImage(versionID, v)
+			err = d.PutImage(uuid, v)
 			if err != nil {
 				return err
 			}
@@ -592,7 +574,7 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 			if err != nil {
 				return err
 			}
-			img, err := d.GetImage(versionID, v)
+			img, err := d.GetImage(uuid, v)
 			if err != nil {
 				return err
 			}
@@ -729,7 +711,7 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 	}
 
 	// Get the version ID from a uniquely identifiable string
-	_, _, versionID, err := service.NodeIDFromString(uuidStr)
+	uuid, _, _, err := service.NodeIDFromString(uuidStr)
 	if err != nil {
 		return fmt.Errorf("Could not find node with UUID %s: %s", uuidStr, err.Error())
 	}
@@ -772,7 +754,7 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 		if err != nil {
 			return err
 		}
-		err = d.PutImage(versionID, v)
+		err = d.PutImage(uuid, v)
 		if err != nil {
 			return err
 		}
@@ -785,7 +767,7 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 }
 
 // GetImage retrieves a 2d image from a version node given a geometry of voxels.
-func (d *Data) GetImage(versionID datastore.VersionLocalID, v VoxelHandler) (img image.Image, err error) {
+func (d *Data) GetImage(uuid datastore.UUID, v VoxelHandler) (img image.Image, err error) {
 	db := server.StorageEngine()
 	if db == nil {
 		err = fmt.Errorf("Did not find a working key-value datastore to get image!")
@@ -795,6 +777,9 @@ func (d *Data) GetImage(versionID datastore.VersionLocalID, v VoxelHandler) (img
 	op := Operation{v, GetOp}
 	wg := new(sync.WaitGroup)
 	chunkOp := &storage.ChunkOp{&op, wg}
+
+	service := server.DatastoreService()
+	_, versionID, err := service.LocalIDFromUUID(uuid)
 
 	for it, err := v.IndexIterator(d.BlockSize); err == nil && it.Valid(); it.NextSpan() {
 		indexBeg, indexEnd, err := it.IndexSpan()
@@ -824,7 +809,13 @@ func (d *Data) GetImage(versionID datastore.VersionLocalID, v VoxelHandler) (img
 // are larger than a 2d slice, this also requires integrating this image into current
 // chunks before writing result back out, so it's a PUT for nonexistant keys and GET/PUT
 // for existing keys.
-func (d *Data) PutImage(versionID datastore.VersionLocalID, v VoxelHandler) error {
+func (d *Data) PutImage(uuid datastore.UUID, v VoxelHandler) error {
+	service := server.DatastoreService()
+	_, versionID, err := service.LocalIDFromUUID(uuid)
+	if err != nil {
+		return err
+	}
+
 	db := server.StorageEngine()
 	if db == nil {
 		return fmt.Errorf("Did not find a working key-value datastore to put image!")
@@ -844,7 +835,7 @@ func (d *Data) PutImage(versionID datastore.VersionLocalID, v VoxelHandler) erro
 	var extentChanged bool
 	defer func() {
 		if extentChanged {
-			err := d.DatasetDirty()
+			err := service.SaveDataset(uuid)
 			if err != nil {
 				dvid.Log(dvid.Normal, "Error in trying to save dataset on change: %s\n", err.Error())
 			}

@@ -133,16 +133,14 @@ func (suite *DataSuite) sliceTest(c *C, slice dvid.Geometry) {
 	img := dvid.ImageGrayFromData(data, int(nx), int(ny))
 
 	// Store it into datastore at root
-	_, versionID, err := suite.service.LocalIDFromUUID(root)
-	c.Assert(err, IsNil)
 	v, err := grayscale.NewVoxelHandler(slice, img)
 	c.Assert(err, IsNil)
 
-	err = grayscale.PutImage(versionID, v)
+	err = grayscale.PutImage(root, v)
 	c.Assert(err, IsNil)
 
 	// Read the stored image
-	retrieved, err := grayscale.GetImage(versionID, v)
+	retrieved, err := grayscale.GetImage(root, v)
 	c.Assert(err, IsNil)
 
 	// Make sure the retrieved image matches the original
