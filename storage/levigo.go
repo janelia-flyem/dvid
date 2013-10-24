@@ -146,8 +146,10 @@ func (db *LevelDB) Close() {
 
 // Get returns a value given a key.
 func (db *LevelDB) Get(k Key) (v []byte, err error) {
+	dvid.StartCgo()
 	ro := db.options.ReadOptions
 	v, err = db.ldb.Get(ro, k.Bytes())
+	dvid.StopCgo()
 	bytesRead <- len(v)
 	return
 }
@@ -155,10 +157,13 @@ func (db *LevelDB) Get(k Key) (v []byte, err error) {
 // GetRange returns a range of values spanning (kStart, kEnd) keys.  These key-value
 // pairs will be sorted in ascending key order.
 func (db *LevelDB) GetRange(kStart, kEnd Key) (values []KeyValue, err error) {
+	dvid.StartCgo()
 	ro := levigo.NewReadOptions()
-	//ro.SetFillCache(false)
 	it := db.ldb.NewIterator(ro)
-	defer it.Close()
+	defer func() {
+		it.Close()
+		dvid.StopCgo()
+	}()
 
 	values = []KeyValue{}
 	it.Seek(kStart.Bytes())
@@ -188,10 +193,13 @@ func (db *LevelDB) GetRange(kStart, kEnd Key) (values []KeyValue, err error) {
 
 // ProcessRange sends a range of key-value pairs to chunk handlers.
 func (db *LevelDB) ProcessRange(kStart, kEnd Key, op *ChunkOp, f func(*Chunk)) error {
+	dvid.StartCgo()
 	ro := levigo.NewReadOptions()
-	//ro.SetFillCache(false)
 	it := db.ldb.NewIterator(ro)
-	defer it.Close()
+	defer func() {
+		it.Close()
+		dvid.StopCgo()
+	}()
 
 	endBytes := kEnd.Bytes()
 	it.Seek(kStart.Bytes())
@@ -228,8 +236,10 @@ func (db *LevelDB) ProcessRange(kStart, kEnd Key, op *ChunkOp, f func(*Chunk)) e
 
 // Put writes a value with given key.
 func (db *LevelDB) Put(k Key, v []byte) error {
+	dvid.StartCgo()
 	wo := db.options.WriteOptions
 	err := db.ldb.Put(wo, k.Bytes(), v)
+	dvid.StopCgo()
 	bytesWritten <- len(v)
 	return err
 }
@@ -237,9 +247,13 @@ func (db *LevelDB) Put(k Key, v []byte) error {
 // PutRange puts key/value pairs that have been sorted in sequential key order.
 // Current implementation in levigo driver simply does a batch write.
 func (db *LevelDB) PutRange(values []KeyValue) error {
+	dvid.StartCgo()
 	wo := db.options.WriteOptions
 	wb := levigo.NewWriteBatch()
-	defer wb.Close()
+	defer func() {
+		wb.Close()
+		dvid.StopCgo()
+	}()
 	for _, kv := range values {
 		wb.Put(kv.K.Bytes(), kv.V)
 	}
@@ -248,8 +262,10 @@ func (db *LevelDB) PutRange(values []KeyValue) error {
 
 // Delete removes a value with given key.
 func (db *LevelDB) Delete(k Key) (err error) {
+	dvid.StartCgo()
 	wo := db.options.WriteOptions
 	err = db.ldb.Delete(wo, k.Bytes())
+	dvid.StopCgo()
 	return
 }
 
@@ -263,29 +279,40 @@ type goBatch struct {
 
 // NewBatch returns an implementation that allows batch writes
 func (db *LevelDB) NewBatch() Batch {
+	dvid.StartCgo()
+	defer dvid.StopCgo()
 	return &goBatch{levigo.NewWriteBatch(), db.options.WriteOptions, db.ldb}
 }
 
 // --- Batch interface ---
 
-func (batch *goBatch) Commit() (err error) {
-	err = batch.ldb.Write(batch.wo, batch.WriteBatch)
-	return
+func (batch *goBatch) Commit() error {
+	dvid.StartCgo()
+	defer dvid.StopCgo()
+	return batch.ldb.Write(batch.wo, batch.WriteBatch)
 }
 
 func (batch *goBatch) Delete(k Key) {
+	dvid.StartCgo()
+	defer dvid.StopCgo()
 	batch.WriteBatch.Delete(k.Bytes())
 }
 
 func (batch *goBatch) Put(k Key, v []byte) {
+	dvid.StartCgo()
+	defer dvid.StopCgo()
 	batch.WriteBatch.Put(k.Bytes(), v)
 }
 
 func (batch *goBatch) Clear() {
+	dvid.StartCgo()
+	defer dvid.StopCgo()
 	batch.WriteBatch.Clear()
 }
 
 func (batch *goBatch) Close() {
+	dvid.StartCgo()
+	defer dvid.StopCgo()
 	batch.WriteBatch.Close()
 }
 
@@ -320,6 +347,9 @@ func (opt *Options) ldb() *leveldbOptions {
 
 // Initialize Options using the settings.
 func (opt *Options) initBySettings(create bool) *leveldbOptions {
+	dvid.StartCgo()
+	defer dvid.StopCgo()
+
 	ldbOptions := &leveldbOptions{
 		Options:      levigo.NewOptions(),
 		ReadOptions:  levigo.NewReadOptions(),

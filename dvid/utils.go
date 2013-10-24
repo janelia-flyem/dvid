@@ -105,7 +105,7 @@ func ElapsedTime(mode ModeFlag, startTime time.Time, p ...interface{}) {
 		args = append(args, p[1:]...)
 	}
 	args = append(args, time.Since(startTime))
-	Fmt(mode, args...)
+	Log(mode, args...)
 }
 
 // WriteJSONFile writes an arbitrary but exportable Go object to a JSON file.

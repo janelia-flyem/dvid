@@ -142,10 +142,11 @@ func Shutdown() {
 			log.Printf("Waiting for %d chunk handlers to finish...\n", active)
 		} else {
 			log.Println("No chunk handlers active...")
-			return
+			break
 		}
 		time.Sleep(1 * time.Second)
 	}
+	dvid.BlockOnActiveCgo()
 }
 
 // ServerlessDo runs a command locally, opening and closing a datastore

@@ -649,6 +649,8 @@ func (d *Data) ConstructTiles(versionID datastore.VersionLocalID, config dvid.Co
 		(src.MaxIndex.Value(1)+1)*src.BlockSize.Value(1) - 1,
 		(src.MaxIndex.Value(2)+1)*src.BlockSize.Value(2) - 1,
 	}
+	fmt.Printf("MinIndex: %s, MaxIndex: %s\n", src.MinIndex, src.MaxIndex)
+	fmt.Printf("minPt: %s, maxPt: %s, blockSize: %s\n", minPt, maxPt, src.BlockSize)
 
 	// Determine covering volume size that is multiple of tile size.
 	tileSize := dvid.Point3d{d.Size, d.Size, d.Size}
@@ -705,6 +707,8 @@ func (d *Data) ConstructTiles(versionID datastore.VersionLocalID, config dvid.Co
 				maxTiles = tilesInY
 			}
 			maxScale := log2(maxTiles)
+
+			dvid.Log(dvid.Debug, "Generating XY tiles for Z %d -> %d\n", minPt[2], maxPt[2])
 			for z := minPt[2]; z <= maxPt[2]; z++ {
 				sliceTime := time.Now()
 				offset[2] = z
@@ -743,6 +747,8 @@ func (d *Data) ConstructTiles(versionID datastore.VersionLocalID, config dvid.Co
 				maxTiles = tilesInZ
 			}
 			maxScale := log2(maxTiles)
+
+			dvid.Log(dvid.Debug, "Generating XZ tiles for Y %d -> %d\n", minPt[1], maxPt[1])
 			for y := minPt[1]; y <= maxPt[1]; y++ {
 				sliceTime := time.Now()
 				offset[1] = y
@@ -781,6 +787,8 @@ func (d *Data) ConstructTiles(versionID datastore.VersionLocalID, config dvid.Co
 				maxTiles = tilesInY
 			}
 			maxScale := log2(maxTiles)
+
+			dvid.Log(dvid.Debug, "Generating YZ tiles for X %d -> %d\n", minPt[0], maxPt[0])
 			for x := minPt[0]; x <= maxPt[0]; x++ {
 				sliceTime := time.Now()
 				offset[0] = x
