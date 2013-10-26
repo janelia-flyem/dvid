@@ -27,8 +27,6 @@ const RPCHelpMessage = `Commands executed on the server (rpc address = %s):
 	datasets new         (returns UUID of dataset's root node)
 
 	dataset <UUID> new <datatype name> <data name> <datatype-specific config>...
-	dataset <UUID> new <datatype name> <data name> <datatype-specific config>...
-
 	dataset <UUID> <data name> help
 
 	node <UUID> lock
@@ -120,7 +118,7 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 	case "dataset":
 		var uuidStr, subcommand, typename, dataname string
 		cmd.CommandArgs(1, &uuidStr, &subcommand)
-		uuid, _, _, err := runningService.NodeIDFromString(uuidStr)
+		uuid, err := MatchingUUID(uuidStr)
 		if err != nil {
 			return err
 		}
@@ -151,7 +149,7 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 	case "node":
 		var uuidStr, descriptor string
 		cmd.CommandArgs(1, &uuidStr, &descriptor)
-		uuid, _, _, err := runningService.NodeIDFromString(uuidStr)
+		uuid, err := MatchingUUID(uuidStr)
 		if err != nil {
 			return err
 		}

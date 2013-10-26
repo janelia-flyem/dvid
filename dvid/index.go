@@ -10,6 +10,7 @@ import (
 	"encoding/gob"
 	"encoding/hex"
 	"fmt"
+	"hash/fnv"
 )
 
 func init() {
@@ -118,6 +119,39 @@ type IndexRange struct {
 }
 
 // ---- Index Implementations --------
+
+// IndexString satisfies an Index interface with a string.
+type IndexString string
+
+func (i IndexString) Duplicate() Index {
+	return i
+}
+
+func (i IndexString) String() string {
+	return string(i)
+}
+
+func (i IndexString) Bytes() []byte {
+	return []byte(i)
+}
+
+func (i IndexString) Hash(n int) int {
+	hash := fnv.New32()
+	_, err := hash.Write(i.Bytes())
+	if err != nil {
+		Error("Could not write to fnv hash in IndexString.Hash()")
+		return 0
+	}
+	return int(hash.Sum32()) % n
+}
+
+func (i IndexString) Scheme() string {
+	return "String Indexing"
+}
+
+func (i IndexString) IndexFromBytes(b []byte) (Index, error) {
+	return IndexString(b), nil
+}
 
 // IndexUint8 satisfies an Index interface with an 8-bit unsigned integer index.
 type IndexUint8 uint8

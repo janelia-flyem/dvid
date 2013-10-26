@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
@@ -77,14 +78,8 @@ type DataService interface {
 	// DataName returns the name of the data (e.g., grayscale data that is grayscale8 data type).
 	DataName() DataString
 
-	// DatasetLocalID returns a DVID instance-specific id for this dataset, which
-	// can be held in a relatively small number of bytes and is a key component.
-	DatasetID() DatasetLocalID
-
-	// LocalID returns a DVID instance-specific id for this data.
-	LocalID() DataLocalID
-
-	// IsVersioned returns true if this data can be mutated across versions.
+	// IsVersioned returns true if this data can be mutated across versions.  If the data is
+	// not versioned, only one copy of data is kept across all versions nodes in a dataset.
 	IsVersioned() bool
 
 	// DoRPC handles command line and RPC commands specific to a data type
@@ -114,8 +109,6 @@ type Response struct {
 }
 
 type ArbitraryOutput interface{}
-
-// --- Base implementation and some functions using above types and interfaces -----
 
 // CompiledTypes is the set of registered data types compiled into DVID and
 // held as a global variable initialized at runtime.
@@ -260,4 +253,33 @@ func (d *Data) IsVersioned() bool {
 func (d *Data) UnknownCommand(request Request) error {
 	return fmt.Errorf("Unknown command.  Data type '%s' [%s] does not support '%s' command.",
 		d.Name, d.DatatypeName(), request.TypeCommand())
+}
+
+// --- Handle version-specific data mutexes -----
+
+type nodeID struct {
+	Dataset DatasetLocalID
+	Data    DataLocalID
+	Version VersionLocalID
+}
+
+// Map of mutexes at the granularity of dataset/data/version
+var versionMutexes map[nodeID]*sync.Mutex
+
+func init() {
+	versionMutexes = make(map[nodeID]*sync.Mutex)
+}
+
+// VersionMutex returns a Mutex that is specific for data at a particular version.
+func (d *Data) VersionMutex(versionID VersionLocalID) *sync.Mutex {
+	var mutex sync.Mutex
+	mutex.Lock()
+	id := nodeID{d.DsetID, d.ID, versionID}
+	vmutex, found := versionMutexes[id]
+	if !found {
+		vmutex = new(sync.Mutex)
+		versionMutexes[id] = vmutex
+	}
+	mutex.Unlock()
+	return vmutex
 }

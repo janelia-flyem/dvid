@@ -699,21 +699,12 @@ func (d *Data) SliceImage(v VoxelHandler, z int32) (img image.Image, err error) 
 func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) error {
 	startTime := time.Now()
 
-	// Get the running datastore service from this DVID instance.
-	service := server.DatastoreService()
-
 	// Parse the request
 	var uuidStr, dataName, cmdStr, sourceStr, planeStr, offsetStr string
 	filenames := request.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &sourceStr,
 		&planeStr, &offsetStr)
 	if len(filenames) == 0 {
 		return fmt.Errorf("Need to include at least one file to add: %s", request)
-	}
-
-	// Get the version ID from a uniquely identifiable string
-	uuid, _, _, err := service.NodeIDFromString(uuidStr)
-	if err != nil {
-		return fmt.Errorf("Could not find node with UUID %s: %s", uuidStr, err.Error())
 	}
 
 	// Get offset
@@ -739,6 +730,10 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 	}
 
 	// Load and PUT each image.
+	uuid, err := server.MatchingUUID(uuidStr)
+	if err != nil {
+		return err
+	}
 	numSuccessful := 0
 	for _, filename := range filenames {
 		sliceTime := time.Now()
@@ -827,7 +822,7 @@ func (d *Data) PutImage(uuid datastore.UUID, v VoxelHandler) error {
 
 	// We only want one PUT on given version for given data to prevent interleaved
 	// chunk PUTs that could potentially overwrite slice modifications.
-	versionMutex := datastore.VersionMutex(d, versionID)
+	versionMutex := d.VersionMutex(versionID)
 	versionMutex.Lock()
 	defer versionMutex.Unlock()
 

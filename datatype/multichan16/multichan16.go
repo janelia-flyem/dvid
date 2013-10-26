@@ -368,7 +368,7 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 	var uuidStr, dataName, cmdStr, sourceStr, filename string
 	_ = request.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &sourceStr, &filename)
 
-	// Get the version ID from a uniquely identifiable string
+	// Get the uuid from a uniquely identifiable string
 	uuid, _, _, err := service.NodeIDFromString(uuidStr)
 	if err != nil {
 		return fmt.Errorf("Could not find node with UUID %s: %s", uuidStr, err.Error())

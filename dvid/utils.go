@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"net/http"
 	"os"
 	"sync"
 	"time"
@@ -37,6 +38,17 @@ var (
 	// The global, unexported error logger for DVID.
 	errorLogger *log.Logger
 )
+
+// DataFromPost returns data submitted in the given key of a POST request.
+func DataFromPost(r *http.Request, key string) ([]byte, error) {
+	f, _, err := r.FormFile(key)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	return ioutil.ReadAll(f)
+}
 
 // Log prints a message via log.Print() depending on the Mode of DVID.
 func Log(mode ModeFlag, p ...interface{}) {

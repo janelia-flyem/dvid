@@ -162,6 +162,11 @@ type DataKey struct {
 	Index dvid.Index
 }
 
+// DataKey returns a DataKey for this data given a local version and a data-specific Index.
+func (d *Data) DataKey(versionID VersionLocalID, index dvid.Index) *DataKey {
+	return &DataKey{d.DsetID, d.ID, versionID, index}
+}
+
 // KeyToPointIndexer takes a Key and returns an implementation of a PointIndexer if possible.
 func KeyToPointIndexer(key storage.Key) (dvid.PointIndexer, error) {
 	datakey, ok := key.(*DataKey)

@@ -61,9 +61,14 @@ func (suite *DataSuite) TestNewDataDifferent(c *C) {
 	dataservice2, err := suite.service.DataService(root, "image2")
 	c.Assert(err, IsNil)
 
-	c.Assert(dataservice1.DatasetID(), Equals, dataservice2.DatasetID())
+	data1, ok := dataservice1.(*Data)
+	c.Assert(ok, Equals, true)
 
-	c.Assert(dataservice1.LocalID(), Not(Equals), dataservice2.LocalID())
+	data2, ok := dataservice2.(*Data)
+	c.Assert(ok, Equals, true)
+
+	c.Assert(data1.DsetID, Equals, data2.DsetID)
+	c.Assert(data1.ID, Not(Equals), data2.ID)
 }
 
 // Data from which to construct repeatable 3d images where adjacent voxels have different values.

@@ -12,7 +12,6 @@ import (
 	"image"
 	"image/jpeg"
 	"image/png"
-	"io"
 	"net/http"
 	"os"
 	"reflect"
@@ -307,14 +306,11 @@ func ImageFromFile(filename string) (img image.Image, format string, err error) 
 func ImageFromPost(r *http.Request, key string) (img image.Image, format string, err error) {
 	f, _, err := r.FormFile(key)
 	if err != nil {
-		return
+		return nil, "none", err
 	}
 	defer f.Close()
 
-	var buf bytes.Buffer
-	io.Copy(&buf, f)
-	img, format, err = image.Decode(&buf)
-	return
+	return image.Decode(f)
 }
 
 // ImageGrayFromData returns a Gray image given data and image size.

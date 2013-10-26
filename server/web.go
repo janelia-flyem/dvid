@@ -250,8 +250,7 @@ func datasetRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get particular dataset for this UUID
-	uuidStr := parts[0]
-	uuid, _, _, err := runningService.NodeIDFromString(uuidStr)
+	uuid, err := MatchingUUID(parts[0])
 	if err != nil {
 		BadRequest(w, r, err.Error())
 		return
@@ -294,7 +293,7 @@ func datasetRequest(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, "{%q: 'Added %s [%s] to node %s'}", "result", dataname, typename, uuidStr)
+		fmt.Fprintf(w, "{%q: 'Added %s [%s] to node %s'}", "result", dataname, typename, uuid)
 		return
 	}
 
@@ -322,8 +321,7 @@ func nodeRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get particular dataset for this UUID
-	uuidStr := parts[0]
-	uuid, _, _, err := runningService.NodeIDFromString(uuidStr)
+	uuid, err := MatchingUUID(parts[0])
 	if err != nil {
 		BadRequest(w, r, err.Error())
 		return
@@ -337,7 +335,7 @@ func nodeRequest(w http.ResponseWriter, r *http.Request) {
 			BadRequest(w, r, err.Error())
 		} else {
 			w.Header().Set("Content-Type", "text/plain")
-			fmt.Fprintln(w, "Lock on node %s successful.", uuidStr)
+			fmt.Fprintln(w, "Lock on node %s successful.", uuid)
 		}
 
 	case "branch":

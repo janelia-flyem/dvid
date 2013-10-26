@@ -17,6 +17,7 @@ import (
 	"github.com/janelia-flyem/dvid/server"
 
 	// Declare the data types this DVID executable will support
+	_ "github.com/janelia-flyem/dvid/datatype/keyvalue"
 	_ "github.com/janelia-flyem/dvid/datatype/multichan16"
 	_ "github.com/janelia-flyem/dvid/datatype/tiles"
 	_ "github.com/janelia-flyem/dvid/datatype/voxels"

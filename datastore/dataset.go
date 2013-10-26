@@ -18,33 +18,6 @@ import (
 	"github.com/janelia-flyem/go/go-uuid/uuid"
 )
 
-type nodeID struct {
-	Dataset DatasetLocalID
-	Data    DataLocalID
-	Version VersionLocalID
-}
-
-// Map of mutexes at the granularity of dataset/data/version
-var versionMutexes map[nodeID]*sync.Mutex
-
-func init() {
-	versionMutexes = make(map[nodeID]*sync.Mutex)
-}
-
-func VersionMutex(data DataService, versionID VersionLocalID) (vmutex *sync.Mutex) {
-	var mutex sync.Mutex
-	mutex.Lock()
-	id := nodeID{data.DatasetID(), data.LocalID(), versionID}
-	var found bool
-	vmutex, found = versionMutexes[id]
-	if !found {
-		vmutex = new(sync.Mutex)
-		versionMutexes[id] = vmutex
-	}
-	mutex.Unlock()
-	return
-}
-
 // Datasets holds information on all the Dataset available.
 type Datasets struct {
 	writeLock sync.Mutex // guards the fields below
