@@ -72,7 +72,7 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 		// Make this process shutdown in a second to allow time for RPC to finish.
 		// TODO -- Better way to do this?
 		log.Printf("DVID server halted due to 'shutdown' command.")
-		reply.Text = fmt.Sprintf("DVID server at %s has been halted.",
+		reply.Text = fmt.Sprintf("DVID server at %s has been halted.\n",
 			runningService.RPCAddress)
 		go func() {
 			time.Sleep(1 * time.Second)
@@ -130,7 +130,7 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 			if err != nil {
 				return err
 			}
-			reply.Text = fmt.Sprintf("Data %q [%s] added to node %s", dataname, typename, uuidStr)
+			reply.Text = fmt.Sprintf("Data %q [%s] added to node %s\n", dataname, typename, uuidStr)
 		default:
 			dataname := datastore.DataString(subcommand)
 			dataservice, err := runningService.DataService(uuid, dataname)

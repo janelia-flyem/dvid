@@ -116,7 +116,7 @@ func (terminal *Terminal) Send(cmd dvid.Command) (err error) {
 		}
 	}
 	if reply.Text != "" {
-		fmt.Println(reply.Text)
+		fmt.Printf(reply.Text)
 	}
 	return
 }

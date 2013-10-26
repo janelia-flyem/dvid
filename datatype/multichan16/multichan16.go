@@ -395,11 +395,11 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 	d.NumChannels = len(channels)
 	if d.NumChannels > 0 {
 		d.ByteOrder = channels[0].ByteOrder()
-		reply.Text = fmt.Sprintf("Loaded %s into data '%s': found %d channels",
+		reply.Text = fmt.Sprintf("Loaded %s into data '%s': found %d channels\n",
 			d.DataName(), filename, d.NumChannels)
 		reply.Text += fmt.Sprintf(" %s", channels[0])
 	} else {
-		reply.Text = fmt.Sprintf("Found no channels in file %s", filename)
+		reply.Text = fmt.Sprintf("Found no channels in file %s\n", filename)
 		return nil
 	}
 	if err := service.SaveDataset(uuid); err != nil {
