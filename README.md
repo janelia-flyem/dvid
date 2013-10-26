@@ -15,6 +15,7 @@ Command-line and HTTP API documentation is currently distributed over data types
 found in help constants:
 
 * [general commands and HTTP API](http://godoc.org/github.com/janelia-flyem/dvid/server#pkg-constants)
+* [keyvalue](http://godoc.org/github.com/janelia-flyem/dvid/datatype/keyvalue#pkg-constants)
 * [voxels](http://godoc.org/github.com/janelia-flyem/dvid/datatype/voxels#pkg-constants)
 * [multichan16](http://godoc.org/github.com/janelia-flyem/dvid/datatype/multichan16#pkg-constants)
 * [tiles](http://godoc.org/github.com/janelia-flyem/dvid/datatype/tiles#pkg-constants)
