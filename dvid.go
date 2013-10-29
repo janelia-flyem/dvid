@@ -180,9 +180,6 @@ func main() {
 		dvid.NumCPU = 1
 	}
 	runtime.GOMAXPROCS(dvid.NumCPU)
-	if dvid.NumCPU > 1 || *useCPU != 0 {
-		log.Printf("Using %d of %d logical CPUs for DVID.\n", dvid.NumCPU, numCPU)
-	}
 
 	// Capture ctrl+c and other interrupts.  Then handle graceful shutdown.
 	stopSig := make(chan os.Signal)

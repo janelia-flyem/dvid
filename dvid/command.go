@@ -61,6 +61,10 @@ func (c Config) SetVersioned(versioned bool) {
 // GetString returns a string value of the given key.  If setting of key is not
 // a string, returns an error.
 func (c Config) GetString(key string) (s string, found bool, err error) {
+	if c == nil {
+		err = fmt.Errorf("Cannot GetString on a nil Config")
+		return
+	}
 	var param interface{}
 	lowerkey := strings.ToLower(key)
 	if param, found = c[lowerkey]; found {
@@ -77,12 +81,41 @@ func (c Config) GetString(key string) (s string, found bool, err error) {
 // GetInt returns an int value of the given key.  If setting of key is not
 // parseable as an int, returns an error.
 func (c Config) GetInt(key string) (i int, found bool, err error) {
+	if c == nil {
+		err = fmt.Errorf("Cannot GetInt on a nil Config")
+		return
+	}
 	var s string
 	s, found, err = c.GetString(key)
 	if err != nil || !found {
 		return
 	}
 	i, err = strconv.Atoi(s)
+	return
+}
+
+// GetBool returns a bool value of the given key.  If setting of key is not
+// parseable as a bool ("false", "true", "0", or "1"), returns an error.  If the key
+// is not found, it will also return a false bool (the Go zero value for bool).
+func (c Config) GetBool(key string) (value, found bool, err error) {
+	if c == nil {
+		err = fmt.Errorf("Cannot GetBool on a nil Config")
+		return
+	}
+	var s string
+	s, found, err = c.GetString(key)
+	if err != nil || !found {
+		return
+	}
+	boolStr := strings.ToLower(s)
+	switch boolStr {
+	case "false", "0":
+		value = false
+	case "true", "1":
+		value = true
+	default:
+		err = fmt.Errorf("Cannot parse '%s' as a boolean.  Use 'true', 'false', '0', or '1'.")
+	}
 	return
 }
 

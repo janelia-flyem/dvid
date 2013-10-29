@@ -235,9 +235,18 @@ func (dtype *Datatype) NewDataService(id *datastore.DataID, config dvid.Config) 
 
 	// Make sure we have a valid DataService source
 	name, found, err := config.GetString("Source")
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, fmt.Errorf("Cannot make tiles data without valid 'Source' setting.")
+	}
 	sourcename := datastore.DataString(name)
-	if err != nil || !found {
-		return nil, fmt.Errorf("Cannot make tiles data without valid 'Source' setting")
+
+	// See if we want placeholder tiles.
+	placeholder, found, err := config.GetBool("Placeholder")
+	if err != nil {
+		return nil, err
 	}
 
 	// Initialize the tiles data
@@ -246,8 +255,9 @@ func (dtype *Datatype) NewDataService(id *datastore.DataID, config dvid.Config) 
 		return nil, err
 	}
 	data := &Data{
-		Data:   basedata,
-		Source: sourcename,
+		Data:        basedata,
+		Source:      sourcename,
+		Placeholder: placeholder,
 	}
 	tilesize, found, err := config.GetInt("TileSize")
 	if err != nil {
@@ -283,6 +293,10 @@ type Data struct {
 	// MaxScale is the maximum scaling computed for the tiles.  The maximum scaling
 	// is sufficient to show the longest dimension as one tile.
 	MaxScale uint8
+
+	// Placeholder, when true (false by default), will generate fake tile images if a tile cannot
+	// be found.  This is useful in testing clients.
+	Placeholder bool
 }
 
 // JSONString returns the JSON for this Data's configuration
@@ -421,9 +435,13 @@ func (d *Data) GetTile(versionID datastore.VersionLocalID, planeStr, scalingStr,
 	key := &datastore.DataKey{d.DatasetID(), d.ID, versionID, index}
 	data, err := db.Get(key)
 	if err != nil {
-		return nil, fmt.Errorf("Could not find tile in datastore: %s", err.Error())
+		return nil, fmt.Errorf("Error trying to GET from datastore: %s", err.Error())
 	}
 	if data == nil {
+		if d.Placeholder {
+			message := fmt.Sprintf("Tile %s @ scale %d", point, scaling)
+			return dvid.PlaceholderImage(shape, message)
+		}
 		return nil, nil // Not found
 	}
 	//fmt.Printf("Retrieved tile for key %s: %d bytes\n", key, len(data))

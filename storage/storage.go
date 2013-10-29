@@ -13,6 +13,8 @@ package storage
 import (
 	"log"
 	"sync"
+
+	"github.com/janelia-flyem/dvid/dvid"
 )
 
 // ChunkOp is a type-specific operation with an optional WaitGroup to
@@ -33,7 +35,7 @@ type Chunk struct {
 // type to support options.
 type Options struct {
 	// Settings provides values for database-specific options.
-	Settings map[string]interface{}
+	Settings dvid.Config
 
 	// Database-specific implementation of options
 	options interface{}

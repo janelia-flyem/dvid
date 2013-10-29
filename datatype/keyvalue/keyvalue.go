@@ -65,22 +65,24 @@ $ dvid node <UUID> <data name> get <key>
     data name     Name of data to add.
     key           A string key.
 	
-$ dvid node <UUID> <data name> put local  <key> <file name>
-$ dvid node <UUID> <data name> put remote <key> <file name>    (TODO -- currently unimplemented)
+$ dvid node <UUID> <data name> put <key> <file name>
+$ dvid -stdin node <UUID> <data name> put <key>  <  some_file
 
-    Adds file data to a version node when the server can see the local files ("local")
-    or when the server must be sent the files via rpc ("remote").
+    Adds file data to a version node.  If the first form of the command is used, the
+    server must be able to see the full file path.
 
     Example: 
 
-    $ dvid node 3f8c stuff put local stuff.txt
+    $ dvid node 3f8c stuff put stuffkey stuff.txt
+    $ dvid -stdin node 3f8c stuff put stuffkey < stuff.txt
 
     Arguments:
 
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add.
     key           A string key.
-    file name     File name of the value to be stored.
+    file name     Full file path of the value to be stored, visible to server, or you must
+                    use the -stdin flag and pipe the file data in.
 	
     ------------------
 
@@ -245,14 +247,7 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 	case "get":
 		return d.Get(request, reply)
 	case "put":
-		switch request.Command[4] {
-		case "local":
-			return d.PutLocal(request, reply)
-		case "remote":
-			return fmt.Errorf("put remote not yet implemented")
-		default:
-			return d.UnknownCommand(request)
-		}
+		return d.Put(request, reply)
 	default:
 		return d.UnknownCommand(request)
 	}
@@ -345,13 +340,13 @@ func (d *Data) Get(request datastore.Request, reply *datastore.Response) error {
 	return nil
 }
 
-// PutLocal puts file data data to a version node.
-func (d *Data) PutLocal(request datastore.Request, reply *datastore.Response) error {
+// Put puts file data data to a version node.
+func (d *Data) Put(request datastore.Request, reply *datastore.Response) error {
 	startTime := time.Now()
 
 	// Parse the request
-	var uuidStr, dataName, cmdStr, sourceStr, keyStr string
-	filenames := request.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &sourceStr, &keyStr)
+	var uuidStr, dataName, cmdStr, keyStr string
+	filenames := request.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &keyStr)
 	if len(filenames) > 1 {
 		return fmt.Errorf("keyvalue loads can only take one file at this time")
 	}

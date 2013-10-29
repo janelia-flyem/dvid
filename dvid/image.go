@@ -262,6 +262,11 @@ func init() {
 	gob.Register(&image.RGBA64{})
 }
 
+// PlaceholderImage returns an solid image with a message and text describing the shape.
+func PlaceholderImage(shape DataShape, message string) (image.Image, error) {
+	return nil, nil
+}
+
 // ImageData returns the underlying pixel data for an image or an error if
 // the image doesn't have the requisite []uint8 pixel data.
 func ImageData(img image.Image) (data []uint8, stride int32, err error) {
