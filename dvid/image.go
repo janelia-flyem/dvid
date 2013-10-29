@@ -20,6 +20,8 @@ import (
 
 	"github.com/janelia-flyem/go/go.image/bmp"
 	"github.com/janelia-flyem/go/go.image/tiff"
+
+	"code.google.com/p/freetype-go/freetype"
 )
 
 func init() {

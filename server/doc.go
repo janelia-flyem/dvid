@@ -1,23 +1,18 @@
 /*
-Package server provides web and rpc interfaces to DVID operations.  For web browser 
-access, the goal is to provide a GUI for monitoring and performing a subset of 
-operations in a nicely formatted view.  
+Package server provides web and rpc interfaces to DVID operations.  It is also
+the likely package to manage polyglot persistence, i.e., given a data type and
+UUID, direct it to the appropriate storage engine (datastore service).
+
+For a DVID web console, see the repo:
+
+https://github.com/janelia-flyem/dvid-webclient
+
+The goal of a DVID web console is to provide a GUI for monitoring and performing
+a subset of operations in a nicely formatted view.
 
 DVID command line interaction occurs via the rpc interface to a running server.
 Please see the main DVID documentation:
 
 http://godoc.org/github.com/janelia-flyem/dvid
-
-Examples of planned browser-based features in order of likely implementation:
-
-  • Peruse documentation on DVID operation and APIs (HTTP and eventually Thrift).
-
-  • Graphically show the image version DAG and allow the viewer to examine the 
-    provenance along the edges.  (GUI for 'log' command.)
-
-  • View slices of an image version via a javascript (or Dart) program.  
-    This could be extended to allow interactive editing and n-dimensional visualization.
-
-  • Query remote DVID servers regarding the state of their volume.
 */
 package server

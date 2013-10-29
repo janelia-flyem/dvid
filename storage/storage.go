@@ -4,9 +4,12 @@
 	number of interfaces and the Engine interface provides a way to query
 	which interfaces are implemented by a given storage engine.
 
+	Initially we are concentrating on key-value storage engines but expect to
+	expand support to graph and relational databases.
+
 	Each storage engine must implement the following:
 
-		NewEngine(path string, create bool, options Options) (Engine, error)
+		NewStore(path string, create bool, options *Options) (Engine, error)
 */
 package storage
 
