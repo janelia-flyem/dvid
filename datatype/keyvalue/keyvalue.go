@@ -375,7 +375,7 @@ func (d *Data) Put(request datastore.Request, reply *datastore.Response) error {
 		return err
 	}
 	err = d.PutData(uuid, keyStr, data)
-	dvid.ElapsedTime(dvid.Debug, startTime, "RPC put local %d bytes -> key (%s) completed",
+	dvid.ElapsedTime(dvid.Debug, startTime, "RPC put %d bytes -> key (%s) completed",
 		len(data), keyStr)
 	return err
 }

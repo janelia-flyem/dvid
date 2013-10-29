@@ -52,10 +52,7 @@ func Init(directory string, create bool) error {
 	return err
 }
 
-// Service couples an open DVID storage engine and DVID datasets.  If more than one
-// storage engine is used by a DVID server, e.g., polyglot persistence where graphs
-// are managed by a graph database and key-value by a key-value database, this would
-// be the level at which the storage engines are integrated.
+// Service couples an open DVID storage engine and DVID datasets.
 type Service struct {
 	datasets *Datasets
 

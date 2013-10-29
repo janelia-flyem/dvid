@@ -71,7 +71,10 @@ var (
 	GzipAPI = false
 )
 
-// Service holds information on the servers attached to a DVID datastore.
+// Service holds information on the servers attached to a DVID datastore.  If more than
+// one storage engine is used by a DVID server, e.g., polyglot persistence where graphs
+// are managed by a graph database and key-value by a key-value database, this would
+// be the level at which the storage engines are integrated.
 type Service struct {
 	// The currently opened DVID datastore
 	*datastore.Service
