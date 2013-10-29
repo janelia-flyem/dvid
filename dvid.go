@@ -1,8 +1,14 @@
+// NOTE: No messages should be written to stdout because DVID can be used as a
+// client where results of returned data are written out to stdout, e.g., a GET of data.
+// Status and other informational messages should be reserved for the server package,
+// executed during a 'serve' command.
+
 package main
 
 import (
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"os"
 	"os/signal"
@@ -62,6 +68,9 @@ var (
 
 	// Number of seconds to wait trying to get exclusive access to DVID datastore.
 	timeout = flag.Int("timeout", 0, "")
+
+	// Accept and send stdin to server for use in commands if true.
+	useStdin = flag.Bool("stdin", false, "")
 )
 
 const helpMessage = `
@@ -77,6 +86,7 @@ Usage: dvid [options] <command>
       -memprofile =string   Write memory profile to this file on ctrl-C.
       -numcpu     =number   Number of logical CPUs to use for DVID.
       -timeout    =number   Seconds to wait trying to get exclusive access to datastore.
+      -stdin      (flag)    Accept and send stdin to server for use in commands.
       -gzip       (flag)    Turn gzip compression on for REST API.
       -types      (flag)    Show compiled DVID data types
       -debug      (flag)    Run in debug mode.  Verbose.
@@ -130,11 +140,9 @@ func main() {
 
 	if *runDebug {
 		dvid.Mode = dvid.Debug
-		fmt.Println("Running in Debug mode...")
 	}
 	if *runBenchmark {
 		dvid.Mode = dvid.Benchmark
-		fmt.Println("Running in Benchmark mode...")
 	}
 	if *timeout != 0 {
 		server.TimeoutSecs = *timeout
@@ -208,7 +216,7 @@ func main() {
 	} else {
 		command := dvid.Command(flag.Args())
 		if err := DoCommand(command); err != nil {
-			fmt.Println(err.Error())
+			fmt.Fprintln(os.Stderr, err.Error())
 			os.Exit(1)
 		}
 	}
@@ -232,7 +240,15 @@ func DoCommand(cmd dvid.Command) error {
 	// Send everything else to server via DVID terminal
 	default:
 		terminal := server.NewTerminal(*datastoreDir, *rpcAddress)
-		return terminal.Send(cmd)
+		request := datastore.Request{Command: cmd}
+		if *useStdin {
+			var err error
+			request.Input, err = ioutil.ReadAll(os.Stdin)
+			if err != nil {
+				return fmt.Errorf("Error in reading from standard input: %s", err.Error())
+			}
+		}
+		return terminal.Send(request)
 	}
 	return nil
 }

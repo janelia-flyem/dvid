@@ -93,15 +93,15 @@ type DataService interface {
 	UnknownCommand(r Request) error
 }
 
-// Request supports requests to the DVID server.  Since input and reply payloads
-// are different depending on the command and the data type, we use an ArbitraryInput
-// (empty interface) for the payload.
+// Request supports requests to the DVID server.
 type Request struct {
 	dvid.Command
-	Input ArbitraryInput
+	Input []byte
 }
 
-type ArbitraryInput interface{}
+var (
+	HelpRequest = Request{Command: []string{"help"}}
+)
 
 // Response supports responses from DVID.
 type Response struct {

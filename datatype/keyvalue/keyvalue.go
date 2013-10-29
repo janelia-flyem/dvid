@@ -352,22 +352,26 @@ func (d *Data) PutLocal(request datastore.Request, reply *datastore.Response) er
 	// Parse the request
 	var uuidStr, dataName, cmdStr, sourceStr, keyStr string
 	filenames := request.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &sourceStr, &keyStr)
-	if len(filenames) == 0 {
-		return fmt.Errorf("Need to include at least one file to add: %s", request)
-	}
 	if len(filenames) > 1 {
 		return fmt.Errorf("keyvalue loads can only take one file at this time")
 	}
-	filename := filenames[0]
 
-	// Load the file
-	file, err := os.Open(filename)
-	if err != nil {
-		return err
-	}
-	data, err := ioutil.ReadAll(file)
-	if err != nil {
-		return err
+	// Get data from request or from file.
+	var data []byte
+	if request.Input != nil {
+		data = request.Input
+	} else {
+		if len(filenames) == 0 {
+			return fmt.Errorf("Specify at least one file name to send or use -stdin")
+		}
+		file, err := os.Open(filenames[0])
+		if err != nil {
+			return err
+		}
+		data, err = ioutil.ReadAll(file)
+		if err != nil {
+			return err
+		}
 	}
 
 	// Put the data
@@ -376,6 +380,7 @@ func (d *Data) PutLocal(request datastore.Request, reply *datastore.Response) er
 		return err
 	}
 	err = d.PutData(uuid, keyStr, data)
-	dvid.ElapsedTime(dvid.Debug, startTime, "RPC put local of file (%s) completed", filename)
+	dvid.ElapsedTime(dvid.Debug, startTime, "RPC put local %d bytes -> key (%s) completed",
+		len(data), keyStr)
 	return err
 }

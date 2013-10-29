@@ -1,3 +1,7 @@
+/*
+	This file handles client communication to a remote DVID server.
+*/
+
 package server
 
 import (
@@ -31,6 +35,7 @@ func prompt(message string) dvid.Command {
 // DVID commands from the shell, terminal use keeps several DVID values
 // (e.g., rpc address, image version UUID) in memory and provides them
 // automatically to the DVID server.
+// TODO - Terminal is only partially usable at this time.
 type Terminal struct {
 	datastoreDir string
 	rpcAddress   string
@@ -43,10 +48,9 @@ type Terminal struct {
 func NewTerminal(datastoreDir, rpcAddress string) *Terminal {
 	client, err := rpc.DialHTTP("tcp", rpcAddress)
 	if err != nil {
-		fmt.Printf("Did not find DVID server for RPC at %s  [%s]\n", rpcAddress, err.Error())
+		fmt.Fprintf(os.Stderr, "Did not find DVID server for RPC at %s  [%s]\n",
+			rpcAddress, err.Error())
 		client = nil // Close connection if any error and try serverless mode.
-	} else {
-		dvid.Fmt(dvid.Debug, "Found DVID server for RPC at %s\n", rpcAddress)
 	}
 	return &Terminal{
 		datastoreDir: datastoreDir,
@@ -56,6 +60,7 @@ func NewTerminal(datastoreDir, rpcAddress string) *Terminal {
 }
 
 // Shell takes commands and processes them in an endless loop.
+// TODO -- This is not really fleshed out.
 func (terminal *Terminal) Shell() {
 	fmt.Printf("\nDVID %s Terminal\n\n", datastore.Version)
 
@@ -68,7 +73,7 @@ func (terminal *Terminal) Shell() {
 			fmt.Println("Enter 'help' to see commands")
 		case "help", "h":
 			fmt.Printf(shellHelp)
-			terminal.Send(dvid.Command([]string{"help"}))
+			terminal.Send(datastore.HelpRequest)
 		case "quit", "q":
 			takeCommands = false
 		case "version":
@@ -79,7 +84,7 @@ func (terminal *Terminal) Shell() {
 				fmt.Printf("Current version: %s\n", terminal.version)
 			}
 		default:
-			err := terminal.Send(cmd)
+			err := terminal.Send(datastore.Request{Command: cmd})
 			if err != nil {
 				fmt.Println(err.Error())
 			}
@@ -89,34 +94,26 @@ func (terminal *Terminal) Shell() {
 
 // Send transmits an RPC command if a server is available or else it
 // runs the command in serverless mode.
-func (terminal *Terminal) Send(cmd dvid.Command) (err error) {
+func (terminal *Terminal) Send(request datastore.Request) error {
 	var reply datastore.Response
-	request := datastore.Request{Command: cmd}
 	if terminal.client != nil {
-		dvid.Fmt(dvid.Debug, "Running remote command '%s'...\n", cmd)
-		err = terminal.client.Call("RPCConnection.Do", request, &reply)
+		err := terminal.client.Call("RPCConnection.Do", request, &reply)
 		if err != nil {
 			if dvid.Mode == dvid.Debug {
-				err = fmt.Errorf("RPC error for '%s': %s", cmd, err.Error())
+				return fmt.Errorf("RPC error for '%s': %s", request.Command, err.Error())
 			} else {
-				err = fmt.Errorf("RPC error: %s", err.Error())
+				return fmt.Errorf("RPC error: %s", err.Error())
 			}
-			return
 		}
 	} else {
-		dvid.Fmt(dvid.Debug, "Running local command '%s'...\n", cmd)
-		err = ServerlessDo(terminal.datastoreDir, request, &reply)
+		err := ServerlessDo(terminal.datastoreDir, request, &reply)
 		if err != nil {
 			if dvid.Mode == dvid.Debug {
-				err = fmt.Errorf("Error for '%s': %s", cmd, err.Error())
+				return fmt.Errorf("Error for '%s': %s", request.Command, err.Error())
 			} else {
-				err = fmt.Errorf("Error: %s", err.Error())
+				return fmt.Errorf("Error: %s", err.Error())
 			}
-			return
 		}
-	}
-	if err != nil {
-		return
 	}
 	return reply.Write(os.Stdout)
 }

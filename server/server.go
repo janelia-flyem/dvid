@@ -247,6 +247,8 @@ func OpenDatastore(datastoreDir string) (service *Service, err error) {
 // Serve opens a datastore then creates both web and rpc servers for the datastore.
 // This function must be called for DatastoreService() to be non-nil.
 func (service *Service) Serve(webAddress, webClientDir, rpcAddress string) error {
+	log.Printf("Using %d of %d logical CPUs for DVID.\n", dvid.NumCPU, runtime.NumCPU())
+
 	// Register an error logger that appends to a file in this datastore directory.
 	errorLog := filepath.Join(service.ErrorLogDir, ErrorLogFilename)
 	file, err := os.OpenFile(errorLog, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
