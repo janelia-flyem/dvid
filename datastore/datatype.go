@@ -6,6 +6,7 @@ package datastore
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -105,10 +106,22 @@ type ArbitraryInput interface{}
 // Response supports responses from DVID.
 type Response struct {
 	dvid.Response
-	Output ArbitraryOutput
+	Output []byte
 }
 
-type ArbitraryOutput interface{}
+// Writes a response to a writer.
+func (r *Response) Write(w io.Writer) error {
+	if len(r.Response.Text) != 0 {
+		fmt.Fprintf(w, r.Response.Text)
+		return nil
+	} else if len(r.Output) != 0 {
+		_, err := w.Write(r.Output)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 // CompiledTypes is the set of registered data types compiled into DVID and
 // held as a global variable initialized at runtime.

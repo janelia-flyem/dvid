@@ -340,7 +340,7 @@ func (d *Data) Get(request datastore.Request, reply *datastore.Response) error {
 	if err != nil {
 		return err
 	}
-	reply.Text = string(data)
+	reply.Output = data
 	dvid.ElapsedTime(dvid.Debug, startTime, "RPC GET (%s) completed", keyStr)
 	return nil
 }
