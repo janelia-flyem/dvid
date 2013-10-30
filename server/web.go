@@ -130,6 +130,7 @@ func loadRequest(w http.ResponseWriter, r *http.Request) {
 		"GET requests":    storage.GetsPerSec,
 		"PUT requests":    storage.PutsPerSec,
 		"handlers active": int(100 * ActiveHandlers / MaxChunkHandlers),
+		"goroutines":      runtime.NumGoroutine(),
 	})
 	if err != nil {
 		BadRequest(w, r, err.Error())
