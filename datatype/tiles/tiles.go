@@ -168,30 +168,6 @@ func init() {
 	gob.Register(&IndexTile{})
 }
 
-// Operation holds Voxel-specific data for processing chunks.
-type Operation struct {
-	voxels.VoxelHandler
-	OpType
-}
-
-type OpType int
-
-const (
-	GetOp OpType = iota
-	PutOp
-)
-
-func (o OpType) String() string {
-	switch o {
-	case GetOp:
-		return "Get Op"
-	case PutOp:
-		return "Put Op"
-	default:
-		return "Illegal Op"
-	}
-}
-
 func getSourceVoxels(uuid datastore.UUID, name datastore.DataString) (*voxels.Data, error) {
 	service := server.DatastoreService()
 	source, err := service.DataService(uuid, name)
@@ -330,12 +306,9 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 
 	// Get the action (GET, POST)
 	action := strings.ToLower(r.Method)
-	var op OpType
 	switch action {
-	case "get":
-		op = GetOp
-	case "post":
-		op = PutOp
+	case "get", "post":
+		// Acceptable
 	default:
 		return fmt.Errorf("Can only handle GET or POST HTTP verbs")
 	}
@@ -368,7 +341,7 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 		return nil
 	case "tile":
 		planeStr, scalingStr, coordStr := parts[4], parts[5], parts[6]
-		if op == PutOp {
+		if action == "post" {
 			return fmt.Errorf("DVID does not yet support POST of tiles")
 		} else {
 			img, err := d.GetTile(versionID, planeStr, scalingStr, coordStr)
@@ -424,12 +397,11 @@ func (d *Data) GetTile(versionID datastore.VersionLocalID, planeStr, scalingStr,
 	if err != nil {
 		return nil, fmt.Errorf("Illegal tile scale: %s (%s)", scalingStr, err.Error())
 	}
-	point, err := dvid.StringToPoint(coordStr, "_")
+	tileCoord, err := dvid.StringToPoint(coordStr, "_")
 	if err != nil {
 		return nil, fmt.Errorf("Illegal tile coordinate: %s (%s)", coordStr, err.Error())
 	}
-	index := &IndexTile{shape, uint8(scaling), point}
-	//fmt.Printf("Point %s, Index: %s\n", point, index)
+	index := &IndexTile{shape, uint8(scaling), tileCoord}
 
 	// Retrieve the tile from datastore
 	key := &datastore.DataKey{d.DatasetID(), d.ID, versionID, index}
@@ -439,8 +411,8 @@ func (d *Data) GetTile(versionID datastore.VersionLocalID, planeStr, scalingStr,
 	}
 	if data == nil {
 		if d.Placeholder {
-			message := fmt.Sprintf("Tile %s @ scale %d", point, scaling)
-			return dvid.PlaceholderImage(shape, message)
+			message := fmt.Sprintf("Tile %s @ scale %d", tileCoord, scaling)
+			return dvid.PlaceholderImage(shape, d.Size, d.Size, message)
 		}
 		return nil, nil // Not found
 	}

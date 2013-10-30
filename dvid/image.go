@@ -21,7 +21,7 @@ import (
 	"github.com/janelia-flyem/go/go.image/bmp"
 	"github.com/janelia-flyem/go/go.image/tiff"
 
-	"code.google.com/p/freetype-go/freetype"
+	// "github.com/janelia-flyem/go/freetype-go/freetype"
 )
 
 func init() {
@@ -265,7 +265,8 @@ func init() {
 }
 
 // PlaceholderImage returns an solid image with a message and text describing the shape.
-func PlaceholderImage(shape DataShape, message string) (image.Image, error) {
+func PlaceholderImage(shape DataShape, dx, dy int32, message string) (image.Image, error) {
+
 	return nil, nil
 }
 
