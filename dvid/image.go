@@ -10,6 +10,8 @@ import (
 	"encoding/gob"
 	"fmt"
 	"image"
+	"image/color"
+	"image/draw"
 	"image/jpeg"
 	"image/png"
 	"net/http"
@@ -21,12 +23,25 @@ import (
 	"github.com/janelia-flyem/go/go.image/bmp"
 	"github.com/janelia-flyem/go/go.image/tiff"
 
-	// "github.com/janelia-flyem/go/freetype-go/freetype"
+	"github.com/janelia-flyem/go/freetype-go/freetype"
+	"github.com/janelia-flyem/go/freetype-go/freetype/raster"
+	"github.com/janelia-flyem/go/freetype-go/freetype/truetype"
+)
+
+var (
+	Font *truetype.Font
 )
 
 func init() {
 	// Need to register types that will be used to fulfill interfaces.
 	gob.Register(&Image{})
+
+	// Initialize font from inlined ttf font data
+	var err error
+	Font, err = freetype.ParseFont(fontBytes)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Unable to create font from font bytes!")
+	}
 }
 
 // DefaultJPEGQuality is the quality of images returned if requesting JPEG images
@@ -266,8 +281,64 @@ func init() {
 
 // PlaceholderImage returns an solid image with a message and text describing the shape.
 func PlaceholderImage(shape DataShape, dx, dy int32, message string) (image.Image, error) {
+	size := float64(12)
+	spacing := float64(1.5)
 
-	return nil, nil
+	// Initialize the context.
+	fg, bg := image.Black, image.White
+	ruler := color.RGBA{0xdd, 0xdd, 0xdd, 0xff}
+	// White on black
+	// fg, bg = image.White, image.Black
+	// ruler = color.RGBA{0x22, 0x22, 0x22, 0xff}
+	rgba := image.NewRGBA(image.Rect(0, 0, int(dx), int(dy)))
+	draw.Draw(rgba, rgba.Bounds(), bg, image.ZP, draw.Src)
+	c := freetype.NewContext()
+	c.SetDPI(72)
+	c.SetFont(Font)
+	c.SetFontSize(size)
+	c.SetClip(rgba.Bounds())
+	c.SetDst(rgba)
+	c.SetSrc(fg)
+
+	// Draw the guidelines.
+	for x := 10; x < int(dx)-10; x++ {
+		rgba.Set(x, 10, ruler)
+	}
+	for y := 10; y < int(dy)-10; y++ {
+		rgba.Set(10, y, ruler)
+	}
+
+	// Write axis labels.
+	rasterToInt := func(f32 raster.Fix32) int {
+		return int(f32 >> 8)
+	}
+	fontY := c.PointToFix32(size * spacing)
+	y := 10 + rasterToInt(c.PointToFix32(size))
+	pt := freetype.Pt(int(dx)-10, y)
+	_, err := c.DrawString(shape.AxisName(0), pt)
+	if err != nil {
+		return nil, err
+	}
+	pt = freetype.Pt(10, int(dy)-rasterToInt(fontY))
+	_, err = c.DrawString(shape.AxisName(1), pt)
+	if err != nil {
+		return nil, err
+	}
+
+	// Draw the text.
+	pt = freetype.Pt(15, y+rasterToInt(fontY))
+	_, err = c.DrawString(message, pt)
+	if err != nil {
+		return nil, err
+	}
+	pt.Y += fontY
+	sizeStr := fmt.Sprintf("%d x %d pixels", dx, dy)
+	_, err = c.DrawString(sizeStr, pt)
+	if err != nil {
+		return nil, err
+	}
+
+	return rgba, nil
 }
 
 // ImageData returns the underlying pixel data for an image or an error if

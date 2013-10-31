@@ -55,6 +55,7 @@ $ dvid dataset <UUID> new tiles <data name> <settings...>
     Versioned      "true" or "false" (default)
     Source         Name of data source (required)
     TileSize       Size in pixels  (default: %s)
+    Placeholder    Bool ("false", "true", "0", or "1").  Return placeholder tile if missing.
 
 
 $ dvid node <UUID> <data name> generate <settings>
@@ -411,7 +412,7 @@ func (d *Data) GetTile(versionID datastore.VersionLocalID, planeStr, scalingStr,
 	}
 	if data == nil {
 		if d.Placeholder {
-			message := fmt.Sprintf("Tile %s @ scale %d", tileCoord, scaling)
+			message := fmt.Sprintf("%s Tile coord %s @ scale %d", shape, tileCoord, scaling)
 			return dvid.PlaceholderImage(shape, d.Size, d.Size, message)
 		}
 		return nil, nil // Not found

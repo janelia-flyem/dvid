@@ -75,6 +75,23 @@ func BytesToDataShape(b []byte) (s DataShape, err error) {
 	return
 }
 
+// AxisName returns common axis descriptions like X, Y, and Z for a shapes dimensions.
+func (s DataShape) AxisName(axis uint) string {
+	if int(axis) >= len(s.shape) {
+		return "Unknown"
+	}
+	switch s.shape[axis] {
+	case 0:
+		return "X"
+	case 1:
+		return "Y"
+	case 2:
+		return "Z"
+	default:
+		return fmt.Sprintf("Dim %d", axis)
+	}
+}
+
 // Bytes returns a fixed length byte representation that can be used for keys.
 // Up to 5-d shapes can be used.
 func (s DataShape) Bytes() []byte {
