@@ -272,6 +272,21 @@ func (service *Service) Serve(webAddress, webClientDir, rpcAddress string) error
 	return nil
 }
 
+// Wrapper function so that http handlers recover from panics gracefully
+// without crashing the entire program.  The error message is written to
+// the log.  Paradigm follows recommendation in:
+// "Programming in Go: Creating Applications for the 21st Century".
+func logHttpPanics(httpHandler func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		defer func() {
+			if err := recover(); err != nil {
+				log.Printf("[%v] caught panic: %v", request.RemoteAddr, err)
+			}
+		}()
+		httpHandler(writer, request)
+	}
+}
+
 // Listen and serve HTTP requests using address and don't let stay-alive
 // connections hog goroutines for more than an hour.
 // See for discussion:
@@ -292,9 +307,9 @@ func (service *Service) ServeHttp(address, clientDir string) {
 	// Handle Level 2 REST API.
 	if GzipAPI {
 		fmt.Println("HTTP server will return gzip values if permitted by browser.")
-		http.HandleFunc(WebAPIPath, makeGzipHandler(apiHandler))
+		http.HandleFunc(WebAPIPath, logHttpPanics(makeGzipHandler(apiHandler)))
 	} else {
-		http.HandleFunc(WebAPIPath, apiHandler)
+		http.HandleFunc(WebAPIPath, logHttpPanics(apiHandler))
 	}
 
 	// Handle static files through serving embedded files
@@ -305,17 +320,17 @@ func (service *Service) ServeHttp(address, clientDir string) {
 			fmt.Println("ERROR with nrsc trying to serve web pages:", err.Error())
 			fmt.Println(webClientUnavailableMessage)
 			fmt.Println("HTTP server will be started without webclient...\n")
-			http.HandleFunc(ConsolePath, mainHandler)
+			http.HandleFunc(ConsolePath, logHttpPanics(mainHandler))
 		} else {
 			fmt.Println("Serving web client from embedded files...")
 		}
 	} else {
-		http.HandleFunc(ConsolePath, mainHandler)
+		http.HandleFunc(ConsolePath, logHttpPanics(mainHandler))
 		dvid.Log(dvid.Debug, "Serving web pages from %s\n", clientDir)
 	}
 
 	// Manage redirection from / to the ConsolePath.
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/", logHttpPanics(func(w http.ResponseWriter, r *http.Request) {
 		var urlStr string
 		if r.URL.Path == "/" {
 			urlStr = ConsolePath + "index.html"
@@ -324,7 +339,7 @@ func (service *Service) ServeHttp(address, clientDir string) {
 		}
 		dvid.Fmt(dvid.Debug, "Redirect %s -> %s\n", r.URL.Path, urlStr)
 		http.Redirect(w, r, urlStr, http.StatusMovedPermanently)
-	})
+	}))
 
 	// Serve it up!
 	src.ListenAndServe()
