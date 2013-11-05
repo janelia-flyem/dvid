@@ -407,7 +407,7 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 		}
 
 		serviceData := make(map[string]interface{})
-		err = json.Unmarshal(jsonBytes, serviceData)
+		err = json.Unmarshal(jsonBytes, &serviceData)
 		if err != nil {
 			return err
 		}
@@ -425,8 +425,14 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 				if !ok {
 					return fmt.Errorf("No status set for %s/%s", parts[2], serviceIdStr)
 				}
-				w.Header().Set("Content-Type", "text/plain")
-				fmt.Fprintln(w, status)
+				jsonBytes, err := json.Marshal(map[string]string{"status": status.(string)})
+
+				if err != nil {
+					return fmt.Errorf("Could not create a json string")
+				}
+
+				w.Header().Set("Content-Type", "application/json")
+				fmt.Fprintf(w, string(jsonBytes))
 
 			} else if method == "put" {
 				// must be authenticated
@@ -473,7 +479,7 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 				// retrieve the result for the given service id
 				value, err := d.GetData(uuid, keyStr)
 				if err != nil {
-					return err
+					return fmt.Errorf("No result exists")
 				}
 				w.Header().Set("Content-Type", "application/octet-stream")
 				_, err = w.Write(value)
