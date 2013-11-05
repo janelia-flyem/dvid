@@ -10,12 +10,13 @@ import (
 	"encoding/gob"
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"net/http"
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
-	"github.com/dchest/uniuri"
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/keyvalue"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -158,6 +159,17 @@ func init() {
 	gob.Register(&binary.LittleEndian)
 	gob.Register(&binary.BigEndian)
 	gob.Register(&ServiceLocalExe{})
+
+	rand.Seed(time.Now().UTC().UnixNano())
+}
+
+func randomHex() (randomStr string) {
+	randomStr = ""
+	for i := 0; i < 16; i++ {
+		val := rand.Intn(16)
+		randomStr += strconv.FormatInt(int64(val), 16)
+	}
+	return
 }
 
 // interface for actually calling the service
@@ -275,7 +287,7 @@ func (d *Data) PostService(uuid datastore.UUID, w http.ResponseWriter, r *http.R
 	contract["status"] = "not started"
 
 	// random string for future communication be service and DVID
-	contract["access-key"] = uniuri.New()
+	contract["access-key"] = randomHex()
 
 	contractJSON, err := json.Marshal(contract)
 	if err != nil {
