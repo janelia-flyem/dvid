@@ -5,6 +5,7 @@
 package service
 
 import (
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/gob"
 	"encoding/json"
@@ -31,7 +32,7 @@ const HelpMessage = `
 API for 'service' datatype (github.com/janelia-flyem/dvid/service)
 =============================================================================
 
-Command-line:
+Command-line (not yet implemented and maybe unnecessary):
 
 $ dvid dataset <UUID> new <service type name> <service name> <settings>
 
@@ -108,7 +109,7 @@ included in HTML specs.  For ease of use in constructing clients, HTTP POST is u
 to create or modify resources in an idempotent fashion.
 
 GET  /api/node/<UUID>/<service name>/help
-GET  /api/node/<UUID>/<service name>/interface
+GET  /api/node/<UUID>/<service name>/contract
 
 	Returns service-specific help or interface message.
 
@@ -117,8 +118,8 @@ GET  /api/node/<UUID>/<service name>/<service id>[/result]
 PUT  /api/node/<UUID>/<service name>/<service id>[/result]
 
     Retrieves or puts values for a given service call.
-    PUT data should use the "data" key in a form for updating the status.
-    A result should be PUT using a binary type.
+    PUT data should use the "status" key in a JSON when updating the status and
+    "data" key in a form when updating the result (/result specified).
 
     Example: 
 
@@ -127,8 +128,6 @@ PUT  /api/node/<UUID>/<service name>/<service id>[/result]
     Returns the status, in plain text, associated with service invocation '5'.  If
     a result is specified, it returns a binary file representing the result (see
     documentation for specific service name).
-
-    The "Content-type" of the HTTP response should agree with the requested format.
 
     Arguments:
 
@@ -250,8 +249,105 @@ func (d *Data) ContractString() (jsonStr string, err error) {
 
 // DoRPC acts as a switchboard for RPC commands.
 func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error {
-	// TBD
+	// TBD -- maybe
+	return fmt.Errorf("RPC commands not yet implemented")
+}
 
+func (d *Data) PostService(uuid datastore.UUID, w http.ResponseWriter, r *http.Request) error {
+	// retrieves contract from http
+	decoder := json.NewDecoder(r.Body)
+	contract := make(map[string]interface{})
+	err := decoder.Decode(&contract)
+	if err != nil {
+		return fmt.Errorf("Error decoding POSTed JSON contract for calling service")
+	}
+
+	// location for writing back status and results
+	callback := r.URL.Path + "/" + strconv.Itoa(int(d.CurrentServiceId))
+
+	// parameters the service will need to fulfill the contract
+
+	// the service understand how to call dvid given a UUID and base URL
+	contract["server-path"] = server.ServerAddress()
+	contract["uuid"] = uuid
+
+	contract["callback"] = callback
+	contract["status"] = "not started"
+
+	// random string for future communication be service and DVID
+	contract["access-key"] = uniuri.New()
+
+	contractJSON, err := json.Marshal(contract)
+	if err != nil {
+		return fmt.Errorf("JSON string could not be formatted properly to call service")
+	}
+
+	// add contract to a value associated with the service id
+	err = d.PutData(uuid, strconv.Itoa(int(d.CurrentServiceId)), contractJSON)
+	if err != nil {
+		return fmt.Errorf("Service call information could not be saved in the DB")
+	}
+
+	// increase the unique id associated with each service call
+	d.CurrentServiceId += 1
+
+	// save the state of the service since it has changed
+	service := server.DatastoreService()
+	err = service.SaveDataset(uuid)
+	if err != nil {
+		return fmt.Errorf("Error in trying to save dataset on change: %s", err.Error())
+	}
+
+	// convert the bytes to string and execute the service
+	jstr := string(contractJSON)
+	d.ServiceExe.RunService(jstr)
+
+	// create json just for the callback address to be returned to the caller
+	callbackJSON, err := json.Marshal(map[string]string{
+		"callback": callback,
+	})
+	if err != nil {
+		return fmt.Errorf("JSON could not be created from callback")
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, string(callbackJSON))
+
+	return nil
+}
+
+func (d *Data) BasicAuthKey(r *http.Request) (accessKey string, err error) {
+	auth := r.Header.Get("Authorization")
+	if auth == "" {
+		err = fmt.Errorf("No authentication with access key")
+		return
+	}
+
+	authSlice := strings.Split(strings.TrimSpace(auth), "Basic ")
+	if len(authSlice) != 2 {
+		err = fmt.Errorf("Incorrectly formatted authentication")
+		return
+	}
+
+	authBytes, err := base64.StdEncoding.DecodeString(authSlice[1])
+	if err != nil {
+		return
+	}
+
+	s := strings.Split(string(authBytes), ":")
+	accessKey = s[0]
+
+	return
+}
+
+func (d *Data) AuthenticateRequest(accessKey string, r *http.Request) error {
+	requestKey, err := d.BasicAuthKey(r)
+	if err != nil {
+		return err
+	}
+	if requestKey != accessKey {
+		return fmt.Errorf("Wrong")
+	}
 	return nil
 }
 
@@ -265,78 +361,132 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 	parts := strings.Split(url, "/")
 	method := strings.ToLower(r.Method)
 
-	// service invocation
-	if len(parts) == 3 && method == "post" {
-		decoder := json.NewDecoder(r.Body)
-		//type Config map[string]interface{}
-		//var contract dvid.Config = NewConfig()
-		contract := make(map[string]interface{})
-		err := decoder.Decode(&contract)
-		if err != nil {
-			return fmt.Errorf("Error decoding POSTed JSON contract for calling service %s", parts[2])
+	if len(parts) == 3 {
+		// service invocation
+		if method == "post" {
+			err := d.PostService(uuid, w, r)
+			if err != nil {
+				return err
+			}
+		} else {
+			return fmt.Errorf("Only posts allowed on a service name")
+		}
+	} else if len(parts) > 3 {
+		// Process help and info.
+		if method == "get" {
+			switch parts[3] {
+			case "help":
+				w.Header().Set("Content-Type", "text/plain")
+				fmt.Fprintln(w, d.Help())
+				return nil
+			case "contract":
+				w.Header().Set("Content-Type", "text/plain")
+				fmt.Fprintln(w, d.Contract)
+				return nil
+			default:
+			}
 		}
 
-		// location for writing back status and results
-		callback := r.URL.Path + "/" + strconv.Itoa(int(d.CurrentServiceId))
-
-		// parameters the service will need to fulfill the contract
-
-		// the service understand how to call dvid given a UUID and base URL
-		contract["server-path"] = server.ServerAddress()
-		contract["uuid"] = uuid
-
-		contract["callback"] = callback
-		contract["status"] = "not started"
-
-		// random string for future communication be service and DVID
-		contract["access-key"] = uniuri.New()
-
-		contractJSON, err := json.Marshal(contract)
+		// get or put on specific service call id key
+		serviceIdStr := parts[3]
+		jsonBytes, err := d.GetData(uuid, serviceIdStr)
 		if err != nil {
-			return fmt.Errorf("JSON string could not be formatted properly to call service")
+			return err
 		}
 
-		err = d.PutData(uuid, strconv.Itoa(int(d.CurrentServiceId)), contractJSON)
+		serviceData := make(map[string]interface{})
+		err = json.Unmarshal(jsonBytes, serviceData)
 		if err != nil {
-			return fmt.Errorf("Service call information could not be saved in the DB")
+			return err
 		}
 
-		d.CurrentServiceId += 1
-
-		service := server.DatastoreService()
-
-		err = service.SaveDataset(uuid)
-		if err != nil {
-			return fmt.Errorf("Error in trying to save dataset on change: %s", err.Error())
+		accessKey, ok := serviceData["access-key"]
+		accessKeyStr := accessKey.(string)
+		if !ok {
+			return fmt.Errorf("Service ID %s does not have an access key", serviceIdStr)
 		}
 
-		jstr := string(contractJSON)
-		d.ServiceExe.RunService(jstr)
+		if len(parts) == 4 {
+			// querying or putting the status of the service ID
+			if method == "get" {
+				status, ok := serviceData["status"]
+				if !ok {
+					return fmt.Errorf("No status set for %s/%s", parts[2], serviceIdStr)
+				}
+				w.Header().Set("Content-Type", "text/plain")
+				fmt.Fprintln(w, status)
 
-		callbackJSON, err := json.Marshal(map[string]string{
-			"callback": callback,
-		})
-		if err != nil {
-			return fmt.Errorf("JSON could not be created from callback")
+			} else if method == "put" {
+				// must be authenticated
+				err = d.AuthenticateRequest(accessKeyStr, r)
+				if err != nil {
+					return err
+				}
+
+				// grab "status" from json in request
+				decoder := json.NewDecoder(r.Body)
+				statusData := make(map[string]interface{})
+				err = decoder.Decode(&statusData)
+				if err != nil {
+					return fmt.Errorf("Error decoding PUT JSON status for %s/%s", parts[2], parts[3])
+				}
+				status, ok := statusData["status"]
+				if !ok {
+					return fmt.Errorf("No status set in status field")
+				}
+
+				// replace service data's status with supplied status
+				serviceData["status"] = status
+				jsonData, err := json.Marshal(serviceData)
+				if err != nil {
+					return fmt.Errorf("JSON could not be formatted properly")
+				}
+
+				// put this back in the key/value database as json
+				err = d.PutData(uuid, serviceIdStr, jsonData)
+				if err != nil {
+					return fmt.Errorf("Service call information could not be saved in the DB")
+				}
+			} else {
+				return fmt.Errorf("The service ID only supports GET and PUT")
+			}
+		} else if len(parts) == 5 {
+			// retrieving or putting a result
+			if parts[4] != "result" {
+				return fmt.Errorf("Only results can be queried for specific ")
+			}
+
+			keyStr := serviceIdStr + "-result"
+			if method == "get" {
+				// retrieve the result for the given service id
+				value, err := d.GetData(uuid, keyStr)
+				if err != nil {
+					return err
+				}
+				w.Header().Set("Content-Type", "application/octet-stream")
+				_, err = w.Write(value)
+				if err != nil {
+					return err
+				}
+			} else if method == "put" {
+				// must be authenticated
+				err = d.AuthenticateRequest(accessKeyStr, r)
+				if err != nil {
+					return err
+				}
+
+				data, err := dvid.DataFromPost(r, "data")
+				if err != nil {
+					return err
+				}
+				err = d.PutData(uuid, keyStr, data)
+				if err != nil {
+					return err
+				}
+			} else {
+				return fmt.Errorf("Results to a service can only be GET or PUT")
+			}
 		}
-
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, string(callbackJSON))
-
-		return nil
-	}
-
-	// Process help and info.
-	switch parts[3] {
-	case "help":
-		w.Header().Set("Content-Type", "text/plain")
-		fmt.Fprintln(w, d.Help())
-		return nil
-	case "contract":
-		w.Header().Set("Content-Type", "text/plain")
-		fmt.Fprintln(w, d.Contract)
-		return nil
-	default:
 	}
 
 	return nil
