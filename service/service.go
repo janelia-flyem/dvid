@@ -312,7 +312,7 @@ func (d *Data) PostService(uuid datastore.UUID, w http.ResponseWriter, r *http.R
 
 	// convert the bytes to string and execute the service
 	jstr := string(contractJSON)
-	d.ServiceExe.RunService(jstr)
+	go d.ServiceExe.RunService(jstr)
 
 	// create json just for the callback address to be returned to the caller
 	callbackJSON, err := json.Marshal(map[string]string{
