@@ -45,7 +45,7 @@ func (s *MessageEcho) RunService(jsonStr string) {
 	// catch any panics that arise from service
 	defer func() {
 		if err := recover(); err != nil {
-			log.Printf("Error in service")
+			log.Printf("Panic caught in helloworld service: %s", err)
 		}
 	}()
 
@@ -53,13 +53,13 @@ func (s *MessageEcho) RunService(jsonStr string) {
 	jsonData := make(map[string]interface{})
 	err := json.Unmarshal([]byte(jsonStr), &jsonData)
 	if err != nil {
-		return
+		panic("cannot decode input json string")
 	}
 
 	// retrieve message passed in
 	message, ok := jsonData["message"]
 	if !ok {
-		return
+		panic("cannot retrieve json message parameter")
 	}
 
 	// make a status message and result message to be put for the specific service callback id
@@ -68,15 +68,15 @@ func (s *MessageEcho) RunService(jsonStr string) {
 
 	serverPath, ok := jsonData["server-path"]
 	if !ok {
-		return
+		panic("cannot retrieve server-path from server")
 	}
 	callback, ok := jsonData["callback"]
 	if !ok {
-		return
+		panic("cannot retrieve callback from server")
 	}
 	accessKey, ok := jsonData["access-key"]
 	if !ok {
-		return
+		panic("cannot retrieve access-key from server")
 	}
 
 	// callback paths
@@ -89,28 +89,22 @@ func (s *MessageEcho) RunService(jsonStr string) {
 	tempResultBuffer := bytes.NewBuffer(resultJSON)
 	resultBuffer := &bytes.Buffer{}
 	writer := multipart.NewWriter(resultBuffer)
-	part, err := writer.CreateFormFile("data", "result.json")
-	if err != nil {
-		return
-	}
+	part, _ := writer.CreateFormFile("data", "result.json")
 	_, err = io.Copy(part, tempResultBuffer)
 	if err != nil {
-		return
+		panic("cannot copy result to buffer")
 	}
-	err = writer.Close()
-	if err != nil {
-		return
-	}
+	writer.Close()
 
 	// put a message result for the service call
-	req, err := http.NewRequest("PUT", resultPath, resultBuffer)
+	req, _ := http.NewRequest("PUT", resultPath, resultBuffer)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	req.SetBasicAuth(accessKey.(string), "")
 	resp, err := client.Do(req)
 	if err != nil {
-		return
+		panic("cannot execute client put result request")
 	}
-
+	// close response body if there is a response
 	if resp != nil && resp.Body != nil {
 		resp.Body.Close()
 	}
@@ -120,11 +114,11 @@ func (s *MessageEcho) RunService(jsonStr string) {
 	req.Header.Set("Content-Type", "application/json")
 	req.SetBasicAuth(accessKey.(string), "")
 	resp, err = client.Do(req)
-
 	if err != nil {
+		panic("cannot execute client put status request")
 		return
 	}
-
+	// close response body if there is a response
 	if resp != nil && resp.Body != nil {
 		resp.Body.Close()
 	}
