@@ -104,6 +104,7 @@ func (s *MessageEcho) RunService(jsonStr string) {
 
 	// put a message result for the service call
 	req, err := http.NewRequest("PUT", resultPath, resultBuffer)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
 	req.SetBasicAuth(accessKey.(string), "")
 	resp, err := client.Do(req)
 	if err != nil {
