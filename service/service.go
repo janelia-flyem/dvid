@@ -33,8 +33,8 @@ const HelpMessage = `
 API for 'service' datatype (github.com/janelia-flyem/dvid/service)
 =============================================================================
 
-Command-line (not yet implemented and maybe unnecessary):
-
+Command-line
+ 
 $ dvid dataset <UUID> new <service type name> <service name> <settings>
 
 	Adds newly named service of the 'service type name' to dataset with specified UUID.
@@ -56,6 +56,7 @@ $ dvid dataset <UUID> new <service type name> <service name> <settings>
     service name        Name of service to create (should be same as the type name)
     settings            TBD: perhaps the settings for how to connect to the service 
 
+(following command-line commands not yet implemented and maybe unnecessary)
 
 $ dvid node <UUID> <service name> get <service id>
 $ dvid node <UUID> <service name> get result <service id>
