@@ -27,6 +27,7 @@ import (
 	_ "github.com/janelia-flyem/dvid/datatype/multichan16"
 	_ "github.com/janelia-flyem/dvid/datatype/tiles"
 	_ "github.com/janelia-flyem/dvid/datatype/voxels"
+	_ "github.com/janelia-flyem/dvid/service"
 )
 
 var (

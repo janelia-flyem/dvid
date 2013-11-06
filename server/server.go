@@ -124,6 +124,11 @@ func DatastoreService() *datastore.Service {
 	return runningService.Service
 }
 
+// ServerAddress returns the server location and port.
+func ServerAddress() string {
+	return runningService.WebAddress
+}
+
 // MatchingUUID returns a UUID on this server that uniquely matches a uuid string.
 func MatchingUUID(uuidStr string) (uuid datastore.UUID, err error) {
 	if runningService.Service == nil {
