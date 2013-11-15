@@ -3,6 +3,8 @@ package datastore
 import (
 	. "github.com/janelia-flyem/go/gocheck"
 	"testing"
+
+	"github.com/janelia-flyem/dvid/dvid"
 )
 
 // Hook up gocheck into the "go test" runner.
@@ -23,7 +25,7 @@ func (suite *DataSuite) SetUpSuite(c *C) {
 	suite.dir = c.MkDir()
 
 	// Create a new datastore.
-	err := Init(suite.dir, true)
+	err := Init(suite.dir, true, dvid.Config{})
 	c.Assert(err, IsNil)
 
 	// Open the datastore

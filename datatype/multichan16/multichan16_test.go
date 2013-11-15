@@ -27,7 +27,7 @@ func (s *DataSuite) SetUpSuite(c *C) {
 	s.dir = c.MkDir()
 
 	// Create a new datastore.
-	err := datastore.Init(s.dir, true)
+	err := datastore.Init(s.dir, true, dvid.Config{})
 	c.Assert(err, IsNil)
 
 	// Open the datastore
@@ -43,7 +43,7 @@ func (s *DataSuite) TestDatasetPersistence(c *C) {
 	dir := c.MkDir()
 
 	// Create a new datastore.
-	err := datastore.Init(dir, true)
+	err := datastore.Init(dir, true, dvid.Config{})
 	c.Assert(err, IsNil)
 
 	// Open the datastore

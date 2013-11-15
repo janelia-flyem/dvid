@@ -77,15 +77,25 @@ else ()
     # dependencies.
 
     include (leveldb)
-    set (DVID_BACKEND levigo)
-    set (DVID_BACKEND_DEPEND ${leveldb_NAME})
+#    include (lmdb)
 
-    # include (lmdb)
-    # set (DVID_BACKEND lmdb)
-    # set (DVID_BACKEND_DEPEND ${lmdb_NAME})
+	# Defaults to standard leveldb
+    if ("${DVID_BACKEND}" STREQUAL "lmdb")
+        set (DVID_BACKEND_DEPEND    "")   # Assume manual install
+#        set (DVID_BACKEND_DEPEND    ${lmdb_NAME})
+        message ("Installing Lightning MDB for DVID storage engine")
+    elseif ("${DVID_BACKEND}" STREQUAL "hyperleveldb")
+        set (DVID_BACKEND_DEPEND    "")   # Assume manual install
+        message ("Assuming manually installed HyperLevelDB will be used for DVID storage engine.")
+    elseif ("${DVID_BACKEND}" STREQUAL "couchbase")
+        set (DVID_BACKEND_DEPEND    "")   # Assume manual install
+        message ("Assuming manually installed couchbase will be used for DVID storage engine.")
+    else ()
+		set (DVID_BACKEND			"levigo")
+        set (DVID_BACKEND_DEPEND    ${leveldb_NAME})
+        message ("Installing standard leveldb for DVID storage engine")
+    endif ()
 
-    # set (DVID_BACKEND couchbase)
-    # set (DVID_BACKEND_DEPEND "")   # Assume manual install
 
     set (DVID_GO      github.com/janelia-flyem/dvid)
 

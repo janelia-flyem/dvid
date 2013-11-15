@@ -35,12 +35,11 @@ func Versions() string {
 // Init creates a key-value datastore using default arguments.  Datastore
 // configuration is stored as key/values in the datastore and also in a
 // human-readable config file in the datastore directory.
-func Init(directory string, create bool) error {
+func Init(directory string, create bool, config dvid.Config) error {
 	fmt.Println("\nInitializing datastore at", directory)
 
 	// Initialize the backend database
-	dbOptions := storage.Options{}
-	db, err := storage.NewStore(directory, create, &dbOptions)
+	db, err := storage.NewStore(directory, create, config)
 	if err != nil {
 		return fmt.Errorf("Error initializing datastore (%s): %s\n", directory, err.Error())
 	}
@@ -78,9 +77,8 @@ type OpenError struct {
 // a Service that allows operations on that datastore.
 func Open(path string) (s *Service, openErr *OpenError) {
 	// Open the datastore
-	dbOptions := storage.Options{}
 	create := false
-	db, err := storage.NewStore(path, create, &dbOptions)
+	db, err := storage.NewStore(path, create, dvid.Config{})
 	if err != nil {
 		openErr = &OpenError{
 			fmt.Errorf("Error opening datastore (%s): %s", path, err.Error()),

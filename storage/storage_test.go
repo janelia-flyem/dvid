@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	. "github.com/janelia-flyem/go/gocheck"
+
+	"github.com/janelia-flyem/dvid/dvid"
 )
 
 // Hook up gocheck into the "go test" runner.
@@ -24,8 +26,7 @@ func (s *DataSuite) SetUpSuite(c *C) {
 	s.dir = c.MkDir()
 
 	// Create a new storage engine.
-	options := &Options{}
-	db, err := NewStore(s.dir, true, options)
+	db, err := NewStore(s.dir, true, dvid.Config{})
 	c.Assert(err, IsNil)
 
 	s.db = db

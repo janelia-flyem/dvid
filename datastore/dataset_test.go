@@ -3,6 +3,8 @@ package datastore
 import (
 	. "github.com/janelia-flyem/go/gocheck"
 	_ "testing"
+
+	"github.com/janelia-flyem/dvid/dvid"
 )
 
 func (s *DataSuite) TestNewDAG(c *C) {
@@ -16,7 +18,7 @@ func (s *DataSuite) TestDatasetPersistence(c *C) {
 	dir := c.MkDir()
 
 	// Create a new datastore.
-	err := Init(dir, true)
+	err := Init(dir, true, dvid.Config{})
 	c.Assert(err, IsNil)
 
 	// Open the datastore

@@ -1,4 +1,4 @@
-// +build levigo
+// +build lmdb
 
 package storage
 
@@ -7,11 +7,11 @@ import (
 	_ "fmt"
 
 	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/janelia-flyem/go/levigo"
+	"github.com/janelia-flyem/go/hyperleveldb"
 )
 
 const (
-	Version = "github.com/janelia-flyem/go/levigo"
+	Version = "github.com/janelia-flyem/go/hyperleveldb"
 
 	// Default size of LRU cache that caches frequently used uncompressed blocks.
 	DefaultCacheSize = 128 * dvid.Mega

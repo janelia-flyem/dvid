@@ -253,7 +253,7 @@ func DoCommand(cmd dvid.Command) error {
 // DoInit performs the "init" command, creating a new DVID datastore.
 func DoInit(cmd dvid.Command) error {
 	create := true
-	return datastore.Init(*datastoreDir, create)
+	return datastore.Init(*datastoreDir, create, cmd.Settings())
 }
 
 // DoServe opens a datastore then creates both web and rpc servers for the datastore

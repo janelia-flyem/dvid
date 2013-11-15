@@ -14,7 +14,6 @@
 package storage
 
 import (
-	"log"
 	"sync"
 
 	"github.com/janelia-flyem/dvid/dvid"
@@ -31,36 +30,6 @@ type ChunkOp struct {
 type Chunk struct {
 	*ChunkOp
 	KeyValue
-}
-
-// Options encapsulates settings passed in as well as database-specific environments
-// created as a result of the settings.  Each implementation creates methods on this
-// type to support options.
-type Options struct {
-	// Settings provides values for database-specific options.
-	Settings dvid.Config
-
-	// Database-specific implementation of options
-	options interface{}
-}
-
-// IntSetting returns an int or sets ok to false if it can't cast the value or
-// the setting key doesn't exist.
-func (opt *Options) IntSetting(key string) (setting int, ok bool) {
-	if opt == nil {
-		ok = false
-		return
-	}
-	var value interface{}
-	value, ok = opt.Settings[key]
-	if !ok {
-		return
-	}
-	setting, ok = value.(int)
-	if !ok {
-		log.Fatalf("Could not cast to int: Setting[%s] = %s\n", key, value)
-	}
-	return
 }
 
 // Requirements lists required backend interfaces for a type.
@@ -81,7 +50,7 @@ type Engine interface {
 	IsBulkIniter() bool
 	IsBulkWriter() bool
 
-	GetOptions() *Options
+	GetConfig() dvid.Config
 }
 
 // KeyValueDB provides an interface to the simplest storage API: a key/value store.
