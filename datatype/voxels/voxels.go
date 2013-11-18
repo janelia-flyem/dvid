@@ -54,15 +54,31 @@ $ dvid dataset <UUID> new <type name> <data name> <settings...>
     VoxelRes       Resolution of voxels (default: 1.0, 1.0, 1.0)
     VoxelResUnits  String of units (default: "nanometers")
 
-$ dvid node <UUID> <data name> load local  <plane> <offset> <image glob>
-$ dvid node <UUID> <data name> load remote <plane> <offset> <image glob>
+$ dvid node <UUID> <data name> load <offset> <image glob>
+
+    Initializes version node to a set of XY images described by glob of filenames.  The
+    DVID server must have access to the named files.  Currently, XY images are required.
+
+    Example: 
+
+    $ dvid node 3f8c mygrayscale load 0,0,100 data/*.png
+
+    Arguments:
+
+    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    data name     Name of data to add.
+    offset        3d coordinate in the format "x,y,z".  Gives coordinate of top upper left voxel.
+    image glob    Filenames of images, e.g., foo-xy-*.png
+
+$ dvid node <UUID> <data name> put local  <plane> <offset> <image glob>
+$ dvid node <UUID> <data name> put remote <plane> <offset> <image glob>
 
     Adds image data to a version node when the server can see the local files ("local")
     or when the server must be sent the files via rpc ("remote").
 
     Example: 
 
-    $ dvid node 3f8c mygrayscale load local xy 0,0,100 data/*.png
+    $ dvid node 3f8c mygrayscale put local xy 0,0,100 data/*.png
 
     Arguments:
 
@@ -482,18 +498,25 @@ func (d *Data) NewVoxelHandler(geom dvid.Geometry, img image.Image) (VoxelHandle
 
 // DoRPC acts as a switchboard for RPC commands.
 func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error {
-	if request.TypeCommand() != "load" {
-		return d.UnknownCommand(request)
-	}
-	if len(request.Command) < 7 {
-		return fmt.Errorf("Poorly formatted load command.  See command-line help.")
-	}
-	source := request.Command[4]
-	switch source {
-	case "local":
-		return d.LoadLocal(request, reply)
-	case "remote":
-		return fmt.Errorf("load remote not yet implemented")
+	switch request.TypeCommand() {
+	case "load":
+		if len(request.Command) < 5 {
+			return fmt.Errorf("Poorly formatted load command.  See command-line help.")
+		}
+		return d.LoadXY(request, reply)
+	case "put":
+		if len(request.Command) < 7 {
+			return fmt.Errorf("Poorly formatted put command.  See command-line help.")
+		}
+		source := request.Command[4]
+		switch source {
+		case "local":
+			return d.PutLocal(request, reply)
+		case "remote":
+			return fmt.Errorf("put remote not yet implemented")
+		default:
+			return d.UnknownCommand(request)
+		}
 	default:
 		return d.UnknownCommand(request)
 	}
@@ -673,30 +696,197 @@ func (d *Data) SliceImage(v VoxelHandler, z int32) (img image.Image, err error) 
 	return
 }
 
-// LoadLocal adds image data to a version node.  Command-line usage is as follows:
-//
-// $ dvid node <UUID> <data name> load local  <plane> <offset> <image glob>
-// $ dvid node <UUID> <data name> load remote <plane> <offset> <image glob>
-//
-//     Adds image data to a version node when the server can see the local files ("local")
-//     or when the server must be sent the files via rpc ("remote").
-//
-//     Example:
-//
-//     $ dvid node 3f8c mygrayscale load local xy 0,0,100 data/*.png
-//
-//     Arguments:
-//
-//     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
-//     data name     Name of data to add.
-//     plane         One of "xy", "xz", or "yz".
-//     offset        3d coordinate in the format "x,y,z".  Gives coordinate of top upper left voxel.
-//     image glob    Filenames of images, e.g., foo-xy-*.png
+func (d *Data) getNumBlocks(geom dvid.Geometry) int {
+	startPt := geom.StartPoint()
+	endPt := geom.EndPoint()
+	size := geom.Size()
+	numBlocks := 1
+	for dim := uint8(0); dim < geom.Size().NumDims(); dim++ {
+		blockSize := d.BlockSize.Value(dim)
+		startMod := startPt.Value(dim) % blockSize
+		blocks := (size.Value(dim) + startMod) / blockSize
+		if endPt.Value(dim)%blockSize != 0 {
+			blocks++
+		}
+		numBlocks *= int(blocks)
+	}
+	return numBlocks
+}
+
+// Optimized bulk loading of XY images.  Uses more memory.
+func (d *Data) LoadXY(request datastore.Request, reply *datastore.Response) error {
+	startTime := time.Now()
+
+	// Parse the request
+	var uuidStr, dataName, cmdStr, offsetStr string
+	filenames := request.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &offsetStr)
+	if len(filenames) == 0 {
+		return fmt.Errorf("Need to include at least one file to add: %s", request)
+	}
+
+	// Get offset
+	offset, err := dvid.StringToPoint(offsetStr, ",")
+	if err != nil {
+		return fmt.Errorf("Illegal offset specification: %s: %s", offsetStr, err.Error())
+	}
+
+	// Get list of files to add
+	var addedFiles string
+	if len(filenames) == 1 {
+		addedFiles = filenames[0]
+	} else {
+		addedFiles = fmt.Sprintf("filenames: %s [%d more]", filenames[0], len(filenames)-1)
+	}
+	dvid.Log(dvid.Debug, addedFiles+"\n")
+
+	// Get plane
+	plane := dvid.XY
+
+	// Get version node
+	uuid, err := server.MatchingUUID(uuidStr)
+	if err != nil {
+		return err
+	}
+
+	service := server.DatastoreService()
+	_, versionID, err := service.LocalIDFromUUID(uuid)
+	if err != nil {
+		return err
+	}
+
+	db := server.StorageEngine()
+	if db == nil {
+		return fmt.Errorf("Did not find a working key-value datastore to put image!")
+	}
+
+	// We only want one PUT on given version for given data to prevent interleaved
+	// chunk PUTs that could potentially overwrite slice modifications.
+	versionMutex := d.VersionMutex(versionID)
+	versionMutex.Lock()
+	defer versionMutex.Unlock()
+
+	// Keep track of changing extents and mark dataset as dirty if changed.
+	var extentChanged bool
+	defer func() {
+		if extentChanged {
+			err := service.SaveDataset(uuid)
+			if err != nil {
+				dvid.Log(dvid.Normal, "Error in trying to save dataset on change: %s\n", err.Error())
+			}
+		}
+	}()
+
+	// Iterate through slices.
+	blockSize := d.BlockSize.(dvid.Point3d)
+	var numBlocks int
+	var blocks [][]uint8
+	var keys []*datastore.DataKey
+	fileNum := 1
+	for _, filename := range filenames {
+		sliceTime := time.Now()
+		img, _, err := dvid.ImageFromFile(filename)
+		if err != nil {
+			return fmt.Errorf("Error after %d images successfully added: %s",
+				fileNum-1, err.Error())
+		}
+		slice, err := dvid.NewOrthogSlice(plane, offset, dvid.RectSize(img.Bounds()))
+		if err != nil {
+			return fmt.Errorf("Unable to determine slice: %s", err.Error())
+		}
+		v, err := d.NewVoxelHandler(slice, img)
+		if err != nil {
+			return err
+		}
+		blockBytes := int(blockSize[0] * blockSize[1] * blockSize[2] * v.BytesPerVoxel())
+
+		// Initialize new map of blocks if we are at new slice.
+		zInBlock := offset.Value(2) % d.BlockSize.Value(2)
+		if blocks == nil || zInBlock == 0 {
+			//fmt.Printf("Initializing new blocks at %s\n", slice)
+			numBlocks = d.getNumBlocks(slice)
+			blocks = make([][]uint8, numBlocks)
+			for i := 0; i < numBlocks; i++ {
+				blocks[i] = make([]uint8, blockBytes)
+			}
+			keys = make([]*datastore.DataKey, numBlocks)
+		}
+
+		// Iterate through index space for this data.
+		blockNum := 0
+		for it, err := v.IndexIterator(d.BlockSize); err == nil && it.Valid(); it.NextSpan() {
+			i0, i1, err := it.IndexSpan()
+			if err != nil {
+				return err
+			}
+			indexBeg := i0.Duplicate().(dvid.PointIndexer)
+			indexEnd := i1.Duplicate().(dvid.PointIndexer)
+
+			begX := indexBeg.Value(0)
+			endX := indexEnd.Value(0)
+			p := dvid.Point3d{begX, indexBeg.Value(1), indexBeg.Value(2)}
+			for x := begX; x <= endX; x++ {
+				p[0] = x
+				key := &datastore.DataKey{d.DsetID, d.ID, versionID, v.Index(p)}
+				keys[blockNum] = key
+
+				// Write this slice data into the block.
+				d.writeSlice(key, v, blocks[blockNum])
+				blockNum++
+			}
+		}
+		if blockNum != numBlocks {
+			fmt.Printf("?? LoadXY() iterated through %d blocks != expected %d blocks\n",
+				blockNum, numBlocks)
+		}
+
+		// If we've finished writing these blocks, do sequential write in goroutine.
+		if zInBlock == d.BlockSize.Value(2)-1 || fileNum == len(filenames) {
+			//fmt.Printf("zInBlock %d, filenum %d/%d\n", zInBlock, fileNum, len(filenames))
+			go func(blocks [][]uint8, keys []*datastore.DataKey) {
+				// Serialize and compress the blocks.
+				keyvalues := make(storage.KeyValues, len(blocks))
+				for i, block := range blocks {
+					serialization, err := dvid.SerializeData([]byte(block), dvid.Snappy, dvid.CRC32)
+					if err != nil {
+						fmt.Printf("Unable to serialize block: %s\n", err.Error())
+						return
+					}
+					//fmt.Printf("Serializing #%d block %d -> %d bytes for key %s\n",
+					//	i, len(block), len(serialization), keys[i])
+					//dvid.PrintNonZero("Non-zero block values", []byte(block))
+					keyvalues[i] = storage.KeyValue{
+						K: keys[i],
+						V: serialization,
+					}
+					blocks[i] = nil
+				}
+				blocks = nil
+				keys = nil
+
+				// Write them in one swoop.
+				err := db.PutRange(keyvalues)
+				if err != nil {
+					fmt.Printf("Unable to write slice blocks: %s\n", err.Error())
+				}
+			}(blocks, keys)
+		}
+
+		dvid.ElapsedTime(dvid.Debug, sliceTime, "%s load %s", d.DataName(), slice)
+		fileNum++
+		offset = offset.Add(dvid.Point3d{0, 0, 1})
+	}
+	dvid.ElapsedTime(dvid.Debug, startTime, "RPC load (%s) completed", addedFiles)
+
+	return nil
+}
+
+// PutLocal adds image data to a version node, altering underlying blocks if the image
+// intersects the block.
 //
 // The image filename glob MUST BE absolute file paths that are visible to the server.
 // This function is meant for mass ingestion of large data files, and it is inappropriate
 // to read gigabytes of data just to send it over the network to a local DVID.
-func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) error {
+func (d *Data) PutLocal(request datastore.Request, reply *datastore.Response) error {
 	startTime := time.Now()
 
 	// Parse the request
@@ -725,7 +915,6 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 	// Get plane
 	plane, err := dvid.DataShapeString(planeStr).DataShape()
 	if err != nil {
-		fmt.Println("GetPlane")
 		return err
 	}
 
@@ -734,12 +923,14 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 	if err != nil {
 		return err
 	}
+
 	numSuccessful := 0
 	for _, filename := range filenames {
 		sliceTime := time.Now()
 		img, _, err := dvid.ImageFromFile(filename)
 		if err != nil {
-			return fmt.Errorf("Error after %d images successfully added: %s", err.Error())
+			return fmt.Errorf("Error after %d images successfully added: %s",
+				numSuccessful, err.Error())
 		}
 		slice, err := dvid.NewOrthogSlice(plane, offset, dvid.RectSize(img.Bounds()))
 		if err != nil {
@@ -753,11 +944,11 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 		if err != nil {
 			return err
 		}
-		dvid.ElapsedTime(dvid.Debug, sliceTime, "%s load local %s", d.DataName(), slice)
+		dvid.ElapsedTime(dvid.Debug, sliceTime, "%s put local %s", d.DataName(), slice)
 		numSuccessful++
 		offset = offset.Add(dvid.Point3d{0, 0, 1})
 	}
-	dvid.ElapsedTime(dvid.Debug, startTime, "RPC load local (%s) completed", addedFiles)
+	dvid.ElapsedTime(dvid.Debug, startTime, "RPC put local (%s) completed", addedFiles)
 	return nil
 }
 
@@ -959,6 +1150,53 @@ func (d *Data) GetVolume(versionID dvid.LocalID, vol Geometry) (data []byte, err
 	return
 }
 */
+
+// Writes a slice of data into a block.
+func (d *Data) writeSlice(key *datastore.DataKey, v VoxelHandler, block []uint8) error {
+	index, err := datastore.KeyToPointIndexer(key)
+	if err != nil {
+		return fmt.Errorf("Data %s: %s\n", d.DataName(), err.Error())
+	}
+
+	// Compute the bounding voxel coordinates for this block.
+	blockSize := d.BlockSize.(dvid.Point3d)
+	minBlockVoxel := index.PointInChunk(blockSize)
+	maxBlockVoxel := minBlockVoxel.Add(blockSize.Sub(dvid.Point3d{1, 1, 1}))
+
+	// Compute the bound voxel coordinates for the data slice and adjust
+	// to our block bounds.
+	minDataVoxel := v.StartPoint()
+	maxDataVoxel := v.EndPoint()
+	begVolCoord := minDataVoxel.Max(minBlockVoxel)
+	endVolCoord := maxDataVoxel.Min(maxBlockVoxel)
+
+	bytesPerVoxel := v.BytesPerVoxel()
+
+	// Compute block coord matching beg's DVID volume space voxel coord
+	blockBeg := begVolCoord.Sub(minBlockVoxel).(dvid.Point3d)
+
+	// Compute index into the block byte buffer, blockI
+	blockNumX := blockSize[0] * bytesPerVoxel
+	blockNumXY := blockSize[1] * blockNumX
+
+	// Adjust the DVID volume voxel coordinates for the data so that (0,0,0)
+	// is where we expect this slice/subvolume's data to begin.
+	beg := begVolCoord.Sub(v.StartPoint()).(dvid.Point3d)
+	end := endVolCoord.Sub(v.StartPoint()).(dvid.Point3d)
+
+	// Traverse the XY data slice and write to the block.
+	data := v.Data()
+	blockI := blockBeg[2]*blockNumXY + blockBeg[1]*blockNumX + blockBeg[0]*bytesPerVoxel
+	dataI := beg[1]*v.Stride() + beg[0]*bytesPerVoxel
+	for y := beg[1]; y <= end[1]; y++ {
+		run := end[0] - beg[0] + 1
+		bytes := run * bytesPerVoxel
+		copy(block[blockI:blockI+bytes], data[dataI:dataI+bytes])
+		blockI += blockSize[0] * bytesPerVoxel
+		dataI += v.Stride()
+	}
+	return nil
+}
 
 // ProcessChunk processes a chunk of data as part of a mapped operation.  The data may be
 // thinner, wider, and longer than the chunk, depending on the data shape (XY, XZ, etc).
