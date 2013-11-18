@@ -335,10 +335,17 @@ func (db *LevelDB) PutRange(values []KeyValue) error {
 		wb.Close()
 		dvid.StopCgo()
 	}()
+	bytesPut := 0
 	for _, kv := range values {
 		wb.Put(kv.K.Bytes(), kv.V)
+		bytesPut += len(kv.V)
 	}
-	return db.ldb.Write(wo, wb)
+	err := db.ldb.Write(wo, wb)
+	if err != nil {
+		return err
+	}
+	bytesWritten <- bytesPut
+	return nil
 }
 
 // Delete removes a value with given key.
