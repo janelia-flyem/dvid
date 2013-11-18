@@ -146,6 +146,7 @@ func aboutJSON() (jsonStr string, err error) {
 		"Maximum Cores":   fmt.Sprintf("%d", runtime.NumCPU()),
 		"DVID datastore":  datastore.Version,
 		"Storage backend": storage.Version,
+		"Storage driver":  storage.Driver,
 	}
 	m, err := json.Marshal(data)
 	if err != nil {

@@ -1,4 +1,4 @@
-// +build lmdb
+// +build hyperleveldb
 
 package storage
 
@@ -11,7 +11,9 @@ import (
 )
 
 const (
-	Version = "github.com/janelia-flyem/go/hyperleveldb"
+	Version = "HyperLevelDB"
+
+	Driver = "github.com/janelia-flyem/go/hyperleveldb"
 
 	// Default size of LRU cache that caches frequently used uncompressed blocks.
 	DefaultCacheSize = 128 * dvid.Mega

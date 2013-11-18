@@ -11,7 +11,9 @@ import (
 )
 
 const (
-	Version = "github.com/janelia-flyem/go/levigo"
+	Version = "Standard Leveldb"
+
+	Driver = "github.com/janelia-flyem/go/levigo"
 
 	// Default size of LRU cache that caches frequently used uncompressed blocks.
 	DefaultCacheSize = 128 * dvid.Mega

@@ -110,7 +110,7 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 			if err != nil {
 				return err
 			}
-			reply.Text = string(uuid)
+			reply.Text = fmt.Sprintf("New dataset created with head node %s\n", uuid)
 		default:
 			return fmt.Errorf("Unknown datasets command: %q", subcommand)
 		}
