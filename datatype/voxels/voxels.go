@@ -736,14 +736,14 @@ func (d *Data) SliceImage(v VoxelHandler, z int32) (img image.Image, err error) 
 
 func (d *Data) getNumBlocks(geom dvid.Geometry) int {
 	startPt := geom.StartPoint()
-	endPt := geom.EndPoint()
 	size := geom.Size()
 	numBlocks := 1
 	for dim := uint8(0); dim < geom.Size().NumDims(); dim++ {
 		blockSize := d.BlockSize.Value(dim)
 		startMod := startPt.Value(dim) % blockSize
-		blocks := (size.Value(dim) + startMod) / blockSize
-		if endPt.Value(dim)%blockSize != 0 {
+		length := size.Value(dim) + startMod
+		blocks := length / blockSize
+		if length%blockSize != 0 {
 			blocks++
 		}
 		numBlocks *= int(blocks)
@@ -850,7 +850,6 @@ func (d *Data) LoadXY(request datastore.Request, reply *datastore.Response) erro
 		// Initialize new map of blocks if we are at new slice.
 		zInBlock := offset.Value(2) % d.BlockSize.Value(2)
 		if blocks == nil || zInBlock == 0 {
-			//fmt.Printf("Initializing new blocks at %s\n", slice)
 			numBlocks = d.getNumBlocks(slice)
 			blocks = make([][]uint8, numBlocks)
 			for i := 0; i < numBlocks; i++ {
@@ -859,7 +858,7 @@ func (d *Data) LoadXY(request datastore.Request, reply *datastore.Response) erro
 			keys = make([]*datastore.DataKey, numBlocks)
 		}
 
-		// Iterate through index space for this data.
+		// Iterate through index space for this data using ZYX ordering.
 		blockNum := 0
 		for it, err := v.IndexIterator(d.BlockSize); err == nil && it.Valid(); it.NextSpan() {
 			i0, i1, err := it.IndexSpan()
@@ -880,7 +879,6 @@ func (d *Data) LoadXY(request datastore.Request, reply *datastore.Response) erro
 				p[0] = x
 				key := &datastore.DataKey{d.DsetID, d.ID, versionID, v.Index(p)}
 				keys[blockNum] = key
-
 				// Write this slice data into the block.
 				d.writeBlock(key, v, blocks[blockNum])
 				blockNum++
