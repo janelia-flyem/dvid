@@ -49,10 +49,10 @@ type Point interface {
 	Mult(Point) Point
 
 	// Max returns a Point where each of its elements are the maximum of two points' elements.
-	Max(Point) Point
+	Max(Point) (Point, bool)
 
 	// Min returns a Point where each of its elements are the minimum of two points' elements.
-	Min(Point) Point
+	Min(Point) (Point, bool)
 
 	// Distance returns the integer distance (rounding down).
 	Distance(Point) int32
@@ -170,29 +170,35 @@ func (p Point2d) Mult(x Point) (result Point) {
 }
 
 // Max returns a Point where each of its elements are the maximum of two points' elements.
-func (p Point2d) Max(x Point) Point {
+func (p Point2d) Max(x Point) (Point, bool) {
+	var changed bool
 	p2 := x.(Point2d)
 	result := p
 	if p[0] < p2[0] {
 		result[0] = p2[0]
+		changed = true
 	}
 	if p[1] < p2[1] {
 		result[1] = p2[1]
+		changed = true
 	}
-	return result
+	return result, changed
 }
 
 // Min returns a Point where each of its elements are the minimum of two points' elements.
-func (p Point2d) Min(x Point) Point {
+func (p Point2d) Min(x Point) (Point, bool) {
+	var changed bool
 	p2 := x.(Point2d)
 	result := p
 	if p[0] > p2[0] {
 		result[0] = p2[0]
+		changed = true
 	}
 	if p[1] > p2[1] {
 		result[1] = p2[1]
+		changed = true
 	}
-	return result
+	return result, changed
 }
 
 // Distance returns the integer distance (rounding down).
@@ -316,35 +322,43 @@ func (p Point3d) Mult(x Point) (result Point) {
 }
 
 // Max returns a Point where each of its elements are the maximum of two points' elements.
-func (p Point3d) Max(x Point) Point {
+func (p Point3d) Max(x Point) (Point, bool) {
+	var changed bool
 	p2 := x.(Point3d)
 	result := p
 	if p[0] < p2[0] {
 		result[0] = p2[0]
+		changed = true
 	}
 	if p[1] < p2[1] {
 		result[1] = p2[1]
+		changed = true
 	}
 	if p[2] < p2[2] {
 		result[2] = p2[2]
+		changed = true
 	}
-	return result
+	return result, changed
 }
 
 // Min returns a Point where each of its elements are the minimum of two points' elements.
-func (p Point3d) Min(x Point) Point {
+func (p Point3d) Min(x Point) (Point, bool) {
+	var changed bool
 	p2 := x.(Point3d)
 	result := p
 	if p[0] > p2[0] {
 		result[0] = p2[0]
+		changed = true
 	}
 	if p[1] > p2[1] {
 		result[1] = p2[1]
+		changed = true
 	}
 	if p[2] > p2[2] {
 		result[2] = p2[2]
+		changed = true
 	}
-	return result
+	return result, changed
 }
 
 // Distance returns the integer distance (rounding down).

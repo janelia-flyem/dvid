@@ -450,9 +450,47 @@ type Data struct {
 	// The endianness of this loaded data.
 	ByteOrder binary.ByteOrder
 
-	// Maximum extents of data stored
+	// Extents of data stored in absolute voxel coordinates.
+	MinPoint dvid.Point
+	MaxPoint dvid.Point
+
+	// Extents of data stored in terms of chunk indices
 	MinIndex dvid.PointIndexer
 	MaxIndex dvid.PointIndexer
+}
+
+func (d *Data) adjustExtentsPoint(pointBeg, pointEnd dvid.Point) bool {
+	var changed bool
+	if d.MinPoint == nil {
+		d.MinPoint = pointBeg
+		changed = true
+	} else {
+		d.MinPoint, changed = d.MinPoint.Min(pointBeg)
+	}
+	if d.MaxPoint == nil {
+		d.MaxPoint = pointEnd
+		changed = true
+	} else {
+		d.MaxPoint, changed = d.MaxPoint.Max(pointEnd)
+	}
+	return changed
+}
+
+func (d *Data) adjustExtentsIndex(indexBeg, indexEnd dvid.PointIndexer) bool {
+	var changed bool
+	if d.MinIndex == nil {
+		d.MinIndex = indexBeg
+		changed = true
+	} else {
+		d.MinIndex, changed = d.MinIndex.Min(indexBeg)
+	}
+	if d.MaxIndex == nil {
+		d.MaxIndex = indexEnd
+		changed = true
+	} else {
+		d.MaxIndex, changed = d.MaxIndex.Max(indexEnd)
+	}
+	return changed
 }
 
 // JSONString returns the JSON for this Data's configuration
@@ -763,11 +801,16 @@ func (d *Data) LoadXY(request datastore.Request, reply *datastore.Response) erro
 	// chunk PUTs that could potentially overwrite slice modifications.
 	versionMutex := d.VersionMutex(versionID)
 	versionMutex.Lock()
-	defer versionMutex.Unlock()
 
 	// Keep track of changing extents and mark dataset as dirty if changed.
 	var extentChanged bool
+
+	// Handle cleanup given multiple goroutines still writing data.
+	var wg sync.WaitGroup
 	defer func() {
+		wg.Wait()
+		versionMutex.Unlock()
+
 		if extentChanged {
 			err := service.SaveDataset(uuid)
 			if err != nil {
@@ -799,6 +842,11 @@ func (d *Data) LoadXY(request datastore.Request, reply *datastore.Response) erro
 		}
 		blockBytes := int(blockSize[0] * blockSize[1] * blockSize[2] * v.BytesPerVoxel())
 
+		// Track point extents
+		if d.adjustExtentsPoint(slice.StartPoint(), slice.EndPoint()) {
+			extentChanged = true
+		}
+
 		// Initialize new map of blocks if we are at new slice.
 		zInBlock := offset.Value(2) % d.BlockSize.Value(2)
 		if blocks == nil || zInBlock == 0 {
@@ -821,6 +869,10 @@ func (d *Data) LoadXY(request datastore.Request, reply *datastore.Response) erro
 			indexBeg := i0.Duplicate().(dvid.PointIndexer)
 			indexEnd := i1.Duplicate().(dvid.PointIndexer)
 
+			if d.adjustExtentsIndex(indexBeg, indexEnd) {
+				extentChanged = true
+			}
+
 			begX := indexBeg.Value(0)
 			endX := indexEnd.Value(0)
 			p := dvid.Point3d{begX, indexBeg.Value(1), indexBeg.Value(2)}
@@ -830,7 +882,7 @@ func (d *Data) LoadXY(request datastore.Request, reply *datastore.Response) erro
 				keys[blockNum] = key
 
 				// Write this slice data into the block.
-				d.writeSlice(key, v, blocks[blockNum])
+				d.writeBlock(key, v, blocks[blockNum])
 				blockNum++
 			}
 		}
@@ -841,8 +893,13 @@ func (d *Data) LoadXY(request datastore.Request, reply *datastore.Response) erro
 
 		// If we've finished writing these blocks, do sequential write in goroutine.
 		if zInBlock == d.BlockSize.Value(2)-1 || fileNum == len(filenames) {
-			//fmt.Printf("zInBlock %d, filenum %d/%d\n", zInBlock, fileNum, len(filenames))
+			<-server.HandlerToken
+			wg.Add(1)
 			go func(blocks [][]uint8, keys []*datastore.DataKey) {
+				defer func() {
+					server.HandlerToken <- 1
+					wg.Done()
+				}()
 				// Serialize and compress the blocks.
 				keyvalues := make(storage.KeyValues, len(blocks))
 				for i, block := range blocks {
@@ -851,9 +908,6 @@ func (d *Data) LoadXY(request datastore.Request, reply *datastore.Response) erro
 						fmt.Printf("Unable to serialize block: %s\n", err.Error())
 						return
 					}
-					//fmt.Printf("Serializing #%d block %d -> %d bytes for key %s\n",
-					//	i, len(block), len(serialization), keys[i])
-					//dvid.PrintNonZero("Non-zero block values", []byte(block))
 					keyvalues[i] = storage.KeyValue{
 						K: keys[i],
 						V: serialization,
@@ -936,6 +990,7 @@ func (d *Data) PutLocal(request datastore.Request, reply *datastore.Response) er
 		if err != nil {
 			return fmt.Errorf("Unable to determine slice: %s", err.Error())
 		}
+
 		v, err := d.NewVoxelHandler(slice, img)
 		if err != nil {
 			return err
@@ -1028,6 +1083,10 @@ func (d *Data) PutImage(uuid datastore.UUID, v VoxelHandler) error {
 		}
 	}()
 
+	if d.adjustExtentsPoint(v.StartPoint(), v.EndPoint()) {
+		extentChanged = true
+	}
+
 	// Iterate through index space for this data.
 	for it, err := v.IndexIterator(d.BlockSize); err == nil && it.Valid(); it.NextSpan() {
 		i0, i1, err := it.IndexSpan()
@@ -1040,25 +1099,8 @@ func (d *Data) PutImage(uuid datastore.UUID, v VoxelHandler) error {
 		begX := indexBeg.Value(0)
 		endX := indexEnd.Value(0)
 
-		// Expand stored extents if necessary.
-		var changed bool
-		if d.MinIndex == nil {
-			d.MinIndex = indexBeg
+		if d.adjustExtentsIndex(indexBeg, indexEnd) {
 			extentChanged = true
-		} else {
-			d.MinIndex, changed = d.MinIndex.Min(indexBeg)
-			if changed {
-				extentChanged = true
-			}
-		}
-		if d.MaxIndex == nil {
-			d.MaxIndex = indexEnd
-			extentChanged = true
-		} else {
-			d.MaxIndex, changed = d.MaxIndex.Max(indexEnd)
-			if changed {
-				extentChanged = true
-			}
 		}
 
 		startKey := &datastore.DataKey{d.DsetID, d.ID, versionID, indexBeg}
@@ -1152,7 +1194,7 @@ func (d *Data) GetVolume(versionID dvid.LocalID, vol Geometry) (data []byte, err
 */
 
 // Writes a slice of data into a block.
-func (d *Data) writeSlice(key *datastore.DataKey, v VoxelHandler, block []uint8) error {
+func (d *Data) writeBlock(key *datastore.DataKey, v VoxelHandler, block []uint8) error {
 	index, err := datastore.KeyToPointIndexer(key)
 	if err != nil {
 		return fmt.Errorf("Data %s: %s\n", d.DataName(), err.Error())
@@ -1167,8 +1209,8 @@ func (d *Data) writeSlice(key *datastore.DataKey, v VoxelHandler, block []uint8)
 	// to our block bounds.
 	minDataVoxel := v.StartPoint()
 	maxDataVoxel := v.EndPoint()
-	begVolCoord := minDataVoxel.Max(minBlockVoxel)
-	endVolCoord := maxDataVoxel.Min(maxBlockVoxel)
+	begVolCoord, _ := minDataVoxel.Max(minBlockVoxel)
+	endVolCoord, _ := maxDataVoxel.Min(maxBlockVoxel)
 
 	bytesPerVoxel := v.BytesPerVoxel()
 
@@ -1234,8 +1276,8 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 	// to our block bounds.
 	minDataVoxel := op.StartPoint()
 	maxDataVoxel := op.EndPoint()
-	begVolCoord := minDataVoxel.Max(minBlockVoxel)
-	endVolCoord := maxDataVoxel.Min(maxBlockVoxel)
+	begVolCoord, _ := minDataVoxel.Max(minBlockVoxel)
+	endVolCoord, _ := maxDataVoxel.Min(maxBlockVoxel)
 	//fmt.Printf("minDataVoxel: %s, maxDataVoxel: %s\n", minDataVoxel, maxDataVoxel)
 	//fmt.Printf("begVolCoord: %s, endVolCoord: %s\n", begVolCoord, endVolCoord)
 

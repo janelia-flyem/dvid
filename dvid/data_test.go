@@ -42,14 +42,14 @@ func (s *DataSuite) TestPoint3d(c *C) {
 
 	c.Assert(a.String(), Equals, "(10,21,837821)")
 
-	result = a.Max(b)
+	result, _ = a.Max(b)
 	c.Assert(result, Equals, Point3d{78312, 21, 837821})
-	result = b.Max(a)
+	result, _ = b.Max(a)
 	c.Assert(result, Equals, Point3d{78312, 21, 837821})
 
-	result = a.Min(b)
+	result, _ = a.Min(b)
 	c.Assert(result, Equals, Point3d{10, -200, 40123})
-	result = b.Min(a)
+	result, _ = b.Min(a)
 	c.Assert(result, Equals, Point3d{10, -200, 40123})
 
 	d = Point3d{111, 213, 678}
@@ -85,14 +85,14 @@ func (s *DataSuite) TestChunk(c *C) {
 
 	c.Assert(a.String(), Equals, "(123,8191,32001)")
 
-	result = a.Max(b)
+	result, _ = a.Max(b)
 	c.Assert(result, Equals, Point3d{2980, 8191, 32001})
-	result = b.Max(a)
+	result, _ = b.Max(a)
 	c.Assert(result, Equals, Point3d{2980, 8191, 32001})
 
-	result = a.Min(b)
+	result, _ = a.Min(b)
 	c.Assert(result, Equals, Point3d{123, 617, 99})
-	result = b.Min(a)
+	result, _ = b.Min(a)
 	c.Assert(result, Equals, Point3d{123, 617, 99})
 
 }
