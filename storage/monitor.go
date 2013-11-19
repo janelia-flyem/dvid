@@ -25,8 +25,8 @@ var (
 	// Number of key-value PUT calls in last second.
 	PutsPerSec int
 
-	bytesRead    chan int
-	bytesWritten chan int
+	BytesRead    chan int
+	BytesWritten chan int
 
 	// Current tallies up to a second.
 	curBytesReadPerSec    int
@@ -36,8 +36,8 @@ var (
 )
 
 func init() {
-	bytesRead = make(chan int, MonitorBuffer)
-	bytesWritten = make(chan int, MonitorBuffer)
+	BytesRead = make(chan int, MonitorBuffer)
+	BytesWritten = make(chan int, MonitorBuffer)
 
 	go loadMonitor()
 }
@@ -48,10 +48,10 @@ func loadMonitor() {
 	var access sync.Mutex
 	for {
 		select {
-		case b := <-bytesRead:
+		case b := <-BytesRead:
 			curBytesReadPerSec += b
 			curGetsPerSec++
-		case b := <-bytesWritten:
+		case b := <-BytesWritten:
 			curBytesWrittenPerSec += b
 			curPutsPerSec++
 		case <-secondTick:

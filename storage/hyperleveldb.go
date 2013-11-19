@@ -233,7 +233,7 @@ func (db *LevelDB) Get(k Key) (v []byte, err error) {
 	ro := db.options.ReadOptions
 	v, err = db.ldb.Get(ro, k.Bytes())
 	dvid.StopCgo()
-	bytesRead <- len(v)
+	BytesRead <- len(v)
 	return
 }
 
@@ -255,7 +255,7 @@ func (db *LevelDB) GetRange(kStart, kEnd Key) (values []KeyValue, err error) {
 	for {
 		if it.Valid() {
 			value := it.Value()
-			bytesRead <- len(value)
+			BytesRead <- len(value)
 			if bytes.Compare(it.Key(), endBytes) > 0 {
 				return
 			}
@@ -290,7 +290,7 @@ func (db *LevelDB) ProcessRange(kStart, kEnd Key, op *ChunkOp, f func(*Chunk)) e
 	for {
 		if it.Valid() {
 			value := it.Value()
-			bytesRead <- len(value)
+			BytesRead <- len(value)
 			if bytes.Compare(it.Key(), endBytes) > 0 {
 				return nil
 			}
@@ -323,7 +323,7 @@ func (db *LevelDB) Put(k Key, v []byte) error {
 	wo := db.options.WriteOptions
 	err := db.ldb.Put(wo, k.Bytes(), v)
 	dvid.StopCgo()
-	bytesWritten <- len(v)
+	BytesWritten <- len(v)
 	return err
 }
 
@@ -346,7 +346,7 @@ func (db *LevelDB) PutRange(values []KeyValue) error {
 	if err != nil {
 		return err
 	}
-	bytesWritten <- bytesPut
+	BytesWritten <- bytesPut
 	return nil
 }
 

@@ -840,6 +840,7 @@ func (d *Data) LoadXY(request datastore.Request, reply *datastore.Response) erro
 		if err != nil {
 			return err
 		}
+		storage.BytesRead <- len(v.Data())
 		blockBytes := int(blockSize[0] * blockSize[1] * blockSize[2] * v.BytesPerVoxel())
 
 		// Track point extents
@@ -891,8 +892,9 @@ func (d *Data) LoadXY(request datastore.Request, reply *datastore.Response) erro
 
 		// If we've finished writing these blocks, do sequential write in goroutine.
 		if zInBlock == d.BlockSize.Value(2)-1 || fileNum == len(filenames) {
-			<-server.HandlerToken
+			wg.Wait()
 			wg.Add(1)
+			<-server.HandlerToken
 			go func(blocks [][]uint8, keys []*datastore.DataKey) {
 				defer func() {
 					server.HandlerToken <- 1
@@ -993,6 +995,7 @@ func (d *Data) PutLocal(request datastore.Request, reply *datastore.Response) er
 		if err != nil {
 			return err
 		}
+		storage.BytesRead <- len(v.Data())
 		err = d.PutImage(uuid, v)
 		if err != nil {
 			return err
