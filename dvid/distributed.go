@@ -51,12 +51,14 @@ func init() {
 func BlockOnActiveCgo() {
 	startCgo.Lock()
 	fmt.Printf("Checking for any active cgo routines...\n")
+	waits := 0
 	for {
-		if cgoNumActive == 0 && len(cgoActive) == 0 {
+		if (cgoNumActive == 0 && len(cgoActive) == 0) || waits >= 20 {
 			return
 		}
-		fmt.Printf("Waiting for %d active cgo routines (%d messages to be processed)...\n",
-			cgoNumActive, len(cgoActive))
+		fmt.Printf("Waited %d seconds for %d active cgo routines (%d messages to be processed)...\n",
+			waits, cgoNumActive, len(cgoActive))
+		waits++
 		time.Sleep(1 * time.Second)
 	}
 }

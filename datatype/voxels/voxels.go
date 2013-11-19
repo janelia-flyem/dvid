@@ -24,6 +24,9 @@ import (
 const (
 	Version = "0.8"
 	RepoUrl = "github.com/janelia-flyem/dvid/datatype/voxels"
+
+	// KVWriteSize is the # of key/value pairs we will write as one atomic batch write.
+	KVWriteSize = 500
 )
 
 const HelpMessage = `
@@ -502,6 +505,16 @@ func (d *Data) JSONString() (jsonStr string, err error) {
 	return string(m), nil
 }
 
+// DeserializeData returns an uncompressed block of data
+func (d *Data) DeserializeData(value []byte) ([]uint8, error) {
+	data, _, err := dvid.DeserializeData(value, true)
+	if err != nil {
+		return nil, fmt.Errorf("Unable to deserialize chunk from dataset '%s': %s\n",
+			d.DataName(), err.Error())
+	}
+	return []uint8(data), nil
+}
+
 // If img is passed in, newVoxels will initialize the VoxelHandler with data from the image.
 // Otherwise, it will allocate a zero buffer of appropriate size.
 func (d *Data) NewVoxelHandler(geom dvid.Geometry, img image.Image) (VoxelHandler, error) {
@@ -820,11 +833,13 @@ func (d *Data) LoadXY(request datastore.Request, reply *datastore.Response) erro
 	}()
 
 	// Iterate through slices.
-	blockSize := d.BlockSize.(dvid.Point3d)
 	var numBlocks int
 	var blocks [][]uint8
 	var keys []*datastore.DataKey
+
 	fileNum := 1
+	blockSize := d.BlockSize.(dvid.Point3d)
+
 	for _, filename := range filenames {
 		sliceTime := time.Now()
 		img, _, err := dvid.ImageFromFile(filename)
@@ -849,15 +864,21 @@ func (d *Data) LoadXY(request datastore.Request, reply *datastore.Response) erro
 		}
 
 		// Initialize new map of blocks if we are at new slice.
-		zInBlock := offset.Value(2) % d.BlockSize.Value(2)
+		zInBlock := offset.Value(2) % blockSize.Value(2)
+		var loadOld bool // Do we need to load old block values before storing?
 		if blocks == nil || zInBlock == 0 {
 			numBlocks = d.getNumBlocks(slice)
 			blocks = make([][]uint8, numBlocks)
-			for i := 0; i < numBlocks; i++ {
-				blocks[i] = make([]uint8, blockBytes)
-			}
 			keys = make([]*datastore.DataKey, numBlocks)
+			if fileNum == 1 {
+				loadOld = true
+			} else if fileNum+int(blockSize.Value(2)) > len(filenames) {
+				loadOld = true
+			}
 		}
+
+		// Create a map of blocks that may be present on the ends, i.e., first and last slice.
+		endsBlocks := map[string]([]uint8){}
 
 		// Iterate through index space for this data using ZYX ordering.
 		blockNum := 0
@@ -866,6 +887,31 @@ func (d *Data) LoadXY(request datastore.Request, reply *datastore.Response) erro
 			if err != nil {
 				return err
 			}
+
+			// Get previous data at ends.
+			if loadOld {
+				keyBeg := &datastore.DataKey{d.DsetID, d.ID, versionID, i0}
+				keyEnd := &datastore.DataKey{d.DsetID, d.ID, versionID, i1}
+				keyvalues, err := db.GetRange(keyBeg, keyEnd)
+				if err != nil {
+					return err
+				}
+				for _, kv := range keyvalues {
+					dataKey, ok := kv.K.(*datastore.DataKey)
+					if ok {
+						block, err := d.DeserializeData(kv.V)
+						if err != nil {
+							return err
+						}
+						endsBlocks[dataKey.Index.String()] = block
+					} else {
+						fmt.Println("Error no DataKey")
+					}
+				}
+				//fmt.Printf("Loading old for filenum %d at z = %d: keyvalues non-zero bytes %d\n",
+				//	fileNum, offset.Value(2), kvbytes)
+			}
+
 			indexBeg := i0.Duplicate().(dvid.PointIndexer)
 			indexEnd := i1.Duplicate().(dvid.PointIndexer)
 
@@ -880,6 +926,16 @@ func (d *Data) LoadXY(request datastore.Request, reply *datastore.Response) erro
 				p[0] = x
 				key := &datastore.DataKey{d.DsetID, d.ID, versionID, v.Index(p)}
 				keys[blockNum] = key
+				if fileNum == 1 || zInBlock == 0 {
+					blocks[blockNum] = make([]uint8, blockBytes)
+					// If this is in first/last block slice, read previous block if any.
+					if loadOld {
+						block, ok := endsBlocks[key.Index.String()]
+						if ok {
+							copy(blocks[blockNum], block)
+						}
+					}
+				}
 				// Write this slice data into the block.
 				d.writeBlock(key, v, blocks[blockNum])
 				blockNum++
@@ -916,10 +972,13 @@ func (d *Data) LoadXY(request datastore.Request, reply *datastore.Response) erro
 						batch.Put(keys[i], serialization)
 						blocks[i] = nil
 						keys[i] = nil
-					}
-					if err := batch.Commit(); err != nil {
-						fmt.Printf("Error on trying to write batch: %s\n", err.Error())
-						return
+						if i%KVWriteSize == KVWriteSize-1 || i == len(blocks)-1 {
+							if err := batch.Commit(); err != nil {
+								fmt.Printf("Error on trying to write batch: %s\n", err.Error())
+								return
+							}
+							batch.Clear()
+						}
 					}
 					blocks = nil
 					keys = nil
@@ -1322,16 +1381,9 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 	if chunk == nil || chunk.V == nil {
 		block = make([]uint8, blockBytes)
 	} else {
-		// Deserialize
-		data, _, err := dvid.DeserializeData(chunk.V, true)
+		block, err = d.DeserializeData(chunk.V)
 		if err != nil {
-			log.Fatalf("Unable to deserialize chunk from dataset '%s': %s\n",
-				d.DataName(), err.Error())
-		}
-		block = []uint8(data)
-		if len(block) != blockBytes {
-			log.Fatalf("Retrieved block for dataset '%s' is %d bytes, not %d block size!\n",
-				d.DataName(), len(block), blockBytes)
+			log.Fatalf(err.Error())
 		}
 	}
 
