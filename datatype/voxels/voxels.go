@@ -900,28 +900,55 @@ func (d *Data) LoadXY(request datastore.Request, reply *datastore.Response) erro
 					server.HandlerToken <- 1
 					wg.Done()
 				}()
-				// Serialize and compress the blocks.
-				keyvalues := make(storage.KeyValues, len(blocks))
-				for i, block := range blocks {
-					serialization, err := dvid.SerializeData([]byte(block), dvid.Snappy, dvid.CRC32)
-					if err != nil {
-						fmt.Printf("Unable to serialize block: %s\n", err.Error())
+				// If we can do write batches, use it, else do put ranges.
+				// With write batches, we write the byte slices immediately and
+				// for implementations like leveldb, a copy is made.  The put range
+				// approach can lead to duplicated memory.
+				batcher, ok := db.(storage.Batcher)
+				if ok {
+					batch := batcher.NewBatch()
+					for i, block := range blocks {
+						serialization, err := dvid.SerializeData([]byte(block), dvid.Snappy, dvid.CRC32)
+						if err != nil {
+							fmt.Printf("Unable to serialize block: %s\n", err.Error())
+							return
+						}
+						batch.Put(keys[i], serialization)
+						blocks[i] = nil
+						keys[i] = nil
+					}
+					if err := batch.Commit(); err != nil {
+						fmt.Printf("Error on trying to write batch: %s\n", err.Error())
 						return
 					}
-					keyvalues[i] = storage.KeyValue{
-						K: keys[i],
-						V: serialization,
+					blocks = nil
+					keys = nil
+					batch.Close()
+				} else {
+					// Serialize and compress the blocks.
+					keyvalues := make(storage.KeyValues, len(blocks))
+					for i, block := range blocks {
+						serialization, err := dvid.SerializeData([]byte(block), dvid.Snappy, dvid.CRC32)
+						if err != nil {
+							fmt.Printf("Unable to serialize block: %s\n", err.Error())
+							return
+						}
+						keyvalues[i] = storage.KeyValue{
+							K: keys[i],
+							V: serialization,
+						}
+						blocks[i] = nil
 					}
-					blocks[i] = nil
-				}
-				blocks = nil
-				keys = nil
+					blocks = nil
+					keys = nil
 
-				// Write them in one swoop.
-				err := db.PutRange(keyvalues)
-				if err != nil {
-					fmt.Printf("Unable to write slice blocks: %s\n", err.Error())
+					// Write them in one swoop.
+					err := db.PutRange(keyvalues)
+					if err != nil {
+						fmt.Printf("Unable to write slice blocks: %s\n", err.Error())
+					}
 				}
+
 			}(blocks, keys)
 		}
 

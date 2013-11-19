@@ -161,10 +161,15 @@ func Shutdown() {
 	if runningService.Service != nil {
 		runningService.Service.Shutdown()
 	}
+	waits := 0
 	for {
 		active := MaxChunkHandlers - len(HandlerToken)
-		if active > 0 {
+		if waits >= 20 {
+			log.Printf("Already waited for 20 seconds.  Continuing with shutdown...")
+			break
+		} else if active > 0 {
 			log.Printf("Waiting for %d chunk handlers to finish...\n", active)
+			waits++
 		} else {
 			log.Println("No chunk handlers active...")
 			break

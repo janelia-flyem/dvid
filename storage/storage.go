@@ -70,7 +70,9 @@ type KeyValueDB interface {
 	// Put writes a value with given key.
 	Put(k Key, v []byte) error
 
-	// Put key-value pairs that have already been sorted in sequential key order.
+	// Put key-value pairs.  Note that it could be more efficient to use the Batcher
+	// interface so you don't have to create and keep a slice of KeyValue.  Some
+	// databases like leveldb will copy on batch put anyway.
 	PutRange(values []KeyValue) error
 
 	// Delete removes an entry given key.
