@@ -367,6 +367,7 @@ func (d *Data) Put(request datastore.Request, reply *datastore.Response) error {
 		if err != nil {
 			return err
 		}
+		storage.FileBytesRead <- len(data)
 	}
 
 	// Put the data

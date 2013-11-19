@@ -125,12 +125,14 @@ func helpRequest(w http.ResponseWriter, r *http.Request) {
 
 func loadRequest(w http.ResponseWriter, r *http.Request) {
 	m, err := json.Marshal(map[string]int{
-		"bytes read":      storage.BytesReadPerSec,
-		"bytes written":   storage.BytesWrittenPerSec,
-		"GET requests":    storage.GetsPerSec,
-		"PUT requests":    storage.PutsPerSec,
-		"handlers active": int(100 * ActiveHandlers / MaxChunkHandlers),
-		"goroutines":      runtime.NumGoroutine(),
+		"file bytes read":     storage.FileBytesReadPerSec,
+		"file bytes written":  storage.FileBytesWrittenPerSec,
+		"store bytes read":    storage.StoreBytesReadPerSec,
+		"store bytes written": storage.StoreBytesWrittenPerSec,
+		"GET requests":        storage.GetsPerSec,
+		"PUT requests":        storage.PutsPerSec,
+		"handlers active":     int(100 * ActiveHandlers / MaxChunkHandlers),
+		"goroutines":          runtime.NumGoroutine(),
 	})
 	if err != nil {
 		BadRequest(w, r, err.Error())

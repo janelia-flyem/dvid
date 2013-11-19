@@ -1,6 +1,6 @@
 /*
-	Thie file implements a monitor for various operations.  It exposes two channels
-	that handlers can use to signal progress.
+	Thie file implements a monitor for various operations.  It exposes channels
+	that can be used to track I/O bandwidth.
 */
 
 package storage
@@ -13,11 +13,17 @@ import (
 const MonitorBuffer = 10000
 
 var (
-	// Number of bytes read in last second.
-	BytesReadPerSec int
+	// Number of bytes read in last second from storage engine.
+	StoreBytesReadPerSec int
 
-	// Number of bytes written in last second.
-	BytesWrittenPerSec int
+	// Number of bytes written in last second to storage engine.
+	StoreBytesWrittenPerSec int
+
+	// Number of bytes read in last second from file system.
+	FileBytesReadPerSec int
+
+	// Number of bytes written in last second to file system.
+	FileBytesWrittenPerSec int
 
 	// Number of key-value GET calls in last second.
 	GetsPerSec int
@@ -25,19 +31,32 @@ var (
 	// Number of key-value PUT calls in last second.
 	PutsPerSec int
 
-	BytesRead    chan int
-	BytesWritten chan int
+	// Channel to notify bytes read from a storage engine.
+	StoreBytesRead chan int
+
+	// Channel to notify bytes written to a storage engine.
+	StoreBytesWritten chan int
+
+	// Channel to notify bytes read from file system.
+	FileBytesRead chan int
+
+	// Channel to notify bytes written to file system.
+	FileBytesWritten chan int
 
 	// Current tallies up to a second.
-	curBytesReadPerSec    int
-	curBytesWrittenPerSec int
-	curGetsPerSec         int
-	curPutsPerSec         int
+	storeBytesReadPerSec    int
+	storeBytesWrittenPerSec int
+	fileBytesReadPerSec     int
+	fileBytesWrittenPerSec  int
+	getsPerSec              int
+	putsPerSec              int
 )
 
 func init() {
-	BytesRead = make(chan int, MonitorBuffer)
-	BytesWritten = make(chan int, MonitorBuffer)
+	StoreBytesRead = make(chan int, MonitorBuffer)
+	StoreBytesWritten = make(chan int, MonitorBuffer)
+	FileBytesRead = make(chan int, MonitorBuffer)
+	FileBytesWritten = make(chan int, MonitorBuffer)
 
 	go loadMonitor()
 }
@@ -48,22 +67,34 @@ func loadMonitor() {
 	var access sync.Mutex
 	for {
 		select {
-		case b := <-BytesRead:
-			curBytesReadPerSec += b
-			curGetsPerSec++
-		case b := <-BytesWritten:
-			curBytesWrittenPerSec += b
-			curPutsPerSec++
+		case b := <-StoreBytesRead:
+			storeBytesReadPerSec += b
+			getsPerSec++
+		case b := <-StoreBytesWritten:
+			storeBytesWrittenPerSec += b
+			putsPerSec++
+		case b := <-FileBytesRead:
+			fileBytesReadPerSec += b
+		case b := <-FileBytesWritten:
+			fileBytesWrittenPerSec += b
 		case <-secondTick:
 			access.Lock()
-			BytesReadPerSec = curBytesReadPerSec
-			BytesWrittenPerSec = curBytesWrittenPerSec
-			curBytesReadPerSec = 0
-			curBytesWrittenPerSec = 0
-			GetsPerSec = curGetsPerSec
-			PutsPerSec = curPutsPerSec
-			curGetsPerSec = 0
-			curPutsPerSec = 0
+
+			FileBytesReadPerSec = fileBytesReadPerSec
+			FileBytesWrittenPerSec = fileBytesWrittenPerSec
+			fileBytesReadPerSec = 0
+			fileBytesWrittenPerSec = 0
+
+			StoreBytesReadPerSec = storeBytesReadPerSec
+			StoreBytesWrittenPerSec = storeBytesWrittenPerSec
+			storeBytesReadPerSec = 0
+			storeBytesWrittenPerSec = 0
+
+			GetsPerSec = getsPerSec
+			PutsPerSec = putsPerSec
+			getsPerSec = 0
+			putsPerSec = 0
+
 			access.Unlock()
 		}
 	}

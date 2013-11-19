@@ -840,7 +840,7 @@ func (d *Data) LoadXY(request datastore.Request, reply *datastore.Response) erro
 		if err != nil {
 			return err
 		}
-		storage.BytesRead <- len(v.Data())
+		storage.FileBytesRead <- len(v.Data())
 		blockBytes := int(blockSize[0] * blockSize[1] * blockSize[2] * v.BytesPerVoxel())
 
 		// Track point extents
@@ -995,7 +995,7 @@ func (d *Data) PutLocal(request datastore.Request, reply *datastore.Response) er
 		if err != nil {
 			return err
 		}
-		storage.BytesRead <- len(v.Data())
+		storage.FileBytesRead <- len(v.Data())
 		err = d.PutImage(uuid, v)
 		if err != nil {
 			return err
