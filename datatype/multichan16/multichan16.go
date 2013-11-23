@@ -116,12 +116,13 @@ var (
 )
 
 func init() {
-	dtype := &Datatype{voxels.NewDatatype(1, 2)}
+	dtype := &Datatype{voxels.NewDatatype(1, 2, nil)}
 	dtype.DatatypeID = datastore.MakeDatatypeID("multichan16", RepoUrl, Version)
+
 	// See doc for package on why channels are segregated instead of interleaved.
 	// Data types must be registered with the datastore to be used.
-	datastore.RegisterDatatype(dtype)
 	typeService = dtype
+	datastore.RegisterDatatype(dtype)
 
 	// Need to register types that will be used to fulfill interfaces.
 	gob.Register(&Datatype{})
@@ -173,7 +174,7 @@ type Datatype struct {
 
 // --- TypeService interface ---
 
-// NewData returns a pointer to a new Voxels with default values.
+// NewData returns a pointer to a new multichan16 with default values.
 func (dtype *Datatype) NewDataService(id *datastore.DataID, config dvid.Config) (
 	datastore.DataService, error) {
 
@@ -184,6 +185,8 @@ func (dtype *Datatype) NewDataService(id *datastore.DataID, config dvid.Config) 
 	basedata := voxelservice.(*voxels.Data)
 	basedata.BlockSize = DefaultBlockMax
 	basedata.TypeService = typeService
+	basedata.Values = nil
+
 	service := &Data{
 		Data: *basedata,
 	}
@@ -393,6 +396,13 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 
 	// Store the metadata
 	d.NumChannels = len(channels)
+	d.Values = make([]voxels.DataValue, d.NumChannels)
+	for channel := 0; channel < d.NumChannels; channel++ {
+		d.Values[channel] = voxels.DataValue{
+			DataType: "uint8",
+			Label:    fmt.Sprintf("channel%d", channel),
+		}
+	}
 	if d.NumChannels > 0 {
 		d.ByteOrder = channels[0].ByteOrder()
 		reply.Text = fmt.Sprintf("Loaded %s into data '%s': found %d channels\n",

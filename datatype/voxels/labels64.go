@@ -10,7 +10,13 @@ import (
 )
 
 func init() {
-	labels := NewDatatype(1, 8)
+	values := []DataValue{
+		{
+			DataType: "uint64",
+			Label:    "labels64",
+		},
+	}
+	labels := NewDatatype(1, 8, values)
 	labels.DatatypeID = &datastore.DatatypeID{
 		Name:    "labels64",
 		Url:     "github.com/janelia-flyem/dvid/datatype/voxels/labels64.go",

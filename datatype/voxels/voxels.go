@@ -77,7 +77,8 @@ $ dvid node <UUID> <data name> put local  <plane> <offset> <image glob>
 $ dvid node <UUID> <data name> put remote <plane> <offset> <image glob>
 
     Adds image data to a version node when the server can see the local files ("local")
-    or when the server must be sent the files via rpc ("remote").
+    or when the server must be sent the files via rpc ("remote").  If possible, use the
+    "load" command instead because it is much more efficient.
 
     Example: 
 
@@ -104,18 +105,25 @@ GET  /api/node/<UUID>/<data name>/help
 GET  /api/node/<UUID>/<data name>/info
 POST /api/node/<UUID>/<data name>/info
 
-    Retrieves or puts data properties.
+    Retrieves or puts DVID-specific data properties for these voxels.
 
     Example: 
 
     GET /api/node/3f8c/grayscale/info
 
-    Returns JSON with configuration settings.
+    Returns JSON with configuration settings that include location in DVID space and
+    min/max block indices.
 
     Arguments:
 
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
     data name     Name of voxels data.
+
+
+GET  /api/node/<UUID>/<data name>/schema
+
+	Retrieves a JSON schema (application/vnd.dvid-nd-data+json) that describes the layout
+	of bytes returned for n-d images.
 
 
 GET  /api/node/<UUID>/<data name>/<dims>/<size>/<offset>[/<format>]
@@ -337,6 +345,15 @@ func (v *Voxels) IndexIterator(chunkSize dvid.Point) (dvid.IndexIterator, error)
 	return dvid.NewIndexZYXIterator(v.Geometry, begBlock, endBlock), nil
 }
 
+// DataValue describes the data type and label for each value within a voxel.
+type DataValue struct {
+	DataType string
+	Label    string
+}
+
+// DataValues describes the interleaved values within a voxel.
+type DataValues []DataValue
+
 // Datatype embeds the datastore's Datatype to create a unique type
 // with voxel functions.  Refinements of general voxel types can be implemented
 // by embedding this type, choosing appropriate # of values and bytes/value,
@@ -353,13 +370,18 @@ type Datatype struct {
 
 	// bytesPerValue gives the # of bytes/value/voxel
 	bytesPerValue int32
+
+	// values describes the data type/label for each value within a voxel.
+	values DataValues
 }
 
 // NewDatatype returns a pointer to a new voxels Datatype with default values set.
-func NewDatatype(valuesPerVoxel, bytesPerValue int32) (dtype *Datatype) {
+func NewDatatype(valuesPerVoxel, bytesPerValue int32, values []DataValue) (dtype *Datatype) {
 	dtype = new(Datatype)
 	dtype.valuesPerVoxel = valuesPerVoxel
 	dtype.bytesPerValue = bytesPerValue
+	dtype.values = values
+
 	dtype.Requirements = &storage.Requirements{
 		BulkIniter: false,
 		BulkWriter: false,
@@ -379,11 +401,14 @@ func (dtype *Datatype) NewDataService(id *datastore.DataID, config dvid.Config) 
 	if err != nil {
 		return
 	}
+	fmt.Printf("NewDataService: %s\n", dtype.values)
 	data := &Data{
 		Data:           basedata,
 		ValuesPerVoxel: dtype.valuesPerVoxel,
 		BytesPerValue:  dtype.bytesPerValue,
 	}
+	data.Values = make([]DataValue, len(dtype.values))
+	copy(data.Values, dtype.values)
 
 	var s string
 	var found bool
@@ -441,6 +466,9 @@ type Data struct {
 	// BytesPerValue gives the # of bytes/value/voxel
 	BytesPerValue int32
 
+	// Values describes the data type/label for each value within a voxel.
+	Values DataValues
+
 	// Block size for this dataset
 	BlockSize dvid.Point
 
@@ -494,6 +522,43 @@ func (d *Data) adjustExtentsIndex(indexBeg, indexEnd dvid.PointIndexer) bool {
 		d.MaxIndex, changed = d.MaxIndex.Max(indexEnd)
 	}
 	return changed
+}
+
+type dataSchema struct {
+	Axes   []axis
+	Values DataValues
+}
+
+type axis struct {
+	Label      string
+	Resolution float32
+	Units      string
+	Size       int32
+}
+
+// TODO -- Allow explicit setting of axes labels.
+var axesName = []string{"X", "Y", "Z", "t", "c"}
+
+// NdDataSchema returns the JSON schema for this Data
+func (d *Data) NdDataSchema() (jsonStr string, err error) {
+	var schema dataSchema
+	dims := int(d.BlockSize.NumDims())
+	schema.Axes = []axis{}
+	for dim := 0; dim < dims; dim++ {
+		schema.Axes = append(schema.Axes, axis{
+			Label:      axesName[dim],
+			Resolution: d.VoxelRes[dim],
+			Units:      d.VoxelResUnits[dim],
+			Size:       d.BlockSize.Value(uint8(dim)),
+		})
+	}
+	schema.Values = d.Values
+
+	m, err := json.Marshal(schema)
+	if err != nil {
+		return "", err
+	}
+	return string(m), nil
 }
 
 // JSONString returns the JSON for this Data's configuration
@@ -603,6 +668,15 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 		w.Header().Set("Content-Type", "text/plain")
 		fmt.Fprintln(w, d.Help())
 		return nil
+	case "schema":
+		jsonStr, err := d.NdDataSchema()
+		if err != nil {
+			server.BadRequest(w, r, err.Error())
+			return err
+		}
+		w.Header().Set("Content-Type", "application/vnd.dvid-nd-data+json")
+		fmt.Fprintln(w, jsonStr)
+		return nil
 	case "info":
 		jsonStr, err := d.JSONString()
 		if err != nil {
@@ -664,25 +738,26 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 		}
 	case 3:
 		sizeStr, offsetStr := parts[4], parts[5]
-		_, err := dvid.NewSubvolumeFromStrings(offsetStr, sizeStr, "_")
+		subvol, err := dvid.NewSubvolumeFromStrings(offsetStr, sizeStr, "_")
 		if err != nil {
 			return err
 		}
 		if op == GetOp {
-			return fmt.Errorf("DVID does not yet support GET of thrift-encoded volume data")
-			/*
-				if data, err := d.GetVolume(uuidStr, subvol); err != nil {
+			v, err := d.NewVoxelHandler(subvol, nil)
+			if err != nil {
+				return err
+			}
+			if data, err := d.GetVolume(uuid, v); err != nil {
+				return err
+			} else {
+				w.Header().Set("Content-type", "application/octet-stream")
+				_, err = w.Write(data)
+				if err != nil {
 					return err
-				} else {
-					w.Header().Set("Content-type", "application/x-protobuf")
-					_, err = w.Write(data)
-					if err != nil {
-						return err
-					}
 				}
-			*/
+			}
 		} else {
-			return fmt.Errorf("DVID does not yet support POST of thrift-encoded volume data")
+			return fmt.Errorf("DVID does not yet support POST of volume data")
 		}
 	default:
 		return fmt.Errorf("DVID currently supports shapes of only 2 and 3 dimensions")
@@ -1094,12 +1169,11 @@ func (d *Data) PutLocal(request datastore.Request, reply *datastore.Response) er
 	return nil
 }
 
-// GetImage retrieves a 2d image from a version node given a geometry of voxels.
-func (d *Data) GetImage(uuid datastore.UUID, v VoxelHandler) (img image.Image, err error) {
+// GetVoxels retrieves voxels from a version node.
+func (d *Data) GetVoxels(uuid datastore.UUID, v VoxelHandler) error {
 	db := server.StorageEngine()
 	if db == nil {
-		err = fmt.Errorf("Did not find a working key-value datastore to get image!")
-		return
+		return fmt.Errorf("Did not find a working key-value datastore to get image!")
 	}
 
 	op := Operation{v, GetOp}
@@ -1112,7 +1186,7 @@ func (d *Data) GetImage(uuid datastore.UUID, v VoxelHandler) (img image.Image, e
 	for it, err := v.IndexIterator(d.BlockSize); err == nil && it.Valid(); it.NextSpan() {
 		indexBeg, indexEnd, err := it.IndexSpan()
 		if err != nil {
-			return nil, err
+			return err
 		}
 		startKey := &datastore.DataKey{d.DsetID, d.ID, versionID, indexBeg}
 		endKey := &datastore.DataKey{d.DsetID, d.ID, versionID, indexEnd}
@@ -1120,17 +1194,32 @@ func (d *Data) GetImage(uuid datastore.UUID, v VoxelHandler) (img image.Image, e
 		// Send the entire range of key/value pairs to ProcessChunk()
 		err = db.ProcessRange(startKey, endKey, chunkOp, d.ProcessChunk)
 		if err != nil {
-			return nil, fmt.Errorf("Unable to GET data %s: %s", d.DataName(), err.Error())
+			return fmt.Errorf("Unable to GET data %s: %s", d.DataName(), err.Error())
 		}
 	}
 	if err != nil {
-		return
+		return err
 	}
 
 	// Reduce: Grab the resulting 2d image.
 	wg.Wait()
-	img, err = d.SliceImage(v, 0)
-	return
+	return nil
+}
+
+// GetImage retrieves a 2d image from a version node given a geometry of voxels.
+func (d *Data) GetImage(uuid datastore.UUID, v VoxelHandler) (image.Image, error) {
+	if err := d.GetVoxels(uuid, v); err != nil {
+		return nil, err
+	}
+	return d.SliceImage(v, 0)
+}
+
+// GetVolume retrieves a 3d volume from a version node given a geometry of voxels.
+func (d *Data) GetVolume(uuid datastore.UUID, v VoxelHandler) ([]uint8, error) {
+	if err := d.GetVoxels(uuid, v); err != nil {
+		return nil, err
+	}
+	return v.Data(), nil
 }
 
 // PutImage adds a 2d image within given geometry to a version node.   Since chunk sizes
@@ -1243,42 +1332,6 @@ func (d *Data) PutImage(uuid datastore.UUID, v VoxelHandler) error {
 
 	return nil
 }
-
-/*
-func (d *Data) GetVolume(versionID dvid.LocalID, vol Geometry) (data []byte, err error) {
-	startTime := time.Now()
-
-	bytesPerVoxel := d.BytesPerVoxel()
-	numBytes := int64(bytesPerVoxel) * vol.NumVoxels()
-	voldata := make([]uint8, numBytes, numBytes)
-	operation := d.makeOp(&Voxels{vol, voldata, 0}, versionID, GetOp)
-
-	// Perform operation using mapping
-	err = operation.Map()
-	if err != nil {
-		return
-	}
-	operation.Wait()
-
-	// server.Subvolume is a thrift-defined data structure
-	encodedVol := &server.Subvolume{
-		Data:    proto.String(string(d.DataName())),
-		OffsetX: proto.Int32(operation.data.Geometry.StartPoint()[0]),
-		OffsetY: proto.Int32(operation.data.Geometry.StartPoint()[1]),
-		OffsetZ: proto.Int32(operation.data.Geometry.StartPoint()[2]),
-		SizeX:   proto.Uint32(uint32(operation.data.Geometry.Size()[0])),
-		SizeY:   proto.Uint32(uint32(operation.data.Geometry.Size()[1])),
-		SizeZ:   proto.Uint32(uint32(operation.data.Geometry.Size()[2])),
-		Data:    []byte(operation.data.data),
-	}
-	data, err = proto.Marshal(encodedVol)
-
-	dvid.ElapsedTime(dvid.Normal, startTime, "%s %s (%s) %s", GetOp, operation.DataName(),
-		operation.DatatypeName(), operation.data.Geometry)
-
-	return
-}
-*/
 
 // Writes a slice of data into a block.
 func (d *Data) writeBlock(key *datastore.DataKey, v VoxelHandler, block []uint8) error {

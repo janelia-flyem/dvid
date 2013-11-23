@@ -5,7 +5,13 @@ import (
 )
 
 func init() {
-	grayscale := NewDatatype(1, 1)
+	values := []DataValue{
+		{
+			DataType: "uint8",
+			Label:    "grayscale",
+		},
+	}
+	grayscale := NewDatatype(1, 1, values)
 	grayscale.DatatypeID = &datastore.DatatypeID{
 		Name:    "grayscale8",
 		Url:     "github.com/janelia-flyem/dvid/datatype/voxels/grayscale8.go",
