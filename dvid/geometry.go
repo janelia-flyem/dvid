@@ -126,7 +126,7 @@ func (s DataShape) Duplicate() DataShape {
 
 // Equals returns true if the passed DataShape is identical.
 func (s DataShape) Equals(s2 DataShape) bool {
-	if s.dims == s2.dims {
+	if s.dims == s2.dims && len(s.shape) == len(s2.shape) {
 		for i, dim := range s.shape {
 			if s2.shape[i] != dim {
 				return false
