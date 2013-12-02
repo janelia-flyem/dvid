@@ -534,22 +534,39 @@ type axis struct {
 	Resolution float32
 	Units      string
 	Size       int32
+	Offset     int32
 }
 
 // TODO -- Allow explicit setting of axes labels.
 var axesName = []string{"X", "Y", "Z", "t", "c"}
 
 // NdDataSchema returns the JSON schema for this Data
-func (d *Data) NdDataSchema() (jsonStr string, err error) {
-	var schema dataSchema
+func (d *Data) NdDataSchema() (string, error) {
+	var err error
+	var size, offset dvid.Point
+
 	dims := int(d.BlockSize.NumDims())
+	if d.MinPoint == nil || d.MaxPoint == nil {
+		zeroPt := make([]int32, dims)
+		size, err = dvid.NewPoint(zeroPt)
+		if err != nil {
+			return "", err
+		}
+		offset = size
+	} else {
+		size = d.MaxPoint.Sub(d.MinPoint).AddScalar(1)
+		offset = d.MinPoint
+	}
+
+	var schema dataSchema
 	schema.Axes = []axis{}
 	for dim := 0; dim < dims; dim++ {
 		schema.Axes = append(schema.Axes, axis{
 			Label:      axesName[dim],
 			Resolution: d.VoxelRes[dim],
 			Units:      d.VoxelResUnits[dim],
-			Size:       d.BlockSize.Value(uint8(dim)),
+			Size:       size.Value(uint8(dim)),
+			Offset:     offset.Value(uint8(dim)),
 		})
 	}
 	schema.Values = d.Values
@@ -907,13 +924,15 @@ func (d *Data) LoadXY(request datastore.Request, reply *datastore.Response) erro
 		}
 	}()
 
-	// Iterate through slices.
+	// Setup the iteration by reading the first slice to establish image sizes.
 	var numBlocks int
 	var blocks [][]uint8
 	var keys []*datastore.DataKey
 
 	fileNum := 1
 	blockSize := d.BlockSize.(dvid.Point3d)
+
+	zInBlock := offset.Value(2) % blockSize.Value(2)
 
 	for _, filename := range filenames {
 		sliceTime := time.Now()
@@ -939,7 +958,6 @@ func (d *Data) LoadXY(request datastore.Request, reply *datastore.Response) erro
 		}
 
 		// Initialize new map of blocks if we are at new slice.
-		zInBlock := offset.Value(2) % blockSize.Value(2)
 		var loadOld bool // Do we need to load old block values before storing?
 		if blocks == nil || zInBlock == 0 {
 			numBlocks = d.getNumBlocks(slice)
@@ -1032,9 +1050,8 @@ func (d *Data) LoadXY(request datastore.Request, reply *datastore.Response) erro
 					wg.Done()
 				}()
 				// If we can do write batches, use it, else do put ranges.
-				// With write batches, we write the byte slices immediately and
-				// for implementations like leveldb, a copy is made.  The put range
-				// approach can lead to duplicated memory.
+				// With write batches, we write the byte slices immediately.
+				// The put range approach can lead to duplicated memory.
 				batcher, ok := db.(storage.Batcher)
 				if ok {
 					batch := batcher.NewBatch()

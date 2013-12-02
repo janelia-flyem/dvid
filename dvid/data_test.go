@@ -42,6 +42,9 @@ func (s *DataSuite) TestPoint3d(c *C) {
 
 	c.Assert(a.String(), Equals, "(10,21,837821)")
 
+	result = a.AddScalar(10)
+	c.Assert(result, Equals, Point3d{20, 31, 837831})
+
 	result, _ = a.Max(b)
 	c.Assert(result, Equals, Point3d{78312, 21, 837821})
 	result, _ = b.Max(a)

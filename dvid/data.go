@@ -33,6 +33,9 @@ type Point interface {
 	// Modify returns a copy of the point with the given (dim, value) components modified.
 	Modify(map[uint8]int32) Point
 
+	// AddScalar adds a scalar value to this point.
+	AddScalar(int32) Point
+
 	// Add returns the addition of two points.
 	Add(Point) Point
 
@@ -73,6 +76,25 @@ type Chunkable interface {
 	// is a block of voxels, then the returned point is in that block coordinate space with
 	// the first voxel in the block as the origin or zero point.
 	PointInChunk(size Point) Point
+}
+
+// NewPoint returns an appropriate Point implementation for the number of dimensions
+// passed in.
+func NewPoint(values []int32) (Point, error) {
+	switch len(values) {
+	case 0, 1:
+		return nil, fmt.Errorf("No Point implementation for 0 or 1-d slice")
+	case 2:
+		return Point2d{values[0], values[1]}, nil
+	case 3:
+		return Point3d{values[0], values[1], values[2]}, nil
+	default:
+		p := make(PointNd, len(values))
+		for i, value := range values {
+			p[i] = value
+		}
+		return p, nil
+	}
 }
 
 // --- Implementations of the above interfaces in 2d and 3d ---------
@@ -122,6 +144,11 @@ func (p Point2d) Modify(settings map[uint8]int32) Point {
 		altered[dim] = value
 	}
 	return altered
+}
+
+// AddScalar adds a scalar value to this point.
+func (p Point2d) AddScalar(value int32) Point {
+	return Point2d{p[0] + value, p[1] + value}
 }
 
 // Add returns the addition of two points.
@@ -269,6 +296,11 @@ func (p Point3d) Modify(settings map[uint8]int32) Point {
 		altered[dim] = value
 	}
 	return altered
+}
+
+// AddScalar adds a scalar value to this point.
+func (p Point3d) AddScalar(value int32) Point {
+	return Point3d{p[0] + value, p[1] + value, p[2] + value}
 }
 
 // Add returns the addition of two points.
@@ -435,6 +467,15 @@ func (p PointNd) Modify(settings map[uint8]int32) Point {
 		p[dim] = value
 	}
 	return p
+}
+
+// AddScalar adds a scalar value to this point.
+func (p PointNd) AddScalar(value int32) Point {
+	result := make(PointNd, len(p))
+	for i, _ := range p {
+		result[i] = p[i] + value
+	}
+	return result
 }
 
 // Add returns the addition of two points.
