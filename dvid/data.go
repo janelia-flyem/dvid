@@ -396,6 +396,174 @@ func (p Point3d) PointInChunk(size Point) Point {
 	}
 }
 
+// PointNd is a slice of N 32-bit signed integers that implements the Point interface.
+type PointNd []int32
+
+// --- Point interface support -----
+
+// NumDims returns the dimensionality of this point.
+func (p PointNd) NumDims() uint8 {
+	return uint8(len(p))
+}
+
+// Value returns the point's value for the specified dimension without checking dim bounds.
+func (p PointNd) Value(dim uint8) int32 {
+	return p[dim]
+}
+
+// CheckedValue returns the point's value for the specified dimension and checks dim bounds.
+func (p PointNd) CheckedValue(dim uint8) (int32, error) {
+	if int(dim) >= len(p) {
+		return 0, fmt.Errorf("Cannot return dimension %d of %d-d point!", dim, len(p))
+	}
+	return p[dim], nil
+}
+
+// Duplicate returns a copy of the point without any pointer references.
+func (p PointNd) Duplicate() Point {
+	nd := make(PointNd, len(p))
+	copy(nd, p)
+	return nd
+}
+
+// Modify returns a copy of the point with the given (dim, value) components modified.
+func (p PointNd) Modify(settings map[uint8]int32) Point {
+	if settings == nil {
+		return p
+	}
+	for dim, value := range settings {
+		p[dim] = value
+	}
+	return p
+}
+
+// Add returns the addition of two points.
+func (p PointNd) Add(x Point) Point {
+	p2 := x.(PointNd)
+	result := make(PointNd, len(p))
+	for i, _ := range p {
+		result[i] = p[i] + p2[i]
+	}
+	return result
+}
+
+// Sub returns the subtraction of the passed point from the receiver.
+func (p PointNd) Sub(x Point) Point {
+	p2 := x.(PointNd)
+	result := make(PointNd, len(p))
+	for i, _ := range p {
+		result[i] = p[i] - p2[i]
+	}
+	return result
+}
+
+// Mod returns a point where each component is the receiver modulo the passed point's components.
+func (p PointNd) Mod(x Point) Point {
+	p2 := x.(PointNd)
+	result := make(PointNd, len(p))
+	for i, _ := range p {
+		result[i] = p[i] % p2[i]
+	}
+	return result
+}
+
+// Div returns the division of the receiver by the passed point.
+func (p PointNd) Div(x Point) Point {
+	p2 := x.(PointNd)
+	result := make(PointNd, len(p))
+	for i, _ := range p {
+		result[i] = p[i] / p2[i]
+	}
+	return result
+}
+
+// Div returns the multiplication of the receiver by the passed point.
+func (p PointNd) Mult(x Point) Point {
+	p2 := x.(PointNd)
+	result := make(PointNd, len(p))
+	for i, _ := range p {
+		result[i] = p[i] * p2[i]
+	}
+	return result
+}
+
+// Max returns a Point where each of its elements are the maximum of two points' elements.
+func (p PointNd) Max(x Point) (Point, bool) {
+	p2 := x.(PointNd)
+	var changed bool
+	result := make(PointNd, len(p))
+	for i, _ := range p {
+		if p[i] < p2[i] {
+			result[i] = p2[i]
+			changed = true
+		} else {
+			result[i] = p[i]
+		}
+	}
+	return result, changed
+}
+
+// Min returns a Point where each of its elements are the minimum of two points' elements.
+func (p PointNd) Min(x Point) (Point, bool) {
+	p2 := x.(PointNd)
+	var changed bool
+	result := make(PointNd, len(p))
+	for i, _ := range p {
+		if p[i] > p2[i] {
+			result[i] = p2[i]
+			changed = true
+		} else {
+			result[i] = p[i]
+		}
+	}
+	return result, changed
+}
+
+// Distance returns the integer distance (rounding down).
+func (p PointNd) Distance(x Point) int32 {
+	p2 := x.(PointNd)
+	var sqrDist float64
+	for i, _ := range p {
+		delta := p[i] - p2[i]
+		sqrDist += float64(delta * delta)
+	}
+	return int32(math.Sqrt(sqrDist))
+}
+
+func (p PointNd) String() string {
+	output := "("
+	for _, val := range p {
+		if len(output) > 1 {
+			output += ","
+		}
+		output += strconv.Itoa(int(val))
+	}
+	output += ")"
+	return output
+}
+
+// --- Chunkable interface support -----
+
+// Chunk returns the chunk space coordinate of the chunk containing the point.
+func (p PointNd) Chunk(x Point) Point {
+	size := x.(PointNd)
+	result := make(PointNd, len(p))
+	for i, _ := range p {
+		result[i] = p[i] / size[i]
+	}
+	return result
+}
+
+// ChunkPoint returns a point in containing block space for the given point.
+func (p PointNd) PointInChunk(x Point) Point {
+	size := x.(PointNd)
+	result := make(PointNd, len(p))
+	for i, _ := range p {
+		result[i] = p[i] % size[i]
+	}
+	return result
+}
+
 // Convert a slice of int32 into an appropriate Point implementation.
 func SliceToPoint(coord []int32) (p Point, err error) {
 	switch len(coord) {
@@ -406,7 +574,7 @@ func SliceToPoint(coord []int32) (p Point, err error) {
 	case 3:
 		return Point3d{coord[0], coord[1], coord[2]}, nil
 	default:
-		return nil, fmt.Errorf("DVID does not currently support nD points > 3 dimensions")
+		return PointNd(coord), nil
 	}
 }
 
@@ -421,7 +589,7 @@ func StringToPoint(str, separator string) (p Point, err error) {
 	case 3:
 		p, err = NdString(elems).Point3d()
 	default:
-		return nil, fmt.Errorf("DVID does not currently support nD points > 3 dimensions")
+		p, err = NdString(elems).PointNd()
 	}
 	return
 }
@@ -490,4 +658,16 @@ func (n NdString) Point3d() (p Point3d, err error) {
 		return
 	}
 	return Point3d{int32(i), int32(j), int32(k)}, nil
+}
+
+func (n NdString) PointNd() (PointNd, error) {
+	result := make(PointNd, len(n))
+	for i, _ := range n {
+		val, err := strconv.ParseInt(n[i], 10, 32)
+		if err != nil {
+			return nil, err
+		}
+		result[i] = int32(val)
+	}
+	return result, nil
 }
