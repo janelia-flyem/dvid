@@ -236,7 +236,6 @@ func (img *Image) Deserialize(b []byte) error {
 	}
 	rect := image.Rect(0, 0, int(dx), int(dy))
 	pix := []uint8(buffer.Bytes())
-	PrintNonZero("Right after deserializing", []byte(pix))
 
 	switch img.Which {
 	case 0:

@@ -143,8 +143,8 @@ func (c *Channel) String() string {
 }
 
 // Index returns a channel-specific Index
-func (c *Channel) Index(p dvid.Point) dvid.Index {
-	return dvid.IndexCZYX{c.channelNum, dvid.IndexZYX(p.(dvid.Point3d))}
+func (c *Channel) Index(p dvid.ChunkPoint) dvid.Index {
+	return dvid.IndexCZYX{c.channelNum, dvid.IndexZYX(p.(dvid.ChunkPoint3d))}
 }
 
 // IndexIterator returns an iterator that can move across the voxel geometry,
@@ -161,8 +161,8 @@ func (c *Channel) IndexIterator(chunkSize dvid.Point) (dvid.IndexIterator, error
 	}
 
 	blockSize := chunkSize.(dvid.Point3d)
-	begBlock := begVoxel.Chunk(blockSize).(dvid.Point3d)
-	endBlock := endVoxel.Chunk(blockSize).(dvid.Point3d)
+	begBlock := begVoxel.Chunk(blockSize).(dvid.ChunkPoint3d)
+	endBlock := endVoxel.Chunk(blockSize).(dvid.ChunkPoint3d)
 
 	return dvid.NewIndexCZYXIterator(c.channelNum, c.Geometry, begBlock, endBlock), nil
 }

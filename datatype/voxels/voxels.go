@@ -233,7 +233,7 @@ type VoxelHandler interface {
 
 	Stride() int32
 
-	Index(p dvid.Point) dvid.Index
+	Index(p dvid.ChunkPoint) dvid.Index
 
 	IndexIterator(chunkSize dvid.Point) (dvid.IndexIterator, error)
 }
@@ -323,8 +323,8 @@ func (v *Voxels) ByteOrder() binary.ByteOrder {
 	return v.byteOrder
 }
 
-func (v *Voxels) Index(p dvid.Point) dvid.Index {
-	return dvid.IndexZYX(p.(dvid.Point3d))
+func (v *Voxels) Index(c dvid.ChunkPoint) dvid.Index {
+	return dvid.IndexZYX(c.(dvid.ChunkPoint3d))
 }
 
 // IndexIterator returns an iterator that can move across the voxel geometry,
@@ -339,8 +339,8 @@ func (v *Voxels) IndexIterator(chunkSize dvid.Point) (dvid.IndexIterator, error)
 	if !ok {
 		return nil, fmt.Errorf("VoxelHandler EndPoint() cannot handle Chunkable points.")
 	}
-	begBlock := begVoxel.Chunk(chunkSize).(dvid.Point3d)
-	endBlock := endVoxel.Chunk(chunkSize).(dvid.Point3d)
+	begBlock := begVoxel.Chunk(chunkSize).(dvid.ChunkPoint3d)
+	endBlock := endVoxel.Chunk(chunkSize).(dvid.ChunkPoint3d)
 
 	return dvid.NewIndexZYXIterator(v.Geometry, begBlock, endBlock), nil
 }
@@ -1014,10 +1014,10 @@ func (d *Data) LoadXY(request datastore.Request, reply *datastore.Response) erro
 
 			begX := indexBeg.Value(0)
 			endX := indexEnd.Value(0)
-			p := dvid.Point3d{begX, indexBeg.Value(1), indexBeg.Value(2)}
+			c := dvid.ChunkPoint3d{begX, indexBeg.Value(1), indexBeg.Value(2)}
 			for x := begX; x <= endX; x++ {
-				p[0] = x
-				key := &datastore.DataKey{d.DsetID, d.ID, versionID, v.Index(p)}
+				c[0] = x
+				key := &datastore.DataKey{d.DsetID, d.ID, versionID, v.Index(c)}
 				keys[blockNum] = key
 				if fileNum == 1 || zInBlock == 0 {
 					blocks[blockNum] = make([]uint8, blockBytes)
@@ -1314,10 +1314,10 @@ func (d *Data) PutImage(uuid datastore.UUID, v VoxelHandler) error {
 			oldkv = keyvalues[oldI]
 		}
 		wg.Add(int(endX-begX) + 1)
-		p := dvid.Point3d{begX, indexBeg.Value(1), indexBeg.Value(2)}
+		c := dvid.ChunkPoint3d{begX, indexBeg.Value(1), indexBeg.Value(2)}
 		for x := begX; x <= endX; x++ {
-			p[0] = x
-			key := &datastore.DataKey{d.DsetID, d.ID, versionID, v.Index(p)}
+			c[0] = x
+			key := &datastore.DataKey{d.DsetID, d.ID, versionID, v.Index(c)}
 			// Check for this key among old key-value pairs and if so,
 			// send the old value into chunk handler.
 			if oldkv.K != nil {
@@ -1359,7 +1359,7 @@ func (d *Data) writeBlock(key *datastore.DataKey, v VoxelHandler, block []uint8)
 
 	// Compute the bounding voxel coordinates for this block.
 	blockSize := d.BlockSize.(dvid.Point3d)
-	minBlockVoxel := index.PointInChunk(blockSize)
+	minBlockVoxel := index.FirstPoint(blockSize)
 	maxBlockVoxel := minBlockVoxel.Add(blockSize.Sub(dvid.Point3d{1, 1, 1}))
 
 	// Compute the bound voxel coordinates for the data slice and adjust
@@ -1425,7 +1425,7 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 
 	// Compute the bounding voxel coordinates for this block.
 	blockSize := d.BlockSize.(dvid.Point3d)
-	minBlockVoxel := index.PointInChunk(blockSize)
+	minBlockVoxel := index.FirstPoint(blockSize)
 	maxBlockVoxel := minBlockVoxel.Add(blockSize.Sub(dvid.Point3d{1, 1, 1}))
 	//fmt.Printf("MinBlockVoxel: %s, MaxBlockVoxel: %s\n", minBlockVoxel, maxBlockVoxel)
 

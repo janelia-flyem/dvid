@@ -65,17 +65,24 @@ type Point interface {
 
 // Chunkable is an interface for n-dimensional points that can be partitioned into chunks.
 type Chunkable interface {
-	Point
-
 	// Chunk returns a point in chunk space, which partitions the underlying point space.
 	// For example, a chunk could be a tile (or a subvolume/block) and this returns the
 	// tile's coordinate in tile space.
-	Chunk(size Point) Point
+	Chunk(size Point) ChunkPoint
 
 	// PointInChunk returns a point in a particular chunk's space.  For example, if a chunk
 	// is a block of voxels, then the returned point is in that block coordinate space with
 	// the first voxel in the block as the origin or zero point.
 	PointInChunk(size Point) Point
+}
+
+// ChunkPoint describes a particular chunk in chunk space.
+// The binary representation of a chunk point must behave reasonably for both negative and
+// positive coordinates, e.g., when moving from -1 to 0 the binary representation isn't
+// discontinous so the lexicographical ordering switches.  The simplest way to achieve
+// this is to convert to an unsigned (positive) integer space where all coordinates are
+// greater or equal to (0,0,...).
+type ChunkPoint interface {
 }
 
 // NewPoint returns an appropriate Point implementation for the number of dimensions
@@ -98,6 +105,12 @@ func NewPoint(values []int32) (Point, error) {
 }
 
 // --- Implementations of the above interfaces in 2d and 3d ---------
+
+const CoordinateBits = 32
+
+// The middle value of a 32 bit space.  This should match the # of bits
+// used for coordinates.
+var middleValue int64 = 1 << (CoordinateBits - 1)
 
 // Point2d is a 2d point.
 type Point2d [2]int32
@@ -242,19 +255,22 @@ func (pt Point2d) String() string {
 
 // --- Chunkable interface support -----
 
+// ChunkPoint2d handles unsigned chunk coordinates.
+type ChunkPoint2d [2]uint32
+
 // Chunk returns the chunk space coordinate of the chunk containing the point.
-func (p Point2d) Chunk(size Point) Point {
-	return Point2d{
-		p[0] / size.Value(0),
-		p[1] / size.Value(1),
+func (p Point2d) Chunk(size Point) ChunkPoint {
+	return ChunkPoint2d{
+		uint32((int64(p[0]) + middleValue) / int64(size.Value(0))),
+		uint32((int64(p[1]) + middleValue) / int64(size.Value(1))),
 	}
 }
 
-// ChunkPoint returns a point in containing block space for the given point.
+// PointInChunk returns a point in containing block (chunk) space for the given point.
 func (p Point2d) PointInChunk(size Point) Point {
 	return Point2d{
-		p[0] % size.Value(0),
-		p[1] % size.Value(1),
+		int32((int64(p[0]) + middleValue) % int64(size.Value(0))),
+		int32((int64(p[1]) + middleValue) % int64(size.Value(1))),
 	}
 }
 
@@ -408,23 +424,24 @@ func (p Point3d) String() string {
 
 // --- Chunkable interface support -----
 
+// ChunkPoint3d handles unsigned chunk coordinates.
+type ChunkPoint3d [3]uint32
+
 // Chunk returns the chunk space coordinate of the chunk containing the point.
-func (p Point3d) Chunk(size Point) Point {
-	size3d := size.(Point3d)
-	return Point3d{
-		p[0] / size3d[0],
-		p[1] / size3d[1],
-		p[2] / size3d[2],
+func (p Point3d) Chunk(size Point) ChunkPoint {
+	return ChunkPoint3d{
+		uint32((int64(p[0]) + middleValue) / int64(size.Value(0))),
+		uint32((int64(p[1]) + middleValue) / int64(size.Value(1))),
+		uint32((int64(p[2]) + middleValue) / int64(size.Value(2))),
 	}
 }
 
-// ChunkPoint returns a point in containing block space for the given point.
+// PointInChunk returns a point in containing block (chunk) space for the given point.
 func (p Point3d) PointInChunk(size Point) Point {
-	size3d := size.(Point3d)
 	return Point3d{
-		p[0] % size3d[0],
-		p[1] % size3d[1],
-		p[2] % size3d[2],
+		int32((int64(p[0]) + middleValue) % int64(size.Value(0))),
+		int32((int64(p[1]) + middleValue) % int64(size.Value(1))),
+		int32((int64(p[2]) + middleValue) % int64(size.Value(2))),
 	}
 }
 
@@ -585,24 +602,25 @@ func (p PointNd) String() string {
 
 // --- Chunkable interface support -----
 
+// ChunkPointNd handles unsigned chunk coordinates.
+type ChunkPointNd []uint32
+
 // Chunk returns the chunk space coordinate of the chunk containing the point.
-func (p PointNd) Chunk(x Point) Point {
-	size := x.(PointNd)
-	result := make(PointNd, len(p))
+func (p PointNd) Chunk(size Point) ChunkPoint {
+	chunkPoint := make(ChunkPointNd, len(p))
 	for i, _ := range p {
-		result[i] = p[i] / size[i]
+		chunkPoint[i] = uint32((int64(p[i]) + middleValue) / int64(size.Value(uint8(i))))
 	}
-	return result
+	return chunkPoint
 }
 
-// ChunkPoint returns a point in containing block space for the given point.
-func (p PointNd) PointInChunk(x Point) Point {
-	size := x.(PointNd)
-	result := make(PointNd, len(p))
+// PointInChunk returns a point in containing block (chunk) space for the given point.
+func (p PointNd) PointInChunk(size Point) Point {
+	point := make(PointNd, len(p))
 	for i, _ := range p {
-		result[i] = p[i] % size[i]
+		point[i] = int32((int64(p[i]) + middleValue) % int64(size.Value(uint8(i))))
 	}
-	return result
+	return point
 }
 
 // Convert a slice of int32 into an appropriate Point implementation.

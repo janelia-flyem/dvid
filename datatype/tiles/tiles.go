@@ -639,16 +639,8 @@ func (d *Data) ConstructTiles(uuidStr string, config dvid.Config) error {
 	}
 
 	// Get voxel extents of volume.
-	minPt := dvid.Point3d{
-		src.MinIndex.Value(0) * src.BlockSize.Value(0),
-		src.MinIndex.Value(1) * src.BlockSize.Value(1),
-		src.MinIndex.Value(2) * src.BlockSize.Value(2),
-	}
-	maxPt := dvid.Point3d{
-		(src.MaxIndex.Value(0)+1)*src.BlockSize.Value(0) - 1,
-		(src.MaxIndex.Value(1)+1)*src.BlockSize.Value(1) - 1,
-		(src.MaxIndex.Value(2)+1)*src.BlockSize.Value(2) - 1,
-	}
+	minPt := src.MinIndex.(dvid.PointIndexer).FirstPoint(src.BlockSize).(dvid.Point3d)
+	maxPt := src.MaxIndex.(dvid.PointIndexer).LastPoint(src.BlockSize).(dvid.Point3d)
 	fmt.Printf("MinIndex Z: %d, MaxIndex Z: %d\n", src.MinIndex.Value(2), src.MaxIndex.Value(2))
 	fmt.Printf("minPt: %s, maxPt: %s, blockSize: %s\n", minPt, maxPt, src.BlockSize)
 

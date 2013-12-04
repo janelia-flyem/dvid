@@ -1,8 +1,9 @@
 package dvid
 
 import (
-	. "github.com/janelia-flyem/go/gocheck"
 	"testing"
+
+	. "github.com/janelia-flyem/go/gocheck"
 )
 
 // Hook up gocheck into the "go test" runner.
@@ -55,22 +56,22 @@ func (s *DataSuite) TestPoint3d(c *C) {
 	result, _ = b.Min(a)
 	c.Assert(result, Equals, Point3d{10, -200, 40123})
 
-	d = Point3d{111, 213, 678}
+	d = Point3d{111, -213, 678}
 	blockSize := Point3d{20, 30, 40}
 	g := d.Chunk(blockSize)
-	c.Assert(g, Equals, Point3d{5, 7, 16})
+	c.Assert(g, Equals, ChunkPoint3d{0x666666b, 0x444443d, 0x3333344})
 
 	d = Point3d{111, 213, 680}
 	g = d.Chunk(blockSize)
-	c.Assert(g, Equals, Point3d{5, 7, 17})
+	c.Assert(g, Equals, ChunkPoint3d{0x666666b, 0x444444b, 0x3333344})
 
 	d = Point3d{111, 213, 678}
 	blockSize = Point3d{20, 30, 1}
 	g = d.Chunk(blockSize)
-	c.Assert(g, Equals, Point3d{5, 7, 678})
+	c.Assert(g, Equals, ChunkPoint3d{0x666666b, 0x444444b, 0x800002a6})
 
 	result = d.PointInChunk(blockSize)
-	c.Assert(result, Equals, Point3d{11, 3, 0})
+	c.Assert(result, Equals, Point3d{19, 11, 0})
 }
 
 func (s *DataSuite) TestPointNd(c *C) {
@@ -117,22 +118,22 @@ func (s *DataSuite) TestPointNd(c *C) {
 	result, _ = b.Min(a)
 	c.Assert(result, DeepEquals, PointNd{10, -200, 40123, -100})
 
-	d = PointNd{111, 213, 678}
+	d = PointNd{111, -213, 678}
 	blockSize := PointNd{20, 30, 40}
 	g := d.Chunk(blockSize)
-	c.Assert(g, DeepEquals, PointNd{5, 7, 16})
+	c.Assert(g, DeepEquals, ChunkPointNd{0x666666b, 0x444443d, 0x3333344})
 
 	d = PointNd{111, 213, 680}
 	g = d.Chunk(blockSize)
-	c.Assert(g, DeepEquals, PointNd{5, 7, 17})
+	c.Assert(g, DeepEquals, ChunkPointNd{0x666666b, 0x444444b, 0x3333344})
 
 	d = PointNd{111, 213, 678}
 	blockSize = PointNd{20, 30, 1}
 	g = d.Chunk(blockSize)
-	c.Assert(g, DeepEquals, PointNd{5, 7, 678})
+	c.Assert(g, DeepEquals, ChunkPointNd{0x666666b, 0x444444b, 0x800002a6})
 
 	result = d.PointInChunk(blockSize)
-	c.Assert(result, DeepEquals, PointNd{11, 3, 0})
+	c.Assert(result, DeepEquals, PointNd{19, 11, 0})
 }
 
 func (s *DataSuite) TestChunk(c *C) {

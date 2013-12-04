@@ -92,12 +92,13 @@ type PointIndexer interface {
 	Index
 
 	// Value returns the index point's value for the specified dimension without checking dim bounds.
-	Value(dim uint8) int32
+	Value(dim uint8) uint32
 
-	// ChunkPoint returns the first point within a chunk.  For example, if a chunk
-	// is a block of voxels, then the ChunkPoint is the point corresponding to the
-	// first voxel in the block.
-	PointInChunk(size Point) Point
+	// FirstPoint returns the first point within a chunk given an index's iteration.
+	FirstPoint(size Point) Point
+
+	// LastPoint returns the last point within a chunk given an index's iteration.
+	LastPoint(size Point) Point
 
 	// Min returns a PointIndexer that is the minimum of its value and the passed one.
 	Min(PointIndexer) (min PointIndexer, changed bool)
@@ -186,7 +187,7 @@ func (i IndexUint8) IndexFromBytes(b []byte) (Index, error) {
 
 // IndexZYX implements the Index interface and provides simple indexing on Z,
 // then Y, then X.
-type IndexZYX Point3d
+type IndexZYX ChunkPoint3d
 
 func (i IndexZYX) Duplicate() Index {
 	dup := i
@@ -197,7 +198,11 @@ func (i IndexZYX) String() string {
 	return hex.EncodeToString(i.Bytes())
 }
 
-// Bytes returns a byte representation of the Index.
+// Bytes returns a byte representation of the Index.  This should layout
+// integer space as consecutive in binary representation.
+// TODO: don't just use binary representation of negative numbers because of
+// discontinuity at -1 to 0 (most significant bit shouldn't be used to
+// signal negative numbers).  Instead add 1 >> 31 and store as unsigned.
 func (i IndexZYX) Bytes() []byte {
 	buf := new(bytes.Buffer)
 	binary.Write(buf, binary.BigEndian, i[2])
@@ -220,27 +225,36 @@ func (i IndexZYX) Scheme() string {
 // IndexFromBytes returns an index from bytes.  The passed Index is used just
 // to choose the appropriate byte decoding scheme.
 func (i IndexZYX) IndexFromBytes(b []byte) (Index, error) {
-	z := int32(binary.BigEndian.Uint32(b[0:4]))
-	y := int32(binary.BigEndian.Uint32(b[4:8]))
-	x := int32(binary.BigEndian.Uint32(b[8:12]))
+	z := binary.BigEndian.Uint32(b[0:4])
+	y := binary.BigEndian.Uint32(b[4:8])
+	x := binary.BigEndian.Uint32(b[8:12])
 	return &IndexZYX{x, y, z}, nil
 }
 
 // ------- PointIndexer interface ----------
 
 // Value returns the value at the specified dimension for this index.
-func (i IndexZYX) Value(dim uint8) int32 {
+func (i IndexZYX) Value(dim uint8) uint32 {
 	return i[dim]
 }
 
-// ChunkPoint returns the voxel coordinate at the top left corner of the chunk
-// corresponding to the index.
-func (i IndexZYX) PointInChunk(size Point) Point {
-	size3d := size.(Point3d)
+// FirstPoint returns the first voxel coordinate for a chunk based on the index's
+// standard iteration.
+func (i IndexZYX) FirstPoint(size Point) Point {
 	return Point3d{
-		i[0] * size3d[0],
-		i[1] * size3d[1],
-		i[2] * size3d[2],
+		int32(int64(i[0])*int64(size.Value(0)) - middleValue),
+		int32(int64(i[1])*int64(size.Value(1)) - middleValue),
+		int32(int64(i[2])*int64(size.Value(2)) - middleValue),
+	}
+}
+
+// LastPoint returns the last voxel coordinate for a chunk based on the index's
+// standard iteration.
+func (i IndexZYX) LastPoint(size Point) Point {
+	return Point3d{
+		int32(int64(i[0]+1)*int64(size.Value(0)) - middleValue - 1),
+		int32(int64(i[1]+1)*int64(size.Value(1)) - middleValue - 1),
+		int32(int64(i[2]+1)*int64(size.Value(2)) - middleValue - 1),
 	}
 }
 
@@ -285,14 +299,14 @@ func (i IndexZYX) Max(idx PointIndexer) (PointIndexer, bool) {
 // ----- IndexIterator implementation ------------
 type IndexZYXIterator struct {
 	geom     Geometry
-	x, y, z  int32
-	begBlock Point3d
-	endBlock Point3d
+	x, y, z  uint32
+	begBlock ChunkPoint3d
+	endBlock ChunkPoint3d
 	endBytes []byte
 }
 
 // NewIndexZYXIterator returns an IndexIterator that iterates over XYZ space.
-func NewIndexZYXIterator(geom Geometry, start, end Point3d) *IndexZYXIterator {
+func NewIndexZYXIterator(geom Geometry, start, end ChunkPoint3d) *IndexZYXIterator {
 	return &IndexZYXIterator{
 		geom:     geom,
 		x:        start[0],
@@ -370,14 +384,14 @@ func (i IndexCZYX) IndexFromBytes(b []byte) (Index, error) {
 type IndexCZYXIterator struct {
 	channel  int32
 	geom     Geometry
-	x, y, z  int32
-	begBlock Point3d
-	endBlock Point3d
+	x, y, z  uint32
+	begBlock ChunkPoint3d
+	endBlock ChunkPoint3d
 	endBytes []byte
 }
 
 // NewIndexCZYXIterator returns an IndexIterator that iterates over XYZ space for a C.
-func NewIndexCZYXIterator(channel int32, geom Geometry, start, end Point3d) *IndexCZYXIterator {
+func NewIndexCZYXIterator(channel int32, geom Geometry, start, end ChunkPoint3d) *IndexCZYXIterator {
 	endIndex := IndexCZYX{channel, IndexZYX{end[0], end[1], end[2]}}
 	return &IndexCZYXIterator{
 		channel:  channel,
