@@ -780,7 +780,7 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 		return fmt.Errorf("DVID currently supports shapes of only 2 and 3 dimensions")
 	}
 
-	dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: %s", r.Method, dataShape)
+	dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: %s (%s)", r.Method, dataShape, r.URL)
 	return nil
 }
 
@@ -932,8 +932,6 @@ func (d *Data) LoadXY(request datastore.Request, reply *datastore.Response) erro
 	fileNum := 1
 	blockSize := d.BlockSize.(dvid.Point3d)
 
-	zInBlock := offset.Value(2) % blockSize.Value(2)
-
 	for _, filename := range filenames {
 		sliceTime := time.Now()
 		img, _, err := dvid.ImageFromFile(filename)
@@ -958,6 +956,8 @@ func (d *Data) LoadXY(request datastore.Request, reply *datastore.Response) erro
 		}
 
 		// Initialize new map of blocks if we are at new slice.
+		zInBlock := offset.Value(2) % blockSize.Value(2)
+
 		var loadOld bool // Do we need to load old block values before storing?
 		if blocks == nil || zInBlock == 0 {
 			numBlocks = d.getNumBlocks(slice)

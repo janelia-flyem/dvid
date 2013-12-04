@@ -619,7 +619,7 @@ func SliceToPoint(coord []int32) (p Point, err error) {
 	}
 }
 
-// Parse a string of format "%d,%d,%d,..." into a Point
+// Parse a string of format "%d<sep>%d<sep>%d,..." into a Point
 func StringToPoint(str, separator string) (p Point, err error) {
 	elems := strings.Split(str, separator)
 	switch len(elems) {
