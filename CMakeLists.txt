@@ -136,13 +136,18 @@ else ()
         DEPENDS     ${golang_NAME} snappy-go
         COMMENT     "Added pure Go implementation of leveldb")
 
+    add_custom_target (gofuse
+        ${BUILDEM_ENV_STRING} go get ${GO_GET} bazil.org/fuse
+        DEPENDS     ${golang_NAME}
+        COMMENT     "Added FUSE Go library")
+
     # Build DVID with chosen backend
     add_custom_target (dvid-exe
         ${BUILDEM_ENV_STRING} ${GO_ENV} ${CGO_FLAGS} go build -o ${BUILDEM_BIN_DIR}/dvid 
             -v -tags '${DVID_BACKEND}' dvid.go 
         WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
         DEPENDS     ${golang_NAME} ${snappy_NAME} ${DVID_BACKEND_DEPEND}
-                    gopackages extensions
+                    gopackages extensions gofuse
         COMMENT     "Compiled and installed dvid executable.")
 
     # Build DVID with pure Go leveldb implementation
