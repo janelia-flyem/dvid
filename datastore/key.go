@@ -13,20 +13,9 @@ import (
 	"github.com/janelia-flyem/dvid/storage"
 )
 
-// DatasetLocalID is a DVID server-specific ID that is more compact than a UUID.
-type DatasetLocalID dvid.LocalID32
-
 const maxDatasetLocalID = dvid.MaxLocalID32
 
-// DataLocalID is a DVID server-specific ID that is more compact than a (UUID, Data URL).
-type DataLocalID dvid.LocalID
-
 const maxDataLocalID = dvid.MaxLocalID
-
-// VersionalLocalID is a DVID server-specific ID that is more compact than a UUID.
-// We assume we do not need more than 16-bits to represent the number of nodes in a
-// version DAG.
-type VersionLocalID dvid.LocalID
 
 const (
 	// Key group that hold data for Datasets
@@ -95,7 +84,7 @@ func (k DatasetsKey) String() string {
 
 // DatasetKey is an implementation of storage.Key for Dataset persistence.
 type DatasetKey struct {
-	Dataset DatasetLocalID
+	Dataset dvid.DatasetLocalID
 }
 
 func (k DatasetKey) KeyType() storage.KeyType {
@@ -110,7 +99,7 @@ func (k DatasetKey) BytesToKey(b []byte) (storage.Key, error) {
 		return nil, fmt.Errorf("Cannot convert %s Key Type into DatasetKey", KeyType(b[0]))
 	}
 	dataset, _ := dvid.LocalID32FromBytes(b[1:])
-	return &DatasetKey{DatasetLocalID(dataset)}, nil
+	return &DatasetKey{dvid.DatasetLocalID(dataset)}, nil
 }
 
 func (k DatasetKey) Bytes() (b []byte) {
@@ -147,14 +136,14 @@ func MaxDatasetKey() storage.Key {
 */
 type DataKey struct {
 	// The DVID server-specific 32-bit ID for a dataset.
-	Dataset DatasetLocalID
+	Dataset dvid.DatasetLocalID
 
 	// The DVID server-specific data index that is unique per dataset.
-	Data DataLocalID
+	Data dvid.DataLocalID
 
 	// The DVID server-specific version index that is fewer bytes than a
 	// complete UUID and unique per dataset.
-	Version VersionLocalID
+	Version dvid.VersionLocalID
 
 	// The datatype-specific (usually spatiotemporal) index that allows partitioning
 	// of the data.  In the case of voxels, this could be a (x, y, z) coordinate
@@ -163,7 +152,7 @@ type DataKey struct {
 }
 
 // DataKey returns a DataKey for this data given a local version and a data-specific Index.
-func (d *Data) DataKey(versionID VersionLocalID, index dvid.Index) *DataKey {
+func (d *Data) DataKey(versionID dvid.VersionLocalID, index dvid.Index) *DataKey {
 	return &DataKey{d.DsetID, d.ID, versionID, index}
 }
 
@@ -189,7 +178,7 @@ func (key *DataKey) KeyType() storage.KeyType {
 
 // BytesToKey returns a DataKey given a slice of bytes
 func (key *DataKey) BytesToKey(b []byte) (storage.Key, error) {
-	if len(b) < 10 {
+	if len(b) < 9 {
 		return nil, fmt.Errorf("Malformed DataKey bytes (too few): %x", b)
 	}
 	if b[0] != byte(KeyData) {
@@ -202,8 +191,13 @@ func (key *DataKey) BytesToKey(b []byte) (storage.Key, error) {
 	start += length
 	version, _ := dvid.LocalIDFromBytes(b[start:])
 	start += length
-	index, err := key.Index.IndexFromBytes(b[start:])
-	return &DataKey{DatasetLocalID(dataset), DataLocalID(data), VersionLocalID(version), index}, err
+
+	var index dvid.Index
+	var err error
+	if start < len(b) {
+		index, err = key.Index.IndexFromBytes(b[start:])
+	}
+	return &DataKey{dvid.DatasetLocalID(dataset), dvid.DataLocalID(data), dvid.VersionLocalID(version), index}, err
 }
 
 // Bytes returns a slice of bytes derived from the concatenation of the key elements.
@@ -212,7 +206,9 @@ func (key *DataKey) Bytes() (b []byte) {
 	b = append(b, dvid.LocalID32(key.Dataset).Bytes()...)
 	b = append(b, dvid.LocalID(key.Data).Bytes()...)
 	b = append(b, dvid.LocalID(key.Version).Bytes()...)
-	b = append(b, key.Index.Bytes()...)
+	if key.Index != nil {
+		b = append(b, key.Index.Bytes()...)
+	}
 	return
 }
 

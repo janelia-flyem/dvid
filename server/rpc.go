@@ -132,7 +132,7 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 			}
 			reply.Text = fmt.Sprintf("Data %q [%s] added to node %s\n", dataname, typename, uuidStr)
 		default:
-			dataname := datastore.DataString(subcommand)
+			dataname := dvid.DataString(subcommand)
 			dataservice, err := runningService.DataService(uuid, dataname)
 			if err != nil {
 				return err
@@ -167,7 +167,7 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 			reply.Text = string(newuuid)
 
 		default:
-			dataname := datastore.DataString(descriptor)
+			dataname := dvid.DataString(descriptor)
 			var subcommand string
 			cmd.CommandArgs(3, &subcommand)
 			dataservice, err := runningService.DataService(uuid, dataname)

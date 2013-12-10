@@ -4,7 +4,6 @@ package storage
 
 import (
 	"bytes"
-	_ "fmt"
 
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/go/levigo"
@@ -251,21 +250,53 @@ func (db *LevelDB) GetRange(kStart, kEnd Key) (values []KeyValue, err error) {
 	values = []KeyValue{}
 	it.Seek(kStart.Bytes())
 	endBytes := kEnd.Bytes()
-	//	fmt.Printf("levigo.GetRange: %x -> %x\n", kStart.Bytes(), endBytes)
 	for {
 		if it.Valid() {
-			value := it.Value()
-			StoreBytesRead <- len(value)
 			if bytes.Compare(it.Key(), endBytes) > 0 {
 				return
 			}
-			//			fmt.Printf("          Valid: %x\n", it.Key())
+			value := it.Value()
+			StoreBytesRead <- len(value)
+
 			var key Key
 			key, err = kStart.BytesToKey(it.Key())
 			if err != nil {
 				return
 			}
 			values = append(values, KeyValue{key, value})
+			it.Next()
+		} else {
+			err = it.GetError()
+			return
+		}
+	}
+}
+
+// KeysInRange returns a range of present keys spanning (kStart, kEnd).  Values
+// associated with the keys are not read.
+func (db *LevelDB) KeysInRange(kStart, kEnd Key) (keys []Key, err error) {
+	dvid.StartCgo()
+	ro := levigo.NewReadOptions()
+	it := db.ldb.NewIterator(ro)
+	defer func() {
+		it.Close()
+		dvid.StopCgo()
+	}()
+
+	keys = []Key{}
+	it.Seek(kStart.Bytes())
+	endBytes := kEnd.Bytes()
+	for {
+		if it.Valid() {
+			if bytes.Compare(it.Key(), endBytes) > 0 {
+				return
+			}
+			var key Key
+			key, err = kStart.BytesToKey(it.Key())
+			if err != nil {
+				return
+			}
+			keys = append(keys, key)
 			it.Next()
 		} else {
 			err = it.GetError()

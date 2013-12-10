@@ -169,7 +169,7 @@ func init() {
 	gob.Register(&IndexTile{})
 }
 
-func getSourceVoxels(uuid datastore.UUID, name datastore.DataString) (*voxels.Data, error) {
+func getSourceVoxels(uuid dvid.UUID, name dvid.DataString) (*voxels.Data, error) {
 	service := server.DatastoreService()
 	source, err := service.DataService(uuid, name)
 	if err != nil {
@@ -218,7 +218,7 @@ func (dtype *Datatype) NewDataService(id *datastore.DataID, config dvid.Config) 
 	if !found {
 		return nil, fmt.Errorf("Cannot make tiles data without valid 'Source' setting.")
 	}
-	sourcename := datastore.DataString(name)
+	sourcename := dvid.DataString(name)
 
 	// See if we want placeholder tiles.
 	placeholder, found, err := config.GetBool("Placeholder")
@@ -262,7 +262,7 @@ type Data struct {
 	*datastore.Data
 
 	// Source of the data for these tiles.
-	Source datastore.DataString
+	Source dvid.DataString
 
 	// Size in pixels.  All tiles are square.
 	Size int32
@@ -299,7 +299,7 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 }
 
 // DoHTTP handles all incoming HTTP requests for this data.
-func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Request) error {
+func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) error {
 	startTime := time.Now()
 
 	// Allow cross-origin resource sharing.
@@ -380,7 +380,7 @@ func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Reques
 }
 
 // GetTile retrieves a tile.
-func (d *Data) GetTile(versionID datastore.VersionLocalID, planeStr, scalingStr, coordStr string) (
+func (d *Data) GetTile(versionID dvid.VersionLocalID, planeStr, scalingStr, coordStr string) (
 	image.Image, error) {
 
 	db := server.StorageEngine()
@@ -605,21 +605,21 @@ func (d *Data) extractTiles(img image.Image, interp resize.InterpolationFunction
 	return nil
 }
 
-func (d *Data) getXYKeyFunc(versionID datastore.VersionLocalID, z int32) keyFunc {
+func (d *Data) getXYKeyFunc(versionID dvid.VersionLocalID, z int32) keyFunc {
 	return func(scaling uint8, tileX, tileY int32) *datastore.DataKey {
 		index := IndexTile{dvid.XY, scaling, dvid.Point3d{tileX, tileY, z}}
 		return &datastore.DataKey{d.DatasetID(), d.ID, versionID, index}
 	}
 }
 
-func (d *Data) getXZKeyFunc(versionID datastore.VersionLocalID, y int32) keyFunc {
+func (d *Data) getXZKeyFunc(versionID dvid.VersionLocalID, y int32) keyFunc {
 	return func(scaling uint8, tileX, tileY int32) *datastore.DataKey {
 		index := IndexTile{dvid.XZ, scaling, dvid.Point3d{tileX, y, tileY}}
 		return &datastore.DataKey{d.DatasetID(), d.ID, versionID, index}
 	}
 }
 
-func (d *Data) getYZKeyFunc(versionID datastore.VersionLocalID, x int32) keyFunc {
+func (d *Data) getYZKeyFunc(versionID dvid.VersionLocalID, x int32) keyFunc {
 	return func(scaling uint8, tileX, tileY int32) *datastore.DataKey {
 		index := IndexTile{dvid.YZ, scaling, dvid.Point3d{x, tileX, tileY}}
 		return &datastore.DataKey{d.DatasetID(), d.ID, versionID, index}

@@ -19,6 +19,10 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 )
 
+func Shutdown() {
+	ShutdownFUSE()
+}
+
 // ChunkOp is a type-specific operation with an optional WaitGroup to
 // sync mapping before reduce.
 type ChunkOp struct {
@@ -63,6 +67,9 @@ type KeyValueDB interface {
 
 	// GetRange returns a range of values spanning (kStart, kEnd) keys.
 	GetRange(kStart, kEnd Key) (values []KeyValue, err error)
+
+	// KeysInRange returns a range of keys spanning (kStart, kEnd).
+	KeysInRange(kStart, kEnd Key) (keys []Key, err error)
 
 	// ProcessRange sends a range of key/value pairs to type-specific chunk handlers.
 	ProcessRange(kStart, kEnd Key, op *ChunkOp, f func(*Chunk)) (err error)

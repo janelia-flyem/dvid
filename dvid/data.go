@@ -7,7 +7,40 @@ import (
 	"math"
 	"strconv"
 	"strings"
+
+	"github.com/janelia-flyem/go/go-uuid/uuid"
 )
+
+// DataString is a string that is the name of DVID data.
+// This gets its own type for documentation and also provide static error checks
+// to prevent conflation of type name from data name.
+type DataString string
+
+// DatasetLocalID is a DVID server-specific ID that is more compact than a UUID.
+type DatasetLocalID LocalID32
+
+// DataLocalID is a DVID server-specific ID that is more compact than a (UUID, Data URL).
+type DataLocalID LocalID
+
+// VersionalLocalID is a DVID server-specific ID that is more compact than a UUID.
+// We assume we do not need more than 16-bits to represent the number of nodes in a
+// version DAG.
+type VersionLocalID LocalID
+
+// UUID is a 32 character hexidecimal string ("" if invalid) that uniquely identifies
+// nodes in a datastore's DAG.  We need universally unique identifiers to prevent collisions
+// during creation of child nodes by distributed DVIDs:
+// http://en.wikipedia.org/wiki/Universally_unique_identifier
+type UUID string
+
+// NewUUID returns a UUID
+func NewUUID() UUID {
+	u := uuid.NewUUID()
+	if u == nil || len(u) != 16 {
+		return UUID("")
+	}
+	return UUID(fmt.Sprintf("%032x", []byte(u)))
+}
 
 func init() {
 	// Need to register types that will be used to fulfill interfaces.

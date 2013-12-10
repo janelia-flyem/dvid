@@ -15,7 +15,7 @@ func Test(t *testing.T) { TestingT(t) }
 type DataSuite struct {
 	dir     string
 	service *server.Service
-	head    datastore.UUID
+	head    dvid.UUID
 }
 
 var _ = Suite(&DataSuite{})
@@ -73,7 +73,7 @@ func (s *DataSuite) TestDatasetPersistence(c *C) {
 	c.Assert(err, IsNil)
 
 	// Go into the dataset and modify the above data so we can make sure it persist.
-	test := datastore.DataString("test")
+	test := dvid.DataString("test")
 	dataservice, err := service.DataService(child1_1, test)
 	c.Assert(err, IsNil)
 

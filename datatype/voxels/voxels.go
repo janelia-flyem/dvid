@@ -180,7 +180,7 @@ GET  /api/node/<UUID>/<data name>/arb/<center>/<normal>/<size>[/<format>]
 
 var (
 	// DefaultBlockSize specifies the default size for each block of this data type.
-	DefaultBlockSize = dvid.Point3d{16, 16, 16}
+	DefaultBlockSize = dvid.Point3d{32, 32, 32}
 
 	DefaultVoxelRes = dvid.NdFloat32{10.0, 10.0, 10.0}
 
@@ -401,7 +401,6 @@ func (dtype *Datatype) NewDataService(id *datastore.DataID, config dvid.Config) 
 	if err != nil {
 		return
 	}
-	fmt.Printf("NewDataService: %s\n", dtype.values)
 	data := &Data{
 		Data:           basedata,
 		ValuesPerVoxel: dtype.valuesPerVoxel,
@@ -657,7 +656,7 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 }
 
 // DoHTTP handles all incoming HTTP requests for this data.
-func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Request) error {
+func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) error {
 	startTime := time.Now()
 
 	// Allow cross-origin resource sharing.
@@ -1187,7 +1186,7 @@ func (d *Data) PutLocal(request datastore.Request, reply *datastore.Response) er
 }
 
 // GetVoxels retrieves voxels from a version node.
-func (d *Data) GetVoxels(uuid datastore.UUID, v VoxelHandler) error {
+func (d *Data) GetVoxels(uuid dvid.UUID, v VoxelHandler) error {
 	db := server.StorageEngine()
 	if db == nil {
 		return fmt.Errorf("Did not find a working key-value datastore to get image!")
@@ -1224,7 +1223,7 @@ func (d *Data) GetVoxels(uuid datastore.UUID, v VoxelHandler) error {
 }
 
 // GetImage retrieves a 2d image from a version node given a geometry of voxels.
-func (d *Data) GetImage(uuid datastore.UUID, v VoxelHandler) (image.Image, error) {
+func (d *Data) GetImage(uuid dvid.UUID, v VoxelHandler) (image.Image, error) {
 	if err := d.GetVoxels(uuid, v); err != nil {
 		return nil, err
 	}
@@ -1232,7 +1231,7 @@ func (d *Data) GetImage(uuid datastore.UUID, v VoxelHandler) (image.Image, error
 }
 
 // GetVolume retrieves a 3d volume from a version node given a geometry of voxels.
-func (d *Data) GetVolume(uuid datastore.UUID, v VoxelHandler) ([]uint8, error) {
+func (d *Data) GetVolume(uuid dvid.UUID, v VoxelHandler) ([]uint8, error) {
 	if err := d.GetVoxels(uuid, v); err != nil {
 		return nil, err
 	}
@@ -1243,7 +1242,7 @@ func (d *Data) GetVolume(uuid datastore.UUID, v VoxelHandler) ([]uint8, error) {
 // are larger than a 2d slice, this also requires integrating this image into current
 // chunks before writing result back out, so it's a PUT for nonexistant keys and GET/PUT
 // for existing keys.
-func (d *Data) PutImage(uuid datastore.UUID, v VoxelHandler) error {
+func (d *Data) PutImage(uuid dvid.UUID, v VoxelHandler) error {
 	service := server.DatastoreService()
 	_, versionID, err := service.LocalIDFromUUID(uuid)
 	if err != nil {

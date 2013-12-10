@@ -238,7 +238,7 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 }
 
 // DoHTTP handles all incoming HTTP requests for this dataset.
-func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Request) error {
+func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) error {
 	startTime := time.Now()
 
 	// Allow cross-origin resource sharing.
@@ -438,7 +438,7 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 }
 
 // Create a RGB interleaved volume.
-func (d *Data) storeComposite(uuid datastore.UUID, channels []*Channel) error {
+func (d *Data) storeComposite(uuid dvid.UUID, channels []*Channel) error {
 	// Setup the composite Channel
 	geom := channels[0].Geometry
 	pixels := int(geom.NumVoxels())

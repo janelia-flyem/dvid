@@ -61,11 +61,6 @@ type Subsetter interface {
 	AvailableExtents() dvid.IndexRange
 }
 
-// DataString is a string that is the name of DVID data.
-// This gets its own type for documentation and also provide static error checks
-// to prevent conflation of type name from data name.
-type DataString string
-
 // DataService is an interface for operations on arbitrary data that
 // use a supported TypeService.  Chunk handlers are allocated at this level,
 // so an implementation can own a number of goroutines.
@@ -77,7 +72,7 @@ type DataService interface {
 	TypeService
 
 	// DataName returns the name of the data (e.g., grayscale data that is grayscale8 data type).
-	DataName() DataString
+	DataName() dvid.DataString
 
 	// IsVersioned returns true if this data can be mutated across versions.  If the data is
 	// not versioned, only one copy of data is kept across all versions nodes in a dataset.
@@ -87,7 +82,7 @@ type DataService interface {
 	DoRPC(request Request, reply *Response) error
 
 	// DoHTTP handles HTTP requests specific to a data type
-	DoHTTP(uuid UUID, w http.ResponseWriter, r *http.Request) error
+	DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) error
 
 	// Returns standard error response for unknown commands
 	UnknownCommand(r Request) error
@@ -226,16 +221,16 @@ func (datatype *Datatype) Help() string {
 
 // DataID identifies data within a DVID server.
 type DataID struct {
-	Name   DataString
-	ID     DataLocalID
-	DsetID DatasetLocalID
+	Name   dvid.DataString
+	ID     dvid.DataLocalID
+	DsetID dvid.DatasetLocalID
 }
 
-func (id DataID) DataName() DataString { return id.Name }
+func (id DataID) DataName() dvid.DataString { return id.Name }
 
-func (id DataID) LocalID() DataLocalID { return id.ID }
+func (id DataID) LocalID() dvid.DataLocalID { return id.ID }
 
-func (id DataID) DatasetID() DatasetLocalID { return id.DsetID }
+func (id DataID) DatasetID() dvid.DatasetLocalID { return id.DsetID }
 
 // Data is an instance of a data type with some identifiers and it satisfies
 // a DataService interface.  Each Data is dataset-specific.
@@ -271,9 +266,9 @@ func (d *Data) UnknownCommand(request Request) error {
 // --- Handle version-specific data mutexes -----
 
 type nodeID struct {
-	Dataset DatasetLocalID
-	Data    DataLocalID
-	Version VersionLocalID
+	Dataset dvid.DatasetLocalID
+	Data    dvid.DataLocalID
+	Version dvid.VersionLocalID
 }
 
 // Map of mutexes at the granularity of dataset/data/version
@@ -284,7 +279,7 @@ func init() {
 }
 
 // VersionMutex returns a Mutex that is specific for data at a particular version.
-func (d *Data) VersionMutex(versionID VersionLocalID) *sync.Mutex {
+func (d *Data) VersionMutex(versionID dvid.VersionLocalID) *sync.Mutex {
 	var mutex sync.Mutex
 	mutex.Lock()
 	id := nodeID{d.DsetID, d.ID, versionID}

@@ -149,7 +149,7 @@ func (s *Service) DatasetsAllJSON() (stringJSON string, err error) {
 }
 
 // DatasetJSON returns JSON for a particular dataset referenced by a uuid.
-func (s *Service) DatasetJSON(root UUID) (stringJSON string, err error) {
+func (s *Service) DatasetJSON(root dvid.UUID) (stringJSON string, err error) {
 	if s.datasets == nil {
 		stringJSON = "{}"
 		return
@@ -167,7 +167,7 @@ func (s *Service) DatasetJSON(root UUID) (stringJSON string, err error) {
 // opaque UUID or the shortened datasetID.
 
 // NewDataset creates a new dataset.
-func (s *Service) NewDataset() (root UUID, datasetID DatasetLocalID, err error) {
+func (s *Service) NewDataset() (root dvid.UUID, datasetID dvid.DatasetLocalID, err error) {
 	if s.datasets == nil {
 		err = fmt.Errorf("Datastore service has no datasets available")
 		return
@@ -189,7 +189,7 @@ func (s *Service) NewDataset() (root UUID, datasetID DatasetLocalID, err error) 
 
 // NewVersions creates a new version (child node) off of a LOCKED parent node.
 // Will return an error if the parent node has not been locked.
-func (s *Service) NewVersion(parent UUID) (u UUID, err error) {
+func (s *Service) NewVersion(parent dvid.UUID) (u dvid.UUID, err error) {
 	if s.datasets == nil {
 		err = fmt.Errorf("Datastore service has no datasets available")
 		return
@@ -204,7 +204,7 @@ func (s *Service) NewVersion(parent UUID) (u UUID, err error) {
 }
 
 // NewData adds data of given name and type to a dataset specified by a UUID.
-func (s *Service) NewData(u UUID, typename, dataname string, config dvid.Config) error {
+func (s *Service) NewData(u dvid.UUID, typename, dataname string, config dvid.Config) error {
 	if s.datasets == nil {
 		return fmt.Errorf("Datastore service has no datasets available")
 	}
@@ -212,7 +212,7 @@ func (s *Service) NewData(u UUID, typename, dataname string, config dvid.Config)
 	if err != nil {
 		return err
 	}
-	err = dataset.newData(DataString(dataname), typename, config)
+	err = dataset.newData(dvid.DataString(dataname), typename, config)
 	if err != nil {
 		return err
 	}
@@ -220,7 +220,7 @@ func (s *Service) NewData(u UUID, typename, dataname string, config dvid.Config)
 }
 
 // Locks the node with the given UUID.
-func (s *Service) Lock(u UUID) error {
+func (s *Service) Lock(u dvid.UUID) error {
 	if s.datasets == nil {
 		return fmt.Errorf("Datastore service has no datasets available")
 	}
@@ -237,7 +237,7 @@ func (s *Service) Lock(u UUID) error {
 
 // SaveDataset forces this service to persist the dataset with given UUID.
 // It is useful when modifying datasets internally.
-func (s *Service) SaveDataset(u UUID) error {
+func (s *Service) SaveDataset(u dvid.UUID) error {
 	if s.datasets == nil {
 		return fmt.Errorf("Datastore service has no datasets available")
 	}
@@ -250,7 +250,7 @@ func (s *Service) SaveDataset(u UUID) error {
 
 // LocalIDFromUUID when supplied a UUID string, returns smaller sized local IDs that identify a
 // dataset and a version.
-func (s *Service) LocalIDFromUUID(u UUID) (dID DatasetLocalID, vID VersionLocalID, err error) {
+func (s *Service) LocalIDFromUUID(u dvid.UUID) (dID dvid.DatasetLocalID, vID dvid.VersionLocalID, err error) {
 	if s.datasets == nil {
 		err = fmt.Errorf("Datastore service has no datasets available")
 		return
@@ -272,8 +272,8 @@ func (s *Service) LocalIDFromUUID(u UUID) (dID DatasetLocalID, vID VersionLocalI
 // NodeIDFromString when supplied a UUID string, returns the matched UUID as well as
 // more compact local IDs that identify the dataset and a version.  Partial matches
 // are allowed, similar to DatasetFromString.
-func (s *Service) NodeIDFromString(str string) (u UUID, dID DatasetLocalID,
-	vID VersionLocalID, err error) {
+func (s *Service) NodeIDFromString(str string) (u dvid.UUID, dID dvid.DatasetLocalID,
+	vID dvid.VersionLocalID, err error) {
 
 	if s.datasets == nil {
 		err = fmt.Errorf("Datastore service has no datasets available")
@@ -290,7 +290,7 @@ func (s *Service) NodeIDFromString(str string) (u UUID, dID DatasetLocalID,
 }
 
 // DataService returns a service for data of a given name and version
-func (s *Service) DataService(u UUID, name DataString) (dataservice DataService, err error) {
+func (s *Service) DataService(u dvid.UUID, name dvid.DataString) (dataservice DataService, err error) {
 	if s.datasets == nil {
 		err = fmt.Errorf("Datastore service has no datasets available")
 		return
@@ -365,7 +365,7 @@ func (s *Service) DataChart() string {
 	if s.datasets == nil || len(s.datasets.list) == 0 {
 		return "  No datasets have been added to this datastore.\n"
 	}
-	writeLine := func(name DataString, version string, url UrlString) {
+	writeLine := func(name dvid.DataString, version string, url UrlString) {
 		text += fmt.Sprintf("%-15s  %-25s  %s\n", name, version, url)
 	}
 	for num, dset := range s.datasets.list {

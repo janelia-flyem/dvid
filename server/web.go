@@ -302,7 +302,7 @@ func datasetRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Forward all other commands to the data service.
-	dataname := datastore.DataString(parts[1])
+	dataname := dvid.DataString(parts[1])
 	dataservice, err := runningService.DataService(uuid, dataname)
 	if err != nil {
 		BadRequest(w, r, err.Error())
@@ -352,7 +352,7 @@ func nodeRequest(w http.ResponseWriter, r *http.Request) {
 		}
 
 	default:
-		dataname := datastore.DataString(parts[1])
+		dataname := dvid.DataString(parts[1])
 		dataservice, err := runningService.DataService(uuid, dataname)
 		if err != nil {
 			BadRequest(w, r, err.Error())

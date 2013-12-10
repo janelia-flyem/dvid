@@ -83,6 +83,12 @@ $ dvid -stdin node <UUID> <data name> put <key>  <  some_file
     key           A string key.
     file name     Full file path of the value to be stored, visible to server, or you must
                     use the -stdin flag and pipe the file data in.
+
+$ dvid node <UUID> <data name> mount <directory>
+
+	Creates a FUSE file system at given mount directory.  Each version will have
+	a separate directory with the UUID as name.  Reading and writing files in this
+	directory will be the same as reading and writing keyvalue data to DVID.
 	
     ------------------
 
@@ -193,7 +199,7 @@ type Data struct {
 }
 
 // GetData gets a value using a key at a given uuid
-func (d *Data) GetData(uuid datastore.UUID, keyStr string) ([]byte, error) {
+func (d *Data) GetData(uuid dvid.UUID, keyStr string) ([]byte, error) {
 	// Compute the key
 	versionID, err := server.VersionLocalID(uuid)
 	if err != nil {
@@ -213,7 +219,7 @@ func (d *Data) GetData(uuid datastore.UUID, keyStr string) ([]byte, error) {
 }
 
 // PutData puts a key/value at a given uuid
-func (d *Data) PutData(uuid datastore.UUID, keyStr string, value []byte) error {
+func (d *Data) PutData(uuid dvid.UUID, keyStr string, value []byte) error {
 	// Compute the key
 	versionID, err := server.VersionLocalID(uuid)
 	if err != nil {
@@ -248,6 +254,8 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 		return d.Get(request, reply)
 	case "put":
 		return d.Put(request, reply)
+	case "mount":
+		return d.Mount(request, reply)
 	default:
 		return d.UnknownCommand(request)
 	}
@@ -255,7 +263,7 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 }
 
 // DoHTTP handles all incoming HTTP requests for this data.
-func (d *Data) DoHTTP(uuid datastore.UUID, w http.ResponseWriter, r *http.Request) error {
+func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) error {
 	startTime := time.Now()
 
 	// Allow cross-origin resource sharing.

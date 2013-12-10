@@ -15,7 +15,7 @@ func Test(t *testing.T) { TestingT(t) }
 type DataSuite struct {
 	dir     string
 	service *server.Service
-	head    datastore.UUID
+	head    dvid.UUID
 }
 
 var _ = Suite(&DataSuite{})

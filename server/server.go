@@ -125,7 +125,7 @@ func DatastoreService() *datastore.Service {
 }
 
 // MatchingUUID returns a UUID on this server that uniquely matches a uuid string.
-func MatchingUUID(uuidStr string) (uuid datastore.UUID, err error) {
+func MatchingUUID(uuidStr string) (uuid dvid.UUID, err error) {
 	if runningService.Service == nil {
 		err = fmt.Errorf("Datastore service has not been started on this server.")
 		return
@@ -135,7 +135,7 @@ func MatchingUUID(uuidStr string) (uuid datastore.UUID, err error) {
 }
 
 // VersionLocalID returns a server-specific local ID for the node with the given UUID.
-func VersionLocalID(uuid datastore.UUID) (datastore.VersionLocalID, error) {
+func VersionLocalID(uuid dvid.UUID) (dvid.VersionLocalID, error) {
 	if runningService.Service == nil {
 		return 0, fmt.Errorf("Datastore service has not been started on this server.")
 	}
@@ -176,6 +176,7 @@ func Shutdown() {
 		}
 		time.Sleep(1 * time.Second)
 	}
+	storage.Shutdown()
 	dvid.BlockOnActiveCgo()
 }
 

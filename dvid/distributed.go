@@ -53,7 +53,7 @@ func BlockOnActiveCgo() {
 	fmt.Printf("Checking for any active cgo routines...\n")
 	waits := 0
 	for {
-		if (cgoNumActive == 0 && len(cgoActive) == 0) || waits >= 20 {
+		if (cgoNumActive == 0 && len(cgoActive) == 0) || waits >= 5 {
 			return
 		}
 		fmt.Printf("Waited %d seconds for %d active cgo routines (%d messages to be processed)...\n",

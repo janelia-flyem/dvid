@@ -14,8 +14,6 @@ import (
 
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
-
-	"github.com/janelia-flyem/go/go-uuid/uuid"
 )
 
 // Datasets holds information on all the Dataset available.
@@ -27,14 +25,14 @@ type Datasets struct {
 	list []*Dataset
 
 	// Efficiently maps all UUIDs to the version DAG from which it came.
-	mapUUID map[UUID]*Dataset
+	mapUUID map[dvid.UUID]*Dataset
 
 	// Counter that provides the local ID of the next new dataset.
-	newDatasetID DatasetLocalID
+	newDatasetID dvid.DatasetLocalID
 }
 
 // DataService returns a service for data of a given name under a Dataset.
-func (dsets *Datasets) DataService(u UUID, name DataString) (dataservice DataService, err error) {
+func (dsets *Datasets) DataService(u dvid.UUID, name dvid.DataString) (dataservice DataService, err error) {
 	// Determine the dataset that contains the node with this UUID
 	dataset, found := dsets.mapUUID[u]
 	if !found {
@@ -52,7 +50,7 @@ func (dsets *Datasets) DataService(u UUID, name DataString) (dataservice DataSer
 // will coordinate persistence of in-memory Datasets as well as multiple storage engines.
 
 // DatasetFromUUID returns a dataset given a UUID.
-func (dsets *Datasets) DatasetFromUUID(u UUID) (dataset *Dataset, err error) {
+func (dsets *Datasets) DatasetFromUUID(u dvid.UUID) (dataset *Dataset, err error) {
 	dataset, found := dsets.mapUUID[u]
 	if !found {
 		err = fmt.Errorf("DatasetFromUUID(): Illegal UUID (%s) not found", u)
@@ -65,7 +63,7 @@ func (dsets *Datasets) DatasetFromUUID(u UUID) (dataset *Dataset, err error) {
 // a datastore has nodes with UUID strings 3FA22..., 7CD11..., and 836EE...,
 // we can still find a match even if given the minimum 3 letters.  (We don't
 // allow UUID strings of less than 3 letters just to prevent mistakes.)
-func (dsets *Datasets) DatasetFromString(str string) (dataset *Dataset, u UUID, err error) {
+func (dsets *Datasets) DatasetFromString(str string) (dataset *Dataset, u dvid.UUID, err error) {
 	numMatches := 0
 	for dsetUUID, dset := range dsets.mapUUID {
 		if strings.HasPrefix(string(dsetUUID), str) {
@@ -133,7 +131,7 @@ func (dsets *Datasets) newDataset() (dset *Dataset, err error) {
 
 // newChild creates a new child node off a LOCKED parent node.  Will return
 // an error if the parent node has not been locked.
-func (dsets *Datasets) newChild(parent UUID) (dset *Dataset, u UUID, err error) {
+func (dsets *Datasets) newChild(parent dvid.UUID) (dset *Dataset, u dvid.UUID, err error) {
 	// Find the Dataset with this UUID
 	var found bool
 	dset, found = dsets.mapUUID[parent]
@@ -154,13 +152,13 @@ func (dsets *Datasets) newChild(parent UUID) (dset *Dataset, u UUID, err error) 
 // -- Datasets Serialization and Deserialization ---
 
 type serializableDatasets struct {
-	DatasetsUUID []UUID
-	NewDatasetID DatasetLocalID
+	DatasetsUUID []dvid.UUID
+	NewDatasetID dvid.DatasetLocalID
 }
 
 func (dsets *Datasets) serializableStruct() (sdata *serializableDatasets) {
 	sdata = &serializableDatasets{
-		DatasetsUUID: []UUID{},
+		DatasetsUUID: []dvid.UUID{},
 		NewDatasetID: dsets.newDatasetID,
 	}
 	for _, dset := range dsets.list {
@@ -232,7 +230,7 @@ func (dsets *Datasets) Load(db storage.Engine) (err error) {
 
 	// Reconstruct the Datasets by associating UUIDs.
 	dsets.list = []*Dataset{}
-	dsets.mapUUID = make(map[UUID]*Dataset)
+	dsets.mapUUID = make(map[dvid.UUID]*Dataset)
 	for _, value := range keyvalues {
 		dataset := new(Dataset)
 		err := dvid.Deserialize(value.V, dataset)
@@ -273,17 +271,17 @@ type Dataset struct {
 	Alias string
 
 	// DatasetID is the 32-bit identifier that is DVID server-specific.
-	DatasetID DatasetLocalID
+	DatasetID dvid.DatasetLocalID
 
 	// DataMap keeps the dataset-specific names for instances of data types
 	// in this dataset.  Although this is public, access should be through
 	// the DataService(name) function to also match possible prefix data names,
 	// e.g., multichannel types.
-	DataMap map[DataString]DataService
+	DataMap map[dvid.DataString]DataService
 }
 
 // TypeService returns the TypeService underlying data of a given name.
-func (dset *Dataset) TypeService(name DataString) (t TypeService, err error) {
+func (dset *Dataset) TypeService(name dvid.DataString) (t TypeService, err error) {
 	data, err := dset.DataService(name)
 	if err != nil {
 		err = fmt.Errorf("Cannot get type of unknown data '%s'", name)
@@ -294,7 +292,7 @@ func (dset *Dataset) TypeService(name DataString) (t TypeService, err error) {
 }
 
 // DataService returns a DataService for data of a given name.
-func (dset *Dataset) DataService(name DataString) (dataservice DataService, err error) {
+func (dset *Dataset) DataService(name dvid.DataString) (dataservice DataService, err error) {
 	var found bool
 	dataservice, found = dset.DataMap[name]
 	if !found {
@@ -343,7 +341,7 @@ func (dset *Dataset) Put(db storage.Engine) error {
 // newData adds a new, named instance of a data type to dataset.  Settings can be passed
 // via the 'config' argument.  For example, config["versioned"] will specify whether
 // the data is mutable across nodes in the version DAG or is simply unversioned.
-func (dset *Dataset) newData(name DataString, typeName string, config dvid.Config) error {
+func (dset *Dataset) newData(name dvid.DataString, typeName string, config dvid.Config) error {
 	// Only allow unique data names per dataset.
 	// TODO -- Do more elaborate check that prevents prefixing data names using
 	// data types that allow different suffixes, e.g., multichannel data.
@@ -368,25 +366,10 @@ func (dset *Dataset) newData(name DataString, typeName string, config dvid.Confi
 		return err
 	}
 	if dset.DataMap == nil {
-		dset.DataMap = make(map[DataString]DataService)
+		dset.DataMap = make(map[dvid.DataString]DataService)
 	}
 	dset.DataMap[name] = dataservice
 	return nil
-}
-
-// UUID is a 32 character hexidecimal string ("" if invalid) that uniquely identifies
-// nodes in a datastore's DAG.  We need universally unique identifiers to prevent collisions
-// during creation of child nodes by distributed DVIDs:
-// http://en.wikipedia.org/wiki/Universally_unique_identifier
-type UUID string
-
-// NewUUID returns a UUID
-func NewUUID() UUID {
-	u := uuid.NewUUID()
-	if u == nil || len(u) != 16 {
-		return UUID("")
-	}
-	return UUID(fmt.Sprintf("%032x", []byte(u)))
 }
 
 // DataAvail gives the availability of data within a node or whether parent nodes
@@ -412,19 +395,19 @@ const (
 // children, and provenance.
 type NodeVersion struct {
 	// GlobalID is a globally unique id.
-	GlobalID UUID
+	GlobalID dvid.UUID
 
 	// VersionID is a Dataset-specific id for each UUID, so we can compress the UUIDs.
-	VersionID VersionLocalID
+	VersionID dvid.VersionLocalID
 
 	// Locked nodes are read-only and can be branched.
 	Locked bool
 
 	// Parents is an ordered list of parent nodes.
-	Parents []UUID
+	Parents []dvid.UUID
 
 	// Children is a list of child nodes.
-	Children []UUID
+	Children []dvid.UUID
 
 	Created time.Time
 	Updated time.Time
@@ -451,7 +434,7 @@ type Node struct {
 	// If there is no map or data availability is not explicitly set, we use
 	// the default for that data, e.g., DataComplete if versioned or DataRoot
 	// if unversioned.
-	Avail map[DataString]DataAvail
+	Avail map[dvid.DataString]DataAvail
 
 	writeLock sync.Mutex
 }
@@ -459,15 +442,15 @@ type Node struct {
 // VersionDAG is the directed acyclic graph of NodeVersion and an index by UUID into
 // the graph.
 type VersionDAG struct {
-	Root  UUID
-	Nodes map[UUID]*Node
+	Root  dvid.UUID
+	Nodes map[dvid.UUID]*Node
 
 	// VersionMap is used to accelerate mapping global UUID to DVID server-specific
 	// and smaller ID for a version.
-	VersionMap map[UUID]VersionLocalID
+	VersionMap map[dvid.UUID]dvid.VersionLocalID
 
-	NewVersionID VersionLocalID
-	NewDataID    DataLocalID
+	NewVersionID dvid.VersionLocalID
+	NewDataID    dvid.DataLocalID
 
 	mapLock sync.Mutex // guards the VersionDAG maps
 }
@@ -476,9 +459,9 @@ type VersionDAG struct {
 // assigning its UUID.
 func NewVersionDAG() *VersionDAG {
 	dag := VersionDAG{
-		Root:       NewUUID(),
-		Nodes:      make(map[UUID]*Node),
-		VersionMap: make(map[UUID]VersionLocalID),
+		Root:       dvid.NewUUID(),
+		Nodes:      make(map[dvid.UUID]*Node),
+		VersionMap: make(map[dvid.UUID]dvid.VersionLocalID),
 	}
 	t := time.Now()
 	version := &NodeVersion{
@@ -495,7 +478,7 @@ func NewVersionDAG() *VersionDAG {
 
 // Lock locks a node.  This is an irreversible operation since some nodes
 // can be cloned externally.
-func (dag *VersionDAG) Lock(u UUID) error {
+func (dag *VersionDAG) Lock(u dvid.UUID) error {
 	node, found := dag.Nodes[u]
 	if !found {
 		return fmt.Errorf("No node found with UUID %s", u)
@@ -506,7 +489,7 @@ func (dag *VersionDAG) Lock(u UUID) error {
 
 // newChild creates a new child node off a LOCKED parent node.  Will return
 // an error if the parent node has not been locked.
-func (dag *VersionDAG) newChild(parent UUID) (u UUID, err error) {
+func (dag *VersionDAG) newChild(parent dvid.UUID) (u dvid.UUID, err error) {
 	node, found := dag.Nodes[parent]
 	if !found {
 		err = fmt.Errorf("No node found with UUID %s", parent)
@@ -517,7 +500,7 @@ func (dag *VersionDAG) newChild(parent UUID) (u UUID, err error) {
 		return
 	}
 
-	u = NewUUID()
+	u = dvid.NewUUID()
 	t := time.Now()
 
 	node.writeLock.Lock()
@@ -531,7 +514,7 @@ func (dag *VersionDAG) newChild(parent UUID) (u UUID, err error) {
 		VersionID: dag.NewVersionID,
 		Created:   t,
 		Updated:   t,
-		Parents:   []UUID{parent},
+		Parents:   []dvid.UUID{parent},
 	}
 	dag.Nodes[u] = &Node{NodeVersion: version}
 	dag.VersionMap[u] = version.VersionID
@@ -550,8 +533,8 @@ func (dag *VersionDAG) LogInfo() string {
 }
 
 // Versions returns a slice of UUID within this version DAG.
-func (dag *VersionDAG) Versions() []UUID {
-	uuids := []UUID{}
+func (dag *VersionDAG) Versions() []dvid.UUID {
+	uuids := []dvid.UUID{}
 	for u, _ := range dag.Nodes {
 		uuids = append(uuids, u)
 	}

@@ -9,7 +9,7 @@ import (
 
 func (s *DataSuite) TestNewDAG(c *C) {
 	dag := NewVersionDAG()
-	c.Assert(dag.NewVersionID, Equals, VersionLocalID(1))
+	c.Assert(dag.NewVersionID, Equals, dvid.VersionLocalID(1))
 	c.Assert(dag.Nodes, HasLen, 1)
 	c.Assert(dag.VersionMap, HasLen, 1)
 }

@@ -317,6 +317,37 @@ func (db *LevelDB) ProcessRange(kStart, kEnd Key, op *ChunkOp, f func(*Chunk)) e
 	}
 }
 
+// IterateKeys iterates through stored keys spanning (kStart, kEnd), calling
+// a supplied function with the current key.
+func (db *LevelDB) IterateKeys(kStart, kEnd Key, f func(Key)) error {
+	dvid.StartCgo()
+	ro := levigo.NewReadOptions()
+	it := db.ldb.NewIterator(ro)
+	defer func() {
+		it.Close()
+		dvid.StopCgo()
+	}()
+
+	it.Seek(kStart.Bytes())
+	endBytes := kEnd.Bytes()
+	for {
+		if it.Valid() {
+			if bytes.Compare(it.Key(), endBytes) > 0 {
+				return nil
+			}
+			var key Key
+			key, err = kStart.BytesToKey(it.Key())
+			if err != nil {
+				return err
+			}
+			f(key)
+			it.Next()
+		} else {
+			return it.GetError()
+		}
+	}
+}
+
 // Put writes a value with given key.
 func (db *LevelDB) Put(k Key, v []byte) error {
 	dvid.StartCgo()
