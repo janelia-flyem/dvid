@@ -22,9 +22,9 @@ found in help constants:
 
 ## Table of Contents
 
-### [Philosophy](#philosophy)
-### [Build Process](#build-process)
-### [Simple Example](#simple-example)
+* [Philosophy](#philosophy)
+* [Build Process](#build-process)
+* [Simple Example](#simple-example)
 
 ## Philosophy
 
