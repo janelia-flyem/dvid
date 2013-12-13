@@ -6,8 +6,8 @@ DVID
 [![Build Status](https://drone.io/github.com/janelia-flyem/dvid/status.png)](https://drone.io/github.com/janelia-flyem/dvid/latest)
 
 DVID is a *distributed, versioned, image-oriented datastore* written in Go that supports different
-storage backends, a Level 2 REST HTTP API, and command-line access.  It has been tested on both
-MacOS X and Linux (Fedora 16, CentOS 6) but not on Windows.
+storage backends, a Level 2 REST HTTP API, command-line access, and a FUSE frontend to at least
+one of its data types.  It has been tested on both MacOS X and Linux (Fedora 16, CentOS 6) but not on Windows.
 
 Documentation is [available here](http://godoc.org/github.com/janelia-flyem/dvid).
 
@@ -20,22 +20,104 @@ found in help constants:
 * [multichan16](http://godoc.org/github.com/janelia-flyem/dvid/datatype/multichan16#pkg-constants)
 * [tiles](http://godoc.org/github.com/janelia-flyem/dvid/datatype/tiles#pkg-constants)
 
+## Table of Contents
+
+### [Philosophy](#philosophy)
+### [Build Process](#build-process)
+### [Simple Example](#simple-example)
+
 ## Philosophy
 
-DVID gains much of its power by assuming a key-value persistence layer, allowing pluggable
-storage engines, and creating conventions of how to organize key space for arbitrary
-type-specific indexing and distributed versioning.
+DVID (Distributed, Versioned, Image­-oriented Datastore) was designed as a datastore that can be easily 
+installed and managed locally, yet still scale to the available storage system and number of compute 
+nodes. If data transmission or computer memory is an issue, it allows us to choose a local first­class 
+datastore that will eventually (or continuously) be synced with remote datastores. By “first class”, we 
+mean that each DVID server, even on laptops, behaves identically to larger institutional DVID servers 
+save for resource limitations like the size of the data that can be managed.
 
-User-defined data types can be added to DVID.  Standard data types (8-bit grayscale
-images, 64-bit label data, and label-to-label maps) will be included with the base
-DVID installation, although their packaging is identical to any other user-defined
-data type.
+Scalability can be achieved in at least two ways:
 
-DVID operations can be run from the command line by knowledgeable users, but
-we assume that clients will build upon DVID layers to hide the complexity from
-users.  DVID currently uses a Level 2 REST HTTP API and plans to incorporate
-Apache Thrift APIs.
+* Scale­up: Run DVID on a computer with more cores, larger memory, and faster/larger storage (e.g., use 
+a cluster­ready backend system like couchbase, Cassandra, or a Facebook Haystack­-inspired system).
+* Scale­out: Subdivide (by sharding) the data and run DVID servers on each subdivision, perhaps 
+eventually aggregating the subdivisions to a larger DVID server in a map/reduce fashion.
 
+Why is distributed versioning central to DVID instead of a centralized approach?
+
+* **Significant processing can occur in small subsets of the data or using alternative, compact 
+representations**: FlyEM mostly works in portions of the data after using full data to establish 
+context.​  We can't even see the cells if we zoom out to the scale of our volumes. And if we want to 
+work on neurons, it's a sparse volume that can be relatively compact and proofreading occurs in that 
+sparse volume and its neighboring structures. Frequently, we can also transform voxel­-level data to 
+more compact data structures like region adjacency graphs.
+* **Research groups may want to silo data but eventually share and sync that data**: It's not clear 
+researchers want just "one" centralized datastore but might require one for each institution/group. 
+Researchers don't always want to share data. So as soon as you support more than one centralized 
+location, and think about syncing, you are basically looking at a distributed data problem or you'll be 
+doing some ad hoc solution instead of￼more elegant git-­like techniques. And sometimes, researchers want 
+to only share a particular version of their dataset, e.g., the state of the dataset at the time of a 
+publication that requires open access to the data, yet they want to continue to work on the dataset 
+privately.
+* **As computers increase in power, forcing centralization leads to significant wasted resources**: 
+Since significant workflows require only relatively small subsets of data, we can move data to 
+workstations and laptops and use graphics/computation resources of those systems. Also, allowing 
+distributed data persistence lets us explore other funding mechanisms, not just having deep­-pocketed 
+institutions footing the bill for all storage and computation.
+* **Large, multi­tenancy datastores can be difficult to optimize for particular use cases and guarantee 
+throughput/latency**. Shared resources can be exhausted if many users hit the resource when working 
+toward seasonal deadlines. Aside from this timing issue, certain applications require tight bounds on 
+availability, e.g., image acquisition. Since data access optimization via caching and other techniques 
+is very specific to an application, datastore systems should be (1) relatively simple so systems 
+exclusive to an application can be created and (2) have well­-defined interfaces both to the storage 
+engine and the client, so application­specific optimizations can be made. A research group can buy 
+server(s) and deploy a relatively simple system that is dedicated for a particular use case or run 
+applications in lock­step so optimizations are easier to make, e.g., the formatting of data to suit a 
+particular data access pattern.
+
+Planned and Existing Features for DVID:
+
+* Distributed operation: Once a DVID dataset is created and loaded with data, it can be cloned to 
+remote sites using user­-defined spatial extents. Each DVID server chooses how much of the data set is 
+held locally. (_Status: Planned Q1 2014_)
+* Versioned: Each version of a DVID dataset corresponds to a node in a version DAG (Directed Acyclic 
+Graph). Versions are identified through a UUID that can be composed locally yet are unique globally. 
+Versioning and distribution follow patterns similar to distributed version control systems like git and 
+mercurial. Provenance is kept in the DAG.  (_Status: Simple DAG and UUID support implemented.  
+Versioned compression schemes have been worked out with implementation ~Q2 2014._)
+* Denormalized Views: For any node in the version DAG, we can choose to create denormalized views that 
+accelerate particular access patterns. For example, quad trees can be created for XY, XZ, and YZ 
+orthogonal views or sparse volumes can compactly describe a neuron. The extra denormalized data is kept 
+in the datastore until a node is archived, which removes all denormalized key­-value pairs
+associated with that version node. Views of the same data can be eventually consistent.
+(_Status: Tiles implemented, quad-tree forthcoming._)
+* Flexible Data Types: DVID provides a well­defined interface to data type code that can be easily added 
+by users. A DVID server provides HTTP and RPC APIs, authentication, authorization, versioning, 
+provenance, and storage engines. It delegates datatype­-specific commands and processing to data type 
+code. As long as a DVID type can return data for its implemented commands, we don’t care how its 
+implemented. (_Status: Variety of voxel types, tiles, key-value implemented.  
+Authentication/authorization support planned Q2 2014, likely using Mozilla Persona + auth tokens 
+similar to github API._)
+* Scalable Storage Engine: Although we may have DVID support polyglot persistence, i.e., allow use of 
+relational, graph, or NoSQL databases, we are initially focused on key­-value stores. DVID has an 
+abstract key­value interface to its swappable storage engine. We choose a key­value interface because (1) 
+there are a large number of high­-performance, open­-source implementations that run from embedded to 
+clustered systems, (2) the surface area of the API is very small, even after adding important cases 
+like bulk loads or sequential key read/write, and (3) novel open­-source technology tends to match key­-
+value interfaces, e.g., groupcache, distributed in­memory caching; the successor to memcached], erasure 
+codes [improved bandwidth/storage costs for a given failure rate], and low­cost, scale­out solutions from 
+companies like Seagate.  (_Status: Use of standard leveldb and HyperLevelDB implemented.  Lightning
+MDB to be added soon._)
+
+DVID promotes the view of data as a collection of key­-value pairs where each key is composed of 
+global identifiers for versioning and data identification as well as a datatype­-specific index 
+(e.g., a spatial index) that allows large data to be broken into chunks. DVID focuses on how to 
+break data into these key­-value pairs in way that facilitates distributed systems as well as 
+optimization of data access for various clients.
+
+A DVID server is limited to local resources and the user determines what datasets, subvolume, and 
+versions are held within that DVID server. Overwrites are allowed but once a version is locked, no 
+further edits are allowed on that particular version. This allows manual or automated editing to be 
+done during a period without accumulation of unnecessary deltas.
 
 ## Build Process
 
