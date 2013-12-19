@@ -38,7 +38,7 @@ func (V3DRawMarshaler) UnmarshalV3DRaw(reader io.Reader) ([]*Channel, error) {
 	if err := binary.Read(reader, byteOrder, &dataType); err != nil {
 		return nil, err
 	}
-	var bytesPerVoxel uint32
+	var bytesPerVoxel int32
 	switch dataType {
 	case 1:
 		bytesPerVoxel = 1
@@ -62,14 +62,20 @@ func (V3DRawMarshaler) UnmarshalV3DRaw(reader io.Reader) ([]*Channel, error) {
 	}
 
 	// Allocate the V3DRaw struct for the # channels
-	totalBytes := int(bytesPerVoxel * width * height * depth)
+	totalBytes := int(bytesPerVoxel) * int(width*height*depth)
 	size := dvid.Point3d{int32(width), int32(height), int32(depth)}
 	volume := dvid.NewSubvolume(dvid.Point3d{0, 0, 0}, size)
 	v3draw := make([]*Channel, numChannels, numChannels)
 	var c int32
 	for c = 0; c < int32(numChannels); c++ {
 		data := make([]uint8, totalBytes, totalBytes)
-		v := voxels.NewVoxels(volume, 1, int32(bytesPerVoxel), data, byteOrder)
+		values := voxels.DataValues{
+			{
+				DataType: fmt.Sprintf("uint%d", bytesPerVoxel*8),
+				Label:    fmt.Sprintf("channel%d", c),
+			},
+		}
+		v := voxels.NewVoxels(volume, values, data, int32(width)*bytesPerVoxel, byteOrder)
 		v3draw[c] = &Channel{
 			Voxels:     v,
 			channelNum: c + 1,

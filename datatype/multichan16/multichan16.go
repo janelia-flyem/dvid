@@ -42,8 +42,7 @@ API for datatypes derived from multichan16 (github.com/janelia-flyem/dvid/dataty
 
 Command-line:
 
-$ dvid node <UUID> <data name> load local <V3D raw filename>
-$ dvid node <UUID> <data name> load remote <V3D raw filename>
+$ dvid node <UUID> <data name> load <V3D raw filename>
 
     Adds multichannel data to a version node when the server can see the local files ("local")
     or when the server must be sent the files via rpc ("remote").
@@ -111,12 +110,32 @@ POST /api/node/<UUID>/<data name>/<dims>/<size>/<offset>[/<format>]
 
 // DefaultBlockMax specifies the default size for each block of this data type.
 var (
-	DefaultBlockMax = dvid.Point3d{16, 16, 16}
-	typeService     datastore.TypeService
+	DefaultBlockSize int32 = 32
+
+	typeService datastore.TypeService
+
+	compositeValues = voxels.DataValues{
+		{
+			DataType: "uint8",
+			Label:    "red",
+		},
+		{
+			DataType: "uint8",
+			Label:    "green",
+		},
+		{
+			DataType: "uint8",
+			Label:    "blue",
+		},
+		{
+			DataType: "uint8",
+			Label:    "alpha",
+		},
+	}
 )
 
 func init() {
-	dtype := &Datatype{voxels.NewDatatype(1, 2, nil)}
+	dtype := &Datatype{voxels.NewDatatype(nil)}
 	dtype.DatatypeID = datastore.MakeDatatypeID("multichan16", RepoUrl, Version)
 
 	// See doc for package on why channels are segregated instead of interleaved.
@@ -129,12 +148,13 @@ func init() {
 	gob.Register(&Data{})
 }
 
-// -------  VoxelHandler interface implementation -------------
+// -------  ExtHandler interface implementation -------------
 
-// Channel is an image volume that fulfills the voxels.VoxelHandler interface.
+// Channel is an image volume that fulfills the voxels.ExtHandler interface.
 type Channel struct {
 	*voxels.Voxels
 
+	// Channel 0 is the composite RGBA channel and all others are 16-bit.
 	channelNum int32
 }
 
@@ -153,11 +173,11 @@ func (c *Channel) IndexIterator(chunkSize dvid.Point) (dvid.IndexIterator, error
 	// Setup traversal
 	begVoxel, ok := c.StartPoint().(dvid.Chunkable)
 	if !ok {
-		return nil, fmt.Errorf("VoxelHandler StartPoint() cannot handle Chunkable points.")
+		return nil, fmt.Errorf("ExtHandler StartPoint() cannot handle Chunkable points.")
 	}
 	endVoxel, ok := c.EndPoint().(dvid.Chunkable)
 	if !ok {
-		return nil, fmt.Errorf("VoxelHandler EndPoint() cannot handle Chunkable points.")
+		return nil, fmt.Errorf("ExtHandler EndPoint() cannot handle Chunkable points.")
 	}
 
 	blockSize := chunkSize.(dvid.Point3d)
@@ -183,10 +203,7 @@ func (dtype *Datatype) NewDataService(id *datastore.DataID, config dvid.Config) 
 		return nil, err
 	}
 	basedata := voxelservice.(*voxels.Data)
-	basedata.BlockSize = DefaultBlockMax
-	basedata.TypeService = typeService
-	basedata.Values = nil
-
+	basedata.Properties.Values = nil
 	service := &Data{
 		Data: *basedata,
 	}
@@ -222,19 +239,10 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 	if request.TypeCommand() != "load" {
 		return d.UnknownCommand(request)
 	}
-	if len(request.Command) < 6 {
+	if len(request.Command) < 5 {
 		return fmt.Errorf("Poorly formatted load command.  See command-line help.")
 	}
-	source := request.Command[4]
-	switch source {
-	case "local":
-		return d.LoadLocal(request, reply)
-	case "remote":
-		return fmt.Errorf("load remote not yet implemented")
-	default:
-		return d.UnknownCommand(request)
-	}
-	return nil
+	return d.LoadLocal(request, reply)
 }
 
 // DoHTTP handles all incoming HTTP requests for this dataset.
@@ -315,21 +323,22 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		if op == voxels.PutOp {
 			return fmt.Errorf("DVID does not yet support POST of slices into multichannel data")
 		} else {
-			var valuesPerVoxel, bytesPerValue int32
-			if channelNum == 0 {
-				valuesPerVoxel = 4
-				bytesPerValue = 1
-			} else {
-				valuesPerVoxel = 1
-				bytesPerValue = 2
+			if d.NumChannels == 0 || d.Data.Values() == nil {
+				return fmt.Errorf("Cannot retrieve absent data '%d'.  Please load data.", d.DataName())
 			}
+			values := d.Data.Values()
+			if len(values) <= int(channelNum) {
+				return fmt.Errorf("Must choose channel from 0 to %d", len(values))
+			}
+			stride := slice.Size().Value(0) * values.BytesPerVoxel()
+			dataValues := voxels.DataValues{values[channelNum]}
 			data := make([]uint8, int(slice.NumVoxels()))
-			v := voxels.NewVoxels(slice, valuesPerVoxel, bytesPerValue, data, d.ByteOrder)
+			v := voxels.NewVoxels(slice, dataValues, data, stride, d.ByteOrder)
 			channel := &Channel{
 				Voxels:     v,
 				channelNum: channelNum,
 			}
-			img, err := d.GetImage(uuid, channel)
+			img, err := voxels.GetImage(uuid, d, channel)
 			var formatStr string
 			if len(parts) >= 7 {
 				formatStr = parts[6]
@@ -347,9 +356,9 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 			return err
 		}
 		if op == voxels.GetOp {
-			return fmt.Errorf("DVID does not yet support GET of thrift-encoded volume data")
+			return fmt.Errorf("DVID does not yet support GET of volume data")
 		} else {
-			return fmt.Errorf("DVID does not yet support POST of thrift-encoded volume data")
+			return fmt.Errorf("DVID does not yet support POST of volume data")
 		}
 	default:
 		return fmt.Errorf("DVID does not yet support nD volumes")
@@ -396,13 +405,7 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 
 	// Store the metadata
 	d.NumChannels = len(channels)
-	d.Values = make([]voxels.DataValue, d.NumChannels)
-	for channel := 0; channel < d.NumChannels; channel++ {
-		d.Values[channel] = voxels.DataValue{
-			DataType: "uint8",
-			Label:    fmt.Sprintf("channel%d", channel),
-		}
-	}
+	d.Properties.Values = make(voxels.DataValues, d.NumChannels)
 	if d.NumChannels > 0 {
 		d.ByteOrder = channels[0].ByteOrder()
 		reply.Text = fmt.Sprintf("Loaded %s into data '%s': found %d channels\n",
@@ -412,6 +415,9 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 		reply.Text = fmt.Sprintf("Found no channels in file %s\n", filename)
 		return nil
 	}
+	for i, channel := range channels {
+		d.Properties.Values[i] = channel.Voxels.Values()[0]
+	}
 	if err := service.SaveDataset(uuid); err != nil {
 		return err
 	}
@@ -419,7 +425,7 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 	// PUT each channel of the file into the datastore using a separate data name.
 	for _, channel := range channels {
 		dvid.Fmt(dvid.Debug, "Processing channel %d... \n", channel.channelNum)
-		err = d.PutImage(uuid, channel)
+		err = voxels.PutImage(uuid, d, channel)
 		if err != nil {
 			return err
 		}
@@ -442,8 +448,9 @@ func (d *Data) storeComposite(uuid dvid.UUID, channels []*Channel) error {
 	// Setup the composite Channel
 	geom := channels[0].Geometry
 	pixels := int(geom.NumVoxels())
+	stride := geom.Size().Value(0) * 4
 	composite := &Channel{
-		Voxels:     voxels.NewVoxels(geom, 4, 1, make([]uint8, pixels*4), d.ByteOrder),
+		Voxels:     voxels.NewVoxels(geom, compositeValues, channels[0].Data(), stride, d.ByteOrder),
 		channelNum: channels[0].channelNum,
 	}
 
@@ -503,5 +510,5 @@ func (d *Data) storeComposite(uuid dvid.UUID, channels []*Channel) error {
 	}
 
 	// Store the result
-	return d.PutImage(uuid, composite)
+	return voxels.PutImage(uuid, d, composite)
 }

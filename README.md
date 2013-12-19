@@ -37,10 +37,10 @@ save for resource limitations like the size of the data that can be managed.
 
 Scalability can be achieved in at least two ways:
 
-* **Scale­up**: Run DVID on a computer with more cores, larger memory, and faster/larger storage 
+* **Scale­-up**: Run DVID on a computer with more cores, larger memory, and faster/larger storage 
 (e.g., use a cluster­-ready backend system like couchbase, Cassandra, or a Facebook Haystack­-inspired 
 system).
-* **Scale­out**: Subdivide (by sharding) the data and run DVID servers on each subdivision, perhaps 
+* **Scale­-out**: Subdivide (by sharding) the data and run DVID servers on each subdivision, perhaps 
 eventually aggregating the subdivisions to a larger DVID server in a map/reduce fashion.
 
 Why is distributed versioning central to DVID instead of a centralized approach?
@@ -183,7 +183,7 @@ You can then modify the web client code and simply refresh the browser.
 
 ## Simple Example
 
-In this example, we'll initialize a new datastore, create a grayscale data type and data,
+In this example, we'll initialize a new datastore, create grayscale data,
 load some images, and then use a web browser to see the results. 
 
 ### Getting help

@@ -10,13 +10,13 @@ import (
 )
 
 func init() {
-	values := []DataValue{
+	values := DataValues{
 		{
 			DataType: "uint32",
 			Label:    "labels32",
 		},
 	}
-	labels := NewDatatype(1, 4, values)
+	labels := NewDatatype(values)
 	labels.DatatypeID = &datastore.DatatypeID{
 		Name:    "labels32",
 		Url:     "github.com/janelia-flyem/dvid/datatype/voxels/labels32.go",

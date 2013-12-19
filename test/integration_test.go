@@ -12,6 +12,7 @@ import (
 	"github.com/janelia-flyem/dvid/server"
 
 	// Declare the data types this DVID executable will support
+	//_ "github.com/janelia-flyem/dvid/datatype/labels64"
 	_ "github.com/janelia-flyem/dvid/datatype/multichan16"
 	_ "github.com/janelia-flyem/dvid/datatype/tiles"
 	_ "github.com/janelia-flyem/dvid/datatype/voxels"
@@ -124,8 +125,8 @@ func (suite *DataSuite) TestDatasetPersistence(c *C) {
 	err = service.NewData(root, "labels32", "node2labels32", config)
 	c.Assert(err, IsNil)
 
-	err = service.NewData(root, "labels64", "node2labels64", config)
-	c.Assert(err, IsNil)
+	//err = service.NewData(root, "labels64", "node2labels64", config)
+	//c.Assert(err, IsNil)
 
 	err = service.NewData(root, "rgba8", "node2rgba8", config)
 	c.Assert(err, IsNil)

@@ -25,6 +25,24 @@ type Geometry interface {
 	String() string
 }
 
+// GetNumBlocks returns the number of n-d blocks necessary to cover the given geometry.
+func GetNumBlocks(geom Geometry, blockSize Point) int {
+	startPt := geom.StartPoint()
+	size := geom.Size()
+	numBlocks := 1
+	for dim := uint8(0); dim < geom.Size().NumDims(); dim++ {
+		blockLength := blockSize.Value(dim)
+		startMod := startPt.Value(dim) % blockLength
+		length := size.Value(dim) + startMod
+		blocks := length / blockLength
+		if length%blockLength != 0 {
+			blocks++
+		}
+		numBlocks *= int(blocks)
+	}
+	return numBlocks
+}
+
 type Dimension struct {
 	Name     string
 	Units    string
@@ -76,7 +94,7 @@ func BytesToDataShape(b []byte) (s DataShape, err error) {
 }
 
 // AxisName returns common axis descriptions like X, Y, and Z for a shapes dimensions.
-func (s DataShape) AxisName(axis uint) string {
+func (s DataShape) AxisName(axis uint8) string {
 	if int(axis) >= len(s.shape) {
 		return "Unknown"
 	}
@@ -115,6 +133,17 @@ func (s DataShape) ShapeDimensions() int8 {
 		return 0
 	}
 	return int8(len(s.shape))
+}
+
+// ShapeDimension returns the axis number for a shape dimension.
+func (s DataShape) ShapeDimension(axis uint8) (uint8, error) {
+	if s.shape == nil {
+		return 0, fmt.Errorf("Cannot request ShapeDimension from nil DataShape")
+	}
+	if len(s.shape) <= int(axis) {
+		return 0, fmt.Errorf("Illegal dimension requested from DataShape: %d", axis)
+	}
+	return s.shape[axis], nil
 }
 
 // Duplicate returns a duplicate of the DataShape.

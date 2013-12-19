@@ -30,7 +30,8 @@ type ChunkOp struct {
 	Wg *sync.WaitGroup
 }
 
-// Chunk is the unit passed down channels to chunk handlers.
+// Chunk is the unit passed down channels to chunk handlers.  Chunks can be passed
+// from lower-level database access functions to type-specific chunk processing.
 type Chunk struct {
 	*ChunkOp
 	KeyValue

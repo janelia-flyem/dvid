@@ -12,17 +12,17 @@ import (
 // Hook up gocheck into the "go test" runner.
 func Test(t *testing.T) { TestingT(t) }
 
-type DataSuite struct {
+type TestSuite struct {
 	dir     string
 	service *server.Service
 	head    dvid.UUID
 }
 
-var _ = Suite(&DataSuite{})
+var _ = Suite(&TestSuite{})
 
 // This will setup a new datastore and open it up, keeping the UUID and
 // service pointer in the DataSuite.
-func (suite *DataSuite) SetUpSuite(c *C) {
+func (suite *TestSuite) SetUpSuite(c *C) {
 	// Make a temporary testing directory that will be auto-deleted after testing.
 	suite.dir = c.MkDir()
 
@@ -35,12 +35,12 @@ func (suite *DataSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (suite *DataSuite) TearDownSuite(c *C) {
+func (suite *TestSuite) TearDownSuite(c *C) {
 	suite.service.Shutdown()
 }
 
 // Make sure new grayscale8 data have different IDs.
-func (suite *DataSuite) TestNewDataDifferent(c *C) {
+func (suite *TestSuite) TestNewDataDifferent(c *C) {
 	// Create a new dataset
 	root, _, err := suite.service.NewDataset()
 	c.Assert(err, IsNil)
@@ -110,7 +110,7 @@ func MakeVolume(offset, size dvid.Point3d) []byte {
 	return volume
 }
 
-func (suite *DataSuite) sliceTest(c *C, slice dvid.Geometry) {
+func (suite *TestSuite) sliceTest(c *C, slice dvid.Geometry) {
 	// Create a new dataset
 	root, _, err := suite.service.NewDataset()
 	c.Assert(err, IsNil)
@@ -138,14 +138,14 @@ func (suite *DataSuite) sliceTest(c *C, slice dvid.Geometry) {
 	img := dvid.ImageGrayFromData(data, int(nx), int(ny))
 
 	// Store it into datastore at root
-	v, err := grayscale.NewVoxelHandler(slice, img)
+	v, err := grayscale.NewExtHandler(slice, img)
 	c.Assert(err, IsNil)
 
-	err = grayscale.PutImage(root, v)
+	err = PutImage(root, grayscale, v)
 	c.Assert(err, IsNil)
 
 	// Read the stored image
-	retrieved, err := grayscale.GetImage(root, v)
+	retrieved, err := GetImage(root, grayscale, v)
 	c.Assert(err, IsNil)
 
 	// Make sure the retrieved image matches the original
@@ -155,7 +155,7 @@ func (suite *DataSuite) sliceTest(c *C, slice dvid.Geometry) {
 	c.Assert(retrievedData, DeepEquals, data)
 }
 
-func (suite *DataSuite) TestXYSliceGrayscale8(c *C) {
+func (suite *TestSuite) TestXYSliceGrayscale8(c *C) {
 	offset := dvid.Point3d{3, 13, 24}
 	size := dvid.Point2d{100, 100}
 	slice, err := dvid.NewOrthogSlice(dvid.XY, offset, size)
@@ -163,7 +163,7 @@ func (suite *DataSuite) TestXYSliceGrayscale8(c *C) {
 	suite.sliceTest(c, slice)
 }
 
-func (suite *DataSuite) TestXZSliceGrayscale8(c *C) {
+func (suite *TestSuite) TestXZSliceGrayscale8(c *C) {
 	offset := dvid.Point3d{31, 10, 14}
 	size := dvid.Point2d{100, 100}
 	slice, err := dvid.NewOrthogSlice(dvid.XZ, offset, size)
@@ -171,7 +171,7 @@ func (suite *DataSuite) TestXZSliceGrayscale8(c *C) {
 	suite.sliceTest(c, slice)
 }
 
-func (suite *DataSuite) TestYZSliceGrayscale8(c *C) {
+func (suite *TestSuite) TestYZSliceGrayscale8(c *C) {
 	offset := dvid.Point3d{13, 40, 99}
 	size := dvid.Point2d{100, 100}
 	slice, err := dvid.NewOrthogSlice(dvid.YZ, offset, size)

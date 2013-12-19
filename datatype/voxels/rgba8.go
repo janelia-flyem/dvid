@@ -10,7 +10,7 @@ import (
 )
 
 func init() {
-	values := []DataValue{
+	values := DataValues{
 		{
 			DataType: "uint8",
 			Label:    "red",
@@ -28,7 +28,7 @@ func init() {
 			Label:    "alpha",
 		},
 	}
-	rgba := NewDatatype(4, 1, values)
+	rgba := NewDatatype(values)
 	rgba.DatatypeID = &datastore.DatatypeID{
 		Name:    "rgba8",
 		Url:     "github.com/janelia-flyem/dvid/datatype/voxels/rgba8.go",

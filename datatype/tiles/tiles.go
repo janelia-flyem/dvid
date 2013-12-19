@@ -639,10 +639,10 @@ func (d *Data) ConstructTiles(uuidStr string, config dvid.Config) error {
 	}
 
 	// Get voxel extents of volume.
-	minPt := src.MinIndex.(dvid.PointIndexer).FirstPoint(src.BlockSize).(dvid.Point3d)
-	maxPt := src.MaxIndex.(dvid.PointIndexer).LastPoint(src.BlockSize).(dvid.Point3d)
+	minPt := src.MinIndex.(dvid.PointIndexer).FirstPoint(src.BlockSize()).(dvid.Point3d)
+	maxPt := src.MaxIndex.(dvid.PointIndexer).LastPoint(src.BlockSize()).(dvid.Point3d)
 	fmt.Printf("MinIndex Z: %d, MaxIndex Z: %d\n", src.MinIndex.Value(2), src.MaxIndex.Value(2))
-	fmt.Printf("minPt: %s, maxPt: %s, blockSize: %s\n", minPt, maxPt, src.BlockSize)
+	fmt.Printf("minPt: %s, maxPt: %s, blockSize: %s\n", minPt, maxPt, src.BlockSize())
 
 	// Determine covering volume size that is multiple of tile size.
 	tileSize := dvid.Point3d{d.Size, d.Size, d.Size}
@@ -708,11 +708,11 @@ func (d *Data) ConstructTiles(uuidStr string, config dvid.Config) error {
 				if err != nil {
 					return err
 				}
-				v, err := src.NewVoxelHandler(slice, nil)
+				v, err := src.NewExtHandler(slice, nil)
 				if err != nil {
 					return err
 				}
-				img, err = src.GetImage(uuid, v)
+				img, err = voxels.GetImage(uuid, src, v)
 				if err != nil {
 					return err
 				}
@@ -748,11 +748,11 @@ func (d *Data) ConstructTiles(uuidStr string, config dvid.Config) error {
 				if err != nil {
 					return err
 				}
-				v, err := src.NewVoxelHandler(slice, nil)
+				v, err := src.NewExtHandler(slice, nil)
 				if err != nil {
 					return err
 				}
-				img, err = src.GetImage(uuid, v)
+				img, err = voxels.GetImage(uuid, src, v)
 				if err != nil {
 					return err
 				}
@@ -788,11 +788,11 @@ func (d *Data) ConstructTiles(uuidStr string, config dvid.Config) error {
 				if err != nil {
 					return err
 				}
-				v, err := src.NewVoxelHandler(slice, nil)
+				v, err := src.NewExtHandler(slice, nil)
 				if err != nil {
 					return err
 				}
-				img, err = src.GetImage(uuid, v)
+				img, err = voxels.GetImage(uuid, src, v)
 				if err != nil {
 					return err
 				}

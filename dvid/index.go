@@ -121,6 +121,41 @@ type IndexRange struct {
 
 // ---- Index Implementations --------
 
+// IndexBytes satisfies an Index interface with a slice of bytes.
+type IndexBytes []byte
+
+func (i IndexBytes) Duplicate() Index {
+	dup := make(IndexBytes, len(i))
+	copy(dup, i)
+	return dup
+}
+
+func (i IndexBytes) String() string {
+	return string(i)
+}
+
+func (i IndexBytes) Bytes() []byte {
+	return []byte(i)
+}
+
+func (i IndexBytes) Hash(n int) int {
+	hash := fnv.New32()
+	_, err := hash.Write([]byte(i))
+	if err != nil {
+		Error("Could not write to fnv hash in IndexBytes.Hash()")
+		return 0
+	}
+	return int(hash.Sum32()) % n
+}
+
+func (i IndexBytes) Scheme() string {
+	return "Bytes Indexing"
+}
+
+func (i IndexBytes) IndexFromBytes(b []byte) (Index, error) {
+	return IndexBytes(b), nil
+}
+
 // IndexString satisfies an Index interface with a string.
 type IndexString string
 

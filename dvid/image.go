@@ -353,6 +353,9 @@ func ImageData(img image.Image) (data []uint8, stride int32, err error) {
 	case *image.RGBA:
 		data = typedImg.Pix
 		stride = int32(typedImg.Stride)
+	case *image.NRGBA:
+		data = typedImg.Pix
+		stride = int32(typedImg.Stride)
 	case *image.RGBA64:
 		data = typedImg.Pix
 		stride = int32(typedImg.Stride)

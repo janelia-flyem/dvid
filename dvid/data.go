@@ -93,6 +93,9 @@ type Point interface {
 	// Distance returns the integer distance (rounding down).
 	Distance(Point) int32
 
+	// Prod returns the product of the point elements.
+	Prod() int64
+
 	String() string
 }
 
@@ -282,6 +285,10 @@ func (p Point2d) Distance(x Point) int32 {
 	return int32(math.Sqrt(float64(dx*dx + dy*dy)))
 }
 
+func (p Point2d) Prod() int64 {
+	return int64(p[0]) * int64(p[1])
+}
+
 func (pt Point2d) String() string {
 	return fmt.Sprintf("(%d, %d)", pt[0], pt[1])
 }
@@ -449,6 +456,10 @@ func (p Point3d) Distance(x Point) int32 {
 	dy := p[1] - p2[1]
 	dz := p[2] - p2[2]
 	return int32(math.Sqrt(float64(dx*dx + dy*dy + dz*dz)))
+}
+
+func (p Point3d) Prod() int64 {
+	return int64(p[0]) * int64(p[1]) * int64(p[2])
 }
 
 func (p Point3d) String() string {
@@ -619,6 +630,14 @@ func (p PointNd) Distance(x Point) int32 {
 		sqrDist += float64(delta * delta)
 	}
 	return int32(math.Sqrt(sqrDist))
+}
+
+func (p PointNd) Prod() int64 {
+	prod := int64(1)
+	for _, val := range p {
+		prod *= int64(val)
+	}
+	return prod
 }
 
 func (p PointNd) String() string {

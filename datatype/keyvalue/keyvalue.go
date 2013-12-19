@@ -42,8 +42,7 @@ $ dvid dataset <UUID> new keyvalue <data name> <settings...>
     Arguments:
 
     UUID           Hexidecimal string with enough characters to uniquely identify a version node.
-    type name      Data type name, e.g., "grayscale8"
-    data name      Name of data to create, e.g., "mygrayscale"
+    data name      Name of data to create, e.g., "myblobs"
     settings       Configuration settings in "key=value" format separated by spaces.
 
     Configuration Settings (case-insensitive keys)

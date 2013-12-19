@@ -162,12 +162,12 @@ func KeyToPointIndexer(key storage.Key) (dvid.PointIndexer, error) {
 	if !ok {
 		return nil, fmt.Errorf("Can't convert Key (%s) to DataKey", key)
 	}
-	zyx, ok := datakey.Index.(dvid.PointIndexer)
+	ptIndex, ok := datakey.Index.(dvid.PointIndexer)
 	if !ok {
 		return nil, fmt.Errorf("Can't convert DataKey.Index (%s) to PointIndexer",
 			reflect.TypeOf(datakey.Index))
 	}
-	return zyx, nil
+	return ptIndex, nil
 }
 
 // ------ Key Interface ----------
