@@ -39,6 +39,30 @@ var (
 	errorLogger *log.Logger
 )
 
+// Bool is a concurrency-safe bool.
+type Bool struct {
+	mu  sync.RWMutex
+	bit bool
+}
+
+func (b *Bool) SetTrue() {
+	b.mu.Lock()
+	b.bit = true
+	b.mu.Unlock()
+}
+
+func (b *Bool) SetFalse() {
+	b.mu.Lock()
+	b.bit = false
+	b.mu.Unlock()
+}
+
+func (b *Bool) Value() bool {
+	defer b.mu.RUnlock()
+	b.mu.RLock()
+	return b.bit
+}
+
 // DataFromPost returns data submitted in the given key of a POST request.
 func DataFromPost(r *http.Request, key string) ([]byte, error) {
 	f, _, err := r.FormFile(key)

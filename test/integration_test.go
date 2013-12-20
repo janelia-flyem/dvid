@@ -77,8 +77,8 @@ func (suite *DataSuite) TestVersionedDataOps(c *C) {
 
 	c.Assert(root1, Not(Equals), root2)
 
-	err = suite.service.NewData(root2, "labels64", "labels2", config)
-	c.Assert(err, IsNil)
+	//err = suite.service.NewData(root2, "labels64", "labels2", config)
+	//c.Assert(err, IsNil)
 
 	err = suite.service.NewData(root2, "grayscale8", "grayscale2", config)
 	c.Assert(err, IsNil)

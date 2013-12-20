@@ -517,13 +517,33 @@ func PutImage(uuid dvid.UUID, i IntHandler, e ExtHandler) error {
 	return nil
 }
 
+// Loads a XY oriented image at given offset, returning an ExtHandler.
+func loadXYImage(i IntHandler, filename string, offset dvid.Point) (ExtHandler, error) {
+	startTime := time.Now()
+	img, _, err := dvid.ImageFromFile(filename)
+	if err != nil {
+		return nil, err
+	}
+	slice, err := dvid.NewOrthogSlice(dvid.XY, offset, dvid.RectSize(img.Bounds()))
+	if err != nil {
+		return nil, fmt.Errorf("Unable to determine slice: %s", err.Error())
+	}
+	e, err := i.NewExtHandler(slice, img)
+	if err != nil {
+		return nil, err
+	}
+	storage.FileBytesRead <- len(e.Data())
+	dvid.ElapsedTime(dvid.Debug, startTime, "%s loaded %s", i.DataID().DataName(), e)
+	return e, nil
+}
+
 // Optimized bulk loading of XY images by loading all slices for a block before processing.
 // Trades off memory for speed.
 func LoadXY(i IntHandler, uuid dvid.UUID, offset dvid.Point, filenames []string) error {
+	if len(filenames) == 0 {
+		return nil
+	}
 	startTime := time.Now()
-
-	// Get plane
-	plane := dvid.XY
 
 	service := server.DatastoreService()
 	_, versionID, err := service.LocalIDFromUUID(uuid)
@@ -537,15 +557,15 @@ func LoadXY(i IntHandler, uuid dvid.UUID, offset dvid.Point, filenames []string)
 	versionMutex.Lock()
 
 	// Keep track of changing extents and mark dataset as dirty if changed.
-	var extentChanged bool
+	var extentChanged dvid.Bool
 
 	// Handle cleanup given multiple goroutines still writing data.
-	var wg sync.WaitGroup
+	var writeWait, blockWait sync.WaitGroup
 	defer func() {
-		wg.Wait()
+		writeWait.Wait()
 		versionMutex.Unlock()
 
-		if extentChanged {
+		if extentChanged.Value() {
 			err := service.SaveDataset(uuid)
 			if err != nil {
 				dvid.Log(dvid.Normal, "Error in trying to save dataset on change: %s\n", err.Error())
@@ -553,90 +573,160 @@ func LoadXY(i IntHandler, uuid dvid.UUID, offset dvid.Point, filenames []string)
 		}
 	}()
 
-	// Setup the iteration by reading the first slice to establish image sizes.
+	// Load first slice, get dimensions, allocate blocks for whole slice.
+	// Note: We don't need to lock the block slices because goroutines do NOT
+	// access the same elements of a slice.
 	var numBlocks int
-	var blocks Blocks
+	var blocks [2]Blocks
+	curBlocks := 0
+	blockSize := i.BlockSize()
+	blockBytes := blockSize.Prod() * int64(i.Values().BytesPerVoxel())
 
+	// Iterate through XY slices batched into the Z length of blocks.
 	fileNum := 1
 	for _, filename := range filenames {
 		sliceTime := time.Now()
-		img, _, err := dvid.ImageFromFile(filename)
-		if err != nil {
-			return fmt.Errorf("Error after %d images successfully added: %s",
-				fileNum-1, err.Error())
-		}
-		slice, err := dvid.NewOrthogSlice(plane, offset, dvid.RectSize(img.Bounds()))
-		if err != nil {
-			return fmt.Errorf("Unable to determine slice: %s", err.Error())
-		}
-		e, err := i.NewExtHandler(slice, img)
-		if err != nil {
-			return err
-		}
-		storage.FileBytesRead <- len(e.Data())
 
-		// Track point extents
-		extents := i.Extents()
-		if extents.AdjustPoints(slice.StartPoint(), slice.EndPoint()) {
-			extentChanged = true
-		}
-
-		// Initialize new map of blocks if we are at new slice.
-		blockSize := i.BlockSize()
 		zInBlock := offset.Value(2) % blockSize.Value(2)
+		firstSlice := fileNum == 1
+		lastSlice := fileNum == len(filenames)
+		firstSliceInBlock := firstSlice || zInBlock == 0
+		lastSliceInBlock := lastSlice || zInBlock == blockSize.Value(2)-1
+		lastBlocks := fileNum+int(blockSize.Value(2)) > len(filenames)
 
-		var loadOld bool // Do we need to load old block values before storing?
-		if blocks == nil || zInBlock == 0 {
-			numBlocks = dvid.GetNumBlocks(slice, blockSize)
-			blocks = make(Blocks, numBlocks)
-			if fileNum == 1 {
-				loadOld = true
-			} else if fileNum+int(blockSize.Value(2)) > len(filenames) {
-				loadOld = true
-			}
-		}
-
-		// Process an XY image (slice).
-		firstSliceInBlock := fileNum == 1 || zInBlock == 0
-		changed, err := processXYImage(i, e, blocks, versionID, firstSliceInBlock, loadOld)
+		// Load images synchronously
+		e, err := loadXYImage(i, filename, offset)
 		if err != nil {
 			return err
 		}
-		if changed {
-			extentChanged = true
-		}
 
-		// If we've finished writing these blocks, do sequential write in goroutine.
-		if zInBlock == blockSize.Value(2)-1 || fileNum == len(filenames) {
-			if err = AsyncWriteData(blocks, &wg); err != nil {
+		// Allocate blocks and/or load old block data if first/last XY blocks.
+		if fileNum == 1 || (lastBlocks && firstSliceInBlock) {
+			if fileNum == 1 {
+				numBlocks = dvid.GetNumBlocks(e, blockSize)
+				blocks[0] = make(Blocks, numBlocks, numBlocks)
+				blocks[1] = make(Blocks, numBlocks, numBlocks)
+				for i := 0; i < numBlocks; i++ {
+					blocks[0][i].V = make([]byte, blockBytes, blockBytes)
+					blocks[1][i].V = make([]byte, blockBytes, blockBytes)
+				}
+			}
+			err = loadOldBlocks(i, e, blocks[curBlocks], versionID)
+			if err != nil {
 				return err
 			}
 		}
 
-		dvid.ElapsedTime(dvid.Debug, sliceTime, "%s load %s", i.DataID().DataName(), slice)
+		// Transfer data between external<->internal blocks asynchronously
+		blockWait.Add(1)
+		go func() {
+			// Track point extents
+			if i.Extents().AdjustPoints(e.StartPoint(), e.EndPoint()) {
+				extentChanged.SetTrue()
+			}
+
+			// Process an XY image (slice).
+			changed, err := writeXYImage(i, e, blocks[curBlocks], versionID)
+			if err != nil {
+				dvid.Log(dvid.Normal, "Error writing XY image: %s\n", err.Error())
+			}
+			if changed {
+				extentChanged.SetTrue()
+			}
+			blockWait.Done()
+		}()
+
+		// If this is the end of a block (or filenames), wait until all goroutines complete,
+		// then asynchronously write blocks.
+		if lastSliceInBlock {
+			blockWait.Wait()
+			if err = AsyncWriteData(blocks[curBlocks], &writeWait); err != nil {
+				return err
+			}
+			curBlocks = (curBlocks + 1) % 2
+		}
+
 		fileNum++
 		offset = offset.Add(dvid.Point3d{0, 0, 1})
+		dvid.ElapsedTime(dvid.Debug, sliceTime, "Loaded %s slice %s", i, e)
 	}
 	dvid.ElapsedTime(dvid.Debug, startTime, "RPC load of %d files completed", len(filenames))
 
 	return nil
 }
 
-func processXYImage(i IntHandler, e ExtHandler, blocks Blocks, versionID dvid.VersionLocalID,
-	firstSliceInBlock, loadOld bool) (extentChanged bool, err error) {
+// Loads blocks with old data if they exist or else set the block to zeros.
+func loadOldBlocks(i IntHandler, e ExtHandler, blocks Blocks, versionID dvid.VersionLocalID) error {
+	db := server.StorageEngine()
+	if db == nil {
+		return fmt.Errorf("Did not find a working key-value datastore to put image!")
+	}
 
+	// Create a map of old blocks indexed by the index
+	oldBlocks := map[string]([]byte){}
+
+	// Iterate through index space for this data using ZYX ordering.
+	dataID := i.DataID()
+	blockSize := i.BlockSize()
+	blockNum := 0
+	for it, err := e.IndexIterator(blockSize); err == nil && it.Valid(); it.NextSpan() {
+		indexBeg, indexEnd, err := it.IndexSpan()
+		if err != nil {
+			return err
+		}
+
+		// Get previous data.
+		keyBeg := &datastore.DataKey{dataID.DsetID, dataID.ID, versionID, indexBeg}
+		keyEnd := &datastore.DataKey{dataID.DsetID, dataID.ID, versionID, indexEnd}
+		keyvalues, err := db.GetRange(keyBeg, keyEnd)
+		if err != nil {
+			return err
+		}
+		for _, kv := range keyvalues {
+			dataKey, ok := kv.K.(*datastore.DataKey)
+			if ok {
+				block, _, err := dvid.DeserializeData(kv.V, true)
+				if err != nil {
+					return fmt.Errorf("Unable to deserialize block in '%s': %s",
+						dataID.DataName(), err.Error())
+				}
+				oldBlocks[dataKey.Index.String()] = block
+			} else {
+				return fmt.Errorf("Error no DataKey in retrieving old data for loadOldBlocks()")
+			}
+		}
+
+		ptBeg := indexBeg.Duplicate().(dvid.PointIndexer)
+		ptEnd := indexEnd.Duplicate().(dvid.PointIndexer)
+		begX := ptBeg.Value(0)
+		endX := ptEnd.Value(0)
+		c := dvid.ChunkPoint3d{begX, ptBeg.Value(1), ptBeg.Value(2)}
+		for x := begX; x <= endX; x++ {
+			c[0] = x
+			key := &datastore.DataKey{dataID.DsetID, dataID.ID, versionID, e.Index(c)}
+			blocks[blockNum].K = key
+			block, ok := oldBlocks[key.Index.String()]
+			if ok {
+				copy(blocks[blockNum].V, block)
+			}
+			blockNum++
+		}
+	}
+	return nil
+}
+
+// Writes a XY image (the ExtHandler) into the blocks that intersect it.
+// This function assumes the blocks have been allocated and if necessary, filled
+// with old data.
+func writeXYImage(i IntHandler, e ExtHandler, blocks Blocks, versionID dvid.VersionLocalID) (extentChanged bool, err error) {
 	db := server.StorageEngine()
 	if db == nil {
 		return false, fmt.Errorf("Did not find a working key-value datastore to put image!")
 	}
 
-	// Create a map of blocks that may be present on the ends, i.e., first and last slice.
-	endsBlocks := map[string]([]uint8){}
-
 	// Iterate through index space for this data using ZYX ordering.
 	dataID := i.DataID()
 	blockSize := i.BlockSize()
-	blockBytes := blockSize.Prod() * int64(i.Values().BytesPerVoxel())
 	blockNum := 0
 	for it, err := e.IndexIterator(blockSize); err == nil && it.Valid(); it.NextSpan() {
 		indexBeg, indexEnd, err := it.IndexSpan()
@@ -644,32 +734,10 @@ func processXYImage(i IntHandler, e ExtHandler, blocks Blocks, versionID dvid.Ve
 			return extentChanged, err
 		}
 
-		// Get previous data at ends.
-		if loadOld {
-			keyBeg := &datastore.DataKey{dataID.DsetID, dataID.ID, versionID, indexBeg}
-			keyEnd := &datastore.DataKey{dataID.DsetID, dataID.ID, versionID, indexEnd}
-			keyvalues, err := db.GetRange(keyBeg, keyEnd)
-			if err != nil {
-				return extentChanged, err
-			}
-			for _, kv := range keyvalues {
-				dataKey, ok := kv.K.(*datastore.DataKey)
-				if ok {
-					block, _, err := dvid.DeserializeData(kv.V, true)
-					if err != nil {
-						return false, fmt.Errorf("Unable to deserialize block in '%s': %s",
-							dataID.DataName(), err.Error())
-					}
-					endsBlocks[dataKey.Index.String()] = block
-				} else {
-					return extentChanged, fmt.Errorf("Error no DataKey in retrieving old data for LoadXY()")
-				}
-			}
-		}
-
 		ptBeg := indexBeg.Duplicate().(dvid.PointIndexer)
 		ptEnd := indexEnd.Duplicate().(dvid.PointIndexer)
 
+		// Track point extents
 		if i.Extents().AdjustIndices(ptBeg, ptEnd) {
 			extentChanged = true
 		}
@@ -681,15 +749,7 @@ func processXYImage(i IntHandler, e ExtHandler, blocks Blocks, versionID dvid.Ve
 			c[0] = x
 			key := &datastore.DataKey{dataID.DsetID, dataID.ID, versionID, e.Index(c)}
 			blocks[blockNum].K = key
-			if firstSliceInBlock {
-				blocks[blockNum].V = make([]uint8, blockBytes)
-				if loadOld {
-					block, ok := endsBlocks[key.Index.String()]
-					if ok {
-						copy(blocks[blockNum].V, block)
-					}
-				}
-			}
+
 			// Write this slice data into the block.
 			WriteToBlock(e, &(blocks[blockNum]), blockSize)
 			blockNum++
@@ -729,8 +789,6 @@ func AsyncWriteData(blocks Blocks, wg *sync.WaitGroup) error {
 					return
 				}
 				batch.Put(block.K, serialization)
-				blocks[i].V = nil
-				blocks[i].K = nil
 				if i%KVWriteSize == KVWriteSize-1 || i == len(blocks)-1 {
 					if err := batch.Commit(); err != nil {
 						fmt.Printf("Error on trying to write batch: %s\n", err.Error())
@@ -739,7 +797,6 @@ func AsyncWriteData(blocks Blocks, wg *sync.WaitGroup) error {
 					batch.Clear()
 				}
 			}
-			blocks = nil
 			batch.Close()
 		} else {
 			// Serialize and compress the blocks.
@@ -754,9 +811,7 @@ func AsyncWriteData(blocks Blocks, wg *sync.WaitGroup) error {
 					K: block.K,
 					V: serialization,
 				}
-				blocks[i].V = nil
 			}
-			blocks = nil
 
 			// Write them in one swoop.
 			err := db.PutRange(keyvalues)
@@ -1242,10 +1297,16 @@ type Extents struct {
 
 	MinIndex dvid.PointIndexer
 	MaxIndex dvid.PointIndexer
+
+	pointMu sync.Mutex
+	indexMu sync.Mutex
 }
 
-// Adjust points modifies extents based on new voxel coordinates.
+// AdjustPoints modifies extents based on new voxel coordinates in concurrency-safe manner.
 func (ext *Extents) AdjustPoints(pointBeg, pointEnd dvid.Point) bool {
+	defer ext.pointMu.Unlock()
+	ext.pointMu.Lock()
+
 	var changed bool
 	if ext.MinPoint == nil {
 		ext.MinPoint = pointBeg
@@ -1262,8 +1323,11 @@ func (ext *Extents) AdjustPoints(pointBeg, pointEnd dvid.Point) bool {
 	return changed
 }
 
-// AdjustIndices modifies extents based on new block indices.
+// AdjustIndices modifies extents based on new block indices in concurrency-safe manner.
 func (ext *Extents) AdjustIndices(indexBeg, indexEnd dvid.PointIndexer) bool {
+	defer ext.indexMu.Unlock()
+	ext.indexMu.Lock()
+
 	var changed bool
 	if ext.MinIndex == nil {
 		ext.MinIndex = indexBeg
