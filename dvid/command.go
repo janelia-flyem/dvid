@@ -8,6 +8,7 @@ package dvid
 
 import (
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -190,6 +191,36 @@ func (cmd Command) Settings() Config {
 	return config
 }
 
+// FilenameArgs is similar to CommandArgs except it can take filename glob patterns
+// at the end of the string, and will find matches and return those.
+func (cmd Command) FilenameArgs(startPos int, targets ...*string) (filenames []string, err error) {
+	filenames = []string{}
+	for _, target := range targets {
+		*target = ""
+	}
+	if len(cmd) > startPos {
+		numTargets := len(targets)
+		curTarget := 0
+		for _, arg := range cmd[startPos:] {
+			elems := strings.Split(arg, "=")
+			if len(elems) != 2 {
+				if curTarget >= numTargets {
+					matches, err := filepath.Glob(arg)
+					if err != nil {
+						return nil, err
+					} else {
+						filenames = append(filenames, matches...)
+					}
+				} else {
+					*(targets[curTarget]) = arg
+				}
+				curTarget++
+			}
+		}
+	}
+	return
+}
+
 // CommandArgs sets a variadic argument set of string pointers to data
 // command arguments, ignoring setting arguments of the form "<key>=<value>".
 // If there aren't enough arguments to set a target, the target is set to the
@@ -210,13 +241,12 @@ func (cmd Command) Settings() Config {
 //      add
 //      param1 param2
 //      42
-func (cmd Command) CommandArgs(startPos int, targets ...*string) (overflow []string) {
-	overflow = getArgs(cmd, startPos, targets...)
-	return
+func (cmd Command) CommandArgs(startPos int, targets ...*string) []string {
+	return getArgs(cmd, startPos, targets...)
 }
 
-func getArgs(cmd Command, startPos int, targets ...*string) (overflow []string) {
-	overflow = make([]string, 0, len(cmd))
+func getArgs(cmd Command, startPos int, targets ...*string) []string {
+	overflow := make([]string, len(cmd))
 	for _, target := range targets {
 		*target = ""
 	}
@@ -235,5 +265,5 @@ func getArgs(cmd Command, startPos int, targets ...*string) (overflow []string) 
 			}
 		}
 	}
-	return
+	return overflow
 }

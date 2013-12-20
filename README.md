@@ -265,7 +265,7 @@ Download a [small stack of grayscale images from github](https://github.com/jane
 You can either clone it using git or use the "Download ZIP" button on the right.  Once you've downloaded
 that 250 x 250 x 250 grayscale volume, enter the following:
 
-    % dvid node c7 mygrayscale load xy 100,100,2600 /path/to/sample/*.png
+    % dvid node c7 mygrayscale load xy 100,100,2600 "/path/to/sample/*.png"
 
 Once again, replace the "c7" with a UUID string for your dataset.  Note that you have to specify
 the full path to the PNG images.  If you started the DVID server using the "-debug" option, 

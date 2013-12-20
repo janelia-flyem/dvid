@@ -519,7 +519,6 @@ func PutImage(uuid dvid.UUID, i IntHandler, e ExtHandler) error {
 
 // Loads a XY oriented image at given offset, returning an ExtHandler.
 func loadXYImage(i IntHandler, filename string, offset dvid.Point) (ExtHandler, error) {
-	startTime := time.Now()
 	img, _, err := dvid.ImageFromFile(filename)
 	if err != nil {
 		return nil, err
@@ -533,7 +532,6 @@ func loadXYImage(i IntHandler, filename string, offset dvid.Point) (ExtHandler, 
 		return nil, err
 	}
 	storage.FileBytesRead <- len(e.Data())
-	dvid.ElapsedTime(dvid.Debug, startTime, "%s loaded %s", i.DataID().DataName(), e)
 	return e, nil
 }
 
@@ -1503,7 +1501,10 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 		}
 		// Parse the request
 		var uuidStr, dataName, cmdStr, offsetStr string
-		filenames := request.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &offsetStr)
+		filenames, err := request.FilenameArgs(1, &uuidStr, &dataName, &cmdStr, &offsetStr)
+		if err != nil {
+			return err
+		}
 		if len(filenames) == 0 {
 			return fmt.Errorf("Need to include at least one file to add: %s", request)
 		}

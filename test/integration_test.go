@@ -58,8 +58,8 @@ func (suite *DataSuite) TestVersionedDataOps(c *C) {
 	err = suite.service.NewData(root1, "grayscale8", "grayscale", config)
 	c.Assert(err, IsNil)
 
-	err = suite.service.NewData(root1, "labels64", "labels", config)
-	c.Assert(err, IsNil)
+	//err = suite.service.NewData(root1, "labels64", "labels", config)
+	//c.Assert(err, IsNil)
 
 	child1, err := suite.service.NewVersion(root1)
 	// Should be an error because we have not locked previous node before making a child.
