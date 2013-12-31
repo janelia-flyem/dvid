@@ -151,6 +151,9 @@ type DataKey struct {
 	Index dvid.Index
 }
 
+// The offset to the Index in bytes of a DataKey bytes representation
+const DataKeyIndexOffset = dvid.LocalIDSize*2 + dvid.LocalID32Size + 1
+
 // DataKey returns a DataKey for this data given a local version and a data-specific Index.
 func (d *Data) DataKey(versionID dvid.VersionLocalID, index dvid.Index) *DataKey {
 	return &DataKey{d.DsetID, d.ID, versionID, index}

@@ -4,7 +4,6 @@ package storage
 
 import (
 	"bytes"
-	_ "fmt"
 
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/go/hyperleveldb"
@@ -100,6 +99,7 @@ func NewStore(path string, create bool, config dvid.Config) (Engine, error) {
 		WriteOptions: levigo.NewWriteOptions(),
 		env:          levigo.NewDefaultEnv(),
 	}
+	opt.WriteOptions.SetSync(DefaultSync) // Huge performance penalty to set sync to true
 
 	leveldb := &LevelDB{
 		directory: path,
@@ -233,7 +233,7 @@ func (db *LevelDB) Get(k Key) (v []byte, err error) {
 	ro := db.options.ReadOptions
 	v, err = db.ldb.Get(ro, k.Bytes())
 	dvid.StopCgo()
-	StoreBytesRead <- len(v)
+	StoreValueBytesRead <- len(v)
 	return
 }
 
@@ -251,21 +251,59 @@ func (db *LevelDB) GetRange(kStart, kEnd Key) (values []KeyValue, err error) {
 	values = []KeyValue{}
 	it.Seek(kStart.Bytes())
 	endBytes := kEnd.Bytes()
-	//	fmt.Printf("levigo.GetRange: %x -> %x\n", kStart.Bytes(), endBytes)
 	for {
 		if it.Valid() {
-			value := it.Value()
-			StoreBytesRead <- len(value)
-			if bytes.Compare(it.Key(), endBytes) > 0 {
+			itKey := it.Key()
+			StoreKeyBytesRead <- len(itKey)
+			if bytes.Compare(itKey, endBytes) > 0 {
 				return
 			}
-			//			fmt.Printf("          Valid: %x\n", it.Key())
+			itValue := it.Value()
+			StoreValueBytesRead <- len(itValue)
+
+			// Convert byte representation of key to storage.Key
 			var key Key
-			key, err = kStart.BytesToKey(it.Key())
+			key, err = kStart.BytesToKey(itKey)
 			if err != nil {
 				return
 			}
-			values = append(values, KeyValue{key, value})
+			values = append(values, KeyValue{key, itValue})
+			it.Next()
+		} else {
+			err = it.GetError()
+			return
+		}
+	}
+}
+
+// KeysInRange returns a range of present keys spanning (kStart, kEnd).  Values
+// associated with the keys are not read.
+func (db *LevelDB) KeysInRange(kStart, kEnd Key) (keys []Key, err error) {
+	dvid.StartCgo()
+	ro := levigo.NewReadOptions()
+	it := db.ldb.NewIterator(ro)
+	defer func() {
+		it.Close()
+		dvid.StopCgo()
+	}()
+
+	keys = []Key{}
+	it.Seek(kStart.Bytes())
+	endBytes := kEnd.Bytes()
+	for {
+		if it.Valid() {
+			itKey := it.Key()
+			StoreKeyBytesRead <- len(itKey)
+			if bytes.Compare(itKey, endBytes) > 0 {
+				return
+			}
+			// Convert byte representation of key to storage.Key
+			var key Key
+			key, err = kStart.BytesToKey(itKey)
+			if err != nil {
+				return
+			}
+			keys = append(keys, key)
 			it.Next()
 		} else {
 			err = it.GetError()
@@ -286,17 +324,17 @@ func (db *LevelDB) ProcessRange(kStart, kEnd Key, op *ChunkOp, f func(*Chunk)) e
 
 	endBytes := kEnd.Bytes()
 	it.Seek(kStart.Bytes())
-	//	fmt.Printf("levigo.ProcessRange: %x -> %x\n", kStart.Bytes(), endBytes)
 	for {
 		if it.Valid() {
-			value := it.Value()
-			StoreBytesRead <- len(value)
-			if bytes.Compare(it.Key(), endBytes) > 0 {
+			itValue := it.Value()
+			StoreValueBytesRead <- len(itValue)
+			itKey := it.Key()
+			StoreKeyBytesRead <- len(itKey)
+			if bytes.Compare(itKey, endBytes) > 0 {
 				return nil
 			}
-			//			fmt.Printf("              Valid: %x\n", it.Key())
-			// Send to channel
-			key, err := kStart.BytesToKey(it.Key())
+			// Convert byte representation of key to storage.Key
+			key, err := kStart.BytesToKey(itKey)
 			if err != nil {
 				return err
 			}
@@ -306,41 +344,10 @@ func (db *LevelDB) ProcessRange(kStart, kEnd Key, op *ChunkOp, f func(*Chunk)) e
 			}
 			chunk := &Chunk{
 				op,
-				KeyValue{key, value},
+				KeyValue{key, itValue},
 			}
 			f(chunk)
 
-			it.Next()
-		} else {
-			return it.GetError()
-		}
-	}
-}
-
-// IterateKeys iterates through stored keys spanning (kStart, kEnd), calling
-// a supplied function with the current key.
-func (db *LevelDB) IterateKeys(kStart, kEnd Key, f func(Key)) error {
-	dvid.StartCgo()
-	ro := levigo.NewReadOptions()
-	it := db.ldb.NewIterator(ro)
-	defer func() {
-		it.Close()
-		dvid.StopCgo()
-	}()
-
-	it.Seek(kStart.Bytes())
-	endBytes := kEnd.Bytes()
-	for {
-		if it.Valid() {
-			if bytes.Compare(it.Key(), endBytes) > 0 {
-				return nil
-			}
-			var key Key
-			key, err = kStart.BytesToKey(it.Key())
-			if err != nil {
-				return err
-			}
-			f(key)
 			it.Next()
 		} else {
 			return it.GetError()
@@ -352,9 +359,11 @@ func (db *LevelDB) IterateKeys(kStart, kEnd Key, f func(Key)) error {
 func (db *LevelDB) Put(k Key, v []byte) error {
 	dvid.StartCgo()
 	wo := db.options.WriteOptions
-	err := db.ldb.Put(wo, k.Bytes(), v)
+	kBytes := k.Bytes()
+	err := db.ldb.Put(wo, kBytes, v)
 	dvid.StopCgo()
-	StoreBytesWritten <- len(v)
+	StoreKeyBytesWritten <- len(kBytes)
+	StoreValueBytesWritten <- len(v)
 	return err
 }
 
@@ -368,16 +377,19 @@ func (db *LevelDB) PutRange(values []KeyValue) error {
 		wb.Close()
 		dvid.StopCgo()
 	}()
-	bytesPut := 0
+	var keyBytesPut, valueBytesPut int
 	for _, kv := range values {
-		wb.Put(kv.K.Bytes(), kv.V)
-		bytesPut += len(kv.V)
+		kBytes := kv.K.Bytes()
+		wb.Put(kBytes, kv.V)
+		keyBytesPut += len(kBytes)
+		valueBytesPut += len(kv.V)
 	}
 	err := db.ldb.Write(wo, wb)
 	if err != nil {
 		return err
 	}
-	StoreBytesWritten <- bytesPut
+	StoreKeyBytesWritten <- keyBytesPut
+	StoreValueBytesWritten <- valueBytesPut
 	return nil
 }
 
@@ -422,8 +434,10 @@ func (batch *goBatch) Delete(k Key) {
 func (batch *goBatch) Put(k Key, v []byte) {
 	dvid.StartCgo()
 	defer dvid.StopCgo()
-	StoreBytesWritten <- len(v)
-	batch.WriteBatch.Put(k.Bytes(), v)
+	kBytes := k.Bytes()
+	StoreKeyBytesWritten <- len(kBytes)
+	StoreValueBytesWritten <- len(v)
+	batch.WriteBatch.Put(kBytes, v)
 }
 
 func (batch *goBatch) Clear() {

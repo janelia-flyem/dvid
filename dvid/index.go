@@ -29,8 +29,8 @@ type LocalID uint16
 type LocalID32 uint32
 
 const (
-	sizeOfLocalID   = 2
-	sizeOfLocalID32 = 4
+	LocalIDSize   = 2
+	LocalID32Size = 4
 
 	MaxLocalID   = 0xFFFF
 	MaxLocalID32 = 0xFFFFFFFF
@@ -38,28 +38,28 @@ const (
 
 // Bytes returns a sequence of bytes encoding this LocalID.
 func (id LocalID) Bytes() []byte {
-	buf := make([]byte, sizeOfLocalID, sizeOfLocalID)
-	binary.LittleEndian.PutUint16(buf, uint16(id))
+	buf := make([]byte, LocalIDSize, LocalIDSize)
+	binary.BigEndian.PutUint16(buf, uint16(id))
 	return buf
 }
 
 // LocalIDFromBytes returns a LocalID from the start of the slice and the number of bytes used.
 // Note: No error checking is done to ensure byte slice has sufficient bytes for LocalID.
 func LocalIDFromBytes(b []byte) (id LocalID, length int) {
-	return LocalID(binary.LittleEndian.Uint16(b)), sizeOfLocalID
+	return LocalID(binary.BigEndian.Uint16(b)), LocalIDSize
 }
 
 // Bytes returns a sequence of bytes encoding this LocalID32.
 func (id LocalID32) Bytes() []byte {
-	buf := make([]byte, sizeOfLocalID32, sizeOfLocalID32)
-	binary.LittleEndian.PutUint32(buf, uint32(id))
+	buf := make([]byte, LocalID32Size, LocalID32Size)
+	binary.BigEndian.PutUint32(buf, uint32(id))
 	return buf
 }
 
 // LocalID32FromBytes returns a LocalID from the start of the slice and the number of bytes used.
 // Note: No error checking is done to ensure byte slice has sufficient bytes for LocalID.
 func LocalID32FromBytes(b []byte) (id LocalID32, length int) {
-	return LocalID32(binary.LittleEndian.Uint32(b)), sizeOfLocalID32
+	return LocalID32(binary.BigEndian.Uint32(b)), LocalID32Size
 }
 
 // Index is a one-dimensional index, typically constructed using some sort of
@@ -223,6 +223,8 @@ func (i IndexUint8) IndexFromBytes(b []byte) (Index, error) {
 // IndexZYX implements the Index interface and provides simple indexing on Z,
 // then Y, then X.
 type IndexZYX ChunkPoint3d
+
+const IndexZYXSize = ChunkPoint3dSize
 
 func (i IndexZYX) Duplicate() Index {
 	dup := i

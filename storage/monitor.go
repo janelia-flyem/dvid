@@ -14,10 +14,16 @@ const MonitorBuffer = 10000
 
 var (
 	// Number of bytes read in last second from storage engine.
-	StoreBytesReadPerSec int
+	StoreKeyBytesReadPerSec int
 
 	// Number of bytes written in last second to storage engine.
-	StoreBytesWrittenPerSec int
+	StoreKeyBytesWrittenPerSec int
+
+	// Number of bytes read in last second from storage engine.
+	StoreValueBytesReadPerSec int
+
+	// Number of bytes written in last second to storage engine.
+	StoreValueBytesWrittenPerSec int
 
 	// Number of bytes read in last second from file system.
 	FileBytesReadPerSec int
@@ -32,10 +38,16 @@ var (
 	PutsPerSec int
 
 	// Channel to notify bytes read from a storage engine.
-	StoreBytesRead chan int
+	StoreKeyBytesRead chan int
 
 	// Channel to notify bytes written to a storage engine.
-	StoreBytesWritten chan int
+	StoreKeyBytesWritten chan int
+
+	// Channel to notify bytes read from a storage engine.
+	StoreValueBytesRead chan int
+
+	// Channel to notify bytes written to a storage engine.
+	StoreValueBytesWritten chan int
 
 	// Channel to notify bytes read from file system.
 	FileBytesRead chan int
@@ -44,17 +56,21 @@ var (
 	FileBytesWritten chan int
 
 	// Current tallies up to a second.
-	storeBytesReadPerSec    int
-	storeBytesWrittenPerSec int
-	fileBytesReadPerSec     int
-	fileBytesWrittenPerSec  int
-	getsPerSec              int
-	putsPerSec              int
+	storeKeyBytesReadPerSec      int
+	storeKeyBytesWrittenPerSec   int
+	storeValueBytesReadPerSec    int
+	storeValueBytesWrittenPerSec int
+	fileBytesReadPerSec          int
+	fileBytesWrittenPerSec       int
+	getsPerSec                   int
+	putsPerSec                   int
 )
 
 func init() {
-	StoreBytesRead = make(chan int, MonitorBuffer)
-	StoreBytesWritten = make(chan int, MonitorBuffer)
+	StoreKeyBytesRead = make(chan int, MonitorBuffer)
+	StoreKeyBytesWritten = make(chan int, MonitorBuffer)
+	StoreValueBytesRead = make(chan int, MonitorBuffer)
+	StoreValueBytesWritten = make(chan int, MonitorBuffer)
 	FileBytesRead = make(chan int, MonitorBuffer)
 	FileBytesWritten = make(chan int, MonitorBuffer)
 
@@ -67,11 +83,15 @@ func loadMonitor() {
 	var access sync.Mutex
 	for {
 		select {
-		case b := <-StoreBytesRead:
-			storeBytesReadPerSec += b
+		case b := <-StoreKeyBytesRead:
+			storeKeyBytesReadPerSec += b
+		case b := <-StoreKeyBytesWritten:
+			storeKeyBytesWrittenPerSec += b
+		case b := <-StoreValueBytesRead:
+			storeValueBytesReadPerSec += b
 			getsPerSec++
-		case b := <-StoreBytesWritten:
-			storeBytesWrittenPerSec += b
+		case b := <-StoreValueBytesWritten:
+			storeValueBytesWrittenPerSec += b
 			putsPerSec++
 		case b := <-FileBytesRead:
 			fileBytesReadPerSec += b
@@ -85,10 +105,15 @@ func loadMonitor() {
 			fileBytesReadPerSec = 0
 			fileBytesWrittenPerSec = 0
 
-			StoreBytesReadPerSec = storeBytesReadPerSec
-			StoreBytesWrittenPerSec = storeBytesWrittenPerSec
-			storeBytesReadPerSec = 0
-			storeBytesWrittenPerSec = 0
+			StoreKeyBytesReadPerSec = storeKeyBytesReadPerSec
+			StoreKeyBytesWrittenPerSec = storeKeyBytesWrittenPerSec
+			storeKeyBytesReadPerSec = 0
+			storeKeyBytesWrittenPerSec = 0
+
+			StoreValueBytesReadPerSec = storeValueBytesReadPerSec
+			StoreValueBytesWrittenPerSec = storeValueBytesWrittenPerSec
+			storeValueBytesReadPerSec = 0
+			storeValueBytesWrittenPerSec = 0
 
 			GetsPerSec = getsPerSec
 			PutsPerSec = putsPerSec

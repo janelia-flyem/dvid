@@ -342,23 +342,28 @@ func PlaceholderImage(shape DataShape, dx, dy int32, message string) (image.Imag
 
 // ImageData returns the underlying pixel data for an image or an error if
 // the image doesn't have the requisite []uint8 pixel data.
-func ImageData(img image.Image) (data []uint8, stride int32, err error) {
+func ImageData(img image.Image) (data []uint8, bytesPerPixel, stride int32, err error) {
 	switch typedImg := img.(type) {
 	case *image.Gray:
 		data = typedImg.Pix
 		stride = int32(typedImg.Stride)
+		bytesPerPixel = 1
 	case *image.Gray16:
 		data = typedImg.Pix
 		stride = int32(typedImg.Stride)
+		bytesPerPixel = 2
 	case *image.RGBA:
 		data = typedImg.Pix
 		stride = int32(typedImg.Stride)
+		bytesPerPixel = 4
 	case *image.NRGBA:
 		data = typedImg.Pix
 		stride = int32(typedImg.Stride)
+		bytesPerPixel = 4
 	case *image.RGBA64:
 		data = typedImg.Pix
 		stride = int32(typedImg.Stride)
+		bytesPerPixel = 8
 	default:
 		err = fmt.Errorf("Illegal image type called ImageData(): %T", typedImg)
 	}

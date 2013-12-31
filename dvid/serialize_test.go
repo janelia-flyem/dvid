@@ -11,7 +11,7 @@ func (s *DataSuite) TestLocalID(c *C) {
 	id2, length := LocalIDFromBytes(b)
 
 	c.Assert(id, Equals, id2)
-	c.Assert(length, Equals, sizeOfLocalID)
+	c.Assert(length, Equals, LocalIDSize)
 }
 
 func (suite *DataSuite) TestSerialize(c *C) {

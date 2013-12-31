@@ -1447,13 +1447,14 @@ func (d *Data) NewExtHandler(geom dvid.Geometry, img interface{}) (ExtHandler, e
 		case image.Image:
 			var actualStride int32
 			var err error
-			voxels.data, actualStride, err = dvid.ImageData(t)
+			voxels.data, _, actualStride, err = dvid.ImageData(t)
 			if err != nil {
 				return nil, err
 			}
 			if actualStride < stride {
-				return nil, fmt.Errorf("Too little data in input image (%d stride bytes)", stride)
+				return nil, fmt.Errorf("Too little data in input image (expected stride %d)", stride)
 			}
+			voxels.stride = actualStride
 		default:
 			return nil, fmt.Errorf("Unexpected image type given to NewExtHandler(): %T", t)
 		}

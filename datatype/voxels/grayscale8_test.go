@@ -150,9 +150,10 @@ func (suite *TestSuite) sliceTest(c *C, slice dvid.Geometry) {
 
 	// Make sure the retrieved image matches the original
 	c.Assert(img.Rect, DeepEquals, retrieved.Bounds())
-	retrievedData, _, err := dvid.ImageData(retrieved)
+	retrievedData, voxelSize, _, err := dvid.ImageData(retrieved)
 	c.Assert(err, IsNil)
 	c.Assert(retrievedData, DeepEquals, data)
+	c.Assert(voxelSize, Equals, int32(1))
 }
 
 func (suite *TestSuite) TestXYSliceGrayscale8(c *C) {

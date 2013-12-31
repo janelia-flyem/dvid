@@ -51,6 +51,7 @@ type TypeService interface {
 // Subsetter is a type that can tell us its range of Index and how much it has
 // actually available in this server.  It's used to implement limited cloning,
 // e.g., only cloning a quarter of an image volume.
+// TODO: Fulfill implementation for voxels data type.
 type Subsetter interface {
 	// MaximumExtents returns a range of indices for which data is available at
 	// some DVID server.

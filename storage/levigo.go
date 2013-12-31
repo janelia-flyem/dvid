@@ -99,6 +99,7 @@ func NewStore(path string, create bool, config dvid.Config) (Engine, error) {
 		WriteOptions: levigo.NewWriteOptions(),
 		env:          levigo.NewDefaultEnv(),
 	}
+	opt.WriteOptions.SetSync(DefaultSync) // Huge performance penalty to set sync to true
 
 	leveldb := &LevelDB{
 		directory: path,
@@ -232,7 +233,7 @@ func (db *LevelDB) Get(k Key) (v []byte, err error) {
 	ro := db.options.ReadOptions
 	v, err = db.ldb.Get(ro, k.Bytes())
 	dvid.StopCgo()
-	StoreBytesRead <- len(v)
+	StoreValueBytesRead <- len(v)
 	return
 }
 
@@ -252,18 +253,21 @@ func (db *LevelDB) GetRange(kStart, kEnd Key) (values []KeyValue, err error) {
 	endBytes := kEnd.Bytes()
 	for {
 		if it.Valid() {
-			if bytes.Compare(it.Key(), endBytes) > 0 {
+			itKey := it.Key()
+			StoreKeyBytesRead <- len(itKey)
+			if bytes.Compare(itKey, endBytes) > 0 {
 				return
 			}
-			value := it.Value()
-			StoreBytesRead <- len(value)
+			itValue := it.Value()
+			StoreValueBytesRead <- len(itValue)
 
+			// Convert byte representation of key to storage.Key
 			var key Key
-			key, err = kStart.BytesToKey(it.Key())
+			key, err = kStart.BytesToKey(itKey)
 			if err != nil {
 				return
 			}
-			values = append(values, KeyValue{key, value})
+			values = append(values, KeyValue{key, itValue})
 			it.Next()
 		} else {
 			err = it.GetError()
@@ -288,11 +292,14 @@ func (db *LevelDB) KeysInRange(kStart, kEnd Key) (keys []Key, err error) {
 	endBytes := kEnd.Bytes()
 	for {
 		if it.Valid() {
-			if bytes.Compare(it.Key(), endBytes) > 0 {
+			itKey := it.Key()
+			StoreKeyBytesRead <- len(itKey)
+			if bytes.Compare(itKey, endBytes) > 0 {
 				return
 			}
+			// Convert byte representation of key to storage.Key
 			var key Key
-			key, err = kStart.BytesToKey(it.Key())
+			key, err = kStart.BytesToKey(itKey)
 			if err != nil {
 				return
 			}
@@ -317,17 +324,17 @@ func (db *LevelDB) ProcessRange(kStart, kEnd Key, op *ChunkOp, f func(*Chunk)) e
 
 	endBytes := kEnd.Bytes()
 	it.Seek(kStart.Bytes())
-	//	fmt.Printf("levigo.ProcessRange: %x -> %x\n", kStart.Bytes(), endBytes)
 	for {
 		if it.Valid() {
-			value := it.Value()
-			StoreBytesRead <- len(value)
-			if bytes.Compare(it.Key(), endBytes) > 0 {
+			itValue := it.Value()
+			StoreValueBytesRead <- len(itValue)
+			itKey := it.Key()
+			StoreKeyBytesRead <- len(itKey)
+			if bytes.Compare(itKey, endBytes) > 0 {
 				return nil
 			}
-			//			fmt.Printf("              Valid: %x\n", it.Key())
-			// Send to channel
-			key, err := kStart.BytesToKey(it.Key())
+			// Convert byte representation of key to storage.Key
+			key, err := kStart.BytesToKey(itKey)
 			if err != nil {
 				return err
 			}
@@ -337,7 +344,7 @@ func (db *LevelDB) ProcessRange(kStart, kEnd Key, op *ChunkOp, f func(*Chunk)) e
 			}
 			chunk := &Chunk{
 				op,
-				KeyValue{key, value},
+				KeyValue{key, itValue},
 			}
 			f(chunk)
 
@@ -352,9 +359,11 @@ func (db *LevelDB) ProcessRange(kStart, kEnd Key, op *ChunkOp, f func(*Chunk)) e
 func (db *LevelDB) Put(k Key, v []byte) error {
 	dvid.StartCgo()
 	wo := db.options.WriteOptions
-	err := db.ldb.Put(wo, k.Bytes(), v)
+	kBytes := k.Bytes()
+	err := db.ldb.Put(wo, kBytes, v)
 	dvid.StopCgo()
-	StoreBytesWritten <- len(v)
+	StoreKeyBytesWritten <- len(kBytes)
+	StoreValueBytesWritten <- len(v)
 	return err
 }
 
@@ -368,16 +377,19 @@ func (db *LevelDB) PutRange(values []KeyValue) error {
 		wb.Close()
 		dvid.StopCgo()
 	}()
-	bytesPut := 0
+	var keyBytesPut, valueBytesPut int
 	for _, kv := range values {
-		wb.Put(kv.K.Bytes(), kv.V)
-		bytesPut += len(kv.V)
+		kBytes := kv.K.Bytes()
+		wb.Put(kBytes, kv.V)
+		keyBytesPut += len(kBytes)
+		valueBytesPut += len(kv.V)
 	}
 	err := db.ldb.Write(wo, wb)
 	if err != nil {
 		return err
 	}
-	StoreBytesWritten <- bytesPut
+	StoreKeyBytesWritten <- keyBytesPut
+	StoreValueBytesWritten <- valueBytesPut
 	return nil
 }
 
@@ -422,8 +434,10 @@ func (batch *goBatch) Delete(k Key) {
 func (batch *goBatch) Put(k Key, v []byte) {
 	dvid.StartCgo()
 	defer dvid.StopCgo()
-	StoreBytesWritten <- len(v)
-	batch.WriteBatch.Put(k.Bytes(), v)
+	kBytes := k.Bytes()
+	StoreKeyBytesWritten <- len(kBytes)
+	StoreValueBytesWritten <- len(v)
+	batch.WriteBatch.Put(kBytes, v)
 }
 
 func (batch *goBatch) Clear() {

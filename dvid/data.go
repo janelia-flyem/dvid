@@ -471,6 +471,8 @@ func (p Point3d) String() string {
 // ChunkPoint3d handles unsigned chunk coordinates.
 type ChunkPoint3d [3]uint32
 
+const ChunkPoint3dSize = 12
+
 // Chunk returns the chunk space coordinate of the chunk containing the point.
 func (p Point3d) Chunk(size Point) ChunkPoint {
 	return ChunkPoint3d{
