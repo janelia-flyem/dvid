@@ -56,22 +56,29 @@ func (s *DataSuite) TestPoint3d(c *C) {
 	result, _ = b.Min(a)
 	c.Assert(result, Equals, Point3d{10, -200, 40123})
 
-	d = Point3d{111, -213, 678}
-	blockSize := Point3d{20, 30, 40}
-	g := d.Chunk(blockSize)
-	c.Assert(g, Equals, ChunkPoint3d{0x666666b, 0x444443d, 0x3333344})
+	a = Point3d{123, 8191, 32001}
+	b = Point3d{2980, 617, 99}
+	result = a.Add(b)
+	c.Assert(result.Value(0), Equals, a[0]+b[0])
+	c.Assert(result.Value(1), Equals, a[1]+b[1])
+	c.Assert(result.Value(2), Equals, a[2]+b[2])
 
-	d = Point3d{111, 213, 680}
-	g = d.Chunk(blockSize)
-	c.Assert(g, Equals, ChunkPoint3d{0x666666b, 0x444444b, 0x3333344})
+	result = a.Sub(b)
+	c.Assert(result.Value(0), Equals, a[0]-b[0])
+	c.Assert(result.Value(1), Equals, a[1]-b[1])
+	c.Assert(result.Value(2), Equals, a[2]-b[2])
 
-	d = Point3d{111, 213, 678}
-	blockSize = Point3d{20, 30, 1}
-	g = d.Chunk(blockSize)
-	c.Assert(g, Equals, ChunkPoint3d{0x666666b, 0x444444b, 0x800002a6})
+	c.Assert(a.String(), Equals, "(123,8191,32001)")
 
-	result = d.PointInChunk(blockSize)
-	c.Assert(result, Equals, Point3d{19, 11, 0})
+	result, _ = a.Max(b)
+	c.Assert(result, Equals, Point3d{2980, 8191, 32001})
+	result, _ = b.Max(a)
+	c.Assert(result, Equals, Point3d{2980, 8191, 32001})
+
+	result, _ = a.Min(b)
+	c.Assert(result, Equals, Point3d{123, 617, 99})
+	result, _ = b.Min(a)
+	c.Assert(result, Equals, Point3d{123, 617, 99})
 }
 
 func (s *DataSuite) TestPointNd(c *C) {
@@ -137,28 +144,31 @@ func (s *DataSuite) TestPointNd(c *C) {
 }
 
 func (s *DataSuite) TestChunk(c *C) {
-	a := Point3d{123, 8191, 32001}
-	b := Point3d{2980, 617, 99}
-	result := a.Add(b)
-	c.Assert(result.Value(0), Equals, a[0]+b[0])
-	c.Assert(result.Value(1), Equals, a[1]+b[1])
-	c.Assert(result.Value(2), Equals, a[2]+b[2])
+	d := Point3d{111, -213, 671}
+	blockSize := Point3d{20, 30, 40}
+	g := d.Chunk(blockSize)
+	c.Assert(g, Equals, ChunkPoint3d{0x666666b, 0x444443d, 0x3333343})
 
-	result = a.Sub(b)
-	c.Assert(result.Value(0), Equals, a[0]-b[0])
-	c.Assert(result.Value(1), Equals, a[1]-b[1])
-	c.Assert(result.Value(2), Equals, a[2]-b[2])
+	chunkPt := d.Chunk(blockSize)
+	minVoxelPt := chunkPt.(ChunkPoint3d).MinVoxelPoint(blockSize)
+	maxVoxelPt := chunkPt.(ChunkPoint3d).MaxVoxelPoint(blockSize)
+	for dim := uint8(0); dim < uint8(3); dim++ {
+		if d.Value(dim) < minVoxelPt.Value(dim) || d.Value(dim) > maxVoxelPt.Value(dim) {
+			c.Errorf("Original voxel pt dim %d (%d) is not in chunk range %d to %d\n",
+				dim, d.Value(dim), minVoxelPt.Value(dim), maxVoxelPt.Value(dim))
+		}
+	}
 
-	c.Assert(a.String(), Equals, "(123,8191,32001)")
+	d = Point3d{111, 213, 680}
+	g = d.Chunk(blockSize)
+	c.Assert(g, Equals, ChunkPoint3d{0x666666b, 0x444444b, 0x3333344})
 
-	result, _ = a.Max(b)
-	c.Assert(result, Equals, Point3d{2980, 8191, 32001})
-	result, _ = b.Max(a)
-	c.Assert(result, Equals, Point3d{2980, 8191, 32001})
+	d = Point3d{111, 213, 678}
+	blockSize = Point3d{20, 30, 1}
+	g = d.Chunk(blockSize)
+	c.Assert(g, Equals, ChunkPoint3d{0x666666b, 0x444444b, 0x800002a6})
 
-	result, _ = a.Min(b)
-	c.Assert(result, Equals, Point3d{123, 617, 99})
-	result, _ = b.Min(a)
-	c.Assert(result, Equals, Point3d{123, 617, 99})
+	result := d.PointInChunk(blockSize)
+	c.Assert(result, Equals, Point3d{19, 11, 0})
 
 }

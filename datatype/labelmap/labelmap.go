@@ -158,6 +158,7 @@ func (t KeyType) String() string {
 type Operation struct {
 	labels    *labels64.Data
 	versionID dvid.VersionLocalID
+	mapping   map[string]uint64
 }
 
 func getRelatedLabels(uuid dvid.UUID, name dvid.DataString) (*labels64.Data, error) {
@@ -484,6 +485,58 @@ func (d *Data) GetLabelMapping(versionID dvid.VersionLocalID, label []byte) (uin
 	return mapping, nil
 }
 
+// GetBlockLayerMapping gets the label mapping for a Z layer of blocks and stores the result
+// in the passed Operation.
+func (d *Data) GetBlockLayerMapping(blockZ uint32, op *Operation) (
+	minChunkPt, maxChunkPt dvid.ChunkPoint3d, err error) {
+
+	// Convert blockZ to actual voxel space Z range.
+	minChunkPt = dvid.ChunkPoint3d{0, 0, blockZ}
+	maxChunkPt = dvid.ChunkPoint3d{dvid.MaxChunkPoint3d[0], dvid.MaxChunkPoint3d[1], blockZ}
+	minVoxelPt := minChunkPt.MinVoxelPoint(op.labels.BlockSize())
+	maxVoxelPt := minChunkPt.MaxVoxelPoint(op.labels.BlockSize())
+
+	// Get first and last keys that span that voxel space Z range.
+	firstIndex := make([]byte, 17)
+	firstIndex[0] = byte(KeyForwardMap)
+	copy(firstIndex[1:9], labels64.RavelerSuperpixelBytes(uint32(minVoxelPt.Value(2)), 1))
+	lastIndex := make([]byte, 17)
+	lastIndex[0] = byte(KeyForwardMap)
+	copy(lastIndex[1:9], labels64.RavelerSuperpixelBytes(uint32(maxVoxelPt.Value(2)), 0xFFFFFFFF))
+	binary.BigEndian.PutUint64(lastIndex[9:17], 0xFFFFFFFFFFFFFFFF)
+
+	firstKey := d.DataKey(op.versionID, dvid.IndexBytes(firstIndex))
+	lastKey := d.DataKey(op.versionID, dvid.IndexBytes(lastIndex))
+
+	// Get all forward mappings from the key-value store.
+	op.mapping = nil
+
+	db := server.StorageEngine()
+	if db == nil {
+		err = fmt.Errorf("Did not find a working key-value datastore to get image!")
+		return
+	}
+	var keys []storage.Key
+	keys, err = db.KeysInRange(firstKey, lastKey)
+	if err != nil {
+		return
+	}
+
+	// Cache this layer of blocks' mappings.
+	numKeys := len(keys)
+	if numKeys != 0 {
+		op.mapping = make(map[string]uint64, numKeys)
+		for _, key := range keys {
+			keyBytes := key.Bytes()
+			indexBytes := keyBytes[datastore.DataKeyIndexOffset:]
+			label := string(indexBytes[1:9])
+			label2 := binary.BigEndian.Uint64(indexBytes[9:17])
+			op.mapping[label] = label2
+		}
+	}
+	return
+}
+
 // Iterate through all blocks in the associated label volume, computing the spatial indices
 // for bodies and the mappings for each spatial index.
 func (d *Data) ProcessSpatially(uuid dvid.UUID) {
@@ -510,25 +563,42 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 		return
 	}
 
-	// Initialize the z counter for status messages.
-	extents := labels.Extents()
-	d.processingZMutex.Lock()
-	d.processingZ = extents.MinIndex.FirstPoint(labels.BlockSize()).Value(2)
-	d.processingZMutex.Unlock()
-
-	// Iterate through all indices for the labels data.
-	dataID := labels.DataID()
-	startKey := &datastore.DataKey{dataID.DsetID, dataID.ID, versionID, extents.MinIndex}
-	endKey := &datastore.DataKey{dataID.DsetID, dataID.ID, versionID, extents.MaxIndex}
-
+	// Iterate through all labels chunks incrementally in Z, loading and then using the maps
+	// for all blocks in that layer.
 	wg := new(sync.WaitGroup)
-	op := &Operation{labels, versionID}
-	chunkOp := &storage.ChunkOp{op, wg}
+	op := &Operation{labels, versionID, nil}
 
-	err = db.ProcessRange(startKey, endKey, chunkOp, d.ProcessChunk)
+	dataID := labels.DataID()
+	extents := labels.Extents()
+	minIndexZ := extents.MinIndex.(dvid.IndexZYX)[2]
+	maxIndexZ := extents.MaxIndex.(dvid.IndexZYX)[2]
+	for z := minIndexZ; z <= maxIndexZ; z++ {
+		t := time.Now()
+
+		// Get the label->label map for this Z
+		var minChunkPt, maxChunkPt dvid.ChunkPoint3d
+		minChunkPt, maxChunkPt, err := d.GetBlockLayerMapping(z, op)
+		if err != nil {
+			dvid.Log(dvid.Normal, "Error getting label mapping for block Z %d: %s\n", z, err.Error())
+			return
+		}
+
+		// Process the labels chunks for this Z
+		minIndex := dvid.IndexZYX(minChunkPt)
+		maxIndex := dvid.IndexZYX(maxChunkPt)
+		if op.mapping != nil {
+			startKey := &datastore.DataKey{dataID.DsetID, dataID.ID, versionID, minIndex}
+			endKey := &datastore.DataKey{dataID.DsetID, dataID.ID, versionID, maxIndex}
+			chunkOp := &storage.ChunkOp{op, wg}
+			err = db.ProcessRange(startKey, endKey, chunkOp, d.ProcessChunk)
+			wg.Wait()
+		}
+
+		dvid.ElapsedTime(dvid.Debug, t, "Processed all %s blocks for layer %d/%d",
+			d.Labels, z-minIndexZ+1, maxIndexZ-minIndexZ+1)
+	}
 
 	// Wait for results then set Updating.
-	wg.Wait()
 	d.Ready = true
 
 	dvid.ElapsedTime(dvid.Debug, startTime, "Processed spatial information from %s for mapping %s",
@@ -561,17 +631,6 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 	zyx := dataKey.Index.(*dvid.IndexZYX)
 	zyxBytes := zyx.Bytes()
 
-	// Print status if we are processing a new Z
-	firstPt := zyx.FirstPoint(op.labels.BlockSize())
-	fmt.Printf("Procesing %s\n", firstPt)
-	z := firstPt.Value(2)
-	d.processingZMutex.Lock()
-	if z > d.processingZ {
-		d.processingZ = z
-		fmt.Printf("Z = %d: Creating spatial indexes for labels (%s)\n", z, d.DataName())
-	}
-	d.processingZMutex.Unlock()
-
 	// Initialize the label buffer.  For voxels, this data needs to be uncompressed and deserialized.
 	blockData, _, err := dvid.DeserializeData(chunk.V, true)
 	if err != nil {
@@ -594,6 +653,7 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 		return
 	}
 
+	written := make(map[string]bool, blockBytes/10)
 	for start := 0; start < blockBytes; start += 8 {
 		a := blockData[start : start+8]
 
@@ -603,8 +663,8 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 		}
 
 		// Get the label to which the current label is mapped.
-		b, err := d.GetLabelMapping(op.versionID, a)
-		if err != nil {
+		b, ok := op.mapping[string(a)]
+		if !ok {
 			dvid.Log(dvid.Normal, "Error on getting forward label for %x: %s\n", a, err.Error())
 			return
 		}
@@ -614,19 +674,27 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 		copy(spatialMapIndex[1:i], zyxBytes)
 		copy(spatialMapIndex[i:i+8], a)
 		binary.BigEndian.PutUint64(spatialMapIndex[i+8:i+16], b)
-		key := d.DataKey(op.versionID, dvid.IndexBytes(spatialMapIndex))
-		if err = db.Put(key, emptyValue); err != nil {
-			dvid.Log(dvid.Normal, "Error on PUT of KeySpatialMap: %s + %x + %d\n", dataKey.Index, a, b)
-			return
+		_, found := written[string(spatialMapIndex)]
+		if !found {
+			key := d.DataKey(op.versionID, dvid.IndexBytes(spatialMapIndex))
+			if err = db.Put(key, emptyValue); err != nil {
+				dvid.Log(dvid.Normal, "Error on PUT of KeySpatialMap: %s + %x + %d\n", dataKey.Index, a, b)
+				return
+			}
+			written[string(spatialMapIndex)] = true
 		}
 
 		// Store a KeyLabelSpatialMap key (index = b + s)
 		binary.BigEndian.PutUint64(labelSpatialMapIndex[1:9], b)
 		copy(labelSpatialMapIndex[9:9+dvid.IndexZYXSize], zyxBytes)
-		key = d.DataKey(op.versionID, dvid.IndexBytes(labelSpatialMapIndex))
-		if err = db.Put(key, emptyValue); err != nil {
-			dvid.Log(dvid.Normal, "Error on PUT of KeyLabelSpatialMap: %d + %s\n", b, dataKey.Index)
-			return
+		_, found = written[string(labelSpatialMapIndex)]
+		if !found {
+			key := d.DataKey(op.versionID, dvid.IndexBytes(labelSpatialMapIndex))
+			if err = db.Put(key, emptyValue); err != nil {
+				dvid.Log(dvid.Normal, "Error on PUT of KeyLabelSpatialMap: %d + %s\n", b, dataKey.Index)
+				return
+			}
+			written[string(labelSpatialMapIndex)] = true
 		}
 	}
 

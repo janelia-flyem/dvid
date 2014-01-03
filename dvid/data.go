@@ -118,8 +118,7 @@ type Chunkable interface {
 // discontinous so the lexicographical ordering switches.  The simplest way to achieve
 // this is to convert to an unsigned (positive) integer space where all coordinates are
 // greater or equal to (0,0,...).
-type ChunkPoint interface {
-}
+type ChunkPoint interface{}
 
 // NewPoint returns an appropriate Point implementation for the number of dimensions
 // passed in.
@@ -468,11 +467,6 @@ func (p Point3d) String() string {
 
 // --- Chunkable interface support -----
 
-// ChunkPoint3d handles unsigned chunk coordinates.
-type ChunkPoint3d [3]uint32
-
-const ChunkPoint3dSize = 12
-
 // Chunk returns the chunk space coordinate of the chunk containing the point.
 func (p Point3d) Chunk(size Point) ChunkPoint {
 	return ChunkPoint3d{
@@ -488,6 +482,32 @@ func (p Point3d) PointInChunk(size Point) Point {
 		int32((int64(p[0]) + middleValue) % int64(size.Value(0))),
 		int32((int64(p[1]) + middleValue) % int64(size.Value(1))),
 		int32((int64(p[2]) + middleValue) % int64(size.Value(2))),
+	}
+}
+
+// ChunkPoint3d handles unsigned chunk coordinates.
+type ChunkPoint3d [3]uint32
+
+var MaxChunkPoint3d ChunkPoint3d = ChunkPoint3d{0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF}
+
+const ChunkPoint3dSize = 12
+
+// MinVoxelPoint returns the smalles voxel space coordinate of the given 3d chunk.
+// This is the inverse of Point3d.Chunk().
+func (c ChunkPoint3d) MinVoxelPoint(size Point) Point {
+	return Point3d{
+		int32(int64(c[0])*int64(size.Value(0)) - middleValue),
+		int32(int64(c[1])*int64(size.Value(1)) - middleValue),
+		int32(int64(c[2])*int64(size.Value(2)) - middleValue),
+	}
+}
+
+// MaxVoxelPoint returns the largest voxel space coordinate of the given 3d chunk.
+func (c ChunkPoint3d) MaxVoxelPoint(size Point) Point {
+	return Point3d{
+		int32(int64(c[0])*int64(size.Value(0))-middleValue) + size.Value(0) - 1,
+		int32(int64(c[1])*int64(size.Value(1))-middleValue) + size.Value(1) - 1,
+		int32(int64(c[2])*int64(size.Value(2))-middleValue) + size.Value(2) - 1,
 	}
 }
 
