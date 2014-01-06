@@ -97,7 +97,9 @@ POST /api/node/<UUID>/<data name>/info
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
     data name     Name of mapping data.
 
+GET /api/node/<UUID>/<data name>/sparsevol/<label>
 
+	Returns a sparse volume with voxels of the given label.
 `
 
 func init() {
@@ -227,10 +229,6 @@ type Data struct {
 
 	// Ready is true if inverse map, forward map, and spatial queries are ready.
 	Ready bool
-
-	// private counter of chunk processing for status messages
-	processingZ      int32
-	processingZMutex sync.RWMutex
 }
 
 // JSONString returns the JSON for this Data's configuration
@@ -338,8 +336,11 @@ func loadSegBodyMap(filename string) (map[uint64]uint64, error) {
 }
 
 // LoadRavelerMaps loads maps from Raveler-formatted superpixel->segment and
-// segment->body maps.
+// segment->body maps.  Ignores any mappings that are in slices outside
+// associated labels64 volume.
 func (d *Data) LoadRavelerMaps(request datastore.Request, reply *datastore.Response) error {
+	startTime := time.Now()
+
 	// Use of Raveler maps causes zero labels to be reserved.
 	d.ZeroLocked = true
 
@@ -353,7 +354,13 @@ func (d *Data) LoadRavelerMaps(request datastore.Request, reply *datastore.Respo
 		return err
 	}
 
-	startTime := time.Now()
+	// Get the extents of associated labels.
+	labels, err := getRelatedLabels(uuid, d.Labels)
+	if err != nil {
+		return err
+	}
+	minLabelZ := uint32(labels.Extents().MinPoint.Value(2))
+	maxLabelZ := uint32(labels.Extents().MaxPoint.Value(2))
 
 	// Get the seg->body map
 	seg2body, err := loadSegBodyMap(segbodyStr)
@@ -376,7 +383,8 @@ func (d *Data) LoadRavelerMaps(request datastore.Request, reply *datastore.Respo
 	inverseIndex[0] = byte(KeyInverseMap)
 
 	// Get the sp->seg map, persisting each computed sp->body.
-	dvid.Log(dvid.Normal, "Loading and processing superpixel->segment map: %s\n", spsegStr)
+	dvid.Log(dvid.Normal, "Processing superpixel->segment map (Z %d-%d): %s\n",
+		minLabelZ, maxLabelZ, spsegStr)
 	file, err := os.Open(spsegStr)
 	if err != nil {
 		return fmt.Errorf("Could not open superpixel->segment map: %s", spsegStr)
@@ -396,6 +404,9 @@ func (d *Data) LoadRavelerMaps(request datastore.Request, reply *datastore.Respo
 		storage.FileBytesRead <- len(line)
 		if _, err := fmt.Sscanf(line, "%d %d %d", &slice, &superpixel32, &segment); err != nil {
 			return fmt.Errorf("Error loading superpixel->segment map, line %d in %s", linenum, spsegStr)
+		}
+		if slice < minLabelZ || slice > maxLabelZ {
+			continue
 		}
 		if superpixel32 == 0 {
 			continue
@@ -519,6 +530,8 @@ func (d *Data) GetBlockLayerMapping(blockZ uint32, op *Operation) (
 	var keys []storage.Key
 	keys, err = db.KeysInRange(firstKey, lastKey)
 	if err != nil {
+		err = fmt.Errorf("Could not find mapping with slice between %d and %d: %s",
+			minVoxelPt.Value(2), maxVoxelPt.Value(2), err.Error())
 		return
 	}
 
@@ -534,6 +547,9 @@ func (d *Data) GetBlockLayerMapping(blockZ uint32, op *Operation) (
 			op.mapping[label] = label2
 		}
 	}
+
+	dvid.Log(dvid.Debug, "Loaded %d mappings that cover Z: %d to %d\n", numKeys,
+		minVoxelPt.Value(2), maxVoxelPt.Value(2))
 	return
 }
 
@@ -656,6 +672,9 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 	written := make(map[string]bool, blockBytes/10)
 	for start := 0; start < blockBytes; start += 8 {
 		a := blockData[start : start+8]
+		if a == nil {
+			fmt.Printf("a = nil, start = %d, len(blockData) = %d\n", start, len(blockData))
+		}
 
 		// If this is zero label and we have locked zero value, ignore.
 		if d.ZeroLocked && bytes.Compare(a, zeroSuperpixelBytes) == 0 {
@@ -665,7 +684,11 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 		// Get the label to which the current label is mapped.
 		b, ok := op.mapping[string(a)]
 		if !ok {
-			dvid.Log(dvid.Normal, "Error on getting forward label for %x: %s\n", a, err.Error())
+			zBeg := zyx.FirstPoint(op.labels.BlockSize()).Value(2)
+			zEnd := zyx.LastPoint(op.labels.BlockSize()).Value(2)
+			slice := binary.BigEndian.Uint32(a[0:4])
+			dvid.Log(dvid.Normal, "No mapping found for %x (slice %d) in block with Z %d to %d\n",
+				a, slice, zBeg, zEnd)
 			return
 		}
 
@@ -678,7 +701,8 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 		if !found {
 			key := d.DataKey(op.versionID, dvid.IndexBytes(spatialMapIndex))
 			if err = db.Put(key, emptyValue); err != nil {
-				dvid.Log(dvid.Normal, "Error on PUT of KeySpatialMap: %s + %x + %d\n", dataKey.Index, a, b)
+				dvid.Log(dvid.Normal, "Error on PUT of KeySpatialMap: %s + %x + %d: %s\n",
+					dataKey.Index, a, b, err.Error())
 				return
 			}
 			written[string(spatialMapIndex)] = true
@@ -691,7 +715,8 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 		if !found {
 			key := d.DataKey(op.versionID, dvid.IndexBytes(labelSpatialMapIndex))
 			if err = db.Put(key, emptyValue); err != nil {
-				dvid.Log(dvid.Normal, "Error on PUT of KeyLabelSpatialMap: %d + %s\n", b, dataKey.Index)
+				dvid.Log(dvid.Normal, "Error on PUT of KeyLabelSpatialMap: %d + %s: %s\n",
+					b, dataKey.Index, err.Error())
 				return
 			}
 			written[string(labelSpatialMapIndex)] = true

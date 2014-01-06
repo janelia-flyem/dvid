@@ -599,14 +599,22 @@ func LoadXY(i IntHandler, uuid dvid.UUID, offset dvid.Point, filenames []string)
 		}
 
 		// Allocate blocks and/or load old block data if first/last XY blocks.
+		// Note: Slices are only zeroed out on first and last slice with assumption
+		// that ExtHandler is packed in XY footprint (values cover full extent).
+		// If that is NOT the case, we need to zero out blocks for each block layer.
 		if fileNum == 1 || (lastBlocks && firstSliceInBlock) {
+			numBlocks = dvid.GetNumBlocks(e, blockSize)
 			if fileNum == 1 {
-				numBlocks = dvid.GetNumBlocks(e, blockSize)
 				blocks[0] = make(Blocks, numBlocks, numBlocks)
 				blocks[1] = make(Blocks, numBlocks, numBlocks)
 				for i := 0; i < numBlocks; i++ {
 					blocks[0][i].V = make([]byte, blockBytes, blockBytes)
 					blocks[1][i].V = make([]byte, blockBytes, blockBytes)
+				}
+			} else {
+				blocks[curBlocks] = make(Blocks, numBlocks, numBlocks)
+				for i := 0; i < numBlocks; i++ {
+					blocks[curBlocks][i].V = make([]byte, blockBytes, blockBytes)
 				}
 			}
 			err = loadOldBlocks(i, e, blocks[curBlocks], versionID)
@@ -617,14 +625,14 @@ func LoadXY(i IntHandler, uuid dvid.UUID, offset dvid.Point, filenames []string)
 
 		// Transfer data between external<->internal blocks asynchronously
 		blockWait.Add(1)
-		go func() {
+		go func(ext ExtHandler) {
 			// Track point extents
 			if i.Extents().AdjustPoints(e.StartPoint(), e.EndPoint()) {
 				extentChanged.SetTrue()
 			}
 
 			// Process an XY image (slice).
-			changed, err := writeXYImage(i, e, blocks[curBlocks], versionID)
+			changed, err := writeXYImage(i, ext, blocks[curBlocks], versionID)
 			if err != nil {
 				dvid.Log(dvid.Normal, "Error writing XY image: %s\n", err.Error())
 			}
@@ -632,7 +640,7 @@ func LoadXY(i IntHandler, uuid dvid.UUID, offset dvid.Point, filenames []string)
 				extentChanged.SetTrue()
 			}
 			blockWait.Done()
-		}()
+		}(e)
 
 		// If this is the end of a block (or filenames), wait until all goroutines complete,
 		// then asynchronously write blocks.
@@ -653,7 +661,7 @@ func LoadXY(i IntHandler, uuid dvid.UUID, offset dvid.Point, filenames []string)
 	return nil
 }
 
-// Loads blocks with old data if they exist or else set the block to zeros.
+// Loads blocks with old data if they exist.
 func loadOldBlocks(i IntHandler, e ExtHandler, blocks Blocks, versionID dvid.VersionLocalID) error {
 	db := server.StorageEngine()
 	if db == nil {
@@ -1302,8 +1310,8 @@ type Extents struct {
 
 // AdjustPoints modifies extents based on new voxel coordinates in concurrency-safe manner.
 func (ext *Extents) AdjustPoints(pointBeg, pointEnd dvid.Point) bool {
-	defer ext.pointMu.Unlock()
 	ext.pointMu.Lock()
+	defer ext.pointMu.Unlock()
 
 	var changed bool
 	if ext.MinPoint == nil {
@@ -1323,8 +1331,8 @@ func (ext *Extents) AdjustPoints(pointBeg, pointEnd dvid.Point) bool {
 
 // AdjustIndices modifies extents based on new block indices in concurrency-safe manner.
 func (ext *Extents) AdjustIndices(indexBeg, indexEnd dvid.PointIndexer) bool {
-	defer ext.indexMu.Unlock()
 	ext.indexMu.Lock()
+	defer ext.indexMu.Unlock()
 
 	var changed bool
 	if ext.MinIndex == nil {
