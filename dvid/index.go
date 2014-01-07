@@ -224,6 +224,11 @@ func (i IndexUint8) IndexFromBytes(b []byte) (Index, error) {
 // then Y, then X.
 type IndexZYX ChunkPoint3d
 
+var (
+	MaxIndexZYX = IndexZYX(MaxChunkPoint3d)
+	MinIndexZYX = IndexZYX(MinChunkPoint3d)
+)
+
 const IndexZYXSize = ChunkPoint3dSize
 
 func (i IndexZYX) Duplicate() Index {

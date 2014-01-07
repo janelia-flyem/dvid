@@ -488,7 +488,10 @@ func (p Point3d) PointInChunk(size Point) Point {
 // ChunkPoint3d handles unsigned chunk coordinates.
 type ChunkPoint3d [3]uint32
 
-var MaxChunkPoint3d ChunkPoint3d = ChunkPoint3d{0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF}
+var (
+	MaxChunkPoint3d = ChunkPoint3d{0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF}
+	MinChunkPoint3d = ChunkPoint3d{0, 0, 0}
+)
 
 const ChunkPoint3dSize = 12
 

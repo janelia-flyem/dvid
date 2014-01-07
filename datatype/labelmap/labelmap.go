@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -99,7 +100,38 @@ POST /api/node/<UUID>/<data name>/info
 
 GET /api/node/<UUID>/<data name>/sparsevol/<label>
 
-	Returns a sparse volume with voxels of the given label.
+	Returns a sparse volume with voxels of the given forward label.
+
+TODO:
+
+GET  /api/node/<UUID>/<data name>/<dims>/<size>/<offset>[/<format>]
+
+    Retrieves or puts forward label data.
+
+    Example: 
+
+    GET /api/node/3f8c/superpixels/0_1/512_256/0_0_100
+
+    Returns an XY slice (0th and 1st dimensions) with width (x) of 512 voxels and
+    height (y) of 256 voxels with offset (0,0,100) in PNG format.
+    The example offset assumes the "superpixels" data in version node "3f8c" is 3d.
+    The "Content-type" of the HTTP response should agree with the requested format.
+    For example, returned PNGs will have "Content-type" of "image/png", and returned
+    nD data will be "application/octet-stream".
+
+    Arguments:
+
+    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    data name     Name of data to add.
+    dims          The axes of data extraction in form "i_j_k,..."  Example: "0_2" can be XZ.
+                    Slice strings ("xy", "xz", or "yz") are also accepted.
+    size          Size in voxels along each dimension specified in <dims>.
+    offset        Gives coordinate of first voxel using dimensionality of data.
+    format        Valid formats depend on the dimensionality of the request and formats
+                    available in server implementation.
+                  2D: "png"
+                  nD: uses default "octet-stream".
+
 `
 
 func init() {
@@ -287,19 +319,32 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, jsonStr)
 		return nil
+	case "sparsevol":
+		// GET /api/node/<UUID>/<data name>/sparsevol/<label>
+		if len(parts) < 5 {
+			err := fmt.Errorf("ERROR: DVID requires label ID to follow 'sparsevol' command")
+			server.BadRequest(w, r, err.Error())
+			return err
+		}
+		label, err := strconv.ParseUint(parts[4], 10, 64)
+		if err != nil {
+			server.BadRequest(w, r, err.Error())
+			return err
+		}
+		data, err := d.GetSparseVol(uuid, label)
+		if err != nil {
+			return err
+		}
+		w.Header().Set("Content-type", "application/octet-stream")
+		_, err = w.Write(data)
+		if err != nil {
+			return err
+		}
+		dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: sparsevol on label %d (%s)",
+			r.Method, label, r.URL)
 	default:
 	}
 
-	// Get the key and process request
-	var comment string
-	switch strings.ToLower(r.Method) {
-	case "get":
-	case "post":
-	default:
-		return fmt.Errorf("Can only handle GET or POST HTTP verbs")
-	}
-
-	dvid.ElapsedTime(dvid.Debug, startTime, comment)
 	return nil
 }
 
@@ -335,14 +380,173 @@ func loadSegBodyMap(filename string) (map[uint64]uint64, error) {
 	return segmentToBodyMap, nil
 }
 
+func (d *Data) getHooks(uuid dvid.UUID) (storage.Engine, dvid.VersionLocalID, *labels64.Data, error) {
+	service := server.DatastoreService()
+	_, versionID, err := service.LocalIDFromUUID(uuid)
+	if err != nil {
+		err = fmt.Errorf("Error in getting version ID from UUID '%s': %s\n", uuid, err.Error())
+		return nil, 0, nil, err
+	}
+
+	db := server.StorageEngine()
+	if db == nil {
+		err = fmt.Errorf("Did not find a working key-value datastore to get image!")
+		return nil, versionID, nil, err
+	}
+
+	labels, err := getRelatedLabels(uuid, d.Labels)
+	if err != nil {
+		dvid.Log(dvid.Normal, "Error in getting related labels ('%s'): %s\n", d.Labels, err.Error())
+		return nil, versionID, nil, err
+	}
+	return db, versionID, labels, nil
+}
+
+// NewForwardMapKey returns a datastore.DataKey that encodes a "label + mapping", where
+// the label and mapping are both uint64.
+func (d *Data) NewForwardMapKey(vID dvid.VersionLocalID, label []byte, mapping uint64) *datastore.DataKey {
+	index := make([]byte, 17)
+	index[0] = byte(KeyForwardMap)
+	copy(index[1:9], label)
+	binary.BigEndian.PutUint64(index[9:17], mapping)
+	return d.DataKey(vID, dvid.IndexBytes(index))
+}
+
+// NewRavelerForwardMapKey returns a datastore.DataKey that encodes a "label + mapping", where
+// the label is a uint64 with top 4 bytes encoding Z and least-significant 4 bytes encoding
+// the superpixel ID.  Also, the zero label is reserved.
+func (d *Data) NewRavelerForwardMapKey(vID dvid.VersionLocalID, z, spid uint32, body uint64) *datastore.DataKey {
+	index := make([]byte, 17)
+	index[0] = byte(KeyForwardMap)
+	copy(index[1:9], labels64.RavelerSuperpixelBytes(z, spid))
+	binary.BigEndian.PutUint64(index[9:17], body)
+	return d.DataKey(vID, dvid.IndexBytes(index))
+}
+
+// NewSpatialMapKey returns a datastore.DataKey that encodes a "spatial index + label + mapping".
+func (d *Data) NewSpatialMapKey(vID dvid.VersionLocalID, block dvid.IndexZYX, label []byte,
+	mapping uint64) *datastore.DataKey {
+
+	index := make([]byte, 1+dvid.IndexZYXSize+8+8) // s + a + b
+	index[0] = byte(KeySpatialMap)
+	i := 1 + dvid.IndexZYXSize
+	copy(index[1:i], block.Bytes())
+	if label != nil {
+		copy(index[i:i+8], label)
+	}
+	binary.BigEndian.PutUint64(index[i+8:i+16], mapping)
+	return d.DataKey(vID, dvid.IndexBytes(index))
+}
+
+// NewLabelSpatialMapKey returns a datastore.DataKey that encodes a "label + spatial index", where
+// the spatial index references a block that contains a voxel with the given label.
+func (d *Data) NewLabelSpatialMapKey(vID dvid.VersionLocalID, label uint64, block dvid.IndexZYX) *datastore.DataKey {
+	index := make([]byte, 1+8+dvid.IndexZYXSize)
+	index[0] = byte(KeyLabelSpatialMap)
+	binary.BigEndian.PutUint64(index[1:9], label)
+	copy(index[9:9+dvid.IndexZYXSize], block.Bytes())
+	return d.DataKey(vID, dvid.IndexBytes(index))
+}
+
+// GetSparseVol returns an encoded sparse volume given a label.
+func (d *Data) GetSparseVol(uuid dvid.UUID, label uint64) ([]byte, error) {
+	db, versionID, labelsVol, err := d.getHooks(uuid)
+	if err != nil {
+		return nil, err
+	}
+
+	// Get the start/end keys for this body's KeyLabelSpatialMap (b + s) keys.
+	firstKey := d.NewLabelSpatialMapKey(versionID, label, dvid.MinIndexZYX)
+	lastKey := d.NewLabelSpatialMapKey(versionID, label, dvid.MaxIndexZYX)
+
+	// Get all spatial indices for the given label.
+	keys, err := db.KeysInRange(firstKey, lastKey)
+	if err != nil {
+		return nil, err
+	}
+	dvid.Log(dvid.Debug, "Found %d %s blocks that contain voxels with %d label\n",
+		len(keys), labelsVol.DataName(), label)
+
+	// Concurrently visit each block, retrieving the mapping and sending voxels with given
+	// label down encoding channel.
+	dataID := labelsVol.DataID()
+	numVoxels := 0
+	for _, key := range keys {
+		// Retrieve the spatial index from the key.
+		dataKey := key.(*datastore.DataKey)
+		indexBytes := dataKey.Index.Bytes()
+		index, err := (dvid.IndexZYX{}).IndexFromBytes(indexBytes[9 : 9+dvid.IndexZYXSize])
+		if err != nil {
+			return nil, fmt.Errorf("GetSparseVol(%s, %d): Error decoding spatial index: %s",
+				uuid, label, err.Error())
+		}
+		spatialIndex := index.(*dvid.IndexZYX)
+
+		// Get the label mapping for this spatial index.
+		mapping, err := d.GetBlockMapping(versionID, *spatialIndex)
+		if err != nil {
+			return nil, fmt.Errorf("GetSparseVol(%s, %d): Error getting block mapping: %s",
+				uuid, label, err.Error())
+		}
+
+		// Read the labels64 block voxels.
+		voxelsKey := &datastore.DataKey{dataID.DsetID, dataID.ID, versionID, *spatialIndex}
+		value, err := db.Get(voxelsKey)
+		if err != nil {
+			return nil, fmt.Errorf("GetSparseVol(%s, %d): Error getting block voxels: %s",
+				uuid, label, err.Error())
+		}
+
+		// Deserialize the chunk data.
+		blockData, _, err := dvid.DeserializeData(value, true)
+		if err != nil {
+			minVoxelPt := spatialIndex.FirstPoint(labelsVol.BlockSize())
+			maxVoxelPt := spatialIndex.LastPoint(labelsVol.BlockSize())
+			fmt.Printf("Block is from %s to %s\n", minVoxelPt, maxVoxelPt)
+			return nil, fmt.Errorf("GetSparseVol(%s, %d): Error deserializing block: %s",
+				uuid, label, err.Error())
+		}
+		blockBytes := len(blockData)
+		if blockBytes%8 != 0 {
+			return nil, fmt.Errorf("Deserialized block is wrong size: %d bytes\n", blockBytes)
+		}
+
+		// Iterate through labels, apply mapping, and assemble sparse volume for given label.
+		for start := 0; start < blockBytes; start += 8 {
+			a := blockData[start : start+8]
+			//if d.ZeroLocked && bytes.Compare(a, zeroSuperpixelBytes) == 0 {
+			if bytes.Compare(a, zeroSuperpixelBytes) == 0 {
+				continue
+			}
+			b, ok := mapping[string(a)]
+			if !ok {
+				dvid.Log(dvid.Normal, "GetSparseVol(%s, %d): no mapping for %x\n", uuid, label, a)
+			} else {
+				if b == label {
+					numVoxels++
+				}
+			}
+		}
+	}
+	fmt.Printf("Found %d voxels for label %d\n", numVoxels, label)
+
+	// Get the label mappings for those blocks.
+
+	// Read the blocks and apply mapping, sending voxels down
+	// the sparse volume encoding channel as needed.
+	//voxelChannel := sparsevol.New()
+	//...
+	//encoding := sparsevol.Bytes()
+
+	return []byte{}, nil
+	//return encoding, nil
+}
+
 // LoadRavelerMaps loads maps from Raveler-formatted superpixel->segment and
 // segment->body maps.  Ignores any mappings that are in slices outside
 // associated labels64 volume.
 func (d *Data) LoadRavelerMaps(request datastore.Request, reply *datastore.Response) error {
 	startTime := time.Now()
-
-	// Use of Raveler maps causes zero labels to be reserved.
-	d.ZeroLocked = true
 
 	// Parse the request
 	var uuidStr, dataName, cmdStr, fileTypeStr, spsegStr, segbodyStr string
@@ -351,6 +555,13 @@ func (d *Data) LoadRavelerMaps(request datastore.Request, reply *datastore.Respo
 	// Get the version
 	uuid, err := server.MatchingUUID(uuidStr)
 	if err != nil {
+		return err
+	}
+
+	// Use of Raveler maps causes zero labels to be reserved.
+	d.ZeroLocked = true
+	service := server.DatastoreService()
+	if err := service.SaveDataset(uuid); err != nil {
 		return err
 	}
 
@@ -457,17 +668,8 @@ func (d *Data) LoadRavelerMaps(request datastore.Request, reply *datastore.Respo
 
 // GetLabelMapping returns the mapping for a label.
 func (d *Data) GetLabelMapping(versionID dvid.VersionLocalID, label []byte) (uint64, error) {
-	firstIndex := make([]byte, 17)
-	firstIndex[0] = byte(KeyForwardMap)
-	copy(firstIndex[1:9], label)
-	binary.BigEndian.PutUint64(firstIndex[9:17], 0)
-	lastIndex := make([]byte, 17)
-	lastIndex[0] = byte(KeyForwardMap)
-	copy(lastIndex[1:9], label)
-	binary.BigEndian.PutUint64(lastIndex[9:17], 0xFFFFFFFFFFFFFFFF)
-
-	firstKey := d.DataKey(versionID, dvid.IndexBytes(firstIndex))
-	lastKey := d.DataKey(versionID, dvid.IndexBytes(lastIndex))
+	firstKey := d.NewForwardMapKey(versionID, label, 0)
+	lastKey := d.NewForwardMapKey(versionID, label, 0xFFFFFFFFFFFFFFFF)
 
 	db := server.StorageEngine()
 	if db == nil {
@@ -496,28 +698,50 @@ func (d *Data) GetLabelMapping(versionID dvid.VersionLocalID, label []byte) (uin
 	return mapping, nil
 }
 
+// GetBlockMapping returns the label -> mappedLabel map for a given block.
+func (d *Data) GetBlockMapping(vID dvid.VersionLocalID, block dvid.IndexZYX) (map[string]uint64, error) {
+	db := server.StorageEngine()
+	if db == nil {
+		return nil, fmt.Errorf("Did not find a working key-value datastore to get image!")
+	}
+
+	firstKey := d.NewSpatialMapKey(vID, block, nil, 0)
+	maxLabel := []byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}
+	lastKey := d.NewSpatialMapKey(vID, block, maxLabel, 0xFFFFFFFFFFFFFFFF)
+
+	keys, err := db.KeysInRange(firstKey, lastKey)
+	if err != nil {
+		return nil, err
+	}
+	numKeys := len(keys)
+	mapping := make(map[string]uint64, numKeys)
+	offset := 1 + dvid.IndexZYXSize
+	for _, key := range keys {
+		dataKey := key.(*datastore.DataKey)
+		indexBytes := dataKey.Index.Bytes()
+		label := indexBytes[offset : offset+8]
+		mappedLabel := binary.BigEndian.Uint64(indexBytes[offset+8 : offset+16])
+		mapping[string(label)] = mappedLabel
+	}
+	return mapping, nil
+}
+
 // GetBlockLayerMapping gets the label mapping for a Z layer of blocks and stores the result
 // in the passed Operation.
 func (d *Data) GetBlockLayerMapping(blockZ uint32, op *Operation) (
 	minChunkPt, maxChunkPt dvid.ChunkPoint3d, err error) {
 
 	// Convert blockZ to actual voxel space Z range.
-	minChunkPt = dvid.ChunkPoint3d{0, 0, blockZ}
+	minChunkPt = dvid.ChunkPoint3d{dvid.MinChunkPoint3d[0], dvid.MinChunkPoint3d[1], blockZ}
 	maxChunkPt = dvid.ChunkPoint3d{dvid.MaxChunkPoint3d[0], dvid.MaxChunkPoint3d[1], blockZ}
 	minVoxelPt := minChunkPt.MinVoxelPoint(op.labels.BlockSize())
 	maxVoxelPt := minChunkPt.MaxVoxelPoint(op.labels.BlockSize())
 
 	// Get first and last keys that span that voxel space Z range.
-	firstIndex := make([]byte, 17)
-	firstIndex[0] = byte(KeyForwardMap)
-	copy(firstIndex[1:9], labels64.RavelerSuperpixelBytes(uint32(minVoxelPt.Value(2)), 1))
-	lastIndex := make([]byte, 17)
-	lastIndex[0] = byte(KeyForwardMap)
-	copy(lastIndex[1:9], labels64.RavelerSuperpixelBytes(uint32(maxVoxelPt.Value(2)), 0xFFFFFFFF))
-	binary.BigEndian.PutUint64(lastIndex[9:17], 0xFFFFFFFFFFFFFFFF)
-
-	firstKey := d.DataKey(op.versionID, dvid.IndexBytes(firstIndex))
-	lastKey := d.DataKey(op.versionID, dvid.IndexBytes(lastIndex))
+	minZ := uint32(minVoxelPt.Value(2))
+	maxZ := uint32(maxVoxelPt.Value(2))
+	firstKey := d.NewRavelerForwardMapKey(op.versionID, minZ, 1, 0)
+	lastKey := d.NewRavelerForwardMapKey(op.versionID, maxZ, 0xFFFFFFFF, 0xFFFFFFFFFFFFFFFF)
 
 	// Get all forward mappings from the key-value store.
 	op.mapping = nil
@@ -531,7 +755,7 @@ func (d *Data) GetBlockLayerMapping(blockZ uint32, op *Operation) (
 	keys, err = db.KeysInRange(firstKey, lastKey)
 	if err != nil {
 		err = fmt.Errorf("Could not find mapping with slice between %d and %d: %s",
-			minVoxelPt.Value(2), maxVoxelPt.Value(2), err.Error())
+			minZ, maxZ, err.Error())
 		return
 	}
 
@@ -543,13 +767,13 @@ func (d *Data) GetBlockLayerMapping(blockZ uint32, op *Operation) (
 			keyBytes := key.Bytes()
 			indexBytes := keyBytes[datastore.DataKeyIndexOffset:]
 			label := string(indexBytes[1:9])
-			label2 := binary.BigEndian.Uint64(indexBytes[9:17])
-			op.mapping[label] = label2
+			mappedLabel := binary.BigEndian.Uint64(indexBytes[9:17])
+			op.mapping[label] = mappedLabel
 		}
 	}
 
-	dvid.Log(dvid.Debug, "Loaded %d mappings that cover Z: %d to %d\n", numKeys,
-		minVoxelPt.Value(2), maxVoxelPt.Value(2))
+	//dvid.Log(dvid.Debug, "Loaded %d mappings that cover Z: %d to %d\n", numKeys,
+	//	minVoxelPt.Value(2), maxVoxelPt.Value(2))
 	return
 }
 
@@ -560,22 +784,9 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 	dvid.Log(dvid.Normal, "Adding spatial information from label volume %s for mapping %s...\n",
 		d.Labels, d.DataName())
 
-	service := server.DatastoreService()
-	_, versionID, err := service.LocalIDFromUUID(uuid)
+	db, versionID, labels, err := d.getHooks(uuid)
 	if err != nil {
-		dvid.Log(dvid.Normal, "Error in getting version ID from UUID '%s': %s\n", uuid, err.Error())
-		return
-	}
-
-	db := server.StorageEngine()
-	if db == nil {
-		dvid.Log(dvid.Normal, "Did not find a working key-value datastore to get image!")
-		return
-	}
-
-	labels, err := getRelatedLabels(uuid, d.Labels)
-	if err != nil {
-		dvid.Log(dvid.Normal, "Error in getting related labels ('%s'): %s\n", d.Labels, err.Error())
+		dvid.Log(dvid.Normal, "Error in %s.ProcessSpatially(): %s\n", d.DataName(), err.Error())
 		return
 	}
 
