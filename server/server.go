@@ -279,16 +279,16 @@ func (service *Service) Serve(webAddress, webClientDir, rpcAddress string) error
 	return nil
 }
 
-type httpHandler func(http.ResponseWriter, *http.Request)
-
 // Wrapper function so that http handlers recover from panics gracefully
 // without crashing the entire program.  The error message is written to
 // the log.
-func logHttpPanics(handler httpHandler) httpHandler {
+func logHttpPanics(handler func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		defer func() {
 			if err := recover(); err != nil {
-				log.Printf("[%v] caught panic: %v\nDump: %s", request.RemoteAddr, err, debug.Stack())
+				log.Printf("Caught panic on HTTP request: %s", err)
+				log.Printf("IP: %v, URL: %s", request.RemoteAddr, request.URL.Path)
+				log.Printf("Stack Dump:\n%s", debug.Stack())
 			}
 		}()
 		handler(writer, request)
