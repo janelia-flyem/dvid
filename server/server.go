@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -278,18 +279,19 @@ func (service *Service) Serve(webAddress, webClientDir, rpcAddress string) error
 	return nil
 }
 
+type httpHandler func(http.ResponseWriter, *http.Request)
+
 // Wrapper function so that http handlers recover from panics gracefully
 // without crashing the entire program.  The error message is written to
-// the log.  Paradigm follows recommendation in:
-// "Programming in Go: Creating Applications for the 21st Century".
-func logHttpPanics(httpHandler func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
+// the log.
+func logHttpPanics(handler httpHandler) httpHandler {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		defer func() {
 			if err := recover(); err != nil {
-				log.Printf("[%v] caught panic: %v", request.RemoteAddr, err)
+				log.Printf("[%v] caught panic: %v\nDump: %s", request.RemoteAddr, err, debug.Stack())
 			}
 		}()
-		httpHandler(writer, request)
+		handler(writer, request)
 	}
 }
 
