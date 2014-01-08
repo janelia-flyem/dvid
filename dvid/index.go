@@ -221,7 +221,10 @@ func (i IndexUint8) IndexFromBytes(b []byte) (Index, error) {
 }
 
 // IndexZYX implements the Index interface and provides simple indexing on Z,
-// then Y, then X.
+// then Y, then X.  Note that index elements are unsigned to better handle
+// sequential access of negative/positive coordinates.  Conversion to and
+// from signed point space is handled automatically through the Chunkable
+// interface.
 type IndexZYX ChunkPoint3d
 
 var (
@@ -241,10 +244,7 @@ func (i IndexZYX) String() string {
 }
 
 // Bytes returns a byte representation of the Index.  This should layout
-// integer space as consecutive in binary representation.
-// TODO: don't just use binary representation of negative numbers because of
-// discontinuity at -1 to 0 (most significant bit shouldn't be used to
-// signal negative numbers).  Instead add 1 >> 31 and store as unsigned.
+// integer space as consecutive in binary representation, i.e., BigEndian.
 func (i IndexZYX) Bytes() []byte {
 	buf := new(bytes.Buffer)
 	binary.Write(buf, binary.BigEndian, i[2])

@@ -1,6 +1,8 @@
 package dvid
 
 import (
+	"bytes"
+	"encoding/binary"
 	"encoding/gob"
 	"fmt"
 	"image"
@@ -315,6 +317,31 @@ func (p Point2d) PointInChunk(size Point) Point {
 
 // Point3d is an ordered list of three 32-bit signed integers that implements the Point interface.
 type Point3d [3]int32
+
+// Bytes returns a byte representation of the Point3d in little endian format.
+func (p Point3d) Bytes() []byte {
+	buf := new(bytes.Buffer)
+	binary.Write(buf, binary.LittleEndian, p[0])
+	binary.Write(buf, binary.LittleEndian, p[1])
+	binary.Write(buf, binary.LittleEndian, p[2])
+	return buf.Bytes()
+}
+
+// PointFromBytes returns a Point3d from bytes.  The passed point is used just
+// to choose the appropriate byte decoding scheme.
+func (p Point3d) PointFromBytes(b []byte) (readPt Point3d, err error) {
+	buf := bytes.NewReader(b)
+	if err = binary.Read(buf, binary.LittleEndian, &(readPt[0])); err != nil {
+		return
+	}
+	if err = binary.Read(buf, binary.LittleEndian, &(readPt[1])); err != nil {
+		return
+	}
+	if err = binary.Read(buf, binary.LittleEndian, &(readPt[2])); err != nil {
+		return
+	}
+	return
+}
 
 // --- Point interface support -----
 
