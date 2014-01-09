@@ -343,8 +343,24 @@ func (s *Service) About() string {
 	return text
 }
 
-// AboutJSON returns the components and versions of DVID software.
+// TypesJSON returns the components and versions of DVID software available
+// in this DVID server.
 func (s *Service) TypesJSON() (jsonStr string, err error) {
+	data := make(map[string]string)
+	for _, datatype := range CompiledTypes {
+		data[datatype.DatatypeName()] = string(datatype.DatatypeUrl())
+	}
+	m, err := json.Marshal(data)
+	if err != nil {
+		return
+	}
+	jsonStr = string(m)
+	return
+}
+
+// CurrentTypesJSON returns the components and versions of DVID software associated
+// with the current datasets in the service.
+func (s *Service) CurrentTypesJSON() (jsonStr string, err error) {
 	data := make(map[string]string)
 	if s.datasets != nil {
 		for _, dtype := range s.datasets.Datatypes() {
