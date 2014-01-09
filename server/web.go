@@ -30,36 +30,47 @@ DVID Web Client Unavailable!  To make the web client available, you have two cho
 `
 
 const WebAPIHelp = `
-DVID's HTTP API is a Level 2 REST API that roughly translates the dvid terminal
-commands into URL form.
+<!DOCTYPE html>
+<html>
+<body>
+<h1>DVID HTTP API</h1>
+<p>This help system is embedded in DVID servers.  More full-featured help and
+console web apps are available through 
+<a href="https://github.com/janelia-flyem/dvid-webclient">DVID web clients</a>.</p>
+<p>DVID's HTTP API is a Level 2 REST API with URL endpoints prefixed with "api".</p>
+<p>Commands that set or create data use POST.  Commands that return data use GET,
+and the returned format will be in JSON except for "help" which returns HTML.</p>
+<p>In the following examples, any part surrounded by curly braces like {myparam}
+should be replaced by appropriate values.</p>
+<code>
+  <ul>
+    <li>GET /api/help (current page)</li>
+    <li><a href="/api/load">GET /api/load</a></li>
 
-Commands that set or create data use POST.  Commands that return data use GET,
-and the returned format will be in JSON except for "help" which returns HTML.
+    <li><a href="/api/server/info">GET /api/server/info</a></li>
+    <li><a href="/api/server/types">GET /api/server/types</a></li>
 
-    GET /api/help
-    GET /api/load
+    <li><a href="/api/datasets/info">GET /api/datasets/info</a></li>
+    <li><a href="/api/datasets/list">GET /api/datasets/list</a></li>
+    <li>POST /api/datasets/new</li>
 
-    GET /api/server/info
-    GET /api/server/types
+    <li>GET /api/dataset/{UUID}/info</li>
+    <li>POST /api/dataset/{UUID}/new/{datatype name}/{data name}<br />
+        Type-specific configuration settings should be sent via JSON.</li>
 
-    GET /api/datasets/info
-    GET /api/datasets/list
-    POST /api/datasets/new  (Returns JSON like {"Root": "My Root UUID"})
+    <li>GET /api/dataset/{UUID}/{data name}/{type-specific commands}</li>
 
-    GET /api/dataset/<UUID>/info 
-    POST /api/dataset/<UUID>/new/<datatype name>/<data name>
-        Type-specific configuration settings should be sent via JSON.
+    <li>POST /api/node/{UUID}/lock</li>
+    <li>POST /api/node/{UUID}/branch<br /></li>
 
-    GET /api/dataset/<UUID>/<data name>/<type-specific commands>
-
-    POST /api/node/<UUID>/lock
-    POST /api/node/<UUID>/branch
-
-    GET /api/node/<UUID>/<data name>/<type-specific commands>
-    POST /api/node/<UUID>/<data name>/<type-specific commands>
-
-To examine the data type-specific API commands available, use GET /api/dataset/.../help
-shown above.
+    <li>GET /api/node/{UUID}/{data name}/{type-specific commands}</li>
+    <li>POST /api/node/{UUID}/{data name}/{type-specific commands}</li>
+  </ul>
+</code>
+<p>To examine the data type-specific API commands available, use GET /api/dataset/.../help
+shown above.</p>
+</body>
+</html>
 `
 
 func BadRequest(w http.ResponseWriter, r *http.Request, message string) {
