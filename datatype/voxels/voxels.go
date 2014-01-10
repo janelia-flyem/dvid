@@ -1453,7 +1453,11 @@ func (d *Data) NewExtHandler(geom dvid.Geometry, img interface{}) (ExtHandler, e
 	}
 
 	if img == nil {
-		if geom.NumVoxels() > MaxVoxelsRequest {
+		numVoxels := geom.NumVoxels()
+		if numVoxels <= 0 {
+			return nil, fmt.Errorf("Illegal geometry requested: %s", geom)
+		}
+		if numVoxels > MaxVoxelsRequest {
 			return nil, fmt.Errorf("Requested # voxels (%d) exceeds this DVID server's set limit (%d)",
 				geom.NumVoxels(), MaxVoxelsRequest)
 		}

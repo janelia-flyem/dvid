@@ -191,23 +191,33 @@ const (
 
 type KeyType byte
 
+// Label indexing is handled through a variety of key spaces that optimize
+// throughput for access patterns required by our API.  For dcumentation purposes,
+// consider the following key components:
+//   a: original label
+//   b: mapped label
+//   s: spatial index (coordinate of a block)
+//   v: # of voxels for a label
 const (
-	// KeyInverseMap are keys that have label2 + spatial index + label1.
-	// For superpixel->body maps, this key would be body-block-superpixel.
+	// KeyInverseMap have keys of form 'b+a'
 	KeyInverseMap KeyType = iota
 
-	// KeyForwardMap are keys for label1 -> label2 maps, so the keys are label1.
-	// For superpixel->body maps, this key would be the superpixel label.
+	// KeyForwardMap have keys of form 'a+b'
+	// For superpixel->body maps, this key would be superpixel+body.
 	KeyForwardMap
 
-	// KeySpatialMap are keys composed of spatial index + label + forward label.
+	// KeySpatialMap have keys of form 's+a+b'
 	// They are useful for composing label maps for a spatial index.
 	KeySpatialMap
 
-	// KeyLabelSpatialMap are keys for forward label -> spatial indices where the
-	// spatial indices are blocks that have labels that map to the forward label.
-	// They are useful for returning all blocks intersected by a label.
+	// KeyLabelSpatialMap have keys of form 'b+s' and have a sparse volume
+	// encoding for its value. They are useful for returning all blocks
+	// intersected by a label.
 	KeyLabelSpatialMap
+
+	// KeyLabelSizes have keys of form 'v+b'.
+	// They allow rapid size range queries.
+	KeyLabelSizes
 )
 
 func (t KeyType) String() string {
@@ -218,6 +228,10 @@ func (t KeyType) String() string {
 		return "Forward Label Map"
 	case KeySpatialMap:
 		return "Spatial Index to Labels Map"
+	case KeyLabelSpatialMap:
+		return "Forward Label to Spatial Index Map"
+	case KeyLabelSizes:
+		return "Forward Label sorted by volume"
 	default:
 		return "Unknown Key Type"
 	}
@@ -617,6 +631,7 @@ func (d *Data) LoadRavelerMaps(request datastore.Request, reply *datastore.Respo
 
 	// Use of Raveler maps causes zero labels to be reserved.
 	d.ZeroLocked = true
+	d.Ready = false
 	service := server.DatastoreService()
 	if err := service.SaveDataset(uuid); err != nil {
 		return err
@@ -843,7 +858,6 @@ type blockOp struct {
 // Iterate through all blocks in the associated label volume, computing the spatial indices
 // for bodies and the mappings for each spatial index.
 func (d *Data) ProcessSpatially(uuid dvid.UUID) {
-	startTime := time.Now()
 	dvid.Log(dvid.Normal, "Adding spatial information from label volume %s for mapping %s...\n",
 		d.Labels, d.DataName())
 
@@ -855,6 +869,7 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 
 	// Iterate through all labels chunks incrementally in Z, loading and then using the maps
 	// for all blocks in that layer.
+	startTime := time.Now()
 	wg := new(sync.WaitGroup)
 	op := &blockOp{labels, versionID, nil}
 
@@ -887,12 +902,22 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 		dvid.ElapsedTime(dvid.Debug, t, "Processed all %s blocks for layer %d/%d",
 			d.Labels, z-minIndexZ+1, maxIndexZ-minIndexZ+1)
 	}
+	dvid.ElapsedTime(dvid.Debug, startTime, "Processed spatial information from %s for mapping %s",
+		d.Labels, d.DataName())
+
+	// Iterate through all mapped labels and determine the size in voxels.
+	startTime = time.Now()
+
+	dvid.ElapsedTime(dvid.Debug, startTime,
+		"Created size index for mapping '%s' applied to labels '%s'",
+		d.DataName(), d.Labels)
 
 	// Wait for results then set Updating.
 	d.Ready = true
-
-	dvid.ElapsedTime(dvid.Debug, startTime, "Processed spatial information from %s for mapping %s",
-		d.Labels, d.DataName())
+	if err := server.DatastoreService().SaveDataset(uuid); err != nil {
+		dvid.Log(dvid.Normal, "Could not save READY state to data '%s', uuid %s: %s",
+			d.DataName(), uuid, err.Error())
+	}
 }
 
 // ProcessChunk processes a chunk of data as part of a mapped operation.
