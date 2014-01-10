@@ -122,13 +122,13 @@ GET /api/node/<UUID>/<data name>/sparsevol/<mapped label>
 			  ...
 	        int32   Length of run
 	        bytes   Optional payload dependent on first byte descriptor
-	
-TODO:
 
 GET /api/node/<UUID>/<data name>/sizerange/<min size>/<max size>
 
     Returns JSON list of labels that have # voxels that fall within the given range
     of sizes.
+	
+TODO:
 
 GET  /api/node/<UUID>/<data name>/<dims>/<size>/<offset>[/<format>]
 
@@ -180,6 +180,8 @@ var (
 	emptyValue          = []byte{}
 	zeroSuperpixelBytes = make([]byte, 8, 8)
 )
+
+const MaxLabel = 0xFFFFFFFFFFFFFFFF
 
 // Sparse Volume binary encoding payload descriptors.
 const (
@@ -352,6 +354,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		w.Header().Set("Content-Type", "text/plain")
 		fmt.Fprintln(w, d.Help())
 		return nil
+
 	case "info":
 		jsonStr, err := d.JSONString()
 		if err != nil {
@@ -361,6 +364,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, jsonStr)
 		return nil
+
 	case "sparsevol":
 		// GET /api/node/<UUID>/<data name>/sparsevol/<label>
 		if len(parts) < 5 {
@@ -384,6 +388,33 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		}
 		dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: sparsevol on label %d (%s)",
 			r.Method, label, r.URL)
+
+	case "sizerange":
+		// GET /api/node/<UUID>/<data name>/sizerange/<min size>/<max size>
+		if len(parts) < 6 {
+			err := fmt.Errorf("ERROR: DVID requires min & max sizes to follow 'sizerange' command")
+			server.BadRequest(w, r, err.Error())
+			return err
+		}
+		minSize, err := strconv.ParseUint(parts[4], 10, 64)
+		if err != nil {
+			server.BadRequest(w, r, err.Error())
+			return err
+		}
+		maxSize, err := strconv.ParseUint(parts[5], 10, 64)
+		if err != nil {
+			server.BadRequest(w, r, err.Error())
+			return err
+		}
+		jsonStr, err := d.GetSizeRange(uuid, minSize, maxSize)
+		if err != nil {
+			return err
+		}
+		w.Header().Set("Content-type", "application/json")
+		fmt.Fprintf(w, jsonStr)
+		dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: get labels with volume > %d and < %d (%s)",
+			r.Method, minSize, maxSize, r.URL)
+
 	default:
 	}
 
@@ -490,6 +521,15 @@ func (d *Data) NewLabelSpatialMapKey(vID dvid.VersionLocalID, label uint64, bloc
 	return d.DataKey(vID, dvid.IndexBytes(index))
 }
 
+// NewLabelSizesKey returns a datastore.DataKey that encodes a "size + mapped label".
+func (d *Data) NewLabelSizesKey(vID dvid.VersionLocalID, size, label uint64) *datastore.DataKey {
+	index := make([]byte, 17)
+	index[0] = byte(KeyLabelSizes)
+	binary.BigEndian.PutUint64(index[1:9], size)
+	binary.BigEndian.PutUint64(index[9:17], label)
+	return d.DataKey(vID, dvid.IndexBytes(index))
+}
+
 type sparseOp struct {
 	versionID dvid.VersionLocalID
 	encoding  []byte
@@ -556,6 +596,104 @@ func statsRuns(encoding []byte) (numVoxels, numRuns int32, err error) {
 		numVoxels += length
 	}
 	return
+}
+
+// Runs asynchronously and assumes that sparse volumes per spatial indices are ordered
+// by mapped label, i.e., we will get all data for body N before body N+1.  Exits when
+// receives a nil in channel.
+func (d *Data) computeSizes(sizeCh chan *storage.Chunk, db storage.Engine,
+	versionID dvid.VersionLocalID, wg *sync.WaitGroup) {
+
+	const BATCH_SIZE = 10000
+	batcher, ok := db.(storage.Batcher)
+	if !ok {
+		dvid.Log(dvid.Normal, "Storage engine does not support Batch PUT.  Aborting\n")
+		return
+	}
+	batch := batcher.NewBatch()
+
+	defer func() {
+		wg.Done()
+		batch.Close()
+	}()
+
+	// Sequentially process all the sparse volume data for each label
+	var curLabel, curSize uint64
+	putsInBatch := 0
+	notFirst := true
+	for {
+		chunk := <-sizeCh
+		if chunk == nil {
+			key := d.NewLabelSizesKey(versionID, curSize, curLabel)
+			batch.Put(key, emptyValue)
+			if err := batch.Commit(); err != nil {
+				dvid.Log(dvid.Normal, "Error on batch PUT of label sizes for %s: %s\n",
+					d.DataName(), err.Error())
+				return
+			}
+		}
+
+		// Get label associated with this sparse volume.
+		dataKey := chunk.K.(*datastore.DataKey)
+		indexBytes := dataKey.Index.Bytes()
+		label := binary.LittleEndian.Uint64(indexBytes[1:9])
+
+		// Compute the size
+		numVoxels, _, err := statsRuns(chunk.V)
+		if err != nil {
+			dvid.Log(dvid.Normal, "Error on computing label sizes: %s\n", err.Error())
+			return
+		}
+
+		// If we are a new label, store size
+		if notFirst && label != curLabel {
+			key := d.NewLabelSizesKey(versionID, curSize, curLabel)
+			curSize = 0
+			batch.Put(key, emptyValue)
+			putsInBatch++
+			if putsInBatch%BATCH_SIZE == 0 {
+				if err := batch.Commit(); err != nil {
+					dvid.Log(dvid.Normal, "Error on batch PUT of label sizes for %s: %s\n",
+						d.DataName(), err.Error())
+					return
+				}
+			}
+		}
+		curLabel = label
+		curSize += uint64(numVoxels)
+		notFirst = true
+	}
+}
+
+// GetSizeRange returns a JSON list of mapped labels that have volumes within the given range.
+func (d *Data) GetSizeRange(uuid dvid.UUID, minSize, maxSize uint64) (string, error) {
+	db, versionID, _, err := d.getHooks(uuid)
+	if err != nil {
+		return "{}", err
+	}
+
+	// Get the start/end keys for the size range.
+	firstKey := d.NewLabelSizesKey(versionID, minSize, 0)
+	lastKey := d.NewLabelSizesKey(versionID, maxSize, MaxLabel)
+
+	// Grab all keys for this range in one sequential read.
+	keys, err := db.KeysInRange(firstKey, lastKey)
+	if err != nil {
+		return "{}", err
+	}
+
+	// Convert them to a JSON compatible structure.
+	labels := make([]uint64, len(keys))
+	for i, key := range keys {
+		dataKey := key.(*datastore.DataKey)
+		indexBytes := dataKey.Index.Bytes()
+		labels[i] = binary.LittleEndian.Uint64(indexBytes[9:17])
+	}
+	m, err := json.Marshal(labels)
+	if err != nil {
+		return "{}", nil
+	}
+	return string(m), nil
 }
 
 // GetSparseVol returns an encoded sparse volume given a label.  The encoding has the
@@ -741,7 +879,7 @@ func (d *Data) LoadRavelerMaps(request datastore.Request, reply *datastore.Respo
 // GetLabelMapping returns the mapping for a label.
 func (d *Data) GetLabelMapping(versionID dvid.VersionLocalID, label []byte) (uint64, error) {
 	firstKey := d.NewForwardMapKey(versionID, label, 0)
-	lastKey := d.NewForwardMapKey(versionID, label, 0xFFFFFFFFFFFFFFFF)
+	lastKey := d.NewForwardMapKey(versionID, label, MaxLabel)
 
 	db := server.StorageEngine()
 	if db == nil {
@@ -779,7 +917,7 @@ func (d *Data) GetBlockMapping(vID dvid.VersionLocalID, block dvid.IndexZYX) (ma
 
 	firstKey := d.NewSpatialMapKey(vID, block, nil, 0)
 	maxLabel := []byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}
-	lastKey := d.NewSpatialMapKey(vID, block, maxLabel, 0xFFFFFFFFFFFFFFFF)
+	lastKey := d.NewSpatialMapKey(vID, block, maxLabel, MaxLabel)
 
 	keys, err := db.KeysInRange(firstKey, lastKey)
 	if err != nil {
@@ -813,7 +951,7 @@ func (d *Data) GetBlockLayerMapping(blockZ uint32, op *blockOp) (
 	minZ := uint32(minVoxelPt.Value(2))
 	maxZ := uint32(maxVoxelPt.Value(2))
 	firstKey := d.NewRavelerForwardMapKey(op.versionID, minZ, 1, 0)
-	lastKey := d.NewRavelerForwardMapKey(op.versionID, maxZ, 0xFFFFFFFF, 0xFFFFFFFFFFFFFFFF)
+	lastKey := d.NewRavelerForwardMapKey(op.versionID, maxZ, 0xFFFFFFFF, MaxLabel)
 
 	// Get all forward mappings from the key-value store.
 	op.mapping = nil
@@ -907,7 +1045,20 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 
 	// Iterate through all mapped labels and determine the size in voxels.
 	startTime = time.Now()
-
+	startKey := d.NewLabelSpatialMapKey(versionID, 0, dvid.MinIndexZYX)
+	endKey := d.NewLabelSpatialMapKey(versionID, MaxLabel, dvid.MaxIndexZYX)
+	sizeCh := make(chan *storage.Chunk, 10000)
+	wg.Add(1)
+	go d.computeSizes(sizeCh, db, versionID, wg)
+	err = db.ProcessRange(startKey, endKey, &storage.ChunkOp{}, func(chunk *storage.Chunk) {
+		sizeCh <- chunk
+	})
+	if err != nil {
+		dvid.Log(dvid.Normal, "Error indexing sizes for %s: %s\n", d.DataName(), err.Error())
+		return
+	}
+	sizeCh <- nil
+	wg.Wait()
 	dvid.ElapsedTime(dvid.Debug, startTime,
 		"Created size index for mapping '%s' applied to labels '%s'",
 		d.DataName(), d.Labels)
