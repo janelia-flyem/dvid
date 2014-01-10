@@ -99,15 +99,40 @@ POST /api/node/<UUID>/<data name>/info
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
     data name     Name of mapping data.
 
-GET /api/node/<UUID>/<data name>/sparsevol/<label>
+GET /api/node/<UUID>/<data name>/sparsevol/<mapped label>
 
-	Returns a sparse volume with voxels of the given forward label.
+	Returns a sparse volume with voxels of the given forward label in encoded RLE format.
+	The encoding has the following format where integers are little endian and the order
+	of data is exactly as specified below:
 
+	    byte     Payload descriptor:
+	               Bit 0 (LSB) - 8-bit grayscale
+	               Bit 1 - 16-bit grayscale
+	               Bit 2 - 16-bit normal
+	               ...
+	    uint8    Number of dimensions
+	    uint8    Dimension of run (typically 0 = X)
+	    byte     Reserved (to be used later)
+	    uint32    # Voxels [TODO.  0 for now]
+	    uint32    # Spans
+	    Repeating unit of:
+	        int32   Coordinate of run start (dimension 0)
+	        int32   Coordinate of run start (dimension 1)
+	        int32   Coordinate of run start (dimension 2)
+			  ...
+	        int32   Length of run
+	        bytes   Optional payload dependent on first byte descriptor
+	
 TODO:
+
+GET /api/node/<UUID>/<data name>/sizerange/<min size>/<max size>
+
+    Returns JSON list of labels that have # voxels that fall within the given range
+    of sizes.
 
 GET  /api/node/<UUID>/<data name>/<dims>/<size>/<offset>[/<format>]
 
-    Retrieves or puts forward label data.
+    Retrieves or puts mapped label data.
 
     Example: 
 
@@ -454,8 +479,8 @@ func (d *Data) NewLabelSpatialMapKey(vID dvid.VersionLocalID, label uint64, bloc
 type sparseOp struct {
 	versionID dvid.VersionLocalID
 	encoding  []byte
-	numBlocks int32
-	//numRuns   int32
+	numBlocks uint32
+	numRuns   uint32
 	//numVoxels int32
 }
 
@@ -464,6 +489,7 @@ func (d *Data) processLabelRuns(chunk *storage.Chunk) {
 	op := chunk.Op.(*sparseOp)
 	op.numBlocks++
 	op.encoding = append(op.encoding, chunk.V...)
+	op.numRuns += uint32(len(chunk.V) / 16)
 	chunk.Wg.Done()
 }
 
@@ -566,8 +592,10 @@ func (d *Data) GetSparseVol(uuid dvid.UUID, label uint64) ([]byte, error) {
 	}
 	wg.Wait()
 
-	dvid.Log(dvid.Debug, "For data '%s': found %d blocks\n",
-		labelsVol.DataName(), op.numBlocks)
+	binary.LittleEndian.PutUint32(op.encoding[8:12], op.numRuns)
+
+	dvid.Log(dvid.Debug, "For data '%s' label %d: found %d blocks, %d runs\n",
+		labelsVol.DataName(), label, op.numBlocks, op.numRuns)
 	return op.encoding, nil
 }
 
