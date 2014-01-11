@@ -629,8 +629,8 @@ func (d *Data) computeSizes(sizeCh chan *storage.Chunk, db storage.Engine,
 			if err := batch.Commit(); err != nil {
 				dvid.Log(dvid.Normal, "Error on batch PUT of label sizes for %s: %s\n",
 					d.DataName(), err.Error())
-				return
 			}
+			return
 		}
 
 		// Get label associated with this sparse volume.
@@ -755,7 +755,6 @@ func (d *Data) GetSparseVol(uuid dvid.UUID, label uint64) ([]byte, error) {
 // segment->body maps.  Ignores any mappings that are in slices outside
 // associated labels64 volume.
 func (d *Data) LoadRavelerMaps(request datastore.Request, reply *datastore.Response) error {
-	startTime := time.Now()
 
 	// Parse the request
 	var uuidStr, dataName, cmdStr, fileTypeStr, spsegStr, segbodyStr string
@@ -766,6 +765,8 @@ func (d *Data) LoadRavelerMaps(request datastore.Request, reply *datastore.Respo
 	if err != nil {
 		return err
 	}
+
+	startTime := time.Now()
 
 	// Use of Raveler maps causes zero labels to be reserved.
 	d.ZeroLocked = true
