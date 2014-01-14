@@ -17,6 +17,8 @@ found in help constants:
 * [general commands and HTTP API](http://godoc.org/github.com/janelia-flyem/dvid/server#pkg-constants)
 * [keyvalue](http://godoc.org/github.com/janelia-flyem/dvid/datatype/keyvalue#pkg-constants)
 * [voxels](http://godoc.org/github.com/janelia-flyem/dvid/datatype/voxels#pkg-constants)
+* [labels64](http://godoc.org/github.com/janelia-flyem/dvid/datatype/labels64#pkg-constants)
+* [labelmap](http://godoc.org/github.com/janelia-flyem/dvid/datatype/labelmap#pkg-constants)
 * [multichan16](http://godoc.org/github.com/janelia-flyem/dvid/datatype/multichan16#pkg-constants)
 * [tiles](http://godoc.org/github.com/janelia-flyem/dvid/datatype/tiles#pkg-constants)
 
@@ -33,7 +35,9 @@ installed and managed locally, yet still scale to the available storage system a
 nodes. If data transmission or computer memory is an issue, it allows us to choose a local first­ class 
 datastore that will eventually (or continuously) be synced with remote datastores. By “first class”, we 
 mean that each DVID server, even on laptops, behaves identically to larger institutional DVID servers 
-save for resource limitations like the size of the data that can be managed.
+save for resource limitations like the size of the data that can be managed.  Our vision is to have
+something like a "git" for image-oriented data, although there are a number of differences due to
+the size and typing of data.
 
 Scalability can be achieved in at least two ways:
 
@@ -90,15 +94,15 @@ views that accelerate particular access patterns. For example, quad trees can be
 and YZ orthogonal views or sparse volumes can compactly describe a neuron. The extra denormalized data 
 is kept in the datastore until a node is archived, which removes all denormalized key­-value pairs
 associated with that version node. Views of the same data can be eventually consistent.
-(_Status: Multi-scale tiles implemented, sparse volumes forthcoming.  Framework for syncing of 
-denormalized views planned Q1 2014._)
+(_Status: Multi-scale tiles, sparse volumes implemented.  Framework for syncing of 
+denormalized views planned Q1-2 2014._)
 * **Flexible Data Types**: DVID provides a well­-defined interface to data type code that can be 
 easily added by users. A DVID server provides HTTP and RPC APIs, authentication, authorization, 
 versioning, provenance, and storage engines. It delegates datatype­-specific commands and processing to 
 data type code. As long as a DVID type can return data for its implemented commands, we don’t care how 
-its implemented. (_Status: Variety of voxel types, tiles, key-value implemented. Authentication and
-authorization support planned Q2 2014, likely using Mozilla Persona + auth tokens 
-similar to github API._)
+its implemented. (_Status: Variety of voxel types, tiles, key-value implemented. FUSE interface for 
+key-value type working but not heavily used.  Authentication and authorization support planned Q2 2014, 
+likely using Mozilla Persona + auth tokens similar to github API._)
 * **Scalable Storage Engine**: Although we may have DVID support polyglot persistence
 (i.e., allow use of relational, graph, or NoSQL databases), we are initially focused on 
 key­-value stores. DVID has an abstract key­-value interface to its swappable storage engine. 
