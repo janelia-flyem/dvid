@@ -68,7 +68,15 @@ $ dvid node <UUID> <data name> load raveler <superpixel-to-segment filename> <se
 
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add.
-	
+
+$ dvid node <UUID> <data name> apply <labels64 data name> <new labels64 data name>
+
+    Applies a labelmap to current labels64 data and creates a new labels64 data.
+
+    Example:
+
+    $ dvid node 3f8c sp2body apply superpixels bodies
+
 	
     ------------------
 
@@ -322,7 +330,7 @@ func (d *Data) JSONString() (jsonStr string, err error) {
 func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error {
 	switch request.TypeCommand() {
 	case "load":
-		if len(request.Command) < 6 {
+		if len(request.Command) < 7 {
 			return fmt.Errorf("Poorly formatted load command.  See command-line help.")
 		}
 		switch request.Command[4] {
@@ -331,6 +339,11 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 		default:
 			return fmt.Errorf("Cannot load unknown input file types '%s'", request.Command[3])
 		}
+	case "apply":
+		if len(request.Command) < 6 {
+			return fmt.Errorf("Poorly formatted apply command.  See command-line help.")
+		}
+		return d.ApplyLabelMap(request, reply)
 	default:
 		return d.UnknownCommand(request)
 	}
@@ -877,6 +890,92 @@ func (d *Data) LoadRavelerMaps(request datastore.Request, reply *datastore.Respo
 	return nil
 }
 
+// ApplyLabelMap creates a new labels64 by applying a label map to existing labels64 data.
+func (d *Data) ApplyLabelMap(request datastore.Request, reply *datastore.Response) error {
+
+	startTime := time.Now()
+
+	// Parse the request
+	var uuidStr, dataName, cmdStr, sourceName, destName string
+	request.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &sourceName, &destName)
+
+	// Get the version
+	uuid, err := server.MatchingUUID(uuidStr)
+	if err != nil {
+		return err
+	}
+
+	// Get the source labels64 data.
+	source, err := labels64.Get(uuid, dvid.DataString(sourceName))
+	if err != nil {
+		return err
+	}
+
+	// Create a new labels64 data.
+	service := server.DatastoreService()
+	config := dvid.NewConfig()
+	err = service.NewData(uuid, "labels64", destName, config)
+	if err != nil {
+		return err
+	}
+	dest, err := labels64.Get(uuid, dvid.DataString(destName))
+	if err != nil {
+		return err
+	}
+
+	// Prepare for datastore access
+	versionID, err := server.VersionLocalID(uuid)
+	if err != nil {
+		return err
+	}
+	db := server.StorageEngine()
+
+	// Iterate through all labels chunks incrementally in Z, loading and then using the maps
+	// for all blocks in that layer.
+	wg := new(sync.WaitGroup)
+	op := &blockOp{source, dest, versionID, nil}
+
+	dataID := source.DataID()
+	extents := source.Extents()
+	minIndexZ := extents.MinIndex.(dvid.IndexZYX)[2]
+	maxIndexZ := extents.MaxIndex.(dvid.IndexZYX)[2]
+	for z := minIndexZ; z <= maxIndexZ; z++ {
+		t := time.Now()
+
+		// Get the label->label map for this Z
+		var minChunkPt, maxChunkPt dvid.ChunkPoint3d
+		minChunkPt, maxChunkPt, err := d.GetBlockLayerMapping(z, op)
+		if err != nil {
+			return fmt.Errorf("Error getting label mapping for block Z %d: %s\n", z, err.Error())
+		}
+
+		// Process the labels chunks for this Z
+		minIndex := dvid.IndexZYX(minChunkPt)
+		maxIndex := dvid.IndexZYX(maxChunkPt)
+		if op.mapping != nil {
+			startKey := &datastore.DataKey{dataID.DsetID, dataID.ID, versionID, minIndex}
+			endKey := &datastore.DataKey{dataID.DsetID, dataID.ID, versionID, maxIndex}
+			chunkOp := &storage.ChunkOp{op, wg}
+			err = db.ProcessRange(startKey, endKey, chunkOp, d.ChunkApplyMap)
+			wg.Wait()
+		}
+
+		dvid.ElapsedTime(dvid.Debug, t, "Processed all %s blocks for layer %d/%d",
+			sourceName, z-minIndexZ+1, maxIndexZ-minIndexZ+1)
+	}
+	dvid.ElapsedTime(dvid.Debug, startTime, "Mapped %s to %s using label map %s",
+		sourceName, destName, d.DataName())
+
+	// Set new mapped data to same extents.
+	dest.Properties = source.Properties
+	if err := server.DatastoreService().SaveDataset(uuid); err != nil {
+		dvid.Log(dvid.Normal, "Could not save READY state to data '%s', uuid %s: %s",
+			d.DataName(), uuid, err.Error())
+	}
+
+	return nil
+}
+
 // GetLabelMapping returns the mapping for a label.
 func (d *Data) GetLabelMapping(versionID dvid.VersionLocalID, label []byte) (uint64, error) {
 	firstKey := d.NewForwardMapKey(versionID, label, 0)
@@ -945,8 +1044,8 @@ func (d *Data) GetBlockLayerMapping(blockZ uint32, op *blockOp) (
 	// Convert blockZ to actual voxel space Z range.
 	minChunkPt = dvid.ChunkPoint3d{dvid.MinChunkPoint3d[0], dvid.MinChunkPoint3d[1], blockZ}
 	maxChunkPt = dvid.ChunkPoint3d{dvid.MaxChunkPoint3d[0], dvid.MaxChunkPoint3d[1], blockZ}
-	minVoxelPt := minChunkPt.MinVoxelPoint(op.labels.BlockSize())
-	maxVoxelPt := minChunkPt.MaxVoxelPoint(op.labels.BlockSize())
+	minVoxelPt := minChunkPt.MinVoxelPoint(op.source.BlockSize())
+	maxVoxelPt := minChunkPt.MaxVoxelPoint(op.source.BlockSize())
 
 	// Get first and last keys that span that voxel space Z range.
 	minZ := uint32(minVoxelPt.Value(2))
@@ -982,14 +1081,12 @@ func (d *Data) GetBlockLayerMapping(blockZ uint32, op *blockOp) (
 			op.mapping[label] = mappedLabel
 		}
 	}
-
-	//dvid.Log(dvid.Debug, "Loaded %d mappings that cover Z: %d to %d\n", numKeys,
-	//	minVoxelPt.Value(2), maxVoxelPt.Value(2))
 	return
 }
 
 type blockOp struct {
-	labels    *labels64.Data
+	source    *labels64.Data
+	mapped    *labels64.Data
 	versionID dvid.VersionLocalID
 	mapping   map[string]uint64
 }
@@ -1010,7 +1107,7 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 	// for all blocks in that layer.
 	startTime := time.Now()
 	wg := new(sync.WaitGroup)
-	op := &blockOp{labels, versionID, nil}
+	op := &blockOp{labels, nil, versionID, nil}
 
 	dataID := labels.DataID()
 	extents := labels.Extents()
@@ -1072,6 +1169,89 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 	}
 }
 
+// ChunkApplyMap maps a chunk of labels using the current mapping.
+// Only some multiple of the # of CPU cores can be used for chunk handling before
+// it waits for chunk processing to abate via the buffered server.HandlerToken channel.
+func (d *Data) ChunkApplyMap(chunk *storage.Chunk) {
+	<-server.HandlerToken
+	go d.chunkApplyMap(chunk)
+}
+
+func (d *Data) chunkApplyMap(chunk *storage.Chunk) {
+	defer func() {
+		// After processing a chunk, return the token.
+		server.HandlerToken <- 1
+	}()
+
+	op := chunk.Op.(*blockOp)
+	db := server.StorageEngine()
+	if db == nil {
+		dvid.Log(dvid.Normal, "Did not find a working key-value datastore to get image!")
+		return
+	}
+
+	// Get the spatial index associated with this chunk.
+	dataKey := chunk.K.(*datastore.DataKey)
+	zyx := dataKey.Index.(*dvid.IndexZYX)
+
+	// Initialize the label buffers.  For voxels, this data needs to be uncompressed and deserialized.
+	blockData, _, err := dvid.DeserializeData(chunk.V, true)
+	if err != nil {
+		dvid.Log(dvid.Normal, "Unable to deserialize block in '%s': %s\n",
+			d.DataID.DataName(), err.Error())
+		return
+	}
+	blockBytes := len(blockData)
+	if blockBytes%8 != 0 {
+		dvid.Log(dvid.Normal, "Retrieved, deserialized block is wrong size: %d bytes\n", blockBytes)
+		return
+	}
+	mappedData := make([]byte, blockBytes, blockBytes)
+
+	// Map this block of labels.
+	var b uint64
+	var ok bool
+	for start := 0; start < blockBytes; start += 8 {
+		a := blockData[start : start+8]
+
+		// Get the label to which the current label is mapped.
+		zeroToken := d.ZeroLocked && bytes.Compare(a, zeroSuperpixelBytes) == 0
+		if zeroToken {
+			b = 0
+		} else {
+			b, ok = op.mapping[string(a)]
+			if !ok {
+				zBeg := zyx.FirstPoint(op.source.BlockSize()).Value(2)
+				zEnd := zyx.LastPoint(op.source.BlockSize()).Value(2)
+				slice := binary.BigEndian.Uint32(a[0:4])
+				dvid.Log(dvid.Normal, "No mapping found for %x (slice %d) in block with Z %d to %d\n",
+					a, slice, zBeg, zEnd)
+				b = 0
+			}
+		}
+		binary.LittleEndian.PutUint64(mappedData[start:start+8], b)
+	}
+
+	// Save the results
+	mappedKey := &datastore.DataKey{
+		Dataset: dataKey.Dataset,
+		Data:    op.mapped.DataID().ID,
+		Version: op.versionID,
+		Index:   dataKey.Index,
+	}
+	serialization, err := dvid.SerializeData(blockData, dvid.Snappy, dvid.CRC32)
+	if err != nil {
+		dvid.Log(dvid.Normal, "Unable to serialize block: %s\n", err.Error())
+		return
+	}
+	db.Put(mappedKey, serialization)
+
+	// Notify the requestor that this chunk is done.
+	if chunk.Wg != nil {
+		chunk.Wg.Done()
+	}
+}
+
 // ProcessChunk processes a chunk of data as part of a mapped operation.
 // Only some multiple of the # of CPU cores can be used for chunk handling before
 // it waits for chunk processing to abate via the buffered server.HandlerToken channel.
@@ -1125,8 +1305,8 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 	runStarts := make(map[uint64]([]dvid.Point3d), 10)
 	runLengths := make(map[uint64]([]int32), 10)
 
-	firstPt := zyx.FirstPoint(op.labels.BlockSize()).(dvid.Point3d)
-	lastPt := zyx.LastPoint(op.labels.BlockSize()).(dvid.Point3d)
+	firstPt := zyx.FirstPoint(op.source.BlockSize()).(dvid.Point3d)
+	lastPt := zyx.LastPoint(op.source.BlockSize()).(dvid.Point3d)
 	var curPt dvid.Point3d
 	var b, curLabel uint64
 	var z, y, x, curRun int32
@@ -1143,8 +1323,8 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 				} else {
 					b, ok = op.mapping[string(a)]
 					if !ok {
-						zBeg := zyx.FirstPoint(op.labels.BlockSize()).Value(2)
-						zEnd := zyx.LastPoint(op.labels.BlockSize()).Value(2)
+						zBeg := zyx.FirstPoint(op.source.BlockSize()).Value(2)
+						zEnd := zyx.LastPoint(op.source.BlockSize()).Value(2)
 						slice := binary.BigEndian.Uint32(a[0:4])
 						dvid.Log(dvid.Normal, "No mapping found for %x (slice %d) in block with Z %d to %d\n",
 							a, slice, zBeg, zEnd)

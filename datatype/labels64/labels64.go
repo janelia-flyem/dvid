@@ -129,6 +129,10 @@ POST /api/node/<UUID>/<data name>/<dims>/<size>/<offset>[/<format>]
     offset        Gives coordinate of first voxel using dimensionality of data.
 `
 
+var (
+	dtype *Datatype
+)
+
 func init() {
 	values := voxels.DataValues{
 		{
@@ -136,7 +140,7 @@ func init() {
 			Label:    "labels64",
 		},
 	}
-	dtype := &Datatype{voxels.NewDatatype(values)}
+	dtype = &Datatype{voxels.NewDatatype(values)}
 	dtype.DatatypeID = datastore.MakeDatatypeID("labels64", RepoUrl, Version)
 	datastore.RegisterDatatype(dtype)
 
@@ -165,6 +169,29 @@ func (l *Labels) String() string {
 // Datatype just uses voxels data type by composition.
 type Datatype struct {
 	*voxels.Datatype
+}
+
+// Get returns a pointer to labels64 data given a version (UUID) and data name.
+func Get(uuid dvid.UUID, name dvid.DataString) (*Data, error) {
+	service := server.DatastoreService()
+	source, err := service.DataService(uuid, name)
+	if err != nil {
+		return nil, err
+	}
+	data, ok := source.(*Data)
+	if !ok {
+		return nil, fmt.Errorf("Can only use labelmap with labels64 data: %s", name)
+	}
+	return data, nil
+}
+
+// NewData returns a pointer to labels64 data.
+func NewData(id *datastore.DataID, config dvid.Config) (*Data, error) {
+	voxelservice, err := dtype.Datatype.NewDataService(id, config)
+	if err != nil {
+		return nil, err
+	}
+	return &Data{Data: *(voxelservice.(*voxels.Data))}, nil
 }
 
 // --- TypeService interface ---
