@@ -90,7 +90,7 @@ func mainHandler(w http.ResponseWriter, r *http.Request) {
 	if runningService.WebClientPath != "" {
 		consoleFile := strings.TrimPrefix(r.URL.Path, "/console/")
 		filename := filepath.Join(runningService.WebClientPath, consoleFile)
-		dvid.Fmt(dvid.Debug, "Web client: %s -> %s\n", r.URL.Path, filename)
+		dvid.Log(dvid.Debug, "CONSOLE %s: %s\n", r.Method, r.URL)
 		http.ServeFile(w, r, filename)
 	} else {
 		fmt.Fprintf(w, webClientUnavailableMessage)

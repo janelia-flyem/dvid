@@ -115,7 +115,7 @@ HyperLevelDB implemented.  Lightning MDB to be added soon._)
 DVID promotes the view of data as a collection of key­-value pairs where each key is composed of 
 global identifiers for versioning and data identification as well as a datatype­-specific index 
 (e.g., a spatial index) that allows large data to be broken into chunks. DVID focuses on how to 
-break data into these key­-value pairs in way that facilitates distributed systems as well as 
+break data into these key­-value pairs in a way that facilitates distributed systems as well as 
 optimization of data access for various clients.
 
 A DVID server is limited to local resources and the user determines what datasets, subvolume, and 

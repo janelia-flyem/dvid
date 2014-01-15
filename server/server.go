@@ -345,7 +345,7 @@ func (service *Service) ServeHttp(address, clientDir string) {
 		} else {
 			urlStr = ConsolePath + strings.TrimLeft(r.URL.Path, "/")
 		}
-		dvid.Fmt(dvid.Debug, "Redirect %s -> %s\n", r.URL.Path, urlStr)
+		dvid.Log(dvid.Debug, "REDIRECT %s -> %s\n", r.URL.Path, urlStr)
 		http.Redirect(w, r, urlStr, http.StatusMovedPermanently)
 	}))
 
