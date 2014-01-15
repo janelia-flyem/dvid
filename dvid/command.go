@@ -246,7 +246,7 @@ func (cmd Command) CommandArgs(startPos int, targets ...*string) []string {
 }
 
 func getArgs(cmd Command, startPos int, targets ...*string) []string {
-	overflow := make([]string, len(cmd))
+	overflow := []string{}
 	for _, target := range targets {
 		*target = ""
 	}
