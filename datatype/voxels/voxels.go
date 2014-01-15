@@ -1226,14 +1226,14 @@ func (dtype *Datatype) NewDataService(id *datastore.DataID, config dvid.Config) 
 		return
 	}
 	if found {
-		props.Resolution.Value, err = dvid.StringToNdFloat32(s, ",")
+		props.Resolution.VoxelSize, err = dvid.StringToNdFloat32(s, ",")
 		if err != nil {
 			return
 		}
 	} else {
-		props.Resolution.Value = make(dvid.NdFloat32, dimensions)
+		props.Resolution.VoxelSize = make(dvid.NdFloat32, dimensions)
 		for d := 0; d < dimensions; d++ {
-			props.Resolution.Value[d] = DefaultRes
+			props.Resolution.VoxelSize[d] = DefaultRes
 		}
 	}
 	s, found, err = config.GetString("Units")
@@ -1241,14 +1241,14 @@ func (dtype *Datatype) NewDataService(id *datastore.DataID, config dvid.Config) 
 		return
 	}
 	if found {
-		props.Resolution.Units, err = dvid.StringToNdString(s, ",")
+		props.Resolution.VoxelUnits, err = dvid.StringToNdString(s, ",")
 		if err != nil {
 			return
 		}
 	} else {
-		props.Resolution.Units = make(dvid.NdString, dimensions)
+		props.Resolution.VoxelUnits = make(dvid.NdString, dimensions)
 		for d := 0; d < dimensions; d++ {
-			props.Resolution.Units[d] = DefaultUnits
+			props.Resolution.VoxelUnits[d] = DefaultUnits
 		}
 	}
 	service = &Data{
@@ -1356,10 +1356,10 @@ func (ext *Extents) AdjustIndices(indexBeg, indexEnd dvid.PointIndexer) bool {
 
 type Resolution struct {
 	// Resolution of voxels in volume
-	Value dvid.NdFloat32
+	VoxelSize dvid.NdFloat32
 
 	// Units of resolution, e.g., "nanometers"
-	Units dvid.NdString
+	VoxelUnits dvid.NdString
 }
 
 type Properties struct {
@@ -1415,8 +1415,8 @@ func (props *Properties) NdDataSchema() (string, error) {
 	for dim := 0; dim < dims; dim++ {
 		schema.Axes = append(schema.Axes, axis{
 			Label:      axesName[dim],
-			Resolution: props.Resolution.Value[dim],
-			Units:      props.Resolution.Units[dim],
+			Resolution: props.Resolution.VoxelSize[dim],
+			Units:      props.Resolution.VoxelUnits[dim],
 			Size:       size.Value(uint8(dim)),
 			Offset:     offset.Value(uint8(dim)),
 		})

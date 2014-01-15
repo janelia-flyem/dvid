@@ -394,6 +394,8 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		if err != nil {
 			return err
 		}
+		dvid.ElapsedTime(dvid.Debug, startTime, "Pre-write sparsevol on label %d (%s)",
+			label, r.URL)
 		w.Header().Set("Content-type", "application/octet-stream")
 		_, err = w.Write(data)
 		if err != nil {
