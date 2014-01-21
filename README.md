@@ -3,13 +3,11 @@ DVID
 
 *Status: In development, not ready for use.*
 
-[![Build Status](https://drone.io/github.com/janelia-flyem/dvid/status.png)](https://drone.io/github.com/janelia-flyem/dvid/latest)
+[![GoDoc](https://godoc.org/github.com/janelia-flyem/dvid?status.png)](https://godoc.org/github.com/janelia-flyem/dvid) [![Build Status](https://drone.io/github.com/janelia-flyem/dvid/status.png)](https://drone.io/github.com/janelia-flyem/dvid/latest)
 
 DVID is a *distributed, versioned, image-oriented datastore* written in Go that supports different
 storage backends, a Level 2 REST HTTP API, command-line access, and a FUSE frontend to at least
 one of its data types.  It has been tested on both MacOS X and Linux (Fedora 16, CentOS 6) but not on Windows.
-
-Documentation is [available here](http://godoc.org/github.com/janelia-flyem/dvid).
 
 Command-line and HTTP API documentation is currently distributed over data types and can be 
 found in help constants:
