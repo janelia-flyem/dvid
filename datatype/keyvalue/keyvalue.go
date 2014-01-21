@@ -123,7 +123,7 @@ GET  /api/node/<UUID>/<data name>/<key>[/<format>]
 POST /api/node/<UUID>/<data name>/<key>
 DEL  /api/node/<UUID>/<data name>/<key>  (TO DO)
 
-    Retrieves or puts values given a key.  POSTed data should use the "data" key in a form.
+    Retrieves or puts values given a key. 
 
     Example: 
 
@@ -132,17 +132,14 @@ DEL  /api/node/<UUID>/<data name>/<key>  (TO DO)
     Returns the data associated with the key "mykey" of the data "stuff" in version
     node 3f8c.
 
-    The "Content-type" of the HTTP response should agree with the requested format.
+    The "Content-type" of the HTTP response (and usually the request) are
+    "application/octet-stream" for arbitrary binary data.
 
     Arguments:
 
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add/retrieve.
     key           An alphanumeric key.
-    format        Valid formats:
-                  "octet" (default) returns "application/octet-stream" that RFC2046 says is
-                    used for arbitrary binary data.  Clients will usually store this returned
-                    value into a file.
 `
 
 func init() {
@@ -307,7 +304,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		comment = fmt.Sprintf("Returned %d bytes for key '%s', data '%s', uuid %s\n",
 			len(value), keyStr, d.DataName(), uuid)
 	case "post":
-		data, err := dvid.DataFromPost(r, "data")
+		data, err := ioutil.ReadAll(r.Body)
 		if err != nil {
 			return err
 		}

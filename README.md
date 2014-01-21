@@ -98,9 +98,8 @@ denormalized views planned Q1-2 2014._)
 easily added by users. A DVID server provides HTTP and RPC APIs, authentication, authorization, 
 versioning, provenance, and storage engines. It delegates datatype­-specific commands and processing to 
 data type code. As long as a DVID type can return data for its implemented commands, we don’t care how 
-its implemented. (_Status: Variety of voxel types, tiles, key-value implemented. FUSE interface for 
-key-value type working but not heavily used.  Authentication and authorization support planned Q2 2014, 
-likely using Mozilla Persona + auth tokens similar to github API._)
+its implemented. (_Status: Variety of voxel types, tiles, label maps, and key-value implemented. 
+FUSE interface for key-value type working but not heavily used.  Authentication and authorization support planned Q2 2014, likely using Mozilla Persona + auth tokens similar to github API._)
 * **Scalable Storage Engine**: Although we may have DVID support polyglot persistence
 (i.e., allow use of relational, graph, or NoSQL databases), we are initially focused on 
 key­-value stores. DVID has an abstract key­-value interface to its swappable storage engine. 
