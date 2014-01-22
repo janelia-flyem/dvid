@@ -1714,6 +1714,11 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 	defer func() {
 		// After processing a chunk, return the token.
 		server.HandlerToken <- 1
+
+		// Notify the requestor that this chunk is done.
+		if chunk.Wg != nil {
+			chunk.Wg.Done()
+		}
 	}()
 
 	op, ok := chunk.Op.(*Operation)
@@ -1752,11 +1757,6 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 			fmt.Printf("Unable to serialize block: %s\n", err.Error())
 		}
 		db.Put(chunk.K, serialization)
-	}
-
-	// Notify the requestor that this chunk is done.
-	if chunk.Wg != nil {
-		chunk.Wg.Done()
 	}
 }
 

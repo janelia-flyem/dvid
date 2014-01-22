@@ -1183,6 +1183,11 @@ func (d *Data) chunkApplyMap(chunk *storage.Chunk) {
 	defer func() {
 		// After processing a chunk, return the token.
 		server.HandlerToken <- 1
+
+		// Notify the requestor that this chunk is done.
+		if chunk.Wg != nil {
+			chunk.Wg.Done()
+		}
 	}()
 
 	op := chunk.Op.(*blockOp)
@@ -1247,11 +1252,6 @@ func (d *Data) chunkApplyMap(chunk *storage.Chunk) {
 		return
 	}
 	db.Put(mappedKey, serialization)
-
-	// Notify the requestor that this chunk is done.
-	if chunk.Wg != nil {
-		chunk.Wg.Done()
-	}
 }
 
 // ProcessChunk processes a chunk of data as part of a mapped operation.
@@ -1266,6 +1266,11 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 	defer func() {
 		// After processing a chunk, return the token.
 		server.HandlerToken <- 1
+
+		// Notify the requestor that this chunk is done.
+		if chunk.Wg != nil {
+			chunk.Wg.Done()
+		}
 	}()
 
 	op := chunk.Op.(*blockOp)
@@ -1401,9 +1406,4 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 		return
 	}
 	batch.Close()
-
-	// Notify the requestor that this chunk is done.
-	if chunk.Wg != nil {
-		chunk.Wg.Done()
-	}
 }

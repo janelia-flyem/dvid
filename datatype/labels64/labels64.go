@@ -6,6 +6,7 @@
 package labels64
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/gob"
 	"encoding/json"
@@ -13,12 +14,14 @@ import (
 	"image"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/voxels"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
+	"github.com/janelia-flyem/dvid/storage"
 )
 
 const (
@@ -70,6 +73,21 @@ $ dvid node <UUID> <data name> load raveler <offset> <image glob>
     data name     Name of data to add.
     offset        3d coordinate in the format "x,y,z".  Gives coordinate of top upper left voxel.
     image glob    Filenames of label images, preferably in quotes, e.g., "foo-xy-*.png"
+
+$ dvid node <UUID> <data name> composite <grayscale8 data name> <new rgba8 data name>
+
+    Creates a RGBA8 image where the RGB is a hash of the labels and the A is the
+    grayscale intensity.
+
+    Example: 
+
+    $ dvid node 3f8c bodies composite grayscale bodyview
+
+    Arguments:
+
+    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    data name     Name of data to add.
+	
 	
     ------------------
 
@@ -373,6 +391,12 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 			return fmt.Errorf("Currently, only Raveler loading is supported for 64-bit labels.")
 		}
 
+	case "composite":
+		if len(request.Command) < 6 {
+			return fmt.Errorf("Poorly formatted composite command.  See command-line help.")
+		}
+		return d.CreateComposite(request, reply)
+
 	default:
 		return d.UnknownCommand(request)
 	}
@@ -505,4 +529,208 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 
 	dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: %s (%s)", r.Method, dataShape, r.URL)
 	return nil
+}
+
+type blockOp struct {
+	grayscale *voxels.Data
+	composite *voxels.Data
+	versionID dvid.VersionLocalID
+}
+
+// CreateComposite creates a new rgba8 image by combining hash of labels + the grayscale
+func (d *Data) CreateComposite(request datastore.Request, reply *datastore.Response) error {
+
+	startTime := time.Now()
+
+	// Parse the request
+	var uuidStr, dataName, cmdStr, grayscaleName, destName string
+	request.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &grayscaleName, &destName)
+
+	// Get the version
+	uuid, err := server.MatchingUUID(uuidStr)
+	if err != nil {
+		return err
+	}
+
+	// Get the grayscale data.
+	service := server.DatastoreService()
+	dataservice, err := service.DataService(uuid, dvid.DataString(grayscaleName))
+	if err != nil {
+		return err
+	}
+	grayscale, ok := dataservice.(*voxels.Data)
+	if !ok {
+		return fmt.Errorf("%s is not the name of grayscale8 data", grayscaleName)
+	}
+
+	// Create a new rgba8 data.
+	config := dvid.NewConfig()
+	err = service.NewData(uuid, "rgba8", destName, config)
+	if err != nil {
+		return err
+	}
+	dataservice, err = service.DataService(uuid, dvid.DataString(destName))
+	if err != nil {
+		return err
+	}
+	composite, ok := dataservice.(*voxels.Data)
+	if !ok {
+		return fmt.Errorf("Error: %s was unable to be set to rgba8 data", destName)
+	}
+
+	// Prepare for datastore access
+	versionID, err := server.VersionLocalID(uuid)
+	if err != nil {
+		return err
+	}
+	db := server.StorageEngine()
+
+	// Iterate through all labels and grayscale chunks incrementally in Z, a layer at a time.
+	wg := new(sync.WaitGroup)
+	op := &blockOp{grayscale, composite, versionID}
+
+	extents := d.Extents()
+	startKey := d.DataKey(versionID, extents.MinIndex)
+	endKey := d.DataKey(versionID, extents.MaxIndex)
+
+	chunkOp := &storage.ChunkOp{op, wg}
+	err = db.ProcessRange(startKey, endKey, chunkOp, d.CreateCompositeChunk)
+	wg.Wait()
+
+	dvid.ElapsedTime(dvid.Debug, startTime, "Created composite of %s and %s",
+		grayscaleName, destName)
+
+	// Set new mapped data to same extents.
+	composite.Properties.Extents = grayscale.Properties.Extents
+	if err := server.DatastoreService().SaveDataset(uuid); err != nil {
+		dvid.Log(dvid.Normal, "Could not save new data '%s': %s\n", destName, err.Error())
+	}
+
+	return nil
+}
+
+// CreateCompositeChunk processes each chunk of labels and grayscale data,
+// saving the composited result into an rgba8.
+// Only some multiple of the # of CPU cores can be used for chunk handling before
+// it waits for chunk processing to abate via the buffered server.HandlerToken channel.
+func (d *Data) CreateCompositeChunk(chunk *storage.Chunk) {
+	<-server.HandlerToken
+	go d.createCompositeChunk(chunk)
+}
+
+func (d *Data) createCompositeChunk(chunk *storage.Chunk) {
+	defer func() {
+		// After processing a chunk, return the token.
+		server.HandlerToken <- 1
+
+		// Notify the requestor that this chunk is done.
+		if chunk.Wg != nil {
+			chunk.Wg.Done()
+		}
+	}()
+
+	op := chunk.Op.(*blockOp)
+	db := server.StorageEngine()
+	if db == nil {
+		dvid.Log(dvid.Normal, "Did not find a working key-value datastore to get image!")
+		return
+	}
+
+	// Initialize the label buffers.  For voxels, this data needs to be uncompressed and deserialized.
+	labelKey := chunk.K.(*datastore.DataKey)
+	labelData, _, err := dvid.DeserializeData(chunk.V, true)
+	if err != nil {
+		dvid.Log(dvid.Normal, "Unable to deserialize block in '%s': %s\n",
+			d.DataName(), err.Error())
+		return
+	}
+	blockBytes := len(labelData)
+	if blockBytes%8 != 0 {
+		dvid.Log(dvid.Normal, "Retrieved, deserialized block is wrong size: %d bytes\n", blockBytes)
+		return
+	}
+
+	// Get the corresponding grayscale block.
+	grayscaleKey := op.grayscale.DataKey(op.versionID, labelKey.Index)
+	blockData, err := db.Get(grayscaleKey)
+	if err != nil {
+		dvid.Log(dvid.Normal, "Error getting grayscale block for index %s\n", labelKey.Index)
+		return
+	}
+	grayscaleData, _, err := dvid.DeserializeData(blockData, true)
+	if err != nil {
+		dvid.Log(dvid.Normal, "Unable to deserialize block in '%s': %s\n",
+			op.grayscale.DataName(), err.Error())
+		return
+	}
+
+	// Compute the composite block.
+	// TODO -- Exploit run lengths, use cache of hash?
+	compositeBytes := blockBytes / 2
+	compositeData := make([]byte, compositeBytes, compositeBytes)
+	compositeI := 0
+	labelI := 0
+	hashBuf := make([]byte, 4, 4)
+	for _, grayscale := range grayscaleData {
+		murmurhash3(labelData[labelI:labelI+8], hashBuf)
+		hashBuf[3] = grayscale
+		copy(compositeData[compositeI:compositeI+4], hashBuf)
+		compositeI += 4
+		labelI += 8
+	}
+
+	// Store the composite block into the rgba8 data.
+	compositeKey := op.composite.DataKey(op.versionID, labelKey.Index)
+	serialization, err := dvid.SerializeData(compositeData, dvid.Snappy, dvid.CRC32)
+	if err != nil {
+		dvid.Log(dvid.Normal, "Unable to serialize composite block at %s: %s\n",
+			labelKey.Index, err.Error())
+		return
+	}
+	err = db.Put(compositeKey, serialization)
+	if err != nil {
+		dvid.Log(dvid.Normal, "Unable to PUT composite block at %s: %s\n",
+			labelKey.Index, err.Error())
+		return
+	}
+}
+
+func murmurhash3(in64bits, out32bits []byte) {
+	length := len(in64bits)
+	var c1, c2 uint32 = 0xcc9e2d51, 0x1b873593
+	nblocks := length / 4
+	var h, k uint32
+	buf := bytes.NewBuffer(in64bits)
+	for i := 0; i < nblocks; i++ {
+		binary.Read(buf, binary.LittleEndian, &k)
+		k *= c1
+		k = (k << 15) | (k >> (32 - 15))
+		k *= c2
+		h ^= k
+		h = (h << 13) | (h >> (32 - 13))
+		h = (h * 5) + 0xe6546b64
+	}
+	k = 0
+	tailIndex := nblocks * 4
+	switch length & 3 {
+	case 3:
+		k ^= uint32(in64bits[tailIndex+2]) << 16
+		fallthrough
+	case 2:
+		k ^= uint32(in64bits[tailIndex+1]) << 8
+		fallthrough
+	case 1:
+		k ^= uint32(in64bits[tailIndex])
+		k *= c1
+		k = (k << 15) | (k >> (32 - 15))
+		k *= c2
+		h ^= k
+	}
+	h ^= uint32(length)
+	h ^= h >> 16
+	h *= 0x85ebca6b
+	h ^= h >> 13
+	h *= 0xc2b2ae35
+	h ^= h >> 16
+	binary.BigEndian.PutUint32(out32bits, h)
 }
