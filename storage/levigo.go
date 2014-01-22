@@ -6,9 +6,8 @@ import (
 	"bytes"
 
 	"github.com/janelia-flyem/dvid/dvid"
+	humanize "github.com/janelia-flyem/go/go-humanize"
 	"github.com/janelia-flyem/go/levigo"
-
-	humanize "github.com/dustin/go-humanize"
 )
 
 const (
