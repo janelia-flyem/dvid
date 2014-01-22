@@ -103,7 +103,7 @@ type Point interface {
 
 // Chunkable is an interface for n-dimensional points that can be partitioned into chunks.
 type Chunkable interface {
-	// Chunk returns a point in chunk space, which partitions the underlying point space.
+	// Chunk returns a point in chunk space, the partition in which the given point falls.
 	// For example, a chunk could be a tile (or a subvolume/block) and this returns the
 	// tile's coordinate in tile space.
 	Chunk(size Point) ChunkPoint

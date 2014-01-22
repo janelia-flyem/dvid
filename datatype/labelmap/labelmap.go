@@ -107,6 +107,7 @@ POST /api/node/<UUID>/<data name>/info
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
     data name     Name of mapping data.
 
+
 GET /api/node/<UUID>/<data name>/sparsevol/<mapped label>
 
 	Returns a sparse volume with voxels of the given forward label in encoded RLE format.
@@ -131,12 +132,45 @@ GET /api/node/<UUID>/<data name>/sparsevol/<mapped label>
 	        int32   Length of run
 	        bytes   Optional payload dependent on first byte descriptor
 
+
+GET /api/node/<UUID>/<data name>/sparsevol-by-point/<coord>
+
+	Returns a sparse volume with voxels that pass through a given voxel.
+	The encoding is described in the "sparsevol" request above.
+	
+    Arguments:
+
+    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    data name     Name of mapping data.
+    coord     	  Coordinate of voxel with underscore as separator, e.g., 10_20_30
+
+
 GET /api/node/<UUID>/<data name>/sizerange/<min size>/<max size>
 
     Returns JSON list of labels that have # voxels that fall within the given range
     of sizes.
 	
+    Arguments:
+
+    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    data name     Name of mapping data.
+    min size      Minimum # of voxels.
+    max size      Maximum # of voxels.
+
+
 TODO:
+
+GET /api/node/<UUID>/<data name>/mapped/<min bound>/<max bound>
+
+    Returns JSON list of labels that intersect the bounding box.
+	
+    Arguments:
+
+    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    data name     Name of mapping data.
+    min bound     Coordinate of first voxel with underscore as separator, e.g., 10_20_30
+    max size      Coordinate of last voxel with underscore as separator.
+
 
 GET  /api/node/<UUID>/<data name>/<dims>/<size>/<offset>[/<format>]
 
@@ -394,8 +428,6 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		if err != nil {
 			return err
 		}
-		dvid.ElapsedTime(dvid.Debug, startTime, "Pre-write sparsevol on label %d (%s)",
-			label, r.URL)
 		w.Header().Set("Content-type", "application/octet-stream")
 		_, err = w.Write(data)
 		if err != nil {
@@ -403,6 +435,35 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		}
 		dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: sparsevol on label %d (%s)",
 			r.Method, label, r.URL)
+
+	case "sparsevol-by-point":
+		// GET /api/node/<UUID>/<data name>/sparsevol-by-point/<coord>
+		if len(parts) < 5 {
+			err := fmt.Errorf("ERROR: DVID requires coord to follow 'sparsevol-by-point' command")
+			server.BadRequest(w, r, err.Error())
+			return err
+		}
+		coord, err := dvid.StringToPoint(parts[4], "_")
+		if err != nil {
+			server.BadRequest(w, r, err.Error())
+			return err
+		}
+		label, err := d.GetLabelAtPoint(uuid, coord)
+		if err != nil {
+			server.BadRequest(w, r, err.Error())
+			return err
+		}
+		data, err := d.GetSparseVol(uuid, label)
+		if err != nil {
+			return err
+		}
+		w.Header().Set("Content-type", "application/octet-stream")
+		_, err = w.Write(data)
+		if err != nil {
+			return err
+		}
+		dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: sparsevol-by-point at %s (%s)",
+			r.Method, coord, r.URL)
 
 	case "sizerange":
 		// GET /api/node/<UUID>/<data name>/sizerange/<min size>/<max size>
@@ -711,6 +772,48 @@ func (d *Data) GetSizeRange(uuid dvid.UUID, minSize, maxSize uint64) (string, er
 	return string(m), nil
 }
 
+// GetLabelAtPoint returns a label for a given point.
+func (d *Data) GetLabelAtPoint(uuid dvid.UUID, pt dvid.Point) (uint64, error) {
+	db, versionID, _, err := d.getHooks(uuid)
+	if err != nil {
+		return 0, err
+	}
+
+	// Get the source labels64 data.
+	labels, err := labels64.Get(uuid, d.Labels)
+	if err != nil {
+		return 0, err
+	}
+
+	// Compute the block key that contains the given point.
+	coord, ok := pt.(dvid.Chunkable)
+	if !ok {
+		return 0, fmt.Errorf("Can't determine block of point %s", pt)
+	}
+	blockSize := labels.BlockSize()
+	blockCoord := coord.Chunk(blockSize).(dvid.ChunkPoint3d) // TODO -- Get rid of this cast
+	key := labels.DataKey(versionID, dvid.IndexZYX(blockCoord))
+
+	// Retrieve the block of labels
+	serialization, err := db.Get(key)
+	if err != nil {
+		return 0, fmt.Errorf("Error getting '%s' block for index %s\n",
+			labels.DataName(), blockCoord)
+	}
+	labelData, _, err := dvid.DeserializeData(serialization, true)
+	if err != nil {
+		return 0, fmt.Errorf("Unable to deserialize block %s in '%s': %s\n",
+			blockCoord, labels.DataName(), err.Error())
+	}
+
+	// Retrieve the particular label within the block.
+	ptInBlock := coord.PointInChunk(blockSize)
+	nx := blockSize.Value(0)
+	nxy := nx * blockSize.Value(1)
+	i := (ptInBlock.Value(0) + ptInBlock.Value(1)*nx + ptInBlock.Value(2)*nxy) * 8
+	return binary.BigEndian.Uint64(labelData[i : i+8]), nil
+}
+
 // GetSparseVol returns an encoded sparse volume given a label.  The encoding has the
 // following format where integers are little endian:
 //    byte     Payload descriptor:
@@ -908,7 +1011,7 @@ func (d *Data) ApplyLabelMap(request datastore.Request, reply *datastore.Respons
 	}
 
 	// Get the source labels64 data.
-	source, err := labels64.Get(uuid, dvid.DataString(sourceName))
+	labels, err := labels64.Get(uuid, dvid.DataString(sourceName))
 	if err != nil {
 		return err
 	}
@@ -935,10 +1038,10 @@ func (d *Data) ApplyLabelMap(request datastore.Request, reply *datastore.Respons
 	// Iterate through all labels chunks incrementally in Z, loading and then using the maps
 	// for all blocks in that layer.
 	wg := new(sync.WaitGroup)
-	op := &blockOp{source, dest, versionID, nil}
+	op := &blockOp{labels, dest, versionID, nil}
 
-	dataID := source.DataID()
-	extents := source.Extents()
+	dataID := labels.DataID()
+	extents := labels.Extents()
 	minIndexZ := extents.MinIndex.(dvid.IndexZYX)[2]
 	maxIndexZ := extents.MaxIndex.(dvid.IndexZYX)[2]
 	for z := minIndexZ; z <= maxIndexZ; z++ {
@@ -969,7 +1072,7 @@ func (d *Data) ApplyLabelMap(request datastore.Request, reply *datastore.Respons
 		sourceName, destName, d.DataName())
 
 	// Set new mapped data to same extents.
-	dest.Properties = source.Properties
+	dest.Properties = labels.Properties
 	if err := server.DatastoreService().SaveDataset(uuid); err != nil {
 		dvid.Log(dvid.Normal, "Could not save READY state to data '%s', uuid %s: %s",
 			d.DataName(), uuid, err.Error())
