@@ -206,6 +206,9 @@ func (d *Data) GetData(uuid dvid.UUID, keyStr string) ([]byte, error) {
 	// Get the data
 	db := server.StorageEngine()
 	data, err := db.Get(key)
+	if err != nil {
+		return nil, fmt.Errorf("Key '%s' not present: %s\n", keyStr, err.Error())
+	}
 	uncompress := true
 	value, _, err := dvid.DeserializeData(data, uncompress)
 	if err != nil {
