@@ -58,11 +58,7 @@ type Engine interface {
 	GetConfig() dvid.Config
 }
 
-// KeyValueDB provides an interface to the simplest storage API: a key/value store.
-type KeyValueDB interface {
-	// Closes datastore.
-	Close()
-
+type KeyValueGetter interface {
 	// Get returns a value given a key.
 	Get(k Key) (v []byte, err error)
 
@@ -74,7 +70,9 @@ type KeyValueDB interface {
 
 	// ProcessRange sends a range of key/value pairs to type-specific chunk handlers.
 	ProcessRange(kStart, kEnd Key, op *ChunkOp, f func(*Chunk)) (err error)
+}
 
+type KeyValueSetter interface {
 	// Put writes a value with given key.
 	Put(k Key, v []byte) error
 
@@ -85,6 +83,15 @@ type KeyValueDB interface {
 
 	// Delete removes an entry given key.
 	Delete(k Key) error
+}
+
+// KeyValueDB provides an interface to the simplest storage API: a key/value store.
+type KeyValueDB interface {
+	KeyValueGetter
+	KeyValueSetter
+
+	// Closes datastore.
+	Close()
 }
 
 // Batchers allow batching operations into an atomic update or transaction.
