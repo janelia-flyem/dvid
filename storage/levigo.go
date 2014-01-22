@@ -133,7 +133,8 @@ func NewStore(path string, create bool, config dvid.Config) (Engine, error) {
 		cacheSize *= dvid.Mega
 	}
 	if create {
-		dvid.Log(dvid.Normal, "leveldb cache size: %s\n", humanize.Bytes(cacheSize))
+		dvid.Log(dvid.Normal, "leveldb cache size: %s\n", 
+			humanize.Bytes(uint64(cacheSize)))
 		opt.SetLRUCacheSize(cacheSize)
 	}
 
@@ -147,7 +148,8 @@ func NewStore(path string, create bool, config dvid.Config) (Engine, error) {
 		writeBufferSize *= dvid.Mega
 	}
 	if create {
-		dvid.Log(dvid.Normal, "leveldb write buffer size: %s\n", humanize.Bytes(writeBufferSize))
+		dvid.Log(dvid.Normal, "leveldb write buffer size: %s\n", 
+			humanize.Bytes(uint64(writeBufferSize)))
 		opt.SetWriteBufferSize(writeBufferSize)
 	}
 
