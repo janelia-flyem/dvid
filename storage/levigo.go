@@ -7,6 +7,8 @@ import (
 
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/go/levigo"
+
+	humanize "github.com/dustin/go-humanize"
 )
 
 const (
@@ -15,7 +17,7 @@ const (
 	Driver = "github.com/janelia-flyem/go/levigo"
 
 	// Default size of LRU cache that caches frequently used uncompressed blocks.
-	DefaultCacheSize = 128 * dvid.Mega
+	DefaultCacheSize = 1024 * dvid.Mega
 
 	// Default # bits for Bloom Filter.  The filter reduces the number of unnecessary
 	// disk reads needed for Get() calls by a large factor.
@@ -42,7 +44,7 @@ const (
 	// so you may wish to adjust this parameter to control memory usage.
 	// Also, a larger write buffer will result in a longer recovery time
 	// the next time the database is opened.
-	DefaultWriteBufferSize = 256 * dvid.Mega
+	DefaultWriteBufferSize = 512 * dvid.Mega
 
 	// Write Options
 
@@ -132,6 +134,7 @@ func NewStore(path string, create bool, config dvid.Config) (Engine, error) {
 		cacheSize *= dvid.Mega
 	}
 	if create {
+		dvid.Log(dvid.Normal, "leveldb cache size: %s\n", humanize.Bytes(cacheSize))
 		opt.SetLRUCacheSize(cacheSize)
 	}
 
@@ -145,6 +148,7 @@ func NewStore(path string, create bool, config dvid.Config) (Engine, error) {
 		writeBufferSize *= dvid.Mega
 	}
 	if create {
+		dvid.Log(dvid.Normal, "leveldb write buffer size: %s\n", humanize.Bytes(writeBufferSize))
 		opt.SetWriteBufferSize(writeBufferSize)
 	}
 
