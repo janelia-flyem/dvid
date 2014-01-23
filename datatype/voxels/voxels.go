@@ -1137,6 +1137,14 @@ func (v *Voxels) GoImage() (img image.Image, err error) {
 	case 4:
 		switch bytesPerValue {
 		case 1:
+			// HACK -- This should be handled client side in shader.
+			for i := int32(0); i < sliceBytes; i += 4 {
+				v := float32(data[i+3]) / 255.0
+				data[i] = uint8(float32(data[i]) * v)
+				data[i+1] = uint8(float32(data[i+1]) * v)
+				data[i+2] = uint8(float32(data[i+2]) * v)
+				data[i+3] = 255
+			}
 			img = &image.RGBA{data[beg:end], 4 * r.Dx(), r}
 		case 2:
 			img = &image.RGBA64{data[beg:end], 8 * r.Dx(), r}

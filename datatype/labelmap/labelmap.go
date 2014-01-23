@@ -772,7 +772,7 @@ func (d *Data) GetSizeRange(uuid dvid.UUID, minSize, maxSize uint64) (string, er
 	return string(m), nil
 }
 
-// GetLabelAtPoint returns a label for a given point.
+// GetLabelAtPoint returns a mapped label for a given point.
 func (d *Data) GetLabelAtPoint(uuid dvid.UUID, pt dvid.Point) (uint64, error) {
 	db, versionID, _, err := d.getHooks(uuid)
 	if err != nil {
@@ -811,7 +811,10 @@ func (d *Data) GetLabelAtPoint(uuid dvid.UUID, pt dvid.Point) (uint64, error) {
 	nx := blockSize.Value(0)
 	nxy := nx * blockSize.Value(1)
 	i := (ptInBlock.Value(0) + ptInBlock.Value(1)*nx + ptInBlock.Value(2)*nxy) * 8
-	return binary.BigEndian.Uint64(labelData[i : i+8]), nil
+	label := labelData[i : i+8]
+
+	// Apply mapping.
+	return d.GetLabelMapping(versionID, label)
 }
 
 // GetSparseVol returns an encoded sparse volume given a label.  The encoding has the
