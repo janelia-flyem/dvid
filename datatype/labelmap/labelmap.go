@@ -1349,7 +1349,7 @@ func (d *Data) chunkApplyMap(chunk *storage.Chunk) {
 		Version: op.versionID,
 		Index:   dataKey.Index,
 	}
-	serialization, err := dvid.SerializeData(blockData, dvid.Snappy, dvid.CRC32)
+	serialization, err := dvid.SerializeData(mappedData, dvid.Snappy, dvid.CRC32)
 	if err != nil {
 		dvid.Log(dvid.Normal, "Unable to serialize block: %s\n", err.Error())
 		return
