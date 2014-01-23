@@ -1016,16 +1016,20 @@ func (d *Data) ApplyLabelMap(request datastore.Request, reply *datastore.Respons
 		return err
 	}
 
-	// Create a new labels64 data.
-	service := server.DatastoreService()
-	config := dvid.NewConfig()
-	err = service.NewData(uuid, "labels64", destName, config)
+	// Use existing destination data or a new labels64 data.
+	var dest *labels64.Data
+	dest, err = labels64.Get(uuid, dvid.DataString(destName))
 	if err != nil {
-		return err
-	}
-	dest, err := labels64.Get(uuid, dvid.DataString(destName))
-	if err != nil {
-		return err
+		service := server.DatastoreService()
+		config := dvid.NewConfig()
+		err = service.NewData(uuid, "labels64", destName, config)
+		if err != nil {
+			return err
+		}
+		dest, err = labels64.Get(uuid, dvid.DataString(destName))
+		if err != nil {
+			return err
+		}
 	}
 
 	// Prepare for datastore access
