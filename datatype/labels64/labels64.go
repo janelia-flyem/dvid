@@ -618,6 +618,9 @@ func (d *Data) CreateCompositeChunk(chunk *storage.Chunk) {
 	go d.createCompositeChunk(chunk)
 }
 
+var curZ uint32
+var curZMutex sync.Mutex
+
 func (d *Data) createCompositeChunk(chunk *storage.Chunk) {
 	defer func() {
 		// After processing a chunk, return the token.
@@ -638,6 +641,17 @@ func (d *Data) createCompositeChunk(chunk *storage.Chunk) {
 
 	// Initialize the label buffers.  For voxels, this data needs to be uncompressed and deserialized.
 	labelKey := chunk.K.(*datastore.DataKey)
+	zyx := labelKey.Index.(*dvid.IndexZYX)
+	curZMutex.Lock()
+	if zyx[2] > curZ {
+		curZ = zyx[2]
+		min := zyx.FirstPoint(d.BlockSize())
+		max := zyx.LastPoint(d.BlockSize())
+		dvid.Log(dvid.Debug, "Now creating composite blocks for Z %d to %d\n",
+			min.Value(2), max.Value(2))
+	}
+	curZMutex.Unlock()
+
 	labelData, _, err := dvid.DeserializeData(chunk.V, true)
 	if err != nil {
 		dvid.Log(dvid.Normal, "Unable to deserialize block in '%s': %s\n",
