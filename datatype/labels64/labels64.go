@@ -564,16 +564,20 @@ func (d *Data) CreateComposite(request datastore.Request, reply *datastore.Respo
 	}
 
 	// Create a new rgba8 data.
-	config := dvid.NewConfig()
-	err = service.NewData(uuid, "rgba8", destName, config)
+	var compservice datastore.DataService
+	compservice, err = service.DataService(uuid, dvid.DataString(destName))
 	if err != nil {
-		return err
+		config := dvid.NewConfig()
+		err = service.NewData(uuid, "rgba8", destName, config)
+		if err != nil {
+			return err
+		}
+		compservice, err = service.DataService(uuid, dvid.DataString(destName))
+		if err != nil {
+			return err
+		}
 	}
-	dataservice, err = service.DataService(uuid, dvid.DataString(destName))
-	if err != nil {
-		return err
-	}
-	composite, ok := dataservice.(*voxels.Data)
+	composite, ok := compservice.(*voxels.Data)
 	if !ok {
 		return fmt.Errorf("Error: %s was unable to be set to rgba8 data", destName)
 	}
