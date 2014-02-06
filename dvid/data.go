@@ -50,19 +50,23 @@ func init() {
 	gob.Register(Point2d{})
 }
 
-// Point is an interface for n-dimensional points.   Types that implement the
-// interface can optimize for particular dimensionality.
-type Point interface {
+type SimplePoint interface {
 	// NumDims returns the dimensionality of this point.
 	NumDims() uint8
 
 	// Value returns the point's value for the specified dimension without checking dim bounds.
 	Value(dim uint8) int32
+}
+
+// Point is an interface for n-dimensional points.   Types that implement the
+// interface can optimize for particular dimensionality.
+type Point interface {
+	SimplePoint
 
 	// CheckedValue returns the point's value for the specified dimension and checks dim bounds.
 	CheckedValue(dim uint8) (int32, error)
 
-	// Duplicate returns a copy of the point without any pointer references.
+	// Duplicate returns a copy of the point.
 	Duplicate() Point
 
 	// Modify returns a copy of the point with the given (dim, value) components modified.
@@ -70,6 +74,9 @@ type Point interface {
 
 	// AddScalar adds a scalar value to this point.
 	AddScalar(int32) Point
+
+	// DivScalar divides this point by a scalar value.
+	DivScalar(int32) Point
 
 	// Add returns the addition of two points.
 	Add(Point) Point
@@ -115,12 +122,15 @@ type Chunkable interface {
 }
 
 // ChunkPoint describes a particular chunk in chunk space.
-// The binary representation of a chunk point must behave reasonably for both negative and
-// positive coordinates, e.g., when moving from -1 to 0 the binary representation isn't
-// discontinous so the lexicographical ordering switches.  The simplest way to achieve
-// this is to convert to an unsigned (positive) integer space where all coordinates are
-// greater or equal to (0,0,...).
-type ChunkPoint interface{}
+type ChunkPoint interface {
+	SimplePoint
+
+	// MinPoint returns the minimum point within a chunk and first in an iteration.
+	MinPoint(size Point) Point
+
+	// MaxPoint returns the maximum point within a chunk and last in an iteration.
+	MaxPoint(size Point) Point
+}
 
 // NewPoint returns an appropriate Point implementation for the number of dimensions
 // passed in.
@@ -199,6 +209,11 @@ func (p Point2d) Modify(settings map[uint8]int32) Point {
 // AddScalar adds a scalar value to this point.
 func (p Point2d) AddScalar(value int32) Point {
 	return Point2d{p[0] + value, p[1] + value}
+}
+
+// DivScalar divides this point by a scalar value.
+func (p Point2d) DivScalar(value int32) Point {
+	return Point2d{p[0] / value, p[1] / value}
 }
 
 // Add returns the addition of two points.
@@ -296,23 +311,40 @@ func (pt Point2d) String() string {
 
 // --- Chunkable interface support -----
 
-// ChunkPoint2d handles unsigned chunk coordinates.
-type ChunkPoint2d [2]uint32
-
 // Chunk returns the chunk space coordinate of the chunk containing the point.
 func (p Point2d) Chunk(size Point) ChunkPoint {
-	return ChunkPoint2d{
-		uint32((int64(p[0]) + middleValue) / int64(size.Value(0))),
-		uint32((int64(p[1]) + middleValue) / int64(size.Value(1))),
+	var c0, c1 int32
+	s0 := size.Value(0)
+	s1 := size.Value(1)
+	if p[0] < 0 {
+		c0 = (p[0] - s0 + 1) / s0
+	} else {
+		c0 = p[0] / s0
 	}
+	if p[1] < 0 {
+		c1 = (p[1] - s1 + 1) / s1
+	} else {
+		c1 = p[1] / s1
+	}
+	return ChunkPoint2d{c0, c1}
 }
 
 // PointInChunk returns a point in containing block (chunk) space for the given point.
 func (p Point2d) PointInChunk(size Point) Point {
-	return Point2d{
-		int32((int64(p[0]) + middleValue) % int64(size.Value(0))),
-		int32((int64(p[1]) + middleValue) % int64(size.Value(1))),
+	var p0, p1 int32
+	s0 := size.Value(0)
+	s1 := size.Value(1)
+	if p[0] < 0 {
+		p0 = s0 - ((p[0] + 1) % s0) - 1
+	} else {
+		p0 = p[0] % s0
 	}
+	if p[1] < 0 {
+		p1 = s1 - ((p[1] + 1) % s1) - 1
+	} else {
+		p1 = p[1] % s1
+	}
+	return Point2d{p0, p1}
 }
 
 // Point3d is an ordered list of three 32-bit signed integers that implements the Point interface.
@@ -383,6 +415,11 @@ func (p Point3d) Modify(settings map[uint8]int32) Point {
 // AddScalar adds a scalar value to this point.
 func (p Point3d) AddScalar(value int32) Point {
 	return Point3d{p[0] + value, p[1] + value, p[2] + value}
+}
+
+// DivScalar divides this point by a scalar value.
+func (p Point3d) DivScalar(value int32) Point {
+	return Point3d{p[0] / value, p[1] / value, p[2] / value}
 }
 
 // Add returns the addition of two points.
@@ -496,49 +533,50 @@ func (p Point3d) String() string {
 
 // Chunk returns the chunk space coordinate of the chunk containing the point.
 func (p Point3d) Chunk(size Point) ChunkPoint {
-	return ChunkPoint3d{
-		uint32((int64(p[0]) + middleValue) / int64(size.Value(0))),
-		uint32((int64(p[1]) + middleValue) / int64(size.Value(1))),
-		uint32((int64(p[2]) + middleValue) / int64(size.Value(2))),
+	var c0, c1, c2 int32
+	s0 := size.Value(0)
+	s1 := size.Value(1)
+	s2 := size.Value(2)
+	if p[0] < 0 {
+		c0 = (p[0] - s0 + 1) / s0
+	} else {
+		c0 = p[0] / s0
 	}
+	if p[1] < 0 {
+		c1 = (p[1] - s1 + 1) / s1
+	} else {
+		c1 = p[1] / s1
+	}
+	if p[2] < 0 {
+		c2 = (p[2] - s2 + 1) / s2
+	} else {
+		c2 = p[2] / s2
+	}
+	return ChunkPoint3d{c0, c1, c2}
 }
 
 // PointInChunk returns a point in containing block (chunk) space for the given point.
 func (p Point3d) PointInChunk(size Point) Point {
-	return Point3d{
-		int32((int64(p[0]) + middleValue) % int64(size.Value(0))),
-		int32((int64(p[1]) + middleValue) % int64(size.Value(1))),
-		int32((int64(p[2]) + middleValue) % int64(size.Value(2))),
+	var p0, p1, p2 int32
+	s0 := size.Value(0)
+	s1 := size.Value(1)
+	s2 := size.Value(2)
+	if p[0] < 0 {
+		p0 = s0 - ((p[0] + 1) % s0) - 1
+	} else {
+		p0 = p[0] % s0
 	}
-}
-
-// ChunkPoint3d handles unsigned chunk coordinates.
-type ChunkPoint3d [3]uint32
-
-var (
-	MaxChunkPoint3d = ChunkPoint3d{0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF}
-	MinChunkPoint3d = ChunkPoint3d{0, 0, 0}
-)
-
-const ChunkPoint3dSize = 12
-
-// MinVoxelPoint returns the smalles voxel space coordinate of the given 3d chunk.
-// This is the inverse of Point3d.Chunk().
-func (c ChunkPoint3d) MinVoxelPoint(size Point) Point {
-	return Point3d{
-		int32(int64(c[0])*int64(size.Value(0)) - middleValue),
-		int32(int64(c[1])*int64(size.Value(1)) - middleValue),
-		int32(int64(c[2])*int64(size.Value(2)) - middleValue),
+	if p[1] < 0 {
+		p1 = s1 - ((p[1] + 1) % s1) - 1
+	} else {
+		p1 = p[1] % s1
 	}
-}
-
-// MaxVoxelPoint returns the largest voxel space coordinate of the given 3d chunk.
-func (c ChunkPoint3d) MaxVoxelPoint(size Point) Point {
-	return Point3d{
-		int32(int64(c[0])*int64(size.Value(0))-middleValue) + size.Value(0) - 1,
-		int32(int64(c[1])*int64(size.Value(1))-middleValue) + size.Value(1) - 1,
-		int32(int64(c[2])*int64(size.Value(2))-middleValue) + size.Value(2) - 1,
+	if p[2] < 0 {
+		p2 = s2 - ((p[2] + 1) % s2) - 1
+	} else {
+		p2 = p[2] % s2
 	}
+	return Point3d{p0, p1, p2}
 }
 
 // PointNd is a slice of N 32-bit signed integers that implements the Point interface.
@@ -587,6 +625,15 @@ func (p PointNd) AddScalar(value int32) Point {
 	result := make(PointNd, len(p))
 	for i, _ := range p {
 		result[i] = p[i] + value
+	}
+	return result
+}
+
+// DivScalar divides this point by a scalar value.
+func (p PointNd) DivScalar(value int32) Point {
+	result := make(PointNd, len(p))
+	for i, _ := range p {
+		result[i] = p[i] / value
 	}
 	return result
 }
@@ -706,25 +753,141 @@ func (p PointNd) String() string {
 
 // --- Chunkable interface support -----
 
-// ChunkPointNd handles unsigned chunk coordinates.
-type ChunkPointNd []uint32
-
 // Chunk returns the chunk space coordinate of the chunk containing the point.
 func (p PointNd) Chunk(size Point) ChunkPoint {
-	chunkPoint := make(ChunkPointNd, len(p))
+	cp := make(ChunkPointNd, len(p))
 	for i, _ := range p {
-		chunkPoint[i] = uint32((int64(p[i]) + middleValue) / int64(size.Value(uint8(i))))
+		s := size.Value(uint8(i))
+		if p[i] < 0 {
+			cp[i] = (p[i] - s + 1) / s
+		} else {
+			cp[i] = p[i] / s
+		}
 	}
-	return chunkPoint
+	return cp
 }
 
 // PointInChunk returns a point in containing block (chunk) space for the given point.
 func (p PointNd) PointInChunk(size Point) Point {
-	point := make(PointNd, len(p))
+	cp := make(PointNd, len(p))
 	for i, _ := range p {
-		point[i] = int32((int64(p[i]) + middleValue) % int64(size.Value(uint8(i))))
+		s := size.Value(uint8(i))
+		if p[i] < 0 {
+			cp[i] = s - ((p[i] + 1) % s) - 1
+		} else {
+			cp[i] = p[i] % s
+		}
 	}
-	return point
+	return cp
+}
+
+// ChunkPoint2d handles 2d signed chunk coordinates.
+type ChunkPoint2d [2]int32
+
+var (
+	MaxChunkPoint2d = ChunkPoint2d{math.MaxInt32, math.MaxInt32}
+	MinChunkPoint2d = ChunkPoint2d{math.MinInt32, math.MinInt32}
+)
+
+const ChunkPoint2dSize = 8
+
+// --------- ChunkPoint interface -------------
+// also fulfills SimplePoint interface
+
+func (c ChunkPoint2d) NumDims() uint8 {
+	return 2
+}
+
+// Value returns the value at the specified dimension.
+func (c ChunkPoint2d) Value(dim uint8) int32 {
+	return c[dim]
+}
+
+// MinPoint returns the smallest voxel coordinate of the given 2d chunk.
+func (c ChunkPoint2d) MinPoint(size Point) Point {
+	return Point2d{
+		c[0] * size.Value(0),
+		c[1] * size.Value(1),
+	}
+}
+
+// MaxPoint returns the maximum voxel coordinate of the given 2d chunk.
+func (c ChunkPoint2d) MaxPoint(size Point) Point {
+	return Point2d{
+		(c[0]+1)*size.Value(0) - 1,
+		(c[1]+1)*size.Value(1) - 1,
+	}
+}
+
+// ChunkPoint3d handles 3d signed chunk coordinates.
+type ChunkPoint3d [3]int32
+
+var (
+	MaxChunkPoint3d = ChunkPoint3d{math.MaxInt32, math.MaxInt32, math.MaxInt32}
+	MinChunkPoint3d = ChunkPoint3d{math.MinInt32, math.MinInt32, math.MinInt32}
+)
+
+const ChunkPoint3dSize = 12
+
+// --------- ChunkPoint interface -------------
+
+func (c ChunkPoint3d) NumDims() uint8 {
+	return 3
+}
+
+// Value returns the value at the specified dimension.
+func (c ChunkPoint3d) Value(dim uint8) int32 {
+	return c[dim]
+}
+
+// MinPoint returns the smallest voxel coordinate of the given 3d chunk.
+func (c ChunkPoint3d) MinPoint(size Point) Point {
+	return Point3d{
+		c[0] * size.Value(0),
+		c[1] * size.Value(1),
+		c[2] * size.Value(2),
+	}
+}
+
+// MaxPoint returns the maximum voxel coordinate of the given 3d chunk.
+func (c ChunkPoint3d) MaxPoint(size Point) Point {
+	return Point3d{
+		(c[0]+1)*size.Value(0) - 1,
+		(c[1]+1)*size.Value(1) - 1,
+		(c[2]+1)*size.Value(2) - 1,
+	}
+}
+
+// ChunkPointNd handles N-dimensional signed chunk coordinates.
+type ChunkPointNd []int32
+
+// --------- ChunkPoint interface -------------
+
+func (c ChunkPointNd) NumDims() uint8 {
+	return uint8(len(c))
+}
+
+// Value returns the value at the specified dimension.
+func (c ChunkPointNd) Value(dim uint8) int32 {
+	return c[dim]
+}
+
+// MinPoint returns the smallest voxel coordinate of the given 3d chunk.
+func (c ChunkPointNd) MinPoint(size Point) Point {
+	min := make(PointNd, len(c))
+	for i, _ := range c {
+		min[i] = c[i] * size.Value(uint8(i))
+	}
+	return min
+}
+
+// MaxPoint returns the maximum voxel coordinate of the given 3d chunk.
+func (c ChunkPointNd) MaxPoint(size Point) Point {
+	max := make(PointNd, len(c))
+	for i, _ := range c {
+		max[i] = c[i] * size.Value(uint8(i))
+	}
+	return max
 }
 
 // Convert a slice of int32 into an appropriate Point implementation.

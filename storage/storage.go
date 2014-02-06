@@ -44,18 +44,14 @@ type Requirements struct {
 	Batcher    bool
 }
 
-// Engine implementations can fulfill a variety of interfaces.  Other parts
-// of DVID, most notably the data type implementations, need to know what's available.
+// Engine implementations can fulfill a variety of interfaces and can be checked by
+// runtime cast checks, e.g., myGetter, ok := myEngine.(KeyValueGetter)
 // Data types can throw a warning at init time if the backend doesn't support required
 // interfaces, or they can choose to implement multiple ways of handling data.
 type Engine interface {
-	KeyValueDB
-
-	IsBatcher() bool
-	IsBulkIniter() bool
-	IsBulkWriter() bool
-
+	GetName() string
 	GetConfig() dvid.Config
+	Close()
 }
 
 type KeyValueGetter interface {
@@ -69,6 +65,9 @@ type KeyValueGetter interface {
 	KeysInRange(kStart, kEnd Key) (keys []Key, err error)
 
 	// ProcessRange sends a range of key/value pairs to type-specific chunk handlers.
+	// Since the chunks are typically sent during sequential read iteration, the
+	// receiving function can be organized as an asynchronous pool of chunk handlers.
+	// See datatype.voxels.ProcessChunk() for an example.
 	ProcessRange(kStart, kEnd Key, op *ChunkOp, f func(*Chunk)) (err error)
 }
 
@@ -89,9 +88,6 @@ type KeyValueSetter interface {
 type KeyValueDB interface {
 	KeyValueGetter
 	KeyValueSetter
-
-	// Closes datastore.
-	Close()
 }
 
 // Batchers allow batching operations into an atomic update or transaction.

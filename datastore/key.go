@@ -159,15 +159,15 @@ func (d *Data) DataKey(versionID dvid.VersionLocalID, index dvid.Index) *DataKey
 	return &DataKey{d.DsetID, d.ID, versionID, index}
 }
 
-// KeyToPointIndexer takes a Key and returns an implementation of a PointIndexer if possible.
-func KeyToPointIndexer(key storage.Key) (dvid.PointIndexer, error) {
+// KeyToChunkIndexer takes a Key and returns an implementation of a ChunkIndexer if possible.
+func KeyToChunkIndexer(key storage.Key) (dvid.ChunkIndexer, error) {
 	datakey, ok := key.(*DataKey)
 	if !ok {
 		return nil, fmt.Errorf("Can't convert Key (%s) to DataKey", key)
 	}
-	ptIndex, ok := datakey.Index.(dvid.PointIndexer)
+	ptIndex, ok := datakey.Index.(dvid.ChunkIndexer)
 	if !ok {
-		return nil, fmt.Errorf("Can't convert DataKey.Index (%s) to PointIndexer",
+		return nil, fmt.Errorf("Can't convert DataKey.Index (%s) to ChunkIndexer",
 			reflect.TypeOf(datakey.Index))
 	}
 	return ptIndex, nil

@@ -39,13 +39,17 @@ func Init(directory string, create bool, config dvid.Config) error {
 	fmt.Println("\nInitializing datastore at", directory)
 
 	// Initialize the backend database
-	db, err := storage.NewStore(directory, create, config)
+	engine, err := storage.NewStore(directory, create, config)
 	if err != nil {
 		return fmt.Errorf("Error initializing datastore (%s): %s\n", directory, err.Error())
 	}
-	defer db.Close()
+	defer engine.Close()
 
 	// Put empty Datasets
+	db, ok := engine.(storage.KeyValueSetter)
+	if !ok {
+		return fmt.Errorf("Datastore at %s does not support setting of key-value pairs!", directory)
+	}
 	datasets := new(Datasets)
 	err = datasets.Put(db)
 	return err
@@ -57,7 +61,10 @@ type Service struct {
 
 	// The backend storage which is private since we want to create an object
 	// interface (e.g., cache object or UUID map) and hide DVID-specific keys.
-	db storage.Engine
+	engine   storage.Engine
+	kvDB     storage.KeyValueDB
+	kvSetter storage.KeyValueSetter
+	kvGetter storage.KeyValueGetter
 }
 
 type OpenErrorType int
@@ -78,7 +85,7 @@ type OpenError struct {
 func Open(path string) (s *Service, openErr *OpenError) {
 	// Open the datastore
 	create := false
-	db, err := storage.NewStore(path, create, dvid.Config{})
+	engine, err := storage.NewStore(path, create, dvid.Config{})
 	if err != nil {
 		openErr = &OpenError{
 			fmt.Errorf("Error opening datastore (%s): %s", path, err.Error()),
@@ -87,9 +94,35 @@ func Open(path string) (s *Service, openErr *OpenError) {
 		return
 	}
 
+	// Get interfaces this engine supports.
+	kvGetter, ok := engine.(storage.KeyValueGetter)
+	if !ok {
+		openErr = &OpenError{
+			fmt.Errorf("Opened datastore cannot get key-value pairs."),
+			ErrorOpening,
+		}
+		return
+	}
+	kvSetter, ok := engine.(storage.KeyValueSetter)
+	if !ok {
+		openErr = &OpenError{
+			fmt.Errorf("Opened datastore cannot set key-value pairs."),
+			ErrorOpening,
+		}
+		return
+	}
+	kvDB, ok := engine.(storage.KeyValueDB)
+	if !ok {
+		openErr = &OpenError{
+			fmt.Errorf("Opened datastore does not support key-value database ops."),
+			ErrorOpening,
+		}
+		return
+	}
+
 	// Read this datastore's configuration
 	datasets := new(Datasets)
-	err = datasets.Load(db)
+	err = datasets.Load(kvGetter)
 	if err != nil {
 		openErr = &OpenError{
 			fmt.Errorf("Error reading datasets: %s", err.Error()),
@@ -111,13 +144,52 @@ func Open(path string) (s *Service, openErr *OpenError) {
 	}
 
 	fmt.Printf("\nDatastoreService successfully opened: %s\n", path)
-	s = &Service{datasets, db}
+	s = &Service{datasets, engine, kvDB, kvSetter, kvGetter}
+	return
+}
+
+// DataService returns a service for data of a given name and version
+func (s *Service) DataService(u dvid.UUID, name dvid.DataString) (dataservice DataService, err error) {
+	if s.datasets == nil {
+		err = fmt.Errorf("Datastore service has no datasets available")
+		return
+	}
+	return s.datasets.DataService(u, name)
+}
+
+// StorageEngine returns a a key-value database interface.
+func (s *Service) StorageEngine() storage.Engine {
+	return s.engine
+}
+
+// KeyValueDB returns a a key-value database interface.
+func (s *Service) KeyValueDB() (storage.KeyValueDB, error) {
+	return s.kvDB, nil
+}
+
+// KeyValueGetter returns a a key-value getter interface.
+func (s *Service) KeyValueGetter() (storage.KeyValueGetter, error) {
+	return s.kvGetter, nil
+}
+
+// KeyValueSetter returns a a key-value setter interface.
+func (s *Service) KeyValueSetter() (storage.KeyValueSetter, error) {
+	return s.kvSetter, nil
+}
+
+// Batcher returns an interface that can create a new batch write.
+func (s *Service) Batcher() (db storage.Batcher, err error) {
+	var ok bool
+	db, ok = s.kvSetter.(storage.Batcher)
+	if !ok {
+		err = fmt.Errorf("DVID key-value store does not support batch write")
+	}
 	return
 }
 
 // Shutdown closes a DVID datastore.
 func (s *Service) Shutdown() {
-	s.db.Close()
+	s.engine.Close()
 }
 
 // DatasetsListJSON returns JSON of a list of datasets.
@@ -177,11 +249,11 @@ func (s *Service) NewDataset() (root dvid.UUID, datasetID dvid.DatasetLocalID, e
 	if err != nil {
 		return
 	}
-	err = s.datasets.Put(s.db) // Need to persist change to list of Dataset
+	err = s.datasets.Put(s.kvSetter) // Need to persist change to list of Dataset
 	if err != nil {
 		return
 	}
-	err = dataset.Put(s.db)
+	err = dataset.Put(s.kvSetter)
 	root = dataset.Root
 	datasetID = dataset.DatasetID
 	return
@@ -199,7 +271,7 @@ func (s *Service) NewVersion(parent dvid.UUID) (u dvid.UUID, err error) {
 	if err != nil {
 		return
 	}
-	err = dataset.Put(s.db)
+	err = dataset.Put(s.kvSetter)
 	return
 }
 
@@ -216,7 +288,7 @@ func (s *Service) NewData(u dvid.UUID, typename, dataname string, config dvid.Co
 	if err != nil {
 		return err
 	}
-	return dataset.Put(s.db)
+	return dataset.Put(s.kvSetter)
 }
 
 // Locks the node with the given UUID.
@@ -232,7 +304,7 @@ func (s *Service) Lock(u dvid.UUID) error {
 	if err != nil {
 		return err
 	}
-	return dataset.Put(s.db)
+	return dataset.Put(s.kvSetter)
 }
 
 // SaveDataset forces this service to persist the dataset with given UUID.
@@ -245,7 +317,7 @@ func (s *Service) SaveDataset(u dvid.UUID) error {
 	if err != nil {
 		return err
 	}
-	return dataset.Put(s.db)
+	return dataset.Put(s.kvSetter)
 }
 
 // LocalIDFromUUID when supplied a UUID string, returns smaller sized local IDs that identify a
@@ -286,34 +358,6 @@ func (s *Service) NodeIDFromString(str string) (u dvid.UUID, dID dvid.DatasetLoc
 	}
 	dID = dataset.DatasetID
 	vID = dataset.VersionMap[u]
-	return
-}
-
-// DataService returns a service for data of a given name and version
-func (s *Service) DataService(u dvid.UUID, name dvid.DataString) (dataservice DataService, err error) {
-	if s.datasets == nil {
-		err = fmt.Errorf("Datastore service has no datasets available")
-		return
-	}
-	return s.datasets.DataService(u, name)
-}
-
-// StorageEngine returns a a key-value database interface.
-func (s *Service) StorageEngine() storage.Engine {
-	return s.db
-}
-
-// Batcher returns an interface that can create a new batch write.
-func (s *Service) Batcher() (db storage.Batcher, err error) {
-	if s.db.IsBatcher() {
-		var ok bool
-		db, ok = s.db.(storage.Batcher)
-		if !ok {
-			err = fmt.Errorf("DVID backend says it supports batch write but does not!")
-		}
-	} else {
-		err = fmt.Errorf("DVID backend database does not support batch write")
-	}
 	return
 }
 

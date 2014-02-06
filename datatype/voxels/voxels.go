@@ -261,6 +261,26 @@ type IntHandler interface {
 // 3) Pass ExtHandler to voxels package-level functions.
 //
 type ExtHandler interface {
+	VoxelHandler
+
+	Index(p dvid.ChunkPoint) dvid.Index
+
+	IndexIterator(chunkSize dvid.Point) (dvid.IndexIterator, error)
+
+	// DownRes reduces the image data by the integer scaling for each dimension.
+	DownRes(downmag dvid.Point) error
+
+	// Returns a image.Image suitable for external DVID use
+	GoImage() (image.Image, error)
+}
+
+// VoxelHandlers can get and set n-D voxels.
+type VoxelHandler interface {
+	VoxelGetter
+	VoxelSetter
+}
+
+type VoxelGetter interface {
 	dvid.Geometry
 
 	Values() DataValues
@@ -270,18 +290,23 @@ type ExtHandler interface {
 	ByteOrder() binary.ByteOrder
 
 	Data() []byte
+}
 
-	Index(p dvid.ChunkPoint) dvid.Index
+type VoxelSetter interface {
+	SetGeometry(geom dvid.Geometry)
 
-	IndexIterator(chunkSize dvid.Point) (dvid.IndexIterator, error)
+	SetValues(values DataValues)
 
-	//Returns a image.Image suitable for external DVID use
-	GoImage() (image.Image, error)
+	SetStride(stride int32)
+
+	SetByteOrder(order binary.ByteOrder)
+
+	SetData(data []byte)
 }
 
 // GetImage retrieves a 2d Go image from a version node given a geometry of voxels.
 func GetImage(uuid dvid.UUID, i IntHandler, e ExtHandler) (image.Image, error) {
-	if err := GetVoxels(uuid, i, e); err != nil {
+	if err := SetVoxels(uuid, i, e); err != nil {
 		return nil, err
 	}
 	return e.GoImage()
@@ -289,17 +314,17 @@ func GetImage(uuid dvid.UUID, i IntHandler, e ExtHandler) (image.Image, error) {
 
 // GetVolume retrieves a n-d volume from a version node given a geometry of voxels.
 func GetVolume(uuid dvid.UUID, i IntHandler, e ExtHandler) ([]byte, error) {
-	if err := GetVoxels(uuid, i, e); err != nil {
+	if err := SetVoxels(uuid, i, e); err != nil {
 		return nil, err
 	}
 	return e.Data(), nil
 }
 
-// GetVoxels retrieves voxels from a version node and stores them in the ExtHandler.
-func GetVoxels(uuid dvid.UUID, i IntHandler, e ExtHandler) error {
-	db := server.StorageEngine()
-	if db == nil {
-		return fmt.Errorf("Did not find a working key-value datastore to get image!")
+// SetVoxels retrieves voxels from a version node and stores them in the ExtHandler.
+func SetVoxels(uuid dvid.UUID, i IntHandler, e ExtHandler) error {
+	db, err := server.KeyValueGetter()
+	if err != nil {
+		return err
 	}
 
 	op := Operation{e, GetOp}
@@ -419,9 +444,9 @@ func PutImage(uuid dvid.UUID, i IntHandler, e ExtHandler) error {
 		return err
 	}
 
-	db := server.StorageEngine()
-	if db == nil {
-		return fmt.Errorf("Did not find a working key-value datastore to put image!")
+	db, err := server.KeyValueGetter()
+	if err != nil {
+		return err
 	}
 
 	op := Operation{e, PutOp}
@@ -458,8 +483,8 @@ func PutImage(uuid dvid.UUID, i IntHandler, e ExtHandler) error {
 		if err != nil {
 			return err
 		}
-		ptBeg := i0.Duplicate().(dvid.PointIndexer)
-		ptEnd := i1.Duplicate().(dvid.PointIndexer)
+		ptBeg := i0.Duplicate().(dvid.ChunkIndexer)
+		ptEnd := i1.Duplicate().(dvid.ChunkIndexer)
 
 		begX := ptBeg.Value(0)
 		endX := ptEnd.Value(0)
@@ -492,7 +517,7 @@ func PutImage(uuid dvid.UUID, i IntHandler, e ExtHandler) error {
 			// Check for this key among old key-value pairs and if so,
 			// send the old value into chunk handler.
 			if oldkv.K != nil {
-				indexer, err := datastore.KeyToPointIndexer(oldkv.K)
+				indexer, err := datastore.KeyToChunkIndexer(oldkv.K)
 				if err != nil {
 					return err
 				}
@@ -667,9 +692,9 @@ func LoadXY(i IntHandler, uuid dvid.UUID, offset dvid.Point, filenames []string)
 
 // Loads blocks with old data if they exist.
 func loadOldBlocks(i IntHandler, e ExtHandler, blocks Blocks, versionID dvid.VersionLocalID) error {
-	db := server.StorageEngine()
-	if db == nil {
-		return fmt.Errorf("Did not find a working key-value datastore to put image!")
+	db, err := server.KeyValueGetter()
+	if err != nil {
+		return err
 	}
 
 	// Create a map of old blocks indexed by the index
@@ -706,8 +731,8 @@ func loadOldBlocks(i IntHandler, e ExtHandler, blocks Blocks, versionID dvid.Ver
 			}
 		}
 
-		ptBeg := indexBeg.Duplicate().(dvid.PointIndexer)
-		ptEnd := indexEnd.Duplicate().(dvid.PointIndexer)
+		ptBeg := indexBeg.Duplicate().(dvid.ChunkIndexer)
+		ptEnd := indexEnd.Duplicate().(dvid.ChunkIndexer)
 		begX := ptBeg.Value(0)
 		endX := ptEnd.Value(0)
 		c := dvid.ChunkPoint3d{begX, ptBeg.Value(1), ptBeg.Value(2)}
@@ -729,10 +754,6 @@ func loadOldBlocks(i IntHandler, e ExtHandler, blocks Blocks, versionID dvid.Ver
 // This function assumes the blocks have been allocated and if necessary, filled
 // with old data.
 func writeXYImage(i IntHandler, e ExtHandler, blocks Blocks, versionID dvid.VersionLocalID) (extentChanged bool, err error) {
-	db := server.StorageEngine()
-	if db == nil {
-		return false, fmt.Errorf("Did not find a working key-value datastore to put image!")
-	}
 
 	// Iterate through index space for this data using ZYX ordering.
 	dataID := i.DataID()
@@ -744,8 +765,8 @@ func writeXYImage(i IntHandler, e ExtHandler, blocks Blocks, versionID dvid.Vers
 			return extentChanged, err
 		}
 
-		ptBeg := indexBeg.Duplicate().(dvid.PointIndexer)
-		ptEnd := indexEnd.Duplicate().(dvid.PointIndexer)
+		ptBeg := indexBeg.Duplicate().(dvid.ChunkIndexer)
+		ptEnd := indexEnd.Duplicate().(dvid.ChunkIndexer)
 
 		// Track point extents
 		if i.Extents().AdjustIndices(ptBeg, ptEnd) {
@@ -773,9 +794,9 @@ const KVWriteSize = 500
 
 // AsyncWriteData writes blocks of voxel data asynchronously using batch writes.
 func AsyncWriteData(blocks Blocks, wg *sync.WaitGroup) error {
-	db := server.StorageEngine()
-	if db == nil {
-		return fmt.Errorf("Did not find a working key-value datastore to put image!")
+	db, err := server.KeyValueSetter()
+	if err != nil {
+		return err
 	}
 
 	wg.Wait()
@@ -841,14 +862,14 @@ type OpBounds struct {
 }
 
 func ComputeTransform(v ExtHandler, block *Block, blockSize dvid.Point) (*OpBounds, error) {
-	ptIndex, err := datastore.KeyToPointIndexer(block.K)
+	ptIndex, err := datastore.KeyToChunkIndexer(block.K)
 	if err != nil {
 		return nil, err
 	}
 
 	// Get the bounding voxel coordinates for this block.
-	minBlockVoxel := ptIndex.FirstPoint(blockSize)
-	maxBlockVoxel := ptIndex.LastPoint(blockSize)
+	minBlockVoxel := ptIndex.MinPoint(blockSize)
+	maxBlockVoxel := ptIndex.MaxPoint(blockSize)
 
 	// Compute the boundary voxel coordinates for the ExtHandler and adjust
 	// to our block bounds.
@@ -1010,8 +1031,6 @@ func transferBlock(op OpType, v ExtHandler, block *Block, blockSize dvid.Point) 
 	return nil
 }
 
-// -------  ExtHandler interface implementation -------------
-
 // Voxels represents subvolumes or slices.
 type Voxels struct {
 	dvid.Geometry
@@ -1040,6 +1059,8 @@ func (v *Voxels) String() string {
 	return fmt.Sprintf("%s of size %s @ %s", v.DataShape(), size, v.StartPoint())
 }
 
+// -------  VoxelGetter interface implementation -------------
+
 func (v *Voxels) Values() DataValues {
 	return v.values
 }
@@ -1058,6 +1079,67 @@ func (v *Voxels) BytesPerVoxel() int32 {
 
 func (v *Voxels) ByteOrder() binary.ByteOrder {
 	return v.byteOrder
+}
+
+// -------  VoxelSetter interface implementation -------------
+
+func (v *Voxels) SetGeometry(geom dvid.Geometry) {
+	v.Geometry = geom
+}
+
+func (v *Voxels) SetValues(values DataValues) {
+	v.values = values
+}
+
+func (v *Voxels) SetStride(stride int32) {
+	v.stride = stride
+}
+
+func (v *Voxels) SetByteOrder(order binary.ByteOrder) {
+	v.byteOrder = order
+}
+
+func (v *Voxels) SetData(data []byte) {
+	v.data = data
+}
+
+// -------  ExtHandler interface implementation -------------
+
+// DownRes downsamples by averaging where the down-magnification are integers.
+// This function modifies the Voxels data.
+func (v *Voxels) DownRes(magnification dvid.Point) error {
+	if v.DataShape().ShapeDimensions() != 2 {
+		return fmt.Errorf("ImageDownres() only supports 2d images at this time.")
+	}
+	// Calculate new dimensions and allocate.
+	srcW, srcH, err := v.DataShape().GetSize2D(v.Size())
+	if err != nil {
+		return err
+	}
+	reduceW, reduceH, err := v.DataShape().GetSize2D(magnification)
+	if err != nil {
+		return err
+	}
+	dstW := srcW / reduceW
+	dstH := srcH / reduceH
+	if srcW%reduceW != 0 || srcH%reduceH != 0 {
+		return fmt.Errorf("DVID only computes downres by integral factors.")
+	}
+	numBytes := uint64(dstW) * uint64(dstH) * uint64(v.values.BytesPerVoxel())
+	data := make([]uint8, numBytes, numBytes)
+
+	// Perform averaging on each interleaved value.
+	v.values.averageData(v.data, data, dstW, dstH, reduceW, reduceH)
+
+	// Set data and dimensions to downres data.
+	v.data = data
+	geom, err := dvid.NewOrthogSlice(v.DataShape(), v.StartPoint(), dvid.Point2d{dstW, dstH})
+	if err != nil {
+		return err
+	}
+	v.Geometry = geom
+	v.stride = dstW * v.values.BytesPerVoxel()
+	return nil
 }
 
 func (v *Voxels) Index(c dvid.ChunkPoint) dvid.Index {
@@ -1270,51 +1352,14 @@ func (dtype *Datatype) Help() string {
 	return fmt.Sprintf(HelpMessage, DefaultBlockSize)
 }
 
-// DataValue describes the data type and label for each value within a voxel.
-type DataValue struct {
-	DataType string
-	Label    string
-}
-
-// DataValues describes the interleaved values within a voxel.
-type DataValues []DataValue
-
-var typeBytes = map[string]int32{
-	"uint8":   1,
-	"int8":    1,
-	"uint16":  2,
-	"int16":   2,
-	"uint32":  4,
-	"int32":   4,
-	"uint64":  8,
-	"int64":   8,
-	"float32": 4,
-	"float64": 8,
-}
-
-func (values DataValues) BytesPerVoxel() int32 {
-	var bytes int32
-	for _, dataValue := range values {
-		bytes += typeBytes[dataValue.DataType]
-	}
-	return bytes
-}
-
-func (values DataValues) ValueBytes(dim int) int32 {
-	if dim < 0 || dim >= len(values) {
-		return 0
-	}
-	return typeBytes[values[dim].DataType]
-}
-
 // Extents holds the extents of a volume in both absolute voxel coordinates
 // and lexicographically sorted chunk indices.
 type Extents struct {
 	MinPoint dvid.Point
 	MaxPoint dvid.Point
 
-	MinIndex dvid.PointIndexer
-	MaxIndex dvid.PointIndexer
+	MinIndex dvid.ChunkIndexer
+	MaxIndex dvid.ChunkIndexer
 
 	pointMu sync.Mutex
 	indexMu sync.Mutex
@@ -1342,7 +1387,7 @@ func (ext *Extents) AdjustPoints(pointBeg, pointEnd dvid.Point) bool {
 }
 
 // AdjustIndices modifies extents based on new block indices in concurrency-safe manner.
-func (ext *Extents) AdjustIndices(indexBeg, indexEnd dvid.PointIndexer) bool {
+func (ext *Extents) AdjustIndices(indexBeg, indexEnd dvid.ChunkIndexer) bool {
 	ext.indexMu.Lock()
 	defer ext.indexMu.Unlock()
 
@@ -1603,6 +1648,11 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 	// Break URL request into arguments
 	url := r.URL.Path[len(server.WebAPIPath):]
 	parts := strings.Split(url, "/")
+	if len(parts) < 4 {
+		err := fmt.Errorf("Incomplete API request")
+		server.BadRequest(w, r, err.Error())
+		return err
+	}
 
 	// Process help and info.
 	switch parts[3] {
@@ -1745,6 +1795,7 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 		if err != nil {
 			dvid.Log(dvid.Normal, "Unable to deserialize block in '%s': %s\n",
 				d.DataID().DataName(), err.Error())
+			return
 		}
 	}
 
@@ -1753,16 +1804,27 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 	switch op.OpType {
 	case GetOp:
 		if err = ReadFromBlock(op.ExtHandler, block, d.BlockSize()); err != nil {
-			log.Fatalln(err.Error())
+			dvid.Log(dvid.Normal, "Unable to ReadFromBlock() in '%s': %s\n",
+				d.DataID().DataName(), err.Error())
+			return
 		}
 	case PutOp:
 		if err = WriteToBlock(op.ExtHandler, block, d.BlockSize()); err != nil {
-			log.Fatalln(err.Error())
+			dvid.Log(dvid.Normal, "Unable to WriteToBlock() in '%s': %s\n",
+				d.DataID().DataName(), err.Error())
+			return
 		}
-		db := server.StorageEngine()
+		db, err := server.KeyValueSetter()
+		if err != nil {
+			dvid.Log(dvid.Normal, "Database doesn't support KeyValueSetter in '%s': %s\n",
+				d.DataID().DataName(), err.Error())
+			return
+		}
 		serialization, err := dvid.SerializeData(blockData, dvid.Snappy, dvid.CRC32)
 		if err != nil {
-			fmt.Printf("Unable to serialize block: %s\n", err.Error())
+			dvid.Log(dvid.Normal, "Unable to serialize block in '%s': %s\n",
+				d.DataID().DataName(), err.Error())
+			return
 		}
 		db.Put(chunk.K, serialization)
 	}

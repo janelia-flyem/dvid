@@ -279,7 +279,11 @@ func init() {
 }
 
 // PlaceholderImage returns an solid image with a message and text describing the shape.
-func PlaceholderImage(shape DataShape, dx, dy int32, message string) (image.Image, error) {
+func PlaceholderImage(shape DataShape, imageSize Point, message string) (image.Image, error) {
+	dx, dy, err := shape.GetSize2D(imageSize)
+	if err != nil {
+		return nil, err
+	}
 	size := float64(12)
 	spacing := float64(1.5)
 
@@ -314,7 +318,7 @@ func PlaceholderImage(shape DataShape, dx, dy int32, message string) (image.Imag
 	fontY := c.PointToFix32(size * spacing)
 	y := 10 + rasterToInt(c.PointToFix32(size))
 	pt := freetype.Pt(int(dx)-10, y)
-	_, err := c.DrawString(shape.AxisName(0), pt)
+	_, err = c.DrawString(shape.AxisName(0), pt)
 	if err != nil {
 		return nil, err
 	}

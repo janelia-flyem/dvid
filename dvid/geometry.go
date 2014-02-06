@@ -146,6 +146,45 @@ func (s DataShape) ShapeDimension(axis uint8) (uint8, error) {
 	return s.shape[axis], nil
 }
 
+// GetSize2D returns the width and height of a 2D shape given a n-D size.
+func (s DataShape) GetSize2D(size SimplePoint) (width, height int32, err error) {
+	if len(s.shape) != 2 {
+		err = fmt.Errorf("Can't get 2D size from a non-2D shape: %s", s)
+		return
+	}
+	width = size.Value(s.shape[0])
+	height = size.Value(s.shape[1])
+	return
+}
+
+// ChunkPoint3d returns a chunk point where the XY is determined by the
+// type of slice orientation of the DataShape, and the Z is the non-chunked
+// coordinate.  This is useful for tile generation where you have 2d tiles
+// in a 3d space.
+func (s DataShape) ChunkPoint3d(p, size Point) (ChunkPoint3d, error) {
+	if len(s.shape) != 2 {
+		return ChunkPoint3d{}, fmt.Errorf("Can't get process slice from a non-2D shape: %s", s)
+	}
+	if s.dims != 3 {
+		return ChunkPoint3d{}, fmt.Errorf("ChunkPoint3d() can only be called on 3d points!")
+	}
+	chunkable, ok := p.(Chunkable)
+	if !ok {
+		return ChunkPoint3d{}, fmt.Errorf("ChunkPoint3d() requires Chunkable point.")
+	}
+	chunk := chunkable.Chunk(size)
+	switch {
+	case s.Equals(XY):
+		return ChunkPoint3d{chunk.Value(0), chunk.Value(1), p.Value(2)}, nil
+	case s.Equals(XZ):
+		return ChunkPoint3d{chunk.Value(0), chunk.Value(2), p.Value(1)}, nil
+	case s.Equals(YZ):
+		return ChunkPoint3d{chunk.Value(1), chunk.Value(2), p.Value(0)}, nil
+	default:
+		return ChunkPoint3d{}, fmt.Errorf("ChunkPoint3d() can only be run on slices: given %s", s)
+	}
+}
+
 // Duplicate returns a duplicate of the DataShape.
 func (s DataShape) Duplicate() DataShape {
 	dup := DataShape{dims: s.dims}

@@ -66,66 +66,81 @@ func (k TestKey) String() string {
 }
 
 func (s *DataSuite) TestSingleItem(c *C) {
-	value, err := s.db.Get(NewKey("some key"))
+	kvDB, ok := s.db.(KeyValueDB)
+	if !ok {
+		c.Fail()
+	}
+
+	value, err := kvDB.Get(NewKey("some key"))
 	c.Assert(err, IsNil)
 	c.Assert(value, IsNil)
 
-	err = s.db.Put(NewKey("some key"), []byte("some value"))
+	err = kvDB.Put(NewKey("some key"), []byte("some value"))
 	c.Assert(err, IsNil)
 
-	value, err = s.db.Get(NewKey("not my key"))
+	value, err = kvDB.Get(NewKey("not my key"))
 	c.Assert(err, IsNil)
 	c.Assert(value, IsNil)
 
-	value, err = s.db.Get(NewKey("some key"))
+	value, err = kvDB.Get(NewKey("some key"))
 	c.Assert(err, IsNil)
 	c.Assert(string(value), Equals, "some value")
 }
 
 func (s *DataSuite) TestDeleteItem(c *C) {
-	value, err := s.db.Get(NewKey("some key"))
+	kvDB, ok := s.db.(KeyValueDB)
+	if !ok {
+		c.Fail()
+	}
+
+	value, err := kvDB.Get(NewKey("some key"))
 	c.Assert(err, IsNil)
 	c.Assert(value, IsNil)
 
-	err = s.db.Put(NewKey("some key"), []byte("some value"))
+	err = kvDB.Put(NewKey("some key"), []byte("some value"))
 	c.Assert(err, IsNil)
 
-	value, err = s.db.Get(NewKey("some key"))
+	value, err = kvDB.Get(NewKey("some key"))
 	c.Assert(err, IsNil)
 	c.Assert(string(value), Equals, "some value")
 
-	err = s.db.Delete(NewKey("some key"))
+	err = kvDB.Delete(NewKey("some key"))
 	c.Assert(err, IsNil)
 
-	value, err = s.db.Get(NewKey("some key"))
+	value, err = kvDB.Get(NewKey("some key"))
 	c.Assert(err, IsNil)
 	c.Assert(value, IsNil)
 
 }
 
 func (s *DataSuite) TestMultipleItems(c *C) {
+	kvDB, ok := s.db.(KeyValueDB)
+	if !ok {
+		c.Fail()
+	}
+
 	items := []KeyValue{
 		{K: NewKey("key a"), V: []byte("some value A")},
 		{K: NewKey("key b"), V: []byte("some value B")},
 		{K: NewKey("yet another key C"), V: []byte("some larger value for key C")},
 	}
 
-	value, err := s.db.Get(NewKey("key a"))
+	value, err := kvDB.Get(NewKey("key a"))
 	c.Assert(err, IsNil)
 	c.Assert(value, IsNil)
 
-	err = s.db.PutRange(items)
+	err = kvDB.PutRange(items)
 	c.Assert(err, IsNil)
 
-	value, err = s.db.Get(NewKey("not my key"))
+	value, err = kvDB.Get(NewKey("not my key"))
 	c.Assert(err, IsNil)
 	c.Assert(value, IsNil)
 
-	value, err = s.db.Get(NewKey("key a"))
+	value, err = kvDB.Get(NewKey("key a"))
 	c.Assert(err, IsNil)
 	c.Assert(string(value), Equals, "some value A")
 
-	values, err := s.db.GetRange(NewKey("key a"), NewKey("yet another key F"))
+	values, err := kvDB.GetRange(NewKey("key a"), NewKey("yet another key F"))
 	c.Assert(err, IsNil)
 	c.Assert(len(values), Equals, 3)
 	for i, kv := range values {

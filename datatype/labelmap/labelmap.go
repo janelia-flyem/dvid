@@ -281,19 +281,6 @@ func (t KeyType) String() string {
 	}
 }
 
-func getRelatedLabels(uuid dvid.UUID, name dvid.DataString) (*labels64.Data, error) {
-	service := server.DatastoreService()
-	source, err := service.DataService(uuid, name)
-	if err != nil {
-		return nil, err
-	}
-	data, ok := source.(*labels64.Data)
-	if !ok {
-		return nil, fmt.Errorf("Can only use labelmap with labels64 data: %s", name)
-	}
-	return data, nil
-}
-
 // Datatype embeds the datastore's Datatype to create a unique type for labelmap functions.
 type Datatype struct {
 	datastore.Datatype
@@ -529,26 +516,22 @@ func loadSegBodyMap(filename string) (map[uint64]uint64, error) {
 	return segmentToBodyMap, nil
 }
 
-func (d *Data) getHooks(uuid dvid.UUID) (storage.Engine, dvid.VersionLocalID, *labels64.Data, error) {
+func (d *Data) getHooks(uuid dvid.UUID) (dvid.VersionLocalID, *labels64.Data, error) {
 	service := server.DatastoreService()
 	_, versionID, err := service.LocalIDFromUUID(uuid)
 	if err != nil {
 		err = fmt.Errorf("Error in getting version ID from UUID '%s': %s\n", uuid, err.Error())
-		return nil, 0, nil, err
+		return 0, nil, err
 	}
 
-	db := server.StorageEngine()
-	if db == nil {
-		err = fmt.Errorf("Did not find a working key-value datastore to get image!")
-		return nil, versionID, nil, err
-	}
-
-	labels, err := getRelatedLabels(uuid, d.Labels)
+	// Get the source labels64 data.
+	labels, err := labels64.Get(uuid, d.Labels)
 	if err != nil {
-		dvid.Log(dvid.Normal, "Error in getting related labels ('%s'): %s\n", d.Labels, err.Error())
-		return nil, versionID, nil, err
+		return 0, nil, fmt.Errorf("Error in getting related labels ('%s'): %s\n",
+			d.Labels, err.Error())
 	}
-	return db, versionID, labels, nil
+
+	return versionID, labels, nil
 }
 
 // NewForwardMapKey returns a datastore.DataKey that encodes a "label + mapping", where
@@ -677,7 +660,7 @@ func statsRuns(encoding []byte) (numVoxels, numRuns int32, err error) {
 // Runs asynchronously and assumes that sparse volumes per spatial indices are ordered
 // by mapped label, i.e., we will get all data for body N before body N+1.  Exits when
 // receives a nil in channel.
-func (d *Data) computeSizes(sizeCh chan *storage.Chunk, db storage.Engine,
+func (d *Data) computeSizes(sizeCh chan *storage.Chunk, db storage.KeyValueSetter,
 	versionID dvid.VersionLocalID, wg *sync.WaitGroup) {
 
 	const BATCH_SIZE = 10000
@@ -743,7 +726,12 @@ func (d *Data) computeSizes(sizeCh chan *storage.Chunk, db storage.Engine,
 
 // GetSizeRange returns a JSON list of mapped labels that have volumes within the given range.
 func (d *Data) GetSizeRange(uuid dvid.UUID, minSize, maxSize uint64) (string, error) {
-	db, versionID, _, err := d.getHooks(uuid)
+	versionID, _, err := d.getHooks(uuid)
+	if err != nil {
+		return "{}", err
+	}
+
+	db, err := server.KeyValueGetter()
 	if err != nil {
 		return "{}", err
 	}
@@ -774,13 +762,12 @@ func (d *Data) GetSizeRange(uuid dvid.UUID, minSize, maxSize uint64) (string, er
 
 // GetLabelAtPoint returns a mapped label for a given point.
 func (d *Data) GetLabelAtPoint(uuid dvid.UUID, pt dvid.Point) (uint64, error) {
-	db, versionID, _, err := d.getHooks(uuid)
+	versionID, labels, err := d.getHooks(uuid)
 	if err != nil {
 		return 0, err
 	}
 
-	// Get the source labels64 data.
-	labels, err := labels64.Get(uuid, d.Labels)
+	db, err := server.KeyValueGetter()
 	if err != nil {
 		return 0, err
 	}
@@ -838,7 +825,12 @@ func (d *Data) GetLabelAtPoint(uuid dvid.UUID, pt dvid.Point) (uint64, error) {
 //        bytes   Optional payload dependent on first byte descriptor
 //
 func (d *Data) GetSparseVol(uuid dvid.UUID, label uint64) ([]byte, error) {
-	db, versionID, labelsVol, err := d.getHooks(uuid)
+	db, err := server.KeyValueGetter()
+	if err != nil {
+		return nil, err
+	}
+
+	versionID, labelsVol, err := d.getHooks(uuid)
 	if err != nil {
 		return nil, err
 	}
@@ -881,13 +873,19 @@ func (d *Data) LoadRavelerMaps(request datastore.Request, reply *datastore.Respo
 	var uuidStr, dataName, cmdStr, fileTypeStr, spsegStr, segbodyStr string
 	request.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &fileTypeStr, &spsegStr, &segbodyStr)
 
-	// Get the version
+	startTime := time.Now()
+
+	// Get the version, related labels.
 	uuid, err := server.MatchingUUID(uuidStr)
 	if err != nil {
 		return err
 	}
-
-	startTime := time.Now()
+	versionID, labels, err := d.getHooks(uuid)
+	if err != nil {
+		return err
+	}
+	minLabelZ := uint32(labels.Extents().MinPoint.Value(2))
+	maxLabelZ := uint32(labels.Extents().MaxPoint.Value(2))
 
 	// Use of Raveler maps causes zero labels to be reserved.
 	d.ZeroLocked = true
@@ -897,14 +895,6 @@ func (d *Data) LoadRavelerMaps(request datastore.Request, reply *datastore.Respo
 		return err
 	}
 
-	// Get the extents of associated labels.
-	labels, err := getRelatedLabels(uuid, d.Labels)
-	if err != nil {
-		return err
-	}
-	minLabelZ := uint32(labels.Extents().MinPoint.Value(2))
-	maxLabelZ := uint32(labels.Extents().MaxPoint.Value(2))
-
 	// Get the seg->body map
 	seg2body, err := loadSegBodyMap(segbodyStr)
 	if err != nil {
@@ -912,11 +902,10 @@ func (d *Data) LoadRavelerMaps(request datastore.Request, reply *datastore.Respo
 	}
 
 	// Prepare for datastore access
-	versionID, err := server.VersionLocalID(uuid)
+	db, err := server.KeyValueSetter()
 	if err != nil {
 		return err
 	}
-	db := server.StorageEngine()
 
 	var slice, superpixel32 uint32
 	var segment, body uint64
@@ -1013,8 +1002,11 @@ func (d *Data) ApplyLabelMap(request datastore.Request, reply *datastore.Respons
 		return err
 	}
 
-	// Get the source labels64 data.
-	labels, err := labels64.Get(uuid, dvid.DataString(sourceName))
+	versionID, labels, err := d.getHooks(uuid)
+	if err != nil {
+		return fmt.Errorf("Error in %s.ProcessSpatially(): %s\n", d.DataName(), err.Error())
+	}
+	db, err := server.KeyValueDB()
 	if err != nil {
 		return err
 	}
@@ -1034,13 +1026,6 @@ func (d *Data) ApplyLabelMap(request datastore.Request, reply *datastore.Respons
 			return err
 		}
 	}
-
-	// Prepare for datastore access
-	versionID, err := server.VersionLocalID(uuid)
-	if err != nil {
-		return err
-	}
-	db := server.StorageEngine()
 
 	// Iterate through all labels chunks incrementally in Z, loading and then using the maps
 	// for all blocks in that layer.
@@ -1093,9 +1078,9 @@ func (d *Data) GetLabelMapping(versionID dvid.VersionLocalID, label []byte) (uin
 	firstKey := d.NewForwardMapKey(versionID, label, 0)
 	lastKey := d.NewForwardMapKey(versionID, label, MaxLabel)
 
-	db := server.StorageEngine()
-	if db == nil {
-		return 0, fmt.Errorf("Did not find a working key-value datastore to get image!")
+	db, err := server.KeyValueGetter()
+	if err != nil {
+		return 0, err
 	}
 	keys, err := db.KeysInRange(firstKey, lastKey)
 	if err != nil {
@@ -1122,9 +1107,9 @@ func (d *Data) GetLabelMapping(versionID dvid.VersionLocalID, label []byte) (uin
 
 // GetBlockMapping returns the label -> mappedLabel map for a given block.
 func (d *Data) GetBlockMapping(vID dvid.VersionLocalID, block dvid.IndexZYX) (map[string]uint64, error) {
-	db := server.StorageEngine()
-	if db == nil {
-		return nil, fmt.Errorf("Did not find a working key-value datastore to get image!")
+	db, err := server.KeyValueGetter()
+	if err != nil {
+		return nil, err
 	}
 
 	firstKey := d.NewSpatialMapKey(vID, block, nil, 0)
@@ -1150,14 +1135,14 @@ func (d *Data) GetBlockMapping(vID dvid.VersionLocalID, block dvid.IndexZYX) (ma
 
 // GetBlockLayerMapping gets the label mapping for a Z layer of blocks and stores the result
 // in the passed Operation.
-func (d *Data) GetBlockLayerMapping(blockZ uint32, op *blockOp) (
+func (d *Data) GetBlockLayerMapping(blockZ int32, op *blockOp) (
 	minChunkPt, maxChunkPt dvid.ChunkPoint3d, err error) {
 
 	// Convert blockZ to actual voxel space Z range.
 	minChunkPt = dvid.ChunkPoint3d{dvid.MinChunkPoint3d[0], dvid.MinChunkPoint3d[1], blockZ}
 	maxChunkPt = dvid.ChunkPoint3d{dvid.MaxChunkPoint3d[0], dvid.MaxChunkPoint3d[1], blockZ}
-	minVoxelPt := minChunkPt.MinVoxelPoint(op.source.BlockSize())
-	maxVoxelPt := minChunkPt.MaxVoxelPoint(op.source.BlockSize())
+	minVoxelPt := minChunkPt.MinPoint(op.source.BlockSize())
+	maxVoxelPt := minChunkPt.MaxPoint(op.source.BlockSize())
 
 	// Get first and last keys that span that voxel space Z range.
 	minZ := uint32(minVoxelPt.Value(2))
@@ -1168,9 +1153,8 @@ func (d *Data) GetBlockLayerMapping(blockZ uint32, op *blockOp) (
 	// Get all forward mappings from the key-value store.
 	op.mapping = nil
 
-	db := server.StorageEngine()
-	if db == nil {
-		err = fmt.Errorf("Did not find a working key-value datastore to get image!")
+	db, err := server.KeyValueGetter()
+	if err != nil {
 		return
 	}
 	var keys []storage.Key
@@ -1209,9 +1193,15 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 	dvid.Log(dvid.Normal, "Adding spatial information from label volume %s for mapping %s...\n",
 		d.Labels, d.DataName())
 
-	db, versionID, labels, err := d.getHooks(uuid)
+	versionID, labels, err := d.getHooks(uuid)
 	if err != nil {
 		dvid.Log(dvid.Normal, "Error in %s.ProcessSpatially(): %s\n", d.DataName(), err.Error())
+		return
+	}
+	db, err := server.KeyValueDB()
+	if err != nil {
+		dvid.Log(dvid.Normal, "Could not determine key value datastore in %s.ProcessSpatially()\n",
+			d.DataID.DataName())
 		return
 	}
 
@@ -1301,9 +1291,9 @@ func (d *Data) chunkApplyMap(chunk *storage.Chunk) {
 	}()
 
 	op := chunk.Op.(*blockOp)
-	db := server.StorageEngine()
-	if db == nil {
-		dvid.Log(dvid.Normal, "Did not find a working key-value datastore to get image!")
+	db, err := server.KeyValueSetter()
+	if err != nil {
+		dvid.Log(dvid.Normal, "Error in %s.ChunkApplyMap(): %s", d.DataID.DataName(), err.Error())
 		return
 	}
 
@@ -1338,8 +1328,8 @@ func (d *Data) chunkApplyMap(chunk *storage.Chunk) {
 		} else {
 			b, ok = op.mapping[string(a)]
 			if !ok {
-				zBeg := zyx.FirstPoint(op.source.BlockSize()).Value(2)
-				zEnd := zyx.LastPoint(op.source.BlockSize()).Value(2)
+				zBeg := zyx.MinPoint(op.source.BlockSize()).Value(2)
+				zEnd := zyx.MaxPoint(op.source.BlockSize()).Value(2)
 				slice := binary.BigEndian.Uint32(a[0:4])
 				dvid.Log(dvid.Normal, "No mapping found for %x (slice %d) in block with Z %d to %d\n",
 					a, slice, zBeg, zEnd)
@@ -1384,12 +1374,17 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 	}()
 
 	op := chunk.Op.(*blockOp)
-	db := server.StorageEngine()
-	if db == nil {
-		dvid.Log(dvid.Normal, "Did not find a working key-value datastore to get image!")
+	db, err := server.KeyValueDB()
+	if err != nil {
+		dvid.Log(dvid.Normal, "Error in %s.ProcessChunk(): %s\n", d.DataID.DataName(), err.Error())
 		return
 	}
 	batcher, ok := db.(storage.Batcher)
+	if !ok {
+		dvid.Log(dvid.Normal, "Database doesn't support Batch ops in %s.ProcessChunk()",
+			d.DataID.DataName())
+		return
+	}
 	batch := batcher.NewBatch()
 
 	// Get the spatial index associated with this chunk.
@@ -1422,8 +1417,8 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 	runStarts := make(map[uint64]([]dvid.Point3d), 10)
 	runLengths := make(map[uint64]([]int32), 10)
 
-	firstPt := zyx.FirstPoint(op.source.BlockSize()).(dvid.Point3d)
-	lastPt := zyx.LastPoint(op.source.BlockSize()).(dvid.Point3d)
+	firstPt := zyx.MinPoint(op.source.BlockSize()).(dvid.Point3d)
+	lastPt := zyx.MaxPoint(op.source.BlockSize()).(dvid.Point3d)
 	var curPt dvid.Point3d
 	var b, curLabel uint64
 	var z, y, x, curRun int32
@@ -1440,8 +1435,8 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 				} else {
 					b, ok = op.mapping[string(a)]
 					if !ok {
-						zBeg := zyx.FirstPoint(op.source.BlockSize()).Value(2)
-						zEnd := zyx.LastPoint(op.source.BlockSize()).Value(2)
+						zBeg := zyx.MinPoint(op.source.BlockSize()).Value(2)
+						zEnd := zyx.MaxPoint(op.source.BlockSize()).Value(2)
 						slice := binary.BigEndian.Uint32(a[0:4])
 						dvid.Log(dvid.Normal, "No mapping found for %x (slice %d) in block with Z %d to %d\n",
 							a, slice, zBeg, zEnd)

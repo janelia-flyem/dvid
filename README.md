@@ -18,7 +18,7 @@ found in help constants:
 * [labels64](http://godoc.org/github.com/janelia-flyem/dvid/datatype/labels64#pkg-constants)
 * [labelmap](http://godoc.org/github.com/janelia-flyem/dvid/datatype/labelmap#pkg-constants)
 * [multichan16](http://godoc.org/github.com/janelia-flyem/dvid/datatype/multichan16#pkg-constants)
-* [tiles](http://godoc.org/github.com/janelia-flyem/dvid/datatype/tiles#pkg-constants)
+* [quadtree](http://godoc.org/github.com/janelia-flyem/dvid/datatype/quadtree#pkg-constants)
 
 ## Table of Contents
 
@@ -57,7 +57,7 @@ more compact data structures like region adjacency graphs.
 researchers want just "one" centralized datastore but might require one for each institution/group. 
 Researchers don't always want to share data. So as soon as you support more than one centralized 
 location, and think about syncing, you are basically looking at a distributed data problem or you'll be 
-doing some ad hoc solution instead of￼more elegant git-­like techniques. And sometimes, researchers want 
+doing some ad hoc solution instead of more elegant git-­like techniques. And sometimes, researchers want 
 to only share a particular version of their dataset, e.g., the state of the dataset at the time of a 
 publication that requires open access to the data, yet they want to continue to work on the dataset 
 privately.
@@ -92,21 +92,22 @@ views that accelerate particular access patterns. For example, quad trees can be
 and YZ orthogonal views or sparse volumes can compactly describe a neuron. The extra denormalized data 
 is kept in the datastore until a node is archived, which removes all denormalized key­-value pairs
 associated with that version node. Views of the same data can be eventually consistent.
-(_Status: Multi-scale tiles, sparse volumes implemented.  Framework for syncing of 
+(_Status: Multi-scale quadtree, sparse volumes implemented.  Framework for syncing of 
 denormalized views planned Q1-2 2014._)
 * **Flexible Data Types**: DVID provides a well­-defined interface to data type code that can be 
 easily added by users. A DVID server provides HTTP and RPC APIs, authentication, authorization, 
 versioning, provenance, and storage engines. It delegates datatype­-specific commands and processing to 
 data type code. As long as a DVID type can return data for its implemented commands, we don’t care how 
-its implemented. (_Status: Variety of voxel types, tiles, label maps, and key-value implemented. 
+its implemented. (_Status: Variety of voxel types, quadtree, label maps, and key-value implemented. 
 FUSE interface for key-value type working but not heavily used.  Authentication and authorization support planned Q2 2014, likely using Mozilla Persona + auth tokens similar to github API._)
 * **Scalable Storage Engine**: Although we may have DVID support polyglot persistence
 (i.e., allow use of relational, graph, or NoSQL databases), we are initially focused on 
 key­-value stores. DVID has an abstract key­-value interface to its swappable storage engine. 
 We choose a key­-value interface because (1) there are a large number of high­-performance, open­-source 
 implementations that run from embedded to clustered systems, (2) the surface area of the API is very 
-small, even after adding important cases like bulk loads or sequential key read/write, and (3) novel 
-open­-source technology tends to match key­-value interfaces.  (_Status: Use of standard leveldb and 
+small, even after adding important cases like bulk loads or sequential key read/write, and (3) novel technology tends to match key­-value interfaces, e.g., [groupcache](https://github.com/golang/groupcache)
+and [Seagate's Kinetic Open Storage Platform(https://developers.seagate.com/display/KV/Kinetic+Open+Storage+Documentation+Wiki)]  
+(_Status: Use of standard leveldb and 
 HyperLevelDB implemented.  Lightning MDB to be added soon._)
 
 DVID promotes the view of data as a collection of key­-value pairs where each key is composed of 
@@ -303,38 +304,38 @@ A larger 500 x 500 pixel image should now appear in the browser with black areas
 loaded data.  This is a slice along XZ, an orientation not present in the originally loaded
 XY images.
 
-### Adding multi-scale tiles
+### Adding a quadtree
 
-Let's precompute multi-scale XY, XZ, and YZ tiles for our grayscale image.  First, we add an
-instance of a tiles data type under our previous dataset UUID:
+Let's precompute multi-scale XY, XZ, and YZ quadtree for our grayscale image.  First, we add an
+instance of a quadtree data type under our previous dataset UUID:
 
-    % dvid dataset c7 new tiles mytiles source=mygrayscale TileSize=128
+    % dvid dataset c7 new quadtree myquadtree source=mygrayscale TileSize=128
 
 Note that we set type-specific parameters, "source" to "mygrayscale", which is the name of the
 data we wish to tile, and "TileSize" to "128", which causes all future tile generation to be 128x128
-pixels.  Now that we have tiles data, we generate the tiles using this command:
+pixels.  Now that we have quadtree data, we generate the quadtree using this command:
 
-    % dvid node c7 mytiles generate
+    % dvid node c7 myquadtree generate
 
 This will kick off the tile precomputation (about 30 seconds on my MacBook Pro).  Since our
-loaded grayscale is 250 x 250 x 250, we have two different scales of tiles.  The original
-scale is "0" and can be accessed through the tiles HTTP API.  Visit this URL in your browser:
+loaded grayscale is 250 x 250 x 250, we will have two different scales in the quadtree.  The original
+scale is "0" and can be accessed through the quadtree HTTP API.  Visit this URL in your browser:
 
-    localhost:8000/api/node/c7/mytiles/tile/xy/0/0_0_0
+    localhost:8000/api/node/c7/myquadtree/tile/xy/0/0_0_0
 
 This will return a 128x128 pixel tile, basically the upper left quadrant of the first slice of our
 test data.  By replacing the "0_0_0" (0,0,0) portion with "1_0_0", you can see the upper right
 quadrant (tile x=1, y=0) of the first 250x250 image.  Tile space has its origin in the upper left
 corner.
 
-We can zoom out a bit by going to scale "1" where returned tiles have reduced the size of the
-original image (via bicubic interpolation) by 2.
+We can zoom out a bit by going to scale "1" where returned quadtree have reduced the size of the
+original image by 2.
 
-    localhost:8000/api/node/c7/mytiles/tile/xy/1/0_0_0
+    localhost:8000/api/node/c7/myquadtree/tile/xy/1/0_0_0
 
 The above URL will return a 128x128 pixel tile that covers the original 250x250 image so you see
 a bit of black space at the edges.   DVID automatically creates as many scales as necessary
 until one tile fits the source image extents.  In this test case, we only need two scales because
 at scale "1", our specified tile size can cover the original data.
 
-As an exercise, look at the XZ and YZ tiles as well.
+As an exercise, look at the XZ and YZ quadtree as well.

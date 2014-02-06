@@ -128,30 +128,30 @@ func (s *DataSuite) TestPointNd(c *C) {
 	d = PointNd{111, -213, 678}
 	blockSize := PointNd{20, 30, 40}
 	g := d.Chunk(blockSize)
-	c.Assert(g, DeepEquals, ChunkPointNd{0x666666b, 0x444443d, 0x3333344})
+	c.Assert(g, DeepEquals, ChunkPointNd{5, -8, 16})
 
 	d = PointNd{111, 213, 680}
 	g = d.Chunk(blockSize)
-	c.Assert(g, DeepEquals, ChunkPointNd{0x666666b, 0x444444b, 0x3333344})
+	c.Assert(g, DeepEquals, ChunkPointNd{5, 7, 17})
 
 	d = PointNd{111, 213, 678}
 	blockSize = PointNd{20, 30, 1}
 	g = d.Chunk(blockSize)
-	c.Assert(g, DeepEquals, ChunkPointNd{0x666666b, 0x444444b, 0x800002a6})
+	c.Assert(g, DeepEquals, ChunkPointNd{5, 7, 678})
 
 	result = d.PointInChunk(blockSize)
-	c.Assert(result, DeepEquals, PointNd{19, 11, 0})
+	c.Assert(result, DeepEquals, PointNd{11, 3, 0})
 }
 
 func (s *DataSuite) TestChunk(c *C) {
 	d := Point3d{111, -213, 671}
 	blockSize := Point3d{20, 30, 40}
 	g := d.Chunk(blockSize)
-	c.Assert(g, Equals, ChunkPoint3d{0x666666b, 0x444443d, 0x3333343})
+	c.Assert(g, Equals, ChunkPoint3d{5, -8, 16})
 
 	chunkPt := d.Chunk(blockSize)
-	minVoxelPt := chunkPt.(ChunkPoint3d).MinVoxelPoint(blockSize)
-	maxVoxelPt := chunkPt.(ChunkPoint3d).MaxVoxelPoint(blockSize)
+	minVoxelPt := chunkPt.(ChunkPoint3d).MinPoint(blockSize)
+	maxVoxelPt := chunkPt.(ChunkPoint3d).MaxPoint(blockSize)
 	for dim := uint8(0); dim < uint8(3); dim++ {
 		if d.Value(dim) < minVoxelPt.Value(dim) || d.Value(dim) > maxVoxelPt.Value(dim) {
 			c.Errorf("Original voxel pt dim %d (%d) is not in chunk range %d to %d\n",
@@ -161,14 +161,13 @@ func (s *DataSuite) TestChunk(c *C) {
 
 	d = Point3d{111, 213, 680}
 	g = d.Chunk(blockSize)
-	c.Assert(g, Equals, ChunkPoint3d{0x666666b, 0x444444b, 0x3333344})
+	c.Assert(g, Equals, ChunkPoint3d{5, 7, 17})
 
 	d = Point3d{111, 213, 678}
 	blockSize = Point3d{20, 30, 1}
 	g = d.Chunk(blockSize)
-	c.Assert(g, Equals, ChunkPoint3d{0x666666b, 0x444444b, 0x800002a6})
+	c.Assert(g, Equals, ChunkPoint3d{5, 7, 678})
 
 	result := d.PointInChunk(blockSize)
-	c.Assert(result, Equals, Point3d{19, 11, 0})
-
+	c.Assert(result, Equals, Point3d{11, 3, 0})
 }

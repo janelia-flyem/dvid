@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -204,7 +203,10 @@ func (d *Data) GetData(uuid dvid.UUID, keyStr string) ([]byte, error) {
 	key := d.DataKey(versionID, dvid.IndexString(keyStr))
 
 	// Get the data
-	db := server.StorageEngine()
+	db, err := server.KeyValueGetter()
+	if err != nil {
+		return nil, err
+	}
 	data, err := db.Get(key)
 	if err != nil {
 		return nil, fmt.Errorf("Key '%s' not present: %s\n", keyStr, err.Error())
@@ -227,7 +229,10 @@ func (d *Data) PutData(uuid dvid.UUID, keyStr string, value []byte) error {
 	key := d.DataKey(versionID, dvid.IndexString(keyStr))
 
 	// PUT the file
-	db := server.StorageEngine()
+	db, err := server.KeyValueSetter()
+	if err != nil {
+		return err
+	}
 	serialization, err := dvid.SerializeData(value, dvid.Snappy, dvid.CRC32)
 	if err != nil {
 		return fmt.Errorf("Unable to serialize data: %s\n", err.Error())
@@ -366,15 +371,10 @@ func (d *Data) Put(request datastore.Request, reply *datastore.Response) error {
 		if len(filenames) == 0 {
 			return fmt.Errorf("Specify at least one file name to send or use -stdin")
 		}
-		file, err := os.Open(filenames[0])
-		if err != nil {
+		var err error
+		if data, err = storage.DataFromFile(filenames[0]); err != nil {
 			return err
 		}
-		data, err = ioutil.ReadAll(file)
-		if err != nil {
-			return err
-		}
-		storage.FileBytesRead <- len(data)
 	}
 
 	// Put the data

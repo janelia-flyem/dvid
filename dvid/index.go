@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"hash/fnv"
+	"math"
 )
 
 func init() {
@@ -20,9 +21,9 @@ func init() {
 	gob.Register(IndexCZYX{})
 }
 
-// LocalID is a unique id for some data in a DVID instance.  This unique id is presumably
-// a much smaller representation than the actual data (e.g., a version UUID or dataset
-// description) and can be represented with fewer bytes in keys.
+// LocalID is a unique id for some data in a DVID instance.  This unique id is a much
+// smaller representation than the actual data (e.g., a version UUID or data type url)
+// and can be represented with fewer bytes in keys.
 type LocalID uint16
 
 // LocalID32 is a 32-bit unique id within this DVID instance.
@@ -62,9 +63,8 @@ func LocalID32FromBytes(b []byte) (id LocalID32, length int) {
 	return LocalID32(binary.BigEndian.Uint32(b)), LocalID32Size
 }
 
-// Index is a one-dimensional index, typically constructed using some sort of
-// spatiotemporal indexing scheme.  For example, Z-curves map n-D space to a 1-D index.
-// It is assumed that implementations for this interface are castable to []byte.
+// Index is a one-dimensional index, typically constructed using a space-filling curve that serves
+// as a spatiotemporal indexing scheme.  For example, Z-curves map n-D space to a 1-D index.
 type Index interface {
 	// Duplicate returns a duplicate Index
 	Duplicate() Index
@@ -87,24 +87,17 @@ type Index interface {
 	String() string
 }
 
-// PointIndexer adds Point access to an index.
-type PointIndexer interface {
+// ChunkIndexer adds chunk point access to an index.
+type ChunkIndexer interface {
 	Index
 
-	// Value returns the index point's value for the specified dimension without checking dim bounds.
-	Value(dim uint8) uint32
+	ChunkPoint
 
-	// FirstPoint returns the first point within a chunk given an index's iteration.
-	FirstPoint(size Point) Point
+	// Min returns a ChunkIndexer that is the minimum of its value and the passed one.
+	Min(ChunkIndexer) (min ChunkIndexer, changed bool)
 
-	// LastPoint returns the last point within a chunk given an index's iteration.
-	LastPoint(size Point) Point
-
-	// Min returns a PointIndexer that is the minimum of its value and the passed one.
-	Min(PointIndexer) (min PointIndexer, changed bool)
-
-	// Max returns a PointIndexer that is the maximum of its value and the passed one.
-	Max(PointIndexer) (max PointIndexer, changed bool)
+	// Max returns a ChunkIndexer that is the maximum of its value and the passed one.
+	Max(ChunkIndexer) (max ChunkIndexer, changed bool)
 }
 
 // IndexIterator is a function that returns a sequence of indices and ends with nil.
@@ -222,9 +215,12 @@ func (i IndexUint8) IndexFromBytes(b []byte) (Index, error) {
 
 // IndexZYX implements the Index interface and provides simple indexing on Z,
 // then Y, then X.  Note that index elements are unsigned to better handle
-// sequential access of negative/positive coordinates.  Conversion to and
-// from signed point space is handled automatically through the Chunkable
-// interface.
+// sequential access of negative/positive coordinates.
+// The binary representation of an index must behave reasonably for both negative and
+// positive coordinates, e.g., when moving from -1 to 0 the binary representation isn't
+// discontinous so the lexicographical ordering switches.  The simplest way to achieve
+// this is to convert to an unsigned (positive) integer space where all coordinates are
+// greater or equal to (0,0,...).
 type IndexZYX ChunkPoint3d
 
 var (
@@ -244,12 +240,13 @@ func (i IndexZYX) String() string {
 }
 
 // Bytes returns a byte representation of the Index.  This should layout
-// integer space as consecutive in binary representation, i.e., BigEndian.
+// integer space as consecutive in binary representation so we use
+// bigendian and convert signed integer space to unsigned integer space.
 func (i IndexZYX) Bytes() []byte {
 	buf := new(bytes.Buffer)
-	binary.Write(buf, binary.BigEndian, i[2])
-	binary.Write(buf, binary.BigEndian, i[1])
-	binary.Write(buf, binary.BigEndian, i[0])
+	binary.Write(buf, binary.BigEndian, uint32(int64(i[2])-math.MinInt32))
+	binary.Write(buf, binary.BigEndian, uint32(int64(i[1])-math.MinInt32))
+	binary.Write(buf, binary.BigEndian, uint32(int64(i[0])-math.MinInt32))
 	return buf.Bytes()
 }
 
@@ -267,41 +264,35 @@ func (i IndexZYX) Scheme() string {
 // IndexFromBytes returns an index from bytes.  The passed Index is used just
 // to choose the appropriate byte decoding scheme.
 func (i IndexZYX) IndexFromBytes(b []byte) (Index, error) {
-	z := binary.BigEndian.Uint32(b[0:4])
-	y := binary.BigEndian.Uint32(b[4:8])
-	x := binary.BigEndian.Uint32(b[8:12])
+	z := int32(int64(binary.BigEndian.Uint32(b[0:4])) + math.MinInt32)
+	y := int32(int64(binary.BigEndian.Uint32(b[4:8])) + math.MinInt32)
+	x := int32(int64(binary.BigEndian.Uint32(b[8:12])) + math.MinInt32)
 	return &IndexZYX{x, y, z}, nil
 }
 
-// ------- PointIndexer interface ----------
+// ------- ChunkIndexer interface ----------
+
+func (i IndexZYX) NumDims() uint8 {
+	return 3
+}
 
 // Value returns the value at the specified dimension for this index.
-func (i IndexZYX) Value(dim uint8) uint32 {
+func (i IndexZYX) Value(dim uint8) int32 {
 	return i[dim]
 }
 
-// FirstPoint returns the first voxel coordinate for a chunk based on the index's
-// standard iteration.
-func (i IndexZYX) FirstPoint(size Point) Point {
-	return Point3d{
-		int32(int64(i[0])*int64(size.Value(0)) - middleValue),
-		int32(int64(i[1])*int64(size.Value(1)) - middleValue),
-		int32(int64(i[2])*int64(size.Value(2)) - middleValue),
-	}
+// MinPoint returns the minimum voxel coordinate for a chunk.
+func (i IndexZYX) MinPoint(size Point) Point {
+	return ChunkPoint3d(i).MinPoint(size)
 }
 
-// LastPoint returns the last voxel coordinate for a chunk based on the index's
-// standard iteration.
-func (i IndexZYX) LastPoint(size Point) Point {
-	return Point3d{
-		int32(int64(i[0]+1)*int64(size.Value(0)) - middleValue - 1),
-		int32(int64(i[1]+1)*int64(size.Value(1)) - middleValue - 1),
-		int32(int64(i[2]+1)*int64(size.Value(2)) - middleValue - 1),
-	}
+// MaxPoint returns the maximum voxel coordinate for a chunk.
+func (i IndexZYX) MaxPoint(size Point) Point {
+	return ChunkPoint3d(i).MaxPoint(size)
 }
 
-// Min returns a PointIndexer that is the minimum of its value and the passed one.
-func (i IndexZYX) Min(idx PointIndexer) (PointIndexer, bool) {
+// Min returns a ChunkIndexer that is the minimum of its value and the passed one.
+func (i IndexZYX) Min(idx ChunkIndexer) (ChunkIndexer, bool) {
 	var changed bool
 	min := i
 	if min[0] > idx.Value(0) {
@@ -319,8 +310,8 @@ func (i IndexZYX) Min(idx PointIndexer) (PointIndexer, bool) {
 	return min, changed
 }
 
-// Max returns a PointIndexer that is the maximum of its value and the passed one.
-func (i IndexZYX) Max(idx PointIndexer) (PointIndexer, bool) {
+// Max returns a ChunkIndexer that is the maximum of its value and the passed one.
+func (i IndexZYX) Max(idx ChunkIndexer) (ChunkIndexer, bool) {
 	var changed bool
 	max := i
 	if max[0] < idx.Value(0) {
@@ -341,7 +332,7 @@ func (i IndexZYX) Max(idx PointIndexer) (PointIndexer, bool) {
 // ----- IndexIterator implementation ------------
 type IndexZYXIterator struct {
 	geom     Geometry
-	x, y, z  uint32
+	x, y, z  int32
 	begBlock ChunkPoint3d
 	endBlock ChunkPoint3d
 	endBytes []byte
@@ -384,7 +375,7 @@ func (it *IndexZYXIterator) NextSpan() {
 }
 
 // IndexCZYX implements the Index interface and provides simple indexing on "channel" C,
-// then Z, then Y, then X.  Since IndexZYX is embedded, we get PointIndexer interface.
+// then Z, then Y, then X.  Since IndexZYX is embedded, we get ChunkIndexer interface.
 type IndexCZYX struct {
 	Channel int32
 	IndexZYX
@@ -426,7 +417,7 @@ func (i IndexCZYX) IndexFromBytes(b []byte) (Index, error) {
 type IndexCZYXIterator struct {
 	channel  int32
 	geom     Geometry
-	x, y, z  uint32
+	x, y, z  int32
 	begBlock ChunkPoint3d
 	endBlock ChunkPoint3d
 	endBytes []byte

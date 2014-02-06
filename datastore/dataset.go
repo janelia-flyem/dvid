@@ -199,7 +199,7 @@ func (dsets *Datasets) AllJSON() (m []byte, err error) {
 }
 
 // Load retrieves Datasets and all referenced Dataset from the storage engine.
-func (dsets *Datasets) Load(db storage.Engine) (err error) {
+func (dsets *Datasets) Load(db storage.KeyValueGetter) (err error) {
 	// Get the the map of all UUIDs to local dataset IDs
 	var data []byte
 	data, err = db.Get(&DatasetsKey{})
@@ -246,7 +246,7 @@ func (dsets *Datasets) Load(db storage.Engine) (err error) {
 }
 
 // Put stores Datasets, overwriting whatever was there before.
-func (dsets *Datasets) Put(db storage.Engine) error {
+func (dsets *Datasets) Put(db storage.KeyValueSetter) error {
 	var mutex sync.Mutex
 	mutex.Lock()
 	defer mutex.Unlock()
@@ -323,7 +323,7 @@ func (dset *Dataset) Key() storage.Key {
 }
 
 // Put stores a Dataset into a storage engine, overwriting whatever was there before.
-func (dset *Dataset) Put(db storage.Engine) error {
+func (dset *Dataset) Put(db storage.KeyValueSetter) error {
 	var mutex sync.Mutex
 	mutex.Lock()
 	defer mutex.Unlock()

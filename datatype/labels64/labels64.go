@@ -425,6 +425,11 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 	// Break URL request into arguments
 	url := r.URL.Path[len(server.WebAPIPath):]
 	parts := strings.Split(url, "/")
+	if len(parts) < 4 {
+		err := fmt.Errorf("Incomplete API request")
+		server.BadRequest(w, r, err.Error())
+		return err
+	}
 
 	// Process help and info.
 	switch parts[3] {
@@ -587,7 +592,10 @@ func (d *Data) CreateComposite(request datastore.Request, reply *datastore.Respo
 	if err != nil {
 		return err
 	}
-	db := server.StorageEngine()
+	db, err := server.KeyValueGetter()
+	if err != nil {
+		return err
+	}
 
 	// Iterate through all labels and grayscale chunks incrementally in Z, a layer at a time.
 	wg := new(sync.WaitGroup)
@@ -622,7 +630,7 @@ func (d *Data) CreateCompositeChunk(chunk *storage.Chunk) {
 	go d.createCompositeChunk(chunk)
 }
 
-var curZ uint32
+var curZ int32
 var curZMutex sync.Mutex
 
 func (d *Data) createCompositeChunk(chunk *storage.Chunk) {
@@ -637,9 +645,9 @@ func (d *Data) createCompositeChunk(chunk *storage.Chunk) {
 	}()
 
 	op := chunk.Op.(*blockOp)
-	db := server.StorageEngine()
-	if db == nil {
-		dvid.Log(dvid.Normal, "Did not find a working key-value datastore to get image!")
+	db, err := server.KeyValueDB()
+	if err != nil {
+		dvid.Log(dvid.Normal, "Error in %s.ProcessChunk(): %s\n", d.DataID().DataName(), err.Error())
 		return
 	}
 
@@ -649,8 +657,8 @@ func (d *Data) createCompositeChunk(chunk *storage.Chunk) {
 	curZMutex.Lock()
 	if zyx[2] > curZ {
 		curZ = zyx[2]
-		min := zyx.FirstPoint(d.BlockSize())
-		max := zyx.LastPoint(d.BlockSize())
+		min := zyx.MinPoint(d.BlockSize())
+		max := zyx.MaxPoint(d.BlockSize())
 		dvid.Log(dvid.Debug, "Now creating composite blocks for Z %d to %d\n",
 			min.Value(2), max.Value(2))
 	}

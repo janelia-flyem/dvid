@@ -71,7 +71,11 @@ func (d Dir) Lookup(name string, intr fs.Intr) (fs.Node, fuse.Error) {
 func (d Dir) ReadDir(intr fs.Intr) ([]fuse.Dirent, fuse.Error) {
 	minDataKey := &datastore.DataKey{d.Data.DsetID, d.Data.ID, d.GetVersionID(), dvid.IndexString("")}
 	maxDataKey := &datastore.DataKey{d.Data.DsetID, d.Data.ID, d.GetVersionID() + 1, dvid.IndexString("")}
-	keys, err := server.StorageEngine().KeysInRange(minDataKey, maxDataKey)
+	db, err := server.KeyValueGetter()
+	if err != nil {
+		return nil, fuse.EIO
+	}
+	keys, err := db.KeysInRange(minDataKey, maxDataKey)
 	if err != nil {
 		return nil, fuse.EIO
 	}

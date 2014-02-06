@@ -8,7 +8,9 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"html/template"
 	"net/http"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -29,47 +31,93 @@ DVID Web Client Unavailable!  To make the web client available, you have two cho
    % dvid -webclient=/path/to/html/files -datastore=/path/to/db serve
 `
 
-const WebAPIHelp = `
+const WebHelp = `
 <!DOCTYPE html>
 <html>
-<body>
-<h1>DVID HTTP API</h1>
-<p>This help system is embedded in DVID servers.  More full-featured help and
-console web apps are available through 
-<a href="https://github.com/janelia-flyem/dvid-webclient">DVID web clients</a>.</p>
-<p>DVID's HTTP API is a Level 2 REST API with URL endpoints prefixed with "api".</p>
-<p>Commands that set or create data use POST.  Commands that return data use GET,
-and the returned format will be in JSON except for "help" which returns HTML.</p>
-<p>In the following examples, any part surrounded by curly braces like {myparam}
-should be replaced by appropriate values.</p>
-<code>
-  <ul>
-    <li>GET /api/help (current page)</li>
-    <li><a href="/api/load">GET /api/load</a></li>
 
-    <li><a href="/api/server/info">GET /api/server/info</a></li>
-    <li><a href="/api/server/types">GET /api/server/types</a></li>
+  <head>
+    <meta charset='utf-8' />
+    <meta http-equiv="X-UA-Compatible" content="chrome=1" />
+    <meta name="description" content="DVID Web Server Home Page" />
 
-    <li><a href="/api/datasets/info">GET /api/datasets/info</a></li>
-    <li><a href="/api/datasets/list">GET /api/datasets/list</a></li>
-    <li>POST /api/datasets/new</li>
+    <link rel="stylesheet" type="text/css" media="screen" href="/stylesheets/stylesheet.css">
 
-    <li>GET /api/dataset/{UUID}/info</li>
-    <li>POST /api/dataset/{UUID}/new/{datatype name}/{data name}<br />
-        Type-specific configuration settings should be sent via JSON.</li>
+    <title>DVID Web Server</title>
+  </head>
 
-    <li>GET /api/dataset/{UUID}/{data name}/{type-specific commands}</li>
+  <body>
 
-    <li>POST /api/node/{UUID}/lock</li>
-    <li>POST /api/node/{UUID}/branch<br /></li>
+    <!-- HEADER -->
+    <div id="header_wrap" class="outer">
+        <header class="inner">
+          <a id="forkme_banner" href="https://github.com/janelia-flyem/dvid">View DVID on GitHub</a>
 
-    <li>GET /api/node/{UUID}/{data name}/{type-specific commands}</li>
-    <li>POST /api/node/{UUID}/{data name}/{type-specific commands}</li>
-  </ul>
-</code>
-<p>To examine the data type-specific API commands available, use GET /api/dataset/.../help
-shown above.</p>
-</body>
+          <h1 id="project_title">DVID Web Server</h1>
+          <h2 id="project_tagline">Stock help page for DVID server currently running {{.Hostname}}</h2>
+
+        </header>
+    </div>
+
+    <!-- MAIN CONTENT -->
+    <div id="main_content_wrap" class="outer">
+      <section id="main_content" class="inner">
+        <h3>Welcome to DVID</h3>
+
+        <p>This page provides an introduction to the currently running DVID server.  Developers can visit
+        the <a href="https://github.com/janelia-flyem/dvid">Github repo</a> for more documentation and code.
+        Each DVID install can tailor this page to provide links to datasets and web apps.</p>
+        
+        <h4>HTTP API</h4>
+
+        <p>Please consult the
+           <a href="https://github.com/janelia-flyem/dvid#dvid">DVID documentation</a> for type-specific API help.
+           In the following examples, any part surrounded by curly braces like {myparam}
+           should be replaced by appropriate values.
+        </p>
+
+
+          <code><ul>
+            <li>GET /api/help (current page)</li>
+            <li><a href="/api/load">GET /api/load</a></li>
+
+            <li><a href="/api/server/info">GET /api/server/info</a></li>
+            <li><a href="/api/server/types">GET /api/server/types</a></li>
+
+            <li><a href="/api/datasets/info">GET /api/datasets/info</a></li>
+            <li><a href="/api/datasets/list">GET /api/datasets/list</a></li>
+            <li>POST /api/datasets/new</li>
+
+            <li>GET /api/dataset/{UUID}/info</li>
+            <li>POST /api/dataset/{UUID}/new/{datatype name}/{data name}<br />
+                Type-specific configuration settings should be sent via JSON.</li>
+
+            <li>GET /api/dataset/{UUID}/{data name}/{type-specific commands}</li>
+
+            <li>POST /api/node/{UUID}/lock</li>
+            <li>POST /api/node/{UUID}/branch<br /></li>
+
+            <li>GET /api/node/{UUID}/{data name}/{type-specific commands}</li>
+            <li>POST /api/node/{UUID}/{data name}/{type-specific commands}</li>
+        </ul></code>
+        
+        <h3>Licensing</h3>
+        <p>DVID is released under the
+            <a href="http://janelia-flyem.github.com/janelia_farm_license.html">Janelia Farm license</a>, a
+            <a href="http://en.wikipedia.org/wiki/BSD_license#3-clause_license_.28.22New_BSD_License.22_or_.22Modified_BSD_License.22.29">
+                3-clause BSD license</a>.
+        </p>
+      </section>
+    </div>
+
+    <!-- FOOTER  -->
+    <div id="footer_wrap" class="outer">
+      <footer class="inner">
+      </footer>
+    </div>
+
+    
+
+  </body>
 </html>
 `
 
@@ -87,10 +135,18 @@ func indexHandler(w http.ResponseWriter, r *http.Request) {
 
 // Handler for web client
 func mainHandler(w http.ResponseWriter, r *http.Request) {
-	if runningService.WebClientPath != "" {
-		consoleFile := strings.TrimPrefix(r.URL.Path, "/console/")
-		filename := filepath.Join(runningService.WebClientPath, consoleFile)
-		dvid.Log(dvid.Debug, "CONSOLE %s: %s\n", r.Method, r.URL)
+	if r.URL.Path == "/" {
+		// Respond with stock help page for root URL.
+		t, _ := template.New("Help").Parse(WebHelp)
+		hostname, _ := os.Hostname()
+		vars := struct {
+			Hostname string
+		}{
+			hostname,
+		}
+		t.Execute(w, vars)
+	} else if runningService.WebClientPath != "" {
+		filename := filepath.Join(runningService.WebClientPath, r.URL.Path)
 		http.ServeFile(w, r, filename)
 	} else {
 		fmt.Fprintf(w, webClientUnavailableMessage)
@@ -131,7 +187,7 @@ func apiHandler(w http.ResponseWriter, r *http.Request) {
 
 func helpRequest(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html")
-	fmt.Fprintf(w, WebAPIHelp)
+	fmt.Fprintf(w, WebHelp)
 }
 
 func loadRequest(w http.ResponseWriter, r *http.Request) {

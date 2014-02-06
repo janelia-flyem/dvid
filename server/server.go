@@ -118,13 +118,6 @@ func init() {
 	}()
 }
 
-// DatastoreService returns the current datastore service.  One DVID process
-// is assigned to one datastore service, although it may be possible to have
-// multiple (polyglot) persistence backends attached to that one service.
-func DatastoreService() *datastore.Service {
-	return runningService.Service
-}
-
 // MatchingUUID returns a UUID on this server that uniquely matches a uuid string.
 func MatchingUUID(uuidStr string) (uuid dvid.UUID, err error) {
 	if runningService.Service == nil {
@@ -147,12 +140,45 @@ func VersionLocalID(uuid dvid.UUID) (dvid.VersionLocalID, error) {
 	return versionID, nil
 }
 
-// StorageEngine returns the default storage engine or nil if it's not available.
-func StorageEngine() storage.Engine {
+// --- Return datastore.Service and various database interfaces to support polyglot persistence --
+
+// DatastoreService returns the current datastore service.  One DVID process
+// is assigned to one datastore service, although it may be possible to have
+// multiple (polyglot) persistence backends attached to that one service.
+func DatastoreService() *datastore.Service {
+	return runningService.Service
+}
+
+// KeyValueDB returns the default key-value database
+func KeyValueDB() (storage.KeyValueDB, error) {
 	if runningService.Service == nil {
-		return nil
+		return nil, fmt.Errorf("No running datastore service is available.")
 	}
-	return runningService.StorageEngine()
+	return runningService.KeyValueDB()
+}
+
+// KeyValueGetter returns the default service for retrieving key-value pairs.
+func KeyValueGetter() (storage.KeyValueGetter, error) {
+	if runningService.Service == nil {
+		return nil, fmt.Errorf("No running datastore service is available.")
+	}
+	return runningService.KeyValueGetter()
+}
+
+// KeyValueSetter returns the default service for storing key-value pairs.
+func KeyValueSetter() (storage.KeyValueSetter, error) {
+	if runningService.Service == nil {
+		return nil, fmt.Errorf("No running datastore service is available.")
+	}
+	return runningService.KeyValueSetter()
+}
+
+// StorageEngine returns the default storage engine or nil if it's not available.
+func StorageEngine() (storage.Engine, error) {
+	if runningService.Service == nil {
+		return nil, fmt.Errorf("No running datastore service is available.")
+	}
+	return runningService.StorageEngine(), nil
 }
 
 // Shutdown handles graceful cleanup of server functions before exiting DVID.
@@ -336,18 +362,6 @@ func (service *Service) ServeHttp(address, clientDir string) {
 		http.HandleFunc(ConsolePath, logHttpPanics(mainHandler))
 		dvid.Log(dvid.Debug, "Serving web pages from %s\n", clientDir)
 	}
-
-	// Manage redirection from / to the ConsolePath.
-	http.HandleFunc("/", logHttpPanics(func(w http.ResponseWriter, r *http.Request) {
-		var urlStr string
-		if r.URL.Path == "/" {
-			urlStr = ConsolePath + "index.html"
-		} else {
-			urlStr = ConsolePath + strings.TrimLeft(r.URL.Path, "/")
-		}
-		dvid.Log(dvid.Debug, "REDIRECT %s -> %s\n", r.URL.Path, urlStr)
-		http.Redirect(w, r, urlStr, http.StatusMovedPermanently)
-	}))
 
 	// Serve it up!
 	src.ListenAndServe()

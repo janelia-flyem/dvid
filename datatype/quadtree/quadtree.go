@@ -1,17 +1,15 @@
 /*
-	Package tiles implements DVID support for multiscale tiles in XY, XZ, and YZ orientation
-	that can sync with datatypes based on the voxels package.
+	Package quadtree implements DVID support for quadtrees in XY, XZ, and YZ orientation.
 */
-package tiles
+package quadtree
 
 import (
 	"encoding/gob"
 	"encoding/json"
 	"fmt"
 	"image"
-	"image/color"
+	"math"
 	"net/http"
-	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -21,28 +19,26 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
-
-	"github.com/janelia-flyem/go/resize"
 )
 
 const (
 	Version = "0.1"
-	RepoUrl = "github.com/janelia-flyem/dvid/datatype/tiles"
+	RepoUrl = "github.com/janelia-flyem/dvid/datatype/quadtree"
 )
 
 const HelpMessage = `
-API for datatypes derived from tiles (github.com/janelia-flyem/dvid/datatype/tiles)
+API for datatypes derived from quadtree (github.com/janelia-flyem/dvid/datatype/quadtree)
 =====================================================================================
 
 Command-line:
 
-$ dvid dataset <UUID> new tiles <data name> <settings...>
+$ dvid dataset <UUID> new quadtree <data name> <settings...>
 
-	Adds multiresolution XY, XZ, and YZ tiles from Source to dataset with specified UUID.
+	Adds multiresolution XY, XZ, and YZ quadtree from Source to dataset with specified UUID.
 
 	Example:
 
-	$ dvid dataset 3f8c new tiles mytiles source=mygrayscale versioned=true
+	$ dvid dataset 3f8c new quadtree myquadtree source=mygrayscale versioned=true
 
     Arguments:
 
@@ -58,35 +54,30 @@ $ dvid dataset <UUID> new tiles <data name> <settings...>
     Placeholder    Bool ("false", "true", "0", or "1").  Return placeholder tile if missing.
 
 
-$ dvid node <UUID> <data name> generate <settings>
+$ dvid node <UUID> <data name> generate <config JSON file name> <settings...>
+$ dvid -stdin node <UUID> <data name> generate <settings...> < config.json
 
-	Generates multiresolution XY, XZ, and YZ tiles from Source to dataset with specified UUID.
+	Generates multiresolution XY, XZ, and YZ quadtree from Source to dataset with specified UUID.
+	The resolutions at each scale and the dimensions of the tiles are passed in the configuration
+	JSON.  Only integral multiplications of original resolutions are allowed for scale.  If you
+	want more sophisticated processing, post the quadtree tiles directly via HTTP.
 
 	Example:
 
-	$ dvid dataset 3f8c generate tiles mytiles
+	$ dvid dataset 3f8c myquadtree generate /path/to/config.json
+	$ dvid -stdin dataset 3f8c myquadtree generate planes=yz;0,1 < /path/to/config.json 
 
     Arguments:
 
     UUID            Hexidecimal string with enough characters to uniquely identify a version node.
-    data name       Name of data to create, e.g., "mygrayscale"
-    settings        Configuration settings in "key=value" format separated by spaces.
+    data name       Name of data to create, e.g., "mygrayscale".
+    settings        Optional specification of tiles to generate.
 
     Configuration Settings (case-insensitive keys)
 
     planes          List of one or more planes separated by semicolon.  Each plane can be
                        designated using either axis number ("0,1") or xyz nomenclature ("xy").
                        Example:  planes=0,1;yz
-
-	interpolation   One of the following methods of interpolation:
-	                   NearestNeighbor (Nearest-Neighbor)
-	                   Bilinear
-	                   Bicubic
-	                   MitchellNetravali (Mitchell-Netravali)
-	                   Lanczos2Lut (Lanczos resampling with a=2 using a look-up table)
-	                   Lanczos2  (Same as above but without look-up table for fast computation)
-	                   Lanczos3Lut (Lanczos resampling with a=3 using a look-up table)
-	                   Lanczos3  (Same as above but without look-up table for fast computation)
 
     ------------------
 
@@ -103,21 +94,21 @@ GET  /api/node/<UUID>/<data name>/info
 
     Example: 
 
-    GET /api/node/3f8c/mytiles/info
+    GET /api/node/3f8c/myquadtree/info
 
     Arguments:
 
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
-    data name     Name of tiles data.
+    data name     Name of quadtree data.
 
 
 GET  /api/node/<UUID>/<data name>/tile/<dims>/<scaling>/<tile coord>[/<format>]
-
+(TODO) POST
     Retrieves tile of named data within a version node.
 
     Example: 
 
-    GET /api/node/3f8c/mytiles/tile/xy/0/10_10_20/jpg:80
+    GET /api/node/3f8c/myquadtree/tile/xy/0/10_10_20/jpg:80
 
     Arguments:
 
@@ -134,11 +125,11 @@ GET  /api/node/<UUID>/<data name>/tile/<dims>/<scaling>/<tile coord>[/<format>]
 (TODO)
 GET  /api/node/<UUID>/<data name>/image/<dims>/<size>/<offset>[/<format>]
 
-    Retrieves image of named data within a version node using the precomputed tiles.
+    Retrieves image of named data within a version node using the precomputed quadtree.
 
     Example: 
 
-    GET /api/node/3f8c/mytiles/image/xy/512_256/0_0_100/jpg:80
+    GET /api/node/3f8c/myquadtree/image/xy/512_256/0_0_100/jpg:80
 
     Arguments:
 
@@ -152,21 +143,112 @@ GET  /api/node/<UUID>/<data name>/image/<dims>/<size>/<offset>[/<format>]
 
 `
 
-const DefaultTileSize = 512
-
 func init() {
-	tiles := NewDatatype()
-	tiles.DatatypeID = &datastore.DatatypeID{
-		Name:    "tiles",
-		Url:     "github.com/janelia-flyem/dvid/datatype/tiles",
+	quadtree := NewDatatype()
+	quadtree.DatatypeID = &datastore.DatatypeID{
+		Name:    "quadtree",
+		Url:     "github.com/janelia-flyem/dvid/datatype/quadtree",
 		Version: "0.1",
 	}
-	datastore.RegisterDatatype(tiles)
+	datastore.RegisterDatatype(quadtree)
 
 	// Need to register types that will be used to fulfill interfaces.
 	gob.Register(&Datatype{})
 	gob.Register(&Data{})
 	gob.Register(&IndexTile{})
+}
+
+// Scaling describes the scale level where 0 = original data resolution and
+// higher levels have been downsampled.
+type Scaling uint8
+
+// TileScaleSpec is a slice of tile resolution & size for each dimensions.
+type TileScaleSpec struct {
+	Resolution dvid.NdFloat32
+	TileSize   dvid.Point
+
+	levelMag dvid.Point // Magnification from this one to the next level.
+}
+
+// TileSpec specifies the resolution & size of each dimension at each scale level.
+type TileSpec map[Scaling]TileScaleSpec
+
+type specJSON map[string]struct {
+	Resolution dvid.NdFloat32
+	TileSize   dvid.PointNd
+}
+
+// LoadTileSpec loads a TileSpec from JSON data.
+// JSON data should look like:
+// {
+//    "0": { "Resolution": [3.1, 3.1, 40.0], "TileSize": [512, 512, 40] },
+//    "1": { "Resolution": [6.2, 6.2, 40.0], "TileSize": [512, 512, 80] },
+//    ...
+// }
+// Each line is a scale with a n-D resolution/voxel and a n-D tile size in voxels.
+func LoadTileSpec(data []byte) (TileSpec, error) {
+	var config specJSON
+	err := json.Unmarshal(data, &config)
+	if err != nil {
+		return nil, err
+	}
+
+	// Allocate the tile specs
+	specs := make(TileSpec, len(config))
+
+	// Store resolution and tile sizes per level.
+	firstLevel := true
+	var scaling Scaling
+	var hires, lores float64
+	for scaleStr, levelSpec := range config {
+		scaleLevel, err := strconv.Atoi(scaleStr)
+		if err != nil {
+			return nil, fmt.Errorf("Scaling '%s' needs to be a number for the scale level.", scaleStr)
+		}
+		if firstLevel {
+			if scaleLevel != 0 {
+				return nil, fmt.Errorf("Tile levels should start with '0' then specify '1', etc.")
+			}
+			firstLevel = false
+		} else {
+			if int(scaling+1) != scaleLevel {
+				return nil, fmt.Errorf("Tile levels need to be incremental.  Jumps from %d to %d!",
+					scaling, scaleLevel)
+			}
+		}
+		scaling = Scaling(scaleLevel)
+		specs[scaling] = TileScaleSpec{
+			Resolution: levelSpec.Resolution,
+			TileSize:   levelSpec.TileSize,
+		}
+	}
+
+	// Compute the magnification between each level.
+	for scaling, levelSpec := range specs {
+		if int(scaling+1) < len(specs)-1 {
+			nextSpec := specs[scaling+1]
+			levelMag := make(dvid.PointNd, len(levelSpec.Resolution))
+			for i, curRes := range levelSpec.Resolution {
+				hires = float64(curRes)
+				lores = float64(nextSpec.Resolution[i])
+				rem := math.Remainder(lores, hires)
+				if rem > 0.001 {
+					return nil, fmt.Errorf("Resolutions between scale %d and %d aren't integral magnifications!",
+						scaling, scaling+1)
+				}
+				mag := lores / hires
+				if mag < 0.99 {
+					return nil, fmt.Errorf("A resolution between scale %d and %d actually increases!",
+						scaling, scaling+1)
+				}
+				mag += 0.5
+				levelMag[i] = int32(mag)
+			}
+			levelSpec.levelMag = levelMag
+			specs[scaling] = levelSpec
+		}
+	}
+	return specs, nil
 }
 
 func getSourceVoxels(uuid dvid.UUID, name dvid.DataString) (*voxels.Data, error) {
@@ -177,7 +259,7 @@ func getSourceVoxels(uuid dvid.UUID, name dvid.DataString) (*voxels.Data, error)
 	}
 	data, ok := source.(*voxels.Data)
 	if !ok {
-		return nil, fmt.Errorf("Cannot construct tiles for non-voxels data: %s", name)
+		return nil, fmt.Errorf("Cannot construct quadtree for non-voxels data: %s", name)
 	}
 	return data, nil
 }
@@ -216,17 +298,17 @@ func (dtype *Datatype) NewDataService(id *datastore.DataID, config dvid.Config) 
 		return nil, err
 	}
 	if !found {
-		return nil, fmt.Errorf("Cannot make tiles data without valid 'Source' setting.")
+		return nil, fmt.Errorf("Cannot make quadtree data without valid 'Source' setting.")
 	}
 	sourcename := dvid.DataString(name)
 
-	// See if we want placeholder tiles.
+	// See if we want placeholder quadtree.
 	placeholder, found, err := config.GetBool("Placeholder")
 	if err != nil {
 		return nil, err
 	}
 
-	// Initialize the tiles data
+	// Initialize the quadtree data
 	basedata, err := datastore.NewDataService(id, dtype, config)
 	if err != nil {
 		return nil, err
@@ -235,15 +317,6 @@ func (dtype *Datatype) NewDataService(id *datastore.DataID, config dvid.Config) 
 		Data:        basedata,
 		Source:      sourcename,
 		Placeholder: placeholder,
-	}
-	tilesize, found, err := config.GetInt("TileSize")
-	if err != nil {
-		dvid.Log(dvid.Normal, "Error in trying to set TileSize: %s\n", err.Error())
-		data.Size = DefaultTileSize
-	} else if !found {
-		data.Size = DefaultTileSize
-	} else {
-		data.Size = int32(tilesize)
 	}
 	return data, nil
 }
@@ -261,15 +334,11 @@ type SourceData interface{}
 type Data struct {
 	*datastore.Data
 
-	// Source of the data for these tiles.
+	// Source of the data for these quadtree.
 	Source dvid.DataString
 
-	// Size in pixels.  All tiles are square.
-	Size int32
-
-	// MaxScale is the maximum scaling computed for the tiles.  The maximum scaling
-	// is sufficient to show the longest dimension as one tile.
-	MaxScale uint8
+	// Levels describe the resolution and tile sizes at each level of resolution.
+	Levels TileSpec
 
 	// Placeholder, when true (false by default), will generate fake tile images if a tile cannot
 	// be found.  This is useful in testing clients.
@@ -292,10 +361,29 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 	if request.TypeCommand() != "generate" {
 		return d.UnknownCommand(request)
 	}
-	var uuidStr string
-	request.Command.CommandArgs(1, &uuidStr)
-	config := request.Settings()
-	return d.ConstructTiles(uuidStr, config)
+	var uuidStr, dataName, cmdStr string
+	filenames := request.CommandArgs(1, &uuidStr, &dataName, &cmdStr)
+
+	// Get the quadtree generation configuration from a file or stdin.
+	var configData []byte
+	if request.Input != nil {
+		configData = request.Input
+	} else {
+		if len(filenames) == 0 {
+			return fmt.Errorf("Must specify either a configuration JSON file name or use -stdin")
+		}
+		var err error
+		configData, err = storage.DataFromFile(filenames[0])
+		if err != nil {
+			return err
+		}
+	}
+	tileSpec, err := LoadTileSpec(configData)
+	if err != nil {
+		return err
+	}
+
+	return d.ConstructTiles(uuidStr, tileSpec, request.Settings())
 }
 
 // DoHTTP handles all incoming HTTP requests for this data.
@@ -343,7 +431,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 	case "tile":
 		planeStr, scalingStr, coordStr := parts[4], parts[5], parts[6]
 		if action == "post" {
-			return fmt.Errorf("DVID does not yet support POST of tiles")
+			return fmt.Errorf("DVID does not yet support POST of quadtree")
 		} else {
 			img, err := d.GetTile(versionID, planeStr, scalingStr, coordStr)
 			if err != nil {
@@ -368,9 +456,9 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		}
 
 	case "image":
-		err = fmt.Errorf("DVID does not yet support stitched images from tiles.")
+		err = fmt.Errorf("DVID does not yet support stitched images from quadtree.")
 	default:
-		err = fmt.Errorf("Illegal request for tiles data.  See 'help' for REST API")
+		err = fmt.Errorf("Illegal request for quadtree data.  See 'help' for REST API")
 	}
 	if err != nil {
 		server.BadRequest(w, r, err.Error())
@@ -383,9 +471,13 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 func (d *Data) GetTile(versionID dvid.VersionLocalID, planeStr, scalingStr, coordStr string) (
 	image.Image, error) {
 
-	db := server.StorageEngine()
-	if db == nil {
-		return nil, fmt.Errorf("Did not find a working key-value datastore to get image!")
+	if d.Levels == nil {
+		return nil, fmt.Errorf("Tiles have not been generated.")
+	}
+
+	db, err := server.KeyValueGetter()
+	if err != nil {
+		return nil, err
 	}
 
 	// Construct the index for this tile
@@ -402,7 +494,8 @@ func (d *Data) GetTile(versionID dvid.VersionLocalID, planeStr, scalingStr, coor
 	if err != nil {
 		return nil, fmt.Errorf("Illegal tile coordinate: %s (%s)", coordStr, err.Error())
 	}
-	index := &IndexTile{shape, uint8(scaling), tileCoord}
+	indexZYX := dvid.IndexZYX{tileCoord.Value(0), tileCoord.Value(1), tileCoord.Value(2)}
+	index := &IndexTile{indexZYX, shape, Scaling(scaling)}
 
 	// Retrieve the tile from datastore
 	key := &datastore.DataKey{d.DatasetID(), d.ID, versionID, index}
@@ -412,8 +505,12 @@ func (d *Data) GetTile(versionID dvid.VersionLocalID, planeStr, scalingStr, coor
 	}
 	if data == nil {
 		if d.Placeholder {
+			scaleSpec, ok := d.Levels[Scaling(scaling)]
+			if !ok {
+				return nil, fmt.Errorf("Could not find tiles at given scale %d", scaling)
+			}
 			message := fmt.Sprintf("%s Tile coord %s @ scale %d", shape, tileCoord, scaling)
-			return dvid.PlaceholderImage(shape, d.Size, d.Size, message)
+			return dvid.PlaceholderImage(shape, scaleSpec.TileSize, message)
 		}
 		return nil, nil // Not found
 	}
@@ -427,38 +524,6 @@ func (d *Data) GetTile(versionID dvid.VersionLocalID, planeStr, scalingStr, coor
 	dvid.PrintNonZero("Retrieved tile", []byte(img.Gray.Pix))
 	return img.Get(), nil
 }
-
-func interpConfig(config dvid.Config) (resize.InterpolationFunction, error) {
-	s, found, err := config.GetString("interpolation")
-	if err != nil {
-		return nil, err
-	}
-	if !found {
-		return resize.Bicubic, nil
-	}
-	switch s {
-	case "NearestNeighbor":
-		return resize.NearestNeighbor, nil
-	case "Bilinear":
-		return resize.Bilinear, nil
-	case "Bicubic":
-		return resize.Bicubic, nil
-	case "MitchellNetravali":
-		return resize.MitchellNetravali, nil
-	case "Lanczos2Lut":
-		return resize.Lanczos2Lut, nil
-	case "Lanczos2":
-		return resize.Lanczos2, nil
-	case "Lanczos3Lut":
-		return resize.Lanczos3Lut, nil
-	case "Lanczos3":
-		return resize.Lanczos3, nil
-	default:
-		return nil, fmt.Errorf("Unrecognized interpolation specified '%s'", s)
-	}
-}
-
-type keyFunc func(scaling uint8, tileX, tileY int32) *datastore.DataKey
 
 // pow2 returns the power of 2 with the passed exponent.
 func pow2(exp uint8) int {
@@ -482,229 +547,151 @@ func log2(value int32) uint8 {
 	}
 }
 
-// Reformats an image.RGBA64 into another image type depending on the source image's type.
-// Also compacts the pixel array if offsets and larger amount of data is used than needed
-// when doing conversion from RGBA64.
-func (d *Data) reformatToSource(colorImg, orig image.Image) (image.Image, error) {
-	srcImg := colorImg.(*image.RGBA64)
-	srcRect := colorImg.Bounds()
-	dx := srcRect.Dx()
-	dy := srcRect.Dy()
-	dstRect := image.Rect(0, 0, dx, dy)
-	switch orig.(type) {
-	case *image.RGBA64:
-		return colorImg, nil // No change needed
-	case *image.RGBA:
-		dst := image.NewRGBA(dstRect)
-		for y := srcRect.Min.Y; y < srcRect.Max.Y; y++ {
-			for x := srcRect.Min.X; x < srcRect.Max.X; x++ {
-				c := color.RGBAModel.Convert(srcImg.At(x, y))
-				dst.Set(x, y, c)
-			}
-		}
-		return dst, nil
+type outFunc func(index IndexTile, img *dvid.Image) error
 
-	case *image.Gray:
-		dst := image.NewGray(dstRect)
-		dstI := 0
-		for y := srcRect.Min.Y; y < srcRect.Max.Y; y++ {
-			for x := srcRect.Min.X; x < srcRect.Max.X; x++ {
-				c := color.GrayModel.Convert(srcImg.At(x, y))
-				dst.Pix[dstI] = c.(color.Gray).Y
-				dstI++
-			}
-		}
-		return dst, nil
+// Construct all tiles for an image with offset and send to out function.  extractTiles assumes
+// the image and offset are in the XY plane.
+func (d *Data) extractTiles(v voxels.ExtHandler, offset dvid.Point, scaling Scaling, outF outFunc) error {
 
-	case *image.Gray16:
-		dst := image.NewGray(dstRect)
-		for y := srcRect.Min.Y; y < srcRect.Max.Y; y++ {
-			for x := srcRect.Min.X; x < srcRect.Max.X; x++ {
-				c := color.Gray16Model.Convert(srcImg.At(x, y))
-				dst.Set(x, y, c)
-			}
-		}
-		return dst, nil
-	default:
-		return nil, fmt.Errorf("Cannot modify resized %s into %s",
-			reflect.TypeOf(colorImg), reflect.TypeOf(orig))
+	levelSpec, found := d.Levels[scaling]
+	if !found {
+		return fmt.Errorf("Could not extract tiles for unspecified scale level %d", scaling)
 	}
-}
-
-// Construct all tiles for an image with offset and put in datastore.  This function assumes
-// the image and offset are in the XY plane.  It also assumes that img has dimensions that
-// are a multiple of tile size so generated tiles are full-sized even along edges.
-// Returns the # of extracted tiles.
-// TODO: Currently only returns 8-bit grayscale tiles.
-func (d *Data) extractTiles(img image.Image, interp resize.InterpolationFunction,
-	off dvid.Point2d, f keyFunc, scaling uint8) error {
-
-	db := server.StorageEngine()
-
-	// The reduction factor is 2^scaling.
-	reduction := pow2(scaling)
-	var resizedRGBA64, downres image.Image
-	if scaling == 0 {
-		downres = img
-	} else {
-		width := uint(img.Bounds().Dx() / reduction)
-		height := uint(img.Bounds().Dy() / reduction)
-		// TODO -- Change resize to be more efficient in handling 8 and 16-bit grays
-		//         rather than converting everything to RGBA.
-		resizedRGBA64 = resize.Resize(width, height, img, interp)
-		var err error
-		downres, err = d.reformatToSource(resizedRGBA64, img)
-		if err != nil {
-			return err
-		}
+	srcW, srcH, err := v.DataShape().GetSize2D(v.Size())
+	if err != nil {
+		return err
 	}
-
-	// Determine the bounds in tile space for this scale.
-	offset := dvid.Point2d{
-		off[0] / int32(reduction),
-		off[1] / int32(reduction),
+	tileW, tileH, err := v.DataShape().GetSize2D(levelSpec.TileSize)
+	if err != nil {
+		return err
 	}
-	imgSize := dvid.RectSize(downres.Bounds())
-	lastPt := dvid.Point2d{offset[0] + imgSize[0] - 1, offset[1] + imgSize[1] - 1}
-	tileBegX := offset[0] / d.Size
-	tileEndX := lastPt[0] / d.Size
-	tileBegY := offset[1] / d.Size
-	tileEndY := lastPt[1] / d.Size
+	tileCoord, err := v.DataShape().ChunkPoint3d(offset, levelSpec.TileSize)
+	if err != nil {
+		return err
+	}
 
 	// Split image into tiles and store into datastore.
 	src := new(dvid.Image)
-	src.Set(downres)
-	y0 := tileBegY * d.Size
-	y1 := y0 + d.Size
-	for ty := tileBegY; ty <= tileEndY; ty++ {
-		x0 := tileBegX * d.Size
-		x1 := x0 + d.Size
-		for tx := tileBegX; tx <= tileEndX; tx++ {
+	img, err := v.GoImage()
+	if err != nil {
+		return err
+	}
+	src.Set(img)
+	var x0, y0, x1, y1 int32
+	for y1 = tileH - 1; y1 < srcH; y1 += tileH {
+		x0 = 0
+		for x1 = tileW - 1; x1 < srcW; x1 += tileW {
 			tileRect := image.Rect(int(x0), int(y0), int(x1), int(y1))
 			tile, err := src.SubImage(tileRect)
 			if err != nil {
 				return err
 			}
-			serialization, err := tile.Serialize(dvid.Snappy, dvid.CRC32)
+			tileIndex := NewIndexTile(dvid.IndexZYX(tileCoord), v.DataShape(), scaling)
+			err = outF(tileIndex, tile)
 			if err != nil {
 				return err
 			}
-
-			key := f(scaling, tx, ty)
-			err = db.Put(key, serialization)
-			if err != nil {
-				return err
-			}
-
-			x0 += d.Size
-			x1 += d.Size
+			x0 += tileW
+			tileCoord[0]++
 		}
-		y0 += d.Size
-		y1 += d.Size
+		y0 += tileH
+		tileCoord[1]++
 	}
 	return nil
 }
 
-func (d *Data) getXYKeyFunc(versionID dvid.VersionLocalID, z int32) keyFunc {
-	return func(scaling uint8, tileX, tileY int32) *datastore.DataKey {
-		index := IndexTile{dvid.XY, scaling, dvid.Point3d{tileX, tileY, z}}
-		return &datastore.DataKey{d.DatasetID(), d.ID, versionID, index}
+func (d *Data) getXYPutFunc(versionID dvid.VersionLocalID, z int32) (outFunc, error) {
+	db, err := server.KeyValueSetter()
+	if err != nil {
+		return nil, err
 	}
+	return func(index IndexTile, tile *dvid.Image) error {
+		serialization, err := tile.Serialize(dvid.Snappy, dvid.CRC32)
+		if err != nil {
+			return err
+		}
+		key := &datastore.DataKey{d.DatasetID(), d.ID, versionID, index}
+		return db.Put(key, serialization)
+	}, nil
 }
 
-func (d *Data) getXZKeyFunc(versionID dvid.VersionLocalID, y int32) keyFunc {
-	return func(scaling uint8, tileX, tileY int32) *datastore.DataKey {
-		index := IndexTile{dvid.XZ, scaling, dvid.Point3d{tileX, y, tileY}}
-		return &datastore.DataKey{d.DatasetID(), d.ID, versionID, index}
+func (d *Data) getXZPutFunc(versionID dvid.VersionLocalID, y int32) (outFunc, error) {
+	db, err := server.KeyValueSetter()
+	if err != nil {
+		return nil, err
 	}
+	return func(index IndexTile, tile *dvid.Image) error {
+		serialization, err := tile.Serialize(dvid.Snappy, dvid.CRC32)
+		if err != nil {
+			return err
+		}
+		key := &datastore.DataKey{d.DatasetID(), d.ID, versionID, index}
+		return db.Put(key, serialization)
+	}, nil
 }
 
-func (d *Data) getYZKeyFunc(versionID dvid.VersionLocalID, x int32) keyFunc {
-	return func(scaling uint8, tileX, tileY int32) *datastore.DataKey {
-		index := IndexTile{dvid.YZ, scaling, dvid.Point3d{x, tileX, tileY}}
-		return &datastore.DataKey{d.DatasetID(), d.ID, versionID, index}
+func (d *Data) getYZPutFunc(versionID dvid.VersionLocalID, x int32) (outFunc, error) {
+	db, err := server.KeyValueSetter()
+	if err != nil {
+		return nil, err
 	}
+	return func(index IndexTile, tile *dvid.Image) error {
+		serialization, err := tile.Serialize(dvid.Snappy, dvid.CRC32)
+		if err != nil {
+			return err
+		}
+		key := &datastore.DataKey{d.DatasetID(), d.ID, versionID, index}
+		return db.Put(key, serialization)
+	}, nil
 }
 
-func (d *Data) ConstructTiles(uuidStr string, config dvid.Config) error {
+func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, config dvid.Config) error {
+
+	// Save the current tile specification
 	service := server.DatastoreService()
 	uuid, _, versionID, err := service.NodeIDFromString(uuidStr)
 	if err != nil {
 		return err
 	}
-
+	d.Levels = tileSpec
+	if err := service.SaveDataset(uuid); err != nil {
+		return err
+	}
 	src, err := getSourceVoxels(uuid, d.Source)
 	if err != nil {
 		return err
 	}
 
-	// Get voxel extents of volume.
-	minPt := src.MinIndex.(dvid.PointIndexer).FirstPoint(src.BlockSize()).(dvid.Point3d)
-	maxPt := src.MaxIndex.(dvid.PointIndexer).LastPoint(src.BlockSize()).(dvid.Point3d)
-	fmt.Printf("MinIndex Z: %d, MaxIndex Z: %d\n", src.MinIndex.Value(2), src.MaxIndex.Value(2))
-	fmt.Printf("minPt: %s, maxPt: %s, blockSize: %s\n", minPt, maxPt, src.BlockSize())
-
-	// Determine covering volume size that is multiple of tile size.
-	tileSize := dvid.Point3d{d.Size, d.Size, d.Size}
-	tileMinPt := minPt.Div(tileSize)
-	tileMaxPt := maxPt.Div(tileSize)
-	coverMinPt := tileMinPt.Mult(tileSize)
-	coverMaxPt := dvid.Point3d{
-		(tileMaxPt.Value(0)+1)*d.Size - 1,
-		(tileMaxPt.Value(1)+1)*d.Size - 1,
-		(tileMaxPt.Value(2)+1)*d.Size - 1,
-	}
-
-	// Determine maximum scale levels based on the longest dimension.
-	tilesInX := tileMaxPt.Value(0) - tileMinPt.Value(0) + 1
-	tilesInY := tileMaxPt.Value(1) - tileMinPt.Value(1) + 1
-	tilesInZ := tileMaxPt.Value(2) - tileMinPt.Value(2) + 1
-
-	maxAnyDim := tilesInX
-	if maxAnyDim < tilesInY {
-		maxAnyDim = tilesInY
-	}
-	if maxAnyDim < tilesInZ {
-		maxAnyDim = tilesInZ
-	}
-	d.MaxScale = log2(maxAnyDim)
-
-	// Get type of interpolation
-	interp, err := interpConfig(config)
-	if err != nil {
-		return err
-	}
+	// Expand min and max points to coincide with full tile boundaries of highest resolution.
+	hiresSpec := tileSpec[Scaling(0)]
+	minTileCoord := src.MinPoint.(dvid.Chunkable).Chunk(hiresSpec.TileSize)
+	maxTileCoord := src.MaxPoint.(dvid.Chunkable).Chunk(hiresSpec.TileSize)
+	minPt := minTileCoord.MinPoint(hiresSpec.TileSize)
+	maxPt := maxTileCoord.MaxPoint(hiresSpec.TileSize)
+	sizeVolume := maxPt.Sub(minPt).AddScalar(1)
 
 	// Get the planes we should tile.
 	planes, err := config.GetShapes("planes", ";")
 	if planes == nil {
-		// If no planes are specified, construct tiles for 3 orthogonal planes.
+		// If no planes are specified, construct quadtree for 3 orthogonal planes.
 		planes = []dvid.DataShape{dvid.XY, dvid.XZ, dvid.YZ}
 	}
 
 	for _, plane := range planes {
-		var img image.Image
 		startTime := time.Now()
-		offset := coverMinPt.Duplicate().(dvid.Point3d)
+		offset := minPt.Duplicate()
 
 		switch {
 
 		case plane.Equals(dvid.XY):
-			size := dvid.Point2d{
-				coverMaxPt[0] - offset[0] + 1,
-				coverMaxPt[1] - offset[1] + 1,
+			width, height, err := plane.GetSize2D(sizeVolume)
+			if err != nil {
+				return err
 			}
-			maxTiles := tilesInX
-			if maxTiles < tilesInY {
-				maxTiles = tilesInY
-			}
-			maxScale := log2(maxTiles)
-
-			dvid.Log(dvid.Debug, "Generating XY tiles for Z %d -> %d\n", minPt[2], maxPt[2])
-			for z := minPt[2]; z <= maxPt[2]; z++ {
+			for z := minPt.Value(2); z <= maxPt.Value(2); z++ {
 				sliceTime := time.Now()
-				offset[2] = z
-				slice, err := dvid.NewOrthogSlice(dvid.XY, offset, size)
+				offset = offset.Modify(map[uint8]int32{2: z})
+				slice, err := dvid.NewOrthogSlice(dvid.XY, offset, dvid.Point2d{width, height})
 				if err != nil {
 					return err
 				}
@@ -712,17 +699,22 @@ func (d *Data) ConstructTiles(uuidStr string, config dvid.Config) error {
 				if err != nil {
 					return err
 				}
-				img, err = voxels.GetImage(uuid, src, v)
-				if err != nil {
+				if err = voxels.SetVoxels(uuid, src, v); err != nil {
 					return err
 				}
 				// Iterate through the different scales, extracting tiles at each resolution.
-				extractOffset := dvid.Point2d{offset[0], offset[1]}
-				keyF := d.getXYKeyFunc(versionID, z)
-				for scaling := uint8(0); scaling <= maxScale; scaling++ {
-					err := d.extractTiles(img, interp, extractOffset, keyF, scaling)
+				for scaling, levelSpec := range tileSpec {
+					outF, err := d.getXYPutFunc(versionID, z)
 					if err != nil {
 						return err
+					}
+					if err := d.extractTiles(v, offset, scaling, outF); err != nil {
+						return err
+					}
+					if int(scaling) < len(tileSpec)-1 {
+						if err := v.DownRes(levelSpec.levelMag); err != nil {
+							return err
+						}
 					}
 				}
 				dvid.ElapsedTime(dvid.Debug, sliceTime, "XY Tile @ Z = %d", z)
@@ -730,21 +722,14 @@ func (d *Data) ConstructTiles(uuidStr string, config dvid.Config) error {
 			dvid.ElapsedTime(dvid.Debug, startTime, "Total time to generate XY Tiles")
 
 		case plane.Equals(dvid.XZ):
-			size := dvid.Point2d{
-				coverMaxPt[0] - offset[0] + 1,
-				coverMaxPt[2] - offset[2] + 1,
+			width, height, err := plane.GetSize2D(sizeVolume)
+			if err != nil {
+				return err
 			}
-			maxTiles := tilesInX
-			if maxTiles < tilesInZ {
-				maxTiles = tilesInZ
-			}
-			maxScale := log2(maxTiles)
-
-			dvid.Log(dvid.Debug, "Generating XZ tiles for Y %d -> %d\n", minPt[1], maxPt[1])
-			for y := minPt[1]; y <= maxPt[1]; y++ {
+			for y := minPt.Value(1); y <= maxPt.Value(1); y++ {
 				sliceTime := time.Now()
-				offset[1] = y
-				slice, err := dvid.NewOrthogSlice(dvid.XZ, offset, size)
+				offset = offset.Modify(map[uint8]int32{1: y})
+				slice, err := dvid.NewOrthogSlice(dvid.XZ, offset, dvid.Point2d{width, height})
 				if err != nil {
 					return err
 				}
@@ -752,17 +737,22 @@ func (d *Data) ConstructTiles(uuidStr string, config dvid.Config) error {
 				if err != nil {
 					return err
 				}
-				img, err = voxels.GetImage(uuid, src, v)
-				if err != nil {
+				if err = voxels.SetVoxels(uuid, src, v); err != nil {
 					return err
 				}
 				// Iterate through the different scales, extracting tiles at each resolution.
-				extractOffset := dvid.Point2d{offset[0], offset[2]}
-				keyF := d.getXZKeyFunc(versionID, y)
-				for scaling := uint8(0); scaling <= maxScale; scaling++ {
-					err := d.extractTiles(img, interp, extractOffset, keyF, scaling)
+				for scaling, levelSpec := range tileSpec {
+					outF, err := d.getXZPutFunc(versionID, y)
 					if err != nil {
 						return err
+					}
+					if err := d.extractTiles(v, offset, scaling, outF); err != nil {
+						return err
+					}
+					if int(scaling) < len(tileSpec)-1 {
+						if err := v.DownRes(levelSpec.levelMag); err != nil {
+							return err
+						}
 					}
 				}
 				dvid.ElapsedTime(dvid.Debug, sliceTime, "XZ Tile @ Y = %d", y)
@@ -770,21 +760,14 @@ func (d *Data) ConstructTiles(uuidStr string, config dvid.Config) error {
 			dvid.ElapsedTime(dvid.Debug, startTime, "Total time to generate XZ Tiles")
 
 		case plane.Equals(dvid.YZ):
-			size := dvid.Point2d{
-				coverMaxPt[1] - offset[1] + 1,
-				coverMaxPt[2] - offset[2] + 1,
+			width, height, err := plane.GetSize2D(sizeVolume)
+			if err != nil {
+				return err
 			}
-			maxTiles := tilesInZ
-			if maxTiles < tilesInY {
-				maxTiles = tilesInY
-			}
-			maxScale := log2(maxTiles)
-
-			dvid.Log(dvid.Debug, "Generating YZ tiles for X %d -> %d\n", minPt[0], maxPt[0])
-			for x := minPt[0]; x <= maxPt[0]; x++ {
+			for x := minPt.Value(0); x <= maxPt.Value(0); x++ {
 				sliceTime := time.Now()
-				offset[0] = x
-				slice, err := dvid.NewOrthogSlice(dvid.YZ, offset, size)
+				offset = offset.Modify(map[uint8]int32{0: x})
+				slice, err := dvid.NewOrthogSlice(dvid.YZ, offset, dvid.Point2d{width, height})
 				if err != nil {
 					return err
 				}
@@ -792,17 +775,22 @@ func (d *Data) ConstructTiles(uuidStr string, config dvid.Config) error {
 				if err != nil {
 					return err
 				}
-				img, err = voxels.GetImage(uuid, src, v)
-				if err != nil {
+				if err = voxels.SetVoxels(uuid, src, v); err != nil {
 					return err
 				}
 				// Iterate through the different scales, extracting tiles at each resolution.
-				extractOffset := dvid.Point2d{offset[1], offset[2]}
-				keyF := d.getYZKeyFunc(versionID, x)
-				for scaling := uint8(0); scaling <= maxScale; scaling++ {
-					err := d.extractTiles(img, interp, extractOffset, keyF, scaling)
+				for scaling, levelSpec := range tileSpec {
+					outF, err := d.getYZPutFunc(versionID, x)
 					if err != nil {
 						return err
+					}
+					if err := d.extractTiles(v, offset, scaling, outF); err != nil {
+						return err
+					}
+					if int(scaling) < len(tileSpec)-1 {
+						if err := v.DownRes(levelSpec.levelMag); err != nil {
+							return err
+						}
 					}
 				}
 				dvid.ElapsedTime(dvid.Debug, sliceTime, "YZ Tile @ X = %d", x)

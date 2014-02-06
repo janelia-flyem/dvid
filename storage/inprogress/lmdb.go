@@ -1,22 +1,21 @@
-// +build hyperleveldb
+// +build lmdb
 
 package storage
 
 import (
 	"bytes"
+	_ "fmt"
+	"log"
 
 	"github.com/janelia-flyem/dvid/dvid"
-	humanize "github.com/janelia-flyem/go/go-humanize"
-	"github.com/janelia-flyem/go/hyperleveldb"
+	"github.com/janelia-flyem/go/gomdb"
 )
 
 const (
-	Version = "HyperLevelDB"
-
-	Driver = "github.com/janelia-flyem/go/hyperleveldb"
+	Version = "github.com/janelia-flyem/go/gomdb"
 
 	// Default size of LRU cache that caches frequently used uncompressed blocks.
-	DefaultCacheSize = 1024 * dvid.Mega
+	DefaultCacheSize = 128 * dvid.Mega
 
 	// Default # bits for Bloom Filter.  The filter reduces the number of unnecessary
 	// disk reads needed for Get() calls by a large factor.
@@ -43,7 +42,7 @@ const (
 	// so you may wish to adjust this parameter to control memory usage.
 	// Also, a larger write buffer will result in a longer recovery time
 	// the next time the database is opened.
-	DefaultWriteBufferSize = 512 * dvid.Mega
+	DefaultWriteBufferSize = 256 * dvid.Mega
 
 	// Write Options
 
@@ -72,135 +71,54 @@ const (
 	DefaultDontFillCache = false
 )
 
-type Ranges []levigo.Range
-
-type Sizes []uint64
-
 // --- The Leveldb Implementation must satisfy a Engine interface ----
 
 type LevelDB struct {
 	// Directory of datastore
 	directory string
 
-	// Config at time of Open()
-	config dvid.Config
+	// Settings for the leveldb
+	settings map[string]interface{}
 
+	// Options at time of Open()
 	options *leveldbOptions
-	ldb     *levigo.DB
+
+	// Leveldb connection
+	ldb *levigo.DB
 }
 
-// NewStore returns a leveldb backend.
-func NewStore(path string, create bool, config dvid.Config) (Engine, error) {
-	dvid.StartCgo()
-	defer dvid.StopCgo()
-
-	opt := &leveldbOptions{
-		Options:      levigo.NewOptions(),
-		ReadOptions:  levigo.NewReadOptions(),
-		WriteOptions: levigo.NewWriteOptions(),
-		env:          levigo.NewDefaultEnv(),
+// NewStore returns a lmdb backend.
+func NewStore(path string, create bool, options *Options) (Engine, error) {
+	// Make sure user has specified the database size.
+	sizeGB, found, err := options.Settings.GetInt("size")
+	if err != nil {
+		return nil, err
 	}
-	opt.WriteOptions.SetSync(DefaultSync) // Huge performance penalty to set sync to true
+	if !found {
+		return nil, fmt.Errorf("Cannot create Lightning MDB database without 'size' setting in GB.")
+	}
 
-	leveldb := &LevelDB{
+	ldbOptions := options.initBySettings(create)
+	ldbDB, err := levigo.Open(path, options.ldb().Options)
+	if err != nil {
+		return nil, err
+	}
+	db := &LevelDB{
 		directory: path,
-		config:    config,
-		options:   opt,
+		settings:  options.Settings,
+		options:   ldbOptions,
+		ldb:       ldbDB,
 	}
-	// Set flags based on create parameter
-	opt.SetCreateIfMissing(create)
-	opt.SetErrorIfExists(create)
-
-	// Create associated data structures with default values
-	bloomBits, found, err := config.GetInt("BloomFilterBitsPerKey")
-	if err != nil {
-		return nil, err
-	}
-	if !found {
-		bloomBits = DefaultBloomBits
-	}
-	if create {
-		opt.SetBloomFilterBitsPerKey(bloomBits)
-	}
-
-	cacheSize, found, err := config.GetInt("CacheSize")
-	if err != nil {
-		return nil, err
-	}
-	if !found {
-		cacheSize = DefaultCacheSize
-	} else {
-		cacheSize *= dvid.Mega
-	}
-	if create {
-		dvid.Log(dvid.Normal, "leveldb cache size: %s\n",
-			humanize.Bytes(uint64(cacheSize)))
-		opt.SetLRUCacheSize(cacheSize)
-	}
-
-	writeBufferSize, found, err := config.GetInt("WriteBufferSize")
-	if err != nil {
-		return nil, err
-	}
-	if !found {
-		writeBufferSize = DefaultWriteBufferSize
-	} else {
-		writeBufferSize *= dvid.Mega
-	}
-	if create {
-		dvid.Log(dvid.Normal, "leveldb write buffer size: %s\n",
-			humanize.Bytes(uint64(writeBufferSize)))
-		opt.SetWriteBufferSize(writeBufferSize)
-	}
-
-	maxOpenFiles, found, err := config.GetInt("MaxOpenFiles")
-	if err != nil {
-		return nil, err
-	}
-	if !found {
-		maxOpenFiles = DefaultMaxOpenFiles
-	}
-	if create {
-		opt.SetMaxOpenFiles(maxOpenFiles)
-	}
-
-	blockSize, found, err := config.GetInt("BlockSize")
-	if err != nil {
-		return nil, err
-	}
-	if !found {
-		blockSize = DefaultBlockSize
-	}
-	if create {
-		opt.SetBlockSize(blockSize)
-	}
-
-	opt.SetInfoLog(nil)
-	opt.SetParanoidChecks(false)
-	//opt.SetBlockRestartInterval(8)
-
-	// Don't bother with compression on leveldb side because it will be
-	// selectively applied on DVID side.  We may return and then transmit
-	// Snappy-compressed data without ever decompressing on server-side.
-	opt.SetCompression(levigo.NoCompression) // (levigo.SnappyCompression)
-
-	ldb, err := levigo.Open(path, opt.Options)
-	if err != nil {
-		return nil, err
-	}
-	leveldb.ldb = ldb
-
-	return leveldb, nil
+	return db, nil
 }
 
 // ---- Engine interface ----
 
-func (db *LevelDB) GetName() string {
-	return "HyperLevelDB + levigo driver"
-}
-func (db *LevelDB) GetConfig() dvid.Config {
-	return db.config
-}
+func (db *LevelDB) IsBatcher() bool    { return true }
+func (db *LevelDB) IsBulkIniter() bool { return true }
+func (db *LevelDB) IsBulkWriter() bool { return true }
+
+func (db *LevelDB) GetOptions() *Options { return &Options{db.settings, db.options} }
 
 // ---- KeyValueDB interface -----
 
@@ -231,85 +149,40 @@ func (db *LevelDB) Close() {
 	}
 }
 
-// ---- KeyValueGetter interface ------
-
 // Get returns a value given a key.
 func (db *LevelDB) Get(k Key) (v []byte, err error) {
-	dvid.StartCgo()
 	ro := db.options.ReadOptions
 	v, err = db.ldb.Get(ro, k.Bytes())
-	dvid.StopCgo()
-	StoreValueBytesRead <- len(v)
+	StoreBytesRead <- len(v)
 	return
 }
 
 // GetRange returns a range of values spanning (kStart, kEnd) keys.  These key-value
 // pairs will be sorted in ascending key order.
 func (db *LevelDB) GetRange(kStart, kEnd Key) (values []KeyValue, err error) {
-	dvid.StartCgo()
 	ro := levigo.NewReadOptions()
+	//ro.SetFillCache(false)
 	it := db.ldb.NewIterator(ro)
-	defer func() {
-		it.Close()
-		dvid.StopCgo()
-	}()
+	defer it.Close()
 
 	values = []KeyValue{}
 	it.Seek(kStart.Bytes())
 	endBytes := kEnd.Bytes()
+	//	fmt.Printf("levigo.GetRange: %x -> %x\n", kStart.Bytes(), endBytes)
 	for {
 		if it.Valid() {
-			itKey := it.Key()
-			StoreKeyBytesRead <- len(itKey)
-			if bytes.Compare(itKey, endBytes) > 0 {
+			value := it.Value()
+			StoreBytesRead <- len(value)
+			if bytes.Compare(it.Key(), endBytes) > 0 {
 				return
 			}
-			itValue := it.Value()
-			StoreValueBytesRead <- len(itValue)
-
-			// Convert byte representation of key to storage.Key
+			//			fmt.Printf("          Valid: %x\n", it.Key())
 			var key Key
-			key, err = kStart.BytesToKey(itKey)
+			key, err = kStart.BytesToKey(it.Key())
 			if err != nil {
 				return
 			}
-			values = append(values, KeyValue{key, itValue})
-			it.Next()
-		} else {
-			err = it.GetError()
-			return
-		}
-	}
-}
-
-// KeysInRange returns a range of present keys spanning (kStart, kEnd).  Values
-// associated with the keys are not read.
-func (db *LevelDB) KeysInRange(kStart, kEnd Key) (keys []Key, err error) {
-	dvid.StartCgo()
-	ro := levigo.NewReadOptions()
-	it := db.ldb.NewIterator(ro)
-	defer func() {
-		it.Close()
-		dvid.StopCgo()
-	}()
-
-	keys = []Key{}
-	it.Seek(kStart.Bytes())
-	endBytes := kEnd.Bytes()
-	for {
-		if it.Valid() {
-			itKey := it.Key()
-			StoreKeyBytesRead <- len(itKey)
-			if bytes.Compare(itKey, endBytes) > 0 {
-				return
-			}
-			// Convert byte representation of key to storage.Key
-			var key Key
-			key, err = kStart.BytesToKey(itKey)
-			if err != nil {
-				return
-			}
-			keys = append(keys, key)
+			values = append(values, KeyValue{key, value})
 			it.Next()
 		} else {
 			err = it.GetError()
@@ -320,27 +193,24 @@ func (db *LevelDB) KeysInRange(kStart, kEnd Key) (keys []Key, err error) {
 
 // ProcessRange sends a range of key-value pairs to chunk handlers.
 func (db *LevelDB) ProcessRange(kStart, kEnd Key, op *ChunkOp, f func(*Chunk)) error {
-	dvid.StartCgo()
 	ro := levigo.NewReadOptions()
+	//ro.SetFillCache(false)
 	it := db.ldb.NewIterator(ro)
-	defer func() {
-		it.Close()
-		dvid.StopCgo()
-	}()
+	defer it.Close()
 
 	endBytes := kEnd.Bytes()
 	it.Seek(kStart.Bytes())
+	//	fmt.Printf("levigo.ProcessRange: %x -> %x\n", kStart.Bytes(), endBytes)
 	for {
 		if it.Valid() {
-			itValue := it.Value()
-			StoreValueBytesRead <- len(itValue)
-			itKey := it.Key()
-			StoreKeyBytesRead <- len(itKey)
-			if bytes.Compare(itKey, endBytes) > 0 {
+			value := it.Value()
+			StoreBytesRead <- len(value)
+			if bytes.Compare(it.Key(), endBytes) > 0 {
 				return nil
 			}
-			// Convert byte representation of key to storage.Key
-			key, err := kStart.BytesToKey(itKey)
+			//			fmt.Printf("              Valid: %x\n", it.Key())
+			// Send to channel
+			key, err := kStart.BytesToKey(it.Key())
 			if err != nil {
 				return err
 			}
@@ -350,7 +220,7 @@ func (db *LevelDB) ProcessRange(kStart, kEnd Key, op *ChunkOp, f func(*Chunk)) e
 			}
 			chunk := &Chunk{
 				op,
-				KeyValue{key, itValue},
+				KeyValue{key, value},
 			}
 			f(chunk)
 
@@ -363,50 +233,28 @@ func (db *LevelDB) ProcessRange(kStart, kEnd Key, op *ChunkOp, f func(*Chunk)) e
 
 // Put writes a value with given key.
 func (db *LevelDB) Put(k Key, v []byte) error {
-	dvid.StartCgo()
 	wo := db.options.WriteOptions
-	kBytes := k.Bytes()
-	err := db.ldb.Put(wo, kBytes, v)
-	dvid.StopCgo()
-	StoreKeyBytesWritten <- len(kBytes)
-	StoreValueBytesWritten <- len(v)
+	err := db.ldb.Put(wo, k.Bytes(), v)
+	StoreBytesWritten <- len(v)
 	return err
 }
-
-// ---- KeyValueSetter interface ------
 
 // PutRange puts key/value pairs that have been sorted in sequential key order.
 // Current implementation in levigo driver simply does a batch write.
 func (db *LevelDB) PutRange(values []KeyValue) error {
-	dvid.StartCgo()
 	wo := db.options.WriteOptions
 	wb := levigo.NewWriteBatch()
-	defer func() {
-		wb.Close()
-		dvid.StopCgo()
-	}()
-	var keyBytesPut, valueBytesPut int
+	defer wb.Close()
 	for _, kv := range values {
-		kBytes := kv.K.Bytes()
-		wb.Put(kBytes, kv.V)
-		keyBytesPut += len(kBytes)
-		valueBytesPut += len(kv.V)
+		wb.Put(kv.K.Bytes(), kv.V)
 	}
-	err := db.ldb.Write(wo, wb)
-	if err != nil {
-		return err
-	}
-	StoreKeyBytesWritten <- keyBytesPut
-	StoreValueBytesWritten <- valueBytesPut
-	return nil
+	return db.ldb.Write(wo, wb)
 }
 
 // Delete removes a value with given key.
 func (db *LevelDB) Delete(k Key) (err error) {
-	dvid.StartCgo()
 	wo := db.options.WriteOptions
 	err = db.ldb.Delete(wo, k.Bytes())
-	dvid.StopCgo()
 	return
 }
 
@@ -420,43 +268,30 @@ type goBatch struct {
 
 // NewBatch returns an implementation that allows batch writes
 func (db *LevelDB) NewBatch() Batch {
-	dvid.StartCgo()
-	defer dvid.StopCgo()
 	return &goBatch{levigo.NewWriteBatch(), db.options.WriteOptions, db.ldb}
 }
 
 // --- Batch interface ---
 
-func (batch *goBatch) Commit() error {
-	dvid.StartCgo()
-	defer dvid.StopCgo()
-	return batch.ldb.Write(batch.wo, batch.WriteBatch)
+func (batch *goBatch) Commit() (err error) {
+	err = batch.ldb.Write(batch.wo, batch.WriteBatch)
+	return
 }
 
 func (batch *goBatch) Delete(k Key) {
-	dvid.StartCgo()
-	defer dvid.StopCgo()
 	batch.WriteBatch.Delete(k.Bytes())
 }
 
 func (batch *goBatch) Put(k Key, v []byte) {
-	dvid.StartCgo()
-	defer dvid.StopCgo()
-	kBytes := k.Bytes()
-	StoreKeyBytesWritten <- len(kBytes)
-	StoreValueBytesWritten <- len(v)
-	batch.WriteBatch.Put(kBytes, v)
+	StoreBytesWritten <- len(v)
+	batch.WriteBatch.Put(k.Bytes(), v)
 }
 
 func (batch *goBatch) Clear() {
-	dvid.StartCgo()
-	defer dvid.StopCgo()
 	batch.WriteBatch.Clear()
 }
 
 func (batch *goBatch) Close() {
-	dvid.StartCgo()
-	defer dvid.StopCgo()
 	batch.WriteBatch.Close()
 }
 
@@ -478,6 +313,72 @@ type leveldbOptions struct {
 	cache  *levigo.Cache
 	filter *levigo.FilterPolicy
 	env    *levigo.Env
+}
+
+// Cast the generic options interface{} to a leveldbOptions struct.
+func (opt *Options) ldb() *leveldbOptions {
+	ldbOptions, ok := opt.options.(*leveldbOptions)
+	if !ok {
+		log.Fatalf("getLeveldbOptions() -- bad cast!\n")
+	}
+	return ldbOptions
+}
+
+// Initialize Options using the settings.
+func (opt *Options) initBySettings(create bool) *leveldbOptions {
+	ldbOptions := &leveldbOptions{
+		Options:      levigo.NewOptions(),
+		ReadOptions:  levigo.NewReadOptions(),
+		WriteOptions: levigo.NewWriteOptions(),
+		env:          levigo.NewDefaultEnv(),
+	}
+	opt.options = ldbOptions
+
+	// Set flags based on create parameter
+	ldbOptions.Options.SetCreateIfMissing(create)
+	ldbOptions.Options.SetErrorIfExists(create)
+
+	// Create associated data structures with default values
+	bloomBits, ok := opt.IntSetting("BloomFilterBitsPerKey")
+	if !ok {
+		bloomBits = DefaultBloomBits
+	}
+	ldbOptions.SetBloomFilterBitsPerKey(bloomBits)
+
+	cacheSize, ok := opt.IntSetting("CacheSize")
+	if !ok {
+		cacheSize = DefaultCacheSize
+	}
+	ldbOptions.SetLRUCacheSize(cacheSize)
+
+	writeBufferSize, ok := opt.IntSetting("WriteBufferSize")
+	if !ok {
+		writeBufferSize = DefaultWriteBufferSize
+	}
+	ldbOptions.SetWriteBufferSize(writeBufferSize)
+
+	maxOpenFiles, ok := opt.IntSetting("MaxOpenFiles")
+	if !ok {
+		maxOpenFiles = DefaultMaxOpenFiles
+	}
+	ldbOptions.SetMaxOpenFiles(maxOpenFiles)
+
+	blockSize, ok := opt.IntSetting("BlockSize")
+	if !ok {
+		blockSize = DefaultBlockSize
+	}
+	ldbOptions.SetBlockSize(blockSize)
+
+	ldbOptions.SetInfoLog(nil)
+	ldbOptions.SetParanoidChecks(false)
+	//ldbOptions.SetBlockRestartInterval(8)
+
+	// Don't bother with compression on leveldb side because it will be
+	// selectively applied on DVID side.  We may return and then transmit
+	// Snappy-compressed data without ever decompressing on server-side.
+	ldbOptions.SetCompression(levigo.NoCompression) // (levigo.SnappyCompression)
+
+	return ldbOptions
 }
 
 // Amount of data to build up in memory (backed by an unsorted log

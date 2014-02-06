@@ -14,7 +14,7 @@ import (
 	// Declare the data types this DVID executable will support
 	//_ "github.com/janelia-flyem/dvid/datatype/labels64"
 	_ "github.com/janelia-flyem/dvid/datatype/multichan16"
-	_ "github.com/janelia-flyem/dvid/datatype/tiles"
+	_ "github.com/janelia-flyem/dvid/datatype/quadtree"
 	_ "github.com/janelia-flyem/dvid/datatype/voxels"
 )
 

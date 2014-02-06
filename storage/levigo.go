@@ -133,7 +133,7 @@ func NewStore(path string, create bool, config dvid.Config) (Engine, error) {
 		cacheSize *= dvid.Mega
 	}
 	if create {
-		dvid.Log(dvid.Normal, "leveldb cache size: %s\n", 
+		dvid.Log(dvid.Normal, "leveldb cache size: %s\n",
 			humanize.Bytes(uint64(cacheSize)))
 		opt.SetLRUCacheSize(cacheSize)
 	}
@@ -148,7 +148,7 @@ func NewStore(path string, create bool, config dvid.Config) (Engine, error) {
 		writeBufferSize *= dvid.Mega
 	}
 	if create {
-		dvid.Log(dvid.Normal, "leveldb write buffer size: %s\n", 
+		dvid.Log(dvid.Normal, "leveldb write buffer size: %s\n",
 			humanize.Bytes(uint64(writeBufferSize)))
 		opt.SetWriteBufferSize(writeBufferSize)
 	}
@@ -195,10 +195,9 @@ func NewStore(path string, create bool, config dvid.Config) (Engine, error) {
 
 // ---- Engine interface ----
 
-func (db *LevelDB) IsBatcher() bool    { return true }
-func (db *LevelDB) IsBulkIniter() bool { return true }
-func (db *LevelDB) IsBulkWriter() bool { return true }
-
+func (db *LevelDB) GetName() string {
+	return "leveldb + levigo driver"
+}
 func (db *LevelDB) GetConfig() dvid.Config {
 	return db.config
 }
@@ -231,6 +230,8 @@ func (db *LevelDB) Close() {
 		}
 	}
 }
+
+// ---- KeyValueGetter interface ------
 
 // Get returns a value given a key.
 func (db *LevelDB) Get(k Key) (v []byte, err error) {
@@ -371,6 +372,8 @@ func (db *LevelDB) Put(k Key, v []byte) error {
 	StoreValueBytesWritten <- len(v)
 	return err
 }
+
+// ---- KeyValueSetter interface ------
 
 // PutRange puts key/value pairs that have been sorted in sequential key order.
 // Current implementation in levigo driver simply does a batch write.
