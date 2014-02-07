@@ -162,21 +162,32 @@ func init() {
 // higher levels have been downsampled.
 type Scaling uint8
 
+type LevelSpec struct {
+	Resolution dvid.NdFloat32
+	TileSize   dvid.Point3d
+}
+
 // TileScaleSpec is a slice of tile resolution & size for each dimensions.
 type TileScaleSpec struct {
-	Resolution dvid.NdFloat32
-	TileSize   dvid.Point
+	LevelSpec
 
-	levelMag dvid.Point // Magnification from this one to the next level.
+	levelMag dvid.Point3d // Magnification from this one to the next level.
 }
 
 // TileSpec specifies the resolution & size of each dimension at each scale level.
 type TileSpec map[Scaling]TileScaleSpec
 
-type specJSON map[string]struct {
-	Resolution dvid.NdFloat32
-	TileSize   dvid.PointNd
+// MarshalJSON returns the JSON of the quadtree specifications for each scale level.
+func (tileSpec TileSpec) MarshalJSON() ([]byte, error) {
+	serializable := make(specJSON, len(tileSpec))
+	for scaling, levelSpec := range tileSpec {
+		key := fmt.Sprintf("%d", scaling)
+		serializable[key] = LevelSpec{levelSpec.Resolution, levelSpec.TileSize}
+	}
+	return json.Marshal(serializable)
 }
+
+type specJSON map[string]LevelSpec
 
 // LoadTileSpec loads a TileSpec from JSON data.
 // JSON data should look like:
@@ -195,6 +206,7 @@ func LoadTileSpec(data []byte) (TileSpec, error) {
 
 	// Allocate the tile specs
 	specs := make(TileSpec, len(config))
+	dvid.Log(dvid.Debug, "Found %d scaling levels for quadtree specification.\n", len(config))
 
 	// Store resolution and tile sizes per level.
 	firstLevel := true
@@ -217,17 +229,14 @@ func LoadTileSpec(data []byte) (TileSpec, error) {
 			}
 		}
 		scaling = Scaling(scaleLevel)
-		specs[scaling] = TileScaleSpec{
-			Resolution: levelSpec.Resolution,
-			TileSize:   levelSpec.TileSize,
-		}
+		specs[scaling] = TileScaleSpec{LevelSpec: levelSpec}
 	}
 
 	// Compute the magnification between each level.
 	for scaling, levelSpec := range specs {
-		if int(scaling+1) < len(specs)-1 {
+		if int(scaling+1) <= len(specs)-1 {
 			nextSpec := specs[scaling+1]
-			levelMag := make(dvid.PointNd, len(levelSpec.Resolution))
+			var levelMag dvid.Point3d
 			for i, curRes := range levelSpec.Resolution {
 				hires = float64(curRes)
 				lores = float64(nextSpec.Resolution[i])
@@ -382,7 +391,6 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 	if err != nil {
 		return err
 	}
-
 	return d.ConstructTiles(uuidStr, tileSpec, request.Settings())
 }
 
@@ -520,8 +528,6 @@ func (d *Data) GetTile(versionID dvid.VersionLocalID, planeStr, scalingStr, coor
 	if err != nil {
 		return nil, fmt.Errorf("Error deserializing tile: %s", err.Error())
 	}
-	fmt.Printf("Retrieved tile: %s\n", img.Gray.Bounds())
-	dvid.PrintNonZero("Retrieved tile", []byte(img.Gray.Pix))
 	return img.Get(), nil
 }
 
@@ -557,15 +563,10 @@ func (d *Data) extractTiles(v voxels.ExtHandler, offset dvid.Point, scaling Scal
 	if !found {
 		return fmt.Errorf("Could not extract tiles for unspecified scale level %d", scaling)
 	}
-	srcW, srcH, err := v.DataShape().GetSize2D(v.Size())
-	if err != nil {
-		return err
-	}
+	srcW := v.Size().Value(0)
+	srcH := v.Size().Value(1)
+
 	tileW, tileH, err := v.DataShape().GetSize2D(levelSpec.TileSize)
-	if err != nil {
-		return err
-	}
-	tileCoord, err := v.DataShape().ChunkPoint3d(offset, levelSpec.TileSize)
 	if err != nil {
 		return err
 	}
@@ -586,16 +587,16 @@ func (d *Data) extractTiles(v voxels.ExtHandler, offset dvid.Point, scaling Scal
 			if err != nil {
 				return err
 			}
+			tileCoord, err := v.DataShape().PlaneToChunkPoint3d(x0, y0, offset, levelSpec.TileSize)
+			// fmt.Printf("Tile Coord: %s > %s\n", tileCoord, tileRect)
 			tileIndex := NewIndexTile(dvid.IndexZYX(tileCoord), v.DataShape(), scaling)
 			err = outF(tileIndex, tile)
 			if err != nil {
 				return err
 			}
 			x0 += tileW
-			tileCoord[0]++
 		}
 		y0 += tileH
-		tileCoord[1]++
 	}
 	return nil
 }
@@ -688,7 +689,8 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, config dvid.Con
 			if err != nil {
 				return err
 			}
-			for z := minPt.Value(2); z <= maxPt.Value(2); z++ {
+			dvid.Log(dvid.Debug, "Tiling XY image %d x %d pixels\n", width, height)
+			for z := src.MinPoint.Value(2); z <= src.MaxPoint.Value(2); z++ {
 				sliceTime := time.Now()
 				offset = offset.Modify(map[uint8]int32{2: z})
 				slice, err := dvid.NewOrthogSlice(dvid.XY, offset, dvid.Point2d{width, height})
@@ -719,14 +721,15 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, config dvid.Con
 				}
 				dvid.ElapsedTime(dvid.Debug, sliceTime, "XY Tile @ Z = %d", z)
 			}
-			dvid.ElapsedTime(dvid.Debug, startTime, "Total time to generate XY Tiles")
+			dvid.ElapsedTime(dvid.Normal, startTime, "Total time to generate XY Tiles")
 
 		case plane.Equals(dvid.XZ):
 			width, height, err := plane.GetSize2D(sizeVolume)
 			if err != nil {
 				return err
 			}
-			for y := minPt.Value(1); y <= maxPt.Value(1); y++ {
+			dvid.Log(dvid.Debug, "Tiling XZ image %d x %d pixels\n", width, height)
+			for y := src.MinPoint.Value(1); y <= src.MaxPoint.Value(1); y++ {
 				sliceTime := time.Now()
 				offset = offset.Modify(map[uint8]int32{1: y})
 				slice, err := dvid.NewOrthogSlice(dvid.XZ, offset, dvid.Point2d{width, height})
@@ -757,14 +760,15 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, config dvid.Con
 				}
 				dvid.ElapsedTime(dvid.Debug, sliceTime, "XZ Tile @ Y = %d", y)
 			}
-			dvid.ElapsedTime(dvid.Debug, startTime, "Total time to generate XZ Tiles")
+			dvid.ElapsedTime(dvid.Normal, startTime, "Total time to generate XZ Tiles")
 
 		case plane.Equals(dvid.YZ):
 			width, height, err := plane.GetSize2D(sizeVolume)
 			if err != nil {
 				return err
 			}
-			for x := minPt.Value(0); x <= maxPt.Value(0); x++ {
+			dvid.Log(dvid.Debug, "Tiling YZ image %d x %d pixels\n", width, height)
+			for x := src.MinPoint.Value(0); x <= src.MaxPoint.Value(0); x++ {
 				sliceTime := time.Now()
 				offset = offset.Modify(map[uint8]int32{0: x})
 				slice, err := dvid.NewOrthogSlice(dvid.YZ, offset, dvid.Point2d{width, height})
@@ -795,7 +799,7 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, config dvid.Con
 				}
 				dvid.ElapsedTime(dvid.Debug, sliceTime, "YZ Tile @ X = %d", x)
 			}
-			dvid.ElapsedTime(dvid.Debug, startTime, "Total time to generate YZ Tiles")
+			dvid.ElapsedTime(dvid.Normal, startTime, "Total time to generate YZ Tiles")
 
 		default:
 			dvid.Log(dvid.Normal, "Skipping request to tile '%s'.  Unsupported.", plane)

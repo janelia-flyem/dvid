@@ -19,6 +19,8 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
+
+	hdf5 "github.com/janelia-flyem/go/go-hdf5"
 )
 
 const (
@@ -546,59 +548,36 @@ func PutImage(uuid dvid.UUID, i IntHandler, e ExtHandler) error {
 	return nil
 }
 
-// Loads a XY oriented image at given offset, returning an ExtHandler.
-func loadXYImage(i IntHandler, filename string, offset dvid.Point) (ExtHandler, error) {
-	img, _, err := dvid.ImageFromFile(filename)
-	if err != nil {
-		return nil, err
+type bulkLoadInfo struct {
+	filenames     []string
+	versionID     dvid.VersionLocalID
+	offset        dvid.Point
+	writeWait     sync.WaitGroup
+	extentChanged dvid.Bool
+}
+
+func loadHDF(i IntHandler, load *bulkLoadInfo) error {
+	fmt.Println("Reading HDF...")
+	for _, filename := range load.filenames {
+		f, err := hdf5.OpenFile(filename, hdf5.F_ACC_RDONLY)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+
+		numobj, err := f.NumObjects()
+		fmt.Printf("Number of objects: %d\n", numobj)
+
+		fmt.Printf("Opened HDF5 file: %s\n", filename)
 	}
-	slice, err := dvid.NewOrthogSlice(dvid.XY, offset, dvid.RectSize(img.Bounds()))
-	if err != nil {
-		return nil, fmt.Errorf("Unable to determine slice: %s", err.Error())
-	}
-	e, err := i.NewExtHandler(slice, img)
-	if err != nil {
-		return nil, err
-	}
-	storage.FileBytesRead <- len(e.Data())
-	return e, nil
+	return nil
 }
 
 // Optimized bulk loading of XY images by loading all slices for a block before processing.
 // Trades off memory for speed.
-func LoadXY(i IntHandler, uuid dvid.UUID, offset dvid.Point, filenames []string) error {
-	if len(filenames) == 0 {
-		return nil
-	}
-	startTime := time.Now()
-
-	service := server.DatastoreService()
-	_, versionID, err := service.LocalIDFromUUID(uuid)
-	if err != nil {
-		return err
-	}
-
-	// We only want one PUT on given version for given data to prevent interleaved
-	// chunk PUTs that could potentially overwrite slice modifications.
-	versionMutex := i.VersionMutex(versionID)
-	versionMutex.Lock()
-
-	// Keep track of changing extents and mark dataset as dirty if changed.
-	var extentChanged dvid.Bool
-
-	// Handle cleanup given multiple goroutines still writing data.
-	var writeWait, blockWait sync.WaitGroup
-	defer func() {
-		writeWait.Wait()
-		versionMutex.Unlock()
-
-		if extentChanged.Value() {
-			err := service.SaveDataset(uuid)
-			if err != nil {
-				dvid.Log(dvid.Normal, "Error in trying to save dataset on change: %s\n", err.Error())
-			}
-		}
-	}()
+func loadXYImages(i IntHandler, load *bulkLoadInfo) error {
+	fmt.Println("Reading XY images...")
+	var blockWait sync.WaitGroup
 
 	// Load first slice, get dimensions, allocate blocks for whole slice.
 	// Note: We don't need to lock the block slices because goroutines do NOT
@@ -611,18 +590,18 @@ func LoadXY(i IntHandler, uuid dvid.UUID, offset dvid.Point, filenames []string)
 
 	// Iterate through XY slices batched into the Z length of blocks.
 	fileNum := 1
-	for _, filename := range filenames {
+	for _, filename := range load.filenames {
 		sliceTime := time.Now()
 
-		zInBlock := offset.Value(2) % blockSize.Value(2)
+		zInBlock := load.offset.Value(2) % blockSize.Value(2)
 		firstSlice := fileNum == 1
-		lastSlice := fileNum == len(filenames)
+		lastSlice := fileNum == len(load.filenames)
 		firstSliceInBlock := firstSlice || zInBlock == 0
 		lastSliceInBlock := lastSlice || zInBlock == blockSize.Value(2)-1
-		lastBlocks := fileNum+int(blockSize.Value(2)) > len(filenames)
+		lastBlocks := fileNum+int(blockSize.Value(2)) > len(load.filenames)
 
 		// Load images synchronously
-		e, err := loadXYImage(i, filename, offset)
+		e, err := loadXYImage(i, filename, load.offset)
 		if err != nil {
 			return err
 		}
@@ -646,7 +625,7 @@ func LoadXY(i IntHandler, uuid dvid.UUID, offset dvid.Point, filenames []string)
 					blocks[curBlocks][i].V = make([]byte, blockBytes, blockBytes)
 				}
 			}
-			err = loadOldBlocks(i, e, blocks[curBlocks], versionID)
+			err = loadOldBlocks(i, e, blocks[curBlocks], load.versionID)
 			if err != nil {
 				return err
 			}
@@ -657,16 +636,16 @@ func LoadXY(i IntHandler, uuid dvid.UUID, offset dvid.Point, filenames []string)
 		go func(ext ExtHandler) {
 			// Track point extents
 			if i.Extents().AdjustPoints(e.StartPoint(), e.EndPoint()) {
-				extentChanged.SetTrue()
+				load.extentChanged.SetTrue()
 			}
 
 			// Process an XY image (slice).
-			changed, err := writeXYImage(i, ext, blocks[curBlocks], versionID)
+			changed, err := writeXYImage(i, ext, blocks[curBlocks], load.versionID)
 			if err != nil {
 				dvid.Log(dvid.Normal, "Error writing XY image: %s\n", err.Error())
 			}
 			if changed {
-				extentChanged.SetTrue()
+				load.extentChanged.SetTrue()
 			}
 			blockWait.Done()
 		}(e)
@@ -675,18 +654,79 @@ func LoadXY(i IntHandler, uuid dvid.UUID, offset dvid.Point, filenames []string)
 		// then asynchronously write blocks.
 		if lastSliceInBlock {
 			blockWait.Wait()
-			if err = AsyncWriteData(blocks[curBlocks], &writeWait); err != nil {
+			if err = AsyncWriteData(blocks[curBlocks], &load.writeWait); err != nil {
 				return err
 			}
 			curBlocks = (curBlocks + 1) % 2
 		}
 
 		fileNum++
-		offset = offset.Add(dvid.Point3d{0, 0, 1})
+		load.offset = load.offset.Add(dvid.Point3d{0, 0, 1})
 		dvid.ElapsedTime(dvid.Debug, sliceTime, "Loaded %s slice %s", i, e)
 	}
-	dvid.ElapsedTime(dvid.Debug, startTime, "RPC load of %d files completed", len(filenames))
+	return nil
+}
 
+// Loads a XY oriented image at given offset, returning an ExtHandler.
+func loadXYImage(i IntHandler, filename string, offset dvid.Point) (ExtHandler, error) {
+	img, _, err := dvid.ImageFromFile(filename)
+	if err != nil {
+		return nil, err
+	}
+	slice, err := dvid.NewOrthogSlice(dvid.XY, offset, dvid.RectSize(img.Bounds()))
+	if err != nil {
+		return nil, fmt.Errorf("Unable to determine slice: %s", err.Error())
+	}
+	e, err := i.NewExtHandler(slice, img)
+	if err != nil {
+		return nil, err
+	}
+	storage.FileBytesRead <- len(e.Data())
+	return e, nil
+}
+
+// LoadImages bulk loads images using different techniques if it is a multidimensional
+// file like HDF5 or a sequence of PNG/JPG/TIF images.
+func LoadImages(i IntHandler, uuid dvid.UUID, offset dvid.Point, filenames []string) error {
+	if len(filenames) == 0 {
+		return nil
+	}
+	startTime := time.Now()
+
+	service := server.DatastoreService()
+	_, versionID, err := service.LocalIDFromUUID(uuid)
+	if err != nil {
+		return err
+	}
+
+	// We only want one PUT on given version for given data to prevent interleaved
+	// chunk PUTs that could potentially overwrite slice modifications.
+	versionMutex := i.VersionMutex(versionID)
+	versionMutex.Lock()
+
+	// Handle cleanup given multiple goroutines still writing data.
+	load := &bulkLoadInfo{filenames: filenames, versionID: versionID, offset: offset}
+	defer func() {
+		load.writeWait.Wait()
+		versionMutex.Unlock()
+
+		if load.extentChanged.Value() {
+			err := service.SaveDataset(uuid)
+			if err != nil {
+				dvid.Log(dvid.Normal, "Error in trying to save dataset on change: %s\n", err.Error())
+			}
+		}
+	}()
+
+	// Use different loading techniques if we have a potentially multidimensional HDF5 file
+	// or many 2d images.
+	if dvid.Filename(filenames[0]).HasExtensionPrefix("hdf", "h5") {
+		loadHDF(i, load)
+	} else {
+		loadXYImages(i, load)
+	}
+
+	dvid.ElapsedTime(dvid.Debug, startTime, "RPC load of %d files completed", len(filenames))
 	return nil
 }
 
@@ -1106,30 +1146,27 @@ func (v *Voxels) SetData(data []byte) {
 // -------  ExtHandler interface implementation -------------
 
 // DownRes downsamples by averaging where the down-magnification are integers.
+// If the source image size in Voxels is not an integral multiple of the
+// reduction factor, the edge voxels on the right and bottom side are truncated.
 // This function modifies the Voxels data.
 func (v *Voxels) DownRes(magnification dvid.Point) error {
 	if v.DataShape().ShapeDimensions() != 2 {
 		return fmt.Errorf("ImageDownres() only supports 2d images at this time.")
 	}
 	// Calculate new dimensions and allocate.
-	srcW, srcH, err := v.DataShape().GetSize2D(v.Size())
-	if err != nil {
-		return err
-	}
+	srcW := v.Size().Value(0)
+	srcH := v.Size().Value(1)
 	reduceW, reduceH, err := v.DataShape().GetSize2D(magnification)
 	if err != nil {
 		return err
 	}
 	dstW := srcW / reduceW
 	dstH := srcH / reduceH
-	if srcW%reduceW != 0 || srcH%reduceH != 0 {
-		return fmt.Errorf("DVID only computes downres by integral factors.")
-	}
 	numBytes := uint64(dstW) * uint64(dstH) * uint64(v.values.BytesPerVoxel())
 	data := make([]uint8, numBytes, numBytes)
 
 	// Perform averaging on each interleaved value.
-	v.values.averageData(v.data, data, dstW, dstH, reduceW, reduceH)
+	v.values.averageData(v.data, data, srcW, dstW, dstH, reduceW, reduceH)
 
 	// Set data and dimensions to downres data.
 	v.data = data
@@ -1604,7 +1641,7 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 			return err
 		}
 
-		return LoadXY(d, uuid, offset, filenames)
+		return LoadImages(d, uuid, offset, filenames)
 
 	case "put":
 		if len(request.Command) < 7 {

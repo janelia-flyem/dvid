@@ -791,6 +791,10 @@ var (
 
 const ChunkPoint2dSize = 8
 
+func (c ChunkPoint2d) String() string {
+	return fmt.Sprintf("(%d,%d)", c[0], c[1])
+}
+
 // --------- ChunkPoint interface -------------
 // also fulfills SimplePoint interface
 
@@ -829,6 +833,10 @@ var (
 
 const ChunkPoint3dSize = 12
 
+func (c ChunkPoint3d) String() string {
+	return fmt.Sprintf("(%d,%d,%d)", c[0], c[1], c[2])
+}
+
 // --------- ChunkPoint interface -------------
 
 func (c ChunkPoint3d) NumDims() uint8 {
@@ -860,6 +868,18 @@ func (c ChunkPoint3d) MaxPoint(size Point) Point {
 
 // ChunkPointNd handles N-dimensional signed chunk coordinates.
 type ChunkPointNd []int32
+
+func (c ChunkPointNd) String() string {
+	output := "("
+	for _, val := range c {
+		if len(output) > 1 {
+			output += ","
+		}
+		output += strconv.Itoa(int(val))
+	}
+	output += ")"
+	return output
+}
 
 // --------- ChunkPoint interface -------------
 

@@ -71,6 +71,8 @@ else ()
         include (golang)
     endif ()
 
+    include (hdf5)
+
 
     # The name of the backend should be the same as the tag used for conditional build
     # (see "// +build levigo" in storage/levigo.go) and the custom_target name for the
@@ -101,14 +103,6 @@ else ()
 
     set (CGO_FLAGS   CGO_CFLAGS="-I${BUILDEM_INCLUDE_DIR}";CGO_LDFLAGS="-L${BUILDEM_LIB_DIR};-lsnappy")
 
-    # Packages include:
-    #   code.google.com/p/snappy-go/snappy
-    #   code.google.com/p/go-uuid/uuid
-    #   bitbucket.org/tebeka/nrsc
-    #   github.com/couchbaselabs/go-couchbase
-    #   github.com/jmhodges/levigo
-    #   github.com/robfig/config
-    #
     add_custom_target (gopackages-install
         ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go get ${GO_GET} github.com/janelia-flyem/go
         DEPENDS     ${golang_NAME}
@@ -147,7 +141,7 @@ else ()
             -v -tags '${DVID_BACKEND}' dvid.go 
         WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
         DEPENDS     ${golang_NAME} ${snappy_NAME} ${DVID_BACKEND_DEPEND}
-                    gopackages extensions gofuse
+                    gopackages extensions gofuse ${hdf5_NAME}
         COMMENT     "Compiled and installed dvid executable.")
 
     # Build DVID with pure Go leveldb implementation

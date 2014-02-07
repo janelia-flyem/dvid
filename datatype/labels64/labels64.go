@@ -386,7 +386,7 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 			return err
 		}
 		if formatStr == "raveler" {
-			return voxels.LoadXY(d, uuid, offset, filenames)
+			return voxels.LoadImages(d, uuid, offset, filenames)
 		} else {
 			return fmt.Errorf("Currently, only Raveler loading is supported for 64-bit labels.")
 		}

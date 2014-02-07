@@ -51,30 +51,32 @@ func (values DataValues) ValueBytes(dim int) int32 {
 	return typeBytes[values[dim].DataType]
 }
 
-func (values DataValues) averageData(src, dst []byte, dstW, dstH, reduceW, reduceH int32) {
+func (values DataValues) averageData(src, dst []byte, srcW, dstW, dstH, reduceW, reduceH int32) {
 	var offset int32
 	for _, dv := range values {
 		switch dv.DataType {
 		case "uint8":
-			uint8average(src[offset:], dst[offset:], values.BytesPerVoxel(), dstW, dstH, reduceW, reduceH)
+			uint8average(src[offset:], dst[offset:], values.BytesPerVoxel(), srcW, dstW, dstH, reduceW, reduceH)
 		}
 		offset += dv.ValueBytes()
 	}
 
 }
 
-func uint8average(src, dst []byte, bytesPerVoxel, dstW, dstH, reduceW, reduceH int32) {
+func uint8average(src, dst []byte, bytesPerVoxel, srcW, dstW, dstH, reduceW, reduceH int32) {
 	var reduceSize uint64 = uint64(reduceW) * uint64(reduceH)
-	var dstStride int32 = dstW * bytesPerVoxel
+	var srcStride int32 = srcW * bytesPerVoxel
 	var dstI, srcY, srcX int32
 	var x, y, rx, ry int32
 	for y = 0; y < dstH; y++ {
+		srcX = 0
 		for x = 0; x < dstW; x++ {
 			var sum uint64
 			for ry = 0; ry < reduceH; ry++ {
-				srcI := srcY*dstStride + srcX*bytesPerVoxel
+				srcI := (srcY+ry)*srcStride + srcX*bytesPerVoxel
 				for rx = 0; rx < reduceW; rx++ {
 					sum += uint64(src[srcI])
+					srcI += bytesPerVoxel
 				}
 			}
 			sum /= reduceSize

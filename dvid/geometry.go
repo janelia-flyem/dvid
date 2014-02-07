@@ -185,6 +185,34 @@ func (s DataShape) ChunkPoint3d(p, size Point) (ChunkPoint3d, error) {
 	}
 }
 
+// PlaneToChunkPoint3d returns a chunk point corresponding to the given point on the DataShape's
+// plane.  If DataShape is not a plane, returns an error.
+func (s DataShape) PlaneToChunkPoint3d(x, y int32, offset, size Point) (ChunkPoint3d, error) {
+	if len(s.shape) != 2 {
+		return ChunkPoint3d{}, fmt.Errorf("Can't get plane point from a non-2D shape: %s", s)
+	}
+	if s.dims != 3 {
+		return ChunkPoint3d{}, fmt.Errorf("PlaneToChunkPoint3d() requires 3D shape: %s", s)
+	}
+	var p Point3d
+	switch {
+	case s.Equals(XY):
+		p = Point3d{x + offset.Value(0), y + offset.Value(1), offset.Value(2)}
+		chunkPt := p.Chunk(size)
+		return ChunkPoint3d{chunkPt.Value(0), chunkPt.Value(1), p[2]}, nil
+	case s.Equals(XZ):
+		p = Point3d{x + offset.Value(0), offset.Value(1), y + offset.Value(2)}
+		chunkPt := p.Chunk(size)
+		return ChunkPoint3d{chunkPt.Value(0), p[1], chunkPt.Value(2)}, nil
+	case s.Equals(YZ):
+		p = Point3d{offset.Value(0), x + offset.Value(1), y + offset.Value(2)}
+		chunkPt := p.Chunk(size)
+		return ChunkPoint3d{p[0], chunkPt.Value(1), chunkPt.Value(2)}, nil
+	default:
+		return ChunkPoint3d{}, fmt.Errorf("ChunkPoint3d() can only be run on slices: given %s", s)
+	}
+}
+
 // Duplicate returns a duplicate of the DataShape.
 func (s DataShape) Duplicate() DataShape {
 	dup := DataShape{dims: s.dims}

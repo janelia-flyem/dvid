@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -61,6 +62,21 @@ func (b *Bool) Value() bool {
 	defer b.mu.RUnlock()
 	b.mu.RLock()
 	return b.bit
+}
+
+// Filename has a base name + extension.
+type Filename string
+
+// HasExtensionPrefix returns true if the given string forms a prefix for
+// the filename's extension.
+func (fname Filename) HasExtensionPrefix(exts ...string) bool {
+	for _, ext := range exts {
+		parts := strings.Split(string(fname), ".")
+		if strings.HasPrefix(parts[len(parts)-1], ext) {
+			return true
+		}
+	}
+	return false
 }
 
 // DataFromPost returns data submitted in the given key of a POST request.
