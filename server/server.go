@@ -32,10 +32,6 @@ const (
 	// The relative URL path to our Level 2 REST API
 	WebAPIPath = "/api/"
 
-	// The relative URL path to a DVID web console.
-	// The root URL will be redirected to /{ConsolePath}/index.html
-	ConsolePath = "/console/"
-
 	// The name of the server error log, stored in the datastore directory.
 	ErrorLogFilename = "dvid-errors.log"
 )
@@ -349,17 +345,17 @@ func (service *Service) ServeHttp(address, clientDir string) {
 	// Handle static files through serving embedded files
 	// via nrsc or loading files from a specified web client directory.
 	if clientDir == "" {
-		err := nrsc.Handle(ConsolePath)
+		err := nrsc.Handle("/")
 		if err != nil {
 			fmt.Println("ERROR with nrsc trying to serve web pages:", err.Error())
 			fmt.Println(webClientUnavailableMessage)
 			fmt.Println("HTTP server will be started without webclient...\n")
-			http.HandleFunc(ConsolePath, logHttpPanics(mainHandler))
+			http.HandleFunc("/", logHttpPanics(mainHandler))
 		} else {
 			fmt.Println("Serving web client from embedded files...")
 		}
 	} else {
-		http.HandleFunc(ConsolePath, logHttpPanics(mainHandler))
+		http.HandleFunc("/", logHttpPanics(mainHandler))
 		dvid.Log(dvid.Debug, "Serving web pages from %s\n", clientDir)
 	}
 

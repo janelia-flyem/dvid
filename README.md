@@ -28,14 +28,14 @@ found in help constants:
 
 ## Philosophy
 
-DVID (Distributed, Versioned, Image­-oriented Datastore) was designed as a datastore that can be easily 
-installed and managed locally, yet still scale to the available storage system and number of compute 
-nodes. If data transmission or computer memory is an issue, it allows us to choose a local first­ class 
-datastore that will eventually (or continuously) be synced with remote datastores. By “first class”, we 
-mean that each DVID server, even on laptops, behaves identically to larger institutional DVID servers 
-save for resource limitations like the size of the data that can be managed.  Our vision is to have
-something like a "git" for image-oriented data, although there are a number of differences due to
-the size and typing of data.
+DVID (Distributed, Versioned, Image­-oriented Datastore) was designed as a datastore that can be 
+easily installed and managed locally, yet still scale to the available storage system and number of 
+compute nodes. If data transmission or computer memory is an issue, it allows us to choose a local 
+first­ class datastore that will eventually (or continuously) be synced with remote datastores. By 
+“first class”, we mean that each DVID server, even on laptops, behaves identically to larger 
+institutional DVID servers save for resource limitations like the size of the data that can be 
+managed.  Our vision is to have something like a "git" for image-oriented data, although there are a 
+number of differences due to the size and typing of data.
 
 Scalability can be achieved in at least two ways:
 
@@ -163,7 +163,7 @@ If you haven't built with that buildem directory before, do the additional steps
 
 To build DVID without a built-in web client, assuming you are still in the CMake build directory from above:
 
-    % make dvid-exe
+    % make dvid
 
 This will install a DVID executable 'dvid' in the buildem bin directory.
 
@@ -176,7 +176,7 @@ binary and used by dvid's web server during operation:
 
     % make dvid
 
-For development, I suggest just doing "make dvid-exe" and specifying your choice of web client 
+For development, I suggest just doing "make dvid" and specifying your choice of web client 
 using "-webclient":
 
     % dvid -webclient=/path/to/dvid-webclient -datastore=/path/to/datastore/dir serve

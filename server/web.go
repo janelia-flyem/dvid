@@ -76,7 +76,7 @@ const WebHelp = `
         </p>
 
 
-          <code><ul>
+          <ul>
             <li>GET /api/help (current page)</li>
             <li><a href="/api/load">GET /api/load</a></li>
 
@@ -98,7 +98,7 @@ const WebHelp = `
 
             <li>GET /api/node/{UUID}/{data name}/{type-specific commands}</li>
             <li>POST /api/node/{UUID}/{data name}/{type-specific commands}</li>
-        </ul></code>
+        </ul>
         
         <h3>Licensing</h3>
         <p>DVID is released under the
@@ -140,13 +140,16 @@ func mainHandler(w http.ResponseWriter, r *http.Request) {
 		t, _ := template.New("Help").Parse(WebHelp)
 		hostname, _ := os.Hostname()
 		vars := struct {
-			Hostname string
+			Hostname      string
+			WebClientPath string
 		}{
 			hostname,
+			runningService.WebClientPath,
 		}
 		t.Execute(w, vars)
 	} else if runningService.WebClientPath != "" {
 		filename := filepath.Join(runningService.WebClientPath, r.URL.Path)
+		dvid.Log(dvid.Debug, "Serving %s -> %s\n", r.URL.Path, filename)
 		http.ServeFile(w, r, filename)
 	} else {
 		fmt.Fprintf(w, webClientUnavailableMessage)

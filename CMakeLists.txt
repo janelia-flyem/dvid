@@ -71,11 +71,11 @@ else ()
         include (golang)
     endif ()
 
-    include (hdf5)
-
+    # TODO: use hdf5 after writing Go interface for simple read & write.
+    #include (hdf5)
 
     # The name of the backend should be the same as the tag used for conditional build
-    # (see "// +build levigo" in storage/levigo.go) and the custom_target name for the
+    # (see "// +build leveldb" in storage/leveldb.go) and the custom_target name for the
     # dependencies.
 
     include (leveldb)
@@ -99,7 +99,7 @@ else ()
     endif ()
 
 
-    set (DVID_GO      github.com/janelia-flyem/dvid)
+    set (DVID_GO     github.com/janelia-flyem/dvid)
 
     set (CGO_FLAGS   CGO_CFLAGS="-I${BUILDEM_INCLUDE_DIR}";CGO_LDFLAGS="-L${BUILDEM_LIB_DIR};-lsnappy")
 
@@ -115,53 +115,19 @@ else ()
         WORKING_DIRECTORY $ENV{GOPATH}/src/github.com/janelia-flyem/go
         COMMENT     "Updated required Go packages")
     
-    add_custom_target (emdata
-        ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/DocSavage/emdata
-        DEPENDS     ${golang_NAME}
-        COMMENT     "Added emdata package from DocSavage repo")
-    
-    add_custom_target (extensions
-        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go get ${GO_GET} github.com/DocSavage/dvid
-        DEPENDS     ${golang_NAME} emdata
-        COMMENT     "Added DVID extensions from DocSavage repo")
-    
-    add_custom_target (goleveldb
-        ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/syndtr/goleveldb/leveldb
-        DEPENDS     ${golang_NAME} snappy-go
-        COMMENT     "Added pure Go implementation of leveldb")
-
     add_custom_target (gofuse
         ${BUILDEM_ENV_STRING} go get ${GO_GET} bazil.org/fuse
         DEPENDS     ${golang_NAME}
         COMMENT     "Added FUSE Go library")
 
     # Build DVID with chosen backend
-    add_custom_target (dvid-exe
+    add_custom_target (dvid
         ${BUILDEM_ENV_STRING} ${GO_ENV} ${CGO_FLAGS} go build -o ${BUILDEM_BIN_DIR}/dvid 
             -v -tags '${DVID_BACKEND}' dvid.go 
         WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
         DEPENDS     ${golang_NAME} ${snappy_NAME} ${DVID_BACKEND_DEPEND}
-                    gopackages extensions gofuse ${hdf5_NAME}
+                    gopackages gofuse ${hdf5_NAME}
         COMMENT     "Compiled and installed dvid executable.")
-
-    # Build DVID with pure Go leveldb implementation
-    #add_custom_target (dvid-go-exe
-    #    ${BUILDEM_ENV_STRING} ${GO_ENV} go build -o ${BUILDEM_BIN_DIR}/dvid-go 
-    #        -v -tags 'goleveldb' dvid.go 
-    #    WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
-    #    DEPENDS     ${golang_NAME} snappy-go nrsc uuid goleveldb
-    #    COMMENT     "Compiled and installed dvid pure Go executable, dvid-go.")
-
-   # Embed web client into exe
-   add_custom_target (dvid
-        ${BUILDEM_BIN_DIR}/nrsc ${BUILDEM_BIN_DIR}/dvid ${WEBCLIENT_DIR}
-        DEPENDS dvid-exe dvid-webclient
-        COMMENT     "Added webclient in ${WEBCLIENT_DIR} to dvid executable")
-   
-   #add_custom_target (dvid-go
-   #     ${NRSC_SCRIPT} ${BUILDEM_BIN_DIR}/dvid-go ${CMAKE_CURRENT_SOURCE_DIR}/webclient
-   #     DEPENDS dvid-go-exe
-   #     COMMENT     "Added files in ${CMAKE_CURRENT_SOURCE_DIR}/webclient to dvid-go executable")
 
    # Add testing
    add_custom_target (test-build

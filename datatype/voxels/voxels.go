@@ -11,6 +11,7 @@ import (
 	"image"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -19,8 +20,6 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
-
-	hdf5 "github.com/janelia-flyem/go/go-hdf5"
 )
 
 const (
@@ -557,20 +556,51 @@ type bulkLoadInfo struct {
 }
 
 func loadHDF(i IntHandler, load *bulkLoadInfo) error {
-	fmt.Println("Reading HDF...")
-	for _, filename := range load.filenames {
-		f, err := hdf5.OpenFile(filename, hdf5.F_ACC_RDONLY)
-		if err != nil {
-			return err
-		}
-		defer f.Close()
+	return fmt.Errorf("DVID currently does not support HDF5 image import.")
+	// TODO: Use a DVID-specific HDF5 loader that works off HDF5 C library.
+	/*
+			for _, filename := range load.filenames {
+				f, err := hdf5.OpenFile(filename, hdf5.F_ACC_RDONLY)
+				if err != nil {
+					return err
+				}
+				defer f.Close()
 
-		numobj, err := f.NumObjects()
-		fmt.Printf("Number of objects: %d\n", numobj)
-
-		fmt.Printf("Opened HDF5 file: %s\n", filename)
-	}
-	return nil
+				fmt.Printf("Opened HDF5 file: %s\n", filename)
+				numobj, err := f.NumObjects()
+				fmt.Printf("Number of objects: %d\n", numobj)
+				for n := uint(0); n < numobj; n++ {
+					name, err := f.ObjectNameByIndex(n)
+					if err != nil {
+						return err
+					}
+					fmt.Printf("Object name %d: %s\n", n, name)
+					dataset, err := f.OpenDataset(name)
+					if err != nil {
+						return err
+					}
+					dtype, err := dataset.Datatype()
+					if err != nil {
+						return err
+					}
+					fmt.Printf("Type size: %d\n", dtype.Size())
+					dataspace := dataset.Space()
+					dims, maxdims, err := dataspace.SimpleExtentDims()
+					if err != nil {
+						return err
+					}
+					fmt.Printf("Dims: %s\n", dims)
+					fmt.Printf("Maxdims: %s\n", maxdims)
+					data := make([]uint8, dims[0]*dims[1]*dims[2])
+					err = dataset.Read(&data)
+					if err != nil {
+						return err
+					}
+					fmt.Printf("Read %d bytes\n", len(data))
+				}
+			}
+		return nil
+	*/
 }
 
 // Optimized bulk loading of XY images by loading all slices for a block before processing.
@@ -1617,7 +1647,9 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 			return err
 		}
 		if len(filenames) == 0 {
-			return fmt.Errorf("Need to include at least one file to add: %s", request)
+			hostname, _ := os.Hostname()
+			return fmt.Errorf("Couldn't find any files to add.  Are they visible to DVID server on %s?",
+				hostname)
 		}
 
 		// Get offset
