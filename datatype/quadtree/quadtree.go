@@ -579,9 +579,10 @@ func (d *Data) extractTiles(v voxels.ExtHandler, offset dvid.Point, scaling Scal
 	}
 	src.Set(img)
 	var x0, y0, x1, y1 int32
-	for y1 = tileH - 1; y1 < srcH; y1 += tileH {
-		x0 = 0
-		for x1 = tileW - 1; x1 < srcW; x1 += tileW {
+	y1 = tileH - 1
+	for y0 = 0; y0 < srcH; y0 += tileH {
+		x1 = tileW - 1
+		for x0 = 0; x0 < srcW; x0 += tileW {
 			tileRect := image.Rect(int(x0), int(y0), int(x1), int(y1))
 			tile, err := src.SubImage(tileRect)
 			if err != nil {
@@ -594,9 +595,9 @@ func (d *Data) extractTiles(v voxels.ExtHandler, offset dvid.Point, scaling Scal
 			if err != nil {
 				return err
 			}
-			x0 += tileW
+			x1 += tileW
 		}
-		y0 += tileH
+		y1 += tileH
 	}
 	return nil
 }
