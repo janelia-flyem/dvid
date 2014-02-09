@@ -16,6 +16,10 @@ import (
 	"github.com/janelia-flyem/dvid/storage"
 )
 
+var (
+	Compression dvid.Compression = dvid.LZ4
+)
+
 // Datasets holds information on all the Dataset available.
 type Datasets struct {
 	writeLock sync.Mutex // guards the fields below
@@ -170,7 +174,7 @@ func (dsets *Datasets) serializableStruct() (sdata *serializableDatasets) {
 // Serialize returns a serialization of Datasets with Snappy compression and
 // CRC32 checksum.
 func (dsets *Datasets) serialize() ([]byte, error) {
-	return dvid.Serialize(dsets.serializableStruct(), dvid.Snappy, dvid.CRC32)
+	return dvid.Serialize(dsets.serializableStruct(), Compression, dvid.CRC32)
 }
 
 // Deserialize converts a serialization to Datasets
@@ -329,7 +333,7 @@ func (dset *Dataset) Put(db storage.KeyValueSetter) error {
 	defer mutex.Unlock()
 
 	// Get serialization
-	serialization, err := dvid.Serialize(dset, dvid.Snappy, dvid.CRC32)
+	serialization, err := dvid.Serialize(dset, Compression, dvid.CRC32)
 	if err != nil {
 		return err
 	}

@@ -44,10 +44,6 @@ const (
 	// TODO -- Add couchbase-specific constants
 )
 
-type Ranges []levigo.Range
-
-type Sizes []uint64
-
 // --- The Couchbase Implementation must satisfy a Engine interface ----
 
 type goCouch struct {

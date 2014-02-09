@@ -24,6 +24,10 @@ const (
 	RepoUrl = "github.com/janelia-flyem/dvid/datatype/keyvalue"
 )
 
+var (
+	Compression dvid.Compression = dvid.LZ4
+)
+
 const HelpMessage = `
 API for 'keyvalue' datatype (github.com/janelia-flyem/dvid/datatype/keyvalue)
 =============================================================================
@@ -233,7 +237,7 @@ func (d *Data) PutData(uuid dvid.UUID, keyStr string, value []byte) error {
 	if err != nil {
 		return err
 	}
-	serialization, err := dvid.SerializeData(value, dvid.Snappy, dvid.CRC32)
+	serialization, err := dvid.SerializeData(value, Compression, dvid.CRC32)
 	if err != nil {
 		return fmt.Errorf("Unable to serialize data: %s\n", err.Error())
 	}

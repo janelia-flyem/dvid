@@ -29,6 +29,10 @@ const (
 	RepoUrl = "github.com/janelia-flyem/dvid/datatype/labels64"
 )
 
+var (
+	Compression dvid.Compression = dvid.LZ4
+)
+
 const HelpMessage = `
 API for datatypes derived from labels64 (github.com/janelia-flyem/dvid/datatype/labels64)
 =========================================================================
@@ -707,7 +711,7 @@ func (d *Data) createCompositeChunk(chunk *storage.Chunk) {
 
 	// Store the composite block into the rgba8 data.
 	compositeKey := op.composite.DataKey(op.versionID, labelKey.Index)
-	serialization, err := dvid.SerializeData(compositeData, dvid.Snappy, dvid.CRC32)
+	serialization, err := dvid.SerializeData(compositeData, Compression, dvid.CRC32)
 	if err != nil {
 		dvid.Log(dvid.Normal, "Unable to serialize composite block at %s: %s\n",
 			labelKey.Index, err.Error())

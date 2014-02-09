@@ -31,6 +31,10 @@ const (
 	MaxVoxelsRequest = dvid.Giga
 )
 
+var (
+	Compression dvid.Compression = dvid.LZ4
+)
+
 const HelpMessage = `
 API for 'voxels' datatype (github.com/janelia-flyem/dvid/datatype/voxels)
 =========================================================================
@@ -884,7 +888,7 @@ func AsyncWriteData(blocks Blocks, wg *sync.WaitGroup) error {
 		if ok {
 			batch := batcher.NewBatch()
 			for i, block := range blocks {
-				serialization, err := dvid.SerializeData(block.V, dvid.Snappy, dvid.CRC32)
+				serialization, err := dvid.SerializeData(block.V, Compression, dvid.CRC32)
 				if err != nil {
 					fmt.Printf("Unable to serialize block: %s\n", err.Error())
 					return
@@ -903,7 +907,7 @@ func AsyncWriteData(blocks Blocks, wg *sync.WaitGroup) error {
 			// Serialize and compress the blocks.
 			keyvalues := make(storage.KeyValues, len(blocks))
 			for i, block := range blocks {
-				serialization, err := dvid.SerializeData(block.V, dvid.Snappy, dvid.CRC32)
+				serialization, err := dvid.SerializeData(block.V, Compression, dvid.CRC32)
 				if err != nil {
 					fmt.Printf("Unable to serialize block: %s\n", err.Error())
 					return
@@ -1889,7 +1893,7 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 				d.DataID().DataName(), err.Error())
 			return
 		}
-		serialization, err := dvid.SerializeData(blockData, dvid.Snappy, dvid.CRC32)
+		serialization, err := dvid.SerializeData(blockData, Compression, dvid.CRC32)
 		if err != nil {
 			dvid.Log(dvid.Normal, "Unable to serialize block in '%s': %s\n",
 				d.DataID().DataName(), err.Error())

@@ -2,7 +2,7 @@ package dvid
 
 import (
 	. "github.com/janelia-flyem/go/gocheck"
-	_ "testing"
+	"testing"
 )
 
 func (s *DataSuite) TestLocalID(c *C) {
@@ -14,30 +14,10 @@ func (s *DataSuite) TestLocalID(c *C) {
 	c.Assert(length, Equals, LocalIDSize)
 }
 
-func (suite *DataSuite) TestSerialize(c *C) {
+func (suite *DataSuite) TestSerialization(c *C) {
 	stringObj := "Hi there!"
 	var returnObj string
 
-	// Check uncompressed and no checksum
-	s, err := Serialize(stringObj, Uncompressed, NoChecksum)
-	c.Assert(err, IsNil)
-	if len(s) == 0 {
-		c.Errorf("Bad Serialize() - output length 0")
-	}
-
-	err = Deserialize(s, &returnObj)
-	c.Assert(err, IsNil)
-	c.Assert(returnObj, Equals, stringObj)
-
-	// Check Snappy + CRC32
-	s, err = Serialize(stringObj, Snappy, CRC32)
-	c.Assert(err, IsNil)
-
-	err = Deserialize(s, &returnObj)
-	c.Assert(err, IsNil)
-	c.Assert(returnObj, Equals, stringObj)
-
-	// Check more complex object
 	type ComplexObj struct {
 		Title string
 		MyMap map[interface{}]interface{}
@@ -50,16 +30,66 @@ func (suite *DataSuite) TestSerialize(c *C) {
 			32.1:         []string{"It's ", "amazing", " what ", "we", " put ", "here"},
 		},
 	}
-	s, err = Serialize(complexObj, Snappy, CRC32)
-	c.Assert(err, IsNil)
 
+	for _, compression := range []Compression{Uncompressed, Snappy, LZ4} {
+		for _, checksum := range []Checksum{NoChecksum, CRC32} {
+			// Check simple object
+			s, err := Serialize(stringObj, compression, checksum)
+			c.Assert(err, IsNil)
+			if len(s) == 0 {
+				c.Errorf("Bad Serialize() - output length 0")
+			}
+
+			err = Deserialize(s, &returnObj)
+			c.Assert(err, IsNil)
+			c.Assert(returnObj, Equals, stringObj)
+
+			// Check more complex object
+			s, err = Serialize(complexObj, compression, checksum)
+			c.Assert(err, IsNil)
+
+			var returnComplexObj ComplexObj
+			err = Deserialize(s, &returnComplexObj)
+			c.Assert(err, IsNil)
+			c.Assert(returnComplexObj, DeepEquals, complexObj)
+
+			if checksum != NoChecksum {
+				// Check Checksum on complex object
+				s[5] = s[5] ^ 0x04 // Flip a bit
+				err = Deserialize(s, &returnComplexObj)
+				c.Assert(err, NotNil)
+			}
+		}
+	}
+}
+
+func (suite *DataSuite) testUncompressed(checksum Checksum) {
+	stringObj := "Hi there!"
+	var returnObj string
+
+	type ComplexObj struct {
+		Title string
+		MyMap map[interface{}]interface{}
+	}
+	complexObj := ComplexObj{
+		Title: "my complex object",
+		MyMap: map[interface{}]interface{}{
+			42:           []byte("here's another string"),
+			"some index": []byte{'\x33', '\x18', '\xD0', '\x92', '\x01'},
+			32.1:         []string{"It's ", "amazing", " what ", "we", " put ", "here"},
+		},
+	}
+
+	s, _ := Serialize(stringObj, Uncompressed, checksum)
+	_ = Deserialize(s, &returnObj)
+
+	s, _ = Serialize(complexObj, Uncompressed, checksum)
 	var returnComplexObj ComplexObj
-	err = Deserialize(s, &returnComplexObj)
-	c.Assert(err, IsNil)
-	c.Assert(returnComplexObj, DeepEquals, complexObj)
+	_ = Deserialize(s, &returnComplexObj)
+}
 
-	// Check Checksum on complex object
-	s[5] = s[5] ^ 0x04 // Flip a bit
-	err = Deserialize(s, &returnComplexObj)
-	c.Assert(err, NotNil)
+func (suite *DataSuite) BenchmarkUncompressedNoChecksum(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		suite.testUncompressed(NoChecksum)
+	}
 }

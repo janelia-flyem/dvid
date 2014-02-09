@@ -139,6 +139,16 @@ else ()
             ${DVID_GO}/...
         DEPENDS test-build)
 
+   # Add benchmarking
+   add_custom_target (test-bench
+        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go test -bench -i -tags '${DVID_BACKEND}' 
+            ${DVID_GO}/test ${DVID_GO}/dvid ${DVID_GO}/datastore)
+
+   add_custom_target (bench
+        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go test -bench -tags '${DVID_BACKEND}' 
+            ${DVID_GO}/...
+        DEPENDS test-bench)
+
 
     ###############################################################################
 endif()

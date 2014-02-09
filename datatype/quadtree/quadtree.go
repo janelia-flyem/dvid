@@ -26,6 +26,10 @@ const (
 	RepoUrl = "github.com/janelia-flyem/dvid/datatype/quadtree"
 )
 
+var (
+	Compression dvid.Compression = dvid.LZ4
+)
+
 const HelpMessage = `
 API for datatypes derived from quadtree (github.com/janelia-flyem/dvid/datatype/quadtree)
 =====================================================================================
@@ -608,7 +612,7 @@ func (d *Data) getXYPutFunc(versionID dvid.VersionLocalID, z int32) (outFunc, er
 		return nil, err
 	}
 	return func(index IndexTile, tile *dvid.Image) error {
-		serialization, err := tile.Serialize(dvid.Snappy, dvid.CRC32)
+		serialization, err := tile.Serialize(Compression, dvid.CRC32)
 		if err != nil {
 			return err
 		}
@@ -623,7 +627,7 @@ func (d *Data) getXZPutFunc(versionID dvid.VersionLocalID, y int32) (outFunc, er
 		return nil, err
 	}
 	return func(index IndexTile, tile *dvid.Image) error {
-		serialization, err := tile.Serialize(dvid.Snappy, dvid.CRC32)
+		serialization, err := tile.Serialize(Compression, dvid.CRC32)
 		if err != nil {
 			return err
 		}
@@ -638,7 +642,7 @@ func (d *Data) getYZPutFunc(versionID dvid.VersionLocalID, x int32) (outFunc, er
 		return nil, err
 	}
 	return func(index IndexTile, tile *dvid.Image) error {
-		serialization, err := tile.Serialize(dvid.Snappy, dvid.CRC32)
+		serialization, err := tile.Serialize(Compression, dvid.CRC32)
 		if err != nil {
 			return err
 		}

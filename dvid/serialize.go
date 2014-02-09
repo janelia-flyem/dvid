@@ -12,15 +12,30 @@ import (
 	"hash/crc32"
 	_ "log"
 
+	lz4 "github.com/janelia-flyem/go/golz4"
 	"github.com/janelia-flyem/go/snappy-go/snappy"
 )
 
-// Compression is the format of compression for storing data
+// Redirection tracks whether a value can be used as is or requires a redirection, i.e., contains
+// a local version ID of where the value is actually stored.
+type Redirection uint8
+
+const (
+	// Value can be used as is without redirection.
+	UnversionedValue Redirection = 0
+
+	// Value is a local version ID where the actual value is stored.
+	VersionedValue Redirection = 1
+)
+
+// Compression is the format of compression for storing data.
+// NOTE: Should be no more than 8 (3 bits) of compression types.
 type Compression uint8
 
 const (
 	Uncompressed Compression = 0
 	Snappy                   = 1 << iota
+	LZ4
 )
 
 func (compress Compression) String() string {
@@ -28,13 +43,16 @@ func (compress Compression) String() string {
 	case Uncompressed:
 		return "No compression"
 	case Snappy:
-		return "Google's Snappy compression"
+		return "Go Snappy compression"
+	case LZ4:
+		return "Go LZ4 compression"
 	default:
 		return "Unknown compression"
 	}
 }
 
-// Checksum is the type of checksum employed for error checking stored data
+// Checksum is the type of checksum employed for error checking stored data.
+// NOTE: Should be no more than 4 (2 bits) of checksum types.
 type Checksum uint8
 
 const (
@@ -57,14 +75,14 @@ func (checksum Checksum) String() string {
 type SerializationFormat uint8
 
 func EncodeSerializationFormat(compress Compression, checksum Checksum) SerializationFormat {
-	a := (uint8(compress) & 0x0F) << 4
-	b := uint8(checksum) & 0x0F
+	a := (uint8(compress) & 0x07) << 5
+	b := (uint8(checksum) & 0x03) << 3
 	return SerializationFormat(a | b)
 }
 
 func DecodeSerializationFormat(s SerializationFormat) (compress Compression, checksum Checksum) {
-	compress = Compression(uint8(s) >> 4)
-	checksum = Checksum(uint8(s) & 0x0F)
+	compress = Compression(uint8(s) >> 5)
+	checksum = Checksum((uint8(s) >> 3) & 0x03)
 	return
 }
 
@@ -86,6 +104,15 @@ func SerializeData(data []byte, compress Compression, checksum Checksum) (s []by
 		byteData = data
 	case Snappy:
 		byteData, err = snappy.Encode(nil, data)
+	case LZ4:
+		origSize := uint32(len(data))
+		byteData = make([]byte, lz4.CompressBound(data)+4)
+		binary.LittleEndian.PutUint32(byteData[0:4], origSize)
+		var outSize int
+		outSize, err = lz4.Compress(data, byteData[4:])
+		if err == nil {
+			byteData = byteData[:4+outSize]
+		}
 	default:
 		err = fmt.Errorf("Illegal compression (%s) during serialization", compress)
 	}
@@ -155,12 +182,12 @@ func DeserializeData(s []byte, uncompress bool) (data []byte, compress Compressi
 	}
 
 	// Get the possibly compressed data.
-	data = buffer.Bytes()
+	cdata := buffer.Bytes()
 
 	// Perform any requested checksum
 	switch checksum {
 	case CRC32:
-		crcChecksum := crc32.ChecksumIEEE(data)
+		crcChecksum := crc32.ChecksumIEEE(cdata)
 		if crcChecksum != storedCrc32 {
 			err = fmt.Errorf("Bad checksum.  Stored %x got %x", storedCrc32, crcChecksum)
 		}
@@ -170,8 +197,13 @@ func DeserializeData(s []byte, uncompress bool) (data []byte, compress Compressi
 	if uncompress {
 		switch compress {
 		case Uncompressed:
+			data = cdata
 		case Snappy:
-			data, err = snappy.Decode(nil, data)
+			data, err = snappy.Decode(nil, cdata)
+		case LZ4:
+			origSize := binary.LittleEndian.Uint32(cdata[0:4])
+			data = make([]byte, int(origSize))
+			err = lz4.Uncompress(cdata[4:], data)
 		default:
 			err = fmt.Errorf("Illegal compressiont format (%d) in deserialization", compress)
 		}
