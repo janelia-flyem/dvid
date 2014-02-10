@@ -1,3 +1,4 @@
+[![Stories in Ready](https://badge.waffle.io/janelia-flyem/dvid.png?label=ready)](https://waffle.io/janelia-flyem/dvid)
 DVID
 ====
 
