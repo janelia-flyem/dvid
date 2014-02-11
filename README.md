@@ -144,7 +144,14 @@ You'll want to set your environment variables like so:
 
     % export BUILDEM_DIR=/path/to/buildem/dir
     % export PATH=$BUILDEM_DIR/bin:$PATH
+
+For Linux, export your library path:
+
     % export LD_LIBRARY_PATH=$BUILDEM_DIR/lib:$LD_LIBRARY_PATH
+
+For Mac, the library path is specified as DYLD_LIBRARY_PATH:
+
+    % export DYLD_LIBRARY_PATH=$BUILDEM_DIR/lib:$LD_LIBRARY_PATH
 
 In the above, we are saying to use the executables created in the $BUILDEM_DIR/bin directory first,
 which should include the DVID executable, and also use buildem-created libraries.
