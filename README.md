@@ -49,7 +49,7 @@ Why is distributed versioning central to DVID instead of a centralized approach?
 
 * **Significant processing can occur in small subsets of the data or using alternative, compact 
 representations**: FlyEM mostly works in portions of the data after using full data to establish 
-context.​  We can't even see the cells if we zoom out to the scale of our volumes. And if we want to 
+context.  We can't even see the cells if we zoom out to the scale of our volumes. And if we want to 
 work on neurons, it's a sparse volume that can be relatively compact and proofreading occurs in that 
 sparse volume and its neighboring structures. Frequently, we can also transform voxel­-level data to 
 more compact data structures like region adjacency graphs.
@@ -127,16 +127,16 @@ DVID uses the [buildem system](http://github.com/janelia-flyem/buildem#readme) t
 download and build the specified storage engine (e.g., leveldb), Go language support, and all 
 required Go packages.
 
-First, make sure you have a proper GOPATH environment variable as described in the 
-[Go environment page](http://golang.org/doc/code.html).  The GOPATH should point to the location 
-of your Go workspace with bin/, pkg/, src/, etc.  If you've never worked with Go before, just
-use an empty directory like so:
+### One-time Setup
+
+First, setup the proper directory structure that adheres to 
+[Go standards](http://golang.org/doc/code.html) and clone the dvid repo:
 
     % export GOPATH=/path/to/go/workspace
-    % mkdir $GOPATH
-    
-The DVID repo should be cloned to $GOPATH/src/github.com/janelia-flyem/dvid or you can use
-"go get http://github.com/janelia-flyem/dvid" if your GOPATH is set and you already use go.
+    % export DVIDSRC=$GOPATH/src/github.com/janelia-flyem/dvid
+    % mkdir -p $DVIDSRC
+    % cd $DVIDSRC
+    % git clone https://github.com/janelia-flyem/dvid .
 
 You should also have a BUILDEM_DIR, either an empty directory or your previous buildem directory 
 where you'll compile all the required software and eventually place the compiled dvid executable.
@@ -149,19 +149,24 @@ You'll want to set your environment variables like so:
 In the above, we are saying to use the executables created in the $BUILDEM_DIR/bin directory first,
 which should include the DVID executable, and also use buildem-created libraries.
 
-To build DVID using buildem, do the following steps:
+Create an empty build directory and build dvid:  
 
-    % cd $GOPATH/src/github.com/janelia-flyem/dvid
+    % cd $DVIDSRC
     % mkdir build
     % cd build
-    % cmake -D BUILDEM_DIR=/path/to/buildem/dir ..
+    % cmake -D BUILDEM_DIR=$BUILDEM_DIR ..
+
+The example above creates a build directory in the dvid repo directory, which also has a .gitignore
+that ignores all "build" and "build-*" files/directories.
 
 If you haven't built with that buildem directory before, do the additional steps:
 
     % make
     % cmake -D BUILDEM_DIR=/path/to/buildem/dir ..
 
-To build DVID without a built-in web client, assuming you are still in the CMake build directory from above:
+### Making and testing DVID
+
+Make dvid:
 
     % make dvid
 
@@ -171,17 +176,12 @@ Tests are run with gocheck:
 
     % make test
 
-You could generate a dvid executable with a built-in web client, appended to the executable
-binary and used by dvid's web server during operation:
-
-    % make dvid
-
-For development, I suggest just doing "make dvid" and specifying your choice of web client 
+Specifying your choice of [web client](http://github.com/janelia-flyem/dvid-webclient) 
 using "-webclient":
 
     % dvid -webclient=/path/to/dvid-webclient -datastore=/path/to/datastore/dir serve
     
-You can then modify the web client code and simply refresh the browser.
+You can then modify the web client code and refresh the browser to see the changes.
 
 ## Simple Example
 
@@ -262,7 +262,8 @@ use the "load local" command described in the help response.
 
 ### Loading some sample data
 
-Download a [small stack of grayscale images from github](https://github.com/janelia-flyem/sample-grayscale).
+Download a 
+[small stack of grayscale images from github](https://github.com/janelia-flyem/sample-grayscale).
 
 You can either clone it using git or use the "Download ZIP" button on the right.  Once you've downloaded
 that 250 x 250 x 250 grayscale volume, enter the following:
@@ -315,7 +316,7 @@ Note that we set type-specific parameters, "source" to "mygrayscale", which is t
 data we wish to tile, and "TileSize" to "128", which causes all future tile generation to be 128x128
 pixels.  Now that we have quadtree data, we generate the quadtree using this command:
 
-    % dvid node c7 myquadtree generate
+    % dvid node c7 myquadtree generate tilespec.json
 
 This will kick off the tile precomputation (about 30 seconds on my MacBook Pro).  Since our
 loaded grayscale is 250 x 250 x 250, we will have two different scales in the quadtree.  The original
