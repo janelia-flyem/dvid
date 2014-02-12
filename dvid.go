@@ -21,6 +21,7 @@ import (
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
+	"github.com/janelia-flyem/dvid/storage"
 
 	// Declare the data types this DVID executable will support
 	_ "github.com/janelia-flyem/dvid/datatype/keyvalue"
@@ -102,8 +103,9 @@ Commands that can be performed without a running server:
 
 	about
 	help
-	init 
+	init
 	serve
+	repair
 
 `
 
@@ -234,6 +236,8 @@ func DoCommand(cmd dvid.Command) error {
 		return DoInit(cmd)
 	case "serve":
 		return DoServe(cmd)
+	case "repair":
+		return DoRepair(cmd)
 	case "about":
 		fmt.Println(datastore.Versions())
 	// Send everything else to server via DVID terminal
@@ -256,6 +260,15 @@ func DoCommand(cmd dvid.Command) error {
 func DoInit(cmd dvid.Command) error {
 	create := true
 	return datastore.Init(*datastoreDir, create, cmd.Settings())
+}
+
+// DoRepair performs the "repair" command, trying to repair a storage engine
+func DoRepair(cmd dvid.Command) error {
+	if err := storage.RepairStore(*datastoreDir, cmd.Settings()); err != nil {
+		return err
+	}
+	fmt.Printf("Ran repair on database at %s.\n", *datastoreDir)
+	return nil
 }
 
 // DoServe opens a datastore then creates both web and rpc servers for the datastore

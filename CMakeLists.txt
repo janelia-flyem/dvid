@@ -93,7 +93,7 @@ else ()
         set (DVID_BACKEND_DEPEND    "")   # Assume manual install
         message ("Assuming manually installed couchbase will be used for DVID storage engine.")
     else ()
-		set (DVID_BACKEND			"levigo")
+		set (DVID_BACKEND			"leveldb")
         set (DVID_BACKEND_DEPEND    ${leveldb_NAME})
         message ("Installing standard leveldb for DVID storage engine")
     endif ()

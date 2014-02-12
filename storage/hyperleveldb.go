@@ -89,11 +89,7 @@ type LevelDB struct {
 	ldb     *levigo.DB
 }
 
-// NewStore returns a leveldb backend.
-func NewStore(path string, create bool, config dvid.Config) (Engine, error) {
-	dvid.StartCgo()
-	defer dvid.StopCgo()
-
+func GetOptions(create bool, config dvid.Config) (*leveldbOptions, error) {
 	opt := &leveldbOptions{
 		Options:      levigo.NewOptions(),
 		ReadOptions:  levigo.NewReadOptions(),
@@ -102,11 +98,6 @@ func NewStore(path string, create bool, config dvid.Config) (Engine, error) {
 	}
 	opt.WriteOptions.SetSync(DefaultSync) // Huge performance penalty to set sync to true
 
-	leveldb := &LevelDB{
-		directory: path,
-		config:    config,
-		options:   opt,
-	}
 	// Set flags based on create parameter
 	opt.SetCreateIfMissing(create)
 	opt.SetErrorIfExists(create)
@@ -184,6 +175,25 @@ func NewStore(path string, create bool, config dvid.Config) (Engine, error) {
 	// Snappy-compressed data without ever decompressing on server-side.
 	opt.SetCompression(levigo.NoCompression) // (levigo.SnappyCompression)
 
+	return opt, nil
+}
+
+// NewStore returns a leveldb backend.
+func NewStore(path string, create bool, config dvid.Config) (Engine, error) {
+	dvid.StartCgo()
+	defer dvid.StopCgo()
+
+	opt, err := GetOptions(create, config)
+	if err != nil {
+		return nil, err
+	}
+
+	leveldb := &LevelDB{
+		directory: path,
+		config:    config,
+		options:   opt,
+	}
+
 	ldb, err := levigo.Open(path, opt.Options)
 	if err != nil {
 		return nil, err
@@ -191,6 +201,23 @@ func NewStore(path string, create bool, config dvid.Config) (Engine, error) {
 	leveldb.ldb = ldb
 
 	return leveldb, nil
+}
+
+// RepairStore tries to repair a damaged leveldb
+func RepairStore(path string, config dvid.Config) error {
+	dvid.StartCgo()
+	defer dvid.StopCgo()
+
+	opt, err := GetOptions(false, config)
+	if err != nil {
+		return err
+	}
+
+	err = levigo.RepairDatabase(path, opt.Options)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 // ---- Engine interface ----

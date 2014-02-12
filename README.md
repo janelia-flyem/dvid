@@ -156,7 +156,7 @@ For Mac, the library path is specified as DYLD_LIBRARY_PATH:
 In the above, we are saying to use the executables created in the $BUILDEM_DIR/bin directory first,
 which should include the DVID executable, and also use buildem-created libraries.
 
-Create an empty build directory and build dvid:  
+Create an empty build directory used to build just dvid:  
 
     % cd $DVIDSRC
     % mkdir build
