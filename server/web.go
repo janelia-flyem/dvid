@@ -148,7 +148,12 @@ func mainHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		t.Execute(w, vars)
 	} else if runningService.WebClientPath != "" {
-		filename := filepath.Join(runningService.WebClientPath, r.URL.Path)
+		var filename string
+		if r.URL.Path[len(r.URL.Path)-1:] == "/" {
+			filename = filepath.Join(runningService.WebClientPath, r.URL.Path, "index.html")
+		} else {
+			filename = filepath.Join(runningService.WebClientPath, r.URL.Path)
+		}
 		dvid.Log(dvid.Debug, "Serving %s -> %s\n", r.URL.Path, filename)
 		http.ServeFile(w, r, filename)
 	} else {

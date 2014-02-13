@@ -126,22 +126,51 @@ GET  /api/node/<UUID>/<data name>/tile/<dims>/<scaling>/<tile coord>[/<format>]
                     jpg allows lossy quality setting, e.g., "jpg:80"
 
 
-(TODO)
-GET  /api/node/<UUID>/<data name>/image/<dims>/<size>/<offset>[/<format>]
+GET  /api/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>]
 
-    Retrieves image of named data within a version node using the precomputed quadtree.
+    Retrieves raw image of named data within a version node using the precomputed quadtree.
+    By "raw", we mean that no additional processing is applied based on voxel resolutions
+    to make sure the retrieved image has isotropic pixels.  For example, if an XZ image
+    is requested and the image volume has X resolution 3 nm and Z resolution 40 nm, the
+    returned image will be heavily anisotropic and should be scaled by 40/3 in Y by client.
 
     Example: 
 
-    GET /api/node/3f8c/myquadtree/image/xy/512_256/0_0_100/jpg:80
+    GET /api/node/3f8c/myquadtree/raw/xy/512_256/0_0_100/jpg:80
 
     Arguments:
 
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add.
-    dims          The axes of data extraction in form "i_j_k,..."  Example: "0_2" can be XZ.
+    dims          The axes of data extraction in form i_j.  Example: "0_2" can be XZ.
                     Slice strings ("xy", "xz", or "yz") are also accepted.
-    tile coord    The tile coordinate in "x_y_z" format.  See discussion of scaling above.
+                    Note that only 2d images are returned for quadtrees.
+    size          Size in voxels along each dimension specified in <dims>.
+    offset        Gives coordinate of first voxel using dimensionality of data.
+    format        "png", "jpg" (default: "png")
+                    jpg allows lossy quality setting, e.g., "jpg:80"
+
+GET  /api/node/<UUID>/<data name>/isotropic/<dims>/<size>/<offset>[/<format>]
+
+    Retrieves isotropic image of named data within a version node using the precomputed quadtree.
+    Additional processing is applied based on voxel resolutions to make sure the retrieved image 
+    has isotropic pixels.  For example, if an XZ image is requested and the image volume has 
+    X resolution 3 nm and Z resolution 40 nm, the returned image's height will be magnified 40/3
+    relative to the raw data.
+
+    Example: 
+
+    GET /api/node/3f8c/myquadtree/isotropic/xy/512_256/0_0_100/jpg:80
+
+    Arguments:
+
+    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    data name     Name of data to add.
+    dims          The axes of data extraction in form i_j.  Example: "0_2" can be XZ.
+                    Slice strings ("xy", "xz", or "yz") are also accepted.
+                    Note that only 2d images are returned for quadtrees.
+    size          Size in voxels along each dimension specified in <dims>.
+    offset        Gives coordinate of first voxel using dimensionality of data.
     format        "png", "jpg" (default: "png")
                     jpg allows lossy quality setting, e.g., "jpg:80"
 
@@ -467,8 +496,32 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 			dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: tile %s", r.Method, planeStr)
 		}
 
-	case "image":
-		err = fmt.Errorf("DVID does not yet support stitched images from quadtree.")
+	case "raw", "anisotropic":
+		shapeStr, sizeStr, offsetStr := parts[4], parts[5], parts[6]
+		planeStr := dvid.DataShapeString(shapeStr)
+		plane, err := planeStr.DataShape()
+		if err != nil {
+			return err
+		}
+		if plane.ShapeDimensions() != 2 {
+			return fmt.Errorf("Quadtrees can only return 2d images not %s", plane)
+		}
+		slice, err := dvid.NewSliceFromStrings(planeStr, offsetStr, sizeStr, "_")
+		if err != nil {
+			return err
+		}
+		img, err := d.GetImage(uuid, slice, parts[3])
+		if err != nil {
+			return err
+		}
+		var formatStr string
+		if len(parts) >= 8 {
+			formatStr = parts[7]
+		}
+		err = dvid.WriteImageHttp(w, img, formatStr)
+		if err != nil {
+			return err
+		}
 	default:
 		err = fmt.Errorf("Illegal request for quadtree data.  See 'help' for REST API")
 	}
@@ -477,6 +530,51 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		return err
 	}
 	return nil
+}
+
+// GetImage returns an image given a 2d orthogonal image description.  Since quadtrees
+// have precomputed XY, XZ, and YZ orientations, reconstruction of the desired image should
+// be much faster than computing the image from voxel blocks.
+// The 'proc' option should be either the string "raw" or "isotropic".  If the latter,
+// the returned image will be processed to be isotropic using the data's resolution.
+func (d *Data) GetImage(uuid dvid.UUID, slice dvid.Geometry, proc string) (image.Image, error) {
+	/*
+		// Iterate through tiles that intersect our geometry.
+		levelSpec, found := d.Levels[0]
+		if !found {
+			return nil, fmt.Errorf("%s has no specification for tiles at highest resolution",
+				d.DataName())
+		}
+		src, err := getSourceVoxels(uuid, d.Source)
+		if err != nil {
+			return nil, err
+		}
+		_, versionID, err := server.DatastoreService().LocalIDFromUUID(uuid)
+		if err != nil {
+			return nil, err
+		}
+		dstW := slice.Size().Value(0)
+		dstH := slice.Size().Value(1)
+
+		// Create an image of appropriate size and type using source's ExtHandler creation.
+		v, err := src.NewExtHandler(slice, nil)
+		if err != nil {
+			return nil, err
+		}
+
+		// Read each tile that intersects the geometry and store into final image.
+		tileW, tileH, err := slice.DataShape().GetSize2D(levelSpec.TileSize)
+		if err != nil {
+			return nil, err
+		}
+
+		// Out of the stitched tiles, extract sub-image of interest.
+
+		// If isotropic pixels are requested, scale by the voxel resolutions.
+
+		return v.GoImage()
+	*/
+	return nil, nil
 }
 
 // GetTile retrieves a tile.

@@ -79,23 +79,33 @@ else ()
     # dependencies.
 
     include (leveldb)
-#    include (lmdb)
+    include (basholeveldb)
+    include (hyperleveldb)
+    include (lmdb)
+
+    if (NOT DVID_BACKEND)
+        set (DVID_BACKEND "basholeveldb")
+    endif ()
 
 	# Defaults to standard leveldb
     if ("${DVID_BACKEND}" STREQUAL "lmdb")
-        set (DVID_BACKEND_DEPEND    "")   # Assume manual install
-#        set (DVID_BACKEND_DEPEND    ${lmdb_NAME})
+        set (DVID_BACKEND_DEPEND    ${lmdb_NAME})
         message ("Installing Lightning MDB for DVID storage engine")
-    elseif ("${DVID_BACKEND}" STREQUAL "hyperleveldb")
-        set (DVID_BACKEND_DEPEND    "")   # Assume manual install
-        message ("Assuming manually installed HyperLevelDB will be used for DVID storage engine.")
     elseif ("${DVID_BACKEND}" STREQUAL "couchbase")
         set (DVID_BACKEND_DEPEND    "")   # Assume manual install
         message ("Assuming manually installed couchbase will be used for DVID storage engine.")
-    else ()
-		set (DVID_BACKEND			"leveldb")
+    elseif ("${DVID_BACKEND}" STREQUAL "hyperleveldb")
+        set (DVID_BACKEND_DEPEND    ${hyperleveldb_NAME})
+        message ("Installing HyperLevelDB for DVID storage engine.")
+    elseif ("${DVID_BACKEND}" STREQUAL "leveldb")
+        set (DVID_BACKEND           "leveldb")
         set (DVID_BACKEND_DEPEND    ${leveldb_NAME})
-        message ("Installing standard leveldb for DVID storage engine")
+        message ("Installing standard Google leveldb for DVID storage engine")
+    elseif ("${DVID_BACKEND}" STREQUAL "basholeveldb")
+        set (DVID_BACKEND           "basholeveldb")
+        set (DVID_BACKEND_DEPEND    ${basholeveldb_NAME})
+        message ("Installing Basho-tuned leveldb for DVID storage engine")
+        message (${basholeveldb_NAME})
     endif ()
 
 
