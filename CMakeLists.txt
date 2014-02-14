@@ -111,7 +111,7 @@ else ()
                 # Ubuntu
                 if (LINUX_ISSUE MATCHES "Ubuntu")
                     message ("Detected Ubuntu system.  Using -lrt linker flag.")
-                    set (GO_LDFLAGS "${GO_LDFLAGS} -lrt")
+                    set (GO_LDFLAGS "${GO_LDFLAGS};-lrt")
                 endif ()
             endif()
         endif()
