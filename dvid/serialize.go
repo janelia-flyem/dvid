@@ -60,6 +60,10 @@ const (
 	CRC32               = 1 << iota
 )
 
+// ChecksumUsed is the type of checksum employed for all data operations.
+// Note that many database engines already implement some form of corruption test.
+var ChecksumUsed Checksum = NoChecksum
+
 func (checksum Checksum) String() string {
 	switch checksum {
 	case NoChecksum:

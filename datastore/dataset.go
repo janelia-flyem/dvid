@@ -171,7 +171,7 @@ func (dsets *Datasets) serializableStruct() (sdata *serializableDatasets) {
 	return
 }
 
-// Serialize returns a serialization of Datasets with Snappy compression and
+// Serialize returns a serialization of Datasets with compression and
 // CRC32 checksum.
 func (dsets *Datasets) serialize() ([]byte, error) {
 	return dvid.Serialize(dsets.serializableStruct(), Compression, dvid.CRC32)

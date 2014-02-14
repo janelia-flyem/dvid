@@ -20,12 +20,13 @@ const (
 
 	// Default # bits for Bloom Filter.  The filter reduces the number of unnecessary
 	// disk reads needed for Get() calls by a large factor.
-	DefaultBloomBits = 10
+	DefaultBloomBits = 16
 
 	// Number of open files that can be used by the datastore.  You may need to
 	// increase this if your datastore has a large working set (budget one open
-	// file per 2MB of working set).
-	DefaultMaxOpenFiles = 1000
+	// file per 2MB of working set).  You might need to do "ulimit -n 1200" or
+	// some other number to make sure you can handle the default.
+	DefaultMaxOpenFiles = 1024
 
 	// Approximate size of user data packed per block.  Note that the
 	// block size specified here corresponds to uncompressed data.  The
