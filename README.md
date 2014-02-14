@@ -5,9 +5,15 @@ DVID
 
 [![GoDoc](https://godoc.org/github.com/janelia-flyem/dvid?status.png)](https://godoc.org/github.com/janelia-flyem/dvid) [![Build Status](https://drone.io/github.com/janelia-flyem/dvid/status.png)](https://drone.io/github.com/janelia-flyem/dvid/latest) [![Stories in Ready](https://badge.waffle.io/janelia-flyem/dvid.png?label=ready)](https://waffle.io/janelia-flyem/dvid)
 
-DVID is a *distributed, versioned, image-oriented datastore* written in Go that supports different
-storage backends, a Level 2 REST HTTP API, command-line access, and a FUSE frontend to at least
-one of its data types.  It has been tested on both MacOS X and Linux (Fedora 16, CentOS 6) but not on Windows.
+DVID is a *distributed, versioned, image-oriented datastore* written to support 
+(Janelia Farm Reseach Center's)[http://www.janelia.org] brain imaging, analysis and 
+visualization efforts.  DVID's initial focus is on efficiently storing and retrieving 
+3d grayscale and label data in a variety of ways, e.g., subvolumes, images in XY, XZ, and YZ 
+orientation, multiscale tiles (quadtree and octree forms), and sparse volumes determined by a label.
+
+DVID is written in Go and supports different storage backends, a Level 2 REST HTTP API, 
+command-line access, and a FUSE frontend to at least one of its data types.  It has been 
+tested on both MacOS X and Linux (Fedora 16, CentOS 6) but not on Windows.
 
 Command-line and HTTP API documentation is currently distributed over data types and can be 
 found in help constants:
