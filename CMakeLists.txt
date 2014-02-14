@@ -105,13 +105,22 @@ else ()
         set (DVID_BACKEND           "basholeveldb")
         set (DVID_BACKEND_DEPEND    ${basholeveldb_NAME})
         message ("Installing Basho-tuned leveldb for DVID storage engine")
-        message (${basholeveldb_NAME})
+        if (CMAKE_SYSTEM_NAME MATCHES "Linux")
+            if (EXISTS "/etc/issue")
+                file(READ "/etc/issue" LINUX_ISSUE)
+                # Ubuntu
+                if (LINUX_ISSUE MATCHES "Ubuntu")
+                    message ("Detected Ubuntu system.  Using -lrt linker flag.")
+                    set (CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -lrt")
+                endif ()
+            endif()
+        endif()
     endif ()
 
 
     set (DVID_GO     github.com/janelia-flyem/dvid)
 
-    set (CGO_FLAGS   CGO_CFLAGS="-I${BUILDEM_INCLUDE_DIR}";CGO_LDFLAGS="-L${BUILDEM_LIB_DIR};-lsnappy")
+    set (CGO_FLAGS   CGO_CFLAGS="-I${BUILDEM_INCLUDE_DIR}";CGO_LDFLAGS="-L${BUILDEM_LIB_DIR}")
 
     add_custom_target (gopackages-install
         ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go get ${GO_GET} github.com/janelia-flyem/go
@@ -135,7 +144,7 @@ else ()
         ${BUILDEM_ENV_STRING} ${GO_ENV} ${CGO_FLAGS} go build -o ${BUILDEM_BIN_DIR}/dvid 
             -v -tags '${DVID_BACKEND}' dvid.go 
         WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
-        DEPENDS     ${golang_NAME} ${snappy_NAME} ${DVID_BACKEND_DEPEND}
+        DEPENDS     ${golang_NAME} ${DVID_BACKEND_DEPEND}
                     gopackages gofuse ${hdf5_NAME}
         COMMENT     "Compiled and installed dvid executable.")
 
