@@ -291,6 +291,22 @@ func (s *Service) NewData(u dvid.UUID, typename, dataname string, config dvid.Co
 	return dataset.Put(s.kvSetter)
 }
 
+// ModifyData modifies data of given name in dataset specified by a UUID.
+func (s *Service) ModifyData(u dvid.UUID, dataname string, config dvid.Config) error {
+	if s.datasets == nil {
+		return fmt.Errorf("Datastore service has no datasets available")
+	}
+	dataset, err := s.datasets.DatasetFromUUID(u)
+	if err != nil {
+		return err
+	}
+	err = dataset.modifyData(dvid.DataString(dataname), config)
+	if err != nil {
+		return err
+	}
+	return dataset.Put(s.kvSetter)
+}
+
 // Locks the node with the given UUID.
 func (s *Service) Lock(u dvid.UUID) error {
 	if s.datasets == nil {

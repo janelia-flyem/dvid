@@ -79,6 +79,9 @@ type DataService interface {
 	// not versioned, only one copy of data is kept across all versions nodes in a dataset.
 	IsVersioned() bool
 
+	// ModifyConfig modifies a configuration in a type-specific way.
+	ModifyConfig(config dvid.Config) error
+
 	// DoRPC handles command line and RPC commands specific to a data type
 	DoRPC(request Request, reply *Response) error
 
@@ -214,6 +217,17 @@ type Datatype struct {
 
 // Types must add a NewData() function...
 
+func NewDataService(id *DataID, t TypeService, config dvid.Config) (data *Data, err error) {
+	data = &Data{DataID: id, TypeService: t}
+	var versioned bool
+	versioned, err = config.IsVersioned()
+	if err != nil {
+		return
+	}
+	data.Unversioned = !versioned
+	return
+}
+
 func (datatype *Datatype) Help() string {
 	return fmt.Sprintf(helpMessage, datatype.Name, datatype.Url)
 }
@@ -243,20 +257,17 @@ type Data struct {
 	Unversioned bool
 }
 
-// NewDataService returns a base data struct and sets the versioning depending on config.
-func NewDataService(id *DataID, t TypeService, config dvid.Config) (data *Data, err error) {
-	data = &Data{DataID: id, TypeService: t}
-	var versioned bool
-	versioned, err = config.IsVersioned()
-	if err != nil {
-		return
-	}
-	data.Unversioned = !versioned
-	return
-}
-
 func (d *Data) IsVersioned() bool {
 	return !d.Unversioned
+}
+
+func (d *Data) ModifyConfig(config dvid.Config) error {
+	versioned, err := config.IsVersioned()
+	if err != nil {
+		return err
+	}
+	d.Unversioned = !versioned
+	return nil
 }
 
 func (d *Data) UnknownCommand(request Request) error {

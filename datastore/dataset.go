@@ -376,6 +376,20 @@ func (dset *Dataset) newData(name dvid.DataString, typeName string, config dvid.
 	return nil
 }
 
+// modifyData modifies preexisting Data within a Dataset.  Settings can be passed
+// via the 'config' argument.  Only settings within the passed config are modified.
+func (dset *Dataset) modifyData(name dvid.DataString, config dvid.Config) error {
+	dataservice, found := dset.DataMap[name]
+	if !found {
+		return fmt.Errorf("Data '%s' not found in dataset %s", name, dset.Root)
+	}
+
+	dset.mapLock.Lock()
+	defer dset.mapLock.Unlock()
+
+	return dataservice.ModifyConfig(config)
+}
+
 // DataAvail gives the availability of data within a node or whether parent nodes
 // must be traversed to check for key/value pairs.
 type DataAvail int

@@ -1341,82 +1341,22 @@ func NewDatatype(values DataValues) (dtype *Datatype) {
 
 // NewData returns a pointer to a new Voxels with default values.
 func (dtype *Datatype) NewDataService(id *datastore.DataID, config dvid.Config) (
-	service datastore.DataService, err error) {
+	datastore.DataService, error) {
 
-	var basedata *datastore.Data
-	basedata, err = datastore.NewDataService(id, dtype, config)
+	basedata, err := datastore.NewDataService(id, dtype, config)
 	if err != nil {
-		return
+		return nil, err
 	}
-	props := Properties{
-		Values: make([]DataValue, len(dtype.values)),
+	props := new(Properties)
+	props.SetDefault(dtype.values)
+	if err := props.SetByConfig(config); err != nil {
+		return nil, err
 	}
-	copy(props.Values, dtype.values)
-
-	var dimensions int
-	var s string
-	var found bool
-	dimensions, found, err = config.GetInt("Dimensions")
-	if err != nil {
-		return
-	}
-	if !found {
-		dimensions = 3
-	}
-	s, found, err = config.GetString("BlockSize")
-	if err != nil {
-		return
-	}
-	if found {
-		props.BlockSize, err = dvid.StringToPoint(s, ",")
-		if err != nil {
-			return
-		}
-	} else {
-		size := make([]int32, dimensions)
-		for d := 0; d < dimensions; d++ {
-			size[d] = DefaultBlockSize
-		}
-		props.BlockSize, err = dvid.NewPoint(size)
-		if err != nil {
-			return
-		}
-	}
-	s, found, err = config.GetString("Res")
-	if err != nil {
-		return
-	}
-	if found {
-		props.Resolution.VoxelSize, err = dvid.StringToNdFloat32(s, ",")
-		if err != nil {
-			return
-		}
-	} else {
-		props.Resolution.VoxelSize = make(dvid.NdFloat32, dimensions)
-		for d := 0; d < dimensions; d++ {
-			props.Resolution.VoxelSize[d] = DefaultRes
-		}
-	}
-	s, found, err = config.GetString("Units")
-	if err != nil {
-		return
-	}
-	if found {
-		props.Resolution.VoxelUnits, err = dvid.StringToNdString(s, ",")
-		if err != nil {
-			return
-		}
-	} else {
-		props.Resolution.VoxelUnits = make(dvid.NdString, dimensions)
-		for d := 0; d < dimensions; d++ {
-			props.Resolution.VoxelUnits[d] = DefaultUnits
-		}
-	}
-	service = &Data{
+	service := &Data{
 		Data:       *basedata,
-		Properties: props,
+		Properties: *props,
 	}
-	return
+	return service, nil
 }
 
 func (dtype *Datatype) Help() string {
@@ -1515,6 +1455,72 @@ type axis struct {
 
 // TODO -- Allow explicit setting of axes labels.
 var axesName = []string{"X", "Y", "Z", "t", "c"}
+
+// SetDefault sets Voxels properties to default values.
+func (props *Properties) SetDefault(values DataValues) error {
+	props.Values = make([]DataValue, len(values))
+	copy(props.Values, values)
+
+	dimensions := 3
+	size := make([]int32, dimensions)
+	for d := 0; d < dimensions; d++ {
+		size[d] = DefaultBlockSize
+	}
+	var err error
+	props.BlockSize, err = dvid.NewPoint(size)
+	if err != nil {
+		return err
+	}
+	props.Resolution.VoxelSize = make(dvid.NdFloat32, dimensions)
+	for d := 0; d < dimensions; d++ {
+		props.Resolution.VoxelSize[d] = DefaultRes
+	}
+	props.Resolution.VoxelUnits = make(dvid.NdString, dimensions)
+	for d := 0; d < dimensions; d++ {
+		props.Resolution.VoxelUnits[d] = DefaultUnits
+	}
+	return nil
+}
+
+// SetByConfig sets Voxels properties based on type-specific keywords in the configuration.
+// Any property not described in the config is left as is.  See the Voxels help for listing
+// of configurations.
+func (props *Properties) SetByConfig(config dvid.Config) error {
+	s, found, err := config.GetString("BlockSize")
+	if err != nil {
+		return err
+	}
+	if found {
+		props.BlockSize, err = dvid.StringToPoint(s, ",")
+		if err != nil {
+			return err
+		}
+	}
+	s, found, err = config.GetString("Res")
+	if err != nil {
+		return err
+	}
+	if found {
+		dvid.Log(dvid.Normal, "Changing resolution of voxels to %s\n", s)
+		props.Resolution.VoxelSize, err = dvid.StringToNdFloat32(s, ",")
+		if err != nil {
+			return err
+		}
+	} else {
+		fmt.Printf("Did not find 'Res' in %s\n", config)
+	}
+	s, found, err = config.GetString("Units")
+	if err != nil {
+		return err
+	}
+	if found {
+		props.Resolution.VoxelUnits, err = dvid.StringToNdString(s, ",")
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 // NdDataSchema returns the JSON schema for this Data
 func (props *Properties) NdDataSchema() (string, error) {
@@ -1637,6 +1643,14 @@ func (d *Data) JSONString() (jsonStr string, err error) {
 
 // --- DataService interface ---
 
+func (d *Data) ModifyConfig(config dvid.Config) error {
+	props := &(d.Properties)
+	if err := props.SetByConfig(config); err != nil {
+		return err
+	}
+	return nil
+}
+
 // DoRPC acts as a switchboard for RPC commands.
 func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error {
 	switch request.TypeCommand() {
@@ -1721,6 +1735,21 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 	// Break URL request into arguments
 	url := r.URL.Path[len(server.WebAPIPath):]
 	parts := strings.Split(url, "/")
+	if len(parts) == 3 && op == PutOp {
+		fmt.Printf("Setting configuration of data '%s'\n", d.DataName())
+		config, err := server.DecodeJSON(r)
+		if err != nil {
+			return err
+		}
+		if err := d.ModifyConfig(config); err != nil {
+			return err
+		}
+		if err := server.DatastoreService().SaveDataset(uuid); err != nil {
+			return err
+		}
+		fmt.Fprintf(w, "Changed '%s' based on received configuration:\n%s\n", d.DataName(), config)
+		return nil
+	}
 	if len(parts) < 4 {
 		err := fmt.Errorf("Incomplete API request")
 		server.BadRequest(w, r, err.Error())

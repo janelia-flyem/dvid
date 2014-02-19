@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -96,6 +97,7 @@ const WebHelp = `
             <li>POST /api/node/{UUID}/lock</li>
             <li>POST /api/node/{UUID}/branch<br /></li>
 
+            <li>POST /api/node/{UUID}/{data name} (expects config in JSON format)</li>
             <li>GET /api/node/{UUID}/{data name}/{type-specific commands}</li>
             <li>POST /api/node/{UUID}/{data name}/{type-specific commands}</li>
         </ul>
@@ -126,6 +128,15 @@ func BadRequest(w http.ResponseWriter, r *http.Request, message string) {
 	errorMsg += "  Use 'dvid help' to get proper API request format.\n"
 	dvid.Error(errorMsg)
 	http.Error(w, errorMsg, http.StatusBadRequest)
+}
+
+func DecodeJSON(r *http.Request) (dvid.Config, error) {
+	params := make(map[string]interface{})
+	decoder := json.NewDecoder(r.Body)
+	if err := decoder.Decode(&params); err != nil && err != io.EOF {
+		return nil, fmt.Errorf("Malformed JSON request in body: %s", err.Error())
+	}
+	return dvid.Config(params), nil
 }
 
 // Index file redirection.

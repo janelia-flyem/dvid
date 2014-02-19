@@ -567,6 +567,23 @@ func (d *Data) GetImage(uuid dvid.UUID, slice dvid.Geometry, proc string) (image
 		if err != nil {
 			return nil, err
 		}
+		minPtX, minPtY, err := slice.DataShape().GetSize2D(slice.StartPoint())
+		if err != nil {
+			return nil, err
+		}
+		maxPtX, maxPtY, err := slice.DataShape().GetSize2D(slice.EndPoint())
+		if err != nil {
+			return nil, err
+		}
+		minTileCoord, err := slice.DataShape().PlaneToChunkPoint3d(minPtX, minPtY,
+			dvid.Point3d{0, 0, 0}, levelSpec.TileSize)
+		maxTileCoord, err := slice.DataShape().PlaneToChunkPoint3d(maxPtX, maxPtY,
+			dvid.Point3d{0, 0, 0}, levelSpec.TileSize)
+		for y := minPtY; y <= maxPtY; y += tileH {
+			for x := minPtX; x <= maxPtX; x += tileW {
+
+			}
+		}
 
 		// Out of the stitched tiles, extract sub-image of interest.
 

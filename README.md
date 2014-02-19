@@ -6,14 +6,14 @@ DVID
 [![GoDoc](https://godoc.org/github.com/janelia-flyem/dvid?status.png)](https://godoc.org/github.com/janelia-flyem/dvid) [![Build Status](https://drone.io/github.com/janelia-flyem/dvid/status.png)](https://drone.io/github.com/janelia-flyem/dvid/latest) [![Stories in Ready](https://badge.waffle.io/janelia-flyem/dvid.png?label=ready)](https://waffle.io/janelia-flyem/dvid)
 
 DVID is a *distributed, versioned, image-oriented datastore* written to support 
-(Janelia Farm Reseach Center's)[http://www.janelia.org] brain imaging, analysis and 
+[Janelia Farm Reseach Center's](http://www.janelia.org) brain imaging, analysis and 
 visualization efforts.  DVID's initial focus is on efficiently storing and retrieving 
 3d grayscale and label data in a variety of ways, e.g., subvolumes, images in XY, XZ, and YZ 
 orientation, multiscale tiles (quadtree and octree forms), and sparse volumes determined by a label.
 
 DVID is written in Go and supports different storage backends, a Level 2 REST HTTP API, 
 command-line access, and a FUSE frontend to at least one of its data types.  It has been 
-tested on both MacOS X and Linux (Fedora 16, CentOS 6) but not on Windows.
+tested on both MacOS X and Linux (Fedora 16, CentOS 6, Ubuntu) but not on Windows.
 
 Command-line and HTTP API documentation is currently distributed over data types and can be 
 found in help constants:
@@ -135,7 +135,13 @@ required Go packages.
 
 ### One-time Setup
 
-First, setup the proper directory structure that adheres to 
+Make sure you have the basic requirements:
+
+* C/C++ compiler
+* [CMake](http://www.cmake.org/cmake/resources/software.html)
+* [git](http://git-scm.com/downloads)
+
+Before downloading DVID, setup the proper directory structure that adheres to 
 [Go standards](http://golang.org/doc/code.html) and clone the dvid repo:
 
     % export GOPATH=/path/to/go/workspace
@@ -195,6 +201,31 @@ using "-webclient":
     % dvid -webclient=/path/to/dvid-webclient -datastore=/path/to/datastore/dir serve
     
 You can then modify the web client code and refresh the browser to see the changes.
+
+### Server tuning for big data (optional but recommended)
+
+Particularly when using leveldb variants, we recommend modifying default "max open files" and
+also avoiding extra disk head seeks by turning off *noatime*, which records the last accessed
+time for all files.  See [this explanation on the basho page](http://docs.basho.com/riak/latest/ops/advanced/backends/leveldb/#Tuning-LevelDB)
+
+First, make sure you allow a sufficient number of open files.  This can be checked via the 
+"ulimit -n" command in Linux and Mac.  We suggest raising this to 65535 on Linux and at least
+8192 on a Mac.  You might have to modify the
+(1024 has proven sufficient for Teravoxel datasets on 64-bit Linux using standard leveldb but 
+this had to be raised to several thousand even for 50 Gigavoxel datasets on Mac.)
+
+    % ulimit -n 65535
+
+Second, disable access-time updates for the mount with your DVID data.  In Linux, you can
+add the *noatime* mounting option to /etc/fstab for the partition holding your data.
+The line for the mount holding your DVID data should like something like this:
+
+    /dev/mapper/vg0-lv_data    /dvid/data     xfs      *noatime*,nobarrier     1 2
+
+Then remount the disk:
+
+    % mount /dvid/data -o remount
+
 
 ## Simple Example
 
