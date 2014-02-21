@@ -21,8 +21,8 @@ type IndexTile struct {
 	scaling Scaling
 }
 
-func NewIndexTile(i dvid.IndexZYX, plane dvid.DataShape, scaling Scaling) IndexTile {
-	return IndexTile{i, plane, scaling}
+func NewIndexTile(i dvid.IndexZYX, plane dvid.DataShape, scaling Scaling) *IndexTile {
+	return &IndexTile{i, plane, scaling}
 }
 
 func (i IndexTile) Duplicate() dvid.Index {

@@ -75,6 +75,22 @@ func (img Image) Get() image.Image {
 	}
 }
 
+// Get returns an image.Image from the union struct.
+func (img Image) GetDrawable() draw.Image {
+	switch img.Which {
+	case 0:
+		return img.Gray
+	case 1:
+		return img.Gray16
+	case 2:
+		return img.RGBA
+	case 3:
+		return img.RGBA64
+	default:
+		return nil
+	}
+}
+
 // Set places an image into the union struct.
 func (img *Image) Set(src image.Image) error {
 	switch s := src.(type) {
@@ -94,6 +110,22 @@ func (img *Image) Set(src image.Image) error {
 		return fmt.Errorf("No valid image type received by image.Set(): %s", reflect.TypeOf(src))
 	}
 	return nil
+}
+
+// Data returns a slice of bytes corresponding to the image pixels.
+func (img *Image) Data() []uint8 {
+	switch img.Which {
+	case 0:
+		return img.Gray.Pix
+	case 1:
+		return img.Gray16.Pix
+	case 2:
+		return img.RGBA.Pix
+	case 3:
+		return img.RGBA64.Pix
+	default:
+		return nil
+	}
 }
 
 // SubImage returns an image representing the portion of the image p visible through r.

@@ -8,10 +8,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"image"
+	"image/draw"
 	"math"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
@@ -522,6 +524,8 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		if err != nil {
 			return err
 		}
+		dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: tile-accelerated %s %s (%s)",
+			r.Method, planeStr, parts[3], r.URL)
 	default:
 		err = fmt.Errorf("Illegal request for quadtree data.  See 'help' for REST API")
 	}
@@ -537,75 +541,90 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 // be much faster than computing the image from voxel blocks.
 // The 'proc' option should be either the string "raw" or "isotropic".  If the latter,
 // the returned image will be processed to be isotropic using the data's resolution.
-func (d *Data) GetImage(uuid dvid.UUID, slice dvid.Geometry, proc string) (image.Image, error) {
-	/*
-		// Iterate through tiles that intersect our geometry.
-		levelSpec, found := d.Levels[0]
-		if !found {
-			return nil, fmt.Errorf("%s has no specification for tiles at highest resolution",
-				d.DataName())
-		}
-		src, err := getSourceVoxels(uuid, d.Source)
-		if err != nil {
-			return nil, err
-		}
-		_, versionID, err := server.DatastoreService().LocalIDFromUUID(uuid)
-		if err != nil {
-			return nil, err
-		}
-		dstW := slice.Size().Value(0)
-		dstH := slice.Size().Value(1)
+func (d *Data) GetImage(uuid dvid.UUID, geom dvid.Geometry, proc string) (image.Image, error) {
+	if proc == "isotropic" {
+		return nil, fmt.Errorf("Isotropic images are not yet implemented")
+	}
 
-		// Create an image of appropriate size and type using source's ExtHandler creation.
-		v, err := src.NewExtHandler(slice, nil)
-		if err != nil {
-			return nil, err
-		}
+	// Iterate through tiles that intersect our geometry.
+	levelSpec, found := d.Levels[0]
+	if !found {
+		return nil, fmt.Errorf("%s has no specification for tiles at highest resolution",
+			d.DataName())
+	}
+	src, err := getSourceVoxels(uuid, d.Source)
+	if err != nil {
+		return nil, err
+	}
+	_, versionID, err := server.DatastoreService().LocalIDFromUUID(uuid)
+	if err != nil {
+		return nil, err
+	}
 
-		// Read each tile that intersects the geometry and store into final image.
-		tileW, tileH, err := slice.DataShape().GetSize2D(levelSpec.TileSize)
-		if err != nil {
-			return nil, err
-		}
-		minPtX, minPtY, err := slice.DataShape().GetSize2D(slice.StartPoint())
-		if err != nil {
-			return nil, err
-		}
-		maxPtX, maxPtY, err := slice.DataShape().GetSize2D(slice.EndPoint())
-		if err != nil {
-			return nil, err
-		}
-		minTileCoord, err := slice.DataShape().PlaneToChunkPoint3d(minPtX, minPtY,
-			dvid.Point3d{0, 0, 0}, levelSpec.TileSize)
-		maxTileCoord, err := slice.DataShape().PlaneToChunkPoint3d(maxPtX, maxPtY,
-			dvid.Point3d{0, 0, 0}, levelSpec.TileSize)
-		for y := minPtY; y <= maxPtY; y += tileH {
-			for x := minPtX; x <= maxPtX; x += tileW {
+	// Create an image of appropriate size and type using source's ExtHandler creation.
+	dstW := geom.Size().Value(0)
+	dstH := geom.Size().Value(1)
+	dst, err := src.BlankImage(dstW, dstH)
+	if err != nil {
+		return nil, err
+	}
 
-			}
+	// Read each tile that intersects the geometry and store into final image.
+	slice := geom.DataShape()
+	tileW, tileH, err := slice.GetSize2D(levelSpec.TileSize)
+	if err != nil {
+		return nil, err
+	}
+	tileSize := dvid.Point2d{tileW, tileH}
+	minPtX, minPtY, err := slice.GetSize2D(geom.StartPoint())
+	if err != nil {
+		return nil, err
+	}
+
+	wg := new(sync.WaitGroup)
+	topLeftGlobal := dvid.Point2d{minPtX, minPtY}
+	tilePt := topLeftGlobal.Chunk(tileSize)
+	bottomRightGlobal := tilePt.MaxPoint(tileSize).(dvid.Point2d)
+	y0 := int32(0)
+	y1 := bottomRightGlobal[1] - minPtY + 1
+	for y0 < dstH {
+		x0 := int32(0)
+		x1 := bottomRightGlobal[0] - minPtX + 1
+		for x0 < dstW {
+			wg.Add(1)
+			go func(x0, y0, x1, y1 int32) {
+				// Get this tile from datastore
+				tileCoord, err := slice.PlaneToChunkPoint3d(x0, y0, geom.StartPoint(), levelSpec.TileSize)
+				tileIndex := NewIndexTile(dvid.IndexZYX(tileCoord), slice, Scaling(0))
+				img, err := d.getTile(versionID, slice, Scaling(0), tileIndex)
+				if err != nil || img == nil {
+					return
+				}
+
+				// Get tile space coordinate for top left.
+				curStart := dvid.Point2d{x0 + minPtX, y0 + minPtY}
+				p := curStart.PointInChunk(tileSize)
+				ptInTile := image.Point{int(p.Value(0)), int(p.Value(1))}
+
+				// Paste the pertinent rectangle from this tile into our destination.
+				r := image.Rect(int(x0), int(y0), int(x1), int(y1))
+				draw.Draw(dst.GetDrawable(), r, img.Get(), ptInTile, draw.Src)
+				wg.Done()
+			}(x0, y0, x1, y1)
+			x0 = x1
+			x1 += tileW
 		}
+		y0 = y1
+		y1 += tileH
+	}
+	wg.Wait()
 
-		// Out of the stitched tiles, extract sub-image of interest.
-
-		// If isotropic pixels are requested, scale by the voxel resolutions.
-
-		return v.GoImage()
-	*/
-	return nil, nil
+	return dst.Get(), nil
 }
 
 // GetTile retrieves a tile.
 func (d *Data) GetTile(versionID dvid.VersionLocalID, planeStr, scalingStr, coordStr string) (
 	image.Image, error) {
-
-	if d.Levels == nil {
-		return nil, fmt.Errorf("Tiles have not been generated.")
-	}
-
-	db, err := server.KeyValueGetter()
-	if err != nil {
-		return nil, err
-	}
 
 	// Construct the index for this tile
 	plane := dvid.DataShapeString(planeStr)
@@ -624,30 +643,54 @@ func (d *Data) GetTile(versionID dvid.VersionLocalID, planeStr, scalingStr, coor
 	indexZYX := dvid.IndexZYX{tileCoord.Value(0), tileCoord.Value(1), tileCoord.Value(2)}
 	index := &IndexTile{indexZYX, shape, Scaling(scaling)}
 
+	img, err := d.getTile(versionID, shape, Scaling(scaling), index)
+	if err != nil {
+		return nil, err
+	}
+	return img.Get(), nil
+}
+
+func (d *Data) getTile(versionID dvid.VersionLocalID, plane dvid.DataShape, scaling Scaling,
+	index *IndexTile) (*dvid.Image, error) {
+
+	if d.Levels == nil {
+		return nil, fmt.Errorf("Tiles have not been generated.")
+	}
+
+	db, err := server.KeyValueGetter()
+	if err != nil {
+		return nil, err
+	}
+
 	// Retrieve the tile from datastore
 	key := &datastore.DataKey{d.DatasetID(), d.ID, versionID, index}
 	data, err := db.Get(key)
 	if err != nil {
 		return nil, fmt.Errorf("Error trying to GET from datastore: %s", err.Error())
 	}
+	img := new(dvid.Image)
 	if data == nil {
 		if d.Placeholder {
-			scaleSpec, ok := d.Levels[Scaling(scaling)]
+			scaleSpec, ok := d.Levels[scaling]
 			if !ok {
 				return nil, fmt.Errorf("Could not find tiles at given scale %d", scaling)
 			}
-			message := fmt.Sprintf("%s Tile coord %s @ scale %d", shape, tileCoord, scaling)
-			return dvid.PlaceholderImage(shape, scaleSpec.TileSize, message)
+			message := fmt.Sprintf("%s Tile coord %s @ scale %d", plane, index, scaling)
+			placeholder, err := dvid.PlaceholderImage(plane, scaleSpec.TileSize, message)
+			if err != nil {
+				return nil, err
+			}
+			err = img.Set(placeholder)
+			return img, err
 		}
 		return nil, nil // Not found
 	}
 	//fmt.Printf("Retrieved tile for key %s: %d bytes\n", key, len(data))
-	img := new(dvid.Image)
 	err = img.Deserialize(data)
 	if err != nil {
 		return nil, fmt.Errorf("Error deserializing tile: %s", err.Error())
 	}
-	return img.Get(), nil
+	return img, nil
 }
 
 // pow2 returns the power of 2 with the passed exponent.
@@ -672,7 +715,7 @@ func log2(value int32) uint8 {
 	}
 }
 
-type outFunc func(index IndexTile, img *dvid.Image) error
+type outFunc func(index *IndexTile, img *dvid.Image) error
 
 // Construct all tiles for an image with offset and send to out function.  extractTiles assumes
 // the image and offset are in the XY plane.
@@ -698,9 +741,9 @@ func (d *Data) extractTiles(v voxels.ExtHandler, offset dvid.Point, scaling Scal
 	}
 	src.Set(img)
 	var x0, y0, x1, y1 int32
-	y1 = tileH - 1
+	y1 = tileH
 	for y0 = 0; y0 < srcH; y0 += tileH {
-		x1 = tileW - 1
+		x1 = tileW
 		for x0 = 0; x0 < srcW; x0 += tileW {
 			tileRect := image.Rect(int(x0), int(y0), int(x1), int(y1))
 			tile, err := src.SubImage(tileRect)
@@ -726,7 +769,7 @@ func (d *Data) getXYPutFunc(versionID dvid.VersionLocalID, z int32) (outFunc, er
 	if err != nil {
 		return nil, err
 	}
-	return func(index IndexTile, tile *dvid.Image) error {
+	return func(index *IndexTile, tile *dvid.Image) error {
 		serialization, err := tile.Serialize(Compression, dvid.ChecksumUsed)
 		if err != nil {
 			return err
@@ -741,7 +784,7 @@ func (d *Data) getXZPutFunc(versionID dvid.VersionLocalID, y int32) (outFunc, er
 	if err != nil {
 		return nil, err
 	}
-	return func(index IndexTile, tile *dvid.Image) error {
+	return func(index *IndexTile, tile *dvid.Image) error {
 		serialization, err := tile.Serialize(Compression, dvid.ChecksumUsed)
 		if err != nil {
 			return err
@@ -756,7 +799,7 @@ func (d *Data) getYZPutFunc(versionID dvid.VersionLocalID, x int32) (outFunc, er
 	if err != nil {
 		return nil, err
 	}
-	return func(index IndexTile, tile *dvid.Image) error {
+	return func(index *IndexTile, tile *dvid.Image) error {
 		serialization, err := tile.Serialize(Compression, dvid.ChecksumUsed)
 		if err != nil {
 			return err

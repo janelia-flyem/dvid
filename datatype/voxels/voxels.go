@@ -1244,7 +1244,8 @@ func (v *Voxels) GoImage() (img image.Image, err error) {
 	// values into an appropriate go image.
 	valuesPerVoxel := int32(len(v.values))
 	if valuesPerVoxel < 1 || valuesPerVoxel > 4 {
-		return nil, fmt.Errorf("Standard voxels type can't convert %d values/voxel into go image.", valuesPerVoxel)
+		return nil, fmt.Errorf("Standard voxels type can't convert %d values/voxel into go image.",
+			valuesPerVoxel)
 	}
 	bytesPerValue := v.values.ValueBytes(0)
 	for _, dataValue := range v.values {
@@ -1564,6 +1565,89 @@ func (props *Properties) NdDataSchema() (string, error) {
 type Data struct {
 	datastore.Data
 	Properties
+}
+
+// BlankImage initializes a blank image of appropriate size and depth for the
+// current data values.  Returns an error if the geometry is not 2d.
+func (d *Data) BlankImage(dstW, dstH int32) (*dvid.Image, error) {
+	// Make sure values for this data can be converted into an image.
+	valuesPerVoxel := int32(len(d.Properties.Values))
+	if valuesPerVoxel < 1 || valuesPerVoxel > 4 {
+		return nil, fmt.Errorf("Standard voxels type can't convert %d values/voxel into image.",
+			valuesPerVoxel)
+	}
+	bytesPerValue := d.Properties.Values.ValueBytes(0)
+	for _, dataValue := range d.Properties.Values {
+		if typeBytes[dataValue.DataType] != bytesPerValue {
+			return nil, fmt.Errorf("Standard voxels type can't handle varying sized values per voxel.")
+		}
+	}
+
+	unsupported := func() error {
+		return fmt.Errorf("DVID doesn't support images for %d channels and %d bytes/channel",
+			valuesPerVoxel, bytesPerValue)
+	}
+
+	var img image.Image
+	stride := int(dstW * valuesPerVoxel * bytesPerValue)
+	r := image.Rect(0, 0, int(dstW), int(dstH))
+	imageBytes := int(dstH) * stride
+	data := make([]uint8, imageBytes, imageBytes)
+	switch valuesPerVoxel {
+	case 1:
+		switch bytesPerValue {
+		case 1:
+			img = &image.Gray{
+				Stride: stride,
+				Rect:   r,
+				Pix:    data,
+			}
+		case 2:
+			img = &image.Gray16{
+				Stride: stride,
+				Rect:   r,
+				Pix:    data,
+			}
+		case 4:
+			img = &image.RGBA{
+				Stride: stride,
+				Rect:   r,
+				Pix:    data,
+			}
+		case 8:
+			img = &image.RGBA64{
+				Stride: stride,
+				Rect:   r,
+				Pix:    data,
+			}
+		default:
+			return nil, unsupported()
+		}
+	case 4:
+		switch bytesPerValue {
+		case 1:
+			img = &image.RGBA{
+				Stride: stride,
+				Rect:   r,
+				Pix:    data,
+			}
+		case 2:
+			img = &image.RGBA64{
+				Stride: stride,
+				Rect:   r,
+				Pix:    data,
+			}
+		default:
+			return nil, unsupported()
+		}
+	default:
+		return nil, unsupported()
+	}
+
+	// Package Go image
+	dst := new(dvid.Image)
+	dst.Set(img)
+	return dst, nil
 }
 
 // ----- IntHandler interface implementation ----------
