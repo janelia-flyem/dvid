@@ -60,8 +60,8 @@ $ dvid dataset <UUID> new <type name> <data name> <settings...>
 
     Versioned      "true" or "false" (default)
     BlockSize      Size in pixels  (default: %s)
-    Res       Resolution of voxels (default: 1.0, 1.0, 1.0)
-    Units  String of units (default: "nanometers")
+    VoxelSize      Resolution of voxels (default: 10.0, 10.0, 10.0)
+    VoxelUnits     Resolution units (default: "nanometers")
 
 $ dvid node <UUID> <data name> load <offset> <image glob>
 
@@ -1497,7 +1497,7 @@ func (props *Properties) SetByConfig(config dvid.Config) error {
 			return err
 		}
 	}
-	s, found, err = config.GetString("Res")
+	s, found, err = config.GetString("VoxelSize")
 	if err != nil {
 		return err
 	}
@@ -1507,10 +1507,8 @@ func (props *Properties) SetByConfig(config dvid.Config) error {
 		if err != nil {
 			return err
 		}
-	} else {
-		fmt.Printf("Did not find 'Res' in %s\n", config)
 	}
-	s, found, err = config.GetString("Units")
+	s, found, err = config.GetString("VoxelUnits")
 	if err != nil {
 		return err
 	}

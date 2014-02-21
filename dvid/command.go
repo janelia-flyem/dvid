@@ -7,30 +7,56 @@
 package dvid
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"path/filepath"
 	"strconv"
 	"strings"
 )
 
 // Config is a map of keyword to arbitrary data to specify configurations via keyword.
-type Config map[string]interface{}
+// Keywords are case-insensitive.
+type Config struct {
+	values map[string]interface{} // Make private so we can control case-insensitivity
+}
 
 func NewConfig() Config {
-	c := make(Config)
-	c["versioned"] = "false"
+	c := Config{make(map[string]interface{})}
+	c.values["versioned"] = "false"
 	return c
+}
+
+// Sets a configuration using valid JSON.  Since Config is case-insensitive, JSON
+// object names are converted to lower case.
+func (c *Config) SetByJSON(jsonData io.Reader) error {
+	if c.values == nil {
+		c.values = make(map[string]interface{})
+	}
+	decoder := json.NewDecoder(jsonData)
+	if err := decoder.Decode(&(c.values)); err != nil && err != io.EOF {
+		return fmt.Errorf("Malformed JSON request in body: %s", err.Error())
+	}
+	// Convert all keys to lower case.
+	for key, _ := range c.values {
+		lowerkey := strings.ToLower(key)
+		if key != lowerkey {
+			c.values[lowerkey] = c.values[key]
+			delete(c.values, key)
+		}
+	}
+	return nil
 }
 
 // IsVersioned returns true if we want this data versioned.
 func (c Config) IsVersioned() (versioned bool, err error) {
-	if c == nil {
+	if c.values == nil {
 		err = fmt.Errorf("Config data structure has not been initialized")
 		return
 	}
-	param, found := c["versioned"]
+	param, found := c.values["versioned"]
 	if !found {
-		c["versioned"] = "false"
+		c.values["versioned"] = "false"
 		return false, nil
 	}
 	s, ok := param.(string)
@@ -48,27 +74,35 @@ func (c Config) IsVersioned() (versioned bool, err error) {
 	}
 }
 
-func (c Config) SetVersioned(versioned bool) {
-	if c == nil {
-		c = make(map[string]interface{})
+func (c *Config) SetVersioned(versioned bool) {
+	if c.values == nil {
+		c.values = make(map[string]interface{})
 	}
 	if versioned {
-		c["versioned"] = "true"
+		c.values["versioned"] = "true"
 	} else {
-		c["versioned"] = "false"
+		c.values["versioned"] = "false"
 	}
+}
+
+func (c *Config) Set(key, value string) {
+	if c.values == nil {
+		c.values = make(map[string]interface{})
+	}
+	lowerkey := strings.ToLower(key)
+	c.values[lowerkey] = value
 }
 
 // GetString returns a string value of the given key.  If setting of key is not
 // a string, returns an error.
 func (c Config) GetString(key string) (s string, found bool, err error) {
-	if c == nil {
-		err = fmt.Errorf("Cannot GetString on a nil Config")
+	if c.values == nil {
+		found = false
 		return
 	}
 	var param interface{}
 	lowerkey := strings.ToLower(key)
-	if param, found = c[lowerkey]; found {
+	if param, found = c.values[lowerkey]; found {
 		var ok bool
 		s, ok = param.(string)
 		if !ok {
@@ -82,10 +116,6 @@ func (c Config) GetString(key string) (s string, found bool, err error) {
 // GetInt returns an int value of the given key.  If setting of key is not
 // parseable as an int, returns an error.
 func (c Config) GetInt(key string) (i int, found bool, err error) {
-	if c == nil {
-		err = fmt.Errorf("Cannot GetInt on a nil Config")
-		return
-	}
 	var s string
 	s, found, err = c.GetString(key)
 	if err != nil || !found {
@@ -99,10 +129,6 @@ func (c Config) GetInt(key string) (i int, found bool, err error) {
 // parseable as a bool ("false", "true", "0", or "1"), returns an error.  If the key
 // is not found, it will also return a false bool (the Go zero value for bool).
 func (c Config) GetBool(key string) (value, found bool, err error) {
-	if c == nil {
-		err = fmt.Errorf("Cannot GetBool on a nil Config")
-		return
-	}
 	var s string
 	s, found, err = c.GetString(key)
 	if err != nil || !found {
@@ -178,13 +204,13 @@ func (cmd Command) Setting(key string) (value string, found bool) {
 // a Config, which is a map of key/value data.  All keys are converted
 // to lower case for case-insensitive matching.
 func (cmd Command) Settings() Config {
-	config := make(Config)
+	config := NewConfig()
 	if len(cmd) > 1 {
 		for _, arg := range cmd[1:] {
 			elems := strings.Split(arg, "=")
 			if len(elems) == 2 {
 				lowerkey := strings.ToLower(elems[0])
-				config[lowerkey] = elems[1]
+				config.values[lowerkey] = elems[1]
 			}
 		}
 	}

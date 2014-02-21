@@ -57,19 +57,17 @@ $ dvid dataset <UUID> new labels64 <data name> <settings...>
 
     Versioned      "true" or "false" (default)
     BlockSize      Size in pixels  (default: %s)
-    Res       Resolution of voxels (default: 1.0, 1.0, 1.0)
-    Units  String of units (default: "nanometers")
+    VoxelSize      Resolution of voxels (default: 10.0, 10.0, 10.0)
+    VoxelUnits     Resolution units (default: "nanometers")
 
-$ dvid node <UUID> <data name> load raveler <offset> <image glob>
+$ dvid node <UUID> <data name> load <offset> <image glob> <settings...>
 
     Initializes version node to a set of XY label images described by glob of filenames.
     The DVID server must have access to the named files.  Currently, XY images are required.
-    Requires the files are either 32-bit RGBA (fills the lower 4 bytes of the 64-bit label
-    while the image Z fills the higher 4 bytes) or 64-bit RGBA.
 
     Example: 
 
-    $ dvid node 3f8c superpixels load 0,0,100 "data/*.png"
+    $ dvid node 3f8c superpixels load 0,0,100 "data/*.png" convert=raveler
 
     Arguments:
 
@@ -77,6 +75,11 @@ $ dvid node <UUID> <data name> load raveler <offset> <image glob>
     data name     Name of data to add.
     offset        3d coordinate in the format "x,y,z".  Gives coordinate of top upper left voxel.
     image glob    Filenames of label images, preferably in quotes, e.g., "foo-xy-*.png"
+
+    Configuration Settings (case-insensitive keys)
+
+    Convert       "raveler": fills lower 4 bytes of 64-bit label with loaded pixel values and
+    				 adds the image Z offset as the higher 4 bytes.
 
 $ dvid node <UUID> <data name> composite <grayscale8 data name> <new rgba8 data name>
 
@@ -360,8 +363,8 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 			return fmt.Errorf("Poorly formatted load command.  See command-line help.")
 		}
 		// Parse the request
-		var uuidStr, dataName, cmdStr, formatStr, offsetStr string
-		filenames, err := request.FilenameArgs(1, &uuidStr, &dataName, &cmdStr, &formatStr, &offsetStr)
+		var uuidStr, dataName, cmdStr, offsetStr string
+		filenames, err := request.FilenameArgs(1, &uuidStr, &dataName, &cmdStr, &offsetStr)
 		if err != nil {
 			return err
 		}
@@ -389,10 +392,15 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 		if err != nil {
 			return err
 		}
-		if formatStr == "raveler" {
-			return voxels.LoadImages(d, uuid, offset, filenames)
-		} else {
-			return fmt.Errorf("Currently, only Raveler loading is supported for 64-bit labels.")
+
+		// Load based on the conversion method.
+		config := request.Settings()
+		s, found, err := config.GetString("convert")
+		if found {
+			if strings.ToLower(s) == "raveler" {
+				return voxels.LoadImages(d, uuid, offset, filenames)
+			}
+			return fmt.Errorf("Currently, the only conversion offered is for Raveler")
 		}
 
 	case "composite":

@@ -104,7 +104,6 @@ POST /api/node/<UUID>/<data name>/<dims>/<size>/<offset>[/<format>]
                     available in server implementation.
                   2D: "png", "jpg" (default: "png")
                     jpg allows lossy quality setting, e.g., "jpg:80"
-                  nD: "thrift" (default: "thrift")
 
 `
 

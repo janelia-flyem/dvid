@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
-	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -130,13 +129,13 @@ func BadRequest(w http.ResponseWriter, r *http.Request, message string) {
 	http.Error(w, errorMsg, http.StatusBadRequest)
 }
 
+// DecodeJSON decodes JSON passed in a request into a dvid.Config.
 func DecodeJSON(r *http.Request) (dvid.Config, error) {
-	params := make(map[string]interface{})
-	decoder := json.NewDecoder(r.Body)
-	if err := decoder.Decode(&params); err != nil && err != io.EOF {
-		return nil, fmt.Errorf("Malformed JSON request in body: %s", err.Error())
+	config := dvid.NewConfig()
+	if err := config.SetByJSON(r.Body); err != nil {
+		return dvid.Config{}, fmt.Errorf("Malformed JSON request in body: %s", err.Error())
 	}
-	return dvid.Config(params), nil
+	return config, nil
 }
 
 // Index file redirection.
