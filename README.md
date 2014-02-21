@@ -87,19 +87,21 @@ Planned and Existing Features for DVID:
 
 * **Distributed operation**: Once a DVID dataset is created and loaded with data, it can be cloned to 
 remote sites using user­-defined spatial extents. Each DVID server chooses how much of the data set is 
-held locally. (_Status: Planned Q1 2014_)
-* **Versioning**: Each version of a DVID dataset corresponds to a node in a version DAG (Directed Acyclic 
-Graph). Versions are identified through a UUID that can be composed locally yet are unique globally. 
+held locally. (_Status: Planned Q2 2014_)
+* **Versioning**: Each version of a DVID dataset corresponds to a node in a version DAG 
+(Directed Acyclic Graph). Versions are identified through a UUID that can be composed locally 
+yet are unique globally. 
 Versioning and distribution follow patterns similar to distributed version control systems like git and 
 mercurial. Provenance is kept in the DAG.  (_Status: Simple DAG and UUID support implemented.  
-Versioned compression schemes have been worked out with implementation ~Q2 2014._)
+Versioned compression schemes have been worked out with implementation ~Q1 2014._)
 * **Denormalized Views**: For any node in the version DAG, we can choose to create denormalized 
 views that accelerate particular access patterns. For example, quad trees can be created for XY, XZ, 
 and YZ orthogonal views or sparse volumes can compactly describe a neuron. The extra denormalized data 
 is kept in the datastore until a node is archived, which removes all denormalized key­-value pairs
 associated with that version node. Views of the same data can be eventually consistent.
-(_Status: Multi-scale quadtree, sparse volumes implemented.  Framework for syncing of 
-denormalized views planned Q1-2 2014._)
+(_Status: Multi-scale quadtrees in XY, XZ, YZ, and sparse volumes implemented.  
+Octree planned by Q2 2014.
+Framework for syncing of denormalized views planned Q1-2 2014._)
 * **Flexible Data Types**: DVID provides a well­-defined interface to data type code that can be 
 easily added by users. A DVID server provides HTTP and RPC APIs, authentication, authorization, 
 versioning, provenance, and storage engines. It delegates datatype­-specific commands and processing to 
@@ -112,9 +114,11 @@ key­-value stores. DVID has an abstract key­-value interface to its swappable 
 We choose a key­-value interface because (1) there are a large number of high­-performance, open­-source 
 implementations that run from embedded to clustered systems, (2) the surface area of the API is very 
 small, even after adding important cases like bulk loads or sequential key read/write, and (3) novel technology tends to match key­-value interfaces, e.g., [groupcache](https://github.com/golang/groupcache)
-and [Seagate's Kinetic Open Storage Platform(https://developers.seagate.com/display/KV/Kinetic+Open+Storage+Documentation+Wiki)]  
-(_Status: Use of standard leveldb and 
-HyperLevelDB implemented.  Lightning MDB to be added soon._)
+and [Seagate's Kinetic Open Storage Platform](https://developers.seagate.com/display/KV/Kinetic+Open+Storage+Documentation+Wiki).
+(_Status: Tested with three leveldb variants: 
+[Google's open source version](https://code.google.com/p/leveldb/), 
+[HyperLevelDB](https://github.com/rescrv/HyperLevelDB), and the default
+[Basho-tuned leveldb](https://github.com/basho/leveldb).  Lightning MDB to be added soon._)
 
 DVID promotes the view of data as a collection of key­-value pairs where each key is composed of 
 global identifiers for versioning and data identification as well as a datatype­-specific index 
