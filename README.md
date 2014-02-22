@@ -99,9 +99,8 @@ views that accelerate particular access patterns. For example, quad trees can be
 and YZ orthogonal views or sparse volumes can compactly describe a neuron. The extra denormalized data 
 is kept in the datastore until a node is archived, which removes all denormalized key­-value pairs
 associated with that version node. Views of the same data can be eventually consistent.
-(_Status: Multi-scale quadtrees in XY, XZ, YZ, and sparse volumes implemented.  
-Octree planned by Q2 2014.
-Framework for syncing of denormalized views planned Q1-2 2014._)
+(_Status: Multi-scale quadtrees in XY, XZ, YZ, and sparse volumes implemented.  Octree planned by 
+Q2 2014.  Framework for syncing of denormalized views planned Q1-2 2014._)
 * **Flexible Data Types**: DVID provides a well­-defined interface to data type code that can be 
 easily added by users. A DVID server provides HTTP and RPC APIs, authentication, authorization, 
 versioning, provenance, and storage engines. It delegates datatype­-specific commands and processing to 

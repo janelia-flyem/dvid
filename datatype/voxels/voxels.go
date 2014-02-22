@@ -1338,12 +1338,8 @@ func NewDatatype(values DataValues) (dtype *Datatype) {
 	return
 }
 
-// --- TypeService interface ---
-
 // NewData returns a pointer to a new Voxels with default values.
-func (dtype *Datatype) NewDataService(id *datastore.DataID, config dvid.Config) (
-	datastore.DataService, error) {
-
+func (dtype *Datatype) NewData(id *datastore.DataID, config dvid.Config) (*Data, error) {
 	basedata, err := datastore.NewDataService(id, dtype, config)
 	if err != nil {
 		return nil, err
@@ -1353,11 +1349,18 @@ func (dtype *Datatype) NewDataService(id *datastore.DataID, config dvid.Config) 
 	if err := props.SetByConfig(config); err != nil {
 		return nil, err
 	}
-	service := &Data{
+	data := &Data{
 		Data:       *basedata,
 		Properties: *props,
 	}
-	return service, nil
+	return data, nil
+}
+
+// --- TypeService interface ---
+
+// NewData returns a pointer to a new Voxels with default values.
+func (dtype *Datatype) NewDataService(id *datastore.DataID, config dvid.Config) (datastore.DataService, error) {
+	return dtype.NewData(id, config)
 }
 
 func (dtype *Datatype) Help() string {
@@ -1461,6 +1464,8 @@ var axesName = []string{"X", "Y", "Z", "t", "c"}
 func (props *Properties) SetDefault(values DataValues) error {
 	props.Values = make([]DataValue, len(values))
 	copy(props.Values, values)
+
+	props.ByteOrder = binary.LittleEndian
 
 	dimensions := 3
 	size := make([]int32, dimensions)

@@ -16,18 +16,6 @@ import (
 	"github.com/janelia-flyem/go/snappy-go/snappy"
 )
 
-// Redirection tracks whether a value can be used as is or requires a redirection, i.e., contains
-// a local version ID of where the value is actually stored.
-type Redirection uint8
-
-const (
-	// Value can be used as is without redirection.
-	UnversionedValue Redirection = 0
-
-	// Value is a local version ID where the actual value is stored.
-	VersionedValue Redirection = 1
-)
-
 // Compression is the format of compression for storing data.
 // NOTE: Should be no more than 8 (3 bits) of compression types.
 type Compression uint8

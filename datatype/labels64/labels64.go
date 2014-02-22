@@ -55,6 +55,7 @@ $ dvid dataset <UUID> new labels64 <data name> <settings...>
 
     Configuration Settings (case-insensitive keys)
 
+    LabelType      "Standard" (default) or "Raveler" 
     Versioned      "true" or "false" (default)
     BlockSize      Size in pixels  (default: %s)
     VoxelSize      Resolution of voxels (default: 10.0, 10.0, 10.0)
@@ -178,6 +179,19 @@ func init() {
 	gob.Register(&Data{})
 }
 
+// LabelType specifies how the 64-bit label is organized, allowing some bytes to
+// encode particular attributes.  For example, the "Raveler" LabelType includes
+// the Z-axis coordinate.
+type LabelType uint8
+
+const (
+	Standard64bit LabelType = iota
+
+	// RavelerLabel uses the Z offset as the higher-order 4 bytes and the
+	// superpixel label as the lower 4 bytes.
+	RavelerLabel
+)
+
 // -------  ExtHandler interface implementation -------------
 
 // Labels is an image volume that fulfills the voxels.ExtHandler interface.
@@ -212,27 +226,33 @@ func Get(uuid dvid.UUID, name dvid.DataString) (*Data, error) {
 
 // NewData returns a pointer to labels64 data.
 func NewData(id *datastore.DataID, config dvid.Config) (*Data, error) {
-	voxelservice, err := dtype.Datatype.NewDataService(id, config)
+	voxelData, err := dtype.Datatype.NewData(id, config)
 	if err != nil {
 		return nil, err
 	}
-	return &Data{Data: *(voxelservice.(*voxels.Data))}, nil
+	var labelType LabelType
+	s, found, err := config.GetString("LabelType")
+	if found {
+		switch strings.ToLower(s) {
+		case "raveler":
+			labelType = RavelerLabel
+		case "standard":
+			labelType = Standard64bit
+		default:
+			return nil, fmt.Errorf("unknown label type specified '%s'", s)
+		}
+	}
+	data := &Data{
+		Data:     *voxelData,
+		Labeling: labelType,
+	}
+	return data, nil
 }
 
 // --- TypeService interface ---
 
-// NewData returns a pointer to a new labels64 with default values.
-func (dtype *Datatype) NewDataService(id *datastore.DataID, config dvid.Config) (
-	datastore.DataService, error) {
-
-	voxelservice, err := dtype.Datatype.NewDataService(id, config)
-	if err != nil {
-		return nil, err
-	}
-	service := &Data{
-		Data: *(voxelservice.(*voxels.Data)),
-	}
-	return service, nil
+func (dtype *Datatype) NewDataService(id *datastore.DataID, config dvid.Config) (datastore.DataService, error) {
+	return NewData(id, config)
 }
 
 func (dtype *Datatype) Help() string {
@@ -242,6 +262,7 @@ func (dtype *Datatype) Help() string {
 // Data of labels64 type just uses voxels.Data.
 type Data struct {
 	voxels.Data
+	Labeling LabelType
 }
 
 // JSONString returns the JSON for this Data's configuration
@@ -270,27 +291,31 @@ func (d *Data) NewExtHandler(geom dvid.Geometry, img interface{}) (voxels.ExtHan
 	} else {
 		switch t := img.(type) {
 		case image.Image:
-			var voxelSize, actualStride int32
+			var inputBytesPerVoxel, actualStride int32
 			var err error
-			data, voxelSize, actualStride, err = dvid.ImageData(t)
+			data, inputBytesPerVoxel, actualStride, err = dvid.ImageData(t)
 			if err != nil {
 				return nil, err
 			}
-			if voxelSize != 4 && voxelSize != 8 {
-				return nil, fmt.Errorf("Expecting 4 or 8 byte/voxel labels, got %d bytes/voxel!", voxelSize)
-			}
-			if voxelSize == 4 {
-				data, err = d.addLabelZ(geom, data, actualStride)
-				if err != nil {
-					return nil, err
+			if actualStride != stride {
+				// Need to do some conversion here.
+				switch d.Labeling {
+				case Standard64bit:
+					data, err = d.convertTo64bit(geom, data, int(inputBytesPerVoxel), int(actualStride))
+					if err != nil {
+						return nil, err
+					}
+				case RavelerLabel:
+					data, err = d.addLabelZ(geom, data, actualStride)
+					if err != nil {
+						return nil, err
+					}
+				default:
+					return nil, fmt.Errorf("unexpected label type in labels64: %s", d.Labeling)
 				}
-			} else if actualStride < stride {
-				return nil, fmt.Errorf("Too little data in input image (expected stride %d)", stride)
-			} else {
-				stride = actualStride
 			}
 		default:
-			return nil, fmt.Errorf("Unexpected image type given to NewExtHandler(): %T", t)
+			return nil, fmt.Errorf("unexpected image type given to NewExtHandler(): %T", t)
 		}
 	}
 
@@ -300,15 +325,72 @@ func (d *Data) NewExtHandler(geom dvid.Geometry, img interface{}) (voxels.ExtHan
 	return labels, nil
 }
 
+// Convert a labels into a 64-bit label.
+func (d *Data) convertTo64bit(geom dvid.Geometry, data []uint8, bytesPerVoxel, stride int) ([]byte, error) {
+	nx := int(geom.Size().Value(0))
+	ny := int(geom.Size().Value(1))
+	numBytes := nx * ny * 8
+	data64 := make([]byte, numBytes, numBytes)
+
+	switch bytesPerVoxel {
+	case 1:
+		dstI := 0
+		for y := 0; y < ny; y++ {
+			srcI := y * stride
+			for x := 0; x < nx; x++ {
+				d.ByteOrder.PutUint64(data64[dstI:dstI+8], uint64(data[srcI]))
+				srcI++
+				dstI += 8
+			}
+		}
+	case 2:
+		dstI := 0
+		for y := 0; y < ny; y++ {
+			srcI := y * stride
+			for x := 0; x < nx; x++ {
+				value := binary.BigEndian.Uint16(data[srcI : srcI+2])
+				d.ByteOrder.PutUint64(data64[dstI:dstI+8], uint64(value))
+				srcI += 2
+				dstI += 8
+			}
+		}
+	case 4:
+		dstI := 0
+		for y := 0; y < ny; y++ {
+			srcI := y * stride
+			for x := 0; x < nx; x++ {
+				value := binary.BigEndian.Uint32(data[srcI : srcI+4])
+				d.ByteOrder.PutUint64(data64[dstI:dstI+8], uint64(value))
+				srcI += 4
+				dstI += 8
+			}
+		}
+	case 8:
+		dstI := 0
+		for y := 0; y < ny; y++ {
+			srcI := y * stride
+			for x := 0; x < nx; x++ {
+				value := binary.BigEndian.Uint64(data[srcI : srcI+8])
+				d.ByteOrder.PutUint64(data64[dstI:dstI+8], uint64(value))
+				srcI += 8
+				dstI += 8
+			}
+		}
+	default:
+		return nil, fmt.Errorf("could not convert to 64-bit label given %d bytes/voxel", bytesPerVoxel)
+	}
+	return data64, nil
+}
+
 // Convert a 32-bit label into a 64-bit label by adding the Z coordinate into high 32 bits.
 // Also drops the high byte (alpha channel) since Raveler labels only use 24-bits.
 func (d *Data) addLabelZ(geom dvid.Geometry, data32 []uint8, stride int32) ([]byte, error) {
 	if len(data32)%4 != 0 {
-		return nil, fmt.Errorf("Expected 4 byte/voxel alignment but have %d bytes!", len(data32))
+		return nil, fmt.Errorf("expected 4 byte/voxel alignment but have %d bytes!", len(data32))
 	}
 	coord := geom.StartPoint()
 	if coord.NumDims() < 3 {
-		return nil, fmt.Errorf("Expected n-d (n >= 3) offset for image.  Got %d dimensions.",
+		return nil, fmt.Errorf("expected n-d (n >= 3) offset for image.  Got %d dimensions.",
 			coord.NumDims())
 	}
 	zeroSuperpixelBytes := make([]byte, 8, 8)
@@ -392,16 +474,7 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 		if err != nil {
 			return err
 		}
-
-		// Load based on the conversion method.
-		config := request.Settings()
-		s, found, err := config.GetString("convert")
-		if found {
-			if strings.ToLower(s) == "raveler" {
-				return voxels.LoadImages(d, uuid, offset, filenames)
-			}
-			return fmt.Errorf("Currently, the only conversion offered is for Raveler")
-		}
+		return voxels.LoadImages(d, uuid, offset, filenames)
 
 	case "composite":
 		if len(request.Command) < 6 {
