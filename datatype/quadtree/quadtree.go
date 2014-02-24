@@ -498,7 +498,13 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 			dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: tile %s", r.Method, planeStr)
 		}
 
-	case "raw", "anisotropic":
+	case "raw", "isotropic":
+		if action == "post" {
+			return fmt.Errorf("quadtree '%s' can only PUT tiles not images", d.DataName())
+		}
+		if len(parts) < 7 {
+			return fmt.Errorf("'%s' must be followed by shape/size/offset", parts[3])
+		}
 		shapeStr, sizeStr, offsetStr := parts[4], parts[5], parts[6]
 		planeStr := dvid.DataShapeString(shapeStr)
 		plane, err := planeStr.DataShape()
@@ -512,7 +518,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		if err != nil {
 			return err
 		}
-		img, err := d.GetImage(uuid, slice, parts[3])
+		img, err := d.GetImage(uuid, slice, parts[3] == "isotropic")
 		if err != nil {
 			return err
 		}
@@ -539,13 +545,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 // GetImage returns an image given a 2d orthogonal image description.  Since quadtrees
 // have precomputed XY, XZ, and YZ orientations, reconstruction of the desired image should
 // be much faster than computing the image from voxel blocks.
-// The 'proc' option should be either the string "raw" or "isotropic".  If the latter,
-// the returned image will be processed to be isotropic using the data's resolution.
-func (d *Data) GetImage(uuid dvid.UUID, geom dvid.Geometry, proc string) (image.Image, error) {
-	if proc == "isotropic" {
-		return nil, fmt.Errorf("Isotropic images are not yet implemented")
-	}
-
+func (d *Data) GetImage(uuid dvid.UUID, geom dvid.Geometry, isotropic bool) (image.Image, error) {
 	// Iterate through tiles that intersect our geometry.
 	levelSpec, found := d.Levels[0]
 	if !found {
@@ -556,27 +556,31 @@ func (d *Data) GetImage(uuid dvid.UUID, geom dvid.Geometry, proc string) (image.
 	if err != nil {
 		return nil, err
 	}
+	minSlice, err := src.HandleIsotropy2D(geom, isotropic)
+	if err != nil {
+		return nil, err
+	}
 	_, versionID, err := server.DatastoreService().LocalIDFromUUID(uuid)
 	if err != nil {
 		return nil, err
 	}
 
 	// Create an image of appropriate size and type using source's ExtHandler creation.
-	dstW := geom.Size().Value(0)
-	dstH := geom.Size().Value(1)
+	dstW := minSlice.Size().Value(0)
+	dstH := minSlice.Size().Value(1)
 	dst, err := src.BlankImage(dstW, dstH)
 	if err != nil {
 		return nil, err
 	}
 
 	// Read each tile that intersects the geometry and store into final image.
-	slice := geom.DataShape()
+	slice := minSlice.DataShape()
 	tileW, tileH, err := slice.GetSize2D(levelSpec.TileSize)
 	if err != nil {
 		return nil, err
 	}
 	tileSize := dvid.Point2d{tileW, tileH}
-	minPtX, minPtY, err := slice.GetSize2D(geom.StartPoint())
+	minPtX, minPtY, err := slice.GetSize2D(minSlice.StartPoint())
 	if err != nil {
 		return nil, err
 	}
@@ -594,7 +598,7 @@ func (d *Data) GetImage(uuid dvid.UUID, geom dvid.Geometry, proc string) (image.
 			wg.Add(1)
 			go func(x0, y0, x1, y1 int32) {
 				// Get this tile from datastore
-				tileCoord, err := slice.PlaneToChunkPoint3d(x0, y0, geom.StartPoint(), levelSpec.TileSize)
+				tileCoord, err := slice.PlaneToChunkPoint3d(x0, y0, minSlice.StartPoint(), levelSpec.TileSize)
 				tileIndex := NewIndexTile(dvid.IndexZYX(tileCoord), slice, Scaling(0))
 				img, err := d.getTile(versionID, slice, Scaling(0), tileIndex)
 				if err != nil || img == nil {
@@ -619,7 +623,11 @@ func (d *Data) GetImage(uuid dvid.UUID, geom dvid.Geometry, proc string) (image.
 	}
 	wg.Wait()
 
-	return dst.Get(), nil
+	img := dst.Get()
+	if isotropic {
+		img = dvid.ScaleImage(img, geom)
+	}
+	return img, nil
 }
 
 // GetTile retrieves a tile.

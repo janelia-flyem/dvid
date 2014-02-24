@@ -1978,6 +1978,9 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 				}
 			} else {
 				rawSlice, err := d.HandleIsotropy2D(slice, isotropic)
+				if err != nil {
+					return err
+				}
 				e, err := d.NewExtHandler(rawSlice, nil)
 				if err != nil {
 					return err
