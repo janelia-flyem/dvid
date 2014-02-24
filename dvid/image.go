@@ -486,6 +486,19 @@ func PrintNonZero(message string, value []byte) {
 	fmt.Printf("%s> non-zero voxels: %d of %d bytes\n", message, nonzero, len(value))
 }
 
+// ScaleImage returns a Go image that is scaled to the given geometry.
+func ScaleImage(src image.Image, slice Geometry) image.Image {
+	dstW := int(slice.Size().Value(0))
+	dstH := int(slice.Size().Value(1))
+	srcRect := src.Bounds()
+	srcW := srcRect.Dx()
+	srcH := srcRect.Dy()
+	if srcW == dstW && srcH == dstH {
+		return src
+	}
+	return Resize(src, srcRect, dstW, dstH)
+}
+
 // The code below was taken from the AppEngine moustachio example and should be among
 // the more efficient resizers without resorting to more sophisticated interpolation
 // than nearest-neighbor.

@@ -30,9 +30,9 @@ type SuperpixelFormat uint8
 
 // Enumerate the types of superpixel id formats
 const (
-	SuperpixelNone   SuperpixelFormat = iota
-	Superpixel16Bits SuperpixelFormat = iota
-	Superpixel24Bits SuperpixelFormat = iota
+	SuperpixelNone SuperpixelFormat = iota
+	Superpixel16Bits
+	Superpixel24Bits
 )
 
 // SuperpixelImage is an image with each pixel encoding a unique
@@ -60,7 +60,7 @@ func GetSuperpixelId(superpixels SuperpixelImage, x int, y int,
 			id <<= 8
 			id |= uint32(v.R)
 		default:
-			err = fmt.Errorf("Expected 32-bit RGBA superpixels, got",
+			err = fmt.Errorf("expected 32-bit RGBA superpixels, got",
 				reflect.TypeOf(colorVal))
 		}
 	case Superpixel16Bits, SuperpixelNone:

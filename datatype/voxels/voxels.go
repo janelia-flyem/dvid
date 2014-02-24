@@ -132,17 +132,52 @@ GET  /api/node/<UUID>/<data name>/schema
 	of bytes returned for n-d images.
 
 
-GET  /api/node/<UUID>/<data name>/<dims>/<size>/<offset>[/<format>]
-POST /api/node/<UUID>/<data name>/<dims>/<size>/<offset>[/<format>]
+GET  /api/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>]
+POST /api/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>]
 
     Retrieves or puts voxel data.
 
     Example: 
 
-    GET /api/node/3f8c/grayscale/0_1/512_256/0_0_100/jpg:80
+    GET /api/node/3f8c/grayscale/raw/0_1/512_256/0_0_100/jpg:80
 
-    Returns an XY slice (0th and 1st dimensions) with width (x) of 512 voxels and
+    Returns a raw XY slice (0th and 1st dimensions) with width (x) of 512 voxels and
     height (y) of 256 voxels with offset (0,0,100) in JPG format with quality 80.
+    By "raw", we mean that no additional processing is applied based on voxel
+    resolutions to make sure the retrieved image has isotropic pixels.
+    The example offset assumes the "grayscale" data in version node "3f8c" is 3d.
+    The "Content-type" of the HTTP response should agree with the requested format.
+    For example, returned PNGs will have "Content-type" of "image/png", and returned
+    nD data will be "application/octet-stream".
+
+    Arguments:
+
+    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    data name     Name of data to add.
+    dims          The axes of data extraction in form "i_j_k,..."  Example: "0_2" can be XZ.
+                    Slice strings ("xy", "xz", or "yz") are also accepted.
+    size          Size in voxels along each dimension specified in <dims>.
+    offset        Gives coordinate of first voxel using dimensionality of data.
+    format        Valid formats depend on the dimensionality of the request and formats
+                    available in server implementation.
+                  2D: "png", "jpg" (default: "png")
+                    jpg allows lossy quality setting, e.g., "jpg:80"
+                  nD: uses default "octet-stream".
+
+GET  /api/node/<UUID>/<data name>/isotropic/<dims>/<size>/<offset>[/<format>]
+
+    Retrieves or puts voxel data.
+
+    Example: 
+
+    GET /api/node/3f8c/grayscale/isotropic/0_1/512_256/0_0_100/jpg:80
+
+    Returns an isotropic XY slice (0th and 1st dimensions) with width (x) of 512 voxels and
+    height (y) of 256 voxels with offset (0,0,100) in JPG format with quality 80.
+    Additional processing is applied based on voxel resolutions to make sure the retrieved image 
+    has isotropic pixels.  For example, if an XZ image is requested and the image volume has 
+    X resolution 3 nm and Z resolution 40 nm, the returned image's height will be magnified 40/3
+    relative to the raw data.
     The example offset assumes the "grayscale" data in version node "3f8c" is 3d.
     The "Content-type" of the HTTP response should agree with the requested format.
     For example, returned PNGs will have "Content-type" of "image/png", and returned
@@ -1653,6 +1688,43 @@ func (d *Data) BlankImage(dstW, dstH int32) (*dvid.Image, error) {
 	return dst, nil
 }
 
+// Returns the image size necessary to compute an isotropic slice of the given dimensions.
+// If isotropic is false, simply returns the original slice geometry.  If isotropic is true,
+// uses the higher resolution dimension.
+func (d *Data) HandleIsotropy2D(geom dvid.Geometry, isotropic bool) (dvid.Geometry, error) {
+	if !isotropic {
+		return geom, nil
+	}
+	// Get the voxel resolutions for this particular slice orientation
+	resX, resY, err := geom.DataShape().GetFloat2D(d.Properties.VoxelSize)
+	if err != nil {
+		return nil, err
+	}
+	if resX == resY {
+		return geom, nil
+	}
+	srcW := geom.Size().Value(0)
+	srcH := geom.Size().Value(1)
+	var dstW, dstH int32
+	if resX < resY {
+		// Use x resolution for all pixels.
+		dstW = srcW
+		dstH = int32(float32(srcH)*resX/resY + 0.5)
+	} else {
+		dstH = srcH
+		dstW = int32(float32(srcW)*resY/resX + 0.5)
+	}
+
+	// Make altered geometry
+	slice, ok := geom.(*dvid.OrthogSlice)
+	if !ok {
+		return nil, fmt.Errorf("can only handle isotropy for orthogonal 2d slices")
+	}
+	dstSlice := slice.Duplicate()
+	dstSlice.SetSize(dvid.Point2d{dstW, dstH})
+	return dstSlice, nil
+}
+
 // ----- IntHandler interface implementation ----------
 
 // NewExtHandler returns an ExtHandler given some geometry and optional image data.
@@ -1822,6 +1894,8 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 	// Break URL request into arguments
 	url := r.URL.Path[len(server.WebAPIPath):]
 	parts := strings.Split(url, "/")
+
+	// Handle POST on data -> setting of configuration
 	if len(parts) == 3 && op == PutOp {
 		fmt.Printf("Setting configuration of data '%s'\n", d.DataName())
 		config, err := server.DecodeJSON(r)
@@ -1837,6 +1911,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		fmt.Fprintf(w, "Changed '%s' based on received configuration:\n%s\n", d.DataName(), config)
 		return nil
 	}
+
 	if len(parts) < 4 {
 		err := fmt.Errorf("Incomplete API request")
 		server.BadRequest(w, r, err.Error())
@@ -1867,84 +1942,93 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, jsonStr)
 		return nil
-	default:
-	}
-
-	// Get the data shape.
-	shapeStr := dvid.DataShapeString(parts[3])
-	dataShape, err := shapeStr.DataShape()
-	if err != nil {
-		return fmt.Errorf("Bad data shape given '%s'", shapeStr)
-	}
-
-	switch dataShape.ShapeDimensions() {
-	case 2:
-		sizeStr, offsetStr := parts[4], parts[5]
-		slice, err := dvid.NewSliceFromStrings(shapeStr, offsetStr, sizeStr, "_")
+	case "raw", "isotropic":
+		if len(parts) < 7 {
+			return fmt.Errorf("'%s' must be followed by shape/size/offset", parts[3])
+		}
+		var isotropic bool = (parts[3] == "isotropic")
+		shapeStr, sizeStr, offsetStr := parts[4], parts[5], parts[6]
+		planeStr := dvid.DataShapeString(shapeStr)
+		plane, err := planeStr.DataShape()
 		if err != nil {
 			return err
 		}
-		if op == PutOp {
-			// TODO -- Put in format checks for POSTed image.
-			postedImg, _, err := dvid.ImageFromPost(r, "image")
+		switch plane.ShapeDimensions() {
+		case 2:
+			slice, err := dvid.NewSliceFromStrings(planeStr, offsetStr, sizeStr, "_")
 			if err != nil {
 				return err
 			}
-			e, err := d.NewExtHandler(slice, postedImg)
-			if err != nil {
-				return err
-			}
-			err = PutImage(uuid, d, e)
-			if err != nil {
-				return err
-			}
-		} else {
-			e, err := d.NewExtHandler(slice, nil)
-			if err != nil {
-				return err
-			}
-			img, err := GetImage(uuid, d, e)
-			if err != nil {
-				return err
-			}
-			var formatStr string
-			if len(parts) >= 7 {
-				formatStr = parts[6]
-			}
-			//dvid.ElapsedTime(dvid.Normal, startTime, "%s %s upto image formatting", op, slice)
-			err = dvid.WriteImageHttp(w, img, formatStr)
-			if err != nil {
-				return err
-			}
-		}
-	case 3:
-		sizeStr, offsetStr := parts[4], parts[5]
-		subvol, err := dvid.NewSubvolumeFromStrings(offsetStr, sizeStr, "_")
-		if err != nil {
-			return err
-		}
-		if op == GetOp {
-			e, err := d.NewExtHandler(subvol, nil)
-			if err != nil {
-				return err
-			}
-			if data, err := GetVolume(uuid, d, e); err != nil {
-				return err
+			if op == PutOp {
+				if isotropic {
+					return fmt.Errorf("can only PUT 'raw' not 'isotropic' images")
+				}
+				// TODO -- Put in format checks for POSTed image.
+				postedImg, _, err := dvid.ImageFromPost(r, "image")
+				if err != nil {
+					return err
+				}
+				e, err := d.NewExtHandler(slice, postedImg)
+				if err != nil {
+					return err
+				}
+				err = PutImage(uuid, d, e)
+				if err != nil {
+					return err
+				}
 			} else {
-				w.Header().Set("Content-type", "application/octet-stream")
-				_, err = w.Write(data)
+				rawSlice, err := d.HandleIsotropy2D(slice, isotropic)
+				e, err := d.NewExtHandler(rawSlice, nil)
+				if err != nil {
+					return err
+				}
+				img, err := GetImage(uuid, d, e)
+				if err != nil {
+					return err
+				}
+				if isotropic {
+					img = dvid.ScaleImage(img, slice)
+				}
+				var formatStr string
+				if len(parts) >= 8 {
+					formatStr = parts[7]
+				}
+				err = dvid.WriteImageHttp(w, img, formatStr)
 				if err != nil {
 					return err
 				}
 			}
-		} else {
-			return fmt.Errorf("DVID does not yet support POST of volume data")
+			dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: %s (%s)", r.Method, plane, r.URL)
+		case 3:
+			subvol, err := dvid.NewSubvolumeFromStrings(offsetStr, sizeStr, "_")
+			if err != nil {
+				return err
+			}
+			if op == GetOp {
+				e, err := d.NewExtHandler(subvol, nil)
+				if err != nil {
+					return err
+				}
+				if data, err := GetVolume(uuid, d, e); err != nil {
+					return err
+				} else {
+					w.Header().Set("Content-type", "application/octet-stream")
+					_, err = w.Write(data)
+					if err != nil {
+						return err
+					}
+				}
+			} else {
+				return fmt.Errorf("DVID does not yet support POST of volume data")
+			}
+			dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: %s (%s)", r.Method, subvol, r.URL)
+		default:
+			return fmt.Errorf("DVID currently supports shapes of only 2 and 3 dimensions")
 		}
 	default:
-		return fmt.Errorf("DVID currently supports shapes of only 2 and 3 dimensions")
+		return fmt.Errorf("Unrecognized API call for labels64 data '%s'.  See API help.",
+			d.DataName())
 	}
-
-	dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: %s (%s)", r.Method, dataShape, r.URL)
 	return nil
 }
 

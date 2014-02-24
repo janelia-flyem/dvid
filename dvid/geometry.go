@@ -157,6 +157,17 @@ func (s DataShape) GetSize2D(size SimplePoint) (width, height int32, err error) 
 	return
 }
 
+// GetFloat2D returns elements of a N-d float array given a 2d shape.
+func (s DataShape) GetFloat2D(fslice NdFloat32) (x, y float32, err error) {
+	if len(s.shape) != 2 {
+		err = fmt.Errorf("Can't get 2D data from a non-2D shape: %s", s)
+		return
+	}
+	x = fslice[s.shape[0]]
+	y = fslice[s.shape[1]]
+	return
+}
+
 // ChunkPoint3d returns a chunk point where the XY is determined by the
 // type of slice orientation of the DataShape, and the Z is the non-chunked
 // coordinate.  This is useful for tile generation where you have 2d tiles
@@ -215,9 +226,7 @@ func (s DataShape) PlaneToChunkPoint3d(x, y int32, offset, size Point) (ChunkPoi
 
 // Duplicate returns a duplicate of the DataShape.
 func (s DataShape) Duplicate() DataShape {
-	dup := DataShape{dims: s.dims}
-	copy(dup.shape, s.shape)
-	return dup
+	return DataShape{dims: s.dims, shape: append([]uint8{}, s.shape...)}
 }
 
 // Equals returns true if the passed DataShape is identical.
@@ -439,6 +448,28 @@ func NewOrthogSlice(s DataShape, offset Point, size Point2d) (Geometry, error) {
 	}
 	return geom, nil
 }
+
+func (s *OrthogSlice) SetSize(size Point2d) {
+	s.size = size
+	xDim := s.shape.shape[0]
+	yDim := s.shape.shape[1]
+	settings := map[uint8]int32{
+		xDim: s.offset.Value(xDim) + size[0] - 1,
+		yDim: s.offset.Value(yDim) + size[1] - 1,
+	}
+	s.endPoint = s.offset.Modify(settings)
+}
+
+func (s OrthogSlice) Duplicate() OrthogSlice {
+	return OrthogSlice{
+		shape:    s.shape.Duplicate(),
+		offset:   s.offset.Duplicate(),
+		size:     s.size.Duplicate().(Point2d),
+		endPoint: s.endPoint.Duplicate(),
+	}
+}
+
+// --- Geometry interface -----------
 
 func (s OrthogSlice) DataShape() DataShape {
 	return s.shape
