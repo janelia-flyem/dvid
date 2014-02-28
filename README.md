@@ -3,7 +3,7 @@ DVID
 
 *Status: In development, not ready for use.*
 
-[![GoDoc](https://godoc.org/github.com/janelia-flyem/dvid?status.png)](https://godoc.org/github.com/janelia-flyem/dvid) [![Build Status](https://drone.io/github.com/janelia-flyem/dvid/status.png)](https://drone.io/github.com/janelia-flyem/dvid/latest) [![Stories in Ready](https://badge.waffle.io/janelia-flyem/dvid.png?label=ready)](https://waffle.io/janelia-flyem/dvid)
+[![GoDoc](https://godoc.org/github.com/janelia-flyem/dvid?status.png)](https://godoc.org/github.com/janelia-flyem/dvid) [![Build Status](https://drone.io/github.com/janelia-flyem/dvid/status.png)](https://drone.io/github.com/janelia-flyem/dvid/latest)
 
 DVID is a *distributed, versioned, image-oriented datastore* written to support 
 [Janelia Farm Reseach Center's](http://www.janelia.org) brain imaging, analysis and 

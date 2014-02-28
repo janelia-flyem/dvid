@@ -1959,6 +1959,8 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 			if err != nil {
 				return err
 			}
+			fmt.Printf("Slice start: %s\n", slice.StartPoint())
+			fmt.Printf("Slice end: %s\n", slice.EndPoint())
 			if op == PutOp {
 				if isotropic {
 					return fmt.Errorf("can only PUT 'raw' not 'isotropic' images")

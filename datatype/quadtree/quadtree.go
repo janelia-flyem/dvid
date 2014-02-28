@@ -71,7 +71,7 @@ $ dvid -stdin node <UUID> <data name> generate <settings...> < config.json
 	Example:
 
 	$ dvid dataset 3f8c myquadtree generate /path/to/config.json
-	$ dvid -stdin dataset 3f8c myquadtree generate planes=yz;0,1 < /path/to/config.json 
+	$ dvid -stdin dataset 3f8c myquadtree generate planes="yz;0,1" < /path/to/config.json 
 
     Arguments:
 
@@ -83,7 +83,7 @@ $ dvid -stdin node <UUID> <data name> generate <settings...> < config.json
 
     planes          List of one or more planes separated by semicolon.  Each plane can be
                        designated using either axis number ("0,1") or xyz nomenclature ("xy").
-                       Example:  planes=0,1;yz
+                       Example:  planes="0,1;yz"
 
     ------------------
 
@@ -655,6 +655,9 @@ func (d *Data) GetTile(versionID dvid.VersionLocalID, planeStr, scalingStr, coor
 	if err != nil {
 		return nil, err
 	}
+	if img == nil {
+		return nil, nil
+	}
 	return img.Get(), nil
 }
 
@@ -681,7 +684,7 @@ func (d *Data) getTile(versionID dvid.VersionLocalID, plane dvid.DataShape, scal
 		if d.Placeholder {
 			scaleSpec, ok := d.Levels[scaling]
 			if !ok {
-				return nil, fmt.Errorf("Could not find tiles at given scale %d", scaling)
+				return nil, fmt.Errorf("Could not find tile specification at given scale %d", scaling)
 			}
 			message := fmt.Sprintf("%s Tile coord %s @ scale %d", plane, index, scaling)
 			placeholder, err := dvid.PlaceholderImage(plane, scaleSpec.TileSize, message)

@@ -65,7 +65,7 @@ const WebHelp = `
 
         <p>This page provides an introduction to the currently running DVID server.  Developers can visit
         the <a href="https://github.com/janelia-flyem/dvid">Github repo</a> for more documentation and code.
-        Each DVID install can tailor this page to provide links to datasets and web apps.</p>
+        The <a href="/console/">DVID admin console</a> may be available if you have permissions.</p>
         
         <h4>HTTP API</h4>
 
