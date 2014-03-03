@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"image"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -177,6 +178,8 @@ func init() {
 	// Need to register types that will be used to fulfill interfaces.
 	gob.Register(&Datatype{})
 	gob.Register(&Data{})
+	gob.Register(&binary.LittleEndian)
+	gob.Register(&binary.BigEndian)
 }
 
 // LabelType specifies how the 64-bit label is organized, allowing some bytes to
@@ -263,6 +266,7 @@ func (dtype *Datatype) Help() string {
 type Data struct {
 	voxels.Data
 	Labeling LabelType
+	Ready    bool
 }
 
 // JSONString returns the JSON for this Data's configuration
@@ -474,7 +478,14 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 		if err != nil {
 			return err
 		}
-		return voxels.LoadImages(d, uuid, offset, filenames)
+		err = voxels.LoadImages(d, uuid, offset, filenames)
+		if err != nil {
+			return err
+		}
+
+		// Perform denormalizations
+		go d.ProcessSpatially(uuid)
+		return nil
 
 	case "composite":
 		if len(request.Command) < 6 {
@@ -641,6 +652,84 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		default:
 			return fmt.Errorf("DVID currently supports shapes of only 2 and 3 dimensions")
 		}
+	case "sparsevol":
+		// GET /api/node/<UUID>/<data name>/sparsevol/<label>
+		if len(parts) < 5 {
+			err := fmt.Errorf("ERROR: DVID requires label ID to follow 'sparsevol' command")
+			server.BadRequest(w, r, err.Error())
+			return err
+		}
+		label, err := strconv.ParseUint(parts[4], 10, 64)
+		if err != nil {
+			server.BadRequest(w, r, err.Error())
+			return err
+		}
+		data, err := d.GetSparseVol(uuid, label)
+		if err != nil {
+			return err
+		}
+		w.Header().Set("Content-type", "application/octet-stream")
+		_, err = w.Write(data)
+		if err != nil {
+			return err
+		}
+		dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: sparsevol on label %d (%s)",
+			r.Method, label, r.URL)
+
+	case "sparsevol-by-point":
+		// GET /api/node/<UUID>/<data name>/sparsevol-by-point/<coord>
+		if len(parts) < 5 {
+			err := fmt.Errorf("ERROR: DVID requires coord to follow 'sparsevol-by-point' command")
+			server.BadRequest(w, r, err.Error())
+			return err
+		}
+		coord, err := dvid.StringToPoint(parts[4], "_")
+		if err != nil {
+			server.BadRequest(w, r, err.Error())
+			return err
+		}
+		label, err := d.GetLabelAtPoint(uuid, coord)
+		if err != nil {
+			server.BadRequest(w, r, err.Error())
+			return err
+		}
+		data, err := d.GetSparseVol(uuid, label)
+		if err != nil {
+			return err
+		}
+		w.Header().Set("Content-type", "application/octet-stream")
+		_, err = w.Write(data)
+		if err != nil {
+			return err
+		}
+		dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: sparsevol-by-point at %s (%s)",
+			r.Method, coord, r.URL)
+
+	case "sizerange":
+		// GET /api/node/<UUID>/<data name>/sizerange/<min size>/<max size>
+		if len(parts) < 6 {
+			err := fmt.Errorf("ERROR: DVID requires min & max sizes to follow 'sizerange' command")
+			server.BadRequest(w, r, err.Error())
+			return err
+		}
+		minSize, err := strconv.ParseUint(parts[4], 10, 64)
+		if err != nil {
+			server.BadRequest(w, r, err.Error())
+			return err
+		}
+		maxSize, err := strconv.ParseUint(parts[5], 10, 64)
+		if err != nil {
+			server.BadRequest(w, r, err.Error())
+			return err
+		}
+		jsonStr, err := d.GetSizeRange(uuid, minSize, maxSize)
+		if err != nil {
+			return err
+		}
+		w.Header().Set("Content-type", "application/json")
+		fmt.Fprintf(w, jsonStr)
+		dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: get labels with volume > %d and < %d (%s)",
+			r.Method, minSize, maxSize, r.URL)
 	default:
 		return fmt.Errorf("Unrecognized API call for labels64 data '%s'.  See API help.",
 			d.DataName())
