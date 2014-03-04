@@ -56,7 +56,7 @@ $ dvid dataset <UUID> new labels64 <data name> <settings...>
 
     Configuration Settings (case-insensitive keys)
 
-    LabelType      "Standard" (default) or "Raveler" 
+    LabelType      "standard" (default) or "raveler" 
     Versioned      "true" or "false" (default)
     BlockSize      Size in pixels  (default: %s)
     VoxelSize      Resolution of voxels (default: 10.0, 10.0, 10.0)
@@ -246,8 +246,10 @@ func NewData(id *datastore.DataID, config dvid.Config) (*Data, error) {
 		switch strings.ToLower(s) {
 		case "raveler":
 			labelType = RavelerLabel
+			dvid.Log(dvid.Normal, "Creating labels64 '%s' with Raveler-type labels", voxelData.DataName())
 		case "standard":
 			labelType = Standard64bit
+			dvid.Log(dvid.Normal, "Creating labels64 '%s' with standard labels", voxelData.DataName())
 		default:
 			return nil, fmt.Errorf("unknown label type specified '%s'", s)
 		}
