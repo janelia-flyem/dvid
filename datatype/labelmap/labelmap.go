@@ -979,7 +979,7 @@ func (d *Data) LoadRavelerMaps(request datastore.Request, reply *datastore.Respo
 
 		linenum++
 		if linenum%1000000 == 0 {
-			fmt.Printf("Added %d forward and inverse mappings\n", linenum)
+			dvid.Log(dvid.Normal, "Added %d forward and inverse mappings\n", linenum)
 		}
 	}
 	dvid.Log(dvid.Normal, "Added %d forward and inverse mappings\n", linenum)
@@ -1337,7 +1337,9 @@ func (d *Data) chunkApplyMap(chunk *storage.Chunk) {
 				slice := binary.BigEndian.Uint32(a[0:4])
 				dvid.Log(dvid.Normal, "No mapping found for %x (slice %d) in block with Z %d to %d\n",
 					a, slice, zBeg, zEnd)
-				b = 0
+				dvid.Log(dvid.Normal, "Aborting creation of '%s' chunk using '%s' labelmap\n",
+					op.source.DataName(), d.DataName())
+				return
 			}
 		}
 		binary.LittleEndian.PutUint64(mappedData[start:start+8], b)
@@ -1444,7 +1446,9 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 						slice := binary.BigEndian.Uint32(a[0:4])
 						dvid.Log(dvid.Normal, "No mapping found for %x (slice %d) in block with Z %d to %d\n",
 							a, slice, zBeg, zEnd)
-						b = 0
+						dvid.Log(dvid.Normal, "Aborting processing of '%s' chunk using '%s' labelmap\n",
+							op.source.DataName(), d.DataName())
+						return
 					}
 				}
 

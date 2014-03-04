@@ -66,10 +66,15 @@ $ dvid node <UUID> <data name> load <offset> <image glob> <settings...>
 
     Initializes version node to a set of XY label images described by glob of filenames.
     The DVID server must have access to the named files.  Currently, XY images are required.
+    Note that how the loaded data is processed depends on the LabelType of this labels64 data.
+    If LabelType is "Raveler", DVID assumes we are loading Raveler 24-bit labels and will 
+    set the lower 4 bytes of 64-bit label with loaded pixel values and adds the image Z offset 
+    as the higher 4 bytes.  If LabelType is "Standard", we read the loaded data and convert
+    to 64-bit labels.
 
     Example: 
 
-    $ dvid node 3f8c superpixels load 0,0,100 "data/*.png" convert=raveler
+    $ dvid node 3f8c superpixels load 0,0,100 "data/*.png" proc=noindex
 
     Arguments:
 
@@ -80,8 +85,10 @@ $ dvid node <UUID> <data name> load <offset> <image glob> <settings...>
 
     Configuration Settings (case-insensitive keys)
 
-    Convert       "raveler": fills lower 4 bytes of 64-bit label with loaded pixel values and
-    				 adds the image Z offset as the higher 4 bytes.
+    Proc          "noindex": prevents creation of denormalized data to speed up obtaining sparse 
+    				 volumes and size query responses using the loaded labels.  This is not necessary 
+    				 for data that will evaluated using labelmap data, e.g., Raveler superpixels,
+    				 and is automatically set if LabelType is "Raveler".
 
 $ dvid node <UUID> <data name> composite <grayscale8 data name> <new rgba8 data name>
 
@@ -483,8 +490,14 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 			return err
 		}
 
-		// Perform denormalizations
-		go d.ProcessSpatially(uuid)
+		// Perform denormalizations if requested.
+		processing, _, err := request.Command.Settings().GetString("proc")
+		if err != nil {
+			return err
+		}
+		if d.Labeling != RavelerLabel && processing != "noindex" {
+			go d.ProcessSpatially(uuid)
+		}
 		return nil
 
 	case "composite":
