@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -236,6 +237,7 @@ func aboutJSON() (jsonStr string, err error) {
 		"DVID datastore":  datastore.Version,
 		"Storage backend": storage.Version,
 		"Storage driver":  storage.Driver,
+		"Server uptime":  time.Since(startupTime).String(),
 	}
 	m, err := json.Marshal(data)
 	if err != nil {

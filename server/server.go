@@ -66,6 +66,9 @@ var (
 	// off because delay due to compression is frequently higher than gains
 	// from decreased response size.
 	GzipAPI = false
+
+	// Keep track of the startup time for uptime.
+	startupTime time.Time = time.Now()
 )
 
 // Service holds information on the servers attached to a DVID datastore.  If more than
