@@ -374,7 +374,7 @@ func datasetRequest(w http.ResponseWriter, r *http.Request) {
 		typename := parts[2]
 		dataname := parts[3]
 		decoder := json.NewDecoder(r.Body)
-		var config dvid.Config
+		config := dvid.NewConfig()
 		err = decoder.Decode(&config)
 		if err != nil {
 			BadRequest(w, r, fmt.Sprintf("Error decoding POSTed JSON config for 'new': %s", err.Error()))
