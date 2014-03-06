@@ -111,9 +111,12 @@ func (f File) Attr() fuse.Attr {
 
 func (f File) Read(req *fuse.ReadRequest, resp *fuse.ReadResponse, intr fs.Intr) fuse.Error {
 	fmt.Printf("Reading key %s at offset %d\n", f.keyStr, req.Offset)
-	data, err := f.Dir.Data.GetData(f.Dir.GetUUID(), f.keyStr)
+	data, found, err := f.Dir.Data.GetData(f.Dir.GetUUID(), f.keyStr)
 	if err != nil {
 		return fuse.EIO
+	}
+	if !found {
+		return fuse.ENOENT
 	}
 	resp.Data = data
 	return nil
@@ -121,9 +124,12 @@ func (f File) Read(req *fuse.ReadRequest, resp *fuse.ReadResponse, intr fs.Intr)
 
 func (f File) ReadAll(intr fs.Intr) ([]byte, fuse.Error) {
 	fmt.Printf("Reading all for key %s\n", f.keyStr)
-	data, err := f.Dir.Data.GetData(f.Dir.GetUUID(), f.keyStr)
+	data, found, err := f.Dir.Data.GetData(f.Dir.GetUUID(), f.keyStr)
 	if err != nil {
 		return nil, fuse.EIO
+	}
+	if !found {
+		return nil, fuse.ENOENT
 	}
 	return data, nil
 }
@@ -131,9 +137,12 @@ func (f File) ReadAll(intr fs.Intr) ([]byte, fuse.Error) {
 // Append data
 func (f File) Write(req *fuse.WriteRequest, resp *fuse.WriteResponse, intr fs.Intr) fuse.Error {
 	fmt.Printf("Write of %d bytes at offset %d\n", len(req.Data), req.Offset)
-	data, err := f.Dir.Data.GetData(f.Dir.GetUUID(), f.keyStr)
+	data, found, err := f.Dir.Data.GetData(f.Dir.GetUUID(), f.keyStr)
 	if err != nil {
 		return fuse.EIO
+	}
+	if !found {
+		return fuse.ENOENT
 	}
 	if data == nil {
 		data = []byte{}

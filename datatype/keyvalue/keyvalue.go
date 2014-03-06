@@ -126,7 +126,7 @@ GET  /api/node/<UUID>/<data name>/<key>[/<format>]
 POST /api/node/<UUID>/<data name>/<key>
 DEL  /api/node/<UUID>/<data name>/<key>  (TO DO)
 
-    Retrieves or puts values given a key. 
+    Performs operations on a key/value pair depending on the HTTP verb.
 
     Example: 
 
@@ -198,29 +198,37 @@ type Data struct {
 }
 
 // GetData gets a value using a key at a given uuid
-func (d *Data) GetData(uuid dvid.UUID, keyStr string) ([]byte, error) {
+func (d *Data) GetData(uuid dvid.UUID, keyStr string) (value []byte, found bool, err error) {
 	// Compute the key
-	versionID, err := server.VersionLocalID(uuid)
-	if err != nil {
-		return nil, err
+	versionID, e := server.VersionLocalID(uuid)
+	if e != nil {
+		err = e
+		return
 	}
 	key := d.DataKey(versionID, dvid.IndexString(keyStr))
 
 	// Get the data
-	db, err := server.KeyValueGetter()
-	if err != nil {
-		return nil, err
+	db, e := server.KeyValueGetter()
+	if e != nil {
+		err = e
+		return
 	}
-	data, err := db.Get(key)
-	if err != nil {
-		return nil, fmt.Errorf("Key '%s' not present: %s\n", keyStr, err.Error())
+	data, e := db.Get(key)
+	if e != nil {
+		err = fmt.Errorf("Error in retrieving key '%s': %s", keyStr, e.Error())
+		return
 	}
+	if data == nil {
+		return
+	}
+	found = true
 	uncompress := true
-	value, _, err := dvid.DeserializeData(data, uncompress)
-	if err != nil {
-		return nil, fmt.Errorf("Unable to deserialize data for key '%s': %s\n", keyStr, err.Error())
+	value, _, e = dvid.DeserializeData(data, uncompress)
+	if e != nil {
+		err = fmt.Errorf("Unable to deserialize data for key '%s': %s\n", keyStr, e.Error())
+		return
 	}
-	return value, nil
+	return
 }
 
 // PutData puts a key/value at a given uuid
@@ -304,9 +312,13 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 	keyStr := parts[3]
 	switch strings.ToLower(r.Method) {
 	case "get":
-		value, err := d.GetData(uuid, keyStr)
+		value, found, err := d.GetData(uuid, keyStr)
 		if err != nil {
 			return err
+		}
+		if !found {
+			http.Error(w, fmt.Sprintf("Key '%s' not found", keyStr), http.StatusNotFound)
+			return nil
 		}
 		w.Header().Set("Content-Type", "application/octet-stream")
 		_, err = w.Write(value)
@@ -347,7 +359,7 @@ func (d *Data) Get(request datastore.Request, reply *datastore.Response) error {
 	if err != nil {
 		return err
 	}
-	data, err := d.GetData(uuid, keyStr)
+	data, _, err := d.GetData(uuid, keyStr)
 	if err != nil {
 		return err
 	}
