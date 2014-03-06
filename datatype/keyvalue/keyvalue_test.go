@@ -1,8 +1,8 @@
 package keyvalue
 
 import (
-	. "github.com/janelia-flyem/go/gocheck"
 	"testing"
+	. "github.com/janelia-flyem/go/gocheck"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -95,8 +95,9 @@ func (suite *DataSuite) TestRoundTrip(c *C) {
 	err = kvdata.PutData(root, keyStr, value)
 	c.Assert(err, IsNil)
 
-	retrieved, err := kvdata.GetData(root, keyStr)
+	retrieved, found, err := kvdata.GetData(root, keyStr)
 	c.Assert(err, IsNil)
+	c.Assert(found, Equals, true)
 
 	c.Assert(retrieved, DeepEquals, value)
 }
