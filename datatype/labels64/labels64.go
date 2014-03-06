@@ -161,6 +161,58 @@ POST /api/node/<UUID>/<data name>/<dims>/<size>/<offset>[/<format>]
                     Slice strings ("xy", "xz", or "yz") are also accepted.
     size          Size in voxels along each dimension specified in <dims>.
     offset        Gives coordinate of first voxel using dimensionality of data.
+
+(Assumes labels were loaded using without "proc=noindex")
+
+GET /api/node/<UUID>/<data name>/sparsevol/<label>
+
+	Returns a sparse volume with voxels of the given label in encoded RLE format.
+	The encoding has the following format where integers are little endian and the order
+	of data is exactly as specified below:
+
+	    byte     Payload descriptor:
+	               Bit 0 (LSB) - 8-bit grayscale
+	               Bit 1 - 16-bit grayscale
+	               Bit 2 - 16-bit normal
+	               ...
+	    uint8    Number of dimensions
+	    uint8    Dimension of run (typically 0 = X)
+	    byte     Reserved (to be used later)
+	    uint32    # Voxels [TODO.  0 for now]
+	    uint32    # Spans
+	    Repeating unit of:
+	        int32   Coordinate of run start (dimension 0)
+	        int32   Coordinate of run start (dimension 1)
+	        int32   Coordinate of run start (dimension 2)
+			  ...
+	        int32   Length of run
+	        bytes   Optional payload dependent on first byte descriptor
+
+
+GET /api/node/<UUID>/<data name>/sparsevol-by-point/<coord>
+
+	Returns a sparse volume with voxels that pass through a given voxel.
+	The encoding is described in the "sparsevol" request above.
+	
+    Arguments:
+
+    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    data name     Name of mapping data.
+    coord     	  Coordinate of voxel with underscore as separator, e.g., 10_20_30
+
+
+GET /api/node/<UUID>/<data name>/sizerange/<min size>/<max size>
+
+    Returns JSON list of labels that have # voxels that fall within the given range
+    of sizes.
+	
+    Arguments:
+
+    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    data name     Name of mapping data.
+    min size      Minimum # of voxels.
+    max size      Maximum # of voxels.
+
 `
 
 var (
@@ -202,6 +254,17 @@ const (
 	RavelerLabel
 )
 
+func (lt LabelType) String() string {
+	switch lt {
+	case Standard64bit:
+		return "standard labels"
+	case RavelerLabel:
+		return "raveler labels"
+	default:
+		return "unknown label types"
+	}
+}
+
 // -------  ExtHandler interface implementation -------------
 
 // Labels is an image volume that fulfills the voxels.ExtHandler interface.
@@ -240,20 +303,18 @@ func NewData(id *datastore.DataID, config dvid.Config) (*Data, error) {
 	if err != nil {
 		return nil, err
 	}
-	var labelType LabelType
+	var labelType LabelType = Standard64bit
 	s, found, err := config.GetString("LabelType")
 	if found {
 		switch strings.ToLower(s) {
 		case "raveler":
 			labelType = RavelerLabel
-			dvid.Log(dvid.Normal, "Creating labels64 '%s' with Raveler-type labels", voxelData.DataName())
 		case "standard":
-			labelType = Standard64bit
-			dvid.Log(dvid.Normal, "Creating labels64 '%s' with standard labels", voxelData.DataName())
 		default:
 			return nil, fmt.Errorf("unknown label type specified '%s'", s)
 		}
 	}
+	dvid.Log(dvid.Normal, "Creating labels64 '%s' with %s", voxelData.DataName(), labelType)
 	data := &Data{
 		Data:     *voxelData,
 		Labeling: labelType,
