@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
@@ -57,6 +58,12 @@ var (
 	// HandlerToken is buffered channel to limit spawning of goroutines.
 	// See ProcessChunk() in datatype/voxels for example.
 	HandlerToken = make(chan int, MaxChunkHandlers)
+
+	// SpawnGoroutineMutex is a global lock for compute-intense processes that want to
+	// spawn goroutines that consume handler tokens.  This lets processes capture most 
+	// if not all available handler tokens in a FIFO basis rather than have multiple
+	// concurrent requests launch a few goroutines each.
+	SpawnGoroutineMutex sync.Mutex
 
 	// Timeout in seconds for waiting to open a datastore for exclusive access.
 	TimeoutSecs int

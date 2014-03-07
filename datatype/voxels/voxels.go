@@ -376,9 +376,11 @@ func SetVoxels(uuid dvid.UUID, i IntHandler, e ExtHandler) error {
 
 	dataID := i.DataID()
 
+	server.SpawnGoroutineMutex.Lock()
 	for it, err := e.IndexIterator(i.BlockSize()); err == nil && it.Valid(); it.NextSpan() {
 		indexBeg, indexEnd, err := it.IndexSpan()
 		if err != nil {
+			server.SpawnGoroutineMutex.Unlock()
 			return err
 		}
 		startKey := &datastore.DataKey{dataID.DsetID, dataID.ID, versionID, indexBeg}
@@ -387,9 +389,11 @@ func SetVoxels(uuid dvid.UUID, i IntHandler, e ExtHandler) error {
 		// Send the entire range of key/value pairs to ProcessChunk()
 		err = db.ProcessRange(startKey, endKey, chunkOp, i.ProcessChunk)
 		if err != nil {
+			server.SpawnGoroutineMutex.Unlock()
 			return fmt.Errorf("Unable to GET data %s: %s", dataID.DataName(), err.Error())
 		}
 	}
+	server.SpawnGoroutineMutex.Unlock()
 	if err != nil {
 		return err
 	}
