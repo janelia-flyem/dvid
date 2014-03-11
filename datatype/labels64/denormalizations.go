@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"sync"
 	"time"
 
@@ -65,7 +66,47 @@ const (
 var (
 	emptyValue          = []byte{}
 	zeroSuperpixelBytes = make([]byte, 8, 8)
+
+	zhX, zhY, zhZ [3][3][3]float64
 )
+
+func init() {
+	sqrt3div3 := math.Sqrt(3.0) / 3.0
+	sqrt2div2 := math.Sqrt(2.0) / 2.0
+
+	// Initialize Zucker-Hummel 3x3x3 filter
+
+	// Fill in z = 0 for Z gradient kernel
+	zhZ[0][0][0] = -sqrt3div3
+	zhZ[1][0][0] = -sqrt2div2
+	zhZ[2][0][0] = -sqrt3div3
+
+	zhZ[0][1][0] = -sqrt2div2
+	zhZ[1][1][0] = -1.0
+	zhZ[2][1][0] = -sqrt2div2
+
+	zhZ[0][2][0] = -sqrt3div3
+	zhZ[1][2][0] = -sqrt2div2
+	zhZ[2][2][0] = -sqrt3div3
+
+	// Fill in z=1,2 for Z gradient kernel
+	for y := 0; y < 3; y++ {
+		for x := 0; x < 3; x++ {
+			zhZ[x][y][1] = 0.0
+			zhZ[x][y][2] = -zhZ[x][y][0]
+		}
+	}
+
+	// Copy Z gradient kernel to X and Y gradient kernels
+	for z := 0; z < 3; z++ {
+		for y := 0; y < 3; y++ {
+			for x := 0; x < 3; x++ {
+				zhX[z][x][y] = zhZ[x][y][z]
+				zhY[x][z][y] = zhZ[x][y][z]
+			}
+		}
+	}
+}
 
 func (t KeyType) String() string {
 	switch t {
@@ -100,6 +141,13 @@ func (d *Data) NewLabelSizesKey(vID dvid.VersionLocalID, size, label uint64) *da
 	index[0] = byte(KeyLabelSizes)
 	binary.BigEndian.PutUint64(index[1:9], size)
 	binary.BigEndian.PutUint64(index[9:17], label)
+	return d.DataKey(vID, dvid.IndexBytes(index))
+}
+
+// NewLabelSurfaceKey returns a datastore.DataKey that provides a surface for a given label.
+func (d *Data) NewLabelSurfaceKey(vID dvid.VersionLocalID, label uint64) *datastore.DataKey {
+	index := make([]byte, 8)
+	binary.BigEndian.PutUint64(index, label)
 	return d.DataKey(vID, dvid.IndexBytes(index))
 }
 
@@ -193,7 +241,7 @@ func (d *Data) computeSizes(sizeCh chan *storage.Chunk, db storage.KeyValueSette
 	// Sequentially process all the sparse volume data for each label
 	var curLabel, curSize uint64
 	putsInBatch := 0
-	notFirst := true
+	notFirst := false
 	for {
 		chunk := <-sizeCh
 		if chunk == nil {
@@ -205,11 +253,7 @@ func (d *Data) computeSizes(sizeCh chan *storage.Chunk, db storage.KeyValueSette
 			}
 			return
 		}
-
-		// Get label associated with this sparse volume.
-		dataKey := chunk.K.(*datastore.DataKey)
-		indexBytes := dataKey.Index.Bytes()
-		label := binary.LittleEndian.Uint64(indexBytes[1:9])
+		label := chunk.ChunkOp.Op.(uint64)
 
 		// Compute the size
 		numVoxels, _, err := statsRuns(chunk.V)
@@ -234,6 +278,336 @@ func (d *Data) computeSizes(sizeCh chan *storage.Chunk, db storage.KeyValueSette
 		}
 		curLabel = label
 		curSize += uint64(numVoxels)
+		notFirst = true
+	}
+}
+
+type sparseVol struct {
+	alreadySet bool
+	numVoxels  int32
+	minPt      dvid.Point3d
+	maxPt      dvid.Point3d
+	//minChunk   dvid.ChunkPoint3d
+	//maxChunk   dvid.ChunkPoint3d
+	label uint64
+	key   *datastore.DataKey
+	rles  []rle
+	pos   int // Current index into rle.
+}
+
+type rle struct {
+	//block  dvid.ChunkPoint3d
+	start  dvid.Point3d
+	length int32
+}
+
+// Adds RLEs to sparseVol and increments the position accordingly.
+// The RLE buffer is expanded as needed.  Min and max 3d positions are noted.
+func (vol *sparseVol) AddRLEs(encoding []byte) error {
+	if vol.rles == nil {
+		vol.rles = make([]rle, 10)
+	}
+	lenEncoding := len(encoding)
+	if lenEncoding%16 != 0 {
+		return fmt.Errorf("RLE encoding doesn't have correct # bytes: %d", len(encoding))
+	}
+	if !vol.alreadySet {
+		vol.pos = 0
+		vol.numVoxels = 0
+	}
+	var x, y, z, length int32
+	buf := bytes.NewBuffer(encoding)
+	for {
+		err := binary.Read(buf, binary.LittleEndian, &x)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		if err := binary.Read(buf, binary.LittleEndian, &y); err != nil {
+			return err
+		}
+		if err := binary.Read(buf, binary.LittleEndian, &z); err != nil {
+			return err
+		}
+		if err := binary.Read(buf, binary.LittleEndian, &length); err != nil {
+			return err
+		}
+		if vol.pos >= len(vol.rles) {
+			newsize := cap(vol.rles) * 2
+			tmp := make([]rle, newsize, newsize)
+			copy(tmp[0:len(vol.rles)], vol.rles)
+			vol.rles = tmp
+		}
+		pt := dvid.Point3d{x, y, z}
+		vol.rles[vol.pos] = rle{pt, length}
+		vol.numVoxels += length
+		vol.pos++
+		if vol.alreadySet {
+			vol.minPt.SetMinimum(pt)
+			vol.maxPt.SetMaximum(dvid.Point3d{x + length, y, z})
+		} else {
+			vol.minPt = pt
+			vol.maxPt = pt
+			vol.alreadySet = true
+		}
+	}
+	return nil
+}
+
+type BinaryVolume struct {
+	offset      dvid.Point3d
+	size        dvid.Point3d
+	xanisotropy float64
+	yanisotropy float64
+	zanisotropy float64
+	data        []byte
+}
+
+func (d *Data) NewBinaryVolume(offset, size dvid.Point3d) *BinaryVolume {
+	minRes := d.Resolution.VoxelSize.GetMin()
+	numBytes := size[0] * size[1] * size[2]
+	return &BinaryVolume{
+		offset:      offset,
+		size:        size,
+		xanisotropy: float64(d.Resolution.VoxelSize[0] / minRes),
+		yanisotropy: float64(d.Resolution.VoxelSize[1] / minRes),
+		zanisotropy: float64(d.Resolution.VoxelSize[2] / minRes),
+		data:        make([]byte, numBytes, numBytes),
+	}
+}
+
+// Shift the buffer up by dz voxels.
+func (binvol *BinaryVolume) ShiftUp(dz int32) {
+	binvol.offset[2] += dz
+	sliceBytes := binvol.size[0] * binvol.size[1]
+	var i0, j0, z int32
+	j0 = dz * sliceBytes
+	maxStartI := int32(len(binvol.data)) - sliceBytes
+	for z = 0; z < binvol.size[2]; z++ {
+		if j0 <= maxStartI {
+			copy(binvol.data[i0:i0+sliceBytes], binvol.data[j0:j0+sliceBytes])
+			j0 += sliceBytes
+		} else if i0 <= maxStartI {
+			for i := i0; i < i0+sliceBytes; i++ {
+				binvol.data[i] = 0
+			}
+		}
+		i0 += sliceBytes
+	}
+}
+
+func (binvol *BinaryVolume) CheckSurface(x, y, z int32) (normx, normy, normz float32, isSurface bool) {
+	nx := binvol.size[0]
+	nxy := binvol.size[1] * nx
+	if binvol.data[z*nxy+y*nx+x] == 0 {
+		return
+	}
+	// If any neighbor is 0, this is a surface voxel.
+	var ix, iy, iz, pz, py, p int32
+	for iz = z - 1; iz <= z+1; iz++ {
+		pz = iz * nxy
+		for iy = y - 1; iy <= y+1; iy++ {
+			p = pz + iy*nx + x - 1
+			for ix = 0; ix < 3; ix++ {
+				if binvol.data[p] == 0 {
+					isSurface = true
+					goto ComputeNormal
+				}
+				p++
+			}
+		}
+	}
+
+ComputeNormal:
+	var xgrad, ygrad, zgrad float64
+	pz = (z - 1) * nxy
+	for iz = 0; iz < 3; iz++ {
+		py = (y - 1) * nx
+		for iy = 0; iy < 3; iy++ {
+			p = pz + py + x - 1
+			for ix = 0; ix < 3; ix++ {
+				value := float64(binvol.data[p])
+				xgrad += value * zhX[ix][iy][iz]
+				ygrad += value * zhY[ix][iy][iz]
+				zgrad += value * zhZ[ix][iy][iz]
+				p++
+			}
+			py += nx
+		}
+		pz += nxy
+	}
+
+	// Cheap hack to try to compensate for anisotropy.
+	// TODO -- Implement distance transform followed by gradient to better smooth
+	// and handle anisotropy.
+	xgrad /= binvol.xanisotropy
+	ygrad /= binvol.yanisotropy
+	zgrad /= binvol.zanisotropy
+
+	mag := math.Sqrt(xgrad*xgrad + ygrad*ygrad + zgrad*zgrad)
+	normx = float32(xgrad / mag)
+	normy = float32(ygrad / mag)
+	normz = float32(zgrad / mag)
+	return
+}
+
+// TODO -- can be more efficient in buffer space by only needing 8 blocks worth
+// of data (4 for current XY processing and 4 for next Z), but for simplicity this
+// function uses total XY extents + 2 * block size in Z.
+func (d *Data) computeAndSaveSurface(vol *sparseVol) error {
+	// Allocate buffer for processing
+	dx := vol.maxPt[0] - vol.minPt[0] + 3
+	dy := vol.maxPt[1] - vol.minPt[1] + 3
+	dz := vol.maxPt[2] - vol.minPt[2] + 3
+	blockNz := d.BlockSize().Value(2)
+	if dz > 2*blockNz+1 {
+		dz = 2*blockNz + 1
+	}
+	offset := vol.minPt.AddScalar(-1).(dvid.Point3d)
+	binvol := d.NewBinaryVolume(offset, dvid.Point3d{dx, dy, dz})
+
+	var vertexBuf, normalBuf bytes.Buffer
+	var surfaceSize uint32
+	rleI := 0
+	fmt.Printf("computeAndSaveSurface for label %d, # voxels %d, rle pos %d, size %s\n", vol.label, vol.numVoxels, vol.pos, binvol.size)
+	for {
+		// Populate the buffer
+		for {
+			//fmt.Printf("Populate buffer: rleI %d, vol.pos %d, offset %s,\n", rleI, vol.pos, binvol.offset)
+			if rleI >= vol.pos {
+				// We've added entire volume.
+				break
+			}
+			r := vol.rles[rleI]
+			bz := r.start[2] - binvol.offset[2]
+			if bz >= dz {
+				// rles have filled this buffer.
+				break
+			}
+			by := r.start[1] - binvol.offset[1]
+			bx := r.start[0] - binvol.offset[0]
+			//fmt.Printf("bin pt (%d, %d, %d), offset %s, r.start %s, r.length %d\n", bx, by, bz, binvol.offset, r.start, r.length)
+			p := bz*dx*dy + by*dx + bx
+			for i := int32(0); i < r.length; i++ {
+				binvol.data[p+i] = 255
+			}
+			rleI++
+		}
+
+		// Iterate through XY layers to compute surface and normal
+		var x, y, z int32
+		for z = 1; z <= blockNz; z++ {
+			//fmt.Printf("Compute surface/normal: z %d, real z %d\n", z, binvol.offset[2]+z)
+			if binvol.offset[2]+z >= vol.maxPt[2] {
+				// We've passed through all of this sparse volume's voxels
+				break
+			}
+			for y = 1; y < dy-1; y++ {
+				for x = 1; x < dx-1; x++ {
+					nx, ny, nz, isSurface := binvol.CheckSurface(x, y, z)
+					if isSurface {
+						surfaceSize++
+						fx := float32(x + binvol.offset[0])
+						fy := float32(y + binvol.offset[1])
+						fz := float32(z + binvol.offset[2])
+						if err := binary.Write(&vertexBuf, binary.LittleEndian, fx); err != nil {
+							return err
+						}
+						if err := binary.Write(&vertexBuf, binary.LittleEndian, fy); err != nil {
+							return err
+						}
+						if err := binary.Write(&vertexBuf, binary.LittleEndian, fz); err != nil {
+							return err
+						}
+						if err := binary.Write(&normalBuf, binary.LittleEndian, nx); err != nil {
+							return err
+						}
+						if err := binary.Write(&normalBuf, binary.LittleEndian, ny); err != nil {
+							return err
+						}
+						if err := binary.Write(&normalBuf, binary.LittleEndian, nz); err != nil {
+							return err
+						}
+					}
+				}
+			}
+		}
+
+		// Shift buffer
+		if rleI < vol.pos {
+			binvol.ShiftUp(blockNz)
+		} else {
+			break
+		}
+	}
+
+	// Store computation
+	// TODO -- Make this more efficient in terms of memory
+	numBytes := 4 + vertexBuf.Len() + normalBuf.Len()
+	data := make([]byte, numBytes, numBytes)
+	i := 0
+	j := 4
+	binary.LittleEndian.PutUint32(data[i:j], surfaceSize)
+	i = j
+	j += vertexBuf.Len()
+	copy(data[i:j], vertexBuf.Bytes())
+	i = j
+	j += normalBuf.Len()
+	copy(data[i:j], normalBuf.Bytes())
+
+	db, err := server.KeyValueSetter()
+	if err != nil {
+		return err
+	}
+	serialization, err := dvid.SerializeData(data, dvid.LZ4, dvid.CRC32)
+	if err != nil {
+		return fmt.Errorf("Unable to serialize data in surface computation: %s\n", err.Error())
+	}
+	return db.Put(vol.key, serialization)
+}
+
+// Runs asynchronously and assumes that sparse volumes per spatial indices are ordered
+// by mapped label, i.e., we will get all data for body N before body N+1.  Exits when
+// receives a nil in channel.
+func (d *Data) computeSurface(surfaceCh chan *storage.Chunk, db storage.KeyValueSetter,
+	versionID dvid.VersionLocalID, wg *sync.WaitGroup) {
+
+	defer func() {
+		wg.Done()
+	}()
+
+	// Sequentially process all the sparse volume data for each label
+	var curVol sparseVol
+	var curLabel uint64
+	notFirst := false
+	for {
+		chunk := <-surfaceCh
+		if chunk == nil {
+			if notFirst {
+				if err := d.computeAndSaveSurface(&curVol); err != nil {
+					dvid.Log(dvid.Normal, "Error on computing surface and normals: %s\n", err.Error())
+					return
+				}
+			}
+			return
+		}
+		label := chunk.ChunkOp.Op.(uint64)
+		if label != curLabel || label == 0 {
+			if notFirst {
+				if err := d.computeAndSaveSurface(&curVol); err != nil {
+					dvid.Log(dvid.Normal, "Error on computing surface and normals: %s\n", err.Error())
+					return
+				}
+			}
+			curVol.key = d.NewLabelSurfaceKey(versionID, label)
+			curVol.label = label
+			curVol.alreadySet = false
+		}
+
+		curVol.AddRLEs(chunk.V)
+		curLabel = label
 		notFirst = true
 	}
 }
@@ -381,6 +755,42 @@ func (d *Data) GetSparseVol(uuid dvid.UUID, label uint64) ([]byte, error) {
 	return op.encoding, nil
 }
 
+// GetSurface returns a byte array with # voxels and float32 arrays for vertices and
+// normals.
+func (d *Data) GetSurface(uuid dvid.UUID, label uint64) (s []byte, found bool, err error) {
+	service := server.DatastoreService()
+	_, versionID, e := service.LocalIDFromUUID(uuid)
+	if e != nil {
+		err = fmt.Errorf("Error in getting version ID from UUID '%s': %s\n", uuid, e.Error())
+		return
+	}
+
+	// Retrieve the precomputed surface or that it's not available.
+	key := d.NewLabelSurfaceKey(versionID, label)
+
+	db, e := server.KeyValueGetter()
+	if e != nil {
+		err = e
+		return
+	}
+	data, e := db.Get(key)
+	if e != nil {
+		err = fmt.Errorf("Error in retrieving surface for key '%s': %s", key, e.Error())
+		return
+	}
+	if data == nil {
+		return
+	}
+	found = true
+	uncompress := true
+	s, _, e = dvid.DeserializeData(data, uncompress)
+	if e != nil {
+		err = fmt.Errorf("Unable to deserialize surface for key '%s': %s\n", key, e.Error())
+		return
+	}
+	return
+}
+
 type denormOp struct {
 	source    *Data
 	versionID dvid.VersionLocalID
@@ -439,26 +849,46 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 	startTime = time.Now()
 	startKey := d.NewLabelSpatialMapKey(versionID, 0, dvid.MinIndexZYX)
 	endKey := d.NewLabelSpatialMapKey(versionID, MaxLabel, dvid.MaxIndexZYX)
-	sizeCh := make(chan *storage.Chunk, 10000)
+	sizeCh := make(chan *storage.Chunk, 1000)
 	wg.Add(1)
 	go d.computeSizes(sizeCh, db, versionID, wg)
+
+	// Create a number of label-specific surface calculation jobs
+	const numSurfCalculators = 3
+	var surfaceCh [numSurfCalculators]chan *storage.Chunk
+	for i := 0; i < numSurfCalculators; i++ {
+		surfaceCh[i] = make(chan *storage.Chunk, 10000)
+		wg.Add(1)
+		go d.computeSurface(surfaceCh[i], db, versionID, wg)
+	}
 	err = db.ProcessRange(startKey, endKey, &storage.ChunkOp{}, func(chunk *storage.Chunk) {
+		// Get label associated with this sparse volume.
+		dataKey := chunk.K.(*datastore.DataKey)
+		indexBytes := dataKey.Index.Bytes()
+		label := binary.BigEndian.Uint64(indexBytes[1:9])
+		chunk.ChunkOp = &storage.ChunkOp{label, nil}
+
+		// Send RLE of label to size indexer and surface calculator.
 		sizeCh <- chunk
+		surfaceCh[label%numSurfCalculators] <- chunk
 	})
 	if err != nil {
 		dvid.Log(dvid.Normal, "Error indexing sizes for %s: %s\n", d.DataName(), err.Error())
 		return
 	}
 	sizeCh <- nil
-	wg.Wait()
-	dvid.ElapsedTime(dvid.Debug, startTime, "Created size index for labels '%s'", d.DataName())
+	dvid.ElapsedTime(dvid.Debug, startTime, "Finished reading all RLEs for labels '%s'", d.DataName())
 
 	// Wait for results then set Updating.
-	d.Ready = true
-	if err := server.DatastoreService().SaveDataset(uuid); err != nil {
-		dvid.Log(dvid.Normal, "Could not save READY state to data '%s', uuid %s: %s",
-			d.DataName(), uuid, err.Error())
-	}
+	go func() {
+		wg.Wait()
+		dvid.ElapsedTime(dvid.Debug, startTime, "Finished processing all RLEs for labels '%s'", d.DataName())
+		d.Ready = true
+		if err := server.DatastoreService().SaveDataset(uuid); err != nil {
+			dvid.Log(dvid.Normal, "Could not save READY state to data '%s', uuid %s: %s",
+				d.DataName(), uuid, err.Error())
+		}
+	}()
 }
 
 // ProcessChunk processes a chunk of data as part of a mapped operation.

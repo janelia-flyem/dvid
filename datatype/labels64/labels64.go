@@ -201,6 +201,17 @@ GET /api/node/<UUID>/<data name>/sparsevol-by-point/<coord>
     coord     	  Coordinate of voxel with underscore as separator, e.g., 10_20_30
 
 
+GET /api/node/<UUID>/<data name>/surface/<label>
+
+	Returns array of vertices and normals of surface voxels of given label.
+	The encoding has the following format where integers are little endian and the order
+	of data is exactly as specified below:
+
+	    uint32          # Voxels
+	    N x float32     Vertices where N = 3 * (# Voxels)
+	    N x float32     Normals where N = 3 * (# Voxels)
+
+
 GET /api/node/<UUID>/<data name>/sizerange/<min size>/<max size>
 
     Returns JSON list of labels that have # voxels that fall within the given range
@@ -780,6 +791,35 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		}
 		dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: sparsevol-by-point at %s (%s)",
 			r.Method, coord, r.URL)
+
+	case "surface":
+		// GET /api/node/<UUID>/<data name>/surface/<label>
+		if len(parts) < 5 {
+			err := fmt.Errorf("ERROR: DVID requires label ID to follow 'surface' command")
+			server.BadRequest(w, r, err.Error())
+			return err
+		}
+		label, err := strconv.ParseUint(parts[4], 10, 64)
+		fmt.Printf("Getting surface for label %d\n", label)
+		if err != nil {
+			server.BadRequest(w, r, err.Error())
+			return err
+		}
+		data, found, err := d.GetSurface(uuid, label)
+		if err != nil {
+			return fmt.Errorf("Error on getting surface for label %d: %s", label, err.Error())
+		}
+		if !found {
+			http.Error(w, fmt.Sprintf("Surface for label '%d' not found", label), http.StatusNotFound)
+			return nil
+		}
+		w.Header().Set("Content-type", "application/octet-stream")
+		_, err = w.Write(data)
+		if err != nil {
+			return err
+		}
+		dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: sparsevol on label %d (%s)",
+			r.Method, label, r.URL)
 
 	case "sizerange":
 		// GET /api/node/<UUID>/<data name>/sizerange/<min size>/<max size>

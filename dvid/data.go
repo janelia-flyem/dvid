@@ -375,6 +375,32 @@ func (p Point3d) PointFromBytes(b []byte) (readPt Point3d, err error) {
 	return
 }
 
+// SetMinimum sets the point to the minimum elements of current and passed points.
+func (p *Point3d) SetMinimum(p2 Point3d) {
+	if p[0] > p2[0] {
+		p[0] = p2[0]
+	}
+	if p[1] > p2[1] {
+		p[1] = p2[1]
+	}
+	if p[2] > p2[2] {
+		p[2] = p2[2]
+	}
+}
+
+// SetMaximum sets the point to the maximum elements of current and passed points.
+func (p *Point3d) SetMaximum(p2 Point3d) {
+	if p[0] < p2[0] {
+		p[0] = p2[0]
+	}
+	if p[1] < p2[1] {
+		p[1] = p2[1]
+	}
+	if p[2] < p2[2] {
+		p[2] = p2[2]
+	}
+}
+
 // --- Point interface support -----
 
 // NumDims returns the dimensionality of this point.
@@ -837,6 +863,32 @@ func (c ChunkPoint3d) String() string {
 	return fmt.Sprintf("(%d,%d,%d)", c[0], c[1], c[2])
 }
 
+// SetMinimum sets the point to the minimum elements of current and passed points.
+func (p *ChunkPoint3d) SetMinimum(p2 ChunkPoint3d) {
+	if p[0] > p2[0] {
+		p[0] = p2[0]
+	}
+	if p[1] > p2[1] {
+		p[1] = p2[1]
+	}
+	if p[2] > p2[2] {
+		p[2] = p2[2]
+	}
+}
+
+// SetMaximum sets the point to the maximum elements of current and passed points.
+func (p *ChunkPoint3d) SetMaximum(p2 ChunkPoint3d) {
+	if p[0] < p2[0] {
+		p[0] = p2[0]
+	}
+	if p[1] < p2[1] {
+		p[1] = p2[1]
+	}
+	if p[2] < p2[2] {
+		p[2] = p2[2]
+	}
+}
+
 // --------- ChunkPoint interface -------------
 
 func (c ChunkPoint3d) NumDims() uint8 {
@@ -944,6 +996,36 @@ func StringToPoint(str, separator string) (p Point, err error) {
 
 // NdFloat32 is an N-dimensional slice of float32
 type NdFloat32 []float32
+
+// GetMin returns the minimum element of the N-dimensional float.
+func (n NdFloat32) GetMin() float32 {
+	if n == nil || len(n) == 0 {
+		Log(Normal, "GetMin() called on bad ndfloat32!")
+		return 0.0
+	}
+	min := n[0]
+	for i := 1; i < len(n); i++ {
+		if n[i] < min {
+			min = n[i]
+		}
+	}
+	return min
+}
+
+// GetMax returns the maximum element of the N-dimensional float.
+func (n NdFloat32) GetMax() float32 {
+	if n == nil || len(n) == 0 {
+		Log(Normal, "GetMax() called on bad ndfloat32!")
+		return 0.0
+	}
+	max := n[0]
+	for i := 1; i < len(n); i++ {
+		if n[i] > max {
+			max = n[i]
+		}
+	}
+	return max
+}
 
 // Parse a string of format "%f,%f,%f,..." into a slice of float32.
 func StringToNdFloat32(str, separator string) (nd NdFloat32, err error) {
