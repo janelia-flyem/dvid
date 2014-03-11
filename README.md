@@ -1,4 +1,4 @@
-DVID
+DVID [![Picture](https://raw.github.com/janelia-flyem/janelia-flyem.github.com/master/images/jfrc_grey_180x40.png)](http://www.janelia.org)
 ====
 
 *Status: In development, not ready for use.*
