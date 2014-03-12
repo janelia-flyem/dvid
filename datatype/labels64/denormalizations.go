@@ -471,11 +471,11 @@ func (d *Data) computeAndSaveSurface(vol *sparseVol) error {
 	var vertexBuf, normalBuf bytes.Buffer
 	var surfaceSize uint32
 	rleI := 0
-	fmt.Printf("computeAndSaveSurface for label %d, # voxels %d, rle pos %d, size %s\n", vol.label, vol.numVoxels, vol.pos, binvol.size)
+	fmt.Printf("Compute label %d, # voxels %d, rle pos %d, size %s, minPt %s, maxPt %s\n",
+		vol.label, vol.numVoxels, vol.pos, binvol.size, vol.minPt, vol.maxPt)
 	for {
 		// Populate the buffer
 		for {
-			//fmt.Printf("Populate buffer: rleI %d, vol.pos %d, offset %s,\n", rleI, vol.pos, binvol.offset)
 			if rleI >= vol.pos {
 				// We've added entire volume.
 				break
@@ -488,7 +488,6 @@ func (d *Data) computeAndSaveSurface(vol *sparseVol) error {
 			}
 			by := r.start[1] - binvol.offset[1]
 			bx := r.start[0] - binvol.offset[0]
-			//fmt.Printf("bin pt (%d, %d, %d), offset %s, r.start %s, r.length %d\n", bx, by, bz, binvol.offset, r.start, r.length)
 			p := bz*dx*dy + by*dx + bx
 			for i := int32(0); i < r.length; i++ {
 				binvol.data[p+i] = 255
@@ -499,8 +498,7 @@ func (d *Data) computeAndSaveSurface(vol *sparseVol) error {
 		// Iterate through XY layers to compute surface and normal
 		var x, y, z int32
 		for z = 1; z <= blockNz; z++ {
-			//fmt.Printf("Compute surface/normal: z %d, real z %d\n", z, binvol.offset[2]+z)
-			if binvol.offset[2]+z >= vol.maxPt[2] {
+			if binvol.offset[2]+z > vol.maxPt[2] {
 				// We've passed through all of this sparse volume's voxels
 				break
 			}
@@ -536,7 +534,7 @@ func (d *Data) computeAndSaveSurface(vol *sparseVol) error {
 		}
 
 		// Shift buffer
-		if rleI < vol.pos {
+		if binvol.offset[2]+blockNz < vol.maxPt[2] {
 			binvol.ShiftUp(blockNz)
 		} else {
 			break
@@ -576,6 +574,7 @@ func (d *Data) computeSurface(surfaceCh chan *storage.Chunk, db storage.KeyValue
 
 	defer func() {
 		wg.Done()
+		server.HandlerToken <- 1
 	}()
 
 	// Sequentially process all the sparse volume data for each label
@@ -857,10 +856,23 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 	const numSurfCalculators = 3
 	var surfaceCh [numSurfCalculators]chan *storage.Chunk
 	for i := 0; i < numSurfCalculators; i++ {
+		<-server.HandlerToken
 		surfaceCh[i] = make(chan *storage.Chunk, 10000)
 		wg.Add(1)
 		go d.computeSurface(surfaceCh[i], db, versionID, wg)
 	}
+
+	// Wait for results then set Updating.
+	go func() {
+		wg.Wait()
+		dvid.ElapsedTime(dvid.Debug, startTime, "Finished processing all RLEs for labels '%s'", d.DataName())
+		d.Ready = true
+		if err := server.DatastoreService().SaveDataset(uuid); err != nil {
+			dvid.Log(dvid.Normal, "Could not save READY state to data '%s', uuid %s: %s",
+				d.DataName(), uuid, err.Error())
+		}
+	}()
+
 	err = db.ProcessRange(startKey, endKey, &storage.ChunkOp{}, func(chunk *storage.Chunk) {
 		// Get label associated with this sparse volume.
 		dataKey := chunk.K.(*datastore.DataKey)
@@ -877,18 +889,10 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 		return
 	}
 	sizeCh <- nil
+	for i := 0; i < numSurfCalculators; i++ {
+		surfaceCh[i] <- nil
+	}
 	dvid.ElapsedTime(dvid.Debug, startTime, "Finished reading all RLEs for labels '%s'", d.DataName())
-
-	// Wait for results then set Updating.
-	go func() {
-		wg.Wait()
-		dvid.ElapsedTime(dvid.Debug, startTime, "Finished processing all RLEs for labels '%s'", d.DataName())
-		d.Ready = true
-		if err := server.DatastoreService().SaveDataset(uuid); err != nil {
-			dvid.Log(dvid.Normal, "Could not save READY state to data '%s', uuid %s: %s",
-				d.DataName(), uuid, err.Error())
-		}
-	}()
 }
 
 // ProcessChunk processes a chunk of data as part of a mapped operation.
@@ -954,6 +958,10 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 		for y = firstPt.Value(1); y <= lastPt.Value(1); y++ {
 			for x = firstPt.Value(0); x <= lastPt.Value(0); x++ {
 				voxelLabel = d.Properties.ByteOrder.Uint64(blockData[start : start+8])
+				start += 8
+				if voxelLabel == 0 {
+					continue
+				}
 
 				// Track run length
 				if curRun != 0 && voxelLabel == curLabel {
@@ -974,8 +982,6 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 					curRun = 1
 					curLabel = voxelLabel
 				}
-
-				start += 8
 			}
 			// Force break of any runs when we finish x scan.
 			if curRun > 0 {

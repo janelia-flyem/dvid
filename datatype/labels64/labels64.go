@@ -38,6 +38,11 @@ const HelpMessage = `
 API for datatypes derived from labels64 (github.com/janelia-flyem/dvid/datatype/labels64)
 =========================================================================
 
+Note: Denormalizations like sparse volumes are *not* performed for the "0" label, which is
+considered a special label useful for designating background.  This allows users to define
+sparse labeled structures in a large volume without requiring processing of entire volume.
+
+
 Command-line:
 
 $ dvid dataset <UUID> new labels64 <data name> <settings...>
