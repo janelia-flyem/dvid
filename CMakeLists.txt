@@ -83,9 +83,9 @@ else ()
     include (hyperleveldb)
     include (lmdb)
 
-    if (NOT DVID_BACKEND)
-        set (DVID_BACKEND "basholeveldb")
-    endif ()
+    set (DVID_BACKEND "basholeveldb" CACHE TYPE STRING)
+    
+    message ("Using DVID_BACKEND: ${DVID_BACKEND}")
 
 	# Defaults to standard leveldb
     if ("${DVID_BACKEND}" STREQUAL "lmdb")
