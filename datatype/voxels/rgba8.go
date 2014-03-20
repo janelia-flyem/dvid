@@ -7,28 +7,30 @@ package voxels
 
 import (
 	"github.com/janelia-flyem/dvid/datastore"
+	"github.com/janelia-flyem/dvid/dvid"
 )
 
 func init() {
-	values := DataValues{
+	values := dvid.DataValues{
 		{
-			DataType: "uint8",
-			Label:    "red",
+			T:     dvid.T_uint8,
+			Label: "red",
 		},
 		{
-			DataType: "uint8",
-			Label:    "green",
+			T:     dvid.T_uint8,
+			Label: "green",
 		},
 		{
-			DataType: "uint8",
-			Label:    "blue",
+			T:     dvid.T_uint8,
+			Label: "blue",
 		},
 		{
-			DataType: "uint8",
-			Label:    "alpha",
+			T:     dvid.T_uint8,
+			Label: "alpha",
 		},
 	}
-	rgba := NewDatatype(values)
+	interpolable := true
+	rgba := NewDatatype(values, interpolable)
 	rgba.DatatypeID = &datastore.DatatypeID{
 		Name:    "rgba8",
 		Url:     "github.com/janelia-flyem/dvid/datatype/voxels/rgba8.go",

@@ -113,28 +113,29 @@ var (
 
 	typeService datastore.TypeService
 
-	compositeValues = voxels.DataValues{
+	compositeValues = dvid.DataValues{
 		{
-			DataType: "uint8",
-			Label:    "red",
+			T:     dvid.T_uint8,
+			Label: "red",
 		},
 		{
-			DataType: "uint8",
-			Label:    "green",
+			T:     dvid.T_uint8,
+			Label: "green",
 		},
 		{
-			DataType: "uint8",
-			Label:    "blue",
+			T:     dvid.T_uint8,
+			Label: "blue",
 		},
 		{
-			DataType: "uint8",
-			Label:    "alpha",
+			T:     dvid.T_uint8,
+			Label: "alpha",
 		},
 	}
 )
 
 func init() {
-	dtype := &Datatype{voxels.NewDatatype(nil)}
+	interpolable := true
+	dtype := &Datatype{voxels.NewDatatype(nil, interpolable)}
 	dtype.DatatypeID = datastore.MakeDatatypeID("multichan16", RepoUrl, Version)
 
 	// See doc for package on why channels are segregated instead of interleaved.
@@ -159,6 +160,10 @@ type Channel struct {
 
 func (c *Channel) String() string {
 	return fmt.Sprintf("Channel %d of size %s @ offset %s", c.channelNum, c.Size(), c.StartPoint())
+}
+
+func (c *Channel) Interpolable() bool {
+	return true
 }
 
 // Index returns a channel-specific Index
@@ -334,8 +339,8 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 			if len(values) <= int(channelNum) {
 				return fmt.Errorf("Must choose channel from 0 to %d", len(values))
 			}
-			stride := slice.Size().Value(0) * values.BytesPerVoxel()
-			dataValues := voxels.DataValues{values[channelNum]}
+			stride := slice.Size().Value(0) * values.BytesPerElement()
+			dataValues := dvid.DataValues{values[channelNum]}
 			data := make([]uint8, int(slice.NumVoxels()))
 			v := voxels.NewVoxels(slice, dataValues, data, stride, d.ByteOrder)
 			channel := &Channel{
@@ -348,7 +353,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 				formatStr = parts[6]
 			}
 			//dvid.ElapsedTime(dvid.Normal, startTime, "%s %s upto image formatting", op, slice)
-			err = dvid.WriteImageHttp(w, img, formatStr)
+			err = dvid.WriteImageHttp(w, img.Get(), formatStr)
 			if err != nil {
 				return err
 			}
@@ -409,7 +414,7 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 
 	// Store the metadata
 	d.NumChannels = len(channels)
-	d.Properties.Values = make(voxels.DataValues, d.NumChannels)
+	d.Properties.Values = make(dvid.DataValues, d.NumChannels)
 	if d.NumChannels > 0 {
 		d.ByteOrder = channels[0].ByteOrder()
 		reply.Text = fmt.Sprintf("Loaded %s into data '%s': found %d channels\n",

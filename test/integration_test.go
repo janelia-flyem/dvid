@@ -4,15 +4,15 @@
 package test
 
 import (
-	. "github.com/janelia-flyem/go/gocheck"
 	"testing"
+	. "github.com/janelia-flyem/go/gocheck"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 
 	// Declare the data types this DVID executable will support
-	//_ "github.com/janelia-flyem/dvid/datatype/labels64"
+	_ "github.com/janelia-flyem/dvid/datatype/labels64"
 	_ "github.com/janelia-flyem/dvid/datatype/multichan16"
 	_ "github.com/janelia-flyem/dvid/datatype/quadtree"
 	_ "github.com/janelia-flyem/dvid/datatype/voxels"
@@ -122,11 +122,8 @@ func (suite *DataSuite) TestDatasetPersistence(c *C) {
 	err = service.NewData(root, "multichan16", "node2multichan", config)
 	c.Assert(err, IsNil)
 
-	err = service.NewData(root, "labels32", "node2labels32", config)
+	err = service.NewData(root, "labels64", "node2labels64", config)
 	c.Assert(err, IsNil)
-
-	//err = service.NewData(root, "labels64", "node2labels64", config)
-	//c.Assert(err, IsNil)
 
 	err = service.NewData(root, "rgba8", "node2rgba8", config)
 	c.Assert(err, IsNil)

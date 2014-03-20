@@ -217,6 +217,18 @@ GET /api/node/<UUID>/<data name>/surface/<label>
 	    N x float32     Normals where N = 3 * (# Voxels)
 
 
+GET /api/node/<UUID>/<data name>/surface-by-point/<coord>
+
+	Returns array of vertices and normals of surface voxels for label at given voxel.
+	The encoding is described in the "surface" request above.
+	
+    Arguments:
+
+    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    data name     Name of mapping data.
+    coord     	  Coordinate of voxel with underscore as separator, e.g., 10_20_30
+
+
 GET /api/node/<UUID>/<data name>/sizerange/<min size>/<max size>
 
     Returns JSON list of labels that have # voxels that fall within the given range
@@ -236,13 +248,14 @@ var (
 )
 
 func init() {
-	values := voxels.DataValues{
+	values := dvid.DataValues{
 		{
-			DataType: "uint64",
-			Label:    "labels64",
+			T:     dvid.T_uint64,
+			Label: "labels64",
 		},
 	}
-	dtype = &Datatype{voxels.NewDatatype(values)}
+	interpolable := false
+	dtype = &Datatype{voxels.NewDatatype(values, interpolable)}
 	dtype.DatatypeID = datastore.MakeDatatypeID("labels64", RepoUrl, Version)
 	datastore.RegisterDatatype(dtype)
 
@@ -290,6 +303,10 @@ type Labels struct {
 
 func (l *Labels) String() string {
 	return fmt.Sprintf("Labels of size %s @ offset %s", l.Size(), l.StartPoint())
+}
+
+func (l *Labels) Interpolable() bool {
+	return false
 }
 
 // --- Labels64 Datatype -----
@@ -372,7 +389,7 @@ func (d *Data) JSONString() (string, error) {
 // Unlike the standard voxels NewExtHandler, the labels64 version will modify the
 // labels based on the z-coordinate of the given geometry.
 func (d *Data) NewExtHandler(geom dvid.Geometry, img interface{}) (voxels.ExtHandler, error) {
-	bytesPerVoxel := d.Properties.Values.BytesPerVoxel()
+	bytesPerVoxel := d.Properties.Values.BytesPerElement()
 	stride := geom.Size().Value(0) * bytesPerVoxel
 	var data []byte
 
@@ -704,15 +721,21 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 				if err != nil {
 					return err
 				}
+				var goImg image.Image
 				if isotropic {
-					img = dvid.ScaleImage(img, slice)
+					goImg, err = img.ResizeImage(slice)
+					if err != nil {
+						return err
+					}
+				} else {
+					goImg = img.Get()
 				}
 				var formatStr string
 				if len(parts) >= 8 {
 					formatStr = parts[7]
 				}
 				//dvid.ElapsedTime(dvid.Normal, startTime, "%s %s upto image formatting", op, slice)
-				err = dvid.WriteImageHttp(w, img, formatStr)
+				err = dvid.WriteImageHttp(w, goImg, formatStr)
 				if err != nil {
 					return err
 				}
@@ -823,8 +846,41 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		if err != nil {
 			return err
 		}
-		dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: sparsevol on label %d (%s)",
+		dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: surface on label %d (%s)",
 			r.Method, label, r.URL)
+
+	case "surface-by-point":
+		// GET /api/node/<UUID>/<data name>/surface-by-point/<coord>
+		if len(parts) < 5 {
+			err := fmt.Errorf("ERROR: DVID requires coord to follow 'surface-by-point' command")
+			server.BadRequest(w, r, err.Error())
+			return err
+		}
+		coord, err := dvid.StringToPoint(parts[4], "_")
+		if err != nil {
+			server.BadRequest(w, r, err.Error())
+			return err
+		}
+		label, err := d.GetLabelAtPoint(uuid, coord)
+		if err != nil {
+			server.BadRequest(w, r, err.Error())
+			return err
+		}
+		data, found, err := d.GetSurface(uuid, label)
+		if err != nil {
+			return fmt.Errorf("Error on getting surface for label %d: %s", label, err.Error())
+		}
+		if !found {
+			http.Error(w, fmt.Sprintf("Surface for label '%d' not found", label), http.StatusNotFound)
+			return nil
+		}
+		w.Header().Set("Content-type", "application/octet-stream")
+		_, err = w.Write(data)
+		if err != nil {
+			return err
+		}
+		dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: surface-by-point at %s (%s)",
+			r.Method, coord, r.URL)
 
 	case "sizerange":
 		// GET /api/node/<UUID>/<data name>/sizerange/<min size>/<max size>

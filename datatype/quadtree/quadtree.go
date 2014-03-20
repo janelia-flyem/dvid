@@ -449,14 +449,6 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 	url := r.URL.Path[len(server.WebAPIPath):]
 	parts := strings.Split(url, "/")
 
-	// Get the running datastore service from this DVID instance.
-	service := server.DatastoreService()
-
-	_, versionID, err := service.LocalIDFromUUID(uuid)
-	if err != nil {
-		return err
-	}
-
 	switch parts[3] {
 	case "help":
 		w.Header().Set("Content-Type", "text/plain")
@@ -476,7 +468,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		if action == "post" {
 			return fmt.Errorf("DVID does not yet support POST of quadtree")
 		} else {
-			img, err := d.GetTile(versionID, planeStr, scalingStr, coordStr)
+			img, err := d.GetTile(uuid, planeStr, scalingStr, coordStr)
 			if err != nil {
 				server.BadRequest(w, r, err.Error())
 				return err
@@ -526,16 +518,14 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		if len(parts) >= 8 {
 			formatStr = parts[7]
 		}
-		err = dvid.WriteImageHttp(w, img, formatStr)
+		err = dvid.WriteImageHttp(w, img.Get(), formatStr)
 		if err != nil {
 			return err
 		}
 		dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: tile-accelerated %s %s (%s)",
 			r.Method, planeStr, parts[3], r.URL)
 	default:
-		err = fmt.Errorf("Illegal request for quadtree data.  See 'help' for REST API")
-	}
-	if err != nil {
+		err := fmt.Errorf("Illegal request for quadtree data.  See 'help' for REST API")
 		server.BadRequest(w, r, err.Error())
 		return err
 	}
@@ -545,7 +535,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 // GetImage returns an image given a 2d orthogonal image description.  Since quadtrees
 // have precomputed XY, XZ, and YZ orientations, reconstruction of the desired image should
 // be much faster than computing the image from voxel blocks.
-func (d *Data) GetImage(uuid dvid.UUID, geom dvid.Geometry, isotropic bool) (image.Image, error) {
+func (d *Data) GetImage(uuid dvid.UUID, geom dvid.Geometry, isotropic bool) (*dvid.Image, error) {
 	// Iterate through tiles that intersect our geometry.
 	levelSpec, found := d.Levels[0]
 	if !found {
@@ -556,11 +546,11 @@ func (d *Data) GetImage(uuid dvid.UUID, geom dvid.Geometry, isotropic bool) (ima
 	if err != nil {
 		return nil, err
 	}
-	minSlice, err := src.HandleIsotropy2D(geom, isotropic)
+	_, versionID, err := server.DatastoreService().LocalIDFromUUID(uuid)
 	if err != nil {
 		return nil, err
 	}
-	_, versionID, err := server.DatastoreService().LocalIDFromUUID(uuid)
+	minSlice, err := src.HandleIsotropy2D(geom, isotropic)
 	if err != nil {
 		return nil, err
 	}
@@ -600,7 +590,7 @@ func (d *Data) GetImage(uuid dvid.UUID, geom dvid.Geometry, isotropic bool) (ima
 				// Get this tile from datastore
 				tileCoord, err := slice.PlaneToChunkPoint3d(x0, y0, minSlice.StartPoint(), levelSpec.TileSize)
 				tileIndex := NewIndexTile(dvid.IndexZYX(tileCoord), slice, Scaling(0))
-				img, err := d.getTile(versionID, slice, Scaling(0), tileIndex)
+				img, err := d.getTile(versionID, src, slice, Scaling(0), tileIndex)
 				if err != nil || img == nil {
 					return
 				}
@@ -623,16 +613,25 @@ func (d *Data) GetImage(uuid dvid.UUID, geom dvid.Geometry, isotropic bool) (ima
 	}
 	wg.Wait()
 
-	img := dst.Get()
 	if isotropic {
-		img = dvid.ScaleImage(img, geom)
+		dst, err = dst.ScaleImage(geom)
+		if err != nil {
+			return nil, err
+		}
 	}
-	return img, nil
+	return dst, nil
 }
 
 // GetTile retrieves a tile.
-func (d *Data) GetTile(versionID dvid.VersionLocalID, planeStr, scalingStr, coordStr string) (
-	image.Image, error) {
+func (d *Data) GetTile(uuid dvid.UUID, planeStr, scalingStr, coordStr string) (image.Image, error) {
+	src, err := getSourceVoxels(uuid, d.Source)
+	if err != nil {
+		return nil, err
+	}
+	_, versionID, err := server.DatastoreService().LocalIDFromUUID(uuid)
+	if err != nil {
+		return nil, err
+	}
 
 	// Construct the index for this tile
 	plane := dvid.DataShapeString(planeStr)
@@ -651,7 +650,7 @@ func (d *Data) GetTile(versionID dvid.VersionLocalID, planeStr, scalingStr, coor
 	indexZYX := dvid.IndexZYX{tileCoord.Value(0), tileCoord.Value(1), tileCoord.Value(2)}
 	index := &IndexTile{indexZYX, shape, Scaling(scaling)}
 
-	img, err := d.getTile(versionID, shape, Scaling(scaling), index)
+	img, err := d.getTile(versionID, src, shape, Scaling(scaling), index)
 	if err != nil {
 		return nil, err
 	}
@@ -661,13 +660,12 @@ func (d *Data) GetTile(versionID dvid.VersionLocalID, planeStr, scalingStr, coor
 	return img.Get(), nil
 }
 
-func (d *Data) getTile(versionID dvid.VersionLocalID, plane dvid.DataShape, scaling Scaling,
+func (d *Data) getTile(versionID dvid.VersionLocalID, src *voxels.Data, plane dvid.DataShape, scaling Scaling,
 	index *IndexTile) (*dvid.Image, error) {
 
 	if d.Levels == nil {
 		return nil, fmt.Errorf("Tiles have not been generated.")
 	}
-
 	db, err := server.KeyValueGetter()
 	if err != nil {
 		return nil, err
@@ -691,7 +689,7 @@ func (d *Data) getTile(versionID dvid.VersionLocalID, plane dvid.DataShape, scal
 			if err != nil {
 				return nil, err
 			}
-			err = img.Set(placeholder)
+			err = img.Set(placeholder, src.Properties.Values, src.Properties.Interpolable)
 			return img, err
 		}
 		return nil, nil // Not found
@@ -745,12 +743,10 @@ func (d *Data) extractTiles(v voxels.ExtHandler, offset dvid.Point, scaling Scal
 	}
 
 	// Split image into tiles and store into datastore.
-	src := new(dvid.Image)
-	img, err := v.GoImage()
+	src, err := v.GetImage2d()
 	if err != nil {
 		return err
 	}
-	src.Set(img)
 	var x0, y0, x1, y1 int32
 	y1 = tileH
 	for y0 = 0; y0 < srcH; y0 += tileH {
@@ -875,7 +871,7 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, config dvid.Con
 				if err != nil {
 					return err
 				}
-				if err = voxels.SetVoxels(uuid, src, v); err != nil {
+				if err = voxels.CopyVoxels(uuid, src, v); err != nil {
 					return err
 				}
 				// Iterate through the different scales, extracting tiles at each resolution.
@@ -914,7 +910,7 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, config dvid.Con
 				if err != nil {
 					return err
 				}
-				if err = voxels.SetVoxels(uuid, src, v); err != nil {
+				if err = voxels.CopyVoxels(uuid, src, v); err != nil {
 					return err
 				}
 				// Iterate through the different scales, extracting tiles at each resolution.
@@ -953,7 +949,7 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, config dvid.Con
 				if err != nil {
 					return err
 				}
-				if err = voxels.SetVoxels(uuid, src, v); err != nil {
+				if err = voxels.CopyVoxels(uuid, src, v); err != nil {
 					return err
 				}
 				// Iterate through the different scales, extracting tiles at each resolution.

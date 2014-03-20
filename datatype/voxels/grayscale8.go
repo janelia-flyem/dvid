@@ -2,16 +2,18 @@ package voxels
 
 import (
 	"github.com/janelia-flyem/dvid/datastore"
+	"github.com/janelia-flyem/dvid/dvid"
 )
 
 func init() {
-	values := DataValues{
+	values := dvid.DataValues{
 		{
-			DataType: "uint8",
-			Label:    "grayscale",
+			T:     dvid.T_uint8,
+			Label: "grayscale",
 		},
 	}
-	grayscale := NewDatatype(values)
+	interpolable := true
+	grayscale := NewDatatype(values, interpolable)
 	grayscale.DatatypeID = &datastore.DatatypeID{
 		Name:    "grayscale8",
 		Url:     "github.com/janelia-flyem/dvid/datatype/voxels/grayscale8.go",

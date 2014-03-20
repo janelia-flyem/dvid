@@ -69,10 +69,17 @@ func (V3DRawMarshaler) UnmarshalV3DRaw(reader io.Reader) ([]*Channel, error) {
 	var c int32
 	for c = 0; c < int32(numChannels); c++ {
 		data := make([]uint8, totalBytes, totalBytes)
-		values := voxels.DataValues{
+		var t dvid.DataType
+		switch bytesPerVoxel {
+		case 1:
+			t = dvid.T_uint8
+		case 2:
+			t = dvid.T_uint16
+		}
+		values := dvid.DataValues{
 			{
-				DataType: fmt.Sprintf("uint%d", bytesPerVoxel*8),
-				Label:    fmt.Sprintf("channel%d", c),
+				T:     t,
+				Label: fmt.Sprintf("channel%d", c),
 			},
 		}
 		v := voxels.NewVoxels(volume, values, data, int32(width)*bytesPerVoxel, byteOrder)

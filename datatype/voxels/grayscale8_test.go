@@ -1,8 +1,8 @@
 package voxels
 
 import (
-	. "github.com/janelia-flyem/go/gocheck"
 	"testing"
+	. "github.com/janelia-flyem/go/gocheck"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -149,8 +149,9 @@ func (suite *TestSuite) sliceTest(c *C, slice dvid.Geometry) {
 	c.Assert(err, IsNil)
 
 	// Make sure the retrieved image matches the original
-	c.Assert(img.Rect, DeepEquals, retrieved.Bounds())
-	retrievedData, voxelSize, _, err := dvid.ImageData(retrieved)
+	goImg := retrieved.Get()
+	c.Assert(img.Rect, DeepEquals, goImg.Bounds())
+	retrievedData, voxelSize, _, err := dvid.ImageData(goImg)
 	c.Assert(err, IsNil)
 	c.Assert(retrievedData, DeepEquals, data)
 	c.Assert(voxelSize, Equals, int32(1))

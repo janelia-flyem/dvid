@@ -409,7 +409,6 @@ func makeGzipHandler(fn http.HandlerFunc) http.HandlerFunc {
 			fn(w, r)
 			return
 		}
-		dvid.Log(dvid.Debug, "Responding to request with gzip\n")
 		w.Header().Set("Content-Encoding", "gzip")
 		gz := gzip.NewWriter(w)
 		defer gz.Close()

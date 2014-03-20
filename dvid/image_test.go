@@ -2,7 +2,6 @@ package dvid
 
 import (
 	"image"
-
 	. "github.com/janelia-flyem/go/gocheck"
 )
 
@@ -39,7 +38,14 @@ func (suite *DataSuite) TestSlice(c *C) {
 
 	// Create a serializable image and test its de/serialization.
 	var img Image
-	err := img.Set(goImg)
+	values := DataValues{
+		{
+			T:     T_uint8,
+			Label: "grayscale",
+		},
+	}
+
+	err := img.Set(goImg, values, true)
 	c.Assert(err, IsNil)
 
 	serialization, err := img.Serialize(Snappy, CRC32)
@@ -71,7 +77,13 @@ func (suite *DataSuite) TestOffsetSlice(c *C) {
 
 	// Create a serializable image and test its de/serialization.
 	var img Image
-	err := img.Set(goImg)
+	values := DataValues{
+		{
+			T:     T_uint8,
+			Label: "grayscale",
+		},
+	}
+	err := img.Set(goImg, values, true)
 	c.Assert(err, IsNil)
 
 	serialization, err := img.Serialize(Snappy, CRC32)
@@ -93,7 +105,13 @@ func (suite *DataSuite) TestCompression(c *C) {
 
 	// Create a serializable image and test its de/serialization and size
 	var img Image
-	err := img.Set(goImg)
+	values := DataValues{
+		{
+			T:     T_uint8,
+			Label: "grayscale",
+		},
+	}
+	err := img.Set(goImg, values, true)
 	c.Assert(err, IsNil)
 
 	serialization, err := img.Serialize(Snappy, CRC32)

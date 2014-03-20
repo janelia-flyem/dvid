@@ -275,7 +275,7 @@ type IntHandler interface {
 
 	DataID() datastore.DataID
 
-	Values() DataValues
+	Values() dvid.DataValues
 
 	BlockSize() dvid.Point
 
@@ -310,8 +310,8 @@ type ExtHandler interface {
 	// DownRes reduces the image data by the integer scaling for each dimension.
 	DownRes(downmag dvid.Point) error
 
-	// Returns a image.Image suitable for external DVID use
-	GoImage() (image.Image, error)
+	// Returns a 2d image suitable for external DVID use
+	GetImage2d() (*dvid.Image, error)
 }
 
 // VoxelHandlers can get and set n-D voxels.
@@ -323,19 +323,21 @@ type VoxelHandler interface {
 type VoxelGetter interface {
 	dvid.Geometry
 
-	Values() DataValues
+	Values() dvid.DataValues
 
 	Stride() int32
 
 	ByteOrder() binary.ByteOrder
 
 	Data() []byte
+
+	Interpolable() bool
 }
 
 type VoxelSetter interface {
 	SetGeometry(geom dvid.Geometry)
 
-	SetValues(values DataValues)
+	SetValues(values dvid.DataValues)
 
 	SetStride(stride int32)
 
@@ -344,24 +346,24 @@ type VoxelSetter interface {
 	SetData(data []byte)
 }
 
-// GetImage retrieves a 2d Go image from a version node given a geometry of voxels.
-func GetImage(uuid dvid.UUID, i IntHandler, e ExtHandler) (image.Image, error) {
-	if err := SetVoxels(uuid, i, e); err != nil {
+// GetImage retrieves a 2d image from a version node given a geometry of voxels.
+func GetImage(uuid dvid.UUID, i IntHandler, e ExtHandler) (*dvid.Image, error) {
+	if err := CopyVoxels(uuid, i, e); err != nil {
 		return nil, err
 	}
-	return e.GoImage()
+	return e.GetImage2d()
 }
 
 // GetVolume retrieves a n-d volume from a version node given a geometry of voxels.
 func GetVolume(uuid dvid.UUID, i IntHandler, e ExtHandler) ([]byte, error) {
-	if err := SetVoxels(uuid, i, e); err != nil {
+	if err := CopyVoxels(uuid, i, e); err != nil {
 		return nil, err
 	}
 	return e.Data(), nil
 }
 
-// SetVoxels retrieves voxels from a version node and stores them in the ExtHandler.
-func SetVoxels(uuid dvid.UUID, i IntHandler, e ExtHandler) error {
+// CopyVoxels retrieves voxels from an IntHandler for a version and copies them into an ExtHandler.
+func CopyVoxels(uuid dvid.UUID, i IntHandler, e ExtHandler) error {
 	db, err := server.KeyValueGetter()
 	if err != nil {
 		return err
@@ -659,7 +661,7 @@ func loadXYImages(i IntHandler, load *bulkLoadInfo) error {
 	var blocks [2]Blocks
 	curBlocks := 0
 	blockSize := i.BlockSize()
-	blockBytes := blockSize.Prod() * int64(i.Values().BytesPerVoxel())
+	blockBytes := blockSize.Prod() * int64(i.Values().BytesPerElement())
 
 	// Iterate through XY slices batched into the Z length of blocks.
 	fileNum := 1
@@ -1024,7 +1026,7 @@ func transferBlock(op OpType, v ExtHandler, block *Block, blockSize dvid.Point) 
 		return err
 	}
 	data := v.Data()
-	bytesPerVoxel := v.Values().BytesPerVoxel()
+	bytesPerVoxel := v.Values().BytesPerElement()
 	blockBeg := opBounds.blockBeg
 	dataBeg := opBounds.dataBeg
 	dataEnd := opBounds.dataEnd
@@ -1148,7 +1150,7 @@ func transferBlock(op OpType, v ExtHandler, block *Block, blockSize dvid.Point) 
 type Voxels struct {
 	dvid.Geometry
 
-	values DataValues
+	values dvid.DataValues
 
 	// The data itself
 	data []byte
@@ -1161,7 +1163,7 @@ type Voxels struct {
 	byteOrder binary.ByteOrder
 }
 
-func NewVoxels(geom dvid.Geometry, values DataValues, data []byte, stride int32,
+func NewVoxels(geom dvid.Geometry, values dvid.DataValues, data []byte, stride int32,
 	byteOrder binary.ByteOrder) *Voxels {
 
 	return &Voxels{geom, values, data, stride, byteOrder}
@@ -1174,7 +1176,7 @@ func (v *Voxels) String() string {
 
 // -------  VoxelGetter interface implementation -------------
 
-func (v *Voxels) Values() DataValues {
+func (v *Voxels) Values() dvid.DataValues {
 	return v.values
 }
 
@@ -1187,7 +1189,7 @@ func (v *Voxels) Stride() int32 {
 }
 
 func (v *Voxels) BytesPerVoxel() int32 {
-	return v.values.BytesPerVoxel()
+	return v.values.BytesPerElement()
 }
 
 func (v *Voxels) ByteOrder() binary.ByteOrder {
@@ -1200,7 +1202,7 @@ func (v *Voxels) SetGeometry(geom dvid.Geometry) {
 	v.Geometry = geom
 }
 
-func (v *Voxels) SetValues(values DataValues) {
+func (v *Voxels) SetValues(values dvid.DataValues) {
 	v.values = values
 }
 
@@ -1217,6 +1219,10 @@ func (v *Voxels) SetData(data []byte) {
 }
 
 // -------  ExtHandler interface implementation -------------
+
+func (v *Voxels) Interpolable() bool {
+	return true
+}
 
 // DownRes downsamples by averaging where the down-magnification are integers.
 // If the source image size in Voxels is not an integral multiple of the
@@ -1235,11 +1241,11 @@ func (v *Voxels) DownRes(magnification dvid.Point) error {
 	}
 	dstW := srcW / reduceW
 	dstH := srcH / reduceH
-	numBytes := uint64(dstW) * uint64(dstH) * uint64(v.values.BytesPerVoxel())
+	numBytes := uint64(dstW) * uint64(dstH) * uint64(v.values.BytesPerElement())
 	data := make([]uint8, numBytes, numBytes)
 
 	// Perform averaging on each interleaved value.
-	v.values.averageData(v.data, data, srcW, dstW, dstH, reduceW, reduceH)
+	v.values.AverageData(v.data, data, srcW, dstW, dstH, reduceW, reduceH)
 
 	// Set data and dimensions to downres data.
 	v.data = data
@@ -1248,7 +1254,7 @@ func (v *Voxels) DownRes(magnification dvid.Point) error {
 		return err
 	}
 	v.Geometry = geom
-	v.stride = dstW * v.values.BytesPerVoxel()
+	v.stride = dstW * v.values.BytesPerElement()
 	return nil
 }
 
@@ -1274,21 +1280,21 @@ func (v *Voxels) IndexIterator(chunkSize dvid.Point) (dvid.IndexIterator, error)
 	return dvid.NewIndexZYXIterator(v.Geometry, begBlock, endBlock), nil
 }
 
-// GoImage returns an image.Image suitable for use external to DVID.
+// GetImage2d returns a 2d image suitable for use external to DVID.
 // TODO -- Create more comprehensive handling of endianness and encoding of
 // multibytes/voxel data into appropriate images.
-func (v *Voxels) GoImage() (img image.Image, err error) {
+func (v *Voxels) GetImage2d() (*dvid.Image, error) {
 	// Make sure each value has same # of bytes or else we can't generate a go image.
 	// If so, we need to make another ExtHandler that knows how to convert the varying
 	// values into an appropriate go image.
 	valuesPerVoxel := int32(len(v.values))
 	if valuesPerVoxel < 1 || valuesPerVoxel > 4 {
-		return nil, fmt.Errorf("Standard voxels type can't convert %d values/voxel into go image.",
+		return nil, fmt.Errorf("Standard voxels type can't convert %d values/voxel into image.",
 			valuesPerVoxel)
 	}
 	bytesPerValue := v.values.ValueBytes(0)
 	for _, dataValue := range v.values {
-		if typeBytes[dataValue.DataType] != bytesPerValue {
+		if dvid.DataTypeBytes(dataValue.T) != bytesPerValue {
 			return nil, fmt.Errorf("Standard voxels type can't handle varying sized values per voxel.")
 		}
 	}
@@ -1298,6 +1304,7 @@ func (v *Voxels) GoImage() (img image.Image, err error) {
 			valuesPerVoxel, bytesPerValue)
 	}
 
+	var img image.Image
 	width := v.Size().Value(0)
 	height := v.Size().Value(1)
 	sliceBytes := width * height * valuesPerVoxel * bytesPerValue
@@ -1305,8 +1312,7 @@ func (v *Voxels) GoImage() (img image.Image, err error) {
 	end := beg + sliceBytes
 	data := v.Data()
 	if int(end) > len(data) {
-		err = fmt.Errorf("Voxels %s has insufficient amount of data to return an image.", v)
-		return
+		return nil, fmt.Errorf("Voxels %s has insufficient amount of data to return an image.", v)
 	}
 	r := image.Rect(0, 0, int(width), int(height))
 	switch valuesPerVoxel {
@@ -1321,33 +1327,30 @@ func (v *Voxels) GoImage() (img image.Image, err error) {
 			}
 			img = &image.Gray16{bigendian, 2 * r.Dx(), r}
 		case 4:
-			img = &image.RGBA{data[beg:end], 4 * r.Dx(), r}
+			img = &image.NRGBA{data[beg:end], 4 * r.Dx(), r}
 		case 8:
-			img = &image.RGBA64{data[beg:end], 8 * r.Dx(), r}
+			img = &image.NRGBA64{data[beg:end], 8 * r.Dx(), r}
 		default:
-			err = unsupported()
+			return nil, unsupported()
 		}
 	case 4:
 		switch bytesPerValue {
 		case 1:
-			// HACK -- This should be handled client side in shader.
-			for i := int32(0); i < sliceBytes; i += 4 {
-				v := float32(data[i+3]) / 255.0
-				data[i] = uint8(float32(data[i]) * v)
-				data[i+1] = uint8(float32(data[i+1]) * v)
-				data[i+2] = uint8(float32(data[i+2]) * v)
-				data[i+3] = 255
-			}
-			img = &image.RGBA{data[beg:end], 4 * r.Dx(), r}
+			img = &image.NRGBA{data[beg:end], 4 * r.Dx(), r}
 		case 2:
-			img = &image.RGBA64{data[beg:end], 8 * r.Dx(), r}
+			img = &image.NRGBA64{data[beg:end], 8 * r.Dx(), r}
 		default:
-			err = unsupported()
+			return nil, unsupported()
 		}
 	default:
-		err = unsupported()
+		return nil, unsupported()
 	}
-	return
+
+	ret := new(dvid.Image)
+	if err := ret.Set(img, v.Values(), v.Interpolable()); err != nil {
+		return nil, err
+	}
+	return ret, nil
 }
 
 // Datatype embeds the datastore's Datatype to create a unique type
@@ -1361,13 +1364,17 @@ type Datatype struct {
 	datastore.Datatype
 
 	// values describes the data type/label for each value within a voxel.
-	values DataValues
+	values dvid.DataValues
+
+	// can these values be interpolated?
+	interpolable bool
 }
 
 // NewDatatype returns a pointer to a new voxels Datatype with default values set.
-func NewDatatype(values DataValues) (dtype *Datatype) {
+func NewDatatype(values dvid.DataValues, interpolable bool) (dtype *Datatype) {
 	dtype = new(Datatype)
 	dtype.values = values
+	dtype.interpolable = interpolable
 
 	dtype.Requirements = &storage.Requirements{
 		BulkIniter: false,
@@ -1384,7 +1391,7 @@ func (dtype *Datatype) NewData(id *datastore.DataID, config dvid.Config) (*Data,
 		return nil, err
 	}
 	props := new(Properties)
-	props.SetDefault(dtype.values)
+	props.SetDefault(dtype.values, dtype.interpolable)
 	if err := props.SetByConfig(config); err != nil {
 		return nil, err
 	}
@@ -1471,7 +1478,10 @@ type Resolution struct {
 
 type Properties struct {
 	// Values describes the data type/label for each value within a voxel.
-	Values DataValues
+	Values dvid.DataValues
+
+	// Interpolable is true if voxels can be interpolated when resizing.
+	Interpolable bool
 
 	// Block size for this dataset
 	BlockSize dvid.Point
@@ -1485,7 +1495,7 @@ type Properties struct {
 
 type dataSchema struct {
 	Axes   []axis
-	Values DataValues
+	Values dvid.DataValues
 }
 
 type axis struct {
@@ -1500,9 +1510,10 @@ type axis struct {
 var axesName = []string{"X", "Y", "Z", "t", "c"}
 
 // SetDefault sets Voxels properties to default values.
-func (props *Properties) SetDefault(values DataValues) error {
-	props.Values = make([]DataValue, len(values))
+func (props *Properties) SetDefault(values dvid.DataValues, interpolable bool) error {
+	props.Values = make([]dvid.DataValue, len(values))
 	copy(props.Values, values)
+	props.Interpolable = interpolable
 
 	props.ByteOrder = binary.LittleEndian
 
@@ -1618,11 +1629,9 @@ func (d *Data) BlankImage(dstW, dstH int32) (*dvid.Image, error) {
 		return nil, fmt.Errorf("Standard voxels type can't convert %d values/voxel into image.",
 			valuesPerVoxel)
 	}
-	bytesPerValue := d.Properties.Values.ValueBytes(0)
-	for _, dataValue := range d.Properties.Values {
-		if typeBytes[dataValue.DataType] != bytesPerValue {
-			return nil, fmt.Errorf("Standard voxels type can't handle varying sized values per voxel.")
-		}
+	bytesPerValue, err := d.Properties.Values.BytesPerValue()
+	if err != nil {
+		return nil, err
 	}
 
 	unsupported := func() error {
@@ -1651,13 +1660,13 @@ func (d *Data) BlankImage(dstW, dstH int32) (*dvid.Image, error) {
 				Pix:    data,
 			}
 		case 4:
-			img = &image.RGBA{
+			img = &image.NRGBA{
 				Stride: stride,
 				Rect:   r,
 				Pix:    data,
 			}
 		case 8:
-			img = &image.RGBA64{
+			img = &image.NRGBA64{
 				Stride: stride,
 				Rect:   r,
 				Pix:    data,
@@ -1668,13 +1677,13 @@ func (d *Data) BlankImage(dstW, dstH int32) (*dvid.Image, error) {
 	case 4:
 		switch bytesPerValue {
 		case 1:
-			img = &image.RGBA{
+			img = &image.NRGBA{
 				Stride: stride,
 				Rect:   r,
 				Pix:    data,
 			}
 		case 2:
-			img = &image.RGBA64{
+			img = &image.NRGBA64{
 				Stride: stride,
 				Rect:   r,
 				Pix:    data,
@@ -1688,7 +1697,7 @@ func (d *Data) BlankImage(dstW, dstH int32) (*dvid.Image, error) {
 
 	// Package Go image
 	dst := new(dvid.Image)
-	dst.Set(img)
+	dst.Set(img, d.Properties.Values, d.Properties.Interpolable)
 	return dst, nil
 }
 
@@ -1735,7 +1744,7 @@ func (d *Data) HandleIsotropy2D(geom dvid.Geometry, isotropic bool) (dvid.Geomet
 // If img is passed in, the function will initialize the ExtHandler with data from the image.
 // Otherwise, it will allocate a zero buffer of appropriate size.
 func (d *Data) NewExtHandler(geom dvid.Geometry, img interface{}) (ExtHandler, error) {
-	bytesPerVoxel := d.Properties.Values.BytesPerVoxel()
+	bytesPerVoxel := d.Properties.Values.BytesPerElement()
 	stride := geom.Size().Value(0) * bytesPerVoxel
 
 	voxels := &Voxels{
@@ -1779,7 +1788,7 @@ func (d *Data) DataID() datastore.DataID {
 	return *(d.Data.DataID)
 }
 
-func (d *Data) Values() DataValues {
+func (d *Data) Values() dvid.DataValues {
 	return d.Properties.Values
 }
 
@@ -1874,6 +1883,20 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 		return d.UnknownCommand(request)
 	}
 	return nil
+}
+
+// Prints RGBA of first n x n pixels of image with header string.
+func debugData(img image.Image, message string) {
+	data, _, stride, _ := dvid.ImageData(img)
+	var n = 3 // neighborhood to write
+	fmt.Printf("%s>\n", message)
+	for y := 0; y < n; y++ {
+		for x := 0; x < n; x++ {
+			i := y*int(stride) + x*4
+			fmt.Printf("[%3d %3d %3d %3d]  ", data[i], data[i+1], data[i+2], data[i+3])
+		}
+		fmt.Printf("\n")
+	}
 }
 
 // DoHTTP handles all incoming HTTP requests for this data.
@@ -1993,14 +2016,20 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 				if err != nil {
 					return err
 				}
+				var goImg image.Image
 				if isotropic {
-					img = dvid.ScaleImage(img, slice)
+					goImg, err = img.InterpolateImage(slice)
+					if err != nil {
+						return err
+					}
+				} else {
+					goImg = img.Get()
 				}
 				var formatStr string
 				if len(parts) >= 8 {
 					formatStr = parts[7]
 				}
-				err = dvid.WriteImageHttp(w, img, formatStr)
+				err = dvid.WriteImageHttp(w, goImg, formatStr)
 				if err != nil {
 					return err
 				}
@@ -2033,8 +2062,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 			return fmt.Errorf("DVID currently supports shapes of only 2 and 3 dimensions")
 		}
 	default:
-		return fmt.Errorf("Unrecognized API call for labels64 data '%s'.  See API help.",
-			d.DataName())
+		return fmt.Errorf("Unrecognized API call for data '%s'.  See API help.", d.DataName())
 	}
 	return nil
 }
@@ -2069,7 +2097,7 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 	var err error
 	var blockData []byte
 	if chunk == nil || chunk.V == nil {
-		blockData = make([]byte, d.BlockSize().Prod()*int64(op.Values().BytesPerVoxel()))
+		blockData = make([]byte, d.BlockSize().Prod()*int64(op.Values().BytesPerElement()))
 	} else {
 		blockData, _, err = dvid.DeserializeData(chunk.V, true)
 		if err != nil {
@@ -2112,7 +2140,7 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 
 // Handler conversion of little to big endian for voxels larger than 1 byte.
 func littleToBigEndian(v ExtHandler, data []uint8) (bigendian []uint8, err error) {
-	bytesPerVoxel := v.Values().BytesPerVoxel()
+	bytesPerVoxel := v.Values().BytesPerElement()
 	if v.ByteOrder() == nil || v.ByteOrder() == binary.BigEndian || bytesPerVoxel == 1 {
 		return data, nil
 	}

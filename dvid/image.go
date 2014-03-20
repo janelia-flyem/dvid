@@ -1,5 +1,16 @@
 /*
-	This file supports image operations in DVID.
+	This file supports image operations in DVID.  Images can act as containers for elements that
+	can have a number of values per element.
+
+	Standard images are convenient ways to transmit simple data types in 2d/3d arrays because
+	clients have good implementations of reading and writing them.  For example, javascript web clients
+	can easily GET compressed images.  The Janelia Raveler program used PNG images to hold 24+ bit labels
+	so some of their use was through legacy applications.
+
+	DVID supports packaging of data into standard images to some extent.  Once the data being stored per
+	pixel/voxel becomes sufficiently complex, it makes no sense to force the data into a standard image
+	container.  At that point, a generic binary container, e.g., schema + binary data, or a standard like
+	HDF5 should be used.  HDF5 suffers from complexity and the lack of support within javascript clients.
 */
 
 package dvid
@@ -35,6 +46,10 @@ var (
 func init() {
 	// Need to register types that will be used to fulfill interfaces.
 	gob.Register(&Image{})
+	gob.Register(&image.Gray{})
+	gob.Register(&image.Gray16{})
+	gob.Register(&image.NRGBA{})
+	gob.Register(&image.NRGBA64{})
 
 	// Initialize font from inlined ttf font data
 	var err error
@@ -48,15 +63,21 @@ func init() {
 // and an explicit Quality amount is omitted.
 const DefaultJPEGQuality = 80
 
-// Image is a union of possible image types for better Gob use compared to
-// a generic image.Image interface.  Suggested by Rob Pike in golang-nuts:
+// Image contains a standard Go image as well as a data format description so non-standard
+// image values like uint64 labels or uint32 intensities can be handled.  A DVID image also
+// knows whether it should be interpolated on resizing or must keep pixel values without
+// interpolation, e.g., when using labels.  Better Gob serialization is handled by a union of
+// possible image types compared to a generic image.Image interface:
 // see https://groups.google.com/d/msg/golang-dev/_t4pqoeuflE/DbqSf41wr5EJ
 type Image struct {
-	Which  uint8
-	Gray   *image.Gray
-	Gray16 *image.Gray16
-	RGBA   *image.RGBA
-	RGBA64 *image.RGBA64
+	DataFormat   DataValues
+	Interpolable bool
+
+	Which   uint8
+	Gray    *image.Gray
+	Gray16  *image.Gray16
+	NRGBA   *image.NRGBA
+	NRGBA64 *image.NRGBA64
 }
 
 // Get returns an image.Image from the union struct.
@@ -67,9 +88,9 @@ func (img Image) Get() image.Image {
 	case 1:
 		return img.Gray16
 	case 2:
-		return img.RGBA
+		return img.NRGBA
 	case 3:
-		return img.RGBA64
+		return img.NRGBA64
 	default:
 		return nil
 	}
@@ -83,29 +104,55 @@ func (img Image) GetDrawable() draw.Image {
 	case 1:
 		return img.Gray16
 	case 2:
-		return img.RGBA
+		return img.NRGBA
 	case 3:
-		return img.RGBA64
+		return img.NRGBA64
 	default:
 		return nil
 	}
 }
 
-// Set places an image into the union struct.
-func (img *Image) Set(src image.Image) error {
+// Set initializes a DVID image from a go image and a data format specification.  DVID images
+// must have identical data type values within a pixel..
+func (img *Image) Set(src image.Image, format DataValues, interpolable bool) error {
+	img.DataFormat = format
+	img.Interpolable = interpolable
+
+	valuesPerElement := format.ValuesPerElement()
+	bytesPerValue, err := format.BytesPerValue()
+	if err != nil {
+		return err
+	}
+
 	switch s := src.(type) {
 	case *image.Gray:
 		img.Which = 0
 		img.Gray = s
+		if valuesPerElement != 1 || bytesPerValue != 1 {
+			return fmt.Errorf("Tried to use image.Gray (8-bit) to represent %d values of %d bytes/value",
+				valuesPerElement, bytesPerValue)
+		}
 	case *image.Gray16:
 		img.Which = 1
 		img.Gray16 = s
-	case *image.RGBA:
+		if valuesPerElement != 1 || bytesPerValue != 2 {
+			return fmt.Errorf("Tried to use image.Gray16 (16-bit) to represent %d values of %d bytes/value",
+				valuesPerElement, bytesPerValue)
+		}
+	case *image.NRGBA:
 		img.Which = 2
-		img.RGBA = s
-	case *image.RGBA64:
+		img.NRGBA = s
+		if !((valuesPerElement == 1 && bytesPerValue == 4) || (valuesPerElement == 4 && bytesPerValue == 1)) {
+			return fmt.Errorf("Tried to use image.NRGBA (32-bit) to represent %d values of %d bytes/value",
+				valuesPerElement, bytesPerValue)
+		}
+	case *image.NRGBA64:
 		img.Which = 3
-		img.RGBA64 = s
+		img.NRGBA64 = s
+		if !((valuesPerElement == 1 && bytesPerValue == 8) || (valuesPerElement == 4 && bytesPerValue == 2)) {
+			return fmt.Errorf("Tried to use image.NRGBA64 (64-bit) to represent %d values of %d bytes/value",
+				valuesPerElement, bytesPerValue)
+		}
 	default:
 		return fmt.Errorf("No valid image type received by image.Set(): %s", reflect.TypeOf(src))
 	}
@@ -120,9 +167,9 @@ func (img *Image) Data() []uint8 {
 	case 1:
 		return img.Gray16.Pix
 	case 2:
-		return img.RGBA.Pix
+		return img.NRGBA.Pix
 	case 3:
-		return img.RGBA64.Pix
+		return img.NRGBA64.Pix
 	default:
 		return nil
 	}
@@ -132,6 +179,7 @@ func (img *Image) Data() []uint8 {
 // The returned image shares pixels with the original image.
 func (img *Image) SubImage(r image.Rectangle) (*Image, error) {
 	result := new(Image)
+	result.DataFormat = img.DataFormat
 	result.Which = img.Which
 	switch img.Which {
 	case 0:
@@ -139,9 +187,9 @@ func (img *Image) SubImage(r image.Rectangle) (*Image, error) {
 	case 1:
 		result.Gray16 = img.Gray16.SubImage(r).(*image.Gray16)
 	case 2:
-		result.RGBA = img.RGBA.SubImage(r).(*image.RGBA)
+		result.NRGBA = img.NRGBA.SubImage(r).(*image.NRGBA)
 	case 3:
-		result.RGBA64 = img.RGBA64.SubImage(r).(*image.RGBA64)
+		result.NRGBA64 = img.NRGBA64.SubImage(r).(*image.NRGBA64)
 	default:
 		return nil, fmt.Errorf("Unsupported image type %d asked for SubImage()", img.Which)
 	}
@@ -151,6 +199,13 @@ func (img *Image) SubImage(r image.Rectangle) (*Image, error) {
 // Serialize writes compact byte slice representing image data.
 func (img *Image) Serialize(compress Compression, checksum Checksum) ([]byte, error) {
 	var buffer bytes.Buffer
+
+	// Serialize the data format
+	if err := img.DataFormat.WriteBinary(&buffer); err != nil {
+		return nil, err
+	}
+
+	// Serialize the image portion.
 	err := buffer.WriteByte(byte(img.Which))
 	if err != nil {
 		return nil, err
@@ -177,18 +232,18 @@ func (img *Image) Serialize(compress Compression, checksum Checksum) ([]byte, er
 		pixOffset = img.Gray16.PixOffset
 
 	case 2:
-		stride = img.RGBA.Stride
-		rect = img.RGBA.Rect
+		stride = img.NRGBA.Stride
+		rect = img.NRGBA.Rect
 		bytesPerPixel = 4
-		src = img.RGBA.Pix
-		pixOffset = img.RGBA.PixOffset
+		src = img.NRGBA.Pix
+		pixOffset = img.NRGBA.PixOffset
 
 	case 3:
-		stride = img.RGBA64.Stride
-		rect = img.RGBA64.Rect
+		stride = img.NRGBA64.Stride
+		rect = img.NRGBA64.Rect
 		bytesPerPixel = 8
-		src = img.RGBA64.Pix
-		pixOffset = img.RGBA64.PixOffset
+		src = img.NRGBA64.Pix
+		pixOffset = img.NRGBA64.PixOffset
 	}
 
 	// Make sure the byte slice is compact and not harboring any offsets
@@ -210,16 +265,13 @@ func (img *Image) Serialize(compress Compression, checksum Checksum) ([]byte, er
 		rect = image.Rect(0, 0, dx, dy)
 	}
 
-	err = binary.Write(&buffer, binary.LittleEndian, int32(stride))
-	if err != nil {
+	if err := binary.Write(&buffer, binary.LittleEndian, int32(stride)); err != nil {
 		return nil, err
 	}
-	err = binary.Write(&buffer, binary.LittleEndian, int32(rect.Dx()))
-	if err != nil {
+	if err := binary.Write(&buffer, binary.LittleEndian, int32(rect.Dx())); err != nil {
 		return nil, err
 	}
-	err = binary.Write(&buffer, binary.LittleEndian, int32(rect.Dy()))
-	if err != nil {
+	if err := binary.Write(&buffer, binary.LittleEndian, int32(rect.Dy())); err != nil {
 		return nil, err
 	}
 	_, err = buffer.Write(pix)
@@ -236,12 +288,17 @@ func (img *Image) Deserialize(b []byte) error {
 		return fmt.Errorf("Error attempting to deserialize into nil Image")
 	}
 
+	// Deserialize the data
 	data, _, err := DeserializeData(b, true)
 	if err != nil {
 		return err
 	}
-
 	buffer := bytes.NewBuffer(data)
+
+	// Deserialize the data format
+	if err := img.DataFormat.ReadBinary(buffer); err != nil {
+		return err
+	}
 
 	// Get the image type.
 	imageType, err := buffer.ReadByte()
@@ -285,14 +342,14 @@ func (img *Image) Deserialize(b []byte) error {
 		}
 
 	case 2:
-		img.RGBA = &image.RGBA{
+		img.NRGBA = &image.NRGBA{
 			Stride: int(stride),
 			Rect:   rect,
 			Pix:    pix,
 		}
 
 	case 3:
-		img.RGBA64 = &image.RGBA64{
+		img.NRGBA64 = &image.NRGBA64{
 			Stride: int(stride),
 			Rect:   rect,
 			Pix:    pix,
@@ -301,14 +358,621 @@ func (img *Image) Deserialize(b []byte) error {
 	return nil
 }
 
-// Register all the image types for gob decoding.
-func init() {
-	gob.Register(&Image{})
-	gob.Register(&image.Gray{})
-	gob.Register(&image.Gray16{})
-	gob.Register(&image.RGBA{})
-	gob.Register(&image.RGBA64{})
+// ScaleImage scales a DVID image to the destination geometry size, using nearest-neighbor or
+// interpolation depending on the type of data.
+func (img *Image) ScaleImage(geom Geometry) (*Image, error) {
+	var goImg image.Image
+	var err error
+
+	if img.Interpolable {
+		goImg, err = img.InterpolateImage(geom)
+	} else {
+		goImg, err = img.ResizeImage(geom)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	dst := new(Image)
+	if err = dst.Set(goImg, img.DataFormat, img.Interpolable); err != nil {
+		return nil, err
+	}
+	return dst, nil
 }
+
+// ResizeImage returns an image scaled to the given geometry without doing
+// interpolation.
+func (img *Image) ResizeImage(geom Geometry) (image.Image, error) {
+	if img == nil {
+		return nil, fmt.Errorf("Attempted to resize nil DVID image.")
+	}
+
+	// Get dimensions
+	dstW := int(geom.Size().Value(0))
+	dstH := int(geom.Size().Value(1))
+	src := img.Get()
+	srcRect := src.Bounds()
+	srcW := srcRect.Dx()
+	srcH := srcRect.Dy()
+	if srcW == dstW && srcH == dstH {
+		return src, nil
+	}
+	if dstW <= 0 || dstH <= 0 {
+		return nil, fmt.Errorf("Attempted to resize to %d x %d pixels", dstW, dstH)
+	}
+	if srcW <= 0 || srcH <= 0 {
+		return nil, fmt.Errorf("Attempted to resize source image of %d x %d pixels", srcW, srcH)
+	}
+
+	// Perform interpolation based on # values and bytes/value.
+	valuesPerElement := img.DataFormat.ValuesPerElement()
+	bytesPerValue, err := img.DataFormat.BytesPerValue()
+	if err != nil {
+		return nil, err
+	}
+	switch valuesPerElement {
+	case 1:
+		switch bytesPerValue {
+		case 1:
+			return resize1x8(img.Gray, dstW, dstH), nil
+		case 2:
+			return resize1x16(img.Gray16, dstW, dstH), nil
+		case 4:
+			return resize32(img.NRGBA, dstW, dstH), nil
+		case 8:
+			return resize64(img.NRGBA64, dstW, dstH), nil
+		}
+	case 4:
+		switch bytesPerValue {
+		case 1:
+			return resize32(img.NRGBA, dstW, dstH), nil
+		case 2:
+			return resize64(img.NRGBA64, dstW, dstH), nil
+		}
+	}
+	return nil, fmt.Errorf("Illegal image format for interpolation: %d values with %d bytes/value",
+		valuesPerElement, bytesPerValue)
+}
+
+func resize1x8(src *image.Gray, dstW, dstH int) image.Image {
+	srcRect := src.Bounds()
+	srcW := srcRect.Dx()
+	srcH := srcRect.Dy()
+
+	dstW64, dstH64 := uint64(dstW), uint64(dstH)
+	srcW64, srcH64 := uint64(srcW), uint64(srcH)
+
+	dst := image.NewGray(image.Rect(0, 0, dstW, dstH))
+	var x, y uint64
+	dstI := 0
+	for y = 0; y < dstH64; y++ {
+		srcY := int(y * srcH64 / dstH64)
+		for x = 0; x < dstW64; x++ {
+			srcX := int(x * srcW64 / dstW64)
+			dst.Pix[dstI] = src.Pix[srcY*srcW+srcX]
+			dstI++
+		}
+	}
+	return dst
+}
+
+func resize1x16(src *image.Gray16, dstW, dstH int) image.Image {
+	srcRect := src.Bounds()
+	srcW := srcRect.Dx()
+	srcH := srcRect.Dy()
+
+	dstW64, dstH64 := uint64(dstW), uint64(dstH)
+	srcW64, srcH64 := uint64(srcW), uint64(srcH)
+
+	dst := image.NewGray16(image.Rect(0, 0, dstW, dstH))
+	var x, y uint64
+	dstI := 0
+	for y = 0; y < dstH64; y++ {
+		srcY := int(y * srcH64 / dstH64)
+		for x = 0; x < dstW64; x++ {
+			srcX := int(x * srcW64 / dstW64)
+			srcI := 2 * (srcY*srcW + srcX)
+			copy(dst.Pix[dstI:dstI+2], src.Pix[srcI:srcI+2])
+			dstI += 2
+		}
+	}
+	return dst
+}
+
+func resize32(src *image.NRGBA, dstW, dstH int) image.Image {
+	srcRect := src.Bounds()
+	srcW := srcRect.Dx()
+	srcH := srcRect.Dy()
+
+	dstW64, dstH64 := uint64(dstW), uint64(dstH)
+	srcW64, srcH64 := uint64(srcW), uint64(srcH)
+
+	dst := image.NewNRGBA(image.Rect(0, 0, dstW, dstH))
+	var x, y uint64
+	dstI := 0
+	for y = 0; y < dstH64; y++ {
+		srcY := int(y * srcH64 / dstH64)
+		for x = 0; x < dstW64; x++ {
+			srcX := int(x * srcW64 / dstW64)
+			srcI := 4 * (srcY*srcW + srcX)
+			copy(dst.Pix[dstI:dstI+4], src.Pix[srcI:srcI+4])
+			dstI += 4
+		}
+	}
+	return dst
+}
+
+func resize64(src *image.NRGBA64, dstW, dstH int) image.Image {
+	srcRect := src.Bounds()
+	srcW := srcRect.Dx()
+	srcH := srcRect.Dy()
+
+	dstW64, dstH64 := uint64(dstW), uint64(dstH)
+	srcW64, srcH64 := uint64(srcW), uint64(srcH)
+
+	dst := image.NewNRGBA64(image.Rect(0, 0, dstW, dstH))
+	var x, y uint64
+	dstI := 0
+	for y = 0; y < dstH64; y++ {
+		srcY := int(y * srcH64 / dstH64)
+		for x = 0; x < dstW64; x++ {
+			srcX := int(x * srcW64 / dstW64)
+			srcI := 8 * (srcY*srcW + srcX)
+			copy(dst.Pix[dstI:dstI+8], src.Pix[srcI:srcI+8])
+			dstI += 8
+		}
+	}
+	return dst
+}
+
+// InterpolateImage returns an image scaled to the given geometry using simple
+// nearest-neighbor interpolation.
+func (img *Image) InterpolateImage(geom Geometry) (image.Image, error) {
+	if img == nil {
+		return nil, fmt.Errorf("Attempted to interpolate nil DVID image.")
+	}
+
+	// Get dimensions
+	dstW := int(geom.Size().Value(0))
+	dstH := int(geom.Size().Value(1))
+	src := img.Get()
+	srcRect := src.Bounds()
+	srcW := srcRect.Dx()
+	srcH := srcRect.Dy()
+	if srcW == dstW && srcH == dstH {
+		return src, nil
+	}
+	if dstW <= 0 || dstH <= 0 {
+		return nil, fmt.Errorf("Attempted to interpolate to %d x %d pixels", dstW, dstH)
+	}
+	if srcW <= 0 || srcH <= 0 {
+		return nil, fmt.Errorf("Attempted to interpolate source image of %d x %d pixels", srcW, srcH)
+	}
+
+	// Perform interpolation based on # values and bytes/value.
+	valuesPerElement := img.DataFormat.ValuesPerElement()
+	bytesPerValue, err := img.DataFormat.BytesPerValue()
+	if err != nil {
+		return nil, err
+	}
+	switch valuesPerElement {
+	case 1:
+		switch bytesPerValue {
+		case 1:
+			return interpolate1x8(img.Gray, dstW, dstH), nil
+		case 2:
+			return interpolate1x16(img.Gray16, dstW, dstH), nil
+		case 4:
+			return interpolate1x32(img.NRGBA, dstW, dstH), nil
+		case 8:
+			return interpolate1x64(img.NRGBA64, dstW, dstH), nil
+		}
+	case 4:
+		switch bytesPerValue {
+		case 1:
+			return interpolate4x8(img.NRGBA, dstW, dstH), nil
+		case 2:
+			return interpolate4x16(img.NRGBA64, dstW, dstH), nil
+		}
+	}
+	return nil, fmt.Errorf("Illegal image format for interpolation: %d values with %d bytes/value",
+		valuesPerElement, bytesPerValue)
+}
+
+// The interpolate code below was adapted from the AppEngine moustachio example and should be among
+// the more efficient resizers without resorting to more sophisticated interpolation than
+// nearest-neighbor.
+//
+// http://code.google.com/p/appengine-go/source/browse/example/moustachio/resize/resize.go
+//
+// The scaling algorithm is to nearest-neighbor magnify the dx * dy source
+// to a (ww*dx) * (hh*dy) intermediate image and then minify the intermediate
+// image back down to a ww * hh destination with a simple box filter.
+// The intermediate image is implied, we do not physically allocate a slice
+// of length ww*dx*hh*dy.
+// For example, consider a 4*3 source image. Label its pixels from a-l:
+//      abcd
+//      efgh
+//      ijkl
+// To resize this to a 3*2 destination image, the intermediate is 12*6.
+// Whitespace has been added to delineate the destination pixels:
+//      aaab bbcc cddd
+//      aaab bbcc cddd
+//      eeef ffgg ghhh
+//
+//      eeef ffgg ghhh
+//      iiij jjkk klll
+//      iiij jjkk klll
+// Thus, the 'b' source pixel contributes one third of its value to the
+// (0, 0) destination pixel and two thirds to (1, 0).
+// The implementation is a two-step process. First, the source pixels are
+// iterated over and each source pixel's contribution to 1 or more
+// destination pixels are summed. Second, the sums are divided by a scaling
+// factor to yield the destination pixels.
+// TODO: By interleaving the two steps, instead of doing all of
+// step 1 first and all of step 2 second, we could allocate a smaller sum
+// slice of length 4*w*2 instead of 4*w*h, although the resultant code
+// would become more complicated.
+//
+// Copyright 2011 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Interpolate uint8/pixel images.
+func interpolate1x8(src *image.Gray, dstW, dstH int) image.Image {
+	srcRect := src.Bounds()
+	srcW := srcRect.Dx()
+	srcH := srcRect.Dy()
+
+	ww, hh := uint64(dstW), uint64(dstH)
+	dx, dy := uint64(srcW), uint64(srcH)
+
+	n, sum := dx*dy, make([]uint64, dstW*dstH)
+	for y := 0; y < srcH; y++ {
+		pixOffset := src.PixOffset(0, y)
+		for x := 0; x < srcW; x++ {
+			// Get the source pixel.
+			val64 := uint64(src.Pix[pixOffset])
+			pixOffset++
+
+			// Spread the source pixel over 1 or more destination rows.
+			py := uint64(y) * hh
+			for remy := hh; remy > 0; {
+				qy := dy - (py % dy)
+				if qy > remy {
+					qy = remy
+				}
+				// Spread the source pixel over 1 or more destination columns.
+				px := uint64(x) * ww
+				index := (py/dy)*ww + (px / dx)
+				for remx := ww; remx > 0; {
+					qx := dx - (px % dx)
+					if qx > remx {
+						qx = remx
+					}
+					qxy := qx * qy
+					sum[index] += val64 * qxy
+					index++
+					px += qx
+					remx -= qx
+				}
+				py += qy
+				remy -= qy
+			}
+		}
+	}
+	dst := image.NewGray(image.Rect(0, 0, dstW, dstH))
+	index := 0
+	for y := 0; y < dstH; y++ {
+		pixOffset := dst.PixOffset(0, y)
+		for x := 0; x < dstW; x++ {
+			dst.Pix[pixOffset] = uint8(sum[index] / n)
+			pixOffset++
+			index++
+		}
+	}
+	return dst
+}
+
+// Interpolate uint16/pixel images.
+func interpolate1x16(src *image.Gray16, dstW, dstH int) image.Image {
+	srcRect := src.Bounds()
+	srcW := srcRect.Dx()
+	srcH := srcRect.Dy()
+
+	ww, hh := uint64(dstW), uint64(dstH)
+	dx, dy := uint64(srcW), uint64(srcH)
+
+	n, sum := dx*dy, make([]uint64, dstW*dstH)
+	for y := 0; y < srcH; y++ {
+		pixOffset := src.PixOffset(0, y)
+		for x := 0; x < srcW; x++ {
+			// Get the source pixel.
+			val64 := uint64(binary.BigEndian.Uint16([]byte(src.Pix[pixOffset+0 : pixOffset+2])))
+			pixOffset += 2
+
+			// Spread the source pixel over 1 or more destination rows.
+			py := uint64(y) * hh
+			for remy := hh; remy > 0; {
+				qy := dy - (py % dy)
+				if qy > remy {
+					qy = remy
+				}
+				// Spread the source pixel over 1 or more destination columns.
+				px := uint64(x) * ww
+				index := (py/dy)*ww + (px / dx)
+				for remx := ww; remx > 0; {
+					qx := dx - (px % dx)
+					if qx > remx {
+						qx = remx
+					}
+					qxy := qx * qy
+					sum[index] += val64 * qxy
+					index++
+					px += qx
+					remx -= qx
+				}
+				py += qy
+				remy -= qy
+			}
+		}
+	}
+	dst := image.NewGray16(image.Rect(0, 0, dstW, dstH))
+	index := 0
+	for y := 0; y < dstH; y++ {
+		pixOffset := dst.PixOffset(0, y)
+		for x := 0; x < dstW; x++ {
+			binary.BigEndian.PutUint16(dst.Pix[pixOffset+0:pixOffset+2], uint16(sum[index]/n))
+			pixOffset += 2
+			index++
+		}
+	}
+	return dst
+}
+
+// Interpolate uint32/pixel images.
+func interpolate1x32(src *image.NRGBA, dstW, dstH int) image.Image {
+	srcRect := src.Bounds()
+	srcW := srcRect.Dx()
+	srcH := srcRect.Dy()
+
+	ww, hh := uint64(dstW), uint64(dstH)
+	dx, dy := uint64(srcW), uint64(srcH)
+
+	n, sum := dx*dy, make([]uint64, dstW*dstH)
+	for y := 0; y < srcH; y++ {
+		pixOffset := src.PixOffset(0, y)
+		for x := 0; x < srcW; x++ {
+			// Get the source pixel.
+			val64 := uint64(binary.BigEndian.Uint32([]byte(src.Pix[pixOffset+0 : pixOffset+4])))
+			pixOffset += 4
+
+			// Spread the source pixel over 1 or more destination rows.
+			py := uint64(y) * hh
+			for remy := hh; remy > 0; {
+				qy := dy - (py % dy)
+				if qy > remy {
+					qy = remy
+				}
+				// Spread the source pixel over 1 or more destination columns.
+				px := uint64(x) * ww
+				index := (py/dy)*ww + (px / dx)
+				for remx := ww; remx > 0; {
+					qx := dx - (px % dx)
+					if qx > remx {
+						qx = remx
+					}
+					qxy := qx * qy
+					sum[index] += val64 * qxy
+					index++
+					px += qx
+					remx -= qx
+				}
+				py += qy
+				remy -= qy
+			}
+		}
+	}
+	dst := image.NewNRGBA(image.Rect(0, 0, dstW, dstH))
+	index := 0
+	for y := 0; y < dstH; y++ {
+		pixOffset := dst.PixOffset(0, y)
+		for x := 0; x < dstW; x++ {
+			binary.BigEndian.PutUint32(dst.Pix[pixOffset+0:pixOffset+4], uint32(sum[index]/n))
+			pixOffset += 4
+			index++
+		}
+	}
+	return dst
+}
+
+// Interpolate uint64/pixel images.
+func interpolate1x64(src *image.NRGBA64, dstW, dstH int) image.Image {
+	srcRect := src.Bounds()
+	srcW := srcRect.Dx()
+	srcH := srcRect.Dy()
+
+	ww, hh := uint64(dstW), uint64(dstH)
+	dx, dy := uint64(srcW), uint64(srcH)
+
+	n, sum := dx*dy, make([]uint64, dstW*dstH)
+	for y := 0; y < srcH; y++ {
+		pixOffset := src.PixOffset(0, y)
+		for x := 0; x < srcW; x++ {
+			// Get the source pixel.
+			val64 := binary.BigEndian.Uint64([]byte(src.Pix[pixOffset+0 : pixOffset+8]))
+			pixOffset += 8
+
+			// Spread the source pixel over 1 or more destination rows.
+			py := uint64(y) * hh
+			for remy := hh; remy > 0; {
+				qy := dy - (py % dy)
+				if qy > remy {
+					qy = remy
+				}
+				// Spread the source pixel over 1 or more destination columns.
+				px := uint64(x) * ww
+				index := (py/dy)*ww + (px / dx)
+				for remx := ww; remx > 0; {
+					qx := dx - (px % dx)
+					if qx > remx {
+						qx = remx
+					}
+					qxy := qx * qy
+					sum[index] += val64 * qxy
+					index++
+					px += qx
+					remx -= qx
+				}
+				py += qy
+				remy -= qy
+			}
+		}
+	}
+	dst := image.NewNRGBA64(image.Rect(0, 0, dstW, dstH))
+	index := 0
+	for y := 0; y < dstH; y++ {
+		pixOffset := dst.PixOffset(0, y)
+		for x := 0; x < dstW; x++ {
+			binary.BigEndian.PutUint64(dst.Pix[pixOffset+0:pixOffset+8], sum[index]/n)
+			pixOffset += 8
+			index++
+		}
+	}
+	return dst
+}
+
+// Interpolate 4 interleaved uint8 per pixel images.
+func interpolate4x8(src *image.NRGBA, dstW, dstH int) image.Image {
+	srcRect := src.Bounds()
+	srcW := srcRect.Dx()
+	srcH := srcRect.Dy()
+
+	ww, hh := uint64(dstW), uint64(dstH)
+	dx, dy := uint64(srcW), uint64(srcH)
+
+	n, sum := dx*dy, make([]uint64, 4*dstW*dstH)
+	for y := 0; y < srcH; y++ {
+		pixOffset := src.PixOffset(0, y)
+		for x := 0; x < srcW; x++ {
+			// Get the source pixel.
+			r64 := uint64(src.Pix[pixOffset+0])
+			g64 := uint64(src.Pix[pixOffset+1])
+			b64 := uint64(src.Pix[pixOffset+2])
+			a64 := uint64(src.Pix[pixOffset+3])
+			pixOffset += 4
+			// Spread the source pixel over 1 or more destination rows.
+			py := uint64(y) * hh
+			for remy := hh; remy > 0; {
+				qy := dy - (py % dy)
+				if qy > remy {
+					qy = remy
+				}
+				// Spread the source pixel over 1 or more destination columns.
+				px := uint64(x) * ww
+				index := 4 * ((py/dy)*ww + (px / dx))
+				for remx := ww; remx > 0; {
+					qx := dx - (px % dx)
+					if qx > remx {
+						qx = remx
+					}
+					qxy := qx * qy
+					sum[index+0] += r64 * qxy
+					sum[index+1] += g64 * qxy
+					sum[index+2] += b64 * qxy
+					sum[index+3] += a64 * qxy
+					index += 4
+					px += qx
+					remx -= qx
+				}
+				py += qy
+				remy -= qy
+			}
+		}
+	}
+	dst := image.NewNRGBA(image.Rect(0, 0, dstW, dstH))
+	for y := 0; y < dstH; y++ {
+		pixOffset := dst.PixOffset(0, y)
+		for x := 0; x < dstW; x++ {
+			dst.Pix[pixOffset+0] = uint8(sum[pixOffset+0] / n)
+			dst.Pix[pixOffset+1] = uint8(sum[pixOffset+1] / n)
+			dst.Pix[pixOffset+2] = uint8(sum[pixOffset+2] / n)
+			dst.Pix[pixOffset+3] = uint8(sum[pixOffset+3] / n)
+			pixOffset += 4
+		}
+	}
+	return dst
+}
+
+// Interpolate 4 interleaved uint16 per pixel images.
+func interpolate4x16(src *image.NRGBA64, dstW, dstH int) image.Image {
+	srcRect := src.Bounds()
+	srcW := srcRect.Dx()
+	srcH := srcRect.Dy()
+
+	ww, hh := uint64(dstW), uint64(dstH)
+	dx, dy := uint64(srcW), uint64(srcH)
+
+	n, sum := dx*dy, make([]uint64, 4*dstW*dstH)
+	for y := 0; y < srcH; y++ {
+		pixOffset := src.PixOffset(0, y)
+		for x := 0; x < srcW; x++ {
+			// Get the source pixel.
+			r64 := uint64(binary.BigEndian.Uint16([]byte(src.Pix[pixOffset+0 : pixOffset+2])))
+			g64 := uint64(binary.BigEndian.Uint16([]byte(src.Pix[pixOffset+2 : pixOffset+4])))
+			b64 := uint64(binary.BigEndian.Uint16([]byte(src.Pix[pixOffset+4 : pixOffset+6])))
+			a64 := uint64(binary.BigEndian.Uint16([]byte(src.Pix[pixOffset+6 : pixOffset+8])))
+			pixOffset += 8
+			// Spread the source pixel over 1 or more destination rows.
+			py := uint64(y) * hh
+			for remy := hh; remy > 0; {
+				qy := dy - (py % dy)
+				if qy > remy {
+					qy = remy
+				}
+				// Spread the source pixel over 1 or more destination columns.
+				px := uint64(x) * ww
+				index := 4 * ((py/dy)*ww + (px / dx))
+				for remx := ww; remx > 0; {
+					qx := dx - (px % dx)
+					if qx > remx {
+						qx = remx
+					}
+					qxy := qx * qy
+					sum[index+0] += r64 * qxy
+					sum[index+1] += g64 * qxy
+					sum[index+2] += b64 * qxy
+					sum[index+3] += a64 * qxy
+					index += 4
+					px += qx
+					remx -= qx
+				}
+				py += qy
+				remy -= qy
+			}
+		}
+	}
+	dst := image.NewNRGBA64(image.Rect(0, 0, dstW, dstH))
+	for y := 0; y < dstH; y++ {
+		pixOffset := dst.PixOffset(0, y)
+		index := 4 * y * dstW
+		for x := 0; x < dstW; x++ {
+			binary.BigEndian.PutUint16(dst.Pix[pixOffset+0:pixOffset+2], uint16(sum[index+0]/n))
+			binary.BigEndian.PutUint16(dst.Pix[pixOffset+2:pixOffset+4], uint16(sum[index+1]/n))
+			binary.BigEndian.PutUint16(dst.Pix[pixOffset+4:pixOffset+6], uint16(sum[index+2]/n))
+			binary.BigEndian.PutUint16(dst.Pix[pixOffset+6:pixOffset+8], uint16(sum[index+3]/n))
+			pixOffset += 8
+			index += 4
+		}
+	}
+	return dst
+}
+
+////////////////////////////////////////////////////////////////
+//
+//  General image support through package functions
+//
+////////////////////////////////////////////////////////////////
 
 // PlaceholderImage returns an solid image with a message and text describing the shape.
 func PlaceholderImage(shape DataShape, imageSize Point, message string) (image.Image, error) {
@@ -321,11 +985,11 @@ func PlaceholderImage(shape DataShape, imageSize Point, message string) (image.I
 
 	// Initialize the context.
 	fg, bg := image.Black, image.White
-	ruler := color.RGBA{0xdd, 0xdd, 0xdd, 0xff}
+	ruler := color.NRGBA{0xdd, 0xdd, 0xdd, 0xff}
 	// White on black
 	// fg, bg = image.White, image.Black
-	// ruler = color.RGBA{0x22, 0x22, 0x22, 0xff}
-	rgba := image.NewRGBA(image.Rect(0, 0, int(dx), int(dy)))
+	// ruler = color.NRGBA{0x22, 0x22, 0x22, 0xff}
+	rgba := image.NewNRGBA(image.Rect(0, 0, int(dx), int(dy)))
 	draw.Draw(rgba, rgba.Bounds(), bg, image.ZP, draw.Src)
 	c := freetype.NewContext()
 	c.SetDPI(72)
@@ -389,14 +1053,17 @@ func ImageData(img image.Image) (data []uint8, bytesPerPixel, stride int32, err 
 		stride = int32(typedImg.Stride)
 		bytesPerPixel = 2
 	case *image.RGBA:
+		fmt.Println("image.RGBA in ImageData()")
 		data = typedImg.Pix
 		stride = int32(typedImg.Stride)
 		bytesPerPixel = 4
 	case *image.NRGBA:
+		fmt.Println("image.NRGBA in ImageData()")
 		data = typedImg.Pix
 		stride = int32(typedImg.Stride)
 		bytesPerPixel = 4
-	case *image.RGBA64:
+	case *image.NRGBA64:
+		fmt.Println("image.NRGBA64 in ImageData()")
 		data = typedImg.Pix
 		stride = int32(typedImg.Stride)
 		bytesPerPixel = 8
@@ -484,264 +1151,4 @@ func PrintNonZero(message string, value []byte) {
 		}
 	}
 	fmt.Printf("%s> non-zero voxels: %d of %d bytes\n", message, nonzero, len(value))
-}
-
-// ScaleImage returns a Go image that is scaled to the given geometry.
-func ScaleImage(src image.Image, slice Geometry) image.Image {
-	dstW := int(slice.Size().Value(0))
-	dstH := int(slice.Size().Value(1))
-	srcRect := src.Bounds()
-	srcW := srcRect.Dx()
-	srcH := srcRect.Dy()
-	if srcW == dstW && srcH == dstH {
-		return src
-	}
-	return Resize(src, srcRect, dstW, dstH)
-}
-
-// The code below was taken from the AppEngine moustachio example and should be among
-// the more efficient resizers without resorting to more sophisticated interpolation
-// than nearest-neighbor.
-//
-// http://code.google.com/p/appengine-go/source/browse/example/moustachio/resize/resize.go
-//
-// Copyright 2011 The Go Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
-
-// Resize returns a scaled copy of the image slice r of m.
-// The returned image has width w and height h.
-func Resize(m image.Image, r image.Rectangle, w, h int) image.Image {
-	if w < 0 || h < 0 {
-		return nil
-	}
-	if w == 0 || h == 0 || r.Dx() <= 0 || r.Dy() <= 0 {
-		return image.NewRGBA64(image.Rect(0, 0, w, h))
-	}
-	switch m := m.(type) {
-	case *image.RGBA:
-		return resizeRGBA(m, r, w, h)
-	case *image.YCbCr:
-		if m, ok := resizeYCbCr(m, r, w, h); ok {
-			return m
-		}
-	}
-	ww, hh := uint64(w), uint64(h)
-	dx, dy := uint64(r.Dx()), uint64(r.Dy())
-	// The scaling algorithm is to nearest-neighbor magnify the dx * dy source
-	// to a (ww*dx) * (hh*dy) intermediate image and then minify the intermediate
-	// image back down to a ww * hh destination with a simple box filter.
-	// The intermediate image is implied, we do not physically allocate a slice
-	// of length ww*dx*hh*dy.
-	// For example, consider a 4*3 source image. Label its pixels from a-l:
-	//      abcd
-	//      efgh
-	//      ijkl
-	// To resize this to a 3*2 destination image, the intermediate is 12*6.
-	// Whitespace has been added to delineate the destination pixels:
-	//      aaab bbcc cddd
-	//      aaab bbcc cddd
-	//      eeef ffgg ghhh
-	//
-	//      eeef ffgg ghhh
-	//      iiij jjkk klll
-	//      iiij jjkk klll
-	// Thus, the 'b' source pixel contributes one third of its value to the
-	// (0, 0) destination pixel and two thirds to (1, 0).
-	// The implementation is a two-step process. First, the source pixels are
-	// iterated over and each source pixel's contribution to 1 or more
-	// destination pixels are summed. Second, the sums are divided by a scaling
-	// factor to yield the destination pixels.
-	// TODO: By interleaving the two steps, instead of doing all of
-	// step 1 first and all of step 2 second, we could allocate a smaller sum
-	// slice of length 4*w*2 instead of 4*w*h, although the resultant code
-	// would become more complicated.
-	n, sum := dx*dy, make([]uint64, 4*w*h)
-	for y := r.Min.Y; y < r.Max.Y; y++ {
-		for x := r.Min.X; x < r.Max.X; x++ {
-			// Get the source pixel.
-			r32, g32, b32, a32 := m.At(x, y).RGBA()
-			r64 := uint64(r32)
-			g64 := uint64(g32)
-			b64 := uint64(b32)
-			a64 := uint64(a32)
-			// Spread the source pixel over 1 or more destination rows.
-			py := uint64(y) * hh
-			for remy := hh; remy > 0; {
-				qy := dy - (py % dy)
-				if qy > remy {
-					qy = remy
-				}
-				// Spread the source pixel over 1 or more destination columns.
-				px := uint64(x) * ww
-				index := 4 * ((py/dy)*ww + (px / dx))
-				for remx := ww; remx > 0; {
-					qx := dx - (px % dx)
-					if qx > remx {
-						qx = remx
-					}
-					sum[index+0] += r64 * qx * qy
-					sum[index+1] += g64 * qx * qy
-					sum[index+2] += b64 * qx * qy
-					sum[index+3] += a64 * qx * qy
-					index += 4
-					px += qx
-					remx -= qx
-				}
-				py += qy
-				remy -= qy
-			}
-		}
-	}
-	return average(sum, w, h, n*0x0101)
-}
-
-// average convert the sums to averages and returns the result.
-func average(sum []uint64, w, h int, n uint64) image.Image {
-	ret := image.NewRGBA(image.Rect(0, 0, w, h))
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
-			index := 4 * (y*w + x)
-			ret.SetRGBA(x, y, color.RGBA{
-				uint8(sum[index+0] / n),
-				uint8(sum[index+1] / n),
-				uint8(sum[index+2] / n),
-				uint8(sum[index+3] / n),
-			})
-		}
-	}
-	return ret
-}
-
-// resizeYCbCr returns a scaled copy of the YCbCr image slice r of m.
-// The returned image has width w and height h.
-func resizeYCbCr(m *image.YCbCr, r image.Rectangle, w, h int) (image.Image, bool) {
-	var verticalRes int
-	switch m.SubsampleRatio {
-	case image.YCbCrSubsampleRatio420:
-		verticalRes = 2
-	case image.YCbCrSubsampleRatio422:
-		verticalRes = 1
-	default:
-		return nil, false
-	}
-	ww, hh := uint64(w), uint64(h)
-	dx, dy := uint64(r.Dx()), uint64(r.Dy())
-	// See comment in Resize.
-	n, sum := dx*dy, make([]uint64, 4*w*h)
-	for y := r.Min.Y; y < r.Max.Y; y++ {
-		Y := m.Y[y*m.YStride:]
-		Cb := m.Cb[y/verticalRes*m.CStride:]
-		Cr := m.Cr[y/verticalRes*m.CStride:]
-		for x := r.Min.X; x < r.Max.X; x++ {
-			// Get the source pixel.
-			r8, g8, b8 := color.YCbCrToRGB(Y[x], Cb[x/2], Cr[x/2])
-			r64 := uint64(r8)
-			g64 := uint64(g8)
-			b64 := uint64(b8)
-			// Spread the source pixel over 1 or more destination rows.
-			py := uint64(y) * hh
-			for remy := hh; remy > 0; {
-				qy := dy - (py % dy)
-				if qy > remy {
-					qy = remy
-				}
-				// Spread the source pixel over 1 or more destination columns.
-				px := uint64(x) * ww
-				index := 4 * ((py/dy)*ww + (px / dx))
-				for remx := ww; remx > 0; {
-					qx := dx - (px % dx)
-					if qx > remx {
-						qx = remx
-					}
-					qxy := qx * qy
-					sum[index+0] += r64 * qxy
-					sum[index+1] += g64 * qxy
-					sum[index+2] += b64 * qxy
-					sum[index+3] += 0xFFFF * qxy
-					index += 4
-					px += qx
-					remx -= qx
-				}
-				py += qy
-				remy -= qy
-			}
-		}
-	}
-	return average(sum, w, h, n), true
-}
-
-// resizeRGBA returns a scaled copy of the RGBA image slice r of m.
-// The returned image has width w and height h.
-func resizeRGBA(m *image.RGBA, r image.Rectangle, w, h int) image.Image {
-	ww, hh := uint64(w), uint64(h)
-	dx, dy := uint64(r.Dx()), uint64(r.Dy())
-	// See comment in Resize.
-	n, sum := dx*dy, make([]uint64, 4*w*h)
-	for y := r.Min.Y; y < r.Max.Y; y++ {
-		pixOffset := m.PixOffset(r.Min.X, y)
-		for x := r.Min.X; x < r.Max.X; x++ {
-			// Get the source pixel.
-			r64 := uint64(m.Pix[pixOffset+0])
-			g64 := uint64(m.Pix[pixOffset+1])
-			b64 := uint64(m.Pix[pixOffset+2])
-			a64 := uint64(m.Pix[pixOffset+3])
-			pixOffset += 4
-			// Spread the source pixel over 1 or more destination rows.
-			py := uint64(y) * hh
-			for remy := hh; remy > 0; {
-				qy := dy - (py % dy)
-				if qy > remy {
-					qy = remy
-				}
-				// Spread the source pixel over 1 or more destination columns.
-				px := uint64(x) * ww
-				index := 4 * ((py/dy)*ww + (px / dx))
-				for remx := ww; remx > 0; {
-					qx := dx - (px % dx)
-					if qx > remx {
-						qx = remx
-					}
-					qxy := qx * qy
-					sum[index+0] += r64 * qxy
-					sum[index+1] += g64 * qxy
-					sum[index+2] += b64 * qxy
-					sum[index+3] += a64 * qxy
-					index += 4
-					px += qx
-					remx -= qx
-				}
-				py += qy
-				remy -= qy
-			}
-		}
-	}
-	return average(sum, w, h, n)
-}
-
-// Resample returns a resampled copy of the image slice r of m.
-// The returned image has width w and height h.
-func Resample(m image.Image, r image.Rectangle, w, h int) image.Image {
-	if w < 0 || h < 0 {
-		return nil
-	}
-	if w == 0 || h == 0 || r.Dx() <= 0 || r.Dy() <= 0 {
-		return image.NewRGBA64(image.Rect(0, 0, w, h))
-	}
-	curw, curh := r.Dx(), r.Dy()
-	img := image.NewRGBA(image.Rect(0, 0, w, h))
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
-			// Get a source pixel.
-			subx := x * curw / w
-			suby := y * curh / h
-			r32, g32, b32, a32 := m.At(subx, suby).RGBA()
-			r := uint8(r32 >> 8)
-			g := uint8(g32 >> 8)
-			b := uint8(b32 >> 8)
-			a := uint8(a32 >> 8)
-			img.SetRGBA(x, y, color.RGBA{r, g, b, a})
-		}
-	}
-	return img
 }
