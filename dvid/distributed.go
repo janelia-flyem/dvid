@@ -1,6 +1,7 @@
 /*
 	This file supports DVID distributed systems and goroutines.
 */
+
 package dvid
 
 import (

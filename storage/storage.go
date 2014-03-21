@@ -1,15 +1,18 @@
 /*
 	Package storage provides a unified interface to a number of storage engines.
 	Since each storage engine has different capabilities, this package defines a
-	number of interfaces and the Engine interface provides a way to query
-	which interfaces are implemented by a given storage engine.
+	number of interfaces in addition to the core Engine interface, which all
+	storage engines should satisfy.
 
-	Initially we are concentrating on key-value storage engines but expect to
-	expand support to graph and relational databases.
+	Initially we are concentrating on key-value backends but expect to support
+	graph and perhaps relational databases.
 
-	Each storage engine must implement the following:
+	Each storage engine must implement the following package function:
 
-		NewStore(path string, create bool, options *Options) (Engine, error)
+	func NewStore(path string, create bool, options *Options) (Engine, error)
+
+	Currently only one storage engine file is compiled through the use of build
+	tags like "leveldb", "hyperleveldb", and "basholeveldb".
 */
 package storage
 
