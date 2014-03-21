@@ -1122,7 +1122,7 @@ func transferBlock(op OpType, v ExtHandler, block *Block, blockSize dvid.Point) 
 				for dataY := dataBeg.Value(1); dataY <= dataEnd.Value(1); dataY++ {
 					blockI := blockZ*bY + blockY*bX + blockOffset
 					dataI := dataZ*dY + dataY*dX + dataOffset
-					copy(block.V[blockI:blockI+bytes], data[dataI:dataI+bytes])
+					copy(data[dataI:dataI+bytes], block.V[blockI:blockI+bytes])
 					blockY++
 				}
 				blockZ++
@@ -1133,7 +1133,7 @@ func transferBlock(op OpType, v ExtHandler, block *Block, blockSize dvid.Point) 
 				for dataY := dataBeg.Value(1); dataY <= dataEnd.Value(1); dataY++ {
 					blockI := blockZ*bY + blockY*bX + blockOffset
 					dataI := dataZ*dY + dataY*dX + dataOffset
-					copy(data[dataI:dataI+bytes], block.V[blockI:blockI+bytes])
+					copy(block.V[blockI:blockI+bytes], data[dataI:dataI+bytes])
 					blockY++
 				}
 				blockZ++
@@ -2045,14 +2045,14 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 				if err != nil {
 					return err
 				}
-				if data, err := GetVolume(uuid, d, e); err != nil {
+				data, err := GetVolume(uuid, d, e)
+				if err != nil {
 					return err
-				} else {
-					w.Header().Set("Content-type", "application/octet-stream")
-					_, err = w.Write(data)
-					if err != nil {
-						return err
-					}
+				}
+				w.Header().Set("Content-type", "application/octet-stream")
+				_, err = w.Write(data)
+				if err != nil {
+					return err
 				}
 			} else {
 				return fmt.Errorf("DVID does not yet support POST of volume data")
