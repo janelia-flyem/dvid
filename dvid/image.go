@@ -25,6 +25,7 @@ import (
 	"image/draw"
 	"image/jpeg"
 	"image/png"
+	"io/ioutil"
 	"net/http"
 	"os"
 	"reflect"
@@ -1090,16 +1091,26 @@ func ImageFromFile(filename string) (img image.Image, format string, err error) 
 	return
 }
 
-// ImageFromPost returns and image and its format name given a key to a POST request.
+// ImageFromForm returns an image and its format name given a key to a POST request.
 // The image should be the first file in a POSTed form.
-func ImageFromPost(r *http.Request, key string) (img image.Image, format string, err error) {
+func ImageFromForm(r *http.Request, key string) (img image.Image, format string, err error) {
 	f, _, err := r.FormFile(key)
 	if err != nil {
 		return nil, "none", err
 	}
 	defer f.Close()
-
 	return image.Decode(f)
+}
+
+// ImageFromPOST returns an image and its format name given a POST request.
+func ImageFromPOST(r *http.Request) (img image.Image, format string, err error) {
+	var data []byte
+	data, err = ioutil.ReadAll(r.Body)
+	if err != nil {
+		return nil, "none", err
+	}
+	buf := bytes.NewBuffer(data)
+	return image.Decode(buf)
 }
 
 // ImageGrayFromData returns a Gray image given data and image size.

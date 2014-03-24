@@ -1021,7 +1021,7 @@ func (d *Data) ApplyLabelMap(request datastore.Request, reply *datastore.Respons
 	if err != nil {
 		service := server.DatastoreService()
 		config := dvid.NewConfig()
-		err = service.NewData(uuid, "labels64", destName, config)
+		err = service.NewData(uuid, "labels64", dvid.DataString(destName), config)
 		if err != nil {
 			return err
 		}

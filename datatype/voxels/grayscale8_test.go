@@ -102,12 +102,77 @@ func MakeVolume(offset, size dvid.Point3d) []byte {
 	volume := make([]byte, volumeBytes, volumeBytes)
 	var i int32
 	size2d := dvid.Point2d{size[0], size[1]}
-	for z := offset[2]; z < offset[2]+size[2]; z++ {
+	startZ := offset[2]
+	endZ := startZ + size[2]
+	for z := startZ; z < endZ; z++ {
 		offset[2] = z
 		copy(volume[i:i+sliceBytes], MakeSlice(offset, size2d))
 		i += sliceBytes
 	}
 	return volume
+}
+
+func (suite *TestSuite) makeGrayscale(c *C, root dvid.UUID, name dvid.DataString) *Data {
+	config := dvid.NewConfig()
+	config.SetVersioned(true)
+
+	err := suite.service.NewData(root, "grayscale8", name, config)
+	c.Assert(err, IsNil)
+
+	dataservice, err := suite.service.DataService(root, dvid.DataString(name))
+	c.Assert(err, IsNil)
+
+	grayscale, ok := dataservice.(*Data)
+	if !ok {
+		c.Errorf("Can't cast grayscale8 data service into Data\n")
+	}
+	return grayscale
+}
+
+func (suite *TestSuite) TestSubvolGrayscale8(c *C) {
+	// Create a new dataset
+	root, _, err := suite.service.NewDataset()
+	c.Assert(err, IsNil)
+
+	// Add grayscale data
+	grayscale := suite.makeGrayscale(c, root, "grayscale")
+
+	// Create a fake 100x100x100 8-bit grayscale image
+	offset := dvid.Point3d{5, 35, 61}
+	size := dvid.Point3d{100, 100, 100}
+	subvol := dvid.NewSubvolume(offset, size)
+	data := MakeVolume(offset, size)
+	origData := make([]byte, len(data))
+	copy(origData, data)
+
+	// Store it into datastore at root
+	v, err := grayscale.NewExtHandler(subvol, data)
+	c.Assert(err, IsNil)
+
+	err = PutVoxels(root, grayscale, v)
+	c.Assert(err, IsNil)
+	c.Assert(v.NumVoxels(), Equals, int64(len(origData)))
+
+	// Read the stored image
+	v2, err := grayscale.NewExtHandler(subvol, nil)
+	c.Assert(err, IsNil)
+	err = GetVoxels(root, grayscale, v2)
+	c.Assert(err, IsNil)
+
+	// Make sure the retrieved image matches the original
+	c.Assert(err, IsNil)
+	c.Assert(v.Stride(), Equals, v2.Stride())
+	c.Assert(v.ByteOrder(), Equals, v2.ByteOrder())
+	c.Assert(v.Interpolable(), Equals, v2.Interpolable())
+	c.Assert(v.Size(), DeepEquals, v2.Size())
+	c.Assert(v.NumVoxels(), Equals, v2.NumVoxels())
+	data = v2.Data()
+	for i := int64(0); i < v2.NumVoxels(); i++ {
+		if data[i] != origData[i] {
+			c.Errorf("GET subvol != PUT subvol @ index %d", i)
+			break
+		}
+	}
 }
 
 func (suite *TestSuite) sliceTest(c *C, slice dvid.Geometry) {
@@ -116,19 +181,7 @@ func (suite *TestSuite) sliceTest(c *C, slice dvid.Geometry) {
 	c.Assert(err, IsNil)
 
 	// Add grayscale data
-	config := dvid.NewConfig()
-	config.SetVersioned(true)
-
-	err = suite.service.NewData(root, "grayscale8", "grayscale", config)
-	c.Assert(err, IsNil)
-
-	dataservice, err := suite.service.DataService(root, "grayscale")
-	c.Assert(err, IsNil)
-
-	grayscale, ok := dataservice.(*Data)
-	if !ok {
-		c.Errorf("Can't cast grayscale data service into Data\n")
-	}
+	grayscale := suite.makeGrayscale(c, root, "grayscale")
 
 	// Create a fake 100x100 8-bit grayscale image
 	nx := slice.Size().Value(0)
@@ -141,7 +194,7 @@ func (suite *TestSuite) sliceTest(c *C, slice dvid.Geometry) {
 	v, err := grayscale.NewExtHandler(slice, img)
 	c.Assert(err, IsNil)
 
-	err = PutImage(root, grayscale, v)
+	err = PutVoxels(root, grayscale, v)
 	c.Assert(err, IsNil)
 
 	// Read the stored image

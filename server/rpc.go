@@ -88,7 +88,7 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 			}
 			var typename string
 			cmd.CommandArgs(1, &typename)
-			typeservice, err := datastore.TypeServiceByName(typename)
+			typeservice, err := datastore.TypeServiceByName(dvid.TypeString(typename))
 			if err != nil {
 				return err
 			}
@@ -126,7 +126,7 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 		case "new":
 			cmd.CommandArgs(3, &typename, &dataname)
 			config := cmd.Settings()
-			err = runningService.NewData(uuid, typename, dataname, config)
+			err = runningService.NewData(uuid, dvid.TypeString(typename), dvid.DataString(dataname), config)
 			if err != nil {
 				return err
 			}

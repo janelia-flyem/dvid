@@ -20,7 +20,7 @@ const (
 // fixed at compile-time for this DVID executable
 func Versions() string {
 	var text string = "\nCompile-time version information for this DVID executable:\n\n"
-	writeLine := func(name, version string) {
+	writeLine := func(name dvid.TypeString, version string) {
 		text += fmt.Sprintf("%-15s   %s\n", name, version)
 	}
 	writeLine("Name", "Version")
@@ -276,7 +276,7 @@ func (s *Service) NewVersion(parent dvid.UUID) (u dvid.UUID, err error) {
 }
 
 // NewData adds data of given name and type to a dataset specified by a UUID.
-func (s *Service) NewData(u dvid.UUID, typename, dataname string, config dvid.Config) error {
+func (s *Service) NewData(u dvid.UUID, typename dvid.TypeString, dataname dvid.DataString, config dvid.Config) error {
 	if s.datasets == nil {
 		return fmt.Errorf("Datastore service has no datasets available")
 	}
@@ -284,7 +284,7 @@ func (s *Service) NewData(u dvid.UUID, typename, dataname string, config dvid.Co
 	if err != nil {
 		return err
 	}
-	err = dataset.newData(dvid.DataString(dataname), typename, config)
+	err = dataset.newData(dataname, typename, config)
 	if err != nil {
 		return err
 	}
@@ -292,7 +292,7 @@ func (s *Service) NewData(u dvid.UUID, typename, dataname string, config dvid.Co
 }
 
 // ModifyData modifies data of given name in dataset specified by a UUID.
-func (s *Service) ModifyData(u dvid.UUID, dataname string, config dvid.Config) error {
+func (s *Service) ModifyData(u dvid.UUID, dataname dvid.DataString, config dvid.Config) error {
 	if s.datasets == nil {
 		return fmt.Errorf("Datastore service has no datasets available")
 	}
@@ -300,7 +300,7 @@ func (s *Service) ModifyData(u dvid.UUID, dataname string, config dvid.Config) e
 	if err != nil {
 		return err
 	}
-	err = dataset.modifyData(dvid.DataString(dataname), config)
+	err = dataset.modifyData(dataname, config)
 	if err != nil {
 		return err
 	}
@@ -389,7 +389,7 @@ func (s *Service) SupportedDataChart() string {
 // and the runtime data types.
 func (s *Service) About() string {
 	var text string
-	writeLine := func(name, version string) {
+	writeLine := func(name dvid.TypeString, version string) {
 		text += fmt.Sprintf("%-15s   %s\n", name, version)
 	}
 	writeLine("Name", "Version")
@@ -406,7 +406,7 @@ func (s *Service) About() string {
 // TypesJSON returns the components and versions of DVID software available
 // in this DVID server.
 func (s *Service) TypesJSON() (jsonStr string, err error) {
-	data := make(map[string]string)
+	data := make(map[dvid.TypeString]string)
 	for _, datatype := range CompiledTypes {
 		data[datatype.DatatypeName()] = string(datatype.DatatypeUrl())
 	}
@@ -421,7 +421,7 @@ func (s *Service) TypesJSON() (jsonStr string, err error) {
 // CurrentTypesJSON returns the components and versions of DVID software associated
 // with the current datasets in the service.
 func (s *Service) CurrentTypesJSON() (jsonStr string, err error) {
-	data := make(map[string]string)
+	data := make(map[dvid.TypeString]string)
 	if s.datasets != nil {
 		for _, dtype := range s.datasets.Datatypes() {
 			data[dtype.DatatypeName()] = dtype.DatatypeVersion()
@@ -448,7 +448,7 @@ func (s *Service) DataChart() string {
 		text += fmt.Sprintf("\nDataset %d (UUID = %s):\n\n", num+1, dset.Root)
 		writeLine("Name", "Type Name", "Url")
 		for name, data := range dset.DataMap {
-			writeLine(name, data.DatatypeName()+" ("+data.DatatypeVersion()+")",
+			writeLine(name, string(data.DatatypeName())+" ("+data.DatatypeVersion()+")",
 				data.DatatypeUrl())
 		}
 	}

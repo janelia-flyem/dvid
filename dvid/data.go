@@ -13,9 +13,13 @@ import (
 	"github.com/janelia-flyem/go/go-uuid/uuid"
 )
 
+// Note: TypeString and DataString are types to add static checks and prevent conflation
+// of the two types of identifiers.
+
+// TypeString is a string that is the name of a DVID data type.
+type TypeString string
+
 // DataString is a string that is the name of DVID data.
-// This gets its own type for documentation and also provide static error checks
-// to prevent conflation of type name from data name.
 type DataString string
 
 // DatasetLocalID is a DVID server-specific ID that is more compact than a UUID.

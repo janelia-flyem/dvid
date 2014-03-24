@@ -237,7 +237,7 @@ func aboutJSON() (jsonStr string, err error) {
 		"DVID datastore":  datastore.Version,
 		"Storage backend": storage.Version,
 		"Storage driver":  storage.Driver,
-		"Server uptime":  time.Since(startupTime).String(),
+		"Server uptime":   time.Since(startupTime).String(),
 	}
 	m, err := json.Marshal(data)
 	if err != nil {
@@ -371,8 +371,8 @@ func datasetRequest(w http.ResponseWriter, r *http.Request) {
 			BadRequest(w, r, "Bad URL: Expecting /api/dataset/<UUID>/new/<datatype name>/<data name>")
 			return
 		}
-		typename := parts[2]
-		dataname := parts[3]
+		typename := dvid.TypeString(parts[2])
+		dataname := dvid.DataString(parts[3])
 		decoder := json.NewDecoder(r.Body)
 		config := dvid.NewConfig()
 		err = decoder.Decode(&config)

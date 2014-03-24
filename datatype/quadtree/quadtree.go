@@ -871,7 +871,7 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, config dvid.Con
 				if err != nil {
 					return err
 				}
-				if err = voxels.CopyVoxels(uuid, src, v); err != nil {
+				if err = voxels.GetVoxels(uuid, src, v); err != nil {
 					return err
 				}
 				// Iterate through the different scales, extracting tiles at each resolution.
@@ -910,7 +910,7 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, config dvid.Con
 				if err != nil {
 					return err
 				}
-				if err = voxels.CopyVoxels(uuid, src, v); err != nil {
+				if err = voxels.GetVoxels(uuid, src, v); err != nil {
 					return err
 				}
 				// Iterate through the different scales, extracting tiles at each resolution.
@@ -949,7 +949,7 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, config dvid.Con
 				if err != nil {
 					return err
 				}
-				if err = voxels.CopyVoxels(uuid, src, v); err != nil {
+				if err = voxels.GetVoxels(uuid, src, v); err != nil {
 					return err
 				}
 				// Iterate through the different scales, extracting tiles at each resolution.

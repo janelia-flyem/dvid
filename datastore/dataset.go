@@ -345,7 +345,7 @@ func (dset *Dataset) Put(db storage.KeyValueSetter) error {
 // newData adds a new, named instance of a data type to dataset.  Settings can be passed
 // via the 'config' argument.  For example, config["versioned"] will specify whether
 // the data is mutable across nodes in the version DAG or is simply unversioned.
-func (dset *Dataset) newData(name dvid.DataString, typeName string, config dvid.Config) error {
+func (dset *Dataset) newData(name dvid.DataString, typeName dvid.TypeString, config dvid.Config) error {
 	// Only allow unique data names per dataset.
 	// TODO -- Do more elaborate check that prevents prefixing data names using
 	// data types that allow different suffixes, e.g., multichannel data.

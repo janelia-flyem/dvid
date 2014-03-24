@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"image"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
@@ -348,7 +349,7 @@ type VoxelSetter interface {
 
 // GetImage retrieves a 2d image from a version node given a geometry of voxels.
 func GetImage(uuid dvid.UUID, i IntHandler, e ExtHandler) (*dvid.Image, error) {
-	if err := CopyVoxels(uuid, i, e); err != nil {
+	if err := GetVoxels(uuid, i, e); err != nil {
 		return nil, err
 	}
 	return e.GetImage2d()
@@ -356,28 +357,29 @@ func GetImage(uuid dvid.UUID, i IntHandler, e ExtHandler) (*dvid.Image, error) {
 
 // GetVolume retrieves a n-d volume from a version node given a geometry of voxels.
 func GetVolume(uuid dvid.UUID, i IntHandler, e ExtHandler) ([]byte, error) {
-	if err := CopyVoxels(uuid, i, e); err != nil {
+	if err := GetVoxels(uuid, i, e); err != nil {
 		return nil, err
 	}
 	return e.Data(), nil
 }
 
-// CopyVoxels retrieves voxels from an IntHandler for a version and copies them into an ExtHandler.
-func CopyVoxels(uuid dvid.UUID, i IntHandler, e ExtHandler) error {
+// GetVoxels copies voxels from an IntHandler for a version to an ExtHandler, e.g.,
+// a requested subvolume or 2d image.
+func GetVoxels(uuid dvid.UUID, i IntHandler, e ExtHandler) error {
 	db, err := server.KeyValueGetter()
 	if err != nil {
 		return err
 	}
 
-	op := Operation{e, GetOp}
-	wg := new(sync.WaitGroup)
-	chunkOp := &storage.ChunkOp{&op, wg}
-
 	service := server.DatastoreService()
 	_, versionID, err := service.LocalIDFromUUID(uuid)
+	if err != nil {
+		return err
+	}
 
+	wg := new(sync.WaitGroup)
+	chunkOp := &storage.ChunkOp{&Operation{e, GetOp}, wg}
 	dataID := i.DataID()
-
 	server.SpawnGoroutineMutex.Lock()
 	for it, err := e.IndexIterator(i.BlockSize()); err == nil && it.Valid(); it.NextSpan() {
 		indexBeg, indexEnd, err := it.IndexSpan()
@@ -400,104 +402,30 @@ func CopyVoxels(uuid dvid.UUID, i IntHandler, e ExtHandler) error {
 		return err
 	}
 
-	// Reduce: Grab the resulting 2d image.
 	wg.Wait()
 	return nil
 }
 
-// PutLocal adds image data to a version node, altering underlying blocks if the image
-// intersects the block.
-//
-// The image filename glob MUST BE absolute file paths that are visible to the server.
-// This function is meant for mass ingestion of large data files, and it is inappropriate
-// to read gigabytes of data just to send it over the network to a local DVID.
-func (d *Data) PutLocal(request datastore.Request, reply *datastore.Response) error {
-	startTime := time.Now()
-
-	// Parse the request
-	var uuidStr, dataName, cmdStr, sourceStr, planeStr, offsetStr string
-	filenames := request.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &sourceStr,
-		&planeStr, &offsetStr)
-	if len(filenames) == 0 {
-		return fmt.Errorf("Need to include at least one file to add: %s", request)
-	}
-
-	// Get offset
-	offset, err := dvid.StringToPoint(offsetStr, ",")
-	if err != nil {
-		return fmt.Errorf("Illegal offset specification: %s: %s", offsetStr, err.Error())
-	}
-
-	// Get list of files to add
-	var addedFiles string
-	if len(filenames) == 1 {
-		addedFiles = filenames[0]
-	} else {
-		addedFiles = fmt.Sprintf("filenames: %s [%d more]", filenames[0], len(filenames)-1)
-	}
-	dvid.Log(dvid.Debug, addedFiles+"\n")
-
-	// Get plane
-	plane, err := dvid.DataShapeString(planeStr).DataShape()
+// PutVoxels copies voxels from an ExtHander (e.g., subvolume or 2d image) into an IntHandler
+// for a version.   Since chunk sizes can be larger than the PUT data, this also requires
+// integrating the PUT data into current chunks before writing the result.  There are two passes:
+//   Pass one: Retrieve all available key/values within the PUT space.
+//   Pass two: Merge PUT data into those key/values and store them.
+func PutVoxels(uuid dvid.UUID, i IntHandler, e ExtHandler) error {
+	db, err := server.KeyValueGetter()
 	if err != nil {
 		return err
 	}
 
-	// Load and PUT each image.
-	uuid, err := server.MatchingUUID(uuidStr)
-	if err != nil {
-		return err
-	}
-
-	numSuccessful := 0
-	for _, filename := range filenames {
-		sliceTime := time.Now()
-		img, _, err := dvid.ImageFromFile(filename)
-		if err != nil {
-			return fmt.Errorf("Error after %d images successfully added: %s",
-				numSuccessful, err.Error())
-		}
-		slice, err := dvid.NewOrthogSlice(plane, offset, dvid.RectSize(img.Bounds()))
-		if err != nil {
-			return fmt.Errorf("Unable to determine slice: %s", err.Error())
-		}
-
-		e, err := d.NewExtHandler(slice, img)
-		if err != nil {
-			return err
-		}
-		storage.FileBytesRead <- len(e.Data())
-		err = PutImage(uuid, d, e)
-		if err != nil {
-			return err
-		}
-		dvid.ElapsedTime(dvid.Debug, sliceTime, "%s put local %s", d.DataName(), slice)
-		numSuccessful++
-		offset = offset.Add(dvid.Point3d{0, 0, 1})
-	}
-	dvid.ElapsedTime(dvid.Debug, startTime, "RPC put local (%s) completed", addedFiles)
-	return nil
-}
-
-// PutImage adds a 2d image within given geometry to a version node.   Since chunk sizes
-// are larger than a 2d slice, this also requires integrating this image into current
-// chunks before writing result back out, so it's a PUT for nonexistant keys and GET/PUT
-// for existing keys.
-func PutImage(uuid dvid.UUID, i IntHandler, e ExtHandler) error {
 	service := server.DatastoreService()
 	_, versionID, err := service.LocalIDFromUUID(uuid)
 	if err != nil {
 		return err
 	}
 
-	db, err := server.KeyValueGetter()
-	if err != nil {
-		return err
-	}
-
-	op := Operation{e, PutOp}
 	wg := new(sync.WaitGroup)
-	chunkOp := &storage.ChunkOp{&op, wg}
+	chunkOp := &storage.ChunkOp{&Operation{e, PutOp}, wg}
+	dataID := i.DataID()
 
 	// We only want one PUT on given version for given data to prevent interleaved
 	// chunk PUTs that could potentially overwrite slice modifications.
@@ -521,7 +449,6 @@ func PutImage(uuid dvid.UUID, i IntHandler, e ExtHandler) error {
 	if extents.AdjustPoints(e.StartPoint(), e.EndPoint()) {
 		extentChanged = true
 	}
-	dataID := i.DataID()
 
 	// Iterate through index space for this data.
 	for it, err := e.IndexIterator(i.BlockSize()); err == nil && it.Valid(); it.NextSpan() {
@@ -542,7 +469,7 @@ func PutImage(uuid dvid.UUID, i IntHandler, e ExtHandler) error {
 		startKey := &datastore.DataKey{dataID.DsetID, dataID.ID, versionID, ptBeg}
 		endKey := &datastore.DataKey{dataID.DsetID, dataID.ID, versionID, ptEnd}
 
-		// GET all the chunks for this range.
+		// GET all the key/value pairs for this range.
 		keyvalues, err := db.GetRange(startKey, endKey)
 		if err != nil {
 			return fmt.Errorf("Error in reading data during PUT %s: %s", dataID.DataName(), err.Error())
@@ -587,8 +514,8 @@ func PutImage(uuid dvid.UUID, i IntHandler, e ExtHandler) error {
 			i.ProcessChunk(&storage.Chunk{chunkOp, kv})
 		}
 	}
-	wg.Wait()
 
+	wg.Wait()
 	return nil
 }
 
@@ -1738,6 +1665,80 @@ func (d *Data) HandleIsotropy2D(geom dvid.Geometry, isotropic bool) (dvid.Geomet
 	return dstSlice, nil
 }
 
+// PutLocal adds image data to a version node, altering underlying blocks if the image
+// intersects the block.
+//
+// The image filename glob MUST BE absolute file paths that are visible to the server.
+// This function is meant for mass ingestion of large data files, and it is inappropriate
+// to read gigabytes of data just to send it over the network to a local DVID.
+func (d *Data) PutLocal(request datastore.Request, reply *datastore.Response) error {
+	startTime := time.Now()
+
+	// Parse the request
+	var uuidStr, dataName, cmdStr, sourceStr, planeStr, offsetStr string
+	filenames := request.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &sourceStr,
+		&planeStr, &offsetStr)
+	if len(filenames) == 0 {
+		return fmt.Errorf("Need to include at least one file to add: %s", request)
+	}
+
+	// Get offset
+	offset, err := dvid.StringToPoint(offsetStr, ",")
+	if err != nil {
+		return fmt.Errorf("Illegal offset specification: %s: %s", offsetStr, err.Error())
+	}
+
+	// Get list of files to add
+	var addedFiles string
+	if len(filenames) == 1 {
+		addedFiles = filenames[0]
+	} else {
+		addedFiles = fmt.Sprintf("filenames: %s [%d more]", filenames[0], len(filenames)-1)
+	}
+	dvid.Log(dvid.Debug, addedFiles+"\n")
+
+	// Get plane
+	plane, err := dvid.DataShapeString(planeStr).DataShape()
+	if err != nil {
+		return err
+	}
+
+	// Load and PUT each image.
+	uuid, err := server.MatchingUUID(uuidStr)
+	if err != nil {
+		return err
+	}
+
+	numSuccessful := 0
+	for _, filename := range filenames {
+		sliceTime := time.Now()
+		img, _, err := dvid.ImageFromFile(filename)
+		if err != nil {
+			return fmt.Errorf("Error after %d images successfully added: %s",
+				numSuccessful, err.Error())
+		}
+		slice, err := dvid.NewOrthogSlice(plane, offset, dvid.RectSize(img.Bounds()))
+		if err != nil {
+			return fmt.Errorf("Unable to determine slice: %s", err.Error())
+		}
+
+		e, err := d.NewExtHandler(slice, img)
+		if err != nil {
+			return err
+		}
+		storage.FileBytesRead <- len(e.Data())
+		err = PutVoxels(uuid, d, e)
+		if err != nil {
+			return err
+		}
+		dvid.ElapsedTime(dvid.Debug, sliceTime, "%s put local %s", d.DataName(), slice)
+		numSuccessful++
+		offset = offset.Add(dvid.Point3d{0, 0, 1})
+	}
+	dvid.ElapsedTime(dvid.Debug, startTime, "RPC put local (%s) completed", addedFiles)
+	return nil
+}
+
 // ----- IntHandler interface implementation ----------
 
 // NewExtHandler returns an ExtHandler given some geometry and optional image data.
@@ -1777,6 +1778,14 @@ func (d *Data) NewExtHandler(geom dvid.Geometry, img interface{}) (ExtHandler, e
 				return nil, fmt.Errorf("Too little data in input image (expected stride %d)", stride)
 			}
 			voxels.stride = actualStride
+		case []byte:
+			voxels.data = t
+			actualLen := int64(len(voxels.data))
+			expectedLen := int64(bytesPerVoxel) * geom.NumVoxels()
+			if actualLen != expectedLen {
+				return nil, fmt.Errorf("PUT data was %d bytes, expected %d bytes for %s",
+					actualLen, expectedLen, geom)
+			}
 		default:
 			return nil, fmt.Errorf("Unexpected image type given to NewExtHandler(): %T", t)
 		}
@@ -1991,7 +2000,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 					return fmt.Errorf("can only PUT 'raw' not 'isotropic' images")
 				}
 				// TODO -- Put in format checks for POSTed image.
-				postedImg, _, err := dvid.ImageFromPost(r, "image")
+				postedImg, _, err := dvid.ImageFromPOST(r)
 				if err != nil {
 					return err
 				}
@@ -1999,7 +2008,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 				if err != nil {
 					return err
 				}
-				err = PutImage(uuid, d, e)
+				err = PutVoxels(uuid, d, e)
 				if err != nil {
 					return err
 				}
@@ -2055,7 +2064,21 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 					return err
 				}
 			} else {
-				return fmt.Errorf("DVID does not yet support POST of volume data")
+				if isotropic {
+					return fmt.Errorf("can only PUT 'raw' not 'isotropic' images")
+				}
+				data, err := ioutil.ReadAll(r.Body)
+				if err != nil {
+					return err
+				}
+				e, err := d.NewExtHandler(subvol, data)
+				if err != nil {
+					return err
+				}
+				err = PutVoxels(uuid, d, e)
+				if err != nil {
+					return err
+				}
 			}
 			dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: %s (%s)", r.Method, subvol, r.URL)
 		default:

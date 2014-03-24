@@ -434,7 +434,7 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 	// PUT each channel of the file into the datastore using a separate data name.
 	for _, channel := range channels {
 		dvid.Fmt(dvid.Debug, "Processing channel %d... \n", channel.channelNum)
-		err = voxels.PutImage(uuid, d, channel)
+		err = voxels.PutVoxels(uuid, d, channel)
 		if err != nil {
 			return err
 		}
@@ -519,5 +519,5 @@ func (d *Data) storeComposite(uuid dvid.UUID, channels []*Channel) error {
 	}
 
 	// Store the result
-	return voxels.PutImage(uuid, d, composite)
+	return voxels.PutVoxels(uuid, d, composite)
 }

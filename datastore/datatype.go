@@ -28,7 +28,7 @@ type UrlString string
 // TypeID provides methods for determining the identity of a data type.
 type TypeID interface {
 	// TypeName is an abbreviated type name.
-	DatatypeName() string
+	DatatypeName() dvid.TypeString
 
 	// TypeUrl returns the unique package name that fulfills the DVID Data interface
 	DatatypeUrl() UrlString
@@ -130,7 +130,7 @@ var CompiledTypes = map[UrlString]TypeService{}
 func CompiledTypeNames() string {
 	var names []string
 	for _, datatype := range CompiledTypes {
-		names = append(names, datatype.DatatypeName())
+		names = append(names, string(datatype.DatatypeName()))
 	}
 	return strings.Join(names, ", ")
 }
@@ -147,7 +147,7 @@ func CompiledTypeUrls() string {
 // CompiledTypeChart returns a chart (names/urls) of data types compiled into this DVID.
 func CompiledTypeChart() string {
 	var text string = "\nData types compiled into this DVID\n\n"
-	writeLine := func(name string, url UrlString) {
+	writeLine := func(name dvid.TypeString, url UrlString) {
 		text += fmt.Sprintf("%-15s   %s\n", name, url)
 	}
 	writeLine("Name", "Url")
@@ -166,7 +166,7 @@ func RegisterDatatype(t TypeService) {
 }
 
 // TypeServiceByName returns a type-specific service given a type name.
-func TypeServiceByName(typeName string) (typeService TypeService, err error) {
+func TypeServiceByName(typeName dvid.TypeString) (typeService TypeService, err error) {
 	for _, dtype := range CompiledTypes {
 		if typeName == dtype.DatatypeName() {
 			typeService = dtype
@@ -183,7 +183,7 @@ func TypeServiceByName(typeName string) (typeService TypeService, err error) {
 // shorthand name.
 type DatatypeID struct {
 	// Data type name and may not be unique.
-	Name string
+	Name dvid.TypeString
 
 	// The unique package name that fulfills the DVID Data interface
 	Url UrlString
@@ -192,11 +192,11 @@ type DatatypeID struct {
 	Version string
 }
 
-func MakeDatatypeID(name string, url UrlString, version string) *DatatypeID {
+func MakeDatatypeID(name dvid.TypeString, url UrlString, version string) *DatatypeID {
 	return &DatatypeID{name, url, version}
 }
 
-func (id *DatatypeID) DatatypeName() string { return id.Name }
+func (id *DatatypeID) DatatypeName() dvid.TypeString { return id.Name }
 
 func (id *DatatypeID) DatatypeUrl() UrlString { return id.Url }
 

@@ -699,7 +699,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 					return fmt.Errorf("can only PUT 'raw' not 'isotropic' images")
 				}
 				// TODO -- Put in format checks for POSTed image.
-				postedImg, _, err := dvid.ImageFromPost(r, "image")
+				postedImg, _, err := dvid.ImageFromPOST(r)
 				if err != nil {
 					return err
 				}
@@ -707,7 +707,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 				if err != nil {
 					return err
 				}
-				err = voxels.PutImage(uuid, d, e)
+				err = voxels.PutVoxels(uuid, d, e)
 				if err != nil {
 					return err
 				}
@@ -951,7 +951,7 @@ func (d *Data) CreateComposite(request datastore.Request, reply *datastore.Respo
 	compservice, err = service.DataService(uuid, dvid.DataString(destName))
 	if err != nil {
 		config := dvid.NewConfig()
-		err = service.NewData(uuid, "rgba8", destName, config)
+		err = service.NewData(uuid, "rgba8", dvid.DataString(destName), config)
 		if err != nil {
 			return err
 		}
