@@ -836,7 +836,7 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 		startKey := &datastore.DataKey{dataID.DsetID, dataID.ID, versionID, minIndex}
 		endKey := &datastore.DataKey{dataID.DsetID, dataID.ID, versionID, maxIndex}
 		chunkOp := &storage.ChunkOp{op, wg}
-		err = db.ProcessRange(startKey, endKey, chunkOp, d.ProcessChunk)
+		err = db.ProcessRange(startKey, endKey, chunkOp, d.DenormalizeChunk)
 		wg.Wait()
 
 		dvid.ElapsedTime(dvid.Debug, t, "Processed all '%s' blocks for layer %d/%d",
@@ -895,15 +895,15 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 	dvid.ElapsedTime(dvid.Debug, startTime, "Finished reading all RLEs for labels '%s'", d.DataName())
 }
 
-// ProcessChunk processes a chunk of data as part of a mapped operation.
+// DenormalizeChunk processes a chunk of data as part of a mapped operation.
 // Only some multiple of the # of CPU cores can be used for chunk handling before
 // it waits for chunk processing to abate via the buffered server.HandlerToken channel.
-func (d *Data) ProcessChunk(chunk *storage.Chunk) {
+func (d *Data) DenormalizeChunk(chunk *storage.Chunk) {
 	<-server.HandlerToken
-	go d.processChunk(chunk)
+	go d.denormalizeChunk(chunk)
 }
 
-func (d *Data) processChunk(chunk *storage.Chunk) {
+func (d *Data) denormalizeChunk(chunk *storage.Chunk) {
 	defer func() {
 		// After processing a chunk, return the token.
 		server.HandlerToken <- 1
@@ -917,12 +917,12 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 	op := chunk.Op.(*denormOp)
 	db, err := server.KeyValueDB()
 	if err != nil {
-		dvid.Log(dvid.Normal, "Error in %s.ProcessChunk(): %s\n", d.DataName(), err.Error())
+		dvid.Log(dvid.Normal, "Error in %s.denormalizeChunk(): %s\n", d.DataName(), err.Error())
 		return
 	}
 	batcher, ok := db.(storage.Batcher)
 	if !ok {
-		dvid.Log(dvid.Normal, "Database doesn't support Batch ops in %s.ProcessChunk()", d.DataName())
+		dvid.Log(dvid.Normal, "Database doesn't support Batch ops in %s.denormalizeChunk()", d.DataName())
 		return
 	}
 	batch := batcher.NewBatch()
