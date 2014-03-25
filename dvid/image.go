@@ -197,8 +197,33 @@ func (img *Image) SubImage(r image.Rectangle) (*Image, error) {
 	return result, nil
 }
 
-// Serialize writes compact byte slice representing image data.
+// Serialize writes optionall compressed and checksummed bytes representing image data.
 func (img *Image) Serialize(compress Compression, checksum Checksum) ([]byte, error) {
+	b, err := img.MarshalBinary()
+	if err != nil {
+		return nil, err
+	}
+	return SerializeData(b, compress, checksum)
+}
+
+// Deserialze deserializes an Image from a possibly compressioned, checksummed byte slice.
+func (img *Image) Deserialize(b []byte) error {
+	if img == nil {
+		return fmt.Errorf("Error attempting to deserialize into nil Image")
+	}
+
+	// Unpackage the data using compression and built-in checksum.
+	data, _, err := DeserializeData(b, true)
+	if err != nil {
+		return err
+	}
+
+	return img.UnmarshalBinary(data)
+}
+
+// ----- Fulfills encoding.BinaryMarshaler interface --------
+
+func (img *Image) MarshalBinary() ([]byte, error) {
 	var buffer bytes.Buffer
 
 	// Serialize the data format
@@ -280,21 +305,13 @@ func (img *Image) Serialize(compress Compression, checksum Checksum) ([]byte, er
 		return nil, err
 	}
 
-	return SerializeData(buffer.Bytes(), compress, checksum)
+	return buffer.Bytes(), nil
 }
 
-// Deserialze deserializes an Image from a byte slice.
-func (img *Image) Deserialize(b []byte) error {
-	if img == nil {
-		return fmt.Errorf("Error attempting to deserialize into nil Image")
-	}
+// ----- Fulfills encoding.BinaryUnmarshaler interface --------
 
-	// Deserialize the data
-	data, _, err := DeserializeData(b, true)
-	if err != nil {
-		return err
-	}
-	buffer := bytes.NewBuffer(data)
+func (img *Image) UnmarshalBinary(b []byte) error {
+	buffer := bytes.NewBuffer(b)
 
 	// Deserialize the data format
 	if err := img.DataFormat.ReadBinary(buffer); err != nil {

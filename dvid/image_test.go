@@ -98,6 +98,36 @@ func (suite *DataSuite) TestOffsetSlice(c *C) {
 	c.Assert(newImg.Gray, DeepEquals, goImg)
 }
 
+func (suite *DataSuite) TestMarshaling(c *C) {
+	// Create a fake 100x100 8-bit black image
+	offset := Point3d{7, 31, 32}
+	size := Point2d{100, 100}
+	data := []uint8(makeSlice(offset, size))
+	goImg := ImageGrayFromData(data, 100, 100)
+
+	// Create a serializable image and test its de/serialization and size
+	var img Image
+	values := DataValues{
+		{
+			T:     T_uint8,
+			Label: "grayscale",
+		},
+	}
+	err := img.Set(goImg, values, true)
+	c.Assert(err, IsNil)
+
+	b, err := img.MarshalBinary()
+	c.Assert(err, IsNil)
+	c.Assert(b, Not(Equals), nil)
+
+	newImg := new(Image)
+	err = newImg.UnmarshalBinary(b)
+	c.Assert(err, IsNil)
+
+	c.Assert(img.Which, Equals, newImg.Which)
+	c.Assert(goImg.Pix, DeepEquals, newImg.Gray.Pix)
+}
+
 func (suite *DataSuite) TestCompression(c *C) {
 	// Create a fake 100x100 8-bit black image
 	data := make([]uint8, 100*100)
