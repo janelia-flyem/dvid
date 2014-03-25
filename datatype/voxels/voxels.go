@@ -127,9 +127,9 @@ POST /api/node/<UUID>/<data name>/info
     data name     Name of voxels data.
 
 
-GET  /api/node/<UUID>/<data name>/schema
+GET  /api/node/<UUID>/<data name>/metadata
 
-	Retrieves a JSON schema (application/vnd.dvid-nd-data+json) that describes the layout
+	Retrieves metadata in JSON format (application/vnd.dvid-nd-data+json) that describes the layout
 	of bytes returned for n-d images.
 
 
@@ -1420,12 +1420,12 @@ type Properties struct {
 	Extents
 }
 
-type dataSchema struct {
-	Axes   []axis
+type Metadata struct {
+	Axes   []Axis
 	Values dvid.DataValues
 }
 
-type axis struct {
+type Axis struct {
 	Label      string
 	Resolution float32
 	Units      string
@@ -1503,8 +1503,8 @@ func (props *Properties) SetByConfig(config dvid.Config) error {
 	return nil
 }
 
-// NdDataSchema returns the JSON schema for this Data
-func (props *Properties) NdDataSchema() (string, error) {
+// NdDataSchema returns the metadata in JSON for this Data
+func (props *Properties) NdDataMetadata() (string, error) {
 	var err error
 	var size, offset dvid.Point
 
@@ -1521,10 +1521,10 @@ func (props *Properties) NdDataSchema() (string, error) {
 		offset = props.MinPoint
 	}
 
-	var schema dataSchema
-	schema.Axes = []axis{}
+	var metadata Metadata
+	metadata.Axes = []Axis{}
 	for dim := 0; dim < dims; dim++ {
-		schema.Axes = append(schema.Axes, axis{
+		metadata.Axes = append(metadata.Axes, Axis{
 			Label:      axesName[dim],
 			Resolution: props.Resolution.VoxelSize[dim],
 			Units:      props.Resolution.VoxelUnits[dim],
@@ -1532,9 +1532,9 @@ func (props *Properties) NdDataSchema() (string, error) {
 			Offset:     offset.Value(uint8(dim)),
 		})
 	}
-	schema.Values = props.Values
+	metadata.Values = props.Values
 
-	m, err := json.Marshal(schema)
+	m, err := json.Marshal(metadata)
 	if err != nil {
 		return "", err
 	}
@@ -1960,8 +1960,8 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		w.Header().Set("Content-Type", "text/plain")
 		fmt.Fprintln(w, d.Help())
 		return nil
-	case "schema":
-		jsonStr, err := d.NdDataSchema()
+	case "metadata":
+		jsonStr, err := d.NdDataMetadata()
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
 			return err

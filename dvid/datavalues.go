@@ -8,6 +8,7 @@ package dvid
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 )
 
@@ -59,6 +60,71 @@ type DataValue struct {
 // ValueBytes returns the number of bytes for this value
 func (dv DataValue) ValueBytes() int32 {
 	return typeBytes[dv.T]
+}
+
+// MarshalJSON implements the json.Marshaler interface.
+func (dv DataValue) MarshalJSON() ([]byte, error) {
+	var dataType string
+	switch dv.T {
+	case T_uint8:
+		dataType = "uint8"
+	case T_int8:
+		dataType = "int8"
+	case T_uint16:
+		dataType = "uint16"
+	case T_int16:
+		dataType = "int16"
+	case T_uint32:
+		dataType = "uint32"
+	case T_int32:
+		dataType = "int32"
+	case T_uint64:
+		dataType = "uint64"
+	case T_int64:
+		dataType = "int64"
+	case T_float32:
+		dataType = "float32"
+	case T_float64:
+		dataType = "float64"
+	}
+	return []byte(fmt.Sprintf(`{"DataType":%q,"Label":%q}`, dataType, dv.Label)), nil
+}
+
+// UnmarshalJSON implements the json.Unmarshaler interface.
+func (dv *DataValue) UnmarshalJSON(b []byte) error {
+	var m struct {
+		DataType string
+		Label    string
+	}
+	if err := json.Unmarshal(b, &m); err != nil {
+		return err
+	}
+	var dataType DataType
+	switch m.DataType {
+	case "uint8":
+		dataType = T_uint8
+	case "int8":
+		dataType = T_int8
+	case "uint16":
+		dataType = T_uint16
+	case "int16":
+		dataType = T_int16
+	case "uint32":
+		dataType = T_uint32
+	case "int32":
+		dataType = T_int32
+	case "uint64":
+		dataType = T_uint64
+	case "int64":
+		dataType = T_int64
+	case "float32":
+		dataType = T_float32
+	case "float64":
+		dataType = T_float64
+	}
+	dv.T = dataType
+	dv.Label = m.Label
+	return nil
 }
 
 // DataValues describes the interleaved values within an element.
@@ -117,26 +183,30 @@ func (values DataValues) ValueBytes(n int) int32 {
 	return typeBytes[values[n].T]
 }
 
-func (values DataValues) WriteBinary(buffer *bytes.Buffer) error {
+// MarshalBinary fulfills the encoding.BinaryMarshaler interface.
+func (values DataValues) MarshalBinary() ([]byte, error) {
+	var buffer bytes.Buffer
 	numValues := int16(len(values))
-	if err := binary.Write(buffer, binary.LittleEndian, numValues); err != nil {
-		return err
+	if err := binary.Write(&buffer, binary.LittleEndian, numValues); err != nil {
+		return nil, err
 	}
 	for i := int16(0); i < numValues; i++ {
-		if err := binary.Write(buffer, binary.LittleEndian, values[i].T); err != nil {
-			return err
+		if err := binary.Write(&buffer, binary.LittleEndian, values[i].T); err != nil {
+			return nil, err
 		}
-		if err := binary.Write(buffer, binary.LittleEndian, uint16(len(values[i].Label))); err != nil {
-			return err
+		if err := binary.Write(&buffer, binary.LittleEndian, uint16(len(values[i].Label))); err != nil {
+			return nil, err
 		}
 		if _, err := buffer.Write([]byte(values[i].Label)); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	return nil
+	return buffer.Bytes(), nil
 }
 
-func (values *DataValues) ReadBinary(buffer *bytes.Buffer) error {
+// UnmarshalBinary fulfills the encoding.BinaryUnmarshaler interface.
+func (values *DataValues) UnmarshalBinary(b []byte) error {
+	buffer := bytes.NewBuffer(b)
 	var numValues uint16
 	if err := binary.Read(buffer, binary.LittleEndian, &numValues); err != nil {
 		return err

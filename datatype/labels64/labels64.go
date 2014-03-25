@@ -659,8 +659,8 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		w.Header().Set("Content-Type", "text/plain")
 		fmt.Fprintln(w, d.Help())
 		return nil
-	case "schema":
-		jsonStr, err := d.NdDataSchema()
+	case "metadata":
+		jsonStr, err := d.NdDataMetadata()
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
 			return err

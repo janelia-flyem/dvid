@@ -325,8 +325,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		if err != nil {
 			return err
 		}
-		comment = fmt.Sprintf("Returned %d bytes for key '%s', data '%s', uuid %s\n",
-			len(value), keyStr, d.DataName(), uuid)
+		comment = fmt.Sprintf("HTTP GET keyvalue '%s': %d bytes (%s)\n", d.DataName, len(value), url)
 	case "post":
 		data, err := ioutil.ReadAll(r.Body)
 		if err != nil {
@@ -336,8 +335,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		if err != nil {
 			return err
 		}
-		comment = fmt.Sprintf("POST %d bytes for data %s: key '%s', uuid %s\n",
-			len(data), d.DataName(), keyStr, uuid)
+		comment = fmt.Sprintf("HTTP POST keyvalue '%s': %d bytes (%s)\n", d.DataName, len(data), url)
 	default:
 		return fmt.Errorf("Can only handle GET or POST HTTP verbs")
 	}

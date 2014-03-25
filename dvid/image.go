@@ -197,7 +197,7 @@ func (img *Image) SubImage(r image.Rectangle) (*Image, error) {
 	return result, nil
 }
 
-// Serialize writes optionall compressed and checksummed bytes representing image data.
+// Serialize writes optional compressed and checksummed bytes representing image data.
 func (img *Image) Serialize(compress Compression, checksum Checksum) ([]byte, error) {
 	b, err := img.MarshalBinary()
 	if err != nil {
@@ -221,18 +221,22 @@ func (img *Image) Deserialize(b []byte) error {
 	return img.UnmarshalBinary(data)
 }
 
-// ----- Fulfills encoding.BinaryMarshaler interface --------
-
+// MarshalBinary fulfills the encoding.BinaryMarshaler interface.
 func (img *Image) MarshalBinary() ([]byte, error) {
 	var buffer bytes.Buffer
 
 	// Serialize the data format
-	if err := img.DataFormat.WriteBinary(&buffer); err != nil {
+	b, err := img.DataFormat.MarshalBinary()
+	if err != nil {
 		return nil, err
 	}
+	if err := binary.Write(&buffer, binary.LittleEndian, uint32(len(b))); err != nil {
+		return nil, err
+	}
+	_, err = buffer.Write(b)
 
 	// Serialize the image portion.
-	err := buffer.WriteByte(byte(img.Which))
+	err = buffer.WriteByte(byte(img.Which))
 	if err != nil {
 		return nil, err
 	}
@@ -308,17 +312,14 @@ func (img *Image) MarshalBinary() ([]byte, error) {
 	return buffer.Bytes(), nil
 }
 
-// ----- Fulfills encoding.BinaryUnmarshaler interface --------
-
+// UnmarshalBinary fulfills the encoding.BinaryUnmarshaler interface.
 func (img *Image) UnmarshalBinary(b []byte) error {
-	buffer := bytes.NewBuffer(b)
-
 	// Deserialize the data format
-	if err := img.DataFormat.ReadBinary(buffer); err != nil {
-		return err
-	}
+	lenDataFormat := int(binary.LittleEndian.Uint32(b[0:4]))
+	img.DataFormat.UnmarshalBinary(b[4 : 4+lenDataFormat])
 
 	// Get the image type.
+	buffer := bytes.NewBuffer(b[4+lenDataFormat:])
 	imageType, err := buffer.ReadByte()
 	if err != nil {
 		return err
@@ -327,8 +328,7 @@ func (img *Image) UnmarshalBinary(b []byte) error {
 
 	// Get the stride and sizes.
 	var stride int32
-	err = binary.Read(buffer, binary.LittleEndian, &stride)
-	if err != nil {
+	if err = binary.Read(buffer, binary.LittleEndian, &stride); err != nil {
 		return err
 	}
 
