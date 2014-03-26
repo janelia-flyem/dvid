@@ -378,14 +378,14 @@ func (img *Image) UnmarshalBinary(b []byte) error {
 
 // ScaleImage scales a DVID image to the destination geometry size, using nearest-neighbor or
 // interpolation depending on the type of data.
-func (img *Image) ScaleImage(geom Geometry) (*Image, error) {
+func (img *Image) ScaleImage(dstW, dstH int) (*Image, error) {
 	var goImg image.Image
 	var err error
 
 	if img.Interpolable {
-		goImg, err = img.InterpolateImage(geom)
+		goImg, err = img.InterpolateImage(dstW, dstH)
 	} else {
-		goImg, err = img.ResizeImage(geom)
+		goImg, err = img.ResizeImage(dstW, dstH)
 	}
 	if err != nil {
 		return nil, err
@@ -400,23 +400,21 @@ func (img *Image) ScaleImage(geom Geometry) (*Image, error) {
 
 // ResizeImage returns an image scaled to the given geometry without doing
 // interpolation.
-func (img *Image) ResizeImage(geom Geometry) (image.Image, error) {
+func (img *Image) ResizeImage(dstW, dstH int) (image.Image, error) {
 	if img == nil {
 		return nil, fmt.Errorf("Attempted to resize nil DVID image.")
 	}
+	if dstW <= 0 || dstH <= 0 {
+		return nil, fmt.Errorf("Attempted to resize to %d x %d pixels", dstW, dstH)
+	}
 
 	// Get dimensions
-	dstW := int(geom.Size().Value(0))
-	dstH := int(geom.Size().Value(1))
 	src := img.Get()
 	srcRect := src.Bounds()
 	srcW := srcRect.Dx()
 	srcH := srcRect.Dy()
 	if srcW == dstW && srcH == dstH {
 		return src, nil
-	}
-	if dstW <= 0 || dstH <= 0 {
-		return nil, fmt.Errorf("Attempted to resize to %d x %d pixels", dstW, dstH)
 	}
 	if srcW <= 0 || srcH <= 0 {
 		return nil, fmt.Errorf("Attempted to resize source image of %d x %d pixels", srcW, srcH)
@@ -545,23 +543,21 @@ func resize64(src *image.NRGBA64, dstW, dstH int) image.Image {
 
 // InterpolateImage returns an image scaled to the given geometry using simple
 // nearest-neighbor interpolation.
-func (img *Image) InterpolateImage(geom Geometry) (image.Image, error) {
+func (img *Image) InterpolateImage(dstW, dstH int) (image.Image, error) {
 	if img == nil {
 		return nil, fmt.Errorf("Attempted to interpolate nil DVID image.")
 	}
+	if dstW <= 0 || dstH <= 0 {
+		return nil, fmt.Errorf("Attempted to interpolate to %d x %d pixels", dstW, dstH)
+	}
 
 	// Get dimensions
-	dstW := int(geom.Size().Value(0))
-	dstH := int(geom.Size().Value(1))
 	src := img.Get()
 	srcRect := src.Bounds()
 	srcW := srcRect.Dx()
 	srcH := srcRect.Dy()
 	if srcW == dstW && srcH == dstH {
 		return src, nil
-	}
-	if dstW <= 0 || dstH <= 0 {
-		return nil, fmt.Errorf("Attempted to interpolate to %d x %d pixels", dstW, dstH)
 	}
 	if srcW <= 0 || srcH <= 0 {
 		return nil, fmt.Errorf("Attempted to interpolate source image of %d x %d pixels", srcW, srcH)

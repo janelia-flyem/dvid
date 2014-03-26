@@ -1151,10 +1151,11 @@ func (v *Voxels) Interpolable() bool {
 	return true
 }
 
-// DownRes downsamples by averaging where the down-magnification are integers.
-// If the source image size in Voxels is not an integral multiple of the
+// DownRes downsamples 2d Voxels data by averaging where the down-magnification are
+// integers.  If the source image size in Voxels is not an integral multiple of the
 // reduction factor, the edge voxels on the right and bottom side are truncated.
-// This function modifies the Voxels data.
+// This function modifies the Voxels data.  An error is returned if a non-2d Voxels
+// receiver is used.
 func (v *Voxels) DownRes(magnification dvid.Point) error {
 	if v.DataShape().ShapeDimensions() != 2 {
 		return fmt.Errorf("ImageDownres() only supports 2d images at this time.")
@@ -1168,14 +1169,19 @@ func (v *Voxels) DownRes(magnification dvid.Point) error {
 	}
 	dstW := srcW / reduceW
 	dstH := srcH / reduceH
-	numBytes := uint64(dstW) * uint64(dstH) * uint64(v.values.BytesPerElement())
-	data := make([]uint8, numBytes, numBytes)
 
-	// Perform averaging on each interleaved value.
-	v.values.AverageData(v.data, data, srcW, dstW, dstH, reduceW, reduceH)
+	// Reduce the image.
+	img, err := v.GetImage2d()
+	if err != nil {
+		return err
+	}
+	img, err = img.ScaleImage(int(dstW), int(dstH))
+	if err != nil {
+		return err
+	}
 
 	// Set data and dimensions to downres data.
-	v.data = data
+	v.data = []byte(img.Data())
 	geom, err := dvid.NewOrthogSlice(v.DataShape(), v.StartPoint(), dvid.Point2d{dstW, dstH})
 	if err != nil {
 		return err
@@ -2025,20 +2031,19 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 				if err != nil {
 					return err
 				}
-				var goImg image.Image
 				if isotropic {
-					goImg, err = img.InterpolateImage(slice)
+					dstW := int(slice.Size().Value(0))
+					dstH := int(slice.Size().Value(1))
+					img, err = img.ScaleImage(dstW, dstH)
 					if err != nil {
 						return err
 					}
-				} else {
-					goImg = img.Get()
 				}
 				var formatStr string
 				if len(parts) >= 8 {
 					formatStr = parts[7]
 				}
-				err = dvid.WriteImageHttp(w, goImg, formatStr)
+				err = dvid.WriteImageHttp(w, img.Get(), formatStr)
 				if err != nil {
 					return err
 				}

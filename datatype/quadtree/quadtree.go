@@ -614,7 +614,9 @@ func (d *Data) GetImage(uuid dvid.UUID, geom dvid.Geometry, isotropic bool) (*dv
 	wg.Wait()
 
 	if isotropic {
-		dst, err = dst.ScaleImage(geom)
+		dstW := int(geom.Size().Value(0))
+		dstH := int(geom.Size().Value(1))
+		dst, err = dst.ScaleImage(dstW, dstH)
 		if err != nil {
 			return nil, err
 		}

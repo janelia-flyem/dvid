@@ -721,21 +721,20 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 				if err != nil {
 					return err
 				}
-				var goImg image.Image
 				if isotropic {
-					goImg, err = img.ResizeImage(slice)
+					dstW := int(slice.Size().Value(0))
+					dstH := int(slice.Size().Value(1))
+					img, err = img.ScaleImage(dstW, dstH)
 					if err != nil {
 						return err
 					}
-				} else {
-					goImg = img.Get()
 				}
 				var formatStr string
 				if len(parts) >= 8 {
 					formatStr = parts[7]
 				}
 				//dvid.ElapsedTime(dvid.Normal, startTime, "%s %s upto image formatting", op, slice)
-				err = dvid.WriteImageHttp(w, goImg, formatStr)
+				err = dvid.WriteImageHttp(w, img.Get(), formatStr)
 				if err != nil {
 					return err
 				}
