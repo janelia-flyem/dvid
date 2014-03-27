@@ -1,7 +1,7 @@
 DVID [![Picture](https://raw.github.com/janelia-flyem/janelia-flyem.github.com/master/images/jfrc_grey_180x40.png)](http://www.janelia.org)
 ====
 
-*Status: In development, not ready for use.*
+*Status: In development, being tested at Janelia, and not ready for external use due to possible breaking changes.*
 
 [![GoDoc](https://godoc.org/github.com/janelia-flyem/dvid?status.png)](https://godoc.org/github.com/janelia-flyem/dvid) [![Build Status](https://drone.io/github.com/janelia-flyem/dvid/status.png)](https://drone.io/github.com/janelia-flyem/dvid/latest)
 
@@ -10,6 +10,10 @@ DVID is a *distributed, versioned, image-oriented datastore* written to support
 visualization efforts.  DVID's initial focus is on efficiently storing and retrieving 
 3d grayscale and label data in a variety of ways, e.g., subvolumes, images in XY, XZ, and YZ 
 orientation, multiscale tiles (quadtree and octree forms), and sparse volumes determined by a label.
+
+It could be described as a "github for large image-oriented data" because each DVID
+server can manage multiple repositories, each of which contains an image-oriented dataset
+(e.g., an image volume, labels, skeletons, etc). 
 
 DVID is written in Go and supports different storage backends, a Level 2 REST HTTP API, 
 command-line access, and a FUSE frontend to at least one of its data types.  It has been 
@@ -40,16 +44,14 @@ compute nodes. If data transmission or computer memory is an issue, it allows us
 first­ class datastore that will eventually (or continuously) be synced with remote datastores. By 
 “first class”, we mean that each DVID server, even on laptops, behaves identically to larger 
 institutional DVID servers save for resource limitations like the size of the data that can be 
-managed.  Our vision is to have something like a "git" for image-oriented data, although there are a 
-number of differences due to the size and typing of data.
+managed.  Our vision is to have something like a "github" for image-oriented data, although there are a 
+number of differences due to the size and typing of data as well as the approach to transferring
+versioned data between DVID servers.
 
-Scalability can be achieved in at least two ways:
-
-* **Scale­-up**: Run DVID on a computer with more cores, larger memory, and faster/larger storage 
-(e.g., use a cluster­-ready backend system like couchbase, Cassandra, or a Facebook Haystack­-inspired 
-system).
-* **Scale­-out**: Subdivide (by sharding) the data and run DVID servers on each subdivision, perhaps 
-eventually aggregating the subdivisions to a larger DVID server in a map/reduce fashion.
+DVID promotes the view of data as a collection of key­-value pairs where each key is composed of 
+global identifiers for versioning and data identification as well as a datatype­-specific index 
+(e.g., a spatial index) that allows large data to be broken into chunks. DVID focuses on how to 
+break data into these key­-value pairs in a way that optimizes data access for various clients.
 
 Why is distributed versioning central to DVID instead of a centralized approach?
 
@@ -99,8 +101,9 @@ views that accelerate particular access patterns. For example, quad trees can be
 and YZ orthogonal views or sparse volumes can compactly describe a neuron. The extra denormalized data 
 is kept in the datastore until a node is archived, which removes all denormalized key­-value pairs
 associated with that version node. Views of the same data can be eventually consistent.
-(_Status: Multi-scale quadtrees in XY, XZ, YZ, and sparse volumes implemented.  Octree planned by 
-Q2 2014.  Framework for syncing of denormalized views planned Q1-2 2014._)
+(_Status: Multi-scale 2d images in XY, XZ, YZ, surface voxels and sparse volumes implemented.  
+Multi-scale 3d, like an octree but also supporting arbitrary scaling levels for anisotropic data,
+is planned by Q2 2014.  Framework for syncing of denormalized views planned Q1-2 2014._)
 * **Flexible Data Types**: DVID provides a well­-defined interface to data type code that can be 
 easily added by users. A DVID server provides HTTP and RPC APIs, authentication, authorization, 
 versioning, provenance, and storage engines. It delegates datatype­-specific commands and processing to 
@@ -118,12 +121,6 @@ and [Seagate's Kinetic Open Storage Platform](https://developers.seagate.com/dis
 [Google's open source version](https://code.google.com/p/leveldb/), 
 [HyperLevelDB](https://github.com/rescrv/HyperLevelDB), and the default
 [Basho-tuned leveldb](https://github.com/basho/leveldb).  Lightning MDB to be added soon._)
-
-DVID promotes the view of data as a collection of key­-value pairs where each key is composed of 
-global identifiers for versioning and data identification as well as a datatype­-specific index 
-(e.g., a spatial index) that allows large data to be broken into chunks. DVID focuses on how to 
-break data into these key­-value pairs in a way that facilitates distributed systems as well as 
-optimization of data access for various clients.
 
 A DVID server is limited to local resources and the user determines what datasets, subvolume, and 
 versions are held within that DVID server. Overwrites are allowed but once a version is locked, no 

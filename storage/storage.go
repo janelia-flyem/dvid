@@ -67,9 +67,10 @@ type KeyValueGetter interface {
 	// KeysInRange returns a range of keys spanning (kStart, kEnd).
 	KeysInRange(kStart, kEnd Key) (keys []Key, err error)
 
-	// ProcessRange sends a range of key/value pairs to type-specific chunk handlers.
+	// ProcessRange sends a range of key/value pairs to type-specific chunk handlers,
+	// allowing chunk processing to be concurrent with key/value sequential reads.
 	// Since the chunks are typically sent during sequential read iteration, the
-	// receiving function can be organized as an asynchronous pool of chunk handlers.
+	// receiving function can be organized as a pool of chunk handling goroutines.
 	// See datatype.voxels.ProcessChunk() for an example.
 	ProcessRange(kStart, kEnd Key, op *ChunkOp, f func(*Chunk)) (err error)
 }

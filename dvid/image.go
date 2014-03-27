@@ -1067,17 +1067,14 @@ func ImageData(img image.Image) (data []uint8, bytesPerPixel, stride int32, err 
 		stride = int32(typedImg.Stride)
 		bytesPerPixel = 2
 	case *image.RGBA:
-		fmt.Println("image.RGBA in ImageData()")
 		data = typedImg.Pix
 		stride = int32(typedImg.Stride)
 		bytesPerPixel = 4
 	case *image.NRGBA:
-		fmt.Println("image.NRGBA in ImageData()")
 		data = typedImg.Pix
 		stride = int32(typedImg.Stride)
 		bytesPerPixel = 4
 	case *image.NRGBA64:
-		fmt.Println("image.NRGBA64 in ImageData()")
 		data = typedImg.Pix
 		stride = int32(typedImg.Stride)
 		bytesPerPixel = 8
