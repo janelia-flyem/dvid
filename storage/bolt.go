@@ -17,8 +17,8 @@ const (
 )
 
 type BoltDB struct {
-	// Directory of datastore
-	directory string
+	// Path to datastore
+	path string
 
 	// Config at time of Open()
 	config dvid.Config
@@ -40,16 +40,16 @@ func NewStore(path string, create bool, config dvid.Config) (Engine, error) {
 	if err != nil {
 		return nil, err
 	}
-
+	// TODO -- If we are passed a directory, create a file within it.
 	db, err := bolt.Open(path, 0666)
 	if err != nil {
 		return nil, err
 	}
 	boltdb := &BoltDB{
-		directory: path,
-		config:    config,
-		options:   opt,
-		db:        db,
+		path:    path,
+		config:  config,
+		options: opt,
+		db:      db,
 	}
 
 	// Create buckets for each key type.

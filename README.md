@@ -120,7 +120,9 @@ and [Seagate's Kinetic Open Storage Platform](https://developers.seagate.com/dis
 (_Status: Tested with three leveldb variants: 
 [Google's open source version](https://code.google.com/p/leveldb/), 
 [HyperLevelDB](https://github.com/rescrv/HyperLevelDB), and the default
-[Basho-tuned leveldb](https://github.com/basho/leveldb).  Lightning MDB to be added soon._)
+[Basho-tuned leveldb](https://github.com/basho/leveldb).  
+There's also experimental use of [Bolt](https://github.com/boltdb/bolt) 
+with the original C language Lightning MDB to be added in the near future._)
 
 A DVID server is limited to local resources and the user determines what datasets, subvolume, and 
 versions are held within that DVID server. Overwrites are allowed but once a version is locked, no 
@@ -183,6 +185,9 @@ If you haven't built with that buildem directory before, do the additional steps
     % make
     % cmake -D BUILDEM_DIR=/path/to/buildem/dir ..
 
+You can specify a particular storage engine for DVID by adding a `-D DVID_BACKEND=...` option
+to the above cmake command.  It currently defaults to `basholeveldb` (the Basho-tuned leveldb).
+
 ### Making and testing DVID
 
 Make dvid:
@@ -198,7 +203,7 @@ Tests are run with gocheck:
 Specifying your choice of [web client](http://github.com/janelia-flyem/dvid-webclient) 
 using "-webclient":
 
-    % dvid -webclient=/path/to/dvid-webclient -datastore=/path/to/datastore/dir serve
+    % dvid -webclient=/path/to/dvid-webclient serve /path/to/datastore/dir
     
 You can then modify the web client code and refresh the browser to see the changes.
 
@@ -243,13 +248,13 @@ If DVID was installed correctly, you should be able to ask dvid for help:
 Depending on the storage engine, DVID will store data into a directory.  We must initialize
 the datastore by specifying a datastore directory.
 
-    % dvid -datastore=/path/to/datastore/dir init
+    % dvid init /path/to/datastore/dir
 
 ### Start the DVID server
 
 The "-debug" option lets you see how DVID is processing requests.
 
-    % dvid -datastore=/path/to/datastore/dir -debug serve
+    % dvid -debug serve /path/to/datastore/dir
 
 If dvid wasn't compiled with a built-in web client, you'll see some complaints and ways you can 
 specify a web client.  For our purposes, though, we don't need the web console for this simple
