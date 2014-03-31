@@ -10,13 +10,17 @@ import (
 	humanize "github.com/janelia-flyem/go/go-humanize"
 )
 
+// These constants were guided by Basho documentation and their tuning of leveldb:
+//   https://github.com/basho/leveldb/blob/develop/README
+// See video on "Optimizing LevelDB for Performance and Scale" here:
+//   http://www.youtube.com/watch?v=vo88IdglU_8
 const (
 	Version = "Basho Leveldb"
 
 	Driver = "github.com/janelia-flyem/go/levigo"
 
 	// Default size of LRU cache that caches frequently used uncompressed blocks.
-	DefaultCacheSize = 1024 * dvid.Mega
+	DefaultCacheSize = 536870912
 
 	// Default # bits for Bloom Filter.  The filter reduces the number of unnecessary
 	// disk reads needed for Get() calls by a large factor.
@@ -44,7 +48,7 @@ const (
 	// so you may wish to adjust this parameter to control memory usage.
 	// Also, a larger write buffer will result in a longer recovery time
 	// the next time the database is opened.
-	DefaultWriteBufferSize = 512 * dvid.Mega
+	DefaultWriteBufferSize = 62914560
 
 	// Write Options
 
