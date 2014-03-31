@@ -677,7 +677,6 @@ func (d *Data) computeSizes(sizeCh chan *storage.Chunk, db storage.KeyValueSette
 
 	defer func() {
 		wg.Done()
-		batch.Close()
 	}()
 
 	// Sequentially process all the sparse volume data for each label
@@ -720,6 +719,7 @@ func (d *Data) computeSizes(sizeCh chan *storage.Chunk, db storage.KeyValueSette
 						d.DataName(), err.Error())
 					return
 				}
+				batch = batcher.NewBatch()
 			}
 		}
 		curLabel = label
@@ -1496,7 +1496,7 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 			dataKey.Index, err.Error())
 		return
 	}
-	batch.Clear()
+	batch = batcher.NewBatch()
 
 	// Store the KeyLabelSpatialMap keys (index = b + s) with slice of runs for value.
 	bsIndex := make([]byte, 1+8+dvid.IndexZYXSize)
@@ -1516,7 +1516,5 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 	if err := batch.Commit(); err != nil {
 		dvid.Log(dvid.Normal, "Error on batch PUT of KeyLabelSpatialMap on %s: %s\n",
 			dataKey.Index, err.Error())
-		return
 	}
-	batch.Close()
 }

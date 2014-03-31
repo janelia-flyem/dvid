@@ -91,9 +91,6 @@ else ()
     if ("${DVID_BACKEND}" STREQUAL "lmdb")
         set (DVID_BACKEND_DEPEND    ${lmdb_NAME})
         message ("Installing Lightning MDB for DVID storage engine")
-    elseif ("${DVID_BACKEND}" STREQUAL "couchbase")
-        set (DVID_BACKEND_DEPEND    "")   # Assume manual install
-        message ("Assuming manually installed couchbase will be used for DVID storage engine.")
     elseif ("${DVID_BACKEND}" STREQUAL "hyperleveldb")
         set (DVID_BACKEND_DEPEND    ${hyperleveldb_NAME})
         message ("Installing HyperLevelDB for DVID storage engine.")
@@ -115,6 +112,12 @@ else ()
                 endif ()
             endif()
         endif()
+    elseif ("${DVID_BACKEND}" STREQUAL "bolt")
+        set (DVID_BACKEND           "bolt")
+        set (DVID_BACKEND_DEPEND    "gobolt")
+        message ("Installing pure Go LMDB-inspired Bolt key/value store.")
+    elseif ("${DVID_BACKEND}" STREQUAL "couchbase")
+        message (FATAL_ERROR "Couchbase is currently not supported as a DVID storage engine.")
     endif ()
 
 
@@ -138,6 +141,11 @@ else ()
         ${BUILDEM_ENV_STRING} go get ${GO_GET} bazil.org/fuse
         DEPENDS     ${golang_NAME}
         COMMENT     "Added FUSE Go library")
+
+    add_custom_target (gobolt
+        ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/boltdb/bolt
+        DEPENDS     ${golang_NAME}
+        COMMENT     "Added BoltDB package")
 
     # Build DVID with chosen backend
     add_custom_target (dvid

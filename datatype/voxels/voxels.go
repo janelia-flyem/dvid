@@ -862,15 +862,18 @@ func AsyncWriteData(blocks Blocks, wg *sync.WaitGroup) error {
 					return
 				}
 				batch.Put(block.K, serialization)
-				if i%KVWriteSize == KVWriteSize-1 || i == len(blocks)-1 {
+				if i%KVWriteSize == KVWriteSize-1 {
 					if err := batch.Commit(); err != nil {
-						fmt.Printf("Error on trying to write batch: %s\n", err.Error())
+						dvid.Log(dvid.Normal, "Error on trying to write batch: %s\n", err.Error())
 						return
 					}
-					batch.Clear()
+					batch = batcher.NewBatch()
 				}
 			}
-			batch.Close()
+			if err := batch.Commit(); err != nil {
+				dvid.Log(dvid.Normal, "Error on trying to write batch: %s\n", err.Error())
+				return
+			}
 		} else {
 			// Serialize and compress the blocks.
 			keyvalues := make(storage.KeyValues, len(blocks))

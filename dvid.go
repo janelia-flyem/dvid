@@ -33,6 +33,9 @@ import (
 )
 
 var (
+	// Path to datastore.
+	datastorePath string
+
 	// Display usage if true.
 	showHelp = flag.Bool("help", false, "")
 
@@ -68,9 +71,6 @@ var (
 	// Address for http communication
 	httpAddress = flag.String("http", server.DefaultWebAddress, "")
 
-	// Path to datastore directory.
-	datastoreDir = flag.String("datastore", currentDir(), "")
-
 	// Number of logical CPUs to use for DVID.
 	useCPU = flag.Int("numcpu", 0, "")
 
@@ -86,7 +86,6 @@ dvid is a distributed, versioned image-oriented datastore
 
 Usage: dvid [options] <command>
 
-      -datastore  =string   Path to DVID datastore directory (default: current directory).
       -webclient  =string   Path to web client directory.  Leave unset for default pages.
       -rpc        =string   Address for RPC communication.
       -http       =string   Address for HTTP communication.
@@ -109,9 +108,9 @@ Commands that can be performed without a running server:
 
 	about
 	help
-	init
-	serve
-	repair
+	init   <datastore path>
+	serve  <datastore path>
+	repair <datastore path>
 
 `
 
@@ -164,7 +163,7 @@ func main() {
 		dvid.ChecksumUsed = dvid.CRC32
 	}
 
-	if *showHelp {
+	if *showHelp || flag.NArg() == 0 {
 		flag.Usage()
 		os.Exit(0)
 	}
@@ -219,16 +218,10 @@ func main() {
 	}()
 	signal.Notify(stopSig, os.Interrupt, os.Kill, syscall.SIGTERM)
 
-	// If we have no arguments, run in terminal mode, else execute command.
-	if flag.NArg() == 0 {
-		terminal := server.NewTerminal(*datastoreDir, *rpcAddress)
-		terminal.Shell()
-	} else {
-		command := dvid.Command(flag.Args())
-		if err := DoCommand(command); err != nil {
-			fmt.Fprintln(os.Stderr, err.Error())
-			os.Exit(1)
-		}
+	command := dvid.Command(flag.Args())
+	if err := DoCommand(command); err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		os.Exit(1)
 	}
 }
 
@@ -251,7 +244,7 @@ func DoCommand(cmd dvid.Command) error {
 		fmt.Println(datastore.Versions())
 	// Send everything else to server via DVID terminal
 	default:
-		terminal := server.NewTerminal(*datastoreDir, *rpcAddress)
+		client := server.NewClient(*rpcAddress)
 		request := datastore.Request{Command: cmd}
 		if *useStdin {
 			var err error
@@ -260,29 +253,41 @@ func DoCommand(cmd dvid.Command) error {
 				return fmt.Errorf("Error in reading from standard input: %s", err.Error())
 			}
 		}
-		return terminal.Send(request)
+		return client.Send(request)
 	}
 	return nil
 }
 
 // DoInit performs the "init" command, creating a new DVID datastore.
 func DoInit(cmd dvid.Command) error {
+	datastorePath := cmd.Argument(1)
+	if datastorePath == "" {
+		return fmt.Errorf("init command must be followed by the path to the datastore")
+	}
 	create := true
-	return datastore.Init(*datastoreDir, create, cmd.Settings())
+	return datastore.Init(datastorePath, create, cmd.Settings())
 }
 
 // DoRepair performs the "repair" command, trying to repair a storage engine
 func DoRepair(cmd dvid.Command) error {
-	if err := storage.RepairStore(*datastoreDir, cmd.Settings()); err != nil {
+	datastorePath := cmd.Argument(1)
+	if datastorePath == "" {
+		return fmt.Errorf("repair command must be followed by the path to the datastore")
+	}
+	if err := storage.RepairStore(datastorePath, cmd.Settings()); err != nil {
 		return err
 	}
-	fmt.Printf("Ran repair on database at %s.\n", *datastoreDir)
+	fmt.Printf("Ran repair on database at %s.\n", datastorePath)
 	return nil
 }
 
 // DoServe opens a datastore then creates both web and rpc servers for the datastore
 func DoServe(cmd dvid.Command) error {
-	if service, err := server.OpenDatastore(*datastoreDir); err != nil {
+	datastorePath := cmd.Argument(1)
+	if datastorePath == "" {
+		return fmt.Errorf("serve command must be followed by the path to the datastore")
+	}
+	if service, err := server.OpenDatastore(datastorePath); err != nil {
 		return err
 	} else {
 		if err := service.Serve(*httpAddress, *clientDir, *rpcAddress); err != nil {

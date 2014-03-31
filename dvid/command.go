@@ -167,6 +167,24 @@ func (cmd Command) String() string {
 	return strings.Join([]string(cmd), " ")
 }
 
+// Returns the argument at the given position using zero indexing.  Settings are not
+// considered arguments.  If no argument is at the given position, this returns
+// the empty string.
+func (cmd Command) Argument(pos int) string {
+	argPos := 0
+	for _, arg := range cmd {
+		elems := strings.Split(arg, "=")
+		if len(elems) != 2 {
+			// This is an argument
+			if argPos == pos {
+				return arg
+			}
+			argPos++
+		}
+	}
+	return ""
+}
+
 // Name returns the first argument of the command (in lower case) which is assumed to
 // be the name of the command.
 func (cmd Command) Name() string {

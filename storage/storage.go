@@ -26,6 +26,16 @@ func Shutdown() {
 	ShutdownFUSE()
 }
 
+// Op enumerates the types of single key-value operations that can be performed for storage engines.
+type Op uint8
+
+const (
+	GetOp Op = iota
+	PutOp
+	DeleteOp
+	CommitOp
+)
+
 // ChunkOp is a type-specific operation with an optional WaitGroup to
 // sync mapping before reduce.
 type ChunkOp struct {
@@ -102,20 +112,14 @@ type Batcher interface {
 
 // Batch groups operations into a transaction.
 type Batch interface {
-	// Commits a batch of operations.
-	Commit() error
-
 	// Delete removes from the batch a put using the given key.
 	Delete(k Key)
 
 	// Put adds to the batch a put using the given key/value.
 	Put(k Key, v []byte)
 
-	// Clear clears the contents of a write batch
-	Clear()
-
-	// Close closes a write batch
-	Close()
+	// Commits a batch of operations and closes the write batch.
+	Commit() error
 }
 
 // BulkIniters can employ even more aggressive optimization in loading large

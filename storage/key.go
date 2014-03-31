@@ -19,6 +19,38 @@ import (
 // distinct areas and makes sure keys don't conflict.
 type KeyType byte
 
+const (
+	// Key group that hold data for Datasets
+	KeyDatasets KeyType = iota
+
+	// Key group that holds Dataset structs.  There can be many Dataset structs
+	// persisted to a particular DVID datastore.
+	KeyDataset
+
+	// Key group that holds the Data.  Each Datatype figures out how to partition
+	// its own key space using some type-specific indexing scheme.
+	KeyData
+
+	// Key group that holds Sync links between Data.  Sync key/value pairs designate
+	// what values need to be updated when its linked data changes.
+	KeySync
+)
+
+func (t KeyType) String() string {
+	switch t {
+	case KeyDatasets:
+		return "Datasets Key Type"
+	case KeyDataset:
+		return "Dataset Key Type"
+	case KeyData:
+		return "Data Key Type"
+	case KeySync:
+		return "Data Sync Key Type"
+	default:
+		return "Unknown Key Type"
+	}
+}
+
 type Key interface {
 	KeyType() KeyType
 	BytesToKey([]byte) (Key, error)

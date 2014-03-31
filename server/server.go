@@ -60,7 +60,7 @@ var (
 	HandlerToken = make(chan int, MaxChunkHandlers)
 
 	// SpawnGoroutineMutex is a global lock for compute-intense processes that want to
-	// spawn goroutines that consume handler tokens.  This lets processes capture most 
+	// spawn goroutines that consume handler tokens.  This lets processes capture most
 	// if not all available handler tokens in a FIFO basis rather than have multiple
 	// concurrent requests launch a few goroutines each.
 	SpawnGoroutineMutex sync.Mutex
@@ -213,58 +213,9 @@ func Shutdown() {
 	dvid.BlockOnActiveCgo()
 }
 
-// ServerlessDo runs a command locally, opening and closing a datastore
-// as necessary.
-func ServerlessDo(datastoreDir string, request datastore.Request, reply *datastore.Response) error {
-	// Make sure we don't already have an open datastore.
-	if runningService.Service != nil {
-		return fmt.Errorf("Cannot do concurrent requests on different datastores.")
-	}
-
-	// Get exclusive ownership of a DVID datastore.  Wait if allowed and necessary.
-	dvid.Fmt(dvid.Debug, "Getting exclusive ownership of datastore at: %s\n", datastoreDir)
-	startTime := time.Now()
-	for {
-		var err *datastore.OpenError
-		runningService.Service, err = datastore.Open(datastoreDir)
-		if err != nil {
-			if TimeoutSecs == 0 || err.ErrorType != datastore.ErrorOpening {
-				return err
-			}
-			dvid.Fmt(dvid.Debug, "Waiting a second for exclusive datastore access...\n")
-			time.Sleep(1 * time.Second)
-			elapsed := time.Since(startTime).Seconds()
-			if elapsed > float64(TimeoutSecs) {
-				return fmt.Errorf("Unable to obtain exclusive access of datastore (%s) in %d seconds",
-					datastoreDir, TimeoutSecs)
-			}
-		} else {
-			break
-		}
-	}
-	defer Shutdown()
-
-	// Register an error logger that appends to a file in this datastore directory.
-	errorLog := filepath.Join(datastoreDir, ErrorLogFilename)
-	file, err := os.OpenFile(errorLog, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
-	if err != nil {
-		log.Fatalf("Unable to open error logging file (%s): %s\n", errorLog, err.Error())
-	}
-	dvid.SetErrorLoggingFile(file)
-
-	// Issue local command
-	var localConnect RPCConnection
-	err = localConnect.Do(request, reply)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
 // OpenDatastore returns a Server service.  Only one datastore can be opened
 // for any server.
-func OpenDatastore(datastoreDir string) (service *Service, err error) {
+func OpenDatastore(datastorePath string) (service *Service, err error) {
 	// Make sure we don't already have an open datastore.
 	if runningService.Service != nil {
 		err = fmt.Errorf("Cannot create new server. A DVID process can serve only one datastore.")
@@ -272,15 +223,15 @@ func OpenDatastore(datastoreDir string) (service *Service, err error) {
 	}
 
 	// Get exclusive ownership of a DVID datastore
-	log.Println("Getting exclusive ownership of datastore at:", datastoreDir)
+	log.Println("Getting exclusive ownership of datastore at:", datastorePath)
 
 	var openErr *datastore.OpenError
-	runningService.Service, openErr = datastore.Open(datastoreDir)
+	runningService.Service, openErr = datastore.Open(datastorePath)
 	if openErr != nil {
 		err = openErr
 		return
 	}
-	runningService.ErrorLogDir = datastoreDir
+	runningService.ErrorLogDir = filepath.Dir(datastorePath)
 
 	service = &runningService
 	return

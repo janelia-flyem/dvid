@@ -17,61 +17,25 @@ const maxDatasetLocalID = dvid.MaxLocalID32
 
 const maxDataLocalID = dvid.MaxLocalID
 
-const (
-	// Key group that hold data for Datasets
-	KeyDatasets KeyType = iota
-
-	// Key group that holds Dataset structs.  There can be many Dataset structs
-	// persisted to a particular DVID datastore.
-	KeyDataset
-
-	// Key group that holds the Data.  Each Datatype figures out how to partition
-	// its own key space using some type-specific indexing scheme.
-	KeyData
-
-	// Key group that holds Sync links between Data.  Sync key/value pairs designate
-	// what values need to be updated when its linked data changes.
-	KeySync
-)
-
-type KeyType storage.KeyType
-
-func (t KeyType) String() string {
-	switch t {
-	case KeyDatasets:
-		return "Datasets Key Type"
-	case KeyDataset:
-		return "Dataset Key Type"
-	case KeyData:
-		return "Data Key Type"
-	case KeySync:
-		return "Data Sync Key Type"
-	default:
-		return "Unknown Key Type"
-	}
-}
-
-// EndKey returns the last possible Key of this KeyType.
-
 // DatasetsKey is an implementation of storage.Key for Datasets persistence
 type DatasetsKey struct{}
 
 func (k DatasetsKey) KeyType() storage.KeyType {
-	return storage.KeyType(KeyDatasets)
+	return storage.KeyDatasets
 }
 
 func (k DatasetsKey) BytesToKey(b []byte) (storage.Key, error) {
 	if len(b) < 1 {
 		return nil, fmt.Errorf("Malformed DatasetsKey bytes (too few): %x", b)
 	}
-	if b[0] != byte(KeyDatasets) {
-		return nil, fmt.Errorf("Cannot convert %s Key Type into DatasetsKey", KeyType(b[0]))
+	if b[0] != byte(storage.KeyDatasets) {
+		return nil, fmt.Errorf("Cannot convert %s Key Type into DatasetsKey", storage.KeyType(b[0]))
 	}
 	return &DatasetsKey{}, nil
 }
 
 func (k DatasetsKey) Bytes() []byte {
-	return []byte{byte(KeyDatasets)}
+	return []byte{byte(storage.KeyDatasets)}
 }
 
 func (k DatasetsKey) BytesString() string {
@@ -88,22 +52,22 @@ type DatasetKey struct {
 }
 
 func (k DatasetKey) KeyType() storage.KeyType {
-	return storage.KeyType(KeyDataset)
+	return storage.KeyDataset
 }
 
 func (k DatasetKey) BytesToKey(b []byte) (storage.Key, error) {
 	if len(b) < 1 {
 		return nil, fmt.Errorf("Malformed DatasetKey bytes (too few): %x", b)
 	}
-	if b[0] != byte(KeyDataset) {
-		return nil, fmt.Errorf("Cannot convert %s Key Type into DatasetKey", KeyType(b[0]))
+	if b[0] != byte(storage.KeyDataset) {
+		return nil, fmt.Errorf("Cannot convert %s Key Type into DatasetKey", storage.KeyType(b[0]))
 	}
 	dataset, _ := dvid.LocalID32FromBytes(b[1:])
 	return &DatasetKey{dvid.DatasetLocalID(dataset)}, nil
 }
 
 func (k DatasetKey) Bytes() (b []byte) {
-	b = []byte{byte(KeyDataset)}
+	b = []byte{byte(storage.KeyDataset)}
 	b = append(b, dvid.LocalID32(k.Dataset).Bytes()...)
 	return
 }
@@ -176,7 +140,7 @@ func KeyToChunkIndexer(key storage.Key) (dvid.ChunkIndexer, error) {
 // ------ Key Interface ----------
 
 func (key *DataKey) KeyType() storage.KeyType {
-	return storage.KeyType(KeyData)
+	return storage.KeyData
 }
 
 // BytesToKey returns a DataKey given a slice of bytes
@@ -184,8 +148,8 @@ func (key *DataKey) BytesToKey(b []byte) (storage.Key, error) {
 	if len(b) < 9 {
 		return nil, fmt.Errorf("Malformed DataKey bytes (too few): %x", b)
 	}
-	if b[0] != byte(KeyData) {
-		return nil, fmt.Errorf("Cannot convert %s Key Type into DataKey", KeyType(b[0]))
+	if b[0] != byte(storage.KeyData) {
+		return nil, fmt.Errorf("Cannot convert %s Key Type into DataKey", storage.KeyType(b[0]))
 	}
 	start := 1
 	dataset, length := dvid.LocalID32FromBytes(b[start:])
@@ -205,7 +169,7 @@ func (key *DataKey) BytesToKey(b []byte) (storage.Key, error) {
 
 // Bytes returns a slice of bytes derived from the concatenation of the key elements.
 func (key *DataKey) Bytes() (b []byte) {
-	b = []byte{byte(KeyData)}
+	b = []byte{byte(storage.KeyData)}
 	b = append(b, dvid.LocalID32(key.Dataset).Bytes()...)
 	b = append(b, dvid.LocalID(key.Data).Bytes()...)
 	b = append(b, dvid.LocalID(key.Version).Bytes()...)

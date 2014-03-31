@@ -389,6 +389,8 @@ func (db *LevelDB) ProcessRange(kStart, kEnd Key, op *ChunkOp, f func(*Chunk)) e
 	}
 }
 
+// ---- KeyValueSetter interface ------
+
 // Put writes a value with given key.
 func (db *LevelDB) Put(k Key, v []byte) error {
 	dvid.StartCgo()
@@ -400,8 +402,6 @@ func (db *LevelDB) Put(k Key, v []byte) error {
 	StoreValueBytesWritten <- len(v)
 	return err
 }
-
-// ---- KeyValueSetter interface ------
 
 // PutRange puts key/value pairs that have been sorted in sequential key order.
 // Current implementation in levigo driver simply does a batch write.
@@ -455,12 +455,6 @@ func (db *LevelDB) NewBatch() Batch {
 
 // --- Batch interface ---
 
-func (batch *goBatch) Commit() error {
-	dvid.StartCgo()
-	defer dvid.StopCgo()
-	return batch.ldb.Write(batch.wo, batch.WriteBatch)
-}
-
 func (batch *goBatch) Delete(k Key) {
 	dvid.StartCgo()
 	defer dvid.StopCgo()
@@ -476,6 +470,18 @@ func (batch *goBatch) Put(k Key, v []byte) {
 	batch.WriteBatch.Put(kBytes, v)
 }
 
+func (batch *goBatch) Commit() error {
+	dvid.StartCgo()
+	defer dvid.StopCgo()
+	err := batch.ldb.Write(batch.wo, batch.WriteBatch)
+	batch.WriteBatch.Close()
+	return err
+}
+
+/** Clear and Close were removed due to how other key-value stores implement batches.
+    It's easier to implement cross-database handling of a simple write/delete batch
+    that commits then closes rather than something that clears.
+
 func (batch *goBatch) Clear() {
 	dvid.StartCgo()
 	defer dvid.StopCgo()
@@ -487,6 +493,7 @@ func (batch *goBatch) Close() {
 	defer dvid.StopCgo()
 	batch.WriteBatch.Close()
 }
+**/
 
 // --- Options ----
 

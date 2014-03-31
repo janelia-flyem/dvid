@@ -110,7 +110,7 @@ versioning, provenance, and storage engines. It delegates datatype­-specific co
 data type code. As long as a DVID type can return data for its implemented commands, we don’t care how 
 its implemented. (_Status: Variety of voxel types, quadtree, label maps, and key-value implemented. 
 FUSE interface for key-value type working but not heavily used.  Authentication and authorization support planned Q2 2014, likely using Mozilla Persona + auth tokens similar to github API._)
-* **Scalable Storage Engine**: Although we may have DVID support polyglot persistence
+* **Scalable Storage Engine**: Although DVID may support polyglot persistence
 (i.e., allow use of relational, graph, or NoSQL databases), we are initially focused on 
 key­-value stores. DVID has an abstract key­-value interface to its swappable storage engine. 
 We choose a key­-value interface because (1) there are a large number of high­-performance, open­-source 
