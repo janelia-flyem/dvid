@@ -233,7 +233,6 @@ func (bdb *BoltDB) Put(k Key, v []byte) error {
 }
 
 // PutRange puts key/value pairs that have been sorted in sequential key order.
-// Current implementation in levigo driver simply does a batch write.
 func (bdb *BoltDB) PutRange(values []KeyValue) error {
 	return bdb.db.Update(func(tx *bolt.Tx) error {
 		if values == nil || len(values) == 0 {

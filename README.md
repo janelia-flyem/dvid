@@ -117,12 +117,12 @@ We choose a key­-value interface because (1) there are a large number of high­
 implementations that run from embedded to clustered systems, (2) the surface area of the API is very 
 small, even after adding important cases like bulk loads or sequential key read/write, and (3) novel technology tends to match key­-value interfaces, e.g., [groupcache](https://github.com/golang/groupcache)
 and [Seagate's Kinetic Open Storage Platform](https://developers.seagate.com/display/KV/Kinetic+Open+Storage+Documentation+Wiki).
+As storage becomes more log structured, the key/value API becomes a more natural fit.
 (_Status: Tested with three leveldb variants: 
 [Google's open source version](https://code.google.com/p/leveldb/), 
 [HyperLevelDB](https://github.com/rescrv/HyperLevelDB), and the default
-[Basho-tuned leveldb](https://github.com/basho/leveldb).  
-There's also experimental use of [Bolt](https://github.com/boltdb/bolt) 
-with the original C language Lightning MDB to be added in the near future._)
+[Basho-tuned leveldb](https://github.com/basho/leveldb).  Added [Lightning MDB](http://symas.com/mdb/) and also
+experimental use of [Bolt](https://github.com/boltdb/bolt)._)
 
 A DVID server is limited to local resources and the user determines what datasets, subvolume, and 
 versions are held within that DVID server. Overwrites are allowed but once a version is locked, no 
@@ -186,7 +186,8 @@ If you haven't built with that buildem directory before, do the additional steps
     % cmake -D BUILDEM_DIR=/path/to/buildem/dir ..
 
 You can specify a particular storage engine for DVID by adding a `-D DVID_BACKEND=...` option
-to the above cmake command.  It currently defaults to `basholeveldb` (the Basho-tuned leveldb).
+to the above cmake command.  It currently defaults to `basholeveldb` (the Basho-tuned leveldb)
+but could be run with the `lmdb` setting to install [Lightning MDB](http://symas.com/mdb/).
 
 ### Making and testing DVID
 

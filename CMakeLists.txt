@@ -81,7 +81,6 @@ else ()
     include (leveldb)
     include (basholeveldb)
     include (hyperleveldb)
-    include (lmdb)
 
     set (DVID_BACKEND "basholeveldb" CACHE TYPE STRING)
     
@@ -89,8 +88,8 @@ else ()
 
 	# Defaults to standard leveldb
     if ("${DVID_BACKEND}" STREQUAL "lmdb")
-        set (DVID_BACKEND_DEPEND    ${lmdb_NAME})
-        message ("Installing Lightning MDB for DVID storage engine")
+        set (DVID_BACKEND_DEPEND    "gomdb")
+        message ("Installing Lightning MDB with modified Go driver for DVID storage engine")
     elseif ("${DVID_BACKEND}" STREQUAL "hyperleveldb")
         set (DVID_BACKEND_DEPEND    ${hyperleveldb_NAME})
         message ("Installing HyperLevelDB for DVID storage engine.")
@@ -113,7 +112,6 @@ else ()
             endif()
         endif()
     elseif ("${DVID_BACKEND}" STREQUAL "bolt")
-        set (DVID_BACKEND           "bolt")
         set (DVID_BACKEND_DEPEND    "gobolt")
         message ("Installing pure Go LMDB-inspired Bolt key/value store.")
     elseif ("${DVID_BACKEND}" STREQUAL "couchbase")
@@ -146,6 +144,11 @@ else ()
         ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/boltdb/bolt
         DEPENDS     ${golang_NAME}
         COMMENT     "Added BoltDB package")
+
+    add_custom_target (gomdb
+        ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/DocSavage/gomdb
+        DEPENDS     ${golang_NAME}
+        COMMENT     "Added CGo Lightning MDB")
 
     # Build DVID with chosen backend
     add_custom_target (dvid
