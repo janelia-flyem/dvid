@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"image"
+	"io/ioutil"
 	"net/http"
 	"strconv"
 	"strings"
@@ -750,17 +751,31 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 				if err != nil {
 					return err
 				}
-				if data, err := voxels.GetVolume(uuid, d, e); err != nil {
+				data, err := voxels.GetVolume(uuid, d, e)
+				if err != nil {
 					return err
-				} else {
-					w.Header().Set("Content-type", "application/octet-stream")
-					_, err = w.Write(data)
-					if err != nil {
-						return err
-					}
+				}
+				w.Header().Set("Content-type", "application/octet-stream")
+				_, err = w.Write(data)
+				if err != nil {
+					return err
 				}
 			} else {
-				return fmt.Errorf("DVID does not yet support POST of volume data")
+				if isotropic {
+					return fmt.Errorf("can only PUT 'raw' not 'isotropic' images")
+				}
+				data, err := ioutil.ReadAll(r.Body)
+				if err != nil {
+					return err
+				}
+				e, err := d.NewExtHandler(subvol, data)
+				if err != nil {
+					return err
+				}
+				err = voxels.PutVoxels(uuid, d, e)
+				if err != nil {
+					return err
+				}
 			}
 			dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: %s (%s)", r.Method, subvol, r.URL)
 		default:
