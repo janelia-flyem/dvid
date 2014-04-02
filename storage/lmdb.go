@@ -307,6 +307,9 @@ func (db *LMDB) Put(k Key, v []byte) error {
 	}
 	defer txn.Commit()
 	kBytes := k.Bytes()
+	if v == nil || len(v) == 0 {
+		v = []byte{0}
+	}
 	if err := txn.Put(db.dbi, kBytes, v, 0); err != nil {
 		return err
 	}
@@ -331,11 +334,15 @@ func (db *LMDB) PutRange(values []KeyValue) error {
 
 	for _, kv := range values {
 		kBytes := kv.K.Bytes()
-		if err := txn.Put(db.dbi, kBytes, kv.V, 0); err != nil {
+		v := kv.V
+		if v == nil || len(v) == 0 {
+			v = []byte{0}
+		}
+		if err := txn.Put(db.dbi, kBytes, v, 0); err != nil {
 			return err
 		}
 		StoreKeyBytesRead <- len(kBytes)
-		StoreValueBytesRead <- len(kv.V)
+		StoreValueBytesRead <- len(v)
 	}
 	return nil
 }
@@ -408,6 +415,9 @@ func (b *batch) Put(k Key, v []byte) {
 		dvid.StartCgo()
 		defer dvid.StopCgo()
 		kBytes := k.Bytes()
+		if v == nil || len(v) == 0 {
+			v = []byte{0}
+		}
 		if err := b.txn.Put(b.dbi, kBytes, v, 0); err != nil {
 			dvid.Error("Error in batch Put: %s", err.Error())
 			return

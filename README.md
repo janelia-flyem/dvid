@@ -9,7 +9,8 @@ DVID is a *distributed, versioned, image-oriented datastore* written to support
 [Janelia Farm Reseach Center's](http://www.janelia.org) brain imaging, analysis and 
 visualization efforts.  DVID's initial focus is on efficiently storing and retrieving 
 3d grayscale and label data in a variety of ways, e.g., subvolumes, images in XY, XZ, and YZ 
-orientation, multiscale tiles (quadtree and octree forms), and sparse volumes determined by a label.
+orientation, multiscale 2d and 3d (similar to quadtree and octree forms), and sparse volumes 
+determined by a label.
 
 It could be described as a "github for large image-oriented data" because each DVID
 server can manage multiple repositories, each of which contains an image-oriented dataset
@@ -46,7 +47,8 @@ first­ class datastore that will eventually (or continuously) be synced with re
 institutional DVID servers save for resource limitations like the size of the data that can be 
 managed.  Our vision is to have something like a "github" for image-oriented data, although there are a 
 number of differences due to the size and typing of data as well as the approach to transferring
-versioned data between DVID servers.
+versioned data between DVID servers.  We hope to leverage the significant experience in 
+crafting workflows and management tools for distributed, versioned operations.
 
 DVID promotes the view of data as a collection of key­-value pairs where each key is composed of 
 global identifiers for versioning and data identification as well as a datatype­-specific index 
@@ -83,7 +85,9 @@ exclusive to an application can be created and (2) have well­-defined interface
 engine and the client, so application­-specific optimizations can be made. A research group can buy 
 servers and deploy a relatively simple system that is dedicated for a particular use case or run 
 applications in lock­step so optimizations are easier to make, e.g., the formatting of data to suit a 
-particular data access pattern.
+particular data access pattern.  After a particular use case is addressed like image acquisition,
+some or all of the data can be synced to another DVID server that may be optimized for different 
+uses like parallel proofreading operations in disjoint but small subvolumes.
 
 Planned and Existing Features for DVID:
 
@@ -109,7 +113,8 @@ easily added by users. A DVID server provides HTTP and RPC APIs, authentication,
 versioning, provenance, and storage engines. It delegates datatype­-specific commands and processing to 
 data type code. As long as a DVID type can return data for its implemented commands, we don’t care how 
 its implemented. (_Status: Variety of voxel types, quadtree, label maps, and key-value implemented. 
-FUSE interface for key-value type working but not heavily used.  Authentication and authorization support planned Q2 2014, likely using Mozilla Persona + auth tokens similar to github API._)
+FUSE interface for key-value type working but not heavily used.  Authentication and authorization 
+support planned Q2 2014, likely using Mozilla Persona + auth tokens similar to github API._)
 * **Scalable Storage Engine**: Although DVID may support polyglot persistence
 (i.e., allow use of relational, graph, or NoSQL databases), we are initially focused on 
 key­-value stores. DVID has an abstract key­-value interface to its swappable storage engine. 
