@@ -126,7 +126,7 @@ const WebHelp = `
 func BadRequest(w http.ResponseWriter, r *http.Request, message string) {
 	errorMsg := fmt.Sprintf("ERROR using REST API: %s (%s).", message, r.URL.Path)
 	errorMsg += "  Use 'dvid help' to get proper API request format.\n"
-	dvid.Error(errorMsg)
+	dvid.Log(dvid.Normal, errorMsg)
 	http.Error(w, errorMsg, http.StatusBadRequest)
 }
 
