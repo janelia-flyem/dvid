@@ -31,35 +31,60 @@ type Datasets struct {
 	// Efficiently maps all UUIDs to the version DAG from which it came.
 	mapUUID map[dvid.UUID]*Dataset
 
+	// Keep track of dataset local IDs and their dataset.
+	dsetIDs map[dvid.DatasetLocalID]*Dataset
+
 	// Counter that provides the local ID of the next new dataset.
 	newDatasetID dvid.DatasetLocalID
 }
 
-// DataService returns a service for data of a given name under a Dataset.
-func (dsets *Datasets) DataService(u dvid.UUID, name dvid.DataString) (dataservice DataService, err error) {
+// DataServiceByUUID returns a service for data of a given name under a Dataset referenced by UUID.
+func (dsets *Datasets) DataServiceByUUID(u dvid.UUID, name dvid.DataString) (DataService, error) {
 	// Determine the dataset that contains the node with this UUID
 	dataset, found := dsets.mapUUID[u]
 	if !found {
-		err = fmt.Errorf("No node with UUID %s found", u)
-		return
+		return nil, fmt.Errorf("No node with UUID %s found", u)
 	}
-	dataservice, err = dataset.DataService(name)
+	dataservice, err := dataset.DataService(name)
 	if err != nil {
-		err = fmt.Errorf("No data named '%s' at node with UUID %s: %s", name, u, err.Error())
+		return nil, fmt.Errorf("No data named '%s' at node with UUID %s: %s", name, u, err.Error())
 	}
-	return
+	return dataservice, nil
+}
+
+// DataServiceByLocalID returns a service for data of a given name under a Dataset referenced by local ID.
+func (dsets *Datasets) DataServiceByLocalID(id dvid.DatasetLocalID, name dvid.DataString) (DataService, error) {
+	// Determine the dataset that contains the node with this UUID
+	dataset, found := dsets.dsetIDs[id]
+	if !found {
+		return nil, fmt.Errorf("No dataset with local ID '%d' found", id)
+	}
+	dataservice, err := dataset.DataService(name)
+	if err != nil {
+		return nil, fmt.Errorf("No data named '%s' at local dataset ID %d: %s", name, id, err.Error())
+	}
+	return dataservice, nil
 }
 
 // NOTE: Alterations of Datasets should be approached through datastore.Service since it
 // will coordinate persistence of in-memory Datasets as well as multiple storage engines.
 
 // DatasetFromUUID returns a dataset given a UUID.
-func (dsets *Datasets) DatasetFromUUID(u dvid.UUID) (dataset *Dataset, err error) {
+func (dsets *Datasets) DatasetFromUUID(u dvid.UUID) (*Dataset, error) {
 	dataset, found := dsets.mapUUID[u]
 	if !found {
-		err = fmt.Errorf("DatasetFromUUID(): Illegal UUID (%s) not found", u)
+		return nil, fmt.Errorf("DatasetFromUUID(): Illegal UUID (%s) not found", u)
 	}
-	return
+	return dataset, nil
+}
+
+// DatasetFromLocalID returns a dataset from a local dataset ID.
+func (dsets *Datasets) DatasetFromLocalID(id dvid.DatasetLocalID) (*Dataset, error) {
+	dataset, found := dsets.dsetIDs[id]
+	if !found {
+		return nil, fmt.Errorf("DatasetFromLocalID(): Illegal local dataset ID (%d) not found", id)
+	}
+	return dataset, nil
 }
 
 // DatasetFromString returns a dataset from a UUID string.
@@ -130,6 +155,7 @@ func (dsets *Datasets) newDataset() (dset *Dataset, err error) {
 	dsets.newDatasetID++
 	dsets.list = append(dsets.list, dset)
 	dsets.mapUUID[dset.Root] = dset
+	dsets.dsetIDs[dset.DatasetID] = dset
 	return
 }
 
@@ -235,6 +261,7 @@ func (dsets *Datasets) Load(db storage.KeyValueGetter) (err error) {
 	// Reconstruct the Datasets by associating UUIDs.
 	dsets.list = []*Dataset{}
 	dsets.mapUUID = make(map[dvid.UUID]*Dataset)
+	dsets.dsetIDs = make(map[dvid.DatasetLocalID]*Dataset)
 	for _, value := range keyvalues {
 		dataset := new(Dataset)
 		err := dvid.Deserialize(value.V, dataset)
@@ -245,6 +272,7 @@ func (dsets *Datasets) Load(db storage.KeyValueGetter) (err error) {
 		for u, _ := range dataset.Nodes {
 			dsets.mapUUID[u] = dataset
 		}
+		dsets.dsetIDs[dataset.DatasetID] = dataset
 	}
 	return
 }

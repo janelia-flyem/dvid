@@ -52,13 +52,13 @@ func (suite *TestSuite) TestNewDataDifferent(c *C) {
 	err = suite.service.NewData(root, "grayscale8", "image1", config)
 	c.Assert(err, IsNil)
 
-	dataservice1, err := suite.service.DataService(root, "image1")
+	dataservice1, err := suite.service.DataServiceByUUID(root, "image1")
 	c.Assert(err, IsNil)
 
 	err = suite.service.NewData(root, "grayscale8", "image2", config)
 	c.Assert(err, IsNil)
 
-	dataservice2, err := suite.service.DataService(root, "image2")
+	dataservice2, err := suite.service.DataServiceByUUID(root, "image2")
 	c.Assert(err, IsNil)
 
 	data1, ok := dataservice1.(*Data)
@@ -119,7 +119,7 @@ func (suite *TestSuite) makeGrayscale(c *C, root dvid.UUID, name dvid.DataString
 	err := suite.service.NewData(root, "grayscale8", name, config)
 	c.Assert(err, IsNil)
 
-	dataservice, err := suite.service.DataService(root, dvid.DataString(name))
+	dataservice, err := suite.service.DataServiceByUUID(root, dvid.DataString(name))
 	c.Assert(err, IsNil)
 
 	grayscale, ok := dataservice.(*Data)

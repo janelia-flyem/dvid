@@ -57,7 +57,7 @@ func Init(directory string, create bool, config dvid.Config) error {
 
 // Service couples an open DVID storage engine and DVID datasets.
 type Service struct {
-	datasets *Datasets
+	*Datasets
 
 	// The backend storage which is private since we want to create an object
 	// interface (e.g., cache object or UUID map) and hide DVID-specific keys.
@@ -148,15 +148,6 @@ func Open(path string) (s *Service, openErr *OpenError) {
 	return
 }
 
-// DataService returns a service for data of a given name and version
-func (s *Service) DataService(u dvid.UUID, name dvid.DataString) (dataservice DataService, err error) {
-	if s.datasets == nil {
-		err = fmt.Errorf("Datastore service has no datasets available")
-		return
-	}
-	return s.datasets.DataService(u, name)
-}
-
 // StorageEngine returns a a key-value database interface.
 func (s *Service) StorageEngine() storage.Engine {
 	return s.engine
@@ -194,12 +185,12 @@ func (s *Service) Shutdown() {
 
 // DatasetsListJSON returns JSON of a list of datasets.
 func (s *Service) DatasetsListJSON() (stringJSON string, err error) {
-	if s.datasets == nil {
+	if s.Datasets == nil {
 		stringJSON = "{}"
 		return
 	}
 	var bytesJSON []byte
-	bytesJSON, err = s.datasets.MarshalJSON()
+	bytesJSON, err = s.Datasets.MarshalJSON()
 	if err != nil {
 		return
 	}
@@ -208,12 +199,12 @@ func (s *Service) DatasetsListJSON() (stringJSON string, err error) {
 
 // DatasetsAllJSON returns JSON of a list of datasets.
 func (s *Service) DatasetsAllJSON() (stringJSON string, err error) {
-	if s.datasets == nil {
+	if s.Datasets == nil {
 		stringJSON = "{}"
 		return
 	}
 	var bytesJSON []byte
-	bytesJSON, err = s.datasets.AllJSON()
+	bytesJSON, err = s.Datasets.AllJSON()
 	if err != nil {
 		return
 	}
@@ -222,11 +213,11 @@ func (s *Service) DatasetsAllJSON() (stringJSON string, err error) {
 
 // DatasetJSON returns JSON for a particular dataset referenced by a uuid.
 func (s *Service) DatasetJSON(root dvid.UUID) (stringJSON string, err error) {
-	if s.datasets == nil {
+	if s.Datasets == nil {
 		stringJSON = "{}"
 		return
 	}
-	dataset, err := s.datasets.DatasetFromUUID(root)
+	dataset, err := s.Datasets.DatasetFromUUID(root)
 	if err != nil {
 		return "{}", err
 	}
@@ -240,16 +231,16 @@ func (s *Service) DatasetJSON(root dvid.UUID) (stringJSON string, err error) {
 
 // NewDataset creates a new dataset.
 func (s *Service) NewDataset() (root dvid.UUID, datasetID dvid.DatasetLocalID, err error) {
-	if s.datasets == nil {
+	if s.Datasets == nil {
 		err = fmt.Errorf("Datastore service has no datasets available")
 		return
 	}
 	var dataset *Dataset
-	dataset, err = s.datasets.newDataset()
+	dataset, err = s.Datasets.newDataset()
 	if err != nil {
 		return
 	}
-	err = s.datasets.Put(s.kvSetter) // Need to persist change to list of Dataset
+	err = s.Datasets.Put(s.kvSetter) // Need to persist change to list of Dataset
 	if err != nil {
 		return
 	}
@@ -262,12 +253,12 @@ func (s *Service) NewDataset() (root dvid.UUID, datasetID dvid.DatasetLocalID, e
 // NewVersions creates a new version (child node) off of a LOCKED parent node.
 // Will return an error if the parent node has not been locked.
 func (s *Service) NewVersion(parent dvid.UUID) (u dvid.UUID, err error) {
-	if s.datasets == nil {
+	if s.Datasets == nil {
 		err = fmt.Errorf("Datastore service has no datasets available")
 		return
 	}
 	var dataset *Dataset
-	dataset, u, err = s.datasets.newChild(parent)
+	dataset, u, err = s.Datasets.newChild(parent)
 	if err != nil {
 		return
 	}
@@ -277,10 +268,10 @@ func (s *Service) NewVersion(parent dvid.UUID) (u dvid.UUID, err error) {
 
 // NewData adds data of given name and type to a dataset specified by a UUID.
 func (s *Service) NewData(u dvid.UUID, typename dvid.TypeString, dataname dvid.DataString, config dvid.Config) error {
-	if s.datasets == nil {
+	if s.Datasets == nil {
 		return fmt.Errorf("Datastore service has no datasets available")
 	}
-	dataset, err := s.datasets.DatasetFromUUID(u)
+	dataset, err := s.Datasets.DatasetFromUUID(u)
 	if err != nil {
 		return err
 	}
@@ -293,10 +284,10 @@ func (s *Service) NewData(u dvid.UUID, typename dvid.TypeString, dataname dvid.D
 
 // ModifyData modifies data of given name in dataset specified by a UUID.
 func (s *Service) ModifyData(u dvid.UUID, dataname dvid.DataString, config dvid.Config) error {
-	if s.datasets == nil {
+	if s.Datasets == nil {
 		return fmt.Errorf("Datastore service has no datasets available")
 	}
-	dataset, err := s.datasets.DatasetFromUUID(u)
+	dataset, err := s.Datasets.DatasetFromUUID(u)
 	if err != nil {
 		return err
 	}
@@ -309,10 +300,10 @@ func (s *Service) ModifyData(u dvid.UUID, dataname dvid.DataString, config dvid.
 
 // Locks the node with the given UUID.
 func (s *Service) Lock(u dvid.UUID) error {
-	if s.datasets == nil {
+	if s.Datasets == nil {
 		return fmt.Errorf("Datastore service has no datasets available")
 	}
-	dataset, err := s.datasets.DatasetFromUUID(u)
+	dataset, err := s.Datasets.DatasetFromUUID(u)
 	if err != nil {
 		return err
 	}
@@ -326,10 +317,10 @@ func (s *Service) Lock(u dvid.UUID) error {
 // SaveDataset forces this service to persist the dataset with given UUID.
 // It is useful when modifying datasets internally.
 func (s *Service) SaveDataset(u dvid.UUID) error {
-	if s.datasets == nil {
+	if s.Datasets == nil {
 		return fmt.Errorf("Datastore service has no datasets available")
 	}
-	dataset, err := s.datasets.DatasetFromUUID(u)
+	dataset, err := s.Datasets.DatasetFromUUID(u)
 	if err != nil {
 		return err
 	}
@@ -339,12 +330,12 @@ func (s *Service) SaveDataset(u dvid.UUID) error {
 // LocalIDFromUUID when supplied a UUID string, returns smaller sized local IDs that identify a
 // dataset and a version.
 func (s *Service) LocalIDFromUUID(u dvid.UUID) (dID dvid.DatasetLocalID, vID dvid.VersionLocalID, err error) {
-	if s.datasets == nil {
+	if s.Datasets == nil {
 		err = fmt.Errorf("Datastore service has no datasets available")
 		return
 	}
 	var dataset *Dataset
-	dataset, err = s.datasets.DatasetFromUUID(u)
+	dataset, err = s.Datasets.DatasetFromUUID(u)
 	if err != nil {
 		return
 	}
@@ -363,12 +354,12 @@ func (s *Service) LocalIDFromUUID(u dvid.UUID) (dID dvid.DatasetLocalID, vID dvi
 func (s *Service) NodeIDFromString(str string) (u dvid.UUID, dID dvid.DatasetLocalID,
 	vID dvid.VersionLocalID, err error) {
 
-	if s.datasets == nil {
+	if s.Datasets == nil {
 		err = fmt.Errorf("Datastore service has no datasets available")
 		return
 	}
 	var dataset *Dataset
-	dataset, u, err = s.datasets.DatasetFromString(str)
+	dataset, u, err = s.Datasets.DatasetFromString(str)
 	if err != nil {
 		return
 	}
@@ -395,8 +386,8 @@ func (s *Service) About() string {
 	writeLine("Name", "Version")
 	writeLine("DVID datastore", Version)
 	writeLine("Storage backend", storage.Version)
-	if s.datasets != nil {
-		for _, dtype := range s.datasets.Datatypes() {
+	if s.Datasets != nil {
+		for _, dtype := range s.Datasets.Datatypes() {
 			writeLine(dtype.DatatypeName(), dtype.DatatypeVersion())
 		}
 	}
@@ -422,8 +413,8 @@ func (s *Service) TypesJSON() (jsonStr string, err error) {
 // with the current datasets in the service.
 func (s *Service) CurrentTypesJSON() (jsonStr string, err error) {
 	data := make(map[dvid.TypeString]string)
-	if s.datasets != nil {
-		for _, dtype := range s.datasets.Datatypes() {
+	if s.Datasets != nil {
+		for _, dtype := range s.Datasets.Datatypes() {
 			data[dtype.DatatypeName()] = dtype.DatatypeVersion()
 		}
 	}
@@ -438,13 +429,13 @@ func (s *Service) CurrentTypesJSON() (jsonStr string, err error) {
 // DataChart returns a text chart of data names and their types for this DVID server.
 func (s *Service) DataChart() string {
 	var text string
-	if s.datasets == nil || len(s.datasets.list) == 0 {
+	if s.Datasets == nil || len(s.Datasets.list) == 0 {
 		return "  No datasets have been added to this datastore.\n"
 	}
 	writeLine := func(name dvid.DataString, version string, url UrlString) {
 		text += fmt.Sprintf("%-15s  %-25s  %s\n", name, version, url)
 	}
-	for num, dset := range s.datasets.list {
+	for num, dset := range s.Datasets.list {
 		text += fmt.Sprintf("\nDataset %d (UUID = %s):\n\n", num+1, dset.Root)
 		writeLine("Name", "Type Name", "Url")
 		for name, data := range dset.DataMap {

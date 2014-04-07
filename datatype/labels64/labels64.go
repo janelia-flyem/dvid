@@ -317,16 +317,30 @@ type Datatype struct {
 	*voxels.Datatype
 }
 
-// Get returns a pointer to labels64 data given a version (UUID) and data name.
-func Get(uuid dvid.UUID, name dvid.DataString) (*Data, error) {
+// GetByUUID returns a pointer to labels64 data given a version (UUID) and data name.
+func GetByUUID(uuid dvid.UUID, name dvid.DataString) (*Data, error) {
 	service := server.DatastoreService()
-	source, err := service.DataService(uuid, name)
+	source, err := service.DataServiceByUUID(uuid, name)
 	if err != nil {
 		return nil, err
 	}
 	data, ok := source.(*Data)
 	if !ok {
-		return nil, fmt.Errorf("Can only use labelmap with labels64 data: %s", name)
+		return nil, fmt.Errorf("Instance '%s' is not a labels64 datatype!", name)
+	}
+	return data, nil
+}
+
+// GetByLocalID returns a pointer to labels64 data given a local dataset ID and data name.
+func GetByLocalID(id dvid.DatasetLocalID, name dvid.DataString) (*Data, error) {
+	service := server.DatastoreService()
+	source, err := service.DataServiceByLocalID(id, name)
+	if err != nil {
+		return nil, err
+	}
+	data, ok := source.(*Data)
+	if !ok {
+		return nil, fmt.Errorf("Instance '%s' is not a labels64 datatype!", name)
 	}
 	return data, nil
 }
@@ -501,7 +515,6 @@ func (d *Data) addLabelZ(geom dvid.Geometry, data32 []uint8, stride int32) ([]by
 		return nil, fmt.Errorf("expected n-d (n >= 3) offset for image.  Got %d dimensions.",
 			coord.NumDims())
 	}
-	zeroSuperpixelBytes := make([]byte, 8, 8)
 	superpixelBytes := make([]byte, 8, 8)
 	binary.BigEndian.PutUint32(superpixelBytes[0:4], uint32(coord.Value(2)))
 
@@ -514,7 +527,7 @@ func (d *Data) addLabelZ(geom dvid.Geometry, data32 []uint8, stride int32) ([]by
 		srcI := y * int(stride)
 		for x := 0; x < nx; x++ {
 			if data32[srcI] == 0 && data32[srcI+1] == 0 && data32[srcI+2] == 0 {
-				copy(data64[dstI:dstI+8], zeroSuperpixelBytes)
+				copy(data64[dstI:dstI+8], zeroLabelBytes)
 			} else {
 				superpixelBytes[5] = data32[srcI+2]
 				superpixelBytes[6] = data32[srcI+1]
@@ -658,7 +671,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 	switch parts[3] {
 	case "help":
 		w.Header().Set("Content-Type", "text/plain")
-		fmt.Fprintln(w, d.Help())
+		fmt.Fprintln(w, dtype.Help())
 		return nil
 	case "metadata":
 		jsonStr, err := d.NdDataMetadata()
@@ -922,8 +935,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: get labels with volume > %d and < %d (%s)",
 			r.Method, minSize, maxSize, r.URL)
 	default:
-		return fmt.Errorf("Unrecognized API call for labels64 data '%s'.  See API help.",
-			d.DataName())
+		return fmt.Errorf("Unrecognized API call '%s' for labels64 data '%s'.  See API help.", parts[3], d.DataName())
 	}
 	return nil
 }
@@ -951,7 +963,7 @@ func (d *Data) CreateComposite(request datastore.Request, reply *datastore.Respo
 
 	// Get the grayscale data.
 	service := server.DatastoreService()
-	dataservice, err := service.DataService(uuid, dvid.DataString(grayscaleName))
+	dataservice, err := service.DataServiceByUUID(uuid, dvid.DataString(grayscaleName))
 	if err != nil {
 		return err
 	}
@@ -962,14 +974,14 @@ func (d *Data) CreateComposite(request datastore.Request, reply *datastore.Respo
 
 	// Create a new rgba8 data.
 	var compservice datastore.DataService
-	compservice, err = service.DataService(uuid, dvid.DataString(destName))
+	compservice, err = service.DataServiceByUUID(uuid, dvid.DataString(destName))
 	if err != nil {
 		config := dvid.NewConfig()
 		err = service.NewData(uuid, "rgba8", dvid.DataString(destName), config)
 		if err != nil {
 			return err
 		}
-		compservice, err = service.DataService(uuid, dvid.DataString(destName))
+		compservice, err = service.DataServiceByUUID(uuid, dvid.DataString(destName))
 		if err != nil {
 			return err
 		}

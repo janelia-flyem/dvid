@@ -297,7 +297,7 @@ func LoadTileSpec(data []byte) (TileSpec, error) {
 
 func getSourceVoxels(uuid dvid.UUID, name dvid.DataString) (*voxels.Data, error) {
 	service := server.DatastoreService()
-	source, err := service.DataService(uuid, name)
+	source, err := service.DataServiceByUUID(uuid, name)
 	if err != nil {
 		return nil, err
 	}

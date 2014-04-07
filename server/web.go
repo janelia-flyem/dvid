@@ -392,7 +392,7 @@ func datasetRequest(w http.ResponseWriter, r *http.Request) {
 
 	// Forward all other commands to the data service.
 	dataname := dvid.DataString(parts[1])
-	dataservice, err := runningService.DataService(uuid, dataname)
+	dataservice, err := runningService.DataServiceByUUID(uuid, dataname)
 	if err != nil {
 		BadRequest(w, r, err.Error())
 		return
@@ -442,7 +442,7 @@ func nodeRequest(w http.ResponseWriter, r *http.Request) {
 
 	default:
 		dataname := dvid.DataString(parts[1])
-		dataservice, err := runningService.DataService(uuid, dataname)
+		dataservice, err := runningService.DataServiceByUUID(uuid, dataname)
 		if err != nil {
 			BadRequest(w, r, err.Error())
 			return

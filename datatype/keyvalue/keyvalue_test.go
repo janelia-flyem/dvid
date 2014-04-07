@@ -52,13 +52,13 @@ func (suite *DataSuite) TestNewDataDifferent(c *C) {
 	err = suite.service.NewData(root, "keyvalue", "kv1", config)
 	c.Assert(err, IsNil)
 
-	dataservice1, err := suite.service.DataService(root, "kv1")
+	dataservice1, err := suite.service.DataServiceByUUID(root, "kv1")
 	c.Assert(err, IsNil)
 
 	err = suite.service.NewData(root, "keyvalue", "kv2", config)
 	c.Assert(err, IsNil)
 
-	dataservice2, err := suite.service.DataService(root, "kv2")
+	dataservice2, err := suite.service.DataServiceByUUID(root, "kv2")
 	c.Assert(err, IsNil)
 
 	data1, ok := dataservice1.(*Data)
@@ -81,7 +81,7 @@ func (suite *DataSuite) TestRoundTrip(c *C) {
 	err = suite.service.NewData(root, "keyvalue", "kv", config)
 	c.Assert(err, IsNil)
 
-	kvservice, err := suite.service.DataService(root, "kv")
+	kvservice, err := suite.service.DataServiceByUUID(root, "kv")
 	c.Assert(err, IsNil)
 
 	kvdata, ok := kvservice.(*Data)

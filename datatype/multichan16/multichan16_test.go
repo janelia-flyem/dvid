@@ -1,8 +1,8 @@
 package multichan16
 
 import (
-	. "github.com/janelia-flyem/go/gocheck"
 	"testing"
+	. "github.com/janelia-flyem/go/gocheck"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -74,7 +74,7 @@ func (s *DataSuite) TestDatasetPersistence(c *C) {
 
 	// Go into the dataset and modify the above data so we can make sure it persist.
 	test := dvid.DataString("test")
-	dataservice, err := service.DataService(child1_1, test)
+	dataservice, err := service.DataServiceByUUID(child1_1, test)
 	c.Assert(err, IsNil)
 
 	mchan := dataservice.(*Data)
