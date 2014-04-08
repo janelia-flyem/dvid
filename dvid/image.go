@@ -113,6 +113,28 @@ func (img Image) GetDrawable() draw.Image {
 	}
 }
 
+// GetPNG returns bytes in PNG format.
+func (img Image) GetPNG() ([]byte, error) {
+	var goImg image.Image
+	switch img.Which {
+	case 0:
+		goImg = img.Gray
+	case 1:
+		goImg = img.Gray16
+	case 2:
+		goImg = img.NRGBA
+	case 3:
+		goImg = img.NRGBA64
+	default:
+		return nil, fmt.Errorf("Unknown image type %d in GetPng()", img.Which)
+	}
+	var buffer bytes.Buffer
+	if err := png.Encode(&buffer, goImg); err != nil {
+		return nil, err
+	}
+	return buffer.Bytes(), nil
+}
+
 // Set initializes a DVID image from a go image and a data format specification.  DVID images
 // must have identical data type values within a pixel..
 func (img *Image) Set(src image.Image, format DataValues, interpolable bool) error {
@@ -1135,9 +1157,10 @@ func ImageGrayFromData(data []uint8, nx, ny int) (img *image.Gray) {
 
 // WriteImageHttp writes an image to a HTTP response writer using a format and optional
 // compression strength specified in a string, e.g., "png", "jpg:80".
-func WriteImageHttp(w http.ResponseWriter, img image.Image, formatStr string) (err error) {
+func WriteImageHttp(w http.ResponseWriter, img image.Image, formatStr string) error {
 	format := strings.Split(formatStr, ":")
 	var compression int = DefaultJPEGQuality
+	var err error
 	if len(format) > 1 {
 		compression, err = strconv.Atoi(format[1])
 		if err != nil {
@@ -1147,20 +1170,28 @@ func WriteImageHttp(w http.ResponseWriter, img image.Image, formatStr string) (e
 	switch format[0] {
 	case "", "png":
 		w.Header().Set("Content-type", "image/png")
-		png.Encode(w, img)
+		if err = png.Encode(w, img); err != nil {
+			return err
+		}
 	case "jpg", "jpeg":
 		w.Header().Set("Content-type", "image/jpeg")
-		jpeg.Encode(w, img, &jpeg.Options{Quality: compression})
+		if err = jpeg.Encode(w, img, &jpeg.Options{Quality: compression}); err != nil {
+			return err
+		}
 	case "tiff", "tif":
 		w.Header().Set("Content-type", "image/tiff")
-		tiff.Encode(w, img, &tiff.Options{Compression: tiff.Deflate})
+		if err = tiff.Encode(w, img, &tiff.Options{Compression: tiff.Deflate}); err != nil {
+			return err
+		}
 	case "bmp":
 		w.Header().Set("Content-type", "image/bmp")
-		bmp.Encode(w, img)
+		if err = bmp.Encode(w, img); err != nil {
+			return err
+		}
 	default:
-		err = fmt.Errorf("Illegal image format requested: %s", format[0])
+		return fmt.Errorf("Illegal image format requested: %s", format[0])
 	}
-	return
+	return nil
 }
 
 // PrintNonZero prints the number of non-zero bytes in a slice of bytes.

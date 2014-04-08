@@ -26,6 +26,14 @@ type Compression struct {
 	level  CompressionLevel
 }
 
+func (c Compression) Format() CompressionFormat {
+	return c.format
+}
+
+func (c Compression) Level() CompressionLevel {
+	return c.level
+}
+
 // MarshalJSON implements the json.Marshaler interface.
 func (c Compression) MarshalJSON() ([]byte, error) {
 	return []byte(fmt.Sprintf(`{"Format":%d,"Level":%d}`, c.format, c.level)), nil

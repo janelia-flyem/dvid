@@ -1,14 +1,19 @@
 /*
 	Package quadtree implements DVID support for quadtrees in XY, XZ, and YZ orientation.
+	All raw tiles are stored as PNG images that are by default gzipped.  This allows raw
+	tile gets to be already compressed at the cost of more expensive uncompression to
+	retrieve arbitrary image sizes.
 */
 package quadtree
 
 import (
+	"bytes"
 	"encoding/gob"
 	"encoding/json"
 	"fmt"
 	"image"
 	"image/draw"
+	"image/png"
 	"math"
 	"net/http"
 	"strconv"
@@ -104,13 +109,14 @@ GET  /api/node/<UUID>/<data name>/info
     data name     Name of quadtree data.
 
 
-GET  /api/node/<UUID>/<data name>/tile/<dims>/<scaling>/<tile coord>[/<format>]
+GET  /api/node/<UUID>/<data name>/tile/<dims>/<scaling>/<tile coord>
 (TODO) POST
-    Retrieves tile of named data within a version node.
+    Retrieves PNG tile of named data within a version node.  This GET call should be the fastest
+    way to retrieve image data since internally it has already been stored as a compressed PNG.
 
     Example: 
 
-    GET /api/node/3f8c/myquadtree/tile/xy/0/10_10_20/jpg:80
+    GET /api/node/3f8c/myquadtree/tile/xy/0/10_10_20
 
     Arguments:
 
@@ -120,8 +126,6 @@ GET  /api/node/<UUID>/<data name>/tile/<dims>/<scaling>/<tile coord>[/<format>]
                     Slice strings ("xy", "xz", or "yz") are also accepted.
     scaling       Value from 0 (original resolution) to N where each step is downres by 2.
     tile coord    The tile coordinate in "x_y_z" format.  See discussion of scaling above.
-    format        "png", "jpg" (default: "png")
-                    jpg allows lossy quality setting, e.g., "jpg:80"
 
 
 GET  /api/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>]
@@ -349,14 +353,14 @@ func (dtype *Datatype) NewDataService(id *datastore.DataID, config dvid.Config) 
 	}
 
 	// Set default compression if not supplied.
-	_, found, err = config.GetString("Compression")
+	name, found, err = config.GetString("Compression")
 	if err != nil {
 		return nil, err
 	}
-	if !found {
-		// Use the most compressed gzip
-		config.Set("Compression", "gzip:9")
+	if found {
+		return nil, fmt.Errorf("Quadtree encodes tiles internally as PNG (deflate) so no compression should be specified.")
 	}
+	config.Set("Compression", "none")
 
 	// Initialize the quadtree data
 	basedata, err := datastore.NewDataService(id, dtype, config)
@@ -474,23 +478,19 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		if action == "post" {
 			return fmt.Errorf("DVID does not yet support POST of quadtree")
 		} else {
-			img, err := d.GetTile(uuid, planeStr, scalingStr, coordStr)
+			pngData, err := d.GetTile(uuid, planeStr, scalingStr, coordStr)
 			if err != nil {
 				server.BadRequest(w, r, err.Error())
 				return err
 			}
-			if img == nil {
+			if pngData == nil {
 				http.NotFound(w, r)
 				return nil
 			}
-			var formatStr string
-			if len(parts) >= 8 {
-				formatStr = parts[7]
-			}
+
 			//dvid.ElapsedTime(dvid.Normal, startTime, "%s %s upto image formatting", op, slice)
-			err = dvid.WriteImageHttp(w, img, formatStr)
-			if err != nil {
-				server.BadRequest(w, r, err.Error())
+			w.Header().Set("Content-type", "image/png")
+			if _, err = w.Write(pngData); err != nil {
 				return err
 			}
 			dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: tile %s", r.Method, planeStr)
@@ -596,8 +596,13 @@ func (d *Data) GetImage(uuid dvid.UUID, geom dvid.Geometry, isotropic bool) (*dv
 				// Get this tile from datastore
 				tileCoord, err := slice.PlaneToChunkPoint3d(x0, y0, minSlice.StartPoint(), levelSpec.TileSize)
 				tileIndex := NewIndexTile(dvid.IndexZYX(tileCoord), slice, Scaling(0))
-				img, err := d.getTile(versionID, src, slice, Scaling(0), tileIndex)
-				if err != nil || img == nil {
+				// Get the PNG
+				data, err := d.getTile(versionID, tileIndex)
+				if err != nil {
+					return
+				}
+				goImg, err := d.getTileImage(data, src, slice, tileIndex)
+				if err != nil || goImg == nil {
 					return
 				}
 
@@ -608,7 +613,7 @@ func (d *Data) GetImage(uuid dvid.UUID, geom dvid.Geometry, isotropic bool) (*dv
 
 				// Paste the pertinent rectangle from this tile into our destination.
 				r := image.Rect(int(x0), int(y0), int(x1), int(y1))
-				draw.Draw(dst.GetDrawable(), r, img.Get(), ptInTile, draw.Src)
+				draw.Draw(dst.GetDrawable(), r, goImg, ptInTile, draw.Src)
 				wg.Done()
 			}(x0, y0, x1, y1)
 			x0 = x1
@@ -630,12 +635,8 @@ func (d *Data) GetImage(uuid dvid.UUID, geom dvid.Geometry, isotropic bool) (*dv
 	return dst, nil
 }
 
-// GetTile retrieves a tile.
-func (d *Data) GetTile(uuid dvid.UUID, planeStr, scalingStr, coordStr string) (image.Image, error) {
-	src, err := getSourceVoxels(uuid, d.Source)
-	if err != nil {
-		return nil, err
-	}
+// GetTile retrieves a tile in PNG format.
+func (d *Data) GetTile(uuid dvid.UUID, planeStr, scalingStr, coordStr string) ([]byte, error) {
 	_, versionID, err := server.DatastoreService().LocalIDFromUUID(uuid)
 	if err != nil {
 		return nil, err
@@ -658,19 +659,11 @@ func (d *Data) GetTile(uuid dvid.UUID, planeStr, scalingStr, coordStr string) (i
 	indexZYX := dvid.IndexZYX{tileCoord.Value(0), tileCoord.Value(1), tileCoord.Value(2)}
 	index := &IndexTile{indexZYX, shape, Scaling(scaling)}
 
-	img, err := d.getTile(versionID, src, shape, Scaling(scaling), index)
-	if err != nil {
-		return nil, err
-	}
-	if img == nil {
-		return nil, nil
-	}
-	return img.Get(), nil
+	return d.getTile(versionID, index)
 }
 
-func (d *Data) getTile(versionID dvid.VersionLocalID, src *voxels.Data, plane dvid.DataShape, scaling Scaling,
-	index *IndexTile) (*dvid.Image, error) {
-
+// Returns PNG data for tile without decompression.
+func (d *Data) getTile(versionID dvid.VersionLocalID, index *IndexTile) ([]byte, error) {
 	if d.Levels == nil {
 		return nil, fmt.Errorf("Tiles have not been generated.")
 	}
@@ -685,29 +678,26 @@ func (d *Data) getTile(versionID dvid.VersionLocalID, src *voxels.Data, plane dv
 	if err != nil {
 		return nil, fmt.Errorf("Error trying to GET from datastore: %s", err.Error())
 	}
-	img := new(dvid.Image)
-	if data == nil {
+	return data, nil
+}
+
+// Return an image or a placeholder image.
+func (d *Data) getTileImage(pngData []byte, src *voxels.Data, plane dvid.DataShape, index *IndexTile) (image.Image, error) {
+	if pngData == nil {
 		if d.Placeholder {
-			scaleSpec, ok := d.Levels[scaling]
+			scaleSpec, ok := d.Levels[index.scaling]
 			if !ok {
-				return nil, fmt.Errorf("Could not find tile specification at given scale %d", scaling)
+				return nil, fmt.Errorf("Could not find tile specification at given scale %d", index.scaling)
 			}
-			message := fmt.Sprintf("%s Tile coord %s @ scale %d", plane, index, scaling)
-			placeholder, err := dvid.PlaceholderImage(plane, scaleSpec.TileSize, message)
-			if err != nil {
-				return nil, err
-			}
-			err = img.Set(placeholder, src.Properties.Values, src.Properties.Interpolable)
-			return img, err
+			message := fmt.Sprintf("%s Tile coord %s @ scale %d", plane, index, index.scaling)
+			return dvid.PlaceholderImage(plane, scaleSpec.TileSize, message)
 		}
 		return nil, nil // Not found
 	}
-	//fmt.Printf("Retrieved tile for key %s: %d bytes\n", key, len(data))
-	err = img.Deserialize(data)
-	if err != nil {
-		return nil, fmt.Errorf("Error deserializing tile: %s", err.Error())
-	}
-	return img, nil
+
+	// Decode PNG image to standard Go image
+	pngBuffer := bytes.NewBuffer(pngData)
+	return png.Decode(pngBuffer)
 }
 
 // pow2 returns the power of 2 with the passed exponent.
@@ -768,8 +758,7 @@ func (d *Data) extractTiles(v voxels.ExtHandler, offset dvid.Point, scaling Scal
 			tileCoord, err := v.DataShape().PlaneToChunkPoint3d(x0, y0, offset, levelSpec.TileSize)
 			// fmt.Printf("Tile Coord: %s > %s\n", tileCoord, tileRect)
 			tileIndex := NewIndexTile(dvid.IndexZYX(tileCoord), v.DataShape(), scaling)
-			err = outF(tileIndex, tile)
-			if err != nil {
+			if err = outF(tileIndex, tile); err != nil {
 				return err
 			}
 			x1 += tileW
@@ -779,48 +768,19 @@ func (d *Data) extractTiles(v voxels.ExtHandler, offset dvid.Point, scaling Scal
 	return nil
 }
 
-func (d *Data) getXYPutFunc(versionID dvid.VersionLocalID, z int32) (outFunc, error) {
+// Returns function that stores a tile as an optionally compressed PNG image.
+func (d *Data) putTileFunc(versionID dvid.VersionLocalID) (outFunc, error) {
 	db, err := server.KeyValueSetter()
 	if err != nil {
 		return nil, err
 	}
 	return func(index *IndexTile, tile *dvid.Image) error {
-		serialization, err := tile.Serialize(d.Compression, d.Checksum)
+		pngData, err := tile.GetPNG()
 		if err != nil {
 			return err
 		}
 		key := &datastore.DataKey{d.DatasetID(), d.ID, versionID, index}
-		return db.Put(key, serialization)
-	}, nil
-}
-
-func (d *Data) getXZPutFunc(versionID dvid.VersionLocalID, y int32) (outFunc, error) {
-	db, err := server.KeyValueSetter()
-	if err != nil {
-		return nil, err
-	}
-	return func(index *IndexTile, tile *dvid.Image) error {
-		serialization, err := tile.Serialize(d.Compression, d.Checksum)
-		if err != nil {
-			return err
-		}
-		key := &datastore.DataKey{d.DatasetID(), d.ID, versionID, index}
-		return db.Put(key, serialization)
-	}, nil
-}
-
-func (d *Data) getYZPutFunc(versionID dvid.VersionLocalID, x int32) (outFunc, error) {
-	db, err := server.KeyValueSetter()
-	if err != nil {
-		return nil, err
-	}
-	return func(index *IndexTile, tile *dvid.Image) error {
-		serialization, err := tile.Serialize(d.Compression, d.Checksum)
-		if err != nil {
-			return err
-		}
-		key := &datastore.DataKey{d.DatasetID(), d.ID, versionID, index}
-		return db.Put(key, serialization)
+		return db.Put(key, pngData)
 	}, nil
 }
 
@@ -884,7 +844,7 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, config dvid.Con
 				}
 				// Iterate through the different scales, extracting tiles at each resolution.
 				for scaling, levelSpec := range tileSpec {
-					outF, err := d.getXYPutFunc(versionID, z)
+					outF, err := d.putTileFunc(versionID)
 					if err != nil {
 						return err
 					}
@@ -923,7 +883,7 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, config dvid.Con
 				}
 				// Iterate through the different scales, extracting tiles at each resolution.
 				for scaling, levelSpec := range tileSpec {
-					outF, err := d.getXZPutFunc(versionID, y)
+					outF, err := d.putTileFunc(versionID)
 					if err != nil {
 						return err
 					}
@@ -962,7 +922,7 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, config dvid.Con
 				}
 				// Iterate through the different scales, extracting tiles at each resolution.
 				for scaling, levelSpec := range tileSpec {
-					outF, err := d.getYZPutFunc(versionID, x)
+					outF, err := d.putTileFunc(versionID)
 					if err != nil {
 						return err
 					}
