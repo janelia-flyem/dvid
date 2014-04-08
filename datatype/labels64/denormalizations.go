@@ -559,7 +559,11 @@ func (d *Data) computeAndSaveSurface(vol *sparseVol) error {
 	if err != nil {
 		return err
 	}
-	serialization, err := dvid.SerializeData(data, d.Compression, d.Checksum)
+
+	// Surface blobs are always stored using gzip with best compression, trading off time
+	// during the store for speed during interactive GETs.
+	compression, _ := dvid.NewCompression(dvid.Gzip, dvid.BestCompression)
+	serialization, err := dvid.SerializeData(data, compression, dvid.NoChecksum)
 	if err != nil {
 		return fmt.Errorf("Unable to serialize data in surface computation: %s\n", err.Error())
 	}

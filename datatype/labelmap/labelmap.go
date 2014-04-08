@@ -464,7 +464,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 			server.BadRequest(w, r, err.Error())
 			return err
 		}
-		data, found, err := d.GetSurface(uuid, label)
+		gzipData, found, err := d.GetSurface(uuid, label)
 		if err != nil {
 			return fmt.Errorf("Error on getting surface for label %d: %s", label, err.Error())
 		}
@@ -473,8 +473,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 			return nil
 		}
 		w.Header().Set("Content-type", "application/octet-stream")
-		_, err = w.Write(data)
-		if err != nil {
+		if err := dvid.WriteGzip(gzipData, w, r); err != nil {
 			return err
 		}
 		dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: surface on label %d (%s)",
@@ -497,7 +496,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 			server.BadRequest(w, r, err.Error())
 			return err
 		}
-		data, found, err := d.GetSurface(uuid, label)
+		gzipData, found, err := d.GetSurface(uuid, label)
 		if err != nil {
 			return fmt.Errorf("Error on getting surface for label %d: %s", label, err.Error())
 		}
@@ -506,8 +505,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 			return nil
 		}
 		w.Header().Set("Content-type", "application/octet-stream")
-		_, err = w.Write(data)
-		if err != nil {
+		if err := dvid.WriteGzip(gzipData, w, r); err != nil {
 			return err
 		}
 		dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: surface-by-point at %s (%s)",

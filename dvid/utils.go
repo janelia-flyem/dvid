@@ -2,6 +2,7 @@ package dvid
 
 import (
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -206,4 +207,43 @@ func ReadJSONFile(filename string) (value map[string]interface{}, err error) {
 		}
 	}
 	return
+}
+
+// SupportsGzipEncoding returns true if the http requestor can accept gzip encoding.
+func SupportsGzipEncoding(r *http.Request) bool {
+	for _, v1 := range r.Header["Accept-Encoding"] {
+		for _, v2 := range strings.Split(v1, ",") {
+			if strings.TrimSpace(v2) == "gzip" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// WriteGzip will write already gzip-encoded data to the ResponseWriter unless
+// the requestor cannot support it.  In that case, the gzip data is uncompressed
+// and sent uncompressed.
+func WriteGzip(gzipData []byte, w http.ResponseWriter, r *http.Request) error {
+	if SupportsGzipEncoding(r) {
+		w.Header().Set("Content-Encoding", "gzip")
+		if _, err := w.Write(gzipData); err != nil {
+			return err
+		}
+	} else {
+		Log(Normal, "Requestor (%s) not accepting gzip for request (%s), uncompressing %d bytes.\n",
+			r.RemoteAddr, r.Method, len(gzipData))
+		gzipBuf := bytes.NewBuffer(gzipData)
+		gzipReader, err := gzip.NewReader(gzipBuf)
+		if err != nil {
+			return err
+		}
+		if _, err = io.Copy(w, gzipReader); err != nil {
+			return err
+		}
+		if err = gzipReader.Close(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
