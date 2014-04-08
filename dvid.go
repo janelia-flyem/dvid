@@ -39,9 +39,6 @@ var (
 	// Display usage if true.
 	showHelp = flag.Bool("help", false, "")
 
-	// HTTP REST API returns gzip data by default
-	gzip = flag.Bool("gzip", false, "")
-
 	// Use CRC32 for corruption detection.  Note that some storage engines
 	// will already have error detection and this is at the DVID level, not
 	// the storage engine (i.e., database) level.
@@ -95,7 +92,6 @@ Usage: dvid [options] <command>
       -timeout    =number   Seconds to wait trying to get exclusive access to datastore.
       -stdin      (flag)    Accept and send stdin to server for use in commands.
       -crc32      (flag)    Use CRC32 checksum to detect corruption.
-      -gzip       (flag)    Turn gzip compression on for REST API.
       -types      (flag)    Show compiled DVID data types
       -debug      (flag)    Run in debug mode.  Verbose.
       -benchmark  (flag)    Run in benchmarking mode. 
@@ -155,9 +151,6 @@ func main() {
 	}
 	if *timeout != 0 {
 		server.TimeoutSecs = *timeout
-	}
-	if *gzip {
-		server.GzipAPI = true
 	}
 	if *useCRC32 {
 		dvid.DefaultChecksum = dvid.CRC32

@@ -68,12 +68,6 @@ var (
 	// Timeout in seconds for waiting to open a datastore for exclusive access.
 	TimeoutSecs int
 
-	// GzipAPI turns on gzip compression on REST API responses.
-	// For high bandwidth networks or local use, it is better to leave gzip
-	// off because delay due to compression is frequently higher than gains
-	// from decreased response size.
-	GzipAPI = false
-
 	// Keep track of the startup time for uptime.
 	startupTime time.Time = time.Now()
 )
@@ -296,12 +290,14 @@ func (service *Service) ServeHttp(address, clientDir string) {
 	}
 
 	// Handle Level 2 REST API.
-	if GzipAPI {
-		fmt.Println("HTTP server will return gzip values if permitted by browser.")
-		http.HandleFunc(WebAPIPath, logHttpPanics(makeGzipHandler(apiHandler)))
-	} else {
-		http.HandleFunc(WebAPIPath, logHttpPanics(apiHandler))
-	}
+	http.HandleFunc(WebAPIPath, logHttpPanics(apiHandler))
+
+	// http.HandleFunc(WebAPIPath, logHttpPanics(makeGzipHandler(apiHandler)))
+	//
+	// Could wrap HTTP handler with Gzip handler at this level, but it's too
+	// broad a brush.  Individual data types might already store gzipped or
+	// PNG-encoded (deflate) data, then the gzip wrapping is extra work for
+	// possibly worse data size.
 
 	// Handle static files through serving embedded files
 	// via nrsc or loading files from a specified web client directory.

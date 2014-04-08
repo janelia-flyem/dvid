@@ -362,7 +362,7 @@ A larger 500 x 500 pixel image should now appear in the browser with black areas
 loaded data.  This is a slice along XZ, an orientation not present in the originally loaded
 XY images.
 
-### Adding a multi-scale 2d images
+### Adding multi-scale 2d images
 
 Let's precompute XY, XZ, and YZ multiscale2d for our grayscale image.  First, we add an
 instance of a multiscale2d data type under our previous dataset UUID:
