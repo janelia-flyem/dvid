@@ -1,8 +1,8 @@
 /*
-	This file supports quadtree-specific implementations of dvid.Index, etc.
+	This file supports multiscale2d-specific implementations of dvid.Index, etc.
 */
 
-package quadtree
+package multiscale2d
 
 import (
 	"bytes"

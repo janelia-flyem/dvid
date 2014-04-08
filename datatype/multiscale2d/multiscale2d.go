@@ -1,10 +1,10 @@
 /*
-	Package quadtree implements DVID support for quadtrees in XY, XZ, and YZ orientation.
+	Package multiscale2d implements DVID support for multiscale2ds in XY, XZ, and YZ orientation.
 	All raw tiles are stored as PNG images that are by default gzipped.  This allows raw
 	tile gets to be already compressed at the cost of more expensive uncompression to
 	retrieve arbitrary image sizes.
 */
-package quadtree
+package multiscale2d
 
 import (
 	"bytes"
@@ -30,22 +30,22 @@ import (
 
 const (
 	Version = "0.1"
-	RepoUrl = "github.com/janelia-flyem/dvid/datatype/quadtree"
+	RepoUrl = "github.com/janelia-flyem/dvid/datatype/multiscale2d"
 )
 
 const HelpMessage = `
-API for datatypes derived from quadtree (github.com/janelia-flyem/dvid/datatype/quadtree)
+API for datatypes derived from multiscale2d (github.com/janelia-flyem/dvid/datatype/multiscale2d)
 =====================================================================================
 
 Command-line:
 
-$ dvid dataset <UUID> new quadtree <data name> <settings...>
+$ dvid dataset <UUID> new multiscale2d <data name> <settings...>
 
-	Adds multiresolution XY, XZ, and YZ quadtree from Source to dataset with specified UUID.
+	Adds multiresolution XY, XZ, and YZ multiscale2d from Source to dataset with specified UUID.
 
 	Example:
 
-	$ dvid dataset 3f8c new quadtree myquadtree source=mygrayscale versioned=true
+	$ dvid dataset 3f8c new multiscale2d mymultiscale2d source=mygrayscale versioned=true
 
     Arguments:
 
@@ -64,15 +64,15 @@ $ dvid dataset <UUID> new quadtree <data name> <settings...>
 $ dvid node <UUID> <data name> generate <config JSON file name> <settings...>
 $ dvid -stdin node <UUID> <data name> generate <settings...> < config.json
 
-	Generates multiresolution XY, XZ, and YZ quadtree from Source to dataset with specified UUID.
+	Generates multiresolution XY, XZ, and YZ multiscale2d from Source to dataset with specified UUID.
 	The resolutions at each scale and the dimensions of the tiles are passed in the configuration
 	JSON.  Only integral multiplications of original resolutions are allowed for scale.  If you
-	want more sophisticated processing, post the quadtree tiles directly via HTTP.
+	want more sophisticated processing, post the multiscale2d tiles directly via HTTP.
 
 	Example:
 
-	$ dvid dataset 3f8c myquadtree generate /path/to/config.json
-	$ dvid -stdin dataset 3f8c myquadtree generate planes="yz;0,1" < /path/to/config.json 
+	$ dvid dataset 3f8c mymultiscale2d generate /path/to/config.json
+	$ dvid -stdin dataset 3f8c mymultiscale2d generate planes="yz;0,1" < /path/to/config.json 
 
     Arguments:
 
@@ -101,12 +101,12 @@ GET  /api/node/<UUID>/<data name>/info
 
     Example: 
 
-    GET /api/node/3f8c/myquadtree/info
+    GET /api/node/3f8c/mymultiscale2d/info
 
     Arguments:
 
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
-    data name     Name of quadtree data.
+    data name     Name of multiscale2d data.
 
 
 GET  /api/node/<UUID>/<data name>/tile/<dims>/<scaling>/<tile coord>
@@ -116,7 +116,7 @@ GET  /api/node/<UUID>/<data name>/tile/<dims>/<scaling>/<tile coord>
 
     Example: 
 
-    GET /api/node/3f8c/myquadtree/tile/xy/0/10_10_20
+    GET /api/node/3f8c/mymultiscale2d/tile/xy/0/10_10_20
 
     Arguments:
 
@@ -130,7 +130,7 @@ GET  /api/node/<UUID>/<data name>/tile/<dims>/<scaling>/<tile coord>
 
 GET  /api/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>]
 
-    Retrieves raw image of named data within a version node using the precomputed quadtree.
+    Retrieves raw image of named data within a version node using the precomputed multiscale2d.
     By "raw", we mean that no additional processing is applied based on voxel resolutions
     to make sure the retrieved image has isotropic pixels.  For example, if an XZ image
     is requested and the image volume has X resolution 3 nm and Z resolution 40 nm, the
@@ -138,7 +138,7 @@ GET  /api/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>]
 
     Example: 
 
-    GET /api/node/3f8c/myquadtree/raw/xy/512_256/0_0_100/jpg:80
+    GET /api/node/3f8c/mymultiscale2d/raw/xy/512_256/0_0_100/jpg:80
 
     Arguments:
 
@@ -146,7 +146,7 @@ GET  /api/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>]
     data name     Name of data to add.
     dims          The axes of data extraction in form i_j.  Example: "0_2" can be XZ.
                     Slice strings ("xy", "xz", or "yz") are also accepted.
-                    Note that only 2d images are returned for quadtrees.
+                    Note that only 2d images are returned for multiscale2ds.
     size          Size in voxels along each dimension specified in <dims>.
     offset        Gives coordinate of first voxel using dimensionality of data.
     format        "png", "jpg" (default: "png")
@@ -154,7 +154,7 @@ GET  /api/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>]
 
 GET  /api/node/<UUID>/<data name>/isotropic/<dims>/<size>/<offset>[/<format>]
 
-    Retrieves isotropic image of named data within a version node using the precomputed quadtree.
+    Retrieves isotropic image of named data within a version node using the precomputed multiscale2d.
     Additional processing is applied based on voxel resolutions to make sure the retrieved image 
     has isotropic pixels.  For example, if an XZ image is requested and the image volume has 
     X resolution 3 nm and Z resolution 40 nm, the returned image's height will be magnified 40/3
@@ -162,7 +162,7 @@ GET  /api/node/<UUID>/<data name>/isotropic/<dims>/<size>/<offset>[/<format>]
 
     Example: 
 
-    GET /api/node/3f8c/myquadtree/isotropic/xy/512_256/0_0_100/jpg:80
+    GET /api/node/3f8c/mymultiscale2d/isotropic/xy/512_256/0_0_100/jpg:80
 
     Arguments:
 
@@ -170,7 +170,7 @@ GET  /api/node/<UUID>/<data name>/isotropic/<dims>/<size>/<offset>[/<format>]
     data name     Name of data to add.
     dims          The axes of data extraction in form i_j.  Example: "0_2" can be XZ.
                     Slice strings ("xy", "xz", or "yz") are also accepted.
-                    Note that only 2d images are returned for quadtrees.
+                    Note that only 2d images are returned for multiscale2ds.
     size          Size in voxels along each dimension specified in <dims>.
     offset        Gives coordinate of first voxel using dimensionality of data.
     format        "png", "jpg" (default: "png")
@@ -179,13 +179,13 @@ GET  /api/node/<UUID>/<data name>/isotropic/<dims>/<size>/<offset>[/<format>]
 `
 
 func init() {
-	quadtree := NewDatatype()
-	quadtree.DatatypeID = &datastore.DatatypeID{
-		Name:    "quadtree",
-		Url:     "github.com/janelia-flyem/dvid/datatype/quadtree",
+	multiscale2d := NewDatatype()
+	multiscale2d.DatatypeID = &datastore.DatatypeID{
+		Name:    "multiscale2d",
+		Url:     "github.com/janelia-flyem/dvid/datatype/multiscale2d",
 		Version: "0.1",
 	}
-	datastore.RegisterDatatype(quadtree)
+	datastore.RegisterDatatype(multiscale2d)
 
 	// Need to register types that will be used to fulfill interfaces.
 	gob.Register(&Datatype{})
@@ -212,7 +212,7 @@ type TileScaleSpec struct {
 // TileSpec specifies the resolution & size of each dimension at each scale level.
 type TileSpec map[Scaling]TileScaleSpec
 
-// MarshalJSON returns the JSON of the quadtree specifications for each scale level.
+// MarshalJSON returns the JSON of the multiscale2d specifications for each scale level.
 func (tileSpec TileSpec) MarshalJSON() ([]byte, error) {
 	serializable := make(specJSON, len(tileSpec))
 	for scaling, levelSpec := range tileSpec {
@@ -241,7 +241,7 @@ func LoadTileSpec(data []byte) (TileSpec, error) {
 
 	// Allocate the tile specs
 	specs := make(TileSpec, len(config))
-	dvid.Log(dvid.Debug, "Found %d scaling levels for quadtree specification.\n", len(config))
+	dvid.Log(dvid.Debug, "Found %d scaling levels for multiscale2d specification.\n", len(config))
 
 	// Store resolution and tile sizes per level.
 	firstLevel := true
@@ -303,7 +303,7 @@ func getSourceVoxels(uuid dvid.UUID, name dvid.DataString) (*voxels.Data, error)
 	}
 	data, ok := source.(*voxels.Data)
 	if !ok {
-		return nil, fmt.Errorf("Cannot construct quadtree for non-voxels data: %s", name)
+		return nil, fmt.Errorf("Cannot construct multiscale2d for non-voxels data: %s", name)
 	}
 	return data, nil
 }
@@ -342,11 +342,11 @@ func (dtype *Datatype) NewDataService(id *datastore.DataID, config dvid.Config) 
 		return nil, err
 	}
 	if !found {
-		return nil, fmt.Errorf("Cannot make quadtree data without valid 'Source' setting.")
+		return nil, fmt.Errorf("Cannot make multiscale2d data without valid 'Source' setting.")
 	}
 	sourcename := dvid.DataString(name)
 
-	// See if we want placeholder quadtree.
+	// See if we want placeholder multiscale2d.
 	placeholder, found, err := config.GetBool("Placeholder")
 	if err != nil {
 		return nil, err
@@ -362,7 +362,7 @@ func (dtype *Datatype) NewDataService(id *datastore.DataID, config dvid.Config) 
 	}
 	config.Set("Compression", "none")
 
-	// Initialize the quadtree data
+	// Initialize the multiscale2d data
 	basedata, err := datastore.NewDataService(id, dtype, config)
 	if err != nil {
 		return nil, err
@@ -388,7 +388,7 @@ type SourceData interface{}
 type Data struct {
 	*datastore.Data
 
-	// Source of the data for these quadtree.
+	// Source of the data for these multiscale2d.
 	Source dvid.DataString
 
 	// Levels describe the resolution and tile sizes at each level of resolution.
@@ -418,7 +418,7 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 	var uuidStr, dataName, cmdStr string
 	filenames := request.CommandArgs(1, &uuidStr, &dataName, &cmdStr)
 
-	// Get the quadtree generation configuration from a file or stdin.
+	// Get the multiscale2d generation configuration from a file or stdin.
 	var configData []byte
 	if request.Input != nil {
 		configData = request.Input
@@ -476,7 +476,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 	case "tile":
 		planeStr, scalingStr, coordStr := parts[4], parts[5], parts[6]
 		if action == "post" {
-			return fmt.Errorf("DVID does not yet support POST of quadtree")
+			return fmt.Errorf("DVID does not yet support POST of multiscale2d")
 		} else {
 			pngData, err := d.GetTile(uuid, planeStr, scalingStr, coordStr)
 			if err != nil {
@@ -498,7 +498,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 
 	case "raw", "isotropic":
 		if action == "post" {
-			return fmt.Errorf("quadtree '%s' can only PUT tiles not images", d.DataName())
+			return fmt.Errorf("multiscale2d '%s' can only PUT tiles not images", d.DataName())
 		}
 		if len(parts) < 7 {
 			return fmt.Errorf("'%s' must be followed by shape/size/offset", parts[3])
@@ -531,14 +531,14 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: tile-accelerated %s %s (%s)",
 			r.Method, planeStr, parts[3], r.URL)
 	default:
-		err := fmt.Errorf("Illegal request for quadtree data.  See 'help' for REST API")
+		err := fmt.Errorf("Illegal request for multiscale2d data.  See 'help' for REST API")
 		server.BadRequest(w, r, err.Error())
 		return err
 	}
 	return nil
 }
 
-// GetImage returns an image given a 2d orthogonal image description.  Since quadtrees
+// GetImage returns an image given a 2d orthogonal image description.  Since multiscale2ds
 // have precomputed XY, XZ, and YZ orientations, reconstruction of the desired image should
 // be much faster than computing the image from voxel blocks.
 func (d *Data) GetImage(uuid dvid.UUID, geom dvid.Geometry, isotropic bool) (*dvid.Image, error) {
@@ -812,7 +812,7 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, config dvid.Con
 	// Get the planes we should tile.
 	planes, err := config.GetShapes("planes", ";")
 	if planes == nil {
-		// If no planes are specified, construct quadtree for 3 orthogonal planes.
+		// If no planes are specified, construct multiscale2d for 3 orthogonal planes.
 		planes = []dvid.DataShape{dvid.XY, dvid.XZ, dvid.YZ}
 	}
 
