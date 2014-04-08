@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -217,15 +218,19 @@ type Datatype struct {
 
 // Types must add a NewData() function...
 
-func NewDataService(id *DataID, t TypeService, config dvid.Config) (data *Data, err error) {
-	data = &Data{DataID: id, TypeService: t}
-	var versioned bool
-	versioned, err = config.IsVersioned()
-	if err != nil {
-		return
+// NewDataService returns a Data instance.  If the configuration doesn't explicitly
+// set compression and checksum, LZ4 and the default checksum (chosen by -crc32 flag)
+// is used.
+func NewDataService(id *DataID, t TypeService, config dvid.Config) (*Data, error) {
+	compression, _ := dvid.NewCompression(dvid.LZ4, dvid.DefaultCompression)
+	data := &Data{
+		DataID:      id,
+		TypeService: t,
+		Compression: compression,
+		Checksum:    dvid.DefaultChecksum,
 	}
-	data.Unversioned = !versioned
-	return
+	err := data.ModifyConfig(config)
+	return data, err
 }
 
 func (datatype *Datatype) Help() string {
@@ -253,8 +258,22 @@ type Data struct {
 	*DataID
 	TypeService
 
+	// Compression of serialized data, e.g., the value in a key-value.
+	Compression dvid.Compression
+
+	// Checksum approach for serialized data.
+	Checksum dvid.Checksum
+
 	// If false (default), we allow changes along nodes.
 	Unversioned bool
+}
+
+func (d *Data) UseCompression() dvid.Compression {
+	return d.Compression
+}
+
+func (d *Data) UseChecksum() dvid.Checksum {
+	return d.Checksum
 }
 
 func (d *Data) IsVersioned() bool {
@@ -267,6 +286,54 @@ func (d *Data) ModifyConfig(config dvid.Config) error {
 		return err
 	}
 	d.Unversioned = !versioned
+
+	// Set compression for this instance
+	s, found, err := config.GetString("Compression")
+	if err != nil {
+		return err
+	}
+	if found {
+		format := strings.ToLower(s)
+		switch format {
+		case "none":
+			d.Compression, _ = dvid.NewCompression(dvid.Uncompressed, dvid.DefaultCompression)
+		case "snappy":
+			d.Compression, _ = dvid.NewCompression(dvid.Snappy, dvid.DefaultCompression)
+		case "lz4":
+			d.Compression, _ = dvid.NewCompression(dvid.LZ4, dvid.DefaultCompression)
+		case "gzip":
+			d.Compression, _ = dvid.NewCompression(dvid.Gzip, dvid.DefaultCompression)
+		default:
+			// Check for gzip + compression level
+			parts := strings.Split(format, ":")
+			if len(parts) == 2 && parts[0] == "gzip" {
+				level, err := strconv.Atoi(parts[1])
+				if err != nil {
+					return fmt.Errorf("Unable to parse gzip compression level ('%d').  Should be 'gzip:<level>'.", parts[1])
+				}
+				d.Compression, _ = dvid.NewCompression(dvid.Gzip, dvid.CompressionLevel(level))
+			} else {
+				return fmt.Errorf("Illegal compression specified: %s", s)
+			}
+		}
+	}
+
+	// Set checksum for this instance
+	s, found, err = config.GetString("Checksum")
+	if err != nil {
+		return err
+	}
+	if found {
+		checksum := strings.ToLower(s)
+		switch checksum {
+		case "none":
+			d.Checksum = dvid.NoChecksum
+		case "crc32":
+			d.Checksum = dvid.CRC32
+		default:
+			return fmt.Errorf("Illegal checksum specified: %s", s)
+		}
+	}
 	return nil
 }
 

@@ -28,10 +28,6 @@ const (
 	RepoUrl = "github.com/janelia-flyem/dvid/datatype/quadtree"
 )
 
-var (
-	Compression dvid.Compression = dvid.LZ4
-)
-
 const HelpMessage = `
 API for datatypes derived from quadtree (github.com/janelia-flyem/dvid/datatype/quadtree)
 =====================================================================================
@@ -350,6 +346,16 @@ func (dtype *Datatype) NewDataService(id *datastore.DataID, config dvid.Config) 
 	placeholder, found, err := config.GetBool("Placeholder")
 	if err != nil {
 		return nil, err
+	}
+
+	// Set default compression if not supplied.
+	_, found, err = config.GetString("Compression")
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		// Use the most compressed gzip
+		config.Set("Compression", "gzip:9")
 	}
 
 	// Initialize the quadtree data
@@ -779,7 +785,7 @@ func (d *Data) getXYPutFunc(versionID dvid.VersionLocalID, z int32) (outFunc, er
 		return nil, err
 	}
 	return func(index *IndexTile, tile *dvid.Image) error {
-		serialization, err := tile.Serialize(Compression, dvid.ChecksumUsed)
+		serialization, err := tile.Serialize(d.Compression, d.Checksum)
 		if err != nil {
 			return err
 		}
@@ -794,7 +800,7 @@ func (d *Data) getXZPutFunc(versionID dvid.VersionLocalID, y int32) (outFunc, er
 		return nil, err
 	}
 	return func(index *IndexTile, tile *dvid.Image) error {
-		serialization, err := tile.Serialize(Compression, dvid.ChecksumUsed)
+		serialization, err := tile.Serialize(d.Compression, d.Checksum)
 		if err != nil {
 			return err
 		}
@@ -809,7 +815,7 @@ func (d *Data) getYZPutFunc(versionID dvid.VersionLocalID, x int32) (outFunc, er
 		return nil, err
 	}
 	return func(index *IndexTile, tile *dvid.Image) error {
-		serialization, err := tile.Serialize(Compression, dvid.ChecksumUsed)
+		serialization, err := tile.Serialize(d.Compression, d.Checksum)
 		if err != nil {
 			return err
 		}

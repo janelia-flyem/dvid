@@ -559,7 +559,7 @@ func (d *Data) computeAndSaveSurface(vol *sparseVol) error {
 	if err != nil {
 		return err
 	}
-	serialization, err := dvid.SerializeData(data, dvid.LZ4, dvid.CRC32)
+	serialization, err := dvid.SerializeData(data, d.Compression, d.Checksum)
 	if err != nil {
 		return fmt.Errorf("Unable to serialize data in surface computation: %s\n", err.Error())
 	}

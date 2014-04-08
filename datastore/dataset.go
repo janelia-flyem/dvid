@@ -16,10 +16,6 @@ import (
 	"github.com/janelia-flyem/dvid/storage"
 )
 
-var (
-	Compression dvid.Compression = dvid.LZ4
-)
-
 // Datasets holds information on all the Dataset available.
 type Datasets struct {
 	writeLock sync.Mutex // guards the fields below
@@ -197,10 +193,13 @@ func (dsets *Datasets) serializableStruct() (sdata *serializableDatasets) {
 	return
 }
 
-// Serialize returns a serialization of Datasets with compression and
-// CRC32 checksum.
-func (dsets *Datasets) serialize() ([]byte, error) {
-	return dvid.Serialize(dsets.serializableStruct(), Compression, dvid.CRC32)
+// MarshalBinary fulfills the encoding.BinaryMarshaler interface.
+func (dsets *Datasets) MarshalBinary() ([]byte, error) {
+	compression, err := dvid.NewCompression(dvid.LZ4, dvid.DefaultCompression)
+	if err != nil {
+		return nil, err
+	}
+	return dvid.Serialize(dsets.serializableStruct(), compression, dvid.CRC32)
 }
 
 // Deserialize converts a serialization to Datasets
@@ -284,7 +283,7 @@ func (dsets *Datasets) Put(db storage.KeyValueSetter) error {
 	defer mutex.Unlock()
 
 	// Get serialization
-	serialization, err := dsets.serialize()
+	serialization, err := dsets.MarshalBinary()
 	if err != nil {
 		return err
 	}
@@ -361,7 +360,8 @@ func (dset *Dataset) Put(db storage.KeyValueSetter) error {
 	defer mutex.Unlock()
 
 	// Get serialization
-	serialization, err := dvid.Serialize(dset, Compression, dvid.CRC32)
+	compression, err := dvid.NewCompression(dvid.LZ4, dvid.DefaultCompression)
+	serialization, err := dvid.Serialize(dset, compression, dvid.CRC32)
 	if err != nil {
 		return err
 	}

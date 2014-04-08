@@ -32,10 +32,6 @@ const (
 	MaxVoxelsRequest = dvid.Giga
 )
 
-var (
-	Compression dvid.Compression = dvid.LZ4
-)
-
 const HelpMessage = `
 API for 'voxels' datatype (github.com/janelia-flyem/dvid/datatype/voxels)
 =========================================================================
@@ -275,6 +271,10 @@ type IntHandler interface {
 	NewExtHandler(dvid.Geometry, interface{}) (ExtHandler, error)
 
 	DataID() datastore.DataID
+
+	UseCompression() dvid.Compression
+
+	UseChecksum() dvid.Checksum
 
 	Values() dvid.DataValues
 
@@ -656,7 +656,7 @@ func loadXYImages(i IntHandler, load *bulkLoadInfo) error {
 		// then asynchronously write blocks.
 		if lastSliceInBlock {
 			blockWait.Wait()
-			if err = AsyncWriteData(blocks[curBlocks], &load.writeWait); err != nil {
+			if err = AsyncWriteData(i.UseCompression(), i.UseChecksum(), blocks[curBlocks], &load.writeWait); err != nil {
 				return err
 			}
 			curBlocks = (curBlocks + 1) % 2
@@ -835,7 +835,7 @@ func writeXYImage(i IntHandler, e ExtHandler, blocks Blocks, versionID dvid.Vers
 const KVWriteSize = 500
 
 // AsyncWriteData writes blocks of voxel data asynchronously using batch writes.
-func AsyncWriteData(blocks Blocks, wg *sync.WaitGroup) error {
+func AsyncWriteData(compress dvid.Compression, checksum dvid.Checksum, blocks Blocks, wg *sync.WaitGroup) error {
 	db, err := server.KeyValueSetter()
 	if err != nil {
 		return err
@@ -856,7 +856,7 @@ func AsyncWriteData(blocks Blocks, wg *sync.WaitGroup) error {
 		if ok {
 			batch := batcher.NewBatch()
 			for i, block := range blocks {
-				serialization, err := dvid.SerializeData(block.V, Compression, dvid.ChecksumUsed)
+				serialization, err := dvid.SerializeData(block.V, compress, checksum)
 				if err != nil {
 					fmt.Printf("Unable to serialize block: %s\n", err.Error())
 					return
@@ -878,7 +878,7 @@ func AsyncWriteData(blocks Blocks, wg *sync.WaitGroup) error {
 			// Serialize and compress the blocks.
 			keyvalues := make(storage.KeyValues, len(blocks))
 			for i, block := range blocks {
-				serialization, err := dvid.SerializeData(block.V, Compression, dvid.ChecksumUsed)
+				serialization, err := dvid.SerializeData(block.V, compress, checksum)
 				if err != nil {
 					fmt.Printf("Unable to serialize block: %s\n", err.Error())
 					return
@@ -2159,7 +2159,7 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 				d.DataID().DataName(), err.Error())
 			return
 		}
-		serialization, err := dvid.SerializeData(blockData, Compression, dvid.ChecksumUsed)
+		serialization, err := dvid.SerializeData(blockData, d.UseCompression(), d.UseChecksum())
 		if err != nil {
 			dvid.Log(dvid.Normal, "Unable to serialize block in '%s': %s\n",
 				d.DataID().DataName(), err.Error())

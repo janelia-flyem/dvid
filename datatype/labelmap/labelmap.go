@@ -32,10 +32,6 @@ const (
 	RepoUrl = "github.com/janelia-flyem/dvid/datatype/labelmap"
 )
 
-var (
-	Compression dvid.Compression = dvid.LZ4
-)
-
 const HelpMessage = `
 API for 'labelmap' datatype (github.com/janelia-flyem/dvid/datatype/labelmap)
 =============================================================================
@@ -1006,7 +1002,7 @@ func (d *Data) chunkApplyMap(chunk *storage.Chunk) {
 		Version: op.versionID,
 		Index:   dataKey.Index,
 	}
-	serialization, err := dvid.SerializeData(mappedData, Compression, dvid.ChecksumUsed)
+	serialization, err := dvid.SerializeData(mappedData, d.Compression, d.Checksum)
 	if err != nil {
 		dvid.Log(dvid.Normal, "Unable to serialize block: %s\n", err.Error())
 		return

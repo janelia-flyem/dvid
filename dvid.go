@@ -160,7 +160,7 @@ func main() {
 		server.GzipAPI = true
 	}
 	if *useCRC32 {
-		dvid.ChecksumUsed = dvid.CRC32
+		dvid.DefaultChecksum = dvid.CRC32
 	}
 
 	if *showHelp || flag.NArg() == 0 {

@@ -48,7 +48,9 @@ func (suite *DataSuite) TestSlice(c *C) {
 	err := img.Set(goImg, values, true)
 	c.Assert(err, IsNil)
 
-	serialization, err := img.Serialize(Snappy, CRC32)
+	compression, err := NewCompression(Snappy, DefaultCompression)
+	c.Assert(err, IsNil)
+	serialization, err := img.Serialize(compression, CRC32)
 	c.Assert(err, IsNil)
 	c.Assert(serialization, Not(Equals), nil)
 
@@ -86,7 +88,9 @@ func (suite *DataSuite) TestOffsetSlice(c *C) {
 	err := img.Set(goImg, values, true)
 	c.Assert(err, IsNil)
 
-	serialization, err := img.Serialize(Snappy, CRC32)
+	compression, err := NewCompression(Snappy, DefaultCompression)
+	c.Assert(err, IsNil)
+	serialization, err := img.Serialize(compression, CRC32)
 	c.Assert(err, IsNil)
 	c.Assert(serialization, Not(Equals), nil)
 
@@ -144,7 +148,9 @@ func (suite *DataSuite) TestCompression(c *C) {
 	err := img.Set(goImg, values, true)
 	c.Assert(err, IsNil)
 
-	serialization, err := img.Serialize(Snappy, CRC32)
+	compression, err := NewCompression(Gzip, DefaultCompression)
+	c.Assert(err, IsNil)
+	serialization, err := img.Serialize(compression, CRC32)
 	c.Assert(err, IsNil)
 	c.Assert(serialization, Not(Equals), nil)
 
