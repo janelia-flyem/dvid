@@ -365,17 +365,22 @@ type BinaryVolume struct {
 	data        []byte
 }
 
-func (d *Data) NewBinaryVolume(offset, size dvid.Point3d) *BinaryVolume {
-	minRes := d.Labels.Resolution.VoxelSize.GetMin()
+func (d *Data) NewBinaryVolume(offset, size dvid.Point3d) (*BinaryVolume, error) {
+	labels, err := d.Labels.GetData()
+	if err != nil {
+		return nil, err
+	}
+
+	minRes := labels.Resolution.VoxelSize.GetMin()
 	numBytes := size[0] * size[1] * size[2]
 	return &BinaryVolume{
 		offset:      offset,
 		size:        size,
-		xanisotropy: float64(d.Labels.Resolution.VoxelSize[0] / minRes),
-		yanisotropy: float64(d.Labels.Resolution.VoxelSize[1] / minRes),
-		zanisotropy: float64(d.Labels.Resolution.VoxelSize[2] / minRes),
+		xanisotropy: float64(labels.Resolution.VoxelSize[0] / minRes),
+		yanisotropy: float64(labels.Resolution.VoxelSize[1] / minRes),
+		zanisotropy: float64(labels.Resolution.VoxelSize[2] / minRes),
 		data:        make([]byte, numBytes, numBytes),
-	}
+	}, nil
 }
 
 // Shift the buffer up by dz voxels.
@@ -457,16 +462,25 @@ ComputeNormal:
 // of data (4 for current XY processing and 4 for next Z), but for simplicity this
 // function uses total XY extents + 2 * block size in Z.
 func (d *Data) computeAndSaveSurface(vol *sparseVol) error {
+	labels, err := d.Labels.GetData()
+	if err != nil {
+		return err
+	}
+
 	// Allocate buffer for processing
 	dx := vol.maxPt[0] - vol.minPt[0] + 3
 	dy := vol.maxPt[1] - vol.minPt[1] + 3
 	dz := vol.maxPt[2] - vol.minPt[2] + 3
-	blockNz := d.Labels.BlockSize().Value(2)
+
+	blockNz := labels.BlockSize().Value(2)
 	if dz > 2*blockNz+1 {
 		dz = 2*blockNz + 1
 	}
 	offset := vol.minPt.AddScalar(-1).(dvid.Point3d)
-	binvol := d.NewBinaryVolume(offset, dvid.Point3d{dx, dy, dz})
+	binvol, err := d.NewBinaryVolume(offset, dvid.Point3d{dx, dy, dz})
+	if err != nil {
+		return err
+	}
 
 	var vertexBuf, normalBuf bytes.Buffer
 	var surfaceSize uint32
@@ -665,7 +679,11 @@ func (d *Data) GetLabelAtPoint(uuid dvid.UUID, pt dvid.Point) (uint64, error) {
 	if !ok {
 		return 0, fmt.Errorf("Can't determine block of point %s", pt)
 	}
-	blockSize := d.Labels.BlockSize()
+	labels, err := d.Labels.GetData()
+	if err != nil {
+		return 0, err
+	}
+	blockSize := labels.BlockSize()
 	blockCoord := coord.Chunk(blockSize).(dvid.ChunkPoint3d) // TODO -- Get rid of this cast
 	key := d.DataKey(versionID, dvid.IndexZYX(blockCoord))
 
@@ -809,14 +827,19 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 		return
 	}
 
+	labels, err := d.Labels.GetData()
+	if err != nil {
+		dvid.Error("Could not get labels64 data for '%s'", d.Labels)
+	}
+
 	// Iterate through all labels chunks incrementally in Z, loading and then using the maps
 	// for all blocks in that layer.
 	startTime := time.Now()
 	wg := new(sync.WaitGroup)
-	op := &denormOp{d.Labels, nil, versionID, nil}
+	op := &denormOp{labels, nil, versionID, nil}
 
-	dataID := d.Labels.DataID()
-	extents := d.Labels.Extents()
+	dataID := labels.DataID()
+	extents := labels.Extents()
 	minIndexZ := extents.MinIndex.(dvid.IndexZYX)[2]
 	maxIndexZ := extents.MaxIndex.(dvid.IndexZYX)[2]
 	for z := minIndexZ; z <= maxIndexZ; z++ {

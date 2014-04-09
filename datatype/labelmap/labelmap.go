@@ -287,15 +287,78 @@ func (dtype *Datatype) NewDataService(id *datastore.DataID, c dvid.Config) (data
 	}
 
 	// Make sure there is a valid labels64 instance with the given Labels name
-	labels, err := labels64.GetByLocalID(id.DatasetID(), dvid.DataString(name))
+	labelsRef, err := NewLabelsRef(dvid.DataString(name), id.DatasetID())
 	if err != nil {
 		return nil, err
 	}
-	return &Data{Data: basedata, Labels: labels}, nil
+	return &Data{Data: basedata, Labels: labelsRef}, nil
 }
 
 func (dtype *Datatype) Help() string {
 	return fmt.Sprintf(HelpMessage)
+}
+
+// LabelsRef is a reference to an existing labels64 data
+type LabelsRef struct {
+	name dvid.DataString
+	dset dvid.DatasetLocalID
+	ptr  *labels64.Data
+}
+
+func NewLabelsRef(name dvid.DataString, dset dvid.DatasetLocalID) (LabelsRef, error) {
+	ptr, err := labels64.GetByLocalID(dset, name)
+	if err != nil {
+		return LabelsRef{}, err
+	}
+	return LabelsRef{name, dset, ptr}, nil
+}
+
+// MarshalBinary fulfills the encoding.BinaryMarshaler interface.
+func (ref LabelsRef) MarshalBinary() ([]byte, error) {
+	var buf bytes.Buffer
+	if err := binary.Write(&buf, binary.LittleEndian, uint16(len(ref.name))); err != nil {
+		return nil, err
+	}
+	if _, err := buf.Write([]byte(ref.name)); err != nil {
+		return nil, err
+	}
+	if err := binary.Write(&buf, binary.LittleEndian, ref.dset); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// UnmarshalBinary fulfills the encoding.BinaryUnmarshaler interface.
+func (ref *LabelsRef) UnmarshalBinary(data []byte) error {
+	buf := bytes.NewBuffer(data)
+	var length uint16
+	if err := binary.Read(buf, binary.LittleEndian, &length); err != nil {
+		return err
+	}
+	name := make([]byte, length)
+	if n, err := buf.Read(name); err != nil || n != int(length) {
+		return fmt.Errorf("Error reading label reference name.")
+	}
+	var dset dvid.DatasetLocalID
+	if err := binary.Read(buf, binary.LittleEndian, &dset); err != nil {
+		return err
+	}
+	labelsName := dvid.DataString(name)
+	ptr, err := labels64.GetByLocalID(dset, labelsName)
+	if err != nil {
+		return err
+	}
+	ref = &LabelsRef{labelsName, dset, ptr}
+	return nil
+}
+
+// GetData returns a pointer to the referenced labels.
+func (ref LabelsRef) GetData() (*labels64.Data, error) {
+	return ref.ptr, nil
+}
+
+func (ref LabelsRef) String() string {
+	return string(ref.name)
 }
 
 // Data embeds the datastore's Data and extends it with keyvalue properties (none for now).
@@ -303,7 +366,7 @@ type Data struct {
 	*datastore.Data
 
 	// Labels64 data that we will be mapping.
-	Labels *labels64.Data
+	Labels LabelsRef
 
 	// Ready is true if inverse map, forward map, and spatial queries are ready.
 	Ready bool
@@ -633,8 +696,12 @@ func (d *Data) LoadRavelerMaps(request datastore.Request, reply *datastore.Respo
 	if err != nil {
 		return err
 	}
-	minLabelZ := uint32(d.Labels.Extents().MinPoint.Value(2))
-	maxLabelZ := uint32(d.Labels.Extents().MaxPoint.Value(2))
+	labels, err := d.Labels.GetData()
+	if err != nil {
+		return err
+	}
+	minLabelZ := uint32(labels.Extents().MinPoint.Value(2))
+	maxLabelZ := uint32(labels.Extents().MaxPoint.Value(2))
 
 	d.Ready = false
 	if err := service.SaveDataset(uuid); err != nil {
@@ -774,11 +841,15 @@ func (d *Data) ApplyLabelMap(request datastore.Request, reply *datastore.Respons
 
 	// Iterate through all labels chunks incrementally in Z, loading and then using the maps
 	// for all blocks in that layer.
+	labels, err := d.Labels.GetData()
+	if err != nil {
+		return err
+	}
 	wg := new(sync.WaitGroup)
-	op := &denormOp{d.Labels, dest, versionID, nil}
+	op := &denormOp{labels, dest, versionID, nil}
 
-	dataID := d.Labels.DataID()
-	extents := d.Labels.Extents()
+	dataID := labels.DataID()
+	extents := labels.Extents()
 	minIndexZ := extents.MinIndex.(dvid.IndexZYX)[2]
 	maxIndexZ := extents.MaxIndex.(dvid.IndexZYX)[2]
 	for z := minIndexZ; z <= maxIndexZ; z++ {
@@ -809,7 +880,7 @@ func (d *Data) ApplyLabelMap(request datastore.Request, reply *datastore.Respons
 		sourceName, destName, d.DataName())
 
 	// Set new mapped data to same extents.
-	dest.Properties = d.Labels.Properties
+	dest.Properties = labels.Properties
 	if err := server.DatastoreService().SaveDataset(uuid); err != nil {
 		dvid.Log(dvid.Normal, "Could not save READY state to data '%s', uuid %s: %s",
 			d.DataName(), uuid, err.Error())
