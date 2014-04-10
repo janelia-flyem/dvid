@@ -343,18 +343,29 @@ func (ref *LabelsRef) UnmarshalBinary(data []byte) error {
 	if err := binary.Read(buf, binary.LittleEndian, &dset); err != nil {
 		return err
 	}
+	// See if we can associate a dataset pointer, but if not, simply exit and defer
+	// to GetData() time.
 	labelsName := dvid.DataString(name)
 	ptr, err := labels64.GetByLocalID(dset, labelsName)
 	if err != nil {
-		return err
+		ptr = nil
 	}
 	ref = &LabelsRef{labelsName, dset, ptr}
 	return nil
 }
 
-// GetData returns a pointer to the referenced labels.
-func (ref LabelsRef) GetData() (*labels64.Data, error) {
-	return ref.ptr, nil
+// GetData returns a pointer to the referenced labels and stores the pointer
+// into the reference.
+func (ref *LabelsRef) GetData() (*labels64.Data, error) {
+	if ref.ptr != nil {
+		return ref.ptr, nil
+	}
+	ptr, err := labels64.GetByLocalID(ref.dset, ref.name)
+	if err != nil {
+		return nil, err
+	}
+	ref.ptr = ptr
+	return ptr, nil
 }
 
 func (ref LabelsRef) String() string {

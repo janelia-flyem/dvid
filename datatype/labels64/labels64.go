@@ -330,6 +330,9 @@ func GetByUUID(uuid dvid.UUID, name dvid.DataString) (*Data, error) {
 // GetByLocalID returns a pointer to labels64 data given a local dataset ID and data name.
 func GetByLocalID(id dvid.DatasetLocalID, name dvid.DataString) (*Data, error) {
 	service := server.DatastoreService()
+	if service == nil {
+		return nil, fmt.Errorf("No datastore service established yet!")
+	}
 	source, err := service.DataServiceByLocalID(id, name)
 	if err != nil {
 		return nil, err
