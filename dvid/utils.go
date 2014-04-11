@@ -8,8 +8,10 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"mime"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -207,6 +209,28 @@ func ReadJSONFile(filename string) (value map[string]interface{}, err error) {
 		}
 	}
 	return
+}
+
+// SendHTTP sends data after setting an appropriate Content-Type by examining the
+// name and also some byte sniffing.
+func SendHTTP(w http.ResponseWriter, r *http.Request, name string, data []byte) {
+	// This implementation follows http.serveContent() in the Go standard library.
+	sniffLen := 512
+	ctypes, haveType := w.Header()["Content-Type"]
+	var ctype string
+	if !haveType {
+		ctype = mime.TypeByExtension(filepath.Ext(name))
+		if ctype == "" {
+			ctype = http.DetectContentType(data[:sniffLen])
+		}
+	} else if len(ctypes) > 0 {
+		ctype = ctypes[0]
+	}
+	w.Header().Set("Content-Type", ctype)
+	w.WriteHeader(http.StatusOK)
+	if r.Method != "HEAD" {
+		io.Copy(w, bytes.NewReader(data))
+	}
 }
 
 // SupportsGzipEncoding returns true if the http requestor can accept gzip encoding.

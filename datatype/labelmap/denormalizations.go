@@ -516,6 +516,7 @@ func (d *Data) computeAndSaveSurface(vol *sparseVol) error {
 				// We've passed through all of this sparse volume's voxels
 				break
 			}
+			// TODO -- Keep track of bounding box per Z and limit checks to it.
 			for y = 1; y < dy-1; y++ {
 				for x = 1; x < dx-1; x++ {
 					nx, ny, nz, isSurface := binvol.CheckSurface(x, y, z)
@@ -878,6 +879,10 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 	go d.computeSizes(sizeCh, db, versionID, wg)
 
 	// Create a number of label-specific surface calculation jobs
+	// TODO: Spawn as many surface calculators as we have handler tokens for.
+	// Each surface calculator can use memory ~ XY slice x block Z so memory
+	// and # of cores is important.  Might have to pass this in if there's no
+	// introspection.
 	const numSurfCalculators = 3
 	var surfaceCh [numSurfCalculators]chan *storage.Chunk
 	for i := 0; i < numSurfCalculators; i++ {

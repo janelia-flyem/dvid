@@ -8,10 +8,7 @@ package server
 import (
 	"encoding/json"
 	"fmt"
-	"html/template"
 	"net/http"
-	"os"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -20,17 +17,6 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
 )
-
-const webClientUnavailableMessage = `
-DVID Web Client Unavailable!  To make the web client available, you have two choices:
-
-1) Invoke the DVID server using the full path to the DVID executable to use
-   the built-in web client.
-
-2) Specify a path to web pages that implement a web client via the "-webclient=PATH"
-   option to dvid.  Example: 
-   % dvid -webclient=/path/to/html/files -datastore=/path/to/db serve
-`
 
 const WebHelp = `
 <!DOCTYPE html>
@@ -42,6 +28,10 @@ const WebHelp = `
     <meta name="description" content="DVID Web Server Home Page" />
 
     <link rel="stylesheet" type="text/css" media="screen" href="/stylesheets/stylesheet.css">
+    <link rel="stylesheet" type="text/css" media="screen" href="/stylesheets/raml.css">
+
+    <script src="/js/raml-vendor.js"></script>
+    <script src="/js/raml-app.js"></script>
 
     <title>DVID Web Server</title>
   </head>
@@ -72,35 +62,10 @@ const WebHelp = `
 
         <p>Please consult the
            <a href="https://github.com/janelia-flyem/dvid#dvid">DVID documentation</a> for type-specific API help.
-           In the following examples, any part surrounded by curly braces like {myparam}
-           should be replaced by appropriate values.
+           The DVID API is specified via RAML that can be accessed at /interface.
         </p>
 
-
-          <ul>
-            <li>GET /api/help (current page)</li>
-            <li><a href="/api/load">GET /api/load</a></li>
-
-            <li><a href="/api/server/info">GET /api/server/info</a></li>
-            <li><a href="/api/server/types">GET /api/server/types</a></li>
-
-            <li><a href="/api/datasets/info">GET /api/datasets/info</a></li>
-            <li><a href="/api/datasets/list">GET /api/datasets/list</a></li>
-            <li>POST /api/datasets/new</li>
-
-            <li>GET /api/dataset/{UUID}/info</li>
-            <li>POST /api/dataset/{UUID}/new/{datatype name}/{data name}<br />
-                Type-specific configuration settings should be sent via JSON.</li>
-
-            <li>GET /api/dataset/{UUID}/{data name}/{type-specific commands}</li>
-
-            <li>POST /api/node/{UUID}/lock</li>
-            <li>POST /api/node/{UUID}/branch<br /></li>
-
-            <li>POST /api/node/{UUID}/{data name} (expects config in JSON format)</li>
-            <li>GET /api/node/{UUID}/{data name}/{type-specific commands}</li>
-            <li>POST /api/node/{UUID}/{data name}/{type-specific commands}</li>
-        </ul>
+        <raml-console src="/interface/raw" />
         
         <h3>Licensing</h3>
         <p>DVID is released under the
@@ -145,31 +110,8 @@ func indexHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // Handler for web client
-func mainHandler(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path == "/" {
-		// Respond with stock help page for root URL.
-		t, _ := template.New("Help").Parse(WebHelp)
-		hostname, _ := os.Hostname()
-		vars := struct {
-			Hostname      string
-			WebClientPath string
-		}{
-			hostname,
-			runningService.WebClientPath,
-		}
-		t.Execute(w, vars)
-	} else if runningService.WebClientPath != "" {
-		var filename string
-		if r.URL.Path[len(r.URL.Path)-1:] == "/" {
-			filename = filepath.Join(runningService.WebClientPath, r.URL.Path, "index.html")
-		} else {
-			filename = filepath.Join(runningService.WebClientPath, r.URL.Path)
-		}
-		dvid.Log(dvid.Debug, "Serving %s -> %s\n", r.URL.Path, filename)
-		http.ServeFile(w, r, filename)
-	} else {
-		fmt.Fprintf(w, webClientUnavailableMessage)
-	}
+func (service *Service) mainHandler(w http.ResponseWriter, r *http.Request) {
+	service.sendContent(r.URL.Path, w, r)
 }
 
 // Handler for API commands.  Results come back in JSON.

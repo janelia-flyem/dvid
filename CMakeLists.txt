@@ -42,19 +42,6 @@ if (NOT EXISTS ${BUILDEM_REPO_DIR}/python.cmake)
 else ()
     ###############################################################################
 
-    # Download the DVID webclient from its separate repository
-    message ("Installing buildem repo...")
-    ExternalProject_Add(dvid-webclient
-        PREFIX ${BUILDEM_DIR}
-        GIT_REPOSITORY https://github.com/janelia-flyem/dvid-webclient.git
-        UPDATE_COMMAND ""
-        PATCH_COMMAND ""
-        CONFIGURE_COMMAND "" 
-        BUILD_COMMAND ""
-        INSTALL_COMMAND ""
-    )
-    set (WEBCLIENT_DIR ${BUILDEM_DIR}/src/dvid-webclient)
-
     # Use modules from the downloaded buildem
     set (CMAKE_MODULE_PATH ${BUILDEM_REPO_DIR})
     message("Using cmake modules from ${BUILDEM_REPO_DIR}")
@@ -70,6 +57,19 @@ else ()
         message("Including Go language build...")
         include (golang)
     endif ()
+
+    # Download web console and API help
+    message ("Downloading web console and API help...")
+    ExternalProject_Add(dvid-console
+        PREFIX ${BUILDEM_DIR}
+        GIT_REPOSITORY https://github.com/janelia-flyem/dvid-console.git
+        UPDATE_COMMAND ""
+        PATCH_COMMAND ""
+        CONFIGURE_COMMAND ""
+        BUILD_COMMAND ""
+        INSTALL_COMMAND ""
+    )
+    set (CONSOLE_DIR ${BUILDEM_DIR}/src/dvid-console)
 
     # TODO: use hdf5 after writing Go interface for simple read & write.
     #include (hdf5)
@@ -126,37 +126,62 @@ else ()
     add_custom_target (gopackages-install
         ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go get ${GO_GET} github.com/janelia-flyem/go
         DEPENDS     ${golang_NAME}
-        COMMENT     "Added go package dependencies for janelia-flyem projects")
+        COMMENT     "Adding go package dependencies for janelia-flyem projects...")
 
     add_custom_target (gopackages
         git submodule init
         COMMAND     git submodule update
         DEPENDS     gopackages-install
         WORKING_DIRECTORY $ENV{GOPATH}/src/github.com/janelia-flyem/go
-        COMMENT     "Updated required Go packages")
+        COMMENT     "Updating required Go packages...")
+    
+    add_custom_target (nrsc
+        ${BUILDEM_ENV_STRING} ${GO_ENV} go build -o ${BUILDEM_BIN_DIR}/nrsc
+        DEPENDS     gopackages
+        WORKING_DIRECTORY $ENV{GOPATH}/src/github.com/janelia-flyem/go/nrsc/nrsc
+        COMMENT     "Building nrsc resource compiler...")
     
     add_custom_target (gofuse
         ${BUILDEM_ENV_STRING} go get ${GO_GET} bazil.org/fuse
         DEPENDS     ${golang_NAME}
-        COMMENT     "Added FUSE Go library")
+        COMMENT     "Adding FUSE Go library...")
 
     add_custom_target (gobolt
         ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/boltdb/bolt
         DEPENDS     ${golang_NAME}
-        COMMENT     "Added BoltDB package")
+        COMMENT     "Adding BoltDB package...")
 
     add_custom_target (gomdb
         ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/DocSavage/gomdb
         DEPENDS     ${golang_NAME}
-        COMMENT     "Added CGo Lightning MDB")
+        COMMENT     "Adding CGo Lightning MDB...")
+
+#    add_custom_target (go-bindata
+#        ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/jteeuwen/go-bindata/...
+#        DEPENDS     ${golang_NAME}
+#        COMMENT     "Added go-bindata package")
+
+#    add_custom_target (web-console
+#        ${BUILDEM_ENV_STRING} go-bindata api/ api/font/... api/scripts/... api/styles/... console/...
+#        WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}/console
+#        DEPENDS     go-bindata
+#        COMMENT     "Creating binary data assets to be included as Go file" )
 
     # Build DVID with chosen backend
-    add_custom_target (dvid
+    add_custom_target (dvid-exe
         ${BUILDEM_ENV_STRING} ${GO_ENV} ${CGO_FLAGS} go build -o ${BUILDEM_BIN_DIR}/dvid 
             -v -tags '${DVID_BACKEND}' dvid.go 
         WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
         DEPENDS     ${golang_NAME} ${DVID_BACKEND_DEPEND} gopackages gofuse ${hdf5_NAME}
-        COMMENT     "Compiled and installed dvid executable.")
+        COMMENT     "Compiling and installing dvid executable...")
+
+    # Build DVID with embedded console 
+    add_custom_target (dvid
+        ${BUILDEM_ENV_STRING} nrsc ${BUILDEM_BIN_DIR}/dvid dvid-console
+        WORKING_DIRECTORY   ${BUILDEM_DIR}/src
+        DEPENDS     dvid-exe nrsc dvid-console
+        COMMENT     "Adding embedded console into dvid executable..."
+    )
 
    # Add testing
    add_custom_target (test-build

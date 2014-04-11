@@ -502,6 +502,7 @@ func (d *Data) computeAndSaveSurface(vol *sparseVol) error {
 				// We've passed through all of this sparse volume's voxels
 				break
 			}
+			// TODO -- Keep track of bounding box per Z and limit checks to it.
 			for y = 1; y < dy-1; y++ {
 				for x = 1; x < dx-1; x++ {
 					nx, ny, nz, isSurface := binvol.CheckSurface(x, y, z)

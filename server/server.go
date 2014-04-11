@@ -4,6 +4,7 @@ import (
 	"compress/gzip"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
@@ -30,8 +31,11 @@ const (
 	// The default RPC address of the DVID RPC server
 	DefaultRPCAddress = "localhost:8001"
 
+	// WebAPIVersion is the string version of the API starting with v1
+	WebAPIVersion = "v1"
+
 	// The relative URL path to our Level 2 REST API
-	WebAPIPath = "/api/"
+	WebAPIPath = "/api/" + WebAPIVersion + "/"
 
 	// The name of the server error log, stored in the datastore directory.
 	ErrorLogFilename = "dvid-errors.log"
@@ -71,27 +75,6 @@ var (
 	// Keep track of the startup time for uptime.
 	startupTime time.Time = time.Now()
 )
-
-// Service holds information on the servers attached to a DVID datastore.  If more than
-// one storage engine is used by a DVID server, e.g., polyglot persistence where graphs
-// are managed by a graph database and key-value by a key-value database, this would
-// be the level at which the storage engines are integrated.
-type Service struct {
-	// The currently opened DVID datastore
-	*datastore.Service
-
-	// Error log directory
-	ErrorLogDir string
-
-	// The address of the web server
-	WebAddress string
-
-	// The path to the DVID web client
-	WebClientPath string
-
-	// The address of the rpc server
-	RPCAddress string
-}
 
 func init() {
 	// Initialize the number of handler tokens available.
@@ -231,6 +214,61 @@ func OpenDatastore(datastorePath string) (service *Service, err error) {
 	return
 }
 
+// Service holds information on the servers attached to a DVID datastore.  If more than
+// one storage engine is used by a DVID server, e.g., polyglot persistence where graphs
+// are managed by a graph database and key-value by a key-value database, this would
+// be the level at which the storage engines are integrated.
+type Service struct {
+	// The currently opened DVID datastore
+	*datastore.Service
+
+	// Error log directory
+	ErrorLogDir string
+
+	// The address of the web server
+	WebAddress string
+
+	// The path to the DVID web client
+	WebClientPath string
+
+	// The address of the rpc server
+	RPCAddress string
+}
+
+func (service *Service) sendContent(path string, w http.ResponseWriter, r *http.Request) {
+	if len(path) > 0 && path[len(path)-1:] == "/" {
+		path = filepath.Join(path, "index.html")
+	}
+	if service.WebClientPath == "" {
+		if len(path) > 0 && path[0:1] == "/" {
+			path = path[1:]
+		}
+		dvid.Log(dvid.Debug, "[%s] Serving from embedded files: %s\n", r.Method, path)
+
+		resource := nrsc.Get(path)
+		if resource == nil {
+			http.NotFound(w, r)
+			return
+		}
+		rsrc, err := resource.Open()
+		if err != nil {
+			BadRequest(w, r, err.Error())
+			return
+		}
+		data, err := ioutil.ReadAll(rsrc)
+		if err != nil {
+			BadRequest(w, r, err.Error())
+			return
+		}
+		dvid.SendHTTP(w, r, path, data)
+	} else {
+		// Use a non-embedded directory of files.
+		filename := filepath.Join(runningService.WebClientPath, path)
+		dvid.Log(dvid.Debug, "[%s] Serving from webclient directory: %s\n", r.Method, filename)
+		http.ServeFile(w, r, filename)
+	}
+}
+
 // Serve opens a datastore then creates both web and rpc servers for the datastore.
 // This function must be called for DatastoreService() to be non-nil.
 func (service *Service) Serve(webAddress, webClientDir, rpcAddress string) error {
@@ -289,6 +327,11 @@ func (service *Service) ServeHttp(address, clientDir string) {
 		ReadTimeout: 1 * time.Hour,
 	}
 
+	// Handle RAML interface
+	http.HandleFunc("/interface/raw", logHttpPanics(service.interfaceHandler))
+	http.HandleFunc("/interface/version", logHttpPanics(versionHandler))
+	http.HandleFunc("/interface", logHttpPanics(service.apiHelpHandler))
+
 	// Handle Level 2 REST API.
 	http.HandleFunc(WebAPIPath, logHttpPanics(apiHandler))
 
@@ -302,19 +345,14 @@ func (service *Service) ServeHttp(address, clientDir string) {
 	// Handle static files through serving embedded files
 	// via nrsc or loading files from a specified web client directory.
 	if clientDir == "" {
-		err := nrsc.Handle("/")
-		if err != nil {
-			fmt.Println("ERROR with nrsc trying to serve web pages:", err.Error())
-			fmt.Println(webClientUnavailableMessage)
-			fmt.Println("HTTP server will be started without webclient...\n")
-			http.HandleFunc("/", logHttpPanics(mainHandler))
-		} else {
-			fmt.Println("Serving web client from embedded files...")
+		dvid.Log(dvid.Normal, "Serving web client from embedded files...")
+		if err := nrsc.Initialize(); err != nil {
+			dvid.Log(dvid.Normal, "Error initializing embedded data access: %s\n", err.Error())
 		}
 	} else {
-		http.HandleFunc("/", logHttpPanics(mainHandler))
-		dvid.Log(dvid.Debug, "Serving web pages from %s\n", clientDir)
+		dvid.Log(dvid.Normal, "Serving web pages from %s\n", clientDir)
 	}
+	http.HandleFunc("/", logHttpPanics(service.mainHandler))
 
 	// Serve it up!
 	src.ListenAndServe()

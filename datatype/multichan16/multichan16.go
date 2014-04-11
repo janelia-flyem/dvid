@@ -61,19 +61,19 @@ $ dvid node <UUID> <data name> load <V3D raw filename>
 
 HTTP API (Level 2 REST):
 
-GET  /api/node/<UUID>/<data name>/help
+GET  /api/v1/node<UUID>/<data name>/help
 
 	Returns data-specific help message.
 
 
-GET  /api/node/<UUID>/<data name>/info
-POST /api/node/<UUID>/<data name>/info
+GET  /api/v1/node<UUID>/<data name>/info
+POST /api/v1/node<UUID>/<data name>/info
 
     Retrieves or puts data properties.
 
     Example: 
 
-    GET /api/node/3f8c/multichan16/info
+    GET /api/v1/node3f8c/multichan16/info
 
     Returns JSON with configuration settings.
 
@@ -83,14 +83,14 @@ POST /api/node/<UUID>/<data name>/info
     data name     Name of multichan16 data.
 
 
-GET  /api/node/<UUID>/<data name>/<dims>/<size>/<offset>[/<format>]
-POST /api/node/<UUID>/<data name>/<dims>/<size>/<offset>[/<format>]
+GET  /api/v1/node<UUID>/<data name>/<dims>/<size>/<offset>[/<format>]
+POST /api/v1/node<UUID>/<data name>/<dims>/<size>/<offset>[/<format>]
 
     Retrieves or puts orthogonal plane image data to named multichannel 16-bit data.
 
     Example: 
 
-    GET /api/node/3f8c/mydata2/xy/200,200/0,0,100/jpg:80  (channel 2 of mydata)
+    GET /api/v1/node3f8c/mydata2/xy/200,200/0,0,100/jpg:80  (channel 2 of mydata)
 
     Arguments:
 
