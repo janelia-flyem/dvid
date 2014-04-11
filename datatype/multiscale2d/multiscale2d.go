@@ -90,12 +90,12 @@ $ dvid -stdin node <UUID> <data name> generate <settings...> < config.json
 
 HTTP API (Level 2 REST):
 
-GET  /api/v1/node<UUID>/<data name>/help
+GET  /api/v1/node/<UUID>/<data name>/help
 
 	Returns data-specific help message.
 
 
-GET  /api/v1/node<UUID>/<data name>/info
+GET  /api/v1/node/<UUID>/<data name>/info
 
     Retrieves characteristics of this tile data like the tile size and number of scales present.
 
@@ -109,7 +109,7 @@ GET  /api/v1/node<UUID>/<data name>/info
     data name     Name of multiscale2d data.
 
 
-GET  /api/v1/node<UUID>/<data name>/tile/<dims>/<scaling>/<tile coord>
+GET  /api/v1/node/<UUID>/<data name>/tile/<dims>/<scaling>/<tile coord>
 (TODO) POST
     Retrieves PNG tile of named data within a version node.  This GET call should be the fastest
     way to retrieve image data since internally it has already been stored as a compressed PNG.
@@ -128,7 +128,7 @@ GET  /api/v1/node<UUID>/<data name>/tile/<dims>/<scaling>/<tile coord>
     tile coord    The tile coordinate in "x_y_z" format.  See discussion of scaling above.
 
 
-GET  /api/v1/node<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>]
+GET  /api/v1/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>]
 
     Retrieves raw image of named data within a version node using the precomputed multiscale2d.
     By "raw", we mean that no additional processing is applied based on voxel resolutions
@@ -152,7 +152,7 @@ GET  /api/v1/node<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>]
     format        "png", "jpg" (default: "png")
                     jpg allows lossy quality setting, e.g., "jpg:80"
 
-GET  /api/v1/node<UUID>/<data name>/isotropic/<dims>/<size>/<offset>[/<format>]
+GET  /api/v1/node/<UUID>/<data name>/isotropic/<dims>/<size>/<offset>[/<format>]
 
     Retrieves isotropic image of named data within a version node using the precomputed multiscale2d.
     Additional processing is applied based on voxel resolutions to make sure the retrieved image 

@@ -96,13 +96,13 @@ Note that browsers support HTTP PUT and DELETE via javascript but only GET/POST 
 included in HTML specs.  For ease of use in constructing clients, HTTP POST is used
 to create or modify resources in an idempotent fashion.
 
-GET  /api/v1/node<UUID>/<data name>/help
+GET  /api/v1/node/<UUID>/<data name>/help
 
 	Returns data-specific help message.
 
 
-GET  /api/v1/node<UUID>/<data name>/info
-POST /api/v1/node<UUID>/<data name>/info
+GET  /api/v1/node/<UUID>/<data name>/info
+POST /api/v1/node/<UUID>/<data name>/info
 
     Retrieves or puts data properties.
 
@@ -118,9 +118,9 @@ POST /api/v1/node<UUID>/<data name>/info
     data name     Name of voxels data.
 
 
-GET  /api/v1/node<UUID>/<data name>/<key>[/<format>]
-POST /api/v1/node<UUID>/<data name>/<key>
-DEL  /api/v1/node<UUID>/<data name>/<key>  (TO DO)
+GET  /api/v1/node/<UUID>/<data name>/<key>[/<format>]
+POST /api/v1/node/<UUID>/<data name>/<key>
+DEL  /api/v1/node/<UUID>/<data name>/<key>  (TO DO)
 
     Performs operations on a key/value pair depending on the HTTP verb.
 

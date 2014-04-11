@@ -100,13 +100,13 @@ $ dvid node <UUID> <data name> put remote <plane> <offset> <image glob>
 
 HTTP API (Level 2 REST):
 
-GET  /api/v1/node<UUID>/<data name>/help
+GET  /api/v1/node/<UUID>/<data name>/help
 
 	Returns data-specific help message.
 
 
-GET  /api/v1/node<UUID>/<data name>/info
-POST /api/v1/node<UUID>/<data name>/info
+GET  /api/v1/node/<UUID>/<data name>/info
+POST /api/v1/node/<UUID>/<data name>/info
 
     Retrieves or puts DVID-specific data properties for these voxels.
 
@@ -123,14 +123,14 @@ POST /api/v1/node<UUID>/<data name>/info
     data name     Name of voxels data.
 
 
-GET  /api/v1/node<UUID>/<data name>/metadata
+GET  /api/v1/node/<UUID>/<data name>/metadata
 
 	Retrieves metadata in JSON format (application/vnd.dvid-nd-data+json) that describes the layout
 	of bytes returned for n-d images.
 
 
-GET  /api/v1/node<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>]
-POST /api/v1/node<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>]
+GET  /api/v1/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>]
+POST /api/v1/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>]
 
     Retrieves or puts voxel data.
 
@@ -161,7 +161,7 @@ POST /api/v1/node<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>]
                     jpg allows lossy quality setting, e.g., "jpg:80"
                   nD: uses default "octet-stream".
 
-GET  /api/v1/node<UUID>/<data name>/isotropic/<dims>/<size>/<offset>[/<format>]
+GET  /api/v1/node/<UUID>/<data name>/isotropic/<dims>/<size>/<offset>[/<format>]
 
     Retrieves or puts voxel data.
 
@@ -196,7 +196,7 @@ GET  /api/v1/node<UUID>/<data name>/isotropic/<dims>/<size>/<offset>[/<format>]
 
 (TO DO)
 
-GET  /api/v1/node<UUID>/<data name>/arb/<center>/<normal>/<size>[/<format>]
+GET  /api/v1/node/<UUID>/<data name>/arb/<center>/<normal>/<size>[/<format>]
 
     Retrieves non-orthogonal (arbitrarily oriented planar) image data of named 3d data 
     within a version node.
