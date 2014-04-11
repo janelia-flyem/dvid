@@ -310,6 +310,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 	case "get":
 		value, found, err := d.GetData(uuid, keyStr)
 		if err != nil {
+			server.BadRequest(w, r, err.Error())
 			return err
 		}
 		if !found {
@@ -319,21 +320,26 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		w.Header().Set("Content-Type", "application/octet-stream")
 		_, err = w.Write(value)
 		if err != nil {
+			server.BadRequest(w, r, err.Error())
 			return err
 		}
 		comment = fmt.Sprintf("HTTP GET keyvalue '%s': %d bytes (%s)\n", d.DataName(), len(value), url)
 	case "post":
 		data, err := ioutil.ReadAll(r.Body)
 		if err != nil {
+			server.BadRequest(w, r, err.Error())
 			return err
 		}
 		err = d.PutData(uuid, keyStr, data)
 		if err != nil {
+			server.BadRequest(w, r, err.Error())
 			return err
 		}
 		comment = fmt.Sprintf("HTTP POST keyvalue '%s': %d bytes (%s)\n", d.DataName(), len(data), url)
 	default:
-		return fmt.Errorf("Can only handle GET or POST HTTP verbs")
+		err := fmt.Errorf("Can only handle GET or POST HTTP verbs")
+		server.BadRequest(w, r, err.Error())
+		return err
 	}
 
 	dvid.ElapsedTime(dvid.Debug, startTime, comment, "success")

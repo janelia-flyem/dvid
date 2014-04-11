@@ -460,12 +460,14 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		}
 		_, versionID, err := server.DatastoreService().LocalIDFromUUID(uuid)
 		if err != nil {
+			server.BadRequest(w, r, err.Error())
 			return err
 		}
 		labelBytes := make([]byte, 8, 8)
 		binary.BigEndian.PutUint64(labelBytes, label)
 		mapping, err := d.GetLabelMapping(versionID, labelBytes)
 		if err != nil {
+			server.BadRequest(w, r, err.Error())
 			return err
 		}
 		w.Header().Set("Content-type", "application/json")
@@ -486,11 +488,13 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		}
 		data, err := d.GetSparseVol(uuid, label)
 		if err != nil {
+			server.BadRequest(w, r, err.Error())
 			return err
 		}
 		w.Header().Set("Content-type", "application/octet-stream")
 		_, err = w.Write(data)
 		if err != nil {
+			server.BadRequest(w, r, err.Error())
 			return err
 		}
 		dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: sparsevol on label %d (%s)",
@@ -515,11 +519,13 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		}
 		data, err := d.GetSparseVol(uuid, label)
 		if err != nil {
+			server.BadRequest(w, r, err.Error())
 			return err
 		}
 		w.Header().Set("Content-type", "application/octet-stream")
 		_, err = w.Write(data)
 		if err != nil {
+			server.BadRequest(w, r, err.Error())
 			return err
 		}
 		dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: sparsevol-by-point at %s (%s)",
@@ -548,6 +554,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		}
 		w.Header().Set("Content-type", "application/octet-stream")
 		if err := dvid.WriteGzip(gzipData, w, r); err != nil {
+			server.BadRequest(w, r, err.Error())
 			return err
 		}
 		dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: surface on label %d (%s)",
@@ -604,6 +611,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		}
 		jsonStr, err := d.GetSizeRange(uuid, minSize, maxSize)
 		if err != nil {
+			server.BadRequest(w, r, err.Error())
 			return err
 		}
 		w.Header().Set("Content-type", "application/json")

@@ -728,10 +728,12 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 				rawSlice, err := d.HandleIsotropy2D(slice, isotropic)
 				e, err := d.NewExtHandler(rawSlice, nil)
 				if err != nil {
+					server.BadRequest(w, r, err.Error())
 					return err
 				}
 				img, err := voxels.GetImage(uuid, d, e)
 				if err != nil {
+					server.BadRequest(w, r, err.Error())
 					return err
 				}
 				if isotropic {
@@ -739,6 +741,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 					dstH := int(slice.Size().Value(1))
 					img, err = img.ScaleImage(dstW, dstH)
 					if err != nil {
+						server.BadRequest(w, r, err.Error())
 						return err
 					}
 				}
@@ -749,6 +752,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 				//dvid.ElapsedTime(dvid.Normal, startTime, "%s %s upto image formatting", op, slice)
 				err = dvid.WriteImageHttp(w, img.Get(), formatStr)
 				if err != nil {
+					server.BadRequest(w, r, err.Error())
 					return err
 				}
 			}
@@ -761,10 +765,12 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 			if op == voxels.GetOp {
 				e, err := d.NewExtHandler(subvol, nil)
 				if err != nil {
+					server.BadRequest(w, r, err.Error())
 					return err
 				}
 				data, err := voxels.GetVolume(uuid, d, e)
 				if err != nil {
+					server.BadRequest(w, r, err.Error())
 					return err
 				}
 				w.Header().Set("Content-type", "application/octet-stream")
@@ -778,14 +784,17 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 				}
 				data, err := ioutil.ReadAll(r.Body)
 				if err != nil {
+					server.BadRequest(w, r, err.Error())
 					return err
 				}
 				e, err := d.NewExtHandler(subvol, data)
 				if err != nil {
+					server.BadRequest(w, r, err.Error())
 					return err
 				}
 				err = voxels.PutVoxels(uuid, d, e)
 				if err != nil {
+					server.BadRequest(w, r, err.Error())
 					return err
 				}
 			}
@@ -807,11 +816,13 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		}
 		data, err := d.GetSparseVol(uuid, label)
 		if err != nil {
+			server.BadRequest(w, r, err.Error())
 			return err
 		}
 		w.Header().Set("Content-type", "application/octet-stream")
 		_, err = w.Write(data)
 		if err != nil {
+			server.BadRequest(w, r, err.Error())
 			return err
 		}
 		dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: sparsevol on label %d (%s)",
@@ -836,11 +847,13 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		}
 		data, err := d.GetSparseVol(uuid, label)
 		if err != nil {
+			server.BadRequest(w, r, err.Error())
 			return err
 		}
 		w.Header().Set("Content-type", "application/octet-stream")
 		_, err = w.Write(data)
 		if err != nil {
+			server.BadRequest(w, r, err.Error())
 			return err
 		}
 		dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: sparsevol-by-point at %s (%s)",
@@ -869,6 +882,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		}
 		w.Header().Set("Content-type", "application/octet-stream")
 		if err := dvid.WriteGzip(gzipData, w, r); err != nil {
+			server.BadRequest(w, r, err.Error())
 			return err
 		}
 		dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: surface on label %d (%s)",
@@ -925,6 +939,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		}
 		jsonStr, err := d.GetSizeRange(uuid, minSize, maxSize)
 		if err != nil {
+			server.BadRequest(w, r, err.Error())
 			return err
 		}
 		w.Header().Set("Content-type", "application/json")

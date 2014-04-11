@@ -2006,32 +2006,40 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 			}
 			if op == PutOp {
 				if isotropic {
-					return fmt.Errorf("can only PUT 'raw' not 'isotropic' images")
+					err := fmt.Errorf("can only PUT 'raw' not 'isotropic' images")
+					server.BadRequest(w, r, err.Error())
+					return err
 				}
 				// TODO -- Put in format checks for POSTed image.
 				postedImg, _, err := dvid.ImageFromPOST(r)
 				if err != nil {
+					server.BadRequest(w, r, err.Error())
 					return err
 				}
 				e, err := d.NewExtHandler(slice, postedImg)
 				if err != nil {
+					server.BadRequest(w, r, err.Error())
 					return err
 				}
 				err = PutVoxels(uuid, d, e)
 				if err != nil {
+					server.BadRequest(w, r, err.Error())
 					return err
 				}
 			} else {
 				rawSlice, err := d.HandleIsotropy2D(slice, isotropic)
 				if err != nil {
+					server.BadRequest(w, r, err.Error())
 					return err
 				}
 				e, err := d.NewExtHandler(rawSlice, nil)
 				if err != nil {
+					server.BadRequest(w, r, err.Error())
 					return err
 				}
 				img, err := GetImage(uuid, d, e)
 				if err != nil {
+					server.BadRequest(w, r, err.Error())
 					return err
 				}
 				if isotropic {
@@ -2048,6 +2056,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 				}
 				err = dvid.WriteImageHttp(w, img.Get(), formatStr)
 				if err != nil {
+					server.BadRequest(w, r, err.Error())
 					return err
 				}
 			}
@@ -2060,31 +2069,39 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 			if op == GetOp {
 				e, err := d.NewExtHandler(subvol, nil)
 				if err != nil {
+					server.BadRequest(w, r, err.Error())
 					return err
 				}
 				data, err := GetVolume(uuid, d, e)
 				if err != nil {
+					server.BadRequest(w, r, err.Error())
 					return err
 				}
 				w.Header().Set("Content-type", "application/octet-stream")
 				_, err = w.Write(data)
 				if err != nil {
+					server.BadRequest(w, r, err.Error())
 					return err
 				}
 			} else {
 				if isotropic {
-					return fmt.Errorf("can only PUT 'raw' not 'isotropic' images")
+					err := fmt.Errorf("can only PUT 'raw' not 'isotropic' images")
+					server.BadRequest(w, r, err.Error())
+					return err
 				}
 				data, err := ioutil.ReadAll(r.Body)
 				if err != nil {
+					server.BadRequest(w, r, err.Error())
 					return err
 				}
 				e, err := d.NewExtHandler(subvol, data)
 				if err != nil {
+					server.BadRequest(w, r, err.Error())
 					return err
 				}
 				err = PutVoxels(uuid, d, e)
 				if err != nil {
+					server.BadRequest(w, r, err.Error())
 					return err
 				}
 			}

@@ -476,7 +476,9 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 	case "tile":
 		planeStr, scalingStr, coordStr := parts[4], parts[5], parts[6]
 		if action == "post" {
-			return fmt.Errorf("DVID does not yet support POST of multiscale2d")
+			err := fmt.Errorf("DVID does not yet support POST of multiscale2d")
+			server.BadRequest(w, r, err.Error())
+			return err
 		} else {
 			pngData, err := d.GetTile(uuid, planeStr, scalingStr, coordStr)
 			if err != nil {
@@ -501,12 +503,15 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 			return fmt.Errorf("multiscale2d '%s' can only PUT tiles not images", d.DataName())
 		}
 		if len(parts) < 7 {
-			return fmt.Errorf("'%s' must be followed by shape/size/offset", parts[3])
+			err := fmt.Errorf("'%s' must be followed by shape/size/offset", parts[3])
+			server.BadRequest(w, r, err.Error())
+			return err
 		}
 		shapeStr, sizeStr, offsetStr := parts[4], parts[5], parts[6]
 		planeStr := dvid.DataShapeString(shapeStr)
 		plane, err := planeStr.DataShape()
 		if err != nil {
+			server.BadRequest(w, r, err.Error())
 			return err
 		}
 		if plane.ShapeDimensions() != 2 {
@@ -514,10 +519,12 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		}
 		slice, err := dvid.NewSliceFromStrings(planeStr, offsetStr, sizeStr, "_")
 		if err != nil {
+			server.BadRequest(w, r, err.Error())
 			return err
 		}
 		img, err := d.GetImage(uuid, slice, parts[3] == "isotropic")
 		if err != nil {
+			server.BadRequest(w, r, err.Error())
 			return err
 		}
 		var formatStr string
@@ -526,6 +533,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		}
 		err = dvid.WriteImageHttp(w, img.Get(), formatStr)
 		if err != nil {
+			server.BadRequest(w, r, err.Error())
 			return err
 		}
 		dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: tile-accelerated %s %s (%s)",

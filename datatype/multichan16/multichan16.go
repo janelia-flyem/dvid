@@ -355,6 +355,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 			//dvid.ElapsedTime(dvid.Normal, startTime, "%s %s upto image formatting", op, slice)
 			err = dvid.WriteImageHttp(w, img.Get(), formatStr)
 			if err != nil {
+				server.BadRequest(w, r, err.Error())
 				return err
 			}
 		}
@@ -362,15 +363,22 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		sizeStr, offsetStr := parts[4], parts[5]
 		_, err := dvid.NewSubvolumeFromStrings(offsetStr, sizeStr, "_")
 		if err != nil {
+			server.BadRequest(w, r, err.Error())
 			return err
 		}
 		if op == voxels.GetOp {
-			return fmt.Errorf("DVID does not yet support GET of volume data")
+			err := fmt.Errorf("DVID does not yet support GET of volume data")
+			server.BadRequest(w, r, err.Error())
+			return err
 		} else {
-			return fmt.Errorf("DVID does not yet support POST of volume data")
+			err := fmt.Errorf("DVID does not yet support POST of volume data")
+			server.BadRequest(w, r, err.Error())
+			return err
 		}
 	default:
-		return fmt.Errorf("DVID does not yet support nD volumes")
+		err := fmt.Errorf("DVID does not yet support nD volumes")
+		server.BadRequest(w, r, err.Error())
+		return err
 	}
 
 	dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: %s", r.Method, dataShape)
