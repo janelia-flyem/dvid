@@ -108,7 +108,7 @@ POST /api/v1/node/<UUID>/<data name>/info
 
     Example: 
 
-    GET /api/v1/node3f8c/stuff/info
+    GET /api/v1/node/3f8c/stuff/info
 
     Returns JSON with configuration settings.
 
@@ -126,7 +126,7 @@ DEL  /api/v1/node/<UUID>/<data name>/<key>  (TO DO)
 
     Example: 
 
-    GET /api/v1/node3f8c/stuff/mykey
+    GET /api/v1/node/3f8c/stuff/mykey
 
     Returns the data associated with the key "mykey" of the data "stuff" in version
     node 3f8c.

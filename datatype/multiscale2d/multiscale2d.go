@@ -101,7 +101,7 @@ GET  /api/v1/node/<UUID>/<data name>/info
 
     Example: 
 
-    GET /api/v1/node3f8c/mymultiscale2d/info
+    GET /api/v1/node/3f8c/mymultiscale2d/info
 
     Arguments:
 
@@ -116,7 +116,7 @@ GET  /api/v1/node/<UUID>/<data name>/tile/<dims>/<scaling>/<tile coord>
 
     Example: 
 
-    GET /api/v1/node3f8c/mymultiscale2d/tile/xy/0/10_10_20
+    GET /api/v1/node/3f8c/mymultiscale2d/tile/xy/0/10_10_20
 
     Arguments:
 
@@ -138,7 +138,7 @@ GET  /api/v1/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>]
 
     Example: 
 
-    GET /api/v1/node3f8c/mymultiscale2d/raw/xy/512_256/0_0_100/jpg:80
+    GET /api/v1/node/3f8c/mymultiscale2d/raw/xy/512_256/0_0_100/jpg:80
 
     Arguments:
 
@@ -162,7 +162,7 @@ GET  /api/v1/node/<UUID>/<data name>/isotropic/<dims>/<size>/<offset>[/<format>]
 
     Example: 
 
-    GET /api/v1/node3f8c/mymultiscale2d/isotropic/xy/512_256/0_0_100/jpg:80
+    GET /api/v1/node/3f8c/mymultiscale2d/isotropic/xy/512_256/0_0_100/jpg:80
 
     Arguments:
 

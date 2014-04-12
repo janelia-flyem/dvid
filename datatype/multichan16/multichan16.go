@@ -73,7 +73,7 @@ POST /api/v1/node/<UUID>/<data name>/info
 
     Example: 
 
-    GET /api/v1/node3f8c/multichan16/info
+    GET /api/v1/node/3f8c/multichan16/info
 
     Returns JSON with configuration settings.
 
@@ -90,7 +90,7 @@ POST /api/v1/node/<UUID>/<data name>/<dims>/<size>/<offset>[/<format>]
 
     Example: 
 
-    GET /api/v1/node3f8c/mydata2/xy/200,200/0,0,100/jpg:80  (channel 2 of mydata)
+    GET /api/v1/node/3f8c/mydata2/xy/200,200/0,0,100/jpg:80  (channel 2 of mydata)
 
     Arguments:
 

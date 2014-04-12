@@ -112,7 +112,7 @@ POST /api/v1/node/<UUID>/<data name>/info
 
     Example: 
 
-    GET /api/v1/node3f8c/grayscale/info
+    GET /api/v1/node/3f8c/grayscale/info
 
     Returns JSON with configuration settings that include location in DVID space and
     min/max block indices.
@@ -136,7 +136,7 @@ POST /api/v1/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>]
 
     Example: 
 
-    GET /api/v1/node3f8c/grayscale/raw/0_1/512_256/0_0_100/jpg:80
+    GET /api/v1/node/3f8c/grayscale/raw/0_1/512_256/0_0_100/jpg:80
 
     Returns a raw XY slice (0th and 1st dimensions) with width (x) of 512 voxels and
     height (y) of 256 voxels with offset (0,0,100) in JPG format with quality 80.
@@ -167,7 +167,7 @@ GET  /api/v1/node/<UUID>/<data name>/isotropic/<dims>/<size>/<offset>[/<format>]
 
     Example: 
 
-    GET /api/v1/node3f8c/grayscale/isotropic/0_1/512_256/0_0_100/jpg:80
+    GET /api/v1/node/3f8c/grayscale/isotropic/0_1/512_256/0_0_100/jpg:80
 
     Returns an isotropic XY slice (0th and 1st dimensions) with width (x) of 512 voxels and
     height (y) of 256 voxels with offset (0,0,100) in JPG format with quality 80.
@@ -203,7 +203,7 @@ GET  /api/v1/node/<UUID>/<data name>/arb/<center>/<normal>/<size>[/<format>]
 
     Example: 
 
-    GET /api/v1/node3f8c/grayscale/arb/200_200/2.0_1.3_1/100_100/jpg:80
+    GET /api/v1/node/3f8c/grayscale/arb/200_200/2.0_1.3_1/100_100/jpg:80
 
     Arguments:
 

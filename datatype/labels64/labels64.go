@@ -123,7 +123,7 @@ POST /api/v1/node/<UUID>/<data name>/info
 
     Example: 
 
-    GET /api/v1/node3f8c/grayscale/info
+    GET /api/v1/node/3f8c/grayscale/info
 
     Returns JSON with configuration settings that include location in DVID space and
     min/max block indices.
@@ -148,7 +148,7 @@ POST /api/v1/node/<UUID>/<data name>/<dims>/<size>/<offset>[/<format>]
 
     Example: 
 
-    GET /api/v1/node3f8c/superpixels/0_1/512_256/0_0_100
+    GET /api/v1/node/3f8c/superpixels/0_1/512_256/0_0_100
 
     Returns an XY slice (0th and 1st dimensions) with width (x) of 512 voxels and
     height (y) of 256 voxels with offset (0,0,100) in binary format.
