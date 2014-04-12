@@ -523,7 +523,6 @@ type bulkLoadInfo struct {
 	filenames     []string
 	versionID     dvid.VersionLocalID
 	offset        dvid.Point
-	writeWait     sync.WaitGroup
 	extentChanged dvid.Bool
 }
 
@@ -579,13 +578,16 @@ func loadHDF(i IntHandler, load *bulkLoadInfo) error {
 // Trades off memory for speed.
 func loadXYImages(i IntHandler, load *bulkLoadInfo) error {
 	fmt.Println("Reading XY images...")
-	var blockWait sync.WaitGroup
+
+	var waitForWrites sync.WaitGroup
 
 	// Load first slice, get dimensions, allocate blocks for whole slice.
 	// Note: We don't need to lock the block slices because goroutines do NOT
 	// access the same elements of a slice.
+	const numLayers = 4
 	var numBlocks int
-	var blocks [2]Blocks
+	var blocks [numLayers]Blocks
+	var layerTransferred, layerWritten [numLayers]sync.WaitGroup
 	curBlocks := 0
 	blockSize := i.BlockSize()
 	blockBytes := blockSize.Prod() * int64(i.Values().BytesPerElement())
@@ -615,12 +617,14 @@ func loadXYImages(i IntHandler, load *bulkLoadInfo) error {
 		if fileNum == 1 || (lastBlocks && firstSliceInBlock) {
 			numBlocks = dvid.GetNumBlocks(e, blockSize)
 			if fileNum == 1 {
-				blocks[0] = make(Blocks, numBlocks, numBlocks)
-				blocks[1] = make(Blocks, numBlocks, numBlocks)
-				for i := 0; i < numBlocks; i++ {
-					blocks[0][i].V = make([]byte, blockBytes, blockBytes)
-					blocks[1][i].V = make([]byte, blockBytes, blockBytes)
+				for layer := 0; layer < numLayers; layer++ {
+					blocks[layer] = make(Blocks, numBlocks, numBlocks)
+					for i := 0; i < numBlocks; i++ {
+						blocks[layer][i].V = make([]byte, blockBytes, blockBytes)
+					}
 				}
+				var bufSize uint64 = uint64(blockBytes) * uint64(numBlocks) * uint64(numLayers) / 1000000
+				dvid.Log(dvid.Debug, "Allocated %d MB for buffers.\n", bufSize)
 			} else {
 				blocks[curBlocks] = make(Blocks, numBlocks, numBlocks)
 				for i := 0; i < numBlocks; i++ {
@@ -634,8 +638,8 @@ func loadXYImages(i IntHandler, load *bulkLoadInfo) error {
 		}
 
 		// Transfer data between external<->internal blocks asynchronously
-		blockWait.Add(1)
-		go func(ext ExtHandler) {
+		layerTransferred[curBlocks].Add(1)
+		go func(ext ExtHandler, curBlocks int) {
 			// Track point extents
 			if i.Extents().AdjustPoints(e.StartPoint(), e.EndPoint()) {
 				load.extentChanged.SetTrue()
@@ -649,24 +653,111 @@ func loadXYImages(i IntHandler, load *bulkLoadInfo) error {
 			if changed {
 				load.extentChanged.SetTrue()
 			}
-			blockWait.Done()
-		}(e)
+			layerTransferred[curBlocks].Done()
+		}(e, curBlocks)
 
 		// If this is the end of a block (or filenames), wait until all goroutines complete,
 		// then asynchronously write blocks.
 		if lastSliceInBlock {
-			blockWait.Wait()
-			fmt.Printf("Writing using %s and %s...\n", i.UseCompression(), i.UseChecksum())
-			if err = AsyncWriteData(i.UseCompression(), i.UseChecksum(), blocks[curBlocks], &load.writeWait); err != nil {
-				return err
-			}
-			curBlocks = (curBlocks + 1) % 2
+			waitForWrites.Add(1)
+			layerWritten[curBlocks].Add(1)
+			go func(curBlocks int) {
+				layerTransferred[curBlocks].Wait()
+				dvid.Log(dvid.Debug, "Writing block buffer %d using %s and %s...\n",
+					curBlocks, i.UseCompression(), i.UseChecksum())
+				err := writeBlocks(i.UseCompression(), i.UseChecksum(), blocks[curBlocks],
+					&layerWritten[curBlocks], &waitForWrites)
+				if err != nil {
+					dvid.Error("Error in async write of voxel blocks: %s", err.Error())
+				}
+			}(curBlocks)
+			// We can't move to buffer X until all blocks from buffer X have already been written.
+			curBlocks = (curBlocks + 1) % numLayers
+			dvid.Log(dvid.Debug, "Waiting for layer %d to be written before reusing layer %d blocks\n",
+				curBlocks, curBlocks)
+			layerWritten[curBlocks].Wait()
+			dvid.Log(dvid.Debug, "Using layer %d...\n", curBlocks)
 		}
 
 		fileNum++
 		load.offset = load.offset.Add(dvid.Point3d{0, 0, 1})
 		dvid.ElapsedTime(dvid.Debug, sliceTime, "Loaded %s slice %s", i, e)
 	}
+	waitForWrites.Wait()
+	return nil
+}
+
+// KVWriteSize is the # of key/value pairs we will write as one atomic batch write.
+const KVWriteSize = 500
+
+// writeBlocks writes blocks of voxel data asynchronously using batch writes.
+func writeBlocks(compress dvid.Compression, checksum dvid.Checksum, blocks Blocks, wg1, wg2 *sync.WaitGroup) error {
+	db, err := server.KeyValueSetter()
+	if err != nil {
+		return err
+	}
+
+	preCompress, postCompress := 0, 0
+
+	<-server.HandlerToken
+	go func() {
+		defer func() {
+			dvid.Log(dvid.Debug, "Wrote voxel blocks.  Before %s: %d bytes.  After: %d bytes\n",
+				compress, preCompress, postCompress)
+			server.HandlerToken <- 1
+			wg1.Done()
+			wg2.Done()
+		}()
+		// If we can do write batches, use it, else do put ranges.
+		// With write batches, we write the byte slices immediately.
+		// The put range approach can lead to duplicated memory.
+		batcher, ok := db.(storage.Batcher)
+		if ok {
+			batch := batcher.NewBatch()
+			for i, block := range blocks {
+				serialization, err := dvid.SerializeData(block.V, compress, checksum)
+				preCompress += len(block.V)
+				postCompress += len(serialization)
+				if err != nil {
+					fmt.Printf("Unable to serialize block: %s\n", err.Error())
+					return
+				}
+				batch.Put(block.K, serialization)
+				if i%KVWriteSize == KVWriteSize-1 {
+					if err := batch.Commit(); err != nil {
+						dvid.Log(dvid.Normal, "Error on trying to write batch: %s\n", err.Error())
+						return
+					}
+					batch = batcher.NewBatch()
+				}
+			}
+			if err := batch.Commit(); err != nil {
+				dvid.Log(dvid.Normal, "Error on trying to write batch: %s\n", err.Error())
+				return
+			}
+		} else {
+			// Serialize and compress the blocks.
+			keyvalues := make(storage.KeyValues, len(blocks))
+			for i, block := range blocks {
+				serialization, err := dvid.SerializeData(block.V, compress, checksum)
+				if err != nil {
+					fmt.Printf("Unable to serialize block: %s\n", err.Error())
+					return
+				}
+				keyvalues[i] = storage.KeyValue{
+					K: block.K,
+					V: serialization,
+				}
+			}
+
+			// Write them in one swoop.
+			err := db.PutRange(keyvalues)
+			if err != nil {
+				fmt.Printf("Unable to write slice blocks: %s\n", err.Error())
+			}
+		}
+
+	}()
 	return nil
 }
 
@@ -710,7 +801,6 @@ func LoadImages(i IntHandler, uuid dvid.UUID, offset dvid.Point, filenames []str
 	// Handle cleanup given multiple goroutines still writing data.
 	load := &bulkLoadInfo{filenames: filenames, versionID: versionID, offset: offset}
 	defer func() {
-		load.writeWait.Wait()
 		versionMutex.Unlock()
 
 		if load.extentChanged.Value() {
@@ -847,75 +937,6 @@ func writeXYImage(i IntHandler, e ExtHandler, blocks Blocks, versionID dvid.Vers
 		startingBlock += (endX - begX + 1)
 	}
 	return
-}
-
-// KVWriteSize is the # of key/value pairs we will write as one atomic batch write.
-const KVWriteSize = 500
-
-// AsyncWriteData writes blocks of voxel data asynchronously using batch writes.
-func AsyncWriteData(compress dvid.Compression, checksum dvid.Checksum, blocks Blocks, wg *sync.WaitGroup) error {
-	db, err := server.KeyValueSetter()
-	if err != nil {
-		return err
-	}
-
-	wg.Wait()
-	wg.Add(1)
-	<-server.HandlerToken
-	go func() {
-		defer func() {
-			server.HandlerToken <- 1
-			wg.Done()
-		}()
-		// If we can do write batches, use it, else do put ranges.
-		// With write batches, we write the byte slices immediately.
-		// The put range approach can lead to duplicated memory.
-		batcher, ok := db.(storage.Batcher)
-		if ok {
-			batch := batcher.NewBatch()
-			for i, block := range blocks {
-				serialization, err := dvid.SerializeData(block.V, compress, checksum)
-				if err != nil {
-					fmt.Printf("Unable to serialize block: %s\n", err.Error())
-					return
-				}
-				batch.Put(block.K, serialization)
-				if i%KVWriteSize == KVWriteSize-1 {
-					if err := batch.Commit(); err != nil {
-						dvid.Log(dvid.Normal, "Error on trying to write batch: %s\n", err.Error())
-						return
-					}
-					batch = batcher.NewBatch()
-				}
-			}
-			if err := batch.Commit(); err != nil {
-				dvid.Log(dvid.Normal, "Error on trying to write batch: %s\n", err.Error())
-				return
-			}
-		} else {
-			// Serialize and compress the blocks.
-			keyvalues := make(storage.KeyValues, len(blocks))
-			for i, block := range blocks {
-				serialization, err := dvid.SerializeData(block.V, compress, checksum)
-				if err != nil {
-					fmt.Printf("Unable to serialize block: %s\n", err.Error())
-					return
-				}
-				keyvalues[i] = storage.KeyValue{
-					K: block.K,
-					V: serialization,
-				}
-			}
-
-			// Write them in one swoop.
-			err := db.PutRange(keyvalues)
-			if err != nil {
-				fmt.Printf("Unable to write slice blocks: %s\n", err.Error())
-			}
-		}
-
-	}()
-	return nil
 }
 
 type OpBounds struct {
