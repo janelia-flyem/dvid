@@ -156,17 +156,6 @@ else ()
         DEPENDS     ${golang_NAME}
         COMMENT     "Adding CGo Lightning MDB...")
 
-#    add_custom_target (go-bindata
-#        ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/jteeuwen/go-bindata/...
-#        DEPENDS     ${golang_NAME}
-#        COMMENT     "Added go-bindata package")
-
-#    add_custom_target (web-console
-#        ${BUILDEM_ENV_STRING} go-bindata api/ api/font/... api/scripts/... api/styles/... console/...
-#        WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}/console
-#        DEPENDS     go-bindata
-#        COMMENT     "Creating binary data assets to be included as Go file" )
-
     # Build DVID with chosen backend
     add_custom_target (dvid-exe
         ${BUILDEM_ENV_STRING} ${GO_ENV} ${CGO_FLAGS} go build -o ${BUILDEM_BIN_DIR}/dvid 

@@ -656,6 +656,7 @@ func loadXYImages(i IntHandler, load *bulkLoadInfo) error {
 		// then asynchronously write blocks.
 		if lastSliceInBlock {
 			blockWait.Wait()
+			fmt.Printf("Writing using %s and %s...\n", i.UseCompression(), i.UseChecksum())
 			if err = AsyncWriteData(i.UseCompression(), i.UseChecksum(), blocks[curBlocks], &load.writeWait); err != nil {
 				return err
 			}
@@ -797,10 +798,17 @@ func loadOldBlocks(i IntHandler, e ExtHandler, blocks Blocks, versionID dvid.Ver
 // with old data.
 func writeXYImage(i IntHandler, e ExtHandler, blocks Blocks, versionID dvid.VersionLocalID) (extentChanged bool, err error) {
 
+	// Setup concurrency in image -> block transfers.
+	var wg sync.WaitGroup
+	defer func() {
+		wg.Wait()
+	}()
+
 	// Iterate through index space for this data using ZYX ordering.
 	dataID := i.DataID()
 	blockSize := i.BlockSize()
-	blockNum := 0
+	var startingBlock int32
+
 	for it, err := e.IndexIterator(blockSize); err == nil && it.Valid(); it.NextSpan() {
 		indexBeg, indexEnd, err := it.IndexSpan()
 		if err != nil {
@@ -815,18 +823,28 @@ func writeXYImage(i IntHandler, e ExtHandler, blocks Blocks, versionID dvid.Vers
 			extentChanged = true
 		}
 
+		// Do image -> block transfers in concurrent goroutines.
 		begX := ptBeg.Value(0)
 		endX := ptEnd.Value(0)
-		c := dvid.ChunkPoint3d{begX, ptBeg.Value(1), ptBeg.Value(2)}
-		for x := begX; x <= endX; x++ {
-			c[0] = x
-			key := &datastore.DataKey{dataID.DsetID, dataID.ID, versionID, e.Index(c)}
-			blocks[blockNum].K = key
 
-			// Write this slice data into the block.
-			WriteToBlock(e, &(blocks[blockNum]), blockSize)
-			blockNum++
-		}
+		<-server.HandlerToken
+		wg.Add(1)
+		go func(blockNum int32) {
+			c := dvid.ChunkPoint3d{begX, ptBeg.Value(1), ptBeg.Value(2)}
+			for x := begX; x <= endX; x++ {
+				c[0] = x
+				key := &datastore.DataKey{dataID.DsetID, dataID.ID, versionID, e.Index(c)}
+				blocks[blockNum].K = key
+
+				// Write this slice data into the block.
+				WriteToBlock(e, &(blocks[blockNum]), blockSize)
+				blockNum++
+			}
+			server.HandlerToken <- 1
+			wg.Done()
+		}(startingBlock)
+
+		startingBlock += (endX - begX + 1)
 	}
 	return
 }
