@@ -1,8 +1,8 @@
 package labelmap
 
 import (
-	. "github.com/janelia-flyem/go/gocheck"
 	"testing"
+	. "github.com/janelia-flyem/go/gocheck"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -16,6 +16,9 @@ type DataSuite struct {
 	dir     string
 	service *server.Service
 	head    dvid.UUID
+
+	mylabels datastore.DataService
+	lmap     datastore.DataService
 }
 
 var _ = Suite(&DataSuite{})
@@ -33,15 +36,7 @@ func (suite *DataSuite) SetUpSuite(c *C) {
 	// Open the datastore
 	suite.service, err = server.OpenDatastore(suite.dir)
 	c.Assert(err, IsNil)
-}
 
-func (suite *DataSuite) TearDownSuite(c *C) {
-	suite.service.Shutdown()
-}
-
-/*
-// Make sure new keyvalue data have different IDs.
-func (suite *DataSuite) TestNewDataDifferent(c *C) {
 	// Create a new dataset
 	root, _, err := suite.service.NewDataset()
 	c.Assert(err, IsNil)
@@ -50,54 +45,38 @@ func (suite *DataSuite) TestNewDataDifferent(c *C) {
 	config := dvid.NewConfig()
 	config.SetVersioned(true)
 
-	err = suite.service.NewData(root, "labelmap", "kv1", config)
+	err = suite.service.NewData(root, "labels64", "mylabels", config)
 	c.Assert(err, IsNil)
 
-	dataservice1, err := suite.service.DataService(root, "kv1")
+	suite.mylabels, err = suite.service.DataServiceByUUID(root, "mylabels")
 	c.Assert(err, IsNil)
 
-	err = suite.service.NewData(root, "labelmap", "kv2", config)
+	config.Set("Labels", "mylabels")
+	err = suite.service.NewData(root, "labelmap", "lmap", config)
 	c.Assert(err, IsNil)
 
-	dataservice2, err := suite.service.DataService(root, "kv2")
+	suite.lmap, err = suite.service.DataServiceByUUID(root, "lmap")
 	c.Assert(err, IsNil)
-
-	data1, ok := dataservice1.(*Data)
-	c.Assert(ok, Equals, true)
-
-	data2, ok := dataservice2.(*Data)
-	c.Assert(ok, Equals, true)
-
-	c.Assert(data1.DsetID, Equals, data2.DsetID)
-	c.Assert(data1.ID, Not(Equals), data2.ID)
 }
 
-func (suite *DataSuite) TestRoundTrip(c *C) {
-	root, _, err := suite.service.NewDataset()
+func (suite *DataSuite) TearDownSuite(c *C) {
+	suite.service.Shutdown()
+}
+
+// Make sure the binary serializations are OK.
+func (suite *DataSuite) TestSerialization(c *C) {
+	data, ok := suite.lmap.(*Data)
+	c.Assert(ok, Equals, true)
+
+	// Test Labels reference
+	b, err := data.Labels.MarshalBinary()
 	c.Assert(err, IsNil)
-
-	config := dvid.NewConfig()
-	config.SetVersioned(true)
-
-	err = suite.service.NewData(root, "keyvalue", "kv", config)
-	c.Assert(err, IsNil)
-
-	mapservice, err := suite.service.DataService(root, "kv")
-	c.Assert(err, IsNil)
-
-	_, ok := mapservice.(*Data)
-	if !ok {
-		c.Errorf("Can't cast labelmap data service into Data\n")
+	if len(b) == 0 {
+		c.Fail()
 	}
-		keyStr := "testkey"
-		value := []byte("I like Japan and this is some unicode: \u65e5\u672c\u8a9e")
 
-		err = kvdata.PutData(root, keyStr, value)
-		c.Assert(err, IsNil)
-
-		retrieved, err := kvdata.GetData(root, keyStr)
-		c.Assert(err, IsNil)
-
-		c.Assert(retrieved, DeepEquals, value)
+	var ref LabelsRef
+	err = ref.UnmarshalBinary(b)
+	c.Assert(err, IsNil)
+	c.Assert(ref.name, Equals, dvid.DataString("mylabels"))
 }
-*/

@@ -291,6 +291,7 @@ func (dtype *Datatype) NewDataService(id *datastore.DataID, c dvid.Config) (data
 	if err != nil {
 		return nil, err
 	}
+	fmt.Printf("LabelsRef = %s\n", labelsRef)
 	return &Data{Data: basedata, Labels: labelsRef}, nil
 }
 
@@ -313,6 +314,28 @@ func NewLabelsRef(name dvid.DataString, dset dvid.DatasetLocalID) (LabelsRef, er
 	return LabelsRef{name, dset, ptr}, nil
 }
 
+type labelsExport struct {
+	Name           dvid.DataString
+	DatasetLocalID dvid.DatasetLocalID
+}
+
+// MarshalJSON implements the json.Marshaler interface.
+func (ref LabelsRef) MarshalJSON() ([]byte, error) {
+	v := labelsExport{ref.name, ref.dset}
+	return json.Marshal(v)
+}
+
+// UnmarshalJSON implements the json.Unmarshaler interface.
+func (ref *LabelsRef) UnmarshalJSON(b []byte) error {
+	var labels labelsExport
+	if err := json.Unmarshal(b, &labels); err != nil {
+		return err
+	}
+	ref.name = labels.Name
+	ref.dset = labels.DatasetLocalID
+	return nil
+}
+
 // MarshalBinary fulfills the encoding.BinaryMarshaler interface.
 func (ref LabelsRef) MarshalBinary() ([]byte, error) {
 	var buf bytes.Buffer
@@ -322,6 +345,7 @@ func (ref LabelsRef) MarshalBinary() ([]byte, error) {
 	if _, err := buf.Write([]byte(ref.name)); err != nil {
 		return nil, err
 	}
+	fmt.Printf("LabelsRef.MarshalBinary() on name '%s'\n", ref.name)
 	if err := binary.Write(&buf, binary.LittleEndian, ref.dset); err != nil {
 		return nil, err
 	}
@@ -338,6 +362,8 @@ func (ref *LabelsRef) UnmarshalBinary(data []byte) error {
 	name := make([]byte, length)
 	if n, err := buf.Read(name); err != nil || n != int(length) {
 		return fmt.Errorf("Error reading label reference name.")
+	} else {
+		fmt.Printf("LabelsRef.UnmarshalBinary() read %d bytes for name '%s'\n", n, name)
 	}
 	var dset dvid.DatasetLocalID
 	if err := binary.Read(buf, binary.LittleEndian, &dset); err != nil {
@@ -350,7 +376,9 @@ func (ref *LabelsRef) UnmarshalBinary(data []byte) error {
 	if err != nil {
 		ptr = nil
 	}
-	ref = &LabelsRef{labelsName, dset, ptr}
+	ref.name = labelsName
+	ref.dset = dset
+	ref.ptr = ptr
 	return nil
 }
 
