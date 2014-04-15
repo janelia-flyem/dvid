@@ -458,10 +458,57 @@ ComputeNormal:
 	return
 }
 
+// Runs asynchronously and assumes that sparse volumes per spatial indices are ordered
+// by mapped label, i.e., we will get all data for body N before body N+1.  Exits when
+// receives a nil in channel.
+func (d *Data) computeSurface(surfaceCh chan *storage.Chunk, db storage.KeyValueSetter,
+	versionID dvid.VersionLocalID, wg *sync.WaitGroup) {
+
+	defer func() {
+		wg.Done()
+		server.HandlerToken <- 1
+	}()
+
+	// Sequentially process all the sparse volume data for each label
+	var curVol sparseVol
+	var curLabel uint64
+	notFirst := false
+	for {
+		chunk := <-surfaceCh
+		if chunk == nil {
+			if notFirst {
+				if err := d.computeAndSaveSurface(&curVol); err != nil {
+					dvid.Log(dvid.Normal, "Error on computing surface and normals: %s\n", err.Error())
+					return
+				}
+			}
+			return
+		}
+		label := chunk.ChunkOp.Op.(uint64)
+		if label != curLabel || label == 0 {
+			if notFirst {
+				if err := d.computeAndSaveSurface(&curVol); err != nil {
+					dvid.Log(dvid.Normal, "Error on computing surface and normals: %s\n", err.Error())
+					return
+				}
+			}
+			curVol.key = d.NewLabelSurfaceKey(versionID, label)
+			curVol.label = label
+			curVol.alreadySet = false
+		}
+
+		curVol.AddRLEs(chunk.V)
+		curLabel = label
+		notFirst = true
+	}
+}
+
 // TODO -- can be more efficient in buffer space by only needing 8 blocks worth
 // of data (4 for current XY processing and 4 for next Z), but for simplicity this
 // function uses total XY extents + 2 * block size in Z.
 func (d *Data) computeAndSaveSurface(vol *sparseVol) error {
+	startTime := time.Now()
+
 	labels, err := d.Labels.GetData()
 	if err != nil {
 		return err
@@ -476,6 +523,8 @@ func (d *Data) computeAndSaveSurface(vol *sparseVol) error {
 	if dz > 2*blockNz+1 {
 		dz = 2*blockNz + 1
 	}
+
+	// Allocate buffer for processing
 	offset := vol.minPt.AddScalar(-1).(dvid.Point3d)
 	binvol, err := d.NewBinaryVolume(offset, dvid.Point3d{dx, dy, dz})
 	if err != nil {
@@ -485,9 +534,17 @@ func (d *Data) computeAndSaveSurface(vol *sparseVol) error {
 	var vertexBuf, normalBuf bytes.Buffer
 	var surfaceSize uint32
 	rleI := 0
-	fmt.Printf("Compute label %d, # voxels %d, rle pos %d, size %s, minPt %s, maxPt %s\n",
-		vol.label, vol.numVoxels, vol.pos, binvol.size, vol.minPt, vol.maxPt)
+	dvid.Log(dvid.Debug, "Label %d, # voxels %d, size %s, minPt %s, maxPt %s: ",
+		vol.label, vol.numVoxels, binvol.size, vol.minPt, vol.maxPt)
+	defer func() {
+		dvid.Log(dvid.Debug, "%s", time.Since(startTime))
+	}()
+
 	for {
+		var minX int32 = dx
+		var maxX int32 = 0
+		var minY int32 = dy
+		var maxY int32 = 0
 		// Populate the buffer
 		for {
 			if rleI >= vol.pos {
@@ -506,6 +563,21 @@ func (d *Data) computeAndSaveSurface(vol *sparseVol) error {
 			for i := int32(0); i < r.length; i++ {
 				binvol.data[p+i] = 255
 			}
+
+			// For this buffer, set bounds.  For large sparse volumes that snake
+			// through a lot of space, the XY footprint might be relatively small.
+			if minX > bx {
+				minX = bx
+			}
+			if maxX < bx+r.length {
+				maxX = bx + r.length
+			}
+			if minY > by {
+				minY = by
+			}
+			if maxY < by {
+				maxY = by
+			}
 			rleI++
 		}
 
@@ -517,8 +589,8 @@ func (d *Data) computeAndSaveSurface(vol *sparseVol) error {
 				break
 			}
 			// TODO -- Keep track of bounding box per Z and limit checks to it.
-			for y = 1; y < dy-1; y++ {
-				for x = 1; x < dx-1; x++ {
+			for y = minY; y <= maxY; y++ {
+				for x = minX; x <= maxX; x++ {
 					nx, ny, nz, isSurface := binvol.CheckSurface(x, y, z)
 					if isSurface {
 						surfaceSize++
@@ -576,57 +648,12 @@ func (d *Data) computeAndSaveSurface(vol *sparseVol) error {
 	}
 	// Surface blobs are always stored using gzip with best compression, trading off time
 	// during the store for speed during interactive GETs.
-	compression, _ := dvid.NewCompression(dvid.Gzip, dvid.BestCompression)
+	compression, _ := dvid.NewCompression(dvid.Gzip, dvid.DefaultCompression)
 	serialization, err := dvid.SerializeData(data, compression, dvid.NoChecksum)
 	if err != nil {
 		return fmt.Errorf("Unable to serialize data in surface computation: %s\n", err.Error())
 	}
 	return db.Put(vol.key, serialization)
-}
-
-// Runs asynchronously and assumes that sparse volumes per spatial indices are ordered
-// by mapped label, i.e., we will get all data for body N before body N+1.  Exits when
-// receives a nil in channel.
-func (d *Data) computeSurface(surfaceCh chan *storage.Chunk, db storage.KeyValueSetter,
-	versionID dvid.VersionLocalID, wg *sync.WaitGroup) {
-
-	defer func() {
-		wg.Done()
-		server.HandlerToken <- 1
-	}()
-
-	// Sequentially process all the sparse volume data for each label
-	var curVol sparseVol
-	var curLabel uint64
-	notFirst := false
-	for {
-		chunk := <-surfaceCh
-		if chunk == nil {
-			if notFirst {
-				if err := d.computeAndSaveSurface(&curVol); err != nil {
-					dvid.Log(dvid.Normal, "Error on computing surface and normals: %s\n", err.Error())
-					return
-				}
-			}
-			return
-		}
-		label := chunk.ChunkOp.Op.(uint64)
-		if label != curLabel || label == 0 {
-			if notFirst {
-				if err := d.computeAndSaveSurface(&curVol); err != nil {
-					dvid.Log(dvid.Normal, "Error on computing surface and normals: %s\n", err.Error())
-					return
-				}
-			}
-			curVol.key = d.NewLabelSurfaceKey(versionID, label)
-			curVol.label = label
-			curVol.alreadySet = false
-		}
-
-		curVol.AddRLEs(chunk.V)
-		curLabel = label
-		notFirst = true
-	}
 }
 
 // GetSizeRange returns a JSON list of mapped labels that have volumes within the given range.
@@ -795,13 +822,13 @@ func (d *Data) GetSurface(uuid dvid.UUID, label uint64) (s []byte, found bool, e
 	if data == nil {
 		return
 	}
-	found = true
-	uncompress := true
+	uncompress := false
 	s, _, e = dvid.DeserializeData(data, uncompress)
 	if e != nil {
 		err = fmt.Errorf("Unable to deserialize surface for key '%s': %s\n", key, e.Error())
 		return
 	}
+	found = true
 	return
 }
 

@@ -563,7 +563,7 @@ func (d *Data) computeAndSaveSurface(vol *sparseVol) error {
 
 	// Surface blobs are always stored using gzip with best compression, trading off time
 	// during the store for speed during interactive GETs.
-	compression, _ := dvid.NewCompression(dvid.Gzip, dvid.BestCompression)
+	compression, _ := dvid.NewCompression(dvid.Gzip, dvid.DefaultCompression)
 	serialization, err := dvid.SerializeData(data, compression, dvid.NoChecksum)
 	if err != nil {
 		return fmt.Errorf("Unable to serialize data in surface computation: %s\n", err.Error())
@@ -759,7 +759,7 @@ func (d *Data) GetSparseVol(uuid dvid.UUID, label uint64) ([]byte, error) {
 	return op.encoding, nil
 }
 
-// GetSurface returns a byte array with # voxels and float32 arrays for vertices and
+// GetSurface returns a gzipped byte array with # voxels and float32 arrays for vertices and
 // normals.
 func (d *Data) GetSurface(uuid dvid.UUID, label uint64) (s []byte, found bool, err error) {
 	service := server.DatastoreService()
@@ -785,13 +785,13 @@ func (d *Data) GetSurface(uuid dvid.UUID, label uint64) (s []byte, found bool, e
 	if data == nil {
 		return
 	}
-	found = true
-	uncompress := true
+	uncompress := false
 	s, _, e = dvid.DeserializeData(data, uncompress)
 	if e != nil {
 		err = fmt.Errorf("Unable to deserialize surface for key '%s': %s\n", key, e.Error())
 		return
 	}
+	found = true
 	return
 }
 

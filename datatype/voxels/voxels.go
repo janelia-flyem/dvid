@@ -584,7 +584,7 @@ func loadXYImages(i IntHandler, load *bulkLoadInfo) error {
 	// Load first slice, get dimensions, allocate blocks for whole slice.
 	// Note: We don't need to lock the block slices because goroutines do NOT
 	// access the same elements of a slice.
-	const numLayers = 4
+	const numLayers = 2
 	var numBlocks int
 	var blocks [numLayers]Blocks
 	var layerTransferred, layerWritten [numLayers]sync.WaitGroup

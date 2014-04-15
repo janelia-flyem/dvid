@@ -874,7 +874,9 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		}
 		gzipData, found, err := d.GetSurface(uuid, label)
 		if err != nil {
-			return fmt.Errorf("Error on getting surface for label %d: %s", label, err.Error())
+			err = fmt.Errorf("Error on getting surface for label %d: %s", label, err.Error())
+			server.BadRequest(w, r, err.Error())
+			return err
 		}
 		if !found {
 			http.Error(w, fmt.Sprintf("Surface for label '%d' not found", label), http.StatusNotFound)
@@ -907,14 +909,18 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		}
 		gzipData, found, err := d.GetSurface(uuid, label)
 		if err != nil {
-			return fmt.Errorf("Error on getting surface for label %d: %s", label, err.Error())
+			err = fmt.Errorf("Error on getting surface for label %d: %s", label, err.Error())
+			server.BadRequest(w, r, err.Error())
+			return err
 		}
 		if !found {
 			http.Error(w, fmt.Sprintf("Surface for label '%d' not found", label), http.StatusNotFound)
 			return nil
 		}
+		fmt.Printf("Found surface for label %d: %d bytes (gzip payload)\n", label, len(gzipData))
 		w.Header().Set("Content-type", "application/octet-stream")
 		if err := dvid.WriteGzip(gzipData, w, r); err != nil {
+			server.BadRequest(w, r, err.Error())
 			return err
 		}
 		dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: surface-by-point at %s (%s)",

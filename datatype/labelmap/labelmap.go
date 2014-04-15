@@ -345,7 +345,6 @@ func (ref LabelsRef) MarshalBinary() ([]byte, error) {
 	if _, err := buf.Write([]byte(ref.name)); err != nil {
 		return nil, err
 	}
-	fmt.Printf("LabelsRef.MarshalBinary() on name '%s'\n", ref.name)
 	if err := binary.Write(&buf, binary.LittleEndian, ref.dset); err != nil {
 		return nil, err
 	}
@@ -362,8 +361,6 @@ func (ref *LabelsRef) UnmarshalBinary(data []byte) error {
 	name := make([]byte, length)
 	if n, err := buf.Read(name); err != nil || n != int(length) {
 		return fmt.Errorf("Error reading label reference name.")
-	} else {
-		fmt.Printf("LabelsRef.UnmarshalBinary() read %d bytes for name '%s'\n", n, name)
 	}
 	var dset dvid.DatasetLocalID
 	if err := binary.Read(buf, binary.LittleEndian, &dset); err != nil {
@@ -561,13 +558,13 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 
 	case "surface":
 		// GET /api/v1/node/<UUID>/<data name>/surface/<label>
+		fmt.Printf("Getting surface: %s\n", url)
 		if len(parts) < 5 {
 			err := fmt.Errorf("ERROR: DVID requires label ID to follow 'surface' command")
 			server.BadRequest(w, r, err.Error())
 			return err
 		}
 		label, err := strconv.ParseUint(parts[4], 10, 64)
-		fmt.Printf("Getting surface for label %d\n", label)
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
 			return err
