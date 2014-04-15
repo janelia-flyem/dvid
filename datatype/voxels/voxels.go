@@ -100,19 +100,19 @@ $ dvid node <UUID> <data name> put remote <plane> <offset> <image glob>
 
 HTTP API (Level 2 REST):
 
-GET  /api/v1/node/<UUID>/<data name>/help
+GET  <api URL>/node/<UUID>/<data name>/help
 
 	Returns data-specific help message.
 
 
-GET  /api/v1/node/<UUID>/<data name>/info
-POST /api/v1/node/<UUID>/<data name>/info
+GET  <api URL>/node/<UUID>/<data name>/info
+POST <api URL>/node/<UUID>/<data name>/info
 
     Retrieves or puts DVID-specific data properties for these voxels.
 
     Example: 
 
-    GET /api/v1/node/3f8c/grayscale/info
+    GET <api URL>/node/3f8c/grayscale/info
 
     Returns JSON with configuration settings that include location in DVID space and
     min/max block indices.
@@ -123,20 +123,20 @@ POST /api/v1/node/<UUID>/<data name>/info
     data name     Name of voxels data.
 
 
-GET  /api/v1/node/<UUID>/<data name>/metadata
+GET  <api URL>/node/<UUID>/<data name>/metadata
 
 	Retrieves metadata in JSON format (application/vnd.dvid-nd-data+json) that describes the layout
 	of bytes returned for n-d images.
 
 
-GET  /api/v1/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>]
-POST /api/v1/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>]
+GET  <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>]
+POST <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>]
 
     Retrieves or puts voxel data.
 
     Example: 
 
-    GET /api/v1/node/3f8c/grayscale/raw/0_1/512_256/0_0_100/jpg:80
+    GET <api URL>/node/3f8c/grayscale/raw/0_1/512_256/0_0_100/jpg:80
 
     Returns a raw XY slice (0th and 1st dimensions) with width (x) of 512 voxels and
     height (y) of 256 voxels with offset (0,0,100) in JPG format with quality 80.
@@ -161,13 +161,13 @@ POST /api/v1/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>]
                     jpg allows lossy quality setting, e.g., "jpg:80"
                   nD: uses default "octet-stream".
 
-GET  /api/v1/node/<UUID>/<data name>/isotropic/<dims>/<size>/<offset>[/<format>]
+GET  <api URL>/node/<UUID>/<data name>/isotropic/<dims>/<size>/<offset>[/<format>]
 
     Retrieves or puts voxel data.
 
     Example: 
 
-    GET /api/v1/node/3f8c/grayscale/isotropic/0_1/512_256/0_0_100/jpg:80
+    GET <api URL>/node/3f8c/grayscale/isotropic/0_1/512_256/0_0_100/jpg:80
 
     Returns an isotropic XY slice (0th and 1st dimensions) with width (x) of 512 voxels and
     height (y) of 256 voxels with offset (0,0,100) in JPG format with quality 80.
@@ -196,14 +196,14 @@ GET  /api/v1/node/<UUID>/<data name>/isotropic/<dims>/<size>/<offset>[/<format>]
 
 (TO DO)
 
-GET  /api/v1/node/<UUID>/<data name>/arb/<center>/<normal>/<size>[/<format>]
+GET  <api URL>/node/<UUID>/<data name>/arb/<center>/<normal>/<size>[/<format>]
 
     Retrieves non-orthogonal (arbitrarily oriented planar) image data of named 3d data 
     within a version node.
 
     Example: 
 
-    GET /api/v1/node/3f8c/grayscale/arb/200_200/2.0_1.3_1/100_100/jpg:80
+    GET <api URL>/node/3f8c/grayscale/arb/200_200/2.0_1.3_1/100_100/jpg:80
 
     Arguments:
 

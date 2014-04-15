@@ -31,11 +31,12 @@ const (
 	// The default RPC address of the DVID RPC server
 	DefaultRPCAddress = "localhost:8001"
 
-	// WebAPIVersion is the string version of the API starting with v1
-	WebAPIVersion = "v1"
+	// WebAPIVersion is the string version of the API.  Once DVID is somewhat stable,
+	// this will be "v1/", "v2/", etc.
+	WebAPIVersion = ""
 
 	// The relative URL path to our Level 2 REST API
-	WebAPIPath = "/api/" + WebAPIVersion + "/"
+	WebAPIPath = "/api/" + WebAPIVersion
 
 	// The name of the server error log, stored in the datastore directory.
 	ErrorLogFilename = "dvid-errors.log"

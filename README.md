@@ -342,7 +342,10 @@ You might have noticed a few HTTP API calls listed in the grayscale8 help text. 
 use one of these to look at slices of data orthogonal to the volume axes.  Launch a web browser
 and enter the following URL:
 
-    localhost:8000/api/v1/nodec7/mygrayscale/xy/250_250/100_100_2600
+    <api URL>/node/c7/mygrayscale/xy/250_250/100_100_2600
+
+where `<api URL>` is typically `localhost:8000/api` where the hostname can be set by the dvid option
+`-web` as in `dvid -web=:8080 server /path/to/db`.
     
 You should see a small grayscale image appear in your browser.  It will be 250 x 250 pixels, taken
 from data in the XY plane using an offset of (100,100,2600).  Note that when we did the "load local"
@@ -352,11 +355,11 @@ characters.
 
 Change the Z offset to 2800 to see a different portion of the volume:
 
-    localhost:8000/api/v1/nodec7/mygrayscale/xy/250_250/100_100_2800
+    <api URL>/node/c7/mygrayscale/xy/250_250/100_100_2800
 
 We can see the extent of the loaded image using the following resectioning:
 
-    localhost:8000/api/v1/nodec7/mygrayscale/xz/500_500/0_0_2500
+    <api URL>/node/c7/mygrayscale/xz/500_500/0_0_2500
 
 A larger 500 x 500 pixel image should now appear in the browser with black areas surrounding your
 loaded data.  This is a slice along XZ, an orientation not present in the originally loaded
@@ -379,7 +382,7 @@ This will kick off the tile precomputation (about 30 seconds on my MacBook Pro).
 loaded grayscale is 250 x 250 x 250, we will have two different scales in the multiscale2d.  The original
 scale is "0" and can be accessed through the multiscale2d HTTP API.  Visit this URL in your browser:
 
-    localhost:8000/api/v1/nodec7/mymultiscale2d/tile/xy/0/0_0_0
+    <api URL>/node/c7/mymultiscale2d/tile/xy/0/0_0_0
 
 This will return a 128x128 pixel PNG tile, basically the upper left quadrant of the first slice of our
 test data.  By replacing the "0_0_0" (0,0,0) portion with "1_0_0", you can see the upper right
@@ -389,7 +392,7 @@ corner.
 We can zoom out a bit by going to scale "1" where returned multiscale2d have reduced the size of the
 original image by 2.
 
-    localhost:8000/api/v1/nodec7/mymultiscale2d/tile/xy/1/0_0_0
+    <api URL>/node/c7/mymultiscale2d/tile/xy/1/0_0_0
 
 The above URL will return a 128x128 pixel tile that covers the original 250x250 image so you see
 a bit of black space at the edges.   DVID automatically creates as many scales as necessary

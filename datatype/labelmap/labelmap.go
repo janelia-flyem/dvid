@@ -87,19 +87,19 @@ Note that browsers support HTTP PUT and DELETE via javascript but only GET/POST 
 included in HTML specs.  For ease of use in constructing clients, HTTP POST is used
 to create or modify resources in an idempotent fashion.
 
-GET  /api/v1/node/<UUID>/<data name>/help
+GET  <api URL>/node/<UUID>/<data name>/help
 
 	Returns data-specific help message.
 
 
-GET  /api/v1/node/<UUID>/<data name>/info
-POST /api/v1/node/<UUID>/<data name>/info
+GET  <api URL>/node/<UUID>/<data name>/info
+POST <api URL>/node/<UUID>/<data name>/info
 
     Retrieves or puts data properties.
 
     Example: 
 
-    GET /api/v1/node/3f8c/stuff/info
+    GET <api URL>/node/3f8c/stuff/info
 
     Returns JSON with configuration settings.
 
@@ -109,7 +109,7 @@ POST /api/v1/node/<UUID>/<data name>/info
     data name     Name of mapping data.
 
 
-GET /api/v1/node/<UUID>/<data name>/sparsevol/<mapped label>
+GET <api URL>/node/<UUID>/<data name>/sparsevol/<mapped label>
 
 	Returns a sparse volume with voxels of the given forward label in encoded RLE format.
 	The encoding has the following format where integers are little endian and the order
@@ -134,7 +134,7 @@ GET /api/v1/node/<UUID>/<data name>/sparsevol/<mapped label>
 	        bytes   Optional payload dependent on first byte descriptor
 
 
-GET /api/v1/node/<UUID>/<data name>/sparsevol-by-point/<coord>
+GET <api URL>/node/<UUID>/<data name>/sparsevol-by-point/<coord>
 
 	Returns a sparse volume with voxels that pass through a given voxel.
 	The encoding is described in the "sparsevol" request above.
@@ -146,7 +146,7 @@ GET /api/v1/node/<UUID>/<data name>/sparsevol-by-point/<coord>
     coord     	  Coordinate of voxel with underscore as separator, e.g., 10_20_30
 
 
-GET /api/v1/node/<UUID>/<data name>/surface/<label>
+GET <api URL>/node/<UUID>/<data name>/surface/<label>
 
 	Returns array of vertices and normals of surface voxels of given label.
 	The encoding has the following format where integers are little endian and the order
@@ -157,7 +157,7 @@ GET /api/v1/node/<UUID>/<data name>/surface/<label>
 	    N x float32     Normals where N = 3 * (# Voxels)
 
 
-GET /api/v1/node/<UUID>/<data name>/surface-by-point/<coord>
+GET <api URL>/node/<UUID>/<data name>/surface-by-point/<coord>
 
 	Returns array of vertices and normals of surface voxels for label at given voxel.
 	The encoding is described in the "surface" request above.
@@ -169,7 +169,7 @@ GET /api/v1/node/<UUID>/<data name>/surface-by-point/<coord>
     coord     	  Coordinate of voxel with underscore as separator, e.g., 10_20_30
 
 
-GET /api/v1/node/<UUID>/<data name>/sizerange/<min size>/<max size>
+GET <api URL>/node/<UUID>/<data name>/sizerange/<min size>/<max size>
 
     Returns JSON list of labels that have # voxels that fall within the given range
     of sizes.
@@ -182,7 +182,7 @@ GET /api/v1/node/<UUID>/<data name>/sizerange/<min size>/<max size>
     max size      Maximum # of voxels.
 
 
-GET /api/v1/node/<UUID>/<data name>/mapping/<label>
+GET <api URL>/node/<UUID>/<data name>/mapping/<label>
 
     Returns the label to which the given label has been mapped.
 	
@@ -194,7 +194,7 @@ GET /api/v1/node/<UUID>/<data name>/mapping/<label>
 
 TODO:
 
-GET /api/v1/node/<UUID>/<data name>/mapped/<min bound>/<max bound>
+GET <api URL>/node/<UUID>/<data name>/mapped/<min bound>/<max bound>
 
     Returns JSON list of labels that intersect the bounding box.
 	
@@ -206,13 +206,13 @@ GET /api/v1/node/<UUID>/<data name>/mapped/<min bound>/<max bound>
     max size      Coordinate of last voxel with underscore as separator.
 
 
-GET  /api/v1/node/<UUID>/<data name>/<dims>/<size>/<offset>[/<format>]
+GET  <api URL>/node/<UUID>/<data name>/<dims>/<size>/<offset>[/<format>]
 
     Retrieves or puts mapped label data.
 
     Example: 
 
-    GET /api/v1/node/3f8c/superpixels/0_1/512_256/0_0_100
+    GET <api URL>/node/3f8c/superpixels/0_1/512_256/0_0_100
 
     Returns an XY slice (0th and 1st dimensions) with width (x) of 512 voxels and
     height (y) of 256 voxels with offset (0,0,100) in PNG format.
@@ -472,7 +472,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		return nil
 
 	case "mapping":
-		// GET /api/v1/node/<UUID>/<data name>/mapping/<label>
+		// GET <api URL>/node/<UUID>/<data name>/mapping/<label>
 		if len(parts) < 5 {
 			err := fmt.Errorf("ERROR: DVID requires label ID to follow 'sparsevol' command")
 			server.BadRequest(w, r, err.Error())
@@ -500,7 +500,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: mapping of label '%d' (%s)", r.Method, label, r.URL)
 
 	case "sparsevol":
-		// GET /api/v1/node/<UUID>/<data name>/sparsevol/<label>
+		// GET <api URL>/node/<UUID>/<data name>/sparsevol/<label>
 		if len(parts) < 5 {
 			err := fmt.Errorf("ERROR: DVID requires label ID to follow 'sparsevol' command")
 			server.BadRequest(w, r, err.Error())
@@ -526,7 +526,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 			r.Method, label, r.URL)
 
 	case "sparsevol-by-point":
-		// GET /api/v1/node/<UUID>/<data name>/sparsevol-by-point/<coord>
+		// GET <api URL>/node/<UUID>/<data name>/sparsevol-by-point/<coord>
 		if len(parts) < 5 {
 			err := fmt.Errorf("ERROR: DVID requires coord to follow 'sparsevol-by-point' command")
 			server.BadRequest(w, r, err.Error())
@@ -557,7 +557,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 			r.Method, coord, r.URL)
 
 	case "surface":
-		// GET /api/v1/node/<UUID>/<data name>/surface/<label>
+		// GET <api URL>/node/<UUID>/<data name>/surface/<label>
 		fmt.Printf("Getting surface: %s\n", url)
 		if len(parts) < 5 {
 			err := fmt.Errorf("ERROR: DVID requires label ID to follow 'surface' command")
@@ -586,7 +586,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 			r.Method, label, r.URL)
 
 	case "surface-by-point":
-		// GET /api/v1/node/<UUID>/<data name>/surface-by-point/<coord>
+		// GET <api URL>/node/<UUID>/<data name>/surface-by-point/<coord>
 		if len(parts) < 5 {
 			err := fmt.Errorf("ERROR: DVID requires coord to follow 'surface-by-point' command")
 			server.BadRequest(w, r, err.Error())
@@ -618,7 +618,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 			r.Method, coord, r.URL)
 
 	case "sizerange":
-		// GET /api/v1/node/<UUID>/<data name>/sizerange/<min size>/<max size>
+		// GET <api URL>/node/<UUID>/<data name>/sizerange/<min size>/<max size>
 		if len(parts) < 6 {
 			err := fmt.Errorf("ERROR: DVID requires min & max sizes to follow 'sizerange' command")
 			server.BadRequest(w, r, err.Error())

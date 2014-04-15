@@ -96,19 +96,19 @@ Note that browsers support HTTP PUT and DELETE via javascript but only GET/POST 
 included in HTML specs.  For ease of use in constructing clients, HTTP POST is used
 to create or modify resources in an idempotent fashion.
 
-GET  /api/v1/node/<UUID>/<data name>/help
+GET  <api URL>/node/<UUID>/<data name>/help
 
 	Returns data-specific help message.
 
 
-GET  /api/v1/node/<UUID>/<data name>/info
-POST /api/v1/node/<UUID>/<data name>/info
+GET  <api URL>/node/<UUID>/<data name>/info
+POST <api URL>/node/<UUID>/<data name>/info
 
     Retrieves or puts data properties.
 
     Example: 
 
-    GET /api/v1/node/3f8c/stuff/info
+    GET <api URL>/node/3f8c/stuff/info
 
     Returns JSON with configuration settings.
 
@@ -118,15 +118,15 @@ POST /api/v1/node/<UUID>/<data name>/info
     data name     Name of voxels data.
 
 
-GET  /api/v1/node/<UUID>/<data name>/<key>[/<format>]
-POST /api/v1/node/<UUID>/<data name>/<key>
-DEL  /api/v1/node/<UUID>/<data name>/<key>  (TO DO)
+GET  <api URL>/node/<UUID>/<data name>/<key>[/<format>]
+POST <api URL>/node/<UUID>/<data name>/<key>
+DEL  <api URL>/node/<UUID>/<data name>/<key>  (TO DO)
 
     Performs operations on a key/value pair depending on the HTTP verb.
 
     Example: 
 
-    GET /api/v1/node/3f8c/stuff/mykey
+    GET <api URL>/node/3f8c/stuff/mykey
 
     Returns the data associated with the key "mykey" of the data "stuff" in version
     node 3f8c.
