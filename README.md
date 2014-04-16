@@ -5,6 +5,8 @@ DVID [![Picture](https://raw.github.com/janelia-flyem/janelia-flyem.github.com/m
 
 [![GoDoc](https://godoc.org/github.com/janelia-flyem/dvid?status.png)](https://godoc.org/github.com/janelia-flyem/dvid) [![Build Status](https://drone.io/github.com/janelia-flyem/dvid/status.png)](https://drone.io/github.com/janelia-flyem/dvid/latest)
 
+![Web app for 3d inspection being served from and sending requests to DVID](/images/webapp.png)
+
 DVID is a *distributed, versioned, image-oriented datastore* written to support 
 [Janelia Farm Reseach Center's](http://www.janelia.org) brain imaging, analysis and 
 visualization efforts.  DVID's initial focus is on efficiently storing and retrieving 
