@@ -14,9 +14,10 @@ visualization efforts.  DVID's initial focus is on efficiently storing and retri
 orientation, multiscale 2d and 3d (similar to quadtree and octree forms), and sparse volumes 
 determined by a label.
 
-It could be described as a "github for large image-oriented data" because each DVID
+DVID aspires to be a "github for large image-oriented data" because each DVID
 server can manage multiple repositories, each of which contains an image-oriented dataset
-(e.g., an image volume, labels, skeletons, etc). 
+(e.g., an image volume, labels, skeletons, etc).  The goal is to provide scientists with
+a github-like web client + server that can push/pull data to a collaborator's DVID server.
 
 DVID is written in Go and supports different storage backends, a Level 2 REST HTTP API, 
 command-line access, and a FUSE frontend to at least one of its data types.  It has been 
