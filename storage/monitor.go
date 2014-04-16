@@ -5,10 +5,7 @@
 
 package storage
 
-import (
-	"sync"
-	"time"
-)
+import "time"
 
 const MonitorBuffer = 10000
 
@@ -80,7 +77,6 @@ func init() {
 // Monitors the # of requests/done on block handlers per data set.
 func loadMonitor() {
 	secondTick := time.Tick(1 * time.Second)
-	var access sync.Mutex
 	for {
 		select {
 		case b := <-StoreKeyBytesRead:
@@ -98,8 +94,6 @@ func loadMonitor() {
 		case b := <-FileBytesWritten:
 			fileBytesWrittenPerSec += b
 		case <-secondTick:
-			access.Lock()
-
 			FileBytesReadPerSec = fileBytesReadPerSec
 			FileBytesWrittenPerSec = fileBytesWrittenPerSec
 			fileBytesReadPerSec = 0
@@ -119,8 +113,6 @@ func loadMonitor() {
 			PutsPerSec = putsPerSec
 			getsPerSec = 0
 			putsPerSec = 0
-
-			access.Unlock()
 		}
 	}
 }
