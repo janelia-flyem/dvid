@@ -435,6 +435,14 @@ func (d *Data) NewExtHandler(geom dvid.Geometry, img interface{}) (voxels.ExtHan
 					return nil, fmt.Errorf("unexpected label type in labels64: %s", d.Labeling)
 				}
 			}
+		case []byte:
+			data = t
+			actualLen := int64(len(data))
+			expectedLen := int64(bytesPerVoxel) * geom.NumVoxels()
+			if actualLen != expectedLen {
+				return nil, fmt.Errorf("PUT data was %d bytes, expected %d bytes for %s",
+					actualLen, expectedLen, geom)
+			}
 		default:
 			return nil, fmt.Errorf("unexpected image type given to NewExtHandler(): %T", t)
 		}
