@@ -188,7 +188,7 @@ func (c *Channel) IndexIterator(chunkSize dvid.Point) (dvid.IndexIterator, error
 	begBlock := begVoxel.Chunk(blockSize).(dvid.ChunkPoint3d)
 	endBlock := endVoxel.Chunk(blockSize).(dvid.ChunkPoint3d)
 
-	return dvid.NewIndexCZYXIterator(c.channelNum, c.Geometry, begBlock, endBlock), nil
+	return dvid.NewIndexCZYXIterator(c.channelNum, begBlock, endBlock), nil
 }
 
 // Datatype just uses voxels data type by composition.

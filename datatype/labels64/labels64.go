@@ -140,11 +140,12 @@ GET  <api URL>/node/<UUID>/<data name>/schema
 	of bytes returned for n-d images.
 
 
-GET  <api URL>/node/<UUID>/<data name>/<dims>/<size>/<offset>[/<format>]
-POST <api URL>/node/<UUID>/<data name>/<dims>/<size>/<offset>[/<format>]
+GET  <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>]
+GET  <api URL>/node/<UUID>/<data name>/isotropic/<dims>/<size>/<offset>[/<format>]
+POST <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>]
 
     Retrieves or puts label data as binary blob using schema above.  Binary data is simply
-    packed 64-bit data.
+    packed 64-bit data.  See 'voxels' API for discussion of 'raw' versus 'isotropic'
 
     Example: 
 
@@ -461,6 +462,13 @@ func (d *Data) convertTo64bit(geom dvid.Geometry, data []uint8, bytesPerVoxel, s
 	numBytes := nx * ny * 8
 	data64 := make([]byte, numBytes, numBytes)
 
+	var byteOrder binary.ByteOrder
+	if geom.DataShape().ShapeDimensions() == 2 {
+		byteOrder = binary.BigEndian // This is the default for PNG
+	} else {
+		byteOrder = binary.LittleEndian
+	}
+
 	switch bytesPerVoxel {
 	case 1:
 		dstI := 0
@@ -477,7 +485,7 @@ func (d *Data) convertTo64bit(geom dvid.Geometry, data []uint8, bytesPerVoxel, s
 		for y := 0; y < ny; y++ {
 			srcI := y * stride
 			for x := 0; x < nx; x++ {
-				value := binary.BigEndian.Uint16(data[srcI : srcI+2])
+				value := byteOrder.Uint16(data[srcI : srcI+2])
 				d.ByteOrder.PutUint64(data64[dstI:dstI+8], uint64(value))
 				srcI += 2
 				dstI += 8
@@ -488,7 +496,7 @@ func (d *Data) convertTo64bit(geom dvid.Geometry, data []uint8, bytesPerVoxel, s
 		for y := 0; y < ny; y++ {
 			srcI := y * stride
 			for x := 0; x < nx; x++ {
-				value := binary.BigEndian.Uint32(data[srcI : srcI+4])
+				value := byteOrder.Uint32(data[srcI : srcI+4])
 				d.ByteOrder.PutUint64(data64[dstI:dstI+8], uint64(value))
 				srcI += 4
 				dstI += 8
@@ -499,7 +507,7 @@ func (d *Data) convertTo64bit(geom dvid.Geometry, data []uint8, bytesPerVoxel, s
 		for y := 0; y < ny; y++ {
 			srcI := y * stride
 			for x := 0; x < nx; x++ {
-				value := binary.BigEndian.Uint64(data[srcI : srcI+8])
+				value := byteOrder.Uint64(data[srcI : srcI+8])
 				d.ByteOrder.PutUint64(data64[dstI:dstI+8], uint64(value))
 				srcI += 8
 				dstI += 8
@@ -680,6 +688,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		w.Header().Set("Content-Type", "text/plain")
 		fmt.Fprintln(w, dtype.Help())
 		return nil
+
 	case "metadata":
 		jsonStr, err := d.NdDataMetadata()
 		if err != nil {
@@ -689,6 +698,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		w.Header().Set("Content-Type", "application/vnd.dvid-nd-data+json")
 		fmt.Fprintln(w, jsonStr)
 		return nil
+
 	case "info":
 		jsonStr, err := d.JSONString()
 		if err != nil {
@@ -698,6 +708,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, jsonStr)
 		return nil
+
 	case "raw", "isotropic":
 		if len(parts) < 7 {
 			return fmt.Errorf("'%s' must be followed by shape/size/offset", parts[3])
@@ -810,6 +821,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		default:
 			return fmt.Errorf("DVID currently supports shapes of only 2 and 3 dimensions")
 		}
+
 	case "sparsevol":
 		// GET <api URL>/node/<UUID>/<data name>/sparsevol/<label>
 		if len(parts) < 5 {

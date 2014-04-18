@@ -22,6 +22,7 @@ import (
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/labels64"
+	"github.com/janelia-flyem/dvid/datatype/voxels"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
@@ -192,31 +193,16 @@ GET <api URL>/node/<UUID>/<data name>/mapping/<label>
     data name     Name of mapping data.
 
 
-TODO:
+GET  <api URL>/node/<UUID>/<data name>/mappings/<dims>/<size>/<offset>[/<format>]
 
-GET <api URL>/node/<UUID>/<data name>/mapped/<min bound>/<max bound>
-
-    Returns JSON list of labels that intersect the bounding box.
-	
-    Arguments:
-
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
-    data name     Name of mapping data.
-    min bound     Coordinate of first voxel with underscore as separator, e.g., 10_20_30
-    max size      Coordinate of last voxel with underscore as separator.
-
-
-GET  <api URL>/node/<UUID>/<data name>/<dims>/<size>/<offset>[/<format>]
-
-    Retrieves or puts mapped label data.
+    Retrieves mapped label data.
 
     Example: 
 
-    GET <api URL>/node/3f8c/superpixels/0_1/512_256/0_0_100
+    GET <api URL>/node/3f8c/sp2body/0_1/512_256/0_0_100
 
     Returns an XY slice (0th and 1st dimensions) with width (x) of 512 voxels and
     height (y) of 256 voxels with offset (0,0,100) in PNG format.
-    The example offset assumes the "superpixels" data in version node "3f8c" is 3d.
     The "Content-type" of the HTTP response should agree with the requested format.
     For example, returned PNGs will have "Content-type" of "image/png", and returned
     nD data will be "application/octet-stream".
@@ -224,7 +210,7 @@ GET  <api URL>/node/<UUID>/<data name>/<dims>/<size>/<offset>[/<format>]
     Arguments:
 
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
-    data name     Name of data to add.
+    data name     Name of data.
     dims          The axes of data extraction in form "i_j_k,..."  Example: "0_2" can be XZ.
                     Slice strings ("xy", "xz", or "yz") are also accepted.
     size          Size in voxels along each dimension specified in <dims>.
@@ -233,6 +219,22 @@ GET  <api URL>/node/<UUID>/<data name>/<dims>/<size>/<offset>[/<format>]
                     available in server implementation.
                   2D: "png"
                   nD: uses default "octet-stream".
+
+GET <api URL>/node/<UUID>/<data name>/intersect/<min block>/<max block>
+
+    Returns JSON list of labels that intersect the volume bounded by the min and max blocks.
+    Note that the blocks are specified using block coordinates, so if this data instance
+    has 32 x 32 x 32 voxel blocks, and we specify min block "1_2_3" and max block "3_4_5",
+    the subvolume in voxels will be from min voxel point (32, 64, 96) to max voxel
+    point (96, 128, 160).
+	
+    Arguments:
+
+    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    data name     Name of mapping data.
+    min block     Minimum block coordinate with underscore as separator, e.g., 10_20_30
+    max block     Maximum block coordinate with underscore as separator.
+
 
 `
 
@@ -250,6 +252,7 @@ func init() {
 	gob.Register(&Data{})
 	gob.Register(&binary.LittleEndian)
 	gob.Register(&binary.BigEndian)
+	gob.Register(&LabelsRef{})
 }
 
 // Datatype embeds the datastore's Datatype to create a unique type for labelmap functions.
@@ -450,6 +453,18 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 	// Allow cross-origin resource sharing.
 	w.Header().Add("Access-Control-Allow-Origin", "*")
 
+	// Get the action (GET, POST)
+	action := strings.ToLower(r.Method)
+	var op voxels.OpType
+	switch action {
+	case "get":
+		op = voxels.GetOp
+	case "post":
+		op = voxels.PutOp
+	default:
+		return fmt.Errorf("Can only handle GET or POST HTTP verbs")
+	}
+
 	// Break URL request into arguments
 	url := r.URL.Path[len(server.WebAPIPath):]
 	parts := strings.Split(url, "/")
@@ -644,6 +659,125 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: get labels with volume > %d and < %d (%s)",
 			r.Method, minSize, maxSize, r.URL)
 
+	case "mappings":
+		if len(parts) < 7 {
+			return fmt.Errorf("'mappings' must be followed by shape/size/offset")
+		}
+		if op == voxels.PutOp {
+			return fmt.Errorf("Cannot POST.  Can only GET mapped labels that intersect the given geometry.")
+		}
+		shapeStr, sizeStr, offsetStr := parts[4], parts[5], parts[6]
+		planeStr := dvid.DataShapeString(shapeStr)
+		plane, err := planeStr.DataShape()
+		if err != nil {
+			return err
+		}
+		labels, err := d.Labels.GetData()
+		if err != nil {
+			return err
+		}
+
+		switch plane.ShapeDimensions() {
+		case 2:
+			slice, err := dvid.NewSliceFromStrings(planeStr, offsetStr, sizeStr, "_")
+			if err != nil {
+				return err
+			}
+			e, err := labels.NewExtHandler(slice, nil)
+			if err != nil {
+				server.BadRequest(w, r, err.Error())
+				return err
+			}
+			img, err := d.GetMappedImage(uuid, e)
+			if err != nil {
+				server.BadRequest(w, r, err.Error())
+				return err
+			}
+			var formatStr string
+			if len(parts) >= 8 {
+				formatStr = parts[7]
+			}
+			//dvid.ElapsedTime(dvid.Normal, startTime, "%s %s upto image formatting", op, slice)
+			err = dvid.WriteImageHttp(w, img.Get(), formatStr)
+			if err != nil {
+				server.BadRequest(w, r, err.Error())
+				return err
+			}
+			dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: %s (%s)", r.Method, plane, r.URL)
+		case 3:
+			subvol, err := dvid.NewSubvolumeFromStrings(offsetStr, sizeStr, "_")
+			if err != nil {
+				return err
+			}
+			e, err := labels.NewExtHandler(subvol, nil)
+			if err != nil {
+				server.BadRequest(w, r, err.Error())
+				return err
+			}
+			data, err := d.GetMappedVolume(uuid, e)
+			if err != nil {
+				server.BadRequest(w, r, err.Error())
+				return err
+			}
+			w.Header().Set("Content-type", "application/octet-stream")
+			_, err = w.Write(data)
+			if err != nil {
+				return err
+			}
+			dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: %s (%s)", r.Method, subvol, r.URL)
+		default:
+			return fmt.Errorf("DVID currently supports shapes of only 2 and 3 dimensions")
+		}
+
+	case "intersect":
+		// GET <api URL>/node/<UUID>/<data name>/intersect/<min block>/<max block>
+		if len(parts) < 6 {
+			err := fmt.Errorf("ERROR: DVID requires min & max block coordinates to follow 'intersect' command")
+			server.BadRequest(w, r, err.Error())
+			return err
+		}
+		minPoint, err := dvid.StringToPoint(parts[4], "_")
+		if err != nil {
+			server.BadRequest(w, r, err.Error())
+			return err
+		}
+		if minPoint.NumDims() != 3 {
+			err := fmt.Errorf("ERROR: 'intersect' requires block coordinates to be in 3d, not %d-d", minPoint.NumDims())
+			server.BadRequest(w, r, err.Error())
+			return err
+		}
+		minCoord, ok := minPoint.(dvid.Point3d)
+		if !ok {
+			err := fmt.Errorf("ERROR: 'intersect' requires block coordinates to be 3d.  Got: %s", minPoint)
+			server.BadRequest(w, r, err.Error())
+			return err
+		}
+		maxPoint, err := dvid.StringToPoint(parts[5], "_")
+		if err != nil {
+			server.BadRequest(w, r, err.Error())
+			return err
+		}
+		if maxPoint.NumDims() != 3 {
+			err := fmt.Errorf("ERROR: 'intersect' requires block coordinates to be in 3d, not %d-d", maxPoint.NumDims())
+			server.BadRequest(w, r, err.Error())
+			return err
+		}
+		maxCoord, ok := maxPoint.(dvid.Point3d)
+		if !ok {
+			err := fmt.Errorf("ERROR: 'intersect' requires block coordinates to be 3d.  Got: %s", maxPoint)
+			server.BadRequest(w, r, err.Error())
+			return err
+		}
+		jsonStr, err := d.GetLabelsInVolume(uuid, dvid.ChunkPoint3d(minCoord), dvid.ChunkPoint3d(maxCoord))
+		if err != nil {
+			server.BadRequest(w, r, err.Error())
+			return err
+		}
+		w.Header().Set("Content-type", "application/json")
+		fmt.Fprintf(w, jsonStr)
+		dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: labels that intersect volume %s -> %s",
+			r.Method, minCoord, maxCoord)
+
 	default:
 		return fmt.Errorf("Unrecognized API call '%s' for labels64 data '%s'.  See API help.", parts[3], d.DataName())
 	}
@@ -705,13 +839,13 @@ func (d *Data) NewRavelerForwardMapKey(vID dvid.VersionLocalID, z, spid uint32, 
 }
 
 // NewSpatialMapKey returns a datastore.DataKey that encodes a "spatial index + label + mapping".
-func (d *Data) NewSpatialMapKey(vID dvid.VersionLocalID, block dvid.IndexZYX, label []byte,
+func (d *Data) NewSpatialMapKey(vID dvid.VersionLocalID, blockIndex dvid.Index, label []byte,
 	mapping uint64) *datastore.DataKey {
 
 	index := make([]byte, 1+dvid.IndexZYXSize+8+8) // s + a + b
 	index[0] = byte(KeySpatialMap)
 	i := 1 + dvid.IndexZYXSize
-	copy(index[1:i], block.Bytes())
+	copy(index[1:i], blockIndex.Bytes())
 	if label != nil {
 		copy(index[i:i+8], label)
 	}
@@ -889,8 +1023,9 @@ func (d *Data) ApplyLabelMap(request datastore.Request, reply *datastore.Respons
 	if err != nil {
 		return err
 	}
+
 	wg := new(sync.WaitGroup)
-	op := &denormOp{labels, dest, versionID, nil}
+	op := &denormOp{labels, nil, dest.DataID().ID, versionID, nil}
 
 	dataID := labels.DataID()
 	extents := labels.Extents()
@@ -1105,13 +1240,13 @@ func (d *Data) chunkApplyMap(chunk *storage.Chunk) {
 				return
 			}
 		}
-		binary.LittleEndian.PutUint64(mappedData[start:start+8], b)
+		op.source.ByteOrder.PutUint64(mappedData[start:start+8], b)
 	}
 
 	// Save the results
 	mappedKey := &datastore.DataKey{
 		Dataset: dataKey.Dataset,
-		Data:    op.mapped.DataID().ID,
+		Data:    op.destID,
 		Version: op.versionID,
 		Index:   dataKey.Index,
 	}

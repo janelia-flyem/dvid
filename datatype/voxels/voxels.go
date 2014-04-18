@@ -939,16 +939,10 @@ func writeXYImage(i IntHandler, e ExtHandler, blocks Blocks, versionID dvid.Vers
 	return
 }
 
-type OpBounds struct {
-	blockBeg dvid.Point
-	dataBeg  dvid.Point
-	dataEnd  dvid.Point
-}
-
-func ComputeTransform(v ExtHandler, block *Block, blockSize dvid.Point) (*OpBounds, error) {
+func ComputeTransform(v ExtHandler, block *Block, blockSize dvid.Point) (blockBeg, dataBeg, dataEnd dvid.Point, err error) {
 	ptIndex, err := datastore.KeyToChunkIndexer(block.K)
 	if err != nil {
-		return nil, err
+		return
 	}
 
 	// Get the bounding voxel coordinates for this block.
@@ -964,18 +958,14 @@ func ComputeTransform(v ExtHandler, block *Block, blockSize dvid.Point) (*OpBoun
 
 	// Adjust the DVID volume voxel coordinates for the data so that (0,0,0)
 	// is where we expect this slice/subvolume's data to begin.
-	dataBeg := begVolCoord.Sub(v.StartPoint())
-	dataEnd := endVolCoord.Sub(v.StartPoint())
+	dataBeg = begVolCoord.Sub(v.StartPoint())
+	dataEnd = endVolCoord.Sub(v.StartPoint())
 
 	// Compute block coord matching dataBeg
-	blockBeg := begVolCoord.Sub(minBlockVoxel)
+	blockBeg = begVolCoord.Sub(minBlockVoxel)
 
 	// Get the bytes per Voxel
-	return &OpBounds{
-		blockBeg: blockBeg,
-		dataBeg:  dataBeg,
-		dataEnd:  dataEnd,
-	}, nil
+	return
 }
 
 func ReadFromBlock(v ExtHandler, block *Block, blockSize dvid.Point) error {
@@ -990,15 +980,12 @@ func transferBlock(op OpType, v ExtHandler, block *Block, blockSize dvid.Point) 
 	if blockSize.NumDims() > 3 {
 		return fmt.Errorf("DVID voxel blocks currently only supports up to 3d, not 4+ dimensions")
 	}
-	opBounds, err := ComputeTransform(v, block, blockSize)
+	blockBeg, dataBeg, dataEnd, err := ComputeTransform(v, block, blockSize)
 	if err != nil {
 		return err
 	}
 	data := v.Data()
 	bytesPerVoxel := v.Values().BytesPerElement()
-	blockBeg := opBounds.blockBeg
-	dataBeg := opBounds.dataBeg
-	dataEnd := opBounds.dataEnd
 
 	// Compute the strides (in bytes)
 	bX := blockSize.Value(0) * bytesPerVoxel
@@ -1252,7 +1239,7 @@ func (v *Voxels) IndexIterator(chunkSize dvid.Point) (dvid.IndexIterator, error)
 	begBlock := begVoxel.Chunk(chunkSize).(dvid.ChunkPoint3d)
 	endBlock := endVoxel.Chunk(chunkSize).(dvid.ChunkPoint3d)
 
-	return dvid.NewIndexZYXIterator(v.Geometry, begBlock, endBlock), nil
+	return dvid.NewIndexZYXIterator(begBlock, endBlock), nil
 }
 
 // GetImage2d returns a 2d image suitable for use external to DVID.

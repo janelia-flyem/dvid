@@ -331,7 +331,6 @@ func (i IndexZYX) Max(idx ChunkIndexer) (ChunkIndexer, bool) {
 
 // ----- IndexIterator implementation ------------
 type IndexZYXIterator struct {
-	geom     Geometry
 	x, y, z  int32
 	begBlock ChunkPoint3d
 	endBlock ChunkPoint3d
@@ -339,9 +338,8 @@ type IndexZYXIterator struct {
 }
 
 // NewIndexZYXIterator returns an IndexIterator that iterates over XYZ space.
-func NewIndexZYXIterator(geom Geometry, start, end ChunkPoint3d) *IndexZYXIterator {
+func NewIndexZYXIterator(start, end ChunkPoint3d) *IndexZYXIterator {
 	return &IndexZYXIterator{
-		geom:     geom,
 		x:        start[0],
 		y:        start[1],
 		z:        start[2],
@@ -416,7 +414,6 @@ func (i IndexCZYX) IndexFromBytes(b []byte) (Index, error) {
 // ----- IndexIterator implementation ------------
 type IndexCZYXIterator struct {
 	channel  int32
-	geom     Geometry
 	x, y, z  int32
 	begBlock ChunkPoint3d
 	endBlock ChunkPoint3d
@@ -424,11 +421,10 @@ type IndexCZYXIterator struct {
 }
 
 // NewIndexCZYXIterator returns an IndexIterator that iterates over XYZ space for a C.
-func NewIndexCZYXIterator(channel int32, geom Geometry, start, end ChunkPoint3d) *IndexCZYXIterator {
+func NewIndexCZYXIterator(channel int32, start, end ChunkPoint3d) *IndexCZYXIterator {
 	endIndex := IndexCZYX{channel, IndexZYX{end[0], end[1], end[2]}}
 	return &IndexCZYXIterator{
 		channel:  channel,
-		geom:     geom,
 		x:        start[0],
 		y:        start[1],
 		z:        start[2],

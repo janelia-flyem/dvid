@@ -12,12 +12,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"sync"
 	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/labels64"
+	"github.com/janelia-flyem/dvid/datatype/voxels"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
@@ -691,6 +693,69 @@ func (d *Data) GetSizeRange(uuid dvid.UUID, minSize, maxSize uint64) (string, er
 	return string(m), nil
 }
 
+// GetLabelsInVolume returns a JSON list of mapped labels that intersect a volume bounded
+// by the specified block coordinates.  Note that the blocks are specified using block
+// coordinates, so if this data instance has 32 x 32 x 32 voxel blocks, and we specify
+// min block (1,2,3) and max block (3,4,5), the subvolume in voxels will be from min voxel
+// point (32, 64, 96) to max voxel point (96, 128, 160).
+func (d *Data) GetLabelsInVolume(uuid dvid.UUID, minBlock, maxBlock dvid.ChunkPoint3d) (string, error) {
+	_, versionID, err := server.DatastoreService().LocalIDFromUUID(uuid)
+	if err != nil {
+		return "{}", err
+	}
+	db, err := server.KeyValueGetter()
+	if err != nil {
+		return "{}", err
+	}
+
+	// Get the mappings for this span of keys by using just spatial indices.
+	// We work with the spatial index (s), original label (a), and mapped label (b).
+	maxLabelBytes := make([]byte, 8, 8)
+	binary.BigEndian.PutUint64(maxLabelBytes, 0xFFFFFFFFFFFFFFFF)
+
+	offset := 1 + dvid.IndexZYXSize + 8 // index here = s + a + b, and we want only b
+	labelset := make(map[uint64]bool, 10)
+	for it := dvid.NewIndexZYXIterator(minBlock, maxBlock); it.Valid(); it.NextSpan() {
+		// Get keys for this span of blocks
+		indexBeg, indexEnd, err := it.IndexSpan()
+		if err != nil {
+			return "{}", err
+		}
+		startKey := d.NewSpatialMapKey(versionID, indexBeg, nil, 0)
+		endKey := d.NewSpatialMapKey(versionID, indexEnd, maxLabelBytes, 0xFFFFFFFFFFFFFFFF)
+
+		var keys []storage.Key
+		keys, err = db.KeysInRange(startKey, endKey)
+		if err != nil {
+			return "{}", err
+		}
+
+		// Add mapped labels for these keys into the set
+		for _, key := range keys {
+			keyBytes := key.Bytes()
+			indexBytes := keyBytes[datastore.DataKeyIndexOffset:]
+			mappedLabel := binary.BigEndian.Uint64(indexBytes[offset : offset+8])
+			labelset[mappedLabel] = true
+		}
+	}
+
+	// Convert set to a JSON compatible list.
+	numLabels := len(labelset)
+	dvid.Log(dvid.Debug, "Found %d labels that intersect subvolume with block coords %s -> %s\n", numLabels,
+		minBlock, maxBlock)
+	labellist := make([]uint64, numLabels, numLabels)
+	i := 0
+	for label, _ := range labelset {
+		labellist[i] = label
+		i++
+	}
+	m, err := json.Marshal(labellist)
+	if err != nil {
+		return "{}", nil
+	}
+	return string(m), nil
+}
+
 // GetLabelAtPoint returns a mapped label for a given point.
 func (d *Data) GetLabelAtPoint(uuid dvid.UUID, pt dvid.Point) (uint64, error) {
 	_, versionID, err := server.DatastoreService().LocalIDFromUUID(uuid)
@@ -718,8 +783,7 @@ func (d *Data) GetLabelAtPoint(uuid dvid.UUID, pt dvid.Point) (uint64, error) {
 	// Retrieve the block of labels
 	serialization, err := db.Get(key)
 	if err != nil {
-		return 0, fmt.Errorf("Error getting '%s' block for index %s\n",
-			d.DataName(), blockCoord)
+		return 0, fmt.Errorf("Error getting '%s' block for index %s\n", d.DataName(), blockCoord)
 	}
 	labelData, _, err := dvid.DeserializeData(serialization, true)
 	if err != nil {
@@ -834,9 +898,107 @@ func (d *Data) GetSurface(uuid dvid.UUID, label uint64) (s []byte, found bool, e
 
 type denormOp struct {
 	source    *labels64.Data
-	mapped    *labels64.Data
+	mapped    voxels.ExtHandler // Can store mapped labels into this if provided.
+	destID    dvid.DataLocalID
 	versionID dvid.VersionLocalID
 	mapping   map[string]uint64
+}
+
+// GetMappedImage retrieves a 2d image from a version node given a geometry of voxels.
+func (d *Data) GetMappedImage(uuid dvid.UUID, e voxels.ExtHandler) (*dvid.Image, error) {
+	if err := d.GetMappedVoxels(uuid, e); err != nil {
+		return nil, err
+	}
+	return e.GetImage2d()
+}
+
+// GetMappedVolume retrieves a n-d volume from a version node given a geometry of voxels.
+func (d *Data) GetMappedVolume(uuid dvid.UUID, e voxels.ExtHandler) ([]byte, error) {
+	if err := d.GetMappedVoxels(uuid, e); err != nil {
+		return nil, err
+	}
+	return e.Data(), nil
+}
+
+// GetMappedVoxels copies mapped labels for each voxel for a version to an ExtHandler, e.g.,
+// a requested subvolume or 2d image.
+func (d *Data) GetMappedVoxels(uuid dvid.UUID, e voxels.ExtHandler) error {
+	_, versionID, err := server.DatastoreService().LocalIDFromUUID(uuid)
+	if err != nil {
+		return fmt.Errorf("Could not determine versionID in %s.ProcessSpatially(): %s",
+			d.DataID.DataName(), err.Error())
+	}
+	db, err := server.KeyValueGetter()
+	if err != nil {
+		return err
+	}
+
+	labels, err := d.Labels.GetData()
+	if err != nil {
+		dvid.Error("Could not get labels64 data for '%s'", d.Labels)
+	}
+
+	wg := new(sync.WaitGroup)
+	dataID := d.DataID.ID
+	datasetID := d.DataID.DsetID
+	for it, err := e.IndexIterator(labels.BlockSize()); err == nil && it.Valid(); it.NextSpan() {
+		indexBeg, indexEnd, err := it.IndexSpan()
+		if err != nil {
+			return err
+		}
+		indexBegZYX, ok := indexBeg.(dvid.IndexZYX)
+		if !ok {
+			return fmt.Errorf("First spatial index for mapped voxels request was not dvid.IndexZYX: %s", indexBeg)
+		}
+		indexEndZYX, ok := indexEnd.(dvid.IndexZYX)
+		if !ok {
+			return fmt.Errorf("Last spatial index for mapped voxels request was not dvid.IndexZYX: %s", indexEnd)
+		}
+
+		// Get the mappings for this span of key/value by using just spatial indices.
+		// We work with the spatial index (s), original label (a), and mapped label (b).
+		maxLabelBytes := make([]byte, 8, 8)
+		binary.BigEndian.PutUint64(maxLabelBytes, 0xFFFFFFFFFFFFFFFF)
+
+		sabKeyBeg := d.NewSpatialMapKey(versionID, indexBegZYX, nil, 0)
+		sabKeyEnd := d.NewSpatialMapKey(versionID, indexEndZYX, maxLabelBytes, 0xFFFFFFFFFFFFFFFF)
+
+		var keys []storage.Key
+		keys, err = db.KeysInRange(sabKeyBeg, sabKeyEnd)
+		if err != nil {
+			return err
+		}
+		numKeys := len(keys)
+		if numKeys == 0 {
+			continue
+		}
+
+		// Cache this layer of blocks' mappings.
+		labelOffset := 1 + dvid.IndexZYXSize // index here = s + a + b
+		mapping := make(map[string]uint64, numKeys)
+		for _, key := range keys {
+			keyBytes := key.Bytes()
+			indexBytes := keyBytes[datastore.DataKeyIndexOffset:]
+			label := string(indexBytes[labelOffset : labelOffset+8])
+			mappedLabel := binary.BigEndian.Uint64(indexBytes[labelOffset+8 : labelOffset+16])
+			mapping[label] = mappedLabel
+		}
+
+		// Send the entire range of key/value pairs to chunk mapper
+		chunkOp := &storage.ChunkOp{&denormOp{labels, e, 0, versionID, mapping}, wg}
+		startKey := &datastore.DataKey{datasetID, dataID, versionID, indexBeg}
+		endKey := &datastore.DataKey{datasetID, dataID, versionID, indexEnd}
+		err = db.ProcessRange(startKey, endKey, chunkOp, d.MapChunk)
+		if err != nil {
+			return fmt.Errorf("Unable to GET data %s: %s", d.DataID.DataName(), err.Error())
+		}
+	}
+	if err != nil {
+		return err
+	}
+
+	wg.Wait()
+	return nil
 }
 
 // Iterate through all blocks in the associated label volume, computing the spatial indices
@@ -864,7 +1026,7 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 	// for all blocks in that layer.
 	startTime := time.Now()
 	wg := new(sync.WaitGroup)
-	op := &denormOp{labels, nil, versionID, nil}
+	op := &denormOp{labels, nil, 0, versionID, nil}
 
 	dataID := labels.DataID()
 	extents := labels.Extents()
@@ -950,6 +1112,164 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 		surfaceCh[i] <- nil
 	}
 	dvid.ElapsedTime(dvid.Debug, startTime, "Finished reading all RLEs for labels '%s'", d.DataName())
+}
+
+// MapChunk processes a chunk of label data, storing the mapped labels.  The data may be
+// thinner, wider, and longer than the chunk, depending on the data shape (XY, XZ, etc).
+// Only some multiple of the # of CPU cores can be used for chunk handling before
+// it waits for chunk processing to abate via the buffered server.HandlerToken channel.
+func (d *Data) MapChunk(chunk *storage.Chunk) {
+	<-server.HandlerToken
+	go d.mapChunk(chunk)
+}
+
+func (d *Data) mapChunk(chunk *storage.Chunk) {
+	defer func() {
+		// After processing a chunk, return the token.
+		server.HandlerToken <- 1
+
+		// Notify the requestor that this chunk is done.
+		if chunk.Wg != nil {
+			chunk.Wg.Done()
+		}
+	}()
+
+	op, ok := chunk.Op.(*denormOp)
+	if !ok {
+		log.Fatalf("Illegal operation passed to ProcessChunk() for data %s\n", d.DataName())
+	}
+
+	// Initialize the block buffer using the chunk of data.  For voxels, this chunk of
+	// data needs to be uncompressed and deserialized.
+	var err error
+	var blockData []byte
+	if chunk == nil || chunk.V == nil {
+		blockData = make([]byte, op.source.BlockSize().Prod()*int64(op.source.Values().BytesPerElement()))
+	} else {
+		blockData, _, err = dvid.DeserializeData(chunk.V, true)
+		if err != nil {
+			dvid.Error("Unable to deserialize block in '%s': %s\n",
+				d.DataID.DataName(), err.Error())
+			return
+		}
+	}
+
+	// Transfer the mapped data.
+	block := &voxels.Block{K: chunk.K, V: blockData}
+	blockSize := op.source.BlockSize()
+
+	blockBeg, dataBeg, dataEnd, err := voxels.ComputeTransform(op.mapped, block, blockSize)
+	if err != nil {
+		dvid.Error("Error in mapChunk(): %s\n", err.Error())
+		return
+	}
+	data := op.mapped.Data()
+	bytesPerVoxel := op.mapped.Values().BytesPerElement()
+
+	// Compute the strides (in bytes)
+	bX := blockSize.Value(0) * bytesPerVoxel
+	bY := blockSize.Value(1) * bX
+	dX := op.mapped.Stride()
+
+	// Do the transfers depending on shape of the external voxels.
+	switch {
+	case op.mapped.DataShape().Equals(dvid.XY):
+		blockI := blockBeg.Value(2)*bY + blockBeg.Value(1)*bX + blockBeg.Value(0)*bytesPerVoxel
+		dataI := dataBeg.Value(1)*dX + dataBeg.Value(0)*bytesPerVoxel
+		span := (dataEnd.Value(0) - dataBeg.Value(0) + 1)
+		for y := dataBeg.Value(1); y <= dataEnd.Value(1); y++ {
+			b0 := blockI
+			b1 := blockI + bytesPerVoxel
+			d0 := dataI
+			d1 := dataI + bytesPerVoxel
+			for x := int32(0); x < span; x++ {
+				origLabel := string(block.V[b0:b1])
+				mappedLabel, found := op.mapping[origLabel]
+				if !found {
+					dvid.Error("No mapping found for label %s ... aborting\n", origLabel)
+					return
+				}
+				binary.BigEndian.PutUint64(data[d0:d1], mappedLabel)
+				b0 += bytesPerVoxel
+				b1 += bytesPerVoxel
+				d0 += bytesPerVoxel
+				d1 += bytesPerVoxel
+			}
+			blockI += bX
+			dataI += dX
+		}
+
+	case op.mapped.DataShape().Equals(dvid.XZ):
+		blockI := blockBeg.Value(2)*bY + blockBeg.Value(1)*bX + blockBeg.Value(0)*bytesPerVoxel
+		dataI := dataBeg.Value(2)*op.mapped.Stride() + dataBeg.Value(0)*bytesPerVoxel
+		span := (dataEnd.Value(0) - dataBeg.Value(0) + 1)
+		for y := dataBeg.Value(2); y <= dataEnd.Value(2); y++ {
+			b0 := blockI
+			b1 := blockI + bytesPerVoxel
+			d0 := dataI
+			d1 := dataI + bytesPerVoxel
+			for x := int32(0); x < span; x++ {
+				origLabel := string(block.V[b0:b1])
+				mappedLabel, found := op.mapping[origLabel]
+				if !found {
+					dvid.Error("No mapping found for label %s ... aborting\n", origLabel)
+					return
+				}
+				binary.BigEndian.PutUint64(data[d0:d1], mappedLabel)
+				b0 += bytesPerVoxel
+				b1 += bytesPerVoxel
+				d0 += bytesPerVoxel
+				d1 += bytesPerVoxel
+			}
+			blockI += bY
+			dataI += dX
+		}
+
+	case op.mapped.DataShape().Equals(dvid.YZ):
+		bz := blockBeg.Value(2)
+		for y := dataBeg.Value(2); y <= dataEnd.Value(2); y++ {
+			blockI := bz*bY + blockBeg.Value(1)*bX + blockBeg.Value(0)*bytesPerVoxel
+			dataI := y*dX + dataBeg.Value(1)*bytesPerVoxel
+			for x := dataBeg.Value(1); x <= dataEnd.Value(1); x++ {
+				origLabel := string(block.V[blockI : blockI+bytesPerVoxel])
+				mappedLabel, found := op.mapping[origLabel]
+				if !found {
+					dvid.Log(dvid.Normal, "No mapping found for label %s ... aborting\n", origLabel)
+					return
+				}
+				binary.BigEndian.PutUint64(data[dataI:dataI+bytesPerVoxel], mappedLabel)
+				blockI += bX
+				dataI += bytesPerVoxel
+			}
+			bz++
+		}
+
+	case op.mapped.DataShape().ShapeDimensions() == 2:
+		// TODO: General code for handling 2d ExtHandler in n-d space.
+		dvid.Error("DVID currently does not support 2d in n-d space.")
+
+	case op.mapped.DataShape().Equals(dvid.Vol3d):
+		blockOffset := blockBeg.Value(0) * bytesPerVoxel
+		dX = op.mapped.Size().Value(0) * bytesPerVoxel
+		dY := op.mapped.Size().Value(1) * dX
+		dataOffset := dataBeg.Value(0) * bytesPerVoxel
+		bytes := (dataEnd.Value(0) - dataBeg.Value(0) + 1) * bytesPerVoxel
+		blockZ := blockBeg.Value(2)
+
+		for dataZ := dataBeg.Value(2); dataZ <= dataEnd.Value(2); dataZ++ {
+			blockY := blockBeg.Value(1)
+			for dataY := dataBeg.Value(1); dataY <= dataEnd.Value(1); dataY++ {
+				blockI := blockZ*bY + blockY*bX + blockOffset
+				dataI := dataZ*dY + dataY*dX + dataOffset
+				copy(data[dataI:dataI+bytes], block.V[blockI:blockI+bytes])
+				blockY++
+			}
+			blockZ++
+		}
+
+	default:
+		dvid.Error("Cannot ReadFromBlock() unsupported voxels data shape %s", op.mapped.DataShape())
+	}
 }
 
 // DenormalizeChunk processes a chunk of data as part of a mapped operation.
