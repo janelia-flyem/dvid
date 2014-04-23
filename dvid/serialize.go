@@ -100,10 +100,10 @@ func NewCompression(format CompressionFormat, level CompressionLevel) (Compressi
 type CompressionLevel int8
 
 const (
-	NoCompression      = 0
-	BestSpeed          = 1
-	BestCompression    = 9
-	DefaultCompression = -1
+	NoCompression      CompressionLevel = 0
+	BestSpeed                           = 1
+	BestCompression                     = 9
+	DefaultCompression                  = -1
 )
 
 // CompressionFormat specifies the compression algorithm.
