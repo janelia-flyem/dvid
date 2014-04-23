@@ -42,9 +42,9 @@ $ dvid dataset <UUID> new <type name> <data name> <settings...>
 
 	Adds newly named data of the 'type name' to dataset with specified UUID.
 
-	Example:
+	Example (note anisotropic resolution specified instead of default 8 nm isotropic):
 
-	$ dvid dataset 3f8c new grayscale8 mygrayscale BlockSize=32 Res=1.5,1.0,1.5
+	$ dvid dataset 3f8c new grayscale8 mygrayscale BlockSize=32 Res=3.2,3.2,40.0
 
     Arguments:
 
@@ -57,7 +57,7 @@ $ dvid dataset <UUID> new <type name> <data name> <settings...>
 
     Versioned      "true" or "false" (default)
     BlockSize      Size in pixels  (default: %s)
-    VoxelSize      Resolution of voxels (default: 10.0, 10.0, 10.0)
+    VoxelSize      Resolution of voxels (default: 8.0, 8.0, 8.0)
     VoxelUnits     Resolution units (default: "nanometers")
 
 $ dvid node <UUID> <data name> load <offset> <image glob>
@@ -220,7 +220,7 @@ var (
 	// DefaultBlockSize specifies the default size for each block of this data type.
 	DefaultBlockSize int32 = 32
 
-	DefaultRes float32 = 10
+	DefaultRes float32 = 8
 
 	DefaultUnits = "nanometers"
 )
