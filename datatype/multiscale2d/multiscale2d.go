@@ -933,6 +933,12 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, config dvid.Con
 	maxPt := maxTileCoord.MaxPoint(hiresSpec.TileSize)
 	sizeVolume := maxPt.Sub(minPt).AddScalar(1)
 
+	// Setup swappable ExtHandler buffers (the stitched slices) so we can be generating tiles
+	// at same time we are reading and stitching them.
+	var bufferLock [2]sync.Mutex
+	var sliceBuffers [2]voxels.ExtHandler
+	var bufferNum int
+
 	// Get the planes we should tile.
 	planes, err := config.GetShapes("planes", ";")
 	if planes == nil {
@@ -959,29 +965,40 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, config dvid.Con
 				if err != nil {
 					return err
 				}
-				v, err := src.NewExtHandler(slice, nil)
+				sliceBuffers[bufferNum], err = src.NewExtHandler(slice, nil)
 				if err != nil {
 					return err
 				}
-				if err = voxels.GetVoxels(uuid, src, v); err != nil {
+				if err = voxels.GetVoxels(uuid, src, sliceBuffers[bufferNum]); err != nil {
 					return err
 				}
 				// Iterate through the different scales, extracting tiles at each resolution.
-				for scaling, levelSpec := range tileSpec {
-					outF, err := d.putTileFunc(versionID)
-					if err != nil {
-						return err
-					}
-					if err := d.extractTiles(v, offset, scaling, outF); err != nil {
-						return err
-					}
-					if int(scaling) < len(tileSpec)-1 {
-						if err := v.DownRes(levelSpec.levelMag); err != nil {
-							return err
+				bufferLock[bufferNum].Lock()
+				go func(bufferNum int) {
+					startTime := time.Now()
+					for scaling, levelSpec := range tileSpec {
+						outF, err := d.putTileFunc(versionID)
+						if err != nil {
+							dvid.Error("Error in tiling: %s\n", err.Error())
+							return
+						}
+						if err := d.extractTiles(sliceBuffers[bufferNum], offset, scaling, outF); err != nil {
+							dvid.Error("Error in tiling: %s\n", err.Error())
+							return
+						}
+						if int(scaling) < len(tileSpec)-1 {
+							if err := sliceBuffers[bufferNum].DownRes(levelSpec.levelMag); err != nil {
+								dvid.Error("Error in tiling: %s\n", err.Error())
+								return
+							}
 						}
 					}
-				}
-				dvid.ElapsedTime(dvid.Debug, sliceTime, "XY Tile @ Z = %d", z)
+					dvid.ElapsedTime(dvid.Debug, startTime, "Tiled XY Tile @ Z = %d", z)
+					bufferLock[bufferNum].Unlock()
+				}(bufferNum)
+
+				dvid.ElapsedTime(dvid.Debug, sliceTime, "Read XY Tile @ Z = %d, now tiling...", z)
+				bufferNum = (bufferNum + 1) % 2
 			}
 			dvid.ElapsedTime(dvid.Normal, startTime, "Total time to generate XY Tiles")
 
@@ -998,29 +1015,39 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, config dvid.Con
 				if err != nil {
 					return err
 				}
-				v, err := src.NewExtHandler(slice, nil)
+				sliceBuffers[bufferNum], err = src.NewExtHandler(slice, nil)
 				if err != nil {
 					return err
 				}
-				if err = voxels.GetVoxels(uuid, src, v); err != nil {
+				if err = voxels.GetVoxels(uuid, src, sliceBuffers[bufferNum]); err != nil {
 					return err
 				}
 				// Iterate through the different scales, extracting tiles at each resolution.
-				for scaling, levelSpec := range tileSpec {
-					outF, err := d.putTileFunc(versionID)
-					if err != nil {
-						return err
-					}
-					if err := d.extractTiles(v, offset, scaling, outF); err != nil {
-						return err
-					}
-					if int(scaling) < len(tileSpec)-1 {
-						if err := v.DownRes(levelSpec.levelMag); err != nil {
-							return err
+				bufferLock[bufferNum].Lock()
+				go func(bufferNum int) {
+					startTime := time.Now()
+					for scaling, levelSpec := range tileSpec {
+						outF, err := d.putTileFunc(versionID)
+						if err != nil {
+							dvid.Error("Error in tiling: %s\n", err.Error())
+							return
+						}
+						if err := d.extractTiles(sliceBuffers[bufferNum], offset, scaling, outF); err != nil {
+							dvid.Error("Error in tiling: %s\n", err.Error())
+							return
+						}
+						if int(scaling) < len(tileSpec)-1 {
+							if err := sliceBuffers[bufferNum].DownRes(levelSpec.levelMag); err != nil {
+								dvid.Error("Error in tiling: %s\n", err.Error())
+								return
+							}
 						}
 					}
-				}
-				dvid.ElapsedTime(dvid.Debug, sliceTime, "XZ Tile @ Y = %d", y)
+					dvid.ElapsedTime(dvid.Debug, startTime, "Tiled XZ Tile @ Y = %d", y)
+					bufferLock[bufferNum].Unlock()
+				}(bufferNum)
+
+				dvid.ElapsedTime(dvid.Debug, sliceTime, "Read XZ Tile @ Y = %d, now tiling...", y)
 			}
 			dvid.ElapsedTime(dvid.Normal, startTime, "Total time to generate XZ Tiles")
 
@@ -1037,29 +1064,39 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, config dvid.Con
 				if err != nil {
 					return err
 				}
-				v, err := src.NewExtHandler(slice, nil)
+				sliceBuffers[bufferNum], err = src.NewExtHandler(slice, nil)
 				if err != nil {
 					return err
 				}
-				if err = voxels.GetVoxels(uuid, src, v); err != nil {
+				if err = voxels.GetVoxels(uuid, src, sliceBuffers[bufferNum]); err != nil {
 					return err
 				}
 				// Iterate through the different scales, extracting tiles at each resolution.
-				for scaling, levelSpec := range tileSpec {
-					outF, err := d.putTileFunc(versionID)
-					if err != nil {
-						return err
-					}
-					if err := d.extractTiles(v, offset, scaling, outF); err != nil {
-						return err
-					}
-					if int(scaling) < len(tileSpec)-1 {
-						if err := v.DownRes(levelSpec.levelMag); err != nil {
-							return err
+				bufferLock[bufferNum].Lock()
+				go func(bufferNum int) {
+					startTime := time.Now()
+					for scaling, levelSpec := range tileSpec {
+						outF, err := d.putTileFunc(versionID)
+						if err != nil {
+							dvid.Error("Error in tiling: %s\n", err.Error())
+							return
+						}
+						if err := d.extractTiles(sliceBuffers[bufferNum], offset, scaling, outF); err != nil {
+							dvid.Error("Error in tiling: %s\n", err.Error())
+							return
+						}
+						if int(scaling) < len(tileSpec)-1 {
+							if err := sliceBuffers[bufferNum].DownRes(levelSpec.levelMag); err != nil {
+								dvid.Error("Error in tiling: %s\n", err.Error())
+								return
+							}
 						}
 					}
-				}
-				dvid.ElapsedTime(dvid.Debug, sliceTime, "YZ Tile @ X = %d", x)
+					dvid.ElapsedTime(dvid.Debug, startTime, "Tiled YZ Tile @ X = %d", x)
+					bufferLock[bufferNum].Unlock()
+				}(bufferNum)
+
+				dvid.ElapsedTime(dvid.Debug, sliceTime, "Read YZ Tile @ X = %d, now tiling...", x)
 			}
 			dvid.ElapsedTime(dvid.Normal, startTime, "Total time to generate YZ Tiles")
 

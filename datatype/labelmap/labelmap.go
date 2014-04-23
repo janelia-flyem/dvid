@@ -13,6 +13,7 @@ import (
 	"encoding/gob"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"os"
 	"strconv"
@@ -1071,7 +1072,7 @@ func (d *Data) ApplyLabelMap(request datastore.Request, reply *datastore.Respons
 // GetLabelMapping returns the mapping for a label.
 func (d *Data) GetLabelMapping(versionID dvid.VersionLocalID, label []byte) (uint64, error) {
 	firstKey := d.NewForwardMapKey(versionID, label, 0)
-	lastKey := d.NewForwardMapKey(versionID, label, MaxLabel)
+	lastKey := d.NewForwardMapKey(versionID, label, math.MaxUint64)
 
 	db, err := server.KeyValueGetter()
 	if err != nil {
@@ -1109,7 +1110,7 @@ func (d *Data) GetBlockMapping(vID dvid.VersionLocalID, block dvid.IndexZYX) (ma
 
 	firstKey := d.NewSpatialMapKey(vID, block, nil, 0)
 	maxLabel := []byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}
-	lastKey := d.NewSpatialMapKey(vID, block, maxLabel, MaxLabel)
+	lastKey := d.NewSpatialMapKey(vID, block, maxLabel, math.MaxUint64)
 
 	keys, err := db.KeysInRange(firstKey, lastKey)
 	if err != nil {
@@ -1142,7 +1143,7 @@ func (d *Data) GetBlockLayerMapping(blockZ int32, op *denormOp) (minChunkPt, max
 	minZ := uint32(minVoxelPt.Value(2))
 	maxZ := uint32(maxVoxelPt.Value(2))
 	firstKey := d.NewRavelerForwardMapKey(op.versionID, minZ, 1, 0)
-	lastKey := d.NewRavelerForwardMapKey(op.versionID, maxZ, 0xFFFFFFFF, MaxLabel)
+	lastKey := d.NewRavelerForwardMapKey(op.versionID, maxZ, 0xFFFFFFFF, math.MaxUint64)
 
 	// Get all forward mappings from the key-value store.
 	op.mapping = nil

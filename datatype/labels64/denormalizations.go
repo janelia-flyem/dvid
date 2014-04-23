@@ -60,8 +60,6 @@ func init() {
 	}
 }
 
-const MaxLabel = 0xFFFFFFFFFFFFFFFF
-
 // Sparse Volume binary encoding payload descriptors.
 const (
 	PayloadBinary      byte = 0x00
@@ -224,6 +222,8 @@ func statsRuns(encoding []byte) (numVoxels, numRuns int32, err error) {
 // receives a nil in channel.
 func (d *Data) computeSizes(sizeCh chan *storage.Chunk, db storage.KeyValueSetter,
 	versionID dvid.VersionLocalID, wg *sync.WaitGroup) {
+
+	dvid.Log(dvid.Debug, "Storing size in voxels for all labels '%s'\n", d.DataName())
 
 	const BATCH_SIZE = 10000
 	batcher, ok := db.(storage.Batcher)
@@ -617,6 +617,7 @@ func (d *Data) computeSurface(surfaceCh chan *storage.Chunk, db storage.KeyValue
 }
 
 // GetSizeRange returns a JSON list of mapped labels that have volumes within the given range.
+// If maxSize is 0, all mapped labels are returned >= minSize.
 func (d *Data) GetSizeRange(uuid dvid.UUID, minSize, maxSize uint64) (string, error) {
 	service := server.DatastoreService()
 	_, versionID, err := service.LocalIDFromUUID(uuid)
@@ -632,7 +633,13 @@ func (d *Data) GetSizeRange(uuid dvid.UUID, minSize, maxSize uint64) (string, er
 
 	// Get the start/end keys for the size range.
 	firstKey := d.NewLabelSizesKey(versionID, minSize, 0)
-	lastKey := d.NewLabelSizesKey(versionID, maxSize, MaxLabel)
+	var upperBound uint64
+	if maxSize != 0 {
+		upperBound = maxSize
+	} else {
+		upperBound = math.MaxUint64
+	}
+	lastKey := d.NewLabelSizesKey(versionID, upperBound, math.MaxUint64)
 
 	// Grab all keys for this range in one sequential read.
 	keys, err := db.KeysInRange(firstKey, lastKey)
@@ -852,7 +859,7 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 	// Iterate through all mapped labels and determine the size in voxels.
 	startTime = time.Now()
 	startKey := d.NewLabelSpatialMapKey(versionID, 0, dvid.MinIndexZYX)
-	endKey := d.NewLabelSpatialMapKey(versionID, MaxLabel, dvid.MaxIndexZYX)
+	endKey := d.NewLabelSpatialMapKey(versionID, math.MaxUint64, dvid.MaxIndexZYX)
 	sizeCh := make(chan *storage.Chunk, 1000)
 	wg.Add(1)
 	go d.computeSizes(sizeCh, db, versionID, wg)
