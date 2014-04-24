@@ -975,6 +975,7 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, config dvid.Con
 				// Iterate through the different scales, extracting tiles at each resolution.
 				bufferLock[bufferNum].Lock()
 				go func(bufferNum int) {
+					defer bufferLock[bufferNum].Unlock()
 					startTime := time.Now()
 					for scaling, levelSpec := range tileSpec {
 						outF, err := d.putTileFunc(versionID)
@@ -994,7 +995,6 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, config dvid.Con
 						}
 					}
 					dvid.ElapsedTime(dvid.Debug, startTime, "Tiled XY Tile @ Z = %d", z)
-					bufferLock[bufferNum].Unlock()
 				}(bufferNum)
 
 				dvid.ElapsedTime(dvid.Debug, sliceTime, "Read XY Tile @ Z = %d, now tiling...", z)
@@ -1025,6 +1025,7 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, config dvid.Con
 				// Iterate through the different scales, extracting tiles at each resolution.
 				bufferLock[bufferNum].Lock()
 				go func(bufferNum int) {
+					defer bufferLock[bufferNum].Unlock()
 					startTime := time.Now()
 					for scaling, levelSpec := range tileSpec {
 						outF, err := d.putTileFunc(versionID)
@@ -1044,7 +1045,6 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, config dvid.Con
 						}
 					}
 					dvid.ElapsedTime(dvid.Debug, startTime, "Tiled XZ Tile @ Y = %d", y)
-					bufferLock[bufferNum].Unlock()
 				}(bufferNum)
 
 				dvid.ElapsedTime(dvid.Debug, sliceTime, "Read XZ Tile @ Y = %d, now tiling...", y)
@@ -1074,6 +1074,7 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, config dvid.Con
 				// Iterate through the different scales, extracting tiles at each resolution.
 				bufferLock[bufferNum].Lock()
 				go func(bufferNum int) {
+					defer bufferLock[bufferNum].Unlock()
 					startTime := time.Now()
 					for scaling, levelSpec := range tileSpec {
 						outF, err := d.putTileFunc(versionID)
@@ -1093,7 +1094,6 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, config dvid.Con
 						}
 					}
 					dvid.ElapsedTime(dvid.Debug, startTime, "Tiled YZ Tile @ X = %d", x)
-					bufferLock[bufferNum].Unlock()
 				}(bufferNum)
 
 				dvid.ElapsedTime(dvid.Debug, sliceTime, "Read YZ Tile @ X = %d, now tiling...", x)
