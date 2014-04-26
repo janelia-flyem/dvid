@@ -204,7 +204,7 @@ func (d *Data) GetData(uuid dvid.UUID, keyStr string) (value []byte, found bool,
 	key := d.DataKey(versionID, dvid.IndexString(keyStr))
 
 	// Get the data
-	db, e := server.KeyValueGetter()
+	db, e := server.OrderedKeyValueGetter()
 	if e != nil {
 		err = e
 		return
@@ -237,7 +237,7 @@ func (d *Data) PutData(uuid dvid.UUID, keyStr string, value []byte) error {
 	key := d.DataKey(versionID, dvid.IndexString(keyStr))
 
 	// PUT the file
-	db, err := server.KeyValueSetter()
+	db, err := server.OrderedKeyValueSetter()
 	if err != nil {
 		return err
 	}

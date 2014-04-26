@@ -1034,7 +1034,7 @@ func (d *Data) CreateComposite(request datastore.Request, reply *datastore.Respo
 	if err != nil {
 		return err
 	}
-	db, err := server.KeyValueGetter()
+	db, err := server.OrderedKeyValueGetter()
 	if err != nil {
 		return err
 	}
@@ -1087,7 +1087,7 @@ func (d *Data) createCompositeChunk(chunk *storage.Chunk) {
 	}()
 
 	op := chunk.Op.(*blockOp)
-	db, err := server.KeyValueDB()
+	db, err := server.OrderedKeyValueDB()
 	if err != nil {
 		dvid.Log(dvid.Normal, "Error in %s.ProcessChunk(): %s\n", d.DataID().DataName(), err.Error())
 		return

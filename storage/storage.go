@@ -58,7 +58,7 @@ type Requirements struct {
 }
 
 // Engine implementations can fulfill a variety of interfaces and can be checked by
-// runtime cast checks, e.g., myGetter, ok := myEngine.(KeyValueGetter)
+// runtime cast checks, e.g., myGetter, ok := myEngine.(OrderedKeyValueGetter)
 // Data types can throw a warning at init time if the backend doesn't support required
 // interfaces, or they can choose to implement multiple ways of handling data.
 type Engine interface {
@@ -70,6 +70,10 @@ type Engine interface {
 type KeyValueGetter interface {
 	// Get returns a value given a key.
 	Get(k Key) (v []byte, err error)
+}
+
+type OrderedKeyValueGetter interface {
+	KeyValueGetter
 
 	// GetRange returns a range of values spanning (kStart, kEnd) keys.
 	GetRange(kStart, kEnd Key) (values []KeyValue, err error)
@@ -89,19 +93,29 @@ type KeyValueSetter interface {
 	// Put writes a value with given key.
 	Put(k Key, v []byte) error
 
+	// Delete removes an entry given key.
+	Delete(k Key) error
+}
+
+type OrderedKeyValueSetter interface {
+	KeyValueSetter
+
 	// Put key-value pairs.  Note that it could be more efficient to use the Batcher
 	// interface so you don't have to create and keep a slice of KeyValue.  Some
 	// databases like leveldb will copy on batch put anyway.
 	PutRange(values []KeyValue) error
-
-	// Delete removes an entry given key.
-	Delete(k Key) error
 }
 
 // KeyValueDB provides an interface to the simplest storage API: a key/value store.
 type KeyValueDB interface {
 	KeyValueGetter
 	KeyValueSetter
+}
+
+// OrderedKeyValueDB addes range queries and range puts to a base KeyValueDB.
+type OrderedKeyValueDB interface {
+	OrderedKeyValueGetter
+	OrderedKeyValueSetter
 }
 
 // Batchers allow batching operations into an atomic update or transaction.

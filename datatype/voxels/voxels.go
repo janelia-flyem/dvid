@@ -366,7 +366,7 @@ func GetVolume(uuid dvid.UUID, i IntHandler, e ExtHandler) ([]byte, error) {
 // GetVoxels copies voxels from an IntHandler for a version to an ExtHandler, e.g.,
 // a requested subvolume or 2d image.
 func GetVoxels(uuid dvid.UUID, i IntHandler, e ExtHandler) error {
-	db, err := server.KeyValueGetter()
+	db, err := server.OrderedKeyValueGetter()
 	if err != nil {
 		return err
 	}
@@ -412,7 +412,7 @@ func GetVoxels(uuid dvid.UUID, i IntHandler, e ExtHandler) error {
 //   Pass one: Retrieve all available key/values within the PUT space.
 //   Pass two: Merge PUT data into those key/values and store them.
 func PutVoxels(uuid dvid.UUID, i IntHandler, e ExtHandler) error {
-	db, err := server.KeyValueGetter()
+	db, err := server.OrderedKeyValueGetter()
 	if err != nil {
 		return err
 	}
@@ -692,7 +692,7 @@ const KVWriteSize = 500
 
 // writeBlocks writes blocks of voxel data asynchronously using batch writes.
 func writeBlocks(compress dvid.Compression, checksum dvid.Checksum, blocks Blocks, wg1, wg2 *sync.WaitGroup) error {
-	db, err := server.KeyValueSetter()
+	db, err := server.OrderedKeyValueSetter()
 	if err != nil {
 		return err
 	}
@@ -825,7 +825,7 @@ func LoadImages(i IntHandler, uuid dvid.UUID, offset dvid.Point, filenames []str
 
 // Loads blocks with old data if they exist.
 func loadOldBlocks(i IntHandler, e ExtHandler, blocks Blocks, versionID dvid.VersionLocalID) error {
-	db, err := server.KeyValueGetter()
+	db, err := server.OrderedKeyValueGetter()
 	if err != nil {
 		return err
 	}
@@ -2196,9 +2196,9 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 				d.DataID().DataName(), err.Error())
 			return
 		}
-		db, err := server.KeyValueSetter()
+		db, err := server.OrderedKeyValueSetter()
 		if err != nil {
-			dvid.Log(dvid.Normal, "Database doesn't support KeyValueSetter in '%s': %s\n",
+			dvid.Log(dvid.Normal, "Database doesn't support OrderedKeyValueSetter in '%s': %s\n",
 				d.DataID().DataName(), err.Error())
 			return
 		}

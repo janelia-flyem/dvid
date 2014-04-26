@@ -758,7 +758,7 @@ func (d *Data) getTileData(uuid dvid.UUID, shape dvid.DataShape, scaling Scaling
 	if d.Levels == nil {
 		return nil, fmt.Errorf("Tiles have not been generated.")
 	}
-	db, err := server.KeyValueGetter()
+	db, err := server.OrderedKeyValueGetter()
 	if err != nil {
 		return nil, err
 	}
@@ -880,7 +880,7 @@ func (d *Data) extractTiles(v voxels.ExtHandler, offset dvid.Point, scaling Scal
 
 // Returns function that stores a tile as an optionally compressed PNG image.
 func (d *Data) putTileFunc(versionID dvid.VersionLocalID) (outFunc, error) {
-	db, err := server.KeyValueSetter()
+	db, err := server.OrderedKeyValueSetter()
 	if err != nil {
 		return nil, err
 	}

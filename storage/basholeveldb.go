@@ -234,7 +234,7 @@ func (db *LevelDB) GetConfig() dvid.Config {
 	return db.config
 }
 
-// ---- KeyValueDB interface -----
+// ---- OrderedKeyValueDB interface -----
 
 // Close closes the leveldb and then the I/O abstraction for leveldb.
 func (db *LevelDB) Close() {
@@ -263,7 +263,7 @@ func (db *LevelDB) Close() {
 	}
 }
 
-// ---- KeyValueGetter interface ------
+// ---- OrderedKeyValueGetter interface ------
 
 // Get returns a value given a key.
 func (db *LevelDB) Get(k Key) (v []byte, err error) {
@@ -393,7 +393,7 @@ func (db *LevelDB) ProcessRange(kStart, kEnd Key, op *ChunkOp, f func(*Chunk)) e
 	}
 }
 
-// ---- KeyValueSetter interface ------
+// ---- OrderedKeyValueSetter interface ------
 
 // Put writes a value with given key.
 func (db *LevelDB) Put(k Key, v []byte) error {

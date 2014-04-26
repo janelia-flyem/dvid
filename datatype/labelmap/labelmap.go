@@ -894,7 +894,7 @@ func (d *Data) LoadRavelerMaps(request datastore.Request, reply *datastore.Respo
 	}
 
 	// Prepare for datastore access
-	db, err := server.KeyValueSetter()
+	db, err := server.OrderedKeyValueSetter()
 	if err != nil {
 		return err
 	}
@@ -998,7 +998,7 @@ func (d *Data) ApplyLabelMap(request datastore.Request, reply *datastore.Respons
 	if err != nil {
 		return err
 	}
-	db, err := server.KeyValueDB()
+	db, err := server.OrderedKeyValueDB()
 	if err != nil {
 		return err
 	}
@@ -1074,7 +1074,7 @@ func (d *Data) GetLabelMapping(versionID dvid.VersionLocalID, label []byte) (uin
 	firstKey := d.NewForwardMapKey(versionID, label, 0)
 	lastKey := d.NewForwardMapKey(versionID, label, math.MaxUint64)
 
-	db, err := server.KeyValueGetter()
+	db, err := server.OrderedKeyValueGetter()
 	if err != nil {
 		return 0, err
 	}
@@ -1103,7 +1103,7 @@ func (d *Data) GetLabelMapping(versionID dvid.VersionLocalID, label []byte) (uin
 
 // GetBlockMapping returns the label -> mappedLabel map for a given block.
 func (d *Data) GetBlockMapping(vID dvid.VersionLocalID, block dvid.IndexZYX) (map[string]uint64, error) {
-	db, err := server.KeyValueGetter()
+	db, err := server.OrderedKeyValueGetter()
 	if err != nil {
 		return nil, err
 	}
@@ -1148,7 +1148,7 @@ func (d *Data) GetBlockLayerMapping(blockZ int32, op *denormOp) (minChunkPt, max
 	// Get all forward mappings from the key-value store.
 	op.mapping = nil
 
-	db, err := server.KeyValueGetter()
+	db, err := server.OrderedKeyValueGetter()
 	if err != nil {
 		return
 	}
@@ -1195,7 +1195,7 @@ func (d *Data) chunkApplyMap(chunk *storage.Chunk) {
 	}()
 
 	op := chunk.Op.(*denormOp)
-	db, err := server.KeyValueSetter()
+	db, err := server.OrderedKeyValueSetter()
 	if err != nil {
 		dvid.Log(dvid.Normal, "Error in %s.ChunkApplyMap(): %s", d.DataID.DataName(), err.Error())
 		return

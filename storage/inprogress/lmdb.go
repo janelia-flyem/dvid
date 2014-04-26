@@ -120,7 +120,7 @@ func (db *LevelDB) IsBulkWriter() bool { return true }
 
 func (db *LevelDB) GetOptions() *Options { return &Options{db.settings, db.options} }
 
-// ---- KeyValueDB interface -----
+// ---- OrderedKeyValueDB interface -----
 
 // Close closes the leveldb and then the I/O abstraction for leveldb.
 func (db *LevelDB) Close() {

@@ -46,7 +46,7 @@ func Init(directory string, create bool, config dvid.Config) error {
 	defer engine.Close()
 
 	// Put empty Datasets
-	db, ok := engine.(storage.KeyValueSetter)
+	db, ok := engine.(storage.OrderedKeyValueSetter)
 	if !ok {
 		return fmt.Errorf("Datastore at %s does not support setting of key-value pairs!", directory)
 	}
@@ -62,9 +62,9 @@ type Service struct {
 	// The backend storage which is private since we want to create an object
 	// interface (e.g., cache object or UUID map) and hide DVID-specific keys.
 	engine   storage.Engine
-	kvDB     storage.KeyValueDB
-	kvSetter storage.KeyValueSetter
-	kvGetter storage.KeyValueGetter
+	kvDB     storage.OrderedKeyValueDB
+	kvSetter storage.OrderedKeyValueSetter
+	kvGetter storage.OrderedKeyValueGetter
 }
 
 type OpenErrorType int
@@ -95,7 +95,7 @@ func Open(path string) (s *Service, openErr *OpenError) {
 	}
 
 	// Get interfaces this engine supports.
-	kvGetter, ok := engine.(storage.KeyValueGetter)
+	kvGetter, ok := engine.(storage.OrderedKeyValueGetter)
 	if !ok {
 		openErr = &OpenError{
 			fmt.Errorf("Opened datastore cannot get key-value pairs."),
@@ -103,7 +103,7 @@ func Open(path string) (s *Service, openErr *OpenError) {
 		}
 		return
 	}
-	kvSetter, ok := engine.(storage.KeyValueSetter)
+	kvSetter, ok := engine.(storage.OrderedKeyValueSetter)
 	if !ok {
 		openErr = &OpenError{
 			fmt.Errorf("Opened datastore cannot set key-value pairs."),
@@ -111,7 +111,7 @@ func Open(path string) (s *Service, openErr *OpenError) {
 		}
 		return
 	}
-	kvDB, ok := engine.(storage.KeyValueDB)
+	kvDB, ok := engine.(storage.OrderedKeyValueDB)
 	if !ok {
 		openErr = &OpenError{
 			fmt.Errorf("Opened datastore does not support key-value database ops."),
@@ -153,18 +153,18 @@ func (s *Service) StorageEngine() storage.Engine {
 	return s.engine
 }
 
-// KeyValueDB returns a a key-value database interface.
-func (s *Service) KeyValueDB() (storage.KeyValueDB, error) {
+// OrederedOrderedKeyValueDB returns a a key-value database interface.
+func (s *Service) OrderedKeyValueDB() (storage.OrderedKeyValueDB, error) {
 	return s.kvDB, nil
 }
 
-// KeyValueGetter returns a a key-value getter interface.
-func (s *Service) KeyValueGetter() (storage.KeyValueGetter, error) {
+// OrderedKeyValueGetter returns a a key-value getter interface.
+func (s *Service) OrderedKeyValueGetter() (storage.OrderedKeyValueGetter, error) {
 	return s.kvGetter, nil
 }
 
-// KeyValueSetter returns a a key-value setter interface.
-func (s *Service) KeyValueSetter() (storage.KeyValueSetter, error) {
+// OrderedKeyValueSetter returns a a key-value setter interface.
+func (s *Service) OrderedKeyValueSetter() (storage.OrderedKeyValueSetter, error) {
 	return s.kvSetter, nil
 }
 

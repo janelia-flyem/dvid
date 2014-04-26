@@ -66,7 +66,7 @@ func (k TestKey) String() string {
 }
 
 func (s *DataSuite) TestSingleItem(c *C) {
-	kvDB, ok := s.db.(KeyValueDB)
+	kvDB, ok := s.db.(OrderedKeyValueDB)
 	if !ok {
 		c.Fail()
 	}
@@ -88,7 +88,7 @@ func (s *DataSuite) TestSingleItem(c *C) {
 }
 
 func (s *DataSuite) TestDeleteItem(c *C) {
-	kvDB, ok := s.db.(KeyValueDB)
+	kvDB, ok := s.db.(OrderedKeyValueDB)
 	if !ok {
 		c.Fail()
 	}
@@ -114,7 +114,7 @@ func (s *DataSuite) TestDeleteItem(c *C) {
 }
 
 func (s *DataSuite) TestMultipleItems(c *C) {
-	kvDB, ok := s.db.(KeyValueDB)
+	kvDB, ok := s.db.(OrderedKeyValueDB)
 	if !ok {
 		c.Fail()
 	}

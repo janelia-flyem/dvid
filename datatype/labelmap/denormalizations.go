@@ -222,7 +222,7 @@ func statsRuns(encoding []byte) (numVoxels, numRuns int32, err error) {
 // Runs asynchronously and assumes that sparse volumes per spatial indices are ordered
 // by mapped label, i.e., we will get all data for body N before body N+1.  Exits when
 // receives a nil in channel.
-func (d *Data) computeSizes(sizeCh chan *storage.Chunk, db storage.KeyValueSetter,
+func (d *Data) computeSizes(sizeCh chan *storage.Chunk, db storage.OrderedKeyValueSetter,
 	versionID dvid.VersionLocalID, wg *sync.WaitGroup) {
 
 	dvid.Log(dvid.Debug, "Storing size in voxels for all labels in labelmap '%s'\n", d.DataName())
@@ -463,7 +463,7 @@ ComputeNormal:
 // Runs asynchronously and assumes that sparse volumes per spatial indices are ordered
 // by mapped label, i.e., we will get all data for body N before body N+1.  Exits when
 // receives a nil in channel.
-func (d *Data) computeSurface(surfaceCh chan *storage.Chunk, db storage.KeyValueSetter,
+func (d *Data) computeSurface(surfaceCh chan *storage.Chunk, db storage.OrderedKeyValueSetter,
 	versionID dvid.VersionLocalID, wg *sync.WaitGroup) {
 
 	defer func() {
@@ -644,7 +644,7 @@ func (d *Data) computeAndSaveSurface(vol *sparseVol) error {
 	j += normalBuf.Len()
 	copy(data[i:j], normalBuf.Bytes())
 
-	db, err := server.KeyValueSetter()
+	db, err := server.OrderedKeyValueSetter()
 	if err != nil {
 		return err
 	}
@@ -665,7 +665,7 @@ func (d *Data) GetSizeRange(uuid dvid.UUID, minSize, maxSize uint64) (string, er
 	if err != nil {
 		return "{}", err
 	}
-	db, err := server.KeyValueGetter()
+	db, err := server.OrderedKeyValueGetter()
 	if err != nil {
 		return "{}", err
 	}
@@ -711,7 +711,7 @@ func (d *Data) GetLabelsInVolume(uuid dvid.UUID, minBlock, maxBlock dvid.ChunkPo
 	if err != nil {
 		return "{}", err
 	}
-	db, err := server.KeyValueGetter()
+	db, err := server.OrderedKeyValueGetter()
 	if err != nil {
 		return "{}", err
 	}
@@ -770,7 +770,7 @@ func (d *Data) GetLabelAtPoint(uuid dvid.UUID, pt dvid.Point) (uint64, error) {
 	if err != nil {
 		return 0, err
 	}
-	db, err := server.KeyValueGetter()
+	db, err := server.OrderedKeyValueGetter()
 	if err != nil {
 		return 0, err
 	}
@@ -834,7 +834,7 @@ func (d *Data) GetSparseVol(uuid dvid.UUID, label uint64) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	db, err := server.KeyValueGetter()
+	db, err := server.OrderedKeyValueGetter()
 	if err != nil {
 		return nil, err
 	}
@@ -881,7 +881,7 @@ func (d *Data) GetSurface(uuid dvid.UUID, label uint64) (s []byte, found bool, e
 	// Retrieve the precomputed surface or that it's not available.
 	key := d.NewLabelSurfaceKey(versionID, label)
 
-	db, e := server.KeyValueGetter()
+	db, e := server.OrderedKeyValueGetter()
 	if e != nil {
 		err = e
 		return
@@ -936,7 +936,7 @@ func (d *Data) GetMappedVoxels(uuid dvid.UUID, e voxels.ExtHandler) error {
 		return fmt.Errorf("Could not determine versionID in %s.ProcessSpatially(): %s",
 			d.DataID.DataName(), err.Error())
 	}
-	db, err := server.KeyValueGetter()
+	db, err := server.OrderedKeyValueGetter()
 	if err != nil {
 		return err
 	}
@@ -1019,7 +1019,7 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 		dvid.Error("Could not determine versionID in %s.ProcessSpatially(): %s", d.DataID.DataName(), err.Error())
 		return
 	}
-	db, err := server.KeyValueDB()
+	db, err := server.OrderedKeyValueDB()
 	if err != nil {
 		dvid.Error("Could not determine key value datastore in %s.ProcessSpatially(): %s\n", d.DataID.DataName(), err.Error())
 		return
@@ -1302,7 +1302,7 @@ func (d *Data) denormalizeChunk(chunk *storage.Chunk) {
 	}()
 
 	op := chunk.Op.(*denormOp)
-	db, err := server.KeyValueDB()
+	db, err := server.OrderedKeyValueDB()
 	if err != nil {
 		dvid.Log(dvid.Normal, "Error in %s.denormalizeChunk(): %s\n", d.DataName(), err.Error())
 		return

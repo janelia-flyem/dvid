@@ -133,28 +133,28 @@ func DatastoreService() *datastore.Service {
 	return runningService.Service
 }
 
-// KeyValueDB returns the default key-value database
-func KeyValueDB() (storage.KeyValueDB, error) {
+// OrderedKeyValueDB returns the default key-value database
+func OrderedKeyValueDB() (storage.OrderedKeyValueDB, error) {
 	if runningService.Service == nil {
 		return nil, fmt.Errorf("No running datastore service is available.")
 	}
-	return runningService.KeyValueDB()
+	return runningService.OrderedKeyValueDB()
 }
 
-// KeyValueGetter returns the default service for retrieving key-value pairs.
-func KeyValueGetter() (storage.KeyValueGetter, error) {
+// OrderedKeyValueGetter returns the default service for retrieving key-value pairs.
+func OrderedKeyValueGetter() (storage.OrderedKeyValueGetter, error) {
 	if runningService.Service == nil {
 		return nil, fmt.Errorf("No running datastore service is available.")
 	}
-	return runningService.KeyValueGetter()
+	return runningService.OrderedKeyValueGetter()
 }
 
-// KeyValueSetter returns the default service for storing key-value pairs.
-func KeyValueSetter() (storage.KeyValueSetter, error) {
+// OrderedKeyValueSetter returns the default service for storing key-value pairs.
+func OrderedKeyValueSetter() (storage.OrderedKeyValueSetter, error) {
 	if runningService.Service == nil {
 		return nil, fmt.Errorf("No running datastore service is available.")
 	}
-	return runningService.KeyValueSetter()
+	return runningService.OrderedKeyValueSetter()
 }
 
 // StorageEngine returns the default storage engine or nil if it's not available.
