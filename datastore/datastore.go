@@ -153,7 +153,7 @@ func (s *Service) StorageEngine() storage.Engine {
 	return s.engine
 }
 
-// OrederedOrderedKeyValueDB returns a a key-value database interface.
+// OrderedKeyValueDB returns a a key-value database interface.
 func (s *Service) OrderedKeyValueDB() (storage.OrderedKeyValueDB, error) {
 	return s.kvDB, nil
 }

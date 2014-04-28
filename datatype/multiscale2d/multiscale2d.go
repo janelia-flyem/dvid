@@ -974,7 +974,7 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, config dvid.Con
 					return err
 				}
 				// Iterate through the different scales, extracting tiles at each resolution.
-				go func(bufferNum int) {
+				go func(bufferNum int, offset dvid.Point) {
 					defer bufferLock[bufferNum].Unlock()
 					startTime := time.Now()
 					for scaling, levelSpec := range tileSpec {
@@ -994,8 +994,8 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, config dvid.Con
 							}
 						}
 					}
-					dvid.ElapsedTime(dvid.Debug, startTime, "Tiled XY Tile @ Z = %d", z)
-				}(bufferNum)
+					dvid.ElapsedTime(dvid.Debug, startTime, "Tiled XY Tile using buffer %d", bufferNum)
+				}(bufferNum, offset)
 
 				dvid.ElapsedTime(dvid.Debug, sliceTime, "Read XY Tile @ Z = %d, now tiling...", z)
 				bufferNum = (bufferNum + 1) % 2
@@ -1024,7 +1024,7 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, config dvid.Con
 					return err
 				}
 				// Iterate through the different scales, extracting tiles at each resolution.
-				go func(bufferNum int) {
+				go func(bufferNum int, offset dvid.Point) {
 					defer bufferLock[bufferNum].Unlock()
 					startTime := time.Now()
 					for scaling, levelSpec := range tileSpec {
@@ -1044,8 +1044,8 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, config dvid.Con
 							}
 						}
 					}
-					dvid.ElapsedTime(dvid.Debug, startTime, "Tiled XZ Tile @ Y = %d", y)
-				}(bufferNum)
+					dvid.ElapsedTime(dvid.Debug, startTime, "Tiled XZ Tile using buffer %d", bufferNum)
+				}(bufferNum, offset)
 
 				dvid.ElapsedTime(dvid.Debug, sliceTime, "Read XZ Tile @ Y = %d, now tiling...", y)
 				bufferNum = (bufferNum + 1) % 2
@@ -1074,7 +1074,7 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, config dvid.Con
 					return err
 				}
 				// Iterate through the different scales, extracting tiles at each resolution.
-				go func(bufferNum int) {
+				go func(bufferNum int, offset dvid.Point) {
 					defer bufferLock[bufferNum].Unlock()
 					startTime := time.Now()
 					for scaling, levelSpec := range tileSpec {
@@ -1094,8 +1094,8 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, config dvid.Con
 							}
 						}
 					}
-					dvid.ElapsedTime(dvid.Debug, startTime, "Tiled YZ Tile @ X = %d", x)
-				}(bufferNum)
+					dvid.ElapsedTime(dvid.Debug, startTime, "Tiled YZ Tile using buffer %d", bufferNum)
+				}(bufferNum, offset)
 
 				dvid.ElapsedTime(dvid.Debug, sliceTime, "Read YZ Tile @ X = %d, now tiling...", x)
 				bufferNum = (bufferNum + 1) % 2
