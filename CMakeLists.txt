@@ -84,6 +84,9 @@ else ()
 
     set (DVID_BACKEND "basholeveldb" CACHE TYPE STRING)
     
+    # flag for building graph backend (currently just using specified key-value store
+    set (DVID_GRAPHBACKEND "graphkeyvalue" CACHE TYPE STRING)
+    
     message ("Using DVID_BACKEND: ${DVID_BACKEND}")
 
 	# Defaults to standard leveldb
@@ -159,7 +162,7 @@ else ()
     # Build DVID with chosen backend
     add_custom_target (dvid-exe
         ${BUILDEM_ENV_STRING} ${GO_ENV} ${CGO_FLAGS} go build -o ${BUILDEM_BIN_DIR}/dvid 
-            -v -tags '${DVID_BACKEND}' dvid.go 
+        -v -tags '${DVID_BACKEND} ${DVID_GRAPHBACKEND}' dvid.go 
         WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
         DEPENDS     ${golang_NAME} ${DVID_BACKEND_DEPEND} gopackages gofuse ${hdf5_NAME}
         COMMENT     "Compiling and installing dvid executable...")
@@ -174,21 +177,21 @@ else ()
 
    # Add testing
    add_custom_target (test-build
-        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go test -i -tags '${DVID_BACKEND}' 
+       ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go test -i -tags '${DVID_BACKEND} ${DVID_GRAPHBACKEND}' 
             ${DVID_GO}/test ${DVID_GO}/dvid ${DVID_GO}/datastore)
 
    add_custom_target (test
-        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go test -tags '${DVID_BACKEND}' 
+        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go test -tags '${DVID_BACKEND} ${DVID_GRAPHBACKEND}' 
             ${DVID_GO}/...
         DEPENDS test-build)
 
    # Add benchmarking
    add_custom_target (test-bench
-        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go test -bench -i -tags '${DVID_BACKEND}' 
+        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go test -bench -i -tags '${DVID_BACKEND} ${DVID_GRAPHBACKEND}' 
             ${DVID_GO}/test ${DVID_GO}/dvid ${DVID_GO}/datastore)
 
    add_custom_target (bench
-        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go test -bench -tags '${DVID_BACKEND}' 
+        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go test -bench -tags '${DVID_BACKEND} ${DVID_GRAPHBACKEND}' 
             ${DVID_GO}/...
         DEPENDS test-bench)
 

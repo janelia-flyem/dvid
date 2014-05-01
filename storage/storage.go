@@ -55,6 +55,7 @@ type Requirements struct {
 	BulkIniter bool
 	BulkWriter bool
 	Batcher    bool
+	GraphDB    bool
 }
 
 // Engine implementations can fulfill a variety of interfaces and can be checked by
@@ -131,4 +132,33 @@ type BulkIniter interface {
 // amount of data.  For some key-value databases, this requires keys to
 // be presorted.
 type BulkWriter interface {
+}
+
+type GraphSetter interface {
+	CreateGraph(graph Key) error
+	AddVertex(graph Key, id VertexID, weight float64) error
+	AddEdge(graph Key, id1 VertexID, id2 VertexID, weight float64) error
+	SetVertexWeight(graph Key, id VertexID, weight float64) error
+	SetEdgeWeight(graph Key, id1 VertexID, id2 VertexID, weight float64) error
+	SetVertexProperty(graph Key, id VertexID, key string, value []byte) error
+	SetEdgeProperty(graph Key, id1 VertexID, id2 VertexID, key string, value []byte) error
+	RemoveVertex(graph Key, id VertexID) error
+	RemoveEdge(graph Key, id1 VertexID, id2 VertexID) error
+	RemoveGraph(graph Key) error
+	RemoveVertexProperty(graph Key, id VertexID, key string) error
+	RemoveEdgeProperty(graph Key, id1 VertexID, id2 VertexID, key string) error
+}
+
+type GraphGetter interface {
+	GetVertices(graph Key) ([]GraphVertex, error)
+	GetEdges(graph Key) ([]GraphEdge, error)
+	GetVertex(graph Key, id VertexID) (GraphVertex, error)
+	GetEdge(graph Key, id1 VertexID, id2 VertexID) (GraphEdge, error)
+	GetVertexProperty(graph Key, id VertexID, key string) ([]byte, error)
+	GetEdgeProperty(graph Key, id1 VertexID, id2 VertexID, key string) ([]byte, error)
+}
+
+type GraphDB interface {
+	GraphSetter
+	GraphGetter
 }

@@ -45,6 +45,17 @@ func Init(directory string, create bool, config dvid.Config) error {
 	}
 	defer engine.Close()
 
+	kvDB, ok := engine.(storage.KeyValueDB)
+	if !ok {
+		return fmt.Errorf("Datastore at %s does not support key-value database ops.", directory)
+	}
+	// Initialize the graph backend database
+	gengine, err := storage.NewGraphStore(directory, create, config, kvDB)
+	if err != nil {
+		return fmt.Errorf("Error initializing graph datastore (%s): %s\n", directory, err.Error())
+	}
+	defer gengine.Close()
+
 	// Put empty Datasets
 	db, ok := engine.(storage.KeyValueSetter)
 	if !ok {
@@ -61,10 +72,14 @@ type Service struct {
 
 	// The backend storage which is private since we want to create an object
 	// interface (e.g., cache object or UUID map) and hide DVID-specific keys.
-	engine   storage.Engine
-	kvDB     storage.KeyValueDB
-	kvSetter storage.KeyValueSetter
-	kvGetter storage.KeyValueGetter
+	engine      storage.Engine
+	kvDB        storage.KeyValueDB
+	kvSetter    storage.KeyValueSetter
+	kvGetter    storage.KeyValueGetter
+	graphengine storage.Engine
+	gDB         storage.GraphDB
+	gSetter     storage.GraphSetter
+	gGetter     storage.GraphGetter
 }
 
 type OpenErrorType int
@@ -120,6 +135,41 @@ func Open(path string) (s *Service, openErr *OpenError) {
 		return
 	}
 
+	// Open the graph datastore (nothing happens if the graph key value store is used)
+	gengine, err := storage.NewGraphStore(path, create, dvid.Config{}, kvDB)
+	if err != nil {
+		openErr = &OpenError{
+			fmt.Errorf("Error opening graph datastore (%s): %s", path, err.Error()),
+			ErrorOpening,
+		}
+		return
+	}
+
+	gSetter, ok := gengine.(storage.GraphSetter)
+	if !ok {
+		openErr = &OpenError{
+			fmt.Errorf("Opened datastore cannot set graph objects."),
+			ErrorOpening,
+		}
+		return
+	}
+	gGetter, ok := gengine.(storage.GraphGetter)
+	if !ok {
+		openErr = &OpenError{
+			fmt.Errorf("Opened datastore cannot get graph objects."),
+			ErrorOpening,
+		}
+		return
+	}
+	gDB, ok := gengine.(storage.GraphDB)
+	if !ok {
+		openErr = &OpenError{
+			fmt.Errorf("Opened datastore does not support graph database ops."),
+			ErrorOpening,
+		}
+		return
+	}
+
 	// Read this datastore's configuration
 	datasets := new(Datasets)
 	err = datasets.Load(kvGetter)
@@ -144,7 +194,7 @@ func Open(path string) (s *Service, openErr *OpenError) {
 	}
 
 	fmt.Printf("\nDatastoreService successfully opened: %s\n", path)
-	s = &Service{datasets, engine, kvDB, kvSetter, kvGetter}
+	s = &Service{datasets, engine, kvDB, kvSetter, kvGetter, gengine, gDB, gSetter, gGetter}
 	return
 }
 
@@ -166,6 +216,26 @@ func (s *Service) KeyValueGetter() (storage.KeyValueGetter, error) {
 // KeyValueSetter returns a a key-value setter interface.
 func (s *Service) KeyValueSetter() (storage.KeyValueSetter, error) {
 	return s.kvSetter, nil
+}
+
+// GraphStorageEngine returns a graph database interface.
+func (s *Service) GraphStorageEngine() storage.Engine {
+	return s.graphengine
+}
+
+// GraphDB returns a graph database interface.
+func (s *Service) GraphDB() (storage.GraphDB, error) {
+	return s.gDB, nil
+}
+
+// GraphGetter returns a GraphDB getter interface.
+func (s *Service) GraphGetter() (storage.GraphGetter, error) {
+	return s.gGetter, nil
+}
+
+// GraphSetter returns a GraphDB setter interface.
+func (s *Service) GraphSetter() (storage.GraphSetter, error) {
+	return s.gSetter, nil
 }
 
 // Batcher returns an interface that can create a new batch write.
