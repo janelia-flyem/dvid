@@ -6,8 +6,8 @@ type VertexID uint64
 
 // smaller ID should be first
 type VertexPairID struct {
-	vertex1 VertexID
-	vertex2 VertexID
+	Vertex1 VertexID
+	Vertex2 VertexID
 }
 
 // some of the fields might just be embedded in the name
@@ -15,17 +15,17 @@ type VertexPairID struct {
 // only support unidirectional edges directly (direction must be a property)
 
 type GraphElement struct {
-	properties ElementProperties
-	weight     float64
+	Properties ElementProperties
+	Weight     float64
 }
 
 type GraphVertex struct {
 	*GraphElement
-	id       VertexID
-	vertices []VertexID
+	Id       VertexID
+	Vertices []VertexID
 }
 
 type GraphEdge struct {
 	*GraphElement
-	vertexpair VertexPairID
+	Vertexpair VertexPairID
 }

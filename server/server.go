@@ -149,6 +149,14 @@ func KeyValueGetter() (storage.KeyValueGetter, error) {
 	return runningService.KeyValueGetter()
 }
 
+// GraphDB returns the default service for handling grah operations.
+func GraphDB() (storage.GraphDB, error) {
+	if runningService.Service == nil {
+		return nil, fmt.Errorf("No running datastore service is available.")
+	}
+	return runningService.GraphDB()
+}
+
 // KeyValueSetter returns the default service for storing key-value pairs.
 func KeyValueSetter() (storage.KeyValueSetter, error) {
 	if runningService.Service == nil {

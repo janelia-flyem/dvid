@@ -138,6 +138,12 @@ else ()
         WORKING_DIRECTORY $ENV{GOPATH}/src/github.com/janelia-flyem/go
         COMMENT     "Updating required Go packages...")
     
+    add_custom_target (gojsonschema
+        ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/janelia-flyem/gojsonschema
+        DEPENDS     ${golang_NAME}
+        COMMENT     "Adding gojsonschema library...")
+
+    
     add_custom_target (nrsc
         ${BUILDEM_ENV_STRING} ${GO_ENV} go build -o ${BUILDEM_BIN_DIR}/nrsc
         DEPENDS     gopackages
@@ -164,7 +170,7 @@ else ()
         ${BUILDEM_ENV_STRING} ${GO_ENV} ${CGO_FLAGS} go build -o ${BUILDEM_BIN_DIR}/dvid 
         -v -tags '${DVID_BACKEND} ${DVID_GRAPHBACKEND}' dvid.go 
         WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
-        DEPENDS     ${golang_NAME} ${DVID_BACKEND_DEPEND} gopackages gofuse ${hdf5_NAME}
+        DEPENDS     ${golang_NAME} ${DVID_BACKEND_DEPEND} gopackages gofuse gojsonschema ${hdf5_NAME}
         COMMENT     "Compiling and installing dvid executable...")
 
     # Build DVID with embedded console 
