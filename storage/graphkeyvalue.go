@@ -3,7 +3,7 @@
 /*
    Package interacts with a key-value datastore to satisfy the GraphDB interface.
    For now, this is the only functionality that implements the GraphDB interface.  In the future,
-   we might develop plugins for graph databases allowing deployment to choose.  This module
+   we might develop plugins for graph databases allowing deployers to choose.  This module
    is implemented as a separate engine but really just reuses the chosen key value engine.
    This distinction might be relevant in the future if multiple engines are supported.
 */
@@ -16,6 +16,7 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 )
 
+// graphType defines the type of graph key inserted in a key/value datastore
 type graphType byte
 
 const (
@@ -26,9 +27,14 @@ const (
 	keyMax
 )
 
-// if keySize is no longer 9, there will be problems
+// keySize is the expected DVID prefix size after which graph specific key
+// information is encoded
 const keySize = 9
 
+const vertexIDSize = 8
+
+// graphKey implements the Key interface taking the DVID key as the base and
+// encoding specific information relating to the graph
 type graphKey struct {
 	keytype  graphType
 	basekey  []byte
@@ -42,14 +48,16 @@ func (gk *graphKey) KeyType() KeyType {
 }
 
 func (gk *graphKey) BytesToKey(b []byte) (Key, error) {
-	if len(b) < 18 {
+	// key should be at least the size of the base key plus the graph type
+	// and size of the vertex id
+	if len(b) < (keySize + 9) {
 		return nil, fmt.Errorf("Malformed graphKey bytes (too few): %x", b)
 	}
 	if b[0] != byte(KeyData) {
 		return nil, fmt.Errorf("Cannot convert %s Key Type into graphKey", KeyType(b[0]))
 	}
 	/*
-	           start := 1
+	        start := 1
 	   	dataset, length := dvid.LocalID32FromBytes(b[start:])
 	   	start += length
 	   	data, length := dvid.LocalIDFromBytes(b[start:])
@@ -61,15 +69,17 @@ func (gk *graphKey) BytesToKey(b []byte) (Key, error) {
 	*/
 	basekey := b[0:keySize]
 	start := keySize
+	keyType := graphType(b[start])
+	start += 1
 	vertex1 := VertexID(binary.BigEndian.Uint64(b[start:]))
-	start += 8
+	start += vertexIDSize
 	vertex2 := VertexID(0)
-	if graphType(b[0]) == keyEdge || graphType(b[0]) == keyEdgeProperty {
+	if keyType == keyEdge || keyType == keyEdgeProperty {
 		vertex2 = VertexID(binary.BigEndian.Uint64(b[start:]))
-		start += 8
+		start += vertexIDSize
 	}
 	property := ""
-	if graphType(b[0]) == keyVertexProperty || graphType(b[0]) == keyEdgeProperty {
+	if keyType == keyVertexProperty || keyType == keyEdgeProperty {
 		property = string(b[start:])
 	}
 
@@ -90,12 +100,12 @@ func (gk *graphKey) Bytes() []byte {
 		}
 	}
 
-	buf := make([]byte, 8, 8)
+	buf := make([]byte, vertexIDSize, vertexIDSize)
 	binary.BigEndian.PutUint64(buf, uint64(vertex1))
 	b = append(b, buf...)
 
 	if gk.keytype == keyEdge || gk.keytype == keyEdgeProperty {
-		buf = make([]byte, 8, 8)
+		buf = make([]byte, vertexIDSize, vertexIDSize)
 		binary.BigEndian.PutUint64(buf, uint64(vertex2))
 		b = append(b, buf...)
 	}
@@ -309,9 +319,6 @@ func (db *GraphKeyValueDB) SetVertexProperty(graph Key, id VertexID, key string,
 		return nil
 	}
 	batcher.Put(propKey, value)
-	if err != nil {
-		return nil
-	}
 
 	vertex.Properties[key] = struct{}{}
 	data := db.serializeVertex(vertex)
@@ -335,9 +342,6 @@ func (db *GraphKeyValueDB) SetEdgeProperty(graph Key, id1 VertexID, id2 VertexID
 	}
 
 	batcher.Put(propKey, value)
-	if err != nil {
-		return nil
-	}
 
 	edge.Properties[key] = struct{}{}
 	data := db.serializeEdge(edge)
@@ -360,12 +364,9 @@ func (db *GraphKeyValueDB) RemoveGraph(graph Key) error {
 
 	for _, key := range keys {
 		batcher.Delete(key)
-		if err != nil {
-			return err
-		}
 	}
 	err = batcher.Commit()
-	return nil
+	return err
 }
 
 func (db *GraphKeyValueDB) RemoveVertex(graph Key, id VertexID) error {
@@ -422,15 +423,13 @@ func (db *GraphKeyValueDB) RemoveEdge(graph Key, id1 VertexID, id2 VertexID) err
 
 	// remove vertex from vertex list
 	delkey := 0
-	i := 0
-	var vertex VertexID
-	for i, vertex = range vertex1.Vertices {
+	for i, vertex := range vertex1.Vertices {
 		if vertex == id2 {
 			delkey = i
 			break
 		}
 	}
-	vertex1.Vertices = append(vertex1.Vertices[0:i], vertex1.Vertices[i+1:]...)
+	vertex1.Vertices = append(vertex1.Vertices[0:delkey], vertex1.Vertices[delkey+1:]...)
 	delkey = 0
 	for i, vertex := range vertex2.Vertices {
 		if vertex == id1 {
