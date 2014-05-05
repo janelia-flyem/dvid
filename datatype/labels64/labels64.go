@@ -622,6 +622,11 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 		}
 		if d.Labeling != RavelerLabel && processing != "noindex" {
 			go d.ProcessSpatially(uuid)
+		} else {
+			d.Ready = true
+			if err := server.DatastoreService().SaveDataset(uuid); err != nil {
+				return err
+			}
 		}
 		return nil
 

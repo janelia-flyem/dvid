@@ -453,6 +453,51 @@ ComputeNormal:
 	return
 }
 
+// Runs asynchronously and assumes that sparse volumes per spatial indices are ordered
+// by mapped label, i.e., we will get all data for body N before body N+1.  Exits when
+// receives a nil in channel.
+func (d *Data) computeSurface(surfaceCh chan *storage.Chunk, db storage.OrderedKeyValueSetter,
+	versionID dvid.VersionLocalID, wg *sync.WaitGroup) {
+
+	defer func() {
+		wg.Done()
+		server.HandlerToken <- 1
+	}()
+
+	// Sequentially process all the sparse volume data for each label
+	var curVol sparseVol
+	var curLabel uint64
+	notFirst := false
+	for {
+		chunk := <-surfaceCh
+		if chunk == nil {
+			if notFirst {
+				if err := d.computeAndSaveSurface(&curVol); err != nil {
+					dvid.Log(dvid.Normal, "Error on computing surface and normals: %s\n", err.Error())
+					return
+				}
+			}
+			return
+		}
+		label := chunk.ChunkOp.Op.(uint64)
+		if label != curLabel || label == 0 {
+			if notFirst {
+				if err := d.computeAndSaveSurface(&curVol); err != nil {
+					dvid.Log(dvid.Normal, "Error on computing surface and normals: %s\n", err.Error())
+					return
+				}
+			}
+			curVol.key = d.NewLabelSurfaceKey(versionID, label)
+			curVol.label = label
+			curVol.alreadySet = false
+		}
+
+		curVol.AddRLEs(chunk.V)
+		curLabel = label
+		notFirst = true
+	}
+}
+
 // TODO -- can be more efficient in buffer space by only needing 8 blocks worth
 // of data (4 for current XY processing and 4 for next Z), but for simplicity this
 // function uses total XY extents + 2 * block size in Z.
@@ -569,51 +614,6 @@ func (d *Data) computeAndSaveSurface(vol *sparseVol) error {
 		return fmt.Errorf("Unable to serialize data in surface computation: %s\n", err.Error())
 	}
 	return db.Put(vol.key, serialization)
-}
-
-// Runs asynchronously and assumes that sparse volumes per spatial indices are ordered
-// by mapped label, i.e., we will get all data for body N before body N+1.  Exits when
-// receives a nil in channel.
-func (d *Data) computeSurface(surfaceCh chan *storage.Chunk, db storage.OrderedKeyValueSetter,
-	versionID dvid.VersionLocalID, wg *sync.WaitGroup) {
-
-	defer func() {
-		wg.Done()
-		server.HandlerToken <- 1
-	}()
-
-	// Sequentially process all the sparse volume data for each label
-	var curVol sparseVol
-	var curLabel uint64
-	notFirst := false
-	for {
-		chunk := <-surfaceCh
-		if chunk == nil {
-			if notFirst {
-				if err := d.computeAndSaveSurface(&curVol); err != nil {
-					dvid.Log(dvid.Normal, "Error on computing surface and normals: %s\n", err.Error())
-					return
-				}
-			}
-			return
-		}
-		label := chunk.ChunkOp.Op.(uint64)
-		if label != curLabel || label == 0 {
-			if notFirst {
-				if err := d.computeAndSaveSurface(&curVol); err != nil {
-					dvid.Log(dvid.Normal, "Error on computing surface and normals: %s\n", err.Error())
-					return
-				}
-			}
-			curVol.key = d.NewLabelSurfaceKey(versionID, label)
-			curVol.label = label
-			curVol.alreadySet = false
-		}
-
-		curVol.AddRLEs(chunk.V)
-		curLabel = label
-		notFirst = true
-	}
 }
 
 // GetSizeRange returns a JSON list of mapped labels that have volumes within the given range.

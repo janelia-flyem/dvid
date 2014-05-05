@@ -247,6 +247,7 @@ func (d *Data) computeSizes(sizeCh chan *storage.Chunk, db storage.OrderedKeyVal
 		chunk := <-sizeCh
 		if chunk == nil {
 			key := d.NewLabelSizesKey(versionID, curSize, curLabel)
+			dvid.Log(dvid.Debug, "Nil chunk -> Storing Label %6d: size %d\n", curLabel, curSize)
 			batch.Put(key, emptyValue)
 			if err := batch.Commit(); err != nil {
 				dvid.Log(dvid.Normal, "Error on batch PUT of label sizes for %s: %s\n",
@@ -268,6 +269,7 @@ func (d *Data) computeSizes(sizeCh chan *storage.Chunk, db storage.OrderedKeyVal
 			key := d.NewLabelSizesKey(versionID, curSize, curLabel)
 			curSize = 0
 			batch.Put(key, emptyValue)
+			dvid.Log(dvid.Debug, "Storing Label %6d: size %d\n", curLabel, curSize)
 			putsInBatch++
 			if putsInBatch%BATCH_SIZE == 0 {
 				if err := batch.Commit(); err != nil {

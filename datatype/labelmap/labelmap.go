@@ -902,6 +902,9 @@ func (d *Data) LoadRavelerMaps(request datastore.Request, reply *datastore.Respo
 	if err != nil {
 		return err
 	}
+	if !labels.Ready {
+		return fmt.Errorf("Can't load raveler maps if underlying labels64 %q has not been loaded!", labels.DataName())
+	}
 	minLabelZ := uint32(labels.Extents().MinPoint.Value(2))
 	maxLabelZ := uint32(labels.Extents().MaxPoint.Value(2))
 
@@ -1004,6 +1007,10 @@ func (d *Data) LoadRavelerMaps(request datastore.Request, reply *datastore.Respo
 
 // ApplyLabelMap creates a new labels64 by applying a label map to existing labels64 data.
 func (d *Data) ApplyLabelMap(request datastore.Request, reply *datastore.Response) error {
+
+	if !d.Ready {
+		return fmt.Errorf("Can't apply labelmap that hasn't been loaded.")
+	}
 
 	startTime := time.Now()
 
