@@ -267,9 +267,9 @@ func (d *Data) computeSizes(sizeCh chan *storage.Chunk, db storage.OrderedKeyVal
 		// If we are a new label, store size
 		if notFirst && label != curLabel {
 			key := d.NewLabelSizesKey(versionID, curSize, curLabel)
+			dvid.Log(dvid.Debug, "Storing Label %6d: size %d\n", curLabel, curSize)
 			curSize = 0
 			batch.Put(key, emptyValue)
-			dvid.Log(dvid.Debug, "Storing Label %6d: size %d\n", curLabel, curSize)
 			putsInBatch++
 			if putsInBatch%BATCH_SIZE == 0 {
 				if err := batch.Commit(); err != nil {
