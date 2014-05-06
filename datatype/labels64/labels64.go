@@ -228,7 +228,7 @@ GET <api URL>/node/<UUID>/<data name>/surface-by-point/<coord>
     coord     	  Coordinate of voxel with underscore as separator, e.g., 10_20_30
 
 
-GET <api URL>/node/<UUID>/<data name>/sizerange/<min size>/<max size>
+GET <api URL>/node/<UUID>/<data name>/sizerange/<min size>/<optional max size>
 
     Returns JSON list of labels that have # voxels that fall within the given range
     of sizes.
@@ -238,7 +238,9 @@ GET <api URL>/node/<UUID>/<data name>/sizerange/<min size>/<max size>
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
     data name     Name of mapping data.
     min size      Minimum # of voxels.
-    max size      Maximum # of voxels.
+    max size      Optional maximum # of voxels.  If not specified, all labels with volume above minimum
+                   are returned.
+
 
 `
 
@@ -953,9 +955,9 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 			r.Method, coord, r.URL)
 
 	case "sizerange":
-		// GET <api URL>/node/<UUID>/<data name>/sizerange/<min size>/<max size>
-		if len(parts) < 6 {
-			err := fmt.Errorf("ERROR: DVID requires min & max sizes to follow 'sizerange' command")
+		// GET <api URL>/node/<UUID>/<data name>/sizerange/<min size>/<optional max size>
+		if len(parts) < 5 {
+			err := fmt.Errorf("ERROR: DVID requires at least the minimum size to follow 'sizerange' command")
 			server.BadRequest(w, r, err.Error())
 			return err
 		}
@@ -964,10 +966,13 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 			server.BadRequest(w, r, err.Error())
 			return err
 		}
-		maxSize, err := strconv.ParseUint(parts[5], 10, 64)
-		if err != nil {
-			server.BadRequest(w, r, err.Error())
-			return err
+		var maxSize uint64
+		if len(parts) >= 6 {
+			maxSize, err = strconv.ParseUint(parts[5], 10, 64)
+			if err != nil {
+				server.BadRequest(w, r, err.Error())
+				return err
+			}
 		}
 		jsonStr, err := labels.GetSizeRange(d, uuid, minSize, maxSize)
 		if err != nil {
