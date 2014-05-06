@@ -86,7 +86,7 @@ func NewEngine(url string, create bool, options *Options) (db Engine, err error)
 
 // --- Engine interface ----
 
-func (db *goCouch) IsKeyValueDB() bool     { return true }
+func (db *goCouch) IsOrderedKeyValueDB() bool     { return true }
 func (db *goCouch) IsJSONDatastore() bool  { return true }
 func (db *goCouch) ProvidesIterator() bool { return true }
 func (db *goCouch) IsBulkIniter() bool     { return true }
@@ -94,7 +94,7 @@ func (db *goCouch) IsBulkLoader() bool     { return true }
 func (db *goCouch) IsBatcher() bool        { return true }
 func (db *goCouch) GetOptions() *Options   { return &Options{} }
 
-// ---- KeyValueDB interface -----
+// ---- OrderedKeyValueDB interface -----
 
 // Close closes the couchbase bucket
 func (db *goCouch) Close() {

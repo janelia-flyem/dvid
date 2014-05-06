@@ -46,9 +46,9 @@ $ dvid dataset <UUID> new labels64 <data name> <settings...>
 
 	Adds newly named data of the 'type name' to dataset with specified UUID.
 
-	Example:
+	Example (note anisotropic resolution specified instead of default 8 nm isotropic):
 
-	$ dvid dataset 3f8c new labels64 superpixels Res=1.5,1.0,1.5
+	$ dvid dataset 3f8c new labels64 superpixels Res=3.2,3.2,40.0
 
     Arguments:
 
@@ -61,7 +61,7 @@ $ dvid dataset <UUID> new labels64 <data name> <settings...>
     LabelType      "standard" (default) or "raveler" 
     Versioned      "true" or "false" (default)
     BlockSize      Size in pixels  (default: %s)
-    VoxelSize      Resolution of voxels (default: 10.0, 10.0, 10.0)
+    VoxelSize      Resolution of voxels (default: 8.0, 8.0, 8.0)
     VoxelUnits     Resolution units (default: "nanometers")
 
 $ dvid node <UUID> <data name> load <offset> <image glob> <settings...>
@@ -622,6 +622,11 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 		}
 		if d.Labeling != RavelerLabel && processing != "noindex" {
 			go d.ProcessSpatially(uuid)
+		} else {
+			d.Ready = true
+			if err := server.DatastoreService().SaveDataset(uuid); err != nil {
+				return err
+			}
 		}
 		return nil
 
@@ -1034,7 +1039,7 @@ func (d *Data) CreateComposite(request datastore.Request, reply *datastore.Respo
 	if err != nil {
 		return err
 	}
-	db, err := server.KeyValueGetter()
+	db, err := server.OrderedKeyValueGetter()
 	if err != nil {
 		return err
 	}
@@ -1087,7 +1092,7 @@ func (d *Data) createCompositeChunk(chunk *storage.Chunk) {
 	}()
 
 	op := chunk.Op.(*blockOp)
-	db, err := server.KeyValueDB()
+	db, err := server.OrderedKeyValueDB()
 	if err != nil {
 		dvid.Log(dvid.Normal, "Error in %s.ProcessChunk(): %s\n", d.DataID().DataName(), err.Error())
 		return

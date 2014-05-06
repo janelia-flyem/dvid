@@ -120,13 +120,13 @@ func (gk *graphKey) String() string {
 // GraphKeyValueDB defines a type that embeds a KeyValueDB using that engine to
 // store all graph objects
 type GraphKeyValueDB struct {
-	KeyValueDB
+	OrderedKeyValueDB
 	dbbatch Batcher
 }
 
 // NewGraphStore returns a graph backend that uses the provided keyvalue datastore (the keyvalue
 // parameter will likely be unnecessary for future graph implementations)
-func NewGraphStore(path string, create bool, config dvid.Config, kvdb KeyValueDB) (Engine, error) {
+func NewGraphStore(path string, create bool, config dvid.Config, kvdb OrderedKeyValueDB) (Engine, error) {
 	dbbatch, ok := kvdb.(Batcher)
 	var err error
 	if !ok {

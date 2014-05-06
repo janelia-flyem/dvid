@@ -31,7 +31,7 @@ func (s *DataSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 
 	// Initialize the graph backend database
-	gengine, err := NewGraphStore(s.dir, true, dvid.Config{}, db.(KeyValueDB))
+	gengine, err := NewGraphStore(s.dir, true, dvid.Config{}, db.(OrderedKeyValueDB))
 	c.Assert(err, IsNil)
 
 	s.db = db
@@ -73,7 +73,7 @@ func (k TestKey) String() string {
 }
 
 func (s *DataSuite) TestSingleItem(c *C) {
-	kvDB, ok := s.db.(KeyValueDB)
+	kvDB, ok := s.db.(OrderedKeyValueDB)
 	if !ok {
 		c.Fail()
 	}
@@ -95,7 +95,7 @@ func (s *DataSuite) TestSingleItem(c *C) {
 }
 
 func (s *DataSuite) TestDeleteItem(c *C) {
-	kvDB, ok := s.db.(KeyValueDB)
+	kvDB, ok := s.db.(OrderedKeyValueDB)
 	if !ok {
 		c.Fail()
 	}
@@ -121,7 +121,7 @@ func (s *DataSuite) TestDeleteItem(c *C) {
 }
 
 func (s *DataSuite) TestMultipleItems(c *C) {
-	kvDB, ok := s.db.(KeyValueDB)
+	kvDB, ok := s.db.(OrderedKeyValueDB)
 	if !ok {
 		c.Fail()
 	}

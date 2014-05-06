@@ -11,7 +11,6 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"io"
 	"math"
 	"sync"
 	"time"
@@ -20,54 +19,6 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
-)
-
-func init() {
-	sqrt3div3 := math.Sqrt(3.0) / 3.0
-	sqrt2div2 := math.Sqrt(2.0) / 2.0
-
-	// Initialize Zucker-Hummel 3x3x3 filter
-
-	// Fill in z = 0 for Z gradient kernel
-	zhZ[0][0][0] = -sqrt3div3
-	zhZ[1][0][0] = -sqrt2div2
-	zhZ[2][0][0] = -sqrt3div3
-
-	zhZ[0][1][0] = -sqrt2div2
-	zhZ[1][1][0] = -1.0
-	zhZ[2][1][0] = -sqrt2div2
-
-	zhZ[0][2][0] = -sqrt3div3
-	zhZ[1][2][0] = -sqrt2div2
-	zhZ[2][2][0] = -sqrt3div3
-
-	// Fill in z=1,2 for Z gradient kernel
-	for y := 0; y < 3; y++ {
-		for x := 0; x < 3; x++ {
-			zhZ[x][y][1] = 0.0
-			zhZ[x][y][2] = -zhZ[x][y][0]
-		}
-	}
-
-	// Copy Z gradient kernel to X and Y gradient kernels
-	for z := 0; z < 3; z++ {
-		for y := 0; y < 3; y++ {
-			for x := 0; x < 3; x++ {
-				zhX[z][x][y] = zhZ[x][y][z]
-				zhY[x][z][y] = zhZ[x][y][z]
-			}
-		}
-	}
-}
-
-const MaxLabel = 0xFFFFFFFFFFFFFFFF
-
-// Sparse Volume binary encoding payload descriptors.
-const (
-	PayloadBinary      byte = 0x00
-	PayloadGrayscale8       = 0x01
-	PayloadGrayscale16      = 0x02
-	PayloadNormal16         = 0x04
 )
 
 type KeyType byte
@@ -104,8 +55,6 @@ const (
 var (
 	emptyValue     = []byte{}
 	zeroLabelBytes = make([]byte, 8, 8)
-
-	zhX, zhY, zhZ [3][3][3]float64
 )
 
 func (t KeyType) String() string {
@@ -168,62 +117,13 @@ func (d *Data) processLabelRuns(chunk *storage.Chunk) {
 	chunk.Wg.Done()
 }
 
-// Encodes RLE as bytes.
-func encodeRuns(starts []dvid.Point3d, lengths []int32) ([]byte, error) {
-	if starts == nil {
-		return nil, fmt.Errorf("Cannot encode run with nil slice of start points")
-	}
-	if lengths == nil {
-		return nil, fmt.Errorf("Cannot encode run with nil slice of lengths")
-	}
-	if len(starts) != len(lengths) {
-		return nil, fmt.Errorf("Cannot encode runs with %d start points and %d lengths",
-			len(starts), len(lengths))
-	}
-	buf := new(bytes.Buffer)
-	for i, start := range starts {
-		binary.Write(buf, binary.LittleEndian, start[0])
-		binary.Write(buf, binary.LittleEndian, start[1])
-		binary.Write(buf, binary.LittleEndian, start[2])
-		binary.Write(buf, binary.LittleEndian, lengths[i])
-	}
-	return buf.Bytes(), nil
-}
-
-// Get the total number of voxels and runs in an encoded RLE.
-func statsRuns(encoding []byte) (numVoxels, numRuns int32, err error) {
-	if len(encoding)%16 != 0 {
-		err = fmt.Errorf("RLE encoding doesn't have correct # bytes: %d", len(encoding))
-		return
-	}
-	coord := make([]byte, 12)
-	buf := bytes.NewBuffer(encoding)
-	var n int
-	var length int32
-	for {
-		n, err = buf.Read(coord)
-		if n == 0 || err == io.EOF {
-			err = nil
-			break
-		}
-		if err != nil {
-			return
-		}
-		numRuns++
-		err = binary.Read(buf, binary.LittleEndian, &length)
-		if err != nil {
-			return
-		}
-		numVoxels += length
-	}
-	return
-}
-
 // Runs asynchronously and assumes that sparse volumes per spatial indices are ordered
 // by mapped label, i.e., we will get all data for body N before body N+1.  Exits when
 // receives a nil in channel.
-func (d *Data) computeSizes(sizeCh chan *storage.Chunk, db storage.KeyValueSetter,
+func (d *Data) computeSizes(sizeCh chan *storage.Chunk, db storage.OrderedKeyValueSetter,
 	versionID dvid.VersionLocalID, wg *sync.WaitGroup) {
+
+	dvid.Log(dvid.Debug, "Storing size in voxels for all labels '%s'\n", d.DataName())
 
 	const BATCH_SIZE = 10000
 	batcher, ok := db.(storage.Batcher)
@@ -255,11 +155,12 @@ func (d *Data) computeSizes(sizeCh chan *storage.Chunk, db storage.KeyValueSette
 		label := chunk.ChunkOp.Op.(uint64)
 
 		// Compute the size
-		numVoxels, _, err := statsRuns(chunk.V)
-		if err != nil {
-			dvid.Log(dvid.Normal, "Error on computing label sizes: %s\n", err.Error())
+		var rles dvid.RLEs
+		if err := rles.UnmarshalBinary(chunk.V); err != nil {
+			dvid.Log(dvid.Normal, "Error deserializing RLEs: %s\n", err.Error())
 			return
 		}
+		numVoxels, _ := rles.Stats()
 
 		// If we are a new label, store size
 		if notFirst && label != curLabel {
@@ -282,281 +183,61 @@ func (d *Data) computeSizes(sizeCh chan *storage.Chunk, db storage.KeyValueSette
 	}
 }
 
-type sparseVol struct {
-	alreadySet bool
-	numVoxels  int32
-	minPt      dvid.Point3d
-	maxPt      dvid.Point3d
-	//minChunk   dvid.ChunkPoint3d
-	//maxChunk   dvid.ChunkPoint3d
-	label uint64
-	key   *datastore.DataKey
-	rles  []rle
-	pos   int // Current index into rle.
-}
+// Runs asynchronously and assumes that sparse volumes per spatial indices are ordered
+// by mapped label, i.e., we will get all data for body N before body N+1.  Exits when
+// receives a nil in channel.
+func (d *Data) computeSurface(surfaceCh chan *storage.Chunk, db storage.OrderedKeyValueSetter,
+	versionID dvid.VersionLocalID, wg *sync.WaitGroup) {
 
-type rle struct {
-	//block  dvid.ChunkPoint3d
-	start  dvid.Point3d
-	length int32
-}
+	defer func() {
+		wg.Done()
+		server.HandlerToken <- 1
+	}()
 
-// Adds RLEs to sparseVol and increments the position accordingly.
-// The RLE buffer is expanded as needed.  Min and max 3d positions are noted.
-func (vol *sparseVol) AddRLEs(encoding []byte) error {
-	if vol.rles == nil {
-		vol.rles = make([]rle, 10)
-	}
-	lenEncoding := len(encoding)
-	if lenEncoding%16 != 0 {
-		return fmt.Errorf("RLE encoding doesn't have correct # bytes: %d", len(encoding))
-	}
-	if !vol.alreadySet {
-		vol.pos = 0
-		vol.numVoxels = 0
-	}
-	var x, y, z, length int32
-	buf := bytes.NewBuffer(encoding)
+	// Sequentially process all the sparse volume data for each label
+	var curVol dvid.SparseVol
+	var curLabel uint64
+	notFirst := false
 	for {
-		err := binary.Read(buf, binary.LittleEndian, &x)
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return err
-		}
-		if err := binary.Read(buf, binary.LittleEndian, &y); err != nil {
-			return err
-		}
-		if err := binary.Read(buf, binary.LittleEndian, &z); err != nil {
-			return err
-		}
-		if err := binary.Read(buf, binary.LittleEndian, &length); err != nil {
-			return err
-		}
-		if vol.pos >= len(vol.rles) {
-			newsize := cap(vol.rles) * 2
-			tmp := make([]rle, newsize, newsize)
-			copy(tmp[0:len(vol.rles)], vol.rles)
-			vol.rles = tmp
-		}
-		pt := dvid.Point3d{x, y, z}
-		vol.rles[vol.pos] = rle{pt, length}
-		vol.numVoxels += length
-		vol.pos++
-		if vol.alreadySet {
-			vol.minPt.SetMinimum(pt)
-			vol.maxPt.SetMaximum(dvid.Point3d{x + length, y, z})
-		} else {
-			vol.minPt = pt
-			vol.maxPt = pt
-			vol.alreadySet = true
-		}
-	}
-	return nil
-}
-
-type BinaryVolume struct {
-	offset      dvid.Point3d
-	size        dvid.Point3d
-	xanisotropy float64
-	yanisotropy float64
-	zanisotropy float64
-	data        []byte
-}
-
-func (d *Data) NewBinaryVolume(offset, size dvid.Point3d) *BinaryVolume {
-	minRes := d.Resolution.VoxelSize.GetMin()
-	numBytes := size[0] * size[1] * size[2]
-	return &BinaryVolume{
-		offset:      offset,
-		size:        size,
-		xanisotropy: float64(d.Resolution.VoxelSize[0] / minRes),
-		yanisotropy: float64(d.Resolution.VoxelSize[1] / minRes),
-		zanisotropy: float64(d.Resolution.VoxelSize[2] / minRes),
-		data:        make([]byte, numBytes, numBytes),
-	}
-}
-
-// Shift the buffer up by dz voxels.
-func (binvol *BinaryVolume) ShiftUp(dz int32) {
-	binvol.offset[2] += dz
-	sliceBytes := binvol.size[0] * binvol.size[1]
-	var i0, j0, z int32
-	j0 = dz * sliceBytes
-	maxStartI := int32(len(binvol.data)) - sliceBytes
-	for z = 0; z < binvol.size[2]; z++ {
-		if j0 <= maxStartI {
-			copy(binvol.data[i0:i0+sliceBytes], binvol.data[j0:j0+sliceBytes])
-			j0 += sliceBytes
-		} else if i0 <= maxStartI {
-			for i := i0; i < i0+sliceBytes; i++ {
-				binvol.data[i] = 0
-			}
-		}
-		i0 += sliceBytes
-	}
-}
-
-func (binvol *BinaryVolume) CheckSurface(x, y, z int32) (normx, normy, normz float32, isSurface bool) {
-	nx := binvol.size[0]
-	nxy := binvol.size[1] * nx
-	if binvol.data[z*nxy+y*nx+x] == 0 {
-		return
-	}
-	// If any neighbor is 0, this is a surface voxel.
-	var ix, iy, iz, pz, py, p int32
-	for iz = z - 1; iz <= z+1; iz++ {
-		pz = iz * nxy
-		for iy = y - 1; iy <= y+1; iy++ {
-			p = pz + iy*nx + x - 1
-			for ix = 0; ix < 3; ix++ {
-				if binvol.data[p] == 0 {
-					isSurface = true
-					goto ComputeNormal
-				}
-				p++
-			}
-		}
-	}
-
-ComputeNormal:
-	var xgrad, ygrad, zgrad float64
-	pz = (z - 1) * nxy
-	for iz = 0; iz < 3; iz++ {
-		py = (y - 1) * nx
-		for iy = 0; iy < 3; iy++ {
-			p = pz + py + x - 1
-			for ix = 0; ix < 3; ix++ {
-				value := float64(binvol.data[p])
-				xgrad += value * zhX[ix][iy][iz]
-				ygrad += value * zhY[ix][iy][iz]
-				zgrad += value * zhZ[ix][iy][iz]
-				p++
-			}
-			py += nx
-		}
-		pz += nxy
-	}
-
-	// Cheap hack to try to compensate for anisotropy.
-	// TODO -- Implement distance transform followed by gradient to better smooth
-	// and handle anisotropy.
-	xgrad /= binvol.xanisotropy
-	ygrad /= binvol.yanisotropy
-	zgrad /= binvol.zanisotropy
-
-	mag := math.Sqrt(xgrad*xgrad + ygrad*ygrad + zgrad*zgrad)
-	normx = float32(xgrad / mag)
-	normy = float32(ygrad / mag)
-	normz = float32(zgrad / mag)
-	return
-}
-
-// TODO -- can be more efficient in buffer space by only needing 8 blocks worth
-// of data (4 for current XY processing and 4 for next Z), but for simplicity this
-// function uses total XY extents + 2 * block size in Z.
-func (d *Data) computeAndSaveSurface(vol *sparseVol) error {
-	// Allocate buffer for processing
-	dx := vol.maxPt[0] - vol.minPt[0] + 3
-	dy := vol.maxPt[1] - vol.minPt[1] + 3
-	dz := vol.maxPt[2] - vol.minPt[2] + 3
-	blockNz := d.BlockSize().Value(2)
-	if dz > 2*blockNz+1 {
-		dz = 2*blockNz + 1
-	}
-	offset := vol.minPt.AddScalar(-1).(dvid.Point3d)
-	binvol := d.NewBinaryVolume(offset, dvid.Point3d{dx, dy, dz})
-
-	var vertexBuf, normalBuf bytes.Buffer
-	var surfaceSize uint32
-	rleI := 0
-	fmt.Printf("Compute label %d, # voxels %d, rle pos %d, size %s, minPt %s, maxPt %s\n",
-		vol.label, vol.numVoxels, vol.pos, binvol.size, vol.minPt, vol.maxPt)
-	for {
-		// Populate the buffer
-		for {
-			if rleI >= vol.pos {
-				// We've added entire volume.
-				break
-			}
-			r := vol.rles[rleI]
-			bz := r.start[2] - binvol.offset[2]
-			if bz >= dz {
-				// rles have filled this buffer.
-				break
-			}
-			by := r.start[1] - binvol.offset[1]
-			bx := r.start[0] - binvol.offset[0]
-			p := bz*dx*dy + by*dx + bx
-			for i := int32(0); i < r.length; i++ {
-				binvol.data[p+i] = 255
-			}
-			rleI++
-		}
-
-		// Iterate through XY layers to compute surface and normal
-		var x, y, z int32
-		for z = 1; z <= blockNz; z++ {
-			if binvol.offset[2]+z > vol.maxPt[2] {
-				// We've passed through all of this sparse volume's voxels
-				break
-			}
-			// TODO -- Keep track of bounding box per Z and limit checks to it.
-			for y = 1; y < dy-1; y++ {
-				for x = 1; x < dx-1; x++ {
-					nx, ny, nz, isSurface := binvol.CheckSurface(x, y, z)
-					if isSurface {
-						surfaceSize++
-						fx := float32(x + binvol.offset[0])
-						fy := float32(y + binvol.offset[1])
-						fz := float32(z + binvol.offset[2])
-						if err := binary.Write(&vertexBuf, binary.LittleEndian, fx); err != nil {
-							return err
-						}
-						if err := binary.Write(&vertexBuf, binary.LittleEndian, fy); err != nil {
-							return err
-						}
-						if err := binary.Write(&vertexBuf, binary.LittleEndian, fz); err != nil {
-							return err
-						}
-						if err := binary.Write(&normalBuf, binary.LittleEndian, nx); err != nil {
-							return err
-						}
-						if err := binary.Write(&normalBuf, binary.LittleEndian, ny); err != nil {
-							return err
-						}
-						if err := binary.Write(&normalBuf, binary.LittleEndian, nz); err != nil {
-							return err
-						}
-					}
+		chunk := <-surfaceCh
+		if chunk == nil {
+			if notFirst {
+				if err := d.computeAndSaveSurface(versionID, &curVol); err != nil {
+					dvid.Log(dvid.Normal, "Error on computing surface and normals: %s\n", err.Error())
+					return
 				}
 			}
+			return
+		}
+		label := chunk.ChunkOp.Op.(uint64)
+		if label != curLabel || label == 0 {
+			if notFirst {
+				if err := d.computeAndSaveSurface(versionID, &curVol); err != nil {
+					dvid.Log(dvid.Normal, "Error on computing surface and normals: %s\n", err.Error())
+					return
+				}
+			}
+			curVol.Clear()
+			curVol.SetLabel(label)
 		}
 
-		// Shift buffer
-		if binvol.offset[2]+blockNz < vol.maxPt[2] {
-			binvol.ShiftUp(blockNz)
-		} else {
-			break
+		if err := curVol.AddRLEs(chunk.V); err != nil {
+			dvid.Log(dvid.Normal, "Error adding RLE for label %d: %s\n", label, err.Error())
+			return
 		}
+		curLabel = label
+		notFirst = true
+	}
+}
+
+func (d *Data) computeAndSaveSurface(versionID dvid.VersionLocalID, vol *dvid.SparseVol) error {
+
+	data, err := vol.SurfaceSerialization(d.Resolution.VoxelSize)
+	if err != nil {
+		return err
 	}
 
-	// Store computation
-	// TODO -- Make this more efficient in terms of memory
-	numBytes := 4 + vertexBuf.Len() + normalBuf.Len()
-	data := make([]byte, numBytes, numBytes)
-	i := 0
-	j := 4
-	binary.LittleEndian.PutUint32(data[i:j], surfaceSize)
-	i = j
-	j += vertexBuf.Len()
-	copy(data[i:j], vertexBuf.Bytes())
-	i = j
-	j += normalBuf.Len()
-	copy(data[i:j], normalBuf.Bytes())
-
-	db, err := server.KeyValueSetter()
+	db, err := server.OrderedKeyValueSetter()
 	if err != nil {
 		return err
 	}
@@ -568,55 +249,11 @@ func (d *Data) computeAndSaveSurface(vol *sparseVol) error {
 	if err != nil {
 		return fmt.Errorf("Unable to serialize data in surface computation: %s\n", err.Error())
 	}
-	return db.Put(vol.key, serialization)
-}
-
-// Runs asynchronously and assumes that sparse volumes per spatial indices are ordered
-// by mapped label, i.e., we will get all data for body N before body N+1.  Exits when
-// receives a nil in channel.
-func (d *Data) computeSurface(surfaceCh chan *storage.Chunk, db storage.KeyValueSetter,
-	versionID dvid.VersionLocalID, wg *sync.WaitGroup) {
-
-	defer func() {
-		wg.Done()
-		server.HandlerToken <- 1
-	}()
-
-	// Sequentially process all the sparse volume data for each label
-	var curVol sparseVol
-	var curLabel uint64
-	notFirst := false
-	for {
-		chunk := <-surfaceCh
-		if chunk == nil {
-			if notFirst {
-				if err := d.computeAndSaveSurface(&curVol); err != nil {
-					dvid.Log(dvid.Normal, "Error on computing surface and normals: %s\n", err.Error())
-					return
-				}
-			}
-			return
-		}
-		label := chunk.ChunkOp.Op.(uint64)
-		if label != curLabel || label == 0 {
-			if notFirst {
-				if err := d.computeAndSaveSurface(&curVol); err != nil {
-					dvid.Log(dvid.Normal, "Error on computing surface and normals: %s\n", err.Error())
-					return
-				}
-			}
-			curVol.key = d.NewLabelSurfaceKey(versionID, label)
-			curVol.label = label
-			curVol.alreadySet = false
-		}
-
-		curVol.AddRLEs(chunk.V)
-		curLabel = label
-		notFirst = true
-	}
+	return db.Put(d.NewLabelSurfaceKey(versionID, vol.Label()), serialization)
 }
 
 // GetSizeRange returns a JSON list of mapped labels that have volumes within the given range.
+// If maxSize is 0, all mapped labels are returned >= minSize.
 func (d *Data) GetSizeRange(uuid dvid.UUID, minSize, maxSize uint64) (string, error) {
 	service := server.DatastoreService()
 	_, versionID, err := service.LocalIDFromUUID(uuid)
@@ -625,14 +262,20 @@ func (d *Data) GetSizeRange(uuid dvid.UUID, minSize, maxSize uint64) (string, er
 		return "{}", err
 	}
 
-	db, err := server.KeyValueGetter()
+	db, err := server.OrderedKeyValueGetter()
 	if err != nil {
 		return "{}", err
 	}
 
 	// Get the start/end keys for the size range.
 	firstKey := d.NewLabelSizesKey(versionID, minSize, 0)
-	lastKey := d.NewLabelSizesKey(versionID, maxSize, MaxLabel)
+	var upperBound uint64
+	if maxSize != 0 {
+		upperBound = maxSize
+	} else {
+		upperBound = math.MaxUint64
+	}
+	lastKey := d.NewLabelSizesKey(versionID, upperBound, math.MaxUint64)
 
 	// Grab all keys for this range in one sequential read.
 	keys, err := db.KeysInRange(firstKey, lastKey)
@@ -663,7 +306,7 @@ func (d *Data) GetLabelAtPoint(uuid dvid.UUID, pt dvid.Point) (uint64, error) {
 		return 0, err
 	}
 
-	db, err := server.KeyValueGetter()
+	db, err := server.OrderedKeyValueGetter()
 	if err != nil {
 		return 0, err
 	}
@@ -725,14 +368,14 @@ func (d *Data) GetSparseVol(uuid dvid.UUID, label uint64) ([]byte, error) {
 		return nil, err
 	}
 
-	db, err := server.KeyValueGetter()
+	db, err := server.OrderedKeyValueGetter()
 	if err != nil {
 		return nil, err
 	}
 
 	// Create the sparse volume header
 	buf := new(bytes.Buffer)
-	buf.WriteByte(PayloadBinary)
+	buf.WriteByte(dvid.EncodingBinary)
 	binary.Write(buf, binary.LittleEndian, uint8(3))
 	binary.Write(buf, binary.LittleEndian, byte(0))
 	buf.WriteByte(byte(0))
@@ -772,7 +415,7 @@ func (d *Data) GetSurface(uuid dvid.UUID, label uint64) (s []byte, found bool, e
 	// Retrieve the precomputed surface or that it's not available.
 	key := d.NewLabelSurfaceKey(versionID, label)
 
-	db, e := server.KeyValueGetter()
+	db, e := server.OrderedKeyValueGetter()
 	if e != nil {
 		err = e
 		return
@@ -812,7 +455,7 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 		return
 	}
 
-	db, err := server.KeyValueDB()
+	db, err := server.OrderedKeyValueDB()
 	if err != nil {
 		dvid.Log(dvid.Normal, "Could not determine key value datastore in %s.ProcessSpatially()\n",
 			d.DataName())
@@ -852,7 +495,7 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 	// Iterate through all mapped labels and determine the size in voxels.
 	startTime = time.Now()
 	startKey := d.NewLabelSpatialMapKey(versionID, 0, dvid.MinIndexZYX)
-	endKey := d.NewLabelSpatialMapKey(versionID, MaxLabel, dvid.MaxIndexZYX)
+	endKey := d.NewLabelSpatialMapKey(versionID, math.MaxUint64, dvid.MaxIndexZYX)
 	sizeCh := make(chan *storage.Chunk, 1000)
 	wg.Add(1)
 	go d.computeSizes(sizeCh, db, versionID, wg)
@@ -920,7 +563,7 @@ func (d *Data) denormalizeChunk(chunk *storage.Chunk) {
 	}()
 
 	op := chunk.Op.(*denormOp)
-	db, err := server.KeyValueDB()
+	db, err := server.OrderedKeyValueDB()
 	if err != nil {
 		dvid.Log(dvid.Normal, "Error in %s.denormalizeChunk(): %s\n", d.DataName(), err.Error())
 		return
@@ -950,11 +593,11 @@ func (d *Data) denormalizeChunk(chunk *storage.Chunk) {
 		dvid.Log(dvid.Normal, "Retrieved, deserialized block is wrong size: %d bytes\n", blockBytes)
 		return
 	}
-	runStarts := make(map[uint64]([]dvid.Point3d), 10)
-	runLengths := make(map[uint64]([]int32), 10)
+	labelRLEs := make(map[uint64]dvid.RLEs, 10)
 	firstPt := zyx.MinPoint(op.source.BlockSize()).(dvid.Point3d)
 	lastPt := zyx.MaxPoint(op.source.BlockSize()).(dvid.Point3d)
-	var curPt dvid.Point3d
+
+	var curStart dvid.Point3d
 	var voxelLabel, curLabel uint64
 	var z, y, x, curRun int32
 	start := 0
@@ -968,17 +611,11 @@ func (d *Data) denormalizeChunk(chunk *storage.Chunk) {
 				if voxelLabel == 0 || voxelLabel != curLabel {
 					// Save old run
 					if curRun > 0 {
-						runLengths[curLabel] = append(runLengths[curLabel], curRun)
+						labelRLEs[curLabel] = append(labelRLEs[curLabel], dvid.NewRLE(curStart, curRun))
 					}
 					// Start new one if not zero label.
 					if voxelLabel != 0 {
-						curPt = dvid.Point3d{x, y, z}
-						if runStarts[voxelLabel] == nil {
-							runStarts[voxelLabel] = []dvid.Point3d{curPt}
-							runLengths[voxelLabel] = []int32{}
-						} else {
-							runStarts[voxelLabel] = append(runStarts[voxelLabel], curPt)
-						}
+						curStart = dvid.Point3d{x, y, z}
 						curRun = 1
 					} else {
 						curRun = 0
@@ -990,7 +627,7 @@ func (d *Data) denormalizeChunk(chunk *storage.Chunk) {
 			}
 			// Force break of any runs when we finish x scan.
 			if curRun > 0 {
-				runLengths[curLabel] = append(runLengths[curLabel], curRun)
+				labelRLEs[curLabel] = append(labelRLEs[curLabel], dvid.NewRLE(curStart, curRun))
 				curLabel = 0
 				curRun = 0
 			}
@@ -1007,10 +644,10 @@ func (d *Data) denormalizeChunk(chunk *storage.Chunk) {
 	bsIndex := make([]byte, 1+8+dvid.IndexZYXSize)
 	bsIndex[0] = byte(KeyLabelSpatialMap)
 	copy(bsIndex[9:9+dvid.IndexZYXSize], zyxBytes)
-	for b, coords := range runStarts {
+	for b, rles := range labelRLEs {
 		binary.BigEndian.PutUint64(bsIndex[1:9], b)
 		key := d.DataKey(op.versionID, dvid.IndexBytes(bsIndex))
-		runsBytes, err := encodeRuns(coords, runLengths[b])
+		runsBytes, err := rles.MarshalBinary()
 		if err != nil {
 			dvid.Log(dvid.Normal, "Error encoding KeyLabelSpatialMap keys for mapped label %d: %s\n",
 				b, err.Error())

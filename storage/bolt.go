@@ -94,7 +94,7 @@ func (bdb *BoltDB) Close() {
 	}
 }
 
-// ---- KeyValueGetter interface ------
+// ---- OrderedKeyValueGetter interface ------
 
 // Get returns a value given a key.
 func (bdb *BoltDB) Get(k Key) (v []byte, err error) {
@@ -213,7 +213,7 @@ func (bdb *BoltDB) ProcessRange(kStart, kEnd Key, op *ChunkOp, f func(*Chunk)) e
 	})
 }
 
-// ---- KeyValueSetter interface ------
+// ---- OrderedKeyValueSetter interface ------
 
 // Put writes a value with given key.
 func (bdb *BoltDB) Put(k Key, v []byte) error {

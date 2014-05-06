@@ -13,6 +13,7 @@ import (
 	"encoding/gob"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"os"
 	"strconv"
@@ -193,9 +194,24 @@ GET <api URL>/node/<UUID>/<data name>/mapping/<label>
     data name     Name of mapping data.
 
 
-GET  <api URL>/node/<UUID>/<data name>/mappings/<dims>/<size>/<offset>[/<format>]
+GET <api URL>/node/<UUID>/<data name>/intersect/<min block>/<max block>
 
-    Retrieves mapped label data.
+    Returns JSON list of labels that intersect the volume bounded by the min and max blocks.
+    Note that the blocks are specified using block coordinates, so if this data instance
+    has 32 x 32 x 32 voxel blocks, and we specify min block "1_2_3" and max block "3_4_5",
+    the subvolume in voxels will be from min voxel point (32, 64, 96) to max voxel
+    point (96, 128, 160).
+	
+    Arguments:
+
+    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    data name     Name of mapping data.
+    min block     Minimum block coordinate with underscore as separator, e.g., 10_20_30
+    max block     Maximum block coordinate with underscore as separator.
+
+GET  <api URL>/node/<UUID>/<data name>/labels/<dims>/<size>/<offset>[/<format>]
+
+    Retrieves mapped labels for each voxel in the specified extent.
 
     Example: 
 
@@ -220,20 +236,28 @@ GET  <api URL>/node/<UUID>/<data name>/mappings/<dims>/<size>/<offset>[/<format>
                   2D: "png"
                   nD: uses default "octet-stream".
 
-GET <api URL>/node/<UUID>/<data name>/intersect/<min block>/<max block>
+TODO
 
-    Returns JSON list of labels that intersect the volume bounded by the min and max blocks.
-    Note that the blocks are specified using block coordinates, so if this data instance
-    has 32 x 32 x 32 voxel blocks, and we specify min block "1_2_3" and max block "3_4_5",
-    the subvolume in voxels will be from min voxel point (32, 64, 96) to max voxel
-    point (96, 128, 160).
-	
+GET  <api URL>/node/<UUID>/<data name>/mappings/<dims>/<size>/<offset>
+
+    Returns the mappings in JSON format for the specified extent.
+
+    Example: 
+
+    GET <api URL>/node/3f8c/sp2body/mappings/0_1/512_256/0_0_100
+
+    Returns JSON of form { pre_label1: post_label1, pre_label2: post_label2, ... } corresponding to
+    the mappings for an XY slice (0th and 1st dimensions) with width (x) of 512 voxels and
+    height (y) of 256 voxels with offset (0,0,100) in PNG format.
+
     Arguments:
 
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
-    data name     Name of mapping data.
-    min block     Minimum block coordinate with underscore as separator, e.g., 10_20_30
-    max block     Maximum block coordinate with underscore as separator.
+    data name     Name of data.
+    dims          The axes of data extraction in form "i_j_k,..."  Example: "0_2" can be XZ.
+                    Slice strings ("xy", "xz", or "yz") are also accepted.
+    size          Size in voxels along each dimension specified in <dims>.
+    offset        Gives coordinate of first voxel using dimensionality of data.
 
 
 `
@@ -659,9 +683,9 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: get labels with volume > %d and < %d (%s)",
 			r.Method, minSize, maxSize, r.URL)
 
-	case "mappings":
+	case "labels":
 		if len(parts) < 7 {
-			return fmt.Errorf("'mappings' must be followed by shape/size/offset")
+			return fmt.Errorf("'labels' must be followed by shape/size/offset")
 		}
 		if op == voxels.PutOp {
 			return fmt.Errorf("Cannot POST.  Can only GET mapped labels that intersect the given geometry.")
@@ -779,7 +803,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 			r.Method, minCoord, maxCoord)
 
 	default:
-		return fmt.Errorf("Unrecognized API call '%s' for labels64 data '%s'.  See API help.", parts[3], d.DataName())
+		return fmt.Errorf("Unrecognized API call '%s' for labelmap data '%s'.  See API help.", parts[3], d.DataName())
 	}
 
 	return nil
@@ -878,6 +902,9 @@ func (d *Data) LoadRavelerMaps(request datastore.Request, reply *datastore.Respo
 	if err != nil {
 		return err
 	}
+	if !labels.Ready {
+		return fmt.Errorf("Can't load raveler maps if underlying labels64 %q has not been loaded!", labels.DataName())
+	}
 	minLabelZ := uint32(labels.Extents().MinPoint.Value(2))
 	maxLabelZ := uint32(labels.Extents().MaxPoint.Value(2))
 
@@ -893,7 +920,7 @@ func (d *Data) LoadRavelerMaps(request datastore.Request, reply *datastore.Respo
 	}
 
 	// Prepare for datastore access
-	db, err := server.KeyValueSetter()
+	db, err := server.OrderedKeyValueSetter()
 	if err != nil {
 		return err
 	}
@@ -981,6 +1008,10 @@ func (d *Data) LoadRavelerMaps(request datastore.Request, reply *datastore.Respo
 // ApplyLabelMap creates a new labels64 by applying a label map to existing labels64 data.
 func (d *Data) ApplyLabelMap(request datastore.Request, reply *datastore.Response) error {
 
+	if !d.Ready {
+		return fmt.Errorf("Can't apply labelmap that hasn't been loaded.")
+	}
+
 	startTime := time.Now()
 
 	// Parse the request
@@ -997,7 +1028,7 @@ func (d *Data) ApplyLabelMap(request datastore.Request, reply *datastore.Respons
 	if err != nil {
 		return err
 	}
-	db, err := server.KeyValueDB()
+	db, err := server.OrderedKeyValueDB()
 	if err != nil {
 		return err
 	}
@@ -1071,9 +1102,9 @@ func (d *Data) ApplyLabelMap(request datastore.Request, reply *datastore.Respons
 // GetLabelMapping returns the mapping for a label.
 func (d *Data) GetLabelMapping(versionID dvid.VersionLocalID, label []byte) (uint64, error) {
 	firstKey := d.NewForwardMapKey(versionID, label, 0)
-	lastKey := d.NewForwardMapKey(versionID, label, MaxLabel)
+	lastKey := d.NewForwardMapKey(versionID, label, math.MaxUint64)
 
-	db, err := server.KeyValueGetter()
+	db, err := server.OrderedKeyValueGetter()
 	if err != nil {
 		return 0, err
 	}
@@ -1102,14 +1133,14 @@ func (d *Data) GetLabelMapping(versionID dvid.VersionLocalID, label []byte) (uin
 
 // GetBlockMapping returns the label -> mappedLabel map for a given block.
 func (d *Data) GetBlockMapping(vID dvid.VersionLocalID, block dvid.IndexZYX) (map[string]uint64, error) {
-	db, err := server.KeyValueGetter()
+	db, err := server.OrderedKeyValueGetter()
 	if err != nil {
 		return nil, err
 	}
 
 	firstKey := d.NewSpatialMapKey(vID, block, nil, 0)
 	maxLabel := []byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}
-	lastKey := d.NewSpatialMapKey(vID, block, maxLabel, MaxLabel)
+	lastKey := d.NewSpatialMapKey(vID, block, maxLabel, math.MaxUint64)
 
 	keys, err := db.KeysInRange(firstKey, lastKey)
 	if err != nil {
@@ -1142,12 +1173,12 @@ func (d *Data) GetBlockLayerMapping(blockZ int32, op *denormOp) (minChunkPt, max
 	minZ := uint32(minVoxelPt.Value(2))
 	maxZ := uint32(maxVoxelPt.Value(2))
 	firstKey := d.NewRavelerForwardMapKey(op.versionID, minZ, 1, 0)
-	lastKey := d.NewRavelerForwardMapKey(op.versionID, maxZ, 0xFFFFFFFF, MaxLabel)
+	lastKey := d.NewRavelerForwardMapKey(op.versionID, maxZ, 0xFFFFFFFF, math.MaxUint64)
 
 	// Get all forward mappings from the key-value store.
 	op.mapping = nil
 
-	db, err := server.KeyValueGetter()
+	db, err := server.OrderedKeyValueGetter()
 	if err != nil {
 		return
 	}
@@ -1194,7 +1225,7 @@ func (d *Data) chunkApplyMap(chunk *storage.Chunk) {
 	}()
 
 	op := chunk.Op.(*denormOp)
-	db, err := server.KeyValueSetter()
+	db, err := server.OrderedKeyValueSetter()
 	if err != nil {
 		dvid.Log(dvid.Normal, "Error in %s.ChunkApplyMap(): %s", d.DataID.DataName(), err.Error())
 		return

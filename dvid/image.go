@@ -135,6 +135,32 @@ func (img Image) GetPNG() ([]byte, error) {
 	return buffer.Bytes(), nil
 }
 
+// GetJPEG returns bytes in JPEG format where quality is 1-100, higher is better,
+// and quality 0 is default (50)
+func (img Image) GetJPEG(quality int) ([]byte, error) {
+	if quality == 0 { // default
+		quality = 50
+	}
+	var goImg image.Image
+	switch img.Which {
+	case 0:
+		goImg = img.Gray
+	case 1:
+		goImg = img.Gray16
+	case 2:
+		goImg = img.NRGBA
+	case 3:
+		goImg = img.NRGBA64
+	default:
+		return nil, fmt.Errorf("Unknown image type %d in GetJPEG()", img.Which)
+	}
+	var buffer bytes.Buffer
+	if err := jpeg.Encode(&buffer, goImg, &jpeg.Options{quality}); err != nil {
+		return nil, err
+	}
+	return buffer.Bytes(), nil
+}
+
 // Set initializes a DVID image from a go image and a data format specification.  DVID images
 // must have identical data type values within a pixel..
 func (img *Image) Set(src image.Image, format DataValues, interpolable bool) error {

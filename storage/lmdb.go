@@ -121,7 +121,7 @@ func (db *LMDB) Close() {
 	}
 }
 
-// ---- KeyValueGetter interface ------
+// ---- OrderedKeyValueGetter interface ------
 
 // Get returns a value given a key.
 func (db *LMDB) Get(k Key) ([]byte, error) {
@@ -291,7 +291,7 @@ func (db *LMDB) ProcessRange(kStart, kEnd Key, op *ChunkOp, f func(*Chunk)) erro
 	return nil
 }
 
-// ---- KeyValueSetter interface ------
+// ---- OrderedKeyValueSetter interface ------
 
 // Put writes a value with given key.
 func (db *LMDB) Put(k Key, v []byte) error {

@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"image"
 	"image/draw"
+	"image/jpeg"
 	"image/png"
 	"math"
 	"net/http"
@@ -45,7 +46,7 @@ $ dvid dataset <UUID> new multiscale2d <data name> <settings...>
 
 	Example:
 
-	$ dvid dataset 3f8c new multiscale2d mymultiscale2d source=mygrayscale versioned=true
+	$ dvid dataset 3f8c new multiscale2d mymultiscale2d source=mygrayscale format=jpg
 
     Arguments:
 
@@ -55,6 +56,9 @@ $ dvid dataset <UUID> new multiscale2d <data name> <settings...>
 
     Configuration Settings (case-insensitive keys)
 
+    Format         "lz4" (default), "jpg", or "png".  In the case of "lz4", decoding/encoding is done at
+                      tile request time and is a better choice if you primarily ask for arbitrary sized images
+                      (via GET .../raw/... or .../isotropic/...) instead of tiles (via GET .../tile/...)
     Versioned      "true" or "false" (default)
     Source         Name of data source (required)
     TileSize       Size in pixels  (default: %s)
@@ -352,15 +356,44 @@ func (dtype *Datatype) NewDataService(id *datastore.DataID, config dvid.Config) 
 		return nil, err
 	}
 
-	// Set default compression if not supplied.
+	// Determine encoding for tile storage and this dictates what kind of compression we use.
+	encoding, found, err := config.GetString("Format")
+	if err != nil {
+		return nil, err
+	}
+	format := LZ4
+	if found {
+		switch strings.ToLower(encoding) {
+		case "lz4":
+			format = LZ4
+		case "png":
+			format = PNG
+		case "jpg":
+			format = JPG
+		default:
+			return nil, fmt.Errorf("Unknown encoding specified: '%s' (should be 'lz4', 'png', or 'jpg'", encoding)
+		}
+	}
+
+	// Compression is determined by encoding.  Inform user if there's a discrepancy.
+	var compression string
+	switch format {
+	case LZ4:
+		compression = "lz4"
+	case PNG:
+		compression = "none"
+	case JPG:
+		compression = "none"
+	}
 	name, found, err = config.GetString("Compression")
 	if err != nil {
 		return nil, err
 	}
-	if found {
-		return nil, fmt.Errorf("Quadtree encodes tiles internally as PNG (deflate) so no compression should be specified.")
+	if found && strings.ToLower(name) != compression {
+		return nil, fmt.Errorf("Conflict between specified compression '%s' and format '%s'.  Suggest not dictating compression.",
+			name, encoding)
 	}
-	config.Set("Compression", "none")
+	config.Set("Compression", compression)
 
 	// Initialize the multiscale2d data
 	basedata, err := datastore.NewDataService(id, dtype, config)
@@ -371,6 +404,7 @@ func (dtype *Datatype) NewDataService(id *datastore.DataID, config dvid.Config) 
 		Data:        basedata,
 		Source:      sourcename,
 		Placeholder: placeholder,
+		Encoding:    format,
 	}
 	return data, nil
 }
@@ -383,6 +417,27 @@ func (dtype *Datatype) Help() string {
 
 // SourceData is the source of the tile data and should be voxels or voxels-derived data.
 type SourceData interface{}
+
+type Format uint8
+
+const (
+	LZ4 Format = iota
+	PNG
+	JPG
+)
+
+func (f Format) String() string {
+	switch f {
+	case LZ4:
+		return "lz4"
+	case PNG:
+		return "png"
+	case JPG:
+		return "jpeg"
+	default:
+		return fmt.Sprintf("format %d", f)
+	}
+}
 
 // Data embeds the datastore's Data and extends it with voxel-specific properties.
 type Data struct {
@@ -397,6 +452,12 @@ type Data struct {
 	// Placeholder, when true (false by default), will generate fake tile images if a tile cannot
 	// be found.  This is useful in testing clients.
 	Placeholder bool
+
+	// Encoding describes encoding of the stored tile.  See multiscale2d.Format
+	Encoding Format
+
+	// Quality is optional quality of encoding for jpeg, 1-100, higher is better.
+	Quality int
 }
 
 // JSONString returns the JSON for this Data's configuration
@@ -474,28 +535,21 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		fmt.Fprintf(w, jsonStr)
 		return nil
 	case "tile":
+		if len(parts) < 7 {
+			err := fmt.Errorf("'tile' request must be following by plane, scale level, and tile coordinate\n")
+			server.BadRequest(w, r, err.Error())
+			return err
+		}
 		planeStr, scalingStr, coordStr := parts[4], parts[5], parts[6]
 		if action == "post" {
 			err := fmt.Errorf("DVID does not yet support POST of multiscale2d")
 			server.BadRequest(w, r, err.Error())
 			return err
 		} else {
-			pngData, err := d.GetTile(uuid, planeStr, scalingStr, coordStr)
-			if err != nil {
-				server.BadRequest(w, r, err.Error())
+			if err := d.ServeTile(uuid, w, r, planeStr, scalingStr, coordStr); err != nil {
 				return err
 			}
-			if pngData == nil {
-				http.NotFound(w, r)
-				return nil
-			}
-
-			//dvid.ElapsedTime(dvid.Normal, startTime, "%s %s upto image formatting", op, slice)
-			w.Header().Set("Content-type", "image/png")
-			if _, err = w.Write(pngData); err != nil {
-				return err
-			}
-			dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: tile %s", r.Method, planeStr)
+			dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: tile %s (%s)", r.Method, planeStr, r.URL)
 		}
 
 	case "raw", "isotropic":
@@ -546,7 +600,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 	return nil
 }
 
-// GetImage returns an image given a 2d orthogonal image description.  Since multiscale2ds
+// GetImage returns an image given a 2d orthogonal image description.  Since multiscale2d tiles
 // have precomputed XY, XZ, and YZ orientations, reconstruction of the desired image should
 // be much faster than computing the image from voxel blocks.
 func (d *Data) GetImage(uuid dvid.UUID, geom dvid.Geometry, isotropic bool) (*dvid.Image, error) {
@@ -557,10 +611,6 @@ func (d *Data) GetImage(uuid dvid.UUID, geom dvid.Geometry, isotropic bool) (*dv
 			d.DataName())
 	}
 	src, err := getSourceVoxels(uuid, d.Source)
-	if err != nil {
-		return nil, err
-	}
-	_, versionID, err := server.DatastoreService().LocalIDFromUUID(uuid)
 	if err != nil {
 		return nil, err
 	}
@@ -603,13 +653,7 @@ func (d *Data) GetImage(uuid dvid.UUID, geom dvid.Geometry, isotropic bool) (*dv
 			go func(x0, y0, x1, y1 int32) {
 				// Get this tile from datastore
 				tileCoord, err := slice.PlaneToChunkPoint3d(x0, y0, minSlice.StartPoint(), levelSpec.TileSize)
-				tileIndex := NewIndexTile(dvid.IndexZYX(tileCoord), slice, Scaling(0))
-				// Get the PNG
-				data, err := d.getTile(versionID, tileIndex)
-				if err != nil {
-					return
-				}
-				goImg, err := d.getTileImage(data, src, slice, tileIndex)
+				goImg, err := d.GetTile(uuid, slice, Scaling(0), dvid.IndexZYX(tileCoord))
 				if err != nil || goImg == nil {
 					return
 				}
@@ -643,45 +687,85 @@ func (d *Data) GetImage(uuid dvid.UUID, geom dvid.Geometry, isotropic bool) (*dv
 	return dst, nil
 }
 
-// GetTile retrieves a tile in PNG format.
-func (d *Data) GetTile(uuid dvid.UUID, planeStr, scalingStr, coordStr string) ([]byte, error) {
-	_, versionID, err := server.DatastoreService().LocalIDFromUUID(uuid)
-	if err != nil {
-		return nil, err
-	}
-
+// ServeTile returns a tile with appropriate Content-Type set.
+func (d *Data) ServeTile(uuid dvid.UUID, w http.ResponseWriter, r *http.Request, planeStr, scalingStr, coordStr string) error {
 	// Construct the index for this tile
 	plane := dvid.DataShapeString(planeStr)
 	shape, err := plane.DataShape()
 	if err != nil {
-		return nil, fmt.Errorf("Illegal tile plane: %s (%s)", planeStr, err.Error())
+		err = fmt.Errorf("Illegal tile plane: %s (%s)", planeStr, err.Error())
+		server.BadRequest(w, r, err.Error())
+		return err
 	}
 	scaling, err := strconv.ParseUint(scalingStr, 10, 8)
 	if err != nil {
-		return nil, fmt.Errorf("Illegal tile scale: %s (%s)", scalingStr, err.Error())
+		err = fmt.Errorf("Illegal tile scale: %s (%s)", scalingStr, err.Error())
+		server.BadRequest(w, r, err.Error())
+		return err
 	}
 	tileCoord, err := dvid.StringToPoint(coordStr, "_")
 	if err != nil {
-		return nil, fmt.Errorf("Illegal tile coordinate: %s (%s)", coordStr, err.Error())
+		err = fmt.Errorf("Illegal tile coordinate: %s (%s)", coordStr, err.Error())
+		server.BadRequest(w, r, err.Error())
+		return err
 	}
 	indexZYX := dvid.IndexZYX{tileCoord.Value(0), tileCoord.Value(1), tileCoord.Value(2)}
-	index := &IndexTile{indexZYX, shape, Scaling(scaling)}
+	data, err := d.getTileData(uuid, shape, Scaling(scaling), indexZYX)
 
-	return d.getTile(versionID, index)
+	switch d.Encoding {
+	case LZ4:
+		var img dvid.Image
+		if err := img.Deserialize(data); err != nil {
+			return err
+		}
+		data, err = img.GetPNG()
+		w.Header().Set("Content-type", "image/png")
+	case PNG:
+		w.Header().Set("Content-type", "image/png")
+	case JPG:
+		w.Header().Set("Content-type", "image/jpeg")
+	}
+	if err != nil {
+		server.BadRequest(w, r, err.Error())
+		return err
+	}
+	if data == nil {
+		http.NotFound(w, r)
+		return nil
+	}
+	if _, err = w.Write(data); err != nil {
+		return err
+	}
+	return nil
 }
 
-// Returns PNG data for tile without decompression.
-func (d *Data) getTile(versionID dvid.VersionLocalID, index *IndexTile) ([]byte, error) {
+// GetTile returns an 2d tile image
+func (d *Data) GetTile(uuid dvid.UUID, shape dvid.DataShape, scaling Scaling, index dvid.IndexZYX) (image.Image, error) {
+	data, err := d.getTileData(uuid, shape, scaling, index)
+	if err != nil {
+		return nil, err
+	}
+	tileIndex := &IndexTile{index, shape, scaling}
+	return d.getTileImage(data, shape, tileIndex)
+}
+
+// getTileData returns 2d tile data straight from storage without decoding.
+func (d *Data) getTileData(uuid dvid.UUID, shape dvid.DataShape, scaling Scaling, index dvid.IndexZYX) ([]byte, error) {
+	_, versionID, err := server.DatastoreService().LocalIDFromUUID(uuid)
+	if err != nil {
+		return nil, err
+	}
 	if d.Levels == nil {
 		return nil, fmt.Errorf("Tiles have not been generated.")
 	}
-	db, err := server.KeyValueGetter()
+	db, err := server.OrderedKeyValueGetter()
 	if err != nil {
 		return nil, err
 	}
 
-	// Retrieve the tile from datastore
-	key := &datastore.DataKey{d.DatasetID(), d.ID, versionID, index}
+	// Retrieve the tile data from datastore
+	tileIndex := &IndexTile{index, shape, scaling}
+	key := &datastore.DataKey{d.DatasetID(), d.ID, versionID, tileIndex}
 	data, err := db.Get(key)
 	if err != nil {
 		return nil, fmt.Errorf("Error trying to GET from datastore: %s", err.Error())
@@ -690,8 +774,8 @@ func (d *Data) getTile(versionID dvid.VersionLocalID, index *IndexTile) ([]byte,
 }
 
 // Return an image or a placeholder image.
-func (d *Data) getTileImage(pngData []byte, src *voxels.Data, plane dvid.DataShape, index *IndexTile) (image.Image, error) {
-	if pngData == nil {
+func (d *Data) getTileImage(data []byte, plane dvid.DataShape, index *IndexTile) (image.Image, error) {
+	if data == nil {
 		if d.Placeholder {
 			scaleSpec, ok := d.Levels[index.scaling]
 			if !ok {
@@ -703,9 +787,27 @@ func (d *Data) getTileImage(pngData []byte, src *voxels.Data, plane dvid.DataSha
 		return nil, nil // Not found
 	}
 
-	// Decode PNG image to standard Go image
-	pngBuffer := bytes.NewBuffer(pngData)
-	return png.Decode(pngBuffer)
+	var err error
+	var goImg image.Image
+
+	switch d.Encoding {
+	case LZ4:
+		var img dvid.Image
+		err = img.Deserialize(data)
+		if err != nil {
+			return nil, err
+		}
+		goImg = img.Get()
+	case PNG:
+		pngBuffer := bytes.NewBuffer(data)
+		goImg, err = png.Decode(pngBuffer)
+	case JPG:
+		jpgBuffer := bytes.NewBuffer(data)
+		goImg, err = jpeg.Decode(jpgBuffer)
+	default:
+		return nil, fmt.Errorf("Unknown tile encoding: %s", d.Encoding)
+	}
+	return goImg, err
 }
 
 // pow2 returns the power of 2 with the passed exponent.
@@ -778,17 +880,31 @@ func (d *Data) extractTiles(v voxels.ExtHandler, offset dvid.Point, scaling Scal
 
 // Returns function that stores a tile as an optionally compressed PNG image.
 func (d *Data) putTileFunc(versionID dvid.VersionLocalID) (outFunc, error) {
-	db, err := server.KeyValueSetter()
+	db, err := server.OrderedKeyValueSetter()
 	if err != nil {
 		return nil, err
 	}
 	return func(index *IndexTile, tile *dvid.Image) error {
-		pngData, err := tile.GetPNG()
+		var err error
+		var data []byte
+
+		switch d.Encoding {
+		case LZ4:
+			compression, err := dvid.NewCompression(dvid.LZ4, dvid.DefaultCompression)
+			if err != nil {
+				return err
+			}
+			data, err = tile.Serialize(compression, d.Checksum)
+		case PNG:
+			data, err = tile.GetPNG()
+		case JPG:
+			data, err = tile.GetJPEG(d.Quality)
+		}
 		if err != nil {
 			return err
 		}
 		key := &datastore.DataKey{d.DatasetID(), d.ID, versionID, index}
-		return db.Put(key, pngData)
+		return db.Put(key, data)
 	}, nil
 }
 
@@ -817,6 +933,12 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, config dvid.Con
 	maxPt := maxTileCoord.MaxPoint(hiresSpec.TileSize)
 	sizeVolume := maxPt.Sub(minPt).AddScalar(1)
 
+	// Setup swappable ExtHandler buffers (the stitched slices) so we can be generating tiles
+	// at same time we are reading and stitching them.
+	var bufferLock [2]sync.Mutex
+	var sliceBuffers [2]voxels.ExtHandler
+	var bufferNum int
+
 	// Get the planes we should tile.
 	planes, err := config.GetShapes("planes", ";")
 	if planes == nil {
@@ -843,29 +965,40 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, config dvid.Con
 				if err != nil {
 					return err
 				}
-				v, err := src.NewExtHandler(slice, nil)
+				bufferLock[bufferNum].Lock()
+				sliceBuffers[bufferNum], err = src.NewExtHandler(slice, nil)
 				if err != nil {
 					return err
 				}
-				if err = voxels.GetVoxels(uuid, src, v); err != nil {
+				if err = voxels.GetVoxels(uuid, src, sliceBuffers[bufferNum]); err != nil {
 					return err
 				}
 				// Iterate through the different scales, extracting tiles at each resolution.
-				for scaling, levelSpec := range tileSpec {
-					outF, err := d.putTileFunc(versionID)
-					if err != nil {
-						return err
-					}
-					if err := d.extractTiles(v, offset, scaling, outF); err != nil {
-						return err
-					}
-					if int(scaling) < len(tileSpec)-1 {
-						if err := v.DownRes(levelSpec.levelMag); err != nil {
-							return err
+				go func(bufferNum int, offset dvid.Point) {
+					defer bufferLock[bufferNum].Unlock()
+					startTime := time.Now()
+					for scaling, levelSpec := range tileSpec {
+						outF, err := d.putTileFunc(versionID)
+						if err != nil {
+							dvid.Error("Error in tiling: %s\n", err.Error())
+							return
+						}
+						if err := d.extractTiles(sliceBuffers[bufferNum], offset, scaling, outF); err != nil {
+							dvid.Error("Error in tiling: %s\n", err.Error())
+							return
+						}
+						if int(scaling) < len(tileSpec)-1 {
+							if err := sliceBuffers[bufferNum].DownRes(levelSpec.levelMag); err != nil {
+								dvid.Error("Error in tiling: %s\n", err.Error())
+								return
+							}
 						}
 					}
-				}
-				dvid.ElapsedTime(dvid.Debug, sliceTime, "XY Tile @ Z = %d", z)
+					dvid.ElapsedTime(dvid.Debug, startTime, "Tiled XY Tile using buffer %d", bufferNum)
+				}(bufferNum, offset)
+
+				dvid.ElapsedTime(dvid.Debug, sliceTime, "Read XY Tile @ Z = %d, now tiling...", z)
+				bufferNum = (bufferNum + 1) % 2
 			}
 			dvid.ElapsedTime(dvid.Normal, startTime, "Total time to generate XY Tiles")
 
@@ -882,29 +1015,40 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, config dvid.Con
 				if err != nil {
 					return err
 				}
-				v, err := src.NewExtHandler(slice, nil)
+				bufferLock[bufferNum].Lock()
+				sliceBuffers[bufferNum], err = src.NewExtHandler(slice, nil)
 				if err != nil {
 					return err
 				}
-				if err = voxels.GetVoxels(uuid, src, v); err != nil {
+				if err = voxels.GetVoxels(uuid, src, sliceBuffers[bufferNum]); err != nil {
 					return err
 				}
 				// Iterate through the different scales, extracting tiles at each resolution.
-				for scaling, levelSpec := range tileSpec {
-					outF, err := d.putTileFunc(versionID)
-					if err != nil {
-						return err
-					}
-					if err := d.extractTiles(v, offset, scaling, outF); err != nil {
-						return err
-					}
-					if int(scaling) < len(tileSpec)-1 {
-						if err := v.DownRes(levelSpec.levelMag); err != nil {
-							return err
+				go func(bufferNum int, offset dvid.Point) {
+					defer bufferLock[bufferNum].Unlock()
+					startTime := time.Now()
+					for scaling, levelSpec := range tileSpec {
+						outF, err := d.putTileFunc(versionID)
+						if err != nil {
+							dvid.Error("Error in tiling: %s\n", err.Error())
+							return
+						}
+						if err := d.extractTiles(sliceBuffers[bufferNum], offset, scaling, outF); err != nil {
+							dvid.Error("Error in tiling: %s\n", err.Error())
+							return
+						}
+						if int(scaling) < len(tileSpec)-1 {
+							if err := sliceBuffers[bufferNum].DownRes(levelSpec.levelMag); err != nil {
+								dvid.Error("Error in tiling: %s\n", err.Error())
+								return
+							}
 						}
 					}
-				}
-				dvid.ElapsedTime(dvid.Debug, sliceTime, "XZ Tile @ Y = %d", y)
+					dvid.ElapsedTime(dvid.Debug, startTime, "Tiled XZ Tile using buffer %d", bufferNum)
+				}(bufferNum, offset)
+
+				dvid.ElapsedTime(dvid.Debug, sliceTime, "Read XZ Tile @ Y = %d, now tiling...", y)
+				bufferNum = (bufferNum + 1) % 2
 			}
 			dvid.ElapsedTime(dvid.Normal, startTime, "Total time to generate XZ Tiles")
 
@@ -921,29 +1065,40 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, config dvid.Con
 				if err != nil {
 					return err
 				}
-				v, err := src.NewExtHandler(slice, nil)
+				bufferLock[bufferNum].Lock()
+				sliceBuffers[bufferNum], err = src.NewExtHandler(slice, nil)
 				if err != nil {
 					return err
 				}
-				if err = voxels.GetVoxels(uuid, src, v); err != nil {
+				if err = voxels.GetVoxels(uuid, src, sliceBuffers[bufferNum]); err != nil {
 					return err
 				}
 				// Iterate through the different scales, extracting tiles at each resolution.
-				for scaling, levelSpec := range tileSpec {
-					outF, err := d.putTileFunc(versionID)
-					if err != nil {
-						return err
-					}
-					if err := d.extractTiles(v, offset, scaling, outF); err != nil {
-						return err
-					}
-					if int(scaling) < len(tileSpec)-1 {
-						if err := v.DownRes(levelSpec.levelMag); err != nil {
-							return err
+				go func(bufferNum int, offset dvid.Point) {
+					defer bufferLock[bufferNum].Unlock()
+					startTime := time.Now()
+					for scaling, levelSpec := range tileSpec {
+						outF, err := d.putTileFunc(versionID)
+						if err != nil {
+							dvid.Error("Error in tiling: %s\n", err.Error())
+							return
+						}
+						if err := d.extractTiles(sliceBuffers[bufferNum], offset, scaling, outF); err != nil {
+							dvid.Error("Error in tiling: %s\n", err.Error())
+							return
+						}
+						if int(scaling) < len(tileSpec)-1 {
+							if err := sliceBuffers[bufferNum].DownRes(levelSpec.levelMag); err != nil {
+								dvid.Error("Error in tiling: %s\n", err.Error())
+								return
+							}
 						}
 					}
-				}
-				dvid.ElapsedTime(dvid.Debug, sliceTime, "YZ Tile @ X = %d", x)
+					dvid.ElapsedTime(dvid.Debug, startTime, "Tiled YZ Tile using buffer %d", bufferNum)
+				}(bufferNum, offset)
+
+				dvid.ElapsedTime(dvid.Debug, sliceTime, "Read YZ Tile @ X = %d, now tiling...", x)
+				bufferNum = (bufferNum + 1) % 2
 			}
 			dvid.ElapsedTime(dvid.Normal, startTime, "Total time to generate YZ Tiles")
 

@@ -42,9 +42,9 @@ $ dvid dataset <UUID> new <type name> <data name> <settings...>
 
 	Adds newly named data of the 'type name' to dataset with specified UUID.
 
-	Example:
+	Example (note anisotropic resolution specified instead of default 8 nm isotropic):
 
-	$ dvid dataset 3f8c new grayscale8 mygrayscale BlockSize=32 Res=1.5,1.0,1.5
+	$ dvid dataset 3f8c new grayscale8 mygrayscale BlockSize=32 Res=3.2,3.2,40.0
 
     Arguments:
 
@@ -57,7 +57,7 @@ $ dvid dataset <UUID> new <type name> <data name> <settings...>
 
     Versioned      "true" or "false" (default)
     BlockSize      Size in pixels  (default: %s)
-    VoxelSize      Resolution of voxels (default: 10.0, 10.0, 10.0)
+    VoxelSize      Resolution of voxels (default: 8.0, 8.0, 8.0)
     VoxelUnits     Resolution units (default: "nanometers")
 
 $ dvid node <UUID> <data name> load <offset> <image glob>
@@ -220,7 +220,7 @@ var (
 	// DefaultBlockSize specifies the default size for each block of this data type.
 	DefaultBlockSize int32 = 32
 
-	DefaultRes float32 = 10
+	DefaultRes float32 = 8
 
 	DefaultUnits = "nanometers"
 )
@@ -366,7 +366,7 @@ func GetVolume(uuid dvid.UUID, i IntHandler, e ExtHandler) ([]byte, error) {
 // GetVoxels copies voxels from an IntHandler for a version to an ExtHandler, e.g.,
 // a requested subvolume or 2d image.
 func GetVoxels(uuid dvid.UUID, i IntHandler, e ExtHandler) error {
-	db, err := server.KeyValueGetter()
+	db, err := server.OrderedKeyValueGetter()
 	if err != nil {
 		return err
 	}
@@ -412,7 +412,7 @@ func GetVoxels(uuid dvid.UUID, i IntHandler, e ExtHandler) error {
 //   Pass one: Retrieve all available key/values within the PUT space.
 //   Pass two: Merge PUT data into those key/values and store them.
 func PutVoxels(uuid dvid.UUID, i IntHandler, e ExtHandler) error {
-	db, err := server.KeyValueGetter()
+	db, err := server.OrderedKeyValueGetter()
 	if err != nil {
 		return err
 	}
@@ -692,7 +692,7 @@ const KVWriteSize = 500
 
 // writeBlocks writes blocks of voxel data asynchronously using batch writes.
 func writeBlocks(compress dvid.Compression, checksum dvid.Checksum, blocks Blocks, wg1, wg2 *sync.WaitGroup) error {
-	db, err := server.KeyValueSetter()
+	db, err := server.OrderedKeyValueSetter()
 	if err != nil {
 		return err
 	}
@@ -825,7 +825,7 @@ func LoadImages(i IntHandler, uuid dvid.UUID, offset dvid.Point, filenames []str
 
 // Loads blocks with old data if they exist.
 func loadOldBlocks(i IntHandler, e ExtHandler, blocks Blocks, versionID dvid.VersionLocalID) error {
-	db, err := server.KeyValueGetter()
+	db, err := server.OrderedKeyValueGetter()
 	if err != nil {
 		return err
 	}
@@ -2196,9 +2196,9 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 				d.DataID().DataName(), err.Error())
 			return
 		}
-		db, err := server.KeyValueSetter()
+		db, err := server.OrderedKeyValueSetter()
 		if err != nil {
-			dvid.Log(dvid.Normal, "Database doesn't support KeyValueSetter in '%s': %s\n",
+			dvid.Log(dvid.Normal, "Database doesn't support OrderedKeyValueSetter in '%s': %s\n",
 				d.DataID().DataName(), err.Error())
 			return
 		}
