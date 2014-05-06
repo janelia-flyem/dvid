@@ -886,7 +886,7 @@ func (d *Data) LoadRavelerMaps(request datastore.Request, reply *datastore.Respo
 	var uuidStr, dataName, cmdStr, fileTypeStr, spsegStr, segbodyStr string
 	request.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &fileTypeStr, &spsegStr, &segbodyStr)
 
-	//startTime := time.Now()
+	startTime := time.Now()
 
 	uuid, err := server.MatchingUUID(uuidStr)
 	if err != nil {
