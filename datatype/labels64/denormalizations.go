@@ -9,96 +9,17 @@ package labels64
 import (
 	"bytes"
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
 	"math"
 	"sync"
 	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
+	"github.com/janelia-flyem/dvid/datatype/labels"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
 )
-
-type KeyType byte
-
-// Label indexing is handled through a variety of key spaces that optimize
-// throughput for access patterns required by our API.  For dcumentation purposes,
-// consider the following key components:
-//   a: original label
-//   b: mapped label
-//   s: spatial index (coordinate of a block)
-//   v: # of voxels for a label
-const (
-	// KeyInverseMap have keys of form 'b+a'
-	KeyInverseMap KeyType = iota
-
-	// KeyForwardMap have keys of form 'a+b'
-	// For superpixel->body maps, this key would be superpixel+body.
-	KeyForwardMap
-
-	// KeySpatialMap have keys of form 's+a+b'
-	// They are useful for composing label maps for a spatial index.
-	KeySpatialMap
-
-	// KeyLabelSpatialMap have keys of form 'b+s' and have a sparse volume
-	// encoding for its value. They are useful for returning all blocks
-	// intersected by a label.
-	KeyLabelSpatialMap
-
-	// KeyLabelSizes have keys of form 'v+b'.
-	// They allow rapid size range queries.
-	KeyLabelSizes
-)
-
-var (
-	emptyValue     = []byte{}
-	zeroLabelBytes = make([]byte, 8, 8)
-)
-
-func (t KeyType) String() string {
-	switch t {
-	case KeyInverseMap:
-		return "Inverse Label Map"
-	case KeyForwardMap:
-		return "Forward Label Map"
-	case KeySpatialMap:
-		return "Spatial Index to Labels Map"
-	case KeyLabelSpatialMap:
-		return "Forward Label to Spatial Index Map"
-	case KeyLabelSizes:
-		return "Forward Label sorted by volume"
-	default:
-		return "Unknown Key Type"
-	}
-}
-
-// NewLabelSpatialMapKey returns a datastore.DataKey that encodes a "label + spatial index", where
-// the spatial index references a block that contains a voxel with the given label.
-func (d *Data) NewLabelSpatialMapKey(vID dvid.VersionLocalID, label uint64, block dvid.IndexZYX) *datastore.DataKey {
-	index := make([]byte, 1+8+dvid.IndexZYXSize)
-	index[0] = byte(KeyLabelSpatialMap)
-	binary.BigEndian.PutUint64(index[1:9], label)
-	copy(index[9:9+dvid.IndexZYXSize], block.Bytes())
-	return d.DataKey(vID, dvid.IndexBytes(index))
-}
-
-// NewLabelSizesKey returns a datastore.DataKey that encodes a "size + mapped label".
-func (d *Data) NewLabelSizesKey(vID dvid.VersionLocalID, size, label uint64) *datastore.DataKey {
-	index := make([]byte, 17)
-	index[0] = byte(KeyLabelSizes)
-	binary.BigEndian.PutUint64(index[1:9], size)
-	binary.BigEndian.PutUint64(index[9:17], label)
-	return d.DataKey(vID, dvid.IndexBytes(index))
-}
-
-// NewLabelSurfaceKey returns a datastore.DataKey that provides a surface for a given label.
-func (d *Data) NewLabelSurfaceKey(vID dvid.VersionLocalID, label uint64) *datastore.DataKey {
-	index := make([]byte, 8)
-	binary.BigEndian.PutUint64(index, label)
-	return d.DataKey(vID, dvid.IndexBytes(index))
-}
 
 type sparseOp struct {
 	versionID dvid.VersionLocalID
@@ -106,81 +27,6 @@ type sparseOp struct {
 	numBlocks uint32
 	numRuns   uint32
 	//numVoxels int32
-}
-
-// Adds retrieved RLE runs to an encoding.
-func (d *Data) processLabelRuns(chunk *storage.Chunk) {
-	op := chunk.Op.(*sparseOp)
-	op.numBlocks++
-	op.encoding = append(op.encoding, chunk.V...)
-	op.numRuns += uint32(len(chunk.V) / 16)
-	chunk.Wg.Done()
-}
-
-// Runs asynchronously and assumes that sparse volumes per spatial indices are ordered
-// by mapped label, i.e., we will get all data for body N before body N+1.  Exits when
-// receives a nil in channel.
-func (d *Data) computeSizes(sizeCh chan *storage.Chunk, db storage.OrderedKeyValueSetter,
-	versionID dvid.VersionLocalID, wg *sync.WaitGroup) {
-
-	dvid.Log(dvid.Debug, "Storing size in voxels for all labels '%s'\n", d.DataName())
-
-	const BATCH_SIZE = 10000
-	batcher, ok := db.(storage.Batcher)
-	if !ok {
-		dvid.Log(dvid.Normal, "Storage engine does not support Batch PUT.  Aborting\n")
-		return
-	}
-	batch := batcher.NewBatch()
-
-	defer func() {
-		wg.Done()
-	}()
-
-	// Sequentially process all the sparse volume data for each label
-	var curLabel, curSize uint64
-	putsInBatch := 0
-	notFirst := false
-	for {
-		chunk := <-sizeCh
-		if chunk == nil {
-			key := d.NewLabelSizesKey(versionID, curSize, curLabel)
-			batch.Put(key, emptyValue)
-			if err := batch.Commit(); err != nil {
-				dvid.Log(dvid.Normal, "Error on batch PUT of label sizes for %s: %s\n",
-					d.DataName(), err.Error())
-			}
-			return
-		}
-		label := chunk.ChunkOp.Op.(uint64)
-
-		// Compute the size
-		var rles dvid.RLEs
-		if err := rles.UnmarshalBinary(chunk.V); err != nil {
-			dvid.Log(dvid.Normal, "Error deserializing RLEs: %s\n", err.Error())
-			return
-		}
-		numVoxels, _ := rles.Stats()
-
-		// If we are a new label, store size
-		if notFirst && label != curLabel {
-			key := d.NewLabelSizesKey(versionID, curSize, curLabel)
-			curSize = 0
-			batch.Put(key, emptyValue)
-			putsInBatch++
-			if putsInBatch%BATCH_SIZE == 0 {
-				if err := batch.Commit(); err != nil {
-					dvid.Log(dvid.Normal, "Error on batch PUT of label sizes for %s: %s\n",
-						d.DataName(), err.Error())
-					return
-				}
-				batch = batcher.NewBatch()
-			}
-		}
-		curLabel = label
-		curSize += uint64(numVoxels)
-		notFirst = true
-	}
 }
 
 // Runs asynchronously and assumes that sparse volumes per spatial indices are ordered
@@ -232,7 +78,7 @@ func (d *Data) computeSurface(surfaceCh chan *storage.Chunk, db storage.OrderedK
 
 func (d *Data) computeAndSaveSurface(versionID dvid.VersionLocalID, vol *dvid.SparseVol) error {
 
-	data, err := vol.SurfaceSerialization(d.Resolution.VoxelSize)
+	data, err := vol.SurfaceSerialization(d.BlockSize().Value(2), d.Resolution.VoxelSize)
 	if err != nil {
 		return err
 	}
@@ -249,52 +95,7 @@ func (d *Data) computeAndSaveSurface(versionID dvid.VersionLocalID, vol *dvid.Sp
 	if err != nil {
 		return fmt.Errorf("Unable to serialize data in surface computation: %s\n", err.Error())
 	}
-	return db.Put(d.NewLabelSurfaceKey(versionID, vol.Label()), serialization)
-}
-
-// GetSizeRange returns a JSON list of mapped labels that have volumes within the given range.
-// If maxSize is 0, all mapped labels are returned >= minSize.
-func (d *Data) GetSizeRange(uuid dvid.UUID, minSize, maxSize uint64) (string, error) {
-	service := server.DatastoreService()
-	_, versionID, err := service.LocalIDFromUUID(uuid)
-	if err != nil {
-		err = fmt.Errorf("Error in getting version ID from UUID '%s': %s\n", uuid, err.Error())
-		return "{}", err
-	}
-
-	db, err := server.OrderedKeyValueGetter()
-	if err != nil {
-		return "{}", err
-	}
-
-	// Get the start/end keys for the size range.
-	firstKey := d.NewLabelSizesKey(versionID, minSize, 0)
-	var upperBound uint64
-	if maxSize != 0 {
-		upperBound = maxSize
-	} else {
-		upperBound = math.MaxUint64
-	}
-	lastKey := d.NewLabelSizesKey(versionID, upperBound, math.MaxUint64)
-
-	// Grab all keys for this range in one sequential read.
-	keys, err := db.KeysInRange(firstKey, lastKey)
-	if err != nil {
-		return "{}", err
-	}
-
-	// Convert them to a JSON compatible structure.
-	labels := make([]uint64, len(keys))
-	for i, key := range keys {
-		dataKey := key.(*datastore.DataKey)
-		indexBytes := dataKey.Index.Bytes()
-		labels[i] = binary.LittleEndian.Uint64(indexBytes[9:17])
-	}
-	m, err := json.Marshal(labels)
-	if err != nil {
-		return "{}", nil
-	}
-	return string(m), nil
+	return db.Put(labels.NewLabelSurfaceKey(d, versionID, vol.Label()), serialization)
 }
 
 // GetLabelAtPoint returns a mapped label for a given point.
@@ -383,13 +184,19 @@ func (d *Data) GetSparseVol(uuid dvid.UUID, label uint64) ([]byte, error) {
 	binary.Write(buf, binary.LittleEndian, uint32(0)) // Placeholder for # spans
 
 	// Get the start/end keys for this body's KeyLabelSpatialMap (b + s) keys.
-	firstKey := d.NewLabelSpatialMapKey(versionID, label, dvid.MinIndexZYX)
-	lastKey := d.NewLabelSpatialMapKey(versionID, label, dvid.MaxIndexZYX)
+	firstKey := labels.NewLabelSpatialMapKey(d, versionID, label, dvid.MinIndexZYX)
+	lastKey := labels.NewLabelSpatialMapKey(d, versionID, label, dvid.MaxIndexZYX)
 
 	// Process all the b+s keys and their values, which contain RLE runs for that label.
 	wg := new(sync.WaitGroup)
 	op := &sparseOp{versionID: versionID, encoding: buf.Bytes()}
-	err = db.ProcessRange(firstKey, lastKey, &storage.ChunkOp{op, wg}, d.processLabelRuns)
+	err = db.ProcessRange(firstKey, lastKey, &storage.ChunkOp{op, wg}, func(chunk *storage.Chunk) {
+		op := chunk.Op.(*sparseOp)
+		op.numBlocks++
+		op.encoding = append(op.encoding, chunk.V...)
+		op.numRuns += uint32(len(chunk.V) / 16)
+		chunk.Wg.Done()
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -413,7 +220,7 @@ func (d *Data) GetSurface(uuid dvid.UUID, label uint64) (s []byte, found bool, e
 	}
 
 	// Retrieve the precomputed surface or that it's not available.
-	key := d.NewLabelSurfaceKey(versionID, label)
+	key := labels.NewLabelSurfaceKey(d, versionID, label)
 
 	db, e := server.OrderedKeyValueGetter()
 	if e != nil {
@@ -494,11 +301,11 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 
 	// Iterate through all mapped labels and determine the size in voxels.
 	startTime = time.Now()
-	startKey := d.NewLabelSpatialMapKey(versionID, 0, dvid.MinIndexZYX)
-	endKey := d.NewLabelSpatialMapKey(versionID, math.MaxUint64, dvid.MaxIndexZYX)
+	startKey := labels.NewLabelSpatialMapKey(d, versionID, 0, dvid.MinIndexZYX)
+	endKey := labels.NewLabelSpatialMapKey(d, versionID, math.MaxUint64, dvid.MaxIndexZYX)
 	sizeCh := make(chan *storage.Chunk, 1000)
 	wg.Add(1)
-	go d.computeSizes(sizeCh, db, versionID, wg)
+	go labels.ComputeSizes(d, sizeCh, db, versionID, wg)
 
 	// Create a number of label-specific surface calculation jobs
 	const numSurfCalculators = 3
@@ -563,6 +370,13 @@ func (d *Data) denormalizeChunk(chunk *storage.Chunk) {
 	}()
 
 	op := chunk.Op.(*denormOp)
+
+	// Get the spatial index associated with this chunk.
+	dataKey := chunk.K.(*datastore.DataKey)
+	zyx := dataKey.Index.(*dvid.IndexZYX)
+	zyxBytes := zyx.Bytes()
+
+	// Setup the database
 	db, err := server.OrderedKeyValueDB()
 	if err != nil {
 		dvid.Log(dvid.Normal, "Error in %s.denormalizeChunk(): %s\n", d.DataName(), err.Error())
@@ -574,11 +388,12 @@ func (d *Data) denormalizeChunk(chunk *storage.Chunk) {
 		return
 	}
 	batch := batcher.NewBatch()
-
-	// Get the spatial index associated with this chunk.
-	dataKey := chunk.K.(*datastore.DataKey)
-	zyx := dataKey.Index.(*dvid.IndexZYX)
-	zyxBytes := zyx.Bytes()
+	defer func() {
+		if err := batch.Commit(); err != nil {
+			dvid.Log(dvid.Normal, "Error on batch PUT of KeySpatialMap on %s: %s\n",
+				dataKey.Index, err.Error())
+		}
+	}()
 
 	// Initialize the label buffer.  For voxels, this data needs to be uncompressed and deserialized.
 	blockData, _, err := dvid.DeserializeData(chunk.V, true)
@@ -633,30 +448,7 @@ func (d *Data) denormalizeChunk(chunk *storage.Chunk) {
 			}
 		}
 	}
-	if err := batch.Commit(); err != nil {
-		dvid.Log(dvid.Normal, "Error on batch PUT of KeySpatialMap on %s: %s\n",
-			dataKey.Index, err.Error())
-		return
-	}
-	batch = batcher.NewBatch()
 
 	// Store the KeyLabelSpatialMap keys (index = b + s) with slice of runs for value.
-	bsIndex := make([]byte, 1+8+dvid.IndexZYXSize)
-	bsIndex[0] = byte(KeyLabelSpatialMap)
-	copy(bsIndex[9:9+dvid.IndexZYXSize], zyxBytes)
-	for b, rles := range labelRLEs {
-		binary.BigEndian.PutUint64(bsIndex[1:9], b)
-		key := d.DataKey(op.versionID, dvid.IndexBytes(bsIndex))
-		runsBytes, err := rles.MarshalBinary()
-		if err != nil {
-			dvid.Log(dvid.Normal, "Error encoding KeyLabelSpatialMap keys for mapped label %d: %s\n",
-				b, err.Error())
-			return
-		}
-		batch.Put(key, runsBytes)
-	}
-	if err := batch.Commit(); err != nil {
-		dvid.Log(dvid.Normal, "Error on batch PUT of KeyLabelSpatialMap on %s: %s\n",
-			dataKey.Index, err.Error())
-	}
+	labels.StoreKeyLabelSpatialMap(d, batcher, op.versionID, zyxBytes, labelRLEs)
 }

@@ -12,6 +12,14 @@ import (
 	"fmt"
 )
 
+var (
+	emptyValue = []byte{}
+)
+
+func EmptyValue() []byte {
+	return emptyValue
+}
+
 // DataType is a unique ID for each type of data within DVID, e.g., a uint8 or a float32.
 type DataType uint8
 

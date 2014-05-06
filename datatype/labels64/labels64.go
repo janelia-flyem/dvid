@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
+	"github.com/janelia-flyem/dvid/datatype/labels"
 	"github.com/janelia-flyem/dvid/datatype/voxels"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
@@ -542,7 +543,7 @@ func (d *Data) addLabelZ(geom dvid.Geometry, data32 []uint8, stride int32) ([]by
 		srcI := y * int(stride)
 		for x := 0; x < nx; x++ {
 			if data32[srcI] == 0 && data32[srcI+1] == 0 && data32[srcI+2] == 0 {
-				copy(data64[dstI:dstI+8], zeroLabelBytes)
+				copy(data64[dstI:dstI+8], labels.ZeroBytes())
 			} else {
 				superpixelBytes[5] = data32[srcI+2]
 				superpixelBytes[6] = data32[srcI+1]
@@ -968,7 +969,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 			server.BadRequest(w, r, err.Error())
 			return err
 		}
-		jsonStr, err := d.GetSizeRange(uuid, minSize, maxSize)
+		jsonStr, err := labels.GetSizeRange(d, uuid, minSize, maxSize)
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
 			return err

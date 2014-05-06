@@ -125,6 +125,9 @@ type Batcher interface {
 }
 
 // Batch groups operations into a transaction.
+// Clear() and Close() were removed due to how other key-value stores implement batches.
+// It's easier to implement cross-database handling of a simple write/delete batch
+// that commits then closes rather than something that clears.
 type Batch interface {
 	// Delete removes from the batch a put using the given key.
 	Delete(k Key)

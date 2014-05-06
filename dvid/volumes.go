@@ -58,8 +58,6 @@ const (
 )
 
 var (
-	emptyValue = []byte{}
-
 	zhX, zhY, zhZ [3][3][3]float64
 )
 
@@ -224,7 +222,9 @@ func (vol *SparseVol) AddRLEs(encoding []byte) error {
 //    Array of N vertices, each with 3 little-endian float32 (x,y,z)
 //    Array of N normals, each with 3 little-endian float32 (nx,ny,nz)
 //
-func (vol *SparseVol) SurfaceSerialization(res NdFloat32) ([]byte, error) {
+// The blockNz parameter is necessary since underlying RLEs in the SparseVol are ordered
+// by blocks in Z but not within a block, so RLEs can have different Z within a block.
+func (vol *SparseVol) SurfaceSerialization(blockNz int32, res NdFloat32) ([]byte, error) {
 	// TODO -- can be more efficient in buffer space by only needing 8 blocks worth
 	// of data (4 for current XY processing and 4 for next Z), but for simplicity this
 	// function uses total XY extents + some # of slices (blockNz).
@@ -232,7 +232,8 @@ func (vol *SparseVol) SurfaceSerialization(res NdFloat32) ([]byte, error) {
 	dy := vol.maxPt[1] - vol.minPt[1] + 3
 	dz := vol.maxPt[2] - vol.minPt[2] + 3
 
-	blockNz := int32(32)
+	// Note that SparseVol RLEs can jump in Z within a block of data, so buffer must be at least
+	// as big as a block in Z.
 	if dz > blockNz*2+1 {
 		dz = blockNz*2 + 1
 	}
@@ -252,7 +253,7 @@ func (vol *SparseVol) SurfaceSerialization(res NdFloat32) ([]byte, error) {
 		var maxX int32 = dx - 1 //0
 		var minY int32 = 1      //dy
 		var maxY int32 = dy - 1 //0
-		// Populate the buffer
+		// Populate the buffer.
 		for {
 			if rleI >= vol.pos {
 				// We've added entire volume.
@@ -273,6 +274,7 @@ func (vol *SparseVol) SurfaceSerialization(res NdFloat32) ([]byte, error) {
 
 			// For this buffer, set bounds.  For large sparse volumes that snake
 			// through a lot of space, the XY footprint might be relatively small.
+			// This is currently not working but is a TODO.
 			/*
 				if minX > bx {
 					minX = bx

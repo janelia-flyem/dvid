@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
+	"github.com/janelia-flyem/dvid/datatype/labels"
 	"github.com/janelia-flyem/dvid/datatype/labels64"
 	"github.com/janelia-flyem/dvid/datatype/voxels"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -673,7 +674,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 			server.BadRequest(w, r, err.Error())
 			return err
 		}
-		jsonStr, err := d.GetSizeRange(uuid, minSize, maxSize)
+		jsonStr, err := labels.GetSizeRange(d, uuid, minSize, maxSize)
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
 			return err
@@ -841,39 +842,14 @@ func loadSegBodyMap(filename string) (map[uint64]uint64, error) {
 	return segmentToBodyMap, nil
 }
 
-// NewForwardMapKey returns a datastore.DataKey that encodes a "label + mapping", where
-// the label and mapping are both uint64.
-func (d *Data) NewForwardMapKey(vID dvid.VersionLocalID, label []byte, mapping uint64) *datastore.DataKey {
-	index := make([]byte, 17)
-	index[0] = byte(KeyForwardMap)
-	copy(index[1:9], label)
-	binary.BigEndian.PutUint64(index[9:17], mapping)
-	return d.DataKey(vID, dvid.IndexBytes(index))
-}
-
 // NewRavelerForwardMapKey returns a datastore.DataKey that encodes a "label + mapping", where
 // the label is a uint64 with top 4 bytes encoding Z and least-significant 4 bytes encoding
 // the superpixel ID.  Also, the zero label is reserved.
 func (d *Data) NewRavelerForwardMapKey(vID dvid.VersionLocalID, z, spid uint32, body uint64) *datastore.DataKey {
 	index := make([]byte, 17)
-	index[0] = byte(KeyForwardMap)
+	index[0] = byte(labels.KeyForwardMap)
 	copy(index[1:9], labels64.RavelerSuperpixelBytes(z, spid))
 	binary.BigEndian.PutUint64(index[9:17], body)
-	return d.DataKey(vID, dvid.IndexBytes(index))
-}
-
-// NewSpatialMapKey returns a datastore.DataKey that encodes a "spatial index + label + mapping".
-func (d *Data) NewSpatialMapKey(vID dvid.VersionLocalID, blockIndex dvid.Index, label []byte,
-	mapping uint64) *datastore.DataKey {
-
-	index := make([]byte, 1+dvid.IndexZYXSize+8+8) // s + a + b
-	index[0] = byte(KeySpatialMap)
-	i := 1 + dvid.IndexZYXSize
-	copy(index[1:i], blockIndex.Bytes())
-	if label != nil {
-		copy(index[i:i+8], label)
-	}
-	binary.BigEndian.PutUint64(index[i+8:i+16], mapping)
 	return d.DataKey(vID, dvid.IndexBytes(index))
 }
 
@@ -898,15 +874,15 @@ func (d *Data) LoadRavelerMaps(request datastore.Request, reply *datastore.Respo
 	if err != nil {
 		return err
 	}
-	labels, err := d.Labels.GetData()
+	labelData, err := d.Labels.GetData()
 	if err != nil {
 		return err
 	}
-	if !labels.Ready {
-		return fmt.Errorf("Can't load raveler maps if underlying labels64 %q has not been loaded!", labels.DataName())
+	if !labelData.Ready {
+		return fmt.Errorf("Can't load raveler maps if underlying labels64 %q has not been loaded!", labelData.DataName())
 	}
-	minLabelZ := uint32(labels.Extents().MinPoint.Value(2))
-	maxLabelZ := uint32(labels.Extents().MaxPoint.Value(2))
+	minLabelZ := uint32(labelData.Extents().MinPoint.Value(2))
+	maxLabelZ := uint32(labelData.Extents().MaxPoint.Value(2))
 
 	d.Ready = false
 	if err := service.SaveDataset(uuid); err != nil {
@@ -928,9 +904,9 @@ func (d *Data) LoadRavelerMaps(request datastore.Request, reply *datastore.Respo
 	var slice, superpixel32 uint32
 	var segment, body uint64
 	forwardIndex := make([]byte, 17)
-	forwardIndex[0] = byte(KeyForwardMap)
+	forwardIndex[0] = byte(labels.KeyForwardMap)
 	inverseIndex := make([]byte, 17)
-	inverseIndex[0] = byte(KeyInverseMap)
+	inverseIndex[0] = byte(labels.KeyInverseMap)
 
 	// Get the sp->seg map, persisting each computed sp->body.
 	dvid.Log(dvid.Normal, "Processing superpixel->segment map (Z %d-%d): %s\n",
@@ -975,7 +951,7 @@ func (d *Data) LoadRavelerMaps(request datastore.Request, reply *datastore.Respo
 		copy(forwardIndex[1:9], superpixelBytes)
 		binary.BigEndian.PutUint64(forwardIndex[9:17], body)
 		key := d.DataKey(versionID, dvid.IndexBytes(forwardIndex))
-		err = db.Put(key, emptyValue)
+		err = db.Put(key, dvid.EmptyValue())
 		if err != nil {
 			return fmt.Errorf("ERROR on PUT of forward label mapping (%x -> %d): %s\n",
 				superpixelBytes, body, err.Error())
@@ -985,7 +961,7 @@ func (d *Data) LoadRavelerMaps(request datastore.Request, reply *datastore.Respo
 		binary.BigEndian.PutUint64(inverseIndex[1:9], body)
 		copy(inverseIndex[9:17], superpixelBytes)
 		key = d.DataKey(versionID, dvid.IndexBytes(inverseIndex))
-		err = db.Put(key, emptyValue)
+		err = db.Put(key, dvid.EmptyValue())
 		if err != nil {
 			return fmt.Errorf("ERROR on PUT of inverse label mapping (%d -> %x): %s\n",
 				body, superpixelBytes, err.Error())
@@ -1050,16 +1026,16 @@ func (d *Data) ApplyLabelMap(request datastore.Request, reply *datastore.Respons
 
 	// Iterate through all labels chunks incrementally in Z, loading and then using the maps
 	// for all blocks in that layer.
-	labels, err := d.Labels.GetData()
+	labelData, err := d.Labels.GetData()
 	if err != nil {
 		return err
 	}
 
 	wg := new(sync.WaitGroup)
-	op := &denormOp{labels, nil, dest.DataID().ID, versionID, nil}
+	op := &denormOp{labelData, nil, dest.DataID().ID, versionID, nil}
 
-	dataID := labels.DataID()
-	extents := labels.Extents()
+	dataID := labelData.DataID()
+	extents := labelData.Extents()
 	minIndexZ := extents.MinIndex.(dvid.IndexZYX)[2]
 	maxIndexZ := extents.MaxIndex.(dvid.IndexZYX)[2]
 	for z := minIndexZ; z <= maxIndexZ; z++ {
@@ -1090,7 +1066,7 @@ func (d *Data) ApplyLabelMap(request datastore.Request, reply *datastore.Respons
 		sourceName, destName, d.DataName())
 
 	// Set new mapped data to same extents.
-	dest.Properties = labels.Properties
+	dest.Properties = labelData.Properties
 	if err := server.DatastoreService().SaveDataset(uuid); err != nil {
 		dvid.Log(dvid.Normal, "Could not save READY state to data '%s', uuid %s: %s",
 			d.DataName(), uuid, err.Error())
@@ -1101,8 +1077,8 @@ func (d *Data) ApplyLabelMap(request datastore.Request, reply *datastore.Respons
 
 // GetLabelMapping returns the mapping for a label.
 func (d *Data) GetLabelMapping(versionID dvid.VersionLocalID, label []byte) (uint64, error) {
-	firstKey := d.NewForwardMapKey(versionID, label, 0)
-	lastKey := d.NewForwardMapKey(versionID, label, math.MaxUint64)
+	firstKey := labels.NewForwardMapKey(d, versionID, label, 0)
+	lastKey := labels.NewForwardMapKey(d, versionID, label, math.MaxUint64)
 
 	db, err := server.OrderedKeyValueGetter()
 	if err != nil {
@@ -1138,9 +1114,9 @@ func (d *Data) GetBlockMapping(vID dvid.VersionLocalID, block dvid.IndexZYX) (ma
 		return nil, err
 	}
 
-	firstKey := d.NewSpatialMapKey(vID, block, nil, 0)
 	maxLabel := []byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}
-	lastKey := d.NewSpatialMapKey(vID, block, maxLabel, math.MaxUint64)
+	firstKey := labels.NewSpatialMapKey(d, vID, block, nil, 0)
+	lastKey := labels.NewSpatialMapKey(d, vID, block, maxLabel, math.MaxUint64)
 
 	keys, err := db.KeysInRange(firstKey, lastKey)
 	if err != nil {
@@ -1256,7 +1232,7 @@ func (d *Data) chunkApplyMap(chunk *storage.Chunk) {
 		a := blockData[start : start+8]
 
 		// Get the label to which the current label is mapped.
-		if bytes.Compare(a, zeroLabelBytes) == 0 {
+		if bytes.Compare(a, labels.ZeroBytes()) == 0 {
 			b = 0
 		} else {
 			b, ok = op.mapping[string(a)]
