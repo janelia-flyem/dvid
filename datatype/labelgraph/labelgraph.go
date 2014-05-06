@@ -186,6 +186,17 @@ DELETE <api URL>/node/<UUID>/<data name>/property/<vertex1>/<vertex2>/<key>
     vertex1       ID of vertex1
     vertex2       ID of vertex2
     key           Name of the property
+
+    
+TODO:
+
+* Convenient interfaces like retrieve vertex neighbors
+* Bulk loader interface?
+* Implement transaction history as keyvalue array and support undo command (allow users to flush transaction history and perform mergers without transactions)
+* Compress JSON representation of the graph and/or use a binary format
+* Better handling of errors mid action (if there is no transaction support)
+* Implement more transactions at the storage level to prevent any weirdness
+* Implement transactions at the datatype level to enable atomicity (how to handle queuing operations?)
 `
 
 func init() {
@@ -209,17 +220,20 @@ type Datatype struct {
 	datastore.Datatype
 }
 
+// labelVertex stores a subset of information contained in GraphVertex for interfacing with client
 type labelVertex struct {
 	Id     storage.VertexID
 	Weight float64
 }
 
+// labelEdge stores a subset of information contained in GraphVertex for interfacing with client
 type labelEdge struct {
 	Id1    storage.VertexID
 	Id2    storage.VertexID
 	Weight float64
 }
 
+// LabelGraph encodes data exchanged with a client
 type LabelGraph struct {
 	Vertices []labelVertex
 	Edges    []labelEdge
@@ -266,6 +280,7 @@ func (d *Data) JSONString() (jsonStr string, err error) {
 	return string(m), nil
 }
 
+// getGraphDB retrieves the GraphDB interface and the key defining the graph space
 func (d *Data) getGraphDB(uuid dvid.UUID) (storage.Key, storage.GraphDB, error) {
 	// Compute the key
 	var key storage.Key
@@ -280,6 +295,7 @@ func (d *Data) getGraphDB(uuid dvid.UUID) (storage.Key, storage.GraphDB, error) 
 	return key, db, err
 }
 
+// handleSubgraph loads, retrieves, or deletes a subgraph (more description in REST interface)
 func (d *Data) handleSubgraph(uuid dvid.UUID, w http.ResponseWriter, labelgraph *LabelGraph, method string) error {
 	key, db, err := d.getGraphDB(uuid)
 	if err != nil {
@@ -309,6 +325,7 @@ func (d *Data) handleSubgraph(uuid dvid.UUID, w http.ResponseWriter, labelgraph 
 				}
 			}
 		} else {
+			// if no set of vertices are supplied, just grab the whole graph
 			vertices, err = db.GetVertices(key)
 			if err != nil {
 				return fmt.Errorf("Failed to retrieve vertices: %s\n", err.Error())
@@ -331,6 +348,7 @@ func (d *Data) handleSubgraph(uuid dvid.UUID, w http.ResponseWriter, labelgraph 
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, string(m))
 	} else if method == "post" {
+		// add list of vertices and edges from supplied JSON -- overwrite existing values
 		for _, vertex := range labelgraph.Vertices {
 			err := db.AddVertex(key, vertex.Id, vertex.Weight)
 			if err != nil {
@@ -344,6 +362,7 @@ func (d *Data) handleSubgraph(uuid dvid.UUID, w http.ResponseWriter, labelgraph 
 			}
 		}
 	} else if method == "delete" {
+		// delete the vertices supplied and all of their edges or delete the whole graph
 		if len(labelgraph.Vertices) > 0 || len(labelgraph.Edges) > 0 {
 			for _, vertex := range labelgraph.Vertices {
 				db.RemoveVertex(key, vertex.Id)
@@ -364,6 +383,7 @@ func (d *Data) handleSubgraph(uuid dvid.UUID, w http.ResponseWriter, labelgraph 
 	return err
 }
 
+// handleMerge merges a list of vertices onto the final vertex in the Vertices list
 func (d *Data) handleMerge(uuid dvid.UUID, w http.ResponseWriter, labelgraph *LabelGraph, method string) error {
 	key, db, err := d.getGraphDB(uuid)
 	if err != nil {
@@ -452,6 +472,7 @@ func (d *Data) handleMerge(uuid dvid.UUID, w http.ResponseWriter, labelgraph *La
 			}
 		}
 	}
+
 	// update vertex weight
 	err = db.SetVertexWeight(key, labelgraph.Vertices[numverts-1].Id, vertweight)
 	if err != nil {
@@ -472,6 +493,8 @@ func (d *Data) handleMerge(uuid dvid.UUID, w http.ResponseWriter, labelgraph *La
 	return nil
 }
 
+// handleProperty retrieves or deletes properties that can be added to a vertex or edge -- data posted
+// or retrieved uses default compression
 func (d *Data) handleProperty(uuid dvid.UUID, w http.ResponseWriter, r *http.Request, path []string, method string) error {
 	key, db, err := d.getGraphDB(uuid)
 	if err != nil {
@@ -480,6 +503,7 @@ func (d *Data) handleProperty(uuid dvid.UUID, w http.ResponseWriter, r *http.Req
 
 	edgemode := false
 	var propertyname string
+
 	if len(path) == 3 {
 		edgemode = true
 		propertyname = path[2]
@@ -503,6 +527,7 @@ func (d *Data) handleProperty(uuid dvid.UUID, w http.ResponseWriter, r *http.Req
 		id2 = storage.VertexID(temp)
 	}
 
+	// remove a property from a vertex or edge
 	if method == "delete" {
 		if edgemode {
 			db.RemoveEdgeProperty(key, id1, id2, propertyname)
@@ -538,6 +563,7 @@ func (d *Data) handleProperty(uuid dvid.UUID, w http.ResponseWriter, r *http.Req
 			return err
 		}
 	} else if method == "post" {
+		// read as binary and load into propertyname
 		data, err := ioutil.ReadAll(r.Body)
 		if err != nil {
 			return err
@@ -559,6 +585,8 @@ func (d *Data) handleProperty(uuid dvid.UUID, w http.ResponseWriter, r *http.Req
 	return err
 }
 
+// ExtractGraph takes the client's supplied JSON, verifies that it conforms to the
+// schema, and loads it into the LabelGraph data structure
 func (d *Data) ExtractGraph(r *http.Request) (*LabelGraph, error) {
 	labelgraph := new(LabelGraph)
 	if r.Body == nil {
@@ -566,9 +594,6 @@ func (d *Data) ExtractGraph(r *http.Request) (*LabelGraph, error) {
 	}
 
 	// read json
-	//decoder := json.NewDecoder(r.Body)
-	//err := decoder.Decode(&json_data)
-
 	data, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		return labelgraph, err
@@ -577,6 +602,7 @@ func (d *Data) ExtractGraph(r *http.Request) (*LabelGraph, error) {
 		return labelgraph, nil
 	}
 
+	// load data labelgraph and generic string-inteface{} map
 	err = json.Unmarshal(data, labelgraph)
 	var json_data map[string]interface{}
 	err = json.Unmarshal(data, &json_data)
@@ -606,7 +632,7 @@ func (d *Data) ExtractGraph(r *http.Request) (*LabelGraph, error) {
 
 // --- DataService interface ---
 
-// DoRPC acts as a switchboard for RPC commands.
+// DoRPC acts as a switchboard for RPC commands -- not supported
 func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error {
 	return nil
 }
@@ -675,6 +701,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		}
 		return nil
 	case "undomerge":
+		// not supported until transaction history is supported
 		err := fmt.Errorf("undomerge not yet implemented")
 		return err
 	default:
