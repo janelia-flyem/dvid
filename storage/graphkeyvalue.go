@@ -27,10 +27,6 @@ const (
 	keyMax
 )
 
-// keySize is the expected DVID prefix size after which graph specific key
-// information is encoded
-const keySize = 9
-
 const vertexIDSize = 8
 
 // graphKey implements the Key interface taking the DVID key as the base and
@@ -50,11 +46,10 @@ func (gk *graphKey) KeyType() KeyType {
 func (gk *graphKey) BytesToKey(b []byte) (Key, error) {
 	// key should be at least the size of the base key plus the graph type
 	// and size of the vertex id
-	if len(b) < (keySize + 9) {
+	prekeySize := len(gk.basekey)
+
+	if len(b) < (prekeySize + 9) {
 		return nil, fmt.Errorf("Malformed graphKey bytes (too few): %x", b)
-	}
-	if b[0] != byte(KeyData) {
-		return nil, fmt.Errorf("Cannot convert %s Key Type into graphKey", KeyType(b[0]))
 	}
 	/*
 	        start := 1
@@ -67,8 +62,8 @@ func (gk *graphKey) BytesToKey(b []byte) (Key, error) {
 
 	   	basekey := &DataKey{dvid.DatasetLocalID(dataset), dvid.DataLocalID(data), dvid.VersionLocalID(version)}
 	*/
-	basekey := b[0:keySize]
-	start := keySize
+	basekey := b[0:prekeySize]
+	start := prekeySize
 	keyType := graphType(b[start])
 	start += 1
 	vertex1 := VertexID(binary.BigEndian.Uint64(b[start:]))
