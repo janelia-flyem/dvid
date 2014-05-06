@@ -35,30 +35,30 @@ const graphSchema = `
       "description": "Describes a vertex in a graph",
       "type": "object",
       "properties": {
-        "id": { "type": "integer", "description": "64 bit ID for vertex" },
-        "weight": { "type": "number", "description": "Weight/size of vertex" }
+        "Id": { "type": "integer", "description": "64 bit ID for vertex" },
+        "Weight": { "type": "number", "description": "Weight/size of vertex" }
       },
-      "required": ["id"]
+      "required": ["Id"]
     },
     "edge": {
       "description": "Describes an edge in a graph",
       "type": "object",
       "properties": {
-        "id1": { "type": "integer", "description": "64 bit ID for vertex1" },
-        "id2": { "type": "integer", "description": "64 bit ID for vertex2" },
-        "weight": { "type": "number", "description": "Weight/size of edge" }
+        "Id1": { "type": "integer", "description": "64 bit ID for vertex1" },
+        "Id2": { "type": "integer", "description": "64 bit ID for vertex2" },
+        "Weight": { "type": "number", "description": "Weight/size of edge" }
       },
-      "required": ["id1", "id2"]
+      "required": ["Id1", "Id2"]
     }
   },
   "properties": {
-    "vertices": { 
+    "Vertices": { 
       "description": "array of vertices",
       "type": "array",
       "items": {"$ref": "#/definitions/vertex"},
       "uniqueItems": true
     },
-    "edges": { 
+    "Edges": { 
       "description": "array of edges",
       "type": "array",
       "items": {"$ref": "#/definitions/edge"},
@@ -210,19 +210,19 @@ type Datatype struct {
 }
 
 type labelVertex struct {
-	id     storage.VertexID
-	weight float64
+	Id     storage.VertexID
+	Weight float64
 }
 
 type labelEdge struct {
-	id1    storage.VertexID
-	id2    storage.VertexID
-	weight float64
+	Id1    storage.VertexID
+	Id2    storage.VertexID
+	Weight float64
 }
 
 type LabelGraph struct {
-	vertices []labelVertex
-	edges    []labelEdge
+	Vertices []labelVertex
+	Edges    []labelEdge
 }
 
 // NewDatatype returns a pointer to a new keyvalue Datatype with default values set.
@@ -287,14 +287,15 @@ func (d *Data) handleSubgraph(uuid dvid.UUID, w http.ResponseWriter, labelgraph 
 	}
 	labelgraph2 := new(LabelGraph)
 
+	// ?! do not grab edges that connect to outside vertices
 	if method == "get" {
 		var vertices []storage.GraphVertex
 		var edges []storage.GraphEdge
-		if len(labelgraph.vertices) > 0 {
-			for _, vertex := range labelgraph.vertices {
-				storedvert, err := db.GetVertex(key, vertex.id)
+		if len(labelgraph.Vertices) > 0 {
+			for _, vertex := range labelgraph.Vertices {
+				storedvert, err := db.GetVertex(key, vertex.Id)
 				if err != nil {
-					return fmt.Errorf("Failed to retrieve vertix %d: %s\n", vertex.id, err.Error())
+					return fmt.Errorf("Failed to retrieve vertix %d: %s\n", vertex.Id, err.Error())
 				}
 				vertices = append(vertices, storedvert)
 				for _, vert2 := range storedvert.Vertices {
@@ -318,10 +319,10 @@ func (d *Data) handleSubgraph(uuid dvid.UUID, w http.ResponseWriter, labelgraph 
 			}
 		}
 		for _, vertex := range vertices {
-			labelgraph2.vertices = append(labelgraph2.vertices, labelVertex{vertex.Id, vertex.Weight})
+			labelgraph2.Vertices = append(labelgraph2.Vertices, labelVertex{vertex.Id, vertex.Weight})
 		}
 		for _, edge := range edges {
-			labelgraph2.edges = append(labelgraph2.edges, labelEdge{edge.Vertexpair.Vertex1, edge.Vertexpair.Vertex2, edge.Weight})
+			labelgraph2.Edges = append(labelgraph2.Edges, labelEdge{edge.Vertexpair.Vertex1, edge.Vertexpair.Vertex2, edge.Weight})
 		}
 		m, err := json.Marshal(labelgraph2)
 		if err != nil {
@@ -330,24 +331,31 @@ func (d *Data) handleSubgraph(uuid dvid.UUID, w http.ResponseWriter, labelgraph 
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, string(m))
 	} else if method == "post" {
-		for _, vertex := range labelgraph.vertices {
-			err := db.AddVertex(key, vertex.id, vertex.weight)
+		for _, vertex := range labelgraph.Vertices {
+			err := db.AddVertex(key, vertex.Id, vertex.Weight)
 			if err != nil {
 				return fmt.Errorf("Failed to add vertex: %s\n", err.Error())
 			}
 		}
-		for _, edge := range labelgraph.edges {
-			err := db.AddEdge(key, edge.id1, edge.id2, edge.weight)
+		for _, edge := range labelgraph.Edges {
+			err := db.AddEdge(key, edge.Id1, edge.Id2, edge.Weight)
 			if err != nil {
 				return fmt.Errorf("Failed to add edge: %s\n", err.Error())
 			}
 		}
 	} else if method == "delete" {
-		for _, vertex := range labelgraph.vertices {
-			db.RemoveVertex(key, vertex.id)
-		}
-		for _, edge := range labelgraph.edges {
-			db.RemoveEdge(key, edge.id1, edge.id2)
+		if len(labelgraph.Vertices) > 0 || len(labelgraph.Edges) > 0 {
+			for _, vertex := range labelgraph.Vertices {
+				db.RemoveVertex(key, vertex.Id)
+			}
+			for _, edge := range labelgraph.Edges {
+				db.RemoveEdge(key, edge.Id1, edge.Id2)
+			}
+		} else {
+			err = db.RemoveGraph(key)
+			if err != nil {
+				return fmt.Errorf("Failed to remove graph: %s\n", err.Error())
+			}
 		}
 	} else {
 		err = fmt.Errorf("Does not support PUT")
@@ -362,22 +370,22 @@ func (d *Data) handleMerge(uuid dvid.UUID, w http.ResponseWriter, labelgraph *La
 		return err
 	}
 
-	numverts := len(labelgraph.vertices)
+	numverts := len(labelgraph.Vertices)
 	if numverts < 2 {
 		return fmt.Errorf("Must specify at least two vertices for merging")
 	}
 
-	var overlapweights map[storage.VertexID]float64
+	overlapweights := make(map[storage.VertexID]float64)
 	vertweight := float64(0)
 	var keepvertex storage.GraphVertex
-	var allverts map[storage.VertexID]struct{}
-	var keepverts map[storage.VertexID]struct{}
+	allverts := make(map[storage.VertexID]struct{})
+	keepverts := make(map[storage.VertexID]struct{})
 
 	// accumulate weights, find common edges
-	for i, vertex := range labelgraph.vertices {
-		vert, err := db.GetVertex(key, vertex.id)
+	for i, vertex := range labelgraph.Vertices {
+		vert, err := db.GetVertex(key, vertex.Id)
 		if err != nil {
-			return fmt.Errorf("Failed to retrieve vertex %d: %s\n", vertex.id, err.Error())
+			return fmt.Errorf("Failed to retrieve vertex %d: %s\n", vertex.Id, err.Error())
 		}
 		allverts[vert.Id] = struct{}{}
 		vertweight += vert.Weight
@@ -388,7 +396,7 @@ func (d *Data) handleMerge(uuid dvid.UUID, w http.ResponseWriter, labelgraph *La
 			for _, vert2 := range vert.Vertices {
 				edge, err := db.GetEdge(key, vert.Id, vert2)
 				if err != nil {
-					return fmt.Errorf("Failed to retrieve edge %d-%d: %s\n", vertex.id, vert2, err.Error())
+					return fmt.Errorf("Failed to retrieve edge %d-%d: %s\n", vertex.Id, vert2, err.Error())
 				}
 				overlapweights[vert2] += edge.Weight
 			}
@@ -406,24 +414,24 @@ func (d *Data) handleMerge(uuid dvid.UUID, w http.ResponseWriter, labelgraph *La
 	}
 
 	// use specified weights even if marked as 0
-	for _, edge := range labelgraph.edges {
-		id := edge.id1
-		baseid := edge.id2
-		if keepvertex.Id == edge.id1 {
-			id = edge.id2
-			baseid = edge.id1
+	for _, edge := range labelgraph.Edges {
+		id := edge.Id1
+		baseid := edge.Id2
+		if keepvertex.Id == edge.Id1 {
+			id = edge.Id2
+			baseid = edge.Id1
 		}
 		if baseid == keepvertex.Id {
 			if _, ok := overlapweights[id]; ok {
-				overlapweights[id] = edge.weight
+				overlapweights[id] = edge.Weight
 			}
 		}
 	}
 
 	// if user specifies an edge weight other than 0 (?! -- somehow allow in future)
 	// use that weight
-	if labelgraph.vertices[numverts-1].weight != 0 {
-		vertweight = labelgraph.vertices[numverts-1].weight
+	if labelgraph.Vertices[numverts-1].Weight != 0 {
+		vertweight = labelgraph.Vertices[numverts-1].Weight
 	}
 
 	for id2, newweight := range overlapweights {
@@ -445,19 +453,19 @@ func (d *Data) handleMerge(uuid dvid.UUID, w http.ResponseWriter, labelgraph *La
 		}
 	}
 	// update vertex weight
-	err = db.SetVertexWeight(key, labelgraph.vertices[numverts-1].id, vertweight)
+	err = db.SetVertexWeight(key, labelgraph.Vertices[numverts-1].Id, vertweight)
 	if err != nil {
 		return fmt.Errorf("Failed to update weight on vertex %d: %s\n", keepvertex.Id, err.Error())
 	}
 
 	// remove old vertices which will remove the old edges
-	for i, vertex := range labelgraph.vertices {
+	for i, vertex := range labelgraph.Vertices {
 		if i == (numverts - 1) {
 			break
 		}
-		err := db.RemoveVertex(key, vertex.id)
+		err := db.RemoveVertex(key, vertex.Id)
 		if err != nil {
-			return fmt.Errorf("Failed to remove vertex %d: %s\n", vertex.id, err.Error())
+			return fmt.Errorf("Failed to remove vertex %d: %s\n", vertex.Id, err.Error())
 		}
 	}
 
@@ -471,12 +479,14 @@ func (d *Data) handleProperty(uuid dvid.UUID, w http.ResponseWriter, r *http.Req
 	}
 
 	edgemode := false
-	propertyname := path[1]
+	var propertyname string
 	if len(path) == 3 {
 		edgemode = true
 		propertyname = path[2]
 	} else if len(path) != 2 {
 		return fmt.Errorf("Incorrect number of parameters specified for handling properties")
+	} else {
+		propertyname = path[1]
 	}
 	temp, err := strconv.Atoi(path[0])
 	if err != nil {
@@ -530,7 +540,6 @@ func (d *Data) handleProperty(uuid dvid.UUID, w http.ResponseWriter, r *http.Req
 	} else if method == "post" {
 		data, err := ioutil.ReadAll(r.Body)
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
 			return err
 		}
 		serialization, err := dvid.SerializeData(data, d.Compression, d.Checksum)
@@ -557,9 +566,20 @@ func (d *Data) ExtractGraph(r *http.Request) (*LabelGraph, error) {
 	}
 
 	// read json
-	decoder := json.NewDecoder(r.Body)
+	//decoder := json.NewDecoder(r.Body)
+	//err := decoder.Decode(&json_data)
+
+	data, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		return labelgraph, err
+	}
+	if len(data) == 0 {
+		return labelgraph, nil
+	}
+
+	err = json.Unmarshal(data, labelgraph)
 	var json_data map[string]interface{}
-	err := decoder.Decode(&json_data)
+	err = json.Unmarshal(data, &json_data)
 
 	if err != nil {
 		return labelgraph, err
@@ -570,12 +590,16 @@ func (d *Data) ExtractGraph(r *http.Request) (*LabelGraph, error) {
 	json.Unmarshal([]byte(graphSchema), &schema_data)
 
 	schema, err := gojsonschema.NewJsonSchemaDocument(schema_data)
+	if err != nil {
+		err = fmt.Errorf("JSON schema did not build")
+		return labelgraph, err
+	}
+
 	validationResult := schema.Validate(json_data)
 	if !validationResult.Valid() {
 		err = fmt.Errorf("JSON did not pass validation")
 		return labelgraph, err
 	}
-	err = decoder.Decode(labelgraph)
 
 	return labelgraph, err
 }
@@ -603,12 +627,10 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 
 	if len(parts) < 4 {
 		err := fmt.Errorf("No resource specified in URI")
-		server.BadRequest(w, r, err.Error())
 		return err
 	}
 	if method == "put" {
 		err := fmt.Errorf("PUT requests not supported")
-		server.BadRequest(w, r, err.Error())
 		return err
 	}
 
@@ -621,7 +643,6 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 	case "info":
 		jsonStr, err := d.JSONString()
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
 			return err
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -630,38 +651,34 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 	case "subgraph":
 		labelgraph, err := d.ExtractGraph(r)
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
 			return err
 		}
 		err = d.handleSubgraph(uuid, w, labelgraph, method)
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
 			return err
 		}
+		return nil
 	case "merge":
 		labelgraph, err := d.ExtractGraph(r)
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
 			return err
 		}
 		err = d.handleMerge(uuid, w, labelgraph, method)
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
 			return err
 		}
+		return nil
 	case "property":
 		err := d.handleProperty(uuid, w, r, parts[4:], method)
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
 			return err
 		}
+		return nil
 	case "undomerge":
 		err := fmt.Errorf("undomerge not yet implemented")
-		server.BadRequest(w, r, err.Error())
 		return err
 	default:
 		err := fmt.Errorf("%s not found", parts[3])
-		server.BadRequest(w, r, err.Error())
 		return err
 	}
 
