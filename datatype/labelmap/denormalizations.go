@@ -493,8 +493,10 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 	// Each surface calculator can use memory ~ XY slice x block Z so memory
 	// and # of cores is important.  Might have to pass this in if there's no
 	// introspection.
-	const numSurfCalculators = 3
-	var surfaceCh [numSurfCalculators]chan *storage.Chunk
+	size := extents.MaxPoint.Sub(extents.MinPoint)
+	goroutineMB := size.Value(0) * size.Value(1) * (2*labelData.BlockSize().Value(2) + 1) / dvid.Mega
+	numSurfCalculators := dvid.EstimateGoroutines(0.5, goroutineMB)
+	surfaceCh := make([]chan *storage.Chunk, numSurfCalculators, numSurfCalculators)
 	for i := 0; i < numSurfCalculators; i++ {
 		<-server.HandlerToken
 		surfaceCh[i] = make(chan *storage.Chunk, 10000)
@@ -522,7 +524,7 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 
 		// Send RLE of label to size indexer and surface calculator.
 		sizeCh <- chunk
-		surfaceCh[label%numSurfCalculators] <- chunk
+		surfaceCh[label%uint64(numSurfCalculators)] <- chunk
 	})
 	if err != nil {
 		dvid.Error("Error indexing sizes for %s: %s\n", d.DataName(), err.Error())

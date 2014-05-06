@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"math"
 	"mime"
 	"net/http"
 	"os"
@@ -65,6 +66,24 @@ func (b *Bool) Value() bool {
 	defer b.mu.RUnlock()
 	b.mu.RLock()
 	return b.bit
+}
+
+// EstimateGoroutines returns the # of goroutines that can be launched
+// given a percentage (up to 1.0) of available CPUs (set by command line
+// option or # cores) and/or the megabytes (MB) of memory needed for each goroutine.
+// A minimum of 1 goroutine is returned.
+// TODO: Actually use the required memory provided in argument.  For now,
+//  only returns percentage of maximum # of cores.
+func EstimateGoroutines(percentCPUs float64, goroutineMB int32) int {
+	goroutines := percentCPUs * float64(NumCPU)
+	if goroutines < 1.0 {
+		return 1
+	}
+	rounded := int(math.Floor(goroutines + 0.5))
+	if rounded > NumCPU {
+		return NumCPU
+	}
+	return rounded
 }
 
 // Filename has a base name + extension.
