@@ -892,113 +892,113 @@ func (d *Data) LoadRavelerMaps(request datastore.Request, reply *datastore.Respo
 	if err != nil {
 		return err
 	}
-	/*
-		service := server.DatastoreService()
-		_, versionID, err := service.LocalIDFromUUID(uuid)
+
+	service := server.DatastoreService()
+	_, versionID, err := service.LocalIDFromUUID(uuid)
+	if err != nil {
+		return err
+	}
+	labels, err := d.Labels.GetData()
+	if err != nil {
+		return err
+	}
+	if !labels.Ready {
+		return fmt.Errorf("Can't load raveler maps if underlying labels64 %q has not been loaded!", labels.DataName())
+	}
+	minLabelZ := uint32(labels.Extents().MinPoint.Value(2))
+	maxLabelZ := uint32(labels.Extents().MaxPoint.Value(2))
+
+	d.Ready = false
+	if err := service.SaveDataset(uuid); err != nil {
+		return err
+	}
+
+	// Get the seg->body map
+	seg2body, err := loadSegBodyMap(segbodyStr)
+	if err != nil {
+		return err
+	}
+
+	// Prepare for datastore access
+	db, err := server.OrderedKeyValueSetter()
+	if err != nil {
+		return err
+	}
+
+	var slice, superpixel32 uint32
+	var segment, body uint64
+	forwardIndex := make([]byte, 17)
+	forwardIndex[0] = byte(KeyForwardMap)
+	inverseIndex := make([]byte, 17)
+	inverseIndex[0] = byte(KeyInverseMap)
+
+	// Get the sp->seg map, persisting each computed sp->body.
+	dvid.Log(dvid.Normal, "Processing superpixel->segment map (Z %d-%d): %s\n",
+		minLabelZ, maxLabelZ, spsegStr)
+	file, err := os.Open(spsegStr)
+	if err != nil {
+		return fmt.Errorf("Could not open superpixel->segment map: %s", spsegStr)
+	}
+	defer file.Close()
+	lineReader := bufio.NewReader(file)
+	linenum := 0
+
+	for {
+		line, err := lineReader.ReadString('\n')
 		if err != nil {
-			return err
+			break
 		}
-		labels, err := d.Labels.GetData()
+		if line[0] == ' ' || line[0] == '#' {
+			continue
+		}
+		storage.FileBytesRead <- len(line)
+		if _, err := fmt.Sscanf(line, "%d %d %d", &slice, &superpixel32, &segment); err != nil {
+			return fmt.Errorf("Error loading superpixel->segment map, line %d in %s", linenum, spsegStr)
+		}
+		if slice < minLabelZ || slice > maxLabelZ {
+			continue
+		}
+		if superpixel32 == 0 {
+			continue
+		}
+		if superpixel32 > 0x0000000000FFFFFF {
+			return fmt.Errorf("Error in line %d: superpixel id exceeds 24-bit value!", linenum)
+		}
+		superpixelBytes := labels64.RavelerSuperpixelBytes(slice, superpixel32)
+		var found bool
+		body, found = seg2body[segment]
+		if !found {
+			return fmt.Errorf("Segment (%d) in %s not found in %s", segment, spsegStr, segbodyStr)
+		}
+
+		// PUT the forward label pair without compression.
+		copy(forwardIndex[1:9], superpixelBytes)
+		binary.BigEndian.PutUint64(forwardIndex[9:17], body)
+		key := d.DataKey(versionID, dvid.IndexBytes(forwardIndex))
+		err = db.Put(key, emptyValue)
 		if err != nil {
-			return err
-		}
-		if !labels.Ready {
-			return fmt.Errorf("Can't load raveler maps if underlying labels64 %q has not been loaded!", labels.DataName())
-		}
-		minLabelZ := uint32(labels.Extents().MinPoint.Value(2))
-		maxLabelZ := uint32(labels.Extents().MaxPoint.Value(2))
-
-		d.Ready = false
-		if err := service.SaveDataset(uuid); err != nil {
-			return err
+			return fmt.Errorf("ERROR on PUT of forward label mapping (%x -> %d): %s\n",
+				superpixelBytes, body, err.Error())
 		}
 
-		// Get the seg->body map
-		seg2body, err := loadSegBodyMap(segbodyStr)
+		// PUT the inverse label pair without compression.
+		binary.BigEndian.PutUint64(inverseIndex[1:9], body)
+		copy(inverseIndex[9:17], superpixelBytes)
+		key = d.DataKey(versionID, dvid.IndexBytes(inverseIndex))
+		err = db.Put(key, emptyValue)
 		if err != nil {
-			return err
+			return fmt.Errorf("ERROR on PUT of inverse label mapping (%d -> %x): %s\n",
+				body, superpixelBytes, err.Error())
 		}
 
-		// Prepare for datastore access
-		db, err := server.OrderedKeyValueSetter()
-		if err != nil {
-			return err
+		linenum++
+		if linenum%1000000 == 0 {
+			dvid.Log(dvid.Normal, "Added %d forward and inverse mappings\n", linenum)
 		}
+	}
+	dvid.Log(dvid.Normal, "Added %d forward and inverse mappings\n", linenum)
+	dvid.ElapsedTime(dvid.Normal, startTime, "Processed Raveler superpixel->body files")
 
-		var slice, superpixel32 uint32
-		var segment, body uint64
-		forwardIndex := make([]byte, 17)
-		forwardIndex[0] = byte(KeyForwardMap)
-		inverseIndex := make([]byte, 17)
-		inverseIndex[0] = byte(KeyInverseMap)
-
-		// Get the sp->seg map, persisting each computed sp->body.
-		dvid.Log(dvid.Normal, "Processing superpixel->segment map (Z %d-%d): %s\n",
-			minLabelZ, maxLabelZ, spsegStr)
-		file, err := os.Open(spsegStr)
-		if err != nil {
-			return fmt.Errorf("Could not open superpixel->segment map: %s", spsegStr)
-		}
-		defer file.Close()
-		lineReader := bufio.NewReader(file)
-		linenum := 0
-
-		for {
-			line, err := lineReader.ReadString('\n')
-			if err != nil {
-				break
-			}
-			if line[0] == ' ' || line[0] == '#' {
-				continue
-			}
-			storage.FileBytesRead <- len(line)
-			if _, err := fmt.Sscanf(line, "%d %d %d", &slice, &superpixel32, &segment); err != nil {
-				return fmt.Errorf("Error loading superpixel->segment map, line %d in %s", linenum, spsegStr)
-			}
-			if slice < minLabelZ || slice > maxLabelZ {
-				continue
-			}
-			if superpixel32 == 0 {
-				continue
-			}
-			if superpixel32 > 0x0000000000FFFFFF {
-				return fmt.Errorf("Error in line %d: superpixel id exceeds 24-bit value!", linenum)
-			}
-			superpixelBytes := labels64.RavelerSuperpixelBytes(slice, superpixel32)
-			var found bool
-			body, found = seg2body[segment]
-			if !found {
-				return fmt.Errorf("Segment (%d) in %s not found in %s", segment, spsegStr, segbodyStr)
-			}
-
-			// PUT the forward label pair without compression.
-			copy(forwardIndex[1:9], superpixelBytes)
-			binary.BigEndian.PutUint64(forwardIndex[9:17], body)
-			key := d.DataKey(versionID, dvid.IndexBytes(forwardIndex))
-			err = db.Put(key, emptyValue)
-			if err != nil {
-				return fmt.Errorf("ERROR on PUT of forward label mapping (%x -> %d): %s\n",
-					superpixelBytes, body, err.Error())
-			}
-
-			// PUT the inverse label pair without compression.
-			binary.BigEndian.PutUint64(inverseIndex[1:9], body)
-			copy(inverseIndex[9:17], superpixelBytes)
-			key = d.DataKey(versionID, dvid.IndexBytes(inverseIndex))
-			err = db.Put(key, emptyValue)
-			if err != nil {
-				return fmt.Errorf("ERROR on PUT of inverse label mapping (%d -> %x): %s\n",
-					body, superpixelBytes, err.Error())
-			}
-
-			linenum++
-			if linenum%1000000 == 0 {
-				dvid.Log(dvid.Normal, "Added %d forward and inverse mappings\n", linenum)
-			}
-		}
-		dvid.Log(dvid.Normal, "Added %d forward and inverse mappings\n", linenum)
-		dvid.ElapsedTime(dvid.Normal, startTime, "Processed Raveler superpixel->body files")
-	*/
 	// Spawn goroutine to do spatial processing on associated label volume.
 	go d.ProcessSpatially(uuid)
 
