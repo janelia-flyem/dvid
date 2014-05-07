@@ -33,6 +33,7 @@ found in help constants:
 * [labelmap](http://godoc.org/github.com/janelia-flyem/dvid/datatype/labelmap#pkg-constants)
 * [multichan16](http://godoc.org/github.com/janelia-flyem/dvid/datatype/multichan16#pkg-constants)
 * [multiscale2d](http://godoc.org/github.com/janelia-flyem/dvid/datatype/multiscale2d#pkg-constants)
+* [labelgraph](https://godoc.org/github.com/janelia-flyem/dvid/datatype/labelgraph#pkg-constants)
 
 ## Table of Contents
 

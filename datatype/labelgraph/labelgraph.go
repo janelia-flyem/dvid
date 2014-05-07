@@ -1,5 +1,5 @@
 /*
-	Package keyvalue implements DVID support for data using the underlying graph storage engine.
+	Package labelgraph implements DVID support for data using the underlying graph storage engine.
 */
 package labelgraph
 
