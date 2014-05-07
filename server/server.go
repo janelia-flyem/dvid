@@ -1,9 +1,7 @@
 package server
 
 import (
-	"compress/gzip"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"log"
 	"net"
@@ -13,7 +11,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
-	"strings"
 	"sync"
 	"time"
 
@@ -344,13 +341,6 @@ func (service *Service) ServeHttp(address, clientDir string) {
 	// Handle Level 2 REST API.
 	http.HandleFunc(WebAPIPath, logHttpPanics(apiHandler))
 
-	// http.HandleFunc(WebAPIPath, logHttpPanics(makeGzipHandler(apiHandler)))
-	//
-	// Could wrap HTTP handler with Gzip handler at this level, but it's too
-	// broad a brush.  Individual data types might already store gzipped or
-	// PNG-encoded (deflate) data, then the gzip wrapping is extra work for
-	// possibly worse data size.
-
 	// Handle static files through serving embedded files
 	// via nrsc or loading files from a specified web client directory.
 	if clientDir == "" {
@@ -384,28 +374,4 @@ func (service *Service) ServeRpc(address string) error {
 	}
 	http.Serve(listener, nil)
 	return nil
-}
-
-// Nod to Andrew Gerrand for simple gzip solution:
-// See https://groups.google.com/forum/m/?fromgroups#!topic/golang-nuts/eVnTcMwNVjM
-type gzipResponseWriter struct {
-	io.Writer
-	http.ResponseWriter
-}
-
-func (w gzipResponseWriter) Write(b []byte) (int, error) {
-	return w.Writer.Write(b)
-}
-
-func makeGzipHandler(fn http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
-			fn(w, r)
-			return
-		}
-		w.Header().Set("Content-Encoding", "gzip")
-		gz := gzip.NewWriter(w)
-		defer gz.Close()
-		fn(gzipResponseWriter{Writer: gz, ResponseWriter: w}, r)
-	}
 }
