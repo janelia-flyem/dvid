@@ -18,6 +18,17 @@ import (
 	"github.com/janelia-flyem/dvid/storage"
 )
 
+const HelpMessage = `
+HTTP API (Level 2 REST) for general DVID commands
+=================================================
+
+POST <api URL>/dataset/<UUID>/new/<datatype name>/<data name>
+
+    Creates a new instance of the given data type.  Expects configuration data in JSON
+    as the body of the POST.  Configuration data is a JSON object with each property
+    corresponding to a configuration keyword for the particular data type.
+`
+
 const WebHelp = `
 <!DOCTYPE html>
 <html>
