@@ -99,7 +99,7 @@ func (d *Data) GetArbitraryImage(uuid dvid.UUID, tlStr, trStr, blStr, resStr str
 
 	// Iterate across arbitrary image using res increments, retrieving trilinear interpolation
 	// at each point.
-	cache := make(map[storage.Key]([]byte), 2)
+	cache := NewValueCache(100)
 	dataID := d.DataID()
 	keyF := func(pt dvid.Point3d) storage.Key {
 		chunkPt := pt.Chunk(d.BlockSize())
@@ -111,10 +111,9 @@ func (d *Data) GetArbitraryImage(uuid dvid.UUID, tlStr, trStr, blStr, resStr str
 	leftPt := arb.topLeft
 	var x, y, i int32
 	for y = 0; y < arb.size[1]; y++ {
-		fmt.Printf("Computing %d of %d (width %d)\n", y, arb.size[1], arb.size[0])
 		curPt := leftPt
 		for x = 0; x < arb.size[0]; x++ {
-			value, err := d.computeValue(curPt, KeyFunc(keyF), ValueCache(cache))
+			value, err := d.computeValue(curPt, KeyFunc(keyF), cache)
 			if err != nil {
 				return nil, err
 			}
@@ -131,9 +130,6 @@ func (d *Data) GetArbitraryImage(uuid dvid.UUID, tlStr, trStr, blStr, resStr str
 	img.SetFromData(arb.size[0], arb.size[1], arb.data, d.Properties.Values, d.Properties.Interpolable)
 	return img, nil
 }
-
-type KeyFunc func(dvid.Point3d) storage.Key
-type ValueCache map[storage.Key]([]byte)
 
 type neighbors struct {
 	xd, yd, zd float64
@@ -197,8 +193,40 @@ func (d *Data) neighborhood(pt dvid.Vector3d) neighbors {
 	return n
 }
 
+type KeyFunc func(dvid.Point3d) storage.Key
+
+type ValueCache struct {
+	deserializedBlocks map[string]([]byte)
+	keyQueue           []string
+	size               int
+}
+
+func NewValueCache(size int) *ValueCache {
+	var vc ValueCache
+	vc.deserializedBlocks = make(map[string]([]byte), size)
+	vc.keyQueue = make([]string, size)
+	vc.size = size
+	return &vc
+}
+
+func (vc ValueCache) Get(key storage.Key) (data []byte, found bool) {
+	data, found = vc.deserializedBlocks[key.BytesString()]
+	return
+}
+
+func (vc *ValueCache) Add(key storage.Key, data []byte) {
+	stringKey := key.BytesString()
+	if len(vc.keyQueue) >= vc.size {
+		delete(vc.deserializedBlocks, vc.keyQueue[0])
+		vc.keyQueue = append(vc.keyQueue[1:], stringKey)
+	} else {
+		vc.keyQueue = append(vc.keyQueue, stringKey)
+	}
+	vc.deserializedBlocks[stringKey] = data
+}
+
 // Calculates value of a 3d real world point in space defined by underlying data resolution.
-func (d *Data) computeValue(pt dvid.Vector3d, keyF KeyFunc, cache ValueCache) ([]byte, error) {
+func (d *Data) computeValue(pt dvid.Vector3d, keyF KeyFunc, cache *ValueCache) ([]byte, error) {
 	valuesPerElement := d.Properties.Values.ValuesPerElement()
 	bytesPerValue, err := d.Properties.Values.BytesPerValue()
 	if err != nil {
@@ -225,20 +253,15 @@ func (d *Data) computeValue(pt dvid.Vector3d, keyF KeyFunc, cache ValueCache) ([
 
 	// For the given point, compute surrounding lattice points and retrieve values.
 	neighbors := d.neighborhood(pt)
-	var blockData []byte
 	var valuesI int32
-	var lastKey storage.Key
-	lastBlock := make([]byte, blockBytes, blockBytes)
 	for _, voxelCoord := range neighbors.coords {
 		key := keyF(voxelCoord)
-		if key == lastKey {
-			blockData = lastBlock
-		} else {
+		deserializedData, found := cache.Get(key)
+		if !found {
 			serializedData, err := db.Get(key)
 			if err != nil {
 				return nil, err
 			}
-			var deserializedData []byte
 			if serializedData == nil || len(serializedData) == 0 {
 				deserializedData = emptyBlock
 			} else {
@@ -247,15 +270,13 @@ func (d *Data) computeValue(pt dvid.Vector3d, keyF KeyFunc, cache ValueCache) ([
 					return nil, fmt.Errorf("Unable to deserialize block: %s", err.Error())
 				}
 			}
-			blockData = deserializedData
-			lastBlock = deserializedData
-			lastKey = key
+			cache.Add(key, deserializedData)
 		}
 		blockPt := voxelCoord.PointInChunk(blockSize).(dvid.Point3d)
 		blockI := blockPt[2]*nxy + blockPt[1]*nx + blockPt[0]
 		//fmt.Printf("Block %s (%d) len %d -> Neighbor %s (buffer %d, len %d)\n",
 		//	blockPt, blockI, len(blockData), voxelCoord, valuesI, len(neighbors.values))
-		copy(neighbors.values[valuesI:valuesI+bytesPerVoxel], blockData[blockI:blockI+bytesPerVoxel])
+		copy(neighbors.values[valuesI:valuesI+bytesPerVoxel], deserializedData[blockI:blockI+bytesPerVoxel])
 		valuesI += bytesPerVoxel
 	}
 
