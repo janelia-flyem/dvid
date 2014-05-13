@@ -63,8 +63,8 @@ func (suite *DataSuite) TearDownSuite(c *C) {
 	suite.service.Shutdown()
 }
 
-// Make sure the binary serializations are OK.
-func (suite *DataSuite) TestSerialization(c *C) {
+// Make sure the binary serializations for LabelsRef are OK.
+func (suite *DataSuite) TestLabelsRefSerialization(c *C) {
 	data, ok := suite.lmap.(*Data)
 	c.Assert(ok, Equals, true)
 

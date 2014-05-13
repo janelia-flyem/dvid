@@ -130,7 +130,15 @@ func DatastoreService() *datastore.Service {
 	return runningService.Service
 }
 
-// OrderedKeyValueDB returns the default key-value database
+// KeyValueGetter returns the default service for retrieving key-value pairs.
+func KeyValueGetter() (storage.KeyValueGetter, error) {
+	if runningService.Service == nil {
+		return nil, fmt.Errorf("No running datastore service is available.")
+	}
+	return runningService.KeyValueGetter()
+}
+
+// OrderedKeyValueDB returns the default ordered key-value database
 func OrderedKeyValueDB() (storage.OrderedKeyValueDB, error) {
 	if runningService.Service == nil {
 		return nil, fmt.Errorf("No running datastore service is available.")
@@ -138,12 +146,20 @@ func OrderedKeyValueDB() (storage.OrderedKeyValueDB, error) {
 	return runningService.OrderedKeyValueDB()
 }
 
-// OrderedKeyValueGetter returns the default service for retrieving key-value pairs.
+// OrderedKeyValueGetter returns the default service for retrieving ordered key-value pairs.
 func OrderedKeyValueGetter() (storage.OrderedKeyValueGetter, error) {
 	if runningService.Service == nil {
 		return nil, fmt.Errorf("No running datastore service is available.")
 	}
 	return runningService.OrderedKeyValueGetter()
+}
+
+// OrderedKeyValueSetter returns the default service for storing ordered key-value pairs.
+func OrderedKeyValueSetter() (storage.OrderedKeyValueSetter, error) {
+	if runningService.Service == nil {
+		return nil, fmt.Errorf("No running datastore service is available.")
+	}
+	return runningService.OrderedKeyValueSetter()
 }
 
 // GraphDB returns the default service for handling grah operations.
@@ -152,14 +168,6 @@ func GraphDB() (storage.GraphDB, error) {
 		return nil, fmt.Errorf("No running datastore service is available.")
 	}
 	return runningService.GraphDB()
-}
-
-// OrderedKeyValueSetter returns the default service for storing key-value pairs.
-func OrderedKeyValueSetter() (storage.OrderedKeyValueSetter, error) {
-	if runningService.Service == nil {
-		return nil, fmt.Errorf("No running datastore service is available.")
-	}
-	return runningService.OrderedKeyValueSetter()
 }
 
 // StorageEngine returns the default storage engine or nil if it's not available.

@@ -204,17 +204,32 @@ func (s *Service) StorageEngine() storage.Engine {
 	return s.engine
 }
 
-// OrderedKeyValueDB returns a a key-value database interface.
+// KeyValueDB returns a key-value database interface.
+func (s *Service) KeyValueDB() (storage.KeyValueDB, error) {
+	return s.kvDB.(storage.KeyValueDB), nil
+}
+
+// KeyValueGetter returns a a key-value getter interface.
+func (s *Service) KeyValueGetter() (storage.KeyValueGetter, error) {
+	return s.kvGetter.(storage.KeyValueGetter), nil
+}
+
+// KeyValueSetter returns a a key-value setter interface.
+func (s *Service) KeyValueSetter() (storage.KeyValueSetter, error) {
+	return s.kvSetter.(storage.KeyValueSetter), nil
+}
+
+// OrderedKeyValueDB returns an ordered key-value database interface.
 func (s *Service) OrderedKeyValueDB() (storage.OrderedKeyValueDB, error) {
 	return s.kvDB, nil
 }
 
-// OrderedKeyValueGetter returns a a key-value getter interface.
+// OrderedKeyValueGetter returns an ordered key-value getter interface.
 func (s *Service) OrderedKeyValueGetter() (storage.OrderedKeyValueGetter, error) {
 	return s.kvGetter, nil
 }
 
-// OrderedKeyValueSetter returns a a key-value setter interface.
+// OrderedKeyValueSetter returns an ordered key-value setter interface.
 func (s *Service) OrderedKeyValueSetter() (storage.OrderedKeyValueSetter, error) {
 	return s.kvSetter, nil
 }
