@@ -281,28 +281,70 @@ func (d *Data) computeValue(pt dvid.Vector3d, keyF KeyFunc, cache *ValueCache) (
 	}
 
 	// Perform trilinear interpolation on the underlying data values.
+	unsupported := func() error {
+		return fmt.Errorf("DVID cannot retrieve images with arbitrary orientation using %d channels and %d bytes/channel",
+			valuesPerElement, bytesPerValue)
+	}
 	var value []byte
 	switch valuesPerElement {
 	case 1:
 		switch bytesPerValue {
 		case 1:
-			interpValue := trilinearInterpUint8(neighbors.xd, neighbors.yd, neighbors.zd, []uint8(neighbors.values))
-			value = []byte{byte(interpValue)}
+			if d.Interpolable {
+				interpValue := trilinearInterpUint8(neighbors.xd, neighbors.yd, neighbors.zd, []uint8(neighbors.values))
+				value = []byte{byte(interpValue)}
+			} else {
+				value = []byte{nearestNeighborUint8(neighbors.xd, neighbors.yd, neighbors.zd, []uint8(neighbors.values))}
+			}
 		case 2:
+			fallthrough
 		case 4:
+			fallthrough
 		case 8:
+			fallthrough
 		default:
+			return nil, unsupported()
 		}
 	case 4:
 		switch bytesPerValue {
 		case 1:
+			value = make([]byte, 4, 4)
+			for c := 0; c < 4; c++ {
+				channelValues := make([]uint8, 8, 8)
+				for i := 0; i < 8; i++ {
+					channelValues[i] = uint8(neighbors.values[i*4+c])
+				}
+				if d.Interpolable {
+					interpValue := trilinearInterpUint8(neighbors.xd, neighbors.yd, neighbors.zd, channelValues)
+					value[c] = byte(interpValue)
+				} else {
+					value[c] = byte(nearestNeighborUint8(neighbors.xd, neighbors.yd, neighbors.zd, channelValues))
+				}
+			}
 		case 2:
+			fallthrough
 		default:
+			return nil, unsupported()
 		}
 	default:
 	}
 
 	return value, nil
+}
+
+// Returns value of nearest neighbor to point.
+func nearestNeighborUint8(xd, yd, zd float64, values []uint8) uint8 {
+	var x, y, z int
+	if xd > 0.5 {
+		x = 1
+	}
+	if yd > 0.5 {
+		y = 1
+	}
+	if zd > 0.5 {
+		z = 1
+	}
+	return values[z*4+y*2+x]
 }
 
 // Returns the trilinear interpolation of a point 'pt' where 'pt0' is the lattice point below and
