@@ -112,8 +112,13 @@ func (d *Data) GetArbitraryImage(uuid dvid.UUID, tlStr, trStr, blStr, resStr str
 	var i int32
 	var wg sync.WaitGroup
 	for y := int32(0); y < arb.size[1]; y++ {
+		<-server.HandlerToken
 		wg.Add(1)
 		go func(curPt dvid.Vector3d, dstI int32) {
+			defer func() {
+				server.HandlerToken <- 1
+				wg.Done()
+			}()
 			for x := int32(0); x < arb.size[0]; x++ {
 				value, err := d.computeValue(curPt, KeyFunc(keyF), cache)
 				if err != nil {
@@ -125,7 +130,6 @@ func (d *Data) GetArbitraryImage(uuid dvid.UUID, tlStr, trStr, blStr, resStr str
 				curPt.Increment(arb.incrX)
 				dstI += arb.bytesPerVoxel
 			}
-			wg.Done()
 		}(leftPt, i)
 		leftPt.Increment(arb.incrY)
 		i += arb.size[0] * arb.bytesPerVoxel
