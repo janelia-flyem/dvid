@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"sync"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -67,7 +68,6 @@ func (d *Data) NewArbSlice(topLeft, topRight, bottomLeft dvid.Vector3d, res floa
 
 	// Allocate the image buffer
 	numVoxels := size[0] * size[1]
-	fmt.Printf("Allocating new arbitrary image %d x %d\n", size[0], size[1])
 	if numVoxels <= 0 {
 		return nil, fmt.Errorf("Bad arbitrary image size requested: %s", arb)
 	}
@@ -109,21 +109,28 @@ func (d *Data) GetArbitraryImage(uuid dvid.UUID, tlStr, trStr, blStr, resStr str
 
 	// TODO: Add concurrency.
 	leftPt := arb.topLeft
-	var x, y, i int32
-	for y = 0; y < arb.size[1]; y++ {
-		curPt := leftPt
-		for x = 0; x < arb.size[0]; x++ {
-			value, err := d.computeValue(curPt, KeyFunc(keyF), cache)
-			if err != nil {
-				return nil, err
-			}
-			copy(arb.data[i:i+arb.bytesPerVoxel], value)
+	var i int32
+	var wg sync.WaitGroup
+	for y := int32(0); y < arb.size[1]; y++ {
+		wg.Add(1)
+		go func(curPt dvid.Vector3d, dstI int32) {
+			for x := int32(0); x < arb.size[0]; x++ {
+				value, err := d.computeValue(curPt, KeyFunc(keyF), cache)
+				if err != nil {
+					dvid.Error("Error in concurrent arbitrary image calc: " + err.Error())
+					return
+				}
+				copy(arb.data[dstI:dstI+arb.bytesPerVoxel], value)
 
-			curPt.Increment(arb.incrX)
-			i += arb.bytesPerVoxel
-		}
+				curPt.Increment(arb.incrX)
+				dstI += arb.bytesPerVoxel
+			}
+			wg.Done()
+		}(leftPt, i)
 		leftPt.Increment(arb.incrY)
+		i += arb.size[0] * arb.bytesPerVoxel
 	}
+	wg.Wait()
 
 	// Insert the image data into a dvid.Image struct
 	img := new(dvid.Image)
@@ -194,11 +201,14 @@ func (d *Data) neighborhood(pt dvid.Vector3d) neighbors {
 }
 
 type KeyFunc func(dvid.Point3d) storage.Key
+type PopulateFunc func(storage.Key) ([]byte, error)
 
+// ValueCache is a concurrency-friendly cache
 type ValueCache struct {
 	deserializedBlocks map[string]([]byte)
 	keyQueue           []string
 	size               int
+	mu                 sync.Mutex
 }
 
 func NewValueCache(size int) *ValueCache {
@@ -209,12 +219,30 @@ func NewValueCache(size int) *ValueCache {
 	return &vc
 }
 
-func (vc ValueCache) Get(key storage.Key) (data []byte, found bool) {
-	data, found = vc.deserializedBlocks[key.BytesString()]
-	return
+// Get returns the cached value of a key.  On a miss, it uses the passed PopulateFunc
+// to retrieve the key and stores it in the cache.  If nil is passed for the PopulateFunc,
+// the function just returns a "false" with no value.
+func (vc ValueCache) Get(key storage.Key, pf PopulateFunc) ([]byte, bool, error) {
+	vc.mu.Lock()
+	defer vc.mu.Unlock()
+	data, found := vc.deserializedBlocks[key.BytesString()]
+	if !found {
+		// If no populate function provided, just say it's not found.
+		if pf == nil {
+			return nil, false, nil
+		}
+		// Populate the cache
+		var err error
+		data, err = pf(key)
+		if err != nil {
+			return nil, false, err
+		}
+		vc.add(key, data)
+	}
+	return data, found, nil
 }
 
-func (vc *ValueCache) Add(key storage.Key, data []byte) {
+func (vc *ValueCache) add(key storage.Key, data []byte) {
 	stringKey := key.BytesString()
 	if len(vc.keyQueue) >= vc.size {
 		delete(vc.deserializedBlocks, vc.keyQueue[0])
@@ -223,6 +251,14 @@ func (vc *ValueCache) Add(key storage.Key, data []byte) {
 		vc.keyQueue = append(vc.keyQueue, stringKey)
 	}
 	vc.deserializedBlocks[stringKey] = data
+}
+
+// Clear clears the cache.
+func (vc *ValueCache) Clear() {
+	vc.mu.Lock()
+	vc.deserializedBlocks = make(map[string]([]byte), vc.size)
+	vc.keyQueue = make([]string, vc.size)
+	vc.mu.Unlock()
 }
 
 // Calculates value of a 3d real world point in space defined by underlying data resolution.
@@ -251,26 +287,31 @@ func (d *Data) computeValue(pt dvid.Vector3d, keyF KeyFunc, cache *ValueCache) (
 	blockBytes := nxyz * bytesPerVoxel
 	emptyBlock := make([]byte, blockBytes, blockBytes)
 
+	populateF := func(key storage.Key) ([]byte, error) {
+		serializedData, err := db.Get(key)
+		if err != nil {
+			return nil, err
+		}
+		var deserializedData []byte
+		if serializedData == nil || len(serializedData) == 0 {
+			deserializedData = emptyBlock
+		} else {
+			deserializedData, _, err = dvid.DeserializeData(serializedData, true)
+			if err != nil {
+				return nil, fmt.Errorf("Unable to deserialize block: %s", err.Error())
+			}
+		}
+		return deserializedData, nil
+	}
+
 	// For the given point, compute surrounding lattice points and retrieve values.
 	neighbors := d.neighborhood(pt)
 	var valuesI int32
 	for _, voxelCoord := range neighbors.coords {
 		key := keyF(voxelCoord)
-		deserializedData, found := cache.Get(key)
-		if !found {
-			serializedData, err := db.Get(key)
-			if err != nil {
-				return nil, err
-			}
-			if serializedData == nil || len(serializedData) == 0 {
-				deserializedData = emptyBlock
-			} else {
-				deserializedData, _, err = dvid.DeserializeData(serializedData, true)
-				if err != nil {
-					return nil, fmt.Errorf("Unable to deserialize block: %s", err.Error())
-				}
-			}
-			cache.Add(key, deserializedData)
+		deserializedData, _, err := cache.Get(key, populateF)
+		if err != nil {
+			return nil, err
 		}
 		blockPt := voxelCoord.PointInChunk(blockSize).(dvid.Point3d)
 		blockI := blockPt[2]*nxy + blockPt[1]*nx + blockPt[0]
