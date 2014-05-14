@@ -1085,6 +1085,9 @@ func (d *Data) ApplyLabelMap(request datastore.Request, reply *datastore.Respons
 			d.DataName(), uuid, err.Error())
 	}
 
+	// Kickoff denormalizations based on new labels.
+	go dest.ProcessSpatially(uuid)
+
 	return nil
 }
 
