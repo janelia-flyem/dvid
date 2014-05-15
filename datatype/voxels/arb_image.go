@@ -209,10 +209,10 @@ type PopulateFunc func(storage.Key) ([]byte, error)
 
 // ValueCache is a concurrency-friendly cache
 type ValueCache struct {
+	sync.Mutex
 	deserializedBlocks map[string]([]byte)
 	keyQueue           []string
 	size               int
-	mu                 sync.Mutex
 }
 
 func NewValueCache(size int) *ValueCache {
@@ -227,22 +227,24 @@ func NewValueCache(size int) *ValueCache {
 // to retrieve the key and stores it in the cache.  If nil is passed for the PopulateFunc,
 // the function just returns a "false" with no value.
 func (vc ValueCache) Get(key storage.Key, pf PopulateFunc) ([]byte, bool, error) {
-	vc.mu.Lock()
-	defer vc.mu.Unlock()
+	vc.Lock()
 	data, found := vc.deserializedBlocks[key.BytesString()]
 	if !found {
 		// If no populate function provided, just say it's not found.
 		if pf == nil {
+			vc.Unlock()
 			return nil, false, nil
 		}
 		// Populate the cache
 		var err error
 		data, err = pf(key)
 		if err != nil {
+			vc.Unlock()
 			return nil, false, err
 		}
 		vc.add(key, data)
 	}
+	vc.Unlock()
 	return data, found, nil
 }
 
@@ -259,10 +261,10 @@ func (vc *ValueCache) add(key storage.Key, data []byte) {
 
 // Clear clears the cache.
 func (vc *ValueCache) Clear() {
-	vc.mu.Lock()
+	vc.Lock()
 	vc.deserializedBlocks = make(map[string]([]byte), vc.size)
 	vc.keyQueue = make([]string, vc.size)
-	vc.mu.Unlock()
+	vc.Unlock()
 }
 
 // Calculates value of a 3d real world point in space defined by underlying data resolution.

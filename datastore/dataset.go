@@ -142,7 +142,6 @@ func (dsets *Datasets) VerifyCompiledTypes() error {
 // arbitrary data within the nodes of the DAG.
 func (dsets *Datasets) newDataset() (dset *Dataset, err error) {
 	dsets.writeLock.Lock()
-	defer dsets.writeLock.Unlock()
 
 	dset = &Dataset{
 		VersionDAG: NewVersionDAG(),
@@ -152,6 +151,8 @@ func (dsets *Datasets) newDataset() (dset *Dataset, err error) {
 	dsets.list = append(dsets.list, dset)
 	dsets.mapUUID[dset.Root] = dset
 	dsets.dsetIDs[dset.DatasetID] = dset
+
+	dsets.writeLock.Unlock()
 	return
 }
 
