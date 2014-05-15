@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
@@ -31,11 +32,20 @@ const graphSchema = `
   "title": "Representation for a graph.  List of vertices with weights and their edges.  The weight terms are not mandatory",
   "type": "object",
   "definitions": {
+    "transaction": {
+      "description": "Transaction for locking vertex",
+      "type": "object",
+      "properties": {
+        "Id": { "type": "integer", "description": "64 bit ID for vertex" },
+        "Trans": {"type": "integer", "description": "64 bit transaction number" }
+      },
+      "required": ["Vertex", "Num"]
+    },
     "vertex": {
       "description": "Describes a vertex in a graph",
       "type": "object",
       "properties": {
-        "Id": { "type": "integer", "description": "64 bit ID for vertex" },
+        "Id": { "type": "integer", "description": "64 bit ID for vertex >0" },
         "Weight": { "type": "number", "description": "Weight/size of vertex" }
       },
       "required": ["Id"]
@@ -44,14 +54,20 @@ const graphSchema = `
       "description": "Describes an edge in a graph",
       "type": "object",
       "properties": {
-        "Id1": { "type": "integer", "description": "64 bit ID for vertex1" },
-        "Id2": { "type": "integer", "description": "64 bit ID for vertex2" },
+        "Id1": { "type": "integer", "description": "64 bit ID for vertex1 >0" },
+        "Id2": { "type": "integer", "description": "64 bit ID for vertex2 >0" },
         "Weight": { "type": "number", "description": "Weight/size of edge" }
       },
       "required": ["Id1", "Id2"]
     }
   },
   "properties": {
+    "Transactions": {
+        "description": "array of transactions",
+        "type": "array",
+        "items": {"$ref": "#/definitions/transaction"},
+        "uniqueItems": true
+    },
     "Vertices": { 
       "description": "array of vertices",
       "type": "array",
@@ -64,7 +80,8 @@ const graphSchema = `
       "items": {"$ref": "#/definitions/edge"},
       "uniqueItems": true
     }
-  }
+  },
+  "required": ["Vertices", "Edges"]
 }
 `
 
@@ -102,18 +119,23 @@ POST <api URL>/node/<UUID>/<data name>/info
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
     data name     Name of voxels data.
 
+
 GET  <api URL>/node/<UUID>/<data name>/subgraph
 POST  <api URL>/node/<UUID>/<data name>/subgraph
 DELETE  <api URL>/node/<UUID>/<data name>/subgraph
 
-    Performs graph-wide applications.  GET (retrieve subgraph), POST (add subgraph -- does
-    not change existing graph connections), DELETE (delete whole graph or subgraph indicated
-    by a list of nodes or list of edges).  POSTs or DELETEs using this URI will erase
-    all merge history.
+    Performs graph-wide applications.  Calling this will set a data-wide lock.  If another subgraph
+    call is performed during this operation, an error will be returned.  Users should try making a
+    request after a few hundred milliseconds.  For now, there will be only one DVID client handling
+    requests and it can probably handle a few hundred wait requests per second without
+    many performance issues.  GET (retrieve subgraph),
+    POST (add subgraph -- does not change existing graph connections), DELETE (delete whole
+    graph or subgraph indicated by a list of nodes or list of edges).  POSTs or DELETEs using
+    this URI will erase all merge history.
 
     Example: 
 
-    GET <api URL>/node/3f8c/stuff
+    GET <api URL>/node/3f8c/stuff/subgraph
 
     Returns the graph associated with the data "stuff" in version
     node 3f8c.  An optional JSON can be specified listing the vertices to be included.
@@ -144,7 +166,6 @@ POST  <api URL>/node/<UUID>/<data name>/merge/[nohistory]
     data name     Name of data to add/retrieve.
 
 
-
 POST  <api URL>/node/<UUID>/<data name>/undomerge
 
     Undoes last merge.  An error message is returned if no UNDO occurs.
@@ -153,6 +174,70 @@ POST  <api URL>/node/<UUID>/<data name>/undomerge
 
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add/retrieve.
+
+
+GET  <api URL>/node/<UUID>/<data name>/neighbors/<vertex>
+
+    Retrieves the vertices/edges that are connected to the given vertex.
+
+    The "Content-type" of the HTTP response are
+    "application/json" as a node list and edge list.  Vertex elements contain a "id"
+    and "weight" (float).  Edge elements contain "id1", "id2", and "weight" (float).
+
+    Arguments:
+
+    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    data name     Name of data to add/retrieve.
+    vertex        ID of vertex
+
+
+POST  <api URL>/node/<UUID>/<data name>/weight
+
+    Updates the weight associated with the provided vertices and edges.  Requests
+    should be made in JSON following the graph schema.  The weights provided represent
+    the increment that should be applied to the weight for a vertex or edge.  No more than
+    1000 vertices should be associated with these edges and vertices being updated.  DVID
+    guarantees the atomicity of this transaction by locking the vertices.
+    
+    Arguments:
+
+    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    data name     Name of data to add/retrieve.
+
+
+GET  <api URL>/node/<UUID>/<data name>/propertytransaction/<edges|vertices>/<property>
+POST (really PUT)  <api URL>/node/<UUID>/<data name>/propertytransaction/<edges|vertices>/<property>
+    
+    Retrieve or set the property given by <property> for a set of vertices or edges.  Both GET and POST
+    requests must send binary data encoding the vertices that will need to be locked for
+    this transaction.  POST transactions should then list all the vertices and edges with the data
+    to be posted.  Only 1000 vertices can be locked for a given transaction.
+    
+    The "Content-type" of the HTTP response and the request are
+    "application/octet-stream" for arbitrary binary data. 
+
+    REQUEST BINARY FORMAT (all numbers are 8 byte unsigned numbers)
+
+    <NUM VERTICES TO LOCK>
+    array: <VERTEX NUMBER><TRANSACTION ID|set to 0 if GET>
+    <NUM PROPERTIES TO GET/PUT>
+    array: <VERTEX ID1><VERTEX ID2|if edge><DATA SIZE|if posting><DATA CHUNK|if posting>
+
+    RESPONSE BINARY FORMAT (all numbers are 8 byte unsigned numbers)
+
+    <NUM VERTICES SUCCESSFULLY LOCKED>
+    array: <VERTEX NUMBER><TRANSACTION ID>
+    <NUM VERTICES UNSUCCESSFULLY LOCKED>
+    array: <VERTEX NUMBER>
+    <NUM PROPERTIES TO GET>
+    array: <VERTEX ID1><VERTEX ID2|if edge><DATA SIZE><DATA CHUNK>
+    
+    Arguments:
+
+    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    data name     Name of data to add/retrieve.
+    property           Name of the property
+
 
 GET  <api URL>/node/<UUID>/<data name>/property/<vertex1>/<key>
 POST (really PUT)  <api URL>/node/<UUID>/<data name>/property/<vertex>/<key>
@@ -169,6 +254,7 @@ DELETE  <api URL>/node/<UUID>/<data name>/property/<vertex>/<key>
     data name     Name of data to add/retrieve.
     vertex        ID of vertex
     key           Name of the property
+
 
 GET  <api URL>/node/<UUID>/<data name>/property/<vertex1>/<vertex2>/<key>
 POST (really PUT)  <api URL>/node/<UUID>/<data name>/property/<vertex1>/<vertex2>/<key>
@@ -190,13 +276,13 @@ DELETE <api URL>/node/<UUID>/<data name>/property/<vertex1>/<vertex2>/<key>
     
 TODO:
 
-* Convenient interfaces like retrieve vertex neighbors
-* Bulk loader interface?
+* Bulk loading/retrieving (compression of JSON files)
+* Allow concurrent bulk reads
+* Handle tranactions across multiple DVID clients
+* Consider transaction/lock handling at a lower-level (Neo4j solutions?); atomicity of commands?
+
 * Implement transaction history as keyvalue array and support undo command (allow users to flush transaction history and perform mergers without transactions)
-* Compress JSON representation of the graph and/or use a binary format
-* Better handling of errors mid action (if there is no transaction support)
-* Implement more transactions at the storage level to prevent any weirdness
-* Implement transactions at the datatype level to enable atomicity (how to handle queuing operations?)
+* Implement better atomicity at storage level to prevent weirdness (all writes should be in a batch -- most currently are)
 `
 
 func init() {
@@ -235,8 +321,9 @@ type labelEdge struct {
 
 // LabelGraph encodes data exchanged with a client
 type LabelGraph struct {
-	Vertices []labelVertex
-	Edges    []labelEdge
+	Transactions []transactionItem // transaction ids associated with vertices
+	Vertices     []labelVertex
+	Edges        []labelEdge
 }
 
 // NewDatatype returns a pointer to a new keyvalue Datatype with default values set.
@@ -251,6 +338,198 @@ func NewDatatype() (dtype *Datatype) {
 	return
 }
 
+// --- structures for handling concurrency by associating transaction ids for given vertices ---
+
+// transacitonItem defines an transaction id associated with a vertex (used for concurrent access)
+type transactionItem struct {
+	Id    storage.VertexID
+	Trans uint64
+}
+
+// transactionLog holds reference to the last transaction performed on a given vertex
+// (only for relevant API)
+type transactionLog struct {
+	transaction_queue    map[storage.VertexID]uint64 // map of vertex to transaction id
+	requestor_channels   map[uint64]chan struct{}    // keep track of current requesters
+	current_id           uint64                      // current transaction id -- always increases
+	mutex                sync.Mutex
+	current_requestor_id uint64 // current id assigned to new transaction requests
+}
+
+// transactionGroup defines a set of vertex transactions
+type transactionGroup struct {
+	log                  *transactionLog
+	current_requestor_id uint64                      // unique id of requestor
+	trans_channel        <-chan struct{}             // ability to wait for changes to transactions
+	locked_ids           map[storage.VertexID]uint64 // vertex ids that this group is locking
+	lockedold_ids        []storage.VertexID          // vertex ids that this group could not lock
+	outdated_ids         []storage.VertexID          // vertex ids which were not given the correct tranaction ids (non-readonly modes)
+}
+
+// NewTransactionGroup returns a pointer to a new transaction group
+func NewTransactionGroup(log *transactionLog, current_requestor_id uint64) *transactionGroup {
+	return &transactionGroup{
+		log:                  log,
+		current_requestor_id: current_requestor_id,
+		trans_channel:        log.requestor_channels[current_requestor_id],
+		locked_ids:           make(map[storage.VertexID]uint64),
+	}
+}
+
+// waitForChange waits on channels for another tranaction group to close (look for changes)
+func (t *transactionGroup) waitForChange() {
+	_ = <-t.trans_channel
+}
+
+// closeTransaction updates all ids for locked transactions
+func (t *transactionGroup) closeTransaction() {
+	t.log.removeTransactionGroup(t.locked_ids, t.current_requestor_id)
+}
+
+// addTransaction adds a vertex to the locked list (only called internally)
+func (t *transactionGroup) addTransaction(vertex storage.VertexID, trans uint64) {
+	t.locked_ids[vertex] = trans
+}
+
+// exportTransaction writes out a list of vertices and their new transction id (0 if the vertex
+// was invalid -- busy or requestor provided the wrong transaction id for non-readonly)
+func (t *transactionGroup) exportTransactions() []transactionItem {
+	var vertices []transactionItem
+
+	for vertex, id := range t.locked_ids {
+		vertices = append(vertices, transactionItem{vertex, id})
+	}
+	for _, vertex := range t.lockedold_ids {
+		vertices = append(vertices, transactionItem{vertex, 0})
+	}
+	for _, vertex := range t.outdated_ids {
+		vertices = append(vertices, transactionItem{vertex, 0})
+	}
+
+	return vertices
+}
+
+// exportTransaciton writes out vertices in binary (number of locked vertices, list of vertex and id,
+// number of ids without locked vertex, list unlocked vertices)
+func (t *transactionGroup) exportTransactionsBinary() []byte {
+	start := 0
+	total_size := 16 + len(t.locked_ids)*8*2 + len(t.lockedold_ids)*8 + len(t.outdated_ids)*8
+	buf := make([]byte, total_size, total_size)
+	binary.PutUvarint(buf[start:], uint64(len(t.locked_ids)))
+	start += 8
+
+	for vertex, id := range t.locked_ids {
+		binary.PutUvarint(buf[start:], uint64(vertex))
+		start += 8
+		binary.PutUvarint(buf[start:], id)
+		start += 8
+	}
+
+	binary.PutUvarint(buf[start:], uint64(len(t.lockedold_ids)+len(t.outdated_ids)))
+	start += 8
+	for _, vertex := range t.lockedold_ids {
+		binary.PutUvarint(buf[start:], uint64(vertex))
+		start += 8
+	}
+	for _, vertex := range t.outdated_ids {
+		binary.PutUvarint(buf[start:], uint64(vertex))
+		start += 8
+	}
+
+	return buf
+}
+
+// NewTransactionLog creats a pointer to transaction log, initializing relevant maps
+func NewTransactionLog() *transactionLog {
+	return &transactionLog{
+		transaction_queue:  make(map[storage.VertexID]uint64),
+		requestor_channels: make(map[uint64]chan struct{}),
+		current_id:         1,
+	}
+}
+
+// removeTransactionGroup sets the new transaction ids for locked vertices, removed the requestor
+// channel, and updates all other requestor channels
+func (t *transactionLog) removeTransactionGroup(locked_ids map[storage.VertexID]uint64, trans_id uint64) {
+	t.mutex.Lock()
+	defer t.mutex.Unlock()
+
+	for vertex, id := range locked_ids {
+		t.transaction_queue[vertex] = id
+	}
+	delete(t.requestor_channels, trans_id)
+
+	for _, channel := range t.requestor_channels {
+		select {
+		case channel <- struct{}{}:
+			// signal this channel
+		default:
+			// otherwise ignore
+		}
+	}
+}
+
+// createTransactionGroup takes a list of vertices (with up-to-date transaction ids if not
+// read only) and locks those vertices.  Vertices that have an out-of-date transaction are not
+// locked (non-readonly).  Vertices that are currently locked by another requstor are also not locked.
+func (t *transactionLog) createTransactionGroup(vertices []transactionItem, readonly bool) (*transactionGroup, error) {
+	if len(vertices) > 1000 {
+		return nil, fmt.Errorf("Do not support transaction with over 1000 ids")
+	}
+
+	t.mutex.Lock()
+	defer t.mutex.Unlock()
+	t.requestor_channels[t.current_requestor_id] = make(chan struct{}, 1)
+	transaction_group := NewTransactionGroup(t, t.current_requestor_id)
+	t.current_requestor_id += 1
+
+	for _, trans_record := range vertices {
+		current_transaction, ok := t.transaction_queue[trans_record.Id]
+
+		// readonly -- just grab current ID or create a new one if never examiend
+		if !ok && readonly {
+			current_transaction = t.current_id
+			t.current_id += 1
+		} else if !ok || (!readonly && (current_transaction != trans_record.Trans)) {
+			transaction_group.outdated_ids = append(transaction_group.outdated_ids, trans_record.Id)
+			continue
+		} else if current_transaction == 0 {
+			// 0 denotes a locked transaction
+			transaction_group.lockedold_ids = append(transaction_group.lockedold_ids, trans_record.Id)
+			continue
+		} else if !readonly {
+			// make a new transaction number if this is not readonly
+			current_transaction = t.current_id
+			t.current_id += 1
+		}
+
+		t.transaction_queue[trans_record.Id] = 0
+		transaction_group.addTransaction(trans_record.Id, current_transaction)
+	}
+	return transaction_group, nil
+}
+
+// createTransactionGroupBinary reads through binary representation of vertex / transaction id
+// pairs and calls creatTransactionGroup
+func (t *transactionLog) createTransactionGroupBinary(data []byte, readonly bool) (*transactionGroup, int, error) {
+	start := 0
+	numtrans, _ := binary.Uvarint(data[start:])
+	start += 8
+
+	var vertices []transactionItem
+	for i := uint64(0); i < numtrans; i++ {
+		vertex, _ := binary.Uvarint(data[start:])
+		start += 8
+		trans, _ := binary.Uvarint(data[start:])
+		start += 8
+
+		vertices = append(vertices, transactionItem{storage.VertexID(vertex), trans})
+	}
+
+	transaction_group, err := t.createTransactionGroup(vertices, readonly)
+	return transaction_group, start, err
+}
+
 // --- TypeService interface ---
 
 // NewData returns a pointer to new keyvalue data with default values.
@@ -262,13 +541,48 @@ func (dtype *Datatype) NewDataService(id *datastore.DataID, c dvid.Config) (data
 	return &Data{Data: basedata}, nil
 }
 
+// Help returns help mesage for datatype
 func (dtype *Datatype) Help() string {
 	return fmt.Sprintf(HelpMessage)
 }
 
-// Data embeds the datastore's Data and extends it with keyvalue properties (none for now).
+// Data embeds the datastore's Data and extends it with transaction properties
+// (default values are okay after deserializing).
 type Data struct {
 	*datastore.Data
+	transaction_log *transactionLog
+	busy            bool
+	datawide_mutex  sync.Mutex
+}
+
+// initializeLog ensures that the transaction_log has been created
+func (d *Data) initializeLog() {
+	d.datawide_mutex.Lock()
+	defer d.datawide_mutex.Unlock()
+	if d.transaction_log == nil {
+		d.transaction_log = NewTransactionLog()
+	}
+}
+
+// setBusy checks if data is busy with a large transaction (currently small transactions do not
+// set some busy signal to prevent a large transaction from occurring -- applications should avoid
+// collisions with bulk actions)
+func (d *Data) setBusy() bool {
+	d.datawide_mutex.Lock()
+	defer d.datawide_mutex.Unlock()
+	if d.busy {
+		return false
+	} else {
+		d.busy = true
+	}
+	return true
+}
+
+// setNotBusy checks if a the data instance is busy with some other request
+func (d *Data) setNotBusy() {
+	d.datawide_mutex.Lock()
+	defer d.datawide_mutex.Unlock()
+	d.busy = false
 }
 
 // JSONString returns the JSON for this Data's configuration
@@ -296,7 +610,12 @@ func (d *Data) getGraphDB(uuid dvid.UUID) (storage.Key, storage.GraphDB, error) 
 }
 
 // handleSubgraph loads, retrieves, or deletes a subgraph (more description in REST interface)
-func (d *Data) handleSubgraph(uuid dvid.UUID, w http.ResponseWriter, labelgraph *LabelGraph, method string) error {
+func (d *Data) handleSubgraphBulk(uuid dvid.UUID, w http.ResponseWriter, labelgraph *LabelGraph, method string) error {
+	if !d.setBusy() {
+		return fmt.Errorf("Server busy with bulk transaction")
+	}
+	defer d.setNotBusy()
+
 	key, db, err := d.getGraphDB(uuid)
 	if err != nil {
 		return err
@@ -383,8 +702,134 @@ func (d *Data) handleSubgraph(uuid dvid.UUID, w http.ResponseWriter, labelgraph 
 	return err
 }
 
+func (d *Data) extractOpenVertices(labelgraph *LabelGraph) []transactionItem {
+	var open_vertices []transactionItem
+	check_vertices := make(map[storage.VertexID]struct{})
+	for _, vertex := range labelgraph.Vertices {
+		if vertex.Id != 0 {
+			if _, ok2 := check_vertices[vertex.Id]; !ok2 {
+				open_vertices = append(open_vertices, transactionItem{vertex.Id, 0})
+				check_vertices[vertex.Id] = struct{}{}
+			}
+		}
+	}
+	for _, edge := range labelgraph.Edges {
+		if edge.Id1 != 0 {
+			if _, ok2 := check_vertices[edge.Id1]; !ok2 {
+				open_vertices = append(open_vertices, transactionItem{edge.Id1, 0})
+				check_vertices[edge.Id1] = struct{}{}
+			}
+			if _, ok2 := check_vertices[edge.Id2]; !ok2 {
+				open_vertices = append(open_vertices, transactionItem{edge.Id2, 0})
+				check_vertices[edge.Id2] = struct{}{}
+			}
+		}
+	}
+	return open_vertices
+}
+
+// handleWeightUpdate POST vertex/edge weight increment/decrement.  POSTing to an uncreated
+// node or edge will create the node or edge (default 0 weight).  Limit of 1000 vertices and 1000 edges.
+func (d *Data) handleWeightUpdate(uuid dvid.UUID, w http.ResponseWriter, labelgraph *LabelGraph) error {
+	key, db, err := d.getGraphDB(uuid)
+	if err != nil {
+		return err
+	}
+
+	// collect all vertices that need to be locked and wrap in transaction ("read only")
+	open_vertices := d.extractOpenVertices(labelgraph)
+	transaction_group, err := d.transaction_log.createTransactionGroup(open_vertices, true)
+
+	if err != nil {
+		transaction_group.closeTransaction()
+		return fmt.Errorf("Could not create transaction group")
+	}
+
+	leftover := true
+
+	// iterate until leftovers are empty
+	for leftover {
+		if len(transaction_group.lockedold_ids) == 0 {
+			leftover = false
+		}
+
+		for _, vertex := range labelgraph.Vertices {
+			// if it was already examined, continue
+			if vertex.Id == 0 {
+				continue
+			}
+			// if it the vertex was not locked, continue
+			if _, ok := transaction_group.locked_ids[vertex.Id]; !ok {
+				continue
+			}
+
+			// retrieve vertex, update or create depending on error status
+			storedvert, err := db.GetVertex(key, vertex.Id)
+			if err != nil {
+				err = db.AddVertex(key, vertex.Id, vertex.Weight)
+				if err != nil {
+					return fmt.Errorf("Failed to add vertex: %s\n", err.Error())
+				}
+			} else {
+				// increment/decrement weight
+				err = db.SetVertexWeight(key, vertex.Id, storedvert.Weight+vertex.Weight)
+				if err != nil {
+					return fmt.Errorf("Failed to add vertex: %s\n", err.Error())
+				}
+			}
+			// do not revisit
+			vertex.Id = 0
+		}
+		for _, edge := range labelgraph.Edges {
+			// if it was already examined, continue
+			if edge.Id1 == 0 {
+				continue
+			}
+
+			// if it the edge was not locked, continue
+			if _, ok := transaction_group.locked_ids[edge.Id1]; !ok {
+				continue
+			}
+			if _, ok := transaction_group.locked_ids[edge.Id2]; !ok {
+				continue
+			}
+
+			// retrieve edge, update or create depending on error status
+			storededge, err := db.GetEdge(key, edge.Id1, edge.Id2)
+			if err != nil {
+				err = db.AddEdge(key, edge.Id1, edge.Id2, edge.Weight)
+				if err != nil {
+					return fmt.Errorf("Failed to add edge: %s\n", err.Error())
+				}
+			} else {
+				// increment/decrement weight
+				err = db.SetEdgeWeight(key, edge.Id1, edge.Id2, storededge.Weight+edge.Weight)
+				if err != nil {
+					return fmt.Errorf("Failed to update edge: %s\n", err.Error())
+				}
+			}
+			// do not revisit
+			edge.Id1 = 0
+
+		}
+
+		if leftover {
+			// wait on update to channel if there are leftovers
+			transaction_group.waitForChange()
+
+			// close transaction, create new transaction from leftovers in labelgraph
+			transaction_group.closeTransaction()
+			open_vertices = d.extractOpenVertices(labelgraph)
+			transaction_group, _ = d.transaction_log.createTransactionGroup(open_vertices, true)
+		}
+	}
+
+	transaction_group.closeTransaction()
+	return nil
+}
+
 // handleMerge merges a list of vertices onto the final vertex in the Vertices list
-func (d *Data) handleMerge(uuid dvid.UUID, w http.ResponseWriter, labelgraph *LabelGraph, method string) error {
+func (d *Data) handleMerge(uuid dvid.UUID, w http.ResponseWriter, labelgraph *LabelGraph) error {
 	key, db, err := d.getGraphDB(uuid)
 	if err != nil {
 		return err
@@ -491,6 +936,202 @@ func (d *Data) handleMerge(uuid dvid.UUID, w http.ResponseWriter, labelgraph *La
 	}
 
 	return nil
+}
+
+// handleNeighbors returns the vertices and edges connected to the provided vertex
+// (Should I protect this transaction like the update weight function?  It is probably
+// unnecessary because any update based on retrieved information will be written to a
+// property which has transactional protection)
+func (d *Data) handleNeighbors(uuid dvid.UUID, w http.ResponseWriter, path []string) error {
+	key, db, err := d.getGraphDB(uuid)
+	if err != nil {
+		return err
+	}
+	labelgraph := new(LabelGraph)
+
+	temp, err := strconv.Atoi(path[0])
+	if err != nil {
+		return fmt.Errorf("Vertex number not provided")
+	}
+	id := storage.VertexID(temp)
+
+	storedvert, err := db.GetVertex(key, id)
+	if err != nil {
+		return fmt.Errorf("Failed to retrieve vertix %d: %s\n", id, err.Error())
+	}
+
+	labelgraph.Vertices = append(labelgraph.Vertices, labelVertex{storedvert.Id, storedvert.Weight})
+
+	for _, vert2 := range storedvert.Vertices {
+		vertex, err := db.GetVertex(key, vert2)
+		if err != nil {
+			return fmt.Errorf("Failed to retrieve vertex %d: %s\n", vertex.Id, err.Error())
+		}
+		labelgraph.Vertices = append(labelgraph.Vertices, labelVertex{vertex.Id, vertex.Weight})
+		edge, err := db.GetEdge(key, id, vert2)
+		if err != nil {
+			return fmt.Errorf("Failed to retrieve edge %d-%d: %s\n", vertex.Id, vert2, err.Error())
+		}
+		labelgraph.Edges = append(labelgraph.Edges, labelEdge{edge.Vertexpair.Vertex1, edge.Vertexpair.Vertex2, edge.Weight})
+	}
+	m, err := json.Marshal(labelgraph)
+	if err != nil {
+		return fmt.Errorf("Could not serialize graph")
+	}
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, string(m))
+	return nil
+}
+
+// handelPropertyTransaction allows gets/posts (really puts) of edge or vertex properties.
+func (d *Data) handlePropertyTransaction(uuid dvid.UUID, w http.ResponseWriter, r *http.Request, path []string, method string) error {
+	key, db, err := d.getGraphDB(uuid)
+	if err != nil {
+		return err
+	}
+	if len(path) < 2 {
+		return fmt.Errorf("Must specify edges or vertices in URI and property name")
+	}
+	if method == "delete" {
+		return fmt.Errorf("Transactional delete not supported")
+	}
+
+	edgemode := false
+	if path[0] == "edges" {
+		edgemode = true
+	} else if path[1] != "vertices" {
+		return fmt.Errorf("Must specify edges or vertices in URI")
+	}
+	propertyname := path[1]
+
+	readonly := false
+	if method == "get" {
+		readonly = true
+	}
+	data, err := ioutil.ReadAll(r.Body)
+
+	// only allow 1000 vertices to be locked
+	transactions, start, err := d.transaction_log.createTransactionGroupBinary(data, readonly)
+	defer transactions.closeTransaction()
+	if err != nil {
+		return fmt.Errorf("Failed to create property transaction: %s", err.Error())
+	}
+
+	returned_data := transactions.exportTransactionsBinary()
+
+	if method == "post" {
+		// deserialize transaction (vertex or edge) -- use URI?
+		num_properties, _ := binary.Uvarint(data[start:])
+		start += 8
+
+		for i := uint64(0); i < num_properties; i++ {
+			temp, _ := binary.Uvarint(data[start:])
+			id := storage.VertexID(temp)
+			var id2 storage.VertexID
+			start += 8
+			if edgemode {
+				temp, _ = binary.Uvarint(data[start:])
+				id2 = storage.VertexID(temp)
+				start += 8
+			}
+			data_size, _ := binary.Uvarint(data[start:])
+			start += 8
+			data_begin := start
+			start += int(data_size)
+			data_end := start
+
+			// check if post is possible
+			if _, ok := transactions.locked_ids[id]; !ok {
+				continue
+			}
+			if edgemode {
+				if _, ok := transactions.locked_ids[id2]; !ok {
+					continue
+				}
+			}
+
+			// execute post
+			serialization, err := dvid.SerializeData(data[data_begin:data_end], d.Compression, d.Checksum)
+			if err != nil {
+				return fmt.Errorf("Unable to serialize data: %s\n", err.Error())
+			}
+			if edgemode {
+				err = db.SetEdgeProperty(key, id, id2, propertyname, serialization)
+			} else {
+				err = db.SetVertexProperty(key, id, propertyname, serialization)
+			}
+			if err != nil {
+				return fmt.Errorf("Failed to add property %s: %s\n", propertyname, err.Error())
+			}
+		}
+	} else {
+		num_properties, _ := binary.Uvarint(data[start:])
+		start += 8
+		num_properties_loc := len(returned_data)
+		longbuf := make([]byte, 8, 8)
+		binary.PutUvarint(longbuf, 0)
+		returned_data = append(returned_data, longbuf...)
+		num_executed_transactions := uint64(0)
+
+		// read the vertex or edge properties desired
+		for i := uint64(0); i < num_properties; i++ {
+			temp, _ := binary.Uvarint(data[start:])
+			id := storage.VertexID(temp)
+			var id2 storage.VertexID
+			start += 8
+			if edgemode {
+				temp, _ := binary.Uvarint(data[start:])
+				id2 = storage.VertexID(temp)
+				start += 8
+			}
+
+			// check if post is possible
+			if _, ok := transactions.locked_ids[id]; !ok {
+				continue
+			}
+			if edgemode {
+				if _, ok := transactions.locked_ids[id2]; !ok {
+					continue
+				}
+			}
+
+			// execute get command
+			var dataout []byte
+			if edgemode {
+				dataout, err = db.GetEdgeProperty(key, id, id2, propertyname)
+			} else {
+				dataout, err = db.GetVertexProperty(key, id, propertyname)
+			}
+			if err != nil {
+				return fmt.Errorf("Failed to get property %s: %s\n", propertyname, err.Error())
+			}
+			uncompress := true
+			data_serialized, _, e := dvid.DeserializeData(dataout, uncompress)
+			if e != nil {
+				err = fmt.Errorf("Unable to deserialize data for property '%s': %s\n", propertyname, e.Error())
+				return err
+			}
+
+			// save transaction
+			num_executed_transactions += 1
+			binary.PutUvarint(longbuf, uint64(id))
+			returned_data = append(returned_data, longbuf...)
+			if edgemode {
+				binary.PutUvarint(longbuf, uint64(id2))
+				returned_data = append(returned_data, longbuf...)
+			}
+			binary.PutUvarint(longbuf, uint64(len(data_serialized)))
+			returned_data = append(returned_data, longbuf...)
+			returned_data = append(returned_data, data_serialized...)
+		}
+
+		// update the number of transactions
+		binary.PutUvarint(returned_data[num_properties_loc:], num_executed_transactions)
+	}
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	_, err = w.Write(returned_data)
+	return err
 }
 
 // handleProperty retrieves or deletes properties that can be added to a vertex or edge -- data posted
@@ -641,6 +1282,9 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) error {
 	startTime := time.Now()
 
+	// make sure transaction log is created
+	d.initializeLog()
+
 	// Allow cross-origin resource sharing.
 	w.Header().Add("Access-Control-Allow-Origin", "*")
 
@@ -674,26 +1318,56 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, jsonStr)
 		return nil
-	case "subgraph":
+	case "substack":
 		labelgraph, err := d.ExtractGraph(r)
 		if err != nil {
 			return err
 		}
-		err = d.handleSubgraph(uuid, w, labelgraph, method)
+		err = d.handleSubgraphBulk(uuid, w, labelgraph, method)
+		if err != nil {
+			return err
+		}
+		return nil
+	case "neighbors":
+		if method != "get" {
+			return fmt.Errorf("Only supports GETs")
+		}
+		err := d.handleNeighbors(uuid, w, parts[4:])
 		if err != nil {
 			return err
 		}
 		return nil
 	case "merge":
+		if method != "post" {
+			return fmt.Errorf("Only supports POSTs")
+		}
 		labelgraph, err := d.ExtractGraph(r)
 		if err != nil {
 			return err
 		}
-		err = d.handleMerge(uuid, w, labelgraph, method)
+		err = d.handleMerge(uuid, w, labelgraph)
 		if err != nil {
 			return err
 		}
 		return nil
+	case "weight":
+		if method != "post" {
+			return fmt.Errorf("Only supports POSTs")
+		}
+		labelgraph, err := d.ExtractGraph(r)
+		if err != nil {
+			return err
+		}
+		err = d.handleWeightUpdate(uuid, w, labelgraph)
+		if err != nil {
+			return err
+		}
+		return nil
+	case "propertytransaction":
+		err := d.handlePropertyTransaction(uuid, w, r, parts[4:], method)
+		if err != nil {
+			return err
+		}
 	case "property":
 		err := d.handleProperty(uuid, w, r, parts[4:], method)
 		if err != nil {
