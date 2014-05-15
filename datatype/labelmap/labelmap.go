@@ -211,7 +211,7 @@ GET <api URL>/node/<UUID>/<data name>/intersect/<min block>/<max block>
     min block     Minimum block coordinate with underscore as separator, e.g., 10_20_30
     max block     Maximum block coordinate with underscore as separator.
 
-GET  <api URL>/node/<UUID>/<data name>/labels/<dims>/<size>/<offset>[/<format>]
+GET  <api URL>/node/<UUID>/<data name>/labels/<dims>/<size>/<offset>[/<format>][?throttle=on]
 
     Retrieves mapped labels for each voxel in the specified extent.
 
@@ -224,6 +224,11 @@ GET  <api URL>/node/<UUID>/<data name>/labels/<dims>/<size>/<offset>[/<format>]
     The "Content-type" of the HTTP response should agree with the requested format.
     For example, returned PNGs will have "Content-type" of "image/png", and returned
     nD data will be "application/octet-stream".
+
+    Throttling can be enabled by passing a "throttle=on" query string.  Throttling makes sure
+    only one compute-intense operation (all API calls that can be throttled) is handled.
+    If the server can't initiate the API call right away, a 503 (Service Unavailable) status
+    code is returned.
 
     Arguments:
 
@@ -743,6 +748,22 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 			}
 			dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: %s (%s)", r.Method, plane, r.URL)
 		case 3:
+			queryStrings := r.URL.Query()
+			if queryStrings.Get("throttle") == "on" {
+				select {
+				case <-server.Throttle:
+					// Proceed with operation, returning throttle token to server at end.
+					defer func() {
+						server.Throttle <- 1
+					}()
+				default:
+					throttleMsg := fmt.Sprintf("Server already running maximum of %d throttled operations",
+						server.MaxThrottledOps)
+					http.Error(w, throttleMsg, http.StatusServiceUnavailable)
+					dvid.Log(dvid.Debug, "Returned 503 since already performing a throttled operation.\n")
+					return nil
+				}
+			}
 			subvol, err := dvid.NewSubvolumeFromStrings(offsetStr, sizeStr, "_")
 			if err != nil {
 				return err

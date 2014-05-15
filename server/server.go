@@ -37,6 +37,9 @@ const (
 
 	// The name of the server error log, stored in the datastore directory.
 	ErrorLogFilename = "dvid-errors.log"
+
+	// Maximum number of throttled ops we can handle through API
+	MaxThrottledOps = 1
 )
 
 var (
@@ -61,6 +64,11 @@ var (
 	// See ProcessChunk() in datatype/voxels for example.
 	HandlerToken = make(chan int, MaxChunkHandlers)
 
+	// Throttle allows server-wide throttling of operations.  This is used for voxels-based
+	// compute-intensive operations on constrained servers.
+	// TODO: This should be replaced with message queue mechanism for prioritized requests.
+	Throttle = make(chan int, MaxThrottledOps)
+
 	// SpawnGoroutineMutex is a global lock for compute-intense processes that want to
 	// spawn goroutines that consume handler tokens.  This lets processes capture most
 	// if not all available handler tokens in a FIFO basis rather than have multiple
@@ -75,6 +83,11 @@ var (
 )
 
 func init() {
+	// Initialize the number of throttled ops available.
+	for i := 0; i < MaxThrottledOps; i++ {
+		Throttle <- 1
+	}
+
 	// Initialize the number of handler tokens available.
 	for i := 0; i < MaxChunkHandlers; i++ {
 		HandlerToken <- 1
