@@ -60,7 +60,7 @@ var (
 	YZ = DataShape{3, []uint8{1, 2}}
 
 	// Arb describes a 2d rectangle of voxels with arbitrary 3d orientation.
-	Arb = DataShape{dims: 3}
+	Arb = DataShape{3, nil}
 
 	// Vol3d describes a 3d volume of voxels
 	Vol3d = DataShape{3, []uint8{0, 1, 2}}

@@ -194,24 +194,26 @@ GET  <api URL>/node/<UUID>/<data name>/isotropic/<dims>/<size>/<offset>[/<format
                     jpg allows lossy quality setting, e.g., "jpg:80"
                   nD: uses default "octet-stream".
 
-(TO DO)
-
-GET  <api URL>/node/<UUID>/<data name>/arb/<center>/<normal>/<size>[/<format>]
+GET  <api URL>/node/<UUID>/<data name>/arb/<top left>/<top right>/<bottom left>/<res>[/<format>]
 
     Retrieves non-orthogonal (arbitrarily oriented planar) image data of named 3d data 
-    within a version node.
+    within a version node.  Returns an image where the top left pixel corresponds to the
+    real world coordinate (not in voxel space but in space defined by resolution, e.g.,
+    nanometer space).  The real world coordinates are specified in  "x_y_z" format, e.g., "20.3_11.8_109.4".
+    The resolution is used to determine the # pixels in the returned image.
 
     Example: 
 
-    GET <api URL>/node/3f8c/grayscale/arb/200_200/2.0_1.3_1/100_100/jpg:80
+    GET <api URL>/node/3f8c/grayscale/arb/100.2_90_80.7/200.2_90_80.7/100.2_190.0_80.7/10.0/jpg:80
 
     Arguments:
 
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add.
-    center        3d coordinate in the format "x_y_z".  Gives 3d coord of center pixel.
-    normal        3d vector in the format "nx_ny_nz".  Gives normal vector of image.
-    size          Size in pixels in the format "dx_dy".
+    top left      Real world coordinate (in nanometers) of top left pixel in returned image.
+    top right     Real world coordinate of top right pixel.
+    bottom left   Real world coordinate of bottom left pixel.
+    res           The resolution/pixel that is used to calculate the returned image size in pixels.
     format        "png", "jpg" (default: "png")  
                     jpg allows lossy quality setting, e.g., "jpg:80"
 `
@@ -1309,7 +1311,7 @@ func (v *Voxels) GetImage2d() (*dvid.Image, error) {
 	}
 
 	ret := new(dvid.Image)
-	if err := ret.Set(img, v.Values(), v.Interpolable()); err != nil {
+	if err := ret.SetFromGoImage(img, v.Values(), v.Interpolable()); err != nil {
 		return nil, err
 	}
 	return ret, nil
@@ -1436,6 +1438,19 @@ type Resolution struct {
 
 	// Units of resolution, e.g., "nanometers"
 	VoxelUnits dvid.NdString
+}
+
+func (r Resolution) IsIsotropic() bool {
+	if len(r.VoxelSize) <= 1 {
+		return true
+	}
+	curRes := r.VoxelSize[0]
+	for _, res := range r.VoxelSize[1:] {
+		if res != curRes {
+			return false
+		}
+	}
+	return true
 }
 
 type Properties struct {
@@ -1659,7 +1674,7 @@ func (d *Data) BlankImage(dstW, dstH int32) (*dvid.Image, error) {
 
 	// Package Go image
 	dst := new(dvid.Image)
-	dst.Set(img, d.Properties.Values, d.Properties.Interpolable)
+	dst.SetFromGoImage(img, d.Properties.Values, d.Properties.Interpolable)
 	return dst, nil
 }
 
@@ -2016,7 +2031,29 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, jsonStr)
 		return nil
+	case "arb":
+		// GET  <api URL>/node/<UUID>/<data name>/arb/<top left>/<top right>/<bottom left>/<res>[/<format>]
+		if len(parts) < 8 {
+			return fmt.Errorf("'%s' must be followed by top-left/top-right/bottom-left/res", parts[3])
+		}
+		img, err := d.GetArbitraryImage(uuid, parts[4], parts[5], parts[6], parts[7])
+		if err != nil {
+			server.BadRequest(w, r, err.Error())
+			return err
+		}
+		var formatStr string
+		if len(parts) >= 9 {
+			formatStr = parts[8]
+		}
+		err = dvid.WriteImageHttp(w, img.Get(), formatStr)
+		if err != nil {
+			server.BadRequest(w, r, err.Error())
+			return err
+		}
+		dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: Arbitrary image (%s)", r.Method, r.URL)
+
 	case "raw", "isotropic":
+		// GET  <api URL>/node/<UUID>/<data name>/isotropic/<dims>/<size>/<offset>[/<format>]
 		if len(parts) < 7 {
 			return fmt.Errorf("'%s' must be followed by shape/size/offset", parts[3])
 		}

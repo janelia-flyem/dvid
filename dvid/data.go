@@ -998,6 +998,55 @@ func StringToPoint(str, separator string) (p Point, err error) {
 
 // -- Handle N-dimensional floating points and strings --------
 
+// Vector3d is a 3D vector of 64-bit floats, a recommended type for math operations.
+type Vector3d [3]float64
+
+func StringToVector3d(str, separator string) (Vector3d, error) {
+	elems := strings.Split(str, separator)
+	if len(elems) != 3 {
+		return Vector3d{}, fmt.Errorf("Can't convert string '%s' (length %d) to Vector3d", str, len(elems))
+	}
+	var v Vector3d
+	var err error
+	for i, elem := range elems {
+		v[i], err = strconv.ParseFloat(elem, 64)
+		if err != nil {
+			return Vector3d{}, err
+		}
+	}
+	return v, nil
+}
+
+// Distance returns the distance between two points a and b.
+func (v Vector3d) Distance(x Vector3d) float64 {
+	dx := x[0] - v[0]
+	dy := x[1] - v[1]
+	dz := x[2] - v[2]
+	return math.Sqrt(dx*dx + dy*dy + dz*dz)
+}
+
+func (v Vector3d) Subtract(x Vector3d) Vector3d {
+	return Vector3d{v[0] - x[0], v[1] - x[1], v[2] - x[2]}
+}
+
+func (v Vector3d) Add(x Vector3d) Vector3d {
+	return Vector3d{v[0] + x[0], v[1] + x[1], v[2] + x[2]}
+}
+
+func (v Vector3d) DivideScalar(x float64) Vector3d {
+	return Vector3d{v[0] / x, v[1] / x, v[2] / x}
+}
+
+func (v *Vector3d) Increment(x Vector3d) {
+	(*v)[0] += x[0]
+	(*v)[1] += x[1]
+	(*v)[2] += x[2]
+}
+
+func (v Vector3d) String() string {
+	return fmt.Sprintf("(%f,%f,%f)", v[0], v[1], v[2])
+}
+
 // NdFloat32 is an N-dimensional slice of float32
 type NdFloat32 []float32
 

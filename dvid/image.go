@@ -161,9 +161,9 @@ func (img Image) GetJPEG(quality int) ([]byte, error) {
 	return buffer.Bytes(), nil
 }
 
-// Set initializes a DVID image from a go image and a data format specification.  DVID images
+// SetFromGoImage initializes a DVID image from a go image and a data format specification.  DVID images
 // must have identical data type values within a pixel..
-func (img *Image) Set(src image.Image, format DataValues, interpolable bool) error {
+func (img *Image) SetFromGoImage(src image.Image, format DataValues, interpolable bool) error {
 	img.DataFormat = format
 	img.Interpolable = interpolable
 
@@ -205,6 +205,79 @@ func (img *Image) Set(src image.Image, format DataValues, interpolable bool) err
 	default:
 		return fmt.Errorf("No valid image type received by image.Set(): %s", reflect.TypeOf(src))
 	}
+	return nil
+}
+
+// SetFromData returns a DVID Image from raw data and dimensions.
+func (img *Image) SetFromData(dstW, dstH int32, data []byte, format DataValues, interpolable bool) error {
+	// Make sure values for this data can be converted into an image.
+	valuesPerElement := format.ValuesPerElement()
+	bytesPerValue, err := format.BytesPerValue()
+	if err != nil {
+		return err
+	}
+
+	unsupported := func() error {
+		return fmt.Errorf("DVID images currently does not support images for %d channels and %d bytes/channel",
+			valuesPerElement, bytesPerValue)
+	}
+
+	var goImg image.Image
+	stride := int(dstW * valuesPerElement * bytesPerValue)
+	r := image.Rect(0, 0, int(dstW), int(dstH))
+	switch valuesPerElement {
+	case 1:
+		switch bytesPerValue {
+		case 1:
+			goImg = &image.Gray{
+				Stride: stride,
+				Rect:   r,
+				Pix:    data,
+			}
+		case 2:
+			goImg = &image.Gray16{
+				Stride: stride,
+				Rect:   r,
+				Pix:    data,
+			}
+		case 4:
+			goImg = &image.NRGBA{
+				Stride: stride,
+				Rect:   r,
+				Pix:    data,
+			}
+		case 8:
+			goImg = &image.NRGBA64{
+				Stride: stride,
+				Rect:   r,
+				Pix:    data,
+			}
+		default:
+			return unsupported()
+		}
+	case 4:
+		switch bytesPerValue {
+		case 1:
+			goImg = &image.NRGBA{
+				Stride: stride,
+				Rect:   r,
+				Pix:    data,
+			}
+		case 2:
+			goImg = &image.NRGBA64{
+				Stride: stride,
+				Rect:   r,
+				Pix:    data,
+			}
+		default:
+			return unsupported()
+		}
+	default:
+		return unsupported()
+	}
+
+	// Package Go image
+	img.SetFromGoImage(goImg, format, interpolable)
 	return nil
 }
 
@@ -440,7 +513,7 @@ func (img *Image) ScaleImage(dstW, dstH int) (*Image, error) {
 	}
 
 	dst := new(Image)
-	if err = dst.Set(goImg, img.DataFormat, img.Interpolable); err != nil {
+	if err = dst.SetFromGoImage(goImg, img.DataFormat, img.Interpolable); err != nil {
 		return nil, err
 	}
 	return dst, nil

@@ -1,9 +1,7 @@
 package server
 
 import (
-	"compress/gzip"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"log"
 	"net"
@@ -13,7 +11,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
-	"strings"
 	"sync"
 	"time"
 
@@ -133,7 +130,15 @@ func DatastoreService() *datastore.Service {
 	return runningService.Service
 }
 
-// OrderedKeyValueDB returns the default key-value database
+// KeyValueGetter returns the default service for retrieving key-value pairs.
+func KeyValueGetter() (storage.KeyValueGetter, error) {
+	if runningService.Service == nil {
+		return nil, fmt.Errorf("No running datastore service is available.")
+	}
+	return runningService.KeyValueGetter()
+}
+
+// OrderedKeyValueDB returns the default ordered key-value database
 func OrderedKeyValueDB() (storage.OrderedKeyValueDB, error) {
 	if runningService.Service == nil {
 		return nil, fmt.Errorf("No running datastore service is available.")
@@ -141,12 +146,20 @@ func OrderedKeyValueDB() (storage.OrderedKeyValueDB, error) {
 	return runningService.OrderedKeyValueDB()
 }
 
-// OrderedKeyValueGetter returns the default service for retrieving key-value pairs.
+// OrderedKeyValueGetter returns the default service for retrieving ordered key-value pairs.
 func OrderedKeyValueGetter() (storage.OrderedKeyValueGetter, error) {
 	if runningService.Service == nil {
 		return nil, fmt.Errorf("No running datastore service is available.")
 	}
 	return runningService.OrderedKeyValueGetter()
+}
+
+// OrderedKeyValueSetter returns the default service for storing ordered key-value pairs.
+func OrderedKeyValueSetter() (storage.OrderedKeyValueSetter, error) {
+	if runningService.Service == nil {
+		return nil, fmt.Errorf("No running datastore service is available.")
+	}
+	return runningService.OrderedKeyValueSetter()
 }
 
 // GraphDB returns the default service for handling grah operations.
@@ -155,14 +168,6 @@ func GraphDB() (storage.GraphDB, error) {
 		return nil, fmt.Errorf("No running datastore service is available.")
 	}
 	return runningService.GraphDB()
-}
-
-// OrderedKeyValueSetter returns the default service for storing key-value pairs.
-func OrderedKeyValueSetter() (storage.OrderedKeyValueSetter, error) {
-	if runningService.Service == nil {
-		return nil, fmt.Errorf("No running datastore service is available.")
-	}
-	return runningService.OrderedKeyValueSetter()
 }
 
 // StorageEngine returns the default storage engine or nil if it's not available.
@@ -344,13 +349,6 @@ func (service *Service) ServeHttp(address, clientDir string) {
 	// Handle Level 2 REST API.
 	http.HandleFunc(WebAPIPath, logHttpPanics(apiHandler))
 
-	// http.HandleFunc(WebAPIPath, logHttpPanics(makeGzipHandler(apiHandler)))
-	//
-	// Could wrap HTTP handler with Gzip handler at this level, but it's too
-	// broad a brush.  Individual data types might already store gzipped or
-	// PNG-encoded (deflate) data, then the gzip wrapping is extra work for
-	// possibly worse data size.
-
 	// Handle static files through serving embedded files
 	// via nrsc or loading files from a specified web client directory.
 	if clientDir == "" {
@@ -384,28 +382,4 @@ func (service *Service) ServeRpc(address string) error {
 	}
 	http.Serve(listener, nil)
 	return nil
-}
-
-// Nod to Andrew Gerrand for simple gzip solution:
-// See https://groups.google.com/forum/m/?fromgroups#!topic/golang-nuts/eVnTcMwNVjM
-type gzipResponseWriter struct {
-	io.Writer
-	http.ResponseWriter
-}
-
-func (w gzipResponseWriter) Write(b []byte) (int, error) {
-	return w.Writer.Write(b)
-}
-
-func makeGzipHandler(fn http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
-			fn(w, r)
-			return
-		}
-		w.Header().Set("Content-Encoding", "gzip")
-		gz := gzip.NewWriter(w)
-		defer gz.Close()
-		fn(gzipResponseWriter{Writer: gz, ResponseWriter: w}, r)
-	}
 }

@@ -45,7 +45,7 @@ func (suite *DataSuite) TestSlice(c *C) {
 		},
 	}
 
-	err := img.Set(goImg, values, true)
+	err := img.SetFromGoImage(goImg, values, true)
 	c.Assert(err, IsNil)
 
 	compression, err := NewCompression(Snappy, DefaultCompression)
@@ -85,7 +85,7 @@ func (suite *DataSuite) TestOffsetSlice(c *C) {
 			Label: "grayscale",
 		},
 	}
-	err := img.Set(goImg, values, true)
+	err := img.SetFromGoImage(goImg, values, true)
 	c.Assert(err, IsNil)
 
 	compression, err := NewCompression(Snappy, DefaultCompression)
@@ -117,7 +117,7 @@ func (suite *DataSuite) TestMarshaling(c *C) {
 			Label: "grayscale",
 		},
 	}
-	err := img.Set(goImg, values, true)
+	err := img.SetFromGoImage(goImg, values, true)
 	c.Assert(err, IsNil)
 
 	b, err := img.MarshalBinary()
@@ -145,7 +145,7 @@ func (suite *DataSuite) TestCompression(c *C) {
 			Label: "grayscale",
 		},
 	}
-	err := img.Set(goImg, values, true)
+	err := img.SetFromGoImage(goImg, values, true)
 	c.Assert(err, IsNil)
 
 	compression, err := NewCompression(Gzip, DefaultCompression)
