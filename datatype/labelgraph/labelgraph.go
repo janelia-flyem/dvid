@@ -197,7 +197,9 @@ POST  <api URL>/node/<UUID>/<data name>/weight
     should be made in JSON following the graph schema.  The weights provided represent
     the increment that should be applied to the weight for a vertex or edge.  No more than
     1000 vertices should be associated with these edges and vertices being updated.  DVID
-    guarantees the atomicity of this transaction by locking the vertices.
+    guarantees the atomicity of this transaction by locking the vertices.  If the vertex,
+    doesn't exist it will be created.  But an edge cannot be created unless one of its constituent
+    vertices has been created (or is specified in this update call)
     
     Arguments:
 
@@ -211,7 +213,9 @@ POST (really PUT)  <api URL>/node/<UUID>/<data name>/propertytransaction/<edges|
     Retrieve or set the property given by <property> for a set of vertices or edges.  Both GET and POST
     requests must send binary data encoding the vertices that will need to be locked for
     this transaction.  POST transactions should then list all the vertices and edges with the data
-    to be posted.  Only 1000 vertices can be locked for a given transaction.
+    to be posted.  Only 1000 vertices can be locked for a given transaction.  GET requests to
+    non-existent properties will return a transaction id for the relevant vertices and empty data
+    for the vertex/edge.
     
     The "Content-type" of the HTTP response and the request are
     "application/octet-stream" for arbitrary binary data. 
@@ -572,9 +576,8 @@ func (d *Data) setBusy() bool {
 	defer d.datawide_mutex.Unlock()
 	if d.busy {
 		return false
-	} else {
-		d.busy = true
 	}
+	d.busy = true
 	return true
 }
 
@@ -753,7 +756,7 @@ func (d *Data) handleWeightUpdate(uuid dvid.UUID, w http.ResponseWriter, labelgr
 			leftover = false
 		}
 
-		for _, vertex := range labelgraph.Vertices {
+		for i, vertex := range labelgraph.Vertices {
 			// if it was already examined, continue
 			if vertex.Id == 0 {
 				continue
@@ -768,19 +771,22 @@ func (d *Data) handleWeightUpdate(uuid dvid.UUID, w http.ResponseWriter, labelgr
 			if err != nil {
 				err = db.AddVertex(key, vertex.Id, vertex.Weight)
 				if err != nil {
+					transaction_group.closeTransaction()
 					return fmt.Errorf("Failed to add vertex: %s\n", err.Error())
 				}
 			} else {
 				// increment/decrement weight
 				err = db.SetVertexWeight(key, vertex.Id, storedvert.Weight+vertex.Weight)
 				if err != nil {
+					transaction_group.closeTransaction()
 					return fmt.Errorf("Failed to add vertex: %s\n", err.Error())
 				}
 			}
+
 			// do not revisit
-			vertex.Id = 0
+			labelgraph.Vertices[i].Id = 0
 		}
-		for _, edge := range labelgraph.Edges {
+		for i, edge := range labelgraph.Edges {
 			// if it was already examined, continue
 			if edge.Id1 == 0 {
 				continue
@@ -799,18 +805,20 @@ func (d *Data) handleWeightUpdate(uuid dvid.UUID, w http.ResponseWriter, labelgr
 			if err != nil {
 				err = db.AddEdge(key, edge.Id1, edge.Id2, edge.Weight)
 				if err != nil {
+					transaction_group.closeTransaction()
 					return fmt.Errorf("Failed to add edge: %s\n", err.Error())
 				}
 			} else {
 				// increment/decrement weight
 				err = db.SetEdgeWeight(key, edge.Id1, edge.Id2, storededge.Weight+edge.Weight)
 				if err != nil {
+					transaction_group.closeTransaction()
 					return fmt.Errorf("Failed to update edge: %s\n", err.Error())
 				}
 			}
-			// do not revisit
-			edge.Id1 = 0
 
+			// do not revisit
+			labelgraph.Edges[i].Id1 = 0
 		}
 
 		if leftover {
@@ -999,7 +1007,7 @@ func (d *Data) handlePropertyTransaction(uuid dvid.UUID, w http.ResponseWriter, 
 	edgemode := false
 	if path[0] == "edges" {
 		edgemode = true
-	} else if path[1] != "vertices" {
+	} else if path[0] != "vertices" {
 		return fmt.Errorf("Must specify edges or vertices in URI")
 	}
 	propertyname := path[1]
@@ -1102,14 +1110,16 @@ func (d *Data) handlePropertyTransaction(uuid dvid.UUID, w http.ResponseWriter, 
 			} else {
 				dataout, err = db.GetVertexProperty(key, id, propertyname)
 			}
-			if err != nil {
-				return fmt.Errorf("Failed to get property %s: %s\n", propertyname, err.Error())
-			}
-			uncompress := true
-			data_serialized, _, e := dvid.DeserializeData(dataout, uncompress)
-			if e != nil {
-				err = fmt.Errorf("Unable to deserialize data for property '%s': %s\n", propertyname, e.Error())
-				return err
+
+			// serialize return data only if there is return data and no error;
+			// otherwise return just return the id and size of 0
+			var data_serialized []byte
+			if (err == nil) && len(dataout) > 0 {
+				uncompress := true
+				data_serialized, _, err = dvid.DeserializeData(dataout, uncompress)
+				if err != nil {
+					return fmt.Errorf("Unable to deserialize data for property '%s': %s\n", propertyname, err.Error())
+				}
 			}
 
 			// save transaction
@@ -1318,7 +1328,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, jsonStr)
 		return nil
-	case "substack":
+	case "subgraph":
 		labelgraph, err := d.ExtractGraph(r)
 		if err != nil {
 			return err
