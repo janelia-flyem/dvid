@@ -719,6 +719,14 @@ func (d *Data) ServeTile(uuid dvid.UUID, w http.ResponseWriter, r *http.Request,
 	}
 	indexZYX := dvid.IndexZYX{tileCoord.Value(0), tileCoord.Value(1), tileCoord.Value(2)}
 	data, err := d.getTileData(uuid, shape, Scaling(scaling), indexZYX)
+	if err != nil {
+		server.BadRequest(w, r, err.Error())
+		return err
+	}
+	if data == nil {
+		http.NotFound(w, r)
+		return nil
+	}
 
 	switch d.Encoding {
 	case LZ4:
@@ -736,10 +744,6 @@ func (d *Data) ServeTile(uuid dvid.UUID, w http.ResponseWriter, r *http.Request,
 	if err != nil {
 		server.BadRequest(w, r, err.Error())
 		return err
-	}
-	if data == nil {
-		http.NotFound(w, r)
-		return nil
 	}
 	if _, err = w.Write(data); err != nil {
 		return err
