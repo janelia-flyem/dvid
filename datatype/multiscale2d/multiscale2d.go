@@ -659,6 +659,8 @@ func (d *Data) GetImage(uuid dvid.UUID, geom dvid.Geometry, isotropic bool) (*dv
 		for x0 < dstW {
 			wg.Add(1)
 			go func(x0, y0, x1, y1 int32) {
+				defer wg.Done()
+
 				// Get this tile from datastore
 				tileCoord, err := slice.PlaneToChunkPoint3d(x0, y0, minSlice.StartPoint(), levelSpec.TileSize)
 				goImg, err := d.GetTile(uuid, slice, Scaling(0), dvid.IndexZYX(tileCoord))
@@ -674,7 +676,6 @@ func (d *Data) GetImage(uuid dvid.UUID, geom dvid.Geometry, isotropic bool) (*dv
 				// Paste the pertinent rectangle from this tile into our destination.
 				r := image.Rect(int(x0), int(y0), int(x1), int(y1))
 				draw.Draw(dst.GetDrawable(), r, goImg, ptInTile, draw.Src)
-				wg.Done()
 			}(x0, y0, x1, y1)
 			x0 = x1
 			x1 += tileW
