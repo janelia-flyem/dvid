@@ -30,6 +30,9 @@ import (
 const (
 	Version = "0.1"
 	RepoUrl = "github.com/janelia-flyem/dvid/datatype/labels64"
+
+	// Don't allow requests that will return more than this amount of data.
+	MaxDataRequest = dvid.Giga
 )
 
 const HelpMessage = `
@@ -417,7 +420,16 @@ func (d *Data) NewExtHandler(geom dvid.Geometry, img interface{}) (voxels.ExtHan
 	var data []byte
 
 	if img == nil {
-		data = make([]byte, int64(bytesPerVoxel)*geom.NumVoxels())
+		numVoxels := geom.NumVoxels()
+		if numVoxels <= 0 {
+			return nil, fmt.Errorf("Illegal geometry requested: %s", geom)
+		}
+		requestSize := int64(bytesPerVoxel) * numVoxels
+		if requestSize > MaxDataRequest {
+			return nil, fmt.Errorf("Requested payload (%d bytes) exceeds this DVID server's set limit (%d)",
+				requestSize, MaxDataRequest)
+		}
+		data = make([]byte, requestSize)
 	} else {
 		switch t := img.(type) {
 		case image.Image:

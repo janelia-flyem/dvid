@@ -27,9 +27,8 @@ const (
 	Version = "0.8"
 	RepoUrl = "github.com/janelia-flyem/dvid/datatype/voxels"
 
-	// Don't allow requests for more than this many voxels, which is larger than
-	// 1000 x 1000 x 1000 volume, or 30000 x 30000 image.
-	MaxVoxelsRequest = dvid.Giga
+	// Don't allow requests that will return more than this amount of data.
+	MaxDataRequest = dvid.Giga
 )
 
 const HelpMessage = `
@@ -1820,11 +1819,12 @@ func (d *Data) NewExtHandler(geom dvid.Geometry, img interface{}) (ExtHandler, e
 		if numVoxels <= 0 {
 			return nil, fmt.Errorf("Illegal geometry requested: %s", geom)
 		}
-		if numVoxels > MaxVoxelsRequest {
-			return nil, fmt.Errorf("Requested # voxels (%d) exceeds this DVID server's set limit (%d)",
-				geom.NumVoxels(), MaxVoxelsRequest)
+		requestSize := int64(bytesPerVoxel) * numVoxels
+		if requestSize > MaxDataRequest {
+			return nil, fmt.Errorf("Requested payload (%d bytes) exceeds this DVID server's set limit (%d)",
+				requestSize, MaxDataRequest)
 		}
-		voxels.data = make([]uint8, int64(bytesPerVoxel)*geom.NumVoxels())
+		voxels.data = make([]uint8, requestSize)
 	} else {
 		switch t := img.(type) {
 		case image.Image:
