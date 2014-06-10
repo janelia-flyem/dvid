@@ -1462,6 +1462,11 @@ func (r Resolution) IsIsotropic() bool {
 	return true
 }
 
+type Metadata struct {
+	Axes       []Axis
+	Properties Properties
+}
+
 type Properties struct {
 	// Values describes the data type/label for each value within a voxel.
 	Values dvid.DataValues
@@ -1477,11 +1482,6 @@ type Properties struct {
 
 	Resolution
 	Extents
-}
-
-type Metadata struct {
-	Axes   []Axis
-	Values dvid.DataValues
 }
 
 type Axis struct {
@@ -1591,7 +1591,7 @@ func (props *Properties) NdDataMetadata() (string, error) {
 			Offset:     offset.Value(uint8(dim)),
 		})
 	}
-	metadata.Values = props.Values
+	metadata.Properties = *props
 
 	m, err := json.Marshal(metadata)
 	if err != nil {
