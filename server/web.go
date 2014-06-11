@@ -38,12 +38,6 @@ const WebHelp = `
     <meta http-equiv="X-UA-Compatible" content="chrome=1" />
     <meta name="description" content="DVID Web Server Home Page" />
 
-    <link rel="stylesheet" type="text/css" media="screen" href="/stylesheets/stylesheet.css">
-    <link rel="stylesheet" type="text/css" media="screen" href="/stylesheets/raml.css">
-
-    <script src="/js/raml-vendor.js"></script>
-    <script src="/js/raml-app.js"></script>
-
     <title>DVID Web Server</title>
   </head>
 
@@ -76,8 +70,6 @@ const WebHelp = `
            The DVID API is specified via RAML that can be accessed at /interface.
         </p>
 
-        <raml-console src="/interface/raw" />
-        
         <h3>Licensing</h3>
         <p>DVID is released under the
             <a href="http://janelia-flyem.github.com/janelia_farm_license.html">Janelia Farm license</a>, a
@@ -93,7 +85,6 @@ const WebHelp = `
       </footer>
     </div>
 
-    
 
   </body>
 </html>

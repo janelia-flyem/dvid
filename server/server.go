@@ -355,9 +355,8 @@ func (service *Service) ServeHttp(address, clientDir string) {
 	}
 
 	// Handle RAML interface
-	http.HandleFunc("/interface/raw", logHttpPanics(service.interfaceHandler))
+	http.HandleFunc("/interface/", logHttpPanics(service.interfaceHandler))
 	http.HandleFunc("/interface/version", logHttpPanics(versionHandler))
-	http.HandleFunc("/interface", logHttpPanics(service.apiHelpHandler))
 
 	// Handle Level 2 REST API.
 	http.HandleFunc(WebAPIPath, logHttpPanics(apiHandler))
