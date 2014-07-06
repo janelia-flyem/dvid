@@ -241,19 +241,22 @@ func OpenDatastore(datastorePath string) (service *Service, err error) {
 	return
 }
 
-// Service holds information on the servers attached to a DVID datastore.  If more than
-// one storage engine is used by a DVID server, e.g., polyglot persistence where graphs
-// are managed by a graph database and key-value by a key-value database, this would
-// be the level at which the storage engines are integrated.
+// StandaloneService adds logging and tailorable web addressing if we are running DVID on
+// local servers instead of a managed cloud like Google.
+type StandaloneService struct {
+	Service
+
+	// LogFile is the local file name for log output.
+	LogFile string
+
+	// The address for http server.
+	WebAddress string
+}
+
+// Service holds what we need to run an http service using various storage engines.
 type Service struct {
 	// The currently opened DVID datastore
 	*datastore.Service
-
-	// Error log directory
-	ErrorLogDir string
-
-	// The address of the web server
-	WebAddress string
 
 	// The path to the DVID web client
 	WebClientPath string

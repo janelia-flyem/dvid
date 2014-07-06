@@ -179,8 +179,8 @@ func GetOptions(create bool, config dvid.Config) (*leveldbOptions, error) {
 	return opt, nil
 }
 
-// NewStore returns a leveldb backend.
-func NewStore(path string, create bool, config dvid.Config) (Engine, error) {
+// NewKeyValueStore returns a leveldb backend.
+func NewKeyValueStore(path string, create bool, config dvid.Config) (Engine, error) {
 	dvid.StartCgo()
 	defer dvid.StopCgo()
 

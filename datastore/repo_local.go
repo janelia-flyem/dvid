@@ -1,99 +1,113 @@
+// +build !clustered,!gcloud
+
 /*
-	This file contains code for the Dataset, a version DAG and all the Data within its
-	nodes.
+	This file contains code for handling a Repo, the basic unit of versioning in DVID,
+	and Repos, a collection of Repo.  A Repo consists of a DAG where nodes can be
+	optionally locked.
+
+	For non-clustered, non-cloud ("local") DVID servers, we can get away with a simple
+	in-memory implementation that persists to the MetadataStore when needed.
 */
 
 package datastore
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/janelia-flyem/dvid/datatype"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
 )
 
-// Datasets holds information on all the Dataset available.
-type Datasets struct {
-	writeLock sync.Mutex // guards the fields below
+var (
+	ErrModifyLockedNode = errors.New("can't modify locked node")
+)
 
-	// Keep list of Dataset.  Could be much smaller than mapUUID which contains
-	// all versions of all Dataset.
-	list []*Dataset
+// Repos holds information on all the Repo available.
+type Repos struct {
+	sync.Mutex
 
-	// Efficiently maps all UUIDs to the version DAG from which it came.
-	mapUUID map[dvid.UUID]*Dataset
+	// Keep list of available Repo.  Could be much smaller than mapUUID which contains
+	// all versions of all Repo.
+	available []*Repo
 
-	// Keep track of dataset local IDs and their dataset.
-	dsetIDs map[dvid.DatasetLocalID]*Dataset
+	// Map all UUIDs to the repos from which they came.
+	mapUUID map[dvid.UUID]*Repo
 
-	// Counter that provides the local ID of the next new dataset.
-	newDatasetID dvid.DatasetLocalID
+	// Map all local ids for repo nodes to the repos from which they came.
+	nodeIDs map[dvid.NodeID]*Repo
+
+	// Counters that provide the local IDs of the next new repo, version, or data instance.
+	newRepoID     dvid.RepoID
+	newVersionID  dvid.VersionID
+	newInstanceID dvid.InstanceID
 }
 
-// DataServiceByUUID returns a service for data of a given name under a Dataset referenced by UUID.
-func (dsets *Datasets) DataServiceByUUID(u dvid.UUID, name dvid.DataString) (DataService, error) {
-	// Determine the dataset that contains the node with this UUID
-	dataset, found := dsets.mapUUID[u]
+// DataServiceByUUID returns a service for data of a given name under a Repo referenced by UUID.
+func (dsets *Repos) DataServiceByUUID(u dvid.UUID, name dvid.DataString) (DataService, error) {
+	// Determine the repo that contains the node with this UUID
+	repo, found := dsets.mapUUID[u]
 	if !found {
 		return nil, fmt.Errorf("No node with UUID %s found", u)
 	}
-	dataservice, err := dataset.DataService(name)
+	dataservice, err := repo.DataService(name)
 	if err != nil {
 		return nil, fmt.Errorf("No data named '%s' at node with UUID %s: %s", name, u, err.Error())
 	}
 	return dataservice, nil
 }
 
-// DataServiceByLocalID returns a service for data of a given name under a Dataset referenced by local ID.
-func (dsets *Datasets) DataServiceByLocalID(id dvid.DatasetLocalID, name dvid.DataString) (DataService, error) {
-	// Determine the dataset that contains the node with this UUID
-	dataset, found := dsets.dsetIDs[id]
+// DataServiceByLocalID returns a service for data of a given name under a Repo referenced by local ID.
+func (dsets *Repos) DataServiceByLocalID(id dvid.RepoLocalID, name dvid.DataString) (DataService, error) {
+	// Determine the repo that contains the node with this UUID
+	repo, found := dsets.dsetIDs[id]
 	if !found {
-		return nil, fmt.Errorf("No dataset with local ID '%d' found", id)
+		return nil, fmt.Errorf("No repo with local ID '%d' found", id)
 	}
-	dataservice, err := dataset.DataService(name)
+	dataservice, err := repo.DataService(name)
 	if err != nil {
-		return nil, fmt.Errorf("No data named '%s' at local dataset ID %d: %s", name, id, err.Error())
+		return nil, fmt.Errorf("No data named '%s' at local repo ID %d: %s", name, id, err.Error())
 	}
 	return dataservice, nil
 }
 
-// NOTE: Alterations of Datasets should be approached through datastore.Service since it
-// will coordinate persistence of in-memory Datasets as well as multiple storage engines.
+// NOTE: Alterations of Repos should be approached through datastore.Service since it
+// will coordinate persistence of in-memory Repos as well as multiple storage engines.
 
-// DatasetFromUUID returns a dataset given a UUID.
-func (dsets *Datasets) DatasetFromUUID(u dvid.UUID) (*Dataset, error) {
-	dataset, found := dsets.mapUUID[u]
+// RepoFromUUID returns a repo given a UUID.
+func (dsets *Repos) RepoFromUUID(u dvid.UUID) (*Repo, error) {
+	repo, found := dsets.mapUUID[u]
 	if !found {
-		return nil, fmt.Errorf("DatasetFromUUID(): Illegal UUID (%s) not found", u)
+		return nil, fmt.Errorf("RepoFromUUID(): Illegal UUID (%s) not found", u)
 	}
-	return dataset, nil
+	return repo, nil
 }
 
-// DatasetFromLocalID returns a dataset from a local dataset ID.
-func (dsets *Datasets) DatasetFromLocalID(id dvid.DatasetLocalID) (*Dataset, error) {
-	dataset, found := dsets.dsetIDs[id]
+// RepoFromLocalID returns a repo from a local repo ID.
+func (dsets *Repos) RepoFromLocalID(id dvid.RepoLocalID) (*Repo, error) {
+	repo, found := dsets.dsetIDs[id]
 	if !found {
-		return nil, fmt.Errorf("DatasetFromLocalID(): Illegal local dataset ID (%d) not found", id)
+		return nil, fmt.Errorf("RepoFromLocalID(): Illegal local repo ID (%d) not found", id)
 	}
-	return dataset, nil
+	return repo, nil
 }
 
-// DatasetFromString returns a dataset from a UUID string.
+// RepoFromString returns a repo from a UUID string.
 // Partial matches are accepted as long as they are unique for a datastore.  So if
 // a datastore has nodes with UUID strings 3FA22..., 7CD11..., and 836EE...,
 // we can still find a match even if given the minimum 3 letters.  (We don't
 // allow UUID strings of less than 3 letters just to prevent mistakes.)
-func (dsets *Datasets) DatasetFromString(str string) (dataset *Dataset, u dvid.UUID, err error) {
+func (dsets *Repos) RepoFromString(str string) (repo *Repo, u dvid.UUID, err error) {
 	numMatches := 0
 	for dsetUUID, dset := range dsets.mapUUID {
 		if strings.HasPrefix(string(dsetUUID), str) {
 			numMatches++
-			dataset = dset
+			repo = dset
 			u = dsetUUID
 		}
 	}
@@ -107,9 +121,9 @@ func (dsets *Datasets) DatasetFromString(str string) (dataset *Dataset, u dvid.U
 
 // Datatypes returns a map of all unique data types where the key is the
 // unique URL identifying the data type.  Since type names can collide
-// across datasets, we do not return the abbreviated data type names.
-func (dsets *Datasets) Datatypes() map[UrlString]TypeService {
-	typemap := make(map[UrlString]TypeService)
+// across repos, we do not return the abbreviated data type names.
+func (dsets *Repos) Datatypes() map[UrlString]datatype.Service {
+	typemap := make(map[UrlString]datatype.Service)
 	for _, dset := range dsets.list {
 		for _, dataservice := range dset.DataMap {
 			typemap[dataservice.DatatypeUrl()] = dataservice
@@ -121,7 +135,7 @@ func (dsets *Datasets) Datatypes() map[UrlString]TypeService {
 // VerifyCompiledTypes will return an error if any required data type in the datastore
 // configuration was not compiled into DVID executable.  Check is done by more exact
 // URL and not the data type name.
-func (dsets *Datasets) VerifyCompiledTypes() error {
+func (dsets *Repos) VerifyCompiledTypes() error {
 	var errMsg string
 	for _, dset := range dsets.list {
 		for name, data := range dset.DataMap {
@@ -138,19 +152,19 @@ func (dsets *Datasets) VerifyCompiledTypes() error {
 	return nil
 }
 
-// newDataset creates a new Dataset, which constitutes a version DAG and allows storing
+// newRepo creates a new Repo, which constitutes a version DAG and allows storing
 // arbitrary data within the nodes of the DAG.
-func (dsets *Datasets) newDataset() (dset *Dataset, err error) {
+func (dsets *Repos) newRepo() (dset *Repo, err error) {
 	dsets.writeLock.Lock()
 
-	dset = &Dataset{
+	dset = &Repo{
 		VersionDAG: NewVersionDAG(),
-		DatasetID:  dsets.newDatasetID,
+		RepoID:     dsets.newRepoID,
 	}
-	dsets.newDatasetID++
+	dsets.newRepoID++
 	dsets.list = append(dsets.list, dset)
 	dsets.mapUUID[dset.Root] = dset
-	dsets.dsetIDs[dset.DatasetID] = dset
+	dsets.dsetIDs[dset.RepoID] = dset
 
 	dsets.writeLock.Unlock()
 	return
@@ -158,8 +172,8 @@ func (dsets *Datasets) newDataset() (dset *Dataset, err error) {
 
 // newChild creates a new child node off a LOCKED parent node.  Will return
 // an error if the parent node has not been locked.
-func (dsets *Datasets) newChild(parent dvid.UUID) (dset *Dataset, u dvid.UUID, err error) {
-	// Find the Dataset with this UUID
+func (dsets *Repos) newChild(parent dvid.UUID) (dset *Repo, u dvid.UUID, err error) {
+	// Find the Repo with this UUID
 	var found bool
 	dset, found = dsets.mapUUID[parent]
 	if !found {
@@ -167,7 +181,7 @@ func (dsets *Datasets) newChild(parent dvid.UUID) (dset *Dataset, u dvid.UUID, e
 		return
 	}
 
-	// Create the child in this Dataset's DAG
+	// Create the child in this Repo's DAG
 	u, err = dset.VersionDAG.newChild(parent)
 	if err != nil {
 		return
@@ -176,26 +190,26 @@ func (dsets *Datasets) newChild(parent dvid.UUID) (dset *Dataset, u dvid.UUID, e
 	return
 }
 
-// -- Datasets Serialization and Deserialization ---
+// -- Repos Serialization and Deserialization ---
 
-type serializableDatasets struct {
-	DatasetsUUID []dvid.UUID
-	NewDatasetID dvid.DatasetLocalID
+type serializableRepos struct {
+	ReposUUID []dvid.UUID
+	NewRepoID dvid.RepoLocalID
 }
 
-func (dsets *Datasets) serializableStruct() (sdata *serializableDatasets) {
-	sdata = &serializableDatasets{
-		DatasetsUUID: []dvid.UUID{},
-		NewDatasetID: dsets.newDatasetID,
+func (dsets *Repos) serializableStruct() (sdata *serializableRepos) {
+	sdata = &serializableRepos{
+		ReposUUID: []dvid.UUID{},
+		NewRepoID: dsets.newRepoID,
 	}
 	for _, dset := range dsets.list {
-		sdata.DatasetsUUID = append(sdata.DatasetsUUID, dset.Root)
+		sdata.ReposUUID = append(sdata.ReposUUID, dset.Root)
 	}
 	return
 }
 
 // MarshalBinary fulfills the encoding.BinaryMarshaler interface.
-func (dsets *Datasets) MarshalBinary() ([]byte, error) {
+func (dsets *Repos) MarshalBinary() ([]byte, error) {
 	compression, err := dvid.NewCompression(dvid.LZ4, dvid.DefaultCompression)
 	if err != nil {
 		return nil, err
@@ -203,36 +217,36 @@ func (dsets *Datasets) MarshalBinary() ([]byte, error) {
 	return dvid.Serialize(dsets.serializableStruct(), compression, dvid.CRC32)
 }
 
-// Deserialize converts a serialization to Datasets
-func (dsets *Datasets) deserialize(s []byte) (*serializableDatasets, error) {
-	deserialization := new(serializableDatasets)
+// Deserialize converts a serialization to Repos
+func (dsets *Repos) deserialize(s []byte) (*serializableRepos, error) {
+	deserialization := new(serializableRepos)
 	err := dvid.Deserialize(s, deserialization)
 	if err != nil {
-		return nil, fmt.Errorf("Error in deserializing datasets: %s", err.Error())
+		return nil, fmt.Errorf("Error in deserializing repos: %s", err.Error())
 	}
 	return deserialization, nil
 }
 
-// MarshalJSON returns the JSON of just the list of Dataset.
-func (dsets *Datasets) MarshalJSON() (m []byte, err error) {
+// MarshalJSON returns the JSON of just the list of Repo.
+func (dsets *Repos) MarshalJSON() (m []byte, err error) {
 	return json.Marshal(dsets.serializableStruct())
 }
 
-// AllJSON returns JSON of all the datasets information.
-func (dsets *Datasets) AllJSON() (m []byte, err error) {
+// AllJSON returns JSON of all the repos information.
+func (dsets *Repos) AllJSON() (m []byte, err error) {
 	data := struct {
-		Datasets []*Dataset
+		Repos []*Repo
 	}{
 		dsets.list,
 	}
 	return json.Marshal(data)
 }
 
-// Load retrieves Datasets and all referenced Dataset from the storage engine.
-func (dsets *Datasets) Load(db storage.OrderedKeyValueGetter) (err error) {
-	// Get the the map of all UUIDs to local dataset IDs
+// Load retrieves Repos and all referenced Repo from the storage engine.
+func (dsets *Repos) Load(db storage.OrderedKeyValueGetter) (err error) {
+	// Get the the map of all UUIDs to local repo IDs
 	var data []byte
-	data, err = db.Get(&DatasetsKey{})
+	data, err = db.Get(&ReposKey{})
 	if err != nil {
 		return
 	}
@@ -241,44 +255,44 @@ func (dsets *Datasets) Load(db storage.OrderedKeyValueGetter) (err error) {
 		return err
 	}
 
-	// Get every Dataset (range query)
-	keyvalues, err := db.GetRange(MinDatasetKey(), MaxDatasetKey())
+	// Get every Repo (range query)
+	keyvalues, err := db.GetRange(MinRepoKey(), MaxRepoKey())
 	if err != nil {
 		return err
 	}
 
-	// Check our expected # of Dataset == actually loaded # of Dataset.
-	if len(keyvalues) != len(deserialization.DatasetsUUID) {
-		return fmt.Errorf("Stored Datasets does not agree with the # of Dataset entries: %d vs %d",
-			len(deserialization.DatasetsUUID), len(keyvalues))
+	// Check our expected # of Repo == actually loaded # of Repo.
+	if len(keyvalues) != len(deserialization.ReposUUID) {
+		return fmt.Errorf("Stored Repos does not agree with the # of Repo entries: %d vs %d",
+			len(deserialization.ReposUUID), len(keyvalues))
 	}
-	if int(deserialization.NewDatasetID) < len(keyvalues) {
-		return fmt.Errorf("Unexpected stored new dataset ID %d < current # datasets (%d)!",
-			deserialization.NewDatasetID, len(keyvalues))
+	if int(deserialization.NewRepoID) < len(keyvalues) {
+		return fmt.Errorf("Unexpected stored new repo ID %d < current # repos (%d)!",
+			deserialization.NewRepoID, len(keyvalues))
 	}
-	dsets.newDatasetID = deserialization.NewDatasetID
+	dsets.newRepoID = deserialization.NewRepoID
 
-	// Reconstruct the Datasets by associating UUIDs.
-	dsets.list = []*Dataset{}
-	dsets.mapUUID = make(map[dvid.UUID]*Dataset)
-	dsets.dsetIDs = make(map[dvid.DatasetLocalID]*Dataset)
+	// Reconstruct the Repos by associating UUIDs.
+	dsets.list = []*Repo{}
+	dsets.mapUUID = make(map[dvid.UUID]*Repo)
+	dsets.dsetIDs = make(map[dvid.RepoLocalID]*Repo)
 	for _, value := range keyvalues {
-		dataset := new(Dataset)
-		err := dvid.Deserialize(value.V, dataset)
+		repo := new(Repo)
+		err := dvid.Deserialize(value.V, repo)
 		if err != nil {
 			return err
 		}
-		dsets.list = append(dsets.list, dataset)
-		for u, _ := range dataset.Nodes {
-			dsets.mapUUID[u] = dataset
+		dsets.list = append(dsets.list, repo)
+		for u, _ := range repo.Nodes {
+			dsets.mapUUID[u] = repo
 		}
-		dsets.dsetIDs[dataset.DatasetID] = dataset
+		dsets.dsetIDs[repo.RepoID] = repo
 	}
 	return
 }
 
-// Put stores Datasets, overwriting whatever was there before.
-func (dsets *Datasets) Put(db storage.OrderedKeyValueSetter) error {
+// Put stores Repos, overwriting whatever was there before.
+func (dsets *Repos) Put(db storage.OrderedKeyValueSetter) error {
 	var mutex sync.Mutex
 	mutex.Lock()
 	defer mutex.Unlock()
@@ -290,41 +304,57 @@ func (dsets *Datasets) Put(db storage.OrderedKeyValueSetter) error {
 	}
 
 	// Put data
-	return db.Put(&DatasetsKey{}, serialization)
+	return db.Put(&ReposKey{}, serialization)
 }
 
-// Dataset is a set of Data with an associated version DAG.
-type Dataset struct {
-	*VersionDAG
+// Repo is a set of Data with an associated version DAG.
+type Repo struct {
+	dag *VersionDAG
 
-	// Alias is an optional user-supplied string to identify this dataset
+	// alias is an optional user-supplied string to identify this repo
 	// in a more friendly way than a UUID.  There are no guarantees that
-	// this string is unique across all datasets.
-	Alias string
+	// this string is unique across all repos.
+	alias string
 
-	// DatasetID is the 32-bit identifier that is DVID server-specific.
-	DatasetID dvid.DatasetLocalID
-
-	// DataMap keeps the dataset-specific names for instances of data types
-	// in this dataset.  Although this is public, access should be through
-	// the DataService(name) function to also match possible prefix data names,
-	// e.g., multichannel types.
-	DataMap map[dvid.DataString]DataService
+	// instances keeps the repo-specific names for instances of data types.
+	instances map[dvid.DataString]DataService
 }
 
-// TypeService returns the TypeService underlying data of a given name.
-func (dset *Dataset) TypeService(name dvid.DataString) (t TypeService, err error) {
+/*
+// AddChildNode adds a new version as a child of the node with given UUID.
+func (r *Repo) AddChildNode(uuid dvid.UUID) error {
+
+}
+
+// AddDataInstance adds a new instance of the given datatype.Service to the repo.
+func (r *Repo) AddDataInstance(name dvid.DataString, ts datatype.Service, config dvid.Config) error {
+
+}
+
+// ModifyUnversionedInstance modifies unversioned properties of a data instance.
+func (r *Repo) ModifyUnversionedInstance(name dvid.DataString, config dvid.Config) error {
+
+}
+
+// ModifyVersionedInstance modifies unversioned properties of a data instance.
+func (r *Repo) ModifyVersionedInstance(name dvid.DataString, uuid dvid.UUID, config dvid.Config) error {
+	// If locked node, return error.
+}
+*/
+
+// TypeService returns the datatype.Service underlying data of a given name.
+func (dset *Repo) TypeService(name dvid.DataString) (t datatype.Service, err error) {
 	data, err := dset.DataService(name)
 	if err != nil {
 		err = fmt.Errorf("Cannot get type of unknown data '%s'", name)
 		return
 	}
-	t = data.(TypeService)
+	t = data.(datatype.Service)
 	return
 }
 
 // DataService returns a DataService for data of a given name.
-func (dset *Dataset) DataService(name dvid.DataString) (dataservice DataService, err error) {
+func (dset *Repo) DataService(name dvid.DataString) (dataservice DataService, err error) {
 	var found bool
 	dataservice, found = dset.DataMap[name]
 	if !found {
@@ -341,7 +371,7 @@ func (dset *Dataset) DataService(name dvid.DataString) (dataservice DataService,
 }
 
 // JSONString returns the JSON for this Data's configuration
-func (dset *Dataset) JSONString() (jsonStr string, err error) {
+func (dset *Repo) JSONString() (jsonStr string, err error) {
 	m, err := json.Marshal(dset)
 	if err != nil {
 		return "", err
@@ -349,13 +379,13 @@ func (dset *Dataset) JSONString() (jsonStr string, err error) {
 	return string(m), nil
 }
 
-// Key returns a Key for this Dataset
-func (dset *Dataset) Key() storage.Key {
-	return &DatasetKey{dset.DatasetID}
+// Key returns a Key for this Repo
+func (dset *Repo) Key() storage.Key {
+	return &RepoKey{dset.RepoID}
 }
 
-// Put stores a Dataset into a storage engine, overwriting whatever was there before.
-func (dset *Dataset) Put(db storage.OrderedKeyValueSetter) error {
+// Put stores a Repo into a storage engine, overwriting whatever was there before.
+func (dset *Repo) Put(db storage.OrderedKeyValueSetter) error {
 	var mutex sync.Mutex
 	mutex.Lock()
 	defer mutex.Unlock()
@@ -371,19 +401,19 @@ func (dset *Dataset) Put(db storage.OrderedKeyValueSetter) error {
 	return db.Put(dset.Key(), serialization)
 }
 
-// newData adds a new, named instance of a data type to dataset.  Settings can be passed
+// newData adds a new, named instance of a data type to repo.  Settings can be passed
 // via the 'config' argument.  For example, config["versioned"] will specify whether
 // the data is mutable across nodes in the version DAG or is simply unversioned.
-func (dset *Dataset) newData(name dvid.DataString, typeName dvid.TypeString, config dvid.Config) error {
-	// Only allow unique data names per dataset.
+func (dset *Repo) newData(name dvid.DataString, typeName dvid.TypeString, config dvid.Config) error {
+	// Only allow unique data names per repo.
 	// TODO -- Do more elaborate check that prevents prefixing data names using
 	// data types that allow different suffixes, e.g., multichannel data.
 	dataservice, found := dset.DataMap[name]
 	if found {
-		return fmt.Errorf("Data named '%s' already exists in dataset %s", name, dset.Root)
+		return fmt.Errorf("Data named '%s' already exists in repo %s", name, dset.Root)
 	}
 
-	// Create new data for this dataset.
+	// Create new data for this repo.
 	typeService, err := TypeServiceByName(typeName)
 	if err != nil {
 		return fmt.Errorf("No data type '%s' found [%s]", typeName, err)
@@ -392,7 +422,7 @@ func (dset *Dataset) newData(name dvid.DataString, typeName dvid.TypeString, con
 	dset.mapLock.Lock()
 	defer dset.mapLock.Unlock()
 
-	dataID := &DataID{name, dset.NewDataID, dset.DatasetID}
+	dataID := &DataInstance{name, dset.NewDataID, dset.RepoID}
 	dset.NewDataID++
 	dataservice, err = typeService.NewDataService(dataID, config)
 	if err != nil {
@@ -405,12 +435,12 @@ func (dset *Dataset) newData(name dvid.DataString, typeName dvid.TypeString, con
 	return nil
 }
 
-// modifyData modifies preexisting Data within a Dataset.  Settings can be passed
+// modifyData modifies preexisting Data within a Repo.  Settings can be passed
 // via the 'config' argument.  Only settings within the passed config are modified.
-func (dset *Dataset) modifyData(name dvid.DataString, config dvid.Config) error {
+func (dset *Repo) modifyData(name dvid.DataString, config dvid.Config) error {
 	dataservice, found := dset.DataMap[name]
 	if !found {
-		return fmt.Errorf("Data '%s' not found in dataset %s", name, dset.Root)
+		return fmt.Errorf("Data '%s' not found in repo %s", name, dset.Root)
 	}
 
 	dset.mapLock.Lock()
@@ -444,7 +474,7 @@ type NodeVersion struct {
 	// GlobalID is a globally unique id.
 	GlobalID dvid.UUID
 
-	// VersionID is a Dataset-specific id for each UUID, so we can compress the UUIDs.
+	// VersionID is a Repo-specific id for each UUID, so we can compress the UUIDs.
 	VersionID dvid.VersionLocalID
 
 	// Locked nodes are read-only and can be branched.

@@ -168,7 +168,7 @@ else ()
     # Build DVID with chosen backend
     add_custom_target (dvid-exe
         ${BUILDEM_ENV_STRING} ${GO_ENV} ${CGO_FLAGS} go build -o ${BUILDEM_BIN_DIR}/dvid 
-        -v -tags '${DVID_BACKEND} ${DVID_GRAPHBACKEND}' dvid.go 
+        -v -tags '${DVID_BACKEND} ${DVID_GRAPHBACKEND}' cli/main.go 
         WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
         DEPENDS     ${golang_NAME} ${DVID_BACKEND_DEPEND} gopackages gofuse gojsonschema ${hdf5_NAME}
         COMMENT     "Compiling and installing dvid executable...")

@@ -39,7 +39,7 @@ func (s *DataSuite) TearDownSuite(c *C) {
 	s.service.Shutdown()
 }
 
-func (s *DataSuite) TestDatasetPersistence(c *C) {
+func (s *DataSuite) TestRepoPersistence(c *C) {
 	dir := c.MkDir()
 
 	// Create a new datastore.
@@ -50,7 +50,7 @@ func (s *DataSuite) TestDatasetPersistence(c *C) {
 	service, err := datastore.Open(dir)
 	c.Assert(err, IsNil)
 
-	root, _, err := service.NewDataset()
+	root, _, err := service.NewRepo()
 	c.Assert(err, IsNil)
 
 	c.Assert(service.Lock(root), IsNil)
@@ -72,7 +72,7 @@ func (s *DataSuite) TestDatasetPersistence(c *C) {
 	err = service.NewData(child1_1, "multichan16", "test", config)
 	c.Assert(err, IsNil)
 
-	// Go into the dataset and modify the above data so we can make sure it persist.
+	// Go into the repo and modify the above data so we can make sure it persist.
 	test := dvid.DataString("test")
 	dataservice, err := service.DataServiceByUUID(child1_1, test)
 	c.Assert(err, IsNil)
@@ -80,10 +80,10 @@ func (s *DataSuite) TestDatasetPersistence(c *C) {
 	mchan := dataservice.(*Data)
 	mchan.NumChannels = 18
 
-	oldJSON, err := service.DatasetsAllJSON()
+	oldJSON, err := service.ReposAllJSON()
 	c.Assert(err, IsNil)
 
-	err = service.SaveDataset(child1_1)
+	err = service.SaveRepo(child1_1)
 	c.Assert(err, IsNil)
 
 	service.Shutdown()
@@ -92,7 +92,7 @@ func (s *DataSuite) TestDatasetPersistence(c *C) {
 	service2, err := datastore.Open(dir)
 	c.Assert(err, IsNil)
 
-	newJSON, err := service2.DatasetsAllJSON()
+	newJSON, err := service2.ReposAllJSON()
 	c.Assert(err, IsNil)
 
 	c.Assert(newJSON, DeepEquals, oldJSON)

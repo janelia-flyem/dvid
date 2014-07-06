@@ -10,28 +10,81 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/go/go-uuid/uuid"
 )
 
-// Note: TypeString and DataString are types to add static checks and prevent conflation
-// of the two types of identifiers.
+func init() {
+	// Need to register types that will be used to fulfill interfaces.
+	gob.Register(Point3d{})
+	gob.Register(Point2d{})
+}
 
-// TypeString is a string that is the name of a DVID data type.
-type TypeString string
+// LocalID is a unique id for some data in a DVID instance.  This unique id is a much
+// smaller representation than the actual data (e.g., a version UUID or data type url)
+// and can be represented with fewer bytes in keys.
+type LocalID uint16
 
-// DataString is a string that is the name of DVID data.
-type DataString string
+// LocalID32 is a 32-bit unique id within this DVID instance.
+type LocalID32 uint32
 
-// DatasetLocalID is a DVID server-specific ID that is more compact than a UUID.
-type DatasetLocalID LocalID32
+const (
+	LocalIDSize   = 2
+	LocalID32Size = 4
 
-// DataLocalID is a DVID server-specific ID that is more compact than a (UUID, Data URL).
-type DataLocalID LocalID
+	MaxLocalID   = 0xFFFF
+	MaxLocalID32 = 0xFFFFFFFF
+)
 
-// VersionalLocalID is a DVID server-specific ID that is more compact than a UUID.
-// We assume we do not need more than 16-bits to represent the number of nodes in a
-// version DAG.
-type VersionLocalID LocalID
+// Bytes returns a sequence of bytes encoding this LocalID.  Binary representation
+// will be big-endian to make integers lexigraphically
+func (id LocalID) Bytes() []byte {
+	buf := make([]byte, LocalIDSize, LocalIDSize)
+	binary.BigEndian.PutUint16(buf, uint16(id))
+	return buf
+}
+
+// LocalIDFromBytes returns a LocalID from the start of the slice and the number of bytes used.
+// Note: No error checking is done to ensure byte slice has sufficient bytes for LocalID.
+func LocalIDFromBytes(b []byte) (id LocalID, length int) {
+	return LocalID(binary.BigEndian.Uint16(b)), LocalIDSize
+}
+
+// Bytes returns a sequence of bytes encoding this LocalID32.
+func (id LocalID32) Bytes() []byte {
+	buf := make([]byte, LocalID32Size, LocalID32Size)
+	binary.BigEndian.PutUint32(buf, uint32(id))
+	return buf
+}
+
+// LocalID32FromBytes returns a LocalID from the start of the slice and the number of bytes used.
+// Note: No error checking is done to ensure byte slice has sufficient bytes for LocalID.
+func LocalID32FromBytes(b []byte) (id LocalID32, length int) {
+	return LocalID32(binary.BigEndian.Uint32(b)), LocalID32Size
+}
+
+// ---- Base identifiers of data within DVID -----
+
+// The following identifiers are more compact than the global identifiers such as
+// UUID or URLs, and therefore useful for compressing key sizes.
+
+// InstanceID is a DVID server-specific identifier for data instances.  Each InstanceID
+// is only used within one repo, so all key/values for a repo can be obtained by
+// doing range queries on instances associated with a repo.
+type InstanceID dvid.LocalID32
+
+// RepoID is a DVID server-specific identifier for a particular Repo.
+type RepoID dvid.LocalID32
+
+// VersionID is a DVID server-specific identifier for a particular version or
+// node of a repo's DAG.
+type VersionID dvid.LocalID32
+
+const (
+	MaxInstanceID = dvid.MaxLocalID32
+	MaxRepoID     = dvid.MaxLocalID32
+	MaxVersionID  = dvid.MaxLocalID32
+)
 
 // UUID is a 32 character hexidecimal string ("" if invalid) that uniquely identifies
 // nodes in a datastore's DAG.  We need universally unique identifiers to prevent collisions
@@ -48,11 +101,14 @@ func NewUUID() UUID {
 	return UUID(fmt.Sprintf("%032x", []byte(u)))
 }
 
-func init() {
-	// Need to register types that will be used to fulfill interfaces.
-	gob.Register(Point3d{})
-	gob.Register(Point2d{})
-}
+// Note: TypeString and DataString are types to add static checks and prevent conflation
+// of the two types of identifiers.
+
+// TypeString is a string that is the name of a DVID data type.
+type TypeString string
+
+// DataString is a string that is the name of DVID data.
+type DataString string
 
 type SimplePoint interface {
 	// NumDims returns the dimensionality of this point.

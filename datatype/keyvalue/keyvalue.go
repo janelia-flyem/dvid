@@ -30,13 +30,13 @@ API for 'keyvalue' datatype (github.com/janelia-flyem/dvid/datatype/keyvalue)
 
 Command-line:
 
-$ dvid dataset <UUID> new keyvalue <data name> <settings...>
+$ dvid repo <UUID> new keyvalue <data name> <settings...>
 
-	Adds newly named key/value data to dataset with specified UUID.
+	Adds newly named key/value data to repo with specified UUID.
 
 	Example:
 
-	$ dvid dataset 3f8c new keyvalue stuff
+	$ dvid repo 3f8c new keyvalue stuff
 
     Arguments:
 
@@ -176,7 +176,7 @@ func NewDatatype() (dtype *Datatype) {
 // --- TypeService interface ---
 
 // NewData returns a pointer to new keyvalue data with default values.
-func (dtype *Datatype) NewDataService(id *datastore.DataID, c dvid.Config) (datastore.DataService, error) {
+func (dtype *Datatype) NewDataService(id *datastore.DataInstance, c dvid.Config) (datastore.DataService, error) {
 	basedata, err := datastore.NewDataService(id, dtype, c)
 	if err != nil {
 		return nil, err
@@ -194,7 +194,7 @@ type Data struct {
 }
 
 // GetData gets a value using a key at a given uuid
-func (d *Data) GetData(uuid dvid.UUID, keyStr string) (value []byte, found bool, err error) {
+func (d *Data) GetData(c storage.Context, keyStr string) (value []byte, found bool, err error) {
 	// Compute the key
 	versionID, e := server.VersionLocalID(uuid)
 	if e != nil {
@@ -269,7 +269,8 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 	case "mount":
 		return d.Mount(request, reply)
 	default:
-		return d.UnknownCommand(request)
+		return fmt.Errorf("Unknown command.  Data type '%s' [%s] does not support '%s' command.",
+			d.Name, d.DatatypeName(), request.TypeCommand())
 	}
 	return nil
 }

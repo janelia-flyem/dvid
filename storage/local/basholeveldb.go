@@ -1,4 +1,4 @@
-// +build leveldb
+// +build basholeveldb
 
 package storage
 
@@ -6,17 +6,21 @@ import (
 	"bytes"
 
 	"github.com/janelia-flyem/dvid/dvid"
+	levigo "github.com/janelia-flyem/go/basholeveldb"
 	humanize "github.com/janelia-flyem/go/go-humanize"
-	"github.com/janelia-flyem/go/levigo"
 )
 
+// These constants were guided by Basho documentation and their tuning of leveldb:
+//   https://github.com/basho/leveldb/blob/develop/README
+// See video on "Optimizing LevelDB for Performance and Scale" here:
+//   http://www.youtube.com/watch?v=vo88IdglU_8
 const (
-	Version = "Standard Leveldb"
+	Version = "Basho Leveldb"
 
 	Driver = "github.com/janelia-flyem/go/levigo"
 
 	// Default size of LRU cache that caches frequently used uncompressed blocks.
-	DefaultCacheSize = 1024 * dvid.Mega
+	DefaultCacheSize = 536870912
 
 	// Default # bits for Bloom Filter.  The filter reduces the number of unnecessary
 	// disk reads needed for Get() calls by a large factor.
@@ -44,7 +48,7 @@ const (
 	// so you may wish to adjust this parameter to control memory usage.
 	// Also, a larger write buffer will result in a longer recovery time
 	// the next time the database is opened.
-	DefaultWriteBufferSize = 512 * dvid.Mega
+	DefaultWriteBufferSize = 62914560
 
 	// Write Options
 
@@ -179,8 +183,8 @@ func GetOptions(create bool, config dvid.Config) (*leveldbOptions, error) {
 	return opt, nil
 }
 
-// NewStore returns a leveldb backend.
-func NewStore(path string, create bool, config dvid.Config) (Engine, error) {
+// NewKeyValueStore returns a leveldb backend.
+func NewKeyValueStore(path string, create bool, config dvid.Config) (Engine, error) {
 	dvid.StartCgo()
 	defer dvid.StopCgo()
 
@@ -230,8 +234,6 @@ func (db *LevelDB) GetConfig() dvid.Config {
 	return db.config
 }
 
-// ---- OrderedKeyValueDB interface -----
-
 // Close closes the leveldb and then the I/O abstraction for leveldb.
 func (db *LevelDB) Close() {
 	if db != nil {
@@ -259,24 +261,57 @@ func (db *LevelDB) Close() {
 	}
 }
 
+// Context provides information necessary to compose proper keys for versioning
+// and cloud datastores.
+type LevelDBContext struct {
+	db        *LevelDB
+	ancestors []DataAncestor
+}
+
+// NewStorageContext returns a storage Context that permits computation of
+// keys, etc, for storage operations.
+func NewStorageContext(e Engine, ancestors []DataAncestor) *Context {
+	return &LevelDBContext{e.(*LevelDB), ancestors}
+}
+
+// ---- Context inteface ------
+
+func (c *LevelDBContext) Depth() int {
+	return len(c.ancestors)
+}
+
+func (c *LevelDBContext) Ancestor(depth int) *DataAncestor {
+	if depth >= len(c.ancestors) {
+		return nil
+	}
+	return c.ancestors[depth]
+}
+
 // ---- OrderedKeyValueGetter interface ------
 
 // Get returns a value given a key.
-func (db *LevelDB) Get(k Key) (v []byte, err error) {
+func (c *LevelDBContext) Get(k Key) ([]byte, error) {
 	dvid.StartCgo()
-	ro := db.options.ReadOptions
-	v, err = db.ldb.Get(ro, k.Bytes())
+	ro := c.db.options.ReadOptions
+	keyBytes, err := c.VersionedKey(k)
+	if err != nil {
+		return nil, err
+	}
+	v, err := c.db.ldb.Get(ro, keyBytes)
+	if err != nil {
+		return nil, err
+	}
 	dvid.StopCgo()
 	StoreValueBytesRead <- len(v)
-	return
+	return err
 }
 
 // GetRange returns a range of values spanning (kStart, kEnd) keys.  These key-value
 // pairs will be sorted in ascending key order.
-func (db *LevelDB) GetRange(kStart, kEnd Key) (values []KeyValue, err error) {
+func (c *LevelDBContext) GetRange(kStart, kEnd Key) (values []KeyValue, err error) {
 	dvid.StartCgo()
 	ro := levigo.NewReadOptions()
-	it := db.ldb.NewIterator(ro)
+	it := c.db.ldb.NewIterator(ro)
 	defer func() {
 		it.Close()
 		dvid.StopCgo()
@@ -312,10 +347,10 @@ func (db *LevelDB) GetRange(kStart, kEnd Key) (values []KeyValue, err error) {
 
 // KeysInRange returns a range of present keys spanning (kStart, kEnd).  Values
 // associated with the keys are not read.
-func (db *LevelDB) KeysInRange(kStart, kEnd Key) (keys []Key, err error) {
+func (c *LevelDBContext) KeysInRange(kStart, kEnd Key) (keys []Key, err error) {
 	dvid.StartCgo()
 	ro := levigo.NewReadOptions()
-	it := db.ldb.NewIterator(ro)
+	it := c.db.ldb.NewIterator(ro)
 	defer func() {
 		it.Close()
 		dvid.StopCgo()
@@ -347,10 +382,10 @@ func (db *LevelDB) KeysInRange(kStart, kEnd Key) (keys []Key, err error) {
 }
 
 // ProcessRange sends a range of key-value pairs to chunk handlers.
-func (db *LevelDB) ProcessRange(kStart, kEnd Key, op *ChunkOp, f func(*Chunk)) error {
+func (c *LevelDBContext) ProcessRange(kStart, kEnd Key, op *ChunkOp, f func(*Chunk)) error {
 	dvid.StartCgo()
 	ro := levigo.NewReadOptions()
-	it := db.ldb.NewIterator(ro)
+	it := c.db.ldb.NewIterator(ro)
 	defer func() {
 		it.Close()
 		dvid.StopCgo()
@@ -392,11 +427,11 @@ func (db *LevelDB) ProcessRange(kStart, kEnd Key, op *ChunkOp, f func(*Chunk)) e
 // ---- OrderedKeyValueSetter interface ------
 
 // Put writes a value with given key.
-func (db *LevelDB) Put(k Key, v []byte) error {
+func (c *LevelDBContext) Put(k Key, v []byte) error {
 	dvid.StartCgo()
-	wo := db.options.WriteOptions
+	wo := c.db.options.WriteOptions
 	kBytes := k.Bytes()
-	err := db.ldb.Put(wo, kBytes, v)
+	err := c.db.ldb.Put(wo, kBytes, v)
 	dvid.StopCgo()
 	StoreKeyBytesWritten <- len(kBytes)
 	StoreValueBytesWritten <- len(v)
@@ -405,9 +440,9 @@ func (db *LevelDB) Put(k Key, v []byte) error {
 
 // PutRange puts key/value pairs that have been sorted in sequential key order.
 // Current implementation in levigo driver simply does a batch write.
-func (db *LevelDB) PutRange(values []KeyValue) error {
+func (c *LevelDBContext) PutRange(values []KeyValue) error {
 	dvid.StartCgo()
-	wo := db.options.WriteOptions
+	wo := c.db.options.WriteOptions
 	wb := levigo.NewWriteBatch()
 	defer func() {
 		wb.Close()
@@ -420,7 +455,7 @@ func (db *LevelDB) PutRange(values []KeyValue) error {
 		keyBytesPut += len(kBytes)
 		valueBytesPut += len(kv.V)
 	}
-	err := db.ldb.Write(wo, wb)
+	err := c.db.ldb.Write(wo, wb)
 	if err != nil {
 		return err
 	}
@@ -430,10 +465,10 @@ func (db *LevelDB) PutRange(values []KeyValue) error {
 }
 
 // Delete removes a value with given key.
-func (db *LevelDB) Delete(k Key) (err error) {
+func (c *LevelDBContext) Delete(k Key) (err error) {
 	dvid.StartCgo()
-	wo := db.options.WriteOptions
-	err = db.ldb.Delete(wo, k.Bytes())
+	wo := c.db.options.WriteOptions
+	err = c.db.ldb.Delete(wo, k.Bytes())
 	dvid.StopCgo()
 	return
 }
@@ -447,10 +482,10 @@ type goBatch struct {
 }
 
 // NewBatch returns an implementation that allows batch writes
-func (db *LevelDB) NewBatch() Batch {
+func (c *LevelDBContext) NewBatch() Batch {
 	dvid.StartCgo()
 	defer dvid.StopCgo()
-	return &goBatch{levigo.NewWriteBatch(), db.options.WriteOptions, db.ldb}
+	return &goBatch{levigo.NewWriteBatch(), c.db.options.WriteOptions, c.db.ldb}
 }
 
 // --- Batch interface ---

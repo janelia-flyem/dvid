@@ -41,8 +41,8 @@ func (suite *TestSuite) TearDownSuite(c *C) {
 
 // Make sure new grayscale8 data have different IDs.
 func (suite *TestSuite) TestNewDataDifferent(c *C) {
-	// Create a new dataset
-	root, _, err := suite.service.NewDataset()
+	// Create a new repo
+	root, _, err := suite.service.NewRepo()
 	c.Assert(err, IsNil)
 
 	// Add grayscale data
@@ -130,8 +130,8 @@ func (suite *TestSuite) makeGrayscale(c *C, root dvid.UUID, name dvid.DataString
 }
 
 func (suite *TestSuite) TestSubvolGrayscale8(c *C) {
-	// Create a new dataset
-	root, _, err := suite.service.NewDataset()
+	// Create a new repo
+	root, _, err := suite.service.NewRepo()
 	c.Assert(err, IsNil)
 
 	// Add grayscale data
@@ -176,8 +176,8 @@ func (suite *TestSuite) TestSubvolGrayscale8(c *C) {
 }
 
 func (suite *TestSuite) sliceTest(c *C, slice dvid.Geometry) {
-	// Create a new dataset
-	root, _, err := suite.service.NewDataset()
+	// Create a new repo
+	root, _, err := suite.service.NewRepo()
 	c.Assert(err, IsNil)
 
 	// Add grayscale data

@@ -101,7 +101,7 @@ func (d *Data) GetArbitraryImage(uuid dvid.UUID, tlStr, trStr, blStr, resStr str
 	// Iterate across arbitrary image using res increments, retrieving trilinear interpolation
 	// at each point.
 	cache := NewValueCache(100)
-	dataID := d.DataID()
+	dataID := d.DataInstance()
 	keyF := func(pt dvid.Point3d) storage.Key {
 		chunkPt := pt.Chunk(d.BlockSize())
 		index := dvid.IndexZYX(chunkPt.(dvid.ChunkPoint3d)) // TODO: Can we remove this ugliness?

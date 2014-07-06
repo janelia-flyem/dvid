@@ -41,13 +41,13 @@ API for 'labelmap' datatype (github.com/janelia-flyem/dvid/datatype/labelmap)
 
 Command-line:
 
-$ dvid dataset <UUID> new labelmap <data name> <settings...>
+$ dvid repo <UUID> new labelmap <data name> <settings...>
 
-	Adds newly named labelmap data to dataset with specified UUID.
+	Adds newly named labelmap data to repo with specified UUID.
 
 	Example:
 
-	$ dvid dataset 3f8c new labelmap sp2body Labels=mylabels
+	$ dvid repo 3f8c new labelmap sp2body Labels=mylabels
 
     Arguments:
 
@@ -305,7 +305,7 @@ func NewDatatype() (dtype *Datatype) {
 // --- TypeService interface ---
 
 // NewData returns a pointer to new labelmap data with default values.
-func (dtype *Datatype) NewDataService(id *datastore.DataID, c dvid.Config) (datastore.DataService, error) {
+func (dtype *Datatype) NewDataService(id *datastore.DataInstance, c dvid.Config) (datastore.DataService, error) {
 	// Make sure we have valid labels64 data for mapping
 	name, found, err := c.GetString("Labels")
 	if err != nil {
@@ -321,7 +321,7 @@ func (dtype *Datatype) NewDataService(id *datastore.DataID, c dvid.Config) (data
 	}
 
 	// Make sure there is a valid labels64 instance with the given Labels name
-	labelsRef, err := NewLabelsRef(dvid.DataString(name), id.DatasetID())
+	labelsRef, err := NewLabelsRef(dvid.DataString(name), id.RepoID())
 	if err != nil {
 		return nil, err
 	}
@@ -336,11 +336,11 @@ func (dtype *Datatype) Help() string {
 // LabelsRef is a reference to an existing labels64 data
 type LabelsRef struct {
 	name dvid.DataString
-	dset dvid.DatasetLocalID
+	dset dvid.RepoLocalID
 	ptr  *labels64.Data
 }
 
-func NewLabelsRef(name dvid.DataString, dset dvid.DatasetLocalID) (LabelsRef, error) {
+func NewLabelsRef(name dvid.DataString, dset dvid.RepoLocalID) (LabelsRef, error) {
 	ptr, err := labels64.GetByLocalID(dset, name)
 	if err != nil {
 		return LabelsRef{}, err
@@ -349,8 +349,8 @@ func NewLabelsRef(name dvid.DataString, dset dvid.DatasetLocalID) (LabelsRef, er
 }
 
 type labelsExport struct {
-	Name           dvid.DataString
-	DatasetLocalID dvid.DatasetLocalID
+	Name        dvid.DataString
+	RepoLocalID dvid.RepoLocalID
 }
 
 // MarshalJSON implements the json.Marshaler interface.
@@ -366,7 +366,7 @@ func (ref *LabelsRef) UnmarshalJSON(b []byte) error {
 		return err
 	}
 	ref.name = labels.Name
-	ref.dset = labels.DatasetLocalID
+	ref.dset = labels.RepoLocalID
 	return nil
 }
 
@@ -396,11 +396,11 @@ func (ref *LabelsRef) UnmarshalBinary(data []byte) error {
 	if n, err := buf.Read(name); err != nil || n != int(length) {
 		return fmt.Errorf("Error reading label reference name.")
 	}
-	var dset dvid.DatasetLocalID
+	var dset dvid.RepoLocalID
 	if err := binary.Read(buf, binary.LittleEndian, &dset); err != nil {
 		return err
 	}
-	// See if we can associate a dataset pointer, but if not, simply exit and defer
+	// See if we can associate a repo pointer, but if not, simply exit and defer
 	// to GetData() time.
 	labelsName := dvid.DataString(name)
 	ptr, err := labels64.GetByLocalID(dset, labelsName)
@@ -472,7 +472,8 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 		}
 		return d.ApplyLabelMap(request, reply)
 	default:
-		return d.UnknownCommand(request)
+		return fmt.Errorf("Unknown command.  Data type '%s' [%s] does not support '%s' command.",
+			d.Name, d.DatatypeName(), request.TypeCommand())
 	}
 	return nil
 }
@@ -760,7 +761,6 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 					throttleMsg := fmt.Sprintf("Server already running maximum of %d throttled operations",
 						server.MaxThrottledOps)
 					http.Error(w, throttleMsg, http.StatusServiceUnavailable)
-					dvid.Log(dvid.Debug, "Returned 503 since already performing a throttled operation.\n")
 					return nil
 				}
 			}
@@ -919,7 +919,7 @@ func (d *Data) LoadRavelerMaps(request datastore.Request, reply *datastore.Respo
 	maxLabelZ := uint32(labelData.Extents().MaxPoint.Value(2))
 
 	d.Ready = false
-	if err := service.SaveDataset(uuid); err != nil {
+	if err := service.SaveRepo(uuid); err != nil {
 		return err
 	}
 
@@ -1066,9 +1066,9 @@ func (d *Data) ApplyLabelMap(request datastore.Request, reply *datastore.Respons
 	}
 
 	wg := new(sync.WaitGroup)
-	op := &denormOp{labelData, nil, dest.DataID().ID, versionID, nil}
+	op := &denormOp{labelData, nil, dest.DataInstance().ID, versionID, nil}
 
-	dataID := labelData.DataID()
+	dataID := labelData.DataInstance()
 	extents := labelData.Extents()
 	minIndexZ := extents.MinIndex.(dvid.IndexZYX)[2]
 	maxIndexZ := extents.MaxIndex.(dvid.IndexZYX)[2]
@@ -1101,13 +1101,13 @@ func (d *Data) ApplyLabelMap(request datastore.Request, reply *datastore.Respons
 
 	// Set new mapped data to same extents.
 	dest.Properties = labelData.Properties
-	if err := server.DatastoreService().SaveDataset(uuid); err != nil {
+	if err := server.DatastoreService().SaveRepo(uuid); err != nil {
 		dvid.Log(dvid.Normal, "Could not save READY state to data '%s', uuid %s: %s",
 			d.DataName(), uuid, err.Error())
 	}
 
 	// Kickoff denormalizations based on new labels.
-	go dest.ProcessSpatially(uuid)
+	//go dest.ProcessSpatially(uuid)
 
 	return nil
 }
@@ -1240,7 +1240,7 @@ func (d *Data) chunkApplyMap(chunk *storage.Chunk) {
 	op := chunk.Op.(*denormOp)
 	db, err := server.OrderedKeyValueSetter()
 	if err != nil {
-		dvid.Log(dvid.Normal, "Error in %s.ChunkApplyMap(): %s", d.DataID.DataName(), err.Error())
+		dvid.Log(dvid.Normal, "Error in %s.ChunkApplyMap(): %s", d.DataInstance.DataName(), err.Error())
 		return
 	}
 
@@ -1252,7 +1252,7 @@ func (d *Data) chunkApplyMap(chunk *storage.Chunk) {
 	blockData, _, err := dvid.DeserializeData(chunk.V, true)
 	if err != nil {
 		dvid.Log(dvid.Normal, "Unable to deserialize block in '%s': %s\n",
-			d.DataID.DataName(), err.Error())
+			d.DataInstance.DataName(), err.Error())
 		return
 	}
 	blockBytes := len(blockData)
@@ -1289,7 +1289,7 @@ func (d *Data) chunkApplyMap(chunk *storage.Chunk) {
 
 	// Save the results
 	mappedKey := &datastore.DataKey{
-		Dataset: dataKey.Dataset,
+		Repo:    dataKey.Repo,
 		Data:    op.destID,
 		Version: op.versionID,
 		Index:   dataKey.Index,

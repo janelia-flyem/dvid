@@ -8,7 +8,6 @@ import (
 	"log"
 
 	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/janelia-flyem/go/gomdb"
 )
 
 const (
@@ -87,8 +86,8 @@ type LevelDB struct {
 	ldb *levigo.DB
 }
 
-// NewStore returns a lmdb backend.
-func NewStore(path string, create bool, options *Options) (Engine, error) {
+// NewKeyValueStore returns a lmdb backend.
+func NewKeyValueStore(path string, create bool, options *Options) (Engine, error) {
 	// Make sure user has specified the database size.
 	sizeGB, found, err := options.Settings.GetInt("size")
 	if err != nil {

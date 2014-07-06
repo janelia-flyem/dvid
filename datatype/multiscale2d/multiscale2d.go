@@ -40,13 +40,13 @@ API for datatypes derived from multiscale2d (github.com/janelia-flyem/dvid/datat
 
 Command-line:
 
-$ dvid dataset <UUID> new multiscale2d <data name> <settings...>
+$ dvid repo <UUID> new multiscale2d <data name> <settings...>
 
-	Adds multiresolution XY, XZ, and YZ multiscale2d from Source to dataset with specified UUID.
+	Adds multiresolution XY, XZ, and YZ multiscale2d from Source to repo with specified UUID.
 
 	Example:
 
-	$ dvid dataset 3f8c new multiscale2d mymultiscale2d source=mygrayscale format=jpg
+	$ dvid repo 3f8c new multiscale2d mymultiscale2d source=mygrayscale format=jpg
 
     Arguments:
 
@@ -68,15 +68,15 @@ $ dvid dataset <UUID> new multiscale2d <data name> <settings...>
 $ dvid node <UUID> <data name> generate <config JSON file name> <settings...>
 $ dvid -stdin node <UUID> <data name> generate <settings...> < config.json
 
-	Generates multiresolution XY, XZ, and YZ multiscale2d from Source to dataset with specified UUID.
+	Generates multiresolution XY, XZ, and YZ multiscale2d from Source to repo with specified UUID.
 	The resolutions at each scale and the dimensions of the tiles are passed in the configuration
 	JSON.  Only integral multiplications of original resolutions are allowed for scale.  If you
 	want more sophisticated processing, post the multiscale2d tiles directly via HTTP.
 
 	Example:
 
-	$ dvid dataset 3f8c mymultiscale2d generate /path/to/config.json
-	$ dvid -stdin dataset 3f8c mymultiscale2d generate planes="yz;0,1" < /path/to/config.json 
+	$ dvid repo 3f8c mymultiscale2d generate /path/to/config.json
+	$ dvid -stdin repo 3f8c mymultiscale2d generate planes="yz;0,1" < /path/to/config.json 
 
     Arguments:
 
@@ -337,7 +337,7 @@ func NewDatatype() (dtype *Datatype) {
 // --- TypeService interface ---
 
 // NewData returns a pointer to new tile data with default values.
-func (dtype *Datatype) NewDataService(id *datastore.DataID, config dvid.Config) (
+func (dtype *Datatype) NewDataService(id *datastore.DataInstance, config dvid.Config) (
 	datastore.DataService, error) {
 
 	// Make sure we have a valid DataService source
@@ -474,7 +474,8 @@ func (d *Data) JSONString() (jsonStr string, err error) {
 // DoRPC handles the 'generate' command.
 func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error {
 	if request.TypeCommand() != "generate" {
-		return d.UnknownCommand(request)
+		return fmt.Errorf("Unknown command.  Data type '%s' [%s] does not support '%s' command.",
+			d.Name, d.DatatypeName(), request.TypeCommand())
 	}
 	var uuidStr, dataName, cmdStr string
 	filenames := request.CommandArgs(1, &uuidStr, &dataName, &cmdStr)
@@ -778,7 +779,7 @@ func (d *Data) getTileData(uuid dvid.UUID, shape dvid.DataShape, scaling Scaling
 
 	// Retrieve the tile data from datastore
 	tileIndex := &IndexTile{index, shape, scaling}
-	key := &datastore.DataKey{d.DatasetID(), d.ID, versionID, tileIndex}
+	key := &datastore.DataKey{d.RepoID(), d.ID, versionID, tileIndex}
 	data, err := db.Get(key)
 	if err != nil {
 		return nil, fmt.Errorf("Error trying to GET from datastore: %s", err.Error())
@@ -916,7 +917,7 @@ func (d *Data) putTileFunc(versionID dvid.VersionLocalID) (outFunc, error) {
 		if err != nil {
 			return err
 		}
-		key := &datastore.DataKey{d.DatasetID(), d.ID, versionID, index}
+		key := &datastore.DataKey{d.RepoID(), d.ID, versionID, index}
 		return db.Put(key, data)
 	}, nil
 }
@@ -930,7 +931,7 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, config dvid.Con
 		return err
 	}
 	d.Levels = tileSpec
-	if err := service.SaveDataset(uuid); err != nil {
+	if err := service.SaveRepo(uuid); err != nil {
 		return err
 	}
 	src, err := getSourceVoxels(uuid, d.Source)

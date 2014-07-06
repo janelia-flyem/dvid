@@ -7,12 +7,12 @@
 	Initially we are concentrating on key-value backends but expect to support
 	graph and perhaps relational databases.
 
-	Each storage engine must implement the following package function:
+	Each local storage engine must implement the following package function:
 
-	func NewStore(path string, create bool, options *Options) (Engine, error)
+	func NewKeyValueStore(path string, create bool, options *Options) (Engine, error)
 
-	Currently only one storage engine file is compiled through the use of build
-	tags like "leveldb", "hyperleveldb", and "basholeveldb".
+	If DVID is compiled without gcloud or clustered build flags, a local storage engine
+	is selected through build tags, e.g., "hyperleveldb", "basholeveldb", or "bolt".
 */
 package storage
 
@@ -20,10 +20,45 @@ import (
 	"sync"
 
 	"github.com/janelia-flyem/dvid/dvid"
+	"github.com/janelia-flyem/dvid/storage"
 )
 
-func Shutdown() {
-	ShutdownFUSE()
+// ---- The three tiers of storage for a DVID datastore, characterized by the
+// ---- maximum size of values and the bandwidth/latency.  These interfaces are
+// ---- initialized based on build flags for whether DVID is running locally,
+// ---- in a cluster, or in a cloud with services.
+
+var (
+	// Metadata is the interface for storing DVID datastore metadata like the
+	// repositories and associated DAGs.  It is characterized by the following:
+	// (1) not big data, (2) ideally in memory, (3) strongly consistent across all
+	// DVID processes, e.g., all front-end DVID apps.  Of the three tiers of storage
+	// (MetadataStore, SmallFastStore, BigDataStore), Metadata should have
+	// the smallest capacity and the lowest latency.
+	Metadata metadata
+
+	// SmallData is the interface for storing key-only or small key/value pairs that
+	// require much more capacity and potentially higher latency than Metadata.
+	SmallData smallFast
+
+	// BigData is the interface for storing DVID key/value pairs that are relatively
+	// large compared to key/value pairs used in SmallData.  This interface should be used
+	// for blocks of voxels and large denormalized data like the multi-scale surface of a
+	// given label.  This store should have considerably more capacity and potentially
+	// higher latency than SmallData.
+	BigData bigData
+)
+
+type metadata interface {
+	storage.KeyValueDB
+}
+
+type smallFast interface {
+	storage.OrderedKeyValueDB
+}
+
+type bigData interface {
+	storage.OrderedKeyValueDB
 }
 
 // Op enumerates the types of single key-value operations that can be performed for storage engines.
@@ -67,6 +102,39 @@ type Engine interface {
 	GetConfig() dvid.Config
 	Close()
 }
+
+// A DataAncestor encapsulates what the storage layer needs to know about the version DAG
+// to support versioning for a particular data instance.  In particular, it lets the
+// storage layer compute the keys (across all ancestors) needed to fulfill a Get request.
+type DataAncestor struct {
+	uuid  dvid.UUID
+	bloom interface{} // TODO -- add bitly's dabloom
+}
+
+// A Context encapsulates information needed to store and retrieve data from
+// the storage engines.  One of the storage interfaces below can be obtained
+// by doing a type assertion on a Context.  For example:
+//
+//     kvGetter := Context.(KeyValueGetter)
+//
+// Contexts are obtained via storage backend-specific NewStorageContext()
+// function calls.  These calls can be found in each storage engine implementation
+// that is only compiled if the appropriate build tags are used.
+type Context interface {
+	// VersionedKey returns the first key in the ancestor path that holds a value.
+	// This allows efficient deltas by only storing changed key/values.
+	VersionedKey(Key) ([]byte, error)
+
+	// Depth returns the one more than number of ancestors of the current version,
+	// where the first ancestor is the current version.
+	Depth() int
+
+	// Ancestor returns an ancestor of the current version where depth 0
+	// is the current version, depth 1 is its parent, and so forth.
+	Ancestor(depth int) *DataAncestor
+}
+
+// ---- Storage interfaces ------
 
 type KeyValueGetter interface {
 	// Get returns a value given a key.
@@ -215,4 +283,8 @@ type GraphGetter interface {
 type GraphDB interface {
 	GraphSetter
 	GraphGetter
+}
+
+func Shutdown() {
+	ShutdownFUSE()
 }

@@ -245,7 +245,7 @@ func (vol *SparseVol) SurfaceSerialization(blockNz int32, res NdFloat32) ([]byte
 	var vertexBuf, normalBuf bytes.Buffer
 	var surfaceSize uint32
 	rleI := 0
-	Log(Debug, "Label %d, # voxels %d, size %s, minPt %s, maxPt %s: ",
+	Log(Debug, "Label %d, # voxels %d, buffer size %s, minPt %s, maxPt %s: ",
 		vol.label, vol.numVoxels, binvol.size, vol.minPt, vol.maxPt)
 
 	for {

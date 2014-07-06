@@ -199,7 +199,7 @@ type Datatype struct {
 // --- TypeService interface ---
 
 // NewData returns a pointer to a new multichan16 with default values.
-func (dtype *Datatype) NewDataService(id *datastore.DataID, config dvid.Config) (
+func (dtype *Datatype) NewDataService(id *datastore.DataInstance, config dvid.Config) (
 	datastore.DataService, error) {
 
 	voxelservice, err := dtype.Datatype.NewDataService(id, config)
@@ -241,7 +241,8 @@ func (d *Data) JSONString() (string, error) {
 // Do acts as a switchboard for RPC commands.
 func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error {
 	if request.TypeCommand() != "load" {
-		return d.UnknownCommand(request)
+		return fmt.Errorf("Unknown command.  Data type '%s' [%s] does not support '%s' command.",
+			d.Name, d.DatatypeName(), request.TypeCommand())
 	}
 	if len(request.Command) < 5 {
 		return fmt.Errorf("Poorly formatted load command.  See command-line help.")
@@ -249,7 +250,7 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 	return d.LoadLocal(request, reply)
 }
 
-// DoHTTP handles all incoming HTTP requests for this dataset.
+// DoHTTP handles all incoming HTTP requests for this repo.
 func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) error {
 	startTime := time.Now()
 
@@ -438,7 +439,7 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 	for i, channel := range channels {
 		d.Properties.Values[i] = channel.Voxels.Values()[0]
 	}
-	if err := service.SaveDataset(uuid); err != nil {
+	if err := service.SaveRepo(uuid); err != nil {
 		return err
 	}
 

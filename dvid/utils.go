@@ -25,23 +25,9 @@ const (
 	Tera = 1 << 40
 )
 
-type ModeFlag uint
-
-const (
-	Normal ModeFlag = iota
-	Debug
-	Benchmark
-)
-
 var (
 	// NumCPU is the number of cores available to this DVID server.
 	NumCPU int
-
-	// Mode is a global variable set to the run modes of this DVID process.
-	Mode ModeFlag
-
-	// The global, unexported error logger for DVID.
-	errorLogger *log.Logger
 )
 
 // Bool is a concurrency-safe bool.
@@ -132,31 +118,6 @@ func Fmt(mode ModeFlag, p ...interface{}) {
 			fmt.Printf(p[0].(string), p[1:]...)
 		}
 	}
-}
-
-// Error prints a message to the Error Log File, which is useful to mark potential issues
-// but not ones that should crash the DVID server.  Basically, you should opt to crash
-// the server if a mistake can propagate and corrupt data.  If not, you can use this function.
-// Note that Error logging to a file only occurs if DVID is running as a server, otherwise
-// this function will print to stdout.
-func Error(p ...interface{}) {
-	if len(p) == 0 {
-		log.Println("No message")
-	} else {
-		log.Printf(p[0].(string), p[1:]...)
-	}
-	if errorLogger != nil {
-		if len(p) == 0 {
-			errorLogger.Println("No message")
-		} else {
-			errorLogger.Printf(p[0].(string), p[1:]...)
-		}
-	}
-}
-
-// SetErrorLoggingFile creates an error logger to the given file for this DVID process.
-func SetErrorLoggingFile(out io.Writer) {
-	errorLogger = log.New(out, "", log.Ldate|log.Ltime|log.Llongfile)
 }
 
 // Wait for WaitGroup then print message including time for operation.

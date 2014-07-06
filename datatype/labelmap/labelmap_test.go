@@ -37,8 +37,8 @@ func (suite *DataSuite) SetUpSuite(c *C) {
 	suite.service, err = server.OpenDatastore(suite.dir)
 	c.Assert(err, IsNil)
 
-	// Create a new dataset
-	root, _, err := suite.service.NewDataset()
+	// Create a new repo
+	root, _, err := suite.service.NewRepo()
 	c.Assert(err, IsNil)
 
 	// Add data

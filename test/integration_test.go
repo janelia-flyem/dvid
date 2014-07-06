@@ -49,7 +49,7 @@ func (suite *DataSuite) TearDownSuite(c *C) {
 }
 
 func (suite *DataSuite) TestVersionedDataOps(c *C) {
-	root1, _, err := suite.service.NewDataset()
+	root1, _, err := suite.service.NewRepo()
 	c.Assert(err, IsNil)
 
 	config := dvid.NewConfig()
@@ -71,8 +71,8 @@ func (suite *DataSuite) TestVersionedDataOps(c *C) {
 	child1, err = suite.service.NewVersion(root1)
 	c.Assert(err, IsNil)
 
-	// Add a second Dataset
-	root2, _, err := suite.service.NewDataset()
+	// Add a second Repo
+	root2, _, err := suite.service.NewRepo()
 	c.Assert(err, IsNil)
 
 	c.Assert(root1, Not(Equals), root2)
@@ -92,8 +92,8 @@ func (suite *DataSuite) TestVersionedDataOps(c *C) {
 	c.Assert(child1, Not(Equals), child2)
 }
 
-// Make sure Datasets configuration persists even after shutdown.
-func (suite *DataSuite) TestDatasetPersistence(c *C) {
+// Make sure Repos configuration persists even after shutdown.
+func (suite *DataSuite) TestRepoPersistence(c *C) {
 	dir := c.MkDir()
 
 	// Create a new datastore.
@@ -104,7 +104,7 @@ func (suite *DataSuite) TestDatasetPersistence(c *C) {
 	service, err := datastore.Open(dir)
 	c.Assert(err, IsNil)
 
-	root, _, err := service.NewDataset()
+	root, _, err := service.NewRepo()
 	c.Assert(err, IsNil)
 
 	config := dvid.NewConfig()
@@ -113,7 +113,7 @@ func (suite *DataSuite) TestDatasetPersistence(c *C) {
 	err = service.NewData(root, "grayscale8", "node1image", config)
 	c.Assert(err, IsNil)
 
-	root, _, err = service.NewDataset()
+	root, _, err = service.NewRepo()
 	c.Assert(err, IsNil)
 
 	err = service.NewData(root, "grayscale8", "node2image", config)
@@ -128,7 +128,7 @@ func (suite *DataSuite) TestDatasetPersistence(c *C) {
 	err = service.NewData(root, "rgba8", "node2rgba8", config)
 	c.Assert(err, IsNil)
 
-	oldJSON, err := service.DatasetsAllJSON()
+	oldJSON, err := service.ReposAllJSON()
 	c.Assert(err, IsNil)
 
 	service.Shutdown()
@@ -137,7 +137,7 @@ func (suite *DataSuite) TestDatasetPersistence(c *C) {
 	service2, err := datastore.Open(dir)
 	c.Assert(err, IsNil)
 
-	newJSON, err := service2.DatasetsAllJSON()
+	newJSON, err := service2.ReposAllJSON()
 	c.Assert(err, IsNil)
 
 	c.Assert(newJSON, DeepEquals, oldJSON)
