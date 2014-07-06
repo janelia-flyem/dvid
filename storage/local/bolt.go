@@ -34,8 +34,8 @@ func GetOptions(create bool, config dvid.Config) (*boltOptions, error) {
 	return &boltOptions{}, nil
 }
 
-// NewStore returns a bolt backend.
-func NewStore(path string, create bool, config dvid.Config) (Engine, error) {
+// NewKeyValueStore returns a bolt backend.
+func NewKeyValueStore(path string, create bool, config dvid.Config) (Engine, error) {
 	opt, err := GetOptions(create, config)
 	if err != nil {
 		return nil, err
@@ -54,10 +54,10 @@ func NewStore(path string, create bool, config dvid.Config) (Engine, error) {
 
 	// Create buckets for each key type.
 	db.Update(func(tx *bolt.Tx) error {
-		if err := tx.CreateBucket(KeyDatasets.String()); err != nil {
+		if err := tx.CreateBucket(KeyRepos.String()); err != nil {
 			return err
 		}
-		if err := tx.CreateBucket(KeyDataset.String()); err != nil {
+		if err := tx.CreateBucket(KeyRepo.String()); err != nil {
 			return err
 		}
 		if err := tx.CreateBucket(KeyData.String()); err != nil {

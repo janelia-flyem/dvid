@@ -1,4 +1,4 @@
-// +build basholeveldb
+// +build leveldb
 
 package storage
 
@@ -6,21 +6,17 @@ import (
 	"bytes"
 
 	"github.com/janelia-flyem/dvid/dvid"
-	levigo "github.com/janelia-flyem/go/basholeveldb"
 	humanize "github.com/janelia-flyem/go/go-humanize"
+	"github.com/janelia-flyem/go/levigo"
 )
 
-// These constants were guided by Basho documentation and their tuning of leveldb:
-//   https://github.com/basho/leveldb/blob/develop/README
-// See video on "Optimizing LevelDB for Performance and Scale" here:
-//   http://www.youtube.com/watch?v=vo88IdglU_8
 const (
-	Version = "Basho Leveldb"
+	Version = "Standard Leveldb"
 
 	Driver = "github.com/janelia-flyem/go/levigo"
 
 	// Default size of LRU cache that caches frequently used uncompressed blocks.
-	DefaultCacheSize = 536870912
+	DefaultCacheSize = 1024 * dvid.Mega
 
 	// Default # bits for Bloom Filter.  The filter reduces the number of unnecessary
 	// disk reads needed for Get() calls by a large factor.
@@ -48,7 +44,7 @@ const (
 	// so you may wish to adjust this parameter to control memory usage.
 	// Also, a larger write buffer will result in a longer recovery time
 	// the next time the database is opened.
-	DefaultWriteBufferSize = 62914560
+	DefaultWriteBufferSize = 512 * dvid.Mega
 
 	// Write Options
 
@@ -183,8 +179,8 @@ func GetOptions(create bool, config dvid.Config) (*leveldbOptions, error) {
 	return opt, nil
 }
 
-// NewStore returns a leveldb backend.
-func NewStore(path string, create bool, config dvid.Config) (Engine, error) {
+// NewKeyValueStore returns a leveldb backend.
+func NewKeyValueStore(path string, create bool, config dvid.Config) (Engine, error) {
 	dvid.StartCgo()
 	defer dvid.StopCgo()
 

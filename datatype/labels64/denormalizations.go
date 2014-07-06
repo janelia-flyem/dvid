@@ -275,7 +275,7 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 	wg := new(sync.WaitGroup)
 	op := &denormOp{d, versionID}
 
-	dataID := d.DataID()
+	dataID := d.DataInstance()
 	extents := d.Extents()
 	minIndexZ := extents.MinIndex.(dvid.IndexZYX)[2]
 	maxIndexZ := extents.MaxIndex.(dvid.IndexZYX)[2]
@@ -324,7 +324,7 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 		wg.Wait()
 		dvid.ElapsedTime(dvid.Debug, startTime, "Finished processing all RLEs for labels '%s'", d.DataName())
 		d.Ready = true
-		if err := server.DatastoreService().SaveDataset(uuid); err != nil {
+		if err := server.DatastoreService().SaveRepo(uuid); err != nil {
 			dvid.Log(dvid.Normal, "Could not save READY state to data '%s', uuid %s: %s",
 				d.DataName(), uuid, err.Error())
 		}

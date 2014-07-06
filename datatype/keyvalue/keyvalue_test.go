@@ -41,8 +41,8 @@ func (suite *DataSuite) TearDownSuite(c *C) {
 
 // Make sure new keyvalue data have different IDs.
 func (suite *DataSuite) TestNewDataDifferent(c *C) {
-	// Create a new dataset
-	root, _, err := suite.service.NewDataset()
+	// Create a new repo
+	root, _, err := suite.service.NewRepo()
 	c.Assert(err, IsNil)
 
 	// Add data
@@ -72,7 +72,7 @@ func (suite *DataSuite) TestNewDataDifferent(c *C) {
 }
 
 func (suite *DataSuite) TestRoundTrip(c *C) {
-	root, _, err := suite.service.NewDataset()
+	root, _, err := suite.service.NewRepo()
 	c.Assert(err, IsNil)
 
 	config := dvid.NewConfig()

@@ -1,5 +1,6 @@
 /*
-	This file defines the base identification and indexing schemes used within DVID.
+	This file defines datatype-specific components of keys that provide an index into
+	the key/value pairs associated with a data instance.
 */
 
 package dvid
@@ -15,56 +16,16 @@ import (
 )
 
 func init() {
-	// Register types that may fulfill interface for Gob
+	// Register Index implementations that may fulfill interface for Gob
 	gob.Register(IndexUint8(0))
 	gob.Register(IndexZYX{})
 	gob.Register(IndexCZYX{})
 }
 
-// LocalID is a unique id for some data in a DVID instance.  This unique id is a much
-// smaller representation than the actual data (e.g., a version UUID or data type url)
-// and can be represented with fewer bytes in keys.
-type LocalID uint16
-
-// LocalID32 is a 32-bit unique id within this DVID instance.
-type LocalID32 uint32
-
-const (
-	LocalIDSize   = 2
-	LocalID32Size = 4
-
-	MaxLocalID   = 0xFFFF
-	MaxLocalID32 = 0xFFFFFFFF
-)
-
-// Bytes returns a sequence of bytes encoding this LocalID.
-func (id LocalID) Bytes() []byte {
-	buf := make([]byte, LocalIDSize, LocalIDSize)
-	binary.BigEndian.PutUint16(buf, uint16(id))
-	return buf
-}
-
-// LocalIDFromBytes returns a LocalID from the start of the slice and the number of bytes used.
-// Note: No error checking is done to ensure byte slice has sufficient bytes for LocalID.
-func LocalIDFromBytes(b []byte) (id LocalID, length int) {
-	return LocalID(binary.BigEndian.Uint16(b)), LocalIDSize
-}
-
-// Bytes returns a sequence of bytes encoding this LocalID32.
-func (id LocalID32) Bytes() []byte {
-	buf := make([]byte, LocalID32Size, LocalID32Size)
-	binary.BigEndian.PutUint32(buf, uint32(id))
-	return buf
-}
-
-// LocalID32FromBytes returns a LocalID from the start of the slice and the number of bytes used.
-// Note: No error checking is done to ensure byte slice has sufficient bytes for LocalID.
-func LocalID32FromBytes(b []byte) (id LocalID32, length int) {
-	return LocalID32(binary.BigEndian.Uint32(b)), LocalID32Size
-}
-
-// Index is a one-dimensional index, typically constructed using a space-filling curve that serves
-// as a spatiotemporal indexing scheme.  For example, Z-curves map n-D space to a 1-D index.
+// Index is the datatype-specific (usually spatiotemporal) key that allows
+// partitioning of the data.  In the case of voxels, this could be an IndexZYX
+// implementation that uses a 3d coordinate packed into a slice of bytes.  For
+// the keyvalue datatype, the index is simply a string.
 type Index interface {
 	// Duplicate returns a duplicate Index
 	Duplicate() Index
@@ -135,7 +96,7 @@ func (i IndexBytes) Hash(n int) int {
 	hash := fnv.New32()
 	_, err := hash.Write([]byte(i))
 	if err != nil {
-		Error("Could not write to fnv hash in IndexBytes.Hash()")
+		Errorf("Could not write to fnv hash in IndexBytes.Hash()")
 		return 0
 	}
 	return int(hash.Sum32()) % n
@@ -168,7 +129,7 @@ func (i IndexString) Hash(n int) int {
 	hash := fnv.New32()
 	_, err := hash.Write(i.Bytes())
 	if err != nil {
-		Error("Could not write to fnv hash in IndexString.Hash()")
+		Errorf("Could not write to fnv hash in IndexString.Hash()")
 		return 0
 	}
 	return int(hash.Sum32()) % n

@@ -1,8 +1,8 @@
 package labelgraph
 
 import (
-	. "github.com/janelia-flyem/go/gocheck"
 	"testing"
+	. "github.com/janelia-flyem/go/gocheck"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -41,8 +41,8 @@ func (suite *DataSuite) TearDownSuite(c *C) {
 
 // Make sure new labelgraph data have different IDs.
 func (suite *DataSuite) TestNewDataDifferent(c *C) {
-	// Create a new dataset
-	root, _, err := suite.service.NewDataset()
+	// Create a new repo
+	root, _, err := suite.service.NewRepo()
 	c.Assert(err, IsNil)
 
 	// Add data

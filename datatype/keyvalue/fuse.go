@@ -26,13 +26,13 @@ func (d *Data) Mount(request datastore.Request, reply *datastore.Response) error
 	}
 
 	// Make sure we have a directory for this particular UUID.
-	uuid, datasetID, versionID, err := server.DatastoreService().NodeIDFromString(uuidStr)
+	uuid, repoID, versionID, err := server.DatastoreService().NodeIDFromString(uuidStr)
 	if err != nil {
 		return err
 	}
 
 	// Make sure we have a FUSE file system at mount directory.
-	versionInfo := storage.NewVersionInfo(uuid, datasetID, versionID)
+	versionInfo := storage.NewVersionInfo(uuid, repoID, versionID)
 	err = storage.OpenFUSE(dirnames[0], d, versionInfo)
 	if err != nil {
 		return err
@@ -50,7 +50,7 @@ func (d *Data) FUSEDir(vinfo storage.VersionInfo) storage.FUSEDirer {
 }
 
 // Dir implements both Node and Handle for this data directory
-// Each directory is specific to one data in a dataset.
+// Each directory is specific to one data in a repo.
 type Dir struct {
 	*Data
 	storage.VersionInfo

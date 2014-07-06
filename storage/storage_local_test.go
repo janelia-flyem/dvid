@@ -7,6 +7,7 @@ import (
 	. "github.com/janelia-flyem/go/gocheck"
 
 	"github.com/janelia-flyem/dvid/dvid"
+	"github.com/janelia-flyem/dvid/storage/local"
 )
 
 // Hook up gocheck into the "go test" runner.
@@ -27,7 +28,7 @@ func (s *DataSuite) SetUpSuite(c *C) {
 	s.dir = c.MkDir()
 
 	// Create a new storage engine.
-	db, err := NewStore(s.dir, true, dvid.Config{})
+	db, err := local.NewKeyValueStore(s.dir, true, dvid.Config{})
 	c.Assert(err, IsNil)
 
 	// Initialize the graph backend database

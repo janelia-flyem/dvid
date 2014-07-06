@@ -46,13 +46,13 @@ sparse labeled structures in a large volume without requiring processing of enti
 
 Command-line:
 
-$ dvid dataset <UUID> new labels64 <data name> <settings...>
+$ dvid repo <UUID> new labels64 <data name> <settings...>
 
-	Adds newly named data of the 'type name' to dataset with specified UUID.
+	Adds newly named data of the 'type name' to repo with specified UUID.
 
 	Example (note anisotropic resolution specified instead of default 8 nm isotropic):
 
-	$ dvid dataset 3f8c new labels64 superpixels Res=3.2,3.2,40.0
+	$ dvid repo 3f8c new labels64 superpixels Res=3.2,3.2,40.0
 
     Arguments:
 
@@ -339,8 +339,8 @@ func GetByUUID(uuid dvid.UUID, name dvid.DataString) (*Data, error) {
 	return data, nil
 }
 
-// GetByLocalID returns a pointer to labels64 data given a local dataset ID and data name.
-func GetByLocalID(id dvid.DatasetLocalID, name dvid.DataString) (*Data, error) {
+// GetByLocalID returns a pointer to labels64 data given a local repo ID and data name.
+func GetByLocalID(id dvid.RepoLocalID, name dvid.DataString) (*Data, error) {
 	service := server.DatastoreService()
 	if service == nil {
 		return nil, fmt.Errorf("No datastore service established yet!")
@@ -357,7 +357,7 @@ func GetByLocalID(id dvid.DatasetLocalID, name dvid.DataString) (*Data, error) {
 }
 
 // NewData returns a pointer to labels64 data.
-func NewData(id *datastore.DataID, config dvid.Config) (*Data, error) {
+func NewData(id *datastore.DataInstance, config dvid.Config) (*Data, error) {
 	voxelData, err := dtype.Datatype.NewData(id, config)
 	if err != nil {
 		return nil, err
@@ -383,7 +383,7 @@ func NewData(id *datastore.DataID, config dvid.Config) (*Data, error) {
 
 // --- TypeService interface ---
 
-func (dtype *Datatype) NewDataService(id *datastore.DataID, config dvid.Config) (datastore.DataService, error) {
+func (dtype *Datatype) NewDataService(id *datastore.DataInstance, config dvid.Config) (datastore.DataService, error) {
 	return NewData(id, config)
 }
 
@@ -644,7 +644,7 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 			go d.ProcessSpatially(uuid)
 		} else {
 			d.Ready = true
-			if err := server.DatastoreService().SaveDataset(uuid); err != nil {
+			if err := server.DatastoreService().SaveRepo(uuid); err != nil {
 				return err
 			}
 		}
@@ -657,7 +657,8 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 		return d.CreateComposite(request, reply)
 
 	default:
-		return d.UnknownCommand(request)
+		return fmt.Errorf("Unknown command.  Data type '%s' [%s] does not support '%s' command.",
+			d.Name, d.DatatypeName(), request.TypeCommand())
 	}
 	return nil
 }
@@ -697,7 +698,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		if err := d.ModifyConfig(config); err != nil {
 			return err
 		}
-		if err := server.DatastoreService().SaveDataset(uuid); err != nil {
+		if err := server.DatastoreService().SaveRepo(uuid); err != nil {
 			return err
 		}
 		fmt.Fprintf(w, "Changed '%s' based on received configuration:\n%s\n", d.DataName(), config)
@@ -1102,7 +1103,7 @@ func (d *Data) CreateComposite(request datastore.Request, reply *datastore.Respo
 
 	// Set new mapped data to same extents.
 	composite.Properties.Extents = grayscale.Properties.Extents
-	if err := server.DatastoreService().SaveDataset(uuid); err != nil {
+	if err := server.DatastoreService().SaveRepo(uuid); err != nil {
 		dvid.Log(dvid.Normal, "Could not save new data '%s': %s\n", destName, err.Error())
 	}
 
@@ -1135,7 +1136,7 @@ func (d *Data) createCompositeChunk(chunk *storage.Chunk) {
 	op := chunk.Op.(*blockOp)
 	db, err := server.OrderedKeyValueDB()
 	if err != nil {
-		dvid.Log(dvid.Normal, "Error in %s.ProcessChunk(): %s\n", d.DataID().DataName(), err.Error())
+		dvid.Log(dvid.Normal, "Error in %s.ProcessChunk(): %s\n", d.DataInstance().DataName(), err.Error())
 		return
 	}
 

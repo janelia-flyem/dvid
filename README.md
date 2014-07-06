@@ -15,7 +15,7 @@ orientation, multiscale 2d and 3d (similar to quadtree and octree forms), and sp
 determined by a label.
 
 DVID aspires to be a "github for large image-oriented data" because each DVID
-server can manage multiple repositories, each of which contains an image-oriented dataset
+server can manage multiple repositories, each of which contains an image-oriented repo
 (e.g., an image volume, labels, skeletons, etc).  The goal is to provide scientists with
 a github-like web client + server that can push/pull data to a collaborator's DVID server.
 
@@ -72,8 +72,8 @@ researchers want just "one" centralized datastore but might require one for each
 Researchers don't always want to share data. So as soon as you support more than one centralized 
 location, and think about syncing, you are basically looking at a distributed data problem or you'll be 
 doing some ad hoc solution instead of more elegant git-­like techniques. And sometimes, researchers want 
-to only share a particular version of their dataset, e.g., the state of the dataset at the time of a 
-publication that requires open access to the data, yet they want to continue to work on the dataset 
+to only share a particular version of their repo, e.g., the state of the repo at the time of a 
+publication that requires open access to the data, yet they want to continue to work on the repo 
 privately.
 * **As computers increase in power, forcing centralization leads to significant wasted resources**: 
 Since significant workflows require only relatively small subsets of data, we can move data to 
@@ -95,10 +95,10 @@ uses like parallel proofreading operations in disjoint but small subvolumes.
 
 Planned and Existing Features for DVID:
 
-* **Distributed operation**: Once a DVID dataset is created and loaded with data, it can be cloned to 
+* **Distributed operation**: Once a DVID repo is created and loaded with data, it can be cloned to 
 remote sites using user­-defined spatial extents. Each DVID server chooses how much of the data set is 
 held locally. (_Status: Planned Q2 2014_)
-* **Versioning**: Each version of a DVID dataset corresponds to a node in a version DAG 
+* **Versioning**: Each version of a DVID repo corresponds to a node in a version DAG 
 (Directed Acyclic Graph). Versions are identified through a UUID that can be composed locally 
 yet are unique globally. 
 Versioning and distribution follow patterns similar to distributed version control systems like git and 
@@ -135,7 +135,7 @@ As storage becomes more log structured, the key/value API becomes a more natural
 experimental use of [Bolt](https://github.com/boltdb/bolt), although neither have been tuned to work as well as
 the leveldb variants._)
 
-A DVID server is limited to local resources and the user determines what datasets, subvolume, and 
+A DVID server is limited to local resources and the user determines what repos, subvolume, and 
 versions are held within that DVID server. Overwrites are allowed but once a version is locked, no 
 further edits are allowed on that particular version. This allows manual or automated editing to be 
 done during a period without accumulation of unnecessary deltas.
@@ -228,8 +228,8 @@ time for all files.  See [this explanation on the basho page](http://docs.basho.
 First, make sure you allow a sufficient number of open files.  This can be checked via the 
 "ulimit -n" command in Linux and Mac.  We suggest raising this to 65535 on Linux and at least
 8192 on a Mac.  You might have to modify the
-(1024 has proven sufficient for Teravoxel datasets on 64-bit Linux using standard leveldb but 
-this had to be raised to several thousand even for 50 Gigavoxel datasets on Mac.)
+(1024 has proven sufficient for Teravoxel repos on 64-bit Linux using standard leveldb but 
+this had to be raised to several thousand even for 50 Gigavoxel repos on Mac.)
 
     % ulimit -n 65535
 
@@ -278,32 +278,36 @@ data types supported by this DVID server:
 
     % dvid types
 
-### Create a new dataset
+### Create a new repository (repo)
 
-One DVID server can manage many different datasets.   We create a dataset like so:
+One DVID server can manage different repositories (repos), each of which correspond to a set of
+possibly versioned data in a consistent coordinate system.   We think of a repo as all the data
+associated with a particular alignment of images.  If the underlying image data is changed
+dramatically, e.g., through realignment, warping, etc, it should be given a separate repo.
+We create a new repo like so:
 
-    % dvid datasets new
+    % dvid repos new
 
-A hexadecimal string will be printed in response.  Datasets, like versions of data within a dataset, 
-are identified by a global UUID, usually printed and read in hexadecimal format (e.g., "c78a0").
+A hexadecimal string will be printed in response.  Repos are identified by the global UUID of
+its root version, usually printed and read in hexadecimal format (e.g., "c78a0").
 When supplying a UUID, you only need enough letters to uniquely identify the UUID within that
-DVID server.  For example, if there are only two datasets, each with only one version, and the root
-versions for each dataset are "c78a0..." and "da0a4...", respectively, then you can uniquely specify
-the datasets using "c7" and "da".  (We might use one letter, but generally two or more letters 
+DVID server.  For example, if there are only two repos, each with only one version, and the root
+versions for each repo are "c78a0..." and "da0a4...", respectively, then you can uniquely specify
+the repos using "c7" and "da".  (We might use one letter, but generally two or more letters 
 are better.)
 
     % dvid types
     
-Entering the above command will show the new dataset but there are no data under it.
+Entering the above command will show the new repo but there are no data under it.
 
-### Create new data for a dataset
+### Create new data for a repo
 
-We can create an instance of a supported data type for the new dataset:
+We can create an instance of a supported data type for the new repo:
 
-    % dvid dataset c7 new grayscale8 mygrayscale
+    % dvid repo c7 new grayscale8 mygrayscale
 
-Replace "c7" with the first two letters of whatever UUID was printed when you created a new dataset.
-You can also see the UUIDs for datasets by using the "dvid types" command.
+Replace "c7" with the first two letters of whatever UUID was printed when you created a new repo.
+You can also see the UUIDs for repos by using the "dvid types" command.
 
 After adding new data, you can see the result via the "dvid types" command.  It will show new data
 named "mygrayscale" that is of grayscale8 data type.  DVID allows a variety of data types, each
@@ -331,7 +335,7 @@ that 250 x 250 x 250 grayscale volume, enter the following:
 
     % dvid node c7 mygrayscale load 100,100,2600 "/path/to/sample/*.png"
 
-Once again, replace the "c7" with a UUID string for your dataset.  Note that you have to specify
+Once again, replace the "c7" with a UUID string for your repo.  Note that you have to specify
 the full path to the PNG images.  If you started the DVID server using the "-debug" option, 
 you'll see a series of messages from the server on reading each image and storing it into the datastore.
 This command loads all image filenames in alphanumeric order.  Since we specified "xy" (and could
@@ -372,9 +376,9 @@ XY images.
 ### Adding multi-scale 2d images
 
 Let's precompute XY, XZ, and YZ multiscale2d for our grayscale image.  First, we add an
-instance of a multiscale2d data type under our previous dataset UUID:
+instance of a multiscale2d data type under our previous repo UUID:
 
-    % dvid dataset c7 new multiscale2d mymultiscale2d source=mygrayscale TileSize=128
+    % dvid repo c7 new multiscale2d mymultiscale2d source=mygrayscale TileSize=128
 
 Note that we set type-specific parameters, "source" to "mygrayscale", which is the name of the
 data we wish to tile, and "TileSize" to "128", which causes all future tile generation to be 128x128

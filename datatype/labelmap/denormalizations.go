@@ -344,7 +344,7 @@ func (d *Data) GetMappedVoxels(uuid dvid.UUID, e voxels.ExtHandler) error {
 	_, versionID, err := server.DatastoreService().LocalIDFromUUID(uuid)
 	if err != nil {
 		return fmt.Errorf("Could not determine versionID in %s.ProcessSpatially(): %s",
-			d.DataID.DataName(), err.Error())
+			d.DataInstance.DataName(), err.Error())
 	}
 	db, err := server.OrderedKeyValueGetter()
 	if err != nil {
@@ -357,8 +357,8 @@ func (d *Data) GetMappedVoxels(uuid dvid.UUID, e voxels.ExtHandler) error {
 	}
 
 	wg := new(sync.WaitGroup)
-	dataID := d.DataID.ID
-	datasetID := d.DataID.DsetID
+	dataID := d.DataInstance.ID
+	repoID := d.DataInstance.DsetID
 	for it, err := e.IndexIterator(labelData.BlockSize()); err == nil && it.Valid(); it.NextSpan() {
 		indexBeg, indexEnd, err := it.IndexSpan()
 		if err != nil {
@@ -404,11 +404,11 @@ func (d *Data) GetMappedVoxels(uuid dvid.UUID, e voxels.ExtHandler) error {
 
 		// Send the entire range of key/value pairs to chunk mapper
 		chunkOp := &storage.ChunkOp{&denormOp{labelData, e, 0, versionID, mapping}, wg}
-		startKey := &datastore.DataKey{datasetID, dataID, versionID, indexBeg}
-		endKey := &datastore.DataKey{datasetID, dataID, versionID, indexEnd}
+		startKey := &datastore.DataKey{repoID, dataID, versionID, indexBeg}
+		endKey := &datastore.DataKey{repoID, dataID, versionID, indexEnd}
 		err = db.ProcessRange(startKey, endKey, chunkOp, d.MapChunk)
 		if err != nil {
-			return fmt.Errorf("Unable to GET data %s: %s", d.DataID.DataName(), err.Error())
+			return fmt.Errorf("Unable to GET data %s: %s", d.DataInstance.DataName(), err.Error())
 		}
 	}
 	if err != nil {
@@ -426,12 +426,12 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 
 	_, versionID, err := server.DatastoreService().LocalIDFromUUID(uuid)
 	if err != nil {
-		dvid.Error("Could not determine versionID in %s.ProcessSpatially(): %s", d.DataID.DataName(), err.Error())
+		dvid.Error("Could not determine versionID in %s.ProcessSpatially(): %s", d.DataInstance.DataName(), err.Error())
 		return
 	}
 	db, err := server.OrderedKeyValueDB()
 	if err != nil {
-		dvid.Error("Could not determine key value datastore in %s.ProcessSpatially(): %s\n", d.DataID.DataName(), err.Error())
+		dvid.Error("Could not determine key value datastore in %s.ProcessSpatially(): %s\n", d.DataInstance.DataName(), err.Error())
 		return
 	}
 
@@ -446,7 +446,7 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 	wg := new(sync.WaitGroup)
 	op := &denormOp{labelData, nil, 0, versionID, nil}
 
-	dataID := labelData.DataID()
+	dataID := labelData.DataInstance()
 	extents := labelData.Extents()
 	minIndexZ := extents.MinIndex.(dvid.IndexZYX)[2]
 	maxIndexZ := extents.MaxIndex.(dvid.IndexZYX)[2]
@@ -509,7 +509,7 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 		wg.Wait()
 		dvid.ElapsedTime(dvid.Debug, startTime, "Finished processing all RLEs for labels '%s'", d.DataName())
 		d.Ready = true
-		if err := server.DatastoreService().SaveDataset(uuid); err != nil {
+		if err := server.DatastoreService().SaveRepo(uuid); err != nil {
 			dvid.Error("Could not save READY state to data '%s', uuid %s: %s", d.DataName(), uuid, err.Error())
 		}
 	}()
@@ -572,7 +572,7 @@ func (d *Data) mapChunk(chunk *storage.Chunk) {
 		blockData, _, err = dvid.DeserializeData(chunk.V, true)
 		if err != nil {
 			dvid.Error("Unable to deserialize block in '%s': %s\n",
-				d.DataID.DataName(), err.Error())
+				d.DataInstance.DataName(), err.Error())
 			return
 		}
 	}

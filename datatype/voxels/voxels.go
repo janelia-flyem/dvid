@@ -37,13 +37,13 @@ API for 'voxels' datatype (github.com/janelia-flyem/dvid/datatype/voxels)
 
 Command-line:
 
-$ dvid dataset <UUID> new <type name> <data name> <settings...>
+$ dvid repo <UUID> new <type name> <data name> <settings...>
 
-	Adds newly named data of the 'type name' to dataset with specified UUID.
+	Adds newly named data of the 'type name' to repo with specified UUID.
 
 	Example (note anisotropic resolution specified instead of default 8 nm isotropic):
 
-	$ dvid dataset 3f8c new grayscale8 mygrayscale BlockSize=32 Res=3.2,3.2,40.0
+	$ dvid repo 3f8c new grayscale8 mygrayscale BlockSize=32 Res=3.2,3.2,40.0
 
     Arguments:
 
@@ -281,7 +281,7 @@ type Blocks []Block
 type IntHandler interface {
 	NewExtHandler(dvid.Geometry, interface{}) (ExtHandler, error)
 
-	DataID() datastore.DataID
+	DataInstance() datastore.DataInstance
 
 	UseCompression() dvid.Compression
 
@@ -390,7 +390,7 @@ func GetVoxels(uuid dvid.UUID, i IntHandler, e ExtHandler) error {
 
 	wg := new(sync.WaitGroup)
 	chunkOp := &storage.ChunkOp{&Operation{e, GetOp}, wg}
-	dataID := i.DataID()
+	dataID := i.DataInstance()
 	server.SpawnGoroutineMutex.Lock()
 	for it, err := e.IndexIterator(i.BlockSize()); err == nil && it.Valid(); it.NextSpan() {
 		indexBeg, indexEnd, err := it.IndexSpan()
@@ -436,7 +436,7 @@ func PutVoxels(uuid dvid.UUID, i IntHandler, e ExtHandler) error {
 
 	wg := new(sync.WaitGroup)
 	chunkOp := &storage.ChunkOp{&Operation{e, PutOp}, wg}
-	dataID := i.DataID()
+	dataID := i.DataInstance()
 
 	// We only want one PUT on given version for given data to prevent interleaved
 	// chunk PUTs that could potentially overwrite slice modifications.
@@ -444,13 +444,13 @@ func PutVoxels(uuid dvid.UUID, i IntHandler, e ExtHandler) error {
 	versionMutex.Lock()
 	defer versionMutex.Unlock()
 
-	// Keep track of changing extents and mark dataset as dirty if changed.
+	// Keep track of changing extents and mark repo as dirty if changed.
 	var extentChanged bool
 	defer func() {
 		if extentChanged {
-			err := service.SaveDataset(uuid)
+			err := service.SaveRepo(uuid)
 			if err != nil {
-				dvid.Log(dvid.Normal, "Error in trying to save dataset on change: %s\n", err.Error())
+				dvid.Log(dvid.Normal, "Error in trying to save repo on change: %s\n", err.Error())
 			}
 		}
 	}()
@@ -557,16 +557,16 @@ func loadHDF(i IntHandler, load *bulkLoadInfo) error {
 						return err
 					}
 					fmt.Printf("Object name %d: %s\n", n, name)
-					dataset, err := f.OpenDataset(name)
+					repo, err := f.OpenRepo(name)
 					if err != nil {
 						return err
 					}
-					dtype, err := dataset.Datatype()
+					dtype, err := repo.Datatype()
 					if err != nil {
 						return err
 					}
 					fmt.Printf("Type size: %d\n", dtype.Size())
-					dataspace := dataset.Space()
+					dataspace := repo.Space()
 					dims, maxdims, err := dataspace.SimpleExtentDims()
 					if err != nil {
 						return err
@@ -574,7 +574,7 @@ func loadHDF(i IntHandler, load *bulkLoadInfo) error {
 					fmt.Printf("Dims: %s\n", dims)
 					fmt.Printf("Maxdims: %s\n", maxdims)
 					data := make([]uint8, dims[0]*dims[1]*dims[2])
-					err = dataset.Read(&data)
+					err = repo.Read(&data)
 					if err != nil {
 						return err
 					}
@@ -815,9 +815,9 @@ func LoadImages(i IntHandler, uuid dvid.UUID, offset dvid.Point, filenames []str
 		versionMutex.Unlock()
 
 		if load.extentChanged.Value() {
-			err := service.SaveDataset(uuid)
+			err := service.SaveRepo(uuid)
 			if err != nil {
-				dvid.Log(dvid.Normal, "Error in trying to save dataset on change: %s\n", err.Error())
+				dvid.Log(dvid.Normal, "Error in trying to save repo on change: %s\n", err.Error())
 			}
 		}
 	}()
@@ -845,7 +845,7 @@ func loadOldBlocks(i IntHandler, e ExtHandler, blocks Blocks, versionID dvid.Ver
 	oldBlocks := map[string]([]byte){}
 
 	// Iterate through index space for this data using ZYX ordering.
-	dataID := i.DataID()
+	dataID := i.DataInstance()
 	blockSize := i.BlockSize()
 	blockNum := 0
 	for it, err := e.IndexIterator(blockSize); err == nil && it.Valid(); it.NextSpan() {
@@ -906,7 +906,7 @@ func writeXYImage(i IntHandler, e ExtHandler, blocks Blocks, versionID dvid.Vers
 	}()
 
 	// Iterate through index space for this data using ZYX ordering.
-	dataID := i.DataID()
+	dataID := i.DataInstance()
 	blockSize := i.BlockSize()
 	var startingBlock int32
 
@@ -1358,7 +1358,7 @@ func NewDatatype(values dvid.DataValues, interpolable bool) (dtype *Datatype) {
 }
 
 // NewData returns a pointer to a new Voxels with default values.
-func (dtype *Datatype) NewData(id *datastore.DataID, config dvid.Config) (*Data, error) {
+func (dtype *Datatype) NewData(id *datastore.DataInstance, config dvid.Config) (*Data, error) {
 	basedata, err := datastore.NewDataService(id, dtype, config)
 	if err != nil {
 		return nil, err
@@ -1378,7 +1378,7 @@ func (dtype *Datatype) NewData(id *datastore.DataID, config dvid.Config) (*Data,
 // --- TypeService interface ---
 
 // NewData returns a pointer to a new Voxels with default values.
-func (dtype *Datatype) NewDataService(id *datastore.DataID, config dvid.Config) (datastore.DataService, error) {
+func (dtype *Datatype) NewDataService(id *datastore.DataInstance, config dvid.Config) (datastore.DataService, error) {
 	return dtype.NewData(id, config)
 }
 
@@ -1474,7 +1474,7 @@ type Properties struct {
 	// Interpolable is true if voxels can be interpolated when resizing.
 	Interpolable bool
 
-	// Block size for this dataset
+	// Block size for this repo
 	BlockSize dvid.Point
 
 	// The endianness of this loaded data.
@@ -1853,8 +1853,8 @@ func (d *Data) NewExtHandler(geom dvid.Geometry, img interface{}) (ExtHandler, e
 	return voxels, nil
 }
 
-func (d *Data) DataID() datastore.DataID {
-	return *(d.Data.DataID)
+func (d *Data) DataInstance() datastore.DataInstance {
+	return *(d.Data.DataInstance)
 }
 
 func (d *Data) Values() dvid.DataValues {
@@ -1945,11 +1945,13 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 		case "remote":
 			return fmt.Errorf("put remote not yet implemented")
 		default:
-			return d.UnknownCommand(request)
+			return fmt.Errorf("Unknown command.  Data type '%s' [%s] does not support '%s' command.",
+				d.Name, d.DatatypeName(), request.TypeCommand())
 		}
 
 	default:
-		return d.UnknownCommand(request)
+		return fmt.Errorf("Unknown command.  Data type '%s' [%s] does not support '%s' command.",
+			d.Name, d.DatatypeName(), request.TypeCommand())
 	}
 	return nil
 }
@@ -2004,7 +2006,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		if err := d.ModifyConfig(config); err != nil {
 			return err
 		}
-		if err := server.DatastoreService().SaveDataset(uuid); err != nil {
+		if err := server.DatastoreService().SaveRepo(uuid); err != nil {
 			return err
 		}
 		fmt.Fprintf(w, "Changed '%s' based on received configuration:\n%s\n", d.DataName(), config)
@@ -2256,7 +2258,7 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 		blockData, _, err = dvid.DeserializeData(chunk.V, true)
 		if err != nil {
 			dvid.Log(dvid.Normal, "Unable to deserialize block in '%s': %s\n",
-				d.DataID().DataName(), err.Error())
+				d.DataInstance().DataName(), err.Error())
 			return
 		}
 	}
@@ -2267,25 +2269,25 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 	case GetOp:
 		if err = ReadFromBlock(op.ExtHandler, block, d.BlockSize()); err != nil {
 			dvid.Log(dvid.Normal, "Unable to ReadFromBlock() in '%s': %s\n",
-				d.DataID().DataName(), err.Error())
+				d.DataInstance().DataName(), err.Error())
 			return
 		}
 	case PutOp:
 		if err = WriteToBlock(op.ExtHandler, block, d.BlockSize()); err != nil {
 			dvid.Log(dvid.Normal, "Unable to WriteToBlock() in '%s': %s\n",
-				d.DataID().DataName(), err.Error())
+				d.DataInstance().DataName(), err.Error())
 			return
 		}
 		db, err := server.OrderedKeyValueSetter()
 		if err != nil {
 			dvid.Log(dvid.Normal, "Database doesn't support OrderedKeyValueSetter in '%s': %s\n",
-				d.DataID().DataName(), err.Error())
+				d.DataInstance().DataName(), err.Error())
 			return
 		}
 		serialization, err := dvid.SerializeData(blockData, d.UseCompression(), d.UseChecksum())
 		if err != nil {
 			dvid.Log(dvid.Normal, "Unable to serialize block in '%s': %s\n",
-				d.DataID().DataName(), err.Error())
+				d.DataInstance().DataName(), err.Error())
 			return
 		}
 		db.Put(chunk.K, serialization)

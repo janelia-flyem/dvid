@@ -23,11 +23,11 @@ const RPCHelpMessage = `Commands executed on the server (rpc address = %s):
 	types
 	types <datatype name> help
 
-	datasets info
-	datasets new         (returns UUID of dataset's root node)
+	repos info
+	repos new         (returns UUID of repo's root node)
 
-	dataset <UUID> new <datatype name> <data name> <datatype-specific config>...
-	dataset <UUID> <data name> help
+	repo <UUID> new <datatype name> <data name> <datatype-specific config>...
+	repo <UUID> <data name> help
 
 	node <UUID> lock
 	node <UUID> branch   (returns UUID of new child node)
@@ -47,7 +47,7 @@ type RPCConnection struct{}
 // Do acts as a switchboard for remote command execution
 func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) error {
 	if reply == nil {
-		dvid.Log(dvid.Debug, "reply is nil coming in!\n")
+		dvid.Debugf("reply is nil coming in!\n")
 		return nil
 	}
 	if cmd.Name() == "" {
@@ -95,27 +95,27 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 			reply.Text = typeservice.Help()
 		}
 
-	case "datasets":
+	case "repos":
 		var subcommand string
 		cmd.CommandArgs(1, &subcommand)
 		switch subcommand {
 		case "info":
-			jsonStr, err := runningService.DatasetsListJSON()
+			jsonStr, err := runningService.ReposListJSON()
 			if err != nil {
 				return err
 			}
 			reply.Text = jsonStr
 		case "new":
-			uuid, _, err := runningService.NewDataset()
+			uuid, _, err := runningService.NewRepo()
 			if err != nil {
 				return err
 			}
-			reply.Text = fmt.Sprintf("New dataset created with head node %s\n", uuid)
+			reply.Text = fmt.Sprintf("New repo created with head node %s\n", uuid)
 		default:
-			return fmt.Errorf("Unknown datasets command: %q", subcommand)
+			return fmt.Errorf("Unknown repos command: %q", subcommand)
 		}
 
-	case "dataset":
+	case "repo":
 		var uuidStr, subcommand, typename, dataname string
 		cmd.CommandArgs(1, &uuidStr, &subcommand)
 		uuid, err := MatchingUUID(uuidStr)

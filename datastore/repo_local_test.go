@@ -1,8 +1,10 @@
+// +build !clustered,!gcloud
+
 package datastore
 
 import (
-	. "github.com/janelia-flyem/go/gocheck"
 	_ "testing"
+	. "github.com/janelia-flyem/go/gocheck"
 
 	"github.com/janelia-flyem/dvid/dvid"
 )
@@ -14,7 +16,7 @@ func (s *DataSuite) TestNewDAG(c *C) {
 	c.Assert(dag.VersionMap, HasLen, 1)
 }
 
-func (s *DataSuite) TestDatasetPersistence(c *C) {
+func (s *DataSuite) TestRepoPersistence(c *C) {
 	dir := c.MkDir()
 
 	// Create a new datastore.
@@ -25,7 +27,7 @@ func (s *DataSuite) TestDatasetPersistence(c *C) {
 	service, err := Open(dir)
 	c.Assert(err, IsNil)
 
-	root, _, err := service.NewDataset()
+	root, _, err := service.NewRepo()
 	c.Assert(err, IsNil)
 
 	c.Assert(service.Lock(root), IsNil)
@@ -41,7 +43,7 @@ func (s *DataSuite) TestDatasetPersistence(c *C) {
 	_, err = service.NewVersion(child1)
 	c.Assert(err, IsNil)
 
-	oldJSON, err := service.DatasetsAllJSON()
+	oldJSON, err := service.ReposAllJSON()
 	c.Assert(err, IsNil)
 
 	service.Shutdown()
@@ -50,20 +52,20 @@ func (s *DataSuite) TestDatasetPersistence(c *C) {
 	service2, err := Open(dir)
 	c.Assert(err, IsNil)
 
-	newJSON, err := service2.DatasetsAllJSON()
+	newJSON, err := service2.ReposAllJSON()
 	c.Assert(err, IsNil)
 
 	c.Assert(newJSON, DeepEquals, oldJSON)
 }
 
-// Make sure each new dataset has a different local ID.
-func (s *DataSuite) TestNewDatasetDifferent(c *C) {
-	root1, datasetID1, err := s.service.NewDataset()
+// Make sure each new repo has a different local ID.
+func (s *DataSuite) TestNewRepoDifferent(c *C) {
+	root1, repoID1, err := s.service.NewRepo()
 	c.Assert(err, IsNil)
 
-	root2, datasetID2, err := s.service.NewDataset()
+	root2, repoID2, err := s.service.NewRepo()
 	c.Assert(err, IsNil)
 
-	c.Assert(datasetID1, Not(Equals), datasetID2)
+	c.Assert(repoID1, Not(Equals), repoID2)
 	c.Assert(root1, Not(Equals), root2)
 }

@@ -48,8 +48,8 @@ func GetOptions(create bool, config dvid.Config) (*lmdbOptions, error) {
 	return &lmdbOptions{}, nil
 }
 
-// NewStore returns a lmdb backend.
-func NewStore(path string, create bool, config dvid.Config) (Engine, error) {
+// NewKeyValueStore returns a lmdb backend.
+func NewKeyValueStore(path string, create bool, config dvid.Config) (Engine, error) {
 	// Create the directory if it doesn't exist.
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		if err = os.MkdirAll(path, 0770); err != nil {

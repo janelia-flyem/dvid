@@ -10,8 +10,10 @@ import (
 	"fmt"
 	"net/http"
 	"runtime"
-	"strings"
 	"time"
+
+	"github.com/janelia-flyem/go/goji"
+	"github.com/janelia-flyem/go/goji/web"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -22,7 +24,7 @@ const HelpMessage = `
 HTTP API (Level 2 REST) for general DVID commands
 =================================================
 
-POST <api URL>/dataset/<UUID>/new/<datatype name>/<data name>
+POST <api URL>/repo/<UUID>/new/<datatype name>/<data name>
 
     Creates a new instance of the given data type.  Expects configuration data in JSON
     as the body of the POST.  Configuration data is a JSON object with each property
@@ -90,6 +92,45 @@ const WebHelp = `
 </html>
 `
 
+type Context struct {
+	log         dvid.Logger
+	data        []*datastore.DataContext
+	accessToken string
+}
+
+func init() {
+	goji.Get("/help", helpHandler)
+	goji.Get("/load", loadHandler)
+
+	goji.Get("/api/server/info", serverInfoHandler)
+	goji.Get("/api/server/types", serverTypesHandler)
+
+	goji.Post("/api/repos", reposPostHandler)
+
+	goji.Get("/api/repos/info", reposInfoHandler)
+	goji.Get("/api/repos/list", reposListHandler)
+
+	repoMux := web.New()
+	goji.Handle("/api/repo/:uuid/*", repoMux)
+	repoMux.Use(repoSelector)
+	repoMux.Post("/api/repo/:uuid/instance", repoPostHandler)
+	repoMux.Get("/api/repo/:uuid/info", repoInfoHandler)
+	repoMux.Get("/api/repo/:uuid/lock", repoLockHandler)
+	repoMux.Get("/api/repo/:uuid/branch", repoBranchHandler)
+
+	instanceMux := web.New()
+	goji.Handle("/api/repo/:uuid/:dataname/*", instanceMux)
+	instanceMux.Use(repoSelector)
+	instanceMux.Use(instanceSelector)
+	instanceMux.NotFound(NotFound)
+}
+
+func NotFound(w http.ResponseWriter, r *http.Request) {
+	errorMsg := fmt.Sprintf("Could not find the URL: %s", r.URL.Path)
+	dvid.Log(dvid.Normal, errorMsg)
+	http.Error(w, errorMsg, http.StatusNotFound)
+}
+
 func BadRequest(w http.ResponseWriter, r *http.Request, message string) {
 	errorMsg := fmt.Sprintf("ERROR using REST API: %s (%s).", message, r.URL.Path)
 	errorMsg += "  Use 'dvid help' to get proper API request format.\n"
@@ -106,54 +147,69 @@ func DecodeJSON(r *http.Request) (dvid.Config, error) {
 	return config, nil
 }
 
-// Index file redirection.
-func indexHandler(w http.ResponseWriter, r *http.Request) {
-	http.Redirect(w, r, "/index.html", http.StatusMovedPermanently)
-}
-
-// Handler for web client
-func (service *Service) mainHandler(w http.ResponseWriter, r *http.Request) {
-	service.sendContent(r.URL.Path, w, r)
-}
-
-// Handler for API commands.  Results come back in JSON.
-// We assume all DVID API commands have URLs with prefix /api/...
-// See WebAPIHelp for expected calling URLs and HTTP verbs.
-func apiHandler(w http.ResponseWriter, r *http.Request) {
-	// Break URL request into arguments
-	lenPath := len(WebAPIPath)
-	url := r.URL.Path[lenPath:]
-	parts := strings.Split(url, "/")
-	if len(parts) == 0 {
-		BadRequest(w, r, "Poorly formed request")
+// AboutJSON returns a JSON string describing the properties of this server.
+func AboutJSON() (jsonStr string, err error) {
+	data := map[string]string{
+		"Cores":           fmt.Sprintf("%d", dvid.NumCPU),
+		"Maximum Cores":   fmt.Sprintf("%d", runtime.NumCPU()),
+		"DVID datastore":  datastore.Version,
+		"Storage backend": storage.Version,
+		"Storage driver":  storage.Driver,
+		"Server uptime":   time.Since(startupTime).String(),
+	}
+	m, err := json.Marshal(data)
+	if err != nil {
 		return
 	}
-
-	// Handle the requests
-	switch parts[0] {
-	case "help":
-		helpRequest(w, r)
-	case "load":
-		loadRequest(w, r)
-	case "server":
-		serverRequest(w, r)
-	case "datasets":
-		datasetsRequest(w, r)
-	case "dataset":
-		datasetRequest(w, r)
-	case "node":
-		nodeRequest(w, r)
-	default:
-		BadRequest(w, r, "Request not in API")
-	}
+	jsonStr = string(m)
+	return
 }
 
-func helpRequest(w http.ResponseWriter, r *http.Request) {
+// ---- Middleware -------------
+
+// repoSelector retrieves the particular repo from a potentially partial string that uniquely
+// identifies the repo.
+func repoSelector(c *web.C, h http.Handler) http.Handler {
+	fn := func(w http.ResponseWriter, r *http.Request) {
+		var err error
+		if c.Env["uuid"], err = MatchingUUID(c.URLParams["uuid"]); err != nil {
+			BadRequest(w, r, err.Error())
+			return
+		}
+		h.ServeHTTP(w, r)
+	}
+	return http.HandlerFunc(fn)
+}
+
+// instanceSelector retrieves the data instance given its complete string name and
+// forwards the request to that instance's HTTP handler.
+func instanceSelector(c *web.C, h http.Handler) http.Handler {
+	fn := func(w http.ResponseWriter, r *http.Request) {
+		var err error
+		dataname := dvid.DataString(c.URLParams["dataname"])
+		uuid := c.Env["uuid"].(dvid.UUID)
+		dataservice, err := runningService.DataServiceByUUID(uuid, dataname)
+		if err != nil {
+			BadRequest(w, r, err.Error())
+			return
+		}
+		err = dataservice.DoHTTP(uuid, w, r)
+		if err != nil {
+			BadRequest(w, r, err.Error())
+		}
+	}
+	return http.HandlerFunc(fn)
+}
+
+// ---- Function types that fulfill http.Handler.  How can a bare function satisfy an interface?
+//      See http://www.onebigfluke.com/2014/04/gos-power-is-in-emergent-behavior.html
+
+func helpHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html")
 	fmt.Fprintf(w, WebHelp)
 }
 
-func loadRequest(w http.ResponseWriter, r *http.Request) {
+func loadHandler(w http.ResponseWriter, r *http.Request) {
 	m, err := json.Marshal(map[string]int{
 		"file bytes read":     storage.FileBytesReadPerSec,
 		"file bytes written":  storage.FileBytesWrittenPerSec,
@@ -174,226 +230,142 @@ func loadRequest(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, string(m))
 }
 
-func aboutJSON() (jsonStr string, err error) {
-	data := map[string]string{
-		"Cores":           fmt.Sprintf("%d", dvid.NumCPU),
-		"Maximum Cores":   fmt.Sprintf("%d", runtime.NumCPU()),
-		"DVID datastore":  datastore.Version,
-		"Storage backend": storage.Version,
-		"Storage driver":  storage.Driver,
-		"Server uptime":   time.Since(startupTime).String(),
-	}
-	m, err := json.Marshal(data)
+func serverInfoHandler(w http.ResponseWriter, r *http.Request) {
+	jsonStr, err := AboutJSON()
 	if err != nil {
+		BadRequest(w, r, err.Error())
 		return
 	}
-	jsonStr = string(m)
-	return
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, jsonStr)
 }
 
-func serverRequest(w http.ResponseWriter, r *http.Request) {
-	lenPath := len(WebAPIPath + "server/")
-	url := r.URL.Path[lenPath:]
-	parts := strings.Split(url, "/")
-
-	badRequest := func() {
-		BadRequest(w, r, WebAPIPath+"server/ must be followed with 'info' or 'types'")
-	}
-
-	if len(parts) != 1 {
-		badRequest()
+func serverTypesHandler(w http.ResponseWriter, r *http.Request) {
+	jsonStr, err := runningService.TypesJSON()
+	if err != nil {
+		BadRequest(w, r, err.Error())
 		return
 	}
-
-	switch parts[0] {
-	case "info":
-		jsonStr, err := aboutJSON()
-		if err != nil {
-			BadRequest(w, r, err.Error())
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, jsonStr)
-	case "types":
-		jsonStr, err := runningService.TypesJSON()
-		if err != nil {
-			BadRequest(w, r, err.Error())
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, jsonStr)
-	default:
-		badRequest()
-	}
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, jsonStr)
 }
 
-func datasetsRequest(w http.ResponseWriter, r *http.Request) {
-	lenPath := len(WebAPIPath + "datasets/")
-	url := r.URL.Path[lenPath:]
-	parts := strings.Split(url, "/")
-	action := strings.ToLower(r.Method)
-
-	badRequest := func() {
-		BadRequest(w, r, WebAPIPath+"datasets/ must be followed with 'info', 'list' or 'new'")
-	}
-
-	if len(parts) != 1 {
-		badRequest()
+func reposInfoHandler(w http.ResponseWriter, r *http.Request) {
+	jsonStr, err := runningService.ReposAllJSON()
+	if err != nil {
+		BadRequest(w, r, err.Error())
 		return
 	}
-
-	switch parts[0] {
-	case "list":
-		jsonStr, err := runningService.DatasetsListJSON()
-		if err != nil {
-			BadRequest(w, r, err.Error())
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, jsonStr)
-	case "info":
-		jsonStr, err := runningService.DatasetsAllJSON()
-		if err != nil {
-			BadRequest(w, r, err.Error())
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, jsonStr)
-	case "new":
-		if action != "post" {
-			BadRequest(w, r, "Datasets 'new' request must be made with HTTP POST method")
-			return
-		}
-		root, _, err := runningService.NewDataset()
-		if err != nil {
-			BadRequest(w, r, err.Error())
-		}
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, "{%q: %q}", "Root", root)
-	default:
-		badRequest()
-	}
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, jsonStr)
 }
 
-func datasetRequest(w http.ResponseWriter, r *http.Request) {
-	lenPath := len(WebAPIPath + "dataset/")
-	url := r.URL.Path[lenPath:]
-	parts := strings.Split(url, "/")
-	action := strings.ToLower(r.Method)
-
-	if len(parts) < 2 || len(parts) > 4 {
-		BadRequest(w, r, "Bad dataset request made.  Visit /api/help for help.")
+func reposListHandler(w http.ResponseWriter, r *http.Request) {
+	jsonStr, err := runningService.ReposListJSON()
+	if err != nil {
+		BadRequest(w, r, err.Error())
 		return
 	}
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, jsonStr)
+}
 
-	// Get particular dataset for this UUID
-	uuid, err := MatchingUUID(parts[0])
+func reposPostHandler(w http.ResponseWriter, r *http.Request) {
+	root, _, err := runningService.NewRepo()
+	if err != nil {
+		BadRequest(w, r, err.Error())
+	}
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, "{%q: %q}", "Root", root)
+}
+
+func repoInfoHandler(c web.C, w http.ResponseWriter, r *http.Request) {
+	uuid, err := MatchingUUID(c.URLParams["uuid"])
 	if err != nil {
 		BadRequest(w, r, err.Error())
 		return
 	}
 
-	// Handle query of dataset properties
-	if parts[1] == "info" {
-		jsonStr, err := runningService.DatasetJSON(uuid)
-		if err != nil {
-			BadRequest(w, r, err.Error())
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, jsonStr)
-		return
-	}
-
-	// Handle creation of new data in dataset via POST.
-	if parts[1] == "new" {
-		if action != "post" {
-			BadRequest(w, r, "Dataset 'new' request must be made with HTTP POST method")
-			return
-		}
-		if len(parts) != 4 {
-			BadRequest(w, r, "Bad URL: Expecting /api/dataset/<UUID>/new/<datatype name>/<data name>")
-			return
-		}
-		typename := dvid.TypeString(parts[2])
-		dataname := dvid.DataString(parts[3])
-		decoder := json.NewDecoder(r.Body)
-		config := dvid.NewConfig()
-		err = decoder.Decode(&config)
-		if err != nil {
-			BadRequest(w, r, fmt.Sprintf("Error decoding POSTed JSON config for 'new': %s", err.Error()))
-			return
-		}
-		err = runningService.NewData(uuid, typename, dataname, config)
-		if err != nil {
-			BadRequest(w, r, err.Error())
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, "{%q: 'Added %s [%s] to node %s'}", "result", dataname, typename, uuid)
-		return
-	}
-
-	// Forward all other commands to the data service.
-	dataname := dvid.DataString(parts[1])
-	dataservice, err := runningService.DataServiceByUUID(uuid, dataname)
+	jsonStr, err := runningService.RepoJSON(uuid)
 	if err != nil {
 		BadRequest(w, r, err.Error())
 		return
 	}
-	err = dataservice.DoHTTP(uuid, w, r)
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, jsonStr)
+}
+
+func repoPostHandler(c web.C, w http.ResponseWriter, r *http.Request) {
+	uuid, err := MatchingUUID(c.URLParams["uuid"])
 	if err != nil {
 		BadRequest(w, r, err.Error())
+		return
+	}
+
+	decoder := json.NewDecoder(r.Body)
+	config := dvid.NewConfig()
+	err = decoder.Decode(&config)
+	if err != nil {
+		BadRequest(w, r, fmt.Sprintf("Error decoding POSTed JSON config for 'new': %s", err.Error()))
+		return
+	}
+
+	// Make sure that the passed configuration has data type and instance name.
+	typename, found, err := config.GetString("datatype")
+	if !found || err != nil {
+		BadRequest(w, r, "POST on repo endpoint requires specification of valid 'datatype'")
+		return
+	}
+	dataname, found, err := config.GetString("dataname")
+	if !found || err != nil {
+		BadRequest(w, r, "POST on repo endpoint requires specification of valid 'dataname'")
+		return
+	}
+
+	err = runningService.NewData(uuid, typename, dataname, config)
+	if err != nil {
+		BadRequest(w, r, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, "{%q: 'Added %s [%s] to node %s'}", "result", dataname, typename, uuid)
+}
+
+func repoLockHandler(c web.C, w http.ResponseWriter, r *http.Request) {
+	uuid, err := MatchingUUID(c.URLParams["uuid"])
+	if err != nil {
+		BadRequest(w, r, err.Error())
+		return
+	}
+
+	err := runningService.Lock(uuid)
+	if err != nil {
+		BadRequest(w, r, err.Error())
+	} else {
+		w.Header().Set("Content-Type", "text/plain")
+		fmt.Fprintln(w, "Lock on node %s successful.", uuid)
 	}
 }
 
-func nodeRequest(w http.ResponseWriter, r *http.Request) {
-	lenPath := len(WebAPIPath + "node/")
-	url := r.URL.Path[lenPath:]
-	parts := strings.Split(url, "/")
-
-	if len(parts) < 2 {
-		BadRequest(w, r, "Bad node request made.  Visit /api/help for help.")
-		return
-	}
-
-	// Get particular dataset for this UUID
-	uuid, err := MatchingUUID(parts[0])
+func repoBranchHandler(c web.C, w http.ResponseWriter, r *http.Request) {
+	uuid, err := MatchingUUID(c.URLParams["uuid"])
 	if err != nil {
 		BadRequest(w, r, err.Error())
 		return
 	}
 
-	// Handle the dataset command.
-	switch parts[1] {
-	case "lock":
-		err := runningService.Lock(uuid)
-		if err != nil {
-			BadRequest(w, r, err.Error())
-		} else {
-			w.Header().Set("Content-Type", "text/plain")
-			fmt.Fprintln(w, "Lock on node %s successful.", uuid)
-		}
-
-	case "branch":
-		newuuid, err := runningService.NewVersion(uuid)
-		if err != nil {
-			BadRequest(w, r, err.Error())
-		} else {
-			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprintf(w, "{%q: %q}", "Branch", newuuid)
-		}
-
-	default:
-		dataname := dvid.DataString(parts[1])
-		dataservice, err := runningService.DataServiceByUUID(uuid, dataname)
-		if err != nil {
-			BadRequest(w, r, err.Error())
-			return
-		}
-		err = dataservice.DoHTTP(uuid, w, r)
-		if err != nil {
-			BadRequest(w, r, err.Error())
-		}
+	newuuid, err := runningService.NewVersion(uuid)
+	if err != nil {
+		BadRequest(w, r, err.Error())
+	} else {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, "{%q: %q}", "Branch", newuuid)
 	}
 }
+
+// Handler for web client
+/*
+func (service *Service) mainHandler(w http.ResponseWriter, r *http.Request) {
+	service.sendContent(r.URL.Path, w, r)
+}
+*/

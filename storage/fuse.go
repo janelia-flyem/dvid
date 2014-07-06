@@ -76,11 +76,11 @@ type Data []Mountable
 // VersionInfo holds both local and global IDs for a node.
 type VersionInfo struct {
 	uuid      dvid.UUID
-	datasetID dvid.DatasetLocalID
+	repoID    repo.LocalID
 	versionID dvid.VersionLocalID
 }
 
-func NewVersionInfo(uuid dvid.UUID, dID dvid.DatasetLocalID, vID dvid.VersionLocalID) VersionInfo {
+func NewVersionInfo(uuid dvid.UUID, dID dvid.RepoLocalID, vID dvid.VersionLocalID) VersionInfo {
 	return VersionInfo{uuid, dID, vID}
 }
 
@@ -88,8 +88,8 @@ func (v VersionInfo) GetUUID() dvid.UUID {
 	return v.uuid
 }
 
-func (v VersionInfo) GetDatasetID() dvid.DatasetLocalID {
-	return v.datasetID
+func (v VersionInfo) GetRepoID() dvid.RepoLocalID {
+	return v.repoID
 }
 
 func (v VersionInfo) GetVersionID() dvid.VersionLocalID {
@@ -166,7 +166,7 @@ func (MountDir) ReadDir(intr fs.Intr) ([]fuse.Dirent, fuse.Error) {
 }
 
 // VersionDir implements both Node and Handle for the version directories.
-// Each directory is specific to one data in a dataset.
+// Each directory is specific to one data in a repo.
 type VersionDir struct {
 	Mount
 }
