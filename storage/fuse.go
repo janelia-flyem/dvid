@@ -1,3 +1,5 @@
+// +build fuse
+
 /*
 	This file implements FUSE file systems that can be used to access DVID data.
 */
@@ -76,11 +78,11 @@ type Data []Mountable
 // VersionInfo holds both local and global IDs for a node.
 type VersionInfo struct {
 	uuid      dvid.UUID
-	repoID    repo.LocalID
-	versionID dvid.VersionLocalID
+	repoID    dvid.RepoID
+	versionID dvid.VersionID
 }
 
-func NewVersionInfo(uuid dvid.UUID, dID dvid.RepoLocalID, vID dvid.VersionLocalID) VersionInfo {
+func NewVersionInfo(uuid dvid.UUID, dID dvid.RepoID, vID dvid.VersionID) VersionInfo {
 	return VersionInfo{uuid, dID, vID}
 }
 
@@ -88,7 +90,7 @@ func (v VersionInfo) GetUUID() dvid.UUID {
 	return v.uuid
 }
 
-func (v VersionInfo) GetRepoID() dvid.RepoLocalID {
+func (v VersionInfo) GetRepoID() dvid.RepoID {
 	return v.repoID
 }
 

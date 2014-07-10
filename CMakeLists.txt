@@ -86,6 +86,12 @@ else ()
     
     # flag for building graph backend (currently just using specified key-value store
     set (DVID_GRAPHBACKEND "graphkeyvalue" CACHE TYPE STRING)
+
+    # flag for building with FUSE support for key-value
+    set (DVID_FUSE FALSE CACHE TYPE BOOL)
+    if (${DVID_FUSE})
+        set (DVID_BUILD_TAGS "fuse")
+    endif ()
     
     message ("Using DVID_BACKEND: ${DVID_BACKEND}")
 
@@ -143,6 +149,8 @@ else ()
         DEPENDS     ${golang_NAME}
         COMMENT     "Adding gojsonschema library...")
 
+    set (DVID_GO_PACKAGES gopackages gojsonschema)
+
     
     add_custom_target (nrsc
         ${BUILDEM_ENV_STRING} ${GO_ENV} go build -o ${BUILDEM_BIN_DIR}/nrsc
@@ -150,10 +158,13 @@ else ()
         WORKING_DIRECTORY $ENV{GOPATH}/src/github.com/janelia-flyem/go/nrsc/nrsc
         COMMENT     "Building nrsc resource compiler...")
     
-    add_custom_target (gofuse
-        ${BUILDEM_ENV_STRING} go get ${GO_GET} bazil.org/fuse
-        DEPENDS     ${golang_NAME}
-        COMMENT     "Adding FUSE Go library...")
+    if (${DVID_FUSE})
+        add_custom_target (gofuse
+            ${BUILDEM_ENV_STRING} go get ${GO_GET} bazil.org/fuse
+            DEPENDS     ${golang_NAME}
+            COMMENT     "Adding FUSE Go library...")
+        set (DVID_GO_PACKAGES ${DVID_GO_PACKAGES} gofuse)
+    endif()
 
     add_custom_target (gobolt
         ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/boltdb/bolt
@@ -168,9 +179,9 @@ else ()
     # Build DVID with chosen backend
     add_custom_target (dvid-exe
         ${BUILDEM_ENV_STRING} ${GO_ENV} ${CGO_FLAGS} go build -o ${BUILDEM_BIN_DIR}/dvid 
-        -v -tags '${DVID_BACKEND} ${DVID_GRAPHBACKEND}' cli/main.go 
+        -v -tags '${DVID_BACKEND} ${DVID_GRAPHBACKEND} ${DVID_BUILD_TAGS}' cli/main.go 
         WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
-        DEPENDS     ${golang_NAME} ${DVID_BACKEND_DEPEND} gopackages gofuse gojsonschema ${hdf5_NAME}
+        DEPENDS     ${golang_NAME} ${DVID_BACKEND_DEPEND}  ${hdf5_NAME}
         COMMENT     "Compiling and installing dvid executable...")
 
     # Build DVID with embedded console 

@@ -1,3 +1,5 @@
+// +build fuse
+
 /*
 	This file supports a FUSE file system implementation for keyvalue data.
 */
