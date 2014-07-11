@@ -17,11 +17,64 @@
 package storage
 
 import (
+	"bytes"
 	"sync"
 
 	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/janelia-flyem/dvid/storage"
 )
+
+// Key provides an abstraction for everything a versioned storage engine needs to know
+// about how to construct key bytes and interpret the returned, versioned key/value pairs.
+// The exact Key implementations are typically at the datastore or datatype level where
+// each data instance can determine the best way to structure keys, depending on maximum
+// versions per unique index, access speed requirements, etc.  Keeping the Key implementations
+// at the datastore level also allows consistent partioning of possibly different versions
+// of the key space.  To ensure consistency in how the key space is handled, best practice
+// is to define an opaque Key type at the datastore level and force use of its interface
+// in setting and retrieving key components.  (See datastore.Key)
+type Key interface {
+	// Bytes returns the key representation as a slice of bytes
+	Bytes() []byte
+
+	// BytesToKey returns a Key given its representation as a slice of bytes
+	BytesToKey([]byte) (Key, error)
+
+	String() string
+
+	// Versioned is true if multiple versions of a key/value could be available.
+	Versioned() bool
+
+	// Returns lower bound key for versions of given byte slice key representation.
+	MinVersionKey([]byte) (Key, error)
+
+	// Returns upper bound key for versions of given byte slice key representation.
+	MaxVersionKey([]byte) (Key, error)
+
+	// VersionedKeyValue returns the key/value pair corresponding to this key's version
+	// given a list of key/value pairs across many versions.
+	VersionedKeyValue([]KeyValue) (KeyValue, error)
+}
+
+// KeyValue stores a key-value pair.
+type KeyValue struct {
+	K Key
+	V []byte
+}
+
+// Deserialize returns a key-value pair where the value has been deserialized.
+func (kv KeyValue) Deserialize(uncompress bool) (KeyValue, error) {
+	value, _, err := dvid.DeserializeData(kv.V, uncompress)
+	return KeyValue{kv.K, value}, err
+}
+
+// KeyValues is a slice of key-value pairs that can be sorted.
+type KeyValues []KeyValue
+
+func (kv KeyValues) Len() int      { return len(kv) }
+func (kv KeyValues) Swap(i, j int) { kv[i], kv[j] = kv[j], kv[i] }
+func (kv KeyValues) Less(i, j int) bool {
+	return bytes.Compare(kv[i].K.Bytes(), kv[j].K.Bytes()) <= 0
+}
 
 // ---- The three tiers of storage for a DVID datastore, characterized by the
 // ---- maximum size of values and the bandwidth/latency.  These interfaces are
@@ -35,11 +88,11 @@ var (
 	// DVID processes, e.g., all front-end DVID apps.  Of the three tiers of storage
 	// (MetadataStore, SmallFastStore, BigDataStore), Metadata should have
 	// the smallest capacity and the lowest latency.
-	Metadata metadata
+	MetaData metaData
 
 	// SmallData is the interface for storing key-only or small key/value pairs that
 	// require much more capacity and potentially higher latency than Metadata.
-	SmallData smallFast
+	SmallData smallData
 
 	// BigData is the interface for storing DVID key/value pairs that are relatively
 	// large compared to key/value pairs used in SmallData.  This interface should be used
@@ -49,16 +102,16 @@ var (
 	BigData bigData
 )
 
-type metadata interface {
-	storage.KeyValueDB
+type metaData interface {
+	KeyValueDB
 }
 
-type smallFast interface {
-	storage.OrderedKeyValueDB
+type smallData interface {
+	OrderedKeyValueDB
 }
 
 type bigData interface {
-	storage.OrderedKeyValueDB
+	OrderedKeyValueDB
 }
 
 // Op enumerates the types of single key-value operations that can be performed for storage engines.
@@ -145,7 +198,7 @@ type OrderedKeyValueGetter interface {
 	KeyValueGetter
 
 	// GetRange returns a range of values spanning (kStart, kEnd) keys.
-	GetRange(kStart, kEnd Key) (values []KeyValue, err error)
+	GetRange(kStart, kEnd Key) (values []*KeyValue, err error)
 
 	// KeysInRange returns a range of keys spanning (kStart, kEnd).
 	KeysInRange(kStart, kEnd Key) (keys []Key, err error)

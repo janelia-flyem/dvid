@@ -9,8 +9,6 @@ import (
 	"math"
 	"strconv"
 	"strings"
-
-	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/go/go-uuid/uuid"
 )
 
@@ -64,27 +62,6 @@ func LocalID32FromBytes(b []byte) (id LocalID32, length int) {
 }
 
 // ---- Base identifiers of data within DVID -----
-
-// The following identifiers are more compact than the global identifiers such as
-// UUID or URLs, and therefore useful for compressing key sizes.
-
-// InstanceID is a DVID server-specific identifier for data instances.  Each InstanceID
-// is only used within one repo, so all key/values for a repo can be obtained by
-// doing range queries on instances associated with a repo.
-type InstanceID dvid.LocalID32
-
-// RepoID is a DVID server-specific identifier for a particular Repo.
-type RepoID dvid.LocalID32
-
-// VersionID is a DVID server-specific identifier for a particular version or
-// node of a repo's DAG.
-type VersionID dvid.LocalID32
-
-const (
-	MaxInstanceID = dvid.MaxLocalID32
-	MaxRepoID     = dvid.MaxLocalID32
-	MaxVersionID  = dvid.MaxLocalID32
-)
 
 // UUID is a 32 character hexidecimal string ("" if invalid) that uniquely identifies
 // nodes in a datastore's DAG.  We need universally unique identifiers to prevent collisions

@@ -305,12 +305,12 @@ type IntHandler interface {
 // block of data, and the key contains some spatial indexing.
 //
 // We can read/write different external formats through the following steps:
-// 1) Create a data type package (e.g., datatype/labels64) and define a ExtHandler type
-//    where the data layout (i.e., the values in a voxel) is identical to
-//    the targeted DVID IntHandler.
-// 2) Do I/O for external format (e.g., Raveler's superpixel PNG images with implicit Z)
-//    and convert external data to the ExtHandler instance.
-// 3) Pass ExtHandler to voxels package-level functions.
+//   1) Create a data type package (e.g., datatype/labels64) and define a ExtHandler type
+//      where the data layout (i.e., the values in a voxel) is identical to
+//      the targeted DVID IntHandler.
+//   2) Do I/O for external format (e.g., Raveler's superpixel PNG images with implicit Z)
+//      and convert external data to the ExtHandler instance.
+//   3) Pass ExtHandler to voxels package-level functions.
 //
 type ExtHandler interface {
 	VoxelHandler
@@ -501,7 +501,11 @@ func PutVoxels(uuid dvid.UUID, i IntHandler, e ExtHandler) error {
 			// Check for this key among old key-value pairs and if so,
 			// send the old value into chunk handler.
 			if oldkv.K != nil {
-				indexer, err := datastore.KeyToChunkIndexer(oldkv.K)
+				datakey, ok := oldkv.K.(*DataKey)
+				if !ok {
+					return fmt.Errorf("Can't convert Key (%s) to DataKey", key)
+				}
+				indexer, err := datastore.DataKeyToChunkIndexer(datakey)
 				if err != nil {
 					return err
 				}
@@ -951,7 +955,13 @@ func writeXYImage(i IntHandler, e ExtHandler, blocks Blocks, versionID dvid.Vers
 }
 
 func ComputeTransform(v ExtHandler, block *Block, blockSize dvid.Point) (blockBeg, dataBeg, dataEnd dvid.Point, err error) {
-	ptIndex, err := datastore.KeyToChunkIndexer(block.K)
+	datakey, ok := block.K.(*DataKey)
+	if !ok {
+		err = fmt.Errorf("Can't convert Key (%s) to DataKey", block.K)
+		return
+	}
+	var ptIndex dvid.ChunkIndexer
+	ptIndex, err = datastore.KeyToChunkIndexer(datakey)
 	if err != nil {
 		return
 	}
