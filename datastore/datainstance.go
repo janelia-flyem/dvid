@@ -113,23 +113,23 @@ func NewDataService(id *DataInstance, t datatype.Service, config dvid.Config) (*
 
 // ---- DataService implementation ----
 
-// DataInstance identifies data within a DVID server.
-type DataInstance struct {
-	Name   dvid.DataString
-	ID     dvid.DataLocalID
-	DsetID dvid.RepoLocalID
+// DataID identifies a data instance within a DVID server.
+type DataID struct {
+	Name dvid.DataString
+	id   InstanceID
+	repo RepoID
 }
 
 func (id DataInstance) DataName() dvid.DataString { return id.Name }
 
-func (id DataInstance) LocalID() dvid.DataLocalID { return id.ID }
+func (id DataInstance) ID() dvid.DataLocalID { return id.ID }
 
 func (id DataInstance) RepoID() dvid.RepoLocalID { return id.DsetID }
 
 // Data is an instance of a data type with some identifiers and it satisfies
 // a DataService interface.  Each Data is repo-specific.
-type Data struct {
-	*DataInstance
+type DataInstance struct {
+	*DataID
 	datatype.Service
 
 	// Compression of serialized data, e.g., the value in a key-value.
@@ -138,8 +138,14 @@ type Data struct {
 	// Checksum approach for serialized data.
 	Checksum dvid.Checksum
 
-	// If false (default), we allow changes along nodes.
-	Unversioned bool
+	// If true (default), we allow changes along nodes.
+	unversioned bool
+}
+
+// DataKey returns a DataKey for this data given a local version and a data-specific Index. If
+// the data is to be unversioned, the versionID should represent the root node of the version DAG.
+func (d *Data) DataKey(versionID dvid.VersionID, index dvid.Index) *DataKey {
+	return &DataKey{d.ID, versionID, index}
 }
 
 func (d *Data) UseCompression() dvid.Compression {

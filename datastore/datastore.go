@@ -5,6 +5,7 @@
 package datastore
 
 import (
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"sync"
@@ -25,6 +26,66 @@ var (
 func init() {
 	versionMutexes = make(map[nodeID]*sync.Mutex)
 }
+
+// The following identifiers are more compact than the global identifiers such as
+// UUID or URLs, and therefore useful for compressing key sizes.
+
+// InstanceID is a DVID server-specific identifier for data instances.  Each InstanceID
+// is only used within one repo, so all key/values for a repo can be obtained by
+// doing range queries on instances associated with a repo.
+type InstanceID dvid.LocalID32
+
+// Bytes returns a sequence of bytes encoding this InstanceID.
+func (id InstanceID) Bytes() []byte {
+	buf := make([]byte, LocalID32Size, LocalID32Size)
+	binary.BigEndian.PutUint32(buf, uint32(id))
+	return buf
+}
+
+// InstanceIDFromBytes returns a LocalID from the start of the slice and the number of bytes used.
+// Note: No error checking is done to ensure byte slice has sufficient bytes for InstanceID.
+func InstanceIDFromBytes(b []byte) (id InstanceID, length int) {
+	return InstanceID(binary.BigEndian.Uint32(b)), LocalID32Size
+}
+
+// RepoID is a DVID server-specific identifier for a particular Repo.
+type RepoID dvid.LocalID32
+
+// Bytes returns a sequence of bytes encoding this RepoID.
+func (id RepoID) Bytes() []byte {
+	buf := make([]byte, LocalID32Size, LocalID32Size)
+	binary.BigEndian.PutUint32(buf, uint32(id))
+	return buf
+}
+
+// RepoIDFromBytes returns a RepoID from the start of the slice and the number of bytes used.
+// Note: No error checking is done to ensure byte slice has sufficient bytes for RepoID.
+func RepoIDFromBytes(b []byte) (id RepoID, length int) {
+	return RepoID(binary.BigEndian.Uint32(b)), LocalID32Size
+}
+
+// VersionID is a DVID server-specific identifier for a particular version or
+// node of a repo's DAG.
+type VersionID dvid.LocalID32
+
+// Bytes returns a sequence of bytes encoding this VersionID.
+func (id VersionID) Bytes() []byte {
+	buf := make([]byte, LocalID32Size, LocalID32Size)
+	binary.BigEndian.PutUint32(buf, uint32(id))
+	return buf
+}
+
+// VersionIDFromBytes returns a VersionID from the start of the slice and the number of bytes used.
+// Note: No error checking is done to ensure byte slice has sufficient bytes for VersionID.
+func VersionIDFromBytes(b []byte) (id VersionID, length int) {
+	return VersionID(binary.BigEndian.Uint32(b)), LocalID32Size
+}
+
+const (
+	MaxInstanceID = dvid.MaxLocalID32
+	MaxRepoID     = dvid.MaxLocalID32
+	MaxVersionID  = dvid.MaxLocalID32
+)
 
 // Versions returns a chart of version identifiers for data types and and DVID's datastore
 // fixed at compile-time for this DVID executable
