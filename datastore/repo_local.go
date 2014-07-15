@@ -2,7 +2,7 @@
 
 /*
 	This file contains code for handling a Repo, the basic unit of versioning in DVID,
-	and Repos, a collection of Repo.  A Repo consists of a DAG where nodes can be
+	and Manager, a collection of Repo.  A Repo consists of a DAG where nodes can be
 	optionally locked.
 
 	For non-clustered, non-cloud ("local") DVID servers, we can get away with a simple
@@ -28,8 +28,24 @@ var (
 	ErrModifyLockedNode = errors.New("can't modify locked node")
 )
 
-// Repos holds information on all the Repo available.
-type Repos struct {
+// --- In the case of a single DVID process, return new ids requires only a lock.
+// --- This becomes more tricky when dealing with multiple DVID processes working
+// --- off shared storage engines.
+
+func NewInstanceID() (InstanceID, error) {
+
+}
+
+func NewRepoID() (RepoID, error) {
+
+}
+
+func NewVersionID() (VersionID, error) {
+
+}
+
+// Manager manages all the repos in the datastore.
+type Manager struct {
 	sync.Mutex
 
 	// Keep list of available Repo.  Could be much smaller than mapUUID which contains
@@ -49,7 +65,7 @@ type Repos struct {
 }
 
 // DataServiceByUUID returns a service for data of a given name under a Repo referenced by UUID.
-func (dsets *Repos) DataServiceByUUID(u dvid.UUID, name dvid.DataString) (DataService, error) {
+func (dsets *Manager) DataServiceByUUID(u dvid.UUID, name dvid.DataString) (DataService, error) {
 	// Determine the repo that contains the node with this UUID
 	repo, found := dsets.mapUUID[u]
 	if !found {
@@ -63,7 +79,7 @@ func (dsets *Repos) DataServiceByUUID(u dvid.UUID, name dvid.DataString) (DataSe
 }
 
 // DataServiceByLocalID returns a service for data of a given name under a Repo referenced by local ID.
-func (dsets *Repos) DataServiceByLocalID(id dvid.RepoLocalID, name dvid.DataString) (DataService, error) {
+func (dsets *Manager) DataServiceByLocalID(id dvid.RepoLocalID, name dvid.DataString) (DataService, error) {
 	// Determine the repo that contains the node with this UUID
 	repo, found := dsets.dsetIDs[id]
 	if !found {
@@ -76,11 +92,11 @@ func (dsets *Repos) DataServiceByLocalID(id dvid.RepoLocalID, name dvid.DataStri
 	return dataservice, nil
 }
 
-// NOTE: Alterations of Repos should be approached through datastore.Service since it
-// will coordinate persistence of in-memory Repos as well as multiple storage engines.
+// NOTE: Alterations of Manager should be approached through datastore.Service since it
+// will coordinate persistence of in-memory Manager as well as multiple storage engines.
 
 // RepoFromUUID returns a repo given a UUID.
-func (dsets *Repos) RepoFromUUID(u dvid.UUID) (*Repo, error) {
+func (dsets *Manager) RepoFromUUID(u dvid.UUID) (*Repo, error) {
 	repo, found := dsets.mapUUID[u]
 	if !found {
 		return nil, fmt.Errorf("RepoFromUUID(): Illegal UUID (%s) not found", u)
@@ -89,7 +105,7 @@ func (dsets *Repos) RepoFromUUID(u dvid.UUID) (*Repo, error) {
 }
 
 // RepoFromLocalID returns a repo from a local repo ID.
-func (dsets *Repos) RepoFromLocalID(id dvid.RepoLocalID) (*Repo, error) {
+func (dsets *Manager) RepoFromLocalID(id dvid.RepoLocalID) (*Repo, error) {
 	repo, found := dsets.dsetIDs[id]
 	if !found {
 		return nil, fmt.Errorf("RepoFromLocalID(): Illegal local repo ID (%d) not found", id)
@@ -102,7 +118,7 @@ func (dsets *Repos) RepoFromLocalID(id dvid.RepoLocalID) (*Repo, error) {
 // a datastore has nodes with UUID strings 3FA22..., 7CD11..., and 836EE...,
 // we can still find a match even if given the minimum 3 letters.  (We don't
 // allow UUID strings of less than 3 letters just to prevent mistakes.)
-func (dsets *Repos) RepoFromString(str string) (repo *Repo, u dvid.UUID, err error) {
+func (dsets *Manager) RepoFromString(str string) (repo *Repo, u dvid.UUID, err error) {
 	numMatches := 0
 	for dsetUUID, dset := range dsets.mapUUID {
 		if strings.HasPrefix(string(dsetUUID), str) {
@@ -122,7 +138,7 @@ func (dsets *Repos) RepoFromString(str string) (repo *Repo, u dvid.UUID, err err
 // Datatypes returns a map of all unique data types where the key is the
 // unique URL identifying the data type.  Since type names can collide
 // across repos, we do not return the abbreviated data type names.
-func (dsets *Repos) Datatypes() map[UrlString]datatype.Service {
+func (dsets *Manager) Datatypes() map[UrlString]datatype.Service {
 	typemap := make(map[UrlString]datatype.Service)
 	for _, dset := range dsets.list {
 		for _, dataservice := range dset.DataMap {
@@ -135,7 +151,7 @@ func (dsets *Repos) Datatypes() map[UrlString]datatype.Service {
 // VerifyCompiledTypes will return an error if any required data type in the datastore
 // configuration was not compiled into DVID executable.  Check is done by more exact
 // URL and not the data type name.
-func (dsets *Repos) VerifyCompiledTypes() error {
+func (dsets *Manager) VerifyCompiledTypes() error {
 	var errMsg string
 	for _, dset := range dsets.list {
 		for name, data := range dset.DataMap {
@@ -154,7 +170,7 @@ func (dsets *Repos) VerifyCompiledTypes() error {
 
 // newRepo creates a new Repo, which constitutes a version DAG and allows storing
 // arbitrary data within the nodes of the DAG.
-func (dsets *Repos) newRepo() (dset *Repo, err error) {
+func (dsets *Manager) newRepo() (dset *Repo, err error) {
 	dsets.writeLock.Lock()
 
 	dset = &Repo{
@@ -172,7 +188,7 @@ func (dsets *Repos) newRepo() (dset *Repo, err error) {
 
 // newChild creates a new child node off a LOCKED parent node.  Will return
 // an error if the parent node has not been locked.
-func (dsets *Repos) newChild(parent dvid.UUID) (dset *Repo, u dvid.UUID, err error) {
+func (dsets *Manager) newChild(parent dvid.UUID) (dset *Repo, u dvid.UUID, err error) {
 	// Find the Repo with this UUID
 	var found bool
 	dset, found = dsets.mapUUID[parent]
@@ -190,14 +206,14 @@ func (dsets *Repos) newChild(parent dvid.UUID) (dset *Repo, u dvid.UUID, err err
 	return
 }
 
-// -- Repos Serialization and Deserialization ---
+// -- Manager Serialization and Deserialization ---
 
 type serializableRepos struct {
 	ReposUUID []dvid.UUID
 	NewRepoID dvid.RepoLocalID
 }
 
-func (dsets *Repos) serializableStruct() (sdata *serializableRepos) {
+func (dsets *Manager) serializableStruct() (sdata *serializableRepos) {
 	sdata = &serializableRepos{
 		ReposUUID: []dvid.UUID{},
 		NewRepoID: dsets.newRepoID,
@@ -209,7 +225,7 @@ func (dsets *Repos) serializableStruct() (sdata *serializableRepos) {
 }
 
 // MarshalBinary fulfills the encoding.BinaryMarshaler interface.
-func (dsets *Repos) MarshalBinary() ([]byte, error) {
+func (dsets *Manager) MarshalBinary() ([]byte, error) {
 	compression, err := dvid.NewCompression(dvid.LZ4, dvid.DefaultCompression)
 	if err != nil {
 		return nil, err
@@ -217,8 +233,8 @@ func (dsets *Repos) MarshalBinary() ([]byte, error) {
 	return dvid.Serialize(dsets.serializableStruct(), compression, dvid.CRC32)
 }
 
-// Deserialize converts a serialization to Repos
-func (dsets *Repos) deserialize(s []byte) (*serializableRepos, error) {
+// Deserialize converts a serialization to Manager
+func (dsets *Manager) deserialize(s []byte) (*serializableRepos, error) {
 	deserialization := new(serializableRepos)
 	err := dvid.Deserialize(s, deserialization)
 	if err != nil {
@@ -228,22 +244,22 @@ func (dsets *Repos) deserialize(s []byte) (*serializableRepos, error) {
 }
 
 // MarshalJSON returns the JSON of just the list of Repo.
-func (dsets *Repos) MarshalJSON() (m []byte, err error) {
+func (dsets *Manager) MarshalJSON() (m []byte, err error) {
 	return json.Marshal(dsets.serializableStruct())
 }
 
 // AllJSON returns JSON of all the repos information.
-func (dsets *Repos) AllJSON() (m []byte, err error) {
+func (dsets *Manager) AllJSON() (m []byte, err error) {
 	data := struct {
-		Repos []*Repo
+		Manager []*Repo
 	}{
 		dsets.list,
 	}
 	return json.Marshal(data)
 }
 
-// Load retrieves Repos and all referenced Repo from the storage engine.
-func (dsets *Repos) Load(db storage.OrderedKeyValueGetter) (err error) {
+// Load retrieves Manager and all referenced Repo from the storage engine.
+func (dsets *Manager) Load(db storage.OrderedKeyValueGetter) (err error) {
 	// Get the the map of all UUIDs to local repo IDs
 	var data []byte
 	data, err = db.Get(&ReposKey{})
@@ -263,7 +279,7 @@ func (dsets *Repos) Load(db storage.OrderedKeyValueGetter) (err error) {
 
 	// Check our expected # of Repo == actually loaded # of Repo.
 	if len(keyvalues) != len(deserialization.ReposUUID) {
-		return fmt.Errorf("Stored Repos does not agree with the # of Repo entries: %d vs %d",
+		return fmt.Errorf("Stored Manager does not agree with the # of Repo entries: %d vs %d",
 			len(deserialization.ReposUUID), len(keyvalues))
 	}
 	if int(deserialization.NewRepoID) < len(keyvalues) {
@@ -272,7 +288,7 @@ func (dsets *Repos) Load(db storage.OrderedKeyValueGetter) (err error) {
 	}
 	dsets.newRepoID = deserialization.NewRepoID
 
-	// Reconstruct the Repos by associating UUIDs.
+	// Reconstruct the Manager by associating UUIDs.
 	dsets.list = []*Repo{}
 	dsets.mapUUID = make(map[dvid.UUID]*Repo)
 	dsets.dsetIDs = make(map[dvid.RepoLocalID]*Repo)
@@ -291,8 +307,8 @@ func (dsets *Repos) Load(db storage.OrderedKeyValueGetter) (err error) {
 	return
 }
 
-// Put stores Repos, overwriting whatever was there before.
-func (dsets *Repos) Put(db storage.OrderedKeyValueSetter) error {
+// Put stores Manager, overwriting whatever was there before.
+func (dsets *Manager) Put(db storage.OrderedKeyValueSetter) error {
 	var mutex sync.Mutex
 	mutex.Lock()
 	defer mutex.Unlock()

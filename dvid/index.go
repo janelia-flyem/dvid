@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"math"
+	"reflect"
 )
 
 func init() {
@@ -59,6 +60,16 @@ type ChunkIndexer interface {
 
 	// Max returns a ChunkIndexer that is the maximum of its value and the passed one.
 	Max(ChunkIndexer) (max ChunkIndexer, changed bool)
+}
+
+// KeyToChunkIndexer takes a Key and returns an implementation of a ChunkIndexer if possible.
+func KeyToChunkIndexer(key *DataKey) (ChunkIndexer, error) {
+	ptIndex, ok := key.index.(ChunkIndexer)
+	if !ok {
+		return nil, fmt.Errorf("Can't convert DataKey.Index (%s) to ChunkIndexer",
+			reflect.TypeOf(key.index))
+	}
+	return ptIndex, nil
 }
 
 // IndexIterator is a function that returns a sequence of indices and ends with nil.

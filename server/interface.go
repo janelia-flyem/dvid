@@ -53,7 +53,7 @@ baseUri: /api/{version}
 `
 
 // Handler for RAML interface.
-func (s *Service) interfaceHandler(w http.ResponseWriter, r *http.Request) {
+func interfaceHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/raml+yaml")
 	w.WriteHeader(http.StatusOK)
 	if r.Method != "HEAD" {

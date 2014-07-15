@@ -28,6 +28,9 @@ var (
 	// Run in verbose mode if true.
 	runVerbose = flag.Bool("verbose", false, "")
 
+	// Path to web client directory.  Leave unset for default pages.
+	clientDir = flag.String("webclient", "", "")
+
 	// Address for rpc communication.
 	rpcAddress = flag.String("rpc", server.DefaultRPCAddress, "")
 
@@ -52,6 +55,7 @@ dvid is a command-line interface to a distributed, versioned image-oriented data
 
 Usage: dvid [options] <command>
 
+      -webclient  =string   Path to web client directory.  Leave unset for default pages.
       -rpc        =string   Address for RPC communication.
       -http       =string   Address for HTTP communication.
       -cpuprofile =string   Write CPU profile to this file.

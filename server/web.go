@@ -8,8 +8,10 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"runtime"
+	"runtime/debug"
 	"time"
 
 	"github.com/janelia-flyem/go/goji"
@@ -92,13 +94,26 @@ const WebHelp = `
 </html>
 `
 
+const (
+	// WebAPIVersion is the string version of the API.  Once DVID is somewhat stable,
+	// this will be "v1/", "v2/", etc.
+	WebAPIVersion = ""
+
+	// The relative URL path to our Level 2 REST API
+	WebAPIPath = "/api/" + WebAPIVersion
+)
+
 type Context struct {
 	log         dvid.Logger
 	data        []*datastore.DataContext
 	accessToken string
 }
 
-func init() {
+func initRoutes(webClientDir string) {
+	// Handle RAML interface
+	goji.Get("/interface/", logHttpPanics(interfaceHandler))
+	goji.Get("/interface/version", logHttpPanics(versionHandler))
+
 	goji.Get("/help", helpHandler)
 	goji.Get("/load", loadHandler)
 
@@ -123,6 +138,24 @@ func init() {
 	instanceMux.Use(repoSelector)
 	instanceMux.Use(instanceSelector)
 	instanceMux.NotFound(NotFound)
+
+	goji.Get("/", mainHandler)
+}
+
+// Wrapper function so that http handlers recover from panics gracefully
+// without crashing the entire program.  The error message is written to
+// the log.
+func logHttpPanics(handler func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		defer func() {
+			if err := recover(); err != nil {
+				log.Printf("Caught panic on HTTP request: %s", err)
+				log.Printf("IP: %v, URL: %s", request.RemoteAddr, request.URL.Path)
+				log.Printf("Stack Dump:\n%s", debug.Stack())
+			}
+		}()
+		handler(writer, request)
+	}
 }
 
 func NotFound(w http.ResponseWriter, r *http.Request) {
@@ -207,6 +240,11 @@ func instanceSelector(c *web.C, h http.Handler) http.Handler {
 func helpHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html")
 	fmt.Fprintf(w, WebHelp)
+}
+
+// Handler for web client and other static content
+func mainHandler(w http.ResponseWriter, r *http.Request) {
+	service.sendContent(r.URL.Path, w, r)
 }
 
 func loadHandler(w http.ResponseWriter, r *http.Request) {
@@ -362,10 +400,3 @@ func repoBranchHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "{%q: %q}", "Branch", newuuid)
 	}
 }
-
-// Handler for web client
-/*
-func (service *Service) mainHandler(w http.ResponseWriter, r *http.Request) {
-	service.sendContent(r.URL.Path, w, r)
-}
-*/

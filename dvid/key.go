@@ -1,30 +1,14 @@
 /*
-	This file contains types that implement storage.Key and define valid key spaces
-	within a DVID key-value database.
+	This file contains types that manage valid key space within a DVID key-value database
+	and support versioning.
 */
 
-package datastore
+package dvid
 
 import (
+	"bytes"
 	"fmt"
-	"reflect"
-
-	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/janelia-flyem/dvid/storage"
 )
-
-// Key is an opaque type that enforces partitioning of the key space in a way that
-// voids collisions. All keys used for a particular DVID server *must* use one set of
-// Key implementations like the ones in package datastore.  Data types should not
-// construct their own implementations of storage.Key.
-// For a description of Go language opaque types, see the following:
-//   http://www.onebigfluke.com/2014/04/gos-power-is-in-emergent-behavior.html
-type Key interface {
-	storage.Key
-
-	// Enforces opaque data type.
-	implementsOpaque()
-}
 
 // KeyType is a portion of a serialized Key that partitions key space into
 // distinct areas and makes sure keys don't conflict.
@@ -62,13 +46,82 @@ func (t KeyType) String() string {
 	}
 }
 
+// Key is an opaque type that enforces partitioning of the key space in a way that
+// avoids collisions.  Datatype implementations typically use NewDataKey() and provide
+// a datatype-specific index, which could be considered datatype-specific keys that
+// adhere to the overall DVID key space partitioning.
+// For a description of Go language opaque types, see the following:
+//   http://www.onebigfluke.com/2014/04/gos-power-is-in-emergent-behavior.html
+type Key interface {
+	// Bytes returns the key representation as a slice of bytes
+	Bytes() []byte
+
+	// BytesToKey returns a Key given its representation as a slice of bytes
+	BytesToKey([]byte) (Key, error)
+
+	String() string
+
+	// Versioned is true if multiple versions of a key/value could be available and
+	// this implementation of Key also implements the VersionedKey interface.
+	Versioned() bool
+
+	// Enforces opaque data type.
+	implementsOpaque()
+}
+
+// VersionedKey extends Key with the minimal functions necessary to handle versioning
+// in storage engines.  If a Data's Versioned() returns true, we may assert that
+// the key also implements a VersionedKey interface.
+type VersionedKey interface {
+	Key
+
+	// Returns lower bound key for versions of given byte slice key representation.
+	MinVersionKey([]byte) (Key, error)
+
+	// Returns upper bound key for versions of given byte slice key representation.
+	MaxVersionKey([]byte) (Key, error)
+
+	// VersionedKeyValue returns the key/value pair corresponding to this key's version
+	// given a list of key/value pairs across many versions.
+	VersionedKeyValue([]KeyValue) (KeyValue, error)
+}
+
+// VersionIterator allows iteration through ancestors of version DAG and determining
+// if current ancestor is acceptable.
+type VersionIterator interface {
+	Valid() bool
+	Next()
+	AcceptableKey(Key) bool
+}
+
+// KeyValue stores a key-value pair.
+type KeyValue struct {
+	K Key
+	V []byte
+}
+
+// Deserialize returns a key-value pair where the value has been deserialized.
+func (kv KeyValue) Deserialize(uncompress bool) (KeyValue, error) {
+	value, _, err := DeserializeData(kv.V, uncompress)
+	return KeyValue{kv.K, value}, err
+}
+
+// KeyValues is a slice of key-value pairs that can be sorted.
+type KeyValues []KeyValue
+
+func (kv KeyValues) Len() int      { return len(kv) }
+func (kv KeyValues) Swap(i, j int) { kv[i], kv[j] = kv[j], kv[i] }
+func (kv KeyValues) Less(i, j int) bool {
+	return bytes.Compare(kv[i].K.Bytes(), kv[j].K.Bytes()) <= 0
+}
+
 // ---- Key implementations -----
 
 // UnversionedKey is useful for embedding and implements stubs for the versioned-related
 // interface requirements for storage.Key
 type UnversionedKey struct{}
 
-func (k UniversionedKey) implementsOpaque() {}
+func (k UnversionedKey) implementsOpaque() {}
 
 // Versioned is true if multiple versions of a key/value could be available.
 func (k UnversionedKey) Versioned() bool {
@@ -88,7 +141,7 @@ func (k UnversionedKey) MaxVersionKey([]byte) (Key, error) {
 // VersionedKeyValue returns the key/value pair corresponding to this key's version
 // given a list of key/value pairs across many versions.
 func (k UnversionedKey) VersionedKeyValue([]KeyValue) (KeyValue, error) {
-	return nil, fmt.Errorf("versioned keys requested from unversioned key")
+	return KeyValue{}, fmt.Errorf("versioned keys requested from unversioned key")
 }
 
 // VersionedKeyValues returns the key/value pairs corresponding to this key's version
@@ -180,36 +233,29 @@ func MaxRepoKey() Key {
 	return &RepoKey{repo: MaxRepoID}
 }
 
-// DataKey holds DVID-centric data like shortened identifiers for the data instance,
-// version (node of DAG), and some datatype-specific key (Index).  This type should
+// DataKey holds DVID-centric data and some datatype-specific key (Index).  This type should
 // be embedded within datatype-specific key types.
 type DataKey struct {
-	index   dvid.Index
-	version dvid.VersionID
-
-	instance  dvid.InstanceID
-	versioned bool
-
-	repo *Repo
+	index   Index
+	version VersionID
+	data    Data
 }
 
-func NewDataKey(index dvid.Index, version VersionID, instance *DataInstance, repo *Repo) *DataKey {
-	return DataKey{index, version, instance.ID(), instance.Versioned(), repo}
+// NewDataKey provides a way for datatypes to create DataKey that adhere to a DVID-wide
+// key space partitioning.  Since Key and VersionedKey interfaces are opaque, i.e., can
+// only be implemented within package dvid, we force compatible implementations to embed
+// DataKey and initialize it via this function.
+func NewDataKey(index Index, version VersionID, data Data) *DataKey {
+	return &DataKey{index, version, data}
 }
 
 func (key *DataKey) implementsOpaque() {}
 
 // The offset to the Index in bytes
-const DataKeyIndexOffset = dvid.LocalID32Size + 1
+const DataKeyIndexOffset = LocalID32Size + 1
 
-// KeyToChunkIndexer takes a Key and returns an implementation of a ChunkIndexer if possible.
-func KeyToChunkIndexer(key *DataKey) (dvid.ChunkIndexer, error) {
-	ptIndex, ok := datakey.index.(dvid.ChunkIndexer)
-	if !ok {
-		return nil, fmt.Errorf("Can't convert DataKey.Index (%s) to ChunkIndexer",
-			reflect.TypeOf(datakey.index))
-	}
-	return ptIndex, nil
+func (key *DataKey) Index() Index {
+	return key.index
 }
 
 // ------ Key Interface ----------
@@ -227,27 +273,31 @@ func (key *DataKey) BytesToKey(b []byte) (Key, error) {
 		return nil, fmt.Errorf("Cannot convert %s Key Type into DataKey", KeyType(b[0]))
 	}
 	// Get instance ID as first component
-	instance, _ := InstanceIDFromBytes(b[1:])
+	instanceID, _ := InstanceIDFromBytes(b[1:])
+	if instanceID != key.data.InstanceID() {
+		return nil, fmt.Errorf("Key of instance %v (%d) used to convert bytes -> key of different instance (%d)",
+			key.data.DataName(), key.data.InstanceID(), instanceID)
+	}
 
 	// Get version ID as last component
-	start := len(b) - dvid.LocalID32Size
+	start := len(b) - LocalID32Size
 	version, _ := VersionIDFromBytes(b[start:])
 
 	// Whatever remains is the datatype-specific component of the key.
-	var index dvid.Index
+	var index Index
 	var err error
 	end := start
 	start = DataKeyIndexOffset
 	if end > start {
 		index, err = key.index.IndexFromBytes(b[start:end])
 	}
-	return &DataKey{index, version, key.instance, key.versioned, key.repo}, err
+	return &DataKey{index, version, key.data}, err
 }
 
 // Bytes returns a slice of bytes derived from the concatenation of the key elements.
 func (key *DataKey) Bytes() (b []byte) {
 	b = []byte{byte(KeyData)}
-	b = append(b, key.instance.Bytes()...)
+	b = append(b, key.data.InstanceID().Bytes()...)
 	b = append(b, key.index.Bytes()...)
 	b = append(b, key.version.Bytes()...)
 	return
@@ -258,45 +308,59 @@ func (key *DataKey) BytesString() string {
 	return string(key.Bytes())
 }
 
-// String returns a hexadecimal representation of the bytes encoding a key
-// so it is readable on a terminal.
+// String returns a human-readable description of a DataKey
 func (key *DataKey) String() string {
-	return fmt.Sprintf("%x", key.Bytes())
+	return fmt.Sprintf("Key of data %v (%d), version %d, index = %x", key.data.DataName(),
+		key.data.InstanceID(), key.index.Bytes())
 }
 
 // Returns lower bound key for versions of given byte slice key representation.
 func (key *DataKey) MinVersionKey(b []byte) (Key, error) {
-	minKey, err := key.BytesToKey(b)
+	k, err := key.BytesToKey(b)
 	if err != nil {
 		return nil, err
 	}
-	minKey.version = dvid.VersionID(0)
+	minKey, _ := k.(*DataKey) // If no error in BytesToKey, we have a *DataKey
+	minKey.version = VersionID(0)
 	return minKey, nil
 }
 
 // Returns upper bound key for versions of given byte slice key representation.
-func (key *DataKey) MaxVersionKey([]byte) (Key, error) {
-	maxKey, err := key.BytesToKey(b)
+func (key *DataKey) MaxVersionKey(b []byte) (Key, error) {
+	k, err := key.BytesToKey(b)
 	if err != nil {
 		return nil, err
 	}
-	maxKey.version = dvid.MaxVersionID
+	maxKey, _ := k.(*DataKey) // If no error in BytesToKey, we have a *DataKey
+	maxKey.version = MaxVersionID
 	return maxKey, nil
 }
 
 func (key *DataKey) Versioned() bool {
-	return key.versioned
+	return key.data.Versioned()
 }
 
-func (key *DataKey) VersionedKeyValue(values []storage.KeyValue) (storage.KeyValue, error) {
+func (key *DataKey) VersionedKeyValue(values []KeyValue) (KeyValue, error) {
+	// This data needs to be Versioned or return an error.
+	if !key.data.Versioned() {
+		return KeyValue{}, fmt.Errorf("Data instance %v is not versioned so can't do VersionedKeyValue()",
+			key.data.DataName())
+	}
+
+	vdata, ok := key.data.(VersionedData)
+	if !ok {
+		return KeyValue{}, fmt.Errorf("Data instance %v should have implemented GetIterator()",
+			key.data.DataName())
+	}
+
 	// Iterate from the current node up the ancestors in the version DAG, checking if
 	// current best is present.
-	for it, err := key.repo.VersionIterator(key.DataKey); err == nil && it.Valid(); it.Next() {
+	for it, err := vdata.GetIterator(key); err == nil && it.Valid(); it.Next() {
 		for _, kv := range values {
-			if it.MatchedKey(kv.K) {
+			if it.AcceptableKey(kv.K) {
 				return kv, nil
 			}
 		}
 	}
-	return storage.KeyValue{}, nil
+	return KeyValue{}, nil
 }
