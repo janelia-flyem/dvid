@@ -49,23 +49,6 @@ type Subsetter interface {
 	AvailableExtents() dvid.IndexRange
 }
 
-// DataService is an interface for operations on an instance of a supported datatype.
-type DataService interface {
-	datatype.Service
-
-	// DataName returns the name of the data (e.g., grayscale data that is grayscale8 data type).
-	DataName() dvid.DataString
-
-	// ModifyConfig modifies a configuration in a type-specific way.
-	ModifyConfig(config dvid.Config) error
-
-	// DoRPC handles command line and RPC commands specific to a data type
-	DoRPC(request Request, reply *Response) error
-
-	// ServeHTTP fulfills the http.Handler interface.
-	ServeHTTP(w http.ResponseWriter, r *http.Request)
-}
-
 // Request supports requests to the DVID server.
 type Request struct {
 	dvid.Command
@@ -96,51 +79,62 @@ func (r *Response) Write(w io.Writer) error {
 	return nil
 }
 
-// NewDataService returns a Data instance.  If the configuration doesn't explicitly
-// set compression and checksum, LZ4 and the default checksum (chosen by -crc32 flag)
-// is used.
-func NewDataService(id *DataInstance, t datatype.Service, config dvid.Config) (*Data, error) {
-	compression, _ := dvid.NewCompression(dvid.LZ4, dvid.DefaultCompression)
-	data := &Data{
-		DataInstance: id,
-		Service:      t,
-		Compression:  compression,
-		Checksum:     dvid.DefaultChecksum,
-	}
-	err := data.ModifyConfig(config)
-	return data, err
-}
+// DataService is an interface for operations on an instance of a supported datatype.
+type DataService interface {
+	dvid.Data
 
-// ---- DataService implementation ----
-
-// DataID identifies a data instance within a DVID server.
-type DataID struct {
-	Name dvid.DataString
-	id   InstanceID
-	repo RepoID
-}
-
-func (id DataInstance) DataName() dvid.DataString { return id.Name }
-
-func (id DataInstance) ID() dvid.DataLocalID { return id.ID }
-
-func (id DataInstance) RepoID() dvid.RepoLocalID { return id.DsetID }
-
-// Data is an instance of a data type with some identifiers and it satisfies
-// a DataService interface.  Each Data is repo-specific.
-type DataInstance struct {
-	*DataID
 	datatype.Service
 
+	// ModifyConfig modifies a configuration in a type-specific way.
+	ModifyConfig(config dvid.Config) error
+
+	// DoRPC handles command line and RPC commands specific to a data type
+	DoRPC(request Request, reply *Response) error
+
+	// ServeHTTP fulfills the http.Handler interface.
+	ServeHTTP(w http.ResponseWriter, r *http.Request)
+}
+
+// DataInstance is the base struct of repo-specific data instances.  It should be embedded
+// in a datatype's DataService implementation and handle datastore-wide key partitioning.
+type DataInstance struct {
+	datatype.Service
+
+	name dvid.DataString
+	id   dvid.InstanceID
+	repo *Repo
+
 	// Compression of serialized data, e.g., the value in a key-value.
-	Compression dvid.Compression
+	compression dvid.Compression
 
 	// Checksum approach for serialized data.
-	Checksum dvid.Checksum
+	checksum dvid.Checksum
 
 	// If true (default), we allow changes along nodes.
-	unversioned bool
+	versioned bool
 }
+
+// NewDataInstance returns a new instance.  By default, LZ4 and the default checksum is used.
+func NewDataInstance(name dvid.DataString, t datatype.Service, r *Repo) *DataInstance {
+	compression, _ := dvid.NewCompression(dvid.LZ4, dvid.DefaultCompression)
+	return &DataInstance{
+		t,
+		name,
+		id:          NewInstanceID(),
+		repo:        r,
+		compression: compression,
+		checksum:    dvid.DefaultChecksum,
+		versioned:   true,
+	}
+}
+
+// ---- Partial DataService implementation ----
+
+func (data *DataInstance) DataName() dvid.DataString { return data.name }
+
+func (data *DataInstance) InstanceID() InstanceID { return data.id }
+
+func (data *DataInstance) RepoID() RepoID { return data.repo.ID() }
 
 // DataKey returns a DataKey for this data given a local version and a data-specific Index. If
 // the data is to be unversioned, the versionID should represent the root node of the version DAG.

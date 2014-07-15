@@ -390,7 +390,7 @@ func GetVoxels(uuid dvid.UUID, i IntHandler, e ExtHandler) error {
 
 	wg := new(sync.WaitGroup)
 	chunkOp := &storage.ChunkOp{&Operation{e, GetOp}, wg}
-	dataID := i.DataInstance()
+	data := i.DataInstance()
 	server.SpawnGoroutineMutex.Lock()
 	for it, err := e.IndexIterator(i.BlockSize()); err == nil && it.Valid(); it.NextSpan() {
 		indexBeg, indexEnd, err := it.IndexSpan()
@@ -398,8 +398,10 @@ func GetVoxels(uuid dvid.UUID, i IntHandler, e ExtHandler) error {
 			server.SpawnGoroutineMutex.Unlock()
 			return err
 		}
-		startKey := &datastore.DataKey{dataID.DsetID, dataID.ID, versionID, indexBeg}
-		endKey := &datastore.DataKey{dataID.DsetID, dataID.ID, versionID, indexEnd}
+		//startKey := &datastore.DataKey{dataID.DsetID, dataID.ID, versionID, indexBeg}
+		//endKey := &datastore.DataKey{dataID.DsetID, dataID.ID, versionID, indexEnd}
+		startKey := dvid.NewDataKey(indexBeg, versionID, data.InstanceID(), repo)
+		endKey := dvid.NewDataKey(indexEnd, versionID, data.InstanceID(), repo)
 
 		// Send the entire range of key/value pairs to ProcessChunk()
 		err = db.ProcessRange(startKey, endKey, chunkOp, i.ProcessChunk)

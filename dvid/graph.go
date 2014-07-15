@@ -3,7 +3,7 @@
    be brokered by the graph interface.
 */
 
-package storage
+package dvid
 
 // ElementProperties is a set of strings corresponding to properties
 // stored at an graph edge or vertex (it might make sense to store some

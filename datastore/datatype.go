@@ -1,4 +1,4 @@
-package datatype
+package datastore
 
 import (
 	"fmt"
@@ -10,10 +10,10 @@ import (
 
 type UrlString string
 
-// ID provides methods for determining the identity of a datatype.  Note that
-// we are verbose for the functions of this interface because datatype.ID is
-// likely to be embedded in other structs that will also have names, etc.
-type ID interface {
+// TypeID provides methods for determining the identity of a datatype.  Note that
+// we are verbose for the functions of this interface because TypeID is
+// likely to be embedded in other structs like DataInstance that will also have names, etc.
+type TypeID interface {
 	// TypeName is an abbreviated datatype name.
 	TypeName() dvid.TypeString
 
@@ -24,15 +24,15 @@ type ID interface {
 	TypeVersion() string
 }
 
-// Service is an interface for operations using arbitrary datatypes.
-type Service interface {
-	ID
+// TypeService is an interface all datatype implementations must fulfill.
+type TypeService interface {
+	TypeID
 
 	// Help returns a string explaining how to use a datatype's service
 	Help() string
 
-	// Create Data that is an instance of this datatype in the given Repo
-	NewDataService(id *DataInstance, config dvid.Config) (service DataService, err error)
+	// Create an instance of this datatype in the given repo
+	NewDataInstance(name dvid.DataString, config dvid.Config, repo *Repo) (*DataInstance, error)
 }
 
 var (

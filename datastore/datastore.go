@@ -5,7 +5,6 @@
 package datastore
 
 import (
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"sync"
@@ -29,63 +28,6 @@ func init() {
 
 // The following identifiers are more compact than the global identifiers such as
 // UUID or URLs, and therefore useful for compressing key sizes.
-
-// InstanceID is a DVID server-specific identifier for data instances.  Each InstanceID
-// is only used within one repo, so all key/values for a repo can be obtained by
-// doing range queries on instances associated with a repo.
-type InstanceID dvid.LocalID32
-
-// Bytes returns a sequence of bytes encoding this InstanceID.
-func (id InstanceID) Bytes() []byte {
-	buf := make([]byte, LocalID32Size, LocalID32Size)
-	binary.BigEndian.PutUint32(buf, uint32(id))
-	return buf
-}
-
-// InstanceIDFromBytes returns a LocalID from the start of the slice and the number of bytes used.
-// Note: No error checking is done to ensure byte slice has sufficient bytes for InstanceID.
-func InstanceIDFromBytes(b []byte) (id InstanceID, length int) {
-	return InstanceID(binary.BigEndian.Uint32(b)), LocalID32Size
-}
-
-// RepoID is a DVID server-specific identifier for a particular Repo.
-type RepoID dvid.LocalID32
-
-// Bytes returns a sequence of bytes encoding this RepoID.
-func (id RepoID) Bytes() []byte {
-	buf := make([]byte, LocalID32Size, LocalID32Size)
-	binary.BigEndian.PutUint32(buf, uint32(id))
-	return buf
-}
-
-// RepoIDFromBytes returns a RepoID from the start of the slice and the number of bytes used.
-// Note: No error checking is done to ensure byte slice has sufficient bytes for RepoID.
-func RepoIDFromBytes(b []byte) (id RepoID, length int) {
-	return RepoID(binary.BigEndian.Uint32(b)), LocalID32Size
-}
-
-// VersionID is a DVID server-specific identifier for a particular version or
-// node of a repo's DAG.
-type VersionID dvid.LocalID32
-
-// Bytes returns a sequence of bytes encoding this VersionID.
-func (id VersionID) Bytes() []byte {
-	buf := make([]byte, LocalID32Size, LocalID32Size)
-	binary.BigEndian.PutUint32(buf, uint32(id))
-	return buf
-}
-
-// VersionIDFromBytes returns a VersionID from the start of the slice and the number of bytes used.
-// Note: No error checking is done to ensure byte slice has sufficient bytes for VersionID.
-func VersionIDFromBytes(b []byte) (id VersionID, length int) {
-	return VersionID(binary.BigEndian.Uint32(b)), LocalID32Size
-}
-
-const (
-	MaxInstanceID = dvid.MaxLocalID32
-	MaxRepoID     = dvid.MaxLocalID32
-	MaxVersionID  = dvid.MaxLocalID32
-)
 
 // Versions returns a chart of version identifiers for data types and and DVID's datastore
 // fixed at compile-time for this DVID executable
@@ -138,9 +80,10 @@ func Init(directory string, create bool, config dvid.Config) error {
 	return err
 }
 
-// Service couples an open DVID storage engine and DVID repos.
+// Service manages storage engines and a collection of Repo.
 type Service struct {
-	*Repos
+	*RepoManager
+	*EngineManager
 
 	// The backend storage which is private since we want to create an object
 	// interface (e.g., cache object or UUID map) and hide DVID-specific keys.
@@ -154,93 +97,10 @@ type Service struct {
 	gGetter     storage.GraphGetter
 }
 
-type OpenErrorType int
-
-const (
-	ErrorOpening OpenErrorType = iota
-	ErrorRepos
-	ErrorDatatypeUnavailable
-)
-
-type OpenError struct {
-	error
-	ErrorType OpenErrorType
-}
-
 // Open opens a DVID datastore at the given path (directory, url, etc) and returns
 // a Service that allows operations on that datastore.
 func Open(path string) (s *Service, openErr *OpenError) {
-	// Open the datastore
-	create := false
-	engine, err := storage.NewKeyValueStore(path, create, dvid.Config{})
-	if err != nil {
-		openErr = &OpenError{
-			fmt.Errorf("Error opening datastore (%s): %s", path, err.Error()),
-			ErrorOpening,
-		}
-		return
-	}
-
-	// Get interfaces this engine supports.
-	kvGetter, ok := engine.(storage.OrderedKeyValueGetter)
-	if !ok {
-		openErr = &OpenError{
-			fmt.Errorf("Opened datastore cannot get key-value pairs."),
-			ErrorOpening,
-		}
-		return
-	}
-	kvSetter, ok := engine.(storage.OrderedKeyValueSetter)
-	if !ok {
-		openErr = &OpenError{
-			fmt.Errorf("Opened datastore cannot set key-value pairs."),
-			ErrorOpening,
-		}
-		return
-	}
-	kvDB, ok := engine.(storage.OrderedKeyValueDB)
-	if !ok {
-		openErr = &OpenError{
-			fmt.Errorf("Opened datastore does not support key-value database ops."),
-			ErrorOpening,
-		}
-		return
-	}
-
-	// Open the graph datastore (nothing happens if the graph key value store is used)
-	gengine, err := storage.NewGraphStore(path, create, dvid.Config{}, kvDB)
-	if err != nil {
-		openErr = &OpenError{
-			fmt.Errorf("Error opening graph datastore (%s): %s", path, err.Error()),
-			ErrorOpening,
-		}
-		return
-	}
-
-	gSetter, ok := gengine.(storage.GraphSetter)
-	if !ok {
-		openErr = &OpenError{
-			fmt.Errorf("Opened datastore cannot set graph objects."),
-			ErrorOpening,
-		}
-		return
-	}
-	gGetter, ok := gengine.(storage.GraphGetter)
-	if !ok {
-		openErr = &OpenError{
-			fmt.Errorf("Opened datastore cannot get graph objects."),
-			ErrorOpening,
-		}
-		return
-	}
-	gDB, ok := gengine.(storage.GraphDB)
-	if !ok {
-		openErr = &OpenError{
-			fmt.Errorf("Opened datastore does not support graph database ops."),
-			ErrorOpening,
-		}
-		return
-	}
+	// -- moved to SetupEngines()
 
 	// Read this datastore's configuration
 	repos := new(Repos)
@@ -267,71 +127,6 @@ func Open(path string) (s *Service, openErr *OpenError) {
 
 	fmt.Printf("\nDatastoreService successfully opened: %s\n", path)
 	s = &Service{repos, engine, kvDB, kvSetter, kvGetter, gengine, gDB, gSetter, gGetter}
-	return
-}
-
-// StorageEngine returns a a key-value database interface.
-func (s *Service) StorageEngine() storage.Engine {
-	return s.engine
-}
-
-// KeyValueDB returns a key-value database interface.
-func (s *Service) KeyValueDB() (storage.KeyValueDB, error) {
-	return s.kvDB.(storage.KeyValueDB), nil
-}
-
-// KeyValueGetter returns a a key-value getter interface.
-func (s *Service) KeyValueGetter() (storage.KeyValueGetter, error) {
-	return s.kvGetter.(storage.KeyValueGetter), nil
-}
-
-// KeyValueSetter returns a a key-value setter interface.
-func (s *Service) KeyValueSetter() (storage.KeyValueSetter, error) {
-	return s.kvSetter.(storage.KeyValueSetter), nil
-}
-
-// OrderedKeyValueDB returns an ordered key-value database interface.
-func (s *Service) OrderedKeyValueDB() (storage.OrderedKeyValueDB, error) {
-	return s.kvDB, nil
-}
-
-// OrderedKeyValueGetter returns an ordered key-value getter interface.
-func (s *Service) OrderedKeyValueGetter() (storage.OrderedKeyValueGetter, error) {
-	return s.kvGetter, nil
-}
-
-// OrderedKeyValueSetter returns an ordered key-value setter interface.
-func (s *Service) OrderedKeyValueSetter() (storage.OrderedKeyValueSetter, error) {
-	return s.kvSetter, nil
-}
-
-// GraphStorageEngine returns a graph database interface.
-func (s *Service) GraphStorageEngine() storage.Engine {
-	return s.graphengine
-}
-
-// GraphDB returns a graph database interface.
-func (s *Service) GraphDB() (storage.GraphDB, error) {
-	return s.gDB, nil
-}
-
-// GraphGetter returns a GraphDB getter interface.
-func (s *Service) GraphGetter() (storage.GraphGetter, error) {
-	return s.gGetter, nil
-}
-
-// GraphSetter returns a GraphDB setter interface.
-func (s *Service) GraphSetter() (storage.GraphSetter, error) {
-	return s.gSetter, nil
-}
-
-// Batcher returns an interface that can create a new batch write.
-func (s *Service) Batcher() (db storage.Batcher, err error) {
-	var ok bool
-	db, ok = s.kvSetter.(storage.Batcher)
-	if !ok {
-		err = fmt.Errorf("DVID key-value store does not support batch write")
-	}
 	return
 }
 

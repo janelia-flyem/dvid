@@ -1,3 +1,10 @@
+// +build !clustered,!gcloud
+
+/*
+	This file supports opening and managing HTTP/RPC servers locally from one process
+	instead of using always available services like in a cluster or Google cloud.
+*/
+
 package server
 
 import (
@@ -10,7 +17,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"runtime/debug"
 	"sync"
 	"time"
 
@@ -19,6 +25,17 @@ import (
 	"github.com/janelia-flyem/dvid/storage"
 
 	"github.com/janelia-flyem/go/nrsc"
+)
+
+const (
+	// The default RPC address of the DVID RPC server
+	DefaultRPCAddress = "localhost:8001"
+
+	// The name of the server error log, stored in the datastore directory.
+	ErrorLogFilename = "dvid-errors.log"
+
+	// Maximum number of throttled ops we can handle through API
+	MaxThrottledOps = 1
 )
 
 var (
@@ -301,62 +318,6 @@ func (service *Service) Serve(webAddress, webClientDir, rpcAddress string) error
 	}
 
 	return nil
-}
-
-// Wrapper function so that http handlers recover from panics gracefully
-// without crashing the entire program.  The error message is written to
-// the log.
-func logHttpPanics(handler func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
-	return func(writer http.ResponseWriter, request *http.Request) {
-		defer func() {
-			if err := recover(); err != nil {
-				log.Printf("Caught panic on HTTP request: %s", err)
-				log.Printf("IP: %v, URL: %s", request.RemoteAddr, request.URL.Path)
-				log.Printf("Stack Dump:\n%s", debug.Stack())
-			}
-		}()
-		handler(writer, request)
-	}
-}
-
-// Listen and serve HTTP requests using address and don't let stay-alive
-// connections hog goroutines for more than an hour.
-// See for discussion:
-// http://stackoverflow.com/questions/10971800/golang-http-server-leaving-open-goroutines
-func (service *Service) ServeHttp(address, clientDir string) {
-	if address == "" {
-		address = DefaultWebAddress
-	}
-	service.WebAddress = address
-	service.WebClientPath = clientDir
-	fmt.Printf("Web server listening at %s ...\n", address)
-
-	src := &http.Server{
-		Addr:        address,
-		ReadTimeout: 1 * time.Hour,
-	}
-
-	// Handle RAML interface
-	http.HandleFunc("/interface/", logHttpPanics(service.interfaceHandler))
-	http.HandleFunc("/interface/version", logHttpPanics(versionHandler))
-
-	// Handle Level 2 REST API.
-	http.HandleFunc(WebAPIPath, logHttpPanics(apiHandler))
-
-	// Handle static files through serving embedded files
-	// via nrsc or loading files from a specified web client directory.
-	if clientDir == "" {
-		dvid.Log(dvid.Normal, "Serving web client from embedded files...")
-		if err := nrsc.Initialize(); err != nil {
-			dvid.Log(dvid.Normal, "Error initializing embedded data access: %s\n", err.Error())
-		}
-	} else {
-		dvid.Log(dvid.Normal, "Serving web pages from %s\n", clientDir)
-	}
-	http.HandleFunc("/", logHttpPanics(service.mainHandler))
-
-	// Serve it up!
-	src.ListenAndServe()
 }
 
 // Listen and serve RPC requests using address.

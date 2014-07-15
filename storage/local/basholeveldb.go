@@ -183,7 +183,8 @@ func GetOptions(create bool, config dvid.Config) (*leveldbOptions, error) {
 	return opt, nil
 }
 
-// NewKeyValueStore returns a leveldb backend.
+// NewKeyValueStore returns a leveldb backend.  If create is true, the leveldb
+// will be created at the path if it doesn't already exist.
 func NewKeyValueStore(path string, create bool, config dvid.Config) (Engine, error) {
 	dvid.StartCgo()
 	defer dvid.StopCgo()
