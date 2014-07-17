@@ -275,7 +275,7 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 	wg := new(sync.WaitGroup)
 	op := &denormOp{d, versionID}
 
-	dataID := d.DataInstance()
+	dataID := d.Data()
 	extents := d.Extents()
 	minIndexZ := extents.MinIndex.(dvid.IndexZYX)[2]
 	maxIndexZ := extents.MaxIndex.(dvid.IndexZYX)[2]

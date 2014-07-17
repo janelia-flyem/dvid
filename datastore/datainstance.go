@@ -95,9 +95,9 @@ type DataService interface {
 	ServeHTTP(w http.ResponseWriter, r *http.Request)
 }
 
-// DataInstance is the base struct of repo-specific data instances.  It should be embedded
+// Data is the base struct of repo-specific data instances.  It should be embedded
 // in a datatype's DataService implementation and handle datastore-wide key partitioning.
-type DataInstance struct {
+type Data struct {
 	datatype.Service
 
 	name dvid.DataString
@@ -115,9 +115,9 @@ type DataInstance struct {
 }
 
 // NewDataInstance returns a new instance.  By default, LZ4 and the default checksum is used.
-func NewDataInstance(name dvid.DataString, t datatype.Service, r *Repo) *DataInstance {
+func NewDataInstance(name dvid.DataString, t datatype.Service, r *Repo) *Data {
 	compression, _ := dvid.NewCompression(dvid.LZ4, dvid.DefaultCompression)
-	return &DataInstance{
+	return &Data{
 		t,
 		name,
 		id:          NewInstanceID(),
@@ -128,30 +128,32 @@ func NewDataInstance(name dvid.DataString, t datatype.Service, r *Repo) *DataIns
 	}
 }
 
-// ---- Partial DataService implementation ----
+// ---- dvid.Data implementation ----
 
-func (data *DataInstance) DataName() dvid.DataString { return data.name }
+func (d *Data) DataName() dvid.DataString { return d.name }
 
-func (data *DataInstance) InstanceID() InstanceID { return data.id }
+func (d *Data) InstanceID() InstanceID { return d.id }
 
-func (data *DataInstance) RepoID() RepoID { return data.repo.ID() }
-
-// DataKey returns a DataKey for this data given a local version and a data-specific Index. If
-// the data is to be unversioned, the versionID should represent the root node of the version DAG.
-func (d *Data) DataKey(versionID dvid.VersionID, index dvid.Index) *DataKey {
-	return &DataKey{d.ID, versionID, index}
+func (d *Data) Versioned() bool {
+	return d.versioned
 }
 
+// ---- dvid.VersionedData implementation ----
+
+func (d *Data) GetIterator(key dvid.VersionedKey) (dvid.VersionIterator, error) {
+	return d.repo.GetIterator(key)
+}
+
+// -----------
+
+func (d *Data) RepoID() RepoID { return d.repo.ID() }
+
 func (d *Data) UseCompression() dvid.Compression {
-	return d.Compression
+	return d.compression
 }
 
 func (d *Data) UseChecksum() dvid.Checksum {
-	return d.Checksum
-}
-
-func (d *Data) IsVersioned() bool {
-	return !d.Unversioned
+	return d.checksum
 }
 
 func (d *Data) ModifyConfig(config dvid.Config) error {
@@ -159,7 +161,7 @@ func (d *Data) ModifyConfig(config dvid.Config) error {
 	if err != nil {
 		return err
 	}
-	d.Unversioned = !versioned
+	d.versioned = versioned
 
 	// Set compression for this instance
 	s, found, err := config.GetString("Compression")
@@ -170,13 +172,13 @@ func (d *Data) ModifyConfig(config dvid.Config) error {
 		format := strings.ToLower(s)
 		switch format {
 		case "none":
-			d.Compression, _ = dvid.NewCompression(dvid.Uncompressed, dvid.DefaultCompression)
+			d.compression, _ = dvid.NewCompression(dvid.Uncompressed, dvid.DefaultCompression)
 		case "snappy":
-			d.Compression, _ = dvid.NewCompression(dvid.Snappy, dvid.DefaultCompression)
+			d.compression, _ = dvid.NewCompression(dvid.Snappy, dvid.DefaultCompression)
 		case "lz4":
-			d.Compression, _ = dvid.NewCompression(dvid.LZ4, dvid.DefaultCompression)
+			d.compression, _ = dvid.NewCompression(dvid.LZ4, dvid.DefaultCompression)
 		case "gzip":
-			d.Compression, _ = dvid.NewCompression(dvid.Gzip, dvid.DefaultCompression)
+			d.compression, _ = dvid.NewCompression(dvid.Gzip, dvid.DefaultCompression)
 		default:
 			// Check for gzip + compression level
 			parts := strings.Split(format, ":")
@@ -185,7 +187,7 @@ func (d *Data) ModifyConfig(config dvid.Config) error {
 				if err != nil {
 					return fmt.Errorf("Unable to parse gzip compression level ('%d').  Should be 'gzip:<level>'.", parts[1])
 				}
-				d.Compression, _ = dvid.NewCompression(dvid.Gzip, dvid.CompressionLevel(level))
+				d.compression, _ = dvid.NewCompression(dvid.Gzip, dvid.CompressionLevel(level))
 			} else {
 				return fmt.Errorf("Illegal compression specified: %s", s)
 			}
@@ -201,9 +203,9 @@ func (d *Data) ModifyConfig(config dvid.Config) error {
 		checksum := strings.ToLower(s)
 		switch checksum {
 		case "none":
-			d.Checksum = dvid.NoChecksum
+			d.checksum = dvid.NoChecksum
 		case "crc32":
-			d.Checksum = dvid.CRC32
+			d.checksum = dvid.CRC32
 		default:
 			return fmt.Errorf("Illegal checksum specified: %s", s)
 		}
@@ -213,22 +215,22 @@ func (d *Data) ModifyConfig(config dvid.Config) error {
 
 func (d *Data) UnknownCommand(request Request) error {
 	return fmt.Errorf("Unknown command.  Data type '%s' [%s] does not support '%s' command.",
-		d.Name, d.DatatypeName(), request.TypeCommand())
+		d.name, d.TypeName(), request.TypeCommand())
 }
 
 // --- Handle version-specific data mutexes -----
 
 type nodeID struct {
-	Repo    dvid.RepoLocalID
-	Data    dvid.DataLocalID
-	Version dvid.VersionLocalID
+	repo     dvid.RepoID
+	instance dvid.InstanceID
+	version  dvid.VersionLocalID
 }
 
 // VersionMutex returns a Mutex that is specific for data at a particular version.
-func (d *Data) VersionMutex(versionID dvid.VersionLocalID) *sync.Mutex {
+func (d *Data) VersionMutex(versionID dvid.VersionID) *sync.Mutex {
 	var mutex sync.Mutex
 	mutex.Lock()
-	id := nodeID{d.DsetID, d.ID, versionID}
+	id := nodeID{d.RepoID(), d.id, versionID}
 	vmutex, found := versionMutexes[id]
 	if !found {
 		vmutex = new(sync.Mutex)

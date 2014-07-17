@@ -303,9 +303,9 @@ func (lt LabelType) String() string {
 	}
 }
 
-// -------  ExtHandler interface implementation -------------
+// -------  ExtData interface implementation -------------
 
-// Labels is an image volume that fulfills the voxels.ExtHandler interface.
+// Labels is an image volume that fulfills the voxels.ExtData interface.
 type Labels struct {
 	*voxels.Voxels
 }
@@ -357,7 +357,7 @@ func GetByLocalID(id dvid.RepoLocalID, name dvid.DataString) (*Data, error) {
 }
 
 // NewData returns a pointer to labels64 data.
-func NewData(id *datastore.DataInstance, config dvid.Config) (*Data, error) {
+func NewData(id *datastore.Data, config dvid.Config) (*Data, error) {
 	voxelData, err := dtype.Datatype.NewData(id, config)
 	if err != nil {
 		return nil, err
@@ -383,7 +383,7 @@ func NewData(id *datastore.DataInstance, config dvid.Config) (*Data, error) {
 
 // --- TypeService interface ---
 
-func (dtype *Datatype) NewDataService(id *datastore.DataInstance, config dvid.Config) (datastore.DataService, error) {
+func (dtype *Datatype) NewDataService(id *datastore.Data, config dvid.Config) (datastore.DataService, error) {
 	return NewData(id, config)
 }
 
@@ -407,14 +407,14 @@ func (d *Data) JSONString() (string, error) {
 	return string(m), nil
 }
 
-// --- voxels.IntHandler interface -------------
+// --- voxels.IntData interface -------------
 
-// NewExtHandler returns a labels64 ExtHandler given some geometry and optional image data.
-// If img is passed in, the function will initialize the ExtHandler with data from the image.
+// NewExtHandler returns a labels64 ExtData given some geometry and optional image data.
+// If img is passed in, the function will initialize the ExtData with data from the image.
 // Otherwise, it will allocate a zero buffer of appropriate size.
 // Unlike the standard voxels NewExtHandler, the labels64 version will modify the
 // labels based on the z-coordinate of the given geometry.
-func (d *Data) NewExtHandler(geom dvid.Geometry, img interface{}) (voxels.ExtHandler, error) {
+func (d *Data) NewExtHandler(geom dvid.Geometry, img interface{}) (voxels.ExtData, error) {
 	bytesPerVoxel := d.Properties.Values.BytesPerElement()
 	stride := geom.Size().Value(0) * bytesPerVoxel
 	var data []byte
@@ -1136,7 +1136,7 @@ func (d *Data) createCompositeChunk(chunk *storage.Chunk) {
 	op := chunk.Op.(*blockOp)
 	db, err := server.OrderedKeyValueDB()
 	if err != nil {
-		dvid.Log(dvid.Normal, "Error in %s.ProcessChunk(): %s\n", d.DataInstance().DataName(), err.Error())
+		dvid.Log(dvid.Normal, "Error in %s.ProcessChunk(): %s\n", d.Data().DataName(), err.Error())
 		return
 	}
 

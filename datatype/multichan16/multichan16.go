@@ -148,9 +148,9 @@ func init() {
 	gob.Register(&Data{})
 }
 
-// -------  ExtHandler interface implementation -------------
+// -------  ExtData interface implementation -------------
 
-// Channel is an image volume that fulfills the voxels.ExtHandler interface.
+// Channel is an image volume that fulfills the voxels.ExtData interface.
 type Channel struct {
 	*voxels.Voxels
 
@@ -177,11 +177,11 @@ func (c *Channel) IndexIterator(chunkSize dvid.Point) (dvid.IndexIterator, error
 	// Setup traversal
 	begVoxel, ok := c.StartPoint().(dvid.Chunkable)
 	if !ok {
-		return nil, fmt.Errorf("ExtHandler StartPoint() cannot handle Chunkable points.")
+		return nil, fmt.Errorf("ExtData StartPoint() cannot handle Chunkable points.")
 	}
 	endVoxel, ok := c.EndPoint().(dvid.Chunkable)
 	if !ok {
-		return nil, fmt.Errorf("ExtHandler EndPoint() cannot handle Chunkable points.")
+		return nil, fmt.Errorf("ExtData EndPoint() cannot handle Chunkable points.")
 	}
 
 	blockSize := chunkSize.(dvid.Point3d)
@@ -199,7 +199,7 @@ type Datatype struct {
 // --- TypeService interface ---
 
 // NewData returns a pointer to a new multichan16 with default values.
-func (dtype *Datatype) NewDataService(id *datastore.DataInstance, config dvid.Config) (
+func (dtype *Datatype) NewDataService(id *datastore.Data, config dvid.Config) (
 	datastore.DataService, error) {
 
 	voxelservice, err := dtype.Datatype.NewDataService(id, config)

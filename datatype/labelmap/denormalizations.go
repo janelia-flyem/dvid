@@ -316,14 +316,14 @@ func (d *Data) GetSurface(uuid dvid.UUID, label uint64) (s []byte, found bool, e
 
 type denormOp struct {
 	source    *labels64.Data
-	mapped    voxels.ExtHandler // Can store mapped labels into this if provided.
+	mapped    voxels.ExtData // Can store mapped labels into this if provided.
 	destID    dvid.DataLocalID
 	versionID dvid.VersionLocalID
 	mapping   map[string]uint64
 }
 
 // GetMappedImage retrieves a 2d image from a version node given a geometry of voxels.
-func (d *Data) GetMappedImage(uuid dvid.UUID, e voxels.ExtHandler) (*dvid.Image, error) {
+func (d *Data) GetMappedImage(uuid dvid.UUID, e voxels.ExtData) (*dvid.Image, error) {
 	if err := d.GetMappedVoxels(uuid, e); err != nil {
 		return nil, err
 	}
@@ -331,20 +331,20 @@ func (d *Data) GetMappedImage(uuid dvid.UUID, e voxels.ExtHandler) (*dvid.Image,
 }
 
 // GetMappedVolume retrieves a n-d volume from a version node given a geometry of voxels.
-func (d *Data) GetMappedVolume(uuid dvid.UUID, e voxels.ExtHandler) ([]byte, error) {
+func (d *Data) GetMappedVolume(uuid dvid.UUID, e voxels.ExtData) ([]byte, error) {
 	if err := d.GetMappedVoxels(uuid, e); err != nil {
 		return nil, err
 	}
 	return e.Data(), nil
 }
 
-// GetMappedVoxels copies mapped labels for each voxel for a version to an ExtHandler, e.g.,
+// GetMappedVoxels copies mapped labels for each voxel for a version to an ExtData, e.g.,
 // a requested subvolume or 2d image.
-func (d *Data) GetMappedVoxels(uuid dvid.UUID, e voxels.ExtHandler) error {
+func (d *Data) GetMappedVoxels(uuid dvid.UUID, e voxels.ExtData) error {
 	_, versionID, err := server.DatastoreService().LocalIDFromUUID(uuid)
 	if err != nil {
 		return fmt.Errorf("Could not determine versionID in %s.ProcessSpatially(): %s",
-			d.DataInstance.DataName(), err.Error())
+			d.Data.DataName(), err.Error())
 	}
 	db, err := server.OrderedKeyValueGetter()
 	if err != nil {
@@ -357,8 +357,8 @@ func (d *Data) GetMappedVoxels(uuid dvid.UUID, e voxels.ExtHandler) error {
 	}
 
 	wg := new(sync.WaitGroup)
-	dataID := d.DataInstance.ID
-	repoID := d.DataInstance.DsetID
+	dataID := d.Data.ID
+	repoID := d.Data.DsetID
 	for it, err := e.IndexIterator(labelData.BlockSize()); err == nil && it.Valid(); it.NextSpan() {
 		indexBeg, indexEnd, err := it.IndexSpan()
 		if err != nil {
@@ -408,7 +408,7 @@ func (d *Data) GetMappedVoxels(uuid dvid.UUID, e voxels.ExtHandler) error {
 		endKey := &datastore.DataKey{repoID, dataID, versionID, indexEnd}
 		err = db.ProcessRange(startKey, endKey, chunkOp, d.MapChunk)
 		if err != nil {
-			return fmt.Errorf("Unable to GET data %s: %s", d.DataInstance.DataName(), err.Error())
+			return fmt.Errorf("Unable to GET data %s: %s", d.Data.DataName(), err.Error())
 		}
 	}
 	if err != nil {
@@ -426,12 +426,12 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 
 	_, versionID, err := server.DatastoreService().LocalIDFromUUID(uuid)
 	if err != nil {
-		dvid.Error("Could not determine versionID in %s.ProcessSpatially(): %s", d.DataInstance.DataName(), err.Error())
+		dvid.Error("Could not determine versionID in %s.ProcessSpatially(): %s", d.Data.DataName(), err.Error())
 		return
 	}
 	db, err := server.OrderedKeyValueDB()
 	if err != nil {
-		dvid.Error("Could not determine key value datastore in %s.ProcessSpatially(): %s\n", d.DataInstance.DataName(), err.Error())
+		dvid.Error("Could not determine key value datastore in %s.ProcessSpatially(): %s\n", d.Data.DataName(), err.Error())
 		return
 	}
 
@@ -446,7 +446,7 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 	wg := new(sync.WaitGroup)
 	op := &denormOp{labelData, nil, 0, versionID, nil}
 
-	dataID := labelData.DataInstance()
+	dataID := labelData.Data()
 	extents := labelData.Extents()
 	minIndexZ := extents.MinIndex.(dvid.IndexZYX)[2]
 	maxIndexZ := extents.MaxIndex.(dvid.IndexZYX)[2]
@@ -572,7 +572,7 @@ func (d *Data) mapChunk(chunk *storage.Chunk) {
 		blockData, _, err = dvid.DeserializeData(chunk.V, true)
 		if err != nil {
 			dvid.Error("Unable to deserialize block in '%s': %s\n",
-				d.DataInstance.DataName(), err.Error())
+				d.Data.DataName(), err.Error())
 			return
 		}
 	}
@@ -668,7 +668,7 @@ func (d *Data) mapChunk(chunk *storage.Chunk) {
 		}
 
 	case op.mapped.DataShape().ShapeDimensions() == 2:
-		// TODO: General code for handling 2d ExtHandler in n-d space.
+		// TODO: General code for handling 2d ExtData in n-d space.
 		dvid.Error("DVID currently does not support 2d in n-d space.")
 
 	case op.mapped.DataShape().Equals(dvid.Vol3d):
