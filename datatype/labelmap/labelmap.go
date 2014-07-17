@@ -305,7 +305,7 @@ func NewDatatype() (dtype *Datatype) {
 // --- TypeService interface ---
 
 // NewData returns a pointer to new labelmap data with default values.
-func (dtype *Datatype) NewDataService(id *datastore.DataInstance, c dvid.Config) (datastore.DataService, error) {
+func (dtype *Datatype) NewDataService(id *datastore.Data, c dvid.Config) (datastore.DataService, error) {
 	// Make sure we have valid labels64 data for mapping
 	name, found, err := c.GetString("Labels")
 	if err != nil {
@@ -1066,9 +1066,9 @@ func (d *Data) ApplyLabelMap(request datastore.Request, reply *datastore.Respons
 	}
 
 	wg := new(sync.WaitGroup)
-	op := &denormOp{labelData, nil, dest.DataInstance().ID, versionID, nil}
+	op := &denormOp{labelData, nil, dest.Data().ID, versionID, nil}
 
-	dataID := labelData.DataInstance()
+	dataID := labelData.Data()
 	extents := labelData.Extents()
 	minIndexZ := extents.MinIndex.(dvid.IndexZYX)[2]
 	maxIndexZ := extents.MaxIndex.(dvid.IndexZYX)[2]
@@ -1240,7 +1240,7 @@ func (d *Data) chunkApplyMap(chunk *storage.Chunk) {
 	op := chunk.Op.(*denormOp)
 	db, err := server.OrderedKeyValueSetter()
 	if err != nil {
-		dvid.Log(dvid.Normal, "Error in %s.ChunkApplyMap(): %s", d.DataInstance.DataName(), err.Error())
+		dvid.Log(dvid.Normal, "Error in %s.ChunkApplyMap(): %s", d.Data.DataName(), err.Error())
 		return
 	}
 
@@ -1252,7 +1252,7 @@ func (d *Data) chunkApplyMap(chunk *storage.Chunk) {
 	blockData, _, err := dvid.DeserializeData(chunk.V, true)
 	if err != nil {
 		dvid.Log(dvid.Normal, "Unable to deserialize block in '%s': %s\n",
-			d.DataInstance.DataName(), err.Error())
+			d.Data.DataName(), err.Error())
 		return
 	}
 	blockBytes := len(blockData)

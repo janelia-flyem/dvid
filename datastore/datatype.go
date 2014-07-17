@@ -12,7 +12,7 @@ type UrlString string
 
 // TypeID provides methods for determining the identity of a datatype.  Note that
 // we are verbose for the functions of this interface because TypeID is
-// likely to be embedded in other structs like DataInstance that will also have names, etc.
+// likely to be embedded in other structs like Data that will also have names, etc.
 type TypeID interface {
 	// TypeName is an abbreviated datatype name.
 	TypeName() dvid.TypeString
@@ -32,7 +32,7 @@ type TypeService interface {
 	Help() string
 
 	// Create an instance of this datatype in the given repo
-	NewDataInstance(name dvid.DataString, config dvid.Config, repo *Repo) (*DataInstance, error)
+	NewDataInstance(name dvid.DataString, config dvid.Config, repo *Repo) (*Data, error)
 }
 
 var (

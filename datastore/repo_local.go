@@ -438,7 +438,7 @@ func (dset *Repo) newData(name dvid.DataString, typeName dvid.TypeString, config
 	dset.mapLock.Lock()
 	defer dset.mapLock.Unlock()
 
-	dataID := &DataInstance{name, dset.NewDataID, dset.RepoID}
+	dataID := &Data{name, dset.NewDataID, dset.RepoID}
 	dset.NewDataID++
 	dataservice, err = typeService.NewDataService(dataID, config)
 	if err != nil {

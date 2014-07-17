@@ -337,7 +337,7 @@ func NewDatatype() (dtype *Datatype) {
 // --- TypeService interface ---
 
 // NewData returns a pointer to new tile data with default values.
-func (dtype *Datatype) NewDataService(id *datastore.DataInstance, config dvid.Config) (
+func (dtype *Datatype) NewDataService(id *datastore.Data, config dvid.Config) (
 	datastore.DataService, error) {
 
 	// Make sure we have a valid DataService source
@@ -628,7 +628,7 @@ func (d *Data) GetImage(uuid dvid.UUID, geom dvid.Geometry, isotropic bool) (*dv
 		return nil, err
 	}
 
-	// Create an image of appropriate size and type using source's ExtHandler creation.
+	// Create an image of appropriate size and type using source's ExtData creation.
 	dstW := minSlice.Size().Value(0)
 	dstH := minSlice.Size().Value(1)
 	dst, err := src.BlankImage(dstW, dstH)
@@ -850,7 +850,7 @@ type outFunc func(index *IndexTile, img *dvid.Image) error
 
 // Construct all tiles for an image with offset and send to out function.  extractTiles assumes
 // the image and offset are in the XY plane.
-func (d *Data) extractTiles(v voxels.ExtHandler, offset dvid.Point, scaling Scaling, outF outFunc) error {
+func (d *Data) extractTiles(v voxels.ExtData, offset dvid.Point, scaling Scaling, outF outFunc) error {
 
 	levelSpec, found := d.Levels[scaling]
 	if !found {
@@ -947,10 +947,10 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, config dvid.Con
 	maxPt := maxTileCoord.MaxPoint(hiresSpec.TileSize)
 	sizeVolume := maxPt.Sub(minPt).AddScalar(1)
 
-	// Setup swappable ExtHandler buffers (the stitched slices) so we can be generating tiles
+	// Setup swappable ExtData buffers (the stitched slices) so we can be generating tiles
 	// at same time we are reading and stitching them.
 	var bufferLock [2]sync.Mutex
-	var sliceBuffers [2]voxels.ExtHandler
+	var sliceBuffers [2]voxels.ExtData
 	var bufferNum int
 
 	// Get the planes we should tile.

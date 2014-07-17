@@ -176,7 +176,7 @@ func NewDatatype() (dtype *Datatype) {
 // --- TypeService interface ---
 
 // NewData returns a pointer to new keyvalue data with default values.
-func (dtype *Datatype) NewDataService(id *datastore.DataInstance, c dvid.Config) (datastore.DataService, error) {
+func (dtype *Datatype) NewDataService(id *datastore.Data, c dvid.Config) (datastore.DataService, error) {
 	basedata, err := datastore.NewDataService(id, dtype, c)
 	if err != nil {
 		return nil, err

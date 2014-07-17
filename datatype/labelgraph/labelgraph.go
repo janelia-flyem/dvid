@@ -312,14 +312,14 @@ type Datatype struct {
 
 // labelVertex stores a subset of information contained in GraphVertex for interfacing with client
 type labelVertex struct {
-	Id     storage.VertexID
+	Id     dvid.VertexID
 	Weight float64
 }
 
 // labelEdge stores a subset of information contained in GraphVertex for interfacing with client
 type labelEdge struct {
-	Id1    storage.VertexID
-	Id2    storage.VertexID
+	Id1    dvid.VertexID
+	Id2    dvid.VertexID
 	Weight float64
 }
 
@@ -346,16 +346,16 @@ func NewDatatype() (dtype *Datatype) {
 
 // transacitonItem defines an transaction id associated with a vertex (used for concurrent access)
 type transactionItem struct {
-	Id    storage.VertexID
+	Id    dvid.VertexID
 	Trans uint64
 }
 
 // transactionLog holds reference to the last transaction performed on a given vertex
 // (only for relevant API)
 type transactionLog struct {
-	transaction_queue    map[storage.VertexID]uint64 // map of vertex to transaction id
-	requestor_channels   map[uint64]chan struct{}    // keep track of current requesters
-	current_id           uint64                      // current transaction id -- always increases
+	transaction_queue    map[dvid.VertexID]uint64 // map of vertex to transaction id
+	requestor_channels   map[uint64]chan struct{} // keep track of current requesters
+	current_id           uint64                   // current transaction id -- always increases
 	mutex                sync.Mutex
 	current_requestor_id uint64 // current id assigned to new transaction requests
 }
@@ -363,11 +363,11 @@ type transactionLog struct {
 // transactionGroup defines a set of vertex transactions
 type transactionGroup struct {
 	log                  *transactionLog
-	current_requestor_id uint64                      // unique id of requestor
-	trans_channel        <-chan struct{}             // ability to wait for changes to transactions
-	locked_ids           map[storage.VertexID]uint64 // vertex ids that this group is locking
-	lockedold_ids        []storage.VertexID          // vertex ids that this group could not lock
-	outdated_ids         []storage.VertexID          // vertex ids which were not given the correct tranaction ids (non-readonly modes)
+	current_requestor_id uint64                   // unique id of requestor
+	trans_channel        <-chan struct{}          // ability to wait for changes to transactions
+	locked_ids           map[dvid.VertexID]uint64 // vertex ids that this group is locking
+	lockedold_ids        []dvid.VertexID          // vertex ids that this group could not lock
+	outdated_ids         []dvid.VertexID          // vertex ids which were not given the correct tranaction ids (non-readonly modes)
 }
 
 // NewTransactionGroup returns a pointer to a new transaction group
@@ -376,7 +376,7 @@ func NewTransactionGroup(log *transactionLog, current_requestor_id uint64) *tran
 		log:                  log,
 		current_requestor_id: current_requestor_id,
 		trans_channel:        log.requestor_channels[current_requestor_id],
-		locked_ids:           make(map[storage.VertexID]uint64),
+		locked_ids:           make(map[dvid.VertexID]uint64),
 	}
 }
 
@@ -391,7 +391,7 @@ func (t *transactionGroup) closeTransaction() {
 }
 
 // addTransaction adds a vertex to the locked list (only called internally)
-func (t *transactionGroup) addTransaction(vertex storage.VertexID, trans uint64) {
+func (t *transactionGroup) addTransaction(vertex dvid.VertexID, trans uint64) {
 	t.locked_ids[vertex] = trans
 }
 
@@ -446,7 +446,7 @@ func (t *transactionGroup) exportTransactionsBinary() []byte {
 // NewTransactionLog creats a pointer to transaction log, initializing relevant maps
 func NewTransactionLog() *transactionLog {
 	return &transactionLog{
-		transaction_queue:  make(map[storage.VertexID]uint64),
+		transaction_queue:  make(map[dvid.VertexID]uint64),
 		requestor_channels: make(map[uint64]chan struct{}),
 		current_id:         1,
 	}
@@ -454,7 +454,7 @@ func NewTransactionLog() *transactionLog {
 
 // removeTransactionGroup sets the new transaction ids for locked vertices, removed the requestor
 // channel, and updates all other requestor channels
-func (t *transactionLog) removeTransactionGroup(locked_ids map[storage.VertexID]uint64, trans_id uint64) {
+func (t *transactionLog) removeTransactionGroup(locked_ids map[dvid.VertexID]uint64, trans_id uint64) {
 	t.mutex.Lock()
 	defer t.mutex.Unlock()
 
@@ -527,7 +527,7 @@ func (t *transactionLog) createTransactionGroupBinary(data []byte, readonly bool
 		trans, _ := binary.Uvarint(data[start:])
 		start += 8
 
-		vertices = append(vertices, transactionItem{storage.VertexID(vertex), trans})
+		vertices = append(vertices, transactionItem{dvid.VertexID(vertex), trans})
 	}
 
 	transaction_group, err := t.createTransactionGroup(vertices, readonly)
@@ -537,7 +537,7 @@ func (t *transactionLog) createTransactionGroupBinary(data []byte, readonly bool
 // --- TypeService interface ---
 
 // NewData returns a pointer to new keyvalue data with default values.
-func (dtype *Datatype) NewDataService(id *datastore.DataInstance, c dvid.Config) (datastore.DataService, error) {
+func (dtype *Datatype) NewDataService(id *datastore.Data, c dvid.Config) (datastore.DataService, error) {
 	basedata, err := datastore.NewDataService(id, dtype, c)
 	if err != nil {
 		return nil, err
@@ -707,7 +707,7 @@ func (d *Data) handleSubgraphBulk(uuid dvid.UUID, w http.ResponseWriter, labelgr
 
 func (d *Data) extractOpenVertices(labelgraph *LabelGraph) []transactionItem {
 	var open_vertices []transactionItem
-	check_vertices := make(map[storage.VertexID]struct{})
+	check_vertices := make(map[dvid.VertexID]struct{})
 	for _, vertex := range labelgraph.Vertices {
 		if vertex.Id != 0 {
 			if _, ok2 := check_vertices[vertex.Id]; !ok2 {
@@ -848,11 +848,11 @@ func (d *Data) handleMerge(uuid dvid.UUID, w http.ResponseWriter, labelgraph *La
 		return fmt.Errorf("Must specify at least two vertices for merging")
 	}
 
-	overlapweights := make(map[storage.VertexID]float64)
+	overlapweights := make(map[dvid.VertexID]float64)
 	vertweight := float64(0)
 	var keepvertex storage.GraphVertex
-	allverts := make(map[storage.VertexID]struct{})
-	keepverts := make(map[storage.VertexID]struct{})
+	allverts := make(map[dvid.VertexID]struct{})
+	keepverts := make(map[dvid.VertexID]struct{})
 
 	// accumulate weights, find common edges
 	for i, vertex := range labelgraph.Vertices {
@@ -961,7 +961,7 @@ func (d *Data) handleNeighbors(uuid dvid.UUID, w http.ResponseWriter, path []str
 	if err != nil {
 		return fmt.Errorf("Vertex number not provided")
 	}
-	id := storage.VertexID(temp)
+	id := dvid.VertexID(temp)
 
 	storedvert, err := db.GetVertex(key, id)
 	if err != nil {
@@ -1034,12 +1034,12 @@ func (d *Data) handlePropertyTransaction(uuid dvid.UUID, w http.ResponseWriter, 
 
 		for i := uint64(0); i < num_properties; i++ {
 			temp, _ := binary.Uvarint(data[start:])
-			id := storage.VertexID(temp)
-			var id2 storage.VertexID
+			id := dvid.VertexID(temp)
+			var id2 dvid.VertexID
 			start += 8
 			if edgemode {
 				temp, _ = binary.Uvarint(data[start:])
-				id2 = storage.VertexID(temp)
+				id2 = dvid.VertexID(temp)
 				start += 8
 			}
 			data_size, _ := binary.Uvarint(data[start:])
@@ -1084,12 +1084,12 @@ func (d *Data) handlePropertyTransaction(uuid dvid.UUID, w http.ResponseWriter, 
 		// read the vertex or edge properties desired
 		for i := uint64(0); i < num_properties; i++ {
 			temp, _ := binary.Uvarint(data[start:])
-			id := storage.VertexID(temp)
-			var id2 storage.VertexID
+			id := dvid.VertexID(temp)
+			var id2 dvid.VertexID
 			start += 8
 			if edgemode {
 				temp, _ := binary.Uvarint(data[start:])
-				id2 = storage.VertexID(temp)
+				id2 = dvid.VertexID(temp)
 				start += 8
 			}
 
@@ -1167,15 +1167,15 @@ func (d *Data) handleProperty(uuid dvid.UUID, w http.ResponseWriter, r *http.Req
 	if err != nil {
 		return fmt.Errorf("Vertex number not provided")
 	}
-	id1 := storage.VertexID(temp)
+	id1 := dvid.VertexID(temp)
 
-	id2 := storage.VertexID(0)
+	id2 := dvid.VertexID(0)
 	if edgemode {
 		temp, err := strconv.Atoi(path[1])
 		if err != nil {
 			return fmt.Errorf("Vertex number not provided")
 		}
-		id2 = storage.VertexID(temp)
+		id2 = dvid.VertexID(temp)
 	}
 
 	// remove a property from a vertex or edge

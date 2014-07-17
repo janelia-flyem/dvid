@@ -246,7 +246,7 @@ func init() {
 
 // Operation holds Voxel-specific data for processing chunks.
 type Operation struct {
-	ExtHandler
+	ExtData
 	OpType
 }
 
@@ -275,13 +275,13 @@ type Block storage.KeyValue
 // Blocks is a slice of Block.
 type Blocks []Block
 
-// IntHandler implementations handle internal DVID voxel representations, knowing how
+// IntData implementations handle internal DVID voxel representations, knowing how
 // to break data into chunks (blocks for voxels).  Typically, each voxels-oriented
-// package has a Data type that fulfills the IntHandler interface.
-type IntHandler interface {
-	NewExtHandler(dvid.Geometry, interface{}) (ExtHandler, error)
+// package has a Data type that fulfills the IntData interface.
+type IntData interface {
+	NewExtHandler(dvid.Geometry, interface{}) (ExtData, error)
 
-	DataInstance() datastore.DataInstance
+	Data() datastore.Data
 
 	UseCompression() dvid.Compression
 
@@ -293,26 +293,26 @@ type IntHandler interface {
 
 	Extents() *Extents
 
-	VersionMutex(dvid.VersionLocalID) *sync.Mutex
+	VersionMutex(dvid.VersionID) *sync.Mutex
 
 	ProcessChunk(*storage.Chunk)
 }
 
-// ExtHandler provides the shape, location (indexing), and data of a set of voxels
+// ExtData provides the shape, location (indexing), and data of a set of voxels
 // connected with external usage. It is the type used for I/O from DVID to clients,
 // e.g., 2d images, 3d subvolumes, etc.  These user-facing data must be converted to
 // and from internal DVID representations using key/value pairs where the value is a
 // block of data, and the key contains some spatial indexing.
 //
 // We can read/write different external formats through the following steps:
-//   1) Create a data type package (e.g., datatype/labels64) and define a ExtHandler type
+//   1) Create a data type package (e.g., datatype/labels64) and define a ExtData type
 //      where the data layout (i.e., the values in a voxel) is identical to
-//      the targeted DVID IntHandler.
+//      the targeted DVID IntData.
 //   2) Do I/O for external format (e.g., Raveler's superpixel PNG images with implicit Z)
-//      and convert external data to the ExtHandler instance.
-//   3) Pass ExtHandler to voxels package-level functions.
+//      and convert external data to the ExtData instance.
+//   3) Pass ExtData to voxels package-level functions.
 //
-type ExtHandler interface {
+type ExtData interface {
 	VoxelHandler
 
 	Index(p dvid.ChunkPoint) dvid.Index
@@ -359,7 +359,7 @@ type VoxelSetter interface {
 }
 
 // GetImage retrieves a 2d image from a version node given a geometry of voxels.
-func GetImage(uuid dvid.UUID, i IntHandler, e ExtHandler) (*dvid.Image, error) {
+func GetImage(uuid dvid.UUID, i IntData, e ExtData) (*dvid.Image, error) {
 	if err := GetVoxels(uuid, i, e); err != nil {
 		return nil, err
 	}
@@ -367,16 +367,16 @@ func GetImage(uuid dvid.UUID, i IntHandler, e ExtHandler) (*dvid.Image, error) {
 }
 
 // GetVolume retrieves a n-d volume from a version node given a geometry of voxels.
-func GetVolume(uuid dvid.UUID, i IntHandler, e ExtHandler) ([]byte, error) {
+func GetVolume(uuid dvid.UUID, i IntData, e ExtData) ([]byte, error) {
 	if err := GetVoxels(uuid, i, e); err != nil {
 		return nil, err
 	}
 	return e.Data(), nil
 }
 
-// GetVoxels copies voxels from an IntHandler for a version to an ExtHandler, e.g.,
+// GetVoxels copies voxels from an IntData for a version to an ExtData, e.g.,
 // a requested subvolume or 2d image.
-func GetVoxels(uuid dvid.UUID, i IntHandler, e ExtHandler) error {
+func GetVoxels(uuid dvid.UUID, i IntData, e ExtData) error {
 	db, err := server.OrderedKeyValueGetter()
 	if err != nil {
 		return err
@@ -390,7 +390,7 @@ func GetVoxels(uuid dvid.UUID, i IntHandler, e ExtHandler) error {
 
 	wg := new(sync.WaitGroup)
 	chunkOp := &storage.ChunkOp{&Operation{e, GetOp}, wg}
-	data := i.DataInstance()
+	data := i.Data()
 	server.SpawnGoroutineMutex.Lock()
 	for it, err := e.IndexIterator(i.BlockSize()); err == nil && it.Valid(); it.NextSpan() {
 		indexBeg, indexEnd, err := it.IndexSpan()
@@ -400,8 +400,8 @@ func GetVoxels(uuid dvid.UUID, i IntHandler, e ExtHandler) error {
 		}
 		//startKey := &datastore.DataKey{dataID.DsetID, dataID.ID, versionID, indexBeg}
 		//endKey := &datastore.DataKey{dataID.DsetID, dataID.ID, versionID, indexEnd}
-		startKey := dvid.NewDataKey(indexBeg, versionID, data.InstanceID(), repo)
-		endKey := dvid.NewDataKey(indexEnd, versionID, data.InstanceID(), repo)
+		startKey := dvid.NewDataKey(indexBeg, versionID, data)
+		endKey := dvid.NewDataKey(indexEnd, versionID, data)
 
 		// Send the entire range of key/value pairs to ProcessChunk()
 		err = db.ProcessRange(startKey, endKey, chunkOp, i.ProcessChunk)
@@ -419,12 +419,12 @@ func GetVoxels(uuid dvid.UUID, i IntHandler, e ExtHandler) error {
 	return nil
 }
 
-// PutVoxels copies voxels from an ExtHander (e.g., subvolume or 2d image) into an IntHandler
+// PutVoxels copies voxels from an ExtData (e.g., subvolume or 2d image) into an IntData
 // for a version.   Since chunk sizes can be larger than the PUT data, this also requires
 // integrating the PUT data into current chunks before writing the result.  There are two passes:
 //   Pass one: Retrieve all available key/values within the PUT space.
 //   Pass two: Merge PUT data into those key/values and store them.
-func PutVoxels(uuid dvid.UUID, i IntHandler, e ExtHandler) error {
+func PutVoxels(uuid dvid.UUID, i IntData, e ExtData) error {
 	db, err := server.OrderedKeyValueGetter()
 	if err != nil {
 		return err
@@ -438,7 +438,7 @@ func PutVoxels(uuid dvid.UUID, i IntHandler, e ExtHandler) error {
 
 	wg := new(sync.WaitGroup)
 	chunkOp := &storage.ChunkOp{&Operation{e, PutOp}, wg}
-	dataID := i.DataInstance()
+	dataID := i.Data()
 
 	// We only want one PUT on given version for given data to prevent interleaved
 	// chunk PUTs that could potentially overwrite slice modifications.
@@ -543,7 +543,7 @@ type bulkLoadInfo struct {
 	extentChanged dvid.Bool
 }
 
-func loadHDF(i IntHandler, load *bulkLoadInfo) error {
+func loadHDF(i IntData, load *bulkLoadInfo) error {
 	return fmt.Errorf("DVID currently does not support HDF5 image import.")
 	// TODO: Use a DVID-specific HDF5 loader that works off HDF5 C library.
 	/*
@@ -593,7 +593,7 @@ func loadHDF(i IntHandler, load *bulkLoadInfo) error {
 
 // Optimized bulk loading of XY images by loading all slices for a block before processing.
 // Trades off memory for speed.
-func loadXYImages(i IntHandler, load *bulkLoadInfo) error {
+func loadXYImages(i IntData, load *bulkLoadInfo) error {
 	fmt.Println("Reading XY images...")
 
 	var waitForWrites sync.WaitGroup
@@ -629,7 +629,7 @@ func loadXYImages(i IntHandler, load *bulkLoadInfo) error {
 
 		// Allocate blocks and/or load old block data if first/last XY blocks.
 		// Note: Slices are only zeroed out on first and last slice with assumption
-		// that ExtHandler is packed in XY footprint (values cover full extent).
+		// that ExtData is packed in XY footprint (values cover full extent).
 		// If that is NOT the case, we need to zero out blocks for each block layer.
 		if fileNum == 1 || (lastBlocks && firstSliceInBlock) {
 			numBlocks = dvid.GetNumBlocks(e, blockSize)
@@ -656,7 +656,7 @@ func loadXYImages(i IntHandler, load *bulkLoadInfo) error {
 
 		// Transfer data between external<->internal blocks asynchronously
 		layerTransferred[curBlocks].Add(1)
-		go func(ext ExtHandler, curBlocks int) {
+		go func(ext ExtData, curBlocks int) {
 			// Track point extents
 			if i.Extents().AdjustPoints(e.StartPoint(), e.EndPoint()) {
 				load.extentChanged.SetTrue()
@@ -778,8 +778,8 @@ func writeBlocks(compress dvid.Compression, checksum dvid.Checksum, blocks Block
 	return nil
 }
 
-// Loads a XY oriented image at given offset, returning an ExtHandler.
-func loadXYImage(i IntHandler, filename string, offset dvid.Point) (ExtHandler, error) {
+// Loads a XY oriented image at given offset, returning an ExtData.
+func loadXYImage(i IntData, filename string, offset dvid.Point) (ExtData, error) {
 	img, _, err := dvid.ImageFromFile(filename)
 	if err != nil {
 		return nil, err
@@ -798,7 +798,7 @@ func loadXYImage(i IntHandler, filename string, offset dvid.Point) (ExtHandler, 
 
 // LoadImages bulk loads images using different techniques if it is a multidimensional
 // file like HDF5 or a sequence of PNG/JPG/TIF images.
-func LoadImages(i IntHandler, uuid dvid.UUID, offset dvid.Point, filenames []string) error {
+func LoadImages(i IntData, uuid dvid.UUID, offset dvid.Point, filenames []string) error {
 	if len(filenames) == 0 {
 		return nil
 	}
@@ -841,7 +841,7 @@ func LoadImages(i IntHandler, uuid dvid.UUID, offset dvid.Point, filenames []str
 }
 
 // Loads blocks with old data if they exist.
-func loadOldBlocks(i IntHandler, e ExtHandler, blocks Blocks, versionID dvid.VersionLocalID) error {
+func loadOldBlocks(i IntData, e ExtData, blocks Blocks, versionID dvid.VersionLocalID) error {
 	db, err := server.OrderedKeyValueGetter()
 	if err != nil {
 		return err
@@ -851,7 +851,7 @@ func loadOldBlocks(i IntHandler, e ExtHandler, blocks Blocks, versionID dvid.Ver
 	oldBlocks := map[string]([]byte){}
 
 	// Iterate through index space for this data using ZYX ordering.
-	dataID := i.DataInstance()
+	dataID := i.Data()
 	blockSize := i.BlockSize()
 	blockNum := 0
 	for it, err := e.IndexIterator(blockSize); err == nil && it.Valid(); it.NextSpan() {
@@ -900,10 +900,10 @@ func loadOldBlocks(i IntHandler, e ExtHandler, blocks Blocks, versionID dvid.Ver
 	return nil
 }
 
-// Writes a XY image (the ExtHandler) into the blocks that intersect it.
+// Writes a XY image (the ExtData) into the blocks that intersect it.
 // This function assumes the blocks have been allocated and if necessary, filled
 // with old data.
-func writeXYImage(i IntHandler, e ExtHandler, blocks Blocks, versionID dvid.VersionLocalID) (extentChanged bool, err error) {
+func writeXYImage(i IntData, e ExtData, blocks Blocks, versionID dvid.VersionLocalID) (extentChanged bool, err error) {
 
 	// Setup concurrency in image -> block transfers.
 	var wg sync.WaitGroup
@@ -912,7 +912,7 @@ func writeXYImage(i IntHandler, e ExtHandler, blocks Blocks, versionID dvid.Vers
 	}()
 
 	// Iterate through index space for this data using ZYX ordering.
-	dataID := i.DataInstance()
+	dataID := i.Data()
 	blockSize := i.BlockSize()
 	var startingBlock int32
 
@@ -956,7 +956,7 @@ func writeXYImage(i IntHandler, e ExtHandler, blocks Blocks, versionID dvid.Vers
 	return
 }
 
-func ComputeTransform(v ExtHandler, block *Block, blockSize dvid.Point) (blockBeg, dataBeg, dataEnd dvid.Point, err error) {
+func ComputeTransform(v ExtData, block *Block, blockSize dvid.Point) (blockBeg, dataBeg, dataEnd dvid.Point, err error) {
 	datakey, ok := block.K.(*DataKey)
 	if !ok {
 		err = fmt.Errorf("Can't convert Key (%s) to DataKey", block.K)
@@ -972,7 +972,7 @@ func ComputeTransform(v ExtHandler, block *Block, blockSize dvid.Point) (blockBe
 	minBlockVoxel := ptIndex.MinPoint(blockSize)
 	maxBlockVoxel := ptIndex.MaxPoint(blockSize)
 
-	// Compute the boundary voxel coordinates for the ExtHandler and adjust
+	// Compute the boundary voxel coordinates for the ExtData and adjust
 	// to our block bounds.
 	minDataVoxel := v.StartPoint()
 	maxDataVoxel := v.EndPoint()
@@ -991,15 +991,15 @@ func ComputeTransform(v ExtHandler, block *Block, blockSize dvid.Point) (blockBe
 	return
 }
 
-func ReadFromBlock(v ExtHandler, block *Block, blockSize dvid.Point) error {
+func ReadFromBlock(v ExtData, block *Block, blockSize dvid.Point) error {
 	return transferBlock(GetOp, v, block, blockSize)
 }
 
-func WriteToBlock(v ExtHandler, block *Block, blockSize dvid.Point) error {
+func WriteToBlock(v ExtData, block *Block, blockSize dvid.Point) error {
 	return transferBlock(PutOp, v, block, blockSize)
 }
 
-func transferBlock(op OpType, v ExtHandler, block *Block, blockSize dvid.Point) error {
+func transferBlock(op OpType, v ExtData, block *Block, blockSize dvid.Point) error {
 	if blockSize.NumDims() > 3 {
 		return fmt.Errorf("DVID voxel blocks currently only supports up to 3d, not 4+ dimensions")
 	}
@@ -1083,7 +1083,7 @@ func transferBlock(op OpType, v ExtHandler, block *Block, blockSize dvid.Point) 
 		}
 
 	case v.DataShape().ShapeDimensions() == 2:
-		// TODO: General code for handling 2d ExtHandler in n-d space.
+		// TODO: General code for handling 2d ExtData in n-d space.
 		return fmt.Errorf("DVID currently does not support 2d in n-d space.")
 
 	case v.DataShape().Equals(dvid.Vol3d):
@@ -1125,7 +1125,7 @@ func transferBlock(op OpType, v ExtHandler, block *Block, blockSize dvid.Point) 
 	return nil
 }
 
-// Voxels represents subvolumes or slices.
+// Voxels represents subvolumes or slices and implements the ExtData interface.
 type Voxels struct {
 	dvid.Geometry
 
@@ -1197,7 +1197,7 @@ func (v *Voxels) SetData(data []byte) {
 	v.data = data
 }
 
-// -------  ExtHandler interface implementation -------------
+// -------  ExtData interface implementation -------------
 
 func (v *Voxels) Interpolable() bool {
 	return true
@@ -1253,11 +1253,11 @@ func (v *Voxels) IndexIterator(chunkSize dvid.Point) (dvid.IndexIterator, error)
 	// Setup traversal
 	begVoxel, ok := v.StartPoint().(dvid.Chunkable)
 	if !ok {
-		return nil, fmt.Errorf("ExtHandler StartPoint() cannot handle Chunkable points.")
+		return nil, fmt.Errorf("ExtData StartPoint() cannot handle Chunkable points.")
 	}
 	endVoxel, ok := v.EndPoint().(dvid.Chunkable)
 	if !ok {
-		return nil, fmt.Errorf("ExtHandler EndPoint() cannot handle Chunkable points.")
+		return nil, fmt.Errorf("ExtData EndPoint() cannot handle Chunkable points.")
 	}
 	begBlock := begVoxel.Chunk(chunkSize).(dvid.ChunkPoint3d)
 	endBlock := endVoxel.Chunk(chunkSize).(dvid.ChunkPoint3d)
@@ -1270,7 +1270,7 @@ func (v *Voxels) IndexIterator(chunkSize dvid.Point) (dvid.IndexIterator, error)
 // multibytes/voxel data into appropriate images.
 func (v *Voxels) GetImage2d() (*dvid.Image, error) {
 	// Make sure each value has same # of bytes or else we can't generate a go image.
-	// If so, we need to make another ExtHandler that knows how to convert the varying
+	// If so, we need to make another ExtData that knows how to convert the varying
 	// values into an appropriate go image.
 	valuesPerVoxel := int32(len(v.values))
 	if valuesPerVoxel < 1 || valuesPerVoxel > 4 {
@@ -1370,7 +1370,7 @@ func NewDatatype(values dvid.DataValues, interpolable bool) (dtype *Datatype) {
 }
 
 // NewData returns a pointer to a new Voxels with default values.
-func (dtype *Datatype) NewData(id *datastore.DataInstance, config dvid.Config) (*Data, error) {
+func (dtype *Datatype) NewData(id *datastore.Data, config dvid.Config) (*Data, error) {
 	basedata, err := datastore.NewDataService(id, dtype, config)
 	if err != nil {
 		return nil, err
@@ -1390,7 +1390,7 @@ func (dtype *Datatype) NewData(id *datastore.DataInstance, config dvid.Config) (
 // --- TypeService interface ---
 
 // NewData returns a pointer to a new Voxels with default values.
-func (dtype *Datatype) NewDataService(id *datastore.DataInstance, config dvid.Config) (datastore.DataService, error) {
+func (dtype *Datatype) NewDataService(id *datastore.Data, config dvid.Config) (datastore.DataService, error) {
 	return dtype.NewData(id, config)
 }
 
@@ -1810,12 +1810,12 @@ func (d *Data) PutLocal(request datastore.Request, reply *datastore.Response) er
 	return nil
 }
 
-// ----- IntHandler interface implementation ----------
+// ----- IntData interface implementation ----------
 
-// NewExtHandler returns an ExtHandler given some geometry and optional image data.
-// If img is passed in, the function will initialize the ExtHandler with data from the image.
+// NewExtHandler returns an ExtData given some geometry and optional image data.
+// If img is passed in, the function will initialize the ExtData with data from the image.
 // Otherwise, it will allocate a zero buffer of appropriate size.
-func (d *Data) NewExtHandler(geom dvid.Geometry, img interface{}) (ExtHandler, error) {
+func (d *Data) NewExtHandler(geom dvid.Geometry, img interface{}) (ExtData, error) {
 	bytesPerVoxel := d.Properties.Values.BytesPerElement()
 	stride := geom.Size().Value(0) * bytesPerVoxel
 
@@ -1865,8 +1865,8 @@ func (d *Data) NewExtHandler(geom dvid.Geometry, img interface{}) (ExtHandler, e
 	return voxels, nil
 }
 
-func (d *Data) DataInstance() datastore.DataInstance {
-	return *(d.Data.DataInstance)
+func (d *Data) Data() datastore.Data {
+	return *(d.Data.Data)
 }
 
 func (d *Data) Values() dvid.DataValues {
@@ -2270,7 +2270,7 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 		blockData, _, err = dvid.DeserializeData(chunk.V, true)
 		if err != nil {
 			dvid.Log(dvid.Normal, "Unable to deserialize block in '%s': %s\n",
-				d.DataInstance().DataName(), err.Error())
+				d.Data().DataName(), err.Error())
 			return
 		}
 	}
@@ -2279,27 +2279,27 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 	block := &Block{K: chunk.K, V: blockData}
 	switch op.OpType {
 	case GetOp:
-		if err = ReadFromBlock(op.ExtHandler, block, d.BlockSize()); err != nil {
+		if err = ReadFromBlock(op.ExtData, block, d.BlockSize()); err != nil {
 			dvid.Log(dvid.Normal, "Unable to ReadFromBlock() in '%s': %s\n",
-				d.DataInstance().DataName(), err.Error())
+				d.Data().DataName(), err.Error())
 			return
 		}
 	case PutOp:
-		if err = WriteToBlock(op.ExtHandler, block, d.BlockSize()); err != nil {
+		if err = WriteToBlock(op.ExtData, block, d.BlockSize()); err != nil {
 			dvid.Log(dvid.Normal, "Unable to WriteToBlock() in '%s': %s\n",
-				d.DataInstance().DataName(), err.Error())
+				d.Data().DataName(), err.Error())
 			return
 		}
 		db, err := server.OrderedKeyValueSetter()
 		if err != nil {
 			dvid.Log(dvid.Normal, "Database doesn't support OrderedKeyValueSetter in '%s': %s\n",
-				d.DataInstance().DataName(), err.Error())
+				d.Data().DataName(), err.Error())
 			return
 		}
 		serialization, err := dvid.SerializeData(blockData, d.UseCompression(), d.UseChecksum())
 		if err != nil {
 			dvid.Log(dvid.Normal, "Unable to serialize block in '%s': %s\n",
-				d.DataInstance().DataName(), err.Error())
+				d.Data().DataName(), err.Error())
 			return
 		}
 		db.Put(chunk.K, serialization)
@@ -2307,7 +2307,7 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 }
 
 // Handler conversion of little to big endian for voxels larger than 1 byte.
-func littleToBigEndian(v ExtHandler, data []uint8) (bigendian []uint8, err error) {
+func littleToBigEndian(v ExtData, data []uint8) (bigendian []uint8, err error) {
 	bytesPerVoxel := v.Values().BytesPerElement()
 	if v.ByteOrder() == nil || v.ByteOrder() == binary.BigEndian || bytesPerVoxel == 1 {
 		return data, nil
