@@ -114,18 +114,22 @@ type Data struct {
 	versioned bool
 }
 
-// NewDataInstance returns a new instance.  By default, LZ4 and the default checksum is used.
-func NewDataInstance(name dvid.DataString, t datatype.Service, r *Repo) *Data {
+// NewDataInstance returns a new Data instance that fulfills the DataService interface.
+// This returned Data struct is usually embedded by datatype-specific data instances.
+// By default, LZ4 and the default checksum is used.
+func NewDataInstance(t datatype.Service, name dvid.DataString, c dvid.Config, r *Repo) (*Data, error) {
 	compression, _ := dvid.NewCompression(dvid.LZ4, dvid.DefaultCompression)
-	return &Data{
+	data := &Data{
 		t,
 		name,
-		id:          NewInstanceID(),
+		id:          r.NewInstanceID(),
 		repo:        r,
 		compression: compression,
 		checksum:    dvid.DefaultChecksum,
 		versioned:   true,
 	}
+	err := data.ModifyConfig(c)
+	return data, err
 }
 
 // ---- dvid.Data implementation ----
@@ -148,11 +152,11 @@ func (d *Data) GetIterator(key dvid.VersionedKey) (dvid.VersionIterator, error) 
 
 func (d *Data) RepoID() RepoID { return d.repo.ID() }
 
-func (d *Data) UseCompression() dvid.Compression {
+func (d *Data) Compression() dvid.Compression {
 	return d.compression
 }
 
-func (d *Data) UseChecksum() dvid.Checksum {
+func (d *Data) Checksum() dvid.Checksum {
 	return d.checksum
 }
 

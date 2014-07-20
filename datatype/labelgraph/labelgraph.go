@@ -537,8 +537,8 @@ func (t *transactionLog) createTransactionGroupBinary(data []byte, readonly bool
 // --- TypeService interface ---
 
 // NewData returns a pointer to new keyvalue data with default values.
-func (dtype *Datatype) NewDataService(id *datastore.Data, c dvid.Config) (datastore.DataService, error) {
-	basedata, err := datastore.NewDataService(id, dtype, c)
+func (dtype *Datatype) NewDataService(name dvid.DataString, c dvid.Config, r *datastore.Repo) (datastore.DataService, error) {
+	basedata, err := datastore.NewDataInstance(dtype, name, c, r)
 	if err != nil {
 		return nil, err
 	}
@@ -597,19 +597,17 @@ func (d *Data) JSONString() (jsonStr string, err error) {
 	return string(m), nil
 }
 
-// getGraphDB retrieves the GraphDB interface and the key defining the graph space
-func (d *Data) getGraphDB(uuid dvid.UUID) (storage.Key, storage.GraphDB, error) {
+// getGraphDB retrieves the GraphDB interface and the Context defining the graph space
+func (d *Data) getGraphDB(uuid dvid.UUID) (storage.Context, storage.GraphDB, error) {
 	// Compute the key
-	var key storage.Key
 	var db storage.GraphDB
 
 	versionID, err := server.VersionLocalID(uuid)
 	if err != nil {
-		return key, db, err
+		return nil, db, err
 	}
-	key = d.DataKey(versionID, dvid.IndexString(""))
 	db, err = server.GraphDB()
-	return key, db, err
+	return storage.NewDataContext(d, versionID), db, err
 }
 
 // handleSubgraph loads, retrieves, or deletes a subgraph (more description in REST interface)
@@ -619,7 +617,7 @@ func (d *Data) handleSubgraphBulk(uuid dvid.UUID, w http.ResponseWriter, labelgr
 	}
 	defer d.setNotBusy()
 
-	key, db, err := d.getGraphDB(uuid)
+	ctx, db, err := d.getGraphDB(uuid)
 	if err != nil {
 		return err
 	}
@@ -631,14 +629,14 @@ func (d *Data) handleSubgraphBulk(uuid dvid.UUID, w http.ResponseWriter, labelgr
 		var edges []storage.GraphEdge
 		if len(labelgraph.Vertices) > 0 {
 			for _, vertex := range labelgraph.Vertices {
-				storedvert, err := db.GetVertex(key, vertex.Id)
+				storedvert, err := db.GetVertex(ctx, vertex.Id)
 				if err != nil {
 					return fmt.Errorf("Failed to retrieve vertix %d: %s\n", vertex.Id, err.Error())
 				}
 				vertices = append(vertices, storedvert)
 				for _, vert2 := range storedvert.Vertices {
 					if storedvert.Id < vert2 {
-						edge, err := db.GetEdge(key, storedvert.Id, vert2)
+						edge, err := db.GetEdge(ctx, storedvert.Id, vert2)
 						if err != nil {
 							return fmt.Errorf("Failed to retrieve edge %d-%d: %s\n", storedvert.Id, vert2, err.Error())
 						}
@@ -648,11 +646,11 @@ func (d *Data) handleSubgraphBulk(uuid dvid.UUID, w http.ResponseWriter, labelgr
 			}
 		} else {
 			// if no set of vertices are supplied, just grab the whole graph
-			vertices, err = db.GetVertices(key)
+			vertices, err = db.GetVertices(ctx)
 			if err != nil {
 				return fmt.Errorf("Failed to retrieve vertices: %s\n", err.Error())
 			}
-			edges, err = db.GetEdges(key)
+			edges, err = db.GetEdges(ctx)
 			if err != nil {
 				return fmt.Errorf("Failed to retrieve edges: %s\n", err.Error())
 			}
@@ -672,13 +670,13 @@ func (d *Data) handleSubgraphBulk(uuid dvid.UUID, w http.ResponseWriter, labelgr
 	} else if method == "post" {
 		// add list of vertices and edges from supplied JSON -- overwrite existing values
 		for _, vertex := range labelgraph.Vertices {
-			err := db.AddVertex(key, vertex.Id, vertex.Weight)
+			err := db.AddVertex(ctx, vertex.Id, vertex.Weight)
 			if err != nil {
 				return fmt.Errorf("Failed to add vertex: %s\n", err.Error())
 			}
 		}
 		for _, edge := range labelgraph.Edges {
-			err := db.AddEdge(key, edge.Id1, edge.Id2, edge.Weight)
+			err := db.AddEdge(ctx, edge.Id1, edge.Id2, edge.Weight)
 			if err != nil {
 				return fmt.Errorf("Failed to add edge: %s\n", err.Error())
 			}
@@ -687,13 +685,13 @@ func (d *Data) handleSubgraphBulk(uuid dvid.UUID, w http.ResponseWriter, labelgr
 		// delete the vertices supplied and all of their edges or delete the whole graph
 		if len(labelgraph.Vertices) > 0 || len(labelgraph.Edges) > 0 {
 			for _, vertex := range labelgraph.Vertices {
-				db.RemoveVertex(key, vertex.Id)
+				db.RemoveVertex(ctx, vertex.Id)
 			}
 			for _, edge := range labelgraph.Edges {
-				db.RemoveEdge(key, edge.Id1, edge.Id2)
+				db.RemoveEdge(ctx, edge.Id1, edge.Id2)
 			}
 		} else {
-			err = db.RemoveGraph(key)
+			err = db.RemoveGraph(ctx)
 			if err != nil {
 				return fmt.Errorf("Failed to remove graph: %s\n", err.Error())
 			}
@@ -734,7 +732,7 @@ func (d *Data) extractOpenVertices(labelgraph *LabelGraph) []transactionItem {
 // handleWeightUpdate POST vertex/edge weight increment/decrement.  POSTing to an uncreated
 // node or edge will create the node or edge (default 0 weight).  Limit of 1000 vertices and 1000 edges.
 func (d *Data) handleWeightUpdate(uuid dvid.UUID, w http.ResponseWriter, labelgraph *LabelGraph) error {
-	key, db, err := d.getGraphDB(uuid)
+	ctx, db, err := d.getGraphDB(uuid)
 	if err != nil {
 		return err
 	}
@@ -767,16 +765,16 @@ func (d *Data) handleWeightUpdate(uuid dvid.UUID, w http.ResponseWriter, labelgr
 			}
 
 			// retrieve vertex, update or create depending on error status
-			storedvert, err := db.GetVertex(key, vertex.Id)
+			storedvert, err := db.GetVertex(ctx, vertex.Id)
 			if err != nil {
-				err = db.AddVertex(key, vertex.Id, vertex.Weight)
+				err = db.AddVertex(ctx, vertex.Id, vertex.Weight)
 				if err != nil {
 					transaction_group.closeTransaction()
 					return fmt.Errorf("Failed to add vertex: %s\n", err.Error())
 				}
 			} else {
 				// increment/decrement weight
-				err = db.SetVertexWeight(key, vertex.Id, storedvert.Weight+vertex.Weight)
+				err = db.SetVertexWeight(ctx, vertex.Id, storedvert.Weight+vertex.Weight)
 				if err != nil {
 					transaction_group.closeTransaction()
 					return fmt.Errorf("Failed to add vertex: %s\n", err.Error())
@@ -801,16 +799,16 @@ func (d *Data) handleWeightUpdate(uuid dvid.UUID, w http.ResponseWriter, labelgr
 			}
 
 			// retrieve edge, update or create depending on error status
-			storededge, err := db.GetEdge(key, edge.Id1, edge.Id2)
+			storededge, err := db.GetEdge(ctx, edge.Id1, edge.Id2)
 			if err != nil {
-				err = db.AddEdge(key, edge.Id1, edge.Id2, edge.Weight)
+				err = db.AddEdge(ctx, edge.Id1, edge.Id2, edge.Weight)
 				if err != nil {
 					transaction_group.closeTransaction()
 					return fmt.Errorf("Failed to add edge: %s\n", err.Error())
 				}
 			} else {
 				// increment/decrement weight
-				err = db.SetEdgeWeight(key, edge.Id1, edge.Id2, storededge.Weight+edge.Weight)
+				err = db.SetEdgeWeight(ctx, edge.Id1, edge.Id2, storededge.Weight+edge.Weight)
 				if err != nil {
 					transaction_group.closeTransaction()
 					return fmt.Errorf("Failed to update edge: %s\n", err.Error())
@@ -838,7 +836,7 @@ func (d *Data) handleWeightUpdate(uuid dvid.UUID, w http.ResponseWriter, labelgr
 
 // handleMerge merges a list of vertices onto the final vertex in the Vertices list
 func (d *Data) handleMerge(uuid dvid.UUID, w http.ResponseWriter, labelgraph *LabelGraph) error {
-	key, db, err := d.getGraphDB(uuid)
+	ctx, db, err := d.getGraphDB(uuid)
 	if err != nil {
 		return err
 	}
@@ -856,7 +854,7 @@ func (d *Data) handleMerge(uuid dvid.UUID, w http.ResponseWriter, labelgraph *La
 
 	// accumulate weights, find common edges
 	for i, vertex := range labelgraph.Vertices {
-		vert, err := db.GetVertex(key, vertex.Id)
+		vert, err := db.GetVertex(ctx, vertex.Id)
 		if err != nil {
 			return fmt.Errorf("Failed to retrieve vertex %d: %s\n", vertex.Id, err.Error())
 		}
@@ -867,7 +865,7 @@ func (d *Data) handleMerge(uuid dvid.UUID, w http.ResponseWriter, labelgraph *La
 			keepvertex = vert
 		} else {
 			for _, vert2 := range vert.Vertices {
-				edge, err := db.GetEdge(key, vert.Id, vert2)
+				edge, err := db.GetEdge(ctx, vert.Id, vert2)
 				if err != nil {
 					return fmt.Errorf("Failed to retrieve edge %d-%d: %s\n", vertex.Id, vert2, err.Error())
 				}
@@ -878,7 +876,7 @@ func (d *Data) handleMerge(uuid dvid.UUID, w http.ResponseWriter, labelgraph *La
 
 	// examine keep vertex (save edges so only the weights are updated)
 	for _, vert2 := range keepvertex.Vertices {
-		edge, err := db.GetEdge(key, keepvertex.Id, vert2)
+		edge, err := db.GetEdge(ctx, keepvertex.Id, vert2)
 		if err != nil {
 			return fmt.Errorf("Failed to retrieve edge %d-%d: %s\n", keepvertex.Id, vert2, err.Error())
 		}
@@ -912,13 +910,13 @@ func (d *Data) handleMerge(uuid dvid.UUID, w http.ResponseWriter, labelgraph *La
 			// only examine edges where the node is not internal
 			if _, ok := keepverts[id2]; !ok {
 				// if not in keepverts create new edge
-				err := db.AddEdge(key, keepvertex.Id, id2, newweight)
+				err := db.AddEdge(ctx, keepvertex.Id, id2, newweight)
 				if err != nil {
 					return fmt.Errorf("Failed to create edge %d-%d: %s\n", keepvertex.Id, id2, err.Error())
 				}
 			} else {
 				// else just update weight
-				err := db.SetEdgeWeight(key, keepvertex.Id, id2, newweight)
+				err := db.SetEdgeWeight(ctx, keepvertex.Id, id2, newweight)
 				if err != nil {
 					return fmt.Errorf("Failed to update weight on edge %d-%d: %s\n", keepvertex.Id, id2, err.Error())
 				}
@@ -927,7 +925,7 @@ func (d *Data) handleMerge(uuid dvid.UUID, w http.ResponseWriter, labelgraph *La
 	}
 
 	// update vertex weight
-	err = db.SetVertexWeight(key, labelgraph.Vertices[numverts-1].Id, vertweight)
+	err = db.SetVertexWeight(ctx, labelgraph.Vertices[numverts-1].Id, vertweight)
 	if err != nil {
 		return fmt.Errorf("Failed to update weight on vertex %d: %s\n", keepvertex.Id, err.Error())
 	}
@@ -937,7 +935,7 @@ func (d *Data) handleMerge(uuid dvid.UUID, w http.ResponseWriter, labelgraph *La
 		if i == (numverts - 1) {
 			break
 		}
-		err := db.RemoveVertex(key, vertex.Id)
+		err := db.RemoveVertex(ctx, vertex.Id)
 		if err != nil {
 			return fmt.Errorf("Failed to remove vertex %d: %s\n", vertex.Id, err.Error())
 		}
@@ -951,7 +949,7 @@ func (d *Data) handleMerge(uuid dvid.UUID, w http.ResponseWriter, labelgraph *La
 // unnecessary because any update based on retrieved information will be written to a
 // property which has transactional protection)
 func (d *Data) handleNeighbors(uuid dvid.UUID, w http.ResponseWriter, path []string) error {
-	key, db, err := d.getGraphDB(uuid)
+	ctx, db, err := d.getGraphDB(uuid)
 	if err != nil {
 		return err
 	}
@@ -963,7 +961,7 @@ func (d *Data) handleNeighbors(uuid dvid.UUID, w http.ResponseWriter, path []str
 	}
 	id := dvid.VertexID(temp)
 
-	storedvert, err := db.GetVertex(key, id)
+	storedvert, err := db.GetVertex(ctx, id)
 	if err != nil {
 		return fmt.Errorf("Failed to retrieve vertix %d: %s\n", id, err.Error())
 	}
@@ -971,12 +969,12 @@ func (d *Data) handleNeighbors(uuid dvid.UUID, w http.ResponseWriter, path []str
 	labelgraph.Vertices = append(labelgraph.Vertices, labelVertex{storedvert.Id, storedvert.Weight})
 
 	for _, vert2 := range storedvert.Vertices {
-		vertex, err := db.GetVertex(key, vert2)
+		vertex, err := db.GetVertex(ctx, vert2)
 		if err != nil {
 			return fmt.Errorf("Failed to retrieve vertex %d: %s\n", vertex.Id, err.Error())
 		}
 		labelgraph.Vertices = append(labelgraph.Vertices, labelVertex{vertex.Id, vertex.Weight})
-		edge, err := db.GetEdge(key, id, vert2)
+		edge, err := db.GetEdge(ctx, id, vert2)
 		if err != nil {
 			return fmt.Errorf("Failed to retrieve edge %d-%d: %s\n", vertex.Id, vert2, err.Error())
 		}
@@ -993,7 +991,7 @@ func (d *Data) handleNeighbors(uuid dvid.UUID, w http.ResponseWriter, path []str
 
 // handelPropertyTransaction allows gets/posts (really puts) of edge or vertex properties.
 func (d *Data) handlePropertyTransaction(uuid dvid.UUID, w http.ResponseWriter, r *http.Request, path []string, method string) error {
-	key, db, err := d.getGraphDB(uuid)
+	ctx, db, err := d.getGraphDB(uuid)
 	if err != nil {
 		return err
 	}
@@ -1069,9 +1067,9 @@ func (d *Data) handlePropertyTransaction(uuid dvid.UUID, w http.ResponseWriter, 
 				return fmt.Errorf("Unable to serialize data: %s\n", err.Error())
 			}
 			if edgemode {
-				err = db.SetEdgeProperty(key, id, id2, propertyname, serialization)
+				err = db.SetEdgeProperty(ctx, id, id2, propertyname, serialization)
 			} else {
-				err = db.SetVertexProperty(key, id, propertyname, serialization)
+				err = db.SetVertexProperty(ctx, id, propertyname, serialization)
 			}
 			if err != nil {
 				return fmt.Errorf("Failed to add property %s: %s\n", propertyname, err.Error())
@@ -1111,9 +1109,9 @@ func (d *Data) handlePropertyTransaction(uuid dvid.UUID, w http.ResponseWriter, 
 			// execute get command
 			var dataout []byte
 			if edgemode {
-				dataout, err = db.GetEdgeProperty(key, id, id2, propertyname)
+				dataout, err = db.GetEdgeProperty(ctx, id, id2, propertyname)
 			} else {
-				dataout, err = db.GetVertexProperty(key, id, propertyname)
+				dataout, err = db.GetVertexProperty(ctx, id, propertyname)
 			}
 
 			// serialize return data only if there is return data and no error;
@@ -1152,7 +1150,7 @@ func (d *Data) handlePropertyTransaction(uuid dvid.UUID, w http.ResponseWriter, 
 // handleProperty retrieves or deletes properties that can be added to a vertex or edge -- data posted
 // or retrieved uses default compression
 func (d *Data) handleProperty(uuid dvid.UUID, w http.ResponseWriter, r *http.Request, path []string, method string) error {
-	key, db, err := d.getGraphDB(uuid)
+	ctx, db, err := d.getGraphDB(uuid)
 	if err != nil {
 		return err
 	}
@@ -1186,12 +1184,12 @@ func (d *Data) handleProperty(uuid dvid.UUID, w http.ResponseWriter, r *http.Req
 	// remove a property from a vertex or edge
 	if method == "delete" {
 		if edgemode {
-			db.RemoveEdgeProperty(key, id1, id2, propertyname)
+			db.RemoveEdgeProperty(ctx, id1, id2, propertyname)
 			if err != nil {
 				return fmt.Errorf("Failed to remove edge property %d-%d %s: %s\n", id1, id2, propertyname, err.Error())
 			}
 		} else {
-			db.RemoveVertexProperty(key, id1, propertyname)
+			db.RemoveVertexProperty(ctx, id1, propertyname)
 			if err != nil {
 				return fmt.Errorf("Failed to remove vertex property %d %s: %s\n", id1, propertyname, err.Error())
 			}
@@ -1199,9 +1197,9 @@ func (d *Data) handleProperty(uuid dvid.UUID, w http.ResponseWriter, r *http.Req
 	} else if method == "get" {
 		var data []byte
 		if edgemode {
-			data, err = db.GetEdgeProperty(key, id1, id2, propertyname)
+			data, err = db.GetEdgeProperty(ctx, id1, id2, propertyname)
 		} else {
-			data, err = db.GetVertexProperty(key, id1, propertyname)
+			data, err = db.GetVertexProperty(ctx, id1, propertyname)
 		}
 		if err != nil {
 			return fmt.Errorf("Failed to get property %s: %s\n", propertyname, err.Error())
@@ -1229,9 +1227,9 @@ func (d *Data) handleProperty(uuid dvid.UUID, w http.ResponseWriter, r *http.Req
 			return fmt.Errorf("Unable to serialize data: %s\n", err.Error())
 		}
 		if edgemode {
-			err = db.SetEdgeProperty(key, id1, id2, propertyname, serialization)
+			err = db.SetEdgeProperty(ctx, id1, id2, propertyname, serialization)
 		} else {
-			err = db.SetVertexProperty(key, id1, propertyname, serialization)
+			err = db.SetVertexProperty(ctx, id1, propertyname, serialization)
 		}
 		if err != nil {
 			return fmt.Errorf("Failed to add property %s: %s\n", propertyname, err.Error())

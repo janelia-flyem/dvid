@@ -36,9 +36,6 @@ type Index interface {
 	// lexicographic ordering.
 	Bytes() []byte
 
-	// BytesToIndex returns an Index from a byte representation
-	IndexFromBytes(b []byte) (Index, error)
-
 	// Hash provides a consistent mapping from an Index to an integer (0,n]
 	Hash(n int) int
 
@@ -117,10 +114,6 @@ func (i IndexBytes) Scheme() string {
 	return "Bytes Indexing"
 }
 
-func (i IndexBytes) IndexFromBytes(b []byte) (Index, error) {
-	return IndexBytes(b), nil
-}
-
 // IndexString satisfies an Index interface with a string.
 type IndexString string
 
@@ -150,10 +143,6 @@ func (i IndexString) Scheme() string {
 	return "String Indexing"
 }
 
-func (i IndexString) IndexFromBytes(b []byte) (Index, error) {
-	return IndexString(b), nil
-}
-
 // IndexUint8 satisfies an Index interface with an 8-bit unsigned integer index.
 type IndexUint8 uint8
 
@@ -177,12 +166,6 @@ func (i IndexUint8) Hash(n int) int {
 
 func (i IndexUint8) Scheme() string {
 	return "Unsigned 8-bit Indexing"
-}
-
-// IndexFromBytes returns an index from bytes.  The passed Index is used just
-// to choose the appropriate byte decoding scheme.
-func (i IndexUint8) IndexFromBytes(b []byte) (Index, error) {
-	return IndexUint8(b[0]), nil
 }
 
 // IndexZYX implements the Index interface and provides simple indexing on Z,

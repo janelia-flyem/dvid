@@ -283,9 +283,9 @@ type IntData interface {
 
 	Data() datastore.Data
 
-	UseCompression() dvid.Compression
+	Compression() dvid.Compression
 
-	UseChecksum() dvid.Checksum
+	Checksum() dvid.Checksum
 
 	Values() dvid.DataValues
 
@@ -681,8 +681,8 @@ func loadXYImages(i IntData, load *bulkLoadInfo) error {
 			go func(curBlocks int) {
 				layerTransferred[curBlocks].Wait()
 				dvid.Log(dvid.Debug, "Writing block buffer %d using %s and %s...\n",
-					curBlocks, i.UseCompression(), i.UseChecksum())
-				err := writeBlocks(i.UseCompression(), i.UseChecksum(), blocks[curBlocks],
+					curBlocks, i.Compression(), i.Checksum())
+				err := writeBlocks(i.Compression(), i.Checksum(), blocks[curBlocks],
 					&layerWritten[curBlocks], &waitForWrites)
 				if err != nil {
 					dvid.Error("Error in async write of voxel blocks: %s", err.Error())
@@ -2296,7 +2296,7 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 				d.Data().DataName(), err.Error())
 			return
 		}
-		serialization, err := dvid.SerializeData(blockData, d.UseCompression(), d.UseChecksum())
+		serialization, err := dvid.SerializeData(blockData, d.Compression(), d.Checksum())
 		if err != nil {
 			dvid.Log(dvid.Normal, "Unable to serialize block in '%s': %s\n",
 				d.Data().DataName(), err.Error())
