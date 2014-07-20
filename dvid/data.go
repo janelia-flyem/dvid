@@ -94,8 +94,8 @@ func (id InstanceID) Bytes() []byte {
 
 // InstanceIDFromBytes returns a LocalID from the start of the slice and the number of bytes used.
 // Note: No error checking is done to ensure byte slice has sufficient bytes for InstanceID.
-func InstanceIDFromBytes(b []byte) (id InstanceID, length int) {
-	return InstanceID(binary.BigEndian.Uint32(b)), LocalID32Size
+func InstanceIDFromBytes(b []byte) InstanceID {
+	return InstanceID(binary.BigEndian.Uint32(b))
 }
 
 // RepoID is a DVID server-specific identifier for a particular Repo.
@@ -111,8 +111,8 @@ func (id RepoID) Bytes() []byte {
 
 // RepoIDFromBytes returns a RepoID from the start of the slice and the number of bytes used.
 // Note: No error checking is done to ensure byte slice has sufficient bytes for RepoID.
-func RepoIDFromBytes(b []byte) (id RepoID, length int) {
-	return RepoID(binary.BigEndian.Uint32(b)), LocalID32Size
+func RepoIDFromBytes(b []byte) RepoID {
+	return RepoID(binary.BigEndian.Uint32(b))
 }
 
 // VersionID is a DVID server-specific identifier for a particular version or
@@ -129,14 +129,18 @@ func (id VersionID) Bytes() []byte {
 
 // VersionIDFromBytes returns a VersionID from the start of the slice and the number of bytes used.
 // Note: No error checking is done to ensure byte slice has sufficient bytes for VersionID.
-func VersionIDFromBytes(b []byte) (id VersionID, length int) {
-	return VersionID(binary.BigEndian.Uint32(b)), LocalID32Size
+func VersionIDFromBytes(b []byte) VersionID {
+	return VersionID(binary.BigEndian.Uint32(b))
 }
 
 const (
 	MaxInstanceID = MaxLocalID32
 	MaxRepoID     = MaxLocalID32
 	MaxVersionID  = MaxLocalID32
+
+	InstanceIDSize = 4
+	RepoIDSize     = 4
+	VersionIDSize  = 4
 )
 
 // Data is the minimal interface for datatype-specific data that is implemented
@@ -146,14 +150,20 @@ type Data interface {
 	DataName() DataString
 	InstanceID() InstanceID
 
-	// Versioned should be true if this Data also implements the VersionedData
-	// interface.
+	// Versioned is true if this Data is also VersionedData.
 	Versioned() bool
 }
 
-// VersionedData extends Data with a mechanism to find key/value pairs closest to a
-// particular version of a key.
+// VersionedData extends Data with a mechanism to iterate up the ancestor path for a given version.
 type VersionedData interface {
 	Data
-	GetIterator(VersionedKey) (VersionIterator, error)
+	GetIterator(VersionID) (VersionIterator, error)
+}
+
+// VersionIterator allows iteration through ancestors of version DAG.  It is assumed
+// only one parent is needed based on how merge operations are handled.
+type VersionIterator interface {
+	Valid() bool
+	VersionID() VersionID
+	Next()
 }

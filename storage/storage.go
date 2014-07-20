@@ -17,10 +17,32 @@
 package storage
 
 import (
+	"bytes"
 	"sync"
 
 	"github.com/janelia-flyem/dvid/dvid"
 )
+
+// KeyValue stores a key-value pair.
+type KeyValue struct {
+	K []byte
+	V []byte
+}
+
+// Deserialize returns a key-value pair where the value has been deserialized.
+func (kv KeyValue) Deserialize(uncompress bool) (KeyValue, error) {
+	value, _, err := DeserializeData(kv.V, uncompress)
+	return KeyValue{kv.K, value}, err
+}
+
+// KeyValues is a slice of key-value pairs that can be sorted.
+type KeyValues []KeyValue
+
+func (kv KeyValues) Len() int      { return len(kv) }
+func (kv KeyValues) Swap(i, j int) { kv[i], kv[j] = kv[j], kv[i] }
+func (kv KeyValues) Less(i, j int) bool {
+	return bytes.Compare(kv[i].K, kv[j].K) <= 0
+}
 
 // Engine implementations can fulfill a variety of interfaces and can be checked by
 // runtime cast checks, e.g., myGetter, ok := myEngine.(OrderedKeyValueGetter)
@@ -105,34 +127,73 @@ type Requirements struct {
 
 // ---- Storage interfaces ------
 
+// Context allows encapsulation of data that defines the partitioning of the DVID
+// key space.  To prevent conflicting implementations, Context is an opaque interface type
+// that requires use of an implementation from the storage package, either directly or
+// through embedding.
+//
+// For a description of Go language opaque types, see the following:
+//   http://www.onebigfluke.com/2014/04/gos-power-is-in-emergent-behavior.html
+type Context interface {
+	// ConstructKey takes a slice of bytes and generates a key that fits with the
+	// DVID-wide key space partitioning.
+	ConstructKey([]byte) []byte
+
+	// String prints a description of the Context
+	String() string
+
+	// Versioned is true if this Context is also a VersionedContext.
+	Versioned() bool
+
+	// Enforces opaque data type.
+	implementsOpaque()
+}
+
+// VersionedContext extends a Context with the minimal functions necessary to handle
+// versioning in storage engines.
+type VersionedContext interface {
+	Context
+
+	// Returns lower bound key for versions of given byte slice key representation.
+	MinVersionKey([]byte) ([]byte, error)
+
+	// Returns upper bound key for versions of given byte slice key representation.
+	MaxVersionKey([]byte) ([]byte, error)
+
+	// VersionedKeyValue returns the key/value pair corresponding to this key's version
+	// given a list of key/value pairs across many versions.  If no suitable key/value
+	// pair is found, nil is returned.
+	VersionedKeyValue([]KeyValue) (*KeyValue, error)
+}
+
 type KeyValueGetter interface {
 	// Get returns a value given a key.
-	Get(k dvid.Key) (v []byte, err error)
+	Get(ctx Context, k []byte) (v []byte, err error)
 }
 
 type OrderedKeyValueGetter interface {
 	KeyValueGetter
 
 	// GetRange returns a range of values spanning (kStart, kEnd) keys.
-	GetRange(kStart, kEnd dvid.Key) (values []dvid.KeyValue, err error)
+	GetRange(ctx Context, kStart, kEnd []byte) (values []*KeyValue, err error)
 
 	// KeysInRange returns a range of keys spanning (kStart, kEnd).
-	KeysInRange(kStart, kEnd dvid.Key) (keys []dvid.Key, err error)
+	KeysInRange(ctx Context, kStart, kEnd []byte) (keys [][]byte, err error)
 
 	// ProcessRange sends a range of key/value pairs to type-specific chunk handlers,
 	// allowing chunk processing to be concurrent with key/value sequential reads.
 	// Since the chunks are typically sent during sequential read iteration, the
 	// receiving function can be organized as a pool of chunk handling goroutines.
 	// See datatype.voxels.ProcessChunk() for an example.
-	ProcessRange(kStart, kEnd dvid.Key, op *ChunkOp, f func(*Chunk)) (err error)
+	ProcessRange(ctx Context, kStart, kEnd []byte, op *ChunkOp, f func(*Chunk)) (err error)
 }
 
 type KeyValueSetter interface {
 	// Put writes a value with given key.
-	Put(k dvid.Key, v []byte) error
+	Put(ctx Context, k, v []byte) error
 
 	// Delete removes an entry given key.
-	Delete(k dvid.Key) error
+	Delete(ctx Context, k []byte) error
 }
 
 type OrderedKeyValueSetter interface {
@@ -141,7 +202,7 @@ type OrderedKeyValueSetter interface {
 	// Put key-value pairs.  Note that it could be more efficient to use the Batcher
 	// interface so you don't have to create and keep a slice of KeyValue.  Some
 	// databases like leveldb will copy on batch put anyway.
-	PutRange(values []dvid.KeyValue) error
+	PutRange(ctx Context, values []KeyValue) error
 }
 
 // KeyValueDB provides an interface to the simplest storage API: a key/value store.
@@ -159,7 +220,7 @@ type OrderedKeyValueDB interface {
 // KeyValueBatcher allow batching operations into an atomic update or transaction.
 // For example: "Atomic Updates" in http://leveldb.googlecode.com/svn/trunk/doc/index.html
 type KeyValueBatcher interface {
-	NewBatch() Batch
+	NewBatch(ctx Context) Batch
 }
 
 // Batch groups operations into a transaction.
@@ -168,10 +229,10 @@ type KeyValueBatcher interface {
 // that commits then closes rather than something that clears.
 type Batch interface {
 	// Delete removes from the batch a put using the given key.
-	Delete(k dvid.Key)
+	Delete(k []byte)
 
 	// Put adds to the batch a put using the given key/value.
-	Put(k dvid.Key, v []byte)
+	Put(k, v []byte)
 
 	// Commits a batch of operations and closes the write batch.
 	Commit() error
@@ -190,62 +251,62 @@ type BulkWriter interface {
 
 // GraphSetter defines operations that modify a graph
 type GraphSetter interface {
-	// CreateGraph creates a graph using a name defined with the dvid.Key interface
-	CreateGraph(graph dvid.Key) error
+	// CreateGraph creates a graph with the given context.
+	CreateGraph(ctx Context) error
 
 	// AddVertex inserts an id of a given weight into the graph
-	AddVertex(graph dvid.Key, id dvid.VertexID, weight float64) error
+	AddVertex(ctx Context, id dvid.VertexID, weight float64) error
 
 	// AddEdge adds an edge between vertex id1 and id2 with the provided weight
-	AddEdge(graph dvid.Key, id1 dvid.VertexID, id2 dvid.VertexID, weight float64) error
+	AddEdge(ctx Context, id1 dvid.VertexID, id2 dvid.VertexID, weight float64) error
 
 	// SetVertexWeight modifies the weight of vertex id
-	SetVertexWeight(graph dvid.Key, id dvid.VertexID, weight float64) error
+	SetVertexWeight(ctx Context, id dvid.VertexID, weight float64) error
 
 	// SetEdgeWeight modifies the weight of the edge defined by id1 and id2
-	SetEdgeWeight(graph dvid.Key, id1 dvid.VertexID, id2 dvid.VertexID, weight float64) error
+	SetEdgeWeight(ctx Context, id1 dvid.VertexID, id2 dvid.VertexID, weight float64) error
 
 	// SetVertexProperty adds arbitrary data to a vertex using a string key
-	SetVertexProperty(graph dvid.Key, id dvid.VertexID, key string, value []byte) error
+	SetVertexProperty(ctx Context, id dvid.VertexID, key string, value []byte) error
 
 	// SetEdgeProperty adds arbitrary data to an edge using a string key
-	SetEdgeProperty(graph dvid.Key, id1 dvid.VertexID, id2 dvid.VertexID, key string, value []byte) error
+	SetEdgeProperty(ctx Context, id1 dvid.VertexID, id2 dvid.VertexID, key string, value []byte) error
 
 	// RemoveVertex removes the vertex and its properties and edges
-	RemoveVertex(graph dvid.Key, id dvid.VertexID) error
+	RemoveVertex(ctx Context, id dvid.VertexID) error
 
 	// RemoveEdge removes the edge defined by id1 and id2 and its properties
-	RemoveEdge(graph dvid.Key, id1 dvid.VertexID, id2 dvid.VertexID) error
+	RemoveEdge(ctx Context, id1 dvid.VertexID, id2 dvid.VertexID) error
 
 	// RemoveGraph removes the entire graph including all vertices, edges, and properties
-	RemoveGraph(graph dvid.Key) error
+	RemoveGraph(ctx Context) error
 
 	// RemoveVertexProperty removes the property data for vertex id at the key
-	RemoveVertexProperty(graph dvid.Key, id dvid.VertexID, key string) error
+	RemoveVertexProperty(ctx Context, id dvid.VertexID, key string) error
 
 	// RemoveEdgeProperty removes the property data for edge at the key
-	RemoveEdgeProperty(graph dvid.Key, id1 dvid.VertexID, id2 dvid.VertexID, key string) error
+	RemoveEdgeProperty(ctx Context, id1 dvid.VertexID, id2 dvid.VertexID, key string) error
 }
 
 // GraphGetter defines operations that retrieve information from a graph
 type GraphGetter interface {
 	// GetVertices retrieves a list of all vertices in the graph
-	GetVertices(graph dvid.Key) ([]GraphVertex, error)
+	GetVertices(ctx Context) ([]GraphVertex, error)
 
 	// GetEdges retrieves a list of all edges in the graph
-	GetEdges(graph dvid.Key) ([]dvid.GraphEdge, error)
+	GetEdges(ctx Context) ([]dvid.GraphEdge, error)
 
 	// GetVertex retrieves a vertex given a vertex id
-	GetVertex(graph dvid.Key, id dvid.VertexID) (dvid.GraphVertex, error)
+	GetVertex(ctx Context, id dvid.VertexID) (dvid.GraphVertex, error)
 
 	// GetVertex retrieves an edges between two vertex IDs
-	GetEdge(graph dvid.Key, id1 dvid.VertexID, id2 dvid.VertexID) (dvid.GraphEdge, error)
+	GetEdge(ctx Context, id1 dvid.VertexID, id2 dvid.VertexID) (dvid.GraphEdge, error)
 
 	// GetVertexProperty retrieves a property as a byte array given a vertex id
-	GetVertexProperty(graph dvid.Key, id dvid.VertexID, key string) ([]byte, error)
+	GetVertexProperty(ctx Context, id dvid.VertexID, key string) ([]byte, error)
 
 	// GetEdgeProperty retrieves a property as a byte array given an edge defined by id1 and id2
-	GetEdgeProperty(graph dvid.Key, id1 dvid.VertexID, id2 dvid.VertexID, key string) ([]byte, error)
+	GetEdgeProperty(ctx Context, id1 dvid.VertexID, id2 dvid.VertexID, key string) ([]byte, error)
 }
 
 // GraphDB defines the entire interface that a graph database should support
