@@ -373,7 +373,7 @@ func (d *Data) GetMappedVoxels(uuid dvid.UUID, e voxels.ExtData) error {
 			return fmt.Errorf("Last spatial index for mapped voxels request was not dvid.IndexZYX: %s", indexEnd)
 		}
 
-		// Get the mappings for this span of key/value by using just spatial indices.
+		// Get the mappings for this span of key-value by using just spatial indices.
 		// We work with the spatial index (s), original label (a), and mapped label (b).
 		maxLabelBytes := make([]byte, 8, 8)
 		binary.BigEndian.PutUint64(maxLabelBytes, 0xFFFFFFFFFFFFFFFF)
@@ -402,7 +402,7 @@ func (d *Data) GetMappedVoxels(uuid dvid.UUID, e voxels.ExtData) error {
 			mapping[label] = mappedLabel
 		}
 
-		// Send the entire range of key/value pairs to chunk mapper
+		// Send the entire range of key-value pairs to chunk mapper
 		chunkOp := &storage.ChunkOp{&denormOp{labelData, e, 0, versionID, mapping}, wg}
 		startKey := &datastore.DataKey{repoID, dataID, versionID, indexBeg}
 		endKey := &datastore.DataKey{repoID, dataID, versionID, indexEnd}

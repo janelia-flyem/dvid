@@ -127,7 +127,7 @@ implementations that run from embedded to clustered systems, (2) the surface are
 small, even after adding important cases like bulk loads or sequential key read/write, and 
 (3) novel technology tends to match key­-value interfaces, e.g., [groupcache](https://github.com/golang/groupcache)
 and [Seagate's Kinetic Open Storage Platform](https://developers.seagate.com/display/KV/Kinetic+Open+Storage+Documentation+Wiki).
-As storage becomes more log structured, the key/value API becomes a more natural fit.
+As storage becomes more log structured, the key-value API becomes a more natural fit.
 (_Status: Tested with three leveldb variants: 
 [Google's open source version](https://code.google.com/p/leveldb/), 
 [HyperLevelDB](https://github.com/rescrv/HyperLevelDB), and the default

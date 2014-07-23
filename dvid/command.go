@@ -219,7 +219,7 @@ func (cmd Command) Setting(key string) (value string, found bool) {
 }
 
 // Settings scans a command for any "key=value" argument and returns
-// a Config, which is a map of key/value data.  All keys are converted
+// a Config, which is a map of key-value data.  All keys are converted
 // to lower case for case-insensitive matching.
 func (cmd Command) Settings() Config {
 	config := NewConfig()

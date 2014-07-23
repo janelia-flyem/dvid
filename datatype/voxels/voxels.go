@@ -268,7 +268,7 @@ func (o OpType) String() string {
 	}
 }
 
-// Block is the basic key/value for the voxel type.
+// Block is the basic key-value for the voxel type.
 // The value is a slice of bytes corresponding to data within a block.
 type Block storage.KeyValue
 
@@ -301,7 +301,7 @@ type IntData interface {
 // ExtData provides the shape, location (indexing), and data of a set of voxels
 // connected with external usage. It is the type used for I/O from DVID to clients,
 // e.g., 2d images, 3d subvolumes, etc.  These user-facing data must be converted to
-// and from internal DVID representations using key/value pairs where the value is a
+// and from internal DVID representations using key-value pairs where the value is a
 // block of data, and the key contains some spatial indexing.
 //
 // We can read/write different external formats through the following steps:
@@ -314,6 +314,8 @@ type IntData interface {
 //
 type ExtData interface {
 	VoxelHandler
+
+	NewChunkIndex() dvid.ChunkIndexer
 
 	Index(p dvid.ChunkPoint) dvid.Index
 
@@ -403,7 +405,7 @@ func GetVoxels(uuid dvid.UUID, i IntData, e ExtData) error {
 		startKey := dvid.NewDataKey(indexBeg, versionID, data)
 		endKey := dvid.NewDataKey(indexEnd, versionID, data)
 
-		// Send the entire range of key/value pairs to ProcessChunk()
+		// Send the entire range of key-value pairs to ProcessChunk()
 		err = db.ProcessRange(startKey, endKey, chunkOp, i.ProcessChunk)
 		if err != nil {
 			server.SpawnGoroutineMutex.Unlock()
@@ -482,7 +484,7 @@ func PutVoxels(uuid dvid.UUID, i IntData, e ExtData) error {
 		startKey := &datastore.DataKey{dataID.DsetID, dataID.ID, versionID, ptBeg}
 		endKey := &datastore.DataKey{dataID.DsetID, dataID.ID, versionID, ptEnd}
 
-		// GET all the key/value pairs for this range.
+		// GET all the key-value pairs for this range.
 		keyvalues, err := db.GetRange(startKey, endKey)
 		if err != nil {
 			return fmt.Errorf("Error in reading data during PUT %s: %s", dataID.DataName(), err.Error())
@@ -704,7 +706,7 @@ func loadXYImages(i IntData, load *bulkLoadInfo) error {
 	return nil
 }
 
-// KVWriteSize is the # of key/value pairs we will write as one atomic batch write.
+// KVWriteSize is the # of key-value pairs we will write as one atomic batch write.
 const KVWriteSize = 500
 
 // writeBlocks writes blocks of voxel data asynchronously using batch writes.
@@ -956,15 +958,11 @@ func writeXYImage(i IntData, e ExtData, blocks Blocks, versionID dvid.VersionLoc
 	return
 }
 
+// ComputeTransform determines the block coordinate and beginning + ending voxel points
+// for the data corresponding to the given Block.
 func ComputeTransform(v ExtData, block *Block, blockSize dvid.Point) (blockBeg, dataBeg, dataEnd dvid.Point, err error) {
-	datakey, ok := block.K.(*DataKey)
-	if !ok {
-		err = fmt.Errorf("Can't convert Key (%s) to DataKey", block.K)
-		return
-	}
-	var ptIndex dvid.ChunkIndexer
-	ptIndex, err = datastore.KeyToChunkIndexer(datakey)
-	if err != nil {
+	ptIndex := v.NewChunkIndex()
+	if err = ptIndex.IndexFromBytes(block.K); err != nil {
 		return
 	}
 
@@ -987,7 +985,6 @@ func ComputeTransform(v ExtData, block *Block, blockSize dvid.Point) (blockBeg, 
 	// Compute block coord matching dataBeg
 	blockBeg = begVolCoord.Sub(minBlockVoxel)
 
-	// Get the bytes per Voxel
 	return
 }
 
@@ -1199,6 +1196,10 @@ func (v *Voxels) SetData(data []byte) {
 
 // -------  ExtData interface implementation -------------
 
+func (v *Voxels) NewChunkIndex() dvid.ChunkIndexer {
+	return &dvid.IndexZYX{}
+}
+
 func (v *Voxels) Interpolable() bool {
 	return true
 }
@@ -1370,14 +1371,14 @@ func NewDatatype(values dvid.DataValues, interpolable bool) (dtype *Datatype) {
 }
 
 // NewData returns a pointer to a new Voxels with default values.
-func (dtype *Datatype) NewData(id *datastore.Data, config dvid.Config) (*Data, error) {
-	basedata, err := datastore.NewDataService(id, dtype, config)
+func (dtype *Datatype) NewData(r datastore.Repo, id dvid.InstanceID, name dvid.DataString, c dvid.Config) (*Data, error) {
+	basedata, err := datastore.NewDataService(dtype, r, id, name, c)
 	if err != nil {
 		return nil, err
 	}
 	props := new(Properties)
 	props.SetDefault(dtype.values, dtype.interpolable)
-	if err := props.SetByConfig(config); err != nil {
+	if err := props.SetByConfig(c); err != nil {
 		return nil, err
 	}
 	data := &Data{
@@ -1389,9 +1390,9 @@ func (dtype *Datatype) NewData(id *datastore.Data, config dvid.Config) (*Data, e
 
 // --- TypeService interface ---
 
-// NewData returns a pointer to a new Voxels with default values.
-func (dtype *Datatype) NewDataService(id *datastore.Data, config dvid.Config) (datastore.DataService, error) {
-	return dtype.NewData(id, config)
+// NewDataService returns a pointer to a new Voxels with default values.
+func (dtype *Datatype) NewDataService(r datastore.Repo, id dvid.InstanceID, name dvid.DataString, c dvid.Config) (datastore.DataService, error) {
+	return dtype.NewData(r, id, name, c)
 }
 
 func (dtype *Datatype) Help() string {

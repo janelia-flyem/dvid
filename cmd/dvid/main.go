@@ -228,12 +228,8 @@ func DoServe(cmd dvid.Command) error {
 	if datastorePath == "" {
 		return fmt.Errorf("serve command must be followed by the path to the datastore")
 	}
-	if service, err := server.OpenDatastore(datastorePath); err != nil {
+	if err := server.Serve(datastorePath, *httpAddress, *clientDir, *rpcAddress); err != nil {
 		return err
-	} else {
-		if err := service.Serve(*httpAddress, *clientDir, *rpcAddress); err != nil {
-			return err
-		}
 	}
 	return nil
 }

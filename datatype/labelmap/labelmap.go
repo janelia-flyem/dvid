@@ -304,10 +304,15 @@ func NewDatatype() (dtype *Datatype) {
 
 // --- TypeService interface ---
 
-// NewData returns a pointer to new labelmap data with default values.
-func (dtype *Datatype) NewDataService(id *datastore.Data, c dvid.Config) (datastore.DataService, error) {
+// NewDataService returns a pointer to new labelmap data with default values.
+func (dtype *Datatype) NewDataService(r Repo, id dvid.InstanceID, name dvid.DataString, c dvid.Config) (datastore.DataService, error) {
+	basedata, err := datastore.NewDataService(dtype, r, id, name, c)
+	if err != nil {
+		return nil, err
+	}
+
 	// Make sure we have valid labels64 data for mapping
-	name, found, err := c.GetString("Labels")
+	labelname, found, err := c.GetString("Labels")
 	if err != nil {
 		return nil, err
 	}
@@ -315,13 +320,8 @@ func (dtype *Datatype) NewDataService(id *datastore.Data, c dvid.Config) (datast
 		return nil, fmt.Errorf("Cannot make labelmap without valid 'Labels' setting.")
 	}
 
-	basedata, err := datastore.NewDataService(id, dtype, c)
-	if err != nil {
-		return nil, err
-	}
-
 	// Make sure there is a valid labels64 instance with the given Labels name
-	labelsRef, err := NewLabelsRef(dvid.DataString(name), id.RepoID())
+	labelsRef, err := NewLabelsRef(dvid.DataString(labelname), r.RepoID())
 	if err != nil {
 		return nil, err
 	}

@@ -265,7 +265,7 @@ func (ds *GAEContext) Put(k Key, v []byte) error {
 	return nil
 }
 
-// PutRange puts key/value pairs that have been sorted in sequential key order.
+// PutRange puts key-value pairs that have been sorted in sequential key order.
 func (ds *GAEContext) PutRange(values []KeyValue) error {
 	if ds == nil {
 		return fmt.Errorf("Cannot run PutRange() on invalid database.")

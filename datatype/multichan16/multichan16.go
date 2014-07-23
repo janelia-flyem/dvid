@@ -166,6 +166,10 @@ func (c *Channel) Interpolable() bool {
 	return true
 }
 
+func (c *Channel) NewChunkIndex() dvid.ChunkIndexer {
+	return &dvid.IndexCZYX{c.channelNum, dvid.IndexZYX{}}
+}
+
 // Index returns a channel-specific Index
 func (c *Channel) Index(p dvid.ChunkPoint) dvid.Index {
 	return dvid.IndexCZYX{c.channelNum, dvid.IndexZYX(p.(dvid.ChunkPoint3d))}
@@ -198,15 +202,13 @@ type Datatype struct {
 
 // --- TypeService interface ---
 
-// NewData returns a pointer to a new multichan16 with default values.
-func (dtype *Datatype) NewDataService(id *datastore.Data, config dvid.Config) (
-	datastore.DataService, error) {
-
-	voxelservice, err := dtype.Datatype.NewDataService(id, config)
+// NewDataService returns a pointer to a new multichan16 with default values.
+func (dtype *Datatype) NewDataService(r Repo, id dvid.InstanceID, name dvid.DataString, c dvid.Config) (datastore.DataService, error) {
+	voxelData, err := dtype.Datatype.NewDataService(dtype, r, id, name, c)
 	if err != nil {
 		return nil, err
 	}
-	basedata := voxelservice.(*voxels.Data)
+	basedata := voxelData.(*voxels.Data)
 	basedata.Properties.Values = nil
 	service := &Data{
 		Data: *basedata,

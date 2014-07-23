@@ -357,13 +357,14 @@ func GetByLocalID(id dvid.RepoLocalID, name dvid.DataString) (*Data, error) {
 }
 
 // NewData returns a pointer to labels64 data.
-func NewData(id *datastore.Data, config dvid.Config) (*Data, error) {
-	voxelData, err := dtype.Datatype.NewData(id, config)
+func NewData(r Repo, id dvid.InstanceID, name dvid.DataString, c dvid.Config) (*Data, error) {
+	voxelData, err := dtype.Datatype.NewDataService(dtype, r, id, name, c)
 	if err != nil {
 		return nil, err
 	}
+
 	var labelType LabelType = Standard64bit
-	s, found, err := config.GetString("LabelType")
+	s, found, err := c.GetString("LabelType")
 	if found {
 		switch strings.ToLower(s) {
 		case "raveler":
@@ -383,8 +384,8 @@ func NewData(id *datastore.Data, config dvid.Config) (*Data, error) {
 
 // --- TypeService interface ---
 
-func (dtype *Datatype) NewDataService(id *datastore.Data, config dvid.Config) (datastore.DataService, error) {
-	return NewData(id, config)
+func (dtype *Datatype) NewDataService(r datastore.Repo, id dvid.InstanceID, name dvid.DataString, c dvid.Config) (datastore.DataService, error) {
+	return NewData(r, id, name, c)
 }
 
 func (dtype *Datatype) Help() string {

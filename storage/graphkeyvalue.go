@@ -80,7 +80,8 @@ func (i *graphIndex) Bytes() []byte {
 }
 
 // BytesToIndex returns an Index from a byte representation
-func (i *graphIndex) IndexFromBytes(b []byte) (dvid.Index, error) {
+// TODO -- Add error checking on slice format.
+func (i *graphIndex) IndexFromBytes(b []byte) error {
 	keyType := graphType(b[0])
 	vertex1 := dvid.VertexID(binary.BigEndian.Uint64(b[1 : 1+vertexIDSize]))
 	vertex2 := dvid.VertexID(0)
@@ -94,7 +95,8 @@ func (i *graphIndex) IndexFromBytes(b []byte) (dvid.Index, error) {
 		property = string(b[start:])
 	}
 
-	return &graphIndex{keyType, vertex1, vertex2, property}, nil
+	*i = graphIndex{keyType, vertex1, vertex2, property}
+	return nil
 }
 
 // Hash provides a consistent mapping from an Index to an integer (0,n]
@@ -111,28 +113,6 @@ func (i *graphIndex) Scheme() string {
 func (i *graphIndex) String() string {
 	return fmt.Sprintf("<GraphType %d: vertex1 %d, vertex2 %d, prop %s>",
 		i.keytype, i.vertex1, i.vertex2, i.property)
-}
-
-// graphKey extends a dvid.DataKey using graph-specific data.
-type graphKey struct {
-	*dvid.DataKey
-}
-
-func (gk *graphKey) BytesToKey(b []byte) (dvid.Key, error) {
-	key, err := gk.BytesToKey(b)
-	if err != nil {
-		return nil, err
-	}
-	dataKey, ok := key.(*dvid.DataKey)
-	if !ok {
-		return nil, fmt.Errorf("Expected *dvid.DataKey and got key %q", key)
-	}
-	return &graphKey{dataKey}, nil
-}
-
-// String returns a formatted string of the bytes
-func (gk *graphKey) String() string {
-	return fmt.Sprintf("Graph Key %s", gk.DataKey.String())
 }
 
 // GraphKeyValueDB defines a type that embeds a KeyValueDB using that engine to
@@ -227,20 +207,19 @@ func (db *GraphKeyValueDB) deserializeEdge(edgedata []byte) (dvid.GraphEdge, err
 }
 
 // CreateGraph does nothing as the graph keyspace uniquely defines a graph when
-// using a single key/value datastore
+// using a single key-value datastore
 func (db *GraphKeyValueDB) CreateGraph(ctx Context) error {
 	return nil
 }
 
-// AddVertex requires one key/value put
+// AddVertex requires one key-value put
 func (db *GraphKeyValueDB) AddVertex(ctx Context, id dvid.VertexID, weight float64) error {
 	properties := make(dvid.ElementProperties)
 	var vertices []dvid.VertexID
 	vertex := dvid.GraphVertex{&dvid.GraphElement{properties, weight}, id, vertices}
 	data := db.serializeVertex(vertex)
 	index := &graphIndex{keyVertex, id, 0, ""}
-	vertexKey := &graphKey{NewDataKey(index, versionID, dataIndex)}
-	err := db.Put(vertexKey, data)
+	err := db.Put(ctx, index.Bytes(), data)
 	return err
 }
 
@@ -248,20 +227,20 @@ func (db *GraphKeyValueDB) AddVertex(ctx Context, id dvid.VertexID, weight float
 // (2 read ops, 3 write ops)
 func (db *GraphKeyValueDB) AddEdge(ctx Context, id1 dvid.VertexID, id2 dvid.VertexID, weight float64) error {
 	// find vertex data
-	vertex1, err := db.GetVertex(graph, id1)
+	vertex1, err := db.GetVertex(ctx, id1)
 	if err != nil {
 		return err
 	}
-	vertex2, err := db.GetVertex(graph, id2)
+	vertex2, err := db.GetVertex(ctx, id2)
 	if err != nil {
 		return err
 	}
 
-	vertexKey1 := &graphKey{keyVertex, graph.Bytes(), id1, 0, ""}
-	vertexKey2 := &graphKey{keyVertex, graph.Bytes(), id2, 0, ""}
+	vertexIndex1 := &graphIndex{keyVertex, id1, 0, ""}
+	vertexIndex2 := &graphIndex{keyVertex, id2, 0, ""}
 
 	// make sure all writing is done in a batch to maintain atomicity
-	batcher := db.dbbatch.NewBatch()
+	batcher := db.dbbatch.NewBatch(ctx)
 
 	found := false
 	for _, vertex := range vertex1.Vertices {
@@ -287,72 +266,72 @@ func (db *GraphKeyValueDB) AddEdge(ctx Context, id1 dvid.VertexID, id2 dvid.Vert
 	// edge lists in vertices are modified
 	data1 := db.serializeVertex(vertex1)
 	data2 := db.serializeVertex(vertex2)
-	batcher.Put(vertexKey1, data1)
-	batcher.Put(vertexKey2, data2)
+	batcher.Put(vertexIndex1.Bytes(), data1)
+	batcher.Put(vertexIndex2.Bytes(), data2)
 
 	// GraphEdge should have smaller id as id1
-	properties := make(ElementProperties)
+	properties := make(dvid.ElementProperties)
 	if id1 > id2 {
 		temp := id2
 		id2 = id1
 		id1 = temp
 	}
-	edge := GraphEdge{&GraphElement{properties, weight}, VertexPairID{id1, id2}}
+	edge := dvid.GraphEdge{&dvid.GraphElement{properties, weight}, dvid.VertexPairID{id1, id2}}
 	data := db.serializeEdge(edge)
 
-	EdgeKey := &graphKey{keyEdge, graph.Bytes(), id1, id2, ""}
+	edgeIndex := &graphIndex{keyEdge, id1, id2, ""}
 
-	batcher.Put(EdgeKey, data)
+	batcher.Put(edgeIndex.Bytes(), data)
 	err = batcher.Commit()
 	return err
 }
 
 // SetVertexWeight requires 1 read, 1 write
 func (db *GraphKeyValueDB) SetVertexWeight(ctx Context, id dvid.VertexID, weight float64) error {
-	vertex, err := db.GetVertex(graph, id)
+	vertex, err := db.GetVertex(ctx, id)
 	if err != nil {
 		return nil
 	}
 
 	vertex.Weight = weight
 	data := db.serializeVertex(vertex)
-	vertexKey := &graphKey{keyVertex, graph.Bytes(), id, 0, ""}
-	err = db.Put(vertexKey, data)
+	vertexIndex := &graphIndex{keyVertex, id, 0, ""}
+	err = db.Put(ctx, vertexIndex.Bytes(), data)
 	return err
 }
 
 // SetEdgeWeight requires 1 read, 1 write
 func (db *GraphKeyValueDB) SetEdgeWeight(ctx Context, id1 dvid.VertexID, id2 dvid.VertexID, weight float64) error {
-	edge, err := db.GetEdge(graph, id1, id2)
+	edge, err := db.GetEdge(ctx, id1, id2)
 	if err != nil {
 		return nil
 	}
 
 	edge.Weight = weight
 	data := db.serializeEdge(edge)
-	edgeKey := &graphKey{keyEdge, graph.Bytes(), id1, id2, ""}
-	err = db.Put(edgeKey, data)
+	edgeIndex := &graphIndex{keyEdge, id1, id2, ""}
+	err = db.Put(ctx, edgeIndex.Bytes(), data)
 	return err
 }
 
 // SetVertexProperty modifies the vertex and adds a property vertex key (1 read, 2 writes)
 func (db *GraphKeyValueDB) SetVertexProperty(ctx Context, id dvid.VertexID, key string, value []byte) error {
 	// load data
-	vertexKey := &graphKey{keyVertex, graph.Bytes(), id, 0, ""}
-	propKey := &graphKey{keyVertexProperty, graph.Bytes(), id, 0, key}
+	vertexIndex := &graphIndex{keyVertex, id, 0, ""}
+	propIndex := &graphIndex{keyVertexProperty, id, 0, key}
 
 	// batch write to maintain atomicity
-	batcher := db.dbbatch.NewBatch()
+	batcher := db.dbbatch.NewBatch(ctx)
 
-	vertex, err := db.GetVertex(graph, id)
+	vertex, err := db.GetVertex(ctx, id)
 	if err != nil {
 		return nil
 	}
-	batcher.Put(propKey, value)
+	batcher.Put(propIndex.Bytes(), value)
 
 	vertex.Properties[key] = struct{}{}
 	data := db.serializeVertex(vertex)
-	batcher.Put(vertexKey, data)
+	batcher.Put(vertexIndex.Bytes(), data)
 	err = batcher.Commit()
 	return err
 }
@@ -360,32 +339,32 @@ func (db *GraphKeyValueDB) SetVertexProperty(ctx Context, id dvid.VertexID, key 
 // SetEdgeProperty modifies the edge and adds a property vertex key (1 read, 2 writes)
 func (db *GraphKeyValueDB) SetEdgeProperty(ctx Context, id1 dvid.VertexID, id2 dvid.VertexID, key string, value []byte) error {
 	// load data
-	edgeKey := &graphKey{keyEdge, graph.Bytes(), id1, id2, ""}
-	propKey := &graphKey{keyEdgeProperty, graph.Bytes(), id1, id2, key}
+	edgeIndex := &graphIndex{keyEdge, id1, id2, ""}
+	propIndex := &graphIndex{keyEdgeProperty, id1, id2, key}
 
-	batcher := db.dbbatch.NewBatch()
+	batcher := db.dbbatch.NewBatch(ctx)
 
-	edge, err := db.GetEdge(graph, id1, id2)
+	edge, err := db.GetEdge(ctx, id1, id2)
 	if err != nil {
 		return nil
 	}
 
-	batcher.Put(propKey, value)
+	batcher.Put(propIndex.Bytes(), value)
 
 	edge.Properties[key] = struct{}{}
 	data := db.serializeEdge(edge)
-	batcher.Put(edgeKey, data)
+	batcher.Put(edgeIndex.Bytes(), data)
 	err = batcher.Commit()
 	return err
 }
 
 // RemoveGraph retrieves all keys with the graph prefix and deletes them
 func (db *GraphKeyValueDB) RemoveGraph(ctx Context) error {
-	batcher := db.dbbatch.NewBatch()
+	batcher := db.dbbatch.NewBatch(ctx)
 
-	keylb := &graphKey{keyVertex, graph.Bytes(), 0, 0, ""}
-	keyub := &graphKey{keyMax, graph.Bytes(), 0, 0, ""}
-	keys, err := db.KeysInRange(keylb, keyub)
+	keylb := &graphIndex{keyVertex, 0, 0, ""}
+	keyub := &graphIndex{keyMax, 0, 0, ""}
+	keys, err := db.KeysInRange(ctx, keylb.Bytes(), keyub.Bytes())
 	if err != nil {
 		return err
 	}
@@ -401,11 +380,11 @@ func (db *GraphKeyValueDB) RemoveGraph(ctx Context) error {
 // RemoveVertex removes the vertex and all of its edges and properties
 // (1 read, 1 + num edges + num properties writes)
 func (db *GraphKeyValueDB) RemoveVertex(ctx Context, id dvid.VertexID) error {
-	batcher := db.dbbatch.NewBatch()
+	batcher := db.dbbatch.NewBatch(ctx)
 
-	keylb := &graphKey{keyVertexProperty, graph.Bytes(), id, 0, ""}
-	keyub := &graphKey{keyVertexProperty, graph.Bytes(), id, 1, ""}
-	keys, err := db.KeysInRange(keylb, keyub)
+	keylb := &graphIndex{keyVertexProperty, id, 0, ""}
+	keyub := &graphIndex{keyVertexProperty, id, 1, ""}
+	keys, err := db.KeysInRange(ctx, keylb.Bytes(), keyub.Bytes())
 	if err != nil {
 		return err
 	}
@@ -418,18 +397,18 @@ func (db *GraphKeyValueDB) RemoveVertex(ctx Context, id dvid.VertexID) error {
 		}
 	}
 
-	vertex, err := db.GetVertex(graph, id)
+	vertex, err := db.GetVertex(ctx, id)
 	if err != nil {
 		return err
 	}
 
 	// edges are removed in separate transactions from vertex and properties!
 	for _, vid := range vertex.Vertices {
-		db.RemoveEdge(graph, id, vid)
+		db.RemoveEdge(ctx, id, vid)
 	}
 
-	vertexKey := &graphKey{keyVertex, graph.Bytes(), id, 0, ""}
-	batcher.Delete(vertexKey)
+	vertexIndex := &graphIndex{keyVertex, id, 0, ""}
+	batcher.Delete(vertexIndex.Bytes())
 	err = batcher.Commit()
 	return err
 }
@@ -438,20 +417,20 @@ func (db *GraphKeyValueDB) RemoveVertex(ctx Context, id dvid.VertexID) error {
 // (2 read, 3 + num properties writes)
 func (db *GraphKeyValueDB) RemoveEdge(ctx Context, id1 dvid.VertexID, id2 dvid.VertexID) error {
 	// find vertex data
-	vertex1, err := db.GetVertex(graph, id1)
+	vertex1, err := db.GetVertex(ctx, id1)
 	if err != nil {
 		return err
 	}
-	vertex2, err := db.GetVertex(graph, id2)
+	vertex2, err := db.GetVertex(ctx, id2)
 	if err != nil {
 		return err
 	}
 
-	vertexKey1 := &graphKey{keyVertex, graph.Bytes(), id1, 0, ""}
-	vertexKey2 := &graphKey{keyVertex, graph.Bytes(), id2, 0, ""}
+	vertexKey1 := &graphIndex{keyVertex, id1, 0, ""}
+	vertexKey2 := &graphIndex{keyVertex, id2, 0, ""}
 
 	// all writes are batched
-	batcher := db.dbbatch.NewBatch()
+	batcher := db.dbbatch.NewBatch(ctx)
 
 	// remove vertex from vertex list
 	delkey := 0
@@ -474,12 +453,12 @@ func (db *GraphKeyValueDB) RemoveEdge(ctx Context, id1 dvid.VertexID, id2 dvid.V
 	// update vertices
 	data1 := db.serializeVertex(vertex1)
 	data2 := db.serializeVertex(vertex2)
-	batcher.Put(vertexKey1, data1)
-	batcher.Put(vertexKey2, data2)
+	batcher.Put(vertexKey1.Bytes(), data1)
+	batcher.Put(vertexKey2.Bytes(), data2)
 
-	keylb := &graphKey{keyEdgeProperty, graph.Bytes(), id1, id2, ""}
-	keyub := &graphKey{keyEdgeProperty, graph.Bytes(), id1, id2 + 1, ""}
-	keys, err := db.KeysInRange(keylb, keyub)
+	keylb := &graphIndex{keyEdgeProperty, id1, id2, ""}
+	keyub := &graphIndex{keyEdgeProperty, id1, id2 + 1, ""}
+	keys, err := db.KeysInRange(ctx, keylb.Bytes(), keyub.Bytes())
 	if err != nil {
 		return err
 	}
@@ -491,8 +470,8 @@ func (db *GraphKeyValueDB) RemoveEdge(ctx Context, id1 dvid.VertexID, id2 dvid.V
 		}
 	}
 
-	vertexKey := &graphKey{keyEdge, graph.Bytes(), id1, id2, ""}
-	batcher.Delete(vertexKey)
+	vertexIndex := &graphIndex{keyEdge, id1, id2, ""}
+	batcher.Delete(vertexIndex.Bytes())
 	err = batcher.Commit()
 	return err
 }
@@ -500,24 +479,24 @@ func (db *GraphKeyValueDB) RemoveEdge(ctx Context, id1 dvid.VertexID, id2 dvid.V
 // RemoveVertexProperty retrieves vertex and batch removes property and modifies vertex
 // (1 read, 2 writes)
 func (db *GraphKeyValueDB) RemoveVertexProperty(ctx Context, id dvid.VertexID, key string) error {
-	vertex, err := db.GetVertex(graph, id)
+	vertex, err := db.GetVertex(ctx, id)
 	if err != nil {
 		return nil
 	}
 
 	delete(vertex.Properties, key)
 	data := db.serializeVertex(vertex)
-	vertexKey := &graphKey{keyVertex, graph.Bytes(), id, 0, ""}
+	vertexIndex := &graphIndex{keyVertex, id, 0, ""}
 
-	batcher := db.dbbatch.NewBatch()
+	batcher := db.dbbatch.NewBatch(ctx)
 
-	batcher.Put(vertexKey, data)
+	batcher.Put(vertexIndex.Bytes(), data)
 	if err != nil {
 		return nil
 	}
 
-	propKey := &graphKey{keyVertexProperty, graph.Bytes(), id, 0, key}
-	batcher.Delete(propKey)
+	propIndex := &graphIndex{keyVertexProperty, id, 0, key}
+	batcher.Delete(propIndex.Bytes())
 	err = batcher.Commit()
 	return err
 }
@@ -525,37 +504,37 @@ func (db *GraphKeyValueDB) RemoveVertexProperty(ctx Context, id dvid.VertexID, k
 // RemoveEdgeProperty retrieves edge and batch removes property and modifies edge
 // (1 read, 2 writes)
 func (db *GraphKeyValueDB) RemoveEdgeProperty(ctx Context, id1 dvid.VertexID, id2 dvid.VertexID, key string) error {
-	edge, err := db.GetEdge(graph, id1, id2)
+	edge, err := db.GetEdge(ctx, id1, id2)
 	if err != nil {
 		return nil
 	}
 
 	delete(edge.Properties, key)
 	data := db.serializeEdge(edge)
-	edgeKey := &graphKey{keyEdge, graph.Bytes(), id1, id2, ""}
+	edgeIndex := &graphIndex{keyEdge, id1, id2, ""}
 
-	batcher := db.dbbatch.NewBatch()
+	batcher := db.dbbatch.NewBatch(ctx)
 
-	batcher.Put(edgeKey, data)
+	batcher.Put(edgeIndex.Bytes(), data)
 	if err != nil {
 		return nil
 	}
 
-	propKey := &graphKey{keyEdgeProperty, graph.Bytes(), id1, id2, key}
-	batcher.Delete(propKey)
+	propIndex := &graphIndex{keyEdgeProperty, id1, id2, key}
+	batcher.Delete(propIndex.Bytes())
 	err = batcher.Commit()
 	return err
 }
 
 // GetVertices uses a range query to get all vertices (#reads = #vertices)
 func (db *GraphKeyValueDB) GetVertices(ctx Context) ([]dvid.GraphVertex, error) {
-	minid := VertexID(0)
+	minid := dvid.VertexID(0)
 	maxid := ^minid
 
-	keylb := &graphKey{keyVertex, graph.Bytes(), minid, 0, ""}
-	keyub := &graphKey{keyVertex, graph.Bytes(), maxid, 0, ""}
-	keyvalues, err := db.GetRange(keylb, keyub)
-	var vertexlist []GraphVertex
+	keylb := &graphIndex{keyVertex, minid, 0, ""}
+	keyub := &graphIndex{keyVertex, maxid, 0, ""}
+	keyvalues, err := db.GetRange(ctx, keylb.Bytes(), keyub.Bytes())
+	var vertexlist []dvid.GraphVertex
 	if err != nil {
 		return vertexlist, err
 	}
@@ -573,9 +552,9 @@ func (db *GraphKeyValueDB) GetVertices(ctx Context) ([]dvid.GraphVertex, error) 
 
 // GetVertex performs 1 read
 func (db *GraphKeyValueDB) GetVertex(ctx Context, id dvid.VertexID) (dvid.GraphVertex, error) {
-	vertexKey := &graphKey{keyVertex, graph.Bytes(), id, 0, ""}
+	vertexIndex := &graphIndex{keyVertex, id, 0, ""}
 	var vertex dvid.GraphVertex
-	data, err := db.Get(vertexKey)
+	data, err := db.Get(ctx, vertexIndex.Bytes())
 	if err != nil {
 		return vertex, err
 	}
@@ -585,9 +564,9 @@ func (db *GraphKeyValueDB) GetVertex(ctx Context, id dvid.VertexID) (dvid.GraphV
 
 // GetEdge performs 1 read
 func (db *GraphKeyValueDB) GetEdge(ctx Context, id1 dvid.VertexID, id2 dvid.VertexID) (dvid.GraphEdge, error) {
-	edgeKey := &graphKey{keyEdge, graph.Bytes(), id1, id2, ""}
+	edgeIndex := &graphIndex{keyEdge, id1, id2, ""}
 	var edge dvid.GraphEdge
-	data, err := db.Get(edgeKey)
+	data, err := db.Get(ctx, edgeIndex.Bytes())
 	if err != nil {
 		return edge, err
 	}
@@ -600,11 +579,11 @@ func (db *GraphKeyValueDB) GetEdges(ctx Context) ([]dvid.GraphEdge, error) {
 	minid := dvid.VertexID(0)
 	maxid := ^minid
 
-	keylb := &graphKey{keyEdge, graph.Bytes(), minid, minid, ""}
-	keyub := &graphKey{keyEdge, graph.Bytes(), maxid, maxid, ""}
+	keylb := &graphIndex{keyEdge, minid, minid, ""}
+	keyub := &graphIndex{keyEdge, maxid, maxid, ""}
 
-	keyvalues, err := db.GetRange(keylb, keyub)
-	var edgelist []GraphEdge
+	keyvalues, err := db.GetRange(ctx, keylb.Bytes(), keyub.Bytes())
+	var edgelist []dvid.GraphEdge
 	if err != nil {
 		return edgelist, err
 	}
@@ -623,15 +602,15 @@ func (db *GraphKeyValueDB) GetEdges(ctx Context) ([]dvid.GraphEdge, error) {
 // GetVertexProperty performs 1 read (property name with vertex id encoded in key)
 func (db *GraphKeyValueDB) GetVertexProperty(ctx Context, id dvid.VertexID, key string) ([]byte, error) {
 	// load data
-	propKey := &graphKey{keyVertexProperty, graph.Bytes(), id, 0, key}
-	data, err := db.Get(propKey)
+	propIndex := &graphIndex{keyVertexProperty, id, 0, key}
+	data, err := db.Get(ctx, propIndex.Bytes())
 	return data, err
 }
 
 // GetEdgeProperty performs 1 read (property name with vertex ids encoded in key)
 func (db *GraphKeyValueDB) GetEdgeProperty(ctx Context, id1 dvid.VertexID, id2 dvid.VertexID, key string) ([]byte, error) {
 	// load data
-	propKey := &graphKey{keyEdgeProperty, graph.Bytes(), id1, id2, key}
-	data, err := db.Get(propKey)
+	propIndex := &graphIndex{keyEdgeProperty, id1, id2, key}
+	data, err := db.Get(ctx, propIndex.Bytes())
 	return data, err
 }

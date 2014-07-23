@@ -1,5 +1,5 @@
 /*
-	Package keyvalue implements DVID support for data using generic key/value.
+	Package keyvalue implements DVID support for data using generic key-value.
 */
 package keyvalue
 
@@ -32,7 +32,7 @@ Command-line:
 
 $ dvid repo <UUID> new keyvalue <data name> <settings...>
 
-	Adds newly named key/value data to repo with specified UUID.
+	Adds newly named key-value data to repo with specified UUID.
 
 	Example:
 
@@ -122,7 +122,7 @@ GET  <api URL>/node/<UUID>/<data name>/<key>[/<format>]
 POST <api URL>/node/<UUID>/<data name>/<key>
 DEL  <api URL>/node/<UUID>/<data name>/<key>  (TO DO)
 
-    Performs operations on a key/value pair depending on the HTTP verb.
+    Performs operations on a key-value pair depending on the HTTP verb.
 
     Example: 
 
@@ -176,8 +176,8 @@ func NewDatatype() (dtype *Datatype) {
 // --- TypeService interface ---
 
 // NewData returns a pointer to new keyvalue data with default values.
-func (dtype *Datatype) NewDataService(id *datastore.Data, c dvid.Config) (datastore.DataService, error) {
-	basedata, err := datastore.NewDataService(id, dtype, c)
+func (dtype *Datatype) NewDataService(r Repo, id dvid.InstanceID, name dvid.DataString, c dvid.Config) (datastore.DataService, error) {
+	basedata, err := datastore.NewDataService(dtype, r, id, name, c)
 	if err != nil {
 		return nil, err
 	}
@@ -227,7 +227,7 @@ func (d *Data) GetData(c storage.Context, keyStr string) (value []byte, found bo
 	return
 }
 
-// PutData puts a key/value at a given uuid
+// PutData puts a key-value at a given uuid
 func (d *Data) PutData(uuid dvid.UUID, keyStr string, value []byte) error {
 	// Compute the key
 	versionID, err := server.VersionLocalID(uuid)

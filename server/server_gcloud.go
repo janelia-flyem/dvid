@@ -1,9 +1,7 @@
-// +build !clustered,!gcloud
+// +build gcloud
 
 /*
-	This file supports opening and managing HTTP/RPC servers locally from one process
-	instead of using always available services like in a cluster or Google cloud.  It
-	also manages local or embedded storage engines.
+	This file supports HTTP and RPC requests to DVID on Google Cloud.
 */
 
 package server
@@ -21,12 +19,12 @@ import (
 	"sync"
 	"time"
 
+	"bitbucket.org/tebeka/nrsc"
+
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
 	"github.com/janelia-flyem/dvid/storage/local"
-
-	"github.com/janelia-flyem/go/nrsc"
 )
 
 const (
@@ -110,43 +108,6 @@ func init() {
 	}()
 }
 
-// Initialize encapsulates platform-specific initialization functions and creates a public
-// server.Context that provides logging and data persistence methods.
-func Initialize(datastorePath, webAddress, webClientDir, rpcAddress string) error {
-	// Setup logging
-
-	// Setup storage tiers
-
-	// Initialize datastore and set repo management as global var in package server
-	ctx := datastore.Context{logger, metadata, smalldata, bigdata}
-	var err error
-	Repos, err = datastore.Initialize(ctx)
-	if err != nil {
-		return err
-	}
-
-	log.Printf("Using %d of %d logical CPUs for DVID.\n", dvid.NumCPU, runtime.NumCPU())
-
-	// Register an error logger that appends to a file in this datastore directory.
-	errorLog := filepath.Join(service.ErrorLogDir, ErrorLogFilename)
-	file, err := os.OpenFile(errorLog, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
-	if err != nil {
-		log.Fatalf("Unable to open error logging file (%s): %s\n", errorLog, err.Error())
-	}
-	dvid.SetErrorLoggingFile(file)
-
-	// Launch the web server
-	go runningService.ServeHttp(webAddress, webClientDir)
-
-	// Launch the rpc server
-	err = runningService.ServeRpc(rpcAddress)
-	if err != nil {
-		log.Fatalln(err.Error())
-	}
-
-	return nil
-}
-
 // ---- Handle Storage Setup
 
 func SetupEngines(path string, config dvid.Config) error {
@@ -203,6 +164,16 @@ func SetupTiers() {
 }
 
 // ---- Handle HTTP/RPC Setup
+
+// MatchingUUID returns a UUID on this server that uniquely matches a uuid string.
+func MatchingUUID(uuidStr string) (uuid dvid.UUID, err error) {
+	if runningService.Service == nil {
+		err = fmt.Errorf("Datastore service has not been started on this server.")
+		return
+	}
+	uuid, _, _, err = runningService.Service.NodeIDFromString(uuidStr)
+	return
+}
 
 // VersionLocalID returns a server-specific local ID for the node with the given UUID.
 func VersionLocalID(uuid dvid.UUID) (dvid.VersionLocalID, error) {
