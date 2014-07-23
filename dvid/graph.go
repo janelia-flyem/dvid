@@ -13,6 +13,8 @@ type ElementProperties map[string]struct{}
 // VertexID is a 64 bit label ID for vertices in the graph
 type VertexID uint64
 
+const VertexIDSize = 8
+
 // smaller ID should be first
 type VertexPairID struct {
 	Vertex1 VertexID

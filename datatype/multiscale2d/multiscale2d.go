@@ -337,11 +337,10 @@ func NewDatatype() (dtype *Datatype) {
 // --- TypeService interface ---
 
 // NewData returns a pointer to new tile data with default values.
-func (dtype *Datatype) NewDataService(id *datastore.Data, config dvid.Config) (
-	datastore.DataService, error) {
+func (dtype *Datatype) NewDataService(r Repo, id dvid.InstanceID, name dvid.DataString, c dvid.Config) (datastore.DataService, error) {
 
 	// Make sure we have a valid DataService source
-	name, found, err := config.GetString("Source")
+	name, found, err := c.GetString("Source")
 	if err != nil {
 		return nil, err
 	}
@@ -351,13 +350,13 @@ func (dtype *Datatype) NewDataService(id *datastore.Data, config dvid.Config) (
 	sourcename := dvid.DataString(name)
 
 	// See if we want placeholder multiscale2d.
-	placeholder, found, err := config.GetBool("Placeholder")
+	placeholder, found, err := c.GetBool("Placeholder")
 	if err != nil {
 		return nil, err
 	}
 
 	// Determine encoding for tile storage and this dictates what kind of compression we use.
-	encoding, found, err := config.GetString("Format")
+	encoding, found, err := c.GetString("Format")
 	if err != nil {
 		return nil, err
 	}
@@ -385,7 +384,7 @@ func (dtype *Datatype) NewDataService(id *datastore.Data, config dvid.Config) (
 	case JPG:
 		compression = "none"
 	}
-	name, found, err = config.GetString("Compression")
+	name, found, err = c.GetString("Compression")
 	if err != nil {
 		return nil, err
 	}
@@ -393,10 +392,10 @@ func (dtype *Datatype) NewDataService(id *datastore.Data, config dvid.Config) (
 		return nil, fmt.Errorf("Conflict between specified compression '%s' and format '%s'.  Suggest not dictating compression.",
 			name, encoding)
 	}
-	config.Set("Compression", compression)
+	c.Set("Compression", compression)
 
 	// Initialize the multiscale2d data
-	basedata, err := datastore.NewDataService(id, dtype, config)
+	basedata, err := datastore.NewDataService(dtype, r, id, name, c)
 	if err != nil {
 		return nil, err
 	}

@@ -306,10 +306,6 @@ func (s *Service) LocalIDFromUUID(u dvid.UUID) (dID dvid.RepoLocalID, vID dvid.V
 func (s *Service) NodeIDFromString(str string) (u dvid.UUID, dID dvid.RepoLocalID,
 	vID dvid.VersionLocalID, err error) {
 
-	if s.Repos == nil {
-		err = fmt.Errorf("Datastore service has no repos available")
-		return
-	}
 	var repo *Repo
 	repo, u, err = s.Repos.RepoFromString(str)
 	if err != nil {

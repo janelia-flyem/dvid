@@ -9,6 +9,7 @@ package keyvalue
 import (
 	"fmt"
 
+	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/cache"
 	"github.com/syndtr/goleveldb/leveldb/filter"
@@ -133,7 +134,7 @@ func (db *goLDB) Delete(k Key, wo WriteOptions) (err error) {
 	return
 }
 
-// Write allows you to batch a series of key/value puts.
+// Write allows you to batch a series of key-value puts.
 func (db *goLDB) Write(batch WriteBatch, wo WriteOptions) (err error) {
 	err = db.ldb.Write(batch.(*goBatch).Batch, wo.(*goWriteOptions).WriteOptions)
 	return

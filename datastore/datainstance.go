@@ -12,28 +12,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/janelia-flyem/dvid/datatype"
 	"github.com/janelia-flyem/dvid/dvid"
 )
-
-// This message is used for all data types to explain options.
-const helpMessage = `
-    DVID data type information
-
-    name: %s 
-    url: %s 
-`
-
-type Context struct {
-	*Service
-	config dvid.Config
-}
-
-type DataContext struct {
-	*Context
-	uuid   dvid.UUID
-	dataID dvid.DataLocalID
-}
 
 // Subsetter is a type that can tell us its range of Index and how much it has
 // actually available in this server.  It's used to implement limited cloning,
@@ -83,7 +63,7 @@ func (r *Response) Write(w io.Writer) error {
 type DataService interface {
 	dvid.Data
 
-	datatype.Service
+	TypeService
 
 	// ModifyConfig modifies a configuration in a type-specific way.
 	ModifyConfig(config dvid.Config) error
@@ -98,11 +78,11 @@ type DataService interface {
 // Data is the base struct of repo-specific data instances.  It should be embedded
 // in a datatype's DataService implementation and handle datastore-wide key partitioning.
 type Data struct {
-	datatype.Service
+	TypeService
 
 	name dvid.DataString
 	id   dvid.InstanceID
-	repo *Repo
+	repo Repo
 
 	// Compression of serialized data, e.g., the value in a key-value.
 	compression dvid.Compression
@@ -114,15 +94,15 @@ type Data struct {
 	versioned bool
 }
 
-// NewDataInstance returns a new Data instance that fulfills the DataService interface.
+// NewDataService returns a new Data instance that fulfills the DataService interface.
 // This returned Data struct is usually embedded by datatype-specific data instances.
 // By default, LZ4 and the default checksum is used.
-func NewDataInstance(t datatype.Service, name dvid.DataString, c dvid.Config, r *Repo) (*Data, error) {
+func NewDataService(t TypeService, r Repo, id dvid.InstanceID, name dvid.DataString, c dvid.Config) (*Data, error) {
 	compression, _ := dvid.NewCompression(dvid.LZ4, dvid.DefaultCompression)
 	data := &Data{
 		t,
 		name,
-		id:          r.NewInstanceID(),
+		id:          id,
 		repo:        r,
 		compression: compression,
 		checksum:    dvid.DefaultChecksum,
@@ -136,7 +116,7 @@ func NewDataInstance(t datatype.Service, name dvid.DataString, c dvid.Config, r 
 
 func (d *Data) DataName() dvid.DataString { return d.name }
 
-func (d *Data) InstanceID() InstanceID { return d.id }
+func (d *Data) InstanceID() dvid.InstanceID { return d.id }
 
 func (d *Data) Versioned() bool {
 	return d.versioned
@@ -144,13 +124,13 @@ func (d *Data) Versioned() bool {
 
 // ---- dvid.VersionedData implementation ----
 
-func (d *Data) GetIterator(key dvid.VersionedKey) (dvid.VersionIterator, error) {
-	return d.repo.GetIterator(key)
+func (d *Data) GetIterator(versionID dvid.VersionID) (dvid.VersionIterator, error) {
+	return d.repo.GetIterator(versionID)
 }
 
 // -----------
 
-func (d *Data) RepoID() RepoID { return d.repo.ID() }
+func (d *Data) RepoID() dvid.RepoID { return d.repo.ID() }
 
 func (d *Data) Compression() dvid.Compression {
 	return d.compression
@@ -227,7 +207,7 @@ func (d *Data) UnknownCommand(request Request) error {
 type nodeID struct {
 	repo     dvid.RepoID
 	instance dvid.InstanceID
-	version  dvid.VersionLocalID
+	version  dvid.VersionID
 }
 
 // VersionMutex returns a Mutex that is specific for data at a particular version.

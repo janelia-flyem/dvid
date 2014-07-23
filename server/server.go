@@ -22,12 +22,9 @@ import (
 )
 
 var (
-	// runningService is a global variable that holds the currently running
-	// datastore service.
-	runningService = Service{
-		WebAddress: DefaultWebAddress,
-		RPCAddress: DefaultRPCAddress,
-	}
+	// Repos provides high-level repository management for DVID and is initialized
+	// on start.
+	Repos datastore.RepoManager
 
 	// ActiveHandlers is maximum number of active handlers over last second.
 	ActiveHandlers int
@@ -61,6 +58,21 @@ var (
 	startupTime time.Time = time.Now()
 )
 
+type storageManager struct {
+	// True if SetupEngines() has been called
+	setup bool
+
+	// Cached type-asserted interfaces
+	kvEngine    Engine
+	kvDB        OrderedKeyValueDB
+	kvSetter    OrderedKeyValueSetter
+	kvGetter    OrderedKeyValueGetter
+	graphEngine Engine
+	graphDB     GraphDB
+	graphSetter GraphSetter
+	graphGetter GraphGetter
+}
+
 func init() {
 	// Initialize the number of throttled ops available.
 	for i := 0; i < MaxThrottledOps; i++ {
@@ -91,16 +103,6 @@ func init() {
 	}()
 }
 
-// MatchingUUID returns a UUID on this server that uniquely matches a uuid string.
-func MatchingUUID(uuidStr string) (uuid dvid.UUID, err error) {
-	if runningService.Service == nil {
-		err = fmt.Errorf("Datastore service has not been started on this server.")
-		return
-	}
-	uuid, _, _, err = runningService.Service.NodeIDFromString(uuidStr)
-	return
-}
-
 // VersionLocalID returns a server-specific local ID for the node with the given UUID.
 func VersionLocalID(uuid dvid.UUID) (dvid.VersionLocalID, error) {
 	if runningService.Service == nil {
@@ -111,15 +113,6 @@ func VersionLocalID(uuid dvid.UUID) (dvid.VersionLocalID, error) {
 		return 0, err
 	}
 	return versionID, nil
-}
-
-// --- Return datastore.Service and various database interfaces to support polyglot persistence --
-
-// DatastoreService returns the current datastore service.  One DVID process
-// is assigned to one datastore service, although it may be possible to have
-// multiple (polyglot) persistence backends attached to that one service.
-func DatastoreService() *datastore.Service {
-	return runningService.Service
 }
 
 // KeyValueGetter returns the default service for retrieving key-value pairs.

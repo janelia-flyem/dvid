@@ -536,9 +536,9 @@ func (t *transactionLog) createTransactionGroupBinary(data []byte, readonly bool
 
 // --- TypeService interface ---
 
-// NewData returns a pointer to new keyvalue data with default values.
-func (dtype *Datatype) NewDataService(name dvid.DataString, c dvid.Config, r *datastore.Repo) (datastore.DataService, error) {
-	basedata, err := datastore.NewDataInstance(dtype, name, c, r)
+// NewDataService returns a pointer to new keyvalue data with default values.
+func (dtype *Datatype) NewDataService(r Repo, id dvid.InstanceID, name dvid.DataString, c dvid.Config) (datastore.DataService, error) {
+	basedata, err := datastore.NewDataService(dtype, r, id, name, c)
 	if err != nil {
 		return nil, err
 	}

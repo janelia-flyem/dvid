@@ -1,6 +1,6 @@
 /*
 	This file defines datatype-specific components of keys that provide an index into
-	the key/value pairs associated with a data instance.
+	the key-value pairs associated with a data instance.
 */
 
 package dvid
@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"hash/fnv"
 	"math"
-	"reflect"
 )
 
 func init() {
@@ -36,14 +35,20 @@ type Index interface {
 	// lexicographic ordering.
 	Bytes() []byte
 
-	// Hash provides a consistent mapping from an Index to an integer (0,n]
-	Hash(n int) int
+	// IndexFromBytes sets the receiver from the given bytes.
+	IndexFromBytes([]byte) error
 
 	// Scheme returns a string describing the indexing scheme.
 	Scheme() string
 
-	// String returns a hexadecimal string representation
+	// String returns a human readable description of the Index.
 	String() string
+}
+
+// Hashable is a type that provies a function to hash itself to an integer range.
+type Hashable interface {
+	// Hash provides a consistent mapping from an Index to an integer (0,n]
+	Hash(n int) int
 }
 
 // ChunkIndexer adds chunk point access to an index.
@@ -59,16 +64,6 @@ type ChunkIndexer interface {
 	Max(ChunkIndexer) (max ChunkIndexer, changed bool)
 }
 
-// KeyToChunkIndexer takes a Key and returns an implementation of a ChunkIndexer if possible.
-func KeyToChunkIndexer(key *DataKey) (ChunkIndexer, error) {
-	ptIndex, ok := key.index.(ChunkIndexer)
-	if !ok {
-		return nil, fmt.Errorf("Can't convert DataKey.Index (%s) to ChunkIndexer",
-			reflect.TypeOf(key.index))
-	}
-	return ptIndex, nil
-}
-
 // IndexIterator is a function that returns a sequence of indices and ends with nil.
 type IndexIterator interface {
 	Valid() bool
@@ -81,28 +76,12 @@ type IndexRange struct {
 	Minimum, Maximum Index
 }
 
-// ---- Index Implementations --------
-
 // IndexBytes satisfies an Index interface with a slice of bytes.
 type IndexBytes []byte
 
-func (i IndexBytes) Duplicate() Index {
-	dup := make(IndexBytes, len(i))
-	copy(dup, i)
-	return dup
-}
-
-func (i IndexBytes) String() string {
-	return string(i)
-}
-
-func (i IndexBytes) Bytes() []byte {
-	return []byte(i)
-}
-
-func (i IndexBytes) Hash(n int) int {
+func (i *IndexBytes) Hash(n int) int {
 	hash := fnv.New32()
-	_, err := hash.Write([]byte(i))
+	_, err := hash.Write([]byte(*i))
 	if err != nil {
 		Errorf("Could not write to fnv hash in IndexBytes.Hash()")
 		return 0
@@ -110,26 +89,35 @@ func (i IndexBytes) Hash(n int) int {
 	return int(hash.Sum32()) % n
 }
 
-func (i IndexBytes) Scheme() string {
+// ---- Index interface implementation --------
+
+func (i *IndexBytes) Duplicate() Index {
+	dup := make(IndexBytes, len(*i))
+	copy(dup, *i)
+	return &dup
+}
+
+func (i *IndexBytes) String() string {
+	return string(*i)
+}
+
+func (i *IndexBytes) Bytes() []byte {
+	return []byte(*i)
+}
+
+func (i *IndexBytes) Scheme() string {
 	return "Bytes Indexing"
+}
+
+func (i *IndexBytes) IndexFromBytes(b []byte) error {
+	*i = IndexBytes(b)
+	return nil
 }
 
 // IndexString satisfies an Index interface with a string.
 type IndexString string
 
-func (i IndexString) Duplicate() Index {
-	return i
-}
-
-func (i IndexString) String() string {
-	return string(i)
-}
-
-func (i IndexString) Bytes() []byte {
-	return []byte(i)
-}
-
-func (i IndexString) Hash(n int) int {
+func (i *IndexString) Hash(n int) int {
 	hash := fnv.New32()
 	_, err := hash.Write(i.Bytes())
 	if err != nil {
@@ -139,33 +127,62 @@ func (i IndexString) Hash(n int) int {
 	return int(hash.Sum32()) % n
 }
 
-func (i IndexString) Scheme() string {
+// ---- Index interface implementation --------
+
+func (i *IndexString) Duplicate() Index {
+	return i
+}
+
+func (i *IndexString) String() string {
+	return string(*i)
+}
+
+func (i *IndexString) Bytes() []byte {
+	return []byte(*i)
+}
+
+func (i *IndexString) Scheme() string {
 	return "String Indexing"
+}
+
+func (i *IndexString) IndexFromBytes(b []byte) error {
+	*i = IndexString(b)
+	return nil
 }
 
 // IndexUint8 satisfies an Index interface with an 8-bit unsigned integer index.
 type IndexUint8 uint8
 
-func (i IndexUint8) Duplicate() Index {
+// Hash returns an integer [0, n)
+func (i *IndexUint8) Hash(n int) int {
+	return int(*i) % n
+}
+
+// ---- Index interface implementation --------
+
+func (i *IndexUint8) Duplicate() Index {
 	return i
 }
 
-func (i IndexUint8) String() string {
-	return fmt.Sprintf("%x", i)
+func (i *IndexUint8) String() string {
+	return fmt.Sprintf("%x", *i)
 }
 
 // Bytes returns a byte representation of the Index.
-func (i IndexUint8) Bytes() []byte {
-	return []byte{byte(i)}
+func (i *IndexUint8) Bytes() []byte {
+	return []byte{byte(*i)}
 }
 
-// Hash returns an integer [0, n)
-func (i IndexUint8) Hash(n int) int {
-	return int(i) % n
-}
-
-func (i IndexUint8) Scheme() string {
+func (i *IndexUint8) Scheme() string {
 	return "Unsigned 8-bit Indexing"
+}
+
+func (i *IndexUint8) IndexFromBytes(b []byte) error {
+	if len(b) != 1 {
+		return fmt.Errorf("IndexUint8 should only be one byte not %d", len(b))
+	}
+	*i = IndexUint8(b[0])
+	return nil
 }
 
 // IndexZYX implements the Index interface and provides simple indexing on Z,
@@ -185,71 +202,77 @@ var (
 
 const IndexZYXSize = ChunkPoint3dSize
 
-func (i IndexZYX) Duplicate() Index {
-	dup := i
-	return dup
+// Hash returns an integer [0, n) where the returned values should be reasonably
+// spread among the range of returned values.  This implementation makes sure
+// that any range query along x, y, or z direction will map to different handlers.
+func (i *IndexZYX) Hash(n int) int {
+	return int((*i)[0]+(*i)[1]+(*i)[2]) % n
 }
 
-func (i IndexZYX) String() string {
+// ---- Index interface implementation
+
+func (i *IndexZYX) Duplicate() Index {
+	dup := *i
+	return &dup
+}
+
+func (i *IndexZYX) String() string {
 	return hex.EncodeToString(i.Bytes())
 }
 
 // Bytes returns a byte representation of the Index.  This should layout
 // integer space as consecutive in binary representation so we use
 // bigendian and convert signed integer space to unsigned integer space.
-func (i IndexZYX) Bytes() []byte {
+func (i *IndexZYX) Bytes() []byte {
 	buf := new(bytes.Buffer)
-	binary.Write(buf, binary.BigEndian, uint32(int64(i[2])-math.MinInt32))
-	binary.Write(buf, binary.BigEndian, uint32(int64(i[1])-math.MinInt32))
-	binary.Write(buf, binary.BigEndian, uint32(int64(i[0])-math.MinInt32))
+	binary.Write(buf, binary.BigEndian, uint32(int64((*i)[2])-math.MinInt32))
+	binary.Write(buf, binary.BigEndian, uint32(int64((*i)[1])-math.MinInt32))
+	binary.Write(buf, binary.BigEndian, uint32(int64((*i)[0])-math.MinInt32))
 	return buf.Bytes()
 }
 
-// Hash returns an integer [0, n) where the returned values should be reasonably
-// spread among the range of returned values.  This implementation makes sure
-// that any range query along x, y, or z direction will map to different handlers.
-func (i IndexZYX) Hash(n int) int {
-	return int(i[0]+i[1]+i[2]) % n
-}
-
-func (i IndexZYX) Scheme() string {
+func (i *IndexZYX) Scheme() string {
 	return "ZYX Indexing"
 }
 
 // IndexFromBytes returns an index from bytes.  The passed Index is used just
 // to choose the appropriate byte decoding scheme.
-func (i IndexZYX) IndexFromBytes(b []byte) (Index, error) {
+func (i *IndexZYX) IndexFromBytes(b []byte) error {
+	if len(b) != 12 {
+		return fmt.Errorf("Illegal byte length (%d) for IndexZYX", len(b))
+	}
 	z := int32(int64(binary.BigEndian.Uint32(b[0:4])) + math.MinInt32)
 	y := int32(int64(binary.BigEndian.Uint32(b[4:8])) + math.MinInt32)
 	x := int32(int64(binary.BigEndian.Uint32(b[8:12])) + math.MinInt32)
-	return &IndexZYX{x, y, z}, nil
+	*i = IndexZYX{x, y, z}
+	return nil
 }
 
-// ------- ChunkIndexer interface ----------
+// ----- ChunkIndexer interface implementation
 
-func (i IndexZYX) NumDims() uint8 {
+func (i *IndexZYX) NumDims() uint8 {
 	return 3
 }
 
 // Value returns the value at the specified dimension for this index.
-func (i IndexZYX) Value(dim uint8) int32 {
-	return i[dim]
+func (i *IndexZYX) Value(dim uint8) int32 {
+	return (*i)[dim]
 }
 
 // MinPoint returns the minimum voxel coordinate for a chunk.
-func (i IndexZYX) MinPoint(size Point) Point {
-	return ChunkPoint3d(i).MinPoint(size)
+func (i *IndexZYX) MinPoint(size Point) Point {
+	return ChunkPoint3d(*i).MinPoint(size)
 }
 
 // MaxPoint returns the maximum voxel coordinate for a chunk.
-func (i IndexZYX) MaxPoint(size Point) Point {
-	return ChunkPoint3d(i).MaxPoint(size)
+func (i *IndexZYX) MaxPoint(size Point) Point {
+	return ChunkPoint3d(*i).MaxPoint(size)
 }
 
 // Min returns a ChunkIndexer that is the minimum of its value and the passed one.
-func (i IndexZYX) Min(idx ChunkIndexer) (ChunkIndexer, bool) {
+func (i *IndexZYX) Min(idx ChunkIndexer) (ChunkIndexer, bool) {
 	var changed bool
-	min := i
+	min := *i
 	if min[0] > idx.Value(0) {
 		min[0] = idx.Value(0)
 		changed = true
@@ -262,13 +285,13 @@ func (i IndexZYX) Min(idx ChunkIndexer) (ChunkIndexer, bool) {
 		min[2] = idx.Value(2)
 		changed = true
 	}
-	return min, changed
+	return &min, changed
 }
 
 // Max returns a ChunkIndexer that is the maximum of its value and the passed one.
-func (i IndexZYX) Max(idx ChunkIndexer) (ChunkIndexer, bool) {
+func (i *IndexZYX) Max(idx ChunkIndexer) (ChunkIndexer, bool) {
 	var changed bool
-	max := i
+	max := *i
 	if max[0] < idx.Value(0) {
 		max[0] = idx.Value(0)
 		changed = true
@@ -281,7 +304,7 @@ func (i IndexZYX) Max(idx ChunkIndexer) (ChunkIndexer, bool) {
 		max[2] = idx.Value(2)
 		changed = true
 	}
-	return max, changed
+	return &max, changed
 }
 
 // ----- IndexIterator implementation ------------
@@ -294,18 +317,20 @@ type IndexZYXIterator struct {
 
 // NewIndexZYXIterator returns an IndexIterator that iterates over XYZ space.
 func NewIndexZYXIterator(start, end ChunkPoint3d) *IndexZYXIterator {
+	index := IndexZYX(end)
 	return &IndexZYXIterator{
 		x:        start[0],
 		y:        start[1],
 		z:        start[2],
 		begBlock: start,
 		endBlock: end,
-		endBytes: IndexZYX(end).Bytes(),
+		endBytes: (&index).Bytes(),
 	}
 }
 
 func (it *IndexZYXIterator) Valid() bool {
-	cursorBytes := IndexZYX{it.x, it.y, it.z}.Bytes()
+	index := &IndexZYX{it.x, it.y, it.z}
+	cursorBytes := index.Bytes()
 	if bytes.Compare(cursorBytes, it.endBytes) > 0 {
 		return false
 	}
@@ -313,8 +338,8 @@ func (it *IndexZYXIterator) Valid() bool {
 }
 
 func (it *IndexZYXIterator) IndexSpan() (beg, end Index, err error) {
-	beg = IndexZYX{it.begBlock[0], it.y, it.z}
-	end = IndexZYX{it.endBlock[0], it.y, it.z}
+	beg = &IndexZYX{it.begBlock[0], it.y, it.z}
+	end = &IndexZYX{it.endBlock[0], it.y, it.z}
 	return
 }
 
@@ -334,36 +359,35 @@ type IndexCZYX struct {
 	IndexZYX
 }
 
-func (i IndexCZYX) Duplicate() Index {
+func (i *IndexCZYX) Duplicate() Index {
 	dup := i
 	return dup
 }
 
-func (i IndexCZYX) String() string {
+func (i *IndexCZYX) String() string {
 	return hex.EncodeToString(i.Bytes())
 }
 
 // Bytes returns a byte representation of the Index.
-func (i IndexCZYX) Bytes() []byte {
+func (i *IndexCZYX) Bytes() []byte {
 	buf := new(bytes.Buffer)
 	binary.Write(buf, binary.BigEndian, i.Channel)
 	buf.Write(i.IndexZYX.Bytes())
 	return buf.Bytes()
 }
 
-func (i IndexCZYX) Scheme() string {
+func (i *IndexCZYX) Scheme() string {
 	return "CZYX Indexing"
 }
 
 // IndexFromBytes returns an index from bytes.  The passed Index is used just
 // to choose the appropriate byte decoding scheme.
-func (i IndexCZYX) IndexFromBytes(b []byte) (Index, error) {
-	c := int32(binary.BigEndian.Uint16(b[0:4]))
-	index, err := i.IndexFromBytes(b[4:])
-	if err != nil {
-		return nil, err
+func (i *IndexCZYX) IndexFromBytes(b []byte) error {
+	i.Channel = int32(binary.BigEndian.Uint16(b[0:4]))
+	if err := i.IndexZYX.IndexFromBytes(b[4:]); err != nil {
+		return err
 	}
-	return &IndexCZYX{c, index.(IndexZYX)}, nil
+	return nil
 }
 
 // ----- IndexIterator implementation ------------
@@ -390,7 +414,8 @@ func NewIndexCZYXIterator(channel int32, start, end ChunkPoint3d) *IndexCZYXIter
 }
 
 func (it *IndexCZYXIterator) Valid() bool {
-	cursorBytes := IndexCZYX{it.channel, IndexZYX{it.x, it.y, it.z}}.Bytes()
+	index := &IndexCZYX{it.channel, IndexZYX{it.x, it.y, it.z}}
+	cursorBytes := index.Bytes()
 	if bytes.Compare(cursorBytes, it.endBytes) > 0 {
 		return false
 	}
@@ -398,8 +423,8 @@ func (it *IndexCZYXIterator) Valid() bool {
 }
 
 func (it *IndexCZYXIterator) IndexSpan() (beg, end Index, err error) {
-	beg = IndexCZYX{it.channel, IndexZYX{it.begBlock[0], it.y, it.z}}
-	end = IndexCZYX{it.channel, IndexZYX{it.endBlock[0], it.y, it.z}}
+	beg = &IndexCZYX{it.channel, IndexZYX{it.begBlock[0], it.y, it.z}}
+	end = &IndexCZYX{it.channel, IndexZYX{it.endBlock[0], it.y, it.z}}
 	return
 }
 

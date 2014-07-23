@@ -1,6 +1,6 @@
 // +build lmdb
 
-package storage
+package local
 
 import (
 	"bytes"
@@ -318,7 +318,7 @@ func (db *LMDB) Put(k Key, v []byte) error {
 	return nil
 }
 
-// PutRange puts key/value pairs that have been sorted in sequential key order.
+// PutRange puts key-value pairs that have been sorted in sequential key order.
 func (db *LMDB) PutRange(values []KeyValue) error {
 	if db == nil || db.env == nil {
 		return fmt.Errorf("Cannot run PutRange() on invalid database.")

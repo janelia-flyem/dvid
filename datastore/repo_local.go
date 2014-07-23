@@ -12,470 +12,681 @@
 package datastore
 
 import (
-	"encoding/json"
-	"errors"
+	"bytes"
+	"encoding/gob"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/janelia-flyem/dvid/datatype"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
 )
 
-var (
-	ErrModifyLockedNode = errors.New("can't modify locked node")
-)
+func init() {
+	gob.Register(&repoManager{})
+	gob.Register(&repoT{})
+	gob.Register(&dagT{})
+	gob.Register(&nodeT{})
+}
 
 // --- In the case of a single DVID process, return new ids requires only a lock.
 // --- This becomes more tricky when dealing with multiple DVID processes working
 // --- off shared storage engines.
 
-func NewInstanceID() (InstanceID, error) {
+// repoManager manages all the repos in the datastore.
+type repoManager struct {
+	sync.Mutex // broad mutex should be sufficient since metadata is infrequently updated.
 
-}
+	Context
 
-func NewRepoID() (RepoID, error) {
+	// Map local RepoID to root UUID
+	repoToUUID map[dvid.RepoID]dvid.UUID
 
-}
+	// Map local VersionID to UUID.  This also lets us know which nodes are available
+	// in this DVID server since a subset of data can be pulled.
+	versionToUUID map[dvid.VersionID]dvid.UUID
 
-func NewVersionID() (VersionID, error) {
-
-}
-
-// Manager manages all the repos in the datastore.
-type Manager struct {
-	sync.Mutex
-
-	// Keep list of available Repo.  Could be much smaller than mapUUID which contains
-	// all versions of all Repo.
-	available []*Repo
-
-	// Map all UUIDs to the repos from which they came.
-	mapUUID map[dvid.UUID]*Repo
-
-	// Map all local ids for repo nodes to the repos from which they came.
-	nodeIDs map[dvid.NodeID]*Repo
+	// Map UUID to local VersionID -- this is not stored but generated on load
+	UUIDToVersion map[dvid.UUID]dvid.VersionID
 
 	// Counters that provide the local IDs of the next new repo, version, or data instance.
 	newRepoID     dvid.RepoID
 	newVersionID  dvid.VersionID
 	newInstanceID dvid.InstanceID
+
+	// Mapping of all UUIDs to the repositories where that node sits.
+	repos map[dvid.UUID]*repoT
 }
 
-// DataServiceByUUID returns a service for data of a given name under a Repo referenced by UUID.
-func (dsets *Manager) DataServiceByUUID(u dvid.UUID, name dvid.DataString) (DataService, error) {
-	// Determine the repo that contains the node with this UUID
-	repo, found := dsets.mapUUID[u]
-	if !found {
-		return nil, fmt.Errorf("No node with UUID %s found", u)
+// Initialize returns a RepoManager implementation suitable for managing repositories.
+func Initialize(ctx Context, old bool) (RepoManager, error) {
+	m := &repoManager{
+		Context:       ctx,
+		repoToUUID:    make(map[dvid.RepoID]dvid.UUID),
+		versionToUUID: make(map[dvid.VersionID]dvid.UUID),
+		repos:         make(map[dvid.UUID]*repoT),
 	}
-	dataservice, err := repo.DataService(name)
+
+	// Try to load metadata from the MetaData store.
+	if err := m.loadMetadata(); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+// ---- RepoManager persistence to MetaData storage -----
+
+func (m *repoManager) getData(t keyType, data interface{}) error {
+	var ctx storage.MetadataContext
+	idx := metadataIndex{t: t}
+	value, err := m.Context.MetaData.Get(ctx, idx.Bytes())
 	if err != nil {
-		return nil, fmt.Errorf("No data named '%s' at node with UUID %s: %s", name, u, err.Error())
+		return err
 	}
-	return dataservice, nil
+	buf := bytes.NewBuffer(value)
+	dec := gob.NewDecoder(buf)
+	if err := dec.Decode(data); err != nil {
+		return err
+	}
+	return nil
 }
 
-// DataServiceByLocalID returns a service for data of a given name under a Repo referenced by local ID.
-func (dsets *Manager) DataServiceByLocalID(id dvid.RepoLocalID, name dvid.DataString) (DataService, error) {
-	// Determine the repo that contains the node with this UUID
-	repo, found := dsets.dsetIDs[id]
-	if !found {
-		return nil, fmt.Errorf("No repo with local ID '%d' found", id)
+func (m *repoManager) putData(t keyType, data interface{}) error {
+	var ctx storage.MetadataContext
+	idx := metadataIndex{t: t}
+	var buf bytes.Buffer
+	enc := gob.NewEncoder(&buf)
+	if err := enc.Encode(data); err != nil {
+		return err
 	}
-	dataservice, err := repo.DataService(name)
+	return m.Context.MetaData.Put(ctx, idx.Bytes(), buf.Bytes())
+}
+
+// Load the next ids to be used for RepoID, VersionID, and InstanceID.
+func (m *repoManager) getNewIDs() error {
+	var ctx storage.MetadataContext
+	idx := metadataIndex{t: newIDsKey}
+	value, err := m.Context.MetaData.Get(ctx, idx.Bytes())
 	if err != nil {
-		return nil, fmt.Errorf("No data named '%s' at local repo ID %d: %s", name, id, err.Error())
+		return err
 	}
-	return dataservice, nil
+	if len(value) != dvid.RepoIDSize+dvid.VersionIDSize+dvid.InstanceIDSize {
+		return fmt.Errorf("Bad value returned for new ids.  Length %d bytes!", len(value))
+	}
+	pos := 0
+	m.newRepoID = dvid.RepoIDFromBytes(value[pos : pos+dvid.RepoIDSize])
+	pos += dvid.RepoIDSize
+	m.newVersionID = dvid.VersionIDFromBytes(value[pos : pos+dvid.VersionIDSize])
+	pos += dvid.VersionIDSize
+	m.newInstanceID = dvid.InstanceIDFromBytes(value[pos : pos+dvid.InstanceIDSize])
+	return nil
 }
 
-// NOTE: Alterations of Manager should be approached through datastore.Service since it
-// will coordinate persistence of in-memory Manager as well as multiple storage engines.
+func (m *repoManager) putNewIDs() error {
+	var ctx storage.MetadataContext
+	idx := metadataIndex{t: newIDsKey}
+	value := append(m.newRepoID.Bytes(), m.newVersionID.Bytes()...)
+	value = append(value, m.newInstanceID.Bytes()...)
+	return m.Context.MetaData.Put(ctx, idx.Bytes(), value)
+}
 
-// RepoFromUUID returns a repo given a UUID.
-func (dsets *Manager) RepoFromUUID(u dvid.UUID) (*Repo, error) {
-	repo, found := dsets.mapUUID[u]
+func (m *repoManager) putCaches() error {
+	if err := m.putData(repoToUUIDKey, m.repoToUUID); err != nil {
+		return nil, err
+	}
+	if err := m.putData(versionToUUIDKey, m.versionToUUID); err != nil {
+		return nil, err
+	}
+}
+
+// Loads all data necessary for repoManager.
+func (m *repoManager) loadMetadata() error {
+	// Load the maps
+	if err := m.getData(repoToUUIDKey, &(m.repoToUUID)); err != nil {
+		return nil, err
+	}
+	if err := m.getNewIDs(); err != nil {
+		return nil, err
+	}
+	if err := m.getData(versionToUUIDKey, &(m.versionToUUID)); err != nil {
+		return nil, err
+	}
+
+	// Generate the inverse UUID to VersionID mapping.
+	for versionID, uuid := range m.versionToUUID {
+		m.UUIDToVersion[uuid] = versionID
+	}
+
+	// Load all the repo data
+	var ctx storage.MetadataContext
+	minIndex := metadataIndex{t: repoKey, repoID: dvid.RepoID(0)}
+	maxIndex := metadataIndex{t: repoKey, repoID: dvid.MaxRepoID}
+	kvList, err := m.Context.MetaData.GetRange(ctx, minIndex.Bytes(), maxIndex.Bytes())
+	if err != nil {
+		return err
+	}
+
+	var index metadataIndex
+	for i, kv := range kvList {
+		indexBytes, err := storage.DataContextIndex(kv.K)
+		if err != nil {
+			return err
+		}
+		err = index.IndexFromBytes(indexBytes)
+		if err != nil {
+			return err
+		}
+		// Load each repo
+		uuid, found := m.repoToUUID[index.repoID]
+		if !found {
+			return fmt.Errorf("Retrieved repo with id %d that is not in map.  Corrupt DB?", index.repoID)
+		}
+		buf := bytes.NewBuffer(kv.V)
+		dec := gob.NewDecoder(buf)
+		var repo repoT
+		if err = dec.Decode(&repo); err != nil {
+			return err
+		}
+		// Cache all UUID from nodes into our high-level cache
+		for versionID, node := range repo.dag.nodes {
+			uuid, found := m.versionToUUID[versionID]
+			if !found {
+				return fmt.Errorf("Version id %d found in repo %s (id %d) not in cache map",
+					versionID, repo.rootID, repo.repoID)
+			}
+			m.repos[uuid] = repo
+		}
+	}
+	m.Context.Infof("Loaded %d repositories from metadata store.", len(m.repos))
+	return m.verifyCompiledDatatypes()
+}
+
+// TODO: Verify that the datatypes used by the repo data have been compiled into this server.
+func (m *repoManager) verifyCompiledDatatypes() error {
+	// Iterate over all data in all repo and check if present in Compiled
+	return nil
+}
+
+// ---- IDManager implementation -----------
+
+func (m *repoManager) NewInstanceID() (dvid.InstanceID, error) {
+	m.Lock()
+	defer m.Unlock()
+	curid := m.newInstanceID
+	m.newInstanceID++
+	return curid, m.putNewIDs()
+}
+
+func (m *repoManager) NewRepoID() (dvid.RepoID, error) {
+	m.Lock()
+	defer m.Unlock()
+	curid := m.newRepoID
+	m.newRepoID++
+	return curid, m.putNewIDs()
+}
+
+// NewVersionID returns an atomically generated UUID and its associated local VersionID.
+func (m *repoManager) NewVersionID() (dvid.UUID, dvid.VersionID, error) {
+	m.Lock()
+	defer m.Unlock()
+	uuid := dvid.NewUUID()
+	curid := m.newVersionID
+	m.versionToUUID[curid] = uuid
+	m.newVersionID++
+	return uuid, curid, m.putNewIDs()
+}
+
+func (m *repoManager) UUIDFromVersion(versionID dvid.VersionID) (dvid.UUID, error) {
+	uuid, found := m.versionToUUID[versionID]
 	if !found {
-		return nil, fmt.Errorf("RepoFromUUID(): Illegal UUID (%s) not found", u)
+		return dvid.NilUUID, fmt.Errorf("No UUID found for version id %d", versionID)
 	}
-	return repo, nil
+	return uuid, nil
 }
 
-// RepoFromLocalID returns a repo from a local repo ID.
-func (dsets *Manager) RepoFromLocalID(id dvid.RepoLocalID) (*Repo, error) {
-	repo, found := dsets.dsetIDs[id]
+func (m *repoManager) VersionFromUUID(uuid dvid.UUID) (dvid.VersionID, error) {
+	versionID, found := m.UUIDToVersion[uuid]
 	if !found {
-		return nil, fmt.Errorf("RepoFromLocalID(): Illegal local repo ID (%d) not found", id)
+		return 0, fmt.Errorf("No version ID found for uuid %s", uuid)
 	}
-	return repo, nil
+	return versionID, nil
 }
 
-// RepoFromString returns a repo from a UUID string.
+// ---- RepoManager implementation
+
+func (m *repoManager) GobDecode(b []byte) error {
+	buf := bytes.NewBuffer(b)
+	dec := gob.NewDecoder(buf)
+	if err := dec.Decode(&(m.repoToUUID)); err != nil {
+		return err
+	}
+	if err := dec.Decode(&(m.versionToUUID)); err != nil {
+		return err
+	}
+	// Generate the inverse UUID to VersionID mapping.
+	for versionID, uuid := range m.versionToUUID {
+		m.UUIDToVersion[uuid] = versionID
+	}
+	if err := dec.Decode(&(m.newRepoID)); err != nil {
+		return err
+	}
+	if err := dec.Decode(&(m.newVersionID)); err != nil {
+		return err
+	}
+	if err := dec.Decode(&(m.newInstanceID)); err != nil {
+		return err
+	}
+	if err := dec.Decode(&(m.repos)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (m *repoManager) GobEncode() ([]byte, error) {
+	var buf bytes.Buffer
+	enc := gob.NewEncoder(&buf)
+	if err := enc.Encode(m.repoToUUID); err != nil {
+		return nil, err
+	}
+	if err := enc.Encode(m.versionToUUID); err != nil {
+		return nil, err
+	}
+	if err := enc.Encode(m.newRepoID); err != nil {
+		return nil, err
+	}
+	if err := enc.Encode(m.newVersionID); err != nil {
+		return nil, err
+	}
+	if err := enc.Encode(m.newInstanceID); err != nil {
+		return nil, err
+	}
+	if err := enc.Encode(m.repos); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// MatchingUUID returns a repo and the full UUID from a potentially shortened UUID string.
 // Partial matches are accepted as long as they are unique for a datastore.  So if
 // a datastore has nodes with UUID strings 3FA22..., 7CD11..., and 836EE...,
 // we can still find a match even if given the minimum 3 letters.  (We don't
 // allow UUID strings of less than 3 letters just to prevent mistakes.)
-func (dsets *Manager) RepoFromString(str string) (repo *Repo, u dvid.UUID, err error) {
+func (m *repoManager) MatchingUUID(str string) (Repo, dvid.UUID, error) {
+	var bestRepo Repo
+	var bestUUID dvid.UUID
 	numMatches := 0
-	for dsetUUID, dset := range dsets.mapUUID {
-		if strings.HasPrefix(string(dsetUUID), str) {
+	for uuid, repo := range m.repoByUUID {
+		if strings.HasPrefix(string(uuid), str) {
 			numMatches++
-			repo = dset
-			u = dsetUUID
+			bestRepo = repo
+			bestUUID = uuid
 		}
 	}
 	if numMatches > 1 {
-		err = fmt.Errorf("More than one UUID matches %s!", str)
+		return nil, dvid.NilUUID, fmt.Errorf("More than one UUID matches %s!", str)
 	} else if numMatches == 0 {
-		err = fmt.Errorf("Could not find UUID with partial match to %s!", str)
+		return nil, dvid.NilUUID, fmt.Errorf("Could not find UUID with partial match to %s!", str)
 	}
-	return
+	return bestRepo, bestUUID, nil
 }
 
-// Datatypes returns a map of all unique data types where the key is the
-// unique URL identifying the data type.  Since type names can collide
-// across repos, we do not return the abbreviated data type names.
-func (dsets *Manager) Datatypes() map[UrlString]datatype.Service {
-	typemap := make(map[UrlString]datatype.Service)
-	for _, dset := range dsets.list {
-		for _, dataservice := range dset.DataMap {
-			typemap[dataservice.DatatypeUrl()] = dataservice
-		}
-	}
-	return typemap
-}
-
-// VerifyCompiledTypes will return an error if any required data type in the datastore
-// configuration was not compiled into DVID executable.  Check is done by more exact
-// URL and not the data type name.
-func (dsets *Manager) VerifyCompiledTypes() error {
-	var errMsg string
-	for _, dset := range dsets.list {
-		for name, data := range dset.DataMap {
-			_, found := CompiledTypes[data.DatatypeUrl()]
-			if !found {
-				errMsg += fmt.Sprintf("DVID not compiled with support for %s, data type %s [%s]\n",
-					name, data.DatatypeName(), data.DatatypeUrl())
-			}
-		}
-	}
-	if errMsg != "" {
-		return fmt.Errorf(errMsg)
-	}
-	return nil
-}
-
-// newRepo creates a new Repo, which constitutes a version DAG and allows storing
-// arbitrary data within the nodes of the DAG.
-func (dsets *Manager) newRepo() (dset *Repo, err error) {
-	dsets.writeLock.Lock()
-
-	dset = &Repo{
-		VersionDAG: NewVersionDAG(),
-		RepoID:     dsets.newRepoID,
-	}
-	dsets.newRepoID++
-	dsets.list = append(dsets.list, dset)
-	dsets.mapUUID[dset.Root] = dset
-	dsets.dsetIDs[dset.RepoID] = dset
-
-	dsets.writeLock.Unlock()
-	return
-}
-
-// newChild creates a new child node off a LOCKED parent node.  Will return
-// an error if the parent node has not been locked.
-func (dsets *Manager) newChild(parent dvid.UUID) (dset *Repo, u dvid.UUID, err error) {
-	// Find the Repo with this UUID
-	var found bool
-	dset, found = dsets.mapUUID[parent]
+// RepoFromUUID returns a repo given a UUID.
+func (m *repoManager) RepoFromUUID(uuid dvid.UUID) (Repo, error) {
+	repo, found := m.repos[uuid]
 	if !found {
-		err = fmt.Errorf("No node found with UUID %s", parent)
-		return
+		return nil, fmt.Errorf("RepoFromUUID(): Illegal UUID (%s) not found", uuid)
 	}
-
-	// Create the child in this Repo's DAG
-	u, err = dset.VersionDAG.newChild(parent)
-	if err != nil {
-		return
-	}
-	dsets.mapUUID[u] = dset
-	return
+	return repo, nil
 }
 
-// -- Manager Serialization and Deserialization ---
-
-type serializableRepos struct {
-	ReposUUID []dvid.UUID
-	NewRepoID dvid.RepoLocalID
+// RepoFromUUID returns a repo given a UUID.
+func (m *repoManager) RepoFromID(repoID dvid.RepoID) (Repo, error) {
+	uuid, found := m.repoToUUID[repoID]
+	if !found {
+		return nil, fmt.Errorf("RepoFromID(): Illegal RepoID (%d) used, not found.", repoID)
+	}
+	repo, found := m.repos[uuid]
+	if !found {
+		return nil, fmt.Errorf("RepoFromID(): Illegal UUID (%s) not found", uuid)
+	}
+	return repo, nil
 }
 
-func (dsets *Manager) serializableStruct() (sdata *serializableRepos) {
-	sdata = &serializableRepos{
-		ReposUUID: []dvid.UUID{},
-		NewRepoID: dsets.newRepoID,
-	}
-	for _, dset := range dsets.list {
-		sdata.ReposUUID = append(sdata.ReposUUID, dset.Root)
-	}
-	return
-}
-
-// MarshalBinary fulfills the encoding.BinaryMarshaler interface.
-func (dsets *Manager) MarshalBinary() ([]byte, error) {
-	compression, err := dvid.NewCompression(dvid.LZ4, dvid.DefaultCompression)
+// NewRepo creates a new Repo with a unique UUID
+func (m *repoManager) NewRepo() (Repo, error) {
+	repo, versionID, err := newRepo(m)
 	if err != nil {
 		return nil, err
 	}
-	return dvid.Serialize(dsets.serializableStruct(), compression, dvid.CRC32)
+	m.Lock()
+	defer m.Unlock()
+	uuid := repo.RootUUID()
+	m.repos[uuid] = repo
+	m.versionToUUID[versionID] = uuid
+	m.UUIDToVersion[uuid] = versionID
+	m.availRepos[uuid] = true
+	return repo, m.putCaches()
 }
 
-// Deserialize converts a serialization to Manager
-func (dsets *Manager) deserialize(s []byte) (*serializableRepos, error) {
-	deserialization := new(serializableRepos)
-	err := dvid.Deserialize(s, deserialization)
-	if err != nil {
-		return nil, fmt.Errorf("Error in deserializing repos: %s", err.Error())
-	}
-	return deserialization, nil
-}
-
-// MarshalJSON returns the JSON of just the list of Repo.
-func (dsets *Manager) MarshalJSON() (m []byte, err error) {
-	return json.Marshal(dsets.serializableStruct())
-}
-
-// AllJSON returns JSON of all the repos information.
-func (dsets *Manager) AllJSON() (m []byte, err error) {
-	data := struct {
-		Manager []*Repo
-	}{
-		dsets.list,
-	}
-	return json.Marshal(data)
-}
-
-// Load retrieves Manager and all referenced Repo from the storage engine.
-func (dsets *Manager) Load(db storage.OrderedKeyValueGetter) (err error) {
-	// Get the the map of all UUIDs to local repo IDs
-	var data []byte
-	data, err = db.Get(&ReposKey{})
-	if err != nil {
-		return
-	}
-	deserialization, err := dsets.deserialize(data)
-	if err != nil {
-		return err
-	}
-
-	// Get every Repo (range query)
-	keyvalues, err := db.GetRange(MinRepoKey(), MaxRepoKey())
-	if err != nil {
-		return err
-	}
-
-	// Check our expected # of Repo == actually loaded # of Repo.
-	if len(keyvalues) != len(deserialization.ReposUUID) {
-		return fmt.Errorf("Stored Manager does not agree with the # of Repo entries: %d vs %d",
-			len(deserialization.ReposUUID), len(keyvalues))
-	}
-	if int(deserialization.NewRepoID) < len(keyvalues) {
-		return fmt.Errorf("Unexpected stored new repo ID %d < current # repos (%d)!",
-			deserialization.NewRepoID, len(keyvalues))
-	}
-	dsets.newRepoID = deserialization.NewRepoID
-
-	// Reconstruct the Manager by associating UUIDs.
-	dsets.list = []*Repo{}
-	dsets.mapUUID = make(map[dvid.UUID]*Repo)
-	dsets.dsetIDs = make(map[dvid.RepoLocalID]*Repo)
-	for _, value := range keyvalues {
-		repo := new(Repo)
-		err := dvid.Deserialize(value.V, repo)
+// Datatypes returns a list of TypeService needed for this set of repositories
+func (m *repoManager) Datatypes() (map[UrlString]TypeService, error) {
+	combinedMap := make(map[UrlString]TypeService)
+	for _, repo := range m.repos {
+		repoMap, err := repo.Datatypes()
 		if err != nil {
-			return err
+			return combinedMap, err
 		}
-		dsets.list = append(dsets.list, repo)
-		for u, _ := range repo.Nodes {
-			dsets.mapUUID[u] = repo
+		for url, t := range repoMap {
+			combinedMap[url] = t
 		}
-		dsets.dsetIDs[repo.RepoID] = repo
 	}
-	return
+	return combinedMap, nil
 }
 
-// Put stores Manager, overwriting whatever was there before.
-func (dsets *Manager) Put(db storage.OrderedKeyValueSetter) error {
-	var mutex sync.Mutex
-	mutex.Lock()
-	defer mutex.Unlock()
-
-	// Get serialization
-	serialization, err := dsets.MarshalBinary()
-	if err != nil {
-		return err
-	}
-
-	// Put data
-	return db.Put(&ReposKey{}, serialization)
-}
-
-// Repo is a set of Data with an associated version DAG.
-type Repo struct {
-	dag *VersionDAG
-
+// repoT encapsulates everything we need to know about a repository.
+// Note that changes to the DAG, e.g., adding a child node, will need updates
+// to the cached maps in the RepoManager, so there is a pointer to it.
+type repoT struct {
 	// alias is an optional user-supplied string to identify this repo
 	// in a more friendly way than a UUID.  There are no guarantees that
 	// this string is unique across all repos.
-	alias string
+	alias       string
+	description string
+	repoID      dvid.RepoID
+	rootID      dvid.UUID
 
-	// instances keeps the repo-specific names for instances of data types.
-	instances map[dvid.DataString]DataService
+	properties map[string]interface{}
+	dag        *dagT
+
+	// data holds instances of data types.
+	data map[dvid.DataString]DataService
+
+	// necessary to update cached maps based on changes to DAG and data instances.
+	manager *repoManager
+	mu      sync.Mutex
 }
 
-/*
-// AddChildNode adds a new version as a child of the node with given UUID.
-func (r *Repo) AddChildNode(uuid dvid.UUID) error {
-
-}
-
-// AddDataInstance adds a new instance of the given datatype.Service to the repo.
-func (r *Repo) AddDataInstance(name dvid.DataString, ts datatype.Service, config dvid.Config) error {
-
-}
-
-// ModifyUnversionedInstance modifies unversioned properties of a data instance.
-func (r *Repo) ModifyUnversionedInstance(name dvid.DataString, config dvid.Config) error {
-
-}
-
-// ModifyVersionedInstance modifies unversioned properties of a data instance.
-func (r *Repo) ModifyVersionedInstance(name dvid.DataString, uuid dvid.UUID, config dvid.Config) error {
-	// If locked node, return error.
-}
-*/
-
-// TypeService returns the datatype.Service underlying data of a given name.
-func (dset *Repo) TypeService(name dvid.DataString) (t datatype.Service, err error) {
-	data, err := dset.DataService(name)
+// newRepo creates a new repository, updating the version id within the RepoManager.
+func newRepo(m *repoManager, alias, description string) (*repoT, dvid.VersionID, error) {
+	repoID, err := m.NewRepoID()
 	if err != nil {
-		err = fmt.Errorf("Cannot get type of unknown data '%s'", name)
-		return
+		return nil, 0, err
 	}
-	t = data.(datatype.Service)
-	return
+	uuid, versionID, err := m.NewVersionID()
+	if err != nil {
+		return nil, 0, err
+	}
+	repo := &repoT{
+		alias:       alias,
+		description: description,
+		properties:  make(map[string]interface{}),
+		data:        make(map[dvid.DataString]DataService),
+		manager:     m,
+	}
+	repo.dag, err = repo.newDAG(uuid, versionID)
+	return repo, versionID, err
 }
 
-// DataService returns a DataService for data of a given name.
-func (dset *Repo) DataService(name dvid.DataString) (dataservice DataService, err error) {
-	var found bool
-	dataservice, found = dset.DataMap[name]
+func (r *repoT) store() error {
+	var ctx storage.MetadataContext
+	idx := metatdataIndex{t: repoKey, repoID: r.repoID}
+	serialization, err := r.GobEncode()
+	return r.manager.Context.MetaData.Put(ctx, idx.Bytes(), serialization)
+}
+
+// ---- Describer interface implementation ----------
+
+func (r *repoT) GetAlias() string {
+	return r.alias
+}
+
+func (r *repoT) SetAlias(alias string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.alias = alias
+	return r.store()
+}
+
+func (r *repoT) GetDescription() string {
+	return r.description
+}
+
+func (r *repoT) SetDescription(desc string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.description = desc
+	return r.store()
+}
+
+// For local implementation, no error is possible, just whether it's found or not
+func (r *repoT) GetProperty(name string) (interface{}, error) {
+	value, found := r.properties[name]
 	if !found {
-		// Also allow numerical suffixes on names.
-		for basename, service := range dset.DataMap {
-			if strings.HasPrefix(string(name), string(basename)) {
-				return service, nil
-			}
-		}
-		err = fmt.Errorf("Cannot find data '%s'", name)
-		return
+		return nil, nil
 	}
-	return
+	return value, nil
 }
 
-// JSONString returns the JSON for this Data's configuration
-func (dset *Repo) JSONString() (jsonStr string, err error) {
-	m, err := json.Marshal(dset)
-	if err != nil {
-		return "", err
-	}
-	return string(m), nil
+func (r *repoT) GetProperties() (map[string]interface{}, error) {
+	return m.properties, nil
 }
 
-// Key returns a Key for this Repo
-func (dset *Repo) Key() storage.Key {
-	return &RepoKey{dset.RepoID}
+func (r *repoT) SetProperty(name string, value interface{}) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.properties[name] = value
+	return r.store()
 }
 
-// Put stores a Repo into a storage engine, overwriting whatever was there before.
-func (dset *Repo) Put(db storage.OrderedKeyValueSetter) error {
-	var mutex sync.Mutex
-	mutex.Lock()
-	defer mutex.Unlock()
+// ---- Repo interface implementation -----------
 
-	// Get serialization
-	compression, err := dvid.NewCompression(dvid.LZ4, dvid.DefaultCompression)
-	serialization, err := dvid.Serialize(dset, compression, dvid.CRC32)
-	if err != nil {
+func (r *repoT) GobDecode(b []byte) error {
+	buf := bytes.NewBuffer(b)
+	dec := gob.NewDecoder(buf)
+	if err := dec.Decode(&(r.alias)); err != nil {
 		return err
 	}
-
-	// Put data
-	return db.Put(dset.Key(), serialization)
-}
-
-// newData adds a new, named instance of a data type to repo.  Settings can be passed
-// via the 'config' argument.  For example, config["versioned"] will specify whether
-// the data is mutable across nodes in the version DAG or is simply unversioned.
-func (dset *Repo) newData(name dvid.DataString, typeName dvid.TypeString, config dvid.Config) error {
-	// Only allow unique data names per repo.
-	// TODO -- Do more elaborate check that prevents prefixing data names using
-	// data types that allow different suffixes, e.g., multichannel data.
-	dataservice, found := dset.DataMap[name]
-	if found {
-		return fmt.Errorf("Data named '%s' already exists in repo %s", name, dset.Root)
-	}
-
-	// Create new data for this repo.
-	typeService, err := TypeServiceByName(typeName)
-	if err != nil {
-		return fmt.Errorf("No data type '%s' found [%s]", typeName, err)
-	}
-
-	dset.mapLock.Lock()
-	defer dset.mapLock.Unlock()
-
-	dataID := &Data{name, dset.NewDataID, dset.RepoID}
-	dset.NewDataID++
-	dataservice, err = typeService.NewDataService(dataID, config)
-	if err != nil {
+	if err := dec.Decode(&(r.description)); err != nil {
 		return err
 	}
-	if dset.DataMap == nil {
-		dset.DataMap = make(map[dvid.DataString]DataService)
+	if err := dec.Decode(&(r.repoID)); err != nil {
+		return err
 	}
-	dset.DataMap[name] = dataservice
+	if err := dec.Decode(&(r.rootID)); err != nil {
+		return err
+	}
+	if err := dec.Decode(&(r.properties)); err != nil {
+		return err
+	}
+	if err := dec.Decode(&(r.data)); err != nil {
+		return err
+	}
+	if err := dec.Decode(&(r.dagT)); err != nil {
+		return err
+	}
 	return nil
+}
+
+func (r *repoT) GobEncode() ([]byte, error) {
+	var buf bytes.Buffer
+	enc := gob.NewEncoder(&buf)
+	if err := enc.Encode(r.alias); err != nil {
+		return nil, err
+	}
+	if err := enc.Encode(r.description); err != nil {
+		return nil, err
+	}
+	if err := enc.Encode(r.repoID); err != nil {
+		return nil, err
+	}
+	if err := enc.Encode(r.rootID); err != nil {
+		return nil, err
+	}
+	if err := enc.Encode(r.properties); err != nil {
+		return nil, err
+	}
+	if err := enc.Encode(r.data); err != nil {
+		return nil, err
+	}
+	if err := enc.Encode(r.dagT); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func (r *repoT) RepoID() dvid.RepoID {
+	return r.repoID
+}
+
+func (r *repoT) RootUUID() dvid.UUID {
+	return r.rootID
+}
+
+func (r *repoT) GetDataByName(name dvid.DataString) (DataService, error) {
+	elements := strings.Split(name, "-")
+	stem := elements[0]
+	data, found := r.data[stem]
+	if !found {
+		return nil, nil
+	}
+	return data, nil
+}
+
+func (r *repoT) GetIterator(versionID dvid.VersionID) (dvid.VersionIterator, error) {
+	return r.dag.GetIterator(versionID)
+}
+
+func (r *repoT) NewData(t TypeService, name dvid.DataString, c dvid.Config) (DataService, error) {
+	// Only allow unique data name per repo
+	if _, found := r.data[name]; found {
+		return nil, fmt.Errorf("Data named %q already exists in repo (root %s)", name, r.rootID)
+	}
+	instanceID, err := r.manager.NewInstanceID()
+	if err != nil {
+		return nil, err
+	}
+	dataservice, err := t.NewDataService(r, instanceID, name, c)
+	if err != nil {
+		return nil, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.data[name] = dataservice
+	return dataservice, r.store()
+}
+
+func (r *repoT) NewChild(uuid dvid.UUID) (dvid.UUID, error) {
+	// Make sure parent is available and locked.
+	parentVersionID, err := r.manager.UUIDToVersion[uuid]
+	if err != nil {
+		return dvid.NilUUID, fmt.Errorf("No parent version found with uuid %s", uuid)
+	}
+	parentNode, found := r.dag.nodes[parentVersionID]
+	if !found {
+		return dvid.NilUUID, fmt.Errorf("No parent version found with uuid %s (version %d)", uuid,
+			parentVersionID)
+	}
+	if !parentNode.locked {
+		return dvid.NilUUID, fmt.Errorf("Cannot create child on unlocked parent node %s", uuid)
+	}
+
+	// Add the child node.  Since it's new and unavailable, no need to lock it.
+	childNode, err := r.newNode()
+	if err != nil {
+		return dvid.NilUUID, err
+	}
+	childNode.parents = []dvid.VersionID{parentVersionID}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.dag.nodes[childNode.versionID] = childNode
+
+	parentNode.Lock()
+	parentNode.children = append(parentNode.children, childNode.versionID)
+	parentNode.updated = time.Now()
+	parentNode.Unlock()
+	return r.store()
+}
+
+func (r *repoT) Lock(uuid dvid.UUID) error {
+	versionID, found := r.manager.UUIDToVersion[uuid]
+	if !found {
+		return fmt.Errorf("Could not LOCK missing version (uuid %s)", uuid)
+	}
+	node, found := r.dag.nodes[versionID]
+	if !found {
+		return fmt.Errorf("Could not LOCK missing version (id %d)", versionID)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	node.locked = true
+	return r.store()
+}
+
+func (r *repoT) Datatypes() (map[UrlString]TypeService, error) {
+	datatypes := make(map[UrlString]TypeService)
+	for _, dataservice := range r.data {
+		t := dataservice.TypeService
+		datatypes[t.TypeUrl()] = t
+	}
+	return datatypes, nil
+}
+
+func (r *repoT) newDAG(uuid dvid.UUID, versionID dvid.VersionID) (*dagT, error) {
+	dag := &dagT{root: uuid}
+	node, err := r.newNode()
+	if err != nil {
+		return nil, err
+	}
+	dag.nodes = map[dvid.VersionID]*nodeT{
+		versionID: node,
+	}
+	return dag, nil
+}
+
+func (r *repoT) newNode() (*nodeT, error) {
+	uuid, versionID, err := r.manager.NewVersionID()
+	if err != nil {
+		return nil, err
+	}
+	t := time.Now()
+	node := &nodeT{
+		uuid:    uuid,
+		version: versionID,
+		created: t,
+		updated: t,
+	}
+	r.manager.Lock()
+	r.repos[uuid] = r
+	r.manager.Unlock()
+	return node, nil
 }
 
 // modifyData modifies preexisting Data within a Repo.  Settings can be passed
 // via the 'config' argument.  Only settings within the passed config are modified.
-func (dset *Repo) modifyData(name dvid.DataString, config dvid.Config) error {
-	dataservice, found := dset.DataMap[name]
-	if !found {
-		return fmt.Errorf("Data '%s' not found in repo %s", name, dset.Root)
+func (r *repoT) modifyData(name dvid.DataString, config dvid.Config) error {
+	dataservice, err := r.GetDataByName(name)
+	if err != nil {
+		return err
 	}
-
-	dset.mapLock.Lock()
-	defer dset.mapLock.Unlock()
-
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	return dataservice.ModifyConfig(config)
 }
 
+// --------------------------------------
+
 // DataAvail gives the availability of data within a node or whether parent nodes
-// must be traversed to check for key/value pairs.
-type DataAvail int
+// must be traversed to check for key-value pairs.
+type DataAvail uint8
 
 const (
-	// All key/value pairs are available within this node.
-	DataComplete DataAvail = iota
+	// For any query, we must also traverse this node's ancestors in the DAG
+	// up to any DataComplete ancestor.  Used if a node is marked as archived.
+	DataDelta DataAvail = iota
 
-	// For any range query, we must also traverse this node's ancestors in the DAG
-	// up to any NodeComplete ancestor.  Used if a node is marked as archived.
-	DataDelta
+	// All key-value pairs are available within this node.
+	DataComplete
 
 	// Queries are redirected to Root since this is unversioned.
 	DataRoot
@@ -484,152 +695,172 @@ const (
 	DataDeleted
 )
 
-// NodeVersion contains all information for a node in the version DAG like its parents,
-// children, and provenance.
-type NodeVersion struct {
-	// GlobalID is a globally unique id.
-	GlobalID dvid.UUID
-
-	// VersionID is a Repo-specific id for each UUID, so we can compress the UUIDs.
-	VersionID dvid.VersionLocalID
-
-	// Locked nodes are read-only and can be branched.
-	Locked bool
-
-	// Parents is an ordered list of parent nodes.
-	Parents []dvid.UUID
-
-	// Children is a list of child nodes.
-	Children []dvid.UUID
-
-	Created time.Time
-	Updated time.Time
+// dagT implements a Directed Acyclic Graph where each node manages information
+// about a version of data.
+type dagT struct {
+	root  dvid.UUID
+	nodes map[dvid.VersionID]*nodeT
 }
 
-// NodeText holds provenance and other information useful for analysis.  It's
-// possible that these structs could get large if useful provenance is large.
-type NodeText struct {
-	// Note holds general information on this node.
-	Note string
-
-	// Provenance describes the operations performed between the locking of
-	// this node's parents and its current state.
-	Provenance string
+func (dag *dagT) GetIterator(versionID dvid.VersionID) (dvid.VersionIterator, error) {
+	node, found := dag.nodes[versionID]
+	if !found {
+		return nil, fmt.Errorf("No version found with id %d", versionID)
+	}
+	return &versionIterator{dag, true, versionID, node}, nil
 }
 
-// Node contains all information needed at each node of the version DAG
-type Node struct {
-	*NodeVersion
-	*NodeText
+func (dag *dagT) GobDecode(b []byte) error {
+	buf := bytes.NewBuffer(b)
+	dec := gob.NewDecoder(buf)
+	if err := dec.Decode(&(dag.root)); err != nil {
+		return err
+	}
+	if err := dec.Decode(&(dag.nodes)); err != nil {
+		return err
+	}
+	return nil
+}
 
-	// Avail is used for data compression/deltas in version DAG, depending on
+func (dag *dagT) GobEncode() ([]byte, error) {
+	var buf bytes.Buffer
+	enc := gob.NewEncoder(&buf)
+	if err := enc.Encode(dag.root); err != nil {
+		return nil, err
+	}
+	if err := enc.Encode(dag.nodes); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+type nodeT struct {
+	sync.Mutex
+
+	note string
+	log  []string
+
+	// avail is used for data compression/deltas in version DAG, depending on
 	// type of data (e.g., versioned) and whether nodes are archived or not.
 	// If there is no map or data availability is not explicitly set, we use
 	// the default for that data, e.g., DataComplete if versioned or DataRoot
 	// if unversioned.
-	Avail map[dvid.DataString]DataAvail
+	avail map[dvid.DataString]DataAvail
 
-	writeLock sync.Mutex
+	uuid      dvid.UUID
+	versionID dvid.VersionID
+	locked    bool
+
+	// In the case of multiple parents, parents[0] is the default traversal for
+	// an ancestor path.  It's assumed that any merger operation either creates
+	// a DataComplete node or any delta is off one of the parents.
+	parents  []dvid.VersionID
+	children []dvid.VersionID
+
+	created time.Time
+	updated time.Time
 }
 
-// VersionDAG is the directed acyclic graph of NodeVersion and an index by UUID into
-// the graph.
-type VersionDAG struct {
-	Root  dvid.UUID
-	Nodes map[dvid.UUID]*Node
-
-	// VersionMap is used to accelerate mapping global UUID to DVID server-specific
-	// and smaller ID for a version.
-	VersionMap map[dvid.UUID]dvid.VersionLocalID
-
-	NewVersionID dvid.VersionLocalID
-	NewDataID    dvid.DataLocalID
-
-	mapLock sync.Mutex // guards the VersionDAG maps
-}
-
-// NewVersionDAG creates a version DAG and initializes the first unlocked node,
-// assigning its UUID.
-func NewVersionDAG() *VersionDAG {
-	dag := VersionDAG{
-		Root:       dvid.NewUUID(),
-		Nodes:      make(map[dvid.UUID]*Node),
-		VersionMap: make(map[dvid.UUID]dvid.VersionLocalID),
+func (node *nodeT) GobDecode(b []byte) error {
+	buf := bytes.NewBuffer(b)
+	dec := gob.NewDecoder(buf)
+	if err := dec.Decode(&(node.note)); err != nil {
+		return err
 	}
-	t := time.Now()
-	version := &NodeVersion{
-		GlobalID:  dag.Root,
-		VersionID: 0,
-		Created:   t,
-		Updated:   t,
+	if err := dec.Decode(&(node.log)); err != nil {
+		return err
 	}
-	dag.Nodes[dag.Root] = &Node{NodeVersion: version}
-	dag.VersionMap[dag.Root] = 0
-	dag.NewVersionID = 1
-	return &dag
-}
-
-// Lock locks a node.  This is an irreversible operation since some nodes
-// can be cloned externally.
-func (dag *VersionDAG) Lock(u dvid.UUID) error {
-	node, found := dag.Nodes[u]
-	if !found {
-		return fmt.Errorf("No node found with UUID %s", u)
+	if err := dec.Decode(&(node.avail)); err != nil {
+		return err
 	}
-	node.Locked = true
+	if err := dec.Decode(&(node.uuid)); err != nil {
+		return err
+	}
+	if err := dec.Decode(&(node.versionID)); err != nil {
+		return err
+	}
+	if err := dec.Decode(&(node.locked)); err != nil {
+		return err
+	}
+	if err := dec.Decode(&(node.parents)); err != nil {
+		return err
+	}
+	if err := dec.Decode(&(node.children)); err != nil {
+		return err
+	}
+	if err := dec.Decode(&(node.created)); err != nil {
+		return err
+	}
+	if err := dec.Decode(&(node.updated)); err != nil {
+		return err
+	}
 	return nil
 }
 
-// newChild creates a new child node off a LOCKED parent node.  Will return
-// an error if the parent node has not been locked.
-func (dag *VersionDAG) newChild(parent dvid.UUID) (u dvid.UUID, err error) {
-	node, found := dag.Nodes[parent]
-	if !found {
-		err = fmt.Errorf("No node found with UUID %s", parent)
-		return
+func (node *nodeT) GobEncode() ([]byte, error) {
+	var buf bytes.Buffer
+	enc := gob.NewEncoder(&buf)
+	if err := enc.Encode(node.note); err != nil {
+		return err
 	}
-	if !node.Locked {
-		err = fmt.Errorf("Cannot create a child of an unlocked node %s", parent)
-		return
+	if err := enc.Encode(node.log); err != nil {
+		return err
 	}
-
-	u = dvid.NewUUID()
-	t := time.Now()
-
-	node.writeLock.Lock()
-	node.Children = append(node.Children, u)
-	node.Updated = t
-	node.writeLock.Unlock()
-
-	dag.mapLock.Lock()
-	version := &NodeVersion{
-		GlobalID:  u,
-		VersionID: dag.NewVersionID,
-		Created:   t,
-		Updated:   t,
-		Parents:   []dvid.UUID{parent},
+	if err := enc.Encode(node.avail); err != nil {
+		return err
 	}
-	dag.Nodes[u] = &Node{NodeVersion: version}
-	dag.VersionMap[u] = version.VersionID
-	dag.NewVersionID++
-	dag.mapLock.Unlock()
-	return
+	if err := enc.Encode(node.uuid); err != nil {
+		return err
+	}
+	if err := enc.Encode(node.versionID); err != nil {
+		return err
+	}
+	if err := enc.Encode(node.locked); err != nil {
+		return err
+	}
+	if err := enc.Encode(node.parents); err != nil {
+		return err
+	}
+	if err := enc.Encode(node.children); err != nil {
+		return err
+	}
+	if err := enc.Encode(node.created); err != nil {
+		return err
+	}
+	if err := enc.Encode(node.updated); err != nil {
+		return err
+	}
+	return buf.Bytes(), nil
 }
 
-// LogInfo returns provenance information for all the version nodes.
-func (dag *VersionDAG) LogInfo() string {
-	text := "Versions:\n"
-	for _, node := range dag.Nodes {
-		text += fmt.Sprintf("%s  (%d)\n", node.GlobalID, node.VersionID)
-	}
-	return text
+// ----- dvid.VersionIterator implementation
+
+type versionIterator struct {
+	dag        *dagT
+	valid      bool
+	curVersion dvid.VersionID
+	curNode    *nodeT
 }
 
-// Versions returns a slice of UUID within this version DAG.
-func (dag *VersionDAG) Versions() []dvid.UUID {
-	uuids := []dvid.UUID{}
-	for u, _ := range dag.Nodes {
-		uuids = append(uuids, u)
+func (it *versionIterator) Valid() bool {
+	return it.valid
+}
+
+func (it *versionIterator) VersionID() dvid.VersionID {
+	return it.curVersion
+}
+
+func (it *versionIterator) Next() {
+	if len(it.curNode.parents) == 0 {
+		it.valid = false
+		return
 	}
-	return uuids
+	curVersion := it.curNode.parents[0]
+	node, found := dag.nodes[curVersion]
+	if found {
+		it.curNode = node
+		it.curVersion = curVersion
+	} else {
+		it.valid = false
+	}
 }

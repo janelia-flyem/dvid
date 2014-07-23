@@ -27,8 +27,8 @@ func NewMetadataContext() MetadataContext {
 
 func (ctx MetadataContext) implementsOpaque() {}
 
-func (ctx MetadataContext) ConstructKey(b []byte) []byte {
-	return append([]byte{metadataKeyPrefix}, b...)
+func (ctx MetadataContext) ConstructKey(index dvid.Index) []byte {
+	return append([]byte{metadataKeyPrefix}, index.Bytes()...)
 }
 
 func (ctx MetadataContext) String() string {
@@ -42,23 +42,34 @@ func (ctx MetadataContext) Versioned() bool {
 // DataContext supports both unversioned and versioned data persistence.
 type DataContext struct {
 	data    dvid.Data
-	version VersionID
+	version dvid.VersionID
 }
 
 // NewDataContext provides a way for datatypes to create a Context that adheres to DVID
 // key space partitioning.  Since Context and VersionedContext interfaces are opaque, i.e., can
 // only be implemented within package storage, we force compatible implementations to embed
 // DataContext and initialize it via this function.
-func NewDataContext(data Data, version VersionID) *DataContext {
-	return &DataKey{data, version}
+func NewDataContext(data dvid.Data, version dvid.VersionID) *DataContext {
+	return &DataContext{data, version}
+}
+
+// DataContextIndex returns the byte representation of a datatype-specific key (index)
+// from a key constructed using a DataContext.
+func DataContextIndex(b []byte) ([]byte, error) {
+	if b[0] != dataKeyPrefix {
+		return nil, fmt.Errorf("Cannot extract Index from key not constructed using DataContext")
+	}
+	start := 1 + dvid.InstanceIDSize
+	end := len(b) - dvid.VersionIDSize
+	return b[start:end], nil
 }
 
 func (ctx *DataContext) implementsOpaque() {}
 
-func (ctx *DataContext) ConstructKey(b []byte) []byte {
-	key := append([]byte{dataKeyPrefix}, data.InstanceID().Bytes()...)
-	key = append(key, b...)
-	return append(key, data.VersionID().Bytes()...)
+func (ctx *DataContext) ConstructKey(index dvid.Index) []byte {
+	key := append([]byte{dataKeyPrefix}, ctx.data.InstanceID().Bytes()...)
+	key = append(key, index.Bytes()...)
+	return append(key, ctx.version.Bytes()...)
 }
 
 func (ctx *DataContext) String() string {
@@ -80,7 +91,6 @@ func (ctx *DataContext) MinVersionKey(b []byte) ([]byte, error) {
 
 // Returns upper bound key for versions of given byte slice key representation.
 func (ctx *DataContext) MaxVersionKey(b []byte) ([]byte, error) {
-	k, err := key.BytesToKey(b)
 	pos := len(b) - dvid.VersionIDSize
 	maxKey := make([]byte, pos)
 	copy(maxKey, b[0:pos])
@@ -90,17 +100,17 @@ func (ctx *DataContext) MaxVersionKey(b []byte) ([]byte, error) {
 func (ctx *DataContext) VersionedKeyValue(values []KeyValue) (*KeyValue, error) {
 	// This data needs to be Versioned or return an error.
 	if !ctx.data.Versioned() {
-		return KeyValue{}, fmt.Errorf("Data instance %v is not versioned so can't do VersionedKeyValue()",
+		return nil, fmt.Errorf("Data instance %v is not versioned so can't do VersionedKeyValue()",
 			ctx.data.DataName())
 	}
-	vdata, ok := ctx.data.(VersionedData)
+	vdata, ok := ctx.data.(dvid.VersionedData)
 	if !ok {
-		return KeyValue{}, fmt.Errorf("Data instance %v should have implemented GetIterator()",
+		return nil, fmt.Errorf("Data instance %v should have implemented GetIterator()",
 			ctx.data.DataName())
 	}
 
 	// Set up a map[VersionID]KeyValue
-	versionMap := make(map[dvid.VersiondID]*KeyValue, len(values))
+	versionMap := make(map[dvid.VersionID]*KeyValue, len(values))
 	for i, kv := range values {
 		pos := len(kv.K) - dvid.VersionIDSize
 		vid := dvid.VersionIDFromBytes(kv.K[pos:])

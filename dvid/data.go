@@ -71,6 +71,8 @@ func NewUUID() UUID {
 	return UUID(fmt.Sprintf("%032x", []byte(u)))
 }
 
+const NilUUID = UUID("")
+
 // Note: TypeString and DataString are types to add static checks and prevent conflation
 // of the two types of identifiers.
 

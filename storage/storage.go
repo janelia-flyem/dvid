@@ -4,10 +4,17 @@
 	number of interfaces in addition to the core Engine interface, which all
 	storage engines should satisfy.
 
-	Initially we are concentrating on key-value backends but expect to support
-	graph and perhaps relational databases.
+	Keys are specified as a combination of Context and a datatype-specific byte slice.
+	The Context provides DVID-wide namespacing and as such, must use one of the
+	Context implementations within the storage package.  (It is implemented as a
+	Go opaque interface.)  The datatype-specific byte slice formatting is entirely
+	up to the datatype designer, although use of dvid.Index is suggested.
 
-	Each local storage engine must implement the following package function:
+	Initially we are concentrating on key-value backends but expect to support
+	graph and perhaps relational databases, either using specialized databases
+	or software layers on top of an ordered key-value store.
+
+	Each local key-value engine must implement the following package function:
 
 	func NewKeyValueStore(path string, create bool, options *Options) (Engine, error)
 
@@ -31,7 +38,7 @@ type KeyValue struct {
 
 // Deserialize returns a key-value pair where the value has been deserialized.
 func (kv KeyValue) Deserialize(uncompress bool) (KeyValue, error) {
-	value, _, err := DeserializeData(kv.V, uncompress)
+	value, _, err := dvid.DeserializeData(kv.V, uncompress)
 	return KeyValue{kv.K, value}, err
 }
 
@@ -54,42 +61,28 @@ type Engine interface {
 	Close()
 }
 
-// ---- The three tiers of key/value storage for a DVID datastore, characterized by
-// ---- the maximum size of values and the bandwidth/latency, that provide a layer
-// ---- of semantics on top of underlying storage engines.  These interfaces are
-// ---- implemented based on build flags for whether DVID is running locally,
-// ---- in a cluster, or in a cloud with services.
-
-var (
-	// Metadata is the interface for storing DVID datastore metadata like the
-	// repositories and associated DAGs.  It is characterized by the following:
-	// (1) not big data, (2) ideally in memory, (3) strongly consistent across all
-	// DVID processes, e.g., all front-end DVID apps.  Of the three tiers of storage
-	// (MetadataStore, SmallFastStore, BigDataStore), Metadata should have
-	// the smallest capacity and the lowest latency.
-	MetaData metaData
-
-	// SmallData is the interface for storing key-only or small key/value pairs that
-	// require much more capacity and allow higher latency than MetaData.
-	SmallData smallData
-
-	// BigData is the interface for storing DVID key/value pairs that are relatively
-	// large compared to key/value pairs used in SmallData.  This interface should be used
-	// for blocks of voxels and large denormalized data like the multi-scale surface of a
-	// given label.  This store should have considerably more capacity and potentially
-	// higher latency than SmallData.
-	BigData bigData
-)
-
-type metaData interface {
+// MetaData is the interface for storing DVID datastore metadata like the
+// repositories and associated DAGs.  It is characterized by the following:
+// (1) not big data, (2) ideally in memory, (3) strongly consistent across all
+// DVID processes, e.g., all front-end DVID apps.  Of the three tiers of storage
+// (Metadata, SmallData, BigData), MetaData should have
+// the smallest capacity and the lowest latency.
+type MetaData interface {
 	KeyValueDB
 }
 
-type smallData interface {
+// SmallData is the interface for storing key-only or small key-value pairs that
+// require much more capacity and allow higher latency than MetaData.
+type SmallData interface {
 	OrderedKeyValueDB
 }
 
-type bigData interface {
+// BigData is the interface for storing DVID key-value pairs that are relatively
+// large compared to key-value pairs used in SmallData.  This interface should be used
+// for blocks of voxels and large denormalized data like the multi-scale surface of a
+// given label.  This store should have considerably more capacity and potentially
+// higher latency than SmallData.
+type BigData interface {
 	OrderedKeyValueDB
 }
 
@@ -114,7 +107,7 @@ type ChunkOp struct {
 // from lower-level database access functions to type-specific chunk processing.
 type Chunk struct {
 	*ChunkOp
-	dvid.KeyValue
+	KeyValue
 }
 
 // Requirements lists required backend interfaces for a type.
@@ -160,8 +153,8 @@ type VersionedContext interface {
 	// Returns upper bound key for versions of given byte slice key representation.
 	MaxVersionKey([]byte) ([]byte, error)
 
-	// VersionedKeyValue returns the key/value pair corresponding to this key's version
-	// given a list of key/value pairs across many versions.  If no suitable key/value
+	// VersionedKeyValue returns the key-value pair corresponding to this key's version
+	// given a list of key-value pairs across many versions.  If no suitable key-value
 	// pair is found, nil is returned.
 	VersionedKeyValue([]KeyValue) (*KeyValue, error)
 }
@@ -180,8 +173,8 @@ type OrderedKeyValueGetter interface {
 	// KeysInRange returns a range of keys spanning (kStart, kEnd).
 	KeysInRange(ctx Context, kStart, kEnd []byte) (keys [][]byte, err error)
 
-	// ProcessRange sends a range of key/value pairs to type-specific chunk handlers,
-	// allowing chunk processing to be concurrent with key/value sequential reads.
+	// ProcessRange sends a range of key-value pairs to type-specific chunk handlers,
+	// allowing chunk processing to be concurrent with key-value sequential reads.
 	// Since the chunks are typically sent during sequential read iteration, the
 	// receiving function can be organized as a pool of chunk handling goroutines.
 	// See datatype.voxels.ProcessChunk() for an example.
@@ -205,7 +198,7 @@ type OrderedKeyValueSetter interface {
 	PutRange(ctx Context, values []KeyValue) error
 }
 
-// KeyValueDB provides an interface to the simplest storage API: a key/value store.
+// KeyValueDB provides an interface to the simplest storage API: a key-value store.
 type KeyValueDB interface {
 	KeyValueGetter
 	KeyValueSetter
@@ -231,7 +224,7 @@ type Batch interface {
 	// Delete removes from the batch a put using the given key.
 	Delete(k []byte)
 
-	// Put adds to the batch a put using the given key/value.
+	// Put adds to the batch a put using the given key-value.
 	Put(k, v []byte)
 
 	// Commits a batch of operations and closes the write batch.
@@ -291,7 +284,7 @@ type GraphSetter interface {
 // GraphGetter defines operations that retrieve information from a graph
 type GraphGetter interface {
 	// GetVertices retrieves a list of all vertices in the graph
-	GetVertices(ctx Context) ([]GraphVertex, error)
+	GetVertices(ctx Context) ([]dvid.GraphVertex, error)
 
 	// GetEdges retrieves a list of all edges in the graph
 	GetEdges(ctx Context) ([]dvid.GraphEdge, error)

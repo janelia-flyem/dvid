@@ -1,11 +1,13 @@
 // +build basholeveldb
 
-package storage
+package local
 
 import (
 	"bytes"
 
 	"github.com/janelia-flyem/dvid/dvid"
+	"github.com/janelia-flyem/dvid/storage"
+
 	levigo "github.com/janelia-flyem/go/basholeveldb"
 	humanize "github.com/janelia-flyem/go/go-humanize"
 )
@@ -185,7 +187,7 @@ func GetOptions(create bool, config dvid.Config) (*leveldbOptions, error) {
 
 // NewKeyValueStore returns a leveldb backend.  If create is true, the leveldb
 // will be created at the path if it doesn't already exist.
-func NewKeyValueStore(path string, create bool, config dvid.Config) (Engine, error) {
+func NewKeyValueStore(path string, create bool, config dvid.Config) (storage.Engine, error) {
 	dvid.StartCgo()
 	defer dvid.StopCgo()
 
@@ -229,7 +231,7 @@ func RepairStore(path string, config dvid.Config) error {
 // ---- Engine interface ----
 
 func (db *LevelDB) GetName() string {
-	return "leveldb + levigo driver"
+	return "basho-tuned leveldb + levigo driver"
 }
 func (db *LevelDB) GetConfig() dvid.Config {
 	return db.config
@@ -265,9 +267,9 @@ func (db *LevelDB) Close() {
 // ---- OrderedKeyValueGetter interface ------
 
 // Get returns a value given a key.
-func (db *LevelDB) Get(ctx Context, k []byte) ([]byte, error) {
+func (db *LevelDB) Get(ctx storage.Context, k []byte) ([]byte, error) {
 	if ctx.Versioned() {
-		vctx, _ := ctx.(VersionedContext)
+		vctx, _ := ctx.(storage.VersionedContext)
 
 		// Get all versions of this key and return the most recent
 		values, err := db.getSingleKeyVersions(k)
@@ -289,9 +291,9 @@ func (db *LevelDB) Get(ctx Context, k []byte) ([]byte, error) {
 	}
 }
 
-// getSingleKeyVersions returns all versions of a key.  These key/value pairs will be sorted
+// getSingleKeyVersions returns all versions of a key.  These key-value pairs will be sorted
 // in ascending key order.
-func (db *LevelDB) getSingleKeyVersions(vctx VersionedContext, k []byte) ([]KeyValue, error) {
+func (db *LevelDB) getSingleKeyVersions(vctx storage.VersionedContext, k []byte) ([]storage.KeyValue, error) {
 	dvid.StartCgo()
 	ro := levigo.NewReadOptions()
 	it := db.ldb.NewIterator(ro)
@@ -333,8 +335,8 @@ type errorableKV struct {
 	error
 }
 
-// versionedRange sends a range of key/value pairs for a particular version down a channel.
-func (db *LevelDB) versionedRange(vctx VersionedContext, kStart, kEnd []byte, ch chan errorableKV, keysOnly bool) {
+// versionedRange sends a range of key-value pairs for a particular version down a channel.
+func (db *LevelDB) versionedRange(vctx storage.VersionedContext, kStart, kEnd []byte, ch chan errorableKV, keysOnly bool) {
 	dvid.StartCgo()
 	ro := levigo.NewReadOptions()
 	it := c.db.ldb.NewIterator(ro)
@@ -410,8 +412,8 @@ func (db *LevelDB) versionedRange(vctx VersionedContext, kStart, kEnd []byte, ch
 	}
 }
 
-// unversionedRange sends a range of key/value pairs down a channel.
-func (db *LevelDB) unversionedRange(ctx Context, kStart, kEnd []byte, ch chan errorableKV, keysOnly bool) {
+// unversionedRange sends a range of key-value pairs down a channel.
+func (db *LevelDB) unversionedRange(ctx storage.Context, kStart, kEnd []byte, ch chan errorableKV, keysOnly bool) {
 	dvid.StartCgo()
 	ro := levigo.NewReadOptions()
 	it := c.db.ldb.NewIterator(ro)
@@ -446,13 +448,13 @@ func (db *LevelDB) unversionedRange(ctx Context, kStart, kEnd []byte, ch chan er
 // KeysInRange returns a range of present keys spanning (kStart, kEnd).  Values
 // associated with the keys are not read.   If the keys are versioned, only keys
 // in the ancestor path of the current context's version will be returned.
-func (db *LevelDB) KeysInRange(ctx Context, kStart, kEnd []byte) ([][]byte, error) {
+func (db *LevelDB) KeysInRange(ctx storage.Context, kStart, kEnd []byte) ([][]byte, error) {
 	ch := make(chan errorableKV)
 
 	// Run the range query on a potentially versioned key in a goroutine.
 	go func() {
 		if ctx.Versioned() {
-			db.versionedRange(ctx.(VersionedContext), kStart, kEnd, ch, true)
+			db.versionedRange(ctx.(storage.VersionedContext), kStart, kEnd, ch, true)
 		} else {
 			db.unversionedRange(ctx, kStart, kEnd, ch, true)
 		}
@@ -472,22 +474,22 @@ func (db *LevelDB) KeysInRange(ctx Context, kStart, kEnd []byte) ([][]byte, erro
 	}
 }
 
-// GetRange returns a range of values spanning (kStart, kEnd) keys.  These key/value
-// pairs will be sorted in ascending key order.  If the keys are versioned, all key/value
+// GetRange returns a range of values spanning (kStart, kEnd) keys.  These key-value
+// pairs will be sorted in ascending key order.  If the keys are versioned, all key-value
 // pairs for the particular version will be returned.
-func (db *LevelDB) GetRange(ctx Context, kStart, kEnd []byte) ([]*KeyValue, error) {
+func (db *LevelDB) GetRange(ctx storage.Context, kStart, kEnd []byte) ([]*storage.KeyValue, error) {
 	ch := make(chan errorableKV)
 
 	// Run the range query on a potentially versioned key in a goroutine.
 	go func() {
 		if ctx.Versioned() {
-			db.versionedRange(ctx.(VersionedContext), kStart, kEnd, ch, false)
+			db.versionedRange(ctx.(storage.VersionedContext), kStart, kEnd, ch, false)
 		} else {
 			db.unversionedRange(ctx, kStart, kEnd, ch, false)
 		}
 	}()
 
-	// Consume the key/value pairs.
+	// Consume the key-value pairs.
 	values := []KeyValue{}
 	for {
 		result := <-ch
@@ -501,21 +503,21 @@ func (db *LevelDB) GetRange(ctx Context, kStart, kEnd []byte) ([]*KeyValue, erro
 	}
 }
 
-// ProcessRange sends a range of key/value pairs to chunk handlers.  If the keys are versioned,
-// only key/value pairs for kStart's version will be transmitted.
-func (db *LevelDB) ProcessRange(ctx Context, kStart, kEnd []byte, op *ChunkOp, f func(*Chunk)) error {
+// ProcessRange sends a range of key-value pairs to chunk handlers.  If the keys are versioned,
+// only key-value pairs for kStart's version will be transmitted.
+func (db *LevelDB) ProcessRange(ctx storage.Context, kStart, kEnd []byte, op *ChunkOp, f func(*Chunk)) error {
 	ch := make(chan errorableKV)
 
 	// Run the range query on a potentially versioned key in a goroutine.
 	go func() {
 		if ctx.Versioned() {
-			db.versionedRange(ctx.(VersionedContext), kStart, kEnd, ch, false)
+			db.versionedRange(ctx.(storage.VersionedContext), kStart, kEnd, ch, false)
 		} else {
 			db.unversionedRange(ctx, kStart, kEnd, ch, false)
 		}
 	}()
 
-	// Consume the key/value pairs.
+	// Consume the key-value pairs.
 	values := []KeyValue{}
 	for {
 		result := <-ch
@@ -536,7 +538,7 @@ func (db *LevelDB) ProcessRange(ctx Context, kStart, kEnd []byte, op *ChunkOp, f
 // ---- OrderedKeyValueSetter interface ------
 
 // Put writes a value with given key.
-func (db *LevelDB) Put(ctx Context, k, v []byte) error {
+func (db *LevelDB) Put(ctx storage.Context, k, v []byte) error {
 	dvid.StartCgo()
 	wo := db.options.WriteOptions
 	key := ctx.ConstructKey(k)
@@ -547,9 +549,9 @@ func (db *LevelDB) Put(ctx Context, k, v []byte) error {
 	return err
 }
 
-// PutRange puts key/value pairs that have been sorted in sequential key order.
+// PutRange puts key-value pairs that have been sorted in sequential key order.
 // Current implementation in levigo driver simply does a batch write.
-func (db *LevelDB) PutRange(ctx Context, values []KeyValue) error {
+func (db *LevelDB) PutRange(ctx storage.Context, values []storage.KeyValue) error {
 	dvid.StartCgo()
 	wo := db.options.WriteOptions
 	wb := levigo.NewWriteBatch()
@@ -574,7 +576,7 @@ func (db *LevelDB) PutRange(ctx Context, values []KeyValue) error {
 }
 
 // Delete removes a value with given key.
-func (db *LevelDB) Delete(ctx Context, k []byte) (err error) {
+func (db *LevelDB) Delete(ctx storage.Context, k []byte) (err error) {
 	dvid.StartCgo()
 	wo := db.options.WriteOptions
 	err = db.ldb.Delete(wo, ctx.ConstructKey(k))
@@ -585,14 +587,14 @@ func (db *LevelDB) Delete(ctx Context, k []byte) (err error) {
 // --- Batcher interface ----
 
 type goBatch struct {
-	ctx Context
+	ctx storage.Context
 	*levigo.WriteBatch
 	wo  *levigo.WriteOptions
 	ldb *levigo.DB
 }
 
 // NewBatch returns an implementation that allows batch writes
-func (db *LevelDB) NewBatch(ctx Context) Batch {
+func (db *LevelDB) NewBatch(ctx storage.Context) Batch {
 	dvid.StartCgo()
 	defer dvid.StopCgo()
 	return &goBatch{ctx, levigo.NewWriteBatch(), db.options.WriteOptions, db.ldb}

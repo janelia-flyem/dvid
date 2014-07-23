@@ -31,20 +31,21 @@ type TypeService interface {
 	// Help returns a string explaining how to use a datatype's service
 	Help() string
 
-	// Create an instance of this datatype in the given repo
-	NewDataService(name dvid.DataString, config dvid.Config, repo *Repo) (DataService, error)
+	// Create an instance of this datatype in the given repo with local instance ID
+	// and name, passing configuration parameters via dvid.Config.
+	NewDataService(Repo, dvid.InstanceID, dvid.DataString, dvid.Config) (DataService, error)
 }
 
 var (
 	// Compiled is the set of registered datatypes compiled into DVID and
 	// held as a global variable initialized at runtime.
-	Compiled map[UrlString]Service
+	Compiled map[UrlString]TypeService
 )
 
 // Register registers a datatype for DVID use.
 func Register(t Service) {
 	if Compiled == nil {
-		Compiled = make(map[UrlString]Service)
+		Compiled = make(map[UrlString]TypeService)
 	}
 	Compiled[t.TypeUrl()] = t
 }
@@ -53,7 +54,7 @@ func Register(t Service) {
 func CompiledNames() string {
 	var names []string
 	for _, datatype := range Compiled {
-		names = append(names, string(datatype.DatatypeName()))
+		names = append(names, string(datatype.TypeName()))
 	}
 	return strings.Join(names, ", ")
 }
@@ -75,21 +76,19 @@ func CompiledChart() string {
 	}
 	writeLine("Name", "Url")
 	for _, datatype := range Compiled {
-		writeLine(datatype.DatatypeName(), datatype.DatatypeUrl())
+		writeLine(datatype.TypeName(), datatype.TypeUrl())
 	}
 	return text + "\n"
 }
 
-// ServiceByName returns a type-specific service given a type name.
-func ServiceByName(typeName dvid.TypeString) (typeService Service, err error) {
+// TypeServiceByName returns a TypeService given a type name.
+func TypeServiceByName(name dvid.TypeString) (TypeService, error) {
 	for _, dtype := range Compiled {
-		if typeName == dtype.DatatypeName() {
-			typeService = dtype
-			return
+		if name == dtype.TypeName() {
+			return dtype, nil
 		}
 	}
-	err = fmt.Errorf("Data type '%s' is not supported in current DVID executable", typeName)
-	return
+	return nil, fmt.Errorf("Data type '%s' is not supported in current DVID executable", name)
 }
 
 // ---- Service Implementation ----
