@@ -45,41 +45,6 @@ func Versions() string {
 	return text
 }
 
-// Init creates a key-value datastore using default arguments.  Datastore
-// configuration is stored as key/values in the datastore and also in a
-// human-readable config file in the datastore directory.
-func Init(directory string, create bool, config dvid.Config) error {
-	fmt.Println("\nInitializing datastore at", directory)
-
-	// Initialize the backend database
-	engine, err := storage.NewKeyValueStore(directory, create, config)
-	if err != nil {
-		return fmt.Errorf("Error initializing datastore (%s): %s\n", directory, err.Error())
-	}
-	defer engine.Close()
-
-	// Initial graph database from ordered key value
-	kvDB, ok := engine.(storage.OrderedKeyValueDB)
-	if !ok {
-		return fmt.Errorf("Datastore at %s does not support key-value database ops.", directory)
-	}
-	// Initialize the graph backend database
-	gengine, err := storage.NewGraphStore(directory, create, config, kvDB)
-	if err != nil {
-		return fmt.Errorf("Error initializing graph datastore (%s): %s\n", directory, err.Error())
-	}
-	defer gengine.Close()
-
-	// Put empty Repos
-	db, ok := engine.(storage.OrderedKeyValueSetter)
-	if !ok {
-		return fmt.Errorf("Datastore at %s does not support setting of key-value pairs!", directory)
-	}
-	repos := new(Repos)
-	err = repos.Put(db)
-	return err
-}
-
 // Service manages storage engines and a collection of Repo.
 type Service struct {
 	*RepoManager

@@ -1016,7 +1016,7 @@ type NdFloat32 []float32
 // GetMin returns the minimum element of the N-dimensional float.
 func (n NdFloat32) GetMin() float32 {
 	if n == nil || len(n) == 0 {
-		Log(Normal, "GetMin() called on bad ndfloat32!")
+		Criticalf("GetMin() called on bad ndfloat32!")
 		return 0.0
 	}
 	min := n[0]
@@ -1031,7 +1031,7 @@ func (n NdFloat32) GetMin() float32 {
 // GetMax returns the maximum element of the N-dimensional float.
 func (n NdFloat32) GetMax() float32 {
 	if n == nil || len(n) == 0 {
-		Log(Normal, "GetMax() called on bad ndfloat32!")
+		Criticalf("GetMax() called on bad ndfloat32!")
 		return 0.0
 	}
 	max := n[0]

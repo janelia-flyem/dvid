@@ -15,8 +15,6 @@ var (
 
 	// Mode is a global variable set to the run modes of this DVID process.
 	Mode ModeFlag
-
-	logger Logger
 )
 
 // Logger provides a way for the application to log messages at different severities.
@@ -39,17 +37,12 @@ type Logger interface {
 	// Criticalf is like Debugf, but at Critical level.
 	Criticalf(format string, args ...interface{})
 
-	// NewTimeLog returns a logger that supports elapsed time from the request.
-	// Example:
-	//     mylog := NewTimeLog()
-	//     ...
-	//     mylog.Debugf("stuff happened")  // Appends elapsed time from NewTimeLog() to message.
-	NewTimeLog() TimeLog
+	// Shutdown makes sure logs are closed.
+	Shutdown()
 }
 
-func init() {
-	logger = newLogger(nil)
-}
+// package print functions use the default package-level logger initialized
+// with newLogger() or is simply nil and uses unmodified standard log package.
 
 func Debugf(format string, args ...interface{}) {
 	logger.Debugf(format, args)
@@ -72,9 +65,17 @@ func Criticalf(format string, args ...interface{}) {
 }
 
 // TimeLog adds elapsed time to logging.
+// Example:
+//     mylog := NewTimeLog()
+//     ...
+//     mylog.Debugf("stuff happened")  // Appends elapsed time from NewTimeLog() to message.
 type TimeLog struct {
 	logger Logger
 	start  time.Time
+}
+
+func NewTimeLog(logger Logger) TimeLog {
+	return TimeLog{logger, time.Now()}
 }
 
 func (t TimeLog) Debugf(format string, args ...interface{}) {
@@ -95,4 +96,8 @@ func (t TimeLog) Errorf(format string, args ...interface{}) {
 
 func (t TimeLog) Criticalf(format string, args ...interface{}) {
 	t.logger.Criticalf(format+": %s\n", append(args, time.Since(t.start)))
+}
+
+func (t TimeLog) Shutdown() {
+	t.logger.Shutdown()
 }

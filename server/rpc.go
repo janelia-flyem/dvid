@@ -47,7 +47,7 @@ type RPCConnection struct{}
 // Do acts as a switchboard for remote command execution
 func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) error {
 	if reply == nil {
-		dvid.Debugf("reply is nil coming in!\n")
+		dvid.Debugf(("reply is nil coming in!\n")
 		return nil
 	}
 	if cmd.Name() == "" {

@@ -374,7 +374,7 @@ func NewData(r Repo, id dvid.InstanceID, name dvid.DataString, c dvid.Config) (*
 			return nil, fmt.Errorf("unknown label type specified '%s'", s)
 		}
 	}
-	dvid.Log(dvid.Normal, "Creating labels64 '%s' with %s", voxelData.DataName(), labelType)
+	dvid.Infof("Creating labels64 '%s' with %s", voxelData.DataName(), labelType)
 	data := &Data{
 		Data:     *voxelData,
 		Labeling: labelType,
@@ -624,7 +624,7 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 		} else {
 			addedFiles = fmt.Sprintf("filenames: %s [%d more]", filenames[0], len(filenames)-1)
 		}
-		dvid.Log(dvid.Debug, addedFiles+"\n")
+		dvid.Debugf(addedFiles + "\n")
 
 		// Get version node
 		uuid, err := server.MatchingUUID(uuidStr)
@@ -1105,7 +1105,7 @@ func (d *Data) CreateComposite(request datastore.Request, reply *datastore.Respo
 	// Set new mapped data to same extents.
 	composite.Properties.Extents = grayscale.Properties.Extents
 	if err := server.DatastoreService().SaveRepo(uuid); err != nil {
-		dvid.Log(dvid.Normal, "Could not save new data '%s': %s\n", destName, err.Error())
+		dvid.Infof("Could not save new data '%s': %s\n", destName, err.Error())
 	}
 
 	return nil
@@ -1137,7 +1137,7 @@ func (d *Data) createCompositeChunk(chunk *storage.Chunk) {
 	op := chunk.Op.(*blockOp)
 	db, err := server.OrderedKeyValueDB()
 	if err != nil {
-		dvid.Log(dvid.Normal, "Error in %s.ProcessChunk(): %s\n", d.Data().DataName(), err.Error())
+		dvid.Infof("Error in %s.ProcessChunk(): %s\n", d.Data().DataName(), err.Error())
 		return
 	}
 
@@ -1149,20 +1149,20 @@ func (d *Data) createCompositeChunk(chunk *storage.Chunk) {
 		curZ = zyx[2]
 		min := zyx.MinPoint(d.BlockSize())
 		max := zyx.MaxPoint(d.BlockSize())
-		dvid.Log(dvid.Debug, "Now creating composite blocks for Z %d to %d\n",
+		dvid.Debugf("Now creating composite blocks for Z %d to %d\n",
 			min.Value(2), max.Value(2))
 	}
 	curZMutex.Unlock()
 
 	labelData, _, err := dvid.DeserializeData(chunk.V, true)
 	if err != nil {
-		dvid.Log(dvid.Normal, "Unable to deserialize block in '%s': %s\n",
+		dvid.Infof("Unable to deserialize block in '%s': %s\n",
 			d.DataName(), err.Error())
 		return
 	}
 	blockBytes := len(labelData)
 	if blockBytes%8 != 0 {
-		dvid.Log(dvid.Normal, "Retrieved, deserialized block is wrong size: %d bytes\n", blockBytes)
+		dvid.Infof("Retrieved, deserialized block is wrong size: %d bytes\n", blockBytes)
 		return
 	}
 
@@ -1170,12 +1170,12 @@ func (d *Data) createCompositeChunk(chunk *storage.Chunk) {
 	grayscaleKey := op.grayscale.DataKey(op.versionID, labelKey.Index)
 	blockData, err := db.Get(grayscaleKey)
 	if err != nil {
-		dvid.Log(dvid.Normal, "Error getting grayscale block for index %s\n", labelKey.Index)
+		dvid.Infof("Error getting grayscale block for index %s\n", labelKey.Index)
 		return
 	}
 	grayscaleData, _, err := dvid.DeserializeData(blockData, true)
 	if err != nil {
-		dvid.Log(dvid.Normal, "Unable to deserialize block in '%s': %s\n",
+		dvid.Infof("Unable to deserialize block in '%s': %s\n",
 			op.grayscale.DataName(), err.Error())
 		return
 	}
@@ -1200,13 +1200,13 @@ func (d *Data) createCompositeChunk(chunk *storage.Chunk) {
 	compositeKey := op.composite.DataKey(op.versionID, labelKey.Index)
 	serialization, err := dvid.SerializeData(compositeData, d.Compression, d.Checksum)
 	if err != nil {
-		dvid.Log(dvid.Normal, "Unable to serialize composite block at %s: %s\n",
+		dvid.Infof("Unable to serialize composite block at %s: %s\n",
 			labelKey.Index, err.Error())
 		return
 	}
 	err = db.Put(compositeKey, serialization)
 	if err != nil {
-		dvid.Log(dvid.Normal, "Unable to PUT composite block at %s: %s\n",
+		dvid.Infof("Unable to PUT composite block at %s: %s\n",
 			labelKey.Index, err.Error())
 		return
 	}

@@ -1,17 +1,33 @@
-// +build !gcloud
+// +build !clustered,!gcloud
 
 package dvid
 
 import (
 	"log"
-	"time"
+
+	lumberjack "gopkg.in/natefinch/lumberjack.v2"
 )
 
-type stdLogger struct{}
+type stdLogger struct {
+	*lumberjack.Logger
+}
+
+var logger stdLogger
 
 // Sets up a logger that sends messages via standard log but does not exit or panic.
 func newLogger(c interface{}) Logger {
-	return stdLogger{}
+	filename, ok := c.(string)
+	if !ok {
+		log.Fatalf("Cannot open logger.  Received %v instead of string\n", c)
+		return nil
+	}
+	l := &lumberjack.Logger{
+		Filename: filename,
+		MaxSize:  50, // megabytes
+	}
+	log.SetOutput(l)
+	logger = stdLogger{l}
+	return logger
 }
 
 // --- Logger implementation ----
@@ -43,11 +59,6 @@ func (slog stdLogger) Criticalf(format string, args ...interface{}) {
 	log.Printf("CRITICAL "+format, args)
 }
 
-// NewTimeLog returns a logger that supports elapsed time from the request.
-// Example:
-//     mylog := NewTimeLog()
-//     ...
-//     mylog.Debugf("stuff happened")  // Appends elapsed time from NewTimeLog() to message.
-func (slog stdLogger) NewTimeLog() TimeLog {
-	return TimeLog{slog, time.Now()}
+func (slog stdLogger) Shutdown() {
+	slog.Rotate()
 }
