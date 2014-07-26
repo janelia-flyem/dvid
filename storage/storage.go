@@ -107,7 +107,7 @@ type ChunkOp struct {
 // from lower-level database access functions to type-specific chunk processing.
 type Chunk struct {
 	*ChunkOp
-	KeyValue
+	*KeyValue
 }
 
 // Requirements lists required backend interfaces for a type.

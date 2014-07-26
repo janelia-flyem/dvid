@@ -49,7 +49,7 @@ func (d *Data) computeSurface(surfaceCh chan *storage.Chunk, db storage.OrderedK
 		if chunk == nil {
 			if notFirst {
 				if err := d.computeAndSaveSurface(versionID, &curVol); err != nil {
-					dvid.Log(dvid.Normal, "Error on computing surface and normals: %s\n", err.Error())
+					dvid.Infof("Error on computing surface and normals: %s\n", err.Error())
 					return
 				}
 			}
@@ -59,7 +59,7 @@ func (d *Data) computeSurface(surfaceCh chan *storage.Chunk, db storage.OrderedK
 		if label != curLabel || label == 0 {
 			if notFirst {
 				if err := d.computeAndSaveSurface(versionID, &curVol); err != nil {
-					dvid.Log(dvid.Normal, "Error on computing surface and normals: %s\n", err.Error())
+					dvid.Infof("Error on computing surface and normals: %s\n", err.Error())
 					return
 				}
 			}
@@ -68,7 +68,7 @@ func (d *Data) computeSurface(surfaceCh chan *storage.Chunk, db storage.OrderedK
 		}
 
 		if err := curVol.AddRLEs(chunk.V); err != nil {
-			dvid.Log(dvid.Normal, "Error adding RLE for label %d: %s\n", label, err.Error())
+			dvid.Infof("Error adding RLE for label %d: %s\n", label, err.Error())
 			return
 		}
 		curLabel = label
@@ -204,7 +204,7 @@ func (d *Data) GetSparseVol(uuid dvid.UUID, label uint64) ([]byte, error) {
 
 	binary.LittleEndian.PutUint32(op.encoding[8:12], op.numRuns)
 
-	dvid.Log(dvid.Debug, "For data '%s' label %d: found %d blocks, %d runs\n",
+	dvid.Debugf("For data '%s' label %d: found %d blocks, %d runs\n",
 		d.DataName(), label, op.numBlocks, op.numRuns)
 	return op.encoding, nil
 }
@@ -253,18 +253,18 @@ type denormOp struct {
 // Iterate through all blocks in the associated label volume, computing the spatial indices
 // for bodies and the mappings for each spatial index.
 func (d *Data) ProcessSpatially(uuid dvid.UUID) {
-	dvid.Log(dvid.Normal, "Adding spatial information from label volume %s ...\n", d.DataName())
+	dvid.Infof("Adding spatial information from label volume %s ...\n", d.DataName())
 
 	service := server.DatastoreService()
 	_, versionID, err := service.LocalIDFromUUID(uuid)
 	if err != nil {
-		dvid.Log(dvid.Normal, "Error in getting version ID from UUID '%s': %s\n", uuid, err.Error())
+		dvid.Infof("Error in getting version ID from UUID '%s': %s\n", uuid, err.Error())
 		return
 	}
 
 	db, err := server.OrderedKeyValueDB()
 	if err != nil {
-		dvid.Log(dvid.Normal, "Could not determine key value datastore in %s.ProcessSpatially()\n",
+		dvid.Infof("Could not determine key value datastore in %s.ProcessSpatially()\n",
 			d.DataName())
 		return
 	}
@@ -325,7 +325,7 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 		dvid.ElapsedTime(dvid.Debug, startTime, "Finished processing all RLEs for labels '%s'", d.DataName())
 		d.Ready = true
 		if err := server.DatastoreService().SaveRepo(uuid); err != nil {
-			dvid.Log(dvid.Normal, "Could not save READY state to data '%s', uuid %s: %s",
+			dvid.Infof("Could not save READY state to data '%s', uuid %s: %s",
 				d.DataName(), uuid, err.Error())
 		}
 	}()
@@ -342,7 +342,7 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 		surfaceCh[label%uint64(numSurfCalculators)] <- chunk
 	})
 	if err != nil {
-		dvid.Log(dvid.Normal, "Error indexing sizes for %s: %s\n", d.DataName(), err.Error())
+		dvid.Infof("Error indexing sizes for %s: %s\n", d.DataName(), err.Error())
 		return
 	}
 	sizeCh <- nil
@@ -381,18 +381,18 @@ func (d *Data) denormalizeChunk(chunk *storage.Chunk) {
 	// Setup the database
 	db, err := server.OrderedKeyValueDB()
 	if err != nil {
-		dvid.Log(dvid.Normal, "Error in %s.denormalizeChunk(): %s\n", d.DataName(), err.Error())
+		dvid.Infof("Error in %s.denormalizeChunk(): %s\n", d.DataName(), err.Error())
 		return
 	}
 	batcher, ok := db.(storage.Batcher)
 	if !ok {
-		dvid.Log(dvid.Normal, "Database doesn't support Batch ops in %s.denormalizeChunk()", d.DataName())
+		dvid.Infof("Database doesn't support Batch ops in %s.denormalizeChunk()", d.DataName())
 		return
 	}
 	batch := batcher.NewBatch()
 	defer func() {
 		if err := batch.Commit(); err != nil {
-			dvid.Log(dvid.Normal, "Error on batch PUT of KeySpatialMap on %s: %s\n",
+			dvid.Infof("Error on batch PUT of KeySpatialMap on %s: %s\n",
 				dataKey.Index, err.Error())
 		}
 	}()
@@ -400,14 +400,14 @@ func (d *Data) denormalizeChunk(chunk *storage.Chunk) {
 	// Initialize the label buffer.  For voxels, this data needs to be uncompressed and deserialized.
 	blockData, _, err := dvid.DeserializeData(chunk.V, true)
 	if err != nil {
-		dvid.Log(dvid.Normal, "Unable to deserialize block in '%s': %s\n", d.DataName(), err.Error())
+		dvid.Infof("Unable to deserialize block in '%s': %s\n", d.DataName(), err.Error())
 		return
 	}
 
 	// Iterate through this block of labels.
 	blockBytes := len(blockData)
 	if blockBytes%8 != 0 {
-		dvid.Log(dvid.Normal, "Retrieved, deserialized block is wrong size: %d bytes\n", blockBytes)
+		dvid.Infof("Retrieved, deserialized block is wrong size: %d bytes\n", blockBytes)
 		return
 	}
 	labelRLEs := make(map[uint64]dvid.RLEs, 10)

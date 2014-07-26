@@ -245,7 +245,7 @@ func LoadTileSpec(data []byte) (TileSpec, error) {
 
 	// Allocate the tile specs
 	specs := make(TileSpec, len(config))
-	dvid.Log(dvid.Debug, "Found %d scaling levels for multiscale2d specification.\n", len(config))
+	dvid.Debugf("Found %d scaling levels for multiscale2d specification.\n", len(config))
 
 	// Store resolution and tile sizes per level.
 	firstLevel := true
@@ -970,7 +970,7 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, config dvid.Con
 			if err != nil {
 				return err
 			}
-			dvid.Log(dvid.Debug, "Tiling XY image %d x %d pixels\n", width, height)
+			dvid.Debugf("Tiling XY image %d x %d pixels\n", width, height)
 			for z := src.MinPoint.Value(2); z <= src.MaxPoint.Value(2); z++ {
 				sliceTime := time.Now()
 				offset = offset.Modify(map[uint8]int32{2: z})
@@ -1020,7 +1020,7 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, config dvid.Con
 			if err != nil {
 				return err
 			}
-			dvid.Log(dvid.Debug, "Tiling XZ image %d x %d pixels\n", width, height)
+			dvid.Debugf("Tiling XZ image %d x %d pixels\n", width, height)
 			for y := src.MinPoint.Value(1); y <= src.MaxPoint.Value(1); y++ {
 				sliceTime := time.Now()
 				offset = offset.Modify(map[uint8]int32{1: y})
@@ -1070,7 +1070,7 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, config dvid.Con
 			if err != nil {
 				return err
 			}
-			dvid.Log(dvid.Debug, "Tiling YZ image %d x %d pixels\n", width, height)
+			dvid.Debugf("Tiling YZ image %d x %d pixels\n", width, height)
 			for x := src.MinPoint.Value(0); x <= src.MaxPoint.Value(0); x++ {
 				sliceTime := time.Now()
 				offset = offset.Modify(map[uint8]int32{0: x})
@@ -1116,7 +1116,7 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, config dvid.Con
 			dvid.ElapsedTime(dvid.Normal, startTime, "Total time to generate YZ Tiles")
 
 		default:
-			dvid.Log(dvid.Normal, "Skipping request to tile '%s'.  Unsupported.", plane)
+			dvid.Infof("Skipping request to tile '%s'.  Unsupported.", plane)
 		}
 	}
 	return nil

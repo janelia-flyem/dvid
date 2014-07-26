@@ -25,6 +25,9 @@ var (
 	// Display usage if true.
 	showHelp = flag.Bool("help", false, "")
 
+	// Name of file for logging output
+	logfile = flag.String("logfile", "", "")
+
 	// Run in verbose mode if true.
 	runVerbose = flag.Bool("verbose", false, "")
 
@@ -58,6 +61,7 @@ Usage: dvid [options] <command>
       -webclient  =string   Path to web client directory.  Leave unset for default pages.
       -rpc        =string   Address for RPC communication.
       -http       =string   Address for HTTP communication.
+      -logfile    =string   File name for log.  Will be rotated.
       -cpuprofile =string   Write CPU profile to this file.
       -memprofile =string   Write memory profile to this file on ctrl-C.
       -numcpu     =number   Number of logical CPUs to use for DVID.
@@ -134,31 +138,6 @@ func main() {
 	}
 	runtime.GOMAXPROCS(dvid.NumCPU)
 
-	// Capture ctrl+c and other interrupts.  Then handle graceful shutdown.
-	stopSig := make(chan os.Signal)
-	go func() {
-		for sig := range stopSig {
-			log.Printf("Stop signal captured: %q.  Shutting down...\n", sig)
-			if *memprofile != "" {
-				log.Printf("Storing memory profiling to %s...\n", *memprofile)
-				f, err := os.Create(*memprofile)
-				if err != nil {
-					log.Fatal(err)
-				}
-				pprof.WriteHeapProfile(f)
-				f.Close()
-			}
-			if *cpuprofile != "" {
-				log.Printf("Stopping CPU profiling to %s...\n", *cpuprofile)
-				pprof.StopCPUProfile()
-			}
-			server.Shutdown()
-			time.Sleep(1 * time.Second)
-			os.Exit(0)
-		}
-	}()
-	signal.Notify(stopSig, os.Interrupt, os.Kill, syscall.SIGTERM)
-
 	command := dvid.Command(flag.Args())
 	if err := DoCommand(command); err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
@@ -224,11 +203,36 @@ func DoRepair(cmd dvid.Command) error {
 
 // DoServe opens a datastore then creates both web and rpc servers for the datastore
 func DoServe(cmd dvid.Command) error {
+	// Capture ctrl+c and other interrupts.  Then handle graceful shutdown.
+	stopSig := make(chan os.Signal)
+	go func() {
+		for sig := range stopSig {
+			log.Printf("Stop signal captured: %q.  Shutting down...\n", sig)
+			if *memprofile != "" {
+				log.Printf("Storing memory profiling to %s...\n", *memprofile)
+				f, err := os.Create(*memprofile)
+				if err != nil {
+					log.Fatal(err)
+				}
+				pprof.WriteHeapProfile(f)
+				f.Close()
+			}
+			if *cpuprofile != "" {
+				log.Printf("Stopping CPU profiling to %s...\n", *cpuprofile)
+				pprof.StopCPUProfile()
+			}
+			server.Shutdown()
+			time.Sleep(1 * time.Second)
+			os.Exit(0)
+		}
+	}()
+	signal.Notify(stopSig, os.Interrupt, os.Kill, syscall.SIGTERM)
+
 	datastorePath := cmd.Argument(1)
 	if datastorePath == "" {
 		return fmt.Errorf("serve command must be followed by the path to the datastore")
 	}
-	if err := server.Serve(datastorePath, *httpAddress, *clientDir, *rpcAddress); err != nil {
+	if err := server.Serve(datastorePath, *httpAddress, *clientDir, *rpcAddress, *logfile); err != nil {
 		return err
 	}
 	return nil

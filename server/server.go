@@ -1,24 +1,13 @@
 package server
 
 import (
-	"fmt"
-	"io/ioutil"
 	"log"
-	"net"
-	"net/http"
-	"net/rpc"
-	"os"
-	"path/filepath"
 	"runtime"
-	"runtime/debug"
 	"sync"
 	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
-	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
-
-	"github.com/janelia-flyem/go/nrsc"
 )
 
 var (
@@ -101,75 +90,13 @@ func init() {
 			}
 		}
 	}()
-}
 
-// VersionLocalID returns a server-specific local ID for the node with the given UUID.
-func VersionLocalID(uuid dvid.UUID) (dvid.VersionLocalID, error) {
-	if runningService.Service == nil {
-		return 0, fmt.Errorf("Datastore service has not been started on this server.")
-	}
-	_, versionID, err := runningService.Service.LocalIDFromUUID(uuid)
-	if err != nil {
-		return 0, err
-	}
-	return versionID, nil
-}
-
-// KeyValueGetter returns the default service for retrieving key-value pairs.
-func KeyValueGetter() (storage.KeyValueGetter, error) {
-	if runningService.Service == nil {
-		return nil, fmt.Errorf("No running datastore service is available.")
-	}
-	return runningService.KeyValueGetter()
-}
-
-// OrderedKeyValueDB returns the default ordered key-value database
-func OrderedKeyValueDB() (storage.OrderedKeyValueDB, error) {
-	if runningService.Service == nil {
-		return nil, fmt.Errorf("No running datastore service is available.")
-	}
-	return runningService.OrderedKeyValueDB()
-}
-
-// OrderedKeyValueGetter returns the default service for retrieving ordered key-value pairs.
-func OrderedKeyValueGetter() (storage.OrderedKeyValueGetter, error) {
-	if runningService.Service == nil {
-		return nil, fmt.Errorf("No running datastore service is available.")
-	}
-	return runningService.OrderedKeyValueGetter()
-}
-
-// OrderedKeyValueSetter returns the default service for storing ordered key-value pairs.
-func OrderedKeyValueSetter() (storage.OrderedKeyValueSetter, error) {
-	if runningService.Service == nil {
-		return nil, fmt.Errorf("No running datastore service is available.")
-	}
-	return runningService.OrderedKeyValueSetter()
-}
-
-// GraphDB returns the default service for handling grah operations.
-func GraphDB() (storage.GraphDB, error) {
-	if runningService.Service == nil {
-		return nil, fmt.Errorf("No running datastore service is available.")
-	}
-	return runningService.GraphDB()
-}
-
-// StorageEngine returns the default storage engine or nil if it's not available.
-func StorageEngine() (storage.Engine, error) {
-	if runningService.Service == nil {
-		return nil, fmt.Errorf("No running datastore service is available.")
-	}
-	return runningService.StorageEngine(), nil
 }
 
 // Shutdown handles graceful cleanup of server functions before exiting DVID.
 // This may not be so graceful if the chunk handler uses cgo since the interrupt
 // may be caught during cgo execution.
 func Shutdown() {
-	if runningService.Service != nil {
-		runningService.Service.Shutdown()
-	}
 	waits := 0
 	for {
 		active := MaxChunkHandlers - len(HandlerToken)
@@ -186,187 +113,6 @@ func Shutdown() {
 		time.Sleep(1 * time.Second)
 	}
 	storage.Shutdown()
-	dvid.BlockOnActiveCgo()
-}
-
-// OpenDatastore returns a Server service.  Only one datastore can be opened
-// for any server.
-func OpenDatastore(datastorePath string) (service *Service, err error) {
-	// Make sure we don't already have an open datastore.
-	if runningService.Service != nil {
-		err = fmt.Errorf("Cannot create new server. A DVID process can serve only one datastore.")
-		return
-	}
-
-	// Get exclusive ownership of a DVID datastore
-	log.Println("Getting exclusive ownership of datastore at:", datastorePath)
-
-	var openErr *datastore.OpenError
-	runningService.Service, openErr = datastore.Open(datastorePath)
-	if openErr != nil {
-		err = openErr
-		return
-	}
-	runningService.ErrorLogDir = filepath.Dir(datastorePath)
-
-	service = &runningService
-	return
-}
-
-// StandaloneService adds logging and tailorable web addressing if we are running DVID on
-// local servers instead of a managed cloud like Google.
-type StandaloneService struct {
-	Service
-
-	// LogFile is the local file name for log output.
-	LogFile string
-
-	// The address for http server.
-	WebAddress string
-}
-
-// Service holds what we need to run an http service using various storage engines.
-type Service struct {
-	// The currently opened DVID datastore
-	*datastore.Service
-
-	// The path to the DVID web client
-	WebClientPath string
-
-	// The address of the rpc server
-	RPCAddress string
-}
-
-func (service *Service) sendContent(path string, w http.ResponseWriter, r *http.Request) {
-	if len(path) > 0 && path[len(path)-1:] == "/" {
-		path = filepath.Join(path, "index.html")
-	}
-	if service.WebClientPath == "" {
-		if len(path) > 0 && path[0:1] == "/" {
-			path = path[1:]
-		}
-		dvid.Log(dvid.Debug, "[%s] Serving from embedded files: %s\n", r.Method, path)
-
-		resource := nrsc.Get(path)
-		if resource == nil {
-			http.NotFound(w, r)
-			return
-		}
-		rsrc, err := resource.Open()
-		if err != nil {
-			BadRequest(w, r, err.Error())
-			return
-		}
-		data, err := ioutil.ReadAll(rsrc)
-		if err != nil {
-			BadRequest(w, r, err.Error())
-			return
-		}
-		dvid.SendHTTP(w, r, path, data)
-	} else {
-		// Use a non-embedded directory of files.
-		filename := filepath.Join(runningService.WebClientPath, path)
-		dvid.Log(dvid.Debug, "[%s] Serving from webclient directory: %s\n", r.Method, filename)
-		http.ServeFile(w, r, filename)
-	}
-}
-
-// Serve opens a datastore then creates both web and rpc servers for the datastore.
-// This function must be called for DatastoreService() to be non-nil.
-func (service *Service) Serve(webAddress, webClientDir, rpcAddress string) error {
-	log.Printf("Using %d of %d logical CPUs for DVID.\n", dvid.NumCPU, runtime.NumCPU())
-
-	// Register an error logger that appends to a file in this datastore directory.
-	errorLog := filepath.Join(service.ErrorLogDir, ErrorLogFilename)
-	file, err := os.OpenFile(errorLog, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
-	if err != nil {
-		log.Fatalf("Unable to open error logging file (%s): %s\n", errorLog, err.Error())
-	}
-	dvid.SetErrorLoggingFile(file)
-
-	// Launch the web server
-	go runningService.ServeHttp(webAddress, webClientDir)
-
-	// Launch the rpc server
-	err = runningService.ServeRpc(rpcAddress)
-	if err != nil {
-		log.Fatalln(err.Error())
-	}
-
-	return nil
-}
-
-// Wrapper function so that http handlers recover from panics gracefully
-// without crashing the entire program.  The error message is written to
-// the log.
-func logHttpPanics(handler func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
-	return func(writer http.ResponseWriter, request *http.Request) {
-		defer func() {
-			if err := recover(); err != nil {
-				log.Printf("Caught panic on HTTP request: %s", err)
-				log.Printf("IP: %v, URL: %s", request.RemoteAddr, request.URL.Path)
-				log.Printf("Stack Dump:\n%s", debug.Stack())
-			}
-		}()
-		handler(writer, request)
-	}
-}
-
-// Listen and serve HTTP requests using address and don't let stay-alive
-// connections hog goroutines for more than an hour.
-// See for discussion:
-// http://stackoverflow.com/questions/10971800/golang-http-server-leaving-open-goroutines
-func (service *Service) ServeHttp(address, clientDir string) {
-	if address == "" {
-		address = DefaultWebAddress
-	}
-	service.WebAddress = address
-	service.WebClientPath = clientDir
-	fmt.Printf("Web server listening at %s ...\n", address)
-
-	src := &http.Server{
-		Addr:        address,
-		ReadTimeout: 1 * time.Hour,
-	}
-
-	// Handle RAML interface
-	http.HandleFunc("/interface/", logHttpPanics(service.interfaceHandler))
-	http.HandleFunc("/interface/version", logHttpPanics(versionHandler))
-
-	// Handle Level 2 REST API.
-	http.HandleFunc(WebAPIPath, logHttpPanics(apiHandler))
-
-	// Handle static files through serving embedded files
-	// via nrsc or loading files from a specified web client directory.
-	if clientDir == "" {
-		dvid.Log(dvid.Normal, "Serving web client from embedded files...")
-		if err := nrsc.Initialize(); err != nil {
-			dvid.Log(dvid.Normal, "Error initializing embedded data access: %s\n", err.Error())
-		}
-	} else {
-		dvid.Log(dvid.Normal, "Serving web pages from %s\n", clientDir)
-	}
-	http.HandleFunc("/", logHttpPanics(service.mainHandler))
-
-	// Serve it up!
-	src.ListenAndServe()
-}
-
-// Listen and serve RPC requests using address.
-func (service *Service) ServeRpc(address string) error {
-	if address == "" {
-		address = DefaultRPCAddress
-	}
-	service.RPCAddress = address
-	dvid.Log(dvid.Debug, "Rpc server listening at %s ...\n", address)
-
-	c := new(RPCConnection)
-	rpc.Register(c)
-	rpc.HandleHTTP()
-	listener, err := net.Listen("tcp", address)
-	if err != nil {
-		return err
-	}
-	http.Serve(listener, nil)
-	return nil
+	Repos.
+		dvid.BlockOnActiveCgo()
 }

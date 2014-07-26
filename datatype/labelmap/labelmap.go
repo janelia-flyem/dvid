@@ -846,7 +846,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 
 func loadSegBodyMap(filename string) (map[uint64]uint64, error) {
 	startTime := time.Now()
-	dvid.Log(dvid.Normal, "Loading segment->body map: %s\n", filename)
+	dvid.Infof("Loading segment->body map: %s\n", filename)
 
 	segmentToBodyMap := make(map[uint64]uint64, 100000)
 	file, err := os.Open(filename)
@@ -943,7 +943,7 @@ func (d *Data) LoadRavelerMaps(request datastore.Request, reply *datastore.Respo
 	inverseIndex[0] = byte(labels.KeyInverseMap)
 
 	// Get the sp->seg map, persisting each computed sp->body.
-	dvid.Log(dvid.Normal, "Processing superpixel->segment map (Z %d-%d): %s\n",
+	dvid.Infof("Processing superpixel->segment map (Z %d-%d): %s\n",
 		minLabelZ, maxLabelZ, spsegStr)
 	file, err := os.Open(spsegStr)
 	if err != nil {
@@ -1003,10 +1003,10 @@ func (d *Data) LoadRavelerMaps(request datastore.Request, reply *datastore.Respo
 
 		linenum++
 		if linenum%1000000 == 0 {
-			dvid.Log(dvid.Normal, "Added %d forward and inverse mappings\n", linenum)
+			dvid.Infof("Added %d forward and inverse mappings\n", linenum)
 		}
 	}
-	dvid.Log(dvid.Normal, "Added %d forward and inverse mappings\n", linenum)
+	dvid.Infof("Added %d forward and inverse mappings\n", linenum)
 	dvid.ElapsedTime(dvid.Normal, startTime, "Processed Raveler superpixel->body files")
 
 	// Spawn goroutine to do spatial processing on associated label volume.
@@ -1102,7 +1102,7 @@ func (d *Data) ApplyLabelMap(request datastore.Request, reply *datastore.Respons
 	// Set new mapped data to same extents.
 	dest.Properties = labelData.Properties
 	if err := server.DatastoreService().SaveRepo(uuid); err != nil {
-		dvid.Log(dvid.Normal, "Could not save READY state to data '%s', uuid %s: %s",
+		dvid.Infof("Could not save READY state to data '%s', uuid %s: %s",
 			d.DataName(), uuid, err.Error())
 	}
 
@@ -1240,7 +1240,7 @@ func (d *Data) chunkApplyMap(chunk *storage.Chunk) {
 	op := chunk.Op.(*denormOp)
 	db, err := server.OrderedKeyValueSetter()
 	if err != nil {
-		dvid.Log(dvid.Normal, "Error in %s.ChunkApplyMap(): %s", d.Data.DataName(), err.Error())
+		dvid.Infof("Error in %s.ChunkApplyMap(): %s", d.Data.DataName(), err.Error())
 		return
 	}
 
@@ -1251,13 +1251,13 @@ func (d *Data) chunkApplyMap(chunk *storage.Chunk) {
 	// Initialize the label buffers.  For voxels, this data needs to be uncompressed and deserialized.
 	blockData, _, err := dvid.DeserializeData(chunk.V, true)
 	if err != nil {
-		dvid.Log(dvid.Normal, "Unable to deserialize block in '%s': %s\n",
+		dvid.Infof("Unable to deserialize block in '%s': %s\n",
 			d.Data.DataName(), err.Error())
 		return
 	}
 	blockBytes := len(blockData)
 	if blockBytes%8 != 0 {
-		dvid.Log(dvid.Normal, "Retrieved, deserialized block is wrong size: %d bytes\n", blockBytes)
+		dvid.Infof("Retrieved, deserialized block is wrong size: %d bytes\n", blockBytes)
 		return
 	}
 	mappedData := make([]byte, blockBytes, blockBytes)
@@ -1277,9 +1277,9 @@ func (d *Data) chunkApplyMap(chunk *storage.Chunk) {
 				zBeg := zyx.MinPoint(op.source.BlockSize()).Value(2)
 				zEnd := zyx.MaxPoint(op.source.BlockSize()).Value(2)
 				slice := binary.BigEndian.Uint32(a[0:4])
-				dvid.Log(dvid.Normal, "No mapping found for %x (slice %d) in block with Z %d to %d\n",
+				dvid.Infof("No mapping found for %x (slice %d) in block with Z %d to %d\n",
 					a, slice, zBeg, zEnd)
-				dvid.Log(dvid.Normal, "Aborting creation of '%s' chunk using '%s' labelmap\n",
+				dvid.Infof("Aborting creation of '%s' chunk using '%s' labelmap\n",
 					op.source.DataName(), d.DataName())
 				return
 			}
@@ -1296,7 +1296,7 @@ func (d *Data) chunkApplyMap(chunk *storage.Chunk) {
 	}
 	serialization, err := dvid.SerializeData(mappedData, d.Compression, d.Checksum)
 	if err != nil {
-		dvid.Log(dvid.Normal, "Unable to serialize block: %s\n", err.Error())
+		dvid.Infof("Unable to serialize block: %s\n", err.Error())
 		return
 	}
 	db.Put(mappedKey, serialization)

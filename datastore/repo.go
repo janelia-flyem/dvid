@@ -22,11 +22,15 @@ var (
 // Context provides repo management, logging and storage of key-value pairs using tiers of
 // storage.  Contexts are typically set by the server package and are tailored for local,
 // clustered, and cloud-based (service-oriented) DVID servers.
-type Context interface {
+type Context struct {
 	dvid.Logger
-	storage.MetaData
-	storage.SmallData
-	storage.BigData
+	metadata  storage.MetaData
+	smalldata storage.SmallData
+	bigdata   storage.BigData
+}
+
+func NewContext(l dvid.Logger, meta storage.MetaData, small storage.SmallData, big storage.BigData) *Context {
+	return &Context{l, meta, small, big}
 }
 
 // IDManager allows atomic ID incrementing across a DVID installation.  In the case
@@ -42,6 +46,7 @@ type IDManager interface {
 }
 
 type RepoManager interface {
+	dvid.Logger
 	IDManager
 	gob.GobDecoder
 	gob.GobEncoder

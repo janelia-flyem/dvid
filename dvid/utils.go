@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"log"
 	"math"
 	"mime"
 	"net/http"
@@ -15,7 +14,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"time"
 )
 
 const (
@@ -96,51 +94,6 @@ func DataFromPost(r *http.Request, key string) ([]byte, error) {
 	defer f.Close()
 
 	return ioutil.ReadAll(f)
-}
-
-// Log prints a message via log.Print() depending on the Mode of DVID.
-func Log(mode ModeFlag, p ...interface{}) {
-	if mode == Normal || mode == Mode {
-		if len(p) == 0 {
-			log.Println("No message")
-		} else {
-			log.Printf(p[0].(string), p[1:]...)
-		}
-	}
-}
-
-// Fmt prints a message via fmt.Print() depending on the Mode of DVID.
-func Fmt(mode ModeFlag, p ...interface{}) {
-	if mode == Normal || mode == Mode {
-		if len(p) == 0 {
-			fmt.Println("No message")
-		} else {
-			fmt.Printf(p[0].(string), p[1:]...)
-		}
-	}
-}
-
-// Wait for WaitGroup then print message including time for operation.
-// The last arguments are fmt.Printf arguments and should not include the
-// newline since one is added in this function.
-func WaitToComplete(wg *sync.WaitGroup, mode ModeFlag, startTime time.Time, p ...interface{}) {
-	wg.Wait()
-	ElapsedTime(mode, startTime, p...)
-}
-
-// ElapsedTime prints the time elapsed from the start time with Printf arguments afterwards.
-// Example:  ElapsedTime(dvid.Debug, startTime, "Time since launch of %s", funcName)
-func ElapsedTime(mode ModeFlag, startTime time.Time, p ...interface{}) {
-	var args []interface{}
-	if len(p) == 0 {
-		args = append(args, "%s\n")
-	} else {
-		format := p[0].(string) + ": %s\n"
-		args = append(args, format)
-		args = append(args, p[1:]...)
-	}
-	args = append(args, time.Since(startTime))
-	Log(mode, args...)
 }
 
 // WriteJSONFile writes an arbitrary but exportable Go object to a JSON file.
@@ -235,7 +188,7 @@ func WriteGzip(gzipData []byte, w http.ResponseWriter, r *http.Request) error {
 			return err
 		}
 	} else {
-		Log(Normal, "Requestor (%s) not accepting gzip for request (%s), uncompressing %d bytes.\n",
+		Debugf("Requestor (%s) not accepting gzip for request (%s), uncompressing %d bytes.\n",
 			r.RemoteAddr, r.Method, len(gzipData))
 		gzipBuf := bytes.NewBuffer(gzipData)
 		gzipReader, err := gzip.NewReader(gzipBuf)

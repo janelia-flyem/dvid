@@ -126,7 +126,7 @@ func GetOptions(create bool, config dvid.Config) (*leveldbOptions, error) {
 		cacheSize *= dvid.Mega
 	}
 	if create {
-		dvid.Log(dvid.Normal, "leveldb cache size: %s\n",
+		dvid.Infof("leveldb cache size: %s\n",
 			humanize.Bytes(uint64(cacheSize)))
 		opt.SetLRUCacheSize(cacheSize)
 	}
@@ -141,7 +141,7 @@ func GetOptions(create bool, config dvid.Config) (*leveldbOptions, error) {
 		writeBufferSize *= dvid.Mega
 	}
 	if create {
-		dvid.Log(dvid.Normal, "leveldb write buffer size: %s\n",
+		dvid.Infof("leveldb write buffer size: %s\n",
 			humanize.Bytes(uint64(writeBufferSize)))
 		opt.SetWriteBufferSize(writeBufferSize)
 	}
@@ -226,7 +226,7 @@ func RepairStore(path string, config dvid.Config) error {
 // ---- Engine interface ----
 
 func (db *LevelDB) GetName() string {
-	return "HyperLevelDB + levigo driver"
+	return "basho-tuned leveldb + levigo driver"
 }
 func (db *LevelDB) GetConfig() dvid.Config {
 	return db.config
@@ -267,7 +267,7 @@ func (db *LevelDB) Get(ctx storage.Context, k []byte) ([]byte, error) {
 		vctx, _ := ctx.(storage.VersionedContext)
 
 		// Get all versions of this key and return the most recent
-		values, err := db.getSingleKeyVersions(k)
+		values, err := db.getSingleKeyVersions(vctx, k)
 		if err != nil {
 			return nil, err
 		}
@@ -281,7 +281,7 @@ func (db *LevelDB) Get(ctx storage.Context, k []byte) ([]byte, error) {
 		ro := db.options.ReadOptions
 		v, err := db.ldb.Get(ro, k)
 		dvid.StopCgo()
-		StoreValueBytesRead <- len(v)
+		storage.StoreValueBytesRead <- len(v)
 		return v, err
 	}
 }
@@ -297,7 +297,7 @@ func (db *LevelDB) getSingleKeyVersions(vctx storage.VersionedContext, k []byte)
 		dvid.StopCgo()
 	}()
 
-	values := []KeyValue{}
+	values := []storage.KeyValue{}
 	kStart, err := vctx.MinVersionKey(k)
 	if err != nil {
 		return nil, err
@@ -311,12 +311,12 @@ func (db *LevelDB) getSingleKeyVersions(vctx storage.VersionedContext, k []byte)
 	for {
 		if it.Valid() {
 			itKey := it.Key()
-			StoreKeyBytesRead <- len(itKey)
+			storage.StoreKeyBytesRead <- len(itKey)
 			if bytes.Compare(itKey, kEnd) > 0 {
 				return values, nil
 			}
 			itValue := it.Value()
-			StoreValueBytesRead <- len(itValue)
+			storage.StoreValueBytesRead <- len(itValue)
 
 			it.Next()
 		} else {
@@ -326,7 +326,7 @@ func (db *LevelDB) getSingleKeyVersions(vctx storage.VersionedContext, k []byte)
 }
 
 type errorableKV struct {
-	*KeyValue
+	*storage.KeyValue
 	error
 }
 
@@ -334,7 +334,7 @@ type errorableKV struct {
 func (db *LevelDB) versionedRange(vctx storage.VersionedContext, kStart, kEnd []byte, ch chan errorableKV, keysOnly bool) {
 	dvid.StartCgo()
 	ro := levigo.NewReadOptions()
-	it := c.db.ldb.NewIterator(ro)
+	it := db.ldb.NewIterator(ro)
 	defer func() {
 		it.Close()
 		dvid.StopCgo()
@@ -345,13 +345,13 @@ func (db *LevelDB) versionedRange(vctx storage.VersionedContext, kStart, kEnd []
 		ch <- errorableKV{nil, err}
 		return
 	}
-	maxKey, err = vctx.MaxVersionKey(kEnd)
+	maxKey, err := vctx.MaxVersionKey(kEnd)
 	if err != nil {
 		ch <- errorableKV{nil, err}
 		return
 	}
 
-	values := []KeyValue{}
+	values := []storage.KeyValue{}
 	maxVersionKey, err := vctx.MaxVersionKey(kStart)
 	if err != nil {
 		ch <- errorableKV{nil, err}
@@ -363,10 +363,10 @@ func (db *LevelDB) versionedRange(vctx storage.VersionedContext, kStart, kEnd []
 		if it.Valid() {
 			if !keysOnly {
 				itValue = it.Value()
-				StoreValueBytesRead <- len(itValue)
+				storage.StoreValueBytesRead <- len(itValue)
 			}
 			itKey := it.Key()
-			StoreKeyBytesRead <- len(itKey)
+			storage.StoreKeyBytesRead <- len(itKey)
 			// Did we pass all versions for last key read?
 			if bytes.Compare(itKey, maxVersionKey) > 0 {
 				maxVersionKey, err = vctx.MaxVersionKey(itKey)
@@ -382,7 +382,7 @@ func (db *LevelDB) versionedRange(vctx storage.VersionedContext, kStart, kEnd []
 				if kv.K != nil {
 					ch <- errorableKV{kv, nil}
 				}
-				values = []KeyValue{}
+				values = []storage.KeyValue{}
 			}
 			// Did we pass the final key?
 			if bytes.Compare(itKey, maxKey) > 0 {
@@ -393,16 +393,17 @@ func (db *LevelDB) versionedRange(vctx storage.VersionedContext, kStart, kEnd []
 						return
 					}
 					if kv.K != nil {
-						ch <- errorableKV{kv, err}
+						ch <- errorableKV{kv, nil}
 					}
-					ch <- nil
+					ch <- errorableKV{nil, nil}
 				}
 				return
 			}
-			values = append(values, KeyValue{itKey, itValue})
+			values = append(values, storage.KeyValue{itKey, itValue})
 			it.Next()
 		} else {
-			return it.GetError()
+			ch <- errorableKV{nil, it.GetError()}
+			return
 		}
 	}
 }
@@ -411,7 +412,7 @@ func (db *LevelDB) versionedRange(vctx storage.VersionedContext, kStart, kEnd []
 func (db *LevelDB) unversionedRange(ctx storage.Context, kStart, kEnd []byte, ch chan errorableKV, keysOnly bool) {
 	dvid.StartCgo()
 	ro := levigo.NewReadOptions()
-	it := c.db.ldb.NewIterator(ro)
+	it := db.ldb.NewIterator(ro)
 	defer func() {
 		it.Close()
 		dvid.StopCgo()
@@ -423,19 +424,20 @@ func (db *LevelDB) unversionedRange(ctx storage.Context, kStart, kEnd []byte, ch
 		if it.Valid() {
 			if !keysOnly {
 				itValue = it.Value()
-				StoreValueBytesRead <- len(itValue)
+				storage.StoreValueBytesRead <- len(itValue)
 			}
 			itKey := it.Key()
-			StoreKeyBytesRead <- len(itKey)
+			storage.StoreKeyBytesRead <- len(itKey)
 			// Did we pass the final key?
 			if bytes.Compare(itKey, kEnd) > 0 {
-				ch <- nil
+				ch <- errorableKV{nil, nil}
 				return
 			}
-			ch <- errorableKV{&KeyValue{itKey, itValue}, nil}
+			ch <- errorableKV{&storage.KeyValue{itKey, itValue}, nil}
 			it.Next()
 		} else {
-			return it.GetError()
+			ch <- errorableKV{nil, it.GetError()}
+			return
 		}
 	}
 }
@@ -459,7 +461,7 @@ func (db *LevelDB) KeysInRange(ctx storage.Context, kStart, kEnd []byte) ([][]by
 	values := [][]byte{}
 	for {
 		result := <-ch
-		if result == nil {
+		if result.KeyValue == nil {
 			return values, nil
 		}
 		if result.error != nil {
@@ -485,10 +487,10 @@ func (db *LevelDB) GetRange(ctx storage.Context, kStart, kEnd []byte) ([]*storag
 	}()
 
 	// Consume the key-value pairs.
-	values := []KeyValue{}
+	values := []*storage.KeyValue{}
 	for {
 		result := <-ch
-		if result == nil {
+		if result.KeyValue == nil {
 			return values, nil
 		}
 		if result.error != nil {
@@ -500,7 +502,7 @@ func (db *LevelDB) GetRange(ctx storage.Context, kStart, kEnd []byte) ([]*storag
 
 // ProcessRange sends a range of key-value pairs to chunk handlers.  If the keys are versioned,
 // only key-value pairs for kStart's version will be transmitted.
-func (db *LevelDB) ProcessRange(ctx storage.Context, kStart, kEnd []byte, op *ChunkOp, f func(*Chunk)) error {
+func (db *LevelDB) ProcessRange(ctx storage.Context, kStart, kEnd []byte, op *storage.ChunkOp, f func(*storage.Chunk)) error {
 	ch := make(chan errorableKV)
 
 	// Run the range query on a potentially versioned key in a goroutine.
@@ -513,10 +515,9 @@ func (db *LevelDB) ProcessRange(ctx storage.Context, kStart, kEnd []byte, op *Ch
 	}()
 
 	// Consume the key-value pairs.
-	values := []KeyValue{}
 	for {
 		result := <-ch
-		if result == nil {
+		if result.KeyValue == nil {
 			return nil
 		}
 		if result.error != nil {
@@ -525,7 +526,7 @@ func (db *LevelDB) ProcessRange(ctx storage.Context, kStart, kEnd []byte, op *Ch
 		if op.Wg != nil {
 			op.Wg.Add(1)
 		}
-		chunk := &Chunk{op, result.KeyValue}
+		chunk := &storage.Chunk{op, result.KeyValue}
 		f(chunk)
 	}
 }
@@ -539,8 +540,8 @@ func (db *LevelDB) Put(ctx storage.Context, k, v []byte) error {
 	key := ctx.ConstructKey(k)
 	err := db.ldb.Put(wo, key, v)
 	dvid.StopCgo()
-	StoreKeyBytesWritten <- len(key)
-	StoreValueBytesWritten <- len(v)
+	storage.StoreKeyBytesWritten <- len(key)
+	storage.StoreValueBytesWritten <- len(v)
 	return err
 }
 
@@ -565,8 +566,8 @@ func (db *LevelDB) PutRange(ctx storage.Context, values []storage.KeyValue) erro
 	if err != nil {
 		return err
 	}
-	StoreKeyBytesWritten <- keyBytesPut
-	StoreValueBytesWritten <- valueBytesPut
+	storage.StoreKeyBytesWritten <- keyBytesPut
+	storage.StoreValueBytesWritten <- valueBytesPut
 	return nil
 }
 
@@ -589,7 +590,7 @@ type goBatch struct {
 }
 
 // NewBatch returns an implementation that allows batch writes
-func (db *LevelDB) NewBatch(ctx storage.Context) Batch {
+func (db *LevelDB) NewBatch(ctx storage.Context) storage.Batch {
 	dvid.StartCgo()
 	defer dvid.StopCgo()
 	return &goBatch{ctx, levigo.NewWriteBatch(), db.options.WriteOptions, db.ldb}
@@ -607,8 +608,8 @@ func (batch *goBatch) Put(k, v []byte) {
 	dvid.StartCgo()
 	defer dvid.StopCgo()
 	key := batch.ctx.ConstructKey(k)
-	StoreKeyBytesWritten <- len(key)
-	StoreValueBytesWritten <- len(v)
+	storage.StoreKeyBytesWritten <- len(key)
+	storage.StoreValueBytesWritten <- len(v)
 	batch.WriteBatch.Put(key, v)
 }
 
@@ -667,7 +668,7 @@ type leveldbOptions struct {
 // the next time the database is opened.
 func (opts *leveldbOptions) SetWriteBufferSize(nBytes int) {
 	if nBytes != opts.writeBufferSize {
-		dvid.Log(dvid.Debug, "Write buffer set to %d bytes.\n", nBytes)
+		dvid.Debugf("Write buffer set to %d bytes.\n", nBytes)
 		opts.Options.SetWriteBufferSize(nBytes)
 		opts.writeBufferSize = nBytes
 	}
@@ -700,7 +701,7 @@ func (opts *leveldbOptions) GetMaxOpenFiles() (nFiles int) {
 // compression is enabled.  This parameter can be changed dynamically.
 func (opts *leveldbOptions) SetBlockSize(nBytes int) {
 	if nBytes != opts.blockSize {
-		dvid.Log(dvid.Debug, "Block size set to %d bytes.\n", nBytes)
+		dvid.Debugf("Block size set to %d bytes.\n", nBytes)
 		opts.Options.SetBlockSize(nBytes)
 		opts.blockSize = nBytes
 	}
@@ -718,7 +719,7 @@ func (opts *leveldbOptions) SetLRUCacheSize(nBytes int) {
 		if opts.cache != nil {
 			opts.cache.Close()
 		}
-		dvid.Log(dvid.Debug, "LRU cache size set to %d bytes.\n", nBytes)
+		dvid.Debugf("LRU cache size set to %d bytes.\n", nBytes)
 		opts.cache = levigo.NewLRUCache(nBytes)
 		opts.nLRUCacheBytes = nBytes
 		opts.Options.SetCache(opts.cache)

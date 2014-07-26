@@ -149,8 +149,12 @@ else ()
         DEPENDS     ${golang_NAME}
         COMMENT     "Adding gojsonschema library...")
 
-    set (DVID_GO_PACKAGES gopackages gojsonschema)
+    add_custom_target (lumberjack
+        ${BUILDEM_ENV_STRING} go get ${GO_GET} gopkg.in/natefinch/lumberjack.v2
+        DEPENDS     ${golang_NAME}
+        COMMENT     "Adding lumberjack logger library...")
 
+    set (DVID_GO_PACKAGES gopackages gojsonschema lumberjack)
     
     add_custom_target (nrsc
         ${BUILDEM_ENV_STRING} ${GO_ENV} go build -o ${BUILDEM_BIN_DIR}/nrsc
@@ -181,7 +185,7 @@ else ()
         ${BUILDEM_ENV_STRING} ${GO_ENV} ${CGO_FLAGS} go build -o ${BUILDEM_BIN_DIR}/dvid 
         -v -tags '${DVID_BACKEND} ${DVID_GRAPHBACKEND} ${DVID_BUILD_TAGS}' cmd/dvid/main.go 
         WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
-        DEPENDS     ${golang_NAME} ${DVID_BACKEND_DEPEND}  ${hdf5_NAME}
+        DEPENDS     ${golang_NAME} ${DVID_BACKEND_DEPEND} ${DVID_GO_PACKAGES} ${hdf5_NAME}
         COMMENT     "Compiling and installing dvid executable...")
 
     # Build DVID with embedded console 

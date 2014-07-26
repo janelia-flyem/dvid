@@ -137,7 +137,7 @@ func StoreKeyLabelSpatialMap(labeler Labeler, batcher storage.Batcher, versionID
 	batch := batcher.NewBatch()
 	defer func() {
 		if err := batch.Commit(); err != nil {
-			dvid.Log(dvid.Normal, "Error on batch PUT of KeyLabelSpatialMap: %s\n", err.Error())
+			dvid.Infof("Error on batch PUT of KeyLabelSpatialMap: %s\n", err.Error())
 		}
 	}()
 	bsIndex := make([]byte, 1+8+dvid.IndexZYXSize)
@@ -148,7 +148,7 @@ func StoreKeyLabelSpatialMap(labeler Labeler, batcher storage.Batcher, versionID
 		key := labeler.DataKey(versionID, dvid.IndexBytes(bsIndex))
 		runsBytes, err := rles.MarshalBinary()
 		if err != nil {
-			dvid.Log(dvid.Normal, "Error encoding KeyLabelSpatialMap keys for mapped label %d: %s\n", b, err.Error())
+			dvid.Infof("Error encoding KeyLabelSpatialMap keys for mapped label %d: %s\n", b, err.Error())
 			return
 		}
 		batch.Put(key, runsBytes)
@@ -170,7 +170,7 @@ func ComputeSizes(labeler Labeler, sizeCh chan *storage.Chunk, db storage.Ordere
 	const BATCH_SIZE = 10000
 	batcher, ok := db.(storage.Batcher)
 	if !ok {
-		dvid.Log(dvid.Normal, "Storage engine does not support Batch PUT.  Aborting\n")
+		dvid.Infof("Storage engine does not support Batch PUT.  Aborting\n")
 		return
 	}
 	batch := batcher.NewBatch()
@@ -189,7 +189,7 @@ func ComputeSizes(labeler Labeler, sizeCh chan *storage.Chunk, db storage.Ordere
 			key := NewLabelSizesKey(labeler, versionID, curSize, curLabel)
 			batch.Put(key, dvid.EmptyValue())
 			if err := batch.Commit(); err != nil {
-				dvid.Log(dvid.Normal, "Error on batch PUT of label sizes: %s\n", err.Error())
+				dvid.Infof("Error on batch PUT of label sizes: %s\n", err.Error())
 			}
 			return
 		}
@@ -198,7 +198,7 @@ func ComputeSizes(labeler Labeler, sizeCh chan *storage.Chunk, db storage.Ordere
 		// Compute the size
 		var rles dvid.RLEs
 		if err := rles.UnmarshalBinary(chunk.V); err != nil {
-			dvid.Log(dvid.Normal, "Error deserializing RLEs: %s\n", err.Error())
+			dvid.Infof("Error deserializing RLEs: %s\n", err.Error())
 			return
 		}
 		numVoxels, _ := rles.Stats()
@@ -211,7 +211,7 @@ func ComputeSizes(labeler Labeler, sizeCh chan *storage.Chunk, db storage.Ordere
 			putsInBatch++
 			if putsInBatch%BATCH_SIZE == 0 {
 				if err := batch.Commit(); err != nil {
-					dvid.Log(dvid.Normal, "Error on batch PUT of label sizes: %s\n", err.Error())
+					dvid.Infof("Error on batch PUT of label sizes: %s\n", err.Error())
 					return
 				}
 				batch = batcher.NewBatch()

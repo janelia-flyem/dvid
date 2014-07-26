@@ -160,14 +160,14 @@ func logHttpPanics(handler func(http.ResponseWriter, *http.Request)) func(http.R
 
 func NotFound(w http.ResponseWriter, r *http.Request) {
 	errorMsg := fmt.Sprintf("Could not find the URL: %s", r.URL.Path)
-	dvid.Log(dvid.Normal, errorMsg)
+	dvid.Infof(errorMsg)
 	http.Error(w, errorMsg, http.StatusNotFound)
 }
 
 func BadRequest(w http.ResponseWriter, r *http.Request, message string) {
 	errorMsg := fmt.Sprintf("ERROR using REST API: %s (%s).", message, r.URL.Path)
 	errorMsg += "  Use 'dvid help' to get proper API request format.\n"
-	dvid.Log(dvid.Normal, errorMsg)
+	dvid.Infof(errorMsg)
 	http.Error(w, errorMsg, http.StatusBadRequest)
 }
 

@@ -32,10 +32,11 @@
 package storage
 
 import (
+	"fmt"
 	"log"
 
+	"github.com/couchbaselabs/go-couchbase"
 	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/janelia-flyem/go/go-couchbase"
 )
 
 const (
@@ -86,13 +87,13 @@ func NewEngine(url string, create bool, options *Options) (db Engine, err error)
 
 // --- Engine interface ----
 
-func (db *goCouch) IsOrderedKeyValueDB() bool     { return true }
-func (db *goCouch) IsJSONDatastore() bool  { return true }
-func (db *goCouch) ProvidesIterator() bool { return true }
-func (db *goCouch) IsBulkIniter() bool     { return true }
-func (db *goCouch) IsBulkLoader() bool     { return true }
-func (db *goCouch) IsBatcher() bool        { return true }
-func (db *goCouch) GetOptions() *Options   { return &Options{} }
+func (db *goCouch) IsOrderedKeyValueDB() bool { return true }
+func (db *goCouch) IsJSONDatastore() bool     { return true }
+func (db *goCouch) ProvidesIterator() bool    { return true }
+func (db *goCouch) IsBulkIniter() bool        { return true }
+func (db *goCouch) IsBulkLoader() bool        { return true }
+func (db *goCouch) IsBatcher() bool           { return true }
+func (db *goCouch) GetOptions() *Options      { return &Options{} }
 
 // ---- OrderedKeyValueDB interface -----
 
@@ -276,7 +277,7 @@ func (opt *Options) initBySettings(create bool) *leveldbOptions {
 // the next time the database is opened.
 func (opts *leveldbOptions) SetWriteBufferSize(nBytes int) {
 	if nBytes != opts.writeBufferSize {
-		dvid.Log(dvid.Debug, "Write buffer set to %d bytes.\n", nBytes)
+		dvid.Debugf("Write buffer set to %d bytes.\n", nBytes)
 		opts.Options.SetWriteBufferSize(nBytes)
 		opts.writeBufferSize = nBytes
 	}
@@ -309,7 +310,7 @@ func (opts *leveldbOptions) GetMaxOpenFiles() (nFiles int) {
 // compression is enabled.  This parameter can be changed dynamically.
 func (opts *leveldbOptions) SetBlockSize(nBytes int) {
 	if nBytes != opts.blockSize {
-		dvid.Log(dvid.Debug, "Block size set to %d bytes.\n", nBytes)
+		dvid.Debugf("Block size set to %d bytes.\n", nBytes)
 		opts.Options.SetBlockSize(nBytes)
 		opts.blockSize = nBytes
 	}
@@ -327,7 +328,7 @@ func (opts *leveldbOptions) SetLRUCacheSize(nBytes int) {
 		if opts.cache != nil {
 			opts.cache.Close()
 		}
-		dvid.Log(dvid.Debug, "LRU cache size set to %d bytes.\n", nBytes)
+		dvid.Debugf("LRU cache size set to %d bytes.\n", nBytes)
 		opts.cache = levigo.NewLRUCache(nBytes)
 		opts.nLRUCacheBytes = nBytes
 		opts.Options.SetCache(opts.cache)

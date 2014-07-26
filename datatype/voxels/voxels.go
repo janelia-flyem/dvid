@@ -454,7 +454,7 @@ func PutVoxels(uuid dvid.UUID, i IntData, e ExtData) error {
 		if extentChanged {
 			err := service.SaveRepo(uuid)
 			if err != nil {
-				dvid.Log(dvid.Normal, "Error in trying to save repo on change: %s\n", err.Error())
+				dvid.Infof("Error in trying to save repo on change: %s\n", err.Error())
 			}
 		}
 	}()
@@ -643,7 +643,7 @@ func loadXYImages(i IntData, load *bulkLoadInfo) error {
 					}
 				}
 				var bufSize uint64 = uint64(blockBytes) * uint64(numBlocks) * uint64(numLayers) / 1000000
-				dvid.Log(dvid.Debug, "Allocated %d MB for buffers.\n", bufSize)
+				dvid.Debugf("Allocated %d MB for buffers.\n", bufSize)
 			} else {
 				blocks[curBlocks] = make(Blocks, numBlocks, numBlocks)
 				for i := 0; i < numBlocks; i++ {
@@ -667,7 +667,7 @@ func loadXYImages(i IntData, load *bulkLoadInfo) error {
 			// Process an XY image (slice).
 			changed, err := writeXYImage(i, ext, blocks[curBlocks], load.versionID)
 			if err != nil {
-				dvid.Log(dvid.Normal, "Error writing XY image: %s\n", err.Error())
+				dvid.Infof("Error writing XY image: %s\n", err.Error())
 			}
 			if changed {
 				load.extentChanged.SetTrue()
@@ -682,7 +682,7 @@ func loadXYImages(i IntData, load *bulkLoadInfo) error {
 			layerWritten[curBlocks].Add(1)
 			go func(curBlocks int) {
 				layerTransferred[curBlocks].Wait()
-				dvid.Log(dvid.Debug, "Writing block buffer %d using %s and %s...\n",
+				dvid.Debugf("Writing block buffer %d using %s and %s...\n",
 					curBlocks, i.Compression(), i.Checksum())
 				err := writeBlocks(i.Compression(), i.Checksum(), blocks[curBlocks],
 					&layerWritten[curBlocks], &waitForWrites)
@@ -692,10 +692,10 @@ func loadXYImages(i IntData, load *bulkLoadInfo) error {
 			}(curBlocks)
 			// We can't move to buffer X until all blocks from buffer X have already been written.
 			curBlocks = (curBlocks + 1) % numLayers
-			dvid.Log(dvid.Debug, "Waiting for layer %d to be written before reusing layer %d blocks\n",
+			dvid.Debugf("Waiting for layer %d to be written before reusing layer %d blocks\n",
 				curBlocks, curBlocks)
 			layerWritten[curBlocks].Wait()
-			dvid.Log(dvid.Debug, "Using layer %d...\n", curBlocks)
+			dvid.Debugf("Using layer %d...\n", curBlocks)
 		}
 
 		fileNum++
@@ -721,7 +721,7 @@ func writeBlocks(compress dvid.Compression, checksum dvid.Checksum, blocks Block
 	<-server.HandlerToken
 	go func() {
 		defer func() {
-			dvid.Log(dvid.Debug, "Wrote voxel blocks.  Before %s: %d bytes.  After: %d bytes\n",
+			dvid.Debugf("Wrote voxel blocks.  Before %s: %d bytes.  After: %d bytes\n",
 				compress, preCompress, postCompress)
 			server.HandlerToken <- 1
 			wg1.Done()
@@ -744,14 +744,14 @@ func writeBlocks(compress dvid.Compression, checksum dvid.Checksum, blocks Block
 				batch.Put(block.K, serialization)
 				if i%KVWriteSize == KVWriteSize-1 {
 					if err := batch.Commit(); err != nil {
-						dvid.Log(dvid.Normal, "Error on trying to write batch: %s\n", err.Error())
+						dvid.Infof("Error on trying to write batch: %s\n", err.Error())
 						return
 					}
 					batch = batcher.NewBatch()
 				}
 			}
 			if err := batch.Commit(); err != nil {
-				dvid.Log(dvid.Normal, "Error on trying to write batch: %s\n", err.Error())
+				dvid.Infof("Error on trying to write batch: %s\n", err.Error())
 				return
 			}
 		} else {
@@ -825,7 +825,7 @@ func LoadImages(i IntData, uuid dvid.UUID, offset dvid.Point, filenames []string
 		if load.extentChanged.Value() {
 			err := service.SaveRepo(uuid)
 			if err != nil {
-				dvid.Log(dvid.Normal, "Error in trying to save repo on change: %s\n", err.Error())
+				dvid.Infof("Error in trying to save repo on change: %s\n", err.Error())
 			}
 		}
 	}()
@@ -1556,7 +1556,7 @@ func (props *Properties) SetByConfig(config dvid.Config) error {
 		return err
 	}
 	if found {
-		dvid.Log(dvid.Normal, "Changing resolution of voxels to %s\n", s)
+		dvid.Infof("Changing resolution of voxels to %s\n", s)
 		props.Resolution.VoxelSize, err = dvid.StringToNdFloat32(s, ",")
 		if err != nil {
 			return err
@@ -1767,7 +1767,7 @@ func (d *Data) PutLocal(request datastore.Request, reply *datastore.Response) er
 	} else {
 		addedFiles = fmt.Sprintf("filenames: %s [%d more]", filenames[0], len(filenames)-1)
 	}
-	dvid.Log(dvid.Debug, addedFiles+"\n")
+	dvid.Debugf(addedFiles + "\n")
 
 	// Get plane
 	plane, err := dvid.DataShapeString(planeStr).DataShape()
@@ -1937,7 +1937,7 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 		} else {
 			addedFiles = fmt.Sprintf("filenames: %s [%d more]", filenames[0], len(filenames)-1)
 		}
-		dvid.Log(dvid.Debug, addedFiles+"\n")
+		dvid.Debugf(addedFiles + "\n")
 
 		// Get version node
 		uuid, err := server.MatchingUUID(uuidStr)
@@ -2270,7 +2270,7 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 	} else {
 		blockData, _, err = dvid.DeserializeData(chunk.V, true)
 		if err != nil {
-			dvid.Log(dvid.Normal, "Unable to deserialize block in '%s': %s\n",
+			dvid.Infof("Unable to deserialize block in '%s': %s\n",
 				d.Data().DataName(), err.Error())
 			return
 		}
@@ -2281,25 +2281,25 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 	switch op.OpType {
 	case GetOp:
 		if err = ReadFromBlock(op.ExtData, block, d.BlockSize()); err != nil {
-			dvid.Log(dvid.Normal, "Unable to ReadFromBlock() in '%s': %s\n",
+			dvid.Infof("Unable to ReadFromBlock() in '%s': %s\n",
 				d.Data().DataName(), err.Error())
 			return
 		}
 	case PutOp:
 		if err = WriteToBlock(op.ExtData, block, d.BlockSize()); err != nil {
-			dvid.Log(dvid.Normal, "Unable to WriteToBlock() in '%s': %s\n",
+			dvid.Infof("Unable to WriteToBlock() in '%s': %s\n",
 				d.Data().DataName(), err.Error())
 			return
 		}
 		db, err := server.OrderedKeyValueSetter()
 		if err != nil {
-			dvid.Log(dvid.Normal, "Database doesn't support OrderedKeyValueSetter in '%s': %s\n",
+			dvid.Infof("Database doesn't support OrderedKeyValueSetter in '%s': %s\n",
 				d.Data().DataName(), err.Error())
 			return
 		}
 		serialization, err := dvid.SerializeData(blockData, d.Compression(), d.Checksum())
 		if err != nil {
-			dvid.Log(dvid.Normal, "Unable to serialize block in '%s': %s\n",
+			dvid.Infof("Unable to serialize block in '%s': %s\n",
 				d.Data().DataName(), err.Error())
 			return
 		}
