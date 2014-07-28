@@ -36,8 +36,8 @@ const graphSchema = `
       "description": "Transaction for locking vertex",
       "type": "object",
       "properties": {
-        "Id": { "type": "integer", "description": "64 bit ID for vertex" },
-        "Trans": {"type": "integer", "description": "64 bit transaction number" }
+        "Id": { "type": "number", "description": "64 bit ID for vertex" },
+        "Trans": {"type": "number", "description": "64 bit transaction number" }
       },
       "required": ["Vertex", "Num"]
     },
@@ -45,7 +45,7 @@ const graphSchema = `
       "description": "Describes a vertex in a graph",
       "type": "object",
       "properties": {
-        "Id": { "type": "integer", "description": "64 bit ID for vertex >0" },
+        "Id": { "type": "number", "description": "64 bit ID for vertex >0" },
         "Weight": { "type": "number", "description": "Weight/size of vertex" }
       },
       "required": ["Id"]
@@ -54,8 +54,8 @@ const graphSchema = `
       "description": "Describes an edge in a graph",
       "type": "object",
       "properties": {
-        "Id1": { "type": "integer", "description": "64 bit ID for vertex1 >0" },
-        "Id2": { "type": "integer", "description": "64 bit ID for vertex2 >0" },
+        "Id1": { "type": "number", "description": "64 bit ID for vertex1 >0" },
+        "Id2": { "type": "number", "description": "64 bit ID for vertex2 >0" },
         "Weight": { "type": "number", "description": "Weight/size of edge" }
       },
       "required": ["Id1", "Id2"]
@@ -419,24 +419,24 @@ func (t *transactionGroup) exportTransactionsBinary() []byte {
 	start := 0
 	total_size := 16 + len(t.locked_ids)*8*2 + len(t.lockedold_ids)*8 + len(t.outdated_ids)*8
 	buf := make([]byte, total_size, total_size)
-	binary.PutUvarint(buf[start:], uint64(len(t.locked_ids)))
+	binary.LittleEndian.PutUint64(buf[start:], uint64(len(t.locked_ids)))
 	start += 8
 
 	for vertex, id := range t.locked_ids {
-		binary.PutUvarint(buf[start:], uint64(vertex))
+	        binary.LittleEndian.PutUint64(buf[start:], uint64(vertex))
 		start += 8
-		binary.PutUvarint(buf[start:], id)
+	        binary.LittleEndian.PutUint64(buf[start:], id)
 		start += 8
 	}
 
-	binary.PutUvarint(buf[start:], uint64(len(t.lockedold_ids)+len(t.outdated_ids)))
+	binary.LittleEndian.PutUint64(buf[start:], uint64(len(t.lockedold_ids)+len(t.outdated_ids)))
 	start += 8
 	for _, vertex := range t.lockedold_ids {
-		binary.PutUvarint(buf[start:], uint64(vertex))
+	        binary.LittleEndian.PutUint64(buf[start:], uint64(vertex))
 		start += 8
 	}
 	for _, vertex := range t.outdated_ids {
-		binary.PutUvarint(buf[start:], uint64(vertex))
+	        binary.LittleEndian.PutUint64(buf[start:], uint64(vertex))
 		start += 8
 	}
 
@@ -517,14 +517,14 @@ func (t *transactionLog) createTransactionGroup(vertices []transactionItem, read
 // pairs and calls creatTransactionGroup
 func (t *transactionLog) createTransactionGroupBinary(data []byte, readonly bool) (*transactionGroup, int, error) {
 	start := 0
-	numtrans, _ := binary.Uvarint(data[start:])
+	numtrans := binary.LittleEndian.Uint64(data[start:])
 	start += 8
 
 	var vertices []transactionItem
 	for i := uint64(0); i < numtrans; i++ {
-		vertex, _ := binary.Uvarint(data[start:])
+	        vertex := binary.LittleEndian.Uint64(data[start:])
 		start += 8
-		trans, _ := binary.Uvarint(data[start:])
+	        trans := binary.LittleEndian.Uint64(data[start:])
 		start += 8
 
 		vertices = append(vertices, transactionItem{storage.VertexID(vertex), trans})
@@ -1017,7 +1017,7 @@ func (d *Data) handlePropertyTransaction(uuid dvid.UUID, w http.ResponseWriter, 
 		readonly = true
 	}
 	data, err := ioutil.ReadAll(r.Body)
-
+        
 	// only allow 1000 vertices to be locked
 	transactions, start, err := d.transaction_log.createTransactionGroupBinary(data, readonly)
 	defer transactions.closeTransaction()
@@ -1027,26 +1027,32 @@ func (d *Data) handlePropertyTransaction(uuid dvid.UUID, w http.ResponseWriter, 
 
 	returned_data := transactions.exportTransactionsBinary()
 
+
 	if method == "post" {
 		// deserialize transaction (vertex or edge) -- use URI?
-		num_properties, _ := binary.Uvarint(data[start:])
+	        num_properties := binary.LittleEndian.Uint64(data[start:])
 		start += 8
 
 		for i := uint64(0); i < num_properties; i++ {
-			temp, _ := binary.Uvarint(data[start:])
+	                temp := binary.LittleEndian.Uint64(data[start:])
 			id := storage.VertexID(temp)
 			var id2 storage.VertexID
 			start += 8
 			if edgemode {
-				temp, _ = binary.Uvarint(data[start:])
+	                        temp = binary.LittleEndian.Uint64(data[start:])
 				id2 = storage.VertexID(temp)
 				start += 8
 			}
-			data_size, _ := binary.Uvarint(data[start:])
+	                data_size := binary.LittleEndian.Uint64(data[start:])
 			start += 8
 			data_begin := start
-			start += int(data_size)
+		
+                        start += int(data_size)
 			data_end := start
+
+                        if data_begin == data_end {
+                                continue
+                        }
 
 			// check if post is possible
 			if _, ok := transactions.locked_ids[id]; !ok {
@@ -1073,22 +1079,22 @@ func (d *Data) handlePropertyTransaction(uuid dvid.UUID, w http.ResponseWriter, 
 			}
 		}
 	} else {
-		num_properties, _ := binary.Uvarint(data[start:])
+	        num_properties := binary.LittleEndian.Uint64(data[start:])
 		start += 8
 		num_properties_loc := len(returned_data)
 		longbuf := make([]byte, 8, 8)
-		binary.PutUvarint(longbuf, 0)
+	        binary.LittleEndian.PutUint64(longbuf, 0)
 		returned_data = append(returned_data, longbuf...)
 		num_executed_transactions := uint64(0)
 
 		// read the vertex or edge properties desired
 		for i := uint64(0); i < num_properties; i++ {
-			temp, _ := binary.Uvarint(data[start:])
-			id := storage.VertexID(temp)
+	                temp := binary.LittleEndian.Uint64(data[start:])
+                        id := storage.VertexID(temp)
 			var id2 storage.VertexID
 			start += 8
-			if edgemode {
-				temp, _ := binary.Uvarint(data[start:])
+                        if edgemode {
+	                        temp := binary.LittleEndian.Uint64(data[start:])
 				id2 = storage.VertexID(temp)
 				start += 8
 			}
@@ -1124,19 +1130,19 @@ func (d *Data) handlePropertyTransaction(uuid dvid.UUID, w http.ResponseWriter, 
 
 			// save transaction
 			num_executed_transactions += 1
-			binary.PutUvarint(longbuf, uint64(id))
+	                binary.LittleEndian.PutUint64(longbuf, uint64(id))
 			returned_data = append(returned_data, longbuf...)
 			if edgemode {
-				binary.PutUvarint(longbuf, uint64(id2))
+	                        binary.LittleEndian.PutUint64(longbuf, uint64(id2))
 				returned_data = append(returned_data, longbuf...)
 			}
-			binary.PutUvarint(longbuf, uint64(len(data_serialized)))
+	                binary.LittleEndian.PutUint64(longbuf, uint64(len(data_serialized)))
 			returned_data = append(returned_data, longbuf...)
 			returned_data = append(returned_data, data_serialized...)
 		}
 
 		// update the number of transactions
-		binary.PutUvarint(returned_data[num_properties_loc:], num_executed_transactions)
+	        binary.LittleEndian.PutUint64(returned_data[num_properties_loc:], num_executed_transactions)
 	}
 
 	w.Header().Set("Content-Type", "application/octet-stream")
