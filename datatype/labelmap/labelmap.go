@@ -760,7 +760,6 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 					throttleMsg := fmt.Sprintf("Server already running maximum of %d throttled operations",
 						server.MaxThrottledOps)
 					http.Error(w, throttleMsg, http.StatusServiceUnavailable)
-					dvid.Log(dvid.Debug, "Returned 503 since already performing a throttled operation.\n")
 					return nil
 				}
 			}

@@ -817,7 +817,6 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 					throttleMsg := fmt.Sprintf("Server already running maximum of %d throttled operations",
 						server.MaxThrottledOps)
 					http.Error(w, throttleMsg, http.StatusServiceUnavailable)
-					dvid.Log(dvid.Debug, "Returned 503 since already performing a throttled operation.\n")
 					return nil
 				}
 			}
@@ -1187,8 +1186,9 @@ func (d *Data) createCompositeChunk(chunk *storage.Chunk) {
 	labelI := 0
 	hashBuf := make([]byte, 4, 4)
 	for _, grayscale := range grayscaleData {
-		murmurhash3(labelData[labelI:labelI+8], hashBuf)
-		hashBuf[3] = grayscale
+		//murmurhash3(labelData[labelI:labelI+8], hashBuf)
+		//hashBuf[3] = grayscale
+        writePseudoColor(grayscale, labelData[labelI:labelI+8], hashBuf)
 		copy(compositeData[compositeI:compositeI+4], hashBuf)
 		compositeI += 4
 		labelI += 8
@@ -1208,6 +1208,21 @@ func (d *Data) createCompositeChunk(chunk *storage.Chunk) {
 			labelKey.Index, err.Error())
 		return
 	}
+}
+
+func writePseudoColor(grayscale uint8, in64bits, out32bits []byte) {
+    murmurhash3(in64bits, out32bits)
+    var t uint64
+    t = uint64(out32bits[0]) * uint64(grayscale)
+    t >>= 8
+    out32bits[0] = uint8(t)
+    t = uint64(out32bits[1]) * uint64(grayscale)
+    t >>= 8
+    out32bits[1] = uint8(t)
+    t = uint64(out32bits[2]) * uint64(grayscale)
+    t >>= 8
+    out32bits[2] = uint8(t)
+    out32bits[3] = 255
 }
 
 func murmurhash3(in64bits, out32bits []byte) {
