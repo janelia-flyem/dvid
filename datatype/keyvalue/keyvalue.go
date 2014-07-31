@@ -118,7 +118,7 @@ POST <api URL>/node/<UUID>/<data name>/info
     data name     Name of voxels data.
 
 
-GET  <api URL>/node/<UUID>/<data name>/<key>[/<format>]
+GET  <api URL>/node/<UUID>/<data name>/<key>[/<key2>]
 POST <api URL>/node/<UUID>/<data name>/<key>
 DEL  <api URL>/node/<UUID>/<data name>/<key>  (TO DO)
 
@@ -139,6 +139,7 @@ DEL  <api URL>/node/<UUID>/<data name>/<key>  (TO DO)
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add/retrieve.
     key           An alphanumeric key.
+    key2          If given, return value is a JSON list of all keys between 'key' and 'key2'
 `
 
 func init() {
@@ -191,6 +192,33 @@ func (dtype *Datatype) Help() string {
 // Data embeds the datastore's Data and extends it with keyvalue properties (none for now).
 type Data struct {
 	*datastore.Data
+}
+
+func (d *Data) GetKeysInRange(uuid dvid.UUID, keyBeg, keyEnd string) ([]string, error) {
+	// Compute first and last key for range
+	versionID, err := server.VersionLocalID(uuid)
+	if err != nil {
+		return nil, err
+	}
+	key1 := d.DataKey(versionID, dvid.IndexString(keyBeg))
+	key2 := d.DataKey(versionID, dvid.IndexString(keyEnd))
+	db, err := server.OrderedKeyValueGetter()
+	if err != nil {
+		return nil, err
+	}
+	keys, err := db.KeysInRange(key1, key2)
+	if err != nil {
+		return nil, err
+	}
+	keyList := []string{}
+	for _, key := range keys {
+		dataKey, ok := key.(*datastore.DataKey)
+		if !ok {
+			return nil, fmt.Errorf("Returned keys were not DataKey")
+		}
+		keyList = append(keyList, dataKey.Index.String())
+	}
+	return keyList, nil
 }
 
 // GetData gets a value using a key at a given uuid
@@ -318,22 +346,44 @@ func (d *Data) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	keyStr := parts[3]
 	switch strings.ToLower(r.Method) {
 	case "get":
-		value, found, err := d.GetData(uuid, keyStr)
-		if err != nil {
-			server.BadRequest(w, r, err.Error())
-			return err
+		// TODO: Use one endpoint for now.  Should provide different endpoints:
+		// <name>/value/<key>                  (returns value for a single key)
+		// <name>/keys?min=begKey&max=endKey   (returns keys between endpoints)
+		if len(parts) > 4 {
+			// Return JSON list of keys
+			keyBeg := keyStr
+			keyEnd := parts[4]
+			keyList, err := d.GetKeysInRange(uuid, keyBeg, keyEnd)
+			if err != nil {
+				server.BadRequest(w, r, err.Error())
+				return err
+			}
+			jsonBytes, err := json.Marshal(keyList)
+			if err != nil {
+				server.BadRequest(w, r, err.Error())
+				return err
+			}
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintf(w, string(jsonBytes))
+		} else {
+			// Return value of single key
+			value, found, err := d.GetData(uuid, keyStr)
+			if err != nil {
+				server.BadRequest(w, r, err.Error())
+				return err
+			}
+			if !found {
+				http.Error(w, fmt.Sprintf("Key '%s' not found", keyStr), http.StatusNotFound)
+				return nil
+			}
+			w.Header().Set("Content-Type", "application/octet-stream")
+			_, err = w.Write(value)
+			if err != nil {
+				server.BadRequest(w, r, err.Error())
+				return err
+			}
+			comment = fmt.Sprintf("HTTP GET keyvalue '%s': %d bytes (%s)\n", d.DataName(), len(value), url)
 		}
-		if !found {
-			http.Error(w, fmt.Sprintf("Key '%s' not found", keyStr), http.StatusNotFound)
-			return
-		}
-		w.Header().Set("Content-Type", "application/octet-stream")
-		_, err = w.Write(value)
-		if err != nil {
-			server.BadRequest(w, r, err.Error())
-			return
-		}
-		comment = fmt.Sprintf("HTTP GET keyvalue '%s': %d bytes (%s)\n", d.DataName(), len(value), url)
 	case "post":
 		data, err := ioutil.ReadAll(r.Body)
 		if err != nil {
