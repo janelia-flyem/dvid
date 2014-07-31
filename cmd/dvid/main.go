@@ -79,6 +79,7 @@ Commands that can be performed without a running server:
 	create <datastore path>
 	serve  <datastore path>
 	repair <datastore path>
+
 `
 
 var usage = func() {
@@ -88,7 +89,8 @@ var usage = func() {
 	// Print server DVID help if available
 	err := DoCommand(dvid.Command([]string{"help"}))
 	if err != nil {
-		fmt.Printf("\nUnable to get 'help' from DVID server at %q.\n\n", server.DefaultWebAddress)
+		fmt.Printf("Unable to get 'help' from DVID server at %q.\n%s\n",
+			server.DefaultWebAddress, err.Error())
 	}
 }
 
@@ -164,7 +166,10 @@ func DoCommand(cmd dvid.Command) error {
 		fmt.Println(datastore.Versions())
 	// Send everything else to server via DVID terminal
 	default:
-		client := server.NewClient(*rpcAddress)
+		client, err := server.NewClient(*rpcAddress)
+		if err != nil {
+			return err
+		}
 		request := datastore.Request{Command: cmd}
 		if *useStdin {
 			var err error
