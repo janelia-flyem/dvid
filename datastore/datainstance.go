@@ -5,6 +5,7 @@
 package datastore
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -62,17 +63,16 @@ func (r *Response) Write(w io.Writer) error {
 // DataService is an interface for operations on an instance of a supported datatype.
 type DataService interface {
 	dvid.Data
-
 	TypeService
+	http.Handler
+
+	DataType() TypeService
 
 	// ModifyConfig modifies a configuration in a type-specific way.
 	ModifyConfig(config dvid.Config) error
 
 	// DoRPC handles command line and RPC commands specific to a data type
 	DoRPC(request Request, reply *Response) error
-
-	// ServeHTTP fulfills the http.Handler interface.
-	ServeHTTP(w http.ResponseWriter, r *http.Request)
 }
 
 // Data is the base struct of repo-specific data instances.  It should be embedded
@@ -94,14 +94,32 @@ type Data struct {
 	versioned bool
 }
 
+func (d *Data) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		TypeURL     URLString
+		Name        dvid.DataString
+		RepoUUID    dvid.UUID
+		Compression string
+		Checksum    string
+		Versioned   bool
+	}{
+		TypeURL:     d.TypeURL(),
+		Name:        d.name,
+		RepoUUID:    d.repo.RootUUID(),
+		Compression: d.compression.String(),
+		Checksum:    d.checksum.String(),
+		Versioned:   d.versioned,
+	})
+}
+
 // NewDataService returns a new Data instance that fulfills the DataService interface.
 // This returned Data struct is usually embedded by datatype-specific data instances.
 // By default, LZ4 and the default checksum is used.
 func NewDataService(t TypeService, r Repo, id dvid.InstanceID, name dvid.DataString, c dvid.Config) (*Data, error) {
 	compression, _ := dvid.NewCompression(dvid.LZ4, dvid.DefaultCompression)
 	data := &Data{
-		t,
-		name,
+		TypeService: t,
+		name:        name,
 		id:          id,
 		repo:        r,
 		compression: compression,
@@ -130,7 +148,9 @@ func (d *Data) GetIterator(versionID dvid.VersionID) (dvid.VersionIterator, erro
 
 // -----------
 
-func (d *Data) RepoID() dvid.RepoID { return d.repo.ID() }
+func (d *Data) RepoID() dvid.RepoID {
+	return d.repo.RepoID()
+}
 
 func (d *Data) Compression() dvid.Compression {
 	return d.compression
@@ -138,6 +158,12 @@ func (d *Data) Compression() dvid.Compression {
 
 func (d *Data) Checksum() dvid.Checksum {
 	return d.checksum
+}
+
+// --- DataService implementation -----
+
+func (d *Data) DataType() TypeService {
+	return d.TypeService
 }
 
 func (d *Data) ModifyConfig(config dvid.Config) error {

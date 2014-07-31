@@ -122,9 +122,9 @@ type GraphKeyValueDB struct {
 	dbbatch KeyValueBatcher
 }
 
-// NewGraphStore returns a graph backend that uses the provided keyvalue datastore (the keyvalue
-// parameter will likely be unnecessary for future graph implementations)
-func NewGraphStore(path string, create bool, config dvid.Config, kvdb OrderedKeyValueDB) (Engine, error) {
+// NewGraphStore returns a graph backend that uses the provided keyvalue datastore.
+// If a first-class graph store is used in the future, this function must be changed.
+func NewGraphStore(kvdb OrderedKeyValueDB) (Engine, error) {
 	dbbatch, ok := kvdb.(KeyValueBatcher)
 	var err error
 	if !ok {

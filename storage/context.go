@@ -11,12 +11,51 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 )
 
+// Context allows encapsulation of data that defines the partitioning of the DVID
+// key space.  To prevent conflicting implementations, Context is an opaque interface type
+// that requires use of an implementation from the storage package, either directly or
+// through embedding.
+//
+// For a description of Go language opaque types, see the following:
+//   http://www.onebigfluke.com/2014/04/gos-power-is-in-emergent-behavior.html
+type Context interface {
+	// ConstructKey takes a slice of bytes and generates a key that fits with the
+	// DVID-wide key space partitioning.
+	ConstructKey([]byte) []byte
+
+	// String prints a description of the Context
+	String() string
+
+	// Versioned is true if this Context is also a VersionedContext.
+	Versioned() bool
+
+	// Enforces opaque data type.
+	implementsOpaque()
+}
+
+// VersionedContext extends a Context with the minimal functions necessary to handle
+// versioning in storage engines.
+type VersionedContext interface {
+	Context
+
+	// Returns lower bound key for versions of given byte slice key representation.
+	MinVersionKey([]byte) ([]byte, error)
+
+	// Returns upper bound key for versions of given byte slice key representation.
+	MaxVersionKey([]byte) ([]byte, error)
+
+	// VersionedKeyValue returns the key-value pair corresponding to this key's version
+	// given a list of key-value pairs across many versions.  If no suitable key-value
+	// pair is found, nil is returned.
+	VersionedKeyValue([]KeyValue) (*KeyValue, error)
+}
+
+// ---- Context implementations -----
+
 const (
 	metadataKeyPrefix byte = iota
 	dataKeyPrefix
 )
-
-// ---- Context implementations -----
 
 // MetadataContext is an implementation of Context for MetadataContext persistence.
 type MetadataContext struct{}
@@ -27,8 +66,8 @@ func NewMetadataContext() MetadataContext {
 
 func (ctx MetadataContext) implementsOpaque() {}
 
-func (ctx MetadataContext) ConstructKey(index dvid.Index) []byte {
-	return append([]byte{metadataKeyPrefix}, index.Bytes()...)
+func (ctx MetadataContext) ConstructKey(b []byte) []byte {
+	return append([]byte{metadataKeyPrefix}, b...)
 }
 
 func (ctx MetadataContext) String() string {
@@ -66,9 +105,9 @@ func DataContextIndex(b []byte) ([]byte, error) {
 
 func (ctx *DataContext) implementsOpaque() {}
 
-func (ctx *DataContext) ConstructKey(index dvid.Index) []byte {
+func (ctx *DataContext) ConstructKey(b []byte) []byte {
 	key := append([]byte{dataKeyPrefix}, ctx.data.InstanceID().Bytes()...)
-	key = append(key, index.Bytes()...)
+	key = append(key, b...)
 	return append(key, ctx.version.Bytes()...)
 }
 

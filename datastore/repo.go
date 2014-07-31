@@ -8,30 +8,16 @@ package datastore
 
 import (
 	"encoding/gob"
+	"encoding/json"
 	"errors"
 	"fmt"
 
 	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/janelia-flyem/dvid/storage"
 )
 
 var (
 	ErrModifyLockedNode = errors.New("can't modify locked node")
 )
-
-// Context provides repo management, logging and storage of key-value pairs using tiers of
-// storage.  Contexts are typically set by the server package and are tailored for local,
-// clustered, and cloud-based (service-oriented) DVID servers.
-type Context struct {
-	dvid.Logger
-	metadata  storage.MetaData
-	smalldata storage.SmallData
-	bigdata   storage.BigData
-}
-
-func NewContext(l dvid.Logger, meta storage.MetaData, small storage.SmallData, big storage.BigData) *Context {
-	return &Context{l, meta, small, big}
-}
 
 // IDManager allows atomic ID incrementing across a DVID installation.  In the case
 // of a cluster of DVID servers using a common clustered DB, this requires
@@ -46,13 +32,10 @@ type IDManager interface {
 }
 
 type RepoManager interface {
-	dvid.Logger
 	IDManager
-	gob.GobDecoder
-	gob.GobEncoder
 
-	// MatchingUUID returns a Repo that uniquely matches a uuid string.
-	MatchingUUID(uuidStr string) (dvid.UUID, Repo, error)
+	// MatchingUUID returns version identifiers that uniquely matches a uuid string.
+	MatchingUUID(uuidStr string) (dvid.UUID, dvid.VersionID, error)
 
 	// RepoFromUUID returns a Repo given a UUID.
 	RepoFromUUID(dvid.UUID) (Repo, error)
@@ -62,7 +45,12 @@ type RepoManager interface {
 
 	NewRepo() (Repo, error)
 
-	Datatypes() (map[UrlString]TypeService, error)
+	Datatypes() (map[URLString]TypeService, error)
+
+	// Support serialization to Gob and user-friendly view in JSON
+	gob.GobDecoder
+	gob.GobEncoder
+	json.Marshaler
 }
 
 type Describer interface {
@@ -79,16 +67,20 @@ type Describer interface {
 	GetProperties() (map[string]interface{}, error)
 
 	SetProperty(name string, value interface{}) error
+	SetProperties(map[string]interface{}) error
+
+	GetLog() ([]string, error)
+	AddToLog(hx string) error
 }
 
 type Repo interface {
-	gob.GobDecoder
-	gob.GobEncoder
 	Describer
 
 	RepoID() dvid.RepoID
 
 	RootUUID() dvid.UUID
+
+	Datatypes() (map[URLString]TypeService, error)
 
 	// GetDataByName returns a DataService if the name is present or nil otherwise.
 	// Names can  be UTF8 except for the hyphen, which is a way of passing additional
@@ -114,7 +106,9 @@ type Repo interface {
 
 	Lock(dvid.UUID) error
 
-	Datatypes() (map[UrlString]TypeService, error)
+	gob.GobDecoder
+	gob.GobEncoder
+	json.Marshaler
 }
 
 // ---- Key space handling for metadata
@@ -133,7 +127,7 @@ type metadataIndex struct {
 	repoID dvid.RepoID // Only used for repoKey
 }
 
-func (i *metadataIndex) Duplicate() Index {
+func (i *metadataIndex) Duplicate() dvid.Index {
 	dup := *i
 	return &dup
 }

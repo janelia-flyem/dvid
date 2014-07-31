@@ -15,7 +15,7 @@ type stdLogger struct {
 var logger stdLogger
 
 // Sets up a logger that sends messages via standard log but does not exit or panic.
-func newLogger(c interface{}) Logger {
+func NewLogger(c interface{}) Logger {
 	filename, ok := c.(string)
 	if !ok {
 		log.Fatalf("Cannot open logger.  Received %v instead of string\n", c)

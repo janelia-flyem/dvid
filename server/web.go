@@ -8,15 +8,16 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net/http"
+	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"strings"
 	"time"
 
-	"github.com/janelia-flyem/go/goji"
-	"github.com/janelia-flyem/go/goji/web"
-
+	"bitbucket.org/tebeka/nrsc"
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
@@ -103,43 +104,39 @@ const (
 	WebAPIPath = "/api/" + WebAPIVersion
 )
 
-type Context struct {
-	log         dvid.Logger
-	data        []*datastore.DataContext
-	accessToken string
-}
+// Listen and serve HTTP requests using address and don't let stay-alive
+// connections hog goroutines for more than an hour.
+// See for discussion:
+// http://stackoverflow.com/questions/10971800/golang-http-server-leaving-open-goroutines
+func serveHttp(address, clientDir string) {
+	dvid.Infof("Web server listening at %s ...\n", address)
 
-func initRoutes(webClientDir string) {
+	src := &http.Server{
+		Addr:        address,
+		ReadTimeout: 1 * time.Hour,
+	}
+
 	// Handle RAML interface
-	goji.Get("/interface/", logHttpPanics(interfaceHandler))
-	goji.Get("/interface/version", logHttpPanics(versionHandler))
+	http.HandleFunc("/interface/", logHttpPanics(interfaceHandler))
+	http.HandleFunc("/interface/version", logHttpPanics(versionHandler))
 
-	goji.Get("/help", helpHandler)
-	goji.Get("/load", loadHandler)
+	// Handle Level 2 REST API.
+	http.HandleFunc(WebAPIPath, logHttpPanics(apiHandler))
 
-	goji.Get("/api/server/info", serverInfoHandler)
-	goji.Get("/api/server/types", serverTypesHandler)
+	// Handle static files through serving embedded files
+	// via nrsc or loading files from a specified web client directory.
+	if clientDir == "" {
+		dvid.Infof("Serving web client from embedded files...")
+		if err := nrsc.Initialize(); err != nil {
+			dvid.Errorf("Error initializing embedded data access: %s\n", err.Error())
+		}
+	} else {
+		dvid.Infof("Serving web pages from %s\n", clientDir)
+	}
+	http.HandleFunc("/", logHttpPanics(mainHandler))
 
-	goji.Post("/api/repos", reposPostHandler)
-
-	goji.Get("/api/repos/info", reposInfoHandler)
-	goji.Get("/api/repos/list", reposListHandler)
-
-	repoMux := web.New()
-	goji.Handle("/api/repo/:uuid/*", repoMux)
-	repoMux.Use(repoSelector)
-	repoMux.Post("/api/repo/:uuid/instance", repoPostHandler)
-	repoMux.Get("/api/repo/:uuid/info", repoInfoHandler)
-	repoMux.Get("/api/repo/:uuid/lock", repoLockHandler)
-	repoMux.Get("/api/repo/:uuid/branch", repoBranchHandler)
-
-	instanceMux := web.New()
-	goji.Handle("/api/repo/:uuid/:dataname/*", instanceMux)
-	instanceMux.Use(repoSelector)
-	instanceMux.Use(instanceSelector)
-	instanceMux.NotFound(NotFound)
-
-	goji.Get("/", mainHandler)
+	// Serve it up!
+	src.ListenAndServe()
 }
 
 // Wrapper function so that http handlers recover from panics gracefully
@@ -165,9 +162,8 @@ func NotFound(w http.ResponseWriter, r *http.Request) {
 }
 
 func BadRequest(w http.ResponseWriter, r *http.Request, message string) {
-	errorMsg := fmt.Sprintf("ERROR using REST API: %s (%s).", message, r.URL.Path)
-	errorMsg += "  Use 'dvid help' to get proper API request format.\n"
-	dvid.Infof(errorMsg)
+	errorMsg := fmt.Sprintf("ERROR: %s (%s).", message, r.URL.Path)
+	dvid.Errorf(errorMsg)
 	http.Error(w, errorMsg, http.StatusBadRequest)
 }
 
@@ -180,74 +176,85 @@ func DecodeJSON(r *http.Request) (dvid.Config, error) {
 	return config, nil
 }
 
-// AboutJSON returns a JSON string describing the properties of this server.
-func AboutJSON() (jsonStr string, err error) {
-	data := map[string]string{
-		"Cores":           fmt.Sprintf("%d", dvid.NumCPU),
-		"Maximum Cores":   fmt.Sprintf("%d", runtime.NumCPU()),
-		"DVID datastore":  datastore.Version,
-		"Storage backend": storage.Version,
-		"Storage driver":  storage.Driver,
-		"Server uptime":   time.Since(startupTime).String(),
-	}
-	m, err := json.Marshal(data)
-	if err != nil {
-		return
-	}
-	jsonStr = string(m)
-	return
-}
-
-// ---- Middleware -------------
-
-// repoSelector retrieves the particular repo from a potentially partial string that uniquely
-// identifies the repo.
-func repoSelector(c *web.C, h http.Handler) http.Handler {
-	fn := func(w http.ResponseWriter, r *http.Request) {
-		var err error
-		if c.Env["uuid"], err = MatchingUUID(c.URLParams["uuid"]); err != nil {
-			BadRequest(w, r, err.Error())
-			return
-		}
-		h.ServeHTTP(w, r)
-	}
-	return http.HandlerFunc(fn)
-}
-
-// instanceSelector retrieves the data instance given its complete string name and
-// forwards the request to that instance's HTTP handler.
-func instanceSelector(c *web.C, h http.Handler) http.Handler {
-	fn := func(w http.ResponseWriter, r *http.Request) {
-		var err error
-		dataname := dvid.DataString(c.URLParams["dataname"])
-		uuid := c.Env["uuid"].(dvid.UUID)
-		dataservice, err := runningService.DataServiceByUUID(uuid, dataname)
-		if err != nil {
-			BadRequest(w, r, err.Error())
-			return
-		}
-		err = dataservice.DoHTTP(uuid, w, r)
-		if err != nil {
-			BadRequest(w, r, err.Error())
-		}
-	}
-	return http.HandlerFunc(fn)
-}
-
 // ---- Function types that fulfill http.Handler.  How can a bare function satisfy an interface?
 //      See http://www.onebigfluke.com/2014/04/gos-power-is-in-emergent-behavior.html
 
-func helpHandler(w http.ResponseWriter, r *http.Request) {
+// Handler for web client and other static content
+func mainHandler(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Path
+	// Serve from embedded files in executable if not web client directory was specified
+	if config.webClientDir == "" {
+		if len(path) > 0 && path[0:1] == "/" {
+			path = path[1:]
+		}
+		dvid.Debugf("[%s] Serving from embedded files: %s\n", r.Method, path)
+
+		resource := nrsc.Get(path)
+		if resource == nil {
+			http.NotFound(w, r)
+			return
+		}
+		rsrc, err := resource.Open()
+		if err != nil {
+			BadRequest(w, r, err.Error())
+			return
+		}
+		data, err := ioutil.ReadAll(rsrc)
+		if err != nil {
+			BadRequest(w, r, err.Error())
+			return
+		}
+		dvid.SendHTTP(w, r, path, data)
+	} else {
+		filename := filepath.Join(config.webClientDir, path)
+		dvid.Debugf("[%s] Serving from webclient directory: %s\n", r.Method, filename)
+		http.ServeFile(w, r, filename)
+	}
+}
+
+// Handler for API commands.  Results come back in JSON.
+// We assume all DVID API commands have URLs with prefix /api/...
+// See WebAPIHelp for expected calling URLs and HTTP verbs.
+func apiHandler(w http.ResponseWriter, r *http.Request) {
+	// Break URL request into arguments
+	lenPath := len(WebAPIPath)
+	url := r.URL.Path[lenPath:]
+	parts := strings.Split(url, "/")
+	if len(parts) == 0 {
+		BadRequest(w, r, "Poorly formed request")
+		return
+	}
+
+	// Handle the requests
+	switch parts[0] {
+	case "help":
+		helpRequest(w, r)
+	case "load":
+		loadRequest(w, r)
+	case "server":
+		serverRequest(w, r)
+	case "repos":
+		reposRequest(w, r)
+	case "repo":
+		repoRequest(w, r)
+	case "version":
+		versionRequest(w, r)
+	default:
+		BadRequest(w, r, "Request not in API")
+	}
+}
+
+// Index file redirection.
+func indexHandler(w http.ResponseWriter, r *http.Request) {
+	http.Redirect(w, r, "/index.html", http.StatusMovedPermanently)
+}
+
+func helpRequest(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html")
 	fmt.Fprintf(w, WebHelp)
 }
 
-// Handler for web client and other static content
-func mainHandler(w http.ResponseWriter, r *http.Request) {
-	service.sendContent(r.URL.Path, w, r)
-}
-
-func loadHandler(w http.ResponseWriter, r *http.Request) {
+func loadRequest(w http.ResponseWriter, r *http.Request) {
 	m, err := json.Marshal(map[string]int{
 		"file bytes read":     storage.FileBytesReadPerSec,
 		"file bytes written":  storage.FileBytesWrittenPerSec,
@@ -268,135 +275,221 @@ func loadHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, string(m))
 }
 
-func serverInfoHandler(w http.ResponseWriter, r *http.Request) {
-	jsonStr, err := AboutJSON()
-	if err != nil {
-		BadRequest(w, r, err.Error())
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, jsonStr)
-}
+func serverRequest(w http.ResponseWriter, r *http.Request) {
+	lenPath := len(WebAPIPath + "server/")
+	url := r.URL.Path[lenPath:]
+	parts := strings.Split(url, "/")
 
-func serverTypesHandler(w http.ResponseWriter, r *http.Request) {
-	jsonStr, err := runningService.TypesJSON()
-	if err != nil {
-		BadRequest(w, r, err.Error())
-		return
+	badRequest := func() {
+		BadRequest(w, r, WebAPIPath+"server/ must be followed with 'info' or 'types'")
 	}
-	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, jsonStr)
-}
 
-func reposInfoHandler(w http.ResponseWriter, r *http.Request) {
-	jsonStr, err := runningService.ReposAllJSON()
-	if err != nil {
-		BadRequest(w, r, err.Error())
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, jsonStr)
-}
-
-func reposListHandler(w http.ResponseWriter, r *http.Request) {
-	jsonStr, err := runningService.ReposListJSON()
-	if err != nil {
-		BadRequest(w, r, err.Error())
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, jsonStr)
-}
-
-func reposPostHandler(w http.ResponseWriter, r *http.Request) {
-	root, _, err := runningService.NewRepo()
-	if err != nil {
-		BadRequest(w, r, err.Error())
-	}
-	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, "{%q: %q}", "Root", root)
-}
-
-func repoInfoHandler(c web.C, w http.ResponseWriter, r *http.Request) {
-	uuid, err := MatchingUUID(c.URLParams["uuid"])
-	if err != nil {
-		BadRequest(w, r, err.Error())
+	if len(parts) != 1 {
+		badRequest()
 		return
 	}
 
-	jsonStr, err := runningService.RepoJSON(uuid)
-	if err != nil {
-		BadRequest(w, r, err.Error())
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, jsonStr)
-}
-
-func repoPostHandler(c web.C, w http.ResponseWriter, r *http.Request) {
-	uuid, err := MatchingUUID(c.URLParams["uuid"])
-	if err != nil {
-		BadRequest(w, r, err.Error())
-		return
-	}
-
-	decoder := json.NewDecoder(r.Body)
-	config := dvid.NewConfig()
-	err = decoder.Decode(&config)
-	if err != nil {
-		BadRequest(w, r, fmt.Sprintf("Error decoding POSTed JSON config for 'new': %s", err.Error()))
-		return
-	}
-
-	// Make sure that the passed configuration has data type and instance name.
-	typename, found, err := config.GetString("datatype")
-	if !found || err != nil {
-		BadRequest(w, r, "POST on repo endpoint requires specification of valid 'datatype'")
-		return
-	}
-	dataname, found, err := config.GetString("dataname")
-	if !found || err != nil {
-		BadRequest(w, r, "POST on repo endpoint requires specification of valid 'dataname'")
-		return
-	}
-
-	err = runningService.NewData(uuid, typename, dataname, config)
-	if err != nil {
-		BadRequest(w, r, err.Error())
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, "{%q: 'Added %s [%s] to node %s'}", "result", dataname, typename, uuid)
-}
-
-func repoLockHandler(c web.C, w http.ResponseWriter, r *http.Request) {
-	uuid, err := MatchingUUID(c.URLParams["uuid"])
-	if err != nil {
-		BadRequest(w, r, err.Error())
-		return
-	}
-
-	err := runningService.Lock(uuid)
-	if err != nil {
-		BadRequest(w, r, err.Error())
-	} else {
-		w.Header().Set("Content-Type", "text/plain")
-		fmt.Fprintln(w, "Lock on node %s successful.", uuid)
-	}
-}
-
-func repoBranchHandler(c web.C, w http.ResponseWriter, r *http.Request) {
-	uuid, err := MatchingUUID(c.URLParams["uuid"])
-	if err != nil {
-		BadRequest(w, r, err.Error())
-		return
-	}
-
-	newuuid, err := runningService.NewVersion(uuid)
-	if err != nil {
-		BadRequest(w, r, err.Error())
-	} else {
+	switch parts[0] {
+	case "info":
+		jsonStr, err := AboutJSON()
+		if err != nil {
+			BadRequest(w, r, err.Error())
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, "{%q: %q}", "Branch", newuuid)
+		fmt.Fprintf(w, jsonStr)
+	default:
+		badRequest()
+	}
+}
+
+func reposRequest(w http.ResponseWriter, r *http.Request) {
+	lenPath := len(WebAPIPath + "repos/")
+	url := r.URL.Path[lenPath:]
+	parts := strings.Split(url, "/")
+	action := strings.ToLower(r.Method)
+
+	badRequest := func() {
+		BadRequest(w, r, WebAPIPath+"repos/ must be followed with 'info', 'list' or 'new'")
+	}
+
+	if len(parts) != 1 {
+		badRequest()
+		return
+	}
+
+	switch parts[0] {
+	case "info":
+		jsonBytes, err := Repos.MarshalJSON()
+		if err != nil {
+			BadRequest(w, r, err.Error())
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, string(jsonBytes))
+	case "new":
+		if action != "post" {
+			BadRequest(w, r, "Repos 'new' request must be made with HTTP POST method")
+			return
+		}
+		config, err := DecodeJSON(r)
+		if err != nil {
+			BadRequest(w, r, err.Error())
+			return
+		}
+		repo, err := Repos.NewRepo()
+		if err != nil {
+			BadRequest(w, r, err.Error())
+			return
+		}
+		alias, found, err := config.GetString("Alias")
+		if err != nil || !found {
+			alias = fmt.Sprintf("Repo %d", repo.RepoID())
+		}
+		repo.SetAlias(alias)
+		description, found, err := config.GetString("Description")
+		if err != nil || !found {
+			description = "N/A"
+		}
+		repo.SetDescription(description)
+		config.Remove("Alias", "Description")
+		if err := repo.SetProperties(config.GetAll()); err != nil {
+			BadRequest(w, r, err.Error())
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, "{%q: %q}", "Root", repo.RootUUID())
+	default:
+		badRequest()
+	}
+}
+
+func repoRequest(w http.ResponseWriter, r *http.Request) {
+	lenPath := len(WebAPIPath + "repo/")
+	url := r.URL.Path[lenPath:]
+	parts := strings.Split(url, "/")
+	action := strings.ToLower(r.Method)
+
+	if len(parts) < 2 || len(parts) > 4 {
+		BadRequest(w, r, "Bad repo request made.  Visit /api/help for help.")
+		return
+	}
+
+	// Get particular repo for this UUID
+	uuid, _, err := Repos.MatchingUUID(parts[0])
+	if err != nil {
+		BadRequest(w, r, err.Error())
+		return
+	}
+	repo, err := Repos.RepoFromUUID(uuid)
+	if err != nil {
+		BadRequest(w, r, err.Error())
+		return
+	}
+
+	// Handle query of dataset properties
+	if parts[1] == "info" {
+		jsonBytes, err := repo.MarshalJSON()
+		if err != nil {
+			BadRequest(w, r, err.Error())
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, string(jsonBytes))
+		return
+	}
+
+	// Handle creation of new data in dataset via POST.
+	if parts[1] == "new" {
+		if action != "post" {
+			BadRequest(w, r, "Repo 'new' request must be made with HTTP POST method")
+			return
+		}
+		if len(parts) != 4 {
+			BadRequest(w, r, "Bad URL: Expecting /api/dataset/<UUID>/new/<datatype name>/<data name>")
+			return
+		}
+		typename := dvid.TypeString(parts[2])
+		dataname := dvid.DataString(parts[3])
+		config, err := DecodeJSON(r)
+		if err != nil {
+			BadRequest(w, r, err.Error())
+			return
+		}
+		typeservice, err := datastore.TypeServiceByName(typename)
+		if err != nil {
+			BadRequest(w, r, err.Error())
+			return
+		}
+		if _, err := repo.NewData(typeservice, dataname, config); err != nil {
+			BadRequest(w, r, err.Error())
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, "{%q: 'Added %s [%s] to node %s'}", "result", dataname, typename, uuid)
+		return
+	}
+
+	// Forward all other commands to the data service.
+	dataname := dvid.DataString(parts[1])
+	dataservice, err := repo.GetDataByName(dataname)
+	if err != nil {
+		BadRequest(w, r, err.Error())
+		return
+	}
+	dataservice.ServeHTTP(w, r)
+}
+
+func versionRequest(w http.ResponseWriter, r *http.Request) {
+	lenPath := len(WebAPIPath + "version/")
+	url := r.URL.Path[lenPath:]
+	parts := strings.Split(url, "/")
+
+	if len(parts) < 2 {
+		BadRequest(w, r, "Bad version request made.  Visit /api/help for help.")
+		return
+	}
+
+	// Get particular repo for this UUID
+	uuid, _, err := Repos.MatchingUUID(parts[0])
+	if err != nil {
+		BadRequest(w, r, err.Error())
+		return
+	}
+	repo, err := Repos.RepoFromUUID(uuid)
+	if err != nil {
+		BadRequest(w, r, err.Error())
+		return
+	}
+
+	// Handle the repo command.
+	switch parts[1] {
+	case "lock":
+		err := repo.Lock(uuid)
+		if err != nil {
+			BadRequest(w, r, err.Error())
+		} else {
+			w.Header().Set("Content-Type", "text/plain")
+			fmt.Fprintln(w, "Lock on node %s successful.", uuid)
+		}
+
+	case "branch":
+		newuuid, err := repo.NewChild(uuid)
+		if err != nil {
+			BadRequest(w, r, err.Error())
+		} else {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintf(w, "{%q: %q}", "Branch", newuuid)
+		}
+
+	default:
+		dataname := dvid.DataString(parts[1])
+		dataservice, err := repo.GetDataByName(dataname)
+		if err != nil {
+			BadRequest(w, r, err.Error())
+			return
+		}
+		dataservice.ServeHTTP(w, r)
 	}
 }

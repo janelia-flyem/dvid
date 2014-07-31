@@ -61,28 +61,31 @@ type Engine interface {
 	Close()
 }
 
-// MetaData is the interface for storing DVID datastore metadata like the
+// --- The three tiers of storage might gain new interfaces when we add cluster
+// --- support to DVID.
+
+// MetaDataStorer is the interface for storing DVID datastore metadata like the
 // repositories and associated DAGs.  It is characterized by the following:
 // (1) not big data, (2) ideally in memory, (3) strongly consistent across all
 // DVID processes, e.g., all front-end DVID apps.  Of the three tiers of storage
 // (Metadata, SmallData, BigData), MetaData should have
 // the smallest capacity and the lowest latency.
-type MetaData interface {
-	KeyValueDB
-}
-
-// SmallData is the interface for storing key-only or small key-value pairs that
-// require much more capacity and allow higher latency than MetaData.
-type SmallData interface {
+type MetaDataStorer interface {
 	OrderedKeyValueDB
 }
 
-// BigData is the interface for storing DVID key-value pairs that are relatively
+// SmallDataStorer is the interface for storing key-only or small key-value pairs that
+// require much more capacity and allow higher latency than MetaData.
+type SmallDataStorer interface {
+	OrderedKeyValueDB
+}
+
+// BigDataStorer is the interface for storing DVID key-value pairs that are relatively
 // large compared to key-value pairs used in SmallData.  This interface should be used
 // for blocks of voxels and large denormalized data like the multi-scale surface of a
 // given label.  This store should have considerably more capacity and potentially
 // higher latency than SmallData.
-type BigData interface {
+type BigDataStorer interface {
 	OrderedKeyValueDB
 }
 
@@ -119,45 +122,6 @@ type Requirements struct {
 }
 
 // ---- Storage interfaces ------
-
-// Context allows encapsulation of data that defines the partitioning of the DVID
-// key space.  To prevent conflicting implementations, Context is an opaque interface type
-// that requires use of an implementation from the storage package, either directly or
-// through embedding.
-//
-// For a description of Go language opaque types, see the following:
-//   http://www.onebigfluke.com/2014/04/gos-power-is-in-emergent-behavior.html
-type Context interface {
-	// ConstructKey takes a slice of bytes and generates a key that fits with the
-	// DVID-wide key space partitioning.
-	ConstructKey([]byte) []byte
-
-	// String prints a description of the Context
-	String() string
-
-	// Versioned is true if this Context is also a VersionedContext.
-	Versioned() bool
-
-	// Enforces opaque data type.
-	implementsOpaque()
-}
-
-// VersionedContext extends a Context with the minimal functions necessary to handle
-// versioning in storage engines.
-type VersionedContext interface {
-	Context
-
-	// Returns lower bound key for versions of given byte slice key representation.
-	MinVersionKey([]byte) ([]byte, error)
-
-	// Returns upper bound key for versions of given byte slice key representation.
-	MaxVersionKey([]byte) ([]byte, error)
-
-	// VersionedKeyValue returns the key-value pair corresponding to this key's version
-	// given a list of key-value pairs across many versions.  If no suitable key-value
-	// pair is found, nil is returned.
-	VersionedKeyValue([]KeyValue) (*KeyValue, error)
-}
 
 type KeyValueGetter interface {
 	// Get returns a value given a key.

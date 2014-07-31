@@ -276,7 +276,7 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 }
 
 // DoHTTP handles all incoming HTTP requests for this data.
-func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) error {
+func (d *Data) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	startTime := time.Now()
 
 	// Allow cross-origin resource sharing.
@@ -300,7 +300,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 	case "help":
 		w.Header().Set("Content-Type", "text/plain")
 		fmt.Fprintln(w, d.Help())
-		return nil
+		return
 	case "info":
 		jsonStr, err := d.JSONString()
 		if err != nil {
@@ -309,7 +309,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		}
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, jsonStr)
-		return nil
+		return
 	default:
 	}
 
@@ -325,35 +325,34 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		}
 		if !found {
 			http.Error(w, fmt.Sprintf("Key '%s' not found", keyStr), http.StatusNotFound)
-			return nil
+			return
 		}
 		w.Header().Set("Content-Type", "application/octet-stream")
 		_, err = w.Write(value)
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
-			return err
+			return
 		}
 		comment = fmt.Sprintf("HTTP GET keyvalue '%s': %d bytes (%s)\n", d.DataName(), len(value), url)
 	case "post":
 		data, err := ioutil.ReadAll(r.Body)
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
-			return err
+			return
 		}
 		err = d.PutData(uuid, keyStr, data)
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
-			return err
+			return
 		}
 		comment = fmt.Sprintf("HTTP POST keyvalue '%s': %d bytes (%s)\n", d.DataName(), len(data), url)
 	default:
 		err := fmt.Errorf("Can only handle GET or POST HTTP verbs")
 		server.BadRequest(w, r, err.Error())
-		return err
+		return
 	}
 
 	dvid.ElapsedTime(dvid.Debug, startTime, comment, "success")
-	return nil
 }
 
 // Get retrieves data given a key and a version node.
