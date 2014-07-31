@@ -1,12 +1,15 @@
 package server
 
 import (
+	"encoding/json"
+	"fmt"
 	"log"
 	"runtime"
 	"sync"
 	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
+	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
 )
 
@@ -47,21 +50,6 @@ var (
 	startupTime time.Time = time.Now()
 )
 
-type storageManager struct {
-	// True if SetupEngines() has been called
-	setup bool
-
-	// Cached type-asserted interfaces
-	kvEngine    Engine
-	kvDB        OrderedKeyValueDB
-	kvSetter    OrderedKeyValueSetter
-	kvGetter    OrderedKeyValueGetter
-	graphEngine Engine
-	graphDB     GraphDB
-	graphSetter GraphSetter
-	graphGetter GraphGetter
-}
-
 func init() {
 	// Initialize the number of throttled ops available.
 	for i := 0; i < MaxThrottledOps; i++ {
@@ -93,6 +81,23 @@ func init() {
 
 }
 
+// AboutJSON returns a JSON string describing the properties of this server.
+func AboutJSON() (jsonStr string, err error) {
+	data := map[string]string{
+		"Cores":           fmt.Sprintf("%d", dvid.NumCPU),
+		"Maximum Cores":   fmt.Sprintf("%d", runtime.NumCPU()),
+		"DVID datastore":  datastore.Version,
+		"Storage backend": storage.EnginesAvailable(),
+		"Server uptime":   time.Since(startupTime).String(),
+	}
+	m, err := json.Marshal(data)
+	if err != nil {
+		return
+	}
+	jsonStr = string(m)
+	return
+}
+
 // Shutdown handles graceful cleanup of server functions before exiting DVID.
 // This may not be so graceful if the chunk handler uses cgo since the interrupt
 // may be caught during cgo execution.
@@ -113,6 +118,5 @@ func Shutdown() {
 		time.Sleep(1 * time.Second)
 	}
 	storage.Shutdown()
-	Repos.
-		dvid.BlockOnActiveCgo()
+	dvid.BlockOnActiveCgo()
 }

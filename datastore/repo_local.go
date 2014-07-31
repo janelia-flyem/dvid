@@ -14,6 +14,7 @@ package datastore
 import (
 	"bytes"
 	"encoding/gob"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
+	"github.com/janelia-flyem/dvid/storage/local"
 )
 
 func init() {
@@ -37,8 +39,6 @@ func init() {
 // repoManager manages all the repos in the datastore.
 type repoManager struct {
 	sync.Mutex // broad mutex should be sufficient since metadata is infrequently updated.
-
-	Context
 
 	// Map local RepoID to root UUID
 	repoToUUID map[dvid.RepoID]dvid.UUID
@@ -57,19 +57,68 @@ type repoManager struct {
 
 	// Mapping of all UUIDs to the repositories where that node sits.
 	repos map[dvid.UUID]*repoT
+
+	// Verified metadata storage for ease of use.
+	store storage.MetaDataStorer
+}
+
+// Create creates a local key-value store and if it is designated for
+// metadata storage (metadata = true), also stores a blank RepoManager
+// into the newly created key-value store.
+func Create(path string, metadata bool, config dvid.Config) error {
+	// Make the local key value store
+	create := true
+	kvEngine, err := local.NewKeyValueStore(path, create, config)
+	if err != nil {
+		return err
+	}
+
+	// Put a blank RepoManager onto the key value store.
+	if metadata {
+		m := &repoManager{
+			repoToUUID:    make(map[dvid.RepoID]dvid.UUID),
+			versionToUUID: make(map[dvid.VersionID]dvid.UUID),
+			repos:         make(map[dvid.UUID]*repoT),
+		}
+		// Verify that our new kv engine satisfies a MetaDataStorer.
+		var ok bool
+		m.store, ok = kvEngine.(storage.MetaDataStorer)
+		if !ok {
+			return fmt.Errorf("Key-value store at %q cannot satisfy MetaData store", path)
+		}
+		// Store repo management data
+		if err := m.putNewIDs(); err != nil {
+			return err
+		}
+		if err := m.putCaches(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Repair repairs the datastore.  Currently this just launchs repair of the underlying
+// storage engine.
+func Repair(path string, config dvid.Config) error {
+	return local.RepairStore(path, config)
 }
 
 // Initialize returns a RepoManager implementation suitable for managing repositories.
-func Initialize(ctx Context, old bool) (RepoManager, error) {
+func Initialize() (RepoManager, error) {
 	m := &repoManager{
-		Context:       ctx,
 		repoToUUID:    make(map[dvid.RepoID]dvid.UUID),
 		versionToUUID: make(map[dvid.VersionID]dvid.UUID),
 		repos:         make(map[dvid.UUID]*repoT),
 	}
 
+	var err error
+	m.store, err = storage.MetaDataStore()
+	if err != nil {
+		return nil, err
+	}
+
 	// Try to load metadata from the MetaData store.
-	if err := m.loadMetadata(); err != nil {
+	if err = m.loadMetadata(); err != nil {
 		return nil, err
 	}
 	return m, nil
@@ -80,7 +129,7 @@ func Initialize(ctx Context, old bool) (RepoManager, error) {
 func (m *repoManager) getData(t keyType, data interface{}) error {
 	var ctx storage.MetadataContext
 	idx := metadataIndex{t: t}
-	value, err := m.Context.MetaData.Get(ctx, idx.Bytes())
+	value, err := m.store.Get(ctx, idx.Bytes())
 	if err != nil {
 		return err
 	}
@@ -100,14 +149,14 @@ func (m *repoManager) putData(t keyType, data interface{}) error {
 	if err := enc.Encode(data); err != nil {
 		return err
 	}
-	return m.Context.MetaData.Put(ctx, idx.Bytes(), buf.Bytes())
+	return m.store.Put(ctx, idx.Bytes(), buf.Bytes())
 }
 
 // Load the next ids to be used for RepoID, VersionID, and InstanceID.
 func (m *repoManager) getNewIDs() error {
 	var ctx storage.MetadataContext
 	idx := metadataIndex{t: newIDsKey}
-	value, err := m.Context.MetaData.Get(ctx, idx.Bytes())
+	value, err := m.store.Get(ctx, idx.Bytes())
 	if err != nil {
 		return err
 	}
@@ -128,29 +177,30 @@ func (m *repoManager) putNewIDs() error {
 	idx := metadataIndex{t: newIDsKey}
 	value := append(m.newRepoID.Bytes(), m.newVersionID.Bytes()...)
 	value = append(value, m.newInstanceID.Bytes()...)
-	return m.Context.MetaData.Put(ctx, idx.Bytes(), value)
+	return m.store.Put(ctx, idx.Bytes(), value)
 }
 
 func (m *repoManager) putCaches() error {
 	if err := m.putData(repoToUUIDKey, m.repoToUUID); err != nil {
-		return nil, err
+		return err
 	}
 	if err := m.putData(versionToUUIDKey, m.versionToUUID); err != nil {
-		return nil, err
+		return err
 	}
+	return nil
 }
 
 // Loads all data necessary for repoManager.
 func (m *repoManager) loadMetadata() error {
 	// Load the maps
 	if err := m.getData(repoToUUIDKey, &(m.repoToUUID)); err != nil {
-		return nil, err
+		return err
 	}
 	if err := m.getNewIDs(); err != nil {
-		return nil, err
+		return err
 	}
 	if err := m.getData(versionToUUIDKey, &(m.versionToUUID)); err != nil {
-		return nil, err
+		return err
 	}
 
 	// Generate the inverse UUID to VersionID mapping.
@@ -162,13 +212,13 @@ func (m *repoManager) loadMetadata() error {
 	var ctx storage.MetadataContext
 	minIndex := metadataIndex{t: repoKey, repoID: dvid.RepoID(0)}
 	maxIndex := metadataIndex{t: repoKey, repoID: dvid.MaxRepoID}
-	kvList, err := m.Context.MetaData.GetRange(ctx, minIndex.Bytes(), maxIndex.Bytes())
+	kvList, err := m.store.GetRange(ctx, minIndex.Bytes(), maxIndex.Bytes())
 	if err != nil {
 		return err
 	}
 
 	var index metadataIndex
-	for i, kv := range kvList {
+	for _, kv := range kvList {
 		indexBytes, err := storage.DataContextIndex(kv.K)
 		if err != nil {
 			return err
@@ -178,18 +228,18 @@ func (m *repoManager) loadMetadata() error {
 			return err
 		}
 		// Load each repo
-		uuid, found := m.repoToUUID[index.repoID]
+		_, found := m.repoToUUID[index.repoID]
 		if !found {
 			return fmt.Errorf("Retrieved repo with id %d that is not in map.  Corrupt DB?", index.repoID)
 		}
 		buf := bytes.NewBuffer(kv.V)
 		dec := gob.NewDecoder(buf)
-		var repo repoT
-		if err = dec.Decode(&repo); err != nil {
+		repo := new(repoT)
+		if err = dec.Decode(repo); err != nil {
 			return err
 		}
 		// Cache all UUID from nodes into our high-level cache
-		for versionID, node := range repo.dag.nodes {
+		for versionID, _ := range repo.dag.nodes {
 			uuid, found := m.versionToUUID[versionID]
 			if !found {
 				return fmt.Errorf("Version id %d found in repo %s (id %d) not in cache map",
@@ -198,7 +248,7 @@ func (m *repoManager) loadMetadata() error {
 			m.repos[uuid] = repo
 		}
 	}
-	m.Context.Infof("Loaded %d repositories from metadata store.", len(m.repos))
+	dvid.Infof("Loaded %d repositories from metadata store.", len(m.repos))
 	return m.verifyCompiledDatatypes()
 }
 
@@ -307,28 +357,33 @@ func (m *repoManager) GobEncode() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// MatchingUUID returns a repo and the full UUID from a potentially shortened UUID string.
-// Partial matches are accepted as long as they are unique for a datastore.  So if
+func (m *repoManager) MarshalJSON() ([]byte, error) {
+	return json.Marshal(m.repos)
+}
+
+// MatchingUUID returns a local version ID and the full UUID from a potentially shortened UUID
+// string. Partial matches are accepted as long as they are unique for a datastore.  So if
 // a datastore has nodes with UUID strings 3FA22..., 7CD11..., and 836EE...,
 // we can still find a match even if given the minimum 3 letters.  (We don't
 // allow UUID strings of less than 3 letters just to prevent mistakes.)
-func (m *repoManager) MatchingUUID(str string) (Repo, dvid.UUID, error) {
-	var bestRepo Repo
+func (m *repoManager) MatchingUUID(str string) (dvid.UUID, dvid.VersionID, error) {
+	var bestVersion dvid.VersionID
 	var bestUUID dvid.UUID
 	numMatches := 0
-	for uuid, repo := range m.repoByUUID {
+	for uuid, versionID := range m.UUIDToVersion {
 		if strings.HasPrefix(string(uuid), str) {
 			numMatches++
-			bestRepo = repo
+			bestVersion = versionID
 			bestUUID = uuid
 		}
 	}
+	var err error
 	if numMatches > 1 {
-		return nil, dvid.NilUUID, fmt.Errorf("More than one UUID matches %s!", str)
+		err = fmt.Errorf("More than one UUID matches %s!", str)
 	} else if numMatches == 0 {
-		return nil, dvid.NilUUID, fmt.Errorf("Could not find UUID with partial match to %s!", str)
+		err = fmt.Errorf("Could not find UUID with partial match to %s!", str)
 	}
-	return bestRepo, bestUUID, nil
+	return bestUUID, bestVersion, err
 }
 
 // RepoFromUUID returns a repo given a UUID.
@@ -365,13 +420,12 @@ func (m *repoManager) NewRepo() (Repo, error) {
 	m.repos[uuid] = repo
 	m.versionToUUID[versionID] = uuid
 	m.UUIDToVersion[uuid] = versionID
-	m.availRepos[uuid] = true
 	return repo, m.putCaches()
 }
 
 // Datatypes returns a list of TypeService needed for this set of repositories
-func (m *repoManager) Datatypes() (map[UrlString]TypeService, error) {
-	combinedMap := make(map[UrlString]TypeService)
+func (m *repoManager) Datatypes() (map[URLString]TypeService, error) {
+	combinedMap := make(map[URLString]TypeService)
 	for _, repo := range m.repos {
 		repoMap, err := repo.Datatypes()
 		if err != nil {
@@ -388,13 +442,15 @@ func (m *repoManager) Datatypes() (map[UrlString]TypeService, error) {
 // Note that changes to the DAG, e.g., adding a child node, will need updates
 // to the cached maps in the RepoManager, so there is a pointer to it.
 type repoT struct {
+	repoID dvid.RepoID
+	rootID dvid.UUID
+
 	// alias is an optional user-supplied string to identify this repo
 	// in a more friendly way than a UUID.  There are no guarantees that
 	// this string is unique across all repos.
 	alias       string
 	description string
-	repoID      dvid.RepoID
-	rootID      dvid.UUID
+	log         []string
 
 	properties map[string]interface{}
 	dag        *dagT
@@ -408,7 +464,7 @@ type repoT struct {
 }
 
 // newRepo creates a new repository, updating the version id within the RepoManager.
-func newRepo(m *repoManager, alias, description string) (*repoT, dvid.VersionID, error) {
+func newRepo(m *repoManager) (*repoT, dvid.VersionID, error) {
 	repoID, err := m.NewRepoID()
 	if err != nil {
 		return nil, 0, err
@@ -418,11 +474,12 @@ func newRepo(m *repoManager, alias, description string) (*repoT, dvid.VersionID,
 		return nil, 0, err
 	}
 	repo := &repoT{
-		alias:       alias,
-		description: description,
-		properties:  make(map[string]interface{}),
-		data:        make(map[dvid.DataString]DataService),
-		manager:     m,
+		repoID:     repoID,
+		rootID:     uuid,
+		log:        []string{},
+		properties: make(map[string]interface{}),
+		data:       make(map[dvid.DataString]DataService),
+		manager:    m,
 	}
 	repo.dag, err = repo.newDAG(uuid, versionID)
 	return repo, versionID, err
@@ -430,9 +487,12 @@ func newRepo(m *repoManager, alias, description string) (*repoT, dvid.VersionID,
 
 func (r *repoT) store() error {
 	var ctx storage.MetadataContext
-	idx := metatdataIndex{t: repoKey, repoID: r.repoID}
+	idx := metadataIndex{t: repoKey, repoID: r.repoID}
 	serialization, err := r.GobEncode()
-	return r.manager.Context.MetaData.Put(ctx, idx.Bytes(), serialization)
+	if err != nil {
+		return err
+	}
+	return r.manager.store.Put(ctx, idx.Bytes(), serialization)
 }
 
 // ---- Describer interface implementation ----------
@@ -469,7 +529,7 @@ func (r *repoT) GetProperty(name string) (interface{}, error) {
 }
 
 func (r *repoT) GetProperties() (map[string]interface{}, error) {
-	return m.properties, nil
+	return r.properties, nil
 }
 
 func (r *repoT) SetProperty(name string, value interface{}) error {
@@ -477,6 +537,24 @@ func (r *repoT) SetProperty(name string, value interface{}) error {
 	defer r.mu.Unlock()
 	r.properties[name] = value
 	return r.store()
+}
+
+func (r *repoT) SetProperties(props map[string]interface{}) error {
+	for k, v := range props {
+		r.properties[k] = v
+	}
+	return nil
+}
+
+func (r *repoT) GetLog() ([]string, error) {
+	return r.log, nil
+}
+
+func (r *repoT) AddToLog(hx string) error {
+	r.mu.Lock()
+	r.log = append(r.log, hx)
+	r.mu.Unlock()
+	return nil
 }
 
 // ---- Repo interface implementation -----------
@@ -502,7 +580,7 @@ func (r *repoT) GobDecode(b []byte) error {
 	if err := dec.Decode(&(r.data)); err != nil {
 		return err
 	}
-	if err := dec.Decode(&(r.dagT)); err != nil {
+	if err := dec.Decode(&(r.dag)); err != nil {
 		return err
 	}
 	return nil
@@ -529,10 +607,30 @@ func (r *repoT) GobEncode() ([]byte, error) {
 	if err := enc.Encode(r.data); err != nil {
 		return nil, err
 	}
-	if err := enc.Encode(r.dagT); err != nil {
+	if err := enc.Encode(r.dag); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+func (r *repoT) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Root        dvid.UUID
+		Alias       string
+		Description string
+		Log         []string
+		Properties  map[string]interface{}
+		Data        map[dvid.DataString]DataService
+		DAG         *dagT
+	}{
+		r.rootID,
+		r.alias,
+		r.description,
+		r.log,
+		r.properties,
+		r.data,
+		r.dag,
+	})
 }
 
 func (r *repoT) RepoID() dvid.RepoID {
@@ -544,9 +642,9 @@ func (r *repoT) RootUUID() dvid.UUID {
 }
 
 func (r *repoT) GetDataByName(name dvid.DataString) (DataService, error) {
-	elements := strings.Split(name, "-")
+	elements := strings.Split(string(name), "-")
 	stem := elements[0]
-	data, found := r.data[stem]
+	data, found := r.data[dvid.DataString(stem)]
 	if !found {
 		return nil, nil
 	}
@@ -576,10 +674,22 @@ func (r *repoT) NewData(t TypeService, name dvid.DataString, c dvid.Config) (Dat
 	return dataservice, r.store()
 }
 
+// ModifyData modifies preexisting Data within a Repo.  Settings can be passed
+// via the 'config' argument.  Only settings within the passed config are modified.
+func (r *repoT) ModifyData(name dvid.DataString, config dvid.Config) error {
+	dataservice, err := r.GetDataByName(name)
+	if err != nil {
+		return err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return dataservice.ModifyConfig(config)
+}
+
 func (r *repoT) NewChild(uuid dvid.UUID) (dvid.UUID, error) {
 	// Make sure parent is available and locked.
-	parentVersionID, err := r.manager.UUIDToVersion[uuid]
-	if err != nil {
+	parentVersionID, found := r.manager.UUIDToVersion[uuid]
+	if !found {
 		return dvid.NilUUID, fmt.Errorf("No parent version found with uuid %s", uuid)
 	}
 	parentNode, found := r.dag.nodes[parentVersionID]
@@ -605,7 +715,7 @@ func (r *repoT) NewChild(uuid dvid.UUID) (dvid.UUID, error) {
 	parentNode.children = append(parentNode.children, childNode.versionID)
 	parentNode.updated = time.Now()
 	parentNode.Unlock()
-	return r.store()
+	return childNode.uuid, r.store()
 }
 
 func (r *repoT) Lock(uuid dvid.UUID) error {
@@ -623,11 +733,11 @@ func (r *repoT) Lock(uuid dvid.UUID) error {
 	return r.store()
 }
 
-func (r *repoT) Datatypes() (map[UrlString]TypeService, error) {
-	datatypes := make(map[UrlString]TypeService)
+func (r *repoT) Datatypes() (map[URLString]TypeService, error) {
+	datatypes := make(map[URLString]TypeService)
 	for _, dataservice := range r.data {
-		t := dataservice.TypeService
-		datatypes[t.TypeUrl()] = t
+		t := dataservice.DataType()
+		datatypes[t.TypeURL()] = t
 	}
 	return datatypes, nil
 }
@@ -651,27 +761,15 @@ func (r *repoT) newNode() (*nodeT, error) {
 	}
 	t := time.Now()
 	node := &nodeT{
-		uuid:    uuid,
-		version: versionID,
-		created: t,
-		updated: t,
+		uuid:      uuid,
+		versionID: versionID,
+		created:   t,
+		updated:   t,
 	}
 	r.manager.Lock()
-	r.repos[uuid] = r
+	r.manager.repos[uuid] = r
 	r.manager.Unlock()
 	return node, nil
-}
-
-// modifyData modifies preexisting Data within a Repo.  Settings can be passed
-// via the 'config' argument.  Only settings within the passed config are modified.
-func (r *repoT) modifyData(name dvid.DataString, config dvid.Config) error {
-	dataservice, err := r.GetDataByName(name)
-	if err != nil {
-		return err
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return dataservice.ModifyConfig(config)
 }
 
 // --------------------------------------
@@ -694,6 +792,22 @@ const (
 	// Data has been explicitly deleted at this node and is no longer available.
 	DataDeleted
 )
+
+func (avail DataAvail) String() string {
+	switch avail {
+	case DataDelta:
+		return "Delta"
+	case DataComplete:
+		return "Complete Copy"
+	case DataRoot:
+		return "Unversioned"
+	case DataDeleted:
+		return "Deleted"
+	default:
+		dvid.Criticalf("Unknown DataAvail (%v) with String()\n", avail)
+		return "Unknown"
+	}
+}
 
 // dagT implements a Directed Acyclic Graph where each node manages information
 // about a version of data.
@@ -732,6 +846,21 @@ func (dag *dagT) GobEncode() ([]byte, error) {
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+func (dag *dagT) MarshalJSON() ([]byte, error) {
+	// Create temporary map using UUID instead of local version IDs.
+	uuidMap := make(map[dvid.UUID]*nodeT)
+	for _, node := range dag.nodes {
+		uuidMap[node.uuid] = node
+	}
+	return json.Marshal(struct {
+		Root  dvid.UUID
+		Nodes map[dvid.UUID]*nodeT
+	}{
+		dag.root,
+		uuidMap,
+	})
 }
 
 type nodeT struct {
@@ -801,36 +930,62 @@ func (node *nodeT) GobEncode() ([]byte, error) {
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
 	if err := enc.Encode(node.note); err != nil {
-		return err
+		return nil, err
 	}
 	if err := enc.Encode(node.log); err != nil {
-		return err
+		return nil, err
 	}
 	if err := enc.Encode(node.avail); err != nil {
-		return err
+		return nil, err
 	}
 	if err := enc.Encode(node.uuid); err != nil {
-		return err
+		return nil, err
 	}
 	if err := enc.Encode(node.versionID); err != nil {
-		return err
+		return nil, err
 	}
 	if err := enc.Encode(node.locked); err != nil {
-		return err
+		return nil, err
 	}
 	if err := enc.Encode(node.parents); err != nil {
-		return err
+		return nil, err
 	}
 	if err := enc.Encode(node.children); err != nil {
-		return err
+		return nil, err
 	}
 	if err := enc.Encode(node.created); err != nil {
-		return err
+		return nil, err
 	}
 	if err := enc.Encode(node.updated); err != nil {
-		return err
+		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+func (node *nodeT) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Note      string
+		Log       []string
+		Data      map[dvid.DataString]DataAvail
+		UUID      dvid.UUID
+		VersionID dvid.VersionID
+		Locked    bool
+		Parents   []dvid.VersionID
+		Children  []dvid.VersionID
+		Created   time.Time
+		Updated   time.Time
+	}{
+		node.note,
+		node.log,
+		node.avail,
+		node.uuid,
+		node.versionID,
+		node.locked,
+		node.parents,
+		node.children,
+		node.created,
+		node.updated,
+	})
 }
 
 // ----- dvid.VersionIterator implementation
@@ -856,7 +1011,7 @@ func (it *versionIterator) Next() {
 		return
 	}
 	curVersion := it.curNode.parents[0]
-	node, found := dag.nodes[curVersion]
+	node, found := it.dag.nodes[curVersion]
 	if found {
 		it.curNode = node
 		it.curVersion = curVersion

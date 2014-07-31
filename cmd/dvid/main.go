@@ -76,7 +76,7 @@ Commands that can be performed without a running server:
 
 	about
 	help
-	init   <datastore path>
+	create <datastore path>
 	serve  <datastore path>
 	repair <datastore path>
 `
@@ -154,8 +154,8 @@ func DoCommand(cmd dvid.Command) error {
 
 	switch cmd.Name() {
 	// Handle commands that don't require server connection
-	case "init":
-		return DoInit(cmd)
+	case "create":
+		return DoCreate(cmd)
 	case "serve":
 		return DoServe(cmd)
 	case "repair":
@@ -178,14 +178,14 @@ func DoCommand(cmd dvid.Command) error {
 	return nil
 }
 
-// DoInit performs the "init" command, creating a new DVID datastore.
-func DoInit(cmd dvid.Command) error {
+// DoCreate creates a new DVID datastore.
+func DoCreate(cmd dvid.Command) error {
 	datastorePath := cmd.Argument(1)
 	if datastorePath == "" {
-		return fmt.Errorf("init command must be followed by the path to the datastore")
+		return fmt.Errorf("create command must be followed by the path to the datastore")
 	}
-	create := true
-	return datastore.Init(datastorePath, create, cmd.Settings())
+	kvCanStoreMetadata := true // We assume this for local key value stores.
+	return datastore.Create(datastorePath, kvCanStoreMetadata, cmd.Settings())
 }
 
 // DoRepair performs the "repair" command, trying to repair a storage engine
@@ -194,7 +194,7 @@ func DoRepair(cmd dvid.Command) error {
 	if datastorePath == "" {
 		return fmt.Errorf("repair command must be followed by the path to the datastore")
 	}
-	if err := storage.RepairStore(datastorePath, cmd.Settings()); err != nil {
+	if err := datastore.Repair(datastorePath, cmd.Settings()); err != nil {
 		return err
 	}
 	fmt.Printf("Ran repair on database at %s.\n", datastorePath)
@@ -232,7 +232,7 @@ func DoServe(cmd dvid.Command) error {
 	if datastorePath == "" {
 		return fmt.Errorf("serve command must be followed by the path to the datastore")
 	}
-	if err := server.Serve(datastorePath, *httpAddress, *clientDir, *rpcAddress, *logfile); err != nil {
+	if err := server.Serve(datastorePath, *httpAddress, *clientDir, *rpcAddress, cmd.Settings()); err != nil {
 		return err
 	}
 	return nil

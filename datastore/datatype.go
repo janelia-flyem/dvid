@@ -8,7 +8,7 @@ import (
 	"github.com/janelia-flyem/dvid/storage"
 )
 
-type UrlString string
+type URLString string
 
 // TypeID provides methods for determining the identity of a datatype.  Note that
 // we are verbose for the functions of this interface because TypeID is
@@ -17,8 +17,8 @@ type TypeID interface {
 	// TypeName is an abbreviated datatype name.
 	TypeName() dvid.TypeString
 
-	// TypeUrl returns the unique package url of the datatype implementation.
-	TypeUrl() UrlString
+	// TypeURL returns the unique package url of the datatype implementation.
+	TypeURL() URLString
 
 	// TypeVersion describes the version identifier of this datatype code
 	TypeVersion() string
@@ -39,15 +39,15 @@ type TypeService interface {
 var (
 	// Compiled is the set of registered datatypes compiled into DVID and
 	// held as a global variable initialized at runtime.
-	Compiled map[UrlString]TypeService
+	Compiled map[URLString]TypeService
 )
 
 // Register registers a datatype for DVID use.
-func Register(t Service) {
+func Register(t TypeService) {
 	if Compiled == nil {
-		Compiled = make(map[UrlString]TypeService)
+		Compiled = make(map[URLString]TypeService)
 	}
-	Compiled[t.TypeUrl()] = t
+	Compiled[t.TypeURL()] = t
 }
 
 // CompiledNames returns a list of datatype names compiled into this DVID.
@@ -71,12 +71,12 @@ func CompiledUrls() string {
 // CompiledChart returns a chart (names/urls) of datatypes compiled into this DVID.
 func CompiledChart() string {
 	var text string = "\nData types compiled into this DVID\n\n"
-	writeLine := func(name dvid.TypeString, url UrlString) {
+	writeLine := func(name dvid.TypeString, url URLString) {
 		text += fmt.Sprintf("%-15s   %s\n", name, url)
 	}
 	writeLine("Name", "Url")
 	for _, datatype := range Compiled {
-		writeLine(datatype.TypeName(), datatype.TypeUrl())
+		writeLine(datatype.TypeName(), datatype.TypeURL())
 	}
 	return text + "\n"
 }
@@ -100,19 +100,19 @@ type DatatypeID struct {
 	Name dvid.TypeString
 
 	// The unique package name that fulfills the DVID Data interface
-	Url UrlString
+	Url URLString
 
 	// The version identifier of this datatype code
 	Version string
 }
 
-func MakeDatatypeID(name dvid.TypeString, url UrlString, version string) *DatatypeID {
+func MakeDatatypeID(name dvid.TypeString, url URLString, version string) *DatatypeID {
 	return &DatatypeID{name, url, version}
 }
 
 func (id *DatatypeID) TypeName() dvid.TypeString { return id.Name }
 
-func (id *DatatypeID) TypeUrl() UrlString { return id.Url }
+func (id *DatatypeID) TypeURL() URLString { return id.Url }
 
 func (id *DatatypeID) TypeVersion() string { return id.Version }
 

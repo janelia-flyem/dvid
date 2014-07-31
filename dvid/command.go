@@ -93,6 +93,10 @@ func (c *Config) Set(key, value string) {
 	c.values[lowerkey] = value
 }
 
+func (c Config) GetAll() map[string]interface{} {
+	return c.values
+}
+
 // GetString returns a string value of the given key.  If setting of key is not
 // a string, returns an error.
 func (c Config) GetString(key string) (s string, found bool, err error) {
@@ -144,6 +148,19 @@ func (c Config) GetBool(key string) (value, found bool, err error) {
 		err = fmt.Errorf("Cannot parse '%s' as a boolean.  Use 'true', 'false', '0', or '1'.")
 	}
 	return
+}
+
+// Remove removes the key/value pairs with the given keys.
+func (c *Config) Remove(keys ...string) {
+	toDelete := []string{}
+	for _, key := range keys {
+		if _, found := c.values[key]; found {
+			toDelete = append(toDelete, key)
+		}
+	}
+	for _, key := range toDelete {
+		delete(c.values, key)
+	}
 }
 
 // Response provides a few string fields to pass information back from
