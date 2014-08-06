@@ -413,6 +413,13 @@ func (db *LevelDB) versionedRange(vctx storage.VersionedContext, kStart, kEnd []
 	}
 }
 
+func constructKey(ctx storage.Context, key []byte) []byte {
+	if ctx != nil {
+		return ctx.ConstructKey(key)
+	}
+	return key
+}
+
 // unversionedRange sends a range of key-value pairs down a channel.
 func (db *LevelDB) unversionedRange(ctx storage.Context, kStart, kEnd []byte, ch chan errorableKV, keysOnly bool) {
 	dvid.StartCgo()
@@ -423,8 +430,12 @@ func (db *LevelDB) unversionedRange(ctx storage.Context, kStart, kEnd []byte, ch
 		dvid.StopCgo()
 	}()
 
+	// Apply context if applicable
+	keyBeg := constructKey(ctx, kStart)
+	keyEnd := constructKey(ctx, kEnd)
+
 	var itValue []byte
-	it.Seek(kStart)
+	it.Seek(keyBeg)
 	for {
 		if it.Valid() {
 			if !keysOnly {
@@ -434,7 +445,7 @@ func (db *LevelDB) unversionedRange(ctx storage.Context, kStart, kEnd []byte, ch
 			itKey := it.Key()
 			storage.StoreKeyBytesRead <- len(itKey)
 			// Did we pass the final key?
-			if bytes.Compare(itKey, kEnd) > 0 {
+			if bytes.Compare(itKey, keyEnd) > 0 {
 				ch <- errorableKV{nil, nil}
 				return
 			}
@@ -455,7 +466,7 @@ func (db *LevelDB) KeysInRange(ctx storage.Context, kStart, kEnd []byte) ([][]by
 
 	// Run the range query on a potentially versioned key in a goroutine.
 	go func() {
-		if ctx.Versioned() {
+		if ctx != nil && ctx.Versioned() {
 			db.versionedRange(ctx.(storage.VersionedContext), kStart, kEnd, ch, true)
 		} else {
 			db.unversionedRange(ctx, kStart, kEnd, ch, true)
@@ -484,7 +495,7 @@ func (db *LevelDB) GetRange(ctx storage.Context, kStart, kEnd []byte) ([]*storag
 
 	// Run the range query on a potentially versioned key in a goroutine.
 	go func() {
-		if ctx.Versioned() {
+		if ctx != nil && ctx.Versioned() {
 			db.versionedRange(ctx.(storage.VersionedContext), kStart, kEnd, ch, false)
 		} else {
 			db.unversionedRange(ctx, kStart, kEnd, ch, false)
@@ -512,7 +523,7 @@ func (db *LevelDB) ProcessRange(ctx storage.Context, kStart, kEnd []byte, op *st
 
 	// Run the range query on a potentially versioned key in a goroutine.
 	go func() {
-		if ctx.Versioned() {
+		if ctx != nil && ctx.Versioned() {
 			db.versionedRange(ctx.(storage.VersionedContext), kStart, kEnd, ch, false)
 		} else {
 			db.unversionedRange(ctx, kStart, kEnd, ch, false)
@@ -542,7 +553,7 @@ func (db *LevelDB) ProcessRange(ctx storage.Context, kStart, kEnd []byte, op *st
 func (db *LevelDB) Put(ctx storage.Context, k, v []byte) error {
 	dvid.StartCgo()
 	wo := db.options.WriteOptions
-	key := ctx.ConstructKey(k)
+	key := constructKey(ctx, k)
 	err := db.ldb.Put(wo, key, v)
 	dvid.StopCgo()
 	storage.StoreKeyBytesWritten <- len(key)
@@ -562,7 +573,7 @@ func (db *LevelDB) PutRange(ctx storage.Context, values []storage.KeyValue) erro
 	}()
 	var keyBytesPut, valueBytesPut int
 	for _, kv := range values {
-		key := ctx.ConstructKey(kv.K)
+		key := constructKey(ctx, kv.K)
 		wb.Put(key, kv.V)
 		keyBytesPut += len(key)
 		valueBytesPut += len(kv.V)
@@ -580,7 +591,8 @@ func (db *LevelDB) PutRange(ctx storage.Context, values []storage.KeyValue) erro
 func (db *LevelDB) Delete(ctx storage.Context, k []byte) (err error) {
 	dvid.StartCgo()
 	wo := db.options.WriteOptions
-	err = db.ldb.Delete(wo, ctx.ConstructKey(k))
+	key := constructKey(ctx, k)
+	err = db.ldb.Delete(wo, key)
 	dvid.StopCgo()
 	return
 }
@@ -606,13 +618,14 @@ func (db *LevelDB) NewBatch(ctx storage.Context) storage.Batch {
 func (batch *goBatch) Delete(k []byte) {
 	dvid.StartCgo()
 	defer dvid.StopCgo()
-	batch.WriteBatch.Delete(batch.ctx.ConstructKey(k))
+	key := constructKey(batch.ctx, k)
+	batch.WriteBatch.Delete(key)
 }
 
 func (batch *goBatch) Put(k, v []byte) {
 	dvid.StartCgo()
 	defer dvid.StopCgo()
-	key := batch.ctx.ConstructKey(k)
+	key := constructKey(batch.ctx, k)
 	storage.StoreKeyBytesWritten <- len(key)
 	storage.StoreValueBytesWritten <- len(v)
 	batch.WriteBatch.Put(key, v)

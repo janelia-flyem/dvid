@@ -54,6 +54,13 @@ func BigDataStore() (BigDataStorer, error) {
 	return manager.bigdata, nil
 }
 
+func GraphStore() (GraphDB, error) {
+	if !manager.setup {
+		return nil, fmt.Errorf("Graph DB not initialized before requesting it")
+	}
+	return manager.graphDB, nil
+}
+
 // EnginesAvailable returns a description of the available storage engines.
 func EnginesAvailable() string {
 	return strings.Join(manager.enginesAvail, "; ")

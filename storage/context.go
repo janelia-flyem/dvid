@@ -38,6 +38,9 @@ type Context interface {
 type VersionedContext interface {
 	Context
 
+	// VersionID returns the local version ID of the DAG node being operated on.
+	VersionID() dvid.VersionID
+
 	// Returns lower bound key for versions of given byte slice key representation.
 	MinVersionKey([]byte) ([]byte, error)
 
@@ -118,6 +121,10 @@ func (ctx *DataContext) String() string {
 
 func (ctx *DataContext) Versioned() bool {
 	return ctx.data.Versioned()
+}
+
+func (ctx *DataContext) VersionID() dvid.VersionID {
+	return ctx.version
 }
 
 // Returns lower bound key for versions of given byte slice key representation.
