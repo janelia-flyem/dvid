@@ -71,6 +71,20 @@ type IndexIterator interface {
 	NextSpan()
 }
 
+// Subsetter can tell us its range of Index and how much it has actually
+// available in this server.  It's used to implement limited cloning,
+// e.g., only cloning a quarter of an image volume.
+// TODO: Fulfill implementation for voxels data type.
+type Subsetter interface {
+	// MaximumExtents returns a range of indices for which data is available at
+	// some DVID server.
+	MaximumExtents() IndexRange
+
+	// AvailableExtents returns a range of indices for which data is available
+	// at this DVID server.  It is the currently available extents.
+	AvailableExtents() IndexRange
+}
+
 // IndexRange defines the extent of data via minimum and maximum indices.
 type IndexRange struct {
 	Minimum, Maximum Index

@@ -10,6 +10,10 @@
 	Go opaque interface.)  The datatype-specific byte slice formatting is entirely
 	up to the datatype designer, although use of dvid.Index is suggested.
 
+	The storage engines should accept a nil Context, which allows direct saving of a
+	raw key without use of a ConstructKey() transformation.  In general, though,
+	keys passed
+
 	Initially we are concentrating on key-value backends but expect to support
 	graph and perhaps relational databases, either using specialized databases
 	or software layers on top of an ordered key-value store.
@@ -75,7 +79,8 @@ type MetaDataStorer interface {
 }
 
 // SmallDataStorer is the interface for storing key-only or small key-value pairs that
-// require much more capacity and allow higher latency than MetaData.
+// require much more aggregate capacity and allow higher latency than MetaData.  This is
+// typically used for indexing where the values aren't too large.
 type SmallDataStorer interface {
 	OrderedKeyValueDB
 }
@@ -134,7 +139,10 @@ type OrderedKeyValueGetter interface {
 	// GetRange returns a range of values spanning (kStart, kEnd) keys.
 	GetRange(ctx Context, kStart, kEnd []byte) (values []*KeyValue, err error)
 
-	// KeysInRange returns a range of keys spanning (kStart, kEnd).
+	// KeysInRange returns a range of full keys spanning (kStart, kEnd).  Note that
+	// the returned keys are the full keys (including context from ctx.ConstructKey()).
+	// To access the original indices passed in with a non-nil Context, use
+	// something like storage.DataContextIndex(key).
 	KeysInRange(ctx Context, kStart, kEnd []byte) (keys [][]byte, err error)
 
 	// ProcessRange sends a range of key-value pairs to type-specific chunk handlers,

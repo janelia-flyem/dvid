@@ -43,7 +43,12 @@ type RepoManager interface {
 	// RepoFromID returns a Repo from a RepoID.
 	RepoFromID(dvid.RepoID) (Repo, error)
 
+	// NewRepo creates and returns a new Repo.
 	NewRepo() (Repo, error)
+
+	// SaveRepo persists a Repo to the MetaDataStore.
+	SaveRepo(dvid.UUID) error
+	SaveRepoByVersionID(dvid.VersionID) error
 
 	Datatypes() (map[URLString]TypeService, error)
 
@@ -100,10 +105,14 @@ type Repo interface {
 	// ModifyData modifies a preexisting data instance with new configuration settings.
 	ModifyData(dvid.DataString, dvid.Config) error
 
-	// NewChild creates a new child node off a LOCKED parent node.  Will return
+	// NewVersion creates a new child node off a LOCKED parent node.  Will return
 	// an error if the parent node has not been locked.
-	NewChild(dvid.UUID) (dvid.UUID, error)
+	NewVersion(dvid.UUID) (dvid.UUID, error)
 
+	// Save persists the repo to the MetaDataStore.
+	Save() error
+
+	// Lock "locks" the given node of the DAG to be read-only.
 	Lock(dvid.UUID) error
 
 	gob.GobDecoder

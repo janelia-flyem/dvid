@@ -16,18 +16,18 @@ import (
 // at the coordinate (not index) origin.  Tile coordinates are converted to unsigned integers
 // when serialized to bytes.
 type IndexTile struct {
-	dvid.IndexZYX
+	*dvid.IndexZYX
 	plane   dvid.DataShape
 	scaling Scaling
 }
 
 func NewIndexTile(i dvid.IndexZYX, plane dvid.DataShape, scaling Scaling) *IndexTile {
-	return &IndexTile{i, plane, scaling}
+	return &IndexTile{&i, plane, scaling}
 }
 
 func (i *IndexTile) Duplicate() dvid.Index {
-	dupIndex := i.IndexZYX.Duplicate().(dvid.IndexZYX)
-	return IndexTile{dupIndex, i.plane.Duplicate(), i.scaling}
+	dupIndex := i.IndexZYX.Duplicate().(*dvid.IndexZYX)
+	return &IndexTile{dupIndex, i.plane.Duplicate(), i.scaling}
 }
 
 func (i *IndexTile) String() string {
@@ -57,15 +57,11 @@ func (i *IndexTile) IndexFromBytes(b []byte) error {
 		return err
 	}
 	scaling := Scaling(b[dvid.DataShapeBytes])
-	index, err := i.IndexZYX.IndexFromBytes(b[dvid.DataShapeBytes+2:])
+	err = i.IndexZYX.IndexFromBytes(b[dvid.DataShapeBytes+2:])
 	if err != nil {
 		return err
 	}
-	indexZYX, ok := index.(dvid.IndexZYX)
-	if !ok {
-		return fmt.Errorf("Could not decode index tile bytes to IndexZYX: %x",
-			b[dvid.DataShapeBytes+2:])
-	}
-	*i = IndexTile{indexZYX, dataShape, scaling}
+	i.plane = dataShape
+	i.scaling = scaling
 	return nil
 }

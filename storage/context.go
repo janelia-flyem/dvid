@@ -14,11 +14,16 @@ import (
 // Context allows encapsulation of data that defines the partitioning of the DVID
 // key space.  To prevent conflicting implementations, Context is an opaque interface type
 // that requires use of an implementation from the storage package, either directly or
-// through embedding.
+// through embedding.  The storage engines should accept a nil Context, which allows
+// direct saving of a raw key without use of a ConstructKey() transformation.
 //
 // For a description of Go language opaque types, see the following:
 //   http://www.onebigfluke.com/2014/04/gos-power-is-in-emergent-behavior.html
 type Context interface {
+	// VersionID returns the local version ID of the DAG node being operated on.
+	// If not versioned, the version is the root ID.
+	VersionID() dvid.VersionID
+
 	// ConstructKey takes a slice of bytes and generates a key that fits with the
 	// DVID-wide key space partitioning.
 	ConstructKey([]byte) []byte
@@ -37,9 +42,6 @@ type Context interface {
 // versioning in storage engines.
 type VersionedContext interface {
 	Context
-
-	// VersionID returns the local version ID of the DAG node being operated on.
-	VersionID() dvid.VersionID
 
 	// Returns lower bound key for versions of given byte slice key representation.
 	MinVersionKey([]byte) ([]byte, error)
@@ -68,6 +70,10 @@ func NewMetadataContext() MetadataContext {
 }
 
 func (ctx MetadataContext) implementsOpaque() {}
+
+func (ctx MetadataContext) VersionID() dvid.VersionID {
+	return 0 // Only one version of Metadata
+}
 
 func (ctx MetadataContext) ConstructKey(b []byte) []byte {
 	return append([]byte{metadataKeyPrefix}, b...)
@@ -106,7 +112,24 @@ func DataContextIndex(b []byte) ([]byte, error) {
 	return b[start:end], nil
 }
 
+// KeyToIndexZYX parses a DataContext key and returns the index as a dvid.IndexZYX
+func KeyToIndexZYX(k []byte) (dvid.IndexZYX, error) {
+	var zyx dvid.IndexZYX
+	indexBytes, err := DataContextIndex(k)
+	if err != nil {
+		return zyx, fmt.Errorf("Cannot convert key %v to IndexZYX: %s\n", k, err.Error())
+	}
+	if err := zyx.IndexFromBytes(indexBytes); err != nil {
+		return zyx, fmt.Errorf("Cannot recover ZYX index from key %v: %s\n", k, err.Error())
+	}
+	return zyx, nil
+}
+
 func (ctx *DataContext) implementsOpaque() {}
+
+func (ctx *DataContext) VersionID() dvid.VersionID {
+	return ctx.version
+}
 
 func (ctx *DataContext) ConstructKey(b []byte) []byte {
 	key := append([]byte{dataKeyPrefix}, ctx.data.InstanceID().Bytes()...)
@@ -121,10 +144,6 @@ func (ctx *DataContext) String() string {
 
 func (ctx *DataContext) Versioned() bool {
 	return ctx.data.Versioned()
-}
-
-func (ctx *DataContext) VersionID() dvid.VersionID {
-	return ctx.version
 }
 
 // Returns lower bound key for versions of given byte slice key representation.

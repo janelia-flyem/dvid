@@ -13,40 +13,27 @@ import (
 	"strings"
 	"sync"
 
+	"code.google.com/p/go.net/context"
+
 	"github.com/janelia-flyem/dvid/dvid"
 )
 
-// Subsetter is a type that can tell us its range of Index and how much it has
-// actually available in this server.  It's used to implement limited cloning,
-// e.g., only cloning a quarter of an image volume.
-// TODO: Fulfill implementation for voxels data type.
-type Subsetter interface {
-	// MaximumExtents returns a range of indices for which data is available at
-	// some DVID server.
-	MaximumExtents() dvid.IndexRange
+// ------------------------
+// TODO -- Deprecate RPC commands to datatypes.  All commands should be via HTTP.
 
-	// AvailableExtents returns a range of indices for which data is available
-	// at this DVID server.  It is the currently available extents.
-	AvailableExtents() dvid.IndexRange
-}
-
-// Request supports requests to the DVID server.
+// Request supports RPC requests to the DVID server.
 type Request struct {
 	dvid.Command
 	Input []byte
 }
 
-var (
-	HelpRequest = Request{Command: []string{"help"}}
-)
-
-// Response supports responses from DVID.
+// Response supports RPC responses from DVID.
 type Response struct {
 	dvid.Response
 	Output []byte
 }
 
-// Writes a response to a writer.
+// Writes a RPC response to a writer.
 func (r *Response) Write(w io.Writer) error {
 	if len(r.Response.Text) != 0 {
 		fmt.Fprintf(w, r.Response.Text)
@@ -60,11 +47,12 @@ func (r *Response) Write(w io.Writer) error {
 	return nil
 }
 
+// ------------------------
+
 // DataService is an interface for operations on an instance of a supported datatype.
 type DataService interface {
 	dvid.Data
 	TypeService
-	http.Handler
 
 	DataType() TypeService
 
@@ -73,6 +61,10 @@ type DataService interface {
 
 	// DoRPC handles command line and RPC commands specific to a data type
 	DoRPC(request Request, reply *Response) error
+
+	// ServeHTTP handles HTTP requests in the context of a particular version of a Repo
+	// for this instance of a datatype.
+	ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request)
 }
 
 // Data is the base struct of repo-specific data instances.  It should be embedded

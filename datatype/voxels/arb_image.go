@@ -6,7 +6,6 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
@@ -85,15 +84,9 @@ func (s ArbSlice) String() string {
 		s.size[0], s.size[1], s.topLeft, s.topRight, s.bottomLeft, s.res)
 }
 
-func (d *Data) GetArbitraryImage(uuid dvid.UUID, tlStr, trStr, blStr, resStr string) (*dvid.Image, error) {
+func (d *Data) GetArbitraryImage(ctx storage.Context, tlStr, trStr, blStr, resStr string) (*dvid.Image, error) {
 	// Setup the image buffer
 	arb, err := d.NewArbSliceFromStrings(tlStr, trStr, blStr, resStr, "_")
-	if err != nil {
-		return nil, err
-	}
-
-	service := server.DatastoreService()
-	_, versionID, err := service.LocalIDFromUUID(uuid)
 	if err != nil {
 		return nil, err
 	}
@@ -101,11 +94,10 @@ func (d *Data) GetArbitraryImage(uuid dvid.UUID, tlStr, trStr, blStr, resStr str
 	// Iterate across arbitrary image using res increments, retrieving trilinear interpolation
 	// at each point.
 	cache := NewValueCache(100)
-	dataID := d.Data()
-	keyF := func(pt dvid.Point3d) storage.Key {
+	keyF := func(pt dvid.Point3d) []byte {
 		chunkPt := pt.Chunk(d.BlockSize())
 		index := dvid.IndexZYX(chunkPt.(dvid.ChunkPoint3d)) // TODO: Can we remove this ugliness?
-		return &datastore.DataKey{dataID.DsetID, dataID.ID, versionID, index}
+		return index.Bytes()
 	}
 
 	// TODO: Add concurrency.
@@ -121,9 +113,9 @@ func (d *Data) GetArbitraryImage(uuid dvid.UUID, tlStr, trStr, blStr, resStr str
 				wg.Done()
 			}()
 			for x := int32(0); x < arb.size[0]; x++ {
-				value, err := d.computeValue(curPt, KeyFunc(keyF), cache)
+				value, err := d.computeValue(curPt, ctx, KeyFunc(keyF), cache)
 				if err != nil {
-					dvid.Error("Error in concurrent arbitrary image calc: " + err.Error())
+					dvid.Errorf("Error in concurrent arbitrary image calc: %s", err.Error())
 					return
 				}
 				copy(arb.data[dstI:dstI+arb.bytesPerVoxel], value)
@@ -205,8 +197,8 @@ func (d *Data) neighborhood(pt dvid.Vector3d) neighbors {
 	return n
 }
 
-type KeyFunc func(dvid.Point3d) storage.Key
-type PopulateFunc func(storage.Key) ([]byte, error)
+type KeyFunc func(dvid.Point3d) []byte
+type PopulateFunc func([]byte) ([]byte, error)
 
 // ValueCache is a concurrency-friendly cache
 type ValueCache struct {
@@ -227,9 +219,9 @@ func NewValueCache(size int) *ValueCache {
 // Get returns the cached value of a key.  On a miss, it uses the passed PopulateFunc
 // to retrieve the key and stores it in the cache.  If nil is passed for the PopulateFunc,
 // the function just returns a "false" with no value.
-func (vc ValueCache) Get(key storage.Key, pf PopulateFunc) ([]byte, bool, error) {
+func (vc ValueCache) Get(key []byte, pf PopulateFunc) ([]byte, bool, error) {
 	vc.Lock()
-	data, found := vc.deserializedBlocks[key.BytesString()]
+	data, found := vc.deserializedBlocks[string(key)]
 	if !found {
 		// If no populate function provided, just say it's not found.
 		if pf == nil {
@@ -249,8 +241,8 @@ func (vc ValueCache) Get(key storage.Key, pf PopulateFunc) ([]byte, bool, error)
 	return data, found, nil
 }
 
-func (vc *ValueCache) add(key storage.Key, data []byte) {
-	stringKey := key.BytesString()
+func (vc *ValueCache) add(key []byte, data []byte) {
+	stringKey := string(key)
 	if len(vc.keyQueue) >= vc.size {
 		delete(vc.deserializedBlocks, vc.keyQueue[0])
 		vc.keyQueue = append(vc.keyQueue[1:], stringKey)
@@ -269,19 +261,18 @@ func (vc *ValueCache) Clear() {
 }
 
 // Calculates value of a 3d real world point in space defined by underlying data resolution.
-func (d *Data) computeValue(pt dvid.Vector3d, keyF KeyFunc, cache *ValueCache) ([]byte, error) {
+func (d *Data) computeValue(pt dvid.Vector3d, ctx storage.Context, keyF KeyFunc, cache *ValueCache) ([]byte, error) {
+	db, err := storage.BigDataStore()
+	if err != nil {
+		return nil, err
+	}
+
 	valuesPerElement := d.Properties.Values.ValuesPerElement()
 	bytesPerValue, err := d.Properties.Values.BytesPerValue()
 	if err != nil {
 		return nil, err
 	}
 	bytesPerVoxel := valuesPerElement * bytesPerValue
-
-	// Setup datastore access.
-	db, err := server.KeyValueGetter()
-	if err != nil {
-		return nil, err
-	}
 
 	// Allocate an empty block.
 	blockSize, ok := d.BlockSize().(dvid.Point3d)
@@ -294,8 +285,8 @@ func (d *Data) computeValue(pt dvid.Vector3d, keyF KeyFunc, cache *ValueCache) (
 	blockBytes := nxyz * bytesPerVoxel
 	emptyBlock := make([]byte, blockBytes, blockBytes)
 
-	populateF := func(key storage.Key) ([]byte, error) {
-		serializedData, err := db.Get(key)
+	populateF := func(key []byte) ([]byte, error) {
+		serializedData, err := db.Get(ctx, key)
 		if err != nil {
 			return nil, err
 		}
@@ -315,8 +306,7 @@ func (d *Data) computeValue(pt dvid.Vector3d, keyF KeyFunc, cache *ValueCache) (
 	neighbors := d.neighborhood(pt)
 	var valuesI int32
 	for _, voxelCoord := range neighbors.coords {
-		key := keyF(voxelCoord)
-		deserializedData, _, err := cache.Get(key, populateF)
+		deserializedData, _, err := cache.Get(keyF(voxelCoord), populateF)
 		if err != nil {
 			return nil, err
 		}

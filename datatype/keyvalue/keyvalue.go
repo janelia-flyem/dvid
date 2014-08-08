@@ -11,7 +11,8 @@ import (
 	"io/ioutil"
 	"net/http"
 	"strings"
-	"time"
+
+	"code.google.com/p/go.net/context"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -47,40 +48,6 @@ $ dvid repo <UUID> new keyvalue <data name> <settings...>
     Configuration Settings (case-insensitive keys)
 
     Versioned      "true" or "false" (default)
-
-$ dvid node <UUID> <data name> get <key>
-
-    Returns data for a key in the given version node.  Since the returned data is
-    binary, the user typically pipes the output to a file.
-
-    Example: 
-
-    $ dvid node 3f8c stuff get mykey > myvalue
-
-    Arguments:
-
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
-    data name     Name of data to add.
-    key           A string key.
-	
-$ dvid node <UUID> <data name> put <key> <file name>
-$ dvid -stdin node <UUID> <data name> put <key>  <  some_file
-
-    Adds file data to a version node.  If the first form of the command is used, the
-    server must be able to see the full file path.
-
-    Example: 
-
-    $ dvid node 3f8c stuff put stuffkey stuff.txt
-    $ dvid -stdin node 3f8c stuff put stuffkey < stuff.txt
-
-    Arguments:
-
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
-    data name     Name of data to add.
-    key           A string key.
-    file name     Full file path of the value to be stored, visible to server, or you must
-                    use the -stdin flag and pipe the file data in.
 
 $ dvid node <UUID> <data name> mount <directory>
 
@@ -149,7 +116,7 @@ func init() {
 		Url:     RepoUrl,
 		Version: Version,
 	}
-	datastore.RegisterDatatype(kvtype)
+	datastore.Register(kvtype)
 
 	// Need to register types that will be used to fulfill interfaces.
 	gob.Register(&Datatype{})
@@ -160,7 +127,7 @@ func init() {
 
 // Datatype embeds the datastore's Datatype to create a unique type for keyvalue functions.
 type Datatype struct {
-	datastore.Datatype
+	*datastore.Datatype
 }
 
 // NewDatatype returns a pointer to a new keyvalue Datatype with default values set.
@@ -177,7 +144,7 @@ func NewDatatype() (dtype *Datatype) {
 // --- TypeService interface ---
 
 // NewData returns a pointer to new keyvalue data with default values.
-func (dtype *Datatype) NewDataService(r Repo, id dvid.InstanceID, name dvid.DataString, c dvid.Config) (datastore.DataService, error) {
+func (dtype *Datatype) NewDataService(r datastore.Repo, id dvid.InstanceID, name dvid.DataString, c dvid.Config) (datastore.DataService, error) {
 	basedata, err := datastore.NewDataService(dtype, r, id, name, c)
 	if err != nil {
 		return nil, err
@@ -194,86 +161,63 @@ type Data struct {
 	*datastore.Data
 }
 
-func (d *Data) GetKeysInRange(uuid dvid.UUID, keyBeg, keyEnd string) ([]string, error) {
+func (d *Data) GetKeysInRange(ctx storage.Context, keyBeg, keyEnd string) ([]string, error) {
+	db, err := storage.BigDataStore()
+	if err != nil {
+		return nil, err
+	}
 	// Compute first and last key for range
-	versionID, err := server.VersionLocalID(uuid)
-	if err != nil {
-		return nil, err
-	}
-	key1 := d.DataKey(versionID, dvid.IndexString(keyBeg))
-	key2 := d.DataKey(versionID, dvid.IndexString(keyEnd))
-	db, err := server.OrderedKeyValueGetter()
-	if err != nil {
-		return nil, err
-	}
-	keys, err := db.KeysInRange(key1, key2)
+	first := dvid.IndexString(keyBeg)
+	last := dvid.IndexString(keyEnd)
+	keys, err := db.KeysInRange(ctx, first.Bytes(), last.Bytes())
 	if err != nil {
 		return nil, err
 	}
 	keyList := []string{}
 	for _, key := range keys {
-		dataKey, ok := key.(*datastore.DataKey)
-		if !ok {
-			return nil, fmt.Errorf("Returned keys were not DataKey")
+		index, err := storage.DataContextIndex(key)
+		if err != nil {
+			return nil, err
 		}
-		keyList = append(keyList, dataKey.Index.String())
+		keyList = append(keyList, string(index))
 	}
 	return keyList, nil
 }
 
-// GetData gets a value using a key at a given uuid
-func (d *Data) GetData(c storage.Context, keyStr string) (value []byte, found bool, err error) {
-	// Compute the key
-	versionID, e := server.VersionLocalID(uuid)
-	if e != nil {
-		err = e
-		return
+// GetData gets a value using a key
+func (d *Data) GetData(ctx storage.Context, keyStr string) ([]byte, bool, error) {
+	db, err := storage.BigDataStore()
+	if err != nil {
+		return nil, false, err
 	}
-	key := d.DataKey(versionID, dvid.IndexString(keyStr))
-
-	// Get the data
-	db, e := server.OrderedKeyValueGetter()
-	if e != nil {
-		err = e
-		return
-	}
-	data, e := db.Get(key)
-	if e != nil {
-		err = fmt.Errorf("Error in retrieving key '%s': %s", keyStr, e.Error())
-		return
+	key := dvid.IndexString(keyStr)
+	data, err := db.Get(ctx, key.Bytes())
+	if err != nil {
+		return nil, false, fmt.Errorf("Error in retrieving key '%s': %s", keyStr, err.Error())
 	}
 	if data == nil {
-		return
+		return nil, false, nil
 	}
-	found = true
 	uncompress := true
-	value, _, e = dvid.DeserializeData(data, uncompress)
-	if e != nil {
-		err = fmt.Errorf("Unable to deserialize data for key '%s': %s\n", keyStr, e.Error())
-		return
+	value, _, err := dvid.DeserializeData(data, uncompress)
+	if err != nil {
+		return nil, false, fmt.Errorf("Unable to deserialize data for key '%s': %s\n", keyStr, err.Error())
 	}
-	return
+	return value, true, nil
 }
 
 // PutData puts a key-value at a given uuid
-func (d *Data) PutData(uuid dvid.UUID, keyStr string, value []byte) error {
-	// Compute the key
-	versionID, err := server.VersionLocalID(uuid)
+func (d *Data) PutData(ctx storage.Context, keyStr string, value []byte) error {
+	db, err := storage.BigDataStore()
 	if err != nil {
 		return err
 	}
-	key := d.DataKey(versionID, dvid.IndexString(keyStr))
-
-	// PUT the file
-	db, err := server.OrderedKeyValueSetter()
-	if err != nil {
-		return err
-	}
-	serialization, err := dvid.SerializeData(value, d.Compression, d.Checksum)
+	serialization, err := dvid.SerializeData(value, d.Compression(), d.Checksum())
 	if err != nil {
 		return fmt.Errorf("Unable to serialize data: %s\n", err.Error())
 	}
-	return db.Put(key, serialization)
+	key := dvid.IndexString(keyStr)
+	return db.Put(ctx, key.Bytes(), serialization)
 }
 
 // JSONString returns the JSON for this Data's configuration
@@ -290,22 +234,32 @@ func (d *Data) JSONString() (jsonStr string, err error) {
 // DoRPC acts as a switchboard for RPC commands.
 func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error {
 	switch request.TypeCommand() {
-	case "get":
-		return d.Get(request, reply)
-	case "put":
-		return d.Put(request, reply)
 	case "mount":
 		return d.Mount(request, reply)
 	default:
-		return fmt.Errorf("Unknown command.  Data type '%s' [%s] does not support '%s' command.",
-			d.Name, d.DatatypeName(), request.TypeCommand())
+		return fmt.Errorf("Unknown command.  Data '%s' [%s] does not support '%s' command.",
+			d.DataName(), d.TypeName(), request.TypeCommand())
 	}
 	return nil
 }
 
-// DoHTTP handles all incoming HTTP requests for this data.
-func (d *Data) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	startTime := time.Now()
+// ServeHTTP handles all incoming HTTP requests for this data.
+func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *http.Request) {
+	timedLog := dvid.NewTimeLog()
+
+	// Get repo and version ID of this request
+	_, versions, ok := datastore.FromContext(requestCtx)
+	if !ok {
+		server.BadRequest(w, r, "Error: %q ServeHTTP has invalid context\n", d.DataName)
+		return
+	}
+
+	// Construct storage.Context using a particular version of this Data
+	var versionID dvid.VersionID
+	if len(versions) > 0 {
+		versionID = versions[0]
+	}
+	storeCtx := storage.NewDataContext(d, versionID)
 
 	// Allow cross-origin resource sharing.
 	w.Header().Add("Access-Control-Allow-Origin", "*")
@@ -318,9 +272,8 @@ func (d *Data) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(parts) < 4 {
-		err := fmt.Errorf("incomplete API specification")
-		server.BadRequest(w, r, err.Error())
-		return err
+		server.BadRequest(w, r, "incomplete API specification")
+		return
 	}
 
 	// Process help and info.
@@ -333,7 +286,7 @@ func (d *Data) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		jsonStr, err := d.JSONString()
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
-			return err
+			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, jsonStr)
@@ -353,34 +306,34 @@ func (d *Data) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			// Return JSON list of keys
 			keyBeg := keyStr
 			keyEnd := parts[4]
-			keyList, err := d.GetKeysInRange(uuid, keyBeg, keyEnd)
+			keyList, err := d.GetKeysInRange(storeCtx, keyBeg, keyEnd)
 			if err != nil {
 				server.BadRequest(w, r, err.Error())
-				return err
+				return
 			}
 			jsonBytes, err := json.Marshal(keyList)
 			if err != nil {
 				server.BadRequest(w, r, err.Error())
-				return err
+				return
 			}
 			w.Header().Set("Content-Type", "application/json")
 			fmt.Fprintf(w, string(jsonBytes))
 		} else {
 			// Return value of single key
-			value, found, err := d.GetData(uuid, keyStr)
+			value, found, err := d.GetData(storeCtx, keyStr)
 			if err != nil {
 				server.BadRequest(w, r, err.Error())
-				return err
+				return
 			}
 			if !found {
 				http.Error(w, fmt.Sprintf("Key '%s' not found", keyStr), http.StatusNotFound)
-				return nil
+				return
 			}
 			w.Header().Set("Content-Type", "application/octet-stream")
 			_, err = w.Write(value)
 			if err != nil {
 				server.BadRequest(w, r, err.Error())
-				return err
+				return
 			}
 			comment = fmt.Sprintf("HTTP GET keyvalue '%s': %d bytes (%s)\n", d.DataName(), len(value), url)
 		}
@@ -390,75 +343,16 @@ func (d *Data) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			server.BadRequest(w, r, err.Error())
 			return
 		}
-		err = d.PutData(uuid, keyStr, data)
+		err = d.PutData(storeCtx, keyStr, data)
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
 			return
 		}
 		comment = fmt.Sprintf("HTTP POST keyvalue '%s': %d bytes (%s)\n", d.DataName(), len(data), url)
 	default:
-		err := fmt.Errorf("Can only handle GET or POST HTTP verbs")
-		server.BadRequest(w, r, err.Error())
+		server.BadRequest(w, r, "Can only handle GET or POST HTTP verbs")
 		return
 	}
 
-	dvid.ElapsedTime(dvid.Debug, startTime, comment, "success")
-}
-
-// Get retrieves data given a key and a version node.
-func (d *Data) Get(request datastore.Request, reply *datastore.Response) error {
-	startTime := time.Now()
-
-	// Parse the request
-	var uuidStr, dataName, cmdStr, keyStr string
-	request.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &keyStr)
-
-	// Put the data
-	uuid, err := server.MatchingUUID(uuidStr)
-	if err != nil {
-		return err
-	}
-	data, _, err := d.GetData(uuid, keyStr)
-	if err != nil {
-		return err
-	}
-	reply.Output = data
-	dvid.ElapsedTime(dvid.Debug, startTime, "RPC GET (%s) completed", keyStr)
-	return nil
-}
-
-// Put puts file data data to a version node.
-func (d *Data) Put(request datastore.Request, reply *datastore.Response) error {
-	startTime := time.Now()
-
-	// Parse the request
-	var uuidStr, dataName, cmdStr, keyStr string
-	filenames := request.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &keyStr)
-	if len(filenames) > 1 {
-		return fmt.Errorf("keyvalue loads can only take one file at this time")
-	}
-
-	// Get data from request or from file.
-	var data []byte
-	if request.Input != nil {
-		data = request.Input
-	} else {
-		if len(filenames) == 0 {
-			return fmt.Errorf("Specify at least one file name to send or use -stdin")
-		}
-		var err error
-		if data, err = storage.DataFromFile(filenames[0]); err != nil {
-			return err
-		}
-	}
-
-	// Put the data
-	uuid, err := server.MatchingUUID(uuidStr)
-	if err != nil {
-		return err
-	}
-	err = d.PutData(uuid, keyStr, data)
-	dvid.ElapsedTime(dvid.Debug, startTime, "RPC put %d bytes -> key (%s) completed",
-		len(data), keyStr)
-	return err
+	timedLog.Infof(comment)
 }

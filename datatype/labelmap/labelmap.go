@@ -19,10 +19,10 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
+
+	"code.google.com/p/go.net/context"
 
 	"github.com/janelia-flyem/dvid/datastore"
-	"github.com/janelia-flyem/dvid/datatype/labels"
 	"github.com/janelia-flyem/dvid/datatype/labels64"
 	"github.com/janelia-flyem/dvid/datatype/voxels"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -276,7 +276,7 @@ func init() {
 		Url:     RepoUrl,
 		Version: Version,
 	}
-	datastore.RegisterDatatype(labelmap)
+	datastore.Register(labelmap)
 
 	// Need to register types that will be used to fulfill interfaces.
 	gob.Register(&Datatype{})
@@ -305,7 +305,7 @@ func NewDatatype() (dtype *Datatype) {
 // --- TypeService interface ---
 
 // NewDataService returns a pointer to new labelmap data with default values.
-func (dtype *Datatype) NewDataService(r Repo, id dvid.InstanceID, name dvid.DataString, c dvid.Config) (datastore.DataService, error) {
+func (dtype *Datatype) NewDataService(r datastore.Repo, id dvid.InstanceID, name dvid.DataString, c dvid.Config) (datastore.DataService, error) {
 	basedata, err := datastore.NewDataService(dtype, r, id, name, c)
 	if err != nil {
 		return nil, err
@@ -335,27 +335,27 @@ func (dtype *Datatype) Help() string {
 
 // LabelsRef is a reference to an existing labels64 data
 type LabelsRef struct {
-	name dvid.DataString
-	dset dvid.RepoLocalID
-	ptr  *labels64.Data
+	name   dvid.DataString
+	repoID dvid.RepoID
+	ptr    *labels64.Data
 }
 
-func NewLabelsRef(name dvid.DataString, dset dvid.RepoLocalID) (LabelsRef, error) {
-	ptr, err := labels64.GetByLocalID(dset, name)
+func NewLabelsRef(name dvid.DataString, repoID dvid.RepoID) (LabelsRef, error) {
+	ptr, err := labels64.GetByRepoID(repoID, name)
 	if err != nil {
 		return LabelsRef{}, err
 	}
-	return LabelsRef{name, dset, ptr}, nil
+	return LabelsRef{name, repoID, ptr}, nil
 }
 
 type labelsExport struct {
-	Name        dvid.DataString
-	RepoLocalID dvid.RepoLocalID
+	Name   dvid.DataString
+	RepoID dvid.RepoID
 }
 
 // MarshalJSON implements the json.Marshaler interface.
 func (ref LabelsRef) MarshalJSON() ([]byte, error) {
-	v := labelsExport{ref.name, ref.dset}
+	v := labelsExport{ref.name, ref.repoID}
 	return json.Marshal(v)
 }
 
@@ -366,7 +366,7 @@ func (ref *LabelsRef) UnmarshalJSON(b []byte) error {
 		return err
 	}
 	ref.name = labels.Name
-	ref.dset = labels.RepoLocalID
+	ref.repoID = labels.RepoID
 	return nil
 }
 
@@ -379,7 +379,7 @@ func (ref LabelsRef) MarshalBinary() ([]byte, error) {
 	if _, err := buf.Write([]byte(ref.name)); err != nil {
 		return nil, err
 	}
-	if err := binary.Write(&buf, binary.LittleEndian, ref.dset); err != nil {
+	if err := binary.Write(&buf, binary.LittleEndian, ref.repoID); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
@@ -396,19 +396,19 @@ func (ref *LabelsRef) UnmarshalBinary(data []byte) error {
 	if n, err := buf.Read(name); err != nil || n != int(length) {
 		return fmt.Errorf("Error reading label reference name.")
 	}
-	var dset dvid.RepoLocalID
-	if err := binary.Read(buf, binary.LittleEndian, &dset); err != nil {
+	var repoID dvid.RepoID
+	if err := binary.Read(buf, binary.LittleEndian, &repoID); err != nil {
 		return err
 	}
 	// See if we can associate a repo pointer, but if not, simply exit and defer
 	// to GetData() time.
 	labelsName := dvid.DataString(name)
-	ptr, err := labels64.GetByLocalID(dset, labelsName)
+	ptr, err := labels64.GetByRepoID(repoID, labelsName)
 	if err != nil {
 		ptr = nil
 	}
 	ref.name = labelsName
-	ref.dset = dset
+	ref.repoID = repoID
 	ref.ptr = ptr
 	return nil
 }
@@ -419,7 +419,7 @@ func (ref *LabelsRef) GetData() (*labels64.Data, error) {
 	if ref.ptr != nil {
 		return ref.ptr, nil
 	}
-	ptr, err := labels64.GetByLocalID(ref.dset, ref.name)
+	ptr, err := labels64.GetByRepoID(ref.repoID, ref.name)
 	if err != nil {
 		return nil, err
 	}
@@ -473,14 +473,28 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 		return d.ApplyLabelMap(request, reply)
 	default:
 		return fmt.Errorf("Unknown command.  Data type '%s' [%s] does not support '%s' command.",
-			d.Name, d.DatatypeName(), request.TypeCommand())
+			d.DataName(), d.TypeName(), request.TypeCommand())
 	}
 	return nil
 }
 
-// DoHTTP handles all incoming HTTP requests for this data.
-func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) error {
-	startTime := time.Now()
+// ServeHTTP handles all incoming HTTP requests for this data.
+func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *http.Request) {
+	timedLog := dvid.NewTimeLog()
+
+	// Get repo and version ID of this request
+	_, versions, ok := datastore.FromContext(requestCtx)
+	if !ok {
+		server.BadRequest(w, r, "Error: %q ServeHTTP has invalid context\n", d.DataName)
+		return
+	}
+
+	// Construct storage.Context using a particular version of this Data
+	var versionID dvid.VersionID
+	if len(versions) > 0 {
+		versionID = versions[0]
+	}
+	storeCtx := storage.NewDataContext(d, versionID)
 
 	// Allow cross-origin resource sharing.
 	w.Header().Add("Access-Control-Allow-Origin", "*")
@@ -494,7 +508,8 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 	case "post":
 		op = voxels.PutOp
 	default:
-		return fmt.Errorf("Can only handle GET or POST HTTP verbs")
+		server.BadRequest(w, r, "Can only handle GET or POST HTTP verbs")
+		return
 	}
 
 	// Break URL request into arguments
@@ -505,9 +520,8 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 	}
 
 	if len(parts) < 4 {
-		err := fmt.Errorf("incomplete API specification")
-		server.BadRequest(w, r, err.Error())
-		return err
+		server.BadRequest(w, r, "incomplete API request")
+		return
 	}
 
 	// Process help and info.
@@ -515,227 +529,219 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 	case "help":
 		w.Header().Set("Content-Type", "text/plain")
 		fmt.Fprintln(w, d.Help())
-		return nil
+		return
 
 	case "info":
 		jsonStr, err := d.JSONString()
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
-			return err
+			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, jsonStr)
-		return nil
+		return
 
 	case "mapping":
 		// GET <api URL>/node/<UUID>/<data name>/mapping/<label>
 		if len(parts) < 5 {
-			err := fmt.Errorf("ERROR: DVID requires label ID to follow 'sparsevol' command")
-			server.BadRequest(w, r, err.Error())
-			return err
+			server.BadRequest(w, r, "ERROR: DVID requires label ID to follow 'sparsevol' command")
+			return
 		}
 		label, err := strconv.ParseUint(parts[4], 10, 64)
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
-			return err
-		}
-		_, versionID, err := server.DatastoreService().LocalIDFromUUID(uuid)
-		if err != nil {
-			server.BadRequest(w, r, err.Error())
-			return err
+			return
 		}
 		labelBytes := make([]byte, 8, 8)
 		binary.BigEndian.PutUint64(labelBytes, label)
 		mapping, err := d.GetLabelMapping(versionID, labelBytes)
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
-			return err
+			return
 		}
 		w.Header().Set("Content-type", "application/json")
 		fmt.Fprintf(w, `{ "Mapping": %d }`, mapping)
-		dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: mapping of label '%d' (%s)", r.Method, label, r.URL)
+		timedLog.Infof("HTTP %s: mapping of label '%d' (%s)", r.Method, label, r.URL)
 
 	case "sparsevol":
 		// GET <api URL>/node/<UUID>/<data name>/sparsevol/<label>
 		if len(parts) < 5 {
-			err := fmt.Errorf("ERROR: DVID requires label ID to follow 'sparsevol' command")
-			server.BadRequest(w, r, err.Error())
-			return err
+			server.BadRequest(w, r, "ERROR: DVID requires label ID to follow 'sparsevol' command")
+			return
 		}
 		label, err := strconv.ParseUint(parts[4], 10, 64)
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
-			return err
+			return
 		}
-		data, err := d.GetSparseVol(uuid, label)
+		data, err := labels64.GetSparseVol(storeCtx, label)
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
-			return err
+			return
 		}
 		w.Header().Set("Content-type", "application/octet-stream")
 		_, err = w.Write(data)
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
-			return err
+			return
 		}
-		dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: sparsevol on label %d (%s)",
-			r.Method, label, r.URL)
+		timedLog.Infof("HTTP %s: sparsevol on label %d (%s)", r.Method, label, r.URL)
 
 	case "sparsevol-by-point":
 		// GET <api URL>/node/<UUID>/<data name>/sparsevol-by-point/<coord>
 		if len(parts) < 5 {
-			err := fmt.Errorf("ERROR: DVID requires coord to follow 'sparsevol-by-point' command")
-			server.BadRequest(w, r, err.Error())
-			return err
+			server.BadRequest(w, r, "ERROR: DVID requires coord to follow 'sparsevol-by-point' command")
+			return
 		}
 		coord, err := dvid.StringToPoint(parts[4], "_")
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
-			return err
+			return
 		}
-		label, err := d.GetLabelAtPoint(uuid, coord)
+		label, err := d.GetLabelAtPoint(storeCtx, coord)
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
-			return err
+			return
 		}
-		data, err := d.GetSparseVol(uuid, label)
+		data, err := labels64.GetSparseVol(storeCtx, label)
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
-			return err
+			return
 		}
 		w.Header().Set("Content-type", "application/octet-stream")
 		_, err = w.Write(data)
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
-			return err
+			return
 		}
-		dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: sparsevol-by-point at %s (%s)",
-			r.Method, coord, r.URL)
+		timedLog.Infof("HTTP %s: sparsevol-by-point at %s (%s)", r.Method, coord, r.URL)
 
 	case "surface":
 		// GET <api URL>/node/<UUID>/<data name>/surface/<label>
 		fmt.Printf("Getting surface: %s\n", url)
 		if len(parts) < 5 {
-			err := fmt.Errorf("ERROR: DVID requires label ID to follow 'surface' command")
-			server.BadRequest(w, r, err.Error())
-			return err
+			server.BadRequest(w, r, "ERROR: DVID requires label ID to follow 'surface' command")
+			return
 		}
 		label, err := strconv.ParseUint(parts[4], 10, 64)
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
-			return err
+			return
 		}
-		gzipData, found, err := d.GetSurface(uuid, label)
+		gzipData, found, err := labels64.GetSurface(storeCtx, label)
 		if err != nil {
-			return fmt.Errorf("Error on getting surface for label %d: %s", label, err.Error())
+			server.BadRequest(w, r, "Error on getting surface for label %d: %s", label, err.Error())
+			return
 		}
 		if !found {
 			http.Error(w, fmt.Sprintf("Surface for label '%d' not found", label), http.StatusNotFound)
-			return nil
+			return
 		}
 		w.Header().Set("Content-type", "application/octet-stream")
 		if err := dvid.WriteGzip(gzipData, w, r); err != nil {
 			server.BadRequest(w, r, err.Error())
-			return err
+			return
 		}
-		dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: surface on label %d (%s)",
-			r.Method, label, r.URL)
+		timedLog.Infof("HTTP %s: surface on label %d (%s)", r.Method, label, r.URL)
 
 	case "surface-by-point":
 		// GET <api URL>/node/<UUID>/<data name>/surface-by-point/<coord>
 		if len(parts) < 5 {
-			err := fmt.Errorf("ERROR: DVID requires coord to follow 'surface-by-point' command")
-			server.BadRequest(w, r, err.Error())
-			return err
+			server.BadRequest(w, r, "ERROR: DVID requires coord to follow 'surface-by-point' command")
+			return
 		}
 		coord, err := dvid.StringToPoint(parts[4], "_")
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
-			return err
+			return
 		}
-		label, err := d.GetLabelAtPoint(uuid, coord)
+		label, err := d.GetLabelAtPoint(storeCtx, coord)
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
-			return err
+			return
 		}
-		gzipData, found, err := d.GetSurface(uuid, label)
+		gzipData, found, err := labels64.GetSurface(storeCtx, label)
 		if err != nil {
-			return fmt.Errorf("Error on getting surface for label %d: %s", label, err.Error())
+			server.BadRequest(w, r, "Error on getting surface for label %d: %s", label, err.Error())
+			return
 		}
 		if !found {
 			http.Error(w, fmt.Sprintf("Surface for label '%d' not found", label), http.StatusNotFound)
-			return nil
+			return
 		}
 		w.Header().Set("Content-type", "application/octet-stream")
 		if err := dvid.WriteGzip(gzipData, w, r); err != nil {
-			return err
+			server.BadRequest(w, r, err.Error())
+			return
 		}
-		dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: surface-by-point at %s (%s)",
-			r.Method, coord, r.URL)
+		timedLog.Infof("HTTP %s: surface-by-point at %s (%s)", r.Method, coord, r.URL)
 
 	case "sizerange":
 		// GET <api URL>/node/<UUID>/<data name>/sizerange/<min size>/<optional max size>
 		if len(parts) < 5 {
-			err := fmt.Errorf("ERROR: DVID requires at least the minimum size to follow 'sizerange' command")
-			server.BadRequest(w, r, err.Error())
-			return err
+			server.BadRequest(w, r, "ERROR: DVID requires at least the minimum size to follow 'sizerange' command")
+			return
 		}
 		minSize, err := strconv.ParseUint(parts[4], 10, 64)
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
-			return err
+			return
 		}
 		var maxSize uint64
 		if len(parts) >= 6 {
 			maxSize, err = strconv.ParseUint(parts[5], 10, 64)
 			if err != nil {
 				server.BadRequest(w, r, err.Error())
-				return err
+				return
 			}
 		}
-		jsonStr, err := labels.GetSizeRange(d, uuid, minSize, maxSize)
+		jsonStr, err := labels64.GetSizeRange(d, versionID, minSize, maxSize)
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
-			return err
+			return
 		}
 		w.Header().Set("Content-type", "application/json")
 		fmt.Fprintf(w, jsonStr)
-		dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: get labels with volume > %d and < %d (%s)",
-			r.Method, minSize, maxSize, r.URL)
+		timedLog.Infof("HTTP %s: get labels with volume > %d and < %d (%s)", r.Method, minSize, maxSize, r.URL)
 
 	case "labels":
 		if len(parts) < 7 {
-			return fmt.Errorf("'labels' must be followed by shape/size/offset")
+			server.BadRequest(w, r, "'labels' must be followed by shape/size/offset")
+			return
 		}
 		if op == voxels.PutOp {
-			return fmt.Errorf("Cannot POST.  Can only GET mapped labels that intersect the given geometry.")
+			server.BadRequest(w, r, "Cannot POST.  Can only GET mapped labels that intersect the given geometry.")
+			return
 		}
 		shapeStr, sizeStr, offsetStr := parts[4], parts[5], parts[6]
 		planeStr := dvid.DataShapeString(shapeStr)
 		plane, err := planeStr.DataShape()
 		if err != nil {
-			return err
+			server.BadRequest(w, r, err.Error())
+			return
 		}
 		labels, err := d.Labels.GetData()
 		if err != nil {
-			return err
+			server.BadRequest(w, r, "Error getting labels %q", labels.DataName())
+			return
 		}
 
 		switch plane.ShapeDimensions() {
 		case 2:
 			slice, err := dvid.NewSliceFromStrings(planeStr, offsetStr, sizeStr, "_")
 			if err != nil {
-				return err
+				server.BadRequest(w, r, "Error parsing slice: %s", err.Error())
+				return
 			}
 			e, err := labels.NewExtHandler(slice, nil)
 			if err != nil {
 				server.BadRequest(w, r, err.Error())
-				return err
+				return
 			}
-			img, err := d.GetMappedImage(uuid, e)
+			img, err := d.GetMappedImage(versionID, e)
 			if err != nil {
 				server.BadRequest(w, r, err.Error())
-				return err
+				return
 			}
 			var formatStr string
 			if len(parts) >= 8 {
@@ -745,9 +751,9 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 			err = dvid.WriteImageHttp(w, img.Get(), formatStr)
 			if err != nil {
 				server.BadRequest(w, r, err.Error())
-				return err
+				return
 			}
-			dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: %s (%s)", r.Method, plane, r.URL)
+			timedLog.Infof("HTTP %s: %s (%s)", r.Method, plane, r.URL)
 		case 3:
 			queryStrings := r.URL.Query()
 			if queryStrings.Get("throttle") == "on" {
@@ -761,91 +767,86 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 					throttleMsg := fmt.Sprintf("Server already running maximum of %d throttled operations",
 						server.MaxThrottledOps)
 					http.Error(w, throttleMsg, http.StatusServiceUnavailable)
-					return nil
+					return
 				}
 			}
 			subvol, err := dvid.NewSubvolumeFromStrings(offsetStr, sizeStr, "_")
 			if err != nil {
-				return err
+				server.BadRequest(w, r, "Error parsing subvolume: %s", err.Error())
+				return
 			}
 			e, err := labels.NewExtHandler(subvol, nil)
 			if err != nil {
 				server.BadRequest(w, r, err.Error())
-				return err
+				return
 			}
-			data, err := d.GetMappedVolume(uuid, e)
+			data, err := d.GetMappedVolume(versionID, e)
 			if err != nil {
 				server.BadRequest(w, r, err.Error())
-				return err
+				return
 			}
 			w.Header().Set("Content-type", "application/octet-stream")
 			_, err = w.Write(data)
 			if err != nil {
-				return err
+				server.BadRequest(w, r, "Error writing data: %s", err.Error())
+				return
 			}
-			dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: %s (%s)", r.Method, subvol, r.URL)
+			timedLog.Infof("HTTP %s: %s (%s)", r.Method, subvol, r.URL)
 		default:
-			return fmt.Errorf("DVID currently supports shapes of only 2 and 3 dimensions")
+			server.BadRequest(w, r, "DVID currently supports shapes of only 2 and 3 dimensions")
+			return
 		}
 
 	case "intersect":
 		// GET <api URL>/node/<UUID>/<data name>/intersect/<min block>/<max block>
 		if len(parts) < 6 {
-			err := fmt.Errorf("ERROR: DVID requires min & max block coordinates to follow 'intersect' command")
-			server.BadRequest(w, r, err.Error())
-			return err
+			server.BadRequest(w, r, "ERROR: DVID requires min & max block coordinates to follow 'intersect' command")
+			return
 		}
 		minPoint, err := dvid.StringToPoint(parts[4], "_")
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
-			return err
+			return
 		}
 		if minPoint.NumDims() != 3 {
-			err := fmt.Errorf("ERROR: 'intersect' requires block coordinates to be in 3d, not %d-d", minPoint.NumDims())
-			server.BadRequest(w, r, err.Error())
-			return err
+			server.BadRequest(w, r, "ERROR: 'intersect' requires block coordinates to be in 3d, not %d-d", minPoint.NumDims())
+			return
 		}
 		minCoord, ok := minPoint.(dvid.Point3d)
 		if !ok {
-			err := fmt.Errorf("ERROR: 'intersect' requires block coordinates to be 3d.  Got: %s", minPoint)
-			server.BadRequest(w, r, err.Error())
-			return err
+			server.BadRequest(w, r, "ERROR: 'intersect' requires block coordinates to be 3d.  Got: %s", minPoint)
+			return
 		}
 		maxPoint, err := dvid.StringToPoint(parts[5], "_")
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
-			return err
+			return
 		}
 		if maxPoint.NumDims() != 3 {
-			err := fmt.Errorf("ERROR: 'intersect' requires block coordinates to be in 3d, not %d-d", maxPoint.NumDims())
-			server.BadRequest(w, r, err.Error())
-			return err
+			server.BadRequest(w, r, "ERROR: 'intersect' requires block coordinates to be in 3d, not %d-d", maxPoint.NumDims())
+			return
 		}
 		maxCoord, ok := maxPoint.(dvid.Point3d)
 		if !ok {
-			err := fmt.Errorf("ERROR: 'intersect' requires block coordinates to be 3d.  Got: %s", maxPoint)
-			server.BadRequest(w, r, err.Error())
-			return err
+			server.BadRequest(w, r, "ERROR: 'intersect' requires block coordinates to be 3d.  Got: %s", maxPoint)
+			return
 		}
-		jsonStr, err := d.GetLabelsInVolume(uuid, dvid.ChunkPoint3d(minCoord), dvid.ChunkPoint3d(maxCoord))
+		jsonStr, err := d.GetLabelsInVolume(storeCtx, dvid.ChunkPoint3d(minCoord), dvid.ChunkPoint3d(maxCoord))
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
-			return err
+			return
 		}
 		w.Header().Set("Content-type", "application/json")
 		fmt.Fprintf(w, jsonStr)
-		dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: labels that intersect volume %s -> %s",
-			r.Method, minCoord, maxCoord)
+		timedLog.Infof("HTTP %s: labels that intersect volume %s -> %s", r.Method, minCoord, maxCoord)
 
 	default:
-		return fmt.Errorf("Unrecognized API call '%s' for labelmap data '%s'.  See API help.", parts[3], d.DataName())
+		server.BadRequest(w, r, "Unrecognized API call '%s' for labelmap data '%s'.  See API help.", parts[3], d.DataName())
 	}
-
-	return nil
 }
 
 func loadSegBodyMap(filename string) (map[uint64]uint64, error) {
-	startTime := time.Now()
+	timedLog := dvid.NewTimeLog()
 	dvid.Infof("Loading segment->body map: %s\n", filename)
 
 	segmentToBodyMap := make(map[uint64]uint64, 100000)
@@ -872,19 +873,19 @@ func loadSegBodyMap(filename string) (map[uint64]uint64, error) {
 		segmentToBodyMap[segment] = body
 		linenum++
 	}
-	dvid.ElapsedTime(dvid.Debug, startTime, "Loaded Raveler segment->body file: %s", filename)
+	timedLog.Infof("Loaded Raveler segment->body file: %s", filename)
 	return segmentToBodyMap, nil
 }
 
-// NewRavelerForwardMapKey returns a datastore.DataKey that encodes a "label + mapping", where
+// NewRavelerForwardMapIndex returns an index that encodes a "label + mapping", where
 // the label is a uint64 with top 4 bytes encoding Z and least-significant 4 bytes encoding
 // the superpixel ID.  Also, the zero label is reserved.
-func (d *Data) NewRavelerForwardMapKey(vID dvid.VersionLocalID, z, spid uint32, body uint64) *datastore.DataKey {
+func (d *Data) NewRavelerForwardMapIndex(z, spid uint32, body uint64) []byte {
 	index := make([]byte, 17)
-	index[0] = byte(labels.KeyForwardMap)
+	index[0] = byte(labels64.KeyForwardMap)
 	copy(index[1:9], labels64.RavelerSuperpixelBytes(z, spid))
 	binary.BigEndian.PutUint64(index[9:17], body)
-	return d.DataKey(vID, dvid.IndexBytes(index))
+	return index
 }
 
 // LoadRavelerMaps loads maps from Raveler-formatted superpixel->segment and
@@ -896,15 +897,9 @@ func (d *Data) LoadRavelerMaps(request datastore.Request, reply *datastore.Respo
 	var uuidStr, dataName, cmdStr, fileTypeStr, spsegStr, segbodyStr string
 	request.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &fileTypeStr, &spsegStr, &segbodyStr)
 
-	startTime := time.Now()
+	timedLog := dvid.NewTimeLog()
 
-	uuid, err := server.MatchingUUID(uuidStr)
-	if err != nil {
-		return err
-	}
-
-	service := server.DatastoreService()
-	_, versionID, err := service.LocalIDFromUUID(uuid)
+	uuid, versionID, err := server.Repos.MatchingUUID(uuidStr)
 	if err != nil {
 		return err
 	}
@@ -919,9 +914,15 @@ func (d *Data) LoadRavelerMaps(request datastore.Request, reply *datastore.Respo
 	maxLabelZ := uint32(labelData.Extents().MaxPoint.Value(2))
 
 	d.Ready = false
-	if err := service.SaveRepo(uuid); err != nil {
+	if err := server.Repos.SaveRepo(uuid); err != nil {
 		return err
 	}
+
+	smalldata, err := storage.SmallDataStore()
+	if err != nil {
+		return fmt.Errorf("Cannot get datastore that handles small data: %s\n", err.Error())
+	}
+	ctx := storage.NewDataContext(d, versionID)
 
 	// Get the seg->body map
 	seg2body, err := loadSegBodyMap(segbodyStr)
@@ -929,22 +930,15 @@ func (d *Data) LoadRavelerMaps(request datastore.Request, reply *datastore.Respo
 		return err
 	}
 
-	// Prepare for datastore access
-	db, err := server.OrderedKeyValueSetter()
-	if err != nil {
-		return err
-	}
-
 	var slice, superpixel32 uint32
 	var segment, body uint64
 	forwardIndex := make([]byte, 17)
-	forwardIndex[0] = byte(labels.KeyForwardMap)
+	forwardIndex[0] = byte(labels64.KeyForwardMap)
 	inverseIndex := make([]byte, 17)
-	inverseIndex[0] = byte(labels.KeyInverseMap)
+	inverseIndex[0] = byte(labels64.KeyInverseMap)
 
 	// Get the sp->seg map, persisting each computed sp->body.
-	dvid.Infof("Processing superpixel->segment map (Z %d-%d): %s\n",
-		minLabelZ, maxLabelZ, spsegStr)
+	dvid.Infof("Processing superpixel->segment map (Z %d-%d): %s\n", minLabelZ, maxLabelZ, spsegStr)
 	file, err := os.Open(spsegStr)
 	if err != nil {
 		return fmt.Errorf("Could not open superpixel->segment map: %s", spsegStr)
@@ -984,9 +978,7 @@ func (d *Data) LoadRavelerMaps(request datastore.Request, reply *datastore.Respo
 		// PUT the forward label pair without compression.
 		copy(forwardIndex[1:9], superpixelBytes)
 		binary.BigEndian.PutUint64(forwardIndex[9:17], body)
-		key := d.DataKey(versionID, dvid.IndexBytes(forwardIndex))
-		err = db.Put(key, dvid.EmptyValue())
-		if err != nil {
+		if err := smalldata.Put(ctx, forwardIndex, dvid.EmptyValue()); err != nil {
 			return fmt.Errorf("ERROR on PUT of forward label mapping (%x -> %d): %s\n",
 				superpixelBytes, body, err.Error())
 		}
@@ -994,9 +986,7 @@ func (d *Data) LoadRavelerMaps(request datastore.Request, reply *datastore.Respo
 		// PUT the inverse label pair without compression.
 		binary.BigEndian.PutUint64(inverseIndex[1:9], body)
 		copy(inverseIndex[9:17], superpixelBytes)
-		key = d.DataKey(versionID, dvid.IndexBytes(inverseIndex))
-		err = db.Put(key, dvid.EmptyValue())
-		if err != nil {
+		if err := smalldata.Put(ctx, inverseIndex, dvid.EmptyValue()); err != nil {
 			return fmt.Errorf("ERROR on PUT of inverse label mapping (%d -> %x): %s\n",
 				body, superpixelBytes, err.Error())
 		}
@@ -1007,7 +997,7 @@ func (d *Data) LoadRavelerMaps(request datastore.Request, reply *datastore.Respo
 		}
 	}
 	dvid.Infof("Added %d forward and inverse mappings\n", linenum)
-	dvid.ElapsedTime(dvid.Normal, startTime, "Processed Raveler superpixel->body files")
+	timedLog.Infof("Processed Raveler superpixel->body files")
 
 	// Spawn goroutine to do spatial processing on associated label volume.
 	go d.ProcessSpatially(uuid)
@@ -1017,28 +1007,21 @@ func (d *Data) LoadRavelerMaps(request datastore.Request, reply *datastore.Respo
 
 // ApplyLabelMap creates a new labels64 by applying a label map to existing labels64 data.
 func (d *Data) ApplyLabelMap(request datastore.Request, reply *datastore.Response) error {
-
 	if !d.Ready {
 		return fmt.Errorf("Can't apply labelmap that hasn't been loaded.")
 	}
-
-	startTime := time.Now()
+	timedLog := dvid.NewTimeLog()
 
 	// Parse the request
 	var uuidStr, dataName, cmdStr, sourceName, destName string
 	request.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &sourceName, &destName)
 
-	// Get the version
-	uuid, err := server.MatchingUUID(uuidStr)
+	// Get the version and repo
+	uuid, versionID, err := server.Repos.MatchingUUID(uuidStr)
 	if err != nil {
 		return err
 	}
-	service := server.DatastoreService()
-	_, versionID, err := service.LocalIDFromUUID(uuid)
-	if err != nil {
-		return err
-	}
-	db, err := server.OrderedKeyValueDB()
+	repo, err := server.Repos.RepoFromUUID(uuid)
 	if err != nil {
 		return err
 	}
@@ -1048,32 +1031,41 @@ func (d *Data) ApplyLabelMap(request datastore.Request, reply *datastore.Respons
 	dest, err = labels64.GetByUUID(uuid, dvid.DataString(destName))
 	if err != nil {
 		config := dvid.NewConfig()
-		err = service.NewData(uuid, "labels64", dvid.DataString(destName), config)
+		typeservice, err := datastore.TypeServiceByName("labels64")
 		if err != nil {
 			return err
 		}
-		dest, err = labels64.GetByUUID(uuid, dvid.DataString(destName))
+		dataservice, err := repo.NewData(typeservice, dvid.DataString(destName), config)
 		if err != nil {
 			return err
+		}
+		var ok bool
+		dest, ok = dataservice.(*labels64.Data)
+		if !ok {
+			return fmt.Errorf("Could not create labels64 data instance")
 		}
 	}
 
 	// Iterate through all labels chunks incrementally in Z, loading and then using the maps
 	// for all blocks in that layer.
+	bigdata, err := storage.BigDataStore()
+	if err != nil {
+		return fmt.Errorf("Cannot get datastore that handles big data: %s\n", err.Error())
+	}
 	labelData, err := d.Labels.GetData()
 	if err != nil {
 		return err
 	}
+	labelCtx := storage.NewDataContext(labelData, versionID)
 
 	wg := new(sync.WaitGroup)
-	op := &denormOp{labelData, nil, dest.Data().ID, versionID, nil}
+	op := &denormOp{labelData, nil, dest, versionID, nil}
 
-	dataID := labelData.Data()
 	extents := labelData.Extents()
-	minIndexZ := extents.MinIndex.(dvid.IndexZYX)[2]
-	maxIndexZ := extents.MaxIndex.(dvid.IndexZYX)[2]
+	minIndexZ := extents.MinIndex.Value(2)
+	maxIndexZ := extents.MaxIndex.Value(2)
 	for z := minIndexZ; z <= maxIndexZ; z++ {
-		t := time.Now()
+		layerLog := dvid.NewTimeLog()
 
 		// Get the label->label map for this Z
 		var minChunkPt, maxChunkPt dvid.ChunkPoint3d
@@ -1083,45 +1075,41 @@ func (d *Data) ApplyLabelMap(request datastore.Request, reply *datastore.Respons
 		}
 
 		// Process the labels chunks for this Z
-		minIndex := dvid.IndexZYX(minChunkPt)
-		maxIndex := dvid.IndexZYX(maxChunkPt)
 		if op.mapping != nil {
-			startKey := &datastore.DataKey{dataID.DsetID, dataID.ID, versionID, minIndex}
-			endKey := &datastore.DataKey{dataID.DsetID, dataID.ID, versionID, maxIndex}
+			minIndex := dvid.IndexZYX(minChunkPt)
+			maxIndex := dvid.IndexZYX(maxChunkPt)
 			chunkOp := &storage.ChunkOp{op, wg}
-			err = db.ProcessRange(startKey, endKey, chunkOp, d.ChunkApplyMap)
+			err = bigdata.ProcessRange(labelCtx, minIndex.Bytes(), maxIndex.Bytes(), chunkOp, d.ChunkApplyMap)
 			wg.Wait()
 		}
 
-		dvid.ElapsedTime(dvid.Debug, t, "Processed all %s blocks for layer %d/%d",
-			sourceName, z-minIndexZ+1, maxIndexZ-minIndexZ+1)
+		layerLog.Debugf("Processed all %s blocks for layer %d/%d", sourceName, z-minIndexZ+1, maxIndexZ-minIndexZ+1)
 	}
-	dvid.ElapsedTime(dvid.Debug, startTime, "Mapped %s to %s using label map %s",
-		sourceName, destName, d.DataName())
+	timedLog.Infof("Mapped %s to %s using label map %s", sourceName, destName, d.DataName())
 
 	// Set new mapped data to same extents.
 	dest.Properties = labelData.Properties
-	if err := server.DatastoreService().SaveRepo(uuid); err != nil {
-		dvid.Infof("Could not save READY state to data '%s', uuid %s: %s",
-			d.DataName(), uuid, err.Error())
+	if err := server.Repos.SaveRepo(uuid); err != nil {
+		dvid.Infof("Could not save READY state to data '%s', uuid %s: %s", d.DataName(), uuid, err.Error())
 	}
 
-	// Kickoff denormalizations based on new labels.
-	//go dest.ProcessSpatially(uuid)
+	// Kickoff denormalizations based on new labels64.
+	go dest.ProcessSpatially(uuid)
 
 	return nil
 }
 
 // GetLabelMapping returns the mapping for a label.
-func (d *Data) GetLabelMapping(versionID dvid.VersionLocalID, label []byte) (uint64, error) {
-	firstKey := labels.NewForwardMapKey(d, versionID, label, 0)
-	lastKey := labels.NewForwardMapKey(d, versionID, label, math.MaxUint64)
+func (d *Data) GetLabelMapping(versionID dvid.VersionID, label []byte) (uint64, error) {
+	begIndex := labels64.NewForwardMapIndex(label, 0)
+	endIndex := labels64.NewForwardMapIndex(label, math.MaxUint64)
 
-	db, err := server.OrderedKeyValueGetter()
+	smalldata, err := storage.SmallDataStore()
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("Cannot get datastore that handles small data: %s\n", err.Error())
 	}
-	keys, err := db.KeysInRange(firstKey, lastKey)
+	ctx := storage.NewDataContext(d, versionID)
+	keys, err := smalldata.KeysInRange(ctx, begIndex, endIndex)
 	if err != nil {
 		return 0, err
 	}
@@ -1136,26 +1124,28 @@ func (d *Data) GetLabelMapping(versionID dvid.VersionLocalID, label []byte) (uin
 		}
 		return 0, fmt.Errorf("Label %d is mapped to more than one label: %s", label, mapped)
 	}
-
-	b := keys[0].Bytes()
-	indexBytes := b[datastore.DataKeyIndexOffset:]
+	indexBytes, err := storage.DataContextIndex(keys[0])
+	if err != nil {
+		return 0, err
+	}
 	mapping := binary.BigEndian.Uint64(indexBytes[9:17])
 
 	return mapping, nil
 }
 
 // GetBlockMapping returns the label -> mappedLabel map for a given block.
-func (d *Data) GetBlockMapping(vID dvid.VersionLocalID, block dvid.IndexZYX) (map[string]uint64, error) {
-	db, err := server.OrderedKeyValueGetter()
-	if err != nil {
-		return nil, err
-	}
+func (d *Data) GetBlockMapping(versionID dvid.VersionID, blockI dvid.Index) (map[string]uint64, error) {
 
 	maxLabel := []byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}
-	firstKey := labels.NewSpatialMapKey(d, vID, block, nil, 0)
-	lastKey := labels.NewSpatialMapKey(d, vID, block, maxLabel, math.MaxUint64)
+	begIndex := labels64.NewSpatialMapIndex(blockI, nil, 0)
+	endIndex := labels64.NewSpatialMapIndex(blockI, maxLabel, math.MaxUint64)
 
-	keys, err := db.KeysInRange(firstKey, lastKey)
+	smalldata, err := storage.SmallDataStore()
+	if err != nil {
+		return nil, fmt.Errorf("Cannot get datastore that handles small data: %s\n", err.Error())
+	}
+	ctx := storage.NewDataContext(d, versionID)
+	keys, err := smalldata.KeysInRange(ctx, begIndex, endIndex)
 	if err != nil {
 		return nil, err
 	}
@@ -1163,8 +1153,10 @@ func (d *Data) GetBlockMapping(vID dvid.VersionLocalID, block dvid.IndexZYX) (ma
 	mapping := make(map[string]uint64, numKeys)
 	offset := 1 + dvid.IndexZYXSize
 	for _, key := range keys {
-		dataKey := key.(*datastore.DataKey)
-		indexBytes := dataKey.Index.Bytes()
+		indexBytes, err := storage.DataContextIndex(key)
+		if err != nil {
+			return nil, err
+		}
 		label := indexBytes[offset : offset+8]
 		mappedLabel := binary.BigEndian.Uint64(indexBytes[offset+8 : offset+16])
 		mapping[string(label)] = mappedLabel
@@ -1185,18 +1177,20 @@ func (d *Data) GetBlockLayerMapping(blockZ int32, op *denormOp) (minChunkPt, max
 	// Get first and last keys that span that voxel space Z range.
 	minZ := uint32(minVoxelPt.Value(2))
 	maxZ := uint32(maxVoxelPt.Value(2))
-	firstKey := d.NewRavelerForwardMapKey(op.versionID, minZ, 1, 0)
-	lastKey := d.NewRavelerForwardMapKey(op.versionID, maxZ, 0xFFFFFFFF, math.MaxUint64)
+	begIndex := d.NewRavelerForwardMapIndex(minZ, 1, 0)
+	endIndex := d.NewRavelerForwardMapIndex(maxZ, 0xFFFFFFFF, math.MaxUint64)
 
 	// Get all forward mappings from the key-value store.
 	op.mapping = nil
 
-	db, err := server.OrderedKeyValueGetter()
+	smalldata, err := storage.SmallDataStore()
 	if err != nil {
+		err = fmt.Errorf("Cannot get datastore that handles small data: %s\n", err.Error())
 		return
 	}
-	var keys []storage.Key
-	keys, err = db.KeysInRange(firstKey, lastKey)
+	ctx := storage.NewDataContext(d, op.versionID)
+	var keys [][]byte
+	keys, err = smalldata.KeysInRange(ctx, begIndex, endIndex)
 	if err != nil {
 		err = fmt.Errorf("Could not find mapping with slice between %d and %d: %s",
 			minZ, maxZ, err.Error())
@@ -1207,9 +1201,12 @@ func (d *Data) GetBlockLayerMapping(blockZ int32, op *denormOp) (minChunkPt, max
 	numKeys := len(keys)
 	if numKeys != 0 {
 		op.mapping = make(map[string]uint64, numKeys)
+		var indexBytes []byte
 		for _, key := range keys {
-			keyBytes := key.Bytes()
-			indexBytes := keyBytes[datastore.DataKeyIndexOffset:]
+			indexBytes, err = storage.DataContextIndex(key)
+			if err != nil {
+				return
+			}
 			label := string(indexBytes[1:9])
 			mappedLabel := binary.BigEndian.Uint64(indexBytes[9:17])
 			op.mapping[label] = mappedLabel
@@ -1238,21 +1235,19 @@ func (d *Data) chunkApplyMap(chunk *storage.Chunk) {
 	}()
 
 	op := chunk.Op.(*denormOp)
-	db, err := server.OrderedKeyValueSetter()
-	if err != nil {
-		dvid.Infof("Error in %s.ChunkApplyMap(): %s", d.Data.DataName(), err.Error())
-		return
-	}
 
 	// Get the spatial index associated with this chunk.
-	dataKey := chunk.K.(*datastore.DataKey)
-	zyx := dataKey.Index.(*dvid.IndexZYX)
+	zyx, err := storage.KeyToIndexZYX(chunk.K)
+	if err != nil {
+		dvid.Errorf("Error in %s.ChunkApplyMap(): %s", d.Data.DataName(), err.Error())
+		return
+	}
+	zyxBytes := zyx.Bytes()
 
 	// Initialize the label buffers.  For voxels, this data needs to be uncompressed and deserialized.
 	blockData, _, err := dvid.DeserializeData(chunk.V, true)
 	if err != nil {
-		dvid.Infof("Unable to deserialize block in '%s': %s\n",
-			d.Data.DataName(), err.Error())
+		dvid.Infof("Unable to deserialize block in '%s': %s\n", d.Data.DataName(), err.Error())
 		return
 	}
 	blockBytes := len(blockData)
@@ -1262,23 +1257,23 @@ func (d *Data) chunkApplyMap(chunk *storage.Chunk) {
 	}
 	mappedData := make([]byte, blockBytes, blockBytes)
 
-	// Map this block of labels.
+	// Map this block of labels64.
 	var b uint64
 	var ok bool
 	for start := 0; start < blockBytes; start += 8 {
 		a := blockData[start : start+8]
 
 		// Get the label to which the current label is mapped.
-		if bytes.Compare(a, labels.ZeroBytes()) == 0 {
+		if bytes.Compare(a, labels64.ZeroBytes()) == 0 {
 			b = 0
 		} else {
 			b, ok = op.mapping[string(a)]
 			if !ok {
-				zBeg := zyx.MinPoint(op.source.BlockSize()).Value(2)
-				zEnd := zyx.MaxPoint(op.source.BlockSize()).Value(2)
+				minZ := zyx.MinPoint(op.source.BlockSize()).Value(2)
+				maxZ := zyx.MaxPoint(op.source.BlockSize()).Value(2)
 				slice := binary.BigEndian.Uint32(a[0:4])
 				dvid.Infof("No mapping found for %x (slice %d) in block with Z %d to %d\n",
-					a, slice, zBeg, zEnd)
+					a, slice, minZ, maxZ)
 				dvid.Infof("Aborting creation of '%s' chunk using '%s' labelmap\n",
 					op.source.DataName(), d.DataName())
 				return
@@ -1288,16 +1283,16 @@ func (d *Data) chunkApplyMap(chunk *storage.Chunk) {
 	}
 
 	// Save the results
-	mappedKey := &datastore.DataKey{
-		Repo:    dataKey.Repo,
-		Data:    op.destID,
-		Version: op.versionID,
-		Index:   dataKey.Index,
-	}
-	serialization, err := dvid.SerializeData(mappedData, d.Compression, d.Checksum)
+	serialization, err := dvid.SerializeData(mappedData, d.Compression(), d.Checksum())
 	if err != nil {
 		dvid.Infof("Unable to serialize block: %s\n", err.Error())
 		return
 	}
-	db.Put(mappedKey, serialization)
+	bigdata, err := storage.BigDataStore()
+	if err != nil {
+		dvid.Errorf("Unable to retrieve big data store: %s\n", err.Error())
+		return
+	}
+	ctx := storage.NewDataContext(op.dest, op.versionID)
+	bigdata.Put(ctx, zyxBytes, serialization)
 }

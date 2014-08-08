@@ -17,10 +17,10 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
+
+	"code.google.com/p/go.net/context"
 
 	"github.com/janelia-flyem/dvid/datastore"
-	"github.com/janelia-flyem/dvid/datatype/labels"
 	"github.com/janelia-flyem/dvid/datatype/voxels"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
@@ -266,11 +266,11 @@ func init() {
 	interpolable := false
 	dtype = &Datatype{voxels.NewDatatype(values, interpolable)}
 	dtype.DatatypeID = datastore.MakeDatatypeID("labels64", RepoUrl, Version)
-	datastore.RegisterDatatype(dtype)
+	datastore.Register(dtype)
 
 	// See doc for package on why channels are segregated instead of interleaved.
 	// Data types must be registered with the datastore to be used.
-	datastore.RegisterDatatype(dtype)
+	datastore.Register(dtype)
 
 	// Need to register types that will be used to fulfill interfaces.
 	gob.Register(&Datatype{})
@@ -327,8 +327,11 @@ type Datatype struct {
 
 // GetByUUID returns a pointer to labels64 data given a version (UUID) and data name.
 func GetByUUID(uuid dvid.UUID, name dvid.DataString) (*Data, error) {
-	service := server.DatastoreService()
-	source, err := service.DataServiceByUUID(uuid, name)
+	repo, err := server.Repos.RepoFromUUID(uuid)
+	if err != nil {
+		return nil, err
+	}
+	source, err := repo.GetDataByName(name)
 	if err != nil {
 		return nil, err
 	}
@@ -339,13 +342,13 @@ func GetByUUID(uuid dvid.UUID, name dvid.DataString) (*Data, error) {
 	return data, nil
 }
 
-// GetByLocalID returns a pointer to labels64 data given a local repo ID and data name.
-func GetByLocalID(id dvid.RepoLocalID, name dvid.DataString) (*Data, error) {
-	service := server.DatastoreService()
-	if service == nil {
-		return nil, fmt.Errorf("No datastore service established yet!")
+// GetByRepoID returns a pointer to labels64 data given a local repo ID and data name.
+func GetByRepoID(id dvid.RepoID, name dvid.DataString) (*Data, error) {
+	repo, err := server.Repos.RepoFromID(id)
+	if err != nil {
+		return nil, err
 	}
-	source, err := service.DataServiceByLocalID(id, name)
+	source, err := repo.GetDataByName(name)
 	if err != nil {
 		return nil, err
 	}
@@ -357,8 +360,8 @@ func GetByLocalID(id dvid.RepoLocalID, name dvid.DataString) (*Data, error) {
 }
 
 // NewData returns a pointer to labels64 data.
-func NewData(r Repo, id dvid.InstanceID, name dvid.DataString, c dvid.Config) (*Data, error) {
-	voxelData, err := dtype.Datatype.NewDataService(dtype, r, id, name, c)
+func NewData(r datastore.Repo, id dvid.InstanceID, name dvid.DataString, c dvid.Config) (*Data, error) {
+	voxelData, err := dtype.Datatype.NewData(r, id, name, c)
 	if err != nil {
 		return nil, err
 	}
@@ -563,7 +566,7 @@ func (d *Data) addLabelZ(geom dvid.Geometry, data32 []uint8, stride int32) ([]by
 		srcI := y * int(stride)
 		for x := 0; x < nx; x++ {
 			if data32[srcI] == 0 && data32[srcI+1] == 0 && data32[srcI+2] == 0 {
-				copy(data64[dstI:dstI+8], labels.ZeroBytes())
+				copy(data64[dstI:dstI+8], ZeroBytes())
 			} else {
 				superpixelBytes[5] = data32[srcI+2]
 				superpixelBytes[6] = data32[srcI+1]
@@ -626,12 +629,11 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 		}
 		dvid.Debugf(addedFiles + "\n")
 
-		// Get version node
-		uuid, err := server.MatchingUUID(uuidStr)
+		uuid, versionID, err := server.Repos.MatchingUUID(uuidStr)
 		if err != nil {
 			return err
 		}
-		err = voxels.LoadImages(d, uuid, offset, filenames)
+		err = voxels.LoadImages(versionID, d, offset, filenames)
 		if err != nil {
 			return err
 		}
@@ -645,7 +647,7 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 			go d.ProcessSpatially(uuid)
 		} else {
 			d.Ready = true
-			if err := server.DatastoreService().SaveRepo(uuid); err != nil {
+			if err := server.Repos.SaveRepo(uuid); err != nil {
 				return err
 			}
 		}
@@ -659,14 +661,28 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 
 	default:
 		return fmt.Errorf("Unknown command.  Data type '%s' [%s] does not support '%s' command.",
-			d.Name, d.DatatypeName(), request.TypeCommand())
+			d.DataName(), d.TypeName(), request.TypeCommand())
 	}
 	return nil
 }
 
-// DoHTTP handles all incoming HTTP requests for this data.
-func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) error {
-	startTime := time.Now()
+// ServeHTTP handles all incoming HTTP requests for this data.
+func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	timedLog := dvid.NewTimeLog()
+
+	// Get repo and version ID of this request
+	repo, versions, ok := datastore.FromContext(ctx)
+	if !ok {
+		server.BadRequest(w, r, "Error: %q ServeHTTP has invalid context\n", d.DataName)
+		return
+	}
+
+	// Construct storage.Context using a particular version of this Data
+	var versionID dvid.VersionID
+	if len(versions) > 0 {
+		versionID = versions[0]
+	}
+	storeCtx := storage.NewDataContext(d, versionID)
 
 	// Allow cross-origin resource sharing.
 	w.Header().Add("Access-Control-Allow-Origin", "*")
@@ -680,7 +696,8 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 	case "post":
 		op = voxels.PutOp
 	default:
-		return fmt.Errorf("Can only handle GET or POST HTTP verbs")
+		server.BadRequest(w, r, "Can only handle GET or POST HTTP verbs")
+		return
 	}
 
 	// Break URL request into arguments
@@ -694,22 +711,24 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 	if len(parts) == 3 && op == voxels.PutOp {
 		config, err := server.DecodeJSON(r)
 		if err != nil {
-			return err
+			server.BadRequest(w, r, err.Error())
+			return
 		}
 		if err := d.ModifyConfig(config); err != nil {
-			return err
+			server.BadRequest(w, r, err.Error())
+			return
 		}
-		if err := server.DatastoreService().SaveRepo(uuid); err != nil {
-			return err
+		if err := repo.Save(); err != nil {
+			server.BadRequest(w, r, err.Error())
+			return
 		}
 		fmt.Fprintf(w, "Changed '%s' based on received configuration:\n%s\n", d.DataName(), config)
-		return nil
+		return
 	}
 
 	if len(parts) < 4 {
-		err := fmt.Errorf("Incomplete API request")
-		server.BadRequest(w, r, err.Error())
-		return err
+		server.BadRequest(w, r, "Incomplete API request")
+		return
 	}
 
 	// Process help and info.
@@ -717,73 +736,77 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 	case "help":
 		w.Header().Set("Content-Type", "text/plain")
 		fmt.Fprintln(w, dtype.Help())
-		return nil
 
 	case "metadata":
 		jsonStr, err := d.NdDataMetadata()
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
-			return err
+			return
 		}
 		w.Header().Set("Content-Type", "application/vnd.dvid-nd-data+json")
 		fmt.Fprintln(w, jsonStr)
-		return nil
 
 	case "info":
 		jsonStr, err := d.JSONString()
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
-			return err
+			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, jsonStr)
-		return nil
 
 	case "raw", "isotropic":
 		if len(parts) < 7 {
-			return fmt.Errorf("'%s' must be followed by shape/size/offset", parts[3])
+			server.BadRequest(w, r, "'%s' must be followed by shape/size/offset", parts[3])
+			return
 		}
 		var isotropic bool = (parts[3] == "isotropic")
 		shapeStr, sizeStr, offsetStr := parts[4], parts[5], parts[6]
 		planeStr := dvid.DataShapeString(shapeStr)
 		plane, err := planeStr.DataShape()
 		if err != nil {
-			return err
+			server.BadRequest(w, r, err.Error())
+			return
 		}
 		switch plane.ShapeDimensions() {
 		case 2:
 			slice, err := dvid.NewSliceFromStrings(planeStr, offsetStr, sizeStr, "_")
 			if err != nil {
-				return err
+				server.BadRequest(w, r, err.Error())
+				return
 			}
 			if op == voxels.PutOp {
 				if isotropic {
-					return fmt.Errorf("can only PUT 'raw' not 'isotropic' images")
+					server.BadRequest(w, r, "can only PUT 'raw' not 'isotropic' images")
+					return
 				}
 				// TODO -- Put in format checks for POSTed image.
 				postedImg, _, err := dvid.ImageFromPOST(r)
 				if err != nil {
-					return err
+					server.BadRequest(w, r, err.Error())
+					return
 				}
 				e, err := d.NewExtHandler(slice, postedImg)
 				if err != nil {
-					return err
+					server.BadRequest(w, r, err.Error())
+					return
 				}
-				err = voxels.PutVoxels(uuid, d, e)
+				err = voxels.PutVoxels(storeCtx, d, e)
 				if err != nil {
-					return err
+					server.BadRequest(w, r, err.Error())
+					return
 				}
 			} else {
 				rawSlice, err := d.HandleIsotropy2D(slice, isotropic)
 				e, err := d.NewExtHandler(rawSlice, nil)
 				if err != nil {
 					server.BadRequest(w, r, err.Error())
-					return err
+					return
 				}
-				img, err := voxels.GetImage(uuid, d, e)
+				img, err := voxels.GetImage(storeCtx, d, e)
 				if err != nil {
 					server.BadRequest(w, r, err.Error())
-					return err
+					return
 				}
 				if isotropic {
 					dstW := int(slice.Size().Value(0))
@@ -791,7 +814,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 					img, err = img.ScaleImage(dstW, dstH)
 					if err != nil {
 						server.BadRequest(w, r, err.Error())
-						return err
+						return
 					}
 				}
 				var formatStr string
@@ -802,10 +825,10 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 				err = dvid.WriteImageHttp(w, img.Get(), formatStr)
 				if err != nil {
 					server.BadRequest(w, r, err.Error())
-					return err
+					return
 				}
 			}
-			dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: %s (%s)", r.Method, plane, r.URL)
+			timedLog.Infof("HTTP %s: %s (%s)", r.Method, plane, r.URL)
 		case 3:
 			queryStrings := r.URL.Query()
 			if queryStrings.Get("throttle") == "on" {
@@ -819,237 +842,275 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 					throttleMsg := fmt.Sprintf("Server already running maximum of %d throttled operations",
 						server.MaxThrottledOps)
 					http.Error(w, throttleMsg, http.StatusServiceUnavailable)
-					return nil
+					return
 				}
 			}
 			subvol, err := dvid.NewSubvolumeFromStrings(offsetStr, sizeStr, "_")
 			if err != nil {
-				return err
+				server.BadRequest(w, r, err.Error())
+				return
 			}
 			if op == voxels.GetOp {
 				e, err := d.NewExtHandler(subvol, nil)
 				if err != nil {
 					server.BadRequest(w, r, err.Error())
-					return err
+					return
 				}
-				data, err := voxels.GetVolume(uuid, d, e)
+				data, err := voxels.GetVolume(storeCtx, d, e)
 				if err != nil {
 					server.BadRequest(w, r, err.Error())
-					return err
+					return
 				}
 				w.Header().Set("Content-type", "application/octet-stream")
 				_, err = w.Write(data)
 				if err != nil {
-					return err
+					server.BadRequest(w, r, err.Error())
+					return
 				}
 			} else {
 				if isotropic {
-					return fmt.Errorf("can only PUT 'raw' not 'isotropic' images")
+					server.BadRequest(w, r, "can only PUT 'raw' not 'isotropic' images")
+					return
 				}
 				data, err := ioutil.ReadAll(r.Body)
 				if err != nil {
 					server.BadRequest(w, r, err.Error())
-					return err
+					return
 				}
 				e, err := d.NewExtHandler(subvol, data)
 				if err != nil {
 					server.BadRequest(w, r, err.Error())
-					return err
+					return
 				}
-				err = voxels.PutVoxels(uuid, d, e)
+				err = voxels.PutVoxels(storeCtx, d, e)
 				if err != nil {
 					server.BadRequest(w, r, err.Error())
-					return err
+					return
 				}
 			}
-			dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: %s (%s)", r.Method, subvol, r.URL)
+			timedLog.Infof("HTTP %s: %s (%s)", r.Method, subvol, r.URL)
 		default:
-			return fmt.Errorf("DVID currently supports shapes of only 2 and 3 dimensions")
+			server.BadRequest(w, r, "DVID currently supports shapes of only 2 and 3 dimensions")
+			return
 		}
 
 	case "sparsevol":
 		// GET <api URL>/node/<UUID>/<data name>/sparsevol/<label>
 		if len(parts) < 5 {
-			err := fmt.Errorf("ERROR: DVID requires label ID to follow 'sparsevol' command")
-			server.BadRequest(w, r, err.Error())
-			return err
+			server.BadRequest(w, r, "ERROR: DVID requires label ID to follow 'sparsevol' command")
+			return
 		}
 		label, err := strconv.ParseUint(parts[4], 10, 64)
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
-			return err
+			return
 		}
-		data, err := d.GetSparseVol(uuid, label)
+		data, err := GetSparseVol(storeCtx, label)
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
-			return err
+			return
 		}
 		w.Header().Set("Content-type", "application/octet-stream")
 		_, err = w.Write(data)
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
-			return err
+			return
 		}
-		dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: sparsevol on label %d (%s)",
-			r.Method, label, r.URL)
+		timedLog.Infof("HTTP %s: sparsevol on label %d (%s)", r.Method, label, r.URL)
 
 	case "sparsevol-by-point":
 		// GET <api URL>/node/<UUID>/<data name>/sparsevol-by-point/<coord>
 		if len(parts) < 5 {
-			err := fmt.Errorf("ERROR: DVID requires coord to follow 'sparsevol-by-point' command")
-			server.BadRequest(w, r, err.Error())
-			return err
+			server.BadRequest(w, r, "ERROR: DVID requires coord to follow 'sparsevol-by-point' command")
+			return
 		}
 		coord, err := dvid.StringToPoint(parts[4], "_")
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
-			return err
+			return
 		}
-		label, err := d.GetLabelAtPoint(uuid, coord)
+		label, err := d.GetLabelAtPoint(storeCtx, coord)
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
-			return err
+			return
 		}
-		data, err := d.GetSparseVol(uuid, label)
+		data, err := GetSparseVol(storeCtx, label)
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
-			return err
+			return
 		}
 		w.Header().Set("Content-type", "application/octet-stream")
 		_, err = w.Write(data)
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
-			return err
+			return
 		}
-		dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: sparsevol-by-point at %s (%s)",
-			r.Method, coord, r.URL)
+		timedLog.Infof("HTTP %s: sparsevol-by-point at %s (%s)", r.Method, coord, r.URL)
 
 	case "surface":
 		// GET <api URL>/node/<UUID>/<data name>/surface/<label>
 		if len(parts) < 5 {
-			err := fmt.Errorf("ERROR: DVID requires label ID to follow 'surface' command")
-			server.BadRequest(w, r, err.Error())
-			return err
+			server.BadRequest(w, r, "ERROR: DVID requires label ID to follow 'surface' command")
+			return
 		}
 		label, err := strconv.ParseUint(parts[4], 10, 64)
 		fmt.Printf("Getting surface for label %d\n", label)
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
-			return err
+			return
 		}
-		gzipData, found, err := d.GetSurface(uuid, label)
+		gzipData, found, err := GetSurface(storeCtx, label)
 		if err != nil {
-			err = fmt.Errorf("Error on getting surface for label %d: %s", label, err.Error())
-			server.BadRequest(w, r, err.Error())
-			return err
+			server.BadRequest(w, r, "Error on getting surface for label %d: %s", label, err.Error())
+			return
 		}
 		if !found {
 			http.Error(w, fmt.Sprintf("Surface for label '%d' not found", label), http.StatusNotFound)
-			return nil
+			return
 		}
 		w.Header().Set("Content-type", "application/octet-stream")
 		if err := dvid.WriteGzip(gzipData, w, r); err != nil {
 			server.BadRequest(w, r, err.Error())
-			return err
+			return
 		}
-		dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: surface on label %d (%s)",
-			r.Method, label, r.URL)
+		timedLog.Infof("HTTP %s: surface on label %d (%s)", r.Method, label, r.URL)
 
 	case "surface-by-point":
 		// GET <api URL>/node/<UUID>/<data name>/surface-by-point/<coord>
 		if len(parts) < 5 {
-			err := fmt.Errorf("ERROR: DVID requires coord to follow 'surface-by-point' command")
-			server.BadRequest(w, r, err.Error())
-			return err
+			server.BadRequest(w, r, "ERROR: DVID requires coord to follow 'surface-by-point' command")
+			return
 		}
 		coord, err := dvid.StringToPoint(parts[4], "_")
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
-			return err
+			return
 		}
-		label, err := d.GetLabelAtPoint(uuid, coord)
+		label, err := d.GetLabelAtPoint(storeCtx, coord)
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
-			return err
+			return
 		}
-		gzipData, found, err := d.GetSurface(uuid, label)
+		gzipData, found, err := GetSurface(storeCtx, label)
 		if err != nil {
-			err = fmt.Errorf("Error on getting surface for label %d: %s", label, err.Error())
-			server.BadRequest(w, r, err.Error())
-			return err
+			server.BadRequest(w, r, "Error on getting surface for label %d: %s", label, err.Error())
+			return
 		}
 		if !found {
 			http.Error(w, fmt.Sprintf("Surface for label '%d' not found", label), http.StatusNotFound)
-			return nil
+			return
 		}
 		fmt.Printf("Found surface for label %d: %d bytes (gzip payload)\n", label, len(gzipData))
 		w.Header().Set("Content-type", "application/octet-stream")
 		if err := dvid.WriteGzip(gzipData, w, r); err != nil {
 			server.BadRequest(w, r, err.Error())
-			return err
+			return
 		}
-		dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: surface-by-point at %s (%s)",
-			r.Method, coord, r.URL)
+		timedLog.Infof("HTTP %s: surface-by-point at %s (%s)", r.Method, coord, r.URL)
 
 	case "sizerange":
 		// GET <api URL>/node/<UUID>/<data name>/sizerange/<min size>/<optional max size>
 		if len(parts) < 5 {
-			err := fmt.Errorf("ERROR: DVID requires at least the minimum size to follow 'sizerange' command")
-			server.BadRequest(w, r, err.Error())
-			return err
+			server.BadRequest(w, r, "ERROR: DVID requires at least the minimum size to follow 'sizerange' command")
+			return
 		}
 		minSize, err := strconv.ParseUint(parts[4], 10, 64)
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
-			return err
+			return
 		}
 		var maxSize uint64
 		if len(parts) >= 6 {
 			maxSize, err = strconv.ParseUint(parts[5], 10, 64)
 			if err != nil {
 				server.BadRequest(w, r, err.Error())
-				return err
+				return
 			}
 		}
-		jsonStr, err := labels.GetSizeRange(d, uuid, minSize, maxSize)
+		jsonStr, err := GetSizeRange(d, versionID, minSize, maxSize)
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
-			return err
+			return
 		}
 		w.Header().Set("Content-type", "application/json")
 		fmt.Fprintf(w, jsonStr)
-		dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: get labels with volume > %d and < %d (%s)",
-			r.Method, minSize, maxSize, r.URL)
+		timedLog.Infof("HTTP %s: get labels with volume > %d and < %d (%s)", r.Method, minSize, maxSize, r.URL)
 	default:
-		return fmt.Errorf("Unrecognized API call '%s' for labels64 data '%s'.  See API help.", parts[3], d.DataName())
+		server.BadRequest(w, r, "Unrecognized API call '%s' for labels64 data '%s'.  See API help.",
+			parts[3], d.DataName())
 	}
-	return nil
+}
+
+// GetLabelBytesAtPoint returns the 8 byte slice corresponding to a 64-bit label at a point.
+func (d *Data) GetLabelBytesAtPoint(ctx storage.Context, pt dvid.Point) ([]byte, error) {
+	store, err := storage.BigDataStore()
+	if err != nil {
+		return nil, err
+	}
+
+	// Compute the block key that contains the given point.
+	coord, ok := pt.(dvid.Chunkable)
+	if !ok {
+		return nil, fmt.Errorf("Can't determine block of point %s", pt)
+	}
+	blockSize := d.BlockSize()
+	blockCoord := coord.Chunk(blockSize).(dvid.ChunkPoint3d) // TODO -- Get rid of this cast
+	index := dvid.IndexZYX(blockCoord)
+
+	// Retrieve the block of labels
+	serialization, err := store.Get(ctx, index.Bytes())
+	if err != nil {
+		return nil, fmt.Errorf("Error getting '%s' block for index %s\n", d.DataName(), blockCoord)
+	}
+	labelData, _, err := dvid.DeserializeData(serialization, true)
+	if err != nil {
+		return nil, fmt.Errorf("Unable to deserialize block %s in '%s': %s\n",
+			blockCoord, d.DataName(), err.Error())
+	}
+
+	// Retrieve the particular label within the block.
+	ptInBlock := coord.PointInChunk(blockSize)
+	nx := blockSize.Value(0)
+	nxy := nx * blockSize.Value(1)
+	i := (ptInBlock.Value(0) + ptInBlock.Value(1)*nx + ptInBlock.Value(2)*nxy) * 8
+	return labelData[i : i+8], nil
+}
+
+// GetLabelAtPoint returns the 64-bit unsigned int label for a given point.
+func (d *Data) GetLabelAtPoint(ctx storage.Context, pt dvid.Point) (uint64, error) {
+	labelBytes, err := d.GetLabelBytesAtPoint(ctx, pt)
+	if err != nil {
+		return 0, err
+	}
+	return d.Properties.ByteOrder.Uint64(labelBytes), nil
 }
 
 type blockOp struct {
 	grayscale *voxels.Data
 	composite *voxels.Data
-	versionID dvid.VersionLocalID
+	versionID dvid.VersionID
 }
 
 // CreateComposite creates a new rgba8 image by combining hash of labels + the grayscale
 func (d *Data) CreateComposite(request datastore.Request, reply *datastore.Response) error {
-
-	startTime := time.Now()
+	timedLog := dvid.NewTimeLog()
 
 	// Parse the request
 	var uuidStr, dataName, cmdStr, grayscaleName, destName string
 	request.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &grayscaleName, &destName)
 
 	// Get the version
-	uuid, err := server.MatchingUUID(uuidStr)
+	uuid, versionID, err := server.Repos.MatchingUUID(uuidStr)
 	if err != nil {
 		return err
 	}
 
 	// Get the grayscale data.
-	service := server.DatastoreService()
-	dataservice, err := service.DataServiceByUUID(uuid, dvid.DataString(grayscaleName))
+	repo, err := server.Repos.RepoFromUUID(uuid)
+	if err != nil {
+		return err
+	}
+	dataservice, err := repo.GetDataByName(dvid.DataString(grayscaleName))
 	if err != nil {
 		return err
 	}
@@ -1060,54 +1121,48 @@ func (d *Data) CreateComposite(request datastore.Request, reply *datastore.Respo
 
 	// Create a new rgba8 data.
 	var compservice datastore.DataService
-	compservice, err = service.DataServiceByUUID(uuid, dvid.DataString(destName))
+	compservice, err = repo.GetDataByName(dvid.DataString(destName))
+	if err == nil {
+		return fmt.Errorf("Data instance with name %q already exists", destName)
+	}
+	typeService, err := datastore.TypeServiceByName("rgba8")
 	if err != nil {
-		config := dvid.NewConfig()
-		err = service.NewData(uuid, "rgba8", dvid.DataString(destName), config)
-		if err != nil {
-			return err
-		}
-		compservice, err = service.DataServiceByUUID(uuid, dvid.DataString(destName))
-		if err != nil {
-			return err
-		}
+		return fmt.Errorf("Could not get rgba8 type service from DVID")
+	}
+	config := dvid.NewConfig()
+	compservice, err = repo.NewData(typeService, dvid.DataString(destName), config)
+	if err != nil {
+		return err
 	}
 	composite, ok := compservice.(*voxels.Data)
 	if !ok {
 		return fmt.Errorf("Error: %s was unable to be set to rgba8 data", destName)
 	}
 
-	// Prepare for datastore access
-	versionID, err := server.VersionLocalID(uuid)
-	if err != nil {
-		return err
-	}
-	db, err := server.OrderedKeyValueGetter()
-	if err != nil {
-		return err
-	}
-
 	// Iterate through all labels and grayscale chunks incrementally in Z, a layer at a time.
 	wg := new(sync.WaitGroup)
 	op := &blockOp{grayscale, composite, versionID}
+	chunkOp := &storage.ChunkOp{op, wg}
 
 	extents := d.Extents()
-	startKey := d.DataKey(versionID, extents.MinIndex)
-	endKey := d.DataKey(versionID, extents.MaxIndex)
+	begIndex := extents.MinIndex.Bytes()
+	endIndex := extents.MaxIndex.Bytes()
 
-	chunkOp := &storage.ChunkOp{op, wg}
-	err = db.ProcessRange(startKey, endKey, chunkOp, d.CreateCompositeChunk)
+	store, err := storage.BigDataStore()
+	if err != nil {
+		return err
+	}
+	ctx := storage.NewDataContext(d, versionID)
+	err = store.ProcessRange(ctx, begIndex, endIndex, chunkOp, d.CreateCompositeChunk)
 	wg.Wait()
-
-	dvid.ElapsedTime(dvid.Debug, startTime, "Created composite of %s and %s",
-		grayscaleName, destName)
 
 	// Set new mapped data to same extents.
 	composite.Properties.Extents = grayscale.Properties.Extents
-	if err := server.DatastoreService().SaveRepo(uuid); err != nil {
+	if err := repo.Save(); err != nil {
 		dvid.Infof("Could not save new data '%s': %s\n", destName, err.Error())
 	}
 
+	timedLog.Infof("Created composite of %s and %s", grayscaleName, destName)
 	return nil
 }
 
@@ -1135,29 +1190,28 @@ func (d *Data) createCompositeChunk(chunk *storage.Chunk) {
 	}()
 
 	op := chunk.Op.(*blockOp)
-	db, err := server.OrderedKeyValueDB()
+
+	// Get the spatial index associated with this chunk.
+	zyx, err := storage.KeyToIndexZYX(chunk.K)
 	if err != nil {
-		dvid.Infof("Error in %s.ProcessChunk(): %s\n", d.Data().DataName(), err.Error())
+		dvid.Errorf("Error in %s.ChunkApplyMap(): %s", d.Data.DataName(), err.Error())
 		return
 	}
+	zyxBytes := zyx.Bytes()
 
 	// Initialize the label buffers.  For voxels, this data needs to be uncompressed and deserialized.
-	labelKey := chunk.K.(*datastore.DataKey)
-	zyx := labelKey.Index.(*dvid.IndexZYX)
 	curZMutex.Lock()
 	if zyx[2] > curZ {
 		curZ = zyx[2]
-		min := zyx.MinPoint(d.BlockSize())
-		max := zyx.MaxPoint(d.BlockSize())
-		dvid.Debugf("Now creating composite blocks for Z %d to %d\n",
-			min.Value(2), max.Value(2))
+		minZ := zyx.MinPoint(d.BlockSize()).Value(2)
+		maxZ := zyx.MaxPoint(d.BlockSize()).Value(2)
+		dvid.Debugf("Now creating composite blocks for Z %d to %d\n", minZ, maxZ)
 	}
 	curZMutex.Unlock()
 
 	labelData, _, err := dvid.DeserializeData(chunk.V, true)
 	if err != nil {
-		dvid.Infof("Unable to deserialize block in '%s': %s\n",
-			d.DataName(), err.Error())
+		dvid.Infof("Unable to deserialize block in '%s': %s\n", d.DataName(), err.Error())
 		return
 	}
 	blockBytes := len(labelData)
@@ -1167,16 +1221,20 @@ func (d *Data) createCompositeChunk(chunk *storage.Chunk) {
 	}
 
 	// Get the corresponding grayscale block.
-	grayscaleKey := op.grayscale.DataKey(op.versionID, labelKey.Index)
-	blockData, err := db.Get(grayscaleKey)
+	bigdata, err := storage.BigDataStore()
 	if err != nil {
-		dvid.Infof("Error getting grayscale block for index %s\n", labelKey.Index)
+		dvid.Errorf("Unable to retrieve big data store: %s\n", err.Error())
+		return
+	}
+	grayscaleCtx := storage.NewDataContext(op.grayscale, op.versionID)
+	blockData, err := bigdata.Get(grayscaleCtx, zyxBytes)
+	if err != nil {
+		dvid.Errorf("Error getting grayscale block for index %s\n", zyx)
 		return
 	}
 	grayscaleData, _, err := dvid.DeserializeData(blockData, true)
 	if err != nil {
-		dvid.Infof("Unable to deserialize block in '%s': %s\n",
-			op.grayscale.DataName(), err.Error())
+		dvid.Errorf("Unable to deserialize block in '%s': %s\n", op.grayscale.DataName(), err.Error())
 		return
 	}
 
@@ -1190,41 +1248,39 @@ func (d *Data) createCompositeChunk(chunk *storage.Chunk) {
 	for _, grayscale := range grayscaleData {
 		//murmurhash3(labelData[labelI:labelI+8], hashBuf)
 		//hashBuf[3] = grayscale
-        writePseudoColor(grayscale, labelData[labelI:labelI+8], hashBuf)
+		writePseudoColor(grayscale, labelData[labelI:labelI+8], hashBuf)
 		copy(compositeData[compositeI:compositeI+4], hashBuf)
 		compositeI += 4
 		labelI += 8
 	}
 
 	// Store the composite block into the rgba8 data.
-	compositeKey := op.composite.DataKey(op.versionID, labelKey.Index)
-	serialization, err := dvid.SerializeData(compositeData, d.Compression, d.Checksum)
+	serialization, err := dvid.SerializeData(compositeData, d.Compression(), d.Checksum())
 	if err != nil {
-		dvid.Infof("Unable to serialize composite block at %s: %s\n",
-			labelKey.Index, err.Error())
+		dvid.Errorf("Unable to serialize composite block %s: %s\n", zyx, err.Error())
 		return
 	}
-	err = db.Put(compositeKey, serialization)
+	compositeCtx := storage.NewDataContext(op.composite, op.versionID)
+	err = bigdata.Put(compositeCtx, zyxBytes, serialization)
 	if err != nil {
-		dvid.Infof("Unable to PUT composite block at %s: %s\n",
-			labelKey.Index, err.Error())
+		dvid.Errorf("Unable to PUT composite block %s: %s\n", zyx, err.Error())
 		return
 	}
 }
 
 func writePseudoColor(grayscale uint8, in64bits, out32bits []byte) {
-    murmurhash3(in64bits, out32bits)
-    var t uint64
-    t = uint64(out32bits[0]) * uint64(grayscale)
-    t >>= 8
-    out32bits[0] = uint8(t)
-    t = uint64(out32bits[1]) * uint64(grayscale)
-    t >>= 8
-    out32bits[1] = uint8(t)
-    t = uint64(out32bits[2]) * uint64(grayscale)
-    t >>= 8
-    out32bits[2] = uint8(t)
-    out32bits[3] = 255
+	murmurhash3(in64bits, out32bits)
+	var t uint64
+	t = uint64(out32bits[0]) * uint64(grayscale)
+	t >>= 8
+	out32bits[0] = uint8(t)
+	t = uint64(out32bits[1]) * uint64(grayscale)
+	t >>= 8
+	out32bits[1] = uint8(t)
+	t = uint64(out32bits[2]) * uint64(grayscale)
+	t >>= 8
+	out32bits[2] = uint8(t)
+	out32bits[3] = 255
 }
 
 func murmurhash3(in64bits, out32bits []byte) {

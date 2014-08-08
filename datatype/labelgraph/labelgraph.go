@@ -13,7 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
+
+	"code.google.com/p/go.net/context"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -296,7 +297,7 @@ func init() {
 		Url:     RepoUrl,
 		Version: Version,
 	}
-	datastore.RegisterDatatype(kvtype)
+	datastore.Register(kvtype)
 
 	// Need to register types that will be used to fulfill interfaces.
 	gob.Register(&Datatype{})
@@ -537,7 +538,7 @@ func (t *transactionLog) createTransactionGroupBinary(data []byte, readonly bool
 // --- TypeService interface ---
 
 // NewDataService returns a pointer to new keyvalue data with default values.
-func (dtype *Datatype) NewDataService(r Repo, id dvid.InstanceID, name dvid.DataString, c dvid.Config) (datastore.DataService, error) {
+func (dtype *Datatype) NewDataService(r datastore.Repo, id dvid.InstanceID, name dvid.DataString, c dvid.Config) (datastore.DataService, error) {
 	basedata, err := datastore.NewDataService(dtype, r, id, name, c)
 	if err != nil {
 		return nil, err
@@ -597,36 +598,42 @@ func (d *Data) JSONString() (jsonStr string, err error) {
 	return string(m), nil
 }
 
-// getGraphDB retrieves the GraphDB interface and the Context defining the graph space
-func (d *Data) getGraphDB(uuid dvid.UUID) (storage.Context, storage.GraphDB, error) {
-	// Compute the key
-	var db storage.GraphDB
-
-	versionID, err := server.VersionLocalID(uuid)
-	if err != nil {
-		return nil, db, err
+// getGraphContext retrieves the GraphDB interface and the Context defining the graph space
+func (d *Data) getGraphContext(ctx context.Context) (storage.Context, storage.GraphDB, error) {
+	// Get repo and version ID of this request
+	_, versions, ok := datastore.FromContext(ctx)
+	if !ok {
+		return nil, nil, fmt.Errorf("Error: %q has invalid context\n", d.DataName)
 	}
-	db, err = server.GraphDB()
+
+	// Construct storage.Context using a particular version of this Data
+	var versionID dvid.VersionID
+	if len(versions) > 0 {
+		versionID = versions[0]
+	}
+	db, err := storage.GraphStore()
+	if err != nil {
+		return nil, nil, err
+	}
+
 	return storage.NewDataContext(d, versionID), db, err
 }
 
 // handleSubgraph loads, retrieves, or deletes a subgraph (more description in REST interface)
-func (d *Data) handleSubgraphBulk(uuid dvid.UUID, w http.ResponseWriter, labelgraph *LabelGraph, method string) error {
+func (d *Data) handleSubgraphBulk(ctx storage.Context, db storage.GraphDB, w http.ResponseWriter, labelgraph *LabelGraph, method string) error {
+	var err error
+
 	if !d.setBusy() {
 		return fmt.Errorf("Server busy with bulk transaction")
 	}
 	defer d.setNotBusy()
 
-	ctx, db, err := d.getGraphDB(uuid)
-	if err != nil {
-		return err
-	}
 	labelgraph2 := new(LabelGraph)
 
 	// ?! do not grab edges that connect to outside vertices
 	if method == "get" {
-		var vertices []storage.GraphVertex
-		var edges []storage.GraphEdge
+		var vertices []dvid.GraphVertex
+		var edges []dvid.GraphEdge
 		if len(labelgraph.Vertices) > 0 {
 			for _, vertex := range labelgraph.Vertices {
 				storedvert, err := db.GetVertex(ctx, vertex.Id)
@@ -731,11 +738,7 @@ func (d *Data) extractOpenVertices(labelgraph *LabelGraph) []transactionItem {
 
 // handleWeightUpdate POST vertex/edge weight increment/decrement.  POSTing to an uncreated
 // node or edge will create the node or edge (default 0 weight).  Limit of 1000 vertices and 1000 edges.
-func (d *Data) handleWeightUpdate(uuid dvid.UUID, w http.ResponseWriter, labelgraph *LabelGraph) error {
-	ctx, db, err := d.getGraphDB(uuid)
-	if err != nil {
-		return err
-	}
+func (d *Data) handleWeightUpdate(ctx storage.Context, db storage.GraphDB, w http.ResponseWriter, labelgraph *LabelGraph) error {
 
 	// collect all vertices that need to be locked and wrap in transaction ("read only")
 	open_vertices := d.extractOpenVertices(labelgraph)
@@ -835,11 +838,7 @@ func (d *Data) handleWeightUpdate(uuid dvid.UUID, w http.ResponseWriter, labelgr
 }
 
 // handleMerge merges a list of vertices onto the final vertex in the Vertices list
-func (d *Data) handleMerge(uuid dvid.UUID, w http.ResponseWriter, labelgraph *LabelGraph) error {
-	ctx, db, err := d.getGraphDB(uuid)
-	if err != nil {
-		return err
-	}
+func (d *Data) handleMerge(ctx storage.Context, db storage.GraphDB, w http.ResponseWriter, labelgraph *LabelGraph) error {
 
 	numverts := len(labelgraph.Vertices)
 	if numverts < 2 {
@@ -848,7 +847,7 @@ func (d *Data) handleMerge(uuid dvid.UUID, w http.ResponseWriter, labelgraph *La
 
 	overlapweights := make(map[dvid.VertexID]float64)
 	vertweight := float64(0)
-	var keepvertex storage.GraphVertex
+	var keepvertex dvid.GraphVertex
 	allverts := make(map[dvid.VertexID]struct{})
 	keepverts := make(map[dvid.VertexID]struct{})
 
@@ -925,7 +924,7 @@ func (d *Data) handleMerge(uuid dvid.UUID, w http.ResponseWriter, labelgraph *La
 	}
 
 	// update vertex weight
-	err = db.SetVertexWeight(ctx, labelgraph.Vertices[numverts-1].Id, vertweight)
+	err := db.SetVertexWeight(ctx, labelgraph.Vertices[numverts-1].Id, vertweight)
 	if err != nil {
 		return fmt.Errorf("Failed to update weight on vertex %d: %s\n", keepvertex.Id, err.Error())
 	}
@@ -940,7 +939,6 @@ func (d *Data) handleMerge(uuid dvid.UUID, w http.ResponseWriter, labelgraph *La
 			return fmt.Errorf("Failed to remove vertex %d: %s\n", vertex.Id, err.Error())
 		}
 	}
-
 	return nil
 }
 
@@ -948,11 +946,7 @@ func (d *Data) handleMerge(uuid dvid.UUID, w http.ResponseWriter, labelgraph *La
 // (Should I protect this transaction like the update weight function?  It is probably
 // unnecessary because any update based on retrieved information will be written to a
 // property which has transactional protection)
-func (d *Data) handleNeighbors(uuid dvid.UUID, w http.ResponseWriter, path []string) error {
-	ctx, db, err := d.getGraphDB(uuid)
-	if err != nil {
-		return err
-	}
+func (d *Data) handleNeighbors(ctx storage.Context, db storage.GraphDB, w http.ResponseWriter, path []string) error {
 	labelgraph := new(LabelGraph)
 
 	temp, err := strconv.Atoi(path[0])
@@ -990,11 +984,7 @@ func (d *Data) handleNeighbors(uuid dvid.UUID, w http.ResponseWriter, path []str
 }
 
 // handelPropertyTransaction allows gets/posts (really puts) of edge or vertex properties.
-func (d *Data) handlePropertyTransaction(uuid dvid.UUID, w http.ResponseWriter, r *http.Request, path []string, method string) error {
-	ctx, db, err := d.getGraphDB(uuid)
-	if err != nil {
-		return err
-	}
+func (d *Data) handlePropertyTransaction(ctx storage.Context, db storage.GraphDB, w http.ResponseWriter, r *http.Request, path []string, method string) error {
 	if len(path) < 2 {
 		return fmt.Errorf("Must specify edges or vertices in URI and property name")
 	}
@@ -1032,12 +1022,12 @@ func (d *Data) handlePropertyTransaction(uuid dvid.UUID, w http.ResponseWriter, 
 
 		for i := uint64(0); i < num_properties; i++ {
 			temp := binary.LittleEndian.Uint64(data[start:])
-			id := storage.VertexID(temp)
-			var id2 storage.VertexID
+			id := dvid.VertexID(temp)
+			var id2 dvid.VertexID
 			start += 8
 			if edgemode {
 				temp = binary.LittleEndian.Uint64(data[start:])
-				id2 = storage.VertexID(temp)
+				id2 = dvid.VertexID(temp)
 				start += 8
 			}
 			data_size := binary.LittleEndian.Uint64(data[start:])
@@ -1062,7 +1052,7 @@ func (d *Data) handlePropertyTransaction(uuid dvid.UUID, w http.ResponseWriter, 
 			}
 
 			// execute post
-			serialization, err := dvid.SerializeData(data[data_begin:data_end], d.Compression, d.Checksum)
+			serialization, err := dvid.SerializeData(data[data_begin:data_end], d.Compression(), d.Checksum())
 			if err != nil {
 				return fmt.Errorf("Unable to serialize data: %s\n", err.Error())
 			}
@@ -1087,12 +1077,12 @@ func (d *Data) handlePropertyTransaction(uuid dvid.UUID, w http.ResponseWriter, 
 		// read the vertex or edge properties desired
 		for i := uint64(0); i < num_properties; i++ {
 			temp := binary.LittleEndian.Uint64(data[start:])
-			id := storage.VertexID(temp)
-			var id2 storage.VertexID
+			id := dvid.VertexID(temp)
+			var id2 dvid.VertexID
 			start += 8
 			if edgemode {
 				temp := binary.LittleEndian.Uint64(data[start:])
-				id2 = storage.VertexID(temp)
+				id2 = dvid.VertexID(temp)
 				start += 8
 			}
 
@@ -1149,11 +1139,7 @@ func (d *Data) handlePropertyTransaction(uuid dvid.UUID, w http.ResponseWriter, 
 
 // handleProperty retrieves or deletes properties that can be added to a vertex or edge -- data posted
 // or retrieved uses default compression
-func (d *Data) handleProperty(uuid dvid.UUID, w http.ResponseWriter, r *http.Request, path []string, method string) error {
-	ctx, db, err := d.getGraphDB(uuid)
-	if err != nil {
-		return err
-	}
+func (d *Data) handleProperty(ctx storage.Context, db storage.GraphDB, w http.ResponseWriter, r *http.Request, path []string, method string) error {
 
 	edgemode := false
 	var propertyname string
@@ -1222,7 +1208,7 @@ func (d *Data) handleProperty(uuid dvid.UUID, w http.ResponseWriter, r *http.Req
 		if err != nil {
 			return err
 		}
-		serialization, err := dvid.SerializeData(data, d.Compression, d.Checksum)
+		serialization, err := dvid.SerializeData(data, d.Compression(), d.Checksum())
 		if err != nil {
 			return fmt.Errorf("Unable to serialize data: %s\n", err.Error())
 		}
@@ -1291,9 +1277,18 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 	return nil
 }
 
-// DoHTTP handles all incoming HTTP requests for this data.
-func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) error {
-	startTime := time.Now()
+// ServeHTTP handles all incoming HTTP requests for this data.
+func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *http.Request) {
+	// --- Don't time labelgraph ops because they are very small and frequent.
+	// --- TODO -- Implement monitoring system that aggregates logged ops instead of
+	// ----------- printing out each one.
+	// timedLog := dvid.NewTimeLog()
+
+	storeCtx, db, err := d.getGraphContext(requestCtx)
+	if err != nil {
+		server.BadRequest(w, r, err.Error())
+		return
+	}
 
 	// make sure transaction log is created
 	d.initializeLog()
@@ -1304,17 +1299,14 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 	// Break URL request into arguments
 	url := r.URL.Path[len(server.WebAPIPath):]
 	parts := strings.Split(url, "/")
-
-	method := strings.ToLower(r.Method)
-	var comment string
-
 	if len(parts) < 4 {
-		err := fmt.Errorf("No resource specified in URI")
-		return err
+		server.BadRequest(w, r, "No resource specified in URI")
+		return
 	}
+	method := strings.ToLower(r.Method)
 	if method == "put" {
-		err := fmt.Errorf("PUT requests not supported")
-		return err
+		server.BadRequest(w, r, "PUT requests not supported")
+		return
 	}
 
 	// Process help and info.
@@ -1322,80 +1314,85 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 	case "help":
 		w.Header().Set("Content-Type", "text/plain")
 		fmt.Fprintln(w, d.Help())
-		return nil
+		return
 	case "info":
 		jsonStr, err := d.JSONString()
 		if err != nil {
-			return err
+			server.BadRequest(w, r, err.Error())
+			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, jsonStr)
-		return nil
 	case "subgraph":
 		labelgraph, err := d.ExtractGraph(r)
 		if err != nil {
-			return err
+			server.BadRequest(w, r, err.Error())
+			return
 		}
-		err = d.handleSubgraphBulk(uuid, w, labelgraph, method)
+		err = d.handleSubgraphBulk(storeCtx, db, w, labelgraph, method)
 		if err != nil {
-			return err
+			server.BadRequest(w, r, err.Error())
+			return
 		}
-		return nil
 	case "neighbors":
 		if method != "get" {
-			return fmt.Errorf("Only supports GETs")
+			server.BadRequest(w, r, "Only supports GETs")
+			return
 		}
-		err := d.handleNeighbors(uuid, w, parts[4:])
+		err := d.handleNeighbors(storeCtx, db, w, parts[4:])
 		if err != nil {
-			return err
+			server.BadRequest(w, r, err.Error())
+			return
 		}
-		return nil
 	case "merge":
 		if method != "post" {
-			return fmt.Errorf("Only supports POSTs")
+			server.BadRequest(w, r, "Only supports POSTs")
+			return
 		}
 		labelgraph, err := d.ExtractGraph(r)
 		if err != nil {
-			return err
+			server.BadRequest(w, r, err.Error())
+			return
 		}
-		err = d.handleMerge(uuid, w, labelgraph)
+		err = d.handleMerge(storeCtx, db, w, labelgraph)
 		if err != nil {
-			return err
+			server.BadRequest(w, r, err.Error())
+			return
 		}
-		return nil
 	case "weight":
 		if method != "post" {
-			return fmt.Errorf("Only supports POSTs")
+			server.BadRequest(w, r, "Only supports POSTs")
+			return
 		}
 		labelgraph, err := d.ExtractGraph(r)
 		if err != nil {
-			return err
+			server.BadRequest(w, r, err.Error())
+			return
 		}
-		err = d.handleWeightUpdate(uuid, w, labelgraph)
+		err = d.handleWeightUpdate(storeCtx, db, w, labelgraph)
 		if err != nil {
-			return err
+			server.BadRequest(w, r, err.Error())
+			return
 		}
-		return nil
 	case "propertytransaction":
-		err := d.handlePropertyTransaction(uuid, w, r, parts[4:], method)
+		err := d.handlePropertyTransaction(storeCtx, db, w, r, parts[4:], method)
 		if err != nil {
-			return err
+			server.BadRequest(w, r, err.Error())
+			return
 		}
 	case "property":
-		err := d.handleProperty(uuid, w, r, parts[4:], method)
+		err := d.handleProperty(storeCtx, db, w, r, parts[4:], method)
 		if err != nil {
-			return err
+			server.BadRequest(w, r, err.Error())
+			return
 		}
-		return nil
 	case "undomerge":
 		// not supported until transaction history is supported
-		err := fmt.Errorf("undomerge not yet implemented")
-		return err
+		server.BadRequest(w, r, "undomerge not yet implemented")
+		return
 	default:
-		err := fmt.Errorf("%s not found", parts[3])
-		return err
+		server.BadRequest(w, r, "%s not found", parts[3])
+		return
 	}
-
-	dvid.ElapsedTime(dvid.Debug, startTime, comment, "success")
-	return nil
+	//timedLog.Infof("Successful labelgraph op %s on %q", parts[3], d.DataName())
 }

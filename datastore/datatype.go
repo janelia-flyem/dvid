@@ -123,14 +123,14 @@ const helpMessage = `
     url: %s 
 `
 
-// T is the base struct that satisfies a Service and can be embedded in other datatypes.
-type T struct {
-	DatatypeID
+// Datatype is the base struct that satisfies a Service and can be embedded in other datatypes.
+type Datatype struct {
+	*DatatypeID
 
 	// A list of interface requirements for the backend datastore
 	Requirements *storage.Requirements
 }
 
-func (t *T) Help() string {
+func (t *Datatype) Help() string {
 	return fmt.Sprintf(helpMessage, t.Name, t.Url)
 }

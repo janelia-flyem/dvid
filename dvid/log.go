@@ -74,7 +74,7 @@ type TimeLog struct {
 	start  time.Time
 }
 
-func NewTimeLog(logger Logger) TimeLog {
+func NewTimeLog() TimeLog {
 	return TimeLog{logger, time.Now()}
 }
 

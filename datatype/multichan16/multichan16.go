@@ -23,12 +23,14 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
+
+	"code.google.com/p/go.net/context"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/voxels"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
+	"github.com/janelia-flyem/dvid/storage"
 )
 
 const (
@@ -141,7 +143,7 @@ func init() {
 	// See doc for package on why channels are segregated instead of interleaved.
 	// Data types must be registered with the datastore to be used.
 	typeService = dtype
-	datastore.RegisterDatatype(dtype)
+	datastore.Register(dtype)
 
 	// Need to register types that will be used to fulfill interfaces.
 	gob.Register(&Datatype{})
@@ -172,7 +174,7 @@ func (c *Channel) NewChunkIndex() dvid.ChunkIndexer {
 
 // Index returns a channel-specific Index
 func (c *Channel) Index(p dvid.ChunkPoint) dvid.Index {
-	return dvid.IndexCZYX{c.channelNum, dvid.IndexZYX(p.(dvid.ChunkPoint3d))}
+	return &dvid.IndexCZYX{c.channelNum, dvid.IndexZYX(p.(dvid.ChunkPoint3d))}
 }
 
 // IndexIterator returns an iterator that can move across the voxel geometry,
@@ -203,8 +205,8 @@ type Datatype struct {
 // --- TypeService interface ---
 
 // NewDataService returns a pointer to a new multichan16 with default values.
-func (dtype *Datatype) NewDataService(r Repo, id dvid.InstanceID, name dvid.DataString, c dvid.Config) (datastore.DataService, error) {
-	voxelData, err := dtype.Datatype.NewDataService(dtype, r, id, name, c)
+func (dtype *Datatype) NewDataService(r datastore.Repo, id dvid.InstanceID, name dvid.DataString, c dvid.Config) (datastore.DataService, error) {
+	voxelData, err := dtype.Datatype.NewDataService(r, id, name, c)
 	if err != nil {
 		return nil, err
 	}
@@ -244,7 +246,7 @@ func (d *Data) JSONString() (string, error) {
 func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error {
 	if request.TypeCommand() != "load" {
 		return fmt.Errorf("Unknown command.  Data type '%s' [%s] does not support '%s' command.",
-			d.Name, d.DatatypeName(), request.TypeCommand())
+			d.DataName(), d.TypeName(), request.TypeCommand())
 	}
 	if len(request.Command) < 5 {
 		return fmt.Errorf("Poorly formatted load command.  See command-line help.")
@@ -252,9 +254,23 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 	return d.LoadLocal(request, reply)
 }
 
-// DoHTTP handles all incoming HTTP requests for this repo.
-func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) error {
-	startTime := time.Now()
+// ServeHTTP handles all incoming HTTP requests for this data.
+func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *http.Request) {
+	timedLog := dvid.NewTimeLog()
+
+	// Get repo and version ID of this request
+	_, versions, ok := datastore.FromContext(requestCtx)
+	if !ok {
+		server.BadRequest(w, r, "Error: %q ServeHTTP has invalid context\n", d.DataName)
+		return
+	}
+
+	// Construct storage.Context using a particular version of this Data
+	var versionID dvid.VersionID
+	if len(versions) > 0 {
+		versionID = versions[0]
+	}
+	storeCtx := storage.NewDataContext(d, versionID)
 
 	// Allow cross-origin resource sharing.
 	w.Header().Add("Access-Control-Allow-Origin", "*")
@@ -268,7 +284,8 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 	case "post":
 		op = voxels.PutOp
 	default:
-		return fmt.Errorf("Can only handle GET or POST HTTP verbs")
+		server.BadRequest(w, r, "Can only handle GET or POST HTTP verbs")
+		return
 	}
 
 	// Break URL request into arguments
@@ -278,9 +295,8 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		parts = parts[:len(parts)-1]
 	}
 	if len(parts) < 4 {
-		err := fmt.Errorf("Incomplete API request")
-		server.BadRequest(w, r, err.Error())
-		return err
+		server.BadRequest(w, r, "Incomplete API request")
+		return
 	}
 
 	// Process help and info.
@@ -288,35 +304,37 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 	case "help":
 		w.Header().Set("Content-Type", "text/plain")
 		fmt.Fprintln(w, d.Help())
-		return nil
+		return
 	case "info":
 		jsonStr, err := d.JSONString()
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
-			return err
+			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, jsonStr)
-		return nil
+		return
 	default:
 	}
 
 	// Get the data name and parse out the channel number or see if composite is required.
 	var channelNum int32
-	channumStr := strings.TrimPrefix(parts[2], string(d.Name))
+	channumStr := strings.TrimPrefix(parts[2], string(d.DataName()))
 	if len(channumStr) == 0 {
 		channelNum = 0
 	} else {
 		n, err := strconv.ParseInt(channumStr, 10, 32)
 		if err != nil {
-			return fmt.Errorf("Error parsing channel number from data name '%s': %s",
+			server.BadRequest(w, r, "Error parsing channel number from data name '%s': %s",
 				parts[2], err.Error())
+			return
 		}
 		if int(n) > d.NumChannels {
 			minChannelName := fmt.Sprintf("%s1", d.DataName())
 			maxChannelName := fmt.Sprintf("%s%d", d.DataName(), d.NumChannels)
-			return fmt.Errorf("Data only has %d channels.  Use names '%s' -> '%s'", d.NumChannels,
+			server.BadRequest(w, r, "Data only has %d channels.  Use names '%s' -> '%s'", d.NumChannels,
 				minChannelName, maxChannelName)
+			return
 		}
 		channelNum = int32(n)
 	}
@@ -325,7 +343,8 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 	shapeStr := dvid.DataShapeString(parts[3])
 	dataShape, err := shapeStr.DataShape()
 	if err != nil {
-		return fmt.Errorf("Bad data shape given '%s'", shapeStr)
+		server.BadRequest(w, r, "Bad data shape given '%s'", shapeStr)
+		return
 	}
 
 	switch dataShape.ShapeDimensions() {
@@ -333,17 +352,21 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		sizeStr, offsetStr := parts[4], parts[5]
 		slice, err := dvid.NewSliceFromStrings(shapeStr, offsetStr, sizeStr, "_")
 		if err != nil {
-			return err
+			server.BadRequest(w, r, err.Error())
+			return
 		}
 		if op == voxels.PutOp {
-			return fmt.Errorf("DVID does not yet support POST of slices into multichannel data")
+			server.BadRequest(w, r, "DVID does not yet support POST of slices into multichannel data")
+			return
 		} else {
 			if d.NumChannels == 0 || d.Data.Values() == nil {
-				return fmt.Errorf("Cannot retrieve absent data '%d'.  Please load data.", d.DataName())
+				server.BadRequest(w, r, "Cannot retrieve absent data '%d'.  Please load data.", d.DataName())
+				return
 			}
 			values := d.Data.Values()
 			if len(values) <= int(channelNum) {
-				return fmt.Errorf("Must choose channel from 0 to %d", len(values))
+				server.BadRequest(w, r, "Must choose channel from 0 to %d", len(values))
+				return
 			}
 			stride := slice.Size().Value(0) * values.BytesPerElement()
 			dataValues := dvid.DataValues{values[channelNum]}
@@ -353,7 +376,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 				Voxels:     v,
 				channelNum: channelNum,
 			}
-			img, err := voxels.GetImage(uuid, d, channel)
+			img, err := voxels.GetImage(storeCtx, d, channel)
 			var formatStr string
 			if len(parts) >= 7 {
 				formatStr = parts[6]
@@ -362,7 +385,7 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 			err = dvid.WriteImageHttp(w, img.Get(), formatStr)
 			if err != nil {
 				server.BadRequest(w, r, err.Error())
-				return err
+				return
 			}
 		}
 	case 3:
@@ -370,41 +393,33 @@ func (d *Data) DoHTTP(uuid dvid.UUID, w http.ResponseWriter, r *http.Request) er
 		_, err := dvid.NewSubvolumeFromStrings(offsetStr, sizeStr, "_")
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
-			return err
+			return
 		}
 		if op == voxels.GetOp {
-			err := fmt.Errorf("DVID does not yet support GET of volume data")
-			server.BadRequest(w, r, err.Error())
-			return err
+			server.BadRequest(w, r, "DVID does not yet support GET of volume data")
+			return
 		} else {
-			err := fmt.Errorf("DVID does not yet support POST of volume data")
-			server.BadRequest(w, r, err.Error())
-			return err
+			server.BadRequest(w, r, "DVID does not yet support POST of volume data")
+			return
 		}
 	default:
-		err := fmt.Errorf("DVID does not yet support nD volumes")
-		server.BadRequest(w, r, err.Error())
-		return err
+		server.BadRequest(w, r, "DVID does not yet support nD volumes")
+		return
 	}
-
-	dvid.ElapsedTime(dvid.Debug, startTime, "HTTP %s: %s", r.Method, dataShape)
-	return nil
+	timedLog.Infof("HTTP %s: %s", r.Method, dataShape)
 }
 
 // LoadLocal adds image data to a version node.  See HelpMessage for example of
 // command-line use of "load local".
 func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) error {
-	startTime := time.Now()
-
-	// Get the running datastore service from this DVID instance.
-	service := server.DatastoreService()
+	timedLog := dvid.NewTimeLog()
 
 	// Parse the request
 	var uuidStr, dataName, cmdStr, sourceStr, filename string
 	_ = request.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &sourceStr, &filename)
 
 	// Get the uuid from a uniquely identifiable string
-	uuid, _, _, err := service.NodeIDFromString(uuidStr)
+	uuid, versionID, err := server.Repos.MatchingUUID(uuidStr)
 	if err != nil {
 		return fmt.Errorf("Could not find node with UUID %s: %s", uuidStr, err.Error())
 	}
@@ -441,14 +456,21 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 	for i, channel := range channels {
 		d.Properties.Values[i] = channel.Voxels.Values()[0]
 	}
-	if err := service.SaveRepo(uuid); err != nil {
+
+	// Get repo and save it.
+	repo, err := server.Repos.RepoFromUUID(uuid)
+	if err != nil {
+		return err
+	}
+	if err := repo.Save(); err != nil {
 		return err
 	}
 
 	// PUT each channel of the file into the datastore using a separate data name.
+	storeCtx := storage.NewDataContext(d, versionID)
 	for _, channel := range channels {
-		dvid.Fmt(dvid.Debug, "Processing channel %d... \n", channel.channelNum)
-		err = voxels.PutVoxels(uuid, d, channel)
+		dvid.Infof("Processing channel %d... \n", channel.channelNum)
+		err = voxels.PutVoxels(storeCtx, d, channel)
 		if err != nil {
 			return err
 		}
@@ -456,18 +478,18 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 
 	// Create a RGB composite from the first 3 channels.  This is considered to be channel 0
 	// or can be accessed with the base data name.
-	dvid.Fmt(dvid.Debug, "Creating composite image from channels...\n")
-	err = d.storeComposite(uuid, channels)
+	dvid.Infof("Creating composite image from channels...\n")
+	err = d.storeComposite(storeCtx, channels)
 	if err != nil {
 		return err
 	}
 
-	dvid.ElapsedTime(dvid.Debug, startTime, "RPC load local '%s' completed", filename)
+	timedLog.Infof("RPC load local '%s' completed", filename)
 	return nil
 }
 
 // Create a RGB interleaved volume.
-func (d *Data) storeComposite(uuid dvid.UUID, channels []*Channel) error {
+func (d *Data) storeComposite(ctx storage.Context, channels []*Channel) error {
 	// Setup the composite Channel
 	geom := channels[0].Geometry
 	pixels := int(geom.NumVoxels())
@@ -533,5 +555,5 @@ func (d *Data) storeComposite(uuid dvid.UUID, channels []*Channel) error {
 	}
 
 	// Store the result
-	return voxels.PutVoxels(uuid, d, composite)
+	return voxels.PutVoxels(ctx, d, composite)
 }

@@ -423,6 +423,24 @@ func (m *repoManager) NewRepo() (Repo, error) {
 	return repo, m.putCaches()
 }
 
+// SaveRepo persists a Repo to the MetaDataStore.
+func (m *repoManager) SaveRepo(uuid dvid.UUID) error {
+	repo, found := m.repos[uuid]
+	if !found {
+		return fmt.Errorf("SaveRepo(): Illegal UUID (%s) not found", uuid)
+	}
+	return repo.Save()
+}
+
+// SaveRepoByVersionID persists a Repo to the MetaDataStore using a version ID.
+func (m *repoManager) SaveRepoByVersionID(versionID dvid.VersionID) error {
+	uuid, found := m.versionToUUID[versionID]
+	if !found {
+		return fmt.Errorf("SaveRepoByVersionID(): Illegal version ID (%d)", versionID)
+	}
+	return m.SaveRepo(uuid)
+}
+
 // Datatypes returns a list of TypeService needed for this set of repositories
 func (m *repoManager) Datatypes() (map[URLString]TypeService, error) {
 	combinedMap := make(map[URLString]TypeService)
@@ -485,16 +503,6 @@ func newRepo(m *repoManager) (*repoT, dvid.VersionID, error) {
 	return repo, versionID, err
 }
 
-func (r *repoT) store() error {
-	var ctx storage.MetadataContext
-	idx := metadataIndex{t: repoKey, repoID: r.repoID}
-	serialization, err := r.GobEncode()
-	if err != nil {
-		return err
-	}
-	return r.manager.store.Put(ctx, idx.Bytes(), serialization)
-}
-
 // ---- Describer interface implementation ----------
 
 func (r *repoT) GetAlias() string {
@@ -505,7 +513,7 @@ func (r *repoT) SetAlias(alias string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.alias = alias
-	return r.store()
+	return r.Save()
 }
 
 func (r *repoT) GetDescription() string {
@@ -516,7 +524,7 @@ func (r *repoT) SetDescription(desc string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.description = desc
-	return r.store()
+	return r.Save()
 }
 
 // For local implementation, no error is possible, just whether it's found or not
@@ -536,7 +544,7 @@ func (r *repoT) SetProperty(name string, value interface{}) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.properties[name] = value
-	return r.store()
+	return r.Save()
 }
 
 func (r *repoT) SetProperties(props map[string]interface{}) error {
@@ -671,7 +679,7 @@ func (r *repoT) NewData(t TypeService, name dvid.DataString, c dvid.Config) (Dat
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.data[name] = dataservice
-	return dataservice, r.store()
+	return dataservice, r.Save()
 }
 
 // ModifyData modifies preexisting Data within a Repo.  Settings can be passed
@@ -686,7 +694,7 @@ func (r *repoT) ModifyData(name dvid.DataString, config dvid.Config) error {
 	return dataservice.ModifyConfig(config)
 }
 
-func (r *repoT) NewChild(uuid dvid.UUID) (dvid.UUID, error) {
+func (r *repoT) NewVersion(uuid dvid.UUID) (dvid.UUID, error) {
 	// Make sure parent is available and locked.
 	parentVersionID, found := r.manager.UUIDToVersion[uuid]
 	if !found {
@@ -715,7 +723,20 @@ func (r *repoT) NewChild(uuid dvid.UUID) (dvid.UUID, error) {
 	parentNode.children = append(parentNode.children, childNode.versionID)
 	parentNode.updated = time.Now()
 	parentNode.Unlock()
-	return childNode.uuid, r.store()
+	return childNode.uuid, r.Save()
+}
+
+func (r *repoT) Save() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	var ctx storage.MetadataContext
+	idx := metadataIndex{t: repoKey, repoID: r.repoID}
+	serialization, err := r.GobEncode()
+	if err != nil {
+		return err
+	}
+	return r.manager.store.Put(ctx, idx.Bytes(), serialization)
 }
 
 func (r *repoT) Lock(uuid dvid.UUID) error {
@@ -730,7 +751,7 @@ func (r *repoT) Lock(uuid dvid.UUID) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	node.locked = true
-	return r.store()
+	return r.Save()
 }
 
 func (r *repoT) Datatypes() (map[URLString]TypeService, error) {

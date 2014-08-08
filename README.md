@@ -24,16 +24,8 @@ command-line access, and a FUSE frontend to at least one of its data types.  It 
 tested on both MacOS X and Linux (Fedora 16, CentOS 6, Ubuntu) but not on Windows.
 
 Command-line and HTTP API documentation is currently distributed over data types and can be 
-found in help constants:
-
-* [general commands and HTTP API](http://godoc.org/github.com/janelia-flyem/dvid/server#pkg-constants)
-* [keyvalue](http://godoc.org/github.com/janelia-flyem/dvid/datatype/keyvalue#pkg-constants)
-* [voxels](http://godoc.org/github.com/janelia-flyem/dvid/datatype/voxels#pkg-constants)
-* [labels64](http://godoc.org/github.com/janelia-flyem/dvid/datatype/labels64#pkg-constants)
-* [labelmap](http://godoc.org/github.com/janelia-flyem/dvid/datatype/labelmap#pkg-constants)
-* [multichan16](http://godoc.org/github.com/janelia-flyem/dvid/datatype/multichan16#pkg-constants)
-* [multiscale2d](http://godoc.org/github.com/janelia-flyem/dvid/datatype/multiscale2d#pkg-constants)
-* [labelgraph](https://godoc.org/github.com/janelia-flyem/dvid/datatype/labelgraph#pkg-constants)
+found in [help constants within packages](https://github.com/janelia-flyem/dvid/blob/master/datatype/labels64/labels64.go#L38).  We are in the process of 
+figuring out a nice way to document the APIs either through RAML or Swagger.
 
 ## Table of Contents
 

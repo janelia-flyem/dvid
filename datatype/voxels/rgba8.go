@@ -36,5 +36,5 @@ func init() {
 		Url:     "github.com/janelia-flyem/dvid/datatype/voxels/rgba8.go",
 		Version: "0.6",
 	}
-	datastore.RegisterDatatype(rgba)
+	datastore.Register(rgba)
 }

@@ -19,6 +19,15 @@ import (
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
+
+	// Declare the data types this DVID executable will support
+	_ "github.com/janelia-flyem/dvid/datatype/keyvalue"
+	_ "github.com/janelia-flyem/dvid/datatype/labelgraph"
+	_ "github.com/janelia-flyem/dvid/datatype/labelmap"
+	_ "github.com/janelia-flyem/dvid/datatype/labels64"
+	_ "github.com/janelia-flyem/dvid/datatype/multichan16"
+	_ "github.com/janelia-flyem/dvid/datatype/multiscale2d"
+	_ "github.com/janelia-flyem/dvid/datatype/voxels"
 )
 
 var (

@@ -19,5 +19,5 @@ func init() {
 		Url:     "github.com/janelia-flyem/dvid/datatype/voxels/grayscale8.go",
 		Version: "0.6",
 	}
-	datastore.RegisterDatatype(grayscale)
+	datastore.Register(grayscale)
 }

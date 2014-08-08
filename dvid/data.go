@@ -156,9 +156,11 @@ type Data interface {
 	Versioned() bool
 }
 
-// VersionedData extends Data with a mechanism to iterate up the ancestor path for a given version.
+// VersionedData is Data at a particular version of the DAG and includes a mechanism to
+// iterate up the ancestor path.
 type VersionedData interface {
 	Data
+	VersionID() VersionID
 	GetIterator(VersionID) (VersionIterator, error)
 }
 
