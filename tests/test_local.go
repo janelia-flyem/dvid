@@ -59,17 +59,15 @@ func CloseStore() {
 	defer mu.Unlock()
 	count--
 	if count == 0 {
-		go func() {
-			dvid.BlockOnActiveCgo()
-			if engine == nil {
-				log.Fatalf("Attempted to close non-existant engine!")
-			}
-			// Close engine and delete store.
-			engine.Close()
-			engine = nil
-			if err := os.RemoveAll(dbpath); err != nil {
-				log.Fatalf("Unable to cleanup test store: %s\n", dbpath)
-			}
-		}()
+		dvid.BlockOnActiveCgo()
+		if engine == nil {
+			log.Fatalf("Attempted to close non-existant engine!")
+		}
+		// Close engine and delete store.
+		engine.Close()
+		engine = nil
+		if err := os.RemoveAll(dbpath); err != nil {
+			log.Fatalf("Unable to cleanup test store: %s\n", dbpath)
+		}
 	}
 }
