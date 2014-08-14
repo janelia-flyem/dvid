@@ -32,15 +32,20 @@ func CreateBlankStore(path string) (storage.Engine, error) {
 	// See if an old test database exists.  If so, delete.
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		if err := os.RemoveAll(path); err != nil {
-			return nil, fmt.Errorf("Can't delete old datastore %q: %s\n", path, err.Error())
+			return nil, fmt.Errorf("Can't delete old datastore %q: %s", path, err.Error())
 		}
+	}
+
+	// Make a directory at the path.
+	if err := os.MkdirAll(path, 0744); err != nil {
+		return nil, fmt.Errorf("Can't make directory at %s: %s", path, err.Error())
 	}
 
 	// Make the local key value store
 	create := true
 	store, err := NewKeyValueStore(path, create, dvid.Config{})
 	if err != nil {
-		return nil, fmt.Errorf("Can't create key-value store: %s\n", err.Error())
+		return nil, fmt.Errorf("Can't create key-value store: %s", err.Error())
 	}
 	return store, nil
 }
