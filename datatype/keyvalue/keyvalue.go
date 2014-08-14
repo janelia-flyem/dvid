@@ -21,8 +21,9 @@ import (
 )
 
 const (
-	Version = "0.1"
-	RepoUrl = "github.com/janelia-flyem/dvid/datatype/keyvalue"
+	Version  = "0.1"
+	RepoUrl  = "github.com/janelia-flyem/dvid/datatype/keyvalue"
+	TypeName = "keyvalue"
 )
 
 const HelpMessage = `
@@ -110,13 +111,13 @@ DEL  <api URL>/node/<UUID>/<data name>/<key>  (TO DO)
 `
 
 func init() {
-	kvtype := NewDatatype()
-	kvtype.DatatypeID = &datastore.DatatypeID{
-		Name:    "keyvalue",
+	t := NewDatatype()
+	t.DatatypeID = &datastore.DatatypeID{
+		Name:    TypeName,
 		Url:     RepoUrl,
 		Version: Version,
 	}
-	datastore.Register(kvtype)
+	datastore.Register(t)
 
 	// Need to register types that will be used to fulfill interfaces.
 	gob.Register(&Datatype{})
@@ -127,18 +128,18 @@ func init() {
 
 // Datatype embeds the datastore's Datatype to create a unique type for keyvalue functions.
 type Datatype struct {
-	*datastore.Datatype
+	datastore.Datatype
 }
 
 // NewDatatype returns a pointer to a new keyvalue Datatype with default values set.
-func NewDatatype() (dtype *Datatype) {
-	dtype = new(Datatype)
+func NewDatatype() *Datatype {
+	dtype := new(Datatype)
 	dtype.Requirements = &storage.Requirements{
 		BulkIniter: false,
 		BulkWriter: false,
 		Batcher:    true,
 	}
-	return
+	return dtype
 }
 
 // --- TypeService interface ---
@@ -190,8 +191,8 @@ func (d *Data) GetData(ctx storage.Context, keyStr string) ([]byte, bool, error)
 	if err != nil {
 		return nil, false, err
 	}
-	key := dvid.IndexString(keyStr)
-	data, err := db.Get(ctx, key.Bytes())
+	index := dvid.IndexString(keyStr)
+	data, err := db.Get(ctx, index.Bytes())
 	if err != nil {
 		return nil, false, fmt.Errorf("Error in retrieving key '%s': %s", keyStr, err.Error())
 	}
@@ -216,8 +217,8 @@ func (d *Data) PutData(ctx storage.Context, keyStr string, value []byte) error {
 	if err != nil {
 		return fmt.Errorf("Unable to serialize data: %s\n", err.Error())
 	}
-	key := dvid.IndexString(keyStr)
-	return db.Put(ctx, key.Bytes(), serialization)
+	index := dvid.IndexString(keyStr)
+	return db.Put(ctx, index.Bytes(), serialization)
 }
 
 // JSONString returns the JSON for this Data's configuration
@@ -248,9 +249,9 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 	timedLog := dvid.NewTimeLog()
 
 	// Get repo and version ID of this request
-	_, versions, ok := datastore.FromContext(requestCtx)
-	if !ok {
-		server.BadRequest(w, r, "Error: %q ServeHTTP has invalid context\n", d.DataName)
+	_, versions, err := datastore.FromContext(requestCtx)
+	if err != nil {
+		server.BadRequest(w, r, "Error: %q ServeHTTP has invalid context: %s\n", d.DataName, err.Error())
 		return
 	}
 

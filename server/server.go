@@ -13,6 +13,15 @@ import (
 	"github.com/janelia-flyem/dvid/storage"
 )
 
+// Local server configuration parameters.  Should be set by platform-specific implementations.
+type Config interface {
+	HTTPAddress() string
+	RPCAddress() string
+
+	// Path to web client files
+	WebClient() string
+}
+
 var (
 	// Repos provides high-level repository management for DVID and is initialized
 	// on start.
@@ -48,6 +57,9 @@ var (
 
 	// Keep track of the startup time for uptime.
 	startupTime time.Time = time.Now()
+
+	config      Config
+	initialized bool
 )
 
 func init() {
@@ -78,7 +90,6 @@ func init() {
 			}
 		}
 	}()
-
 }
 
 // AboutJSON returns a JSON string describing the properties of this server.

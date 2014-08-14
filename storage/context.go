@@ -24,9 +24,9 @@ type Context interface {
 	// If not versioned, the version is the root ID.
 	VersionID() dvid.VersionID
 
-	// ConstructKey takes a slice of bytes and generates a key that fits with the
-	// DVID-wide key space partitioning.
-	ConstructKey([]byte) []byte
+	// ConstructKey takes an index, a type-specific slice of bytes, and generates a
+	// namespaced key that fits with the DVID-wide key space partitioning.
+	ConstructKey(index []byte) []byte
 
 	// String prints a description of the Context
 	String() string
@@ -43,16 +43,16 @@ type Context interface {
 type VersionedContext interface {
 	Context
 
-	// Returns lower bound key for versions of given byte slice key representation.
-	MinVersionKey([]byte) ([]byte, error)
+	// Returns lower bound key for versions of given byte slice index.
+	MinVersionKey(index []byte) (key []byte, err error)
 
-	// Returns upper bound key for versions of given byte slice key representation.
-	MaxVersionKey([]byte) ([]byte, error)
+	// Returns upper bound key for versions of given byte slice index.
+	MaxVersionKey(index []byte) (key []byte, err error)
 
 	// VersionedKeyValue returns the key-value pair corresponding to this key's version
 	// given a list of key-value pairs across many versions.  If no suitable key-value
 	// pair is found, nil is returned.
-	VersionedKeyValue([]KeyValue) (*KeyValue, error)
+	VersionedKeyValue([]*KeyValue) (*KeyValue, error)
 }
 
 // ---- Context implementations -----
@@ -131,9 +131,9 @@ func (ctx *DataContext) VersionID() dvid.VersionID {
 	return ctx.version
 }
 
-func (ctx *DataContext) ConstructKey(b []byte) []byte {
+func (ctx *DataContext) ConstructKey(index []byte) []byte {
 	key := append([]byte{dataKeyPrefix}, ctx.data.InstanceID().Bytes()...)
-	key = append(key, b...)
+	key = append(key, index...)
 	return append(key, ctx.version.Bytes()...)
 }
 
@@ -147,47 +147,57 @@ func (ctx *DataContext) Versioned() bool {
 }
 
 // Returns lower bound key for versions of given byte slice key representation.
-func (ctx *DataContext) MinVersionKey(b []byte) ([]byte, error) {
-	pos := len(b) - dvid.VersionIDSize
-	minKey := make([]byte, pos)
-	copy(minKey, b[0:pos])
-	return append(minKey, dvid.VersionID(0).Bytes()...), nil
+func (ctx *DataContext) MinVersionKey(index []byte) ([]byte, error) {
+	key := append([]byte{dataKeyPrefix}, ctx.data.InstanceID().Bytes()...)
+	key = append(key, index...)
+	return append(key, dvid.VersionID(0).Bytes()...), nil
 }
 
 // Returns upper bound key for versions of given byte slice key representation.
-func (ctx *DataContext) MaxVersionKey(b []byte) ([]byte, error) {
-	pos := len(b) - dvid.VersionIDSize
-	maxKey := make([]byte, pos)
-	copy(maxKey, b[0:pos])
-	return append(maxKey, dvid.VersionID(dvid.MaxVersionID).Bytes()...), nil
+func (ctx *DataContext) MaxVersionKey(index []byte) ([]byte, error) {
+	key := append([]byte{dataKeyPrefix}, ctx.data.InstanceID().Bytes()...)
+	key = append(key, index...)
+	return append(key, dvid.VersionID(dvid.MaxVersionID).Bytes()...), nil
 }
 
-func (ctx *DataContext) VersionedKeyValue(values []KeyValue) (*KeyValue, error) {
+// VersionedKeyValue returns the key-value pair corresponding to this key's version
+// given a list of key-value pairs across many versions.  If no suitable key-value
+// pair is found, nil is returned.
+func (ctx *DataContext) VersionedKeyValue(values []*KeyValue) (*KeyValue, error) {
 	// This data needs to be Versioned or return an error.
 	if !ctx.data.Versioned() {
-		return nil, fmt.Errorf("Data instance %v is not versioned so can't do VersionedKeyValue()",
+		return nil, fmt.Errorf("Data instance %q is not versioned so can't do VersionedKeyValue()",
 			ctx.data.DataName())
 	}
 	vdata, ok := ctx.data.(dvid.VersionedData)
 	if !ok {
-		return nil, fmt.Errorf("Data instance %v should have implemented GetIterator()",
+		return nil, fmt.Errorf("Expected versioned data instance %q: must implement GetIterator()",
 			ctx.data.DataName())
 	}
 
 	// Set up a map[VersionID]KeyValue
 	versionMap := make(map[dvid.VersionID]*KeyValue, len(values))
-	for i, kv := range values {
+	for _, kv := range values {
 		pos := len(kv.K) - dvid.VersionIDSize
 		vid := dvid.VersionIDFromBytes(kv.K[pos:])
-		versionMap[vid] = &(values[i])
+		versionMap[vid] = kv
 	}
 
 	// Iterate from the current node up the ancestors in the version DAG, checking if
 	// current best is present.
-	for it, err := vdata.GetIterator(ctx.version); err == nil && it.Valid(); it.Next() {
-		if kv, found := versionMap[it.VersionID()]; found {
-			return kv, nil
+	it, err := vdata.GetIterator(ctx.version)
+	if err != nil {
+		return nil, fmt.Errorf("Couldn't get iterator from %s: %s\n", vdata.DataName(), err.Error())
+	}
+	for {
+		if it.Valid() {
+			if kv, found := versionMap[it.VersionID()]; found {
+				return kv, nil
+			}
+		} else {
+			break
 		}
+		it.Next()
 	}
 	return nil, nil
 }

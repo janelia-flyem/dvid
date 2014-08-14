@@ -160,7 +160,6 @@ type Data interface {
 // iterate up the ancestor path.
 type VersionedData interface {
 	Data
-	VersionID() VersionID
 	GetIterator(VersionID) (VersionIterator, error)
 }
 

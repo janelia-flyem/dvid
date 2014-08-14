@@ -491,9 +491,10 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 	timedLog := dvid.NewTimeLog()
 
 	// Get repo and version ID of this request
-	repo, versions, ok := datastore.FromContext(requestCtx)
-	if !ok {
-		server.BadRequest(w, r, "Error: %q ServeHTTP has invalid context\n", d.DataName())
+	repo, versions, err := datastore.FromContext(requestCtx)
+	if err != nil {
+		server.BadRequest(w, r, "Error: %q ServeHTTP has invalid context: %s\n",
+			d.DataName(), err.Error())
 		return
 	}
 

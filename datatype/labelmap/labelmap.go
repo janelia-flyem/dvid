@@ -31,8 +31,9 @@ import (
 )
 
 const (
-	Version = "0.1"
-	RepoUrl = "github.com/janelia-flyem/dvid/datatype/labelmap"
+	Version  = "0.1"
+	RepoUrl  = "github.com/janelia-flyem/dvid/datatype/labelmap"
+	TypeName = "labelmap"
 )
 
 const HelpMessage = `
@@ -272,7 +273,7 @@ GET  <api URL>/node/<UUID>/<data name>/mappings/<dims>/<size>/<offset>
 func init() {
 	labelmap := NewDatatype()
 	labelmap.DatatypeID = &datastore.DatatypeID{
-		Name:    "labelmap",
+		Name:    TypeName,
 		Url:     RepoUrl,
 		Version: Version,
 	}
@@ -325,7 +326,7 @@ func (dtype *Datatype) NewDataService(r datastore.Repo, id dvid.InstanceID, name
 	if err != nil {
 		return nil, err
 	}
-	fmt.Printf("LabelsRef = %s\n", labelsRef)
+	dvid.Debugf("Creating labelmap instance %q with labels %q\n", name, labelsRef)
 	return &Data{Data: basedata, Labels: labelsRef}, nil
 }
 
@@ -483,9 +484,10 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 	timedLog := dvid.NewTimeLog()
 
 	// Get repo and version ID of this request
-	_, versions, ok := datastore.FromContext(requestCtx)
-	if !ok {
-		server.BadRequest(w, r, "Error: %q ServeHTTP has invalid context\n", d.DataName)
+	_, versions, err := datastore.FromContext(requestCtx)
+	if err != nil {
+		server.BadRequest(w, r, "Error: %q ServeHTTP has invalid context: %s\n",
+			d.DataName, err.Error())
 		return
 	}
 

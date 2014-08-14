@@ -28,8 +28,9 @@ import (
 )
 
 const (
-	Version = "0.1"
-	RepoUrl = "github.com/janelia-flyem/dvid/datatype/labels64"
+	Version  = "0.1"
+	RepoUrl  = "github.com/janelia-flyem/dvid/datatype/labels64"
+	TypeName = "labels64"
 
 	// Don't allow requests that will return more than this amount of data.
 	MaxDataRequest = dvid.Giga
@@ -260,12 +261,12 @@ func init() {
 	values := dvid.DataValues{
 		{
 			T:     dvid.T_uint64,
-			Label: "labels64",
+			Label: TypeName,
 		},
 	}
 	interpolable := false
 	dtype = &Datatype{voxels.NewDatatype(values, interpolable)}
-	dtype.DatatypeID = datastore.MakeDatatypeID("labels64", RepoUrl, Version)
+	dtype.DatatypeID = datastore.MakeDatatypeID(TypeName, RepoUrl, Version)
 	datastore.Register(dtype)
 
 	// See doc for package on why channels are segregated instead of interleaved.
@@ -671,9 +672,10 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 	timedLog := dvid.NewTimeLog()
 
 	// Get repo and version ID of this request
-	repo, versions, ok := datastore.FromContext(ctx)
-	if !ok {
-		server.BadRequest(w, r, "Error: %q ServeHTTP has invalid context\n", d.DataName)
+	repo, versions, err := datastore.FromContext(ctx)
+	if err != nil {
+		server.BadRequest(w, r, "Error: %q ServeHTTP has invalid context: %s\n",
+			d.DataName, err.Error())
 		return
 	}
 

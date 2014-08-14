@@ -616,5 +616,5 @@ func (d *Data) denormalizeChunk(chunk *storage.Chunk) {
 	}
 
 	// Store the KeyLabelSpatialMap keys (index = b + s) with slice of runs for value.
-	labels64.StoreKeyLabelSpatialMap(d, smallBatcher, zyxBytes, labelRLEs)
+	labels64.StoreKeyLabelSpatialMap(op.versionID, d, smallBatcher, zyxBytes, labelRLEs)
 }

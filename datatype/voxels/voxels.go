@@ -492,7 +492,7 @@ func PutVoxels(ctx storage.Context, i IntData, e ExtData) error {
 			// Check for this index among old key-value pairs and if so,
 			// send the old value into chunk handler.  Else we are just sending
 			// keys with no value.
-			if oldkv.K != nil {
+			if oldkv != nil && oldkv.K != nil {
 				oldIndexBytes, err := storage.DataContextIndex(oldkv.K)
 				if err != nil {
 					return err
@@ -940,7 +940,13 @@ func writeXYImage(versionID dvid.VersionID, i IntData, e ExtData, blocks Blocks)
 // for the data corresponding to the given Block.
 func ComputeTransform(v ExtData, block *Block, blockSize dvid.Point) (blockBeg, dataBeg, dataEnd dvid.Point, err error) {
 	ptIndex := v.NewChunkIndex()
-	if err = ptIndex.IndexFromBytes(block.K); err != nil {
+
+	var indexBytes []byte
+	indexBytes, err = storage.DataContextIndex(block.K)
+	if err != nil {
+		return
+	}
+	if err = ptIndex.IndexFromBytes(indexBytes); err != nil {
 		return
 	}
 
@@ -1971,9 +1977,10 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 	timedLog := dvid.NewTimeLog()
 
 	// Get repo and version ID of this request
-	repo, versions, ok := datastore.FromContext(requestCtx)
-	if !ok {
-		server.BadRequest(w, r, "Error: %q ServeHTTP has invalid context\n", d.DataName)
+	repo, versions, err := datastore.FromContext(requestCtx)
+	if err != nil {
+		server.BadRequest(w, r, "Error: %q ServeHTTP has invalid context: %s\n",
+			d.DataName, err.Error())
 		return
 	}
 

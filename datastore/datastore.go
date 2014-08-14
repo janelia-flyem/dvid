@@ -45,9 +45,13 @@ func NewContext(ctx context.Context, repo Repo, versions ...dvid.VersionID) cont
 }
 
 // FromContext returns Repo and optional versions within that Repo from a Context.
-func FromContext(ctx context.Context) (Repo, []dvid.VersionID, bool) {
-	value, ok := ctx.Value(repoCtxKey).(repoContext)
-	return value.repo, value.versions, ok
+func FromContext(ctx context.Context) (Repo, []dvid.VersionID, error) {
+	repoCtxValue := ctx.Value(repoCtxKey)
+	value, ok := repoCtxValue.(repoContext)
+	if !ok {
+		return value.repo, value.versions, fmt.Errorf("Server context has bad value: %v", repoCtxValue)
+	}
+	return value.repo, value.versions, nil
 }
 
 // The following identifiers are more compact than the global identifiers such as

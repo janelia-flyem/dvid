@@ -9,6 +9,7 @@
 package server
 
 import (
+	"fmt"
 	"net"
 	"net/http"
 	"net/rpc"
@@ -16,7 +17,6 @@ import (
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/janelia-flyem/dvid/storage/local"
 )
 
 const (
@@ -33,47 +33,59 @@ const (
 	MaxThrottledOps = 1
 )
 
-// Local server configuration parameters.
 type configT struct {
-	dbPath, webAddress, webClientDir, rpcAddress string
+	httpAddress, rpcAddress, webClientDir string
 }
 
-var config configT
+func (c configT) HTTPAddress() string {
+	return c.httpAddress
+}
 
-// Serve calls platform-specific initialization and sets server.Repos, a package variable
-// that holds the currently running engines and context.
-func Serve(dbPath, webAddress, webClientDir, rpcAddress string, c dvid.Config) error {
+func (c configT) RPCAddress() string {
+	return c.rpcAddress
+}
+
+func (c configT) WebClient() string {
+	return c.webClientDir
+}
+
+// Initialize datastore and repo management at server level.
+func Initialize() error {
 	var err error
-	config = configT{dbPath, webAddress, webClientDir, rpcAddress}
-
-	// Setup local storage engine
-	if err = local.Initialize(dbPath, c); err != nil {
-		return err
-	}
-
-	// Initialize datastore and set repo management as global var in package server
 	Repos, err = datastore.Initialize()
 	if err != nil {
-		return err
+		return fmt.Errorf("Unable to initialize datastore Repo manager: %s\n", err.Error())
+	}
+	initialized = true
+	return nil
+}
+
+// Serve starts HTTP and RPC servers.
+func Serve(httpAddress, webClientDir, rpcAddress string) error {
+	if !initialized {
+		return fmt.Errorf("Cannot serve HTTP and RPC without server.Initialize()")
 	}
 
-	dvid.Infof("Using %d of %d logical CPUs for DVID.\n", dvid.NumCPU, runtime.NumCPU())
-
 	// Launch the web server
-	go serveHttp(webAddress, webClientDir)
+	go serveHttp(httpAddress, webClientDir)
 
 	// Launch the rpc server
 	if err := serveRpc(rpcAddress); err != nil {
-		dvid.Criticalf("Could not start RPC server: %s\n", err.Error())
+		return fmt.Errorf("Could not start RPC server: %s\n", err.Error())
 	}
 
+	// Set the package-level config variable
+	config = configT{httpAddress, rpcAddress, webClientDir}
+
+	dvid.Infof("Serving HTTP on %s\n", httpAddress)
+	dvid.Infof("Serving RPC  on %s\n", rpcAddress)
+	dvid.Infof("Using web client files from %s\n", webClientDir)
+	dvid.Infof("Using %d of %d logical CPUs for DVID.\n", dvid.NumCPU, runtime.NumCPU())
 	return nil
 }
 
 // Listen and serve RPC requests using address.
 func serveRpc(address string) error {
-	dvid.Infof("Rpc server listening at %s ...\n", address)
-
 	c := new(RPCConnection)
 	rpc.Register(c)
 	rpc.HandleHTTP()

@@ -55,11 +55,7 @@ func (c *Client) Send(request datastore.Request) error {
 	if c.client != nil {
 		err := c.client.Call("RPCConnection.Do", request, &reply)
 		if err != nil {
-			if dvid.Mode == dvid.Debug {
-				return fmt.Errorf("RPC error for '%s': %s", request.Command, err.Error())
-			} else {
-				return fmt.Errorf("RPC error: %s", err.Error())
-			}
+			return fmt.Errorf("RPC error for '%s': %s", request.Command, err.Error())
 		}
 	} else {
 		reply.Output = []byte(fmt.Sprintf("No DVID server is available: %s\n", request.Command))
@@ -86,14 +82,14 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 	switch cmd.Name() {
 
 	case "help":
-		reply.Text = fmt.Sprintf(RPCHelpMessage, config.rpcAddress, config.webAddress)
+		reply.Text = fmt.Sprintf(RPCHelpMessage, config.RPCAddress(), config.HTTPAddress())
 
 	case "shutdown":
 		Shutdown()
 		// Make this process shutdown in a second to allow time for RPC to finish.
 		// TODO -- Better way to do this?
 		log.Printf("DVID server halted due to 'shutdown' command.")
-		reply.Text = fmt.Sprintf("DVID server at %s has been halted.\n", config.rpcAddress)
+		reply.Text = fmt.Sprintf("DVID server at %s has been halted.\n", config.RPCAddress())
 		go func() {
 			time.Sleep(1 * time.Second)
 			os.Exit(0)

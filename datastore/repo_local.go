@@ -64,7 +64,8 @@ type repoManager struct {
 
 // Create creates a local key-value store and if it is designated for
 // metadata storage (metadata = true), also stores a blank RepoManager
-// into the newly created key-value store.
+// into the newly created key-value store.  Any preexisting data at the
+// path is retained.
 func Create(path string, metadata bool, config dvid.Config) error {
 	// Make the local key value store
 	create := true
@@ -74,25 +75,34 @@ func Create(path string, metadata bool, config dvid.Config) error {
 	}
 
 	// Put a blank RepoManager onto the key value store.
-	if metadata {
-		m := &repoManager{
-			repoToUUID:    make(map[dvid.RepoID]dvid.UUID),
-			versionToUUID: make(map[dvid.VersionID]dvid.UUID),
-			repos:         make(map[dvid.UUID]*repoT),
-		}
-		// Verify that our new kv engine satisfies a MetaDataStorer.
-		var ok bool
-		m.store, ok = kvEngine.(storage.MetaDataStorer)
-		if !ok {
-			return fmt.Errorf("Key-value store at %q cannot satisfy MetaData store", path)
-		}
-		// Store repo management data
-		if err := m.putNewIDs(); err != nil {
-			return err
-		}
-		if err := m.putCaches(); err != nil {
-			return err
-		}
+	if err = InitMetadata(kvEngine); err != nil {
+		return err
+	}
+	return nil
+}
+
+// InitMetadata initializes a MetaData store with blank Repo management support.
+// Note this is a destructive call and will delete stored metadata.
+func InitMetadata(store storage.Engine) error {
+	// Verify that our engine satisfies a MetaDataStorer.
+	metadataStore, ok := store.(storage.MetaDataStorer)
+	if !ok {
+		return fmt.Errorf("Store (%v) cannot satisfy MetaData store", store)
+	}
+
+	m := &repoManager{
+		store:         metadataStore,
+		repoToUUID:    make(map[dvid.RepoID]dvid.UUID),
+		versionToUUID: make(map[dvid.VersionID]dvid.UUID),
+		UUIDToVersion: make(map[dvid.UUID]dvid.VersionID),
+		repos:         make(map[dvid.UUID]*repoT),
+	}
+	// Store repo management data
+	if err := m.putNewIDs(); err != nil {
+		return err
+	}
+	if err := m.putCaches(); err != nil {
+		return err
 	}
 	return nil
 }
@@ -108,6 +118,7 @@ func Initialize() (RepoManager, error) {
 	m := &repoManager{
 		repoToUUID:    make(map[dvid.RepoID]dvid.UUID),
 		versionToUUID: make(map[dvid.VersionID]dvid.UUID),
+		UUIDToVersion: make(map[dvid.UUID]dvid.VersionID),
 		repos:         make(map[dvid.UUID]*repoT),
 	}
 
@@ -119,7 +130,7 @@ func Initialize() (RepoManager, error) {
 
 	// Try to load metadata from the MetaData store.
 	if err = m.loadMetadata(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("Error loading metadata: %s", err.Error())
 	}
 	return m, nil
 }
@@ -131,12 +142,13 @@ func (m *repoManager) getData(t keyType, data interface{}) error {
 	idx := metadataIndex{t: t}
 	value, err := m.store.Get(ctx, idx.Bytes())
 	if err != nil {
-		return err
+		return fmt.Errorf("Bad metadata GET: %s", err.Error())
 	}
 	buf := bytes.NewBuffer(value)
 	dec := gob.NewDecoder(buf)
 	if err := dec.Decode(data); err != nil {
-		return err
+		return fmt.Errorf("Could not decode Gob encoded metadata (len %d): %s",
+			len(value), err.Error())
 	}
 	return nil
 }
@@ -194,13 +206,13 @@ func (m *repoManager) putCaches() error {
 func (m *repoManager) loadMetadata() error {
 	// Load the maps
 	if err := m.getData(repoToUUIDKey, &(m.repoToUUID)); err != nil {
-		return err
+		return fmt.Errorf("Error loading repo to UUID map: %s", err)
 	}
 	if err := m.getNewIDs(); err != nil {
-		return err
+		return fmt.Errorf("Error loading new local ids: %s", err)
 	}
 	if err := m.getData(versionToUUIDKey, &(m.versionToUUID)); err != nil {
-		return err
+		return fmt.Errorf("Error loading version to UUID map: %s", err)
 	}
 
 	// Generate the inverse UUID to VersionID mapping.
@@ -260,17 +272,19 @@ func (m *repoManager) verifyCompiledDatatypes() error {
 
 // ---- IDManager implementation -----------
 
+var idMu sync.Mutex
+
 func (m *repoManager) NewInstanceID() (dvid.InstanceID, error) {
-	m.Lock()
-	defer m.Unlock()
+	idMu.Lock()
+	defer idMu.Unlock()
 	curid := m.newInstanceID
 	m.newInstanceID++
 	return curid, m.putNewIDs()
 }
 
 func (m *repoManager) NewRepoID() (dvid.RepoID, error) {
-	m.Lock()
-	defer m.Unlock()
+	idMu.Lock()
+	defer idMu.Unlock()
 	curid := m.newRepoID
 	m.newRepoID++
 	return curid, m.putNewIDs()
@@ -278,8 +292,8 @@ func (m *repoManager) NewRepoID() (dvid.RepoID, error) {
 
 // NewVersionID returns an atomically generated UUID and its associated local VersionID.
 func (m *repoManager) NewVersionID() (dvid.UUID, dvid.VersionID, error) {
-	m.Lock()
-	defer m.Unlock()
+	idMu.Lock()
+	defer idMu.Unlock()
 	uuid := dvid.NewUUID()
 	curid := m.newVersionID
 	m.versionToUUID[curid] = uuid
@@ -386,11 +400,11 @@ func (m *repoManager) MatchingUUID(str string) (dvid.UUID, dvid.VersionID, error
 	return bestUUID, bestVersion, err
 }
 
-// RepoFromUUID returns a repo given a UUID.
+// RepoFromUUID returns a repo given a UUID.  It will return nil if not found.
 func (m *repoManager) RepoFromUUID(uuid dvid.UUID) (Repo, error) {
 	repo, found := m.repos[uuid]
 	if !found {
-		return nil, fmt.Errorf("RepoFromUUID(): Illegal UUID (%s) not found", uuid)
+		return nil, nil
 	}
 	return repo, nil
 }
@@ -410,16 +424,12 @@ func (m *repoManager) RepoFromID(repoID dvid.RepoID) (Repo, error) {
 
 // NewRepo creates a new Repo with a unique UUID
 func (m *repoManager) NewRepo() (Repo, error) {
-	repo, versionID, err := newRepo(m)
+	m.Lock()
+	defer m.Unlock()
+	repo, _, err := newRepo(m)
 	if err != nil {
 		return nil, err
 	}
-	m.Lock()
-	defer m.Unlock()
-	uuid := repo.RootUUID()
-	m.repos[uuid] = repo
-	m.versionToUUID[versionID] = uuid
-	m.UUIDToVersion[uuid] = versionID
 	return repo, m.putCaches()
 }
 
@@ -499,7 +509,13 @@ func newRepo(m *repoManager) (*repoT, dvid.VersionID, error) {
 		data:       make(map[dvid.DataString]DataService),
 		manager:    m,
 	}
-	repo.dag, err = repo.newDAG(uuid, versionID)
+	repo.dag = repo.newDAG(uuid, versionID)
+
+	m.repos[uuid] = repo
+	m.repoToUUID[repo.repoID] = uuid
+	m.versionToUUID[versionID] = uuid
+	m.UUIDToVersion[uuid] = versionID
+
 	return repo, versionID, err
 }
 
@@ -513,7 +529,7 @@ func (r *repoT) SetAlias(alias string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.alias = alias
-	return r.Save()
+	return r.save()
 }
 
 func (r *repoT) GetDescription() string {
@@ -524,7 +540,7 @@ func (r *repoT) SetDescription(desc string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.description = desc
-	return r.Save()
+	return r.save()
 }
 
 // For local implementation, no error is possible, just whether it's found or not
@@ -544,14 +560,16 @@ func (r *repoT) SetProperty(name string, value interface{}) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.properties[name] = value
-	return r.Save()
+	return r.save()
 }
 
 func (r *repoT) SetProperties(props map[string]interface{}) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	for k, v := range props {
 		r.properties[k] = v
 	}
-	return nil
+	return r.save()
 }
 
 func (r *repoT) GetLog() ([]string, error) {
@@ -560,9 +578,9 @@ func (r *repoT) GetLog() ([]string, error) {
 
 func (r *repoT) AddToLog(hx string) error {
 	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.log = append(r.log, hx)
-	r.mu.Unlock()
-	return nil
+	return r.save()
 }
 
 // ---- Repo interface implementation -----------
@@ -641,6 +659,14 @@ func (r *repoT) MarshalJSON() ([]byte, error) {
 	})
 }
 
+func (r *repoT) String() string {
+	json, err := r.MarshalJSON()
+	if err != nil {
+		return fmt.Sprintf("Repo print error: %s", err.Error())
+	}
+	return string(json)
+}
+
 func (r *repoT) RepoID() dvid.RepoID {
 	return r.repoID
 }
@@ -664,6 +690,8 @@ func (r *repoT) GetIterator(versionID dvid.VersionID) (dvid.VersionIterator, err
 }
 
 func (r *repoT) NewData(t TypeService, name dvid.DataString, c dvid.Config) (DataService, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	// Only allow unique data name per repo
 	if _, found := r.data[name]; found {
 		return nil, fmt.Errorf("Data named %q already exists in repo (root %s)", name, r.rootID)
@@ -676,10 +704,8 @@ func (r *repoT) NewData(t TypeService, name dvid.DataString, c dvid.Config) (Dat
 	if err != nil {
 		return nil, err
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
 	r.data[name] = dataservice
-	return dataservice, r.Save()
+	return dataservice, r.save()
 }
 
 // ModifyData modifies preexisting Data within a Repo.  Settings can be passed
@@ -689,12 +715,12 @@ func (r *repoT) ModifyData(name dvid.DataString, config dvid.Config) error {
 	if err != nil {
 		return err
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
 	return dataservice.ModifyConfig(config)
 }
 
 func (r *repoT) NewVersion(uuid dvid.UUID) (dvid.UUID, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	// Make sure parent is available and locked.
 	parentVersionID, found := r.manager.UUIDToVersion[uuid]
 	if !found {
@@ -710,36 +736,29 @@ func (r *repoT) NewVersion(uuid dvid.UUID) (dvid.UUID, error) {
 	}
 
 	// Add the child node.  Since it's new and unavailable, no need to lock it.
-	childNode, err := r.newNode()
+	childNode, err := r.addNode()
 	if err != nil {
 		return dvid.NilUUID, err
 	}
 	childNode.parents = []dvid.VersionID{parentVersionID}
-	r.mu.Lock()
-	defer r.mu.Unlock()
 	r.dag.nodes[childNode.versionID] = childNode
 
 	parentNode.Lock()
 	parentNode.children = append(parentNode.children, childNode.versionID)
 	parentNode.updated = time.Now()
 	parentNode.Unlock()
-	return childNode.uuid, r.Save()
+	return childNode.uuid, r.save()
 }
 
 func (r *repoT) Save() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-
-	var ctx storage.MetadataContext
-	idx := metadataIndex{t: repoKey, repoID: r.repoID}
-	serialization, err := r.GobEncode()
-	if err != nil {
-		return err
-	}
-	return r.manager.store.Put(ctx, idx.Bytes(), serialization)
+	return r.save()
 }
 
 func (r *repoT) Lock(uuid dvid.UUID) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	versionID, found := r.manager.UUIDToVersion[uuid]
 	if !found {
 		return fmt.Errorf("Could not LOCK missing version (uuid %s)", uuid)
@@ -748,10 +767,8 @@ func (r *repoT) Lock(uuid dvid.UUID) error {
 	if !found {
 		return fmt.Errorf("Could not LOCK missing version (id %d)", versionID)
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
 	node.locked = true
-	return r.Save()
+	return r.save()
 }
 
 func (r *repoT) Datatypes() (map[URLString]TypeService, error) {
@@ -763,23 +780,35 @@ func (r *repoT) Datatypes() (map[URLString]TypeService, error) {
 	return datatypes, nil
 }
 
-func (r *repoT) newDAG(uuid dvid.UUID, versionID dvid.VersionID) (*dagT, error) {
-	dag := &dagT{root: uuid}
-	node, err := r.newNode()
+func (r *repoT) save() error {
+	var ctx storage.MetadataContext
+	idx := metadataIndex{t: repoKey, repoID: r.repoID}
+	serialization, err := r.GobEncode()
 	if err != nil {
-		return nil, err
+		return err
 	}
-	dag.nodes = map[dvid.VersionID]*nodeT{
-		versionID: node,
-	}
-	return dag, nil
+	return r.manager.store.Put(ctx, idx.Bytes(), serialization)
 }
 
-func (r *repoT) newNode() (*nodeT, error) {
+func (r *repoT) newDAG(uuid dvid.UUID, versionID dvid.VersionID) *dagT {
+	dag := &dagT{
+		root: uuid,
+		nodes: map[dvid.VersionID]*nodeT{
+			versionID: r.newNode(uuid, versionID),
+		},
+	}
+	return dag
+}
+
+func (r *repoT) addNode() (*nodeT, error) {
 	uuid, versionID, err := r.manager.NewVersionID()
 	if err != nil {
 		return nil, err
 	}
+	return r.newNode(uuid, versionID), nil
+}
+
+func (r *repoT) newNode(uuid dvid.UUID, versionID dvid.VersionID) *nodeT {
 	t := time.Now()
 	node := &nodeT{
 		uuid:      uuid,
@@ -787,10 +816,8 @@ func (r *repoT) newNode() (*nodeT, error) {
 		created:   t,
 		updated:   t,
 	}
-	r.manager.Lock()
 	r.manager.repos[uuid] = r
-	r.manager.Unlock()
-	return node, nil
+	return node
 }
 
 // --------------------------------------
@@ -840,7 +867,7 @@ type dagT struct {
 func (dag *dagT) GetIterator(versionID dvid.VersionID) (dvid.VersionIterator, error) {
 	node, found := dag.nodes[versionID]
 	if !found {
-		return nil, fmt.Errorf("No version found with id %d", versionID)
+		return nil, fmt.Errorf("GetIterator: no version %d\n  dag %s\n", versionID, dag)
 	}
 	return &versionIterator{dag, true, versionID, node}, nil
 }
@@ -882,6 +909,14 @@ func (dag *dagT) MarshalJSON() ([]byte, error) {
 		dag.root,
 		uuidMap,
 	})
+}
+
+func (dag *dagT) String() string {
+	json, err := dag.MarshalJSON()
+	if err != nil {
+		return fmt.Sprintf("DAG print error: %s", err.Error())
+	}
+	return string(json)
 }
 
 type nodeT struct {

@@ -140,14 +140,9 @@ func NewLabelSurfaceIndex(label uint64) []byte {
 }
 
 // Store the KeyLabelSpatialMap keys (index = b + s) with slice of runs for value.
-func StoreKeyLabelSpatialMap(data dvid.Data, batcher storage.KeyValueBatcher, zyxBytes []byte,
-	labelRLEs map[uint64]dvid.RLEs) {
+func StoreKeyLabelSpatialMap(versionID dvid.VersionID, data dvid.Data, batcher storage.KeyValueBatcher,
+	zyxBytes []byte, labelRLEs map[uint64]dvid.RLEs) {
 
-	var versionID dvid.VersionID
-	if data.Versioned() {
-		vdata, _ := data.(dvid.VersionedData)
-		versionID = vdata.VersionID()
-	}
 	ctx := storage.NewDataContext(data, versionID)
 	batch := batcher.NewBatch(ctx)
 	defer func() {

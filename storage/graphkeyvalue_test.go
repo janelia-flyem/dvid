@@ -1,80 +1,75 @@
 // +build graphkeyvalue
 
-package storage
+package storage_test
 
 import (
-	. "github.com/janelia-flyem/go/gocheck"
+	"testing"
 
 	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/janelia-flyem/dvid/storage/local"
+	"github.com/janelia-flyem/dvid/storage"
+	"github.com/janelia-flyem/dvid/tests"
 )
 
-type GDataSuite struct {
-	dir string
-	db  Engine
-	gdb Engine
-}
+func TestBasicGraph(t *testing.T) {
+	tests.UseStore()
+	defer tests.CloseStore()
 
-var _ = Suite(&GDataSuite{})
-
-// This will setup a new datastore and open it up, keeping the UUID and
-// service pointer in the DataSuite.
-func (s *GDataSuite) SetUpSuite(c *C) {
-	// Make a temporary testing directory that will be auto-deleted after testing.
-	s.dir = c.MkDir()
-
-	// Create a new storage engine.
-	db, err := local.NewKeyValueStore(s.dir, true, dvid.Config{})
-	c.Assert(err, IsNil)
-
-	// Initialize the graph backend database
-	gengine, err := NewGraphStore(s.dir, true, dvid.Config{}, db.(OrderedKeyValueDB))
-	c.Assert(err, IsNil)
-
-	s.db = db
-	s.gdb = gengine
-}
-
-func (s *GDataSuite) TearDownSuite(c *C) {
-	s.gdb.Close()
-	s.db.Close()
-}
-
-func (s *GDataSuite) TestBasicGraph(c *C) {
-	graphDB, ok := s.gdb.(GraphDB)
-	if !ok {
-		c.Fail()
+	graphDB, err := storage.GraphStore()
+	if err != nil {
+		t.Fatalf("Can't open graph store: %s\n", err.Error())
 	}
 
-	graphKey := NewKey("graph")
-	err := graphDB.CreateGraph(graphKey)
-	c.Assert(err, IsNil)
+	ctx := storage.GetTestDataContext(storage.TestUUID1, "graph", dvid.InstanceID(13))
 
-	err = graphDB.AddVertex(graphKey, 1, 5)
-	c.Assert(err, IsNil)
+	if err = graphDB.CreateGraph(ctx); err != nil {
+		t.Errorf("Can't create graph: %s\n", err.Error())
+	}
 
-	err = graphDB.AddVertex(graphKey, 2, 11)
-	c.Assert(err, IsNil)
+	if err = graphDB.AddVertex(ctx, 1, 5); err != nil {
+		t.Errorf("Can't add vertex: %s\n", err.Error())
+	}
 
-	err = graphDB.AddEdge(graphKey, 1, 2, 0.3)
-	c.Assert(err, IsNil)
+	if err = graphDB.AddVertex(ctx, 2, 11); err != nil {
+		t.Errorf("Can't add vertex: %s\n", err.Error())
+	}
 
-	vert1, err := graphDB.GetVertex(graphKey, 1)
-	c.Assert(err, IsNil)
-	c.Assert(vert1.Weight, Equals, float64(5))
+	if err = graphDB.AddEdge(ctx, 1, 2, 0.3); err != nil {
+		t.Errorf("Can't add edge: %s\n", err.Error())
+	}
 
-	vert2, err := graphDB.GetVertex(graphKey, 2)
-	c.Assert(err, IsNil)
-	c.Assert(vert2.Weight, Equals, float64(11))
+	vert1, err := graphDB.GetVertex(ctx, 1)
+	if err != nil {
+		t.Errorf("Can't get vertex: %s\n", err.Error())
+	}
+	if vert1.Weight != float64(5) {
+		t.Errorf("Bad weight.  Should be %f, was %f\n", 5, vert1.Weight)
+	}
 
-	edge, err := graphDB.GetEdge(graphKey, 1, 2)
-	c.Assert(err, IsNil)
-	c.Assert(edge.Weight, Equals, float64(0.3))
+	vert2, err := graphDB.GetVertex(ctx, 2)
+	if err != nil {
+		t.Errorf("Can't get vertex: %s\n", err.Error())
+	}
+	if vert2.Weight != float64(11) {
+		t.Errorf("Bad weight.  Should be %f, was %f\n", 11, vert1.Weight)
+	}
 
-	edge, err = graphDB.GetEdge(graphKey, 2, 1)
-	c.Assert(err, IsNil)
-	c.Assert(edge.Weight, Equals, float64(0.3))
+	edge, err := graphDB.GetEdge(ctx, 1, 2)
+	if err != nil {
+		t.Errorf("Can't get edge: %s\n", err.Error())
+	}
+	if edge.Weight != float64(0.3) {
+		t.Errorf("Bad edge.  Should be %f, was %f\n", 0.3, edge.Weight)
+	}
 
-	err = graphDB.RemoveGraph(graphKey)
-	c.Assert(err, IsNil)
+	edge, err = graphDB.GetEdge(ctx, 2, 1)
+	if err != nil {
+		t.Errorf("Can't get edge: %s\n", err.Error())
+	}
+	if edge.Weight != float64(0.3) {
+		t.Errorf("Bad edge.  Should be %f, was %f\n", 0.3, edge.Weight)
+	}
+
+	if err = graphDB.RemoveGraph(ctx); err != nil {
+		t.Errorf("Error removing graph: %s\n", err.Error())
+	}
 }

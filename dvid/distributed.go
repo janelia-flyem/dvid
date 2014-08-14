@@ -5,7 +5,6 @@
 package dvid
 
 import (
-	"fmt"
 	"sync"
 	"time"
 )
@@ -51,23 +50,19 @@ func init() {
 //    dvid.StopCgo()
 func BlockOnActiveCgo() {
 	startCgo.Lock()
-	fmt.Printf("Checking for any active cgo routines...\n")
+	defer startCgo.Unlock()
+
+	Infof("Checking for any active cgo routines...\n")
 	waits := 0
 	for {
 		if (cgoNumActive == 0 && len(cgoActive) == 0) || waits >= 5 {
 			return
 		}
-		fmt.Printf("Waited %d seconds for %d active cgo routines (%d messages to be processed)...\n",
+		Infof("Waited %d seconds for %d active cgo routines (%d messages to be processed)...\n",
 			waits, cgoNumActive, len(cgoActive))
 		waits++
 		time.Sleep(1 * time.Second)
 	}
-}
-
-// UnblockCgo allows cgo routines to start if they have been previously blocked using a
-// BlockOnActiveCgo() call.
-func UnblockCgo() {
-	startCgo.Unlock()
 }
 
 // StartCgo is used to mark the beginning of a cgo routine and blocks if we have requested

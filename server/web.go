@@ -258,7 +258,7 @@ func helpHandler(w http.ResponseWriter, r *http.Request) {
 func mainHandler(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 	// Serve from embedded files in executable if not web client directory was specified
-	if config.webClientDir == "" {
+	if config.WebClient() == "" {
 		if len(path) > 0 && path[0:1] == "/" {
 			path = path[1:]
 		}
@@ -281,7 +281,7 @@ func mainHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		dvid.SendHTTP(w, r, path, data)
 	} else {
-		filename := filepath.Join(config.webClientDir, path)
+		filename := filepath.Join(config.WebClient(), path)
 		dvid.Debugf("[%s] Serving from webclient directory: %s\n", r.Method, filename)
 		http.ServeFile(w, r, filename)
 	}

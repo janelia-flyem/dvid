@@ -19,6 +19,7 @@ import (
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
+	"github.com/janelia-flyem/dvid/storage/local"
 
 	// Declare the data types this DVID executable will support
 	_ "github.com/janelia-flyem/dvid/datatype/keyvalue"
@@ -242,11 +243,17 @@ func DoServe(cmd dvid.Command) error {
 	}()
 	signal.Notify(stopSig, os.Interrupt, os.Kill, syscall.SIGTERM)
 
-	datastorePath := cmd.Argument(1)
-	if datastorePath == "" {
+	dbpath := cmd.Argument(1)
+	if dbpath == "" {
 		return fmt.Errorf("serve command must be followed by the path to the datastore")
 	}
-	if err := server.Serve(datastorePath, *httpAddress, *clientDir, *rpcAddress, cmd.Settings()); err != nil {
+	if err := local.Initialize(dbpath, cmd.Settings()); err != nil {
+		return fmt.Errorf("Unable to initialize local storage: %s\n", err.Error())
+	}
+	if err := server.Initialize(); err != nil {
+		return fmt.Errorf("Unable to initialize server: %s\n", err.Error())
+	}
+	if err := server.Serve(*httpAddress, *clientDir, *rpcAddress); err != nil {
 		return err
 	}
 	return nil

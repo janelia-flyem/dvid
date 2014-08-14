@@ -5,8 +5,12 @@ import "time"
 type ModeFlag uint
 
 const (
-	Normal ModeFlag = iota
-	Debug
+	DebugMode ModeFlag = iota
+	InfoMode
+	WarningMode
+	ErrorMode
+	CriticalMode
+	SilentMode
 )
 
 var (
@@ -14,7 +18,7 @@ var (
 	Verbose bool
 
 	// Mode is a global variable set to the run modes of this DVID process.
-	Mode ModeFlag
+	mode ModeFlag
 )
 
 // Logger provides a way for the application to log messages at different severities.
@@ -44,24 +48,41 @@ type Logger interface {
 // package print functions use the default package-level logger initialized
 // with newLogger() or is simply nil and uses unmodified standard log package.
 
+// SetLogMode sets the severity required for a log message to be printed.
+// For example, SetMode(dvid.WarningMode) will log any calls using
+// Warningf, Errorf, or Criticalf.  To turn off all logging, use SilentMode.
+func SetLogMode(newMode ModeFlag) {
+	mode = newMode
+}
+
 func Debugf(format string, args ...interface{}) {
-	logger.Debugf(format, args)
+	if mode <= DebugMode {
+		logger.Debugf(format, args...)
+	}
 }
 
 func Infof(format string, args ...interface{}) {
-	logger.Infof(format, args)
+	if mode <= InfoMode {
+		logger.Infof(format, args...)
+	}
 }
 
 func Warningf(format string, args ...interface{}) {
-	logger.Warningf(format, args)
+	if mode <= WarningMode {
+		logger.Warningf(format, args...)
+	}
 }
 
 func Errorf(format string, args ...interface{}) {
-	logger.Errorf(format, args)
+	if mode <= ErrorMode {
+		logger.Errorf(format, args...)
+	}
 }
 
 func Criticalf(format string, args ...interface{}) {
-	logger.Criticalf(format, args)
+	if mode <= CriticalMode {
+		logger.Criticalf(format, args...)
+	}
 }
 
 // TimeLog adds elapsed time to logging.
@@ -79,23 +100,33 @@ func NewTimeLog() TimeLog {
 }
 
 func (t TimeLog) Debugf(format string, args ...interface{}) {
-	t.logger.Debugf(format+": %s\n", append(args, time.Since(t.start)))
+	if mode <= DebugMode {
+		t.logger.Debugf(format+": %s\n", append(args, time.Since(t.start))...)
+	}
 }
 
 func (t TimeLog) Infof(format string, args ...interface{}) {
-	t.logger.Infof(format+": %s\n", append(args, time.Since(t.start)))
+	if mode <= InfoMode {
+		t.logger.Infof(format+": %s\n", append(args, time.Since(t.start))...)
+	}
 }
 
 func (t TimeLog) Warningf(format string, args ...interface{}) {
-	t.logger.Warningf(format+": %s\n", append(args, time.Since(t.start)))
+	if mode <= WarningMode {
+		t.logger.Warningf(format+": %s\n", append(args, time.Since(t.start))...)
+	}
 }
 
 func (t TimeLog) Errorf(format string, args ...interface{}) {
-	t.logger.Errorf(format+": %s\n", append(args, time.Since(t.start)))
+	if mode <= ErrorMode {
+		t.logger.Errorf(format+": %s\n", append(args, time.Since(t.start))...)
+	}
 }
 
 func (t TimeLog) Criticalf(format string, args ...interface{}) {
-	t.logger.Criticalf(format+": %s\n", append(args, time.Since(t.start)))
+	if mode <= CriticalMode {
+		t.logger.Criticalf(format+": %s\n", append(args, time.Since(t.start))...)
+	}
 }
 
 func (t TimeLog) Shutdown() {

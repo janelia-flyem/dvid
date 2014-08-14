@@ -1,103 +1,109 @@
 package keyvalue
 
 import (
+	"bytes"
+	"log"
+	"sync"
 	"testing"
-	. "github.com/janelia-flyem/go/gocheck"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/janelia-flyem/dvid/server"
+	"github.com/janelia-flyem/dvid/storage"
+	"github.com/janelia-flyem/dvid/tests"
 )
 
-// Hook up gocheck into the "go test" runner.
-func Test(t *testing.T) { TestingT(t) }
+var (
+	kvtype datastore.TypeService
+	testMu sync.Mutex
+)
 
-type DataSuite struct {
-	dir     string
-	service *server.Service
-	head    dvid.UUID
-}
-
-var _ = Suite(&DataSuite{})
-
-// This will setup a new datastore and open it up, keeping the UUID and
-// service pointer in the DataSuite.
-func (suite *DataSuite) SetUpSuite(c *C) {
-	// Make a temporary testing directory that will be auto-deleted after testing.
-	suite.dir = c.MkDir()
-
-	// Create a new datastore.
-	err := datastore.Init(suite.dir, true, dvid.Config{})
-	c.Assert(err, IsNil)
-
-	// Open the datastore
-	suite.service, err = server.OpenDatastore(suite.dir)
-	c.Assert(err, IsNil)
-}
-
-func (suite *DataSuite) TearDownSuite(c *C) {
-	suite.service.Shutdown()
+// Sets package-level testRepo and TestVersionID
+func initTestRepo() (datastore.Repo, dvid.VersionID) {
+	testMu.Lock()
+	defer testMu.Unlock()
+	if kvtype == nil {
+		var err error
+		kvtype, err = datastore.TypeServiceByName(TypeName)
+		if err != nil {
+			log.Fatalf("Can't get keyvalue type: %s\n", err)
+		}
+	}
+	return tests.NewRepo()
 }
 
 // Make sure new keyvalue data have different IDs.
-func (suite *DataSuite) TestNewDataDifferent(c *C) {
-	// Create a new repo
-	root, _, err := suite.service.NewRepo()
-	c.Assert(err, IsNil)
+func TestNewKeyvalueDifferent(t *testing.T) {
+	tests.UseStore()
+	defer tests.CloseStore()
+
+	repo, _ := initTestRepo()
 
 	// Add data
 	config := dvid.NewConfig()
 	config.SetVersioned(true)
+	dataservice1, err := repo.NewData(kvtype, "instance1", config)
+	if err != nil {
+		t.Errorf("Error creating new keyvalue instance: %s\n", err.Error())
+	}
+	kv1, ok := dataservice1.(*Data)
+	if !ok {
+		t.Errorf("Returned new data instance 1 is not keyvalue.Data\n")
+	}
+	if kv1.DataName() != "instance1" {
+		t.Errorf("New keyvalue data instance name set incorrectly: %q != %q\n",
+			kv1.DataName(), "instance1")
+	}
 
-	err = suite.service.NewData(root, "keyvalue", "kv1", config)
-	c.Assert(err, IsNil)
+	dataservice2, err := repo.NewData(kvtype, "instance2", config)
+	if err != nil {
+		t.Errorf("Error creating new keyvalue instance: %s\n", err.Error())
+	}
+	kv2, ok := dataservice2.(*Data)
+	if !ok {
+		t.Errorf("Returned new data instance 2 is not keyvalue.Data\n")
+	}
 
-	dataservice1, err := suite.service.DataServiceByUUID(root, "kv1")
-	c.Assert(err, IsNil)
-
-	err = suite.service.NewData(root, "keyvalue", "kv2", config)
-	c.Assert(err, IsNil)
-
-	dataservice2, err := suite.service.DataServiceByUUID(root, "kv2")
-	c.Assert(err, IsNil)
-
-	data1, ok := dataservice1.(*Data)
-	c.Assert(ok, Equals, true)
-
-	data2, ok := dataservice2.(*Data)
-	c.Assert(ok, Equals, true)
-
-	c.Assert(data1.DsetID, Equals, data2.DsetID)
-	c.Assert(data1.ID, Not(Equals), data2.ID)
+	if kv1.InstanceID() == kv2.InstanceID() {
+		t.Errorf("Instance IDs should be different: %d == %d\n",
+			kv1.InstanceID(), kv2.InstanceID())
+	}
 }
 
-func (suite *DataSuite) TestRoundTrip(c *C) {
-	root, _, err := suite.service.NewRepo()
-	c.Assert(err, IsNil)
+func TestKeyValueRoundTrip(t *testing.T) {
+	tests.UseStore()
+	defer tests.CloseStore()
 
+	repo, versionID := initTestRepo()
+
+	// Add data
 	config := dvid.NewConfig()
 	config.SetVersioned(true)
-
-	err = suite.service.NewData(root, "keyvalue", "kv", config)
-	c.Assert(err, IsNil)
-
-	kvservice, err := suite.service.DataServiceByUUID(root, "kv")
-	c.Assert(err, IsNil)
-
-	kvdata, ok := kvservice.(*Data)
-	if !ok {
-		c.Errorf("Can't cast keyservice data service into Data\n")
+	dataservice, err := repo.NewData(kvtype, "roundtripper", config)
+	if err != nil {
+		t.Errorf("Error creating new keyvalue instance: %s\n", err.Error())
 	}
+	kvdata, ok := dataservice.(*Data)
+	if !ok {
+		t.Errorf("Returned new data instance is not keyvalue.Data\n")
+	}
+
+	ctx := storage.NewDataContext(dataservice, versionID)
 
 	keyStr := "testkey"
 	value := []byte("I like Japan and this is some unicode: \u65e5\u672c\u8a9e")
 
-	err = kvdata.PutData(root, keyStr, value)
-	c.Assert(err, IsNil)
+	if err = kvdata.PutData(ctx, keyStr, value); err != nil {
+		t.Errorf("Could not put keyvalue data: %s\n", err.Error())
+	}
 
-	retrieved, found, err := kvdata.GetData(root, keyStr)
-	c.Assert(err, IsNil)
-	c.Assert(found, Equals, true)
-
-	c.Assert(retrieved, DeepEquals, value)
+	retrieved, found, err := kvdata.GetData(ctx, keyStr)
+	if err != nil {
+		t.Fatalf("Could not get keyvalue data: %s\n", err.Error())
+	}
+	if !found {
+		t.Fatalf("Could not find put keyvalue\n")
+	}
+	if bytes.Compare(value, retrieved) != 0 {
+		t.Errorf("keyvalue retrieved %q != put %q\n", string(retrieved), string(value))
+	}
 }

@@ -220,5 +220,5 @@ func (d *Data) denormalizeChunk(chunk *storage.Chunk) {
 		dvid.Errorf("Database doesn't support Batch ops in %s.denormalizeChunk()", d.DataName())
 		return
 	}
-	StoreKeyLabelSpatialMap(d, batcher, zyxBytes, labelRLEs)
+	StoreKeyLabelSpatialMap(op.versionID, d, batcher, zyxBytes, labelRLEs)
 }

@@ -34,8 +34,9 @@ import (
 )
 
 const (
-	Version = "0.1"
-	RepoUrl = "github.com/janelia-flyem/dvid/datatype/multichan16"
+	Version  = "0.1"
+	RepoUrl  = "github.com/janelia-flyem/dvid/datatype/multichan16"
+	TypeName = "multichan16"
 )
 
 const HelpMessage = `
@@ -138,7 +139,7 @@ var (
 func init() {
 	interpolable := true
 	dtype := &Datatype{voxels.NewDatatype(nil, interpolable)}
-	dtype.DatatypeID = datastore.MakeDatatypeID("multichan16", RepoUrl, Version)
+	dtype.DatatypeID = datastore.MakeDatatypeID(TypeName, RepoUrl, Version)
 
 	// See doc for package on why channels are segregated instead of interleaved.
 	// Data types must be registered with the datastore to be used.
@@ -259,9 +260,10 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 	timedLog := dvid.NewTimeLog()
 
 	// Get repo and version ID of this request
-	_, versions, ok := datastore.FromContext(requestCtx)
-	if !ok {
-		server.BadRequest(w, r, "Error: %q ServeHTTP has invalid context\n", d.DataName)
+	_, versions, err := datastore.FromContext(requestCtx)
+	if err != nil {
+		server.BadRequest(w, r, "Error: %q ServeHTTP has invalid context: %s\n",
+			d.DataName, err.Error())
 		return
 	}
 

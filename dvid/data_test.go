@@ -30,24 +30,21 @@ func (s *DataSuite) TestConversionToBytes(c *C) {
 	for i := 0; i < 10; i++ {
 		localid := InstanceID(r.Uint32())
 		b := localid.Bytes()
-		localid2, sz := InstanceIDFromBytes(b)
+		localid2 := InstanceIDFromBytes(b)
 		c.Assert(localid, Equals, localid2)
-		c.Assert(sz, Equals, LocalID32Size)
 	}
 
 	for i := 0; i < 10; i++ {
 		localid := RepoID(r.Uint32())
 		b := localid.Bytes()
-		localid2, sz := RepoIDFromBytes(b)
+		localid2 := RepoIDFromBytes(b)
 		c.Assert(localid, Equals, localid2)
-		c.Assert(sz, Equals, LocalID32Size)
 	}
 
 	for i := 0; i < 10; i++ {
 		localid := VersionID(r.Uint32())
 		b := localid.Bytes()
-		localid2, sz := VersionIDFromBytes(b)
+		localid2 := VersionIDFromBytes(b)
 		c.Assert(localid, Equals, localid2)
-		c.Assert(sz, Equals, LocalID32Size)
 	}
 }

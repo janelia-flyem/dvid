@@ -1,72 +1,58 @@
 package labelgraph
 
 import (
+	"log"
 	"testing"
-	. "github.com/janelia-flyem/go/gocheck"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/janelia-flyem/dvid/server"
+	"github.com/janelia-flyem/dvid/tests"
 )
 
-// Hook up gocheck into the "go test" runner.
-func Test(t *testing.T) { TestingT(t) }
+var (
+	dtype datastore.TypeService
+)
 
-type DataSuite struct {
-	dir     string
-	service *server.Service
-	head    dvid.UUID
-}
-
-var _ = Suite(&DataSuite{})
-
-// This will setup a new datastore and open it up, keeping the UUID and
-// service pointer in the DataSuite.
-func (suite *DataSuite) SetUpSuite(c *C) {
-	// Make a temporary testing directory that will be auto-deleted after testing.
-	suite.dir = c.MkDir()
-
-	// Create a new datastore.
-	err := datastore.Init(suite.dir, true, dvid.Config{})
-	c.Assert(err, IsNil)
-
-	// Open the datastore
-	suite.service, err = server.OpenDatastore(suite.dir)
-	c.Assert(err, IsNil)
-}
-
-func (suite *DataSuite) TearDownSuite(c *C) {
-	suite.service.Shutdown()
+// Sets package-level testRepo and TestVersionID
+func initTestRepo() (datastore.Repo, dvid.VersionID) {
+	if dtype == nil {
+		var err error
+		dtype, err = datastore.TypeServiceByName(TypeName)
+		if err != nil {
+			log.Fatalf("Can't get labelgraph type: %s\n", err)
+		}
+	}
+	return tests.NewRepo()
 }
 
 // Make sure new labelgraph data have different IDs.
-func (suite *DataSuite) TestNewDataDifferent(c *C) {
-	// Create a new repo
-	root, _, err := suite.service.NewRepo()
-	c.Assert(err, IsNil)
+func TestNewLabelgraphDifferent(t *testing.T) {
+	tests.UseStore()
+	defer tests.CloseStore()
+
+	repo, _ := initTestRepo()
 
 	// Add data
 	config := dvid.NewConfig()
 	config.SetVersioned(true)
-
-	err = suite.service.NewData(root, "labelgraph", "lg1", config)
-	c.Assert(err, IsNil)
-
-	dataservice1, err := suite.service.DataServiceByUUID(root, "lg1")
-	c.Assert(err, IsNil)
-
-	err = suite.service.NewData(root, "labelgraph", "lg2", config)
-	c.Assert(err, IsNil)
-
-	dataservice2, err := suite.service.DataServiceByUUID(root, "lg2")
-	c.Assert(err, IsNil)
-
+	dataservice1, err := repo.NewData(dtype, "lg1", config)
+	if err != nil {
+		t.Errorf("Error creating new labelgraph instance 1: %s\n", err.Error())
+	}
 	data1, ok := dataservice1.(*Data)
-	c.Assert(ok, Equals, true)
-
+	if !ok {
+		t.Errorf("Returned new data instance 1 is not labelgraph.Data\n")
+	}
+	dataservice2, err := repo.NewData(dtype, "lg2", config)
+	if err != nil {
+		t.Errorf("Error creating new labelgraph instance 2: %s\n", err.Error())
+	}
 	data2, ok := dataservice2.(*Data)
-	c.Assert(ok, Equals, true)
-
-	c.Assert(data1.DsetID, Equals, data2.DsetID)
-	c.Assert(data1.ID, Not(Equals), data2.ID)
+	if !ok {
+		t.Errorf("Returned new data instance 2 is not labelgraph.Data\n")
+	}
+	if data1.InstanceID() == data2.InstanceID() {
+		t.Errorf("Instance IDs should be different: %d == %d\n",
+			data1.InstanceID(), data2.InstanceID())
+	}
 }

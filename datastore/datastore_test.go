@@ -1,34 +1,37 @@
 package datastore
 
 import (
-	. "github.com/janelia-flyem/go/gocheck"
+	"reflect"
 	"testing"
+
+	"code.google.com/p/go.net/context"
 
 	"github.com/janelia-flyem/dvid/dvid"
 )
 
-// Hook up gocheck into the "go test" runner.
-func Test(t *testing.T) { TestingT(t) }
-
-type DataSuite struct {
-	dir     string
-	service *Service
-	head    dvid.UUID
+// Returns a mockRepo with limited functionality for testing.
+func mockRepo() *repoT {
+	return &repoT{
+		repoID:     0,
+		rootID:     dvid.UUID("test uuid"),
+		properties: make(map[string]interface{}),
+		data:       make(map[dvid.DataString]DataService),
+	}
 }
 
-var _ = Suite(&DataSuite{})
-
-// This will setup a new datastore and open it up, keeping the UUID and
-// service pointer in the DataSuite.
-func (suite *DataSuite) SetUpSuite(c *C) {
-	// Make a temporary testing directory that will be auto-deleted after testing.
-	suite.dir = c.MkDir()
-
-	// Create a new datastore.
-	err := Init(suite.dir, true, dvid.Config{})
-	c.Assert(err, IsNil)
-
-	// Open the datastore
-	suite.service, err = Open(suite.dir)
-	c.Assert(err, IsNil)
+func TestServerContext(t *testing.T) {
+	repo := mockRepo()
+	versionID := dvid.VersionID(1003)
+	ctx := NewContext(context.Background(), repo, versionID)
+	repo2, versions, err := FromContext(ctx)
+	if err != nil {
+		t.Errorf("Server context retrieval error: %s\n", err.Error())
+	}
+	if !reflect.DeepEqual(repo, repo2) {
+		t.Errorf("Server context retrieval error: bad repo\n")
+	}
+	if len(versions) != 1 {
+		t.Errorf("Server context retrieval error: bad versions %v (expected just %d)\n",
+			versions, versionID)
+	}
 }

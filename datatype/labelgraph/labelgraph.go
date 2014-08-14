@@ -24,8 +24,9 @@ import (
 )
 
 const (
-	Version = "0.1"
-	RepoUrl = "github.com/janelia-flyem/dvid/datatype/labelgraph"
+	Version  = "0.1"
+	RepoUrl  = "github.com/janelia-flyem/dvid/datatype/labelgraph"
+	TypeName = "labelgraph"
 )
 
 const graphSchema = `
@@ -293,7 +294,7 @@ TODO:
 func init() {
 	kvtype := NewDatatype()
 	kvtype.DatatypeID = &datastore.DatatypeID{
-		Name:    "labelgraph",
+		Name:    TypeName,
 		Url:     RepoUrl,
 		Version: Version,
 	}
@@ -601,9 +602,9 @@ func (d *Data) JSONString() (jsonStr string, err error) {
 // getGraphContext retrieves the GraphDB interface and the Context defining the graph space
 func (d *Data) getGraphContext(ctx context.Context) (storage.Context, storage.GraphDB, error) {
 	// Get repo and version ID of this request
-	_, versions, ok := datastore.FromContext(ctx)
-	if !ok {
-		return nil, nil, fmt.Errorf("Error: %q has invalid context\n", d.DataName)
+	_, versions, err := datastore.FromContext(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("Error: %q has invalid context: %s\n", d.DataName, err.Error())
 	}
 
 	// Construct storage.Context using a particular version of this Data

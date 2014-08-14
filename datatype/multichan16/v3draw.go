@@ -94,10 +94,6 @@ func (V3DRawMarshaler) UnmarshalV3DRaw(reader io.Reader) ([]*Channel, error) {
 		if err := binary.Read(reader, byteOrder, v3draw[c].Data()); err != nil {
 			return nil, fmt.Errorf("Error reading data for channel %d: %s", c, err.Error())
 		}
-		if dvid.Mode == dvid.Debug {
-			chanStr := fmt.Sprintf("Channel %d", v3draw[c].channelNum)
-			dvid.PrintNonZero(chanStr, v3draw[c].Data())
-		}
 	}
 	return v3draw, nil
 }

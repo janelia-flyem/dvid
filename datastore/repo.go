@@ -37,10 +37,10 @@ type RepoManager interface {
 	// MatchingUUID returns version identifiers that uniquely matches a uuid string.
 	MatchingUUID(uuidStr string) (dvid.UUID, dvid.VersionID, error)
 
-	// RepoFromUUID returns a Repo given a UUID.
+	// RepoFromUUID returns a Repo given a UUID.  Returns nil Repo if not found.
 	RepoFromUUID(dvid.UUID) (Repo, error)
 
-	// RepoFromID returns a Repo from a RepoID.
+	// RepoFromID returns a Repo from a RepoID.  Returns error if not found.
 	RepoFromID(dvid.RepoID) (Repo, error)
 
 	// NewRepo creates and returns a new Repo.
@@ -130,6 +130,21 @@ const (
 	newIDsKey
 	repoKey
 )
+
+func (t keyType) String() string {
+	switch t {
+	case repoToUUIDKey:
+		return "repo to UUID map"
+	case versionToUUIDKey:
+		return "version to UUID map"
+	case newIDsKey:
+		return "next new local ids"
+	case repoKey:
+		return "repository metadata"
+	default:
+		return fmt.Sprintf("unknown metadata key: %v", t)
+	}
+}
 
 type metadataIndex struct {
 	t      keyType

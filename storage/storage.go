@@ -4,11 +4,12 @@
 	number of interfaces in addition to the core Engine interface, which all
 	storage engines should satisfy.
 
-	Keys are specified as a combination of Context and a datatype-specific byte slice.
-	The Context provides DVID-wide namespacing and as such, must use one of the
-	Context implementations within the storage package.  (It is implemented as a
-	Go opaque interface.)  The datatype-specific byte slice formatting is entirely
-	up to the datatype designer, although use of dvid.Index is suggested.
+	Keys are specified as a combination of Context and a datatype-specific byte slice,
+	typicalled called an "index" in DVID docs and code.  The Context provides DVID-wide
+	namespacing and as such, must use one of the Context implementations within the
+	storage package.  (This is enforced by making Context a Go opaque interface.)
+	The datatype-specific byte slice (index) formatting is entirely up to the datatype
+	designer, although use of dvid.Index is suggested.
 
 	The storage engines should accept a nil Context, which allows direct saving of a
 	raw key without use of a ConstructKey() transformation.  In general, though,
@@ -130,7 +131,7 @@ type Requirements struct {
 
 type KeyValueGetter interface {
 	// Get returns a value given a key.
-	Get(ctx Context, k []byte) (v []byte, err error)
+	Get(ctx Context, k []byte) ([]byte, error)
 }
 
 type OrderedKeyValueGetter interface {

@@ -1,82 +1,86 @@
 package labelmap
 
 import (
+	"log"
+	"sync"
 	"testing"
-	. "github.com/janelia-flyem/go/gocheck"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/janelia-flyem/dvid/server"
+	"github.com/janelia-flyem/dvid/tests"
+
+	"github.com/janelia-flyem/dvid/datatype/labels64"
 )
 
-// Hook up gocheck into the "go test" runner.
-func Test(t *testing.T) { TestingT(t) }
+var (
+	labelsT, labelmapT datastore.TypeService
+	testMu             sync.Mutex
+)
 
-type DataSuite struct {
-	dir     string
-	service *server.Service
-	head    dvid.UUID
-
-	mylabels datastore.DataService
-	lmap     datastore.DataService
+// Sets package-level testRepo and TestVersionID
+func initTestRepo() (datastore.Repo, dvid.VersionID) {
+	testMu.Lock()
+	defer testMu.Unlock()
+	if labelsT == nil {
+		var err error
+		labelsT, err = datastore.TypeServiceByName(labels64.TypeName)
+		if err != nil {
+			log.Fatalf("Can't get labels64 type: %s\n", err.Error())
+		}
+		labelmapT, err = datastore.TypeServiceByName(TypeName)
+		if err != nil {
+			log.Fatalf("Can't get labelmap type: %s\n", err.Error())
+		}
+	}
+	return tests.NewRepo()
 }
 
-var _ = Suite(&DataSuite{})
+func TestBasic(t *testing.T) {
+	tests.UseStore()
+	defer tests.CloseStore()
 
-// This will setup a new datastore and open it up, keeping the UUID and
-// service pointer in the DataSuite.
-func (suite *DataSuite) SetUpSuite(c *C) {
-	// Make a temporary testing directory that will be auto-deleted after testing.
-	suite.dir = c.MkDir()
+	repo, _ := initTestRepo()
 
-	// Create a new datastore.
-	err := datastore.Init(suite.dir, true, dvid.Config{})
-	c.Assert(err, IsNil)
-
-	// Open the datastore
-	suite.service, err = server.OpenDatastore(suite.dir)
-	c.Assert(err, IsNil)
-
-	// Create a new repo
-	root, _, err := suite.service.NewRepo()
-	c.Assert(err, IsNil)
-
-	// Add data
 	config := dvid.NewConfig()
 	config.SetVersioned(true)
+	_, err := repo.NewData(labelsT, "mylabels", config)
+	if err != nil {
+		t.Fatalf("Error creating new labels64 instance: %s\n", err.Error())
+	}
 
-	err = suite.service.NewData(root, "labels64", "mylabels", config)
-	c.Assert(err, IsNil)
+	// Creation of labelmap should require specification of underlying labels64.
+	mylabelmap, err := repo.NewData(labelmapT, "mylabelmap", config)
+	if err == nil {
+		t.Fatalf("Creation of labelmap should have errored if no labels specified!\n")
+	}
 
-	suite.mylabels, err = suite.service.DataServiceByUUID(root, "mylabels")
-	c.Assert(err, IsNil)
-
+	// Try again with proper config.
 	config.Set("Labels", "mylabels")
-	err = suite.service.NewData(root, "labelmap", "lmap", config)
-	c.Assert(err, IsNil)
+	mylabelmap, err = repo.NewData(labelmapT, "mylabelmap", config)
+	if err != nil {
+		t.Fatalf("Unable to create labelmap instance: %s\n", err.Error())
+	}
 
-	suite.lmap, err = suite.service.DataServiceByUUID(root, "lmap")
-	c.Assert(err, IsNil)
-}
+	// Make sure the binary serializations for LabelsRef are OK.
+	data, ok := mylabelmap.(*Data)
+	if !ok {
+		t.Fatalf("Labelmap instance does not return *labelmap.Data\n")
+	}
 
-func (suite *DataSuite) TearDownSuite(c *C) {
-	suite.service.Shutdown()
-}
-
-// Make sure the binary serializations for LabelsRef are OK.
-func (suite *DataSuite) TestLabelsRefSerialization(c *C) {
-	data, ok := suite.lmap.(*Data)
-	c.Assert(ok, Equals, true)
-
-	// Test Labels reference
 	b, err := data.Labels.MarshalBinary()
-	c.Assert(err, IsNil)
+	if err != nil {
+		t.Fatalf("Error serializing label reference: %s\n", err.Error())
+	}
 	if len(b) == 0 {
-		c.Fail()
+		t.Fatalf("Empty serialization of label reference\n")
 	}
 
 	var ref LabelsRef
-	err = ref.UnmarshalBinary(b)
-	c.Assert(err, IsNil)
-	c.Assert(ref.name, Equals, dvid.DataString("mylabels"))
+	if err = ref.UnmarshalBinary(b); err != nil {
+		t.Fatalf("Unable to deserialize label reference: %s\n", err.Error())
+	}
+	if ref.name != dvid.DataString("mylabels") {
+		t.Errorf("Bad (de)serialization of label reference: %s != %s\n",
+			ref.name, "mylabels")
+	}
 }

@@ -1,74 +1,38 @@
 package voxels
 
 import (
+	"log"
+	"reflect"
+	"sync"
 	"testing"
-	. "github.com/janelia-flyem/go/gocheck"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/janelia-flyem/dvid/server"
+	"github.com/janelia-flyem/dvid/storage"
+	"github.com/janelia-flyem/dvid/tests"
 )
 
-// Hook up gocheck into the "go test" runner.
-func Test(t *testing.T) { TestingT(t) }
+var (
+	grayscaleT, rgbaT datastore.TypeService
+	testMu            sync.Mutex
+)
 
-type TestSuite struct {
-	dir     string
-	service *server.Service
-	head    dvid.UUID
-}
-
-var _ = Suite(&TestSuite{})
-
-// This will setup a new datastore and open it up, keeping the UUID and
-// service pointer in the DataSuite.
-func (suite *TestSuite) SetUpSuite(c *C) {
-	// Make a temporary testing directory that will be auto-deleted after testing.
-	suite.dir = c.MkDir()
-
-	// Create a new datastore.
-	err := datastore.Init(suite.dir, true, dvid.Config{})
-	c.Assert(err, IsNil)
-
-	// Open the datastore
-	suite.service, err = server.OpenDatastore(suite.dir)
-	c.Assert(err, IsNil)
-}
-
-func (suite *TestSuite) TearDownSuite(c *C) {
-	suite.service.Shutdown()
-}
-
-// Make sure new grayscale8 data have different IDs.
-func (suite *TestSuite) TestNewDataDifferent(c *C) {
-	// Create a new repo
-	root, _, err := suite.service.NewRepo()
-	c.Assert(err, IsNil)
-
-	// Add grayscale data
-	config := dvid.NewConfig()
-	config.SetVersioned(true)
-
-	err = suite.service.NewData(root, "grayscale8", "image1", config)
-	c.Assert(err, IsNil)
-
-	dataservice1, err := suite.service.DataServiceByUUID(root, "image1")
-	c.Assert(err, IsNil)
-
-	err = suite.service.NewData(root, "grayscale8", "image2", config)
-	c.Assert(err, IsNil)
-
-	dataservice2, err := suite.service.DataServiceByUUID(root, "image2")
-	c.Assert(err, IsNil)
-
-	data1, ok := dataservice1.(*Data)
-	c.Assert(ok, Equals, true)
-
-	data2, ok := dataservice2.(*Data)
-	c.Assert(ok, Equals, true)
-
-	c.Assert(data1.DsetID, Equals, data2.DsetID)
-	c.Assert(data1.ID, Not(Equals), data2.ID)
+// Sets package-level testRepo and TestVersionID
+func initTestRepo() (datastore.Repo, dvid.VersionID) {
+	testMu.Lock()
+	defer testMu.Unlock()
+	if grayscaleT == nil {
+		var err error
+		grayscaleT, err = datastore.TypeServiceByName("grayscale8")
+		if err != nil {
+			log.Fatalf("Can't get grayscale type: %s\n", err)
+		}
+		rgbaT, err = datastore.TypeServiceByName("rgba8")
+		if err != nil {
+			log.Fatalf("Can't get rgba8 type: %s\n", err)
+		}
+	}
+	return tests.NewRepo()
 }
 
 // Data from which to construct repeatable 3d images where adjacent voxels have different values.
@@ -77,7 +41,7 @@ var ydata = []byte{'\x33', '\xB2', '\x77', '\xD0', '\x4F'}
 var zdata = []byte{'\x5C', '\x89', '\x40', '\x13', '\xCA'}
 
 // Make a 2d slice of bytes with top left corner at (ox,oy,oz) and size (nx,ny)
-func MakeSlice(offset dvid.Point3d, size dvid.Point2d) []byte {
+func makeSlice(offset dvid.Point3d, size dvid.Point2d) []byte {
 	slice := make([]byte, size[0]*size[1], size[0]*size[1])
 	i := 0
 	modz := offset[2] % int32(len(zdata))
@@ -96,7 +60,7 @@ func MakeSlice(offset dvid.Point3d, size dvid.Point2d) []byte {
 }
 
 // Make a 3d volume of bytes with top left corner at (ox,oy,oz) and size (nx, ny, nz)
-func MakeVolume(offset, size dvid.Point3d) []byte {
+func makeVolume(offset, size dvid.Point3d) []byte {
 	sliceBytes := size[0] * size[1]
 	volumeBytes := sliceBytes * size[2]
 	volume := make([]byte, volumeBytes, volumeBytes)
@@ -106,130 +70,176 @@ func MakeVolume(offset, size dvid.Point3d) []byte {
 	endZ := startZ + size[2]
 	for z := startZ; z < endZ; z++ {
 		offset[2] = z
-		copy(volume[i:i+sliceBytes], MakeSlice(offset, size2d))
+		copy(volume[i:i+sliceBytes], makeSlice(offset, size2d))
 		i += sliceBytes
 	}
 	return volume
 }
 
-func (suite *TestSuite) makeGrayscale(c *C, root dvid.UUID, name dvid.DataString) *Data {
+func makeGrayscale(repo datastore.Repo, t *testing.T, name dvid.DataString) *Data {
 	config := dvid.NewConfig()
 	config.SetVersioned(true)
-
-	err := suite.service.NewData(root, "grayscale8", name, config)
-	c.Assert(err, IsNil)
-
-	dataservice, err := suite.service.DataServiceByUUID(root, dvid.DataString(name))
-	c.Assert(err, IsNil)
+	dataservice, err := repo.NewData(grayscaleT, name, config)
+	if err != nil {
+		t.Errorf("Unable to create grayscale instance %q: %s\n", name, err.Error())
+	}
 
 	grayscale, ok := dataservice.(*Data)
 	if !ok {
-		c.Errorf("Can't cast grayscale8 data service into Data\n")
+		t.Errorf("Can't cast grayscale8 data service into Data\n")
 	}
 	return grayscale
 }
 
-func (suite *TestSuite) TestSubvolGrayscale8(c *C) {
-	// Create a new repo
-	root, _, err := suite.service.NewRepo()
-	c.Assert(err, IsNil)
+func TestSubvolGrayscale8(t *testing.T) {
+	tests.UseStore()
+	defer tests.CloseStore()
 
-	// Add grayscale data
-	grayscale := suite.makeGrayscale(c, root, "grayscale")
+	repo, versionID := initTestRepo()
+	grayscale := makeGrayscale(repo, t, "grayscale")
+	grayscaleCtx := storage.NewDataContext(grayscale, versionID)
 
 	// Create a fake 100x100x100 8-bit grayscale image
 	offset := dvid.Point3d{5, 35, 61}
 	size := dvid.Point3d{100, 100, 100}
 	subvol := dvid.NewSubvolume(offset, size)
-	data := MakeVolume(offset, size)
+	data := makeVolume(offset, size)
 	origData := make([]byte, len(data))
 	copy(origData, data)
 
 	// Store it into datastore at root
 	v, err := grayscale.NewExtHandler(subvol, data)
-	c.Assert(err, IsNil)
-
-	err = PutVoxels(root, grayscale, v)
-	c.Assert(err, IsNil)
-	c.Assert(v.NumVoxels(), Equals, int64(len(origData)))
+	if err != nil {
+		t.Fatalf("Unable to make new grayscale ExtHandler: %s\n", err.Error())
+	}
+	if err = PutVoxels(grayscaleCtx, grayscale, v); err != nil {
+		t.Errorf("Unable to put voxels for %s: %s\n", grayscaleCtx, err.Error())
+	}
+	if v.NumVoxels() != int64(len(origData)) {
+		t.Errorf("# voxels (%d) after PutVoxels != # original voxels (%d)\n",
+			v.NumVoxels(), int64(len(origData)))
+	}
 
 	// Read the stored image
 	v2, err := grayscale.NewExtHandler(subvol, nil)
-	c.Assert(err, IsNil)
-	err = GetVoxels(root, grayscale, v2)
-	c.Assert(err, IsNil)
+	if err != nil {
+		t.Errorf("Unable to make new grayscale ExtHandler: %s\n", err.Error())
+	}
+	if err = GetVoxels(grayscaleCtx, grayscale, v2); err != nil {
+		t.Errorf("Unable to get voxels for %s: %s\n", grayscaleCtx, err.Error())
+	}
 
 	// Make sure the retrieved image matches the original
-	c.Assert(err, IsNil)
-	c.Assert(v.Stride(), Equals, v2.Stride())
-	c.Assert(v.ByteOrder(), Equals, v2.ByteOrder())
-	c.Assert(v.Interpolable(), Equals, v2.Interpolable())
-	c.Assert(v.Size(), DeepEquals, v2.Size())
-	c.Assert(v.NumVoxels(), Equals, v2.NumVoxels())
+	if v.Stride() != v2.Stride() {
+		t.Errorf("Stride in retrieved subvol incorrect\n")
+	}
+	if v.ByteOrder() != v2.ByteOrder() {
+		t.Errorf("ByteOrder in retrieved subvol incorrect\n")
+	}
+	if v.Interpolable() != v2.Interpolable() {
+		t.Errorf("Interpolable bool in retrieved subvol incorrect\n")
+	}
+	if !reflect.DeepEqual(v.Size(), v2.Size()) {
+		t.Errorf("Size in retrieved subvol incorrect: %s vs expected %s\n",
+			v2.Size(), v.Size())
+	}
+	if v.NumVoxels() != v2.NumVoxels() {
+		t.Errorf("# voxels in retrieved is different: %d vs expected %d\n",
+			v2.NumVoxels(), v.NumVoxels())
+	}
 	data = v2.Data()
+	//dvid.PrintNonZero("original value", origData)
+	//dvid.PrintNonZero("returned value", data)
 	for i := int64(0); i < v2.NumVoxels(); i++ {
 		if data[i] != origData[i] {
-			c.Errorf("GET subvol != PUT subvol @ index %d", i)
-			break
+			t.Logf("Size of data: %d bytes from GET, %d bytes in PUT\n", len(data), len(origData))
+			t.Fatalf("GET subvol (%d) != PUT subvol (%d) @ index %d", data[i], origData[i], i)
 		}
 	}
 }
 
-func (suite *TestSuite) sliceTest(c *C, slice dvid.Geometry) {
-	// Create a new repo
-	root, _, err := suite.service.NewRepo()
-	c.Assert(err, IsNil)
+func sliceTest(t *testing.T, slice dvid.Geometry) {
+	tests.UseStore()
+	defer tests.CloseStore()
 
-	// Add grayscale data
-	grayscale := suite.makeGrayscale(c, root, "grayscale")
+	repo, versionID := initTestRepo()
+	grayscale := makeGrayscale(repo, t, "grayscale2")
+	grayscaleCtx := storage.NewDataContext(grayscale, versionID)
 
 	// Create a fake 100x100 8-bit grayscale image
 	nx := slice.Size().Value(0)
 	ny := slice.Size().Value(1)
 	offset := slice.StartPoint().(dvid.Point3d)
-	data := []uint8(MakeSlice(offset, dvid.Point2d{nx, ny}))
+	data := []uint8(makeSlice(offset, dvid.Point2d{nx, ny}))
 	img := dvid.ImageGrayFromData(data, int(nx), int(ny))
 
 	// Store it into datastore at root
 	v, err := grayscale.NewExtHandler(slice, img)
-	c.Assert(err, IsNil)
-
-	err = PutVoxels(root, grayscale, v)
-	c.Assert(err, IsNil)
+	if err != nil {
+		t.Fatalf("Unable to make new grayscale ExtHandler: %s\n", err.Error())
+	}
+	if err = PutVoxels(grayscaleCtx, grayscale, v); err != nil {
+		t.Errorf("Unable to put voxels for %s: %s\n", grayscaleCtx, err.Error())
+	}
 
 	// Read the stored image
-	retrieved, err := GetImage(root, grayscale, v)
-	c.Assert(err, IsNil)
+	v2, err := grayscale.NewExtHandler(slice, nil)
+	retrieved, err := GetImage(grayscaleCtx, grayscale, v2)
+	if err != nil {
+		t.Fatalf("Unable to get image for %s: %s\n", grayscaleCtx, err.Error())
+	}
 
 	// Make sure the retrieved image matches the original
 	goImg := retrieved.Get()
-	c.Assert(img.Rect, DeepEquals, goImg.Bounds())
+	if !reflect.DeepEqual(img.Rect, goImg.Bounds()) {
+		t.Errorf("Retrieved image size %s different than original %s\n",
+			goImg.Bounds(), img.Rect)
+	}
 	retrievedData, voxelSize, _, err := dvid.ImageData(goImg)
-	c.Assert(err, IsNil)
-	c.Assert(retrievedData, DeepEquals, data)
-	c.Assert(voxelSize, Equals, int32(1))
+	if err != nil {
+		t.Errorf("Unable to get data/size from retrieved image: %s\n", err.Error())
+	}
+	if !reflect.DeepEqual(retrievedData, data) {
+		t.Errorf("Retrieved data differs from original data\n")
+	}
+	if voxelSize != int32(1) {
+		t.Errorf("Retrieved voxel size in bytes incorrect.  Got %d, expected 1\n", voxelSize)
+	}
+	//dvid.PrintNonZero("original value", data)
+	//dvid.PrintNonZero("returned value", retrievedData)
+	for i := 0; i < len(data); i++ {
+		if data[i] != retrievedData[i] {
+			t.Fatalf("GET slice (%d) != PUT slice (%d) @ index %d", retrievedData[i], data[i], i)
+		}
+	}
 }
 
-func (suite *TestSuite) TestXYSliceGrayscale8(c *C) {
+func TestXYSliceGrayscale8(t *testing.T) {
 	offset := dvid.Point3d{3, 13, 24}
 	size := dvid.Point2d{100, 100}
 	slice, err := dvid.NewOrthogSlice(dvid.XY, offset, size)
-	c.Assert(err, IsNil)
-	suite.sliceTest(c, slice)
+	if err != nil {
+		t.Errorf("Problem getting new orthogonal slice: %s\n", err.Error())
+	}
+	sliceTest(t, slice)
 }
 
-func (suite *TestSuite) TestXZSliceGrayscale8(c *C) {
+func TestXZSliceGrayscale8(t *testing.T) {
 	offset := dvid.Point3d{31, 10, 14}
 	size := dvid.Point2d{100, 100}
 	slice, err := dvid.NewOrthogSlice(dvid.XZ, offset, size)
-	c.Assert(err, IsNil)
-	suite.sliceTest(c, slice)
+	if err != nil {
+		t.Errorf("Problem getting new orthogonal slice: %s\n", err.Error())
+	}
+	sliceTest(t, slice)
 }
 
-func (suite *TestSuite) TestYZSliceGrayscale8(c *C) {
+func TestYZSliceGrayscale8(t *testing.T) {
 	offset := dvid.Point3d{13, 40, 99}
 	size := dvid.Point2d{100, 100}
 	slice, err := dvid.NewOrthogSlice(dvid.YZ, offset, size)
-	c.Assert(err, IsNil)
-	suite.sliceTest(c, slice)
+	if err != nil {
+		t.Errorf("Problem getting new orthogonal slice: %s\n", err.Error())
+	}
+	sliceTest(t, slice)
 }
