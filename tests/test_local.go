@@ -35,7 +35,8 @@ func UseStore() {
 	mu.Lock()
 	defer mu.Unlock()
 	if count == 0 {
-		dbpath = filepath.Join(os.TempDir(), fmt.Sprintf("dvid-test-%d", uuid.NewUUID()))
+		dbpath = filepath.Join(os.TempDir(), fmt.Sprintf("dvid-test-%s", uuid.NewUUID()))
+		fmt.Printf("datastore path: %s\n", dbpath)
 		var err error
 		engine, err = local.CreateBlankStore(dbpath)
 		if err != nil {
