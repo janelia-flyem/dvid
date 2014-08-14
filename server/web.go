@@ -17,7 +17,8 @@ import (
 
 	"code.google.com/p/go.net/context"
 
-	"bitbucket.org/tebeka/nrsc"
+	"github.com/janelia-flyem/go/nrsc"
+
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"

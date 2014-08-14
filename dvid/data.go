@@ -8,7 +8,7 @@ import (
 	"encoding/binary"
 	"fmt"
 
-	"code.google.com/p/go-uuid/uuid"
+	"github.com/janelia-flyem/go/go-uuid/uuid"
 )
 
 // LocalID is a unique id for some data in a DVID instance.  This unique id is a much

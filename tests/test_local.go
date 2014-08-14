@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	"code.google.com/p/go-uuid/uuid"
+	"github.com/janelia-flyem/go/go-uuid/uuid"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"

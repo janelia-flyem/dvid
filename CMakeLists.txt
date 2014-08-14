@@ -162,7 +162,7 @@ else ()
     add_custom_target (context
         ${BUILDEM_ENV_STRING} go get ${GO_GET} code.google.com/p/go.net/context
         DEPENDS     ${golang_NAME}
-        COMMENT     "Adding go.net packages...")
+        COMMENT     "Adding go.net context")
 
     set (DVID_GO_PACKAGES gopackages gojsonschema lumberjack goji context)
 
