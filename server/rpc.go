@@ -104,10 +104,10 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 			if err != nil {
 				return err
 			}
-			if err := repo.SetProperty("Alias", alias); err != nil {
+			if err := repo.SetAlias(alias); err != nil {
 				return err
 			}
-			if err := repo.SetProperty("Description", description); err != nil {
+			if err := repo.SetDescription(description); err != nil {
 				return err
 			}
 			reply.Text = fmt.Sprintf("New repo %q created with head node %s\n", alias, repo.RootUUID())

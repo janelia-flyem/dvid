@@ -66,6 +66,13 @@ func Serve(httpAddress, webClientDir, rpcAddress string) error {
 		return fmt.Errorf("Cannot serve HTTP and RPC without server.Initialize()")
 	}
 
+	// Set the package-level config variable
+	dvid.Infof("Serving HTTP on %s\n", httpAddress)
+	dvid.Infof("Serving RPC  on %s\n", rpcAddress)
+	dvid.Infof("Using web client files from %s\n", webClientDir)
+	dvid.Infof("Using %d of %d logical CPUs for DVID.\n", dvid.NumCPU, runtime.NumCPU())
+	config = configT{httpAddress, rpcAddress, webClientDir}
+
 	// Launch the web server
 	go serveHttp(httpAddress, webClientDir)
 
@@ -73,14 +80,6 @@ func Serve(httpAddress, webClientDir, rpcAddress string) error {
 	if err := serveRpc(rpcAddress); err != nil {
 		return fmt.Errorf("Could not start RPC server: %s\n", err.Error())
 	}
-
-	// Set the package-level config variable
-	config = configT{httpAddress, rpcAddress, webClientDir}
-
-	dvid.Infof("Serving HTTP on %s\n", httpAddress)
-	dvid.Infof("Serving RPC  on %s\n", rpcAddress)
-	dvid.Infof("Using web client files from %s\n", webClientDir)
-	dvid.Infof("Using %d of %d logical CPUs for DVID.\n", dvid.NumCPU, runtime.NumCPU())
 	return nil
 }
 

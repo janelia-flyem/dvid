@@ -88,6 +88,7 @@ type Data struct {
 
 func (d *Data) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
+		TypeName    dvid.TypeString
 		TypeURL     URLString
 		Name        dvid.DataString
 		RepoUUID    dvid.UUID
@@ -95,6 +96,7 @@ func (d *Data) MarshalJSON() ([]byte, error) {
 		Checksum    string
 		Versioned   bool
 	}{
+		TypeName:    d.TypeName(),
 		TypeURL:     d.TypeURL(),
 		Name:        d.name,
 		RepoUUID:    d.repo.RootUUID(),

@@ -481,7 +481,11 @@ type repoT struct {
 	log         []string
 
 	properties map[string]interface{}
-	dag        *dagT
+
+	created time.Time
+	updated time.Time
+
+	dag *dagT
 
 	// data holds instances of data types.
 	data map[dvid.DataString]DataService
@@ -501,6 +505,7 @@ func newRepo(m *repoManager) (*repoT, dvid.VersionID, error) {
 	if err != nil {
 		return nil, 0, err
 	}
+	t := time.Now()
 	repo := &repoT{
 		repoID:     repoID,
 		rootID:     uuid,
@@ -508,6 +513,8 @@ func newRepo(m *repoManager) (*repoT, dvid.VersionID, error) {
 		properties: make(map[string]interface{}),
 		data:       make(map[dvid.DataString]DataService),
 		manager:    m,
+		created:    t,
+		updated:    t,
 	}
 	repo.dag = repo.newDAG(uuid, versionID)
 
@@ -540,6 +547,7 @@ func (r *repoT) SetDescription(desc string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.description = desc
+	r.updated = time.Now()
 	return r.save()
 }
 
@@ -560,6 +568,7 @@ func (r *repoT) SetProperty(name string, value interface{}) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.properties[name] = value
+	r.updated = time.Now()
 	return r.save()
 }
 
@@ -569,6 +578,7 @@ func (r *repoT) SetProperties(props map[string]interface{}) error {
 	for k, v := range props {
 		r.properties[k] = v
 	}
+	r.updated = time.Now()
 	return r.save()
 }
 
@@ -580,6 +590,7 @@ func (r *repoT) AddToLog(hx string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.log = append(r.log, hx)
+	r.updated = time.Now()
 	return r.save()
 }
 
@@ -648,6 +659,8 @@ func (r *repoT) MarshalJSON() ([]byte, error) {
 		Properties  map[string]interface{}
 		Data        map[dvid.DataString]DataService
 		DAG         *dagT
+		Created     time.Time
+		Updated     time.Time
 	}{
 		r.rootID,
 		r.alias,
@@ -656,6 +669,8 @@ func (r *repoT) MarshalJSON() ([]byte, error) {
 		r.properties,
 		r.data,
 		r.dag,
+		r.created,
+		r.updated,
 	})
 }
 
@@ -705,6 +720,7 @@ func (r *repoT) NewData(t TypeService, name dvid.DataString, c dvid.Config) (Dat
 		return nil, err
 	}
 	r.data[name] = dataservice
+	r.updated = time.Now()
 	return dataservice, r.save()
 }
 
@@ -715,6 +731,7 @@ func (r *repoT) ModifyData(name dvid.DataString, config dvid.Config) error {
 	if err != nil {
 		return err
 	}
+	r.updated = time.Now()
 	return dataservice.ModifyConfig(config)
 }
 
@@ -747,6 +764,7 @@ func (r *repoT) NewVersion(uuid dvid.UUID) (dvid.UUID, error) {
 	parentNode.children = append(parentNode.children, childNode.versionID)
 	parentNode.updated = time.Now()
 	parentNode.Unlock()
+	r.updated = time.Now()
 	return childNode.uuid, r.save()
 }
 
@@ -768,6 +786,7 @@ func (r *repoT) Lock(uuid dvid.UUID) error {
 		return fmt.Errorf("Could not LOCK missing version (id %d)", versionID)
 	}
 	node.locked = true
+	r.updated = time.Now()
 	return r.save()
 }
 

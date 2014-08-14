@@ -11,6 +11,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"os"
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
@@ -22,9 +23,9 @@ import (
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
-
-	"github.com/zenazn/goji"
+	"github.com/zenazn/goji/graceful"
 	"github.com/zenazn/goji/web"
+	"github.com/zenazn/goji/web/middleware"
 )
 
 const HelpMessage = `
@@ -58,7 +59,7 @@ const WebHelp = `
           <a id="forkme_banner" href="https://github.com/janelia-flyem/dvid">View DVID on GitHub</a>
 
           <h1 id="project_title">DVID Web Server</h1>
-          <h2 id="project_tagline">Stock help page for DVID server currently running {{.Hostname}}</h2>
+          <h2 id="project_tagline">Stock help page for DVID server currently running %s</h2>
 
         </header>
     </div>
@@ -108,33 +109,61 @@ const (
 	WebAPIPath = "/api/" + WebAPIVersion
 )
 
+var (
+	// The main web mux
+	WebMux *web.Mux
+)
+
+func init() {
+	WebMux = web.New()
+	WebMux.Use(middleware.RequestID)
+}
+
 // Listen and serve HTTP requests using address and don't let stay-alive
 // connections hog goroutines for more than an hour.
 // See for discussion:
 // http://stackoverflow.com/questions/10971800/golang-http-server-leaving-open-goroutines
 func serveHttp(address, clientDir string) {
 	dvid.Infof("Web server listening at %s ...\n", address)
-	initRoutes(clientDir)
-	goji.Serve()
+	initRoutes()
+
+	// Install our handler at the root of the standard net/http default mux.
+	// This allows packages like expvar to continue working as expected.  (From goji.go)
+	http.Handle("/", WebMux)
+
+	graceful.HandleSignals()
+	if err := graceful.ListenAndServe(address, http.DefaultServeMux); err != nil {
+		log.Fatal(err)
+	}
+	graceful.Wait()
 }
 
 // High-level switchboard for DVID HTTP API.
-func initRoutes(webClientDir string) {
+func initRoutes() {
+	silentMux := web.New()
+	WebMux.Handle("/api/load", silentMux)
+	silentMux.Get("/api/load", loadHandler)
+
+	mainMux := web.New()
+	WebMux.Handle("/*", mainMux)
+	mainMux.Use(middleware.Logger)
+	mainMux.Use(middleware.Recoverer)
+	mainMux.Use(middleware.AutomaticOptions)
+
 	// Handle RAML interface
-	goji.Get("/interface/", logHttpPanics(interfaceHandler))
-	goji.Get("/interface/version", logHttpPanics(versionHandler))
+	mainMux.Get("/interface", logHttpPanics(interfaceHandler))
+	mainMux.Get("/interface/version", logHttpPanics(versionHandler))
 
-	goji.Get("/help", helpHandler)
-	goji.Get("/load", loadHandler)
+	mainMux.Get("/api/help", helpHandler)
 
-	goji.Get("/api/server/info", serverInfoHandler)
-	goji.Get("/api/server/types", serverTypesHandler)
+	mainMux.Get("/api/server/info", serverInfoHandler)
+	mainMux.Get("/api/server/types", serverTypesHandler)
 
-	goji.Post("/api/repos", reposPostHandler)
-	goji.Get("/api/repos/info", reposInfoHandler)
+	mainMux.Post("/api/repos", reposPostHandler)
+	mainMux.Get("/api/repos/info", reposInfoHandler)
 
 	repoMux := web.New()
-	goji.Handle("/api/repo/:uuid/*", repoMux)
+	mainMux.Handle("/api/repo/:uuid/*", repoMux)
 	repoMux.Use(repoSelector)
 	repoMux.Post("/api/repo/:uuid/instance", repoPostHandler)
 	repoMux.Get("/api/repo/:uuid/info", repoInfoHandler)
@@ -142,12 +171,12 @@ func initRoutes(webClientDir string) {
 	repoMux.Get("/api/repo/:uuid/branch", repoBranchHandler)
 
 	instanceMux := web.New()
-	goji.Handle("/api/repo/:uuid/:dataname/:keyword/*", instanceMux)
+	mainMux.Handle("/api/node/:uuid/:dataname/:keyword/*", instanceMux)
 	instanceMux.Use(repoSelector)
 	instanceMux.Use(instanceSelector)
 	instanceMux.NotFound(NotFound)
 
-	goji.Get("/", mainHandler)
+	mainMux.Get("/*", mainHandler)
 }
 
 // Wrapper function so that http handlers recover from panics gracefully
@@ -252,12 +281,20 @@ func instanceSelector(c *web.C, h http.Handler) http.Handler {
 
 func helpHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html")
-	fmt.Fprintf(w, WebHelp)
+	hostname, err := os.Hostname()
+	if err != nil {
+		hostname = "Unknown host"
+	}
+	fmt.Fprintf(w, fmt.Sprintf(WebHelp, hostname))
 }
 
 // Handler for web client and other static content
 func mainHandler(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
+	if config == nil {
+		log.Fatalf("mainHandler() called when server was not configured!\n")
+	}
+
 	// Serve from embedded files in executable if not web client directory was specified
 	if config.WebClient() == "" {
 		if len(path) > 0 && path[0:1] == "/" {
