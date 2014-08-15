@@ -1766,10 +1766,11 @@ func (d *Data) PutLocal(request datastore.Request, reply *datastore.Response) er
 	}
 
 	// Get Repo and IDs
-	_, versionID, err := datastore.MatchingUUID(uuidStr)
+	uuid, versionID, err := datastore.MatchingUUID(uuidStr)
 	if err != nil {
 		return err
 	}
+
 	ctx := datastore.NewVersionedContext(d, versionID)
 
 	// Load and PUT each image.
@@ -1799,6 +1800,12 @@ func (d *Data) PutLocal(request datastore.Request, reply *datastore.Response) er
 		numSuccessful++
 		offset = offset.Add(dvid.Point3d{0, 0, 1})
 	}
+
+	repo, err := datastore.RepoFromUUID(uuid)
+	if err != nil {
+		return err
+	}
+	repo.AddToLog(request.Command.String())
 	timedLog.Infof("RPC put local (%s) completed", addedFiles)
 	return nil
 }
@@ -1931,8 +1938,15 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 		}
 		dvid.Debugf(addedFiles + "\n")
 
-		_, versionID, err := datastore.MatchingUUID(uuidStr)
+		uuid, versionID, err := datastore.MatchingUUID(uuidStr)
 		if err != nil {
+			return err
+		}
+		repo, err := datastore.RepoFromUUID(uuid)
+		if err != nil {
+			return err
+		}
+		if err = repo.AddToLog(request.Command.String()); err != nil {
 			return err
 		}
 		return LoadImages(versionID, d, offset, filenames)

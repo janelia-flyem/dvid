@@ -483,7 +483,7 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 	if err != nil {
 		return err
 	}
-	return d.ConstructTiles(uuidStr, tileSpec, request.Settings())
+	return d.ConstructTiles(uuidStr, tileSpec, request)
 }
 
 // ServeHTTP handles all incoming HTTP requests for this data.
@@ -913,7 +913,9 @@ func (d *Data) putTileFunc(versionID dvid.VersionID) (outFunc, error) {
 	}, nil
 }
 
-func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, config dvid.Config) error {
+func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, request datastore.Request) error {
+
+	config := request.Settings()
 
 	uuid, versionID, err := datastore.MatchingUUID(uuidStr)
 	if err != nil {
@@ -923,6 +925,10 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, config dvid.Con
 	if err != nil {
 		return err
 	}
+	if err = repo.AddToLog(request.Command.String()); err != nil {
+		return err
+	}
+
 	source, err := repo.GetDataByName(d.Source)
 	if err != nil {
 		return err

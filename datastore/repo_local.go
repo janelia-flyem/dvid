@@ -591,8 +591,10 @@ func (r *repoT) GetLog() ([]string, error) {
 func (r *repoT) AddToLog(hx string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.log = append(r.log, hx)
-	r.updated = time.Now()
+	t := time.Now()
+	message := fmt.Sprintf("%s  %s", t.Format(time.RFC3339), hx)
+	r.log = append(r.log, message)
+	r.updated = t
 	return r.save()
 }
 

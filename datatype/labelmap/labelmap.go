@@ -915,8 +915,15 @@ func (d *Data) LoadRavelerMaps(request datastore.Request, reply *datastore.Respo
 	minLabelZ := uint32(labelData.Extents().MinPoint.Value(2))
 	maxLabelZ := uint32(labelData.Extents().MaxPoint.Value(2))
 
+	repo, err := datastore.RepoFromUUID(uuid)
+	if err != nil {
+		return err
+	}
 	d.Ready = false
-	if err := datastore.SaveRepo(uuid); err != nil {
+	if err := repo.Save(); err != nil {
+		return err
+	}
+	if err = repo.AddToLog(request.Command.String()); err != nil {
 		return err
 	}
 
@@ -1025,6 +1032,9 @@ func (d *Data) ApplyLabelMap(request datastore.Request, reply *datastore.Respons
 	}
 	repo, err := datastore.RepoFromUUID(uuid)
 	if err != nil {
+		return err
+	}
+	if err = repo.AddToLog(request.Command.String()); err != nil {
 		return err
 	}
 

@@ -634,6 +634,14 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 		if err != nil {
 			return err
 		}
+		repo, err := datastore.RepoFromUUID(uuid)
+		if err != nil {
+			return err
+		}
+		if err = repo.AddToLog(request.Command.String()); err != nil {
+			return err
+		}
+
 		err = voxels.LoadImages(versionID, d, offset, filenames)
 		if err != nil {
 			return err
@@ -1107,11 +1115,16 @@ func (d *Data) CreateComposite(request datastore.Request, reply *datastore.Respo
 		return err
 	}
 
-	// Get the grayscale data.
+	// Get this repo and log request.
 	repo, err := datastore.RepoFromUUID(uuid)
 	if err != nil {
 		return err
 	}
+	if err = repo.AddToLog(request.Command.String()); err != nil {
+		return err
+	}
+
+	// Get the grayscale data.
 	dataservice, err := repo.GetDataByName(dvid.DataString(grayscaleName))
 	if err != nil {
 		return err
