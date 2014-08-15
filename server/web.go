@@ -227,12 +227,12 @@ func repoSelector(c *web.C, h http.Handler) http.Handler {
 	fn := func(w http.ResponseWriter, r *http.Request) {
 		var err error
 		var uuid dvid.UUID
-		if uuid, c.Env["versionID"], err = Repos.MatchingUUID(c.URLParams["uuid"]); err != nil {
+		if uuid, c.Env["versionID"], err = datastore.MatchingUUID(c.URLParams["uuid"]); err != nil {
 			BadRequest(w, r, err.Error())
 			return
 		}
 		c.Env["uuid"] = uuid
-		c.Env["repo"], err = Repos.RepoFromUUID(uuid)
+		c.Env["repo"], err = datastore.RepoFromUUID(uuid)
 		if err != nil {
 			BadRequest(w, r, err.Error())
 		} else {
@@ -254,12 +254,12 @@ func instanceSelector(c *web.C, h http.Handler) http.Handler {
 			BadRequest(w, r, msg)
 			return
 		}
-		repo, err := Repos.RepoFromUUID(uuid)
+		repo, err := datastore.RepoFromUUID(uuid)
 		if err != nil {
 			BadRequest(w, r, err.Error())
 			return
 		}
-		versionID, err := Repos.VersionFromUUID(uuid)
+		versionID, err := datastore.VersionFromUUID(uuid)
 		if err != nil {
 			BadRequest(w, r, err.Error())
 			return
@@ -358,7 +358,7 @@ func serverInfoHandler(w http.ResponseWriter, r *http.Request) {
 
 func serverTypesHandler(w http.ResponseWriter, r *http.Request) {
 	jsonMap := make(map[dvid.TypeString]string)
-	datatypes, err := Repos.Datatypes()
+	datatypes, err := datastore.Datatypes()
 	if err != nil {
 		msg := fmt.Sprintf("Cannot return server datatypes: %s\n", err.Error())
 		BadRequest(w, r, msg)
@@ -378,7 +378,7 @@ func serverTypesHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func reposInfoHandler(w http.ResponseWriter, r *http.Request) {
-	jsonBytes, err := Repos.MarshalJSON()
+	jsonBytes, err := datastore.Manager.MarshalJSON()
 	if err != nil {
 		BadRequest(w, r, err.Error())
 		return
@@ -388,7 +388,7 @@ func reposInfoHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func reposPostHandler(w http.ResponseWriter, r *http.Request) {
-	repo, err := Repos.NewRepo()
+	repo, err := datastore.NewRepo()
 	if err != nil {
 		BadRequest(w, r, err.Error())
 	}
@@ -456,7 +456,7 @@ func repoLockHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 		BadRequest(w, r, "Error in retrieving Repo from URL parameters")
 		return
 	}
-	uuid, _, err := Repos.MatchingUUID(c.URLParams["uuid"])
+	uuid, _, err := datastore.MatchingUUID(c.URLParams["uuid"])
 	if err != nil {
 		BadRequest(w, r, err.Error())
 		return
@@ -477,7 +477,7 @@ func repoBranchHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 		BadRequest(w, r, "Error in retrieving Repo from URL parameters")
 		return
 	}
-	uuid, _, err := Repos.MatchingUUID(c.URLParams["uuid"])
+	uuid, _, err := datastore.MatchingUUID(c.URLParams["uuid"])
 	if err != nil {
 		BadRequest(w, r, err.Error())
 		return

@@ -12,6 +12,7 @@ import (
 	"math"
 	"sync"
 
+	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
@@ -99,8 +100,9 @@ func NewLabelSizesIndex(size, label uint64) []byte {
 	return dvid.IndexBytes(index)
 }
 
-func labelFromLabelSizesIndex(key []byte) (uint64, error) {
-	indexBytes, err := storage.DataContextIndex(key)
+func labelFromLabelSizesKey(key []byte) (uint64, error) {
+	ctx := &storage.DataContext{}
+	indexBytes, err := ctx.IndexFromKey(key)
 	if err != nil {
 		return 0, err
 	}
@@ -143,7 +145,7 @@ func NewLabelSurfaceIndex(label uint64) []byte {
 func StoreKeyLabelSpatialMap(versionID dvid.VersionID, data dvid.Data, batcher storage.KeyValueBatcher,
 	zyxBytes []byte, labelRLEs map[uint64]dvid.RLEs) {
 
-	ctx := storage.NewDataContext(data, versionID)
+	ctx := datastore.NewVersionedContext(data, versionID)
 	batch := batcher.NewBatch(ctx)
 	defer func() {
 		if err := batch.Commit(); err != nil {
@@ -395,7 +397,7 @@ func GetSizeRange(data dvid.Data, versionID dvid.VersionID, minSize, maxSize uin
 	if err != nil {
 		return "{}", err
 	}
-	ctx := storage.NewDataContext(data, versionID)
+	ctx := datastore.NewVersionedContext(data, versionID)
 
 	// Get the start/end keys for the size range.
 	firstKey := NewLabelSizesIndex(minSize, 0)
@@ -416,7 +418,7 @@ func GetSizeRange(data dvid.Data, versionID dvid.VersionID, minSize, maxSize uin
 	// Convert them to a JSON compatible structure.
 	labels := make([]uint64, len(keys))
 	for i, key := range keys {
-		labels[i], err = labelFromLabelSizesIndex(key)
+		labels[i], err = labelFromLabelSizesKey(key)
 		if err != nil {
 			return "{}", err
 		}

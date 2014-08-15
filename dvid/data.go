@@ -151,22 +151,5 @@ const (
 type Data interface {
 	DataName() DataString
 	InstanceID() InstanceID
-
-	// Versioned is true if this Data is also VersionedData.
 	Versioned() bool
-}
-
-// VersionedData is Data at a particular version of the DAG and includes a mechanism to
-// iterate up the ancestor path.
-type VersionedData interface {
-	Data
-	GetIterator(VersionID) (VersionIterator, error)
-}
-
-// VersionIterator allows iteration through ancestors of version DAG.  It is assumed
-// only one parent is needed based on how merge operations are handled.
-type VersionIterator interface {
-	Valid() bool
-	VersionID() VersionID
-	Next()
 }

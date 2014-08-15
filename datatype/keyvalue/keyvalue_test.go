@@ -8,7 +8,6 @@ import (
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/janelia-flyem/dvid/storage"
 	"github.com/janelia-flyem/dvid/tests"
 )
 
@@ -87,7 +86,7 @@ func TestKeyValueRoundTrip(t *testing.T) {
 		t.Errorf("Returned new data instance is not keyvalue.Data\n")
 	}
 
-	ctx := storage.NewDataContext(dataservice, versionID)
+	ctx := datastore.NewVersionedContext(dataservice, versionID)
 
 	keyStr := "testkey"
 	value := []byte("I like Japan and this is some unicode: \u65e5\u672c\u8a9e")

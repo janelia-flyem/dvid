@@ -13,7 +13,6 @@ import (
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
 	"github.com/janelia-flyem/dvid/storage/local"
 )
@@ -39,7 +38,7 @@ func UseStore() {
 		var err error
 		engine, err = local.CreateBlankStore(dbpath)
 		if err != nil {
-			log.Fatalf("Can't create a test datastore: %s\n", err.Error())
+			log.Fatalf("Can't create a blank test datastore: %s\n", err.Error())
 		}
 		if err = storage.Initialize(engine, "testdb"); err != nil {
 			log.Fatalf("Can't initialize test datastore: %s\n", err.Error())
@@ -47,8 +46,8 @@ func UseStore() {
 		if err = datastore.InitMetadata(engine); err != nil {
 			log.Fatalf("Can't write blank datastore metadata: %s\n", err.Error())
 		}
-		if err = server.Initialize(); err != nil {
-			log.Fatalf("Can't initialize server: %s\n", err.Error())
+		if err = datastore.Initialize(); err != nil {
+			log.Fatalf("Can't initialize datastore management: %s\n", err.Error())
 		}
 	}
 	count++

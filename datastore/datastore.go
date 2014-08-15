@@ -19,6 +19,10 @@ const (
 )
 
 var (
+	// Manager provides high-level repository management for DVID and is initialized
+	// on start.  Package functions provide a quick alias to this default RepoManager.
+	Manager RepoManager
+
 	// Map of mutexes at the granularity of repo node ID
 	versionMutexes map[nodeID]*sync.Mutex
 )
@@ -26,6 +30,99 @@ var (
 func init() {
 	versionMutexes = make(map[nodeID]*sync.Mutex)
 }
+
+// ---- Aliased package functions for Repo management.
+
+func NewInstanceID() (dvid.InstanceID, error) {
+	if Manager == nil {
+		return 0, fmt.Errorf("datastore not initialized")
+	}
+	return Manager.NewInstanceID()
+}
+
+func NewRepoID() (dvid.RepoID, error) {
+	if Manager == nil {
+		return 0, fmt.Errorf("datastore not initialized")
+	}
+	return Manager.NewRepoID()
+}
+
+func NewVersionID() (dvid.UUID, dvid.VersionID, error) {
+	if Manager == nil {
+		return dvid.NilUUID, 0, fmt.Errorf("datastore not initialized")
+	}
+	return Manager.NewVersionID()
+}
+
+func UUIDFromVersion(versionID dvid.VersionID) (dvid.UUID, error) {
+	if Manager == nil {
+		return dvid.NilUUID, fmt.Errorf("datastore not initialized")
+	}
+	return Manager.UUIDFromVersion(versionID)
+}
+
+func VersionFromUUID(uuid dvid.UUID) (dvid.VersionID, error) {
+	if Manager == nil {
+		return 0, fmt.Errorf("datastore not initialized")
+	}
+	return Manager.VersionFromUUID(uuid)
+}
+
+// MatchingUUID returns version identifiers that uniquely matches a uuid string.
+func MatchingUUID(uuidStr string) (dvid.UUID, dvid.VersionID, error) {
+	if Manager == nil {
+		return dvid.NilUUID, 0, fmt.Errorf("datastore not initialized")
+	}
+	return Manager.MatchingUUID(uuidStr)
+}
+
+// RepoFromUUID returns a Repo given a UUID.  Returns nil Repo if not found.
+func RepoFromUUID(uuid dvid.UUID) (Repo, error) {
+	if Manager == nil {
+		return nil, fmt.Errorf("datastore not initialized")
+	}
+	return Manager.RepoFromUUID(uuid)
+}
+
+// RepoFromID returns a Repo from a RepoID.  Returns error if not found.
+func RepoFromID(repoID dvid.RepoID) (Repo, error) {
+	if Manager == nil {
+		return nil, fmt.Errorf("datastore not initialized")
+	}
+	return Manager.RepoFromID(repoID)
+}
+
+// NewRepo creates and returns a new Repo.
+func NewRepo() (Repo, error) {
+	if Manager == nil {
+		return nil, fmt.Errorf("datastore not initialized")
+	}
+	return Manager.NewRepo()
+}
+
+// SaveRepo persists a Repo to the MetaDataStore.
+func SaveRepo(uuid dvid.UUID) error {
+	if Manager == nil {
+		return fmt.Errorf("datastore not initialized")
+	}
+	return Manager.SaveRepo(uuid)
+}
+
+func SaveRepoByVersionID(versionID dvid.VersionID) error {
+	if Manager == nil {
+		return fmt.Errorf("datastore not initialized")
+	}
+	return Manager.SaveRepoByVersionID(versionID)
+}
+
+func Datatypes() (map[URLString]TypeService, error) {
+	if Manager == nil {
+		return nil, fmt.Errorf("datastore not initialized")
+	}
+	return Manager.Datatypes()
+}
+
+// ---- Server Context code, not to be confused with storage.Context.
 
 // The ctxkey type is unexported to prevent collisions with context keys defined in
 // other packages.  See Context article at http://blog.golang.org/context
@@ -38,13 +135,13 @@ type repoContext struct {
 	versions []dvid.VersionID
 }
 
-// NewContext returns a Context extended with the Repo and optionally one or more
+// NewContext returns a server Context extended with the Repo and optionally one or more
 // versions within that Repo for this request.
 func NewContext(ctx context.Context, repo Repo, versions ...dvid.VersionID) context.Context {
 	return context.WithValue(ctx, repoCtxKey, repoContext{repo, versions})
 }
 
-// FromContext returns Repo and optional versions within that Repo from a Context.
+// FromContext returns Repo and optional versions within that Repo from a server Context.
 func FromContext(ctx context.Context) (Repo, []dvid.VersionID, error) {
 	repoCtxValue := ctx.Value(repoCtxKey)
 	value, ok := repoCtxValue.(repoContext)
@@ -53,9 +150,6 @@ func FromContext(ctx context.Context) (Repo, []dvid.VersionID, error) {
 	}
 	return value.repo, value.versions, nil
 }
-
-// The following identifiers are more compact than the global identifiers such as
-// UUID or URLs, and therefore useful for compressing key sizes.
 
 // Versions returns a chart of version identifiers for data types and and DVID's datastore
 // fixed at compile-time for this DVID executable

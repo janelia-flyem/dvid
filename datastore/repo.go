@@ -13,6 +13,7 @@ import (
 	"fmt"
 
 	"github.com/janelia-flyem/dvid/dvid"
+	"github.com/janelia-flyem/dvid/storage"
 )
 
 var (
@@ -95,7 +96,7 @@ type Repo interface {
 
 	// GetIterator returns a VersionIterator capable of ascending ancestor path from
 	// a particular version in the DAG.
-	GetIterator(dvid.VersionID) (dvid.VersionIterator, error)
+	GetIterator(dvid.VersionID) (storage.VersionIterator, error)
 
 	// NewData adds a new, named instance of a datatype to repo.  Settings can be passed
 	// via the 'config' argument.  For example, config["versioned"] with a bool value

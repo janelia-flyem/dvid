@@ -8,7 +8,6 @@ import (
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/janelia-flyem/dvid/storage"
 	"github.com/janelia-flyem/dvid/tests"
 )
 
@@ -97,7 +96,7 @@ func TestSubvolGrayscale8(t *testing.T) {
 
 	repo, versionID := initTestRepo()
 	grayscale := makeGrayscale(repo, t, "grayscale")
-	grayscaleCtx := storage.NewDataContext(grayscale, versionID)
+	grayscaleCtx := datastore.NewVersionedContext(grayscale, versionID)
 
 	// Create a fake 100x100x100 8-bit grayscale image
 	offset := dvid.Point3d{5, 35, 61}
@@ -164,7 +163,7 @@ func sliceTest(t *testing.T, slice dvid.Geometry) {
 
 	repo, versionID := initTestRepo()
 	grayscale := makeGrayscale(repo, t, "grayscale2")
-	grayscaleCtx := storage.NewDataContext(grayscale, versionID)
+	grayscaleCtx := datastore.NewVersionedContext(grayscale, versionID)
 
 	// Create a fake 100x100 8-bit grayscale image
 	nx := slice.Size().Value(0)

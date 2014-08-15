@@ -15,7 +15,6 @@ import (
 	"net/rpc"
 	"runtime"
 
-	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 )
 
@@ -49,23 +48,8 @@ func (c configT) WebClient() string {
 	return c.webClientDir
 }
 
-// Initialize datastore and repo management at server level.
-func Initialize() error {
-	var err error
-	Repos, err = datastore.Initialize()
-	if err != nil {
-		return fmt.Errorf("Unable to initialize datastore Repo manager: %s\n", err.Error())
-	}
-	initialized = true
-	return nil
-}
-
 // Serve starts HTTP and RPC servers.
 func Serve(httpAddress, webClientDir, rpcAddress string) error {
-	if !initialized {
-		return fmt.Errorf("Cannot serve HTTP and RPC without server.Initialize()")
-	}
-
 	// Set the package-level config variable
 	dvid.Infof("Serving HTTP on %s\n", httpAddress)
 	dvid.Infof("Serving RPC  on %s\n", rpcAddress)

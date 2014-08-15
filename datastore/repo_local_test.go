@@ -2,6 +2,67 @@
 
 package datastore
 
+import (
+	"reflect"
+	"testing"
+	"time"
+
+	"github.com/janelia-flyem/dvid/dvid"
+)
+
+func TestRepoGobEncoding(t *testing.T) {
+	now := time.Now()
+	repo := &repoT{
+		repoID: 3,
+		rootID: dvid.UUID("23f8"),
+		log: []string{
+			"Did this",
+			"Then that",
+			"And the other thing",
+		},
+		properties: map[string]interface{}{
+			"foo": 42,
+			"bar": "some string",
+			"baz": []int{3, 9, 7},
+		},
+		dag:     &dagT{},
+		data:    make(map[dvid.DataString]DataService),
+		created: now,
+		updated: now,
+	}
+	encoding, err := repo.GobEncode()
+	if err != nil {
+		t.Fatalf("Could not encode repo: %s\n", err.Error())
+	}
+	received := repoT{}
+	if err = received.GobDecode(encoding); err != nil {
+		t.Fatalf("Could not decode repo: %s\n", err.Error())
+	}
+	// Test DAG elsewhere
+	repo.dag = nil
+	received.dag = nil
+	if len(received.properties) != 3 {
+		t.Errorf("Repo Gob messed up properties: %v\n", received.properties)
+	}
+	foo, ok := received.properties["foo"]
+	if !ok || foo != 42 {
+		t.Errorf("Repo Gob messed up properties: %v\n", received.properties)
+	}
+	bar, ok := received.properties["bar"]
+	if !ok || bar != "some string" {
+		t.Errorf("Repo Gob messed up properties: %v\n", received.properties)
+	}
+	baz, ok := received.properties["baz"]
+	if !ok || !reflect.DeepEqual(baz, []int{3, 9, 7}) {
+		t.Errorf("Repo Gob messed up properties: %v\n", received.properties)
+	}
+	repo.properties = nil
+	received.properties = nil
+	if !reflect.DeepEqual(*repo, received) {
+		t.Fatalf("Repo Gob messed up:\nOriginal: %v\nReceived: %v\n", *repo, received)
+	}
+}
+
 /*
 func TestNewDAG(t *testing.T) {
 	dag := NewVersionDAG()

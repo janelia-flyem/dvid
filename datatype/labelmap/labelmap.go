@@ -496,7 +496,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 	if len(versions) > 0 {
 		versionID = versions[0]
 	}
-	storeCtx := storage.NewDataContext(d, versionID)
+	storeCtx := datastore.NewVersionedContext(d, versionID)
 
 	// Allow cross-origin resource sharing.
 	w.Header().Add("Access-Control-Allow-Origin", "*")
@@ -901,7 +901,7 @@ func (d *Data) LoadRavelerMaps(request datastore.Request, reply *datastore.Respo
 
 	timedLog := dvid.NewTimeLog()
 
-	uuid, versionID, err := server.Repos.MatchingUUID(uuidStr)
+	uuid, versionID, err := datastore.MatchingUUID(uuidStr)
 	if err != nil {
 		return err
 	}
@@ -916,7 +916,7 @@ func (d *Data) LoadRavelerMaps(request datastore.Request, reply *datastore.Respo
 	maxLabelZ := uint32(labelData.Extents().MaxPoint.Value(2))
 
 	d.Ready = false
-	if err := server.Repos.SaveRepo(uuid); err != nil {
+	if err := datastore.SaveRepo(uuid); err != nil {
 		return err
 	}
 
@@ -924,7 +924,7 @@ func (d *Data) LoadRavelerMaps(request datastore.Request, reply *datastore.Respo
 	if err != nil {
 		return fmt.Errorf("Cannot get datastore that handles small data: %s\n", err.Error())
 	}
-	ctx := storage.NewDataContext(d, versionID)
+	ctx := datastore.NewVersionedContext(d, versionID)
 
 	// Get the seg->body map
 	seg2body, err := loadSegBodyMap(segbodyStr)
@@ -1019,11 +1019,11 @@ func (d *Data) ApplyLabelMap(request datastore.Request, reply *datastore.Respons
 	request.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &sourceName, &destName)
 
 	// Get the version and repo
-	uuid, versionID, err := server.Repos.MatchingUUID(uuidStr)
+	uuid, versionID, err := datastore.MatchingUUID(uuidStr)
 	if err != nil {
 		return err
 	}
-	repo, err := server.Repos.RepoFromUUID(uuid)
+	repo, err := datastore.RepoFromUUID(uuid)
 	if err != nil {
 		return err
 	}
@@ -1058,7 +1058,7 @@ func (d *Data) ApplyLabelMap(request datastore.Request, reply *datastore.Respons
 	if err != nil {
 		return err
 	}
-	labelCtx := storage.NewDataContext(labelData, versionID)
+	labelCtx := datastore.NewVersionedContext(labelData, versionID)
 
 	wg := new(sync.WaitGroup)
 	op := &denormOp{labelData, nil, dest, versionID, nil}
@@ -1091,7 +1091,7 @@ func (d *Data) ApplyLabelMap(request datastore.Request, reply *datastore.Respons
 
 	// Set new mapped data to same extents.
 	dest.Properties = labelData.Properties
-	if err := server.Repos.SaveRepo(uuid); err != nil {
+	if err := datastore.SaveRepo(uuid); err != nil {
 		dvid.Infof("Could not save READY state to data '%s', uuid %s: %s", d.DataName(), uuid, err.Error())
 	}
 
@@ -1110,7 +1110,7 @@ func (d *Data) GetLabelMapping(versionID dvid.VersionID, label []byte) (uint64, 
 	if err != nil {
 		return 0, fmt.Errorf("Cannot get datastore that handles small data: %s\n", err.Error())
 	}
-	ctx := storage.NewDataContext(d, versionID)
+	ctx := datastore.NewVersionedContext(d, versionID)
 	keys, err := smalldata.KeysInRange(ctx, begIndex, endIndex)
 	if err != nil {
 		return 0, err
@@ -1126,7 +1126,7 @@ func (d *Data) GetLabelMapping(versionID dvid.VersionID, label []byte) (uint64, 
 		}
 		return 0, fmt.Errorf("Label %d is mapped to more than one label: %s", label, mapped)
 	}
-	indexBytes, err := storage.DataContextIndex(keys[0])
+	indexBytes, err := ctx.IndexFromKey(keys[0])
 	if err != nil {
 		return 0, err
 	}
@@ -1146,7 +1146,7 @@ func (d *Data) GetBlockMapping(versionID dvid.VersionID, blockI dvid.Index) (map
 	if err != nil {
 		return nil, fmt.Errorf("Cannot get datastore that handles small data: %s\n", err.Error())
 	}
-	ctx := storage.NewDataContext(d, versionID)
+	ctx := datastore.NewVersionedContext(d, versionID)
 	keys, err := smalldata.KeysInRange(ctx, begIndex, endIndex)
 	if err != nil {
 		return nil, err
@@ -1155,7 +1155,7 @@ func (d *Data) GetBlockMapping(versionID dvid.VersionID, blockI dvid.Index) (map
 	mapping := make(map[string]uint64, numKeys)
 	offset := 1 + dvid.IndexZYXSize
 	for _, key := range keys {
-		indexBytes, err := storage.DataContextIndex(key)
+		indexBytes, err := ctx.IndexFromKey(key)
 		if err != nil {
 			return nil, err
 		}
@@ -1190,7 +1190,7 @@ func (d *Data) GetBlockLayerMapping(blockZ int32, op *denormOp) (minChunkPt, max
 		err = fmt.Errorf("Cannot get datastore that handles small data: %s\n", err.Error())
 		return
 	}
-	ctx := storage.NewDataContext(d, op.versionID)
+	ctx := datastore.NewVersionedContext(d, op.versionID)
 	var keys [][]byte
 	keys, err = smalldata.KeysInRange(ctx, begIndex, endIndex)
 	if err != nil {
@@ -1205,7 +1205,7 @@ func (d *Data) GetBlockLayerMapping(blockZ int32, op *denormOp) (minChunkPt, max
 		op.mapping = make(map[string]uint64, numKeys)
 		var indexBytes []byte
 		for _, key := range keys {
-			indexBytes, err = storage.DataContextIndex(key)
+			indexBytes, err = ctx.IndexFromKey(key)
 			if err != nil {
 				return
 			}
@@ -1295,6 +1295,6 @@ func (d *Data) chunkApplyMap(chunk *storage.Chunk) {
 		dvid.Errorf("Unable to retrieve big data store: %s\n", err.Error())
 		return
 	}
-	ctx := storage.NewDataContext(op.dest, op.versionID)
+	ctx := datastore.NewVersionedContext(op.dest, op.versionID)
 	bigdata.Put(ctx, zyxBytes, serialization)
 }

@@ -328,7 +328,7 @@ type Datatype struct {
 
 // GetByUUID returns a pointer to labels64 data given a version (UUID) and data name.
 func GetByUUID(uuid dvid.UUID, name dvid.DataString) (*Data, error) {
-	repo, err := server.Repos.RepoFromUUID(uuid)
+	repo, err := datastore.RepoFromUUID(uuid)
 	if err != nil {
 		return nil, err
 	}
@@ -345,7 +345,7 @@ func GetByUUID(uuid dvid.UUID, name dvid.DataString) (*Data, error) {
 
 // GetByRepoID returns a pointer to labels64 data given a local repo ID and data name.
 func GetByRepoID(id dvid.RepoID, name dvid.DataString) (*Data, error) {
-	repo, err := server.Repos.RepoFromID(id)
+	repo, err := datastore.RepoFromID(id)
 	if err != nil {
 		return nil, err
 	}
@@ -630,7 +630,7 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 		}
 		dvid.Debugf(addedFiles + "\n")
 
-		uuid, versionID, err := server.Repos.MatchingUUID(uuidStr)
+		uuid, versionID, err := datastore.MatchingUUID(uuidStr)
 		if err != nil {
 			return err
 		}
@@ -648,7 +648,7 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 			go d.ProcessSpatially(uuid)
 		} else {
 			d.Ready = true
-			if err := server.Repos.SaveRepo(uuid); err != nil {
+			if err := datastore.SaveRepo(uuid); err != nil {
 				return err
 			}
 		}
@@ -684,7 +684,7 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 	if len(versions) > 0 {
 		versionID = versions[0]
 	}
-	storeCtx := storage.NewDataContext(d, versionID)
+	storeCtx := datastore.NewVersionedContext(d, versionID)
 
 	// Allow cross-origin resource sharing.
 	w.Header().Add("Access-Control-Allow-Origin", "*")
@@ -1102,13 +1102,13 @@ func (d *Data) CreateComposite(request datastore.Request, reply *datastore.Respo
 	request.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &grayscaleName, &destName)
 
 	// Get the version
-	uuid, versionID, err := server.Repos.MatchingUUID(uuidStr)
+	uuid, versionID, err := datastore.MatchingUUID(uuidStr)
 	if err != nil {
 		return err
 	}
 
 	// Get the grayscale data.
-	repo, err := server.Repos.RepoFromUUID(uuid)
+	repo, err := datastore.RepoFromUUID(uuid)
 	if err != nil {
 		return err
 	}
@@ -1154,7 +1154,7 @@ func (d *Data) CreateComposite(request datastore.Request, reply *datastore.Respo
 	if err != nil {
 		return err
 	}
-	ctx := storage.NewDataContext(d, versionID)
+	ctx := datastore.NewVersionedContext(d, versionID)
 	err = store.ProcessRange(ctx, begIndex, endIndex, chunkOp, d.CreateCompositeChunk)
 	wg.Wait()
 
@@ -1228,7 +1228,7 @@ func (d *Data) createCompositeChunk(chunk *storage.Chunk) {
 		dvid.Errorf("Unable to retrieve big data store: %s\n", err.Error())
 		return
 	}
-	grayscaleCtx := storage.NewDataContext(op.grayscale, op.versionID)
+	grayscaleCtx := datastore.NewVersionedContext(op.grayscale, op.versionID)
 	blockData, err := bigdata.Get(grayscaleCtx, zyxBytes)
 	if err != nil {
 		dvid.Errorf("Error getting grayscale block for index %s\n", zyx)
@@ -1262,7 +1262,7 @@ func (d *Data) createCompositeChunk(chunk *storage.Chunk) {
 		dvid.Errorf("Unable to serialize composite block %s: %s\n", zyx, err.Error())
 		return
 	}
-	compositeCtx := storage.NewDataContext(op.composite, op.versionID)
+	compositeCtx := datastore.NewVersionedContext(op.composite, op.versionID)
 	err = bigdata.Put(compositeCtx, zyxBytes, serialization)
 	if err != nil {
 		dvid.Errorf("Unable to PUT composite block %s: %s\n", zyx, err.Error())

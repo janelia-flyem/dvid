@@ -11,6 +11,7 @@ import (
 	"math"
 	"sync"
 
+	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
@@ -26,7 +27,7 @@ type denormOp struct {
 func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 	dvid.Infof("Adding spatial information from label volume %s ...\n", d.DataName())
 
-	versionID, err := server.Repos.VersionFromUUID(uuid)
+	versionID, err := datastore.VersionFromUUID(uuid)
 	if err != nil {
 		dvid.Errorf("Illegal UUID %q with no corresponding version ID!  Aborting.", uuid)
 		return
@@ -42,7 +43,7 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 		dvid.Errorf("Cannot get datastore that handles small data: %s\n", err.Error())
 		return
 	}
-	ctx := storage.NewDataContext(d, versionID)
+	ctx := datastore.NewVersionedContext(d, versionID)
 
 	// Iterate through all labels chunks incrementally in Z, loading and then using the maps
 	// for all blocks in that layer.
@@ -93,7 +94,7 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 		wg.Wait()
 		timedLog.Debugf("Finished processing all RLEs for labels '%s'", d.DataName())
 		d.Ready = true
-		if err := server.Repos.SaveRepo(uuid); err != nil {
+		if err := datastore.SaveRepo(uuid); err != nil {
 			dvid.Errorf("Could not save READY state to data '%s', uuid %s: %s",
 				d.DataName(), uuid, err.Error())
 		}
@@ -103,7 +104,7 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 	endIndex := NewLabelSpatialMapIndex(math.MaxUint64, dvid.MaxIndexZYX)
 	err = smalldata.ProcessRange(ctx, begIndex, endIndex, &storage.ChunkOp{}, func(chunk *storage.Chunk) {
 		// Get label associated with this sparse volume.
-		indexBytes, err := storage.DataContextIndex(chunk.K)
+		indexBytes, err := ctx.IndexFromKey(chunk.K)
 		if err != nil {
 			dvid.Errorf("Could not get %q index bytes from chunk key: %s\n", d.DataName(), err.Error())
 			return

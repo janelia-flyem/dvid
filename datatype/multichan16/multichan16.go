@@ -272,7 +272,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 	if len(versions) > 0 {
 		versionID = versions[0]
 	}
-	storeCtx := storage.NewDataContext(d, versionID)
+	storeCtx := datastore.NewVersionedContext(d, versionID)
 
 	// Allow cross-origin resource sharing.
 	w.Header().Add("Access-Control-Allow-Origin", "*")
@@ -421,7 +421,7 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 	_ = request.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &sourceStr, &filename)
 
 	// Get the uuid from a uniquely identifiable string
-	uuid, versionID, err := server.Repos.MatchingUUID(uuidStr)
+	uuid, versionID, err := datastore.MatchingUUID(uuidStr)
 	if err != nil {
 		return fmt.Errorf("Could not find node with UUID %s: %s", uuidStr, err.Error())
 	}
@@ -460,7 +460,7 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 	}
 
 	// Get repo and save it.
-	repo, err := server.Repos.RepoFromUUID(uuid)
+	repo, err := datastore.RepoFromUUID(uuid)
 	if err != nil {
 		return err
 	}
@@ -469,7 +469,7 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 	}
 
 	// PUT each channel of the file into the datastore using a separate data name.
-	storeCtx := storage.NewDataContext(d, versionID)
+	storeCtx := datastore.NewVersionedContext(d, versionID)
 	for _, channel := range channels {
 		dvid.Infof("Processing channel %d... \n", channel.channelNum)
 		err = voxels.PutVoxels(storeCtx, d, channel)

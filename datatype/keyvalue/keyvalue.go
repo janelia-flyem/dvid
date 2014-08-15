@@ -176,7 +176,7 @@ func (d *Data) GetKeysInRange(ctx storage.Context, keyBeg, keyEnd string) ([]str
 	}
 	keyList := []string{}
 	for _, key := range keys {
-		index, err := storage.DataContextIndex(key)
+		index, err := ctx.IndexFromKey(key)
 		if err != nil {
 			return nil, err
 		}
@@ -260,7 +260,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 	if len(versions) > 0 {
 		versionID = versions[0]
 	}
-	storeCtx := storage.NewDataContext(d, versionID)
+	storeCtx := datastore.NewVersionedContext(d, versionID)
 
 	// Allow cross-origin resource sharing.
 	w.Header().Add("Access-Control-Allow-Origin", "*")

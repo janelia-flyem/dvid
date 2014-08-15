@@ -503,7 +503,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 	if len(versions) > 0 {
 		versionID = versions[0]
 	}
-	storeCtx := storage.NewDataContext(d, versionID)
+	storeCtx := datastore.NewVersionedContext(d, versionID)
 
 	// Allow cross-origin resource sharing.
 	w.Header().Add("Access-Control-Allow-Origin", "*")
@@ -888,7 +888,7 @@ func (d *Data) putTileFunc(versionID dvid.VersionID) (outFunc, error) {
 	if err != nil {
 		return nil, fmt.Errorf("Cannot open big data store: %s\n", err.Error())
 	}
-	ctx := storage.NewDataContext(d, versionID)
+	ctx := datastore.NewVersionedContext(d, versionID)
 
 	return func(index *IndexTile, tile *dvid.Image) error {
 		var err error
@@ -915,11 +915,11 @@ func (d *Data) putTileFunc(versionID dvid.VersionID) (outFunc, error) {
 
 func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, config dvid.Config) error {
 
-	uuid, versionID, err := server.Repos.MatchingUUID(uuidStr)
+	uuid, versionID, err := datastore.MatchingUUID(uuidStr)
 	if err != nil {
 		return err
 	}
-	repo, err := server.Repos.RepoFromUUID(uuid)
+	repo, err := datastore.RepoFromUUID(uuid)
 	if err != nil {
 		return err
 	}
@@ -959,7 +959,7 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, config dvid.Con
 		planes = []dvid.DataShape{dvid.XY, dvid.XZ, dvid.YZ}
 	}
 
-	voxelsCtx := storage.NewDataContext(src, versionID)
+	voxelsCtx := datastore.NewVersionedContext(src, versionID)
 	outF, err := d.putTileFunc(versionID)
 
 	for _, plane := range planes {

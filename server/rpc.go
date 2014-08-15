@@ -75,9 +75,6 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 	if cmd.Name() == "" {
 		return fmt.Errorf("Server error: got empty command!")
 	}
-	if Repos == nil {
-		return fmt.Errorf("Datastore not open!  Cannot execute command.")
-	}
 
 	switch cmd.Name() {
 
@@ -100,7 +97,7 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 		cmd.CommandArgs(1, &subcommand, &alias, &description)
 		switch subcommand {
 		case "new":
-			repo, err := Repos.NewRepo()
+			repo, err := datastore.NewRepo()
 			if err != nil {
 				return err
 			}
@@ -118,7 +115,7 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 	case "repo":
 		var uuidStr, subcommand, typename, dataname string
 		cmd.CommandArgs(1, &uuidStr, &subcommand)
-		uuid, _, err := Repos.MatchingUUID(uuidStr)
+		uuid, _, err := datastore.MatchingUUID(uuidStr)
 		if err != nil {
 			return err
 		}
@@ -127,7 +124,7 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 			cmd.CommandArgs(3, &typename, &dataname)
 
 			// Get Repo
-			repo, err := Repos.RepoFromUUID(uuid)
+			repo, err := datastore.RepoFromUUID(uuid)
 			if err != nil {
 				return err
 			}
@@ -152,13 +149,13 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 	case "node":
 		var uuidStr, descriptor string
 		cmd.CommandArgs(1, &uuidStr, &descriptor)
-		uuid, _, err := Repos.MatchingUUID(uuidStr)
+		uuid, _, err := datastore.MatchingUUID(uuidStr)
 		if err != nil {
 			return err
 		}
 
 		// Get Repo
-		repo, err := Repos.RepoFromUUID(uuid)
+		repo, err := datastore.RepoFromUUID(uuid)
 		if err != nil {
 			return err
 		}

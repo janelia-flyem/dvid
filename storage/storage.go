@@ -142,8 +142,6 @@ type OrderedKeyValueGetter interface {
 
 	// KeysInRange returns a range of full keys spanning (kStart, kEnd).  Note that
 	// the returned keys are the full keys (including context from ctx.ConstructKey()).
-	// To access the original indices passed in with a non-nil Context, use
-	// something like storage.DataContextIndex(key).
 	KeysInRange(ctx Context, kStart, kEnd []byte) (keys [][]byte, err error)
 
 	// ProcessRange sends a range of key-value pairs to type-specific chunk handlers,

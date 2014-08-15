@@ -433,7 +433,7 @@ func PutVoxels(ctx storage.Context, i IntData, e ExtData) error {
 	defer versionMutex.Unlock()
 
 	// Get UUID
-	uuid, err := server.Repos.UUIDFromVersion(versionID)
+	uuid, err := datastore.UUIDFromVersion(versionID)
 	if err != nil {
 		return err
 	}
@@ -442,7 +442,7 @@ func PutVoxels(ctx storage.Context, i IntData, e ExtData) error {
 	var extentChanged bool
 	defer func() {
 		if extentChanged {
-			err := server.Repos.SaveRepo(uuid)
+			err := datastore.SaveRepo(uuid)
 			if err != nil {
 				dvid.Infof("Error in trying to save repo on change: %s\n", err.Error())
 			}
@@ -493,7 +493,7 @@ func PutVoxels(ctx storage.Context, i IntData, e ExtData) error {
 			// send the old value into chunk handler.  Else we are just sending
 			// keys with no value.
 			if oldkv != nil && oldkv.K != nil {
-				oldIndexBytes, err := storage.DataContextIndex(oldkv.K)
+				oldIndexBytes, err := ctx.IndexFromKey(oldkv.K)
 				if err != nil {
 					return err
 				}
@@ -583,7 +583,7 @@ func loadXYImages(i IntData, load *bulkLoadInfo) error {
 	fmt.Println("Reading XY images...")
 
 	// Construct a storage.Context for this data and version
-	ctx := storage.NewDataContext(i.BaseData(), load.versionID)
+	ctx := datastore.NewVersionedContext(i.BaseData(), load.versionID)
 
 	// Load first slice, get dimensions, allocate blocks for whole slice.
 	// Note: We don't need to lock the block slices because goroutines do NOT
@@ -804,7 +804,7 @@ func LoadImages(versionID dvid.VersionID, i IntData, offset dvid.Point, filename
 		versionMutex.Unlock()
 
 		if load.extentChanged.Value() {
-			err := server.Repos.SaveRepoByVersionID(versionID)
+			err := datastore.SaveRepoByVersionID(versionID)
 			if err != nil {
 				dvid.Infof("Error in trying to save repo on change: %s\n", err.Error())
 			}
@@ -829,7 +829,7 @@ func loadOldBlocks(versionID dvid.VersionID, i IntData, e ExtData, blocks Blocks
 	if err != nil {
 		return err
 	}
-	ctx := storage.NewDataContext(i.BaseData(), versionID)
+	ctx := datastore.NewVersionedContext(i.BaseData(), versionID)
 
 	// Create a map of old blocks indexed by the index
 	oldBlocks := map[string]([]byte){}
@@ -849,7 +849,7 @@ func loadOldBlocks(versionID dvid.VersionID, i IntData, e ExtData, blocks Blocks
 			return err
 		}
 		for _, kv := range keyvalues {
-			indexBytes, err := storage.DataContextIndex(kv.K)
+			indexBytes, err := ctx.IndexFromKey(kv.K)
 			if err != nil {
 				return err
 			}
@@ -892,7 +892,7 @@ func writeXYImage(versionID dvid.VersionID, i IntData, e ExtData, blocks Blocks)
 	}()
 
 	// Iterate through index space for this data using ZYX ordering.
-	ctx := storage.NewDataContext(i.BaseData(), versionID)
+	ctx := datastore.NewVersionedContext(i.BaseData(), versionID)
 	blockSize := i.BlockSize()
 	var startingBlock int32
 
@@ -942,7 +942,8 @@ func ComputeTransform(v ExtData, block *Block, blockSize dvid.Point) (blockBeg, 
 	ptIndex := v.NewChunkIndex()
 
 	var indexBytes []byte
-	indexBytes, err = storage.DataContextIndex(block.K)
+	ctx := &storage.DataContext{}
+	indexBytes, err = ctx.IndexFromKey(block.K)
 	if err != nil {
 		return
 	}
@@ -1765,11 +1766,11 @@ func (d *Data) PutLocal(request datastore.Request, reply *datastore.Response) er
 	}
 
 	// Get Repo and IDs
-	_, versionID, err := server.Repos.MatchingUUID(uuidStr)
+	_, versionID, err := datastore.MatchingUUID(uuidStr)
 	if err != nil {
 		return err
 	}
-	ctx := storage.NewDataContext(d, versionID)
+	ctx := datastore.NewVersionedContext(d, versionID)
 
 	// Load and PUT each image.
 	numSuccessful := 0
@@ -1930,7 +1931,7 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 		}
 		dvid.Debugf(addedFiles + "\n")
 
-		_, versionID, err := server.Repos.MatchingUUID(uuidStr)
+		_, versionID, err := datastore.MatchingUUID(uuidStr)
 		if err != nil {
 			return err
 		}
@@ -1989,7 +1990,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 	if len(versions) > 0 {
 		versionID = versions[0]
 	}
-	storeCtx := storage.NewDataContext(d, versionID)
+	storeCtx := datastore.NewVersionedContext(d, versionID)
 
 	dvid.Infof("voxels.ServeHTTP(): versionID %d\n", versionID)
 

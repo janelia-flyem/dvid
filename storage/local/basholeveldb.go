@@ -4,6 +4,7 @@ package local
 
 import (
 	"bytes"
+	"fmt"
 
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
@@ -269,7 +270,10 @@ func (db *LevelDB) Close() {
 // Get returns a value given a key.
 func (db *LevelDB) Get(ctx storage.Context, k []byte) ([]byte, error) {
 	if ctx != nil && ctx.Versioned() {
-		vctx, _ := ctx.(storage.VersionedContext)
+		vctx, ok := ctx.(storage.VersionedContext)
+		if !ok {
+			return nil, fmt.Errorf("Bad Get(): context is versioned but doesn't fulfill storage.VersionedContext")
+		}
 
 		// Get all versions of this key and return the most recent
 		//log.Printf("  basholeveldb versioned get of key %v\n", k)
@@ -408,10 +412,7 @@ func (db *LevelDB) versionedRange(vctx storage.VersionedContext, kStart, kEnd []
 
 			// Did we pass all versions for last key read?
 			if bytes.Compare(itKey, maxVersionKey) > 0 {
-				// NOTE: Recovering index from full key should be part of
-				//  context because this assumes a DataContext, which really
-				//  should be the only versioned Context anyway.
-				indexBytes, err := storage.DataContextIndex(itKey)
+				indexBytes, err := vctx.IndexFromKey(itKey)
 				if err != nil {
 					ch <- errorableKV{nil, err}
 					return

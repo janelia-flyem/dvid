@@ -617,7 +617,7 @@ func (d *Data) getGraphContext(ctx context.Context) (storage.Context, storage.Gr
 		return nil, nil, err
 	}
 
-	return storage.NewDataContext(d, versionID), db, err
+	return datastore.NewVersionedContext(d, versionID), db, err
 }
 
 // handleSubgraph loads, retrieves, or deletes a subgraph (more description in REST interface)

@@ -5,7 +5,6 @@ import (
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/janelia-flyem/dvid/server"
 
 	// Declare the data types this DVID executable will support
 	_ "github.com/janelia-flyem/dvid/datatype/labels64"
@@ -18,10 +17,7 @@ func TestDataAndChildCreation(t *testing.T) {
 	UseStore()
 	defer CloseStore()
 
-	repo, err := server.Repos.NewRepo()
-	if err != nil {
-		t.Fatalf("Could not create new Repo: %s\n", err.Error())
-	}
+	repo, _ := NewRepo()
 
 	grayscale8, err := datastore.TypeServiceByName("grayscale8")
 	if err != nil {

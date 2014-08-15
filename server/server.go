@@ -23,10 +23,6 @@ type Config interface {
 }
 
 var (
-	// Repos provides high-level repository management for DVID and is initialized
-	// on start.
-	Repos datastore.RepoManager
-
 	// ActiveHandlers is maximum number of active handlers over last second.
 	ActiveHandlers int
 

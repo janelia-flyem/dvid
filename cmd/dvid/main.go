@@ -250,8 +250,8 @@ func DoServe(cmd dvid.Command) error {
 	if err := local.Initialize(dbpath, cmd.Settings()); err != nil {
 		return fmt.Errorf("Unable to initialize local storage: %s\n", err.Error())
 	}
-	if err := server.Initialize(); err != nil {
-		return fmt.Errorf("Unable to initialize server: %s\n", err.Error())
+	if err := datastore.Initialize(); err != nil {
+		return fmt.Errorf("Unable to initialize datastore: %s\n", err.Error())
 	}
 	if err := server.Serve(*httpAddress, *clientDir, *rpcAddress); err != nil {
 		return err

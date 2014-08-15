@@ -28,6 +28,10 @@ type Context interface {
 	// namespaced key that fits with the DVID-wide key space partitioning.
 	ConstructKey(index []byte) []byte
 
+	// IndexFromKey returns an index, the type-specific component of the key, from
+	// an entire storage key.
+	IndexFromKey(key []byte) (index []byte, err error)
+
 	// String prints a description of the Context
 	String() string
 
@@ -39,9 +43,13 @@ type Context interface {
 }
 
 // VersionedContext extends a Context with the minimal functions necessary to handle
-// versioning in storage engines.
+// versioning in storage engines.  For DataContext, only GetIterator() needs to be
+// implemented at higher levels where the version DAG is available.
 type VersionedContext interface {
 	Context
+
+	// GetIterator returns an iterator up a version DAG.
+	GetIterator() (VersionIterator, error)
 
 	// Returns lower bound key for versions of given byte slice index.
 	MinVersionKey(index []byte) (key []byte, err error)
@@ -53,6 +61,14 @@ type VersionedContext interface {
 	// given a list of key-value pairs across many versions.  If no suitable key-value
 	// pair is found, nil is returned.
 	VersionedKeyValue([]*KeyValue) (*KeyValue, error)
+}
+
+// VersionIterator allows iteration through ancestors of version DAG.  It is assumed
+// only one parent is needed based on how merge operations are handled.
+type VersionIterator interface {
+	Valid() bool
+	VersionID() dvid.VersionID
+	Next()
 }
 
 // ---- Context implementations -----
@@ -75,8 +91,15 @@ func (ctx MetadataContext) VersionID() dvid.VersionID {
 	return 0 // Only one version of Metadata
 }
 
-func (ctx MetadataContext) ConstructKey(b []byte) []byte {
-	return append([]byte{metadataKeyPrefix}, b...)
+func (ctx MetadataContext) ConstructKey(index []byte) []byte {
+	return append([]byte{metadataKeyPrefix}, index...)
+}
+
+func (ctx MetadataContext) IndexFromKey(key []byte) ([]byte, error) {
+	if key[0] != metadataKeyPrefix {
+		return nil, fmt.Errorf("Cannot extract MetadataContext index from different key")
+	}
+	return key[1:], nil
 }
 
 func (ctx MetadataContext) String() string {
@@ -97,25 +120,15 @@ type DataContext struct {
 // key space partitioning.  Since Context and VersionedContext interfaces are opaque, i.e., can
 // only be implemented within package storage, we force compatible implementations to embed
 // DataContext and initialize it via this function.
-func NewDataContext(data dvid.Data, version dvid.VersionID) *DataContext {
-	return &DataContext{data, version}
+func NewDataContext(data dvid.Data, versionID dvid.VersionID) *DataContext {
+	return &DataContext{data, versionID}
 }
 
-// DataContextIndex returns the byte representation of a datatype-specific key (index)
-// from a key constructed using a DataContext.
-func DataContextIndex(b []byte) ([]byte, error) {
-	if b[0] != dataKeyPrefix {
-		return nil, fmt.Errorf("Cannot extract Index from key not constructed using DataContext")
-	}
-	start := 1 + dvid.InstanceIDSize
-	end := len(b) - dvid.VersionIDSize
-	return b[start:end], nil
-}
-
-// KeyToIndexZYX parses a DataContext key and returns the index as a dvid.IndexZYX
+// KeyToIndexZYX parses a key under a DataContext and returns the index as a dvid.IndexZYX
 func KeyToIndexZYX(k []byte) (dvid.IndexZYX, error) {
 	var zyx dvid.IndexZYX
-	indexBytes, err := DataContextIndex(k)
+	ctx := &DataContext{}
+	indexBytes, err := ctx.IndexFromKey(k)
 	if err != nil {
 		return zyx, fmt.Errorf("Cannot convert key %v to IndexZYX: %s\n", k, err.Error())
 	}
@@ -124,6 +137,8 @@ func KeyToIndexZYX(k []byte) (dvid.IndexZYX, error) {
 	}
 	return zyx, nil
 }
+
+// ---- storage.Context implementation
 
 func (ctx *DataContext) implementsOpaque() {}
 
@@ -137,6 +152,15 @@ func (ctx *DataContext) ConstructKey(index []byte) []byte {
 	return append(key, ctx.version.Bytes()...)
 }
 
+func (ctx *DataContext) IndexFromKey(key []byte) ([]byte, error) {
+	if key[0] != dataKeyPrefix {
+		return nil, fmt.Errorf("Cannot extract DataContext index from different key")
+	}
+	start := 1 + dvid.InstanceIDSize
+	end := len(key) - dvid.VersionIDSize
+	return key[start:end], nil
+}
+
 func (ctx *DataContext) String() string {
 	return fmt.Sprintf("Data Context for %q (local id %d, version id %d)", ctx.data.DataName(),
 		ctx.data.InstanceID(), ctx.version)
@@ -145,6 +169,8 @@ func (ctx *DataContext) String() string {
 func (ctx *DataContext) Versioned() bool {
 	return ctx.data.Versioned()
 }
+
+// ----- partial storage.VersionedContext implementation
 
 // Returns lower bound key for versions of given byte slice key representation.
 func (ctx *DataContext) MinVersionKey(index []byte) ([]byte, error) {
@@ -158,46 +184,4 @@ func (ctx *DataContext) MaxVersionKey(index []byte) ([]byte, error) {
 	key := append([]byte{dataKeyPrefix}, ctx.data.InstanceID().Bytes()...)
 	key = append(key, index...)
 	return append(key, dvid.VersionID(dvid.MaxVersionID).Bytes()...), nil
-}
-
-// VersionedKeyValue returns the key-value pair corresponding to this key's version
-// given a list of key-value pairs across many versions.  If no suitable key-value
-// pair is found, nil is returned.
-func (ctx *DataContext) VersionedKeyValue(values []*KeyValue) (*KeyValue, error) {
-	// This data needs to be Versioned or return an error.
-	if !ctx.data.Versioned() {
-		return nil, fmt.Errorf("Data instance %q is not versioned so can't do VersionedKeyValue()",
-			ctx.data.DataName())
-	}
-	vdata, ok := ctx.data.(dvid.VersionedData)
-	if !ok {
-		return nil, fmt.Errorf("Expected versioned data instance %q: must implement GetIterator()",
-			ctx.data.DataName())
-	}
-
-	// Set up a map[VersionID]KeyValue
-	versionMap := make(map[dvid.VersionID]*KeyValue, len(values))
-	for _, kv := range values {
-		pos := len(kv.K) - dvid.VersionIDSize
-		vid := dvid.VersionIDFromBytes(kv.K[pos:])
-		versionMap[vid] = kv
-	}
-
-	// Iterate from the current node up the ancestors in the version DAG, checking if
-	// current best is present.
-	it, err := vdata.GetIterator(ctx.version)
-	if err != nil {
-		return nil, fmt.Errorf("Couldn't get iterator from %s: %s\n", vdata.DataName(), err.Error())
-	}
-	for {
-		if it.Valid() {
-			if kv, found := versionMap[it.VersionID()]; found {
-				return kv, nil
-			}
-		} else {
-			break
-		}
-		it.Next()
-	}
-	return nil, nil
 }

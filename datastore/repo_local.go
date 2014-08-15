@@ -113,8 +113,8 @@ func Repair(path string, config dvid.Config) error {
 	return local.RepairStore(path, config)
 }
 
-// Initialize returns a RepoManager implementation suitable for managing repositories.
-func Initialize() (RepoManager, error) {
+// Initialize creates a repositories manager that is handled through package functions.
+func Initialize() error {
 	m := &repoManager{
 		repoToUUID:    make(map[dvid.RepoID]dvid.UUID),
 		versionToUUID: make(map[dvid.VersionID]dvid.UUID),
@@ -125,14 +125,17 @@ func Initialize() (RepoManager, error) {
 	var err error
 	m.store, err = storage.MetaDataStore()
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	// Try to load metadata from the MetaData store.
 	if err = m.loadMetadata(); err != nil {
-		return nil, fmt.Errorf("Error loading metadata: %s", err.Error())
+		return fmt.Errorf("Error loading metadata: %s", err.Error())
 	}
-	return m, nil
+
+	// Set the package variable.  We are good to go...
+	Manager = m
+	return nil
 }
 
 // ---- RepoManager persistence to MetaData storage -----
@@ -231,7 +234,7 @@ func (m *repoManager) loadMetadata() error {
 
 	var index metadataIndex
 	for _, kv := range kvList {
-		indexBytes, err := storage.DataContextIndex(kv.K)
+		indexBytes, err := ctx.IndexFromKey(kv.K)
 		if err != nil {
 			return err
 		}
@@ -244,11 +247,10 @@ func (m *repoManager) loadMetadata() error {
 		if !found {
 			return fmt.Errorf("Retrieved repo with id %d that is not in map.  Corrupt DB?", index.repoID)
 		}
-		buf := bytes.NewBuffer(kv.V)
-		dec := gob.NewDecoder(buf)
-		repo := new(repoT)
-		if err = dec.Decode(repo); err != nil {
-			return err
+		dvid.Debugf("Loaded metadata index: %v  --> %d bytes\n", index, len(kv.V))
+		var repo repoT
+		if err = repo.GobDecode(kv.V); err != nil {
+			return fmt.Errorf("Error gob decoding repo %d: %s", index.repoID, err.Error())
 		}
 		// Cache all UUID from nodes into our high-level cache
 		for versionID, _ := range repo.dag.nodes {
@@ -257,7 +259,7 @@ func (m *repoManager) loadMetadata() error {
 				return fmt.Errorf("Version id %d found in repo %s (id %d) not in cache map",
 					versionID, repo.rootID, repo.repoID)
 			}
-			m.repos[uuid] = repo
+			m.repos[uuid] = &repo
 		}
 	}
 	dvid.Infof("Loaded %d repositories from metadata store.", len(m.repos))
@@ -597,27 +599,37 @@ func (r *repoT) AddToLog(hx string) error {
 // ---- Repo interface implementation -----------
 
 func (r *repoT) GobDecode(b []byte) error {
+	fmt.Printf("In repo.GobDecode()\n")
 	buf := bytes.NewBuffer(b)
 	dec := gob.NewDecoder(buf)
-	if err := dec.Decode(&(r.alias)); err != nil {
-		return err
-	}
-	if err := dec.Decode(&(r.description)); err != nil {
-		return err
-	}
 	if err := dec.Decode(&(r.repoID)); err != nil {
 		return err
 	}
 	if err := dec.Decode(&(r.rootID)); err != nil {
 		return err
 	}
+	if err := dec.Decode(&(r.alias)); err != nil {
+		return err
+	}
+	if err := dec.Decode(&(r.description)); err != nil {
+		return err
+	}
+	if err := dec.Decode(&(r.log)); err != nil {
+		return err
+	}
 	if err := dec.Decode(&(r.properties)); err != nil {
 		return err
 	}
-	if err := dec.Decode(&(r.data)); err != nil {
+	if err := dec.Decode(&(r.created)); err != nil {
+		return err
+	}
+	if err := dec.Decode(&(r.updated)); err != nil {
 		return err
 	}
 	if err := dec.Decode(&(r.dag)); err != nil {
+		return err
+	}
+	if err := dec.Decode(&(r.data)); err != nil {
 		return err
 	}
 	return nil
@@ -626,25 +638,34 @@ func (r *repoT) GobDecode(b []byte) error {
 func (r *repoT) GobEncode() ([]byte, error) {
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
-	if err := enc.Encode(r.alias); err != nil {
-		return nil, err
-	}
-	if err := enc.Encode(r.description); err != nil {
-		return nil, err
-	}
 	if err := enc.Encode(r.repoID); err != nil {
 		return nil, err
 	}
 	if err := enc.Encode(r.rootID); err != nil {
 		return nil, err
 	}
+	if err := enc.Encode(r.alias); err != nil {
+		return nil, err
+	}
+	if err := enc.Encode(r.description); err != nil {
+		return nil, err
+	}
+	if err := enc.Encode(r.log); err != nil {
+		return nil, err
+	}
 	if err := enc.Encode(r.properties); err != nil {
 		return nil, err
 	}
-	if err := enc.Encode(r.data); err != nil {
+	if err := enc.Encode(r.created); err != nil {
+		return nil, err
+	}
+	if err := enc.Encode(r.updated); err != nil {
 		return nil, err
 	}
 	if err := enc.Encode(r.dag); err != nil {
+		return nil, err
+	}
+	if err := enc.Encode(r.data); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
@@ -700,7 +721,7 @@ func (r *repoT) GetDataByName(name dvid.DataString) (DataService, error) {
 	return data, nil
 }
 
-func (r *repoT) GetIterator(versionID dvid.VersionID) (dvid.VersionIterator, error) {
+func (r *repoT) GetIterator(versionID dvid.VersionID) (storage.VersionIterator, error) {
 	return r.dag.GetIterator(versionID)
 }
 
@@ -830,8 +851,12 @@ func (r *repoT) addNode() (*nodeT, error) {
 func (r *repoT) newNode(uuid dvid.UUID, versionID dvid.VersionID) *nodeT {
 	t := time.Now()
 	node := &nodeT{
+		log:       []string{},
+		avail:     make(map[dvid.DataString]DataAvail),
 		uuid:      uuid,
 		versionID: versionID,
+		parents:   []dvid.VersionID{},
+		children:  []dvid.VersionID{},
 		created:   t,
 		updated:   t,
 	}
@@ -883,7 +908,7 @@ type dagT struct {
 	nodes map[dvid.VersionID]*nodeT
 }
 
-func (dag *dagT) GetIterator(versionID dvid.VersionID) (dvid.VersionIterator, error) {
+func (dag *dagT) GetIterator(versionID dvid.VersionID) (storage.VersionIterator, error) {
 	node, found := dag.nodes[versionID]
 	if !found {
 		return nil, fmt.Errorf("GetIterator: no version %d\n  dag %s\n", versionID, dag)

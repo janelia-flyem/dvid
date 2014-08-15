@@ -15,6 +15,7 @@ import (
 	"math"
 	"sync"
 
+	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/labels64"
 	"github.com/janelia-flyem/dvid/datatype/voxels"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -56,7 +57,7 @@ func (d *Data) GetLabelsInVolume(ctx storage.Context, minBlock, maxBlock dvid.Ch
 
 		// Add mapped labels for these keys into the set
 		for _, key := range keys {
-			indexBytes, err := storage.DataContextIndex(key)
+			indexBytes, err := ctx.IndexFromKey(key)
 			if err != nil {
 				return "{}", err
 			}
@@ -135,8 +136,8 @@ func (d *Data) GetMappedVoxels(versionID dvid.VersionID, e voxels.ExtData) error
 	if err != nil {
 		dvid.Errorf("Could not get labels64 data for '%s'", d.Labels)
 	}
-	labelsCtx := storage.NewDataContext(labelData, versionID)
-	mappingCtx := storage.NewDataContext(d, versionID)
+	labelsCtx := datastore.NewVersionedContext(labelData, versionID)
+	mappingCtx := datastore.NewVersionedContext(d, versionID)
 
 	wg := new(sync.WaitGroup)
 	for it, err := e.IndexIterator(labelData.BlockSize()); err == nil && it.Valid(); it.NextSpan() {
@@ -166,7 +167,7 @@ func (d *Data) GetMappedVoxels(versionID dvid.VersionID, e voxels.ExtData) error
 		labelOffset := 1 + dvid.IndexZYXSize // index here = s + a + b
 		mapping := make(map[string]uint64, numKeys)
 		for _, key := range keys {
-			indexBytes, err := storage.DataContextIndex(key)
+			indexBytes, err := mappingCtx.IndexFromKey(key)
 			if err != nil {
 				return err
 			}
@@ -195,7 +196,7 @@ func (d *Data) GetMappedVoxels(versionID dvid.VersionID, e voxels.ExtData) error
 func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 	dvid.Infof("Adding spatial information from label volume %s ...\n", d.DataName())
 
-	versionID, err := server.Repos.VersionFromUUID(uuid)
+	versionID, err := datastore.VersionFromUUID(uuid)
 	if err != nil {
 		dvid.Errorf("Illegal UUID %q with no corresponding version ID!  Aborting.", uuid)
 		return
@@ -227,7 +228,7 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 	minIndexZ := extents.MinIndex.Value(2)
 	maxIndexZ := extents.MaxIndex.Value(2)
 
-	labelsCtx := storage.NewDataContext(labelData, versionID)
+	labelsCtx := datastore.NewVersionedContext(labelData, versionID)
 	for z := minIndexZ; z <= maxIndexZ; z++ {
 		blockLog := dvid.NewTimeLog()
 
@@ -258,7 +259,7 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 	timedLog = dvid.NewTimeLog()
 	sizeCh := make(chan *storage.Chunk, 1000)
 	wg.Add(1)
-	labelmapCtx := storage.NewDataContext(d, versionID)
+	labelmapCtx := datastore.NewVersionedContext(d, versionID)
 	go labels64.ComputeSizes(labelmapCtx, sizeCh, smalldata, wg)
 
 	// Create a number of label-specific surface calculation jobs
@@ -282,7 +283,7 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 		wg.Wait()
 		timedLog.Infof("Finished processing all RLEs for labels '%s'", d.DataName())
 		d.Ready = true
-		if err := server.Repos.SaveRepo(uuid); err != nil {
+		if err := datastore.SaveRepo(uuid); err != nil {
 			dvid.Errorf("Could not save READY state to data '%s', uuid %s: %s", d.DataName(), uuid, err.Error())
 		}
 	}()
@@ -292,7 +293,7 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 	endIndex := labels64.NewLabelSpatialMapIndex(math.MaxUint64, dvid.MaxIndexZYX)
 	err = smalldata.ProcessRange(labelmapCtx, begIndex, endIndex, &storage.ChunkOp{}, func(chunk *storage.Chunk) {
 		// Get label associated with this sparse volume.
-		indexBytes, err := storage.DataContextIndex(chunk.K)
+		indexBytes, err := labelmapCtx.IndexFromKey(chunk.K)
 		if err != nil {
 			dvid.Errorf("Unable to recover label with chunk key %v: %s\n", chunk.K, err.Error())
 			return
@@ -494,7 +495,8 @@ func (d *Data) denormalizeChunk(chunk *storage.Chunk) {
 	op := chunk.Op.(*denormOp)
 
 	// Get the spatial index associated with this chunk.
-	indexBytes, err := storage.DataContextIndex(chunk.K)
+	ctx := datastore.NewVersionedContext(d, op.versionID)
+	indexBytes, err := ctx.IndexFromKey(chunk.K)
 	if err != nil {
 		dvid.Errorf("Bad chunk key %v: %s\n", chunk.K, err.Error())
 		return
@@ -517,7 +519,6 @@ func (d *Data) denormalizeChunk(chunk *storage.Chunk) {
 		dvid.Infof("Database doesn't support Batch ops in %s.denormalizeChunk()", d.DataName())
 		return
 	}
-	ctx := storage.NewDataContext(d, op.versionID)
 	smallBatch := smallBatcher.NewBatch(ctx)
 	defer func() {
 		if err := smallBatch.Commit(); err != nil {

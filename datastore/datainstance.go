@@ -16,6 +16,7 @@ import (
 	"code.google.com/p/go.net/context"
 
 	"github.com/janelia-flyem/dvid/dvid"
+	"github.com/janelia-flyem/dvid/storage"
 )
 
 // ------------------------
@@ -49,6 +50,60 @@ func (r *Response) Write(w io.Writer) error {
 
 // ------------------------
 
+// VersionedContext implements storage.VersionedContext for data instances that
+// have a version DAG.
+type VersionedContext struct {
+	*storage.DataContext
+}
+
+func NewVersionedContext(data dvid.Data, versionID dvid.VersionID) *VersionedContext {
+	return &VersionedContext{storage.NewDataContext(data, versionID)}
+}
+
+func (ctx *VersionedContext) GetIterator() (storage.VersionIterator, error) {
+	uuid, err := UUIDFromVersion(ctx.VersionID())
+	if err != nil {
+		return nil, err
+	}
+	repo, err := RepoFromUUID(uuid)
+	if err != nil {
+		return nil, err
+	}
+	return repo.GetIterator(ctx.VersionID())
+}
+
+// VersionedKeyValue returns the key-value pair corresponding to this key's version
+// given a list of key-value pairs across many versions.  If no suitable key-value
+// pair is found, nil is returned.
+func (ctx *VersionedContext) VersionedKeyValue(values []*storage.KeyValue) (*storage.KeyValue, error) {
+
+	// Set up a map[VersionID]KeyValue
+	versionMap := make(map[dvid.VersionID]*storage.KeyValue, len(values))
+	for _, kv := range values {
+		pos := len(kv.K) - dvid.VersionIDSize
+		vid := dvid.VersionIDFromBytes(kv.K[pos:])
+		versionMap[vid] = kv
+	}
+
+	// Iterate from the current node up the ancestors in the version DAG, checking if
+	// current best is present.
+	it, err := ctx.GetIterator()
+	if err != nil {
+		return nil, fmt.Errorf("Couldn't get versioned data iterator: %s\n", err.Error())
+	}
+	for {
+		if it.Valid() {
+			if kv, found := versionMap[it.VersionID()]; found {
+				return kv, nil
+			}
+		} else {
+			break
+		}
+		it.Next()
+	}
+	return nil, nil
+}
+
 // DataService is an interface for operations on an instance of a supported datatype.
 type DataService interface {
 	dvid.Data
@@ -74,7 +129,7 @@ type Data struct {
 
 	name dvid.DataString
 	id   dvid.InstanceID
-	repo Repo
+	uuid dvid.UUID // Root uuid of repo
 
 	// Compression of serialized data, e.g., the value in a key-value.
 	compression dvid.Compression
@@ -99,7 +154,7 @@ func (d *Data) MarshalJSON() ([]byte, error) {
 		TypeName:    d.TypeName(),
 		TypeURL:     d.TypeURL(),
 		Name:        d.name,
-		RepoUUID:    d.repo.RootUUID(),
+		RepoUUID:    d.uuid,
 		Compression: d.compression.String(),
 		Checksum:    d.checksum.String(),
 		Versioned:   d.versioned,
@@ -115,7 +170,7 @@ func NewDataService(t TypeService, r Repo, id dvid.InstanceID, name dvid.DataStr
 		TypeService: t,
 		name:        name,
 		id:          id,
-		repo:        r,
+		uuid:        r.RootUUID(),
 		compression: compression,
 		checksum:    dvid.DefaultChecksum,
 		versioned:   true,
@@ -134,17 +189,7 @@ func (d *Data) Versioned() bool {
 	return d.versioned
 }
 
-// ---- dvid.VersionedData implementation ----
-
-func (d *Data) GetIterator(versionID dvid.VersionID) (dvid.VersionIterator, error) {
-	return d.repo.GetIterator(versionID)
-}
-
 // -----------
-
-func (d *Data) RepoID() dvid.RepoID {
-	return d.repo.RepoID()
-}
 
 func (d *Data) Compression() dvid.Compression {
 	return d.compression
@@ -225,7 +270,6 @@ func (d *Data) UnknownCommand(request Request) error {
 // --- Handle version-specific data mutexes -----
 
 type nodeID struct {
-	repo     dvid.RepoID
 	instance dvid.InstanceID
 	version  dvid.VersionID
 }
@@ -234,7 +278,7 @@ type nodeID struct {
 func (d *Data) VersionMutex(versionID dvid.VersionID) *sync.Mutex {
 	var mutex sync.Mutex
 	mutex.Lock()
-	id := nodeID{d.RepoID(), d.id, versionID}
+	id := nodeID{d.id, versionID}
 	vmutex, found := versionMutexes[id]
 	if !found {
 		vmutex = new(sync.Mutex)
