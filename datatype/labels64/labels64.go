@@ -29,7 +29,7 @@ import (
 
 const (
 	Version  = "0.1"
-	RepoUrl  = "github.com/janelia-flyem/dvid/datatype/labels64"
+	RepoURL  = "github.com/janelia-flyem/dvid/datatype/labels64"
 	TypeName = "labels64"
 
 	// Don't allow requests that will return more than this amount of data.
@@ -254,7 +254,7 @@ GET <api URL>/node/<UUID>/<data name>/sizerange/<min size>/<optional max size>
 `
 
 var (
-	dtype *Datatype
+	dtype *Type
 )
 
 func init() {
@@ -265,19 +265,82 @@ func init() {
 		},
 	}
 	interpolable := false
-	dtype = &Datatype{voxels.NewDatatype(values, interpolable)}
-	dtype.DatatypeID = datastore.MakeDatatypeID(TypeName, RepoUrl, Version)
-	datastore.Register(dtype)
+	dtype = &Type{voxels.NewType(values, interpolable)}
+	dtype.Type.Name = TypeName
+	dtype.Type.URL = RepoURL
+	dtype.Type.Version = Version
 
 	// See doc for package on why channels are segregated instead of interleaved.
 	// Data types must be registered with the datastore to be used.
 	datastore.Register(dtype)
 
 	// Need to register types that will be used to fulfill interfaces.
-	gob.Register(&Datatype{})
+	gob.Register(&Type{})
 	gob.Register(&Data{})
 	gob.Register(&binary.LittleEndian)
 	gob.Register(&binary.BigEndian)
+}
+
+// --- Labels64 Datatype -----
+
+// Type just uses voxels data type by composition.
+type Type struct {
+	*voxels.Type
+}
+
+// NewData returns a pointer to labels64 data.
+func NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.DataString, c dvid.Config) (*Data, error) {
+	voxelData, err := dtype.Type.NewData(uuid, id, name, c)
+	if err != nil {
+		return nil, err
+	}
+
+	var labelType LabelType = Standard64bit
+	s, found, err := c.GetString("LabelType")
+	if found {
+		switch strings.ToLower(s) {
+		case "raveler":
+			labelType = RavelerLabel
+		case "standard":
+		default:
+			return nil, fmt.Errorf("unknown label type specified '%s'", s)
+		}
+	}
+	dvid.Infof("Creating labels64 '%s' with %s", voxelData.DataName(), labelType)
+	data := &Data{
+		Data:     *voxelData,
+		Labeling: labelType,
+	}
+	return data, nil
+}
+
+// --- TypeService interface ---
+
+func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.DataString, c dvid.Config) (datastore.DataService, error) {
+	return NewData(uuid, id, name, c)
+}
+
+func (dtype *Type) Help() string {
+	return HelpMessage
+}
+
+// -------
+
+// GetByUUID returns a pointer to labels64 data given a version (UUID) and data name.
+func GetByUUID(uuid dvid.UUID, name dvid.DataString) (*Data, error) {
+	repo, err := datastore.RepoFromUUID(uuid)
+	if err != nil {
+		return nil, err
+	}
+	source, err := repo.GetDataByName(name)
+	if err != nil {
+		return nil, err
+	}
+	data, ok := source.(*Data)
+	if !ok {
+		return nil, fmt.Errorf("Instance '%s' is not a labels64 datatype!", name)
+	}
+	return data, nil
 }
 
 // LabelType specifies how the 64-bit label is organized, allowing some bytes to
@@ -317,83 +380,6 @@ func (l *Labels) String() string {
 
 func (l *Labels) Interpolable() bool {
 	return false
-}
-
-// --- Labels64 Datatype -----
-
-// Datatype just uses voxels data type by composition.
-type Datatype struct {
-	*voxels.Datatype
-}
-
-// GetByUUID returns a pointer to labels64 data given a version (UUID) and data name.
-func GetByUUID(uuid dvid.UUID, name dvid.DataString) (*Data, error) {
-	repo, err := datastore.RepoFromUUID(uuid)
-	if err != nil {
-		return nil, err
-	}
-	source, err := repo.GetDataByName(name)
-	if err != nil {
-		return nil, err
-	}
-	data, ok := source.(*Data)
-	if !ok {
-		return nil, fmt.Errorf("Instance '%s' is not a labels64 datatype!", name)
-	}
-	return data, nil
-}
-
-// GetByRepoID returns a pointer to labels64 data given a local repo ID and data name.
-func GetByRepoID(id dvid.RepoID, name dvid.DataString) (*Data, error) {
-	repo, err := datastore.RepoFromID(id)
-	if err != nil {
-		return nil, err
-	}
-	source, err := repo.GetDataByName(name)
-	if err != nil {
-		return nil, err
-	}
-	data, ok := source.(*Data)
-	if !ok {
-		return nil, fmt.Errorf("Instance '%s' is not a labels64 datatype!", name)
-	}
-	return data, nil
-}
-
-// NewData returns a pointer to labels64 data.
-func NewData(r datastore.Repo, id dvid.InstanceID, name dvid.DataString, c dvid.Config) (*Data, error) {
-	voxelData, err := dtype.Datatype.NewData(r, id, name, c)
-	if err != nil {
-		return nil, err
-	}
-
-	var labelType LabelType = Standard64bit
-	s, found, err := c.GetString("LabelType")
-	if found {
-		switch strings.ToLower(s) {
-		case "raveler":
-			labelType = RavelerLabel
-		case "standard":
-		default:
-			return nil, fmt.Errorf("unknown label type specified '%s'", s)
-		}
-	}
-	dvid.Infof("Creating labels64 '%s' with %s", voxelData.DataName(), labelType)
-	data := &Data{
-		Data:     *voxelData,
-		Labeling: labelType,
-	}
-	return data, nil
-}
-
-// --- TypeService interface ---
-
-func (dtype *Datatype) NewDataService(r datastore.Repo, id dvid.InstanceID, name dvid.DataString, c dvid.Config) (datastore.DataService, error) {
-	return NewData(r, id, name, c)
-}
-
-func (dtype *Datatype) Help() string {
-	return HelpMessage
 }
 
 // Data of labels64 type just uses voxels.Data.

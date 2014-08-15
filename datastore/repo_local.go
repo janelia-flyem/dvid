@@ -263,11 +263,11 @@ func (m *repoManager) loadMetadata() error {
 		}
 	}
 	dvid.Infof("Loaded %d repositories from metadata store.", len(m.repos))
-	return m.verifyCompiledDatatypes()
+	return m.verifyCompiledTypes()
 }
 
 // TODO: Verify that the datatypes used by the repo data have been compiled into this server.
-func (m *repoManager) verifyCompiledDatatypes() error {
+func (m *repoManager) verifyCompiledTypes() error {
 	// Iterate over all data in all repo and check if present in Compiled
 	return nil
 }
@@ -454,10 +454,10 @@ func (m *repoManager) SaveRepoByVersionID(versionID dvid.VersionID) error {
 }
 
 // Datatypes returns a list of TypeService needed for this set of repositories
-func (m *repoManager) Datatypes() (map[URLString]TypeService, error) {
-	combinedMap := make(map[URLString]TypeService)
+func (m *repoManager) Types() (map[dvid.URLString]TypeService, error) {
+	combinedMap := make(map[dvid.URLString]TypeService)
 	for _, repo := range m.repos {
-		repoMap, err := repo.Datatypes()
+		repoMap, err := repo.Types()
 		if err != nil {
 			return combinedMap, err
 		}
@@ -601,7 +601,6 @@ func (r *repoT) AddToLog(hx string) error {
 // ---- Repo interface implementation -----------
 
 func (r *repoT) GobDecode(b []byte) error {
-	fmt.Printf("In repo.GobDecode()\n")
 	buf := bytes.NewBuffer(b)
 	dec := gob.NewDecoder(buf)
 	if err := dec.Decode(&(r.repoID)); err != nil {
@@ -738,7 +737,7 @@ func (r *repoT) NewData(t TypeService, name dvid.DataString, c dvid.Config) (Dat
 	if err != nil {
 		return nil, err
 	}
-	dataservice, err := t.NewDataService(r, instanceID, name, c)
+	dataservice, err := t.NewDataService(r.RootUUID(), instanceID, name, c)
 	if err != nil {
 		return nil, err
 	}
@@ -813,11 +812,11 @@ func (r *repoT) Lock(uuid dvid.UUID) error {
 	return r.save()
 }
 
-func (r *repoT) Datatypes() (map[URLString]TypeService, error) {
-	datatypes := make(map[URLString]TypeService)
+func (r *repoT) Types() (map[dvid.URLString]TypeService, error) {
+	datatypes := make(map[dvid.URLString]TypeService)
 	for _, dataservice := range r.data {
-		t := dataservice.DataType()
-		datatypes[t.TypeURL()] = t
+		t := dataservice.GetType()
+		datatypes[t.GetType().URL] = t
 	}
 	return datatypes, nil
 }
@@ -993,6 +992,13 @@ type nodeT struct {
 }
 
 func (node *nodeT) GobDecode(b []byte) error {
+	// Set zero values since gob doesn't transmit zero values down wire.
+	node = &nodeT{
+		log:      []string{},
+		avail:    make(map[dvid.DataString]DataAvail),
+		parents:  []dvid.VersionID{},
+		children: []dvid.VersionID{},
+	}
 	buf := bytes.NewBuffer(b)
 	dec := gob.NewDecoder(buf)
 	if err := dec.Decode(&(node.note)); err != nil {

@@ -30,11 +30,10 @@ func init() {
 		},
 	}
 	interpolable := true
-	rgba := NewDatatype(values, interpolable)
-	rgba.DatatypeID = &datastore.DatatypeID{
-		Name:    "rgba8",
-		Url:     "github.com/janelia-flyem/dvid/datatype/voxels/rgba8.go",
-		Version: "0.6",
-	}
+	rgba := NewType(values, interpolable)
+	rgba.Type.Name = "rgba8"
+	rgba.Type.URL = "github.com/janelia-flyem/dvid/datatype/voxels/rgba8.go"
+	rgba.Type.Version = "0.6"
+
 	datastore.Register(rgba)
 }

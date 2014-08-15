@@ -25,7 +25,7 @@ import (
 
 const (
 	Version  = "0.1"
-	RepoUrl  = "github.com/janelia-flyem/dvid/datatype/labelgraph"
+	RepoURL  = "github.com/janelia-flyem/dvid/datatype/labelgraph"
 	TypeName = "labelgraph"
 )
 
@@ -292,24 +292,13 @@ TODO:
 `
 
 func init() {
-	kvtype := NewDatatype()
-	kvtype.DatatypeID = &datastore.DatatypeID{
-		Name:    TypeName,
-		Url:     RepoUrl,
-		Version: Version,
-	}
-	datastore.Register(kvtype)
+	datastore.Register(NewType())
 
 	// Need to register types that will be used to fulfill interfaces.
-	gob.Register(&Datatype{})
+	gob.Register(&Type{})
 	gob.Register(&Data{})
 	gob.Register(&binary.LittleEndian)
 	gob.Register(&binary.BigEndian)
-}
-
-// Datatype embeds the datastore's Datatype to create a unique type for keyvalue functions.
-type Datatype struct {
-	datastore.Datatype
 }
 
 // labelVertex stores a subset of information contained in GraphVertex for interfacing with client
@@ -330,18 +319,6 @@ type LabelGraph struct {
 	Transactions []transactionItem // transaction ids associated with vertices
 	Vertices     []labelVertex
 	Edges        []labelEdge
-}
-
-// NewDatatype returns a pointer to a new keyvalue Datatype with default values set.
-func NewDatatype() (dtype *Datatype) {
-	dtype = new(Datatype)
-	dtype.Requirements = &storage.Requirements{
-		BulkIniter: false,
-		BulkWriter: false,
-		Batcher:    true,
-		GraphDB:    true,
-	}
-	return
 }
 
 // --- structures for handling concurrency by associating transaction ids for given vertices ---
@@ -536,11 +513,33 @@ func (t *transactionLog) createTransactionGroupBinary(data []byte, readonly bool
 	return transaction_group, start, err
 }
 
+// Type embeds the datastore's Type to create a unique type for labelgraph functions.
+type Type struct {
+	datastore.Type
+}
+
+// NewDatatype returns a pointer to a new keyvalue Datatype with default values set.
+func NewType() *Type {
+	dtype := new(Type)
+	dtype.Type = datastore.Type{
+		Name:    TypeName,
+		URL:     RepoURL,
+		Version: Version,
+		Requirements: &storage.Requirements{
+			BulkIniter: false,
+			BulkWriter: false,
+			Batcher:    true,
+			GraphDB:    true,
+		},
+	}
+	return dtype
+}
+
 // --- TypeService interface ---
 
 // NewDataService returns a pointer to new keyvalue data with default values.
-func (dtype *Datatype) NewDataService(r datastore.Repo, id dvid.InstanceID, name dvid.DataString, c dvid.Config) (datastore.DataService, error) {
-	basedata, err := datastore.NewDataService(dtype, r, id, name, c)
+func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.DataString, c dvid.Config) (datastore.DataService, error) {
+	basedata, err := datastore.NewDataService(dtype, uuid, id, name, c)
 	if err != nil {
 		return nil, err
 	}
@@ -548,7 +547,7 @@ func (dtype *Datatype) NewDataService(r datastore.Repo, id dvid.InstanceID, name
 }
 
 // Help returns help mesage for datatype
-func (dtype *Datatype) Help() string {
+func (dtype *Type) Help() string {
 	return fmt.Sprintf(HelpMessage)
 }
 
@@ -559,6 +558,11 @@ type Data struct {
 	transaction_log *transactionLog
 	busy            bool
 	datawide_mutex  sync.Mutex
+}
+
+// Help returns help mesage for datatype
+func (d *Data) Help() string {
+	return fmt.Sprintf(HelpMessage)
 }
 
 // initializeLog ensures that the transaction_log has been created

@@ -32,7 +32,7 @@ import (
 
 const (
 	Version  = "0.1"
-	RepoUrl  = "github.com/janelia-flyem/dvid/datatype/labelmap"
+	RepoURL  = "github.com/janelia-flyem/dvid/datatype/labelmap"
 	TypeName = "labelmap"
 )
 
@@ -271,43 +271,40 @@ GET  <api URL>/node/<UUID>/<data name>/mappings/<dims>/<size>/<offset>
 `
 
 func init() {
-	labelmap := NewDatatype()
-	labelmap.DatatypeID = &datastore.DatatypeID{
-		Name:    TypeName,
-		Url:     RepoUrl,
-		Version: Version,
-	}
-	datastore.Register(labelmap)
+	datastore.Register(NewType())
 
 	// Need to register types that will be used to fulfill interfaces.
-	gob.Register(&Datatype{})
+	gob.Register(&Type{})
 	gob.Register(&Data{})
 	gob.Register(&binary.LittleEndian)
 	gob.Register(&binary.BigEndian)
 	gob.Register(&LabelsRef{})
 }
 
-// Datatype embeds the datastore's Datatype to create a unique type for labelmap functions.
-type Datatype struct {
-	datastore.Datatype
+// Type embeds the datastore's Type to create a unique type for labelmap functions.
+type Type struct {
+	datastore.Type
 }
 
 // NewDatatype returns a pointer to a new labelmap Datatype with default values set.
-func NewDatatype() (dtype *Datatype) {
-	dtype = new(Datatype)
-	dtype.Requirements = &storage.Requirements{
-		BulkIniter: false,
-		BulkWriter: false,
-		Batcher:    true,
+func NewType() *Type {
+	dtype := new(Type)
+	dtype.Type = datastore.Type{
+		Name:    TypeName,
+		URL:     RepoURL,
+		Version: Version,
+		Requirements: &storage.Requirements{
+			Batcher: true,
+		},
 	}
-	return
+	return dtype
 }
 
 // --- TypeService interface ---
 
 // NewDataService returns a pointer to new labelmap data with default values.
-func (dtype *Datatype) NewDataService(r datastore.Repo, id dvid.InstanceID, name dvid.DataString, c dvid.Config) (datastore.DataService, error) {
-	basedata, err := datastore.NewDataService(dtype, r, id, name, c)
+func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.DataString, c dvid.Config) (datastore.DataService, error) {
+	basedata, err := datastore.NewDataService(dtype, uuid, id, name, c)
 	if err != nil {
 		return nil, err
 	}
@@ -322,7 +319,7 @@ func (dtype *Datatype) NewDataService(r datastore.Repo, id dvid.InstanceID, name
 	}
 
 	// Make sure there is a valid labels64 instance with the given Labels name
-	labelsRef, err := NewLabelsRef(dvid.DataString(labelname), r.RepoID())
+	labelsRef, err := NewLabelsRef(uuid, dvid.DataString(labelname))
 	if err != nil {
 		return nil, err
 	}
@@ -330,88 +327,55 @@ func (dtype *Datatype) NewDataService(r datastore.Repo, id dvid.InstanceID, name
 	return &Data{Data: basedata, Labels: labelsRef}, nil
 }
 
-func (dtype *Datatype) Help() string {
+func (dtype *Type) Help() string {
 	return fmt.Sprintf(HelpMessage)
 }
 
 // LabelsRef is a reference to an existing labels64 data
 type LabelsRef struct {
-	name   dvid.DataString
-	repoID dvid.RepoID
-	ptr    *labels64.Data
+	uuid dvid.UUID
+	name dvid.DataString
+	ptr  *labels64.Data
 }
 
-func NewLabelsRef(name dvid.DataString, repoID dvid.RepoID) (LabelsRef, error) {
-	ptr, err := labels64.GetByRepoID(repoID, name)
+func NewLabelsRef(uuid dvid.UUID, name dvid.DataString) (LabelsRef, error) {
+	ptr, err := labels64.GetByUUID(uuid, name)
 	if err != nil {
 		return LabelsRef{}, err
 	}
-	return LabelsRef{name, repoID, ptr}, nil
+	return LabelsRef{uuid, name, ptr}, nil
 }
 
-type labelsExport struct {
-	Name   dvid.DataString
-	RepoID dvid.RepoID
+type labelsRefExport struct {
+	UUID dvid.UUID
+	Name dvid.DataString
 }
 
 // MarshalJSON implements the json.Marshaler interface.
 func (ref LabelsRef) MarshalJSON() ([]byte, error) {
-	v := labelsExport{ref.name, ref.repoID}
-	return json.Marshal(v)
+	return json.Marshal(labelsRefExport{ref.uuid, ref.name})
 }
 
 // UnmarshalJSON implements the json.Unmarshaler interface.
 func (ref *LabelsRef) UnmarshalJSON(b []byte) error {
-	var labels labelsExport
+	var labels labelsRefExport
 	if err := json.Unmarshal(b, &labels); err != nil {
 		return err
 	}
+	ref.uuid = labels.UUID
 	ref.name = labels.Name
-	ref.repoID = labels.RepoID
 	return nil
 }
 
 // MarshalBinary fulfills the encoding.BinaryMarshaler interface.
+// Since LabelsRef are considered metadata, we don't optimize but reuse JSON.
 func (ref LabelsRef) MarshalBinary() ([]byte, error) {
-	var buf bytes.Buffer
-	if err := binary.Write(&buf, binary.LittleEndian, uint16(len(ref.name))); err != nil {
-		return nil, err
-	}
-	if _, err := buf.Write([]byte(ref.name)); err != nil {
-		return nil, err
-	}
-	if err := binary.Write(&buf, binary.LittleEndian, ref.repoID); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
+	return ref.MarshalJSON()
 }
 
 // UnmarshalBinary fulfills the encoding.BinaryUnmarshaler interface.
 func (ref *LabelsRef) UnmarshalBinary(data []byte) error {
-	buf := bytes.NewBuffer(data)
-	var length uint16
-	if err := binary.Read(buf, binary.LittleEndian, &length); err != nil {
-		return err
-	}
-	name := make([]byte, length)
-	if n, err := buf.Read(name); err != nil || n != int(length) {
-		return fmt.Errorf("Error reading label reference name.")
-	}
-	var repoID dvid.RepoID
-	if err := binary.Read(buf, binary.LittleEndian, &repoID); err != nil {
-		return err
-	}
-	// See if we can associate a repo pointer, but if not, simply exit and defer
-	// to GetData() time.
-	labelsName := dvid.DataString(name)
-	ptr, err := labels64.GetByRepoID(repoID, labelsName)
-	if err != nil {
-		ptr = nil
-	}
-	ref.name = labelsName
-	ref.repoID = repoID
-	ref.ptr = ptr
-	return nil
+	return ref.UnmarshalJSON(data)
 }
 
 // GetData returns a pointer to the referenced labels and stores the pointer
@@ -420,7 +384,7 @@ func (ref *LabelsRef) GetData() (*labels64.Data, error) {
 	if ref.ptr != nil {
 		return ref.ptr, nil
 	}
-	ptr, err := labels64.GetByRepoID(ref.repoID, ref.name)
+	ptr, err := labels64.GetByUUID(ref.uuid, ref.name)
 	if err != nil {
 		return nil, err
 	}
@@ -453,6 +417,10 @@ func (d *Data) JSONString() (jsonStr string, err error) {
 }
 
 // --- DataService interface ---
+
+func (d *Data) Help() string {
+	return fmt.Sprintf(HelpMessage)
+}
 
 // DoRPC acts as a switchboard for RPC commands.
 func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error {

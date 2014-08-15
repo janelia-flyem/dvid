@@ -27,7 +27,7 @@ import (
 
 const (
 	Version = "0.8"
-	RepoUrl = "github.com/janelia-flyem/dvid/datatype/voxels"
+	RepoURL = "github.com/janelia-flyem/dvid/datatype/voxels"
 
 	// Don't allow requests that will return more than this amount of data.
 	MaxDataRequest = dvid.Giga
@@ -240,10 +240,70 @@ var (
 
 func init() {
 	// Need to register types that will be used to fulfill interfaces.
-	gob.Register(&Datatype{})
+	gob.Register(&Type{})
 	gob.Register(&Data{})
 	gob.Register(&binary.LittleEndian)
 	gob.Register(&binary.BigEndian)
+}
+
+// Type embeds the datastore's Type to create a unique type with voxel functions.
+// Refinements of general voxel types can be implemented by embedding this type,
+// choosing appropriate # of values and bytes/value, overriding functions as needed,
+// and calling datastore.Register().
+// Note that these fields are invariant for all instances of this type.  Fields
+// that can change depending on the type of data (e.g., resolution) should be
+// in the Data type.
+type Type struct {
+	datastore.Type
+
+	// values describes the data type/label for each value within a voxel.
+	values dvid.DataValues
+
+	// can these values be interpolated?
+	interpolable bool
+}
+
+// NewType returns a pointer to a new voxels Type with default values set.
+func NewType(values dvid.DataValues, interpolable bool) *Type {
+	dtype := &Type{
+		values:       values,
+		interpolable: interpolable,
+	}
+	dtype.Type = datastore.Type{
+		Requirements: &storage.Requirements{
+			Batcher: true,
+		},
+	}
+	return dtype
+}
+
+// NewData returns a pointer to a new Voxels with default values.
+func (dtype *Type) NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.DataString, c dvid.Config) (*Data, error) {
+	basedata, err := datastore.NewDataService(dtype, uuid, id, name, c)
+	if err != nil {
+		return nil, err
+	}
+	props := new(Properties)
+	props.SetDefault(dtype.values, dtype.interpolable)
+	if err := props.SetByConfig(c); err != nil {
+		return nil, err
+	}
+	data := &Data{
+		Data:       *basedata,
+		Properties: *props,
+	}
+	return data, nil
+}
+
+// --- TypeService interface ---
+
+// NewDataService returns a pointer to a new Voxels with default values.
+func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.DataString, c dvid.Config) (datastore.DataService, error) {
+	return dtype.NewData(uuid, id, name, c)
+}
+
+func (dtype *Type) Help() string {
+	return fmt.Sprintf(HelpMessage, DefaultBlockSize)
 }
 
 // Operation holds Voxel-specific data for processing chunks.
@@ -1329,66 +1389,6 @@ func (v *Voxels) GetImage2d() (*dvid.Image, error) {
 	return ret, nil
 }
 
-// Datatype embeds the datastore's Datatype to create a unique type
-// with voxel functions.  Refinements of general voxel types can be implemented
-// by embedding this type, choosing appropriate # of values and bytes/value,
-// overriding functions as needed, and calling datastore.Register().
-// Note that these fields are invariant for all instances of this type.  Fields
-// that can change depending on the type of data (e.g., resolution) should be
-// in the Data type.
-type Datatype struct {
-	datastore.Datatype
-
-	// values describes the data type/label for each value within a voxel.
-	values dvid.DataValues
-
-	// can these values be interpolated?
-	interpolable bool
-}
-
-// NewDatatype returns a pointer to a new voxels Datatype with default values set.
-func NewDatatype(values dvid.DataValues, interpolable bool) (dtype *Datatype) {
-	dtype = new(Datatype)
-	dtype.values = values
-	dtype.interpolable = interpolable
-
-	dtype.Requirements = &storage.Requirements{
-		BulkIniter: false,
-		BulkWriter: false,
-		Batcher:    true,
-	}
-	return
-}
-
-// NewData returns a pointer to a new Voxels with default values.
-func (dtype *Datatype) NewData(r datastore.Repo, id dvid.InstanceID, name dvid.DataString, c dvid.Config) (*Data, error) {
-	basedata, err := datastore.NewDataService(dtype, r, id, name, c)
-	if err != nil {
-		return nil, err
-	}
-	props := new(Properties)
-	props.SetDefault(dtype.values, dtype.interpolable)
-	if err := props.SetByConfig(c); err != nil {
-		return nil, err
-	}
-	data := &Data{
-		Data:       *basedata,
-		Properties: *props,
-	}
-	return data, nil
-}
-
-// --- TypeService interface ---
-
-// NewDataService returns a pointer to a new Voxels with default values.
-func (dtype *Datatype) NewDataService(r datastore.Repo, id dvid.InstanceID, name dvid.DataString, c dvid.Config) (datastore.DataService, error) {
-	return dtype.NewData(r, id, name, c)
-}
-
-func (dtype *Datatype) Help() string {
-	return fmt.Sprintf(HelpMessage, DefaultBlockSize)
-}
-
 // Extents holds the extents of a volume in both absolute voxel coordinates
 // and lexicographically sorted chunk indices.
 type Extents struct {
@@ -1896,6 +1896,9 @@ func (d *Data) JSONString() (jsonStr string, err error) {
 
 // --- DataService interface ---
 
+func (d *Data) Help() string {
+	return fmt.Sprintf(HelpMessage, DefaultBlockSize)
+}
 func (d *Data) ModifyConfig(config dvid.Config) error {
 	props := &(d.Properties)
 	if err := props.SetByConfig(config); err != nil {

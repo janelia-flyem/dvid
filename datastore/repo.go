@@ -51,7 +51,7 @@ type RepoManager interface {
 	SaveRepo(dvid.UUID) error
 	SaveRepoByVersionID(dvid.VersionID) error
 
-	Datatypes() (map[URLString]TypeService, error)
+	Types() (map[dvid.URLString]TypeService, error)
 
 	// Support serialization to Gob and user-friendly view in JSON
 	gob.GobDecoder
@@ -86,7 +86,7 @@ type Repo interface {
 
 	RootUUID() dvid.UUID
 
-	Datatypes() (map[URLString]TypeService, error)
+	Types() (map[dvid.URLString]TypeService, error)
 
 	// GetDataByName returns a DataService if the name is present or nil otherwise.
 	// Names can  be UTF8 except for the hyphen, which is a way of passing additional

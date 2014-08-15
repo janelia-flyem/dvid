@@ -22,7 +22,7 @@ import (
 
 const (
 	Version  = "0.1"
-	RepoUrl  = "github.com/janelia-flyem/dvid/datatype/keyvalue"
+	RepoURL  = "github.com/janelia-flyem/dvid/datatype/keyvalue"
 	TypeName = "keyvalue"
 )
 
@@ -111,33 +111,30 @@ DEL  <api URL>/node/<UUID>/<data name>/<key>  (TO DO)
 `
 
 func init() {
-	t := NewDatatype()
-	t.DatatypeID = &datastore.DatatypeID{
-		Name:    TypeName,
-		Url:     RepoUrl,
-		Version: Version,
-	}
-	datastore.Register(t)
+	datastore.Register(NewType())
 
 	// Need to register types that will be used to fulfill interfaces.
-	gob.Register(&Datatype{})
+	gob.Register(&Type{})
 	gob.Register(&Data{})
 	gob.Register(&binary.LittleEndian)
 	gob.Register(&binary.BigEndian)
 }
 
-// Datatype embeds the datastore's Datatype to create a unique type for keyvalue functions.
-type Datatype struct {
-	datastore.Datatype
+// Type embeds the datastore's Type to create a unique type for keyvalue functions.
+type Type struct {
+	datastore.Type
 }
 
-// NewDatatype returns a pointer to a new keyvalue Datatype with default values set.
-func NewDatatype() *Datatype {
-	dtype := new(Datatype)
-	dtype.Requirements = &storage.Requirements{
-		BulkIniter: false,
-		BulkWriter: false,
-		Batcher:    true,
+// NewType returns a pointer to a new keyvalue Type with default values set.
+func NewType() *Type {
+	dtype := new(Type)
+	dtype.Type = datastore.Type{
+		Name:    TypeName,
+		URL:     RepoURL,
+		Version: Version,
+		Requirements: &storage.Requirements{
+			Batcher: true,
+		},
 	}
 	return dtype
 }
@@ -145,15 +142,15 @@ func NewDatatype() *Datatype {
 // --- TypeService interface ---
 
 // NewData returns a pointer to new keyvalue data with default values.
-func (dtype *Datatype) NewDataService(r datastore.Repo, id dvid.InstanceID, name dvid.DataString, c dvid.Config) (datastore.DataService, error) {
-	basedata, err := datastore.NewDataService(dtype, r, id, name, c)
+func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.DataString, c dvid.Config) (datastore.DataService, error) {
+	basedata, err := datastore.NewDataService(dtype, uuid, id, name, c)
 	if err != nil {
 		return nil, err
 	}
-	return &Data{Data: basedata}, nil
+	return &Data{basedata}, nil
 }
 
-func (dtype *Datatype) Help() string {
+func (dtype *Type) Help() string {
 	return fmt.Sprintf(HelpMessage)
 }
 
@@ -231,6 +228,10 @@ func (d *Data) JSONString() (jsonStr string, err error) {
 }
 
 // --- DataService interface ---
+
+func (d *Data) Help() string {
+	return fmt.Sprintf(HelpMessage)
+}
 
 // DoRPC acts as a switchboard for RPC commands.
 func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error {

@@ -35,7 +35,7 @@ import (
 
 const (
 	Version  = "0.1"
-	RepoUrl  = "github.com/janelia-flyem/dvid/datatype/multichan16"
+	RepoURL  = "github.com/janelia-flyem/dvid/datatype/multichan16"
 	TypeName = "multichan16"
 )
 
@@ -138,8 +138,7 @@ var (
 
 func init() {
 	interpolable := true
-	dtype := &Datatype{voxels.NewDatatype(nil, interpolable)}
-	dtype.DatatypeID = datastore.MakeDatatypeID(TypeName, RepoUrl, Version)
+	dtype := NewType(compositeValues, interpolable)
 
 	// See doc for package on why channels are segregated instead of interleaved.
 	// Data types must be registered with the datastore to be used.
@@ -147,8 +146,39 @@ func init() {
 	datastore.Register(dtype)
 
 	// Need to register types that will be used to fulfill interfaces.
-	gob.Register(&Datatype{})
+	gob.Register(&Type{})
 	gob.Register(&Data{})
+}
+
+// Type just uses voxels data type by composition.
+type Type struct {
+	*voxels.Type
+}
+
+// NewType returns a pointer to a new voxels Type with default values set.
+func NewType(values dvid.DataValues, interpolable bool) *Type {
+	basetype := voxels.NewType(compositeValues, interpolable)
+	basetype.Name = TypeName
+	basetype.URL = RepoURL
+	basetype.Version = Version
+	return &Type{basetype}
+}
+
+// --- TypeService interface ---
+
+// NewDataService returns a pointer to a new multichan16 with default values.
+func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.DataString, c dvid.Config) (datastore.DataService, error) {
+	voxelData, err := dtype.Type.NewDataService(uuid, id, name, c)
+	if err != nil {
+		return nil, err
+	}
+	basedata := voxelData.(*voxels.Data)
+	basedata.Properties.Values = nil
+	return &Data{Data: basedata}, nil
+}
+
+func (dtype *Type) Help() string {
+	return HelpMessage
 }
 
 // -------  ExtData interface implementation -------------
@@ -198,34 +228,9 @@ func (c *Channel) IndexIterator(chunkSize dvid.Point) (dvid.IndexIterator, error
 	return dvid.NewIndexCZYXIterator(c.channelNum, begBlock, endBlock), nil
 }
 
-// Datatype just uses voxels data type by composition.
-type Datatype struct {
-	*voxels.Datatype
-}
-
-// --- TypeService interface ---
-
-// NewDataService returns a pointer to a new multichan16 with default values.
-func (dtype *Datatype) NewDataService(r datastore.Repo, id dvid.InstanceID, name dvid.DataString, c dvid.Config) (datastore.DataService, error) {
-	voxelData, err := dtype.Datatype.NewDataService(r, id, name, c)
-	if err != nil {
-		return nil, err
-	}
-	basedata := voxelData.(*voxels.Data)
-	basedata.Properties.Values = nil
-	service := &Data{
-		Data: *basedata,
-	}
-	return service, nil
-}
-
-func (dtype *Datatype) Help() string {
-	return HelpMessage
-}
-
 // Data of multichan16 type embeds voxels and extends it with channels.
 type Data struct {
-	voxels.Data
+	*voxels.Data
 
 	// Number of channels for this data.  The names are referenced by
 	// adding a number onto the data name, e.g., mydata1, mydata2, etc.

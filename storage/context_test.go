@@ -32,6 +32,18 @@ func (d *testData) Versioned() bool {
 	return false
 }
 
+func (d *testData) TypeName() dvid.TypeString {
+	return "testType"
+}
+
+func (d *testData) TypeURL() dvid.URLString {
+	return "foo.baz.com/go/testData"
+}
+
+func (d *testData) TypeVersion() string {
+	return "1.0"
+}
+
 func GetTestDataContext(uuid dvid.UUID, name string, instanceID dvid.InstanceID) *DataContext {
 	versionID, found := testUUIDToVersion[uuid]
 	if !found {

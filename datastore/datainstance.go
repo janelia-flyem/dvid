@@ -5,6 +5,8 @@
 package datastore
 
 import (
+	"bytes"
+	"encoding/gob"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -18,6 +20,10 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
 )
+
+func init() {
+	gob.Register(&Data{})
+}
 
 // ------------------------
 // TODO -- Deprecate RPC commands to datatypes.  All commands should be via HTTP.
@@ -107,9 +113,8 @@ func (ctx *VersionedContext) VersionedKeyValue(values []*storage.KeyValue) (*sto
 // DataService is an interface for operations on an instance of a supported datatype.
 type DataService interface {
 	dvid.Data
-	TypeService
 
-	DataType() TypeService
+	GetType() TypeService
 
 	// ModifyConfig modifies a configuration in a type-specific way.
 	ModifyConfig(config dvid.Config) error
@@ -120,12 +125,16 @@ type DataService interface {
 	// ServeHTTP handles HTTP requests in the context of a particular version of a Repo
 	// for this instance of a datatype.
 	ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request)
+
+	Help() string
 }
 
 // Data is the base struct of repo-specific data instances.  It should be embedded
 // in a datatype's DataService implementation and handle datastore-wide key partitioning.
 type Data struct {
-	TypeService
+	typename    dvid.TypeString
+	typeurl     dvid.URLString
+	typeversion string
 
 	name dvid.DataString
 	id   dvid.InstanceID
@@ -144,15 +153,17 @@ type Data struct {
 func (d *Data) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		TypeName    dvid.TypeString
-		TypeURL     URLString
+		TypeURL     dvid.URLString
+		TypeVersion string
 		Name        dvid.DataString
 		RepoUUID    dvid.UUID
 		Compression string
 		Checksum    string
 		Versioned   bool
 	}{
-		TypeName:    d.TypeName(),
-		TypeURL:     d.TypeURL(),
+		TypeName:    d.typename,
+		TypeURL:     d.typeurl,
+		TypeVersion: d.typeversion,
 		Name:        d.name,
 		RepoUUID:    d.uuid,
 		Compression: d.compression.String(),
@@ -162,15 +173,19 @@ func (d *Data) MarshalJSON() ([]byte, error) {
 }
 
 // NewDataService returns a new Data instance that fulfills the DataService interface.
+// The UUID passed in corresponds to the root UUID of the repo that should hold the data.
 // This returned Data struct is usually embedded by datatype-specific data instances.
 // By default, LZ4 and the default checksum is used.
-func NewDataService(t TypeService, r Repo, id dvid.InstanceID, name dvid.DataString, c dvid.Config) (*Data, error) {
+func NewDataService(t TypeService, uuid dvid.UUID, id dvid.InstanceID, name dvid.DataString, c dvid.Config) (*Data, error) {
 	compression, _ := dvid.NewCompression(dvid.LZ4, dvid.DefaultCompression)
+	dtype := t.GetType()
 	data := &Data{
-		TypeService: t,
+		typename:    dtype.Name,
+		typeurl:     dtype.URL,
+		typeversion: dtype.Version,
 		name:        name,
 		id:          id,
-		uuid:        r.RootUUID(),
+		uuid:        uuid,
 		compression: compression,
 		checksum:    dvid.DefaultChecksum,
 		versioned:   true,
@@ -185,8 +200,78 @@ func (d *Data) DataName() dvid.DataString { return d.name }
 
 func (d *Data) InstanceID() dvid.InstanceID { return d.id }
 
-func (d *Data) Versioned() bool {
-	return d.versioned
+func (d *Data) TypeName() dvid.TypeString { return d.typename }
+
+func (d *Data) TypeURL() dvid.URLString { return d.typeurl }
+
+func (d *Data) TypeVersion() string { return d.typeversion }
+
+func (d *Data) Versioned() bool { return d.versioned }
+
+func (d *Data) GobDecode(b []byte) error {
+	buf := bytes.NewBuffer(b)
+	dec := gob.NewDecoder(buf)
+	if err := dec.Decode(&(d.typename)); err != nil {
+		return err
+	}
+	if err := dec.Decode(&(d.typeurl)); err != nil {
+		return err
+	}
+	if err := dec.Decode(&(d.typeversion)); err != nil {
+		return err
+	}
+	if err := dec.Decode(&(d.name)); err != nil {
+		return err
+	}
+	if err := dec.Decode(&(d.id)); err != nil {
+		return err
+	}
+	if err := dec.Decode(&(d.uuid)); err != nil {
+		return err
+	}
+	if err := dec.Decode(&(d.compression)); err != nil {
+		return err
+	}
+	if err := dec.Decode(&(d.checksum)); err != nil {
+		return err
+	}
+	if err := dec.Decode(&(d.versioned)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (d *Data) GobEncode() ([]byte, error) {
+	var buf bytes.Buffer
+	enc := gob.NewEncoder(&buf)
+	if err := enc.Encode(d.typename); err != nil {
+		return nil, err
+	}
+	if err := enc.Encode(d.typeurl); err != nil {
+		return nil, err
+	}
+	if err := enc.Encode(d.typeversion); err != nil {
+		return nil, err
+	}
+	if err := enc.Encode(d.name); err != nil {
+		return nil, err
+	}
+	if err := enc.Encode(d.id); err != nil {
+		return nil, err
+	}
+	if err := enc.Encode(d.uuid); err != nil {
+		return nil, err
+	}
+	if err := enc.Encode(d.compression); err != nil {
+		return nil, err
+	}
+	if err := enc.Encode(d.checksum); err != nil {
+		return nil, err
+	}
+	if err := enc.Encode(d.versioned); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 // -----------
@@ -201,8 +286,12 @@ func (d *Data) Checksum() dvid.Checksum {
 
 // --- DataService implementation -----
 
-func (d *Data) DataType() TypeService {
-	return d.TypeService
+func (d *Data) GetType() TypeService {
+	typeservice, err := TypeServiceByURL(d.typeurl)
+	if err != nil {
+		dvid.Errorf("Data %q: %s\n", d.name, err.Error())
+	}
+	return typeservice
 }
 
 func (d *Data) ModifyConfig(config dvid.Config) error {

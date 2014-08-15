@@ -32,7 +32,7 @@ import (
 
 const (
 	Version = "0.1"
-	RepoUrl = "github.com/janelia-flyem/dvid/datatype/multiscale2d"
+	RepoURL = "github.com/janelia-flyem/dvid/datatype/multiscale2d"
 )
 
 const HelpMessage = `
@@ -184,18 +184,113 @@ GET  <api URL>/node/<UUID>/<data name>/isotropic/<dims>/<size>/<offset>[/<format
 `
 
 func init() {
-	multiscale2d := NewDatatype()
-	multiscale2d.DatatypeID = &datastore.DatatypeID{
-		Name:    "multiscale2d",
-		Url:     "github.com/janelia-flyem/dvid/datatype/multiscale2d",
-		Version: "0.1",
-	}
-	datastore.Register(multiscale2d)
+	datastore.Register(NewType())
 
 	// Need to register types that will be used to fulfill interfaces.
-	gob.Register(&Datatype{})
+	gob.Register(&Type{})
 	gob.Register(&Data{})
 	gob.Register(&IndexTile{})
+}
+
+// Type embeds the datastore's Type to create a unique type with tile functions.
+// Refinements of general tile types can be implemented by embedding this type,
+// choosing appropriate # of channels and bytes/voxel, overriding functions as
+// needed, and calling datastore.Register().
+// Note that these fields are invariant for all instances of this type.  Fields
+// that can change depending on the type of data (e.g., resolution) should be
+// in the Data type.
+type Type struct {
+	datastore.Type
+}
+
+// NewDatatype returns a pointer to a new voxels Datatype with default values set.
+func NewType() *Type {
+	return &Type{
+		datastore.Type{
+			Name:    "multiscale2d",
+			URL:     "github.com/janelia-flyem/dvid/datatype/multiscale2d",
+			Version: "0.1",
+			Requirements: &storage.Requirements{
+				Batcher: true,
+			},
+		},
+	}
+}
+
+// --- TypeService interface ---
+
+// NewData returns a pointer to new tile data with default values.
+func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.DataString, c dvid.Config) (datastore.DataService, error) {
+	// Make sure we have a valid DataService source
+	sourcename, found, err := c.GetString("Source")
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, fmt.Errorf("Cannot make multiscale2d data without valid 'Source' setting.")
+	}
+
+	// See if we want placeholder multiscale2d.
+	placeholder, found, err := c.GetBool("Placeholder")
+	if err != nil {
+		return nil, err
+	}
+
+	// Determine encoding for tile storage and this dictates what kind of compression we use.
+	encoding, found, err := c.GetString("Format")
+	if err != nil {
+		return nil, err
+	}
+	format := LZ4
+	if found {
+		switch strings.ToLower(encoding) {
+		case "lz4":
+			format = LZ4
+		case "png":
+			format = PNG
+		case "jpg":
+			format = JPG
+		default:
+			return nil, fmt.Errorf("Unknown encoding specified: '%s' (should be 'lz4', 'png', or 'jpg'", encoding)
+		}
+	}
+
+	// Compression is determined by encoding.  Inform user if there's a discrepancy.
+	var compression string
+	switch format {
+	case LZ4:
+		compression = "lz4"
+	case PNG:
+		compression = "none"
+	case JPG:
+		compression = "none"
+	}
+	compressConfig, found, err := c.GetString("Compression")
+	if err != nil {
+		return nil, err
+	}
+	if found && strings.ToLower(compressConfig) != compression {
+		return nil, fmt.Errorf("Conflict between specified compression '%s' and format '%s'.  Suggest not dictating compression.",
+			compressConfig, encoding)
+	}
+	c.Set("Compression", compression)
+
+	// Initialize the multiscale2d data
+	basedata, err := datastore.NewDataService(dtype, uuid, id, name, c)
+	if err != nil {
+		return nil, err
+	}
+	data := &Data{
+		Data:        basedata,
+		Source:      dvid.DataString(sourcename),
+		Placeholder: placeholder,
+		Encoding:    format,
+	}
+	return data, nil
+}
+
+func (dtype *Type) Help() string {
+	return HelpMessage
 }
 
 // Scaling describes the scale level where 0 = original data resolution and
@@ -300,104 +395,6 @@ func LoadTileSpec(data []byte) (TileSpec, error) {
 	return specs, nil
 }
 
-// Datatype embeds the datastore's Datatype to create a unique type
-// with tile functions.  Refinements of general tile types can be implemented
-// by embedding this type, choosing appropriate # of channels and bytes/voxel,
-// overriding functions as needed, and calling datastore.Register().
-// Note that these fields are invariant for all instances of this type.  Fields
-// that can change depending on the type of data (e.g., resolution) should be
-// in the Data type.
-type Datatype struct {
-	datastore.Datatype
-}
-
-// NewDatatype returns a pointer to a new voxels Datatype with default values set.
-func NewDatatype() (dtype *Datatype) {
-	dtype = new(Datatype)
-	dtype.Requirements = &storage.Requirements{
-		BulkIniter: false,
-		BulkWriter: false,
-		Batcher:    true,
-	}
-	return
-}
-
-// --- TypeService interface ---
-
-// NewData returns a pointer to new tile data with default values.
-func (dtype *Datatype) NewDataService(r datastore.Repo, id dvid.InstanceID, name dvid.DataString, c dvid.Config) (datastore.DataService, error) {
-	// Make sure we have a valid DataService source
-	sourcename, found, err := c.GetString("Source")
-	if err != nil {
-		return nil, err
-	}
-	if !found {
-		return nil, fmt.Errorf("Cannot make multiscale2d data without valid 'Source' setting.")
-	}
-
-	// See if we want placeholder multiscale2d.
-	placeholder, found, err := c.GetBool("Placeholder")
-	if err != nil {
-		return nil, err
-	}
-
-	// Determine encoding for tile storage and this dictates what kind of compression we use.
-	encoding, found, err := c.GetString("Format")
-	if err != nil {
-		return nil, err
-	}
-	format := LZ4
-	if found {
-		switch strings.ToLower(encoding) {
-		case "lz4":
-			format = LZ4
-		case "png":
-			format = PNG
-		case "jpg":
-			format = JPG
-		default:
-			return nil, fmt.Errorf("Unknown encoding specified: '%s' (should be 'lz4', 'png', or 'jpg'", encoding)
-		}
-	}
-
-	// Compression is determined by encoding.  Inform user if there's a discrepancy.
-	var compression string
-	switch format {
-	case LZ4:
-		compression = "lz4"
-	case PNG:
-		compression = "none"
-	case JPG:
-		compression = "none"
-	}
-	compressConfig, found, err := c.GetString("Compression")
-	if err != nil {
-		return nil, err
-	}
-	if found && strings.ToLower(compressConfig) != compression {
-		return nil, fmt.Errorf("Conflict between specified compression '%s' and format '%s'.  Suggest not dictating compression.",
-			compressConfig, encoding)
-	}
-	c.Set("Compression", compression)
-
-	// Initialize the multiscale2d data
-	basedata, err := datastore.NewDataService(dtype, r, id, name, c)
-	if err != nil {
-		return nil, err
-	}
-	data := &Data{
-		Data:        basedata,
-		Source:      dvid.DataString(sourcename),
-		Placeholder: placeholder,
-		Encoding:    format,
-	}
-	return data, nil
-}
-
-func (dtype *Datatype) Help() string {
-	return HelpMessage
-}
-
 // --- Tile Data ----
 
 // SourceData is the source of the tile data and should be voxels or voxels-derived data.
@@ -455,6 +452,10 @@ func (d *Data) JSONString() (jsonStr string, err error) {
 }
 
 // --- DataService interface ---
+
+func (d *Data) Help() string {
+	return HelpMessage
+}
 
 // DoRPC handles the 'generate' command.
 func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error {

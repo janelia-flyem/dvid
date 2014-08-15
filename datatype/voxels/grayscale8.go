@@ -13,11 +13,10 @@ func init() {
 		},
 	}
 	interpolable := true
-	grayscale := NewDatatype(values, interpolable)
-	grayscale.DatatypeID = &datastore.DatatypeID{
-		Name:    "grayscale8",
-		Url:     "github.com/janelia-flyem/dvid/datatype/voxels/grayscale8.go",
-		Version: "0.6",
-	}
+	grayscale := NewType(values, interpolable)
+	grayscale.Type.Name = "grayscale8"
+	grayscale.Type.URL = "github.com/janelia-flyem/dvid/datatype/voxels/grayscale8.go"
+	grayscale.Type.Version = "0.7"
+
 	datastore.Register(grayscale)
 }

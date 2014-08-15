@@ -358,14 +358,15 @@ func serverInfoHandler(w http.ResponseWriter, r *http.Request) {
 
 func serverTypesHandler(w http.ResponseWriter, r *http.Request) {
 	jsonMap := make(map[dvid.TypeString]string)
-	datatypes, err := datastore.Datatypes()
+	typemap, err := datastore.Types()
 	if err != nil {
 		msg := fmt.Sprintf("Cannot return server datatypes: %s\n", err.Error())
 		BadRequest(w, r, msg)
 		return
 	}
-	for _, datatype := range datatypes {
-		jsonMap[datatype.TypeName()] = string(datatype.TypeURL())
+	for _, typeservice := range typemap {
+		t := typeservice.GetType()
+		jsonMap[t.Name] = string(t.URL)
 	}
 	m, err := json.Marshal(jsonMap)
 	if err != nil {

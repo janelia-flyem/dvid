@@ -8,59 +8,62 @@ import (
 	"github.com/janelia-flyem/dvid/storage"
 )
 
-type URLString string
+// Type identifies the datatype underlying a DataService.
+type Type struct {
+	// Data type name and may not be unique.
+	Name dvid.TypeString
 
-// TypeID provides methods for determining the identity of a datatype.  Note that
-// we are verbose for the functions of this interface because TypeID is
-// likely to be embedded in other structs like DataInstance that will also have names, etc.
-type TypeID interface {
-	// TypeName is an abbreviated datatype name.
-	TypeName() dvid.TypeString
+	// The unique package name that fulfills the DVID Data interface
+	URL dvid.URLString
 
-	// TypeURL returns the unique package url of the datatype implementation.
-	TypeURL() URLString
+	// The version identifier of this datatype code
+	Version string
 
-	// TypeVersion describes the version identifier of this datatype code
-	TypeVersion() string
+	// A list of interface requirements for the backend datastore
+	Requirements *storage.Requirements
+}
+
+func (t *Type) GetType() *Type {
+	return t
 }
 
 // TypeService is an interface all datatype implementations must fulfill.
 type TypeService interface {
-	TypeID
+	GetType() *Type
+
+	// Create an instance of this datatype in the given repo (identified by its root UUID)
+	// with local instance ID and name, passing configuration parameters via dvid.Config.
+	NewDataService(dvid.UUID, dvid.InstanceID, dvid.DataString, dvid.Config) (DataService, error)
 
 	// Help returns a string explaining how to use a datatype's service
 	Help() string
-
-	// Create an instance of this datatype in the given repo with local instance ID
-	// and name, passing configuration parameters via dvid.Config.
-	NewDataService(Repo, dvid.InstanceID, dvid.DataString, dvid.Config) (DataService, error)
 }
 
 var (
 	// Compiled is the set of registered datatypes compiled into DVID and
 	// held as a global variable initialized at runtime.
-	Compiled map[URLString]TypeService
+	Compiled map[dvid.URLString]TypeService
 )
 
 // Register registers a datatype for DVID use.
 func Register(t TypeService) {
 	if Compiled == nil {
-		Compiled = make(map[URLString]TypeService)
+		Compiled = make(map[dvid.URLString]TypeService)
 	}
-	Compiled[t.TypeURL()] = t
+	Compiled[t.GetType().URL] = t
 }
 
 // CompiledNames returns a list of datatype names compiled into this DVID.
 func CompiledNames() string {
 	var names []string
-	for _, datatype := range Compiled {
-		names = append(names, string(datatype.TypeName()))
+	for _, typeservice := range Compiled {
+		names = append(names, string(typeservice.GetType().Name))
 	}
 	return strings.Join(names, ", ")
 }
 
-// CompiledUrls returns a list of datatype urls supported by this DVID.
-func CompiledUrls() string {
+// CompiledURLs returns a list of datatype urls supported by this DVID.
+func CompiledURLs() string {
 	var urls []string
 	for url, _ := range Compiled {
 		urls = append(urls, string(url))
@@ -71,66 +74,36 @@ func CompiledUrls() string {
 // CompiledChart returns a chart (names/urls) of datatypes compiled into this DVID.
 func CompiledChart() string {
 	var text string = "\nData types compiled into this DVID\n\n"
-	writeLine := func(name dvid.TypeString, url URLString) {
+	writeLine := func(name dvid.TypeString, url dvid.URLString) {
 		text += fmt.Sprintf("%-15s   %s\n", name, url)
 	}
-	writeLine("Name", "Url")
-	for _, datatype := range Compiled {
-		writeLine(datatype.TypeName(), datatype.TypeURL())
+	writeLine("Name", "URL")
+	for _, typeservice := range Compiled {
+		t := typeservice.GetType()
+		writeLine(t.Name, t.URL)
 	}
 	return text + "\n"
 }
 
-// TypeServiceByName returns a TypeService given a type name.
+// TypeServiceByName returns a TypeService given a type name.  Note that the
+// type name is possibly ambiguous, particularly if using type names across
+// different DVID servers.
 func TypeServiceByName(name dvid.TypeString) (TypeService, error) {
-	for _, dtype := range Compiled {
-		if name == dtype.TypeName() {
-			return dtype, nil
+	for _, typeservice := range Compiled {
+		if name == typeservice.GetType().Name {
+			return typeservice, nil
 		}
 	}
-	return nil, fmt.Errorf("Data type '%s' is not supported in current DVID executable", name)
+	return nil, fmt.Errorf("Data type %q is not supported by current DVID server", name)
 }
 
-// ---- Service Implementation ----
-
-// DatatypeID uniquely identifies a DVID-supported datatype and provides a
-// shorthand name.
-type DatatypeID struct {
-	// Data type name and may not be unique.
-	Name dvid.TypeString
-
-	// The unique package name that fulfills the DVID Data interface
-	Url URLString
-
-	// The version identifier of this datatype code
-	Version string
-}
-
-func MakeDatatypeID(name dvid.TypeString, url URLString, version string) *DatatypeID {
-	return &DatatypeID{name, url, version}
-}
-
-func (id *DatatypeID) TypeName() dvid.TypeString { return id.Name }
-
-func (id *DatatypeID) TypeURL() URLString { return id.Url }
-
-func (id *DatatypeID) TypeVersion() string { return id.Version }
-
-const helpMessage = `
-    DVID data type information
-
-    name: %s 
-    url: %s 
-`
-
-// Datatype is the base struct that satisfies a Service and can be embedded in other datatypes.
-type Datatype struct {
-	*DatatypeID
-
-	// A list of interface requirements for the backend datastore
-	Requirements *storage.Requirements
-}
-
-func (t *Datatype) Help() string {
-	return fmt.Sprintf(helpMessage, t.Name, t.Url)
+// TypeServiceByURL returns a TypeService given its URL.  This is the preferred
+// method for accessing datatype implementations since they should work across different
+// DVID servers.
+func TypeServiceByURL(url dvid.URLString) (TypeService, error) {
+	t, found := Compiled[url]
+	if !found {
+		return nil, fmt.Errorf("Data type %q is not supported by current DVID server", url)
+	}
+	return t, nil
 }

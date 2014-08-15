@@ -79,6 +79,9 @@ const NilUUID = UUID("")
 // TypeString is a string that is the name of a DVID data type.
 type TypeString string
 
+// URLString is a string representing a URL.
+type URLString string
+
 // DataString is a string that is the name of DVID data.
 type DataString string
 
@@ -151,5 +154,10 @@ const (
 type Data interface {
 	DataName() DataString
 	InstanceID() InstanceID
+
+	TypeName() TypeString
+	TypeURL() URLString
+	TypeVersion() string
+
 	Versioned() bool
 }

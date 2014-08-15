@@ -115,11 +115,11 @@ func SaveRepoByVersionID(versionID dvid.VersionID) error {
 	return Manager.SaveRepoByVersionID(versionID)
 }
 
-func Datatypes() (map[URLString]TypeService, error) {
+func Types() (map[dvid.URLString]TypeService, error) {
 	if Manager == nil {
 		return nil, fmt.Errorf("datastore not initialized")
 	}
-	return Manager.Datatypes()
+	return Manager.Types()
 }
 
 // ---- Server Context code, not to be confused with storage.Context.
@@ -161,8 +161,9 @@ func Versions() string {
 	writeLine("Name", "Version")
 	writeLine("DVID datastore", Version)
 	writeLine("Storage engines", storage.EnginesAvailable())
-	for _, datatype := range Compiled {
-		writeLine(datatype.TypeName(), datatype.TypeVersion())
+	for _, typeservice := range Compiled {
+		t := typeservice.GetType()
+		writeLine(t.Name, t.Version)
 	}
 	return text
 }
