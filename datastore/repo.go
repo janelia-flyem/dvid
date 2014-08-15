@@ -53,7 +53,6 @@ type RepoManager interface {
 
 	Types() (map[dvid.URLString]TypeService, error)
 
-	// Support serialization to Gob and user-friendly view in JSON
 	gob.GobDecoder
 	gob.GobEncoder
 	json.Marshaler

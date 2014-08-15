@@ -252,6 +252,7 @@ func (m *repoManager) loadMetadata() error {
 		if err = repo.GobDecode(kv.V); err != nil {
 			return fmt.Errorf("Error gob decoding repo %d: %s", index.repoID, err.Error())
 		}
+		repo.manager = m
 		// Cache all UUID from nodes into our high-level cache
 		for versionID, _ := range repo.dag.nodes {
 			uuid, found := m.versionToUUID[versionID]
@@ -321,6 +322,13 @@ func (m *repoManager) VersionFromUUID(uuid dvid.UUID) (dvid.VersionID, error) {
 
 // ---- RepoManager implementation
 
+// We don't store repoManager via Gob as a single unit.  Rather, we persist
+// parts of it to different key/value pairs in the metadata store, so there's
+// more granualarity in I/O, e.g., at the single repo level rather than all
+// repos at once.
+//
+// The Gob (de)serialization allows transmission over the network if doing p2p.
+
 func (m *repoManager) GobDecode(b []byte) error {
 	buf := bytes.NewBuffer(b)
 	dec := gob.NewDecoder(buf)
@@ -345,6 +353,10 @@ func (m *repoManager) GobDecode(b []byte) error {
 	}
 	if err := dec.Decode(&(m.repos)); err != nil {
 		return err
+	}
+	// Set all the manager references within the repos.
+	for _, pRepo := range m.repos {
+		pRepo.manager = m
 	}
 	return nil
 }
@@ -918,6 +930,8 @@ func (dag *dagT) GetIterator(versionID dvid.VersionID) (storage.VersionIterator,
 }
 
 func (dag *dagT) GobDecode(b []byte) error {
+	dag.nodes = make(map[dvid.VersionID]*nodeT)
+
 	buf := bytes.NewBuffer(b)
 	dec := gob.NewDecoder(buf)
 	if err := dec.Decode(&(dag.root)); err != nil {
@@ -993,12 +1007,11 @@ type nodeT struct {
 
 func (node *nodeT) GobDecode(b []byte) error {
 	// Set zero values since gob doesn't transmit zero values down wire.
-	node = &nodeT{
-		log:      []string{},
-		avail:    make(map[dvid.DataString]DataAvail),
-		parents:  []dvid.VersionID{},
-		children: []dvid.VersionID{},
-	}
+	node.log = []string{}
+	node.avail = make(map[dvid.DataString]DataAvail)
+	node.parents = []dvid.VersionID{}
+	node.children = []dvid.VersionID{}
+
 	buf := bytes.NewBuffer(b)
 	dec := gob.NewDecoder(buf)
 	if err := dec.Decode(&(node.note)); err != nil {
