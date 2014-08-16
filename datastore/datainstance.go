@@ -127,6 +127,13 @@ type DataService interface {
 	ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request)
 
 	Help() string
+
+	// DataService must allow serialization into JSON and binary I/O
+	json.Marshaler
+
+	// NOTE: Requiring these interfaces breaks Gob encoding/decoding
+	//gob.GobEncoder
+	//gob.GobDecoder
 }
 
 // Data is the base struct of repo-specific data instances.  It should be embedded
@@ -150,7 +157,7 @@ type Data struct {
 	versioned bool
 }
 
-func (d *Data) MarshalJSON() ([]byte, error) {
+func (d Data) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		TypeName    dvid.TypeString
 		TypeURL     dvid.URLString

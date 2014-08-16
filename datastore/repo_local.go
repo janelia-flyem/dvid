@@ -25,13 +25,6 @@ import (
 	"github.com/janelia-flyem/dvid/storage/local"
 )
 
-func init() {
-	gob.Register(&repoManager{})
-	gob.Register(&repoT{})
-	gob.Register(&dagT{})
-	gob.Register(&nodeT{})
-}
-
 // --- In the case of a single DVID process, return new ids requires only a lock.
 // --- This becomes more tricky when dealing with multiple DVID processes working
 // --- off shared storage engines.
@@ -247,9 +240,12 @@ func (m *repoManager) loadMetadata() error {
 		if !found {
 			return fmt.Errorf("Retrieved repo with id %d that is not in map.  Corrupt DB?", index.repoID)
 		}
-		dvid.Debugf("Loaded metadata index: %v  --> %d bytes\n", index, len(kv.V))
-		var repo repoT
-		if err = repo.GobDecode(kv.V); err != nil {
+		repo := &repoT{
+			log:        []string{},
+			properties: make(map[string]interface{}),
+			data:       make(map[dvid.DataString]DataService),
+		}
+		if err = dvid.Deserialize(kv.V, repo); err != nil {
 			return fmt.Errorf("Error gob decoding repo %d: %s", index.repoID, err.Error())
 		}
 		repo.manager = m
@@ -260,7 +256,7 @@ func (m *repoManager) loadMetadata() error {
 				return fmt.Errorf("Version id %d found in repo %s (id %d) not in cache map",
 					versionID, repo.rootID, repo.repoID)
 			}
-			m.repos[uuid] = &repo
+			m.repos[uuid] = repo
 		}
 	}
 	dvid.Infof("Loaded %d repositories from metadata store.", len(m.repos))
@@ -639,10 +635,10 @@ func (r *repoT) GobDecode(b []byte) error {
 	if err := dec.Decode(&(r.updated)); err != nil {
 		return err
 	}
-	if err := dec.Decode(&(r.dag)); err != nil {
+	if err := dec.Decode(&(r.data)); err != nil {
 		return err
 	}
-	if err := dec.Decode(&(r.data)); err != nil {
+	if err := dec.Decode(&(r.dag)); err != nil {
 		return err
 	}
 	return nil
@@ -675,10 +671,10 @@ func (r *repoT) GobEncode() ([]byte, error) {
 	if err := enc.Encode(r.updated); err != nil {
 		return nil, err
 	}
-	if err := enc.Encode(r.dag); err != nil {
+	if err := enc.Encode(r.data); err != nil {
 		return nil, err
 	}
-	if err := enc.Encode(r.data); err != nil {
+	if err := enc.Encode(r.dag); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
@@ -691,7 +687,7 @@ func (r *repoT) MarshalJSON() ([]byte, error) {
 		Description string
 		Log         []string
 		Properties  map[string]interface{}
-		Data        map[dvid.DataString]DataService
+		Data        map[dvid.DataString]DataService `json:"DataInstances"`
 		DAG         *dagT
 		Created     time.Time
 		Updated     time.Time
@@ -834,12 +830,17 @@ func (r *repoT) Types() (map[dvid.URLString]TypeService, error) {
 }
 
 func (r *repoT) save() error {
-	var ctx storage.MetadataContext
-	idx := metadataIndex{t: repoKey, repoID: r.repoID}
-	serialization, err := r.GobEncode()
+	compression, err := dvid.NewCompression(dvid.LZ4, dvid.DefaultCompression)
 	if err != nil {
 		return err
 	}
+	serialization, err := dvid.Serialize(r, compression, dvid.CRC32)
+	if err != nil {
+		return err
+	}
+
+	var ctx storage.MetadataContext
+	idx := metadataIndex{t: repoKey, repoID: r.repoID}
 	return r.manager.store.Put(ctx, idx.Bytes(), serialization)
 }
 

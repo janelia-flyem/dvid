@@ -1885,6 +1885,40 @@ func (d *Data) String() string {
 	return string(d.DataName())
 }
 
+func (d *Data) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Base     *datastore.Data
+		Extended Properties
+	}{
+		&(d.Data),
+		d.Properties,
+	})
+}
+
+func (d *Data) GobDecode(b []byte) error {
+	buf := bytes.NewBuffer(b)
+	dec := gob.NewDecoder(buf)
+	if err := dec.Decode(&(d.Data)); err != nil {
+		return err
+	}
+	if err := dec.Decode(&(d.Properties)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (d *Data) GobEncode() ([]byte, error) {
+	var buf bytes.Buffer
+	enc := gob.NewEncoder(&buf)
+	if err := enc.Encode(d.Data); err != nil {
+		return nil, err
+	}
+	if err := enc.Encode(d.Properties); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
 // JSONString returns the JSON for this Data's configuration
 func (d *Data) JSONString() (jsonStr string, err error) {
 	m, err := json.Marshal(d)
