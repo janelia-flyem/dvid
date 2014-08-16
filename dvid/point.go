@@ -15,6 +15,10 @@ func init() {
 	// Need to register types that will be used to fulfill interfaces.
 	gob.Register(Point3d{})
 	gob.Register(Point2d{})
+	gob.Register(PointNd{})
+	gob.Register(ChunkPoint2d{})
+	gob.Register(ChunkPoint3d{})
+	gob.Register(ChunkPointNd{})
 }
 
 type SimplePoint interface {

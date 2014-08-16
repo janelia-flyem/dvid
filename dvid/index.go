@@ -17,9 +17,14 @@ import (
 
 func init() {
 	// Register Index implementations that may fulfill interface for Gob
-	gob.Register(IndexUint8(0))
-	gob.Register(IndexZYX{})
-	gob.Register(IndexCZYX{})
+	//var indexBytes = IndexBytes{}
+	gob.Register(&IndexBytes{})
+	var indexString IndexString
+	gob.Register(&indexString)
+	var indexUint8 = IndexUint8(0)
+	gob.Register(&indexUint8)
+	gob.Register(&IndexZYX{})
+	gob.Register(&IndexCZYX{})
 }
 
 // Index is the datatype-specific (usually spatiotemporal) key that allows
