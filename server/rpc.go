@@ -92,6 +92,31 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 			os.Exit(0)
 		}()
 
+	case "types":
+		if len(cmd.Command) == 1 {
+			text := "\nData Types within this DVID Server\n"
+			text += "----------------------------------\n"
+			mapTypes, err := datastore.Types()
+			if err != nil {
+				return fmt.Errorf("Error trying to retrieve data types within this DVID server!")
+			}
+			for url, typeservice := range mapTypes {
+				text += fmt.Sprintf("%-20s %s\n", typeservice.GetType().Name, url)
+			}
+			reply.Text = text
+		} else {
+			if len(cmd.Command) != 3 || cmd.Command[2] != "help" {
+				return fmt.Errorf("Unknown types command: %q", cmd.Command)
+			}
+			var typename string
+			cmd.CommandArgs(1, &typename)
+			typeservice, err := datastore.TypeServiceByName(dvid.TypeString(typename))
+			if err != nil {
+				return err
+			}
+			reply.Text = typeservice.Help()
+		}
+
 	case "repos":
 		var subcommand, alias, description string
 		cmd.CommandArgs(1, &subcommand, &alias, &description)
