@@ -276,14 +276,14 @@ func (db *LevelDB) Get(ctx storage.Context, k []byte) ([]byte, error) {
 		}
 
 		// Get all versions of this key and return the most recent
-		//log.Printf("  basholeveldb versioned get of key %v\n", k)
+		// log.Printf("  basholeveldb versioned get of key %v\n", k)
 		values, err := db.getSingleKeyVersions(vctx, k)
-		//log.Printf("            got back %v\n", values)
+		// log.Printf("            got back %v\n", values)
 		if err != nil {
 			return nil, err
 		}
 		kv, err := vctx.VersionedKeyValue(values)
-		//log.Printf("  after deversioning: %v\n", kv)
+		// log.Printf("  after deversioning: %v\n", kv)
 		if kv != nil {
 			return kv.V, err
 		}
@@ -292,7 +292,7 @@ func (db *LevelDB) Get(ctx storage.Context, k []byte) ([]byte, error) {
 		key := constructKey(ctx, k)
 		dvid.StartCgo()
 		ro := db.options.ReadOptions
-		//log.Printf("  basholeveldb unversioned get of key %v\n", key)
+		// log.Printf("  basholeveldb unversioned get of key %v\n", key)
 		v, err := db.ldb.Get(ro, key)
 		dvid.StopCgo()
 		storage.StoreValueBytesRead <- len(v)
@@ -343,11 +343,11 @@ func (db *LevelDB) getSingleKeyVersions(vctx storage.VersionedContext, k []byte)
 	}
 }
 
-func constructKey(ctx storage.Context, key []byte) []byte {
+func constructKey(ctx storage.Context, index []byte) []byte {
 	if ctx != nil {
-		return ctx.ConstructKey(key)
+		return ctx.ConstructKey(index)
 	}
-	return key
+	return index
 }
 
 type errorableKV struct {
@@ -395,14 +395,14 @@ func (db *LevelDB) versionedRange(vctx storage.VersionedContext, kStart, kEnd []
 		ch <- errorableKV{nil, err}
 		return
 	}
-	//log.Printf("         minKey %v\n", minKey)
-	//log.Printf("         maxKey %v\n", maxKey)
-	//log.Printf("  maxVersionKey %v\n", maxVersionKey)
+	// log.Printf("         minKey %v\n", minKey)
+	// log.Printf("         maxKey %v\n", maxKey)
+	// log.Printf("  maxVersionKey %v\n", maxVersionKey)
 	it.Seek(minKey)
 	var itValue []byte
 	for {
 		if it.Valid() {
-			//log.Printf("   +++valid key %v\n", it.Key())
+			// log.Printf("   +++valid key %v\n", it.Key())
 			if !keysOnly {
 				itValue = it.Value()
 				storage.StoreValueBytesRead <- len(itValue)
@@ -422,7 +422,7 @@ func (db *LevelDB) versionedRange(vctx storage.VersionedContext, kStart, kEnd []
 					ch <- errorableKV{nil, err}
 					return
 				}
-				//log.Printf("->maxVersionKey %v (transmitting %d values)\n", maxVersionKey, len(values))
+				// log.Printf("->maxVersionKey %v (transmitting %d values)\n", maxVersionKey, len(values))
 				sendKV(vctx, values, ch)
 				values = []*storage.KeyValue{}
 			}
@@ -461,6 +461,11 @@ func (db *LevelDB) unversionedRange(ctx storage.Context, kStart, kEnd []byte, ch
 	// Apply context if applicable
 	keyBeg := constructKey(ctx, kStart)
 	keyEnd := constructKey(ctx, kEnd)
+	// fmt.Printf("unversionedRange():\n")
+	// fmt.Printf("    index beg: %v\n", kStart)
+	// fmt.Printf("    index end: %v\n", kEnd)
+	// fmt.Printf("    key start: %v\n", keyBeg)
+	// fmt.Printf("      key end: %v\n", keyEnd)
 
 	var itValue []byte
 	it.Seek(keyBeg)
@@ -548,6 +553,7 @@ func (db *LevelDB) GetRange(ctx storage.Context, kStart, kEnd []byte) ([]*storag
 // only key-value pairs for kStart's version will be transmitted.
 func (db *LevelDB) ProcessRange(ctx storage.Context, kStart, kEnd []byte, op *storage.ChunkOp, f func(*storage.Chunk)) error {
 	ch := make(chan errorableKV)
+	//fmt.Printf("Process Range: ctx %v, index %v -> %v, op %v\n", ctx, kStart, kEnd, op)
 
 	// Run the range query on a potentially versioned key in a goroutine.
 	go func() {
@@ -583,8 +589,8 @@ func (db *LevelDB) Put(ctx storage.Context, k, v []byte) error {
 	wo := db.options.WriteOptions
 	key := constructKey(ctx, k)
 	err := db.ldb.Put(wo, key, v)
-	//log.Printf("  basholeveldb put using index %v\n", k)
-	//log.Printf("  basholeveldb put of key %v: len %d bytes\n", key, len(v))
+	//log.Printf("  PUT index %v, %d bytes\n", k, len(v))
+	//log.Printf("  PUT key %v\n", key)
 	dvid.StopCgo()
 	storage.StoreKeyBytesWritten <- len(key)
 	storage.StoreValueBytesWritten <- len(v)
@@ -638,6 +644,7 @@ type goBatch struct {
 
 // NewBatch returns an implementation that allows batch writes
 func (db *LevelDB) NewBatch(ctx storage.Context) storage.Batch {
+	//fmt.Printf("  NewBatch with ctx %v\n", ctx)
 	dvid.StartCgo()
 	defer dvid.StopCgo()
 	return &goBatch{ctx, levigo.NewWriteBatch(), db.options.WriteOptions, db.ldb}
@@ -656,6 +663,8 @@ func (batch *goBatch) Put(k, v []byte) {
 	dvid.StartCgo()
 	defer dvid.StopCgo()
 	key := constructKey(batch.ctx, k)
+	//log.Printf("  PUT index %v, %d bytes\n", k, len(v))
+	//log.Printf("  PUT key %v\n", key)
 	storage.StoreKeyBytesWritten <- len(key)
 	storage.StoreValueBytesWritten <- len(v)
 	batch.WriteBatch.Put(key, v)

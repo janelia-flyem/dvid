@@ -785,20 +785,25 @@ func writeBlocks(ctx storage.Context, compress dvid.Compression, checksum dvid.C
 				preCompress += len(block.V)
 				postCompress += len(serialization)
 				if err != nil {
-					fmt.Printf("Unable to serialize block: %s\n", err.Error())
+					dvid.Errorf("Unable to serialize block: %s\n", err.Error())
 					return
 				}
-				batch.Put(block.K, serialization)
+				indexBytes, err := ctx.IndexFromKey(block.K)
+				if err != nil {
+					dvid.Errorf("Unable to recover index from block key: %v\n", block.K)
+					return
+				}
+				batch.Put(indexBytes, serialization)
 				if i%KVWriteSize == KVWriteSize-1 {
 					if err := batch.Commit(); err != nil {
-						dvid.Infof("Error on trying to write batch: %s\n", err.Error())
+						dvid.Errorf("Error on trying to write batch: %s\n", err.Error())
 						return
 					}
 					batch = batcher.NewBatch(ctx)
 				}
 			}
 			if err := batch.Commit(); err != nil {
-				dvid.Infof("Error on trying to write batch: %s\n", err.Error())
+				dvid.Errorf("Error on trying to write batch: %s\n", err.Error())
 				return
 			}
 		} else {
@@ -807,11 +812,16 @@ func writeBlocks(ctx storage.Context, compress dvid.Compression, checksum dvid.C
 			for i, block := range blocks {
 				serialization, err := dvid.SerializeData(block.V, compress, checksum)
 				if err != nil {
-					fmt.Printf("Unable to serialize block: %s\n", err.Error())
+					dvid.Errorf("Unable to serialize block: %s\n", err.Error())
+					return
+				}
+				indexBytes, err := ctx.IndexFromKey(block.K)
+				if err != nil {
+					dvid.Errorf("Unable to recover index from block key: %v\n", block.K)
 					return
 				}
 				keyvalues[i] = storage.KeyValue{
-					K: block.K,
+					K: indexBytes,
 					V: serialization,
 				}
 			}
@@ -819,7 +829,7 @@ func writeBlocks(ctx storage.Context, compress dvid.Compression, checksum dvid.C
 			// Write them in one swoop.
 			err := db.PutRange(ctx, keyvalues)
 			if err != nil {
-				fmt.Printf("Unable to write slice blocks: %s\n", err.Error())
+				dvid.Errorf("Unable to write slice blocks: %s\n", err.Error())
 			}
 		}
 
