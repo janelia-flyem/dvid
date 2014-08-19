@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 
 	"code.google.com/p/go.net/context"
 
@@ -361,25 +360,4 @@ func (d *Data) ModifyConfig(config dvid.Config) error {
 func (d *Data) UnknownCommand(request Request) error {
 	return fmt.Errorf("Unknown command.  Data type '%s' [%s] does not support '%s' command.",
 		d.name, d.TypeName(), request.TypeCommand())
-}
-
-// --- Handle version-specific data mutexes -----
-
-type nodeID struct {
-	instance dvid.InstanceID
-	version  dvid.VersionID
-}
-
-// VersionMutex returns a Mutex that is specific for data at a particular version.
-func (d *Data) VersionMutex(versionID dvid.VersionID) *sync.Mutex {
-	var mutex sync.Mutex
-	mutex.Lock()
-	id := nodeID{d.id, versionID}
-	vmutex, found := versionMutexes[id]
-	if !found {
-		vmutex = new(sync.Mutex)
-		versionMutexes[id] = vmutex
-	}
-	mutex.Unlock()
-	return vmutex
 }

@@ -52,6 +52,20 @@ func (b *Bool) Value() bool {
 	return b.bit
 }
 
+func MaxInt32(a, b int32) int32 {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func MinInt32(a, b int32) int32 {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 // EstimateGoroutines returns the # of goroutines that can be launched
 // given a percentage (up to 1.0) of available CPUs (set by command line
 // option or # cores) and/or the megabytes (MB) of memory needed for each goroutine.

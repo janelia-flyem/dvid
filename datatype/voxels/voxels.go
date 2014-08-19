@@ -355,8 +355,6 @@ type IntData interface {
 
 	Extents() *Extents
 
-	VersionMutex(dvid.VersionID) *sync.Mutex
-
 	ProcessChunk(*storage.Chunk)
 }
 
@@ -488,9 +486,9 @@ func PutVoxels(ctx storage.Context, i IntData, e ExtData) error {
 	// We only want one PUT on given version for given data to prevent interleaved
 	// chunk PUTs that could potentially overwrite slice modifications.
 	versionID := ctx.VersionID()
-	versionMutex := i.VersionMutex(versionID)
-	versionMutex.Lock()
-	defer versionMutex.Unlock()
+	putMutex := ctx.Mutex()
+	putMutex.Lock()
+	defer putMutex.Unlock()
 
 	// Get UUID
 	uuid, err := datastore.UUIDFromVersion(versionID)
@@ -865,18 +863,19 @@ func LoadImages(versionID dvid.VersionID, i IntData, offset dvid.Point, filename
 
 	// We only want one PUT on given version for given data to prevent interleaved
 	// chunk PUTs that could potentially overwrite slice modifications.
-	versionMutex := i.VersionMutex(versionID)
-	versionMutex.Lock()
+	ctx := storage.NewDataContext(i.BaseData(), versionID)
+	loadMutex := ctx.Mutex()
+	loadMutex.Lock()
 
 	// Handle cleanup given multiple goroutines still writing data.
 	load := &bulkLoadInfo{filenames: filenames, versionID: versionID, offset: offset}
 	defer func() {
-		versionMutex.Unlock()
+		loadMutex.Unlock()
 
 		if load.extentChanged.Value() {
 			err := datastore.SaveRepoByVersionID(versionID)
 			if err != nil {
-				dvid.Infof("Error in trying to save repo on change: %s\n", err.Error())
+				dvid.Errorf("Error in trying to save repo for voxel extent change: %s\n", err.Error())
 			}
 		}
 	}()

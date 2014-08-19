@@ -10,8 +10,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"math"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 
 	"code.google.com/p/go.net/context"
@@ -121,6 +123,10 @@ POST <api URL>/node/<UUID>/<data name>/ptquery
 
   	Returned: "[false, true]"
 
+GET <api URL>/node/<UUID>/<data name>/partition?batchsize=8
+
+	Returns JSON of subvolumes that are batchsize^3 blocks in volume and cover the ROI.
+	If the optional batchsize is omitted, the default is 8.
 `
 
 func init() {
@@ -177,17 +183,57 @@ func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.
 	} else {
 		blockSize = dvid.Point3d{voxels.DefaultBlockSize, voxels.DefaultBlockSize, voxels.DefaultBlockSize}
 	}
-	return &Data{basedata, blockSize}, nil
+	return &Data{basedata, Properties{blockSize, math.MaxInt32, math.MinInt32}}, nil
 }
 
 func (dtype *Type) Help() string {
 	return fmt.Sprintf(HelpMessage, voxels.DefaultBlockSize)
 }
 
+type Properties struct {
+	BlockSize dvid.Point3d
+	MinZ      int32
+	MaxZ      int32
+}
+
 // Data embeds the datastore's Data and extends it with keyvalue properties (none for now).
 type Data struct {
 	*datastore.Data
-	BlockSize dvid.Point3d
+	Properties
+}
+
+func (d *Data) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Base     *datastore.Data
+		Extended Properties
+	}{
+		d.Data,
+		d.Properties,
+	})
+}
+
+func (d *Data) GobDecode(b []byte) error {
+	buf := bytes.NewBuffer(b)
+	dec := gob.NewDecoder(buf)
+	if err := dec.Decode(&(d.Data)); err != nil {
+		return err
+	}
+	if err := dec.Decode(&(d.Properties)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (d *Data) GobEncode() ([]byte, error) {
+	var buf bytes.Buffer
+	enc := gob.NewEncoder(&buf)
+	if err := enc.Encode(d.Data); err != nil {
+		return nil, err
+	}
+	if err := enc.Encode(d.Properties); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 var (
@@ -294,7 +340,7 @@ func Get(ctx storage.Context) ([]byte, error) {
 }
 
 // Put saves JSON-encoded data representing an ROI into the datastore.
-func Put(ctx storage.Context, jsonBytes []byte) error {
+func (d *Data) Put(ctx storage.Context, jsonBytes []byte) error {
 	db, err := storage.SmallDataStore()
 	if err != nil {
 		return err
@@ -313,10 +359,29 @@ func Put(ctx storage.Context, jsonBytes []byte) error {
 		return fmt.Errorf("Unable to store ROI: small data store can't do batching!")
 	}
 
+	// We only want one PUT on given version for given data to prevent interleaved PUTs.
+	putMutex := ctx.Mutex()
+	putMutex.Lock()
+
+	// Save new extents after finished.
+	defer func() {
+		defer putMutex.Unlock()
+		err := datastore.SaveRepoByVersionID(ctx.VersionID())
+		if err != nil {
+			dvid.Errorf("Error in trying to save repo on roi extent change: %s\n", err.Error())
+		}
+	}()
+
 	// Put the new key/values
 	const BATCH_SIZE = 10000
 	batch := batcher.NewBatch(ctx)
 	for i, span := range spans {
+		if span[2] < d.MinZ {
+			d.MinZ = span[2]
+		}
+		if span[2] > d.MaxZ {
+			d.MaxZ = span[2]
+		}
 		index := indexRLE{
 			start: dvid.IndexZYX{span[2], span[1], span[0]},
 			span:  uint32(span[3] - span[2] + 1),
@@ -396,6 +461,212 @@ func (d *Data) PointQuery(ctx storage.Context, jsonBytes []byte) ([]byte, error)
 		return nil, err
 	}
 	return inclusionsJSON, nil
+}
+
+type subvolumesT struct {
+	NumTotalBlocks  int32
+	NumActiveBlocks int32
+	Subvolumes      []subvolumeT
+}
+
+type subvolumeT struct {
+	MinCorner    dvid.ChunkPoint3d
+	MaxCorner    dvid.ChunkPoint3d
+	ActiveBlocks int32
+	//activeBlocks []dvid.ChunkPoint3d
+}
+
+type layerT struct {
+	activeBlocks []*indexRLE
+	minX, maxX   int32
+	minY, maxY   int32
+	minZ, maxZ   int32
+}
+
+func (d *Data) newLayer(z0, z1 int32) *layerT {
+	return &layerT{
+		[]*indexRLE{},
+		math.MaxInt32, math.MinInt32,
+		math.MaxInt32, math.MinInt32,
+		z0, z1,
+	}
+}
+
+func (layer *layerT) extend(rle *indexRLE) {
+	layer.activeBlocks = append(layer.activeBlocks, rle)
+
+	y := rle.start.Value(1)
+	x0 := rle.start.Value(0)
+	x1 := x0 + int32(rle.span) - 1
+
+	if layer.minX > x0 {
+		layer.minX = x0
+	}
+	if layer.maxX < x1 {
+		layer.maxX = x1
+	}
+	if layer.minY > y {
+		layer.minY = y
+	}
+	if layer.maxY < y {
+		layer.maxY = y
+	}
+}
+
+func getPadding(x0, x1, batchsize int32) (leftPad, rightPad int32) {
+	var padding int32
+	overage := (x1 - x0 + 1) % batchsize
+	if overage == 0 {
+		padding = 0
+	} else {
+		padding = batchsize - overage
+	}
+	leftPad = padding / 2
+	rightPad = padding - leftPad
+	return
+}
+
+// For a slice of RLEs, return the min and max block Y coordinate
+func getYRange(blocks []*indexRLE) (minY, maxY int32, found bool) {
+	minY = math.MaxInt32
+	maxY = math.MinInt32
+	for _, rle := range blocks {
+		if rle.start[1] < minY {
+			minY = rle.start[1]
+		}
+		if rle.start[1] > maxY {
+			maxY = rle.start[1]
+		}
+		found = true
+	}
+	return
+}
+
+func getXRange(blocks []*indexRLE, minY, maxY int32) (minX, maxX int32, actives []*indexRLE) {
+	minX = math.MaxInt32
+	maxX = math.MinInt32
+	actives = []*indexRLE{}
+	for i, rle := range blocks {
+		if rle.start[1] >= minY && rle.start[1] <= maxY {
+			if rle.start[0] < minX {
+				minX = rle.start[0]
+			}
+			x1 := rle.start[0] + int32(rle.span) - 1
+			if x1 > maxX {
+				maxX = x1
+			}
+			actives = append(actives, blocks[i])
+		}
+	}
+	return
+}
+
+func findActives(blocks []*indexRLE, minX, maxX int32) int32 {
+	var numActive int32
+	for _, rle := range blocks {
+		spanBeg := rle.start[0]
+		if spanBeg > maxX {
+			continue
+		}
+		spanEnd := spanBeg + int32(rle.span) - 1
+		if spanEnd < minX {
+			continue
+		}
+		x0 := dvid.MaxInt32(minX, spanBeg)
+		x1 := dvid.MinInt32(maxX, spanEnd)
+		numActive += x1 - x0 + 1
+	}
+	return numActive
+}
+
+// Adds subvolumes based on given extents for a layer.
+func (layer *layerT) addSubvolumes(subvolumes *subvolumesT, batchsize int32) {
+	minY, maxY, found := getYRange(layer.activeBlocks)
+	if !found {
+		return
+	}
+	topPad, _ := getPadding(minY, maxY, batchsize)
+	for begY := minY - topPad; begY < maxY; begY += batchsize {
+		endY := begY + batchsize - 1
+		minX, maxX, actives := getXRange(layer.activeBlocks, begY, endY)
+		if len(actives) > 0 {
+			leftPad, _ := getPadding(minX, maxX, batchsize)
+			// Create subvolumes along this row.
+			for begX := minX - leftPad; begX < maxX; begX += batchsize {
+				endX := begX + batchsize - 1
+				minCorner := dvid.ChunkPoint3d{begX, begY, layer.minZ}
+				maxCorner := dvid.ChunkPoint3d{endX, endY, layer.maxZ}
+				numActive := findActives(actives, begX, endX)
+				subvolume := subvolumeT{
+					MinCorner:    minCorner,
+					MaxCorner:    maxCorner,
+					ActiveBlocks: numActive,
+				}
+				subvolumes.Subvolumes = append(subvolumes.Subvolumes, subvolume)
+				subvolumes.NumActiveBlocks += numActive
+			}
+		}
+	}
+}
+
+func (d *Data) Partition(ctx storage.Context, batchsize int32) ([]byte, error) {
+	// Position first subvolume layers at reasonable Z so full subvolume
+	// coverage best covers depth of ROI, assuming continuity in Z.
+	topZPad, _ := getPadding(d.MinZ, d.MaxZ, batchsize)
+
+	layerBegZ := d.MinZ - topZPad
+	layerEndZ := layerBegZ + batchsize - 1
+
+	// Iterate through blocks in ascending Z, calculating active extents and subvolume coverage.
+	// Keep track of current layer = batchsize of blocks in Z.
+	var subvolumes subvolumesT
+	subvolumes.Subvolumes = []subvolumeT{}
+	layer := d.newLayer(layerBegZ, layerEndZ)
+
+	db, err := storage.SmallDataStore()
+	if err != nil {
+		return nil, err
+	}
+	err = db.ProcessRange(ctx, minIndexRLE.Bytes(), maxIndexRLE.Bytes(), &storage.ChunkOp{}, func(chunk *storage.Chunk) {
+		indexBytes, err := ctx.IndexFromKey(chunk.K)
+		if err != nil {
+			dvid.Errorf("Unable to recover roi RLE from chunk key %v: %s\n", chunk.K, err.Error())
+			return
+		}
+		index := new(indexRLE)
+		if err = index.IndexFromBytes(indexBytes); err != nil {
+			dvid.Errorf("Unable to get indexRLE out of []byte encoding: %s\n", err.Error())
+		}
+
+		// If we are in new layer, process last one.
+		z := index.start.Value(2)
+		if z > layerEndZ {
+
+			// Process last layer
+			layer.addSubvolumes(&subvolumes, batchsize)
+
+			// Init variables for next layer
+			layerBegZ += batchsize
+			layerEndZ += batchsize
+			layer = d.newLayer(layerBegZ, layerEndZ)
+		}
+
+		// Check this block against current layer extents
+		layer.extend(index)
+	})
+
+	// Process last incomplete layer if there is one.
+	if d.MaxZ < layerEndZ {
+		layer.addSubvolumes(&subvolumes, batchsize)
+	}
+	subvolumes.NumTotalBlocks = batchsize * batchsize * batchsize * int32(len(subvolumes.Subvolumes))
+
+	// Encode as JSON
+	jsonBytes, err := json.MarshalIndent(subvolumes, "", "    ")
+	if err != nil {
+		return nil, err
+	}
+	return jsonBytes, err
 }
 
 // --- DataService interface ---
@@ -483,7 +754,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 				server.BadRequest(w, r, err.Error())
 				return
 			}
-			err = Put(storeCtx, data)
+			err = d.Put(storeCtx, data)
 			if err != nil {
 				server.BadRequest(w, r, err.Error())
 				return
@@ -511,7 +782,28 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 			comment = fmt.Sprintf("HTTP POST ptquery '%s'\n", d.DataName())
 		}
 	case "partition":
-		fmt.Fprintf(w, "Partitioning not available yet...\n")
+		if method != "get" {
+			server.BadRequest(w, r, "partition only supports GET request")
+			return
+		}
+		queryValues := r.URL.Query()
+		batchsizeStr := queryValues.Get("batchsize")
+		batchsize, err := strconv.Atoi(batchsizeStr)
+		if err != nil {
+			server.BadRequest(w, r, fmt.Sprintf("Error reading batchsize query string: %s", err.Error()))
+			return
+		}
+		dvid.Infof("Partitioning into subvolumes using batchsize %d\n", batchsize)
+
+		jsonBytes, err := d.Partition(storeCtx, int32(batchsize))
+		if err != nil {
+			server.BadRequest(w, r, err.Error())
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, string(jsonBytes))
+		comment = fmt.Sprintf("HTTP partition '%s' with batch size %d\n",
+			d.DataName(), batchsize)
 	default:
 		w.Header().Set("Content-Type", "text/plain")
 		server.BadRequest(w, r, "Can only handle GET or POST HTTP verbs")

@@ -7,6 +7,7 @@ package storage
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/janelia-flyem/dvid/dvid"
 )
@@ -34,6 +35,9 @@ type Context interface {
 
 	// String prints a description of the Context
 	String() string
+
+	// Returns a sync.Mutex specific to this context.
+	Mutex() *sync.Mutex
 
 	// Versioned is true if this Context is also a VersionedContext.
 	Versioned() bool
@@ -71,6 +75,12 @@ type VersionIterator interface {
 	Next()
 }
 
+var contextMutexes map[mutexID]*sync.Mutex
+
+func init() {
+	contextMutexes = make(map[mutexID]*sync.Mutex)
+}
+
 // ---- Context implementations -----
 
 const (
@@ -100,6 +110,12 @@ func (ctx MetadataContext) IndexFromKey(key []byte) ([]byte, error) {
 		return nil, fmt.Errorf("Cannot extract MetadataContext index from different key")
 	}
 	return key[1:], nil
+}
+
+var metadataMutex sync.Mutex
+
+func (ctx MetadataContext) Mutex() *sync.Mutex {
+	return &metadataMutex
 }
 
 func (ctx MetadataContext) String() string {
@@ -159,6 +175,26 @@ func (ctx *DataContext) IndexFromKey(key []byte) ([]byte, error) {
 	start := 1 + dvid.InstanceIDSize
 	end := len(key) - dvid.VersionIDSize
 	return key[start:end], nil
+}
+
+type mutexID struct {
+	instance dvid.InstanceID
+	version  dvid.VersionID
+}
+
+var dataMutex sync.Mutex
+
+func (ctx *DataContext) Mutex() *sync.Mutex {
+	dataMutex.Lock()
+	defer dataMutex.Unlock()
+
+	id := mutexID{ctx.data.InstanceID(), ctx.version}
+	mu, found := contextMutexes[id]
+	if !found {
+		mu = new(sync.Mutex)
+		contextMutexes[id] = mu
+	}
+	return mu
 }
 
 func (ctx *DataContext) String() string {

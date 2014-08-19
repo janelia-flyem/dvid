@@ -6,7 +6,6 @@ package datastore
 
 import (
 	"fmt"
-	"sync"
 
 	"code.google.com/p/go.net/context"
 
@@ -22,14 +21,7 @@ var (
 	// Manager provides high-level repository management for DVID and is initialized
 	// on start.  Package functions provide a quick alias to this default RepoManager.
 	Manager RepoManager
-
-	// Map of mutexes at the granularity of repo node ID
-	versionMutexes map[nodeID]*sync.Mutex
 )
-
-func init() {
-	versionMutexes = make(map[nodeID]*sync.Mutex)
-}
 
 // ---- Aliased package functions for Repo management.
 
