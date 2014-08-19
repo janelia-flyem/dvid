@@ -127,18 +127,18 @@ yet are unique globally.
 Versioning and distribution follow patterns similar to distributed version control systems like git and 
 mercurial. Provenance is kept in the DAG.
 
-_Status: Simple DAG and UUID support implemented.  
-Version compression was introduced in August 2014 and is undergoing testing/refinement._
+_Status: Simple DAG and UUID support implemented.  Version compression was introduced in August 2014 and 
+is undergoing testing/refinement._
 
 **Denormalized Views**: For any node in the version DAG, we can choose to create denormalized 
-views that accelerate particular access patterns. For example, quad trees can be created for XY, XZ, 
-and YZ orthogonal views or sparse volumes can compactly describe a neuron. The extra denormalized data 
-is kept in the datastore until a node is archived, which removes all denormalized key­-value pairs
-associated with that version node. Views of the same data can be eventually consistent.
+views that accelerate particular access patterns. For example, multiscale2d (quadtree) data 
+can be created for XY, XZ, and YZ orthogonal views or sparse volumes can compactly describe a neuron. 
+The extra denormalized data is kept in the datastore until a node is archived, which removes all 
+denormalized key­-value pairs associated with that version node. Views of the same data will be eventually 
+consistent.
 
 _Status: Multi-scale 2d images in XY, XZ, YZ, surface voxels and sparse volumes implemented. 
-Multi-scale 3d is planned with no set timeline.  
-Framework for syncing of denormalized views planned Q4 2014._
+Multi-scale 3d is planned with no set timeline.  Framework for syncing of denormalized views planned Q4 2014._
 
 **Flexible Data Types**: DVID provides a well­-defined interface to data type code that can be 
 easily added by users. A DVID server provides HTTP and RPC APIs, authentication, authorization, 
@@ -146,9 +146,9 @@ versioning, provenance, and storage engines. It delegates datatype­-specific co
 data type code. As long as a DVID type can return data for its implemented commands, we don’t care how 
 its implemented. 
 
-_Status: Variety of voxel types, multiscale2d, label map, label graph, key-value, and ROI implemented. 
-FUSE interface for key-value type working but not heavily used.  
-Authentication and authorization support planned Q4 2014, likely using Google or other provider authentication + tokens similar to github API._
+_Status: Variety of voxel types, multiscale2d, label map, label graph, key-value, and ROI implemented. FUSE 
+interface for key-value type working but not heavily used.  Authentication and authorization support planned 
+Q4 2014, likely using Google or other provider authentication + tokens similar to github API._
 
 **Scalable Storage Engine**: Although DVID may support polyglot persistence
 (i.e., allow use of relational, graph, or NoSQL databases), we are initially focused on 
@@ -161,11 +161,11 @@ e.g., [groupcache](https://github.com/golang/groupcache)
 and [Seagate's Kinetic Open Storage Platform](https://developers.seagate.com/display/KV/Kinetic+Open+Storage+Documentation+Wiki).
 As storage becomes more log structured, the key-value API becomes a more natural fit.
 
-_Status: Currently used with [Basho-tuned leveldb](https://github.com/basho/leveldb) and
+_Status: Currently built with [Basho-tuned leveldb](https://github.com/basho/leveldb) and
 other leveldb variants have been tested successfully in past:
 [Google's open source version](https://code.google.com/p/leveldb/) and
-[HyperLevelDB](https://github.com/rescrv/HyperLevelDB).  RocksDB support is planned.
-Added [Lightning MDB](http://symas.com/mdb/) and also experimental use of 
+[HyperLevelDB](https://github.com/rescrv/HyperLevelDB).  RocksDB support is planned. Added 
+[Lightning MDB](http://symas.com/mdb/) and also experimental use of 
 [Bolt](https://github.com/boltdb/bolt), although neither have been tuned to work as well as
 the leveldb variants.  Clustered DB or object-value store support planned Q4 2014 and includes
 FoundationDB and Scality drivers.  Direct support of Seagate Kinetic drives via their
