@@ -576,6 +576,35 @@ func (p Point3d) PointInChunk(size Point) Point {
 	return Point3d{p0, p1, p2}
 }
 
+type ListPoint3d []Point3d
+
+type ByZYX ListPoint3d
+
+func (list ByZYX) Len() int {
+	return len(list)
+}
+
+func (list ByZYX) Swap(i, j int) {
+	list[i], list[j] = list[j], list[i]
+}
+
+// Points are ordered by Z, then Y, then X.
+func (list ByZYX) Less(i, j int) bool {
+	if list[i][2] < list[j][2] {
+		return true
+	}
+	if list[i][2] > list[j][2] {
+		return false
+	}
+	if list[i][1] < list[j][1] {
+		return true
+	}
+	if list[i][1] > list[j][1] {
+		return false
+	}
+	return list[i][0] < list[j][0]
+}
+
 // PointNd is a slice of N 32-bit signed integers that implements the Point interface.
 type PointNd []int32
 

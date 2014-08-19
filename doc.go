@@ -5,6 +5,6 @@
 	on Windows.
 
 	The starting point for DVID documentation is the README.md file in the DVID repo:
-	https://github.com/janelia-flyem/dvid#dvid
+	https://github.com/janelia-flyem/dvid#dvid-
 */
 package main

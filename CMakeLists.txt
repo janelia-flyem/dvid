@@ -206,15 +206,13 @@ else ()
         COMMENT     "Adding embedded console into dvid executable..."
     )
 
-   # Add testing
-   #add_custom_target (test-build
-   #    ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go test -i -tags '${DVID_BACKEND} ${DVID_GRAPHBACKEND}' 
-   #         ${DVID_GO}/test ${DVID_GO}/dvid ${DVID_GO}/datastore)
-
    add_custom_target (test
         ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go test -v -tags '${DVID_BACKEND} ${DVID_GRAPHBACKEND}' 
             ${DVID_GO}/...)
-    #    DEPENDS test-build)
+
+   add_custom_target (coverage
+        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go test -cover -tags '${DVID_BACKEND} ${DVID_GRAPHBACKEND}' 
+            ${DVID_GO}/...)
 
    # Add benchmarking
    add_custom_target (test-bench

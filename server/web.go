@@ -69,14 +69,18 @@ const WebHelp = `
       <section id="main_content" class="inner">
         <h3>Welcome to DVID</h3>
 
-        <p>This page provides an introduction to the currently running DVID server.  Developers can visit
-        the <a href="https://github.com/janelia-flyem/dvid">Github repo</a> for more documentation and code.
-        The <a href="/console/">DVID admin console</a> may be available if you have permissions.</p>
+        <p>This page provides an introduction to the currently running DVID server.  
+        Developers can visit the <a href="https://github.com/janelia-flyem/dvid">Github repo</a> 
+        for more documentation and code.
+        The <a href="/console/">DVID admin console</a> may be available if you have downloaded the
+        <a href="https://github.com/janelia-flyem/dvid-console">DVID console web client repo</a>
+        and included <i>-webclient=/path/to/console</i> when running <strong>dvid server</strong>.</p>
         
         <h4>HTTP API</h4>
 
         <p>Please consult the
-           <a href="https://github.com/janelia-flyem/dvid#dvid">DVID documentation</a> for type-specific API help.
+           <a href="https://github.com/janelia-flyem/dvid#dvid">DVID documentation</a> 
+           for type-specific API help.
            The DVID API is specified via RAML that can be accessed at /interface.
         </p>
 
@@ -84,7 +88,7 @@ const WebHelp = `
         <p>DVID is released under the
             <a href="http://janelia-flyem.github.com/janelia_farm_license.html">Janelia Farm license</a>, a
             <a href="http://en.wikipedia.org/wiki/BSD_license#3-clause_license_.28.22New_BSD_License.22_or_.22Modified_BSD_License.22.29">
-                3-clause BSD license</a>.
+            3-clause BSD license</a>.
         </p>
       </section>
     </div>
@@ -94,8 +98,6 @@ const WebHelp = `
       <footer class="inner">
       </footer>
     </div>
-
-
   </body>
 </html>
 `

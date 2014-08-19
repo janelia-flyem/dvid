@@ -157,7 +157,7 @@ type Data struct {
 	versioned bool
 }
 
-func (d Data) MarshalJSON() ([]byte, error) {
+func (d *Data) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		TypeName    dvid.TypeString
 		TypeURL     dvid.URLString

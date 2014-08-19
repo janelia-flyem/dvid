@@ -9,22 +9,40 @@ DVID [![Picture](https://raw.github.com/janelia-flyem/janelia-flyem.github.com/m
 
 DVID is a *distributed, versioned, image-oriented datastore* written to support 
 [Janelia Farm Reseach Center's](http://www.janelia.org) brain imaging, analysis and 
-visualization efforts.  DVID's initial focus is on efficiently storing and retrieving 
-3d grayscale and label data in a variety of ways, e.g., subvolumes, images in XY, XZ, and YZ 
-orientation, multiscale 2d and 3d (similar to quadtree and octree forms), and sparse volumes 
-determined by a label.
+visualization efforts.  
 
 DVID aspires to be a "github for large image-oriented data" because each DVID
 server can manage multiple repositories, each of which contains an image-oriented repo
-(e.g., an image volume, labels, skeletons, etc).  The goal is to provide scientists with
-a github-like web client + server that can push/pull data to a collaborator's DVID server.
+with related data like an image volume, labels, and skeletons.  The goal is to provide scientists 
+with a github-like web client + server that can push/pull data to a collaborator's DVID server.
 
-DVID is written in Go and supports different storage backends, a Level 2 REST HTTP API, 
-command-line access, and a FUSE frontend to at least one of its data types.  It has been 
-tested on both MacOS X and Linux (Fedora 16, CentOS 6, Ubuntu) but not on Windows.
+Although DVID is easily extensible by adding custom *data types*, each of which fulfill a
+minimal interface (e.g., HTTP request handling), DVID's initial focus is on efficiently storing 
+and retrieving 3d grayscale and label data in a variety of ways:
+
+* subvolumes
+* images in XY, XZ, YZ, and arbitrary orientation
+* multiscale 2d and 3d, similar to quadtrees and octrees
+* sparse volumes determined by a label
+* label maps that handle mapping of labels X -> Y
+* label graphs
+* regions of interest represented via a coarse subdivision of space using block indices
+
+Each of the above is handled by standard data types via a
+[Level 2 REST HTTP API](http://martinfowler.com/articles/richardsonMaturityModel.html)
+implemented by Go language packages within the *datatype* directory.  When dealing with novel data,
+we typically use the generic *keyvalue* data type and store JSON-encoded or binary data
+until we understand the desired access patterns and API.  When we outgrow the *keyvalue* type's
+GET, PULL, and DELETE operations, we create a custom data type package with a specialized HTTP API.
+
+DVID is written in Go and supports different storage backends, a REST HTTP API,
+command-line access (likely minimized in near future), and a FUSE frontend to at least 
+one of its data types.  It has been tested on both MacOS X and Linux (Fedora 16, CentOS 6, Ubuntu) 
+but not on Windows.
 
 Command-line and HTTP API documentation is currently distributed over data types and can be 
-found in [help constants within packages](https://github.com/janelia-flyem/dvid/blob/master/datatype/labels64/labels64.go#L38).  We are in the process of 
+found in [help constants within packages](https://github.com/janelia-flyem/dvid/blob/master/datatype/labels64/labels64.go#L39) or by visiting the **/api/help**
+HTTP endpoint on a running DVID server.  We are in the process of 
 figuring out a nice way to document the APIs either through RAML or Swagger.
 
 ## Table of Contents
@@ -46,10 +64,20 @@ although there are a number of differences due to the size and typing of data as
 to transferring versioned data between DVID servers.  We hope to leverage the significant experience in 
 crafting workflows and management tools for distributed, versioned operations.
 
+It has been designed foremost as a malleable system with exchangeable components:
+
+* Data type packages -- allow easy addition of new data and access patterns.
+* Storage engines -- allow tradeoffs in access speed, data size, and concurrency.
+
 DVID promotes the view of data as a collection of key­-value pairs where each key is composed of 
 global identifiers for versioning and data identification as well as a datatype­-specific index 
 (e.g., a spatial index) that allows large data to be broken into chunks. DVID focuses on how to 
 break data into these key­-value pairs in a way that optimizes data access for various clients.
+
+A DVID server is limited to local resources and the user determines what repos, data extents, and 
+versions are held within that DVID server. Overwrites are allowed but once a version is locked, no 
+further edits are allowed on that particular version. This allows manual or automated editing to be 
+done during a period without accumulation of unnecessary deltas.
 
 Why is distributed versioning central to DVID instead of a centralized approach?
 
@@ -87,50 +115,62 @@ uses like parallel proofreading operations in disjoint but small subvolumes.
 
 Planned and Existing Features for DVID:
 
-* **Distributed operation**: Once a DVID repo is created and loaded with data, it can be cloned to 
+**Distributed operation**: Once a DVID repo is created and loaded with data, it can be cloned to 
 remote sites using user­-defined spatial extents. Each DVID server chooses how much of the data set is 
-held locally. (_Status: Planned Q2 2014_)
-* **Versioning**: Each version of a DVID repo corresponds to a node in a version DAG 
+held locally. 
+
+_Status: Next up!  Planned Q4 2014_
+
+**Versioning**: Each version of a DVID repo corresponds to a node in a version DAG 
 (Directed Acyclic Graph). Versions are identified through a UUID that can be composed locally 
 yet are unique globally. 
 Versioning and distribution follow patterns similar to distributed version control systems like git and 
-mercurial. Provenance is kept in the DAG.  (_Status: Simple DAG and UUID support implemented.  
-Versioned compression schemes have been worked out with implementation Q2-Q3 2014._)
-* **Denormalized Views**: For any node in the version DAG, we can choose to create denormalized 
+mercurial. Provenance is kept in the DAG.
+
+_Status: Simple DAG and UUID support implemented.  
+Version compression was introduced in August 2014 and is undergoing testing/refinement._
+
+**Denormalized Views**: For any node in the version DAG, we can choose to create denormalized 
 views that accelerate particular access patterns. For example, quad trees can be created for XY, XZ, 
 and YZ orthogonal views or sparse volumes can compactly describe a neuron. The extra denormalized data 
 is kept in the datastore until a node is archived, which removes all denormalized key­-value pairs
 associated with that version node. Views of the same data can be eventually consistent.
-(_Status: Multi-scale 2d images in XY, XZ, YZ, surface voxels and sparse volumes implemented. Multi-scale 3d, 
-like an octree but also supporting arbitrary scaling levels for anisotropic data,
-is planned by Q3 2014.  Framework for syncing of denormalized views planned Q3-4 2014._)
-* **Flexible Data Types**: DVID provides a well­-defined interface to data type code that can be 
+
+_Status: Multi-scale 2d images in XY, XZ, YZ, surface voxels and sparse volumes implemented. 
+Multi-scale 3d is planned with no set timeline.  
+Framework for syncing of denormalized views planned Q4 2014._
+
+**Flexible Data Types**: DVID provides a well­-defined interface to data type code that can be 
 easily added by users. A DVID server provides HTTP and RPC APIs, authentication, authorization, 
 versioning, provenance, and storage engines. It delegates datatype­-specific commands and processing to 
 data type code. As long as a DVID type can return data for its implemented commands, we don’t care how 
-its implemented. (_Status: Variety of voxel types, multiscale2d, label maps, and key-value implemented. 
-FUSE interface for key-value type working but not heavily used.  Authentication and authorization 
-support planned Q3 2014, likely using Google or other provider authentication + tokens similar to github API._)
-* **Scalable Storage Engine**: Although DVID may support polyglot persistence
+its implemented. 
+
+_Status: Variety of voxel types, multiscale2d, label map, label graph, key-value, and ROI implemented. 
+FUSE interface for key-value type working but not heavily used.  
+Authentication and authorization support planned Q4 2014, likely using Google or other provider authentication + tokens similar to github API._
+
+**Scalable Storage Engine**: Although DVID may support polyglot persistence
 (i.e., allow use of relational, graph, or NoSQL databases), we are initially focused on 
 key­-value stores. DVID has an abstract key­-value interface to its swappable storage engine. 
 We choose a key­-value interface because (1) there are a large number of high­-performance, open­-source 
 implementations that run from embedded to clustered systems, (2) the surface area of the API is very 
 small, even after adding important cases like bulk loads or sequential key read/write, and 
-(3) novel technology tends to match key­-value interfaces, e.g., [groupcache](https://github.com/golang/groupcache)
+(3) novel technology tends to match key­-value interfaces, 
+e.g., [groupcache](https://github.com/golang/groupcache)
 and [Seagate's Kinetic Open Storage Platform](https://developers.seagate.com/display/KV/Kinetic+Open+Storage+Documentation+Wiki).
 As storage becomes more log structured, the key-value API becomes a more natural fit.
-(_Status: Tested with three leveldb variants: 
-[Google's open source version](https://code.google.com/p/leveldb/), 
-[HyperLevelDB](https://github.com/rescrv/HyperLevelDB), and the default
-[Basho-tuned leveldb](https://github.com/basho/leveldb).  Added [Lightning MDB](http://symas.com/mdb/) and also
-experimental use of [Bolt](https://github.com/boltdb/bolt), although neither have been tuned to work as well as
-the leveldb variants._)
 
-A DVID server is limited to local resources and the user determines what repos, subvolume, and 
-versions are held within that DVID server. Overwrites are allowed but once a version is locked, no 
-further edits are allowed on that particular version. This allows manual or automated editing to be 
-done during a period without accumulation of unnecessary deltas.
+_Status: Currently used with [Basho-tuned leveldb](https://github.com/basho/leveldb) and
+other leveldb variants have been tested successfully in past:
+[Google's open source version](https://code.google.com/p/leveldb/) and
+[HyperLevelDB](https://github.com/rescrv/HyperLevelDB).  RocksDB support is planned.
+Added [Lightning MDB](http://symas.com/mdb/) and also experimental use of 
+[Bolt](https://github.com/boltdb/bolt), although neither have been tuned to work as well as
+the leveldb variants.  Clustered DB or object-value store support planned Q4 2014 and includes
+FoundationDB and Scality drivers.  Direct support of Seagate Kinetic drives via their
+[protobuf protocol](https://github.com/Seagate/kinetic-protocol) is planned Q4 2014 or Q1 2015, 
+depending on availability of drives._
 
 ## Build Process
 
@@ -239,7 +279,10 @@ Then remount the disk:
 ## Simple Example
 
 In this example, we'll initialize a new datastore, create grayscale data,
-load some images, and then use a web browser to see the results. 
+load some images, and then use a web browser to see the results.  Although this demo
+uses the command line, in the near future we'll likely deprecate all command line
+interaction (save *create*, *repair*, and *serve* commands) and force interaction
+through HTTP requests.
 
 ### Getting help
 
