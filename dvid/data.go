@@ -161,3 +161,28 @@ type Data interface {
 
 	Versioned() bool
 }
+
+// Axis enumerates differnt types of axis (x, y, z, time, etc)
+type Axis uint8
+
+const (
+	XAxis Axis = iota
+	YAxis
+	ZAxis
+	TAxis
+)
+
+func (a Axis) String() string {
+	switch a {
+	case XAxis:
+		return "X axis"
+	case YAxis:
+		return "Y axis"
+	case ZAxis:
+		return "Z axis"
+	case TAxis:
+		return "Time"
+	default:
+		return "Unknown"
+	}
+}
