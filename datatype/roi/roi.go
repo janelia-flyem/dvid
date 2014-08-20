@@ -376,11 +376,11 @@ func (d *Data) Put(ctx storage.Context, jsonBytes []byte) error {
 	const BATCH_SIZE = 10000
 	batch := batcher.NewBatch(ctx)
 	for i, span := range spans {
-		if span[2] < d.MinZ {
-			d.MinZ = span[2]
+		if span[0] < d.MinZ {
+			d.MinZ = span[0]
 		}
-		if span[2] > d.MaxZ {
-			d.MaxZ = span[2]
+		if span[0] > d.MaxZ {
+			d.MaxZ = span[0]
 		}
 		index := indexRLE{
 			start: dvid.IndexZYX{span[2], span[1], span[0]},
@@ -466,6 +466,7 @@ func (d *Data) PointQuery(ctx storage.Context, jsonBytes []byte) ([]byte, error)
 type subvolumesT struct {
 	NumTotalBlocks  int32
 	NumActiveBlocks int32
+	NumSubvolumes   int32
 	Subvolumes      []subvolumeT
 }
 
@@ -575,6 +576,8 @@ func findActives(blocks []*indexRLE, minX, maxX int32) int32 {
 		x0 := dvid.MaxInt32(minX, spanBeg)
 		x1 := dvid.MinInt32(maxX, spanEnd)
 		numActive += x1 - x0 + 1
+		//fmt.Printf("RLE Span X %3d -> %3d (Y %3d, Z %3d).  Subvolume %4d -> %4d.  active blocks: %d\n",
+		//	spanBeg, spanEnd, rle.start[1], rle.start[2], minX, maxX, numActive)
 	}
 	return numActive
 }
@@ -659,7 +662,9 @@ func (d *Data) Partition(ctx storage.Context, batchsize int32) ([]byte, error) {
 	if d.MaxZ < layerEndZ {
 		layer.addSubvolumes(&subvolumes, batchsize)
 	}
-	subvolumes.NumTotalBlocks = batchsize * batchsize * batchsize * int32(len(subvolumes.Subvolumes))
+	numSubvolumes := int32(len(subvolumes.Subvolumes))
+	subvolumes.NumTotalBlocks = batchsize * batchsize * batchsize * numSubvolumes
+	subvolumes.NumSubvolumes = numSubvolumes
 
 	// Encode as JSON
 	jsonBytes, err := json.MarshalIndent(subvolumes, "", "    ")
