@@ -171,8 +171,7 @@ func TestROIRequests(t *testing.T) {
 	}
 }
 
-// Make sure lower-level ROI functions.
-func TestROIUse(t *testing.T) {
+func TestROICreateAndSerialize(t *testing.T) {
 	tests.UseStore()
 	defer tests.CloseStore()
 
@@ -194,6 +193,7 @@ func TestROIUse(t *testing.T) {
 			roi1.DataName(), "myroi")
 	}
 
+	config.Set("BlockSize", "15,16,17")
 	dataservice2, err := repo.NewData(roitype, "myroi2", config)
 	if err != nil {
 		t.Errorf("Error creating new roi instance: %s\n", err.Error())
@@ -207,27 +207,92 @@ func TestROIUse(t *testing.T) {
 		t.Errorf("Instance IDs should be different: %d == %d\n",
 			roi1.InstanceID(), roi2.InstanceID())
 	}
+
+	// Test persistence of storage.
+	roi2.MinZ = 13
+	roi2.MaxZ = 3098
+	gobBytes, err := roi2.GobEncode()
+	if err != nil {
+		t.Fatalf("Could not Gob encode roi: %s\n", err.Error())
+	}
+
+	var received Data
+	if err = received.GobDecode(gobBytes); err != nil {
+		t.Fatalf("Could not decode Gob-encoded roi: %s\n", err.Error())
+	}
+
+	if !reflect.DeepEqual(*(roi2.Data), *(received.Data)) {
+		t.Errorf("ROI base Data has bad roundtrip:\nOriginal:\n%v\nReceived:\n%v\n",
+			*(roi2.Data), *(received.Data))
+	}
+
+	if !reflect.DeepEqual(roi2.Properties, received.Properties) {
+		t.Errorf("ROI extended properties has bad roundtrip:\nOriginal:\n%v\nReceived:\n%v\n",
+			roi2.Properties, received.Properties)
+	}
 }
 
-/*
-func TestROIValueRoundTrip(t *testing.T) {
+func TestROIRepoPersistence(t *testing.T) {
 	tests.UseStore()
 	defer tests.CloseStore()
 
-	repo, versionID := initTestRepo()
+	repo, _ := initTestRepo()
 
 	// Add data
 	config := dvid.NewConfig()
 	config.SetVersioned(true)
-	dataservice, err := repo.NewData(roitype, "roundtripper", config)
+	dataservice1, err := repo.NewData(roitype, "myroi", config)
 	if err != nil {
 		t.Errorf("Error creating new roi instance: %s\n", err.Error())
 	}
-	roi, ok := dataservice.(*Data)
+	roi1, ok := dataservice1.(*Data)
 	if !ok {
-		t.Errorf("Returned new data instance is not roi.Data\n")
+		t.Errorf("Returned new data instance 1 is not roi.Data\n")
+	}
+	if roi1.DataName() != "myroi" {
+		t.Errorf("New roi data instance name set incorrectly: %q != %q\n",
+			roi1.DataName(), "myroi")
 	}
 
-	ctx := datastore.NewVersionedContext(dataservice, versionID)
+	config.Set("BlockSize", "15,16,17")
+	dataservice2, err := repo.NewData(roitype, "myroi2", config)
+	if err != nil {
+		t.Errorf("Error creating new roi instance: %s\n", err.Error())
+	}
+	roi2, ok := dataservice2.(*Data)
+	if !ok {
+		t.Errorf("Returned new data instance 2 is not roi.Data\n")
+	}
+	roi2.MinZ = 13
+	roi2.MaxZ = 3098
+	oldBlockSize := roi2.BlockSize
+
+	// Check instance IDs
+	if roi1.InstanceID() == roi2.InstanceID() {
+		t.Errorf("Instance IDs should be different: %d == %d\n",
+			roi1.InstanceID(), roi2.InstanceID())
+	}
+
+	// Restart test datastore and see if datasets are still there.
+	if err = repo.Save(); err != nil {
+		t.Fatalf("Unable to save repo during ROI persistence test: %s\n", err.Error())
+	}
+	oldRepoUUID := repo.RootUUID()
+	tests.CloseReopenStore()
+
+	repo2, err := datastore.RepoFromUUID(oldRepoUUID)
+	if err != nil {
+		t.Fatalf("Can't get repo %s from reloaded test db: %s\n", oldRepoUUID, err.Error())
+	}
+	dataservice3, err := repo2.GetDataByName("myroi2")
+	if err != nil {
+		t.Fatalf("Can't get first ROI instance from reloaded test db: %s\n", err.Error())
+	}
+	roi2new, ok := dataservice3.(*Data)
+	if !ok {
+		t.Errorf("Returned new data instance 3 is not roi.Data\n")
+	}
+	if !reflect.DeepEqual(oldBlockSize, roi2new.BlockSize) {
+		t.Errorf("Expected %v, got %v in roi2.BlockSize\n", oldBlockSize, roi2new.BlockSize)
+	}
 }
-*/

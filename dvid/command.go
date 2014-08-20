@@ -85,12 +85,18 @@ func (c *Config) SetVersioned(versioned bool) {
 	}
 }
 
-func (c *Config) Set(key, value string) {
+func (c *Config) Set(key string, value interface{}) {
 	if c.values == nil {
 		c.values = make(map[string]interface{})
 	}
 	lowerkey := strings.ToLower(key)
 	c.values[lowerkey] = value
+}
+
+func (c *Config) Get(key string) (interface{}, bool) {
+	lowerkey := strings.ToLower(key)
+	value, ok := c.values[lowerkey]
+	return value, ok
 }
 
 func (c Config) GetAll() map[string]interface{} {

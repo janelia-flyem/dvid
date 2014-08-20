@@ -53,6 +53,31 @@ func UseStore() {
 	count++
 }
 
+// CloseReopenStore forces close of the underlying storage engine and then reopening
+// the datastore.  Useful for testing metadata persistence.
+func CloseReopenStore() {
+	mu.Lock()
+	defer mu.Unlock()
+	dvid.BlockOnActiveCgo()
+	if engine == nil {
+		log.Fatalf("Attempted to close and reopen non-existant engine!")
+	}
+	engine.Close()
+
+	var err error
+	create := false
+	engine, err = local.NewKeyValueStore(dbpath, create, dvid.Config{})
+	if err != nil {
+		log.Fatalf("Error reopening test db at %s: %s\n", dbpath, err.Error())
+	}
+	if err = storage.Initialize(engine, "testdb"); err != nil {
+		log.Fatalf("Can't initialize test datastore: %s\n", err.Error())
+	}
+	if err = datastore.Initialize(); err != nil {
+		log.Fatalf("Can't initialize datastore management: %s\n", err.Error())
+	}
+}
+
 func CloseStore() {
 	mu.Lock()
 	defer mu.Unlock()

@@ -4,7 +4,6 @@ package local
 
 import (
 	"fmt"
-	"log"
 	"os"
 
 	"github.com/janelia-flyem/dvid/dvid"
@@ -16,8 +15,6 @@ import (
 // local storage system waits until it receives a path and configuration data from a
 // "serve" command.
 func Initialize(path string, config dvid.Config) error {
-	log.Printf("local.Initialize()\n")
-
 	create := false
 	kvEngine, err := NewKeyValueStore(path, create, config)
 	if err != nil {
