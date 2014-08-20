@@ -582,6 +582,59 @@ func findActives(blocks []*indexRLE, minX, maxX int32) int32 {
 	return numActive
 }
 
+func findXHoles(blocks []*indexRLE, minX, maxX int32) (bestBeg, bestEnd int32, found bool) {
+	nx := maxX - minX + 1
+	used := make([]bool, nx, nx)
+
+	for _, rle := range blocks {
+		spanBeg := rle.start[0]
+		if spanBeg > maxX {
+			continue
+		}
+		spanEnd := spanBeg + int32(rle.span) - 1
+		if spanEnd < minX {
+			continue
+		}
+		x0 := dvid.MaxInt32(minX, spanBeg)
+		x1 := dvid.MinInt32(maxX, spanEnd)
+
+		for x := x0; x <= x1; x++ {
+			i := x - minX
+			used[i] = true
+		}
+	}
+
+	// See if there are holes.
+	var holeSize, bestSize int32
+	var holeBeg, holeEnd int32
+	var inHole bool
+	for x := minX; x <= maxX; x++ {
+		i := x - minX
+		if !used[i] {
+			if inHole {
+				holeEnd = x
+				holeSize++
+			} else {
+				inHole = true
+				holeBeg = x
+				holeEnd = x
+				holeSize = 1
+			}
+		} else {
+			inHole = false
+		}
+		if holeSize > bestSize {
+			bestSize = holeSize
+			bestBeg = holeBeg
+			bestEnd = holeEnd
+		}
+	}
+	if bestSize > 0 {
+		found = true
+	}
+	return
+}
+
 func totalBlocks(minCorner, maxCorner dvid.ChunkPoint3d) int32 {
 	dx := maxCorner[0] - minCorner[0] + 1
 	dy := maxCorner[1] - minCorner[1] + 1
@@ -591,7 +644,7 @@ func totalBlocks(minCorner, maxCorner dvid.ChunkPoint3d) int32 {
 
 // Adds subvolumes based on given extents for a layer.
 func (d *Data) addSubvolumes(layer *layerT, subvolumes *subvolumesT, batchsize int32) {
-	mergeThreshold := batchsize * batchsize * batchsize / 10
+	// mergeThreshold := batchsize * batchsize * batchsize / 10
 	minY, maxY, found := getYRange(layer.activeBlocks)
 	if !found {
 		return
@@ -627,17 +680,25 @@ func (d *Data) addSubvolumes(layer *layerT, subvolumes *subvolumesT, batchsize i
 				}
 				minCorner := dvid.ChunkPoint3d{begX, begY, layer.minZ}
 				maxCorner := dvid.ChunkPoint3d{endX, endY, layer.maxZ}
-				numTotal := totalBlocks(minCorner, maxCorner)
-				numActive := findActives(actives, begX, endX)
-				if numActive < mergeThreshold {
-					lastI := len(subvolumes.Subvolumes) - 1
-					subvolume := subvolumes.Subvolumes[lastI]
+				holeBeg, holeEnd, found := findXHoles(actives, begX, endX)
+				var numActive, numTotal int32
+				if found {
 					// MinCorner stays same since we are extended in X
-					subvolume.MaxCorner = maxCorner.MinPoint(d.BlockSize).(dvid.Point3d)
-					subvolume.TotalBlocks += numTotal
-					subvolume.ActiveBlocks += numActive
-					subvolumes.Subvolumes[lastI] = subvolume
+					if holeBeg-1 >= begX {
+						lastI := len(subvolumes.Subvolumes) - 1
+						subvolume := subvolumes.Subvolumes[lastI]
+						lastCorner := dvid.ChunkPoint3d{holeBeg - 1, endY, layer.maxZ}
+						subvolume.MaxCorner = lastCorner.MinPoint(d.BlockSize).(dvid.Point3d)
+						numTotal = totalBlocks(minCorner, lastCorner)
+						numActive = findActives(actives, begX, holeBeg-1)
+						subvolume.TotalBlocks += numTotal
+						subvolume.ActiveBlocks += numActive
+						subvolumes.Subvolumes[lastI] = subvolume
+					}
+					begX = holeEnd + 1
 				} else {
+					numTotal = totalBlocks(minCorner, maxCorner)
+					numActive = findActives(actives, begX, endX)
 					subvolume := subvolumeT{
 						MinCorner:    minCorner.MinPoint(d.BlockSize).(dvid.Point3d),
 						MaxCorner:    maxCorner.MaxPoint(d.BlockSize).(dvid.Point3d),
@@ -645,10 +706,10 @@ func (d *Data) addSubvolumes(layer *layerT, subvolumes *subvolumesT, batchsize i
 						ActiveBlocks: numActive,
 					}
 					subvolumes.Subvolumes = append(subvolumes.Subvolumes, subvolume)
+					begX = endX + 1
 				}
 				subvolumes.NumActiveBlocks += numActive
 				subvolumes.NumTotalBlocks += numTotal
-				begX = endX + 1
 			}
 		}
 		begY = endY + 1
