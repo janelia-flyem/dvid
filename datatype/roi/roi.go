@@ -471,10 +471,10 @@ type subvolumesT struct {
 }
 
 type subvolumeT struct {
-	MinCorner    dvid.ChunkPoint3d
-	MaxCorner    dvid.ChunkPoint3d
+	MinCorner    dvid.Point3d
+	MaxCorner    dvid.Point3d
+	TotalBlocks  int32
 	ActiveBlocks int32
-	//activeBlocks []dvid.ChunkPoint3d
 }
 
 type layerT struct {
@@ -582,42 +582,85 @@ func findActives(blocks []*indexRLE, minX, maxX int32) int32 {
 	return numActive
 }
 
+func totalBlocks(minCorner, maxCorner dvid.ChunkPoint3d) int32 {
+	dx := maxCorner[0] - minCorner[0] + 1
+	dy := maxCorner[1] - minCorner[1] + 1
+	dz := maxCorner[2] - minCorner[2] + 1
+	return dx * dy * dz
+}
+
 // Adds subvolumes based on given extents for a layer.
-func (layer *layerT) addSubvolumes(subvolumes *subvolumesT, batchsize int32) {
+func (d *Data) addSubvolumes(layer *layerT, subvolumes *subvolumesT, batchsize int32) {
+	mergeThreshold := batchsize * batchsize * batchsize / 10
 	minY, maxY, found := getYRange(layer.activeBlocks)
 	if !found {
 		return
 	}
-	topPad, _ := getPadding(minY, maxY, batchsize)
-	for begY := minY - topPad; begY < maxY; begY += batchsize {
+	dy := maxY - minY + 1
+	yleft := dy % batchsize
+
+	begY := minY
+	for {
+		if begY > maxY {
+			break
+		}
 		endY := begY + batchsize - 1
+		if yleft > 0 {
+			endY++
+			yleft--
+		}
 		minX, maxX, actives := getXRange(layer.activeBlocks, begY, endY)
 		if len(actives) > 0 {
-			leftPad, _ := getPadding(minX, maxX, batchsize)
+			dx := maxX - minX + 1
+			xleft := dx % batchsize
+
 			// Create subvolumes along this row.
-			for begX := minX - leftPad; begX < maxX; begX += batchsize {
+			begX := minX
+			for {
+				if begX > maxX {
+					break
+				}
 				endX := begX + batchsize - 1
+				if xleft > 0 {
+					endX++
+					xleft--
+				}
 				minCorner := dvid.ChunkPoint3d{begX, begY, layer.minZ}
 				maxCorner := dvid.ChunkPoint3d{endX, endY, layer.maxZ}
+				numTotal := totalBlocks(minCorner, maxCorner)
 				numActive := findActives(actives, begX, endX)
-				subvolume := subvolumeT{
-					MinCorner:    minCorner,
-					MaxCorner:    maxCorner,
-					ActiveBlocks: numActive,
+				if numActive < mergeThreshold {
+					lastI := len(subvolumes.Subvolumes) - 1
+					subvolume := subvolumes.Subvolumes[lastI]
+					// MinCorner stays same since we are extended in X
+					subvolume.MaxCorner = maxCorner.MinPoint(d.BlockSize).(dvid.Point3d)
+					subvolume.TotalBlocks += numTotal
+					subvolume.ActiveBlocks += numActive
+					subvolumes.Subvolumes[lastI] = subvolume
+				} else {
+					subvolume := subvolumeT{
+						MinCorner:    minCorner.MinPoint(d.BlockSize).(dvid.Point3d),
+						MaxCorner:    maxCorner.MaxPoint(d.BlockSize).(dvid.Point3d),
+						TotalBlocks:  numTotal,
+						ActiveBlocks: numActive,
+					}
+					subvolumes.Subvolumes = append(subvolumes.Subvolumes, subvolume)
 				}
-				subvolumes.Subvolumes = append(subvolumes.Subvolumes, subvolume)
 				subvolumes.NumActiveBlocks += numActive
+				subvolumes.NumTotalBlocks += numTotal
+				begX = endX + 1
 			}
 		}
+		begY = endY + 1
 	}
 }
 
 func (d *Data) Partition(ctx storage.Context, batchsize int32) ([]byte, error) {
-	// Position first subvolume layers at reasonable Z so full subvolume
-	// coverage best covers depth of ROI, assuming continuity in Z.
-	topZPad, _ := getPadding(d.MinZ, d.MaxZ, batchsize)
+	// Partition Z as perfectly as we can.
+	dz := d.MaxZ - d.MinZ + 1
+	zleft := dz % batchsize
 
-	layerBegZ := d.MinZ - topZPad
+	layerBegZ := d.MinZ
 	layerEndZ := layerBegZ + batchsize - 1
 
 	// Iterate through blocks in ascending Z, calculating active extents and subvolume coverage.
@@ -644,13 +687,18 @@ func (d *Data) Partition(ctx storage.Context, batchsize int32) ([]byte, error) {
 		// If we are in new layer, process last one.
 		z := index.start.Value(2)
 		if z > layerEndZ {
-
 			// Process last layer
-			layer.addSubvolumes(&subvolumes, batchsize)
+			dvid.Debugf("Computing subvolumes in layer with Z %d -> %d (dz %d)\n",
+				layer.minZ, layer.maxZ, layer.maxZ-layer.minZ+1)
+			d.addSubvolumes(layer, &subvolumes, batchsize)
 
 			// Init variables for next layer
-			layerBegZ += batchsize
+			layerBegZ = layerEndZ + 1
 			layerEndZ += batchsize
+			if zleft > 0 {
+				layerEndZ++
+				zleft--
+			}
 			layer = d.newLayer(layerBegZ, layerEndZ)
 		}
 
@@ -659,12 +707,12 @@ func (d *Data) Partition(ctx storage.Context, batchsize int32) ([]byte, error) {
 	})
 
 	// Process last incomplete layer if there is one.
-	if d.MaxZ < layerEndZ {
-		layer.addSubvolumes(&subvolumes, batchsize)
+	if len(layer.activeBlocks) > 0 {
+		dvid.Debugf("Computing subvolumes for final layer Z %d -> %d (dz %d)\n",
+			layer.minZ, layer.maxZ, layer.maxZ-layer.minZ+1)
+		d.addSubvolumes(layer, &subvolumes, batchsize)
 	}
-	numSubvolumes := int32(len(subvolumes.Subvolumes))
-	subvolumes.NumTotalBlocks = batchsize * batchsize * batchsize * numSubvolumes
-	subvolumes.NumSubvolumes = numSubvolumes
+	subvolumes.NumSubvolumes = int32(len(subvolumes.Subvolumes))
 
 	// Encode as JSON
 	jsonBytes, err := json.MarshalIndent(subvolumes, "", "    ")
