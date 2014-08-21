@@ -265,7 +265,7 @@ func TestROIRepoPersistence(t *testing.T) {
 	}
 	roi2.MinZ = 13
 	roi2.MaxZ = 3098
-	oldBlockSize := roi2.BlockSize
+	oldData := *roi2
 
 	// Check instance IDs
 	if roi1.InstanceID() == roi2.InstanceID() {
@@ -292,7 +292,7 @@ func TestROIRepoPersistence(t *testing.T) {
 	if !ok {
 		t.Errorf("Returned new data instance 3 is not roi.Data\n")
 	}
-	if !reflect.DeepEqual(oldBlockSize, roi2new.BlockSize) {
-		t.Errorf("Expected %v, got %v in roi2.BlockSize\n", oldBlockSize, roi2new.BlockSize)
+	if !reflect.DeepEqual(oldData, *roi2new) {
+		t.Errorf("Expected %v, got %v\n", oldData, *roi2new)
 	}
 }

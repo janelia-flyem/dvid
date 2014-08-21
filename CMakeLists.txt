@@ -207,7 +207,7 @@ else ()
     )
 
    add_custom_target (test
-        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go test -v -tags '${DVID_BACKEND} ${DVID_GRAPHBACKEND}' 
+        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go test -tags '${DVID_BACKEND} ${DVID_GRAPHBACKEND}' 
             ${DVID_GO}/...)
 
    add_custom_target (coverage

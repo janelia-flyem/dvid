@@ -1254,6 +1254,16 @@ func ImageGrayFromData(data []uint8, nx, ny int) (img *image.Gray) {
 	return
 }
 
+// ImageNRGBA64FromData returns a NRGBA64 image given 64-bit data and image size.
+func ImageNRGBA64FromData(data []byte, nx, ny int) (img *image.NRGBA64) {
+	img = &image.NRGBA64{
+		Pix:    data,
+		Stride: nx * 8,
+		Rect:   image.Rect(0, 0, nx, ny),
+	}
+	return
+}
+
 // WriteImageHttp writes an image to a HTTP response writer using a format and optional
 // compression strength specified in a string, e.g., "png", "jpg:80".
 func WriteImageHttp(w http.ResponseWriter, img image.Image, formatStr string) error {

@@ -277,8 +277,6 @@ func init() {
 	// Need to register types that will be used to fulfill interfaces.
 	gob.Register(&Type{})
 	gob.Register(&Data{})
-	gob.Register(&binary.LittleEndian)
-	gob.Register(&binary.BigEndian)
 }
 
 // --- Labels64 Datatype -----
@@ -308,7 +306,7 @@ func NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.DataString, c dvid.Co
 	}
 	dvid.Infof("Creating labels64 '%s' with %s", voxelData.DataName(), labelType)
 	data := &Data{
-		Data:     *voxelData,
+		Data:     voxelData,
 		Labeling: labelType,
 	}
 	return data, nil
@@ -384,18 +382,59 @@ func (l *Labels) Interpolable() bool {
 
 // Data of labels64 type just uses voxels.Data.
 type Data struct {
-	voxels.Data
+	*voxels.Data
 	Labeling LabelType
 	Ready    bool
 }
 
-// JSONString returns the JSON for this Data's configuration
-func (d *Data) JSONString() (string, error) {
-	m, err := json.Marshal(d)
-	if err != nil {
-		return "", err
+type propertiesT struct {
+	voxels.Properties
+	Labeling LabelType
+	Ready    bool
+}
+
+func (d *Data) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Base     *voxels.Data
+		Extended propertiesT
+	}{
+		d.Data,
+		propertiesT{
+			d.Properties,
+			d.Labeling,
+			d.Ready,
+		},
+	})
+}
+
+func (d *Data) GobDecode(b []byte) error {
+	buf := bytes.NewBuffer(b)
+	dec := gob.NewDecoder(buf)
+	if err := dec.Decode(&(d.Data)); err != nil {
+		return err
 	}
-	return string(m), nil
+	if err := dec.Decode(&(d.Labeling)); err != nil {
+		return err
+	}
+	if err := dec.Decode(&(d.Ready)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (d *Data) GobEncode() ([]byte, error) {
+	var buf bytes.Buffer
+	enc := gob.NewEncoder(&buf)
+	if err := enc.Encode(d.Data); err != nil {
+		return nil, err
+	}
+	if err := enc.Encode(d.Labeling); err != nil {
+		return nil, err
+	}
+	if err := enc.Encode(d.Ready); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 // --- voxels.IntData interface -------------
@@ -466,7 +505,7 @@ func (d *Data) NewExtHandler(geom dvid.Geometry, img interface{}) (voxels.ExtDat
 	return labels, nil
 }
 
-// Convert a labels into a 64-bit label.
+// Convert raw image data into a 2d array of 64-bit labels
 func (d *Data) convertTo64bit(geom dvid.Geometry, data []uint8, bytesPerVoxel, stride int) ([]byte, error) {
 	nx := int(geom.Size().Value(0))
 	ny := int(geom.Size().Value(1))
@@ -743,13 +782,13 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 		fmt.Fprintln(w, jsonStr)
 
 	case "info":
-		jsonStr, err := d.JSONString()
+		jsonBytes, err := d.MarshalJSON()
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, jsonStr)
+		fmt.Fprintf(w, string(jsonBytes))
 
 	case "raw", "isotropic":
 		if len(parts) < 7 {

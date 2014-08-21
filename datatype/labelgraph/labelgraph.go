@@ -297,8 +297,6 @@ func init() {
 	// Need to register types that will be used to fulfill interfaces.
 	gob.Register(&Type{})
 	gob.Register(&Data{})
-	gob.Register(&binary.LittleEndian)
-	gob.Register(&binary.BigEndian)
 }
 
 // labelVertex stores a subset of information contained in GraphVertex for interfacing with client

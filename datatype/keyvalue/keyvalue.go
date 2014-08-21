@@ -4,7 +4,7 @@
 package keyvalue
 
 import (
-	"encoding/binary"
+	"bytes"
 	"encoding/gob"
 	"encoding/json"
 	"fmt"
@@ -24,6 +24,8 @@ const (
 	Version  = "0.1"
 	RepoURL  = "github.com/janelia-flyem/dvid/datatype/keyvalue"
 	TypeName = "keyvalue"
+
+	DefaultMaxKeySize = 20
 )
 
 const HelpMessage = `
@@ -49,6 +51,7 @@ $ dvid repo <UUID> new keyvalue <data name> <settings...>
     Configuration Settings (case-insensitive keys)
 
     Versioned      "true" or "false" (default)
+    MaxKeySize     Maximum size of keys in terms of characters.  Default is 20.
 
 $ dvid node <UUID> <data name> mount <directory>
 
@@ -116,8 +119,6 @@ func init() {
 	// Need to register types that will be used to fulfill interfaces.
 	gob.Register(&Type{})
 	gob.Register(&Data{})
-	gob.Register(&binary.LittleEndian)
-	gob.Register(&binary.BigEndian)
 }
 
 // Type embeds the datastore's Type to create a unique type for keyvalue functions.
@@ -147,16 +148,51 @@ func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.
 	if err != nil {
 		return nil, err
 	}
-	return &Data{basedata}, nil
+	maxKeySize, found, err := c.GetInt("MaxKeySize")
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		maxKeySize = DefaultMaxKeySize
+	}
+	return &Data{basedata, maxKeySize}, nil
 }
 
 func (dtype *Type) Help() string {
 	return fmt.Sprintf(HelpMessage)
 }
 
+type indexT []byte
+
+// Removes all bytes at first 0.
+func (i indexT) String() string {
+	if len(i) == 0 {
+		return ""
+	}
+	n := bytes.Index(i, []byte{0})
+	if n < 0 {
+		return string(i)
+	}
+	return string(i[:n])
+}
+
 // Data embeds the datastore's Data and extends it with keyvalue properties (none for now).
 type Data struct {
 	*datastore.Data
+	MaxKeySize int
+}
+
+func (d *Data) getIndex(key string) (indexT, error) {
+	if !d.Versioned() {
+		return []byte(key), nil
+	}
+	if len(key) > d.MaxKeySize {
+		return nil, fmt.Errorf("Key %q is too long.  Data instance %q is set to max key size of %d",
+			key, d.DataName(), d.MaxKeySize)
+	}
+	index := make(indexT, d.MaxKeySize, d.MaxKeySize)
+	copy(index[0:len(key)], []byte(key))
+	return index, nil
 }
 
 func (d *Data) GetKeysInRange(ctx storage.Context, keyBeg, keyEnd string) ([]string, error) {
@@ -164,20 +200,33 @@ func (d *Data) GetKeysInRange(ctx storage.Context, keyBeg, keyEnd string) ([]str
 	if err != nil {
 		return nil, err
 	}
+	fmt.Printf("Getting keys in range %s -> %s\n", keyBeg, keyEnd)
 	// Compute first and last key for range
-	first := dvid.IndexString(keyBeg)
-	last := dvid.IndexString(keyEnd)
-	keys, err := db.KeysInRange(ctx, first.Bytes(), last.Bytes())
+	first, err := d.getIndex(keyBeg)
 	if err != nil {
 		return nil, err
 	}
+	last, err := d.getIndex(keyEnd)
+	if err != nil {
+		return nil, err
+	}
+	keys, err := db.KeysInRange(ctx, []byte(first), []byte(last))
+	if err != nil {
+		return nil, err
+	}
+	var keyString string
 	keyList := []string{}
 	for _, key := range keys {
 		index, err := ctx.IndexFromKey(key)
 		if err != nil {
 			return nil, err
 		}
-		keyList = append(keyList, string(index))
+		if d.Versioned() {
+			keyString = indexT(index).String()
+		} else {
+			keyString = string(index)
+		}
+		keyList = append(keyList, keyString)
 	}
 	return keyList, nil
 }
@@ -188,8 +237,11 @@ func (d *Data) GetData(ctx storage.Context, keyStr string) ([]byte, bool, error)
 	if err != nil {
 		return nil, false, err
 	}
-	index := dvid.IndexString(keyStr)
-	data, err := db.Get(ctx, index.Bytes())
+	index, err := d.getIndex(keyStr)
+	if err != nil {
+		return nil, false, err
+	}
+	data, err := db.Get(ctx, []byte(index))
 	if err != nil {
 		return nil, false, fmt.Errorf("Error in retrieving key '%s': %s", keyStr, err.Error())
 	}
@@ -214,8 +266,11 @@ func (d *Data) PutData(ctx storage.Context, keyStr string, value []byte) error {
 	if err != nil {
 		return fmt.Errorf("Unable to serialize data: %s\n", err.Error())
 	}
-	index := dvid.IndexString(keyStr)
-	return db.Put(ctx, index.Bytes(), serialization)
+	index, err := d.getIndex(keyStr)
+	if err != nil {
+		return err
+	}
+	return db.Put(ctx, []byte(index), serialization)
 }
 
 // JSONString returns the JSON for this Data's configuration
@@ -308,6 +363,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 			// Return JSON list of keys
 			keyBeg := keyStr
 			keyEnd := parts[4]
+			fmt.Printf("get key range: %s\n", url)
 			keyList, err := d.GetKeysInRange(storeCtx, keyBeg, keyEnd)
 			if err != nil {
 				server.BadRequest(w, r, err.Error())
@@ -321,6 +377,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 			w.Header().Set("Content-Type", "application/json")
 			fmt.Fprintf(w, string(jsonBytes))
 		} else {
+			fmt.Printf("get single key: %s\n", url)
 			// Return value of single key
 			value, found, err := d.GetData(storeCtx, keyStr)
 			if err != nil {

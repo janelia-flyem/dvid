@@ -5,11 +5,16 @@
 	storage engines should satisfy.
 
 	Keys are specified as a combination of Context and a datatype-specific byte slice,
-	typicalled called an "index" in DVID docs and code.  The Context provides DVID-wide
+	typically called an "index" in DVID docs and code.  The Context provides DVID-wide
 	namespacing and as such, must use one of the Context implementations within the
 	storage package.  (This is enforced by making Context a Go opaque interface.)
 	The datatype-specific byte slice (index) formatting is entirely up to the datatype
 	designer, although use of dvid.Index is suggested.
+
+	NOTE: Versioned data instances MUST have fixed index sizes because versioning
+	is added to end.  For example, the keyvalue data type cannot accept arbitrary
+	key lengths if the data instance is versioned.  A MaxKeySize configuration can
+	be optionally set for versioned keyvalue data instances.
 
 	The storage engines should accept a nil Context, which allows direct saving of a
 	raw key without use of a ConstructKey() transformation.  In general, though,

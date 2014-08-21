@@ -242,8 +242,8 @@ func init() {
 	// Need to register types that will be used to fulfill interfaces.
 	gob.Register(&Type{})
 	gob.Register(&Data{})
-	gob.Register(&binary.LittleEndian)
-	gob.Register(&binary.BigEndian)
+	gob.Register(binary.LittleEndian)
+	gob.Register(binary.BigEndian)
 }
 
 // Type embeds the datastore's Type to create a unique type with voxel functions.
