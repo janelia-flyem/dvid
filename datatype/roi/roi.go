@@ -188,6 +188,8 @@ func (dtype *Type) Help() string {
 	return fmt.Sprintf(HelpMessage, voxels.DefaultBlockSize)
 }
 
+// Properties are additional properties for keyvalue data instances beyond those
+// in standard datastore.Data.   These will be persisted to metadata storage.
 type Properties struct {
 	BlockSize dvid.Point3d
 	MinZ      int32

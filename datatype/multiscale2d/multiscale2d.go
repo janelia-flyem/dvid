@@ -31,8 +31,9 @@ import (
 )
 
 const (
-	Version = "0.1"
-	RepoURL = "github.com/janelia-flyem/dvid/datatype/multiscale2d"
+	Version  = "0.1"
+	RepoURL  = "github.com/janelia-flyem/dvid/datatype/multiscale2d"
+	TypeName = "multiscale2d"
 )
 
 const HelpMessage = `
@@ -281,10 +282,12 @@ func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.
 		return nil, err
 	}
 	data := &Data{
-		Data:        basedata,
-		Source:      dvid.DataString(sourcename),
-		Placeholder: placeholder,
-		Encoding:    format,
+		Data: basedata,
+		Properties: Properties{
+			Source:      dvid.DataString(sourcename),
+			Placeholder: placeholder,
+			Encoding:    format,
+		},
 	}
 	return data, nil
 }
@@ -421,10 +424,9 @@ func (f Format) String() string {
 	}
 }
 
-// Data embeds the datastore's Data and extends it with voxel-specific properties.
-type Data struct {
-	*datastore.Data
-
+// Properties are additional properties for keyvalue data instances beyond those
+// in standard datastore.Data.   These will be persisted to metadata storage.
+type Properties struct {
 	// Source of the data for these multiscale2d.
 	Source dvid.DataString
 
@@ -442,13 +444,44 @@ type Data struct {
 	Quality int
 }
 
-// JSONString returns the JSON for this Data's configuration
-func (d *Data) JSONString() (jsonStr string, err error) {
-	m, err := json.Marshal(d)
-	if err != nil {
-		return "", err
+// Data embeds the datastore's Data and extends it with voxel-specific properties.
+type Data struct {
+	*datastore.Data
+	Properties
+}
+
+func (d *Data) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Base     *datastore.Data
+		Extended Properties
+	}{
+		d.Data,
+		d.Properties,
+	})
+}
+
+func (d *Data) GobDecode(b []byte) error {
+	buf := bytes.NewBuffer(b)
+	dec := gob.NewDecoder(buf)
+	if err := dec.Decode(&(d.Data)); err != nil {
+		return err
 	}
-	return string(m), nil
+	if err := dec.Decode(&(d.Properties)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (d *Data) GobEncode() ([]byte, error) {
+	var buf bytes.Buffer
+	enc := gob.NewEncoder(&buf)
+	if err := enc.Encode(d.Data); err != nil {
+		return nil, err
+	}
+	if err := enc.Encode(d.Properties); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 // --- DataService interface ---
@@ -536,13 +569,13 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 		fmt.Fprintln(w, d.Help())
 
 	case "info":
-		jsonStr, err := d.JSONString()
+		jsonBytes, err := d.MarshalJSON()
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, jsonStr)
+		fmt.Fprintf(w, string(jsonBytes))
 
 	case "tile":
 		if len(parts) < 7 {

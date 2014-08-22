@@ -15,6 +15,7 @@
 package multichan16
 
 import (
+	"bytes"
 	"encoding/gob"
 	"encoding/json"
 	"fmt"
@@ -231,19 +232,52 @@ func (c *Channel) IndexIterator(chunkSize dvid.Point) (dvid.IndexIterator, error
 // Data of multichan16 type embeds voxels and extends it with channels.
 type Data struct {
 	*voxels.Data
+	NumChannels int
+}
+
+type propertiesT struct {
+	voxels.Properties
 
 	// Number of channels for this data.  The names are referenced by
 	// adding a number onto the data name, e.g., mydata1, mydata2, etc.
 	NumChannels int
 }
 
-// JSONString returns the JSON for this Data's configuration
-func (d *Data) JSONString() (string, error) {
-	m, err := json.Marshal(d)
-	if err != nil {
-		return "", err
+func (d *Data) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Base     *voxels.Data
+		Extended propertiesT
+	}{
+		d.Data,
+		propertiesT{
+			d.Properties,
+			d.NumChannels,
+		},
+	})
+}
+
+func (d *Data) GobDecode(b []byte) error {
+	buf := bytes.NewBuffer(b)
+	dec := gob.NewDecoder(buf)
+	if err := dec.Decode(&(d.Data)); err != nil {
+		return err
 	}
-	return string(m), nil
+	if err := dec.Decode(&(d.NumChannels)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (d *Data) GobEncode() ([]byte, error) {
+	var buf bytes.Buffer
+	enc := gob.NewEncoder(&buf)
+	if err := enc.Encode(d.Data); err != nil {
+		return nil, err
+	}
+	if err := enc.Encode(d.NumChannels); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 // --- DataService interface ---
@@ -313,13 +347,13 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 		fmt.Fprintln(w, d.Help())
 		return
 	case "info":
-		jsonStr, err := d.JSONString()
+		jsonBytes, err := d.MarshalJSON()
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, jsonStr)
+		fmt.Fprintf(w, string(jsonBytes))
 		return
 	default:
 	}

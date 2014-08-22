@@ -2,6 +2,7 @@ package labelgraph
 
 import (
 	"log"
+	"reflect"
 	"testing"
 
 	"github.com/janelia-flyem/dvid/datastore"
@@ -54,5 +55,48 @@ func TestNewLabelgraphDifferent(t *testing.T) {
 	if data1.InstanceID() == data2.InstanceID() {
 		t.Errorf("Instance IDs should be different: %d == %d\n",
 			data1.InstanceID(), data2.InstanceID())
+	}
+}
+
+func TestLabelgraphRepoPersistence(t *testing.T) {
+	tests.UseStore()
+	defer tests.CloseStore()
+
+	repo, _ := initTestRepo()
+
+	// Make labels and set various properties
+	config := dvid.NewConfig()
+	config.SetVersioned(true)
+	dataservice, err := repo.NewData(dtype, "lg", config)
+	if err != nil {
+		t.Errorf("Unable to create labelgraph instance: %s\n", err.Error())
+	}
+	lgdata, ok := dataservice.(*Data)
+	if !ok {
+		t.Errorf("Can't cast labelgraph data service into labelgraph.Data\n")
+	}
+	oldData := *lgdata
+
+	// Restart test datastore and see if datasets are still there.
+	if err = repo.Save(); err != nil {
+		t.Fatalf("Unable to save repo during labelgraph persistence test: %s\n", err.Error())
+	}
+	oldUUID := repo.RootUUID()
+	tests.CloseReopenStore()
+
+	repo2, err := datastore.RepoFromUUID(oldUUID)
+	if err != nil {
+		t.Fatalf("Can't get repo %s from reloaded test db: %s\n", oldUUID, err.Error())
+	}
+	dataservice2, err := repo2.GetDataByName("lg")
+	if err != nil {
+		t.Fatalf("Can't get labelgraph instance from reloaded test db: %s\n", err.Error())
+	}
+	lgdata2, ok := dataservice2.(*Data)
+	if !ok {
+		t.Errorf("Returned new data instance 2 is not labelgraph.Data\n")
+	}
+	if !reflect.DeepEqual(oldData, *lgdata2) {
+		t.Errorf("Expected %v, got %v\n", oldData, *lgdata2)
 	}
 }

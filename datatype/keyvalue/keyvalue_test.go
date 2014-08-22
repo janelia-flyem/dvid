@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -112,6 +113,50 @@ func TestKeyvalueRoundTrip(t *testing.T) {
 	}
 	if bytes.Compare(value, retrieved) != 0 {
 		t.Errorf("keyvalue retrieved %q != put %q\n", string(retrieved), string(value))
+	}
+}
+
+func TestKeyvalueRepoPersistence(t *testing.T) {
+	tests.UseStore()
+	defer tests.CloseStore()
+
+	repo, _ := initTestRepo()
+
+	// Make labels and set various properties
+	config := dvid.NewConfig()
+	config.SetVersioned(true)
+	config.Set("MaxKeySize", "31")
+	dataservice, err := repo.NewData(kvtype, "mykv", config)
+	if err != nil {
+		t.Errorf("Unable to create keyvalue instance: %s\n", err.Error())
+	}
+	kvdata, ok := dataservice.(*Data)
+	if !ok {
+		t.Errorf("Can't cast keyvalue data service into keyvalue.Data\n")
+	}
+	oldData := *kvdata
+
+	// Restart test datastore and see if datasets are still there.
+	if err = repo.Save(); err != nil {
+		t.Fatalf("Unable to save repo during keyvalue persistence test: %s\n", err.Error())
+	}
+	oldUUID := repo.RootUUID()
+	tests.CloseReopenStore()
+
+	repo2, err := datastore.RepoFromUUID(oldUUID)
+	if err != nil {
+		t.Fatalf("Can't get repo %s from reloaded test db: %s\n", oldUUID, err.Error())
+	}
+	dataservice2, err := repo2.GetDataByName("mykv")
+	if err != nil {
+		t.Fatalf("Can't get keyvalue instance from reloaded test db: %s\n", err.Error())
+	}
+	kvdata2, ok := dataservice2.(*Data)
+	if !ok {
+		t.Errorf("Returned new data instance 2 is not keyvalue.Data\n")
+	}
+	if !reflect.DeepEqual(oldData, *kvdata2) {
+		t.Errorf("Expected %v, got %v\n", oldData, *kvdata2)
 	}
 }
 

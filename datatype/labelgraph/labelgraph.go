@@ -4,6 +4,7 @@
 package labelgraph
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/gob"
 	"encoding/json"
@@ -558,6 +559,32 @@ type Data struct {
 	datawide_mutex  sync.Mutex
 }
 
+func (d *Data) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Base *datastore.Data
+	}{
+		d.Data,
+	})
+}
+
+func (d *Data) GobDecode(b []byte) error {
+	buf := bytes.NewBuffer(b)
+	dec := gob.NewDecoder(buf)
+	if err := dec.Decode(&(d.Data)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (d *Data) GobEncode() ([]byte, error) {
+	var buf bytes.Buffer
+	enc := gob.NewEncoder(&buf)
+	if err := enc.Encode(d.Data); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
 // Help returns help mesage for datatype
 func (d *Data) Help() string {
 	return fmt.Sprintf(HelpMessage)
@@ -590,15 +617,6 @@ func (d *Data) setNotBusy() {
 	d.datawide_mutex.Lock()
 	defer d.datawide_mutex.Unlock()
 	d.busy = false
-}
-
-// JSONString returns the JSON for this Data's configuration
-func (d *Data) JSONString() (jsonStr string, err error) {
-	m, err := json.Marshal(d)
-	if err != nil {
-		return "", err
-	}
-	return string(m), nil
 }
 
 // getGraphContext retrieves the GraphDB interface and the Context defining the graph space
@@ -1319,13 +1337,13 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 		fmt.Fprintln(w, d.Help())
 		return
 	case "info":
-		jsonStr, err := d.JSONString()
+		jsonBytes, err := d.MarshalJSON()
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, jsonStr)
+		fmt.Fprintf(w, string(jsonBytes))
 	case "subgraph":
 		labelgraph, err := d.ExtractGraph(r)
 		if err != nil {

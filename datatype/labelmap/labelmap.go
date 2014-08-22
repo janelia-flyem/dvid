@@ -322,7 +322,7 @@ func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.
 		return nil, err
 	}
 	dvid.Debugf("Creating labelmap instance %q with labels %q\n", name, labelsRef)
-	return &Data{Data: basedata, Labels: labelsRef}, nil
+	return &Data{*basedata, Properties{Labels: labelsRef}}, nil
 }
 
 func (dtype *Type) Help() string {
@@ -333,15 +333,10 @@ func (dtype *Type) Help() string {
 type LabelsRef struct {
 	uuid dvid.UUID
 	name dvid.DataString
-	ptr  *labels64.Data
 }
 
 func NewLabelsRef(uuid dvid.UUID, name dvid.DataString) (LabelsRef, error) {
-	ptr, err := labels64.GetByUUID(uuid, name)
-	if err != nil {
-		return LabelsRef{}, err
-	}
-	return LabelsRef{uuid, name, ptr}, nil
+	return LabelsRef{uuid, name}, nil
 }
 
 type labelsRefExport struct {
@@ -376,28 +371,18 @@ func (ref *LabelsRef) UnmarshalBinary(data []byte) error {
 	return ref.UnmarshalJSON(data)
 }
 
-// GetData returns a pointer to the referenced labels and stores the pointer
-// into the reference.
+// GetData returns a pointer to the referenced labels.
 func (ref *LabelsRef) GetData() (*labels64.Data, error) {
-	if ref.ptr != nil {
-		return ref.ptr, nil
-	}
-	ptr, err := labels64.GetByUUID(ref.uuid, ref.name)
-	if err != nil {
-		return nil, err
-	}
-	ref.ptr = ptr
-	return ptr, nil
+	return labels64.GetByUUID(ref.uuid, ref.name)
 }
 
 func (ref LabelsRef) String() string {
-	return string(ref.name)
+	return fmt.Sprintf("<%s %s>", ref.uuid, ref.name)
 }
 
-// Data embeds the datastore's Data and extends it with keyvalue properties (none for now).
-type Data struct {
-	*datastore.Data
-
+// Properties are additional properties for keyvalue data instances beyond those
+// in standard datastore.Data.   These will be persisted to metadata storage.
+type Properties struct {
 	// Labels64 data that we will be mapping.
 	Labels LabelsRef
 
@@ -405,13 +390,44 @@ type Data struct {
 	Ready bool
 }
 
-// JSONString returns the JSON for this Data's configuration
-func (d *Data) JSONString() (jsonStr string, err error) {
-	m, err := json.Marshal(d)
-	if err != nil {
-		return "", err
+// Data embeds the datastore's Data and extends it with keyvalue properties (none for now).
+type Data struct {
+	datastore.Data
+	Properties
+}
+
+func (d *Data) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Base     datastore.Data
+		Extended Properties
+	}{
+		d.Data,
+		d.Properties,
+	})
+}
+
+func (d *Data) GobDecode(b []byte) error {
+	buf := bytes.NewBuffer(b)
+	dec := gob.NewDecoder(buf)
+	if err := dec.Decode(&(d.Data)); err != nil {
+		return err
 	}
-	return string(m), nil
+	if err := dec.Decode(&(d.Properties)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (d *Data) GobEncode() ([]byte, error) {
+	var buf bytes.Buffer
+	enc := gob.NewEncoder(&buf)
+	if err := enc.Encode(d.Data); err != nil {
+		return nil, err
+	}
+	if err := enc.Encode(d.Properties); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 // --- DataService interface ---
@@ -500,13 +516,13 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 		return
 
 	case "info":
-		jsonStr, err := d.JSONString()
+		jsonBytes, err := d.MarshalJSON()
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, jsonStr)
+		fmt.Fprintf(w, string(jsonBytes))
 		return
 
 	case "mapping":

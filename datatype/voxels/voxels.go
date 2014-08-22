@@ -1474,11 +1474,8 @@ func (r Resolution) IsIsotropic() bool {
 	return true
 }
 
-type Metadata struct {
-	Axes       []Axis
-	Properties Properties
-}
-
+// Properties are additional properties for keyvalue data instances beyond those
+// in standard datastore.Data.   These will be persisted to metadata storage.
 type Properties struct {
 	// Values describes the data type/label for each value within a voxel.
 	Values dvid.DataValues
@@ -1495,17 +1492,6 @@ type Properties struct {
 	Resolution
 	Extents
 }
-
-type Axis struct {
-	Label      string
-	Resolution float32
-	Units      string
-	Size       int32
-	Offset     int32
-}
-
-// TODO -- Allow explicit setting of axes labels.
-var axesName = []string{"X", "Y", "Z", "t", "c"}
 
 // SetDefault sets Voxels properties to default values.
 func (props *Properties) SetDefault(values dvid.DataValues, interpolable bool) error {
@@ -1574,6 +1560,19 @@ func (props *Properties) SetByConfig(config dvid.Config) error {
 	return nil
 }
 
+type metadataT struct {
+	Axes       []axisT
+	Properties Properties
+}
+
+type axisT struct {
+	Label      string
+	Resolution float32
+	Units      string
+	Size       int32
+	Offset     int32
+}
+
 // NdDataSchema returns the metadata in JSON for this Data
 func (props *Properties) NdDataMetadata() (string, error) {
 	var err error
@@ -1592,10 +1591,11 @@ func (props *Properties) NdDataMetadata() (string, error) {
 		offset = props.MinPoint
 	}
 
-	var metadata Metadata
-	metadata.Axes = []Axis{}
+	var axesName = []string{"X", "Y", "Z", "t", "c"}
+	var metadata metadataT
+	metadata.Axes = []axisT{}
 	for dim := 0; dim < dims; dim++ {
-		metadata.Axes = append(metadata.Axes, Axis{
+		metadata.Axes = append(metadata.Axes, axisT{
 			Label:      axesName[dim],
 			Resolution: props.Resolution.VoxelSize[dim],
 			Units:      props.Resolution.VoxelUnits[dim],
@@ -1928,15 +1928,6 @@ func (d *Data) GobEncode() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// JSONString returns the JSON for this Data's configuration
-func (d *Data) JSONString() (jsonStr string, err error) {
-	m, err := json.Marshal(d)
-	if err != nil {
-		return "", err
-	}
-	return string(m), nil
-}
-
 // --- DataService interface ---
 
 func (d *Data) Help() string {
@@ -2118,13 +2109,13 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 		fmt.Fprintln(w, jsonStr)
 		return
 	case "info":
-		jsonStr, err := d.JSONString()
+		jsonBytes, err := d.MarshalJSON()
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, jsonStr)
+		fmt.Fprintf(w, string(jsonBytes))
 		return
 	case "arb":
 		// GET  <api URL>/node/<UUID>/<data name>/arb/<top left>/<top right>/<bottom left>/<res>[/<format>]

@@ -131,6 +131,7 @@ type DataService interface {
 	json.Marshaler
 
 	// NOTE: Requiring these interfaces breaks Gob encoding/decoding
+	//  TODO -- figure out why
 	//gob.GobEncoder
 	//gob.GobDecoder
 }

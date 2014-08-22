@@ -82,7 +82,6 @@ func makeGrayscale(repo datastore.Repo, t *testing.T, name dvid.DataString) *Dat
 	if err != nil {
 		t.Errorf("Unable to create grayscale instance %q: %s\n", name, err.Error())
 	}
-
 	grayscale, ok := dataservice.(*Data)
 	if !ok {
 		t.Errorf("Can't cast grayscale8 data service into Data\n")
