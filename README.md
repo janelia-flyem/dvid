@@ -8,7 +8,7 @@ DVID [![Picture](https://raw.github.com/janelia-flyem/janelia-flyem.github.com/m
 ![Web app for 3d inspection being served from and sending requests to DVID](/images/webapp.png)
 
 DVID is a *distributed, versioned, image-oriented datastore* written to support 
-[Janelia Farm Reseach Center's](http://www.janelia.org) brain imaging, analysis and 
+[Janelia Farm Research Center's](http://www.janelia.org) brain imaging, analysis and 
 visualization efforts.  
 
 DVID aspires to be a "github for large image-oriented data" because each DVID

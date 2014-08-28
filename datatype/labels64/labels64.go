@@ -21,6 +21,7 @@ import (
 	"code.google.com/p/go.net/context"
 
 	"github.com/janelia-flyem/dvid/datastore"
+	"github.com/janelia-flyem/dvid/datatype/roi"
 	"github.com/janelia-flyem/dvid/datatype/voxels"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
@@ -174,6 +175,10 @@ POST <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?th
                     Slice strings ("xy", "xz", or "yz") are also accepted.
     size          Size in voxels along each dimension specified in <dims>.
     offset        Gives coordinate of first voxel using dimensionality of data.
+
+    Query-string Options:
+
+    roi       	  Name of roi data instance used to mask the requested data.
 
 (Assumes labels were loaded using without "proc=noindex")
 
@@ -742,6 +747,11 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 		parts = parts[:len(parts)-1]
 	}
 
+	// Get query strings and possible roi
+	var roiObj voxels.ROI
+	queryValues := r.URL.Query()
+	roiname := dvid.DataString(queryValues.Get("roi"))
+
 	// Handle POST on data -> setting of configuration
 	if len(parts) == 3 && op == voxels.PutOp {
 		config, err := server.DecodeJSON(r)
@@ -838,7 +848,12 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 					server.BadRequest(w, r, err.Error())
 					return
 				}
-				img, err := voxels.GetImage(storeCtx, d, e)
+				roiObj.Iter, err = roi.NewIterator(roiname, versionID, e)
+				if err != nil {
+					server.BadRequest(w, r, err.Error())
+					return
+				}
+				img, err := voxels.GetImage(storeCtx, d, e, &roiObj)
 				if err != nil {
 					server.BadRequest(w, r, err.Error())
 					return
@@ -891,7 +906,12 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 					server.BadRequest(w, r, err.Error())
 					return
 				}
-				data, err := voxels.GetVolume(storeCtx, d, e)
+				roiObj.Iter, err = roi.NewIterator(roiname, versionID, e)
+				if err != nil {
+					server.BadRequest(w, r, err.Error())
+					return
+				}
+				data, err := voxels.GetVolume(storeCtx, d, e, &roiObj)
 				if err != nil {
 					server.BadRequest(w, r, err.Error())
 					return

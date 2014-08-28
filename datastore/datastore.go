@@ -114,6 +114,21 @@ func Types() (map[dvid.URLString]TypeService, error) {
 	return Manager.Types()
 }
 
+func GetData(versionID dvid.VersionID, name dvid.DataString) (DataService, error) {
+	if Manager == nil {
+		return nil, fmt.Errorf("datastore not initialized")
+	}
+	uuid, err := Manager.UUIDFromVersion(versionID)
+	if err != nil {
+		return nil, err
+	}
+	repo, err := Manager.RepoFromUUID(uuid)
+	if err != nil {
+		return nil, err
+	}
+	return repo.GetDataByName(name)
+}
+
 // ---- Server Context code, not to be confused with storage.Context.
 
 // The ctxkey type is unexported to prevent collisions with context keys defined in

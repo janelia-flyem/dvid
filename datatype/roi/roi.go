@@ -19,7 +19,6 @@ import (
 	"code.google.com/p/go.net/context"
 
 	"github.com/janelia-flyem/dvid/datastore"
-	"github.com/janelia-flyem/dvid/datatype/voxels"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
@@ -29,6 +28,8 @@ const (
 	Version  = "0.1"
 	RepoURL  = "github.com/janelia-flyem/dvid/datatype/roi"
 	TypeName = "roi"
+
+	DefaultBlockSize = 32
 )
 
 const HelpMessage = `
@@ -179,21 +180,25 @@ func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.
 		}
 		blockSize, _ = pt.(dvid.Point3d)
 	} else {
-		blockSize = dvid.Point3d{voxels.DefaultBlockSize, voxels.DefaultBlockSize, voxels.DefaultBlockSize}
+		blockSize = dvid.Point3d{DefaultBlockSize, DefaultBlockSize, DefaultBlockSize}
 	}
 	return &Data{basedata, Properties{blockSize, math.MaxInt32, math.MinInt32}}, nil
 }
 
 func (dtype *Type) Help() string {
-	return fmt.Sprintf(HelpMessage, voxels.DefaultBlockSize)
+	return fmt.Sprintf(HelpMessage, DefaultBlockSize)
 }
 
 // Properties are additional properties for keyvalue data instances beyond those
 // in standard datastore.Data.   These will be persisted to metadata storage.
 type Properties struct {
 	BlockSize dvid.Point3d
-	MinZ      int32
-	MaxZ      int32
+
+	// Minimum Block Coord Z for ROI
+	MinZ int32
+
+	// Maximum Block Coord Z for ROI
+	MaxZ int32
 }
 
 // Data embeds the datastore's Data and extends it with keyvalue properties (none for now).
@@ -238,7 +243,7 @@ func (d *Data) GobEncode() ([]byte, error) {
 
 var (
 	minIndexRLE = indexRLE{dvid.MinIndexZYX, 0}
-	maxIndexRLE = indexRLE{dvid.MaxIndexZYX, 0xFFFFFFFF}
+	maxIndexRLE = indexRLE{dvid.MaxIndexZYX, math.MaxUint32}
 )
 
 // indexRLE is the key for block indices included in an ROI.
@@ -268,6 +273,14 @@ func (i *indexRLE) IndexFromBytes(b []byte) error {
 	}
 	i.span = binary.BigEndian.Uint32(b[12:])
 	return nil
+}
+
+func minIndexByBlockZ(z int32) indexRLE {
+	return indexRLE{dvid.IndexZYX{math.MinInt32, math.MinInt32, z}, 0}
+}
+
+func maxIndexByBlockZ(z int32) indexRLE {
+	return indexRLE{dvid.IndexZYX{math.MaxInt32, math.MaxInt32, z}, math.MaxUint32}
 }
 
 // Tuples are (Z, Y, X0, X1)
@@ -300,13 +313,13 @@ func (t tuple) includes(block dvid.ChunkPoint3d) bool {
 }
 
 // Returns all (z, y, x0, x1) tuples in sorted order: z, then y, then x0.
-func getROI(ctx storage.Context) ([]tuple, error) {
+func getSpans(ctx storage.VersionedContext, minIndex, maxIndex indexRLE) ([]tuple, error) {
 	db, err := storage.SmallDataStore()
 	if err != nil {
 		return nil, err
 	}
 	spans := []tuple{}
-	err = db.ProcessRange(ctx, minIndexRLE.Bytes(), maxIndexRLE.Bytes(), &storage.ChunkOp{}, func(chunk *storage.Chunk) {
+	err = db.ProcessRange(ctx, minIndex.Bytes(), maxIndex.Bytes(), &storage.ChunkOp{}, func(chunk *storage.Chunk) {
 		indexBytes, err := ctx.IndexFromKey(chunk.K)
 		if err != nil {
 			dvid.Errorf("Unable to recover roi RLE from chunk key %v: %s\n", chunk.K, err.Error())
@@ -325,10 +338,15 @@ func getROI(ctx storage.Context) ([]tuple, error) {
 	return spans, nil
 }
 
+// Returns all (z, y, x0, x1) tuples in sorted order: z, then y, then x0.
+func GetSpans(ctx storage.VersionedContext) ([]tuple, error) {
+	return getSpans(ctx, minIndexRLE, maxIndexRLE)
+}
+
 // Get returns a JSON-encoded byte slice of the ROI in the form of 4-tuples,
 // where each tuple is [z, y, xstart, xend]
-func Get(ctx storage.Context) ([]byte, error) {
-	spans, err := getROI(ctx)
+func Get(ctx storage.VersionedContext) ([]byte, error) {
+	spans, err := GetSpans(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -340,7 +358,7 @@ func Get(ctx storage.Context) ([]byte, error) {
 }
 
 // Put saves JSON-encoded data representing an ROI into the datastore.
-func (d *Data) Put(ctx storage.Context, jsonBytes []byte) error {
+func (d *Data) Put(ctx storage.VersionedContext, jsonBytes []byte) error {
 	db, err := storage.SmallDataStore()
 	if err != nil {
 		return err
@@ -382,10 +400,14 @@ func (d *Data) Put(ctx storage.Context, jsonBytes []byte) error {
 		if span[0] > d.MaxZ {
 			d.MaxZ = span[0]
 		}
+		if span[3] < span[2] {
+			return fmt.Errorf("Got weird span %v.  span[3] (X1) < span[2] (X0)", span)
+		}
 		index := indexRLE{
 			start: dvid.IndexZYX{span[2], span[1], span[0]},
 			span:  uint32(span[3] - span[2] + 1),
 		}
+
 		batch.Put(index.Bytes(), dvid.EmptyValue())
 		if (i+1)%BATCH_SIZE == 0 {
 			if err := batch.Commit(); err != nil {
@@ -432,7 +454,7 @@ func (d *Data) seekSpan(pt dvid.Point3d, spans []tuple, curSpanI int) (int, bool
 
 // PointQuery checks if a JSON-encoded list of voxel points are within an ROI.
 // It returns a JSON list of bools, each corresponding to the original list of points.
-func (d *Data) PointQuery(ctx storage.Context, jsonBytes []byte) ([]byte, error) {
+func (d *Data) PointQuery(ctx storage.VersionedContext, jsonBytes []byte) ([]byte, error) {
 	// Convert given set of JSON-encoded points to a sorted list of points.
 	var pts dvid.ListPoint3d
 	if err := json.Unmarshal(jsonBytes, &pts); err != nil {
@@ -441,7 +463,7 @@ func (d *Data) PointQuery(ctx storage.Context, jsonBytes []byte) ([]byte, error)
 	sort.Sort(dvid.ByZYX(pts))
 
 	// Get the ROI.  The spans are ordered in z, y, then x0.
-	spans, err := getROI(ctx)
+	spans, err := GetSpans(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -786,7 +808,7 @@ func (d *Data) Partition(ctx storage.Context, batchsize int32) ([]byte, error) {
 // --- DataService interface ---
 
 func (d *Data) Help() string {
-	return fmt.Sprintf(HelpMessage, voxels.DefaultBlockSize)
+	return fmt.Sprintf(HelpMessage, DefaultBlockSize)
 }
 
 // DoRPC acts as a switchboard for RPC commands.

@@ -7,13 +7,18 @@ import (
 	"testing"
 
 	"github.com/janelia-flyem/dvid/datastore"
+	"github.com/janelia-flyem/dvid/datatype/roi"
 	"github.com/janelia-flyem/dvid/dvid"
+	"github.com/janelia-flyem/dvid/storage"
 	"github.com/janelia-flyem/dvid/tests"
 )
 
 var (
-	grayscaleT, rgbaT datastore.TypeService
-	testMu            sync.Mutex
+	grayscaleT,
+	rgbaT,
+	roiT datastore.TypeService
+
+	testMu sync.Mutex
 )
 
 // Sets package-level testRepo and TestVersionID
@@ -29,6 +34,10 @@ func initTestRepo() (datastore.Repo, dvid.VersionID) {
 		rgbaT, err = datastore.TypeServiceByName("rgba8")
 		if err != nil {
 			log.Fatalf("Can't get rgba8 type: %s\n", err)
+		}
+		roiT, err = datastore.TypeServiceByName("roi")
+		if err != nil {
+			log.Fatalf("Can't get ROI type: %s\n", err)
 		}
 	}
 	return tests.NewRepo()
@@ -75,10 +84,10 @@ func makeVolume(offset, size dvid.Point3d) []byte {
 	return volume
 }
 
-func makeGrayscale(repo datastore.Repo, t *testing.T, name dvid.DataString) *Data {
+func makeGrayscale(repo datastore.Repo, t *testing.T, name string) *Data {
 	config := dvid.NewConfig()
 	config.SetVersioned(true)
-	dataservice, err := repo.NewData(grayscaleT, name, config)
+	dataservice, err := repo.NewData(grayscaleT, dvid.DataString(name), config)
 	if err != nil {
 		t.Errorf("Unable to create grayscale instance %q: %s\n", name, err.Error())
 	}
@@ -123,7 +132,7 @@ func TestSubvolGrayscale8(t *testing.T) {
 	if err != nil {
 		t.Errorf("Unable to make new grayscale ExtHandler: %s\n", err.Error())
 	}
-	if err = GetVoxels(grayscaleCtx, grayscale, v2); err != nil {
+	if err = GetVoxels(grayscaleCtx, grayscale, v2, nil); err != nil {
 		t.Errorf("Unable to get voxels for %s: %s\n", grayscaleCtx, err.Error())
 	}
 
@@ -156,12 +165,17 @@ func TestSubvolGrayscale8(t *testing.T) {
 	}
 }
 
-func sliceTest(t *testing.T, slice dvid.Geometry) {
-	tests.UseStore()
-	defer tests.CloseStore()
+type testDataT struct {
+	repo      datastore.Repo
+	versionID dvid.VersionID
+	ctx       storage.VersionedContext
+	data      *Data
+	rawData   []uint8
+}
 
+func storeGrayscale(t *testing.T, sliceType string, slice dvid.Geometry) testDataT {
 	repo, versionID := initTestRepo()
-	grayscale := makeGrayscale(repo, t, "grayscale2")
+	grayscale := makeGrayscale(repo, t, "grayscale"+sliceType)
 	grayscaleCtx := datastore.NewVersionedContext(grayscale, versionID)
 
 	// Create a fake 100x100 8-bit grayscale image
@@ -179,67 +193,150 @@ func sliceTest(t *testing.T, slice dvid.Geometry) {
 	if err = PutVoxels(grayscaleCtx, grayscale, v); err != nil {
 		t.Errorf("Unable to put voxels for %s: %s\n", grayscaleCtx, err.Error())
 	}
+	return testDataT{repo, versionID, grayscaleCtx, grayscale, data}
+}
+
+func sliceTest(t *testing.T, sliceType string, slice dvid.Geometry) {
+	testData := storeGrayscale(t, sliceType, slice)
+	grayscaleCtx := datastore.NewVersionedContext(testData.data, testData.versionID)
 
 	// Read the stored image
-	v2, err := grayscale.NewExtHandler(slice, nil)
-	retrieved, err := GetImage(grayscaleCtx, grayscale, v2)
+	v2, err := testData.data.NewExtHandler(slice, nil)
+	if err != nil {
+		t.Fatalf("Could not create ExtHandler: %s\n", err.Error())
+	}
+	retrieved, err := GetImage(grayscaleCtx, testData.data, v2, nil)
 	if err != nil {
 		t.Fatalf("Unable to get image for %s: %s\n", grayscaleCtx, err.Error())
 	}
 
 	// Make sure the retrieved image matches the original
 	goImg := retrieved.Get()
-	if !reflect.DeepEqual(img.Rect, goImg.Bounds()) {
-		t.Errorf("Retrieved image size %s different than original %s\n",
-			goImg.Bounds(), img.Rect)
-	}
 	retrievedData, voxelSize, _, err := dvid.ImageData(goImg)
 	if err != nil {
 		t.Errorf("Unable to get data/size from retrieved image: %s\n", err.Error())
 	}
-	if !reflect.DeepEqual(retrievedData, data) {
+	if !reflect.DeepEqual(retrievedData, testData.rawData) {
 		t.Errorf("Retrieved data differs from original data\n")
 	}
 	if voxelSize != int32(1) {
 		t.Errorf("Retrieved voxel size in bytes incorrect.  Got %d, expected 1\n", voxelSize)
 	}
-	//dvid.PrintNonZero("original value", data)
-	//dvid.PrintNonZero("returned value", retrievedData)
-	for i := 0; i < len(data); i++ {
-		if data[i] != retrievedData[i] {
-			t.Fatalf("GET slice (%d) != PUT slice (%d) @ index %d", retrievedData[i], data[i], i)
-		}
-	}
 }
 
 func TestXYSliceGrayscale8(t *testing.T) {
+	tests.UseStore()
+	defer tests.CloseStore()
+
 	offset := dvid.Point3d{3, 13, 24}
 	size := dvid.Point2d{100, 100}
 	slice, err := dvid.NewOrthogSlice(dvid.XY, offset, size)
 	if err != nil {
 		t.Errorf("Problem getting new orthogonal slice: %s\n", err.Error())
 	}
-	sliceTest(t, slice)
+	sliceTest(t, "XY", slice)
 }
 
 func TestXZSliceGrayscale8(t *testing.T) {
+	tests.UseStore()
+	defer tests.CloseStore()
+
 	offset := dvid.Point3d{31, 10, 14}
 	size := dvid.Point2d{100, 100}
 	slice, err := dvid.NewOrthogSlice(dvid.XZ, offset, size)
 	if err != nil {
 		t.Errorf("Problem getting new orthogonal slice: %s\n", err.Error())
 	}
-	sliceTest(t, slice)
+	sliceTest(t, "XZ", slice)
 }
 
 func TestYZSliceGrayscale8(t *testing.T) {
+	tests.UseStore()
+	defer tests.CloseStore()
+
 	offset := dvid.Point3d{13, 40, 99}
 	size := dvid.Point2d{100, 100}
 	slice, err := dvid.NewOrthogSlice(dvid.YZ, offset, size)
 	if err != nil {
 		t.Errorf("Problem getting new orthogonal slice: %s\n", err.Error())
 	}
-	sliceTest(t, slice)
+	sliceTest(t, "YZ", slice)
+}
+
+// Should intersect 100x100 image at Z = 67 and Y = 108
+const testROIJson = "[[2,3,10,10],[2,4,12,13]]"
+
+func TestROIMaskGrayscale8(t *testing.T) {
+	tests.UseStore()
+	defer tests.CloseStore()
+
+	offset := dvid.Point3d{312, 87, 67}
+	size := dvid.Point2d{100, 100}
+	slice, err := dvid.NewOrthogSlice(dvid.XY, offset, size)
+	if err != nil {
+		t.Fatalf("Problem getting new orthogonal slice: %s\n", err.Error())
+	}
+	testData := storeGrayscale(t, "XY", slice)
+
+	// Create ROI
+	config := dvid.NewConfig()
+	config.SetVersioned(true)
+	dataservice, err := testData.repo.NewData(roiT, "roi", config)
+	if err != nil {
+		t.Fatalf("Error creating new roi instance: %s\n", err.Error())
+	}
+	roiData, ok := dataservice.(*roi.Data)
+	if !ok {
+		t.Fatalf("Returned new data instance is not roi.Data\n")
+	}
+
+	// write ROI
+	roiCtx := datastore.NewVersionedContext(roiData, testData.versionID)
+	if err = roiData.Put(roiCtx, []byte(testROIJson)); err != nil {
+		t.Fatalf("Unable to PUT test ROI: %s\n", err.Error())
+	}
+
+	// Get the buffer for the retrieved ROI-enabled grayscale slice
+	roiSlice, err := testData.data.NewExtHandler(slice, nil)
+	if err != nil {
+		t.Fatalf("Could not create ExtHandler: %s\n", err.Error())
+	}
+
+	// Read without ROI
+	if err := GetVoxels(testData.ctx, testData.data, roiSlice, nil); err != nil {
+		t.Fatalf("Unable to get image for %s: %s\n", testData.ctx, err.Error())
+	}
+	roiX := 10*32 + 1 - offset[0]
+	roiY := 3*32 + 1 - offset[1]
+	roiIndex := roiY*roiSlice.Stride() + roiX
+	nonroiData := roiSlice.Data()
+	if nonroiData[roiIndex] != testData.rawData[roiIndex] {
+		t.Fatalf("Stored pixel in slice should be %d but is %d\n", testData.rawData[roiIndex], nonroiData[roiIndex])
+	}
+	if nonroiData[roiIndex] == 0 {
+		t.Fatalf("Expected non-zero pixel in roi slice test")
+	}
+
+	// Initialize ROI iterator
+	var roiObj ROI
+	roiObj.Iter, err = roi.NewIterator("roi", testData.versionID, roiSlice)
+	if err != nil {
+		t.Fatalf("Error making ROI iterator: %s\n", err.Error())
+	}
+
+	// Read grayscale using ROI
+	if err := GetVoxels(testData.ctx, testData.data, roiSlice, &roiObj); err != nil {
+		t.Fatalf("Unable to get image for %s: %s\n", testData.ctx, err.Error())
+	}
+
+	// Make sure few points are zero and others aren't
+	pixels := roiSlice.Data()
+	if pixels[0] == 0 {
+		t.Fatalf("Retrieved ROI-applied XY pixel is 0 and should be != 0\n")
+	}
+	if pixels[roiIndex] != 0 {
+		t.Fatalf("Retrieved ROI-applied XY pixel.  Expected pixel == 0, got %d\n", pixels[roiIndex])
+	}
 }
 
 func TestGrayscaleRepoPersistence(t *testing.T) {

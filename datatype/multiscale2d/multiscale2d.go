@@ -1026,7 +1026,7 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, request datasto
 				if err != nil {
 					return err
 				}
-				if err = voxels.GetVoxels(voxelsCtx, src, sliceBuffers[bufferNum]); err != nil {
+				if err = voxels.GetVoxels(voxelsCtx, src, sliceBuffers[bufferNum], nil); err != nil {
 					return err
 				}
 				// Iterate through the different scales, extracting tiles at each resolution.
@@ -1075,7 +1075,7 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, request datasto
 				if err != nil {
 					return err
 				}
-				if err = voxels.GetVoxels(voxelsCtx, src, sliceBuffers[bufferNum]); err != nil {
+				if err = voxels.GetVoxels(voxelsCtx, src, sliceBuffers[bufferNum], nil); err != nil {
 					return err
 				}
 				// Iterate through the different scales, extracting tiles at each resolution.
@@ -1124,7 +1124,7 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, request datasto
 				if err != nil {
 					return err
 				}
-				if err = voxels.GetVoxels(voxelsCtx, src, sliceBuffers[bufferNum]); err != nil {
+				if err = voxels.GetVoxels(voxelsCtx, src, sliceBuffers[bufferNum], nil); err != nil {
 					return err
 				}
 				// Iterate through the different scales, extracting tiles at each resolution.

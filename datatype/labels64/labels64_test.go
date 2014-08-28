@@ -124,7 +124,7 @@ func TestSubvolLabels64(t *testing.T) {
 	if err != nil {
 		t.Errorf("Unable to make new labels ExtHandler: %s\n", err.Error())
 	}
-	if err = voxels.GetVoxels(labelsCtx, labels, v2); err != nil {
+	if err = voxels.GetVoxels(labelsCtx, labels, v2, nil); err != nil {
 		t.Errorf("Unable to get voxels for %s: %s\n", labelsCtx, err.Error())
 	}
 
@@ -182,7 +182,7 @@ func sliceTest(t *testing.T, slice dvid.Geometry) {
 
 	// Read the stored image
 	v2, err := labels.NewExtHandler(slice, nil)
-	retrieved, err := voxels.GetImage(labelsCtx, labels, v2)
+	retrieved, err := voxels.GetImage(labelsCtx, labels, v2, nil)
 	if err != nil {
 		t.Fatalf("Unable to get image for %s: %s\n", labelsCtx, err.Error())
 	}

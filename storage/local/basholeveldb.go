@@ -5,7 +5,6 @@ package local
 import (
 	"bytes"
 	"fmt"
-	"log"
 
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
@@ -357,7 +356,7 @@ type errorableKV struct {
 }
 
 func sendKV(vctx storage.VersionedContext, values []*storage.KeyValue, ch chan errorableKV) {
-	fmt.Printf("sendKV: values %v\n", values)
+	// fmt.Printf("sendKV: values %v\n", values)
 	if len(values) != 0 {
 		kv, err := vctx.VersionedKeyValue(values)
 		if err != nil {
@@ -365,7 +364,7 @@ func sendKV(vctx storage.VersionedContext, values []*storage.KeyValue, ch chan e
 			return
 		}
 		if kv != nil {
-			fmt.Printf("Sending kv: %v\n", kv)
+			// fmt.Printf("Sending kv: %v\n", kv)
 			ch <- errorableKV{kv, nil}
 		}
 	}
@@ -398,9 +397,9 @@ func (db *LevelDB) versionedRange(vctx storage.VersionedContext, kStart, kEnd []
 		ch <- errorableKV{nil, err}
 		return
 	}
-	log.Printf("         minKey %v\n", minKey)
-	log.Printf("         maxKey %v\n", maxKey)
-	log.Printf("  maxVersionKey %v\n", maxVersionKey)
+	// log.Printf("         minKey %v\n", minKey)
+	// log.Printf("         maxKey %v\n", maxKey)
+	// log.Printf("  maxVersionKey %v\n", maxVersionKey)
 	it.Seek(minKey)
 	var itValue []byte
 	for {
@@ -410,7 +409,7 @@ func (db *LevelDB) versionedRange(vctx storage.VersionedContext, kStart, kEnd []
 				storage.StoreValueBytesRead <- len(itValue)
 			}
 			itKey := it.Key()
-			log.Printf("   +++valid key %v\n", itKey)
+			// log.Printf("   +++valid key %v\n", itKey)
 			storage.StoreKeyBytesRead <- len(itKey)
 
 			// Did we pass all versions for last key read?
@@ -425,7 +424,7 @@ func (db *LevelDB) versionedRange(vctx storage.VersionedContext, kStart, kEnd []
 					ch <- errorableKV{nil, err}
 					return
 				}
-				log.Printf("->maxVersionKey %v (transmitting %d values)\n", maxVersionKey, len(values))
+				// log.Printf("->maxVersionKey %v (transmitting %d values)\n", maxVersionKey, len(values))
 				sendKV(vctx, values, ch)
 				values = []*storage.KeyValue{}
 			}
@@ -437,7 +436,7 @@ func (db *LevelDB) versionedRange(vctx storage.VersionedContext, kStart, kEnd []
 				ch <- errorableKV{nil, nil}
 				return
 			}
-			log.Printf("Appending value with key %v\n", itKey)
+			// log.Printf("Appending value with key %v\n", itKey)
 			values = append(values, &storage.KeyValue{itKey, itValue})
 			it.Next()
 		} else {

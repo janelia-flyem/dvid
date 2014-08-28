@@ -14,12 +14,14 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 
 	"code.google.com/p/go.net/context"
 
 	"github.com/janelia-flyem/dvid/datastore"
+	"github.com/janelia-flyem/dvid/datatype/roi"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
@@ -130,7 +132,7 @@ GET  <api URL>/node/<UUID>/<data name>/metadata
 	of bytes returned for n-d images.
 
 
-GET  <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?throttle=on]
+GET  <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?throttle=on][?queryopts]
 POST <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>]
 
     Retrieves or puts voxel data.
@@ -166,6 +168,13 @@ POST <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>]
                   2D: "png", "jpg" (default: "png")
                     jpg allows lossy quality setting, e.g., "jpg:80"
                   nD: uses default "octet-stream".
+
+    Query-string Options:
+
+    roi       	  Name of roi data instance used to mask the requested data.
+    attenuation   For attenuation n, this reduces the intensity of voxels outside ROI by 2^n.
+    			  Valid range is n = 1 to n = 7.  Currently only implemented for 8-bit voxels.
+    			  Default is to zero out voxels outside ROI.
 
 GET  <api URL>/node/<UUID>/<data name>/isotropic/<dims>/<size>/<offset>[/<format>][?throttle=on]
 
@@ -310,6 +319,7 @@ func (dtype *Type) Help() string {
 type Operation struct {
 	ExtData
 	OpType
+	*ROI
 }
 
 type OpType int
@@ -336,6 +346,13 @@ type Block storage.KeyValue
 
 // Blocks is a slice of Block.
 type Blocks []Block
+
+// ROI encapsulates a request-specific ROI check with a given scaling
+// for voxels outside the ROI.
+type ROI struct {
+	Iter        *roi.Iterator
+	attenuation uint8
+}
 
 // IntData implementations handle internal DVID voxel representations, knowing how
 // to break data into chunks (blocks for voxels).  Typically, each voxels-oriented
@@ -421,16 +438,16 @@ type VoxelSetter interface {
 }
 
 // GetImage retrieves a 2d image from a version node given a geometry of voxels.
-func GetImage(ctx storage.Context, i IntData, e ExtData) (*dvid.Image, error) {
-	if err := GetVoxels(ctx, i, e); err != nil {
+func GetImage(ctx storage.Context, i IntData, e ExtData, r *ROI) (*dvid.Image, error) {
+	if err := GetVoxels(ctx, i, e, r); err != nil {
 		return nil, err
 	}
 	return e.GetImage2d()
 }
 
 // GetVolume retrieves a n-d volume from a version node given a geometry of voxels.
-func GetVolume(ctx storage.Context, i IntData, e ExtData) ([]byte, error) {
-	if err := GetVoxels(ctx, i, e); err != nil {
+func GetVolume(ctx storage.Context, i IntData, e ExtData, r *ROI) ([]byte, error) {
+	if err := GetVoxels(ctx, i, e, r); err != nil {
 		return nil, err
 	}
 	return e.Data(), nil
@@ -438,13 +455,13 @@ func GetVolume(ctx storage.Context, i IntData, e ExtData) ([]byte, error) {
 
 // GetVoxels copies voxels from an IntData for a version to an ExtData, e.g.,
 // a requested subvolume or 2d image.
-func GetVoxels(ctx storage.Context, i IntData, e ExtData) error {
+func GetVoxels(ctx storage.Context, i IntData, e ExtData, r *ROI) error {
 	db, err := storage.BigDataStore()
 	if err != nil {
 		return err
 	}
 	wg := new(sync.WaitGroup)
-	chunkOp := &storage.ChunkOp{&Operation{e, GetOp}, wg}
+	chunkOp := &storage.ChunkOp{&Operation{e, GetOp, r}, wg}
 
 	server.SpawnGoroutineMutex.Lock()
 	for it, err := e.IndexIterator(i.BlockSize()); err == nil && it.Valid(); it.NextSpan() {
@@ -454,7 +471,7 @@ func GetVoxels(ctx storage.Context, i IntData, e ExtData) error {
 			return err
 		}
 
-		// Send the entire range of key-value pairs to ProcessChunk()
+		// Send the entire range of key-value pairs to chunk processor
 		err = db.ProcessRange(ctx, indexBeg.Bytes(), indexEnd.Bytes(), chunkOp, i.ProcessChunk)
 		if err != nil {
 			server.SpawnGoroutineMutex.Unlock()
@@ -481,7 +498,7 @@ func PutVoxels(ctx storage.Context, i IntData, e ExtData) error {
 		return err
 	}
 	wg := new(sync.WaitGroup)
-	chunkOp := &storage.ChunkOp{&Operation{e, PutOp}, wg}
+	chunkOp := &storage.ChunkOp{&Operation{e, PutOp, nil}, wg}
 
 	// We only want one PUT on given version for given data to prevent interleaved
 	// chunk PUTs that could potentially overwrite slice modifications.
@@ -1042,12 +1059,101 @@ func ComputeTransform(v ExtData, block *Block, blockSize dvid.Point) (blockBeg, 
 	return
 }
 
-func ReadFromBlock(v ExtData, block *Block, blockSize dvid.Point) error {
+func ReadFromBlock(v ExtData, block *Block, blockSize dvid.Point, attenuation uint8) error {
+	if attenuation != 0 {
+		return readScaledBlock(v, block, blockSize, attenuation)
+	}
 	return transferBlock(GetOp, v, block, blockSize)
 }
 
 func WriteToBlock(v ExtData, block *Block, blockSize dvid.Point) error {
 	return transferBlock(PutOp, v, block, blockSize)
+}
+
+func readScaledBlock(v ExtData, block *Block, blockSize dvid.Point, attenuation uint8) error {
+	if blockSize.NumDims() > 3 {
+		return fmt.Errorf("DVID voxel blocks currently only supports up to 3d, not 4+ dimensions")
+	}
+	blockBeg, dataBeg, dataEnd, err := ComputeTransform(v, block, blockSize)
+	if err != nil {
+		return err
+	}
+	data := v.Data()
+	bytesPerVoxel := v.Values().BytesPerElement()
+	if bytesPerVoxel != 1 {
+		return fmt.Errorf("Can only scale non-ROI blocks with 1 byte voxels")
+	}
+
+	// Compute the strides (in bytes)
+	bX := blockSize.Value(0) * bytesPerVoxel
+	bY := blockSize.Value(1) * bX
+	dX := v.Stride()
+
+	// Do the transfers depending on shape of the external voxels.
+	switch {
+	case v.DataShape().Equals(dvid.XY):
+		blockI := blockBeg.Value(2)*bY + blockBeg.Value(1)*bX + blockBeg.Value(0)*bytesPerVoxel
+		dataI := dataBeg.Value(1)*dX + dataBeg.Value(0)*bytesPerVoxel
+		for y := dataBeg.Value(1); y <= dataEnd.Value(1); y++ {
+			for x := dataBeg.Value(0); x <= dataEnd.Value(0); x++ {
+				data[dataI+x] = (block.V[blockI+x] >> attenuation)
+			}
+			blockI += bX
+			dataI += dX
+		}
+
+	case v.DataShape().Equals(dvid.XZ):
+		blockI := blockBeg.Value(2)*bY + blockBeg.Value(1)*bX + blockBeg.Value(0)*bytesPerVoxel
+		dataI := dataBeg.Value(2)*v.Stride() + dataBeg.Value(0)*bytesPerVoxel
+		for y := dataBeg.Value(2); y <= dataEnd.Value(2); y++ {
+			for x := dataBeg.Value(0); x <= dataEnd.Value(0); x++ {
+				data[dataI+x] = (block.V[blockI+x] >> attenuation)
+			}
+			blockI += bY
+			dataI += dX
+		}
+
+	case v.DataShape().Equals(dvid.YZ):
+		bz := blockBeg.Value(2)
+		for y := dataBeg.Value(2); y <= dataEnd.Value(2); y++ {
+			blockI := bz*bY + blockBeg.Value(1)*bX + blockBeg.Value(0)*bytesPerVoxel
+			dataI := y*dX + dataBeg.Value(1)*bytesPerVoxel
+			for x := dataBeg.Value(1); x <= dataEnd.Value(1); x++ {
+				data[dataI] = (block.V[blockI] >> attenuation)
+				blockI += bX
+				dataI += bytesPerVoxel
+			}
+			bz++
+		}
+
+	case v.DataShape().ShapeDimensions() == 2:
+		// TODO: General code for handling 2d ExtData in n-d space.
+		return fmt.Errorf("DVID currently does not support 2d in n-d space.")
+
+	case v.DataShape().Equals(dvid.Vol3d):
+		blockOffset := blockBeg.Value(0) * bytesPerVoxel
+		dX = v.Size().Value(0) * bytesPerVoxel
+		dY := v.Size().Value(1) * dX
+		dataOffset := dataBeg.Value(0) * bytesPerVoxel
+		blockZ := blockBeg.Value(2)
+
+		for dataZ := dataBeg.Value(2); dataZ <= dataEnd.Value(2); dataZ++ {
+			blockY := blockBeg.Value(1)
+			for dataY := dataBeg.Value(1); dataY <= dataEnd.Value(1); dataY++ {
+				blockI := blockZ*bY + blockY*bX + blockOffset
+				dataI := dataZ*dY + dataY*dX + dataOffset
+				for x := dataBeg.Value(0); x <= dataEnd.Value(0); x++ {
+					data[dataI] = (block.V[blockI] >> attenuation)
+				}
+				blockY++
+			}
+			blockZ++
+		}
+
+	default:
+		return fmt.Errorf("Cannot ReadFromBlock() unsupported voxels data shape %s", v.DataShape())
+	}
+	return nil
 }
 
 func transferBlock(op OpType, v ExtData, block *Block, blockSize dvid.Point) error {
@@ -2068,6 +2174,26 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 		parts = parts[:len(parts)-1]
 	}
 
+	// Get query strings and possible roi
+	var roiObj ROI
+	queryValues := r.URL.Query()
+	roiname := dvid.DataString(queryValues.Get("roi"))
+	if len(roiname) != 0 {
+		attenuationStr := queryValues.Get("attenuation")
+		if len(attenuationStr) != 0 {
+			attenuation, err := strconv.Atoi(attenuationStr)
+			if err != nil {
+				server.BadRequest(w, r, err.Error())
+				return
+			}
+			if attenuation < 1 || attenuation > 7 {
+				server.BadRequest(w, r, "Attenuation should be from 1 to 7 (divides by 2^n)")
+				return
+			}
+			roiObj.attenuation = uint8(attenuation)
+		}
+	}
+
 	// Handle POST on data -> setting of configuration
 	if len(parts) == 3 && op == PutOp {
 		fmt.Printf("Setting configuration of data '%s'\n", d.DataName())
@@ -2208,7 +2334,12 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 					server.BadRequest(w, r, err.Error())
 					return
 				}
-				img, err := GetImage(storeCtx, d, e)
+				roiObj.Iter, err = roi.NewIterator(roiname, versionID, e)
+				if err != nil {
+					server.BadRequest(w, r, err.Error())
+					return
+				}
+				img, err := GetImage(storeCtx, d, e, &roiObj)
 				if err != nil {
 					server.BadRequest(w, r, err.Error())
 					return
@@ -2260,7 +2391,12 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 					server.BadRequest(w, r, err.Error())
 					return
 				}
-				data, err := GetVolume(storeCtx, d, e)
+				roiObj.Iter, err = roi.NewIterator(roiname, versionID, e)
+				if err != nil {
+					server.BadRequest(w, r, err.Error())
+					return
+				}
+				data, err := GetVolume(storeCtx, d, e, &roiObj)
 				if err != nil {
 					server.BadRequest(w, r, err.Error())
 					return
@@ -2327,11 +2463,21 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 		log.Fatalf("Illegal operation passed to ProcessChunk() for data %s\n", d.DataName())
 	}
 
+	// If there's an ROI, if outside ROI, use blank buffer or allow scaling via attenuation.
+	var zeroOut bool
+	var attenuation uint8
+	if op.ROI != nil && op.ROI.Iter != nil && op.ROI.Iter.Outside(chunk.K) {
+		if op.ROI.attenuation == 0 {
+			zeroOut = true
+		}
+		attenuation = op.ROI.attenuation
+	}
+
 	// Initialize the block buffer using the chunk of data.  For voxels, this chunk of
 	// data needs to be uncompressed and deserialized.
 	var err error
 	var blockData []byte
-	if chunk == nil || chunk.V == nil {
+	if zeroOut || chunk == nil || chunk.V == nil {
 		blockData = make([]byte, d.BlockSize().Prod()*int64(op.Values().BytesPerElement()))
 	} else {
 		blockData, _, err = dvid.DeserializeData(chunk.V, true)
@@ -2346,7 +2492,7 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 	block := &Block{K: chunk.K, V: blockData}
 	switch op.OpType {
 	case GetOp:
-		if err = ReadFromBlock(op.ExtData, block, d.BlockSize()); err != nil {
+		if err = ReadFromBlock(op.ExtData, block, d.BlockSize(), attenuation); err != nil {
 			dvid.Errorf("Unable to ReadFromBlock() in %q: %s\n", d.DataName(), err.Error())
 			return
 		}

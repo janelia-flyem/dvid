@@ -5,8 +5,18 @@ import (
 	"strings"
 )
 
+type Bounder interface {
+	// StartPoint returns the offset to first point of data.
+	StartPoint() Point
+
+	// EndPoint returns the last point.
+	EndPoint() Point
+}
+
 // Geometry describes the shape, size, and position of data in the DVID volume.
 type Geometry interface {
+	Bounder
+
 	// DataShape describes the shape of the data.
 	DataShape() DataShape
 
@@ -15,12 +25,6 @@ type Geometry interface {
 
 	// NumVoxels returns the number of voxels within this space.
 	NumVoxels() int64
-
-	// StartPoint returns the offset to first point of data.
-	StartPoint() Point
-
-	// EndPoint returns the last point.
-	EndPoint() Point
 
 	String() string
 }

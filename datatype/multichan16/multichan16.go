@@ -417,7 +417,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 				Voxels:     v,
 				channelNum: channelNum,
 			}
-			img, err := voxels.GetImage(storeCtx, d, channel)
+			img, err := voxels.GetImage(storeCtx, d, channel, nil)
 			var formatStr string
 			if len(parts) >= 7 {
 				formatStr = parts[6]
