@@ -46,7 +46,7 @@ type GAEContext struct {
 }
 
 func NewStorageContext(r *http.Request, ancestors []DataAncestors) *Context {
-	c := appengine.NewContext(r)
+	c := appengine.NewServerContext(r)
 	return &GAEContext{ancestors, c}
 }
 

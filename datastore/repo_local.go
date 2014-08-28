@@ -30,6 +30,8 @@ import (
 // --- off shared storage engines.
 
 // repoManager manages all the repos in the datastore.
+// TODO -- Better analysis and testing of mutexes to prevent concurrent
+//   read/write on ids and their maps.
 type repoManager struct {
 	sync.Mutex // broad mutex should be sufficient since metadata is infrequently updated.
 
@@ -53,6 +55,9 @@ type repoManager struct {
 
 	// Verified metadata storage for ease of use.
 	store storage.MetaDataStorer
+
+	// Mutexes for concurrent use of ids and their maps.
+	idMutex sync.RWMutex
 }
 
 // Create creates a local key-value store and if it is designated for
@@ -133,7 +138,7 @@ func Initialize() error {
 
 // ---- RepoManager persistence to MetaData storage -----
 
-func (m *repoManager) getData(t keyType, data interface{}) error {
+func (m *repoManager) loadData(t keyType, data interface{}) error {
 	var ctx storage.MetadataContext
 	idx := metadataIndex{t: t}
 	value, err := m.store.Get(ctx, idx.Bytes())
@@ -161,7 +166,7 @@ func (m *repoManager) putData(t keyType, data interface{}) error {
 }
 
 // Load the next ids to be used for RepoID, VersionID, and InstanceID.
-func (m *repoManager) getNewIDs() error {
+func (m *repoManager) loadNewIDs() error {
 	var ctx storage.MetadataContext
 	idx := metadataIndex{t: newIDsKey}
 	value, err := m.store.Get(ctx, idx.Bytes())
@@ -201,14 +206,14 @@ func (m *repoManager) putCaches() error {
 // Loads all data necessary for repoManager.
 func (m *repoManager) loadMetadata() error {
 	// Load the maps
-	if err := m.getData(repoToUUIDKey, &(m.repoToUUID)); err != nil {
+	if err := m.loadData(repoToUUIDKey, &(m.repoToUUID)); err != nil {
 		return fmt.Errorf("Error loading repo to UUID map: %s", err)
 	}
-	if err := m.getNewIDs(); err != nil {
-		return fmt.Errorf("Error loading new local ids: %s", err)
-	}
-	if err := m.getData(versionToUUIDKey, &(m.versionToUUID)); err != nil {
+	if err := m.loadData(versionToUUIDKey, &(m.versionToUUID)); err != nil {
 		return fmt.Errorf("Error loading version to UUID map: %s", err)
+	}
+	if err := m.loadNewIDs(); err != nil {
+		return fmt.Errorf("Error loading new local ids: %s", err)
 	}
 
 	// Generate the inverse UUID to VersionID mapping.
@@ -271,19 +276,19 @@ func (m *repoManager) verifyCompiledTypes() error {
 
 // ---- IDManager implementation -----------
 
-var idMu sync.Mutex
-
 func (m *repoManager) NewInstanceID() (dvid.InstanceID, error) {
-	idMu.Lock()
-	defer idMu.Unlock()
+	m.idMutex.Lock()
+	defer m.idMutex.Unlock()
+
 	curid := m.newInstanceID
 	m.newInstanceID++
 	return curid, m.putNewIDs()
 }
 
 func (m *repoManager) NewRepoID() (dvid.RepoID, error) {
-	idMu.Lock()
-	defer idMu.Unlock()
+	m.idMutex.Lock()
+	defer m.idMutex.Unlock()
+
 	curid := m.newRepoID
 	m.newRepoID++
 	return curid, m.putNewIDs()
@@ -291,16 +296,21 @@ func (m *repoManager) NewRepoID() (dvid.RepoID, error) {
 
 // NewVersionID returns an atomically generated UUID and its associated local VersionID.
 func (m *repoManager) NewVersionID() (dvid.UUID, dvid.VersionID, error) {
-	idMu.Lock()
-	defer idMu.Unlock()
+	m.idMutex.Lock()
+	defer m.idMutex.Unlock()
+
 	uuid := dvid.NewUUID()
 	curid := m.newVersionID
 	m.versionToUUID[curid] = uuid
+	m.UUIDToVersion[uuid] = curid
 	m.newVersionID++
 	return uuid, curid, m.putNewIDs()
 }
 
 func (m *repoManager) UUIDFromVersion(versionID dvid.VersionID) (dvid.UUID, error) {
+	m.idMutex.RLock()
+	defer m.idMutex.RUnlock()
+
 	uuid, found := m.versionToUUID[versionID]
 	if !found {
 		return dvid.NilUUID, fmt.Errorf("No UUID found for version id %d", versionID)
@@ -309,6 +319,9 @@ func (m *repoManager) UUIDFromVersion(versionID dvid.VersionID) (dvid.UUID, erro
 }
 
 func (m *repoManager) VersionFromUUID(uuid dvid.UUID) (dvid.VersionID, error) {
+	m.idMutex.RLock()
+	defer m.idMutex.RUnlock()
+
 	versionID, found := m.UUIDToVersion[uuid]
 	if !found {
 		return 0, fmt.Errorf("No version ID found for uuid %s", uuid)
@@ -530,8 +543,6 @@ func newRepo(m *repoManager) (*repoT, dvid.VersionID, error) {
 
 	m.repos[uuid] = repo
 	m.repoToUUID[repo.repoID] = uuid
-	m.versionToUUID[versionID] = uuid
-	m.UUIDToVersion[uuid] = versionID
 
 	return repo, versionID, err
 }
@@ -795,6 +806,7 @@ func (r *repoT) NewVersion(uuid dvid.UUID) (dvid.UUID, error) {
 	parentNode.updated = time.Now()
 	parentNode.Unlock()
 	r.updated = time.Now()
+
 	return childNode.uuid, r.save()
 }
 

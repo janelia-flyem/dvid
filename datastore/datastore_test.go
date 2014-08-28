@@ -22,7 +22,7 @@ func mockRepo() *repoT {
 func TestServerContext(t *testing.T) {
 	repo := mockRepo()
 	versionID := dvid.VersionID(1003)
-	ctx := NewContext(context.Background(), repo, versionID)
+	ctx := NewServerContext(context.Background(), repo, versionID)
 	repo2, versions, err := FromContext(ctx)
 	if err != nil {
 		t.Errorf("Server context retrieval error: %s\n", err.Error())

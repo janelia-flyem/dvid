@@ -122,7 +122,7 @@ func TestROIRequests(t *testing.T) {
 	if err != nil {
 		t.Errorf("Unsuccessful POST request (%s): %s\n", roiRequest, err.Error())
 	}
-	serverCtx := datastore.NewContext(context.Background(), repo, versionID)
+	serverCtx := datastore.NewServerContext(context.Background(), repo, versionID)
 	w := httptest.NewRecorder()
 	data.ServeHTTP(serverCtx, w, req)
 	if w.Code != http.StatusOK {

@@ -127,6 +127,10 @@ type DataService interface {
 
 	Help() string
 
+	// Transfer allows peer-to-peer transmission of a data instance metadata and
+	// all normalized key-value pairs associated with it.
+	// .... Transfer(... , roiName ...string)
+
 	// DataService must allow serialization into JSON and binary I/O
 	json.Marshaler
 

@@ -142,9 +142,9 @@ type repoContext struct {
 	versions []dvid.VersionID
 }
 
-// NewContext returns a server Context extended with the Repo and optionally one or more
+// NewServerContext returns a server Context extended with the Repo and optionally one or more
 // versions within that Repo for this request.
-func NewContext(ctx context.Context, repo Repo, versions ...dvid.VersionID) context.Context {
+func NewServerContext(ctx context.Context, repo Repo, versions ...dvid.VersionID) context.Context {
 	return context.WithValue(ctx, repoCtxKey, repoContext{repo, versions})
 }
 

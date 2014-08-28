@@ -272,7 +272,7 @@ func instanceSelector(c *web.C, h http.Handler) http.Handler {
 			return
 		}
 		// Construct the Context
-		ctx := datastore.NewContext(context.Background(), repo, versionID)
+		ctx := datastore.NewServerContext(context.Background(), repo, versionID)
 		dataservice.ServeHTTP(ctx, w, r)
 	}
 	return http.HandlerFunc(fn)
