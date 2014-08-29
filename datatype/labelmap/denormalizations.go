@@ -387,8 +387,8 @@ func (d *Data) mapChunk(chunk *storage.Chunk) {
 				origLabel := string(block.V[b0:b1])
 				mappedLabel, found := op.mapping[origLabel]
 				if !found {
-					dvid.Errorf("No mapping found for label %s ... aborting\n", origLabel)
-					return
+					dvid.Errorf("No mapping found for label %s ... using 0\n", origLabel)
+					mappedLabel = 0
 				}
 				binary.BigEndian.PutUint64(data[d0:d1], mappedLabel)
 				b0 += bytesPerVoxel
@@ -413,8 +413,8 @@ func (d *Data) mapChunk(chunk *storage.Chunk) {
 				origLabel := string(block.V[b0:b1])
 				mappedLabel, found := op.mapping[origLabel]
 				if !found {
-					dvid.Errorf("No mapping found for label %s ... aborting\n", origLabel)
-					return
+					dvid.Errorf("No mapping found for label %s ... using 0\n", origLabel)
+					mappedLabel = 0
 				}
 				binary.BigEndian.PutUint64(data[d0:d1], mappedLabel)
 				b0 += bytesPerVoxel
@@ -435,8 +435,8 @@ func (d *Data) mapChunk(chunk *storage.Chunk) {
 				origLabel := string(block.V[blockI : blockI+bytesPerVoxel])
 				mappedLabel, found := op.mapping[origLabel]
 				if !found {
-					dvid.Infof("No mapping found for label %s ... aborting\n", origLabel)
-					return
+					dvid.Infof("No mapping found for label %s ... using 0\n", origLabel)
+					mappedLabel = 0
 				}
 				binary.BigEndian.PutUint64(data[dataI:dataI+bytesPerVoxel], mappedLabel)
 				blockI += bX
@@ -570,11 +570,9 @@ func (d *Data) denormalizeChunk(chunk *storage.Chunk) {
 						zBeg := zyx.MinPoint(op.source.BlockSize()).Value(2)
 						zEnd := zyx.MaxPoint(op.source.BlockSize()).Value(2)
 						slice := binary.BigEndian.Uint32(a[0:4])
-						dvid.Infof("No mapping found for %x (slice %d) in block with Z %d to %d\n",
+						dvid.Errorf("No mapping found for %x (slice %d) in block with Z %d to %d... setting to 0\n",
 							a, slice, zBeg, zEnd)
-						dvid.Infof("Aborting processing of '%s' chunk using '%s' labelmap\n",
-							op.source.DataName(), d.DataName())
-						return
+						b = 0
 					}
 				}
 

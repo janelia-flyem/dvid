@@ -1186,7 +1186,7 @@ func (d *Data) GetBlockLayerMapping(blockZ int32, op *denormOp) (minChunkPt, max
 	var keys [][]byte
 	keys, err = smalldata.KeysInRange(ctx, begIndex, endIndex)
 	if err != nil {
-		err = fmt.Errorf("Could not find mapping with slice between %d and %d: %s",
+		err = fmt.Errorf("Error trying to find mapping of slice between %d and %d: %s",
 			minZ, maxZ, err.Error())
 		return
 	}
@@ -1266,11 +1266,9 @@ func (d *Data) chunkApplyMap(chunk *storage.Chunk) {
 				minZ := zyx.MinPoint(op.source.BlockSize()).Value(2)
 				maxZ := zyx.MaxPoint(op.source.BlockSize()).Value(2)
 				slice := binary.BigEndian.Uint32(a[0:4])
-				dvid.Infof("No mapping found for %x (slice %d) in block with Z %d to %d\n",
+				dvid.Infof("No mapping found for %x (slice %d) in block with Z %d to %d.  Set to 0.\n",
 					a, slice, minZ, maxZ)
-				dvid.Infof("Aborting creation of '%s' chunk using '%s' labelmap\n",
-					op.source.DataName(), d.DataName())
-				return
+				b = 0
 			}
 		}
 		op.source.ByteOrder.PutUint64(mappedData[start:start+8], b)
