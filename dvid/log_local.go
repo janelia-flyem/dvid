@@ -5,7 +5,7 @@ package dvid
 import (
 	"log"
 
-	lumberjack "gopkg.in/natefinch/lumberjack.v2"
+	"github.com/janelia-flyem/go/lumberjack"
 )
 
 type stdLogger struct {

@@ -151,11 +151,6 @@ else ()
         DEPENDS     ${golang_NAME}
         COMMENT     "Adding gojsonschema library...")
 
-    add_custom_target (lumberjack
-        ${BUILDEM_ENV_STRING} go get ${GO_GET} gopkg.in/natefinch/lumberjack.v2
-        DEPENDS     ${golang_NAME}
-        COMMENT     "Adding lumberjack logger library...")
-
     add_custom_target (goji
         ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/zenazn/goji
         DEPENDS     ${golang_NAME}
@@ -166,7 +161,7 @@ else ()
         DEPENDS     ${golang_NAME}
         COMMENT     "Adding go.net context")
 
-    set (DVID_GO_PACKAGES gopackages gojsonschema lumberjack goji context)
+    set (DVID_GO_PACKAGES gopackages gojsonschema goji context)
 
     add_custom_target (nrsc
         ${BUILDEM_ENV_STRING} ${GO_ENV} go build -o ${BUILDEM_BIN_DIR}/nrsc
