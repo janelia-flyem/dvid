@@ -132,6 +132,18 @@ type DataContext struct {
 	version dvid.VersionID
 }
 
+// MinDataContextKeyRange returns the minimum and maximum key for data with a given local
+// instance id.
+func DataContextKeyRange(instanceID dvid.InstanceID) (minKey, maxKey []byte) {
+	minKey = make([]byte, 1+dvid.InstanceIDSize)
+	maxKey = make([]byte, 1+dvid.InstanceIDSize)
+	minKey[0] = dataKeyPrefix
+	maxKey[0] = dataKeyPrefix
+	copy(minKey[1:], instanceID.Bytes())
+	copy(maxKey[1:], (instanceID + 1).Bytes())
+	return minKey, maxKey
+}
+
 // NewDataContext provides a way for datatypes to create a Context that adheres to DVID
 // key space partitioning.  Since Context and VersionedContext interfaces are opaque, i.e., can
 // only be implemented within package storage, we force compatible implementations to embed

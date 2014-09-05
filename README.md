@@ -28,7 +28,7 @@ and retrieving 3d grayscale and label data in a variety of ways:
 * label graphs
 * regions of interest represented via a coarse subdivision of space using block indices
 
-Each of the above is handled by standard data types via a
+Each of the above is handled by built-in data types via a
 [Level 2 REST HTTP API](http://martinfowler.com/articles/richardsonMaturityModel.html)
 implemented by Go language packages within the *datatype* directory.  When dealing with novel data,
 we typically use the generic *keyvalue* data type and store JSON-encoded or binary data
@@ -64,7 +64,7 @@ although there are a number of differences due to the size and typing of data as
 to transferring versioned data between DVID servers.  We hope to leverage the significant experience in 
 crafting workflows and management tools for distributed, versioned operations.
 
-It has been designed foremost as a malleable system with exchangeable components:
+DVID has been designed foremost as a malleable system with exchangeable components:
 
 * Data type packages -- allow easy addition of new data and access patterns.
 * Storage engines -- allow tradeoffs in access speed, data size, and concurrency.

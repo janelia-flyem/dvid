@@ -94,6 +94,7 @@ func handlePush(s *message.Socket) error {
 			return fmt.Errorf("Error receiving message on nanomsg socket %s: %s\n", s, err.Error())
 		}
 		if msg.Type == message.CommandType {
+			dvid.Debugf("Received %s: %s\n", msg.Type, msg.Name)
 			if msg.Name == NanoPushStop {
 				break
 			}
@@ -108,8 +109,13 @@ func handlePush(s *message.Socket) error {
 				flush = true
 				curStoreType = msg.SType
 			}
+			if msg.KV == nil || msg.KV.K == nil || msg.KV.V == nil {
+				dvid.Debugf("Received bad keyvalue from socket: %v\n", msg)
+			}
 			oldInstance, oldVersion, err := storage.KeyToLocalIDs(msg.KV.K)
 			if err != nil {
+				dvid.Debugf("Received %s: %s => key %v, value %d bytes\n", msg.Type, msg.Name,
+					msg.KV.K, len(msg.KV.V))
 				return err
 			}
 
@@ -176,6 +182,11 @@ func handlePush(s *message.Socket) error {
 }
 
 func Push(repo Repo, target string, config dvid.Config) error {
+	if target == "" {
+		target = message.DefaultNanomsgAddress
+		dvid.Infof("No target specified for push, defaulting to %q\n", message.DefaultNanomsgAddress)
+	}
+
 	// Get the push configuration
 	roiname, err := getROI(config)
 	if err != nil {
@@ -210,17 +221,21 @@ func Push(repo Repo, target string, config dvid.Config) error {
 
 	// For each data instance, send the data delimited by the roi
 	for _, instance := range data {
+		dvid.Debugf("Sending instance %q data to %q\n", instance.DataName(), target)
 		if err := instance.Send(s, roiname); err != nil {
+			dvid.Debugf("Aborting send of instance %q data\n", instance.DataName())
 			return err
 		}
 	}
 
 	// Send PUSH command end
+	dvid.Debugf("Sending PUSH STOP command to %q\n", target)
 	if err = s.SendCommand(NanoPushStop); err != nil {
 		return err
 	}
 
 	// Close the connection.
+	dvid.Debugf("Closing socket to %q\n", target)
 	time.Sleep(1 * time.Second)
 	if err = s.Close(); err != nil {
 		return err

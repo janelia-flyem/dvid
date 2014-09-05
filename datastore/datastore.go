@@ -39,11 +39,11 @@ func NewRepoID() (dvid.RepoID, error) {
 	return Manager.NewRepoID()
 }
 
-func NewVersionID() (dvid.UUID, dvid.VersionID, error) {
+func NewUUID() (dvid.UUID, dvid.VersionID, error) {
 	if Manager == nil {
 		return dvid.NilUUID, 0, fmt.Errorf("datastore not initialized")
 	}
-	return Manager.NewVersionID()
+	return Manager.NewUUID()
 }
 
 func UUIDFromVersion(versionID dvid.VersionID) (dvid.UUID, error) {

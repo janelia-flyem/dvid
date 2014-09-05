@@ -58,20 +58,22 @@ func Serve(address string) {
 	incoming = &Socket{s}
 	for {
 		cmd, err := incoming.ReceiveCommand()
+		dvid.Debugf("Received command over nanomsg address %q: %s\n", address, cmd)
 		if err != nil {
 			dvid.Errorf("Bad receive on nanomsg address %q: %s\n", address, err.Error())
-			continue
+			break
 		}
 		callback, found := registeredOps.callbacks[cmd]
 		if !found {
 			dvid.Errorf("Received unregistered operation: %s\n", cmd)
-			continue
+			break
 		}
 
 		// Handle the operation
 		// TODO -- handle concurrent pipeline requests
 		if err = callback(incoming); err != nil {
 			dvid.Errorf("Error handling op %q: %s\n", cmd, err.Error())
+			break
 		}
 	}
 }
@@ -253,7 +255,7 @@ func (s *Socket) SendCommand(command string) error {
 }
 
 func (s *Socket) SendKeyValue(desc string, store storage.DataStoreType, kv *storage.KeyValue) error {
-	op := &Op{desc, KeyValueType}
+	op := Op{desc, KeyValueType}
 	opbytes, err := op.MarshalBinary()
 	if err != nil {
 		return err
@@ -274,7 +276,7 @@ func (s *Socket) SendKeyValue(desc string, store storage.DataStoreType, kv *stor
 }
 
 func (s *Socket) SendBinary(desc string, b []byte) error {
-	op := &Op{desc, BinaryType}
+	op := Op{desc, BinaryType}
 	opbytes, err := op.MarshalBinary()
 	if err != nil {
 		return err

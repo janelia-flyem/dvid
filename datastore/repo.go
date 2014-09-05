@@ -26,7 +26,14 @@ var (
 type IDManager interface {
 	NewInstanceID() (dvid.InstanceID, error)
 	NewRepoID() (dvid.RepoID, error)
-	NewVersionID() (dvid.UUID, dvid.VersionID, error)
+
+	// Creates a new local VersionID for the given UUID.  Will return
+	// an error if the given UUID already exists locally, so mainly used
+	// in p2p transmission of data that keeps the remote UUID.
+	NewVersionID(dvid.UUID) (dvid.VersionID, error)
+
+	// Creates a UUID and its associated local version ID.
+	NewUUID() (dvid.UUID, dvid.VersionID, error)
 
 	UUIDFromVersion(dvid.VersionID) (dvid.UUID, error)
 	VersionFromUUID(dvid.UUID) (dvid.VersionID, error)

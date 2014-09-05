@@ -2048,10 +2048,44 @@ func (d *Data) ModifyConfig(config dvid.Config) error {
 	return nil
 }
 
+type SendOp struct {
+	socket *message.Socket
+}
+
 // Send transfers all key-value pairs pertinent to this data type as well as
 // the storage.DataStoreType for them.
 func (d *Data) Send(s *message.Socket, roiname string) error {
-	dvid.Criticalf("voxels.Send() is not implemented yet, so push/pull will not work for this data type.\n")
+	db, err := storage.BigDataStore()
+	if err != nil {
+		return err
+	}
+	//wg := new(sync.WaitGroup)
+	chunkOp := &storage.ChunkOp{&SendOp{s}, nil}
+
+	server.SpawnGoroutineMutex.Lock()
+
+	// Send the entire range of key-value pairs for this instance down the socket
+	keyBeg, keyEnd := storage.DataContextKeyRange(d.InstanceID())
+	fmt.Printf("send keyBeg: %v\n", keyBeg)
+	fmt.Printf("send keyEnd: %v\n", keyEnd)
+	err = db.ProcessRange(nil, keyBeg, keyEnd, chunkOp, func(chunk *storage.Chunk) {
+		if chunk.KeyValue == nil {
+			dvid.Errorf("Received nil keyvalue sending voxel chunks\n")
+		}
+		if err := s.SendKeyValue("voxels", storage.BigData, chunk.KeyValue); err != nil {
+			dvid.Errorf("Error sending voxel chunks through nanomsg socket: %s\n", err.Error())
+		}
+	})
+	if err != nil {
+		server.SpawnGoroutineMutex.Unlock()
+		return fmt.Errorf("Error in voxels %q range query: %s", d.DataName(), err.Error())
+	}
+	server.SpawnGoroutineMutex.Unlock()
+	if err != nil {
+		return err
+	}
+
+	//wg.Wait()
 	return nil
 }
 
@@ -2183,10 +2217,11 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 	}
 
 	// Get query strings and possible roi
-	var roiObj ROI
+	var roiptr *ROI
 	queryValues := r.URL.Query()
 	roiname := dvid.DataString(queryValues.Get("roi"))
 	if len(roiname) != 0 {
+		roiptr = new(ROI)
 		attenuationStr := queryValues.Get("attenuation")
 		if len(attenuationStr) != 0 {
 			attenuation, err := strconv.Atoi(attenuationStr)
@@ -2198,7 +2233,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 				server.BadRequest(w, r, "Attenuation should be from 1 to 7 (divides by 2^n)")
 				return
 			}
-			roiObj.attenuation = uint8(attenuation)
+			roiptr.attenuation = uint8(attenuation)
 		}
 	}
 
@@ -2342,12 +2377,14 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 					server.BadRequest(w, r, err.Error())
 					return
 				}
-				roiObj.Iter, err = roi.NewIterator(roiname, versionID, e)
-				if err != nil {
-					server.BadRequest(w, r, err.Error())
-					return
+				if roiptr != nil {
+					roiptr.Iter, err = roi.NewIterator(roiname, versionID, e)
+					if err != nil {
+						server.BadRequest(w, r, err.Error())
+						return
+					}
 				}
-				img, err := GetImage(storeCtx, d, e, &roiObj)
+				img, err := GetImage(storeCtx, d, e, roiptr)
 				if err != nil {
 					server.BadRequest(w, r, err.Error())
 					return
@@ -2399,12 +2436,14 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 					server.BadRequest(w, r, err.Error())
 					return
 				}
-				roiObj.Iter, err = roi.NewIterator(roiname, versionID, e)
-				if err != nil {
-					server.BadRequest(w, r, err.Error())
-					return
+				if roiptr != nil {
+					roiptr.Iter, err = roi.NewIterator(roiname, versionID, e)
+					if err != nil {
+						server.BadRequest(w, r, err.Error())
+						return
+					}
 				}
-				data, err := GetVolume(storeCtx, d, e, &roiObj)
+				data, err := GetVolume(storeCtx, d, e, roiptr)
 				if err != nil {
 					server.BadRequest(w, r, err.Error())
 					return
@@ -2442,7 +2481,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 			server.BadRequest(w, r, "DVID currently supports shapes of only 2 and 3 dimensions")
 		}
 	default:
-		server.BadRequest(w, r, "Unrecognized API call for data '%s'.  See API help.", d.DataName())
+		server.BadRequest(w, r, "Unrecognized API call for voxels %q.  See API help.", d.DataName())
 	}
 }
 

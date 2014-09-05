@@ -299,8 +299,27 @@ func (m *repoManager) NewRepoID() (dvid.RepoID, error) {
 	return curid, m.putNewIDs()
 }
 
-// NewVersionID returns an atomically generated UUID and its associated local VersionID.
-func (m *repoManager) NewVersionID() (dvid.UUID, dvid.VersionID, error) {
+// NewVersionID returns a new local VersionID for the given UUID.  Will return an error if
+// the given UUID already exists locally, so mainly used in p2p transmission of data that
+// keeps the remote UUID.
+func (m *repoManager) NewVersionID(uuid dvid.UUID) (dvid.VersionID, error) {
+	m.idMutex.Lock()
+	defer m.idMutex.Unlock()
+
+	_, found := m.UUIDToVersion[uuid]
+	if found {
+		return 0, fmt.Errorf("UUID %s already has a local version ID", uuid)
+	}
+
+	curid := m.newVersionID
+	m.versionToUUID[curid] = uuid
+	m.UUIDToVersion[uuid] = curid
+	m.newVersionID++
+	return curid, m.putNewIDs()
+}
+
+// NewUUID returns an atomically generated UUID and its associated local VersionID.
+func (m *repoManager) NewUUID() (dvid.UUID, dvid.VersionID, error) {
 	m.idMutex.Lock()
 	defer m.idMutex.Unlock()
 
@@ -469,6 +488,7 @@ func (m *repoManager) AddRepo(repo Repo) error {
 	}
 	m.repos[r.rootID] = r
 	m.repoToUUID[r.repoID] = r.rootID
+
 	r.manager = m
 	return nil
 }
@@ -541,7 +561,7 @@ func newRepo(m *repoManager) (*repoT, dvid.VersionID, error) {
 	if err != nil {
 		return nil, 0, err
 	}
-	uuid, versionID, err := m.NewVersionID()
+	uuid, versionID, err := m.NewUUID()
 	if err != nil {
 		return nil, 0, err
 	}
@@ -888,7 +908,7 @@ func (r *repoT) newDAG(uuid dvid.UUID, versionID dvid.VersionID) *dagT {
 }
 
 func (r *repoT) addNode() (*nodeT, error) {
-	uuid, versionID, err := r.manager.NewVersionID()
+	uuid, versionID, err := r.manager.NewUUID()
 	if err != nil {
 		return nil, err
 	}
@@ -935,7 +955,8 @@ func (r *repoT) remapLocalIDs() (instanceMapT, versionMapT, error) {
 	newNodes := make(map[dvid.VersionID]*nodeT, len(r.dag.nodes))
 	versionMap := make(versionMapT, len(r.dag.nodes))
 	for oldVersionID, nodePtr := range r.dag.nodes {
-		_, newVersionID, err := Manager.NewVersionID()
+		// keep the old uuid but get a new version id
+		newVersionID, err := Manager.NewVersionID(nodePtr.uuid)
 		if err != nil {
 			return nil, nil, err
 		}
