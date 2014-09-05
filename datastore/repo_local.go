@@ -46,6 +46,8 @@ type repoManager struct {
 	UUIDToVersion map[dvid.UUID]dvid.VersionID
 
 	// Counters that provide the local IDs of the next new repo, version, or data instance.
+	// Valid counters should be >= 1, so we can distinguish between valid ids and the
+	// default zero value.
 	newRepoID     dvid.RepoID
 	newVersionID  dvid.VersionID
 	newInstanceID dvid.InstanceID
@@ -118,6 +120,9 @@ func Initialize() error {
 		versionToUUID: make(map[dvid.VersionID]dvid.UUID),
 		UUIDToVersion: make(map[dvid.UUID]dvid.VersionID),
 		repos:         make(map[dvid.UUID]*repoT),
+		newRepoID:     1,
+		newVersionID:  1,
+		newInstanceID: 1,
 	}
 
 	var err error
@@ -456,6 +461,18 @@ func (m *repoManager) NewRepo() (Repo, error) {
 	return repo, m.putCaches()
 }
 
+// AddRepo adds a preallocated Repo.
+func (m *repoManager) AddRepo(repo Repo) error {
+	r, ok := repo.(*repoT)
+	if !ok {
+		return fmt.Errorf("Repo passed to AddRepo() is not *repoT!")
+	}
+	m.repos[r.rootID] = r
+	m.repoToUUID[r.repoID] = r.rootID
+	r.manager = m
+	return nil
+}
+
 // SaveRepo persists a Repo to the MetaDataStore.
 func (m *repoManager) SaveRepo(uuid dvid.UUID) error {
 	repo, found := m.repos[uuid]
@@ -542,7 +559,7 @@ func newRepo(m *repoManager) (*repoT, dvid.VersionID, error) {
 	repo.dag = repo.newDAG(uuid, versionID)
 
 	m.repos[uuid] = repo
-	m.repoToUUID[repo.repoID] = uuid
+	m.repoToUUID[repoID] = uuid
 
 	return repo, versionID, err
 }
@@ -731,6 +748,10 @@ func (r *repoT) RootUUID() dvid.UUID {
 	return r.rootID
 }
 
+func (r *repoT) GetAllData() (map[dvid.DataString]DataService, error) {
+	return r.data, nil
+}
+
 func (r *repoT) GetDataByName(name dvid.DataString) (DataService, error) {
 	elements := strings.Split(string(name), "-")
 	stem := elements[0]
@@ -888,6 +909,51 @@ func (r *repoT) newNode(uuid dvid.UUID, versionID dvid.VersionID) *nodeT {
 	}
 	r.manager.repos[uuid] = r
 	return node
+}
+
+type instanceMapT map[dvid.InstanceID]dvid.InstanceID
+type versionMapT map[dvid.VersionID]dvid.VersionID
+
+// Given a transmitted repo where you assume all local IDs (instance and version ids)
+// are incorrect, make new local IDs and keep track of the mapping for later key updates.
+// Note that Manager (not r.manager) is used because the manager for this repo is not
+// set until after all pushed data is received.
+func (r *repoT) remapLocalIDs() (instanceMapT, versionMapT, error) {
+
+	// Convert the transmitted local ids to this DVID server's local ids.
+	instanceMap := make(instanceMapT, len(r.data))
+	for dataname, dataservice := range r.data {
+		instanceID, err := Manager.NewInstanceID()
+		if err != nil {
+			return nil, nil, err
+		}
+		instanceMap[dataservice.InstanceID()] = instanceID
+		r.data[dataname].SetInstanceID(instanceID)
+	}
+
+	// Pass 1 on DAG: copy the nodes with new ids
+	newNodes := make(map[dvid.VersionID]*nodeT, len(r.dag.nodes))
+	versionMap := make(versionMapT, len(r.dag.nodes))
+	for oldVersionID, nodePtr := range r.dag.nodes {
+		_, newVersionID, err := Manager.NewVersionID()
+		if err != nil {
+			return nil, nil, err
+		}
+		versionMap[oldVersionID] = newVersionID
+		newNodes[newVersionID] = nodePtr
+	}
+
+	// Pass 2 on DAG: now that we know the version mapping, modify all nodes.
+	for _, nodePtr := range r.dag.nodes {
+		for i, oldVersionID := range nodePtr.parents {
+			nodePtr.parents[i] = versionMap[oldVersionID]
+		}
+		for i, oldVersionID := range nodePtr.children {
+			nodePtr.children[i] = versionMap[oldVersionID]
+		}
+	}
+	r.dag.nodes = newNodes
+	return instanceMap, versionMap, nil
 }
 
 // --------------------------------------

@@ -74,6 +74,16 @@ type Engine interface {
 // --- The three tiers of storage might gain new interfaces when we add cluster
 // --- support to DVID.
 
+// DataStoreType describes the semantics of a particular data store.
+type DataStoreType uint8
+
+const (
+	UnknownData DataStoreType = iota
+	MetaData
+	SmallData
+	BigData
+)
+
 // MetaDataStorer is the interface for storing DVID datastore metadata like the
 // repositories and associated DAGs.  It is characterized by the following:
 // (1) not big data, (2) ideally in memory, (3) strongly consistent across all

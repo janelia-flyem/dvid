@@ -16,6 +16,7 @@ import (
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
+	"github.com/janelia-flyem/dvid/message"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
 )
@@ -326,6 +327,14 @@ func (d *Data) JSONString() (jsonStr string, err error) {
 
 func (d *Data) Help() string {
 	return fmt.Sprintf(HelpMessage)
+}
+
+// Send transfers all key-value pairs pertinent to this data type as well as
+// the storage.DataStoreType for them.  For the keyvalue data type, ROI delimiting
+// is not available.
+func (d *Data) Send(s *message.Socket, roiname string) error {
+	dvid.Criticalf("keyvalue.Send() is not implemented yet, so push/pull will not work for this data type.\n")
+	return nil
 }
 
 // DoRPC acts as a switchboard for RPC commands.

@@ -24,6 +24,7 @@ import (
 	"github.com/janelia-flyem/dvid/datatype/roi"
 	"github.com/janelia-flyem/dvid/datatype/voxels"
 	"github.com/janelia-flyem/dvid/dvid"
+	"github.com/janelia-flyem/dvid/message"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
 )
@@ -627,6 +628,13 @@ func RavelerSuperpixelBytes(slice, superpixel32 uint32) []byte {
 }
 
 // --- datastore.DataService interface ---------
+
+// Send transfers all key-value pairs pertinent to this data type as well as
+// the storage.DataStoreType for them.
+func (d *Data) Send(s *message.Socket, roiname string) error {
+	dvid.Criticalf("labels64.Send() is not implemented yet, so push/pull will not work for this data type.\n")
+	return nil
+}
 
 // DoRPC acts as a switchboard for RPC commands.
 func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error {

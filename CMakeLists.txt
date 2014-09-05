@@ -82,6 +82,8 @@ else ()
     include (basholeveldb)
     include (hyperleveldb)
 
+    include (nanomsg)
+
     set (DVID_BACKEND "basholeveldb" CACHE TYPE STRING)
     
     # flag for building graph backend (currently just using specified key-value store
@@ -134,7 +136,7 @@ else ()
 
     add_custom_target (gopackages-install
         ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go get ${GO_GET} github.com/janelia-flyem/go
-        DEPENDS     ${golang_NAME}
+        DEPENDS     ${golang_NAME} ${nanomsg_NAME}
         COMMENT     "Adding go package dependencies for janelia-flyem projects...")
 
     add_custom_target (gopackages

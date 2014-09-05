@@ -98,7 +98,7 @@ func NewMetadataContext() MetadataContext {
 func (ctx MetadataContext) implementsOpaque() {}
 
 func (ctx MetadataContext) VersionID() dvid.VersionID {
-	return 0 // Only one version of Metadata
+	return 1 // Only one version of Metadata
 }
 
 func (ctx MetadataContext) ConstructKey(index []byte) []byte {
@@ -152,6 +152,27 @@ func KeyToIndexZYX(k []byte) (dvid.IndexZYX, error) {
 		return zyx, fmt.Errorf("Cannot recover ZYX index from key %v: %s\n", k, err.Error())
 	}
 	return zyx, nil
+}
+
+// KeyToLocalIDs parses a key under a DataContext and returns instance and version ids.
+func KeyToLocalIDs(k []byte) (dvid.InstanceID, dvid.VersionID, error) {
+	if k[0] != dataKeyPrefix {
+		return 0, 0, fmt.Errorf("Cannot extract local IDs from a non-DataContext key")
+	}
+	instanceID := dvid.InstanceIDFromBytes(k[1 : 1+dvid.InstanceIDSize])
+	end := len(k) - dvid.VersionIDSize
+	versionID := dvid.VersionIDFromBytes(k[end:])
+	return instanceID, versionID, nil
+}
+
+func UpdateDataContextKey(k []byte, instance dvid.InstanceID, version dvid.VersionID) error {
+	if k[0] != dataKeyPrefix {
+		return fmt.Errorf("Cannot update non-DataContext key")
+	}
+	copy(k[1:1+dvid.InstanceIDSize], instance.Bytes())
+	end := len(k) - dvid.VersionIDSize
+	copy(k[end:], version.Bytes())
+	return nil
 }
 
 // ---- storage.Context implementation

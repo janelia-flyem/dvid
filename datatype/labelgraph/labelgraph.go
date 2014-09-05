@@ -19,6 +19,7 @@ import (
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
+	"github.com/janelia-flyem/dvid/message"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
 	"github.com/janelia-flyem/gojsonschema"
@@ -1292,6 +1293,13 @@ func (d *Data) ExtractGraph(r *http.Request) (*LabelGraph, error) {
 }
 
 // --- DataService interface ---
+
+// Send transfers all key-value pairs pertinent to this data type as well as
+// the storage.DataStoreType for them.
+func (d *Data) Send(s *message.Socket, roiname string) error {
+	dvid.Criticalf("labelgraph.Send() is not implemented yet, so push/pull will not work for this data type.\n")
+	return nil
+}
 
 // DoRPC acts as a switchboard for RPC commands -- not supported
 func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error {

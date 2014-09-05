@@ -26,6 +26,14 @@ const RPCHelpMessage = `Commands executed on the server (rpc address = %s):
 
 	repo <UUID> new <datatype name> <data name> <datatype-specific config>...
 
+	repo <UUID> push <remote DVID address> <settings...>
+
+		where <settings> are optional "key=value" strings that provide:
+
+		roi=<roiname>
+
+		data=<data1>[,<data2>[,<data3>...]]
+
 	node <UUID> <data name> <type-specific commands>
 
 For further information, use a web browser to visit the server for this
@@ -138,21 +146,22 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 		}
 
 	case "repo":
-		var uuidStr, subcommand, typename, dataname string
+		var uuidStr, subcommand string
 		cmd.CommandArgs(1, &uuidStr, &subcommand)
 		uuid, _, err := datastore.MatchingUUID(uuidStr)
 		if err != nil {
 			return err
 		}
+		// Get Repo
+		repo, err := datastore.RepoFromUUID(uuid)
+		if err != nil {
+			return err
+		}
+
 		switch subcommand {
 		case "new":
+			var typename, dataname string
 			cmd.CommandArgs(3, &typename, &dataname)
-
-			// Get Repo
-			repo, err := datastore.RepoFromUUID(uuid)
-			if err != nil {
-				return err
-			}
 
 			// Get TypeService
 			typeservice, err := datastore.TypeServiceByName(dvid.TypeString(typename))
@@ -168,6 +177,14 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 			}
 			reply.Text = fmt.Sprintf("Data %q [%s] added to node %s\n", dataname, typename, uuid)
 			repo.AddToLog(cmd.String())
+		case "push":
+			var target string
+			cmd.CommandArgs(3, &target)
+			config := cmd.Settings()
+			if err = datastore.Push(repo, target, config); err != nil {
+				return err
+			}
+			reply.Text = fmt.Sprintf("Repo %q pushed to %q\n", repo.RootUUID(), target)
 		default:
 			return fmt.Errorf("Unknown command: %q", cmd)
 		}

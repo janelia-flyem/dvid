@@ -18,6 +18,7 @@ import (
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
+	"github.com/janelia-flyem/dvid/message"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage/local"
 
@@ -45,11 +46,11 @@ var (
 	// Path to web client directory.  Leave unset for default pages.
 	clientDir = flag.String("webclient", "", "")
 
-	// Address for rpc communication.
 	rpcAddress = flag.String("rpc", server.DefaultRPCAddress, "")
 
-	// Address for http communication
 	httpAddress = flag.String("http", server.DefaultWebAddress, "")
+
+	nanomsgAddress = flag.String("nanomsg", message.DefaultNanomsgAddress, "")
 
 	// Profile CPU usage using standard gotest system.
 	cpuprofile = flag.String("cpuprofile", "", "")
@@ -72,6 +73,7 @@ Usage: dvid [options] <command>
       -webclient  =string   Path to web client directory.  Leave unset for default pages.
       -rpc        =string   Address for RPC communication.
       -http       =string   Address for HTTP communication.
+      -nanomsg    =string   Address for nanomsg REP server.
       -logfile    =string   File name for log.  Will be rotated.
       -cpuprofile =string   Write CPU profile to this file.
       -memprofile =string   Write memory profile to this file on ctrl-C.
@@ -254,7 +256,7 @@ func DoServe(cmd dvid.Command) error {
 	if err := datastore.Initialize(); err != nil {
 		return fmt.Errorf("Unable to initialize datastore: %s\n", err.Error())
 	}
-	if err := server.Serve(*httpAddress, *clientDir, *rpcAddress); err != nil {
+	if err := server.Serve(*httpAddress, *clientDir, *rpcAddress, *nanomsgAddress); err != nil {
 		return err
 	}
 	return nil

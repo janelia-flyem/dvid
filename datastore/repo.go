@@ -47,6 +47,9 @@ type RepoManager interface {
 	// NewRepo creates and returns a new Repo.
 	NewRepo() (Repo, error)
 
+	// AddRepo adds a preallocated Repo.
+	AddRepo(Repo) error
+
 	// SaveRepo persists a Repo to the MetaDataStore.
 	SaveRepo(dvid.UUID) error
 	SaveRepoByVersionID(dvid.VersionID) error
@@ -86,6 +89,9 @@ type Repo interface {
 	RootUUID() dvid.UUID
 
 	Types() (map[dvid.URLString]TypeService, error)
+
+	// GetAllData returns all data instances for this repo.
+	GetAllData() (map[dvid.DataString]DataService, error)
 
 	// GetDataByName returns a DataService if the name is present or nil otherwise.
 	// Names can  be UTF8 except for the hyphen, which is a way of passing additional

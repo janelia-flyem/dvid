@@ -28,6 +28,10 @@ func (d *testData) InstanceID() dvid.InstanceID {
 	return d.instanceID
 }
 
+func (d *testData) SetInstanceID(id dvid.InstanceID) {
+	d.instanceID = id
+}
+
 func (d *testData) Versioned() bool {
 	return false
 }

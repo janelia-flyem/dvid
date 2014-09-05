@@ -87,7 +87,8 @@ type DataString string
 
 // InstanceID is a DVID server-specific identifier for data instances.  Each InstanceID
 // is only used within one repo, so all key/values for a repo can be obtained by
-// doing range queries on instances associated with a repo.
+// doing range queries on instances associated with a repo.  Valid InstanceIDs should
+// be greater than 0.
 type InstanceID LocalID32
 
 // Bytes returns a sequence of bytes encoding this InstanceID.
@@ -103,7 +104,8 @@ func InstanceIDFromBytes(b []byte) InstanceID {
 	return InstanceID(binary.BigEndian.Uint32(b))
 }
 
-// RepoID is a DVID server-specific identifier for a particular Repo.
+// RepoID is a DVID server-specific identifier for a particular Repo.  Valid RepoIDs
+// should be greater than 0.
 type RepoID LocalID32
 
 // Bytes returns a sequence of bytes encoding this RepoID.  Binary representation is big-endian
@@ -121,7 +123,7 @@ func RepoIDFromBytes(b []byte) RepoID {
 }
 
 // VersionID is a DVID server-specific identifier for a particular version or
-// node of a repo's DAG.
+// node of a repo's DAG.  Valid VersionIDs should be greater than 0.
 type VersionID LocalID32
 
 // Bytes returns a sequence of bytes encoding this VersionID.  Binary representation is big-endian
@@ -154,6 +156,8 @@ const (
 type Data interface {
 	DataName() DataString
 	InstanceID() InstanceID
+
+	SetInstanceID(InstanceID) // Necessary to support transmission of data to remote DVID.
 
 	TypeName() TypeString
 	TypeURL() URLString

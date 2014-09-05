@@ -17,6 +17,7 @@ import (
 	"code.google.com/p/go.net/context"
 
 	"github.com/janelia-flyem/dvid/dvid"
+	"github.com/janelia-flyem/dvid/message"
 	"github.com/janelia-flyem/dvid/storage"
 )
 
@@ -127,9 +128,11 @@ type DataService interface {
 
 	Help() string
 
-	// Transfer allows peer-to-peer transmission of a data instance metadata and
-	// all normalized key-value pairs associated with it.
-	// .... Transfer(... , roiName ...string)
+	// Send allows peer-to-peer transmission of data instance metadata and
+	// all normalized key-value pairs associated with it.  Transmitted data
+	// can be delimited by an optional ROI.  Use an empty string for the roiname
+	// parameter to transmit the full extents.
+	Send(s *message.Socket, roiname string) error
 
 	// DataService must allow serialization into JSON and binary I/O
 	json.Marshaler
@@ -210,6 +213,10 @@ func NewDataService(t TypeService, uuid dvid.UUID, id dvid.InstanceID, name dvid
 func (d *Data) DataName() dvid.DataString { return d.name }
 
 func (d *Data) InstanceID() dvid.InstanceID { return d.id }
+
+func (d *Data) SetInstanceID(id dvid.InstanceID) {
+	d.id = id
+}
 
 func (d *Data) TypeName() dvid.TypeString { return d.typename }
 

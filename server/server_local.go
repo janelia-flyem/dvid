@@ -14,8 +14,8 @@ import (
 	"net/http"
 	"net/rpc"
 	"runtime"
-
 	"github.com/janelia-flyem/dvid/dvid"
+	"github.com/janelia-flyem/dvid/message"
 )
 
 const (
@@ -49,7 +49,7 @@ func (c configT) WebClient() string {
 }
 
 // Serve starts HTTP and RPC servers.
-func Serve(httpAddress, webClientDir, rpcAddress string) error {
+func Serve(httpAddress, webClientDir, rpcAddress, nanomsgAddress string) error {
 	// Set the package-level config variable
 	dvid.Infof("Serving HTTP on %s\n", httpAddress)
 	dvid.Infof("Serving RPC  on %s\n", rpcAddress)
@@ -60,6 +60,9 @@ func Serve(httpAddress, webClientDir, rpcAddress string) error {
 	// Launch the web server
 	go serveHttp(httpAddress, webClientDir)
 
+	// Launch nanomsg request handling
+	go message.Serve(nanomsgAddress)
+
 	// Launch the rpc server
 	if err := serveRpc(rpcAddress); err != nil {
 		return fmt.Errorf("Could not start RPC server: %s\n", err.Error())
@@ -67,7 +70,7 @@ func Serve(httpAddress, webClientDir, rpcAddress string) error {
 	return nil
 }
 
-// Listen and serve RPC requests using address.
+// Listen and serve RPC requests using address.  Should not return if successful.
 func serveRpc(address string) error {
 	c := new(RPCConnection)
 	rpc.Register(c)
