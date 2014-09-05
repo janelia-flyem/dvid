@@ -222,7 +222,7 @@ func Push(repo Repo, target string, config dvid.Config) error {
 	// For each data instance, send the data delimited by the roi
 	for _, instance := range data {
 		dvid.Debugf("Sending instance %q data to %q\n", instance.DataName(), target)
-		if err := instance.Send(s, roiname); err != nil {
+		if err := instance.Send(s, roiname, repo.RootUUID()); err != nil {
 			dvid.Debugf("Aborting send of instance %q data\n", instance.DataName())
 			return err
 		}

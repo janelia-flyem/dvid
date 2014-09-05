@@ -130,9 +130,10 @@ type DataService interface {
 
 	// Send allows peer-to-peer transmission of data instance metadata and
 	// all normalized key-value pairs associated with it.  Transmitted data
-	// can be delimited by an optional ROI.  Use an empty string for the roiname
-	// parameter to transmit the full extents.
-	Send(s *message.Socket, roiname string) error
+	// can be delimited by an optional ROI, specified by the ROI data name
+	// and its UUID.  Use an empty string for the roiname parameter to transmit
+	// the full extents.
+	Send(s *message.Socket, roiname string, uuid dvid.UUID) error
 
 	// DataService must allow serialization into JSON and binary I/O
 	json.Marshaler

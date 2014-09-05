@@ -1518,6 +1518,20 @@ type Extents struct {
 	indexMu sync.Mutex
 }
 
+// --- dvid.Bounder interface ----
+
+// StartPoint returns the offset to first point of data.
+func (ext *Extents) StartPoint() dvid.Point {
+	return ext.MinPoint
+}
+
+// EndPoint returns the last point.
+func (ext *Extents) EndPoint() dvid.Point {
+	return ext.MaxPoint
+}
+
+// --------
+
 // AdjustPoints modifies extents based on new voxel coordinates in concurrency-safe manner.
 func (ext *Extents) AdjustPoints(pointBeg, pointEnd dvid.Point) bool {
 	ext.pointMu.Lock()
@@ -2054,24 +2068,41 @@ type SendOp struct {
 
 // Send transfers all key-value pairs pertinent to this data type as well as
 // the storage.DataStoreType for them.
-func (d *Data) Send(s *message.Socket, roiname string) error {
+// TODO -- handle versioning of the ROI coming.  For not, only allow root version of ROI.
+func (d *Data) Send(s *message.Socket, roiname string, uuid dvid.UUID) error {
 	db, err := storage.BigDataStore()
 	if err != nil {
 		return err
 	}
 	//wg := new(sync.WaitGroup)
-	chunkOp := &storage.ChunkOp{&SendOp{s}, nil}
-
 	server.SpawnGoroutineMutex.Lock()
 
+	// Get the ROI
+	var roiIterator *roi.Iterator
+	if len(roiname) != 0 {
+		versionID, err := datastore.VersionFromUUID(uuid)
+		if err != nil {
+			return err
+		}
+		roiIterator, err = roi.NewIterator(dvid.DataString(roiname), versionID, d)
+		if err != nil {
+			return err
+		}
+	}
+
 	// Send the entire range of key-value pairs for this instance down the socket
+	var blocksTotal, blocksSent int
 	keyBeg, keyEnd := storage.DataContextKeyRange(d.InstanceID())
-	fmt.Printf("send keyBeg: %v\n", keyBeg)
-	fmt.Printf("send keyEnd: %v\n", keyEnd)
+	chunkOp := &storage.ChunkOp{&SendOp{s}, nil}
 	err = db.ProcessRange(nil, keyBeg, keyEnd, chunkOp, func(chunk *storage.Chunk) {
 		if chunk.KeyValue == nil {
 			dvid.Errorf("Received nil keyvalue sending voxel chunks\n")
 		}
+		blocksTotal++
+		if roiIterator != nil && roiIterator.Outside(chunk.K) {
+			return // don't send if this chunk is outside ROI
+		}
+		blocksSent++
 		if err := s.SendKeyValue("voxels", storage.BigData, chunk.KeyValue); err != nil {
 			dvid.Errorf("Error sending voxel chunks through nanomsg socket: %s\n", err.Error())
 		}
@@ -2080,12 +2111,18 @@ func (d *Data) Send(s *message.Socket, roiname string) error {
 		server.SpawnGoroutineMutex.Unlock()
 		return fmt.Errorf("Error in voxels %q range query: %s", d.DataName(), err.Error())
 	}
+
 	server.SpawnGoroutineMutex.Unlock()
 	if err != nil {
 		return err
 	}
-
 	//wg.Wait()
+	if roiIterator == nil {
+		dvid.Infof("Sent %d %s voxel blocks to %s\n", blocksTotal, d.DataName(), s)
+	} else {
+		dvid.Infof("Sent %d %s voxel blocks (out of %d total) within ROI %q to %s\n",
+			blocksSent, d.DataName(), blocksTotal, roiname, s)
+	}
 	return nil
 }
 
