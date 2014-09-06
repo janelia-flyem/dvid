@@ -203,8 +203,10 @@ stop_push:
 		return err
 	}
 
-	// Run any post-processing requests.
-	return postProcQueue.Run()
+	// Run any post-processing requests asynchronously since they may take a long time.
+	go postProcQueue.Run()
+
+	return nil
 }
 
 // Push pushes a Repo to a remote DVID server at the target address.  An ROI delimiter

@@ -6,7 +6,6 @@ package message
 
 import (
 	"fmt"
-	"strings"
 	"sync"
 
 	"github.com/janelia-flyem/dvid/dvid"
@@ -79,22 +78,18 @@ func (q postProcQueue) Add(msg *Message) error {
 
 // Runs a queue of post-processing commands, calling functions previously registered
 // through RegisterPostProcessing().  If a command has not been registered, it will
-// be skipped and noted in the returned error.
-func (q postProcQueue) Run() error {
-	badCommands := []string{}
+// be skipped and noted in log.
+func (q postProcQueue) Run() {
 	for _, command := range q {
 		callback, found := registeredOps.postproc[command.name]
 		if !found {
-			badCommands = append(badCommands, command.name)
+			dvid.Errorf("Skipping unregistered post-processing command %q\n", command.name)
+			continue
 		}
 		if err := callback(command.data); err != nil {
-			return err
+			dvid.Errorf("Error in post-proc command %q: %s\n", command.data, err.Error())
 		}
 	}
-	if len(badCommands) != 0 {
-		return fmt.Errorf("Ignored bad post-processing commands: %s", strings.Join(badCommands, ", "))
-	}
-	return nil
 }
 
 // Establishes a nanomsg pipeline receiver.
