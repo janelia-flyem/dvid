@@ -6,6 +6,7 @@ package message
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/janelia-flyem/dvid/dvid"
@@ -27,25 +28,78 @@ var (
 
 type RegisteredOps struct {
 	sync.RWMutex
-	callbacks map[string]HandlerFunc
+	commands map[string]CommandFunc
+	postproc map[string]PostProcFunc
 }
 
-type HandlerFunc func(*Socket) error
+// CommandFunc is a function that handles incoming data from a Socket.
+type CommandFunc func(*Socket) error
+
+// PostProcFunc is a bridge to functions that perform post-processing after completion
+// of a CommandFunc.  For example, we may want to invoke denormalization of transmitted
+// normalized data, like the creation of sparse volumes and surfaces and transmission
+// of label data.  The []byte payload is typically a serialization of needed parameters.
+type PostProcFunc func([]byte) error
 
 func init() {
-	registeredOps.callbacks = make(map[string]HandlerFunc, 10)
+	registeredOps.commands = make(map[string]CommandFunc, 10)
+	registeredOps.postproc = make(map[string]PostProcFunc, 10)
 }
 
-func RegisterOpName(name string, f HandlerFunc) {
+func RegisterCommand(name string, f CommandFunc) {
 	registeredOps.Lock()
-	registeredOps.callbacks[name] = f
+	registeredOps.commands[name] = f
 	registeredOps.Unlock()
+}
+
+func RegisterPostProcessing(name string, f PostProcFunc) {
+	registeredOps.Lock()
+	registeredOps.postproc[name] = f
+	registeredOps.Unlock()
+}
+
+type postProcCommand struct {
+	name string
+	data []byte
+}
+
+type postProcQueue []postProcCommand
+
+func NewPostProcQueue() postProcQueue {
+	return make(postProcQueue, 10)
+}
+
+func (q postProcQueue) Add(msg *Message) error {
+	if msg == nil {
+		return fmt.Errorf("Can't add a nil message to a post-processing queue")
+	}
+	q = append(q, postProcCommand{msg.Name, msg.Data})
+	return nil
+}
+
+// Runs a queue of post-processing commands, calling functions previously registered
+// through RegisterPostProcessing().  If a command has not been registered, it will
+// be skipped and noted in the returned error.
+func (q postProcQueue) Run() error {
+	badCommands := []string{}
+	for _, command := range q {
+		callback, found := registeredOps.postproc[command.name]
+		if !found {
+			badCommands = append(badCommands, command.name)
+		}
+		if err := callback(command.data); err != nil {
+			return err
+		}
+	}
+	if len(badCommands) != 0 {
+		return fmt.Errorf("Ignored bad post-processing commands: %s", strings.Join(badCommands, ", "))
+	}
+	return nil
 }
 
 // Establishes a nanomsg pipeline receiver.
 func Serve(address string) {
 	dvid.Infof("Starting nanomsg receiver on %v\n", address)
-	// s, err := nanomsg.NewRepSocket()
 	s, err := nanomsg.NewSocket(nanomsg.AF_SP, nanomsg.PULL)
 	if err != nil {
 		dvid.Criticalf("Unable to create new nanomsg pipeline socket\n")
@@ -63,9 +117,11 @@ func Serve(address string) {
 			dvid.Errorf("Bad receive on nanomsg address %q: %s\n", address, err.Error())
 			break
 		}
-		callback, found := registeredOps.callbacks[cmd]
+		registeredOps.RLock()
+		defer registeredOps.RUnlock()
+		callback, found := registeredOps.commands[cmd]
 		if !found {
-			dvid.Errorf("Received unregistered operation: %s\n", cmd)
+			dvid.Errorf("Received unregistered command: %s\n", cmd)
 			break
 		}
 
@@ -93,9 +149,10 @@ func NewPushSocket(target string) (*Socket, error) {
 type OpType uint8
 
 const (
-	NotSetType OpType = iota
-	CommandType
-	BinaryType // hold gobs
+	NotSetType   OpType = iota
+	CommandType         // free-form strings
+	PostProcType        // post-processing to be done at end of command processing
+	BinaryType          // hold gobs
 	KeyValueType
 )
 
@@ -105,6 +162,8 @@ func (optype OpType) String() string {
 		return "not set"
 	case CommandType:
 		return "command"
+	case PostProcType:
+		return "post-processing command"
 	case BinaryType:
 		return "binary encoding"
 	case KeyValueType:
@@ -195,6 +254,8 @@ func (s *Socket) ReceiveMessage() (*Message, error) {
 	switch op.optype {
 	case CommandType:
 		// nothing needed
+	case PostProcType:
+		msg.Data, err = s.receiveBinary()
 	case KeyValueType:
 		msg.SType, msg.KV, err = s.receiveKeyValue()
 	case BinaryType:
@@ -216,6 +277,17 @@ func (s *Socket) ReceiveCommand() (command string, err error) {
 		return
 	}
 	return op.name, nil
+}
+
+func (s *Socket) ReceivePostProc() ([]byte, error) {
+	op, err := s.receiveOp()
+	if err != nil {
+		return nil, err
+	}
+	if op.optype != PostProcType {
+		return nil, fmt.Errorf("Expected post-procesing command, got %s", op.optype)
+	}
+	return s.Recv(0)
 }
 
 func (s *Socket) ReceiveKeyValue() (stype storage.DataStoreType, kv *storage.KeyValue, err error) {
@@ -254,6 +326,21 @@ func (s *Socket) SendCommand(command string) error {
 	return nil
 }
 
+func (s *Socket) SendPostProc(command string, data []byte) error {
+	op := Op{command, PostProcType}
+	opbytes, err := op.MarshalBinary()
+	if err != nil {
+		return err
+	}
+	if _, err := s.Send(opbytes, 0); err != nil {
+		return err
+	}
+	if _, err := s.Send(data, 0); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (s *Socket) SendKeyValue(desc string, store storage.DataStoreType, kv *storage.KeyValue) error {
 	op := Op{desc, KeyValueType}
 	opbytes, err := op.MarshalBinary()
@@ -275,7 +362,7 @@ func (s *Socket) SendKeyValue(desc string, store storage.DataStoreType, kv *stor
 	return nil
 }
 
-func (s *Socket) SendBinary(desc string, b []byte) error {
+func (s *Socket) SendBinary(desc string, data []byte) error {
 	op := Op{desc, BinaryType}
 	opbytes, err := op.MarshalBinary()
 	if err != nil {
@@ -284,7 +371,7 @@ func (s *Socket) SendBinary(desc string, b []byte) error {
 	if _, err := s.Send(opbytes, 0); err != nil {
 		return err
 	}
-	if _, err := s.Send(b, 0); err != nil {
+	if _, err := s.Send(data, 0); err != nil {
 		return err
 	}
 	return nil

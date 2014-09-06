@@ -7,15 +7,60 @@
 package labels64
 
 import (
+	"bytes"
 	"encoding/binary"
+	"encoding/gob"
+	"fmt"
 	"math"
 	"sync"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
+	"github.com/janelia-flyem/dvid/message"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
 )
+
+const NanoLabels64Denorm = "LABELS64_DENORM"
+
+func init() {
+	// Register post-processing actions that need to be performed on dvid push/pull
+	message.RegisterPostProcessing(NanoLabels64Denorm, postProcDenorm)
+}
+
+type postProcData struct {
+	Name dvid.DataString
+	UUID dvid.UUID
+}
+
+func postProcDenorm(b []byte) error {
+	buf := bytes.NewBuffer(b)
+	dec := gob.NewDecoder(buf)
+	var data postProcData
+	if err := dec.Decode(&data); err != nil {
+		return err
+	}
+	// Get the Data from its name and the UUID
+	repo, err := datastore.RepoFromUUID(data.UUID)
+	if err != nil {
+		return fmt.Errorf("Can't get Repo from transmitted uuid (%s) in %s post-proc command: %s",
+			data.UUID, NanoLabels64Denorm, err.Error())
+	}
+	dataservice, err := repo.GetDataByName(data.Name)
+	if err != nil {
+		return fmt.Errorf("Can't get data instance %q in %s post-proc command: %s",
+			data.Name, NanoLabels64Denorm, err.Error())
+	}
+	d, ok := dataservice.(*Data)
+	if !ok {
+		return fmt.Errorf("Data instance %q is not *labels64.Data in %s post-proc command",
+			data.Name, NanoLabels64Denorm)
+	}
+
+	// Call the denormalization
+	d.ProcessSpatially(data.UUID)
+	return nil
+}
 
 type denormOp struct {
 	source    *Data

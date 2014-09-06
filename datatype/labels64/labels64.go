@@ -55,7 +55,7 @@ $ dvid repo <UUID> new labels64 <data name> <settings...>
 
 	Example (note anisotropic resolution specified instead of default 8 nm isotropic):
 
-	$ dvid repo 3f8c new labels64 superpixels Res=3.2,3.2,40.0
+	$ dvid repo 3f8c new labels64 superpixels VoxelSize=3.2,3.2,40.0
 
     Arguments:
 
@@ -632,7 +632,27 @@ func RavelerSuperpixelBytes(slice, superpixel32 uint32) []byte {
 // Send transfers all key-value pairs pertinent to this data type as well as
 // the storage.DataStoreType for them.
 func (d *Data) Send(s *message.Socket, roiname string, uuid dvid.UUID) error {
-	dvid.Criticalf("labels64.Send() is not implemented yet, so push/pull will not work for this data type.\n")
+	// Send the label voxel blocks
+	if err := d.Data.Send(s, roiname, uuid); err != nil {
+		return err
+	}
+
+	// Send command to do denormalization afterwards if necessary.
+	if d.Labeling == RavelerLabel {
+		return nil
+	}
+	params := postProcData{
+		Name: d.DataName(),
+		UUID: uuid,
+	}
+	var buf bytes.Buffer
+	enc := gob.NewEncoder(&buf)
+	if err := enc.Encode(params); err != nil {
+		return err
+	}
+	if err := s.SendPostProc(NanoLabels64Denorm, buf.Bytes()); err != nil {
+		return err
+	}
 	return nil
 }
 

@@ -23,7 +23,7 @@ var (
 const MaxBatchSize = 1000
 
 func init() {
-	message.RegisterOpName(NanoPushStart, handlePush)
+	message.RegisterCommand(NanoPushStart, handlePush)
 }
 
 // Handles a PUSH request, loading repo + data
@@ -79,8 +79,6 @@ func handlePush(s *message.Socket) error {
 	}
 
 	// Store key-value pairs until we get a PUSH STOP.
-	// Use a nil storage.Context so we deal with raw keys and don't bother with ConstructKey()
-	// transformations using data and version.
 	var curStoreType storage.DataStoreType
 	var curInstanceID dvid.InstanceID
 	var curVersionID dvid.VersionID
@@ -88,10 +86,30 @@ func handlePush(s *message.Socket) error {
 	var batchSize int
 	var batch storage.Batch
 
+	postProcQueue := message.NewPostProcQueue()
+
 	for {
 		msg, err := s.ReceiveMessage()
 		if err != nil {
 			return fmt.Errorf("Error receiving message on nanomsg socket %s: %s\n", s, err.Error())
+		}
+		switch msg.Type {
+		case message.CommandType:
+			dvid.Debugf("Received command %q\n", msg.Name)
+			if msg.Name == NanoPushStop {
+				goto stop_push
+			}
+			return fmt.Errorf("Got unexpected command during PUSH: %s", msg.Name)
+		case message.PostProcType:
+			dvid.Debugf("Received post-processing command %q\n", msg.Name)
+			if err = postProcQueue.Add(msg); err != nil {
+				return err
+			}
+			continue
+		case message.KeyValueType:
+			// OK -- process kv pair after this switch
+		default:
+			return fmt.Errorf("Unexpected message received during PUSH: %s", msg.Type)
 		}
 		if msg.Type == message.CommandType {
 			dvid.Debugf("Received %s: %s\n", msg.Type, msg.Name)
@@ -99,9 +117,6 @@ func handlePush(s *message.Socket) error {
 				break
 			}
 			return fmt.Errorf("Expected PUSH STOP.  Got unexpected command instead: %s", msg)
-		}
-		if msg.Type != message.KeyValueType {
-			return fmt.Errorf("Expected key value message within PUSH op.  Got %s instead.", msg.Type)
 		}
 		if duplicateRepo == nil {
 			var flush bool
@@ -149,6 +164,10 @@ func handlePush(s *message.Socket) error {
 					}
 					batchSize = 0
 				}
+				// Use a nil storage.Context so we deal with raw keys and don't bother with
+				// ConstructKey() transformations using data and version.   We operate at a low
+				// level since we need to modify keys to reflect the receiving DVID server's
+				// different local ids.
 				switch curStoreType {
 				case storage.SmallData:
 					batch = smallBatcher.NewBatch(nil)
@@ -166,6 +185,8 @@ func handlePush(s *message.Socket) error {
 		}
 	}
 
+stop_push:
+
 	if duplicateRepo != nil {
 		return fmt.Errorf("Pushed repo %s already exists in this DVID server", repo.rootID)
 	}
@@ -178,9 +199,16 @@ func handlePush(s *message.Socket) error {
 	}
 
 	// Add this repo to current DVID server
-	return Manager.AddRepo(repo)
+	if err = Manager.AddRepo(repo); err != nil {
+		return err
+	}
+
+	// Run any post-processing requests.
+	return postProcQueue.Run()
 }
 
+// Push pushes a Repo to a remote DVID server at the target address.  An ROI delimiter
+// can be specified in the Config.
 func Push(repo Repo, target string, config dvid.Config) error {
 	if target == "" {
 		target = message.DefaultNanomsgAddress
@@ -210,7 +238,7 @@ func Push(repo Repo, target string, config dvid.Config) error {
 
 	// Send the repo metadata
 	// TODO -- add additional information indicating origin and push configuration
-	dvid.Debugf("Sending repo %s data to %q\n", repo.RootUUID(), target)
+	dvid.Infof("Sending repo %s data to %q\n", repo.RootUUID(), target)
 	repoSerialization, err := repo.GobEncode()
 	if err != nil {
 		return err
@@ -221,9 +249,9 @@ func Push(repo Repo, target string, config dvid.Config) error {
 
 	// For each data instance, send the data delimited by the roi
 	for _, instance := range data {
-		dvid.Debugf("Sending instance %q data to %q\n", instance.DataName(), target)
+		dvid.Infof("Sending instance %q data to %q\n", instance.DataName(), target)
 		if err := instance.Send(s, roiname, repo.RootUUID()); err != nil {
-			dvid.Debugf("Aborting send of instance %q data\n", instance.DataName())
+			dvid.Errorf("Aborting send of instance %q data\n", instance.DataName())
 			return err
 		}
 	}
