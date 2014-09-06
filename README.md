@@ -269,7 +269,7 @@ Second, disable access-time updates for the mount with your DVID data.  In Linux
 add the *noatime* mounting option to /etc/fstab for the partition holding your data.
 The line for the mount holding your DVID data should like something like this:
 
-    /dev/mapper/vg0-lv_data    /dvid/data     xfs      *noatime*,nobarrier     1 2
+    /dev/mapper/vg0-lv_data    /dvid/data     xfs      noatime,nobarrier     1 2
 
 Then remount the disk:
 
