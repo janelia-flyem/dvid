@@ -133,7 +133,7 @@ type DataService interface {
 	// can be delimited by an optional ROI, specified by the ROI data name
 	// and its UUID.  Use an empty string for the roiname parameter to transmit
 	// the full extents.
-	Send(s *message.Socket, roiname string, uuid dvid.UUID) error
+	Send(s message.Socket, roiname string, uuid dvid.UUID) error
 
 	// DataService must allow serialization into JSON and binary I/O
 	json.Marshaler

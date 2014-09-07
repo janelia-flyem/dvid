@@ -1,12 +1,11 @@
 /*
-	Package message supports delivery of DVID commands and key-value pairs
-	through a single nanomsg pipeline socket.
+	This file implements messaging using nanomsg.
 */
+
 package message
 
 import (
 	"fmt"
-	"sync"
 
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
@@ -20,91 +19,38 @@ const (
 	DefaultNanomsgAddress = "inproc://a"
 )
 
-var (
-	registeredOps RegisteredOps
-	incoming      *Socket
-)
-
-type RegisteredOps struct {
-	sync.RWMutex
-	commands map[string]CommandFunc
-	postproc map[string]PostProcFunc
-}
-
-// CommandFunc is a function that handles incoming data from a Socket.
-type CommandFunc func(*Socket) error
-
-// PostProcFunc is a bridge to functions that perform post-processing after completion
-// of a CommandFunc.  For example, we may want to invoke denormalization of transmitted
-// normalized data, like the creation of sparse volumes and surfaces and transmission
-// of label data.  The []byte payload is typically a serialization of needed parameters.
-type PostProcFunc func([]byte) error
-
-func init() {
-	registeredOps.commands = make(map[string]CommandFunc, 10)
-	registeredOps.postproc = make(map[string]PostProcFunc, 10)
-}
-
-func RegisterCommand(name string, f CommandFunc) {
-	registeredOps.Lock()
-	registeredOps.commands[name] = f
-	registeredOps.Unlock()
-}
-
-func RegisterPostProcessing(name string, f PostProcFunc) {
-	registeredOps.Lock()
-	registeredOps.postproc[name] = f
-	registeredOps.Unlock()
-}
-
-type postProcCommand struct {
-	name string
-	data []byte
-}
-
-type postProcQueue []postProcCommand
-
-func NewPostProcQueue() postProcQueue {
-	return make(postProcQueue, 10)
-}
-
-func (q postProcQueue) Add(msg *Message) error {
-	if msg == nil {
-		return fmt.Errorf("Can't add a nil message to a post-processing queue")
-	}
-	q = append(q, postProcCommand{msg.Name, msg.Data})
-	return nil
-}
-
-// Runs a queue of post-processing commands, calling functions previously registered
-// through RegisterPostProcessing().  If a command has not been registered, it will
-// be skipped and noted in log.
-func (q postProcQueue) Run() {
-	for _, command := range q {
-		callback, found := registeredOps.postproc[command.name]
-		if !found {
-			dvid.Errorf("Skipping unregistered post-processing command %q\n", command.name)
-			continue
-		}
-		if err := callback(command.data); err != nil {
-			dvid.Errorf("Error in post-proc command %q: %s\n", command.data, err.Error())
-		}
-	}
-}
-
-// Establishes a nanomsg pipeline receiver.
-func Serve(address string) {
-	dvid.Infof("Starting nanomsg receiver on %v\n", address)
+func NewPullSocket(address string) (*nanoSocket, error) {
 	s, err := nanomsg.NewSocket(nanomsg.AF_SP, nanomsg.PULL)
 	if err != nil {
-		dvid.Criticalf("Unable to create new nanomsg pipeline socket\n")
-		return
+		return nil, fmt.Errorf("Unable to create new nanomsg PULL socket: %s\n", err.Error())
 	}
 	_, err = s.Bind(address)
 	if err != nil {
-		dvid.Criticalf("Unable to connect nanomsg to %q\n", address)
+		return nil, fmt.Errorf("Unable to bind nanomsg to %q\n", address)
 	}
-	incoming = &Socket{s}
+	return &nanoSocket{s}, nil
+}
+
+func NewPushSocket(target string) (*nanoSocket, error) {
+	s, err := nanomsg.NewSocket(nanomsg.AF_SP, nanomsg.PUSH)
+	if err != nil {
+		return nil, err
+	}
+	_, err = s.Connect(target)
+	if err != nil {
+		return nil, err
+	}
+	return &nanoSocket{s}, nil
+}
+
+func ServeNanomsg(address string) {
+	dvid.Infof("Starting nanomsg receiver on %v\n", address)
+	var err error
+	incoming, err = NewPullSocket(address)
+	if err != nil {
+		dvid.Errorf("Unable to get new pull socket: %s\n", err.Error())
+		return
+	}
 	for {
 		cmd, err := incoming.ReceiveCommand()
 		dvid.Debugf("Received command over nanomsg address %q: %s\n", address, cmd)
@@ -129,72 +75,11 @@ func Serve(address string) {
 	}
 }
 
-func NewPushSocket(target string) (*Socket, error) {
-	s, err := nanomsg.NewSocket(nanomsg.AF_SP, nanomsg.PUSH)
-	if err != nil {
-		return nil, err
-	}
-	_, err = s.Connect(target)
-	if err != nil {
-		return nil, err
-	}
-	return &Socket{s}, nil
-}
-
-type OpType uint8
-
-const (
-	NotSetType   OpType = iota
-	CommandType         // free-form strings
-	PostProcType        // post-processing to be done at end of command processing
-	BinaryType          // hold gobs
-	KeyValueType
-)
-
-func (optype OpType) String() string {
-	switch optype {
-	case NotSetType:
-		return "not set"
-	case CommandType:
-		return "command"
-	case PostProcType:
-		return "post-processing command"
-	case BinaryType:
-		return "binary encoding"
-	case KeyValueType:
-		return "key value"
-	default:
-		return "unknown op type"
-	}
-}
-
-type Op struct {
-	name   string
-	optype OpType
-}
-
-func (op *Op) MarshalBinary() ([]byte, error) {
-	if op == nil {
-		return nil, nil
-	}
-	return append([]byte(op.name), byte(op.optype)), nil
-}
-
-func (op *Op) UnmarshalBinary(b []byte) error {
-	if op == nil {
-		return fmt.Errorf("Can't unmarshal into a nil messaging.Op")
-	}
-	lastI := len(b) - 1
-	op.name = string(b[:lastI])
-	op.optype = OpType(b[lastI])
-	return nil
-}
-
-type Socket struct {
+type nanoSocket struct {
 	*nanomsg.Socket
 }
 
-func (s *Socket) receiveOp() (*Op, error) {
+func (s *nanoSocket) receiveOp() (*Op, error) {
 	received, err := s.Recv(0)
 	if err != nil {
 		return nil, err
@@ -206,7 +91,7 @@ func (s *Socket) receiveOp() (*Op, error) {
 	return &op, nil
 }
 
-func (s *Socket) receiveKeyValue() (stype storage.DataStoreType, kv *storage.KeyValue, err error) {
+func (s *nanoSocket) receiveKeyValue() (stype storage.DataStoreType, kv *storage.KeyValue, err error) {
 	var received []byte
 	received, err = s.Recv(0)
 	if err != nil {
@@ -226,21 +111,12 @@ func (s *Socket) receiveKeyValue() (stype storage.DataStoreType, kv *storage.Key
 	return
 }
 
-func (s *Socket) receiveBinary() ([]byte, error) {
+func (s *nanoSocket) receiveBinary() ([]byte, error) {
 	return s.Recv(0)
 }
 
-// Message handles any kind of data in the message types.
-type Message struct {
-	Type  OpType
-	Name  string
-	SType storage.DataStoreType
-	KV    *storage.KeyValue
-	Data  []byte
-}
-
 // ReceiveMessage returns whatever kind of data is sent.
-func (s *Socket) ReceiveMessage() (*Message, error) {
+func (s *nanoSocket) ReceiveMessage() (*Message, error) {
 	op, err := s.receiveOp()
 	if err != nil {
 		return nil, err
@@ -261,7 +137,7 @@ func (s *Socket) ReceiveMessage() (*Message, error) {
 	return msg, err
 }
 
-func (s *Socket) ReceiveCommand() (command string, err error) {
+func (s *nanoSocket) ReceiveCommand() (command string, err error) {
 	var op *Op
 	op, err = s.receiveOp()
 	if err != nil {
@@ -274,7 +150,7 @@ func (s *Socket) ReceiveCommand() (command string, err error) {
 	return op.name, nil
 }
 
-func (s *Socket) ReceivePostProc() ([]byte, error) {
+func (s *nanoSocket) ReceivePostProc() ([]byte, error) {
 	op, err := s.receiveOp()
 	if err != nil {
 		return nil, err
@@ -285,7 +161,7 @@ func (s *Socket) ReceivePostProc() ([]byte, error) {
 	return s.Recv(0)
 }
 
-func (s *Socket) ReceiveKeyValue() (stype storage.DataStoreType, kv *storage.KeyValue, err error) {
+func (s *nanoSocket) ReceiveKeyValue() (stype storage.DataStoreType, kv *storage.KeyValue, err error) {
 	var op *Op
 	op, err = s.receiveOp()
 	if err != nil {
@@ -298,7 +174,7 @@ func (s *Socket) ReceiveKeyValue() (stype storage.DataStoreType, kv *storage.Key
 	return s.receiveKeyValue()
 }
 
-func (s *Socket) ReceiveBinary() ([]byte, error) {
+func (s *nanoSocket) ReceiveBinary() ([]byte, error) {
 	op, err := s.receiveOp()
 	if err != nil {
 		return nil, err
@@ -309,7 +185,7 @@ func (s *Socket) ReceiveBinary() ([]byte, error) {
 	return s.Recv(0)
 }
 
-func (s *Socket) SendCommand(command string) error {
+func (s *nanoSocket) SendCommand(command string) error {
 	op := Op{command, CommandType}
 	opBytes, err := op.MarshalBinary()
 	if err != nil {
@@ -321,7 +197,7 @@ func (s *Socket) SendCommand(command string) error {
 	return nil
 }
 
-func (s *Socket) SendPostProc(command string, data []byte) error {
+func (s *nanoSocket) SendPostProc(command string, data []byte) error {
 	op := Op{command, PostProcType}
 	opbytes, err := op.MarshalBinary()
 	if err != nil {
@@ -336,7 +212,7 @@ func (s *Socket) SendPostProc(command string, data []byte) error {
 	return nil
 }
 
-func (s *Socket) SendKeyValue(desc string, store storage.DataStoreType, kv *storage.KeyValue) error {
+func (s *nanoSocket) SendKeyValue(desc string, store storage.DataStoreType, kv *storage.KeyValue) error {
 	op := Op{desc, KeyValueType}
 	opbytes, err := op.MarshalBinary()
 	if err != nil {
@@ -357,7 +233,7 @@ func (s *Socket) SendKeyValue(desc string, store storage.DataStoreType, kv *stor
 	return nil
 }
 
-func (s *Socket) SendBinary(desc string, data []byte) error {
+func (s *nanoSocket) SendBinary(desc string, data []byte) error {
 	op := Op{desc, BinaryType}
 	opbytes, err := op.MarshalBinary()
 	if err != nil {

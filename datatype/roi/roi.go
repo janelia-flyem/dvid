@@ -814,7 +814,7 @@ func (d *Data) Help() string {
 
 // Send transfers all key-value pairs pertinent to this data type as well as
 // the storage.DataStoreType for them.
-func (d *Data) Send(s *message.Socket, roiname string, uuid dvid.UUID) error {
+func (d *Data) Send(s message.Socket, roiname string, uuid dvid.UUID) error {
 	dvid.Criticalf("roi.Send() is not implemented yet, so push/pull will not work for this data type.\n")
 	return nil
 }

@@ -28,7 +28,7 @@ func init() {
 
 // Handles a PUSH request, loading repo + data
 // TODO -- Be more resilient in the face of errors.  Always read to end of STOP.
-func handlePush(s *message.Socket) error {
+func handlePush(s message.Socket) error {
 	if Manager == nil {
 		return fmt.Errorf("Can't process pushes when datastore manager not running!")
 	}

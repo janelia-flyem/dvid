@@ -2063,13 +2063,13 @@ func (d *Data) ModifyConfig(config dvid.Config) error {
 }
 
 type SendOp struct {
-	socket *message.Socket
+	socket message.Socket
 }
 
 // Send transfers all key-value pairs pertinent to this data type as well as
 // the storage.DataStoreType for them.
 // TODO -- handle versioning of the ROI coming.  For not, only allow root version of ROI.
-func (d *Data) Send(s *message.Socket, roiname string, uuid dvid.UUID) error {
+func (d *Data) Send(s message.Socket, roiname string, uuid dvid.UUID) error {
 	db, err := storage.BigDataStore()
 	if err != nil {
 		return err
