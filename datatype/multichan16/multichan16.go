@@ -233,25 +233,25 @@ func (c *Channel) IndexIterator(chunkSize dvid.Point) (dvid.IndexIterator, error
 // Data of multichan16 type embeds voxels and extends it with channels.
 type Data struct {
 	*voxels.Data
-	NumChannels int
-}
-
-type propertiesT struct {
-	voxels.Properties
 
 	// Number of channels for this data.  The names are referenced by
 	// adding a number onto the data name, e.g., mydata1, mydata2, etc.
 	NumChannels int
 }
 
+type propertiesT struct {
+	voxels.Properties
+	NumChannels int
+}
+
 func (d *Data) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
-		Base     *voxels.Data
+		Base     *datastore.Data
 		Extended propertiesT
 	}{
-		d.Data,
+		&(d.Data.Data),
 		propertiesT{
-			d.Properties,
+			d.Data.Properties,
 			d.NumChannels,
 		},
 	})

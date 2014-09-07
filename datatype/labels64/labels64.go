@@ -401,12 +401,12 @@ type propertiesT struct {
 
 func (d *Data) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
-		Base     *voxels.Data
+		Base     *datastore.Data
 		Extended propertiesT
 	}{
-		d.Data,
+		&(d.Data.Data),
 		propertiesT{
-			d.Properties,
+			d.Data.Properties,
 			d.Labeling,
 			d.Ready,
 		},
