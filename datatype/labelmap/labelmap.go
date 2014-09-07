@@ -399,10 +399,10 @@ type Data struct {
 
 func (d *Data) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
-		Base     datastore.Data
+		Base     *datastore.Data
 		Extended Properties
 	}{
-		d.Data,
+		&(d.Data),
 		d.Properties,
 	})
 }
