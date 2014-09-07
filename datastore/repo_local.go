@@ -772,12 +772,14 @@ func (r *repoT) GetAllData() (map[dvid.DataString]DataService, error) {
 	return r.data, nil
 }
 
+// GetDataByName returns a DatasService with the given name or if not found,
+// returns an error.
 func (r *repoT) GetDataByName(name dvid.DataString) (DataService, error) {
 	elements := strings.Split(string(name), "-")
 	stem := elements[0]
 	data, found := r.data[dvid.DataString(stem)]
 	if !found {
-		return nil, nil
+		return nil, fmt.Errorf("No data instance %q found in repo %s", name, r.rootID)
 	}
 	return data, nil
 }
