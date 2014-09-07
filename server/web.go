@@ -48,7 +48,7 @@ const WebHelp = `
     <meta http-equiv="X-UA-Compatible" content="chrome=1" />
     <meta name="description" content="DVID Web Server Home Page" />
 
-    <title>DVID Web Server</title>
+    <title>Embedded DVID Web Server</title>
   </head>
 
   <body>
@@ -56,11 +56,7 @@ const WebHelp = `
     <!-- HEADER -->
     <div id="header_wrap" class="outer">
         <header class="inner">
-          <a id="forkme_banner" href="https://github.com/janelia-flyem/dvid">View DVID on GitHub</a>
-
-          <h1 id="project_title">DVID Web Server</h1>
-          <h2 id="project_tagline">Stock help page for DVID server currently running %s</h2>
-
+          <h2 id="project_tagline">Stock help page for DVID server currently running on %s</h2>
         </header>
     </div>
 
@@ -74,18 +70,18 @@ const WebHelp = `
         for more documentation and code.
         The <a href="/console/">DVID admin console</a> may be available if you have downloaded the
         <a href="https://github.com/janelia-flyem/dvid-console">DVID console web client repo</a>
-        and included <i>-webclient=/path/to/console</i> when running <strong>dvid server</strong>.</p>
+        and included <i>-webclient=/path/to/console</i> when running the
+        <code>dvid serve</code> command.</p>
         
-        <h4>HTTP API</h4>
+        <h4>HTTP API and command line use</h4>
 
-        <p>Please consult the
-           <a href="https://github.com/janelia-flyem/dvid#dvid">DVID documentation</a> 
-           for type-specific API help.
-           The DVID API is specified via RAML that can be accessed at /interface.
-        </p>
+        <p>This server has compiled in the following data types, each of which have a HTTP API.
+           Click on the links below to explore each data type's command line and HTTP API.</p>
+
+        %s
 
         <h3>Licensing</h3>
-        <p>DVID is released under the
+        <p><a href="https://github.com/janelia-flyem/dvid">DVID</a> is released under the
             <a href="http://janelia-flyem.github.com/janelia_farm_license.html">Janelia Farm license</a>, a
             <a href="http://en.wikipedia.org/wiki/BSD_license#3-clause_license_.28.22New_BSD_License.22_or_.22Modified_BSD_License.22.29">
             3-clause BSD license</a>.
@@ -157,6 +153,7 @@ func initRoutes() {
 	mainMux.Get("/interface/version", logHttpPanics(versionHandler))
 
 	mainMux.Get("/api/help", helpHandler)
+	mainMux.Get("/api/help/:typename", typehelpHandler)
 
 	mainMux.Get("/api/server/info", serverInfoHandler)
 	mainMux.Get("/api/server/types", serverTypesHandler)
@@ -287,7 +284,30 @@ func helpHandler(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		hostname = "Unknown host"
 	}
-	fmt.Fprintf(w, fmt.Sprintf(WebHelp, hostname))
+
+	// Get help from all compiled-in data types.
+	html := "<ul>"
+	for _, typeservice := range datastore.Compiled {
+		name := typeservice.GetType().Name
+		html += "<li>"
+		html += fmt.Sprintf("<a href='/api/help/%s'>%s</a>", name, name)
+		html += "</li>"
+	}
+	html += "</ul>"
+
+	// Return the embedded help page.
+	fmt.Fprintf(w, fmt.Sprintf(WebHelp, hostname, html))
+}
+
+func typehelpHandler(c web.C, w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain")
+	typename := dvid.TypeString(c.URLParams["typename"])
+	typeservice, err := datastore.TypeServiceByName(typename)
+	if err != nil {
+		fmt.Fprintf(w, err.Error())
+		return
+	}
+	fmt.Fprintf(w, typeservice.Help())
 }
 
 // Handler for web client and other static content
