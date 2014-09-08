@@ -2099,7 +2099,7 @@ func (d *Data) Send(s message.Socket, roiname string, uuid dvid.UUID) error {
 			dvid.Errorf("Received nil keyvalue sending voxel chunks\n")
 		}
 		blocksTotal++
-		if roiIterator != nil && roiIterator.Outside(chunk.K) {
+		if roiIterator != nil && !roiIterator.Inside(chunk.K) {
 			return // don't send if this chunk is outside ROI
 		}
 		blocksSent++
@@ -2550,7 +2550,7 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 	// If there's an ROI, if outside ROI, use blank buffer or allow scaling via attenuation.
 	var zeroOut bool
 	var attenuation uint8
-	if op.ROI != nil && op.ROI.Iter != nil && op.ROI.Iter.Outside(chunk.K) {
+	if op.ROI != nil && op.ROI.Iter != nil && !op.ROI.Iter.Inside(chunk.K) {
 		if op.ROI.attenuation == 0 {
 			zeroOut = true
 		}

@@ -331,11 +331,12 @@ func TestROIMaskGrayscale8(t *testing.T) {
 
 	// Make sure few points are zero and others aren't
 	pixels := roiSlice.Data()
-	if pixels[0] == 0 {
-		t.Fatalf("Retrieved ROI-applied XY pixel is 0 and should be != 0\n")
+	if pixels[0] != 0 {
+		t.Fatalf("Retrieved ROI-applied XY pixel != 0 and should be 0\n")
 	}
-	if pixels[roiIndex] != 0 {
-		t.Fatalf("Retrieved ROI-applied XY pixel.  Expected pixel == 0, got %d\n", pixels[roiIndex])
+	if pixels[roiIndex] == 0 {
+		t.Fatalf("Retrieved ROI-applied XY pixel.  Expected non-zero pixel %d got 0\n", 
+			testData.rawData[roiIndex])
 	}
 }
 

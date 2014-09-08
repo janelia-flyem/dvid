@@ -48,12 +48,12 @@ func (it *Iterator) Reset() {
 
 // Returns true if the key, which must be generated via storage.DataContext
 // and use IndexZYX, is outside the ROI volume.
-func (it *Iterator) Outside(key []byte) bool {
+func (it *Iterator) Inside(key []byte) bool {
 	// Get IndexZYX from key.
 	indexZYX, err := storage.KeyToIndexZYX(key)
 	if err != nil {
 		// This should not happen unless there is error in code base.
-		dvid.Criticalf("Bad key passed to roi.Iterator.Outside(): %s\n", err.Error())
+		// dvid.Criticalf("Bad key passed to roi.Iterator.Inside(): %s\n", err.Error())
 		return true
 	}
 
@@ -75,7 +75,6 @@ func (it *Iterator) Outside(key []byte) bool {
 			return false
 		}
 		if span[3] >= indexZYX[0] { // check x1
-			fmt.Printf("  OUTSIDE %s\n", indexZYX)
 			return true
 		}
 		// We are in correct z,y but current span is before key's coordinate, so iterate.
