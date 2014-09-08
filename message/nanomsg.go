@@ -1,4 +1,8 @@
+// +build nanomsg
+
 /*
+	EXPERIMENTAL -- needs more work to make messaging robust due to drops.
+
 	This file implements messaging using nanomsg.
 */
 

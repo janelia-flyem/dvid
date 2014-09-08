@@ -13,18 +13,23 @@ import (
 )
 
 var (
-	registeredOps RegisteredOps
-	incoming      Socket
+	registeredOps *RegisteredOps
+	sessions      map[string]Session
 )
 
 type RegisteredOps struct {
 	sync.RWMutex
-	commands map[string]CommandFunc
+	commands map[string]NewSessionFunc
 	postproc map[string]PostProcFunc
 }
 
-// CommandFunc is a function that handles incoming data from a Socket.
-type CommandFunc func(Socket) error
+// Session has a state and processes incoming messages via a finite state machine.
+type Session interface {
+	ProcessMessage(*Message) error
+}
+
+// NewSessionFunc is a function that creates new sessions
+type NewSessionFunc func(*Message) (Session, error)
 
 // PostProcFunc is a bridge to functions that perform post-processing after completion
 // of a CommandFunc.  For example, we may want to invoke denormalization of transmitted
@@ -33,11 +38,14 @@ type CommandFunc func(Socket) error
 type PostProcFunc func([]byte) error
 
 func init() {
-	registeredOps.commands = make(map[string]CommandFunc, 10)
-	registeredOps.postproc = make(map[string]PostProcFunc, 10)
+	registeredOps = &RegisteredOps{
+		commands: make(map[string]NewSessionFunc),
+		postproc: make(map[string]PostProcFunc),
+	}
+	sessions = make(map[string]Session)
 }
 
-func RegisterCommand(name string, f CommandFunc) {
+func RegisterCommand(name string, f NewSessionFunc) {
 	registeredOps.Lock()
 	registeredOps.commands[name] = f
 	registeredOps.Unlock()
@@ -54,13 +62,13 @@ type postProcCommand struct {
 	data []byte
 }
 
-type postProcQueue []postProcCommand
+type PostProcQueue []postProcCommand
 
-func NewPostProcQueue() postProcQueue {
-	return make(postProcQueue, 10)
+func NewPostProcQueue() PostProcQueue {
+	return PostProcQueue{}
 }
 
-func (q postProcQueue) Add(msg *Message) error {
+func (q PostProcQueue) Add(msg *Message) error {
 	if msg == nil {
 		return fmt.Errorf("Can't add a nil message to a post-processing queue")
 	}
@@ -71,7 +79,7 @@ func (q postProcQueue) Add(msg *Message) error {
 // Runs a queue of post-processing commands, calling functions previously registered
 // through RegisterPostProcessing().  If a command has not been registered, it will
 // be skipped and noted in log.
-func (q postProcQueue) Run() {
+func (q PostProcQueue) Run() {
 	for _, command := range q {
 		callback, found := registeredOps.postproc[command.name]
 		if !found {
@@ -136,21 +144,15 @@ func (op *Op) UnmarshalBinary(b []byte) error {
 
 // Message handles any kind of data in the message types.
 type Message struct {
-	Type  OpType
-	Name  string
-	SType storage.DataStoreType
-	KV    *storage.KeyValue
-	Data  []byte
+	Type    OpType
+	Name    string
+	Session string
+	SType   storage.DataStoreType
+	KV      *storage.KeyValue
+	Data    []byte
 }
 
 type Socket interface {
-	ReceiveMessage() (*Message, error)
-
-	ReceivePostProc() ([]byte, error)
-	ReceiveCommand() (command string, err error)
-	ReceiveKeyValue() (stype storage.DataStoreType, kv *storage.KeyValue, err error)
-	ReceiveBinary() ([]byte, error)
-
 	SendCommand(command string) error
 	SendPostProc(command string, data []byte) error
 	SendKeyValue(desc string, store storage.DataStoreType, kv *storage.KeyValue) error

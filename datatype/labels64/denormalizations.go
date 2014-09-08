@@ -21,11 +21,11 @@ import (
 	"github.com/janelia-flyem/dvid/storage"
 )
 
-const NanoLabels64Denorm = "LABELS64_DENORM"
+const CommandLabels64Denorm = "LABELS64_DENORM"
 
 func init() {
-	// Register post-processing actions that need to be performed on dvid push/pull
-	message.RegisterPostProcessing(NanoLabels64Denorm, postProcDenorm)
+	// Register post-processing actions that can be performed on dvid push/pull
+	message.RegisterPostProcessing(CommandLabels64Denorm, postProcDenorm)
 }
 
 type postProcData struct {
@@ -40,21 +40,23 @@ func postProcDenorm(b []byte) error {
 	if err := dec.Decode(&data); err != nil {
 		return err
 	}
+	dvid.Debugf("Running post-processing denormalization on repo %s for data %s\n", data.UUID, data.Name)
+
 	// Get the Data from its name and the UUID
 	repo, err := datastore.RepoFromUUID(data.UUID)
 	if err != nil {
 		return fmt.Errorf("Can't get Repo from transmitted uuid (%s) in %s post-proc command: %s",
-			data.UUID, NanoLabels64Denorm, err.Error())
+			data.UUID, CommandLabels64Denorm, err.Error())
 	}
 	dataservice, err := repo.GetDataByName(data.Name)
 	if err != nil {
 		return fmt.Errorf("Can't get data instance %q in %s post-proc command: %s",
-			data.Name, NanoLabels64Denorm, err.Error())
+			data.Name, CommandLabels64Denorm, err.Error())
 	}
 	d, ok := dataservice.(*Data)
 	if !ok {
 		return fmt.Errorf("Data instance %q is not *labels64.Data in %s post-proc command",
-			data.Name, NanoLabels64Denorm)
+			data.Name, CommandLabels64Denorm)
 	}
 
 	// Call the denormalization

@@ -15,6 +15,7 @@ import (
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
+	"github.com/janelia-flyem/dvid/message"
 )
 
 const RPCHelpMessage = `Commands executed on the server (rpc address = %s):
@@ -72,7 +73,9 @@ func (c *Client) Send(request datastore.Request) error {
 }
 
 // RPCConnection will export all of its functions for rpc access.
-type RPCConnection struct{}
+type RPCConnection struct {
+	message.RPCConnection
+}
 
 // Do acts as a switchboard for remote command execution
 func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) error {

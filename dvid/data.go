@@ -140,6 +140,9 @@ func VersionIDFromBytes(b []byte) VersionID {
 	return VersionID(binary.BigEndian.Uint32(b))
 }
 
+type InstanceMap map[InstanceID]InstanceID
+type VersionMap map[VersionID]VersionID
+
 const (
 	MaxInstanceID = MaxLocalID32
 	MaxRepoID     = MaxLocalID32

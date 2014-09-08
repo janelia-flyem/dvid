@@ -933,17 +933,14 @@ func (r *repoT) newNode(uuid dvid.UUID, versionID dvid.VersionID) *nodeT {
 	return node
 }
 
-type instanceMapT map[dvid.InstanceID]dvid.InstanceID
-type versionMapT map[dvid.VersionID]dvid.VersionID
-
 // Given a transmitted repo where you assume all local IDs (instance and version ids)
 // are incorrect, make new local IDs and keep track of the mapping for later key updates.
 // Note that Manager (not r.manager) is used because the manager for this repo is not
 // set until after all pushed data is received.
-func (r *repoT) remapLocalIDs() (instanceMapT, versionMapT, error) {
+func (r *repoT) remapLocalIDs() (dvid.InstanceMap, dvid.VersionMap, error) {
 
 	// Convert the transmitted local ids to this DVID server's local ids.
-	instanceMap := make(instanceMapT, len(r.data))
+	instanceMap := make(dvid.InstanceMap, len(r.data))
 	for dataname, dataservice := range r.data {
 		instanceID, err := Manager.NewInstanceID()
 		if err != nil {
@@ -955,7 +952,7 @@ func (r *repoT) remapLocalIDs() (instanceMapT, versionMapT, error) {
 
 	// Pass 1 on DAG: copy the nodes with new ids
 	newNodes := make(map[dvid.VersionID]*nodeT, len(r.dag.nodes))
-	versionMap := make(versionMapT, len(r.dag.nodes))
+	versionMap := make(dvid.VersionMap, len(r.dag.nodes))
 	for oldVersionID, nodePtr := range r.dag.nodes {
 		// keep the old uuid but get a new version id
 		newVersionID, err := Manager.NewVersionID(nodePtr.uuid)

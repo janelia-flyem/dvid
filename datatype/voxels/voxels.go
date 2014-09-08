@@ -2118,10 +2118,10 @@ func (d *Data) Send(s message.Socket, roiname string, uuid dvid.UUID) error {
 	}
 	//wg.Wait()
 	if roiIterator == nil {
-		dvid.Infof("Sent %d %s voxel blocks to %s\n", blocksTotal, d.DataName(), s)
+		dvid.Infof("Sent %d %s voxel blocks\n", blocksTotal, d.DataName())
 	} else {
-		dvid.Infof("Sent %d %s voxel blocks (out of %d total) within ROI %q to %s\n",
-			blocksSent, d.DataName(), blocksTotal, roiname, s)
+		dvid.Infof("Sent %d %s voxel blocks (out of %d total) within ROI %q\n",
+			blocksSent, d.DataName(), blocksTotal, roiname)
 	}
 	return nil
 }

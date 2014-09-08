@@ -650,7 +650,7 @@ func (d *Data) Send(s message.Socket, roiname string, uuid dvid.UUID) error {
 	if err := enc.Encode(params); err != nil {
 		return err
 	}
-	if err := s.SendPostProc(NanoLabels64Denorm, buf.Bytes()); err != nil {
+	if err := s.SendPostProc(CommandLabels64Denorm, buf.Bytes()); err != nil {
 		return err
 	}
 	return nil
