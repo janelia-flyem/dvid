@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"strings"
 
 	"code.google.com/p/go.net/context"
 
@@ -158,13 +159,17 @@ func initRoutes() {
 	mainMux.Get("/api/server/info", serverInfoHandler)
 	mainMux.Get("/api/server/types", serverTypesHandler)
 
-	mainMux.Post("/api/repos", reposPostHandler)
+	if !readonly {
+		mainMux.Post("/api/repos", reposPostHandler)
+	}
 	mainMux.Get("/api/repos/info", reposInfoHandler)
 
 	repoMux := web.New()
 	mainMux.Handle("/api/repo/:uuid/*", repoMux)
 	repoMux.Use(repoSelector)
-	repoMux.Post("/api/repo/:uuid/instance", repoPostHandler)
+	if !readonly {
+		repoMux.Post("/api/repo/:uuid/instance", repoPostHandler)
+	}
 	repoMux.Get("/api/repo/:uuid/info", repoInfoHandler)
 	repoMux.Get("/api/repo/:uuid/lock", repoLockHandler)
 	repoMux.Get("/api/repo/:uuid/branch", repoBranchHandler)
@@ -245,6 +250,12 @@ func repoSelector(c *web.C, h http.Handler) http.Handler {
 // forwards the request to that instance's HTTP handler.
 func instanceSelector(c *web.C, h http.Handler) http.Handler {
 	fn := func(w http.ResponseWriter, r *http.Request) {
+		action := strings.ToLower(r.Method)
+		if readonly && action != "get" && action != "head" {
+			BadRequest(w, r, "Server in read-only mode and will only accept GET and HEAD requests")
+			return
+		}
+
 		var err error
 		dataname := dvid.DataString(c.URLParams["dataname"])
 		uuid, ok := c.Env["uuid"].(dvid.UUID)

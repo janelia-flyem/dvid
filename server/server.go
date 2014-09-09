@@ -54,6 +54,9 @@ var (
 	// Keep track of the startup time for uptime.
 	startupTime time.Time = time.Now()
 
+	// Read-only mode ignores all HTTP requests but GET and HEAD
+	readonly bool
+
 	config      Config
 	initialized bool
 )
@@ -86,6 +89,10 @@ func init() {
 			}
 		}
 	}()
+}
+
+func SetReadOnly(on bool) {
+	readonly = on
 }
 
 // AboutJSON returns a JSON string describing the properties of this server.

@@ -36,6 +36,9 @@ var (
 	// Display usage if true.
 	showHelp = flag.Bool("help", false, "")
 
+	// Read-only server.  Will only allow GET and HEAD requests.
+	readonly = flag.Bool("readonly", false, "")
+
 	// Name of file for logging output
 	logfile = flag.String("logfile", "", "")
 
@@ -69,6 +72,7 @@ dvid is a command-line interface to a distributed, versioned image-oriented data
 
 Usage: dvid [options] <command>
 
+	  -readonly   (flag)    HTTP API ignores anything but GET and HEAD requests.
       -webclient  =string   Path to web client directory.  Leave unset for default pages.
       -rpc        =string   Address for RPC communication.
       -http       =string   Address for HTTP communication.
