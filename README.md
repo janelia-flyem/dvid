@@ -115,11 +115,11 @@ uses like parallel proofreading operations in disjoint but small subvolumes.
 
 Planned and Existing Features for DVID:
 
-**Distributed operation**: Once a DVID repo is created and loaded with data, it can be cloned to 
-remote sites using user­-defined spatial extents. Each DVID server chooses how much of the data set is 
+**Distributed operation**: Once a DVID repo is created and loaded with data, it can be pushed to 
+remote sites using an optional ROI as well as pulled. Each DVID server chooses how much of the data set is 
 held locally. 
 
-_Status: Next up!  Planned Q4 2014_
+_Status: Repo push with optional data instance specification added in September 2041.  See [published one-column repo](http://emdata.janelia.org).  Pull ability to be added shortly.  Improved testing and throughput as time permits._
 
 **Versioning**: Each version of a DVID repo corresponds to a node in a version DAG 
 (Directed Acyclic Graph). Versions are identified through a UUID that can be composed locally 
@@ -167,8 +167,9 @@ other leveldb variants have been tested successfully in past:
 [HyperLevelDB](https://github.com/rescrv/HyperLevelDB).  RocksDB support is planned. Added 
 [Lightning MDB](http://symas.com/mdb/) and also experimental use of 
 [Bolt](https://github.com/boltdb/bolt), although neither have been tuned to work as well as
-the leveldb variants.  Clustered DB or object-value store support planned Q4 2014 and includes
-FoundationDB and Scality drivers.  Direct support of Seagate Kinetic drives via their
+the leveldb variants.  Google datastore support planned Q4 2014.
+Clustered DB or object-value store support planned Q4 2014 (Scality and possibly FoundationDB drivers).
+Direct support of Seagate Kinetic drives via their
 [protobuf protocol](https://github.com/Seagate/kinetic-protocol) is planned Q4 2014 or Q1 2015, 
 depending on availability of drives._
 
