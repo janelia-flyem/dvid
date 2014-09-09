@@ -490,7 +490,10 @@ func (m *repoManager) AddRepo(repo Repo) error {
 	m.repoToUUID[r.repoID] = r.rootID
 
 	r.manager = m
-	return nil
+
+	// Persist the changes
+	m.putCaches()
+	return r.Save()
 }
 
 // SaveRepo persists a Repo to the MetaDataStore.
