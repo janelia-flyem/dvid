@@ -13,44 +13,10 @@ import (
 	"sync"
 
 	"github.com/janelia-flyem/dvid/datastore"
+	"github.com/janelia-flyem/dvid/datatype/voxels"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
-)
-
-type KeyType byte
-
-// Label indexing is handled through a variety of key spaces that optimize
-// throughput for access patterns required by our API.  For dcumentation purposes,
-// consider the following key components:
-//   a: original label
-//   b: mapped label
-//   s: spatial index (coordinate of a block)
-//   v: # of voxels for a label
-const (
-	// KeyInverseMap have keys of form 'b+a'
-	KeyInverseMap KeyType = iota
-
-	// KeyForwardMap have keys of form 'a+b'
-	// For superpixel->body maps, this key would be superpixel+body.
-	KeyForwardMap
-
-	// KeySpatialMap have keys of form 's+a+b'
-	// They are useful for composing label maps for a spatial index.
-	KeySpatialMap
-
-	// KeyLabelSpatialMap have keys of form 'b+s' and have a sparse volume
-	// encoding for its value. They are useful for returning all blocks
-	// intersected by a label.
-	KeyLabelSpatialMap
-
-	// KeyLabelSizes have keys of form 'v+b'.
-	// They allow rapid size range queries.
-	KeyLabelSizes
-
-	// KeyLabelSurface have keys of form 'b' and have the label's sparse volume
-	// for its value.
-	KeyLabelSurface
 )
 
 var (
@@ -60,85 +26,6 @@ var (
 // ZeroBytes returns a slice of bytes that represents the zero label.
 func ZeroBytes() []byte {
 	return zeroLabelBytes
-}
-
-func (t KeyType) String() string {
-	switch t {
-	case KeyInverseMap:
-		return "Inverse Label Map"
-	case KeyForwardMap:
-		return "Forward Label Map"
-	case KeySpatialMap:
-		return "Spatial Index to Labels Map"
-	case KeyLabelSpatialMap:
-		return "Forward Label to Spatial Index Map"
-	case KeyLabelSizes:
-		return "Forward Label sorted by volume"
-	case KeyLabelSurface:
-		return "Forward Label Surface"
-	default:
-		return "Unknown Key Type"
-	}
-}
-
-// NewLabelSpatialMapIndex returns an identifier for storing a "label + spatial index", where
-// the spatial index references a block that contains a voxel with the given label.
-func NewLabelSpatialMapIndex(label uint64, block dvid.IndexZYX) []byte {
-	index := make([]byte, 1+8+dvid.IndexZYXSize)
-	index[0] = byte(KeyLabelSpatialMap)
-	binary.BigEndian.PutUint64(index[1:9], label)
-	copy(index[9:9+dvid.IndexZYXSize], block.Bytes())
-	return dvid.IndexBytes(index)
-}
-
-// NewLabelSizesIndex returns an identifier for storing a "size + mapped label".
-func NewLabelSizesIndex(size, label uint64) []byte {
-	index := make([]byte, 17)
-	index[0] = byte(KeyLabelSizes)
-	binary.BigEndian.PutUint64(index[1:9], size)
-	binary.BigEndian.PutUint64(index[9:17], label)
-	return dvid.IndexBytes(index)
-}
-
-func labelFromLabelSizesKey(key []byte) (uint64, error) {
-	ctx := &storage.DataContext{}
-	indexBytes, err := ctx.IndexFromKey(key)
-	if err != nil {
-		return 0, err
-	}
-	return binary.BigEndian.Uint64(indexBytes[9:17]), nil
-}
-
-// NewForwardMapIndex returns an index that encodes a "label + mapping", where
-// the label and mapping are both uint64.
-func NewForwardMapIndex(label []byte, mapping uint64) []byte {
-	index := make([]byte, 17)
-	index[0] = byte(KeyForwardMap)
-	copy(index[1:9], label)
-	binary.BigEndian.PutUint64(index[9:17], mapping)
-	return dvid.IndexBytes(index)
-}
-
-// NewSpatialMapIndex returns an index that encodes a "spatial index + label + mapping".
-func NewSpatialMapIndex(blockIndex dvid.Index, label []byte, mapping uint64) []byte {
-
-	index := make([]byte, 1+dvid.IndexZYXSize+8+8) // s + a + b
-	index[0] = byte(KeySpatialMap)
-	i := 1 + dvid.IndexZYXSize
-	copy(index[1:i], blockIndex.Bytes())
-	if label != nil {
-		copy(index[i:i+8], label)
-	}
-	binary.BigEndian.PutUint64(index[i+8:i+16], mapping)
-	return dvid.IndexBytes(index)
-}
-
-// NewLabelSurfaceIndex returns an identifier for a given label's surface.
-func NewLabelSurfaceIndex(label uint64) []byte {
-	index := make([]byte, 1+8)
-	index[0] = byte(KeyLabelSurface)
-	binary.BigEndian.PutUint64(index[1:9], label)
-	return dvid.IndexBytes(index)
 }
 
 // Store the KeyLabelSpatialMap keys (index = b + s) with slice of runs for value.
@@ -153,7 +40,7 @@ func StoreKeyLabelSpatialMap(versionID dvid.VersionID, data dvid.Data, batcher s
 		}
 	}()
 	bsIndex := make([]byte, 1+8+dvid.IndexZYXSize)
-	bsIndex[0] = byte(KeyLabelSpatialMap)
+	bsIndex[0] = byte(voxels.KeyLabelSpatialMap)
 	copy(bsIndex[9:9+dvid.IndexZYXSize], zyxBytes)
 	for b, rles := range labelRLEs {
 		binary.BigEndian.PutUint64(bsIndex[1:9], b)
@@ -230,7 +117,7 @@ func (d *Data) computeAndSaveSurface(ctx storage.Context, vol *dvid.SparseVol) e
 	if err != nil {
 		return fmt.Errorf("Unable to serialize data in surface computation: %s\n", err.Error())
 	}
-	key := NewLabelSurfaceIndex(vol.Label())
+	key := voxels.NewLabelSurfaceIndex(vol.Label())
 	return store.Put(ctx, key, serialization)
 }
 
@@ -243,7 +130,7 @@ func GetSurface(ctx storage.Context, label uint64) ([]byte, bool, error) {
 	}
 
 	// Retrieve the precomputed surface or that it's not available.
-	data, err := bigdata.Get(ctx, NewLabelSurfaceIndex(label))
+	data, err := bigdata.Get(ctx, voxels.NewLabelSurfaceIndex(label))
 	if err != nil {
 		return nil, false, fmt.Errorf("Error in retrieving surface for label %d: %s", label, err.Error())
 	}
@@ -302,8 +189,8 @@ func GetSparseVol(ctx storage.Context, label uint64) ([]byte, error) {
 	binary.Write(buf, binary.LittleEndian, uint32(0)) // Placeholder for # spans
 
 	// Get the start/end indices for this body's KeyLabelSpatialMap (b + s) keys.
-	begIndex := NewLabelSpatialMapIndex(label, dvid.MinIndexZYX)
-	endIndex := NewLabelSpatialMapIndex(label, dvid.MaxIndexZYX)
+	begIndex := voxels.NewLabelSpatialMapIndex(label, &dvid.MinIndexZYX)
+	endIndex := voxels.NewLabelSpatialMapIndex(label, &dvid.MaxIndexZYX)
 
 	// Process all the b+s keys and their values, which contain RLE runs for that label.
 	wg := new(sync.WaitGroup)
@@ -353,7 +240,7 @@ func ComputeSizes(ctx storage.Context, sizeCh chan *storage.Chunk, smalldata sto
 	for {
 		chunk := <-sizeCh
 		if chunk == nil {
-			key := NewLabelSizesIndex(curSize, curLabel)
+			key := voxels.NewLabelSizesIndex(curSize, curLabel)
 			batch.Put(key, dvid.EmptyValue())
 			if err := batch.Commit(); err != nil {
 				dvid.Infof("Error on batch PUT of label sizes: %s\n", err.Error())
@@ -372,7 +259,7 @@ func ComputeSizes(ctx storage.Context, sizeCh chan *storage.Chunk, smalldata sto
 
 		// If we are a new label, store size
 		if notFirst && label != curLabel {
-			key := NewLabelSizesIndex(curSize, curLabel)
+			key := voxels.NewLabelSizesIndex(curSize, curLabel)
 			curSize = 0
 			batch.Put(key, dvid.EmptyValue())
 			putsInBatch++
@@ -400,14 +287,14 @@ func GetSizeRange(data dvid.Data, versionID dvid.VersionID, minSize, maxSize uin
 	ctx := datastore.NewVersionedContext(data, versionID)
 
 	// Get the start/end keys for the size range.
-	firstKey := NewLabelSizesIndex(minSize, 0)
+	firstKey := voxels.NewLabelSizesIndex(minSize, 0)
 	var upperBound uint64
 	if maxSize != 0 {
 		upperBound = maxSize
 	} else {
 		upperBound = math.MaxUint64
 	}
-	lastKey := NewLabelSizesIndex(upperBound, math.MaxUint64)
+	lastKey := voxels.NewLabelSizesIndex(upperBound, math.MaxUint64)
 
 	// Grab all keys for this range in one sequential read.
 	keys, err := store.KeysInRange(ctx, firstKey, lastKey)
@@ -418,7 +305,7 @@ func GetSizeRange(data dvid.Data, versionID dvid.VersionID, minSize, maxSize uin
 	// Convert them to a JSON compatible structure.
 	labels := make([]uint64, len(keys))
 	for i, key := range keys {
-		labels[i], err = labelFromLabelSizesKey(key)
+		labels[i], err = voxels.LabelFromLabelSizesKey(key)
 		if err != nil {
 			return "{}", err
 		}

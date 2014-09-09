@@ -132,16 +132,16 @@ type DataContext struct {
 	version dvid.VersionID
 }
 
-// MinDataContextKeyRange returns the minimum and maximum key for data with a given local
-// instance id.
-func DataContextKeyRange(instanceID dvid.InstanceID) (minKey, maxKey []byte) {
-	minKey = make([]byte, 1+dvid.InstanceIDSize)
-	maxKey = make([]byte, 1+dvid.InstanceIDSize)
+// DataContextMinKey returns the minimum key for data with a given local
+// instance id and prefix bytes for an index.
+func DataContextMinKey(instanceID dvid.InstanceID, prefix []byte) []byte {
+	size := 1 + dvid.InstanceIDSize + len(prefix)
+	minKey := make([]byte, size)
 	minKey[0] = dataKeyPrefix
-	maxKey[0] = dataKeyPrefix
-	copy(minKey[1:], instanceID.Bytes())
-	copy(maxKey[1:], (instanceID + 1).Bytes())
-	return minKey, maxKey
+	i := 1 + dvid.InstanceIDSize
+	copy(minKey[1:i], instanceID.Bytes())
+	copy(minKey[i:], prefix)
+	return minKey
 }
 
 // NewDataContext provides a way for datatypes to create a Context that adheres to DVID
