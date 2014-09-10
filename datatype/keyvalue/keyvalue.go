@@ -60,6 +60,11 @@ $ dvid node <UUID> <data name> mount <directory>
 	a separate directory with the UUID as name.  Reading and writing files in this
 	directory will be the same as reading and writing keyvalue data to DVID.
 	
+$ dvid -stdin node <UUID> <data name> put <key> < data
+
+	Puts stdin data into the keyvalue data instance under the given key.
+
+	
     ------------------
 
 HTTP API (Level 2 REST):
@@ -314,6 +319,35 @@ func (d *Data) PutData(ctx storage.Context, keyStr string, value []byte) error {
 	return db.Put(ctx, []byte(index), serialization)
 }
 
+// put handles a PUT command-line request.
+func (d *Data) put(cmd datastore.Request, reply *datastore.Response) error {
+	if len(cmd.Command) < 5 {
+		return fmt.Errorf("The key name must be specified after 'put'")
+	}
+	if len(cmd.Input) == 0 {
+		return fmt.Errorf("No data was passed into standard input")
+	}
+	var uuidStr, dataName, cmdStr, keyStr string
+	cmd.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &keyStr)
+
+	// Get repo.
+	_, versionID, err := datastore.MatchingUUID(uuidStr)
+	if err != nil {
+		return err
+	}
+
+	// Store data
+	ctx := datastore.NewVersionedContext(d, versionID)
+	if err = d.PutData(ctx, keyStr, cmd.Input); err != nil {
+		return fmt.Errorf("Error on put to key %q for keyvalue %q: %s\n", keyStr, d.DataName(),
+			err.Error())
+	}
+
+	reply.Output = []byte(fmt.Sprintf("Put %d bytes into key %q for keyvalue %q, uuid %s\n",
+		len(cmd.Input), keyStr, d.DataName(), uuidStr))
+	return nil
+}
+
 // JSONString returns the JSON for this Data's configuration
 func (d *Data) JSONString() (jsonStr string, err error) {
 	m, err := json.Marshal(d)
@@ -341,7 +375,9 @@ func (d *Data) Send(s message.Socket, roiname string, uuid dvid.UUID) error {
 func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error {
 	switch request.TypeCommand() {
 	case "mount":
-		return d.Mount(request, reply)
+		return d.mount(request, reply)
+	case "put":
+		return d.put(request, reply)
 	default:
 		return fmt.Errorf("Unknown command.  Data '%s' [%s] does not support '%s' command.",
 			d.DataName(), d.TypeName(), request.TypeCommand())

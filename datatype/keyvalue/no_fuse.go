@@ -9,6 +9,6 @@ import (
 )
 
 // Mount creates (if not already present) a FUSE file system for this data.
-func (d *Data) Mount(request datastore.Request, reply *datastore.Response) error {
+func (d *Data) mount(request datastore.Request, reply *datastore.Response) error {
 	return fmt.Errorf("keyvalue Mount command not built into this DVID server!")
 }

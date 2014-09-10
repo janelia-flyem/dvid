@@ -20,7 +20,7 @@ import (
 )
 
 // Mount creates (if not already present) a FUSE file system for this data.
-func (d *Data) Mount(request datastore.Request, reply *datastore.Response) error {
+func (d *Data) mount(request datastore.Request, reply *datastore.Response) error {
 	var uuidStr, dataName, cmdStr string
 	dirnames := request.CommandArgs(1, &uuidStr, &dataName, &cmdStr)
 	if len(dirnames) > 1 || len(dirnames) == 0 {

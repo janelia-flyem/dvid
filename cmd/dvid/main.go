@@ -72,7 +72,7 @@ dvid is a command-line interface to a distributed, versioned image-oriented data
 
 Usage: dvid [options] <command>
 
-	  -readonly   (flag)    HTTP API ignores anything but GET and HEAD requests.
+      -readonly   (flag)    HTTP API ignores anything but GET and HEAD requests.
       -webclient  =string   Path to web client directory.  Leave unset for default pages.
       -rpc        =string   Address for RPC communication.
       -http       =string   Address for HTTP communication.
@@ -89,11 +89,11 @@ Usage: dvid [options] <command>
 
 Commands that can be performed without a running server:
 
-	about
-	help
-	create <datastore path>
-	serve  <datastore path>
-	repair <datastore path>
+    about
+    help
+    create <datastore path>
+    serve  <datastore path>
+    repair <datastore path>
 
 `
 
