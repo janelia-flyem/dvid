@@ -144,6 +144,34 @@ type DataService interface {
 	//gob.GobDecoder
 }
 
+// Persistence indicates the level of persistence needed for data within this instance.
+// It's a method to mark how critical it is to protect data.
+type Persistence uint8
+
+const (
+	// DataDefault  - no backups made.  Normal replication using redundant copies or erasure coding.
+	DataDefault Persistence = iota
+
+	// DataCritical - must be serializable and DVID will asynchronously backup data in cheaper storage.
+	DataCritical
+
+	// DataCached - can be deleted after X hours, say 48 hours.
+	DataCached
+)
+
+func (p Persistence) String() string {
+	switch p {
+	case DataDefault:
+		return "standard data persistence"
+	case DataCritical:
+		return "critical data persistence"
+	case DataCached:
+		return "cached data"
+	default:
+		return "unknown persistence model"
+	}
+}
+
 // Data is the base struct of repo-specific data instances.  It should be embedded
 // in a datatype's DataService implementation and handle datastore-wide key partitioning.
 type Data struct {
@@ -161,6 +189,9 @@ type Data struct {
 	// Checksum approach for serialized data.
 	checksum dvid.Checksum
 
+	// Persistence describes how data should be persisted.
+	persistence Persistence
+
 	// If true (default), we allow changes along nodes.
 	versioned bool
 }
@@ -174,6 +205,7 @@ func (d *Data) MarshalJSON() ([]byte, error) {
 		RepoUUID    dvid.UUID
 		Compression string
 		Checksum    string
+		Persistence string
 		Versioned   bool
 	}{
 		TypeName:    d.typename,
@@ -183,6 +215,7 @@ func (d *Data) MarshalJSON() ([]byte, error) {
 		RepoUUID:    d.uuid,
 		Compression: d.compression.String(),
 		Checksum:    d.checksum.String(),
+		Persistence: d.persistence.String(),
 		Versioned:   d.versioned,
 	})
 }
@@ -203,6 +236,7 @@ func NewDataService(t TypeService, uuid dvid.UUID, id dvid.InstanceID, name dvid
 		uuid:        uuid,
 		compression: compression,
 		checksum:    dvid.DefaultChecksum,
+		persistence: DataDefault,
 		versioned:   true,
 	}
 	err := data.ModifyConfig(c)
@@ -254,6 +288,9 @@ func (d *Data) GobDecode(b []byte) error {
 	if err := dec.Decode(&(d.checksum)); err != nil {
 		return err
 	}
+	if err := dec.Decode(&(d.persistence)); err != nil {
+		return err
+	}
 	if err := dec.Decode(&(d.versioned)); err != nil {
 		return err
 	}
@@ -287,6 +324,9 @@ func (d *Data) GobEncode() ([]byte, error) {
 	if err := enc.Encode(d.checksum); err != nil {
 		return nil, err
 	}
+	if err := enc.Encode(d.persistence); err != nil {
+		return nil, err
+	}
 	if err := enc.Encode(d.versioned); err != nil {
 		return nil, err
 	}
@@ -301,6 +341,10 @@ func (d *Data) Compression() dvid.Compression {
 
 func (d *Data) Checksum() dvid.Checksum {
 	return d.checksum
+}
+
+func (d *Data) Persistence() Persistence {
+	return d.persistence
 }
 
 // --- DataService implementation -----
