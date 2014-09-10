@@ -874,7 +874,7 @@ func loadSegBodyMap(filename string) (map[uint64]uint64, error) {
 // the superpixel ID.  Also, the zero label is reserved.
 func (d *Data) NewRavelerForwardMapIndex(z, spid uint32, body uint64) []byte {
 	index := make([]byte, 17)
-	index[0] = byte(labels64.KeyForwardMap)
+	index[0] = byte(voxels.KeyForwardMap)
 	copy(index[1:9], labels64.RavelerSuperpixelBytes(z, spid))
 	binary.BigEndian.PutUint64(index[9:17], body)
 	return index
@@ -932,9 +932,9 @@ func (d *Data) LoadRavelerMaps(request datastore.Request, reply *datastore.Respo
 	var slice, superpixel32 uint32
 	var segment, body uint64
 	forwardIndex := make([]byte, 17)
-	forwardIndex[0] = byte(labels64.KeyForwardMap)
+	forwardIndex[0] = byte(voxels.KeyForwardMap)
 	inverseIndex := make([]byte, 17)
-	inverseIndex[0] = byte(labels64.KeyInverseMap)
+	inverseIndex[0] = byte(voxels.KeyInverseMap)
 
 	// Get the sp->seg map, persisting each computed sp->body.
 	dvid.Infof("Processing superpixel->segment map (Z %d-%d): %s\n", minLabelZ, maxLabelZ, spsegStr)
@@ -1103,8 +1103,8 @@ func (d *Data) ApplyLabelMap(request datastore.Request, reply *datastore.Respons
 
 // GetLabelMapping returns the mapping for a label.
 func (d *Data) GetLabelMapping(versionID dvid.VersionID, label []byte) (uint64, error) {
-	begIndex := labels64.NewForwardMapIndex(label, 0)
-	endIndex := labels64.NewForwardMapIndex(label, math.MaxUint64)
+	begIndex := voxels.NewForwardMapIndex(label, 0)
+	endIndex := voxels.NewForwardMapIndex(label, math.MaxUint64)
 
 	smalldata, err := storage.SmallDataStore()
 	if err != nil {
@@ -1139,8 +1139,8 @@ func (d *Data) GetLabelMapping(versionID dvid.VersionID, label []byte) (uint64, 
 func (d *Data) GetBlockMapping(versionID dvid.VersionID, blockI dvid.Index) (map[string]uint64, error) {
 
 	maxLabel := []byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}
-	begIndex := labels64.NewSpatialMapIndex(blockI, nil, 0)
-	endIndex := labels64.NewSpatialMapIndex(blockI, maxLabel, math.MaxUint64)
+	begIndex := voxels.NewSpatialMapIndex(blockI, nil, 0)
+	endIndex := voxels.NewSpatialMapIndex(blockI, maxLabel, math.MaxUint64)
 
 	smalldata, err := storage.SmallDataStore()
 	if err != nil {

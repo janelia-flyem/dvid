@@ -15,6 +15,7 @@ import (
 	"sync"
 
 	"github.com/janelia-flyem/dvid/datastore"
+	"github.com/janelia-flyem/dvid/datatype/voxels"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/message"
 	"github.com/janelia-flyem/dvid/server"
@@ -147,8 +148,8 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 		}
 	}()
 
-	begIndex := NewLabelSpatialMapIndex(0, dvid.MinIndexZYX)
-	endIndex := NewLabelSpatialMapIndex(math.MaxUint64, dvid.MaxIndexZYX)
+	begIndex := voxels.NewLabelSpatialMapIndex(0, &dvid.MinIndexZYX)
+	endIndex := voxels.NewLabelSpatialMapIndex(math.MaxUint64, &dvid.MaxIndexZYX)
 	err = smalldata.ProcessRange(ctx, begIndex, endIndex, &storage.ChunkOp{}, func(chunk *storage.Chunk) {
 		// Get label associated with this sparse volume.
 		indexBytes, err := ctx.IndexFromKey(chunk.K)

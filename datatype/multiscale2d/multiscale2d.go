@@ -64,7 +64,7 @@ $ dvid repo <UUID> new multiscale2d <data name> <settings...>
                       (via GET .../raw/... or .../isotropic/...) instead of tiles (via GET .../tile/...)
     Versioned      "true" or "false" (default)
     Source         Name of data source (required)
-    TileSize       Size in pixels  (default: %s)
+    TileSize       Size in pixels
     Placeholder    Bool ("false", "true", "0", or "1").  Return placeholder tile if missing.
 
 

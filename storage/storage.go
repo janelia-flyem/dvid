@@ -30,6 +30,35 @@
 
 	If DVID is compiled without gcloud or clustered build flags, a local storage engine
 	is selected through build tags, e.g., "hyperleveldb", "basholeveldb", or "bolt".
+
+
+	Although we assume lexicographically ordering for range queries, there is some
+	variation in how variable size keys are treated.  We assume all storage engines,
+	after appropriate DVID drivers, use the following definition of ordering:
+
+		A string s precedes a string t in lexicographic order if:
+
+		* s is a prefix of t, or
+		* if c and d are respectively the first character of s and t in which s and t differ,
+		  then c precedes d in character order.
+		* if s and t are equivalent for all of s, but t is longer
+
+		Note: For the characters that are alphabetical letters, the character order coincides
+		with the alphabetical order. Digits precede letters, and uppercase letters precede
+		lowercase ones.
+
+		Examples:
+
+		composer precedes computer
+		house precedes household
+		Household precedes house
+		H2O precedes HOTEL
+		mydex precedes mydexterity
+
+		Note that the above is different than shortlex order, which would group strings
+		based on length first.
+
+	The above lexicographical ordering is used by default for levedb variants.
 */
 package storage
 

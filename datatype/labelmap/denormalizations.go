@@ -47,8 +47,8 @@ func (d *Data) GetLabelsInVolume(ctx storage.Context, minBlock, maxBlock dvid.Ch
 		if err != nil {
 			return "{}", err
 		}
-		begIndex := labels64.NewSpatialMapIndex(indexBeg, nil, 0)
-		endIndex := labels64.NewSpatialMapIndex(indexEnd, maxLabelBytes, 0xFFFFFFFFFFFFFFFF)
+		begIndex := voxels.NewSpatialMapIndex(indexBeg, nil, 0)
+		endIndex := voxels.NewSpatialMapIndex(indexEnd, maxLabelBytes, 0xFFFFFFFFFFFFFFFF)
 
 		keys, err := smalldata.KeysInRange(ctx, begIndex, endIndex)
 		if err != nil {
@@ -151,8 +151,8 @@ func (d *Data) GetMappedVoxels(versionID dvid.VersionID, e voxels.ExtData) error
 		maxLabelBytes := make([]byte, 8, 8)
 		binary.BigEndian.PutUint64(maxLabelBytes, 0xFFFFFFFFFFFFFFFF)
 
-		sabBeg := labels64.NewSpatialMapIndex(indexBeg, nil, 0)
-		sabEnd := labels64.NewSpatialMapIndex(indexEnd, maxLabelBytes, 0xFFFFFFFFFFFFFFFF)
+		sabBeg := voxels.NewSpatialMapIndex(indexBeg, nil, 0)
+		sabEnd := voxels.NewSpatialMapIndex(indexEnd, maxLabelBytes, 0xFFFFFFFFFFFFFFFF)
 
 		keys, err := smalldata.KeysInRange(mappingCtx, sabBeg, sabEnd)
 		if err != nil {
@@ -289,8 +289,8 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 	}()
 
 	// Iterate through all mapped labels and send to size and surface processing goroutines.
-	begIndex := labels64.NewLabelSpatialMapIndex(0, dvid.MinIndexZYX)
-	endIndex := labels64.NewLabelSpatialMapIndex(math.MaxUint64, dvid.MaxIndexZYX)
+	begIndex := voxels.NewLabelSpatialMapIndex(0, &dvid.MinIndexZYX)
+	endIndex := voxels.NewLabelSpatialMapIndex(math.MaxUint64, &dvid.MaxIndexZYX)
 	err = smalldata.ProcessRange(labelmapCtx, begIndex, endIndex, &storage.ChunkOp{}, func(chunk *storage.Chunk) {
 		// Get label associated with this sparse volume.
 		indexBytes, err := labelmapCtx.IndexFromKey(chunk.K)
@@ -537,7 +537,7 @@ func (d *Data) denormalizeChunk(chunk *storage.Chunk) {
 	// We work with the spatial index (s), original label (a), and mapped label (b).
 	offsetSAB := 1 + dvid.IndexZYXSize
 	sabIndex := make([]byte, offsetSAB+8+8) // s + a + b
-	sabIndex[0] = byte(labels64.KeySpatialMap)
+	sabIndex[0] = byte(voxels.KeySpatialMap)
 	copy(sabIndex[1:offsetSAB], zyxBytes)
 
 	// Iterate through this block of labels64.
