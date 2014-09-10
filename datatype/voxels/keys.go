@@ -94,14 +94,6 @@ func NewVoxelBlockIndex(blockIndex dvid.Index) []byte {
 	return dvid.IndexBytes(index)
 }
 
-func VoxelBlockMinKey(instanceID dvid.InstanceID) []byte {
-	return storage.DataContextMinKey(instanceID, []byte{byte(KeyVoxelBlock)})
-}
-
-func VoxelBlockMaxKey(instanceID dvid.InstanceID) []byte {
-	return storage.DataContextMinKey(instanceID, []byte{byte(KeyVoxelBlock + 1)})
-}
-
 // NewForwardMapIndex returns an index for mapping a label into another label.
 // Index = a+b
 // For dcumentation purposes, consider the following key components:

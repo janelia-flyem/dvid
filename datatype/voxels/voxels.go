@@ -1813,13 +1813,18 @@ func (d *Data) Send(s message.Socket, roiname string, uuid dvid.UUID) error {
 	}
 
 	// Get the entire range of keys for this instance's voxel blocks
-	keyBeg := VoxelBlockMinKey(d.InstanceID())
-	keyEnd := VoxelBlockMaxKey(d.InstanceID())
+	begIndex := NewVoxelBlockIndex(d.Properties.Extents.MinIndex)
+	ctx := storage.NewDataContext(d, 0)
+	begKey := ctx.ConstructKey(begIndex)
+
+	endIndex := NewVoxelBlockIndex(d.Properties.Extents.MaxIndex)
+	ctx = storage.NewDataContext(d, dvid.MaxVersionID)
+	endKey := ctx.ConstructKey(endIndex)
 
 	// Send this instance's voxel blocks down the socket
 	var blocksTotal, blocksSent int
 	chunkOp := &storage.ChunkOp{&SendOp{s}, nil}
-	err = db.ProcessRange(nil, keyBeg, keyEnd, chunkOp, func(chunk *storage.Chunk) {
+	err = db.ProcessRange(nil, begKey, endKey, chunkOp, func(chunk *storage.Chunk) {
 		if chunk.KeyValue == nil {
 			dvid.Errorf("Received nil keyvalue sending voxel chunks\n")
 		}
