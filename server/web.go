@@ -123,7 +123,11 @@ func init() {
 // See for discussion:
 // http://stackoverflow.com/questions/10971800/golang-http-server-leaving-open-goroutines
 func serveHttp(address, clientDir string) {
-	dvid.Infof("Web server listening at %s ...\n", address)
+	var mode string
+	if readonly {
+		mode = " (read-only mode)"
+	}
+	dvid.Infof("Web server listening at %s%s ...\n", address, mode)
 	initRoutes()
 
 	// Install our handler at the root of the standard net/http default mux.
@@ -157,6 +161,7 @@ func initRoutes() {
 	mainMux.Get("/api/help/:typename", typehelpHandler)
 
 	mainMux.Get("/api/server/info", serverInfoHandler)
+	mainMux.Get("/api/server/info/", serverInfoHandler)
 	mainMux.Get("/api/server/types", serverTypesHandler)
 
 	if !readonly {
@@ -167,14 +172,13 @@ func initRoutes() {
 	repoMux := web.New()
 	mainMux.Handle("/api/repo/:uuid/*", repoMux)
 	repoMux.Use(repoSelector)
-	if !readonly {
-		repoMux.Post("/api/repo/:uuid/instance", repoPostHandler)
-	}
+	repoMux.Post("/api/repo/:uuid/instance", repoPostHandler)
+	repoMux.Post("/api/repo/:uuid/lock", repoLockHandler)
+	repoMux.Post("/api/repo/:uuid/branch", repoBranchHandler)
 	repoMux.Get("/api/repo/:uuid/info", repoInfoHandler)
-	repoMux.Get("/api/repo/:uuid/lock", repoLockHandler)
-	repoMux.Get("/api/repo/:uuid/branch", repoBranchHandler)
 
 	instanceMux := web.New()
+	mainMux.Handle("/api/node/:uuid/:dataname/:keyword", instanceMux)
 	mainMux.Handle("/api/node/:uuid/:dataname/:keyword/*", instanceMux)
 	instanceMux.Use(repoSelector)
 	instanceMux.Use(instanceSelector)
@@ -229,6 +233,12 @@ func DecodeJSON(r *http.Request) (dvid.Config, error) {
 // identifies the repo.
 func repoSelector(c *web.C, h http.Handler) http.Handler {
 	fn := func(w http.ResponseWriter, r *http.Request) {
+		action := strings.ToLower(r.Method)
+		if readonly && action != "get" && action != "head" {
+			BadRequest(w, r, "Server in read-only mode and will only accept GET and HEAD requests")
+			return
+		}
+
 		var err error
 		var uuid dvid.UUID
 		if uuid, c.Env["versionID"], err = datastore.MatchingUUID(c.URLParams["uuid"]); err != nil {
@@ -250,12 +260,6 @@ func repoSelector(c *web.C, h http.Handler) http.Handler {
 // forwards the request to that instance's HTTP handler.
 func instanceSelector(c *web.C, h http.Handler) http.Handler {
 	fn := func(w http.ResponseWriter, r *http.Request) {
-		action := strings.ToLower(r.Method)
-		if readonly && action != "get" && action != "head" {
-			BadRequest(w, r, "Server in read-only mode and will only accept GET and HEAD requests")
-			return
-		}
-
 		var err error
 		dataname := dvid.DataString(c.URLParams["dataname"])
 		uuid, ok := c.Env["uuid"].(dvid.UUID)

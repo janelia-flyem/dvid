@@ -133,6 +133,9 @@ func main() {
 		flag.Usage()
 		os.Exit(0)
 	}
+	if *readonly {
+		server.SetReadOnly(true)
+	}
 
 	if *cpuprofile != "" {
 		f, err := os.Create(*cpuprofile)
