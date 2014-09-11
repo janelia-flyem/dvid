@@ -501,8 +501,11 @@ func (d *Data) denormalizeChunk(chunk *storage.Chunk) {
 		dvid.Errorf("Bad chunk key %v: %s\n", chunk.K, err.Error())
 		return
 	}
+	if indexBytes[0] != byte(voxels.KeyVoxelBlock) {
+		err = fmt.Errorf("Chunk key (%v) in labelmap denormalization has non-VoxelBlock index", chunk.K)
+	}
 	var zyx dvid.IndexZYX
-	if err := zyx.IndexFromBytes(indexBytes); err != nil {
+	if err := zyx.IndexFromBytes(indexBytes[1:]); err != nil {
 		dvid.Errorf("Cannot recover ZYX index from chunk key %v: %s\n", chunk.K, err.Error())
 		return
 	}
