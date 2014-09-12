@@ -445,13 +445,14 @@ func (v *Voxels) DownRes(magnification dvid.Point) error {
 	return nil
 }
 
-func (v *Voxels) Index(c dvid.ChunkPoint) dvid.Index {
+// IndexBytes returns the index bytes for a voxel block with given location.
+func (v *Voxels) IndexBytes(c dvid.ChunkPoint) []byte {
 	chunkPt, ok := c.(dvid.ChunkPoint3d)
 	if !ok {
 		return nil
 	}
-	index := dvid.IndexZYX(chunkPt)
-	return &index
+	zyx := dvid.IndexZYX(chunkPt)
+	return NewVoxelBlockIndex(&zyx)
 }
 
 // IndexIterator returns an iterator that can move across the voxel geometry,
@@ -1147,7 +1148,12 @@ func (d *Data) Send(s message.Socket, roiname string, uuid dvid.UUID) error {
 			dvid.Errorf("Received nil keyvalue sending voxel chunks\n")
 		}
 		blocksTotal++
-		if roiIterator != nil && !roiIterator.Inside(chunk.K) {
+		indexZYX, err := BlockKeyToIndexZYX(chunk.K)
+		if err != nil {
+			dvid.Errorf("Error in sending voxel block: %s\n", err.Error())
+			return
+		}
+		if roiIterator != nil && !roiIterator.Inside(indexZYX) {
 			return // don't send if this chunk is outside ROI
 		}
 		blocksSent++
@@ -1599,7 +1605,12 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 	// If there's an ROI, if outside ROI, use blank buffer or allow scaling via attenuation.
 	var zeroOut bool
 	var attenuation uint8
-	if op.ROI != nil && op.ROI.Iter != nil && !op.ROI.Iter.Inside(chunk.K) {
+	indexZYX, err := BlockKeyToIndexZYX(chunk.K)
+	if err != nil {
+		dvid.Errorf("Error processing voxel block: %s\n", err.Error())
+		return
+	}
+	if op.ROI != nil && op.ROI.Iter != nil && !op.ROI.Iter.Inside(indexZYX) {
 		if op.ROI.attenuation == 0 {
 			zeroOut = true
 		}
@@ -1608,15 +1619,13 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 
 	// Initialize the block buffer using the chunk of data.  For voxels, this chunk of
 	// data needs to be uncompressed and deserialized.
-	var err error
 	var blockData []byte
 	if zeroOut || chunk == nil || chunk.V == nil {
 		blockData = make([]byte, d.BlockSize().Prod()*int64(op.Values().BytesPerElement()))
 	} else {
 		blockData, _, err = dvid.DeserializeData(chunk.V, true)
 		if err != nil {
-			dvid.Errorf("Unable to deserialize block in '%s': %s\n",
-				d.DataName(), err.Error())
+			dvid.Errorf("Unable to deserialize block in '%s': %s\n", d.DataName(), err.Error())
 			return
 		}
 	}

@@ -96,7 +96,7 @@ type ExtData interface {
 
 	NewChunkIndex() dvid.ChunkIndexer
 
-	Index(p dvid.ChunkPoint) dvid.Index
+	IndexBytes(p dvid.ChunkPoint) []byte
 
 	IndexIterator(chunkSize dvid.Point) (dvid.IndexIterator, error)
 
@@ -270,7 +270,7 @@ func PutVoxels(ctx storage.Context, i IntData, e ExtData) error {
 		c := dvid.ChunkPoint3d{begX, ptBeg.Value(1), ptBeg.Value(2)}
 		for x := begX; x <= endX; x++ {
 			c[0] = x
-			curIndexBytes := e.Index(c).Bytes()
+			curIndexBytes := e.IndexBytes(c)
 			// Check for this index among old key-value pairs and if so,
 			// send the old value into chunk handler.  Else we are just sending
 			// keys with no value.
@@ -656,10 +656,9 @@ func loadOldBlocks(versionID dvid.VersionID, i IntData, e ExtData, blocks Blocks
 		c := dvid.ChunkPoint3d{begX, ptBeg.Value(1), ptBeg.Value(2)}
 		for x := begX; x <= endX; x++ {
 			c[0] = x
-			curIndex := e.Index(c)
-			curIndexBytes := NewVoxelBlockIndex(curIndex)
-			blocks[blockNum].K = ctx.ConstructKey(curIndexBytes)
-			block, ok := oldBlocks[string(curIndexBytes)]
+			curIndex := e.IndexBytes(c)
+			blocks[blockNum].K = ctx.ConstructKey(curIndex)
+			block, ok := oldBlocks[string(curIndex)]
 			if ok {
 				copy(blocks[blockNum].V, block)
 			}
@@ -709,9 +708,7 @@ func writeXYImage(versionID dvid.VersionID, i IntData, e ExtData, blocks Blocks)
 			c := dvid.ChunkPoint3d{begX, ptBeg.Value(1), ptBeg.Value(2)}
 			for x := begX; x <= endX; x++ {
 				c[0] = x
-				curIndex := e.Index(c)
-				curIndexBytes := NewVoxelBlockIndex(curIndex)
-				blocks[blockNum].K = ctx.ConstructKey(curIndexBytes)
+				blocks[blockNum].K = ctx.ConstructKey(e.IndexBytes(c))
 
 				// Write this slice data into the block.
 				WriteToBlock(e, &(blocks[blockNum]), blockSize)

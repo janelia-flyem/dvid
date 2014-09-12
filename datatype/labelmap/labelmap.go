@@ -1239,7 +1239,7 @@ func (d *Data) chunkApplyMap(chunk *storage.Chunk) {
 	op := chunk.Op.(*denormOp)
 
 	// Get the spatial index associated with this chunk.
-	zyx, err := storage.KeyToIndexZYX(chunk.K)
+	zyx, err := voxels.BlockKeyToIndexZYX(chunk.K)
 	if err != nil {
 		dvid.Errorf("Error in %s.ChunkApplyMap(): %s", d.Data.DataName(), err.Error())
 		return

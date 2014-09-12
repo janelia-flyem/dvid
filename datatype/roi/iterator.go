@@ -5,7 +5,6 @@ import (
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/janelia-flyem/dvid/storage"
 )
 
 // Iterator is optimized for detecting whether given keys are within an ROI.
@@ -46,17 +45,8 @@ func (it *Iterator) Reset() {
 	it.curSpan = 0
 }
 
-// Returns true if the key, which must be generated via storage.DataContext
-// and use IndexZYX, is outside the ROI volume.
-func (it *Iterator) Inside(key []byte) bool {
-	// Get IndexZYX from key.
-	indexZYX, err := storage.KeyToIndexZYX(key)
-	if err != nil {
-		// This should not happen unless there is error in code base.
-		// dvid.Criticalf("Bad key passed to roi.Iterator.Inside(): %s\n", err.Error())
-		return true
-	}
-
+// Returns true if the index is outside the ROI volume.
+func (it *Iterator) Inside(indexZYX dvid.IndexZYX) bool {
 	// Fast forward through spans to make sure we are either in span or past all
 	// smaller spans.
 	numSpans := int32(len(it.spans))

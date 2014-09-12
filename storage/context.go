@@ -152,20 +152,6 @@ func NewDataContext(data dvid.Data, versionID dvid.VersionID) *DataContext {
 	return &DataContext{data, versionID}
 }
 
-// KeyToIndexZYX parses a key under a DataContext and returns the index as a dvid.IndexZYX
-func KeyToIndexZYX(k []byte) (dvid.IndexZYX, error) {
-	var zyx dvid.IndexZYX
-	ctx := &DataContext{}
-	indexBytes, err := ctx.IndexFromKey(k)
-	if err != nil {
-		return zyx, fmt.Errorf("Cannot convert key %v to IndexZYX: %s\n", k, err.Error())
-	}
-	if err := zyx.IndexFromBytes(indexBytes); err != nil {
-		return zyx, fmt.Errorf("Cannot recover ZYX index from key %v: %s\n", k, err.Error())
-	}
-	return zyx, nil
-}
-
 // KeyToLocalIDs parses a key under a DataContext and returns instance and version ids.
 func KeyToLocalIDs(k []byte) (dvid.InstanceID, dvid.VersionID, error) {
 	if k[0] != dataKeyPrefix {

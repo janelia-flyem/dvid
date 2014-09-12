@@ -197,7 +197,7 @@ func (d *Data) denormalizeChunk(chunk *storage.Chunk) {
 	op := chunk.Op.(*denormOp)
 
 	// Get the spatial index associated with this chunk.
-	zyx, err := storage.KeyToIndexZYX(chunk.K)
+	zyx, err := voxels.BlockKeyToIndexZYX(chunk.K)
 	if err != nil {
 		dvid.Errorf("Error in %s.denormalizeChunk(): %s", d.DataName(), err.Error())
 		return

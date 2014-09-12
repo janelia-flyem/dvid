@@ -6,6 +6,7 @@ package voxels
 
 import (
 	"encoding/binary"
+	"fmt"
 
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
@@ -81,6 +82,25 @@ func (t KeyType) String() string {
 	default:
 		return "Unknown Key Type"
 	}
+}
+
+// BlockKeyToIndexZYX parses a voxel block key and returns its IndexZYX.
+func BlockKeyToIndexZYX(k []byte) (dvid.IndexZYX, error) {
+	var zyx dvid.IndexZYX
+	ctx := &storage.DataContext{}
+	indexBytes, err := ctx.IndexFromKey(k)
+	if err != nil {
+		return zyx, fmt.Errorf("Can't get index from presumed voxels block key (%v): %s",
+			k, err.Error())
+	}
+	if indexBytes[0] != byte(KeyVoxelBlock) {
+		return zyx, fmt.Errorf("Instead of expected KeyVoxelBlock (%d) got %d",
+			KeyVoxelBlock, indexBytes[0])
+	}
+	if err := zyx.IndexFromBytes(indexBytes[1:]); err != nil {
+		return zyx, fmt.Errorf("Cannot recover ZYX index from key %v: %s\n", k, err.Error())
+	}
+	return zyx, nil
 }
 
 // NewVoxelBlockIndex returns an index for a voxel block.
