@@ -56,7 +56,7 @@ $ dvid repo <UUID> new roi <data name> <settings...>
     Configuration Settings (case-insensitive keys)
 
     Versioned      "true" or "false" (default)
-    BlockSize      Size in pixels  (default: %s)
+    BlockSize      Size in pixels  (default: %d)
 	
     ------------------
 

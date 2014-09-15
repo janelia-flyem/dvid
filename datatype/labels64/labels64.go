@@ -776,9 +776,12 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 	}
 
 	// Get query strings and possible roi
-	var roiObj voxels.ROI
+	var roiptr *voxels.ROI
 	queryValues := r.URL.Query()
 	roiname := dvid.DataString(queryValues.Get("roi"))
+	if len(roiname) != 0 {
+		roiptr = new(voxels.ROI)
+	}
 
 	// Handle POST on data -> setting of configuration
 	if len(parts) == 3 && op == voxels.PutOp {
@@ -876,12 +879,14 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 					server.BadRequest(w, r, err.Error())
 					return
 				}
-				roiObj.Iter, err = roi.NewIterator(roiname, versionID, e)
-				if err != nil {
-					server.BadRequest(w, r, err.Error())
-					return
+				if roiptr != nil {
+					roiptr.Iter, err = roi.NewIterator(roiname, versionID, e)
+					if err != nil {
+						server.BadRequest(w, r, err.Error())
+						return
+					}
 				}
-				img, err := voxels.GetImage(storeCtx, d, e, &roiObj)
+				img, err := voxels.GetImage(storeCtx, d, e, roiptr)
 				if err != nil {
 					server.BadRequest(w, r, err.Error())
 					return
@@ -934,12 +939,14 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 					server.BadRequest(w, r, err.Error())
 					return
 				}
-				roiObj.Iter, err = roi.NewIterator(roiname, versionID, e)
-				if err != nil {
-					server.BadRequest(w, r, err.Error())
-					return
+				if roiptr != nil {
+					roiptr.Iter, err = roi.NewIterator(roiname, versionID, e)
+					if err != nil {
+						server.BadRequest(w, r, err.Error())
+						return
+					}
 				}
-				data, err := voxels.GetVolume(storeCtx, d, e, &roiObj)
+				data, err := voxels.GetVolume(storeCtx, d, e, roiptr)
 				if err != nil {
 					server.BadRequest(w, r, err.Error())
 					return
