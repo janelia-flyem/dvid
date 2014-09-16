@@ -97,7 +97,7 @@ POST <api URL>/node/<UUID>/<data name>/info
 
 GET  <api URL>/node/<UUID>/<data name>/<key>[/<key2>]
 POST <api URL>/node/<UUID>/<data name>/<key>
-DEL  <api URL>/node/<UUID>/<data name>/<key>  (TO DO)
+DEL  <api URL>/node/<UUID>/<data name>/<key> 
 
     Performs operations on a key-value pair depending on the HTTP verb.
 
@@ -319,6 +319,19 @@ func (d *Data) PutData(ctx storage.Context, keyStr string, value []byte) error {
 	return db.Put(ctx, []byte(index), serialization)
 }
 
+// DeleteData deletes a key-value pair
+func (d *Data) DeleteData(ctx storage.Context, keyStr string) error {
+	db, err := storage.BigDataStore()
+	if err != nil {
+		return err
+	}
+	index, err := d.getIndex(keyStr)
+	if err != nil {
+		return err
+	}
+	return db.Delete(ctx, []byte(index))
+}
+
 // put handles a PUT command-line request.
 func (d *Data) put(cmd datastore.Request, reply *datastore.Response) error {
 	if len(cmd.Command) < 5 {
@@ -448,7 +461,6 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 			// Return JSON list of keys
 			keyBeg := keyStr
 			keyEnd := parts[4]
-			fmt.Printf("get key range: %s\n", url)
 			keyList, err := d.GetKeysInRange(storeCtx, keyBeg, keyEnd)
 			if err != nil {
 				server.BadRequest(w, r, err.Error())
@@ -462,7 +474,6 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 			w.Header().Set("Content-Type", "application/json")
 			fmt.Fprintf(w, string(jsonBytes))
 		} else {
-			fmt.Printf("get single key: %s\n", url)
 			// Return value of single key
 			value, found, err := d.GetData(storeCtx, keyStr)
 			if err != nil {
@@ -479,8 +490,14 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 				server.BadRequest(w, r, err.Error())
 				return
 			}
-			comment = fmt.Sprintf("HTTP GET keyvalue '%s': %d bytes (%s)\n", d.DataName(), len(value), url)
+			comment = fmt.Sprintf("HTTP GET key %q of keyvalue %q: %d bytes (%s)\n", keyStr, d.DataName(), len(value), url)
 		}
+	case "delete":
+		if err := d.DeleteData(storeCtx, keyStr); err != nil {
+			server.BadRequest(w, r, err.Error())
+			return
+		}
+		comment = fmt.Sprintf("HTTP DELETE data with key %q of keyvalue %q (%s)\n", keyStr, d.DataName(), url)
 	case "post":
 		data, err := ioutil.ReadAll(r.Body)
 		if err != nil {
