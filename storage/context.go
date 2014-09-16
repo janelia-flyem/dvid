@@ -133,7 +133,8 @@ type DataContext struct {
 }
 
 // MinDataContextKeyRange returns the minimum and maximum key for data with a given local
-// instance id.
+// instance id.  Note that the returned keys are not type-specific indices but full DVID
+// keys to be used with nil storage.Context.
 func DataContextKeyRange(instanceID dvid.InstanceID) (minKey, maxKey []byte) {
 	minKey = make([]byte, 1+dvid.InstanceIDSize)
 	maxKey = make([]byte, 1+dvid.InstanceIDSize)

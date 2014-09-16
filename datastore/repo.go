@@ -118,6 +118,10 @@ type Repo interface {
 	// ModifyData modifies a preexisting data instance with new configuration settings.
 	ModifyData(dvid.DataString, dvid.Config) error
 
+	// DeleteDataByName deletes all data associated with the data instance and removes
+	// it from the Repo.
+	DeleteDataByName(dvid.DataString) error
+
 	// NewVersion creates a new child node off a LOCKED parent node.  Will return
 	// an error if the parent node has not been locked.
 	NewVersion(dvid.UUID) (dvid.UUID, error)

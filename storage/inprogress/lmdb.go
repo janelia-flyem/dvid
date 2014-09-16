@@ -106,7 +106,7 @@ func RepairStore(path string, config dvid.Config) error {
 
 // ---- Engine interface ----
 
-func (db *LMDB) GetName() string {
+func (db *LMDB) String() string {
 	return "lmdb Cgo database"
 }
 

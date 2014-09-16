@@ -77,7 +77,7 @@ func NewAppEngineDatastore(config dvid.Config) (Engine, error) {
 
 // ---- Engine interface ----
 
-func (ds *AppEngineDatastore) GetName() string {
+func (ds *AppEngineDatastore) String() string {
 	return "Google AppEngine datastore"
 }
 

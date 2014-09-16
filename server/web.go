@@ -113,6 +113,11 @@ const WebHelp = `
 	corresponding to a configuration keyword for the particular data type.  Two properties
 	are required: "typename" should be set to the type name of the new instance, and
 	"dataname" should be set to the desired name of the new instance.
+
+	
+ DELETE /api/repo/{uuid}/{dataname}
+
+	Deletes a data instance of given name from the repository holding a node with UUID.	
 		</pre>
 
 		<h4>Data type commands</h4>
@@ -215,10 +220,11 @@ func initRoutes() {
 	repoMux := web.New()
 	mainMux.Handle("/api/repo/:uuid/*", repoMux)
 	repoMux.Use(repoSelector)
+	repoMux.Get("/api/repo/:uuid/info", repoInfoHandler)
 	repoMux.Post("/api/repo/:uuid/instance", repoNewDataHandler)
 	repoMux.Post("/api/repo/:uuid/lock", repoLockHandler)
 	repoMux.Post("/api/repo/:uuid/branch", repoBranchHandler)
-	repoMux.Get("/api/repo/:uuid/info", repoInfoHandler)
+	repoMux.Delete("/api/repo/:uuid/:dataname", repoDeleteHandler)
 
 	instanceMux := web.New()
 	mainMux.Handle("/api/node/:uuid/:dataname/:keyword", instanceMux)
@@ -478,11 +484,7 @@ func reposPostHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func repoInfoHandler(c web.C, w http.ResponseWriter, r *http.Request) {
-	repo, ok := (c.Env["repo"]).(datastore.Repo)
-	if !ok {
-		BadRequest(w, r, "Error in retrieving Repo from URL parameters")
-		return
-	}
+	repo := (c.Env["repo"]).(datastore.Repo)
 	jsonBytes, err := repo.MarshalJSON()
 	if err != nil {
 		BadRequest(w, r, err.Error())
@@ -492,13 +494,23 @@ func repoInfoHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, string(jsonBytes))
 }
 
-func repoNewDataHandler(c web.C, w http.ResponseWriter, r *http.Request) {
-	repo, ok := (c.Env["repo"]).(datastore.Repo)
+func repoDeleteHandler(c web.C, w http.ResponseWriter, r *http.Request) {
+	repo := (c.Env["repo"]).(datastore.Repo)
+	dataname, ok := c.URLParams["dataname"]
 	if !ok {
-		BadRequest(w, r, "Error in retrieving Repo from URL parameters")
+		BadRequest(w, r, "Error in retrieving data instance name from URL parameters")
 		return
 	}
+	if err := repo.DeleteDataByName(dvid.DataString(dataname)); err != nil {
+		BadRequest(w, r, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, "{%q: 'Deleted data instance %q from repo with root %s'}", "result", dataname, repo.RootUUID())
+}
 
+func repoNewDataHandler(c web.C, w http.ResponseWriter, r *http.Request) {
+	repo := (c.Env["repo"]).(datastore.Repo)
 	config := dvid.NewConfig()
 	if err := config.SetByJSON(r.Body); err != nil {
 		BadRequest(w, r, fmt.Sprintf("Error decoding POSTed JSON config for 'new': %s", err.Error()))
@@ -533,11 +545,7 @@ func repoNewDataHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 }
 
 func repoLockHandler(c web.C, w http.ResponseWriter, r *http.Request) {
-	repo, ok := (c.Env["repo"]).(datastore.Repo)
-	if !ok {
-		BadRequest(w, r, "Error in retrieving Repo from URL parameters")
-		return
-	}
+	repo := (c.Env["repo"]).(datastore.Repo)
 	uuid, _, err := datastore.MatchingUUID(c.URLParams["uuid"])
 	if err != nil {
 		BadRequest(w, r, err.Error())
@@ -554,11 +562,7 @@ func repoLockHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 }
 
 func repoBranchHandler(c web.C, w http.ResponseWriter, r *http.Request) {
-	repo, ok := (c.Env["repo"]).(datastore.Repo)
-	if !ok {
-		BadRequest(w, r, "Error in retrieving Repo from URL parameters")
-		return
-	}
+	repo := (c.Env["repo"]).(datastore.Repo)
 	uuid, _, err := datastore.MatchingUUID(c.URLParams["uuid"])
 	if err != nil {
 		BadRequest(w, r, err.Error())

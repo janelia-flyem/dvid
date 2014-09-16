@@ -64,6 +64,7 @@ package storage
 
 import (
 	"bytes"
+	"fmt"
 	"sync"
 
 	"github.com/janelia-flyem/dvid/dvid"
@@ -95,7 +96,8 @@ func (kv KeyValues) Less(i, j int) bool {
 // Data types can throw a warning at init time if the backend doesn't support required
 // interfaces, or they can choose to implement multiple ways of handling data.
 type Engine interface {
-	GetName() string
+	fmt.Stringer
+
 	GetConfig() dvid.Config
 	Close()
 }
@@ -211,10 +213,15 @@ type OrderedKeyValueSetter interface {
 	// interface so you don't have to create and keep a slice of KeyValue.  Some
 	// databases like leveldb will copy on batch put anyway.
 	PutRange(ctx Context, values []KeyValue) error
+
+	// DeleteRange removes all key-value pairs with keys in the given range.
+	DeleteRange(ctx Context, kStart, kEnd []byte) error
 }
 
 // KeyValueDB provides an interface to the simplest storage API: a key-value store.
 type KeyValueDB interface {
+	fmt.Stringer
+
 	KeyValueGetter
 	KeyValueSetter
 }

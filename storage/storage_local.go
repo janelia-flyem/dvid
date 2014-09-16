@@ -5,6 +5,8 @@ package storage
 import (
 	"fmt"
 	"strings"
+
+	"github.com/janelia-flyem/dvid/dvid"
 )
 
 var manager managerT
@@ -82,15 +84,15 @@ func Initialize(kvEngine Engine, description string) error {
 
 	manager.kvDB, ok = manager.kvEngine.(OrderedKeyValueDB)
 	if !ok {
-		return fmt.Errorf("Database %q is not a valid ordered key-value database", kvEngine.GetName())
+		return fmt.Errorf("Database %q is not a valid ordered key-value database", kvEngine.String())
 	}
 	manager.kvSetter, ok = manager.kvEngine.(OrderedKeyValueSetter)
 	if !ok {
-		return fmt.Errorf("Database %q is not a valid ordered key-value setter", kvEngine.GetName())
+		return fmt.Errorf("Database %q is not a valid ordered key-value setter", kvEngine.String())
 	}
 	manager.kvGetter, ok = manager.kvEngine.(OrderedKeyValueGetter)
 	if !ok {
-		return fmt.Errorf("Database %q is not a valid ordered key-value getter", kvEngine.GetName())
+		return fmt.Errorf("Database %q is not a valid ordered key-value getter", kvEngine.String())
 	}
 
 	var err error
@@ -100,15 +102,15 @@ func Initialize(kvEngine Engine, description string) error {
 	}
 	manager.graphDB, ok = manager.graphEngine.(GraphDB)
 	if !ok {
-		return fmt.Errorf("Database %q cannot support a graph database", kvEngine.GetName())
+		return fmt.Errorf("Database %q cannot support a graph database", kvEngine.String())
 	}
 	manager.graphSetter, ok = manager.graphEngine.(GraphSetter)
 	if !ok {
-		return fmt.Errorf("Database %q cannot support a graph setter", kvEngine.GetName())
+		return fmt.Errorf("Database %q cannot support a graph setter", kvEngine.String())
 	}
 	manager.graphGetter, ok = manager.graphEngine.(GraphGetter)
 	if !ok {
-		return fmt.Errorf("Database %q cannot support a graph getter", kvEngine.GetName())
+		return fmt.Errorf("Database %q cannot support a graph getter", kvEngine.String())
 	}
 
 	// Setup the three tiers of storage.  In the case of a single local server with
@@ -121,5 +123,27 @@ func Initialize(kvEngine Engine, description string) error {
 	manager.enginesAvail = append(manager.enginesAvail, description)
 
 	manager.setup = true
+	return nil
+}
+
+// DeleteDataInstance removes all data context key-value pairs from all tiers of storage.
+func DeleteDataInstance(instanceID dvid.InstanceID) error {
+	if !manager.setup {
+		return fmt.Errorf("Can't delete data instance %d before storage manager is initialized", instanceID)
+	}
+
+	// Determine all database tiers that are distinct.
+	dbs := []OrderedKeyValueDB{manager.smalldata}
+	if manager.smalldata != manager.bigdata {
+		dbs = append(dbs, manager.bigdata)
+	}
+
+	// For each storage tier, remove all key-values with the given instance id.
+	for _, db := range dbs {
+		minKey, maxKey := DataContextKeyRange(instanceID)
+		if err := db.DeleteRange(nil, minKey, maxKey); err != nil {
+			return err
+		}
+	}
 	return nil
 }

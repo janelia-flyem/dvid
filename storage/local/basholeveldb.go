@@ -231,9 +231,10 @@ func RepairStore(path string, config dvid.Config) error {
 
 // ---- Engine interface ----
 
-func (db *LevelDB) GetName() string {
+func (db *LevelDB) String() string {
 	return "basho-tuned leveldb + levigo driver"
 }
+
 func (db *LevelDB) GetConfig() dvid.Config {
 	return db.config
 }
@@ -356,7 +357,7 @@ type errorableKV struct {
 }
 
 func sendKV(vctx storage.VersionedContext, values []*storage.KeyValue, ch chan errorableKV) {
-	// fmt.Printf("sendKV: values %v\n", values)
+	fmt.Printf("sendKV: values %v\n", values)
 	if len(values) != 0 {
 		kv, err := vctx.VersionedKeyValue(values)
 		if err != nil {
@@ -364,7 +365,7 @@ func sendKV(vctx storage.VersionedContext, values []*storage.KeyValue, ch chan e
 			return
 		}
 		if kv != nil {
-			// fmt.Printf("Sending kv: %v\n", kv)
+			fmt.Printf("Sending kv: %v\n", kv)
 			ch <- errorableKV{kv, nil}
 		}
 	}
@@ -479,19 +480,24 @@ func (db *LevelDB) unversionedRange(ctx storage.Context, kStart, kEnd []byte, ch
 				storage.StoreValueBytesRead <- len(itValue)
 			}
 			itKey := it.Key()
+			// fmt.Printf("got valid key %v\n", itKey)
 			storage.StoreKeyBytesRead <- len(itKey)
 			// Did we pass the final key?
 			if bytes.Compare(itKey, keyEnd) > 0 {
-				ch <- errorableKV{nil, nil}
-				return
+				break
 			}
 			ch <- errorableKV{&storage.KeyValue{itKey, itValue}, nil}
 			it.Next()
 		} else {
-			ch <- errorableKV{nil, it.GetError()}
-			return
+			break
 		}
 	}
+	if err := it.GetError(); err != nil {
+		ch <- errorableKV{nil, err}
+	} else {
+		ch <- errorableKV{nil, nil}
+	}
+	return
 }
 
 // KeysInRange returns a range of present keys spanning (kStart, kEnd).  Values
@@ -584,7 +590,7 @@ func (db *LevelDB) ProcessRange(ctx storage.Context, kStart, kEnd []byte, op *st
 	}
 }
 
-// ---- OrderedKeyValueSetter interface ------
+// ---- KeyValueSetter interface ------
 
 // Put writes a value with given key.
 func (db *LevelDB) Put(ctx storage.Context, k, v []byte) error {
@@ -599,6 +605,18 @@ func (db *LevelDB) Put(ctx storage.Context, k, v []byte) error {
 	storage.StoreValueBytesWritten <- len(v)
 	return err
 }
+
+// Delete removes a value with given key.
+func (db *LevelDB) Delete(ctx storage.Context, k []byte) (err error) {
+	dvid.StartCgo()
+	wo := db.options.WriteOptions
+	key := constructKey(ctx, k)
+	err = db.ldb.Delete(wo, key)
+	dvid.StopCgo()
+	return
+}
+
+// ---- OrderedKeyValueSetter interface ------
 
 // PutRange puts key-value pairs that have been sorted in sequential key order.
 // Current implementation in levigo driver simply does a batch write.
@@ -626,14 +644,55 @@ func (db *LevelDB) PutRange(ctx storage.Context, values []storage.KeyValue) erro
 	return nil
 }
 
-// Delete removes a value with given key.
-func (db *LevelDB) Delete(ctx storage.Context, k []byte) (err error) {
-	dvid.StartCgo()
-	wo := db.options.WriteOptions
-	key := constructKey(ctx, k)
-	err = db.ldb.Delete(wo, key)
-	dvid.StopCgo()
-	return
+// DeleteRange removes all key-value pairs with keys in the given range.
+func (db *LevelDB) DeleteRange(ctx storage.Context, kStart, kEnd []byte) error {
+	// For leveldb, we just iterate over keys in range and delete each one using batch.
+	const BATCH_SIZE = 10000
+	batch := db.NewBatch(ctx).(*goBatch)
+
+	ch := make(chan errorableKV)
+
+	// Run the keys-only range query in a goroutine.
+	go func() {
+		if ctx != nil && ctx.Versioned() {
+			db.versionedRange(ctx.(storage.VersionedContext), kStart, kEnd, ch, true)
+		} else {
+			db.unversionedRange(ctx, kStart, kEnd, ch, true)
+		}
+	}()
+
+	// Consume the key-value pairs.
+	numKV := 0
+	for {
+		result := <-ch
+		if result.KeyValue == nil {
+			break
+		}
+		if result.error != nil {
+			return result.error
+		}
+
+		dvid.StartCgo()
+		// The key coming down channel is not index but full key, so no need to construct key using context.
+		batch.WriteBatch.Delete(result.KeyValue.K)
+		dvid.StopCgo()
+
+		if (numKV+1)%BATCH_SIZE == 0 {
+			if err := batch.Commit(); err != nil {
+				return fmt.Errorf("Error on batch DELETE at key-value pair %d: %s\n", numKV, err.Error())
+			}
+			batch = db.NewBatch(ctx).(*goBatch)
+		}
+		numKV++
+	}
+	// fmt.Printf("Completed deletion of range, doing last commit\n")
+	if numKV%BATCH_SIZE != 0 {
+		if err := batch.Commit(); err != nil {
+			return fmt.Errorf("Error on last batch DELETE: %s\n", err.Error())
+		}
+	}
+	// fmt.Printf("Completed delete range\n")
+	return nil
 }
 
 // --- Batcher interface ----

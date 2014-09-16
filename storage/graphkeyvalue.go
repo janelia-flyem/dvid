@@ -135,7 +135,7 @@ func NewGraphStore(kvdb OrderedKeyValueDB) (Engine, error) {
 }
 
 // GetName returns the name of theengien
-func (db *GraphKeyValueDB) GetName() string {
+func (db *GraphKeyValueDB) String() string {
 	return "graph db using key value datastore"
 }
 

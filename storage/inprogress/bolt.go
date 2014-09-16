@@ -79,7 +79,7 @@ func RepairStore(path string, config dvid.Config) error {
 
 // ---- Engine interface ----
 
-func (bdb *BoltDB) GetName() string {
+func (bdb *BoltDB) String() string {
 	return "bolt Go database"
 }
 

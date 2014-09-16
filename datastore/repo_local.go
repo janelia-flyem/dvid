@@ -650,11 +650,7 @@ func (r *repoT) GetLog() ([]string, error) {
 func (r *repoT) AddToLog(hx string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	t := time.Now()
-	message := fmt.Sprintf("%s  %s", t.Format(time.RFC3339), hx)
-	r.log = append(r.log, message)
-	r.updated = t
-	return r.save()
+	return r.addToLog(hx)
 }
 
 // ---- Repo interface implementation -----------
@@ -778,17 +774,15 @@ func (r *repoT) GetAllData() (map[dvid.DataString]DataService, error) {
 // GetDataByName returns a DatasService with the given name or if not found,
 // returns an error.
 func (r *repoT) GetDataByName(name dvid.DataString) (DataService, error) {
-	elements := strings.Split(string(name), "-")
-	stem := elements[0]
-	data, found := r.data[dvid.DataString(stem)]
-	if !found {
-		return nil, fmt.Errorf("No data instance %q found in repo %s", name, r.rootID)
-	}
-	return data, nil
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.getDataByName(name)
 }
 
 func (r *repoT) GetIterator(versionID dvid.VersionID) (storage.VersionIterator, error) {
-	return r.dag.GetIterator(versionID)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.dag.getIterator(versionID)
 }
 
 func (r *repoT) NewData(t TypeService, name dvid.DataString, c dvid.Config) (DataService, error) {
@@ -808,6 +802,10 @@ func (r *repoT) NewData(t TypeService, name dvid.DataString, c dvid.Config) (Dat
 	}
 	r.data[name] = dataservice
 	r.updated = time.Now()
+	actionMsg := fmt.Sprintf("Create new data instance %q of type %q", name, dataservice.TypeName())
+	if err = r.addToLog(actionMsg); err != nil {
+		return nil, err
+	}
 	return dataservice, r.save()
 }
 
@@ -820,6 +818,32 @@ func (r *repoT) ModifyData(name dvid.DataString, config dvid.Config) error {
 	}
 	r.updated = time.Now()
 	return dataservice.ModifyConfig(config)
+}
+
+// DeleteDataByName deletes all data associated with the data instance and removes
+// it from the Repo.
+func (r *repoT) DeleteDataByName(name dvid.DataString) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	dataservice, err := r.getDataByName(name)
+	if err != nil {
+		return err
+	}
+
+	// For all data tiers of storage, remove data key-value pairs that would be associated with this instance id.
+	if err = storage.DeleteDataInstance(dataservice.InstanceID()); err != nil {
+		return err
+	}
+
+	// Remove this data instance from the repository and persist.
+	actionMsg := fmt.Sprintf("Delete data instance %q of type %q", name, dataservice.TypeName())
+	if err = r.addToLog(actionMsg); err != nil {
+		return err
+	}
+	r.dag.deleteDataInstance(name)
+	delete(r.data, name)
+	return r.save()
 }
 
 func (r *repoT) NewVersion(uuid dvid.UUID) (dvid.UUID, error) {
@@ -885,6 +909,28 @@ func (r *repoT) Types() (map[dvid.URLString]TypeService, error) {
 		datatypes[t.GetType().URL] = t
 	}
 	return datatypes, nil
+}
+
+// -------------------------------------------------------------------------------------------
+// NOTE: All private repo functions do not hold locks on the repo.  That is done at the public
+//  function level, just so I don't stupidly get into deadlock.
+
+func (r *repoT) getDataByName(name dvid.DataString) (DataService, error) {
+	elements := strings.Split(string(name), "-")
+	stem := elements[0]
+	data, found := r.data[dvid.DataString(stem)]
+	if !found {
+		return nil, fmt.Errorf("No data instance %q found in repo %s", name, r.rootID)
+	}
+	return data, nil
+}
+
+func (r *repoT) addToLog(hx string) error {
+	t := time.Now()
+	message := fmt.Sprintf("%s  %s", t.Format(time.RFC3339), hx)
+	r.log = append(r.log, message)
+	r.updated = t
+	return r.save()
 }
 
 func (r *repoT) save() error {
@@ -1023,14 +1069,6 @@ type dagT struct {
 	nodes map[dvid.VersionID]*nodeT
 }
 
-func (dag *dagT) GetIterator(versionID dvid.VersionID) (storage.VersionIterator, error) {
-	node, found := dag.nodes[versionID]
-	if !found {
-		return nil, fmt.Errorf("GetIterator: no version %d\n  dag %s\n", versionID, dag)
-	}
-	return &versionIterator{dag, true, versionID, node}, nil
-}
-
 func (dag *dagT) GobDecode(b []byte) error {
 	dag.nodes = make(map[dvid.VersionID]*nodeT)
 
@@ -1078,6 +1116,20 @@ func (dag *dagT) String() string {
 		return fmt.Sprintf("DAG print error: %s", err.Error())
 	}
 	return string(json)
+}
+
+func (dag *dagT) getIterator(versionID dvid.VersionID) (storage.VersionIterator, error) {
+	node, found := dag.nodes[versionID]
+	if !found {
+		return nil, fmt.Errorf("GetIterator: no version %d\n  dag %s\n", versionID, dag)
+	}
+	return &versionIterator{dag, true, versionID, node}, nil
+}
+
+func (dag *dagT) deleteDataInstance(name dvid.DataString) {
+	for i, _ := range dag.nodes {
+		delete(dag.nodes[i].avail, name)
+	}
 }
 
 type nodeT struct {
