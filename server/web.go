@@ -1,6 +1,6 @@
 /*
-	This file supports the DVID REST API, breaking down URLs into
-	commands and massaging attached data into appropriate data types.
+   This file supports the DVID REST API, breaking down URLs into
+   commands and massaging attached data into appropriate data types.
 */
 
 package server
@@ -29,72 +29,113 @@ import (
 	"github.com/zenazn/goji/web/middleware"
 )
 
-const HelpMessage = `
-HTTP API (Level 2 REST) for general DVID commands
-=================================================
-
-POST <api URL>/repo/<UUID>/new/<datatype name>/<data name>
-
-    Creates a new instance of the given data type.  Expects configuration data in JSON
-    as the body of the POST.  Configuration data is a JSON object with each property
-    corresponding to a configuration keyword for the particular data type.
-`
-
 const WebHelp = `
 <!DOCTYPE html>
 <html>
 
   <head>
-    <meta charset='utf-8' />
-    <meta http-equiv="X-UA-Compatible" content="chrome=1" />
-    <meta name="description" content="DVID Web Server Home Page" />
+	<meta charset='utf-8' />
+	<meta http-equiv="X-UA-Compatible" content="chrome=1" />
+	<meta name="description" content="DVID Web Server Home Page" />
 
-    <title>Embedded DVID Web Server</title>
+	<title>Embedded DVID Web Server</title>
   </head>
 
   <body>
 
-    <!-- HEADER -->
-    <div id="header_wrap" class="outer">
-        <header class="inner">
-          <h2 id="project_tagline">Stock help page for DVID server currently running on %s</h2>
-        </header>
-    </div>
+	<!-- HEADER -->
+	<div id="header_wrap" class="outer">
+		<header class="inner">
+		  <h2 id="project_tagline">Stock help page for DVID server currently running on %s</h2>
+		</header>
+	</div>
 
-    <!-- MAIN CONTENT -->
-    <div id="main_content_wrap" class="outer">
-      <section id="main_content" class="inner">
-        <h3>Welcome to DVID</h3>
+	<!-- MAIN CONTENT -->
+	<div id="main_content_wrap" class="outer">
+	  <section id="main_content" class="inner">
+		<h3>Welcome to DVID</h3>
 
-        <p>This page provides an introduction to the currently running DVID server.  
-        Developers can visit the <a href="https://github.com/janelia-flyem/dvid">Github repo</a> 
-        for more documentation and code.
-        The <a href="/console/">DVID admin console</a> may be available if you have downloaded the
-        <a href="https://github.com/janelia-flyem/dvid-console">DVID console web client repo</a>
-        and included <i>-webclient=/path/to/console</i> when running the
-        <code>dvid serve</code> command.</p>
-        
-        <h4>HTTP API and command line use</h4>
+		<p>This page provides an introduction to the currently running DVID server.  
+		Developers can visit the <a href="https://github.com/janelia-flyem/dvid">Github repo</a> 
+		for more documentation and code.
+		The <a href="/console/">DVID admin console</a> may be available if you have downloaded the
+		<a href="https://github.com/janelia-flyem/dvid-console">DVID console web client repo</a>
+		and included <i>-webclient=/path/to/console</i> when running the
+		<code>dvid serve</code> command.</p>
+		
+		<h3>HTTP API and command line use</h3>
 
-        <p>This server has compiled in the following data types, each of which have a HTTP API.
-           Click on the links below to explore each data type's command line and HTTP API.</p>
+		<h4>General commands</h4>
 
-        %s
+		<pre>
+ GET  /api/help
 
-        <h3>Licensing</h3>
-        <p><a href="https://github.com/janelia-flyem/dvid">DVID</a> is released under the
-            <a href="http://janelia-flyem.github.com/janelia_farm_license.html">Janelia Farm license</a>, a
-            <a href="http://en.wikipedia.org/wiki/BSD_license#3-clause_license_.28.22New_BSD_License.22_or_.22Modified_BSD_License.22.29">
-            3-clause BSD license</a>.
-        </p>
-      </section>
-    </div>
+	The current page that lists all general and type-specific commands/HTTP API.
 
-    <!-- FOOTER  -->
-    <div id="footer_wrap" class="outer">
-      <footer class="inner">
-      </footer>
-    </div>
+ GET  /api/help/{typename}
+
+	Returns help for the given datatype.
+
+ GET  /api/load
+
+	Returns a JSON of server load statistics.
+
+ GET  /api/server/info
+
+	Returns JSON for server properties.
+
+ GET  /api/server/types
+
+	Returns JSON with datatype names and their URLs.
+
+ GET  /api/repos/info
+
+	Returns JSON for the repositories under management by this server.
+
+ GET  /api/repo/{uuid}/info
+
+	Returns JSON for just the repository with given root UUID.  The UUID string can be
+	shortened as long as it is uniquely identifiable across the managed repositories.
+
+ POST /api/repo/{uuid}/lock
+
+	Locks the node (version) with given UUID.  This is required before a version can 
+	be branched or pushed to a remote server.
+
+ POST /api/repo/{uuid}/branch
+
+	Creates a new child node (version) of the node with given UUID.
+
+ POST /api/repo/{uuid}/instance
+
+	Creates a new instance of the given data type.  Expects configuration data in JSON
+	as the body of the POST.  Configuration data is a JSON object with each property
+	corresponding to a configuration keyword for the particular data type.  Two properties
+	are required: "typename" should be set to the type name of the new instance, and
+	"dataname" should be set to the desired name of the new instance.
+		</pre>
+
+		<h4>Data type commands</h4>
+
+		<p>This server has compiled in the following data types, each of which have a HTTP API.
+		   Click on the links below to explore each data type's command line and HTTP API.</p>
+
+		%s
+
+		<h3>Licensing</h3>
+		<p><a href="https://github.com/janelia-flyem/dvid">DVID</a> is released under the
+			<a href="http://janelia-flyem.github.com/janelia_farm_license.html">Janelia Farm license</a>, a
+			<a href="http://en.wikipedia.org/wiki/BSD_license#3-clause_license_.28.22New_BSD_License.22_or_.22Modified_BSD_License.22.29">
+			3-clause BSD license</a>.
+		</p>
+	  </section>
+	</div>
+
+	<!-- FOOTER  -->
+	<div id="footer_wrap" class="outer">
+	  <footer class="inner">
+	  </footer>
+	</div>
   </body>
 </html>
 `
@@ -158,11 +199,13 @@ func initRoutes() {
 	mainMux.Get("/interface/version", logHttpPanics(versionHandler))
 
 	mainMux.Get("/api/help", helpHandler)
+	mainMux.Get("/api/help/", helpHandler)
 	mainMux.Get("/api/help/:typename", typehelpHandler)
 
 	mainMux.Get("/api/server/info", serverInfoHandler)
 	mainMux.Get("/api/server/info/", serverInfoHandler)
 	mainMux.Get("/api/server/types", serverTypesHandler)
+	mainMux.Get("/api/server/types/", serverTypesHandler)
 
 	if !readonly {
 		mainMux.Post("/api/repos", reposPostHandler)
@@ -172,7 +215,7 @@ func initRoutes() {
 	repoMux := web.New()
 	mainMux.Handle("/api/repo/:uuid/*", repoMux)
 	repoMux.Use(repoSelector)
-	repoMux.Post("/api/repo/:uuid/instance", repoPostHandler)
+	repoMux.Post("/api/repo/:uuid/instance", repoNewDataHandler)
 	repoMux.Post("/api/repo/:uuid/lock", repoLockHandler)
 	repoMux.Post("/api/repo/:uuid/branch", repoBranchHandler)
 	repoMux.Get("/api/repo/:uuid/info", repoInfoHandler)
@@ -449,24 +492,25 @@ func repoInfoHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, string(jsonBytes))
 }
 
-func repoPostHandler(c web.C, w http.ResponseWriter, r *http.Request) {
+func repoNewDataHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	repo, ok := (c.Env["repo"]).(datastore.Repo)
 	if !ok {
 		BadRequest(w, r, "Error in retrieving Repo from URL parameters")
 		return
 	}
 
-	decoder := json.NewDecoder(r.Body)
 	config := dvid.NewConfig()
-	if err := decoder.Decode(&config); err != nil {
+	if err := config.SetByJSON(r.Body); err != nil {
 		BadRequest(w, r, fmt.Sprintf("Error decoding POSTed JSON config for 'new': %s", err.Error()))
 		return
 	}
 
+	fmt.Printf("Got: %v\n", config)
+
 	// Make sure that the passed configuration has data type and instance name.
-	typename, found, err := config.GetString("datatype")
+	typename, found, err := config.GetString("typename")
 	if !found || err != nil {
-		BadRequest(w, r, "POST on repo endpoint requires specification of valid 'datatype'")
+		BadRequest(w, r, "POST on repo endpoint requires specification of valid 'typename'")
 		return
 	}
 	dataname, found, err := config.GetString("dataname")
