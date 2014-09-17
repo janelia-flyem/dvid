@@ -501,12 +501,18 @@ func repoDeleteHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 		BadRequest(w, r, "Error in retrieving data instance name from URL parameters")
 		return
 	}
-	if err := repo.DeleteDataByName(dvid.DataString(dataname)); err != nil {
-		BadRequest(w, r, err.Error())
-		return
-	}
+
+	// Do the deletion asynchronously since they can take a very long time.
+	go func() {
+		if err := repo.DeleteDataByName(dvid.DataString(dataname)); err != nil {
+			dvid.Errorf("Error in deleting data instance %q: %s", dataname, err.Error())
+		}
+	}()
+
+	// Just respond that deletion was successfully started
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, "{%q: 'Deleted data instance %q from repo with root %s'}", "result", dataname, repo.RootUUID())
+	fmt.Fprintf(w, `{"result": "Started deletion of data instance %q from repo with root %s"}`,
+		dataname, repo.RootUUID())
 }
 
 func repoNewDataHandler(c web.C, w http.ResponseWriter, r *http.Request) {

@@ -837,7 +837,7 @@ func (r *repoT) DeleteDataByName(name dvid.DataString) error {
 	}
 
 	// Remove this data instance from the repository and persist.
-	actionMsg := fmt.Sprintf("Delete data instance %q of type %q", name, dataservice.TypeName())
+	actionMsg := fmt.Sprintf("Delete data instance '%s' of type '%s'", name, dataservice.TypeName())
 	if err = r.addToLog(actionMsg); err != nil {
 		return err
 	}
