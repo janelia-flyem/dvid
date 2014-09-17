@@ -105,12 +105,14 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 	for z := minIndexZ; z <= maxIndexZ; z++ {
 		layerLog := dvid.NewTimeLog()
 
-		minI := dvid.IndexZYX{dvid.MinChunkPoint3d[0], dvid.MinChunkPoint3d[1], z}
-		maxI := dvid.IndexZYX{dvid.MaxChunkPoint3d[0], dvid.MaxChunkPoint3d[1], z}
+		minIndexZYX := dvid.IndexZYX{dvid.MinChunkPoint3d[0], dvid.MinChunkPoint3d[1], z}
+		maxIndexZYX := dvid.IndexZYX{dvid.MaxChunkPoint3d[0], dvid.MaxChunkPoint3d[1], z}
+		begIndex := voxels.NewVoxelBlockIndex(&minIndexZYX)
+		endIndex := voxels.NewVoxelBlockIndex(&maxIndexZYX)
 
 		// Process the labels chunks for this Z
 		chunkOp := &storage.ChunkOp{op, wg}
-		err = bigdata.ProcessRange(ctx, minI.Bytes(), maxI.Bytes(), chunkOp, d.DenormalizeChunk)
+		err = bigdata.ProcessRange(ctx, begIndex, endIndex, chunkOp, d.DenormalizeChunk)
 		wg.Wait()
 
 		layerLog.Debugf("Processed all %q blocks for layer %d/%d", d.DataName(), z-minIndexZ+1, maxIndexZ-minIndexZ+1)
@@ -197,7 +199,7 @@ func (d *Data) denormalizeChunk(chunk *storage.Chunk) {
 	op := chunk.Op.(*denormOp)
 
 	// Get the spatial index associated with this chunk.
-	zyx, err := voxels.BlockKeyToIndexZYX(chunk.K)
+	zyx, err := voxels.DecodeVoxelBlockKey(chunk.K)
 	if err != nil {
 		dvid.Errorf("Error in %s.denormalizeChunk(): %s", d.DataName(), err.Error())
 		return

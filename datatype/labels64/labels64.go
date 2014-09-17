@@ -1144,11 +1144,12 @@ func (d *Data) GetLabelBytesAtPoint(ctx storage.Context, pt dvid.Point) ([]byte,
 		return nil, fmt.Errorf("Can't determine block of point %s", pt)
 	}
 	blockSize := d.BlockSize()
-	blockCoord := coord.Chunk(blockSize).(dvid.ChunkPoint3d) // TODO -- Get rid of this cast
+	blockCoord := coord.Chunk(blockSize).(dvid.ChunkPoint3d)
 	index := dvid.IndexZYX(blockCoord)
+	blockIndex := voxels.NewVoxelBlockIndex(&index)
 
 	// Retrieve the block of labels
-	serialization, err := store.Get(ctx, index.Bytes())
+	serialization, err := store.Get(ctx, blockIndex)
 	if err != nil {
 		return nil, fmt.Errorf("Error getting '%s' block for index %s\n", d.DataName(), blockCoord)
 	}
@@ -1239,16 +1240,15 @@ func (d *Data) CreateComposite(request datastore.Request, reply *datastore.Respo
 	op := &blockOp{grayscale, composite, versionID}
 	chunkOp := &storage.ChunkOp{op, wg}
 
-	extents := d.Extents()
-	begIndex := extents.MinIndex.Bytes()
-	endIndex := extents.MaxIndex.Bytes()
-
 	store, err := storage.BigDataStore()
 	if err != nil {
 		return err
 	}
 	ctx := datastore.NewVersionedContext(d, versionID)
-	err = store.ProcessRange(ctx, begIndex, endIndex, chunkOp, d.CreateCompositeChunk)
+	extents := d.Extents()
+	blockBeg := voxels.NewVoxelBlockIndex(extents.MinIndex)
+	blockEnd := voxels.NewVoxelBlockIndex(extents.MaxIndex)
+	err = store.ProcessRange(ctx, blockBeg, blockEnd, chunkOp, d.CreateCompositeChunk)
 	wg.Wait()
 
 	// Set new mapped data to same extents.
@@ -1287,12 +1287,12 @@ func (d *Data) createCompositeChunk(chunk *storage.Chunk) {
 	op := chunk.Op.(*blockOp)
 
 	// Get the spatial index associated with this chunk.
-	zyx, err := voxels.BlockKeyToIndexZYX(chunk.K)
+	zyx, err := voxels.DecodeVoxelBlockKey(chunk.K)
 	if err != nil {
 		dvid.Errorf("Error in %s.ChunkApplyMap(): %s", d.Data.DataName(), err.Error())
 		return
 	}
-	zyxBytes := zyx.Bytes()
+	blockIndex := voxels.NewVoxelBlockIndex(zyx)
 
 	// Initialize the label buffers.  For voxels, this data needs to be uncompressed and deserialized.
 	curZMutex.Lock()
@@ -1322,7 +1322,7 @@ func (d *Data) createCompositeChunk(chunk *storage.Chunk) {
 		return
 	}
 	grayscaleCtx := datastore.NewVersionedContext(op.grayscale, op.versionID)
-	blockData, err := bigdata.Get(grayscaleCtx, zyxBytes)
+	blockData, err := bigdata.Get(grayscaleCtx, blockIndex)
 	if err != nil {
 		dvid.Errorf("Error getting grayscale block for index %s\n", zyx)
 		return
@@ -1356,7 +1356,7 @@ func (d *Data) createCompositeChunk(chunk *storage.Chunk) {
 		return
 	}
 	compositeCtx := datastore.NewVersionedContext(op.composite, op.versionID)
-	err = bigdata.Put(compositeCtx, zyxBytes, serialization)
+	err = bigdata.Put(compositeCtx, blockIndex, serialization)
 	if err != nil {
 		dvid.Errorf("Unable to PUT composite block %s: %s\n", zyx, err.Error())
 		return

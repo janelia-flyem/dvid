@@ -84,25 +84,6 @@ func (t KeyType) String() string {
 	}
 }
 
-// BlockKeyToIndexZYX parses a voxel block key and returns its IndexZYX.
-func BlockKeyToIndexZYX(k []byte) (dvid.IndexZYX, error) {
-	var zyx dvid.IndexZYX
-	ctx := &storage.DataContext{}
-	indexBytes, err := ctx.IndexFromKey(k)
-	if err != nil {
-		return zyx, fmt.Errorf("Can't get index from presumed voxels block key (%v): %s",
-			k, err.Error())
-	}
-	if indexBytes[0] != byte(KeyVoxelBlock) {
-		return zyx, fmt.Errorf("Instead of expected KeyVoxelBlock (%d) got %d",
-			KeyVoxelBlock, indexBytes[0])
-	}
-	if err := zyx.IndexFromBytes(indexBytes[1:]); err != nil {
-		return zyx, fmt.Errorf("Cannot recover ZYX index from key %v: %s\n", k, err.Error())
-	}
-	return zyx, nil
-}
-
 // NewVoxelBlockIndex returns an index for a voxel block.
 // Index = s
 func NewVoxelBlockIndex(blockIndex dvid.Index) []byte {
@@ -110,8 +91,26 @@ func NewVoxelBlockIndex(blockIndex dvid.Index) []byte {
 	sz := len(indexBytes)
 	index := make([]byte, 1+sz)
 	index[0] = byte(KeyVoxelBlock)
-	copy(index[1:1+sz], indexBytes)
+	copy(index[1:], indexBytes)
 	return dvid.IndexBytes(index)
+}
+
+// DecodeVoxelBlockKey returns a spatial index from a voxel block key.
+// TODO: Extend this when necessary to allow any form of spatial indexing like CZYX.
+func DecodeVoxelBlockKey(key []byte) (*dvid.IndexZYX, error) {
+	var ctx storage.DataContext
+	index, err := ctx.IndexFromKey(key)
+	if err != nil {
+		return nil, err
+	}
+	if index[0] != byte(KeyVoxelBlock) {
+		return nil, fmt.Errorf("Expected KeyVoxelBlock index, got %d byte instead", index[0])
+	}
+	var zyx dvid.IndexZYX
+	if err = zyx.IndexFromBytes(index[1:]); err != nil {
+		return nil, fmt.Errorf("Cannot recover ZYX index from key %v: %s\n", key, err.Error())
+	}
+	return &zyx, nil
 }
 
 // NewForwardMapIndex returns an index for mapping a label into another label.
@@ -121,7 +120,7 @@ func NewVoxelBlockIndex(blockIndex dvid.Index) []byte {
 //   b: mapped label
 //   s: spatial index (coordinate of a block)
 //   v: # of voxels for a label
-func NewForwardMapIndex(label []byte, mapping uint64) []byte {
+func NewForwardMapIndex(label []byte, mapping uint64) dvid.IndexBytes {
 	index := make([]byte, 17)
 	index[0] = byte(KeyForwardMap)
 	copy(index[1:9], label)
@@ -131,7 +130,7 @@ func NewForwardMapIndex(label []byte, mapping uint64) []byte {
 
 // NewInverseMapIndex returns an index for mapping a label into another label.
 // Index = b+a
-func NewInverseMapIndex(label []byte, mapping uint64) []byte {
+func NewInverseMapIndex(label []byte, mapping uint64) dvid.IndexBytes {
 	index := make([]byte, 17)
 	index[0] = byte(KeyInverseMap)
 	binary.BigEndian.PutUint64(index[1:9], mapping)
@@ -139,9 +138,11 @@ func NewInverseMapIndex(label []byte, mapping uint64) []byte {
 	return dvid.IndexBytes(index)
 }
 
+type SpatialMapIndex dvid.IndexBytes
+
 // NewSpatialMapIndex returns an index optimizing access to label maps for a given
 // spatial index. Index = s+a+b
-func NewSpatialMapIndex(blockIndex dvid.Index, label []byte, mapping uint64) []byte {
+func NewSpatialMapIndex(blockIndex dvid.Index, label []byte, mappedLabel uint64) SpatialMapIndex {
 	indexBytes := blockIndex.Bytes()
 	sz := len(indexBytes)
 	index := make([]byte, 1+sz+8+8) // s + a + b
@@ -151,24 +152,67 @@ func NewSpatialMapIndex(blockIndex dvid.Index, label []byte, mapping uint64) []b
 	if label != nil {
 		copy(index[i:i+8], label)
 	}
-	binary.BigEndian.PutUint64(index[i+8:i+16], mapping)
-	return dvid.IndexBytes(index)
+	binary.BigEndian.PutUint64(index[i+8:i+16], mappedLabel)
+	return SpatialMapIndex(index)
+}
+
+func (index SpatialMapIndex) UpdateSpatialMapIndex(label []byte, mappedLabel uint64) {
+	spatialSize := len(index) - 17
+	i := 1 + spatialSize
+	if label != nil {
+		copy(index[i:i+8], label)
+	}
+	binary.BigEndian.PutUint64(index[i+8:i+16], mappedLabel)
+}
+
+// DecodeSpatialMapKey returns a label mapping from a spatial map key.
+func DecodeSpatialMapKey(key []byte) (label []byte, mappedLabel uint64, err error) {
+	var ctx storage.DataContext
+	var index []byte
+	index, err = ctx.IndexFromKey(key)
+	if err != nil {
+		return
+	}
+	if index[0] != byte(KeySpatialMap) {
+		err = fmt.Errorf("Expected KeySpatialMap index, got %d byte instead", index[0])
+		return
+	}
+	labelOffset := 1 + dvid.IndexZYXSize // index here = s + a + b
+	label = index[labelOffset : labelOffset+8]
+	mappedLabel = binary.BigEndian.Uint64(index[labelOffset+8 : labelOffset+16])
+	return
 }
 
 // NewLabelSpatialMapIndex returns an identifier for storing a "label + spatial index", where
 // the spatial index references a block that contains a voxel with the given label.
-func NewLabelSpatialMapIndex(label uint64, blockIndex dvid.Index) []byte {
+func NewLabelSpatialMapIndex(label uint64, blockIndex dvid.Index) dvid.IndexBytes {
 	indexBytes := blockIndex.Bytes()
 	sz := len(indexBytes)
 	index := make([]byte, 1+8+sz)
 	index[0] = byte(KeyLabelSpatialMap)
 	binary.BigEndian.PutUint64(index[1:9], label)
-	copy(index[9:9+sz], indexBytes)
+	copy(index[9:], indexBytes)
 	return dvid.IndexBytes(index)
 }
 
+// DecodeLabelSpatialMapKey returns a label from a LabelSpatialMap key.
+func DecodeLabelSpatialMapKey(key []byte) (label uint64, err error) {
+	var ctx storage.DataContext
+	var index []byte
+	index, err = ctx.IndexFromKey(key)
+	if err != nil {
+		return
+	}
+	if index[0] != byte(KeyLabelSpatialMap) {
+		err = fmt.Errorf("Expected KeyLabelSpatialMap index, got %d byte instead", index[0])
+		return
+	}
+	label = binary.BigEndian.Uint64(index[1:9])
+	return
+}
+
 // NewLabelSizesIndex returns an identifier for storing a "size + mapped label".
-func NewLabelSizesIndex(size, label uint64) []byte {
+func NewLabelSizesIndex(size, label uint64) dvid.IndexBytes {
 	index := make([]byte, 17)
 	index[0] = byte(KeyLabelSizes)
 	binary.BigEndian.PutUint64(index[1:9], size)
@@ -186,7 +230,7 @@ func LabelFromLabelSizesKey(key []byte) (uint64, error) {
 }
 
 // NewLabelSurfaceIndex returns an identifier for a given label's surface.
-func NewLabelSurfaceIndex(label uint64) []byte {
+func NewLabelSurfaceIndex(label uint64) dvid.IndexBytes {
 	index := make([]byte, 1+8)
 	index[0] = byte(KeyLabelSurface)
 	binary.BigEndian.PutUint64(index[1:9], label)

@@ -172,11 +172,11 @@ func GetVoxels(ctx storage.Context, i IntData, e ExtData, r *ROI) error {
 			server.SpawnGoroutineMutex.Unlock()
 			return err
 		}
-		begBytes := NewVoxelBlockIndex(indexBeg)
-		endBytes := NewVoxelBlockIndex(indexEnd)
+		blockBeg := NewVoxelBlockIndex(indexBeg)
+		blockEnd := NewVoxelBlockIndex(indexEnd)
 
 		// Send the entire range of key-value pairs to chunk processor
-		err = db.ProcessRange(ctx, begBytes, endBytes, chunkOp, i.ProcessChunk)
+		err = db.ProcessRange(ctx, blockBeg, blockEnd, chunkOp, i.ProcessChunk)
 		if err != nil {
 			server.SpawnGoroutineMutex.Unlock()
 			return fmt.Errorf("Unable to GET data %s: %s", ctx, err.Error())

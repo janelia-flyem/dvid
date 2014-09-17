@@ -931,10 +931,6 @@ func (d *Data) LoadRavelerMaps(request datastore.Request, reply *datastore.Respo
 
 	var slice, superpixel32 uint32
 	var segment, body uint64
-	forwardIndex := make([]byte, 17)
-	forwardIndex[0] = byte(voxels.KeyForwardMap)
-	inverseIndex := make([]byte, 17)
-	inverseIndex[0] = byte(voxels.KeyInverseMap)
 
 	// Get the sp->seg map, persisting each computed sp->body.
 	dvid.Infof("Processing superpixel->segment map (Z %d-%d): %s\n", minLabelZ, maxLabelZ, spsegStr)
@@ -975,16 +971,14 @@ func (d *Data) LoadRavelerMaps(request datastore.Request, reply *datastore.Respo
 		}
 
 		// PUT the forward label pair without compression.
-		copy(forwardIndex[1:9], superpixelBytes)
-		binary.BigEndian.PutUint64(forwardIndex[9:17], body)
+		forwardIndex := voxels.NewForwardMapIndex(superpixelBytes, body)
 		if err := smalldata.Put(ctx, forwardIndex, dvid.EmptyValue()); err != nil {
 			return fmt.Errorf("ERROR on PUT of forward label mapping (%x -> %d): %s\n",
 				superpixelBytes, body, err.Error())
 		}
 
 		// PUT the inverse label pair without compression.
-		binary.BigEndian.PutUint64(inverseIndex[1:9], body)
-		copy(inverseIndex[9:17], superpixelBytes)
+		inverseIndex := voxels.NewInverseMapIndex(superpixelBytes, body)
 		if err := smalldata.Put(ctx, inverseIndex, dvid.EmptyValue()); err != nil {
 			return fmt.Errorf("ERROR on PUT of inverse label mapping (%d -> %x): %s\n",
 				body, superpixelBytes, err.Error())
@@ -1078,10 +1072,12 @@ func (d *Data) ApplyLabelMap(request datastore.Request, reply *datastore.Respons
 
 		// Process the labels chunks for this Z
 		if op.mapping != nil {
-			minIndex := dvid.IndexZYX(minChunkPt)
-			maxIndex := dvid.IndexZYX(maxChunkPt)
+			minIndexZYX := dvid.IndexZYX(minChunkPt)
+			maxIndexZYX := dvid.IndexZYX(maxChunkPt)
+			begIndex := voxels.NewVoxelBlockIndex(&minIndexZYX)
+			endIndex := voxels.NewVoxelBlockIndex(&maxIndexZYX)
 			chunkOp := &storage.ChunkOp{op, wg}
-			err = bigdata.ProcessRange(labelCtx, minIndex.Bytes(), maxIndex.Bytes(), chunkOp, d.ChunkApplyMap)
+			err = bigdata.ProcessRange(labelCtx, begIndex, endIndex, chunkOp, d.ChunkApplyMap)
 			wg.Wait()
 		}
 
@@ -1239,12 +1235,11 @@ func (d *Data) chunkApplyMap(chunk *storage.Chunk) {
 	op := chunk.Op.(*denormOp)
 
 	// Get the spatial index associated with this chunk.
-	zyx, err := voxels.BlockKeyToIndexZYX(chunk.K)
+	zyx, err := voxels.DecodeVoxelBlockKey(chunk.K)
 	if err != nil {
 		dvid.Errorf("Error in %s.ChunkApplyMap(): %s", d.Data.DataName(), err.Error())
 		return
 	}
-	zyxBytes := zyx.Bytes()
 
 	// Initialize the label buffers.  For voxels, this data needs to be uncompressed and deserialized.
 	blockData, _, err := dvid.DeserializeData(chunk.V, true)
@@ -1294,5 +1289,5 @@ func (d *Data) chunkApplyMap(chunk *storage.Chunk) {
 		return
 	}
 	ctx := datastore.NewVersionedContext(op.dest, op.versionID)
-	bigdata.Put(ctx, zyxBytes, serialization)
+	bigdata.Put(ctx, voxels.NewVoxelBlockIndex(zyx), serialization)
 }

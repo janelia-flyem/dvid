@@ -39,7 +39,6 @@ func (d *Data) GetLabelsInVolume(ctx storage.Context, minBlock, maxBlock dvid.Ch
 	maxLabelBytes := make([]byte, 8, 8)
 	binary.BigEndian.PutUint64(maxLabelBytes, 0xFFFFFFFFFFFFFFFF)
 
-	offset := 1 + dvid.IndexZYXSize + 8 // index here = s + a + b, and we want only b
 	labelset := make(map[uint64]bool, 10)
 	for it := dvid.NewIndexZYXIterator(minBlock, maxBlock); it.Valid(); it.NextSpan() {
 		// Get keys for this span of blocks
@@ -57,11 +56,10 @@ func (d *Data) GetLabelsInVolume(ctx storage.Context, minBlock, maxBlock dvid.Ch
 
 		// Add mapped labels for these keys into the set
 		for _, key := range keys {
-			indexBytes, err := ctx.IndexFromKey(key)
+			_, mappedLabel, err := voxels.DecodeSpatialMapKey(key)
 			if err != nil {
 				return "{}", err
 			}
-			mappedLabel := binary.BigEndian.Uint64(indexBytes[offset : offset+8])
 			labelset[mappedLabel] = true
 		}
 	}
@@ -164,21 +162,21 @@ func (d *Data) GetMappedVoxels(versionID dvid.VersionID, e voxels.ExtData) error
 		}
 
 		// Cache this layer of blocks' mappings.
-		labelOffset := 1 + dvid.IndexZYXSize // index here = s + a + b
 		mapping := make(map[string]uint64, numKeys)
 		for _, key := range keys {
-			indexBytes, err := mappingCtx.IndexFromKey(key)
+			label, mappedLabel, err := voxels.DecodeSpatialMapKey(key)
 			if err != nil {
 				return err
 			}
-			label := string(indexBytes[labelOffset : labelOffset+8])
-			mappedLabel := binary.BigEndian.Uint64(indexBytes[labelOffset+8 : labelOffset+16])
-			mapping[label] = mappedLabel
+			mapping[string(label)] = mappedLabel
 		}
 
-		// Send the entire range of key-value pairs to chunk mapper
+		// Send the span of label blocks to chunk mapper
 		chunkOp := &storage.ChunkOp{&denormOp{labelData, e, nil, versionID, mapping}, wg}
-		err = bigdata.ProcessRange(labelsCtx, indexBeg.Bytes(), indexEnd.Bytes(), chunkOp, d.MapChunk)
+		blockBeg := voxels.NewVoxelBlockIndex(indexBeg)
+		blockEnd := voxels.NewVoxelBlockIndex(indexEnd)
+
+		err = bigdata.ProcessRange(labelsCtx, blockBeg, blockEnd, chunkOp, d.MapChunk)
 		if err != nil {
 			return fmt.Errorf("Unable to GET data %s: %s", d.Data.DataName(), err.Error())
 		}
@@ -242,10 +240,12 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 
 		// Process the labels chunks for this Z
 		if op.mapping != nil {
-			begIndex := dvid.IndexZYX(minChunkPt)
-			endIndex := dvid.IndexZYX(maxChunkPt)
+			minIndexZYX := dvid.IndexZYX(minChunkPt)
+			maxIndexZYX := dvid.IndexZYX(maxChunkPt)
+			begIndex := voxels.NewVoxelBlockIndex(&minIndexZYX)
+			endIndex := voxels.NewVoxelBlockIndex(&maxIndexZYX)
 			chunkOp := &storage.ChunkOp{op, wg}
-			err = bigdata.ProcessRange(labelsCtx, begIndex.Bytes(), endIndex.Bytes(), chunkOp, d.DenormalizeChunk)
+			err = bigdata.ProcessRange(labelsCtx, begIndex, endIndex, chunkOp, d.DenormalizeChunk)
 			wg.Wait()
 		} else {
 			dvid.Infof("No mapping for block layer %d found!\n", z)
@@ -293,12 +293,11 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 	endIndex := voxels.NewLabelSpatialMapIndex(math.MaxUint64, &dvid.MaxIndexZYX)
 	err = smalldata.ProcessRange(labelmapCtx, begIndex, endIndex, &storage.ChunkOp{}, func(chunk *storage.Chunk) {
 		// Get label associated with this sparse volume.
-		indexBytes, err := labelmapCtx.IndexFromKey(chunk.K)
+		label, err := voxels.DecodeLabelSpatialMapKey(chunk.K)
 		if err != nil {
 			dvid.Errorf("Unable to recover label with chunk key %v: %s\n", chunk.K, err.Error())
 			return
 		}
-		label := binary.BigEndian.Uint64(indexBytes[1:9])
 		chunk.ChunkOp = &storage.ChunkOp{label, nil}
 
 		// Send RLE of label to size indexer and surface calculator.
@@ -495,18 +494,9 @@ func (d *Data) denormalizeChunk(chunk *storage.Chunk) {
 	op := chunk.Op.(*denormOp)
 
 	// Get the spatial index associated with this chunk.
-	ctx := datastore.NewVersionedContext(d, op.versionID)
-	indexBytes, err := ctx.IndexFromKey(chunk.K)
+	zyx, err := voxels.DecodeVoxelBlockKey(chunk.K)
 	if err != nil {
 		dvid.Errorf("Bad chunk key %v: %s\n", chunk.K, err.Error())
-		return
-	}
-	if indexBytes[0] != byte(voxels.KeyVoxelBlock) {
-		err = fmt.Errorf("Chunk key (%v) in labelmap denormalization has non-VoxelBlock index", chunk.K)
-	}
-	var zyx dvid.IndexZYX
-	if err := zyx.IndexFromBytes(indexBytes[1:]); err != nil {
-		dvid.Errorf("Cannot recover ZYX index from chunk key %v: %s\n", chunk.K, err.Error())
 		return
 	}
 	zyxBytes := zyx.Bytes()
@@ -522,6 +512,7 @@ func (d *Data) denormalizeChunk(chunk *storage.Chunk) {
 		dvid.Infof("Database doesn't support Batch ops in %s.denormalizeChunk()", d.DataName())
 		return
 	}
+	ctx := datastore.NewVersionedContext(d, op.versionID)
 	smallBatch := smallBatcher.NewBatch(ctx)
 	defer func() {
 		if err := smallBatch.Commit(); err != nil {
@@ -538,11 +529,6 @@ func (d *Data) denormalizeChunk(chunk *storage.Chunk) {
 
 	// Construct block-level mapping keys that allow quick range queries pertinent to access patterns.
 	// We work with the spatial index (s), original label (a), and mapped label (b).
-	offsetSAB := 1 + dvid.IndexZYXSize
-	sabIndex := make([]byte, offsetSAB+8+8) // s + a + b
-	sabIndex[0] = byte(voxels.KeySpatialMap)
-	copy(sabIndex[1:offsetSAB], zyxBytes)
-
 	// Iterate through this block of labels64.
 	blockBytes := len(blockData)
 	if blockBytes%8 != 0 {
@@ -554,6 +540,7 @@ func (d *Data) denormalizeChunk(chunk *storage.Chunk) {
 	firstPt := zyx.MinPoint(op.source.BlockSize()).(dvid.Point3d)
 	lastPt := zyx.MaxPoint(op.source.BlockSize()).(dvid.Point3d)
 
+	sabIndex := voxels.NewSpatialMapIndex(zyx, labels64.ZeroBytes(), 0)
 	var curStart dvid.Point3d
 	var b, curLabel uint64
 	var z, y, x, curRun int32
@@ -599,8 +586,7 @@ func (d *Data) denormalizeChunk(chunk *storage.Chunk) {
 
 				// Store a KeySpatialMap key (index = s + a + b)
 				if b != 0 {
-					copy(sabIndex[offsetSAB:offsetSAB+8], a)
-					binary.BigEndian.PutUint64(sabIndex[offsetSAB+8:offsetSAB+16], b)
+					sabIndex.UpdateSpatialMapIndex(a, b)
 					_, found := written[string(sabIndex)]
 					if !found {
 						smallBatch.Put(sabIndex, dvid.EmptyValue())
