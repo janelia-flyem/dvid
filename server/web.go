@@ -115,7 +115,7 @@ const WebHelp = `
 	"dataname" should be set to the desired name of the new instance.
 
 	
- DELETE /api/repo/{uuid}/{dataname}
+ DELETE /api/repo/{uuid}/{dataname}?imsure=true
 
 	Deletes a data instance of given name from the repository holding a node with UUID.	
 		</pre>
@@ -495,6 +495,13 @@ func repoInfoHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 }
 
 func repoDeleteHandler(c web.C, w http.ResponseWriter, r *http.Request) {
+	queryValues := r.URL.Query()
+	imsure := queryValues.Get("imsure")
+	if imsure != "true" {
+		BadRequest(w, r, "Cannot delete instance unless query string 'imsure=true' is present!")
+		return
+	}
+
 	repo := (c.Env["repo"]).(datastore.Repo)
 	dataname, ok := c.URLParams["dataname"]
 	if !ok {
