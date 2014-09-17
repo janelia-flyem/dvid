@@ -357,7 +357,7 @@ type errorableKV struct {
 }
 
 func sendKV(vctx storage.VersionedContext, values []*storage.KeyValue, ch chan errorableKV) {
-	fmt.Printf("sendKV: values %v\n", values)
+	// fmt.Printf("sendKV: values %v\n", values)
 	if len(values) != 0 {
 		kv, err := vctx.VersionedKeyValue(values)
 		if err != nil {
@@ -365,7 +365,7 @@ func sendKV(vctx storage.VersionedContext, values []*storage.KeyValue, ch chan e
 			return
 		}
 		if kv != nil {
-			fmt.Printf("Sending kv: %v\n", kv)
+			// fmt.Printf("Sending kv: %v\n", kv)
 			ch <- errorableKV{kv, nil}
 		}
 	}
