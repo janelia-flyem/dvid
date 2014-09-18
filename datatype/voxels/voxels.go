@@ -445,16 +445,6 @@ func (v *Voxels) DownRes(magnification dvid.Point) error {
 	return nil
 }
 
-// IndexBytes returns the index bytes for a voxel block with given location.
-func (v *Voxels) IndexBytes(c dvid.ChunkPoint) []byte {
-	chunkPt, ok := c.(dvid.ChunkPoint3d)
-	if !ok {
-		return nil
-	}
-	zyx := dvid.IndexZYX(chunkPt)
-	return NewVoxelBlockIndex(&zyx)
-}
-
 // IndexIterator returns an iterator that can move across the voxel geometry,
 // generating indices or index spans.
 func (v *Voxels) IndexIterator(chunkSize dvid.Point) (dvid.IndexIterator, error) {
@@ -1602,6 +1592,16 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 		log.Fatalf("Illegal operation passed to ProcessChunk() for data %s\n", d.DataName())
 	}
 
+	// Make sure our received chunk is valid.
+	if chunk == nil {
+		dvid.Errorf("Received nil chunk in ProcessChunk.  Ignoring chunk.\n")
+		return
+	}
+	if chunk.K == nil {
+		dvid.Errorf("Received nil chunk key in ProcessChunk.  Ignoring chunk.\n")
+		return
+	}
+
 	// If there's an ROI, if outside ROI, use blank buffer or allow scaling via attenuation.
 	var zeroOut bool
 	var attenuation uint8
@@ -1620,7 +1620,7 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 	// Initialize the block buffer using the chunk of data.  For voxels, this chunk of
 	// data needs to be uncompressed and deserialized.
 	var blockData []byte
-	if zeroOut || chunk == nil || chunk.V == nil {
+	if zeroOut || chunk.V == nil {
 		blockData = make([]byte, d.BlockSize().Prod()*int64(op.Values().BytesPerElement()))
 	} else {
 		blockData, _, err = dvid.DeserializeData(chunk.V, true)

@@ -189,6 +189,9 @@ func (ctx *DataContext) ConstructKey(index []byte) []byte {
 }
 
 func (ctx *DataContext) IndexFromKey(key []byte) ([]byte, error) {
+	if key == nil {
+		return nil, fmt.Errorf("Cannot extract DataContext index from nil key")
+	}
 	if key[0] != dataKeyPrefix {
 		return nil, fmt.Errorf("Cannot extract DataContext index from different key")
 	}

@@ -96,8 +96,6 @@ type ExtData interface {
 
 	NewChunkIndex() dvid.ChunkIndexer
 
-	IndexBytes(p dvid.ChunkPoint) []byte
-
 	IndexIterator(chunkSize dvid.Point) (dvid.IndexIterator, error)
 
 	// DownRes reduces the image data by the integer scaling for each dimension.
@@ -260,32 +258,32 @@ func PutVoxels(ctx storage.Context, i IntData, e ExtData) error {
 		}
 
 		// Send all data to chunk handlers for this range.
-		var kv, oldkv *storage.KeyValue
+		var kv *storage.KeyValue
 		numOldkv := len(keyvalues)
-		oldI := 0
-		if numOldkv > 0 {
-			oldkv = keyvalues[oldI] // Start with the first old kv we have in this range.
+		var oldI int // index into old key-value pairs
+		if numOldkv == 0 {
+			oldI = -1
 		}
 		wg.Add(int(endX-begX) + 1)
 		c := dvid.ChunkPoint3d{begX, ptBeg.Value(1), ptBeg.Value(2)}
 		for x := begX; x <= endX; x++ {
 			c[0] = x
-			curIndexBytes := e.IndexBytes(c)
+			curIndex := dvid.IndexZYX(c)
+			curIndexBytes := NewVoxelBlockIndex(&curIndex)
+
 			// Check for this index among old key-value pairs and if so,
 			// send the old value into chunk handler.  Else we are just sending
 			// keys with no value.
-			if oldkv != nil && oldkv.K != nil {
-				oldIndexBytes, err := ctx.IndexFromKey(oldkv.K)
+			if oldI >= 0 {
+				oldIndexBytes, err := ctx.IndexFromKey(keyvalues[oldI].K)
 				if err != nil {
 					return err
 				}
 				if bytes.Compare(curIndexBytes, oldIndexBytes) == 0 {
-					kv = oldkv
+					kv = keyvalues[oldI]
 					oldI++
-					if oldI < numOldkv {
-						oldkv = keyvalues[oldI]
-					} else {
-						oldkv.K = nil
+					if oldI >= numOldkv {
+						oldI = -1
 					}
 				} else {
 					kv = &storage.KeyValue{K: ctx.ConstructKey(curIndexBytes)}
@@ -293,6 +291,7 @@ func PutVoxels(ctx storage.Context, i IntData, e ExtData) error {
 			} else {
 				kv = &storage.KeyValue{K: ctx.ConstructKey(curIndexBytes)}
 			}
+
 			// TODO -- Pass batch write via chunkOp and group all PUTs
 			// together at once.  Should increase write speed, particularly
 			// since the PUTs are using mostly sequential keys.
@@ -656,9 +655,10 @@ func loadOldBlocks(versionID dvid.VersionID, i IntData, e ExtData, blocks Blocks
 		c := dvid.ChunkPoint3d{begX, ptBeg.Value(1), ptBeg.Value(2)}
 		for x := begX; x <= endX; x++ {
 			c[0] = x
-			curIndex := e.IndexBytes(c)
-			blocks[blockNum].K = ctx.ConstructKey(curIndex)
-			block, ok := oldBlocks[string(curIndex)]
+			curIndex := dvid.IndexZYX(c)
+			curIndexBytes := NewVoxelBlockIndex(&curIndex)
+			blocks[blockNum].K = ctx.ConstructKey(curIndexBytes)
+			block, ok := oldBlocks[string(curIndexBytes)]
 			if ok {
 				copy(blocks[blockNum].V, block)
 			}
@@ -708,7 +708,9 @@ func writeXYImage(versionID dvid.VersionID, i IntData, e ExtData, blocks Blocks)
 			c := dvid.ChunkPoint3d{begX, ptBeg.Value(1), ptBeg.Value(2)}
 			for x := begX; x <= endX; x++ {
 				c[0] = x
-				blocks[blockNum].K = ctx.ConstructKey(e.IndexBytes(c))
+				curIndex := dvid.IndexZYX(c)
+				curIndexBytes := NewVoxelBlockIndex(&curIndex)
+				blocks[blockNum].K = ctx.ConstructKey(curIndexBytes)
 
 				// Write this slice data into the block.
 				WriteToBlock(e, &(blocks[blockNum]), blockSize)
