@@ -93,6 +93,15 @@ $ dvid -stdin node <UUID> <data name> generate <settings...> < config.json
                        designated using either axis number ("0,1") or xyz nomenclature ("xy").
                        Example:  planes="0,1;yz"
 
+    Sample config.json:
+
+	{
+	    "0": {  "Resolution": [10.0, 10.0, 10.0], "TileSize": [512, 512, 512] },
+	    "1": {  "Resolution": [20.0, 20.0, 20.0], "TileSize": [512, 512, 512] },
+	    "2": {  "Resolution": [40.0, 40.0, 40.0], "TileSize": [512, 512, 512] },
+	    "3": {  "Resolution": [80.0, 80.0, 80.0], "TileSize": [512, 512, 512] }
+	}
+
     ------------------
 
 HTTP API (Level 2 REST):
