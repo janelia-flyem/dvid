@@ -119,7 +119,7 @@ func TestSubvolGrayscale8(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unable to make new grayscale ExtHandler: %s\n", err.Error())
 	}
-	if err = PutVoxels(grayscaleCtx, grayscale, v); err != nil {
+	if err = PutVoxels(grayscaleCtx, grayscale, v, nil); err != nil {
 		t.Errorf("Unable to put voxels for %s: %s\n", grayscaleCtx, err.Error())
 	}
 	if v.NumVoxels() != int64(len(origData)) {
@@ -173,9 +173,9 @@ type testDataT struct {
 	rawData   []uint8
 }
 
-func storeGrayscale(t *testing.T, sliceType string, slice dvid.Geometry) testDataT {
+func storeGrayscale(t *testing.T, name string, slice dvid.Geometry, r *ROI) testDataT {
 	repo, versionID := initTestRepo()
-	grayscale := makeGrayscale(repo, t, "grayscale"+sliceType)
+	grayscale := makeGrayscale(repo, t, "grayscale"+name)
 	grayscaleCtx := datastore.NewVersionedContext(grayscale, versionID)
 
 	// Create a fake 100x100 8-bit grayscale image
@@ -190,14 +190,14 @@ func storeGrayscale(t *testing.T, sliceType string, slice dvid.Geometry) testDat
 	if err != nil {
 		t.Fatalf("Unable to make new grayscale ExtHandler: %s\n", err.Error())
 	}
-	if err = PutVoxels(grayscaleCtx, grayscale, v); err != nil {
+	if err = PutVoxels(grayscaleCtx, grayscale, v, r); err != nil {
 		t.Errorf("Unable to put voxels for %s: %s\n", grayscaleCtx, err.Error())
 	}
 	return testDataT{repo, versionID, grayscaleCtx, grayscale, data}
 }
 
 func sliceTest(t *testing.T, sliceType string, slice dvid.Geometry) {
-	testData := storeGrayscale(t, sliceType, slice)
+	testData := storeGrayscale(t, sliceType, slice, nil)
 	grayscaleCtx := datastore.NewVersionedContext(testData.data, testData.versionID)
 
 	// Read the stored image
@@ -276,7 +276,7 @@ func TestROIMaskGrayscale8(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Problem getting new orthogonal slice: %s\n", err.Error())
 	}
-	testData := storeGrayscale(t, "XY", slice)
+	testData := storeGrayscale(t, "XY", slice, nil)
 
 	// Create ROI
 	config := dvid.NewConfig()
@@ -306,6 +306,8 @@ func TestROIMaskGrayscale8(t *testing.T) {
 	if err := GetVoxels(testData.ctx, testData.data, roiSlice, nil); err != nil {
 		t.Fatalf("Unable to get image for %s: %s\n", testData.ctx, err.Error())
 	}
+
+	// Check points in and outside ROI are set appropriately.
 	roiX := 10*32 + 1 - offset[0]
 	roiY := 3*32 + 1 - offset[1]
 	roiIndex := roiY*roiSlice.Stride() + roiX
@@ -335,8 +337,34 @@ func TestROIMaskGrayscale8(t *testing.T) {
 		t.Fatalf("Retrieved ROI-applied XY pixel != 0 and should be 0\n")
 	}
 	if pixels[roiIndex] == 0 {
-		t.Fatalf("Retrieved ROI-applied XY pixel.  Expected non-zero pixel %d got 0\n", 
+		t.Fatalf("Retrieved ROI-applied XY pixel.  Expected non-zero pixel %d got 0\n",
 			testData.rawData[roiIndex])
+	}
+
+	// Add new grayscale that uses mask for PUT.
+	roiObj.Iter.Reset()
+	testData2 := storeGrayscale(t, "maskedPUT", slice, &roiObj)
+
+	// Read grayscale without ROI and make sure area outside ROI is black.
+	// Get the buffer for the retrieved ROI-enabled grayscale slice
+	roiSlice2, err := testData.data.NewExtHandler(slice, nil)
+	if err != nil {
+		t.Fatalf("Could not create ExtHandler: %s\n", err.Error())
+	}
+
+	// Read without ROI
+	if err := GetVoxels(testData2.ctx, testData2.data, roiSlice2, nil); err != nil {
+		t.Fatalf("Unable to get image for %s: %s\n", testData2.ctx, err.Error())
+	}
+
+	// Make sure points outside ROI are black and the one inside is on.
+	pixels = roiSlice2.Data()
+	if pixels[0] != 0 {
+		t.Fatalf("Retrieved XY pixel != 0 when PUT should be outside ROI and therefore 0\n")
+	}
+	if pixels[roiIndex] == 0 {
+		t.Fatalf("Retrieved XY pixel == 0 when PUT was within ROI and expected non-zero pixel %d\n",
+			testData2.rawData[roiIndex])
 	}
 }
 

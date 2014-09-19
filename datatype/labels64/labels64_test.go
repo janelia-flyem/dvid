@@ -111,7 +111,7 @@ func TestSubvolLabels64(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unable to make new labels ExtHandler: %s\n", err.Error())
 	}
-	if err = voxels.PutVoxels(labelsCtx, labels, v); err != nil {
+	if err = voxels.PutVoxels(labelsCtx, labels, v, nil); err != nil {
 		t.Errorf("Unable to put labels for %s: %s\n", labelsCtx, err.Error())
 	}
 	if v.NumVoxels() != int64(len(data))/8 {
@@ -176,7 +176,7 @@ func sliceTest(t *testing.T, slice dvid.Geometry) {
 	if err != nil {
 		t.Fatalf("Unable to make new labels ExtHandler: %s\n", err.Error())
 	}
-	if err = voxels.PutVoxels(labelsCtx, labels, v); err != nil {
+	if err = voxels.PutVoxels(labelsCtx, labels, v, nil); err != nil {
 		t.Errorf("Unable to put voxels for %s: %s\n", labelsCtx, err.Error())
 	}
 

@@ -194,13 +194,13 @@ func GetVoxels(ctx storage.Context, i IntData, e ExtData, r *ROI) error {
 // integrating the PUT data into current chunks before writing the result.  There are two passes:
 //   Pass one: Retrieve all available key/values within the PUT space.
 //   Pass two: Merge PUT data into those key/values and store them.
-func PutVoxels(ctx storage.Context, i IntData, e ExtData) error {
+func PutVoxels(ctx storage.Context, i IntData, e ExtData, r *ROI) error {
 	db, err := storage.BigDataStore()
 	if err != nil {
 		return err
 	}
 	wg := new(sync.WaitGroup)
-	chunkOp := &storage.ChunkOp{&Operation{e, PutOp, nil}, wg}
+	chunkOp := &storage.ChunkOp{&Operation{e, PutOp, r}, wg}
 
 	// We only want one PUT on given version for given data to prevent interleaved
 	// chunk PUTs that could potentially overwrite slice modifications.
@@ -290,6 +290,12 @@ func PutVoxels(ctx storage.Context, i IntData, e ExtData) error {
 				}
 			} else {
 				kv = &storage.KeyValue{K: ctx.ConstructKey(curIndexBytes)}
+			}
+
+			// Don't PUT if this index is outside a specified ROI
+			if r != nil && r.Iter != nil && !r.Iter.Inside(curIndex) {
+				wg.Done()
+				continue
 			}
 
 			// TODO -- Pass batch write via chunkOp and group all PUTs

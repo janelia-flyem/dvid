@@ -867,7 +867,14 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 					server.BadRequest(w, r, err.Error())
 					return
 				}
-				err = voxels.PutVoxels(storeCtx, d, e)
+				if roiptr != nil {
+					roiptr.Iter, err = roi.NewIterator(roiname, versionID, e)
+					if err != nil {
+						server.BadRequest(w, r, err.Error())
+						return
+					}
+				}
+				err = voxels.PutVoxels(storeCtx, d, e, roiptr)
 				if err != nil {
 					server.BadRequest(w, r, err.Error())
 					return
@@ -972,7 +979,14 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 					server.BadRequest(w, r, err.Error())
 					return
 				}
-				err = voxels.PutVoxels(storeCtx, d, e)
+				if roiptr != nil {
+					roiptr.Iter, err = roi.NewIterator(roiname, versionID, e)
+					if err != nil {
+						server.BadRequest(w, r, err.Error())
+						return
+					}
+				}
+				err = voxels.PutVoxels(storeCtx, d, e, roiptr)
 				if err != nil {
 					server.BadRequest(w, r, err.Error())
 					return
