@@ -386,7 +386,7 @@ func (d *Data) mapChunk(chunk *storage.Chunk) {
 				origLabel := string(block.V[b0:b1])
 				mappedLabel, found := op.mapping[origLabel]
 				if !found {
-					dvid.Errorf("No mapping found for label %s ... using 0\n", origLabel)
+					dvid.Errorf("No mapping found for label %v ... using 0\n", block.V[b0:b1])
 					mappedLabel = 0
 				}
 				binary.BigEndian.PutUint64(data[d0:d1], mappedLabel)
@@ -412,7 +412,7 @@ func (d *Data) mapChunk(chunk *storage.Chunk) {
 				origLabel := string(block.V[b0:b1])
 				mappedLabel, found := op.mapping[origLabel]
 				if !found {
-					dvid.Errorf("No mapping found for label %s ... using 0\n", origLabel)
+					dvid.Errorf("No mapping found for label %v ... using 0\n", block.V[b0:b1])
 					mappedLabel = 0
 				}
 				binary.BigEndian.PutUint64(data[d0:d1], mappedLabel)
@@ -434,7 +434,7 @@ func (d *Data) mapChunk(chunk *storage.Chunk) {
 				origLabel := string(block.V[blockI : blockI+bytesPerVoxel])
 				mappedLabel, found := op.mapping[origLabel]
 				if !found {
-					dvid.Infof("No mapping found for label %s ... using 0\n", origLabel)
+					dvid.Infof("No mapping found for label %v ... using 0\n", block.V[blockI:blockI+bytesPerVoxel])
 					mappedLabel = 0
 				}
 				binary.BigEndian.PutUint64(data[dataI:dataI+bytesPerVoxel], mappedLabel)

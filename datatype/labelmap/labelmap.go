@@ -219,7 +219,7 @@ GET  <api URL>/node/<UUID>/<data name>/labels/<dims>/<size>/<offset>[/<format>][
 
     Example: 
 
-    GET <api URL>/node/3f8c/sp2body/0_1/512_256/0_0_100
+    GET <api URL>/node/3f8c/sp2body/labels/0_1/512_256/0_0_100
 
     Returns an XY slice (0th and 1st dimensions) with width (x) of 512 voxels and
     height (y) of 256 voxels with offset (0,0,100) in PNG format.
