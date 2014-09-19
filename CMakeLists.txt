@@ -135,7 +135,7 @@ else ()
     set (CGO_FLAGS   CGO_CFLAGS="-I${BUILDEM_INCLUDE_DIR};${GO_CFLAGS}";CGO_LDFLAGS="-L${BUILDEM_LIB_DIR};${GO_LDFLAGS}")
 
     add_custom_target (gopackages-install
-        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go get ${GO_GET} github.com/janelia-flyem/go
+        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go get ${GO_GET} -u github.com/janelia-flyem/go
         DEPENDS     ${golang_NAME} ${nanomsg_NAME}
         COMMENT     "Adding go package dependencies for janelia-flyem projects...")
 
