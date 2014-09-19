@@ -128,7 +128,12 @@ POST <api URL>/node/<UUID>/<data name>/ptquery
 GET <api URL>/node/<UUID>/<data name>/partition?batchsize=8
 
 	Returns JSON of subvolumes that are batchsize^3 blocks in volume and cover the ROI.
-	If the optional batchsize is omitted, the default is 8.
+
+    Query-string Options:
+
+    batchsize	Number of blocks along each axis to batch to make one subvolume (default = 8)
+    optimized   If "true" or "on", partioning returns non-fixed sized subvolumes where the coverage
+                  is better in terms of subvolumes having more active blocks.
 `
 
 func init() {
@@ -247,7 +252,7 @@ var (
 	maxIndexRLE = indexRLE{dvid.MaxIndexZYX, math.MaxUint32}
 )
 
-// indexRLE is the key for block indices included in an ROI.
+// indexRLE is the key component for block indices included in an ROI.
 // Because we use dvid.IndexZYX for index byte slices, we know
 // the key ordering will be Z, then Y, then X0 (and then X1).
 type indexRLE struct {
@@ -490,12 +495,13 @@ type subvolumesT struct {
 	NumTotalBlocks  int32
 	NumActiveBlocks int32
 	NumSubvolumes   int32
+	ROI             dvid.ChunkExtents3d
 	Subvolumes      []subvolumeT
 }
 
 type subvolumeT struct {
-	MinCorner    dvid.Point3d
-	MaxCorner    dvid.Point3d
+	dvid.Extents3d
+	dvid.ChunkExtents3d
 	TotalBlocks  int32
 	ActiveBlocks int32
 }
@@ -566,6 +572,7 @@ func getYRange(blocks []*indexRLE) (minY, maxY int32, found bool) {
 	return
 }
 
+// Return range of x for all spans within the given range of y
 func getXRange(blocks []*indexRLE, minY, maxY int32) (minX, maxX int32, actives []*indexRLE) {
 	minX = math.MaxInt32
 	maxX = math.MinInt32
@@ -666,12 +673,14 @@ func totalBlocks(minCorner, maxCorner dvid.ChunkPoint3d) int32 {
 }
 
 // Adds subvolumes based on given extents for a layer.
-func (d *Data) addSubvolumes(layer *layerT, subvolumes *subvolumesT, batchsize int32) {
+func (d *Data) addSubvolumes(layer *layerT, subvolumes *subvolumesT, batchsize int32, merge bool) {
 	// mergeThreshold := batchsize * batchsize * batchsize / 10
 	minY, maxY, found := getYRange(layer.activeBlocks)
 	if !found {
 		return
 	}
+	subvolumes.ROI.ExtendDim(1, minY)
+	subvolumes.ROI.ExtendDim(1, maxY)
 	dy := maxY - minY + 1
 	yleft := dy % batchsize
 
@@ -687,6 +696,9 @@ func (d *Data) addSubvolumes(layer *layerT, subvolumes *subvolumesT, batchsize i
 		}
 		minX, maxX, actives := getXRange(layer.activeBlocks, begY, endY)
 		if len(actives) > 0 {
+			subvolumes.ROI.ExtendDim(0, minX)
+			subvolumes.ROI.ExtendDim(0, maxX)
+
 			dx := maxX - minX + 1
 			xleft := dx % batchsize
 
@@ -705,13 +717,14 @@ func (d *Data) addSubvolumes(layer *layerT, subvolumes *subvolumesT, batchsize i
 				maxCorner := dvid.ChunkPoint3d{endX, endY, layer.maxZ}
 				holeBeg, holeEnd, found := findXHoles(actives, begX, endX)
 				var numActive, numTotal int32
-				if found {
+				if found && merge {
 					// MinCorner stays same since we are extended in X
 					if holeBeg-1 >= begX {
 						lastI := len(subvolumes.Subvolumes) - 1
 						subvolume := subvolumes.Subvolumes[lastI]
 						lastCorner := dvid.ChunkPoint3d{holeBeg - 1, endY, layer.maxZ}
-						subvolume.MaxCorner = lastCorner.MinPoint(d.BlockSize).(dvid.Point3d)
+						subvolume.MaxPoint = lastCorner.MinPoint(d.BlockSize).(dvid.Point3d)
+						subvolume.MaxChunk = lastCorner
 						numTotal = totalBlocks(minCorner, lastCorner)
 						numActive = findActives(actives, begX, holeBeg-1)
 						subvolume.TotalBlocks += numTotal
@@ -723,10 +736,13 @@ func (d *Data) addSubvolumes(layer *layerT, subvolumes *subvolumesT, batchsize i
 					numTotal = totalBlocks(minCorner, maxCorner)
 					numActive = findActives(actives, begX, endX)
 					subvolume := subvolumeT{
-						MinCorner:    minCorner.MinPoint(d.BlockSize).(dvid.Point3d),
-						MaxCorner:    maxCorner.MaxPoint(d.BlockSize).(dvid.Point3d),
-						TotalBlocks:  numTotal,
-						ActiveBlocks: numActive,
+						Extents3d: dvid.Extents3d{
+							minCorner.MinPoint(d.BlockSize).(dvid.Point3d),
+							maxCorner.MaxPoint(d.BlockSize).(dvid.Point3d),
+						},
+						ChunkExtents3d: dvid.ChunkExtents3d{minCorner, maxCorner},
+						TotalBlocks:    numTotal,
+						ActiveBlocks:   numActive,
 					}
 					subvolumes.Subvolumes = append(subvolumes.Subvolumes, subvolume)
 					begX = endX + 1
@@ -739,11 +755,14 @@ func (d *Data) addSubvolumes(layer *layerT, subvolumes *subvolumesT, batchsize i
 	}
 }
 
+// Partition returns JSON of differently sized subvolumes that attempt to distribute
+// the number of active blocks per subvolume.
 func (d *Data) Partition(ctx storage.Context, batchsize int32) ([]byte, error) {
 	// Partition Z as perfectly as we can.
 	dz := d.MaxZ - d.MinZ + 1
 	zleft := dz % batchsize
 
+	// Adjust Z range
 	layerBegZ := d.MinZ
 	layerEndZ := layerBegZ + batchsize - 1
 
@@ -751,6 +770,146 @@ func (d *Data) Partition(ctx storage.Context, batchsize int32) ([]byte, error) {
 	// Keep track of current layer = batchsize of blocks in Z.
 	var subvolumes subvolumesT
 	subvolumes.Subvolumes = []subvolumeT{}
+	subvolumes.ROI.MinChunk[2] = d.MinZ
+	subvolumes.ROI.MaxChunk[2] = d.MaxZ
+
+	layer := d.newLayer(layerBegZ, layerEndZ)
+
+	db, err := storage.SmallDataStore()
+	if err != nil {
+		return nil, err
+	}
+	merge := true
+	err = db.ProcessRange(ctx, minIndexRLE.Bytes(), maxIndexRLE.Bytes(), &storage.ChunkOp{}, func(chunk *storage.Chunk) {
+		indexBytes, err := ctx.IndexFromKey(chunk.K)
+		if err != nil {
+			dvid.Errorf("Unable to recover roi RLE from chunk key %v: %s\n", chunk.K, err.Error())
+			return
+		}
+		index := new(indexRLE)
+		if err = index.IndexFromBytes(indexBytes); err != nil {
+			dvid.Errorf("Unable to get indexRLE out of []byte encoding: %s\n", err.Error())
+		}
+
+		// If we are in new layer, process last one.
+		z := index.start.Value(2)
+		if z > layerEndZ {
+			// Process last layer
+			dvid.Debugf("Computing subvolumes in layer with Z %d -> %d (dz %d)\n",
+				layer.minZ, layer.maxZ, layer.maxZ-layer.minZ+1)
+			d.addSubvolumes(layer, &subvolumes, batchsize, merge)
+
+			// Init variables for next layer
+			layerBegZ = layerEndZ + 1
+			layerEndZ += batchsize
+			if zleft > 0 {
+				layerEndZ++
+				zleft--
+			}
+			layer = d.newLayer(layerBegZ, layerEndZ)
+		}
+
+		// Check this block against current layer extents
+		layer.extend(index)
+	})
+
+	// Process last incomplete layer if there is one.
+	if len(layer.activeBlocks) > 0 {
+		dvid.Debugf("Computing subvolumes for final layer Z %d -> %d (dz %d)\n",
+			layer.minZ, layer.maxZ, layer.maxZ-layer.minZ+1)
+		d.addSubvolumes(layer, &subvolumes, batchsize, merge)
+	}
+	subvolumes.NumSubvolumes = int32(len(subvolumes.Subvolumes))
+
+	// Encode as JSON
+	jsonBytes, err := json.MarshalIndent(subvolumes, "", "    ")
+	if err != nil {
+		return nil, err
+	}
+	return jsonBytes, err
+}
+
+// Adds subvolumes using simple algorithm centers fixed-sized subvolumes across active blocks.
+func (d *Data) addSubvolumesGrid(layer *layerT, subvolumes *subvolumesT, batchsize int32) {
+	minY, maxY, found := getYRange(layer.activeBlocks)
+	if !found {
+		return
+	}
+	subvolumes.ROI.ExtendDim(1, minY)
+	subvolumes.ROI.ExtendDim(1, maxY)
+	dy := maxY - minY + 1
+	yleft := dy % batchsize
+
+	addYtoBeg := yleft / 2
+	addYtoEnd := yleft - addYtoBeg
+	begY := minY - addYtoBeg
+	endY := maxY + addYtoEnd
+
+	// Iterate through Y, block by block, and determine the X range.  Then center subvolumes
+	// along that X.
+	for y0 := begY; y0 <= maxY; y0 += batchsize {
+		y1 := y0 + batchsize - 1
+		minX, maxX, actives := getXRange(layer.activeBlocks, begY, endY)
+		if len(actives) == 0 {
+			continue
+		}
+		subvolumes.ROI.ExtendDim(0, minX)
+		subvolumes.ROI.ExtendDim(0, maxX)
+
+		// For this row of subvolumes along X, position them to encompass the X range.
+		dx := maxX - minX + 1
+		xleft := dx % batchsize
+
+		addXtoBeg := xleft / 2
+		addXtoEnd := xleft - addXtoBeg
+		begX := minX - addXtoBeg
+		endX := maxX + addXtoEnd
+
+		// Create the subvolumes along X
+		for x0 := begX; x0 <= endX; x0 += batchsize {
+			x1 := x0 + batchsize - 1
+			minCorner := dvid.ChunkPoint3d{x0, y0, layer.minZ}
+			maxCorner := dvid.ChunkPoint3d{x1, y1, layer.maxZ}
+
+			numTotal := totalBlocks(minCorner, maxCorner)
+			numActive := findActives(actives, x0, x1)
+			if numActive > 0 {
+				subvolume := subvolumeT{
+					Extents3d: dvid.Extents3d{
+						minCorner.MinPoint(d.BlockSize).(dvid.Point3d),
+						maxCorner.MaxPoint(d.BlockSize).(dvid.Point3d),
+					},
+					ChunkExtents3d: dvid.ChunkExtents3d{minCorner, maxCorner},
+					TotalBlocks:    numTotal,
+					ActiveBlocks:   numActive,
+				}
+				subvolumes.Subvolumes = append(subvolumes.Subvolumes, subvolume)
+				subvolumes.NumActiveBlocks += numActive
+				subvolumes.NumTotalBlocks += numTotal
+			}
+		}
+	}
+}
+
+// SimplePartition returns JSON of identically sized subvolumes arranged over ROI
+func (d *Data) SimplePartition(ctx storage.Context, batchsize int32) ([]byte, error) {
+	// Partition Z as perfectly as we can.
+	dz := d.MaxZ - d.MinZ + 1
+	zleft := dz % batchsize
+
+	// Adjust Z range
+	addZtoTop := zleft / 2
+	addZtoEnd := zleft - addZtoTop
+	layerBegZ := d.MinZ - addZtoTop
+	layerEndZ := layerBegZ + batchsize - 1 + addZtoEnd
+
+	// Iterate through blocks in ascending Z, calculating active extents and subvolume coverage.
+	// Keep track of current layer = batchsize of blocks in Z.
+	var subvolumes subvolumesT
+	subvolumes.Subvolumes = []subvolumeT{}
+	subvolumes.ROI.MinChunk[2] = d.MinZ
+	subvolumes.ROI.MaxChunk[2] = d.MaxZ
+
 	layer := d.newLayer(layerBegZ, layerEndZ)
 
 	db, err := storage.SmallDataStore()
@@ -772,21 +931,16 @@ func (d *Data) Partition(ctx storage.Context, batchsize int32) ([]byte, error) {
 		z := index.start.Value(2)
 		if z > layerEndZ {
 			// Process last layer
-			dvid.Debugf("Computing subvolumes in layer with Z %d -> %d (dz %d)\n",
-				layer.minZ, layer.maxZ, layer.maxZ-layer.minZ+1)
-			d.addSubvolumes(layer, &subvolumes, batchsize)
+			dvid.Debugf("Computing subvolumes in layer with Z %d -> %d (dz %d)\n", layer.minZ, layer.maxZ, layer.maxZ-layer.minZ+1)
+			d.addSubvolumesGrid(layer, &subvolumes, batchsize)
 
 			// Init variables for next layer
 			layerBegZ = layerEndZ + 1
 			layerEndZ += batchsize
-			if zleft > 0 {
-				layerEndZ++
-				zleft--
-			}
 			layer = d.newLayer(layerBegZ, layerEndZ)
 		}
 
-		// Check this block against current layer extents
+		// Extend current layer by the current block
 		layer.extend(index)
 	})
 
@@ -794,7 +948,7 @@ func (d *Data) Partition(ctx storage.Context, batchsize int32) ([]byte, error) {
 	if len(layer.activeBlocks) > 0 {
 		dvid.Debugf("Computing subvolumes for final layer Z %d -> %d (dz %d)\n",
 			layer.minZ, layer.maxZ, layer.maxZ-layer.minZ+1)
-		d.addSubvolumes(layer, &subvolumes, batchsize)
+		d.addSubvolumesGrid(layer, &subvolumes, batchsize)
 	}
 	subvolumes.NumSubvolumes = int32(len(subvolumes.Subvolumes))
 
@@ -937,9 +1091,16 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 			server.BadRequest(w, r, fmt.Sprintf("Error reading batchsize query string: %s", err.Error()))
 			return
 		}
-		dvid.Infof("Partitioning into subvolumes using batchsize %d\n", batchsize)
 
-		jsonBytes, err := d.Partition(storeCtx, int32(batchsize))
+		var jsonBytes []byte
+		optimizedStr := queryValues.Get("optimized")
+		if optimizedStr == "true" || optimizedStr == "on" {
+			dvid.Infof("Perform optimized partitioning into subvolumes using batchsize %d\n", batchsize)
+			jsonBytes, err = d.Partition(storeCtx, int32(batchsize))
+		} else {
+			dvid.Infof("Performing simple partitioning into subvolumes using batchsize %d\n", batchsize)
+			jsonBytes, err = d.SimplePartition(storeCtx, int32(batchsize))
+		}
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
 			return

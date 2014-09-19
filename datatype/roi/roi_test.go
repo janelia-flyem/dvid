@@ -232,6 +232,335 @@ func TestROICreateAndSerialize(t *testing.T) {
 	}
 }
 
+func TestROIPartition(t *testing.T) {
+	tests.UseStore()
+	defer tests.CloseStore()
+
+	// Create the ROI dataservice.
+	repo, versionID := initTestRepo()
+	uuid, err := datastore.UUIDFromVersion(versionID)
+	if err != nil {
+		t.Errorf(err.Error())
+	}
+
+	config := dvid.NewConfig()
+	config.SetVersioned(true)
+	dataservice, err := repo.NewData(roitype, "roi", config)
+	if err != nil {
+		t.Errorf("Error creating new roi instance: %s\n", err.Error())
+	}
+	data, ok := dataservice.(*Data)
+	if !ok {
+		t.Errorf("Returned new data instance is not roi.Data\n")
+	}
+
+	// PUT an ROI
+	roiRequest := fmt.Sprintf("%snode/%s/%s/roi", server.WebAPIPath, uuid, data.DataName())
+	req, err := http.NewRequest("POST", roiRequest, getSpansJSON(testSpans))
+	if err != nil {
+		t.Errorf("Unsuccessful POST request (%s): %s\n", roiRequest, err.Error())
+	}
+	serverCtx := datastore.NewServerContext(context.Background(), repo, versionID)
+	w := httptest.NewRecorder()
+	data.ServeHTTP(serverCtx, w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("Bad server response roi POST, status %s, for roi %q\n", w.Code, data.DataName())
+	}
+
+	// Request the standard subvolume partitioning
+	partitionReq := fmt.Sprintf("%snode/%s/%s/partition?batchsize=5&optimized=true", server.WebAPIPath, uuid,
+		data.DataName())
+	req, err = http.NewRequest("GET", partitionReq, nil)
+	if err != nil {
+		t.Errorf("Unsuccessful GET request (%s): %s\n", partitionReq, err.Error())
+	}
+	w = httptest.NewRecorder()
+	data.ServeHTTP(serverCtx, w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("Bad server response roi GET, status %s, for roi %q\n", w.Code, data.DataName())
+	}
+	var subvolJSON, expectedJSON interface{}
+	response := w.Body.Bytes()
+	if err := json.Unmarshal(response, &subvolJSON); err != nil {
+		t.Errorf("Can't unmarshal JSON: %s\n", w.Body.Bytes())
+	}
+	json.Unmarshal([]byte(expectedPartition), &expectedJSON)
+	if !reflect.DeepEqual(subvolJSON, expectedJSON) {
+		t.Errorf("Error doing optimized subvolume partitioning.  Got bad result:\n%s\n",
+			string(response))
+	}
+}
+
+func TestROISimplePartition(t *testing.T) {
+	tests.UseStore()
+	defer tests.CloseStore()
+
+	// Create the ROI dataservice.
+	repo, versionID := initTestRepo()
+	uuid, err := datastore.UUIDFromVersion(versionID)
+	if err != nil {
+		t.Errorf(err.Error())
+	}
+
+	config := dvid.NewConfig()
+	config.SetVersioned(true)
+	dataservice, err := repo.NewData(roitype, "roi", config)
+	if err != nil {
+		t.Errorf("Error creating new roi instance: %s\n", err.Error())
+	}
+	data, ok := dataservice.(*Data)
+	if !ok {
+		t.Errorf("Returned new data instance is not roi.Data\n")
+	}
+
+	// PUT an ROI
+	roiRequest := fmt.Sprintf("%snode/%s/%s/roi", server.WebAPIPath, uuid, data.DataName())
+	req, err := http.NewRequest("POST", roiRequest, getSpansJSON(testSpans))
+	if err != nil {
+		t.Errorf("Unsuccessful POST request (%s): %s\n", roiRequest, err.Error())
+	}
+	serverCtx := datastore.NewServerContext(context.Background(), repo, versionID)
+	w := httptest.NewRecorder()
+	data.ServeHTTP(serverCtx, w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("Bad server response roi POST, status %s, for roi %q\n", w.Code, data.DataName())
+	}
+
+	// Request the standard subvolume partitioning
+	partitionReq := fmt.Sprintf("%snode/%s/%s/partition?batchsize=5", server.WebAPIPath, uuid,
+		data.DataName())
+	req, err = http.NewRequest("GET", partitionReq, nil)
+	if err != nil {
+		t.Errorf("Unsuccessful GET request (%s): %s\n", partitionReq, err.Error())
+	}
+	w = httptest.NewRecorder()
+	data.ServeHTTP(serverCtx, w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("Bad server response roi GET, status %s, for roi %q\n", w.Code, data.DataName())
+	}
+	var subvolJSON, expectedJSON interface{}
+	response := w.Body.Bytes()
+	if err := json.Unmarshal(response, &subvolJSON); err != nil {
+		t.Errorf("Can't unmarshal JSON: %s\n", w.Body.Bytes())
+	}
+	json.Unmarshal([]byte(expectedSimplePartition), &expectedJSON)
+	if !reflect.DeepEqual(subvolJSON, expectedJSON) {
+		t.Errorf("Error doing simple subvolume partitioning.  Got bad result:\n%s\n",
+			string(response))
+	}
+}
+
+const expectedPartition = `
+		{
+		    "NumTotalBlocks": 450,
+		    "NumActiveBlocks": 152,
+		    "NumSubvolumes": 3,
+		    "ROI": {
+		        "MinChunk": [
+		            0,
+		            0,
+		            100
+		        ],
+		        "MaxChunk": [
+		            217,
+		            105,
+		            103
+		        ]
+		    },
+		    "Subvolumes": [
+		        {
+		            "MinPoint": [
+		                6400,
+		                3232,
+		                3200
+		            ],
+		            "MaxPoint": [
+		                6591,
+		                3391,
+		                3359
+		            ],
+		            "MinChunk": [
+		                200,
+		                101,
+		                100
+		            ],
+		            "MaxChunk": [
+		                205,
+		                105,
+		                104
+		            ],
+		            "TotalBlocks": 150,
+		            "ActiveBlocks": 61
+		        },
+		        {
+		            "MinPoint": [
+		                6592,
+		                3232,
+		                3200
+		            ],
+		            "MaxPoint": [
+		                6783,
+		                3391,
+		                3359
+		            ],
+		            "MinChunk": [
+		                206,
+		                101,
+		                100
+		            ],
+		            "MaxChunk": [
+		                211,
+		                105,
+		                104
+		            ],
+		            "TotalBlocks": 150,
+		            "ActiveBlocks": 67
+		        },
+		        {
+		            "MinPoint": [
+		                6784,
+		                3232,
+		                3200
+		            ],
+		            "MaxPoint": [
+		                6975,
+		                3391,
+		                3359
+		            ],
+		            "MinChunk": [
+		                212,
+		                101,
+		                100
+		            ],
+		            "MaxChunk": [
+		                217,
+		                105,
+		                104
+		            ],
+		            "TotalBlocks": 150,
+		            "ActiveBlocks": 24
+		        }
+		    ]
+		}
+`
+
+const expectedSimplePartition = `
+		{
+		    "NumTotalBlocks": 700,
+		    "NumActiveBlocks": 152,
+		    "NumSubvolumes": 4,
+		    "ROI": {
+		        "MinChunk": [
+		            0,
+		            0,
+		            100
+		        ],
+		        "MaxChunk": [
+		            217,
+		            105,
+		            103
+		        ]
+		    },
+		    "Subvolumes": [
+		        {
+		            "MinPoint": [
+		                6368,
+		                3232,
+		                3136
+		            ],
+		            "MaxPoint": [
+		                6527,
+		                3391,
+		                3359
+		            ],
+		            "MinChunk": [
+		                199,
+		                101,
+		                98
+		            ],
+		            "MaxChunk": [
+		                203,
+		                105,
+		                104
+		            ],
+		            "TotalBlocks": 175,
+		            "ActiveBlocks": 37
+		        },
+		        {
+		            "MinPoint": [
+		                6528,
+		                3232,
+		                3136
+		            ],
+		            "MaxPoint": [
+		                6687,
+		                3391,
+		                3359
+		            ],
+		            "MinChunk": [
+		                204,
+		                101,
+		                98
+		            ],
+		            "MaxChunk": [
+		                208,
+		                105,
+		                104
+		            ],
+		            "TotalBlocks": 175,
+		            "ActiveBlocks": 60
+		        },
+		        {
+		            "MinPoint": [
+		                6688,
+		                3232,
+		                3136
+		            ],
+		            "MaxPoint": [
+		                6847,
+		                3391,
+		                3359
+		            ],
+		            "MinChunk": [
+		                209,
+		                101,
+		                98
+		            ],
+		            "MaxChunk": [
+		                213,
+		                105,
+		                104
+		            ],
+		            "TotalBlocks": 175,
+		            "ActiveBlocks": 43
+		        },
+		        {
+		            "MinPoint": [
+		                6848,
+		                3232,
+		                3136
+		            ],
+		            "MaxPoint": [
+		                7007,
+		                3391,
+		                3359
+		            ],
+		            "MinChunk": [
+		                214,
+		                101,
+		                98
+		            ],
+		            "MaxChunk": [
+		                218,
+		                105,
+		                104
+		            ],
+		            "TotalBlocks": 175,
+		            "ActiveBlocks": 12
+		        }
+		    ]
+		}`
+
 func TestROIRepoPersistence(t *testing.T) {
 	tests.UseStore()
 	defer tests.CloseStore()

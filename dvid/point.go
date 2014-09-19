@@ -1148,3 +1148,111 @@ func (n NdString) PointNd() (PointNd, error) {
 	}
 	return result, nil
 }
+
+// Extents defines a 3d volume
+type Extents3d struct {
+	MinPoint Point3d
+	MaxPoint Point3d
+}
+
+func (ext *Extents3d) ExtendDim(dim int, val int32) bool {
+	var changed bool
+	if ext == nil {
+		return false
+	}
+	if val < ext.MinPoint[dim] {
+		ext.MinPoint[dim] = val
+		changed = true
+	}
+	if val > ext.MaxPoint[dim] {
+		ext.MaxPoint[dim] = val
+		changed = true
+	}
+	return changed
+}
+
+func (ext *Extents3d) Extend(pt Point3d) bool {
+	var changed bool
+	if ext == nil {
+		return false
+	}
+	if pt[0] < ext.MinPoint[0] {
+		ext.MinPoint[0] = pt[0]
+		changed = true
+	}
+	if pt[1] < ext.MinPoint[1] {
+		ext.MinPoint[1] = pt[1]
+		changed = true
+	}
+	if pt[2] < ext.MinPoint[2] {
+		ext.MinPoint[2] = pt[2]
+		changed = true
+	}
+	if pt[0] > ext.MaxPoint[0] {
+		ext.MaxPoint[0] = pt[0]
+		changed = true
+	}
+	if pt[1] > ext.MaxPoint[1] {
+		ext.MaxPoint[1] = pt[1]
+		changed = true
+	}
+	if pt[2] > ext.MaxPoint[2] {
+		ext.MaxPoint[2] = pt[2]
+		changed = true
+	}
+	return changed
+}
+
+// ChunkExtents3d defines a 3d volume of chunks
+type ChunkExtents3d struct {
+	MinChunk ChunkPoint3d
+	MaxChunk ChunkPoint3d
+}
+
+func (ext *ChunkExtents3d) ExtendDim(dim int, val int32) bool {
+	var changed bool
+	if ext == nil {
+		return false
+	}
+	if val < ext.MinChunk[dim] {
+		ext.MinChunk[dim] = val
+		changed = true
+	}
+	if val > ext.MaxChunk[dim] {
+		ext.MaxChunk[dim] = val
+		changed = true
+	}
+	return changed
+}
+
+func (ext *ChunkExtents3d) Extend(pt ChunkPoint3d) bool {
+	var changed bool
+	if ext == nil {
+		return false
+	}
+	if pt[0] < ext.MinChunk[0] {
+		ext.MinChunk[0] = pt[0]
+		changed = true
+	}
+	if pt[1] < ext.MinChunk[1] {
+		ext.MinChunk[1] = pt[1]
+		changed = true
+	}
+	if pt[2] < ext.MinChunk[2] {
+		ext.MinChunk[2] = pt[2]
+		changed = true
+	}
+	if pt[0] > ext.MaxChunk[0] {
+		ext.MaxChunk[0] = pt[0]
+		changed = true
+	}
+	if pt[1] > ext.MaxChunk[1] {
+		ext.MaxChunk[1] = pt[1]
+		changed = true
+	}
+	if pt[2] > ext.MaxChunk[2] {
+		ext.MaxChunk[2] = pt[2]
+		changed = true
+	}
+	return changed
+}
