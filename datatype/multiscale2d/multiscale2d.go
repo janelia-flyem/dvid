@@ -68,13 +68,15 @@ $ dvid repo <UUID> new multiscale2d <data name> <settings...>
     Placeholder    Bool ("false", "true", "0", or "1").  Return placeholder tile if missing.
 
 
-$ dvid node <UUID> <data name> generate <config JSON file name> <settings...>
+$ dvid node <UUID> <data name> generate <settings...>
 $ dvid -stdin node <UUID> <data name> generate <settings...> < config.json
 
 	Generates multiresolution XY, XZ, and YZ multiscale2d from Source to repo with specified UUID.
 	The resolutions at each scale and the dimensions of the tiles are passed in the configuration
 	JSON.  Only integral multiplications of original resolutions are allowed for scale.  If you
-	want more sophisticated processing, post the multiscale2d tiles directly via HTTP.
+	want more sophisticated processing, post the multiscale2d tiles directly via HTTP.  Note that
+	the generated tiles are aligned in a grid having (0,0,0) as a top left corner of a tile, not
+	tiles that start from the corner of present data since the data can expand.
 
 	Example:
 
@@ -92,6 +94,7 @@ $ dvid -stdin node <UUID> <data name> generate <settings...> < config.json
     planes          List of one or more planes separated by semicolon.  Each plane can be
                        designated using either axis number ("0,1") or xyz nomenclature ("xy").
                        Example:  planes="0,1;yz"
+    filename        Filename of JSON file specifying multiscale tile resolutions as below.
 
     Sample config.json:
 
@@ -328,7 +331,7 @@ type TileScaleSpec struct {
 }
 
 // TileSpec specifies the resolution & size of each dimension at each scale level.
-type TileSpec map[Scaling]TileScaleSpec
+type TileSpec []TileScaleSpec
 
 // MarshalJSON returns the JSON of the multiscale2d specifications for each scale level.
 func (tileSpec TileSpec) MarshalJSON() ([]byte, error) {
@@ -362,33 +365,24 @@ func LoadTileSpec(data []byte) (TileSpec, error) {
 	dvid.Debugf("Found %d scaling levels for multiscale2d specification.\n", len(config))
 
 	// Store resolution and tile sizes per level.
-	firstLevel := true
-	var scaling Scaling
 	var hires, lores float64
 	for scaleStr, levelSpec := range config {
+		fmt.Printf("scale %s, levelSpec %v\n", scaleStr, levelSpec)
 		scaleLevel, err := strconv.Atoi(scaleStr)
 		if err != nil {
 			return nil, fmt.Errorf("Scaling '%s' needs to be a number for the scale level.", scaleStr)
 		}
-		if firstLevel {
-			if scaleLevel != 0 {
-				return nil, fmt.Errorf("Tile levels should start with '0' then specify '1', etc.")
-			}
-			firstLevel = false
-		} else {
-			if int(scaling+1) != scaleLevel {
-				return nil, fmt.Errorf("Tile levels need to be incremental.  Jumps from %d to %d!",
-					scaling, scaleLevel)
-			}
+		if scaleLevel >= len(specs) {
+			return nil, fmt.Errorf("Tile levels must be consecutive integers from [0,Max]: Got scale level %d > # levels (%d)\n",
+				scaleLevel, len(specs))
 		}
-		scaling = Scaling(scaleLevel)
-		specs[scaling] = TileScaleSpec{LevelSpec: levelSpec}
+		specs[scaleLevel] = TileScaleSpec{LevelSpec: levelSpec}
 	}
 
 	// Compute the magnification between each level.
-	for scaling, levelSpec := range specs {
-		if int(scaling+1) <= len(specs)-1 {
-			nextSpec := specs[scaling+1]
+	for scaleLevel, levelSpec := range specs {
+		if int(scaleLevel+1) <= len(specs)-1 {
+			nextSpec := specs[scaleLevel+1]
 			var levelMag dvid.Point3d
 			for i, curRes := range levelSpec.Resolution {
 				hires = float64(curRes)
@@ -396,18 +390,18 @@ func LoadTileSpec(data []byte) (TileSpec, error) {
 				rem := math.Remainder(lores, hires)
 				if rem > 0.001 {
 					return nil, fmt.Errorf("Resolutions between scale %d and %d aren't integral magnifications!",
-						scaling, scaling+1)
+						scaleLevel, scaleLevel+1)
 				}
 				mag := lores / hires
 				if mag < 0.99 {
 					return nil, fmt.Errorf("A resolution between scale %d and %d actually increases!",
-						scaling, scaling+1)
+						scaleLevel, scaleLevel+1)
 				}
 				mag += 0.5
 				levelMag[i] = int32(mag)
 			}
 			levelSpec.levelMag = levelMag
-			specs[scaling] = levelSpec
+			specs[scaleLevel] = levelSpec
 		}
 	}
 	return specs, nil
@@ -465,6 +459,11 @@ type Data struct {
 	Properties
 }
 
+// Returns the default tile spec for
+func (d *Data) DefaultTileSpec() TileSpec {
+	return nil
+}
+
 func (d *Data) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		Base     *datastore.Data
@@ -519,25 +518,35 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 			d.DataName(), d.TypeName(), request.TypeCommand())
 	}
 	var uuidStr, dataName, cmdStr string
-	filenames := request.CommandArgs(1, &uuidStr, &dataName, &cmdStr)
+	request.CommandArgs(1, &uuidStr, &dataName, &cmdStr)
 
 	// Get the multiscale2d generation configuration from a file or stdin.
-	var configData []byte
+	var err error
+	var tileSpec TileSpec
 	if request.Input != nil {
-		configData = request.Input
-	} else {
-		if len(filenames) == 0 {
-			return fmt.Errorf("Must specify either a configuration JSON file name or use -stdin")
-		}
-		var err error
-		configData, err = storage.DataFromFile(filenames[0])
+		tileSpec, err = LoadTileSpec(request.Input)
 		if err != nil {
 			return err
 		}
-	}
-	tileSpec, err := LoadTileSpec(configData)
-	if err != nil {
-		return err
+	} else {
+		config := request.Settings()
+		filename, found, err := config.GetString("filename")
+		if err != nil {
+			return err
+		}
+		if found {
+			configData, err := storage.DataFromFile(filename)
+			if err != nil {
+				return err
+			}
+			tileSpec, err = LoadTileSpec(configData)
+			if err != nil {
+				return err
+			}
+		} else {
+			dvid.Infof("Using default tile generation method since no tile spec file was given...\n")
+			tileSpec = d.DefaultTileSpec()
+		}
 	}
 	return d.ConstructTiles(uuidStr, tileSpec, request)
 }
@@ -676,11 +685,11 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 // be much faster than computing the image from voxel blocks.
 func (d *Data) GetImage(ctx storage.Context, src *voxels.Data, geom dvid.Geometry, isotropic bool) (*dvid.Image, error) {
 	// Iterate through tiles that intersect our geometry.
-	levelSpec, found := d.Levels[0]
-	if !found {
+	if d.Levels == nil || len(d.Levels) == 0 {
 		return nil, fmt.Errorf("%s has no specification for tiles at highest resolution",
 			d.DataName())
 	}
+	levelSpec := d.Levels[0]
 	minSlice, err := src.HandleIsotropy2D(geom, isotropic)
 	if err != nil {
 		return nil, err
@@ -722,7 +731,7 @@ func (d *Data) GetImage(ctx storage.Context, src *voxels.Data, geom dvid.Geometr
 
 				// Get this tile from datastore
 				tileCoord, err := slice.PlaneToChunkPoint3d(x0, y0, minSlice.StartPoint(), levelSpec.TileSize)
-				goImg, err := d.GetTile(ctx, slice, Scaling(0), dvid.IndexZYX(tileCoord))
+				goImg, err := d.GetTile(ctx, slice, 0, dvid.IndexZYX(tileCoord))
 				if err != nil || goImg == nil {
 					return
 				}
@@ -836,21 +845,20 @@ func (d *Data) ServeTile(repo datastore.Repo, ctx storage.Context, w http.Respon
 }
 
 // GetTile returns a 2d tile image or a placeholder
-func (d *Data) GetTile(ctx storage.Context, shape dvid.DataShape, scaling Scaling, index dvid.IndexZYX) (image.Image, error) {
-	data, err := d.getTileData(ctx, shape, scaling, index)
+func (d *Data) GetTile(ctx storage.Context, shape dvid.DataShape, scaling int, index dvid.IndexZYX) (image.Image, error) {
+	data, err := d.getTileData(ctx, shape, Scaling(scaling), index)
 	if err != nil {
 		return nil, err
 	}
-	tileIndex := &IndexTile{&index, shape, scaling}
+	tileIndex := &IndexTile{&index, shape, Scaling(scaling)}
 
 	if data == nil {
 		if d.Placeholder {
-			scaleSpec, ok := d.Levels[scaling]
-			if !ok {
+			if d.Levels == nil || scaling < 0 || scaling >= len(d.Levels) {
 				return nil, fmt.Errorf("Could not find tile specification at given scale %d", scaling)
 			}
 			message := fmt.Sprintf("%s Tile coord %s @ scale %d", shape, tileIndex, scaling)
-			return dvid.PlaceholderImage(shape, scaleSpec.TileSize, message)
+			return dvid.PlaceholderImage(shape, d.Levels[scaling].TileSize, message)
 		}
 		return nil, nil // Not found
 	}
@@ -952,12 +960,11 @@ type outFunc func(index *IndexTile, img *dvid.Image) error
 
 // Construct all tiles for an image with offset and send to out function.  extractTiles assumes
 // the image and offset are in the XY plane.
-func (d *Data) extractTiles(v voxels.ExtData, offset dvid.Point, scaling Scaling, outF outFunc) error {
-
-	levelSpec, found := d.Levels[scaling]
-	if !found {
-		return fmt.Errorf("Could not extract tiles for unspecified scale level %d", scaling)
+func (d *Data) extractTiles(v voxels.ExtData, offset dvid.Point, scaling int, outF outFunc) error {
+	if d.Levels == nil || scaling < 0 || scaling >= len(d.Levels) {
+		return fmt.Errorf("Bad scaling level specified: %d", scaling)
 	}
+	levelSpec := d.Levels[scaling]
 	srcW := v.Size().Value(0)
 	srcH := v.Size().Value(1)
 
@@ -983,7 +990,7 @@ func (d *Data) extractTiles(v voxels.ExtData, offset dvid.Point, scaling Scaling
 			}
 			tileCoord, err := v.DataShape().PlaneToChunkPoint3d(x0, y0, offset, levelSpec.TileSize)
 			// fmt.Printf("Tile Coord: %s > %s\n", tileCoord, tileRect)
-			tileIndex := NewIndexTile(dvid.IndexZYX(tileCoord), v.DataShape(), scaling)
+			tileIndex := NewIndexTile(dvid.IndexZYX(tileCoord), v.DataShape(), Scaling(scaling))
 			if err = outF(tileIndex, tile); err != nil {
 				return err
 			}

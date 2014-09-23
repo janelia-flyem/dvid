@@ -49,6 +49,31 @@ func makeGrayscale(repo datastore.Repo, t *testing.T, name dvid.DataString) *vox
 	return grayscale
 }
 
+const testTileSpec = `
+{
+    "0": {  "Resolution": [10.0, 10.0, 10.0], "TileSize": [512, 512, 512] },
+    "1": {  "Resolution": [20.0, 20.0, 20.0], "TileSize": [512, 512, 512] },
+    "2": {  "Resolution": [40.0, 40.0, 40.0], "TileSize": [512, 512, 512] },
+    "3": {  "Resolution": [80.0, 80.0, 80.0], "TileSize": [512, 512, 512] }
+}
+`
+
+func TestLoadTileSpec(t *testing.T) {
+	tileSpec, err := LoadTileSpec([]byte(testTileSpec))
+	if err != nil {
+		t.Errorf("Unable to load tile spec: %s\n", err.Error())
+	}
+	if len(tileSpec) != 4 {
+		t.Errorf("Bad tile spec load: only %d elements != 4\n", len(tileSpec))
+	}
+	if tileSpec[2].Resolution.GetMax() != 40.0 {
+		t.Errorf("Bad tile spec at level 2: %v\n", tileSpec[2])
+	}
+	if tileSpec[3].TileSize.Value(2) != 512 {
+		t.Errorf("Bad tile spec at level 3: %v\n", tileSpec[3])
+	}
+}
+
 func TestMultiscale2dRepoPersistence(t *testing.T) {
 	tests.UseStore()
 	defer tests.CloseStore()
