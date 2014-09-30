@@ -1272,6 +1272,12 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 	}
 	storeCtx := datastore.NewVersionedContext(d, versionID)
 
+	// All HTTP requests are interactive so let server tally request.
+	// TODO: This command should be moved to web server handling when better
+	// framework for datatype-specific API is implemented, allowing type-specific
+	// logging of API calls, etc.
+	server.GotInteractiveRequest()
+
 	dvid.Infof("voxels.ServeHTTP(): versionID %d\n", versionID)
 
 	// Allow cross-origin resource sharing.

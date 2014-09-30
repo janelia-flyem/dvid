@@ -381,6 +381,8 @@ func loadXYImages(i IntData, load *bulkLoadInfo) error {
 	// Iterate through XY slices batched into the Z length of blocks.
 	fileNum := 1
 	for _, filename := range load.filenames {
+		server.BlockOnInteractiveRequests("voxels.loadXYImages")
+
 		timedLog := dvid.NewTimeLog()
 
 		zInBlock := load.offset.Value(2) % blockSize.Value(2)

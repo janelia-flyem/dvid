@@ -560,6 +560,12 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 	w.Header().Add("Access-Control-Allow-Origin", "*")
 
 	// Get the action (GET, POST)
+	// All HTTP requests are interactive so let server tally request.
+	// TODO: This command should be moved to web server handling when better
+	// framework for datatype-specific API is implemented, allowing type-specific
+	// logging of API calls, etc.
+	server.GotInteractiveRequest()
+
 	action := strings.ToLower(r.Method)
 	switch action {
 	case "get", "post":

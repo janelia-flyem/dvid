@@ -23,6 +23,24 @@ type Config interface {
 }
 
 var (
+	// InteractiveOpsPerMin gives the number of interactive-level requests
+	// received over the last minute.  This is useful for throttling "batch"
+	// operations on a single DVID server.  Note that this metric is an lower
+	// bound on the number of interactive requests over the last minute since
+	// we do non-blocking reports.
+	InteractiveOpsPerMin int
+
+	// Channel to track the # of interactive requests.
+	interactiveOpsCh = make(chan bool)
+
+	// Current tally of interactive requests.
+	interactiveOpsPerMin int
+
+	// MaxInteractiveOpsBeforeBlock specifies the number of interactive requests
+	// per minute that are allowed before batch-like computation (e.g., loading
+	// of voxel volumes) is blocked.
+	MaxInteractiveOpsBeforeBlock int = 3
+
 	// ActiveHandlers is maximum number of active handlers over last second.
 	ActiveHandlers int
 
@@ -89,6 +107,45 @@ func init() {
 			}
 		}
 	}()
+
+	// Monitor the # of interactive requests.
+	go func() {
+		minuteTick := time.Tick(1 * time.Minute)
+		for {
+			select {
+			case <-interactiveOpsCh:
+				interactiveOpsPerMin++
+			case <-minuteTick:
+				InteractiveOpsPerMin = interactiveOpsPerMin
+				interactiveOpsPerMin = 0
+			}
+		}
+	}()
+}
+
+// GotInteractiveRequest can be called to track the # of interactive requests that
+// require some amount of computation.  Don't use this to track simple polling APIs.
+// This routine will not block.
+func GotInteractiveRequest() {
+	select {
+	case interactiveOpsCh <- true:
+	default:
+	}
+}
+
+// BlockOnInteractiveRequests will block this goroutine until the number of interactive
+// requests dips below MaxInteractiveOpsBeforeBlock.
+func BlockOnInteractiveRequests(caller ...string) {
+	for {
+		if InteractiveOpsPerMin < MaxInteractiveOpsBeforeBlock {
+			return
+		}
+		if len(caller) != 0 {
+			dvid.Infof("Routine %q paused due to %d interactive requests/min...\n",
+				caller[0], InteractiveOpsPerMin)
+		}
+		time.Sleep(10 * time.Second)
+	}
 }
 
 func SetReadOnly(on bool) {

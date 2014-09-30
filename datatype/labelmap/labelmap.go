@@ -214,6 +214,7 @@ GET <api URL>/node/<UUID>/<data name>/intersect/<min block>/<max block>
     max block     Maximum block coordinate with underscore as separator.
 
 GET  <api URL>/node/<UUID>/<data name>/labels/<dims>/<size>/<offset>[/<format>][?throttle=on]
+GET  <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?throttle=on]
 
     Retrieves mapped labels for each voxel in the specified extent.
 
@@ -244,6 +245,13 @@ GET  <api URL>/node/<UUID>/<data name>/labels/<dims>/<size>/<offset>[/<format>][
                     available in server implementation.
                   2D: "png"
                   nD: uses default "octet-stream".
+
+POST <api URL>/node/<UUID>/<data name>/sparsevol/<label>
+
+	Posts changes consisting of a sparse volume consisting of one label.
+	If label is 0, a new label is generated and returned as part of response.
+	The sparse volume representation is the same as the sparsevol API in labels64.
+
 
 TODO
 
@@ -487,6 +495,12 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 		versionID = versions[0]
 	}
 	storeCtx := datastore.NewVersionedContext(d, versionID)
+
+	// All HTTP requests are interactive so let server tally request.
+	// TODO: This command should be moved to web server handling when better
+	// framework for datatype-specific API is implemented, allowing type-specific
+	// logging of API calls, etc.
+	server.GotInteractiveRequest()
 
 	// Allow cross-origin resource sharing.
 	w.Header().Add("Access-Control-Allow-Origin", "*")

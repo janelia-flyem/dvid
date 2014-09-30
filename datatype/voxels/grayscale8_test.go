@@ -263,6 +263,60 @@ func TestYZSliceGrayscale8(t *testing.T) {
 	sliceTest(t, "YZ", slice)
 }
 
+/*
+// Create, store, and retrieve data using HTTP API
+func TestGrayscale8HTTPAPI(t *testing.T) {
+	tests.UseStore()
+	defer tests.CloseStore()
+
+	_, versionID := initTestRepo()
+	uuid, err := datastore.UUIDFromVersion(versionID)
+	if err != nil {
+		t.Errorf(err.Error())
+	}
+
+	// Create a data instance
+	name := "grayscaleTest"
+	var config dvid.Config
+	config.Set("typename", "grayscale8")
+	config.Set("dataname", name)
+	apiStr := fmt.Sprintf("%srepo/%s/instance", server.WebAPIPath, uuid)
+	req, err := http.NewRequest("POST", apiStr, config)
+	if err != nil {
+		t.Fatalf("Unsuccessful POST request (%s): %s\n", apiStr, err.Error())
+	}
+	w := httptest.NewRecorder()
+	server.WebMux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Bad server response POST to %s, status %d, for %q: %s\n", apiStr, w.Code, name,
+			string(w.Body.Bytes()))
+	}
+
+	// Test badly formatted API calls return appropriate errors
+	apiStr = fmt.Sprintf("%snode/%s/%s/raw/0_1_2/250_250/0_0_0", server.WebAPIPath, uuid, name)
+	req, err = http.NewRequest("GET", apiStr, nil)
+	if err != nil {
+		t.Fatalf("Unsuccessful POST request (%s): %s\n", apiStr, err.Error())
+	}
+	w = httptest.NewRecorder()
+	server.WebMux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("Bad server response POST to %s, status %d, for %q: %s\n", apiStr, w.Code, name,
+			string(w.Body.Bytes()))
+	}
+
+	// Post data to the instance
+
+	// Get a 2d XY image
+
+	// Get a 2d XZ image
+
+	// Get a 2d YZ image
+
+	// Get a 3d image
+}
+*/
+
 // Should intersect 100x100 image at Z = 67 and Y = 108
 const testROIJson = "[[2,3,10,10],[2,4,12,13]]"
 
