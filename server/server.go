@@ -33,8 +33,9 @@ var (
 	// Channel to track the # of interactive requests.
 	interactiveOpsCh = make(chan bool)
 
-	// Current tally of interactive requests.
-	interactiveOpsPer5Min int
+	// Current tally of interactive requests over last 5 minutes in bins of 5 seconds,
+	// where index 0 = current time bin.
+	interactiveOps = make([]int, 60)
 
 	// MaxInteractiveOpsBeforeBlock specifies the number of interactive requests
 	// per minute that are allowed before batch-like computation (e.g., loading
@@ -108,16 +109,18 @@ func init() {
 		}
 	}()
 
-	// Monitor the # of interactive requests.
+	// Monitor the # of interactive requests over last 5 minutes.
 	go func() {
-		minutesTick := time.Tick(5 * time.Minute)
+		tick := time.Tick(5 * time.Second)
 		for {
 			select {
 			case <-interactiveOpsCh:
-				interactiveOpsPer5Min++
-			case <-minutesTick:
-				InteractiveOpsPer5Min = interactiveOpsPer5Min
-				interactiveOpsPer5Min = 0
+				interactiveOps[0]++
+			case <-tick:
+				newCount := InteractiveOpsPer5Min - interactiveOps[59] + interactiveOps[0]
+				InteractiveOpsPer5Min = newCount
+				copy(interactiveOps[1:], interactiveOps[:59])
+				interactiveOps[0] = 0
 			}
 		}
 	}()
@@ -144,7 +147,7 @@ func BlockOnInteractiveRequests(caller ...string) {
 			dvid.Infof("Routine %q paused due to %d interactive requests/min...\n",
 				caller[0], InteractiveOpsPer5Min)
 		}
-		time.Sleep(10 * time.Second)
+		time.Sleep(30 * time.Second)
 	}
 }
 
