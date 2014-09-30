@@ -23,18 +23,18 @@ type Config interface {
 }
 
 var (
-	// InteractiveOpsPerMin gives the number of interactive-level requests
-	// received over the last minute.  This is useful for throttling "batch"
+	// InteractiveOpsPer5Min gives the number of interactive-level requests
+	// received over the last 5 minutes.  This is useful for throttling "batch"
 	// operations on a single DVID server.  Note that this metric is an lower
 	// bound on the number of interactive requests over the last minute since
 	// we do non-blocking reports.
-	InteractiveOpsPerMin int
+	InteractiveOpsPer5Min int
 
 	// Channel to track the # of interactive requests.
 	interactiveOpsCh = make(chan bool)
 
 	// Current tally of interactive requests.
-	interactiveOpsPerMin int
+	interactiveOpsPer5Min int
 
 	// MaxInteractiveOpsBeforeBlock specifies the number of interactive requests
 	// per minute that are allowed before batch-like computation (e.g., loading
@@ -110,14 +110,14 @@ func init() {
 
 	// Monitor the # of interactive requests.
 	go func() {
-		minuteTick := time.Tick(1 * time.Minute)
+		minutesTick := time.Tick(5 * time.Minute)
 		for {
 			select {
 			case <-interactiveOpsCh:
-				interactiveOpsPerMin++
-			case <-minuteTick:
-				InteractiveOpsPerMin = interactiveOpsPerMin
-				interactiveOpsPerMin = 0
+				interactiveOpsPer5Min++
+			case <-minutesTick:
+				InteractiveOpsPer5Min = interactiveOpsPer5Min
+				interactiveOpsPer5Min = 0
 			}
 		}
 	}()
@@ -137,12 +137,12 @@ func GotInteractiveRequest() {
 // requests dips below MaxInteractiveOpsBeforeBlock.
 func BlockOnInteractiveRequests(caller ...string) {
 	for {
-		if InteractiveOpsPerMin < MaxInteractiveOpsBeforeBlock {
+		if InteractiveOpsPer5Min < MaxInteractiveOpsBeforeBlock {
 			return
 		}
 		if len(caller) != 0 {
 			dvid.Infof("Routine %q paused due to %d interactive requests/min...\n",
-				caller[0], InteractiveOpsPerMin)
+				caller[0], InteractiveOpsPer5Min)
 		}
 		time.Sleep(10 * time.Second)
 	}
