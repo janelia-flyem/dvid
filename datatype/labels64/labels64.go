@@ -35,7 +35,7 @@ const (
 	TypeName = "labels64"
 
 	// Don't allow requests that will return more than this amount of data.
-	MaxDataRequest = dvid.Giga
+	MaxDataRequest = 3 * dvid.Giga
 )
 
 const HelpMessage = `
