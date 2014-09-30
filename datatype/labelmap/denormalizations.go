@@ -228,6 +228,7 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 
 	labelsCtx := datastore.NewVersionedContext(labelData, versionID)
 	for z := minIndexZ; z <= maxIndexZ; z++ {
+		server.BlockOnInteractiveRequests("labelmap [load layer]")
 		blockLog := dvid.NewTimeLog()
 
 		// Get the label->label map for this Z
@@ -303,6 +304,8 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 		// Send RLE of label to size indexer and surface calculator.
 		sizeCh <- chunk
 		surfaceCh[label%uint64(numSurfCalculators)] <- chunk
+
+		server.BlockOnInteractiveRequests("labelmap [size/surface compute]")
 	})
 	if err != nil {
 		dvid.Errorf("Error indexing sizes for %s: %s\n", d.DataName(), err.Error())

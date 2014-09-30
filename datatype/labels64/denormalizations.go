@@ -103,6 +103,7 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 	minIndexZ := extents.MinIndex.(*dvid.IndexZYX)[2]
 	maxIndexZ := extents.MaxIndex.(*dvid.IndexZYX)[2]
 	for z := minIndexZ; z <= maxIndexZ; z++ {
+		server.BlockOnInteractiveRequests("labels64 [load layer]")
 		layerLog := dvid.NewTimeLog()
 
 		minIndexZYX := dvid.IndexZYX{dvid.MinChunkPoint3d[0], dvid.MinChunkPoint3d[1], z}
@@ -165,6 +166,8 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 		// Send RLE of label to size indexer and surface calculator.
 		sizeCh <- chunk
 		surfaceCh[label%uint64(numSurfCalculators)] <- chunk
+
+		server.BlockOnInteractiveRequests("labels64 [size/surface compute]")
 	})
 	if err != nil {
 		dvid.Errorf("Error indexing sizes for %s: %s\n", d.DataName(), err.Error())
