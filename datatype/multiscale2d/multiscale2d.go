@@ -1038,6 +1038,8 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, request datasto
 			}
 			dvid.Debugf("Tiling XY image %d x %d pixels\n", width, height)
 			for z := src.MinPoint.Value(2); z <= src.MaxPoint.Value(2); z++ {
+				server.BlockOnInteractiveRequests("multiscale2d.ConstructTiles [xy]")
+
 				sliceLog := dvid.NewTimeLog()
 				offset = offset.Modify(map[uint8]int32{2: z})
 				slice, err := dvid.NewOrthogSlice(dvid.XY, offset, dvid.Point2d{width, height})
@@ -1087,6 +1089,8 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, request datasto
 			}
 			dvid.Debugf("Tiling XZ image %d x %d pixels\n", width, height)
 			for y := src.MinPoint.Value(1); y <= src.MaxPoint.Value(1); y++ {
+				server.BlockOnInteractiveRequests("multiscale2d.ConstructTiles [xz]")
+
 				sliceLog := dvid.NewTimeLog()
 				offset = offset.Modify(map[uint8]int32{1: y})
 				slice, err := dvid.NewOrthogSlice(dvid.XZ, offset, dvid.Point2d{width, height})
@@ -1136,6 +1140,8 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, request datasto
 			}
 			dvid.Debugf("Tiling YZ image %d x %d pixels\n", width, height)
 			for x := src.MinPoint.Value(0); x <= src.MaxPoint.Value(0); x++ {
+				server.BlockOnInteractiveRequests("multiscale2d.ConstructTiles [yz]")
+
 				sliceLog := dvid.NewTimeLog()
 				offset = offset.Modify(map[uint8]int32{0: x})
 				slice, err := dvid.NewOrthogSlice(dvid.YZ, offset, dvid.Point2d{width, height})
