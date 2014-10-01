@@ -92,6 +92,10 @@ const WebHelp = `
 
 	Returns JSON for the repositories under management by this server.
 
+ HEAD /api/repo/{uuid}
+
+ 	Returns 200 if a repo with given UUID is available.
+
  GET  /api/repo/{uuid}/info
 
 	Returns JSON for just the repository with given root UUID.  The UUID string can be
@@ -218,8 +222,10 @@ func initRoutes() {
 	mainMux.Get("/api/repos/info", reposInfoHandler)
 
 	repoMux := web.New()
+	mainMux.Handle("/api/repo/:uuid", repoMux)
 	mainMux.Handle("/api/repo/:uuid/*", repoMux)
 	repoMux.Use(repoSelector)
+	repoMux.Head("/api/repo/:uuid", repoHeadHandler)
 	repoMux.Get("/api/repo/:uuid/info", repoInfoHandler)
 	repoMux.Post("/api/repo/:uuid/instance", repoNewDataHandler)
 	repoMux.Post("/api/repo/:uuid/lock", repoLockHandler)
@@ -481,6 +487,11 @@ func reposPostHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, "{%q: %q}", "Root", repo.RootUUID())
+}
+
+func repoHeadHandler(c web.C, w http.ResponseWriter, r *http.Request) {
+	repo := (c.Env["repo"]).(datastore.Repo)
+	fmt.Fprintf(w, "Repo available with root UUID %s\n", repo.RootUUID())
 }
 
 func repoInfoHandler(c web.C, w http.ResponseWriter, r *http.Request) {
