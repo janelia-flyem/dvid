@@ -266,6 +266,7 @@ func (m *repoManager) loadMetadata() error {
 				dvid.Errorf("Version id %d found in repo %s (id %d) not in cache map. Adding it...",
 					versionID, repo.rootID, repo.repoID)
 				m.versionToUUID[versionID] = node.uuid
+				m.UUIDToVersion[node.uuid] = versionID
 			}
 			m.repos[uuid] = repo
 		}
@@ -879,7 +880,6 @@ func (r *repoT) NewVersion(uuid dvid.UUID) (dvid.UUID, error) {
 	}
 	childNode.parents = []dvid.VersionID{parentVersionID}
 	r.dag.nodes[childNode.versionID] = childNode
-	r.manager.versionToUUID[childNode.versionID] = childNode.uuid
 
 	parentNode.Lock()
 	parentNode.children = append(parentNode.children, childNode.versionID)
