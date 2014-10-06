@@ -260,11 +260,12 @@ func (m *repoManager) loadMetadata() error {
 		}
 		repo.manager = m
 		// Cache all UUID from nodes into our high-level cache
-		for versionID, _ := range repo.dag.nodes {
+		for versionID, node := range repo.dag.nodes {
 			uuid, found := m.versionToUUID[versionID]
 			if !found {
-				return fmt.Errorf("Version id %d found in repo %s (id %d) not in cache map",
+				dvid.Errorf("Version id %d found in repo %s (id %d) not in cache map. Adding it...",
 					versionID, repo.rootID, repo.repoID)
+				m.versionToUUID[versionID] = node.uuid
 			}
 			m.repos[uuid] = repo
 		}
@@ -315,6 +316,9 @@ func (m *repoManager) NewVersionID(uuid dvid.UUID) (dvid.VersionID, error) {
 	m.versionToUUID[curid] = uuid
 	m.UUIDToVersion[uuid] = curid
 	m.newVersionID++
+	if err := m.putCaches(); err != nil {
+		return curid, err
+	}
 	return curid, m.putNewIDs()
 }
 
@@ -328,6 +332,9 @@ func (m *repoManager) NewUUID() (dvid.UUID, dvid.VersionID, error) {
 	m.versionToUUID[curid] = uuid
 	m.UUIDToVersion[uuid] = curid
 	m.newVersionID++
+	if err := m.putCaches(); err != nil {
+		return uuid, curid, err
+	}
 	return uuid, curid, m.putNewIDs()
 }
 
@@ -492,7 +499,9 @@ func (m *repoManager) AddRepo(repo Repo) error {
 	r.manager = m
 
 	// Persist the changes
-	m.putCaches()
+	if err := m.putCaches(); err != nil {
+		return err
+	}
 	return r.Save()
 }
 
@@ -870,6 +879,7 @@ func (r *repoT) NewVersion(uuid dvid.UUID) (dvid.UUID, error) {
 	}
 	childNode.parents = []dvid.VersionID{parentVersionID}
 	r.dag.nodes[childNode.versionID] = childNode
+	r.manager.versionToUUID[childNode.versionID] = childNode.uuid
 
 	parentNode.Lock()
 	parentNode.children = append(parentNode.children, childNode.versionID)
