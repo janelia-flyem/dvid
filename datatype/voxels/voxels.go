@@ -1278,8 +1278,6 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 	// logging of API calls, etc.
 	server.GotInteractiveRequest()
 
-	dvid.Infof("voxels.ServeHTTP(): versionID %d\n", versionID)
-
 	// Allow cross-origin resource sharing.
 	w.Header().Add("Access-Control-Allow-Origin", "*")
 

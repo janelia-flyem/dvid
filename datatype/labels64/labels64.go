@@ -193,7 +193,7 @@ GET <api URL>/node/<UUID>/<data name>/sparsevol/<label>
 	               Bit 0 (LSB) - 8-bit grayscale
 	               Bit 1 - 16-bit grayscale
 	               Bit 2 - 16-bit normal
-	               ...
+	               If set to all 0, there is no payload and its a binary sparse volume.
 	    uint8    Number of dimensions
 	    uint8    Dimension of run (typically 0 = X)
 	    byte     Reserved (to be used later)

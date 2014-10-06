@@ -491,6 +491,7 @@ func reposPostHandler(w http.ResponseWriter, r *http.Request) {
 
 func repoHeadHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	repo := (c.Env["repo"]).(datastore.Repo)
+	w.Header().Set("Content-Type", "text/plain")
 	fmt.Fprintf(w, "Repo available with root UUID %s\n", repo.RootUUID())
 }
 
@@ -581,7 +582,7 @@ func repoLockHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 		BadRequest(w, r, err.Error())
 	} else {
 		w.Header().Set("Content-Type", "text/plain")
-		fmt.Fprintln(w, "Lock on node %s successful.", uuid)
+		fmt.Fprintf(w, "Lock on node %s successful.\n", uuid)
 	}
 }
 

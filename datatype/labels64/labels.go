@@ -169,12 +169,11 @@ type sparseOp struct {
 //        int32   Coordinate of run start (dimension 0)
 //        int32   Coordinate of run start (dimension 1)
 //        int32   Coordinate of run start (dimension 2)
-//		  ...
 //        int32   Length of run
 //        bytes   Optional payload dependent on first byte descriptor
 //
 func GetSparseVol(ctx storage.Context, label uint64) ([]byte, error) {
-	bigdata, err := storage.SmallDataStore()
+	bigdata, err := storage.BigDataStore()
 	if err != nil {
 		return nil, fmt.Errorf("Cannot get datastore that handles big data: %s\n", err.Error())
 	}
@@ -182,9 +181,9 @@ func GetSparseVol(ctx storage.Context, label uint64) ([]byte, error) {
 	// Create the sparse volume header
 	buf := new(bytes.Buffer)
 	buf.WriteByte(dvid.EncodingBinary)
-	binary.Write(buf, binary.LittleEndian, uint8(3))
-	binary.Write(buf, binary.LittleEndian, byte(0))
-	buf.WriteByte(byte(0))
+	binary.Write(buf, binary.LittleEndian, uint8(3))  // # of dimensions
+	binary.Write(buf, binary.LittleEndian, byte(0))   // dimension of run (X = 0)
+	buf.WriteByte(byte(0))                            // reserved for later
 	binary.Write(buf, binary.LittleEndian, uint32(0)) // Placeholder for # voxels
 	binary.Write(buf, binary.LittleEndian, uint32(0)) // Placeholder for # spans
 
@@ -211,6 +210,33 @@ func GetSparseVol(ctx storage.Context, label uint64) ([]byte, error) {
 
 	dvid.Debugf("[%s] label %d: found %d blocks, %d runs\n", ctx, label, op.numBlocks, op.numRuns)
 	return op.encoding, nil
+}
+
+// PutSparseVol stores an encoded sparse volume that stays within a given forward label.
+// This function handles modification/deletion of all denormalized data touched by this
+// sparse label volume.
+func PutSparseVol(ctx storage.Context, label uint64, data []byte) error {
+	/*
+		bigdata, err := storage.BigDataStore()
+		if err != nil {
+			return fmt.Errorf("Cannot get datastore that handles big data: %s\n", err.Error())
+		}
+
+		if data[0] != dvid.EncodingBinary {
+			return fmt.Errorf("Received corrupt sparse volume -- first byte not %d", dvid.EncodingBinary)
+		}
+		if data[1] != 3 {
+			return fmt.Errorf("Can't process sparse volume with # of dimensions = %d", data[1])
+		}
+		if data[2] != 0 {
+			return fmt.Errorf("Can't process sparse volumes with runs encoded in dimension %d", data[2])
+		}
+		// numVoxels := binary.LittleEndian.Uint32(data[4:8])  [not used right now]
+		numSpans := binary.LittleEndian.Uint32(data[8:12])
+
+		//
+	*/
+	return nil
 }
 
 // Runs asynchronously and assumes that sparse volumes per spatial indices are ordered

@@ -51,10 +51,18 @@ func init() {
 
 // Sparse Volume binary encoding payload descriptors.
 const (
-	EncodingBinary      byte = 0x00
-	EncodingGrayscale8       = 0x01
-	EncodingGrayscale16      = 0x02
-	EncodingNormal16         = 0x04
+	// EncodingBinary denotes no payload bytes since binary sparse volume is
+	// defined by just start and run length.
+	EncodingBinary byte = 0x00
+
+	// EncodingGrayscale8 denotes an 8-bit grayscale payload.
+	EncodingGrayscale8 = 0x01
+
+	// EncodingGrayscale16 denotes a 16-bit grayscale payload.
+	EncodingGrayscale16 = 0x02
+
+	// EncodingNormal16 denotes 16-bit encoded normals.
+	EncodingNormal16 = 0x04
 )
 
 var (
@@ -245,7 +253,7 @@ func (vol *SparseVol) SurfaceSerialization(blockNz int32, res NdFloat32) ([]byte
 	var vertexBuf, normalBuf bytes.Buffer
 	var surfaceSize uint32
 	rleI := 0
-	Debugf("Label %d, # voxels %d, buffer size %s, minPt %s, maxPt %s: ",
+	Debugf("Label %d, # voxels %d, buffer size %s, minPt %s, maxPt %s",
 		vol.label, vol.numVoxels, binvol.size, vol.minPt, vol.maxPt)
 
 	for {

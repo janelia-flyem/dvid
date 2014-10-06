@@ -144,7 +144,7 @@ func BlockOnInteractiveRequests(caller ...string) {
 			return
 		}
 		if len(caller) != 0 {
-			dvid.Infof("Routine %q paused due to %d interactive requests/min...\n",
+			dvid.Infof("Routine %q paused due to %d interactive requests over last 5 min.\n",
 				caller[0], InteractiveOpsPer5Min)
 		}
 		time.Sleep(30 * time.Second)

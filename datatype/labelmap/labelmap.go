@@ -13,6 +13,7 @@ import (
 	"encoding/gob"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"math"
 	"net/http"
 	"os"
@@ -114,9 +115,10 @@ POST <api URL>/node/<UUID>/<data name>/info
     data name     Name of mapping data.
 
 
-GET <api URL>/node/<UUID>/<data name>/sparsevol/<mapped label>
+GET  <api URL>/node/<UUID>/<data name>/sparsevol/<mapped label>
+POST <api URL>/node/<UUID>/<data name>/sparsevol/<mapped label>
 
-	Returns a sparse volume with voxels of the given forward label in encoded RLE format.
+	Returns or puts a sparse volume with voxels of the given forward label in encoded RLE format.
 	The encoding has the following format where integers are little endian and the order
 	of data is exactly as specified below:
 
@@ -134,9 +136,11 @@ GET <api URL>/node/<UUID>/<data name>/sparsevol/<mapped label>
 	        int32   Coordinate of run start (dimension 0)
 	        int32   Coordinate of run start (dimension 1)
 	        int32   Coordinate of run start (dimension 2)
-			  ...
 	        int32   Length of run
 	        bytes   Optional payload dependent on first byte descriptor
+
+	On POST, if mapped label is 0, a new label is generated and returned as part of response.
+	POST will modify the labelmap's underlying
 
 
 GET <api URL>/node/<UUID>/<data name>/sparsevol-by-point/<coord>
@@ -216,7 +220,8 @@ GET <api URL>/node/<UUID>/<data name>/intersect/<min block>/<max block>
 GET  <api URL>/node/<UUID>/<data name>/labels/<dims>/<size>/<offset>[/<format>][?throttle=on]
 GET  <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?throttle=on]
 
-    Retrieves mapped labels for each voxel in the specified extent.
+    Retrieves mapped labels for each voxel in the specified extent.  Either 'labels' or
+    'raw' (similar to labels64 API) can be used.
 
     Example: 
 
@@ -245,13 +250,6 @@ GET  <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?th
                     available in server implementation.
                   2D: "png"
                   nD: uses default "octet-stream".
-
-POST <api URL>/node/<UUID>/<data name>/sparsevol/<label>
-
-	Posts changes consisting of a sparse volume consisting of one label.
-	If label is 0, a new label is generated and returned as part of response.
-	The sparse volume representation is the same as the sparsevol API in labels64.
-
 
 TODO
 
@@ -571,6 +569,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 
 	case "sparsevol":
 		// GET <api URL>/node/<UUID>/<data name>/sparsevol/<label>
+		// POST <api URL>/node/<UUID>/<data name>/sparsevol/<label>
 		if len(parts) < 5 {
 			server.BadRequest(w, r, "ERROR: DVID requires label ID to follow 'sparsevol' command")
 			return
@@ -580,16 +579,31 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 			server.BadRequest(w, r, err.Error())
 			return
 		}
-		data, err := labels64.GetSparseVol(storeCtx, label)
-		if err != nil {
-			server.BadRequest(w, r, err.Error())
-			return
-		}
-		w.Header().Set("Content-type", "application/octet-stream")
-		_, err = w.Write(data)
-		if err != nil {
-			server.BadRequest(w, r, err.Error())
-			return
+		if op == voxels.PutOp {
+			data, err := ioutil.ReadAll(r.Body)
+			if err != nil {
+				server.BadRequest(w, r, err.Error())
+				return
+			}
+			err = labels64.PutSparseVol(storeCtx, label, data)
+			if err != nil {
+				server.BadRequest(w, r, err.Error())
+				return
+			}
+			w.Header().Set("Content-Type", "text/plain")
+			fmt.Fprintf(w, "Put sparse volume with label %d into version %d\n", label, versionID)
+		} else {
+			data, err := labels64.GetSparseVol(storeCtx, label)
+			if err != nil {
+				server.BadRequest(w, r, err.Error())
+				return
+			}
+			w.Header().Set("Content-type", "application/octet-stream")
+			_, err = w.Write(data)
+			if err != nil {
+				server.BadRequest(w, r, err.Error())
+				return
+			}
 		}
 		timedLog.Infof("HTTP %s: sparsevol on label %d (%s)", r.Method, label, r.URL)
 
@@ -710,9 +724,9 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 		fmt.Fprintf(w, jsonStr)
 		timedLog.Infof("HTTP %s: get labels with volume > %d and < %d (%s)", r.Method, minSize, maxSize, r.URL)
 
-	case "labels":
+	case "labels", "raw":
 		if len(parts) < 7 {
-			server.BadRequest(w, r, "'labels' must be followed by shape/size/offset")
+			server.BadRequest(w, r, "'labels' or 'raw' must be followed by shape/size/offset")
 			return
 		}
 		if op == voxels.PutOp {
