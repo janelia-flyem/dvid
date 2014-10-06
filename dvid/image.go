@@ -1244,6 +1244,24 @@ func ImageFromPOST(r *http.Request) (img image.Image, format string, err error) 
 	return image.Decode(buf)
 }
 
+// ImageFromData returns a go Image given pixel data.
+func ImageFromData(data []byte, nx, ny int) (image.Image, error) {
+	sz := len(data)
+	pixels := nx * ny
+	if sz%pixels != 0 {
+		return nil, fmt.Errorf("Can't convert %d bytes to %d x %d image", sz, nx, ny)
+	}
+	bytesPerVoxel := sz / pixels
+	switch bytesPerVoxel {
+	case 1:
+		return ImageGrayFromData(data, nx, ny), nil
+	case 8:
+		return ImageNRGBA64FromData(data, nx, ny), nil
+	default:
+		return nil, fmt.Errorf("Can't convert %d bytes/voxel data to go image", bytesPerVoxel)
+	}
+}
+
 // ImageGrayFromData returns a Gray image given data and image size.
 func ImageGrayFromData(data []uint8, nx, ny int) (img *image.Gray) {
 	img = &image.Gray{

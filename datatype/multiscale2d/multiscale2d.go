@@ -125,7 +125,7 @@ GET  <api URL>/node/<UUID>/<data name>/info
     data name     Name of multiscale2d data.
 
 
-GET  <api URL>/node/<UUID>/<data name>/tile/<dims>/<scaling>/<tile coord>
+GET  <api URL>/node/<UUID>/<data name>/tile/<dims>/<scaling>/<tile coord>[?noblanks=true]
 (TODO) POST
     Retrieves PNG tile of named data within a version node.  This GET call should be the fastest
     way to retrieve image data since internally it has already been stored as a compressed PNG.
@@ -142,6 +142,11 @@ GET  <api URL>/node/<UUID>/<data name>/tile/<dims>/<scaling>/<tile coord>
                     Slice strings ("xy", "xz", or "yz") are also accepted.
     scaling       Value from 0 (original resolution) to N where each step is downres by 2.
     tile coord    The tile coordinate in "x_y_z" format.  See discussion of scaling above.
+
+  	Query-string options:
+
+  	noblanks	  If true, any tile request for tiles outside the currently stored extents
+  				  will return a 
 
 
 GET  <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>]
@@ -601,20 +606,15 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 		fmt.Fprintf(w, string(jsonBytes))
 
 	case "tile":
-		if len(parts) < 7 {
-			server.BadRequest(w, r, "'tile' request must be following by plane, scale level, and tile coordinate")
-			return
-		}
-		planeStr, scalingStr, coordStr := parts[4], parts[5], parts[6]
 		if action == "post" {
 			server.BadRequest(w, r, "DVID does not yet support POST of multiscale2d")
 			return
 		}
-		if err := d.ServeTile(storeCtx, w, r, planeStr, scalingStr, coordStr); err != nil {
+		if err := d.ServeTile(repo, storeCtx, w, r, parts); err != nil {
 			server.BadRequest(w, r, err.Error())
 			return
 		}
-		timedLog.Infof("HTTP %s: tile %s (%s)", r.Method, planeStr, r.URL)
+		timedLog.Infof("HTTP %s: tile (%s)", r.Method, r.URL)
 
 	case "raw", "isotropic":
 		if action == "post" {
@@ -756,7 +756,24 @@ func (d *Data) GetImage(ctx storage.Context, src *voxels.Data, geom dvid.Geometr
 }
 
 // ServeTile returns a tile with appropriate Content-Type set.
-func (d *Data) ServeTile(ctx storage.Context, w http.ResponseWriter, r *http.Request, planeStr, scalingStr, coordStr string) error {
+func (d *Data) ServeTile(repo datastore.Repo, ctx storage.Context, w http.ResponseWriter,
+	r *http.Request, parts []string) error {
+
+	if len(parts) < 7 {
+		return fmt.Errorf("'tile' request must be following by plane, scale level, and tile coordinate")
+	}
+	planeStr, scalingStr, coordStr := parts[4], parts[5], parts[6]
+	queryValues := r.URL.Query()
+	noblanksStr := dvid.DataString(queryValues.Get("noblanks"))
+	var noblanks bool
+	if noblanksStr == "true" {
+		noblanks = true
+	}
+	var formatStr string
+	if len(parts) >= 8 {
+		formatStr = parts[7]
+	}
+
 	// Construct the index for this tile
 	plane := dvid.DataShapeString(planeStr)
 	shape, err := plane.DataShape()
@@ -784,8 +801,15 @@ func (d *Data) ServeTile(ctx storage.Context, w http.ResponseWriter, r *http.Req
 		return err
 	}
 	if data == nil {
-		http.NotFound(w, r)
-		return nil
+		if noblanks {
+			http.NotFound(w, r)
+			return nil
+		}
+		img, err := d.getBlankTileImage(repo, shape, Scaling(scaling))
+		if err != nil {
+			return err
+		}
+		return dvid.WriteImageHttp(w, img, formatStr)
 	}
 
 	switch d.Encoding {
@@ -869,6 +893,37 @@ func (d *Data) getTileData(ctx storage.Context, shape dvid.DataShape, scaling Sc
 		return nil, fmt.Errorf("Error trying to GET from datastore: %s", err.Error())
 	}
 	return data, nil
+}
+
+// getBlankTileData returns zero 2d tile data with a given scaling and format.
+func (d *Data) getBlankTileImage(repo datastore.Repo, shape dvid.DataShape, scaling Scaling) (image.Image, error) {
+	levelSpec, found := d.Levels[scaling]
+	if !found {
+		return nil, fmt.Errorf("Could not extract tiles for unspecified scale level %d", scaling)
+	}
+	tileW, tileH, err := shape.GetSize2D(levelSpec.TileSize)
+	if err != nil {
+		return nil, err
+	}
+	source, err := repo.GetDataByName(d.Source)
+	if err != nil {
+		return nil, err
+	}
+	src, ok := source.(*voxels.Data)
+	if !ok {
+		return nil, fmt.Errorf("Data instance %q for uuid %q is not voxels.Data", d.Source,
+			repo.RootUUID())
+	}
+	bytesPerVoxel := src.Values().BytesPerElement()
+	switch bytesPerVoxel {
+	case 1, 2, 4, 8:
+		numBytes := tileW * tileH * bytesPerVoxel
+		data := make([]byte, numBytes, numBytes)
+		return dvid.ImageFromData(data, int(tileW), int(tileH))
+	default:
+		return nil, fmt.Errorf("Cannot construct blank tile for data %q with %d bytes/voxel",
+			d.Source, src.Values().BytesPerElement())
+	}
 }
 
 // pow2 returns the power of 2 with the passed exponent.
@@ -971,9 +1026,7 @@ func (d *Data) putTileFunc(versionID dvid.VersionID) (outFunc, error) {
 }
 
 func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, request datastore.Request) error {
-
 	config := request.Settings()
-
 	uuid, versionID, err := datastore.MatchingUUID(uuidStr)
 	if err != nil {
 		return err
