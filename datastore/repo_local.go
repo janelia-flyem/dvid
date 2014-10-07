@@ -267,6 +267,7 @@ func (m *repoManager) loadMetadata() error {
 					versionID, repo.rootID, repo.repoID)
 				m.versionToUUID[versionID] = node.uuid
 				m.UUIDToVersion[node.uuid] = versionID
+				uuid = node.uuid
 			}
 			m.repos[uuid] = repo
 		}
