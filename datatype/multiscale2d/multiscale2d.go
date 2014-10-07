@@ -331,7 +331,7 @@ type TileScaleSpec struct {
 }
 
 // TileSpec specifies the resolution & size of each dimension at each scale level.
-type TileSpec []TileScaleSpec
+type TileSpec map[Scaling]TileScaleSpec
 
 // MarshalJSON returns the JSON of the multiscale2d specifications for each scale level.
 func (tileSpec TileSpec) MarshalJSON() ([]byte, error) {
@@ -361,8 +361,9 @@ func LoadTileSpec(data []byte) (TileSpec, error) {
 	}
 
 	// Allocate the tile specs
-	specs := make(TileSpec, len(config))
-	dvid.Debugf("Found %d scaling levels for multiscale2d specification.\n", len(config))
+	numLevels := len(config)
+	specs := make(TileSpec, numLevels)
+	dvid.Infof("Found %d scaling levels for multiscale2d specification.\n", numLevels)
 
 	// Store resolution and tile sizes per level.
 	var hires, lores float64
@@ -372,37 +373,42 @@ func LoadTileSpec(data []byte) (TileSpec, error) {
 		if err != nil {
 			return nil, fmt.Errorf("Scaling '%s' needs to be a number for the scale level.", scaleStr)
 		}
-		if scaleLevel >= len(specs) {
+		if scaleLevel >= numLevels {
 			return nil, fmt.Errorf("Tile levels must be consecutive integers from [0,Max]: Got scale level %d > # levels (%d)\n",
-				scaleLevel, len(specs))
+				scaleLevel, numLevels)
 		}
-		specs[scaleLevel] = TileScaleSpec{LevelSpec: levelSpec}
+		specs[Scaling(scaleLevel)] = TileScaleSpec{LevelSpec: levelSpec}
 	}
 
 	// Compute the magnification between each level.
-	for scaleLevel, levelSpec := range specs {
-		if int(scaleLevel+1) <= len(specs)-1 {
-			nextSpec := specs[scaleLevel+1]
-			var levelMag dvid.Point3d
-			for i, curRes := range levelSpec.Resolution {
-				hires = float64(curRes)
-				lores = float64(nextSpec.Resolution[i])
-				rem := math.Remainder(lores, hires)
-				if rem > 0.001 {
-					return nil, fmt.Errorf("Resolutions between scale %d and %d aren't integral magnifications!",
-						scaleLevel, scaleLevel+1)
-				}
-				mag := lores / hires
-				if mag < 0.99 {
-					return nil, fmt.Errorf("A resolution between scale %d and %d actually increases!",
-						scaleLevel, scaleLevel+1)
-				}
-				mag += 0.5
-				levelMag[i] = int32(mag)
-			}
-			levelSpec.levelMag = levelMag
-			specs[scaleLevel] = levelSpec
+	for scaling := Scaling(0); scaling < Scaling(numLevels-1); scaling++ {
+		levelSpec, found := specs[scaling]
+		if !found {
+			return nil, fmt.Errorf("Could not find tile spec for level %d", scaling)
 		}
+		nextSpec, found := specs[scaling+1]
+		if !found {
+			return nil, fmt.Errorf("Could not find tile spec for level %d", scaling+1)
+		}
+		var levelMag dvid.Point3d
+		for i, curRes := range levelSpec.Resolution {
+			hires = float64(curRes)
+			lores = float64(nextSpec.Resolution[i])
+			rem := math.Remainder(lores, hires)
+			if rem > 0.001 {
+				return nil, fmt.Errorf("Resolutions between scale %d and %d aren't integral magnifications!",
+					scaling, scaling+1)
+			}
+			mag := lores / hires
+			if mag < 0.99 {
+				return nil, fmt.Errorf("A resolution between scale %d and %d actually increases!",
+					scaling, scaling+1)
+			}
+			mag += 0.5
+			levelMag[i] = int32(mag)
+		}
+		levelSpec.levelMag = levelMag
+		specs[scaling] = levelSpec
 	}
 	return specs, nil
 }
@@ -845,16 +851,16 @@ func (d *Data) ServeTile(repo datastore.Repo, ctx storage.Context, w http.Respon
 }
 
 // GetTile returns a 2d tile image or a placeholder
-func (d *Data) GetTile(ctx storage.Context, shape dvid.DataShape, scaling int, index dvid.IndexZYX) (image.Image, error) {
-	data, err := d.getTileData(ctx, shape, Scaling(scaling), index)
+func (d *Data) GetTile(ctx storage.Context, shape dvid.DataShape, scaling Scaling, index dvid.IndexZYX) (image.Image, error) {
+	data, err := d.getTileData(ctx, shape, scaling, index)
 	if err != nil {
 		return nil, err
 	}
-	tileIndex := &IndexTile{&index, shape, Scaling(scaling)}
+	tileIndex := &IndexTile{&index, shape, scaling}
 
 	if data == nil {
 		if d.Placeholder {
-			if d.Levels == nil || scaling < 0 || scaling >= len(d.Levels) {
+			if d.Levels == nil || scaling < 0 || scaling >= Scaling(len(d.Levels)) {
 				return nil, fmt.Errorf("Could not find tile specification at given scale %d", scaling)
 			}
 			message := fmt.Sprintf("%s Tile coord %s @ scale %d", shape, tileIndex, scaling)
@@ -960,11 +966,14 @@ type outFunc func(index *IndexTile, img *dvid.Image) error
 
 // Construct all tiles for an image with offset and send to out function.  extractTiles assumes
 // the image and offset are in the XY plane.
-func (d *Data) extractTiles(v voxels.ExtData, offset dvid.Point, scaling int, outF outFunc) error {
-	if d.Levels == nil || scaling < 0 || scaling >= len(d.Levels) {
+func (d *Data) extractTiles(v voxels.ExtData, offset dvid.Point, scaling Scaling, outF outFunc) error {
+	if d.Levels == nil || scaling < 0 || scaling >= Scaling(len(d.Levels)) {
 		return fmt.Errorf("Bad scaling level specified: %d", scaling)
 	}
-	levelSpec := d.Levels[scaling]
+	levelSpec, found := d.Levels[scaling]
+	if !found {
+		return fmt.Errorf("No scaling specs available for scaling level %d", scaling)
+	}
 	srcW := v.Size().Value(0)
 	srcH := v.Size().Value(1)
 
