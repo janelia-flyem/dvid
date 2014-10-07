@@ -427,8 +427,15 @@ func (m *repoManager) GobEncode() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// MarshalJSON returns JSON of object where each repo is a property with root UUID name
+// and value corresponding to repo info.
 func (m *repoManager) MarshalJSON() ([]byte, error) {
-	return json.Marshal(m.repos)
+	// Create map of Root UUID -> Repo info
+	repos := make(map[dvid.UUID]*repoT, len(m.repoToUUID))
+	for _, uuid := range m.repoToUUID {
+		repos[uuid] = m.repos[uuid]
+	}
+	return json.Marshal(repos)
 }
 
 // MatchingUUID returns a local version ID and the full UUID from a potentially shortened UUID
