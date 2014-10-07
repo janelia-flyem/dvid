@@ -235,6 +235,7 @@ func (m *repoManager) loadMetadata() error {
 		return err
 	}
 
+	var saveCache bool
 	var index metadataIndex
 	for _, kv := range kvList {
 		indexBytes, err := ctx.IndexFromKey(kv.K)
@@ -268,12 +269,22 @@ func (m *repoManager) loadMetadata() error {
 				m.versionToUUID[versionID] = node.uuid
 				m.UUIDToVersion[node.uuid] = versionID
 				uuid = node.uuid
+				saveCache = true
 			}
 			m.repos[uuid] = repo
 		}
 	}
+	if err := m.verifyCompiledTypes(); err != nil {
+		return err
+	}
+	// If we noticed missing cache entries, save current metadata.
+	if saveCache {
+		if err := m.putCaches(); err != nil {
+			return err
+		}
+	}
 	dvid.Infof("Loaded %d repositories from metadata store.", len(m.repos))
-	return m.verifyCompiledTypes()
+	return nil
 }
 
 // TODO: Verify that the datatypes used by the repo data have been compiled into this server.
