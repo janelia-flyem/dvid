@@ -1319,12 +1319,6 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 		return
 	}
 
-	// All HTTP requests are interactive so let server tally request.
-	// TODO: This command should be moved to web server handling when better
-	// framework for datatype-specific API is implemented, allowing type-specific
-	// logging of API calls, etc.
-	server.GotInteractiveRequest()
-
 	// make sure transaction log is created
 	d.initializeLog()
 

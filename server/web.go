@@ -131,6 +131,12 @@ const WebHelp = `
 
 		%s
 
+		<p>Background batch processes like generation of tiles, sparse volumes, and various
+		   indices, will be paused if a single server receives more than a few data type API 
+		   requests over a 5 minute moving window.  You can mark your API request as
+		   non-interactive (i.e., you don't mind if it's delayed) by appending a query string
+		   <code>interactive=0</code>.
+
 		<h3>Licensing</h3>
 		<p><a href="https://github.com/janelia-flyem/dvid">DVID</a> is released under the
 			<a href="http://janelia-flyem.github.com/janelia_farm_license.html">Janelia Farm license</a>, a
@@ -338,6 +344,16 @@ func instanceSelector(c *web.C, h http.Handler) http.Handler {
 			BadRequest(w, r, err.Error())
 			return
 		}
+
+		// Handle DVID-wide query string commands like non-interactive call designations
+		queryValues := r.URL.Query()
+
+		// All HTTP requests are interactive so let server tally request.
+		interactive := queryValues.Get("interactive")
+		if interactive == "" || (interactive != "false" && interactive != "0") {
+			GotInteractiveRequest()
+		}
+
 		// Construct the Context
 		ctx := datastore.NewServerContext(context.Background(), repo, versionID)
 		dataservice.ServeHTTP(ctx, w, r)

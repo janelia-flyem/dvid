@@ -78,6 +78,9 @@ $ dvid -stdin node <UUID> <data name> generate <settings...> < config.json
 	the generated tiles are aligned in a grid having (0,0,0) as a top left corner of a tile, not
 	tiles that start from the corner of present data since the data can expand.
 
+	If not tile spec file is used, a default tile spec is generated that will cover the 
+	extents of the source data.
+
 	Example:
 
 	$ dvid repo 3f8c mymultiscale2d generate /path/to/config.json
@@ -465,7 +468,7 @@ type Data struct {
 	Properties
 }
 
-// Returns the default tile spec for
+// Returns the default tile spec that will fully cover the source extents.
 func (d *Data) DefaultTileSpec() TileSpec {
 	return nil
 }
@@ -549,9 +552,13 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 			if err != nil {
 				return err
 			}
+			dvid.Infof("Using tile spec file: %s\n", filename)
 		} else {
 			dvid.Infof("Using default tile generation method since no tile spec file was given...\n")
 			tileSpec = d.DefaultTileSpec()
+			if tileSpec == nil {
+				return fmt.Errorf("No default tile spec is available")
+			}
 		}
 	}
 	return d.ConstructTiles(uuidStr, tileSpec, request)
@@ -578,13 +585,6 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 
 	// Allow cross-origin resource sharing.
 	w.Header().Add("Access-Control-Allow-Origin", "*")
-
-	// Get the action (GET, POST)
-	// All HTTP requests are interactive so let server tally request.
-	// TODO: This command should be moved to web server handling when better
-	// framework for datatype-specific API is implemented, allowing type-specific
-	// logging of API calls, etc.
-	server.GotInteractiveRequest()
 
 	action := strings.ToLower(r.Method)
 	switch action {
