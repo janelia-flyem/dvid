@@ -27,7 +27,7 @@ if (NOT EXISTS ${BUILDEM_REPO_DIR}/python.cmake)
     message ("Installing buildem repo...")
     ExternalProject_Add(buildem
         PREFIX ${BUILDEM_DIR}
-        GIT_REPOSITORY http://github.com/janelia-flyem/buildem.git
+        GIT_REPOSITORY https://github.com/janelia-flyem/buildem.git
         UPDATE_COMMAND ""
         PATCH_COMMAND ""
         CONFIGURE_COMMAND "" 
