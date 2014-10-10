@@ -446,7 +446,7 @@ const expectedPartition = `
 
 const expectedSimplePartition = `
 		{
-		    "NumTotalBlocks": 700,
+		    "NumTotalBlocks": 875,
 		    "NumActiveBlocks": 152,
 		    "NumSubvolumes": 4,
 		    "ROI": {
@@ -559,7 +559,8 @@ const expectedSimplePartition = `
 		            "ActiveBlocks": 12
 		        }
 		    ]
-		}`
+		}
+`
 
 func TestROIRepoPersistence(t *testing.T) {
 	tests.UseStore()
