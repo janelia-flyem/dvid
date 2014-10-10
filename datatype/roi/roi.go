@@ -606,8 +606,6 @@ func findActives(blocks []*indexRLE, minX, maxX int32) int32 {
 		x0 := dvid.MaxInt32(minX, spanBeg)
 		x1 := dvid.MinInt32(maxX, spanEnd)
 		numActive += x1 - x0 + 1
-		//fmt.Printf("RLE Span X %3d -> %3d (Y %3d, Z %3d).  Subvolume %4d -> %4d.  active blocks: %d\n",
-		//	spanBeg, spanEnd, rle.start[1], rle.start[2], minX, maxX, numActive)
 	}
 	return numActive
 }
@@ -847,9 +845,9 @@ func (d *Data) addSubvolumesGrid(layer *layerT, subvolumes *subvolumesT, batchsi
 
 	// Iterate through Y, block by block, and determine the X range.  Then center subvolumes
 	// along that X.
-	for y0 := begY; y0 <= maxY; y0 += batchsize {
+	for y0 := begY; y0 <= endY; y0 += batchsize {
 		y1 := y0 + batchsize - 1
-		minX, maxX, actives := getXRange(layer.activeBlocks, begY, endY)
+		minX, maxX, actives := getXRange(layer.activeBlocks, y0, y1)
 		if len(actives) == 0 {
 			continue
 		}
@@ -884,9 +882,9 @@ func (d *Data) addSubvolumesGrid(layer *layerT, subvolumes *subvolumesT, batchsi
 					ActiveBlocks:   numActive,
 				}
 				subvolumes.Subvolumes = append(subvolumes.Subvolumes, subvolume)
-				subvolumes.NumActiveBlocks += numActive
-				subvolumes.NumTotalBlocks += numTotal
 			}
+			subvolumes.NumActiveBlocks += numActive
+			subvolumes.NumTotalBlocks += numTotal
 		}
 	}
 }
