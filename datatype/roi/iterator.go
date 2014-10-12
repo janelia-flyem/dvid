@@ -45,8 +45,11 @@ func (it *Iterator) Reset() {
 	it.curSpan = 0
 }
 
-// Returns true if the index is outside the ROI volume.
-func (it *Iterator) Inside(indexZYX dvid.IndexZYX) bool {
+// Returns true if the index is inside the ROI volume.  Note that this optimized
+// function maintains state and is not concurrency safe; it assumes sequential
+// calls where the considered indexZYX is increasing in Z, Y, and X after either
+// NewIterator() or Reset().
+func (it *Iterator) InsideFast(indexZYX dvid.IndexZYX) bool {
 	// Fast forward through spans to make sure we are either in span or past all
 	// smaller spans.
 	numSpans := int32(len(it.spans))

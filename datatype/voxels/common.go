@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"log"
 	"sync"
 
 	"github.com/janelia-flyem/dvid/datastore"
@@ -21,7 +22,8 @@ import (
 type Operation struct {
 	ExtData
 	OpType
-	*ROI
+	blocksInROI map[string]bool
+	attenuation uint8
 }
 
 type OpType int
@@ -161,7 +163,6 @@ func GetVoxels(ctx storage.Context, i IntData, e ExtData, r *ROI) error {
 		return err
 	}
 	wg := new(sync.WaitGroup)
-	chunkOp := &storage.ChunkOp{&Operation{e, GetOp, r}, wg}
 
 	server.SpawnGoroutineMutex.Lock()
 	for it, err := e.IndexIterator(i.BlockSize()); err == nil && it.Valid(); it.NextSpan() {
@@ -172,6 +173,29 @@ func GetVoxels(ctx storage.Context, i IntData, e ExtData, r *ROI) error {
 		}
 		blockBeg := NewVoxelBlockIndex(indexBeg)
 		blockEnd := NewVoxelBlockIndex(indexEnd)
+
+		// Get set of blocks in ROI if ROI provided
+		var chunkOp *storage.ChunkOp
+		if r != nil && r.Iter != nil {
+			ptBeg := indexBeg.Duplicate().(dvid.ChunkIndexer)
+			ptEnd := indexEnd.Duplicate().(dvid.ChunkIndexer)
+			begX := ptBeg.Value(0)
+			endX := ptEnd.Value(0)
+
+			blocksInROI := make(map[string]bool, (endX - begX + 1))
+			c := dvid.ChunkPoint3d{begX, ptBeg.Value(1), ptBeg.Value(2)}
+			for x := begX; x <= endX; x++ {
+				c[0] = x
+				curIndex := dvid.IndexZYX(c)
+				if r.Iter.InsideFast(curIndex) {
+					indexString := string(curIndex.Bytes())
+					blocksInROI[indexString] = true
+				}
+			}
+			chunkOp = &storage.ChunkOp{&Operation{e, GetOp, blocksInROI, r.attenuation}, wg}
+		} else {
+			chunkOp = &storage.ChunkOp{&Operation{e, GetOp, nil, 0}, wg}
+		}
 
 		// Send the entire range of key-value pairs to chunk processor
 		err = db.ProcessRange(ctx, blockBeg, blockEnd, chunkOp, i.ProcessChunk)
@@ -200,7 +224,7 @@ func PutVoxels(ctx storage.Context, i IntData, e ExtData, r *ROI) error {
 		return err
 	}
 	wg := new(sync.WaitGroup)
-	chunkOp := &storage.ChunkOp{&Operation{e, PutOp, r}, wg}
+	chunkOp := &storage.ChunkOp{&Operation{e, PutOp, nil, 0}, wg}
 
 	// We only want one PUT on given version for given data to prevent interleaved
 	// chunk PUTs that could potentially overwrite slice modifications.
@@ -293,7 +317,7 @@ func PutVoxels(ctx storage.Context, i IntData, e ExtData, r *ROI) error {
 			}
 
 			// Don't PUT if this index is outside a specified ROI
-			if r != nil && r.Iter != nil && !r.Iter.Inside(curIndex) {
+			if r != nil && r.Iter != nil && !r.Iter.InsideFast(curIndex) {
 				wg.Done()
 				continue
 			}
@@ -994,4 +1018,124 @@ func transferBlock(op OpType, v ExtData, block *Block, blockSize dvid.Point) err
 		return fmt.Errorf("Cannot ReadFromBlock() unsupported voxels data shape %s", v.DataShape())
 	}
 	return nil
+}
+
+// ProcessChunk processes a chunk of data as part of a mapped operation.  The data may be
+// thinner, wider, and longer than the chunk, depending on the data shape (XY, XZ, etc).
+// Only some multiple of the # of CPU cores can be used for chunk handling before
+// it waits for chunk processing to abate via the buffered server.HandlerToken channel.
+func (d *Data) ProcessChunk(chunk *storage.Chunk) {
+	<-server.HandlerToken
+	go d.processChunk(chunk)
+}
+
+func (d *Data) processChunk(chunk *storage.Chunk) {
+	defer func() {
+		// After processing a chunk, return the token.
+		server.HandlerToken <- 1
+
+		// Notify the requestor that this chunk is done.
+		if chunk.Wg != nil {
+			chunk.Wg.Done()
+		}
+	}()
+
+	op, ok := chunk.Op.(*Operation)
+	if !ok {
+		log.Fatalf("Illegal operation passed to ProcessChunk() for data %s\n", d.DataName())
+	}
+
+	// Make sure our received chunk is valid.
+	if chunk == nil {
+		dvid.Errorf("Received nil chunk in ProcessChunk.  Ignoring chunk.\n")
+		return
+	}
+	if chunk.K == nil {
+		dvid.Errorf("Received nil chunk key in ProcessChunk.  Ignoring chunk.\n")
+		return
+	}
+
+	// If there's an ROI, if outside ROI, use blank buffer or allow scaling via attenuation.
+	var zeroOut bool
+	var attenuation uint8
+	indexZYX, err := DecodeVoxelBlockKey(chunk.K)
+	if err != nil {
+		dvid.Errorf("Error processing voxel block: %s\n", err.Error())
+		return
+	}
+	if op.blocksInROI != nil {
+		indexString := string(indexZYX.Bytes())
+		_, insideROI := op.blocksInROI[indexString]
+		if !insideROI {
+			if op.attenuation == 0 {
+				zeroOut = true
+			}
+			attenuation = op.attenuation
+		}
+	}
+
+	// Initialize the block buffer using the chunk of data.  For voxels, this chunk of
+	// data needs to be uncompressed and deserialized.
+	var blockData []byte
+	if zeroOut || chunk.V == nil {
+		blockData = make([]byte, d.BlockSize().Prod()*int64(op.Values().BytesPerElement()))
+	} else {
+		blockData, _, err = dvid.DeserializeData(chunk.V, true)
+		if err != nil {
+			dvid.Errorf("Unable to deserialize block in '%s': %s\n", d.DataName(), err.Error())
+			return
+		}
+	}
+
+	// Perform the operation.
+	block := &Block{K: chunk.K, V: blockData}
+	switch op.OpType {
+	case GetOp:
+		if err = ReadFromBlock(op.ExtData, block, d.BlockSize(), attenuation); err != nil {
+			dvid.Errorf("Unable to ReadFromBlock() in %q: %s\n", d.DataName(), err.Error())
+			return
+		}
+	case PutOp:
+		if err = WriteToBlock(op.ExtData, block, d.BlockSize()); err != nil {
+			dvid.Errorf("Unable to WriteToBlock() in %q: %s\n", d.DataName(), err.Error())
+			return
+		}
+		db, err := storage.BigDataStore()
+		if err != nil {
+			dvid.Errorf("Unable to obtain BigData store in %q: %s\n", d.DataName(), err.Error())
+			return
+		}
+		serialization, err := dvid.SerializeData(blockData, d.Compression(), d.Checksum())
+		if err != nil {
+			dvid.Errorf("Unable to serialize block in %q: %s\n", d.DataName(), err.Error())
+			return
+		}
+		db.Put(nil, chunk.K, serialization)
+	}
+}
+
+// Handler conversion of little to big endian for voxels larger than 1 byte.
+func littleToBigEndian(v ExtData, data []uint8) (bigendian []uint8, err error) {
+	bytesPerVoxel := v.Values().BytesPerElement()
+	if v.ByteOrder() == nil || v.ByteOrder() == binary.BigEndian || bytesPerVoxel == 1 {
+		return data, nil
+	}
+	bigendian = make([]uint8, len(data))
+	switch bytesPerVoxel {
+	case 2:
+		for beg := 0; beg < len(data)-1; beg += 2 {
+			bigendian[beg], bigendian[beg+1] = data[beg+1], data[beg]
+		}
+	case 4:
+		for beg := 0; beg < len(data)-3; beg += 4 {
+			value := binary.LittleEndian.Uint32(data[beg : beg+4])
+			binary.BigEndian.PutUint32(bigendian[beg:beg+4], value)
+		}
+	case 8:
+		for beg := 0; beg < len(data)-7; beg += 8 {
+			value := binary.LittleEndian.Uint64(data[beg : beg+8])
+			binary.BigEndian.PutUint64(bigendian[beg:beg+8], value)
+		}
+	}
+	return
 }

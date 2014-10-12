@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"image"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"os"
 	"strconv"
@@ -173,7 +172,7 @@ POST <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>]
     Query-string Options:
 
     roi       	  Name of roi data instance used to mask the requested data.
-    attenuation   For attenuation n, this reduces the intensity of voxels outside ROI by 2^n.
+    attenuation   (TODO) For attenuation n, this reduces the intensity of voxels outside ROI by 2^n.
     			  Valid range is n = 1 to n = 7.  Currently only implemented for 8-bit voxels.
     			  Default is to zero out voxels outside ROI.
 
@@ -1143,7 +1142,7 @@ func (d *Data) Send(s message.Socket, roiname string, uuid dvid.UUID) error {
 			dvid.Errorf("Error in sending voxel block: %s\n", err.Error())
 			return
 		}
-		if roiIterator != nil && !roiIterator.Inside(*indexZYX) {
+		if roiIterator != nil && !roiIterator.InsideFast(*indexZYX) {
 			return // don't send if this chunk is outside ROI
 		}
 		blocksSent++
@@ -1577,120 +1576,4 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 	default:
 		server.BadRequest(w, r, "Unrecognized API call for voxels %q.  See API help.", d.DataName())
 	}
-}
-
-// ProcessChunk processes a chunk of data as part of a mapped operation.  The data may be
-// thinner, wider, and longer than the chunk, depending on the data shape (XY, XZ, etc).
-// Only some multiple of the # of CPU cores can be used for chunk handling before
-// it waits for chunk processing to abate via the buffered server.HandlerToken channel.
-func (d *Data) ProcessChunk(chunk *storage.Chunk) {
-	<-server.HandlerToken
-	go d.processChunk(chunk)
-}
-
-func (d *Data) processChunk(chunk *storage.Chunk) {
-	defer func() {
-		// After processing a chunk, return the token.
-		server.HandlerToken <- 1
-
-		// Notify the requestor that this chunk is done.
-		if chunk.Wg != nil {
-			chunk.Wg.Done()
-		}
-	}()
-
-	op, ok := chunk.Op.(*Operation)
-	if !ok {
-		log.Fatalf("Illegal operation passed to ProcessChunk() for data %s\n", d.DataName())
-	}
-
-	// Make sure our received chunk is valid.
-	if chunk == nil {
-		dvid.Errorf("Received nil chunk in ProcessChunk.  Ignoring chunk.\n")
-		return
-	}
-	if chunk.K == nil {
-		dvid.Errorf("Received nil chunk key in ProcessChunk.  Ignoring chunk.\n")
-		return
-	}
-
-	// If there's an ROI, if outside ROI, use blank buffer or allow scaling via attenuation.
-	var zeroOut bool
-	var attenuation uint8
-	indexZYX, err := DecodeVoxelBlockKey(chunk.K)
-	if err != nil {
-		dvid.Errorf("Error processing voxel block: %s\n", err.Error())
-		return
-	}
-	if op.ROI != nil && op.ROI.Iter != nil && !op.ROI.Iter.Inside(*indexZYX) {
-		if op.ROI.attenuation == 0 {
-			zeroOut = true
-		}
-		attenuation = op.ROI.attenuation
-	}
-
-	// Initialize the block buffer using the chunk of data.  For voxels, this chunk of
-	// data needs to be uncompressed and deserialized.
-	var blockData []byte
-	if zeroOut || chunk.V == nil {
-		blockData = make([]byte, d.BlockSize().Prod()*int64(op.Values().BytesPerElement()))
-	} else {
-		blockData, _, err = dvid.DeserializeData(chunk.V, true)
-		if err != nil {
-			dvid.Errorf("Unable to deserialize block in '%s': %s\n", d.DataName(), err.Error())
-			return
-		}
-	}
-
-	// Perform the operation.
-	block := &Block{K: chunk.K, V: blockData}
-	switch op.OpType {
-	case GetOp:
-		if err = ReadFromBlock(op.ExtData, block, d.BlockSize(), attenuation); err != nil {
-			dvid.Errorf("Unable to ReadFromBlock() in %q: %s\n", d.DataName(), err.Error())
-			return
-		}
-	case PutOp:
-		if err = WriteToBlock(op.ExtData, block, d.BlockSize()); err != nil {
-			dvid.Errorf("Unable to WriteToBlock() in %q: %s\n", d.DataName(), err.Error())
-			return
-		}
-		db, err := storage.BigDataStore()
-		if err != nil {
-			dvid.Errorf("Unable to obtain BigData store in %q: %s\n", d.DataName(), err.Error())
-			return
-		}
-		serialization, err := dvid.SerializeData(blockData, d.Compression(), d.Checksum())
-		if err != nil {
-			dvid.Errorf("Unable to serialize block in %q: %s\n", d.DataName(), err.Error())
-			return
-		}
-		db.Put(nil, chunk.K, serialization)
-	}
-}
-
-// Handler conversion of little to big endian for voxels larger than 1 byte.
-func littleToBigEndian(v ExtData, data []uint8) (bigendian []uint8, err error) {
-	bytesPerVoxel := v.Values().BytesPerElement()
-	if v.ByteOrder() == nil || v.ByteOrder() == binary.BigEndian || bytesPerVoxel == 1 {
-		return data, nil
-	}
-	bigendian = make([]uint8, len(data))
-	switch bytesPerVoxel {
-	case 2:
-		for beg := 0; beg < len(data)-1; beg += 2 {
-			bigendian[beg], bigendian[beg+1] = data[beg+1], data[beg]
-		}
-	case 4:
-		for beg := 0; beg < len(data)-3; beg += 4 {
-			value := binary.LittleEndian.Uint32(data[beg : beg+4])
-			binary.BigEndian.PutUint32(bigendian[beg:beg+4], value)
-		}
-	case 8:
-		for beg := 0; beg < len(data)-7; beg += 8 {
-			value := binary.LittleEndian.Uint64(data[beg : beg+8])
-			binary.BigEndian.PutUint64(bigendian[beg:beg+8], value)
-		}
-	}
-	return
 }
