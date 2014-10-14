@@ -68,8 +68,8 @@ $ dvid repo <UUID> new multiscale2d <data name> <settings...>
     Placeholder    Bool ("false", "true", "0", or "1").  Return placeholder tile if missing.
 
 
-$ dvid node <UUID> <data name> generate <settings...>
-$ dvid -stdin node <UUID> <data name> generate <settings...> < config.json
+$ dvid node <UUID> <data name> generate [settings]
+$ dvid -stdin node <UUID> <data name> generate [settings] < config.json
 
 	Generates multiresolution XY, XZ, and YZ multiscale2d from Source to repo with specified UUID.
 	The resolutions at each scale and the dimensions of the tiles are passed in the configuration
@@ -90,7 +90,7 @@ $ dvid -stdin node <UUID> <data name> generate <settings...> < config.json
 
     UUID            Hexidecimal string with enough characters to uniquely identify a version node.
     data name       Name of data to create, e.g., "mygrayscale".
-    settings        Optional specification of tiles to generate.
+    settings        Optional file name of tile specifications for tile generation.
 
     Configuration Settings (case-insensitive keys)
 
@@ -442,6 +442,8 @@ func (f Format) String() string {
 	}
 }
 
+var DefaultTileSize = dvid.Point3d{512, 512, 512}
+
 // Properties are additional properties for keyvalue data instances beyond those
 // in standard datastore.Data.   These will be persisted to metadata storage.
 type Properties struct {
@@ -468,9 +470,83 @@ type Data struct {
 	Properties
 }
 
-// Returns the default tile spec that will fully cover the source extents.
-func (d *Data) DefaultTileSpec() TileSpec {
-	return nil
+// Returns the default tile spec that will fully cover the source extents and scaling 0
+// uses the original voxel resolutions with each subsequent scale causing a 2x zoom out.
+func (d *Data) DefaultTileSpec(uuidStr string) (TileSpec, error) {
+	uuid, _, err := datastore.MatchingUUID(uuidStr)
+	if err != nil {
+		return nil, err
+	}
+	repo, err := datastore.RepoFromUUID(uuid)
+	if err != nil {
+		return nil, err
+	}
+
+	source, err := repo.GetDataByName(d.Source)
+	if err != nil {
+		return nil, err
+	}
+	var ok bool
+	var src *voxels.Data
+	src, ok = source.(*voxels.Data)
+	if !ok {
+		return nil, fmt.Errorf("Cannot construct tile spec for non-voxels data: %s", d.Source)
+	}
+
+	// Set scaling 0 based on extents and resolution of source.
+	//extents := src.Extents()
+	resolution := src.Properties.Resolution.VoxelSize
+
+	if len(resolution) != 3 {
+		return nil, fmt.Errorf("Cannot construct tile spec for non-3d data: voxel is %d-d",
+			len(resolution))
+	}
+
+	// Expand min and max points to coincide with full tile boundaries of highest resolution.
+	minTileCoord := src.MinPoint.(dvid.Chunkable).Chunk(DefaultTileSize)
+	maxTileCoord := src.MaxPoint.(dvid.Chunkable).Chunk(DefaultTileSize)
+	minTiledPt := minTileCoord.MinPoint(DefaultTileSize)
+	maxTiledPt := maxTileCoord.MaxPoint(DefaultTileSize)
+	sizeVolume := maxTiledPt.Sub(minTiledPt).AddScalar(1)
+
+	dvid.Infof("Creating default multiscale tile spec for volume of size %s\n", sizeVolume)
+
+	// For each dimension, calculate the number of scaling levels necessary to cover extent,
+	// assuming we use the raw resolution at scaling 0.
+	numScales := make([]int, 3)
+	var maxScales int
+	var dim uint8
+	for dim = 0; dim < 3; dim++ {
+		numPixels := float64(sizeVolume.Value(dim))
+		tileSize := float64(DefaultTileSize.Value(dim))
+		if numPixels <= tileSize {
+			numScales[dim] = 1
+		} else {
+			numScales[dim] = int(math.Ceil(math.Log2(numPixels/tileSize))) + 1
+		}
+		if numScales[dim] > maxScales {
+			maxScales = numScales[dim]
+		}
+	}
+
+	// Initialize the tile level specification
+	specs := make(TileSpec, maxScales)
+	curRes := resolution
+	levelMag := dvid.Point3d{2, 2, 2}
+	var scaling Scaling
+	for scaling = 0; scaling < Scaling(maxScales); scaling++ {
+		for dim = 0; dim < 3; dim++ {
+			if scaling >= Scaling(numScales[dim]) {
+				levelMag[dim] = 1
+			}
+		}
+		specs[scaling] = TileScaleSpec{
+			LevelSpec{curRes, DefaultTileSize},
+			levelMag,
+		}
+		curRes = curRes.MultScalar(2.0)
+	}
+	return specs, nil
 }
 
 func (d *Data) MarshalJSON() ([]byte, error) {
@@ -555,9 +631,9 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 			dvid.Infof("Using tile spec file: %s\n", filename)
 		} else {
 			dvid.Infof("Using default tile generation method since no tile spec file was given...\n")
-			tileSpec = d.DefaultTileSpec()
-			if tileSpec == nil {
-				return fmt.Errorf("No default tile spec is available")
+			tileSpec, err = d.DefaultTileSpec(uuidStr)
+			if err != nil {
+				return err
 			}
 		}
 	}
@@ -1070,13 +1146,42 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, request datasto
 		return err
 	}
 
-	// Expand min and max points to coincide with full tile boundaries of highest resolution.
-	hiresSpec := tileSpec[Scaling(0)]
-	minTileCoord := src.MinPoint.(dvid.Chunkable).Chunk(hiresSpec.TileSize)
-	maxTileCoord := src.MaxPoint.(dvid.Chunkable).Chunk(hiresSpec.TileSize)
-	minPt := minTileCoord.MinPoint(hiresSpec.TileSize)
-	maxPt := maxTileCoord.MaxPoint(hiresSpec.TileSize)
-	sizeVolume := maxPt.Sub(minPt).AddScalar(1)
+	// Get size of tile at lowest resolution.
+	lastLevel := Scaling(len(tileSpec) - 1)
+	loresSpec, found := tileSpec[lastLevel]
+	if !found {
+		return fmt.Errorf("Illegal tile spec.  Should have levels 0 to absent %d.", lastLevel)
+	}
+	var loresSize [3]float64
+	for i := 0; i < 3; i++ {
+		loresSize[i] = float64(loresSpec.Resolution[i]) * float64(DefaultTileSize[i])
+	}
+	loresMag := dvid.Point3d{1, 1, 1}
+	for i := Scaling(0); i < lastLevel; i++ {
+		levelMag := tileSpec[i].levelMag
+		loresMag[0] *= levelMag[0]
+		loresMag[1] *= levelMag[1]
+		loresMag[2] *= levelMag[2]
+	}
+
+	// Get min and max points in terms of distance.
+	var minPtDist, maxPtDist [3]float64
+	for i := uint8(0); i < 3; i++ {
+		minPtDist[i] = float64(src.MinPoint.Value(i)) * float64(src.VoxelSize[i])
+		maxPtDist[i] = float64(src.MaxPoint.Value(i)) * float64(src.VoxelSize[i])
+	}
+
+	// Adjust min and max points for the tileable surface at lowest resolution.
+	var minTiledPt, maxTiledPt dvid.Point3d
+	for i := 0; i < 3; i++ {
+		minInt, _ := math.Modf(minPtDist[i] / loresSize[i])
+		maxInt, _ := math.Modf(maxPtDist[i] / loresSize[i])
+		minTileCoord := int32(minInt)
+		maxTileCoord := int32(maxInt)
+		minTiledPt[i] = minTileCoord * DefaultTileSize[i] * loresMag[i]
+		maxTiledPt[i] = (maxTileCoord+1)*DefaultTileSize[i]*loresMag[i] - 1
+	}
+	sizeVolume := maxTiledPt.Sub(minTiledPt).AddScalar(1)
 
 	// Setup swappable ExtData buffers (the stitched slices) so we can be generating tiles
 	// at same time we are reading and stitching them.
@@ -1096,7 +1201,7 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, request datasto
 
 	for _, plane := range planes {
 		timedLog := dvid.NewTimeLog()
-		offset := minPt.Duplicate()
+		offset := minTiledPt.Duplicate()
 
 		switch {
 

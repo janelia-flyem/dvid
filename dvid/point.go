@@ -1076,6 +1076,15 @@ func (n NdFloat32) GetMax() float32 {
 	return max
 }
 
+// MultScalar multiples a N-dimensional float by a float32
+func (n NdFloat32) MultScalar(x float32) NdFloat32 {
+	result := make(NdFloat32, len(n))
+	for i := 0; i < len(n); i++ {
+		result[i] = n[i] * x
+	}
+	return result
+}
+
 // Parse a string of format "%f,%f,%f,..." into a slice of float32.
 func StringToNdFloat32(str, separator string) (nd NdFloat32, err error) {
 	elems := strings.Split(str, separator)
