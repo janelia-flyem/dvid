@@ -33,11 +33,12 @@ Each of the above is handled by built-in data types via a
 implemented by Go language packages within the *datatype* directory.  When dealing with novel data,
 we typically use the generic *keyvalue* data type and store JSON-encoded or binary data
 until we understand the desired access patterns and API.  When we outgrow the *keyvalue* type's
-GET, PULL, and DELETE operations, we create a custom data type package with a specialized HTTP API.
+GET, POST, and DELETE operations, we create a custom data type package with a specialized HTTP API.
 
-DVID is written in Go and supports different storage backends, a REST HTTP API,
+DVID is primarily written in Go and supports different storage backends, a REST HTTP API,
 command-line access (likely minimized in near future), and a FUSE frontend to at least 
-one of its data types.  It has been tested on both MacOS X and Linux (Fedora 16, CentOS 6, Ubuntu) 
+one of its data types.  Some components are written in C, e.g., storage engines like Leveldb and
+fast codecs like lz4.  DVID has been tested on both MacOS X and Linux (Fedora 16, CentOS 6, Ubuntu) 
 but not on Windows.
 
 Command-line and HTTP API documentation is currently distributed over data types and can be 
@@ -119,7 +120,7 @@ Planned and Existing Features for DVID:
 remote sites using an optional ROI as well as pulled. Each DVID server chooses how much of the data set is 
 held locally. 
 
-_Status: Repo push with optional data instance specification added in September 2041.  See [published one-column repo](http://emdata.janelia.org).  Pull ability to be added shortly.  Improved testing and throughput as time permits._
+_Status: Repo push with optional data instance specification added in September 2014.  See [published one-column repo](http://emdata.janelia.org).  Pull ability to be added Q4 2014.  Improved testing and throughput as time permits._
 
 **Versioning**: Each version of a DVID repo corresponds to a node in a version DAG 
 (Directed Acyclic Graph). Versions are identified through a UUID that can be composed locally 
@@ -127,8 +128,9 @@ yet are unique globally.
 Versioning and distribution follow patterns similar to distributed version control systems like git and 
 mercurial. Provenance is kept in the DAG.
 
-_Status: Simple DAG and UUID support implemented.  Version compression was introduced in August 2014 and 
-is undergoing testing/refinement._
+_Status: Simple DAG and UUID support implemented.  "Sparse" Version compression was introduced in August 2014 and 
+is undergoing testing/refinement.  There are plans to implement slower but more git-like versioning support via
+content-addressable hashes when adding support for unordered key-value stores like Scality._
 
 **Denormalized Views**: For any node in the version DAG, we can choose to create denormalized 
 views that accelerate particular access patterns. For example, multiscale2d (quadtree) data 
