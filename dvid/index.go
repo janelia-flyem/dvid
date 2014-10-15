@@ -228,6 +228,18 @@ func (i *IndexZYX) Hash(n int) int {
 	return int((*i)[0]+(*i)[1]+(*i)[2]) % n
 }
 
+// MarshalBinary fulfills the encoding.BinaryMarshaler interface and stores
+// index ZYX as X, Y, Z in little endian int32 format.
+func (i *IndexZYX) MarshalBinary() ([]byte, error) {
+	var buf bytes.Buffer
+	for dim := 0; dim < 3; dim++ {
+		if err := binary.Write(&buf, binary.LittleEndian, (*i)[dim]); err != nil {
+			return nil, err
+		}
+	}
+	return buf.Bytes(), nil
+}
+
 // ---- Index interface implementation
 
 func (i *IndexZYX) Duplicate() Index {

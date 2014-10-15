@@ -236,6 +236,42 @@ GET  <api URL>/node/<UUID>/<data name>/arb/<top left>/<top right>/<bottom left>/
     res           The resolution/pixel that is used to calculate the returned image size in pixels.
     format        "png", "jpg" (default: "png")  
                     jpg allows lossy quality setting, e.g., "jpg:80"
+
+GET <api URL>/node/<UUID>/<data name>/blocks/<block coord>/<spanX>
+
+    Retrieves blocks of voxel data.
+
+    Example: 
+
+    GET <api URL>/node/3f8c/grayscale/blocks/10_20_30/8
+
+    Returns blocks where first block has given block coordinate and number
+    of blocks returned along x axis is "spanX".  If no "uncompressed=true" query
+    string is used, the block data is returned in default compression format, usually
+    LZ4.  The data is sent in the following format with all integers in little-endian format:
+
+    <int32: number of blocks, N>
+    <int32: block x coord for block 0>
+    <int32: block y coord for block 0>
+    <int32: block z coord for block 0>
+       if compressed:  <int32: length in bytes of block 0>
+    <int32: block x coord for block 1>
+    ... repeat for all blocks
+    <block 0 byte array>
+    <block 1 byte array>
+    ... repeat for all blocks
+    <block N byte array>
+
+    Arguments:
+
+    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    data name     Name of data to add.
+    block coord   Gives coordinate of first voxel using dimensionality of data.
+
+    Query-string Options:
+
+    uncompressed  If true, causes block data to be uncompressed before sending to client.  This
+    			  will lead to all block being the same size.
 `
 
 var (
@@ -1346,6 +1382,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 		w.Header().Set("Content-Type", "text/plain")
 		fmt.Fprintln(w, d.Help())
 		return
+
 	case "metadata":
 		jsonStr, err := d.NdDataMetadata()
 		if err != nil {
@@ -1355,6 +1392,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 		w.Header().Set("Content-Type", "application/vnd.dvid-nd-data+json")
 		fmt.Fprintln(w, jsonStr)
 		return
+
 	case "info":
 		jsonBytes, err := d.MarshalJSON()
 		if err != nil {
@@ -1364,10 +1402,45 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, string(jsonBytes))
 		return
+
+	case "blocks":
+		// GET <api URL>/node/<UUID>/<data name>/blocks/<block coord>/<spanX>
+		if len(parts) < 6 {
+			server.BadRequest(w, r, "%q must be followed by block-coord/span-x", parts[3])
+			return
+		}
+		queryStrings := r.URL.Query()
+		var uncompressed bool
+		if queryStrings.Get("uncompressed") == "true" {
+			uncompressed = true
+		}
+		blockCoord, err := dvid.StringToChunkPoint3d(parts[4], "_")
+		if err != nil {
+			server.BadRequest(w, r, err.Error())
+			return
+		}
+		span, err := strconv.Atoi(parts[5])
+		if err != nil {
+			server.BadRequest(w, r, err.Error())
+			return
+		}
+		data, err := GetBlocks(storeCtx, uncompressed, blockCoord, span)
+		if err != nil {
+			server.BadRequest(w, r, err.Error())
+			return
+		}
+		w.Header().Set("Content-type", "application/octet-stream")
+		_, err = w.Write(data)
+		if err != nil {
+			server.BadRequest(w, r, err.Error())
+			return
+		}
+		timedLog.Infof("HTTP %s: Blocks (%s)", r.Method, r.URL)
+
 	case "arb":
 		// GET  <api URL>/node/<UUID>/<data name>/arb/<top left>/<top right>/<bottom left>/<res>[/<format>]
 		if len(parts) < 8 {
-			server.BadRequest(w, r, "'%s' must be followed by top-left/top-right/bottom-left/res", parts[3])
+			server.BadRequest(w, r, "%q must be followed by top-left/top-right/bottom-left/res", parts[3])
 			return
 		}
 		queryStrings := r.URL.Query()
@@ -1404,7 +1477,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 	case "raw", "isotropic":
 		// GET  <api URL>/node/<UUID>/<data name>/isotropic/<dims>/<size>/<offset>[/<format>]
 		if len(parts) < 7 {
-			server.BadRequest(w, r, "'%s' must be followed by shape/size/offset", parts[3])
+			server.BadRequest(w, r, "%q must be followed by shape/size/offset", parts[3])
 			return
 		}
 		var isotropic bool = (parts[3] == "isotropic")

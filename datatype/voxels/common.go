@@ -213,6 +213,64 @@ func GetVoxels(ctx storage.Context, i IntData, e ExtData, r *ROI) error {
 	return nil
 }
 
+func GetBlocks(ctx storage.Context, uncompressed bool, start dvid.ChunkPoint3d, span int) ([]byte, error) {
+	bigdata, err := storage.BigDataStore()
+	if err != nil {
+		return nil, fmt.Errorf("Cannot get datastore that handles big data: %s\n", err.Error())
+	}
+
+	indexBeg := dvid.IndexZYX(start)
+	end := start
+	end[0] += int32(span - 1)
+	indexEnd := dvid.IndexZYX(end)
+	voxelBlockBeg := NewVoxelBlockIndex(&indexBeg)
+	voxelBlockEnd := NewVoxelBlockIndex(&indexEnd)
+
+	keyvalues, err := bigdata.GetRange(ctx, voxelBlockBeg, voxelBlockEnd)
+	if err != nil {
+		return nil, err
+	}
+
+	var buf bytes.Buffer
+
+	// Save the # of keyvalues actually obtained.
+	numkv := len(keyvalues)
+	binary.Write(&buf, binary.LittleEndian, int32(numkv))
+
+	// Write the block indices in XYZ little-endian format + the size of each block
+	for _, kv := range keyvalues {
+		indexZYX, err := DecodeVoxelBlockKey(kv.K)
+		if err != nil {
+			return nil, err
+		}
+		indexBytes, err := indexZYX.MarshalBinary()
+		if err != nil {
+			return nil, err
+		}
+		_, err = buf.Write(indexBytes)
+		if err != nil {
+			return nil, err
+		}
+		if !uncompressed {
+			binary.Write(&buf, binary.LittleEndian, int32(len(kv.V)))
+		}
+	}
+
+	// Write the actual data
+	for _, kv := range keyvalues {
+		block, _, err := dvid.DeserializeData(kv.V, uncompressed)
+		if err != nil {
+			return nil, fmt.Errorf("Unable to deserialize block, %s (%v): %s", ctx, kv.K, err.Error())
+		}
+		_, err = buf.Write(block)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return buf.Bytes(), nil
+}
+
 // PutVoxels copies voxels from an ExtData (e.g., subvolume or 2d image) into an IntData
 // for a version.   Since chunk sizes can be larger than the PUT data, this also requires
 // integrating the PUT data into current chunks before writing the result.  There are two passes:

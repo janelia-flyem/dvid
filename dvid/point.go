@@ -918,6 +918,16 @@ func (c ChunkPoint3d) MaxPoint(size Point) Point {
 	}
 }
 
+// Parse a string of format "%d<sep>%d<sep>%d,..." into a ChunkPoint3d
+func StringToChunkPoint3d(str, separator string) (pt ChunkPoint3d, err error) {
+	elems := strings.Split(str, separator)
+	if len(elems) != 3 {
+		err = fmt.Errorf("Cannot convert %q into a ChunkPoint3d", str)
+		return
+	}
+	return NdString(elems).ChunkPoint3d()
+}
+
 // ChunkPointNd handles N-dimensional signed chunk coordinates.
 type ChunkPointNd []int32
 
@@ -1144,6 +1154,27 @@ func (n NdString) Point3d() (p Point3d, err error) {
 		return
 	}
 	return Point3d{int32(i), int32(j), int32(k)}, nil
+}
+
+func (n NdString) ChunkPoint3d() (p ChunkPoint3d, err error) {
+	if len(n) != 3 {
+		err = fmt.Errorf("Cannot parse into a 3d chunk point")
+		return
+	}
+	var i, j, k int64
+	i, err = strconv.ParseInt(n[0], 10, 32)
+	if err != nil {
+		return
+	}
+	j, err = strconv.ParseInt(n[1], 10, 32)
+	if err != nil {
+		return
+	}
+	k, err = strconv.ParseInt(n[2], 10, 32)
+	if err != nil {
+		return
+	}
+	return ChunkPoint3d{int32(i), int32(j), int32(k)}, nil
 }
 
 func (n NdString) PointNd() (PointNd, error) {
