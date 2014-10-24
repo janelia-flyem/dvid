@@ -685,13 +685,12 @@ func (db *LevelDB) DeleteRange(ctx storage.Context, kStart, kEnd []byte) error {
 		}
 		numKV++
 	}
-	// fmt.Printf("Completed deletion of range, doing last commit\n")
 	if numKV%BATCH_SIZE != 0 {
 		if err := batch.Commit(); err != nil {
 			return fmt.Errorf("Error on last batch DELETE: %s\n", err.Error())
 		}
 	}
-	// fmt.Printf("Completed delete range\n")
+	dvid.Infof("Deleted %d key-value pairs for %s\n", numKV, ctx)
 	return nil
 }
 
