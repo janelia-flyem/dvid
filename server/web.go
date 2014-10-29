@@ -16,6 +16,7 @@ import (
 	"runtime"
 	"runtime/debug"
 	"strings"
+	"sync"
 
 	"code.google.com/p/go.net/context"
 
@@ -87,6 +88,12 @@ const WebHelp = `
  GET  /api/server/types
 
 	Returns JSON with datatype names and their URLs.
+
+ POST /api/repos
+
+ 	Creates a new repository.  Expects configuration data in JSON as the body of the POST.
+ 	Configuration is a JSON object with optional "alias" and "description" properties.
+ 	Returns the root UUID of the newly created repo in JSON object: {"Root": uuid}
 
  GET  /api/repos/info
 
@@ -164,14 +171,27 @@ const (
 	WebAPIPath = "/api/" + WebAPIVersion
 )
 
+type WebMux struct {
+	*web.Mux
+	sync.Mutex
+	ready bool
+}
+
 var (
-	// The main web mux
-	WebMux *web.Mux
+	webMux WebMux
 )
 
 func init() {
-	WebMux = web.New()
-	WebMux.Use(middleware.RequestID)
+	webMux.Mux = web.New()
+	webMux.Use(middleware.RequestID)
+}
+
+// ServeHTTP fulfills one request using the default web Mux.
+func ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if !webMux.ready {
+		initRoutes()
+	}
+	webMux.ServeHTTP(w, r)
 }
 
 // Listen and serve HTTP requests using address and don't let stay-alive
@@ -184,11 +204,13 @@ func serveHttp(address, clientDir string) {
 		mode = " (read-only mode)"
 	}
 	dvid.Infof("Web server listening at %s%s ...\n", address, mode)
-	initRoutes()
+	if !webMux.ready {
+		initRoutes()
+	}
 
 	// Install our handler at the root of the standard net/http default mux.
 	// This allows packages like expvar to continue working as expected.  (From goji.go)
-	http.Handle("/", WebMux)
+	http.Handle("/", webMux)
 
 	graceful.HandleSignals()
 	if err := graceful.ListenAndServe(address, http.DefaultServeMux); err != nil {
@@ -199,12 +221,19 @@ func serveHttp(address, clientDir string) {
 
 // High-level switchboard for DVID HTTP API.
 func initRoutes() {
+	webMux.Lock()
+	defer webMux.Unlock()
+
+	if webMux.ready {
+		return
+	}
+
 	silentMux := web.New()
-	WebMux.Handle("/api/load", silentMux)
+	webMux.Handle("/api/load", silentMux)
 	silentMux.Get("/api/load", loadHandler)
 
 	mainMux := web.New()
-	WebMux.Handle("/*", mainMux)
+	webMux.Handle("/*", mainMux)
 	mainMux.Use(middleware.Logger)
 	mainMux.Use(middleware.Recoverer)
 	mainMux.Use(middleware.AutomaticOptions)
@@ -246,6 +275,8 @@ func initRoutes() {
 	instanceMux.NotFound(NotFound)
 
 	mainMux.Get("/*", mainHandler)
+
+	webMux.ready = true
 }
 
 // Wrapper function so that http handlers recover from panics gracefully
@@ -497,7 +528,24 @@ func reposInfoHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func reposPostHandler(w http.ResponseWriter, r *http.Request) {
-	repo, err := datastore.NewRepo()
+	config := dvid.NewConfig()
+	if err := config.SetByJSON(r.Body); err != nil {
+		BadRequest(w, r, fmt.Sprintf("Error decoding POSTed JSON config for new repo: %s", err.Error()))
+		return
+	}
+
+	alias, _, err := config.GetString("alias")
+	if err != nil {
+		BadRequest(w, r, "POST on repos endpoint requires valid 'alias': %s", err.Error())
+		return
+	}
+	description, _, err := config.GetString("description")
+	if err != nil {
+		BadRequest(w, r, "POST on repos endpoint requires valid 'description': %s", err.Error())
+		return
+	}
+
+	repo, err := datastore.NewRepo(alias, description)
 	if err != nil {
 		BadRequest(w, r, err.Error())
 	}
@@ -557,8 +605,6 @@ func repoNewDataHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 		BadRequest(w, r, fmt.Sprintf("Error decoding POSTed JSON config for 'new': %s", err.Error()))
 		return
 	}
-
-	fmt.Printf("Got: %v\n", config)
 
 	// Make sure that the passed configuration has data type and instance name.
 	typename, found, err := config.GetString("typename")

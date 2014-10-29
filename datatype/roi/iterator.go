@@ -61,8 +61,16 @@ func (it *Iterator) InsideFast(indexZYX dvid.IndexZYX) bool {
 		if span[0] > indexZYX[2] { // check z
 			return false
 		}
+		if span[0] < indexZYX[2] {
+			it.curSpan++
+			continue
+		}
 		if span[1] > indexZYX[1] { // check y
 			return false
+		}
+		if span[1] < indexZYX[1] {
+			it.curSpan++
+			continue
 		}
 		if span[2] > indexZYX[0] { // check x0
 			return false

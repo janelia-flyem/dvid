@@ -643,7 +643,7 @@ func writeBlocks(ctx storage.Context, compress dvid.Compression, checksum dvid.C
 
 // Loads a XY oriented image at given offset, returning an ExtData.
 func loadXYImage(i IntData, filename string, offset dvid.Point) (ExtData, error) {
-	img, _, err := dvid.ImageFromFile(filename)
+	img, _, err := dvid.GoImageFromFile(filename)
 	if err != nil {
 		return nil, err
 	}

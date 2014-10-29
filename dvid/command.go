@@ -29,7 +29,7 @@ func NewConfig() Config {
 }
 
 func (c Config) MarshalJSON() ([]byte, error) {
-	return json.Marshal(c)
+	return json.Marshal(c.values)
 }
 
 func (c Config) Read(p []byte) (n int, err error) {
@@ -118,7 +118,7 @@ func (c Config) GetAll() map[string]interface{} {
 }
 
 // GetString returns a string value of the given key.  If setting of key is not
-// a string, returns an error.
+// a string, returns an error.  Returns zero value string ("") if not found.
 func (c Config) GetString(key string) (s string, found bool, err error) {
 	if c.values == nil {
 		found = false

@@ -85,11 +85,11 @@ func RepoFromID(repoID dvid.RepoID) (Repo, error) {
 }
 
 // NewRepo creates and returns a new Repo.
-func NewRepo() (Repo, error) {
+func NewRepo(alias, description string) (Repo, error) {
 	if Manager == nil {
 		return nil, fmt.Errorf("datastore not initialized")
 	}
-	return Manager.NewRepo()
+	return Manager.NewRepo(alias, description)
 }
 
 // SaveRepo persists a Repo to the MetaDataStore.

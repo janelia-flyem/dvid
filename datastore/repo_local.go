@@ -497,12 +497,22 @@ func (m *repoManager) RepoFromID(repoID dvid.RepoID) (Repo, error) {
 }
 
 // NewRepo creates a new Repo with a unique UUID
-func (m *repoManager) NewRepo() (Repo, error) {
+func (m *repoManager) NewRepo(alias, description string) (Repo, error) {
 	m.Lock()
 	defer m.Unlock()
 	repo, _, err := newRepo(m)
 	if err != nil {
 		return nil, err
+	}
+	if alias != "" {
+		if err := repo.SetAlias(alias); err != nil {
+			return nil, err
+		}
+	}
+	if description != "" {
+		if err := repo.SetDescription(description); err != nil {
+			return nil, err
+		}
 	}
 	return repo, m.putCaches()
 }
@@ -626,6 +636,7 @@ func (r *repoT) SetAlias(alias string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.alias = alias
+	r.updated = time.Now()
 	return r.save()
 }
 

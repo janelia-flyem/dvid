@@ -10,8 +10,10 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 )
 
+var rgba8EncodeFormat dvid.DataValues
+
 func init() {
-	values := dvid.DataValues{
+	rgba8EncodeFormat = dvid.DataValues{
 		{
 			T:     dvid.T_uint8,
 			Label: "red",
@@ -30,10 +32,14 @@ func init() {
 		},
 	}
 	interpolable := true
-	rgba := NewType(values, interpolable)
+	rgba := NewType(rgba8EncodeFormat, interpolable)
 	rgba.Type.Name = "rgba8"
 	rgba.Type.URL = "github.com/janelia-flyem/dvid/datatype/voxels/rgba8.go"
 	rgba.Type.Version = "0.6"
 
 	datastore.Register(rgba)
+}
+
+func RGBA8EncodeFormat() dvid.DataValues {
+	return rgba8EncodeFormat
 }

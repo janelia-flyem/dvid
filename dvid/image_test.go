@@ -2,6 +2,7 @@ package dvid
 
 import (
 	"image"
+
 	. "github.com/janelia-flyem/go/gocheck"
 )
 
@@ -37,15 +38,13 @@ func (suite *DataSuite) TestSlice(c *C) {
 	goImg := ImageGrayFromData(data, int(size[0]), int(size[1]))
 
 	// Create a serializable image and test its de/serialization.
-	var img Image
 	values := DataValues{
 		{
 			T:     T_uint8,
 			Label: "grayscale",
 		},
 	}
-
-	err := img.SetFromGoImage(goImg, values, true)
+	img, err := ImageFromGoImage(goImg, values, true)
 	c.Assert(err, IsNil)
 
 	compression, err := NewCompression(Snappy, DefaultCompression)
@@ -78,14 +77,13 @@ func (suite *DataSuite) TestOffsetSlice(c *C) {
 	}
 
 	// Create a serializable image and test its de/serialization.
-	var img Image
 	values := DataValues{
 		{
 			T:     T_uint8,
 			Label: "grayscale",
 		},
 	}
-	err := img.SetFromGoImage(goImg, values, true)
+	img, err := ImageFromGoImage(goImg, values, true)
 	c.Assert(err, IsNil)
 
 	compression, err := NewCompression(Snappy, DefaultCompression)
@@ -110,14 +108,13 @@ func (suite *DataSuite) TestMarshaling(c *C) {
 	goImg := ImageGrayFromData(data, 100, 100)
 
 	// Create a serializable image and test its de/serialization and size
-	var img Image
 	values := DataValues{
 		{
 			T:     T_uint8,
 			Label: "grayscale",
 		},
 	}
-	err := img.SetFromGoImage(goImg, values, true)
+	img, err := ImageFromGoImage(goImg, values, true)
 	c.Assert(err, IsNil)
 
 	b, err := img.MarshalBinary()
@@ -138,14 +135,13 @@ func (suite *DataSuite) TestCompression(c *C) {
 	goImg := ImageGrayFromData(data, 100, 100)
 
 	// Create a serializable image and test its de/serialization and size
-	var img Image
 	values := DataValues{
 		{
 			T:     T_uint8,
 			Label: "grayscale",
 		},
 	}
-	err := img.SetFromGoImage(goImg, values, true)
+	img, err := ImageFromGoImage(goImg, values, true)
 	c.Assert(err, IsNil)
 
 	compression, err := NewCompression(Gzip, DefaultCompression)

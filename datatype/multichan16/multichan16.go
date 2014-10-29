@@ -152,6 +152,10 @@ func init() {
 	gob.Register(&Data{})
 }
 
+func CompositeEncodeFormat() dvid.DataValues {
+	return compositeValues
+}
+
 // Type just uses voxels data type by composition.
 type Type struct {
 	*voxels.Type

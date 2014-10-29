@@ -1009,7 +1009,7 @@ func (d *Data) getBlankTileImage(repo datastore.Repo, shape dvid.DataShape, scal
 	case 1, 2, 4, 8:
 		numBytes := tileW * tileH * bytesPerVoxel
 		data := make([]byte, numBytes, numBytes)
-		return dvid.ImageFromData(data, int(tileW), int(tileH))
+		return dvid.GoImageFromData(data, int(tileW), int(tileH))
 	default:
 		return nil, fmt.Errorf("Cannot construct blank tile for data %q with %d bytes/voxel",
 			d.Source, src.Values().BytesPerElement())

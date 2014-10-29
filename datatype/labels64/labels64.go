@@ -260,18 +260,19 @@ GET <api URL>/node/<UUID>/<data name>/sizerange/<min size>/<optional max size>
 `
 
 var (
-	dtype *Type
+	dtype        *Type
+	encodeFormat dvid.DataValues
 )
 
 func init() {
-	values := dvid.DataValues{
+	encodeFormat = dvid.DataValues{
 		{
 			T:     dvid.T_uint64,
 			Label: TypeName,
 		},
 	}
 	interpolable := false
-	dtype = &Type{voxels.NewType(values, interpolable)}
+	dtype = &Type{voxels.NewType(encodeFormat, interpolable)}
 	dtype.Type.Name = TypeName
 	dtype.Type.URL = RepoURL
 	dtype.Type.Version = Version
@@ -283,6 +284,10 @@ func init() {
 	// Need to register types that will be used to fulfill interfaces.
 	gob.Register(&Type{})
 	gob.Register(&Data{})
+}
+
+func EncodeFormat() dvid.DataValues {
+	return encodeFormat
 }
 
 // --- Labels64 Datatype -----
@@ -857,7 +862,7 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 					return
 				}
 				// TODO -- Put in format checks for POSTed image.
-				postedImg, _, err := dvid.ImageFromPOST(r)
+				postedImg, _, err := image.Decode(r.Body)
 				if err != nil {
 					server.BadRequest(w, r, err.Error())
 					return

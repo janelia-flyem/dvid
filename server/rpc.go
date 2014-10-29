@@ -133,7 +133,7 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 		cmd.CommandArgs(1, &subcommand, &alias, &description)
 		switch subcommand {
 		case "new":
-			repo, err := datastore.NewRepo()
+			repo, err := datastore.NewRepo(alias, description)
 			if err != nil {
 				return err
 			}

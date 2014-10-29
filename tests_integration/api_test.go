@@ -1,0 +1,405 @@
+package tests_integration
+
+import (
+	"bytes"
+	"encoding/binary"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/janelia-flyem/dvid/dvid"
+	"github.com/janelia-flyem/dvid/server"
+	"github.com/janelia-flyem/dvid/tests"
+
+	"github.com/janelia-flyem/dvid/datatype/labels64"
+	"github.com/janelia-flyem/dvid/datatype/voxels"
+
+	// Declare the data types the DVID server should support
+	_ "github.com/janelia-flyem/dvid/datatype/keyvalue"
+	_ "github.com/janelia-flyem/dvid/datatype/labelgraph"
+	_ "github.com/janelia-flyem/dvid/datatype/labelmap"
+	_ "github.com/janelia-flyem/dvid/datatype/multichan16"
+	_ "github.com/janelia-flyem/dvid/datatype/multiscale2d"
+	_ "github.com/janelia-flyem/dvid/datatype/roi"
+)
+
+func doHTTP(t *testing.T, method, urlStr string, payload io.Reader) []byte {
+	req, err := http.NewRequest(method, urlStr, payload)
+	if err != nil {
+		t.Fatalf("Unsuccessful %s on %q: %s\n", method, urlStr, err.Error())
+	}
+	w := httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Bad server response (%d) to %s on %q\n", w.Code, method, urlStr)
+	}
+	return w.Body.Bytes()
+}
+
+// NewServerRepo returns a repo on a running server suitable for testing.
+func NewServerRepo(t *testing.T) (uuid string) {
+	metadata := `{"alias": "testRepo", "description": "A test repository"}`
+	apiStr := server.WebAPIPath + "repos"
+	response := doHTTP(t, "POST", apiStr, bytes.NewBufferString(metadata))
+
+	// Parse the returned root UUID
+	parsedResponse := struct {
+		Root string
+	}{}
+	if err := json.Unmarshal(response, &parsedResponse); err != nil {
+		t.Fatalf("Couldn't decode JSON response to new repo request: %s\n", err.Error())
+	}
+	return parsedResponse.Root
+}
+
+type sliceTester struct {
+	orient string
+	width  int32
+	height int32
+	offset dvid.Point3d
+}
+
+func (s sliceTester) apiStr(uuid dvid.UUID, name string) string {
+	return fmt.Sprintf("%snode/%s/%s/raw/%s/%d_%d/%d_%d_%d", server.WebAPIPath,
+		uuid, name, s.orient, s.width, s.height, s.offset[0], s.offset[1], s.offset[2])
+}
+
+// Returns a value for the DVID voxel coordinate given a slice's orientation and size.
+func (s sliceTester) getLabel(t *testing.T, img *dvid.Image, x, y, z int32) uint64 {
+	switch s.orient {
+	case "xy":
+		if z != s.offset[2] || x < s.offset[0] || x >= s.offset[0]+s.width || y < s.offset[1] || y >= s.offset[1]+s.height {
+			break
+		}
+		ix := x - s.offset[0]
+		iy := y - s.offset[1]
+		data, err := img.DataPtr(ix, iy)
+		if err != nil {
+			t.Fatalf("Could not get data at (%d,%d): %s\n", ix, iy, err.Error())
+		}
+		if len(data) != 8 {
+			t.Fatalf("Returned labels64 data that is not 8 bytes for a voxel")
+		}
+		return binary.LittleEndian.Uint64(data)
+	default:
+		t.Fatalf("Unknown slice orientation %q\n", s.orient)
+	}
+	t.Fatalf("Attempted to get voxel (%d, %d, %d) not in %d x %d %s slice at offset %s\n",
+		x, y, z, s.width, s.height, s.orient, s.offset)
+	return 0
+}
+
+type tuple [4]int
+
+var labelsROI = []tuple{
+	tuple{3, 3, 2, 4}, tuple{3, 4, 2, 3}, tuple{3, 5, 3, 3},
+	tuple{4, 3, 2, 5}, tuple{4, 4, 3, 4}, tuple{4, 5, 2, 4},
+	//tuple{5, 2, 3, 4}, tuple{5, 3, 3, 3}, tuple{5, 4, 2, 3}, tuple{5, 5, 2, 2},
+}
+
+func labelsJSON() string {
+	b, err := json.Marshal(labelsROI)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+func inroi(x, y, z int) bool {
+	for _, span := range labelsROI {
+		if span[0] != z {
+			continue
+		}
+		if span[1] != y {
+			continue
+		}
+		if span[2] > x || span[3] < x {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+func TestLabels64(t *testing.T) {
+	tests.UseStore()
+	defer tests.CloseStore()
+
+	uuid := dvid.UUID(NewServerRepo(t))
+	if len(uuid) < 5 {
+		t.Fatalf("Bad root UUID for new repo: %s\n", uuid)
+	}
+
+	// Create a labels64 instance
+	labelsName := "mylabels"
+	metadata := `{"typename": "labels64", "dataname": "mylabels"}`
+	apiStr := fmt.Sprintf("%srepo/%s/instance", server.WebAPIPath, uuid)
+	doHTTP(t, "POST", apiStr, bytes.NewBufferString(metadata))
+
+	// Post a 3d volume of data that is 10 blocks on a side and straddles block boundaries.
+	payload := new(bytes.Buffer)
+	var label uint64
+	nx := 5
+	ny := 5
+	nz := 5
+	blocksz := 32
+	p := make([]byte, 8*blocksz)
+	for z := 0; z < nz*blocksz; z++ {
+		for y := 0; y < ny*blocksz; y++ {
+			for x := 0; x < nx; x++ {
+				label++
+				for i := 0; i < blocksz; i++ {
+					binary.LittleEndian.PutUint64(p[i*8:(i+1)*8], label)
+				}
+				n, err := payload.Write(p)
+				if n != 8*blocksz {
+					t.Fatalf("Could not write test data: %d bytes instead of %d\n", n, 8*blocksz)
+				}
+				if err != nil {
+					t.Fatalf("Could not write test data: %s\n", err.Error())
+				}
+			}
+		}
+	}
+	apiStr = fmt.Sprintf("%snode/%s/%s/raw/0_1_2/%d_%d_%d/16_48_70", server.WebAPIPath,
+		uuid, labelsName, nx*blocksz, ny*blocksz, nz*blocksz)
+	doHTTP(t, "POST", apiStr, payload)
+
+	// Verify XY slice reads returns what we expect.
+	slice := sliceTester{"xy", 200, 200, dvid.Point3d{10, 40, 72}}
+	apiStr = slice.apiStr(uuid, labelsName)
+	xy := doHTTP(t, "GET", apiStr, nil)
+	img, format, err := dvid.ImageFromBytes(xy, labels64.EncodeFormat(), false)
+	if err != nil {
+		t.Fatalf("Error on XY labels GET: %s\n", err.Error())
+	}
+	if format != "png" {
+		t.Errorf("Expected XY labels GET to return %q image, got %q instead.\n", "png", format)
+	}
+	if img.NumBytes() != 200*200*8 {
+		t.Errorf("Expected %d bytes from XY labels64 GET.  Got %d instead.", 200*200*8, img.NumBytes())
+	}
+	// -- For z = 72, expect labels to go from 1601 to 2400.
+	// -- Make sure corner points have 0 and non-zero labels where appropriate.
+	value := slice.getLabel(t, img, 25, 47, 72)
+	if value != 0 {
+		t.Errorf("Expected 0, got %d\n", value)
+	}
+	value = slice.getLabel(t, img, 25, 48, 72)
+	if value != 1601 {
+		t.Errorf("Expected 1601.  Got %d instead.", value)
+	}
+	value = slice.getLabel(t, img, 25, 208, 72)
+	if value != 0 {
+		t.Errorf("Expected 0.  Got %d instead.", value)
+	}
+	value = slice.getLabel(t, img, 176, 100, 72)
+	if value != 0 {
+		t.Errorf("Expected 0.  Got %d instead.", value)
+	}
+
+	// TODO - Verify XZ slice read returns what we expect.
+
+	// TODO - Verify YZ slice read returns what we expect.
+
+	// Verify 3d volume read returns original.
+	apiStr = fmt.Sprintf("%snode/%s/%s/raw/0_1_2/%d_%d_%d/16_48_70", server.WebAPIPath,
+		uuid, labelsName, nx*blocksz, ny*blocksz, nz*blocksz)
+	xyz := doHTTP(t, "GET", apiStr, nil)
+	if len(xyz) != 160*160*160*8 {
+		t.Errorf("Expected %d bytes from 3d labels64 GET.  Got %d instead.", 160*160*160*8, len(xyz))
+	}
+	label = 0
+	j := 0
+	for z := 0; z < nz*blocksz; z++ {
+		for y := 0; y < ny*blocksz; y++ {
+			for x := 0; x < nx; x++ {
+				label++
+				for i := 0; i < blocksz; i++ {
+					gotlabel := binary.LittleEndian.Uint64(xyz[j : j+8])
+					if gotlabel != label {
+						t.Fatalf("Bad label %d instead of expected %d at (%d,%d,%d)\n",
+							gotlabel, label, x*blocksz+i, y, z)
+					}
+					j += 8
+				}
+			}
+		}
+	}
+
+	// Create a new ROI instance.
+	roiName := "myroi"
+	metadata = `{"typename": "roi", "dataname": "myroi"}`
+	apiStr = fmt.Sprintf("%srepo/%s/instance", server.WebAPIPath, uuid)
+	doHTTP(t, "POST", apiStr, bytes.NewBufferString(metadata))
+
+	// Add ROI data
+	apiStr = fmt.Sprintf("%snode/%s/%s/roi", server.WebAPIPath, uuid, roiName)
+	doHTTP(t, "POST", apiStr, bytes.NewBufferString(labelsJSON()))
+
+	// Post updated labels without ROI.
+	payload = new(bytes.Buffer)
+	label = 200000
+	for z := 0; z < nz*blocksz; z++ {
+		for y := 0; y < ny*blocksz; y++ {
+			for x := 0; x < nx; x++ {
+				label++
+				for i := 0; i < blocksz; i++ {
+					binary.LittleEndian.PutUint64(p[i*8:(i+1)*8], label)
+				}
+				n, err := payload.Write(p)
+				if n != 8*blocksz {
+					t.Fatalf("Could not write test data: %d bytes instead of %d\n", n, 8*blocksz)
+				}
+				if err != nil {
+					t.Fatalf("Could not write test data: %s\n", err.Error())
+				}
+			}
+		}
+	}
+	apiStr = fmt.Sprintf("%snode/%s/%s/raw/0_1_2/%d_%d_%d/16_48_70", server.WebAPIPath,
+		uuid, labelsName, nx*blocksz, ny*blocksz, nz*blocksz)
+	doHTTP(t, "POST", apiStr, payload)
+
+	// Verify 3d volume read returns modified data.
+	apiStr = fmt.Sprintf("%snode/%s/%s/raw/0_1_2/%d_%d_%d/16_48_70", server.WebAPIPath,
+		uuid, labelsName, nx*blocksz, ny*blocksz, nz*blocksz)
+	xyz = doHTTP(t, "GET", apiStr, nil)
+	if len(xyz) != 160*160*160*8 {
+		t.Errorf("Expected %d bytes from 3d labels64 GET.  Got %d instead.", 160*160*160*8, len(xyz))
+	}
+	label = 200000
+	j = 0
+	for z := 0; z < nz*blocksz; z++ {
+		for y := 0; y < ny*blocksz; y++ {
+			for x := 0; x < nx; x++ {
+				label++
+				for i := 0; i < blocksz; i++ {
+					gotlabel := binary.LittleEndian.Uint64(xyz[j : j+8])
+					if gotlabel != label {
+						t.Fatalf("Bad label %d instead of expected modified %d at (%d,%d,%d)\n",
+							gotlabel, label, x*blocksz+i, y, z)
+					}
+					j += 8
+				}
+			}
+		}
+	}
+
+	// TODO - Use the ROI to retrieve a 2d xy image.
+
+	// TODO - Make sure we aren't getting labels back in non-ROI points.
+
+	// Post again but now with ROI
+	payload = new(bytes.Buffer)
+	label = 400000
+	for z := 0; z < nz*blocksz; z++ {
+		for y := 0; y < ny*blocksz; y++ {
+			for x := 0; x < nx; x++ {
+				label++
+				for i := 0; i < blocksz; i++ {
+					binary.LittleEndian.PutUint64(p[i*8:(i+1)*8], label)
+				}
+				n, err := payload.Write(p)
+				if n != 8*blocksz {
+					t.Fatalf("Could not write test data: %d bytes instead of %d\n", n, 8*blocksz)
+				}
+				if err != nil {
+					t.Fatalf("Could not write test data: %s\n", err.Error())
+				}
+			}
+		}
+	}
+	apiStr = fmt.Sprintf("%snode/%s/%s/raw/0_1_2/%d_%d_%d/16_48_70?roi=%s", server.WebAPIPath,
+		uuid, labelsName, nx*blocksz, ny*blocksz, nz*blocksz, roiName)
+	doHTTP(t, "POST", apiStr, payload)
+
+	// Verify ROI masking on GET.
+	apiStr = fmt.Sprintf("%snode/%s/%s/raw/0_1_2/%d_%d_%d/16_48_70?roi=%s", server.WebAPIPath,
+		uuid, labelsName, nx*blocksz, ny*blocksz, nz*blocksz, roiName)
+	xyz2 := doHTTP(t, "GET", apiStr, nil)
+	if len(xyz) != 160*160*160*8 {
+		t.Errorf("Expected %d bytes from 3d labels64 GET.  Got %d instead.", 160*160*160*8, len(xyz))
+	}
+	var newlabel uint64 = 400000
+	var oldlabel uint64 = 200000
+	j = 0
+	offsetx := 16
+	offsety := 48
+	offsetz := 70
+	for z := 0; z < nz*blocksz; z++ {
+		voxz := z + offsetz
+		blockz := voxz / int(voxels.DefaultBlockSize)
+		for y := 0; y < ny*blocksz; y++ {
+			voxy := y + offsety
+			blocky := voxy / int(voxels.DefaultBlockSize)
+			for x := 0; x < nx; x++ {
+				newlabel++
+				oldlabel++
+				voxx := x*blocksz + offsetx
+				for i := 0; i < blocksz; i++ {
+					blockx := voxx / int(voxels.DefaultBlockSize)
+					gotlabel := binary.LittleEndian.Uint64(xyz2[j : j+8])
+					if inroi(blockx, blocky, blockz) {
+						if gotlabel != newlabel {
+							t.Fatalf("Got label %d instead of in-ROI label %d at (%d,%d,%d)\n",
+								gotlabel, newlabel, voxx, voxy, voxz)
+						}
+					} else {
+						if gotlabel != 0 {
+							t.Fatalf("Got label %d instead of 0 at (%d,%d,%d) outside ROI\n",
+								gotlabel, voxx, voxy, voxz)
+						}
+					}
+					j += 8
+					voxx++
+				}
+			}
+		}
+	}
+
+	// Verify everything in mask is new and everything out of mask is old, and everything in mask
+	// is new.
+	apiStr = fmt.Sprintf("%snode/%s/%s/raw/0_1_2/%d_%d_%d/16_48_70", server.WebAPIPath,
+		uuid, labelsName, nx*blocksz, ny*blocksz, nz*blocksz)
+	xyz2 = doHTTP(t, "GET", apiStr, nil)
+	if len(xyz) != 160*160*160*8 {
+		t.Errorf("Expected %d bytes from 3d labels64 GET.  Got %d instead.", 160*160*160*8, len(xyz))
+	}
+	newlabel = 400000
+	oldlabel = 200000
+	j = 0
+	for z := 0; z < nz*blocksz; z++ {
+		voxz := z + offsetz
+		blockz := voxz / int(voxels.DefaultBlockSize)
+		for y := 0; y < ny*blocksz; y++ {
+			voxy := y + offsety
+			blocky := voxy / int(voxels.DefaultBlockSize)
+			for x := 0; x < nx; x++ {
+				newlabel++
+				oldlabel++
+				voxx := x*blocksz + offsetx
+				for i := 0; i < blocksz; i++ {
+					blockx := voxx / int(voxels.DefaultBlockSize)
+					gotlabel := binary.LittleEndian.Uint64(xyz2[j : j+8])
+					if inroi(blockx, blocky, blockz) {
+						if gotlabel != newlabel {
+							t.Fatalf("Got label %d instead of in-ROI label %d at (%d,%d,%d)\n",
+								gotlabel, newlabel, voxx, voxy, voxz)
+						}
+					} else {
+						if gotlabel != oldlabel {
+							t.Fatalf("Got label %d instead of label %d at (%d,%d,%d) outside ROI\n",
+								gotlabel, oldlabel, voxx, voxy, voxz)
+						}
+					}
+					j += 8
+					voxx++
+				}
+			}
+		}
+	}
+}

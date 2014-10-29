@@ -129,10 +129,7 @@ func (d *Data) GetArbitraryImage(ctx storage.Context, tlStr, trStr, blStr, resSt
 	}
 	wg.Wait()
 
-	// Insert the image data into a dvid.Image struct
-	img := new(dvid.Image)
-	img.SetFromData(arb.size[0], arb.size[1], arb.data, d.Properties.Values, d.Properties.Interpolable)
-	return img, nil
+	return dvid.ImageFromData(arb.size[0], arb.size[1], arb.data, d.Properties.Values, d.Properties.Interpolable)
 }
 
 type neighbors struct {

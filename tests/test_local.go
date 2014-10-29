@@ -18,9 +18,9 @@ import (
 )
 
 const (
-	TestWebAddress   = "localhost:8657"
-	TestRPCAddress   = "localhost:8658"
-	TestWebClientDir = ""
+	WebAddress   = "localhost:8657"
+	RPCAddress   = "localhost:8658"
+	WebClientDir = ""
 )
 
 var (

@@ -25,7 +25,6 @@ import (
 	"image/draw"
 	"image/jpeg"
 	"image/png"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"reflect"
@@ -79,6 +78,165 @@ type Image struct {
 	Gray16  *image.Gray16
 	NRGBA   *image.NRGBA
 	NRGBA64 *image.NRGBA64
+}
+
+// ImageFromGoImage returns a DVID image from a go image and a data format specification.  DVID images
+// must have identical data type values within a pixel.
+func ImageFromGoImage(src image.Image, format DataValues, interpolable bool) (*Image, error) {
+	img := new(Image)
+	img.DataFormat = format
+	img.Interpolable = interpolable
+
+	valuesPerElement := format.ValuesPerElement()
+	bytesPerValue, err := format.BytesPerValue()
+	if err != nil {
+		return nil, err
+	}
+
+	switch s := src.(type) {
+	case *image.Gray:
+		img.Which = 0
+		img.Gray = s
+		if valuesPerElement != 1 || bytesPerValue != 1 {
+			return nil, fmt.Errorf("Tried to use image.Gray (8-bit) to represent %d values of %d bytes/value",
+				valuesPerElement, bytesPerValue)
+		}
+	case *image.Gray16:
+		img.Which = 1
+		img.Gray16 = s
+		if valuesPerElement != 1 || bytesPerValue != 2 {
+			return nil, fmt.Errorf("Tried to use image.Gray16 (16-bit) to represent %d values of %d bytes/value",
+				valuesPerElement, bytesPerValue)
+		}
+	case *image.NRGBA:
+		img.Which = 2
+		img.NRGBA = s
+		if !((valuesPerElement == 1 && bytesPerValue == 4) || (valuesPerElement == 4 && bytesPerValue == 1)) {
+			return nil, fmt.Errorf("Tried to use image.NRGBA (32-bit) to represent %d values of %d bytes/value",
+				valuesPerElement, bytesPerValue)
+		}
+	case *image.NRGBA64:
+		img.Which = 3
+		img.NRGBA64 = s
+		if !((valuesPerElement == 1 && bytesPerValue == 8) || (valuesPerElement == 4 && bytesPerValue == 2)) {
+			return nil, fmt.Errorf("Tried to use image.NRGBA64 (64-bit) to represent %d values of %d bytes/value",
+				valuesPerElement, bytesPerValue)
+		}
+	default:
+		return nil, fmt.Errorf("No valid image type received by image.Set(): %s", reflect.TypeOf(src))
+	}
+	return img, nil
+}
+
+// ImageFromBytes returns a DVID Image from binary image data, e.g., a PNG file.
+// Returns a string representing the type of encoding used for the image.
+func ImageFromBytes(data []byte, format DataValues, interpolable bool) (*Image, string, error) {
+	goImg, encoding, err := image.Decode(bytes.NewBuffer(data))
+	if err != nil {
+		return nil, encoding, err
+	}
+	img, err := ImageFromGoImage(goImg, format, interpolable)
+	return img, encoding, err
+}
+
+// ImageFromData returns a DVID Image from raw data and dimensions.
+func ImageFromData(dstW, dstH int32, data []byte, format DataValues, interpolable bool) (*Image, error) {
+	// Make sure values for this data can be converted into an image.
+	valuesPerElement := format.ValuesPerElement()
+	bytesPerValue, err := format.BytesPerValue()
+	if err != nil {
+		return nil, err
+	}
+
+	unsupportedErr := func() error {
+		return fmt.Errorf("DVID images currently does not support images for %d channels and %d bytes/channel",
+			valuesPerElement, bytesPerValue)
+	}
+
+	var goImg image.Image
+	stride := int(dstW * valuesPerElement * bytesPerValue)
+	r := image.Rect(0, 0, int(dstW), int(dstH))
+	switch valuesPerElement {
+	case 1:
+		switch bytesPerValue {
+		case 1:
+			goImg = &image.Gray{
+				Stride: stride,
+				Rect:   r,
+				Pix:    data,
+			}
+		case 2:
+			goImg = &image.Gray16{
+				Stride: stride,
+				Rect:   r,
+				Pix:    data,
+			}
+		case 4:
+			goImg = &image.NRGBA{
+				Stride: stride,
+				Rect:   r,
+				Pix:    data,
+			}
+		case 8:
+			goImg = &image.NRGBA64{
+				Stride: stride,
+				Rect:   r,
+				Pix:    data,
+			}
+		default:
+			return nil, unsupportedErr()
+		}
+	case 4:
+		switch bytesPerValue {
+		case 1:
+			goImg = &image.NRGBA{
+				Stride: stride,
+				Rect:   r,
+				Pix:    data,
+			}
+		case 2:
+			goImg = &image.NRGBA64{
+				Stride: stride,
+				Rect:   r,
+				Pix:    data,
+			}
+		default:
+			return nil, unsupportedErr()
+		}
+	default:
+		return nil, unsupportedErr()
+	}
+
+	return ImageFromGoImage(goImg, format, interpolable)
+}
+
+// Bounds returns the size of the image.  If an image is not set, it returns
+// the zero recatnagle (image.ZR)
+func (img *Image) Bounds() image.Rectangle {
+	if img == nil {
+		return image.ZR
+	}
+	switch img.Which {
+	case 0:
+		return img.Gray.Bounds()
+	case 1:
+		return img.Gray16.Bounds()
+	case 2:
+		return img.NRGBA.Bounds()
+	case 3:
+		return img.NRGBA64.Bounds()
+	default:
+		return image.ZR
+	}
+}
+
+// Returns the number of bytes to be expected for this image and data format.
+func (img *Image) NumBytes() int32 {
+	if img == nil {
+		return 0
+	}
+	bounds := img.Bounds()
+	return int32(bounds.Dx()*bounds.Dy()) * img.DataFormat.BytesPerElement()
 }
 
 // Get returns an image.Image from the union struct.
@@ -161,126 +319,6 @@ func (img Image) GetJPEG(quality int) ([]byte, error) {
 	return buffer.Bytes(), nil
 }
 
-// SetFromGoImage initializes a DVID image from a go image and a data format specification.  DVID images
-// must have identical data type values within a pixel..
-func (img *Image) SetFromGoImage(src image.Image, format DataValues, interpolable bool) error {
-	img.DataFormat = format
-	img.Interpolable = interpolable
-
-	valuesPerElement := format.ValuesPerElement()
-	bytesPerValue, err := format.BytesPerValue()
-	if err != nil {
-		return err
-	}
-
-	switch s := src.(type) {
-	case *image.Gray:
-		img.Which = 0
-		img.Gray = s
-		if valuesPerElement != 1 || bytesPerValue != 1 {
-			return fmt.Errorf("Tried to use image.Gray (8-bit) to represent %d values of %d bytes/value",
-				valuesPerElement, bytesPerValue)
-		}
-	case *image.Gray16:
-		img.Which = 1
-		img.Gray16 = s
-		if valuesPerElement != 1 || bytesPerValue != 2 {
-			return fmt.Errorf("Tried to use image.Gray16 (16-bit) to represent %d values of %d bytes/value",
-				valuesPerElement, bytesPerValue)
-		}
-	case *image.NRGBA:
-		img.Which = 2
-		img.NRGBA = s
-		if !((valuesPerElement == 1 && bytesPerValue == 4) || (valuesPerElement == 4 && bytesPerValue == 1)) {
-			return fmt.Errorf("Tried to use image.NRGBA (32-bit) to represent %d values of %d bytes/value",
-				valuesPerElement, bytesPerValue)
-		}
-	case *image.NRGBA64:
-		img.Which = 3
-		img.NRGBA64 = s
-		if !((valuesPerElement == 1 && bytesPerValue == 8) || (valuesPerElement == 4 && bytesPerValue == 2)) {
-			return fmt.Errorf("Tried to use image.NRGBA64 (64-bit) to represent %d values of %d bytes/value",
-				valuesPerElement, bytesPerValue)
-		}
-	default:
-		return fmt.Errorf("No valid image type received by image.Set(): %s", reflect.TypeOf(src))
-	}
-	return nil
-}
-
-// SetFromData returns a DVID Image from raw data and dimensions.
-func (img *Image) SetFromData(dstW, dstH int32, data []byte, format DataValues, interpolable bool) error {
-	// Make sure values for this data can be converted into an image.
-	valuesPerElement := format.ValuesPerElement()
-	bytesPerValue, err := format.BytesPerValue()
-	if err != nil {
-		return err
-	}
-
-	unsupported := func() error {
-		return fmt.Errorf("DVID images currently does not support images for %d channels and %d bytes/channel",
-			valuesPerElement, bytesPerValue)
-	}
-
-	var goImg image.Image
-	stride := int(dstW * valuesPerElement * bytesPerValue)
-	r := image.Rect(0, 0, int(dstW), int(dstH))
-	switch valuesPerElement {
-	case 1:
-		switch bytesPerValue {
-		case 1:
-			goImg = &image.Gray{
-				Stride: stride,
-				Rect:   r,
-				Pix:    data,
-			}
-		case 2:
-			goImg = &image.Gray16{
-				Stride: stride,
-				Rect:   r,
-				Pix:    data,
-			}
-		case 4:
-			goImg = &image.NRGBA{
-				Stride: stride,
-				Rect:   r,
-				Pix:    data,
-			}
-		case 8:
-			goImg = &image.NRGBA64{
-				Stride: stride,
-				Rect:   r,
-				Pix:    data,
-			}
-		default:
-			return unsupported()
-		}
-	case 4:
-		switch bytesPerValue {
-		case 1:
-			goImg = &image.NRGBA{
-				Stride: stride,
-				Rect:   r,
-				Pix:    data,
-			}
-		case 2:
-			goImg = &image.NRGBA64{
-				Stride: stride,
-				Rect:   r,
-				Pix:    data,
-			}
-		default:
-			return unsupported()
-		}
-	default:
-		return unsupported()
-	}
-
-	// Package Go image
-	img.SetFromGoImage(goImg, format, interpolable)
-	return nil
-}
-
 // Data returns a slice of bytes corresponding to the image pixels.
 func (img *Image) Data() []uint8 {
 	switch img.Which {
@@ -340,6 +378,51 @@ func (img *Image) Deserialize(b []byte) error {
 	}
 
 	return img.UnmarshalBinary(data)
+}
+
+func (img *Image) DataPtr(x, y int32) ([]byte, error) {
+	if img == nil {
+		return nil, fmt.Errorf("Can't get DataPtr for nil dvid.Image")
+	}
+	var bytesPerPixel int
+	var rect image.Rectangle
+	var src []uint8
+	var pixOffset func(x, y int) int
+
+	switch img.Which {
+	case 0:
+		rect = img.Gray.Rect
+		bytesPerPixel = 1
+		src = img.Gray.Pix
+		pixOffset = img.Gray.PixOffset
+
+	case 1:
+		rect = img.Gray16.Rect
+		bytesPerPixel = 2
+		src = img.Gray16.Pix
+		pixOffset = img.Gray16.PixOffset
+
+	case 2:
+		rect = img.NRGBA.Rect
+		bytesPerPixel = 4
+		src = img.NRGBA.Pix
+		pixOffset = img.NRGBA.PixOffset
+
+	case 3:
+		rect = img.NRGBA64.Rect
+		bytesPerPixel = 8
+		src = img.NRGBA64.Pix
+		pixOffset = img.NRGBA64.PixOffset
+	}
+
+	pt := image.Point{int(x), int(y)}
+	if !pt.In(rect) {
+		return nil, fmt.Errorf("Point (%d, %d) not in %d x %d image", x, y, rect.Dx(), rect.Dy())
+	}
+	pix := make([]uint8, bytesPerPixel)
+	i := pixOffset(int(x), int(y))
+	copy(pix, src[i:i+bytesPerPixel])
+	return pix, nil
 }
 
 // MarshalBinary fulfills the encoding.BinaryMarshaler interface.
@@ -511,12 +594,7 @@ func (img *Image) ScaleImage(dstW, dstH int) (*Image, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	dst := new(Image)
-	if err = dst.SetFromGoImage(goImg, img.DataFormat, img.Interpolable); err != nil {
-		return nil, err
-	}
-	return dst, nil
+	return ImageFromGoImage(goImg, img.DataFormat, img.Interpolable)
 }
 
 // ResizeImage returns an image scaled to the given geometry without doing
@@ -1205,47 +1283,18 @@ func ImageData(img image.Image) (data []uint8, bytesPerPixel, stride int32, err 
 	return
 }
 
-// ImageFromFile returns an image and its format name given a file name.
-func ImageFromFile(filename string) (img image.Image, format string, err error) {
-	var file *os.File
-	file, err = os.Open(filename)
+// GoImageFromFile returns an image and its format name given a file name.
+func GoImageFromFile(filename string) (image.Image, string, error) {
+	file, err := os.Open(filename)
+	defer file.Close()
 	if err != nil {
-		err = fmt.Errorf("Unable to open image (%s).  Is this visible to server process?",
-			filename)
-		return
+		return nil, "", fmt.Errorf("Unable to open image %q", filename)
 	}
-	img, format, err = image.Decode(file)
-	if err != nil {
-		return
-	}
-	err = file.Close()
-	return
+	return image.Decode(file)
 }
 
-// ImageFromForm returns an image and its format name given a key to a POST request.
-// The image should be the first file in a POSTed form.
-func ImageFromForm(r *http.Request, key string) (img image.Image, format string, err error) {
-	f, _, err := r.FormFile(key)
-	if err != nil {
-		return nil, "none", err
-	}
-	defer f.Close()
-	return image.Decode(f)
-}
-
-// ImageFromPOST returns an image and its format name given a POST request.
-func ImageFromPOST(r *http.Request) (img image.Image, format string, err error) {
-	var data []byte
-	data, err = ioutil.ReadAll(r.Body)
-	if err != nil {
-		return nil, "none", err
-	}
-	buf := bytes.NewBuffer(data)
-	return image.Decode(buf)
-}
-
-// ImageFromData returns a go Image given pixel data.
-func ImageFromData(data []byte, nx, ny int) (image.Image, error) {
+// GoImageFromData returns a go Image given pixel data.
+func GoImageFromData(data []byte, nx, ny int) (image.Image, error) {
 	sz := len(data)
 	pixels := nx * ny
 	if sz%pixels != 0 {

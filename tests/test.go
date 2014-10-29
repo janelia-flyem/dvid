@@ -14,9 +14,9 @@ func init() {
 	dvid.SetLogMode(dvid.WarningMode)
 }
 
-// NewRepo returns a new Repo suitable for testing.
+// NewRepo returns a new datastore.Repo suitable for testing.
 func NewRepo() (datastore.Repo, dvid.VersionID) {
-	repo, err := datastore.NewRepo()
+	repo, err := datastore.NewRepo("testRepo", "A test repository")
 	if err != nil {
 		log.Fatalf("Unable to create new testing repo: %s\n", err.Error())
 	}

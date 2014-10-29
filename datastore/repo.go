@@ -52,7 +52,7 @@ type RepoManager interface {
 	RepoFromID(dvid.RepoID) (Repo, error)
 
 	// NewRepo creates and returns a new Repo.
-	NewRepo() (Repo, error)
+	NewRepo(alias, description string) (Repo, error)
 
 	// AddRepo adds a preallocated Repo.
 	AddRepo(Repo) error

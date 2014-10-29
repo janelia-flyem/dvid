@@ -564,11 +564,7 @@ func (v *Voxels) GetImage2d() (*dvid.Image, error) {
 		return nil, unsupported()
 	}
 
-	ret := new(dvid.Image)
-	if err := ret.SetFromGoImage(img, v.Values(), v.Interpolable()); err != nil {
-		return nil, err
-	}
-	return ret, nil
+	return dvid.ImageFromGoImage(img, v.Values(), v.Interpolable())
 }
 
 // Extents holds the extents of a volume in both absolute voxel coordinates
@@ -880,10 +876,7 @@ func (d *Data) BlankImage(dstW, dstH int32) (*dvid.Image, error) {
 		return nil, unsupported()
 	}
 
-	// Package Go image
-	dst := new(dvid.Image)
-	dst.SetFromGoImage(img, d.Properties.Values, d.Properties.Interpolable)
-	return dst, nil
+	return dvid.ImageFromGoImage(img, d.Properties.Values, d.Properties.Interpolable)
 }
 
 // Returns the image size necessary to compute an isotropic slice of the given dimensions.
@@ -973,7 +966,7 @@ func (d *Data) PutLocal(request datastore.Request, reply *datastore.Response) er
 	numSuccessful := 0
 	for _, filename := range filenames {
 		sliceLog := dvid.NewTimeLog()
-		img, _, err := dvid.ImageFromFile(filename)
+		img, _, err := dvid.GoImageFromFile(filename)
 		if err != nil {
 			return fmt.Errorf("Error after %d images successfully added: %s",
 				numSuccessful, err.Error())
@@ -1502,7 +1495,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 					return
 				}
 				// TODO -- Put in format checks for POSTed image.
-				postedImg, _, err := dvid.ImageFromPOST(r)
+				postedImg, _, err := image.Decode(r.Body)
 				if err != nil {
 					server.BadRequest(w, r, err.Error())
 					return
