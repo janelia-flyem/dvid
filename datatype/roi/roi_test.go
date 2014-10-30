@@ -40,9 +40,9 @@ func getSpansJSON(spans []tuple) io.Reader {
 	return bytes.NewReader(jsonBytes)
 }
 
-func putSpansJSON(buf *bytes.Buffer) ([]tuple, error) {
+func putSpansJSON(data []byte) ([]tuple, error) {
 	var spans []tuple
-	if err := json.Unmarshal(buf.Bytes(), &spans); err != nil {
+	if err := json.Unmarshal(data, &spans); err != nil {
 		return nil, err
 	}
 	return spans, nil
@@ -72,9 +72,9 @@ func getPointsJSON(pts []dvid.Point3d) io.Reader {
 	return bytes.NewReader(jsonBytes)
 }
 
-func putInclusionJSON(buf *bytes.Buffer) ([]bool, error) {
+func putInclusionJSON(data []byte) ([]bool, error) {
 	var inclusions []bool
-	if err := json.Unmarshal(buf.Bytes(), &inclusions); err != nil {
+	if err := json.Unmarshal(data, &inclusions); err != nil {
 		return nil, err
 	}
 	return inclusions, nil
@@ -92,6 +92,19 @@ func initTestRepo() (datastore.Repo, dvid.VersionID) {
 		}
 	}
 	return tests.NewRepo()
+}
+
+func doHTTP(t *testing.T, method, urlStr string, payload io.Reader) []byte {
+	req, err := http.NewRequest(method, urlStr, payload)
+	if err != nil {
+		t.Fatalf("Unsuccessful %s on %q: %s\n", method, urlStr, err.Error())
+	}
+	w := httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Bad server response (%d) to %s on %q\n", w.Code, method, urlStr)
+	}
+	return w.Body.Bytes()
 }
 
 func TestROIRequests(t *testing.T) {
@@ -118,28 +131,11 @@ func TestROIRequests(t *testing.T) {
 
 	// PUT an ROI
 	roiRequest := fmt.Sprintf("%snode/%s/%s/roi", server.WebAPIPath, uuid, data.DataName())
-	req, err := http.NewRequest("POST", roiRequest, getSpansJSON(testSpans))
-	if err != nil {
-		t.Errorf("Unsuccessful POST request (%s): %s\n", roiRequest, err.Error())
-	}
-	serverCtx := datastore.NewServerContext(context.Background(), repo, versionID)
-	w := httptest.NewRecorder()
-	data.ServeHTTP(serverCtx, w, req)
-	if w.Code != http.StatusOK {
-		t.Errorf("Bad server response roi POST, status %s, for roi %q\n", w.Code, data.DataName())
-	}
+	doHTTP(t, "POST", roiRequest, getSpansJSON(testSpans))
 
 	// Get back the ROI
-	req, err = http.NewRequest("GET", roiRequest, nil)
-	if err != nil {
-		t.Errorf("Unsuccessful GET request (%s): %s\n", roiRequest, err.Error())
-	}
-	w = httptest.NewRecorder()
-	data.ServeHTTP(serverCtx, w, req)
-	if w.Code != http.StatusOK {
-		t.Errorf("Bad server response roi GET, status %s, for roi %q\n", w.Code, data.DataName())
-	}
-	spans, err := putSpansJSON(w.Body)
+	returnedData := doHTTP(t, "GET", roiRequest, nil)
+	spans, err := putSpansJSON(returnedData)
 	if err != nil {
 		t.Errorf("Error on getting back JSON from roi GET: %s\n", err.Error())
 	}
@@ -151,16 +147,8 @@ func TestROIRequests(t *testing.T) {
 
 	// Test the ptquery
 	ptqueryRequest := fmt.Sprintf("%snode/%s/%s/ptquery", server.WebAPIPath, uuid, data.DataName())
-	req, err = http.NewRequest("POST", ptqueryRequest, getPointsJSON(testPoints))
-	if err != nil {
-		t.Fatalf("Unsuccessful POST ptquery request (%s): %s\n", ptqueryRequest, err.Error())
-	}
-	w = httptest.NewRecorder()
-	data.ServeHTTP(serverCtx, w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("Bad server response to ptquery, status %s, for roi %q\n", w.Code, data.DataName())
-	}
-	inclusions, err := putInclusionJSON(w.Body)
+	returnedData = doHTTP(t, "POST", ptqueryRequest, getPointsJSON(testPoints))
+	inclusions, err := putInclusionJSON(returnedData)
 	if err != nil {
 		t.Fatalf("Error on getting back JSON from ptquery: %s\n", err.Error())
 	}
@@ -168,6 +156,99 @@ func TestROIRequests(t *testing.T) {
 	// Make sure the two are the same.
 	if !reflect.DeepEqual(inclusions, expectedInclusions) {
 		t.Errorf("Bad ptquery results\nOriginal:\n%s\nReturned:\n%s\n", expectedInclusions, inclusions)
+	}
+
+	// Test ROI mask out of range -- should be all 0.
+	maskRequest := fmt.Sprintf("%snode/%s/%s/mask/0_1_2/100_100_100/10_40_70", server.WebAPIPath, uuid, data.DataName())
+	returnedData = doHTTP(t, "GET", maskRequest, nil)
+	if len(returnedData) != 100*100*100 {
+		t.Errorf("Expected mask volume of %d bytes, got %d bytes instead\n", 100*100*100, len(returnedData))
+	}
+	for i, value := range returnedData {
+		if value != 0 {
+			t.Errorf("Expected all-zero mask, got %d at index %d\n", value, i)
+			break
+		}
+	}
+
+	// Test ROI mask within range.
+	maskRequest = fmt.Sprintf("%snode/%s/%s/mask/0_1_2/100_100_100/6350_3232_3200", server.WebAPIPath, uuid, data.DataName())
+	returnedData = doHTTP(t, "GET", maskRequest, nil)
+	if len(returnedData) != 100*100*100 {
+		t.Errorf("Expected mask volume of %d bytes, got %d bytes instead\n", 100*100*100, len(returnedData))
+	}
+	// Check first block plane
+	for y := 0; y < 100; y++ {
+		for x := 0; x < 100; x++ {
+			value := returnedData[y*100+x]
+			if x < 50 && value != 0 {
+				t.Errorf("Expected mask to be zero at (%d, %d) before ROI, got %d instead\n", x, y, value)
+				break
+			}
+			if x >= 50 && y < 64 && value != 1 {
+				t.Errorf("Expected mask to be 1 at (%d, %d) within ROI, got %d instead\n", x, y, value)
+				break
+			}
+			// tuple{100, 103, 201, 212}
+			if x <= 81 && y >= 64 && y < 96 && value != 0 {
+				t.Errorf("Expected mask to be zero at (%d, %d) before ROI, got %d instead\n", x, y, value)
+				break
+			}
+			if x > 81 && y >= 64 && y < 96 && value != 1 {
+				t.Errorf("Expected mask to be 1 at (%d, %d) within ROI, got %d instead\n", x, y, value)
+				break
+			}
+		}
+	}
+	// Check second block plane
+	offset := 32 * 100 * 100 // moves to next block in Z
+	for y := 0; y < 100; y++ {
+		for x := 0; x < 100; x++ {
+			value := returnedData[offset+y*100+x]
+			if x < 50 && value != 0 {
+				t.Errorf("Expected mask to be zero at (%d, %d) before ROI, got %d instead\n", x, y, value)
+				break
+			}
+			if x <= 81 && y < 32 && value != 0 {
+				t.Errorf("Expected mask to be zero at (%d, %d) before ROI, got %d instead\n", x, y, value)
+				break
+			}
+			if x > 81 && y < 32 && value != 1 {
+				t.Errorf("Expected mask to be 1 at (%d, %d) within ROI, got %d instead\n", x, y, value)
+				break
+			}
+			if y >= 32 && value != 0 {
+				t.Errorf("Expected mask to be zero at (%d, %d) before ROI, got %d instead\n", x, y, value)
+				break
+			}
+		}
+	}
+	// Check last block plane
+	offset = 96 * 100 * 100 // moves to last ROI layer in Z
+	for y := 0; y < 100; y++ {
+		for x := 0; x < 100; x++ {
+			value := returnedData[offset+y*100+x]
+			if x < 50 && value != 0 {
+				t.Errorf("Expected mask to be zero at (%d, %d) before ROI, got %d instead\n", x, y, value)
+				break
+			}
+			if x >= 50 && y < 32 && value != 1 {
+				t.Errorf("Expected mask to be 1 at (%d, %d) within ROI, got %d instead\n", x, y, value)
+				break
+			}
+			if y >= 32 && y < 64 && value != 0 {
+				t.Errorf("Expected mask to be zero at (%d, %d) before ROI, got %d instead\n", x, y, value)
+				break
+			}
+			if x >= 50 && y >= 64 && y < 96 && value != 1 {
+				t.Errorf("Expected mask to be 1 at (%d, %d) within ROI, got %d instead\n", x, y, value)
+				break
+			}
+			if y >= 96 && value != 0 {
+				t.Errorf("Expected mask to be zero at (%d, %d) before ROI, got %d instead\n", x, y, value)
+				break
+			}
+		}
 	}
 }
 

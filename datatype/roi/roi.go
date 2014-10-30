@@ -113,6 +113,23 @@ DEL  <api URL>/node/<UUID>/<data name>/roi  (TO DO)
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
     data name     Name of ROI data to save/modify or get.
 
+GET <api URL>/node/<UUID>/<data name>/mask/0_1_2/<size>/<offset>
+
+	Returns a binary volume in ZYX order (increasing X is contiguous in array) same as format of
+	the nD voxels GET request.  The returned payload is marked as "octet-stream".
+
+	The request must have size and offset arguments (both must be given if included) similar
+	to the nD voxels GET request.  Currently, only the 3d GET is implemented, although in the
+	future this endpoint will parallel voxel GET request.
+
+	Example:
+
+	GET <api URL>/node/3f8c/myroi/mask/0_1_2/512_512_256/100_200_300
+
+	Returns a binary volume with non-zero elements for voxels within ROI.  The binary volume
+	has size 512 x 512 x 256 voxels and an offset of (100, 200, 300).
+
+
 POST <api URL>/node/<UUID>/<data name>/ptquery
 
 	Determines with a list of 3d points in JSON format sent by POST is within the ROI.
@@ -245,6 +262,10 @@ func (d *Data) GobEncode() ([]byte, error) {
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+type ZRange struct {
+	MinZ, MaxZ int32
 }
 
 var (
@@ -456,6 +477,82 @@ func (d *Data) seekSpan(pt dvid.Point3d, spans []tuple, curSpanI int) (int, bool
 			return curSpanI, false
 		}
 	}
+}
+
+// Returns the voxel range normalized to begVoxel offset and constrained by block span.
+func voxelRange(blockSize, begBlock, endBlock, begVoxel, endVoxel int32) (int32, int32) {
+	v0 := begBlock * blockSize
+	if v0 < begVoxel {
+		v0 = begVoxel
+	}
+	v1 := (endBlock+1)*blockSize - 1
+	if v1 > endVoxel {
+		v1 = endVoxel
+	}
+	v0 -= begVoxel
+	v1 -= begVoxel
+	return v0, v1
+}
+
+// GetMask returns a binary volume of subvol size where each element is 1 if inside the ROI
+// and 0 if outside the ROI.
+func (d *Data) GetMask(ctx storage.VersionedContext, subvol *dvid.Subvolume) ([]byte, error) {
+	pt0 := subvol.StartPoint()
+	pt1 := subvol.EndPoint()
+	minBlockZ := pt0.Value(2) / d.BlockSize[2]
+	maxBlockZ := pt1.Value(2) / d.BlockSize[2]
+	minBlockY := pt0.Value(1) / d.BlockSize[1]
+	maxBlockY := pt1.Value(1) / d.BlockSize[1]
+	minBlockX := pt0.Value(0) / d.BlockSize[0]
+	maxBlockX := pt1.Value(0) / d.BlockSize[0]
+
+	minIndex := minIndexByBlockZ(minBlockZ)
+	maxIndex := maxIndexByBlockZ(maxBlockZ)
+
+	spans, err := getSpans(ctx, minIndex, maxIndex)
+	if err != nil {
+		return nil, err
+	}
+
+	// Allocate the mask volume.
+	data := make([]uint8, subvol.NumVoxels())
+	size := subvol.Size()
+	nx := size.Value(0)
+	nxy := size.Value(1) * nx
+
+	// Fill the mask volume
+	for _, span := range spans {
+		// Handle out of range blocks
+		if span[0] < minBlockZ {
+			continue
+		}
+		if span[0] > maxBlockZ {
+			break
+		}
+		if span[1] < minBlockY || span[1] > maxBlockY {
+			continue
+		}
+		if span[3] < minBlockX || span[2] > maxBlockX {
+			continue
+		}
+
+		// Get the voxel range for this span, including limits based on subvolume.
+		x0, x1 := voxelRange(d.BlockSize[0], span[2], span[3], pt0.Value(0), pt1.Value(0))
+		y0, y1 := voxelRange(d.BlockSize[1], span[1], span[1], pt0.Value(1), pt1.Value(1))
+		z0, z1 := voxelRange(d.BlockSize[2], span[0], span[0], pt0.Value(2), pt1.Value(2))
+
+		// Write the mask
+		for z := z0; z <= z1; z++ {
+			for y := y0; y <= y1; y++ {
+				i := z*nxy + y*nx + x0
+				for x := x0; x <= x1; x++ {
+					data[i] = 1
+					i++
+				}
+			}
+		}
+	}
+	return data, nil
 }
 
 // PointQuery checks if a JSON-encoded list of voxel points are within an ROI.
@@ -1056,6 +1153,44 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 				return
 			}
 			comment = fmt.Sprintf("HTTP POST ROI '%s': %d bytes\n", d.DataName(), len(data))
+		}
+	case "mask":
+		if method != "get" {
+			server.BadRequest(w, r, "ROI mask only supports GET")
+			return
+		}
+		if len(parts) < 7 {
+			server.BadRequest(w, r, "%q must be followed by shape/size/offset", command)
+			return
+		}
+		shapeStr, sizeStr, offsetStr := parts[4], parts[5], parts[6]
+		planeStr := dvid.DataShapeString(shapeStr)
+		plane, err := planeStr.DataShape()
+		if err != nil {
+			server.BadRequest(w, r, err.Error())
+			return
+		}
+		switch plane.ShapeDimensions() {
+		case 3:
+			subvol, err := dvid.NewSubvolumeFromStrings(offsetStr, sizeStr, "_")
+			if err != nil {
+				server.BadRequest(w, r, err.Error())
+				return
+			}
+			data, err := d.GetMask(storeCtx, subvol)
+			if err != nil {
+				server.BadRequest(w, r, err.Error())
+				return
+			}
+			w.Header().Set("Content-type", "application/octet-stream")
+			_, err = w.Write(data)
+			if err != nil {
+				server.BadRequest(w, r, err.Error())
+				return
+			}
+		default:
+			server.BadRequest(w, r, "Currently only 3d masks ('0_1_2' shape) is supported")
+			return
 		}
 	case "ptquery":
 		switch method {
