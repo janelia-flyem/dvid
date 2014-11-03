@@ -119,8 +119,8 @@ const (
 // repositories and associated DAGs.  It is characterized by the following:
 // (1) not big data, (2) ideally in memory, (3) strongly consistent across all
 // DVID processes, e.g., all front-end DVID apps.  Of the three tiers of storage
-// (Metadata, SmallData, BigData), MetaData should have
-// the smallest capacity and the lowest latency.
+// (Metadata, SmallData, BigData), MetaData should have the smallest capacity and
+// the lowest latency.
 type MetaDataStorer interface {
 	OrderedKeyValueDB
 }
@@ -136,7 +136,9 @@ type SmallDataStorer interface {
 // large compared to key-value pairs used in SmallData.  This interface should be used
 // for blocks of voxels and large denormalized data like the multi-scale surface of a
 // given label.  This store should have considerably more capacity and potentially
-// higher latency than SmallData.
+// higher latency than SmallData.  While this type embeds an ordered key-value store,
+// it could be implemented by a wrapper around an unordered key-value store due to the
+// relaxation in the required access times.
 type BigDataStorer interface {
 	OrderedKeyValueDB
 }
@@ -228,6 +230,8 @@ type KeyValueDB interface {
 
 // OrderedKeyValueDB addes range queries and range puts to a base KeyValueDB.
 type OrderedKeyValueDB interface {
+	fmt.Stringer
+
 	OrderedKeyValueGetter
 	OrderedKeyValueSetter
 }

@@ -162,13 +162,15 @@ func GetVoxels(ctx storage.Context, i IntData, e ExtData, r *ROI) error {
 	if err != nil {
 		return err
 	}
-	wg := new(sync.WaitGroup)
 
+	// Only do one request at a time, although each request can start many goroutines.
 	server.SpawnGoroutineMutex.Lock()
+	defer server.SpawnGoroutineMutex.Unlock()
+
+	wg := new(sync.WaitGroup)
 	for it, err := e.IndexIterator(i.BlockSize()); err == nil && it.Valid(); it.NextSpan() {
 		indexBeg, indexEnd, err := it.IndexSpan()
 		if err != nil {
-			server.SpawnGoroutineMutex.Unlock()
 			return err
 		}
 		blockBeg := NewVoxelBlockIndex(indexBeg)
@@ -200,15 +202,12 @@ func GetVoxels(ctx storage.Context, i IntData, e ExtData, r *ROI) error {
 		// Send the entire range of key-value pairs to chunk processor
 		err = db.ProcessRange(ctx, blockBeg, blockEnd, chunkOp, i.ProcessChunk)
 		if err != nil {
-			server.SpawnGoroutineMutex.Unlock()
 			return fmt.Errorf("Unable to GET data %s: %s", ctx, err.Error())
 		}
 	}
-	server.SpawnGoroutineMutex.Unlock()
 	if err != nil {
 		return err
 	}
-
 	wg.Wait()
 	return nil
 }
@@ -296,6 +295,10 @@ func PutVoxels(ctx storage.Context, i IntData, e ExtData, r *ROI) error {
 	if err != nil {
 		return err
 	}
+
+	// Only do one request at a time, although each request can start many goroutines.
+	server.SpawnGoroutineMutex.Lock()
+	defer server.SpawnGoroutineMutex.Unlock()
 
 	// Keep track of changing extents and mark repo as dirty if changed.
 	var extentChanged bool
