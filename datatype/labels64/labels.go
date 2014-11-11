@@ -29,8 +29,9 @@ func ZeroBytes() []byte {
 }
 
 // Store the KeyLabelSpatialMap keys (index = b + s) with slice of runs for value.
+// The parameter 'blockBytes' is the byte slice representation of the block coordinate.
 func StoreKeyLabelSpatialMap(versionID dvid.VersionID, data dvid.Data, batcher storage.KeyValueBatcher,
-	zyxBytes []byte, labelRLEs map[uint64]dvid.RLEs) {
+	blockBytes []byte, labelRLEs map[uint64]dvid.RLEs) {
 
 	ctx := datastore.NewVersionedContext(data, versionID)
 	batch := batcher.NewBatch(ctx)
@@ -41,7 +42,7 @@ func StoreKeyLabelSpatialMap(versionID dvid.VersionID, data dvid.Data, batcher s
 	}()
 	bsIndex := make([]byte, 1+8+dvid.IndexZYXSize)
 	bsIndex[0] = byte(voxels.KeyLabelSpatialMap)
-	copy(bsIndex[9:9+dvid.IndexZYXSize], zyxBytes)
+	copy(bsIndex[9:9+dvid.IndexZYXSize], blockBytes)
 	for b, rles := range labelRLEs {
 		binary.BigEndian.PutUint64(bsIndex[1:9], b)
 		key := dvid.IndexBytes(bsIndex)
@@ -153,6 +154,54 @@ type sparseOp struct {
 	//numVoxels int32
 }
 
+type blockRLEs map[string]dvid.RLEs
+
+func (brles blockRLEs) numVoxels() uint64 {
+	var size uint64
+	for _, rles := range brles {
+		numVoxels, _ := rles.Stats()
+		size += uint64(numVoxels)
+	}
+	return size
+}
+
+// Returns RLEs for a given label where the key of the returned map is the block index
+// in string format.
+func getLabelRLEs(ctx storage.Context, label uint64) (blockRLEs, error) {
+	smalldata, err := storage.SmallDataStore()
+	if err != nil {
+		return nil, fmt.Errorf("Cannot get datastore that handles big data: %s\n", err.Error())
+	}
+
+	// Get the start/end indices for this body's KeyLabelSpatialMap (b + s) keys.
+	begIndex := voxels.NewLabelSpatialMapIndex(label, dvid.MinIndexZYX.Bytes())
+	endIndex := voxels.NewLabelSpatialMapIndex(label, dvid.MaxIndexZYX.Bytes())
+
+	// Process all the b+s keys and their values, which contain RLE runs for that label.
+
+	labelRLEs := blockRLEs{}
+	err = smalldata.ProcessRange(ctx, begIndex, endIndex, &storage.ChunkOp{}, func(chunk *storage.Chunk) {
+		// Get the block index where the fromLabel is present
+		_, blockBytes, err := voxels.DecodeLabelSpatialMapKey(chunk.K)
+		if err != nil {
+			dvid.Errorf("Can't recover block index with chunk key %v: %s\n", chunk.K, err.Error())
+			return
+		}
+		blockStr := string(blockBytes)
+
+		var blockRLEs dvid.RLEs
+		if err := blockRLEs.UnmarshalBinary(chunk.V); err != nil {
+			dvid.Errorf("Unable to unmarshal RLE for label in block %v", chunk.K)
+			return
+		}
+		labelRLEs[blockStr] = blockRLEs
+	})
+	if err != nil {
+		return nil, err
+	}
+	return labelRLEs, nil
+}
+
 // GetSparseVol returns an encoded sparse volume given a label.  The encoding has the
 // following format where integers are little endian:
 //    byte     Payload descriptor:
@@ -173,7 +222,7 @@ type sparseOp struct {
 //        bytes   Optional payload dependent on first byte descriptor
 //
 func GetSparseVol(ctx storage.Context, label uint64) ([]byte, error) {
-	bigdata, err := storage.BigDataStore()
+	smalldata, err := storage.SmallDataStore()
 	if err != nil {
 		return nil, fmt.Errorf("Cannot get datastore that handles big data: %s\n", err.Error())
 	}
@@ -188,23 +237,21 @@ func GetSparseVol(ctx storage.Context, label uint64) ([]byte, error) {
 	binary.Write(buf, binary.LittleEndian, uint32(0)) // Placeholder for # spans
 
 	// Get the start/end indices for this body's KeyLabelSpatialMap (b + s) keys.
-	begIndex := voxels.NewLabelSpatialMapIndex(label, &dvid.MinIndexZYX)
-	endIndex := voxels.NewLabelSpatialMapIndex(label, &dvid.MaxIndexZYX)
+	begIndex := voxels.NewLabelSpatialMapIndex(label, dvid.MinIndexZYX.Bytes())
+	endIndex := voxels.NewLabelSpatialMapIndex(label, dvid.MaxIndexZYX.Bytes())
 
 	// Process all the b+s keys and their values, which contain RLE runs for that label.
-	wg := new(sync.WaitGroup)
 	op := &sparseOp{versionID: ctx.VersionID(), encoding: buf.Bytes()}
-	err = bigdata.ProcessRange(ctx, begIndex, endIndex, &storage.ChunkOp{op, wg}, func(chunk *storage.Chunk) {
+	chunkOp := &storage.ChunkOp{op, nil}
+	err = smalldata.ProcessRange(ctx, begIndex, endIndex, chunkOp, func(chunk *storage.Chunk) {
 		op := chunk.Op.(*sparseOp)
 		op.numBlocks++
 		op.encoding = append(op.encoding, chunk.V...)
 		op.numRuns += uint32(len(chunk.V) / 16)
-		chunk.Wg.Done()
 	})
 	if err != nil {
 		return nil, err
 	}
-	wg.Wait()
 
 	binary.LittleEndian.PutUint32(op.encoding[8:12], op.numRuns)
 

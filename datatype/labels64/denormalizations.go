@@ -151,8 +151,8 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 		}
 	}()
 
-	begIndex := voxels.NewLabelSpatialMapIndex(0, &dvid.MinIndexZYX)
-	endIndex := voxels.NewLabelSpatialMapIndex(math.MaxUint64, &dvid.MaxIndexZYX)
+	begIndex := voxels.NewLabelSpatialMapIndex(0, dvid.MinIndexZYX.Bytes())
+	endIndex := voxels.NewLabelSpatialMapIndex(math.MaxUint64, dvid.MaxIndexZYX.Bytes())
 	err = smalldata.ProcessRange(ctx, begIndex, endIndex, &storage.ChunkOp{}, func(chunk *storage.Chunk) {
 		// Get label associated with this sparse volume.
 		indexBytes, err := ctx.IndexFromKey(chunk.K)
@@ -264,7 +264,7 @@ func (d *Data) denormalizeChunk(chunk *storage.Chunk) {
 	}
 
 	// Store the KeyLabelSpatialMap keys (index = b + s) with slice of runs for value.
-	db, err := storage.BigDataStore()
+	db, err := storage.SmallDataStore()
 	if err != nil {
 		dvid.Errorf("Error in %s.denormalizeChunk(): %s\n", d.DataName(), err.Error())
 		return

@@ -124,18 +124,9 @@ func inroi(x, y, z int) bool {
 	return false
 }
 
-func TestLabels64(t *testing.T) {
-	tests.UseStore()
-	defer tests.CloseStore()
-
-	uuid := dvid.UUID(NewServerRepo(t))
-	if len(uuid) < 5 {
-		t.Fatalf("Bad root UUID for new repo: %s\n", uuid)
-	}
-
+func postLabelVolume(t *testing.T, labelsName string, uuid dvid.UUID) {
 	// Create a labels64 instance
-	labelsName := "mylabels"
-	metadata := `{"typename": "labels64", "dataname": "mylabels"}`
+	metadata := fmt.Sprintf(`{"typename": "labels64", "dataname": %q}`, labelsName)
 	apiStr := fmt.Sprintf("%srepo/%s/instance", server.WebAPIPath, uuid)
 	doHTTP(t, "POST", apiStr, bytes.NewBufferString(metadata))
 
@@ -167,10 +158,38 @@ func TestLabels64(t *testing.T) {
 	apiStr = fmt.Sprintf("%snode/%s/%s/raw/0_1_2/%d_%d_%d/16_48_70", server.WebAPIPath,
 		uuid, labelsName, nx*blocksz, ny*blocksz, nz*blocksz)
 	doHTTP(t, "POST", apiStr, payload)
+}
+
+func TestLabelmap(t *testing.T) {
+	tests.UseStore()
+	defer tests.CloseStore()
+
+	uuid := dvid.UUID(NewServerRepo(t))
+	if len(uuid) < 5 {
+		t.Fatalf("Bad root UUID for new repo: %s\n", uuid)
+	}
+
+	// Create and post a test labels64 volume
+	labelsName := "mylabels"
+	postLabelVolume(t, labelsName, uuid)
+}
+
+func TestLabels64(t *testing.T) {
+	tests.UseStore()
+	defer tests.CloseStore()
+
+	uuid := dvid.UUID(NewServerRepo(t))
+	if len(uuid) < 5 {
+		t.Fatalf("Bad root UUID for new repo: %s\n", uuid)
+	}
+
+	// Create a labels64 instance
+	labelsName := "mylabels"
+	postLabelVolume(t, labelsName, uuid)
 
 	// Verify XY slice reads returns what we expect.
 	slice := sliceTester{"xy", 200, 200, dvid.Point3d{10, 40, 72}}
-	apiStr = slice.apiStr(uuid, labelsName)
+	apiStr := slice.apiStr(uuid, labelsName)
 	xy := doHTTP(t, "GET", apiStr, nil)
 	img, format, err := dvid.ImageFromBytes(xy, labels64.EncodeFormat(), false)
 	if err != nil {
@@ -206,6 +225,11 @@ func TestLabels64(t *testing.T) {
 	// TODO - Verify YZ slice read returns what we expect.
 
 	// Verify 3d volume read returns original.
+	var label uint64
+	nx := 5
+	ny := 5
+	nz := 5
+	blocksz := 32
 	apiStr = fmt.Sprintf("%snode/%s/%s/raw/0_1_2/%d_%d_%d/16_48_70", server.WebAPIPath,
 		uuid, labelsName, nx*blocksz, ny*blocksz, nz*blocksz)
 	xyz := doHTTP(t, "GET", apiStr, nil)
@@ -232,7 +256,7 @@ func TestLabels64(t *testing.T) {
 
 	// Create a new ROI instance.
 	roiName := "myroi"
-	metadata = `{"typename": "roi", "dataname": "myroi"}`
+	metadata := `{"typename": "roi", "dataname": "myroi"}`
 	apiStr = fmt.Sprintf("%srepo/%s/instance", server.WebAPIPath, uuid)
 	doHTTP(t, "POST", apiStr, bytes.NewBufferString(metadata))
 
@@ -241,7 +265,8 @@ func TestLabels64(t *testing.T) {
 	doHTTP(t, "POST", apiStr, bytes.NewBufferString(labelsJSON()))
 
 	// Post updated labels without ROI.
-	payload = new(bytes.Buffer)
+	p := make([]byte, 8*blocksz)
+	payload := new(bytes.Buffer)
 	label = 200000
 	for z := 0; z < nz*blocksz; z++ {
 		for y := 0; y < ny*blocksz; y++ {

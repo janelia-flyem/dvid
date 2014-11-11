@@ -1161,7 +1161,7 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 			dvid.Errorf("Unable to WriteToBlock() in %q: %s\n", d.DataName(), err.Error())
 			return
 		}
-		db, err := storage.BigDataStore()
+		bigdata, err := storage.BigDataStore()
 		if err != nil {
 			dvid.Errorf("Unable to obtain BigData store in %q: %s\n", d.DataName(), err.Error())
 			return
@@ -1171,7 +1171,10 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 			dvid.Errorf("Unable to serialize block in %q: %s\n", d.DataName(), err.Error())
 			return
 		}
-		db.Put(nil, chunk.K, serialization)
+		if err := bigdata.Put(nil, chunk.K, serialization); err != nil {
+			dvid.Errorf("Unable to PUT voxel data for key %v: %s\n", chunk.K, err.Error())
+			return
+		}
 	}
 }
 

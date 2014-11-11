@@ -241,18 +241,18 @@ func (i *IndexZYX) MarshalBinary() ([]byte, error) {
 }
 
 func (i *IndexZYX) UnmarshalBinary(b []byte) error {
-    buf := bytes.NewBuffer(b)
-    if len(b) != 12 {
-        return fmt.Errorf("Bad IndexZYX serialization.  Has length %d bytes != 12", len(b))
-    }
-    for dim := 0; dim < 3; dim++ {
-        var value int32
-        if err := binary.Read(buf, binary.LittleEndian, &value); err != nil {
-            return fmt.Errorf("Bad IndexZYX elem %d read: %s", dim, err.Error())
-        }
-        (*i)[dim] = value
-    }
-    return nil
+	buf := bytes.NewBuffer(b)
+	if len(b) != 12 {
+		return fmt.Errorf("Bad IndexZYX serialization.  Has length %d bytes != 12", len(b))
+	}
+	for dim := 0; dim < 3; dim++ {
+		var value int32
+		if err := binary.Read(buf, binary.LittleEndian, &value); err != nil {
+			return fmt.Errorf("Bad IndexZYX elem %d read: %s", dim, err.Error())
+		}
+		(*i)[dim] = value
+	}
+	return nil
 }
 
 // ---- Index interface implementation

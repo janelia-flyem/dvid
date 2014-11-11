@@ -84,15 +84,20 @@ func (t KeyType) String() string {
 	}
 }
 
+// NewVoxelBlockIndexByCoord returns an index for a block coord in string format.
+func NewVoxelBlockIndexByCoord(blockCoord string) []byte {
+	sz := len(blockCoord)
+	index := make([]byte, 1+sz)
+	index[0] = byte(KeyVoxelBlock)
+	copy(index[1:], blockCoord)
+	return dvid.IndexBytes(index)
+}
+
 // NewVoxelBlockIndex returns an index for a voxel block.
 // Index = s
 func NewVoxelBlockIndex(blockIndex dvid.Index) []byte {
-	indexBytes := blockIndex.Bytes()
-	sz := len(indexBytes)
-	index := make([]byte, 1+sz)
-	index[0] = byte(KeyVoxelBlock)
-	copy(index[1:], indexBytes)
-	return dvid.IndexBytes(index)
+	coord := string(blockIndex.Bytes())
+	return NewVoxelBlockIndexByCoord(coord)
 }
 
 // DecodeVoxelBlockKey returns a spatial index from a voxel block key.
@@ -185,18 +190,19 @@ func DecodeSpatialMapKey(key []byte) (label []byte, mappedLabel uint64, err erro
 
 // NewLabelSpatialMapIndex returns an identifier for storing a "label + spatial index", where
 // the spatial index references a block that contains a voxel with the given label.
-func NewLabelSpatialMapIndex(label uint64, blockIndex dvid.Index) dvid.IndexBytes {
-	indexBytes := blockIndex.Bytes()
-	sz := len(indexBytes)
+func NewLabelSpatialMapIndex(label uint64, blockBytes []byte) dvid.IndexBytes {
+	sz := len(blockBytes)
 	index := make([]byte, 1+8+sz)
 	index[0] = byte(KeyLabelSpatialMap)
 	binary.BigEndian.PutUint64(index[1:9], label)
-	copy(index[9:], indexBytes)
+	copy(index[9:], blockBytes)
 	return dvid.IndexBytes(index)
 }
 
-// DecodeLabelSpatialMapKey returns a label from a LabelSpatialMap key.
-func DecodeLabelSpatialMapKey(key []byte) (label uint64, err error) {
+// DecodeLabelSpatialMapKey returns a label and block index bytes from a LabelSpatialMap key.
+// The block index bytes are returned because different block indices may be used (e.g., CZYX),
+// and its up to caller to determine which one is used for this particular key.
+func DecodeLabelSpatialMapKey(key []byte) (label uint64, blockBytes []byte, err error) {
 	var ctx storage.DataContext
 	var index []byte
 	index, err = ctx.IndexFromKey(key)
@@ -208,6 +214,7 @@ func DecodeLabelSpatialMapKey(key []byte) (label uint64, err error) {
 		return
 	}
 	label = binary.BigEndian.Uint64(index[1:9])
+	blockBytes = index[9:]
 	return
 }
 

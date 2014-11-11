@@ -131,6 +131,45 @@ func (rles *RLEs) UnmarshalBinary(b []byte) error {
 	return nil
 }
 
+// Add adds the given RLEs to the receiver when there's a possibility of overlapping RLEs.
+// If you are guaranteed the RLEs are disjoint, e.g., the passed and receiver RLEs are in
+// different subvolumes, then just concatenate the RLEs instead of calling this function.
+// TODO: If this is a bottleneck, employ better than this brute force insertion method.
+func (rles *RLEs) Add(rles2 RLEs) {
+	for _, rle2 := range rles2 {
+		var found bool
+		for i, rle := range *rles {
+			// If this rle has same z and y, modify the RLE, else just add rle.
+			if rle.start[1] == rle2.start[1] && rle.start[2] == rle2.start[2] {
+				x0 := rle.start[0]
+				x1 := x0 + rle.length - 1
+				cur_x0 := rle2.start[0]
+				cur_x1 := cur_x0 + rle2.length - 1
+				if x1 < cur_x0 {
+					continue
+				}
+				if x0 > cur_x1 {
+					continue
+				}
+				if x0 > cur_x0 {
+					x0 = cur_x0
+				}
+				if x1 < cur_x1 {
+					x1 = cur_x1
+				}
+				rle.start[0] = x0
+				rle.length = x1 - x0 + 1
+				(*rles)[i] = rle
+				found = true
+				break
+			}
+		}
+		if !found {
+			*rles = append(*rles, rle2)
+		}
+	}
+}
+
 // Stats returns the total number of voxels and runs.
 func (rles RLEs) Stats() (numVoxels, numRuns int32) {
 	if rles == nil || len(rles) == 0 {
@@ -146,7 +185,7 @@ func (rles RLEs) Stats() (numVoxels, numRuns int32) {
 // It is particularly good for storing sparse voxels that may traverse large amounts of space.
 type SparseVol struct {
 	initialized bool
-	numVoxels   int32
+	numVoxels   uint64
 	minPt       Point3d
 	maxPt       Point3d
 	label       uint64
@@ -164,6 +203,14 @@ func (vol *SparseVol) MaximumPoint3d() Point3d {
 
 func (vol *SparseVol) Size() Point3d {
 	return Point3d{vol.maxPt[0] - vol.minPt[0] + 1, vol.maxPt[1] - vol.minPt[1] + 1, vol.maxPt[2] - vol.minPt[2] + 1}
+}
+
+func (vol *SparseVol) RLEs() RLEs {
+	return vol.rles
+}
+
+func (vol *SparseVol) NumVoxels() uint64 {
+	return vol.numVoxels
 }
 
 func (vol *SparseVol) Label() uint64 {
@@ -211,7 +258,7 @@ func (vol *SparseVol) AddRLEs(encoding []byte) error {
 		}
 		pt := Point3d{x, y, z}
 		vol.rles[vol.pos] = RLE{pt, length}
-		vol.numVoxels += length
+		vol.numVoxels += uint64(length)
 		vol.pos++
 		if vol.initialized {
 			vol.minPt.SetMinimum(pt)

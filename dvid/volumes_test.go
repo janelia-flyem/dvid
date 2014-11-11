@@ -2,6 +2,7 @@ package dvid
 
 import (
 	_ "testing"
+
 	. "github.com/janelia-flyem/go/gocheck"
 )
 
@@ -13,13 +14,10 @@ type VolumeTest struct {
 var _ = Suite(&VolumeTest{})
 
 func (s *VolumeTest) SetUpSuite(c *C) {
-	var rleTests = []RLE{
+	s.rles = RLEs{
 		{Point3d{2, 3, 4}, 20},
 		{Point3d{4, 4, 4}, 14},
 		{Point3d{1, 3, 5}, 20},
-	}
-	for _, rle := range rleTests {
-		s.rles = append(s.rles, rle)
 	}
 	var err error
 	s.encoding, err = s.rles.MarshalBinary()
@@ -41,6 +39,21 @@ func (s *VolumeTest) TestRLE(c *C) {
 	numVoxels, numRuns := obtained.Stats()
 	c.Assert(numVoxels, Equals, int32(54))
 	c.Assert(numRuns, Equals, int32(3))
+
+	toAdd := RLEs{
+		{Point3d{0, 3, 4}, 14},
+		{Point3d{10, 3, 4}, 14},
+		{Point3d{8, 5, 7}, 13},
+	}
+	expectedRLEs := RLEs{
+		{Point3d{0, 3, 4}, 24},
+		{Point3d{4, 4, 4}, 14},
+		{Point3d{1, 3, 5}, 20},
+		{Point3d{8, 5, 7}, 13},
+	}
+
+	s.rles.Add(toAdd)
+	c.Assert(s.rles, DeepEquals, expectedRLEs)
 }
 
 func (s *VolumeTest) TestSparseVol(c *C) {
@@ -52,14 +65,10 @@ func (s *VolumeTest) TestSparseVol(c *C) {
 	c.Assert(vol.MinimumPoint3d(), Equals, Point3d{1, 3, 4})
 	c.Assert(vol.MaximumPoint3d(), Equals, Point3d{21, 4, 5})
 
-	var rleTests = []RLE{
+	vol.Clear()
+	newrles := RLEs{
 		{Point3d{32, 43, 54}, 20},
 		{Point3d{34, 44, 54}, 14},
-	}
-	vol.Clear()
-	var newrles RLEs
-	for _, rle := range rleTests {
-		newrles = append(newrles, rle)
 	}
 	encoding, err := newrles.MarshalBinary()
 	c.Assert(err, IsNil)

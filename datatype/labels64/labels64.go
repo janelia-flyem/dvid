@@ -256,7 +256,9 @@ GET <api URL>/node/<UUID>/<data name>/sizerange/<min size>/<optional max size>
     max size      Optional maximum # of voxels.  If not specified, all labels with volume above minimum
                    are returned.
 
+POST <api URL>/node/<UUID>/<data name>/merge
 
+POST <api URL>/node/<UUID>/<data name>/split
 `
 
 var (
@@ -1144,6 +1146,37 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 		w.Header().Set("Content-type", "application/json")
 		fmt.Fprintf(w, jsonStr)
 		timedLog.Infof("HTTP %s: get labels with volume > %d and < %d (%s)", r.Method, minSize, maxSize, r.URL)
+
+	case "split":
+		// POST <api URL>/node/<UUID>/<data name>/split
+		if action != "post" {
+			server.BadRequest(w, r, "Split requests must be POST actions.")
+			return
+		}
+		timedLog.Infof("HTTP split request (%s)", r.URL)
+
+	case "merge":
+		// POST <api URL>/node/<UUID>/<data name>/merge
+		if action != "post" {
+			server.BadRequest(w, r, "Merge requests must be POST actions.")
+			return
+		}
+		data, err := ioutil.ReadAll(r.Body)
+		if err != nil {
+			server.BadRequest(w, r, "Bad POSTed data for merge.  Should be JSON.")
+			return
+		}
+		var tuples MergeTuples
+		if err := json.Unmarshal(data, &tuples); err != nil {
+			server.BadRequest(w, r, fmt.Sprintf("Bad merge op JSON: %s", err.Error()))
+			return
+		}
+		if err := d.MergeLabels(storeCtx, tuples); err != nil {
+			server.BadRequest(w, r, fmt.Sprintf("Error on merge: %s", err.Error()))
+			return
+		}
+		timedLog.Infof("HTTP merge request (%s)", r.URL)
+
 	default:
 		server.BadRequest(w, r, "Unrecognized API call '%s' for labels64 data '%s'.  See API help.",
 			parts[3], d.DataName())

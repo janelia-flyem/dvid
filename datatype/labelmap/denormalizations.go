@@ -290,11 +290,11 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 	}()
 
 	// Iterate through all mapped labels and send to size and surface processing goroutines.
-	begIndex := voxels.NewLabelSpatialMapIndex(0, &dvid.MinIndexZYX)
-	endIndex := voxels.NewLabelSpatialMapIndex(math.MaxUint64, &dvid.MaxIndexZYX)
+	begIndex := voxels.NewLabelSpatialMapIndex(0, dvid.MinIndexZYX.Bytes())
+	endIndex := voxels.NewLabelSpatialMapIndex(math.MaxUint64, dvid.MaxIndexZYX.Bytes())
 	err = smalldata.ProcessRange(labelmapCtx, begIndex, endIndex, &storage.ChunkOp{}, func(chunk *storage.Chunk) {
 		// Get label associated with this sparse volume.
-		label, err := voxels.DecodeLabelSpatialMapKey(chunk.K)
+		label, _, err := voxels.DecodeLabelSpatialMapKey(chunk.K)
 		if err != nil {
 			dvid.Errorf("Unable to recover label with chunk key %v: %s\n", chunk.K, err.Error())
 			return
