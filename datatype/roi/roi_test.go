@@ -94,19 +94,6 @@ func initTestRepo() (datastore.Repo, dvid.VersionID) {
 	return tests.NewRepo()
 }
 
-func doHTTP(t *testing.T, method, urlStr string, payload io.Reader) []byte {
-	req, err := http.NewRequest(method, urlStr, payload)
-	if err != nil {
-		t.Fatalf("Unsuccessful %s on %q: %s\n", method, urlStr, err.Error())
-	}
-	w := httptest.NewRecorder()
-	server.ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("Bad server response (%d) to %s on %q\n", w.Code, method, urlStr)
-	}
-	return w.Body.Bytes()
-}
-
 func TestROIRequests(t *testing.T) {
 	tests.UseStore()
 	defer tests.CloseStore()
@@ -131,10 +118,10 @@ func TestROIRequests(t *testing.T) {
 
 	// PUT an ROI
 	roiRequest := fmt.Sprintf("%snode/%s/%s/roi", server.WebAPIPath, uuid, data.DataName())
-	doHTTP(t, "POST", roiRequest, getSpansJSON(testSpans))
+	server.TestHTTP(t, "POST", roiRequest, getSpansJSON(testSpans))
 
 	// Get back the ROI
-	returnedData := doHTTP(t, "GET", roiRequest, nil)
+	returnedData := server.TestHTTP(t, "GET", roiRequest, nil)
 	spans, err := putSpansJSON(returnedData)
 	if err != nil {
 		t.Errorf("Error on getting back JSON from roi GET: %s\n", err.Error())
@@ -147,7 +134,7 @@ func TestROIRequests(t *testing.T) {
 
 	// Test the ptquery
 	ptqueryRequest := fmt.Sprintf("%snode/%s/%s/ptquery", server.WebAPIPath, uuid, data.DataName())
-	returnedData = doHTTP(t, "POST", ptqueryRequest, getPointsJSON(testPoints))
+	returnedData = server.TestHTTP(t, "POST", ptqueryRequest, getPointsJSON(testPoints))
 	inclusions, err := putInclusionJSON(returnedData)
 	if err != nil {
 		t.Fatalf("Error on getting back JSON from ptquery: %s\n", err.Error())
@@ -160,7 +147,7 @@ func TestROIRequests(t *testing.T) {
 
 	// Test ROI mask out of range -- should be all 0.
 	maskRequest := fmt.Sprintf("%snode/%s/%s/mask/0_1_2/100_100_100/10_40_70", server.WebAPIPath, uuid, data.DataName())
-	returnedData = doHTTP(t, "GET", maskRequest, nil)
+	returnedData = server.TestHTTP(t, "GET", maskRequest, nil)
 	if len(returnedData) != 100*100*100 {
 		t.Errorf("Expected mask volume of %d bytes, got %d bytes instead\n", 100*100*100, len(returnedData))
 	}
@@ -173,7 +160,7 @@ func TestROIRequests(t *testing.T) {
 
 	// Test ROI mask within range.
 	maskRequest = fmt.Sprintf("%snode/%s/%s/mask/0_1_2/100_100_100/6350_3232_3200", server.WebAPIPath, uuid, data.DataName())
-	returnedData = doHTTP(t, "GET", maskRequest, nil)
+	returnedData = server.TestHTTP(t, "GET", maskRequest, nil)
 	if len(returnedData) != 100*100*100 {
 		t.Errorf("Expected mask volume of %d bytes, got %d bytes instead\n", 100*100*100, len(returnedData))
 	}

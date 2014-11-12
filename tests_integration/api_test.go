@@ -5,9 +5,6 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"github.com/janelia-flyem/dvid/dvid"
@@ -25,35 +22,6 @@ import (
 	_ "github.com/janelia-flyem/dvid/datatype/multiscale2d"
 	_ "github.com/janelia-flyem/dvid/datatype/roi"
 )
-
-func doHTTP(t *testing.T, method, urlStr string, payload io.Reader) []byte {
-	req, err := http.NewRequest(method, urlStr, payload)
-	if err != nil {
-		t.Fatalf("Unsuccessful %s on %q: %s\n", method, urlStr, err.Error())
-	}
-	w := httptest.NewRecorder()
-	server.ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("Bad server response (%d) to %s on %q\n", w.Code, method, urlStr)
-	}
-	return w.Body.Bytes()
-}
-
-// NewServerRepo returns a repo on a running server suitable for testing.
-func NewServerRepo(t *testing.T) (uuid string) {
-	metadata := `{"alias": "testRepo", "description": "A test repository"}`
-	apiStr := server.WebAPIPath + "repos"
-	response := doHTTP(t, "POST", apiStr, bytes.NewBufferString(metadata))
-
-	// Parse the returned root UUID
-	parsedResponse := struct {
-		Root string
-	}{}
-	if err := json.Unmarshal(response, &parsedResponse); err != nil {
-		t.Fatalf("Couldn't decode JSON response to new repo request: %s\n", err.Error())
-	}
-	return parsedResponse.Root
-}
 
 type sliceTester struct {
 	orient string
@@ -128,7 +96,7 @@ func postLabelVolume(t *testing.T, labelsName string, uuid dvid.UUID) {
 	// Create a labels64 instance
 	metadata := fmt.Sprintf(`{"typename": "labels64", "dataname": %q}`, labelsName)
 	apiStr := fmt.Sprintf("%srepo/%s/instance", server.WebAPIPath, uuid)
-	doHTTP(t, "POST", apiStr, bytes.NewBufferString(metadata))
+	server.TestHTTP(t, "POST", apiStr, bytes.NewBufferString(metadata))
 
 	// Post a 3d volume of data that is 10 blocks on a side and straddles block boundaries.
 	payload := new(bytes.Buffer)
@@ -157,14 +125,14 @@ func postLabelVolume(t *testing.T, labelsName string, uuid dvid.UUID) {
 	}
 	apiStr = fmt.Sprintf("%snode/%s/%s/raw/0_1_2/%d_%d_%d/16_48_70", server.WebAPIPath,
 		uuid, labelsName, nx*blocksz, ny*blocksz, nz*blocksz)
-	doHTTP(t, "POST", apiStr, payload)
+	server.TestHTTP(t, "POST", apiStr, payload)
 }
 
 func TestLabelmap(t *testing.T) {
 	tests.UseStore()
 	defer tests.CloseStore()
 
-	uuid := dvid.UUID(NewServerRepo(t))
+	uuid := dvid.UUID(server.NewTestRepo(t))
 	if len(uuid) < 5 {
 		t.Fatalf("Bad root UUID for new repo: %s\n", uuid)
 	}
@@ -178,7 +146,7 @@ func TestLabels64(t *testing.T) {
 	tests.UseStore()
 	defer tests.CloseStore()
 
-	uuid := dvid.UUID(NewServerRepo(t))
+	uuid := dvid.UUID(server.NewTestRepo(t))
 	if len(uuid) < 5 {
 		t.Fatalf("Bad root UUID for new repo: %s\n", uuid)
 	}
@@ -190,7 +158,7 @@ func TestLabels64(t *testing.T) {
 	// Verify XY slice reads returns what we expect.
 	slice := sliceTester{"xy", 200, 200, dvid.Point3d{10, 40, 72}}
 	apiStr := slice.apiStr(uuid, labelsName)
-	xy := doHTTP(t, "GET", apiStr, nil)
+	xy := server.TestHTTP(t, "GET", apiStr, nil)
 	img, format, err := dvid.ImageFromBytes(xy, labels64.EncodeFormat(), false)
 	if err != nil {
 		t.Fatalf("Error on XY labels GET: %s\n", err.Error())
@@ -232,7 +200,7 @@ func TestLabels64(t *testing.T) {
 	blocksz := 32
 	apiStr = fmt.Sprintf("%snode/%s/%s/raw/0_1_2/%d_%d_%d/16_48_70", server.WebAPIPath,
 		uuid, labelsName, nx*blocksz, ny*blocksz, nz*blocksz)
-	xyz := doHTTP(t, "GET", apiStr, nil)
+	xyz := server.TestHTTP(t, "GET", apiStr, nil)
 	if len(xyz) != 160*160*160*8 {
 		t.Errorf("Expected %d bytes from 3d labels64 GET.  Got %d instead.", 160*160*160*8, len(xyz))
 	}
@@ -258,11 +226,11 @@ func TestLabels64(t *testing.T) {
 	roiName := "myroi"
 	metadata := `{"typename": "roi", "dataname": "myroi"}`
 	apiStr = fmt.Sprintf("%srepo/%s/instance", server.WebAPIPath, uuid)
-	doHTTP(t, "POST", apiStr, bytes.NewBufferString(metadata))
+	server.TestHTTP(t, "POST", apiStr, bytes.NewBufferString(metadata))
 
 	// Add ROI data
 	apiStr = fmt.Sprintf("%snode/%s/%s/roi", server.WebAPIPath, uuid, roiName)
-	doHTTP(t, "POST", apiStr, bytes.NewBufferString(labelsJSON()))
+	server.TestHTTP(t, "POST", apiStr, bytes.NewBufferString(labelsJSON()))
 
 	// Post updated labels without ROI.
 	p := make([]byte, 8*blocksz)
@@ -287,12 +255,12 @@ func TestLabels64(t *testing.T) {
 	}
 	apiStr = fmt.Sprintf("%snode/%s/%s/raw/0_1_2/%d_%d_%d/16_48_70", server.WebAPIPath,
 		uuid, labelsName, nx*blocksz, ny*blocksz, nz*blocksz)
-	doHTTP(t, "POST", apiStr, payload)
+	server.TestHTTP(t, "POST", apiStr, payload)
 
 	// Verify 3d volume read returns modified data.
 	apiStr = fmt.Sprintf("%snode/%s/%s/raw/0_1_2/%d_%d_%d/16_48_70", server.WebAPIPath,
 		uuid, labelsName, nx*blocksz, ny*blocksz, nz*blocksz)
-	xyz = doHTTP(t, "GET", apiStr, nil)
+	xyz = server.TestHTTP(t, "GET", apiStr, nil)
 	if len(xyz) != 160*160*160*8 {
 		t.Errorf("Expected %d bytes from 3d labels64 GET.  Got %d instead.", 160*160*160*8, len(xyz))
 	}
@@ -340,12 +308,12 @@ func TestLabels64(t *testing.T) {
 	}
 	apiStr = fmt.Sprintf("%snode/%s/%s/raw/0_1_2/%d_%d_%d/16_48_70?roi=%s", server.WebAPIPath,
 		uuid, labelsName, nx*blocksz, ny*blocksz, nz*blocksz, roiName)
-	doHTTP(t, "POST", apiStr, payload)
+	server.TestHTTP(t, "POST", apiStr, payload)
 
 	// Verify ROI masking on GET.
 	apiStr = fmt.Sprintf("%snode/%s/%s/raw/0_1_2/%d_%d_%d/16_48_70?roi=%s", server.WebAPIPath,
 		uuid, labelsName, nx*blocksz, ny*blocksz, nz*blocksz, roiName)
-	xyz2 := doHTTP(t, "GET", apiStr, nil)
+	xyz2 := server.TestHTTP(t, "GET", apiStr, nil)
 	if len(xyz) != 160*160*160*8 {
 		t.Errorf("Expected %d bytes from 3d labels64 GET.  Got %d instead.", 160*160*160*8, len(xyz))
 	}
@@ -390,7 +358,7 @@ func TestLabels64(t *testing.T) {
 	// is new.
 	apiStr = fmt.Sprintf("%snode/%s/%s/raw/0_1_2/%d_%d_%d/16_48_70", server.WebAPIPath,
 		uuid, labelsName, nx*blocksz, ny*blocksz, nz*blocksz)
-	xyz2 = doHTTP(t, "GET", apiStr, nil)
+	xyz2 = server.TestHTTP(t, "GET", apiStr, nil)
 	if len(xyz) != 160*160*160*8 {
 		t.Errorf("Expected %d bytes from 3d labels64 GET.  Got %d instead.", 160*160*160*8, len(xyz))
 	}
