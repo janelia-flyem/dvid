@@ -514,9 +514,9 @@ const expectedPartition = `
 
 const expectedSimplePartition = `
 		{
-		    "NumTotalBlocks": 875,
+		    "NumTotalBlocks": 1375,
 		    "NumActiveBlocks": 152,
-		    "NumSubvolumes": 4,
+		    "NumSubvolumes": 10,
 		    "ROI": {
 		        "MinChunk": [
 		            0,
@@ -533,98 +533,242 @@ const expectedSimplePartition = `
 		        {
 		            "MinPoint": [
 		                6368,
-		                3232,
+		                3168,
 		                3136
 		            ],
 		            "MaxPoint": [
 		                6527,
-		                3391,
-		                3359
+		                3327,
+		                3295
 		            ],
 		            "MinChunk": [
 		                199,
-		                101,
+		                99,
 		                98
 		            ],
 		            "MaxChunk": [
 		                203,
-		                105,
-		                104
+		                103,
+		                102
 		            ],
-		            "TotalBlocks": 175,
-		            "ActiveBlocks": 37
+		            "TotalBlocks": 125,
+		            "ActiveBlocks": 25
+		        },
+		        {
+		            "MinPoint": [
+		                6528,
+		                3168,
+		                3136
+		            ],
+		            "MaxPoint": [
+		                6687,
+		                3327,
+		                3295
+		            ],
+		            "MinChunk": [
+		                204,
+		                99,
+		                98
+		            ],
+		            "MaxChunk": [
+		                208,
+		                103,
+		                102
+		            ],
+		            "TotalBlocks": 125,
+		            "ActiveBlocks": 40
+		        },
+		        {
+		            "MinPoint": [
+		                6688,
+		                3168,
+		                3136
+		            ],
+		            "MaxPoint": [
+		                6847,
+		                3327,
+		                3295
+		            ],
+		            "MinChunk": [
+		                209,
+		                99,
+		                98
+		            ],
+		            "MaxChunk": [
+		                213,
+		                103,
+		                102
+		            ],
+		            "TotalBlocks": 125,
+		            "ActiveBlocks": 30
+		        },
+		        {
+		            "MinPoint": [
+		                6848,
+		                3168,
+		                3136
+		            ],
+		            "MaxPoint": [
+		                7007,
+		                3327,
+		                3295
+		            ],
+		            "MinChunk": [
+		                214,
+		                99,
+		                98
+		            ],
+		            "MaxChunk": [
+		                218,
+		                103,
+		                102
+		            ],
+		            "TotalBlocks": 125,
+		            "ActiveBlocks": 8
+		        },
+		        {
+		            "MinPoint": [
+		                6496,
+		                3328,
+		                3136
+		            ],
+		            "MaxPoint": [
+		                6655,
+		                3487,
+		                3295
+		            ],
+		            "MinChunk": [
+		                203,
+		                104,
+		                98
+		            ],
+		            "MaxChunk": [
+		                207,
+		                108,
+		                102
+		            ],
+		            "TotalBlocks": 125,
+		            "ActiveBlocks": 5
+		        },
+		        {
+		            "MinPoint": [
+		                6656,
+		                3328,
+		                3136
+		            ],
+		            "MaxPoint": [
+		                6815,
+		                3487,
+		                3295
+		            ],
+		            "MinChunk": [
+		                208,
+		                104,
+		                98
+		            ],
+		            "MaxChunk": [
+		                212,
+		                108,
+		                102
+		            ],
+		            "TotalBlocks": 125,
+		            "ActiveBlocks": 5
+		        },
+		        {
+		            "MinPoint": [
+		                6816,
+		                3328,
+		                3136
+		            ],
+		            "MaxPoint": [
+		                6975,
+		                3487,
+		                3295
+		            ],
+		            "MinChunk": [
+		                213,
+		                104,
+		                98
+		            ],
+		            "MaxChunk": [
+		                217,
+		                108,
+		                102
+		            ],
+		            "TotalBlocks": 125,
+		            "ActiveBlocks": 5
+		        },
+		        {
+		            "MinPoint": [
+		                6368,
+		                3232,
+		                3296
+		            ],
+		            "MaxPoint": [
+		                6527,
+		                3391,
+		                3455
+		            ],
+		            "MinChunk": [
+		                199,
+		                101,
+		                103
+		            ],
+		            "MaxChunk": [
+		                203,
+		                105,
+		                107
+		            ],
+		            "TotalBlocks": 125,
+		            "ActiveBlocks": 11
 		        },
 		        {
 		            "MinPoint": [
 		                6528,
 		                3232,
-		                3136
+		                3296
 		            ],
 		            "MaxPoint": [
 		                6687,
 		                3391,
-		                3359
+		                3455
 		            ],
 		            "MinChunk": [
 		                204,
 		                101,
-		                98
+		                103
 		            ],
 		            "MaxChunk": [
 		                208,
 		                105,
-		                104
+		                107
 		            ],
-		            "TotalBlocks": 175,
-		            "ActiveBlocks": 60
+		            "TotalBlocks": 125,
+		            "ActiveBlocks": 15
 		        },
 		        {
 		            "MinPoint": [
 		                6688,
 		                3232,
-		                3136
+		                3296
 		            ],
 		            "MaxPoint": [
 		                6847,
 		                3391,
-		                3359
+		                3455
 		            ],
 		            "MinChunk": [
 		                209,
 		                101,
-		                98
+		                103
 		            ],
 		            "MaxChunk": [
 		                213,
 		                105,
-		                104
+		                107
 		            ],
-		            "TotalBlocks": 175,
-		            "ActiveBlocks": 43
-		        },
-		        {
-		            "MinPoint": [
-		                6848,
-		                3232,
-		                3136
-		            ],
-		            "MaxPoint": [
-		                7007,
-		                3391,
-		                3359
-		            ],
-		            "MinChunk": [
-		                214,
-		                101,
-		                98
-		            ],
-		            "MaxChunk": [
-		                218,
-		                105,
-		                104
-		            ],
-		            "TotalBlocks": 175,
-		            "ActiveBlocks": 12
+		            "TotalBlocks": 125,
+		            "ActiveBlocks": 8
 		        }
 		    ]
 		}
