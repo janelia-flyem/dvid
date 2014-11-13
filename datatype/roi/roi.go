@@ -994,9 +994,8 @@ func (d *Data) SimplePartition(ctx storage.Context, batchsize int32) ([]byte, er
 
 	// Adjust Z range
 	addZtoTop := zleft / 2
-	addZtoEnd := zleft - addZtoTop
 	layerBegZ := d.MinZ - addZtoTop
-	layerEndZ := layerBegZ + batchsize - 1 + addZtoEnd
+	layerEndZ := layerBegZ + batchsize - 1
 
 	// Iterate through blocks in ascending Z, calculating active extents and subvolume coverage.
 	// Keep track of current layer = batchsize of blocks in Z.
