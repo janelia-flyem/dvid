@@ -116,7 +116,8 @@ const (
 )
 
 // MetaDataStorer is the interface for storing DVID datastore metadata like the
-// repositories and associated DAGs.  It is characterized by the following:
+// repositories, associated DAGs, and datatype-specific data that needs to be
+// coordinated across front-end DVID servers.  It is characterized by the following:
 // (1) not big data, (2) ideally in memory, (3) strongly consistent across all
 // DVID processes, e.g., all front-end DVID apps.  Of the three tiers of storage
 // (Metadata, SmallData, BigData), MetaData should have the smallest capacity and
@@ -138,7 +139,7 @@ type SmallDataStorer interface {
 // given label.  This store should have considerably more capacity and potentially
 // higher latency than SmallData.  While this type embeds an ordered key-value store,
 // it could be implemented by a wrapper around an unordered key-value store due to the
-// relaxation in the required access times.
+// relaxation in the required access times, e.g., brute force search of generated keys.
 type BigDataStorer interface {
 	OrderedKeyValueDB
 }

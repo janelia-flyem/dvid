@@ -258,6 +258,16 @@ GET <api URL>/node/<UUID>/<data name>/sizerange/<min size>/<optional max size>
 
 POST <api URL>/node/<UUID>/<data name>/merge
 
+	Merges labels.  Requires JSON in request body of the following array format:
+
+	[ [toLabel1, fromLabel1, fromLabel2, fromLabel3, ...],
+	  [toLabel2, fromLabel4, fromLabel5, ...], 
+	  ... ]
+
+	Each element of the JSON array is another array specifying all the labels that
+	should be merged into the label specified by the first element.
+
+
 POST <api URL>/node/<UUID>/<data name>/split
 `
 

@@ -78,7 +78,8 @@ func makeVolume(offset, size dvid.Point3d) []byte {
 	return volume
 }
 
-func makeLabels(repo datastore.Repo, t *testing.T, name dvid.DataString) *Data {
+// Creates a new data instance for labels64
+func newDataInstance(repo datastore.Repo, t *testing.T, name dvid.DataString) *Data {
 	config := dvid.NewConfig()
 	config.SetVersioned(true)
 	dataservice, err := repo.NewData(labelsT, name, config)
@@ -97,7 +98,7 @@ func TestSubvolLabels64(t *testing.T) {
 	defer tests.CloseStore()
 
 	repo, versionID := initTestRepo()
-	labels := makeLabels(repo, t, "mylabels")
+	labels := newDataInstance(repo, t, "mylabels")
 	labelsCtx := datastore.NewVersionedContext(labels, versionID)
 
 	// Create a fake 100x100x100 8-bit grayscale image
@@ -161,7 +162,7 @@ func sliceTest(t *testing.T, slice dvid.Geometry) {
 	defer tests.CloseStore()
 
 	repo, versionID := initTestRepo()
-	labels := makeLabels(repo, t, "labels2")
+	labels := newDataInstance(repo, t, "labels2")
 	labelsCtx := datastore.NewVersionedContext(labels, versionID)
 
 	// Create a fake 100x100 64-bit labels image

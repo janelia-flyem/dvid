@@ -58,7 +58,7 @@ func (s *VolumeTest) TestRLE(c *C) {
 
 func (s *VolumeTest) TestSparseVol(c *C) {
 	var vol SparseVol
-	err := vol.AddRLEs(s.encoding)
+	err := vol.AddSerializedRLEs(s.encoding)
 	c.Assert(err, IsNil)
 
 	c.Assert(vol.Size(), Equals, Point3d{21, 2, 2})
@@ -72,7 +72,7 @@ func (s *VolumeTest) TestSparseVol(c *C) {
 	}
 	encoding, err := newrles.MarshalBinary()
 	c.Assert(err, IsNil)
-	err = vol.AddRLEs(encoding)
+	err = vol.AddSerializedRLEs(encoding)
 	c.Assert(err, IsNil)
 
 	c.Assert(vol.Size(), Equals, Point3d{20, 2, 1})

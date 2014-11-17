@@ -93,10 +93,7 @@ func inroi(x, y, z int) bool {
 }
 
 func postLabelVolume(t *testing.T, labelsName string, uuid dvid.UUID) {
-	// Create a labels64 instance
-	metadata := fmt.Sprintf(`{"typename": "labels64", "dataname": %q}`, labelsName)
-	apiStr := fmt.Sprintf("%srepo/%s/instance", server.WebAPIPath, uuid)
-	server.TestHTTP(t, "POST", apiStr, bytes.NewBufferString(metadata))
+	server.CreateTestInstance(t, uuid, "labels64", labelsName)
 
 	// Post a 3d volume of data that is 10 blocks on a side and straddles block boundaries.
 	payload := new(bytes.Buffer)
@@ -123,7 +120,7 @@ func postLabelVolume(t *testing.T, labelsName string, uuid dvid.UUID) {
 			}
 		}
 	}
-	apiStr = fmt.Sprintf("%snode/%s/%s/raw/0_1_2/%d_%d_%d/16_48_70", server.WebAPIPath,
+	apiStr := fmt.Sprintf("%snode/%s/%s/raw/0_1_2/%d_%d_%d/16_48_70", server.WebAPIPath,
 		uuid, labelsName, nx*blocksz, ny*blocksz, nz*blocksz)
 	server.TestHTTP(t, "POST", apiStr, payload)
 }
@@ -224,9 +221,7 @@ func TestLabels64(t *testing.T) {
 
 	// Create a new ROI instance.
 	roiName := "myroi"
-	metadata := `{"typename": "roi", "dataname": "myroi"}`
-	apiStr = fmt.Sprintf("%srepo/%s/instance", server.WebAPIPath, uuid)
-	server.TestHTTP(t, "POST", apiStr, bytes.NewBufferString(metadata))
+	server.CreateTestInstance(t, uuid, "roi", roiName)
 
 	// Add ROI data
 	apiStr = fmt.Sprintf("%snode/%s/%s/roi", server.WebAPIPath, uuid, roiName)

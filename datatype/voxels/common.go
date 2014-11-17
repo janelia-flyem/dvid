@@ -575,11 +575,11 @@ func writeBlocks(ctx storage.Context, compress dvid.Compression, checksum dvid.C
 	<-server.HandlerToken
 	go func() {
 		defer func() {
+			wg1.Done()
+			wg2.Done()
 			dvid.Debugf("Wrote voxel blocks.  Before %s: %d bytes.  After: %d bytes\n",
 				compress, preCompress, postCompress)
 			server.HandlerToken <- 1
-			wg1.Done()
-			wg2.Done()
 		}()
 		// If we can do write batches, use it, else do put ranges.
 		// With write batches, we write the byte slices immediately.
@@ -618,6 +618,8 @@ func writeBlocks(ctx storage.Context, compress dvid.Compression, checksum dvid.C
 			keyvalues := make(storage.KeyValues, len(blocks))
 			for i, block := range blocks {
 				serialization, err := dvid.SerializeData(block.V, compress, checksum)
+				preCompress += len(block.V)
+				postCompress += len(serialization)
 				if err != nil {
 					dvid.Errorf("Unable to serialize block: %s\n", err.Error())
 					return

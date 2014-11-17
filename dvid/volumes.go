@@ -227,8 +227,8 @@ func (vol *SparseVol) Clear() {
 	vol.numVoxels = 0
 }
 
-// AddRLEs adds binary encoding of RLEs to SparseVol.
-func (vol *SparseVol) AddRLEs(encoding []byte) error {
+// AddSerializedRLEs adds binary encoding of RLEs to SparseVol.
+func (vol *SparseVol) AddSerializedRLEs(encoding []byte) error {
 	lenEncoding := len(encoding)
 	if lenEncoding%16 != 0 {
 		return fmt.Errorf("RLE encoding # bytes is not divisible by 16: %d", len(encoding))
@@ -270,6 +270,31 @@ func (vol *SparseVol) AddRLEs(encoding []byte) error {
 		}
 	}
 	return nil
+}
+
+// AddRLE adds an RLE to a SparseVol.
+func (vol *SparseVol) AddRLE(rles RLEs) {
+	if vol.pos+len(rles) >= cap(vol.rles) {
+		newsize := vol.pos + len(rles)
+		tmp := make(RLEs, newsize, newsize)
+		copy(tmp[0:len(vol.rles)], vol.rles)
+		vol.rles = tmp
+	}
+	for _, rle := range rles {
+		vol.rles[vol.pos] = rle
+		vol.numVoxels += uint64(rle.length)
+		vol.pos++
+		endPt := rle.start
+		endPt[0] += rle.length - 1
+		if vol.initialized {
+			vol.minPt.SetMinimum(rle.start)
+			vol.maxPt.SetMaximum(endPt)
+		} else {
+			vol.minPt = rle.start
+			vol.maxPt = endPt
+			vol.initialized = true
+		}
+	}
 }
 
 // SurfaceSerialization returns binary-encoded surface data with the following format:

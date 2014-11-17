@@ -49,6 +49,10 @@ func (d *Data) MergeLabels(ctx *datastore.VersionedContext, tuples MergeTuples) 
 	if !ok {
 		return fmt.Errorf("Database doesn't support Batch ops in MergeLabels()")
 	}
+	bigdata, err := storage.BigDataStore()
+	if err != nil {
+		return fmt.Errorf("Cannot get datastore that handles big data: %s\n", err.Error())
+	}
 
 	// Global remapping where key = label to be merged; value = new label
 	remapping := make(map[uint64]uint64)
@@ -56,11 +60,13 @@ func (d *Data) MergeLabels(ctx *datastore.VersionedContext, tuples MergeTuples) 
 	// Key = modified label
 	sizeMods := make(map[uint64]sizeChange)
 
-	// Key = string of block index
+	// All blocks that have changed during this merge.  Key = string of block index
 	blocksChanged := make(map[string]bool)
 
 	// Iterate through all the merge ops to get targeted blocks and the necessary relabeling
 	for _, tuple := range tuples {
+
+		fmt.Printf("Processing merge list: %v\n", tuple)
 
 		// Get the block-level RLEs for the toLabel
 		var toLabelSize uint64
@@ -75,14 +81,13 @@ func (d *Data) MergeLabels(ctx *datastore.VersionedContext, tuples MergeTuples) 
 		} else {
 			toLabelSize = toLabelRLEs.numVoxels()
 		}
-		changedRLEs := blockRLEs{}
+		blocksChangedForLabel := make(map[string]bool)
 
 		var addedVoxels uint64
 		for _, fromLabel := range tuple[1:] {
-			minIndex := voxels.NewLabelSpatialMapIndex(fromLabel, dvid.MinIndexZYX.Bytes())
-			maxIndex := voxels.NewLabelSpatialMapIndex(fromLabel, dvid.MaxIndexZYX.Bytes())
-
 			remapping[fromLabel] = toLabel
+
+			fmt.Printf("Processing label %d to label %d...\n", fromLabel, toLabel)
 
 			fromLabelRLEs, err := getLabelRLEs(ctx, fromLabel)
 			if err != nil {
@@ -97,6 +102,7 @@ func (d *Data) MergeLabels(ctx *datastore.VersionedContext, tuples MergeTuples) 
 			for blockStr, fromRLEs := range fromLabelRLEs {
 				// Mark the fromLabel blocks as modified
 				blocksChanged[blockStr] = true
+				blocksChangedForLabel[blockStr] = true
 
 				// Get the toLabel RLEs for this block and add the fromLabel RLEs
 				toRLEs, found := toLabelRLEs[blockStr]
@@ -105,20 +111,28 @@ func (d *Data) MergeLabels(ctx *datastore.VersionedContext, tuples MergeTuples) 
 				} else {
 					toRLEs = fromRLEs
 				}
-				changedRLEs[blockStr] = toRLEs
+				toLabelRLEs[blockStr] = toRLEs
 			}
 
 			// Delete all fromLabel RLEs since they are all integrated into toLabel RLEs
+			minIndex := voxels.NewLabelSpatialMapIndex(fromLabel, dvid.MinIndexZYX.Bytes())
+			maxIndex := voxels.NewLabelSpatialMapIndex(fromLabel, dvid.MaxIndexZYX.Bytes())
 			if err := smalldata.DeleteRange(ctx, minIndex, maxIndex); err != nil {
 				return fmt.Errorf("Can't delete label %d RLEs: %s", fromLabel, err.Error())
 			}
+
+			// Delete the fromLabel surface.
+			surfaceIndex := voxels.NewLabelSurfaceIndex(fromLabel)
+			if err := bigdata.Delete(ctx, surfaceIndex); err != nil {
+				return fmt.Errorf("Can't delete label %d surface: %s", fromLabel, err.Error())
+			}
 		}
 
-		// Update all toLabel RLEs that were changed
+		// Update datastore with all toLabel RLEs that were changed
 		batch := smallBatcher.NewBatch(ctx)
-		for blockStr, toRLEs := range changedRLEs {
+		for blockStr := range blocksChangedForLabel {
 			toLabelRLEsIndex := voxels.NewLabelSpatialMapIndex(toLabel, []byte(blockStr))
-			serialization, err := toRLEs.MarshalBinary()
+			serialization, err := toLabelRLEs[blockStr].MarshalBinary()
 			if err != nil {
 				dvid.Errorf("Error serializing RLEs for label %d: %s\n", toLabel, err.Error())
 				continue
@@ -129,6 +143,9 @@ func (d *Data) MergeLabels(ctx *datastore.VersionedContext, tuples MergeTuples) 
 			dvid.Errorf("Error on updating RLEs for label %d: %s\n", toLabel, err.Error())
 		}
 		sizeMods[toLabel] = sizeChange{toLabelSize, toLabelSize + addedVoxels}
+
+		// Recompute the toLabel surface
+		go d.recomputeSurface(ctx, toLabel, toLabelRLEs)
 	}
 
 	// Update all label size data (key: sz + b)
@@ -138,6 +155,18 @@ func (d *Data) MergeLabels(ctx *datastore.VersionedContext, tuples MergeTuples) 
 	go d.relabelBlocks(ctx, blocksChanged, remapping)
 
 	return nil
+}
+
+// recomputeSurface refreshes the computed surface from a label's RLEs.
+func (d *Data) recomputeSurface(ctx *datastore.VersionedContext, label uint64, rles blockRLEs) {
+	var curVol dvid.SparseVol
+	curVol.SetLabel(label)
+	for _, rle := range rles {
+		curVol.AddRLE(rle)
+	}
+	if err := d.computeAndSaveSurface(ctx, &curVol); err != nil {
+		dvid.Errorf("Error on computing surface and normals for label %d: %s\n", label, err.Error())
+	}
 }
 
 // Update all label size data (key: sz + b)
@@ -153,6 +182,7 @@ func updateLabelSizes(ctx *datastore.VersionedContext, sizeMods map[uint64]sizeC
 		return
 	}
 	// For every label key, delete the current label size and add the new one.
+	timedLog := dvid.NewTimeLog()
 	batch := smallBatcher.NewBatch(ctx)
 	for label, change := range sizeMods {
 		oldKey := voxels.NewLabelSizesIndex(change.oldSize, label)
@@ -163,6 +193,7 @@ func updateLabelSizes(ctx *datastore.VersionedContext, sizeMods map[uint64]sizeC
 	if err := batch.Commit(); err != nil {
 		dvid.Errorf("Error on updating label sizes on %s: %s\n", ctx, err.Error())
 	}
+	timedLog.Infof("Updated %d label sizes", len(sizeMods))
 }
 
 // Iterate through all the label blocks and perform the actual relabeling.
@@ -176,6 +207,7 @@ func (d *Data) relabelBlocks(ctx *datastore.VersionedContext, blocksChanged map[
 	}
 
 	// Iterate through all modified blocks
+	timedLog := dvid.NewTimeLog()
 	wg := new(sync.WaitGroup)
 	for blockStr, _ := range blocksChanged {
 		blockKey := voxels.NewVoxelBlockIndexByCoord(blockStr)
@@ -186,9 +218,11 @@ func (d *Data) relabelBlocks(ctx *datastore.VersionedContext, blocksChanged map[
 			return
 		}
 		<-server.HandlerToken
+		wg.Add(1)
 		go d.relabelChunk(ctx, blockKey, value, remapping, wg)
 	}
 	wg.Wait()
+	timedLog.Infof("Completed relabeling of %d blocks", len(blocksChanged))
 }
 
 func (d *Data) relabelChunk(ctx *datastore.VersionedContext, k, v []byte,

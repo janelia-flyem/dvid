@@ -74,7 +74,7 @@ func ComputeSurface(ctx storage.Context, data *Data, ch chan *storage.Chunk, wg 
 		if chunk == nil {
 			if notFirst {
 				if err := data.computeAndSaveSurface(ctx, &curVol); err != nil {
-					dvid.Infof("Error on computing surface and normals: %s\n", err.Error())
+					dvid.Errorf("Error on computing surface and normals: %s\n", err.Error())
 					return
 				}
 			}
@@ -84,7 +84,7 @@ func ComputeSurface(ctx storage.Context, data *Data, ch chan *storage.Chunk, wg 
 		if label != curLabel || label == 0 {
 			if notFirst {
 				if err := data.computeAndSaveSurface(ctx, &curVol); err != nil {
-					dvid.Infof("Error on computing surface and normals: %s\n", err.Error())
+					dvid.Errorf("Error on computing surface and normals: %s\n", err.Error())
 					return
 				}
 			}
@@ -92,8 +92,8 @@ func ComputeSurface(ctx storage.Context, data *Data, ch chan *storage.Chunk, wg 
 			curVol.SetLabel(label)
 		}
 
-		if err := curVol.AddRLEs(chunk.V); err != nil {
-			dvid.Infof("Error adding RLE for label %d: %s\n", label, err.Error())
+		if err := curVol.AddSerializedRLEs(chunk.V); err != nil {
+			dvid.Errorf("Error adding RLE for label %d: %s\n", label, err.Error())
 			return
 		}
 		curLabel = label
@@ -167,7 +167,7 @@ func (brles blockRLEs) numVoxels() uint64 {
 
 // Returns RLEs for a given label where the key of the returned map is the block index
 // in string format.
-func getLabelRLEs(ctx storage.Context, label uint64) (blockRLEs, error) {
+func getLabelRLEs(ctx *datastore.VersionedContext, label uint64) (blockRLEs, error) {
 	smalldata, err := storage.SmallDataStore()
 	if err != nil {
 		return nil, fmt.Errorf("Cannot get datastore that handles big data: %s\n", err.Error())
@@ -199,6 +199,7 @@ func getLabelRLEs(ctx storage.Context, label uint64) (blockRLEs, error) {
 	if err != nil {
 		return nil, err
 	}
+	fmt.Printf("Found %d blocks with label %d\n", len(labelRLEs), label)
 	return labelRLEs, nil
 }
 

@@ -1,11 +1,22 @@
+/*
+	This file contains functions useful for testing DVID in other packages.
+	Unfortunately, due to the way Go handles compilation of *_test.go files,
+	these functions cannot be in server_test.go since they will be unavailable
+	to test files in external packages.  So these functions are exported and
+	contain the "Test" keyword.
+*/
+
 package server
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/janelia-flyem/dvid/dvid"
 
 	"encoding/json"
 )
@@ -37,4 +48,10 @@ func NewTestRepo(t *testing.T) (uuid string) {
 		t.Fatalf("Couldn't decode JSON response to new repo request: %s\n", err.Error())
 	}
 	return parsedResponse.Root
+}
+
+func CreateTestInstance(t *testing.T, uuid dvid.UUID, typename, name string) {
+	metadata := fmt.Sprintf(`{"typename": %q, "dataname": %q}`, typename, name)
+	apiStr := fmt.Sprintf("%srepo/%s/instance", WebAPIPath, uuid)
+	TestHTTP(t, "POST", apiStr, bytes.NewBufferString(metadata))
 }
