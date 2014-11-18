@@ -314,16 +314,22 @@ func maxIndexByBlockZ(z int32) indexRLE {
 type tuple [4]int32
 
 func (t tuple) less(block dvid.ChunkPoint3d) bool {
+	if t[0] < block[2] {
+		return true
+	}
 	if t[0] > block[2] {
 		return false
+	}
+	if t[1] < block[1] {
+		return true
 	}
 	if t[1] > block[1] {
 		return false
 	}
-	if t[3] > block[0] {
-		return false
+	if t[3] < block[0] {
+		return true
 	}
-	return true
+	return false
 }
 
 func (t tuple) includes(block dvid.ChunkPoint3d) bool {
@@ -451,34 +457,6 @@ func (d *Data) Put(ctx storage.VersionedContext, jsonBytes []byte) error {
 	return nil
 }
 
-// Returns the current span index and whether given point is included in span.
-func (d *Data) seekSpan(pt dvid.Point3d, spans []tuple, curSpanI int) (int, bool) {
-	numSpans := len(spans)
-	if curSpanI >= numSpans {
-		return curSpanI, false
-	}
-
-	// Determine current block index of point.
-	chunkPt, _ := pt.Chunk(d.BlockSize).(dvid.ChunkPoint3d)
-
-	// Keep going through spans until we are equal to or past the chunk point.
-	for {
-		curSpan := spans[curSpanI]
-		if curSpan.less(chunkPt) {
-			curSpanI++
-		} else {
-			if curSpan.includes(chunkPt) {
-				return curSpanI, true
-			} else {
-				return curSpanI, false
-			}
-		}
-		if curSpanI >= numSpans {
-			return curSpanI, false
-		}
-	}
-}
-
 // Returns the voxel range normalized to begVoxel offset and constrained by block span.
 func voxelRange(blockSize, begBlock, endBlock, begVoxel, endVoxel int32) (int32, int32) {
 	v0 := begBlock * blockSize
@@ -553,6 +531,34 @@ func (d *Data) GetMask(ctx storage.VersionedContext, subvol *dvid.Subvolume) ([]
 		}
 	}
 	return data, nil
+}
+
+// Returns the current span index and whether given point is included in span.
+func (d *Data) seekSpan(pt dvid.Point3d, spans []tuple, curSpanI int) (int, bool) {
+	numSpans := len(spans)
+	if curSpanI >= numSpans {
+		return curSpanI, false
+	}
+
+	// Determine current block index of point.
+	chunkPt, _ := pt.Chunk(d.BlockSize).(dvid.ChunkPoint3d)
+
+	// Keep going through spans until we are equal to or past the chunk point.
+	for {
+		curSpan := spans[curSpanI]
+		if curSpan.less(chunkPt) {
+			curSpanI++
+		} else {
+			if curSpan.includes(chunkPt) {
+				return curSpanI, true
+			} else {
+				return curSpanI, false
+			}
+		}
+		if curSpanI >= numSpans {
+			return curSpanI, false
+		}
+	}
 }
 
 // PointQuery checks if a JSON-encoded list of voxel points are within an ROI.

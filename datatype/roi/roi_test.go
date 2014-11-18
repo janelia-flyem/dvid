@@ -52,7 +52,7 @@ var testPoints = []dvid.Point3d{
 	dvid.Point3d{6400, 3232, 3167}, // false
 	dvid.Point3d{6400, 3232, 3200}, // true
 	dvid.Point3d{6719, 3232, 3200}, // true
-	dvid.Point3d{6720, 3232, 3200}, // false
+	dvid.Point3d{6720, 3232, 3200}, // true
 	dvid.Point3d{6720, 4100, 3263}, // false
 }
 
@@ -60,7 +60,7 @@ var expectedInclusions = []bool{
 	false,
 	true,
 	true,
-	false,
+	true,
 	false,
 }
 
@@ -92,6 +92,53 @@ func initTestRepo() (datastore.Repo, dvid.VersionID) {
 		}
 	}
 	return tests.NewRepo()
+}
+
+func TestTuples(t *testing.T) {
+	tup := tuple{10, 11, 20, 30}
+	if tup.less(dvid.ChunkPoint3d{20, 11, 10}) {
+		t.Errorf("Bad tuple.less()\n")
+	}
+	if tup.less(dvid.ChunkPoint3d{30, 11, 10}) {
+		t.Errorf("Bad tuple.less()\n")
+	}
+	if !tup.less(dvid.ChunkPoint3d{31, 11, 10}) {
+		t.Errorf("Bad tuple.less()\n")
+	}
+	if !tup.less(dvid.ChunkPoint3d{20, 11, 11}) {
+		t.Errorf("Bad tuple.less()\n")
+	}
+	if tup.less(dvid.ChunkPoint3d{20, 11, 9}) {
+		t.Errorf("Bad tuple.less()\n")
+	}
+	if !tup.less(dvid.ChunkPoint3d{20, 11, 11}) {
+		t.Errorf("Bad tuple.less()\n")
+	}
+
+	if tup.includes(dvid.ChunkPoint3d{19, 11, 10}) {
+		t.Errorf("Bad tuple.includes()\n")
+	}
+	if !tup.includes(dvid.ChunkPoint3d{20, 11, 10}) {
+		t.Errorf("Bad tuple.includes()\n")
+	}
+	if !tup.includes(dvid.ChunkPoint3d{30, 11, 10}) {
+		t.Errorf("Bad tuple.includes()\n")
+	}
+	if tup.includes(dvid.ChunkPoint3d{31, 11, 10}) {
+		t.Errorf("Bad tuple.includes()\n")
+	}
+	if tup.includes(dvid.ChunkPoint3d{25, 11, 11}) {
+		t.Errorf("Bad tuple.includes()\n")
+	}
+	if tup.includes(dvid.ChunkPoint3d{25, 11, 9}) {
+		t.Errorf("Bad tuple.includes()\n")
+	}
+	if tup.includes(dvid.ChunkPoint3d{25, 10, 10}) {
+		t.Errorf("Bad tuple.includes()\n")
+	}
+	if tup.includes(dvid.ChunkPoint3d{25, 12, 10}) {
+		t.Errorf("Bad tuple.includes()\n")
+	}
 }
 
 func TestROIRequests(t *testing.T) {
