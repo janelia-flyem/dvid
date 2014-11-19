@@ -523,7 +523,7 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 	storeCtx := datastore.NewVersionedContext(d, versionID)
 	for _, channel := range channels {
 		dvid.Infof("Processing channel %d... \n", channel.channelNum)
-		err = voxels.PutVoxels(storeCtx, d, channel, nil)
+		err = voxels.PutVoxels(storeCtx, d, channel, voxels.OpOptions{})
 		if err != nil {
 			return err
 		}
@@ -608,5 +608,5 @@ func (d *Data) storeComposite(ctx storage.Context, channels []*Channel) error {
 	}
 
 	// Store the result
-	return voxels.PutVoxels(ctx, d, composite, nil)
+	return voxels.PutVoxels(ctx, d, composite, voxels.OpOptions{})
 }

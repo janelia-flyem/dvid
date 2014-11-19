@@ -891,7 +891,12 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 						return
 					}
 				}
-				err = voxels.PutVoxels(storeCtx, d, e, roiptr)
+				modsChan := make(voxels.BlockChannel)
+				go d.denormFunc(versionID, modsChan)
+				var opts voxels.OpOptions
+				opts.SetROI(roiptr)
+				opts.SetModsChannel(modsChan)
+				err = voxels.PutVoxels(storeCtx, d, e, opts)
 				if err != nil {
 					server.BadRequest(w, r, err.Error())
 					return
@@ -1003,7 +1008,12 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 						return
 					}
 				}
-				err = voxels.PutVoxels(storeCtx, d, e, roiptr)
+				modsChan := make(voxels.BlockChannel)
+				go d.denormFunc(versionID, modsChan)
+				var opts voxels.OpOptions
+				opts.SetROI(roiptr)
+				opts.SetModsChannel(modsChan)
+				err = voxels.PutVoxels(storeCtx, d, e, opts)
 				if err != nil {
 					server.BadRequest(w, r, err.Error())
 					return
@@ -1223,9 +1233,9 @@ func (d *Data) GetLabelBytesAtPoint(ctx storage.Context, pt dvid.Point) ([]byte,
 
 	// Retrieve the particular label within the block.
 	ptInBlock := coord.PointInChunk(blockSize)
-	nx := blockSize.Value(0)
-	nxy := nx * blockSize.Value(1)
-	i := (ptInBlock.Value(0) + ptInBlock.Value(1)*nx + ptInBlock.Value(2)*nxy) * 8
+	nx := int64(blockSize.Value(0))
+	nxy := nx * int64(blockSize.Value(1))
+	i := (int64(ptInBlock.Value(0)) + int64(ptInBlock.Value(1))*nx + int64(ptInBlock.Value(2))*nxy) * 8
 	return labelData[i : i+8], nil
 }
 

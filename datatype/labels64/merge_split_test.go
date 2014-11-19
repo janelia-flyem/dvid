@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
@@ -48,8 +49,8 @@ func (v *testVolume) add(body testBody) {
 	nxy := nx * v.size[1]
 	for z := body.offset[2]; z < body.offset[2]+body.size[2]; z++ {
 		for y := body.offset[1]; y < body.offset[1]+body.size[1]; y++ {
-			i := (z*nxy + y*nx) * 8
-			for x := body.offset[0]; x < body.offset[0]+body.size[0]; x++ {
+			i := (z*nxy + y*nx + body.offset[0]) * 8
+			for x := int32(0); x < body.size[0]; x++ {
 				binary.LittleEndian.PutUint64(v.data[i:i+8], body.label)
 				i += 8
 			}
@@ -70,14 +71,37 @@ func (v *testVolume) get(t *testing.T, uuid dvid.UUID, name string) {
 	v.data = server.TestHTTP(t, "GET", apiStr, nil)
 }
 
+func (v *testVolume) equals(v2 *testVolume) bool {
+	if !v.size.Equals(v2.size) {
+		return false
+	}
+	if len(v.data) != len(v2.data) {
+		return false
+	}
+	for i, value := range v.data {
+		if value != v2.data[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // Returns true if all voxels in test volume has given label.
-func (v *testVolume) isLabel(label uint64, body testBody) bool {
+func (v *testVolume) isLabel(label uint64, body *testBody) bool {
+	var offset, size dvid.Point3d
+	if body == nil {
+		offset = dvid.Point3d{0, 0, 0}
+		size = v.size
+	} else {
+		offset = body.offset
+		size = body.size
+	}
 	nx := v.size[0]
 	nxy := nx * v.size[1]
-	for z := body.offset[2]; z < body.offset[2]+body.size[2]; z++ {
-		for y := body.offset[1]; y < body.offset[1]+body.size[1]; y++ {
-			i := (z*nxy + y*nx) * 8
-			for x := body.offset[0]; x < body.offset[0]+body.size[0]; x++ {
+	for z := offset[2]; z < offset[2]+size[2]; z++ {
+		for y := offset[1]; y < offset[1]+size[1]; y++ {
+			i := (z*nxy + y*nx + offset[0]) * 8
+			for x := int32(0); x < size[0]; x++ {
 				curLabel := binary.LittleEndian.Uint64(v.data[i : i+8])
 				if curLabel != label {
 					return false
@@ -90,13 +114,21 @@ func (v *testVolume) isLabel(label uint64, body testBody) bool {
 }
 
 // Returns true if any voxel in test volume has given label.
-func (v *testVolume) hasLabel(label uint64, body testBody) bool {
+func (v *testVolume) hasLabel(label uint64, body *testBody) bool {
+	var offset, size dvid.Point3d
+	if body == nil {
+		offset = dvid.Point3d{0, 0, 0}
+		size = v.size
+	} else {
+		offset = body.offset
+		size = body.size
+	}
 	nx := v.size[0]
 	nxy := nx * v.size[1]
-	for z := body.offset[2]; z < body.offset[2]+body.size[2]; z++ {
-		for y := body.offset[1]; y < body.offset[1]+body.size[1]; y++ {
-			i := (z*nxy + y*nx) * 8
-			for x := body.offset[0]; x < body.offset[0]+body.size[0]; x++ {
+	for z := offset[2]; z < offset[2]+size[2]; z++ {
+		for y := offset[1]; y < offset[1]+size[1]; y++ {
+			i := (z*nxy + y*nx + offset[0]) * 8
+			for x := int32(0); x < size[0]; x++ {
 				curLabel := binary.LittleEndian.Uint64(v.data[i : i+8])
 				if curLabel == label {
 					return true
@@ -126,6 +158,11 @@ var (
 		offset: dvid.Point3d{30, 20, 40},
 		size:   dvid.Point3d{50, 50, 20},
 	}
+	body2a = testBody{
+		label:  2,
+		offset: dvid.Point3d{40, 40, 10},
+		size:   dvid.Point3d{20, 20, 30},
+	}
 	body3 = testBody{
 		label:  3,
 		offset: dvid.Point3d{40, 40, 10},
@@ -143,6 +180,9 @@ func createLabelTestVolume(t *testing.T, uuid dvid.UUID, name string) *testVolum
 	volume := newTestVolume(100, 100, 100)
 	volume.add(body1)
 	volume.add(body2)
+	if !volume.isLabel(2, &body2) {
+		t.Errorf("Label 2 was incorrectly written in createLabelTestVolume!")
+	}
 	volume.add(body3)
 	volume.add(body4)
 
@@ -160,7 +200,18 @@ func TestMergeLabels(t *testing.T) {
 	labelsName := "mylabels"
 	uuid := repo.RootUUID()
 	server.CreateTestInstance(t, uuid, "labels64", labelsName)
-	createLabelTestVolume(t, uuid, labelsName)
+	vol := createLabelTestVolume(t, uuid, labelsName)
+
+	expected := newTestVolume(100, 100, 100)
+	expected.add(body1)
+	expected.add(body2)
+	expected.add(body2a)
+	expected.add(body4)
+
+	if !vol.isLabel(2, &body2) {
+		t.Errorf("Label 2 was incorrectly written!")
+	}
+	time.Sleep(10 * time.Second)
 
 	// Test merge 1
 	testMerge := mergeJSON(`
@@ -174,14 +225,17 @@ func TestMergeLabels(t *testing.T) {
 	if len(retrieved.data) != 8*100*100*100 {
 		t.Errorf("Retrieved labels64 volume is incorrect size\n")
 	}
-	if !retrieved.isLabel(2, body2) {
-		t.Errorf("Expected label 2 voxels to remain.  Instead some were removed.\n")
+	if !retrieved.isLabel(2, &body2) {
+		t.Errorf("Expected label 2 original voxels to remain.  Instead some were removed.\n")
 	}
-	if retrieved.hasLabel(3, body3) {
+	if retrieved.hasLabel(3, nil) {
 		t.Errorf("Found label 3 when all label 3 should have been merged into label 2!\n")
 	}
-	if !retrieved.isLabel(2, body3) {
-		t.Errorf("Incomplete merging of label 3 into label 2\n")
+	if !retrieved.isLabel(2, &body3) {
+		t.Errorf("Incomplete merging.  Label 2 should have taken over full extent of label 3\n")
+	}
+	if !retrieved.equals(expected) {
+		t.Errorf("Merged label volume not equal to expected merged volume\n")
 	}
 }
 

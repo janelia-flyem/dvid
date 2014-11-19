@@ -321,6 +321,10 @@ func (p Point2d) PointInChunk(size Point) Point {
 // Point3d is an ordered list of three 32-bit signed integers that implements the Point interface.
 type Point3d [3]int32
 
+func (p Point3d) Equals(p2 Point3d) bool {
+	return p[0] == p2[0] && p[1] == p2[1] && p[2] == p2[2]
+}
+
 // Bytes returns a byte representation of the Point3d in little endian format.
 func (p Point3d) Bytes() []byte {
 	buf := new(bytes.Buffer)

@@ -340,15 +340,15 @@ func (vol *SparseVol) SurfaceSerialization(blockNz int32, res NdFloat32) ([]byte
 				break
 			}
 			r := vol.rles[rleI]
-			bz := r.start[2] - binvol.offset[2]
-			if bz >= dz {
+			bz := int64(r.start[2] - binvol.offset[2])
+			if bz >= int64(dz) {
 				// rles have filled this buffer.
 				break
 			}
-			by := r.start[1] - binvol.offset[1]
-			bx := r.start[0] - binvol.offset[0]
-			p := bz*dx*dy + by*dx + bx
-			for i := int32(0); i < r.length; i++ {
+			by := int64(r.start[1] - binvol.offset[1])
+			bx := int64(r.start[0] - binvol.offset[0])
+			p := bz*int64(dx*dy) + by*int64(dx) + bx
+			for i := int64(0); i < int64(r.length); i++ {
 				binvol.data[p+i] = 255
 			}
 
@@ -373,15 +373,14 @@ func (vol *SparseVol) SurfaceSerialization(blockNz int32, res NdFloat32) ([]byte
 		}
 
 		// Iterate through XY layers to compute surface and normal
-		var x, y, z int32
-		for z = 1; z <= blockNz; z++ {
+		for z := int32(1); z <= blockNz; z++ {
 			if binvol.offset[2]+z > vol.maxPt[2] {
 				// We've passed through all of this sparse volume's voxels
 				break
 			}
 			// TODO -- Keep track of bounding box per Z and limit checks to it.
-			for y = minY; y <= maxY; y++ {
-				for x = minX; x <= maxX; x++ {
+			for y := minY; y <= maxY; y++ {
+				for x := minX; x <= maxX; x++ {
 					nx, ny, nz, isSurface := binvol.CheckSurface(x, y, z)
 					if isSurface {
 						surfaceSize++

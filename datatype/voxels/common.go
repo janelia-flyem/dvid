@@ -24,6 +24,7 @@ type Operation struct {
 	OpType
 	blocksInROI map[string]bool
 	attenuation uint8
+	denormChan  BlockChannel
 }
 
 type OpType int
@@ -50,6 +51,15 @@ type Block storage.KeyValue
 
 // Blocks is a slice of Block.
 type Blocks []Block
+
+// Block3d encodes a 3d block coordinate and data.
+type Block3d struct {
+	Index *dvid.IndexZYX
+	Data  []byte
+}
+
+// BlockChannel is a channel of voxel blocks.
+type BlockChannel chan Block3d
 
 // ROI encapsulates a request-specific ROI check with a given scaling
 // for voxels outside the ROI.
@@ -194,9 +204,9 @@ func GetVoxels(ctx storage.Context, i IntData, e ExtData, r *ROI) error {
 					blocksInROI[indexString] = true
 				}
 			}
-			chunkOp = &storage.ChunkOp{&Operation{e, GetOp, blocksInROI, r.attenuation}, wg}
+			chunkOp = &storage.ChunkOp{&Operation{e, GetOp, blocksInROI, r.attenuation, nil}, wg}
 		} else {
-			chunkOp = &storage.ChunkOp{&Operation{e, GetOp, nil, 0}, wg}
+			chunkOp = &storage.ChunkOp{&Operation{e, GetOp, nil, 0, nil}, wg}
 		}
 
 		// Send the entire range of key-value pairs to chunk processor
@@ -270,18 +280,31 @@ func GetBlocks(ctx storage.Context, uncompressed bool, start dvid.ChunkPoint3d, 
 	return buf.Bytes(), nil
 }
 
+type OpOptions struct {
+	roi      *ROI
+	modsChan BlockChannel
+}
+
+func (opts *OpOptions) SetROI(roi *ROI) {
+	opts.roi = roi
+}
+
+func (opts *OpOptions) SetModsChannel(modsChan BlockChannel) {
+	opts.modsChan = modsChan
+}
+
 // PutVoxels copies voxels from an ExtData (e.g., subvolume or 2d image) into an IntData
 // for a version.   Since chunk sizes can be larger than the PUT data, this also requires
 // integrating the PUT data into current chunks before writing the result.  There are two passes:
 //   Pass one: Retrieve all available key/values within the PUT space.
 //   Pass two: Merge PUT data into those key/values and store them.
-func PutVoxels(ctx storage.Context, i IntData, e ExtData, r *ROI) error {
+func PutVoxels(ctx storage.Context, i IntData, e ExtData, options OpOptions) error {
 	db, err := storage.BigDataStore()
 	if err != nil {
 		return err
 	}
 	wg := new(sync.WaitGroup)
-	chunkOp := &storage.ChunkOp{&Operation{e, PutOp, nil, 0}, wg}
+	chunkOp := &storage.ChunkOp{&Operation{e, PutOp, nil, 0, options.modsChan}, wg}
 
 	// We only want one PUT on given version for given data to prevent interleaved
 	// chunk PUTs that could potentially overwrite slice modifications.
@@ -378,7 +401,7 @@ func PutVoxels(ctx storage.Context, i IntData, e ExtData, r *ROI) error {
 			}
 
 			// Don't PUT if this index is outside a specified ROI
-			if r != nil && r.Iter != nil && !r.Iter.InsideFast(curIndex) {
+			if options.roi != nil && options.roi.Iter != nil && !options.roi.Iter.InsideFast(curIndex) {
 				wg.Done()
 				continue
 			}
@@ -880,23 +903,28 @@ func readScaledBlock(v ExtData, block *Block, blockSize dvid.Point, attenuation 
 		return err
 	}
 	data := v.Data()
-	bytesPerVoxel := v.Values().BytesPerElement()
+	bytesPerVoxel := int64(v.Values().BytesPerElement())
 	if bytesPerVoxel != 1 {
 		return fmt.Errorf("Can only scale non-ROI blocks with 1 byte voxels")
 	}
 
 	// Compute the strides (in bytes)
-	bX := blockSize.Value(0) * bytesPerVoxel
-	bY := blockSize.Value(1) * bX
-	dX := v.Stride()
+	bX := int64(blockSize.Value(0)) * bytesPerVoxel
+	bY := int64(blockSize.Value(1)) * bX
+	dX := int64(v.Stride())
+
+	// Get the block beginning coordinates.
+	blockBegX := int64(blockBeg.Value(0))
+	blockBegY := int64(blockBeg.Value(1))
+	blockBegZ := int64(blockBeg.Value(2))
 
 	// Do the transfers depending on shape of the external voxels.
 	switch {
 	case v.DataShape().Equals(dvid.XY):
-		blockI := blockBeg.Value(2)*bY + blockBeg.Value(1)*bX + blockBeg.Value(0)*bytesPerVoxel
-		dataI := dataBeg.Value(1)*dX + dataBeg.Value(0)*bytesPerVoxel
+		blockI := blockBegZ*bY + blockBegY*bX + blockBegX*bytesPerVoxel
+		dataI := int64(dataBeg.Value(1))*dX + int64(dataBeg.Value(0))*bytesPerVoxel
 		for y := dataBeg.Value(1); y <= dataEnd.Value(1); y++ {
-			for x := dataBeg.Value(0); x <= dataEnd.Value(0); x++ {
+			for x := int64(dataBeg.Value(0)); x <= int64(dataEnd.Value(0)); x++ {
 				data[dataI+x] = (block.V[blockI+x] >> attenuation)
 			}
 			blockI += bX
@@ -904,10 +932,10 @@ func readScaledBlock(v ExtData, block *Block, blockSize dvid.Point, attenuation 
 		}
 
 	case v.DataShape().Equals(dvid.XZ):
-		blockI := blockBeg.Value(2)*bY + blockBeg.Value(1)*bX + blockBeg.Value(0)*bytesPerVoxel
-		dataI := dataBeg.Value(2)*v.Stride() + dataBeg.Value(0)*bytesPerVoxel
+		blockI := blockBegZ*bY + blockBegY*bX + blockBegX*bytesPerVoxel
+		dataI := int64(dataBeg.Value(2))*dX + int64(dataBeg.Value(0))*bytesPerVoxel
 		for y := dataBeg.Value(2); y <= dataEnd.Value(2); y++ {
-			for x := dataBeg.Value(0); x <= dataEnd.Value(0); x++ {
+			for x := int64(dataBeg.Value(0)); x <= int64(dataEnd.Value(0)); x++ {
 				data[dataI+x] = (block.V[blockI+x] >> attenuation)
 			}
 			blockI += bY
@@ -915,10 +943,10 @@ func readScaledBlock(v ExtData, block *Block, blockSize dvid.Point, attenuation 
 		}
 
 	case v.DataShape().Equals(dvid.YZ):
-		bz := blockBeg.Value(2)
-		for y := dataBeg.Value(2); y <= dataEnd.Value(2); y++ {
-			blockI := bz*bY + blockBeg.Value(1)*bX + blockBeg.Value(0)*bytesPerVoxel
-			dataI := y*dX + dataBeg.Value(1)*bytesPerVoxel
+		bz := blockBegZ
+		for y := int64(dataBeg.Value(2)); y <= int64(dataEnd.Value(2)); y++ {
+			blockI := blockBegZ*bY + blockBegY*bX + blockBegX*bytesPerVoxel
+			dataI := y*dX + int64(dataBeg.Value(1))*bytesPerVoxel
 			for x := dataBeg.Value(1); x <= dataEnd.Value(1); x++ {
 				data[dataI] = (block.V[blockI] >> attenuation)
 				blockI += bX
@@ -932,19 +960,19 @@ func readScaledBlock(v ExtData, block *Block, blockSize dvid.Point, attenuation 
 		return fmt.Errorf("DVID currently does not support 2d in n-d space.")
 
 	case v.DataShape().Equals(dvid.Vol3d):
-		blockOffset := blockBeg.Value(0) * bytesPerVoxel
-		dX = v.Size().Value(0) * bytesPerVoxel
-		dY := v.Size().Value(1) * dX
-		dataOffset := dataBeg.Value(0) * bytesPerVoxel
-		blockZ := blockBeg.Value(2)
+		blockOffset := blockBegX * bytesPerVoxel
+		dX := int64(v.Size().Value(0)) * bytesPerVoxel
+		dY := int64(v.Size().Value(1)) * dX
+		dataOffset := int64(dataBeg.Value(0)) * bytesPerVoxel
+		blockZ := blockBegZ
 
 		for dataZ := dataBeg.Value(2); dataZ <= dataEnd.Value(2); dataZ++ {
-			blockY := blockBeg.Value(1)
+			blockY := blockBegY
 			for dataY := dataBeg.Value(1); dataY <= dataEnd.Value(1); dataY++ {
 				blockI := blockZ*bY + blockY*bX + blockOffset
-				dataI := dataZ*dY + dataY*dX + dataOffset
-				for x := dataBeg.Value(0); x <= dataEnd.Value(0); x++ {
-					data[dataI] = (block.V[blockI] >> attenuation)
+				dataI := int64(dataZ)*dY + int64(dataY)*dX + dataOffset
+				for x := int64(dataBeg.Value(0)); x <= int64(dataEnd.Value(0)); x++ {
+					data[dataI+x] = (block.V[blockI+x] >> attenuation)
 				}
 				blockY++
 			}
@@ -966,19 +994,23 @@ func transferBlock(op OpType, v ExtData, block *Block, blockSize dvid.Point) err
 		return err
 	}
 	data := v.Data()
-	bytesPerVoxel := v.Values().BytesPerElement()
+	bytesPerVoxel := int64(v.Values().BytesPerElement())
 
 	// Compute the strides (in bytes)
-	bX := blockSize.Value(0) * bytesPerVoxel
-	bY := blockSize.Value(1) * bX
-	dX := v.Stride()
+	bX := int64(blockSize.Value(0)) * bytesPerVoxel
+	bY := int64(blockSize.Value(1)) * bX
+	dX := int64(v.Stride())
+
+	blockBegX := int64(blockBeg.Value(0))
+	blockBegY := int64(blockBeg.Value(1))
+	blockBegZ := int64(blockBeg.Value(2))
 
 	// Do the transfers depending on shape of the external voxels.
 	switch {
 	case v.DataShape().Equals(dvid.XY):
-		blockI := blockBeg.Value(2)*bY + blockBeg.Value(1)*bX + blockBeg.Value(0)*bytesPerVoxel
-		dataI := dataBeg.Value(1)*dX + dataBeg.Value(0)*bytesPerVoxel
-		bytes := (dataEnd.Value(0) - dataBeg.Value(0) + 1) * bytesPerVoxel
+		dataI := int64(dataBeg.Value(1))*dX + int64(dataBeg.Value(0))*bytesPerVoxel
+		blockI := blockBegZ*bY + blockBegY*bX + blockBegX*bytesPerVoxel
+		bytes := int64(dataEnd.Value(0)-dataBeg.Value(0)+1) * bytesPerVoxel
 		switch op {
 		case GetOp:
 			for y := dataBeg.Value(1); y <= dataEnd.Value(1); y++ {
@@ -995,9 +1027,9 @@ func transferBlock(op OpType, v ExtData, block *Block, blockSize dvid.Point) err
 		}
 
 	case v.DataShape().Equals(dvid.XZ):
-		blockI := blockBeg.Value(2)*bY + blockBeg.Value(1)*bX + blockBeg.Value(0)*bytesPerVoxel
-		dataI := dataBeg.Value(2)*v.Stride() + dataBeg.Value(0)*bytesPerVoxel
-		bytes := (dataEnd.Value(0) - dataBeg.Value(0) + 1) * bytesPerVoxel
+		dataI := int64(dataBeg.Value(2))*dX + int64(dataBeg.Value(0))*bytesPerVoxel
+		blockI := blockBegZ*bY + blockBegY*bX + blockBegX*bytesPerVoxel
+		bytes := int64(dataEnd.Value(0)-dataBeg.Value(0)+1) * bytesPerVoxel
 		switch op {
 		case GetOp:
 			for y := dataBeg.Value(2); y <= dataEnd.Value(2); y++ {
@@ -1014,12 +1046,12 @@ func transferBlock(op OpType, v ExtData, block *Block, blockSize dvid.Point) err
 		}
 
 	case v.DataShape().Equals(dvid.YZ):
-		bz := blockBeg.Value(2)
+		bz := blockBegZ
 		switch op {
 		case GetOp:
-			for y := dataBeg.Value(2); y <= dataEnd.Value(2); y++ {
-				blockI := bz*bY + blockBeg.Value(1)*bX + blockBeg.Value(0)*bytesPerVoxel
-				dataI := y*dX + dataBeg.Value(1)*bytesPerVoxel
+			for y := int64(dataBeg.Value(2)); y <= int64(dataEnd.Value(2)); y++ {
+				dataI := y*dX + int64(dataBeg.Value(1))*bytesPerVoxel
+				blockI := bz*bY + blockBegY*bX + blockBegX*bytesPerVoxel
 				for x := dataBeg.Value(1); x <= dataEnd.Value(1); x++ {
 					copy(data[dataI:dataI+bytesPerVoxel], block.V[blockI:blockI+bytesPerVoxel])
 					blockI += bX
@@ -1028,9 +1060,9 @@ func transferBlock(op OpType, v ExtData, block *Block, blockSize dvid.Point) err
 				bz++
 			}
 		case PutOp:
-			for y := dataBeg.Value(2); y <= dataEnd.Value(2); y++ {
-				blockI := bz*bY + blockBeg.Value(1)*bX + blockBeg.Value(0)*bytesPerVoxel
-				dataI := y*dX + dataBeg.Value(1)*bytesPerVoxel
+			for y := int64(dataBeg.Value(2)); y <= int64(dataEnd.Value(2)); y++ {
+				dataI := y*dX + int64(dataBeg.Value(1))*bytesPerVoxel
+				blockI := bz*bY + blockBegY*bX + blockBegX*bytesPerVoxel
 				for x := dataBeg.Value(1); x <= dataEnd.Value(1); x++ {
 					copy(block.V[blockI:blockI+bytesPerVoxel], data[dataI:dataI+bytesPerVoxel])
 					blockI += bX
@@ -1045,18 +1077,18 @@ func transferBlock(op OpType, v ExtData, block *Block, blockSize dvid.Point) err
 		return fmt.Errorf("DVID currently does not support 2d in n-d space.")
 
 	case v.DataShape().Equals(dvid.Vol3d):
-		blockOffset := blockBeg.Value(0) * bytesPerVoxel
-		dX = v.Size().Value(0) * bytesPerVoxel
-		dY := v.Size().Value(1) * dX
-		dataOffset := dataBeg.Value(0) * bytesPerVoxel
-		bytes := (dataEnd.Value(0) - dataBeg.Value(0) + 1) * bytesPerVoxel
-		blockZ := blockBeg.Value(2)
+		blockOffset := blockBegX * bytesPerVoxel
+		dX := int64(v.Size().Value(0)) * bytesPerVoxel
+		dY := int64(v.Size().Value(1)) * dX
+		dataOffset := int64(dataBeg.Value(0)) * bytesPerVoxel
+		bytes := int64(dataEnd.Value(0)-dataBeg.Value(0)+1) * bytesPerVoxel
+		blockZ := blockBegZ
 
 		switch op {
 		case GetOp:
-			for dataZ := dataBeg.Value(2); dataZ <= dataEnd.Value(2); dataZ++ {
-				blockY := blockBeg.Value(1)
-				for dataY := dataBeg.Value(1); dataY <= dataEnd.Value(1); dataY++ {
+			for dataZ := int64(dataBeg.Value(2)); dataZ <= int64(dataEnd.Value(2)); dataZ++ {
+				blockY := blockBegY
+				for dataY := int64(dataBeg.Value(1)); dataY <= int64(dataEnd.Value(1)); dataY++ {
 					blockI := blockZ*bY + blockY*bX + blockOffset
 					dataI := dataZ*dY + dataY*dX + dataOffset
 					copy(data[dataI:dataI+bytes], block.V[blockI:blockI+bytes])
@@ -1065,11 +1097,11 @@ func transferBlock(op OpType, v ExtData, block *Block, blockSize dvid.Point) err
 				blockZ++
 			}
 		case PutOp:
-			for dataZ := dataBeg.Value(2); dataZ <= dataEnd.Value(2); dataZ++ {
-				blockY := blockBeg.Value(1)
-				for dataY := dataBeg.Value(1); dataY <= dataEnd.Value(1); dataY++ {
-					blockI := blockZ*bY + blockY*bX + blockOffset
+			for dataZ := int64(dataBeg.Value(2)); dataZ <= int64(dataEnd.Value(2)); dataZ++ {
+				blockY := blockBegY
+				for dataY := int64(dataBeg.Value(1)); dataY <= int64(dataEnd.Value(1)); dataY++ {
 					dataI := dataZ*dY + dataY*dX + dataOffset
+					blockI := blockZ*bY + blockY*bX + blockOffset
 					copy(block.V[blockI:blockI+bytes], data[dataI:dataI+bytes])
 					blockY++
 				}
@@ -1162,6 +1194,9 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 		if err = WriteToBlock(op.ExtData, block, d.BlockSize()); err != nil {
 			dvid.Errorf("Unable to WriteToBlock() in %q: %s\n", d.DataName(), err.Error())
 			return
+		}
+		if op.denormChan != nil {
+			op.denormChan <- Block3d{indexZYX, blockData}
 		}
 		bigdata, err := storage.BigDataStore()
 		if err != nil {

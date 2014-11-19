@@ -290,10 +290,14 @@ func PutSparseVol(ctx storage.Context, label uint64, data []byte) error {
 // Runs asynchronously and assumes that sparse volumes per spatial indices are ordered
 // by mapped label, i.e., we will get all data for body N before body N+1.  Exits when
 // receives a nil in channel.
-func ComputeSizes(ctx storage.Context, sizeCh chan *storage.Chunk, smalldata storage.SmallDataStorer,
-	wg *sync.WaitGroup) {
+func ComputeSizes(ctx storage.Context, sizeCh chan *storage.Chunk, wg *sync.WaitGroup) {
 
 	// Make sure our small data store can do batching.
+	smalldata, err := storage.SmallDataStore()
+	if err != nil {
+		dvid.Criticalf("Cannot get datastore that handles small data: %s\n", err.Error())
+		return
+	}
 	batcher, ok := smalldata.(storage.KeyValueBatcher)
 	if !ok {
 		dvid.Criticalf("Unable to compute label sizes: small data store can't do batching!")

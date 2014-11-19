@@ -981,7 +981,7 @@ func (d *Data) PutLocal(request datastore.Request, reply *datastore.Response) er
 			return err
 		}
 		storage.FileBytesRead <- len(e.Data())
-		err = PutVoxels(ctx, d, e, nil)
+		err = PutVoxels(ctx, d, e, OpOptions{})
 		if err != nil {
 			return err
 		}
@@ -1512,7 +1512,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 						return
 					}
 				}
-				err = PutVoxels(storeCtx, d, e, roiptr)
+				err = PutVoxels(storeCtx, d, e, OpOptions{roi: roiptr})
 				if err != nil {
 					server.BadRequest(w, r, err.Error())
 					return
@@ -1629,7 +1629,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 						return
 					}
 				}
-				err = PutVoxels(storeCtx, d, e, roiptr)
+				err = PutVoxels(storeCtx, d, e, OpOptions{roi: roiptr})
 				if err != nil {
 					server.BadRequest(w, r, err.Error())
 					return

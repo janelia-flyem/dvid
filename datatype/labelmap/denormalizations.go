@@ -261,7 +261,7 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 	sizeCh := make(chan *storage.Chunk, 1000)
 	wg.Add(1)
 	labelmapCtx := datastore.NewVersionedContext(d, versionID)
-	go labels64.ComputeSizes(labelmapCtx, sizeCh, smalldata, wg)
+	go labels64.ComputeSizes(labelmapCtx, sizeCh, wg)
 
 	// Create a number of label-specific surface calculation jobs
 	// TODO: Spawn as many surface calculators as we have handler tokens for.

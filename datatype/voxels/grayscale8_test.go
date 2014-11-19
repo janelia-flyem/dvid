@@ -119,7 +119,7 @@ func TestSubvolGrayscale8(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unable to make new grayscale ExtHandler: %s\n", err.Error())
 	}
-	if err = PutVoxels(grayscaleCtx, grayscale, v, nil); err != nil {
+	if err = PutVoxels(grayscaleCtx, grayscale, v, OpOptions{}); err != nil {
 		t.Errorf("Unable to put voxels for %s: %s\n", grayscaleCtx, err.Error())
 	}
 	if v.NumVoxels() != int64(len(origData)) {
@@ -190,7 +190,7 @@ func storeGrayscale(t *testing.T, name string, slice dvid.Geometry, r *ROI) test
 	if err != nil {
 		t.Fatalf("Unable to make new grayscale ExtHandler: %s\n", err.Error())
 	}
-	if err = PutVoxels(grayscaleCtx, grayscale, v, r); err != nil {
+	if err = PutVoxels(grayscaleCtx, grayscale, v, OpOptions{roi: r}); err != nil {
 		t.Errorf("Unable to put voxels for %s: %s\n", grayscaleCtx, err.Error())
 	}
 	return testDataT{repo, versionID, grayscaleCtx, grayscale, data}
