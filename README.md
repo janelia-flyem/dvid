@@ -1,4 +1,4 @@
-DVID [![Picture](https://raw.github.com/janelia-flyem/janelia-flyem.github.com/master/images/HHMI_Janelia_Color_Alternate_252x56.png)](http://www.janelia.org)
+DVID       [![Picture](https://raw.github.com/janelia-flyem/janelia-flyem.github.com/master/images/HHMI_Janelia_Color_Alternate_180x40.png)](http://www.janelia.org)
 ====
 
 *Status: In development, being tested at Janelia, and not ready for external use due to possible breaking changes.*
