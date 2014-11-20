@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
@@ -200,6 +201,10 @@ func TestMergeLabels(t *testing.T) {
 	uuid := repo.RootUUID()
 	server.CreateTestInstance(t, uuid, "labels64", labelsName)
 	vol := createLabelTestVolume(t, uuid, labelsName)
+
+	// TODO -- Remove this hack in favor of whatever will be the method
+	// for discerning denormalizations are not yet complete.
+	time.Sleep(10 * time.Second)
 
 	expected := newTestVolume(100, 100, 100)
 	expected.add(body1)
