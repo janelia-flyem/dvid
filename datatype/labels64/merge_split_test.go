@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
@@ -211,7 +210,6 @@ func TestMergeLabels(t *testing.T) {
 	if !vol.isLabel(2, &body2) {
 		t.Errorf("Label 2 was incorrectly written!")
 	}
-	time.Sleep(10 * time.Second)
 
 	// Test merge 1
 	testMerge := mergeJSON(`

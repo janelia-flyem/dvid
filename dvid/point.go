@@ -1019,7 +1019,7 @@ func StringToVector3d(str, separator string) (Vector3d, error) {
 	var v Vector3d
 	var err error
 	for i, elem := range elems {
-		v[i], err = strconv.ParseFloat(elem, 64)
+		v[i], err = strconv.ParseFloat(strings.TrimSpace(elem), 64)
 		if err != nil {
 			return Vector3d{}, err
 		}
@@ -1059,6 +1059,16 @@ func (v Vector3d) String() string {
 
 // NdFloat32 is an N-dimensional slice of float32
 type NdFloat32 []float32
+
+// Equals returns true if two NdFloat32 are equal for each component.
+func (n NdFloat32) Equals(n2 NdFloat32) bool {
+	for i := range n {
+		if n[i] != n2[i] {
+			return false
+		}
+	}
+	return true
+}
 
 // GetMin returns the minimum element of the N-dimensional float.
 func (n NdFloat32) GetMin() float32 {
@@ -1105,7 +1115,7 @@ func StringToNdFloat32(str, separator string) (nd NdFloat32, err error) {
 	nd = make(NdFloat32, len(elems))
 	var f float64
 	for i, elem := range elems {
-		f, err = strconv.ParseFloat(elem, 32)
+		f, err = strconv.ParseFloat(strings.TrimSpace(elem), 32)
 		if err != nil {
 			return
 		}
@@ -1128,11 +1138,11 @@ func (n NdString) Point2d() (p Point2d, err error) {
 		return
 	}
 	var i, j int64
-	i, err = strconv.ParseInt(n[0], 10, 32)
+	i, err = strconv.ParseInt(strings.TrimSpace(n[0]), 10, 32)
 	if err != nil {
 		return
 	}
-	j, err = strconv.ParseInt(n[1], 10, 32)
+	j, err = strconv.ParseInt(strings.TrimSpace(n[1]), 10, 32)
 	if err != nil {
 		return
 	}
@@ -1145,15 +1155,15 @@ func (n NdString) Point3d() (p Point3d, err error) {
 		return
 	}
 	var i, j, k int64
-	i, err = strconv.ParseInt(n[0], 10, 32)
+	i, err = strconv.ParseInt(strings.TrimSpace(n[0]), 10, 32)
 	if err != nil {
 		return
 	}
-	j, err = strconv.ParseInt(n[1], 10, 32)
+	j, err = strconv.ParseInt(strings.TrimSpace(n[1]), 10, 32)
 	if err != nil {
 		return
 	}
-	k, err = strconv.ParseInt(n[2], 10, 32)
+	k, err = strconv.ParseInt(strings.TrimSpace(n[2]), 10, 32)
 	if err != nil {
 		return
 	}
@@ -1166,15 +1176,15 @@ func (n NdString) ChunkPoint3d() (p ChunkPoint3d, err error) {
 		return
 	}
 	var i, j, k int64
-	i, err = strconv.ParseInt(n[0], 10, 32)
+	i, err = strconv.ParseInt(strings.TrimSpace(n[0]), 10, 32)
 	if err != nil {
 		return
 	}
-	j, err = strconv.ParseInt(n[1], 10, 32)
+	j, err = strconv.ParseInt(strings.TrimSpace(n[1]), 10, 32)
 	if err != nil {
 		return
 	}
-	k, err = strconv.ParseInt(n[2], 10, 32)
+	k, err = strconv.ParseInt(strings.TrimSpace(n[2]), 10, 32)
 	if err != nil {
 		return
 	}
@@ -1184,7 +1194,7 @@ func (n NdString) ChunkPoint3d() (p ChunkPoint3d, err error) {
 func (n NdString) PointNd() (PointNd, error) {
 	result := make(PointNd, len(n))
 	for i, _ := range n {
-		val, err := strconv.ParseInt(n[i], 10, 32)
+		val, err := strconv.ParseInt(strings.TrimSpace(n[i]), 10, 32)
 		if err != nil {
 			return nil, err
 		}

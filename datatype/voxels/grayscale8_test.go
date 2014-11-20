@@ -1,6 +1,9 @@
 package voxels
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
 	"log"
 	"reflect"
 	"sync"
@@ -9,6 +12,7 @@ import (
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/roi"
 	"github.com/janelia-flyem/dvid/dvid"
+	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
 	"github.com/janelia-flyem/dvid/tests"
 )
@@ -96,6 +100,65 @@ func makeGrayscale(repo datastore.Repo, t *testing.T, name string) *Data {
 		t.Errorf("Can't cast grayscale8 data service into Data\n")
 	}
 	return grayscale
+}
+
+func TestVoxelsInstanceCreation(t *testing.T) {
+	tests.UseStore()
+	defer tests.CloseStore()
+
+	uuid := dvid.UUID(server.NewTestRepo(t))
+
+	// Create new voxels instance with optional parameters
+	name := "mygrayscale"
+	metadata := fmt.Sprintf(`{
+		"typename": "grayscale8",
+		"dataname": %q,
+		"blocksize": "64,43,28",
+		"VoxelSize": "13.1, 14.2, 15.3",
+		"VoxelUnits": "picometers,nanometers,microns"
+	}`, name)
+	apiStr := fmt.Sprintf("%srepo/%s/instance", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", apiStr, bytes.NewBufferString(metadata))
+
+	// Get metadata and make sure optional settings have been set.
+	apiStr = fmt.Sprintf("%snode/%s/%s/info", server.WebAPIPath, uuid, name)
+	result := server.TestHTTP(t, "GET", apiStr, nil)
+	var parsed = struct {
+		Base struct {
+			TypeName, Name string
+		}
+		Extended struct {
+			BlockSize  dvid.Point3d
+			VoxelSize  dvid.NdFloat32
+			VoxelUnits dvid.NdString
+		}
+	}{}
+	if err := json.Unmarshal(result, &parsed); err != nil {
+		t.Fatalf("Error parsing JSON response of new instance metadata: %s\n", err.Error())
+	}
+	if parsed.Base.Name != name {
+		t.Errorf("Parsed new instance has unexpected name: %s != %s (expected)\n",
+			parsed.Base.Name, name)
+	}
+	if parsed.Base.TypeName != "grayscale8" {
+		t.Errorf("Parsed new instance has unexpected type name: %s != grayscale8 (expected)\n",
+			parsed.Base.TypeName)
+	}
+	if !parsed.Extended.BlockSize.Equals(dvid.Point3d{64, 43, 28}) {
+		t.Errorf("Bad block size in new grayscale8 instance: %s\n", parsed.Extended.BlockSize)
+	}
+	if !parsed.Extended.VoxelSize.Equals(dvid.NdFloat32{13.1, 14.2, 15.3}) {
+		t.Errorf("Bad voxel size in new grayscale8 instance: %s\n", parsed.Extended.VoxelSize)
+	}
+	if parsed.Extended.VoxelUnits[0] != "picometers" {
+		t.Errorf("Got %q for X voxel units, not picometers\n", parsed.Extended.VoxelUnits[0])
+	}
+	if parsed.Extended.VoxelUnits[1] != "nanometers" {
+		t.Errorf("Got %q for X voxel units, not picometers\n", parsed.Extended.VoxelUnits[0])
+	}
+	if parsed.Extended.VoxelUnits[2] != "microns" {
+		t.Errorf("Got %q for X voxel units, not picometers\n", parsed.Extended.VoxelUnits[0])
+	}
 }
 
 func TestSubvolGrayscale8(t *testing.T) {
