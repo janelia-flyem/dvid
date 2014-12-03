@@ -258,17 +258,6 @@ type Batch interface {
 	Commit() error
 }
 
-// BulkIniters can employ even more aggressive optimization in loading large
-// data since they can assume an uninitialized blank database.
-type BulkIniter interface {
-}
-
-// BulkWriter employ some sort of optimization to efficiently write large
-// amount of data.  For some key-value databases, this requires keys to
-// be presorted.
-type BulkWriter interface {
-}
-
 // GraphSetter defines operations that modify a graph
 type GraphSetter interface {
 	// CreateGraph creates a graph with the given context.

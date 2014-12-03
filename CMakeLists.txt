@@ -82,8 +82,6 @@ else ()
     include (basholeveldb)
     include (hyperleveldb)
 
-    include (nanomsg)
-
     set (DVID_BACKEND "basholeveldb" CACHE TYPE STRING)
     
     # flag for building graph backend (currently just using specified key-value store

@@ -193,7 +193,7 @@ GET <api URL>/node/<UUID>/<data name>/sparsevol/<label>
 	               Bit 0 (LSB) - 8-bit grayscale
 	               Bit 1 - 16-bit grayscale
 	               Bit 2 - 16-bit normal
-	               If set to all 0, there is no payload and its a binary sparse volume.
+	               If set to all 0, there is no payload and it's a binary sparse volume.
 	    uint8    Number of dimensions
 	    uint8    Dimension of run (typically 0 = X)
 	    byte     Reserved (to be used later)
@@ -258,7 +258,7 @@ GET <api URL>/node/<UUID>/<data name>/sizerange/<min size>/<optional max size>
 
 POST <api URL>/node/<UUID>/<data name>/merge
 
-	Merges labels.  Requires JSON in request body of the following array format:
+	Merges labels.  Requires JSON in request body using the following format:
 
 	[ [toLabel1, fromLabel1, fromLabel2, fromLabel3, ...],
 	  [toLabel2, fromLabel4, fromLabel5, ...], 
@@ -269,6 +269,30 @@ POST <api URL>/node/<UUID>/<data name>/merge
 
 
 POST <api URL>/node/<UUID>/<data name>/split
+
+	Splits a portion of a label's voxels into a new label.  Returns the following JSON:
+
+		{ "label": <new label> }
+
+	This request requires a binary sparse volume in the POSTed body with the following 
+	encoded RLE format, which is compatible with the format returned by a GET on the 
+	"sparsevol" endpoint described above:
+
+		All integers are in little-endian format.
+
+	    byte     Payload descriptor:
+	               Set to 0 to indicate it's a binary sparse volume.
+	    uint8    Number of dimensions
+	    uint8    Dimension of run (typically 0 = X)
+	    byte     Reserved (to be used later)
+	    uint32    # Voxels [TODO.  0 for now]
+	    uint32    # Spans
+	    Repeating unit of:
+	        int32   Coordinate of run start (dimension 0)
+	        int32   Coordinate of run start (dimension 1)
+	        int32   Coordinate of run start (dimension 2)
+			  ...
+	        int32   Length of run
 `
 
 var (

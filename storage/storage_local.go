@@ -23,10 +23,6 @@ type managerT struct {
 	bigdata   BigDataStorer
 
 	// Cached type-asserted interfaces
-	kvEngine    Engine
-	kvDB        OrderedKeyValueDB
-	kvSetter    OrderedKeyValueSetter
-	kvGetter    OrderedKeyValueGetter
 	graphEngine Engine
 	graphDB     GraphDB
 	graphSetter GraphSetter
@@ -78,25 +74,13 @@ func Shutdown() {
 // local storage system waits until it receives a path and configuration data from a
 // "serve" command.
 func Initialize(kvEngine Engine, description string) error {
-	var ok bool
-
-	manager.kvEngine = kvEngine
-
-	manager.kvDB, ok = manager.kvEngine.(OrderedKeyValueDB)
+	kvDB, ok := kvEngine.(OrderedKeyValueDB)
 	if !ok {
 		return fmt.Errorf("Database %q is not a valid ordered key-value database", kvEngine.String())
 	}
-	manager.kvSetter, ok = manager.kvEngine.(OrderedKeyValueSetter)
-	if !ok {
-		return fmt.Errorf("Database %q is not a valid ordered key-value setter", kvEngine.String())
-	}
-	manager.kvGetter, ok = manager.kvEngine.(OrderedKeyValueGetter)
-	if !ok {
-		return fmt.Errorf("Database %q is not a valid ordered key-value getter", kvEngine.String())
-	}
 
 	var err error
-	manager.graphEngine, err = NewGraphStore(manager.kvDB)
+	manager.graphEngine, err = NewGraphStore(kvDB)
 	if err != nil {
 		return err
 	}
@@ -116,9 +100,9 @@ func Initialize(kvEngine Engine, description string) error {
 	// Setup the three tiers of storage.  In the case of a single local server with
 	// embedded storage engines, it's simpler because we don't worry about cross-process
 	// synchronization.
-	manager.metadata = manager.kvDB
-	manager.smalldata = manager.kvDB
-	manager.bigdata = manager.kvDB
+	manager.metadata = kvDB
+	manager.smalldata = kvDB
+	manager.bigdata = kvDB
 
 	manager.enginesAvail = append(manager.enginesAvail, description)
 

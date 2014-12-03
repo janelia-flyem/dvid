@@ -62,7 +62,7 @@ type repoManager struct {
 	idMutex sync.RWMutex
 }
 
-// Create creates a local key-value store and if it is designated for
+// Create creates a new local key-value store and if it is designated for
 // metadata storage (metadata = true), also stores a blank RepoManager
 // into the newly created key-value store.  Any preexisting data at the
 // path is retained.

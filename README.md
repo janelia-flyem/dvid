@@ -159,8 +159,7 @@ We choose a key­-value interface because (1) there are a large number of high­
 implementations that run from embedded to clustered systems, (2) the surface area of the API is very 
 small, even after adding important cases like bulk loads or sequential key read/write, and 
 (3) novel technology tends to match key­-value interfaces, 
-e.g., [groupcache](https://github.com/golang/groupcache)
-and [Seagate's Kinetic Open Storage Platform](https://developers.seagate.com/display/KV/Kinetic+Open+Storage+Documentation+Wiki).
+e.g., [Seagate's Kinetic Open Storage Platform](https://developers.seagate.com/display/KV/Kinetic+Open+Storage+Documentation+Wiki).
 As storage becomes more log structured, the key-value API becomes a more natural fit.
 
 _Status: Currently built with [Basho-tuned leveldb](https://github.com/basho/leveldb) and
@@ -169,11 +168,9 @@ other leveldb variants have been tested successfully in past:
 [HyperLevelDB](https://github.com/rescrv/HyperLevelDB).  RocksDB support is planned. Added 
 [Lightning MDB](http://symas.com/mdb/) and also experimental use of 
 [Bolt](https://github.com/boltdb/bolt), although neither have been tuned to work as well as
-the leveldb variants.  Google datastore support planned Q4 2014.
-Clustered DB or object-value store support planned Q4 2014 (Scality and possibly FoundationDB drivers).
+the leveldb variants.  Google datastore support planned Q4 2014.  Clustered DB or object-value store support planned Q4 2014 (Scality and possibly FoundationDB drivers).
 Direct support of Seagate Kinetic drives via their
-[protobuf protocol](https://github.com/Seagate/kinetic-protocol) is planned Q4 2014 or Q1 2015, 
-depending on availability of drives._
+[protobuf protocol](https://github.com/Seagate/kinetic-protocol) is planned in 2015, depending on availability of drives and developer time._
 
 ## Build Process
 
