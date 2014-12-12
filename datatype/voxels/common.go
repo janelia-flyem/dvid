@@ -86,6 +86,8 @@ type IntData interface {
 
 	Extents() *Extents
 
+	BackgroundBlock() []byte
+
 	ProcessChunk(*storage.Chunk)
 }
 
@@ -515,16 +517,16 @@ func loadXYImages(i IntData, load *bulkLoadInfo) error {
 			if fileNum == 1 {
 				for layer := 0; layer < numLayers; layer++ {
 					blocks[layer] = make(Blocks, numBlocks, numBlocks)
-					for i := 0; i < numBlocks; i++ {
-						blocks[layer][i].V = make([]byte, blockBytes, blockBytes)
+					for b := 0; b < numBlocks; b++ {
+						blocks[layer][b].V = i.BackgroundBlock()
 					}
 				}
 				var bufSize uint64 = uint64(blockBytes) * uint64(numBlocks) * uint64(numLayers) / 1000000
 				dvid.Debugf("Allocated %d MB for buffers.\n", bufSize)
 			} else {
 				blocks[curBlocks] = make(Blocks, numBlocks, numBlocks)
-				for i := 0; i < numBlocks; i++ {
-					blocks[curBlocks][i].V = make([]byte, blockBytes, blockBytes)
+				for b := 0; b < numBlocks; b++ {
+					blocks[curBlocks][b].V = i.BackgroundBlock()
 				}
 			}
 			err = loadOldBlocks(load.versionID, i, e, blocks[curBlocks])
@@ -1115,6 +1117,20 @@ func transferBlock(op OpType, v ExtData, block *Block, blockSize dvid.Point) err
 	return nil
 }
 
+// BackgroundBlock returns a block buffer that has been preinitialized to the background value.
+func (d *Data) BackgroundBlock() []byte {
+	numElements := d.BlockSize().Prod()
+	bytesPerElement := int64(d.Values().BytesPerElement())
+	blockData := make([]byte, numElements*bytesPerElement)
+	if d.Background != 0 && bytesPerElement == 1 {
+		background := byte(d.Background)
+		for i := range blockData {
+			blockData[i] = background
+		}
+	}
+	return blockData
+}
+
 // ProcessChunk processes a chunk of data as part of a mapped operation.  The data may be
 // thinner, wider, and longer than the chunk, depending on the data shape (XY, XZ, etc).
 // Only some multiple of the # of CPU cores can be used for chunk handling before
@@ -1173,7 +1189,7 @@ func (d *Data) processChunk(chunk *storage.Chunk) {
 	// data needs to be uncompressed and deserialized.
 	var blockData []byte
 	if zeroOut || chunk.V == nil {
-		blockData = make([]byte, d.BlockSize().Prod()*int64(op.Values().BytesPerElement()))
+		blockData = d.BackgroundBlock()
 	} else {
 		blockData, _, err = dvid.DeserializeData(chunk.V, true)
 		if err != nil {

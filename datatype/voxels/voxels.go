@@ -62,6 +62,7 @@ $ dvid repo <UUID> new <type name> <data name> <settings...>
     BlockSize      Size in pixels  (default: %s)
     VoxelSize      Resolution of voxels (default: 8.0, 8.0, 8.0)
     VoxelUnits     Resolution units (default: "nanometers")
+    Background     Integer value that signifies background in any element (default: 0)
 
 $ dvid node <UUID> <data name> load <offset> <image glob>
 
@@ -99,6 +100,16 @@ $ dvid node <UUID> <data name> put remote <plane> <offset> <image glob>
     offset        3d coordinate in the format "x,y,z".  Gives coordinate of top upper left voxel.
     image glob    Filenames of images, e.g., foo-xy-*.png
 	
+
+$ dvid node <UUID> <data name> roi <new roi data name> <background value> 
+
+    Creates a ROI consisting of all voxel blocks that are non-background.
+
+    Example:
+
+    $ dvid node 3f8c mygrayscale roi grayscale_roi 0
+
+    
     ------------------
 
 HTTP API (Level 2 REST):
@@ -674,6 +685,9 @@ type Properties struct {
 
 	Resolution
 	Extents
+
+	// Background value for data
+	Background uint8
 }
 
 // SetDefault sets Voxels properties to default values.
@@ -739,6 +753,17 @@ func (props *Properties) SetByConfig(config dvid.Config) error {
 		if err != nil {
 			return err
 		}
+	}
+	s, found, err = config.GetString("Background")
+	if err != nil {
+		return err
+	}
+	if found {
+		background, err := strconv.ParseUint(s, 10, 8)
+		if err != nil {
+			return err
+		}
+		props.Background = uint8(background)
 	}
 	return nil
 }
@@ -1198,6 +1223,100 @@ func (d *Data) Send(s message.Socket, roiname string, uuid dvid.UUID) error {
 	return nil
 }
 
+// ForegroundROI creates a new ROI by determining all non-background blocks.
+func (d *Data) ForegroundROI(request datastore.Request, reply *datastore.Response) error {
+	if d.Values().BytesPerElement() != 1 {
+		return fmt.Errorf("Foreground ROI command only implemented for 1 byte/voxel data!")
+	}
+
+	// Parse the request
+	var uuidStr, dataName, cmdStr, destName, backgroundStr string
+	request.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &destName, &backgroundStr)
+
+	// Get the version and repo
+	uuid, versionID, err := datastore.MatchingUUID(uuidStr)
+	if err != nil {
+		return err
+	}
+	repo, err := datastore.RepoFromUUID(uuid)
+	if err != nil {
+		return err
+	}
+	if err = repo.AddToLog(request.Command.String()); err != nil {
+		return err
+	}
+
+	// Use existing destination data or a new ROI data.
+	var dest *roi.Data
+	dest, err = roi.GetByUUID(uuid, dvid.DataString(destName))
+	if err != nil {
+		config := dvid.NewConfig()
+		typeservice, err := datastore.TypeServiceByName("roi")
+		if err != nil {
+			return err
+		}
+		dataservice, err := repo.NewData(typeservice, dvid.DataString(destName), config)
+		if err != nil {
+			return err
+		}
+		var ok bool
+		dest, ok = dataservice.(*roi.Data)
+		if !ok {
+			return fmt.Errorf("Could not create ROI data instance")
+		}
+	}
+
+	// Asynchronously process the voxels.
+	go d.foregroundROI(uuid, versionID, dest)
+
+	return nil
+}
+
+func (d *Data) foregroundROI(uuid dvid.UUID, versionID dvid.VersionID, dest *roi.Data) {
+	timedLog := dvid.NewTimeLog()
+
+	// Iterate through all voxel blocks, loading and then checking blocks
+	// for any foreground voxels.
+	bigdata, err := storage.BigDataStore()
+	if err != nil {
+		dvid.Errorf("Cannot get datastore that handles big data: %s\n", err.Error())
+		return
+	}
+	ctx := datastore.NewVersionedContext(d, versionID)
+
+	spans := []roi.Span{}
+	minIndex := NewVoxelBlockIndex(&dvid.MinIndexZYX)
+	maxIndex := NewVoxelBlockIndex(&dvid.MaxIndexZYX)
+	err = bigdata.ProcessRange(ctx, minIndex, maxIndex, &storage.ChunkOp{}, func(chunk *storage.Chunk) {
+		if chunk == nil || chunk.V == nil {
+			return
+		}
+		data, _, err := dvid.DeserializeData(chunk.V, true)
+		if err != nil {
+			dvid.Errorf("Error decoding block: %s\n", err.Error())
+			return
+		}
+		numVoxels := d.BlockSize().Prod()
+		var foreground bool
+		background := byte(d.Background)
+		for i := int64(0); i < numVoxels; i++ {
+			if data[i] != background {
+				foreground = true
+				break
+			}
+		}
+		if foreground {
+
+		}
+	})
+
+	// Save new ROI
+	if err := datastore.SaveRepo(uuid); err != nil {
+		dvid.Infof("Could not save new ROI %q, uuid %s: %s", dest.DataName(), uuid, err.Error())
+	}
+	timedLog.Infof("Created foreground ROI %q for %s\n", dest.DataName(), d.DataName())
+}
+
 // DoRPC acts as a switchboard for RPC commands.
 func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error {
 	switch request.TypeCommand() {
@@ -1259,6 +1378,12 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 			return fmt.Errorf("Unknown command.  Data instance '%s' [%s] does not support '%s' command.",
 				d.DataName(), d.TypeName(), request.TypeCommand())
 		}
+
+	case "roi":
+		if len(request.Command) < 6 {
+			return fmt.Errorf("Poorly formatted roi command. See command-line help.")
+		}
+		return d.ForegroundROI(request, reply)
 
 	default:
 		return fmt.Errorf("Unknown command.  Data instance '%s' [%s] does not support '%s' command.",

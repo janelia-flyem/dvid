@@ -279,8 +279,7 @@ func (d *Data) computeValue(pt dvid.Vector3d, ctx storage.Context, keyF KeyFunc,
 	nx := blockSize[0]
 	nxy := nx * blockSize[1]
 	nxyz := nxy * blockSize[2]
-	blockBytes := nxyz * bytesPerVoxel
-	emptyBlock := make([]byte, blockBytes, blockBytes)
+	emptyBlock := d.BackgroundBlock()
 
 	populateF := func(key []byte) ([]byte, error) {
 		serializedData, err := db.Get(ctx, key)

@@ -11,7 +11,7 @@ import (
 // It exploits the key, and in particular IndexZYX, ordering so that checks
 // across a volume can be done quickly.
 type Iterator struct {
-	spans   []tuple
+	spans   []Span
 	curSpan int32
 }
 

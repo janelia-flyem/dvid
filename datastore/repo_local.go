@@ -35,6 +35,9 @@ import (
 type repoManager struct {
 	sync.Mutex // broad mutex should be sufficient since metadata is infrequently updated.
 
+	// Allows versioning of metadata format
+	formatVersion uint64
+
 	// Map local RepoID to root UUID
 	repoToUUID map[dvid.RepoID]dvid.UUID
 
@@ -143,20 +146,23 @@ func Initialize() error {
 
 // ---- RepoManager persistence to MetaData storage -----
 
-func (m *repoManager) loadData(t keyType, data interface{}) error {
+func (m *repoManager) loadData(t keyType, data interface{}) (found bool, err error) {
 	var ctx storage.MetadataContext
 	idx := metadataIndex{t: t}
 	value, err := m.store.Get(ctx, idx.Bytes())
 	if err != nil {
-		return fmt.Errorf("Bad metadata GET: %s", err.Error())
+		return false, fmt.Errorf("Bad metadata GET: %s", err.Error())
+	}
+	if value == nil {
+		return false, nil
 	}
 	buf := bytes.NewBuffer(value)
 	dec := gob.NewDecoder(buf)
 	if err := dec.Decode(data); err != nil {
-		return fmt.Errorf("Could not decode Gob encoded metadata (len %d): %s",
+		return false, fmt.Errorf("Could not decode Gob encoded metadata (len %d): %s",
 			len(value), err.Error())
 	}
-	return nil
+	return true, nil
 }
 
 func (m *repoManager) putData(t keyType, data interface{}) error {
@@ -210,11 +216,23 @@ func (m *repoManager) putCaches() error {
 
 // Loads all data necessary for repoManager.
 func (m *repoManager) loadMetadata() error {
+	// Check the version of the metadata
+	found, err := m.loadData(formatKey, &(m.formatVersion))
+	if err != nil {
+		return fmt.Errorf("Error in loading metadata format version: %s\n", err.Error())
+	}
+	if found {
+		dvid.Infof("Loading metadata with format version %d...\n", m.formatVersion)
+	} else {
+		dvid.Infof("Loading metadata without format version...\n")
+		m.formatVersion = 0
+	}
+
 	// Load the maps
-	if err := m.loadData(repoToUUIDKey, &(m.repoToUUID)); err != nil {
+	if _, err := m.loadData(repoToUUIDKey, &(m.repoToUUID)); err != nil {
 		return fmt.Errorf("Error loading repo to UUID map: %s", err)
 	}
-	if err := m.loadData(versionToUUIDKey, &(m.versionToUUID)); err != nil {
+	if _, err := m.loadData(versionToUUIDKey, &(m.versionToUUID)); err != nil {
 		return fmt.Errorf("Error loading version to UUID map: %s", err)
 	}
 	if err := m.loadNewIDs(); err != nil {

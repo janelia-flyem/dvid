@@ -18,7 +18,7 @@
 
 	The storage engines should accept a nil Context, which allows direct saving of a
 	raw key without use of a ConstructKey() transformation.  In general, though,
-	keys passed
+	keys passed are considered within a namespace provided by a non-nil Context.
 
 	Initially we are concentrating on key-value backends but expect to support
 	graph and perhaps relational databases, either using specialized databases

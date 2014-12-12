@@ -90,7 +90,7 @@ POST <api URL>/node/<UUID>/<data name>/info
 
 GET  <api URL>/node/<UUID>/<data name>/roi
 POST <api URL>/node/<UUID>/<data name>/roi
-DEL  <api URL>/node/<UUID>/<data name>/roi  (TO DO)
+DEL  <api URL>/node/<UUID>/<data name>/roi 
 
     Performs operations on an ROI depending on the HTTP verb.
 
@@ -230,6 +230,23 @@ type Data struct {
 	Properties
 }
 
+// GetByUUID returns a pointer to ROI data given a version (UUID) and data name.
+func GetByUUID(uuid dvid.UUID, name dvid.DataString) (*Data, error) {
+	repo, err := datastore.RepoFromUUID(uuid)
+	if err != nil {
+		return nil, err
+	}
+	source, err := repo.GetDataByName(name)
+	if err != nil {
+		return nil, err
+	}
+	data, ok := source.(*Data)
+	if !ok {
+		return nil, fmt.Errorf("Instance '%s' is not a ROI datatype!", name)
+	}
+	return data, nil
+}
+
 func (d *Data) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		Base     *datastore.Data
@@ -311,47 +328,47 @@ func maxIndexByBlockZ(z int32) indexRLE {
 }
 
 // Tuples are (Z, Y, X0, X1)
-type tuple [4]int32
+type Span [4]int32
 
-func (t tuple) less(block dvid.ChunkPoint3d) bool {
-	if t[0] < block[2] {
+func (s Span) less(block dvid.ChunkPoint3d) bool {
+	if s[0] < block[2] {
 		return true
 	}
-	if t[0] > block[2] {
+	if s[0] > block[2] {
 		return false
 	}
-	if t[1] < block[1] {
+	if s[1] < block[1] {
 		return true
 	}
-	if t[1] > block[1] {
+	if s[1] > block[1] {
 		return false
 	}
-	if t[3] < block[0] {
+	if s[3] < block[0] {
 		return true
 	}
 	return false
 }
 
-func (t tuple) includes(block dvid.ChunkPoint3d) bool {
-	if t[0] != block[2] {
+func (s Span) includes(block dvid.ChunkPoint3d) bool {
+	if s[0] != block[2] {
 		return false
 	}
-	if t[1] != block[1] {
+	if s[1] != block[1] {
 		return false
 	}
-	if t[2] > block[0] || t[3] < block[0] {
+	if s[2] > block[0] || s[3] < block[0] {
 		return false
 	}
 	return true
 }
 
-// Returns all (z, y, x0, x1) tuples in sorted order: z, then y, then x0.
-func getSpans(ctx storage.VersionedContext, minIndex, maxIndex indexRLE) ([]tuple, error) {
+// Returns all (z, y, x0, x1) Spans in sorted order: z, then y, then x0.
+func getSpans(ctx storage.VersionedContext, minIndex, maxIndex indexRLE) ([]Span, error) {
 	db, err := storage.SmallDataStore()
 	if err != nil {
 		return nil, err
 	}
-	spans := []tuple{}
+	spans := []Span{}
 	err = db.ProcessRange(ctx, minIndex.Bytes(), maxIndex.Bytes(), &storage.ChunkOp{}, func(chunk *storage.Chunk) {
 		indexBytes, err := ctx.IndexFromKey(chunk.K)
 		if err != nil {
@@ -366,18 +383,18 @@ func getSpans(ctx storage.VersionedContext, minIndex, maxIndex indexRLE) ([]tupl
 		y := index.start.Value(1)
 		x0 := index.start.Value(0)
 		x1 := x0 + int32(index.span) - 1
-		spans = append(spans, tuple{z, y, x0, x1})
+		spans = append(spans, Span{z, y, x0, x1})
 	})
 	return spans, nil
 }
 
-// Returns all (z, y, x0, x1) tuples in sorted order: z, then y, then x0.
-func GetSpans(ctx storage.VersionedContext) ([]tuple, error) {
+// Returns all (z, y, x0, x1) Spans in sorted order: z, then y, then x0.
+func GetSpans(ctx storage.VersionedContext) ([]Span, error) {
 	return getSpans(ctx, minIndexRLE, maxIndexRLE)
 }
 
-// Get returns a JSON-encoded byte slice of the ROI in the form of 4-tuples,
-// where each tuple is [z, y, xstart, xend]
+// Get returns a JSON-encoded byte slice of the ROI in the form of 4-Spans,
+// where each Span is [z, y, xstart, xend]
 func Get(ctx storage.VersionedContext) ([]byte, error) {
 	spans, err := GetSpans(ctx)
 	if err != nil {
@@ -390,19 +407,68 @@ func Get(ctx storage.VersionedContext) ([]byte, error) {
 	return jsonBytes, nil
 }
 
-// Put saves JSON-encoded data representing an ROI into the datastore.
-func (d *Data) Put(ctx storage.VersionedContext, jsonBytes []byte) error {
+// Deletes an ROI.
+func (d *Data) Delete(ctx storage.VersionedContext) error {
+	smalldata, err := storage.SmallDataStore()
+	if err != nil {
+		return err
+	}
+
+	// Make sure our small data store can do batching.
+	batcher, ok := smalldata.(storage.KeyValueBatcher)
+	if !ok {
+		return fmt.Errorf("Unable to store ROI: small data store can't do batching!")
+	}
+
+	// We only want one PUT on given version for given data to prevent interleaved PUTs.
+	putMutex := ctx.Mutex()
+	putMutex.Lock()
+	defer func() {
+		putMutex.Unlock()
+	}()
+
+	d.MinZ = 0
+	d.MaxZ = 0
+	if err := datastore.SaveRepoByVersionID(ctx.VersionID()); err != nil {
+		return fmt.Errorf("Error in trying to save repo on roi extent change: %s\n", err.Error())
+	}
+
+	// Iterate through all keys for ROI, deleting them in batches.
+	const BATCH_SIZE = 10000
+	batch := batcher.NewBatch(nil)
+	begKey := minIndexRLE.Bytes()
+	endKey := maxIndexRLE.Bytes()
+	var curSize int
+	err = smalldata.ProcessRange(ctx, begKey, endKey, &storage.ChunkOp{}, func(chunk *storage.Chunk) {
+		batch.Delete(chunk.K)
+		if (curSize+1)%BATCH_SIZE == 0 {
+			if err := batch.Commit(); err != nil {
+				dvid.Errorf("Error on batch delete of ROI %q\n", d.DataName())
+				return
+			}
+			curSize = 0
+		}
+		curSize++
+	})
+	if curSize != 0 {
+		if err := batch.Commit(); err != nil {
+			return fmt.Errorf("Error on batch delete of ROI %q\n", d.DataName())
+		}
+	}
+	return nil
+}
+
+// PutSpans saves a slice of spans representing an ROI into the datastore.
+func (d *Data) PutSpans(ctx storage.VersionedContext, spans []Span) error {
 	db, err := storage.SmallDataStore()
 	if err != nil {
 		return err
 	}
-	spans := []tuple{}
-	err = json.Unmarshal(jsonBytes, &spans)
-	if err != nil {
-		return fmt.Errorf("Error trying to parse POSTed JSON: %s", err.Error())
-	}
+
 	// Delete the old key/values
-	// TODO ... should just reuse DEL
+	if err := d.Delete(ctx); err != nil {
+		return err
+	}
 
 	// Make sure our small data store can do batching.
 	batcher, ok := db.(storage.KeyValueBatcher)
@@ -416,11 +482,11 @@ func (d *Data) Put(ctx storage.VersionedContext, jsonBytes []byte) error {
 
 	// Save new extents after finished.
 	defer func() {
-		defer putMutex.Unlock()
 		err := datastore.SaveRepoByVersionID(ctx.VersionID())
 		if err != nil {
 			dvid.Errorf("Error in trying to save repo on roi extent change: %s\n", err.Error())
 		}
+		putMutex.Unlock()
 	}()
 
 	// Put the new key/values
@@ -455,6 +521,16 @@ func (d *Data) Put(ctx storage.VersionedContext, jsonBytes []byte) error {
 		}
 	}
 	return nil
+}
+
+// PutJSON saves JSON-encoded data representing an ROI into the datastore.
+func (d *Data) PutJSON(ctx storage.VersionedContext, jsonBytes []byte) error {
+	spans := []Span{}
+	err := json.Unmarshal(jsonBytes, &spans)
+	if err != nil {
+		return fmt.Errorf("Error trying to parse POSTed JSON: %s", err.Error())
+	}
+	return d.PutSpans(ctx, spans)
 }
 
 // Returns the voxel range normalized to begVoxel offset and constrained by block span.
@@ -534,7 +610,7 @@ func (d *Data) GetMask(ctx storage.VersionedContext, subvol *dvid.Subvolume) ([]
 }
 
 // Returns the current span index and whether given point is included in span.
-func (d *Data) seekSpan(pt dvid.Point3d, spans []tuple, curSpanI int) (int, bool) {
+func (d *Data) seekSpan(pt dvid.Point3d, spans []Span, curSpanI int) (int, bool) {
 	numSpans := len(spans)
 	if curSpanI >= numSpans {
 		return curSpanI, false
@@ -1145,19 +1221,25 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 			}
 			w.Header().Set("Content-Type", "application/json")
 			fmt.Fprintf(w, string(jsonBytes))
-			comment = fmt.Sprintf("HTTP GET ROI '%s': %d bytes\n", d.DataName(), len(jsonBytes))
+			comment = fmt.Sprintf("HTTP GET ROI %q: %d bytes\n", d.DataName(), len(jsonBytes))
 		case "post":
 			data, err := ioutil.ReadAll(r.Body)
 			if err != nil {
 				server.BadRequest(w, r, err.Error())
 				return
 			}
-			err = d.Put(storeCtx, data)
+			err = d.PutJSON(storeCtx, data)
 			if err != nil {
 				server.BadRequest(w, r, err.Error())
 				return
 			}
-			comment = fmt.Sprintf("HTTP POST ROI '%s': %d bytes\n", d.DataName(), len(data))
+			comment = fmt.Sprintf("HTTP POST ROI %q: %d bytes\n", d.DataName(), len(data))
+		case "delete":
+			if err := d.Delete(storeCtx); err != nil {
+				server.BadRequest(w, r, err.Error())
+				return
+			}
+			comment = fmt.Sprintf("HTTP DELETE ROI %q\n", d.DataName())
 		}
 	case "mask":
 		if method != "get" {

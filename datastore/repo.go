@@ -146,7 +146,12 @@ const (
 	versionToUUIDKey
 	newIDsKey
 	repoKey
+	formatKey  // Stores MetadataVersion
 )
+
+// NetadataVersion is the version of the metadata so we can add new metadata 
+// without breaking db.
+const MetadataVersion uint64 = 1
 
 func (t keyType) String() string {
 	switch t {

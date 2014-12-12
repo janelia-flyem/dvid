@@ -225,7 +225,7 @@ func getLabelRLEs(ctx *datastore.VersionedContext, label uint64) (blockRLEs, err
 func GetSparseVol(ctx storage.Context, label uint64) ([]byte, error) {
 	smalldata, err := storage.SmallDataStore()
 	if err != nil {
-		return nil, fmt.Errorf("Cannot get datastore that handles big data: %s\n", err.Error())
+		return nil, fmt.Errorf("Cannot get datastore that handles small data: %s\n", err.Error())
 	}
 
 	// Create the sparse volume header
