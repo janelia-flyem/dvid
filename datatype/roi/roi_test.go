@@ -25,14 +25,14 @@ var (
 	testMu  sync.Mutex
 )
 
-var testSpans = []tuple{
-	tuple{100, 101, 200, 210}, tuple{100, 102, 200, 210}, tuple{100, 103, 201, 212},
-	tuple{101, 101, 201, 213}, tuple{101, 102, 202, 215}, tuple{101, 103, 202, 216},
-	tuple{102, 101, 200, 210}, tuple{102, 103, 201, 216}, tuple{102, 104, 203, 217},
-	tuple{103, 101, 200, 210}, tuple{103, 103, 200, 210}, tuple{103, 105, 201, 212},
+var testSpans = []Span{
+	Span{100, 101, 200, 210}, Span{100, 102, 200, 210}, Span{100, 103, 201, 212},
+	Span{101, 101, 201, 213}, Span{101, 102, 202, 215}, Span{101, 103, 202, 216},
+	Span{102, 101, 200, 210}, Span{102, 103, 201, 216}, Span{102, 104, 203, 217},
+	Span{103, 101, 200, 210}, Span{103, 103, 200, 210}, Span{103, 105, 201, 212},
 }
 
-func getSpansJSON(spans []tuple) io.Reader {
+func getSpansJSON(spans []Span) io.Reader {
 	jsonBytes, err := json.Marshal(spans)
 	if err != nil {
 		log.Fatalf("Can't encode spans into JSON: %s\n", err.Error())
@@ -40,8 +40,8 @@ func getSpansJSON(spans []tuple) io.Reader {
 	return bytes.NewReader(jsonBytes)
 }
 
-func putSpansJSON(data []byte) ([]tuple, error) {
-	var spans []tuple
+func putSpansJSON(data []byte) ([]Span, error) {
+	var spans []Span
 	if err := json.Unmarshal(data, &spans); err != nil {
 		return nil, err
 	}
@@ -95,49 +95,49 @@ func initTestRepo() (datastore.Repo, dvid.VersionID) {
 }
 
 func TestTuples(t *testing.T) {
-	tup := tuple{10, 11, 20, 30}
-	if tup.less(dvid.ChunkPoint3d{20, 11, 10}) {
-		t.Errorf("Bad tuple.less()\n")
+	tup := Span{10, 11, 20, 30}
+	if tup.Less(dvid.ChunkPoint3d{20, 11, 10}) {
+		t.Errorf("Bad tuple.Less()\n")
 	}
-	if tup.less(dvid.ChunkPoint3d{30, 11, 10}) {
-		t.Errorf("Bad tuple.less()\n")
+	if tup.Less(dvid.ChunkPoint3d{30, 11, 10}) {
+		t.Errorf("Bad tuple.Less()\n")
 	}
-	if !tup.less(dvid.ChunkPoint3d{31, 11, 10}) {
-		t.Errorf("Bad tuple.less()\n")
+	if !tup.Less(dvid.ChunkPoint3d{31, 11, 10}) {
+		t.Errorf("Bad tuple.Less()\n")
 	}
-	if !tup.less(dvid.ChunkPoint3d{20, 11, 11}) {
-		t.Errorf("Bad tuple.less()\n")
+	if !tup.Less(dvid.ChunkPoint3d{20, 11, 11}) {
+		t.Errorf("Bad tuple.Less()\n")
 	}
-	if tup.less(dvid.ChunkPoint3d{20, 11, 9}) {
-		t.Errorf("Bad tuple.less()\n")
+	if tup.Less(dvid.ChunkPoint3d{20, 11, 9}) {
+		t.Errorf("Bad tuple.Less()\n")
 	}
-	if !tup.less(dvid.ChunkPoint3d{20, 11, 11}) {
-		t.Errorf("Bad tuple.less()\n")
+	if !tup.Less(dvid.ChunkPoint3d{20, 11, 11}) {
+		t.Errorf("Bad tuple.Less()\n")
 	}
 
-	if tup.includes(dvid.ChunkPoint3d{19, 11, 10}) {
-		t.Errorf("Bad tuple.includes()\n")
+	if tup.Includes(dvid.ChunkPoint3d{19, 11, 10}) {
+		t.Errorf("Bad tuple.Includes()\n")
 	}
-	if !tup.includes(dvid.ChunkPoint3d{20, 11, 10}) {
-		t.Errorf("Bad tuple.includes()\n")
+	if !tup.Includes(dvid.ChunkPoint3d{20, 11, 10}) {
+		t.Errorf("Bad tuple.Includes()\n")
 	}
-	if !tup.includes(dvid.ChunkPoint3d{30, 11, 10}) {
-		t.Errorf("Bad tuple.includes()\n")
+	if !tup.Includes(dvid.ChunkPoint3d{30, 11, 10}) {
+		t.Errorf("Bad tuple.Includes()\n")
 	}
-	if tup.includes(dvid.ChunkPoint3d{31, 11, 10}) {
-		t.Errorf("Bad tuple.includes()\n")
+	if tup.Includes(dvid.ChunkPoint3d{31, 11, 10}) {
+		t.Errorf("Bad tuple.Includes()\n")
 	}
-	if tup.includes(dvid.ChunkPoint3d{25, 11, 11}) {
-		t.Errorf("Bad tuple.includes()\n")
+	if tup.Includes(dvid.ChunkPoint3d{25, 11, 11}) {
+		t.Errorf("Bad tuple.Includes()\n")
 	}
-	if tup.includes(dvid.ChunkPoint3d{25, 11, 9}) {
-		t.Errorf("Bad tuple.includes()\n")
+	if tup.Includes(dvid.ChunkPoint3d{25, 11, 9}) {
+		t.Errorf("Bad tuple.Includes()\n")
 	}
-	if tup.includes(dvid.ChunkPoint3d{25, 10, 10}) {
-		t.Errorf("Bad tuple.includes()\n")
+	if tup.Includes(dvid.ChunkPoint3d{25, 10, 10}) {
+		t.Errorf("Bad tuple.Includes()\n")
 	}
-	if tup.includes(dvid.ChunkPoint3d{25, 12, 10}) {
-		t.Errorf("Bad tuple.includes()\n")
+	if tup.Includes(dvid.ChunkPoint3d{25, 12, 10}) {
+		t.Errorf("Bad tuple.Includes()\n")
 	}
 }
 

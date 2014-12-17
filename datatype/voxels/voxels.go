@@ -1284,6 +1284,7 @@ func (d *Data) foregroundROI(uuid dvid.UUID, versionID dvid.VersionID, dest *roi
 	}
 	ctx := datastore.NewVersionedContext(d, versionID)
 
+	var span *roi.Span
 	spans := []roi.Span{}
 	minIndex := NewVoxelBlockIndex(&dvid.MinIndexZYX)
 	maxIndex := NewVoxelBlockIndex(&dvid.MaxIndexZYX)
@@ -1306,13 +1307,28 @@ func (d *Data) foregroundROI(uuid dvid.UUID, versionID dvid.VersionID, dest *roi
 			}
 		}
 		if foreground {
-
+			indexZYX, err := DecodeVoxelBlockKey(chunk.K)
+			if err != nil {
+				dvid.Errorf("Error decoding voxel block key: %s\n", err.Error())
+				return
+			}
+			x, y, z := indexZYX.Unpack()
+			if span == nil {
+				span = &roi.Span{z, y, x, x}
+			} else if !span.Extends(x, y, z) {
+				spans = append(spans, *span)
+				span = &roi.Span{z, y, x, x}
+			}
 		}
 	})
+	if span != nil {
+		spans = append(spans, *span)
+	}
 
 	// Save new ROI
-	if err := datastore.SaveRepo(uuid); err != nil {
-		dvid.Infof("Could not save new ROI %q, uuid %s: %s", dest.DataName(), uuid, err.Error())
+	if err := dest.PutSpans(ctx, spans); err != nil {
+		dvid.Errorf("Error in storing ROI: %s\n", err.Error())
+		return
 	}
 	timedLog.Infof("Created foreground ROI %q for %s\n", dest.DataName(), d.DataName())
 }

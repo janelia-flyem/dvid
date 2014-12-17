@@ -409,7 +409,7 @@ func TestROIMaskGrayscale8(t *testing.T) {
 
 	// write ROI
 	roiCtx := datastore.NewVersionedContext(roiData, testData.versionID)
-	if err = roiData.Put(roiCtx, []byte(testROIJson)); err != nil {
+	if err = roiData.PutJSON(roiCtx, []byte(testROIJson)); err != nil {
 		t.Fatalf("Unable to PUT test ROI: %s\n", err.Error())
 	}
 

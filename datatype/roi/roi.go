@@ -330,7 +330,21 @@ func maxIndexByBlockZ(z int32) indexRLE {
 // Tuples are (Z, Y, X0, X1)
 type Span [4]int32
 
-func (s Span) less(block dvid.ChunkPoint3d) bool {
+// Extend returns true and modifies the span if the given point
+// is one more in x direction than this span.  Else it returns false.
+func (s *Span) Extends(x, y, z int32) bool {
+	if s == nil || (*s)[0] != z || (*s)[1] != y || (*s)[3] != x-1 {
+		return false
+	}
+	(*s)[3] = x
+	return true
+}
+
+func (s Span) Unpack() (z, y, x0, x1 int32) {
+	return s[0], s[1], s[2], s[3]
+}
+
+func (s Span) Less(block dvid.ChunkPoint3d) bool {
 	if s[0] < block[2] {
 		return true
 	}
@@ -349,7 +363,7 @@ func (s Span) less(block dvid.ChunkPoint3d) bool {
 	return false
 }
 
-func (s Span) includes(block dvid.ChunkPoint3d) bool {
+func (s Span) Includes(block dvid.ChunkPoint3d) bool {
 	if s[0] != block[2] {
 		return false
 	}
@@ -622,10 +636,10 @@ func (d *Data) seekSpan(pt dvid.Point3d, spans []Span, curSpanI int) (int, bool)
 	// Keep going through spans until we are equal to or past the chunk point.
 	for {
 		curSpan := spans[curSpanI]
-		if curSpan.less(chunkPt) {
+		if curSpan.Less(chunkPt) {
 			curSpanI++
 		} else {
-			if curSpan.includes(chunkPt) {
+			if curSpan.Includes(chunkPt) {
 				return curSpanI, true
 			} else {
 				return curSpanI, false
