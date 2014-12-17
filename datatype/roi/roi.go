@@ -105,8 +105,9 @@ DEL  <api URL>/node/<UUID>/<data name>/roi
 
   	"[[0, 0, 0, 1], [0, 2, 3, 5], [0, 2, 8, 9], [1, 2, 3, 4]]"
 
-	Each element is expressed as [z, y, x0, x1], which represents blocks with the block indices
-	(x0, y, z) to (x1, y, z)
+	Each element is expressed as [z, y, x0, x1], which represents blocks with the block coordinates
+	(x0, y, z) to (x1, y, z).  Each block is a chunking of voxel space using the BlockSize for 
+	the ROI.
 
     Arguments:
 
@@ -132,8 +133,9 @@ GET <api URL>/node/<UUID>/<data name>/mask/0_1_2/<size>/<offset>
 
 POST <api URL>/node/<UUID>/<data name>/ptquery
 
-	Determines with a list of 3d points in JSON format sent by POST is within the ROI.
-	Returns a list of true/false answers for each point in the same sequence as the POSTed list.
+	Determines whether a list of 3d points (voxel coordinates) in JSON format sent by POST is within 
+	the ROI.  Returns a list of true/false answers for each point in the same sequence as the POSTed 
+	list.
 
     The "Content-type" of the HTTP response (and usually the request) are
     "application/json" for arbitrary binary data.  Returns a list of 4-tuples:
