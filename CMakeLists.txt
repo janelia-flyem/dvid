@@ -159,7 +159,7 @@ else ()
         DEPENDS     ${golang_NAME}
         COMMENT     "Adding go.net context")
 
-    set (DVID_GO_PACKAGES gopackages gojsonschema goji context)
+    set (DVID_DEP_GO_PACKAGES gopackages gojsonschema goji context)
 
     add_custom_target (nrsc
         ${BUILDEM_ENV_STRING} ${GO_ENV} go build -o ${BUILDEM_BIN_DIR}/nrsc
@@ -172,7 +172,7 @@ else ()
             ${BUILDEM_ENV_STRING} go get ${GO_GET} bazil.org/fuse
             DEPENDS     ${golang_NAME}
             COMMENT     "Adding FUSE Go library...")
-        set (DVID_GO_PACKAGES ${DVID_GO_PACKAGES} gofuse)
+        set (DVID_DEP_GO_PACKAGES ${DVID_DEP_GO_PACKAGES} gofuse)
     endif()
 
     add_custom_target (gobolt
@@ -190,7 +190,7 @@ else ()
         ${BUILDEM_ENV_STRING} ${GO_ENV} ${CGO_FLAGS} go build -o ${BUILDEM_BIN_DIR}/dvid 
         -v -tags '${DVID_BACKEND} ${DVID_GRAPHBACKEND} ${DVID_BUILD_TAGS}' cmd/dvid/main.go 
         WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
-        DEPENDS     ${golang_NAME} ${nanomsg_NAME} ${DVID_BACKEND_DEPEND} ${DVID_GO_PACKAGES} ${hdf5_NAME}
+        DEPENDS     ${golang_NAME} ${nanomsg_NAME} ${DVID_BACKEND_DEPEND} ${DVID_DEP_GO_PACKAGES} ${hdf5_NAME}
         COMMENT     "Compiling and installing dvid executable...")
 
     # Build DVID with embedded console 
@@ -201,13 +201,16 @@ else ()
         COMMENT     "Adding embedded console into dvid executable..."
     )
 
+    set (DVID_PACKAGES ${DVID_GO}/datastore ${DVID_GO}/datatype/... ${DVID_GO}/dvid ${DVID_GO}/server
+                       ${DVID_GO}/storage/... ${DVID_GO}/tests ${DVID_GO}/tests_integration)
+
    add_custom_target (test
         ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go test -tags '${DVID_BACKEND} ${DVID_GRAPHBACKEND}' 
-            ${DVID_GO}/...)
+            ${DVID_PACKAGES})
 
    add_custom_target (coverage
         ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go test -cover -tags '${DVID_BACKEND} ${DVID_GRAPHBACKEND}' 
-            ${DVID_GO}/...)
+            ${DVID_PACKAGES})
 
    # Add benchmarking
    add_custom_target (test-bench
@@ -216,7 +219,7 @@ else ()
 
    add_custom_target (bench
         ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go test -bench -tags '${DVID_BACKEND} ${DVID_GRAPHBACKEND}' 
-            ${DVID_GO}/...
+            ${DVID_PACKAGES}
         DEPENDS test-bench)
 
 
