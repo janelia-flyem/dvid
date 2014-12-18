@@ -245,7 +245,7 @@ Tests are run with gocheck:
 
     % make test
 
-Specifying your choice of [web client](http://github.com/janelia-flyem/dvid-webclient) 
+Specifying your choice of [web client](http://github.com/janelia-flyem/dvid-console) 
 using "-webclient":
 
     % dvid -webclient=/path/to/dvid-webclient serve /path/to/datastore/dir
