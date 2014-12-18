@@ -185,6 +185,7 @@ Make sure you have the basic requirements:
 * C/C++ compiler
 * [CMake](http://www.cmake.org/cmake/resources/software.html)
 * [git](http://git-scm.com/downloads)
+* [mercurial](http://mercurial.selenic.com/)
 
 Before downloading DVID, setup the proper directory structure that adheres to 
 [Go standards](http://golang.org/doc/code.html) and clone the dvid repo:
