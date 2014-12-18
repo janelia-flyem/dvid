@@ -185,6 +185,7 @@ Make sure you have the basic requirements:
 * C/C++ compiler
 * [CMake](http://www.cmake.org/cmake/resources/software.html)
 * [git](http://git-scm.com/downloads)
+* [mercurial](http://mercurial.selenic.com/)
 
 Before downloading DVID, setup the proper directory structure that adheres to 
 [Go standards](http://golang.org/doc/code.html) and clone the dvid repo:
@@ -244,7 +245,7 @@ Tests are run with gocheck:
 
     % make test
 
-Specifying your choice of [web client](http://github.com/janelia-flyem/dvid-webclient) 
+Specifying your choice of [web client](http://github.com/janelia-flyem/dvid-console) 
 using "-webclient":
 
     % dvid -webclient=/path/to/dvid-webclient serve /path/to/datastore/dir
@@ -295,13 +296,13 @@ If DVID was installed correctly, you should be able to ask dvid for help:
 Depending on the storage engine, DVID will store data into a directory.  We must initialize
 the datastore by specifying a datastore directory.
 
-    % dvid init /path/to/datastore/dir
+    % dvid create /path/to/datastore/dir
 
 ### Start the DVID server
 
-The "-debug" option lets you see how DVID is processing requests.
+The "-verbose" option lets you see how DVID is processing requests.
 
-    % dvid -debug serve /path/to/datastore/dir
+    % dvid -verbose serve /path/to/datastore/dir
 
 If dvid wasn't compiled with a built-in web client, you'll see some complaints and ways you can 
 specify a web client.  For our purposes, though, we don't need the web console for this simple
@@ -371,7 +372,7 @@ that 250 x 250 x 250 grayscale volume, enter the following:
     % dvid node c7 mygrayscale load 100,100,2600 "/path/to/sample/*.png"
 
 Once again, replace the "c7" with a UUID string for your repo.  Note that you have to specify
-the full path to the PNG images.  If you started the DVID server using the "-debug" option, 
+the full path to the PNG images.  If you started the DVID server using the "-verbose" option,
 you'll see a series of messages from the server on reading each image and storing it into the datastore.
 This command loads all image filenames in alphanumeric order.  Since we specified "xy" (and could
 have used the multidimensional specification "0,1"), each succeeding image is loaded with an offset
@@ -385,7 +386,7 @@ You might have noticed a few HTTP API calls listed in the grayscale8 help text. 
 use one of these to look at slices of data orthogonal to the volume axes.  Launch a web browser
 and enter the following URL:
 
-    <api URL>/node/c7/mygrayscale/xy/raw/250_250/100_100_2600
+    <api URL>/node/c7/mygrayscale/raw/xy/250_250/100_100_2600
 
 where `<api URL>` is typically `localhost:8000/api` where the hostname can be set by the dvid option
 `-web` as in `dvid -web=:8080 server /path/to/db`.
@@ -398,11 +399,11 @@ characters.
 
 Change the Z offset to 2800 to see a different portion of the volume:
 
-    <api URL>/node/c7/mygrayscale/xy/raw/250_250/100_100_2800
+    <api URL>/node/c7/mygrayscale/raw/xy/250_250/100_100_2800
 
 We can see the extent of the loaded image using the following resectioning:
 
-    <api URL>/node/c7/mygrayscale/xz/raw/500_500/0_0_2500
+    <api URL>/node/c7/mygrayscale/raw/xz/500_500/0_100_2500
 
 A larger 500 x 500 pixel image should now appear in the browser with black areas surrounding your
 loaded data.  This is a slice along XZ, an orientation not present in the originally loaded
