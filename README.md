@@ -299,9 +299,9 @@ the datastore by specifying a datastore directory.
 
 ### Start the DVID server
 
-The "-debug" option lets you see how DVID is processing requests.
+The "-verbose" option lets you see how DVID is processing requests.
 
-    % dvid -debug serve /path/to/datastore/dir
+    % dvid -verbose serve /path/to/datastore/dir
 
 If dvid wasn't compiled with a built-in web client, you'll see some complaints and ways you can 
 specify a web client.  For our purposes, though, we don't need the web console for this simple
@@ -371,7 +371,7 @@ that 250 x 250 x 250 grayscale volume, enter the following:
     % dvid node c7 mygrayscale load 100,100,2600 "/path/to/sample/*.png"
 
 Once again, replace the "c7" with a UUID string for your repo.  Note that you have to specify
-the full path to the PNG images.  If you started the DVID server using the "-debug" option, 
+the full path to the PNG images.  If you started the DVID server using the "-verbose" option,
 you'll see a series of messages from the server on reading each image and storing it into the datastore.
 This command loads all image filenames in alphanumeric order.  Since we specified "xy" (and could
 have used the multidimensional specification "0,1"), each succeeding image is loaded with an offset
