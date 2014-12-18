@@ -295,7 +295,7 @@ If DVID was installed correctly, you should be able to ask dvid for help:
 Depending on the storage engine, DVID will store data into a directory.  We must initialize
 the datastore by specifying a datastore directory.
 
-    % dvid init /path/to/datastore/dir
+    % dvid create /path/to/datastore/dir
 
 ### Start the DVID server
 
