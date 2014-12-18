@@ -385,7 +385,7 @@ You might have noticed a few HTTP API calls listed in the grayscale8 help text. 
 use one of these to look at slices of data orthogonal to the volume axes.  Launch a web browser
 and enter the following URL:
 
-    <api URL>/node/c7/mygrayscale/xy/raw/250_250/100_100_2600
+    <api URL>/node/c7/mygrayscale/raw/xy/250_250/100_100_2600
 
 where `<api URL>` is typically `localhost:8000/api` where the hostname can be set by the dvid option
 `-web` as in `dvid -web=:8080 server /path/to/db`.
@@ -398,11 +398,11 @@ characters.
 
 Change the Z offset to 2800 to see a different portion of the volume:
 
-    <api URL>/node/c7/mygrayscale/xy/raw/250_250/100_100_2800
+    <api URL>/node/c7/mygrayscale/raw/xy/250_250/100_100_2800
 
 We can see the extent of the loaded image using the following resectioning:
 
-    <api URL>/node/c7/mygrayscale/xz/raw/500_500/0_0_2500
+    <api URL>/node/c7/mygrayscale/raw/xz/500_500/0_100_2500
 
 A larger 500 x 500 pixel image should now appear in the browser with black areas surrounding your
 loaded data.  This is a slice along XZ, an orientation not present in the originally loaded
