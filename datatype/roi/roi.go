@@ -430,12 +430,6 @@ func (d *Data) Delete(ctx storage.VersionedContext) error {
 		return err
 	}
 
-	// Make sure our small data store can do batching.
-	batcher, ok := smalldata.(storage.KeyValueBatcher)
-	if !ok {
-		return fmt.Errorf("Unable to store ROI: small data store can't do batching!")
-	}
-
 	// We only want one PUT on given version for given data to prevent interleaved PUTs.
 	putMutex := ctx.Mutex()
 	putMutex.Lock()
@@ -449,41 +443,28 @@ func (d *Data) Delete(ctx storage.VersionedContext) error {
 		return fmt.Errorf("Error in trying to save repo on roi extent change: %s\n", err.Error())
 	}
 
-	// Iterate through all keys for ROI, deleting them in batches.
-	const BATCH_SIZE = 10000
-	batch := batcher.NewBatch(nil)
-	begKey := minIndexRLE.Bytes()
-	endKey := maxIndexRLE.Bytes()
-	var curSize int
-	err = smalldata.ProcessRange(ctx, begKey, endKey, &storage.ChunkOp{}, func(chunk *storage.Chunk) {
-		batch.Delete(chunk.K)
-		if (curSize+1)%BATCH_SIZE == 0 {
-			if err := batch.Commit(); err != nil {
-				dvid.Errorf("Error on batch delete of ROI %q\n", d.DataName())
-				return
-			}
-			curSize = 0
-		}
-		curSize++
-	})
-	if curSize != 0 {
-		if err := batch.Commit(); err != nil {
-			return fmt.Errorf("Error on batch delete of ROI %q\n", d.DataName())
-		}
+	// Delete all spans for this ROI
+	minKey, maxKey := storage.DataContextKeyRange(d.InstanceID())
+	if err := smalldata.DeleteRange(nil, minKey, maxKey); err != nil {
+		return err
 	}
 	return nil
 }
 
 // PutSpans saves a slice of spans representing an ROI into the datastore.
-func (d *Data) PutSpans(ctx storage.VersionedContext, spans []Span) error {
+// If the init parameter is true, all previous spans of this ROI are deleted before
+// writing these spans.
+func (d *Data) PutSpans(ctx storage.VersionedContext, spans []Span, init bool) error {
 	db, err := storage.SmallDataStore()
 	if err != nil {
 		return err
 	}
 
 	// Delete the old key/values
-	if err := d.Delete(ctx); err != nil {
-		return err
+	if init {
+		if err := d.Delete(ctx); err != nil {
+			return err
+		}
 	}
 
 	// Make sure our small data store can do batching.
@@ -546,7 +527,7 @@ func (d *Data) PutJSON(ctx storage.VersionedContext, jsonBytes []byte) error {
 	if err != nil {
 		return fmt.Errorf("Error trying to parse POSTed JSON: %s", err.Error())
 	}
-	return d.PutSpans(ctx, spans)
+	return d.PutSpans(ctx, spans, true)
 }
 
 // Returns the voxel range normalized to begVoxel offset and constrained by block span.
