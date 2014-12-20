@@ -1274,6 +1274,7 @@ func (d *Data) ForegroundROI(request datastore.Request, reply *datastore.Respons
 
 func (d *Data) foregroundROI(uuid dvid.UUID, versionID dvid.VersionID, dest *roi.Data) {
 	timedLog := dvid.NewTimeLog()
+	timedLog.Infof("Starting foreground ROI %q for %s\n", dest.DataName(), d.DataName())
 
 	// Iterate through all voxel blocks, loading and then checking blocks
 	// for any foreground voxels.
@@ -1284,6 +1285,7 @@ func (d *Data) foregroundROI(uuid dvid.UUID, versionID dvid.VersionID, dest *roi
 	}
 	ctx := datastore.NewVersionedContext(d, versionID)
 
+	const BATCH_SIZE = 10000
 	var span *roi.Span
 	spans := []roi.Span{}
 	minIndex := NewVoxelBlockIndex(&dvid.MinIndexZYX)
@@ -1317,6 +1319,14 @@ func (d *Data) foregroundROI(uuid dvid.UUID, versionID dvid.VersionID, dest *roi
 				span = &roi.Span{z, y, x, x}
 			} else if !span.Extends(x, y, z) {
 				spans = append(spans, *span)
+				if len(spans) >= BATCH_SIZE {
+					if err := dest.PutSpans(ctx, spans); err != nil {
+						dvid.Errorf("Error in storing ROI: %s\n", err.Error())
+						return
+					}
+					timedLog.Debugf("-- Wrote %d spans for foreground ROI %q\n", len(spans), dest.DataName())
+					spans = []roi.Span{}
+				}
 				span = &roi.Span{z, y, x, x}
 			}
 		}
@@ -1326,9 +1336,11 @@ func (d *Data) foregroundROI(uuid dvid.UUID, versionID dvid.VersionID, dest *roi
 	}
 
 	// Save new ROI
-	if err := dest.PutSpans(ctx, spans); err != nil {
-		dvid.Errorf("Error in storing ROI: %s\n", err.Error())
-		return
+	if len(spans) > 0 {
+		if err := dest.PutSpans(ctx, spans); err != nil {
+			dvid.Errorf("Error in storing ROI: %s\n", err.Error())
+			return
+		}
 	}
 	timedLog.Infof("Created foreground ROI %q for %s\n", dest.DataName(), d.DataName())
 }
