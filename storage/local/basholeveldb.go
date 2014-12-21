@@ -690,7 +690,7 @@ func (db *LevelDB) DeleteRange(ctx storage.Context, kStart, kEnd []byte) error {
 			return fmt.Errorf("Error on last batch DELETE: %s\n", err.Error())
 		}
 	}
-	dvid.Infof("Deleted %d key-value pairs for %s\n", numKV, ctx)
+	dvid.Debugf("Deleted %d key-value pairs via delete range.\n", numKV)
 	return nil
 }
 
