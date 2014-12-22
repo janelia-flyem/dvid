@@ -1285,7 +1285,7 @@ func (d *Data) foregroundROI(uuid dvid.UUID, versionID dvid.VersionID, dest *roi
 	}
 	ctx := datastore.NewVersionedContext(d, versionID)
 
-	const BATCH_SIZE = 10000
+	const BATCH_SIZE = 1000
 	var numBatches int
 	var span *roi.Span
 	spans := []roi.Span{}
@@ -1323,13 +1323,13 @@ func (d *Data) foregroundROI(uuid dvid.UUID, versionID dvid.VersionID, dest *roi
 				if len(spans) >= BATCH_SIZE {
 					init := (numBatches == 0)
 					numBatches++
-					go func() {
+					go func(spans []roi.Span) {
 						if err := dest.PutSpans(versionID, spans, init); err != nil {
 							dvid.Errorf("Error in storing ROI: %s\n", err.Error())
 						} else {
 							timedLog.Debugf("-- Wrote batch %d of spans for foreground ROI %q", numBatches, dest.DataName())
 						}
-					}()
+					}(spans)
 					spans = []roi.Span{}
 				}
 				span = &roi.Span{z, y, x, x}
