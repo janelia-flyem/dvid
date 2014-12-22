@@ -1324,7 +1324,7 @@ func (d *Data) foregroundROI(uuid dvid.UUID, versionID dvid.VersionID, dest *roi
 					init := (numBatches == 0)
 					numBatches++
 					go func() {
-						if err := dest.PutSpans(ctx, spans, init); err != nil {
+						if err := dest.PutSpans(versionID, spans, init); err != nil {
 							dvid.Errorf("Error in storing ROI: %s\n", err.Error())
 						} else {
 							timedLog.Debugf("-- Wrote batch %d of spans for foreground ROI %q", numBatches, dest.DataName())
@@ -1342,7 +1342,7 @@ func (d *Data) foregroundROI(uuid dvid.UUID, versionID dvid.VersionID, dest *roi
 
 	// Save new ROI
 	if len(spans) > 0 {
-		if err := dest.PutSpans(ctx, spans, numBatches == 0); err != nil {
+		if err := dest.PutSpans(versionID, spans, numBatches == 0); err != nil {
 			dvid.Errorf("Error in storing ROI: %s\n", err.Error())
 			return
 		}

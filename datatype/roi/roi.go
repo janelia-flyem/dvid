@@ -437,8 +437,8 @@ func (d *Data) Delete(ctx storage.VersionedContext) error {
 		putMutex.Unlock()
 	}()
 
-	d.MinZ = 0
-	d.MaxZ = 0
+	d.MinZ = math.MaxInt32
+	d.MaxZ = math.MinInt32
 	if err := datastore.SaveRepoByVersionID(ctx.VersionID()); err != nil {
 		return fmt.Errorf("Error in trying to save repo on roi extent change: %s\n", err.Error())
 	}
@@ -454,7 +454,9 @@ func (d *Data) Delete(ctx storage.VersionedContext) error {
 // PutSpans saves a slice of spans representing an ROI into the datastore.
 // If the init parameter is true, all previous spans of this ROI are deleted before
 // writing these spans.
-func (d *Data) PutSpans(ctx storage.VersionedContext, spans []Span, init bool) error {
+func (d *Data) PutSpans(versionID dvid.VersionID, spans []Span, init bool) error {
+	ctx := datastore.NewVersionedContext(d, versionID)
+
 	db, err := storage.SmallDataStore()
 	if err != nil {
 		return err
@@ -521,13 +523,13 @@ func (d *Data) PutSpans(ctx storage.VersionedContext, spans []Span, init bool) e
 }
 
 // PutJSON saves JSON-encoded data representing an ROI into the datastore.
-func (d *Data) PutJSON(ctx storage.VersionedContext, jsonBytes []byte) error {
+func (d *Data) PutJSON(versionID dvid.VersionID, jsonBytes []byte) error {
 	spans := []Span{}
 	err := json.Unmarshal(jsonBytes, &spans)
 	if err != nil {
 		return fmt.Errorf("Error trying to parse POSTed JSON: %s", err.Error())
 	}
-	return d.PutSpans(ctx, spans, true)
+	return d.PutSpans(versionID, spans, true)
 }
 
 // Returns the voxel range normalized to begVoxel offset and constrained by block span.
@@ -1225,7 +1227,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 				server.BadRequest(w, r, err.Error())
 				return
 			}
-			err = d.PutJSON(storeCtx, data)
+			err = d.PutJSON(versionID, data)
 			if err != nil {
 				server.BadRequest(w, r, err.Error())
 				return

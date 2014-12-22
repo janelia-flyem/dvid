@@ -286,6 +286,54 @@ func TestROIRequests(t *testing.T) {
 	}
 }
 
+func TestROIPostAndDelete(t *testing.T) {
+	tests.UseStore()
+	defer tests.CloseStore()
+
+	// Create the ROI dataservice.
+	repo, versionID := initTestRepo()
+	uuid, err := datastore.UUIDFromVersion(versionID)
+	if err != nil {
+		t.Errorf(err.Error())
+	}
+
+	config := dvid.NewConfig()
+	config.SetVersioned(true)
+	dataservice, err := repo.NewData(roitype, "roi", config)
+	if err != nil {
+		t.Errorf("Error creating new roi instance: %s\n", err.Error())
+	}
+	data, ok := dataservice.(*Data)
+	if !ok {
+		t.Errorf("Returned new data instance is not roi.Data\n")
+	}
+
+	// PUT an ROI
+	roiRequest := fmt.Sprintf("%snode/%s/%s/roi", server.WebAPIPath, uuid, data.DataName())
+	server.TestHTTP(t, "POST", roiRequest, getSpansJSON(testSpans))
+
+	// Get back the ROI
+	returnedData := server.TestHTTP(t, "GET", roiRequest, nil)
+	spans, err := putSpansJSON(returnedData)
+	if err != nil {
+		t.Errorf("Error on getting back JSON from roi GET: %s\n", err.Error())
+	}
+
+	// Make sure the two are the same.
+	if !reflect.DeepEqual(spans, testSpans) {
+		t.Errorf("Bad PUT/GET ROI roundtrip\nOriginal:\n%s\nReturned:\n%s\n", testSpans, spans)
+	}
+
+	// Delete the ROI
+	_ = server.TestHTTP(t, "DELETE", roiRequest, nil)
+
+	// ROI should now be empty
+	returnedData = server.TestHTTP(t, "GET", roiRequest, nil)
+	if string(returnedData) != "[]" {
+		t.Errorf("Bad ROI after ROI delete.  Should be [ ] got: %s\n", string(returnedData))
+	}
+}
+
 func TestROICreateAndSerialize(t *testing.T) {
 	tests.UseStore()
 	defer tests.CloseStore()
