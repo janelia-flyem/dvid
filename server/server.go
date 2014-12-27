@@ -23,12 +23,12 @@ type Config interface {
 }
 
 var (
-	// InteractiveOpsPer5Min gives the number of interactive-level requests
-	// received over the last 5 minutes.  This is useful for throttling "batch"
+	// InteractiveOpsPer2Min gives the number of interactive-level requests
+	// received over the last 2 minutes.  This is useful for throttling "batch"
 	// operations on a single DVID server.  Note that this metric is an lower
 	// bound on the number of interactive requests over the last minute since
 	// we do non-blocking reports.
-	InteractiveOpsPer5Min int
+	InteractiveOpsPer2Min int
 
 	// Channel to track the # of interactive requests.
 	interactiveOpsCh = make(chan bool)
@@ -109,7 +109,7 @@ func init() {
 		}
 	}()
 
-	// Monitor the # of interactive requests over last 5 minutes.
+	// Monitor the # of interactive requests over last 2 minutes.
 	go func() {
 		tick := time.Tick(5 * time.Second)
 		for {
@@ -117,9 +117,9 @@ func init() {
 			case <-interactiveOpsCh:
 				interactiveOps[0]++
 			case <-tick:
-				newCount := InteractiveOpsPer5Min - interactiveOps[59] + interactiveOps[0]
-				InteractiveOpsPer5Min = newCount
-				copy(interactiveOps[1:], interactiveOps[:59])
+				newCount := InteractiveOpsPer2Min - interactiveOps[23] + interactiveOps[0]
+				InteractiveOpsPer2Min = newCount
+				copy(interactiveOps[1:], interactiveOps[:23])
 				interactiveOps[0] = 0
 			}
 		}
@@ -140,14 +140,14 @@ func GotInteractiveRequest() {
 // requests dips below MaxInteractiveOpsBeforeBlock.
 func BlockOnInteractiveRequests(caller ...string) {
 	for {
-		if InteractiveOpsPer5Min < MaxInteractiveOpsBeforeBlock {
+		if InteractiveOpsPer2Min < MaxInteractiveOpsBeforeBlock {
 			return
 		}
 		if len(caller) != 0 {
-			dvid.Infof("Routine %q paused due to %d interactive requests over last 5 min.\n",
-				caller[0], InteractiveOpsPer5Min)
+			dvid.Infof("Routine %q paused due to %d interactive requests over last 2 min.\n",
+				caller[0], InteractiveOpsPer2Min)
 		}
-		time.Sleep(30 * time.Second)
+		time.Sleep(10 * time.Second)
 	}
 }
 
