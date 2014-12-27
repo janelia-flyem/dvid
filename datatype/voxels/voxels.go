@@ -1352,6 +1352,7 @@ func (d *Data) foregroundROI(uuid dvid.UUID, versionID dvid.VersionID, dest *roi
 				span = &roi.Span{z, y, x, x}
 			}
 		}
+		server.BlockOnInteractiveRequests("voxels [compute foreground ROI]")
 	})
 	if span != nil {
 		spans = append(spans, *span)
