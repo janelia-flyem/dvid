@@ -612,6 +612,21 @@ func (list ByZYX) Less(i, j int) bool {
 // PointNd is a slice of N 32-bit signed integers that implements the Point interface.
 type PointNd []int32
 
+// StringToPointNd parses a string of format "%d,%d,%d,..." into a slice of int32.
+func StringToPointNd(str, separator string) (nd PointNd, err error) {
+	elems := strings.Split(str, separator)
+	nd = make(PointNd, len(elems))
+	var n int64
+	for i, elem := range elems {
+		n, err = strconv.ParseInt(strings.TrimSpace(elem), 10, 32)
+		if err != nil {
+			return
+		}
+		nd[i] = int32(n)
+	}
+	return
+}
+
 // --- Point interface support -----
 
 // NumDims returns the dimensionality of this point.

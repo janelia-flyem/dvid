@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"image/png"
 	"log"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"sync"
 	"testing"
@@ -158,6 +161,86 @@ func TestVoxelsInstanceCreation(t *testing.T) {
 	}
 	if parsed.Extended.VoxelUnits[2] != "microns" {
 		t.Errorf("Got %q for X voxel units, not picometers\n", parsed.Extended.VoxelUnits[0])
+	}
+}
+
+func TestForegroundROI(t *testing.T) {
+	tests.UseStore()
+	defer tests.CloseStore()
+
+	repo, _ := initTestRepo()
+	grayscale := makeGrayscale(repo, t, "grayscale")
+
+	// Create a fake 500x500 8-bit grayscale image with inner 250x250 foreground and
+	// outer background (value 0)
+	data := make([]uint8, 500*500, 500*500)
+	for y := 125; y <= 375; y++ {
+		for x := 125; x <= 375; x++ {
+			data[y*500+x] = 128
+		}
+		for x := 376; x < 500; x++ {
+			data[y*500+x] = 255
+		}
+	}
+	testImage := dvid.ImageGrayFromData(data, 500, 500)
+
+	// PUT a slice at (127,64,64)
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, testImage); err != nil {
+		t.Fatalf("Unable to encode test image\n")
+	}
+	putRequest := fmt.Sprintf("%snode/%s/grayscale/raw/xy/500_500/127_64_64", server.WebAPIPath, repo.RootUUID())
+	server.TestHTTP(t, "POST", putRequest, &buf)
+
+	// PUT another slice at (1000,14,138)
+	var buf2 bytes.Buffer
+	if err := png.Encode(&buf2, testImage); err != nil {
+		t.Fatalf("Unable to encode test image\n")
+	}
+	putRequest = fmt.Sprintf("%snode/%s/grayscale/raw/xy/500_500/1000_14_138", server.WebAPIPath, repo.RootUUID())
+	server.TestHTTP(t, "POST", putRequest, &buf2)
+
+	// Request a foreground ROI
+	var reply datastore.Response
+	cmd := dvid.Command{"node", string(repo.RootUUID()), string(grayscale.DataName()), "roi", "foreground", "0,255"}
+	if err := grayscale.DoRPC(datastore.Request{Command: cmd}, &reply); err != nil {
+		t.Fatalf("Error running foreground ROI command: %s\n", err.Error())
+	}
+
+	// Check results, making sure it's valid (200).
+	var roiJSON string
+	for {
+		roiRequest := fmt.Sprintf("%snode/%s/foreground/roi", server.WebAPIPath, repo.RootUUID())
+		req, err := http.NewRequest("GET", roiRequest, nil)
+		if err != nil {
+			t.Fatalf("Unsuccessful GET on foreground ROI: %s", err.Error())
+		}
+		w := httptest.NewRecorder()
+		server.ServeHTTP(w, req)
+		roiJSON = string(w.Body.Bytes())
+		if w.Code == http.StatusOK {
+			break
+		} else if w.Code != http.StatusPartialContent {
+			t.Fatalf("Unknown reponse for GET foreground ROI (%d): %s\n", w.Code, roiJSON)
+		}
+	}
+
+	// Check results
+	// Offset for first slice: (127,64,64) with foreground starting 125 pixels in.
+	//    Block index Z = 64 / 32 = 2
+	//    Block index Y0 = (64 + 124) / 32 = 5
+	//    Block index Y1 = (64 + 374) / 32 = 13
+	//    Block index X0 = (127 + 125) / 32 = 7
+	//	  Block index X1 = (127 + 374) / 32 = 15
+	// Offset for first slice: (1000,14,138) with foreground starting 125 pixels in.
+	//    Block index Z = 138 / 32 = 4
+	//    Block index Y0 = (14 + 124) / 32 = 4
+	//    Block index Y1 = (14 + 374) / 32 = 12
+	//    Block index X0 = (1000 + 124) / 32 = 35
+	//	  Block index X1 = (1000 + 374) / 32 = 42
+	expected := "[[2,5,7,15],[2,6,7,15],[2,7,7,15],[2,8,7,15],[2,9,7,15],[2,10,7,15],[2,11,7,15],[2,12,7,15],[2,13,7,15],[4,4,35,42],[4,5,35,42],[4,6,35,42],[4,7,35,42],[4,8,35,42],[4,9,35,42],[4,10,35,42],[4,11,35,42],[4,12,35,42]]"
+	if roiJSON != expected {
+		t.Errorf("Expected the following foreground ROI:\n%s\nGot instead:\n%s\n", expected, roiJSON)
 	}
 }
 

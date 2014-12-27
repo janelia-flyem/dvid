@@ -101,13 +101,13 @@ $ dvid node <UUID> <data name> put remote <plane> <offset> <image glob>
     image glob    Filenames of images, e.g., foo-xy-*.png
 	
 
-$ dvid node <UUID> <data name> roi <new roi data name> <background value> 
+$ dvid node <UUID> <data name> roi <new roi data name> <background values separated by comma> 
 
     Creates a ROI consisting of all voxel blocks that are non-background.
 
     Example:
 
-    $ dvid node 3f8c mygrayscale roi grayscale_roi 0
+    $ dvid node 3f8c mygrayscale roi grayscale_roi 0,255
 
     
     ------------------
@@ -1267,12 +1267,18 @@ func (d *Data) ForegroundROI(request datastore.Request, reply *datastore.Respons
 	}
 
 	// Asynchronously process the voxels.
-	go d.foregroundROI(uuid, versionID, dest)
+	background, err := dvid.StringToPointNd(backgroundStr, ",")
+	if err != nil {
+		return err
+	}
+	go d.foregroundROI(uuid, versionID, dest, background)
 
 	return nil
 }
 
-func (d *Data) foregroundROI(uuid dvid.UUID, versionID dvid.VersionID, dest *roi.Data) {
+func (d *Data) foregroundROI(uuid dvid.UUID, versionID dvid.VersionID, dest *roi.Data, background dvid.PointNd) {
+	dest.Ready = false
+
 	timedLog := dvid.NewTimeLog()
 	timedLog.Infof("Starting foreground ROI %q for %s", dest.DataName(), d.DataName())
 
@@ -1284,6 +1290,11 @@ func (d *Data) foregroundROI(uuid dvid.UUID, versionID dvid.VersionID, dest *roi
 		return
 	}
 	ctx := datastore.NewVersionedContext(d, versionID)
+
+	backgroundBytes := make([]byte, len(background))
+	for i, b := range background {
+		backgroundBytes[i] = byte(b)
+	}
 
 	const BATCH_SIZE = 1000
 	var numBatches int
@@ -1302,9 +1313,15 @@ func (d *Data) foregroundROI(uuid dvid.UUID, versionID dvid.VersionID, dest *roi
 		}
 		numVoxels := d.BlockSize().Prod()
 		var foreground bool
-		background := byte(d.Background)
 		for i := int64(0); i < numVoxels; i++ {
-			if data[i] != background {
+			isBackground := false
+			for _, b := range backgroundBytes {
+				if data[i] == b {
+					isBackground = true
+					break
+				}
+			}
+			if !isBackground {
 				foreground = true
 				break
 			}
@@ -1348,6 +1365,7 @@ func (d *Data) foregroundROI(uuid dvid.UUID, versionID dvid.VersionID, dest *roi
 		}
 	}
 	timedLog.Infof("Created foreground ROI %q for %s", dest.DataName(), d.DataName())
+	dest.Ready = true
 }
 
 // DoRPC acts as a switchboard for RPC commands.

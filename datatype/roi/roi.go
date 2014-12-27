@@ -207,7 +207,7 @@ func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.
 	} else {
 		blockSize = dvid.Point3d{DefaultBlockSize, DefaultBlockSize, DefaultBlockSize}
 	}
-	return &Data{basedata, Properties{blockSize, math.MaxInt32, math.MinInt32}}, nil
+	return &Data{basedata, Properties{blockSize, math.MaxInt32, math.MinInt32}, false}, nil
 }
 
 func (dtype *Type) Help() string {
@@ -230,6 +230,7 @@ type Properties struct {
 type Data struct {
 	*datastore.Data
 	Properties
+	Ready bool
 }
 
 // GetByUUID returns a pointer to ROI data given a version (UUID) and data name.
@@ -529,7 +530,11 @@ func (d *Data) PutJSON(versionID dvid.VersionID, jsonBytes []byte) error {
 	if err != nil {
 		return fmt.Errorf("Error trying to parse POSTed JSON: %s", err.Error())
 	}
-	return d.PutSpans(versionID, spans, true)
+	if err := d.PutSpans(versionID, spans, true); err != nil {
+		return err
+	}
+	d.Ready = true
+	return nil
 }
 
 // Returns the voxel range normalized to begVoxel offset and constrained by block span.
@@ -1219,6 +1224,9 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
+			if !d.Ready {
+				w.WriteHeader(http.StatusPartialContent)
+			}
 			fmt.Fprintf(w, string(jsonBytes))
 			comment = fmt.Sprintf("HTTP GET ROI %q: %d bytes\n", d.DataName(), len(jsonBytes))
 		case "post":
@@ -1313,6 +1321,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 
 		var jsonBytes []byte
 		optimizedStr := queryValues.Get("optimized")
+		dvid.Infof("queryvalues = %v\n", queryValues)
 		if optimizedStr == "true" || optimizedStr == "on" {
 			dvid.Infof("Perform optimized partitioning into subvolumes using batchsize %d\n", batchsize)
 			jsonBytes, err = d.Partition(storeCtx, int32(batchsize))
