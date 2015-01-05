@@ -416,9 +416,6 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 	}
 	storeCtx := datastore.NewVersionedContext(d, versionID)
 
-	// Allow cross-origin resource sharing.
-	w.Header().Add("Access-Control-Allow-Origin", "*")
-
 	// Break URL request into arguments
 	url := r.URL.Path[len(server.WebAPIPath):]
 	parts := strings.Split(url, "/")

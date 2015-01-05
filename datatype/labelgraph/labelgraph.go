@@ -1322,9 +1322,6 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 	// make sure transaction log is created
 	d.initializeLog()
 
-	// Allow cross-origin resource sharing.
-	w.Header().Add("Access-Control-Allow-Origin", "*")
-
 	// Break URL request into arguments
 	url := r.URL.Path[len(server.WebAPIPath):]
 	parts := strings.Split(url, "/")

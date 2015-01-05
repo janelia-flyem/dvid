@@ -174,7 +174,7 @@ const (
 type WebMux struct {
 	*web.Mux
 	sync.Mutex
-	ready bool
+	routesSetup bool
 }
 
 var (
@@ -188,9 +188,13 @@ func init() {
 
 // ServeHTTP fulfills one request using the default web Mux.
 func ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if !webMux.ready {
+	if !webMux.routesSetup {
 		initRoutes()
 	}
+
+	// Allow cross-origin resource sharing.
+	w.Header().Add("Access-Control-Allow-Origin", "*")
+
 	webMux.ServeHTTP(w, r)
 }
 
@@ -204,7 +208,7 @@ func serveHttp(address, clientDir string) {
 		mode = " (read-only mode)"
 	}
 	dvid.Infof("Web server listening at %s%s ...\n", address, mode)
-	if !webMux.ready {
+	if !webMux.routesSetup {
 		initRoutes()
 	}
 
@@ -224,12 +228,13 @@ func initRoutes() {
 	webMux.Lock()
 	defer webMux.Unlock()
 
-	if webMux.ready {
+	if webMux.routesSetup {
 		return
 	}
 
 	silentMux := web.New()
 	webMux.Handle("/api/load", silentMux)
+	silentMux.Use(corsHandler)
 	silentMux.Get("/api/load", loadHandler)
 
 	mainMux := web.New()
@@ -237,6 +242,7 @@ func initRoutes() {
 	mainMux.Use(middleware.Logger)
 	mainMux.Use(middleware.Recoverer)
 	mainMux.Use(middleware.AutomaticOptions)
+	mainMux.Use(corsHandler)
 
 	// Handle RAML interface
 	mainMux.Get("/interface", logHttpPanics(interfaceHandler))
@@ -276,7 +282,7 @@ func initRoutes() {
 
 	mainMux.Get("/*", mainHandler)
 
-	webMux.ready = true
+	webMux.routesSetup = true
 }
 
 // Wrapper function so that http handlers recover from panics gracefully
@@ -320,6 +326,17 @@ func DecodeJSON(r *http.Request) (dvid.Config, error) {
 }
 
 // ---- Middleware -------------
+
+// corsHandler adds CORS support via header
+func corsHandler(c *web.C, h http.Handler) http.Handler {
+	fn := func(w http.ResponseWriter, r *http.Request) {
+		// Allow cross-origin resource sharing.
+		w.Header().Add("Access-Control-Allow-Origin", "*")
+
+		h.ServeHTTP(w, r)
+	}
+	return http.HandlerFunc(fn)
+}
 
 // repoSelector retrieves the particular repo from a potentially partial string that uniquely
 // identifies the repo.

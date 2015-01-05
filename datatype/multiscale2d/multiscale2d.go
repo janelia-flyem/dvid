@@ -659,9 +659,6 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 	}
 	storeCtx := datastore.NewVersionedContext(d, versionID)
 
-	// Allow cross-origin resource sharing.
-	w.Header().Add("Access-Control-Allow-Origin", "*")
-
 	action := strings.ToLower(r.Method)
 	switch action {
 	case "get", "post":

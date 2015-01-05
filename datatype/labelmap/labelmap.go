@@ -494,9 +494,6 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 	}
 	storeCtx := datastore.NewVersionedContext(d, versionID)
 
-	// Allow cross-origin resource sharing.
-	w.Header().Add("Access-Control-Allow-Origin", "*")
-
 	// Get the action (GET, POST)
 	action := strings.ToLower(r.Method)
 	var op voxels.OpType
