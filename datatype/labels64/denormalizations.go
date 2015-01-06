@@ -184,8 +184,6 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 // On return from this function, block-level RLEs have been written but size and surface
 // data are handled asynchronously.
 func (d *Data) denormFunc(versionID dvid.VersionID, mods voxels.BlockChannel) {
-	fmt.Printf("labels denormFunc() started...\n")
-
 	smalldata, err := storage.SmallDataStore()
 	if err != nil {
 		dvid.Errorf("Cannot get datastore that handles small data: %s\n", err.Error())
@@ -263,8 +261,6 @@ func (d *Data) denormFunc(versionID dvid.VersionID, mods voxels.BlockChannel) {
 		dvid.Debugf("Finished processing denormalization for labels '%s'\n", d.DataName())
 		d.Ready = true
 		// TODO -- should use metadata store for this kind of mutex
-
-		fmt.Printf("Finished processing denormalization for labels '%s'\n", d.DataName())
 	}()
 }
 

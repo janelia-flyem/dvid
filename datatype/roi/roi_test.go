@@ -25,14 +25,14 @@ var (
 	testMu  sync.Mutex
 )
 
-var testSpans = []Span{
-	Span{100, 101, 200, 210}, Span{100, 102, 200, 210}, Span{100, 103, 201, 212},
-	Span{101, 101, 201, 213}, Span{101, 102, 202, 215}, Span{101, 103, 202, 216},
-	Span{102, 101, 200, 210}, Span{102, 103, 201, 216}, Span{102, 104, 203, 217},
-	Span{103, 101, 200, 210}, Span{103, 103, 200, 210}, Span{103, 105, 201, 212},
+var testSpans = []dvid.Span{
+	dvid.Span{100, 101, 200, 210}, dvid.Span{100, 102, 200, 210}, dvid.Span{100, 103, 201, 212},
+	dvid.Span{101, 101, 201, 213}, dvid.Span{101, 102, 202, 215}, dvid.Span{101, 103, 202, 216},
+	dvid.Span{102, 101, 200, 210}, dvid.Span{102, 103, 201, 216}, dvid.Span{102, 104, 203, 217},
+	dvid.Span{103, 101, 200, 210}, dvid.Span{103, 103, 200, 210}, dvid.Span{103, 105, 201, 212},
 }
 
-func getSpansJSON(spans []Span) io.Reader {
+func getSpansJSON(spans []dvid.Span) io.Reader {
 	jsonBytes, err := json.Marshal(spans)
 	if err != nil {
 		log.Fatalf("Can't encode spans into JSON: %s\n", err.Error())
@@ -40,8 +40,8 @@ func getSpansJSON(spans []Span) io.Reader {
 	return bytes.NewReader(jsonBytes)
 }
 
-func putSpansJSON(data []byte) ([]Span, error) {
-	var spans []Span
+func putSpansJSON(data []byte) ([]dvid.Span, error) {
+	var spans []dvid.Span
 	if err := json.Unmarshal(data, &spans); err != nil {
 		return nil, err
 	}
@@ -54,6 +54,8 @@ var testPoints = []dvid.Point3d{
 	dvid.Point3d{6719, 3232, 3200}, // true
 	dvid.Point3d{6720, 3232, 3200}, // true
 	dvid.Point3d{6720, 4100, 3263}, // false
+	dvid.Point3d{6720, 3233, 3201}, // true
+	dvid.Point3d{6720, 3234, 3200}, // true
 }
 
 var expectedInclusions = []bool{
@@ -62,6 +64,8 @@ var expectedInclusions = []bool{
 	true,
 	true,
 	false,
+	true,
+	true,
 }
 
 func getPointsJSON(pts []dvid.Point3d) io.Reader {
@@ -95,7 +99,7 @@ func initTestRepo() (datastore.Repo, dvid.VersionID) {
 }
 
 func TestTuples(t *testing.T) {
-	tup := Span{10, 11, 20, 30}
+	tup := dvid.Span{10, 11, 20, 30}
 	if tup.Less(dvid.ChunkPoint3d{20, 11, 10}) {
 		t.Errorf("Bad tuple.Less()\n")
 	}

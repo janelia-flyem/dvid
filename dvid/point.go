@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/gob"
+	"encoding/json"
 	"fmt"
 	"image"
 	"math"
@@ -580,33 +581,54 @@ func (p Point3d) PointInChunk(size Point) Point {
 	return Point3d{p0, p1, p2}
 }
 
-type ListPoint3d []Point3d
-
-type ByZYX ListPoint3d
-
-func (list ByZYX) Len() int {
-	return len(list)
+type ListChunkPoint3d struct {
+	Points  []ChunkPoint3d
+	Indices []int
 }
 
-func (list ByZYX) Swap(i, j int) {
-	list[i], list[j] = list[j], list[i]
+// ListChunkPoint3dFromVoxels creates a ListChunkPoint3d from JSON of voxel coordinates:
+//   [ [x0, y0, z0], [x1, y1, z1], ... ]
+func ListChunkPoint3dFromVoxels(jsonBytes []byte, blockSize Point) (*ListChunkPoint3d, error) {
+	var pts []Point3d
+	if err := json.Unmarshal(jsonBytes, &pts); err != nil {
+		return nil, err
+	}
+	var list ListChunkPoint3d
+	list.Points = make([]ChunkPoint3d, len(pts))
+	list.Indices = make([]int, len(pts))
+	for i, pt := range pts {
+		list.Points[i], _ = pt.Chunk(blockSize).(ChunkPoint3d)
+		list.Indices[i] = i
+	}
+	return &list, nil
+}
+
+type ByZYX ListChunkPoint3d
+
+func (list *ByZYX) Len() int {
+	return len(list.Points)
+}
+
+func (list *ByZYX) Swap(i, j int) {
+	list.Points[i], list.Points[j] = list.Points[j], list.Points[i]
+	list.Indices[i], list.Indices[j] = list.Indices[j], list.Indices[i]
 }
 
 // Points are ordered by Z, then Y, then X.
-func (list ByZYX) Less(i, j int) bool {
-	if list[i][2] < list[j][2] {
+func (list *ByZYX) Less(i, j int) bool {
+	if list.Points[i][2] < list.Points[j][2] {
 		return true
 	}
-	if list[i][2] > list[j][2] {
+	if list.Points[i][2] > list.Points[j][2] {
 		return false
 	}
-	if list[i][1] < list[j][1] {
+	if list.Points[i][1] < list.Points[j][1] {
 		return true
 	}
-	if list[i][1] > list[j][1] {
+	if list.Points[i][1] > list.Points[j][1] {
 		return false
 	}
-	return list[i][0] < list[j][0]
+	return list.Points[i][0] < list.Points[j][0]
 }
 
 // PointNd is a slice of N 32-bit signed integers that implements the Point interface.
@@ -1324,4 +1346,117 @@ func (ext *ChunkExtents3d) Extend(pt ChunkPoint3d) bool {
 		changed = true
 	}
 	return changed
+}
+
+// Span is (Z, Y, X0, X1).
+// TODO -- Consolidate with dvid.RLE since both handle run-length encodings in X, although
+// dvid.RLE handles voxel coordinates not block (chunk) coordinates.
+type Span [4]int32
+
+func (s Span) String() string {
+	return fmt.Sprintf("[%d, %d, %d, %d]", s[0], s[1], s[2], s[3])
+}
+
+// Extends returns true and modifies the span if the given point
+// is one more in x direction than this span.  Else it returns false.
+func (s *Span) Extends(x, y, z int32) bool {
+	if s == nil || (*s)[0] != z || (*s)[1] != y || (*s)[3] != x-1 {
+		return false
+	}
+	(*s)[3] = x
+	return true
+}
+
+func (s Span) Unpack() (z, y, x0, x1 int32) {
+	return s[0], s[1], s[2], s[3]
+}
+
+func (s Span) Less(block ChunkPoint3d) bool {
+	if s[0] < block[2] {
+		return true
+	}
+	if s[0] > block[2] {
+		return false
+	}
+	if s[1] < block[1] {
+		return true
+	}
+	if s[1] > block[1] {
+		return false
+	}
+	if s[3] < block[0] {
+		return true
+	}
+	return false
+}
+
+func (s Span) Includes(block ChunkPoint3d) bool {
+	if s[0] != block[2] {
+		return false
+	}
+	if s[1] != block[1] {
+		return false
+	}
+	if s[2] > block[0] || s[3] < block[0] {
+		return false
+	}
+	return true
+}
+
+type Spans []Span
+
+// MarshalBinary returns a binary serialization of the RLEs for the
+// spans with the first 4 bytes corresponding to the number of spans.
+func (s Spans) MarshalBinary() ([]byte, error) {
+	buf := new(bytes.Buffer)
+	if err := binary.Write(buf, binary.LittleEndian, uint32(len(s))); err != nil {
+		return nil, err
+	}
+	if s != nil {
+		for _, span := range s {
+			if err := binary.Write(buf, binary.LittleEndian, span[2]); err != nil {
+				return nil, err
+			}
+			if err := binary.Write(buf, binary.LittleEndian, span[1]); err != nil {
+				return nil, err
+			}
+			if err := binary.Write(buf, binary.LittleEndian, span[0]); err != nil {
+				return nil, err
+			}
+			if err := binary.Write(buf, binary.LittleEndian, span[3]-span[2]+1); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return buf.Bytes(), nil
+}
+
+func (s *Spans) UnmarshalBinary(b []byte) error {
+	buf := bytes.NewBuffer(b)
+	var numSpans uint32
+	if err := binary.Read(buf, binary.LittleEndian, &numSpans); err != nil {
+		return err
+	}
+	if numSpans == 0 {
+		*s = Spans{}
+		return nil
+	}
+	*s = make(Spans, int(numSpans), int(numSpans))
+	for i := uint32(0); i < numSpans; i++ {
+		if err := binary.Read(buf, binary.LittleEndian, &((*s)[i][2])); err != nil {
+			return err
+		}
+		if err := binary.Read(buf, binary.LittleEndian, &((*s)[i][1])); err != nil {
+			return err
+		}
+		if err := binary.Read(buf, binary.LittleEndian, &((*s)[i][0])); err != nil {
+			return err
+		}
+		var length int32
+		if err := binary.Read(buf, binary.LittleEndian, &length); err != nil {
+			return err
+		}
+		(*s)[i][3] = (*s)[i][2] + length - 1
+	}
+	return nil
 }

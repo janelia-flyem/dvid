@@ -101,7 +101,7 @@ func TestSubvolLabels64(t *testing.T) {
 	labels := newDataInstance(repo, t, "mylabels")
 	labelsCtx := datastore.NewVersionedContext(labels, versionID)
 
-	// Create a fake 100x100x100 8-bit grayscale image
+	// Create a fake 100x100x100 label volume
 	offset := dvid.Point3d{5, 35, 61}
 	size := dvid.Point3d{100, 100, 100}
 	subvol := dvid.NewSubvolume(offset, size)

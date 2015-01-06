@@ -233,7 +233,9 @@ func (i *IndexZYX) Hash(n int) int {
 }
 
 // MarshalBinary fulfills the encoding.BinaryMarshaler interface and stores
-// index ZYX as X, Y, Z in little endian int32 format.
+// index ZYX as X, Y, Z in little endian int32 format.  Note that this should NOT
+// be used when creating a DVID key; use Bytes(), which stores big endian for
+// better lexicographic ordering.
 func (i *IndexZYX) MarshalBinary() ([]byte, error) {
 	var buf bytes.Buffer
 	for dim := 0; dim < 3; dim++ {
@@ -244,6 +246,10 @@ func (i *IndexZYX) MarshalBinary() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// UnmarshalBinary fulfills the encoding.BinaryUnmarshaler interface and sets
+// index ZYX using little endian int32 format.  Note that this should NOT
+// be used when retrieving a DVID key; use IndexFromBytes(), which decodes big
+// endian due to key lexicographic ordering.
 func (i *IndexZYX) UnmarshalBinary(b []byte) error {
 	buf := bytes.NewBuffer(b)
 	if len(b) != 12 {

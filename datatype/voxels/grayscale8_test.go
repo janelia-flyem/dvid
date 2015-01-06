@@ -202,7 +202,7 @@ func TestForegroundROI(t *testing.T) {
 
 	// Request a foreground ROI
 	var reply datastore.Response
-	cmd := dvid.Command{"node", string(repo.RootUUID()), string(grayscale.DataName()), "roi", "foreground", "0,255"}
+	cmd := dvid.Command{"node", string(repo.RootUUID()), "grayscale", "roi", "foreground", "0,255"}
 	if err := grayscale.DoRPC(datastore.Request{Command: cmd}, &reply); err != nil {
 		t.Fatalf("Error running foreground ROI command: %s\n", err.Error())
 	}

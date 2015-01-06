@@ -139,7 +139,7 @@ POST <api URL>/node/<UUID>/<data name>/info
 
 GET  <api URL>/node/<UUID>/<data name>/metadata
 
-	Retrieves metadata in JSON format (application/vnd.dvid-nd-data+json) that describes the layout
+	Retrieves a JSON schema (application/vnd.dvid-nd-data+json) that describes the layout
 	of bytes returned for n-d images.
 
 
@@ -1298,8 +1298,8 @@ func (d *Data) foregroundROI(uuid dvid.UUID, versionID dvid.VersionID, dest *roi
 
 	const BATCH_SIZE = 1000
 	var numBatches int
-	var span *roi.Span
-	spans := []roi.Span{}
+	var span *dvid.Span
+	spans := []dvid.Span{}
 	minIndex := NewVoxelBlockIndex(&dvid.MinIndexZYX)
 	maxIndex := NewVoxelBlockIndex(&dvid.MaxIndexZYX)
 	err = bigdata.ProcessRange(ctx, minIndex, maxIndex, &storage.ChunkOp{}, func(chunk *storage.Chunk) {
@@ -1334,22 +1334,22 @@ func (d *Data) foregroundROI(uuid dvid.UUID, versionID dvid.VersionID, dest *roi
 			}
 			x, y, z := indexZYX.Unpack()
 			if span == nil {
-				span = &roi.Span{z, y, x, x}
+				span = &dvid.Span{z, y, x, x}
 			} else if !span.Extends(x, y, z) {
 				spans = append(spans, *span)
 				if len(spans) >= BATCH_SIZE {
 					init := (numBatches == 0)
 					numBatches++
-					go func(spans []roi.Span) {
+					go func(spans []dvid.Span) {
 						if err := dest.PutSpans(versionID, spans, init); err != nil {
 							dvid.Errorf("Error in storing ROI: %s\n", err.Error())
 						} else {
 							timedLog.Debugf("-- Wrote batch %d of spans for foreground ROI %q", numBatches, dest.DataName())
 						}
 					}(spans)
-					spans = []roi.Span{}
+					spans = []dvid.Span{}
 				}
-				span = &roi.Span{z, y, x, x}
+				span = &dvid.Span{z, y, x, x}
 			}
 		}
 		server.BlockOnInteractiveRequests("voxels [compute foreground ROI]")

@@ -330,62 +330,13 @@ func maxIndexByBlockZ(z int32) indexRLE {
 	return indexRLE{dvid.IndexZYX{math.MaxInt32, math.MaxInt32, z}, math.MaxUint32}
 }
 
-// Tuples are (Z, Y, X0, X1)
-type Span [4]int32
-
-// Extend returns true and modifies the span if the given point
-// is one more in x direction than this span.  Else it returns false.
-func (s *Span) Extends(x, y, z int32) bool {
-	if s == nil || (*s)[0] != z || (*s)[1] != y || (*s)[3] != x-1 {
-		return false
-	}
-	(*s)[3] = x
-	return true
-}
-
-func (s Span) Unpack() (z, y, x0, x1 int32) {
-	return s[0], s[1], s[2], s[3]
-}
-
-func (s Span) Less(block dvid.ChunkPoint3d) bool {
-	if s[0] < block[2] {
-		return true
-	}
-	if s[0] > block[2] {
-		return false
-	}
-	if s[1] < block[1] {
-		return true
-	}
-	if s[1] > block[1] {
-		return false
-	}
-	if s[3] < block[0] {
-		return true
-	}
-	return false
-}
-
-func (s Span) Includes(block dvid.ChunkPoint3d) bool {
-	if s[0] != block[2] {
-		return false
-	}
-	if s[1] != block[1] {
-		return false
-	}
-	if s[2] > block[0] || s[3] < block[0] {
-		return false
-	}
-	return true
-}
-
 // Returns all (z, y, x0, x1) Spans in sorted order: z, then y, then x0.
-func getSpans(ctx storage.VersionedContext, minIndex, maxIndex indexRLE) ([]Span, error) {
+func getSpans(ctx storage.VersionedContext, minIndex, maxIndex indexRLE) ([]dvid.Span, error) {
 	db, err := storage.SmallDataStore()
 	if err != nil {
 		return nil, err
 	}
-	spans := []Span{}
+	spans := []dvid.Span{}
 	err = db.ProcessRange(ctx, minIndex.Bytes(), maxIndex.Bytes(), &storage.ChunkOp{}, func(chunk *storage.Chunk) {
 		indexBytes, err := ctx.IndexFromKey(chunk.K)
 		if err != nil {
@@ -400,13 +351,13 @@ func getSpans(ctx storage.VersionedContext, minIndex, maxIndex indexRLE) ([]Span
 		y := index.start.Value(1)
 		x0 := index.start.Value(0)
 		x1 := x0 + int32(index.span) - 1
-		spans = append(spans, Span{z, y, x0, x1})
+		spans = append(spans, dvid.Span{z, y, x0, x1})
 	})
 	return spans, nil
 }
 
 // Returns all (z, y, x0, x1) Spans in sorted order: z, then y, then x0.
-func GetSpans(ctx storage.VersionedContext) ([]Span, error) {
+func GetSpans(ctx storage.VersionedContext) ([]dvid.Span, error) {
 	return getSpans(ctx, minIndexRLE, maxIndexRLE)
 }
 
@@ -455,7 +406,7 @@ func (d *Data) Delete(ctx storage.VersionedContext) error {
 // PutSpans saves a slice of spans representing an ROI into the datastore.
 // If the init parameter is true, all previous spans of this ROI are deleted before
 // writing these spans.
-func (d *Data) PutSpans(versionID dvid.VersionID, spans []Span, init bool) error {
+func (d *Data) PutSpans(versionID dvid.VersionID, spans []dvid.Span, init bool) error {
 	ctx := datastore.NewVersionedContext(d, versionID)
 
 	db, err := storage.SmallDataStore()
@@ -525,7 +476,7 @@ func (d *Data) PutSpans(versionID dvid.VersionID, spans []Span, init bool) error
 
 // PutJSON saves JSON-encoded data representing an ROI into the datastore.
 func (d *Data) PutJSON(versionID dvid.VersionID, jsonBytes []byte) error {
-	spans := []Span{}
+	spans := []dvid.Span{}
 	err := json.Unmarshal(jsonBytes, &spans)
 	if err != nil {
 		return fmt.Errorf("Error trying to parse POSTed JSON: %s", err.Error())
@@ -614,22 +565,19 @@ func (d *Data) GetMask(ctx storage.VersionedContext, subvol *dvid.Subvolume) ([]
 }
 
 // Returns the current span index and whether given point is included in span.
-func (d *Data) seekSpan(pt dvid.Point3d, spans []Span, curSpanI int) (int, bool) {
+func seekSpan(pt dvid.ChunkPoint3d, spans []dvid.Span, curSpanI int) (int, bool) {
 	numSpans := len(spans)
 	if curSpanI >= numSpans {
 		return curSpanI, false
 	}
 
-	// Determine current block index of point.
-	chunkPt, _ := pt.Chunk(d.BlockSize).(dvid.ChunkPoint3d)
-
 	// Keep going through spans until we are equal to or past the chunk point.
 	for {
 		curSpan := spans[curSpanI]
-		if curSpan.Less(chunkPt) {
+		if curSpan.Less(pt) {
 			curSpanI++
 		} else {
-			if curSpan.Includes(chunkPt) {
+			if curSpan.Includes(pt) {
 				return curSpanI, true
 			} else {
 				return curSpanI, false
@@ -644,12 +592,11 @@ func (d *Data) seekSpan(pt dvid.Point3d, spans []Span, curSpanI int) (int, bool)
 // PointQuery checks if a JSON-encoded list of voxel points are within an ROI.
 // It returns a JSON list of bools, each corresponding to the original list of points.
 func (d *Data) PointQuery(ctx storage.VersionedContext, jsonBytes []byte) ([]byte, error) {
-	// Convert given set of JSON-encoded points to a sorted list of points.
-	var pts dvid.ListPoint3d
-	if err := json.Unmarshal(jsonBytes, &pts); err != nil {
+	list, err := dvid.ListChunkPoint3dFromVoxels(jsonBytes, d.BlockSize)
+	if err != nil {
 		return nil, err
 	}
-	sort.Sort(dvid.ByZYX(pts))
+	sort.Sort((*dvid.ByZYX)(list))
 
 	// Get the ROI.  The spans are ordered in z, y, then x0.
 	spans, err := GetSpans(ctx)
@@ -658,12 +605,13 @@ func (d *Data) PointQuery(ctx storage.VersionedContext, jsonBytes []byte) ([]byt
 	}
 
 	// Iterate through each query point, using the ordering to make the search more efficient.
-	inclusions := make([]bool, len(pts))
+	inclusions := make([]bool, len(list.Points))
 	var included bool
 	curSpan := 0
-	for i := 0; i < len(pts); i++ {
-		curSpan, included = d.seekSpan(pts[i], spans, curSpan)
-		inclusions[i] = included
+	for i, pt := range list.Points {
+		origIndex := list.Indices[i]
+		curSpan, included = seekSpan(pt, spans, curSpan)
+		inclusions[origIndex] = included
 	}
 
 	// Convert to JSON

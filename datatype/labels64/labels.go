@@ -287,6 +287,79 @@ func PutSparseVol(ctx storage.Context, label uint64, data []byte) error {
 	return nil
 }
 
+// GetSparseCoarseVol returns an encoded sparse volume given a label.  The encoding has the
+// following format where integers are little endian:
+// 		byte     Set to 0
+// 		uint8    Number of dimensions
+// 		uint8    Dimension of run (typically 0 = X)
+// 		byte     Reserved (to be used later)
+// 		uint32    # Blocks [TODO.  0 for now]
+// 		uint32    # Spans
+// 		Repeating unit of:
+//     		int32   Block coordinate of run start (dimension 0)
+//     		int32   Block coordinate of run start (dimension 1)
+//     		int32   Block coordinate of run start (dimension 2)
+//     		int32   Length of run
+//
+func GetSparseCoarseVol(ctx storage.Context, label uint64) ([]byte, error) {
+	smalldata, err := storage.SmallDataStore()
+	if err != nil {
+		return nil, fmt.Errorf("Cannot get datastore that handles small data: %s\n", err.Error())
+	}
+
+	// Create the sparse volume header
+	buf := new(bytes.Buffer)
+	buf.WriteByte(dvid.EncodingBinary)
+	binary.Write(buf, binary.LittleEndian, uint8(3))  // # of dimensions
+	binary.Write(buf, binary.LittleEndian, byte(0))   // dimension of run (X = 0)
+	buf.WriteByte(byte(0))                            // reserved for later
+	binary.Write(buf, binary.LittleEndian, uint32(0)) // Placeholder for # blocks
+	encoding := buf.Bytes()
+
+	// Get the start/end indices for this body's KeyLabelSpatialMap (b + s) keys.
+	begIndex := voxels.NewLabelSpatialMapIndex(label, dvid.MinIndexZYX.Bytes())
+	endIndex := voxels.NewLabelSpatialMapIndex(label, dvid.MaxIndexZYX.Bytes())
+
+	// Process all the b+s keys and their values, which contain RLE runs for that label.
+	var numBlocks uint32
+	var span *dvid.Span
+	var spans dvid.Spans
+	err = smalldata.ProcessRange(ctx, begIndex, endIndex, &storage.ChunkOp{}, func(chunk *storage.Chunk) {
+		numBlocks++
+		_, blockBytes, err := voxels.DecodeLabelSpatialMapKey(chunk.K)
+		if err != nil {
+			dvid.Errorf("Error retrieving RLE runs for label %d: %s\n", label, err.Error())
+			return
+		}
+		var indexZYX dvid.IndexZYX
+		if err := indexZYX.IndexFromBytes(blockBytes); err != nil {
+			dvid.Errorf("Error decoding block coordinate (%v) for coarse sparse volume: %s\n",
+				blockBytes, err.Error())
+			return
+		}
+		x, y, z := indexZYX.Unpack()
+		if span == nil {
+			span = &dvid.Span{z, y, x, x}
+		} else if !span.Extends(x, y, z) {
+			spans = append(spans, *span)
+			span = &dvid.Span{z, y, x, x}
+		}
+	})
+	if err != nil {
+		return nil, err
+	}
+	if span != nil {
+		spans = append(spans, *span)
+	}
+	spansBytes, err := spans.MarshalBinary()
+	if err != nil {
+		return nil, err
+	}
+	encoding = append(encoding, spansBytes...)
+	dvid.Debugf("[%s] coarse subvol for label %d: found %d blocks\n", ctx, label, numBlocks)
+	return encoding, nil
+}
+
 // Runs asynchronously and assumes that sparse volumes per spatial indices are ordered
 // by mapped label, i.e., we will get all data for body N before body N+1.  Exits when
 // receives a nil in channel.

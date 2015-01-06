@@ -141,7 +141,7 @@ POST <api URL>/node/<UUID>/<data name>/info
     data name     Name of voxels data.
 
 
-GET  <api URL>/node/<UUID>/<data name>/schema
+GET  <api URL>/node/<UUID>/<data name>/metadata
 
 	Retrieves a JSON schema (application/vnd.dvid-nd-data+json) that describes the layout
 	of bytes returned for n-d images.
@@ -220,6 +220,28 @@ GET <api URL>/node/<UUID>/<data name>/sparsevol-by-point/<coord>
     coord     	  Coordinate of voxel with underscore as separator, e.g., 10_20_30
 
 
+GET <api URL>/node/<UUID>/<data name>/sparsevol-coarse/<label>
+
+	Returns a sparse volume with blocks of the given label in encoded RLE format.
+	The encoding has the following format where integers are little endian and the order
+	of data is exactly as specified below:
+
+	    byte     Set to 0
+	    uint8    Number of dimensions
+	    uint8    Dimension of run (typically 0 = X)
+	    byte     Reserved (to be used later)
+	    uint32    # Blocks [TODO.  0 for now]
+	    uint32    # Spans
+	    Repeating unit of:
+	        int32   Block coordinate of run start (dimension 0)
+	        int32   Block coordinate of run start (dimension 1)
+	        int32   Block coordinate of run start (dimension 2)
+			  ...
+	        int32   Length of run
+
+	Note that the above format is the RLE encoding of sparsevol, where voxel coordinates
+	have been replaced by block coordinates.
+
 GET <api URL>/node/<UUID>/<data name>/surface/<label>
 
 	Returns array of vertices and normals of surface voxels of given label.
@@ -293,6 +315,43 @@ POST <api URL>/node/<UUID>/<data name>/split
 	        int32   Coordinate of run start (dimension 2)
 			  ...
 	        int32   Length of run
+
+PROPOSED API CURRENTLY NOT IMPLEMENTED
+
+GET  <api URL>/node/<UUID>/<data name>/alias/<alias string>
+POST <api URL>/node/<UUID>/<data name>/alias/<alias string>
+DEL  <api URL>/node/<UUID>/<data name>/alias/<alias string>
+
+	Gets or saves an alias for a label.  The GET op returns the labels associated with an alias
+	using JSON of the form:
+
+		{"Labels": <label>, <label>, ...}
+
+	The POST op establishes an alias for label(s) and expects a similar JSON in body.
+	The DELETE op removes an alias.
+
+GET <api URL>/node/<UUID>/<data name>/aliases/<alias prefix>
+
+	Gets any alias with given prefix.  Returned JSON is of form:
+
+	[
+		{
+			"Alias": <alias string>,
+			"Labels": <label>, <label>, ...
+		},
+		{
+			"Alias": <alias string>,
+			"Labels": <label>, <label>, ...
+		},
+		...
+	]
+
+GET <api URL>/node/<UUID>/<data name>/aliases-by-label/<label>
+
+	Returns all aliases associated with a label with JSON of the following format:
+
+	{ "Label": <label id>,  "Aliases": [<alias string>, <alias string>, ...]}
+
 `
 
 var (
@@ -1098,6 +1157,30 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 			return
 		}
 		timedLog.Infof("HTTP %s: sparsevol-by-point at %s (%s)", r.Method, coord, r.URL)
+
+	case "sparsevol-coarse":
+		// GET <api URL>/node/<UUID>/<data name>/sparsevol-coarse/<label>
+		if len(parts) < 5 {
+			server.BadRequest(w, r, "ERROR: DVID requires label ID to follow 'sparsevol-coarse' command")
+			return
+		}
+		label, err := strconv.ParseUint(parts[4], 10, 64)
+		if err != nil {
+			server.BadRequest(w, r, err.Error())
+			return
+		}
+		data, err := GetSparseCoarseVol(storeCtx, label)
+		if err != nil {
+			server.BadRequest(w, r, err.Error())
+			return
+		}
+		w.Header().Set("Content-type", "application/octet-stream")
+		_, err = w.Write(data)
+		if err != nil {
+			server.BadRequest(w, r, err.Error())
+			return
+		}
+		timedLog.Infof("HTTP %s: sparsevol-coarse on label %d (%s)", r.Method, label, r.URL)
 
 	case "surface":
 		// GET <api URL>/node/<UUID>/<data name>/surface/<label>
