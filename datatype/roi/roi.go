@@ -1163,15 +1163,15 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 	case "roi":
 		switch method {
 		case "get":
+			if !d.Ready {
+				w.WriteHeader(http.StatusPartialContent)
+			}
 			jsonBytes, err := Get(storeCtx)
 			if err != nil {
 				server.BadRequest(w, r, err.Error())
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
-			if !d.Ready {
-				w.WriteHeader(http.StatusPartialContent)
-			}
 			fmt.Fprintf(w, string(jsonBytes))
 			comment = fmt.Sprintf("HTTP GET ROI %q: %d bytes\n", d.DataName(), len(jsonBytes))
 		case "post":
