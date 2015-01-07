@@ -94,12 +94,19 @@ POST <api URL>/node/<UUID>/<data name>/info
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
     data name     Name of voxels data.
 
+GET  <api URL>/node/<UUID>/<data name>/keys
+
+	Returns all keys for this data instance in JSON format:
+
+	[key1, key2, ...]
 
 GET  <api URL>/node/<UUID>/<data name>/<key>[/<key2>]
 POST <api URL>/node/<UUID>/<data name>/<key>
 DEL  <api URL>/node/<UUID>/<data name>/<key> 
 
-    Performs operations on a key-value pair depending on the HTTP verb.
+    Performs operations on a key-value pair depending on the HTTP verb.  Note that "info" and "keys"
+    are reserved key values.  In the future, this API call will be deprecated in favor of explicit
+    "key" and "keyrange" endpoints.
 
     Example: 
 
@@ -119,12 +126,20 @@ DEL  <api URL>/node/<UUID>/<data name>/<key>
     key2          If given, return value is a JSON list of all keys between 'key' and 'key2'
 `
 
+var (
+	minKey, maxKey string
+)
+
 func init() {
 	datastore.Register(NewType())
 
 	// Need to register types that will be used to fulfill interfaces.
 	gob.Register(&Type{})
 	gob.Register(&Data{})
+
+	// Create min and max key
+	minKey = string([]byte{0})
+	maxKey = string([]byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF})
 }
 
 // Type embeds the datastore's Type to create a unique type for keyvalue functions.
@@ -185,7 +200,7 @@ func (i indexT) String() string {
 // Properties are additional properties for keyvalue data instances beyond those
 // in standard datastore.Data.   These will be persisted to metadata storage.
 type Properties struct {
-	MaxKeySize int
+	MaxKeySize int // TODO -- Move to smarter system for arbitrary key sizes like fdb's tokens.
 }
 
 // Data embeds the datastore's Data and extends it with keyvalue properties (none for now).
@@ -246,7 +261,7 @@ func (d *Data) GetKeysInRange(ctx storage.Context, keyBeg, keyEnd string) ([]str
 	if err != nil {
 		return nil, err
 	}
-	fmt.Printf("Getting keys in range %s -> %s\n", keyBeg, keyEnd)
+
 	// Compute first and last key for range
 	first, err := d.getIndex(keyBeg)
 	if err != nil {
@@ -442,6 +457,20 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 		}
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, jsonStr)
+		return
+	case "keys":
+		keyList, err := d.GetKeysInRange(storeCtx, minKey, maxKey)
+		if err != nil {
+			server.BadRequest(w, r, err.Error())
+			return
+		}
+		jsonBytes, err := json.Marshal(keyList)
+		if err != nil {
+			server.BadRequest(w, r, err.Error())
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, string(jsonBytes))
 		return
 	default:
 	}

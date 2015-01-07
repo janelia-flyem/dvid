@@ -5,14 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"net/http"
-	"net/http/httptest"
 	"reflect"
 	"strings"
 	"sync"
 	"testing"
-
-	"code.google.com/p/go.net/context"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -177,74 +173,54 @@ func testRequest(t *testing.T, repo datastore.Repo, versionID dvid.VersionID, na
 		t.Fatalf("Returned new data instance is not roi.Data\n")
 	}
 
-	serverCtx := datastore.NewServerContext(context.Background(), repo, versionID)
-
 	// PUT a value
 	key1 := "mykey"
 	value1 := "some stuff"
 	key1req := fmt.Sprintf("%snode/%s/%s/%s", server.WebAPIPath, uuid, data.DataName(), key1)
-	req, err := http.NewRequest("POST", key1req, strings.NewReader(value1))
-	if err != nil {
-		t.Errorf("Unsuccessful POST request (%s): %s\n", key1req, err.Error())
-	}
-	w := httptest.NewRecorder()
-	data.ServeHTTP(serverCtx, w, req)
-	if w.Code != http.StatusOK {
-		t.Errorf("Bad response keyvalue %q POST, status %s, for key %q\n", w.Code,
-			data.DataName(), key1)
-	}
+	server.TestHTTP(t, "POST", key1req, strings.NewReader(value1))
 
 	// Get back k/v
-	req, err = http.NewRequest("GET", key1req, nil)
-	if err != nil {
-		t.Errorf("Unsuccessful GET request (%s): %s\n", key1req, err.Error())
-	}
-	w = httptest.NewRecorder()
-	data.ServeHTTP(serverCtx, w, req)
-	if w.Code != http.StatusOK {
-		t.Errorf("Bad response keyvalue %q GET, status %s\n", key1, w.Code)
-	}
-	retrieved := string(w.Body.Bytes())
-	if retrieved != value1 {
-		t.Errorf("Error on key %q: expected %s, got %s\n", key1, value1, retrieved)
+	returnValue := server.TestHTTP(t, "GET", key1req, nil)
+	if string(returnValue) != value1 {
+		t.Errorf("Error on key %q: expected %s, got %s\n", key1, value1, string(returnValue))
 	}
 
 	// Add 2nd k/v
 	key2 := "my2ndkey"
 	value2 := "more good stuff"
 	key2req := fmt.Sprintf("%snode/%s/%s/%s", server.WebAPIPath, uuid, data.DataName(), key2)
-	req, err = http.NewRequest("POST", key2req, strings.NewReader(value2))
-	if err != nil {
-		t.Errorf("Unsuccessful POST request (%s): %s\n", key2req, err.Error())
-	}
-	w = httptest.NewRecorder()
-	data.ServeHTTP(serverCtx, w, req)
-	if w.Code != http.StatusOK {
-		t.Errorf("Bad response keyvalue %q POST, status %s, for key %q\n", w.Code,
-			data.DataName(), key2)
-	}
+	server.TestHTTP(t, "POST", key2req, strings.NewReader(value2))
 
-	// Check return of all keys between given keys.
+	// Add 3rd k/v
+	key3 := "heresanotherkey"
+	value3 := "my 3rd value"
+	key3req := fmt.Sprintf("%snode/%s/%s/%s", server.WebAPIPath, uuid, data.DataName(), key3)
+	server.TestHTTP(t, "POST", key3req, strings.NewReader(value3))
+
+	// Check return of first two keys in range.
 	rangereq := fmt.Sprintf("%snode/%s/%s/%s/%s", server.WebAPIPath, uuid, data.DataName(),
 		"my", "zebra")
-	req, err = http.NewRequest("GET", rangereq, strings.NewReader(value2))
-	if err != nil {
-		t.Errorf("Unsuccessful GET request (%s): %s\n", rangereq, err.Error())
-	}
-	w = httptest.NewRecorder()
-	data.ServeHTTP(serverCtx, w, req)
-	if w.Code != http.StatusOK {
-		t.Errorf("Bad response keyvalue %q POST, status %s, for key %q\n", w.Code,
-			data.DataName(), key2)
-	}
+	returnValue = server.TestHTTP(t, "GET", rangereq, nil)
+
 	var retrievedKeys []string
-	returnValue := w.Body.Bytes()
 	if err = json.Unmarshal(returnValue, &retrievedKeys); err != nil {
 		t.Errorf("Bad key range request unmarshal: %s\n", err.Error())
 	}
 	if len(retrievedKeys) != 2 || retrievedKeys[1] != "mykey" && retrievedKeys[0] != "my2ndKey" {
-		t.Errorf("Bad key range request return.  Expected: [%q,%q].  Got: %s (code %d)\n",
-			key1, key2, string(returnValue), w.Code)
+		t.Errorf("Bad key range request return.  Expected: [%q,%q].  Got: %s\n",
+			key1, key2, string(returnValue))
+	}
+
+	// Check return of all keys
+	allkeyreq := fmt.Sprintf("%snode/%s/%s/keys", server.WebAPIPath, uuid, data.DataName())
+	returnValue = server.TestHTTP(t, "GET", allkeyreq, nil)
+
+	if err = json.Unmarshal(returnValue, &retrievedKeys); err != nil {
+		t.Errorf("Bad key range request unmarshal: %s\n", err.Error())
+	}
+	if len(retrievedKeys) != 4 || retrievedKeys[0] != "heresanotherkey" && retrievedKeys[1] != "my2ndKey" && retrievedKeys[2] != "mykey" {
+		t.Errorf("Bad all key request return.  Expected: [%q,%q,%q].  Got: %s\n",
+			key3, key1, key2, string(returnValue))
 	}
 }
 
@@ -280,37 +256,17 @@ func TestKeyvalueVersioning(t *testing.T) {
 		t.Fatalf("Returned new data instance is not roi.Data\n")
 	}
 
-	serverCtx := datastore.NewServerContext(context.Background(), repo, versionID)
-
 	// PUT a value
 	key1 := "mykey"
 	value1 := "some stuff"
 	key1req := fmt.Sprintf("%snode/%s/%s/%s", server.WebAPIPath, uuid, data.DataName(), key1)
-	req, err := http.NewRequest("POST", key1req, strings.NewReader(value1))
-	if err != nil {
-		t.Errorf("Unsuccessful POST request (%s): %s\n", key1req, err.Error())
-	}
-
-	w := httptest.NewRecorder()
-	data.ServeHTTP(serverCtx, w, req)
-	if w.Code != http.StatusOK {
-		t.Errorf("Bad response keyvalue %q POST, status %s, for key %q\n", data.DataName(), w.Code, key1)
-	}
+	server.TestHTTP(t, "POST", key1req, strings.NewReader(value1))
 
 	// Add 2nd k/v
 	key2 := "my2ndkey"
 	value2 := "more good stuff"
 	key2req := fmt.Sprintf("%snode/%s/%s/%s", server.WebAPIPath, uuid, data.DataName(), key2)
-	req, err = http.NewRequest("POST", key2req, strings.NewReader(value2))
-	if err != nil {
-		t.Errorf("Unsuccessful POST request (%s): %s\n", key2req, err.Error())
-	}
-
-	w = httptest.NewRecorder()
-	data.ServeHTTP(serverCtx, w, req)
-	if w.Code != http.StatusOK {
-		t.Errorf("Bad response keyvalue %q POST, status %s, for key %q\n", data.DataName(), w.Code, key2)
-	}
+	server.TestHTTP(t, "POST", key2req, strings.NewReader(value2))
 
 	// Create a new version in repo
 	if err = repo.Lock(uuid); err != nil {
@@ -320,73 +276,39 @@ func TestKeyvalueVersioning(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unable to create new version off node %s: %s\n", uuid, err.Error())
 	}
-	version2, err := datastore.VersionFromUUID(uuid2)
+	_, err = datastore.VersionFromUUID(uuid2)
 	if err != nil {
 		t.Fatalf("Unable to get version ID from new uuid %s: %s\n", uuid2, err.Error())
 	}
 
 	// Change the 2nd k/v
-	serverCtx2 := datastore.NewServerContext(context.Background(), repo, version2)
 	value2new := "this is completely different"
 	key2newreq := fmt.Sprintf("%snode/%s/%s/%s", server.WebAPIPath, uuid2, data.DataName(), key2)
-	req, err = http.NewRequest("POST", key2newreq, strings.NewReader(value2new))
-
-	w = httptest.NewRecorder()
-	data.ServeHTTP(serverCtx2, w, req)
-	if w.Code != http.StatusOK {
-		t.Errorf("Bad response keyvalue %q POST, status %s, for key %q\n", data.DataName(), w.Code, key2)
-	}
+	server.TestHTTP(t, "POST", key2newreq, strings.NewReader(value2new))
 
 	// Get the first version value
-	req, err = http.NewRequest("GET", key2req, nil)
-	if err != nil {
-		t.Errorf("Unsuccessful GET request (%s): %s\n", key2req, err.Error())
-	}
-	w = httptest.NewRecorder()
-	data.ServeHTTP(serverCtx, w, req)
-	if w.Code != http.StatusOK {
-		t.Errorf("Bad response keyvalue %q GET, status %s\n", key2, w.Code)
-	}
-	retrieved := string(w.Body.Bytes())
-	if retrieved != value2 {
-		t.Errorf("Error on first version, key %q: expected %s, got %s\n", key2, value2, retrieved)
+	returnValue := server.TestHTTP(t, "GET", key2req, nil)
+	if string(returnValue) != value2 {
+		t.Errorf("Error on first version, key %q: expected %s, got %s\n", key2, value2, string(returnValue))
 	}
 
 	// Get the second version value
-	req, err = http.NewRequest("GET", key2newreq, nil)
-	if err != nil {
-		t.Errorf("Unsuccessful GET request (%s): %s\n", key2newreq, err.Error())
-	}
-	w = httptest.NewRecorder()
-	data.ServeHTTP(serverCtx2, w, req)
-	if w.Code != http.StatusOK {
-		t.Errorf("Bad response keyvalue %q GET, status %s\n", key2, w.Code)
-	}
-	retrieved = string(w.Body.Bytes())
-	if retrieved != value2new {
-		t.Errorf("Error on second version, key %q: expected %s, got %s\n", key2, value2new, retrieved)
+	returnValue = server.TestHTTP(t, "GET", key2newreq, nil)
+	if string(returnValue) != value2new {
+		t.Errorf("Error on second version, key %q: expected %s, got %s\n", key2, value2new, string(returnValue))
 	}
 
-	// Check return of all keys between given keys.
+	// Check return of first two keys in range.
 	rangereq := fmt.Sprintf("%snode/%s/%s/%s/%s", server.WebAPIPath, uuid, data.DataName(),
 		"my", "zebra")
-	req, err = http.NewRequest("GET", rangereq, strings.NewReader(value2))
-	if err != nil {
-		t.Errorf("Unsuccessful GET request (%s): %s\n", rangereq, err.Error())
-	}
-	w = httptest.NewRecorder()
-	data.ServeHTTP(serverCtx, w, req)
-	if w.Code != http.StatusOK {
-		t.Errorf("Bad response keyvalue %q POST, status %s, for key %q\n", w.Code,
-			data.DataName(), key2)
-	}
+	returnValue = server.TestHTTP(t, "GET", rangereq, nil)
+
 	var retrievedKeys []string
-	returnValue := w.Body.Bytes()
 	if err = json.Unmarshal(returnValue, &retrievedKeys); err != nil {
 		t.Errorf("Bad key range request unmarshal: %s\n", err.Error())
 	}
 	if len(retrievedKeys) != 2 || retrievedKeys[1] != "mykey" && retrievedKeys[0] != "my2ndKey" {
-		t.Errorf("Bad key range request return.  Expected: [%q,%q].  Got: %s (code %d)\n",
-			key1, key2, string(returnValue), w.Code)
+		t.Errorf("Bad key range request return.  Expected: [%q,%q].  Got: %s\n",
+			key1, key2, string(returnValue))
 	}
 }
