@@ -66,6 +66,13 @@ const WebHelp = `
 		
 		<h3>HTTP API and command line use</h3>
 
+		<p>All API endpoints follow this layout:
+		<pre>
+/serverhost:someport/api/...
+		</pre>
+		The online documentation doesn't show the server host prefixed to the "/api/..." URL,
+		but it is required.
+
 		<h4>General commands</h4>
 
 		<pre>

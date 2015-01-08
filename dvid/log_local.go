@@ -3,9 +3,10 @@
 package dvid
 
 import (
+	"fmt"
 	"log"
 
-	"github.com/janelia-flyem/go/lumberjack"
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 type stdLogger struct {
@@ -14,20 +15,25 @@ type stdLogger struct {
 
 var logger stdLogger
 
-// Sets up a logger that sends messages via standard log but does not exit or panic.
-func NewLogger(c interface{}) Logger {
-	filename, ok := c.(string)
-	if !ok {
-		log.Fatalf("Cannot open logger.  Received %v instead of string\n", c)
-		return nil
+type LogConfig struct {
+	Logfile string
+	MaxSize int `toml:"max_log_size"`
+	MaxAge  int `toml:"max_log_age"`
+}
+
+// SetLogger creates a logger that saves to a rotating log file.
+func SetLogger(c LogConfig) {
+	if c.Logfile == "" {
+		fmt.Println("Sending log messages to stdout since no log file specified.")
+		return
 	}
+	fmt.Printf("Sending log messages to: %s\n", c.Logfile)
 	l := &lumberjack.Logger{
-		Filename: filename,
-		MaxSize:  50, // megabytes
+		Filename: c.Logfile,
+		MaxSize:  c.MaxSize, // megabytes
+		MaxAge:   c.MaxAge,  //days
 	}
 	log.SetOutput(l)
-	logger = stdLogger{l}
-	return logger
 }
 
 // --- Logger implementation ----

@@ -208,7 +208,7 @@ func testRequest(t *testing.T, repo datastore.Repo, versionID dvid.VersionID, na
 	}
 	if len(retrievedKeys) != 2 || retrievedKeys[1] != "mykey" && retrievedKeys[0] != "my2ndKey" {
 		t.Errorf("Bad key range request return.  Expected: [%q,%q].  Got: %s\n",
-			key1, key2, string(returnValue))
+			key2, key1, string(returnValue))
 	}
 
 	// Check return of all keys
@@ -218,9 +218,9 @@ func testRequest(t *testing.T, repo datastore.Repo, versionID dvid.VersionID, na
 	if err = json.Unmarshal(returnValue, &retrievedKeys); err != nil {
 		t.Errorf("Bad key range request unmarshal: %s\n", err.Error())
 	}
-	if len(retrievedKeys) != 4 || retrievedKeys[0] != "heresanotherkey" && retrievedKeys[1] != "my2ndKey" && retrievedKeys[2] != "mykey" {
+	if len(retrievedKeys) != 3 || retrievedKeys[0] != "heresanotherkey" && retrievedKeys[1] != "my2ndKey" && retrievedKeys[2] != "mykey" {
 		t.Errorf("Bad all key request return.  Expected: [%q,%q,%q].  Got: %s\n",
-			key3, key1, key2, string(returnValue))
+			key3, key2, key1, string(returnValue))
 	}
 }
 

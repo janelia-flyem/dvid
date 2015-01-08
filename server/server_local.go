@@ -49,7 +49,7 @@ func (c configT) WebClient() string {
 }
 
 // Serve starts HTTP and RPC servers.
-func Serve(httpAddress, webClientDir, rpcAddress string) error {
+func Serve(httpAddress, webClientDir, rpcAddress, configfile string) error {
 	// Set the package-level config variable
 	dvid.Infof("Serving HTTP on %s\n", httpAddress)
 	dvid.Infof("Serving command-line use via RPC %s\n", rpcAddress)

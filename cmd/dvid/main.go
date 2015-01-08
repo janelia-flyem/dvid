@@ -21,6 +21,8 @@ import (
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage/local"
 
+	"github.com/janelia-flyem/go/toml"
+
 	// Declare the data types this DVID executable will support
 	_ "github.com/janelia-flyem/dvid/datatype/keyvalue"
 	_ "github.com/janelia-flyem/dvid/datatype/labelgraph"
@@ -39,8 +41,8 @@ var (
 	// Read-only server.  Will only allow GET and HEAD requests.
 	readonly = flag.Bool("readonly", false, "")
 
-	// Name of file for logging output
-	logfile = flag.String("logfile", "", "")
+	// Name of file for TOML configuration.
+	configfile = flag.String("config", "", "")
 
 	// Run in verbose mode if true.
 	runVerbose = flag.Bool("verbose", false, "")
@@ -72,16 +74,16 @@ dvid is a command-line interface to a distributed, versioned image-oriented data
 
 Usage: dvid [options] <command>
 
-      -readonly   (flag)    HTTP API ignores anything but GET and HEAD requests.
-      -webclient  =string   Path to web client directory.  Leave unset for default pages.
-      -rpc        =string   Address for RPC communication.
-      -http       =string   Address for HTTP communication.
-      -logfile    =string   File name for log.  Will be rotated.
-      -cpuprofile =string   Write CPU profile to this file.
-      -memprofile =string   Write memory profile to this file on ctrl-C.
-      -numcpu     =number   Number of logical CPUs to use for DVID.
-      -stdin      (flag)    Accept and send stdin to server for use in commands.
-      -verbose    (flag)    Run in verbose mode.
+	  -readonly   (flag)    HTTP API ignores anything but GET and HEAD requests.
+	  -config     =string   File name for TOML config.  Command-line flags take precedence.
+	  -webclient  =string   Path to web client directory.  Leave unset for default pages.
+	  -rpc        =string   Address for RPC communication.
+	  -http       =string   Address for HTTP communication.
+	  -cpuprofile =string   Write CPU profile to this file.
+	  -memprofile =string   Write memory profile to this file on ctrl-C.
+	  -numcpu     =number   Number of logical CPUs to use for DVID.
+	  -stdin      (flag)    Accept and send stdin to server for use in commands.
+	  -verbose    (flag)    Run in verbose mode.
   -h, -help       (flag)    Show help message
 
   For profiling, please refer to this excellent article:
@@ -89,11 +91,11 @@ Usage: dvid [options] <command>
 
 Commands that can be performed without a running server:
 
-    about
-    help
-    create <datastore path>
-    serve  <datastore path>
-    repair <datastore path>
+	about
+	help
+	create <datastore path>
+	serve  <datastore path>
+	repair <datastore path>
 
 `
 
@@ -224,6 +226,21 @@ func DoRepair(cmd dvid.Command) error {
 	return nil
 }
 
+type tomlConfig struct {
+	Server serverConfig
+}
+
+type serverConfig struct {
+	Notify  []string
+	Logging dvid.LogConfig
+	Email   smtpServer
+}
+
+type smtpServer struct {
+	username, password, server string
+	port                       int
+}
+
 // DoServe opens a datastore then creates both web and rpc servers for the datastore
 func DoServe(cmd dvid.Command) error {
 	// Capture ctrl+c and other interrupts.  Then handle graceful shutdown.
@@ -251,6 +268,18 @@ func DoServe(cmd dvid.Command) error {
 	}()
 	signal.Notify(stopSig, os.Interrupt, os.Kill, syscall.SIGTERM)
 
+	// Check if there is a configuration file, and if so, set logger.
+	if *configfile != "" {
+		var tconfig tomlConfig
+		if _, err := toml.DecodeFile(*configfile, &tconfig); err != nil {
+			return fmt.Errorf("Could not decode TOML config: %s\n", err.Error())
+		}
+
+		// Setup logging
+		dvid.SetLogger(tconfig.Server.Logging)
+	}
+
+	// Load datastore metadata and initialize datastore
 	dbpath := cmd.Argument(1)
 	if dbpath == "" {
 		return fmt.Errorf("serve command must be followed by the path to the datastore")
@@ -261,7 +290,9 @@ func DoServe(cmd dvid.Command) error {
 	if err := datastore.Initialize(); err != nil {
 		return fmt.Errorf("Unable to initialize datastore: %s\n", err.Error())
 	}
-	if err := server.Serve(*httpAddress, *clientDir, *rpcAddress); err != nil {
+
+	// Serve HTTP and RPC
+	if err := server.Serve(*httpAddress, *clientDir, *rpcAddress, *configfile); err != nil {
 		return err
 	}
 	return nil
