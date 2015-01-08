@@ -2,14 +2,14 @@
 
 [server]
 # Who to send email in case of panic
-notify = ["admin@stanford.edu"]
+notify = ["foo@someplace.edu"]
 
     [server.logging]
     logfile = "/demo/logs/dvid.log"
     max_log_size = 500 # MB
     max_log_age = 30   # days
 
-	# Email server to use for notifications and server issuing email-based authorization tokens.
+    # Email server to use for notifications and server issuing email-based authorization tokens.
     [server.email]
     username = 
     password = 
