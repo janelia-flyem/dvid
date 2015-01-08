@@ -27,7 +27,7 @@ func TestHTTP(t *testing.T, method, urlStr string, payload io.Reader) []byte {
 		t.Fatalf("Unsuccessful %s on %q: %s\n", method, urlStr, err.Error())
 	}
 	w := httptest.NewRecorder()
-	ServeHTTP(w, req)
+	ServeSingleHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("Bad server response (%d) to %s on %q\n", w.Code, method, urlStr)
 	}

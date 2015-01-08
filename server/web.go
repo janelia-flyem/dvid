@@ -186,8 +186,8 @@ func init() {
 	webMux.Use(middleware.RequestID)
 }
 
-// ServeHTTP fulfills one request using the default web Mux.
-func ServeHTTP(w http.ResponseWriter, r *http.Request) {
+// ServeSingleHTTP fulfills one request using the default web Mux.
+func ServeSingleHTTP(w http.ResponseWriter, r *http.Request) {
 	if !webMux.routesSetup {
 		initRoutes()
 	}

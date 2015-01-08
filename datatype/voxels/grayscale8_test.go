@@ -216,7 +216,7 @@ func TestForegroundROI(t *testing.T) {
 			t.Fatalf("Unsuccessful GET on foreground ROI: %s", err.Error())
 		}
 		w := httptest.NewRecorder()
-		server.ServeHTTP(w, req)
+		server.ServeSingleHTTP(w, req)
 		roiJSON = string(w.Body.Bytes())
 		if w.Code == http.StatusOK {
 			break
