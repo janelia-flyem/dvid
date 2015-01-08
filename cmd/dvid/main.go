@@ -21,8 +21,6 @@ import (
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage/local"
 
-	"github.com/janelia-flyem/go/toml"
-
 	// Declare the data types this DVID executable will support
 	_ "github.com/janelia-flyem/dvid/datatype/keyvalue"
 	_ "github.com/janelia-flyem/dvid/datatype/labelgraph"
@@ -226,21 +224,6 @@ func DoRepair(cmd dvid.Command) error {
 	return nil
 }
 
-type tomlConfig struct {
-	Server serverConfig
-}
-
-type serverConfig struct {
-	Notify  []string
-	Logging dvid.LogConfig
-	Email   smtpServer
-}
-
-type smtpServer struct {
-	username, password, server string
-	port                       int
-}
-
 // DoServe opens a datastore then creates both web and rpc servers for the datastore
 func DoServe(cmd dvid.Command) error {
 	// Capture ctrl+c and other interrupts.  Then handle graceful shutdown.
@@ -269,15 +252,11 @@ func DoServe(cmd dvid.Command) error {
 	signal.Notify(stopSig, os.Interrupt, os.Kill, syscall.SIGTERM)
 
 	// Check if there is a configuration file, and if so, set logger.
-	if *configfile != "" {
-		var tconfig tomlConfig
-		if _, err := toml.DecodeFile(*configfile, &tconfig); err != nil {
-			return fmt.Errorf("Could not decode TOML config: %s\n", err.Error())
-		}
-
-		// Setup logging
-		dvid.SetLogger(tconfig.Server.Logging)
+	logConfig, err := server.LoadConfig(*configfile)
+	if err != nil {
+		return fmt.Errorf("Error loading configuration file %q: %s\n", *configfile, err.Error())
 	}
+	logConfig.SetLogger()
 
 	// Load datastore metadata and initialize datastore
 	dbpath := cmd.Argument(1)
@@ -292,7 +271,7 @@ func DoServe(cmd dvid.Command) error {
 	}
 
 	// Serve HTTP and RPC
-	if err := server.Serve(*httpAddress, *clientDir, *rpcAddress, *configfile); err != nil {
+	if err := server.Serve(*httpAddress, *clientDir, *rpcAddress); err != nil {
 		return err
 	}
 	return nil

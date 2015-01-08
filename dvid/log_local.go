@@ -22,7 +22,7 @@ type LogConfig struct {
 }
 
 // SetLogger creates a logger that saves to a rotating log file.
-func SetLogger(c LogConfig) {
+func (c *LogConfig) SetLogger() {
 	if c.Logfile == "" {
 		fmt.Println("Sending log messages to stdout since no log file specified.")
 		return

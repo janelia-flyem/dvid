@@ -14,7 +14,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"runtime/debug"
 	"strings"
 	"sync"
 
@@ -98,9 +97,9 @@ const WebHelp = `
 
  POST /api/repos
 
- 	Creates a new repository.  Expects configuration data in JSON as the body of the POST.
- 	Configuration is a JSON object with optional "alias" and "description" properties.
- 	Returns the root UUID of the newly created repo in JSON object: {"Root": uuid}
+	Creates a new repository.  Expects configuration data in JSON as the body of the POST.
+	Configuration is a JSON object with optional "alias" and "description" properties.
+	Returns the root UUID of the newly created repo in JSON object: {"Root": uuid}
 
  GET  /api/repos/info
 
@@ -108,7 +107,7 @@ const WebHelp = `
 
  HEAD /api/repo/{uuid}
 
- 	Returns 200 if a repo with given UUID is available.
+	Returns 200 if a repo with given UUID is available.
 
  GET  /api/repo/{uuid}/info
 
@@ -247,13 +246,13 @@ func initRoutes() {
 	mainMux := web.New()
 	webMux.Handle("/*", mainMux)
 	mainMux.Use(middleware.Logger)
-	mainMux.Use(middleware.Recoverer)
 	mainMux.Use(middleware.AutomaticOptions)
+	mainMux.Use(recoverHandler)
 	mainMux.Use(corsHandler)
 
 	// Handle RAML interface
-	mainMux.Get("/interface", logHttpPanics(interfaceHandler))
-	mainMux.Get("/interface/version", logHttpPanics(versionHandler))
+	mainMux.Get("/interface", interfaceHandler)
+	mainMux.Get("/interface/version", versionHandler)
 
 	mainMux.Get("/api/help", helpHandler)
 	mainMux.Get("/api/help/", helpHandler)
@@ -292,20 +291,32 @@ func initRoutes() {
 	webMux.routesSetup = true
 }
 
-// Wrapper function so that http handlers recover from panics gracefully
-// without crashing the entire program.  The error message is written to
-// the log.
-func logHttpPanics(handler func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
-	return func(writer http.ResponseWriter, request *http.Request) {
+// Middleware that recovers from panics, sends email if a notification email
+// has been provided, and log issues.
+func recoverHandler(c *web.C, h http.Handler) http.Handler {
+	fn := func(w http.ResponseWriter, r *http.Request) {
+		reqID := middleware.GetReqID(*c)
+
 		defer func() {
 			if err := recover(); err != nil {
-				log.Printf("Caught panic on HTTP request: %s", err)
-				log.Printf("IP: %v, URL: %s", request.RemoteAddr, request.URL.Path)
-				log.Printf("Stack Dump:\n%s", debug.Stack())
+				buf := make([]byte, 1<<16)
+				size := runtime.Stack(buf, false)
+				stackTrace := string(buf[0:size])
+				message := fmt.Sprintf("Panic detected on request %s:\n%+v\nIP: %v, URL: %s\nStack trace:\n%s\n",
+					reqID, err, r.RemoteAddr, r.URL.Path, stackTrace)
+				dvid.Criticalf("%s\n", message)
+
+				if err := SendNotification(message, nil); err != nil {
+					dvid.Criticalf("Couldn't send email notifcation: %s\n", err.Error())
+				}
+
+				http.Error(w, http.StatusText(500), 500)
 			}
 		}()
-		handler(writer, request)
+
+		h.ServeHTTP(w, r)
 	}
+	return http.HandlerFunc(fn)
 }
 
 func NotFound(w http.ResponseWriter, r *http.Request) {

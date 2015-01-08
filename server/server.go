@@ -13,7 +13,7 @@ import (
 	"github.com/janelia-flyem/dvid/storage"
 )
 
-// Local server configuration parameters.  Should be set by platform-specific implementations.
+// DVID server configuration parameters.  Should be set by platform-specific implementations.
 type Config interface {
 	HTTPAddress() string
 	RPCAddress() string
