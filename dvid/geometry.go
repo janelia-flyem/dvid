@@ -346,9 +346,15 @@ func NewSubvolumeFromStrings(offsetStr, sizeStr, sep string) (*Subvolume, error)
 	if err != nil {
 		return nil, err
 	}
+	if offset.NumDims() != 3 {
+		return nil, fmt.Errorf("Offset must be 3d coordinate, not %d-d coordinate", offset.NumDims())
+	}
 	size, err := StringToPoint(sizeStr, sep)
 	if err != nil {
 		return nil, err
+	}
+	if size.NumDims() != 3 {
+		return nil, fmt.Errorf("Size must be 3 (not %d) dimensions", size.NumDims())
 	}
 	return NewSubvolume(offset, size), nil
 }
@@ -408,6 +414,9 @@ func NewSliceFromStrings(str DataShapeString, offsetStr, sizeStr, sep string) (G
 	offset, err := StringToPoint(offsetStr, sep)
 	if err != nil {
 		return nil, err
+	}
+	if offset.NumDims() != 3 {
+		return nil, fmt.Errorf("Offset must be 3d coordinate, not %d-d coordinate", offset.NumDims())
 	}
 	// Enforce that size string is 2d since this is supposed to be a slice.
 	ndstring, err := StringToNdString(sizeStr, sep)
