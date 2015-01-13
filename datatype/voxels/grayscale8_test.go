@@ -2,10 +2,12 @@ package voxels
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"image/png"
 	"log"
+	"math/rand"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -16,7 +18,6 @@ import (
 	"github.com/janelia-flyem/dvid/datatype/roi"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
-	"github.com/janelia-flyem/dvid/storage"
 	"github.com/janelia-flyem/dvid/tests"
 )
 
@@ -314,7 +315,7 @@ func TestSubvolGrayscale8(t *testing.T) {
 type testDataT struct {
 	repo      datastore.Repo
 	versionID dvid.VersionID
-	ctx       storage.VersionedContext
+	ctx       *datastore.VersionedContext
 	data      *Data
 	rawData   []uint8
 }
@@ -462,6 +463,62 @@ func TestGrayscale8HTTPAPI(t *testing.T) {
 	// Get a 3d image
 }
 */
+
+func TestBlockAPI(t *testing.T) {
+	tests.UseStore()
+	defer tests.CloseStore()
+
+	repo, _ := initTestRepo()
+	grayscale := makeGrayscale(repo, t, "grayscale")
+	uuid := repo.RootUUID()
+
+	// construct random blocks of data.
+	numBlockBytes := int32(grayscale.BlockSize().Prod())
+	testBlocks := 4
+	var blockData []byte
+	for i := 0; i < testBlocks; i++ {
+		blockData = append(blockData, tests.RandomBytes(numBlockBytes)...)
+	}
+
+	// set start of span
+	x := rand.Int31()
+	y := rand.Int31()
+	z := rand.Int31()
+
+	// Test uncompressed roundtrip
+
+	// send the blocks
+	blockReq := fmt.Sprintf("%snode/%s/grayscale/blocks/%d_%d_%d/%d", server.WebAPIPath, uuid, x, y, z, testBlocks)
+	server.TestHTTP(t, "POST", blockReq, bytes.NewBuffer(blockData))
+
+	// read same span of blocks
+	returnedData := server.TestHTTP(t, "GET", blockReq, nil)
+
+	// make sure blocks are same
+	totBytes := 4 + testBlocks*int(numBlockBytes)
+	if len(returnedData) != totBytes {
+		t.Errorf("Returned %d bytes, expected %d bytes", len(returnedData), totBytes)
+	}
+	if !reflect.DeepEqual(returnedData[4:], blockData) {
+		t.Errorf("Returned block data != original block data\n")
+	}
+
+	// We shouldn't be able to get blocks at different z
+	z += 1
+	blockReq = fmt.Sprintf("%snode/%s/grayscale/blocks/%d_%d_%d/%d", server.WebAPIPath, uuid, x, y, z, testBlocks)
+	returnedData = server.TestHTTP(t, "GET", blockReq, nil)
+	if len(returnedData) != 4 {
+		t.Errorf("Expected only 0 blocks header, got %d bytes instead", len(returnedData))
+	}
+	var numBlocks int32
+	buf := bytes.NewReader(returnedData)
+	if err := binary.Read(buf, binary.LittleEndian, &numBlocks); err != nil {
+		t.Errorf("Error reading # blocks header: %s\n", err.Error())
+	}
+	if numBlocks != 0 {
+		t.Errorf("Expected 0 blocks for empty area, got %d instead", numBlocks)
+	}
+}
 
 // Should intersect 100x100 image at Z = 67 and Y = 108
 const testROIJson = "[[2,3,10,10],[2,4,12,13]]"

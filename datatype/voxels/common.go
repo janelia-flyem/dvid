@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"log"
 	"sync"
 
@@ -152,7 +153,7 @@ type VoxelSetter interface {
 }
 
 // GetImage retrieves a 2d image from a version node given a geometry of voxels.
-func GetImage(ctx storage.Context, i IntData, e ExtData, r *ROI) (*dvid.Image, error) {
+func GetImage(ctx *datastore.VersionedContext, i IntData, e ExtData, r *ROI) (*dvid.Image, error) {
 	if err := GetVoxels(ctx, i, e, r); err != nil {
 		return nil, err
 	}
@@ -160,7 +161,7 @@ func GetImage(ctx storage.Context, i IntData, e ExtData, r *ROI) (*dvid.Image, e
 }
 
 // GetVolume retrieves a n-d volume from a version node given a geometry of voxels.
-func GetVolume(ctx storage.Context, i IntData, e ExtData, r *ROI) ([]byte, error) {
+func GetVolume(ctx *datastore.VersionedContext, i IntData, e ExtData, r *ROI) ([]byte, error) {
 	if err := GetVoxels(ctx, i, e, r); err != nil {
 		return nil, err
 	}
@@ -169,7 +170,7 @@ func GetVolume(ctx storage.Context, i IntData, e ExtData, r *ROI) ([]byte, error
 
 // GetVoxels copies voxels from an IntData for a version to an ExtData, e.g.,
 // a requested subvolume or 2d image.
-func GetVoxels(ctx storage.Context, i IntData, e ExtData, r *ROI) error {
+func GetVoxels(ctx *datastore.VersionedContext, i IntData, e ExtData, r *ROI) error {
 	db, err := storage.BigDataStore()
 	if err != nil {
 		return err
@@ -224,7 +225,7 @@ func GetVoxels(ctx storage.Context, i IntData, e ExtData, r *ROI) error {
 	return nil
 }
 
-func GetBlocks(ctx storage.Context, uncompressed bool, start dvid.ChunkPoint3d, span int) ([]byte, error) {
+func GetBlocks(ctx *datastore.VersionedContext, start dvid.ChunkPoint3d, span int) ([]byte, error) {
 	bigdata, err := storage.BigDataStore()
 	if err != nil {
 		return nil, fmt.Errorf("Cannot get datastore that handles big data: %s\n", err.Error())
@@ -249,27 +250,9 @@ func GetBlocks(ctx storage.Context, uncompressed bool, start dvid.ChunkPoint3d, 
 	binary.Write(&buf, binary.LittleEndian, int32(numkv))
 
 	// Write the block indices in XYZ little-endian format + the size of each block
+	uncompress := true
 	for _, kv := range keyvalues {
-		indexZYX, err := DecodeVoxelBlockKey(kv.K)
-		if err != nil {
-			return nil, err
-		}
-		indexBytes, err := indexZYX.MarshalBinary()
-		if err != nil {
-			return nil, err
-		}
-		_, err = buf.Write(indexBytes)
-		if err != nil {
-			return nil, err
-		}
-		if !uncompressed {
-			binary.Write(&buf, binary.LittleEndian, int32(len(kv.V)))
-		}
-	}
-
-	// Write the actual data
-	for _, kv := range keyvalues {
-		block, _, err := dvid.DeserializeData(kv.V, uncompressed)
+		block, _, err := dvid.DeserializeData(kv.V, uncompress)
 		if err != nil {
 			return nil, fmt.Errorf("Unable to deserialize block, %s (%v): %s", ctx, kv.K, err.Error())
 		}
@@ -280,6 +263,53 @@ func GetBlocks(ctx storage.Context, uncompressed bool, start dvid.ChunkPoint3d, 
 	}
 
 	return buf.Bytes(), nil
+}
+
+func PutBlocks(ctx *datastore.VersionedContext, i IntData, start dvid.ChunkPoint3d, span int, data io.Reader) error {
+	bigdata, err := storage.BigDataStore()
+	if err != nil {
+		return fmt.Errorf("Cannot get datastore that handles big data: %s\n", err.Error())
+	}
+	batcher, ok := bigdata.(storage.KeyValueBatcher)
+	if !ok {
+		return fmt.Errorf("Unable to store voxel blocks: big data store can't do batching!")
+	}
+	batch := batcher.NewBatch(ctx)
+
+	// Read blocks from the stream until we can output a batch put.
+	const BatchSize = 1000
+	var readBlocks int
+	numBlockBytes := i.BlockSize().Prod()
+	chunkPt := start
+	buf := make([]byte, numBlockBytes)
+	for {
+		n, err := data.Read(buf)
+		if err != nil {
+			return fmt.Errorf("Error reading blocks: %s\n", err.Error())
+		}
+		if n != int(numBlockBytes) {
+			return fmt.Errorf("Expected %d bytes in block read, got %d instead!  Aborting.", numBlockBytes, n)
+		}
+
+		index := dvid.IndexZYX(chunkPt)
+		blockIndex := NewVoxelBlockIndex(&index)
+		serialization, err := dvid.SerializeData(buf, i.Compression(), i.Checksum())
+		batch.Put(blockIndex, serialization)
+
+		// Advance to next block
+		chunkPt[0]++
+		readBlocks++
+		finish := (readBlocks == span)
+		if finish || readBlocks%BatchSize == 0 {
+			if err := batch.Commit(); err != nil {
+				return fmt.Errorf("Error on batch commit, block %d: %s\n", readBlocks, err.Error())
+			}
+		}
+		if finish {
+			break
+		}
+	}
+	return nil
 }
 
 type OpOptions struct {

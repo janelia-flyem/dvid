@@ -248,29 +248,23 @@ GET  <api URL>/node/<UUID>/<data name>/arb/<top left>/<top right>/<bottom left>/
     format        "png", "jpg" (default: "png")  
                     jpg allows lossy quality setting, e.g., "jpg:80"
 
-GET <api URL>/node/<UUID>/<data name>/blocks/<block coord>/<spanX>
+ GET <api URL>/node/<UUID>/<data name>/blocks/<block coord>/<spanX>
+POST <api URL>/node/<UUID>/<data name>/blocks/<block coord>/<spanX>
 
-    Retrieves blocks of voxel data.
+    Retrieves or puts "spanX" blocks of uncompressed voxel data along X starting from given block coordinate.
 
     Example: 
 
     GET <api URL>/node/3f8c/grayscale/blocks/10_20_30/8
 
     Returns blocks where first block has given block coordinate and number
-    of blocks returned along x axis is "spanX".  If no "uncompressed=true" query
-    string is used, the block data is returned in default compression format, usually
-    LZ4.  The data is sent in the following format with all integers in little-endian format:
+    of blocks returned along x axis is "spanX".  The data is sent in the following 
+    format with all integers in little-endian format:
 
-    <int32: number of blocks, N>
-    <int32: block x coord for block 0>
-    <int32: block y coord for block 0>
-    <int32: block z coord for block 0>
-       if compressed:  <int32: length in bytes of block 0>
-    <int32: block x coord for block 1>
-    ... repeat for all blocks
+    if GET: <int32: # of blocks actually retrieved or posted>
     <block 0 byte array>
     <block 1 byte array>
-    ... repeat for all blocks
+    ... 
     <block N byte array>
 
     Arguments:
@@ -278,11 +272,6 @@ GET <api URL>/node/<UUID>/<data name>/blocks/<block coord>/<spanX>
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add.
     block coord   Gives coordinate of first voxel using dimensionality of data.
-
-    Query-string Options:
-
-    uncompressed  If true, causes block data to be uncompressed before sending to client.  This
-    			  will lead to all block being the same size.
 `
 
 var (
@@ -1571,15 +1560,11 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 		return
 
 	case "blocks":
-		// GET <api URL>/node/<UUID>/<data name>/blocks/<block coord>/<spanX>
+		// GET  <api URL>/node/<UUID>/<data name>/blocks/<block coord>/<spanX>
+		// POST <api URL>/node/<UUID>/<data name>/blocks/<block coord>/<spanX>
 		if len(parts) < 6 {
 			server.BadRequest(w, r, "%q must be followed by block-coord/span-x", parts[3])
 			return
-		}
-		queryStrings := r.URL.Query()
-		var uncompressed bool
-		if queryStrings.Get("uncompressed") == "true" {
-			uncompressed = true
 		}
 		blockCoord, err := dvid.StringToChunkPoint3d(parts[4], "_")
 		if err != nil {
@@ -1591,16 +1576,23 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 			server.BadRequest(w, r, err.Error())
 			return
 		}
-		data, err := GetBlocks(storeCtx, uncompressed, blockCoord, span)
-		if err != nil {
-			server.BadRequest(w, r, err.Error())
-			return
-		}
-		w.Header().Set("Content-type", "application/octet-stream")
-		_, err = w.Write(data)
-		if err != nil {
-			server.BadRequest(w, r, err.Error())
-			return
+		if op == GetOp {
+			data, err := GetBlocks(storeCtx, blockCoord, span)
+			if err != nil {
+				server.BadRequest(w, r, err.Error())
+				return
+			}
+			w.Header().Set("Content-type", "application/octet-stream")
+			_, err = w.Write(data)
+			if err != nil {
+				server.BadRequest(w, r, err.Error())
+				return
+			}
+		} else {
+			if err := PutBlocks(storeCtx, d, blockCoord, span, r.Body); err != nil {
+				server.BadRequest(w, r, err.Error())
+				return
+			}
 		}
 		timedLog.Infof("HTTP %s: Blocks (%s)", r.Method, r.URL)
 

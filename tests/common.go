@@ -5,6 +5,8 @@ package tests
 
 import (
 	"log"
+	"math/rand"
+	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -26,4 +28,22 @@ func NewRepo() (datastore.Repo, dvid.VersionID) {
 		log.Fatalf("Unable to get version ID from repo root UUID %s\n", repo.RootUUID())
 	}
 	return repo, versionID
+}
+
+// RandomBytes returns a slices of random bytes.
+func RandomBytes(numBytes int32) []byte {
+	buf := make([]byte, numBytes)
+	src := rand.NewSource(time.Now().UnixNano())
+	var offset int32
+	for {
+		val := int64(src.Int63())
+		for i := 0; i < 8; i++ {
+			if offset >= numBytes {
+				return buf
+			}
+			buf[offset] = byte(val)
+			offset++
+			val >>= 8
+		}
+	}
 }
