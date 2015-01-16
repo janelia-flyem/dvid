@@ -135,14 +135,17 @@ POST <api URL>/node/<UUID>/<data name>/ptquery
 
 	Determines whether a list of 3d points (voxel coordinates) in JSON format sent by POST is within 
 	the ROI.  Returns a list of true/false answers for each point in the same sequence as the POSTed 
-	list.
+	list.  The send format is:
+
+	[[x0, y0, z0], [x1, y1, z1], ...]
 
     The "Content-type" of the HTTP response (and usually the request) are
-    "application/json" for arbitrary binary data.  Returns a list of 4-tuples:
+    "application/json" for arbitrary binary data.  Example:
 
   	Sent: "[[0, 100, 910], [0, 121, 900]]"
 
   	Returned: "[false, true]"
+
 
 GET <api URL>/node/<UUID>/<data name>/partition?batchsize=8
 
