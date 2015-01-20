@@ -46,5 +46,5 @@ found in [help constants within packages](https://github.com/janelia-flyem/dvid/
 HTTP endpoint on a running DVID server.  We are in the process of 
 figuring out a nice way to document the APIs either through RAML or Swagger.
 
-See the [DVID Wiki](/wiki) for more information including installation and examples of use.
+See the [DVID Wiki](https://github.com/janelia-flyem/dvid/wiki) for more information including installation and examples of use.
 
