@@ -20,6 +20,9 @@ var (
 	// Display usage if true.
 	showHelp = flag.Bool("help", false, "")
 
+	// Delete old snapshot directory if it exists.
+	deleteSnapshot = flag.Bool("delete", false, "")
+
 	// Run in verbose mode if true.
 	runVerbose = flag.Bool("verbose", false, "")
 )
@@ -29,8 +32,9 @@ dvid-backup does a cold backup of a local leveldb storage engine.
 
 Usage: dvid-backup [options] <database directory> <backup directory>
 
+      -delete     (flag)    Remove old snapshot directory.
 	  -verbose    (flag)    Run in verbose mode.
-      -h, -help       (flag)    Show help message
+      -h, -help   (flag)    Show help message
 
 `
 
@@ -107,8 +111,16 @@ func main() {
 	parentDir, dbName := path.Split(pathDb)
 	snapshotDir := path.Join(parentDir, dbName+"-snapshot")
 	if fileinfo, err = os.Stat(snapshotDir); !os.IsNotExist(err) {
-		fmt.Printf("Already existing snapshot directory: %s\n", snapshotDir)
-		os.Exit(1)
+		if *deleteSnapshot {
+			err = os.RemoveAll(snapshotDir)
+			if err != nil {
+				fmt.Printf("Error removing snapshot directory %q: %s\n", snapshotDir, err.Error())
+				os.Exit(1)
+			}
+		} else {
+			fmt.Printf("Already existing snapshot directory: %s\n", snapshotDir)
+			os.Exit(1)
+		}
 	}
 
 	if err := os.MkdirAll(snapshotDir, 0744); err != nil {
