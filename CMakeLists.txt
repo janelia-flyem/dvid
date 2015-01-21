@@ -202,7 +202,7 @@ else ()
     add_custom_target (dvid
         ${BUILDEM_ENV_STRING} nrsc ${BUILDEM_BIN_DIR}/dvid dvid-console
         WORKING_DIRECTORY   ${BUILDEM_DIR}/src
-        DEPENDS     dvid-exe nrsc dvid-console
+        DEPENDS     dvid-exe nrsc dvid-console dvid-backup
         COMMENT     "Adding embedded console into dvid executable..."
     )
 
@@ -227,6 +227,13 @@ else ()
             ${DVID_PACKAGES}
         DEPENDS test-bench)
 
+    # Build backup command 
+    add_custom_target (dvid-backup
+        ${BUILDEM_ENV_STRING} ${GO_ENV} ${CGO_FLAGS} go build -o ${BUILDEM_BIN_DIR}/dvid-backup 
+        -v -tags '${DVID_BACKEND} ${DVID_GRAPHBACKEND} ${DVID_BUILD_TAGS}' cmd/backup/main.go 
+        WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
+        DEPENDS     ${golang_NAME}
+        COMMENT     "Compiling and installing dvid backup command...")
 
     ###############################################################################
 endif()
