@@ -584,7 +584,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 			w.Header().Set("Content-Type", "text/plain")
 			fmt.Fprintf(w, "Put sparse volume with label %d into version %d\n", label, versionID)
 		} else {
-			data, err := labels64.GetSparseVol(storeCtx, label)
+			data, err := labels64.GetSparseVol(storeCtx, label, labels64.Bounds{})
 			if err != nil {
 				server.BadRequest(w, r, err.Error())
 				return
@@ -614,7 +614,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 			server.BadRequest(w, r, err.Error())
 			return
 		}
-		data, err := labels64.GetSparseVol(storeCtx, label)
+		data, err := labels64.GetSparseVol(storeCtx, label, labels64.Bounds{})
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
 			return

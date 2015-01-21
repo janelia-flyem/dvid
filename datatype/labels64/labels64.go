@@ -183,7 +183,7 @@ POST <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?th
 
 (Assumes labels were loaded using without "proc=noindex")
 
-GET <api URL>/node/<UUID>/<data name>/sparsevol/<label>
+GET <api URL>/node/<UUID>/<data name>/sparsevol/<label>?<options>
 
 	Returns a sparse volume with voxels of the given label in encoded RLE format.
 	The encoding has the following format where integers are little endian and the order
@@ -206,6 +206,17 @@ GET <api URL>/node/<UUID>/<data name>/sparsevol/<label>
 			  ...
 	        int32   Length of run
 	        bytes   Optional payload dependent on first byte descriptor
+
+    Query-string Options:
+
+    minx    Spans must be equal to or larger than this minimum x voxel coordinate.
+    maxx    Spans must be equal to or smaller than this maximum x voxel coordinate.
+    miny    Spans must be equal to or larger than this minimum y voxel coordinate.
+    maxy    Spans must be equal to or smaller than this maximum y voxel coordinate.
+    minz    Spans must be equal to or larger than this minimum z voxel coordinate.
+    maxz    Spans must be equal to or smaller than this maximum z voxel coordinate.
+    exact   "true" if all RLEs should respect voxel bounds.
+            "false" if RLEs can extend a bit outside voxel bounds within border blocks.   
 
 
 GET <api URL>/node/<UUID>/<data name>/sparsevol-by-point/<coord>
@@ -833,6 +844,12 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 	return nil
 }
 
+type Bounds struct {
+	VoxelBounds *dvid.Bounds
+	BlockBounds *dvid.Bounds
+	Exact       bool // All RLEs must respect the voxel bounds.  If false, just screen on blocks.
+}
+
 // ServeHTTP handles all incoming HTTP requests for this data.
 func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 	timedLog := dvid.NewTimeLog()
@@ -1116,7 +1133,21 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 			server.BadRequest(w, r, err.Error())
 			return
 		}
-		data, err := GetSparseVol(storeCtx, label)
+		queryValues := r.URL.Query()
+		var b Bounds
+		b.VoxelBounds, err = dvid.BoundsFromQueryString(r)
+		if err != nil {
+			server.BadRequest(w, r, "Error parsing bounds from query string: %s\n", err.Error())
+			return
+		}
+		blockSize, ok := d.BlockSize().(dvid.Point3d)
+		if !ok {
+			server.BadRequest(w, r, "sparsevol tried to get 3d block failed")
+			return
+		}
+		b.BlockBounds = b.VoxelBounds.Divide(blockSize)
+		b.Exact = queryValues.Get("exact") == "true"
+		data, err := GetSparseVol(storeCtx, label, b)
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
 			return
@@ -1145,7 +1176,7 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 			server.BadRequest(w, r, err.Error())
 			return
 		}
-		data, err := GetSparseVol(storeCtx, label)
+		data, err := GetSparseVol(storeCtx, label, Bounds{})
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
 			return

@@ -203,6 +203,17 @@ func getLabelRLEs(ctx *datastore.VersionedContext, label uint64) (blockRLEs, err
 	return labelRLEs, nil
 }
 
+// Alter serialized RLEs by the bounds.
+func boundRLEs(b []byte, bounds *dvid.Bounds) ([]byte, error) {
+	var oldRLEs dvid.RLEs
+	err := oldRLEs.UnmarshalBinary(b)
+	if err != nil {
+		return nil, err
+	}
+	newRLEs := oldRLEs.FitToBounds(bounds)
+	return newRLEs.MarshalBinary()
+}
+
 // GetSparseVol returns an encoded sparse volume given a label.  The encoding has the
 // following format where integers are little endian:
 //    byte     Payload descriptor:
@@ -222,7 +233,7 @@ func getLabelRLEs(ctx *datastore.VersionedContext, label uint64) (blockRLEs, err
 //        int32   Length of run
 //        bytes   Optional payload dependent on first byte descriptor
 //
-func GetSparseVol(ctx storage.Context, label uint64) ([]byte, error) {
+func GetSparseVol(ctx storage.Context, label uint64, bounds Bounds) ([]byte, error) {
 	smalldata, err := storage.SmallDataStore()
 	if err != nil {
 		return nil, fmt.Errorf("Cannot get datastore that handles small data: %s\n", err.Error())
@@ -238,26 +249,71 @@ func GetSparseVol(ctx storage.Context, label uint64) ([]byte, error) {
 	binary.Write(buf, binary.LittleEndian, uint32(0)) // Placeholder for # spans
 
 	// Get the start/end indices for this body's KeyLabelSpatialMap (b + s) keys.
-	begIndex := voxels.NewLabelSpatialMapIndex(label, dvid.MinIndexZYX.Bytes())
-	endIndex := voxels.NewLabelSpatialMapIndex(label, dvid.MaxIndexZYX.Bytes())
+	minZYX := dvid.MinIndexZYX
+	maxZYX := dvid.MaxIndexZYX
+	blockBounds := bounds.BlockBounds
+	if blockBounds == nil {
+		blockBounds = new(dvid.Bounds)
+	}
+	if minZ, ok := blockBounds.MinZ(); ok {
+		minZYX[2] = minZ
+	}
+	if maxZ, ok := blockBounds.MaxZ(); ok {
+		maxZYX[2] = maxZ
+	}
+	begIndex := voxels.NewLabelSpatialMapIndex(label, minZYX.Bytes())
+	endIndex := voxels.NewLabelSpatialMapIndex(label, maxZYX.Bytes())
 
 	// Process all the b+s keys and their values, which contain RLE runs for that label.
-	op := &sparseOp{versionID: ctx.VersionID(), encoding: buf.Bytes()}
-	chunkOp := &storage.ChunkOp{op, nil}
-	err = smalldata.ProcessRange(ctx, begIndex, endIndex, chunkOp, func(chunk *storage.Chunk) {
-		op := chunk.Op.(*sparseOp)
-		op.numBlocks++
-		op.encoding = append(op.encoding, chunk.V...)
-		op.numRuns += uint32(len(chunk.V) / 16)
+	// TODO -- Make processing asynchronous so can overlap with range disk read now that
+	//   there could be more processing due to bounding calcs.
+	var numRuns, numBlocks uint32
+	encoding := buf.Bytes()
+
+	err = smalldata.ProcessRange(ctx, begIndex, endIndex, &storage.ChunkOp{}, func(chunk *storage.Chunk) {
+		// Make sure this block is within the optinonal bounding.
+		if blockBounds.BoundedX() || blockBounds.BoundedY() {
+			_, blockBytes, err := voxels.DecodeLabelSpatialMapKey(chunk.K)
+			if err != nil {
+				dvid.Errorf("Error decoding sparse volume key (%v): %s\n", chunk.K, err.Error())
+				return
+			}
+			var indexZYX dvid.IndexZYX
+			if err := indexZYX.IndexFromBytes(blockBytes); err != nil {
+				dvid.Errorf("Error decoding block coordinate (%v) for sparse volume: %s\n",
+					blockBytes, err.Error())
+				return
+			}
+			blockX, blockY, _ := indexZYX.Unpack()
+			if blockBounds.OutsideX(blockX) || blockBounds.OutsideY(blockY) {
+				return
+			}
+		}
+
+		// Adjust RLEs within block if we are bounded.
+		var rles []byte
+		var err error
+		if bounds.Exact && bounds.VoxelBounds.IsSet() {
+			rles, err = boundRLEs(chunk.V, bounds.VoxelBounds)
+			if err != nil {
+				dvid.Errorf("Error in adjusting RLEs to bounds: %s\n", err.Error())
+				return
+			}
+		} else {
+			rles = chunk.V
+		}
+
+		numRuns += uint32(len(rles) / 16)
+		numBlocks++
+		encoding = append(encoding, rles...)
 	})
 	if err != nil {
 		return nil, err
 	}
+	binary.LittleEndian.PutUint32(encoding[8:12], numRuns)
 
-	binary.LittleEndian.PutUint32(op.encoding[8:12], op.numRuns)
-
-	dvid.Debugf("[%s] label %d: found %d blocks, %d runs\n", ctx, label, op.numBlocks, op.numRuns)
-	return op.encoding, nil
+	dvid.Debugf("[%s] label %d: found %d blocks, %d runs\n", ctx, label, numBlocks, numRuns)
+	return encoding, nil
 }
 
 // PutSparseVol stores an encoded sparse volume that stays within a given forward label.

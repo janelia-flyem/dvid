@@ -9,6 +9,8 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"net/http"
+	"strconv"
 )
 
 func init() {
@@ -69,11 +71,250 @@ var (
 	zhX, zhY, zhZ [3][3][3]float64
 )
 
+// Bounds holds optional bounds in X, Y, and Z.
+// This differs from Extents in allowing optional min
+// and max bounds along each dimension.
+type Bounds struct {
+	minx, maxx, miny, maxy, minz, maxz *int32
+}
+
+// BoundsFromQueryString returns Bounds from a set of query strings.
+func BoundsFromQueryString(r *http.Request) (*Bounds, error) {
+	bounds := new(Bounds)
+	queryValues := r.URL.Query()
+
+	var minx, maxx, miny, maxy, minz, maxz int32
+	minxStr := queryValues.Get("minx")
+	if minxStr != "" {
+		val, err := strconv.ParseInt(minxStr, 10, 32)
+		if err != nil {
+			return nil, err
+		}
+		minx = int32(val)
+		bounds.minx = &minx
+	}
+	maxxStr := queryValues.Get("maxx")
+	if maxxStr != "" {
+		val, err := strconv.ParseInt(maxxStr, 10, 32)
+		if err != nil {
+			return nil, err
+		}
+		maxx = int32(val)
+		bounds.maxx = &maxx
+	}
+	minyStr := queryValues.Get("miny")
+	if minyStr != "" {
+		val, err := strconv.ParseInt(minyStr, 10, 32)
+		if err != nil {
+			return nil, err
+		}
+		miny = int32(val)
+		bounds.miny = &miny
+	}
+	maxyStr := queryValues.Get("maxy")
+	if maxyStr != "" {
+		val, err := strconv.ParseInt(maxyStr, 10, 32)
+		if err != nil {
+			return nil, err
+		}
+		maxy = int32(val)
+		bounds.maxy = &maxy
+	}
+	minzStr := queryValues.Get("minz")
+	if minzStr != "" {
+		val, err := strconv.ParseInt(minzStr, 10, 32)
+		if err != nil {
+			return nil, err
+		}
+		minz = int32(val)
+		bounds.minz = &minz
+	}
+	maxzStr := queryValues.Get("maxz")
+	if maxzStr != "" {
+		val, err := strconv.ParseInt(maxzStr, 10, 32)
+		if err != nil {
+			return nil, err
+		}
+		maxz = int32(val)
+		bounds.maxz = &maxz
+	}
+	return bounds, nil
+}
+
+func nilOrInt32(p *int32) string {
+	if p == nil {
+		return "nil"
+	}
+	return fmt.Sprintf("%d", *p)
+}
+
+func (b *Bounds) String() string {
+	text := "Bounds{\n"
+	text += "  minx: " + nilOrInt32(b.minx) + "\n"
+	text += "  maxx: " + nilOrInt32(b.maxx) + "\n"
+	text += "  miny: " + nilOrInt32(b.miny) + "\n"
+	text += "  maxy: " + nilOrInt32(b.maxy) + "\n"
+	text += "  minz: " + nilOrInt32(b.minz) + "\n"
+	text += "  maxz: " + nilOrInt32(b.maxz) + "\n"
+	text += "}\n"
+	return text
+}
+
+func (b *Bounds) SetMinX(x int32) {
+	b.minx = &x
+}
+
+func (b *Bounds) SetMaxX(x int32) {
+	b.maxx = &x
+}
+
+func (b *Bounds) SetMinY(y int32) {
+	b.miny = &y
+}
+
+func (b *Bounds) SetMaxY(y int32) {
+	b.maxy = &y
+}
+
+func (b *Bounds) SetMinZ(z int32) {
+	b.minz = &z
+}
+
+func (b *Bounds) SetMaxZ(z int32) {
+	b.maxz = &z
+}
+
+func (b *Bounds) MinX() (x int32, ok bool) {
+	if b.minx == nil {
+		return
+	}
+	return *(b.minx), true
+}
+
+func (b *Bounds) MaxX() (x int32, ok bool) {
+	if b.maxx == nil {
+		return
+	}
+	return *(b.maxx), true
+}
+
+func (b *Bounds) MinY() (y int32, ok bool) {
+	if b.miny == nil {
+		return
+	}
+	return *(b.miny), true
+}
+
+func (b *Bounds) MaxY() (y int32, ok bool) {
+	if b.maxy == nil {
+		return
+	}
+	return *(b.maxy), true
+}
+
+func (b *Bounds) MinZ() (z int32, ok bool) {
+	if b.minz == nil {
+		return
+	}
+	return *(b.minz), true
+}
+
+func (b *Bounds) MaxZ() (z int32, ok bool) {
+	if b.maxz == nil {
+		return
+	}
+	return *(b.maxz), true
+}
+
+// Divide returns a new bounds that has all optionally set
+// bounds divided by the given point.
+func (b *Bounds) Divide(pt Point3d) *Bounds {
+	newB := new(Bounds)
+	if b.minx != nil {
+		newB.minx = new(int32)
+		*(newB.minx) = *(b.minx) / pt[0]
+	}
+	if b.maxx != nil {
+		newB.maxx = new(int32)
+		*(newB.maxx) = *(b.maxx) / pt[0]
+	}
+	if b.miny != nil {
+		newB.miny = new(int32)
+		*(newB.miny) = *(b.miny) / pt[1]
+	}
+	if b.maxy != nil {
+		newB.maxy = new(int32)
+		*(newB.maxy) = *(b.maxy) / pt[1]
+	}
+	if b.minz != nil {
+		newB.minz = new(int32)
+		*(newB.minz) = *(b.minz) / pt[2]
+	}
+	if b.maxz != nil {
+		newB.maxz = new(int32)
+		*(newB.maxz) = *(b.maxz) / pt[2]
+	}
+	return newB
+}
+
+func (b *Bounds) BoundedX() bool {
+	return b.minx != nil || b.maxx != nil
+}
+
+func (b *Bounds) BoundedY() bool {
+	return b.miny != nil || b.maxy != nil
+}
+
+func (b *Bounds) BoundedZ() bool {
+	return b.minz != nil || b.maxz != nil
+}
+
+func (b *Bounds) IsSet() bool {
+	if b.minx != nil || b.maxx != nil || b.miny != nil || b.maxy != nil || b.minz != nil || b.maxz != nil {
+		return true
+	}
+	return false
+}
+
+func (b *Bounds) OutsideX(x int32) bool {
+	if b.minx != nil && x < *(b.minx) {
+		return true
+	}
+	if b.maxx != nil && x > *(b.maxx) {
+		return true
+	}
+	return false
+}
+
+func (b *Bounds) OutsideY(y int32) bool {
+	if b.miny != nil && y < *(b.miny) {
+		return true
+	}
+	if b.maxy != nil && y > *(b.maxy) {
+		return true
+	}
+	return false
+}
+
+func (b *Bounds) OutsideZ(z int32) bool {
+	if b.minz != nil && z < *(b.minz) {
+		return true
+	}
+	if b.maxz != nil && z > *(b.maxz) {
+		return true
+	}
+	return false
+}
+
 // RLE is a single run-length encoded span with a start coordinate and length along
 // a coordinate (typically X).
 type RLE struct {
 	start  Point3d
 	length int32
+}
+
+func (rle RLE) String() string {
+	return fmt.Sprintf("RLE{%s, len %d} ", rle.start, rle.length)
 }
 
 func NewRLE(start Point3d, length int32) RLE {
@@ -82,6 +323,45 @@ func NewRLE(start Point3d, length int32) RLE {
 
 // RLEs are simply a slice of RLE.
 type RLEs []RLE
+
+// FitToBounds returns a copy that has been adjusted to fit
+// within the given optional bounds.
+func (rles RLEs) FitToBounds(bounds *Bounds) RLEs {
+	newRLEs := make(RLEs, 0, len(rles))
+	for _, rle := range rles {
+		if bounds.minz != nil && rle.start[2] < *(bounds.minz) {
+			continue
+		}
+		if bounds.maxz != nil && rle.start[2] > *(bounds.maxz) {
+			continue
+		}
+		if bounds.miny != nil && rle.start[1] < *(bounds.miny) {
+			continue
+		}
+		if bounds.maxy != nil && rle.start[1] > *(bounds.maxy) {
+			continue
+		}
+		if bounds.minx != nil {
+			if rle.start[0]+rle.length-1 < *(bounds.minx) {
+				continue
+			}
+			if rle.start[0] < *(bounds.minx) {
+				rle.length -= *(bounds.minx) - rle.start[0]
+				rle.start[0] = *(bounds.minx)
+			}
+		}
+		if bounds.maxx != nil {
+			if rle.start[0] > *(bounds.maxx) {
+				continue
+			}
+			if rle.start[0]+rle.length-1 > *(bounds.maxx) {
+				rle.length = *(bounds.maxx) - rle.start[0] + 1
+			}
+		}
+		newRLEs = append(newRLEs, rle)
+	}
+	return newRLEs
+}
 
 // MarshalBinary fulfills the encoding.BinaryMarshaler interface.
 func (rles RLEs) MarshalBinary() ([]byte, error) {

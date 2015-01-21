@@ -1684,7 +1684,6 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 					return
 				}
 			} else {
-				fmt.Printf("Getting slice: %s\n", slice)
 				rawSlice, err := d.HandleIsotropy2D(slice, isotropic)
 				if err != nil {
 					server.BadRequest(w, r, err.Error())
