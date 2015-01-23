@@ -5,20 +5,26 @@ DVID       [![Picture](https://raw.github.com/janelia-flyem/janelia-flyem.github
 
 [![GoDoc](https://godoc.org/github.com/janelia-flyem/dvid?status.png)](https://godoc.org/github.com/janelia-flyem/dvid) [![Build Status](https://drone.io/github.com/janelia-flyem/dvid/status.png)](https://drone.io/github.com/janelia-flyem/dvid/latest)
 
+See the [DVID Wiki](https://github.com/janelia-flyem/dvid/wiki) for more information including installation and examples of use.
+
 ![Web app for 3d inspection being served from and sending requests to DVID](/images/webapp.png)
 
 DVID is a *distributed, versioned, image-oriented datastore* written to support 
 [Janelia Farm Research Center's](http://www.janelia.org) brain imaging, analysis and 
-visualization efforts.  
+visualization efforts.  It's goal is to provide:
 
-DVID aspires to be a "github for large image-oriented data" because each DVID
+* Easily extensible *data types* that allow tailoring of access speeds, storage space, and APIs.
+* The ability to use a variety of storage systems by either creating a data type for that system or using an ordered key/value datastore interface.
+* A framework for thinking of distribution and versioning of data similar to distributed version 
+control systems like [git](http://git-scm.com).
+
+Long-term, DVID aspires to be a "github for large image-oriented data" because each DVID
 server can manage multiple repositories, each of which contains an image-oriented repo
 with related data like an image volume, labels, and skeletons.  The goal is to provide scientists 
 with a github-like web client + server that can push/pull data to a collaborator's DVID server.
 
-Although DVID is easily extensible by adding custom *data types*, each of which fulfill a
-minimal interface (e.g., HTTP request handling), DVID's initial focus is on efficiently storing 
-and retrieving 3d grayscale and label data in a variety of ways:
+DVID's initial focus is on efficiently storing and retrieving 3d grayscale and label data in a 
+variety of ways:
 
 * subvolumes
 * images in XY, XZ, YZ, and arbitrary orientation
@@ -30,10 +36,7 @@ and retrieving 3d grayscale and label data in a variety of ways:
 
 Each of the above is handled by built-in data types via a
 [Level 2 REST HTTP API](http://martinfowler.com/articles/richardsonMaturityModel.html)
-implemented by Go language packages within the *datatype* directory.  When dealing with novel data,
-we typically use the generic *keyvalue* data type and store JSON-encoded or binary data
-until we understand the desired access patterns and API.  When we outgrow the *keyvalue* type's
-GET, POST, and DELETE operations, we create a custom data type package with a specialized HTTP API.
+implemented by Go language packages within the *datatype* directory.
 
 DVID is primarily written in Go and supports different storage backends, a REST HTTP API,
 command-line access (likely minimized in near future), and a FUSE frontend to at least 
@@ -45,6 +48,3 @@ Command-line and HTTP API documentation is currently distributed over data types
 found in [help constants within packages](https://github.com/janelia-flyem/dvid/blob/master/datatype/labels64/labels64.go#L39) or by visiting the **/api/help**
 HTTP endpoint on a running DVID server.  We are in the process of 
 figuring out a nice way to document the APIs either through RAML or Swagger.
-
-See the [DVID Wiki](https://github.com/janelia-flyem/dvid/wiki) for more information including installation and examples of use.
-
