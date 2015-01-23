@@ -156,6 +156,19 @@ GET <api URL>/node/<UUID>/<data name>/partition?batchsize=8
     batchsize	Number of blocks along each axis to batch to make one subvolume (default = 8)
     optimized   If "true" or "on", partioning returns non-fixed sized subvolumes where the coverage
                   is better in terms of subvolumes having more active blocks.
+
+TODO (API endpoints that are planned in near future)
+
+GET  <api URL>/node/<UUID>/<data name>/erode/<element size>
+
+    Returns a ROI that has been eroded with a cubic structuring element of the given size.
+
+    Example: 
+
+    GET <api URL>/node/3f8c/medulla/erode/1
+
+    This returns JSON for an ROI that has been eroded by 1 block.
+
 `
 
 func init() {
