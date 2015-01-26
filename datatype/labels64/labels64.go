@@ -147,9 +147,9 @@ GET  <api URL>/node/<UUID>/<data name>/metadata
 	of bytes returned for n-d images.
 
 
-GET  <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?throttle=on]
-GET  <api URL>/node/<UUID>/<data name>/isotropic/<dims>/<size>/<offset>[/<format>][?throttle=on]
-POST <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?throttle=on]
+GET  <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?throttle=true]
+GET  <api URL>/node/<UUID>/<data name>/isotropic/<dims>/<size>/<offset>[/<format>][?throttle=true]
+POST <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?throttle=true]
 
     Retrieves or puts label data as binary blob using schema above.  Binary data is simply
     packed 64-bit data.  See 'voxels' API for discussion of 'raw' versus 'isotropic'
@@ -163,7 +163,7 @@ POST <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?th
     The example offset assumes the "grayscale" data in version node "3f8c" is 3d.
     The "Content-type" of the HTTP response will be "application/octet-stream".
 
-    Throttling can be enabled by passing a "throttle=on" query string.  Throttling makes sure
+    Throttling can be enabled by passing a "throttle=true" query string.  Throttling makes sure
     only one compute-intense operation (all API calls that can be throttled) is handled.
     If the server can't initiate the API call right away, a 503 (Service Unavailable) status
     code is returned.
@@ -1040,7 +1040,8 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 			timedLog.Infof("HTTP %s: %s (%s)", r.Method, plane, r.URL)
 		case 3:
 			queryStrings := r.URL.Query()
-			if queryStrings.Get("throttle") == "on" {
+			throttle := queryStrings.Get("throttle")
+			if throttle == "true" || throttle == "on" {
 				select {
 				case <-server.Throttle:
 					// Proceed with operation, returning throttle token to server at end.

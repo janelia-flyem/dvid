@@ -143,7 +143,7 @@ GET  <api URL>/node/<UUID>/<data name>/metadata
 	of bytes returned for n-d images.
 
 
-GET  <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?throttle=on][?queryopts]
+GET  <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?throttle=true][?queryopts]
 POST <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>]
 
     Retrieves or puts voxel data.
@@ -161,7 +161,7 @@ POST <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>]
     For example, returned PNGs will have "Content-type" of "image/png", and returned
     nD data will be "application/octet-stream". 
 
-    Throttling can be enabled by passing a "throttle=on" query string.  Throttling makes sure
+    Throttling can be enabled by passing a "throttle=true" query string.  Throttling makes sure
     only one compute-intense operation (all API calls that can be throttled) is handled.
     If the server can't initiate the API call right away, a 503 (Service Unavailable) status
     code is returned.
@@ -187,7 +187,7 @@ POST <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>]
     			  Valid range is n = 1 to n = 7.  Currently only implemented for 8-bit voxels.
     			  Default is to zero out voxels outside ROI.
 
-GET  <api URL>/node/<UUID>/<data name>/isotropic/<dims>/<size>/<offset>[/<format>][?throttle=on]
+GET  <api URL>/node/<UUID>/<data name>/isotropic/<dims>/<size>/<offset>[/<format>][?throttle=true]
 
     Retrieves or puts voxel data.
 
@@ -206,7 +206,7 @@ GET  <api URL>/node/<UUID>/<data name>/isotropic/<dims>/<size>/<offset>[/<format
     For example, returned PNGs will have "Content-type" of "image/png", and returned
     nD data will be "application/octet-stream".
 
-    Throttling can be enabled by passing a "throttle=on" query string.  Throttling makes sure
+    Throttling can be enabled by passing a "throttle=true" query string.  Throttling makes sure
     only one compute-intense operation (all API calls that can be throttled) is handled.
     If the server can't initiate the API call right away, a 503 (Service Unavailable) status
     code is returned.
@@ -1603,7 +1603,8 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 			return
 		}
 		queryStrings := r.URL.Query()
-		if queryStrings.Get("throttle") == "on" {
+		throttle := queryStrings.Get("throttle")
+		if throttle == "true" || throttle == "on" {
 			select {
 			case <-server.Throttle:
 				// Proceed with operation, returning throttle token to server at end.

@@ -217,8 +217,8 @@ GET <api URL>/node/<UUID>/<data name>/intersect/<min block>/<max block>
     min block     Minimum block coordinate with underscore as separator, e.g., 10_20_30
     max block     Maximum block coordinate with underscore as separator.
 
-GET  <api URL>/node/<UUID>/<data name>/labels/<dims>/<size>/<offset>[/<format>][?throttle=on]
-GET  <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?throttle=on]
+GET  <api URL>/node/<UUID>/<data name>/labels/<dims>/<size>/<offset>[/<format>][?throttle=true]
+GET  <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?throttle=true]
 
     Retrieves mapped labels for each voxel in the specified extent.  Either 'labels' or
     'raw' (similar to labels64 API) can be used.
@@ -233,7 +233,7 @@ GET  <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?th
     For example, returned PNGs will have "Content-type" of "image/png", and returned
     nD data will be "application/octet-stream".
 
-    Throttling can be enabled by passing a "throttle=on" query string.  Throttling makes sure
+    Throttling can be enabled by passing a "throttle=true" query string.  Throttling makes sure
     only one compute-intense operation (all API calls that can be throttled) is handled.
     If the server can't initiate the API call right away, a 503 (Service Unavailable) status
     code is returned.
@@ -767,7 +767,8 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 			timedLog.Infof("HTTP %s: %s (%s)", r.Method, plane, r.URL)
 		case 3:
 			queryStrings := r.URL.Query()
-			if queryStrings.Get("throttle") == "on" {
+			throttle := queryStrings.Get("throttle")
+			if throttle == "true" || throttle == "on" {
 				select {
 				case <-server.Throttle:
 					// Proceed with operation, returning throttle token to server at end.
