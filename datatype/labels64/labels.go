@@ -380,18 +380,20 @@ func GetSparseCoarseVol(ctx storage.Context, label uint64) ([]byte, error) {
 	var numBlocks uint32
 	var span *dvid.Span
 	var spans dvid.Spans
-	err = smalldata.ProcessRange(ctx, begIndex, endIndex, &storage.ChunkOp{}, func(chunk *storage.Chunk) {
+	keys, err := smalldata.KeysInRange(ctx, begIndex, endIndex)
+	if err != nil {
+		return nil, fmt.Errorf("Cannot get keys for coarse sparse volume: %s", err.Error())
+	}
+	for _, key := range keys {
 		numBlocks++
-		_, blockBytes, err := voxels.DecodeLabelSpatialMapKey(chunk.K)
+		_, blockBytes, err := voxels.DecodeLabelSpatialMapKey(key)
 		if err != nil {
-			dvid.Errorf("Error retrieving RLE runs for label %d: %s\n", label, err.Error())
-			return
+			return nil, fmt.Errorf("Error retrieving RLE runs for label %d: %s", label, err.Error())
 		}
 		var indexZYX dvid.IndexZYX
 		if err := indexZYX.IndexFromBytes(blockBytes); err != nil {
-			dvid.Errorf("Error decoding block coordinate (%v) for coarse sparse volume: %s\n",
+			return nil, fmt.Errorf("Error decoding block coordinate (%v) for coarse sparse volume: %s",
 				blockBytes, err.Error())
-			return
 		}
 		x, y, z := indexZYX.Unpack()
 		if span == nil {
@@ -400,7 +402,7 @@ func GetSparseCoarseVol(ctx storage.Context, label uint64) ([]byte, error) {
 			spans = append(spans, *span)
 			span = &dvid.Span{z, y, x, x}
 		}
-	})
+	}
 	if err != nil {
 		return nil, err
 	}
