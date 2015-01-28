@@ -265,7 +265,7 @@ func GetBlocks(ctx *datastore.VersionedContext, start dvid.ChunkPoint3d, span in
 	return buf.Bytes(), nil
 }
 
-func PutBlocks(ctx *datastore.VersionedContext, i IntData, start dvid.ChunkPoint3d, span int, data io.Reader) error {
+func PutBlocks(ctx *datastore.VersionedContext, i IntData, start dvid.ChunkPoint3d, span int, data io.ReadCloser) error {
 	bigdata, err := storage.BigDataStore()
 	if err != nil {
 		return fmt.Errorf("Cannot get datastore that handles big data: %s\n", err.Error())
@@ -283,17 +283,33 @@ func PutBlocks(ctx *datastore.VersionedContext, i IntData, start dvid.ChunkPoint
 	chunkPt := start
 	buf := make([]byte, numBlockBytes)
 	for {
-		n, err := data.Read(buf)
-		if err != nil {
-			return fmt.Errorf("Error reading blocks: %s\n", err.Error())
+		// Read a block's worth of data
+		readBytes := int64(0)
+		for {
+			n, err := data.Read(buf[readBytes:])
+			readBytes += int64(n)
+			if readBytes == numBlockBytes {
+				break
+			}
+			if err == io.EOF {
+				return fmt.Errorf("Block data ceased before all block data read")
+			}
+			if err != nil {
+				return fmt.Errorf("Error reading blocks: %s\n", err.Error())
+			}
 		}
-		if n != int(numBlockBytes) {
-			return fmt.Errorf("Expected %d bytes in block read, got %d instead!  Aborting.", numBlockBytes, n)
+
+		dvid.Infof("Got %d bytes for a block with capacity %d bytes\n", readBytes, cap(buf))
+		if readBytes != numBlockBytes {
+			return fmt.Errorf("Expected %d bytes in block read, got %d instead!  Aborting.", numBlockBytes, readBytes)
 		}
 
 		index := dvid.IndexZYX(chunkPt)
 		blockIndex := NewVoxelBlockIndex(&index)
 		serialization, err := dvid.SerializeData(buf, i.Compression(), i.Checksum())
+		if err != nil {
+			return err
+		}
 		batch.Put(blockIndex, serialization)
 
 		// Advance to next block
