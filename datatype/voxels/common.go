@@ -299,7 +299,6 @@ func PutBlocks(ctx *datastore.VersionedContext, i IntData, start dvid.ChunkPoint
 			}
 		}
 
-		dvid.Infof("Got %d bytes for a block with capacity %d bytes\n", readBytes, cap(buf))
 		if readBytes != numBlockBytes {
 			return fmt.Errorf("Expected %d bytes in block read, got %d instead!  Aborting.", numBlockBytes, readBytes)
 		}
