@@ -23,8 +23,8 @@ type LogConfig struct {
 
 // SetLogger creates a logger that saves to a rotating log file.
 func (c *LogConfig) SetLogger() {
-	if c.Logfile == "" {
-		fmt.Println("Sending log messages to stdout since no log file specified.")
+	if c == nil || c.Logfile == "" {
+		Infof("Sending log messages to stdout since no log file specified.")
 		return
 	}
 	fmt.Printf("Sending log messages to: %s\n", c.Logfile)
