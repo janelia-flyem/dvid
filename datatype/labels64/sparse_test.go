@@ -58,7 +58,7 @@ func (b testBody) checkSparseVol(t *testing.T, encoding []byte, bounds dvid.Boun
 	spansEncoding := encoding[8:]
 	var spans dvid.Spans
 	if err := spans.UnmarshalBinary(spansEncoding); err != nil {
-		t.Errorf("Error in decoding coarse sparse volume: %s\n", err.Error())
+		t.Errorf("Error in decoding sparse volume: %s\n", err.Error())
 		return
 	}
 

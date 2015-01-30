@@ -100,6 +100,9 @@ func (dv DataValue) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements the json.Unmarshaler interface.
 func (dv *DataValue) UnmarshalJSON(b []byte) error {
+	if dv == nil {
+		return fmt.Errorf("Can't unmarshal JSON into nil DataValue")
+	}
 	var m struct {
 		DataType string
 		Label    string

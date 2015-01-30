@@ -1331,6 +1331,25 @@ func ImageNRGBA64FromData(data []byte, nx, ny int) (img *image.NRGBA64) {
 	return
 }
 
+// Sets the header's content type to approrprirate media type.
+// Default is PNG.
+func SetImageHeader(w http.ResponseWriter, formatStr string) error {
+	format := strings.Split(formatStr, ":")
+	switch format[0] {
+	case "", "png":
+		w.Header().Set("Content-type", "image/png")
+	case "jpg", "jpeg":
+		w.Header().Set("Content-type", "image/jpeg")
+	case "tiff", "tif":
+		w.Header().Set("Content-type", "image/tiff")
+	case "bmp":
+		w.Header().Set("Content-type", "image/bmp")
+	default:
+		return fmt.Errorf("Illegal image format requested: %s", format[0])
+	}
+	return nil
+}
+
 // WriteImageHttp writes an image to a HTTP response writer using a format and optional
 // compression strength specified in a string, e.g., "png", "jpg:80".
 func WriteImageHttp(w http.ResponseWriter, img image.Image, formatStr string) error {

@@ -170,8 +170,9 @@ POST <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>]
 
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add.
-    dims          The axes of data extraction in form "i_j_k,..."  Example: "0_2" can be XZ.
+    dims          The axes of data extraction in form "i_j_k,..."  
                     Slice strings ("xy", "xz", or "yz") are also accepted.
+                    Example: "0_2" is XZ, and "0_1_2" is a 3d subvolume.
     size          Size in voxels along each dimension specified in <dims>.
     offset        Gives coordinate of first voxel using dimensionality of data.
     format        Valid formats depend on the dimensionality of the request and formats
@@ -261,7 +262,7 @@ POST <api URL>/node/<UUID>/<data name>/blocks/<block coord>/<spanX>
     of blocks returned along x axis is "spanX".  The data is sent in the following 
     format with all integers in little-endian format:
 
-    if GET: <int32: # of blocks actually retrieved or posted>
+    if GET: <int32: # of blocks actually retrieved>
     <block 0 byte array>
     <block 1 byte array>
     ... 
@@ -271,7 +272,9 @@ POST <api URL>/node/<UUID>/<data name>/blocks/<block coord>/<spanX>
 
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add.
-    block coord   Gives coordinate of first voxel using dimensionality of data.
+    block coord   The block coordinate of the first block in X_Y_Z format.  Block coordinates
+                  can be derived from voxel coordinates by dividing voxel coordinates by
+                  the block size for a data type.
 `
 
 var (
@@ -891,43 +894,6 @@ func (d *Data) BlankImage(dstW, dstH int32) (*dvid.Image, error) {
 	}
 
 	return dvid.ImageFromGoImage(img, d.Properties.Values, d.Properties.Interpolable)
-}
-
-// Returns the image size necessary to compute an isotropic slice of the given dimensions.
-// If isotropic is false, simply returns the original slice geometry.  If isotropic is true,
-// uses the higher resolution dimension.
-func (d *Data) HandleIsotropy2D(geom dvid.Geometry, isotropic bool) (dvid.Geometry, error) {
-	if !isotropic {
-		return geom, nil
-	}
-	// Get the voxel resolutions for this particular slice orientation
-	resX, resY, err := geom.DataShape().GetFloat2D(d.Properties.VoxelSize)
-	if err != nil {
-		return nil, err
-	}
-	if resX == resY {
-		return geom, nil
-	}
-	srcW := geom.Size().Value(0)
-	srcH := geom.Size().Value(1)
-	var dstW, dstH int32
-	if resX < resY {
-		// Use x resolution for all pixels.
-		dstW = srcW
-		dstH = int32(float32(srcH)*resX/resY + 0.5)
-	} else {
-		dstH = srcH
-		dstW = int32(float32(srcW)*resY/resX + 0.5)
-	}
-
-	// Make altered geometry
-	slice, ok := geom.(*dvid.OrthogSlice)
-	if !ok {
-		return nil, fmt.Errorf("can only handle isotropy for orthogonal 2d slices")
-	}
-	dstSlice := slice.Duplicate()
-	dstSlice.SetSize(dvid.Point2d{dstW, dstH})
-	return dstSlice, nil
 }
 
 // PutLocal adds image data to a version node, altering underlying blocks if the image
@@ -1685,7 +1651,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 					return
 				}
 			} else {
-				rawSlice, err := d.HandleIsotropy2D(slice, isotropic)
+				rawSlice, err := dvid.Isotropy2D(d.Properties.VoxelSize, slice, isotropic)
 				if err != nil {
 					server.BadRequest(w, r, err.Error())
 					return

@@ -1027,7 +1027,25 @@ func SliceToPoint(coord []int32) (p Point, err error) {
 	}
 }
 
-// Parse a string of format "%d<sep>%d<sep>%d,..." into a Point
+// StringToPoint2d parses a string of format "%d<sep>%d,..." into a Point2d
+func StringToPoint2d(str, separator string) (Point2d, error) {
+	elems := strings.Split(str, separator)
+	if len(elems) != 2 {
+		return Point2d{}, fmt.Errorf("String %q cannot be converted to a 2d point", str)
+	}
+	return NdString(elems).Point2d()
+}
+
+// StringToPoint3d parses a string of format "%d<sep>%d<sep>%d,..." into a Point3d
+func StringToPoint3d(str, separator string) (Point3d, error) {
+	elems := strings.Split(str, separator)
+	if len(elems) != 3 {
+		return Point3d{}, fmt.Errorf("String %q cannot be converted to a 3d point", str)
+	}
+	return NdString(elems).Point3d()
+}
+
+// StringToPoint parses a string of format "%d<sep>%d<sep>%d..." into a Point
 func StringToPoint(str, separator string) (p Point, err error) {
 	elems := strings.Split(str, separator)
 	switch len(elems) {

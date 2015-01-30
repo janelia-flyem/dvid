@@ -328,6 +328,43 @@ func (s DataShapeString) DataShape() (shape DataShape, err error) {
 	return
 }
 
+// Returns the image size necessary to compute an isotropic slice of the given dimensions.
+// If isotropic is false, simply returns the original slice geometry.  If isotropic is true,
+// uses the higher resolution dimension.
+func Isotropy2D(voxelSize NdFloat32, geom Geometry, isotropic bool) (Geometry, error) {
+	if !isotropic {
+		return geom, nil
+	}
+	// Get the voxel resolutions for this particular slice orientation
+	resX, resY, err := geom.DataShape().GetFloat2D(voxelSize)
+	if err != nil {
+		return nil, err
+	}
+	if resX == resY {
+		return geom, nil
+	}
+	srcW := geom.Size().Value(0)
+	srcH := geom.Size().Value(1)
+	var dstW, dstH int32
+	if resX < resY {
+		// Use x resolution for all pixels.
+		dstW = srcW
+		dstH = int32(float32(srcH)*resX/resY + 0.5)
+	} else {
+		dstH = srcH
+		dstW = int32(float32(srcW)*resY/resX + 0.5)
+	}
+
+	// Make altered geometry
+	slice, ok := geom.(*OrthogSlice)
+	if !ok {
+		return nil, fmt.Errorf("can only handle isotropy for orthogonal 2d slices")
+	}
+	dstSlice := slice.Duplicate()
+	dstSlice.SetSize(Point2d{dstW, dstH})
+	return dstSlice, nil
+}
+
 // ---- Geometry implementations ------
 
 // Subvolume describes a 3d box Geometry.  The "Sub" prefix emphasizes that the

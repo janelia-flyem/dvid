@@ -319,6 +319,7 @@ func PutBlocks(ctx *datastore.VersionedContext, i IntData, start dvid.ChunkPoint
 			if err := batch.Commit(); err != nil {
 				return fmt.Errorf("Error on batch commit, block %d: %s\n", readBlocks, err.Error())
 			}
+			//batch = batcher.NewBatch(ctx)
 		}
 		if finish {
 			break
@@ -515,8 +516,6 @@ func loadHDF(i IntData, load *bulkLoadInfo) error {
 // Optimized bulk loading of XY images by loading all slices for a block before processing.
 // Trades off memory for speed.
 func loadXYImages(i IntData, load *bulkLoadInfo) error {
-	fmt.Println("Reading XY images...")
-
 	// Construct a storage.Context for this data and version
 	ctx := datastore.NewVersionedContext(i.BaseData(), load.versionID)
 

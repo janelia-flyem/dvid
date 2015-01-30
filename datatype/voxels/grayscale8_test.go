@@ -474,7 +474,7 @@ func TestBlockAPI(t *testing.T) {
 
 	// construct random blocks of data.
 	numBlockBytes := int32(grayscale.BlockSize().Prod())
-	testBlocks := 4
+	testBlocks := 1001
 	var blockData []byte
 	for i := 0; i < testBlocks; i++ {
 		blockData = append(blockData, tests.RandomBytes(numBlockBytes)...)

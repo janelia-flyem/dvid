@@ -999,7 +999,7 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 					return
 				}
 			} else {
-				rawSlice, err := d.HandleIsotropy2D(slice, isotropic)
+				rawSlice, err := dvid.Isotropy2D(d.Properties.VoxelSize, slice, isotropic)
 				e, err := d.NewExtHandler(rawSlice, nil)
 				if err != nil {
 					server.BadRequest(w, r, err.Error())

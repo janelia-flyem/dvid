@@ -64,7 +64,6 @@ $ dvid repo <UUID> new multiscale2d <data name> <settings...>
                       (via GET .../raw/... or .../isotropic/...) instead of tiles (via GET .../tile/...)
     Versioned      "true" or "false" (default)
     Source         Name of data source (required)
-    TileSize       Size in pixels
     Placeholder    Bool ("false", "true", "0", or "1").  Return placeholder tile if missing.
 
 
@@ -769,7 +768,7 @@ func (d *Data) GetImage(ctx storage.Context, src *voxels.Data, geom dvid.Geometr
 			d.DataName())
 	}
 	levelSpec := d.Levels[0]
-	minSlice, err := src.HandleIsotropy2D(geom, isotropic)
+	minSlice, err := dvid.Isotropy2D(src.VoxelSize, geom, isotropic)
 	if err != nil {
 		return nil, err
 	}
