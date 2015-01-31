@@ -319,7 +319,7 @@ func PutBlocks(ctx *datastore.VersionedContext, i IntData, start dvid.ChunkPoint
 			if err := batch.Commit(); err != nil {
 				return fmt.Errorf("Error on batch commit, block %d: %s\n", readBlocks, err.Error())
 			}
-			//batch = batcher.NewBatch(ctx)
+			batch = batcher.NewBatch(ctx)
 		}
 		if finish {
 			break
