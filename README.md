@@ -33,6 +33,7 @@ variety of ways:
 * label maps that handle mapping of labels X -> Y
 * label graphs
 * regions of interest represented via a coarse subdivision of space using block indices
+* tiles and images in XY, XZ, and YZ orientation using Google BrainMaps API
 
 Each of the above is handled by built-in data types via a
 [Level 2 REST HTTP API](http://martinfowler.com/articles/richardsonMaturityModel.html)

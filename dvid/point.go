@@ -581,6 +581,50 @@ func (p Point3d) PointInChunk(size Point) Point {
 	return Point3d{p0, p1, p2}
 }
 
+// -------
+
+// GetPoint3dFrom2d returns a 3d point from a 2d point in a plane.  The fill
+// is used for the dimension not on the plane.
+func GetPoint3dFrom2d(plane DataShape, p2d Point2d, fill int32) (Point3d, error) {
+	var p Point3d
+	switch {
+	case plane.Equals(XY):
+		p[0] = p2d[0]
+		p[1] = p2d[1]
+		p[2] = fill
+	case plane.Equals(XZ):
+		p[0] = p2d[0]
+		p[1] = fill
+		p[2] = p2d[1]
+	case plane.Equals(YZ):
+		p[0] = fill
+		p[1] = p2d[0]
+		p[2] = p2d[1]
+	default:
+		return Point3d{}, fmt.Errorf("Invalid 2d plane: %s", plane)
+	}
+	return p, nil
+}
+
+// Expand2d returns a 3d point increased by given size in the given plane
+func (p Point3d) Expand2d(plane DataShape, size Point2d) (Point3d, error) {
+	pt := p
+	switch {
+	case plane.Equals(XY):
+		p[0] += size[0]
+		p[1] += size[1]
+	case plane.Equals(XZ):
+		p[0] += size[0]
+		p[2] += size[1]
+	case plane.Equals(YZ):
+		p[1] += size[0]
+		p[2] += size[1]
+	default:
+		return Point3d{}, fmt.Errorf("Can't expand 3d point by %s", plane)
+	}
+	return pt, nil
+}
+
 type ListChunkPoint3d struct {
 	Points  []ChunkPoint3d
 	Indices []int
@@ -1114,6 +1158,14 @@ func (v Vector3d) String() string {
 
 // NdFloat32 is an N-dimensional slice of float32
 type NdFloat32 []float32
+
+func (n NdFloat32) String() string {
+	s := make([]string, len(n))
+	for i, f := range n {
+		s[i] = fmt.Sprintf("%f", f)
+	}
+	return strings.Join(s, ",")
+}
 
 // Equals returns true if two NdFloat32 are equal for each component.
 func (n NdFloat32) Equals(n2 NdFloat32) bool {
