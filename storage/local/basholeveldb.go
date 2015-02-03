@@ -560,7 +560,7 @@ func (db *LevelDB) GetRange(ctx storage.Context, kStart, kEnd []byte) ([]*storag
 
 // ProcessRange sends a range of key-value pairs to chunk handlers.  If the keys are versioned,
 // only key-value pairs for kStart's version will be transmitted.
-func (db *LevelDB) ProcessRange(ctx storage.Context, kStart, kEnd []byte, op *storage.ChunkOp, f func(*storage.Chunk)) error {
+func (db *LevelDB) ProcessRange(ctx storage.Context, kStart, kEnd []byte, op *storage.ChunkOp, f storage.ChunkProcessor) error {
 	ch := make(chan errorableKV)
 	//fmt.Printf("Process Range: ctx %v, index %v -> %v, op %v\n", ctx, kStart, kEnd, op)
 
@@ -586,7 +586,9 @@ func (db *LevelDB) ProcessRange(ctx storage.Context, kStart, kEnd []byte, op *st
 			op.Wg.Add(1)
 		}
 		chunk := &storage.Chunk{op, result.KeyValue}
-		f(chunk)
+		if err := f(chunk); err != nil {
+			return err
+		}
 	}
 }
 

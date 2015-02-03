@@ -30,9 +30,6 @@ import (
 const (
 	Version = "0.8"
 	RepoURL = "github.com/janelia-flyem/dvid/datatype/voxels"
-
-	// Don't allow requests that will return more than this amount of data.
-	MaxDataRequest = 3 * dvid.Giga
 )
 
 const HelpMessage = `
@@ -1001,9 +998,9 @@ func (d *Data) NewExtHandler(geom dvid.Geometry, img interface{}) (ExtData, erro
 			return nil, fmt.Errorf("Illegal geometry requested: %s", geom)
 		}
 		requestSize := int64(bytesPerVoxel) * numVoxels
-		if requestSize > MaxDataRequest {
+		if requestSize > server.MaxDataRequest {
 			return nil, fmt.Errorf("Requested payload (%d bytes) exceeds this DVID server's set limit (%d)",
-				requestSize, MaxDataRequest)
+				requestSize, server.MaxDataRequest)
 		}
 		voxels.data = make([]uint8, requestSize)
 	} else {
@@ -1138,27 +1135,30 @@ func (d *Data) Send(s message.Socket, roiname string, uuid dvid.UUID) error {
 	ctx = storage.NewDataContext(d, dvid.MaxVersionID)
 	endKey := ctx.ConstructKey(endIndex)
 
-	// Send this instance's voxel blocks down the socket
+	// Define the chunk processing
 	var blocksTotal, blocksSent int
-	chunkOp := &storage.ChunkOp{&SendOp{s}, nil}
-	err = db.ProcessRange(nil, begKey, endKey, chunkOp, func(chunk *storage.Chunk) {
+	var f storage.ChunkProcessor = func(chunk *storage.Chunk) error {
 		if chunk.KeyValue == nil {
-			dvid.Errorf("Received nil keyvalue sending voxel chunks\n")
+			return fmt.Errorf("Received nil keyvalue sending voxel chunks")
 		}
 		blocksTotal++
 		indexZYX, err := DecodeVoxelBlockKey(chunk.K)
 		if err != nil {
-			dvid.Errorf("Error in sending voxel block: %s\n", err.Error())
-			return
+			return fmt.Errorf("Error in sending voxel block: %s", err.Error())
 		}
 		if roiIterator != nil && !roiIterator.InsideFast(*indexZYX) {
-			return // don't send if this chunk is outside ROI
+			return nil
 		}
 		blocksSent++
 		if err := s.SendKeyValue("voxels", storage.BigData, chunk.KeyValue); err != nil {
-			dvid.Errorf("Error sending voxel chunks through nanomsg socket: %s\n", err.Error())
+			return fmt.Errorf("Error sending voxel chunks through nanomsg socket: %s", err.Error())
 		}
-	})
+		return nil
+	}
+
+	// Send this instance's voxel blocks down the socket
+	chunkOp := &storage.ChunkOp{&SendOp{s}, nil}
+	err = db.ProcessRange(nil, begKey, endKey, chunkOp, f)
 	if err != nil {
 		server.SpawnGoroutineMutex.Unlock()
 		return fmt.Errorf("Error in voxels %q range query: %s", d.DataName(), err.Error())
@@ -1257,14 +1257,14 @@ func (d *Data) foregroundROI(uuid dvid.UUID, versionID dvid.VersionID, dest *roi
 	spans := []dvid.Span{}
 	minIndex := NewVoxelBlockIndex(&dvid.MinIndexZYX)
 	maxIndex := NewVoxelBlockIndex(&dvid.MaxIndexZYX)
-	err = bigdata.ProcessRange(ctx, minIndex, maxIndex, &storage.ChunkOp{}, func(chunk *storage.Chunk) {
+
+	var f storage.ChunkProcessor = func(chunk *storage.Chunk) error {
 		if chunk == nil || chunk.V == nil {
-			return
+			return nil
 		}
 		data, _, err := dvid.DeserializeData(chunk.V, true)
 		if err != nil {
-			dvid.Errorf("Error decoding block: %s\n", err.Error())
-			return
+			return fmt.Errorf("Error decoding block: %s\n", err.Error())
 		}
 		numVoxels := d.BlockSize().Prod()
 		var foreground bool
@@ -1284,8 +1284,7 @@ func (d *Data) foregroundROI(uuid dvid.UUID, versionID dvid.VersionID, dest *roi
 		if foreground {
 			indexZYX, err := DecodeVoxelBlockKey(chunk.K)
 			if err != nil {
-				dvid.Errorf("Error decoding voxel block key: %s\n", err.Error())
-				return
+				return fmt.Errorf("Error decoding voxel block key: %s\n", err.Error())
 			}
 			x, y, z := indexZYX.Unpack()
 			if span == nil {
@@ -1308,7 +1307,13 @@ func (d *Data) foregroundROI(uuid dvid.UUID, versionID dvid.VersionID, dest *roi
 			}
 		}
 		server.BlockOnInteractiveRequests("voxels [compute foreground ROI]")
-	})
+		return nil
+	}
+	err = bigdata.ProcessRange(ctx, minIndex, maxIndex, &storage.ChunkOp{}, f)
+	if err != nil {
+		dvid.Errorf("Error in processing chunks in ROI: %s\n", err.Error())
+		return
+	}
 	if span != nil {
 		spans = append(spans, *span)
 	}

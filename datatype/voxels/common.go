@@ -89,7 +89,7 @@ type IntData interface {
 
 	BackgroundBlock() []byte
 
-	ProcessChunk(*storage.Chunk)
+	ProcessChunk(*storage.Chunk) error
 }
 
 // ExtData provides the shape, location (indexing), and data of a set of voxels
@@ -213,7 +213,7 @@ func GetVoxels(ctx *datastore.VersionedContext, i IntData, e ExtData, r *ROI) er
 		}
 
 		// Send the entire range of key-value pairs to chunk processor
-		err = db.ProcessRange(ctx, blockBeg, blockEnd, chunkOp, i.ProcessChunk)
+		err = db.ProcessRange(ctx, blockBeg, blockEnd, chunkOp, storage.ChunkProcessor(i.ProcessChunk))
 		if err != nil {
 			return fmt.Errorf("Unable to GET data %s: %s", ctx, err.Error())
 		}
@@ -1179,9 +1179,10 @@ func (d *Data) BackgroundBlock() []byte {
 // thinner, wider, and longer than the chunk, depending on the data shape (XY, XZ, etc).
 // Only some multiple of the # of CPU cores can be used for chunk handling before
 // it waits for chunk processing to abate via the buffered server.HandlerToken channel.
-func (d *Data) ProcessChunk(chunk *storage.Chunk) {
+func (d *Data) ProcessChunk(chunk *storage.Chunk) error {
 	<-server.HandlerToken
 	go d.processChunk(chunk)
+	return nil
 }
 
 func (d *Data) processChunk(chunk *storage.Chunk) {

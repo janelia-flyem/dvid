@@ -71,9 +71,9 @@ func (d *Data) NewArbSlice(topLeft, topRight, bottomLeft dvid.Vector3d, res floa
 		return nil, fmt.Errorf("Bad arbitrary image size requested: %s", arb)
 	}
 	requestSize := int64(bytesPerVoxel) * int64(numVoxels)
-	if requestSize > MaxDataRequest {
+	if requestSize > server.MaxDataRequest {
 		return nil, fmt.Errorf("Requested payload (%d bytes) exceeds this DVID server's set limit (%d)",
-			requestSize, MaxDataRequest)
+			requestSize, server.MaxDataRequest)
 	}
 	arb.data = make([]byte, requestSize)
 	return arb, nil

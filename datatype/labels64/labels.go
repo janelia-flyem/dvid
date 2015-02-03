@@ -180,22 +180,22 @@ func getLabelRLEs(ctx *datastore.VersionedContext, label uint64) (blockRLEs, err
 	// Process all the b+s keys and their values, which contain RLE runs for that label.
 
 	labelRLEs := blockRLEs{}
-	err = smalldata.ProcessRange(ctx, begIndex, endIndex, &storage.ChunkOp{}, func(chunk *storage.Chunk) {
+	var f storage.ChunkProcessor = func(chunk *storage.Chunk) error {
 		// Get the block index where the fromLabel is present
 		_, blockBytes, err := voxels.DecodeLabelSpatialMapKey(chunk.K)
 		if err != nil {
-			dvid.Errorf("Can't recover block index with chunk key %v: %s\n", chunk.K, err.Error())
-			return
+			return fmt.Errorf("Can't recover block index with chunk key %v: %s\n", chunk.K, err.Error())
 		}
 		blockStr := string(blockBytes)
 
 		var blockRLEs dvid.RLEs
 		if err := blockRLEs.UnmarshalBinary(chunk.V); err != nil {
-			dvid.Errorf("Unable to unmarshal RLE for label in block %v", chunk.K)
-			return
+			return fmt.Errorf("Unable to unmarshal RLE for label in block %v", chunk.K)
 		}
 		labelRLEs[blockStr] = blockRLEs
-	})
+		return nil
+	}
+	err = smalldata.ProcessRange(ctx, begIndex, endIndex, &storage.ChunkOp{}, f)
 	if err != nil {
 		return nil, err
 	}
@@ -270,23 +270,21 @@ func GetSparseVol(ctx storage.Context, label uint64, bounds Bounds) ([]byte, err
 	var numRuns, numBlocks uint32
 	encoding := buf.Bytes()
 
-	err = smalldata.ProcessRange(ctx, begIndex, endIndex, &storage.ChunkOp{}, func(chunk *storage.Chunk) {
+	var f storage.ChunkProcessor = func(chunk *storage.Chunk) error {
 		// Make sure this block is within the optinonal bounding.
 		if blockBounds.BoundedX() || blockBounds.BoundedY() {
 			_, blockBytes, err := voxels.DecodeLabelSpatialMapKey(chunk.K)
 			if err != nil {
-				dvid.Errorf("Error decoding sparse volume key (%v): %s\n", chunk.K, err.Error())
-				return
+				return fmt.Errorf("Error decoding sparse volume key (%v): %s\n", chunk.K, err.Error())
 			}
 			var indexZYX dvid.IndexZYX
 			if err := indexZYX.IndexFromBytes(blockBytes); err != nil {
-				dvid.Errorf("Error decoding block coordinate (%v) for sparse volume: %s\n",
+				return fmt.Errorf("Error decoding block coordinate (%v) for sparse volume: %s\n",
 					blockBytes, err.Error())
-				return
 			}
 			blockX, blockY, _ := indexZYX.Unpack()
 			if blockBounds.OutsideX(blockX) || blockBounds.OutsideY(blockY) {
-				return
+				return nil
 			}
 		}
 
@@ -296,8 +294,7 @@ func GetSparseVol(ctx storage.Context, label uint64, bounds Bounds) ([]byte, err
 		if bounds.Exact && bounds.VoxelBounds.IsSet() {
 			rles, err = boundRLEs(chunk.V, bounds.VoxelBounds)
 			if err != nil {
-				dvid.Errorf("Error in adjusting RLEs to bounds: %s\n", err.Error())
-				return
+				return fmt.Errorf("Error in adjusting RLEs to bounds: %s\n", err.Error())
 			}
 		} else {
 			rles = chunk.V
@@ -305,9 +302,14 @@ func GetSparseVol(ctx storage.Context, label uint64, bounds Bounds) ([]byte, err
 
 		numRuns += uint32(len(rles) / 16)
 		numBlocks++
+		if int64(len(encoding))+int64(len(rles)) > server.MaxDataRequest {
+			return fmt.Errorf("Sparse volume read aborted because length exceeds %d bytes", server.MaxDataRequest)
+		}
 		encoding = append(encoding, rles...)
-	})
-	if err != nil {
+		return nil
+	}
+
+	if err := smalldata.ProcessRange(ctx, begIndex, endIndex, &storage.ChunkOp{}, f); err != nil {
 		return nil, err
 	}
 	binary.LittleEndian.PutUint32(encoding[8:12], numRuns)

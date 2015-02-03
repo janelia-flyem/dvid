@@ -113,7 +113,7 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 
 		// Process the labels chunks for this Z
 		chunkOp := &storage.ChunkOp{op, wg}
-		err = bigdata.ProcessRange(ctx, begIndex, endIndex, chunkOp, d.CreateChunkRLEs)
+		err = bigdata.ProcessRange(ctx, begIndex, endIndex, chunkOp, storage.ChunkProcessor(d.CreateChunkRLEs))
 		wg.Wait()
 
 		layerLog.Debugf("Processed all %q blocks for layer %d/%d", d.DataName(), z-minIndexZ+1, maxIndexZ-minIndexZ+1)
@@ -150,14 +150,11 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 		}
 	}()
 
-	begIndex := voxels.NewLabelSpatialMapIndex(0, dvid.MinIndexZYX.Bytes())
-	endIndex := voxels.NewLabelSpatialMapIndex(math.MaxUint64, dvid.MaxIndexZYX.Bytes())
-	err = smalldata.ProcessRange(ctx, begIndex, endIndex, &storage.ChunkOp{}, func(chunk *storage.Chunk) {
+	var f storage.ChunkProcessor = func(chunk *storage.Chunk) error {
 		// Get label associated with this sparse volume.
 		indexBytes, err := ctx.IndexFromKey(chunk.K)
 		if err != nil {
-			dvid.Errorf("Could not get %q index bytes from chunk key: %s\n", d.DataName(), err.Error())
-			return
+			return fmt.Errorf("Could not get %q index bytes from chunk key: %s\n", d.DataName(), err.Error())
 		}
 		label := binary.BigEndian.Uint64(indexBytes[1:9])
 		chunk.ChunkOp = &storage.ChunkOp{label, nil}
@@ -167,7 +164,12 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 		surfaceCh[label%uint64(numSurfCalculators)] <- chunk
 
 		server.BlockOnInteractiveRequests("labels64 [size/surface compute]")
-	})
+		return nil
+	}
+
+	begIndex := voxels.NewLabelSpatialMapIndex(0, dvid.MinIndexZYX.Bytes())
+	endIndex := voxels.NewLabelSpatialMapIndex(math.MaxUint64, dvid.MaxIndexZYX.Bytes())
+	err = smalldata.ProcessRange(ctx, begIndex, endIndex, &storage.ChunkOp{}, f)
 	if err != nil {
 		dvid.Errorf("Error indexing sizes for %s: %s\n", d.DataName(), err.Error())
 		return
@@ -226,26 +228,28 @@ func (d *Data) denormFunc(versionID dvid.VersionID, mods voxels.BlockChannel) {
 	wg.Add(1)
 	go ComputeSurface(ctx, d, surfaceCh, wg)
 
+	var f storage.ChunkProcessor = func(chunk *storage.Chunk) error {
+		// Get label associated with this sparse volume.
+		indexBytes, err := ctx.IndexFromKey(chunk.K)
+		if err != nil {
+			return fmt.Errorf("Could not get %q index bytes from chunk key: %s\n", d.DataName(), err.Error())
+		}
+		label := binary.BigEndian.Uint64(indexBytes[1:9])
+		chunk.ChunkOp = &storage.ChunkOp{label, nil}
+
+		// Send RLE of label to size indexer and surface calculator.
+		sizeCh <- chunk
+		surfaceCh <- chunk
+
+		server.BlockOnInteractiveRequests("labels64 [size/surface compute]")
+		return nil
+	}
+
 	// Given all blocks modified, process body RLEs for label sizes and surfaces.
 	for label := range labels {
 		begIndex := voxels.NewLabelSpatialMapIndex(label, dvid.MinIndexZYX.Bytes())
 		endIndex := voxels.NewLabelSpatialMapIndex(label, dvid.MaxIndexZYX.Bytes())
-		err := smalldata.ProcessRange(ctx, begIndex, endIndex, &storage.ChunkOp{}, func(chunk *storage.Chunk) {
-			// Get label associated with this sparse volume.
-			indexBytes, err := ctx.IndexFromKey(chunk.K)
-			if err != nil {
-				dvid.Errorf("Could not get %q index bytes from chunk key: %s\n", d.DataName(), err.Error())
-				return
-			}
-			label := binary.BigEndian.Uint64(indexBytes[1:9])
-			chunk.ChunkOp = &storage.ChunkOp{label, nil}
-
-			// Send RLE of label to size indexer and surface calculator.
-			sizeCh <- chunk
-			surfaceCh <- chunk
-
-			server.BlockOnInteractiveRequests("labels64 [size/surface compute]")
-		})
+		err := smalldata.ProcessRange(ctx, begIndex, endIndex, &storage.ChunkOp{}, f)
 		if err != nil {
 			dvid.Errorf("Error denormalizing %s: %s\n", d.DataName(), err.Error())
 			return
@@ -267,7 +271,7 @@ func (d *Data) denormFunc(versionID dvid.VersionID, mods voxels.BlockChannel) {
 // CreateChunkRLEs processes a chunk of labels data and stores the RLEs for each label.
 // Only some multiple of the # of CPU cores can be used for chunk handling before
 // it waits for chunk processing to abate via the buffered server.HandlerToken channel.
-func (d *Data) CreateChunkRLEs(chunk *storage.Chunk) {
+func (d *Data) CreateChunkRLEs(chunk *storage.Chunk) error {
 	<-server.HandlerToken
 	go func() {
 		defer func() {
@@ -295,6 +299,7 @@ func (d *Data) CreateChunkRLEs(chunk *storage.Chunk) {
 		}
 		d.createChunkRLEs(op.versionID, zyx, blockData)
 	}()
+	return nil
 }
 
 func (d *Data) createChunkRLEs(versionID dvid.VersionID, zyx *dvid.IndexZYX, blockData []byte) {

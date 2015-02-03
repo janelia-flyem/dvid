@@ -1097,7 +1097,10 @@ func (d *Data) ApplyLabelMap(request datastore.Request, reply *datastore.Respons
 			begIndex := voxels.NewVoxelBlockIndex(&minIndexZYX)
 			endIndex := voxels.NewVoxelBlockIndex(&maxIndexZYX)
 			chunkOp := &storage.ChunkOp{op, wg}
-			err = bigdata.ProcessRange(labelCtx, begIndex, endIndex, chunkOp, d.ChunkApplyMap)
+			err = bigdata.ProcessRange(labelCtx, begIndex, endIndex, chunkOp, storage.ChunkProcessor(d.ChunkApplyMap))
+			if err != nil {
+				return err
+			}
 			wg.Wait()
 		}
 
@@ -1236,9 +1239,10 @@ func (d *Data) GetBlockLayerMapping(blockZ int32, op *denormOp) (minChunkPt, max
 // ChunkApplyMap maps a chunk of labels using the current mapping.
 // Only some multiple of the # of CPU cores can be used for chunk handling before
 // it waits for chunk processing to abate via the buffered server.HandlerToken channel.
-func (d *Data) ChunkApplyMap(chunk *storage.Chunk) {
+func (d *Data) ChunkApplyMap(chunk *storage.Chunk) error {
 	<-server.HandlerToken
 	go d.chunkApplyMap(chunk)
+	return nil
 }
 
 func (d *Data) chunkApplyMap(chunk *storage.Chunk) {

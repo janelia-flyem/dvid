@@ -353,23 +353,25 @@ func getSpans(ctx storage.VersionedContext, minIndex, maxIndex indexRLE) ([]dvid
 		return nil, err
 	}
 	spans := []dvid.Span{}
-	err = db.ProcessRange(ctx, minIndex.Bytes(), maxIndex.Bytes(), &storage.ChunkOp{}, func(chunk *storage.Chunk) {
+
+	var f storage.ChunkProcessor = func(chunk *storage.Chunk) error {
 		indexBytes, err := ctx.IndexFromKey(chunk.K)
 		if err != nil {
-			dvid.Errorf("Unable to recover roi RLE from chunk key %v: %s\n", chunk.K, err.Error())
-			return
+			return fmt.Errorf("Unable to recover roi RLE from chunk key %v: %s\n", chunk.K, err.Error())
 		}
 		index := new(indexRLE)
 		if err = index.IndexFromBytes(indexBytes); err != nil {
-			dvid.Errorf("Unable to get indexRLE out of []byte encoding: %s\n", err.Error())
+			return fmt.Errorf("Unable to get indexRLE out of []byte encoding: %s\n", err.Error())
 		}
 		z := index.start.Value(2)
 		y := index.start.Value(1)
 		x0 := index.start.Value(0)
 		x1 := x0 + int32(index.span) - 1
 		spans = append(spans, dvid.Span{z, y, x0, x1})
-	})
-	return spans, nil
+		return nil
+	}
+	err = db.ProcessRange(ctx, minIndex.Bytes(), maxIndex.Bytes(), &storage.ChunkOp{}, f)
+	return spans, err
 }
 
 // Returns all (z, y, x0, x1) Spans in sorted order: z, then y, then x0.
@@ -925,15 +927,14 @@ func (d *Data) Partition(ctx storage.Context, batchsize int32) ([]byte, error) {
 		return nil, err
 	}
 	merge := true
-	err = db.ProcessRange(ctx, minIndexRLE.Bytes(), maxIndexRLE.Bytes(), &storage.ChunkOp{}, func(chunk *storage.Chunk) {
+	var f storage.ChunkProcessor = func(chunk *storage.Chunk) error {
 		indexBytes, err := ctx.IndexFromKey(chunk.K)
 		if err != nil {
-			dvid.Errorf("Unable to recover roi RLE from chunk key %v: %s\n", chunk.K, err.Error())
-			return
+			return fmt.Errorf("Unable to recover roi RLE from chunk key %v: %s\n", chunk.K, err.Error())
 		}
 		index := new(indexRLE)
 		if err = index.IndexFromBytes(indexBytes); err != nil {
-			dvid.Errorf("Unable to get indexRLE out of []byte encoding: %s\n", err.Error())
+			return fmt.Errorf("Unable to get indexRLE out of []byte encoding: %s\n", err.Error())
 		}
 
 		// If we are in new layer, process last one.
@@ -956,7 +957,12 @@ func (d *Data) Partition(ctx storage.Context, batchsize int32) ([]byte, error) {
 
 		// Check this block against current layer extents
 		layer.extend(index)
-	})
+		return nil
+	}
+	err = db.ProcessRange(ctx, minIndexRLE.Bytes(), maxIndexRLE.Bytes(), &storage.ChunkOp{}, f)
+	if err != nil {
+		return nil, err
+	}
 
 	// Process last incomplete layer if there is one.
 	if len(layer.activeBlocks) > 0 {
@@ -1060,15 +1066,14 @@ func (d *Data) SimplePartition(ctx storage.Context, batchsize int32) ([]byte, er
 	if err != nil {
 		return nil, err
 	}
-	err = db.ProcessRange(ctx, minIndexRLE.Bytes(), maxIndexRLE.Bytes(), &storage.ChunkOp{}, func(chunk *storage.Chunk) {
+	var f storage.ChunkProcessor = func(chunk *storage.Chunk) error {
 		indexBytes, err := ctx.IndexFromKey(chunk.K)
 		if err != nil {
-			dvid.Errorf("Unable to recover roi RLE from chunk key %v: %s\n", chunk.K, err.Error())
-			return
+			return fmt.Errorf("Unable to recover roi RLE from chunk key %v: %s\n", chunk.K, err.Error())
 		}
 		index := new(indexRLE)
 		if err = index.IndexFromBytes(indexBytes); err != nil {
-			dvid.Errorf("Unable to get indexRLE out of []byte encoding: %s\n", err.Error())
+			return fmt.Errorf("Unable to get indexRLE out of []byte encoding: %s\n", err.Error())
 		}
 
 		// If we are in new layer, process last one.
@@ -1086,7 +1091,12 @@ func (d *Data) SimplePartition(ctx storage.Context, batchsize int32) ([]byte, er
 
 		// Extend current layer by the current block
 		layer.extend(index)
-	})
+		return nil
+	}
+	err = db.ProcessRange(ctx, minIndexRLE.Bytes(), maxIndexRLE.Bytes(), &storage.ChunkOp{}, f)
+	if err != nil {
+		return nil, err
+	}
 
 	// Process last incomplete layer if there is one.
 	if len(layer.activeBlocks) > 0 {

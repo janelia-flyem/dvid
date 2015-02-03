@@ -33,9 +33,6 @@ const (
 	Version  = "0.1"
 	RepoURL  = "github.com/janelia-flyem/dvid/datatype/labels64"
 	TypeName = "labels64"
-
-	// Don't allow requests that will return more than this amount of data.
-	MaxDataRequest = 3 * dvid.Giga
 )
 
 const HelpMessage = `
@@ -572,9 +569,9 @@ func (d *Data) NewExtHandler(geom dvid.Geometry, img interface{}) (voxels.ExtDat
 			return nil, fmt.Errorf("Illegal geometry requested: %s", geom)
 		}
 		requestSize := int64(bytesPerVoxel) * numVoxels
-		if requestSize > MaxDataRequest {
+		if requestSize > server.MaxDataRequest {
 			return nil, fmt.Errorf("Requested payload (%d bytes) exceeds this DVID server's set limit (%d)",
-				requestSize, MaxDataRequest)
+				requestSize, server.MaxDataRequest)
 		}
 		data = make([]byte, requestSize)
 	} else {
@@ -1456,7 +1453,7 @@ func (d *Data) CreateComposite(request datastore.Request, reply *datastore.Respo
 	extents := d.Extents()
 	blockBeg := voxels.NewVoxelBlockIndex(extents.MinIndex)
 	blockEnd := voxels.NewVoxelBlockIndex(extents.MaxIndex)
-	err = store.ProcessRange(ctx, blockBeg, blockEnd, chunkOp, d.CreateCompositeChunk)
+	err = store.ProcessRange(ctx, blockBeg, blockEnd, chunkOp, storage.ChunkProcessor(d.CreateCompositeChunk))
 	wg.Wait()
 
 	// Set new mapped data to same extents.
@@ -1473,9 +1470,10 @@ func (d *Data) CreateComposite(request datastore.Request, reply *datastore.Respo
 // saving the composited result into an rgba8.
 // Only some multiple of the # of CPU cores can be used for chunk handling before
 // it waits for chunk processing to abate via the buffered server.HandlerToken channel.
-func (d *Data) CreateCompositeChunk(chunk *storage.Chunk) {
+func (d *Data) CreateCompositeChunk(chunk *storage.Chunk) error {
 	<-server.HandlerToken
 	go d.createCompositeChunk(chunk)
+	return nil
 }
 
 var curZ int32

@@ -176,7 +176,7 @@ func (d *Data) GetMappedVoxels(versionID dvid.VersionID, e voxels.ExtData) error
 		blockBeg := voxels.NewVoxelBlockIndex(indexBeg)
 		blockEnd := voxels.NewVoxelBlockIndex(indexEnd)
 
-		err = bigdata.ProcessRange(labelsCtx, blockBeg, blockEnd, chunkOp, d.MapChunk)
+		err = bigdata.ProcessRange(labelsCtx, blockBeg, blockEnd, chunkOp, storage.ChunkProcessor(d.MapChunk))
 		if err != nil {
 			return fmt.Errorf("Unable to GET data %s: %s", d.Data.DataName(), err.Error())
 		}
@@ -246,7 +246,7 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 			begIndex := voxels.NewVoxelBlockIndex(&minIndexZYX)
 			endIndex := voxels.NewVoxelBlockIndex(&maxIndexZYX)
 			chunkOp := &storage.ChunkOp{op, wg}
-			err = bigdata.ProcessRange(labelsCtx, begIndex, endIndex, chunkOp, d.DenormalizeChunk)
+			err = bigdata.ProcessRange(labelsCtx, begIndex, endIndex, chunkOp, storage.ChunkProcessor(d.DenormalizeChunk))
 			wg.Wait()
 		} else {
 			dvid.Infof("No mapping for block layer %d found!\n", z)
@@ -290,14 +290,11 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 	}()
 
 	// Iterate through all mapped labels and send to size and surface processing goroutines.
-	begIndex := voxels.NewLabelSpatialMapIndex(0, dvid.MinIndexZYX.Bytes())
-	endIndex := voxels.NewLabelSpatialMapIndex(math.MaxUint64, dvid.MaxIndexZYX.Bytes())
-	err = smalldata.ProcessRange(labelmapCtx, begIndex, endIndex, &storage.ChunkOp{}, func(chunk *storage.Chunk) {
+	var f storage.ChunkProcessor = func(chunk *storage.Chunk) error {
 		// Get label associated with this sparse volume.
 		label, _, err := voxels.DecodeLabelSpatialMapKey(chunk.K)
 		if err != nil {
-			dvid.Errorf("Unable to recover label with chunk key %v: %s\n", chunk.K, err.Error())
-			return
+			return fmt.Errorf("Unable to recover label with chunk key %v: %s\n", chunk.K, err.Error())
 		}
 		chunk.ChunkOp = &storage.ChunkOp{label, nil}
 
@@ -306,7 +303,11 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 		surfaceCh[label%uint64(numSurfCalculators)] <- chunk
 
 		server.BlockOnInteractiveRequests("labelmap [size/surface compute]")
-	})
+		return nil
+	}
+	begIndex := voxels.NewLabelSpatialMapIndex(0, dvid.MinIndexZYX.Bytes())
+	endIndex := voxels.NewLabelSpatialMapIndex(math.MaxUint64, dvid.MaxIndexZYX.Bytes())
+	err = smalldata.ProcessRange(labelmapCtx, begIndex, endIndex, &storage.ChunkOp{}, f)
 	if err != nil {
 		dvid.Errorf("Error indexing sizes for %s: %s\n", d.DataName(), err.Error())
 		return
@@ -322,9 +323,10 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 // thinner, wider, and longer than the chunk, depending on the data shape (XY, XZ, etc).
 // Only some multiple of the # of CPU cores can be used for chunk handling before
 // it waits for chunk processing to abate via the buffered server.HandlerToken channel.
-func (d *Data) MapChunk(chunk *storage.Chunk) {
+func (d *Data) MapChunk(chunk *storage.Chunk) error {
 	<-server.HandlerToken
 	go d.mapChunk(chunk)
+	return nil
 }
 
 func (d *Data) mapChunk(chunk *storage.Chunk) {
@@ -478,9 +480,10 @@ func (d *Data) mapChunk(chunk *storage.Chunk) {
 // DenormalizeChunk processes a chunk of data as part of a mapped operation.
 // Only some multiple of the # of CPU cores can be used for chunk handling before
 // it waits for chunk processing to abate via the buffered server.HandlerToken channel.
-func (d *Data) DenormalizeChunk(chunk *storage.Chunk) {
+func (d *Data) DenormalizeChunk(chunk *storage.Chunk) error {
 	<-server.HandlerToken
 	go d.denormalizeChunk(chunk)
+	return nil
 }
 
 func (d *Data) denormalizeChunk(chunk *storage.Chunk) {

@@ -168,6 +168,9 @@ type Chunk struct {
 	*KeyValue
 }
 
+// ChunkProcessor is a function that accepts a Chunk.
+type ChunkProcessor func(*Chunk) error
+
 // Requirements lists required backend interfaces for a type.
 type Requirements struct {
 	BulkIniter bool
@@ -198,7 +201,7 @@ type OrderedKeyValueGetter interface {
 	// Since the chunks are typically sent during sequential read iteration, the
 	// receiving function can be organized as a pool of chunk handling goroutines.
 	// See datatype.voxels.ProcessChunk() for an example.
-	ProcessRange(ctx Context, kStart, kEnd []byte, op *ChunkOp, f func(*Chunk)) (err error)
+	ProcessRange(ctx Context, kStart, kEnd []byte, op *ChunkOp, f ChunkProcessor) error
 }
 
 type KeyValueSetter interface {

@@ -23,6 +23,9 @@ type Config interface {
 }
 
 var (
+	// Don't allow requests that will return more than this amount of data.
+	MaxDataRequest = int64(3) * dvid.Giga
+
 	// InteractiveOpsPer2Min gives the number of interactive-level requests
 	// received over the last 2 minutes.  This is useful for throttling "batch"
 	// operations on a single DVID server.  Note that this metric is an lower
