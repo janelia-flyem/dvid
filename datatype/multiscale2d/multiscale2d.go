@@ -325,6 +325,14 @@ type LevelSpec struct {
 	TileSize   dvid.Point3d
 }
 
+func (spec LevelSpec) Duplicate() LevelSpec {
+	var out LevelSpec
+	out.Resolution = make(dvid.NdFloat32, 3)
+	copy(out.Resolution, spec.Resolution)
+	out.TileSize = spec.TileSize
+	return out
+}
+
 // TileScaleSpec is a slice of tile resolution & size for each dimensions.
 type TileScaleSpec struct {
 	LevelSpec

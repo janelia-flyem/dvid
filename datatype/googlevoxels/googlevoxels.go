@@ -19,6 +19,7 @@ import (
 	"code.google.com/p/go.net/context"
 
 	"github.com/janelia-flyem/dvid/datastore"
+	"github.com/janelia-flyem/dvid/datatype/multiscale2d"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/message"
 	"github.com/janelia-flyem/dvid/server"
@@ -616,6 +617,56 @@ type Properties struct {
 
 	// HighResIndex is the geometry that is the highest resolution among the available scaled volumes.
 	HighResIndex GeometryIndex
+}
+
+// MarshalJSON handles JSON serialization for googlevoxels Data.  It adds "Levels" metadata equivalent
+// to multiscale2d's tile specification so clients can treat googlevoxels tile API identically to
+// multiscale2d.  Sensitive information like AuthKey are withheld.
+func (p Properties) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		VolumeID     string
+		TileSize     int32
+		TileMap      GeometryMap
+		Scales       Geometries
+		HighResIndex GeometryIndex
+		Levels       multiscale2d.TileSpec
+	}{
+		p.VolumeID,
+		p.TileSize,
+		p.TileMap,
+		p.Scales,
+		p.HighResIndex,
+		getTileSpec(p.TileSize, p.Scales[p.HighResIndex], p.TileMap),
+	})
+}
+
+// Converts Google BrainMaps scaling to multiscale2d-style tile specifications.
+// This assumes that Google levels always downsample by 2.
+func getTileSpec(tileSize int32, hires Geometry, tileMap GeometryMap) multiscale2d.TileSpec {
+	// Determine how many levels we have by the max of any orientation.
+	// TODO -- Warn user in some way if BrainMaps API has levels in one orientation but not in other.
+	var maxScale Scaling
+	for tileSpec := range tileMap {
+		if tileSpec.scaling > maxScale {
+			maxScale = tileSpec.scaling
+		}
+	}
+
+	// Create the levels from 0 (hires) to max level.
+	levelSpec := multiscale2d.LevelSpec{
+		TileSize: dvid.Point3d{tileSize, tileSize, tileSize},
+	}
+	levelSpec.Resolution = make(dvid.NdFloat32, 3)
+	copy(levelSpec.Resolution, hires.PixelSize)
+	ms2dTileSpec := make(multiscale2d.TileSpec, maxScale+1)
+	for scale := Scaling(0); scale <= maxScale; scale++ {
+		curSpec := levelSpec.Duplicate()
+		ms2dTileSpec[multiscale2d.Scaling(scale)] = multiscale2d.TileScaleSpec{LevelSpec: curSpec}
+		levelSpec.Resolution[0] *= 2
+		levelSpec.Resolution[1] *= 2
+		levelSpec.Resolution[2] *= 2
+	}
+	return ms2dTileSpec
 }
 
 // Data embeds the datastore's Data and extends it with voxel-specific properties.
