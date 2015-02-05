@@ -201,6 +201,9 @@ func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.
 	if err != nil {
 		return nil, fmt.Errorf("Error getting volume metadata from Google: %s", err.Error())
 	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Unexpected status code %d returned when getting volume metadata for %q", resp.StatusCode, volumeid)
+	}
 	metadata, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
@@ -804,6 +807,11 @@ func (d *Data) serveTile(w http.ResponseWriter, r *http.Request, tile *GoogleTil
 		}
 		_, err = w.Write(paddedData)
 		return err
+	}
+
+	// If we aren't on edge or outside, our return status should be OK.
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("Unexpected status code %d on tile request (%q, volume id %q)", resp.StatusCode, d.DataName(), d.VolumeID)
 	}
 
 	// Just send the data as we get it from Google in chunks.
