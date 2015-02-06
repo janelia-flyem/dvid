@@ -889,6 +889,11 @@ func (d *Data) ServeTile(repo datastore.Repo, ctx storage.Context, w http.Respon
 		server.BadRequest(w, r, err.Error())
 		return err
 	}
+	if tileCoord.NumDims() != 3 {
+		err = fmt.Errorf("Expected 3d tile coordinate, got %s", coordStr)
+		server.BadRequest(w, r, err.Error())
+		return err
+	}
 	indexZYX := dvid.IndexZYX{tileCoord.Value(0), tileCoord.Value(1), tileCoord.Value(2)}
 	data, err := d.getTileData(ctx, shape, Scaling(scaling), indexZYX)
 	if err != nil {
