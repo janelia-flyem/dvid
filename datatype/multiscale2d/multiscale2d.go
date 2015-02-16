@@ -17,6 +17,7 @@ import (
 	"image/png"
 	"math"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -1197,6 +1198,7 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, request datasto
 	var bufferLock [2]sync.Mutex
 	var sliceBuffers [2]voxels.ExtData
 	var bufferNum int
+	bufferNum = 0
 
 	// Get the planes we should tile.
 	planes, err := config.GetShapes("planes", ";")
@@ -1207,6 +1209,13 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, request datasto
 
 	voxelsCtx := datastore.NewVersionedContext(src, versionID)
 	outF, err := d.putTileFunc(versionID)
+
+	// sort the tile spec keys to iterate from highest to lowest resolution
+	var sortedKeys []int
+	for scaling, _ := range tileSpec {
+		sortedKeys = append(sortedKeys, int(scaling))
+	}
+	sort.Ints(sortedKeys)
 
 	for _, plane := range planes {
 		timedLog := dvid.NewTimeLog()
@@ -1241,7 +1250,9 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, request datasto
 				go func(bufferNum int, offset dvid.Point) {
 					defer bufferLock[bufferNum].Unlock()
 					timedLog := dvid.NewTimeLog()
-					for scaling, levelSpec := range tileSpec {
+					for _, key := range sortedKeys {
+						scaling := Scaling(key)
+						levelSpec := tileSpec[scaling]
 						if err != nil {
 							dvid.Errorf("Error in tiling: %s\n", err.Error())
 							return
@@ -1292,7 +1303,9 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, request datasto
 				go func(bufferNum int, offset dvid.Point) {
 					defer bufferLock[bufferNum].Unlock()
 					timedLog := dvid.NewTimeLog()
-					for scaling, levelSpec := range tileSpec {
+					for _, key := range sortedKeys {
+						scaling := Scaling(key)
+						levelSpec := tileSpec[scaling]
 						if err != nil {
 							dvid.Errorf("Error in tiling: %s\n", err.Error())
 							return
@@ -1343,7 +1356,9 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, request datasto
 				go func(bufferNum int, offset dvid.Point) {
 					defer bufferLock[bufferNum].Unlock()
 					timedLog := dvid.NewTimeLog()
-					for scaling, levelSpec := range tileSpec {
+					for _, key := range sortedKeys {
+						scaling := Scaling(key)
+						levelSpec := tileSpec[scaling]
 						outF, err := d.putTileFunc(versionID)
 						if err != nil {
 							dvid.Errorf("Error in tiling: %s\n", err.Error())
