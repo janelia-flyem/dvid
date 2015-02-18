@@ -273,6 +273,19 @@ GET <api URL>/node/<UUID>/<data name>/surface-by-point/<coord>
     coord     	  Coordinate of voxel with underscore as separator, e.g., 10_20_30
 
 
+GET <api URL>/node/<UUID>/<data name>/label/<coord>
+
+	Returns JSON for the label at the given coordinate:
+
+	{ "Label": 23 }
+	
+    Arguments:
+
+    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    data name     Name of label data.
+    coord     	  Coordinate of voxel with underscore as separator, e.g., 10_20_30
+
+
 GET <api URL>/node/<UUID>/<data name>/sizerange/<min size>/<optional max size>
 
     Returns JSON list of labels that have # voxels that fall within the given range
@@ -1271,6 +1284,27 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 			return
 		}
 		timedLog.Infof("HTTP %s: surface-by-point at %s (%s)", r.Method, coord, r.URL)
+
+	case "label":
+		// GET <api URL>/node/<UUID>/<data name>/label/<coord>
+		if len(parts) < 5 {
+			server.BadRequest(w, r, "ERROR: DVID requires coord to follow 'label' command")
+			return
+		}
+		coord, err := dvid.StringToPoint(parts[4], "_")
+		if err != nil {
+			server.BadRequest(w, r, err.Error())
+			return
+		}
+		label, err := d.GetLabelAtPoint(storeCtx, coord)
+		if err != nil {
+			server.BadRequest(w, r, err.Error())
+			return
+		}
+		w.Header().Set("Content-type", "application/json")
+		jsonStr := fmt.Sprintf(`{"Label": %d}`, label)
+		fmt.Fprintf(w, jsonStr)
+		timedLog.Infof("HTTP %s: label at %s (%s)", r.Method, coord, r.URL)
 
 	case "sizerange":
 		// GET <api URL>/node/<UUID>/<data name>/sizerange/<min size>/<optional max size>
