@@ -388,7 +388,7 @@ func repoSelector(c *web.C, h http.Handler) http.Handler {
 func instanceSelector(c *web.C, h http.Handler) http.Handler {
 	fn := func(w http.ResponseWriter, r *http.Request) {
 		var err error
-		dataname := dvid.DataString(c.URLParams["dataname"])
+		dataname := dvid.InstanceName(c.URLParams["dataname"])
 		uuid, ok := c.Env["uuid"].(dvid.UUID)
 		if !ok {
 			msg := fmt.Sprintf("Bad format for UUID %q\n", c.Env["uuid"])
@@ -440,7 +440,7 @@ func helpHandler(w http.ResponseWriter, r *http.Request) {
 	// Get help from all compiled-in data types.
 	html := "<ul>"
 	for _, typeservice := range datastore.Compiled {
-		name := typeservice.GetType().Name
+		name := typeservice.GetTypeName()
 		html += "<li>"
 		html += fmt.Sprintf("<a href='/api/help/%s'>%s</a>", name, name)
 		html += "</li>"
@@ -538,9 +538,8 @@ func serverTypesHandler(w http.ResponseWriter, r *http.Request) {
 		BadRequest(w, r, msg)
 		return
 	}
-	for _, typeservice := range typemap {
-		t := typeservice.GetType()
-		jsonMap[t.Name] = string(t.URL)
+	for _, t := range typemap {
+		jsonMap[t.GetTypeName()] = string(t.GetTypeURL())
 	}
 	m, err := json.Marshal(jsonMap)
 	if err != nil {
@@ -622,7 +621,7 @@ func repoDeleteHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 
 	// Do the deletion asynchronously since they can take a very long time.
 	go func() {
-		if err := repo.DeleteDataByName(dvid.DataString(dataname)); err != nil {
+		if err := repo.DeleteDataByName(dvid.InstanceName(dataname)); err != nil {
 			dvid.Errorf("Error in deleting data instance %q: %s", dataname, err.Error())
 		}
 	}()
@@ -657,7 +656,7 @@ func repoNewDataHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 		BadRequest(w, r, err.Error())
 		return
 	}
-	_, err = repo.NewData(typeservice, dvid.DataString(dataname), config)
+	_, err = repo.NewData(typeservice, dvid.InstanceName(dataname), config)
 	if err != nil {
 		BadRequest(w, r, err.Error())
 		return

@@ -24,8 +24,8 @@ import (
 	"code.google.com/p/go.net/context"
 
 	"github.com/janelia-flyem/dvid/datastore"
-	"github.com/janelia-flyem/dvid/datatype/labels64"
-	"github.com/janelia-flyem/dvid/datatype/voxels"
+	"github.com/janelia-flyem/dvid/datatype/imageblk"
+	"github.com/janelia-flyem/dvid/datatype/labelblk"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/message"
 	"github.com/janelia-flyem/dvid/server"
@@ -60,7 +60,7 @@ $ dvid repo <UUID> new labelmap <data name> <settings...>
 
     Configuration Settings (case-insensitive keys)
 
-    Labels           Name of labels64 data for which this is a label mapping. (required)
+    Labels           Name of labelblk data for which this is a label mapping. (required)
     Versioned        "true" or "false" (default)
 
 $ dvid node <UUID> <data name> load raveler <superpixel-to-segment filename> <segment-to-body filename>
@@ -76,9 +76,9 @@ $ dvid node <UUID> <data name> load raveler <superpixel-to-segment filename> <se
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add.
 
-$ dvid node <UUID> <data name> apply <labels64 data name> <new labels64 data name>
+$ dvid node <UUID> <data name> apply <labelblk data name> <new labelblk data name>
 
-    Applies a labelmap to current labels64 data and creates a new labels64 data.
+    Applies a labelmap to current labelblk data and creates a new labelblk data.
 
     Example:
 
@@ -221,7 +221,7 @@ GET  <api URL>/node/<UUID>/<data name>/labels/<dims>/<size>/<offset>[/<format>][
 GET  <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?throttle=true]
 
     Retrieves mapped labels for each voxel in the specified extent.  Either 'labels' or
-    'raw' (similar to labels64 API) can be used.
+    'raw' (similar to labelblk API) can be used.
 
     Example: 
 
@@ -308,13 +308,13 @@ func NewType() *Type {
 // --- TypeService interface ---
 
 // NewDataService returns a pointer to new labelmap data with default values.
-func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.DataString, c dvid.Config) (datastore.DataService, error) {
+func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.Config) (datastore.DataService, error) {
 	basedata, err := datastore.NewDataService(dtype, uuid, id, name, c)
 	if err != nil {
 		return nil, err
 	}
 
-	// Make sure we have valid labels64 data for mapping
+	// Make sure we have valid labelblk data for mapping
 	labelname, found, err := c.GetString("Labels")
 	if err != nil {
 		return nil, err
@@ -323,8 +323,8 @@ func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.
 		return nil, fmt.Errorf("Cannot make labelmap without valid 'Labels' setting.")
 	}
 
-	// Make sure there is a valid labels64 instance with the given Labels name
-	labelsRef, err := NewLabelsRef(uuid, dvid.DataString(labelname))
+	// Make sure there is a valid labelblk instance with the given Labels name
+	labelsRef, err := NewLabelsRef(uuid, dvid.InstanceName(labelname))
 	if err != nil {
 		return nil, err
 	}
@@ -336,19 +336,19 @@ func (dtype *Type) Help() string {
 	return fmt.Sprintf(HelpMessage)
 }
 
-// LabelsRef is a reference to an existing labels64 data
+// LabelsRef is a reference to an existing labelblk data
 type LabelsRef struct {
 	uuid dvid.UUID
-	name dvid.DataString
+	name dvid.InstanceName
 }
 
-func NewLabelsRef(uuid dvid.UUID, name dvid.DataString) (LabelsRef, error) {
+func NewLabelsRef(uuid dvid.UUID, name dvid.InstanceName) (LabelsRef, error) {
 	return LabelsRef{uuid, name}, nil
 }
 
 type labelsRefExport struct {
 	UUID dvid.UUID
-	Name dvid.DataString
+	Name dvid.InstanceName
 }
 
 // MarshalJSON implements the json.Marshaler interface.
@@ -379,8 +379,8 @@ func (ref *LabelsRef) UnmarshalBinary(data []byte) error {
 }
 
 // GetData returns a pointer to the referenced labels.
-func (ref *LabelsRef) GetData() (*labels64.Data, error) {
-	return labels64.GetByUUID(ref.uuid, ref.name)
+func (ref *LabelsRef) GetData() (*labelblk.Data, error) {
+	return labelblk.GetByUUID(ref.uuid, ref.name)
 }
 
 func (ref LabelsRef) String() string {
@@ -496,12 +496,12 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 
 	// Get the action (GET, POST)
 	action := strings.ToLower(r.Method)
-	var op voxels.OpType
+	var op imageblk.OpType
 	switch action {
 	case "get":
-		op = voxels.GetOp
+		op = imageblk.GetOp
 	case "post":
-		op = voxels.PutOp
+		op = imageblk.PutOp
 	default:
 		server.BadRequest(w, r, "Can only handle GET or POST HTTP verbs")
 		return
@@ -570,13 +570,13 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 			server.BadRequest(w, r, err.Error())
 			return
 		}
-		if op == voxels.PutOp {
+		if op == imageblk.PutOp {
 			data, err := ioutil.ReadAll(r.Body)
 			if err != nil {
 				server.BadRequest(w, r, err.Error())
 				return
 			}
-			err = labels64.PutSparseVol(storeCtx, label, data)
+			err = labelblk.PutSparseVol(storeCtx, label, data)
 			if err != nil {
 				server.BadRequest(w, r, err.Error())
 				return
@@ -584,7 +584,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 			w.Header().Set("Content-Type", "text/plain")
 			fmt.Fprintf(w, "Put sparse volume with label %d into version %d\n", label, versionID)
 		} else {
-			data, err := labels64.GetSparseVol(storeCtx, label, labels64.Bounds{})
+			data, err := labelblk.GetSparseVol(storeCtx, label, labelblk.Bounds{})
 			if err != nil {
 				server.BadRequest(w, r, err.Error())
 				return
@@ -609,12 +609,12 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 			server.BadRequest(w, r, err.Error())
 			return
 		}
-		label, err := d.GetLabelAtPoint(storeCtx, coord)
+		label, err := d.GetLabelAtPoint(versionID, coord)
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
 			return
 		}
-		data, err := labels64.GetSparseVol(storeCtx, label, labels64.Bounds{})
+		data, err := labelblk.GetSparseVol(storeCtx, label, labelblk.Bounds{})
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
 			return
@@ -639,7 +639,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 			server.BadRequest(w, r, err.Error())
 			return
 		}
-		gzipData, found, err := labels64.GetSurface(storeCtx, label)
+		gzipData, found, err := labelblk.GetSurface(storeCtx, label)
 		if err != nil {
 			server.BadRequest(w, r, "Error on getting surface for label %d: %s", label, err.Error())
 			return
@@ -671,7 +671,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 			server.BadRequest(w, r, err.Error())
 			return
 		}
-		gzipData, found, err := labels64.GetSurface(storeCtx, label)
+		gzipData, found, err := labelblk.GetSurface(storeCtx, label)
 		if err != nil {
 			server.BadRequest(w, r, "Error on getting surface for label %d: %s", label, err.Error())
 			return
@@ -706,7 +706,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 				return
 			}
 		}
-		jsonStr, err := labels64.GetSizeRange(d, versionID, minSize, maxSize)
+		jsonStr, err := labelblk.GetSizeRange(d, versionID, minSize, maxSize)
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
 			return
@@ -720,7 +720,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 			server.BadRequest(w, r, "'labels' or 'raw' must be followed by shape/size/offset")
 			return
 		}
-		if op == voxels.PutOp {
+		if op == imageblk.PutOp {
 			server.BadRequest(w, r, "Cannot POST.  Can only GET mapped labels that intersect the given geometry.")
 			return
 		}
@@ -894,15 +894,15 @@ func loadSegBodyMap(filename string) (map[uint64]uint64, error) {
 // the superpixel ID.  Also, the zero label is reserved.
 func (d *Data) NewRavelerForwardMapIndex(z, spid uint32, body uint64) []byte {
 	index := make([]byte, 17)
-	index[0] = byte(voxels.KeyForwardMap)
-	copy(index[1:9], labels64.RavelerSuperpixelBytes(z, spid))
+	index[0] = byte(imageblk.KeyForwardMap)
+	copy(index[1:9], labelblk.RavelerSuperpixelBytes(z, spid))
 	binary.BigEndian.PutUint64(index[9:17], body)
 	return index
 }
 
 // LoadRavelerMaps loads maps from Raveler-formatted superpixel->segment and
 // segment->body maps.  Ignores any mappings that are in slices outside
-// associated labels64 volume.
+// associated labelblk volume.
 func (d *Data) LoadRavelerMaps(request datastore.Request, reply *datastore.Response) error {
 
 	// Parse the request
@@ -920,7 +920,7 @@ func (d *Data) LoadRavelerMaps(request datastore.Request, reply *datastore.Respo
 		return err
 	}
 	if !labelData.Ready {
-		return fmt.Errorf("Can't load raveler maps if underlying labels64 %q has not been loaded!", labelData.DataName())
+		return fmt.Errorf("Can't load raveler maps if underlying labelblk %q has not been loaded!", labelData.DataName())
 	}
 	minLabelZ := uint32(labelData.Extents().MinPoint.Value(2))
 	maxLabelZ := uint32(labelData.Extents().MaxPoint.Value(2))
@@ -983,7 +983,7 @@ func (d *Data) LoadRavelerMaps(request datastore.Request, reply *datastore.Respo
 		if superpixel32 > 0x0000000000FFFFFF {
 			return fmt.Errorf("Error in line %d: superpixel id exceeds 24-bit value!", linenum)
 		}
-		superpixelBytes := labels64.RavelerSuperpixelBytes(slice, superpixel32)
+		superpixelBytes := labelblk.RavelerSuperpixelBytes(slice, superpixel32)
 		var found bool
 		body, found = seg2body[segment]
 		if !found {
@@ -991,14 +991,14 @@ func (d *Data) LoadRavelerMaps(request datastore.Request, reply *datastore.Respo
 		}
 
 		// PUT the forward label pair without compression.
-		forwardIndex := voxels.NewForwardMapIndex(superpixelBytes, body)
+		forwardIndex := imageblk.NewForwardMapIndex(superpixelBytes, body)
 		if err := smalldata.Put(ctx, forwardIndex, dvid.EmptyValue()); err != nil {
 			return fmt.Errorf("ERROR on PUT of forward label mapping (%x -> %d): %s\n",
 				superpixelBytes, body, err.Error())
 		}
 
 		// PUT the inverse label pair without compression.
-		inverseIndex := voxels.NewInverseMapIndex(superpixelBytes, body)
+		inverseIndex := imageblk.NewInverseMapIndex(superpixelBytes, body)
 		if err := smalldata.Put(ctx, inverseIndex, dvid.EmptyValue()); err != nil {
 			return fmt.Errorf("ERROR on PUT of inverse label mapping (%d -> %x): %s\n",
 				body, superpixelBytes, err.Error())
@@ -1018,7 +1018,7 @@ func (d *Data) LoadRavelerMaps(request datastore.Request, reply *datastore.Respo
 	return nil
 }
 
-// ApplyLabelMap creates a new labels64 by applying a label map to existing labels64 data.
+// ApplyLabelMap creates a new labelblk by applying a label map to existing labelblk data.
 func (d *Data) ApplyLabelMap(request datastore.Request, reply *datastore.Response) error {
 	if !d.Ready {
 		return fmt.Errorf("Can't apply labelmap that hasn't been loaded.")
@@ -1042,23 +1042,23 @@ func (d *Data) ApplyLabelMap(request datastore.Request, reply *datastore.Respons
 		return err
 	}
 
-	// Use existing destination data or a new labels64 data.
-	var dest *labels64.Data
-	dest, err = labels64.GetByUUID(uuid, dvid.DataString(destName))
+	// Use existing destination data or a new labelblk data.
+	var dest *labelblk.Data
+	dest, err = labelblk.GetByUUID(uuid, dvid.InstanceName(destName))
 	if err != nil {
 		config := dvid.NewConfig()
-		typeservice, err := datastore.TypeServiceByName("labels64")
+		typeservice, err := datastore.TypeServiceByName("labelblk")
 		if err != nil {
 			return err
 		}
-		dataservice, err := repo.NewData(typeservice, dvid.DataString(destName), config)
+		dataservice, err := repo.NewData(typeservice, dvid.InstanceName(destName), config)
 		if err != nil {
 			return err
 		}
 		var ok bool
-		dest, ok = dataservice.(*labels64.Data)
+		dest, ok = dataservice.(*labelblk.Data)
 		if !ok {
-			return fmt.Errorf("Could not create labels64 data instance")
+			return fmt.Errorf("Could not create labelblk data instance")
 		}
 	}
 
@@ -1094,8 +1094,8 @@ func (d *Data) ApplyLabelMap(request datastore.Request, reply *datastore.Respons
 		if op.mapping != nil {
 			minIndexZYX := dvid.IndexZYX(minChunkPt)
 			maxIndexZYX := dvid.IndexZYX(maxChunkPt)
-			begIndex := voxels.NewVoxelBlockIndex(&minIndexZYX)
-			endIndex := voxels.NewVoxelBlockIndex(&maxIndexZYX)
+			begIndex := imageblk.NewVoxelBlockIndex(&minIndexZYX)
+			endIndex := imageblk.NewVoxelBlockIndex(&maxIndexZYX)
 			chunkOp := &storage.ChunkOp{op, wg}
 			err = bigdata.ProcessRange(labelCtx, begIndex, endIndex, chunkOp, storage.ChunkProcessor(d.ChunkApplyMap))
 			if err != nil {
@@ -1114,7 +1114,7 @@ func (d *Data) ApplyLabelMap(request datastore.Request, reply *datastore.Respons
 		dvid.Infof("Could not save READY state to data '%s', uuid %s: %s", d.DataName(), uuid, err.Error())
 	}
 
-	// Kickoff denormalizations based on new labels64.
+	// Kickoff denormalizations based on new labelblk.
 	go dest.ProcessSpatially(uuid)
 
 	return nil
@@ -1122,8 +1122,8 @@ func (d *Data) ApplyLabelMap(request datastore.Request, reply *datastore.Respons
 
 // GetLabelMapping returns the mapping for a label.
 func (d *Data) GetLabelMapping(versionID dvid.VersionID, label []byte) (uint64, error) {
-	begIndex := voxels.NewForwardMapIndex(label, 0)
-	endIndex := voxels.NewForwardMapIndex(label, math.MaxUint64)
+	begIndex := imageblk.NewForwardMapIndex(label, 0)
+	endIndex := imageblk.NewForwardMapIndex(label, math.MaxUint64)
 
 	smalldata, err := storage.SmallDataStore()
 	if err != nil {
@@ -1158,8 +1158,8 @@ func (d *Data) GetLabelMapping(versionID dvid.VersionID, label []byte) (uint64, 
 func (d *Data) GetBlockMapping(versionID dvid.VersionID, blockI dvid.Index) (map[string]uint64, error) {
 
 	maxLabel := []byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}
-	begIndex := voxels.NewSpatialMapIndex(blockI, nil, 0)
-	endIndex := voxels.NewSpatialMapIndex(blockI, maxLabel, math.MaxUint64)
+	begIndex := imageblk.NewSpatialMapIndex(blockI, nil, 0)
+	endIndex := imageblk.NewSpatialMapIndex(blockI, maxLabel, math.MaxUint64)
 
 	smalldata, err := storage.SmallDataStore()
 	if err != nil {
@@ -1259,7 +1259,7 @@ func (d *Data) chunkApplyMap(chunk *storage.Chunk) {
 	op := chunk.Op.(*denormOp)
 
 	// Get the spatial index associated with this chunk.
-	zyx, err := voxels.DecodeVoxelBlockKey(chunk.K)
+	zyx, err := imageblk.DecodeVoxelBlockKey(chunk.K)
 	if err != nil {
 		dvid.Errorf("Error in %s.ChunkApplyMap(): %s", d.Data.DataName(), err.Error())
 		return
@@ -1278,14 +1278,14 @@ func (d *Data) chunkApplyMap(chunk *storage.Chunk) {
 	}
 	mappedData := make([]byte, blockBytes, blockBytes)
 
-	// Map this block of labels64.
+	// Map this block of labelblk.
 	var b uint64
 	var ok bool
 	for start := 0; start < blockBytes; start += 8 {
 		a := blockData[start : start+8]
 
 		// Get the label to which the current label is mapped.
-		if bytes.Compare(a, labels64.ZeroBytes()) == 0 {
+		if bytes.Compare(a, labelblk.ZeroBytes()) == 0 {
 			b = 0
 		} else {
 			b, ok = op.mapping[string(a)]
@@ -1313,5 +1313,5 @@ func (d *Data) chunkApplyMap(chunk *storage.Chunk) {
 		return
 	}
 	ctx := datastore.NewVersionedContext(op.dest, op.versionID)
-	bigdata.Put(ctx, voxels.NewVoxelBlockIndex(zyx), serialization)
+	bigdata.Put(ctx, imageblk.NewVoxelBlockIndex(zyx), serialization)
 }

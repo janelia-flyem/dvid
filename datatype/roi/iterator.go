@@ -15,8 +15,8 @@ type Iterator struct {
 	curSpan int32
 }
 
-func NewIterator(roiName dvid.DataString, versionID dvid.VersionID, b dvid.Bounder) (*Iterator, error) {
-	dataservice, err := datastore.GetData(versionID, roiName)
+func NewIterator(roiName dvid.InstanceName, versionID dvid.VersionID, b dvid.Bounder) (*Iterator, error) {
+	dataservice, err := datastore.GetDataByVersion(versionID, roiName)
 	if err != nil {
 		return nil, fmt.Errorf("Can't get ROI with name %q: %s", roiName, err.Error())
 	}

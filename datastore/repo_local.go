@@ -272,12 +272,13 @@ func (m *repoManager) loadMetadata() error {
 		repo := &repoT{
 			log:        []string{},
 			properties: make(map[string]interface{}),
-			data:       make(map[dvid.DataString]DataService),
+			data:       make(map[dvid.InstanceName]DataService),
 		}
 		if err = dvid.Deserialize(kv.V, repo); err != nil {
 			return fmt.Errorf("Error gob decoding repo %d: %s", index.repoID, err.Error())
 		}
 		repo.manager = m
+
 		// Cache all UUID from nodes into our high-level cache
 		for versionID, node := range repo.dag.nodes {
 			uuid, found := m.versionToUUID[versionID]
@@ -290,6 +291,15 @@ func (m *repoManager) loadMetadata() error {
 				saveCache = true
 			}
 			m.repos[uuid] = repo
+		}
+
+		// Update the sync graph with all syncable data instances in this repo
+		for _, dataservice := range repo.data {
+			syncedData, syncable := dataservice.(Syncer)
+			if syncable {
+				subs := syncedData.InitSyncGraph()
+				repo.addSyncGraph(subs)
+			}
 		}
 	}
 	if err := m.verifyCompiledTypes(); err != nil {
@@ -586,10 +596,24 @@ func (m *repoManager) Types() (map[dvid.URLString]TypeService, error) {
 	return combinedMap, nil
 }
 
+// instanceEvent allows quick lookup of (instance name, event) tuples.
+type instanceEvent struct {
+	dvid.InstanceName
+	SyncEvent
+}
+
+type eventSub struct {
+	dst  dvid.InstanceName
+	ch   chan SyncMessage
+	done chan struct{}
+}
+
 // repoT encapsulates everything we need to know about a repository.
 // Note that changes to the DAG, e.g., adding a child node, will need updates
 // to the cached maps in the RepoManager, so there is a pointer to it.
 type repoT struct {
+	mu sync.Mutex // Currently, we lock entire repo for any changes since
+	// repo mods should be relatively infrequent
 	repoID dvid.RepoID
 	rootID dvid.UUID
 
@@ -608,11 +632,13 @@ type repoT struct {
 	dag *dagT
 
 	// data holds instances of data types.
-	data map[dvid.DataString]DataService
+	data map[dvid.InstanceName]DataService
+
+	// subs holds subscriptions to change events for each data instance
+	subs map[instanceEvent]([]eventSub)
 
 	// necessary to update cached maps based on changes to DAG and data instances.
 	manager *repoManager
-	mu      sync.Mutex
 }
 
 // newRepo creates a new repository, updating the version id within the RepoManager.
@@ -631,7 +657,7 @@ func newRepo(m *repoManager) (*repoT, dvid.VersionID, error) {
 		rootID:     uuid,
 		log:        []string{},
 		properties: make(map[string]interface{}),
-		data:       make(map[dvid.DataString]DataService),
+		data:       make(map[dvid.InstanceName]DataService),
 		manager:    m,
 		created:    t,
 		updated:    t,
@@ -792,7 +818,7 @@ func (r *repoT) MarshalJSON() ([]byte, error) {
 		Description string
 		Log         []string
 		Properties  map[string]interface{}
-		Data        map[dvid.DataString]DataService `json:"DataInstances"`
+		Data        map[dvid.InstanceName]DataService `json:"DataInstances"`
 		DAG         *dagT
 		Created     time.Time
 		Updated     time.Time
@@ -825,13 +851,13 @@ func (r *repoT) RootUUID() dvid.UUID {
 	return r.rootID
 }
 
-func (r *repoT) GetAllData() (map[dvid.DataString]DataService, error) {
+func (r *repoT) GetAllData() (map[dvid.InstanceName]DataService, error) {
 	return r.data, nil
 }
 
 // GetDataByName returns a DatasService with the given name or if not found,
 // returns an error.
-func (r *repoT) GetDataByName(name dvid.DataString) (DataService, error) {
+func (r *repoT) GetDataByName(name dvid.InstanceName) (DataService, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.getDataByName(name)
@@ -843,7 +869,7 @@ func (r *repoT) GetIterator(versionID dvid.VersionID) (storage.VersionIterator, 
 	return r.dag.getIterator(versionID)
 }
 
-func (r *repoT) NewData(t TypeService, name dvid.DataString, c dvid.Config) (DataService, error) {
+func (r *repoT) NewData(t TypeService, name dvid.InstanceName, c dvid.Config) (DataService, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	// Only allow unique data name per repo
@@ -860,7 +886,16 @@ func (r *repoT) NewData(t TypeService, name dvid.DataString, c dvid.Config) (Dat
 	}
 	r.data[name] = dataservice
 	r.updated = time.Now()
-	actionMsg := fmt.Sprintf("Create new data instance %q of type %q", name, dataservice.TypeName())
+
+	// Update the sync graph if this data needs to be synced with another data instance.
+	syncedData, syncable := dataservice.(Syncer)
+	if syncable {
+		subs := syncedData.InitSyncGraph()
+		r.addSyncGraph(subs)
+	}
+
+	// Add to log and save repo
+	actionMsg := fmt.Sprintf("New data instance %q of type %q", name, dataservice.TypeName())
 	if err = r.addToLog(actionMsg); err != nil {
 		return nil, err
 	}
@@ -869,7 +904,7 @@ func (r *repoT) NewData(t TypeService, name dvid.DataString, c dvid.Config) (Dat
 
 // ModifyData modifies preexisting Data within a Repo.  Settings can be passed
 // via the 'config' argument.  Only settings within the passed config are modified.
-func (r *repoT) ModifyData(name dvid.DataString, config dvid.Config) error {
+func (r *repoT) ModifyData(name dvid.InstanceName, config dvid.Config) error {
 	dataservice, err := r.GetDataByName(name)
 	if err != nil {
 		return err
@@ -880,7 +915,7 @@ func (r *repoT) ModifyData(name dvid.DataString, config dvid.Config) error {
 
 // DeleteDataByName deletes all data associated with the data instance and removes
 // it from the Repo.
-func (r *repoT) DeleteDataByName(name dvid.DataString) error {
+func (r *repoT) DeleteDataByName(name dvid.InstanceName) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -892,6 +927,12 @@ func (r *repoT) DeleteDataByName(name dvid.DataString) error {
 	// For all data tiers of storage, remove data key-value pairs that would be associated with this instance id.
 	if err = storage.DeleteDataInstance(dataservice.InstanceID()); err != nil {
 		return err
+	}
+
+	// Delete entries in the sync graph if this data needs to be synced with another data instance.
+	_, syncable := dataservice.(Syncer)
+	if syncable {
+		r.deleteSyncGraph(name)
 	}
 
 	// Remove this data instance from the repository and persist.
@@ -957,6 +998,18 @@ func (r *repoT) Lock(uuid dvid.UUID) error {
 	}
 	node.locked = true
 	r.updated = time.Now()
+
+	// Notify any data instances in this repo that needs to perform syncs.
+	// This will only be necessary if the immediate syncing can't be done or
+	// we want to batch syncs that haven't been done.
+	/*
+		for _, dataservice := range r.data {
+			d, syncable := dataservice.(Syncer)
+			if syncable {
+				go d.SyncOnNodeLock(uuid)
+			}
+		}
+	*/
 	return r.save()
 }
 
@@ -964,7 +1017,7 @@ func (r *repoT) Types() (map[dvid.URLString]TypeService, error) {
 	datatypes := make(map[dvid.URLString]TypeService)
 	for _, dataservice := range r.data {
 		t := dataservice.GetType()
-		datatypes[t.GetType().URL] = t
+		datatypes[t.GetTypeURL()] = t
 	}
 	return datatypes, nil
 }
@@ -973,10 +1026,10 @@ func (r *repoT) Types() (map[dvid.URLString]TypeService, error) {
 // NOTE: All private repo functions do not hold locks on the repo.  That is done at the public
 //  function level, just so I don't stupidly get into deadlock.
 
-func (r *repoT) getDataByName(name dvid.DataString) (DataService, error) {
+func (r *repoT) getDataByName(name dvid.InstanceName) (DataService, error) {
 	elements := strings.Split(string(name), "-")
 	stem := elements[0]
-	data, found := r.data[dvid.DataString(stem)]
+	data, found := r.data[dvid.InstanceName(stem)]
 	if !found {
 		return nil, fmt.Errorf("No data instance %q found in repo %s", name, r.rootID)
 	}
@@ -1028,7 +1081,7 @@ func (r *repoT) newNode(uuid dvid.UUID, versionID dvid.VersionID) *nodeT {
 	t := time.Now()
 	node := &nodeT{
 		log:       []string{},
-		avail:     make(map[dvid.DataString]DataAvail),
+		avail:     make(map[dvid.InstanceName]DataAvail),
 		uuid:      uuid,
 		versionID: versionID,
 		parents:   []dvid.VersionID{},
@@ -1081,6 +1134,69 @@ func (r *repoT) remapLocalIDs() (dvid.InstanceMap, dvid.VersionMap, error) {
 	}
 	r.dag.nodes = newNodes
 	return instanceMap, versionMap, nil
+}
+
+// Adds subscriptions for data instance events.
+func (r *repoT) addSyncGraph(subs []SyncSubscribe) {
+	if r.subs == nil {
+		r.subs = make(map[instanceEvent]([]eventSub))
+	}
+	for _, sub := range subs {
+		ievt := instanceEvent{sub.Src, sub.Event}
+		evtsub := eventSub{sub.Dst, sub.Ch, sub.Done}
+		evtsubs, found := r.subs[ievt]
+		if !found {
+			r.subs[ievt] = []eventSub{evtsub}
+		} else {
+			r.subs[ievt] = append(evtsubs, evtsub)
+		}
+	}
+}
+
+// Deletes subscriptions to and from a data instance.
+func (r *repoT) deleteSyncGraph(name dvid.InstanceName) {
+	if r.subs == nil {
+		return
+	}
+
+	todelete := []instanceEvent{}
+	for ievnt, subs := range r.subs {
+		name := ievnt.InstanceName
+
+		// Remove all subs to the named instance
+		if ievnt.InstanceName == name {
+			r.subs[ievnt] = nil
+			todelete = append(todelete, ievnt)
+			continue
+		}
+
+		// Remove all subs from the named instance
+		var deletions int
+		for _, sub := range subs {
+			if sub.dst == name {
+				deletions++
+			}
+		}
+		if len(subs) == deletions {
+			r.subs[ievnt] = nil
+			todelete = append(todelete, ievnt)
+			continue
+		}
+		if deletions > 0 {
+			newsubs := make([]eventSub, len(subs)-deletions)
+			j := 0
+			for _, sub := range subs {
+				if sub.dst != name {
+					newsubs[j] = sub
+					j++
+				}
+			}
+			r.subs[ievnt] = newsubs
+		}
+	}
+	for _, ievnt := range todelete {
+		delete(r.subs, ievnt)
+	}
 }
 
 // --------------------------------------
@@ -1184,7 +1300,7 @@ func (dag *dagT) getIterator(versionID dvid.VersionID) (storage.VersionIterator,
 	return &versionIterator{dag, true, versionID, node}, nil
 }
 
-func (dag *dagT) deleteDataInstance(name dvid.DataString) {
+func (dag *dagT) deleteDataInstance(name dvid.InstanceName) {
 	for i, _ := range dag.nodes {
 		delete(dag.nodes[i].avail, name)
 	}
@@ -1201,7 +1317,7 @@ type nodeT struct {
 	// If there is no map or data availability is not explicitly set, we use
 	// the default for that data, e.g., DataComplete if versioned or DataRoot
 	// if unversioned.
-	avail map[dvid.DataString]DataAvail
+	avail map[dvid.InstanceName]DataAvail
 
 	uuid      dvid.UUID
 	versionID dvid.VersionID
@@ -1220,7 +1336,7 @@ type nodeT struct {
 func (node *nodeT) GobDecode(b []byte) error {
 	// Set zero values since gob doesn't transmit zero values down wire.
 	node.log = []string{}
-	node.avail = make(map[dvid.DataString]DataAvail)
+	node.avail = make(map[dvid.InstanceName]DataAvail)
 	node.parents = []dvid.VersionID{}
 	node.children = []dvid.VersionID{}
 
@@ -1299,7 +1415,7 @@ func (node *nodeT) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		Note      string
 		Log       []string
-		Data      map[dvid.DataString]DataAvail
+		Data      map[dvid.InstanceName]DataAvail
 		UUID      dvid.UUID
 		VersionID dvid.VersionID
 		Locked    bool

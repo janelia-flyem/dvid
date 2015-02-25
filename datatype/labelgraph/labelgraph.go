@@ -538,7 +538,7 @@ func NewType() *Type {
 // --- TypeService interface ---
 
 // NewDataService returns a pointer to new keyvalue data with default values.
-func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.DataString, c dvid.Config) (datastore.DataService, error) {
+func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.Config) (datastore.DataService, error) {
 	basedata, err := datastore.NewDataService(dtype, uuid, id, name, c)
 	if err != nil {
 		return nil, err
@@ -657,16 +657,14 @@ func (d *Data) handleSubgraphBulk(ctx storage.Context, db storage.GraphDB, w htt
 		var vertices []dvid.GraphVertex
 		var edges []dvid.GraphEdge
 		if len(labelgraph.Vertices) > 0 {
-			used_vertices := make(map[dvid.VertexID]struct{})
 			for _, vertex := range labelgraph.Vertices {
-				used_vertices[vertex.Id] = struct{}{}
 				storedvert, err := db.GetVertex(ctx, vertex.Id)
 				if err != nil {
 					return fmt.Errorf("Failed to retrieve vertix %d: %s\n", vertex.Id, err.Error())
 				}
 				vertices = append(vertices, storedvert)
 				for _, vert2 := range storedvert.Vertices {
-					if _, ok := used_vertices[vert2]; !ok {
+					if storedvert.Id < vert2 {
 						edge, err := db.GetEdge(ctx, storedvert.Id, vert2)
 						if err != nil {
 							return fmt.Errorf("Failed to retrieve edge %d-%d: %s\n", storedvert.Id, vert2, err.Error())

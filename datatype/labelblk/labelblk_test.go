@@ -1,4 +1,4 @@
-package labels64
+package labelblk
 
 import (
 	"encoding/binary"
@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/janelia-flyem/dvid/datastore"
-	"github.com/janelia-flyem/dvid/datatype/voxels"
+	"github.com/janelia-flyem/dvid/datatype/imageblk"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/tests"
 )
@@ -24,9 +24,9 @@ func initTestRepo() (datastore.Repo, dvid.VersionID) {
 	defer testMu.Unlock()
 	if labelsT == nil {
 		var err error
-		labelsT, err = datastore.TypeServiceByName("labels64")
+		labelsT, err = datastore.TypeServiceByName("labelblk")
 		if err != nil {
-			log.Fatalf("Can't get labels64 type: %s\n", err)
+			log.Fatalf("Can't get labelblk type: %s\n", err)
 		}
 		rgbaT, err = datastore.TypeServiceByName("rgba8")
 		if err != nil {
@@ -78,13 +78,13 @@ func makeVolume(offset, size dvid.Point3d) []byte {
 	return volume
 }
 
-// Creates a new data instance for labels64
-func newDataInstance(repo datastore.Repo, t *testing.T, name dvid.DataString) *Data {
+// Creates a new data instance for labelblk
+func newDataInstance(repo datastore.Repo, t *testing.T, name dvid.InstanceName) *Data {
 	config := dvid.NewConfig()
 	config.SetVersioned(true)
 	dataservice, err := repo.NewData(labelsT, name, config)
 	if err != nil {
-		t.Errorf("Unable to create labels64 instance %q: %s\n", name, err.Error())
+		t.Errorf("Unable to create labelblk instance %q: %s\n", name, err.Error())
 	}
 	labels, ok := dataservice.(*Data)
 	if !ok {
@@ -112,7 +112,7 @@ func TestSubvolLabels64(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unable to make new labels ExtHandler: %s\n", err.Error())
 	}
-	if err = voxels.PutVoxels(labelsCtx, labels, v, voxels.OpOptions{}); err != nil {
+	if err = imageblk.PutVoxels(labelsCtx, labels, v, imageblk.OpOptions{}); err != nil {
 		t.Errorf("Unable to put labels for %s: %s\n", labelsCtx, err.Error())
 	}
 	if v.NumVoxels() != int64(len(data))/8 {
@@ -125,7 +125,7 @@ func TestSubvolLabels64(t *testing.T) {
 	if err != nil {
 		t.Errorf("Unable to make new labels ExtHandler: %s\n", err.Error())
 	}
-	if err = voxels.GetVoxels(labelsCtx, labels, v2, nil); err != nil {
+	if err = imageblk.GetVoxels(labelsCtx, labels, v2, nil); err != nil {
 		t.Errorf("Unable to get voxels for %s: %s\n", labelsCtx, err.Error())
 	}
 
@@ -177,13 +177,13 @@ func sliceTest(t *testing.T, slice dvid.Geometry) {
 	if err != nil {
 		t.Fatalf("Unable to make new labels ExtHandler: %s\n", err.Error())
 	}
-	if err = voxels.PutVoxels(labelsCtx, labels, v, voxels.OpOptions{}); err != nil {
+	if err = imageblk.PutVoxels(labelsCtx, labels, v, imageblk.OpOptions{}); err != nil {
 		t.Errorf("Unable to put voxels for %s: %s\n", labelsCtx, err.Error())
 	}
 
 	// Read the stored image
 	v2, err := labels.NewExtHandler(slice, nil)
-	retrieved, err := voxels.GetImage(labelsCtx, labels, v2, nil)
+	retrieved, err := imageblk.GetImage(labelsCtx, labels, v2, nil)
 	if err != nil {
 		t.Fatalf("Unable to get image for %s: %s\n", labelsCtx, err.Error())
 	}
@@ -256,7 +256,7 @@ func TestLabels64RepoPersistence(t *testing.T) {
 	}
 	labels, ok := dataservice.(*Data)
 	if !ok {
-		t.Errorf("Can't cast grayscale8 data service into Data\n")
+		t.Errorf("Can't cast labels data service into Data\n")
 	}
 	oldData := *labels
 
@@ -277,7 +277,7 @@ func TestLabels64RepoPersistence(t *testing.T) {
 	}
 	labels2, ok := dataservice2.(*Data)
 	if !ok {
-		t.Errorf("Returned new data instance 2 is not voxels.Data\n")
+		t.Errorf("Returned new data instance 2 is not imageblk.Data\n")
 	}
 	if !reflect.DeepEqual(oldData, *labels2) {
 		t.Errorf("Expected %v, got %v\n", oldData, *labels2)

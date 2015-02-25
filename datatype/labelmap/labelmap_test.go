@@ -10,12 +10,12 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/tests"
 
-	"github.com/janelia-flyem/dvid/datatype/labels64"
+	"github.com/janelia-flyem/dvid/datatype/labelblk"
 )
 
 var (
 	labelsT, labelmapT datastore.TypeService
-	labelsName         dvid.DataString
+	labelsName         dvid.InstanceName
 	testMu             sync.Mutex
 )
 
@@ -27,16 +27,16 @@ func initTestRepo() (datastore.Repo, dvid.VersionID) {
 	repo, versionID := tests.NewRepo()
 	if labelsT == nil {
 		var err error
-		labelsT, err = datastore.TypeServiceByName(labels64.TypeName)
+		labelsT, err = datastore.TypeServiceByName(labelblk.TypeName)
 		if err != nil {
-			log.Fatalf("Can't get labels64 type: %s\n", err.Error())
+			log.Fatalf("Can't get labelblk type: %s\n", err.Error())
 		}
 		config := dvid.NewConfig()
 		config.SetVersioned(true)
 		labelsName = "mylabels"
 		_, err = repo.NewData(labelsT, labelsName, config)
 		if err != nil {
-			log.Fatalf("Error creating labels64 instance for labelmap test: %s\n", err.Error())
+			log.Fatalf("Error creating labelblk instance for labelmap test: %s\n", err.Error())
 		}
 		labelmapT, err = datastore.TypeServiceByName(TypeName)
 		if err != nil {
@@ -53,7 +53,7 @@ func TestLabelmapRepoPersistence(t *testing.T) {
 
 	repo, _ := initTestRepo()
 
-	// Creation of labelmap should require specification of underlying labels64.
+	// Creation of labelmap should require specification of underlying labelblk.
 	config := dvid.NewConfig()
 	config.SetVersioned(true)
 	mylabelmap, err := repo.NewData(labelmapT, "mylabelmap", config)
@@ -88,7 +88,7 @@ func TestLabelmapRepoPersistence(t *testing.T) {
 	if err = ref.UnmarshalBinary(b); err != nil {
 		t.Fatalf("Unable to deserialize label reference: %s\n", err.Error())
 	}
-	if ref.name != dvid.DataString("mylabels") {
+	if ref.name != dvid.InstanceName("mylabels") {
 		t.Errorf("Bad (de)serialization of label reference: %s != %s\n",
 			ref.name, "mylabels")
 	}

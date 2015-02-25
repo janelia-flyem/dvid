@@ -11,6 +11,8 @@
 	data name.  For example, if we have "mydata" multichan16 data, we reference channel 1
 	as "mydata1" and channel 2 as "mydata2".  Up to the first 3 channels are composited
 	into a RGBA volume that is addressible using "mydata" or "mydata0".
+
+	NOTE: This data type has not been actively maintained and was writtern earlier to
 */
 package multichan16
 
@@ -28,11 +30,10 @@ import (
 	"code.google.com/p/go.net/context"
 
 	"github.com/janelia-flyem/dvid/datastore"
-	"github.com/janelia-flyem/dvid/datatype/voxels"
+	"github.com/janelia-flyem/dvid/datatype/imageblk"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/message"
 	"github.com/janelia-flyem/dvid/server"
-	"github.com/janelia-flyem/dvid/storage"
 )
 
 const (
@@ -144,8 +145,8 @@ func init() {
 
 	// See doc for package on why channels are segregated instead of interleaved.
 	// Data types must be registered with the datastore to be used.
-	typeService = dtype
-	datastore.Register(dtype)
+	typeService = &dtype
+	datastore.Register(&dtype)
 
 	// Need to register types that will be used to fulfill interfaces.
 	gob.Register(&Type{})
@@ -158,27 +159,27 @@ func CompositeEncodeFormat() dvid.DataValues {
 
 // Type just uses voxels data type by composition.
 type Type struct {
-	*voxels.Type
+	imageblk.Type
 }
 
 // NewType returns a pointer to a new voxels Type with default values set.
-func NewType(values dvid.DataValues, interpolable bool) *Type {
-	basetype := voxels.NewType(compositeValues, interpolable)
+func NewType(values dvid.DataValues, interpolable bool) Type {
+	basetype := imageblk.NewType(compositeValues, interpolable)
 	basetype.Name = TypeName
 	basetype.URL = RepoURL
 	basetype.Version = Version
-	return &Type{basetype}
+	return Type{basetype}
 }
 
 // --- TypeService interface ---
 
 // NewDataService returns a pointer to a new multichan16 with default values.
-func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.DataString, c dvid.Config) (datastore.DataService, error) {
+func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.Config) (datastore.DataService, error) {
 	voxelData, err := dtype.Type.NewDataService(uuid, id, name, c)
 	if err != nil {
 		return nil, err
 	}
-	basedata := voxelData.(*voxels.Data)
+	basedata := voxelData.(*imageblk.Data)
 	basedata.Properties.Values = nil
 	return &Data{Data: basedata}, nil
 }
@@ -189,9 +190,9 @@ func (dtype *Type) Help() string {
 
 // -------  ExtData interface implementation -------------
 
-// Channel is an image volume that fulfills the voxels.ExtData interface.
+// Channel is an image volume that fulfills the imageblk.ExtData interface.
 type Channel struct {
-	*voxels.Voxels
+	*imageblk.Voxels
 
 	// Channel 0 is the composite RGBA channel and all others are 16-bit.
 	channelNum int32
@@ -236,7 +237,7 @@ func (c *Channel) IndexIterator(chunkSize dvid.Point) (dvid.IndexIterator, error
 
 // Data of multichan16 type embeds voxels and extends it with channels.
 type Data struct {
-	*voxels.Data
+	*imageblk.Data
 
 	// Number of channels for this data.  The names are referenced by
 	// adding a number onto the data name, e.g., mydata1, mydata2, etc.
@@ -244,7 +245,7 @@ type Data struct {
 }
 
 type propertiesT struct {
-	voxels.Properties
+	imageblk.Properties
 	NumChannels int
 }
 
@@ -323,16 +324,12 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 	if len(versions) > 0 {
 		versionID = versions[0]
 	}
-	storeCtx := datastore.NewVersionedContext(d, versionID)
 
 	// Get the action (GET, POST)
 	action := strings.ToLower(r.Method)
-	var op voxels.OpType
 	switch action {
 	case "get":
-		op = voxels.GetOp
 	case "post":
-		op = voxels.PutOp
 	default:
 		server.BadRequest(w, r, "Can only handle GET or POST HTTP verbs")
 		return
@@ -405,15 +402,15 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 			server.BadRequest(w, r, err.Error())
 			return
 		}
-		if op == voxels.PutOp {
+		if action == "post" {
 			server.BadRequest(w, r, "DVID does not yet support POST of slices into multichannel data")
 			return
 		} else {
-			if d.NumChannels == 0 || d.Data.Values() == nil {
+			if d.NumChannels == 0 || d.Data.Values == nil {
 				server.BadRequest(w, r, "Cannot retrieve absent data '%d'.  Please load data.", d.DataName())
 				return
 			}
-			values := d.Data.Values()
+			values := d.Data.Values
 			if len(values) <= int(channelNum) {
 				server.BadRequest(w, r, "Must choose channel from 0 to %d", len(values))
 				return
@@ -421,12 +418,12 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 			stride := slice.Size().Value(0) * values.BytesPerElement()
 			dataValues := dvid.DataValues{values[channelNum]}
 			data := make([]uint8, int(slice.NumVoxels()))
-			v := voxels.NewVoxels(slice, dataValues, data, stride, d.ByteOrder)
+			v := imageblk.NewVoxels(slice, dataValues, data, stride)
 			channel := &Channel{
 				Voxels:     v,
 				channelNum: channelNum,
 			}
-			img, err := voxels.GetImage(storeCtx, d, channel, nil)
+			img, err := d.GetImage(versionID, channel.Voxels, nil)
 			var formatStr string
 			if len(parts) >= 7 {
 				formatStr = parts[6]
@@ -445,7 +442,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 			server.BadRequest(w, r, err.Error())
 			return
 		}
-		if op == voxels.GetOp {
+		if action == "get" {
 			server.BadRequest(w, r, "DVID does not yet support GET of volume data")
 			return
 		} else {
@@ -495,7 +492,6 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 	d.NumChannels = len(channels)
 	d.Properties.Values = make(dvid.DataValues, d.NumChannels)
 	if d.NumChannels > 0 {
-		d.ByteOrder = channels[0].ByteOrder()
 		reply.Text = fmt.Sprintf("Loaded %s into data '%s': found %d channels\n",
 			d.DataName(), filename, d.NumChannels)
 		reply.Text += fmt.Sprintf(" %s", channels[0])
@@ -517,10 +513,9 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 	}
 
 	// PUT each channel of the file into the datastore using a separate data name.
-	storeCtx := datastore.NewVersionedContext(d, versionID)
 	for _, channel := range channels {
 		dvid.Infof("Processing channel %d... \n", channel.channelNum)
-		err = voxels.PutVoxels(storeCtx, d, channel, voxels.OpOptions{})
+		err = d.PutVoxels(versionID, channel.Voxels, nil)
 		if err != nil {
 			return err
 		}
@@ -529,7 +524,7 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 	// Create a RGB composite from the first 3 channels.  This is considered to be channel 0
 	// or can be accessed with the base data name.
 	dvid.Infof("Creating composite image from channels...\n")
-	err = d.storeComposite(storeCtx, channels)
+	err = d.storeComposite(versionID, channels)
 	if err != nil {
 		return err
 	}
@@ -539,13 +534,13 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 }
 
 // Create a RGB interleaved volume.
-func (d *Data) storeComposite(ctx storage.Context, channels []*Channel) error {
+func (d *Data) storeComposite(v dvid.VersionID, channels []*Channel) error {
 	// Setup the composite Channel
 	geom := channels[0].Geometry
 	pixels := int(geom.NumVoxels())
 	stride := geom.Size().Value(0) * 4
 	composite := &Channel{
-		Voxels:     voxels.NewVoxels(geom, compositeValues, channels[0].Data(), stride, d.ByteOrder),
+		Voxels:     imageblk.NewVoxels(geom, compositeValues, channels[0].Data(), stride),
 		channelNum: channels[0].channelNum,
 	}
 
@@ -605,5 +600,5 @@ func (d *Data) storeComposite(ctx storage.Context, channels []*Channel) error {
 	}
 
 	// Store the result
-	return voxels.PutVoxels(ctx, d, composite, voxels.OpOptions{})
+	return d.PutVoxels(v, composite.Voxels, nil)
 }

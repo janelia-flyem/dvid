@@ -15,7 +15,7 @@ func mockRepo() *repoT {
 		repoID:     0,
 		rootID:     dvid.UUID("test uuid"),
 		properties: make(map[string]interface{}),
-		data:       make(map[dvid.DataString]DataService),
+		data:       make(map[dvid.InstanceName]DataService),
 	}
 }
 

@@ -1,9 +1,9 @@
 /*
-	Data type rgba8 tailors the voxels data type for 8-bit RGBA images.  It simply
+	Data type rgba8 tailors the image block data type for 8-bit RGBA images.  It simply
 	wraps the voxels package, setting Channels (4) and BytesPerValue(1).
 */
 
-package voxels
+package imageblk
 
 import (
 	"github.com/janelia-flyem/dvid/datastore"
@@ -33,13 +33,9 @@ func init() {
 	}
 	interpolable := true
 	rgba := NewType(rgba8EncodeFormat, interpolable)
-	rgba.Type.Name = "rgba8"
-	rgba.Type.URL = "github.com/janelia-flyem/dvid/datatype/voxels/rgba8.go"
-	rgba.Type.Version = "0.6"
+	rgba.Type.Name = "rgba8blk"
+	rgba.Type.URL = "github.com/janelia-flyem/dvid/datatype/imageblk/rgba8.go"
+	rgba.Type.Version = "0.2"
 
-	datastore.Register(rgba)
-}
-
-func RGBA8EncodeFormat() dvid.DataValues {
-	return rgba8EncodeFormat
+	datastore.Register(&rgba)
 }

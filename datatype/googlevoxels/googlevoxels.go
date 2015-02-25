@@ -19,7 +19,7 @@ import (
 	"code.google.com/p/go.net/context"
 
 	"github.com/janelia-flyem/dvid/datastore"
-	"github.com/janelia-flyem/dvid/datatype/multiscale2d"
+	"github.com/janelia-flyem/dvid/datatype/imagetile"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/message"
 	"github.com/janelia-flyem/dvid/server"
@@ -178,7 +178,7 @@ func NewType() *Type {
 // --- TypeService interface ---
 
 // NewData returns a pointer to new googlevoxels data with default values.
-func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.DataString, c dvid.Config) (datastore.DataService, error) {
+func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.Config) (datastore.DataService, error) {
 	// Make sure we have needed volumeid and authentication key.
 	volumeid, found, err := c.GetString("volumeid")
 	if err != nil {
@@ -623,8 +623,8 @@ type Properties struct {
 }
 
 // MarshalJSON handles JSON serialization for googlevoxels Data.  It adds "Levels" metadata equivalent
-// to multiscale2d's tile specification so clients can treat googlevoxels tile API identically to
-// multiscale2d.  Sensitive information like AuthKey are withheld.
+// to imagetile's tile specification so clients can treat googlevoxels tile API identically to
+// imagetile.  Sensitive information like AuthKey are withheld.
 func (p Properties) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		VolumeID     string
@@ -632,7 +632,7 @@ func (p Properties) MarshalJSON() ([]byte, error) {
 		TileMap      GeometryMap
 		Scales       Geometries
 		HighResIndex GeometryIndex
-		Levels       multiscale2d.TileSpec
+		Levels       imagetile.TileSpec
 	}{
 		p.VolumeID,
 		p.TileSize,
@@ -643,9 +643,9 @@ func (p Properties) MarshalJSON() ([]byte, error) {
 	})
 }
 
-// Converts Google BrainMaps scaling to multiscale2d-style tile specifications.
+// Converts Google BrainMaps scaling to imagetile-style tile specifications.
 // This assumes that Google levels always downsample by 2.
-func getTileSpec(tileSize int32, hires Geometry, tileMap GeometryMap) multiscale2d.TileSpec {
+func getTileSpec(tileSize int32, hires Geometry, tileMap GeometryMap) imagetile.TileSpec {
 	// Determine how many levels we have by the max of any orientation.
 	// TODO -- Warn user in some way if BrainMaps API has levels in one orientation but not in other.
 	var maxScale Scaling
@@ -656,15 +656,15 @@ func getTileSpec(tileSize int32, hires Geometry, tileMap GeometryMap) multiscale
 	}
 
 	// Create the levels from 0 (hires) to max level.
-	levelSpec := multiscale2d.LevelSpec{
+	levelSpec := imagetile.LevelSpec{
 		TileSize: dvid.Point3d{tileSize, tileSize, tileSize},
 	}
 	levelSpec.Resolution = make(dvid.NdFloat32, 3)
 	copy(levelSpec.Resolution, hires.PixelSize)
-	ms2dTileSpec := make(multiscale2d.TileSpec, maxScale+1)
+	ms2dTileSpec := make(imagetile.TileSpec, maxScale+1)
 	for scale := Scaling(0); scale <= maxScale; scale++ {
 		curSpec := levelSpec.Duplicate()
-		ms2dTileSpec[multiscale2d.Scaling(scale)] = multiscale2d.TileScaleSpec{LevelSpec: curSpec}
+		ms2dTileSpec[imagetile.Scaling(scale)] = imagetile.TileScaleSpec{LevelSpec: curSpec}
 		levelSpec.Resolution[0] *= 2
 		levelSpec.Resolution[1] *= 2
 		levelSpec.Resolution[2] *= 2
@@ -906,7 +906,7 @@ func (d *Data) ServeTile(w http.ResponseWriter, r *http.Request, parts []string)
 	queryValues := r.URL.Query()
 
 	var noblanks bool
-	noblanksStr := dvid.DataString(queryValues.Get("noblanks"))
+	noblanksStr := dvid.InstanceName(queryValues.Get("noblanks"))
 	if noblanksStr == "true" {
 		noblanks = true
 	}

@@ -342,7 +342,7 @@ func getDataInstances(repo Repo, config dvid.Config) ([]DataService, error) {
 	}
 	// use only those data instances given
 	for _, name := range datanames {
-		dataservice, err := repo.GetDataByName(dvid.DataString(name))
+		dataservice, err := repo.GetDataByName(dvid.InstanceName(name))
 		if err != nil {
 			return nil, err
 		}

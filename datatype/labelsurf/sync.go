@@ -1,68 +1,97 @@
 /*
-	This file contains code for denormalized representations of label data, e.g., indices
-	for fast queries of all labels meeting given size restrictions, or sparse volume
-	representations for a label.
+	This file supports creation of labelsurf data from the associated labelvol data.
 */
 
-package labels64
+package labelsurf
 
 import (
-	"bytes"
 	"encoding/binary"
-	"encoding/gob"
 	"fmt"
 	"math"
 	"sync"
 
 	"github.com/janelia-flyem/dvid/datastore"
-	"github.com/janelia-flyem/dvid/datatype/voxels"
+	"github.com/janelia-flyem/dvid/datatype/common/labels"
 	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/janelia-flyem/dvid/message"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
 )
 
-const CommandLabels64Denorm = "LABELS64_DENORM"
+// Number of change messages we can buffer before blocking on sync channel.
+const syncBuffer = 100
 
-func init() {
-	// Register post-processing actions that can be performed on dvid push/pull
-	message.RegisterPostProcessing(CommandLabels64Denorm, postProcDenorm)
+// InitSyncGraph implements the datastore.Syncer interface and sets up handling
+// of merges and splits to source labelvol.
+func (d *Data) InitSyncGraph() []datastore.SyncSubscribe {
+	mergeCh := make(chan datastore.SyncMessage, syncBuffer)
+	done1Ch := make(chan struct{})
+
+	go d.handleMergeEvent(mergeCh, done1Ch)
+
+	splitCh := make(chan datastore.SyncMessage, syncBuffer)
+	done2Ch := make(chan struct{})
+
+	go d.handleSplitEvent(splitCh, done2Ch)
+
+	subs := []datastore.SyncSubscribe{
+		datastore.SyncSubscribe{
+			Src:   d.Link,
+			Dst:   d.DataName(),
+			Event: labels.MergeEvent,
+			Ch:    mergeCh,
+			Done:  done1Ch,
+		},
+		datastore.SyncSubscribe{
+			Src:   d.Link,
+			Dst:   d.DataName(),
+			Event: labels.SplitEvent,
+			Ch:    splitCh,
+			Done:  done2Ch,
+		},
+	}
+	return subs
 }
 
-type postProcData struct {
-	Name dvid.DataString
-	UUID dvid.UUID
+func (d *Data) handleMergeEvent(in <-chan datastore.SyncMessage, done <-chan struct{}) {
+	for msg := range in {
+		deltas, ok := msg.Delta.(labels.DeltaSizes)
+		if !ok {
+			dvid.Criticalf("Cannot sync labelsz.  Got unexpected delta: %v", msg)
+			return
+		}
+		ctx := datastore.NewVersionedContext(d, msg.Version)
+		batch := batcher.NewBatch(ctx)
+		for _, delta := range deltas {
+			oldKey := NewIndex(delta.OldSize, label)
+			newKey := NewIndex(delta.NewSize, label)
+			batch.Put(newKey, dvid.EmptyValue())
+			batch.Delete(oldKey)
+		}
+		if err := batch.Commit(); err != nil {
+			dvid.Errorf("Error on updating label sizes on %s: %s\n", ctx, err.Error())
+		}
+		select {
+		case <-done:
+			return
+		}
+	}
 }
 
-func postProcDenorm(b []byte) error {
-	buf := bytes.NewBuffer(b)
-	dec := gob.NewDecoder(buf)
-	var data postProcData
-	if err := dec.Decode(&data); err != nil {
-		return err
-	}
-	dvid.Debugf("Running post-processing denormalization on repo %s for data %s\n", data.UUID, data.Name)
+// Handle merge of one or more labels into a target label.
 
-	// Get the Data from its name and the UUID
-	repo, err := datastore.RepoFromUUID(data.UUID)
-	if err != nil {
-		return fmt.Errorf("Can't get Repo from transmitted uuid (%s) in %s post-proc command: %s",
-			data.UUID, CommandLabels64Denorm, err.Error())
-	}
-	dataservice, err := repo.GetDataByName(data.Name)
-	if err != nil {
-		return fmt.Errorf("Can't get data instance %q in %s post-proc command: %s",
-			data.Name, CommandLabels64Denorm, err.Error())
-	}
-	d, ok := dataservice.(*Data)
-	if !ok {
-		return fmt.Errorf("Data instance %q is not *labels64.Data in %s post-proc command",
-			data.Name, CommandLabels64Denorm)
-	}
+// Handle split of some sparsevol from a previous label.
 
-	// Call the denormalization
-	d.ProcessSpatially(data.UUID)
-	return nil
+// TODO -- sync from labelvol changes
+// recomputeSurface refreshes the computed surface from a label's RLEs.
+func (d *Data) recomputeSurface(ctx *datastore.VersionedContext, label uint64, rles labels.BlockRLEs) {
+	var curVol dvid.SparseVol
+	curVol.SetLabel(label)
+	for _, rle := range rles {
+		curVol.AddRLE(rle)
+	}
+	if err := d.computeAndSaveSurface(ctx, &curVol); err != nil {
+		dvid.Errorf("Error on computing surface and normals for label %d: %s\n", label, err.Error())
+	}
 }
 
 type denormOp struct {
@@ -70,9 +99,8 @@ type denormOp struct {
 	versionID dvid.VersionID
 }
 
-// Iterate through all blocks in the associated label volume, computing the spatial indices
-// for bodies and the mappings for each spatial index.
-func (d *Data) ProcessSpatially(uuid dvid.UUID) {
+// Iterate through all linked label sparse volumes (labelvol) and sync the associated labelblk.
+func (d *Data) SyncOnNodeLock(uuid dvid.UUID) {
 	dvid.Infof("Adding spatial information from label volume %s ...\n", d.DataName())
 
 	versionID, err := datastore.VersionFromUUID(uuid)
@@ -103,13 +131,13 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 	minIndexZ := extents.MinIndex.(*dvid.IndexZYX)[2]
 	maxIndexZ := extents.MaxIndex.(*dvid.IndexZYX)[2]
 	for z := minIndexZ; z <= maxIndexZ; z++ {
-		server.BlockOnInteractiveRequests("labels64 [load layer]")
+		server.BlockOnInteractiveRequests("labelblk [load layer]")
 		layerLog := dvid.NewTimeLog()
 
 		minIndexZYX := dvid.IndexZYX{dvid.MinChunkPoint3d[0], dvid.MinChunkPoint3d[1], z}
 		maxIndexZYX := dvid.IndexZYX{dvid.MaxChunkPoint3d[0], dvid.MaxChunkPoint3d[1], z}
-		begIndex := voxels.NewVoxelBlockIndex(&minIndexZYX)
-		endIndex := voxels.NewVoxelBlockIndex(&maxIndexZYX)
+		begIndex := NewIndex(&minIndexZYX)
+		endIndex := NewIndex(&maxIndexZYX)
 
 		// Process the labels chunks for this Z
 		chunkOp := &storage.ChunkOp{op, wg}
@@ -163,12 +191,12 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 		sizeCh <- chunk
 		surfaceCh[label%uint64(numSurfCalculators)] <- chunk
 
-		server.BlockOnInteractiveRequests("labels64 [size/surface compute]")
+		server.BlockOnInteractiveRequests("labelblk [size/surface compute]")
 		return nil
 	}
 
-	begIndex := voxels.NewLabelSpatialMapIndex(0, dvid.MinIndexZYX.Bytes())
-	endIndex := voxels.NewLabelSpatialMapIndex(math.MaxUint64, dvid.MaxIndexZYX.Bytes())
+	begIndex := NewIndex(0, dvid.MinIndexZYX.Bytes())
+	endIndex := NewIndex(math.MaxUint64, dvid.MaxIndexZYX.Bytes())
 	err = smalldata.ProcessRange(ctx, begIndex, endIndex, &storage.ChunkOp{}, f)
 	if err != nil {
 		dvid.Errorf("Error indexing sizes for %s: %s\n", d.DataName(), err.Error())
@@ -185,7 +213,7 @@ func (d *Data) ProcessSpatially(uuid dvid.UUID) {
 // closed, batch denormalizations are handled.
 // On return from this function, block-level RLEs have been written but size and surface
 // data are handled asynchronously.
-func (d *Data) denormFunc(versionID dvid.VersionID, mods voxels.BlockChannel) {
+func (d *Data) denormFunc(versionID dvid.VersionID, mods imageblk.BlockChannel) {
 	smalldata, err := storage.SmallDataStore()
 	if err != nil {
 		dvid.Errorf("Cannot get datastore that handles small data: %s\n", err.Error())
@@ -241,14 +269,14 @@ func (d *Data) denormFunc(versionID dvid.VersionID, mods voxels.BlockChannel) {
 		sizeCh <- chunk
 		surfaceCh <- chunk
 
-		server.BlockOnInteractiveRequests("labels64 [size/surface compute]")
+		server.BlockOnInteractiveRequests("labelblk [size/surface compute]")
 		return nil
 	}
 
 	// Given all blocks modified, process body RLEs for label sizes and surfaces.
 	for label := range labels {
-		begIndex := voxels.NewLabelSpatialMapIndex(label, dvid.MinIndexZYX.Bytes())
-		endIndex := voxels.NewLabelSpatialMapIndex(label, dvid.MaxIndexZYX.Bytes())
+		begIndex := NewIndex(label, dvid.MinIndexZYX.Bytes())
+		endIndex := NewIndex(label, dvid.MaxIndexZYX.Bytes())
 		err := smalldata.ProcessRange(ctx, begIndex, endIndex, &storage.ChunkOp{}, f)
 		if err != nil {
 			dvid.Errorf("Error denormalizing %s: %s\n", d.DataName(), err.Error())
@@ -268,98 +296,69 @@ func (d *Data) denormFunc(versionID dvid.VersionID, mods voxels.BlockChannel) {
 	}()
 }
 
-// CreateChunkRLEs processes a chunk of labels data and stores the RLEs for each label.
-// Only some multiple of the # of CPU cores can be used for chunk handling before
-// it waits for chunk processing to abate via the buffered server.HandlerToken channel.
-func (d *Data) CreateChunkRLEs(chunk *storage.Chunk) error {
-	<-server.HandlerToken
-	go func() {
-		defer func() {
-			// After processing a chunk, return the token.
-			server.HandlerToken <- 1
-
-			// Notify the requestor that this chunk is done.
-			if chunk.Wg != nil {
-				chunk.Wg.Done()
-			}
-		}()
-
-		// Get the spatial index associated with this chunk.
-		zyx, err := voxels.DecodeVoxelBlockKey(chunk.K)
-		if err != nil {
-			dvid.Errorf("Error in %s.denormalizeChunk(): %s", d.DataName(), err.Error())
-			return
-		}
-		op := chunk.Op.(*denormOp)
-		// This data needs to be uncompressed and deserialized.
-		blockData, _, err := dvid.DeserializeData(chunk.V, true)
-		if err != nil {
-			dvid.Infof("Unable to deserialize block in '%s': %s\n", d.DataName(), err.Error())
-			return
-		}
-		d.createChunkRLEs(op.versionID, zyx, blockData)
+// ComputeSurface computes and stores a label surface.
+// Runs asynchronously and assumes that sparse volumes per spatial indices are ordered
+// by mapped label, i.e., we will get all data for body N before body N+1.  Exits when
+// receives a nil in channel.
+func ComputeSurface(ctx storage.Context, data *Data, ch chan *storage.Chunk, wg *sync.WaitGroup) {
+	defer func() {
+		wg.Done()
+		server.HandlerToken <- 1
 	}()
-	return nil
-}
 
-func (d *Data) createChunkRLEs(versionID dvid.VersionID, zyx *dvid.IndexZYX, blockData []byte) {
-	// Iterate through this block of labels.
-	blockBytes := len(blockData)
-	if blockBytes%8 != 0 {
-		dvid.Infof("Retrieved, deserialized block is wrong size: %d bytes\n", blockBytes)
-		return
-	}
-	labelRLEs := make(map[uint64]dvid.RLEs, 10)
-	firstPt := zyx.MinPoint(d.BlockSize())
-	lastPt := zyx.MaxPoint(d.BlockSize())
-
-	var curStart dvid.Point3d
-	var voxelLabel, curLabel uint64
-	var z, y, x, curRun int32
-	start := 0
-	for z = firstPt.Value(2); z <= lastPt.Value(2); z++ {
-		for y = firstPt.Value(1); y <= lastPt.Value(1); y++ {
-			for x = firstPt.Value(0); x <= lastPt.Value(0); x++ {
-				voxelLabel = d.Properties.ByteOrder.Uint64(blockData[start : start+8])
-				start += 8
-
-				// If we hit background or have switched label, save old run and start new one.
-				if voxelLabel == 0 || voxelLabel != curLabel {
-					// Save old run
-					if curRun > 0 {
-						labelRLEs[curLabel] = append(labelRLEs[curLabel], dvid.NewRLE(curStart, curRun))
-					}
-					// Start new one if not zero label.
-					if voxelLabel != 0 {
-						curStart = dvid.Point3d{x, y, z}
-						curRun = 1
-					} else {
-						curRun = 0
-					}
-					curLabel = voxelLabel
-				} else {
-					curRun++
+	// Sequentially process all the sparse volume data for each label coming down channel.
+	var curVol dvid.SparseVol
+	var curLabel uint64
+	notFirst := false
+	for {
+		chunk := <-ch
+		if chunk == nil {
+			if notFirst {
+				if err := data.computeAndSaveSurface(ctx, &curVol); err != nil {
+					dvid.Errorf("Error on computing surface and normals: %s\n", err.Error())
+					return
 				}
 			}
-			// Force break of any runs when we finish x scan.
-			if curRun > 0 {
-				labelRLEs[curLabel] = append(labelRLEs[curLabel], dvid.NewRLE(curStart, curRun))
-				curLabel = 0
-				curRun = 0
-			}
+			return
 		}
+		label := chunk.ChunkOp.Op.(uint64)
+		if label != curLabel || label == 0 {
+			if notFirst {
+				if err := data.computeAndSaveSurface(ctx, &curVol); err != nil {
+					dvid.Errorf("Error on computing surface and normals: %s\n", err.Error())
+					return
+				}
+			}
+			curVol.Clear()
+			curVol.SetLabel(label)
+		}
+
+		if err := curVol.AddSerializedRLEs(chunk.V); err != nil {
+			dvid.Errorf("Error adding RLE for label %d: %s\n", label, err.Error())
+			return
+		}
+		curLabel = label
+		notFirst = true
+	}
+}
+
+func (d *Data) computeAndSaveSurface(ctx storage.Context, vol *dvid.SparseVol) error {
+	surfaceBytes, err := vol.SurfaceSerialization(d.BlockSize().Value(2), d.Resolution.VoxelSize)
+	if err != nil {
+		return err
+	}
+	store, err := storage.BigDataStore()
+	if err != nil {
+		return err
 	}
 
-	// Store the KeyLabelSpatialMap keys (index = b + s) with slice of runs for value.
-	db, err := storage.SmallDataStore()
+	// Surface blobs are always stored using gzip with best compression, trading off time
+	// during the store for speed during interactive GETs.
+	compression, _ := dvid.NewCompression(dvid.Gzip, dvid.DefaultCompression)
+	serialization, err := dvid.SerializeData(surfaceBytes, compression, dvid.NoChecksum)
 	if err != nil {
-		dvid.Errorf("Error in %s.createChunkRLEs(): %s\n", d.DataName(), err.Error())
-		return
+		return fmt.Errorf("Unable to serialize data in surface computation: %s\n", err.Error())
 	}
-	batcher, ok := db.(storage.KeyValueBatcher)
-	if !ok {
-		dvid.Errorf("Database doesn't support Batch ops in %s.denormalizeChunk()", d.DataName())
-		return
-	}
-	StoreKeyLabelSpatialMap(versionID, d, batcher, zyx.Bytes(), labelRLEs)
+	key := imageblk.NewLabelSurfaceIndex(vol.Label())
+	return store.Put(ctx, key, serialization)
 }

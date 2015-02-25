@@ -156,7 +156,7 @@ func TestKeyvalueRepoPersistence(t *testing.T) {
 	}
 }
 
-func testRequest(t *testing.T, repo datastore.Repo, versionID dvid.VersionID, name dvid.DataString, versioned bool) {
+func testRequest(t *testing.T, repo datastore.Repo, versionID dvid.VersionID, name dvid.InstanceName, versioned bool) {
 	uuid, err := datastore.UUIDFromVersion(versionID)
 	if err != nil {
 		t.Errorf(err.Error())

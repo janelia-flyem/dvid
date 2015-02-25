@@ -1,7 +1,7 @@
 // Tests sparsevol variants and merge/split.
 // Test body data is at end of file.
 
-package labels64
+package labelvol
 
 import (
 	"bytes"
@@ -240,11 +240,11 @@ func TestSparseVolumes(t *testing.T) {
 	tests.UseStore()
 	defer tests.CloseStore()
 
-	// Create testbed labels64 volume
+	// Create testbed volume
 	repo, _ := initTestRepo()
 	labelsName := "mylabels"
 	uuid := repo.RootUUID()
-	server.CreateTestInstance(t, uuid, "labels64", labelsName)
+	server.CreateTestInstance(t, uuid, "labelblk", labelsName)
 	_ = createLabelTestVolume(t, uuid, labelsName)
 
 	// TODO -- Remove this hack in favor of whatever will be the method
@@ -287,11 +287,11 @@ func TestMergeLabels(t *testing.T) {
 	tests.UseStore()
 	defer tests.CloseStore()
 
-	// Create testbed labels64 volume
+	// Create testbed volume
 	repo, _ := initTestRepo()
 	labelsName := "mylabels"
 	uuid := repo.RootUUID()
-	server.CreateTestInstance(t, uuid, "labels64", labelsName)
+	server.CreateTestInstance(t, uuid, "labelblk", labelsName)
 	vol := createLabelTestVolume(t, uuid, labelsName)
 
 	// TODO -- Remove this hack in favor of whatever will be the method
@@ -318,7 +318,7 @@ func TestMergeLabels(t *testing.T) {
 	retrieved := newTestVolume(100, 100, 100)
 	retrieved.get(t, uuid, labelsName)
 	if len(retrieved.data) != 8*100*100*100 {
-		t.Errorf("Retrieved labels64 volume is incorrect size\n")
+		t.Errorf("Retrieved labelvol volume is incorrect size\n")
 	}
 	if !retrieved.isLabel(2, &body2) {
 		t.Errorf("Expected label 2 original voxels to remain.  Instead some were removed.\n")
@@ -335,7 +335,7 @@ func TestMergeLabels(t *testing.T) {
 }
 
 func TestSplitLabel(t *testing.T) {
-	// Create testbed labels64 volume
+	// Create testbed volume
 
 	// Split part of a label
 

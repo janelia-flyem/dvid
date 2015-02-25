@@ -1,4 +1,4 @@
-package voxels
+package imageblk
 
 import (
 	"bytes"
@@ -35,13 +35,13 @@ func initTestRepo() (datastore.Repo, dvid.VersionID) {
 	defer testMu.Unlock()
 	if grayscaleT == nil {
 		var err error
-		grayscaleT, err = datastore.TypeServiceByName("grayscale8")
+		grayscaleT, err = datastore.TypeServiceByName("uint8blk")
 		if err != nil {
-			log.Fatalf("Can't get grayscale type: %s\n", err)
+			log.Fatalf("Can't get uint8blk type: %s\n", err)
 		}
-		rgbaT, err = datastore.TypeServiceByName("rgba8")
+		rgbaT, err = datastore.TypeServiceByName("rgba8blk")
 		if err != nil {
-			log.Fatalf("Can't get rgba8 type: %s\n", err)
+			log.Fatalf("Can't get rgba8blk type: %s\n", err)
 		}
 		roiT, err = datastore.TypeServiceByName("roi")
 		if err != nil {
@@ -95,13 +95,13 @@ func makeVolume(offset, size dvid.Point3d) []byte {
 func makeGrayscale(repo datastore.Repo, t *testing.T, name string) *Data {
 	config := dvid.NewConfig()
 	config.SetVersioned(true)
-	dataservice, err := repo.NewData(grayscaleT, dvid.DataString(name), config)
+	dataservice, err := repo.NewData(grayscaleT, dvid.InstanceName(name), config)
 	if err != nil {
 		t.Errorf("Unable to create grayscale instance %q: %s\n", name, err.Error())
 	}
 	grayscale, ok := dataservice.(*Data)
 	if !ok {
-		t.Errorf("Can't cast grayscale8 data service into Data\n")
+		t.Errorf("Can't cast uint8 data service into Data\n")
 	}
 	return grayscale
 }
@@ -115,7 +115,7 @@ func TestVoxelsInstanceCreation(t *testing.T) {
 	// Create new voxels instance with optional parameters
 	name := "mygrayscale"
 	metadata := fmt.Sprintf(`{
-		"typename": "grayscale8",
+		"typename": "uint8blk",
 		"dataname": %q,
 		"blocksize": "64,43,28",
 		"VoxelSize": "13.1, 14.2, 15.3",
@@ -144,15 +144,15 @@ func TestVoxelsInstanceCreation(t *testing.T) {
 		t.Errorf("Parsed new instance has unexpected name: %s != %s (expected)\n",
 			parsed.Base.Name, name)
 	}
-	if parsed.Base.TypeName != "grayscale8" {
-		t.Errorf("Parsed new instance has unexpected type name: %s != grayscale8 (expected)\n",
+	if parsed.Base.TypeName != "uint8" {
+		t.Errorf("Parsed new instance has unexpected type name: %s != uint8 (expected)\n",
 			parsed.Base.TypeName)
 	}
 	if !parsed.Extended.BlockSize.Equals(dvid.Point3d{64, 43, 28}) {
-		t.Errorf("Bad block size in new grayscale8 instance: %s\n", parsed.Extended.BlockSize)
+		t.Errorf("Bad block size in new uint8 instance: %s\n", parsed.Extended.BlockSize)
 	}
 	if !parsed.Extended.VoxelSize.Equals(dvid.NdFloat32{13.1, 14.2, 15.3}) {
-		t.Errorf("Bad voxel size in new grayscale8 instance: %s\n", parsed.Extended.VoxelSize)
+		t.Errorf("Bad voxel size in new uint8 instance: %s\n", parsed.Extended.VoxelSize)
 	}
 	if parsed.Extended.VoxelUnits[0] != "picometers" {
 		t.Errorf("Got %q for X voxel units, not picometers\n", parsed.Extended.VoxelUnits[0])
@@ -410,60 +410,6 @@ func TestYZSliceGrayscale8(t *testing.T) {
 	sliceTest(t, "YZ", slice)
 }
 
-/*
-// Create, store, and retrieve data using HTTP API
-func TestGrayscale8HTTPAPI(t *testing.T) {
-	tests.UseStore()
-	defer tests.CloseStore()
-
-	_, versionID := initTestRepo()
-	uuid, err := datastore.UUIDFromVersion(versionID)
-	if err != nil {
-		t.Errorf(err.Error())
-	}
-
-	// Create a data instance
-	name := "grayscaleTest"
-	var config dvid.Config
-	config.Set("typename", "grayscale8")
-	config.Set("dataname", name)
-	apiStr := fmt.Sprintf("%srepo/%s/instance", server.WebAPIPath, uuid)
-	req, err := http.NewRequest("POST", apiStr, config)
-	if err != nil {
-		t.Fatalf("Unsuccessful POST request (%s): %s\n", apiStr, err.Error())
-	}
-	w := httptest.NewRecorder()
-	server.WebMux.ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("Bad server response POST to %s, status %d, for %q: %s\n", apiStr, w.Code, name,
-			string(w.Body.Bytes()))
-	}
-
-	// Test badly formatted API calls return appropriate errors
-	apiStr = fmt.Sprintf("%snode/%s/%s/raw/0_1_2/250_250/0_0_0", server.WebAPIPath, uuid, name)
-	req, err = http.NewRequest("GET", apiStr, nil)
-	if err != nil {
-		t.Fatalf("Unsuccessful POST request (%s): %s\n", apiStr, err.Error())
-	}
-	w = httptest.NewRecorder()
-	server.WebMux.ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Errorf("Bad server response POST to %s, status %d, for %q: %s\n", apiStr, w.Code, name,
-			string(w.Body.Bytes()))
-	}
-
-	// Post data to the instance
-
-	// Get a 2d XY image
-
-	// Get a 2d XZ image
-
-	// Get a 2d YZ image
-
-	// Get a 3d image
-}
-*/
-
 func TestBlockAPI(t *testing.T) {
 	tests.UseStore()
 	defer tests.CloseStore()
@@ -642,7 +588,7 @@ func TestGrayscaleRepoPersistence(t *testing.T) {
 	}
 	grayscale, ok := dataservice.(*Data)
 	if !ok {
-		t.Errorf("Can't cast grayscale8 data service into Data\n")
+		t.Errorf("Can't cast uint8 data service into Data\n")
 	}
 	oldData := *grayscale
 
@@ -663,9 +609,76 @@ func TestGrayscaleRepoPersistence(t *testing.T) {
 	}
 	grayscale2, ok := dataservice2.(*Data)
 	if !ok {
-		t.Errorf("Returned new data instance 2 is not voxels.Data\n")
+		t.Errorf("Returned new data instance 2 is not imageblk.Data\n")
 	}
 	if !reflect.DeepEqual(oldData, *grayscale2) {
 		t.Errorf("Expected %v, got %v\n", oldData, *grayscale2)
 	}
 }
+
+/* TODO -- Improve testing of voxels handling
+
+// Create, store, and retrieve data using HTTP API
+func TestGrayscale8HTTPAPI(t *testing.T) {
+	tests.UseStore()
+	defer tests.CloseStore()
+
+	_, versionID := initTestRepo()
+	uuid, err := datastore.UUIDFromVersion(versionID)
+	if err != nil {
+		t.Errorf(err.Error())
+	}
+
+	// Create a data instance
+	name := "grayscaleTest"
+	var config dvid.Config
+	config.Set("typename", "uint8")
+	config.Set("dataname", name)
+	apiStr := fmt.Sprintf("%srepo/%s/instance", server.WebAPIPath, uuid)
+	req, err := http.NewRequest("POST", apiStr, config)
+	if err != nil {
+		t.Fatalf("Unsuccessful POST request (%s): %s\n", apiStr, err.Error())
+	}
+	w := httptest.NewRecorder()
+	server.WebMux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Bad server response POST to %s, status %d, for %q: %s\n", apiStr, w.Code, name,
+			string(w.Body.Bytes()))
+	}
+
+	// Test badly formatted API calls return appropriate errors
+	apiStr = fmt.Sprintf("%snode/%s/%s/raw/0_1_2/250_250/0_0_0", server.WebAPIPath, uuid, name)
+	req, err = http.NewRequest("GET", apiStr, nil)
+	if err != nil {
+		t.Fatalf("Unsuccessful POST request (%s): %s\n", apiStr, err.Error())
+	}
+	w = httptest.NewRecorder()
+	server.WebMux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("Bad server response POST to %s, status %d, for %q: %s\n", apiStr, w.Code, name,
+			string(w.Body.Bytes()))
+	}
+
+	// Post data to the instance
+
+	// Get a 2d XY image
+
+	// Get a 2d XZ image
+
+	// Get a 2d YZ image
+
+	// Get a 3d image
+
+	// Create a new version in repo
+
+	// Modify a portion of the preceding grayscale slice
+
+	// Read the first version grayscale
+
+	// Make sure it doesn't have the new stuff
+
+	// Read the second version grayscale
+
+	// Make sure it has modified voxels
+}
+*/

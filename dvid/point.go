@@ -1530,3 +1530,25 @@ func (s *Spans) UnmarshalBinary(b []byte) error {
 	}
 	return nil
 }
+
+type Resolution struct {
+	// Resolution of voxels in volume
+	VoxelSize NdFloat32
+
+	// Units of resolution, e.g., "nanometers"
+	VoxelUnits NdString
+}
+
+// Returns true if resolution in all dimensions is equal.
+func (r Resolution) IsIsotropic() bool {
+	if len(r.VoxelSize) <= 1 {
+		return true
+	}
+	curRes := r.VoxelSize[0]
+	for _, res := range r.VoxelSize[1:] {
+		if res != curRes {
+			return false
+		}
+	}
+	return true
+}

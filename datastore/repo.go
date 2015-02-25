@@ -98,13 +98,13 @@ type Repo interface {
 	Types() (map[dvid.URLString]TypeService, error)
 
 	// GetAllData returns all data instances for this repo.
-	GetAllData() (map[dvid.DataString]DataService, error)
+	GetAllData() (map[dvid.InstanceName]DataService, error)
 
 	// GetDataByName returns a DataService if the name is present or nil otherwise.
 	// Names can  be UTF8 except for the hyphen, which is a way of passing additional
 	// information to a data instance.  For example, "foo-R" will be parsed as name "foo"
 	// with additional information "R" passed to the DataService.
-	GetDataByName(dvid.DataString) (DataService, error)
+	GetDataByName(dvid.InstanceName) (DataService, error)
 
 	// GetIterator returns a VersionIterator capable of ascending ancestor path from
 	// a particular version in the DAG.
@@ -113,14 +113,14 @@ type Repo interface {
 	// NewData adds a new, named instance of a datatype to repo.  Settings can be passed
 	// via the 'config' argument.  For example, config["versioned"] with a bool value
 	// will specify whether the data is versioned.
-	NewData(TypeService, dvid.DataString, dvid.Config) (DataService, error)
+	NewData(TypeService, dvid.InstanceName, dvid.Config) (DataService, error)
 
 	// ModifyData modifies a preexisting data instance with new configuration settings.
-	ModifyData(dvid.DataString, dvid.Config) error
+	ModifyData(dvid.InstanceName, dvid.Config) error
 
 	// DeleteDataByName deletes all data associated with the data instance and removes
 	// it from the Repo.
-	DeleteDataByName(dvid.DataString) error
+	DeleteDataByName(dvid.InstanceName) error
 
 	// NewVersion creates a new child node off a LOCKED parent node.  Will return
 	// an error if the parent node has not been locked.
@@ -146,10 +146,10 @@ const (
 	versionToUUIDKey
 	newIDsKey
 	repoKey
-	formatKey  // Stores MetadataVersion
+	formatKey // Stores MetadataVersion
 )
 
-// NetadataVersion is the version of the metadata so we can add new metadata 
+// NetadataVersion is the version of the metadata so we can add new metadata
 // without breaking db.
 const MetadataVersion uint64 = 1
 

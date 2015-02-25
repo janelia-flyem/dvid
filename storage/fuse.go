@@ -62,8 +62,8 @@ type FUSEFiler interface {
 
 // Mountable is an interface for data that can be mounted as FUSE Files.
 type Mountable interface {
-	// DataName returns the name of the data (e.g., grayscale data that is grayscale8 data type).
-	DataName() dvid.DataString
+	// DataName returns the name of the data (e.g., "grayscale").
+	DataName() dvid.InstanceName
 
 	// LocalDataID returns the server-specific ID (fewer bytes) for this particular data.
 	LocalID() dvid.DataLocalID

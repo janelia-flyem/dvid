@@ -126,12 +126,6 @@ func (ctx MetadataContext) Versioned() bool {
 	return false
 }
 
-// DataContext supports both unversioned and versioned data persistence.
-type DataContext struct {
-	data    dvid.Data
-	version dvid.VersionID
-}
-
 // MinDataContextKeyRange returns the minimum and maximum key for data with a given local
 // instance id.  Note that the returned keys are not type-specific indices but full DVID
 // keys to be used with nil storage.Context.
@@ -172,6 +166,16 @@ func UpdateDataContextKey(k []byte, instance dvid.InstanceID, version dvid.Versi
 	end := len(k) - dvid.VersionIDSize
 	copy(k[end:], version.Bytes())
 	return nil
+}
+
+// DataContext supports both unversioned and versioned data persistence.
+type DataContext struct {
+	data    dvid.Data
+	version dvid.VersionID
+}
+
+func (ctx *DataContext) DataName() dvid.InstanceName {
+	return ctx.data.DataName()
 }
 
 // ---- storage.Context implementation

@@ -73,7 +73,7 @@ func NewUUID() UUID {
 
 const NilUUID = UUID("")
 
-// Note: TypeString and DataString are types to add static checks and prevent conflation
+// Note: TypeString and InstanceName are types to add static checks and prevent conflation
 // of the two types of identifiers.
 
 // TypeString is a string that is the name of a DVID data type.
@@ -82,8 +82,8 @@ type TypeString string
 // URLString is a string representing a URL.
 type URLString string
 
-// DataString is a string that is the name of DVID data.
-type DataString string
+// InstanceName is a string that is the name of DVID data.
+type InstanceName string
 
 // InstanceID is a DVID server-specific identifier for data instances.  Each InstanceID
 // is only used within one repo, so all key/values for a repo can be obtained by
@@ -157,7 +157,7 @@ const (
 // in datatype packages.  It's required to say it's name, unique local instance ID,
 // as well as whether it supports versioning.
 type Data interface {
-	DataName() DataString
+	DataName() InstanceName
 	InstanceID() InstanceID
 
 	SetInstanceID(InstanceID) // Necessary to support transmission of data to remote DVID.

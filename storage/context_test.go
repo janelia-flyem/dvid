@@ -16,11 +16,11 @@ var (
 // Satisfies dvid.Data interface
 type testData struct {
 	uuid       dvid.UUID
-	name       dvid.DataString
+	name       dvid.InstanceName
 	instanceID dvid.InstanceID
 }
 
-func (d *testData) DataName() dvid.DataString {
+func (d *testData) DataName() dvid.InstanceName {
 	return d.name
 }
 
@@ -53,6 +53,6 @@ func GetTestDataContext(uuid dvid.UUID, name string, instanceID dvid.InstanceID)
 	if !found {
 		return nil
 	}
-	data := &testData{uuid, dvid.DataString(name), instanceID}
+	data := &testData{uuid, dvid.InstanceName(name), instanceID}
 	return &DataContext{data, versionID}
 }

@@ -114,13 +114,24 @@ func Types() (map[dvid.URLString]TypeService, error) {
 	return Manager.Types()
 }
 
-func GetData(versionID dvid.VersionID, name dvid.DataString) (DataService, error) {
+func GetDataByVersion(versionID dvid.VersionID, name dvid.InstanceName) (DataService, error) {
 	if Manager == nil {
 		return nil, fmt.Errorf("datastore not initialized")
 	}
 	uuid, err := Manager.UUIDFromVersion(versionID)
 	if err != nil {
 		return nil, err
+	}
+	repo, err := Manager.RepoFromUUID(uuid)
+	if err != nil {
+		return nil, err
+	}
+	return repo.GetDataByName(name)
+}
+
+func GetDataByUUID(uuid dvid.UUID, name dvid.InstanceName) (DataService, error) {
+	if Manager == nil {
+		return nil, fmt.Errorf("datastore not initialized")
 	}
 	repo, err := Manager.RepoFromUUID(uuid)
 	if err != nil {
@@ -168,9 +179,8 @@ func Versions() string {
 	writeLine("Name", "Version")
 	writeLine("DVID datastore", Version)
 	writeLine("Storage engines", storage.EnginesAvailable())
-	for _, typeservice := range Compiled {
-		t := typeservice.GetType()
-		writeLine(t.Name, t.Version)
+	for _, t := range Compiled {
+		writeLine(t.GetTypeName(), t.GetTypeVersion())
 	}
 	return text
 }

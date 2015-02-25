@@ -112,7 +112,7 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 				return fmt.Errorf("Error trying to retrieve data types within this DVID server!")
 			}
 			for url, typeservice := range mapTypes {
-				text += fmt.Sprintf("%-20s %s\n", typeservice.GetType().Name, url)
+				text += fmt.Sprintf("%-20s %s\n", typeservice.GetTypeName(), url)
 			}
 			reply.Text = text
 		} else {
@@ -174,7 +174,7 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 
 			// Create new data
 			config := cmd.Settings()
-			_, err = repo.NewData(typeservice, dvid.DataString(dataname), config)
+			_, err = repo.NewData(typeservice, dvid.InstanceName(dataname), config)
 			if err != nil {
 				return err
 			}
@@ -207,7 +207,7 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 		}
 
 		// Get the DataService
-		dataname := dvid.DataString(descriptor)
+		dataname := dvid.InstanceName(descriptor)
 		var subcommand string
 		cmd.CommandArgs(3, &subcommand)
 		dataservice, err := repo.GetDataByName(dataname)

@@ -46,6 +46,7 @@ fast codecs like lz4.  DVID has been tested on both MacOS X and Linux (Fedora 16
 but not on Windows.
 
 Command-line and HTTP API documentation is currently distributed over data types and can be 
-found in [help constants within packages](https://github.com/janelia-flyem/dvid/blob/master/datatype/labels64/labels64.go#L39) or by visiting the **/api/help**
+found in [help constants within packages](https://github.com/janelia-flyem/dvid/blob/master/datatype/labelvol/labelvol.go#L34) 
+or by visiting the **/api/help**
 HTTP endpoint on a running DVID server.  We are in the process of 
 figuring out a nice way to document the APIs either through RAML or Swagger.

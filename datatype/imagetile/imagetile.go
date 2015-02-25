@@ -1,10 +1,10 @@
 /*
-	Package multiscale2d implements DVID support for multiscale2ds in XY, XZ, and YZ orientation.
+	Package imagetile implements DVID support for imagetiles in XY, XZ, and YZ orientation.
 	All raw tiles are stored as PNG images that are by default gzipped.  This allows raw
 	tile gets to be already compressed at the cost of more expensive uncompression to
 	retrieve arbitrary image sizes.
 */
-package multiscale2d
+package imagetile
 
 import (
 	"bytes"
@@ -17,7 +17,6 @@ import (
 	"image/png"
 	"math"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,7 +24,7 @@ import (
 	"code.google.com/p/go.net/context"
 
 	"github.com/janelia-flyem/dvid/datastore"
-	"github.com/janelia-flyem/dvid/datatype/voxels"
+	"github.com/janelia-flyem/dvid/datatype/imageblk"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/message"
 	"github.com/janelia-flyem/dvid/server"
@@ -34,23 +33,23 @@ import (
 
 const (
 	Version  = "0.1"
-	RepoURL  = "github.com/janelia-flyem/dvid/datatype/multiscale2d"
-	TypeName = "multiscale2d"
+	RepoURL  = "github.com/janelia-flyem/dvid/datatype/imagetile"
+	TypeName = "imagetile"
 )
 
 const HelpMessage = `
-API for datatypes derived from multiscale2d (github.com/janelia-flyem/dvid/datatype/multiscale2d)
+API for datatypes derived from imagetile (github.com/janelia-flyem/dvid/datatype/imagetile)
 =====================================================================================
 
 Command-line:
 
-$ dvid repo <UUID> new multiscale2d <data name> <settings...>
+$ dvid repo <UUID> new imagetile <data name> <settings...>
 
-	Adds multiresolution XY, XZ, and YZ multiscale2d from Source to repo with specified UUID.
+	Adds multiresolution XY, XZ, and YZ imagetile from Source to repo with specified UUID.
 
 	Example:
 
-	$ dvid repo 3f8c new multiscale2d mymultiscale2d source=mygrayscale format=jpg
+	$ dvid repo 3f8c new imagetile myimagetile source=mygrayscale format=jpg
 
     Arguments:
 
@@ -71,10 +70,10 @@ $ dvid repo <UUID> new multiscale2d <data name> <settings...>
 $ dvid node <UUID> <data name> generate [settings]
 $ dvid -stdin node <UUID> <data name> generate [settings] < config.json
 
-	Generates multiresolution XY, XZ, and YZ multiscale2d from Source to repo with specified UUID.
+	Generates multiresolution XY, XZ, and YZ imagetile from Source to repo with specified UUID.
 	The resolutions at each scale and the dimensions of the tiles are passed in the configuration
 	JSON.  Only integral multiplications of original resolutions are allowed for scale.  If you
-	want more sophisticated processing, post the multiscale2d tiles directly via HTTP.  Note that
+	want more sophisticated processing, post the imagetile tiles directly via HTTP.  Note that
 	the generated tiles are aligned in a grid having (0,0,0) as a top left corner of a tile, not
 	tiles that start from the corner of present data since the data can expand.
 
@@ -83,8 +82,8 @@ $ dvid -stdin node <UUID> <data name> generate [settings] < config.json
 
 	Example:
 
-	$ dvid repo 3f8c mymultiscale2d generate /path/to/config.json
-	$ dvid -stdin repo 3f8c mymultiscale2d generate planes="yz;0,1" < /path/to/config.json 
+	$ dvid repo 3f8c myimagetile generate /path/to/config.json
+	$ dvid -stdin repo 3f8c myimagetile generate planes="yz;0,1" < /path/to/config.json 
 
     Arguments:
 
@@ -123,12 +122,12 @@ GET  <api URL>/node/<UUID>/<data name>/info
 
     Example: 
 
-    GET <api URL>/node/3f8c/mymultiscale2d/info
+    GET <api URL>/node/3f8c/myimagetile/info
 
     Arguments:
 
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
-    data name     Name of multiscale2d data.
+    data name     Name of imagetile data.
 
 
 GET  <api URL>/node/<UUID>/<data name>/tile/<dims>/<scaling>/<tile coord>[?noblanks=true]
@@ -138,7 +137,7 @@ GET  <api URL>/node/<UUID>/<data name>/tile/<dims>/<scaling>/<tile coord>[?nobla
 
     Example: 
 
-    GET <api URL>/node/3f8c/mymultiscale2d/tile/xy/0/10_10_20
+    GET <api URL>/node/3f8c/myimagetile/tile/xy/0/10_10_20
 
     Arguments:
 
@@ -157,7 +156,7 @@ GET  <api URL>/node/<UUID>/<data name>/tile/<dims>/<scaling>/<tile coord>[?nobla
 
 GET  <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>]
 
-    Retrieves raw image of named data within a version node using the precomputed multiscale2d.
+    Retrieves raw image of named data within a version node using the precomputed imagetile.
     By "raw", we mean that no additional processing is applied based on voxel resolutions
     to make sure the retrieved image has isotropic pixels.  For example, if an XZ image
     is requested and the image volume has X resolution 3 nm and Z resolution 40 nm, the
@@ -165,7 +164,7 @@ GET  <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>]
 
     Example: 
 
-    GET <api URL>/node/3f8c/mymultiscale2d/raw/xy/512_256/0_0_100/jpg:80
+    GET <api URL>/node/3f8c/myimagetile/raw/xy/512_256/0_0_100/jpg:80
 
     Arguments:
 
@@ -173,7 +172,7 @@ GET  <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>]
     data name     Name of data to add.
     dims          The axes of data extraction in form i_j.  Example: "0_2" can be XZ.
                     Slice strings ("xy", "xz", or "yz") are also accepted.
-                    Note that only 2d images are returned for multiscale2ds.
+                    Note that only 2d images are returned for imagetiles.
     size          Size in voxels along each dimension specified in <dims>.
     offset        Gives coordinate of first voxel using dimensionality of data.
     format        "png", "jpg" (default: "png")
@@ -181,7 +180,7 @@ GET  <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>]
 
 GET  <api URL>/node/<UUID>/<data name>/isotropic/<dims>/<size>/<offset>[/<format>]
 
-    Retrieves isotropic image of named data within a version node using the precomputed multiscale2d.
+    Retrieves isotropic image of named data within a version node using the precomputed imagetile.
     Additional processing is applied based on voxel resolutions to make sure the retrieved image 
     has isotropic pixels.  For example, if an XZ image is requested and the image volume has 
     X resolution 3 nm and Z resolution 40 nm, the returned image's height will be magnified 40/3
@@ -189,7 +188,7 @@ GET  <api URL>/node/<UUID>/<data name>/isotropic/<dims>/<size>/<offset>[/<format
 
     Example: 
 
-    GET <api URL>/node/3f8c/mymultiscale2d/isotropic/xy/512_256/0_0_100/jpg:80
+    GET <api URL>/node/3f8c/myimagetile/isotropic/xy/512_256/0_0_100/jpg:80
 
     Arguments:
 
@@ -197,7 +196,7 @@ GET  <api URL>/node/<UUID>/<data name>/isotropic/<dims>/<size>/<offset>[/<format
     data name     Name of data to add.
     dims          The axes of data extraction in form i_j.  Example: "0_2" can be XZ.
                     Slice strings ("xy", "xz", or "yz") are also accepted.
-                    Note that only 2d images are returned for multiscale2ds.
+                    Note that only 2d images are returned for imagetiles.
     size          Size in voxels along each dimension specified in <dims>.
     offset        Gives coordinate of first voxel using dimensionality of data.
     format        "png", "jpg" (default: "png")
@@ -229,8 +228,8 @@ type Type struct {
 func NewType() *Type {
 	return &Type{
 		datastore.Type{
-			Name:    "multiscale2d",
-			URL:     "github.com/janelia-flyem/dvid/datatype/multiscale2d",
+			Name:    "imagetile",
+			URL:     "github.com/janelia-flyem/dvid/datatype/imagetile",
 			Version: "0.1",
 			Requirements: &storage.Requirements{
 				Batcher: true,
@@ -242,17 +241,17 @@ func NewType() *Type {
 // --- TypeService interface ---
 
 // NewData returns a pointer to new tile data with default values.
-func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.DataString, c dvid.Config) (datastore.DataService, error) {
+func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.Config) (datastore.DataService, error) {
 	// Make sure we have a valid DataService source
 	sourcename, found, err := c.GetString("Source")
 	if err != nil {
 		return nil, err
 	}
 	if !found {
-		return nil, fmt.Errorf("Cannot make multiscale2d data without valid 'Source' setting.")
+		return nil, fmt.Errorf("Cannot make imagetile data without valid 'Source' setting.")
 	}
 
-	// See if we want placeholder multiscale2d.
+	// See if we want placeholder imagetile.
 	placeholder, found, err := c.GetBool("Placeholder")
 	if err != nil {
 		return nil, err
@@ -297,7 +296,7 @@ func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.
 	}
 	c.Set("Compression", compression)
 
-	// Initialize the multiscale2d data
+	// Initialize the imagetile data
 	basedata, err := datastore.NewDataService(dtype, uuid, id, name, c)
 	if err != nil {
 		return nil, err
@@ -305,7 +304,7 @@ func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.
 	data := &Data{
 		Data: basedata,
 		Properties: Properties{
-			Source:      dvid.DataString(sourcename),
+			Source:      dvid.InstanceName(sourcename),
 			Placeholder: placeholder,
 			Encoding:    format,
 		},
@@ -344,7 +343,7 @@ type TileScaleSpec struct {
 // TileSpec specifies the resolution & size of each dimension at each scale level.
 type TileSpec map[Scaling]TileScaleSpec
 
-// MarshalJSON returns the JSON of the multiscale2d specifications for each scale level.
+// MarshalJSON returns the JSON of the imagetile specifications for each scale level.
 func (tileSpec TileSpec) MarshalJSON() ([]byte, error) {
 	serializable := make(specJSON, len(tileSpec))
 	for scaling, levelSpec := range tileSpec {
@@ -374,7 +373,7 @@ func LoadTileSpec(data []byte) (TileSpec, error) {
 	// Allocate the tile specs
 	numLevels := len(config)
 	specs := make(TileSpec, numLevels)
-	dvid.Infof("Found %d scaling levels for multiscale2d specification.\n", numLevels)
+	dvid.Infof("Found %d scaling levels for imagetile specification.\n", numLevels)
 
 	// Store resolution and tile sizes per level.
 	var hires, lores float64
@@ -455,8 +454,8 @@ var DefaultTileSize = dvid.Point3d{512, 512, 512}
 // Properties are additional properties for keyvalue data instances beyond those
 // in standard datastore.Data.   These will be persisted to metadata storage.
 type Properties struct {
-	// Source of the data for these multiscale2d.
-	Source dvid.DataString
+	// Source of the data for these imagetile.
+	Source dvid.InstanceName
 
 	// Levels describe the resolution and tile sizes at each level of resolution.
 	Levels TileSpec
@@ -465,7 +464,7 @@ type Properties struct {
 	// be found.  This is useful in testing clients.
 	Placeholder bool
 
-	// Encoding describes encoding of the stored tile.  See multiscale2d.Format
+	// Encoding describes encoding of the stored tile.  See imagetile.Format
 	Encoding Format
 
 	// Quality is optional quality of encoding for jpeg, 1-100, higher is better.
@@ -495,8 +494,8 @@ func (d *Data) DefaultTileSpec(uuidStr string) (TileSpec, error) {
 		return nil, err
 	}
 	var ok bool
-	var src *voxels.Data
-	src, ok = source.(*voxels.Data)
+	var src *imageblk.Data
+	src, ok = source.(*imageblk.Data)
 	if !ok {
 		return nil, fmt.Errorf("Cannot construct tile spec for non-voxels data: %s", d.Source)
 	}
@@ -600,7 +599,7 @@ func (d *Data) Help() string {
 // Send transfers all key-value pairs pertinent to this data type as well as
 // the storage.DataStoreType for them.
 func (d *Data) Send(s message.Socket, roiname string, uuid dvid.UUID) error {
-	dvid.Criticalf("multiscale2d.Send() is not implemented yet, so push/pull will not work for this data type.\n")
+	dvid.Criticalf("imagetile.Send() is not implemented yet, so push/pull will not work for this data type.\n")
 	return nil
 }
 
@@ -613,7 +612,7 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 	var uuidStr, dataName, cmdStr string
 	request.CommandArgs(1, &uuidStr, &dataName, &cmdStr)
 
-	// Get the multiscale2d generation configuration from a file or stdin.
+	// Get the imagetile generation configuration from a file or stdin.
 	var err error
 	var tileSpec TileSpec
 	if request.Input != nil {
@@ -703,7 +702,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 
 	case "tile":
 		if action == "post" {
-			server.BadRequest(w, r, "DVID does not yet support POST of multiscale2d")
+			server.BadRequest(w, r, "DVID does not yet support POST of imagetile")
 			return
 		}
 		if err := d.ServeTile(repo, storeCtx, w, r, parts); err != nil {
@@ -714,7 +713,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 
 	case "raw", "isotropic":
 		if action == "post" {
-			server.BadRequest(w, r, "multiscale2d '%s' can only PUT tiles not images", d.DataName())
+			server.BadRequest(w, r, "imagetile '%s' can only PUT tiles not images", d.DataName())
 			return
 		}
 		if len(parts) < 7 {
@@ -742,9 +741,9 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 			server.BadRequest(w, r, err.Error())
 			return
 		}
-		src, ok := source.(*voxels.Data)
+		src, ok := source.(*imageblk.Data)
 		if !ok {
-			server.BadRequest(w, r, "Cannot construct multiscale2d for non-voxels data: %s", d.Source)
+			server.BadRequest(w, r, "Cannot construct imagetile for non-voxels data: %s", d.Source)
 			return
 		}
 		img, err := d.GetImage(storeCtx, src, slice, parts[3] == "isotropic")
@@ -763,14 +762,14 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 		}
 		timedLog.Infof("HTTP %s: tile-accelerated %s %s (%s)", r.Method, planeStr, parts[3], r.URL)
 	default:
-		server.BadRequest(w, r, "Illegal request for multiscale2d data.  See 'help' for REST API")
+		server.BadRequest(w, r, "Illegal request for imagetile data.  See 'help' for REST API")
 	}
 }
 
-// GetImage returns an image given a 2d orthogonal image description.  Since multiscale2d tiles
+// GetImage returns an image given a 2d orthogonal image description.  Since imagetile tiles
 // have precomputed XY, XZ, and YZ orientations, reconstruction of the desired image should
 // be much faster than computing the image from voxel blocks.
-func (d *Data) GetImage(ctx storage.Context, src *voxels.Data, geom dvid.Geometry, isotropic bool) (*dvid.Image, error) {
+func (d *Data) GetImage(ctx storage.Context, src *imageblk.Data, geom dvid.Geometry, isotropic bool) (*dvid.Image, error) {
 	// Iterate through tiles that intersect our geometry.
 	if d.Levels == nil || len(d.Levels) == 0 {
 		return nil, fmt.Errorf("%s has no specification for tiles at highest resolution",
@@ -860,7 +859,7 @@ func (d *Data) ServeTile(repo datastore.Repo, ctx storage.Context, w http.Respon
 	}
 	planeStr, scalingStr, coordStr := parts[4], parts[5], parts[6]
 	queryValues := r.URL.Query()
-	noblanksStr := dvid.DataString(queryValues.Get("noblanks"))
+	noblanksStr := dvid.InstanceName(queryValues.Get("noblanks"))
 	var noblanks bool
 	if noblanksStr == "true" {
 		noblanks = true
@@ -1009,12 +1008,12 @@ func (d *Data) getBlankTileImage(repo datastore.Repo, shape dvid.DataShape, scal
 	if err != nil {
 		return nil, err
 	}
-	src, ok := source.(*voxels.Data)
+	src, ok := source.(*imageblk.Data)
 	if !ok {
-		return nil, fmt.Errorf("Data instance %q for uuid %q is not voxels.Data", d.Source,
+		return nil, fmt.Errorf("Data instance %q for uuid %q is not imageblk.Data", d.Source,
 			repo.RootUUID())
 	}
-	bytesPerVoxel := src.Values().BytesPerElement()
+	bytesPerVoxel := src.Values.BytesPerElement()
 	switch bytesPerVoxel {
 	case 1, 2, 4, 8:
 		numBytes := tileW * tileH * bytesPerVoxel
@@ -1022,7 +1021,7 @@ func (d *Data) getBlankTileImage(repo datastore.Repo, shape dvid.DataShape, scal
 		return dvid.GoImageFromData(data, int(tileW), int(tileH))
 	default:
 		return nil, fmt.Errorf("Cannot construct blank tile for data %q with %d bytes/voxel",
-			d.Source, src.Values().BytesPerElement())
+			d.Source, src.Values.BytesPerElement())
 	}
 }
 
@@ -1052,7 +1051,7 @@ type outFunc func(index *IndexTile, img *dvid.Image) error
 
 // Construct all tiles for an image with offset and send to out function.  extractTiles assumes
 // the image and offset are in the XY plane.
-func (d *Data) extractTiles(v voxels.ExtData, offset dvid.Point, scaling Scaling, outF outFunc) error {
+func (d *Data) extractTiles(v *imageblk.Voxels, offset dvid.Point, scaling Scaling, outF outFunc) error {
 	if d.Levels == nil || scaling < 0 || scaling >= Scaling(len(d.Levels)) {
 		return fmt.Errorf("Bad scaling level specified: %d", scaling)
 	}
@@ -1145,9 +1144,9 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, request datasto
 	if err != nil {
 		return err
 	}
-	src, ok := source.(*voxels.Data)
+	src, ok := source.(*imageblk.Data)
 	if !ok {
-		return fmt.Errorf("Cannot construct multiscale2d for non-voxels data: %s", d.Source)
+		return fmt.Errorf("Cannot construct imagetile for non-voxels data: %s", d.Source)
 	}
 
 	// Save the current tile specification
@@ -1196,26 +1195,17 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, request datasto
 	// Setup swappable ExtData buffers (the stitched slices) so we can be generating tiles
 	// at same time we are reading and stitching them.
 	var bufferLock [2]sync.Mutex
-	var sliceBuffers [2]voxels.ExtData
+	var sliceBuffers [2]*imageblk.Voxels
 	var bufferNum int
-	bufferNum = 0
 
 	// Get the planes we should tile.
 	planes, err := config.GetShapes("planes", ";")
 	if planes == nil {
-		// If no planes are specified, construct multiscale2d for 3 orthogonal planes.
+		// If no planes are specified, construct imagetile for 3 orthogonal planes.
 		planes = []dvid.DataShape{dvid.XY, dvid.XZ, dvid.YZ}
 	}
 
-	voxelsCtx := datastore.NewVersionedContext(src, versionID)
 	outF, err := d.putTileFunc(versionID)
-
-	// sort the tile spec keys to iterate from highest to lowest resolution
-	var sortedKeys []int
-	for scaling, _ := range tileSpec {
-		sortedKeys = append(sortedKeys, int(scaling))
-	}
-	sort.Ints(sortedKeys)
 
 	for _, plane := range planes {
 		timedLog := dvid.NewTimeLog()
@@ -1230,7 +1220,7 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, request datasto
 			}
 			dvid.Debugf("Tiling XY image %d x %d pixels\n", width, height)
 			for z := src.MinPoint.Value(2); z <= src.MaxPoint.Value(2); z++ {
-				server.BlockOnInteractiveRequests("multiscale2d.ConstructTiles [xy]")
+				server.BlockOnInteractiveRequests("imagetile.ConstructTiles [xy]")
 
 				sliceLog := dvid.NewTimeLog()
 				offset = offset.Modify(map[uint8]int32{2: z})
@@ -1239,20 +1229,18 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, request datasto
 					return err
 				}
 				bufferLock[bufferNum].Lock()
-				sliceBuffers[bufferNum], err = src.NewExtHandler(slice, nil)
+				sliceBuffers[bufferNum], err = src.NewVoxels(slice, nil)
 				if err != nil {
 					return err
 				}
-				if err = voxels.GetVoxels(voxelsCtx, src, sliceBuffers[bufferNum], nil); err != nil {
+				if err = src.GetVoxels(versionID, sliceBuffers[bufferNum], nil); err != nil {
 					return err
 				}
 				// Iterate through the different scales, extracting tiles at each resolution.
 				go func(bufferNum int, offset dvid.Point) {
 					defer bufferLock[bufferNum].Unlock()
 					timedLog := dvid.NewTimeLog()
-					for _, key := range sortedKeys {
-						scaling := Scaling(key)
-						levelSpec := tileSpec[scaling]
+					for scaling, levelSpec := range tileSpec {
 						if err != nil {
 							dvid.Errorf("Error in tiling: %s\n", err.Error())
 							return
@@ -1283,7 +1271,7 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, request datasto
 			}
 			dvid.Debugf("Tiling XZ image %d x %d pixels\n", width, height)
 			for y := src.MinPoint.Value(1); y <= src.MaxPoint.Value(1); y++ {
-				server.BlockOnInteractiveRequests("multiscale2d.ConstructTiles [xz]")
+				server.BlockOnInteractiveRequests("imagetile.ConstructTiles [xz]")
 
 				sliceLog := dvid.NewTimeLog()
 				offset = offset.Modify(map[uint8]int32{1: y})
@@ -1292,20 +1280,18 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, request datasto
 					return err
 				}
 				bufferLock[bufferNum].Lock()
-				sliceBuffers[bufferNum], err = src.NewExtHandler(slice, nil)
+				sliceBuffers[bufferNum], err = src.NewVoxels(slice, nil)
 				if err != nil {
 					return err
 				}
-				if err = voxels.GetVoxels(voxelsCtx, src, sliceBuffers[bufferNum], nil); err != nil {
+				if err = src.GetVoxels(versionID, sliceBuffers[bufferNum], nil); err != nil {
 					return err
 				}
 				// Iterate through the different scales, extracting tiles at each resolution.
 				go func(bufferNum int, offset dvid.Point) {
 					defer bufferLock[bufferNum].Unlock()
 					timedLog := dvid.NewTimeLog()
-					for _, key := range sortedKeys {
-						scaling := Scaling(key)
-						levelSpec := tileSpec[scaling]
+					for scaling, levelSpec := range tileSpec {
 						if err != nil {
 							dvid.Errorf("Error in tiling: %s\n", err.Error())
 							return
@@ -1336,7 +1322,7 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, request datasto
 			}
 			dvid.Debugf("Tiling YZ image %d x %d pixels\n", width, height)
 			for x := src.MinPoint.Value(0); x <= src.MaxPoint.Value(0); x++ {
-				server.BlockOnInteractiveRequests("multiscale2d.ConstructTiles [yz]")
+				server.BlockOnInteractiveRequests("imagetile.ConstructTiles [yz]")
 
 				sliceLog := dvid.NewTimeLog()
 				offset = offset.Modify(map[uint8]int32{0: x})
@@ -1345,20 +1331,18 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, request datasto
 					return err
 				}
 				bufferLock[bufferNum].Lock()
-				sliceBuffers[bufferNum], err = src.NewExtHandler(slice, nil)
+				sliceBuffers[bufferNum], err = src.NewVoxels(slice, nil)
 				if err != nil {
 					return err
 				}
-				if err = voxels.GetVoxels(voxelsCtx, src, sliceBuffers[bufferNum], nil); err != nil {
+				if err = src.GetVoxels(versionID, sliceBuffers[bufferNum], nil); err != nil {
 					return err
 				}
 				// Iterate through the different scales, extracting tiles at each resolution.
 				go func(bufferNum int, offset dvid.Point) {
 					defer bufferLock[bufferNum].Unlock()
 					timedLog := dvid.NewTimeLog()
-					for _, key := range sortedKeys {
-						scaling := Scaling(key)
-						levelSpec := tileSpec[scaling]
+					for scaling, levelSpec := range tileSpec {
 						outF, err := d.putTileFunc(versionID)
 						if err != nil {
 							dvid.Errorf("Error in tiling: %s\n", err.Error())

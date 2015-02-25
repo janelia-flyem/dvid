@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/janelia-flyem/dvid/datatype/voxels"
+	"github.com/janelia-flyem/dvid/datatype/imageblk"
 	"github.com/janelia-flyem/dvid/dvid"
 )
 
@@ -16,23 +16,23 @@ type V3DRawMarshaler struct{}
 func (V3DRawMarshaler) UnmarshalV3DRaw(reader io.Reader) ([]*Channel, error) {
 	magicString := make([]byte, 24)
 	if n, err := reader.Read(magicString); n != 24 || err != nil {
-		return nil, fmt.Errorf("Error reading magic string in V3D Raw file: %s", err.Error())
+		return nil, fmt.Errorf("error reading magic string in V3D Raw file: %s", err.Error())
 	}
 	if string(magicString) != "raw_image_stack_by_hpeng" {
-		return nil, fmt.Errorf("Bad magic string in V3D Raw File: %s", string(magicString))
+		return nil, fmt.Errorf("bad magic string in V3D Raw File: %s", string(magicString))
 	}
 	endianType := make([]byte, 1, 1)
 	if n, err := reader.Read(endianType); n != 1 || err != nil {
-		return nil, fmt.Errorf("Could not read endianness of V3D Raw file: %s", err.Error())
+		return nil, fmt.Errorf("could not read endianness of V3D Raw file: %s", err.Error())
 	}
 	var byteOrder binary.ByteOrder
 	switch string(endianType) {
 	case "L":
 		byteOrder = binary.LittleEndian
 	case "B":
-		byteOrder = binary.BigEndian
+		return nil, fmt.Errorf("cannot handle big endian byte order in V3D Raw File")
 	default:
-		return nil, fmt.Errorf("Illegal byte order '%s' in V3D Raw File", endianType)
+		return nil, fmt.Errorf("illegal byte order '%s' in V3D Raw File", endianType)
 	}
 	var dataType uint16
 	if err := binary.Read(reader, byteOrder, &dataType); err != nil {
@@ -45,20 +45,20 @@ func (V3DRawMarshaler) UnmarshalV3DRaw(reader io.Reader) ([]*Channel, error) {
 	case 2:
 		bytesPerVoxel = 2
 	default:
-		return nil, fmt.Errorf("Cannot handle V3D Raw File with data type %d", dataType)
+		return nil, fmt.Errorf("cannot handle V3D Raw File with data type %d", dataType)
 	}
 	var width, height, depth, numChannels uint32
 	if err := binary.Read(reader, byteOrder, &width); err != nil {
-		return nil, fmt.Errorf("Error reading width in V3D Raw File: %s", err.Error())
+		return nil, fmt.Errorf("error reading width in V3D Raw File: %s", err.Error())
 	}
 	if err := binary.Read(reader, byteOrder, &height); err != nil {
-		return nil, fmt.Errorf("Error reading height in V3D Raw File: %s", err.Error())
+		return nil, fmt.Errorf("error reading height in V3D Raw File: %s", err.Error())
 	}
 	if err := binary.Read(reader, byteOrder, &depth); err != nil {
-		return nil, fmt.Errorf("Error reading depth in V3D Raw File: %s", err.Error())
+		return nil, fmt.Errorf("error reading depth in V3D Raw File: %s", err.Error())
 	}
 	if err := binary.Read(reader, byteOrder, &numChannels); err != nil {
-		return nil, fmt.Errorf("Error reading # channels in V3D Raw File: %s", err.Error())
+		return nil, fmt.Errorf("error reading # channels in V3D Raw File: %s", err.Error())
 	}
 
 	// Allocate the V3DRaw struct for the # channels
@@ -82,7 +82,7 @@ func (V3DRawMarshaler) UnmarshalV3DRaw(reader io.Reader) ([]*Channel, error) {
 				Label: fmt.Sprintf("channel%d", c),
 			},
 		}
-		v := voxels.NewVoxels(volume, values, data, int32(width)*bytesPerVoxel, byteOrder)
+		v := imageblk.NewVoxels(volume, values, data, int32(width)*bytesPerVoxel)
 		v3draw[c] = &Channel{
 			Voxels:     v,
 			channelNum: c + 1,
@@ -92,7 +92,7 @@ func (V3DRawMarshaler) UnmarshalV3DRaw(reader io.Reader) ([]*Channel, error) {
 	// Read in the data for each channel
 	for c = 0; c < int32(numChannels); c++ {
 		if err := binary.Read(reader, byteOrder, v3draw[c].Data()); err != nil {
-			return nil, fmt.Errorf("Error reading data for channel %d: %s", c, err.Error())
+			return nil, fmt.Errorf("error reading data for channel %d: %s", c, err.Error())
 		}
 	}
 	return v3draw, nil

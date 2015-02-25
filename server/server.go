@@ -56,7 +56,7 @@ var (
 	MaxChunkHandlers = runtime.NumCPU()
 
 	// HandlerToken is buffered channel to limit spawning of goroutines.
-	// See ProcessChunk() in datatype/voxels for example.
+	// See ProcessChunk() in datatype/imageblk for example.
 	HandlerToken = make(chan int, MaxChunkHandlers)
 
 	// Throttle allows server-wide throttling of operations.  This is used for voxels-based

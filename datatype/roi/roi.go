@@ -201,7 +201,7 @@ func NewType() *Type {
 // --- TypeService interface ---
 
 // NewData returns a pointer to new ROI data with default values.
-func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.DataString, c dvid.Config) (datastore.DataService, error) {
+func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.Config) (datastore.DataService, error) {
 	basedata, err := datastore.NewDataService(dtype, uuid, id, name, c)
 	if err != nil {
 		return nil, err
@@ -250,7 +250,7 @@ type Data struct {
 }
 
 // GetByUUID returns a pointer to ROI data given a version (UUID) and data name.
-func GetByUUID(uuid dvid.UUID, name dvid.DataString) (*Data, error) {
+func GetByUUID(uuid dvid.UUID, name dvid.InstanceName) (*Data, error) {
 	repo, err := datastore.RepoFromUUID(uuid)
 	if err != nil {
 		return nil, err

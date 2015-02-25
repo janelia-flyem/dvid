@@ -1,8 +1,8 @@
 /*
-	This file supports multiscale2d-specific implementations of dvid.Index, etc.
+	This file supports imagetile-specific implementations of dvid.Index, etc.
 */
 
-package multiscale2d
+package imagetile
 
 import (
 	"bytes"

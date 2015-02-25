@@ -193,7 +193,7 @@ type Response struct {
 
 // Command supports command-line interaction with DVID.
 // The first item in the string slice is the command, which may be "help"
-// or the name of DVID data name ("grayscale8").  If the first item is the name
+// or the name of DVID data name ("uint8").  If the first item is the name
 // of a data type, the second item will have a type-specific command like "get".
 // The other arguments are command arguments or optional settings of the form
 // "<key>=<value>".

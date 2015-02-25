@@ -1,4 +1,4 @@
-package multiscale2d
+package imagetile
 
 import (
 	"log"
@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/janelia-flyem/dvid/datastore"
-	"github.com/janelia-flyem/dvid/datatype/voxels"
+	"github.com/janelia-flyem/dvid/datatype/imageblk"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/tests"
 )
@@ -25,9 +25,9 @@ func initTestRepo() (datastore.Repo, dvid.VersionID) {
 		var err error
 		mstype, err = datastore.TypeServiceByName(TypeName)
 		if err != nil {
-			log.Fatalf("Can't get multiscale2d type: %s\n", err)
+			log.Fatalf("Can't get imagetile type: %s\n", err)
 		}
-		grayscaleT, err = datastore.TypeServiceByName("grayscale8")
+		grayscaleT, err = datastore.TypeServiceByName("uint8")
 		if err != nil {
 			log.Fatalf("Can't get grayscale type: %s\n", err)
 		}
@@ -35,16 +35,16 @@ func initTestRepo() (datastore.Repo, dvid.VersionID) {
 	return tests.NewRepo()
 }
 
-func makeGrayscale(repo datastore.Repo, t *testing.T, name dvid.DataString) *voxels.Data {
+func makeGrayscale(repo datastore.Repo, t *testing.T, name dvid.InstanceName) *imageblk.Data {
 	config := dvid.NewConfig()
 	config.SetVersioned(true)
 	dataservice, err := repo.NewData(grayscaleT, name, config)
 	if err != nil {
 		t.Errorf("Unable to create grayscale instance %q: %s\n", name, err.Error())
 	}
-	grayscale, ok := dataservice.(*voxels.Data)
+	grayscale, ok := dataservice.(*imageblk.Data)
 	if !ok {
-		t.Errorf("Can't cast grayscale8 data service into Data\n")
+		t.Errorf("Can't cast data service into imageblk Data\n")
 	}
 	return grayscale
 }
@@ -89,19 +89,19 @@ func TestMultiscale2dRepoPersistence(t *testing.T) {
 	config.Set("Placeholder", "true")
 	config.Set("Format", "jpg")
 	config.Set("Source", "grayscale")
-	dataservice, err := repo.NewData(mstype, "mymultiscale2d", config)
+	dataservice, err := repo.NewData(mstype, "myimagetile", config)
 	if err != nil {
-		t.Errorf("Unable to create multiscale2d instance: %s\n", err.Error())
+		t.Errorf("Unable to create imagetile instance: %s\n", err.Error())
 	}
 	msdata, ok := dataservice.(*Data)
 	if !ok {
-		t.Fatalf("Can't cast multiscale2d data service into multiscale2d.Data\n")
+		t.Fatalf("Can't cast imagetile data service into imagetile.Data\n")
 	}
 	oldData := *msdata
 
 	// Restart test datastore and see if datasets are still there.
 	if err = repo.Save(); err != nil {
-		t.Fatalf("Unable to save repo during multiscale2d persistence test: %s\n", err.Error())
+		t.Fatalf("Unable to save repo during imagetile persistence test: %s\n", err.Error())
 	}
 	oldUUID := repo.RootUUID()
 	tests.CloseReopenStore()
@@ -110,13 +110,13 @@ func TestMultiscale2dRepoPersistence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Can't get repo %s from reloaded test db: %s\n", oldUUID, err.Error())
 	}
-	dataservice2, err := repo2.GetDataByName("mymultiscale2d")
+	dataservice2, err := repo2.GetDataByName("myimagetile")
 	if err != nil {
 		t.Fatalf("Can't get keyvalue instance from reloaded test db: %s\n", err.Error())
 	}
 	msdata2, ok := dataservice2.(*Data)
 	if !ok {
-		t.Errorf("Returned new data instance 2 is not multiscale2d.Data\n")
+		t.Errorf("Returned new data instance 2 is not imagetile.Data\n")
 	}
 	if !reflect.DeepEqual(oldData, *msdata2) {
 		t.Errorf("Expected %v, got %v\n", oldData, *msdata)

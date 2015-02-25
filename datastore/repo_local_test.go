@@ -26,7 +26,7 @@ func TestRepoGobEncoding(t *testing.T) {
 			"baz": []int{3, 9, 7},
 		},
 		dag:     &dagT{},
-		data:    make(map[dvid.DataString]DataService),
+		data:    make(map[dvid.InstanceName]DataService),
 		created: now,
 		updated: now,
 	}

@@ -1,7 +1,8 @@
 /*
-	Package voxels implements DVID support for data using voxels as elements.
+	Package imageblk implements DVID support for image blocks of various formats (uint8, uint16, rgba8).
+    For label data, use labelblk.
 */
-package voxels
+package imageblk
 
 import (
 	"bytes"
@@ -15,7 +16,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"sync"
 
 	"code.google.com/p/go.net/context"
 
@@ -28,28 +28,28 @@ import (
 )
 
 const (
-	Version = "0.8"
-	RepoURL = "github.com/janelia-flyem/dvid/datatype/voxels"
+	Version = "0.2"
+	RepoURL = "github.com/janelia-flyem/dvid/datatype/imageblk"
 )
 
 const HelpMessage = `
-API for 'voxels' datatype (github.com/janelia-flyem/dvid/datatype/voxels)
+API for image block datatype (github.com/janelia-flyem/dvid/datatype/imageblk)
 =========================================================================
 
 Command-line:
 
-$ dvid repo <UUID> new <type name> <data name> <settings...>
+$ dvid repo <UUID> new imageblk <data name> <settings...>
 
 	Adds newly named data of the 'type name' to repo with specified UUID.
 
 	Example (note anisotropic resolution specified instead of default 8 nm isotropic):
 
-	$ dvid repo 3f8c new grayscale8 mygrayscale BlockSize=32 Res=3.2,3.2,40.0
+	$ dvid repo 3f8c new uint8 mygrayscale BlockSize=32 Res=3.2,3.2,40.0
 
     Arguments:
 
     UUID           Hexidecimal string with enough characters to uniquely identify a version node.
-    type name      Data type name, e.g., "grayscale8"
+    type name      Data type name, e.g., "uint8"
     data name      Name of data to create, e.g., "mygrayscale"
     settings       Configuration settings in "key=value" format separated by spaces.
 
@@ -281,6 +281,9 @@ var (
 	DefaultRes float32 = 8
 
 	DefaultUnits = "nanometers"
+
+	store   storage.OrderedKeyValueDB
+	batcher storage.KeyValueBatcher
 )
 
 func init() {
@@ -289,6 +292,20 @@ func init() {
 	gob.Register(&Data{})
 	gob.Register(binary.LittleEndian)
 	gob.Register(binary.BigEndian)
+
+	// Initialize the default storage for this datatype
+	var err error
+	store, err = storage.BigDataStore()
+	if err != nil {
+		dvid.Criticalf("Data type imageblk had error initializing store: %s\n", err.Error())
+		os.Exit(1)
+	}
+	var ok bool
+	batcher, ok = store.(storage.KeyValueBatcher)
+	if !ok {
+		dvid.Criticalf("Data type imageblk requires batch-enabled store, which %q is not\n", store)
+		os.Exit(1)
+	}
 }
 
 // Type embeds the datastore's Type to create a unique type with voxel functions.
@@ -308,22 +325,20 @@ type Type struct {
 	interpolable bool
 }
 
-// NewType returns a pointer to a new voxels Type with default values set.
-func NewType(values dvid.DataValues, interpolable bool) *Type {
-	dtype := &Type{
+// NewType returns a pointer to a new imageblk Type with default values set.
+func NewType(values dvid.DataValues, interpolable bool) Type {
+	dtype := Type{
+		Type: datastore.Type{
+			Requirements: &storage.Requirements{Batcher: true},
+		},
 		values:       values,
 		interpolable: interpolable,
-	}
-	dtype.Type = datastore.Type{
-		Requirements: &storage.Requirements{
-			Batcher: true,
-		},
 	}
 	return dtype
 }
 
 // NewData returns a pointer to a new Voxels with default values.
-func (dtype *Type) NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.DataString, c dvid.Config) (*Data, error) {
+func (dtype *Type) NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.Config) (*Data, error) {
 	basedata, err := datastore.NewDataService(dtype, uuid, id, name, c)
 	if err != nil {
 		return nil, err
@@ -343,7 +358,7 @@ func (dtype *Type) NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.DataStr
 // --- TypeService interface ---
 
 // NewDataService returns a pointer to a new Voxels with default values.
-func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.DataString, c dvid.Config) (datastore.DataService, error) {
+func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.Config) (datastore.DataService, error) {
 	return dtype.NewData(uuid, id, name, c)
 }
 
@@ -371,22 +386,17 @@ type Voxels struct {
 	// For 3d subvolumes, we don't reuse standard Go images but maintain fully
 	// packed data slices, so stride isn't necessary.
 	stride int32
-
-	byteOrder binary.ByteOrder
 }
 
-func NewVoxels(geom dvid.Geometry, values dvid.DataValues, data []byte, stride int32,
-	byteOrder binary.ByteOrder) *Voxels {
+func NewVoxels(geom dvid.Geometry, values dvid.DataValues, data []byte, stride int32) *Voxels {
 
-	return &Voxels{geom, values, data, stride, byteOrder}
+	return &Voxels{geom, values, data, stride}
 }
 
 func (v *Voxels) String() string {
 	size := v.Size()
 	return fmt.Sprintf("%s of size %s @ %s", v.DataShape(), size, v.StartPoint())
 }
-
-// -------  VoxelGetter interface implementation -------------
 
 func (v *Voxels) Values() dvid.DataValues {
 	return v.values
@@ -404,12 +414,6 @@ func (v *Voxels) BytesPerVoxel() int32 {
 	return v.values.BytesPerElement()
 }
 
-func (v *Voxels) ByteOrder() binary.ByteOrder {
-	return v.byteOrder
-}
-
-// -------  VoxelSetter interface implementation -------------
-
 func (v *Voxels) SetGeometry(geom dvid.Geometry) {
 	v.Geometry = geom
 }
@@ -420,10 +424,6 @@ func (v *Voxels) SetValues(values dvid.DataValues) {
 
 func (v *Voxels) SetStride(stride int32) {
 	v.stride = stride
-}
-
-func (v *Voxels) SetByteOrder(order binary.ByteOrder) {
-	v.byteOrder = order
 }
 
 func (v *Voxels) SetData(data []byte) {
@@ -539,7 +539,7 @@ func (v *Voxels) GetImage2d() (*dvid.Image, error) {
 		case 1:
 			img = &image.Gray{data[beg:end], 1 * r.Dx(), r}
 		case 2:
-			bigendian, err := littleToBigEndian(v, data[beg:end])
+			bigendian, err := v.littleToBigEndian(data[beg:end])
 			if err != nil {
 				return nil, err
 			}
@@ -567,97 +567,7 @@ func (v *Voxels) GetImage2d() (*dvid.Image, error) {
 	return dvid.ImageFromGoImage(img, v.Values(), v.Interpolable())
 }
 
-// Extents holds the extents of a volume in both absolute voxel coordinates
-// and lexicographically sorted chunk indices.
-type Extents struct {
-	MinPoint dvid.Point
-	MaxPoint dvid.Point
-
-	MinIndex dvid.ChunkIndexer
-	MaxIndex dvid.ChunkIndexer
-
-	pointMu sync.Mutex
-	indexMu sync.Mutex
-}
-
-// --- dvid.Bounder interface ----
-
-// StartPoint returns the offset to first point of data.
-func (ext *Extents) StartPoint() dvid.Point {
-	return ext.MinPoint
-}
-
-// EndPoint returns the last point.
-func (ext *Extents) EndPoint() dvid.Point {
-	return ext.MaxPoint
-}
-
-// --------
-
-// AdjustPoints modifies extents based on new voxel coordinates in concurrency-safe manner.
-func (ext *Extents) AdjustPoints(pointBeg, pointEnd dvid.Point) bool {
-	ext.pointMu.Lock()
-	defer ext.pointMu.Unlock()
-
-	var changed bool
-	if ext.MinPoint == nil {
-		ext.MinPoint = pointBeg
-		changed = true
-	} else {
-		ext.MinPoint, changed = ext.MinPoint.Min(pointBeg)
-	}
-	if ext.MaxPoint == nil {
-		ext.MaxPoint = pointEnd
-		changed = true
-	} else {
-		ext.MaxPoint, changed = ext.MaxPoint.Max(pointEnd)
-	}
-	return changed
-}
-
-// AdjustIndices modifies extents based on new block indices in concurrency-safe manner.
-func (ext *Extents) AdjustIndices(indexBeg, indexEnd dvid.ChunkIndexer) bool {
-	ext.indexMu.Lock()
-	defer ext.indexMu.Unlock()
-
-	var changed bool
-	if ext.MinIndex == nil {
-		ext.MinIndex = indexBeg
-		changed = true
-	} else {
-		ext.MinIndex, changed = ext.MinIndex.Min(indexBeg)
-	}
-	if ext.MaxIndex == nil {
-		ext.MaxIndex = indexEnd
-		changed = true
-	} else {
-		ext.MaxIndex, changed = ext.MaxIndex.Max(indexEnd)
-	}
-	return changed
-}
-
-type Resolution struct {
-	// Resolution of voxels in volume
-	VoxelSize dvid.NdFloat32
-
-	// Units of resolution, e.g., "nanometers"
-	VoxelUnits dvid.NdString
-}
-
-func (r Resolution) IsIsotropic() bool {
-	if len(r.VoxelSize) <= 1 {
-		return true
-	}
-	curRes := r.VoxelSize[0]
-	for _, res := range r.VoxelSize[1:] {
-		if res != curRes {
-			return false
-		}
-	}
-	return true
-}
-
-// Properties are additional properties for keyvalue data instances beyond those
+// Properties are additional properties for image block data instances beyond those
 // in standard datastore.Data.   These will be persisted to metadata storage.
 type Properties struct {
 	// Values describes the data type/label for each value within a voxel.
@@ -672,8 +582,9 @@ type Properties struct {
 	// The endianness of this loaded data.
 	ByteOrder binary.ByteOrder
 
-	Resolution
-	Extents
+	dvid.Resolution
+
+	dvid.Extents
 
 	// Background value for data
 	Background uint8
@@ -937,8 +848,6 @@ func (d *Data) PutLocal(request datastore.Request, reply *datastore.Response) er
 		return err
 	}
 
-	ctx := datastore.NewVersionedContext(d, versionID)
-
 	// Load and PUT each image.
 	numSuccessful := 0
 	for _, filename := range filenames {
@@ -953,13 +862,12 @@ func (d *Data) PutLocal(request datastore.Request, reply *datastore.Response) er
 			return fmt.Errorf("Unable to determine slice: %s", err.Error())
 		}
 
-		e, err := d.NewExtHandler(slice, img)
+		vox, err := d.NewVoxels(slice, img)
 		if err != nil {
 			return err
 		}
-		storage.FileBytesRead <- len(e.Data())
-		err = PutVoxels(ctx, d, e, OpOptions{})
-		if err != nil {
+		storage.FileBytesRead <- len(vox.Data())
+		if err = d.PutVoxels(versionID, vox, nil); err != nil {
 			return err
 		}
 		sliceLog.Debugf("%s put local %s", d.DataName(), slice)
@@ -976,20 +884,17 @@ func (d *Data) PutLocal(request datastore.Request, reply *datastore.Response) er
 	return nil
 }
 
-// ----- IntData interface implementation ----------
-
-// NewExtHandler returns an ExtData given some geometry and optional image data.
-// If img is passed in, the function will initialize the ExtData with data from the image.
+// NewVoxels returns Voxels with given geometry and optional image data.
+// If img is passed in, the function will initialize the Voxels with data from the image.
 // Otherwise, it will allocate a zero buffer of appropriate size.
-func (d *Data) NewExtHandler(geom dvid.Geometry, img interface{}) (ExtData, error) {
+func (d *Data) NewVoxels(geom dvid.Geometry, img interface{}) (*Voxels, error) {
 	bytesPerVoxel := d.Properties.Values.BytesPerElement()
 	stride := geom.Size().Value(0) * bytesPerVoxel
 
 	voxels := &Voxels{
-		Geometry:  geom,
-		values:    d.Properties.Values,
-		stride:    stride,
-		byteOrder: d.ByteOrder,
+		Geometry: geom,
+		values:   d.Properties.Values,
+		stride:   stride,
 	}
 
 	if img == nil {
@@ -1031,20 +936,16 @@ func (d *Data) NewExtHandler(geom dvid.Geometry, img interface{}) (ExtData, erro
 	return voxels, nil
 }
 
-func (d *Data) BaseData() dvid.Data {
-	return d
-}
-
-func (d *Data) Values() dvid.DataValues {
-	return d.Properties.Values
-}
-
 func (d *Data) BlockSize() dvid.Point {
 	return d.Properties.BlockSize
 }
 
-func (d *Data) Extents() *Extents {
+func (d *Data) Extents() *dvid.Extents {
 	return &(d.Properties.Extents)
+}
+
+func (d *Data) Resolution() dvid.Resolution {
+	return d.Properties.Resolution
 }
 
 func (d *Data) String() string {
@@ -1106,12 +1007,8 @@ type SendOp struct {
 // the storage.DataStoreType for them.
 // TODO -- handle versioning of the ROI coming.  For not, only allow root version of ROI.
 func (d *Data) Send(s message.Socket, roiname string, uuid dvid.UUID) error {
-	db, err := storage.BigDataStore()
-	if err != nil {
-		return err
-	}
-	//wg := new(sync.WaitGroup)
 	server.SpawnGoroutineMutex.Lock()
+	defer server.SpawnGoroutineMutex.Unlock()
 
 	// Get the ROI
 	var roiIterator *roi.Iterator
@@ -1120,18 +1017,18 @@ func (d *Data) Send(s message.Socket, roiname string, uuid dvid.UUID) error {
 		if err != nil {
 			return err
 		}
-		roiIterator, err = roi.NewIterator(dvid.DataString(roiname), versionID, d)
+		roiIterator, err = roi.NewIterator(dvid.InstanceName(roiname), versionID, d)
 		if err != nil {
 			return err
 		}
 	}
 
 	// Get the entire range of keys for this instance's voxel blocks
-	begIndex := NewVoxelBlockIndex(d.Properties.Extents.MinIndex)
+	begIndex := NewIndex(d.Properties.Extents.MinIndex)
 	ctx := storage.NewDataContext(d, 0)
 	begKey := ctx.ConstructKey(begIndex)
 
-	endIndex := NewVoxelBlockIndex(d.Properties.Extents.MaxIndex)
+	endIndex := NewIndex(d.Properties.Extents.MaxIndex)
 	ctx = storage.NewDataContext(d, dvid.MaxVersionID)
 	endKey := ctx.ConstructKey(endIndex)
 
@@ -1142,7 +1039,7 @@ func (d *Data) Send(s message.Socket, roiname string, uuid dvid.UUID) error {
 			return fmt.Errorf("Received nil keyvalue sending voxel chunks")
 		}
 		blocksTotal++
-		indexZYX, err := DecodeVoxelBlockKey(chunk.K)
+		indexZYX, err := DecodeKey(chunk.K)
 		if err != nil {
 			return fmt.Errorf("Error in sending voxel block: %s", err.Error())
 		}
@@ -1158,17 +1055,11 @@ func (d *Data) Send(s message.Socket, roiname string, uuid dvid.UUID) error {
 
 	// Send this instance's voxel blocks down the socket
 	chunkOp := &storage.ChunkOp{&SendOp{s}, nil}
-	err = db.ProcessRange(nil, begKey, endKey, chunkOp, f)
+	err := store.ProcessRange(nil, begKey, endKey, chunkOp, f)
 	if err != nil {
-		server.SpawnGoroutineMutex.Unlock()
 		return fmt.Errorf("Error in voxels %q range query: %s", d.DataName(), err.Error())
 	}
 
-	server.SpawnGoroutineMutex.Unlock()
-	if err != nil {
-		return err
-	}
-	//wg.Wait()
 	if roiIterator == nil {
 		dvid.Infof("Sent %d %s voxel blocks\n", blocksTotal, d.DataName())
 	} else {
@@ -1179,14 +1070,14 @@ func (d *Data) Send(s message.Socket, roiname string, uuid dvid.UUID) error {
 }
 
 // ForegroundROI creates a new ROI by determining all non-background blocks.
-func (d *Data) ForegroundROI(request datastore.Request, reply *datastore.Response) error {
-	if d.Values().BytesPerElement() != 1 {
+func (d *Data) ForegroundROI(req datastore.Request, reply *datastore.Response) error {
+	if d.Values.BytesPerElement() != 1 {
 		return fmt.Errorf("Foreground ROI command only implemented for 1 byte/voxel data!")
 	}
 
 	// Parse the request
 	var uuidStr, dataName, cmdStr, destName, backgroundStr string
-	request.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &destName, &backgroundStr)
+	req.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &destName, &backgroundStr)
 
 	// Get the version and repo
 	uuid, versionID, err := datastore.MatchingUUID(uuidStr)
@@ -1197,20 +1088,20 @@ func (d *Data) ForegroundROI(request datastore.Request, reply *datastore.Respons
 	if err != nil {
 		return err
 	}
-	if err = repo.AddToLog(request.Command.String()); err != nil {
+	if err = repo.AddToLog(req.Command.String()); err != nil {
 		return err
 	}
 
 	// Use existing destination data or a new ROI data.
 	var dest *roi.Data
-	dest, err = roi.GetByUUID(uuid, dvid.DataString(destName))
+	dest, err = roi.GetByUUID(uuid, dvid.InstanceName(destName))
 	if err != nil {
 		config := dvid.NewConfig()
 		typeservice, err := datastore.TypeServiceByName("roi")
 		if err != nil {
 			return err
 		}
-		dataservice, err := repo.NewData(typeservice, dvid.DataString(destName), config)
+		dataservice, err := repo.NewData(typeservice, dvid.InstanceName(destName), config)
 		if err != nil {
 			return err
 		}
@@ -1226,12 +1117,12 @@ func (d *Data) ForegroundROI(request datastore.Request, reply *datastore.Respons
 	if err != nil {
 		return err
 	}
-	go d.foregroundROI(uuid, versionID, dest, background)
+	go d.foregroundROI(versionID, dest, background)
 
 	return nil
 }
 
-func (d *Data) foregroundROI(uuid dvid.UUID, versionID dvid.VersionID, dest *roi.Data, background dvid.PointNd) {
+func (d *Data) foregroundROI(v dvid.VersionID, dest *roi.Data, background dvid.PointNd) {
 	dest.Ready = false
 
 	timedLog := dvid.NewTimeLog()
@@ -1239,12 +1130,7 @@ func (d *Data) foregroundROI(uuid dvid.UUID, versionID dvid.VersionID, dest *roi
 
 	// Iterate through all voxel blocks, loading and then checking blocks
 	// for any foreground voxels.
-	bigdata, err := storage.BigDataStore()
-	if err != nil {
-		dvid.Errorf("Cannot get datastore that handles big data: %s\n", err.Error())
-		return
-	}
-	ctx := datastore.NewVersionedContext(d, versionID)
+	ctx := datastore.NewVersionedContext(d, v)
 
 	backgroundBytes := make([]byte, len(background))
 	for i, b := range background {
@@ -1255,8 +1141,8 @@ func (d *Data) foregroundROI(uuid dvid.UUID, versionID dvid.VersionID, dest *roi
 	var numBatches int
 	var span *dvid.Span
 	spans := []dvid.Span{}
-	minIndex := NewVoxelBlockIndex(&dvid.MinIndexZYX)
-	maxIndex := NewVoxelBlockIndex(&dvid.MaxIndexZYX)
+	minIndex := NewIndex(&dvid.MinIndexZYX)
+	maxIndex := NewIndex(&dvid.MaxIndexZYX)
 
 	var f storage.ChunkProcessor = func(chunk *storage.Chunk) error {
 		if chunk == nil || chunk.V == nil {
@@ -1282,7 +1168,7 @@ func (d *Data) foregroundROI(uuid dvid.UUID, versionID dvid.VersionID, dest *roi
 			}
 		}
 		if foreground {
-			indexZYX, err := DecodeVoxelBlockKey(chunk.K)
+			indexZYX, err := DecodeKey(chunk.K)
 			if err != nil {
 				return fmt.Errorf("Error decoding voxel block key: %s\n", err.Error())
 			}
@@ -1295,7 +1181,7 @@ func (d *Data) foregroundROI(uuid dvid.UUID, versionID dvid.VersionID, dest *roi
 					init := (numBatches == 0)
 					numBatches++
 					go func(spans []dvid.Span) {
-						if err := dest.PutSpans(versionID, spans, init); err != nil {
+						if err := dest.PutSpans(v, spans, init); err != nil {
 							dvid.Errorf("Error in storing ROI: %s\n", err.Error())
 						} else {
 							timedLog.Debugf("-- Wrote batch %d of spans for foreground ROI %q", numBatches, dest.DataName())
@@ -1309,7 +1195,7 @@ func (d *Data) foregroundROI(uuid dvid.UUID, versionID dvid.VersionID, dest *roi
 		server.BlockOnInteractiveRequests("voxels [compute foreground ROI]")
 		return nil
 	}
-	err = bigdata.ProcessRange(ctx, minIndex, maxIndex, &storage.ChunkOp{}, f)
+	err := store.ProcessRange(ctx, minIndex, maxIndex, &storage.ChunkOp{}, f)
 	if err != nil {
 		dvid.Errorf("Error in processing chunks in ROI: %s\n", err.Error())
 		return
@@ -1320,7 +1206,7 @@ func (d *Data) foregroundROI(uuid dvid.UUID, versionID dvid.VersionID, dest *roi
 
 	// Save new ROI
 	if len(spans) > 0 {
-		if err := dest.PutSpans(versionID, spans, numBatches == 0); err != nil {
+		if err := dest.PutSpans(v, spans, numBatches == 0); err != nil {
 			dvid.Errorf("Error in storing ROI: %s\n", err.Error())
 			return
 		}
@@ -1330,15 +1216,15 @@ func (d *Data) foregroundROI(uuid dvid.UUID, versionID dvid.VersionID, dest *roi
 }
 
 // DoRPC acts as a switchboard for RPC commands.
-func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error {
-	switch request.TypeCommand() {
+func (d *Data) DoRPC(req datastore.Request, reply *datastore.Response) error {
+	switch req.TypeCommand() {
 	case "load":
-		if len(request.Command) < 5 {
+		if len(req.Command) < 5 {
 			return fmt.Errorf("Poorly formatted load command.  See command-line help.")
 		}
 		// Parse the request
 		var uuidStr, dataName, cmdStr, offsetStr string
-		filenames, err := request.FilenameArgs(1, &uuidStr, &dataName, &cmdStr, &offsetStr)
+		filenames, err := req.FilenameArgs(1, &uuidStr, &dataName, &cmdStr, &offsetStr)
 		if err != nil {
 			return err
 		}
@@ -1371,35 +1257,35 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 		if err != nil {
 			return err
 		}
-		if err = repo.AddToLog(request.Command.String()); err != nil {
+		if err = repo.AddToLog(req.Command.String()); err != nil {
 			return err
 		}
-		return LoadImages(versionID, d, offset, filenames)
+		return d.LoadImages(versionID, offset, filenames)
 
 	case "put":
-		if len(request.Command) < 7 {
+		if len(req.Command) < 7 {
 			return fmt.Errorf("Poorly formatted put command.  See command-line help.")
 		}
-		source := request.Command[4]
+		source := req.Command[4]
 		switch source {
 		case "local":
-			return d.PutLocal(request, reply)
+			return d.PutLocal(req, reply)
 		case "remote":
 			return fmt.Errorf("put remote not yet implemented")
 		default:
 			return fmt.Errorf("Unknown command.  Data instance '%s' [%s] does not support '%s' command.",
-				d.DataName(), d.TypeName(), request.TypeCommand())
+				d.DataName(), d.TypeName(), req.TypeCommand())
 		}
 
 	case "roi":
-		if len(request.Command) < 6 {
+		if len(req.Command) < 6 {
 			return fmt.Errorf("Poorly formatted roi command. See command-line help.")
 		}
-		return d.ForegroundROI(request, reply)
+		return d.ForegroundROI(req, reply)
 
 	default:
 		return fmt.Errorf("Unknown command.  Data instance '%s' [%s] does not support '%s' command.",
-			d.DataName(), d.TypeName(), request.TypeCommand())
+			d.DataName(), d.TypeName(), req.TypeCommand())
 	}
 	return nil
 }
@@ -1419,11 +1305,11 @@ func debugData(img image.Image, message string) {
 }
 
 // ServeHTTP handles all incoming HTTP requests for this data.
-func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *http.Request) {
+func (d *Data) ServeHTTP(reqCtx context.Context, w http.ResponseWriter, r *http.Request) {
 	timedLog := dvid.NewTimeLog()
 
 	// Get repo and version ID of this request
-	repo, versions, err := datastore.FromContext(requestCtx)
+	repo, versions, err := datastore.FromContext(reqCtx)
 	if err != nil {
 		server.BadRequest(w, r, "Error: %q ServeHTTP has invalid context: %s\n",
 			d.DataName, err.Error())
@@ -1439,12 +1325,9 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 
 	// Get the action (GET, POST)
 	action := strings.ToLower(r.Method)
-	var op OpType
 	switch action {
 	case "get":
-		op = GetOp
 	case "post":
-		op = PutOp
 	default:
 		server.BadRequest(w, r, "Can only handle GET or POST HTTP verbs")
 		return
@@ -1460,7 +1343,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 	// Get query strings and possible roi
 	var roiptr *ROI
 	queryValues := r.URL.Query()
-	roiname := dvid.DataString(queryValues.Get("roi"))
+	roiname := dvid.InstanceName(queryValues.Get("roi"))
 	if len(roiname) != 0 {
 		roiptr = new(ROI)
 		attenuationStr := queryValues.Get("attenuation")
@@ -1479,7 +1362,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 	}
 
 	// Handle POST on data -> setting of configuration
-	if len(parts) == 3 && op == PutOp {
+	if len(parts) == 3 && action == "put" {
 		fmt.Printf("Setting configuration of data '%s'\n", d.DataName())
 		config, err := server.DecodeJSON(r)
 		if err != nil {
@@ -1547,8 +1430,8 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 			server.BadRequest(w, r, err.Error())
 			return
 		}
-		if op == GetOp {
-			data, err := GetBlocks(storeCtx, blockCoord, span)
+		if action == "get" {
+			data, err := d.GetBlocks(versionID, blockCoord, span)
 			if err != nil {
 				server.BadRequest(w, r, err.Error())
 				return
@@ -1560,7 +1443,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 				return
 			}
 		} else {
-			if err := PutBlocks(storeCtx, d, blockCoord, span, r.Body); err != nil {
+			if err := d.PutBlocks(versionID, blockCoord, span, r.Body); err != nil {
 				server.BadRequest(w, r, err.Error())
 				return
 			}
@@ -1626,7 +1509,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 				server.BadRequest(w, r, err.Error())
 				return
 			}
-			if op == PutOp {
+			if action == "put" {
 				if isotropic {
 					err := fmt.Errorf("can only PUT 'raw' not 'isotropic' images")
 					server.BadRequest(w, r, err.Error())
@@ -1638,19 +1521,19 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 					server.BadRequest(w, r, err.Error())
 					return
 				}
-				e, err := d.NewExtHandler(slice, postedImg)
+				vox, err := d.NewVoxels(slice, postedImg)
 				if err != nil {
 					server.BadRequest(w, r, err.Error())
 					return
 				}
 				if roiptr != nil {
-					roiptr.Iter, err = roi.NewIterator(roiname, versionID, e)
+					roiptr.Iter, err = roi.NewIterator(roiname, versionID, vox)
 					if err != nil {
 						server.BadRequest(w, r, err.Error())
 						return
 					}
 				}
-				err = PutVoxels(storeCtx, d, e, OpOptions{roi: roiptr})
+				err = d.PutVoxels(versionID, vox, roiptr)
 				if err != nil {
 					server.BadRequest(w, r, err.Error())
 					return
@@ -1661,19 +1544,19 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 					server.BadRequest(w, r, err.Error())
 					return
 				}
-				e, err := d.NewExtHandler(rawSlice, nil)
+				vox, err := d.NewVoxels(rawSlice, nil)
 				if err != nil {
 					server.BadRequest(w, r, err.Error())
 					return
 				}
 				if roiptr != nil {
-					roiptr.Iter, err = roi.NewIterator(roiname, versionID, e)
+					roiptr.Iter, err = roi.NewIterator(roiname, versionID, vox)
 					if err != nil {
 						server.BadRequest(w, r, err.Error())
 						return
 					}
 				}
-				img, err := GetImage(storeCtx, d, e, roiptr)
+				img, err := d.GetImage(versionID, vox, roiptr)
 				if err != nil {
 					server.BadRequest(w, r, err.Error())
 					return
@@ -1719,20 +1602,20 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 				server.BadRequest(w, r, err.Error())
 				return
 			}
-			if op == GetOp {
-				e, err := d.NewExtHandler(subvol, nil)
+			if action == "get" {
+				vox, err := d.NewVoxels(subvol, nil)
 				if err != nil {
 					server.BadRequest(w, r, err.Error())
 					return
 				}
 				if roiptr != nil {
-					roiptr.Iter, err = roi.NewIterator(roiname, versionID, e)
+					roiptr.Iter, err = roi.NewIterator(roiname, versionID, vox)
 					if err != nil {
 						server.BadRequest(w, r, err.Error())
 						return
 					}
 				}
-				data, err := GetVolume(storeCtx, d, e, roiptr)
+				data, err := d.GetVolume(versionID, vox, roiptr)
 				if err != nil {
 					server.BadRequest(w, r, err.Error())
 					return
@@ -1754,20 +1637,19 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 					server.BadRequest(w, r, err.Error())
 					return
 				}
-				e, err := d.NewExtHandler(subvol, data)
+				vox, err := d.NewVoxels(subvol, data)
 				if err != nil {
 					server.BadRequest(w, r, err.Error())
 					return
 				}
 				if roiptr != nil {
-					roiptr.Iter, err = roi.NewIterator(roiname, versionID, e)
+					roiptr.Iter, err = roi.NewIterator(roiname, versionID, vox)
 					if err != nil {
 						server.BadRequest(w, r, err.Error())
 						return
 					}
 				}
-				err = PutVoxels(storeCtx, d, e, OpOptions{roi: roiptr})
-				if err != nil {
+				if err = d.PutVoxels(versionID, vox, roiptr); err != nil {
 					server.BadRequest(w, r, err.Error())
 					return
 				}

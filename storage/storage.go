@@ -200,7 +200,7 @@ type OrderedKeyValueGetter interface {
 	// allowing chunk processing to be concurrent with key-value sequential reads.
 	// Since the chunks are typically sent during sequential read iteration, the
 	// receiving function can be organized as a pool of chunk handling goroutines.
-	// See datatype.voxels.ProcessChunk() for an example.
+	// See datatype/imageblk.ProcessChunk() for an example.
 	ProcessRange(ctx Context, kStart, kEnd []byte, op *ChunkOp, f ChunkProcessor) error
 }
 
