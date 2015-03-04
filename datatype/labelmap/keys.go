@@ -119,6 +119,7 @@ func DecodeBlockMapKey(key []byte) (label []byte, mappedLabel uint64, err error)
 	return
 }
 
+/*
 // NewLabelBlockMapIndex returns an identifier for storing a "label + spatial index", where
 // the spatial index references a block that contains a voxel with the given label.
 func NewLabelBlockMapIndex(label uint64, blockBytes []byte) dvid.IndexBytes {
@@ -148,3 +149,4 @@ func DecodeLabelBlockMapKey(key []byte) (label uint64, blockBytes []byte, err er
 	blockBytes = index[9:]
 	return
 }
+*/

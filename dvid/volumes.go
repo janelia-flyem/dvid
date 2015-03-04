@@ -8,8 +8,10 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
+	"sort"
 	"strconv"
 )
 
@@ -324,6 +326,37 @@ func NewRLE(start Point3d, length int32) RLE {
 // RLEs are simply a slice of RLE.
 type RLEs []RLE
 
+// Partition splits RLEs up into block-sized RLEs using the given block size.
+// The return is a map of RLEs with stringified ZYX block coordinate keys.
+func (rles RLEs) Partition(blockSize Point3d) (BlockRLEs, error) {
+	brles := make(BlockRLEs, 100)
+	for _, rle := range rles {
+		// Get the block coord for starting point.
+		bcoord := rle.start.Chunk(blockSize).(ChunkPoint3d)
+
+		// Iterate block coord in X until block end is past span, storing fragments in block map.
+		bBegX := bcoord[0] * blockSize[0]
+		rx := rle.start[0]
+		remain := rle.length
+		for remain >= 0 {
+			// Store block-clipped rle
+			dx := bBegX + blockSize[0] - rx
+			if remain < dx {
+				brles.appendBlockRLE(bcoord, rx, rle.start[1], rle.start[2], remain)
+			} else {
+				brles.appendBlockRLE(bcoord, rx, rle.start[1], rle.start[2], dx)
+			}
+
+			// Go to next block
+			bcoord[0]++
+			bBegX += blockSize[0]
+			rx += dx
+			remain -= dx
+		}
+	}
+	return brles, nil
+}
+
 // FitToBounds returns a copy that has been adjusted to fit
 // within the given optional bounds.
 func (rles RLEs) FitToBounds(bounds *Bounds) RLEs {
@@ -411,6 +444,28 @@ func (rles *RLEs) UnmarshalBinary(b []byte) error {
 	return nil
 }
 
+// UnmarshalBinaryReader reads from a reader instead of a static slice of bytes.
+// This will likely be more efficient for very large RLEs that are being streamed
+// into the server.
+func (rles *RLEs) UnmarshalBinaryReader(r io.Reader, numRLEs uint32) error {
+	*rles = make(RLEs, numRLEs, numRLEs)
+	for i := uint32(0); i < numRLEs; i++ {
+		if err := binary.Read(r, binary.LittleEndian, &((*rles)[i].start[0])); err != nil {
+			return err
+		}
+		if err := binary.Read(r, binary.LittleEndian, &((*rles)[i].start[1])); err != nil {
+			return err
+		}
+		if err := binary.Read(r, binary.LittleEndian, &((*rles)[i].start[2])); err != nil {
+			return err
+		}
+		if err := binary.Read(r, binary.LittleEndian, &((*rles)[i].length)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Add adds the given RLEs to the receiver when there's a possibility of overlapping RLEs.
 // If you are guaranteed the RLEs are disjoint, e.g., the passed and receiver RLEs are in
 // different subvolumes, then just concatenate the RLEs instead of calling this function.
@@ -451,14 +506,60 @@ func (rles *RLEs) Add(rles2 RLEs) {
 }
 
 // Stats returns the total number of voxels and runs.
-func (rles RLEs) Stats() (numVoxels, numRuns int32) {
+func (rles RLEs) Stats() (numVoxels uint64, numRuns int32) {
 	if rles == nil || len(rles) == 0 {
 		return 0, 0
 	}
 	for _, rle := range rles {
-		numVoxels += rle.length
+		numVoxels += uint64(rle.length)
 	}
 	return numVoxels, int32(len(rles))
+}
+
+// BlockRLEs is a single label's map of block coordinates to RLEs for that label.
+// The key is a string of the serialized block coordinate.
+type BlockRLEs map[IZYXString]RLEs
+
+func (brles BlockRLEs) appendBlockRLE(bcoord ChunkPoint3d, x, y, z, n int32) error {
+	rle := RLE{Point3d{x, y, z}, n}
+	idx := IndexZYX(bcoord)
+	s := IZYXString(idx.Bytes())
+
+	rles, found := brles[s]
+	if !found || rles == nil {
+		brles[s] = RLEs{rle}
+	} else {
+		brles[s] = append(brles[s], rle)
+	}
+	return nil
+}
+
+// NumVoxels is the number of voxels contained within a label's block RLEs.
+func (brles BlockRLEs) NumVoxels() uint64 {
+	var size uint64
+	for _, rles := range brles {
+		numVoxels, _ := rles.Stats()
+		size += uint64(numVoxels)
+	}
+	return size
+}
+
+type izyxSlice []IZYXString
+
+func (i izyxSlice) Len() int           { return len(i) }
+func (i izyxSlice) Swap(a, b int)      { i[a], i[b] = i[b], i[a] }
+func (i izyxSlice) Less(a, b int) bool { return i[a] < i[b] }
+
+// SortedKeys returns a slice of IZYXString sorted in ascending order.
+func (brles BlockRLEs) SortedKeys() []IZYXString {
+	sk := make([]IZYXString, len(brles))
+	var i int
+	for k := range brles {
+		sk[i] = k
+		i++
+	}
+	sort.Sort(izyxSlice(sk))
+	return sk
 }
 
 // SparseVol represents a collection of voxels that may be in an arbitrary shape and have a label.

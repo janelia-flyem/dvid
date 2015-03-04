@@ -5,6 +5,7 @@
 package labelsurf
 
 import (
+	"encoding/binary"
 	"encoding/gob"
 	"fmt"
 	"net/http"
@@ -142,30 +143,33 @@ type Type struct {
 
 // NewData returns a pointer to label surface data.
 func NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.Config) (*Data, error) {
-	// Make sure we have a valid DataService source
-	sourcename, found, err := c.GetString("Source")
-	if err != nil {
-		return nil, err
-	}
-	if !found {
-		return nil, fmt.Errorf("Cannot make labelsurf data without valid 'Source' specifying an associated labelvol.")
-	}
-	var data datastore.DataService
-	data, err = datastore.GetDataByUUID(uuid, dvid.InstanceName(sourcename))
-	if err != nil {
-		return nil, err
-	}
-	dtype := data.GetType()
-	if dtype.GetTypeName() != "labelvol" {
-		return nil, fmt.Errorf("Source data must be of type 'labelvol', not %s", dtype.GetTypeName())
-	}
+	return nil, fmt.Errorf("DVID version does not support labelsurf at this time.")
+	/*
+		// Make sure we have a valid DataService source
+		sourcename, found, err := c.GetString("Source")
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			return nil, fmt.Errorf("Cannot make labelsurf data without valid 'Source' specifying an associated labelvol.")
+		}
+		var data datastore.DataService
+		data, err = datastore.GetDataByUUID(uuid, dvid.InstanceName(sourcename))
+		if err != nil {
+			return nil, err
+		}
+		dtype := data.GetType()
+		if dtype.GetTypeName() != "labelvol" {
+			return nil, fmt.Errorf("Source data must be of type 'labelvol', not %s", dtype.GetTypeName())
+		}
 
-	// Initialize the Data for this data type
-	basedata, err := datastore.NewDataService(dtype, uuid, id, name, c)
-	if err != nil {
-		return nil, err
-	}
-	return &Data{basedata, dvid.DataName(sourcename)}, nil
+		// Initialize the Data for this data type
+		basedata, err := datastore.NewDataService(dtype, uuid, id, name, c)
+		if err != nil {
+			return nil, err
+		}
+		return &Data{basedata, dvid.DataName(sourcename)}, nil
+	*/
 }
 
 // --- TypeService interface ---
@@ -182,7 +186,7 @@ func (dtype *Type) Help() string {
 
 // GetByUUID returns a pointer to labelsurf data given a version (UUID) and data name.
 func GetByUUID(uuid dvid.UUID, name dvid.InstanceName) (*Data, error) {
-	source, err = datastore.GetDataByUUID(uuid, name)
+	source, err := datastore.GetDataByUUID(uuid, name)
 	if err != nil {
 		return nil, err
 	}
@@ -226,8 +230,8 @@ func GetSurface(ctx storage.Context, label uint64) ([]byte, bool, error) {
 }
 
 // GetLabelAtPoint returns the 64-bit unsigned int label for a given point.
-func (d *Data) GetLabelAtPoint(versionID dvid.VersionID, pt dvid.Point) (uint64, error) {
-	uuid, err := datastore.UUIDFromVersion(versionID)
+func (d *Data) GetLabelAtPoint(v dvid.VersionID, pt dvid.Point) (uint64, error) {
+	uuid, err := datastore.UUIDFromVersion(v)
 	if err != nil {
 		return 0, err
 	}
@@ -239,16 +243,17 @@ func (d *Data) GetLabelAtPoint(versionID dvid.VersionID, pt dvid.Point) (uint64,
 	}
 
 	// Then see if we have an associated labelblk to this labelvol.  If not we can't do point query.
+	labelblkName := labelvolData.Link
 
 	// Get the associated labelblk data instance to do the point query
 	labelblkData, err := labelblk.GetByUUID(uuid, labelblkName)
 
 	// Do the point query
-	labelBytes, err := labelblkData.GetLabelBytesAtPoint(versionID, pt)
+	labelBytes, err := labelblkData.GetLabelBytesAtPoint(v, pt)
 	if err != nil {
 		return 0, err
 	}
-	return binary.littleEndian.Uint64(labelBytes), nil
+	return binary.LittleEndian.Uint64(labelBytes), nil
 }
 
 // --- datastore.DataService interface ---------
@@ -275,7 +280,7 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 	timedLog := dvid.NewTimeLog()
 
 	// Get repo and version ID of this request
-	repo, versions, err := datastore.FromContext(ctx)
+	_, versions, err := datastore.FromContext(ctx)
 	if err != nil {
 		server.BadRequest(w, r, "Error: %q ServeHTTP has invalid context: %s\n",
 			d.DataName, err.Error())

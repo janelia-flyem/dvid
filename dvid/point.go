@@ -123,6 +123,30 @@ func NewPoint(values []int32) (Point, error) {
 	}
 }
 
+// BlockAligned returns true if the bounds for a n-d volume are aligned to blocks
+// of the given size.  Alignment requires that the start point is the first voxel
+// in a block and the end point is the last voxel in a block.
+func BlockAligned(geom Bounder, blockSize Point) bool {
+	pt0 := geom.StartPoint()
+	pt1 := geom.EndPoint()
+	if pt0.NumDims() != pt1.NumDims() || pt1.NumDims() != blockSize.NumDims() {
+		Criticalf("Can't check block alignment when bounder %v and block size %v have differing dimensions\n",
+			geom, blockSize)
+		return false
+	}
+
+	var dim uint8
+	for dim = 0; dim < blockSize.NumDims(); dim++ {
+		if pt0.Value(dim)%blockSize.Value(dim) != 0 {
+			return false
+		}
+		if (pt1.Value(dim)+1)%blockSize.Value(dim) != 0 {
+			return false
+		}
+	}
+	return true
+}
+
 // --- Implementations of the above interfaces in 2d and 3d ---------
 
 const CoordinateBits = 32

@@ -297,8 +297,7 @@ func (m *repoManager) loadMetadata() error {
 		for _, dataservice := range repo.data {
 			syncedData, syncable := dataservice.(Syncer)
 			if syncable {
-				subs := syncedData.InitSyncGraph()
-				repo.addSyncGraph(subs)
+				repo.addSyncGraph(syncedData.GetSyncSubs())
 			}
 		}
 	}
@@ -596,18 +595,6 @@ func (m *repoManager) Types() (map[dvid.URLString]TypeService, error) {
 	return combinedMap, nil
 }
 
-// instanceEvent allows quick lookup of (instance name, event) tuples.
-type instanceEvent struct {
-	dvid.InstanceName
-	SyncEvent
-}
-
-type eventSub struct {
-	dst  dvid.InstanceName
-	ch   chan SyncMessage
-	done chan struct{}
-}
-
 // repoT encapsulates everything we need to know about a repository.
 // Note that changes to the DAG, e.g., adding a child node, will need updates
 // to the cached maps in the RepoManager, so there is a pointer to it.
@@ -635,7 +622,7 @@ type repoT struct {
 	data map[dvid.InstanceName]DataService
 
 	// subs holds subscriptions to change events for each data instance
-	subs map[instanceEvent]([]eventSub)
+	subs map[SyncEvent]([]SyncSub)
 
 	// necessary to update cached maps based on changes to DAG and data instances.
 	manager *repoManager
@@ -890,8 +877,7 @@ func (r *repoT) NewData(t TypeService, name dvid.InstanceName, c dvid.Config) (D
 	// Update the sync graph if this data needs to be synced with another data instance.
 	syncedData, syncable := dataservice.(Syncer)
 	if syncable {
-		subs := syncedData.InitSyncGraph()
-		r.addSyncGraph(subs)
+		r.addSyncGraph(syncedData.GetSyncSubs())
 	}
 
 	// Add to log and save repo
@@ -1022,6 +1008,17 @@ func (r *repoT) Types() (map[dvid.URLString]TypeService, error) {
 	return datatypes, nil
 }
 
+// NotifySubscribers sends a message to any data instances subscribed to the event.
+func (r *repoT) NotifySubscribers(e SyncEvent, m SyncMessage) {
+	subs, found := r.subs[e]
+	if !found {
+		return
+	}
+	for _, sub := range subs {
+		sub.Ch <- m
+	}
+}
+
 // -------------------------------------------------------------------------------------------
 // NOTE: All private repo functions do not hold locks on the repo.  That is done at the public
 //  function level, just so I don't stupidly get into deadlock.
@@ -1137,65 +1134,67 @@ func (r *repoT) remapLocalIDs() (dvid.InstanceMap, dvid.VersionMap, error) {
 }
 
 // Adds subscriptions for data instance events.
-func (r *repoT) addSyncGraph(subs []SyncSubscribe) {
+func (r *repoT) addSyncGraph(subs []SyncSub) {
 	if r.subs == nil {
-		r.subs = make(map[instanceEvent]([]eventSub))
+		r.subs = make(map[SyncEvent]([]SyncSub))
 	}
 	for _, sub := range subs {
-		ievt := instanceEvent{sub.Src, sub.Event}
-		evtsub := eventSub{sub.Dst, sub.Ch, sub.Done}
-		evtsubs, found := r.subs[ievt]
+		evtsubs, found := r.subs[sub.Event]
 		if !found {
-			r.subs[ievt] = []eventSub{evtsub}
+			r.subs[sub.Event] = []SyncSub{sub}
 		} else {
-			r.subs[ievt] = append(evtsubs, evtsub)
+			r.subs[sub.Event] = append(evtsubs, sub)
 		}
 	}
 }
 
 // Deletes subscriptions to and from a data instance.
+// Sends done signal to whatever is listening to the subscribed channel.
 func (r *repoT) deleteSyncGraph(name dvid.InstanceName) {
 	if r.subs == nil {
 		return
 	}
 
-	todelete := []instanceEvent{}
-	for ievnt, subs := range r.subs {
-		name := ievnt.InstanceName
-
+	todelete := []SyncEvent{}
+	for evt, subs := range r.subs {
 		// Remove all subs to the named instance
-		if ievnt.InstanceName == name {
-			r.subs[ievnt] = nil
-			todelete = append(todelete, ievnt)
+		if evt.Instance == name {
+			for _, sub := range r.subs[evt] {
+				close(sub.Done)
+			}
+			r.subs[evt] = nil
+			todelete = append(todelete, evt)
 			continue
 		}
 
 		// Remove all subs from the named instance
 		var deletions int
 		for _, sub := range subs {
-			if sub.dst == name {
+			if sub.Notify == name {
 				deletions++
 			}
 		}
 		if len(subs) == deletions {
-			r.subs[ievnt] = nil
-			todelete = append(todelete, ievnt)
+			r.subs[evt] = nil
+			todelete = append(todelete, evt)
 			continue
 		}
 		if deletions > 0 {
-			newsubs := make([]eventSub, len(subs)-deletions)
+			newsubs := make([]SyncSub, len(subs)-deletions)
 			j := 0
 			for _, sub := range subs {
-				if sub.dst != name {
+				if sub.Notify != name {
 					newsubs[j] = sub
 					j++
+				} else {
+					close(sub.Done)
 				}
 			}
-			r.subs[ievnt] = newsubs
+			r.subs[evt] = newsubs
 		}
 	}
-	for _, ievnt := range todelete {
-		delete(r.subs, ievnt)
+	for _, evt := range todelete {
+		delete(r.subs, evt)
 	}
 }
 

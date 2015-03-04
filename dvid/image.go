@@ -294,10 +294,10 @@ func (img Image) GetPNG() ([]byte, error) {
 }
 
 // GetJPEG returns bytes in JPEG format where quality is 1-100, higher is better,
-// and quality 0 is default (50)
+// and quality 0 is DefaultJPEGQuality.
 func (img Image) GetJPEG(quality int) ([]byte, error) {
 	if quality == 0 { // default
-		quality = 50
+		quality = DefaultJPEGQuality
 	}
 	var goImg image.Image
 	switch img.Which {

@@ -6,75 +6,119 @@
 package labels
 
 import (
-	"github.com/janelia-flyem/dvid/datastore"
+	"fmt"
+
+	"github.com/janelia-flyem/dvid/datatype/imageblk"
 	"github.com/janelia-flyem/dvid/dvid"
 )
 
-// Block encodes a 3d block coordinate and uint64 label data.  In order to interpret the label data,
-// the block size needs to be used for the particular data instance.
-type Block struct {
-	Index *dvid.IndexZYX
-	Data  []byte
+// LabelSet is a set of labels.
+type LabelSet map[uint64]struct{}
+
+func (ls LabelSet) String() string {
+	var s string
+	for k := range ls {
+		s += fmt.Sprintf("%d ", k)
+	}
+	return s
+}
+
+// MergeOp represents the merging of a set of labels into a target label.
+type MergeOp struct {
+	Target uint64
+	Merged LabelSet
 }
 
 // MergeTuple represents a merge of labels.  Its first element is the destination label
-// and all later elements in the slice are labels to be merged.
+// and all later elements in the slice are labels to be merged.  It's an easy JSON
+// representation as a list of labels.
 type MergeTuple []uint64
 
-type MergeTuples []MergeTuple
-
-func (mt *MergeTuples) AddMerge(fromLabel, toLabel uint64) {
-	for i, merges := range *mt {
-		if (*mt)[i][0] != toLabel {
-			continue
-		}
-		merges = append(merges, fromLabel)
-		(*mt)[i] = merges
+// Op converts a MergeTuple into a MergeOp.
+func (t MergeTuple) Op() (MergeOp, error) {
+	var op MergeOp
+	if t == nil || len(t) == 1 {
+		return op, fmt.Errorf("invalid merge tuple %v, need at least target and to-merge labels", t)
 	}
+	op.Target = t[0]
+	op.Merged = make(LabelSet, len(t)-1)
+	for _, label := range t {
+		op.Merged[label] = struct{}{}
+	}
+	return op, nil
 }
 
-// BlockRLEs is a single label's map of block coordinates to RLEs for that label.
-// The key is a string of the serialized block coordinate.
-type BlockRLEs map[string]dvid.RLEs
-
-// NumVoxels is the number of voxels contained within a label's block RLEs.
-func (brles BlockRLEs) NumVoxels() uint64 {
-	var size uint64
-	for _, rles := range brles {
-		numVoxels, _ := rles.Stats()
-		size += uint64(numVoxels)
-	}
-	return size
+// DeltaNewSize is a new label being introduced.
+type DeltaNewSize struct {
+	Label uint64
+	Size  uint64
 }
 
-// DeltaSize is a unit of change suitable for describing label volume size changes.
-type DeltaSize struct {
+// DeltaDeleteSize gives info to delete a label's size.
+type DeltaDeleteSize struct {
+	Label    uint64
+	OldSize  uint64
+	OldKnown bool // true if OldSize is valid, otherwise delete all size k/v for this label.
+}
+
+// DeltaModSize gives info to modify an existing label size without knowing the old size.
+type DeltaModSize struct {
+	Label      uint64
+	SizeChange int64 // Adds to old label size
+}
+
+// DeltaReplaceSize gives info to precisely remove an old label size and add the updated size.
+type DeltaReplaceSize struct {
 	Label   uint64
 	OldSize uint64
 	NewSize uint64
 }
 
-// DeltaSizes is a slice of DeltaSize, sent during a ChangeLabelSize event.
-type DeltaSizes []DeltaSize
-
-// DeltaMerge describes the labels affected by a merge operation
+// DeltaMerge describes the labels and blocks affected by a merge operation.  It is sent
+// during a MergeBlockEvent.
 type DeltaMerge struct {
-	MergeTuple
+	MergeOp
+	Blocks map[dvid.IZYXString]struct{}
+}
+
+// DeltaMergeStart is the data sent during a MergeStartEvent.
+type DeltaMergeStart struct {
+	MergeOp
+}
+
+// DeltaMergeEnd is the data sent during a MergeEndEvent.
+type DeltaMergeEnd struct {
+	MergeOp
 }
 
 // DeltaSplit describes the voxels modified during a split operation
 type DeltaSplit struct {
-	NewLabel uint64
 	OldLabel uint64
-	Split    BlockRLEs
+	NewLabel uint64
+	Split    dvid.BlockRLEs
 }
 
-// Label change events, each of which have a different representation of the change
+// DeltaSplitStart is the data sent during a SplitStartEvent.
+type DeltaSplitStart struct {
+	OldLabel uint64
+	NewLabel uint64
+}
+
+// DeltaSplitEnd is the data sent during a SplitEndEvent.
+type DeltaSplitEnd struct {
+	OldLabel uint64
+	NewLabel uint64
+}
+
+// Label change event identifiers
 const (
-	UnknownEvent datastore.SyncEvent = iota
-	ChangeBlockEvent
-	ChangeSparsevolEvent
-	ChangeSizeEvent
-	MergeEvent
-	SplitEvent
+	ChangeBlockEvent     = imageblk.ChangeBlockEvent
+	ChangeSparsevolEvent = "SPARSEVOL_CHANGE"
+	ChangeSizeEvent      = "LABEL_SIZE_CHANGE"
+	MergeStartEvent      = "MERGE_START"
+	MergeBlockEvent      = "MERGE_BLOCK"
+	MergeEndEvent        = "MERGE_END"
+	SplitStartEvent      = "SPLIT_START"
+	SplitBlockEvent      = "SPLIT_BLOCK"
+	SplitEndEvent        = "SPLIT_END"
 )

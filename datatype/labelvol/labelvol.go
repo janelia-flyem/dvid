@@ -15,12 +15,12 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 
 	"code.google.com/p/go.net/context"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
-	"github.com/janelia-flyem/dvid/datatype/imageblk"
 	"github.com/janelia-flyem/dvid/datatype/labelblk"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/message"
@@ -111,9 +111,9 @@ GET <api URL>/node/<UUID>/<data name>/sparsevol/<label>?<options>
 	        int32   Coordinate of run start (dimension 0)
 	        int32   Coordinate of run start (dimension 1)
 	        int32   Coordinate of run start (dimension 2)
-			  ...
 	        int32   Length of run
 	        bytes   Optional payload dependent on first byte descriptor
+			  ...
 
     Query-string Options:
 
@@ -165,15 +165,12 @@ POST <api URL>/node/<UUID>/<data name>/merge
 
 	Merges labels.  Requires JSON in request body using the following format:
 
-	[ [toLabel1, fromLabel1, fromLabel2, fromLabel3, ...],
-	  [toLabel2, fromLabel4, fromLabel5, ...], 
-	  ... ]
+	[toLabel1, fromLabel1, fromLabel2, fromLabel3, ...]
 
-	Each element of the JSON array is another array specifying all the labels that
-	should be merged into the label specified by the first element.
+	The first element of the JSON array specifies the label to be used as the merge result.
 
 
-POST <api URL>/node/<UUID>/<data name>/split
+POST <api URL>/node/<UUID>/<data name>/split/<label>
 
 	Splits a portion of a label's voxels into a new label.  Returns the following JSON:
 
@@ -255,7 +252,7 @@ func NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.
 			return nil, err
 		}
 		data.Properties.Resolution = source.Resolution()
-		data.Properties.BlockSize = source.BlockSize()
+		data.Properties.BlockSize = source.BlockSize().(dvid.Point3d)
 		data.Properties.Link = dvid.InstanceName(sourcename)
 	}
 
@@ -265,6 +262,7 @@ func NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.
 		return nil, err
 	}
 	data.Data = basedata
+	data.Properties.MaxLabel = make(map[dvid.VersionID]uint64)
 	return &data, nil
 }
 
@@ -289,10 +287,15 @@ type Properties struct {
 	dvid.Resolution
 
 	// Block size for this repo
-	BlockSize dvid.Point
+	BlockSize dvid.Point3d
 
 	// The name of an associated labelblk data instance
 	Link dvid.InstanceName
+
+	ml_mu sync.RWMutex // For atomic access of MaxLabel
+
+	// The maximum label id found in this dataset.
+	MaxLabel map[dvid.VersionID]uint64
 }
 
 // Data instance of labelvol, label sparse volumes.
@@ -312,39 +315,6 @@ func GetByUUID(uuid dvid.UUID, name dvid.InstanceName) (*Data, error) {
 		return nil, fmt.Errorf("Instance '%s' is not a labelvol datatype!", name)
 	}
 	return data, nil
-}
-
-// Returns RLEs for a given label where the key of the returned map is the block index
-// in string format.
-func (d *Data) GetLabelRLEs(v dvid.VersionID, label uint64) (labels.BlockRLEs, error) {
-	// Get the start/end indices for this body's KeyLabelSpatialMap (b + s) keys.
-	begIndex := NewIndex(label, dvid.MinIndexZYX.Bytes())
-	endIndex := NewIndex(label, dvid.MaxIndexZYX.Bytes())
-
-	// Process all the b+s keys and their values, which contain RLE runs for that label.
-	labelRLEs := labels.BlockRLEs{}
-	var f storage.ChunkProcessor = func(chunk *storage.Chunk) error {
-		// Get the block index where the fromLabel is present
-		_, blockBytes, err := DecodeKey(chunk.K)
-		if err != nil {
-			return fmt.Errorf("Can't recover block index with chunk key %v: %s\n", chunk.K, err.Error())
-		}
-		blockStr := string(blockBytes)
-
-		var blockRLEs dvid.RLEs
-		if err := blockRLEs.UnmarshalBinary(chunk.V); err != nil {
-			return fmt.Errorf("Unable to unmarshal RLE for label in block %v", chunk.K)
-		}
-		labelRLEs[blockStr] = blockRLEs
-		return nil
-	}
-	ctx := datastore.NewVersionedContext(d, v)
-	err := store.ProcessRange(ctx, begIndex, endIndex, &storage.ChunkOp{}, f)
-	if err != nil {
-		return nil, err
-	}
-	fmt.Printf("Found %d blocks with label %d\n", len(labelRLEs), label)
-	return labelRLEs, nil
 }
 
 // --- datastore.DataService interface ---------
@@ -399,14 +369,6 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 	parts := strings.Split(url, "/")
 	if len(parts[len(parts)-1]) == 0 {
 		parts = parts[:len(parts)-1]
-	}
-
-	// Get query strings and possible roi
-	var roiptr *imageblk.ROI
-	queryValues := r.URL.Query()
-	roiname := dvid.InstanceName(queryValues.Get("roi"))
-	if len(roiname) != 0 {
-		roiptr = new(imageblk.ROI)
 	}
 
 	// Handle POST on data -> setting of configuration
@@ -466,12 +428,7 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 			server.BadRequest(w, r, "Error parsing bounds from query string: %s\n", err.Error())
 			return
 		}
-		blockSize, ok := d.BlockSize.(dvid.Point3d)
-		if !ok {
-			server.BadRequest(w, r, "Data %q has illegal 3d block size: %v", d.DataName(), d.BlockSize)
-			return
-		}
-		b.BlockBounds = b.VoxelBounds.Divide(blockSize)
+		b.BlockBounds = b.VoxelBounds.Divide(d.BlockSize)
 		b.Exact = queryValues.Get("exact") == "true"
 		data, err := GetSparseVol(storeCtx, label, b)
 		if err != nil {
@@ -545,11 +502,27 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 		timedLog.Infof("HTTP %s: sparsevol-coarse on label %d (%s)", r.Method, label, r.URL)
 
 	case "split":
-		// POST <api URL>/node/<UUID>/<data name>/split
+		// POST <api URL>/node/<UUID>/<data name>/split/<label>
 		if action != "post" {
 			server.BadRequest(w, r, "Split requests must be POST actions.")
 			return
 		}
+		if len(parts) < 5 {
+			server.BadRequest(w, r, "ERROR: DVID requires label ID to follow 'split' command")
+			return
+		}
+		fromLabel, err := strconv.ParseUint(parts[4], 10, 64)
+		if err != nil {
+			server.BadRequest(w, r, err.Error())
+			return
+		}
+		toLabel, err := d.SplitLabels(versionID, fromLabel, r.Body)
+		if err != nil {
+			server.BadRequest(w, r, fmt.Sprintf("Error on split: %s", err.Error()))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, "{%q: %q}", "Label", toLabel)
 		timedLog.Infof("HTTP split request (%s)", r.URL)
 
 	case "merge":
@@ -563,12 +536,17 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 			server.BadRequest(w, r, "Bad POSTed data for merge.  Should be JSON.")
 			return
 		}
-		var tuples labels.MergeTuples
-		if err := json.Unmarshal(data, &tuples); err != nil {
+		var tuple labels.MergeTuple
+		if err := json.Unmarshal(data, &tuple); err != nil {
 			server.BadRequest(w, r, fmt.Sprintf("Bad merge op JSON: %s", err.Error()))
 			return
 		}
-		if err := d.MergeLabels(versionID, tuples); err != nil {
+		mergeOp, err := tuple.Op()
+		if err != nil {
+			server.BadRequest(w, r, err.Error())
+			return
+		}
+		if err := d.MergeLabels(versionID, mergeOp); err != nil {
 			server.BadRequest(w, r, fmt.Sprintf("Error on merge: %s", err.Error()))
 			return
 		}
@@ -578,6 +556,85 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 		server.BadRequest(w, r, "Unrecognized API call '%s' for labelvol data '%s'.  See API help.",
 			parts[3], d.DataName())
 	}
+}
+
+// MaxLabel returns the maximum recorded label for the given version.
+func (d *Data) GetMaxLabel(v dvid.VersionID) (uint64, error) {
+	d.ml_mu.RLock()
+	defer d.ml_mu.RUnlock()
+
+	max, found := d.MaxLabel[v]
+	if !found {
+		return 0, fmt.Errorf("no max label found for version %d", v)
+	}
+	return max, nil
+}
+
+// NewLabel returns a new label for the given version.
+func (d *Data) NewLabel(v dvid.VersionID) (uint64, error) {
+	d.ml_mu.Lock()
+	defer d.ml_mu.Unlock()
+
+	var label uint64
+
+	max, found := d.MaxLabel[v]
+	if found {
+		label = max + 1
+	} else {
+		// Get max from parent
+		parent, found, err := datastore.GetParentByVersion(v)
+		if err != nil {
+			return 0, err
+		}
+		if found {
+			maxP, found := d.MaxLabel[parent]
+			if found {
+				label = maxP + 1
+			} else {
+				label = 1
+			}
+		} else {
+			label = 1
+		}
+	}
+	d.MaxLabel[v] = label
+	if err := datastore.SaveRepoByVersionID(v); err != nil {
+		return 0, err
+	}
+	return label, nil
+}
+
+// Returns RLEs for a given label where the key of the returned map is the block index
+// in string format.
+func (d *Data) GetLabelRLEs(v dvid.VersionID, label uint64) (dvid.BlockRLEs, error) {
+	// Get the start/end indices for this body's KeyLabelSpatialMap (b + s) keys.
+	begIndex := NewIndex(label, dvid.MinIndexZYX.Bytes())
+	endIndex := NewIndex(label, dvid.MaxIndexZYX.Bytes())
+
+	// Process all the b+s keys and their values, which contain RLE runs for that label.
+	labelRLEs := dvid.BlockRLEs{}
+	var f storage.ChunkProcessor = func(chunk *storage.Chunk) error {
+		// Get the block index where the fromLabel is present
+		_, blockBytes, err := DecodeKey(chunk.K)
+		if err != nil {
+			return fmt.Errorf("Can't recover block index with chunk key %v: %s\n", chunk.K, err.Error())
+		}
+		blockStr := dvid.IZYXString(blockBytes)
+
+		var blockRLEs dvid.RLEs
+		if err := blockRLEs.UnmarshalBinary(chunk.V); err != nil {
+			return fmt.Errorf("Unable to unmarshal RLE for label in block %v", chunk.K)
+		}
+		labelRLEs[blockStr] = blockRLEs
+		return nil
+	}
+	ctx := datastore.NewVersionedContext(d, v)
+	err := store.ProcessRange(ctx, begIndex, endIndex, &storage.ChunkOp{}, f)
+	if err != nil {
+		return nil, err
+	}
+	fmt.Printf("Found %d blocks with label %d\n", len(labelRLEs), label)
+	return labelRLEs, nil
 }
 
 type sparseOp struct {

@@ -82,6 +82,21 @@ POST <api URL>/node/<UUID>/<data name>/info
     data name     Name of labelsz data.
 
 
+GET <api URL>/node/<UUID>/<data name>/size/<label>
+
+    Returns JSON of the # voxels for the given label:
+
+    {
+    	"Label": 23,
+    	"Voxels": 48399
+    }
+	
+    Arguments:
+
+    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    data name     Name of mapping data.
+    label         The 64-bit unsigned int label
+
 GET <api URL>/node/<UUID>/<data name>/sizerange/<min size>/<optional max size>
 
     Returns JSON list of labels that have # voxels that fall within the given range
@@ -129,6 +144,7 @@ func init() {
 		dvid.Criticalf("Data type labelvol had error initializing store: %s\n", err.Error())
 		os.Exit(1)
 	}
+	var ok bool
 	batcher, ok = store.(storage.KeyValueBatcher)
 	if !ok {
 		dvid.Criticalf("Data type labelvol requires batch-enabled store, which %q is not\n", store)
@@ -163,7 +179,7 @@ func NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.
 	if err != nil {
 		return nil, err
 	}
-	return &Data{basedata, dvid.InstanceName(sourcename)}, nil
+	return &Data{basedata, srcname}, nil
 }
 
 // --- TypeService interface ---
@@ -199,23 +215,46 @@ type Data struct {
 	Source dvid.InstanceName
 }
 
+// GetSize returns the size in voxels of the given label.
+func (d *Data) GetSize(v dvid.VersionID, label uint64) (uint64, error) {
+
+	// Get the start/end keys for the label.
+	firstKey := NewLabelSizeIndex(label, 0)
+	lastKey := NewLabelSizeIndex(label, math.MaxUint64)
+
+	// Grab all keys for this range in one sequential read.
+	ctx := datastore.NewVersionedContext(d, v)
+	keys, err := store.KeysInRange(ctx, firstKey, lastKey)
+	if err != nil {
+		return 0, err
+	}
+
+	if len(keys) == 0 {
+		return 0, fmt.Errorf("found no size for label %d", label)
+	}
+	if len(keys) > 1 {
+		return 0, fmt.Errorf("found %d sizes for label %d!", len(keys), label)
+	}
+	_, size, err := DecodeLabelSizeKey(keys[0])
+	return size, err
+}
+
 // GetSizeRange returns a JSON list of mapped labels that have volumes within the given range.
 // If maxSize is 0, all mapped labels are returned >= minSize.
-func (d *Data) GetSizeRange(versionID dvid.VersionID, minSize, maxSize uint64) (string, error) {
-
-	ctx := datastore.NewVersionedContext(d, versionID)
+func (d *Data) GetSizeRange(v dvid.VersionID, minSize, maxSize uint64) (string, error) {
 
 	// Get the start/end keys for the size range.
-	firstKey := NewIndex(minSize, 0)
+	firstKey := NewSizeLabelIndex(minSize, 0)
 	var upperBound uint64
 	if maxSize != 0 {
 		upperBound = maxSize
 	} else {
 		upperBound = math.MaxUint64
 	}
-	lastKey := NewIndex(upperBound, math.MaxUint64)
+	lastKey := NewSizeLabelIndex(upperBound, math.MaxUint64)
 
 	// Grab all keys for this range in one sequential read.
+	ctx := datastore.NewVersionedContext(d, v)
 	keys, err := store.KeysInRange(ctx, firstKey, lastKey)
 	if err != nil {
 		return "{}", err
@@ -224,7 +263,7 @@ func (d *Data) GetSizeRange(versionID dvid.VersionID, minSize, maxSize uint64) (
 	// Convert them to a JSON compatible structure.
 	labels := make([]uint64, len(keys))
 	for i, key := range keys {
-		labels[i], _, err = DecodeKey(key)
+		labels[i], _, err = DecodeSizeLabelKey(key)
 		if err != nil {
 			return "{}", err
 		}
@@ -260,7 +299,7 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 	timedLog := dvid.NewTimeLog()
 
 	// Get repo and version ID of this request
-	repo, versions, err := datastore.FromContext(ctx)
+	_, versions, err := datastore.FromContext(ctx)
 	if err != nil {
 		server.BadRequest(w, r, "Error: %q ServeHTTP has invalid context: %s\n",
 			d.DataName, err.Error())
@@ -272,7 +311,6 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 	if len(versions) > 0 {
 		versionID = versions[0]
 	}
-	storeCtx := datastore.NewVersionedContext(d, versionID)
 
 	// Check the action
 	action := strings.ToLower(r.Method)
@@ -307,6 +345,26 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 		}
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, string(jsonBytes))
+
+	case "size":
+		// GET <api URL>/node/<UUID>/<data name>/size/<label>
+		if len(parts) < 5 {
+			server.BadRequest(w, r, "ERROR: DVID requires label ID to follow 'size' command")
+			return
+		}
+		label, err := strconv.ParseUint(parts[4], 10, 64)
+		if err != nil {
+			server.BadRequest(w, r, err.Error())
+			return
+		}
+		size, err := d.GetSize(versionID, label)
+		if err != nil {
+			server.BadRequest(w, r, err.Error())
+			return
+		}
+		w.Header().Set("Content-type", "application/json")
+		fmt.Fprintf(w, "{%q: %d, %q: %d}", "Label", label, "Voxels", size)
+		timedLog.Infof("HTTP %s: get label %d size", r.Method, label)
 
 	case "sizerange":
 		// GET <api URL>/node/<UUID>/<data name>/sizerange/<min size>/<optional max size>

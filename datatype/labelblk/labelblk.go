@@ -14,6 +14,7 @@ import (
 	"image"
 	"io/ioutil"
 	"net/http"
+	"os"
 	"strings"
 
 	"code.google.com/p/go.net/context"
@@ -185,6 +186,9 @@ var (
 	encodeFormat dvid.DataValues
 
 	zeroLabelBytes = make([]byte, 8, 8)
+
+	store   storage.OrderedKeyValueDB
+	batcher storage.KeyValueBatcher
 )
 
 func init() {
@@ -207,6 +211,20 @@ func init() {
 	// Need to register types that will be used to fulfill interfaces.
 	gob.Register(&Type{})
 	gob.Register(&Data{})
+
+	// Initialize the default storage for this datatype
+	var err error
+	store, err = storage.BigDataStore()
+	if err != nil {
+		dvid.Criticalf("Data type imageblk had error initializing store: %s\n", err.Error())
+		os.Exit(1)
+	}
+	var ok bool
+	batcher, ok = store.(storage.KeyValueBatcher)
+	if !ok {
+		dvid.Criticalf("Data type imageblk requires batch-enabled store, which %q is not\n", store)
+		os.Exit(1)
+	}
 }
 
 // ZeroBytes returns a slice of bytes that represents the zero label.

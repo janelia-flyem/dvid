@@ -34,34 +34,34 @@ func (t keyType) String() string {
 }
 
 // NewIndexByCoord returns an index for a block coord in string format.
-func NewIndexByCoord(blockCoord string) []byte {
-	sz := len(blockCoord)
-	index := make([]byte, 1+sz)
-	index[0] = byte(keyImageBlock)
-	copy(index[1:], blockCoord)
-	return dvid.IndexBytes(index)
+func NewIndexByCoord(izyx dvid.IZYXString) []byte {
+	sz := len(izyx)
+	ibytes := make([]byte, 1+sz)
+	ibytes[0] = byte(keyImageBlock)
+	copy(ibytes[1:], []byte(izyx))
+	return ibytes
 }
 
 // NewIndex returns an index for an image block.
 // Index = s
-func NewIndex(blockIndex dvid.Index) []byte {
-	coord := string(blockIndex.Bytes())
-	return NewIndexByCoord(coord)
+func NewIndex(idx dvid.Index) []byte {
+	izyx := dvid.IZYXString(idx.Bytes())
+	return NewIndexByCoord(izyx)
 }
 
 // DecodeKey returns a spatial index from a image block key.
 // TODO: Extend this when necessary to allow any form of spatial indexing like CZYX.
 func DecodeKey(key []byte) (*dvid.IndexZYX, error) {
 	var ctx storage.DataContext
-	index, err := ctx.IndexFromKey(key)
+	ibytes, err := ctx.IndexFromKey(key)
 	if err != nil {
 		return nil, err
 	}
-	if index[0] != byte(keyImageBlock) {
-		return nil, fmt.Errorf("Expected keyImageBlock index, got %d byte instead", index[0])
+	if ibytes[0] != byte(keyImageBlock) {
+		return nil, fmt.Errorf("Expected keyImageBlock index, got %d byte instead", ibytes[0])
 	}
 	var zyx dvid.IndexZYX
-	if err = zyx.IndexFromBytes(index[1:]); err != nil {
+	if err = zyx.IndexFromBytes(ibytes[1:]); err != nil {
 		return nil, fmt.Errorf("Cannot recover ZYX index from key %v: %s\n", key, err.Error())
 	}
 	return &zyx, nil

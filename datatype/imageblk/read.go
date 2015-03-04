@@ -14,38 +14,15 @@ import (
 	"github.com/janelia-flyem/dvid/storage"
 )
 
-// Block is the basic key-value for the voxel type.
-// The value is a slice of bytes corresponding to data within a block.
-type Block storage.KeyValue
-
-// Blocks is a slice of Block.
-type Blocks []Block
-
-// Block3d encodes a 3d block coordinate and data.
-type Block3d struct {
-	Index *dvid.IndexZYX
-	Data  []byte
-}
-
-// BlockChannel is a channel of voxel blocks.
-type BlockChannel chan Block3d
-
 // ROI encapsulates a request-specific ROI check with a given scaling for voxels outside the ROI.
 type ROI struct {
 	Iter        *roi.Iterator
 	attenuation uint8
 }
 
-type opType int
-
-const (
-	getOp opType = iota
-	putOp
-)
-
 // ComputeTransform determines the block coordinate and beginning + ending voxel points
 // for the data corresponding to the given Block.
-func (v *Voxels) ComputeTransform(block *Block, blockSize dvid.Point) (blockBeg, dataBeg, dataEnd dvid.Point, err error) {
+func (v *Voxels) ComputeTransform(block *storage.KeyValue, blockSize dvid.Point) (blockBeg, dataBeg, dataEnd dvid.Point, err error) {
 	ptIndex := v.NewChunkIndex()
 
 	var indexBytes []byte
@@ -84,14 +61,14 @@ func (v *Voxels) ComputeTransform(block *Block, blockSize dvid.Point) (blockBeg,
 }
 
 // ReadBlock reads the possibly intersecting block data into the receiver Voxels.
-func (v *Voxels) ReadBlock(block *Block, blockSize dvid.Point, attenuation uint8) error {
+func (v *Voxels) ReadBlock(block *storage.KeyValue, blockSize dvid.Point, attenuation uint8) error {
 	if attenuation != 0 {
 		return v.readScaledBlock(block, blockSize, attenuation)
 	}
 	return v.readBlock(block, blockSize)
 }
 
-func (v *Voxels) readScaledBlock(block *Block, blockSize dvid.Point, attenuation uint8) error {
+func (v *Voxels) readScaledBlock(block *storage.KeyValue, blockSize dvid.Point, attenuation uint8) error {
 	if blockSize.NumDims() > 3 {
 		return fmt.Errorf("DVID voxel blocks currently only supports up to 3d, not 4+ dimensions")
 	}
@@ -182,7 +159,7 @@ func (v *Voxels) readScaledBlock(block *Block, blockSize dvid.Point, attenuation
 	return nil
 }
 
-func (v *Voxels) readBlock(block *Block, blockSize dvid.Point) error {
+func (v *Voxels) readBlock(block *storage.KeyValue, blockSize dvid.Point) error {
 	if blockSize.NumDims() > 3 {
 		return fmt.Errorf("DVID voxel blocks currently only supports up to 3d, not 4+ dimensions")
 	}
@@ -323,7 +300,7 @@ func (d *Data) GetVolume(v dvid.VersionID, vox *Voxels, r *ROI) ([]byte, error) 
 }
 
 type getOperation struct {
-	*Voxels
+	voxels      *Voxels
 	blocksInROI map[string]bool
 	attenuation uint8
 }
@@ -421,7 +398,7 @@ func (d *Data) GetBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int) ([
 }
 
 // Loads blocks with old data if they exist.
-func (d *Data) loadOldBlocks(v dvid.VersionID, vox *Voxels, blocks Blocks) error {
+func (d *Data) loadOldBlocks(v dvid.VersionID, vox *Voxels, blocks storage.KeyValues) error {
 	ctx := datastore.NewVersionedContext(d, v)
 
 	// Create a map of old blocks indexed by the index
@@ -544,8 +521,8 @@ func (d *Data) readChunk(chunk *storage.Chunk) {
 	}
 
 	// Perform the operation.
-	block := &Block{K: chunk.K, V: blockData}
-	if err = op.Voxels.ReadBlock(block, d.BlockSize(), attenuation); err != nil {
+	block := &storage.KeyValue{chunk.K, blockData}
+	if err = op.voxels.ReadBlock(block, d.BlockSize(), attenuation); err != nil {
 		dvid.Errorf("Unable to ReadFromBlock() in %q: %s\n", d.DataName(), err.Error())
 		return
 	}

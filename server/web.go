@@ -114,15 +114,6 @@ const WebHelp = `
 	Returns JSON for just the repository with given root UUID.  The UUID string can be
 	shortened as long as it is uniquely identifiable across the managed repositories.
 
- POST /api/repo/{uuid}/lock
-
-	Locks the node (version) with given UUID.  This is required before a version can 
-	be branched or pushed to a remote server.
-
- POST /api/repo/{uuid}/branch
-
-	Creates a new child node (version) of the node with given UUID.
-
  POST /api/repo/{uuid}/instance
 
 	Creates a new instance of the given data type.  Expects configuration data in JSON
@@ -135,6 +126,16 @@ const WebHelp = `
  DELETE /api/repo/{uuid}/{dataname}?imsure=true
 
 	Deletes a data instance of given name from the repository holding a node with UUID.	
+
+ POST /api/node/{uuid}/lock
+
+	Locks the node (version) with given UUID.  This is required before a version can 
+	be branched or pushed to a remote server.
+
+ POST /api/node/{uuid}/branch
+
+	Creates a new child node (version) of the node with given UUID.
+
 		</pre>
 
 		<h4>Data type commands</h4>
@@ -275,9 +276,9 @@ func initRoutes() {
 	repoMux.Head("/api/repo/:uuid", repoHeadHandler)
 	repoMux.Get("/api/repo/:uuid/info", repoInfoHandler)
 	repoMux.Post("/api/repo/:uuid/instance", repoNewDataHandler)
-	repoMux.Post("/api/repo/:uuid/lock", repoLockHandler)
-	repoMux.Post("/api/repo/:uuid/branch", repoBranchHandler)
 	repoMux.Delete("/api/repo/:uuid/:dataname", repoDeleteHandler)
+	repoMux.Post("/api/node/:uuid/lock", repoLockHandler)
+	repoMux.Post("/api/node/:uuid/branch", repoBranchHandler)
 
 	instanceMux := web.New()
 	mainMux.Handle("/api/node/:uuid/:dataname/:keyword", instanceMux)
@@ -582,6 +583,7 @@ func reposPostHandler(w http.ResponseWriter, r *http.Request) {
 	repo, err := datastore.NewRepo(alias, description)
 	if err != nil {
 		BadRequest(w, r, err.Error())
+		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, "{%q: %q}", "Root", repo.RootUUID())

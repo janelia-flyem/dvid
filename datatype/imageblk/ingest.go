@@ -61,7 +61,7 @@ func (d *Data) loadXYImages(load *bulkLoadInfo) error {
 	// access the same elements of a slice.
 	const numLayers = 2
 	var numBlocks int
-	var blocks [numLayers]Blocks
+	var blocks [numLayers]storage.KeyValues
 	var layerTransferred, layerWritten [numLayers]sync.WaitGroup
 	var waitForWrites sync.WaitGroup
 
@@ -97,7 +97,7 @@ func (d *Data) loadXYImages(load *bulkLoadInfo) error {
 			numBlocks = dvid.GetNumBlocks(vox, blockSize)
 			if fileNum == 1 {
 				for layer := 0; layer < numLayers; layer++ {
-					blocks[layer] = make(Blocks, numBlocks, numBlocks)
+					blocks[layer] = make(storage.KeyValues, numBlocks, numBlocks)
 					for b := 0; b < numBlocks; b++ {
 						blocks[layer][b].V = d.BackgroundBlock()
 					}
@@ -105,7 +105,7 @@ func (d *Data) loadXYImages(load *bulkLoadInfo) error {
 				var bufSize uint64 = uint64(blockBytes) * uint64(numBlocks) * uint64(numLayers) / 1000000
 				dvid.Debugf("Allocated %d MB for buffers.\n", bufSize)
 			} else {
-				blocks[curBlocks] = make(Blocks, numBlocks, numBlocks)
+				blocks[curBlocks] = make(storage.KeyValues, numBlocks, numBlocks)
 				for b := 0; b < numBlocks; b++ {
 					blocks[curBlocks][b].V = d.BackgroundBlock()
 				}

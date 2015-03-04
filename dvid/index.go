@@ -276,6 +276,10 @@ func (i *IndexZYX) String() string {
 	return hex.EncodeToString(i.Bytes())
 }
 
+func (i *IndexZYX) Scheme() string {
+	return "ZYX Indexing"
+}
+
 // Bytes returns a byte representation of the Index.  This should layout
 // integer space as consecutive in binary representation so we use
 // bigendian and convert signed integer space to unsigned integer space.
@@ -287,11 +291,7 @@ func (i *IndexZYX) Bytes() []byte {
 	return buf.Bytes()
 }
 
-func (i *IndexZYX) Scheme() string {
-	return "ZYX Indexing"
-}
-
-// IndexFromBytes returns an index from bytes.  The passed Index is used just
+// IndexFromBytes returns an index from key bytes.  The passed Index is used just
 // to choose the appropriate byte decoding scheme.
 func (i *IndexZYX) IndexFromBytes(b []byte) error {
 	if len(b) != 12 {
@@ -361,6 +361,27 @@ func (i *IndexZYX) Max(idx ChunkIndexer) (ChunkIndexer, bool) {
 		changed = true
 	}
 	return &max, changed
+}
+
+// IZYXString is the stringified version of serialized IndexZYX, optimized for lexicographic
+// ordering.
+type IZYXString string
+
+// IndexZYX returns an index from a string representation of the coordinate.
+func (i IZYXString) IndexZYX() (IndexZYX, error) {
+	var idx IndexZYX
+	if err := idx.IndexFromBytes([]byte(i)); err != nil {
+		return idx, err
+	}
+	return idx, nil
+}
+
+func (i IZYXString) Z() (int32, error) {
+	idx, err := i.IndexZYX()
+	if err != nil {
+		return 0, err
+	}
+	return idx[2], nil
 }
 
 // ----- IndexIterator implementation ------------

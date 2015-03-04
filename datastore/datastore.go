@@ -46,11 +46,11 @@ func NewUUID() (dvid.UUID, dvid.VersionID, error) {
 	return Manager.NewUUID()
 }
 
-func UUIDFromVersion(versionID dvid.VersionID) (dvid.UUID, error) {
+func UUIDFromVersion(v dvid.VersionID) (dvid.UUID, error) {
 	if Manager == nil {
 		return dvid.NilUUID, fmt.Errorf("datastore not initialized")
 	}
-	return Manager.UUIDFromVersion(versionID)
+	return Manager.UUIDFromVersion(v)
 }
 
 func VersionFromUUID(uuid dvid.UUID) (dvid.VersionID, error) {
@@ -72,6 +72,18 @@ func MatchingUUID(uuidStr string) (dvid.UUID, dvid.VersionID, error) {
 func RepoFromUUID(uuid dvid.UUID) (Repo, error) {
 	if Manager == nil {
 		return nil, fmt.Errorf("datastore not initialized")
+	}
+	return Manager.RepoFromUUID(uuid)
+}
+
+// RepoFromVersionID returns a Repo given a version id.
+func RepoFromVersionID(v dvid.VersionID) (Repo, error) {
+	if Manager == nil {
+		return nil, fmt.Errorf("datastore not initialized")
+	}
+	uuid, err := Manager.UUIDFromVersion(v)
+	if err != nil {
+		return nil, err
 	}
 	return Manager.RepoFromUUID(uuid)
 }
@@ -100,11 +112,11 @@ func SaveRepo(uuid dvid.UUID) error {
 	return Manager.SaveRepo(uuid)
 }
 
-func SaveRepoByVersionID(versionID dvid.VersionID) error {
+func SaveRepoByVersionID(v dvid.VersionID) error {
 	if Manager == nil {
 		return fmt.Errorf("datastore not initialized")
 	}
-	return Manager.SaveRepoByVersionID(versionID)
+	return Manager.SaveRepoByVersionID(v)
 }
 
 func Types() (map[dvid.URLString]TypeService, error) {
@@ -114,11 +126,11 @@ func Types() (map[dvid.URLString]TypeService, error) {
 	return Manager.Types()
 }
 
-func GetDataByVersion(versionID dvid.VersionID, name dvid.InstanceName) (DataService, error) {
+func GetDataByVersion(v dvid.VersionID, name dvid.InstanceName) (DataService, error) {
 	if Manager == nil {
 		return nil, fmt.Errorf("datastore not initialized")
 	}
-	uuid, err := Manager.UUIDFromVersion(versionID)
+	uuid, err := Manager.UUIDFromVersion(v)
 	if err != nil {
 		return nil, err
 	}
@@ -138,6 +150,32 @@ func GetDataByUUID(uuid dvid.UUID, name dvid.InstanceName) (DataService, error) 
 		return nil, err
 	}
 	return repo.GetDataByName(name)
+}
+
+// GetParent returns the parent node of the given node.
+func GetParentByVersion(v dvid.VersionID) (parent dvid.VersionID, found bool, err error) {
+	if Manager == nil {
+		err = fmt.Errorf("datastore not initialized")
+		return
+	}
+	var uuid dvid.UUID
+	uuid, err = Manager.UUIDFromVersion(v)
+	if err != nil {
+		return
+	}
+	var repo Repo
+	repo, err = Manager.RepoFromUUID(uuid)
+	if err != nil {
+		return
+	}
+	// Get version iterator and check first ancestor.
+	var it storage.VersionIterator
+	it, err = repo.GetIterator(v)
+	if err != nil {
+		return
+	}
+	it.Next()
+	return it.VersionID(), it.Valid(), nil
 }
 
 // ---- Server Context code, not to be confused with storage.Context.

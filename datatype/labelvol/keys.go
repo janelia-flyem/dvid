@@ -8,7 +8,6 @@ import (
 	"encoding/binary"
 	"fmt"
 
-	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
 )
 
@@ -39,13 +38,13 @@ func (t keyType) String() string {
 
 // NewIndex returns an identifier for storing a "label + spatial index", where
 // the spatial index references a block that contains a voxel with the given label.
-func NewIndex(label uint64, blockBytes []byte) dvid.IndexBytes {
+func NewIndex(label uint64, blockBytes []byte) []byte {
 	sz := len(blockBytes)
-	index := make([]byte, 1+8+sz)
-	index[0] = byte(keyLabelBlockRLE)
-	binary.BigEndian.PutUint64(index[1:9], label)
-	copy(index[9:], blockBytes)
-	return dvid.IndexBytes(index)
+	ibytes := make([]byte, 1+8+sz)
+	ibytes[0] = byte(keyLabelBlockRLE)
+	binary.BigEndian.PutUint64(ibytes[1:9], label)
+	copy(ibytes[9:], blockBytes)
+	return ibytes
 }
 
 // DecodeKey returns a label and block index bytes from a label block RLE key.
@@ -53,16 +52,16 @@ func NewIndex(label uint64, blockBytes []byte) dvid.IndexBytes {
 // and its up to caller to determine which one is used for this particular key.
 func DecodeKey(key []byte) (label uint64, blockBytes []byte, err error) {
 	var ctx storage.DataContext
-	var index []byte
-	index, err = ctx.IndexFromKey(key)
+	var ibytes []byte
+	ibytes, err = ctx.IndexFromKey(key)
 	if err != nil {
 		return
 	}
-	if index[0] != byte(keyLabelBlockRLE) {
-		err = fmt.Errorf("Expected keyLabelBlockRLE index, got %d byte instead", index[0])
+	if ibytes[0] != byte(keyLabelBlockRLE) {
+		err = fmt.Errorf("Expected keyLabelBlockRLE index, got %d byte instead", ibytes[0])
 		return
 	}
-	label = binary.BigEndian.Uint64(index[1:9])
-	blockBytes = index[9:]
+	label = binary.BigEndian.Uint64(ibytes[1:9])
+	blockBytes = ibytes[9:]
 	return
 }

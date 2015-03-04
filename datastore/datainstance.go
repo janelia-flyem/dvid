@@ -145,7 +145,10 @@ type DataService interface {
 }
 
 // SyncEvent identifies an event in which a data instance has modified its data
-type SyncEvent uint64
+type SyncEvent struct {
+	Instance dvid.InstanceName
+	Event    string
+}
 
 // SyncMessage describes changes to a data instance for a given version.
 type SyncMessage struct {
@@ -153,24 +156,24 @@ type SyncMessage struct {
 	Delta   interface{}
 }
 
-// SyncSubscribe is a subscription request to be notified via a channel when
-// a given data instances has the given event.
-type SyncSubscribe struct {
-	Src, Dst dvid.InstanceName
-	Event    SyncEvent
-	Ch       chan SyncMessage
-	Done     chan struct{}
+// SyncSub is a subscription request from an instance to be notified via a channel when
+// a given data instance has a given event.
+type SyncSub struct {
+	Event  SyncEvent
+	Notify dvid.InstanceName
+	Ch     chan SyncMessage
+	Done   chan struct{}
 }
 
 // Syncer types support syncing of data between different data instances.
 type Syncer interface {
-	// InitSyncGraph returns the subscriptions that need to be created to keep this data synced
+	// GetSyncSubs returns the subscriptions that need to be created to keep this data synced
 	// and also launches any necessary goroutines that will consume inbound channels of changes
 	// from associated data.
 	//
 	// This function is called whenever a new data instance is created or loaded on startup, and
 	// it is used to modify the sync graph between data instances.
-	InitSyncGraph() []SyncSubscribe
+	GetSyncSubs() []SyncSub
 }
 
 // Persistence indicates the level of persistence needed for data within this instance.
@@ -247,11 +250,19 @@ func (d *Data) MarshalJSON() ([]byte, error) {
 	})
 }
 
+var reservedNames = map[string]struct{}{
+	"lock":   struct{}{},
+	"branch": struct{}{},
+}
+
 // NewDataService returns a new Data instance that fulfills the DataService interface.
 // The UUID passed in corresponds to the root UUID of the repo that should hold the data.
 // This returned Data struct is usually embedded by datatype-specific data instances.
 // By default, LZ4 and the default checksum is used.
 func NewDataService(t TypeService, uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.Config) (*Data, error) {
+	if _, reserved := reservedNames[string(name)]; reserved {
+		return nil, fmt.Errorf("cannot use reserved name %q", name)
+	}
 	compression, _ := dvid.NewCompression(dvid.LZ4, dvid.DefaultCompression)
 	data := &Data{
 		TypeService: t,

@@ -7,28 +7,18 @@
 package labelmap
 
 import (
-	"bufio"
 	"bytes"
-	"encoding/binary"
 	"encoding/gob"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
-	"math"
 	"net/http"
-	"os"
-	"strconv"
-	"strings"
-	"sync"
 
 	"code.google.com/p/go.net/context"
 
 	"github.com/janelia-flyem/dvid/datastore"
-	"github.com/janelia-flyem/dvid/datatype/imageblk"
 	"github.com/janelia-flyem/dvid/datatype/labelblk"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/message"
-	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
 )
 
@@ -453,21 +443,23 @@ func (d *Data) Send(s message.Socket, roiname string, uuid dvid.UUID) error {
 // DoRPC acts as a switchboard for RPC commands.
 func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error {
 	switch request.TypeCommand() {
-	case "load":
-		if len(request.Command) < 7 {
-			return fmt.Errorf("Poorly formatted load command.  See command-line help.")
-		}
-		switch request.Command[4] {
-		case "raveler":
-			return d.LoadRavelerMaps(request, reply)
-		default:
-			return fmt.Errorf("Cannot load unknown input file types '%s'", request.Command[3])
-		}
-	case "apply":
-		if len(request.Command) < 6 {
-			return fmt.Errorf("Poorly formatted apply command.  See command-line help.")
-		}
-		return d.ApplyLabelMap(request, reply)
+	/*
+		case "load":
+			if len(request.Command) < 7 {
+				return fmt.Errorf("Poorly formatted load command.  See command-line help.")
+			}
+			switch request.Command[4] {
+			case "raveler":
+				return d.LoadRavelerMaps(request, reply)
+			default:
+				return fmt.Errorf("Cannot load unknown input file types '%s'", request.Command[3])
+			}
+		case "apply":
+			if len(request.Command) < 6 {
+				return fmt.Errorf("Poorly formatted apply command.  See command-line help.")
+			}
+			return d.ApplyLabelMap(request, reply)
+	*/
 	default:
 		return fmt.Errorf("Unknown command.  Data type '%s' [%s] does not support '%s' command.",
 			d.DataName(), d.TypeName(), request.TypeCommand())
@@ -477,113 +469,146 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 
 // ServeHTTP handles all incoming HTTP requests for this data.
 func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *http.Request) {
-	timedLog := dvid.NewTimeLog()
+	fmt.Println(w, "labelmap type is currently unavailable until refactoring\n")
+	return
+	/*
+		timedLog := dvid.NewTimeLog()
 
-	// Get repo and version ID of this request
-	_, versions, err := datastore.FromContext(requestCtx)
-	if err != nil {
-		server.BadRequest(w, r, "Error: %q ServeHTTP has invalid context: %s\n",
-			d.DataName, err.Error())
-		return
-	}
-
-	// Construct storage.Context using a particular version of this Data
-	var versionID dvid.VersionID
-	if len(versions) > 0 {
-		versionID = versions[0]
-	}
-	storeCtx := datastore.NewVersionedContext(d, versionID)
-
-	// Get the action (GET, POST)
-	action := strings.ToLower(r.Method)
-	var op imageblk.OpType
-	switch action {
-	case "get":
-		op = imageblk.GetOp
-	case "post":
-		op = imageblk.PutOp
-	default:
-		server.BadRequest(w, r, "Can only handle GET or POST HTTP verbs")
-		return
-	}
-
-	// Break URL request into arguments
-	url := r.URL.Path[len(server.WebAPIPath):]
-	parts := strings.Split(url, "/")
-	if len(parts[len(parts)-1]) == 0 {
-		parts = parts[:len(parts)-1]
-	}
-
-	if len(parts) < 4 {
-		server.BadRequest(w, r, "incomplete API request")
-		return
-	}
-
-	// Process help and info.
-	switch parts[3] {
-	case "help":
-		w.Header().Set("Content-Type", "text/plain")
-		fmt.Fprintln(w, d.Help())
-		return
-
-	case "info":
-		jsonBytes, err := d.MarshalJSON()
+		// Get repo and version ID of this request
+		_, versions, err := datastore.FromContext(requestCtx)
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, "Error: %q ServeHTTP has invalid context: %s\n",
+				d.DataName, err.Error())
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, string(jsonBytes))
-		return
 
-	case "mapping":
-		// GET <api URL>/node/<UUID>/<data name>/mapping/<label>
-		if len(parts) < 5 {
-			server.BadRequest(w, r, "ERROR: DVID requires label ID to follow 'sparsevol' command")
-			return
+		// Construct storage.Context using a particular version of this Data
+		var versionID dvid.VersionID
+		if len(versions) > 0 {
+			versionID = versions[0]
 		}
-		label, err := strconv.ParseUint(parts[4], 10, 64)
-		if err != nil {
-			server.BadRequest(w, r, err.Error())
-			return
-		}
-		labelBytes := make([]byte, 8, 8)
-		binary.BigEndian.PutUint64(labelBytes, label)
-		mapping, err := d.GetLabelMapping(versionID, labelBytes)
-		if err != nil {
-			server.BadRequest(w, r, err.Error())
-			return
-		}
-		w.Header().Set("Content-type", "application/json")
-		fmt.Fprintf(w, `{ "Mapping": %d }`, mapping)
-		timedLog.Infof("HTTP %s: mapping of label '%d' (%s)", r.Method, label, r.URL)
+		storeCtx := datastore.NewVersionedContext(d, versionID)
 
-	case "sparsevol":
-		// GET <api URL>/node/<UUID>/<data name>/sparsevol/<label>
-		// POST <api URL>/node/<UUID>/<data name>/sparsevol/<label>
-		if len(parts) < 5 {
-			server.BadRequest(w, r, "ERROR: DVID requires label ID to follow 'sparsevol' command")
+		// Get the action (GET, POST)
+		action := strings.ToLower(r.Method)
+		var op imageblk.OpType
+		switch action {
+		case "get":
+			op = imageblk.GetOp
+		case "post":
+			op = imageblk.PutOp
+		default:
+			server.BadRequest(w, r, "Can only handle GET or POST HTTP verbs")
 			return
 		}
-		label, err := strconv.ParseUint(parts[4], 10, 64)
-		if err != nil {
-			server.BadRequest(w, r, err.Error())
+
+		// Break URL request into arguments
+		url := r.URL.Path[len(server.WebAPIPath):]
+		parts := strings.Split(url, "/")
+		if len(parts[len(parts)-1]) == 0 {
+			parts = parts[:len(parts)-1]
+		}
+
+		if len(parts) < 4 {
+			server.BadRequest(w, r, "incomplete API request")
 			return
 		}
-		if op == imageblk.PutOp {
-			data, err := ioutil.ReadAll(r.Body)
-			if err != nil {
-				server.BadRequest(w, r, err.Error())
-				return
-			}
-			err = labelblk.PutSparseVol(storeCtx, label, data)
-			if err != nil {
-				server.BadRequest(w, r, err.Error())
-				return
-			}
+
+		// Process help and info.
+		switch parts[3] {
+		case "help":
 			w.Header().Set("Content-Type", "text/plain")
-			fmt.Fprintf(w, "Put sparse volume with label %d into version %d\n", label, versionID)
-		} else {
+			fmt.Fprintln(w, d.Help())
+			return
+
+		case "info":
+			jsonBytes, err := d.MarshalJSON()
+			if err != nil {
+				server.BadRequest(w, r, err.Error())
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintf(w, string(jsonBytes))
+			return
+
+		case "mapping":
+			// GET <api URL>/node/<UUID>/<data name>/mapping/<label>
+			if len(parts) < 5 {
+				server.BadRequest(w, r, "ERROR: DVID requires label ID to follow 'sparsevol' command")
+				return
+			}
+			label, err := strconv.ParseUint(parts[4], 10, 64)
+			if err != nil {
+				server.BadRequest(w, r, err.Error())
+				return
+			}
+			labelBytes := make([]byte, 8, 8)
+			binary.BigEndian.PutUint64(labelBytes, label)
+			mapping, err := d.GetLabelMapping(versionID, labelBytes)
+			if err != nil {
+				server.BadRequest(w, r, err.Error())
+				return
+			}
+			w.Header().Set("Content-type", "application/json")
+			fmt.Fprintf(w, `{ "Mapping": %d }`, mapping)
+			timedLog.Infof("HTTP %s: mapping of label '%d' (%s)", r.Method, label, r.URL)
+
+		case "sparsevol":
+			// GET <api URL>/node/<UUID>/<data name>/sparsevol/<label>
+			// POST <api URL>/node/<UUID>/<data name>/sparsevol/<label>
+			if len(parts) < 5 {
+				server.BadRequest(w, r, "ERROR: DVID requires label ID to follow 'sparsevol' command")
+				return
+			}
+			label, err := strconv.ParseUint(parts[4], 10, 64)
+			if err != nil {
+				server.BadRequest(w, r, err.Error())
+				return
+			}
+			if op == imageblk.PutOp {
+				data, err := ioutil.ReadAll(r.Body)
+				if err != nil {
+					server.BadRequest(w, r, err.Error())
+					return
+				}
+				err = labelblk.PutSparseVol(storeCtx, label, data)
+				if err != nil {
+					server.BadRequest(w, r, err.Error())
+					return
+				}
+				w.Header().Set("Content-Type", "text/plain")
+				fmt.Fprintf(w, "Put sparse volume with label %d into version %d\n", label, versionID)
+			} else {
+				data, err := labelblk.GetSparseVol(storeCtx, label, labelblk.Bounds{})
+				if err != nil {
+					server.BadRequest(w, r, err.Error())
+					return
+				}
+				w.Header().Set("Content-type", "application/octet-stream")
+				_, err = w.Write(data)
+				if err != nil {
+					server.BadRequest(w, r, err.Error())
+					return
+				}
+			}
+			timedLog.Infof("HTTP %s: sparsevol on label %d (%s)", r.Method, label, r.URL)
+
+		case "sparsevol-by-point":
+			// GET <api URL>/node/<UUID>/<data name>/sparsevol-by-point/<coord>
+			if len(parts) < 5 {
+				server.BadRequest(w, r, "ERROR: DVID requires coord to follow 'sparsevol-by-point' command")
+				return
+			}
+			coord, err := dvid.StringToPoint(parts[4], "_")
+			if err != nil {
+				server.BadRequest(w, r, err.Error())
+				return
+			}
+			label, err := d.GetLabelAtPoint(versionID, coord)
+			if err != nil {
+				server.BadRequest(w, r, err.Error())
+				return
+			}
 			data, err := labelblk.GetSparseVol(storeCtx, label, labelblk.Bounds{})
 			if err != nil {
 				server.BadRequest(w, r, err.Error())
@@ -595,268 +620,240 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 				server.BadRequest(w, r, err.Error())
 				return
 			}
-		}
-		timedLog.Infof("HTTP %s: sparsevol on label %d (%s)", r.Method, label, r.URL)
+			timedLog.Infof("HTTP %s: sparsevol-by-point at %s (%s)", r.Method, coord, r.URL)
 
-	case "sparsevol-by-point":
-		// GET <api URL>/node/<UUID>/<data name>/sparsevol-by-point/<coord>
-		if len(parts) < 5 {
-			server.BadRequest(w, r, "ERROR: DVID requires coord to follow 'sparsevol-by-point' command")
-			return
-		}
-		coord, err := dvid.StringToPoint(parts[4], "_")
-		if err != nil {
-			server.BadRequest(w, r, err.Error())
-			return
-		}
-		label, err := d.GetLabelAtPoint(versionID, coord)
-		if err != nil {
-			server.BadRequest(w, r, err.Error())
-			return
-		}
-		data, err := labelblk.GetSparseVol(storeCtx, label, labelblk.Bounds{})
-		if err != nil {
-			server.BadRequest(w, r, err.Error())
-			return
-		}
-		w.Header().Set("Content-type", "application/octet-stream")
-		_, err = w.Write(data)
-		if err != nil {
-			server.BadRequest(w, r, err.Error())
-			return
-		}
-		timedLog.Infof("HTTP %s: sparsevol-by-point at %s (%s)", r.Method, coord, r.URL)
-
-	case "surface":
-		// GET <api URL>/node/<UUID>/<data name>/surface/<label>
-		fmt.Printf("Getting surface: %s\n", url)
-		if len(parts) < 5 {
-			server.BadRequest(w, r, "ERROR: DVID requires label ID to follow 'surface' command")
-			return
-		}
-		label, err := strconv.ParseUint(parts[4], 10, 64)
-		if err != nil {
-			server.BadRequest(w, r, err.Error())
-			return
-		}
-		gzipData, found, err := labelblk.GetSurface(storeCtx, label)
-		if err != nil {
-			server.BadRequest(w, r, "Error on getting surface for label %d: %s", label, err.Error())
-			return
-		}
-		if !found {
-			http.Error(w, fmt.Sprintf("Surface for label '%d' not found", label), http.StatusNotFound)
-			return
-		}
-		w.Header().Set("Content-type", "application/octet-stream")
-		if err := dvid.WriteGzip(gzipData, w, r); err != nil {
-			server.BadRequest(w, r, err.Error())
-			return
-		}
-		timedLog.Infof("HTTP %s: surface on label %d (%s)", r.Method, label, r.URL)
-
-	case "surface-by-point":
-		// GET <api URL>/node/<UUID>/<data name>/surface-by-point/<coord>
-		if len(parts) < 5 {
-			server.BadRequest(w, r, "ERROR: DVID requires coord to follow 'surface-by-point' command")
-			return
-		}
-		coord, err := dvid.StringToPoint(parts[4], "_")
-		if err != nil {
-			server.BadRequest(w, r, err.Error())
-			return
-		}
-		label, err := d.GetLabelAtPoint(storeCtx, coord)
-		if err != nil {
-			server.BadRequest(w, r, err.Error())
-			return
-		}
-		gzipData, found, err := labelblk.GetSurface(storeCtx, label)
-		if err != nil {
-			server.BadRequest(w, r, "Error on getting surface for label %d: %s", label, err.Error())
-			return
-		}
-		if !found {
-			http.Error(w, fmt.Sprintf("Surface for label '%d' not found", label), http.StatusNotFound)
-			return
-		}
-		w.Header().Set("Content-type", "application/octet-stream")
-		if err := dvid.WriteGzip(gzipData, w, r); err != nil {
-			server.BadRequest(w, r, err.Error())
-			return
-		}
-		timedLog.Infof("HTTP %s: surface-by-point at %s (%s)", r.Method, coord, r.URL)
-
-	case "sizerange":
-		// GET <api URL>/node/<UUID>/<data name>/sizerange/<min size>/<optional max size>
-		if len(parts) < 5 {
-			server.BadRequest(w, r, "ERROR: DVID requires at least the minimum size to follow 'sizerange' command")
-			return
-		}
-		minSize, err := strconv.ParseUint(parts[4], 10, 64)
-		if err != nil {
-			server.BadRequest(w, r, err.Error())
-			return
-		}
-		var maxSize uint64
-		if len(parts) >= 6 {
-			maxSize, err = strconv.ParseUint(parts[5], 10, 64)
+		case "surface":
+			// GET <api URL>/node/<UUID>/<data name>/surface/<label>
+			fmt.Printf("Getting surface: %s\n", url)
+			if len(parts) < 5 {
+				server.BadRequest(w, r, "ERROR: DVID requires label ID to follow 'surface' command")
+				return
+			}
+			label, err := strconv.ParseUint(parts[4], 10, 64)
 			if err != nil {
 				server.BadRequest(w, r, err.Error())
 				return
 			}
-		}
-		jsonStr, err := labelblk.GetSizeRange(d, versionID, minSize, maxSize)
-		if err != nil {
-			server.BadRequest(w, r, err.Error())
-			return
-		}
-		w.Header().Set("Content-type", "application/json")
-		fmt.Fprintf(w, jsonStr)
-		timedLog.Infof("HTTP %s: get labels with volume > %d and < %d (%s)", r.Method, minSize, maxSize, r.URL)
-
-	case "labels", "raw":
-		if len(parts) < 7 {
-			server.BadRequest(w, r, "'labels' or 'raw' must be followed by shape/size/offset")
-			return
-		}
-		if op == imageblk.PutOp {
-			server.BadRequest(w, r, "Cannot POST.  Can only GET mapped labels that intersect the given geometry.")
-			return
-		}
-		shapeStr, sizeStr, offsetStr := parts[4], parts[5], parts[6]
-		planeStr := dvid.DataShapeString(shapeStr)
-		plane, err := planeStr.DataShape()
-		if err != nil {
-			server.BadRequest(w, r, err.Error())
-			return
-		}
-		labels, err := d.Labels.GetData()
-		if err != nil {
-			server.BadRequest(w, r, "Error getting labels %q", labels.DataName())
-			return
-		}
-
-		switch plane.ShapeDimensions() {
-		case 2:
-			slice, err := dvid.NewSliceFromStrings(planeStr, offsetStr, sizeStr, "_")
+			gzipData, found, err := labelblk.GetSurface(storeCtx, label)
 			if err != nil {
-				server.BadRequest(w, r, "Error parsing slice: %s", err.Error())
+				server.BadRequest(w, r, "Error on getting surface for label %d: %s", label, err.Error())
 				return
 			}
-			e, err := labels.NewExtHandler(slice, nil)
-			if err != nil {
-				server.BadRequest(w, r, err.Error())
-				return
-			}
-			img, err := d.GetMappedImage(versionID, e)
-			if err != nil {
-				server.BadRequest(w, r, err.Error())
-				return
-			}
-			var formatStr string
-			if len(parts) >= 8 {
-				formatStr = parts[7]
-			}
-			//dvid.ElapsedTime(dvid.Normal, startTime, "%s %s upto image formatting", op, slice)
-			err = dvid.WriteImageHttp(w, img.Get(), formatStr)
-			if err != nil {
-				server.BadRequest(w, r, err.Error())
-				return
-			}
-			timedLog.Infof("HTTP %s: %s (%s)", r.Method, plane, r.URL)
-		case 3:
-			queryStrings := r.URL.Query()
-			throttle := queryStrings.Get("throttle")
-			if throttle == "true" || throttle == "on" {
-				select {
-				case <-server.Throttle:
-					// Proceed with operation, returning throttle token to server at end.
-					defer func() {
-						server.Throttle <- 1
-					}()
-				default:
-					throttleMsg := fmt.Sprintf("Server already running maximum of %d throttled operations",
-						server.MaxThrottledOps)
-					http.Error(w, throttleMsg, http.StatusServiceUnavailable)
-					return
-				}
-			}
-			subvol, err := dvid.NewSubvolumeFromStrings(offsetStr, sizeStr, "_")
-			if err != nil {
-				server.BadRequest(w, r, "Error parsing subvolume: %s", err.Error())
-				return
-			}
-			e, err := labels.NewExtHandler(subvol, nil)
-			if err != nil {
-				server.BadRequest(w, r, err.Error())
-				return
-			}
-			data, err := d.GetMappedVolume(versionID, e)
-			if err != nil {
-				server.BadRequest(w, r, err.Error())
+			if !found {
+				http.Error(w, fmt.Sprintf("Surface for label '%d' not found", label), http.StatusNotFound)
 				return
 			}
 			w.Header().Set("Content-type", "application/octet-stream")
-			_, err = w.Write(data)
-			if err != nil {
-				server.BadRequest(w, r, "Error writing data: %s", err.Error())
+			if err := dvid.WriteGzip(gzipData, w, r); err != nil {
+				server.BadRequest(w, r, err.Error())
 				return
 			}
-			timedLog.Infof("HTTP %s: %s (%s)", r.Method, subvol, r.URL)
+			timedLog.Infof("HTTP %s: surface on label %d (%s)", r.Method, label, r.URL)
+
+		case "surface-by-point":
+			// GET <api URL>/node/<UUID>/<data name>/surface-by-point/<coord>
+			if len(parts) < 5 {
+				server.BadRequest(w, r, "ERROR: DVID requires coord to follow 'surface-by-point' command")
+				return
+			}
+			coord, err := dvid.StringToPoint(parts[4], "_")
+			if err != nil {
+				server.BadRequest(w, r, err.Error())
+				return
+			}
+			label, err := d.GetLabelAtPoint(storeCtx, coord)
+			if err != nil {
+				server.BadRequest(w, r, err.Error())
+				return
+			}
+			gzipData, found, err := labelblk.GetSurface(storeCtx, label)
+			if err != nil {
+				server.BadRequest(w, r, "Error on getting surface for label %d: %s", label, err.Error())
+				return
+			}
+			if !found {
+				http.Error(w, fmt.Sprintf("Surface for label '%d' not found", label), http.StatusNotFound)
+				return
+			}
+			w.Header().Set("Content-type", "application/octet-stream")
+			if err := dvid.WriteGzip(gzipData, w, r); err != nil {
+				server.BadRequest(w, r, err.Error())
+				return
+			}
+			timedLog.Infof("HTTP %s: surface-by-point at %s (%s)", r.Method, coord, r.URL)
+
+		case "sizerange":
+			// GET <api URL>/node/<UUID>/<data name>/sizerange/<min size>/<optional max size>
+			if len(parts) < 5 {
+				server.BadRequest(w, r, "ERROR: DVID requires at least the minimum size to follow 'sizerange' command")
+				return
+			}
+			minSize, err := strconv.ParseUint(parts[4], 10, 64)
+			if err != nil {
+				server.BadRequest(w, r, err.Error())
+				return
+			}
+			var maxSize uint64
+			if len(parts) >= 6 {
+				maxSize, err = strconv.ParseUint(parts[5], 10, 64)
+				if err != nil {
+					server.BadRequest(w, r, err.Error())
+					return
+				}
+			}
+			jsonStr, err := labelblk.GetSizeRange(d, versionID, minSize, maxSize)
+			if err != nil {
+				server.BadRequest(w, r, err.Error())
+				return
+			}
+			w.Header().Set("Content-type", "application/json")
+			fmt.Fprintf(w, jsonStr)
+			timedLog.Infof("HTTP %s: get labels with volume > %d and < %d (%s)", r.Method, minSize, maxSize, r.URL)
+
+		case "labels", "raw":
+			if len(parts) < 7 {
+				server.BadRequest(w, r, "'labels' or 'raw' must be followed by shape/size/offset")
+				return
+			}
+			if op == imageblk.PutOp {
+				server.BadRequest(w, r, "Cannot POST.  Can only GET mapped labels that intersect the given geometry.")
+				return
+			}
+			shapeStr, sizeStr, offsetStr := parts[4], parts[5], parts[6]
+			planeStr := dvid.DataShapeString(shapeStr)
+			plane, err := planeStr.DataShape()
+			if err != nil {
+				server.BadRequest(w, r, err.Error())
+				return
+			}
+			labels, err := d.Labels.GetData()
+			if err != nil {
+				server.BadRequest(w, r, "Error getting labels %q", labels.DataName())
+				return
+			}
+
+			switch plane.ShapeDimensions() {
+			case 2:
+				slice, err := dvid.NewSliceFromStrings(planeStr, offsetStr, sizeStr, "_")
+				if err != nil {
+					server.BadRequest(w, r, "Error parsing slice: %s", err.Error())
+					return
+				}
+				e, err := labels.NewExtHandler(slice, nil)
+				if err != nil {
+					server.BadRequest(w, r, err.Error())
+					return
+				}
+				img, err := d.GetMappedImage(versionID, e)
+				if err != nil {
+					server.BadRequest(w, r, err.Error())
+					return
+				}
+				var formatStr string
+				if len(parts) >= 8 {
+					formatStr = parts[7]
+				}
+				//dvid.ElapsedTime(dvid.Normal, startTime, "%s %s upto image formatting", op, slice)
+				err = dvid.WriteImageHttp(w, img.Get(), formatStr)
+				if err != nil {
+					server.BadRequest(w, r, err.Error())
+					return
+				}
+				timedLog.Infof("HTTP %s: %s (%s)", r.Method, plane, r.URL)
+			case 3:
+				queryStrings := r.URL.Query()
+				throttle := queryStrings.Get("throttle")
+				if throttle == "true" || throttle == "on" {
+					select {
+					case <-server.Throttle:
+						// Proceed with operation, returning throttle token to server at end.
+						defer func() {
+							server.Throttle <- 1
+						}()
+					default:
+						throttleMsg := fmt.Sprintf("Server already running maximum of %d throttled operations",
+							server.MaxThrottledOps)
+						http.Error(w, throttleMsg, http.StatusServiceUnavailable)
+						return
+					}
+				}
+				subvol, err := dvid.NewSubvolumeFromStrings(offsetStr, sizeStr, "_")
+				if err != nil {
+					server.BadRequest(w, r, "Error parsing subvolume: %s", err.Error())
+					return
+				}
+				e, err := labels.NewExtHandler(subvol, nil)
+				if err != nil {
+					server.BadRequest(w, r, err.Error())
+					return
+				}
+				data, err := d.GetMappedVolume(versionID, e)
+				if err != nil {
+					server.BadRequest(w, r, err.Error())
+					return
+				}
+				w.Header().Set("Content-type", "application/octet-stream")
+				_, err = w.Write(data)
+				if err != nil {
+					server.BadRequest(w, r, "Error writing data: %s", err.Error())
+					return
+				}
+				timedLog.Infof("HTTP %s: %s (%s)", r.Method, subvol, r.URL)
+			default:
+				server.BadRequest(w, r, "DVID currently supports shapes of only 2 and 3 dimensions")
+				return
+			}
+
+		case "intersect":
+			// GET <api URL>/node/<UUID>/<data name>/intersect/<min block>/<max block>
+			if len(parts) < 6 {
+				server.BadRequest(w, r, "ERROR: DVID requires min & max block coordinates to follow 'intersect' command")
+				return
+			}
+			minPoint, err := dvid.StringToPoint(parts[4], "_")
+			if err != nil {
+				server.BadRequest(w, r, err.Error())
+				return
+			}
+			if minPoint.NumDims() != 3 {
+				server.BadRequest(w, r, "ERROR: 'intersect' requires block coordinates to be in 3d, not %d-d", minPoint.NumDims())
+				return
+			}
+			minCoord, ok := minPoint.(dvid.Point3d)
+			if !ok {
+				server.BadRequest(w, r, "ERROR: 'intersect' requires block coordinates to be 3d.  Got: %s", minPoint)
+				return
+			}
+			maxPoint, err := dvid.StringToPoint(parts[5], "_")
+			if err != nil {
+				server.BadRequest(w, r, err.Error())
+				return
+			}
+			if maxPoint.NumDims() != 3 {
+				server.BadRequest(w, r, "ERROR: 'intersect' requires block coordinates to be in 3d, not %d-d", maxPoint.NumDims())
+				return
+			}
+			maxCoord, ok := maxPoint.(dvid.Point3d)
+			if !ok {
+				server.BadRequest(w, r, "ERROR: 'intersect' requires block coordinates to be 3d.  Got: %s", maxPoint)
+				return
+			}
+			jsonStr, err := d.GetLabelsInVolume(storeCtx, dvid.ChunkPoint3d(minCoord), dvid.ChunkPoint3d(maxCoord))
+			if err != nil {
+				server.BadRequest(w, r, err.Error())
+				return
+			}
+			w.Header().Set("Content-type", "application/json")
+			fmt.Fprintf(w, jsonStr)
+			timedLog.Infof("HTTP %s: labels that intersect volume %s -> %s", r.Method, minCoord, maxCoord)
+
 		default:
-			server.BadRequest(w, r, "DVID currently supports shapes of only 2 and 3 dimensions")
-			return
+			server.BadRequest(w, r, "Unrecognized API call '%s' for labelmap data '%s'.  See API help.", parts[3], d.DataName())
 		}
-
-	case "intersect":
-		// GET <api URL>/node/<UUID>/<data name>/intersect/<min block>/<max block>
-		if len(parts) < 6 {
-			server.BadRequest(w, r, "ERROR: DVID requires min & max block coordinates to follow 'intersect' command")
-			return
-		}
-		minPoint, err := dvid.StringToPoint(parts[4], "_")
-		if err != nil {
-			server.BadRequest(w, r, err.Error())
-			return
-		}
-		if minPoint.NumDims() != 3 {
-			server.BadRequest(w, r, "ERROR: 'intersect' requires block coordinates to be in 3d, not %d-d", minPoint.NumDims())
-			return
-		}
-		minCoord, ok := minPoint.(dvid.Point3d)
-		if !ok {
-			server.BadRequest(w, r, "ERROR: 'intersect' requires block coordinates to be 3d.  Got: %s", minPoint)
-			return
-		}
-		maxPoint, err := dvid.StringToPoint(parts[5], "_")
-		if err != nil {
-			server.BadRequest(w, r, err.Error())
-			return
-		}
-		if maxPoint.NumDims() != 3 {
-			server.BadRequest(w, r, "ERROR: 'intersect' requires block coordinates to be in 3d, not %d-d", maxPoint.NumDims())
-			return
-		}
-		maxCoord, ok := maxPoint.(dvid.Point3d)
-		if !ok {
-			server.BadRequest(w, r, "ERROR: 'intersect' requires block coordinates to be 3d.  Got: %s", maxPoint)
-			return
-		}
-		jsonStr, err := d.GetLabelsInVolume(storeCtx, dvid.ChunkPoint3d(minCoord), dvid.ChunkPoint3d(maxCoord))
-		if err != nil {
-			server.BadRequest(w, r, err.Error())
-			return
-		}
-		w.Header().Set("Content-type", "application/json")
-		fmt.Fprintf(w, jsonStr)
-		timedLog.Infof("HTTP %s: labels that intersect volume %s -> %s", r.Method, minCoord, maxCoord)
-
-	default:
-		server.BadRequest(w, r, "Unrecognized API call '%s' for labelmap data '%s'.  See API help.", parts[3], d.DataName())
-	}
+	*/
 }
 
+/*
 func loadSegBodyMap(filename string) (map[uint64]uint64, error) {
 	timedLog := dvid.NewTimeLog()
 	dvid.Infof("Loading segment->body map: %s\n", filename)
@@ -1315,3 +1312,4 @@ func (d *Data) chunkApplyMap(chunk *storage.Chunk) {
 	ctx := datastore.NewVersionedContext(op.dest, op.versionID)
 	bigdata.Put(ctx, imageblk.NewVoxelBlockIndex(zyx), serialization)
 }
+*/

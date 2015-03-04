@@ -4,11 +4,7 @@
 
 package labelsurf
 
-import (
-	"encoding/binary"
-
-	"github.com/janelia-flyem/dvid/dvid"
-)
+import "encoding/binary"
 
 // keyType is the first byte of a type-specific index, allowing partitioning of the
 // type-specific key space.
@@ -32,9 +28,9 @@ func (t keyType) String() string {
 }
 
 // NewLabelSurfaceIndex returns an identifier for a given label's surface.
-func NewLabelSurfaceIndex(label uint64) dvid.IndexBytes {
-	index := make([]byte, 1+8)
-	index[0] = byte(keyLabelSurface)
-	binary.BigEndian.PutUint64(index[1:9], label)
-	return dvid.IndexBytes(index)
+func NewLabelSurfaceIndex(label uint64) []byte {
+	ibytes := make([]byte, 1+8)
+	ibytes[0] = byte(keyLabelSurface)
+	binary.BigEndian.PutUint64(ibytes[1:9], label)
+	return ibytes
 }

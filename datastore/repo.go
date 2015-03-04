@@ -39,6 +39,7 @@ type IDManager interface {
 	VersionFromUUID(dvid.UUID) (dvid.VersionID, error)
 }
 
+// RepoManager is the highest-level DVID interface, managing all repos within the datastore.
 type RepoManager interface {
 	IDManager
 
@@ -88,12 +89,26 @@ type Describer interface {
 	AddToLog(hx string) error
 }
 
+type DAGManager interface {
+	RootUUID() dvid.UUID
+
+	// Lock "locks" the given node of the DAG to be read-only.
+	Lock(dvid.UUID) error
+
+	// NewVersion creates a new child node off a LOCKED parent node.  Will return
+	// an error if the parent node has not been locked.
+	NewVersion(dvid.UUID) (dvid.UUID, error)
+
+	// GetIterator returns a VersionIterator capable of ascending ancestor path from
+	// a particular version in the DAG.
+	GetIterator(dvid.VersionID) (storage.VersionIterator, error)
+}
+
 type Repo interface {
 	Describer
+	DAGManager
 
 	RepoID() dvid.RepoID
-
-	RootUUID() dvid.UUID
 
 	Types() (map[dvid.URLString]TypeService, error)
 
@@ -105,10 +120,6 @@ type Repo interface {
 	// information to a data instance.  For example, "foo-R" will be parsed as name "foo"
 	// with additional information "R" passed to the DataService.
 	GetDataByName(dvid.InstanceName) (DataService, error)
-
-	// GetIterator returns a VersionIterator capable of ascending ancestor path from
-	// a particular version in the DAG.
-	GetIterator(dvid.VersionID) (storage.VersionIterator, error)
 
 	// NewData adds a new, named instance of a datatype to repo.  Settings can be passed
 	// via the 'config' argument.  For example, config["versioned"] with a bool value
@@ -122,15 +133,12 @@ type Repo interface {
 	// it from the Repo.
 	DeleteDataByName(dvid.InstanceName) error
 
-	// NewVersion creates a new child node off a LOCKED parent node.  Will return
-	// an error if the parent node has not been locked.
-	NewVersion(dvid.UUID) (dvid.UUID, error)
-
 	// Save persists the repo to the MetaDataStore.
 	Save() error
 
-	// Lock "locks" the given node of the DAG to be read-only.
-	Lock(dvid.UUID) error
+	// NotifySubscribers notifies any subscribed instances of an event and sends an
+	// event-specific message down internal channels.
+	NotifySubscribers(SyncEvent, SyncMessage)
 
 	gob.GobDecoder
 	gob.GobEncoder

@@ -95,9 +95,9 @@ func (d *Data) GetArbitraryImage(ctx storage.Context, tlStr, trStr, blStr, resSt
 	// at each point.
 	cache := NewValueCache(100)
 	keyF := func(pt dvid.Point3d) []byte {
-		chunkPt := pt.Chunk(d.BlockSize())
-		index := dvid.IndexZYX(chunkPt.(dvid.ChunkPoint3d)) // TODO: Can we remove this ugliness?
-		return NewIndex(&index)
+		chunkPt := pt.Chunk(d.BlockSize()).(dvid.ChunkPoint3d)
+		idx := dvid.IndexZYX(chunkPt)
+		return NewIndex(&idx)
 	}
 
 	// TODO: Add concurrency.

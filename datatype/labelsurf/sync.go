@@ -4,57 +4,61 @@
 
 package labelsurf
 
-import (
-	"encoding/binary"
-	"fmt"
-	"math"
-	"sync"
-
-	"github.com/janelia-flyem/dvid/datastore"
-	"github.com/janelia-flyem/dvid/datatype/common/labels"
-	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/janelia-flyem/dvid/server"
-	"github.com/janelia-flyem/dvid/storage"
-)
+import "github.com/janelia-flyem/dvid/datastore"
 
 // Number of change messages we can buffer before blocking on sync channel.
 const syncBuffer = 100
 
-// InitSyncGraph implements the datastore.Syncer interface and sets up handling
-// of merges and splits to source labelvol.
-func (d *Data) InitSyncGraph() []datastore.SyncSubscribe {
-	mergeCh := make(chan datastore.SyncMessage, syncBuffer)
-	done1Ch := make(chan struct{})
+// GetSyncSubs implements the datastore.Syncer interface and allows syncing of
+// label surfaces with changes to linked labelvol (sparse volume) representations.
+func (d *Data) GetSyncSubs() []datastore.SyncSub {
+	/*
+		mergeCh := make(chan datastore.SyncMessage, syncBuffer)
+		done1Ch := make(chan struct{})
 
-	go d.handleMergeEvent(mergeCh, done1Ch)
+		go d.handleMergeEvent(mergeCh, done1Ch)
 
-	splitCh := make(chan datastore.SyncMessage, syncBuffer)
-	done2Ch := make(chan struct{})
+		splitCh := make(chan datastore.SyncMessage, syncBuffer)
+		done2Ch := make(chan struct{})
 
-	go d.handleSplitEvent(splitCh, done2Ch)
+		go d.handleSplitEvent(splitCh, done2Ch)
 
-	subs := []datastore.SyncSubscribe{
-		datastore.SyncSubscribe{
-			Src:   d.Link,
-			Dst:   d.DataName(),
-			Event: labels.MergeEvent,
-			Ch:    mergeCh,
-			Done:  done1Ch,
-		},
-		datastore.SyncSubscribe{
-			Src:   d.Link,
-			Dst:   d.DataName(),
-			Event: labels.SplitEvent,
-			Ch:    splitCh,
-			Done:  done2Ch,
-		},
-	}
-	return subs
+		subs := []datastore.SyncSub{
+			datastore.SyncSub{
+				Src:   d.Link,
+				Dst:   d.DataName(),
+				Event: labels.MergeEvent,
+				Ch:    mergeCh,
+				Done:  done1Ch,
+			},
+			datastore.SyncSub{
+				Src:   d.Link,
+				Dst:   d.DataName(),
+				Event: labels.SplitEvent,
+				Ch:    splitCh,
+				Done:  done2Ch,
+			},
+		}
+		return subs
+	*/
+	return nil
 }
 
+/*
 func (d *Data) handleMergeEvent(in <-chan datastore.SyncMessage, done <-chan struct{}) {
+	// Delete the fromLabel surface.
+	// TODO -- Move to labelsurf
+
+		surfaceIndex := imageblk.NewLabelSurfaceIndex(fromLabel)
+		if err := bigdata.Delete(ctx, surfaceIndex); err != nil {
+			return fmt.Errorf("Can't delete label %d surface: %s", fromLabel, err.Error())
+		}
+
+	// Recompute the toLabel surface
+	// TODO -- Move to labelsurf
+	// go d.recomputeSurface(ctx, toLabel, toLabelRLEs)
 	for msg := range in {
-		deltas, ok := msg.Delta.(labels.DeltaSizes)
+		deltas, ok := msg.Delta.(labels.DeltaReplaceSize)
 		if !ok {
 			dvid.Criticalf("Cannot sync labelsz.  Got unexpected delta: %v", msg)
 			return
@@ -76,6 +80,9 @@ func (d *Data) handleMergeEvent(in <-chan datastore.SyncMessage, done <-chan str
 		}
 	}
 }
+*/
+
+/*
 
 // Handle merge of one or more labels into a target label.
 
@@ -362,3 +369,4 @@ func (d *Data) computeAndSaveSurface(ctx storage.Context, vol *dvid.SparseVol) e
 	key := imageblk.NewLabelSurfaceIndex(vol.Label())
 	return store.Put(ctx, key, serialization)
 }
+*/

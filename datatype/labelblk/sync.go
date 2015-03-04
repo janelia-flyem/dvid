@@ -1,93 +1,210 @@
 /*
-	Support for syncing labelblk from a linked labelvol or labeltiles instance.
+	This file supports interactive syncing between data instances.  It is different
+	from ingestion syncs that can more effectively batch changes.
 */
 
 package labelblk
 
 import (
 	"encoding/binary"
-	"sync"
+	"hash/fnv"
 
 	"github.com/janelia-flyem/dvid/datastore"
+	"github.com/janelia-flyem/dvid/datatype/common/labels"
 	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/janelia-flyem/dvid/server"
-	"github.com/janelia-flyem/dvid/storage"
 )
 
-// Iterate through all the label blocks and perform the actual relabeling.
-func (d *Data) relabelBlocks(ctx *datastore.VersionedContext, blocksChanged map[string]bool,
-	remapping map[uint64]uint64) {
+// GetSyncSubs implements the datastore.Syncer interface
+func (d *Data) GetSyncSubs() []datastore.SyncSub {
+	mergeCh := make(chan datastore.SyncMessage, 100)
+	mergeDone := make(chan struct{})
 
-	bigdata, err := storage.BigDataStore()
-	if err != nil {
-		dvid.Errorf("In relabeling, can't get big datastore: %s\n", err.Error())
-		return
+	splitCh := make(chan datastore.SyncMessage, 10) // Splits can be a lot bigger due to sparsevol
+	splitDone := make(chan struct{})
+
+	subs := []datastore.SyncSub{
+		datastore.SyncSub{
+			Event:  datastore.SyncEvent{d.Link, labels.ChangeSparsevolEvent},
+			Notify: d.DataName(),
+			Ch:     make(chan datastore.SyncMessage, 100),
+			Done:   make(chan struct{}),
+		},
+		datastore.SyncSub{
+			Event:  datastore.SyncEvent{d.Link, labels.MergeStartEvent},
+			Notify: d.DataName(),
+			Ch:     mergeCh,
+			Done:   mergeDone,
+		},
+		datastore.SyncSub{
+			Event:  datastore.SyncEvent{d.Link, labels.MergeEndEvent},
+			Notify: d.DataName(),
+			Ch:     mergeCh,
+			Done:   mergeDone,
+		},
+		datastore.SyncSub{
+			Event:  datastore.SyncEvent{d.Link, labels.MergeBlockEvent},
+			Notify: d.DataName(),
+			Ch:     mergeCh,
+			Done:   mergeDone,
+		},
+		datastore.SyncSub{
+			Event:  datastore.SyncEvent{d.Link, labels.SplitStartEvent},
+			Notify: d.DataName(),
+			Ch:     splitCh,
+			Done:   splitDone,
+		},
+		datastore.SyncSub{
+			Event:  datastore.SyncEvent{d.Link, labels.SplitEndEvent},
+			Notify: d.DataName(),
+			Ch:     splitCh,
+			Done:   splitDone,
+		},
+		datastore.SyncSub{
+			Event:  datastore.SyncEvent{d.Link, labels.SplitBlockEvent},
+			Notify: d.DataName(),
+			Ch:     splitCh,
+			Done:   splitDone,
+		},
 	}
 
-	// Iterate through all modified blocks
-	timedLog := dvid.NewTimeLog()
-	wg := new(sync.WaitGroup)
-	for blockStr, _ := range blocksChanged {
-		blockKey := NewIndexByCoord(blockStr)
-		value, err := bigdata.Get(ctx, blockKey)
-		if err != nil {
-			dvid.Errorf("Error in getting block of labels with block %v: %s\n",
-				[]byte(blockStr), err.Error())
-			return
-		}
-		<-server.HandlerToken
-		wg.Add(1)
-		go d.relabelChunk(ctx, blockKey, value, remapping, wg)
-	}
-	wg.Wait()
-	timedLog.Infof("Completed relabeling of %d blocks", len(blocksChanged))
+	// Launch go routines to handle sync events.
+	go d.syncSparsevolChange(subs[0].Ch, subs[0].Done)
+	go d.syncMerge(mergeCh, mergeDone)
+	go d.syncSplit(splitCh, splitDone)
+
+	return subs
 }
 
-func (d *Data) relabelChunk(ctx *datastore.VersionedContext, k, v []byte,
-	remapping map[uint64]uint64, wg *sync.WaitGroup) {
+func (d *Data) syncSparsevolChange(in <-chan datastore.SyncMessage, done <-chan struct{}) {
+	/*
+		for msg := range in {
+			select {
+			case <-done:
+				return
+			default:
+			}
+		}
+	*/
+}
 
-	defer func() {
-		// After processing a chunk, return the token.
-		server.HandlerToken <- 1
-
-		// Notify the requestor that this chunk is done.
-		wg.Done()
-	}()
-
-	// Initialize the label buffer.  For voxels, this data needs to be uncompressed and deserialized.
-	blockData, _, err := dvid.DeserializeData(v, true)
+func hashStr(s dvid.IZYXString, n int) int {
+	hash := fnv.New32()
+	_, err := hash.Write([]byte(s))
 	if err != nil {
-		dvid.Infof("Unable to deserialize block in '%s': %s\n", d.DataName(), err.Error())
-		return
+		dvid.Criticalf("Could not write to fnv hash in labelblk.hashStr()")
+		return 0
 	}
-	numElements := int32(d.BlockSize().Prod())
-	if int32(len(blockData)) != numElements*8 {
-		dvid.Errorf("Received block with %d bytes instead of bytes for %d labels\n",
-			len(blockData), numElements)
-		return
+	return int(hash.Sum32()) % n
+}
+
+type mergeOp struct {
+	labels.MergeOp
+	ctx  datastore.VersionedContext
+	izyx dvid.IZYXString
+}
+
+func (d *Data) syncMerge(in <-chan datastore.SyncMessage, done <-chan struct{}) {
+	// Start N goroutines to process blocks.  Don't need transactional support for
+	// GET-PUT combo if each block only is handled serially by a given goroutine.
+	const numprocs = 32
+	const mergeBufSize = 100
+	var pch [numprocs]chan mergeOp
+	for i := 0; i < numprocs; i++ {
+		pch[i] = make(chan mergeOp, mergeBufSize)
+		go d.relabelBlock(pch[i])
 	}
 
-	// Iterate through this block of labels and relabel if label in remapping.
-	for i := int32(0); i < numElements*8; i += 8 {
-		label := binary.LittleEndian.Uint64(blockData[i : i+8])
-		toLabel, found := remapping[label]
-		if found {
-			binary.LittleEndian.PutUint64(blockData[i:i+8], toLabel)
+	// Process incoming merge messages
+	const batchSize = 100
+	for msg := range in {
+		select {
+		case <-done:
+			for i := 0; i < numprocs; i++ {
+				close(pch[i])
+			}
+			return
+		default:
+			switch delta := msg.Delta.(type) {
+			case labels.DeltaMerge:
+				ctx := datastore.NewVersionedContext(d, msg.Version)
+				for izyxStr := range delta.Blocks {
+					n := hashStr(izyxStr, numprocs)
+					pch[n] <- mergeOp{delta.MergeOp, *ctx, izyxStr}
+				}
+			case labels.DeltaMergeStart:
+			case labels.DeltaMergeEnd:
+			default:
+				dvid.Criticalf("bad delta in merge event: %v\n", delta)
+				continue
+			}
 		}
 	}
+}
 
-	// Store this block.
-	bigdata, err := storage.BigDataStore()
-	if err != nil {
-		dvid.Errorf("Unable to obtain BigData store in %q: %s\n", d.DataName(), err.Error())
-		return
+func (d *Data) syncSplit(in <-chan datastore.SyncMessage, done <-chan struct{}) {
+	for msg := range in {
+		select {
+		case <-done:
+			return
+		default:
+			switch delta := msg.Delta.(type) {
+			case labels.DeltaSplit:
+				//ctx := datastore.NewVersionedContext(d, msg.Version)
+			case labels.DeltaSplitStart:
+			case labels.DeltaSplitEnd:
+			default:
+				dvid.Criticalf("bad delta in split event: %v\n", delta)
+				continue
+			}
+		}
 	}
-	serialization, err := dvid.SerializeData(blockData, d.Compression(), d.Checksum())
-	if err != nil {
-		dvid.Errorf("Unable to serialize block in %q: %s\n", d.DataName(), err.Error())
-		return
-	}
-	if err := bigdata.Put(ctx, k, serialization); err != nil {
-		dvid.Errorf("Error in putting key %v: %s\n", k, err.Error())
+}
+
+// Goroutine that handles relabeling of blocks that form a part of the spatial index space.
+// Since the same block coordinate always gets mapped to the same goroutine, we handle
+// concurrency by serializing GET/PUT for a particular block coordinate.
+// TODO -- Block-level ops should be handled by one goroutine for a particular block across all ops.
+func (d *Data) relabelBlock(in <-chan mergeOp) {
+	blockBytes := int(d.BlockSize().Prod() * 8)
+
+	for op := range in {
+		k := NewIndexByCoord(op.izyx)
+		data, err := store.Get(op.ctx, k)
+		if err != nil {
+			dvid.Errorf("Error on GET of labelblk with coord string %q\n", op.izyx)
+			return
+		}
+		if data == nil {
+			dvid.Errorf("nil label block where merge was done!\n")
+			return
+		}
+
+		blockData, _, err := dvid.DeserializeData(data, true)
+		if err != nil {
+			dvid.Criticalf("unable to deserialize label block in '%s': %s\n", d.DataName(), err.Error())
+			return
+		}
+		if len(blockData) != blockBytes {
+			dvid.Criticalf("After labelblk deserialization got back %d bytes, expected %d bytes\n", len(blockData), blockBytes)
+			return
+		}
+
+		// Iterate through this block of labels and relabel if label in merge.
+		for i := 0; i < blockBytes; i += 8 {
+			label := binary.LittleEndian.Uint64(blockData[i : i+8])
+			if _, merged := op.Merged[label]; merged {
+				binary.LittleEndian.PutUint64(blockData[i:i+8], op.Target)
+			}
+		}
+
+		// Store this block.
+		serialization, err := dvid.SerializeData(blockData, d.Compression(), d.Checksum())
+		if err != nil {
+			dvid.Errorf("Unable to serialize block in %q: %s\n", d.DataName(), err.Error())
+			return
+		}
+		if err := store.Put(op.ctx, k, serialization); err != nil {
+			dvid.Errorf("Error in putting key %v: %s\n", k, err.Error())
+		}
 	}
 }
