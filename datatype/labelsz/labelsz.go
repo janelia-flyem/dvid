@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"math"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 
@@ -136,20 +135,25 @@ func init() {
 	// Need to register types that will be used to fulfill interfaces.
 	gob.Register(&Type{})
 	gob.Register(&Data{})
+}
 
-	// Initialize the default storage for this datatype
+// Initialize the default storage for this datatype
+func initStore() error {
 	var err error
-	store, err = storage.SmallDataStore()
-	if err != nil {
-		dvid.Criticalf("Data type labelvol had error initializing store: %s\n", err.Error())
-		os.Exit(1)
+	if store == nil {
+		store, err = storage.SmallDataStore()
+		if err != nil {
+			return fmt.Errorf("Data type labelsz had error initializing store: %s\n", err.Error())
+		}
 	}
-	var ok bool
-	batcher, ok = store.(storage.KeyValueBatcher)
-	if !ok {
-		dvid.Criticalf("Data type labelvol requires batch-enabled store, which %q is not\n", store)
-		os.Exit(1)
+	if batcher == nil {
+		var ok bool
+		batcher, ok = store.(storage.KeyValueBatcher)
+		if !ok {
+			return fmt.Errorf("Data type labelsz requires batch-enabled store, which %q is not\n", store)
+		}
 	}
+	return nil
 }
 
 // --- Labelsurf Datatype -----
@@ -185,6 +189,9 @@ func NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.
 // --- TypeService interface ---
 
 func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.Config) (datastore.DataService, error) {
+	if err := initStore(); err != nil {
+		return nil, err
+	}
 	return NewData(uuid, id, name, c)
 }
 
@@ -276,6 +283,10 @@ func (d *Data) GetSizeRange(v dvid.VersionID, minSize, maxSize uint64) (string, 
 }
 
 // --- datastore.DataService interface ---------
+
+func (d *Data) Help() string {
+	return HelpMessage
+}
 
 // Send transfers all key-value pairs pertinent to this data type as well as
 // the storage.DataStoreType for them.

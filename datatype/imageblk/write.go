@@ -319,6 +319,7 @@ func (d *Data) putChunk(chunk *storage.Chunk) {
 		dvid.Errorf("Unable to serialize block in %q: %s\n", d.DataName(), err.Error())
 		return
 	}
+
 	if err := store.Put(nil, chunk.K, serialization); err != nil {
 		dvid.Errorf("Unable to PUT voxel data for key %v: %s\n", chunk.K, err.Error())
 		return

@@ -56,13 +56,13 @@ func (d *Data) CreateComposite(request datastore.Request, reply *datastore.Respo
 		return fmt.Errorf("%s is not the name of uint8 data", grayscaleName)
 	}
 
-	// Create a new rgba8 data.
+	// Create a new rgba8blk data.
 	var compservice datastore.DataService
 	compservice, err = repo.GetDataByName(dvid.InstanceName(destName))
 	if err == nil {
 		return fmt.Errorf("Data instance with name %q already exists", destName)
 	}
-	typeService, err := datastore.TypeServiceByName("rgba8")
+	typeService, err := datastore.TypeServiceByName("rgba8blk")
 	if err != nil {
 		return fmt.Errorf("Could not get rgba8 type service from DVID")
 	}

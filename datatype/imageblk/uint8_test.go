@@ -101,7 +101,7 @@ func makeGrayscale(repo datastore.Repo, t *testing.T, name string) *Data {
 	}
 	grayscale, ok := dataservice.(*Data)
 	if !ok {
-		t.Errorf("Can't cast uint8 data service into Data\n")
+		t.Errorf("Can't cast uint8blk data service into Data\n")
 	}
 	return grayscale
 }
@@ -144,15 +144,15 @@ func TestVoxelsInstanceCreation(t *testing.T) {
 		t.Errorf("Parsed new instance has unexpected name: %s != %s (expected)\n",
 			parsed.Base.Name, name)
 	}
-	if parsed.Base.TypeName != "uint8" {
-		t.Errorf("Parsed new instance has unexpected type name: %s != uint8 (expected)\n",
+	if parsed.Base.TypeName != "uint8blk" {
+		t.Errorf("Parsed new instance has unexpected type name: %s != uint8blk (expected)\n",
 			parsed.Base.TypeName)
 	}
 	if !parsed.Extended.BlockSize.Equals(dvid.Point3d{64, 43, 28}) {
-		t.Errorf("Bad block size in new uint8 instance: %s\n", parsed.Extended.BlockSize)
+		t.Errorf("Bad block size in new uint8blk instance: %s\n", parsed.Extended.BlockSize)
 	}
 	if !parsed.Extended.VoxelSize.Equals(dvid.NdFloat32{13.1, 14.2, 15.3}) {
-		t.Errorf("Bad voxel size in new uint8 instance: %s\n", parsed.Extended.VoxelSize)
+		t.Errorf("Bad voxel size in new uint8blk instance: %s\n", parsed.Extended.VoxelSize)
 	}
 	if parsed.Extended.VoxelUnits[0] != "picometers" {
 		t.Errorf("Got %q for X voxel units, not picometers\n", parsed.Extended.VoxelUnits[0])
@@ -262,11 +262,11 @@ func TestSubvolGrayscale8(t *testing.T) {
 	copy(origData, data)
 
 	// Store it into datastore at root
-	v, err := grayscale.NewExtHandler(subvol, data)
+	v, err := grayscale.NewVoxels(subvol, data)
 	if err != nil {
 		t.Fatalf("Unable to make new grayscale ExtHandler: %s\n", err.Error())
 	}
-	if err = PutVoxels(grayscaleCtx, grayscale, v, OpOptions{}); err != nil {
+	if err = grayscale.PutVoxels(versionID, v, nil); err != nil {
 		t.Errorf("Unable to put voxels for %s: %s\n", grayscaleCtx, err.Error())
 	}
 	if v.NumVoxels() != int64(len(origData)) {
@@ -275,20 +275,17 @@ func TestSubvolGrayscale8(t *testing.T) {
 	}
 
 	// Read the stored image
-	v2, err := grayscale.NewExtHandler(subvol, nil)
+	v2, err := grayscale.NewVoxels(subvol, nil)
 	if err != nil {
 		t.Errorf("Unable to make new grayscale ExtHandler: %s\n", err.Error())
 	}
-	if err = GetVoxels(grayscaleCtx, grayscale, v2, nil); err != nil {
+	if err = grayscale.GetVoxels(versionID, v2, nil); err != nil {
 		t.Errorf("Unable to get voxels for %s: %s\n", grayscaleCtx, err.Error())
 	}
 
 	// Make sure the retrieved image matches the original
 	if v.Stride() != v2.Stride() {
 		t.Errorf("Stride in retrieved subvol incorrect\n")
-	}
-	if v.ByteOrder() != v2.ByteOrder() {
-		t.Errorf("ByteOrder in retrieved subvol incorrect\n")
 	}
 	if v.Interpolable() != v2.Interpolable() {
 		t.Errorf("Interpolable bool in retrieved subvol incorrect\n")
@@ -333,11 +330,11 @@ func storeGrayscale(t *testing.T, name string, slice dvid.Geometry, r *ROI) test
 	img := dvid.ImageGrayFromData(data, int(nx), int(ny))
 
 	// Store it into datastore at root
-	v, err := grayscale.NewExtHandler(slice, img)
+	v, err := grayscale.NewVoxels(slice, img)
 	if err != nil {
 		t.Fatalf("Unable to make new grayscale ExtHandler: %s\n", err.Error())
 	}
-	if err = PutVoxels(grayscaleCtx, grayscale, v, OpOptions{roi: r}); err != nil {
+	if err = grayscale.PutVoxels(versionID, v, r); err != nil {
 		t.Errorf("Unable to put voxels for %s: %s\n", grayscaleCtx, err.Error())
 	}
 	return testDataT{repo, versionID, grayscaleCtx, grayscale, data}
@@ -348,11 +345,11 @@ func sliceTest(t *testing.T, sliceType string, slice dvid.Geometry) {
 	grayscaleCtx := datastore.NewVersionedContext(testData.data, testData.versionID)
 
 	// Read the stored image
-	v2, err := testData.data.NewExtHandler(slice, nil)
+	v2, err := testData.data.NewVoxels(slice, nil)
 	if err != nil {
 		t.Fatalf("Could not create ExtHandler: %s\n", err.Error())
 	}
-	retrieved, err := GetImage(grayscaleCtx, testData.data, v2, nil)
+	retrieved, err := testData.data.GetImage(testData.versionID, v2, nil)
 	if err != nil {
 		t.Fatalf("Unable to get image for %s: %s\n", grayscaleCtx, err.Error())
 	}
@@ -499,13 +496,13 @@ func TestROIMaskGrayscale8(t *testing.T) {
 	}
 
 	// Get the buffer for the retrieved ROI-enabled grayscale slice
-	roiSlice, err := testData.data.NewExtHandler(slice, nil)
+	roiSlice, err := testData.data.NewVoxels(slice, nil)
 	if err != nil {
 		t.Fatalf("Could not create ExtHandler: %s\n", err.Error())
 	}
 
 	// Read without ROI
-	if err := GetVoxels(testData.ctx, testData.data, roiSlice, nil); err != nil {
+	if err := testData.data.GetVoxels(testData.versionID, roiSlice, nil); err != nil {
 		t.Fatalf("Unable to get image for %s: %s\n", testData.ctx, err.Error())
 	}
 
@@ -529,7 +526,7 @@ func TestROIMaskGrayscale8(t *testing.T) {
 	}
 
 	// Read grayscale using ROI
-	if err := GetVoxels(testData.ctx, testData.data, roiSlice, &roiObj); err != nil {
+	if err := testData.data.GetVoxels(testData.versionID, roiSlice, &roiObj); err != nil {
 		t.Fatalf("Unable to get image for %s: %s\n", testData.ctx, err.Error())
 	}
 
@@ -549,13 +546,13 @@ func TestROIMaskGrayscale8(t *testing.T) {
 
 	// Read grayscale without ROI and make sure area outside ROI is black.
 	// Get the buffer for the retrieved ROI-enabled grayscale slice
-	roiSlice2, err := testData.data.NewExtHandler(slice, nil)
+	roiSlice2, err := testData.data.NewVoxels(slice, nil)
 	if err != nil {
 		t.Fatalf("Could not create ExtHandler: %s\n", err.Error())
 	}
 
 	// Read without ROI
-	if err := GetVoxels(testData2.ctx, testData2.data, roiSlice2, nil); err != nil {
+	if err := testData2.data.GetVoxels(testData2.versionID, roiSlice2, nil); err != nil {
 		t.Fatalf("Unable to get image for %s: %s\n", testData2.ctx, err.Error())
 	}
 

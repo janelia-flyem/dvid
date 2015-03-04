@@ -17,7 +17,7 @@ func TestDataAndChildCreation(t *testing.T) {
 
 	repo, _ := NewRepo()
 
-	grayscale8, err := datastore.TypeServiceByName("uint8")
+	grayscale8, err := datastore.TypeServiceByName("uint8blk")
 	if err != nil {
 		t.Fatalf("Could not get grayscale8 type: %s\n", err.Error())
 	}

@@ -1,15 +1,60 @@
 package datastore
 
 import (
+	"encoding/gob"
+	"net/http"
 	"reflect"
 	"testing"
 
+	"code.google.com/p/go.net/context"
+
 	"github.com/janelia-flyem/dvid/dvid"
+	"github.com/janelia-flyem/dvid/message"
 )
+
+func init() {
+	gob.Register(&TestType{})
+	gob.Register(&TestData{})
+}
+
+type TestType struct {
+	Type
+}
+
+func (t *TestType) Help() string {
+	return "no help here!"
+}
+
+func (t *TestType) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.Config) (DataService, error) {
+	basedata, err := NewDataService(t, uuid, id, name, c)
+	if err != nil {
+		return nil, err
+	}
+	return &TestData{basedata}, nil
+}
+
+type TestData struct {
+	*Data
+}
+
+func (d *TestData) Send(s message.Socket, roiname string, uuid dvid.UUID) error {
+	return nil
+}
+
+func (d *TestData) DoRPC(request Request, reply *Response) error {
+	return nil
+}
+
+func (d *TestData) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *http.Request) {
+}
+
+func (d *TestData) Help() string {
+	return "no help here!"
+}
 
 func TestDataGobEncoding(t *testing.T) {
 	compression, _ := dvid.NewCompression(dvid.LZ4, dvid.DefaultCompression)
-	data := &Data{
+	data := &TestData{&Data{
 		typename:    "testtype",
 		typeurl:     "foo.bar.baz/testtype",
 		typeversion: "1.0",
@@ -20,15 +65,15 @@ func TestDataGobEncoding(t *testing.T) {
 		checksum:    dvid.DefaultChecksum,
 		persistence: DataCritical,
 		versioned:   true,
-	}
+	}}
 
 	encoding, err := data.GobEncode()
 	if err != nil {
-		t.Fatalf("Couldn't Gob encode Data: %s\n", err.Error())
+		t.Fatalf("Couldn't Gob encode test data: %s\n", err.Error())
 	}
-	data2 := &Data{}
+	data2 := &TestData{new(Data)}
 	if err = data2.GobDecode(encoding); err != nil {
-		t.Fatalf("Couldn't Gob decode Data: %s\n", err.Error())
+		t.Fatalf("Couldn't Gob decode test data: %s\n", err.Error())
 	}
 	if !reflect.DeepEqual(data, data2) {
 		t.Errorf("Bad Gob roundtrip:\nOriginal: %v\nReturned: %v\n", data, data2)

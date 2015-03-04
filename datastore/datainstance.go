@@ -207,7 +207,9 @@ func (p Persistence) String() string {
 // Data is the base struct of repo-specific data instances.  It should be embedded
 // in a datatype's DataService implementation and handle datastore-wide key partitioning.
 type Data struct {
-	TypeService
+	typename    dvid.TypeString
+	typeurl     dvid.URLString
+	typeversion string
 
 	name dvid.InstanceName
 	id   dvid.InstanceID
@@ -238,9 +240,9 @@ func (d *Data) MarshalJSON() ([]byte, error) {
 		Persistence string
 		Versioned   bool
 	}{
-		TypeName:    d.TypeService.GetTypeName(),
-		TypeURL:     d.TypeService.GetTypeURL(),
-		TypeVersion: d.TypeService.GetTypeVersion(),
+		TypeName:    d.typename,
+		TypeURL:     d.typeurl,
+		TypeVersion: d.typeversion,
 		Name:        d.name,
 		RepoUUID:    d.uuid,
 		Compression: d.compression.String(),
@@ -265,7 +267,9 @@ func NewDataService(t TypeService, uuid dvid.UUID, id dvid.InstanceID, name dvid
 	}
 	compression, _ := dvid.NewCompression(dvid.LZ4, dvid.DefaultCompression)
 	data := &Data{
-		TypeService: t,
+		typename:    t.GetTypeName(),
+		typeurl:     t.GetTypeURL(),
+		typeversion: t.GetTypeVersion(),
 		name:        name,
 		id:          id,
 		uuid:        uuid,
@@ -288,22 +292,26 @@ func (d *Data) SetInstanceID(id dvid.InstanceID) {
 	d.id = id
 }
 
-func (d *Data) TypeName() dvid.TypeString { return d.GetTypeName() }
+func (d *Data) TypeName() dvid.TypeString { return d.typename }
 
-func (d *Data) TypeURL() dvid.URLString { return d.GetTypeURL() }
+func (d *Data) TypeURL() dvid.URLString { return d.typeurl }
 
-func (d *Data) TypeVersion() string { return d.GetTypeVersion() }
+func (d *Data) TypeVersion() string { return d.typeversion }
 
 func (d *Data) Versioned() bool { return d.versioned }
 
 func (d *Data) GobDecode(b []byte) error {
 	buf := bytes.NewBuffer(b)
 	dec := gob.NewDecoder(buf)
-	var t TypeService
-	if err := dec.Decode(&t); err != nil {
+	if err := dec.Decode(&(d.typename)); err != nil {
 		return err
 	}
-	d.TypeService = t
+	if err := dec.Decode(&(d.typeurl)); err != nil {
+		return err
+	}
+	if err := dec.Decode(&(d.typeversion)); err != nil {
+		return err
+	}
 	if err := dec.Decode(&(d.name)); err != nil {
 		return err
 	}
@@ -331,7 +339,13 @@ func (d *Data) GobDecode(b []byte) error {
 func (d *Data) GobEncode() ([]byte, error) {
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
-	if err := enc.Encode(d.TypeService); err != nil {
+	if err := enc.Encode(d.typename); err != nil {
+		return nil, err
+	}
+	if err := enc.Encode(d.typeurl); err != nil {
+		return nil, err
+	}
+	if err := enc.Encode(d.typeversion); err != nil {
 		return nil, err
 	}
 	if err := enc.Encode(d.name); err != nil {
@@ -375,7 +389,11 @@ func (d *Data) Persistence() Persistence {
 // --- DataService implementation -----
 
 func (d *Data) GetType() TypeService {
-	return d.TypeService
+	typeservice, err := TypeServiceByURL(d.typeurl)
+	if err != nil {
+		dvid.Errorf("Data %q: %s\n", d.name, err.Error())
+	}
+	return typeservice
 }
 
 func (d *Data) ModifyConfig(config dvid.Config) error {

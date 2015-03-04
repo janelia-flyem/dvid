@@ -34,7 +34,12 @@ const (
 
 const HelpMessage = `
 API for image block datatype (github.com/janelia-flyem/dvid/datatype/imageblk)
-=========================================================================
+==============================================================================
+
+Note that different data types are available:
+
+    uint8blk
+    rgba8blk
 
 Command-line:
 
@@ -44,7 +49,7 @@ $ dvid repo <UUID> new imageblk <data name> <settings...>
 
 	Example (note anisotropic resolution specified instead of default 8 nm isotropic):
 
-	$ dvid repo 3f8c new uint8 mygrayscale BlockSize=32 Res=3.2,3.2,40.0
+	$ dvid repo 3f8c new uint8blk mygrayscale BlockSize=32 Res=3.2,3.2,40.0
 
     Arguments:
 
@@ -292,20 +297,25 @@ func init() {
 	gob.Register(&Data{})
 	gob.Register(binary.LittleEndian)
 	gob.Register(binary.BigEndian)
+}
 
-	// Initialize the default storage for this datatype
+// Initialize the default storage for this datatype
+func initStore() error {
 	var err error
-	store, err = storage.BigDataStore()
-	if err != nil {
-		dvid.Criticalf("Data type imageblk had error initializing store: %s\n", err.Error())
-		os.Exit(1)
+	if store == nil {
+		store, err = storage.BigDataStore()
+		if err != nil {
+			return fmt.Errorf("Data type imageblk had error initializing store: %s\n", err.Error())
+		}
 	}
-	var ok bool
-	batcher, ok = store.(storage.KeyValueBatcher)
-	if !ok {
-		dvid.Criticalf("Data type imageblk requires batch-enabled store, which %q is not\n", store)
-		os.Exit(1)
+	if batcher == nil {
+		var ok bool
+		batcher, ok = store.(storage.KeyValueBatcher)
+		if !ok {
+			return fmt.Errorf("Data type imageblk requires batch-enabled store, which %q is not\n", store)
+		}
 	}
+	return nil
 }
 
 // Type embeds the datastore's Type to create a unique type with voxel functions.
@@ -339,6 +349,9 @@ func NewType(values dvid.DataValues, interpolable bool) Type {
 
 // NewData returns a pointer to a new Voxels with default values.
 func (dtype *Type) NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.Config) (*Data, error) {
+	if err := initStore(); err != nil {
+		return nil, err
+	}
 	basedata, err := datastore.NewDataService(dtype, uuid, id, name, c)
 	if err != nil {
 		return nil, err
@@ -389,7 +402,6 @@ type Voxels struct {
 }
 
 func NewVoxels(geom dvid.Geometry, values dvid.DataValues, data []byte, stride int32) *Voxels {
-
 	return &Voxels{geom, values, data, stride}
 }
 
@@ -930,7 +942,7 @@ func (d *Data) NewVoxels(geom dvid.Geometry, img interface{}) (*Voxels, error) {
 					actualLen, expectedLen, geom)
 			}
 		default:
-			return nil, fmt.Errorf("Unexpected image type given to NewExtHandler(): %T", t)
+			return nil, fmt.Errorf("Unexpected image type given to NewVoxels(): %T", t)
 		}
 	}
 	return voxels, nil
@@ -1509,76 +1521,49 @@ func (d *Data) ServeHTTP(reqCtx context.Context, w http.ResponseWriter, r *http.
 				server.BadRequest(w, r, err.Error())
 				return
 			}
-			if action == "put" {
-				if isotropic {
-					err := fmt.Errorf("can only PUT 'raw' not 'isotropic' images")
-					server.BadRequest(w, r, err.Error())
-					return
-				}
-				// TODO -- Put in format checks for POSTed image.
-				postedImg, _, err := image.Decode(r.Body)
+			if action != "get" {
+				server.BadRequest(w, r, "DVID does not permit 2d mutations, only 3d block-aligned stores")
+				return
+			}
+			rawSlice, err := dvid.Isotropy2D(d.Properties.VoxelSize, slice, isotropic)
+			if err != nil {
+				server.BadRequest(w, r, err.Error())
+				return
+			}
+			vox, err := d.NewVoxels(rawSlice, nil)
+			if err != nil {
+				server.BadRequest(w, r, err.Error())
+				return
+			}
+			if roiptr != nil {
+				roiptr.Iter, err = roi.NewIterator(roiname, versionID, vox)
 				if err != nil {
 					server.BadRequest(w, r, err.Error())
 					return
 				}
-				vox, err := d.NewVoxels(slice, postedImg)
+			}
+			img, err := d.GetImage(versionID, vox, roiptr)
+			if err != nil {
+				server.BadRequest(w, r, err.Error())
+				return
+			}
+			if isotropic {
+				dstW := int(slice.Size().Value(0))
+				dstH := int(slice.Size().Value(1))
+				img, err = img.ScaleImage(dstW, dstH)
 				if err != nil {
 					server.BadRequest(w, r, err.Error())
 					return
 				}
-				if roiptr != nil {
-					roiptr.Iter, err = roi.NewIterator(roiname, versionID, vox)
-					if err != nil {
-						server.BadRequest(w, r, err.Error())
-						return
-					}
-				}
-				err = d.PutVoxels(versionID, vox, roiptr)
-				if err != nil {
-					server.BadRequest(w, r, err.Error())
-					return
-				}
-			} else {
-				rawSlice, err := dvid.Isotropy2D(d.Properties.VoxelSize, slice, isotropic)
-				if err != nil {
-					server.BadRequest(w, r, err.Error())
-					return
-				}
-				vox, err := d.NewVoxels(rawSlice, nil)
-				if err != nil {
-					server.BadRequest(w, r, err.Error())
-					return
-				}
-				if roiptr != nil {
-					roiptr.Iter, err = roi.NewIterator(roiname, versionID, vox)
-					if err != nil {
-						server.BadRequest(w, r, err.Error())
-						return
-					}
-				}
-				img, err := d.GetImage(versionID, vox, roiptr)
-				if err != nil {
-					server.BadRequest(w, r, err.Error())
-					return
-				}
-				if isotropic {
-					dstW := int(slice.Size().Value(0))
-					dstH := int(slice.Size().Value(1))
-					img, err = img.ScaleImage(dstW, dstH)
-					if err != nil {
-						server.BadRequest(w, r, err.Error())
-						return
-					}
-				}
-				var formatStr string
-				if len(parts) >= 8 {
-					formatStr = parts[7]
-				}
-				err = dvid.WriteImageHttp(w, img.Get(), formatStr)
-				if err != nil {
-					server.BadRequest(w, r, err.Error())
-					return
-				}
+			}
+			var formatStr string
+			if len(parts) >= 8 {
+				formatStr = parts[7]
+			}
+			err = dvid.WriteImageHttp(w, img.Get(), formatStr)
+			if err != nil {
+				server.BadRequest(w, r, err.Error())
+				return
 			}
 			timedLog.Infof("HTTP %s: %s (%s)", r.Method, plane, r.URL)
 		case 3:
@@ -1632,6 +1617,12 @@ func (d *Data) ServeHTTP(reqCtx context.Context, w http.ResponseWriter, r *http.
 					server.BadRequest(w, r, err.Error())
 					return
 				}
+				// Make sure vox is block-aligned
+				if !dvid.BlockAligned(subvol, d.BlockSize()) {
+					server.BadRequest(w, r, "cannot store voxels in non-block aligned geometry %s -> %s", subvol.StartPoint(), subvol.EndPoint())
+					return
+				}
+
 				data, err := ioutil.ReadAll(r.Body)
 				if err != nil {
 					server.BadRequest(w, r, err.Error())

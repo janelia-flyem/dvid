@@ -14,7 +14,6 @@ import (
 	"image"
 	"io/ioutil"
 	"net/http"
-	"os"
 	"strings"
 
 	"code.google.com/p/go.net/context"
@@ -211,20 +210,25 @@ func init() {
 	// Need to register types that will be used to fulfill interfaces.
 	gob.Register(&Type{})
 	gob.Register(&Data{})
+}
 
-	// Initialize the default storage for this datatype
+// Initialize the default storage for this datatype
+func initStore() error {
 	var err error
-	store, err = storage.BigDataStore()
-	if err != nil {
-		dvid.Criticalf("Data type imageblk had error initializing store: %s\n", err.Error())
-		os.Exit(1)
+	if store == nil {
+		store, err = storage.BigDataStore()
+		if err != nil {
+			return fmt.Errorf("Data type labelblk had error initializing store: %s\n", err.Error())
+		}
 	}
-	var ok bool
-	batcher, ok = store.(storage.KeyValueBatcher)
-	if !ok {
-		dvid.Criticalf("Data type imageblk requires batch-enabled store, which %q is not\n", store)
-		os.Exit(1)
+	if batcher == nil {
+		var ok bool
+		batcher, ok = store.(storage.KeyValueBatcher)
+		if !ok {
+			return fmt.Errorf("Data type labelblk requires batch-enabled store, which %q is not\n", store)
+		}
 	}
+	return nil
 }
 
 // ZeroBytes returns a slice of bytes that represents the zero label.
@@ -246,6 +250,9 @@ type Type struct {
 // --- TypeService interface ---
 
 func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.Config) (datastore.DataService, error) {
+	if err := initStore(); err != nil {
+		return nil, err
+	}
 	return NewData(uuid, id, name, c)
 }
 
@@ -444,7 +451,7 @@ func (d *Data) Extents() *dvid.Extents {
 	return &(d.Properties.Extents)
 }
 
-// NewVoxels returns labelblk Labels, a representation of externally usable subvolume
+// NewLabels returns labelblk Labels, a representation of externally usable subvolume
 // or slice data, given some geometry and optional image data.
 // If img is passed in, the function will initialize Voxels with data from the image.
 // Otherwise, it will allocate a zero buffer of appropriate size.
@@ -503,7 +510,7 @@ func (d *Data) NewLabels(geom dvid.Geometry, img interface{}) (*Labels, error) {
 					actualLen, expectedLen, geom)
 			}
 		default:
-			return nil, fmt.Errorf("unexpected image type given to NewExtHandler(): %T", t)
+			return nil, fmt.Errorf("unexpected image type given to NewVoxels(): %T", t)
 		}
 	}
 
@@ -825,71 +832,46 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 				server.BadRequest(w, r, err.Error())
 				return
 			}
-			if action == "post" {
-				if isotropic {
-					server.BadRequest(w, r, "can only POST 'raw' not 'isotropic' images")
-					return
-				}
-				// TODO -- Put in format checks for POSTed image.
-				postedImg, _, err := image.Decode(r.Body)
+			if action != "get" {
+				server.BadRequest(w, r, "DVID does not permit 2d mutations, only 3d block-aligned stores")
+				return
+			}
+			rawSlice, err := dvid.Isotropy2D(d.Properties.VoxelSize, slice, isotropic)
+			lbl, err := d.NewLabels(rawSlice, nil)
+			if err != nil {
+				server.BadRequest(w, r, err.Error())
+				return
+			}
+			if roiptr != nil {
+				roiptr.Iter, err = roi.NewIterator(roiname, versionID, lbl)
 				if err != nil {
 					server.BadRequest(w, r, err.Error())
 					return
 				}
-				lbl, err := d.NewLabels(slice, postedImg)
+			}
+			img, err := d.GetImage(versionID, lbl.Voxels, roiptr)
+			if err != nil {
+				server.BadRequest(w, r, err.Error())
+				return
+			}
+			if isotropic {
+				dstW := int(slice.Size().Value(0))
+				dstH := int(slice.Size().Value(1))
+				img, err = img.ScaleImage(dstW, dstH)
 				if err != nil {
 					server.BadRequest(w, r, err.Error())
 					return
 				}
-				if roiptr != nil {
-					roiptr.Iter, err = roi.NewIterator(roiname, versionID, lbl)
-					if err != nil {
-						server.BadRequest(w, r, err.Error())
-						return
-					}
-				}
-				if err = d.PutVoxels(versionID, lbl.Voxels, roiptr); err != nil {
-					server.BadRequest(w, r, err.Error())
-					return
-				}
-			} else {
-				rawSlice, err := dvid.Isotropy2D(d.Properties.VoxelSize, slice, isotropic)
-				lbl, err := d.NewLabels(rawSlice, nil)
-				if err != nil {
-					server.BadRequest(w, r, err.Error())
-					return
-				}
-				if roiptr != nil {
-					roiptr.Iter, err = roi.NewIterator(roiname, versionID, lbl)
-					if err != nil {
-						server.BadRequest(w, r, err.Error())
-						return
-					}
-				}
-				img, err := d.GetImage(versionID, lbl.Voxels, roiptr)
-				if err != nil {
-					server.BadRequest(w, r, err.Error())
-					return
-				}
-				if isotropic {
-					dstW := int(slice.Size().Value(0))
-					dstH := int(slice.Size().Value(1))
-					img, err = img.ScaleImage(dstW, dstH)
-					if err != nil {
-						server.BadRequest(w, r, err.Error())
-						return
-					}
-				}
-				var formatStr string
-				if len(parts) >= 8 {
-					formatStr = parts[7]
-				}
-				//dvid.ElapsedTime(dvid.Normal, startTime, "%s %s upto image formatting", op, slice)
-				err = dvid.WriteImageHttp(w, img.Get(), formatStr)
-				if err != nil {
-					server.BadRequest(w, r, err.Error())
-					return
-				}
+			}
+			var formatStr string
+			if len(parts) >= 8 {
+				formatStr = parts[7]
+			}
+			//dvid.ElapsedTime(dvid.Normal, startTime, "%s %s upto image formatting", op, slice)
+			err = dvid.WriteImageHttp(w, img.Get(), formatStr)
+			if err != nil {
+				server.BadRequest(w, r, err.Error())
+				return
 			}
 			timedLog.Infof("HTTP %s: %s (%s)", r.Method, plane, r.URL)
 		case 3:
@@ -943,6 +925,12 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 					server.BadRequest(w, r, "can only POST 'raw' not 'isotropic' images")
 					return
 				}
+				// Make sure vox is block-aligned
+				if !dvid.BlockAligned(subvol, d.BlockSize()) {
+					server.BadRequest(w, r, "cannot store labels in non-block aligned geometry %s -> %s", subvol.StartPoint(), subvol.EndPoint())
+					return
+				}
+
 				data, err := ioutil.ReadAll(r.Body)
 				if err != nil {
 					server.BadRequest(w, r, err.Error())

@@ -2,9 +2,7 @@ package labelmap
 
 import (
 	"log"
-	"reflect"
 	"sync"
-	"testing"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -47,6 +45,7 @@ func initTestRepo() (datastore.Repo, dvid.VersionID) {
 	return repo, versionID
 }
 
+/*
 func TestLabelmapRepoPersistence(t *testing.T) {
 	tests.UseStore()
 	defer tests.CloseStore()
@@ -121,3 +120,4 @@ func TestLabelmapRepoPersistence(t *testing.T) {
 			oldData.Properties, data2.Properties)
 	}
 }
+*/

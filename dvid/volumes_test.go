@@ -37,7 +37,7 @@ func (s *VolumeTest) TestRLE(c *C) {
 	}
 
 	numVoxels, numRuns := obtained.Stats()
-	c.Assert(numVoxels, Equals, int32(54))
+	c.Assert(numVoxels, Equals, uint64(54))
 	c.Assert(numRuns, Equals, int32(3))
 
 	toAdd := RLEs{

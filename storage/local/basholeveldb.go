@@ -562,7 +562,6 @@ func (db *LevelDB) GetRange(ctx storage.Context, kStart, kEnd []byte) ([]*storag
 // only key-value pairs for kStart's version will be transmitted.
 func (db *LevelDB) ProcessRange(ctx storage.Context, kStart, kEnd []byte, op *storage.ChunkOp, f storage.ChunkProcessor) error {
 	ch := make(chan errorableKV)
-	//fmt.Printf("Process Range: ctx %v, index %v -> %v, op %v\n", ctx, kStart, kEnd, op)
 
 	// Run the range query on a potentially versioned key in a goroutine.
 	go func() {

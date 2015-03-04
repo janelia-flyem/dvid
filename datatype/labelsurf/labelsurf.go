@@ -258,6 +258,10 @@ func (d *Data) GetLabelAtPoint(v dvid.VersionID, pt dvid.Point) (uint64, error) 
 
 // --- datastore.DataService interface ---------
 
+func (d *Data) Help() string {
+	return HelpMessage
+}
+
 // Send transfers all key-value pairs pertinent to this data type as well as
 // the storage.DataStoreType for them.
 func (d *Data) Send(s message.Socket, roiname string, uuid dvid.UUID) error {

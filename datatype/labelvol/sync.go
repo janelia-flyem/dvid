@@ -19,10 +19,9 @@ func (d *Data) GetSyncSubs() []datastore.SyncSub {
 
 	go d.handleBlockEvent(syncCh, doneCh)
 
-	evt := datastore.SyncEvent{d.Link, labels.ChangeBlockEvent}
 	subs := []datastore.SyncSub{
 		datastore.SyncSub{
-			Event:  evt,
+			Event:  datastore.SyncEvent{d.Link, labels.ChangeBlockEvent},
 			Notify: d.DataName(),
 			Ch:     syncCh,
 			Done:   doneCh,

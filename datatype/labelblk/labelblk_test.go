@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/janelia-flyem/dvid/datastore"
-	"github.com/janelia-flyem/dvid/datatype/imageblk"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/tests"
 )
@@ -28,9 +27,9 @@ func initTestRepo() (datastore.Repo, dvid.VersionID) {
 		if err != nil {
 			log.Fatalf("Can't get labelblk type: %s\n", err)
 		}
-		rgbaT, err = datastore.TypeServiceByName("rgba8")
+		rgbaT, err = datastore.TypeServiceByName("rgba8blk")
 		if err != nil {
-			log.Fatalf("Can't get rgba8 type: %s\n", err)
+			log.Fatalf("Can't get rgba8blk type: %s\n", err)
 		}
 	}
 	return tests.NewRepo()
@@ -103,16 +102,16 @@ func TestSubvolLabels64(t *testing.T) {
 
 	// Create a fake 100x100x100 label volume
 	offset := dvid.Point3d{5, 35, 61}
-	size := dvid.Point3d{100, 100, 100}
+	size := dvid.Point3d{128, 128, 128}
 	subvol := dvid.NewSubvolume(offset, size)
 	data := makeVolume(offset, size)
 
 	// Store it into datastore at root
-	v, err := labels.NewExtHandler(subvol, data)
+	v, err := labels.NewVoxels(subvol, data)
 	if err != nil {
 		t.Fatalf("Unable to make new labels ExtHandler: %s\n", err.Error())
 	}
-	if err = imageblk.PutVoxels(labelsCtx, labels, v, imageblk.OpOptions{}); err != nil {
+	if err = labels.PutVoxels(versionID, v, nil); err != nil {
 		t.Errorf("Unable to put labels for %s: %s\n", labelsCtx, err.Error())
 	}
 	if v.NumVoxels() != int64(len(data))/8 {
@@ -121,20 +120,17 @@ func TestSubvolLabels64(t *testing.T) {
 	}
 
 	// Read the stored image
-	v2, err := labels.NewExtHandler(subvol, nil)
+	v2, err := labels.NewVoxels(subvol, nil)
 	if err != nil {
 		t.Errorf("Unable to make new labels ExtHandler: %s\n", err.Error())
 	}
-	if err = imageblk.GetVoxels(labelsCtx, labels, v2, nil); err != nil {
+	if err = labels.GetVoxels(versionID, v2, nil); err != nil {
 		t.Errorf("Unable to get voxels for %s: %s\n", labelsCtx, err.Error())
 	}
 
 	// Make sure the retrieved image matches the original
 	if v.Stride() != v2.Stride() {
 		t.Errorf("Stride in retrieved subvol incorrect\n")
-	}
-	if v.ByteOrder() != v2.ByteOrder() {
-		t.Errorf("ByteOrder in retrieved subvol incorrect\n")
 	}
 	if v.Interpolable() != v2.Interpolable() {
 		t.Errorf("Interpolable bool in retrieved subvol incorrect\n")
@@ -173,17 +169,17 @@ func sliceTest(t *testing.T, slice dvid.Geometry) {
 	img := dvid.ImageNRGBA64FromData(data, int(nx), int(ny))
 
 	// Store it into datastore at root
-	v, err := labels.NewExtHandler(slice, img)
+	v, err := labels.NewVoxels(slice, img)
 	if err != nil {
 		t.Fatalf("Unable to make new labels ExtHandler: %s\n", err.Error())
 	}
-	if err = imageblk.PutVoxels(labelsCtx, labels, v, imageblk.OpOptions{}); err != nil {
+	if err = labels.PutVoxels(versionID, v, nil); err != nil {
 		t.Errorf("Unable to put voxels for %s: %s\n", labelsCtx, err.Error())
 	}
 
 	// Read the stored image
-	v2, err := labels.NewExtHandler(slice, nil)
-	retrieved, err := imageblk.GetImage(labelsCtx, labels, v2, nil)
+	v2, err := labels.NewVoxels(slice, nil)
+	retrieved, err := labels.GetImage(versionID, v2, nil)
 	if err != nil {
 		t.Fatalf("Unable to get image for %s: %s\n", labelsCtx, err.Error())
 	}

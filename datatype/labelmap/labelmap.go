@@ -739,7 +739,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 					server.BadRequest(w, r, "Error parsing slice: %s", err.Error())
 					return
 				}
-				e, err := labels.NewExtHandler(slice, nil)
+				e, err := labels.NewVoxels(slice, nil)
 				if err != nil {
 					server.BadRequest(w, r, err.Error())
 					return
@@ -782,7 +782,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 					server.BadRequest(w, r, "Error parsing subvolume: %s", err.Error())
 					return
 				}
-				e, err := labels.NewExtHandler(subvol, nil)
+				e, err := labels.NewVoxels(subvol, nil)
 				if err != nil {
 					server.BadRequest(w, r, err.Error())
 					return

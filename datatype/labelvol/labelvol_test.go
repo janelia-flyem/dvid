@@ -7,25 +7,35 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"log"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/tests"
 )
 
-func TestBaseAddMerge(t *testing.T) {
-	tuples1 := MergeTuples{
-		{20, 3, 5, 7},
-		{30, 1, 6, 13, 19},
-		{40, 2, 18},
+var (
+	labelsT datastore.TypeService
+	testMu  sync.Mutex
+)
+
+// Sets package-level testRepo and TestVersionID
+func initTestRepo() (datastore.Repo, dvid.VersionID) {
+	testMu.Lock()
+	defer testMu.Unlock()
+	if labelsT == nil {
+		var err error
+		labelsT, err = datastore.TypeServiceByName("labelblk")
+		if err != nil {
+			log.Fatalf("Can't get labelblk type: %s\n", err)
+		}
 	}
-	tuples1.addMerge(98, 20)
-	if len(tuples1[0]) != 5 {
-		t.Errorf("Expected MergeTuples.addMerge() to add: %v\n", tuples1)
-	}
+	return tests.NewRepo()
 }
 
 // A single label block within the volume
@@ -222,7 +232,7 @@ func (mjson mergeJSON) send(t *testing.T, uuid dvid.UUID, name string) {
 
 func createLabelTestVolume(t *testing.T, uuid dvid.UUID, name string) *testVolume {
 	// Setup test label blocks that are non-intersecting.
-	volume := newTestVolume(100, 100, 100)
+	volume := newTestVolume(128, 128, 128)
 	volume.add(body1, 0)
 	volume.add(body2, 0)
 	if !volume.isLabel(2, &body2) {

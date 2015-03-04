@@ -330,7 +330,7 @@ func BadRequest(w http.ResponseWriter, r *http.Request, message string, args ...
 	if len(args) > 0 {
 		message = fmt.Sprintf(message, args)
 	}
-	errorMsg := fmt.Sprintf("ERROR: %s (%s).", message, r.URL.Path)
+	errorMsg := fmt.Sprintf("%s (%s).", message, r.URL.Path)
 	dvid.Errorf(errorMsg)
 	http.Error(w, errorMsg, http.StatusBadRequest)
 }
