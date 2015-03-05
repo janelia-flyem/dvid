@@ -194,6 +194,15 @@ func (d *Data) PutVoxels(v dvid.VersionID, vox *Voxels, roi *ROI) error {
 
 // PutBlocks stores blocks of data in a span along X
 func (d *Data) PutBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int, data io.ReadCloser) error {
+	store, err := storage.BigDataStore()
+	if err != nil {
+		return fmt.Errorf("Data type imageblk had error initializing store: %s\n", err.Error())
+	}
+	batcher, ok := store.(storage.KeyValueBatcher)
+	if !ok {
+		return fmt.Errorf("Data type imageblk requires batch-enabled store, which %q is not\n", store)
+	}
+
 	ctx := datastore.NewVersionedContext(d, v)
 	batch := batcher.NewBatch(ctx)
 
@@ -320,6 +329,11 @@ func (d *Data) putChunk(chunk *storage.Chunk) {
 		return
 	}
 
+	store, err := storage.BigDataStore()
+	if err != nil {
+		dvid.Errorf("Data type imageblk had error initializing store: %s\n", err.Error())
+		return
+	}
 	if err := store.Put(nil, chunk.K, serialization); err != nil {
 		dvid.Errorf("Unable to PUT voxel data for key %v: %s\n", chunk.K, err.Error())
 		return
@@ -392,6 +406,15 @@ const KVWriteSize = 500
 
 // writeBlocks persists blocks of voxel data asynchronously using batch writes.
 func (d *Data) writeBlocks(v dvid.VersionID, b storage.KeyValues, wg1, wg2 *sync.WaitGroup) error {
+	store, err := storage.BigDataStore()
+	if err != nil {
+		return fmt.Errorf("Data type imageblk had error initializing store: %s\n", err.Error())
+	}
+	batcher, ok := store.(storage.KeyValueBatcher)
+	if !ok {
+		return fmt.Errorf("Data type imageblk requires batch-enabled store, which %q is not\n", store)
+	}
+
 	preCompress, postCompress := 0, 0
 	ctx := datastore.NewVersionedContext(d, v)
 

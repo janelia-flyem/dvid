@@ -7,6 +7,7 @@ import (
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
 	"github.com/janelia-flyem/dvid/datatype/imageblk"
 	"github.com/janelia-flyem/dvid/dvid"
+	"github.com/janelia-flyem/dvid/storage"
 )
 
 // Number of change messages we can buffer before blocking on sync channel.
@@ -36,6 +37,17 @@ func (d *Data) GetSyncSubs() []datastore.SyncSub {
 // might not always hold in future, so stick with incremental update
 // until proven to be a bottleneck.
 func (d *Data) handleBlockEvent(in <-chan datastore.SyncMessage, done <-chan struct{}) {
+	store, err := storage.SmallDataStore()
+	if err != nil {
+		dvid.Errorf("Data type labelvol had error initializing store: %s\n", err.Error())
+		return
+	}
+	batcher, ok := store.(storage.KeyValueBatcher)
+	if !ok {
+		dvid.Errorf("Data type labelvol requires batch-enabled store, which %q is not\n", store)
+		return
+	}
+
 	for msg := range in {
 		select {
 		case <-done:

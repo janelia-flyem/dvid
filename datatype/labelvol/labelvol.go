@@ -198,9 +198,7 @@ POST <api URL>/node/<UUID>/<data name>/split/<label>
 `
 
 var (
-	dtype   *Type
-	store   storage.OrderedKeyValueDB
-	batcher storage.KeyValueBatcher
+	dtype *Type
 )
 
 func init() {
@@ -221,25 +219,6 @@ func init() {
 	// Need to register types that will be used to fulfill interfaces.
 	gob.Register(&Type{})
 	gob.Register(&Data{})
-}
-
-// Initialize the default storage for this datatype
-func initStore() error {
-	var err error
-	if store == nil {
-		store, err = storage.SmallDataStore()
-		if err != nil {
-			return fmt.Errorf("Data type labelvol had error initializing store: %s\n", err.Error())
-		}
-	}
-	if batcher == nil {
-		var ok bool
-		batcher, ok = store.(storage.KeyValueBatcher)
-		if !ok {
-			return fmt.Errorf("Data type labelvol requires batch-enabled store, which %q is not\n", store)
-		}
-	}
-	return nil
 }
 
 // NewData returns a pointer to labelvol data.
@@ -279,9 +258,6 @@ type Type struct {
 // --- TypeService interface ---
 
 func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.Config) (datastore.DataService, error) {
-	if err := initStore(); err != nil {
-		return nil, err
-	}
 	return NewData(uuid, id, name, c)
 }
 
@@ -618,6 +594,11 @@ func (d *Data) NewLabel(v dvid.VersionID) (uint64, error) {
 // Returns RLEs for a given label where the key of the returned map is the block index
 // in string format.
 func (d *Data) GetLabelRLEs(v dvid.VersionID, label uint64) (dvid.BlockRLEs, error) {
+	store, err := storage.SmallDataStore()
+	if err != nil {
+		return nil, fmt.Errorf("Data type labelvol had error initializing store: %s\n", err.Error())
+	}
+
 	// Get the start/end indices for this body's KeyLabelSpatialMap (b + s) keys.
 	begIndex := NewIndex(label, dvid.MinIndexZYX.Bytes())
 	endIndex := NewIndex(label, dvid.MaxIndexZYX.Bytes())
@@ -640,7 +621,7 @@ func (d *Data) GetLabelRLEs(v dvid.VersionID, label uint64) (dvid.BlockRLEs, err
 		return nil
 	}
 	ctx := datastore.NewVersionedContext(d, v)
-	err := store.ProcessRange(ctx, begIndex, endIndex, &storage.ChunkOp{}, f)
+	err = store.ProcessRange(ctx, begIndex, endIndex, &storage.ChunkOp{}, f)
 	if err != nil {
 		return nil, err
 	}
@@ -687,6 +668,10 @@ func boundRLEs(b []byte, bounds *dvid.Bounds) ([]byte, error) {
 //        bytes   Optional payload dependent on first byte descriptor
 //
 func GetSparseVol(ctx storage.Context, label uint64, bounds Bounds) ([]byte, error) {
+	store, err := storage.SmallDataStore()
+	if err != nil {
+		return nil, fmt.Errorf("Data type labelvol had error initializing store: %s\n", err.Error())
+	}
 
 	// Create the sparse volume header
 	buf := new(bytes.Buffer)
@@ -809,6 +794,10 @@ func PutSparseVol(ctx storage.Context, label uint64, data []byte) error {
 //     		int32   Length of run
 //
 func GetSparseCoarseVol(ctx storage.Context, label uint64) ([]byte, error) {
+	store, err := storage.SmallDataStore()
+	if err != nil {
+		return nil, fmt.Errorf("Data type labelvol had error initializing store: %s\n", err.Error())
+	}
 
 	// Create the sparse volume header
 	buf := new(bytes.Buffer)

@@ -307,6 +307,11 @@ type getOperation struct {
 
 // GetVoxels copies voxels from the storage engine to Voxels, a requested subvolume or 2d image.
 func (d *Data) GetVoxels(v dvid.VersionID, vox *Voxels, r *ROI) error {
+	store, err := storage.BigDataStore()
+	if err != nil {
+		return fmt.Errorf("Data type imageblk had error initializing store: %s\n", err.Error())
+	}
+
 	// Only do one request at a time, although each request can start many goroutines.
 	server.SpawnGoroutineMutex.Lock()
 	defer server.SpawnGoroutineMutex.Unlock()
@@ -314,9 +319,7 @@ func (d *Data) GetVoxels(v dvid.VersionID, vox *Voxels, r *ROI) error {
 	ctx := datastore.NewVersionedContext(d, v)
 
 	wg := new(sync.WaitGroup)
-	var it dvid.IndexIterator
-	var err error
-	for it, err = vox.IndexIterator(d.BlockSize()); err == nil && it.Valid(); it.NextSpan() {
+	for it, err := vox.IndexIterator(d.BlockSize()); err == nil && it.Valid(); it.NextSpan() {
 		indexBeg, indexEnd, err := it.IndexSpan()
 		if err != nil {
 			return err
@@ -362,6 +365,11 @@ func (d *Data) GetVoxels(v dvid.VersionID, vox *Voxels, r *ROI) error {
 
 // GetBlocks returns a slice of bytes corresponding to all the blocks along a span in X
 func (d *Data) GetBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int) ([]byte, error) {
+	store, err := storage.BigDataStore()
+	if err != nil {
+		return nil, fmt.Errorf("Data type imageblk had error initializing store: %s\n", err.Error())
+	}
+
 	indexBeg := dvid.IndexZYX(start)
 	end := start
 	end[0] += int32(span - 1)
@@ -399,6 +407,11 @@ func (d *Data) GetBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int) ([
 
 // Loads blocks with old data if they exist.
 func (d *Data) loadOldBlocks(v dvid.VersionID, vox *Voxels, blocks storage.KeyValues) error {
+	store, err := storage.BigDataStore()
+	if err != nil {
+		return fmt.Errorf("Data type imageblk had error initializing store: %s\n", err.Error())
+	}
+
 	ctx := datastore.NewVersionedContext(d, v)
 
 	// Create a map of old blocks indexed by the index

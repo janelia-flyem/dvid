@@ -286,9 +286,6 @@ var (
 	DefaultRes float32 = 8
 
 	DefaultUnits = "nanometers"
-
-	store   storage.OrderedKeyValueDB
-	batcher storage.KeyValueBatcher
 )
 
 func init() {
@@ -297,25 +294,6 @@ func init() {
 	gob.Register(&Data{})
 	gob.Register(binary.LittleEndian)
 	gob.Register(binary.BigEndian)
-}
-
-// Initialize the default storage for this datatype
-func initStore() error {
-	var err error
-	if store == nil {
-		store, err = storage.BigDataStore()
-		if err != nil {
-			return fmt.Errorf("Data type imageblk had error initializing store: %s\n", err.Error())
-		}
-	}
-	if batcher == nil {
-		var ok bool
-		batcher, ok = store.(storage.KeyValueBatcher)
-		if !ok {
-			return fmt.Errorf("Data type imageblk requires batch-enabled store, which %q is not\n", store)
-		}
-	}
-	return nil
 }
 
 // Type embeds the datastore's Type to create a unique type with voxel functions.
@@ -349,9 +327,6 @@ func NewType(values dvid.DataValues, interpolable bool) Type {
 
 // NewData returns a pointer to a new Voxels with default values.
 func (dtype *Type) NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.Config) (*Data, error) {
-	if err := initStore(); err != nil {
-		return nil, err
-	}
 	basedata, err := datastore.NewDataService(dtype, uuid, id, name, c)
 	if err != nil {
 		return nil, err
@@ -1019,6 +994,11 @@ type SendOp struct {
 // the storage.DataStoreType for them.
 // TODO -- handle versioning of the ROI coming.  For not, only allow root version of ROI.
 func (d *Data) Send(s message.Socket, roiname string, uuid dvid.UUID) error {
+	store, err := storage.BigDataStore()
+	if err != nil {
+		return fmt.Errorf("Data type imageblk had error initializing store: %s\n", err.Error())
+	}
+
 	server.SpawnGoroutineMutex.Lock()
 	defer server.SpawnGoroutineMutex.Unlock()
 
@@ -1067,7 +1047,7 @@ func (d *Data) Send(s message.Socket, roiname string, uuid dvid.UUID) error {
 
 	// Send this instance's voxel blocks down the socket
 	chunkOp := &storage.ChunkOp{&SendOp{s}, nil}
-	err := store.ProcessRange(nil, begKey, endKey, chunkOp, f)
+	err = store.ProcessRange(nil, begKey, endKey, chunkOp, f)
 	if err != nil {
 		return fmt.Errorf("Error in voxels %q range query: %s", d.DataName(), err.Error())
 	}
@@ -1136,6 +1116,12 @@ func (d *Data) ForegroundROI(req datastore.Request, reply *datastore.Response) e
 
 func (d *Data) foregroundROI(v dvid.VersionID, dest *roi.Data, background dvid.PointNd) {
 	dest.Ready = false
+
+	store, err := storage.BigDataStore()
+	if err != nil {
+		dvid.Criticalf("Data type imageblk had error initializing store: %s\n", err.Error())
+		return
+	}
 
 	timedLog := dvid.NewTimeLog()
 	timedLog.Infof("Starting foreground ROI %q for %s", dest.DataName(), d.DataName())
@@ -1207,7 +1193,7 @@ func (d *Data) foregroundROI(v dvid.VersionID, dest *roi.Data, background dvid.P
 		server.BlockOnInteractiveRequests("voxels [compute foreground ROI]")
 		return nil
 	}
-	err := store.ProcessRange(ctx, minIndex, maxIndex, &storage.ChunkOp{}, f)
+	err = store.ProcessRange(ctx, minIndex, maxIndex, &storage.ChunkOp{}, f)
 	if err != nil {
 		dvid.Errorf("Error in processing chunks in ROI: %s\n", err.Error())
 		return

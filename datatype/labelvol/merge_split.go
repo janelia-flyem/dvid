@@ -36,6 +36,14 @@ type sizeChange struct {
 // labels.MergeEndEvent occurs at end of merge and transmits labels.DeltaMergeEnd struct.
 //
 func (d *Data) MergeLabels(v dvid.VersionID, m labels.MergeOp) error {
+	store, err := storage.SmallDataStore()
+	if err != nil {
+		return fmt.Errorf("Data type labelvol had error initializing store: %s\n", err.Error())
+	}
+	batcher, ok := store.(storage.KeyValueBatcher)
+	if !ok {
+		return fmt.Errorf("Data type labelvol requires batch-enabled store, which %q is not\n", store)
+	}
 
 	dvid.Debugf("Merging %s into label %d ...\n", m.Merged, m.Target)
 
@@ -153,6 +161,16 @@ func (d *Data) MergeLabels(v dvid.VersionID, m labels.MergeOp) error {
 // labels.SplitEndEvent occurs at end of split and transmits labels.DeltaSplitEnd struct.
 //
 func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser) (toLabel uint64, err error) {
+	store, err := storage.SmallDataStore()
+	if err != nil {
+		err = fmt.Errorf("Data type labelvol had error initializing store: %s\n", err.Error())
+		return
+	}
+	batcher, ok := store.(storage.KeyValueBatcher)
+	if !ok {
+		err = fmt.Errorf("Data type labelvol requires batch-enabled store, which %q is not\n", store)
+		return
+	}
 
 	// Create a new label id for this version that will persist to store
 	toLabel, err = d.NewLabel(v)
@@ -302,6 +320,15 @@ func (d *Data) diffBlock(split, orig dvid.RLEs) (modified dvid.RLEs, dup bool, e
 }
 
 func (d *Data) writeLabelVol(v dvid.VersionID, label uint64, blks []dvid.IZYXString, brles dvid.BlockRLEs) error {
+	store, err := storage.SmallDataStore()
+	if err != nil {
+		return fmt.Errorf("Data type labelvol had error initializing store: %s\n", err.Error())
+	}
+	batcher, ok := store.(storage.KeyValueBatcher)
+	if !ok {
+		return fmt.Errorf("Data type labelvol requires batch-enabled store, which %q is not\n", store)
+	}
+
 	ctx := datastore.NewVersionedContext(d, v)
 	batch := batcher.NewBatch(ctx)
 	for _, s := range blks {

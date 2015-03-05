@@ -12,6 +12,7 @@ import (
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
 	"github.com/janelia-flyem/dvid/dvid"
+	"github.com/janelia-flyem/dvid/storage"
 )
 
 // GetSyncSubs implements the datastore.Syncer interface
@@ -165,6 +166,12 @@ func (d *Data) syncSplit(in <-chan datastore.SyncMessage, done <-chan struct{}) 
 // concurrency by serializing GET/PUT for a particular block coordinate.
 // TODO -- Block-level ops should be handled by one goroutine for a particular block across all ops.
 func (d *Data) relabelBlock(in <-chan mergeOp) {
+	store, err := storage.BigDataStore()
+	if err != nil {
+		dvid.Errorf("Data type labelblk had error initializing store: %s\n", err.Error())
+		return
+	}
+
 	blockBytes := int(d.BlockSize().Prod() * 8)
 
 	for op := range in {

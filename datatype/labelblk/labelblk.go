@@ -185,9 +185,6 @@ var (
 	encodeFormat dvid.DataValues
 
 	zeroLabelBytes = make([]byte, 8, 8)
-
-	store   storage.OrderedKeyValueDB
-	batcher storage.KeyValueBatcher
 )
 
 func init() {
@@ -212,25 +209,6 @@ func init() {
 	gob.Register(&Data{})
 }
 
-// Initialize the default storage for this datatype
-func initStore() error {
-	var err error
-	if store == nil {
-		store, err = storage.BigDataStore()
-		if err != nil {
-			return fmt.Errorf("Data type labelblk had error initializing store: %s\n", err.Error())
-		}
-	}
-	if batcher == nil {
-		var ok bool
-		batcher, ok = store.(storage.KeyValueBatcher)
-		if !ok {
-			return fmt.Errorf("Data type labelblk requires batch-enabled store, which %q is not\n", store)
-		}
-	}
-	return nil
-}
-
 // ZeroBytes returns a slice of bytes that represents the zero label.
 func ZeroBytes() []byte {
 	return zeroLabelBytes
@@ -250,9 +228,6 @@ type Type struct {
 // --- TypeService interface ---
 
 func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.Config) (datastore.DataService, error) {
-	if err := initStore(); err != nil {
-		return nil, err
-	}
 	return NewData(uuid, id, name, c)
 }
 

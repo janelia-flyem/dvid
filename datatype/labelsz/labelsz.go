@@ -112,9 +112,7 @@ GET <api URL>/node/<UUID>/<data name>/sizerange/<min size>/<optional max size>
 `
 
 var (
-	dtype   *Type
-	store   storage.OrderedKeyValueDB
-	batcher storage.KeyValueBatcher
+	dtype *Type
 )
 
 func init() {
@@ -135,25 +133,6 @@ func init() {
 	// Need to register types that will be used to fulfill interfaces.
 	gob.Register(&Type{})
 	gob.Register(&Data{})
-}
-
-// Initialize the default storage for this datatype
-func initStore() error {
-	var err error
-	if store == nil {
-		store, err = storage.SmallDataStore()
-		if err != nil {
-			return fmt.Errorf("Data type labelsz had error initializing store: %s\n", err.Error())
-		}
-	}
-	if batcher == nil {
-		var ok bool
-		batcher, ok = store.(storage.KeyValueBatcher)
-		if !ok {
-			return fmt.Errorf("Data type labelsz requires batch-enabled store, which %q is not\n", store)
-		}
-	}
-	return nil
 }
 
 // --- Labelsurf Datatype -----
@@ -189,9 +168,6 @@ func NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.
 // --- TypeService interface ---
 
 func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.Config) (datastore.DataService, error) {
-	if err := initStore(); err != nil {
-		return nil, err
-	}
 	return NewData(uuid, id, name, c)
 }
 
@@ -224,6 +200,10 @@ type Data struct {
 
 // GetSize returns the size in voxels of the given label.
 func (d *Data) GetSize(v dvid.VersionID, label uint64) (uint64, error) {
+	store, err := storage.SmallDataStore()
+	if err != nil {
+		return 0, fmt.Errorf("Data type imagesz had error initializing store: %s\n", err.Error())
+	}
 
 	// Get the start/end keys for the label.
 	firstKey := NewLabelSizeIndex(label, 0)
@@ -249,6 +229,10 @@ func (d *Data) GetSize(v dvid.VersionID, label uint64) (uint64, error) {
 // GetSizeRange returns a JSON list of mapped labels that have volumes within the given range.
 // If maxSize is 0, all mapped labels are returned >= minSize.
 func (d *Data) GetSizeRange(v dvid.VersionID, minSize, maxSize uint64) (string, error) {
+	store, err := storage.SmallDataStore()
+	if err != nil {
+		return "{}", fmt.Errorf("Data type imagesz had error initializing store: %s\n", err.Error())
+	}
 
 	// Get the start/end keys for the size range.
 	firstKey := NewSizeLabelIndex(minSize, 0)
