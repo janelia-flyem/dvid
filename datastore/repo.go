@@ -138,7 +138,7 @@ type Repo interface {
 
 	// NotifySubscribers notifies any subscribed instances of an event and sends an
 	// event-specific message down internal channels.
-	NotifySubscribers(SyncEvent, SyncMessage)
+	NotifySubscribers(SyncEvent, SyncMessage) error
 
 	gob.GobDecoder
 	gob.GobEncoder

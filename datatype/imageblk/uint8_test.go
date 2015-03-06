@@ -94,7 +94,6 @@ func makeVolume(offset, size dvid.Point3d) []byte {
 
 func makeGrayscale(repo datastore.Repo, t *testing.T, name string) *Data {
 	config := dvid.NewConfig()
-	config.SetVersioned(true)
 	dataservice, err := repo.NewData(grayscaleT, dvid.InstanceName(name), config)
 	if err != nil {
 		t.Errorf("Unable to create grayscale instance %q: %s\n", name, err.Error())
@@ -480,7 +479,6 @@ func TestROIMaskGrayscale8(t *testing.T) {
 
 	// Create ROI
 	config := dvid.NewConfig()
-	config.SetVersioned(true)
 	dataservice, err := testData.repo.NewData(roiT, "roi", config)
 	if err != nil {
 		t.Fatalf("Error creating new roi instance: %s\n", err.Error())
@@ -575,7 +573,6 @@ func TestGrayscaleRepoPersistence(t *testing.T) {
 
 	// Make grayscale and set various properties
 	config := dvid.NewConfig()
-	config.SetVersioned(true)
 	config.Set("BlockSize", "12,13,14")
 	config.Set("VoxelSize", "1.1,2.8,11")
 	config.Set("VoxelUnits", "microns,millimeters,nanometers")

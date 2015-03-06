@@ -80,7 +80,6 @@ func makeVolume(offset, size dvid.Point3d) []byte {
 // Creates a new data instance for labelblk
 func newDataInstance(repo datastore.Repo, t *testing.T, name dvid.InstanceName) *Data {
 	config := dvid.NewConfig()
-	config.SetVersioned(true)
 	dataservice, err := repo.NewData(labelsT, name, config)
 	if err != nil {
 		t.Errorf("Unable to create labelblk instance %q: %s\n", name, err.Error())
@@ -242,7 +241,6 @@ func TestLabels64RepoPersistence(t *testing.T) {
 
 	// Make labels and set various properties
 	config := dvid.NewConfig()
-	config.SetVersioned(true)
 	config.Set("BlockSize", "12,13,14")
 	config.Set("VoxelSize", "1.1,2.8,11")
 	config.Set("VoxelUnits", "microns,millimeters,nanometers")

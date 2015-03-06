@@ -297,7 +297,9 @@ func (m *repoManager) loadMetadata() error {
 		for _, dataservice := range repo.data {
 			syncedData, syncable := dataservice.(Syncer)
 			if syncable {
-				repo.addSyncGraph(syncedData.GetSyncSubs())
+				for _, name := range syncedData.SyncedNames() {
+					repo.addSyncGraph(syncedData.InitSync(name))
+				}
 			}
 		}
 	}
@@ -877,7 +879,9 @@ func (r *repoT) NewData(t TypeService, name dvid.InstanceName, c dvid.Config) (D
 	// Update the sync graph if this data needs to be synced with another data instance.
 	syncedData, syncable := dataservice.(Syncer)
 	if syncable {
-		r.addSyncGraph(syncedData.GetSyncSubs())
+		for _, name := range syncedData.SyncedNames() {
+			r.addSyncGraph(syncedData.InitSync(name))
+		}
 	}
 
 	// Add to log and save repo
@@ -1009,14 +1013,15 @@ func (r *repoT) Types() (map[dvid.URLString]TypeService, error) {
 }
 
 // NotifySubscribers sends a message to any data instances subscribed to the event.
-func (r *repoT) NotifySubscribers(e SyncEvent, m SyncMessage) {
+func (r *repoT) NotifySubscribers(e SyncEvent, m SyncMessage) error {
 	subs, found := r.subs[e]
 	if !found {
-		return
+		return nil
 	}
 	for _, sub := range subs {
 		sub.Ch <- m
 	}
+	return nil
 }
 
 // -------------------------------------------------------------------------------------------

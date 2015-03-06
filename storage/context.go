@@ -204,6 +204,12 @@ func (ctx *DataContext) IndexFromKey(key []byte) ([]byte, error) {
 	return key[start:end], nil
 }
 
+// Versioned returns false.  This can be overriden by embedding DataContext in structures
+// that will support the VersionedContext interface.
+func (ctx *DataContext) Versioned() bool {
+	return false
+}
+
 type mutexID struct {
 	instance dvid.InstanceID
 	version  dvid.VersionID
@@ -227,10 +233,6 @@ func (ctx *DataContext) Mutex() *sync.Mutex {
 func (ctx *DataContext) String() string {
 	return fmt.Sprintf("Data Context for %q (local id %d, version id %d)", ctx.data.DataName(),
 		ctx.data.InstanceID(), ctx.version)
-}
-
-func (ctx *DataContext) Versioned() bool {
-	return ctx.data.Versioned()
 }
 
 // ----- partial storage.VersionedContext implementation

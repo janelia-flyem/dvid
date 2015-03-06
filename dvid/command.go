@@ -62,43 +62,6 @@ func (c *Config) SetByJSON(jsonData io.Reader) error {
 	return nil
 }
 
-// IsVersioned returns true if we want this data versioned.
-func (c Config) IsVersioned() (versioned bool, err error) {
-	if c.values == nil {
-		err = fmt.Errorf("Config data structure has not been initialized")
-		return
-	}
-	param, found := c.values["versioned"]
-	if !found {
-		c.values["versioned"] = "false"
-		return false, nil
-	}
-	s, ok := param.(string)
-	if !ok {
-		return false, fmt.Errorf("'versioned' in DVID configuration must be 'true' or 'false'")
-	}
-	switch s {
-	case "true":
-		return true, nil
-	case "false":
-		return false, nil
-	default:
-		return false, fmt.Errorf(
-			"'versioned' in DVID configuration must be 'true' or 'false', not '%s'", s)
-	}
-}
-
-func (c *Config) SetVersioned(versioned bool) {
-	if c.values == nil {
-		c.values = make(map[string]interface{})
-	}
-	if versioned {
-		c.values["versioned"] = "true"
-	} else {
-		c.values["versioned"] = "false"
-	}
-}
-
 func (c *Config) Set(key string, value interface{}) {
 	if c.values == nil {
 		c.values = make(map[string]interface{})

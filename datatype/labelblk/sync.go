@@ -15,8 +15,14 @@ import (
 	"github.com/janelia-flyem/dvid/storage"
 )
 
-// GetSyncSubs implements the datastore.Syncer interface
-func (d *Data) GetSyncSubs() []datastore.SyncSub {
+// InitSync implements the datastore.Syncer interface
+func (d *Data) InitSync(name dvid.InstanceName) []datastore.SyncSub {
+	// This should only be called once for any synced instance.
+	if d.IsSyncEstablished(name) {
+		return nil
+	}
+	d.SyncEstablished(name)
+
 	mergeCh := make(chan datastore.SyncMessage, 100)
 	mergeDone := make(chan struct{})
 
@@ -25,43 +31,43 @@ func (d *Data) GetSyncSubs() []datastore.SyncSub {
 
 	subs := []datastore.SyncSub{
 		datastore.SyncSub{
-			Event:  datastore.SyncEvent{d.Link, labels.ChangeSparsevolEvent},
+			Event:  datastore.SyncEvent{name, labels.ChangeSparsevolEvent},
 			Notify: d.DataName(),
 			Ch:     make(chan datastore.SyncMessage, 100),
 			Done:   make(chan struct{}),
 		},
 		datastore.SyncSub{
-			Event:  datastore.SyncEvent{d.Link, labels.MergeStartEvent},
+			Event:  datastore.SyncEvent{name, labels.MergeStartEvent},
 			Notify: d.DataName(),
 			Ch:     mergeCh,
 			Done:   mergeDone,
 		},
 		datastore.SyncSub{
-			Event:  datastore.SyncEvent{d.Link, labels.MergeEndEvent},
+			Event:  datastore.SyncEvent{name, labels.MergeEndEvent},
 			Notify: d.DataName(),
 			Ch:     mergeCh,
 			Done:   mergeDone,
 		},
 		datastore.SyncSub{
-			Event:  datastore.SyncEvent{d.Link, labels.MergeBlockEvent},
+			Event:  datastore.SyncEvent{name, labels.MergeBlockEvent},
 			Notify: d.DataName(),
 			Ch:     mergeCh,
 			Done:   mergeDone,
 		},
 		datastore.SyncSub{
-			Event:  datastore.SyncEvent{d.Link, labels.SplitStartEvent},
+			Event:  datastore.SyncEvent{name, labels.SplitStartEvent},
 			Notify: d.DataName(),
 			Ch:     splitCh,
 			Done:   splitDone,
 		},
 		datastore.SyncSub{
-			Event:  datastore.SyncEvent{d.Link, labels.SplitEndEvent},
+			Event:  datastore.SyncEvent{name, labels.SplitEndEvent},
 			Notify: d.DataName(),
 			Ch:     splitCh,
 			Done:   splitDone,
 		},
 		datastore.SyncSub{
-			Event:  datastore.SyncEvent{d.Link, labels.SplitBlockEvent},
+			Event:  datastore.SyncEvent{name, labels.SplitBlockEvent},
 			Notify: d.DataName(),
 			Ch:     splitCh,
 			Done:   splitDone,
@@ -100,7 +106,7 @@ func hashStr(s dvid.IZYXString, n int) int {
 
 type mergeOp struct {
 	labels.MergeOp
-	ctx  datastore.VersionedContext
+	ctx  *datastore.VersionedContext
 	izyx dvid.IZYXString
 }
 
@@ -130,7 +136,7 @@ func (d *Data) syncMerge(in <-chan datastore.SyncMessage, done <-chan struct{}) 
 				ctx := datastore.NewVersionedContext(d, msg.Version)
 				for izyxStr := range delta.Blocks {
 					n := hashStr(izyxStr, numprocs)
-					pch[n] <- mergeOp{delta.MergeOp, *ctx, izyxStr}
+					pch[n] <- mergeOp{delta.MergeOp, ctx, izyxStr}
 				}
 			case labels.DeltaMergeStart:
 			case labels.DeltaMergeEnd:

@@ -18,6 +18,7 @@ package multichan16
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/gob"
 	"encoding/json"
 	"fmt"
@@ -558,7 +559,7 @@ func (d *Data) storeComposite(v dvid.VersionID, channels []*Channel) error {
 		data := channel.Data()
 		beg := 0
 		for i := 0; i < pixels; i++ {
-			value := d.ByteOrder.Uint16(data[beg : beg+2])
+			value := binary.LittleEndian.Uint16(data[beg : beg+2])
 			if value < min[c] {
 				min[c] = value
 			}
@@ -581,7 +582,7 @@ func (d *Data) storeComposite(v dvid.VersionID, channels []*Channel) error {
 		beg := 0
 		begC := c // Channel 0 -> R, Channel 1 -> G, Channel 2 -> B
 		for i := 0; i < pixels; i++ {
-			value := d.ByteOrder.Uint16(data[beg : beg+2])
+			value := binary.LittleEndian.Uint16(data[beg : beg+2])
 			normalized := 255 * int(value-min[c]) / window
 			if normalized > 255 {
 				normalized = 255

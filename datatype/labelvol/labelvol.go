@@ -60,7 +60,9 @@ $ dvid repo <UUID> new labelvol <data name> <settings...>
 
     Configuration Settings (case-insensitive keys)
 
-    Link           Name of associated labelblk data.  Also sets VoxelSize, VoxelUnits, and BlockSize.
+    BlockSize      Size in pixels  (default: %s)
+    VoxelSize      Resolution of voxels (default: 8.0, 8.0, 8.0)
+    VoxelUnits     Resolution units (default: "nanometers")
 	
 	
     ------------------
@@ -199,6 +201,10 @@ POST <api URL>/node/<UUID>/<data name>/split/<label>
 
 var (
 	dtype *Type
+
+	DefaultBlockSize int32   = labelblk.DefaultBlockSize
+	DefaultRes       float32 = labelblk.DefaultRes
+	DefaultUnits             = labelblk.DefaultUnits
 )
 
 func init() {
@@ -223,30 +229,22 @@ func init() {
 
 // NewData returns a pointer to labelvol data.
 func NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.Config) (*Data, error) {
-	// Make sure we have a valid DataService source
-	var data Data
-	sourcename, found, err := c.GetString("Link")
-	if err != nil {
-		return nil, err
-	}
-	if found {
-		source, err := labelblk.GetByUUID(uuid, dvid.InstanceName(sourcename))
-		if err != nil {
-			return nil, err
-		}
-		data.Properties.Resolution = source.Resolution()
-		data.Properties.BlockSize = source.BlockSize().(dvid.Point3d)
-		data.Properties.Link = dvid.InstanceName(sourcename)
-	}
-
 	// Initialize the Data for this data type
 	basedata, err := datastore.NewDataService(dtype, uuid, id, name, c)
 	if err != nil {
 		return nil, err
 	}
-	data.Data = basedata
+	props := new(Properties)
+	props.setDefault()
+	if err := props.setByConfig(c); err != nil {
+		return nil, err
+	}
+	data := &Data{
+		Data:       basedata,
+		Properties: *props,
+	}
 	data.Properties.MaxLabel = make(map[dvid.VersionID]uint64)
-	return &data, nil
+	return data, nil
 }
 
 // --- Labelvol Datatype -----
@@ -267,13 +265,10 @@ func (dtype *Type) Help() string {
 
 // Properties are additional properties for data beyond those in standard datastore.Data.
 type Properties struct {
-	dvid.Resolution
+	Resolution dvid.Resolution
 
 	// Block size for this repo
 	BlockSize dvid.Point3d
-
-	// The name of an associated labelblk data instance
-	Link dvid.InstanceName
 
 	ml_mu sync.RWMutex // For atomic access of MaxLabel
 
@@ -281,10 +276,70 @@ type Properties struct {
 	MaxLabel map[dvid.VersionID]uint64
 }
 
+func (p *Properties) setDefault() {
+	for d := 0; d < 2; d++ {
+		p.BlockSize[d] = DefaultBlockSize
+	}
+	p.Resolution.VoxelSize = make(dvid.NdFloat32, 3)
+	for d := 0; d < 3; d++ {
+		p.Resolution.VoxelSize[d] = DefaultRes
+	}
+	p.Resolution.VoxelUnits = make(dvid.NdString, 3)
+	for d := 0; d < 3; d++ {
+		p.Resolution.VoxelUnits[d] = DefaultUnits
+	}
+}
+
+func (p *Properties) setByConfig(config dvid.Config) error {
+	s, found, err := config.GetString("BlockSize")
+	if err != nil {
+		return err
+	}
+	if found {
+		p.BlockSize, err = dvid.StringToPoint3d(s, ",")
+		if err != nil {
+			return err
+		}
+	}
+	s, found, err = config.GetString("VoxelSize")
+	if err != nil {
+		return err
+	}
+	if found {
+		dvid.Infof("Changing resolution of voxels to %s\n", s)
+		p.Resolution.VoxelSize, err = dvid.StringToNdFloat32(s, ",")
+		if err != nil {
+			return err
+		}
+	}
+	s, found, err = config.GetString("VoxelUnits")
+	if err != nil {
+		return err
+	}
+	if found {
+		p.Resolution.VoxelUnits, err = dvid.StringToNdString(s, ",")
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Data instance of labelvol, label sparse volumes.
 type Data struct {
 	*datastore.Data `json:"Base"`
 	Properties      `json:"Extended"`
+}
+
+func (d *Data) GetSyncedLabelblk(v dvid.VersionID) (*labelblk.Data, error) {
+	// Go through all synced names, and checking if there's a valid source.
+	for _, name := range d.SyncedNames() {
+		source, err := labelblk.GetByVersion(v, name)
+		if err == nil {
+			return source, nil
+		}
+	}
+	return nil, fmt.Errorf("no labelblk data is syncing with %d", d.DataName())
 }
 
 // GetByUUID returns a pointer to labelvol data given a version (UUID) and data name.
@@ -441,9 +496,9 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 			server.BadRequest(w, r, err.Error())
 			return
 		}
-		source, err := labelblk.GetByVersion(versionID, d.Link)
+		source, err := d.GetSyncedLabelblk(versionID)
 		if err != nil {
-			server.BadRequest(w, r, "Can't get data for source labelblk: %s", err.Error())
+			server.BadRequest(w, r, err.Error())
 			return
 		}
 		label, err := source.GetLabelAtPoint(versionID, coord)

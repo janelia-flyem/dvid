@@ -13,8 +13,14 @@ import (
 // Number of change messages we can buffer before blocking on sync channel.
 const syncBufferSize = 100
 
-// GetSyncSubs implements the datastore.Syncer interface
-func (d *Data) GetSyncSubs() []datastore.SyncSub {
+// InitSync implements the datastore.Syncer interface
+func (d *Data) InitSync(name dvid.InstanceName) []datastore.SyncSub {
+	// This should only be called once for any synced instance.
+	if d.IsSyncEstablished(name) {
+		return nil
+	}
+	d.SyncEstablished(name)
+
 	syncCh := make(chan datastore.SyncMessage, syncBufferSize)
 	doneCh := make(chan struct{})
 
@@ -22,7 +28,7 @@ func (d *Data) GetSyncSubs() []datastore.SyncSub {
 
 	subs := []datastore.SyncSub{
 		datastore.SyncSub{
-			Event:  datastore.SyncEvent{d.Link, labels.ChangeBlockEvent},
+			Event:  datastore.SyncEvent{name, labels.ChangeBlockEvent},
 			Notify: d.DataName(),
 			Ch:     syncCh,
 			Done:   doneCh,
@@ -55,7 +61,7 @@ func (d *Data) handleBlockEvent(in <-chan datastore.SyncMessage, done <-chan str
 		default:
 			block, ok := msg.Delta.(imageblk.Block)
 			if !ok {
-				dvid.Criticalf("Cannot sync labelvol from %q block event.  Got unexpected delta: %v", d.Link, msg)
+				dvid.Criticalf("Cannot sync labelvol from change block event.  Got unexpected delta: %v", msg)
 				continue
 			}
 
@@ -120,7 +126,7 @@ func (d *Data) handleBlockEvent(in <-chan datastore.SyncMessage, done <-chan str
 				batch.Put(index, rleBytes)
 			}
 			if err := batch.Commit(); err != nil {
-				dvid.Errorf("Batch PUT during sync of %q with %q block event: %s\n", d.DataName(), d.Link, err.Error())
+				dvid.Errorf("Batch PUT during sync of %q with change block event: %s\n", d.DataName(), err.Error())
 			}
 		}
 	}

@@ -36,7 +36,6 @@ func initTestRepo() (datastore.Repo, dvid.VersionID) {
 
 func makeGrayscale(repo datastore.Repo, t *testing.T, name dvid.InstanceName) *imageblk.Data {
 	config := dvid.NewConfig()
-	config.SetVersioned(true)
 	dataservice, err := repo.NewData(grayscaleT, name, config)
 	if err != nil {
 		t.Errorf("Unable to create grayscale instance %q: %s\n", name, err.Error())
@@ -85,7 +84,6 @@ func TestMultiscale2dRepoPersistence(t *testing.T) {
 
 	// Make labels and set various properties
 	config := dvid.NewConfig()
-	config.SetVersioned(true)
 	config.Set("Placeholder", "true")
 	config.Set("Format", "jpg")
 	config.Set("Source", "grayscale")

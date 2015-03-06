@@ -23,7 +23,6 @@ func TestDataAndChildCreation(t *testing.T) {
 	}
 
 	config := dvid.NewConfig()
-	config.SetVersioned(true)
 	_, err = repo.NewData(grayscale8, "grayscale", config)
 	if err != nil {
 		t.Errorf("Could not create uint8 data instance: %s\n", err.Error())

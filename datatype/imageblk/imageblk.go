@@ -60,7 +60,6 @@ $ dvid repo <UUID> new imageblk <data name> <settings...>
 
     Configuration Settings (case-insensitive keys)
 
-    Versioned      "true" or "false" (default)
     BlockSize      Size in pixels  (default: %s)
     VoxelSize      Resolution of voxels (default: 8.0, 8.0, 8.0)
     VoxelUnits     Resolution units (default: "nanometers")
@@ -331,14 +330,14 @@ func (dtype *Type) NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.Instanc
 	if err != nil {
 		return nil, err
 	}
-	props := new(Properties)
-	props.SetDefault(dtype.values, dtype.interpolable)
-	if err := props.SetByConfig(c); err != nil {
+	p := new(Properties)
+	p.setDefault(dtype.values, dtype.interpolable)
+	if err := p.setByConfig(c); err != nil {
 		return nil, err
 	}
 	data := &Data{
 		Data:       *basedata,
-		Properties: *props,
+		Properties: *p,
 	}
 	return data, nil
 }
@@ -566,9 +565,6 @@ type Properties struct {
 	// Block size for this repo
 	BlockSize dvid.Point
 
-	// The endianness of this loaded data.
-	ByteOrder binary.ByteOrder
-
 	dvid.Resolution
 
 	dvid.Extents
@@ -577,13 +573,11 @@ type Properties struct {
 	Background uint8
 }
 
-// SetDefault sets Voxels properties to default values.
-func (props *Properties) SetDefault(values dvid.DataValues, interpolable bool) error {
-	props.Values = make([]dvid.DataValue, len(values))
-	copy(props.Values, values)
-	props.Interpolable = interpolable
-
-	props.ByteOrder = binary.LittleEndian
+// setDefault sets Voxels properties to default values.
+func (p *Properties) setDefault(values dvid.DataValues, interpolable bool) error {
+	p.Values = make([]dvid.DataValue, len(values))
+	copy(p.Values, values)
+	p.Interpolable = interpolable
 
 	dimensions := 3
 	size := make([]int32, dimensions)
@@ -591,31 +585,31 @@ func (props *Properties) SetDefault(values dvid.DataValues, interpolable bool) e
 		size[d] = DefaultBlockSize
 	}
 	var err error
-	props.BlockSize, err = dvid.NewPoint(size)
+	p.BlockSize, err = dvid.NewPoint(size)
 	if err != nil {
 		return err
 	}
-	props.Resolution.VoxelSize = make(dvid.NdFloat32, dimensions)
+	p.Resolution.VoxelSize = make(dvid.NdFloat32, dimensions)
 	for d := 0; d < dimensions; d++ {
-		props.Resolution.VoxelSize[d] = DefaultRes
+		p.Resolution.VoxelSize[d] = DefaultRes
 	}
-	props.Resolution.VoxelUnits = make(dvid.NdString, dimensions)
+	p.Resolution.VoxelUnits = make(dvid.NdString, dimensions)
 	for d := 0; d < dimensions; d++ {
-		props.Resolution.VoxelUnits[d] = DefaultUnits
+		p.Resolution.VoxelUnits[d] = DefaultUnits
 	}
 	return nil
 }
 
-// SetByConfig sets Voxels properties based on type-specific keywords in the configuration.
+// setByConfig sets Voxels properties based on type-specific keywords in the configuration.
 // Any property not described in the config is left as is.  See the Voxels help for listing
 // of configurations.
-func (props *Properties) SetByConfig(config dvid.Config) error {
+func (p *Properties) setByConfig(config dvid.Config) error {
 	s, found, err := config.GetString("BlockSize")
 	if err != nil {
 		return err
 	}
 	if found {
-		props.BlockSize, err = dvid.StringToPoint(s, ",")
+		p.BlockSize, err = dvid.StringToPoint(s, ",")
 		if err != nil {
 			return err
 		}
@@ -626,7 +620,7 @@ func (props *Properties) SetByConfig(config dvid.Config) error {
 	}
 	if found {
 		dvid.Infof("Changing resolution of voxels to %s\n", s)
-		props.Resolution.VoxelSize, err = dvid.StringToNdFloat32(s, ",")
+		p.Resolution.VoxelSize, err = dvid.StringToNdFloat32(s, ",")
 		if err != nil {
 			return err
 		}
@@ -636,7 +630,7 @@ func (props *Properties) SetByConfig(config dvid.Config) error {
 		return err
 	}
 	if found {
-		props.Resolution.VoxelUnits, err = dvid.StringToNdString(s, ",")
+		p.Resolution.VoxelUnits, err = dvid.StringToNdString(s, ",")
 		if err != nil {
 			return err
 		}
@@ -650,7 +644,7 @@ func (props *Properties) SetByConfig(config dvid.Config) error {
 		if err != nil {
 			return err
 		}
-		props.Background = uint8(background)
+		p.Background = uint8(background)
 	}
 	return nil
 }
@@ -669,12 +663,12 @@ type axisT struct {
 }
 
 // NdDataSchema returns the metadata in JSON for this Data
-func (props *Properties) NdDataMetadata() (string, error) {
+func (p *Properties) NdDataMetadata() (string, error) {
 	var err error
 	var size, offset dvid.Point
 
-	dims := int(props.BlockSize.NumDims())
-	if props.MinPoint == nil || props.MaxPoint == nil {
+	dims := int(p.BlockSize.NumDims())
+	if p.MinPoint == nil || p.MaxPoint == nil {
 		zeroPt := make([]int32, dims)
 		size, err = dvid.NewPoint(zeroPt)
 		if err != nil {
@@ -682,8 +676,8 @@ func (props *Properties) NdDataMetadata() (string, error) {
 		}
 		offset = size
 	} else {
-		size = props.MaxPoint.Sub(props.MinPoint).AddScalar(1)
-		offset = props.MinPoint
+		size = p.MaxPoint.Sub(p.MinPoint).AddScalar(1)
+		offset = p.MinPoint
 	}
 
 	var axesName = []string{"X", "Y", "Z", "t", "c"}
@@ -692,13 +686,13 @@ func (props *Properties) NdDataMetadata() (string, error) {
 	for dim := 0; dim < dims; dim++ {
 		metadata.Axes = append(metadata.Axes, axisT{
 			Label:      axesName[dim],
-			Resolution: props.Resolution.VoxelSize[dim],
-			Units:      props.Resolution.VoxelUnits[dim],
+			Resolution: p.Resolution.VoxelSize[dim],
+			Units:      p.Resolution.VoxelUnits[dim],
 			Size:       size.Value(uint8(dim)),
 			Offset:     offset.Value(uint8(dim)),
 		})
 	}
-	metadata.Properties = *props
+	metadata.Properties = *p
 
 	m, err := json.Marshal(metadata)
 	if err != nil {
@@ -979,8 +973,8 @@ func (d *Data) Help() string {
 	return fmt.Sprintf(HelpMessage, DefaultBlockSize)
 }
 func (d *Data) ModifyConfig(config dvid.Config) error {
-	props := &(d.Properties)
-	if err := props.SetByConfig(config); err != nil {
+	p := &(d.Properties)
+	if err := p.setByConfig(config); err != nil {
 		return err
 	}
 	return nil

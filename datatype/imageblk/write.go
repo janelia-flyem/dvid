@@ -102,7 +102,6 @@ func (v *Voxels) writeBlock(block *storage.KeyValue, blockSize dvid.Point) error
 }
 
 type putOperation struct {
-	repo     datastore.Repo
 	voxels   *Voxels
 	indexZYX dvid.IndexZYX
 	version  dvid.VersionID
@@ -125,11 +124,6 @@ func (d *Data) PutVoxels(v dvid.VersionID, vox *Voxels, roi *ROI) error {
 
 	wg := new(sync.WaitGroup)
 	ctx := datastore.NewVersionedContext(d, v)
-
-	repo, err := datastore.RepoFromVersionID(v)
-	if err != nil {
-		return fmt.Errorf("Unable to get repo associated with version id %d\n", v)
-	}
 
 	// Only do one request at a time, although each request can start many goroutines.
 	server.SpawnGoroutineMutex.Lock()
@@ -182,7 +176,7 @@ func (d *Data) PutVoxels(v dvid.VersionID, vox *Voxels, roi *ROI) error {
 
 			curIndexBytes := NewIndex(&curIndex)
 			kv := &storage.KeyValue{K: ctx.ConstructKey(curIndexBytes)}
-			putOp := &putOperation{repo, vox, curIndex, v}
+			putOp := &putOperation{vox, curIndex, v}
 			op := &storage.ChunkOp{putOp, wg}
 			d.PutChunk(&storage.Chunk{op, kv})
 		}
@@ -205,11 +199,6 @@ func (d *Data) PutBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int, da
 
 	ctx := datastore.NewVersionedContext(d, v)
 	batch := batcher.NewBatch(ctx)
-
-	repo, err := datastore.RepoFromVersionID(v)
-	if err != nil {
-		return err
-	}
 
 	// Read blocks from the stream until we can output a batch put.
 	const BatchSize = 1000
@@ -249,7 +238,9 @@ func (d *Data) PutBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int, da
 		// Notify any subscribers that you've changed block.
 		evt := datastore.SyncEvent{d.DataName(), ChangeBlockEvent}
 		msg := datastore.SyncMessage{v, Block{&zyx, buf}}
-		repo.NotifySubscribers(evt, msg)
+		if err := datastore.NotifySubscribers(evt, msg); err != nil {
+			return err
+		}
 
 		// Advance to next block
 		chunkPt[0]++
@@ -342,7 +333,9 @@ func (d *Data) putChunk(chunk *storage.Chunk) {
 	// Notify any subscribers that you've changed block.
 	evt := datastore.SyncEvent{d.DataName(), ChangeBlockEvent}
 	msg := datastore.SyncMessage{op.version, Block{&op.indexZYX, block.V}}
-	op.repo.NotifySubscribers(evt, msg)
+	if err := datastore.NotifySubscribers(evt, msg); err != nil {
+		dvid.Errorf("Unable to notify subscribers of ChangeBlockEvent in %s\n", d.DataName())
+	}
 }
 
 // Writes a XY image into the blocks that intersect it.  This function assumes the
@@ -418,10 +411,6 @@ func (d *Data) writeBlocks(v dvid.VersionID, b storage.KeyValues, wg1, wg2 *sync
 	preCompress, postCompress := 0, 0
 	ctx := datastore.NewVersionedContext(d, v)
 
-	repo, err := datastore.RepoFromVersionID(v)
-	if err != nil {
-		return err
-	}
 	evt := datastore.SyncEvent{d.DataName(), ChangeBlockEvent}
 
 	<-server.HandlerToken
@@ -450,7 +439,10 @@ func (d *Data) writeBlocks(v dvid.VersionID, b storage.KeyValues, wg1, wg2 *sync
 			batch.Put(indexZYX.Bytes(), serialization)
 
 			msg := datastore.SyncMessage{v, Block{indexZYX, block.V}}
-			repo.NotifySubscribers(evt, msg)
+			if err := datastore.NotifySubscribers(evt, msg); err != nil {
+				dvid.Errorf("Unable to notify subscribers of ChangeBlockEvent in %s\n", d.DataName())
+				return
+			}
 
 			// Check if we should commit
 			if i%KVWriteSize == KVWriteSize-1 {

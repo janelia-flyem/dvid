@@ -44,7 +44,6 @@ func TestNewKeyvalueDifferent(t *testing.T) {
 
 	// Add data
 	config := dvid.NewConfig()
-	config.SetVersioned(true)
 	dataservice1, err := repo.NewData(kvtype, "instance1", config)
 	if err != nil {
 		t.Errorf("Error creating new keyvalue instance: %s\n", err.Error())
@@ -81,7 +80,6 @@ func TestKeyvalueRoundTrip(t *testing.T) {
 
 	// Add data
 	config := dvid.NewConfig()
-	config.SetVersioned(true)
 	dataservice, err := repo.NewData(kvtype, "roundtripper", config)
 	if err != nil {
 		t.Errorf("Error creating new keyvalue instance: %s\n", err.Error())
@@ -120,7 +118,6 @@ func TestKeyvalueRepoPersistence(t *testing.T) {
 
 	// Make labels and set various properties
 	config := dvid.NewConfig()
-	config.SetVersioned(true)
 	config.Set("MaxKeySize", "31")
 	dataservice, err := repo.NewData(kvtype, "mykv", config)
 	if err != nil {
@@ -163,7 +160,6 @@ func testRequest(t *testing.T, repo datastore.Repo, versionID dvid.VersionID, na
 	}
 
 	config := dvid.NewConfig()
-	config.SetVersioned(versioned)
 	dataservice, err := repo.NewData(kvtype, name, config)
 	if err != nil {
 		t.Fatalf("Error creating new keyvalue instance: %s\n", err.Error())
@@ -246,7 +242,6 @@ func TestKeyvalueVersioning(t *testing.T) {
 	}
 
 	config := dvid.NewConfig()
-	config.SetVersioned(true)
 	dataservice, err := repo.NewData(kvtype, "versiontest", config)
 	if err != nil {
 		t.Fatalf("Error creating new keyvalue instance: %s\n", err.Error())

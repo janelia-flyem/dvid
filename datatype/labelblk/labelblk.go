@@ -60,7 +60,7 @@ $ dvid repo <UUID> new labelblk <data name> <settings...>
 
     Configuration Settings (case-insensitive keys)
 
-    Link           Name of associated labelvol data
+    Sync           Name of preexisting labelvol or labeltile data
     LabelType      "standard" (default) or "raveler" 
     BlockSize      Size in pixels  (default: %s)
     VoxelSize      Resolution of voxels (default: 8.0, 8.0, 8.0)
@@ -185,6 +185,10 @@ var (
 	encodeFormat dvid.DataValues
 
 	zeroLabelBytes = make([]byte, 8, 8)
+
+	DefaultBlockSize int32   = imageblk.DefaultBlockSize
+	DefaultRes       float32 = imageblk.DefaultRes
+	DefaultUnits             = imageblk.DefaultUnits
 )
 
 func init() {
@@ -305,10 +309,7 @@ func (l *Labels) Interpolable() bool {
 // Data of labelblk type is an extended form of imageblk Data
 type Data struct {
 	*imageblk.Data
-
-	Link     dvid.InstanceName
 	Labeling LabelType
-	Ready    bool
 }
 
 // NewData returns a pointer to labelblk data.
@@ -316,23 +317,6 @@ func NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.
 	imgblkData, err := dtype.Type.NewData(uuid, id, name, c)
 	if err != nil {
 		return nil, err
-	}
-
-	// Make sure we have a valid DataService source
-	var link dvid.InstanceName
-	sourcename, found, err := c.GetString("Link")
-	if err != nil {
-		return nil, err
-	}
-	if found {
-		source, err := datastore.GetDataByUUID(uuid, dvid.InstanceName(sourcename))
-		if err != nil {
-			return nil, err
-		}
-		if source.TypeName() != "labelvol" {
-			return nil, fmt.Errorf("Linked data %q is not of type 'labelvol'", sourcename)
-		}
-		link = dvid.InstanceName(sourcename)
 	}
 
 	// Check if Raveler label.
@@ -352,7 +336,6 @@ func NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.
 	dvid.Infof("Creating labelblk '%s' with %s", name, labelType)
 	data := &Data{
 		Data:     imgblkData,
-		Link:     link,
 		Labeling: labelType,
 	}
 	return data, nil
@@ -360,9 +343,7 @@ func NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.
 
 type propertiesT struct {
 	imageblk.Properties
-	Link     dvid.InstanceName
 	Labeling LabelType
-	Ready    bool
 }
 
 func (d *Data) MarshalJSON() ([]byte, error) {
@@ -373,9 +354,7 @@ func (d *Data) MarshalJSON() ([]byte, error) {
 		&(d.Data.Data),
 		propertiesT{
 			d.Data.Properties,
-			d.Link,
 			d.Labeling,
-			d.Ready,
 		},
 	})
 }
@@ -386,13 +365,7 @@ func (d *Data) GobDecode(b []byte) error {
 	if err := dec.Decode(&(d.Data)); err != nil {
 		return err
 	}
-	if err := dec.Decode(&(d.Link)); err != nil {
-		return err
-	}
 	if err := dec.Decode(&(d.Labeling)); err != nil {
-		return err
-	}
-	if err := dec.Decode(&(d.Ready)); err != nil {
 		return err
 	}
 	return nil
@@ -404,13 +377,7 @@ func (d *Data) GobEncode() ([]byte, error) {
 	if err := enc.Encode(d.Data); err != nil {
 		return nil, err
 	}
-	if err := enc.Encode(d.Link); err != nil {
-		return nil, err
-	}
 	if err := enc.Encode(d.Labeling); err != nil {
-		return nil, err
-	}
-	if err := enc.Encode(d.Ready); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
@@ -515,7 +482,7 @@ func (d *Data) convertTo64bit(geom dvid.Geometry, data []uint8, bytesPerVoxel, s
 		for y := 0; y < ny; y++ {
 			srcI := y * stride
 			for x := 0; x < nx; x++ {
-				d.ByteOrder.PutUint64(data64[dstI:dstI+8], uint64(data[srcI]))
+				binary.LittleEndian.PutUint64(data64[dstI:dstI+8], uint64(data[srcI]))
 				srcI++
 				dstI += 8
 			}
@@ -526,7 +493,7 @@ func (d *Data) convertTo64bit(geom dvid.Geometry, data []uint8, bytesPerVoxel, s
 			srcI := y * stride
 			for x := 0; x < nx; x++ {
 				value := byteOrder.Uint16(data[srcI : srcI+2])
-				d.ByteOrder.PutUint64(data64[dstI:dstI+8], uint64(value))
+				binary.LittleEndian.PutUint64(data64[dstI:dstI+8], uint64(value))
 				srcI += 2
 				dstI += 8
 			}
@@ -537,7 +504,7 @@ func (d *Data) convertTo64bit(geom dvid.Geometry, data []uint8, bytesPerVoxel, s
 			srcI := y * stride
 			for x := 0; x < nx; x++ {
 				value := byteOrder.Uint32(data[srcI : srcI+4])
-				d.ByteOrder.PutUint64(data64[dstI:dstI+8], uint64(value))
+				binary.LittleEndian.PutUint64(data64[dstI:dstI+8], uint64(value))
 				srcI += 4
 				dstI += 8
 			}
@@ -548,7 +515,7 @@ func (d *Data) convertTo64bit(geom dvid.Geometry, data []uint8, bytesPerVoxel, s
 			srcI := y * stride
 			for x := 0; x < nx; x++ {
 				value := byteOrder.Uint64(data[srcI : srcI+8])
-				d.ByteOrder.PutUint64(data64[dstI:dstI+8], uint64(value))
+				binary.LittleEndian.PutUint64(data64[dstI:dstI+8], uint64(value))
 				srcI += 8
 				dstI += 8
 			}
@@ -671,7 +638,6 @@ func (d *Data) DoRPC(req datastore.Request, reply *datastore.Response) error {
 		if err = d.LoadImages(versionID, offset, filenames); err != nil {
 			return err
 		}
-		d.Ready = true
 		if err := datastore.SaveRepo(uuid); err != nil {
 			return err
 		}
@@ -985,5 +951,5 @@ func (d *Data) GetLabelAtPoint(v dvid.VersionID, pt dvid.Point) (uint64, error) 
 	if err != nil {
 		return 0, err
 	}
-	return d.Properties.ByteOrder.Uint64(labelBytes), nil
+	return binary.LittleEndian.Uint64(labelBytes), nil
 }

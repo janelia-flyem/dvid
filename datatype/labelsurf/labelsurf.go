@@ -5,7 +5,6 @@
 package labelsurf
 
 import (
-	"encoding/binary"
 	"encoding/gob"
 	"fmt"
 	"net/http"
@@ -15,8 +14,6 @@ import (
 	"code.google.com/p/go.net/context"
 
 	"github.com/janelia-flyem/dvid/datastore"
-	"github.com/janelia-flyem/dvid/datatype/labelblk"
-	"github.com/janelia-flyem/dvid/datatype/labelvol"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/message"
 	"github.com/janelia-flyem/dvid/server"
@@ -231,29 +228,32 @@ func GetSurface(ctx storage.Context, label uint64) ([]byte, bool, error) {
 
 // GetLabelAtPoint returns the 64-bit unsigned int label for a given point.
 func (d *Data) GetLabelAtPoint(v dvid.VersionID, pt dvid.Point) (uint64, error) {
-	uuid, err := datastore.UUIDFromVersion(v)
-	if err != nil {
-		return 0, err
-	}
+	/*
+		uuid, err := datastore.UUIDFromVersion(v)
+		if err != nil {
+			return 0, err
+		}
 
-	// Get the associated labelvol
-	labelvolData, err := labelvol.GetByUUID(uuid, d.SparseVol)
-	if err != nil {
-		return 0, err
-	}
+		// Get the associated labelvol
+		labelvolData, err := labelvol.GetByUUID(uuid, d.SparseVol)
+		if err != nil {
+			return 0, err
+		}
 
-	// Then see if we have an associated labelblk to this labelvol.  If not we can't do point query.
-	labelblkName := labelvolData.Link
+		// Then see if we have an associated labelblk to this labelvol.  If not we can't do point query.
+		labelblkName := labelvolData.Link
 
-	// Get the associated labelblk data instance to do the point query
-	labelblkData, err := labelblk.GetByUUID(uuid, labelblkName)
+		// Get the associated labelblk data instance to do the point query
+		labelblkData, err := labelblk.GetByUUID(uuid, labelblkName)
 
-	// Do the point query
-	labelBytes, err := labelblkData.GetLabelBytesAtPoint(v, pt)
-	if err != nil {
-		return 0, err
-	}
-	return binary.LittleEndian.Uint64(labelBytes), nil
+		// Do the point query
+		labelBytes, err := labelblkData.GetLabelBytesAtPoint(v, pt)
+		if err != nil {
+			return 0, err
+		}
+		return binary.LittleEndian.Uint64(labelBytes), nil
+	*/
+	return 0, nil
 }
 
 // --- datastore.DataService interface ---------

@@ -50,11 +50,9 @@ func (d *Data) MergeLabels(v dvid.VersionID, m labels.MergeOp) error {
 	// Signal that we are starting a merge.
 	evt := datastore.SyncEvent{d.DataName(), labels.MergeStartEvent}
 	msg := datastore.SyncMessage{v, labels.DeltaMergeStart{m}}
-	repo, err := datastore.RepoFromVersionID(v)
-	if err != nil {
-		return fmt.Errorf("Could not get repo for version %s", v)
+	if err := datastore.NotifySubscribers(evt, msg); err != nil {
+		return err
 	}
-	repo.NotifySubscribers(evt, msg)
 
 	// All blocks that have changed during this merge.  Key = string of block index
 	blocksChanged := make(map[dvid.IZYXString]struct{})
@@ -87,7 +85,9 @@ func (d *Data) MergeLabels(v dvid.VersionID, m labels.MergeOp) error {
 		}
 		evt := datastore.SyncEvent{d.DataName(), labels.ChangeSizeEvent}
 		msg := datastore.SyncMessage{v, delta}
-		repo.NotifySubscribers(evt, msg)
+		if err := datastore.NotifySubscribers(evt, msg); err != nil {
+			return err
+		}
 
 		// Append or insert RLE runs from fromLabel blocks into toLabel blocks.
 		for blockStr, fromRLEs := range fromLabelRLEs {
@@ -116,7 +116,9 @@ func (d *Data) MergeLabels(v dvid.VersionID, m labels.MergeOp) error {
 	// Publish block-level merge
 	evt = datastore.SyncEvent{d.DataName(), labels.MergeBlockEvent}
 	msg = datastore.SyncMessage{v, labels.DeltaMerge{m, blocksChanged}}
-	repo.NotifySubscribers(evt, msg)
+	if err := datastore.NotifySubscribers(evt, msg); err != nil {
+		return err
+	}
 
 	// Update datastore with all toLabel RLEs that were changed
 	ctx := datastore.NewVersionedContext(d, v)
@@ -139,11 +141,15 @@ func (d *Data) MergeLabels(v dvid.VersionID, m labels.MergeOp) error {
 	}
 	evt = datastore.SyncEvent{d.DataName(), labels.ChangeSizeEvent}
 	msg = datastore.SyncMessage{v, delta}
-	repo.NotifySubscribers(evt, msg)
+	if err := datastore.NotifySubscribers(evt, msg); err != nil {
+		return err
+	}
 
 	evt = datastore.SyncEvent{d.DataName(), labels.MergeEndEvent}
 	msg = datastore.SyncMessage{v, labels.DeltaMergeEnd{m}}
-	repo.NotifySubscribers(evt, msg)
+	if err := datastore.NotifySubscribers(evt, msg); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -182,12 +188,9 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser) 
 	// Signal that we are starting a split.
 	evt := datastore.SyncEvent{d.DataName(), labels.SplitStartEvent}
 	msg := datastore.SyncMessage{v, labels.DeltaSplitStart{fromLabel, toLabel}}
-	var repo datastore.Repo
-	repo, err = datastore.RepoFromVersionID(v)
-	if err != nil {
-		err = fmt.Errorf("Could not get repo for version %s", v)
+	if err := datastore.NotifySubscribers(evt, msg); err != nil {
+		return 0, err
 	}
-	repo.NotifySubscribers(evt, msg)
 
 	// Read the sparse volume from reader.
 	header := make([]byte, 12)
@@ -297,7 +300,9 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser) 
 	}
 	evt = datastore.SyncEvent{d.DataName(), labels.ChangeSizeEvent}
 	msg = datastore.SyncMessage{v, delta}
-	repo.NotifySubscribers(evt, msg)
+	if err := datastore.NotifySubscribers(evt, msg); err != nil {
+		return 0, err
+	}
 
 	delta2 := labels.DeltaModSize{
 		Label:      fromLabel,
@@ -305,12 +310,16 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser) 
 	}
 	evt = datastore.SyncEvent{d.DataName(), labels.ChangeSizeEvent}
 	msg = datastore.SyncMessage{v, delta2}
-	repo.NotifySubscribers(evt, msg)
+	if err := datastore.NotifySubscribers(evt, msg); err != nil {
+		return 0, err
+	}
 
 	// Publish split end
 	evt = datastore.SyncEvent{d.DataName(), labels.SplitEndEvent}
 	msg = datastore.SyncMessage{v, labels.DeltaSplitEnd{fromLabel, toLabel}}
-	repo.NotifySubscribers(evt, msg)
+	if err := datastore.NotifySubscribers(evt, msg); err != nil {
+		return 0, err
+	}
 
 	return toLabel, nil
 }

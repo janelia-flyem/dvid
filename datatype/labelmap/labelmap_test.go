@@ -30,7 +30,6 @@ func initTestRepo() (datastore.Repo, dvid.VersionID) {
 			log.Fatalf("Can't get labelblk type: %s\n", err.Error())
 		}
 		config := dvid.NewConfig()
-		config.SetVersioned(true)
 		labelsName = "mylabels"
 		_, err = repo.NewData(labelsT, labelsName, config)
 		if err != nil {
@@ -54,7 +53,6 @@ func TestLabelmapRepoPersistence(t *testing.T) {
 
 	// Creation of labelmap should require specification of underlying labelblk.
 	config := dvid.NewConfig()
-	config.SetVersioned(true)
 	mylabelmap, err := repo.NewData(labelmapT, "mylabelmap", config)
 	if err == nil {
 		t.Fatalf("Creation of labelmap should have errored if no labels specified!\n")

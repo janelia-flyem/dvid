@@ -157,7 +157,6 @@ func TestROIRequests(t *testing.T) {
 	}
 
 	config := dvid.NewConfig()
-	config.SetVersioned(true)
 	dataservice, err := repo.NewData(roitype, "roi", config)
 	if err != nil {
 		t.Errorf("Error creating new roi instance: %s\n", err.Error())
@@ -302,7 +301,6 @@ func TestROIPostAndDelete(t *testing.T) {
 	}
 
 	config := dvid.NewConfig()
-	config.SetVersioned(true)
 	dataservice, err := repo.NewData(roitype, "roi", config)
 	if err != nil {
 		t.Errorf("Error creating new roi instance: %s\n", err.Error())
@@ -346,7 +344,6 @@ func TestROICreateAndSerialize(t *testing.T) {
 
 	// Add data
 	config := dvid.NewConfig()
-	config.SetVersioned(true)
 	dataservice1, err := repo.NewData(roitype, "myroi", config)
 	if err != nil {
 		t.Errorf("Error creating new roi instance: %s\n", err.Error())
@@ -411,7 +408,6 @@ func TestROIPartition(t *testing.T) {
 	}
 
 	config := dvid.NewConfig()
-	config.SetVersioned(true)
 	dataservice, err := repo.NewData(roitype, "roi", config)
 	if err != nil {
 		t.Errorf("Error creating new roi instance: %s\n", err.Error())
@@ -470,7 +466,6 @@ func TestROISimplePartition(t *testing.T) {
 	}
 
 	config := dvid.NewConfig()
-	config.SetVersioned(true)
 	dataservice, err := repo.NewData(roitype, "roi", config)
 	if err != nil {
 		t.Errorf("Error creating new roi instance: %s\n", err.Error())
@@ -881,7 +876,6 @@ func TestROIRepoPersistence(t *testing.T) {
 
 	// Add data
 	config := dvid.NewConfig()
-	config.SetVersioned(true)
 	dataservice1, err := repo.NewData(roitype, "myroi", config)
 	if err != nil {
 		t.Errorf("Error creating new roi instance: %s\n", err.Error())

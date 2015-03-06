@@ -165,8 +165,6 @@ type Data interface {
 	TypeName() TypeString
 	TypeURL() URLString
 	TypeVersion() string
-
-	Versioned() bool
 }
 
 // Axis enumerates differnt types of axis (x, y, z, time, etc)

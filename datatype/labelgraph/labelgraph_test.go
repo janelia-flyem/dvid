@@ -35,7 +35,6 @@ func TestNewLabelgraphDifferent(t *testing.T) {
 
 	// Add data
 	config := dvid.NewConfig()
-	config.SetVersioned(true)
 	dataservice1, err := repo.NewData(dtype, "lg1", config)
 	if err != nil {
 		t.Errorf("Error creating new labelgraph instance 1: %s\n", err.Error())
@@ -66,7 +65,6 @@ func TestLabelgraphRepoPersistence(t *testing.T) {
 
 	// Make labels and set various properties
 	config := dvid.NewConfig()
-	config.SetVersioned(true)
 	dataservice, err := repo.NewData(dtype, "lg", config)
 	if err != nil {
 		t.Errorf("Unable to create labelgraph instance: %s\n", err.Error())

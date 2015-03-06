@@ -37,7 +37,6 @@ func TestBasic(t *testing.T) {
 	repo, _ := initTestRepo()
 
 	config := dvid.NewConfig()
-	config.SetVersioned(true)
 	_, err := repo.NewData(dtype, "instance1", config)
 	if err != nil {
 		t.Errorf("Error creating new multichan16 instance: %s\n", err.Error())
@@ -52,7 +51,6 @@ func TestMultichan16RepoPersistence(t *testing.T) {
 
 	// Make labels and set various properties
 	config := dvid.NewConfig()
-	config.SetVersioned(true)
 	dataservice, err := repo.NewData(dtype, "mymultichan16", config)
 	if err != nil {
 		t.Errorf("Unable to create multichan16 instance: %s\n", err.Error())

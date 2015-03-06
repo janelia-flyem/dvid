@@ -16,14 +16,20 @@ import (
 // Number of change messages we can buffer before blocking on sync channel.
 const syncBuffer = 100
 
-// InitSyncGraph implements the datastore.Syncer interface
-func (d *Data) InitSyncGraph() []datastore.SyncSub {
+// InitSync implements the datastore.Syncer interface
+func (d *Data) InitSync(name dvid.InstanceName) []datastore.SyncSub {
+	// This should only be called once for any synced instance.
+	if d.IsSyncEstablished(name) {
+		return nil
+	}
+	d.SyncEstablished(name)
+
 	syncCh := make(chan datastore.SyncMessage, syncBuffer)
 	doneCh := make(chan struct{})
 
 	go d.handleSizeEvent(syncCh, doneCh)
 
-	evt := datastore.SyncEvent{d.Source, labels.ChangeSizeEvent}
+	evt := datastore.SyncEvent{name, labels.ChangeSizeEvent}
 	subs := []datastore.SyncSub{
 		datastore.SyncSub{
 			Event:  evt,

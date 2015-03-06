@@ -63,8 +63,7 @@ func TestDataGobEncoding(t *testing.T) {
 		uuid:        dvid.UUID("42"),
 		compression: compression,
 		checksum:    dvid.DefaultChecksum,
-		persistence: DataCritical,
-		versioned:   true,
+		syncs:       []dvid.InstanceName{"moo", "bar", "baz"},
 	}}
 
 	encoding, err := data.GobEncode()

@@ -244,9 +244,6 @@ func (d *Data) GobEncode() ([]byte, error) {
 }
 
 func (d *Data) getIndex(key string) (indexT, error) {
-	if !d.Versioned() {
-		return []byte(key), nil
-	}
 	if len(key) > d.MaxKeySize {
 		return nil, fmt.Errorf("Key %q is too long.  Data instance %q is set to max key size of %d",
 			key, d.DataName(), d.MaxKeySize)
@@ -282,11 +279,7 @@ func (d *Data) GetKeysInRange(ctx storage.Context, keyBeg, keyEnd string) ([]str
 		if err != nil {
 			return nil, err
 		}
-		if d.Versioned() {
-			keyString = indexT(index).String()
-		} else {
-			keyString = string(index)
-		}
+		keyString = indexT(index).String()
 		keyList = append(keyList, keyString)
 	}
 	return keyList, nil

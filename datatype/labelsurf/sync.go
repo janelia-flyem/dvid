@@ -4,15 +4,13 @@
 
 package labelsurf
 
-import "github.com/janelia-flyem/dvid/datastore"
-
 // Number of change messages we can buffer before blocking on sync channel.
 const syncBuffer = 100
 
+/*
 // GetSyncSubs implements the datastore.Syncer interface and allows syncing of
 // label surfaces with changes to linked labelvol (sparse volume) representations.
 func (d *Data) GetSyncSubs() []datastore.SyncSub {
-	/*
 		mergeCh := make(chan datastore.SyncMessage, syncBuffer)
 		done1Ch := make(chan struct{})
 
@@ -40,11 +38,9 @@ func (d *Data) GetSyncSubs() []datastore.SyncSub {
 			},
 		}
 		return subs
-	*/
 	return nil
 }
 
-/*
 func (d *Data) handleMergeEvent(in <-chan datastore.SyncMessage, done <-chan struct{}) {
 	// Delete the fromLabel surface.
 	// TODO -- Move to labelsurf

@@ -48,11 +48,10 @@ $ dvid repo <UUID> new labelsz <data name> source=<linked labelvol name>
 
     UUID           Hexidecimal string with enough characters to uniquely identify a version node.
     data name      Name of data to create, e.g., "bodysizes"
-    linked name    Name of labelvol data to use for size queries.
 	
     Configuration Settings (case-insensitive keys)
 
-    Source         Name of associated labelvol data (required)
+    Source         Name of preexisting labelvol data (required)
 	
     ------------------
 
@@ -156,6 +155,7 @@ func NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.
 	if _, err = labelvol.GetByUUID(uuid, srcname); err != nil {
 		return nil, err
 	}
+	c.Set("sync", s) // This will set base data sync list
 
 	// Initialize the Data for this data type
 	basedata, err := datastore.NewDataService(dtype, uuid, id, name, c)
