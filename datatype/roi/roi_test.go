@@ -385,7 +385,7 @@ func TestROICreateAndSerialize(t *testing.T) {
 		t.Fatalf("Could not decode Gob-encoded roi: %s\n", err.Error())
 	}
 
-	if !reflect.DeepEqual(*(roi2.Data), *(received.Data)) {
+	if !roi2.Data.Equals(received.Data) {
 		t.Errorf("ROI base Data has bad roundtrip:\nOriginal:\n%v\nReceived:\n%v\n",
 			*(roi2.Data), *(received.Data))
 	}
@@ -927,7 +927,7 @@ func TestROIRepoPersistence(t *testing.T) {
 	if !ok {
 		t.Errorf("Returned new data instance 3 is not roi.Data\n")
 	}
-	if !reflect.DeepEqual(oldData, *roi2new) {
+	if !oldData.Equals(roi2new) {
 		t.Errorf("Expected %v, got %v\n", oldData, *roi2new)
 	}
 }

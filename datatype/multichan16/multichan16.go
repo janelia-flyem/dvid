@@ -245,6 +245,14 @@ type Data struct {
 	NumChannels int
 }
 
+func (d *Data) Equals(d2 *Data) bool {
+	if !d.Data.Equals(d2.Data) ||
+		d.NumChannels != d2.NumChannels {
+		return false
+	}
+	return true
+}
+
 type propertiesT struct {
 	imageblk.Properties
 	NumChannels int
@@ -255,7 +263,7 @@ func (d *Data) MarshalJSON() ([]byte, error) {
 		Base     *datastore.Data
 		Extended propertiesT
 	}{
-		&(d.Data.Data),
+		d.Data.Data,
 		propertiesT{
 			d.Data.Properties,
 			d.NumChannels,

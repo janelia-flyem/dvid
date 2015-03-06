@@ -91,7 +91,7 @@ func newDataInstance(repo datastore.Repo, t *testing.T, name dvid.InstanceName) 
 	return labels
 }
 
-func TestSubvolLabels64(t *testing.T) {
+func TestLabelblkDirectAPI(t *testing.T) {
 	tests.UseStore()
 	defer tests.CloseStore()
 
@@ -99,16 +99,16 @@ func TestSubvolLabels64(t *testing.T) {
 	labels := newDataInstance(repo, t, "mylabels")
 	labelsCtx := datastore.NewVersionedContext(labels, versionID)
 
-	// Create a fake 100x100x100 label volume
-	offset := dvid.Point3d{5, 35, 61}
-	size := dvid.Point3d{128, 128, 128}
+	// Create a fake block-aligned label volume
+	offset := dvid.Point3d{32, 0, 64}
+	size := dvid.Point3d{96, 64, 160}
 	subvol := dvid.NewSubvolume(offset, size)
 	data := makeVolume(offset, size)
 
 	// Store it into datastore at root
 	v, err := labels.NewVoxels(subvol, data)
 	if err != nil {
-		t.Fatalf("Unable to make new labels ExtHandler: %s\n", err.Error())
+		t.Fatalf("Unable to make new labels Voxels: %s\n", err.Error())
 	}
 	if err = labels.PutVoxels(versionID, v, nil); err != nil {
 		t.Errorf("Unable to put labels for %s: %s\n", labelsCtx, err.Error())
@@ -151,88 +151,6 @@ func TestSubvolLabels64(t *testing.T) {
 		}
 	}
 }
-
-func sliceTest(t *testing.T, slice dvid.Geometry) {
-	tests.UseStore()
-	defer tests.CloseStore()
-
-	repo, versionID := initTestRepo()
-	labels := newDataInstance(repo, t, "labels2")
-	labelsCtx := datastore.NewVersionedContext(labels, versionID)
-
-	// Create a fake 100x100 64-bit labels image
-	nx := slice.Size().Value(0)
-	ny := slice.Size().Value(1)
-	offset := slice.StartPoint().(dvid.Point3d)
-	data := makeSlice(offset, dvid.Point2d{nx, ny})
-	img := dvid.ImageNRGBA64FromData(data, int(nx), int(ny))
-
-	// Store it into datastore at root
-	v, err := labels.NewVoxels(slice, img)
-	if err != nil {
-		t.Fatalf("Unable to make new labels ExtHandler: %s\n", err.Error())
-	}
-	if err = labels.PutVoxels(versionID, v, nil); err != nil {
-		t.Errorf("Unable to put voxels for %s: %s\n", labelsCtx, err.Error())
-	}
-
-	// Read the stored image
-	v2, err := labels.NewVoxels(slice, nil)
-	retrieved, err := labels.GetImage(versionID, v2, nil)
-	if err != nil {
-		t.Fatalf("Unable to get image for %s: %s\n", labelsCtx, err.Error())
-	}
-
-	// Make sure the retrieved image matches the original
-	goImg := retrieved.Get()
-	if !reflect.DeepEqual(img.Rect, goImg.Bounds()) {
-		t.Errorf("Retrieved image size %s different than original %s\n",
-			goImg.Bounds(), img.Rect)
-	}
-	retrievedData, voxelSize, _, err := dvid.ImageData(goImg)
-	if err != nil {
-		t.Errorf("Unable to get data/size from retrieved image: %s\n", err.Error())
-	}
-	if voxelSize != int32(8) {
-		t.Errorf("Retrieved voxel size in bytes incorrect.  Got %d, expected 8\n", voxelSize)
-	}
-	for i := 0; i < len(data); i++ {
-		if data[i] != retrievedData[i] {
-			t.Fatalf("GET slice (%d) != PUT slice (%d) @ index %d", retrievedData[i], data[i], i)
-		}
-	}
-}
-
-func TestXYSliceLabels64(t *testing.T) {
-	offset := dvid.Point3d{3, 13, 24}
-	size := dvid.Point2d{100, 100}
-	slice, err := dvid.NewOrthogSlice(dvid.XY, offset, size)
-	if err != nil {
-		t.Errorf("Problem getting new orthogonal slice: %s\n", err.Error())
-	}
-	sliceTest(t, slice)
-}
-
-func TestXZSliceLabels64(t *testing.T) {
-	offset := dvid.Point3d{31, 10, 14}
-	size := dvid.Point2d{100, 100}
-	slice, err := dvid.NewOrthogSlice(dvid.XZ, offset, size)
-	if err != nil {
-		t.Errorf("Problem getting new orthogonal slice: %s\n", err.Error())
-	}
-	sliceTest(t, slice)
-}
-
-func TestYZSliceLabels64(t *testing.T) {
-	offset := dvid.Point3d{13, 40, 99}
-	size := dvid.Point2d{100, 100}
-	slice, err := dvid.NewOrthogSlice(dvid.YZ, offset, size)
-	if err != nil {
-		t.Errorf("Problem getting new orthogonal slice: %s\n", err.Error())
-	}
-	sliceTest(t, slice)
-}
-
 func TestLabels64RepoPersistence(t *testing.T) {
 	tests.UseStore()
 	defer tests.CloseStore()
@@ -273,7 +191,7 @@ func TestLabels64RepoPersistence(t *testing.T) {
 	if !ok {
 		t.Errorf("Returned new data instance 2 is not imageblk.Data\n")
 	}
-	if !reflect.DeepEqual(oldData, *labels2) {
+	if !oldData.Equals(labels2) {
 		t.Errorf("Expected %v, got %v\n", oldData, *labels2)
 	}
 }

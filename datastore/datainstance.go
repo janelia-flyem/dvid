@@ -375,6 +375,33 @@ func (d *Data) GobEncode() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+func (d *Data) Equals(d2 *Data) bool {
+	if d.typename != d2.typename ||
+		d.typeurl != d2.typeurl ||
+		d.typeversion != d2.typeversion ||
+		d.name != d2.name ||
+		d.id != d2.id ||
+		d.uuid != d2.uuid ||
+		d.compression != d2.compression ||
+		d.checksum != d2.checksum ||
+		!syncsEqual(d.syncs, d2.syncs) {
+		return false
+	}
+	return true
+}
+
+func syncsEqual(a, b []dvid.InstanceName) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // -----------
 
 func (d *Data) Compression() dvid.Compression {

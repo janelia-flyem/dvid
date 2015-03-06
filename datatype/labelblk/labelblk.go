@@ -312,6 +312,14 @@ type Data struct {
 	Labeling LabelType
 }
 
+func (d *Data) Equals(d2 *Data) bool {
+	if !d.Data.Equals(d2.Data) ||
+		d.Labeling != d2.Labeling {
+		return false
+	}
+	return true
+}
+
 // NewData returns a pointer to labelblk data.
 func NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.Config) (*Data, error) {
 	imgblkData, err := dtype.Type.NewData(uuid, id, name, c)
@@ -351,7 +359,7 @@ func (d *Data) MarshalJSON() ([]byte, error) {
 		Base     *datastore.Data
 		Extended propertiesT
 	}{
-		&(d.Data.Data),
+		d.Data.Data,
 		propertiesT{
 			d.Data.Properties,
 			d.Labeling,

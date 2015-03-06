@@ -560,6 +560,13 @@ type Data struct {
 	datawide_mutex  sync.Mutex
 }
 
+func (d *Data) Equals(d2 *Data) bool {
+	if !d.Data.Equals(d2.Data) {
+		return false
+	}
+	return true
+}
+
 func (d *Data) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		Base *datastore.Data

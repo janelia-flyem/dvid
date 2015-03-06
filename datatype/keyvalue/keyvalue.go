@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"reflect"
 	"strings"
 
 	"code.google.com/p/go.net/context"
@@ -207,6 +208,14 @@ type Properties struct {
 type Data struct {
 	*datastore.Data
 	Properties
+}
+
+func (d *Data) Equals(d2 *Data) bool {
+	if !d.Data.Equals(d2.Data) ||
+		!reflect.DeepEqual(d.Properties, d2.Properties) {
+		return false
+	}
+	return true
 }
 
 func (d *Data) MarshalJSON() ([]byte, error) {

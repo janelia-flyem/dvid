@@ -14,6 +14,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"os"
+	"reflect"
 	"strconv"
 	"strings"
 
@@ -330,14 +331,14 @@ func (dtype *Type) NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.Instanc
 	if err != nil {
 		return nil, err
 	}
-	p := new(Properties)
+	var p Properties
 	p.setDefault(dtype.values, dtype.interpolable)
 	if err := p.setByConfig(c); err != nil {
 		return nil, err
 	}
 	data := &Data{
-		Data:       *basedata,
-		Properties: *p,
+		Data:       basedata,
+		Properties: p,
 	}
 	return data, nil
 }
@@ -703,8 +704,16 @@ func (p *Properties) NdDataMetadata() (string, error) {
 
 // Data embeds the datastore's Data and extends it with voxel-specific properties.
 type Data struct {
-	datastore.Data
+	*datastore.Data
 	Properties
+}
+
+func (d *Data) Equals(d2 *Data) bool {
+	if !d.Data.Equals(d2.Data) ||
+		!reflect.DeepEqual(d.Properties, d2.Properties) {
+		return false
+	}
+	return true
 }
 
 // BlankImage initializes a blank image of appropriate size and depth for the
@@ -938,7 +947,7 @@ func (d *Data) MarshalJSON() ([]byte, error) {
 		Base     *datastore.Data
 		Extended Properties
 	}{
-		&(d.Data),
+		d.Data,
 		d.Properties,
 	})
 }

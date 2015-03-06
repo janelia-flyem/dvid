@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"image/png"
 	"log"
 	"math/rand"
 	"net/http"
@@ -15,7 +14,6 @@ import (
 	"testing"
 
 	"github.com/janelia-flyem/dvid/datastore"
-	"github.com/janelia-flyem/dvid/datatype/roi"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/tests"
@@ -171,34 +169,28 @@ func TestForegroundROI(t *testing.T) {
 	repo, _ := initTestRepo()
 	grayscale := makeGrayscale(repo, t, "grayscale")
 
-	// Create a fake 500x500 8-bit grayscale image with inner 250x250 foreground and
-	// outer background (value 0)
-	data := make([]uint8, 500*500, 500*500)
-	for y := 125; y <= 375; y++ {
-		for x := 125; x <= 375; x++ {
-			data[y*500+x] = 128
+	// Create a fake 128^3 volume with inner 64^3 foreground and
+	// outer background split between 0 and 255 at z = 63,64
+	data := make([]uint8, 128*128*128, 128*128*128)
+	for z := 64; z < 128; z++ {
+		for y := 0; y < 128; y++ {
+			for x := 0; x < 128; x++ {
+				data[z*128*128+y*128+x] = 255
+			}
 		}
-		for x := 376; x < 500; x++ {
-			data[y*500+x] = 255
+	}
+	for z := 32; z < 96; z++ {
+		for y := 32; y < 96; y++ {
+			for x := 32; x < 96; x++ {
+				data[z*128*128+y*128+x] = 128
+			}
 		}
 	}
-	testImage := dvid.ImageGrayFromData(data, 500, 500)
 
-	// PUT a slice at (127,64,64)
-	var buf bytes.Buffer
-	if err := png.Encode(&buf, testImage); err != nil {
-		t.Fatalf("Unable to encode test image\n")
-	}
-	putRequest := fmt.Sprintf("%snode/%s/grayscale/raw/xy/500_500/127_64_64", server.WebAPIPath, repo.RootUUID())
-	server.TestHTTP(t, "POST", putRequest, &buf)
-
-	// PUT another slice at (1000,14,138)
-	var buf2 bytes.Buffer
-	if err := png.Encode(&buf2, testImage); err != nil {
-		t.Fatalf("Unable to encode test image\n")
-	}
-	putRequest = fmt.Sprintf("%snode/%s/grayscale/raw/xy/500_500/1000_14_138", server.WebAPIPath, repo.RootUUID())
-	server.TestHTTP(t, "POST", putRequest, &buf2)
+	// Put the volume so it's block-aligned
+	buf := bytes.NewBuffer(data)
+	putRequest := fmt.Sprintf("%snode/%s/grayscale/raw/0_1_2/128_128_128/160_64_128", server.WebAPIPath, repo.RootUUID())
+	server.TestHTTP(t, "POST", putRequest, buf)
 
 	// Request a foreground ROI
 	var reply datastore.Response
@@ -226,25 +218,17 @@ func TestForegroundROI(t *testing.T) {
 	}
 
 	// Check results
-	// Offset for first slice: (127,64,64) with foreground starting 125 pixels in.
-	//    Block index Z = 64 / 32 = 2
-	//    Block index Y0 = (64 + 124) / 32 = 5
-	//    Block index Y1 = (64 + 374) / 32 = 13
-	//    Block index X0 = (127 + 125) / 32 = 7
-	//	  Block index X1 = (127 + 374) / 32 = 15
-	// Offset for first slice: (1000,14,138) with foreground starting 125 pixels in.
-	//    Block index Z = 138 / 32 = 4
-	//    Block index Y0 = (14 + 124) / 32 = 4
-	//    Block index Y1 = (14 + 374) / 32 = 12
-	//    Block index X0 = (1000 + 124) / 32 = 35
-	//	  Block index X1 = (1000 + 374) / 32 = 42
-	expected := "[[2,5,7,15],[2,6,7,15],[2,7,7,15],[2,8,7,15],[2,9,7,15],[2,10,7,15],[2,11,7,15],[2,12,7,15],[2,13,7,15],[4,4,35,42],[4,5,35,42],[4,6,35,42],[4,7,35,42],[4,8,35,42],[4,9,35,42],[4,10,35,42],[4,11,35,42],[4,12,35,42]]"
+	// We have block-aligned 2^3 block foreground
+	//   from z = 32 -> 95, block coord 1 -> 2 + offset in z by 4 blocks = 5, 6
+	//   from y = 32 -> 95, offset in y by 2 blocks = 3, 4
+	//   from x = 32 -> 95, offset in x by 5 blocks = 6, 7
+	expected := "[[5,3,6,7],[5,4,6,7],[6,3,6,7],[6,4,6,7]]"
 	if roiJSON != expected {
 		t.Errorf("Expected the following foreground ROI:\n%s\nGot instead:\n%s\n", expected, roiJSON)
 	}
 }
 
-func TestSubvolGrayscale8(t *testing.T) {
+func TestDirectCalls(t *testing.T) {
 	tests.UseStore()
 	defer tests.CloseStore()
 
@@ -252,9 +236,9 @@ func TestSubvolGrayscale8(t *testing.T) {
 	grayscale := makeGrayscale(repo, t, "grayscale")
 	grayscaleCtx := datastore.NewVersionedContext(grayscale, versionID)
 
-	// Create a fake 100x100x100 8-bit grayscale image
-	offset := dvid.Point3d{5, 35, 61}
-	size := dvid.Point3d{100, 100, 100}
+	// Create a block-aligned 8-bit grayscale image
+	offset := dvid.Point3d{512, 32, 1024}
+	size := dvid.Point3d{128, 96, 64}
 	subvol := dvid.NewSubvolume(offset, size)
 	data := makeVolume(offset, size)
 	origData := make([]byte, len(data))
@@ -263,7 +247,7 @@ func TestSubvolGrayscale8(t *testing.T) {
 	// Store it into datastore at root
 	v, err := grayscale.NewVoxels(subvol, data)
 	if err != nil {
-		t.Fatalf("Unable to make new grayscale ExtHandler: %s\n", err.Error())
+		t.Fatalf("Unable to make new grayscale voxels: %s\n", err.Error())
 	}
 	if err = grayscale.PutVoxels(versionID, v, nil); err != nil {
 		t.Errorf("Unable to put voxels for %s: %s\n", grayscaleCtx, err.Error())
@@ -306,104 +290,6 @@ func TestSubvolGrayscale8(t *testing.T) {
 			t.Fatalf("GET subvol (%d) != PUT subvol (%d) @ index %d", data[i], origData[i], i)
 		}
 	}
-}
-
-type testDataT struct {
-	repo      datastore.Repo
-	versionID dvid.VersionID
-	ctx       *datastore.VersionedContext
-	data      *Data
-	rawData   []uint8
-}
-
-func storeGrayscale(t *testing.T, name string, slice dvid.Geometry, r *ROI) testDataT {
-	repo, versionID := initTestRepo()
-	grayscale := makeGrayscale(repo, t, "grayscale"+name)
-	grayscaleCtx := datastore.NewVersionedContext(grayscale, versionID)
-
-	// Create a fake 100x100 8-bit grayscale image
-	nx := slice.Size().Value(0)
-	ny := slice.Size().Value(1)
-	offset := slice.StartPoint().(dvid.Point3d)
-	data := []uint8(makeSlice(offset, dvid.Point2d{nx, ny}))
-	img := dvid.ImageGrayFromData(data, int(nx), int(ny))
-
-	// Store it into datastore at root
-	v, err := grayscale.NewVoxels(slice, img)
-	if err != nil {
-		t.Fatalf("Unable to make new grayscale ExtHandler: %s\n", err.Error())
-	}
-	if err = grayscale.PutVoxels(versionID, v, r); err != nil {
-		t.Errorf("Unable to put voxels for %s: %s\n", grayscaleCtx, err.Error())
-	}
-	return testDataT{repo, versionID, grayscaleCtx, grayscale, data}
-}
-
-func sliceTest(t *testing.T, sliceType string, slice dvid.Geometry) {
-	testData := storeGrayscale(t, sliceType, slice, nil)
-	grayscaleCtx := datastore.NewVersionedContext(testData.data, testData.versionID)
-
-	// Read the stored image
-	v2, err := testData.data.NewVoxels(slice, nil)
-	if err != nil {
-		t.Fatalf("Could not create ExtHandler: %s\n", err.Error())
-	}
-	retrieved, err := testData.data.GetImage(testData.versionID, v2, nil)
-	if err != nil {
-		t.Fatalf("Unable to get image for %s: %s\n", grayscaleCtx, err.Error())
-	}
-
-	// Make sure the retrieved image matches the original
-	goImg := retrieved.Get()
-	retrievedData, voxelSize, _, err := dvid.ImageData(goImg)
-	if err != nil {
-		t.Errorf("Unable to get data/size from retrieved image: %s\n", err.Error())
-	}
-	if !reflect.DeepEqual(retrievedData, testData.rawData) {
-		t.Errorf("Retrieved data differs from original data\n")
-	}
-	if voxelSize != int32(1) {
-		t.Errorf("Retrieved voxel size in bytes incorrect.  Got %d, expected 1\n", voxelSize)
-	}
-}
-
-func TestXYSliceGrayscale8(t *testing.T) {
-	tests.UseStore()
-	defer tests.CloseStore()
-
-	offset := dvid.Point3d{3, 13, 24}
-	size := dvid.Point2d{100, 100}
-	slice, err := dvid.NewOrthogSlice(dvid.XY, offset, size)
-	if err != nil {
-		t.Errorf("Problem getting new orthogonal slice: %s\n", err.Error())
-	}
-	sliceTest(t, "XY", slice)
-}
-
-func TestXZSliceGrayscale8(t *testing.T) {
-	tests.UseStore()
-	defer tests.CloseStore()
-
-	offset := dvid.Point3d{31, 10, 14}
-	size := dvid.Point2d{100, 100}
-	slice, err := dvid.NewOrthogSlice(dvid.XZ, offset, size)
-	if err != nil {
-		t.Errorf("Problem getting new orthogonal slice: %s\n", err.Error())
-	}
-	sliceTest(t, "XZ", slice)
-}
-
-func TestYZSliceGrayscale8(t *testing.T) {
-	tests.UseStore()
-	defer tests.CloseStore()
-
-	offset := dvid.Point3d{13, 40, 99}
-	size := dvid.Point2d{100, 100}
-	slice, err := dvid.NewOrthogSlice(dvid.YZ, offset, size)
-	if err != nil {
-		t.Errorf("Problem getting new orthogonal slice: %s\n", err.Error())
-	}
-	sliceTest(t, "YZ", slice)
 }
 
 func TestBlockAPI(t *testing.T) {
@@ -462,9 +348,7 @@ func TestBlockAPI(t *testing.T) {
 	}
 }
 
-// Should intersect 100x100 image at Z = 67 and Y = 108
-const testROIJson = "[[2,3,10,10],[2,4,12,13]]"
-
+/*
 func TestROIMaskGrayscale8(t *testing.T) {
 	tests.UseStore()
 	defer tests.CloseStore()
@@ -564,6 +448,7 @@ func TestROIMaskGrayscale8(t *testing.T) {
 			testData2.rawData[roiIndex])
 	}
 }
+*/
 
 func TestGrayscaleRepoPersistence(t *testing.T) {
 	tests.UseStore()
@@ -605,13 +490,15 @@ func TestGrayscaleRepoPersistence(t *testing.T) {
 	if !ok {
 		t.Errorf("Returned new data instance 2 is not imageblk.Data\n")
 	}
-	if !reflect.DeepEqual(oldData, *grayscale2) {
+	if !oldData.Equals(grayscale2) {
 		t.Errorf("Expected %v, got %v\n", oldData, *grayscale2)
 	}
 }
 
-/* TODO -- Improve testing of voxels handling
+// Should intersect 100x100 image at Z = 67 and Y = 108
+const testROIJson = "[[2,3,10,10],[2,4,12,13]]"
 
+/*
 // Create, store, and retrieve data using HTTP API
 func TestGrayscale8HTTPAPI(t *testing.T) {
 	tests.UseStore()
@@ -674,5 +561,7 @@ func TestGrayscale8HTTPAPI(t *testing.T) {
 	// Read the second version grayscale
 
 	// Make sure it has modified voxels
+
+	// Use an ROI mask
 }
 */

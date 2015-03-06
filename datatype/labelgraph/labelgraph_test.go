@@ -2,7 +2,6 @@ package labelgraph
 
 import (
 	"log"
-	"reflect"
 	"testing"
 
 	"github.com/janelia-flyem/dvid/datastore"
@@ -94,7 +93,7 @@ func TestLabelgraphRepoPersistence(t *testing.T) {
 	if !ok {
 		t.Errorf("Returned new data instance 2 is not labelgraph.Data\n")
 	}
-	if !reflect.DeepEqual(oldData, *lgdata2) {
+	if !oldData.Equals(lgdata2) {
 		t.Errorf("Expected %v, got %v\n", oldData, *lgdata2)
 	}
 }

@@ -2,7 +2,6 @@ package multichan16
 
 import (
 	"log"
-	"reflect"
 	"sync"
 	"testing"
 
@@ -80,7 +79,7 @@ func TestMultichan16RepoPersistence(t *testing.T) {
 	if !ok {
 		t.Errorf("Returned new data instance 2 is not multichan16.Data\n")
 	}
-	if !reflect.DeepEqual(oldData, *mcdata2) {
+	if !oldData.Equals(mcdata2) {
 		t.Errorf("Expected %v, got %v\n", oldData, *mcdata2)
 	}
 }

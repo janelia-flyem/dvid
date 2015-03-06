@@ -12,6 +12,7 @@ import (
 	"io/ioutil"
 	"math"
 	"net/http"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -247,6 +248,15 @@ type Data struct {
 	*datastore.Data
 	Properties
 	Ready bool
+}
+
+func (d *Data) Equals(d2 *Data) bool {
+	if !d.Data.Equals(d2.Data) ||
+		!reflect.DeepEqual(d.Properties, d2.Properties) ||
+		d.Ready != d2.Ready {
+		return false
+	}
+	return true
 }
 
 // GetByUUID returns a pointer to ROI data given a version (UUID) and data name.

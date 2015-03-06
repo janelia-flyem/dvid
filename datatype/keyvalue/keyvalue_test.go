@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -148,7 +147,7 @@ func TestKeyvalueRepoPersistence(t *testing.T) {
 	if !ok {
 		t.Errorf("Returned new data instance 2 is not keyvalue.Data\n")
 	}
-	if !reflect.DeepEqual(oldData, *kvdata2) {
+	if !oldData.Equals(kvdata2) {
 		t.Errorf("Expected %v, got %v\n", oldData, *kvdata2)
 	}
 }
