@@ -276,8 +276,25 @@ type Properties struct {
 	MaxLabel map[dvid.VersionID]uint64
 }
 
+func (p Properties) MarshalJSON() ([]byte, error) {
+	maxLabels := make(map[string]uint64)
+	for v, max := range p.MaxLabel {
+		s := strconv.Itoa(int(v))
+		maxLabels[s] = max
+	}
+	return json.Marshal(struct {
+		dvid.Resolution
+		BlockSize dvid.Point3d
+		MaxLabel  map[string]uint64
+	}{
+		p.Resolution,
+		p.BlockSize,
+		maxLabels,
+	})
+}
+
 func (p *Properties) setDefault() {
-	for d := 0; d < 2; d++ {
+	for d := 0; d < 3; d++ {
 		p.BlockSize[d] = DefaultBlockSize
 	}
 	p.Resolution.VoxelSize = make(dvid.NdFloat32, 3)
@@ -327,8 +344,8 @@ func (p *Properties) setByConfig(config dvid.Config) error {
 
 // Data instance of labelvol, label sparse volumes.
 type Data struct {
-	*datastore.Data `json:"Base"`
-	Properties      `json:"Extended"`
+	*datastore.Data
+	Properties
 }
 
 func (d *Data) GetSyncedLabelblk(v dvid.VersionID) (*labelblk.Data, error) {
@@ -359,6 +376,40 @@ func GetByUUID(uuid dvid.UUID, name dvid.InstanceName) (*Data, error) {
 
 func (d *Data) Help() string {
 	return HelpMessage
+}
+
+func (d *Data) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Base     *datastore.Data
+		Extended Properties
+	}{
+		d.Data,
+		d.Properties,
+	})
+}
+
+func (d *Data) GobDecode(b []byte) error {
+	buf := bytes.NewBuffer(b)
+	dec := gob.NewDecoder(buf)
+	if err := dec.Decode(&(d.Data)); err != nil {
+		return err
+	}
+	if err := dec.Decode(&(d.Properties)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (d *Data) GobEncode() ([]byte, error) {
+	var buf bytes.Buffer
+	enc := gob.NewEncoder(&buf)
+	if err := enc.Encode(d.Data); err != nil {
+		return nil, err
+	}
+	if err := enc.Encode(d.Properties); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 // Send transfers all key-value pairs pertinent to this data type as well as

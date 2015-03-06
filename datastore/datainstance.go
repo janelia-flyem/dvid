@@ -234,6 +234,9 @@ func (d *Data) IsSyncEstablished(name dvid.InstanceName) bool {
 func (d *Data) SyncEstablished(name dvid.InstanceName) {
 	d.syncmu.Lock()
 	defer d.syncmu.Unlock()
+	if d.syncInited == nil {
+		d.syncInited = make(map[dvid.InstanceName]struct{})
+	}
 	d.syncInited[name] = struct{}{}
 }
 
@@ -287,7 +290,6 @@ func NewDataService(t TypeService, uuid dvid.UUID, id dvid.InstanceID, name dvid
 		compression: compression,
 		checksum:    dvid.DefaultChecksum,
 		syncs:       []dvid.InstanceName{},
-		syncInited:  make(map[dvid.InstanceName]struct{}),
 	}
 	err := data.ModifyConfig(c)
 	return data, err

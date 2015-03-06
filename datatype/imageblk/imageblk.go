@@ -50,7 +50,7 @@ $ dvid repo <UUID> new imageblk <data name> <settings...>
 
 	Example (note anisotropic resolution specified instead of default 8 nm isotropic):
 
-	$ dvid repo 3f8c new uint8blk mygrayscale BlockSize=32 Res=3.2,3.2,40.0
+	$ dvid repo 3f8c new uint8blk mygrayscale BlockSize=32,32,32 Res=3.2,3.2,40.0
 
     Arguments:
 
@@ -62,7 +62,7 @@ $ dvid repo <UUID> new imageblk <data name> <settings...>
     Configuration Settings (case-insensitive keys)
 
     BlockSize      Size in pixels  (default: %s)
-    VoxelSize      Resolution of voxels (default: 8.0, 8.0, 8.0)
+    VoxelSize      Resolution of voxels (default: %s)
     VoxelUnits     Resolution units (default: "nanometers")
     Background     Integer value that signifies background in any element (default: 0)
 
