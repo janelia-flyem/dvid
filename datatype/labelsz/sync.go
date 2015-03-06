@@ -85,15 +85,30 @@ func (d *Data) handleSizeEvent(in <-chan datastore.SyncMessage, done <-chan stru
 					// TODO -- Make transactional or force sequentially to label-specific goroutine
 					begKey := NewLabelSizeIndex(delta.Label, 0)
 					endKey := NewLabelSizeIndex(delta.Label, math.MaxUint64)
-					if err := store.DeleteRange(ctx, begKey, endKey); err != nil {
-						dvid.Errorf("Error on trying to delete label+size index for label %d\n", delta.Label)
+					keys, err := store.KeysInRange(ctx, begKey, endKey)
+					if err != nil {
+						dvid.Errorf("Unable to get size keys for label %d: %s\n", delta.Label, err.Error())
+						continue
 					}
-					begKey = NewSizeLabelIndex(0, delta.Label)
-					endKey = NewSizeLabelIndex(math.MaxUint64, delta.Label)
-					if err := store.DeleteRange(ctx, begKey, endKey); err != nil {
-						dvid.Errorf("Error on trying to delete size+label index for label %d\n", delta.Label)
+					if len(keys) != 1 {
+						dvid.Errorf("Cannot modify size of label %d when no prior size recorded!", delta.Label)
+						continue
 					}
-					continue
+
+					// Modify label size
+					label, oldSize, err := DecodeLabelSizeKey(keys[0])
+					if label != delta.Label {
+						dvid.Errorf("Requested size of label %d and got key for label %d!\n", delta.Label, label)
+						continue
+					}
+					batch := batcher.NewBatch(ctx)
+					oldKey := NewSizeLabelIndex(delta.OldSize, delta.Label)
+					batch.Delete(oldKey)
+					oldKey = NewLabelSizeIndex(delta.Label, delta.OldSize)
+					batch.Delete(oldKey)
+					if err := batch.Commit(); err != nil {
+						dvid.Errorf("Error on updating label sizes on %s: %s\n", ctx, err.Error())
+					}
 				}
 
 			case labels.DeltaModSize:
