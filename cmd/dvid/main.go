@@ -30,6 +30,7 @@ import (
 	_ "github.com/janelia-flyem/dvid/datatype/labelgraph"
 	//_ "github.com/janelia-flyem/dvid/datatype/labelmap"
 	//_ "github.com/janelia-flyem/dvid/datatype/labelsurf"
+	_ "github.com/janelia-flyem/dvid/datatype/labelsz"
 	_ "github.com/janelia-flyem/dvid/datatype/labelvol"
 	_ "github.com/janelia-flyem/dvid/datatype/multichan16"
 	_ "github.com/janelia-flyem/dvid/datatype/roi"

@@ -102,9 +102,9 @@ func (d *Data) handleSizeEvent(in <-chan datastore.SyncMessage, done <-chan stru
 						continue
 					}
 					batch := batcher.NewBatch(ctx)
-					oldKey := NewSizeLabelIndex(delta.OldSize, delta.Label)
+					oldKey := NewSizeLabelIndex(oldSize, delta.Label)
 					batch.Delete(oldKey)
-					oldKey = NewLabelSizeIndex(delta.Label, delta.OldSize)
+					oldKey = NewLabelSizeIndex(delta.Label, oldSize)
 					batch.Delete(oldKey)
 					if err := batch.Commit(); err != nil {
 						dvid.Errorf("Error on updating label sizes on %s: %s\n", ctx, err.Error())
