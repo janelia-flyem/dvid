@@ -153,11 +153,31 @@ const (
 	MaxInstanceID = MaxLocalID32
 	MaxRepoID     = MaxLocalID32
 	MaxVersionID  = MaxLocalID32
+	MaxClientID   = MaxLocalID32
 
 	InstanceIDSize = 4
 	RepoIDSize     = 4
 	VersionIDSize  = 4
+	ClientIDSize   = 4
 )
+
+// ClientID is a DVID server-specific identifier of an authorized client.  It is used with data keys
+// to track key-values on a per-client basis.
+type ClientID LocalID32
+
+// Bytes returns a sequence of bytes encoding this ClientID.  Binary representation is big-endian
+// to preserve lexicographic order.
+func (id ClientID) Bytes() []byte {
+	buf := make([]byte, LocalID32Size, LocalID32Size)
+	binary.BigEndian.PutUint32(buf, uint32(id))
+	return buf
+}
+
+// ClientIDFromBytes returns a VersionID from the start of the slice and the number of bytes used.
+// Note: No error checking is done to ensure byte slice has sufficient bytes for ClientID.
+func ClientIDFromBytes(b []byte) ClientID {
+	return ClientID(binary.BigEndian.Uint32(b))
+}
 
 // Data is the minimal interface for datatype-specific data that is implemented
 // in datatype packages.  It's required to say it's name, unique local instance ID,

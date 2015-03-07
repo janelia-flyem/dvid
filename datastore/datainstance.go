@@ -81,7 +81,7 @@ func (ctx *VersionedContext) GetIterator() (storage.VersionIterator, error) {
 
 // VersionedKeyValue returns the key-value pair corresponding to this key's version
 // given a list of key-value pairs across many versions.  If no suitable key-value
-// pair is found, nil is returned.
+// pair is found or a tombstone is encounterd closest to version, nil is returned.
 func (ctx *VersionedContext) VersionedKeyValue(values []*storage.KeyValue) (*storage.KeyValue, error) {
 	// Set up a map[VersionID]KeyValue
 	versionMap := make(map[dvid.VersionID]*storage.KeyValue, len(values))
@@ -100,6 +100,9 @@ func (ctx *VersionedContext) VersionedKeyValue(values []*storage.KeyValue) (*sto
 	for {
 		if it.Valid() {
 			if kv, found := versionMap[it.VersionID()]; found {
+				if ctx.IsTombstoneKey(kv.K) {
+					return nil, nil
+				}
 				return kv, nil
 			}
 		} else {
