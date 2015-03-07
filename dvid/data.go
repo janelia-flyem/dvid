@@ -104,6 +104,12 @@ func InstanceIDFromBytes(b []byte) InstanceID {
 	return InstanceID(binary.BigEndian.Uint32(b))
 }
 
+// InstanceVersion identifies a particular version of a data instance.
+type InstanceVersion struct {
+	Name    InstanceName
+	Version VersionID
+}
+
 // RepoID is a DVID server-specific identifier for a particular Repo.  Valid RepoIDs
 // should be greater than 0.
 type RepoID LocalID32

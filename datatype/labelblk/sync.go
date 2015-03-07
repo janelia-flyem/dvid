@@ -8,11 +8,22 @@ package labelblk
 import (
 	"encoding/binary"
 	"hash/fnv"
+	"sync"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
+)
+
+// Dirty labels can occur from splits and merges.
+// If merge, we can use cache of merges and create an integrated label map for any name+version and
+//   apply the map on GET for a label block.
+// If split, we need the block RLEs of the split fragments to create an integrated map of any modified
+//   block and the changes.
+
+var (
+	mergeCache labels.MergeCache
 )
 
 // InitSync implements the datastore.Syncer interface
@@ -30,24 +41,24 @@ func (d *Data) InitSync(name dvid.InstanceName) []datastore.SyncSub {
 	splitDone := make(chan struct{})
 
 	subs := []datastore.SyncSub{
-		datastore.SyncSub{
-			Event:  datastore.SyncEvent{name, labels.ChangeSparsevolEvent},
-			Notify: d.DataName(),
-			Ch:     make(chan datastore.SyncMessage, 100),
-			Done:   make(chan struct{}),
-		},
+		// datastore.SyncSub{
+		// 	Event:  datastore.SyncEvent{name, labels.ChangeSparsevolEvent},
+		// 	Notify: d.DataName(),
+		// 	Ch:     make(chan datastore.SyncMessage, 100),
+		// 	Done:   make(chan struct{}),
+		// },
 		datastore.SyncSub{
 			Event:  datastore.SyncEvent{name, labels.MergeStartEvent},
 			Notify: d.DataName(),
 			Ch:     mergeCh,
 			Done:   mergeDone,
 		},
-		datastore.SyncSub{
-			Event:  datastore.SyncEvent{name, labels.MergeEndEvent},
-			Notify: d.DataName(),
-			Ch:     mergeCh,
-			Done:   mergeDone,
-		},
+		// datastore.SyncSub{
+		// 	Event:  datastore.SyncEvent{name, labels.MergeEndEvent},
+		// 	Notify: d.DataName(),
+		// 	Ch:     mergeCh,
+		// 	Done:   mergeDone,
+		// },
 		datastore.SyncSub{
 			Event:  datastore.SyncEvent{name, labels.MergeBlockEvent},
 			Notify: d.DataName(),
@@ -75,14 +86,14 @@ func (d *Data) InitSync(name dvid.InstanceName) []datastore.SyncSub {
 	}
 
 	// Launch go routines to handle sync events.
-	go d.syncSparsevolChange(subs[0].Ch, subs[0].Done)
-	go d.syncMerge(mergeCh, mergeDone)
-	go d.syncSplit(splitCh, splitDone)
+	go d.syncSparsevolChange(name, subs[0].Ch, subs[0].Done)
+	go d.syncMerge(name, mergeCh, mergeDone)
+	go d.syncSplit(name, splitCh, splitDone)
 
 	return subs
 }
 
-func (d *Data) syncSparsevolChange(in <-chan datastore.SyncMessage, done <-chan struct{}) {
+func (d *Data) syncSparsevolChange(name dvid.InstanceName, in <-chan datastore.SyncMessage, done <-chan struct{}) {
 	/*
 		for msg := range in {
 			select {
@@ -108,9 +119,10 @@ type mergeOp struct {
 	labels.MergeOp
 	ctx  *datastore.VersionedContext
 	izyx dvid.IZYXString
+	wg   *sync.WaitGroup
 }
 
-func (d *Data) syncMerge(in <-chan datastore.SyncMessage, done <-chan struct{}) {
+func (d *Data) syncMerge(name dvid.InstanceName, in <-chan datastore.SyncMessage, done <-chan struct{}) {
 	// Start N goroutines to process blocks.  Don't need transactional support for
 	// GET-PUT combo if each block only is handled serially by a given goroutine.
 	const numprocs = 32
@@ -131,15 +143,27 @@ func (d *Data) syncMerge(in <-chan datastore.SyncMessage, done <-chan struct{}) 
 			}
 			return
 		default:
+			iv := dvid.InstanceVersion{name, msg.Version}
 			switch delta := msg.Delta.(type) {
 			case labels.DeltaMerge:
 				ctx := datastore.NewVersionedContext(d, msg.Version)
+				wg := new(sync.WaitGroup)
 				for izyxStr := range delta.Blocks {
 					n := hashStr(izyxStr, numprocs)
-					pch[n] <- mergeOp{delta.MergeOp, ctx, izyxStr}
+					wg.Add(1)
+					pch[n] <- mergeOp{delta.MergeOp, ctx, izyxStr, wg}
 				}
+				// When we've processed all the delta blocks, we can remove this merge op
+				// from the merge cache since all labels will have completed.
+				go func(wg *sync.WaitGroup) {
+					wg.Wait()
+					mergeCache.Remove(iv, delta.MergeOp)
+				}(wg)
+
 			case labels.DeltaMergeStart:
-			case labels.DeltaMergeEnd:
+				// Add this merge into the cached blockRLEs
+				mergeCache.Add(iv, delta.MergeOp)
+
 			default:
 				dvid.Criticalf("bad delta in merge event: %v\n", delta)
 				continue
@@ -148,7 +172,7 @@ func (d *Data) syncMerge(in <-chan datastore.SyncMessage, done <-chan struct{}) 
 	}
 }
 
-func (d *Data) syncSplit(in <-chan datastore.SyncMessage, done <-chan struct{}) {
+func (d *Data) syncSplit(name dvid.InstanceName, in <-chan datastore.SyncMessage, done <-chan struct{}) {
 	for msg := range in {
 		select {
 		case <-done:
@@ -185,21 +209,25 @@ func (d *Data) relabelBlock(in <-chan mergeOp) {
 		data, err := store.Get(op.ctx, k)
 		if err != nil {
 			dvid.Errorf("Error on GET of labelblk with coord string %q\n", op.izyx)
-			return
+			op.wg.Done()
+			continue
 		}
 		if data == nil {
 			dvid.Errorf("nil label block where merge was done!\n")
-			return
+			op.wg.Done()
+			continue
 		}
 
 		blockData, _, err := dvid.DeserializeData(data, true)
 		if err != nil {
 			dvid.Criticalf("unable to deserialize label block in '%s': %s\n", d.DataName(), err.Error())
-			return
+			op.wg.Done()
+			continue
 		}
 		if len(blockData) != blockBytes {
 			dvid.Criticalf("After labelblk deserialization got back %d bytes, expected %d bytes\n", len(blockData), blockBytes)
-			return
+			op.wg.Done()
+			continue
 		}
 
 		// Iterate through this block of labels and relabel if label in merge.
@@ -213,11 +241,13 @@ func (d *Data) relabelBlock(in <-chan mergeOp) {
 		// Store this block.
 		serialization, err := dvid.SerializeData(blockData, d.Compression(), d.Checksum())
 		if err != nil {
-			dvid.Errorf("Unable to serialize block in %q: %s\n", d.DataName(), err.Error())
-			return
+			dvid.Criticalf("Unable to serialize block in %q: %s\n", d.DataName(), err.Error())
+			op.wg.Done()
+			continue
 		}
 		if err := store.Put(op.ctx, k, serialization); err != nil {
 			dvid.Errorf("Error in putting key %v: %s\n", k, err.Error())
 		}
+		op.wg.Done()
 	}
 }

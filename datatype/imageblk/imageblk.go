@@ -186,7 +186,7 @@ POST <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>]
     Query-string Options:
 
     roi       	  Name of roi data instance used to mask the requested data.
-    attenuation   (TODO) For attenuation n, this reduces the intensity of voxels outside ROI by 2^n.
+    attenuation   For attenuation n, this reduces the intensity of voxels outside ROI by 2^n.
     			  Valid range is n = 1 to n = 7.  Currently only implemented for 8-bit voxels.
     			  Default is to zero out voxels outside ROI.
 

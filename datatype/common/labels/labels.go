@@ -7,118 +7,193 @@ package labels
 
 import (
 	"fmt"
+	"sync"
 
-	"github.com/janelia-flyem/dvid/datatype/imageblk"
 	"github.com/janelia-flyem/dvid/dvid"
 )
 
-// LabelSet is a set of labels.
-type LabelSet map[uint64]struct{}
+// Mapping is a mapping of labels to labels.
+type Mapping map[uint64]uint64
 
-func (ls LabelSet) String() string {
-	var s string
-	for k := range ls {
-		s += fmt.Sprintf("%d ", k)
+// FinalLabel follows mappings from a start label until
+// a final mapped label is reached.
+func (m Mapping) FinalLabel(start uint64) uint64 {
+	if m == nil {
+		return start
 	}
-	return s
-}
-
-// MergeOp represents the merging of a set of labels into a target label.
-type MergeOp struct {
-	Target uint64
-	Merged LabelSet
-}
-
-// MergeTuple represents a merge of labels.  Its first element is the destination label
-// and all later elements in the slice are labels to be merged.  It's an easy JSON
-// representation as a list of labels.
-type MergeTuple []uint64
-
-// Op converts a MergeTuple into a MergeOp.
-func (t MergeTuple) Op() (MergeOp, error) {
-	var op MergeOp
-	if t == nil || len(t) == 1 {
-		return op, fmt.Errorf("invalid merge tuple %v, need at least target and to-merge labels", t)
+	cur := start
+	for {
+		var found bool
+		cur, found = m[cur]
+		if !found {
+			break
+		}
 	}
-	op.Target = t[0]
-	op.Merged = make(LabelSet, len(t)-1)
-	for _, label := range t {
-		op.Merged[label] = struct{}{}
+	return cur
+}
+
+// Set is a set of labels.
+type Set map[uint64]struct{}
+
+func (s Set) String() string {
+	var str string
+	for k := range s {
+		str += fmt.Sprintf("%d ", k)
 	}
-	return op, nil
+	return str
 }
 
-// DeltaNewSize is a new label being introduced.
-type DeltaNewSize struct {
-	Label uint64
-	Size  uint64
+// Counts is a thread-safe type for counting label references.
+type Counts struct {
+	sync.RWMutex
+	m map[uint64]int
 }
 
-// DeltaDeleteSize gives info to delete a label's size.
-type DeltaDeleteSize struct {
-	Label    uint64
-	OldSize  uint64
-	OldKnown bool // true if OldSize is valid, otherwise delete all size k/v for this label.
+// Incr increments the count for a label.
+func (c *Counts) Incr(label uint64) {
+	if c.m == nil {
+		c.m = make(map[uint64]int)
+	}
+	c.Lock()
+	defer c.Unlock()
+	c.m[label] = c.m[label] + 1
 }
 
-// DeltaModSize gives info to modify an existing label size without knowing the old size.
-type DeltaModSize struct {
-	Label      uint64
-	SizeChange int64 // Adds to old label size
+// Decr decrements the count for a label.
+func (c *Counts) Decr(label uint64) {
+	if c.m == nil {
+		c.m = make(map[uint64]int)
+	}
+	c.Lock()
+	defer c.Unlock()
+	c.m[label] = c.m[label] - 1
 }
 
-// DeltaReplaceSize gives info to precisely remove an old label size and add the updated size.
-type DeltaReplaceSize struct {
-	Label   uint64
-	OldSize uint64
-	NewSize uint64
+// Value returns the count for a label.
+func (c *Counts) Value(label uint64) int {
+	if c.m == nil {
+		return 0
+	}
+	c.RLock()
+	defer c.RUnlock()
+	return c.m[label]
 }
 
-// DeltaMerge describes the labels and blocks affected by a merge operation.  It is sent
-// during a MergeBlockEvent.
-type DeltaMerge struct {
-	MergeOp
-	Blocks map[dvid.IZYXString]struct{}
+// MergeCache is a thread-safe cache for merge operations that provides
+// mapping at any point in time.
+type MergeCache struct {
+	sync.RWMutex
+	m map[dvid.InstanceVersion]Mapping
 }
 
-// DeltaMergeStart is the data sent during a MergeStartEvent.
-type DeltaMergeStart struct {
-	MergeOp
+func (mc *MergeCache) Add(v dvid.InstanceVersion, op MergeOp) {
+	mc.Lock()
+	defer mc.Unlock()
+
+	if mc.m == nil {
+		mc.m = make(map[dvid.InstanceVersion]Mapping)
+	}
+	mapping, found := mc.m[v]
+	if !found {
+		mapping = make(Mapping, len(op.Merged))
+	}
+	for merged := range op.Merged {
+		mapping[merged] = op.Target
+	}
+	mc.m[v] = mapping
 }
 
-// DeltaMergeEnd is the data sent during a MergeEndEvent.
-type DeltaMergeEnd struct {
-	MergeOp
+func (mc *MergeCache) Remove(v dvid.InstanceVersion, op MergeOp) {
+	mc.Lock()
+	defer mc.Unlock()
+
+	if mc.m == nil {
+		mc.m = make(map[dvid.InstanceVersion]Mapping)
+		return
+	}
+	mapping, found := mc.m[v]
+	if !found {
+		return
+	}
+	for merged := range op.Merged {
+		delete(mapping, merged)
+	}
+	mc.m[v] = mapping
 }
 
-// DeltaSplit describes the voxels modified during a split operation
-type DeltaSplit struct {
-	OldLabel uint64
-	NewLabel uint64
-	Split    dvid.BlockRLEs
+// LabelMap returns a label mapping for a version of a data instance.
+// If no label mapping is available, a nil is returned.
+func (mc *MergeCache) LabelMap(v dvid.InstanceVersion) Mapping {
+	mc.RLock()
+	defer mc.RUnlock()
+
+	if mc.m == nil {
+		return nil
+	}
+	mapping, found := mc.m[v]
+	if found {
+		if len(mapping) == 0 {
+			return nil
+		}
+		return mapping
+	}
+	return nil
 }
 
-// DeltaSplitStart is the data sent during a SplitStartEvent.
-type DeltaSplitStart struct {
-	OldLabel uint64
-	NewLabel uint64
+// DirtyCache tracks dirty labels across versions
+type DirtyCache struct {
+	sync.RWMutex
+	dirty map[dvid.InstanceVersion]*Counts
 }
 
-// DeltaSplitEnd is the data sent during a SplitEndEvent.
-type DeltaSplitEnd struct {
-	OldLabel uint64
-	NewLabel uint64
+func (d *DirtyCache) Incr(name dvid.InstanceName, v dvid.VersionID, label uint64) {
+	d.Lock()
+	defer d.Unlock()
+
+	if d.dirty == nil {
+		d.dirty = make(map[dvid.InstanceVersion]*Counts)
+	}
+
+	iv := dvid.InstanceVersion{name, v}
+	cnts, found := d.dirty[iv]
+	if !found || cnts == nil {
+		cnts = &Counts{}
+	}
+	cnts.Incr(label)
 }
 
-// Label change event identifiers
-const (
-	ChangeBlockEvent     = imageblk.ChangeBlockEvent
-	ChangeSparsevolEvent = "SPARSEVOL_CHANGE"
-	ChangeSizeEvent      = "LABEL_SIZE_CHANGE"
-	MergeStartEvent      = "MERGE_START"
-	MergeBlockEvent      = "MERGE_BLOCK"
-	MergeEndEvent        = "MERGE_END"
-	SplitStartEvent      = "SPLIT_START"
-	SplitBlockEvent      = "SPLIT_BLOCK"
-	SplitEndEvent        = "SPLIT_END"
-)
+func (d *DirtyCache) Decr(name dvid.InstanceName, v dvid.VersionID, label uint64) {
+	d.Lock()
+	defer d.Unlock()
+
+	if d.dirty == nil {
+		d.dirty = make(map[dvid.InstanceVersion]*Counts)
+	}
+
+	iv := dvid.InstanceVersion{name, v}
+	cnts, found := d.dirty[iv]
+	if !found || cnts == nil {
+		dvid.Errorf("decremented non-existant count for label %d, data %q, version %d\n", label, name, v)
+		return
+	}
+	cnts.Decr(label)
+}
+
+func (d *DirtyCache) IsDirty(name dvid.InstanceName, v dvid.VersionID, label uint64) bool {
+	d.RLock()
+	defer d.RUnlock()
+
+	if d.dirty == nil {
+		return false
+	}
+
+	iv := dvid.InstanceVersion{name, v}
+	cnts, found := d.dirty[iv]
+	if !found || cnts == nil {
+		return false
+	}
+	if cnts.Value(label) == 0 {
+		return false
+	}
+	return true
+}

@@ -798,7 +798,7 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 					return
 				}
 			}
-			img, err := d.GetImage(versionID, lbl.Voxels, roiptr)
+			img, err := d.GetImage(versionID, lbl, roiptr)
 			if err != nil {
 				server.BadRequest(w, r, err.Error())
 				return
@@ -858,7 +858,7 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 						return
 					}
 				}
-				data, err := d.GetVolume(versionID, lbl.Voxels, roiptr)
+				data, err := d.GetVolume(versionID, lbl, roiptr)
 				if err != nil {
 					server.BadRequest(w, r, err.Error())
 					return
