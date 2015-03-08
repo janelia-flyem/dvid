@@ -12,24 +12,63 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 )
 
-// Mapping is a mapping of labels to labels.
-type Mapping map[uint64]uint64
+// Mapping is an immutable thread-safe mapping of labels to labels.
+type Mapping struct {
+	sync.RWMutex
+	m map[uint64]uint64
+}
 
 // FinalLabel follows mappings from a start label until
 // a final mapped label is reached.
 func (m Mapping) FinalLabel(start uint64) uint64 {
-	if m == nil {
+	m.RLock()
+	defer m.RUnlock()
+
+	if m.m == nil {
 		return start
 	}
 	cur := start
 	for {
 		var found bool
-		cur, found = m[cur]
+		cur, found = m.m[cur]
 		if !found {
 			break
 		}
 	}
 	return cur
+}
+
+// Get returns the mapping or false if no mapping exists.
+func (m Mapping) Get(label uint64) (uint64, bool) {
+	m.RLock()
+	defer m.RUnlock()
+
+	if m.m == nil {
+		return 0, false
+	}
+	mapped, found := m.m[label]
+	if found {
+		return mapped, true
+	}
+	return 0, false
+}
+
+func (m Mapping) set(a, b uint64) {
+	m.Lock()
+	defer m.Unlock()
+
+	if m.m == nil {
+		m.m = make(map[uint64]uint64)
+	}
+	m.m[a] = b
+}
+func (m Mapping) delete(label uint64) {
+	m.Lock()
+	defer m.Unlock()
+
+	if m.m != nil {
+		delete(m.m, label)
+	}
 }
 
 // Set is a set of labels.
@@ -67,6 +106,9 @@ func (c *Counts) Decr(label uint64) {
 	c.Lock()
 	defer c.Unlock()
 	c.m[label] = c.m[label] - 1
+	if c.m[label] == 0 {
+		delete(c.m, label)
+	}
 }
 
 // Value returns the count for a label.
@@ -79,6 +121,14 @@ func (c *Counts) Value(label uint64) int {
 	return c.m[label]
 }
 
+// Empty returns true if there are no counts.
+func (c *Counts) Empty() bool {
+	if len(c.m) == 0 {
+		return true
+	}
+	return false
+}
+
 // MergeCache is a thread-safe cache for merge operations that provides
 // mapping at any point in time.
 type MergeCache struct {
@@ -86,24 +136,24 @@ type MergeCache struct {
 	m map[dvid.InstanceVersion]Mapping
 }
 
-func (mc *MergeCache) Add(v dvid.InstanceVersion, op MergeOp) {
+func (mc *MergeCache) Add(iv dvid.InstanceVersion, op MergeOp) {
 	mc.Lock()
 	defer mc.Unlock()
 
 	if mc.m == nil {
 		mc.m = make(map[dvid.InstanceVersion]Mapping)
 	}
-	mapping, found := mc.m[v]
+	mapping, found := mc.m[iv]
 	if !found {
-		mapping = make(Mapping, len(op.Merged))
+		mapping = Mapping{m: make(map[uint64]uint64, len(op.Merged))}
 	}
 	for merged := range op.Merged {
-		mapping[merged] = op.Target
+		mapping.set(merged, op.Target)
 	}
-	mc.m[v] = mapping
+	mc.m[iv] = mapping
 }
 
-func (mc *MergeCache) Remove(v dvid.InstanceVersion, op MergeOp) {
+func (mc *MergeCache) Remove(iv dvid.InstanceVersion, op MergeOp) {
 	mc.Lock()
 	defer mc.Unlock()
 
@@ -111,31 +161,31 @@ func (mc *MergeCache) Remove(v dvid.InstanceVersion, op MergeOp) {
 		mc.m = make(map[dvid.InstanceVersion]Mapping)
 		return
 	}
-	mapping, found := mc.m[v]
+	mapping, found := mc.m[iv]
 	if !found {
 		return
 	}
 	for merged := range op.Merged {
-		delete(mapping, merged)
+		mapping.delete(merged)
 	}
-	mc.m[v] = mapping
+	mc.m[iv] = mapping
 }
 
 // LabelMap returns a label mapping for a version of a data instance.
 // If no label mapping is available, a nil is returned.
-func (mc *MergeCache) LabelMap(v dvid.InstanceVersion) Mapping {
+func (mc *MergeCache) LabelMap(iv dvid.InstanceVersion) *Mapping {
 	mc.RLock()
 	defer mc.RUnlock()
 
 	if mc.m == nil {
 		return nil
 	}
-	mapping, found := mc.m[v]
+	mapping, found := mc.m[iv]
 	if found {
-		if len(mapping) == 0 {
+		if len(mapping.m) == 0 {
 			return nil
 		}
-		return mapping
+		return &mapping
 	}
 	return nil
 }
@@ -146,7 +196,7 @@ type DirtyCache struct {
 	dirty map[dvid.InstanceVersion]*Counts
 }
 
-func (d *DirtyCache) Incr(name dvid.InstanceName, v dvid.VersionID, label uint64) {
+func (d *DirtyCache) Incr(iv dvid.InstanceVersion, label uint64) {
 	d.Lock()
 	defer d.Unlock()
 
@@ -154,7 +204,6 @@ func (d *DirtyCache) Incr(name dvid.InstanceName, v dvid.VersionID, label uint64
 		d.dirty = make(map[dvid.InstanceVersion]*Counts)
 	}
 
-	iv := dvid.InstanceVersion{name, v}
 	cnts, found := d.dirty[iv]
 	if !found || cnts == nil {
 		cnts = &Counts{}
@@ -162,7 +211,7 @@ func (d *DirtyCache) Incr(name dvid.InstanceName, v dvid.VersionID, label uint64
 	cnts.Incr(label)
 }
 
-func (d *DirtyCache) Decr(name dvid.InstanceName, v dvid.VersionID, label uint64) {
+func (d *DirtyCache) Decr(iv dvid.InstanceVersion, label uint64) {
 	d.Lock()
 	defer d.Unlock()
 
@@ -170,16 +219,15 @@ func (d *DirtyCache) Decr(name dvid.InstanceName, v dvid.VersionID, label uint64
 		d.dirty = make(map[dvid.InstanceVersion]*Counts)
 	}
 
-	iv := dvid.InstanceVersion{name, v}
 	cnts, found := d.dirty[iv]
 	if !found || cnts == nil {
-		dvid.Errorf("decremented non-existant count for label %d, data %q, version %d\n", label, name, v)
+		dvid.Errorf("decremented non-existant count for label %d, version %v\n", label, iv)
 		return
 	}
 	cnts.Decr(label)
 }
 
-func (d *DirtyCache) IsDirty(name dvid.InstanceName, v dvid.VersionID, label uint64) bool {
+func (d *DirtyCache) IsDirty(iv dvid.InstanceVersion, label uint64) bool {
 	d.RLock()
 	defer d.RUnlock()
 
@@ -187,7 +235,6 @@ func (d *DirtyCache) IsDirty(name dvid.InstanceName, v dvid.VersionID, label uin
 		return false
 	}
 
-	iv := dvid.InstanceVersion{name, v}
 	cnts, found := d.dirty[iv]
 	if !found || cnts == nil {
 		return false
@@ -196,4 +243,18 @@ func (d *DirtyCache) IsDirty(name dvid.InstanceName, v dvid.VersionID, label uin
 		return false
 	}
 	return true
+}
+
+func (d *DirtyCache) Empty(iv dvid.InstanceVersion) bool {
+	d.RLock()
+	defer d.RUnlock()
+
+	if len(d.dirty) == 0 {
+		return true
+	}
+	cnts, found := d.dirty[iv]
+	if !found || cnts == nil {
+		return true
+	}
+	return cnts.Empty()
 }

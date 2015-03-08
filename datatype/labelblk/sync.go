@@ -24,6 +24,7 @@ import (
 
 var (
 	mergeCache labels.MergeCache
+	splitCache labels.DirtyCache
 )
 
 // InitSync implements the datastore.Syncer interface
@@ -71,14 +72,14 @@ func (d *Data) InitSync(name dvid.InstanceName) []datastore.SyncSub {
 			Ch:     splitCh,
 			Done:   splitDone,
 		},
+		// datastore.SyncSub{
+		// 	Event:  datastore.SyncEvent{name, labels.SplitEndEvent},
+		// 	Notify: d.DataName(),
+		// 	Ch:     splitCh,
+		// 	Done:   splitDone,
+		// },
 		datastore.SyncSub{
-			Event:  datastore.SyncEvent{name, labels.SplitEndEvent},
-			Notify: d.DataName(),
-			Ch:     splitCh,
-			Done:   splitDone,
-		},
-		datastore.SyncSub{
-			Event:  datastore.SyncEvent{name, labels.SplitBlockEvent},
+			Event:  datastore.SyncEvent{name, labels.SplitLabelEvent},
 			Notify: d.DataName(),
 			Ch:     splitCh,
 			Done:   splitDone,
@@ -124,17 +125,16 @@ type mergeOp struct {
 
 func (d *Data) syncMerge(name dvid.InstanceName, in <-chan datastore.SyncMessage, done <-chan struct{}) {
 	// Start N goroutines to process blocks.  Don't need transactional support for
-	// GET-PUT combo if each block only is handled serially by a given goroutine.
+	// GET-PUT combo if each spatial coordinate (block) is only handled serially by a one goroutine.
 	const numprocs = 32
 	const mergeBufSize = 100
 	var pch [numprocs]chan mergeOp
 	for i := 0; i < numprocs; i++ {
 		pch[i] = make(chan mergeOp, mergeBufSize)
-		go d.relabelBlock(pch[i])
+		go d.mergeBlock(pch[i])
 	}
 
 	// Process incoming merge messages
-	const batchSize = 100
 	for msg := range in {
 		select {
 		case <-done:
@@ -172,36 +172,15 @@ func (d *Data) syncMerge(name dvid.InstanceName, in <-chan datastore.SyncMessage
 	}
 }
 
-func (d *Data) syncSplit(name dvid.InstanceName, in <-chan datastore.SyncMessage, done <-chan struct{}) {
-	for msg := range in {
-		select {
-		case <-done:
-			return
-		default:
-			switch delta := msg.Delta.(type) {
-			case labels.DeltaSplit:
-				//ctx := datastore.NewVersionedContext(d, msg.Version)
-			case labels.DeltaSplitStart:
-			case labels.DeltaSplitEnd:
-			default:
-				dvid.Criticalf("bad delta in split event: %v\n", delta)
-				continue
-			}
-		}
-	}
-}
-
-// Goroutine that handles relabeling of blocks that form a part of the spatial index space.
+// Goroutine that handles relabeling of blocks during a merge operation.
 // Since the same block coordinate always gets mapped to the same goroutine, we handle
 // concurrency by serializing GET/PUT for a particular block coordinate.
-// TODO -- Block-level ops should be handled by one goroutine for a particular block across all ops.
-func (d *Data) relabelBlock(in <-chan mergeOp) {
+func (d *Data) mergeBlock(in <-chan mergeOp) {
 	store, err := storage.BigDataStore()
 	if err != nil {
 		dvid.Errorf("Data type labelblk had error initializing store: %s\n", err.Error())
 		return
 	}
-
 	blockBytes := int(d.BlockSize().Prod() * 8)
 
 	for op := range in {
@@ -250,4 +229,127 @@ func (d *Data) relabelBlock(in <-chan mergeOp) {
 		}
 		op.wg.Done()
 	}
+}
+
+type splitOp struct {
+	labels.DeltaSplit
+	ctx *datastore.VersionedContext
+}
+
+func (d *Data) syncSplit(name dvid.InstanceName, in <-chan datastore.SyncMessage, done <-chan struct{}) {
+	// Start N goroutines to process blocks.  Don't need transactional support for
+	// GET-PUT combo if each spatial coordinate (block) is only handled serially by a one goroutine.
+	const numprocs = 32
+	const splitBufSize = 10
+	var pch [numprocs]chan splitOp
+	for i := 0; i < numprocs; i++ {
+		pch[i] = make(chan splitOp, splitBufSize)
+		go d.splitBlock(pch[i])
+	}
+
+	for msg := range in {
+		select {
+		case <-done:
+			for i := 0; i < numprocs; i++ {
+				close(pch[i])
+			}
+			return
+		default:
+			switch delta := msg.Delta.(type) {
+			case labels.DeltaSplit:
+				ctx := datastore.NewVersionedContext(d, msg.Version)
+				n := delta.OldLabel % numprocs
+				pch[n] <- splitOp{delta, ctx}
+			case labels.DeltaSplitStart:
+				// Mark the old label is under transition
+				iv := dvid.InstanceVersion{name, msg.Version}
+				splitCache.Incr(iv, delta.OldLabel)
+			default:
+				dvid.Criticalf("bad delta in split event: %v\n", delta)
+				continue
+			}
+		}
+	}
+}
+
+// Goroutine that handles splits across a lot of blocks for one label.
+func (d *Data) splitBlock(in <-chan splitOp) {
+	store, err := storage.BigDataStore()
+	if err != nil {
+		dvid.Errorf("Data type labelblk had error initializing store: %s\n", err.Error())
+		return
+	}
+	blockBytes := int(d.BlockSize().Prod() * 8)
+
+	for op := range in {
+		// Iterate through all the modified blocks, inserting the new label using the RLEs for that block.
+		for _, zyxStr := range op.SortedBlocks {
+			// Read the block.
+			k := NewIndexByCoord(zyxStr)
+			data, err := store.Get(op.ctx, k)
+			if err != nil {
+				dvid.Errorf("Error on GET of labelblk with coord string %v\n", []byte(zyxStr))
+				continue
+			}
+			if data == nil {
+				dvid.Errorf("nil label block where split was done, coord %v\n", []byte(zyxStr))
+				continue
+			}
+			bdata, _, err := dvid.DeserializeData(data, true)
+			if err != nil {
+				dvid.Criticalf("unable to deserialize label block in '%s' key %v: %s\n", d.DataName(), []byte(zyxStr), err.Error())
+				continue
+			}
+			if len(bdata) != blockBytes {
+				dvid.Criticalf("splitBlock: coord %v got back %d bytes, expected %d bytes\n", []byte(zyxStr), len(bdata), blockBytes)
+				continue
+			}
+
+			// Modify the block.
+			rles, found := op.Split[zyxStr]
+			if !found {
+				dvid.Errorf("split block %v not present in block RLEs\n", []byte(zyxStr))
+				continue
+			}
+			if err := d.storeRLEs(zyxStr, bdata, op.NewLabel, rles); err != nil {
+				dvid.Errorf("can't store RLEs into block %v\n", []byte(zyxStr))
+				continue
+			}
+
+			// Write the modified block.
+			serialization, err := dvid.SerializeData(bdata, d.Compression(), d.Checksum())
+			if err != nil {
+				dvid.Criticalf("Unable to serialize block in %q: %s\n", d.DataName(), err.Error())
+				continue
+			}
+			if err := store.Put(op.ctx, k, serialization); err != nil {
+				dvid.Errorf("Error in putting key %v: %s\n", k, err.Error())
+			}
+		}
+		splitCache.Decr(op.ctx.InstanceVersion(), op.OldLabel)
+	}
+}
+
+func (d *Data) storeRLEs(zyxStr dvid.IZYXString, data []byte, label uint64, rles dvid.RLEs) error {
+	// Get the block coordinate
+	bcoord, err := zyxStr.ToChunkPoint3d()
+	if err != nil {
+		return err
+	}
+
+	// Get the first voxel offset
+	blockSize := d.BlockSize()
+	offset := bcoord.MinPoint(blockSize)
+
+	// Iterate through rles, getting span for this block of bytes.
+	nx := blockSize.Value(0) * 8
+	nxy := nx * blockSize.Value(1)
+	for _, rle := range rles {
+		p := rle.StartPt().Sub(offset)
+		i := p.Value(2)*nxy + p.Value(1)*nx + p.Value(0)*8
+		for n := int32(0); n < rle.Length(); n++ {
+			binary.LittleEndian.PutUint64(data[i:i+8], label)
+		}
+	}
+	return nil
 }

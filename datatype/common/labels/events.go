@@ -77,9 +77,10 @@ type DeltaMergeEnd struct {
 
 // DeltaSplit describes the voxels modified during a split operation
 type DeltaSplit struct {
-	OldLabel uint64
-	NewLabel uint64
-	Split    dvid.BlockRLEs
+	OldLabel     uint64
+	NewLabel     uint64
+	Split        dvid.BlockRLEs
+	SortedBlocks []dvid.IZYXString
 }
 
 // DeltaSplitStart is the data sent during a SplitStartEvent.
@@ -103,6 +104,6 @@ const (
 	MergeBlockEvent      = "MERGE_BLOCK"
 	MergeEndEvent        = "MERGE_END"
 	SplitStartEvent      = "SPLIT_START"
-	SplitBlockEvent      = "SPLIT_BLOCK"
+	SplitLabelEvent      = "SPLIT_LABEL"
 	SplitEndEvent        = "SPLIT_END"
 )

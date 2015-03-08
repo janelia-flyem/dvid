@@ -315,16 +315,79 @@ type RLE struct {
 	length int32
 }
 
-func (rle RLE) String() string {
-	return fmt.Sprintf("RLE{%s, len %d} ", rle.start, rle.length)
-}
-
 func NewRLE(start Point3d, length int32) RLE {
 	return RLE{start, length}
 }
 
-// RLEs are simply a slice of RLE.
+func (rle RLE) StartPt() Point3d {
+	return rle.start
+}
+func (rle RLE) Length() int32 {
+	return rle.length
+}
+
+func (rle RLE) String() string {
+	return fmt.Sprintf("RLE{%s, len %d} ", rle.start, rle.length)
+}
+
+// Excise returns the portion of the receiver that is not in the passed RLE.
+// If the RLEs do not intersect, nil is returned.
+func (rle RLE) Excise(rle2 RLE) []RLE {
+	if rle.start[2] != rle2.start[2] || rle.start[1] != rle2.start[1] {
+		return nil
+	}
+	z := rle.start[2]
+	y := rle.start[1]
+	x0 := rle.start[0]
+	x1 := x0 + rle.length - 1
+	sx0 := rle2.start[0]
+	sx1 := sx0 + rle2.length - 1
+	if x0 > sx1 || x1 < sx0 {
+		return nil
+	}
+	frags := []RLE{}
+	if sx0 > x0 {
+		frags = append(frags, RLE{Point3d{x0, y, z}, sx0 - x0})
+	}
+	if sx1 < x1 {
+		frags = append(frags, RLE{Point3d{sx1 + 1, y, z}, x1 - sx1})
+	}
+	return frags
+}
+
+func (rle RLE) Less(rle2 RLE) bool {
+	if rle.start[2] < rle2.start[2] {
+		return true
+	}
+	if rle.start[2] > rle2.start[2] {
+		return false
+	}
+	if rle.start[1] < rle2.start[1] {
+		return true
+	}
+	if rle.start[1] > rle2.start[1] {
+		return false
+	}
+	return rle.start[0] < rle2.start[0]
+}
+
+// RLEs are simply a slice of RLE.  Sorting only takes into account
+// the start point and not the length.
 type RLEs []RLE
+
+// --- sort interface
+
+func (rles RLEs) Len() int {
+	return len(rles)
+}
+
+func (rles RLEs) Swap(i, j int) {
+	rles[i], rles[j] = rles[j], rles[i]
+}
+
+func (rles RLEs) Less(i, j int) bool {
+	return rles[i].Less(rles[j])
+}
 
 // Partition splits RLEs up into block-sized RLEs using the given block size.
 // The return is a map of RLEs with stringified ZYX block coordinate keys.

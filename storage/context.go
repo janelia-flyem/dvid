@@ -182,6 +182,10 @@ type DataContext struct {
 	client  dvid.ClientID
 }
 
+func (ctx *DataContext) InstanceVersion() dvid.InstanceVersion {
+	return dvid.InstanceVersion{ctx.data.DataName(), ctx.version}
+}
+
 func (ctx *DataContext) DataName() dvid.InstanceName {
 	return ctx.data.DataName()
 }

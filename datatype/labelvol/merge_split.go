@@ -6,9 +6,11 @@
 package labelvol
 
 import (
+	"container/list"
 	"encoding/binary"
 	"fmt"
 	"io"
+	"sort"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
@@ -221,6 +223,13 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser) 
 	// Get a sorted list of blocks that cover split.
 	splitblks := splitmap.SortedKeys()
 
+	// Publish split event
+	evt = datastore.SyncEvent{d.DataName(), labels.SplitLabelEvent}
+	msg = datastore.SyncMessage{v, labels.DeltaSplit{fromLabel, toLabel, splitmap, splitblks}}
+	if err := datastore.NotifySubscribers(evt, msg); err != nil {
+		return 0, err
+	}
+
 	// Write the split sparse vol.
 	if err = d.writeLabelVol(v, toLabel, splitblks, splitmap); err != nil {
 		return
@@ -324,8 +333,74 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser) 
 	return toLabel, nil
 }
 
+// Given two sets of block-constrained RLEs, subtract split RLEs from original.
+// It is assumed that split is a subset of the orig RLEs.
 func (d *Data) diffBlock(split, orig dvid.RLEs) (modified dvid.RLEs, dup bool, err error) {
-	return
+	// Copy the original and split RLEs, then sort them.
+	srles := make(dvid.RLEs, len(split))
+	copy(srles, split)
+	orles := make(dvid.RLEs, len(orig))
+	copy(orles, orig)
+
+	sort.Sort(srles)
+	sort.Sort(orles)
+
+	// Create a list from the sorted original RLEs
+	l := list.New()
+	for _, rle := range orles {
+		l.PushBack(rle)
+	}
+
+	// Iterate over the original list, fragmenting by splits when they intersect.
+	si := 0 // the split index
+	e := l.Front()
+	for e != nil && si < len(srles) {
+		orig := e.Value.(dvid.RLE)
+
+		badsplit := true
+		for i := si; i < len(srles); i++ {
+			frags := orig.Excise(srles[i])
+			if frags == nil {
+				continue
+			}
+
+			// We have an intersection, so replace our current RLE with these fragments.
+			if len(frags) != 0 {
+				for _, rle := range frags {
+					l.InsertAfter(rle, e)
+				}
+			}
+
+			// Delete the intersected RLE
+			left := e.Prev()
+			l.Remove(e)
+			e = left
+
+			// We are done with this split RLE
+			si++
+			badsplit = false
+			break
+		}
+		if badsplit {
+			err = fmt.Errorf("split is not contained within single label")
+			return
+		}
+
+		e = e.Next()
+	}
+
+	// If there's nothing left of original, the split was a duplicate of the original.
+	if l.Len() == 0 {
+		return nil, true, nil
+	}
+
+	// Convert the remaining fragments into a modified RLEs.
+	modified = make(dvid.RLEs, l.Len())
+	i := 0
+	for e = l.Front(); e != nil; e = e.Next() {
+		modified[i] = e.Value.(dvid.RLE)
+	}
+	return modified, false, nil
 }
 
 func (d *Data) writeLabelVol(v dvid.VersionID, label uint64, blks []dvid.IZYXString, brles dvid.BlockRLEs) error {

@@ -363,7 +363,7 @@ func (i *IndexZYX) Max(idx ChunkIndexer) (ChunkIndexer, bool) {
 	return &max, changed
 }
 
-// IZYXString is the stringified version of serialized IndexZYX, optimized for lexicographic
+// IZYXString is the stringified version of IndexZYX.Bytes(), optimized for lexicographic
 // ordering.
 type IZYXString string
 
@@ -382,6 +382,12 @@ func (i IZYXString) Z() (int32, error) {
 		return 0, err
 	}
 	return idx[2], nil
+}
+
+func (i IZYXString) ToChunkPoint3d() (ChunkPoint3d, error) {
+	var idx IndexZYX
+	err := idx.IndexFromBytes([]byte(i))
+	return ChunkPoint3d(idx), err
 }
 
 // ----- IndexIterator implementation ------------
