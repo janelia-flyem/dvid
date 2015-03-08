@@ -154,24 +154,28 @@ func NewDataContext(data dvid.Data, versionID dvid.VersionID) *DataContext {
 	return &DataContext{data, versionID, 0}
 }
 
-// KeyToLocalIDs parses a key under a DataContext and returns instance and version ids.
-func KeyToLocalIDs(k []byte) (dvid.InstanceID, dvid.VersionID, error) {
+// KeyToLocalIDs parses a key under a DataContext and returns instance, version and client ids.
+func KeyToLocalIDs(k []byte) (dvid.InstanceID, dvid.VersionID, dvid.ClientID, error) {
 	if k[0] != dataKeyPrefix {
-		return 0, 0, fmt.Errorf("Cannot extract local IDs from a non-DataContext key")
+		return 0, 0, 0, fmt.Errorf("Cannot extract local IDs from a non-DataContext key")
 	}
 	instanceID := dvid.InstanceIDFromBytes(k[1 : 1+dvid.InstanceIDSize])
-	end := len(k) - dvid.VersionIDSize
-	versionID := dvid.VersionIDFromBytes(k[end:])
-	return instanceID, versionID, nil
+	start := len(k) - dvid.VersionIDSize - dvid.ClientIDSize - 1
+	versionID := dvid.VersionIDFromBytes(k[start : start+dvid.VersionIDSize])
+	start += dvid.VersionIDSize
+	clientID := dvid.ClientIDFromBytes(k[start : start+dvid.ClientIDSize])
+	return instanceID, versionID, clientID, nil
 }
 
-func UpdateDataContextKey(k []byte, instance dvid.InstanceID, version dvid.VersionID) error {
+func UpdateDataContextKey(k []byte, instance dvid.InstanceID, version dvid.VersionID, client dvid.ClientID) error {
 	if k[0] != dataKeyPrefix {
 		return fmt.Errorf("Cannot update non-DataContext key")
 	}
 	copy(k[1:1+dvid.InstanceIDSize], instance.Bytes())
-	end := len(k) - dvid.VersionIDSize
-	copy(k[end:], version.Bytes())
+	start := len(k) - dvid.VersionIDSize - dvid.ClientIDSize - 1
+	copy(k[start:start+dvid.VersionIDSize], version.Bytes())
+	start += dvid.VersionIDSize
+	copy(k[start:start+dvid.ClientIDSize], client.Bytes())
 	return nil
 }
 
@@ -245,6 +249,28 @@ func (ctx *DataContext) IndexFromKey(key []byte) ([]byte, error) {
 	start := 1 + dvid.InstanceIDSize
 	end := len(key) - dvid.VersionIDSize - dvid.ClientIDSize - 1 // substract version, client, and tombstone
 	return key[start:end], nil
+}
+
+func (ctx *DataContext) VersionFromKey(key []byte) (dvid.VersionID, error) {
+	if key == nil {
+		return 0, fmt.Errorf("Cannot extract DataContext version from nil key")
+	}
+	if key[0] != dataKeyPrefix {
+		return 0, fmt.Errorf("Cannot extract DataContext version from different key type")
+	}
+	start := len(key) - dvid.VersionIDSize - dvid.ClientIDSize - 1 // substract version, client, and tombstone
+	return dvid.VersionIDFromBytes(key[start : start+dvid.VersionIDSize]), nil
+}
+
+func (ctx *DataContext) ClientFromKey(key []byte) (dvid.ClientID, error) {
+	if key == nil {
+		return 0, fmt.Errorf("Cannot extract DataContext client from nil key")
+	}
+	if key[0] != dataKeyPrefix {
+		return 0, fmt.Errorf("Cannot extract DataContext client from different key type")
+	}
+	start := len(key) - dvid.ClientIDSize - 1 // substract client, and tombstone
+	return dvid.ClientIDFromBytes(key[start : start+dvid.ClientIDSize]), nil
 }
 
 // Versioned returns false.  This can be overriden by embedding DataContext in structures

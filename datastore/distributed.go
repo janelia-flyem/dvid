@@ -165,7 +165,7 @@ func readKeyValue(p *pusher, m *message.Message) error {
 	if m.KV == nil || m.KV.K == nil || m.KV.V == nil {
 		dvid.Debugf("Received bad keyvalue from socket: %v\n", m)
 	}
-	oldInstance, oldVersion, err := storage.KeyToLocalIDs(m.KV.K)
+	oldInstance, oldVersion, _, err := storage.KeyToLocalIDs(m.KV.K)
 	if err != nil {
 		dvid.Debugf("Received %s: %s => key %v, value %d bytes\n", m.Type, m.Name,
 			m.KV.K, len(m.KV.V))
@@ -215,7 +215,7 @@ func readKeyValue(p *pusher, m *message.Message) error {
 	}
 
 	// Store the updated key-value
-	if err = storage.UpdateDataContextKey(m.KV.K, p.instanceID, p.versionID); err != nil {
+	if err = storage.UpdateDataContextKey(m.KV.K, p.instanceID, p.versionID, 0); err != nil {
 		return fmt.Errorf("Unable to update DataContext key %v", m.KV.K)
 	}
 	p.batch.Put(m.KV.K, m.KV.V)

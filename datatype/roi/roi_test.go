@@ -913,6 +913,7 @@ func TestROIRepoPersistence(t *testing.T) {
 		t.Fatalf("Unable to save repo during ROI persistence test: %s\n", err.Error())
 	}
 	oldRepoUUID := repo.RootUUID()
+
 	tests.CloseReopenStore()
 
 	repo2, err := datastore.RepoFromUUID(oldRepoUUID)

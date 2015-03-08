@@ -286,6 +286,7 @@ func TestDirectCalls(t *testing.T) {
 	//dvid.PrintNonZero("returned value", data)
 	for i := int64(0); i < v2.NumVoxels(); i++ {
 		if data[i] != origData[i] {
+			t.Logf("Data returned != data stored for voxel %d\n", i)
 			t.Logf("Size of data: %d bytes from GET, %d bytes in PUT\n", len(data), len(origData))
 			t.Fatalf("GET subvol (%d) != PUT subvol (%d) @ index %d", data[i], origData[i], i)
 		}

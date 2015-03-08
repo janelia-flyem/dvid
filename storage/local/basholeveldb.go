@@ -401,6 +401,7 @@ func (db *LevelDB) versionedRange(vctx storage.VersionedContext, kStart, kEnd []
 	// log.Printf("         minKey %v\n", minKey)
 	// log.Printf("         maxKey %v\n", maxKey)
 	// log.Printf("  maxVersionKey %v\n", maxVersionKey)
+
 	it.Seek(minKey)
 	var itValue []byte
 	for {
@@ -465,6 +466,7 @@ func (db *LevelDB) unversionedRange(ctx storage.Context, kStart, kEnd []byte, ch
 	// Apply context if applicable
 	keyBeg := constructKey(ctx, kStart)
 	keyEnd := constructKey(ctx, kEnd)
+
 	// fmt.Printf("unversionedRange():\n")
 	// fmt.Printf("    index beg: %v\n", kStart)
 	// fmt.Printf("    index end: %v\n", kEnd)
@@ -475,12 +477,12 @@ func (db *LevelDB) unversionedRange(ctx storage.Context, kStart, kEnd []byte, ch
 	it.Seek(keyBeg)
 	for {
 		if it.Valid() {
+			// fmt.Printf("unversioned found key %v, %d bytes value\n", it.Key(), len(it.Value()))
 			if !keysOnly {
 				itValue = it.Value()
 				storage.StoreValueBytesRead <- len(itValue)
 			}
 			itKey := it.Key()
-			// fmt.Printf("got valid key %v\n", itKey)
 			storage.StoreKeyBytesRead <- len(itKey)
 			// Did we pass the final key?
 			if bytes.Compare(itKey, keyEnd) > 0 {
@@ -538,9 +540,9 @@ func (db *LevelDB) GetRange(ctx storage.Context, kStart, kEnd []byte) ([]*storag
 	// Run the range query on a potentially versioned key in a goroutine.
 	go func() {
 		if ctx == nil || !ctx.Versioned() {
-			db.unversionedRange(ctx, kStart, kEnd, ch, true)
+			db.unversionedRange(ctx, kStart, kEnd, ch, false)
 		} else {
-			db.versionedRange(ctx.(storage.VersionedContext), kStart, kEnd, ch, true)
+			db.versionedRange(ctx.(storage.VersionedContext), kStart, kEnd, ch, false)
 		}
 	}()
 
@@ -566,9 +568,9 @@ func (db *LevelDB) ProcessRange(ctx storage.Context, kStart, kEnd []byte, op *st
 	// Run the range query on a potentially versioned key in a goroutine.
 	go func() {
 		if ctx == nil || !ctx.Versioned() {
-			db.unversionedRange(ctx, kStart, kEnd, ch, true)
+			db.unversionedRange(ctx, kStart, kEnd, ch, false)
 		} else {
-			db.versionedRange(ctx.(storage.VersionedContext), kStart, kEnd, ch, true)
+			db.versionedRange(ctx.(storage.VersionedContext), kStart, kEnd, ch, false)
 		}
 	}()
 
@@ -677,7 +679,9 @@ func (db *LevelDB) DeleteRange(ctx storage.Context, kStart, kEnd []byte) error {
 		// The key coming down channel is not index but full key, so no need to construct key using context.
 		// If versioned, write a tombstone using current version id since we don't want to delete locked ancestors.
 		// If unversioned, just delete.
-		if ctx.Versioned() {
+		if ctx == nil || !ctx.Versioned() {
+			batch.WriteBatch.Delete(result.KeyValue.K)
+		} else {
 			vctx := ctx.(storage.VersionedContext)
 			idx, err := vctx.IndexFromKey(result.KeyValue.K)
 			if err != nil {
@@ -685,8 +689,6 @@ func (db *LevelDB) DeleteRange(ctx storage.Context, kStart, kEnd []byte) error {
 			}
 			tombstone := vctx.TombstoneKey(idx) // This will now have current version
 			batch.WriteBatch.Put(tombstone, dvid.EmptyValue())
-		} else {
-			batch.WriteBatch.Delete(result.KeyValue.K)
 		}
 		dvid.StopCgo()
 
@@ -703,7 +705,7 @@ func (db *LevelDB) DeleteRange(ctx storage.Context, kStart, kEnd []byte) error {
 			return fmt.Errorf("Error on last batch DELETE: %s\n", err.Error())
 		}
 	}
-	dvid.Debugf("Deleted %d key-value pairs via delete range.\n", numKV)
+	dvid.Debugf("Deleted %d key-value pairs via delete range for %s.\n", numKV, ctx)
 	return nil
 }
 

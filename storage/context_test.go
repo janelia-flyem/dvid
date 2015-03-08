@@ -54,5 +54,5 @@ func GetTestDataContext(uuid dvid.UUID, name string, instanceID dvid.InstanceID)
 		return nil
 	}
 	data := &testData{uuid, dvid.InstanceName(name), instanceID}
-	return &DataContext{data, versionID}
+	return NewDataContext(data, versionID)
 }

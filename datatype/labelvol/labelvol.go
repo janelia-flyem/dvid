@@ -646,7 +646,7 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 		timedLog.Infof("HTTP merge request (%s)", r.URL)
 
 	default:
-		server.BadRequest(w, r, "Unrecognized API call '%s' for labelvol data '%s'.  See API help.",
+		server.BadRequest(w, r, "Unrecognized API call %q for labelvol data %q.  See API help.",
 			parts[3], d.DataName())
 	}
 }

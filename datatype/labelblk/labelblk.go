@@ -909,7 +909,7 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 		}
 
 	default:
-		server.BadRequest(w, r, "Unrecognized API call '%s' for labelblk data '%s'.  See API help.",
+		server.BadRequest(w, r, "Unrecognized API call %q for labelblk data %q.  See API help.",
 			parts[3], d.DataName())
 	}
 }

@@ -268,7 +268,7 @@ func DeserializeData(s []byte, uncompress bool) ([]byte, CompressionFormat, erro
 	// Get the stored compression and checksum
 	var format SerializationFormat
 	if err := binary.Read(buffer, binary.LittleEndian, &format); err != nil {
-		return nil, 0, fmt.Errorf("Could not read serialization format info: %s", err.Error())
+		return nil, 0, fmt.Errorf("Could not read serialization format info from %d byte input: %s", len(s), err.Error())
 	}
 	compression, checksum := DecodeSerializationFormat(format)
 

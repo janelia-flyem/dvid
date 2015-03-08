@@ -86,9 +86,12 @@ func (ctx *VersionedContext) VersionedKeyValue(values []*storage.KeyValue) (*sto
 	// Set up a map[VersionID]KeyValue
 	versionMap := make(map[dvid.VersionID]*storage.KeyValue, len(values))
 	for _, kv := range values {
-		pos := len(kv.K) - dvid.VersionIDSize
-		vid := dvid.VersionIDFromBytes(kv.K[pos:])
+		vid, err := ctx.VersionFromKey(kv.K)
+		if err != nil {
+			return nil, err
+		}
 		versionMap[vid] = kv
+		// fmt.Printf("Found version %d for %s\n", vid, ctx)
 	}
 
 	// Iterate from the current node up the ancestors in the version DAG, checking if
@@ -101,8 +104,10 @@ func (ctx *VersionedContext) VersionedKeyValue(values []*storage.KeyValue) (*sto
 		if it.Valid() {
 			if kv, found := versionMap[it.VersionID()]; found {
 				if ctx.IsTombstoneKey(kv.K) {
+					// fmt.Printf("Found tombstone and returning nil value.\n")
 					return nil, nil
 				}
+				// fmt.Printf("Found version %d and returning value %d bytes\n", it.VersionID(), len(kv.V))
 				return kv, nil
 			}
 		} else {

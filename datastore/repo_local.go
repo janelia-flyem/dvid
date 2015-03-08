@@ -1058,6 +1058,7 @@ func (r *repoT) save() error {
 
 	var ctx storage.MetadataContext
 	idx := metadataIndex{t: repoKey, repoID: r.repoID}
+
 	return r.manager.store.Put(ctx, idx.Bytes(), serialization)
 }
 
