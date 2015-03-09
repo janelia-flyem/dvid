@@ -410,7 +410,6 @@ func (d *Data) writeBlocks(v dvid.VersionID, b storage.KeyValues, wg1, wg2 *sync
 	}
 
 	preCompress, postCompress := 0, 0
-	ctx := datastore.NewVersionedContext(d, v)
 
 	evt := datastore.SyncEvent{d.DataName(), ChangeBlockEvent}
 
@@ -423,7 +422,7 @@ func (d *Data) writeBlocks(v dvid.VersionID, b storage.KeyValues, wg1, wg2 *sync
 			server.HandlerToken <- 1
 		}()
 
-		batch := batcher.NewBatch(ctx)
+		batch := batcher.NewBatch(nil)
 		for i, block := range b {
 			serialization, err := dvid.SerializeData(block.V, d.Compression(), d.Checksum())
 			preCompress += len(block.V)
@@ -432,19 +431,14 @@ func (d *Data) writeBlocks(v dvid.VersionID, b storage.KeyValues, wg1, wg2 *sync
 				dvid.Errorf("Unable to serialize block: %s\n", err.Error())
 				return
 			}
-			indexBytes, err := ctx.IndexFromKey(block.K)
+			batch.Put(block.K, serialization)
+
+			indexZYX, err := DecodeKey(block.K)
 			if err != nil {
 				dvid.Errorf("Unable to recover index from block key: %v\n", block.K)
 				return
 			}
-			var indexZYX dvid.IndexZYX
-			if err := indexZYX.IndexFromBytes(indexBytes); err != nil {
-				dvid.Errorf("Unable to recover indexZYX from index bytes: %v\n", indexBytes)
-				return
-			}
-			batch.Put(indexZYX.Bytes(), serialization)
-
-			msg := datastore.SyncMessage{v, Block{&indexZYX, block.V}}
+			msg := datastore.SyncMessage{v, Block{indexZYX, block.V}}
 			if err := datastore.NotifySubscribers(evt, msg); err != nil {
 				dvid.Errorf("Unable to notify subscribers of ChangeBlockEvent in %s\n", d.DataName())
 				return
@@ -456,7 +450,7 @@ func (d *Data) writeBlocks(v dvid.VersionID, b storage.KeyValues, wg1, wg2 *sync
 					dvid.Errorf("Error on trying to write batch: %s\n", err.Error())
 					return
 				}
-				batch = batcher.NewBatch(ctx)
+				batch = batcher.NewBatch(nil)
 			}
 		}
 		if err := batch.Commit(); err != nil {
