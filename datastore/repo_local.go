@@ -716,14 +716,44 @@ func (r *repoT) SetProperties(props map[string]interface{}) error {
 	return r.save()
 }
 
-func (r *repoT) GetLog() ([]string, error) {
+func (r *repoT) GetRepoLog() ([]string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	return r.log, nil
 }
 
-func (r *repoT) AddToLog(hx string) error {
+func (r *repoT) AddToRepoLog(hx string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.addToLog(hx)
+}
+
+func (r *repoT) GetNodeLog(uuid dvid.UUID) ([]string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	versionID, found := r.manager.UUIDToVersion[uuid]
+	if !found {
+		return nil, fmt.Errorf("could not find uuid %s", uuid)
+	}
+	node, found := r.dag.nodes[versionID]
+	if !found {
+		return nil, fmt.Errorf("could not find version (id %d)", versionID)
+	}
+	return node.log, nil
+}
+
+func (r *repoT) AddToNodeLog(uuid dvid.UUID, hx []string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	versionID, found := r.manager.UUIDToVersion[uuid]
+	if !found {
+		return fmt.Errorf("could not find uuid %s", uuid)
+	}
+	node, found := r.dag.nodes[versionID]
+	if !found {
+		return fmt.Errorf("could not find version (id %d)", versionID)
+	}
+	return node.addToLog(hx)
 }
 
 // ---- Repo interface implementation -----------
@@ -975,7 +1005,7 @@ func (r *repoT) Save() error {
 	return r.save()
 }
 
-func (r *repoT) Lock(uuid dvid.UUID) error {
+func (r *repoT) Lock(uuid dvid.UUID, log []string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	versionID, found := r.manager.UUIDToVersion[uuid]
@@ -988,6 +1018,12 @@ func (r *repoT) Lock(uuid dvid.UUID) error {
 	}
 	node.locked = true
 	r.updated = time.Now()
+
+	if len(log) != 0 {
+		if err := node.addToLog(log); err != nil {
+			return err
+		}
+	}
 
 	// Notify any data instances in this repo that needs to perform syncs.
 	// This will only be necessary if the immediate syncing can't be done or
@@ -1038,9 +1074,9 @@ func (r *repoT) getDataByName(name dvid.InstanceName) (DataService, error) {
 	return data, nil
 }
 
-func (r *repoT) addToLog(hx string) error {
+func (r *repoT) addToLog(msg string) error {
 	t := time.Now()
-	message := fmt.Sprintf("%s  %s", t.Format(time.RFC3339), hx)
+	message := fmt.Sprintf("%s  %s", t.Format(time.RFC3339), msg)
 	r.log = append(r.log, message)
 	r.updated = t
 	return r.save()
@@ -1336,6 +1372,16 @@ type nodeT struct {
 
 	created time.Time
 	updated time.Time
+}
+
+func (node *nodeT) addToLog(msgs []string) error {
+	t := time.Now()
+	for _, msg := range msgs {
+		message := fmt.Sprintf("%s  %s", t.Format(time.RFC3339), msg)
+		node.log = append(node.log, message)
+	}
+	node.updated = t
+	return nil
 }
 
 func (node *nodeT) GobDecode(b []byte) error {

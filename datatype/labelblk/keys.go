@@ -19,9 +19,8 @@ const (
 	// keyUnknown should never be used and is a check for corrupt or incorrectly set keys
 	keyUnknown keyType = 0
 
-	// use different id from other label-type keys to improve odds that any bad use of
-	// arbitrary key decoding will result in error.
-	keyLabelBlock = 37
+	// since we are reusing imageblk read code, need to use the same key.
+	keyLabelBlock = 23
 )
 
 func (t keyType) String() string {

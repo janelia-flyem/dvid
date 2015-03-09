@@ -42,7 +42,7 @@ func (d *Data) CreateComposite(request datastore.Request, reply *datastore.Respo
 	if err != nil {
 		return err
 	}
-	if err = repo.AddToLog(request.Command.String()); err != nil {
+	if err = repo.AddToNodeLog(uuid, []string{request.Command.String()}); err != nil {
 		return err
 	}
 

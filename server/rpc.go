@@ -179,7 +179,7 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 				return err
 			}
 			reply.Text = fmt.Sprintf("Data %q [%s] added to node %s\n", dataname, typename, uuid)
-			repo.AddToLog(cmd.String())
+			repo.AddToRepoLog(cmd.String())
 		case "push":
 			var target string
 			cmd.CommandArgs(3, &target)

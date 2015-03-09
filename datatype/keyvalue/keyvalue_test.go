@@ -263,7 +263,7 @@ func TestKeyvalueVersioning(t *testing.T) {
 	server.TestHTTP(t, "POST", key2req, strings.NewReader(value2))
 
 	// Create a new version in repo
-	if err = repo.Lock(uuid); err != nil {
+	if err = repo.Lock(uuid, []string{"my commit msg"}); err != nil {
 		t.Errorf("Unable to lock root node %s: %s\n", uuid, err.Error())
 	}
 	uuid2, err := repo.NewVersion(uuid)

@@ -271,19 +271,19 @@ func TestSparseVolumes(t *testing.T) {
 
 	for _, label := range []uint64{1, 3, 4} {
 		// Get the coarse sparse volumes for each label and make sure they are correct.
-		reqStr := fmt.Sprintf("%snode/%s/%s/sparsevol-coarse/%d", server.WebAPIPath, uuid, labelsName, label)
+		reqStr := fmt.Sprintf("%snode/%s/%s/sparsevol-coarse/%d", server.WebAPIPath, uuid, "bodies", label)
 		encoding := server.TestHTTP(t, "GET", reqStr, nil)
 		bodies[label-1].checkCoarse(t, encoding)
 	}
 
 	for _, label := range []uint64{1, 2, 3, 4} {
 		// Check full sparse volumes
-		reqStr := fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid, labelsName, label)
+		reqStr := fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid, "bodies", label)
 		encoding := server.TestHTTP(t, "GET", reqStr, nil)
 		bodies[label-1].checkSparseVol(t, encoding, dvid.Bounds{})
 
 		// Check Y/Z restriction
-		reqStr = fmt.Sprintf("%snode/%s/%s/sparsevol/%d?miny=30&maxy=50&minz=20&maxz=40&exact=true", server.WebAPIPath, uuid, labelsName, label)
+		reqStr = fmt.Sprintf("%snode/%s/%s/sparsevol/%d?miny=30&maxy=50&minz=20&maxz=40&exact=true", server.WebAPIPath, uuid, "bodies", label)
 		encoding = server.TestHTTP(t, "GET", reqStr, nil)
 		var bound dvid.Bounds
 		bound.SetMinY(30)
@@ -295,7 +295,7 @@ func TestSparseVolumes(t *testing.T) {
 		// Check X restriction
 		minx := int32(20)
 		maxx := int32(47)
-		reqStr = fmt.Sprintf("%snode/%s/%s/sparsevol/%d?minx=%d&maxx=%d&exact=true", server.WebAPIPath, uuid, labelsName, label, minx, maxx)
+		reqStr = fmt.Sprintf("%snode/%s/%s/sparsevol/%d?minx=%d&maxx=%d&exact=true", server.WebAPIPath, uuid, "bodies", label, minx, maxx)
 		encoding = server.TestHTTP(t, "GET", reqStr, nil)
 		checkSpans(t, encoding, minx, maxx)
 	}
@@ -305,18 +305,25 @@ func TestMergeLabels(t *testing.T) {
 	tests.UseStore()
 	defer tests.CloseStore()
 
-	// Create testbed volume
+	// Create testbed volume and data instances
 	repo, _ := initTestRepo()
-	labelsName := "mylabels"
 	uuid := repo.RootUUID()
-	server.CreateTestInstance(t, uuid, "labelblk", labelsName)
-	vol := createLabelTestVolume(t, uuid, labelsName)
+	config := map[string]interface{}{
+		"sync": "bodies",
+	}
+	server.CreateTestInstance(t, uuid, "labelblk", "labels", config)
+	config = map[string]interface{}{
+		"sync": "labels",
+	}
+	server.CreateTestInstance(t, uuid, "labelvol", "bodies", config)
+
+	vol := createLabelTestVolume(t, uuid, "labels")
 
 	// TODO -- Remove this hack in favor of whatever will be the method
 	// for discerning denormalizations are not yet complete.
 	time.Sleep(10 * time.Second)
 
-	expected := newTestVolume(100, 100, 100)
+	expected := newTestVolume(128, 128, 128)
 	expected.add(body1, 0)
 	expected.add(body2, 0)
 	expected.add(body3, 2)
@@ -327,15 +334,13 @@ func TestMergeLabels(t *testing.T) {
 	}
 
 	// Test merge 1
-	testMerge := mergeJSON(`
-		[ [2, 3] ]
-	`)
-	testMerge.send(t, uuid, labelsName)
+	testMerge := mergeJSON(`[2, 3]`)
+	testMerge.send(t, uuid, "bodies")
 
 	// Make sure changes are correct after completion
-	retrieved := newTestVolume(100, 100, 100)
-	retrieved.get(t, uuid, labelsName)
-	if len(retrieved.data) != 8*100*100*100 {
+	retrieved := newTestVolume(128, 128, 128)
+	retrieved.get(t, uuid, "labels")
+	if len(retrieved.data) != 8*128*128*128 {
 		t.Errorf("Retrieved labelvol volume is incorrect size\n")
 	}
 	if !retrieved.isLabel(2, &body2) {

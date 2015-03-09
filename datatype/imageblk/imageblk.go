@@ -869,7 +869,7 @@ func (d *Data) PutLocal(request datastore.Request, reply *datastore.Response) er
 	if err != nil {
 		return err
 	}
-	repo.AddToLog(request.Command.String())
+	repo.AddToNodeLog(uuid, []string{request.Command.String()})
 	timedLog.Infof("RPC put local (%s) completed", addedFiles)
 	return nil
 }
@@ -1083,7 +1083,7 @@ func (d *Data) ForegroundROI(req datastore.Request, reply *datastore.Response) e
 	if err != nil {
 		return err
 	}
-	if err = repo.AddToLog(req.Command.String()); err != nil {
+	if err = repo.AddToNodeLog(uuid, []string{req.Command.String()}); err != nil {
 		return err
 	}
 
@@ -1258,7 +1258,7 @@ func (d *Data) DoRPC(req datastore.Request, reply *datastore.Response) error {
 		if err != nil {
 			return err
 		}
-		if err = repo.AddToLog(req.Command.String()); err != nil {
+		if err = repo.AddToNodeLog(uuid, []string{req.Command.String()}); err != nil {
 			return err
 		}
 		return d.LoadImages(versionID, offset, filenames)

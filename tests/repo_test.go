@@ -35,7 +35,7 @@ func TestDataAndChildCreation(t *testing.T) {
 	}
 
 	// Lock and retry
-	if err = repo.Lock(repo.RootUUID()); err != nil {
+	if err = repo.Lock(repo.RootUUID(), []string{"test commit"}); err != nil {
 		t.Errorf("Error locking node %s: %s\n", repo.RootUUID(), err.Error())
 	}
 	_, err = repo.NewVersion(repo.RootUUID())

@@ -397,6 +397,7 @@ func (d *Data) writeXYImage(v dvid.VersionID, vox *Voxels, b storage.KeyValues) 
 // KVWriteSize is the # of key-value pairs we will write as one atomic batch write.
 const KVWriteSize = 500
 
+// TODO -- Clean up all the writing and simplify now that we have block-aligned writes.
 // writeBlocks persists blocks of voxel data asynchronously using batch writes.
 func (d *Data) writeBlocks(v dvid.VersionID, b storage.KeyValues, wg1, wg2 *sync.WaitGroup) error {
 	store, err := storage.BigDataStore()
@@ -431,14 +432,19 @@ func (d *Data) writeBlocks(v dvid.VersionID, b storage.KeyValues, wg1, wg2 *sync
 				dvid.Errorf("Unable to serialize block: %s\n", err.Error())
 				return
 			}
-			indexZYX, err := DecodeKey(block.K)
+			indexBytes, err := ctx.IndexFromKey(block.K)
 			if err != nil {
 				dvid.Errorf("Unable to recover index from block key: %v\n", block.K)
 				return
 			}
+			var indexZYX dvid.IndexZYX
+			if err := indexZYX.IndexFromBytes(indexBytes); err != nil {
+				dvid.Errorf("Unable to recover indexZYX from index bytes: %v\n", indexBytes)
+				return
+			}
 			batch.Put(indexZYX.Bytes(), serialization)
 
-			msg := datastore.SyncMessage{v, Block{indexZYX, block.V}}
+			msg := datastore.SyncMessage{v, Block{&indexZYX, block.V}}
 			if err := datastore.NotifySubscribers(evt, msg); err != nil {
 				dvid.Errorf("Unable to notify subscribers of ChangeBlockEvent in %s\n", d.DataName())
 				return

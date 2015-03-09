@@ -8,6 +8,7 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -99,7 +100,7 @@ const WebHelp = `
 
 	Creates a new repository.  Expects configuration data in JSON as the body of the POST.
 	Configuration is a JSON object with optional "alias" and "description" properties.
-	Returns the root UUID of the newly created repo in JSON object: {"Root": uuid}
+	Returns the root UUID of the newly created repo in JSON object: {"root": uuid}
 
  GET  /api/repos/info
 
@@ -129,14 +130,37 @@ const WebHelp = `
 
 	Deletes a data instance of given name from the repository holding a node with UUID.	
 
- POST /api/repo/{uuid}/lock
+  GET /api/node/{uuid}/log
+ POST /api/node/{uuid}/log
+
+	GETs or POSTs log data to the node (version) with given UUID.  The get or post body should 
+	be JSON of the following format: 
+
+	{ "log": [ "provenance data...", "provenance data...", ...] }
+
+	The log is a list of strings that will be appended to the node's log.  They should be
+	data usable by clients to reconstruct the types of operation done to that version
+	of data.
+
+POST /api/node/{uuid}/lock
 
 	Locks the node (version) with given UUID.  This is required before a version can 
-	be branched or pushed to a remote server.
+	be branched or pushed to a remote server.  The post body should be JSON of the 
+	following format: 
 
- POST /api/repo/{uuid}/branch
+	{ "log": [ "provenance data...", "provenance data...", ..., "human readable message"] }
 
-	Creates a new child node (version) of the node with given UUID.
+	The log is a list of strings, the last of which will be considered a human-readable
+	commit message.  Any number of strings can precede the commit message.
+
+ POST /api/node/{uuid}/branch
+
+	Creates a new child node (version) of the node with given UUID.  A JSON response
+	will be sent with the following format:
+
+	{ "child": "3f01a8856" }
+
+	The response includes the UUID of the new child node.
 
 		</pre>
 
@@ -279,8 +303,11 @@ func initRoutes() {
 	repoMux.Get("/api/repo/:uuid/info", repoInfoHandler)
 	repoMux.Post("/api/repo/:uuid/instance", repoNewDataHandler)
 	repoMux.Delete("/api/repo/:uuid/:dataname", repoDeleteHandler)
-	repoMux.Post("/api/repo/:uuid/lock", repoLockHandler)
-	repoMux.Post("/api/repo/:uuid/branch", repoBranchHandler)
+
+	repoMux.Get("/api/node/:uuid/log", getNodeLogHandler)
+	repoMux.Post("/api/node/:uuid/log", postNodeLogHandler)
+	repoMux.Post("/api/node/:uuid/lock", repoLockHandler)
+	repoMux.Post("/api/node/:uuid/branch", repoBranchHandler)
 
 	instanceMux := web.New()
 	mainMux.Handle("/api/node/:uuid/:dataname/:keyword", instanceMux)
@@ -566,9 +593,12 @@ func reposInfoHandler(w http.ResponseWriter, r *http.Request) {
 
 func reposPostHandler(w http.ResponseWriter, r *http.Request) {
 	config := dvid.NewConfig()
-	if err := config.SetByJSON(r.Body); err != nil {
-		BadRequest(w, r, fmt.Sprintf("Error decoding POSTed JSON config for new repo: %s", err.Error()))
-		return
+	if r.Body != nil {
+		fmt.Printf("r.Body = %v\n", r.Body)
+		if err := config.SetByJSON(r.Body); err != nil {
+			BadRequest(w, r, fmt.Sprintf("Error decoding POSTed JSON config for new repo: %s", err.Error()))
+			return
+		}
 	}
 
 	alias, _, err := config.GetString("alias")
@@ -588,7 +618,7 @@ func reposPostHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, "{%q: %q}", "Root", repo.RootUUID())
+	fmt.Fprintf(w, "{%q: %q}", "root", repo.RootUUID())
 }
 
 func repoHeadHandler(c web.C, w http.ResponseWriter, r *http.Request) {
@@ -669,6 +699,56 @@ func repoNewDataHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "{%q: 'Added %s [%s] to node %s'}", "result", dataname, typename, repo.RootUUID())
 }
 
+func getNodeLogHandler(c web.C, w http.ResponseWriter, r *http.Request) {
+	repo := (c.Env["repo"]).(datastore.Repo)
+	uuid, _, err := datastore.MatchingUUID(c.URLParams["uuid"])
+	if err != nil {
+		BadRequest(w, r, err.Error())
+		return
+	}
+
+	logdata, err := repo.GetNodeLog(uuid)
+	if err != nil {
+		BadRequest(w, r, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	jsonStr, err := json.Marshal(struct {
+		Log []string `json:"log"`
+	}{
+		logdata,
+	})
+	if err != nil {
+		BadRequest(w, r, err.Error())
+		return
+	}
+	fmt.Fprintf(w, string(jsonStr))
+}
+
+func postNodeLogHandler(c web.C, w http.ResponseWriter, r *http.Request) {
+	repo := (c.Env["repo"]).(datastore.Repo)
+	uuid, _, err := datastore.MatchingUUID(c.URLParams["uuid"])
+	if err != nil {
+		BadRequest(w, r, err.Error())
+		return
+	}
+
+	jsonData := make(map[string][]string)
+	decoder := json.NewDecoder(r.Body)
+	if err := decoder.Decode(&jsonData); err != nil && err != io.EOF {
+		BadRequest(w, r, fmt.Sprintf("Malformed JSON request in body: %s", err.Error()))
+		return
+	}
+	logdata, ok := jsonData["log"]
+	if !ok {
+		BadRequest(w, r, "Could not find 'log' value in POSTed JSON.")
+	}
+	if err := repo.AddToNodeLog(uuid, logdata); err != nil {
+		BadRequest(w, r, err.Error())
+		return
+	}
+}
+
 func repoLockHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	repo := (c.Env["repo"]).(datastore.Repo)
 	uuid, _, err := datastore.MatchingUUID(c.URLParams["uuid"])
@@ -677,7 +757,18 @@ func repoLockHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = repo.Lock(uuid)
+	jsonData := make(map[string][]string)
+	decoder := json.NewDecoder(r.Body)
+	if err := decoder.Decode(&jsonData); err != nil && err != io.EOF {
+		BadRequest(w, r, fmt.Sprintf("Malformed JSON request in body: %s", err.Error()))
+		return
+	}
+	logdata, ok := jsonData["log"]
+	if !ok {
+		logdata = []string{}
+	}
+
+	err = repo.Lock(uuid, logdata)
 	if err != nil {
 		BadRequest(w, r, err.Error())
 	} else {
@@ -699,6 +790,6 @@ func repoBranchHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 		BadRequest(w, r, err.Error())
 	} else {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, "{%q: %q}", "Child", newuuid)
+		fmt.Fprintf(w, "{%q: %q}", "child", newuuid)
 	}
 }

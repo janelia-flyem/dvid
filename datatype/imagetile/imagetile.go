@@ -1136,7 +1136,7 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, request datasto
 	if err != nil {
 		return err
 	}
-	if err = repo.AddToLog(request.Command.String()); err != nil {
+	if err = repo.AddToNodeLog(uuid, []string{request.Command.String()}); err != nil {
 		return err
 	}
 

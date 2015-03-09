@@ -85,15 +85,20 @@ type Describer interface {
 	SetProperty(name string, value interface{}) error
 	SetProperties(map[string]interface{}) error
 
-	GetLog() ([]string, error)
-	AddToLog(hx string) error
+	GetRepoLog() ([]string, error)
+	AddToRepoLog(string) error
 }
 
 type DAGManager interface {
 	RootUUID() dvid.UUID
 
-	// Lock "locks" the given node of the DAG to be read-only.
-	Lock(dvid.UUID) error
+	GetNodeLog(dvid.UUID) ([]string, error)
+	AddToNodeLog(dvid.UUID, []string) error
+
+	// Lock "locks" the given node of the DAG to be read-only and appends the
+	// slice of string to the log file for the locked node.  By convention,
+	// the last string should be a human-readable commit message.
+	Lock(dvid.UUID, []string) error
 
 	// NewVersion creates a new child node off a LOCKED parent node.  Will return
 	// an error if the parent node has not been locked.

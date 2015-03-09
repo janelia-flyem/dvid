@@ -51,6 +51,9 @@ func NewTestRepo(t *testing.T) (uuid string) {
 }
 
 func CreateTestInstance(t *testing.T, uuid dvid.UUID, typename, name string, config map[string]interface{}) {
+	if config == nil {
+		config = make(map[string]interface{})
+	}
 	config["typename"] = typename
 	config["dataname"] = name
 	jsonData, err := json.Marshal(config)

@@ -640,7 +640,7 @@ func (d *Data) DoRPC(req datastore.Request, reply *datastore.Response) error {
 		if err != nil {
 			return err
 		}
-		if err = repo.AddToLog(req.Command.String()); err != nil {
+		if err = repo.AddToNodeLog(uuid, []string{req.Command.String()}); err != nil {
 			return err
 		}
 		if err = d.LoadImages(versionID, offset, filenames); err != nil {

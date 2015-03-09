@@ -91,7 +91,7 @@ func inroi(x, y, z int) bool {
 }
 
 func postLabelVolume(t *testing.T, labelsName string, uuid dvid.UUID) {
-	server.CreateTestInstance(t, uuid, "labelblk", labelsName)
+	server.CreateTestInstance(t, uuid, "labelblk", labelsName, nil)
 
 	// Post a 3d volume of data that is 10 blocks on a side and straddles block boundaries.
 	payload := new(bytes.Buffer)
@@ -123,21 +123,7 @@ func postLabelVolume(t *testing.T, labelsName string, uuid dvid.UUID) {
 	server.TestHTTP(t, "POST", apiStr, payload)
 }
 
-func TestLabelmap(t *testing.T) {
-	tests.UseStore()
-	defer tests.CloseStore()
-
-	uuid := dvid.UUID(server.NewTestRepo(t))
-	if len(uuid) < 5 {
-		t.Fatalf("Bad root UUID for new repo: %s\n", uuid)
-	}
-
-	// Create and post a test labelblk volume
-	labelsName := "mylabels"
-	postLabelVolume(t, labelsName, uuid)
-}
-
-func TestLabels64(t *testing.T) {
+func TestLabels(t *testing.T) {
 	tests.UseStore()
 	defer tests.CloseStore()
 
@@ -147,8 +133,7 @@ func TestLabels64(t *testing.T) {
 	}
 
 	// Create a labelblk instance
-	labelsName := "mylabels"
-	postLabelVolume(t, labelsName, uuid)
+	postLabelVolume(t, "labels", uuid)
 
 	// Verify XY slice reads returns what we expect.
 	slice := sliceTester{"xy", 200, 200, dvid.Point3d{10, 40, 72}}
@@ -219,7 +204,7 @@ func TestLabels64(t *testing.T) {
 
 	// Create a new ROI instance.
 	roiName := "myroi"
-	server.CreateTestInstance(t, uuid, "roi", roiName)
+	server.CreateTestInstance(t, uuid, "roi", roiName, nil)
 
 	// Add ROI data
 	apiStr = fmt.Sprintf("%snode/%s/%s/roi", server.WebAPIPath, uuid, roiName)

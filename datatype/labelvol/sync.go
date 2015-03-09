@@ -12,7 +12,7 @@ import (
 
 var (
 	// These are the labels that are in the process of modification from merge, split, or other sync events.
-	dirtyBlocks labels.DirtyBlocks
+	dirtyBlocks dvid.DirtyBlocks
 )
 
 // Number of change messages we can buffer before blocking on sync channel.
