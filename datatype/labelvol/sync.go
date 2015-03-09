@@ -10,13 +10,13 @@ import (
 	"github.com/janelia-flyem/dvid/storage"
 )
 
-// Number of change messages we can buffer before blocking on sync channel.
-const syncBufferSize = 100
-
 var (
 	// These are the labels that are in the process of modification from merge, split, or other sync events.
-	dirtyLabels labels.DirtyCache
+	dirtyBlocks labels.DirtyBlocks
 )
+
+// Number of change messages we can buffer before blocking on sync channel.
+const syncBufferSize = 100
 
 // InitSync implements the datastore.Syncer interface
 func (d *Data) InitSync(name dvid.InstanceName) []datastore.SyncSub {

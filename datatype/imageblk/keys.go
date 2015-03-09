@@ -45,8 +45,8 @@ func NewIndexByCoord(izyx dvid.IZYXString) []byte {
 // NewIndex returns an index for an image block.
 // Index = s
 func NewIndex(idx dvid.Index) []byte {
-	izyx := dvid.IZYXString(idx.Bytes())
-	return NewIndexByCoord(izyx)
+	izyx := idx.(*dvid.IndexZYX)
+	return NewIndexByCoord(izyx.ToIZYXString())
 }
 
 // DecodeKey returns a spatial index from a image block key.

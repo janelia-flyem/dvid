@@ -206,13 +206,7 @@ func (d *DirtyCache) Incr(iv dvid.InstanceVersion, label uint64) {
 	if d.dirty == nil {
 		d.dirty = make(map[dvid.InstanceVersion]*Counts)
 	}
-
-	cnts, found := d.dirty[iv]
-	if !found || cnts == nil {
-		cnts = new(Counts)
-		d.dirty[iv] = cnts
-	}
-	cnts.Incr(label)
+	d.incr(iv, label)
 }
 
 func (d *DirtyCache) Decr(iv dvid.InstanceVersion, label uint64) {
@@ -222,13 +216,7 @@ func (d *DirtyCache) Decr(iv dvid.InstanceVersion, label uint64) {
 	if d.dirty == nil {
 		d.dirty = make(map[dvid.InstanceVersion]*Counts)
 	}
-
-	cnts, found := d.dirty[iv]
-	if !found || cnts == nil {
-		dvid.Errorf("decremented non-existant count for label %d, version %v\n", label, iv)
-		return
-	}
-	cnts.Decr(label)
+	d.decr(iv, label)
 }
 
 func (d *DirtyCache) IsDirty(iv dvid.InstanceVersion, label uint64) bool {
@@ -261,4 +249,50 @@ func (d *DirtyCache) Empty(iv dvid.InstanceVersion) bool {
 		return true
 	}
 	return cnts.Empty()
+}
+
+func (d *DirtyCache) AddMerge(iv dvid.InstanceVersion, op MergeOp) {
+	d.Lock()
+	defer d.Unlock()
+
+	if d.dirty == nil {
+		d.dirty = make(map[dvid.InstanceVersion]*Counts)
+	}
+
+	d.incr(iv, op.Target)
+	for label := range op.Merged {
+		d.incr(iv, label)
+	}
+}
+
+func (d *DirtyCache) RemoveMerge(iv dvid.InstanceVersion, op MergeOp) {
+	d.Lock()
+	defer d.Unlock()
+
+	if d.dirty == nil {
+		d.dirty = make(map[dvid.InstanceVersion]*Counts)
+	}
+
+	d.decr(iv, op.Target)
+	for label := range op.Merged {
+		d.decr(iv, label)
+	}
+}
+
+func (d *DirtyCache) incr(iv dvid.InstanceVersion, label uint64) {
+	cnts, found := d.dirty[iv]
+	if !found || cnts == nil {
+		cnts = new(Counts)
+		d.dirty[iv] = cnts
+	}
+	cnts.Incr(label)
+}
+
+func (d *DirtyCache) decr(iv dvid.InstanceVersion, label uint64) {
+	cnts, found := d.dirty[iv]
+	if !found || cnts == nil {
+		dvid.Errorf("decremented non-existant count for label %d, version %v\n", label, iv)
+		return
+	}
+	cnts.Decr(label)
 }

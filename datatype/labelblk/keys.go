@@ -45,8 +45,8 @@ func NewIndexByCoord(bcoord dvid.IZYXString) []byte {
 // NewIndex returns an index for a label block, which is a slice suitable for
 // lexicographical ordering on zyx coordinates.
 func NewIndex(idx dvid.Index) []byte {
-	izyx := dvid.IZYXString(idx.Bytes())
-	return NewIndexByCoord(izyx)
+	izyx := idx.(*dvid.IndexZYX)
+	return NewIndexByCoord(izyx.ToIZYXString())
 }
 
 // DecodeKey returns a spatial index from a label block key.

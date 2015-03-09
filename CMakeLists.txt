@@ -206,8 +206,8 @@ else ()
         COMMENT     "Adding embedded console into dvid executable..."
     )
 
-    set (DVID_PACKAGES ${DVID_GO}/datastore ${DVID_GO}/datatype/... ${DVID_GO}/dvid ${DVID_GO}/server
-                       ${DVID_GO}/storage/... ${DVID_GO}/tests ${DVID_GO}/tests_integration)
+    set (DVID_PACKAGES ${DVID_GO}/dvid ${DVID_GO}/storage/... ${DVID_GO}/datastore ${DVID_GO}/server
+                       ${DVID_GO}/datatype/... ${DVID_GO}/tests ${DVID_GO}/tests_integration)
 
    add_custom_target (test
         ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go test -tags '${DVID_BACKEND} ${DVID_GRAPHBACKEND}' 

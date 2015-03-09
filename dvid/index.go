@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"math"
+	"sync"
 )
 
 func init() {
@@ -225,6 +226,10 @@ func (i *IndexZYX) Unpack() (x, y, z int32) {
 	return i[0], i[1], i[2]
 }
 
+func (i *IndexZYX) ToIZYXString() IZYXString {
+	return IZYXString(i.Bytes())
+}
+
 // Hash returns an integer [0, n) where the returned values should be reasonably
 // spread among the range of returned values.  This implementation makes sure
 // that any range query along x, y, or z direction will map to different handlers.
@@ -272,6 +277,7 @@ func (i *IndexZYX) Duplicate() Index {
 	return &dup
 }
 
+// String produces a pretty printable string of the index in hex format.
 func (i *IndexZYX) String() string {
 	return hex.EncodeToString(i.Bytes())
 }
@@ -388,6 +394,138 @@ func (i IZYXString) ToChunkPoint3d() (ChunkPoint3d, error) {
 	var idx IndexZYX
 	err := idx.IndexFromBytes([]byte(i))
 	return ChunkPoint3d(idx), err
+}
+
+// Print returns a nicely formatted string of the 3d block coordinate or "corrupted coordinate".
+func (i IZYXString) Print() string {
+	idx, err := i.IndexZYX()
+	if err != nil {
+		return "corrupted coordinate"
+	}
+	return fmt.Sprintf("(%d, %d, %d)", idx[0], idx[1], idx[2])
+}
+
+// BlockCounts is a thread-safe type for counting block references.
+type BlockCounts struct {
+	sync.RWMutex
+	m map[IZYXString]int
+}
+
+// Incr increments the count for a block.
+func (c *BlockCounts) Incr(block IZYXString) {
+	if c.m == nil {
+		c.m = make(map[IZYXString]int)
+	}
+	c.Lock()
+	defer c.Unlock()
+	c.m[block] = c.m[block] + 1
+}
+
+// Decr decrements the count for a block.
+func (c *BlockCounts) Decr(block IZYXString) {
+	if c.m == nil {
+		c.m = make(map[IZYXString]int)
+	}
+	c.Lock()
+	defer c.Unlock()
+	c.m[block] = c.m[block] - 1
+	if c.m[block] == 0 {
+		delete(c.m, block)
+	}
+}
+
+// Value returns the count for a block.
+func (c *BlockCounts) Value(block IZYXString) int {
+	if c.m == nil {
+		return 0
+	}
+	c.RLock()
+	defer c.RUnlock()
+	return c.m[block]
+}
+
+// Empty returns true if there are no counts.
+func (c *BlockCounts) Empty() bool {
+	if len(c.m) == 0 {
+		return true
+	}
+	return false
+}
+
+// DirtyBlocks tracks dirty labels across versions
+type DirtyBlocks struct {
+	sync.RWMutex
+	dirty map[InstanceVersion]*BlockCounts
+}
+
+func (d *DirtyBlocks) Incr(iv InstanceVersion, block IZYXString) {
+	d.Lock()
+	defer d.Unlock()
+
+	if d.dirty == nil {
+		d.dirty = make(map[InstanceVersion]*BlockCounts)
+	}
+	d.incr(iv, block)
+}
+
+func (d *DirtyBlocks) Decr(iv InstanceVersion, block IZYXString) {
+	d.Lock()
+	defer d.Unlock()
+
+	if d.dirty == nil {
+		d.dirty = make(map[InstanceVersion]*BlockCounts)
+	}
+	d.decr(iv, block)
+}
+
+func (d *DirtyBlocks) IsDirty(iv InstanceVersion, block IZYXString) bool {
+	d.RLock()
+	defer d.RUnlock()
+
+	if d.dirty == nil {
+		return false
+	}
+
+	cnts, found := d.dirty[iv]
+	if !found || cnts == nil {
+		return false
+	}
+	if cnts.Value(block) == 0 {
+		return false
+	}
+	return true
+}
+
+func (d *DirtyBlocks) Empty(iv InstanceVersion) bool {
+	d.RLock()
+	defer d.RUnlock()
+
+	if len(d.dirty) == 0 {
+		return true
+	}
+	cnts, found := d.dirty[iv]
+	if !found || cnts == nil {
+		return true
+	}
+	return cnts.Empty()
+}
+
+func (d *DirtyBlocks) incr(iv InstanceVersion, block IZYXString) {
+	cnts, found := d.dirty[iv]
+	if !found || cnts == nil {
+		cnts = new(BlockCounts)
+		d.dirty[iv] = cnts
+	}
+	cnts.Incr(block)
+}
+
+func (d *DirtyBlocks) decr(iv InstanceVersion, block IZYXString) {
+	cnts, found := d.dirty[iv]
+	if !found || cnts == nil {
+		Errorf("decremented non-existant count for block %s, version %v\n", block.Print(), iv)
+		return
+	}
+	cnts.Decr(block)
 }
 
 // ----- IndexIterator implementation ------------

@@ -586,7 +586,7 @@ type BlockRLEs map[IZYXString]RLEs
 func (brles BlockRLEs) appendBlockRLE(bcoord ChunkPoint3d, x, y, z, n int32) error {
 	rle := RLE{Point3d{x, y, z}, n}
 	idx := IndexZYX(bcoord)
-	s := IZYXString(idx.Bytes())
+	s := idx.ToIZYXString()
 
 	rles, found := brles[s]
 	if !found || rles == nil {

@@ -18,6 +18,11 @@ import (
 	"github.com/janelia-flyem/dvid/storage"
 )
 
+var (
+	// These are the labels that are in the process of modification from merge, split, or other sync events.
+	dirtyLabels labels.DirtyCache
+)
+
 type sizeChange struct {
 	oldSize, newSize uint64
 }
@@ -55,6 +60,11 @@ func (d *Data) MergeLabels(v dvid.VersionID, m labels.MergeOp) error {
 	if err := datastore.NotifySubscribers(evt, msg); err != nil {
 		return err
 	}
+
+	// Mark these labels as dirty until done.
+	iv := dvid.InstanceVersion{d.DataName(), v}
+	dirtyLabels.AddMerge(iv, m)
+	defer dirtyLabels.RemoveMerge(iv, m)
 
 	// All blocks that have changed during this merge.  Key = string of block index
 	blocksChanged := make(map[dvid.IZYXString]struct{})
@@ -179,6 +189,11 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser) 
 		err = fmt.Errorf("Data type labelvol requires batch-enabled store, which %q is not\n", store)
 		return
 	}
+
+	// Mark these labels as dirty until done.
+	iv := dvid.InstanceVersion{d.DataName(), v}
+	dirtyLabels.Incr(iv, fromLabel)
+	defer dirtyLabels.Decr(iv, fromLabel)
 
 	// Create a new label id for this version that will persist to store
 	toLabel, err = d.NewLabel(v)
