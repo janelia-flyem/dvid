@@ -50,8 +50,13 @@ func NewTestRepo(t *testing.T) (uuid string) {
 	return parsedResponse.Root
 }
 
-func CreateTestInstance(t *testing.T, uuid dvid.UUID, typename, name string) {
-	metadata := fmt.Sprintf(`{"typename": %q, "dataname": %q}`, typename, name)
+func CreateTestInstance(t *testing.T, uuid dvid.UUID, typename, name string, config map[string]interface{}) {
+	config["typename"] = typename
+	config["dataname"] = name
+	jsonData, err := json.Marshal(config)
+	if err != nil {
+		t.Fatalf("Unable to make JSON for instance creation: %v\n", config)
+	}
 	apiStr := fmt.Sprintf("%srepo/%s/instance", WebAPIPath, uuid)
-	TestHTTP(t, "POST", apiStr, bytes.NewBufferString(metadata))
+	TestHTTP(t, "POST", apiStr, bytes.NewBuffer(jsonData))
 }

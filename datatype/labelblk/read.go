@@ -179,7 +179,7 @@ func (d *Data) GetBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int) ([
 			n := len(block) / 8
 			for i := 0; i < n; i++ {
 				orig := binary.LittleEndian.Uint64(block[i*8 : i*8+8])
-				mapped, found := mapping.Get(orig)
+				mapped, found := mapping.FinalLabel(orig)
 				if found {
 					binary.LittleEndian.PutUint64(block[i*8:i*8+8], mapped)
 				} else {
@@ -366,7 +366,7 @@ func (v *Labels) readMappedBlock(block *storage.KeyValue, blockSize dvid.Point, 
 			dI := dataI
 			for x := dataBeg.Value(0); x <= dataEnd.Value(0); x++ {
 				orig := binary.LittleEndian.Uint64(block.V[bI : bI+8])
-				mapped, found := m.Get(orig)
+				mapped, found := m.FinalLabel(orig)
 				if found {
 					binary.LittleEndian.PutUint64(data[dI:dI+8], mapped)
 				} else {
@@ -387,7 +387,7 @@ func (v *Labels) readMappedBlock(block *storage.KeyValue, blockSize dvid.Point, 
 			dI := dataI
 			for x := dataBeg.Value(0); x <= dataEnd.Value(0); x++ {
 				orig := binary.LittleEndian.Uint64(block.V[bI : bI+8])
-				mapped, found := m.Get(orig)
+				mapped, found := m.FinalLabel(orig)
 				if found {
 					binary.LittleEndian.PutUint64(data[dI:dI+8], mapped)
 				} else {
@@ -407,7 +407,7 @@ func (v *Labels) readMappedBlock(block *storage.KeyValue, blockSize dvid.Point, 
 			blockI := bz*bY + blockBegY*bX + blockBegX*8
 			for x := dataBeg.Value(1); x <= dataEnd.Value(1); x++ {
 				orig := binary.LittleEndian.Uint64(block.V[blockI : blockI+8])
-				mapped, found := m.Get(orig)
+				mapped, found := m.FinalLabel(orig)
 				if found {
 					binary.LittleEndian.PutUint64(data[dataI:dataI+8], mapped)
 				} else {
@@ -437,7 +437,7 @@ func (v *Labels) readMappedBlock(block *storage.KeyValue, blockSize dvid.Point, 
 				dI := dataZ*dY + dataY*dX + dataOffset
 				for x := dataBeg.Value(0); x <= dataEnd.Value(0); x++ {
 					orig := binary.LittleEndian.Uint64(block.V[bI : bI+8])
-					mapped, found := m.Get(orig)
+					mapped, found := m.FinalLabel(orig)
 					if found {
 						binary.LittleEndian.PutUint64(data[dI:dI+8], mapped)
 					} else {

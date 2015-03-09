@@ -20,22 +20,24 @@ type Mapping struct {
 
 // FinalLabel follows mappings from a start label until
 // a final mapped label is reached.
-func (m Mapping) FinalLabel(start uint64) uint64 {
+func (m Mapping) FinalLabel(start uint64) (uint64, bool) {
 	m.RLock()
 	defer m.RUnlock()
 
 	if m.m == nil {
-		return start
+		return start, false
 	}
 	cur := start
+	found := false
 	for {
-		var found bool
-		cur, found = m.m[cur]
-		if !found {
+		v, ok := m.m[cur]
+		if !ok {
 			break
 		}
+		cur = v
+		found = true
 	}
-	return cur
+	return cur, found
 }
 
 // Get returns the mapping or false if no mapping exists.
@@ -53,7 +55,7 @@ func (m Mapping) Get(label uint64) (uint64, bool) {
 	return 0, false
 }
 
-func (m Mapping) set(a, b uint64) {
+func (m *Mapping) set(a, b uint64) {
 	m.Lock()
 	defer m.Unlock()
 
@@ -62,7 +64,8 @@ func (m Mapping) set(a, b uint64) {
 	}
 	m.m[a] = b
 }
-func (m Mapping) delete(label uint64) {
+
+func (m *Mapping) delete(label uint64) {
 	m.Lock()
 	defer m.Unlock()
 

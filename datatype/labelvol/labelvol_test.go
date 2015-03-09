@@ -250,12 +250,20 @@ func TestSparseVolumes(t *testing.T) {
 	tests.UseStore()
 	defer tests.CloseStore()
 
-	// Create testbed volume
+	// Create testbed volume and data instances
 	repo, _ := initTestRepo()
-	labelsName := "mylabels"
 	uuid := repo.RootUUID()
-	server.CreateTestInstance(t, uuid, "labelblk", labelsName)
-	_ = createLabelTestVolume(t, uuid, labelsName)
+	config := map[string]interface{}{
+		"sync": "bodies",
+	}
+	server.CreateTestInstance(t, uuid, "labelblk", "labels", config)
+	config = map[string]interface{}{
+		"sync": "labels",
+	}
+	server.CreateTestInstance(t, uuid, "labelvol", "bodies", config)
+
+	// Populte the labels, which should automatically populate the labelvol
+	_ = createLabelTestVolume(t, uuid, "labels")
 
 	// TODO -- Remove this hack in favor of whatever will be the method
 	// for discerning denormalizations are not yet complete.

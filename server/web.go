@@ -120,19 +120,21 @@ const WebHelp = `
 	as the body of the POST.  Configuration data is a JSON object with each property
 	corresponding to a configuration keyword for the particular data type.  Two properties
 	are required: "typename" should be set to the type name of the new instance, and
-	"dataname" should be set to the desired name of the new instance.
+	"dataname" should be set to the desired name of the new instance.  The "sync" value
+	can be set to a comma-separated list of instance names; this makes the new data
+	instance subscribe to changes in the given data instances.
 
 	
  DELETE /api/repo/{uuid}/{dataname}?imsure=true
 
 	Deletes a data instance of given name from the repository holding a node with UUID.	
 
- POST /api/node/{uuid}/lock
+ POST /api/repo/{uuid}/lock
 
 	Locks the node (version) with given UUID.  This is required before a version can 
 	be branched or pushed to a remote server.
 
- POST /api/node/{uuid}/branch
+ POST /api/repo/{uuid}/branch
 
 	Creates a new child node (version) of the node with given UUID.
 
@@ -277,8 +279,8 @@ func initRoutes() {
 	repoMux.Get("/api/repo/:uuid/info", repoInfoHandler)
 	repoMux.Post("/api/repo/:uuid/instance", repoNewDataHandler)
 	repoMux.Delete("/api/repo/:uuid/:dataname", repoDeleteHandler)
-	repoMux.Post("/api/node/:uuid/lock", repoLockHandler)
-	repoMux.Post("/api/node/:uuid/branch", repoBranchHandler)
+	repoMux.Post("/api/repo/:uuid/lock", repoLockHandler)
+	repoMux.Post("/api/repo/:uuid/branch", repoBranchHandler)
 
 	instanceMux := web.New()
 	mainMux.Handle("/api/node/:uuid/:dataname/:keyword", instanceMux)
