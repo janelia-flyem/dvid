@@ -85,6 +85,11 @@ func TestMergeCache(t *testing.T) {
 		MergeTuple{9, 10, 11, 12},
 		MergeTuple{21, 100, 18, 85, 97, 45},
 	}
+	merges2 := []MergeTuple{
+		MergeTuple{4, 9, 3, 22},
+		MergeTuple{9, 5, 11, 6},
+		MergeTuple{21, 44, 55, 66, 77, 88},
+	}
 	expectmap := map[uint64]uint64{
 		1:   4,
 		2:   4,
@@ -100,6 +105,7 @@ func TestMergeCache(t *testing.T) {
 	}
 
 	iv := dvid.InstanceVersion{"foobar", 23}
+	iv2 := dvid.InstanceVersion{"foobar", 24}
 	var m MergeCache
 	for _, tuple := range merges {
 		op, err := tuple.Op()
@@ -108,6 +114,13 @@ func TestMergeCache(t *testing.T) {
 		}
 		m.Add(iv, op)
 	}
+	for _, tuple := range merges2 {
+		op, err := tuple.Op()
+		if err != nil {
+			t.Errorf("Error converting tuple %v to MergeOp: %s\n", tuple, err.Error())
+		}
+		m.Add(iv2, op)
+	}
 	mapping := m.LabelMap(iv)
 	for a, b := range expectmap {
 		c, ok := mapping.Get(a)
@@ -115,11 +128,53 @@ func TestMergeCache(t *testing.T) {
 			t.Errorf("Expected mapping of %d -> %d, got %d (%t) instead\n", a, b, c, ok)
 		}
 	}
-	if v, ok := mapping.Get(2013); ok {
-		t.Errorf("Got mapping even though none existed.")
+	if _, ok := mapping.Get(66); ok {
+		t.Errorf("Got mapping even though none existed for this version.")
 	}
 }
 
 func TestDirtyCache(t *testing.T) {
-
+	var c DirtyCache
+	iv := dvid.InstanceVersion{"foobar", 23}
+	iv2 := dvid.InstanceVersion{"foobar", 24}
+	if !c.Empty(iv) && !c.Empty(iv2) {
+		t.Errorf("DirtyCache should be considered empty but it's not.")
+	}
+	c.Incr(iv, 390)
+	c.Incr(iv, 84)
+	c.Incr(iv, 390)
+	if c.Empty(iv) {
+		t.Errorf("DirtyCache should be non-empty.")
+	}
+	if !c.Empty(iv2) {
+		t.Errorf("DirtyCache should be empty")
+	}
+	c.Incr(iv2, 24)
+	c.Incr(iv2, 390)
+	if c.IsDirty(iv, 1) {
+		t.Errorf("Label is marked dirty when it's not.")
+	}
+	if !c.IsDirty(iv, 84) {
+		t.Errorf("Label is not marked dirty when it is.")
+	}
+	if c.IsDirty(iv, 24) {
+		t.Errorf("Label is marked dirty when it's not.")
+	}
+	if !c.IsDirty(iv2, 24) {
+		t.Errorf("Label is not marked dirty when it is.")
+	}
+	if !c.IsDirty(iv, 390) {
+		t.Errorf("Label is not marked dirty when it is.")
+	}
+	c.Decr(iv, 390)
+	if !c.IsDirty(iv, 390) {
+		t.Errorf("Label is not marked dirty when it is.")
+	}
+	c.Decr(iv, 390)
+	if c.IsDirty(iv, 390) {
+		t.Errorf("Label is marked dirty when it's not.")
+	}
+	if !c.IsDirty(iv2, 390) {
+		t.Errorf("Label is not marked dirty when it is.")
+	}
 }

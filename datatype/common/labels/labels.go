@@ -209,7 +209,8 @@ func (d *DirtyCache) Incr(iv dvid.InstanceVersion, label uint64) {
 
 	cnts, found := d.dirty[iv]
 	if !found || cnts == nil {
-		cnts = &Counts{}
+		cnts = new(Counts)
+		d.dirty[iv] = cnts
 	}
 	cnts.Incr(label)
 }
