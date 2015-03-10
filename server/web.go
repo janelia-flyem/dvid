@@ -304,10 +304,14 @@ func initRoutes() {
 	repoMux.Post("/api/repo/:uuid/instance", repoNewDataHandler)
 	repoMux.Delete("/api/repo/:uuid/:dataname", repoDeleteHandler)
 
-	repoMux.Get("/api/node/:uuid/log", getNodeLogHandler)
-	repoMux.Post("/api/node/:uuid/log", postNodeLogHandler)
-	repoMux.Post("/api/node/:uuid/lock", repoLockHandler)
-	repoMux.Post("/api/node/:uuid/branch", repoBranchHandler)
+	nodeMux := web.New()
+	mainMux.Handle("/api/node/:uuid", nodeMux)
+	mainMux.Handle("/api/node/:uuid/:action", nodeMux)
+	nodeMux.Use(repoSelector)
+	nodeMux.Get("/api/node/:uuid/log", getNodeLogHandler)
+	nodeMux.Post("/api/node/:uuid/log", postNodeLogHandler)
+	nodeMux.Post("/api/node/:uuid/lock", repoLockHandler)
+	nodeMux.Post("/api/node/:uuid/branch", repoBranchHandler)
 
 	instanceMux := web.New()
 	mainMux.Handle("/api/node/:uuid/:dataname/:keyword", instanceMux)
@@ -700,8 +704,13 @@ func repoNewDataHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 }
 
 func getNodeLogHandler(c web.C, w http.ResponseWriter, r *http.Request) {
-	repo := (c.Env["repo"]).(datastore.Repo)
-	uuid, _, err := datastore.MatchingUUID(c.URLParams["uuid"])
+	uuid, ok := c.Env["uuid"].(dvid.UUID)
+	if !ok {
+		msg := fmt.Sprintf("Bad format for UUID %q\n", c.Env["uuid"])
+		BadRequest(w, r, msg)
+		return
+	}
+	repo, err := datastore.RepoFromUUID(uuid)
 	if err != nil {
 		BadRequest(w, r, err.Error())
 		return
@@ -726,8 +735,13 @@ func getNodeLogHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 }
 
 func postNodeLogHandler(c web.C, w http.ResponseWriter, r *http.Request) {
-	repo := (c.Env["repo"]).(datastore.Repo)
-	uuid, _, err := datastore.MatchingUUID(c.URLParams["uuid"])
+	uuid, ok := c.Env["uuid"].(dvid.UUID)
+	if !ok {
+		msg := fmt.Sprintf("Bad format for UUID %q\n", c.Env["uuid"])
+		BadRequest(w, r, msg)
+		return
+	}
+	repo, err := datastore.RepoFromUUID(uuid)
 	if err != nil {
 		BadRequest(w, r, err.Error())
 		return
@@ -750,8 +764,13 @@ func postNodeLogHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 }
 
 func repoLockHandler(c web.C, w http.ResponseWriter, r *http.Request) {
-	repo := (c.Env["repo"]).(datastore.Repo)
-	uuid, _, err := datastore.MatchingUUID(c.URLParams["uuid"])
+	uuid, ok := c.Env["uuid"].(dvid.UUID)
+	if !ok {
+		msg := fmt.Sprintf("Bad format for UUID %q\n", c.Env["uuid"])
+		BadRequest(w, r, msg)
+		return
+	}
+	repo, err := datastore.RepoFromUUID(uuid)
 	if err != nil {
 		BadRequest(w, r, err.Error())
 		return
@@ -778,8 +797,13 @@ func repoLockHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 }
 
 func repoBranchHandler(c web.C, w http.ResponseWriter, r *http.Request) {
-	repo := (c.Env["repo"]).(datastore.Repo)
-	uuid, _, err := datastore.MatchingUUID(c.URLParams["uuid"])
+	uuid, ok := c.Env["uuid"].(dvid.UUID)
+	if !ok {
+		msg := fmt.Sprintf("Bad format for UUID %q\n", c.Env["uuid"])
+		BadRequest(w, r, msg)
+		return
+	}
+	repo, err := datastore.RepoFromUUID(uuid)
 	if err != nil {
 		BadRequest(w, r, err.Error())
 		return

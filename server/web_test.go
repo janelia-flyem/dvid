@@ -42,32 +42,28 @@ func TestLog(t *testing.T) {
 
 	// Verify it was saved.
 	r := TestHTTP(t, "GET", apiStr, nil)
-	jsonResp := make(map[string]interface{})
+	jsonResp := make(map[string][]string)
 	if err := json.Unmarshal(r, &jsonResp); err != nil {
 		t.Fatalf("Unable to unmarshal log response: %s\n", string(r))
 	}
 	if len(jsonResp) != 1 {
 		t.Errorf("Bad log return: %s\n", string(r))
 	}
-	v, ok := jsonResp["log"]
+	data, ok := jsonResp["log"]
 	if !ok {
 		t.Fatalf("No 'log' data returned: %s\n", string(r))
 	}
-	data, ok := v.([]string)
-	if !ok {
-		t.Errorf("Expected []string in logs, got instead: %v\n", v)
-	}
 	if len(data) != 3 {
-		t.Errorf("Got wrong # of lines in log: %v\n", data)
+		t.Fatalf("Got wrong # of lines in log: %v\n", data)
 	}
-	if data[0] != "line1" {
+	if data[0][27:] != "line1" {
 		t.Errorf("Got bad log line: %q\n", data[0])
 	}
-	if data[1] != "line2" {
-		t.Errorf("Got bad log line: %q\n", data[0])
+	if data[1][27:] != "line2" {
+		t.Errorf("Got bad log line: %q\n", data[1])
 	}
-	if data[2] != "some more stuff in a line" {
-		t.Errorf("Got bad log line: %q\n", data[0])
+	if data[2][27:] != "some more stuff in a line" {
+		t.Errorf("Got bad log line: %q\n", data[2])
 	}
 
 	// Add some more to log
@@ -77,29 +73,25 @@ func TestLog(t *testing.T) {
 
 	// Verify it was appended.
 	r = TestHTTP(t, "GET", apiStr, nil)
-	jsonResp = make(map[string]interface{})
+	jsonResp = make(map[string][]string)
 	if err := json.Unmarshal(r, &jsonResp); err != nil {
 		t.Fatalf("Unable to unmarshal log response: %s\n", string(r))
 	}
 	if len(jsonResp) != 1 {
 		t.Errorf("Bad log return: %s\n", string(r))
 	}
-	v, ok = jsonResp["log"]
+	data, ok = jsonResp["log"]
 	if !ok {
 		t.Fatalf("No 'log' data returned: %s\n", string(r))
-	}
-	data, ok = v.([]string)
-	if !ok {
-		t.Errorf("Expected []string in logs, got instead: %v\n", v)
 	}
 	if len(data) != 5 {
 		t.Errorf("Got wrong # of lines in log: %v\n", data)
 	}
-	if data[3] != "line4" {
-		t.Errorf("Got bad log line: %q\n", data[0])
+	if data[3][27:] != "line4" {
+		t.Errorf("Got bad log line: %q\n", data[3])
 	}
-	if data[4] != "line5" {
-		t.Errorf("Got bad log line: %q\n", data[0])
+	if data[4][27:] != "line5" {
+		t.Errorf("Got bad log line: %q\n", data[4])
 	}
 }
 
