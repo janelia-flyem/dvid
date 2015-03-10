@@ -210,7 +210,7 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser) 
 	}
 
 	// Read the sparse volume from reader.
-	header := make([]byte, 12)
+	header := make([]byte, 8)
 	if _, err = io.ReadFull(r, header); err != nil {
 		return
 	}
@@ -261,6 +261,7 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser) 
 	if err != nil {
 		return
 	}
+
 	begIndex := NewIndex(fromLabel, minZYX.Bytes())
 	endIndex := NewIndex(fromLabel, maxZYX.Bytes())
 
@@ -282,6 +283,7 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser) 
 		}
 		origblk := dvid.IZYXString(origblkbytes)
 		splitblk := splitblks[pos]
+
 		if origblk < splitblk || pos >= len(splitblks) {
 			return nil // Seek forward
 		}
@@ -294,6 +296,7 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser) 
 			if err != nil {
 				return err
 			}
+
 			ibytes := NewIndex(fromLabel, []byte(origblk))
 			if dup {
 				batch.Delete(ibytes)
@@ -372,36 +375,43 @@ func (d *Data) diffBlock(split, orig dvid.RLEs) (modified dvid.RLEs, dup bool, e
 	for e != nil && si < len(srles) {
 		orig := e.Value.(dvid.RLE)
 
-		badsplit := true
+		badsplit := false
+		deleted := false
 		for i := si; i < len(srles); i++ {
+			if srles[i].Less(orig) {
+				badsplit = true
+				break
+			}
 			frags := orig.Excise(srles[i])
 			if frags == nil {
-				continue
+				break
 			}
-
-			// We have an intersection, so replace our current RLE with these fragments.
-			if len(frags) != 0 {
-				for _, rle := range frags {
-					l.InsertAfter(rle, e)
+			n := len(frags)
+			if n != 0 {
+				// We have an intersection, so replace our current RLE with these fragments in ascending order.
+				for f := range frags {
+					l.InsertAfter(frags[n-1-f], e)
 				}
 			}
 
 			// Delete the intersected RLE
-			left := e.Prev()
-			l.Remove(e)
-			e = left
+			deleted = true
 
 			// We are done with this split RLE
 			si++
-			badsplit = false
 			break
 		}
 		if badsplit {
 			err = fmt.Errorf("split is not contained within single label")
 			return
 		}
-
-		e = e.Next()
+		if deleted {
+			next := e.Next()
+			l.Remove(e)
+			e = next
+		} else {
+			e = e.Next()
+		}
 	}
 
 	// If there's nothing left of original, the split was a duplicate of the original.
@@ -414,6 +424,7 @@ func (d *Data) diffBlock(split, orig dvid.RLEs) (modified dvid.RLEs, dup bool, e
 	i := 0
 	for e = l.Front(); e != nil; e = e.Next() {
 		modified[i] = e.Value.(dvid.RLE)
+		i++
 	}
 	return modified, false, nil
 }

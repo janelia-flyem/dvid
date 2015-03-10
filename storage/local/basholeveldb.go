@@ -326,16 +326,20 @@ func (db *LevelDB) getSingleKeyVersions(vctx storage.VersionedContext, k []byte)
 	for {
 		if it.Valid() {
 			itKey := it.Key()
+			// log.Printf("got key  %v\n", itKey)
 			storage.StoreKeyBytesRead <- len(itKey)
 			if bytes.Compare(itKey, kEnd) > 0 {
+				// log.Printf("key past %v\n", kEnd)
 				return values, nil
 			}
 			itValue := it.Value()
+			// log.Printf("got value of length %d\n", len(itValue))
 			storage.StoreValueBytesRead <- len(itValue)
 			values = append(values, &storage.KeyValue{itKey, itValue})
 			it.Next()
 		} else {
 			err = it.GetError()
+			// log.Printf("iteration done, err = %v\n", err)
 			if err == nil {
 				return values, nil
 			}

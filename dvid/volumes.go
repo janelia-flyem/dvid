@@ -332,7 +332,7 @@ func (rle RLE) String() string {
 
 // Excise returns the portion of the receiver that is not in the passed RLE.
 // If the RLEs do not intersect, nil is returned.
-func (rle RLE) Excise(rle2 RLE) []RLE {
+func (rle RLE) Excise(rle2 RLE) RLEs {
 	if rle.start[2] != rle2.start[2] || rle.start[1] != rle2.start[1] {
 		return nil
 	}
@@ -345,7 +345,7 @@ func (rle RLE) Excise(rle2 RLE) []RLE {
 	if x0 > sx1 || x1 < sx0 {
 		return nil
 	}
-	frags := []RLE{}
+	frags := RLEs{}
 	if sx0 > x0 {
 		frags = append(frags, RLE{Point3d{x0, y, z}, sx0 - x0})
 	}

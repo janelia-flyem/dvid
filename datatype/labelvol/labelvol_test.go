@@ -6,6 +6,7 @@ package labelvol
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"log"
 	"reflect"
@@ -323,6 +324,21 @@ func TestMergeLabels(t *testing.T) {
 	// for discerning denormalizations are not yet complete.
 	time.Sleep(10 * time.Second)
 
+	// Make sure max label is consistent
+	reqStr := fmt.Sprintf("%snode/%s/%s/maxlabel", server.WebAPIPath, uuid, "bodies")
+	r := server.TestHTTP(t, "GET", reqStr, nil)
+	jsonVal := make(map[string]uint64)
+	if err := json.Unmarshal(r, &jsonVal); err != nil {
+		t.Errorf("Unable to get maxlabel from server.  Instead got: %v\n", jsonVal)
+	}
+	maxlabel, ok := jsonVal["maxlabel"]
+	if !ok {
+		t.Errorf("The maxlabel query did not yield max label.  Instead got: %v\n", jsonVal)
+	}
+	if maxlabel != 4 {
+		t.Errorf("Expected max label to be 4, instead got %d\n", maxlabel)
+	}
+
 	expected := newTestVolume(128, 128, 128)
 	expected.add(body1, 0)
 	expected.add(body2, 0)
@@ -358,11 +374,79 @@ func TestMergeLabels(t *testing.T) {
 }
 
 func TestSplitLabel(t *testing.T) {
-	// Create testbed volume
+	tests.UseStore()
+	defer tests.CloseStore()
 
-	// Split part of a label
+	// Create testbed volume and data instances
+	repo, _ := initTestRepo()
+	uuid := repo.RootUUID()
+	config := map[string]interface{}{
+		"sync": "bodies",
+	}
+	server.CreateTestInstance(t, uuid, "labelblk", "labels", config)
+	config = map[string]interface{}{
+		"sync": "labels",
+	}
+	server.CreateTestInstance(t, uuid, "labelvol", "bodies", config)
 
-	// Make sure changes are correct after completion
+	// Store body 4 in as labels
+	labels := newTestVolume(128, 128, 128)
+	labels.add(body4, 0)
+	labels.put(t, uuid, "labels")
+
+	// TODO -- Remove this hack in favor of whatever will be the method
+	// for discerning denormalizations are not yet complete.
+	time.Sleep(10 * time.Second)
+
+	// Create the sparsevol encoding for body 4a
+	numspans := len(bodysplit.voxelSpans)
+	rles := make(dvid.RLEs, numspans, numspans)
+	for i, span := range bodysplit.voxelSpans {
+		start := dvid.Point3d{span[2], span[1], span[0]}
+		length := span[3] - span[2] + 1
+		rles[i] = dvid.NewRLE(start, length)
+	}
+
+	// Create the sparse volume binary
+	buf := new(bytes.Buffer)
+	buf.WriteByte(dvid.EncodingBinary)
+	binary.Write(buf, binary.LittleEndian, uint8(3))         // # of dimensions
+	binary.Write(buf, binary.LittleEndian, byte(0))          // dimension of run (X = 0)
+	buf.WriteByte(byte(0))                                   // reserved for later
+	binary.Write(buf, binary.LittleEndian, uint32(0))        // Placeholder for # voxels
+	binary.Write(buf, binary.LittleEndian, uint32(numspans)) // Placeholder for # spans
+	rleBytes, err := rles.MarshalBinary()
+	if err != nil {
+		t.Errorf("Unable to serialize RLEs: %s\n", err.Error())
+	}
+	buf.Write(rleBytes)
+
+	// Submit the split sparsevol for body 4a
+	reqStr := fmt.Sprintf("%snode/%s/%s/split/%d", server.WebAPIPath, uuid, "bodies", 4)
+	r := server.TestHTTP(t, "POST", reqStr, buf)
+	jsonVal := make(map[string]uint64)
+	if err := json.Unmarshal(r, &jsonVal); err != nil {
+		t.Errorf("Unable to get new label from split.  Instead got: %v\n", jsonVal)
+	}
+	newlabel, ok := jsonVal["label"]
+	if !ok {
+		t.Errorf("The split request did not yield label value.  Instead got: %v\n", jsonVal)
+	}
+	if newlabel != 5 {
+		t.Errorf("Expected split label to be 5, instead got %d\n", newlabel)
+	}
+
+	// Make sure labels are correct
+
+	// Make sure new body 5 is what we sent
+	reqStr = fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid, "bodies", 5)
+	encoding := server.TestHTTP(t, "GET", reqStr, nil)
+	bodysplit.checkSparseVol(t, encoding, dvid.Bounds{})
+
+	// Make sure sparsevol for original body 4 is correct
+	reqStr = fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid, "bodies", 4)
+	encoding = server.TestHTTP(t, "GET", reqStr, nil)
+	bodyleft.checkSparseVol(t, encoding, dvid.Bounds{})
 }
 
 var (
@@ -1569,10 +1653,153 @@ var (
 				dvid.Span{89, 50, 75, 94}, dvid.Span{89, 51, 75, 94}, dvid.Span{89, 52, 75, 94}, dvid.Span{89, 53, 75, 94}, dvid.Span{89, 54, 75, 94},
 				dvid.Span{89, 55, 75, 94}, dvid.Span{89, 56, 75, 94}, dvid.Span{89, 57, 75, 94}, dvid.Span{89, 58, 75, 94}, dvid.Span{89, 59, 75, 94},
 			},
+		}, {
+			label:  4,
+			offset: dvid.Point3d{75, 40, 60},
+			size:   dvid.Point3d{20, 20, 21},
+			blockSpans: []dvid.Span{
+				dvid.Span{1, 1, 2, 2},
+				dvid.Span{2, 1, 2, 2},
+			},
+			voxelSpans: []dvid.Span{
+				dvid.Span{60, 40, 75, 94}, dvid.Span{60, 41, 75, 94}, dvid.Span{60, 42, 75, 94}, dvid.Span{60, 43, 75, 94}, dvid.Span{60, 44, 75, 94},
+				dvid.Span{60, 45, 75, 94}, dvid.Span{60, 46, 75, 94}, dvid.Span{60, 47, 75, 94}, dvid.Span{60, 48, 75, 94}, dvid.Span{60, 49, 75, 94},
+				dvid.Span{60, 50, 75, 94}, dvid.Span{60, 51, 75, 94}, dvid.Span{60, 52, 75, 94}, dvid.Span{60, 53, 75, 94}, dvid.Span{60, 54, 75, 94},
+				dvid.Span{60, 55, 75, 94}, dvid.Span{60, 56, 75, 94}, dvid.Span{60, 57, 75, 94}, dvid.Span{60, 58, 75, 94}, dvid.Span{60, 59, 75, 94},
+				dvid.Span{61, 40, 75, 94}, dvid.Span{61, 41, 75, 94}, dvid.Span{61, 42, 75, 94}, dvid.Span{61, 43, 75, 94}, dvid.Span{61, 44, 75, 94},
+				dvid.Span{61, 45, 75, 94}, dvid.Span{61, 46, 75, 94}, dvid.Span{61, 47, 75, 94}, dvid.Span{61, 48, 75, 94}, dvid.Span{61, 49, 75, 94},
+				dvid.Span{61, 50, 75, 94}, dvid.Span{61, 51, 75, 94}, dvid.Span{61, 52, 75, 94}, dvid.Span{61, 53, 75, 94}, dvid.Span{61, 54, 75, 94},
+				dvid.Span{61, 55, 75, 94}, dvid.Span{61, 56, 75, 94}, dvid.Span{61, 57, 75, 94}, dvid.Span{61, 58, 75, 94}, dvid.Span{61, 59, 75, 94},
+				dvid.Span{62, 40, 75, 94}, dvid.Span{62, 41, 75, 94}, dvid.Span{62, 42, 75, 94}, dvid.Span{62, 43, 75, 94}, dvid.Span{62, 44, 75, 94},
+				dvid.Span{62, 45, 75, 94}, dvid.Span{62, 46, 75, 94}, dvid.Span{62, 47, 75, 94}, dvid.Span{62, 48, 75, 94}, dvid.Span{62, 49, 75, 94},
+				dvid.Span{62, 50, 75, 94}, dvid.Span{62, 51, 75, 94}, dvid.Span{62, 52, 75, 94}, dvid.Span{62, 53, 75, 94}, dvid.Span{62, 54, 75, 94},
+				dvid.Span{62, 55, 75, 94}, dvid.Span{62, 56, 75, 94}, dvid.Span{62, 57, 75, 94}, dvid.Span{62, 58, 75, 94}, dvid.Span{62, 59, 75, 94},
+				dvid.Span{63, 40, 75, 94}, dvid.Span{63, 41, 75, 94}, dvid.Span{63, 42, 75, 94}, dvid.Span{63, 43, 75, 94}, dvid.Span{63, 44, 75, 94},
+				dvid.Span{63, 45, 75, 94}, dvid.Span{63, 46, 75, 94}, dvid.Span{63, 47, 75, 94}, dvid.Span{63, 48, 75, 94}, dvid.Span{63, 49, 75, 94},
+				dvid.Span{63, 50, 75, 94}, dvid.Span{63, 51, 75, 94}, dvid.Span{63, 52, 75, 94}, dvid.Span{63, 53, 75, 94}, dvid.Span{63, 54, 75, 94},
+				dvid.Span{63, 55, 75, 94}, dvid.Span{63, 56, 75, 94}, dvid.Span{63, 57, 75, 94}, dvid.Span{63, 58, 75, 94}, dvid.Span{63, 59, 75, 94},
+				dvid.Span{64, 40, 75, 94}, dvid.Span{64, 41, 75, 94}, dvid.Span{64, 42, 75, 94}, dvid.Span{64, 43, 75, 94}, dvid.Span{64, 44, 75, 94},
+				dvid.Span{64, 45, 75, 94}, dvid.Span{64, 46, 75, 94}, dvid.Span{64, 47, 75, 94}, dvid.Span{64, 48, 75, 94}, dvid.Span{64, 49, 75, 94},
+				dvid.Span{64, 50, 75, 94}, dvid.Span{64, 51, 75, 94}, dvid.Span{64, 52, 75, 94}, dvid.Span{64, 53, 75, 94}, dvid.Span{64, 54, 75, 94},
+				dvid.Span{64, 55, 75, 94}, dvid.Span{64, 56, 75, 94}, dvid.Span{64, 57, 75, 94}, dvid.Span{64, 58, 75, 94}, dvid.Span{64, 59, 75, 94},
+				dvid.Span{65, 40, 75, 94}, dvid.Span{65, 41, 75, 94}, dvid.Span{65, 42, 75, 94}, dvid.Span{65, 43, 75, 94}, dvid.Span{65, 44, 75, 94},
+				dvid.Span{65, 45, 75, 94}, dvid.Span{65, 46, 75, 94}, dvid.Span{65, 47, 75, 94}, dvid.Span{65, 48, 75, 94}, dvid.Span{65, 49, 75, 94},
+				dvid.Span{65, 50, 75, 94}, dvid.Span{65, 51, 75, 94}, dvid.Span{65, 52, 75, 94}, dvid.Span{65, 53, 75, 94}, dvid.Span{65, 54, 75, 94},
+				dvid.Span{65, 55, 75, 94}, dvid.Span{65, 56, 75, 94}, dvid.Span{65, 57, 75, 94}, dvid.Span{65, 58, 75, 94}, dvid.Span{65, 59, 75, 94},
+				dvid.Span{66, 40, 75, 94}, dvid.Span{66, 41, 75, 94}, dvid.Span{66, 42, 75, 94}, dvid.Span{66, 43, 75, 94}, dvid.Span{66, 44, 75, 94},
+				dvid.Span{66, 45, 75, 94}, dvid.Span{66, 46, 75, 94}, dvid.Span{66, 47, 75, 94}, dvid.Span{66, 48, 75, 94}, dvid.Span{66, 49, 75, 94},
+				dvid.Span{66, 50, 75, 94}, dvid.Span{66, 51, 75, 94}, dvid.Span{66, 52, 75, 94}, dvid.Span{66, 53, 75, 94}, dvid.Span{66, 54, 75, 94},
+				dvid.Span{66, 55, 75, 94}, dvid.Span{66, 56, 75, 94}, dvid.Span{66, 57, 75, 94}, dvid.Span{66, 58, 75, 94}, dvid.Span{66, 59, 75, 94},
+				dvid.Span{67, 40, 75, 94}, dvid.Span{67, 41, 75, 94}, dvid.Span{67, 42, 75, 94}, dvid.Span{67, 43, 75, 94}, dvid.Span{67, 44, 75, 94},
+				dvid.Span{67, 45, 75, 94}, dvid.Span{67, 46, 75, 94}, dvid.Span{67, 47, 75, 94}, dvid.Span{67, 48, 75, 94}, dvid.Span{67, 49, 75, 94},
+				dvid.Span{67, 50, 75, 94}, dvid.Span{67, 51, 75, 94}, dvid.Span{67, 52, 75, 94}, dvid.Span{67, 53, 75, 94}, dvid.Span{67, 54, 75, 94},
+				dvid.Span{67, 55, 75, 94}, dvid.Span{67, 56, 75, 94}, dvid.Span{67, 57, 75, 94}, dvid.Span{67, 58, 75, 94}, dvid.Span{67, 59, 75, 94},
+				dvid.Span{68, 40, 75, 94}, dvid.Span{68, 41, 75, 94}, dvid.Span{68, 42, 75, 94}, dvid.Span{68, 43, 75, 94}, dvid.Span{68, 44, 75, 94},
+				dvid.Span{68, 45, 75, 94}, dvid.Span{68, 46, 75, 94}, dvid.Span{68, 47, 75, 94}, dvid.Span{68, 48, 75, 94}, dvid.Span{68, 49, 75, 94},
+				dvid.Span{68, 50, 75, 94}, dvid.Span{68, 51, 75, 94}, dvid.Span{68, 52, 75, 94}, dvid.Span{68, 53, 75, 94}, dvid.Span{68, 54, 75, 94},
+				dvid.Span{68, 55, 75, 94}, dvid.Span{68, 56, 75, 94}, dvid.Span{68, 57, 75, 94}, dvid.Span{68, 58, 75, 94}, dvid.Span{68, 59, 75, 94},
+				dvid.Span{69, 40, 75, 94}, dvid.Span{69, 41, 75, 94}, dvid.Span{69, 42, 75, 94}, dvid.Span{69, 43, 75, 94}, dvid.Span{69, 44, 75, 94},
+				dvid.Span{69, 45, 75, 94}, dvid.Span{69, 46, 75, 94}, dvid.Span{69, 47, 75, 94}, dvid.Span{69, 48, 75, 94}, dvid.Span{69, 49, 75, 94},
+				dvid.Span{69, 50, 75, 94}, dvid.Span{69, 51, 75, 94}, dvid.Span{69, 52, 75, 94}, dvid.Span{69, 53, 75, 94}, dvid.Span{69, 54, 75, 94},
+				dvid.Span{69, 55, 75, 94}, dvid.Span{69, 56, 75, 94}, dvid.Span{69, 57, 75, 94}, dvid.Span{69, 58, 75, 94}, dvid.Span{69, 59, 75, 94},
+				dvid.Span{70, 40, 75, 94}, dvid.Span{70, 41, 75, 94}, dvid.Span{70, 42, 75, 94}, dvid.Span{70, 43, 75, 94}, dvid.Span{70, 44, 75, 94},
+				dvid.Span{70, 45, 75, 94}, dvid.Span{70, 46, 75, 94}, dvid.Span{70, 47, 75, 94}, dvid.Span{70, 48, 75, 94}, dvid.Span{70, 49, 75, 94},
+				dvid.Span{70, 50, 75, 94}, dvid.Span{70, 51, 75, 94}, dvid.Span{70, 52, 75, 94}, dvid.Span{70, 53, 75, 94}, dvid.Span{70, 54, 75, 94},
+				dvid.Span{70, 55, 75, 94}, dvid.Span{70, 56, 75, 94}, dvid.Span{70, 57, 75, 94}, dvid.Span{70, 58, 75, 94}, dvid.Span{70, 59, 75, 94},
+				dvid.Span{71, 40, 75, 94}, dvid.Span{71, 41, 75, 94}, dvid.Span{71, 42, 75, 94}, dvid.Span{71, 43, 75, 94}, dvid.Span{71, 44, 75, 94},
+				dvid.Span{71, 45, 75, 94}, dvid.Span{71, 46, 75, 94}, dvid.Span{71, 47, 75, 94}, dvid.Span{71, 48, 75, 94}, dvid.Span{71, 49, 75, 94},
+				dvid.Span{71, 50, 75, 94}, dvid.Span{71, 51, 75, 94}, dvid.Span{71, 52, 75, 94}, dvid.Span{71, 53, 75, 94}, dvid.Span{71, 54, 75, 94},
+				dvid.Span{71, 55, 75, 94}, dvid.Span{71, 56, 75, 94}, dvid.Span{71, 57, 75, 94}, dvid.Span{71, 58, 75, 94}, dvid.Span{71, 59, 75, 94},
+				dvid.Span{72, 40, 75, 94}, dvid.Span{72, 41, 75, 94}, dvid.Span{72, 42, 75, 94}, dvid.Span{72, 43, 75, 94}, dvid.Span{72, 44, 75, 94},
+				dvid.Span{72, 45, 75, 94}, dvid.Span{72, 46, 75, 94}, dvid.Span{72, 47, 75, 94}, dvid.Span{72, 48, 75, 94}, dvid.Span{72, 49, 75, 94},
+				dvid.Span{72, 50, 75, 94}, dvid.Span{72, 51, 75, 94}, dvid.Span{72, 52, 75, 94}, dvid.Span{72, 53, 75, 94}, dvid.Span{72, 54, 75, 94},
+				dvid.Span{72, 55, 75, 94}, dvid.Span{72, 56, 75, 94}, dvid.Span{72, 57, 75, 94}, dvid.Span{72, 58, 75, 94}, dvid.Span{72, 59, 75, 94},
+				dvid.Span{73, 40, 75, 94}, dvid.Span{73, 41, 75, 94}, dvid.Span{73, 42, 75, 94}, dvid.Span{73, 43, 75, 94}, dvid.Span{73, 44, 75, 94},
+				dvid.Span{73, 45, 75, 94}, dvid.Span{73, 46, 75, 94}, dvid.Span{73, 47, 75, 94}, dvid.Span{73, 48, 75, 94}, dvid.Span{73, 49, 75, 94},
+				dvid.Span{73, 50, 75, 94}, dvid.Span{73, 51, 75, 94}, dvid.Span{73, 52, 75, 94}, dvid.Span{73, 53, 75, 94}, dvid.Span{73, 54, 75, 94},
+				dvid.Span{73, 55, 75, 94}, dvid.Span{73, 56, 75, 94}, dvid.Span{73, 57, 75, 94}, dvid.Span{73, 58, 75, 94}, dvid.Span{73, 59, 75, 94},
+				dvid.Span{74, 40, 75, 94}, dvid.Span{74, 41, 75, 94}, dvid.Span{74, 42, 75, 94}, dvid.Span{74, 43, 75, 94}, dvid.Span{74, 44, 75, 94},
+				dvid.Span{74, 45, 75, 94}, dvid.Span{74, 46, 75, 94}, dvid.Span{74, 47, 75, 94}, dvid.Span{74, 48, 75, 94}, dvid.Span{74, 49, 75, 94},
+				dvid.Span{74, 50, 75, 94}, dvid.Span{74, 51, 75, 94}, dvid.Span{74, 52, 75, 94}, dvid.Span{74, 53, 75, 94}, dvid.Span{74, 54, 75, 94},
+				dvid.Span{74, 55, 75, 94}, dvid.Span{74, 56, 75, 94}, dvid.Span{74, 57, 75, 94}, dvid.Span{74, 58, 75, 94}, dvid.Span{74, 59, 75, 94},
+				dvid.Span{75, 40, 75, 94}, dvid.Span{75, 41, 75, 94}, dvid.Span{75, 42, 75, 94}, dvid.Span{75, 43, 75, 94}, dvid.Span{75, 44, 75, 94},
+				dvid.Span{75, 45, 75, 94}, dvid.Span{75, 46, 75, 94}, dvid.Span{75, 47, 75, 94}, dvid.Span{75, 48, 75, 94}, dvid.Span{75, 49, 75, 94},
+				dvid.Span{75, 50, 75, 94}, dvid.Span{75, 51, 75, 94}, dvid.Span{75, 52, 75, 94}, dvid.Span{75, 53, 75, 94}, dvid.Span{75, 54, 75, 94},
+				dvid.Span{75, 55, 75, 94}, dvid.Span{75, 56, 75, 94}, dvid.Span{75, 57, 75, 94}, dvid.Span{75, 58, 75, 94}, dvid.Span{75, 59, 75, 94},
+				dvid.Span{76, 40, 75, 94}, dvid.Span{76, 41, 75, 94}, dvid.Span{76, 42, 75, 94}, dvid.Span{76, 43, 75, 94}, dvid.Span{76, 44, 75, 94},
+				dvid.Span{76, 45, 75, 94}, dvid.Span{76, 46, 75, 94}, dvid.Span{76, 47, 75, 94}, dvid.Span{76, 48, 75, 94}, dvid.Span{76, 49, 75, 94},
+				dvid.Span{76, 50, 75, 94}, dvid.Span{76, 51, 75, 94}, dvid.Span{76, 52, 75, 94}, dvid.Span{76, 53, 75, 94}, dvid.Span{76, 54, 75, 94},
+				dvid.Span{76, 55, 75, 94}, dvid.Span{76, 56, 75, 94}, dvid.Span{76, 57, 75, 94}, dvid.Span{76, 58, 75, 94}, dvid.Span{76, 59, 75, 94},
+				dvid.Span{77, 40, 75, 94}, dvid.Span{77, 41, 75, 94}, dvid.Span{77, 42, 75, 94}, dvid.Span{77, 43, 75, 94}, dvid.Span{77, 44, 75, 94},
+				dvid.Span{77, 45, 75, 94}, dvid.Span{77, 46, 75, 94}, dvid.Span{77, 47, 75, 94}, dvid.Span{77, 48, 75, 94}, dvid.Span{77, 49, 75, 94},
+				dvid.Span{77, 50, 75, 94}, dvid.Span{77, 51, 75, 94}, dvid.Span{77, 52, 75, 94}, dvid.Span{77, 53, 75, 94}, dvid.Span{77, 54, 75, 94},
+				dvid.Span{77, 55, 75, 94}, dvid.Span{77, 56, 75, 94}, dvid.Span{77, 57, 75, 94}, dvid.Span{77, 58, 75, 94}, dvid.Span{77, 59, 75, 94},
+				dvid.Span{78, 40, 75, 94}, dvid.Span{78, 41, 75, 94}, dvid.Span{78, 42, 75, 94}, dvid.Span{78, 43, 75, 94}, dvid.Span{78, 44, 75, 94},
+				dvid.Span{78, 45, 75, 94}, dvid.Span{78, 46, 75, 94}, dvid.Span{78, 47, 75, 94}, dvid.Span{78, 48, 75, 94}, dvid.Span{78, 49, 75, 94},
+				dvid.Span{78, 50, 75, 94}, dvid.Span{78, 51, 75, 94}, dvid.Span{78, 52, 75, 94}, dvid.Span{78, 53, 75, 94}, dvid.Span{78, 54, 75, 94},
+				dvid.Span{78, 55, 75, 94}, dvid.Span{78, 56, 75, 94}, dvid.Span{78, 57, 75, 94}, dvid.Span{78, 58, 75, 94}, dvid.Span{78, 59, 75, 94},
+				dvid.Span{79, 40, 75, 94}, dvid.Span{79, 41, 75, 94}, dvid.Span{79, 42, 75, 94}, dvid.Span{79, 43, 75, 94}, dvid.Span{79, 44, 75, 94},
+				dvid.Span{79, 45, 75, 94}, dvid.Span{79, 46, 75, 94}, dvid.Span{79, 47, 75, 94}, dvid.Span{79, 48, 75, 94}, dvid.Span{79, 49, 75, 94},
+				dvid.Span{79, 50, 75, 94}, dvid.Span{79, 51, 75, 94}, dvid.Span{79, 52, 75, 94}, dvid.Span{79, 53, 75, 94}, dvid.Span{79, 54, 75, 94},
+				dvid.Span{79, 55, 75, 94}, dvid.Span{79, 56, 75, 94}, dvid.Span{79, 57, 75, 94}, dvid.Span{79, 58, 75, 94}, dvid.Span{79, 59, 75, 94},
+				dvid.Span{80, 40, 75, 80}, dvid.Span{80, 40, 87, 89}, dvid.Span{80, 40, 93, 94},
+			},
+		}, {
+			label:  5,
+			offset: dvid.Point3d{75, 40, 80},
+			size:   dvid.Point3d{20, 20, 10},
+			blockSpans: []dvid.Span{
+				dvid.Span{2, 1, 2, 2},
+			},
+			voxelSpans: []dvid.Span{
+				dvid.Span{80, 40, 81, 86}, dvid.Span{80, 40, 90, 92}, // These first 2 test splits interleaved in one span.
+				dvid.Span{80, 41, 75, 94}, dvid.Span{80, 42, 75, 94}, dvid.Span{80, 43, 75, 94}, dvid.Span{80, 44, 75, 94},
+				dvid.Span{80, 45, 75, 94}, dvid.Span{80, 46, 75, 94}, dvid.Span{80, 47, 75, 94}, dvid.Span{80, 48, 75, 94}, dvid.Span{80, 49, 75, 94},
+				dvid.Span{80, 50, 75, 94}, dvid.Span{80, 51, 75, 94}, dvid.Span{80, 52, 75, 94}, dvid.Span{80, 53, 75, 94}, dvid.Span{80, 54, 75, 94},
+				dvid.Span{80, 55, 75, 94}, dvid.Span{80, 56, 75, 94}, dvid.Span{80, 57, 75, 94}, dvid.Span{80, 58, 75, 94}, dvid.Span{80, 59, 75, 94},
+				dvid.Span{81, 40, 75, 94}, dvid.Span{81, 41, 75, 94}, dvid.Span{81, 42, 75, 94}, dvid.Span{81, 43, 75, 94}, dvid.Span{81, 44, 75, 94},
+				dvid.Span{81, 45, 75, 94}, dvid.Span{81, 46, 75, 94}, dvid.Span{81, 47, 75, 94}, dvid.Span{81, 48, 75, 94}, dvid.Span{81, 49, 75, 94},
+				dvid.Span{81, 50, 75, 94}, dvid.Span{81, 51, 75, 94}, dvid.Span{81, 52, 75, 94}, dvid.Span{81, 53, 75, 94}, dvid.Span{81, 54, 75, 94},
+				dvid.Span{81, 55, 75, 94}, dvid.Span{81, 56, 75, 94}, dvid.Span{81, 57, 75, 94}, dvid.Span{81, 58, 75, 94}, dvid.Span{81, 59, 75, 94},
+				dvid.Span{82, 40, 75, 94}, dvid.Span{82, 41, 75, 94}, dvid.Span{82, 42, 75, 94}, dvid.Span{82, 43, 75, 94}, dvid.Span{82, 44, 75, 94},
+				dvid.Span{82, 45, 75, 94}, dvid.Span{82, 46, 75, 94}, dvid.Span{82, 47, 75, 94}, dvid.Span{82, 48, 75, 94}, dvid.Span{82, 49, 75, 94},
+				dvid.Span{82, 50, 75, 94}, dvid.Span{82, 51, 75, 94}, dvid.Span{82, 52, 75, 94}, dvid.Span{82, 53, 75, 94}, dvid.Span{82, 54, 75, 94},
+				dvid.Span{82, 55, 75, 94}, dvid.Span{82, 56, 75, 94}, dvid.Span{82, 57, 75, 94}, dvid.Span{82, 58, 75, 94}, dvid.Span{82, 59, 75, 94},
+				dvid.Span{83, 40, 75, 94}, dvid.Span{83, 41, 75, 94}, dvid.Span{83, 42, 75, 94}, dvid.Span{83, 43, 75, 94}, dvid.Span{83, 44, 75, 94},
+				dvid.Span{83, 45, 75, 94}, dvid.Span{83, 46, 75, 94}, dvid.Span{83, 47, 75, 94}, dvid.Span{83, 48, 75, 94}, dvid.Span{83, 49, 75, 94},
+				dvid.Span{83, 50, 75, 94}, dvid.Span{83, 51, 75, 94}, dvid.Span{83, 52, 75, 94}, dvid.Span{83, 53, 75, 94}, dvid.Span{83, 54, 75, 94},
+				dvid.Span{83, 55, 75, 94}, dvid.Span{83, 56, 75, 94}, dvid.Span{83, 57, 75, 94}, dvid.Span{83, 58, 75, 94}, dvid.Span{83, 59, 75, 94},
+				dvid.Span{84, 40, 75, 94}, dvid.Span{84, 41, 75, 94}, dvid.Span{84, 42, 75, 94}, dvid.Span{84, 43, 75, 94}, dvid.Span{84, 44, 75, 94},
+				dvid.Span{84, 45, 75, 94}, dvid.Span{84, 46, 75, 94}, dvid.Span{84, 47, 75, 94}, dvid.Span{84, 48, 75, 94}, dvid.Span{84, 49, 75, 94},
+				dvid.Span{84, 50, 75, 94}, dvid.Span{84, 51, 75, 94}, dvid.Span{84, 52, 75, 94}, dvid.Span{84, 53, 75, 94}, dvid.Span{84, 54, 75, 94},
+				dvid.Span{84, 55, 75, 94}, dvid.Span{84, 56, 75, 94}, dvid.Span{84, 57, 75, 94}, dvid.Span{84, 58, 75, 94}, dvid.Span{84, 59, 75, 94},
+				dvid.Span{85, 40, 75, 94}, dvid.Span{85, 41, 75, 94}, dvid.Span{85, 42, 75, 94}, dvid.Span{85, 43, 75, 94}, dvid.Span{85, 44, 75, 94},
+				dvid.Span{85, 45, 75, 94}, dvid.Span{85, 46, 75, 94}, dvid.Span{85, 47, 75, 94}, dvid.Span{85, 48, 75, 94}, dvid.Span{85, 49, 75, 94},
+				dvid.Span{85, 50, 75, 94}, dvid.Span{85, 51, 75, 94}, dvid.Span{85, 52, 75, 94}, dvid.Span{85, 53, 75, 94}, dvid.Span{85, 54, 75, 94},
+				dvid.Span{85, 55, 75, 94}, dvid.Span{85, 56, 75, 94}, dvid.Span{85, 57, 75, 94}, dvid.Span{85, 58, 75, 94}, dvid.Span{85, 59, 75, 94},
+				dvid.Span{86, 40, 75, 94}, dvid.Span{86, 41, 75, 94}, dvid.Span{86, 42, 75, 94}, dvid.Span{86, 43, 75, 94}, dvid.Span{86, 44, 75, 94},
+				dvid.Span{86, 45, 75, 94}, dvid.Span{86, 46, 75, 94}, dvid.Span{86, 47, 75, 94}, dvid.Span{86, 48, 75, 94}, dvid.Span{86, 49, 75, 94},
+				dvid.Span{86, 50, 75, 94}, dvid.Span{86, 51, 75, 94}, dvid.Span{86, 52, 75, 94}, dvid.Span{86, 53, 75, 94}, dvid.Span{86, 54, 75, 94},
+				dvid.Span{86, 55, 75, 94}, dvid.Span{86, 56, 75, 94}, dvid.Span{86, 57, 75, 94}, dvid.Span{86, 58, 75, 94}, dvid.Span{86, 59, 75, 94},
+				dvid.Span{87, 40, 75, 94}, dvid.Span{87, 41, 75, 94}, dvid.Span{87, 42, 75, 94}, dvid.Span{87, 43, 75, 94}, dvid.Span{87, 44, 75, 94},
+				dvid.Span{87, 45, 75, 94}, dvid.Span{87, 46, 75, 94}, dvid.Span{87, 47, 75, 94}, dvid.Span{87, 48, 75, 94}, dvid.Span{87, 49, 75, 94},
+				dvid.Span{87, 50, 75, 94}, dvid.Span{87, 51, 75, 94}, dvid.Span{87, 52, 75, 94}, dvid.Span{87, 53, 75, 94}, dvid.Span{87, 54, 75, 94},
+				dvid.Span{87, 55, 75, 94}, dvid.Span{87, 56, 75, 94}, dvid.Span{87, 57, 75, 94}, dvid.Span{87, 58, 75, 94}, dvid.Span{87, 59, 75, 94},
+				dvid.Span{88, 40, 75, 94}, dvid.Span{88, 41, 75, 94}, dvid.Span{88, 42, 75, 94}, dvid.Span{88, 43, 75, 94}, dvid.Span{88, 44, 75, 94},
+				dvid.Span{88, 45, 75, 94}, dvid.Span{88, 46, 75, 94}, dvid.Span{88, 47, 75, 94}, dvid.Span{88, 48, 75, 94}, dvid.Span{88, 49, 75, 94},
+				dvid.Span{88, 50, 75, 94}, dvid.Span{88, 51, 75, 94}, dvid.Span{88, 52, 75, 94}, dvid.Span{88, 53, 75, 94}, dvid.Span{88, 54, 75, 94},
+				dvid.Span{88, 55, 75, 94}, dvid.Span{88, 56, 75, 94}, dvid.Span{88, 57, 75, 94}, dvid.Span{88, 58, 75, 94}, dvid.Span{88, 59, 75, 94},
+				dvid.Span{89, 40, 75, 94}, dvid.Span{89, 41, 75, 94}, dvid.Span{89, 42, 75, 94}, dvid.Span{89, 43, 75, 94}, dvid.Span{89, 44, 75, 94},
+				dvid.Span{89, 45, 75, 94}, dvid.Span{89, 46, 75, 94}, dvid.Span{89, 47, 75, 94}, dvid.Span{89, 48, 75, 94}, dvid.Span{89, 49, 75, 94},
+				dvid.Span{89, 50, 75, 94}, dvid.Span{89, 51, 75, 94}, dvid.Span{89, 52, 75, 94}, dvid.Span{89, 53, 75, 94}, dvid.Span{89, 54, 75, 94},
+				dvid.Span{89, 55, 75, 94}, dvid.Span{89, 56, 75, 94}, dvid.Span{89, 57, 75, 94}, dvid.Span{89, 58, 75, 94}, dvid.Span{89, 59, 75, 94},
+			},
 		},
 	}
-	body1 = bodies[0]
-	body2 = bodies[1]
-	body3 = bodies[2]
-	body4 = bodies[3]
+	body1     = bodies[0]
+	body2     = bodies[1]
+	body3     = bodies[2]
+	body4     = bodies[3]
+	bodyleft  = bodies[4]
+	bodysplit = bodies[5]
 )

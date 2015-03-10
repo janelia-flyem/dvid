@@ -646,6 +646,21 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 		}
 		timedLog.Infof("HTTP %s: sparsevol-coarse on label %d (%s)", r.Method, label, r.URL)
 
+	case "maxlabel":
+		// GET <api URL>/node/<UUID>/<data name>/maxlabel
+		if action != "get" {
+			server.BadRequest(w, r, "Can only do GET on maxlabel endpoint.")
+			return
+		}
+		maxlabel, ok := d.MaxLabel[versionID]
+		if !ok {
+			server.BadRequest(w, r, "No maximum label found for %s version %d\n", d.DataName(), versionID)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, "{%q: %d}", "maxlabel", maxlabel)
+		timedLog.Infof("HTTP maxlabel request (%s)", r.URL)
+
 	case "split":
 		// POST <api URL>/node/<UUID>/<data name>/split/<label>
 		if action != "post" {
@@ -667,7 +682,7 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, "{%q: %d}", "Label", toLabel)
+		fmt.Fprintf(w, "{%q: %d}", "label", toLabel)
 		timedLog.Infof("HTTP split request (%s)", r.URL)
 
 	case "merge":
