@@ -302,6 +302,16 @@ func (m *repoManager) loadMetadata() error {
 				}
 			}
 		}
+
+		// Load any mutable properties for the data instances.
+		for _, dataservice := range repo.data {
+			mutator, mutable := dataservice.(InstanceMutator)
+			if mutable {
+				if err := mutator.LoadMutable(); err != nil {
+					return err
+				}
+			}
+		}
 	}
 	if err := m.verifyCompiledTypes(); err != nil {
 		return err

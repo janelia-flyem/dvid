@@ -23,6 +23,8 @@ const (
 	// encoding for its value. They are also useful for returning all blocks
 	// intersected by a label.
 	keyLabelBlockRLE = 227
+
+	keyLabelMax = 228
 )
 
 func (t keyType) String() string {
@@ -31,6 +33,8 @@ func (t keyType) String() string {
 		return "Unknown key Type"
 	case keyLabelBlockRLE:
 		return "Label Block RLEs"
+	case keyLabelMax:
+		return "Max Label"
 	default:
 		return "Unknown key Type"
 	}
@@ -64,4 +68,8 @@ func DecodeKey(key []byte) (label uint64, blockBytes []byte, err error) {
 	label = binary.BigEndian.Uint64(ibytes[1:9])
 	blockBytes = ibytes[9:]
 	return
+}
+
+func NewMaxLabelIndex() []byte {
+	return []byte{byte(keyLabelMax)}
 }

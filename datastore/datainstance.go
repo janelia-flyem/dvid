@@ -156,6 +156,14 @@ type DataService interface {
 	//gob.GobDecoder
 }
 
+// InstanceMutator provides a hook for data instances to load mutable data
+// on startup.  It is assumed that the data instances store data whenever
+// its data mutates, e.g., extents for labelblk or max label for labelvol.
+type InstanceMutator interface {
+	// Loads all mutable properties.
+	LoadMutable() error
+}
+
 // SyncEvent identifies an event in which a data instance has modified its data
 type SyncEvent struct {
 	Instance dvid.InstanceName

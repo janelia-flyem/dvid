@@ -133,25 +133,17 @@ func (ctx MetadataContext) Versioned() bool {
 	return false
 }
 
-// MinDataContextKeyRange returns the minimum and maximum key for data with a given local
+// DataContextKeyRange returns the minimum and maximum key for data with a given local
 // instance id.  Note that the returned keys are not type-specific indices but full DVID
 // keys to be used with nil storage.Context.
-func DataContextKeyRange(instanceID dvid.InstanceID) (minKey, maxKey []byte) {
+func DataContextKeyRange(id dvid.InstanceID) (minKey, maxKey []byte) {
 	minKey = make([]byte, 1+dvid.InstanceIDSize)
 	maxKey = make([]byte, 1+dvid.InstanceIDSize)
 	minKey[0] = dataKeyPrefix
 	maxKey[0] = dataKeyPrefix
-	copy(minKey[1:], instanceID.Bytes())
-	copy(maxKey[1:], (instanceID + 1).Bytes())
+	copy(minKey[1:], id.Bytes())
+	copy(maxKey[1:], (id + 1).Bytes())
 	return minKey, maxKey
-}
-
-// NewDataContext provides a way for datatypes to create a Context that adheres to DVID
-// key space partitioning.  Since Context and VersionedContext interfaces are opaque, i.e., can
-// only be implemented within package storage, we force compatible implementations to embed
-// DataContext and initialize it via this function.
-func NewDataContext(data dvid.Data, versionID dvid.VersionID) *DataContext {
-	return &DataContext{data, versionID, 0}
 }
 
 // KeyToLocalIDs parses a key under a DataContext and returns instance, version and client ids.
@@ -184,6 +176,14 @@ type DataContext struct {
 	data    dvid.Data
 	version dvid.VersionID
 	client  dvid.ClientID
+}
+
+// NewDataContext provides a way for datatypes to create a Context that adheres to DVID
+// key space partitioning.  Since Context and VersionedContext interfaces are opaque, i.e., can
+// only be implemented within package storage, we force compatible implementations to embed
+// DataContext and initialize it via this function.
+func NewDataContext(data dvid.Data, versionID dvid.VersionID) *DataContext {
+	return &DataContext{data, versionID, 0}
 }
 
 func (ctx *DataContext) InstanceVersion() dvid.InstanceVersion {

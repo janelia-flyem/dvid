@@ -137,7 +137,7 @@ func TestLabels(t *testing.T) {
 
 	// Verify XY slice reads returns what we expect.
 	slice := sliceTester{"xy", 200, 200, dvid.Point3d{10, 40, 72}}
-	apiStr := slice.apiStr(uuid, labelsName)
+	apiStr := slice.apiStr(uuid, "labels")
 	xy := server.TestHTTP(t, "GET", apiStr, nil)
 	img, format, err := dvid.ImageFromBytes(xy, labelblk.EncodeFormat(), false)
 	if err != nil {
@@ -179,7 +179,7 @@ func TestLabels(t *testing.T) {
 	nz := 5
 	blocksz := 32
 	apiStr = fmt.Sprintf("%snode/%s/%s/raw/0_1_2/%d_%d_%d/32_64_96", server.WebAPIPath,
-		uuid, labelsName, nx*blocksz, ny*blocksz, nz*blocksz)
+		uuid, "labels", nx*blocksz, ny*blocksz, nz*blocksz)
 	xyz := server.TestHTTP(t, "GET", apiStr, nil)
 	if len(xyz) != 160*160*160*8 {
 		t.Errorf("Expected %d bytes from 3d labelblk GET.  Got %d instead.", 160*160*160*8, len(xyz))
@@ -232,12 +232,12 @@ func TestLabels(t *testing.T) {
 		}
 	}
 	apiStr = fmt.Sprintf("%snode/%s/%s/raw/0_1_2/%d_%d_%d/32_64_96", server.WebAPIPath,
-		uuid, labelsName, nx*blocksz, ny*blocksz, nz*blocksz)
+		uuid, "labels", nx*blocksz, ny*blocksz, nz*blocksz)
 	server.TestHTTP(t, "POST", apiStr, payload)
 
 	// Verify 3d volume read returns modified data.
 	apiStr = fmt.Sprintf("%snode/%s/%s/raw/0_1_2/%d_%d_%d/32_64_96", server.WebAPIPath,
-		uuid, labelsName, nx*blocksz, ny*blocksz, nz*blocksz)
+		uuid, "labels", nx*blocksz, ny*blocksz, nz*blocksz)
 	xyz = server.TestHTTP(t, "GET", apiStr, nil)
 	if len(xyz) != 160*160*160*8 {
 		t.Errorf("Expected %d bytes from 3d labelblk GET.  Got %d instead.", 160*160*160*8, len(xyz))
@@ -285,12 +285,12 @@ func TestLabels(t *testing.T) {
 		}
 	}
 	apiStr = fmt.Sprintf("%snode/%s/%s/raw/0_1_2/%d_%d_%d/32_64_96?roi=%s", server.WebAPIPath,
-		uuid, labelsName, nx*blocksz, ny*blocksz, nz*blocksz, roiName)
+		uuid, "labels", nx*blocksz, ny*blocksz, nz*blocksz, roiName)
 	server.TestHTTP(t, "POST", apiStr, payload)
 
 	// Verify ROI masking on GET.
 	apiStr = fmt.Sprintf("%snode/%s/%s/raw/0_1_2/%d_%d_%d/32_64_96?roi=%s", server.WebAPIPath,
-		uuid, labelsName, nx*blocksz, ny*blocksz, nz*blocksz, roiName)
+		uuid, "labels", nx*blocksz, ny*blocksz, nz*blocksz, roiName)
 	xyz2 := server.TestHTTP(t, "GET", apiStr, nil)
 	if len(xyz) != 160*160*160*8 {
 		t.Errorf("Expected %d bytes from 3d labelblk GET.  Got %d instead.", 160*160*160*8, len(xyz))
@@ -335,7 +335,7 @@ func TestLabels(t *testing.T) {
 	// Verify everything in mask is new and everything out of mask is old, and everything in mask
 	// is new.
 	apiStr = fmt.Sprintf("%snode/%s/%s/raw/0_1_2/%d_%d_%d/32_64_96", server.WebAPIPath,
-		uuid, labelsName, nx*blocksz, ny*blocksz, nz*blocksz)
+		uuid, "labels", nx*blocksz, ny*blocksz, nz*blocksz)
 	xyz2 = server.TestHTTP(t, "GET", apiStr, nil)
 	if len(xyz) != 160*160*160*8 {
 		t.Errorf("Expected %d bytes from 3d labelblk GET.  Got %d instead.", 160*160*160*8, len(xyz))

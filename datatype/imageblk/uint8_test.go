@@ -110,7 +110,7 @@ func TestVoxelsInstanceCreation(t *testing.T) {
 	uuid := dvid.UUID(server.NewTestRepo(t))
 
 	// Create new voxels instance with optional parameters
-	name := "mygrayscale"
+	name := "grayscale"
 	metadata := fmt.Sprintf(`{
 		"typename": "uint8blk",
 		"dataname": %q,

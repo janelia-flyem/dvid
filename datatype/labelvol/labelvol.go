@@ -372,6 +372,47 @@ func GetByUUID(uuid dvid.UUID, name dvid.InstanceName) (*Data, error) {
 	return data, nil
 }
 
+// --- datastore.InstanceMutator interface -----
+
+// LoadMutable loads mutable properties of label volumes like the maximum labels
+// for each version.
+func (d *Data) LoadMutable() error {
+	ctx := storage.NewDataContext(d, 0)
+	minKey, err := ctx.MinVersionKey(NewMaxLabelIndex())
+	if err != nil {
+		return err
+	}
+	maxKey, err := ctx.MaxVersionKey(NewMaxLabelIndex())
+	if err != nil {
+		return err
+	}
+	store, err := storage.SmallDataStore()
+	if err != nil {
+		return fmt.Errorf("Data type labelvol had error initializing store: %s\n", err.Error())
+	}
+	var maxes int
+	d.MaxLabel = make(map[dvid.VersionID]uint64)
+	var f storage.ChunkProcessor = func(chunk *storage.Chunk) error {
+		v, err := ctx.VersionFromKey(chunk.K)
+		if err != nil {
+			return fmt.Errorf("Can't decode key when loading mutable data for %s", d.DataName())
+		}
+		if len(chunk.V) != 8 {
+			return fmt.Errorf("Got bad value.  Expected 64-bit label, got %v", chunk.V)
+		}
+		label := binary.LittleEndian.Uint64(chunk.V)
+		d.MaxLabel[v] = label
+		maxes++
+		return nil
+	}
+	err = store.ProcessRange(nil, minKey, maxKey, &storage.ChunkOp{}, f)
+	if err != nil {
+		return err
+	}
+	dvid.Infof("Loaded %d maximum label values for labelvol %q\n", maxes, d.DataName())
+	return nil
+}
+
 // --- datastore.DataService interface ---------
 
 func (d *Data) Help() string {
@@ -615,7 +656,7 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, "{%q: %q}", "Label", toLabel)
+		fmt.Fprintf(w, "{%q: %d}", "Label", toLabel)
 		timedLog.Infof("HTTP split request (%s)", r.URL)
 
 	case "merge":
@@ -663,6 +704,37 @@ func (d *Data) GetMaxLabel(v dvid.VersionID) (uint64, error) {
 	return max, nil
 }
 
+func (d *Data) casMaxLabel(batch storage.Batch, v dvid.VersionID, label uint64) {
+	d.ml_mu.Lock()
+	defer d.ml_mu.Unlock()
+	save := false
+	maxLabel, found := d.MaxLabel[v]
+	if !found {
+		// Get parent's max or start with 1.
+		parent, found, err := datastore.GetParentByVersion(v)
+		if !found || err != nil {
+			maxLabel = 1
+		} else {
+			maxLabel, found = d.MaxLabel[parent]
+			if found {
+				maxLabel++
+			} else {
+				maxLabel = 1
+			}
+		}
+		save = true
+	}
+	if save || maxLabel < label {
+		buf := make([]byte, 8)
+		binary.LittleEndian.PutUint64(buf, label)
+		batch.Put(NewMaxLabelIndex(), buf)
+	}
+	if err := batch.Commit(); err != nil {
+		dvid.Errorf("batch put: %s\n", err.Error())
+		return
+	}
+}
+
 // NewLabel returns a new label for the given version.
 func (d *Data) NewLabel(v dvid.VersionID) (uint64, error) {
 	d.ml_mu.Lock()
@@ -691,9 +763,14 @@ func (d *Data) NewLabel(v dvid.VersionID) (uint64, error) {
 		}
 	}
 	d.MaxLabel[v] = label
-	if err := datastore.SaveRepoByVersionID(v); err != nil {
-		return 0, err
+	store, err := storage.SmallDataStore()
+	if err != nil {
+		return 0, fmt.Errorf("can't initializing small data store: %s\n", err.Error())
 	}
+	buf := make([]byte, 8)
+	binary.LittleEndian.PutUint64(buf, label)
+	ctx := datastore.NewVersionedContext(d, v)
+	store.Put(ctx, NewMaxLabelIndex(), buf)
 	return label, nil
 }
 

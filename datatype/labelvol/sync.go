@@ -82,13 +82,16 @@ func (d *Data) handleBlockEvent(in <-chan datastore.SyncMessage, done <-chan str
 			lastPt := block.Index.MaxPoint(d.BlockSize)
 
 			var curStart dvid.Point3d
-			var voxelLabel, curLabel uint64
+			var voxelLabel, curLabel, maxLabel uint64
 			var z, y, x, curRun int32
 			start := 0
 			for z = firstPt.Value(2); z <= lastPt.Value(2); z++ {
 				for y = firstPt.Value(1); y <= lastPt.Value(1); y++ {
 					for x = firstPt.Value(0); x <= lastPt.Value(0); x++ {
 						voxelLabel = binary.LittleEndian.Uint64(block.Data[start : start+8])
+						if maxLabel < voxelLabel {
+							maxLabel = voxelLabel
+						}
 						start += 8
 
 						// If we hit background or have switched label, save old run and start new one.
@@ -130,9 +133,8 @@ func (d *Data) handleBlockEvent(in <-chan datastore.SyncMessage, done <-chan str
 				}
 				batch.Put(index, rleBytes)
 			}
-			if err := batch.Commit(); err != nil {
-				dvid.Errorf("Batch PUT during sync of %q with change block event: %s\n", d.DataName(), err.Error())
-			}
+			// compare-and-set MaxLabel and batch commit
+			d.casMaxLabel(batch, msg.Version, maxLabel)
 		}
 	}
 }
