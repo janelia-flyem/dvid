@@ -162,6 +162,14 @@ GET <api URL>/node/<UUID>/<data name>/sparsevol-coarse/<label>
 	Note that the above format is the RLE encoding of sparsevol, where voxel coordinates
 	have been replaced by block coordinates.
 
+
+GET <api URL>/node/<UUID>/<data name>/maxlabel
+
+	Returns the maximum label for the version of data in JSON form:
+
+		{ "maxlabel": <label #> }
+
+
 POST <api URL>/node/<UUID>/<data name>/merge
 
 	Merges labels.  Requires JSON in request body using the following format:
@@ -724,10 +732,15 @@ func (d *Data) casMaxLabel(batch storage.Batch, v dvid.VersionID, label uint64) 
 		}
 		save = true
 	}
-	if save || maxLabel < label {
+	if maxLabel < label {
+		maxLabel = label
+		save = true
+	}
+	if save {
 		buf := make([]byte, 8)
 		binary.LittleEndian.PutUint64(buf, label)
 		batch.Put(NewMaxLabelIndex(), buf)
+		d.MaxLabel[v] = maxLabel
 	}
 	if err := batch.Commit(); err != nil {
 		dvid.Errorf("batch put: %s\n", err.Error())
