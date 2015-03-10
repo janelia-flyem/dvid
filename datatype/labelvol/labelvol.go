@@ -287,8 +287,11 @@ type Properties struct {
 func (p Properties) MarshalJSON() ([]byte, error) {
 	maxLabels := make(map[string]uint64)
 	for v, max := range p.MaxLabel {
-		s := strconv.Itoa(int(v))
-		maxLabels[s] = max
+		uuid, err := datastore.UUIDFromVersion(v)
+		if err != nil {
+			return nil, err
+		}
+		maxLabels[string(uuid)] = max
 	}
 	return json.Marshal(struct {
 		dvid.Resolution
