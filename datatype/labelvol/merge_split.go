@@ -266,6 +266,10 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser) 
 		if err != nil {
 			return toLabel, err
 		}
+
+		if val == nil {
+			return toLabel, fmt.Errorf("Split RLEs at block %s are not part of original label %d", splitblk.Print(), fromLabel)
+		}
 		var rles dvid.RLEs
 		if err := rles.UnmarshalBinary(val); err != nil {
 			return toLabel, fmt.Errorf("Unable to unmarshal RLE for original labels in block %s", splitblk.Print())
@@ -346,13 +350,8 @@ func (d *Data) diffBlock(split, orig dvid.RLEs) (modified dvid.RLEs, dup bool, e
 	for e != nil && si < len(srles) {
 		orig := e.Value.(dvid.RLE)
 
-		badsplit := false
 		deleted := false
 		for i := si; i < len(srles); i++ {
-			if srles[i].Less(orig) {
-				badsplit = true
-				break
-			}
 			frags := orig.Excise(srles[i])
 			if frags == nil {
 				break
@@ -364,6 +363,7 @@ func (d *Data) diffBlock(split, orig dvid.RLEs) (modified dvid.RLEs, dup bool, e
 					l.InsertAfter(frags[n-1-f], e)
 				}
 			}
+			// If n == 0 the rle is a duplicate.
 
 			// Delete the intersected RLE
 			deleted = true
@@ -372,10 +372,6 @@ func (d *Data) diffBlock(split, orig dvid.RLEs) (modified dvid.RLEs, dup bool, e
 			si++
 			break
 		}
-		if badsplit {
-			err = fmt.Errorf("split is not contained within single label")
-			return
-		}
 		if deleted {
 			next := e.Next()
 			l.Remove(e)
@@ -383,6 +379,12 @@ func (d *Data) diffBlock(split, orig dvid.RLEs) (modified dvid.RLEs, dup bool, e
 		} else {
 			e = e.Next()
 		}
+	}
+
+	// Check if we haven't gone through all splits.
+	if si < len(srles) {
+		err = fmt.Errorf("some split RLEs are not contained within original RLEs")
+		return
 	}
 
 	// If there's nothing left of original, the split was a duplicate of the original.
