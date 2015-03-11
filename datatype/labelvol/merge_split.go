@@ -282,35 +282,37 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser) 
 			return fmt.Errorf("Error decoding sparse volume key (%v): %s\n", chunk.K, err.Error())
 		}
 		origblk := dvid.IZYXString(origblkbytes)
-		splitblk := splitblks[pos]
-
-		if origblk < splitblk || pos >= len(splitblks) {
-			return nil // Seek forward
-		}
-		if origblk == splitblk {
-			var rles dvid.RLEs
-			if err := rles.UnmarshalBinary(chunk.V); err != nil {
-				return fmt.Errorf("Unable to unmarshal RLE for label in block %v", chunk.K)
+		for {
+			if pos >= len(splitblks) {
+				return nil
 			}
-			modified, dup, err := d.diffBlock(splitmap[splitblk], rles)
-			if err != nil {
-				return err
+			splitblk := splitblks[pos]
+			if origblk < splitblk {
+				return nil // Seek forward
 			}
-
-			ibytes := NewIndex(fromLabel, []byte(origblk))
-			if dup {
-				batch.Delete(ibytes)
-			} else {
-				rleBytes, err := modified.MarshalBinary()
-				if err != nil {
-					return fmt.Errorf("can't serialize modified RLEs for split of %d: %s\n", fromLabel, err.Error())
+			if origblk == splitblk {
+				var rles dvid.RLEs
+				if err := rles.UnmarshalBinary(chunk.V); err != nil {
+					return fmt.Errorf("Unable to unmarshal RLE for label in block %v", chunk.K)
 				}
-				batch.Put(ibytes, rleBytes)
+				modified, dup, err := d.diffBlock(splitmap[splitblk], rles)
+				if err != nil {
+					return err
+				}
+
+				ibytes := NewIndex(fromLabel, []byte(origblk))
+				if dup {
+					batch.Delete(ibytes)
+				} else {
+					rleBytes, err := modified.MarshalBinary()
+					if err != nil {
+						return fmt.Errorf("can't serialize modified RLEs for split of %d: %s\n", fromLabel, err.Error())
+					}
+					batch.Put(ibytes, rleBytes)
+				}
 			}
-		} else {
 			pos++
 		}
-		return nil
 	}
 	if err := store.ProcessRange(ctx, begIndex, endIndex, &storage.ChunkOp{}, f); err != nil {
 		return toLabel, err
