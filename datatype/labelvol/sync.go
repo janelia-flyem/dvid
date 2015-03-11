@@ -121,11 +121,12 @@ func (d *Data) handleBlockEvent(in <-chan datastore.SyncMessage, done <-chan str
 				}
 			}
 
-			// Store the label RLEs
+			// Store the RLEs for each label in this block.
 			ctx := datastore.NewVersionedContext(d, msg.Version)
 			batch := batcher.NewBatch(ctx)
+			blockStr := block.Index.ToIZYXString()
 			for label, rles := range labelRLEs {
-				index := NewIndex(label, block.Index.Bytes())
+				index := NewIndex(label, blockStr)
 				rleBytes, err := rles.MarshalBinary()
 				if err != nil {
 					dvid.Errorf("Bad encoding labelvol keys for label %d: %s\n", label, err.Error())

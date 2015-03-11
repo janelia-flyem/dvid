@@ -117,8 +117,8 @@ func (d *Data) MergeLabels(v dvid.VersionID, m labels.MergeOp) error {
 		}
 
 		// Delete all fromLabel RLEs since they are all integrated into toLabel RLEs
-		minIndex := NewIndex(fromLabel, dvid.MinIndexZYX.Bytes())
-		maxIndex := NewIndex(fromLabel, dvid.MaxIndexZYX.Bytes())
+		minIndex := NewIndex(fromLabel, dvid.MinIndexZYX.ToIZYXString())
+		maxIndex := NewIndex(fromLabel, dvid.MaxIndexZYX.ToIZYXString())
 		ctx := datastore.NewVersionedContext(d, v)
 		if err := store.DeleteRange(ctx, minIndex, maxIndex); err != nil {
 			return fmt.Errorf("Can't delete label %d RLEs: %s", fromLabel, err.Error())
@@ -136,7 +136,7 @@ func (d *Data) MergeLabels(v dvid.VersionID, m labels.MergeOp) error {
 	ctx := datastore.NewVersionedContext(d, v)
 	batch := batcher.NewBatch(ctx)
 	for blockStr := range blocksChanged {
-		index := NewIndex(toLabel, []byte(blockStr))
+		index := NewIndex(toLabel, blockStr)
 		serialization, err := toLabelRLEs[blockStr].MarshalBinary()
 		if err != nil {
 			return fmt.Errorf("Error serializing RLEs for label %d: %s\n", toLabel, err.Error())
@@ -250,72 +250,41 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser) 
 		return
 	}
 
-	// Restrict original block scan to split Z range.
-	minZYX := dvid.MinIndexZYX
-	maxZYX := dvid.MaxIndexZYX
-	minZYX[2], err = splitblks[0].Z()
-	if err != nil {
-		return
-	}
-	maxZYX[2], err = splitblks[len(splitblks)-1].Z()
-	if err != nil {
-		return
-	}
-
-	begIndex := NewIndex(fromLabel, minZYX.Bytes())
-	endIndex := NewIndex(fromLabel, maxZYX.Bytes())
-
-	// Iterate block-by-block through the split, which is a subset of the original
-	// sparse volume, read original until we have same block or are past it.
-	// For blocks within split and original, if the two are identical, delete the
-	// original, and if not, modify the original.  The latter modification op
-	// should be transactional since it's GET-PUT, therefore use hash on block coord
-	// to direct it to block-specific goroutine; we serialize requests to handle
-	// concurrency.
+	// Iterate through the split blocks, read the original block.  If the RLEs
+	// are identical, just delete the original.  If not, modify the original.
+	// TODO: Modifications should be transactional since it's GET-PUT, therefore use
+	// hash on block coord to direct it to block-specific goroutine; we serialize
+	// requests to handle concurrency.
 	ctx := datastore.NewVersionedContext(d, v)
 	batch := batcher.NewBatch(ctx)
 
-	pos := 0
-	var f storage.ChunkProcessor = func(chunk *storage.Chunk) error {
-		_, origblkbytes, err := DecodeKey(chunk.K)
-		if err != nil {
-			return fmt.Errorf("Error decoding sparse volume key (%v): %s\n", chunk.K, err.Error())
-		}
-		origblk := dvid.IZYXString(origblkbytes)
-		for {
-			if pos >= len(splitblks) {
-				return nil
-			}
-			splitblk := splitblks[pos]
-			if origblk < splitblk {
-				return nil // Seek forward
-			}
-			if origblk == splitblk {
-				var rles dvid.RLEs
-				if err := rles.UnmarshalBinary(chunk.V); err != nil {
-					return fmt.Errorf("Unable to unmarshal RLE for label in block %v", chunk.K)
-				}
-				modified, dup, err := d.diffBlock(splitmap[splitblk], rles)
-				if err != nil {
-					return err
-				}
+	for _, splitblk := range splitblks {
 
-				ibytes := NewIndex(fromLabel, []byte(origblk))
-				if dup {
-					batch.Delete(ibytes)
-				} else {
-					rleBytes, err := modified.MarshalBinary()
-					if err != nil {
-						return fmt.Errorf("can't serialize modified RLEs for split of %d: %s\n", fromLabel, err.Error())
-					}
-					batch.Put(ibytes, rleBytes)
-				}
-			}
-			pos++
+		// Get original block
+		idx := NewIndex(fromLabel, splitblk)
+		val, err := store.Get(ctx, idx)
+		if err != nil {
+			return toLabel, err
 		}
-	}
-	if err := store.ProcessRange(ctx, begIndex, endIndex, &storage.ChunkOp{}, f); err != nil {
-		return toLabel, err
+		var rles dvid.RLEs
+		if err := rles.UnmarshalBinary(val); err != nil {
+			return toLabel, fmt.Errorf("Unable to unmarshal RLE for original labels in block %s", splitblk.Print())
+		}
+
+		// Compare and process based on modifications required.
+		modified, dup, err := d.diffBlock(splitmap[splitblk], rles)
+		if err != nil {
+			return toLabel, err
+		}
+		if dup {
+			batch.Delete(idx)
+		} else {
+			rleBytes, err := modified.MarshalBinary()
+			if err != nil {
+				return toLabel, fmt.Errorf("can't serialize modified RLEs for split of %d: %s\n", fromLabel, err.Error())
+			}
+			batch.Put(idx, rleBytes)
+		}
 	}
 
 	if err := batch.Commit(); err != nil {
@@ -448,7 +417,7 @@ func (d *Data) writeLabelVol(v dvid.VersionID, label uint64, blks []dvid.IZYXStr
 		if err != nil {
 			return fmt.Errorf("Error serializing RLEs for label %d: %s\n", label, err.Error())
 		}
-		batch.Put(NewIndex(label, []byte(s)), serialization)
+		batch.Put(NewIndex(label, s), serialization)
 	}
 	if err := batch.Commit(); err != nil {
 		return fmt.Errorf("Error on updating RLEs for label %d: %s\n", label, err.Error())

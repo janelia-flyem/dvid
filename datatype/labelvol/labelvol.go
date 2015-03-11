@@ -814,8 +814,8 @@ func (d *Data) GetLabelRLEs(v dvid.VersionID, label uint64) (dvid.BlockRLEs, err
 	}
 
 	// Get the start/end indices for this body's KeyLabelSpatialMap (b + s) keys.
-	begIndex := NewIndex(label, dvid.MinIndexZYX.Bytes())
-	endIndex := NewIndex(label, dvid.MaxIndexZYX.Bytes())
+	begIndex := NewIndex(label, dvid.MinIndexZYX.ToIZYXString())
+	endIndex := NewIndex(label, dvid.MaxIndexZYX.ToIZYXString())
 
 	// Process all the b+s keys and their values, which contain RLE runs for that label.
 	labelRLEs := dvid.BlockRLEs{}
@@ -909,8 +909,8 @@ func GetSparseVol(ctx storage.Context, label uint64, bounds Bounds) ([]byte, err
 	if maxZ, ok := blockBounds.MaxZ(); ok {
 		maxZYX[2] = maxZ
 	}
-	begIndex := NewIndex(label, minZYX.Bytes())
-	endIndex := NewIndex(label, maxZYX.Bytes())
+	begIndex := NewIndex(label, minZYX.ToIZYXString())
+	endIndex := NewIndex(label, maxZYX.ToIZYXString())
 
 	// Process all the b+s keys and their values, which contain RLE runs for that label.
 	// TODO -- Make processing asynchronous so can overlap with range disk read now that
@@ -921,14 +921,14 @@ func GetSparseVol(ctx storage.Context, label uint64, bounds Bounds) ([]byte, err
 	var f storage.ChunkProcessor = func(chunk *storage.Chunk) error {
 		// Make sure this block is within the optinonal bounding.
 		if blockBounds.BoundedX() || blockBounds.BoundedY() {
-			_, blockBytes, err := DecodeKey(chunk.K)
+			_, blockStr, err := DecodeKey(chunk.K)
 			if err != nil {
 				return fmt.Errorf("Error decoding sparse volume key (%v): %s\n", chunk.K, err.Error())
 			}
-			var indexZYX dvid.IndexZYX
-			if err := indexZYX.IndexFromBytes(blockBytes); err != nil {
+			indexZYX, err := blockStr.IndexZYX()
+			if err != nil {
 				return fmt.Errorf("Error decoding block coordinate (%v) for sparse volume: %s\n",
-					blockBytes, err.Error())
+					blockStr, err.Error())
 			}
 			blockX, blockY, _ := indexZYX.Unpack()
 			if blockBounds.OutsideX(blockX) || blockBounds.OutsideY(blockY) {
@@ -1023,8 +1023,8 @@ func GetSparseCoarseVol(ctx storage.Context, label uint64) ([]byte, error) {
 	encoding := buf.Bytes()
 
 	// Get the start/end indices for this body's KeyLabelSpatialMap (b + s) keys.
-	begIndex := NewIndex(label, dvid.MinIndexZYX.Bytes())
-	endIndex := NewIndex(label, dvid.MaxIndexZYX.Bytes())
+	begIndex := NewIndex(label, dvid.MinIndexZYX.ToIZYXString())
+	endIndex := NewIndex(label, dvid.MaxIndexZYX.ToIZYXString())
 
 	// Process all the b+s keys and their values, which contain RLE runs for that label.
 	var numBlocks uint32
@@ -1036,14 +1036,14 @@ func GetSparseCoarseVol(ctx storage.Context, label uint64) ([]byte, error) {
 	}
 	for _, key := range keys {
 		numBlocks++
-		_, blockBytes, err := DecodeKey(key)
+		_, blockStr, err := DecodeKey(key)
 		if err != nil {
 			return nil, fmt.Errorf("Error retrieving RLE runs for label %d: %s", label, err.Error())
 		}
-		var indexZYX dvid.IndexZYX
-		if err := indexZYX.IndexFromBytes(blockBytes); err != nil {
-			return nil, fmt.Errorf("Error decoding block coordinate (%v) for coarse sparse volume: %s",
-				blockBytes, err.Error())
+		indexZYX, err := blockStr.IndexZYX()
+		if err != nil {
+			return nil, fmt.Errorf("Error decoding block coordinate (%v) for sparse volume: %s\n",
+				blockStr, err.Error())
 		}
 		x, y, z := indexZYX.Unpack()
 		if span == nil {

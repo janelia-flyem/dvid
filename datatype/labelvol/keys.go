@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"fmt"
 
+	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
 )
 
@@ -42,19 +43,19 @@ func (t keyType) String() string {
 
 // NewIndex returns an identifier for storing a "label + spatial index", where
 // the spatial index references a block that contains a voxel with the given label.
-func NewIndex(label uint64, blockBytes []byte) []byte {
-	sz := len(blockBytes)
+func NewIndex(label uint64, block dvid.IZYXString) []byte {
+	sz := len(block)
 	ibytes := make([]byte, 1+8+sz)
 	ibytes[0] = byte(keyLabelBlockRLE)
 	binary.BigEndian.PutUint64(ibytes[1:9], label)
-	copy(ibytes[9:], blockBytes)
+	copy(ibytes[9:], []byte(block))
 	return ibytes
 }
 
 // DecodeKey returns a label and block index bytes from a label block RLE key.
 // The block index bytes are returned because different block indices may be used (e.g., CZYX),
 // and its up to caller to determine which one is used for this particular key.
-func DecodeKey(key []byte) (label uint64, blockBytes []byte, err error) {
+func DecodeKey(key []byte) (label uint64, block dvid.IZYXString, err error) {
 	var ctx storage.DataContext
 	var ibytes []byte
 	ibytes, err = ctx.IndexFromKey(key)
@@ -66,7 +67,7 @@ func DecodeKey(key []byte) (label uint64, blockBytes []byte, err error) {
 		return
 	}
 	label = binary.BigEndian.Uint64(ibytes[1:9])
-	blockBytes = ibytes[9:]
+	block = dvid.IZYXString(ibytes[9:])
 	return
 }
 

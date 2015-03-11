@@ -405,6 +405,15 @@ func (i IZYXString) Print() string {
 	return fmt.Sprintf("(%d, %d, %d)", idx[0], idx[1], idx[2])
 }
 
+// Hash returns an integer [0, n) where the returned values should be reasonably
+// spread among the range of returned values.  This implementation makes sure
+// that any range query along x, y, or z direction will map to different handlers.
+func (i IZYXString) Hash(n int) int {
+	h := fnv.New32a()
+	h.Write([]byte(i))
+	return int(h.Sum32()) % n
+}
+
 // BlockCounts is a thread-safe type for counting block references.
 type BlockCounts struct {
 	sync.RWMutex
