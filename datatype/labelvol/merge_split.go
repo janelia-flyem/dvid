@@ -344,47 +344,40 @@ func (d *Data) diffBlock(split, orig dvid.RLEs) (modified dvid.RLEs, dup bool, e
 		l.PushBack(rle)
 	}
 
-	// Iterate over the original list, fragmenting by splits when they intersect.
-	si := 0 // the split index
+	// For each split, find the corresponding original RLE and split it, accumulating
+	// fragments into our list.
 	e := l.Front()
-	for e != nil && si < len(srles) {
-		orig := e.Value.(dvid.RLE)
+	for _, srle := range srles {
 
-		deleted := false
-		for i := si; i < len(srles); i++ {
-			frags := orig.Excise(srles[i])
-			if frags == nil {
+		// Iterate on list until we find original RLE that encompasses this split.
+		var frags dvid.RLEs
+		for {
+			if e == nil {
+				err = fmt.Errorf("split RLE %s is not in original label RLEs", srle)
+				return
+			}
+			orle := e.Value.(dvid.RLE)
+			frags = orle.Excise(srle)
+			if frags != nil {
 				break
 			}
-			n := len(frags)
-			if n != 0 {
-				// We have an intersection, so replace our current RLE with these fragments in ascending order.
-				for f := range frags {
-					l.InsertAfter(frags[n-1-f], e)
-				}
-			}
-			// If n == 0 the rle is a duplicate.
-
-			// Delete the intersected RLE
-			deleted = true
-
-			// We are done with this split RLE
-			si++
-			break
-		}
-		if deleted {
-			next := e.Next()
-			l.Remove(e)
-			e = next
-		} else {
 			e = e.Next()
 		}
-	}
 
-	// Check if we haven't gone through all splits.
-	if si < len(srles) {
-		err = fmt.Errorf("some split RLEs are not contained within original RLEs")
-		return
+		n := len(frags)
+
+		// If n == 0 the rle is a duplicate.
+		if n != 0 {
+			// We have an intersection, so replace our current RLE with these fragments in ascending order.
+			for f := range frags {
+				l.InsertAfter(frags[n-1-f], e)
+			}
+		}
+
+		// Delete the intersected RLE
+		next := e.Next()
+		l.Remove(e)
+		e = next
 	}
 
 	// If there's nothing left of original, the split was a duplicate of the original.

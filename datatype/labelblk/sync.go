@@ -233,7 +233,7 @@ func (d *Data) mergeBlock(in <-chan mergeOp) {
 
 type splitOp struct {
 	labels.DeltaSplit
-	ctx *datastore.VersionedContext
+	ctx datastore.VersionedContext
 }
 
 func (d *Data) syncSplit(name dvid.InstanceName, in <-chan datastore.SyncMessage, done <-chan struct{}) {
@@ -259,7 +259,7 @@ func (d *Data) syncSplit(name dvid.InstanceName, in <-chan datastore.SyncMessage
 			case labels.DeltaSplit:
 				ctx := datastore.NewVersionedContext(d, msg.Version)
 				n := delta.OldLabel % numprocs
-				pch[n] <- splitOp{delta, ctx}
+				pch[n] <- splitOp{delta, *ctx}
 			case labels.DeltaSplitStart:
 				// Mark the old label is under transition
 				iv := dvid.InstanceVersion{name, msg.Version}
@@ -286,7 +286,7 @@ func (d *Data) splitBlock(in <-chan splitOp) {
 		for _, zyxStr := range op.SortedBlocks {
 			// Read the block.
 			k := NewIndexByCoord(zyxStr)
-			data, err := store.Get(op.ctx, k)
+			data, err := store.Get(&op.ctx, k)
 			if err != nil {
 				dvid.Errorf("Error on GET of labelblk with coord string %v\n", []byte(zyxStr))
 				continue
@@ -322,7 +322,7 @@ func (d *Data) splitBlock(in <-chan splitOp) {
 				dvid.Criticalf("Unable to serialize block in %q: %s\n", d.DataName(), err.Error())
 				continue
 			}
-			if err := store.Put(op.ctx, k, serialization); err != nil {
+			if err := store.Put(&op.ctx, k, serialization); err != nil {
 				dvid.Errorf("Error in putting key %v: %s\n", k, err.Error())
 			}
 		}
