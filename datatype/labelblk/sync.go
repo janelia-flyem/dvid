@@ -7,6 +7,7 @@ package labelblk
 
 import (
 	"encoding/binary"
+	"fmt"
 	"hash/fnv"
 	"sync"
 
@@ -279,14 +280,22 @@ func (d *Data) splitBlock(in <-chan splitOp) {
 		dvid.Errorf("Data type labelblk had error initializing store: %s\n", err.Error())
 		return
 	}
+	batcher, ok := store.(storage.KeyValueBatcher)
+	if !ok {
+		err = fmt.Errorf("Data type labelblk requires batch-enabled store, which %q is not\n", store)
+		return
+	}
 	blockBytes := int(d.BlockSize().Prod() * 8)
 
 	for op := range in {
 		// Iterate through all the modified blocks, inserting the new label using the RLEs for that block.
+		timedLog := dvid.NewTimeLog()
+		splitCache.Incr(op.ctx.InstanceVersion(), op.OldLabel)
+		batch := batcher.NewBatch(&op.ctx)
 		for _, zyxStr := range op.SortedBlocks {
 			// Read the block.
-			k := NewIndexByCoord(zyxStr)
-			data, err := store.Get(&op.ctx, k)
+			idx := NewIndexByCoord(zyxStr)
+			data, err := store.Get(&op.ctx, idx)
 			if err != nil {
 				dvid.Errorf("Error on GET of labelblk with coord string %v\n", []byte(zyxStr))
 				continue
@@ -322,11 +331,13 @@ func (d *Data) splitBlock(in <-chan splitOp) {
 				dvid.Criticalf("Unable to serialize block in %q: %s\n", d.DataName(), err.Error())
 				continue
 			}
-			if err := store.Put(&op.ctx, k, serialization); err != nil {
-				dvid.Errorf("Error in putting key %v: %s\n", k, err.Error())
-			}
+			batch.Put(idx, serialization)
+		}
+		if err := batch.Commit(); err != nil {
+			dvid.Errorf("Batch PUT during %q block split of %d: %s\n", d.DataName(), op.OldLabel, err.Error())
 		}
 		splitCache.Decr(op.ctx.InstanceVersion(), op.OldLabel)
+		timedLog.Debugf("labelblk sync complete for split of %d -> %d", op.OldLabel, op.NewLabel)
 	}
 }
 
@@ -349,6 +360,7 @@ func (d *Data) storeRLEs(zyxStr dvid.IZYXString, data []byte, label uint64, rles
 		i := p.Value(2)*nxy + p.Value(1)*nx + p.Value(0)*8
 		for n := int32(0); n < rle.Length(); n++ {
 			binary.LittleEndian.PutUint64(data[i:i+8], label)
+			i += 8
 		}
 	}
 	return nil

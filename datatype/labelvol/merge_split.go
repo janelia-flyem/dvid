@@ -200,7 +200,7 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser) 
 	if err != nil {
 		return
 	}
-	dvid.Debugf("Splitting subset of label %s into label %d ...\n", fromLabel, toLabel)
+	dvid.Debugf("Splitting subset of label %d into label %d ...\n", fromLabel, toLabel)
 
 	// Signal that we are starting a split.
 	evt := datastore.SyncEvent{d.DataName(), labels.SplitStartEvent}
