@@ -401,7 +401,7 @@ func (rles RLEs) Partition(blockSize Point3d) (BlockRLEs, error) {
 		bBegX := bcoord[0] * blockSize[0]
 		rx := rle.start[0]
 		remain := rle.length
-		for remain >= 0 {
+		for remain >= 1 {
 			// Store block-clipped rle
 			dx := bBegX + blockSize[0] - rx
 			if remain < dx {
