@@ -152,7 +152,7 @@ func TestKeyvalueRepoPersistence(t *testing.T) {
 	}
 }
 
-func testRequest(t *testing.T, repo datastore.Repo, versionID dvid.VersionID, name dvid.InstanceName, versioned bool) {
+func testRequest(t *testing.T, repo datastore.Repo, versionID dvid.VersionID, name dvid.InstanceName) {
 	uuid, err := datastore.UUIDFromVersion(versionID)
 	if err != nil {
 		t.Errorf(err.Error())
@@ -171,7 +171,7 @@ func testRequest(t *testing.T, repo datastore.Repo, versionID dvid.VersionID, na
 	// PUT a value
 	key1 := "mykey"
 	value1 := "some stuff"
-	key1req := fmt.Sprintf("%snode/%s/%s/%s", server.WebAPIPath, uuid, data.DataName(), key1)
+	key1req := fmt.Sprintf("%snode/%s/%s/key/%s", server.WebAPIPath, uuid, data.DataName(), key1)
 	server.TestHTTP(t, "POST", key1req, strings.NewReader(value1))
 
 	// Get back k/v
@@ -183,17 +183,17 @@ func testRequest(t *testing.T, repo datastore.Repo, versionID dvid.VersionID, na
 	// Add 2nd k/v
 	key2 := "my2ndkey"
 	value2 := "more good stuff"
-	key2req := fmt.Sprintf("%snode/%s/%s/%s", server.WebAPIPath, uuid, data.DataName(), key2)
+	key2req := fmt.Sprintf("%snode/%s/%s/key/%s", server.WebAPIPath, uuid, data.DataName(), key2)
 	server.TestHTTP(t, "POST", key2req, strings.NewReader(value2))
 
 	// Add 3rd k/v
 	key3 := "heresanotherkey"
 	value3 := "my 3rd value"
-	key3req := fmt.Sprintf("%snode/%s/%s/%s", server.WebAPIPath, uuid, data.DataName(), key3)
+	key3req := fmt.Sprintf("%snode/%s/%s/key/%s", server.WebAPIPath, uuid, data.DataName(), key3)
 	server.TestHTTP(t, "POST", key3req, strings.NewReader(value3))
 
 	// Check return of first two keys in range.
-	rangereq := fmt.Sprintf("%snode/%s/%s/%s/%s", server.WebAPIPath, uuid, data.DataName(),
+	rangereq := fmt.Sprintf("%snode/%s/%s/keyrange/%s/%s", server.WebAPIPath, uuid, data.DataName(),
 		"my", "zebra")
 	returnValue = server.TestHTTP(t, "GET", rangereq, nil)
 
@@ -225,8 +225,7 @@ func TestKeyvalueRequests(t *testing.T) {
 
 	repo, versionID := initTestRepo()
 
-	testRequest(t, repo, versionID, "versioned", true)
-	testRequest(t, repo, versionID, "unversioned", false)
+	testRequest(t, repo, versionID, "mykeyvalue")
 }
 
 func TestKeyvalueVersioning(t *testing.T) {
@@ -253,13 +252,13 @@ func TestKeyvalueVersioning(t *testing.T) {
 	// PUT a value
 	key1 := "mykey"
 	value1 := "some stuff"
-	key1req := fmt.Sprintf("%snode/%s/%s/%s", server.WebAPIPath, uuid, data.DataName(), key1)
+	key1req := fmt.Sprintf("%snode/%s/%s/key/%s", server.WebAPIPath, uuid, data.DataName(), key1)
 	server.TestHTTP(t, "POST", key1req, strings.NewReader(value1))
 
 	// Add 2nd k/v
 	key2 := "my2ndkey"
 	value2 := "more good stuff"
-	key2req := fmt.Sprintf("%snode/%s/%s/%s", server.WebAPIPath, uuid, data.DataName(), key2)
+	key2req := fmt.Sprintf("%snode/%s/%s/key/%s", server.WebAPIPath, uuid, data.DataName(), key2)
 	server.TestHTTP(t, "POST", key2req, strings.NewReader(value2))
 
 	// Create a new version in repo
@@ -277,7 +276,7 @@ func TestKeyvalueVersioning(t *testing.T) {
 
 	// Change the 2nd k/v
 	value2new := "this is completely different"
-	key2newreq := fmt.Sprintf("%snode/%s/%s/%s", server.WebAPIPath, uuid2, data.DataName(), key2)
+	key2newreq := fmt.Sprintf("%snode/%s/%s/key/%s", server.WebAPIPath, uuid2, data.DataName(), key2)
 	server.TestHTTP(t, "POST", key2newreq, strings.NewReader(value2new))
 
 	// Get the first version value
@@ -293,7 +292,7 @@ func TestKeyvalueVersioning(t *testing.T) {
 	}
 
 	// Check return of first two keys in range.
-	rangereq := fmt.Sprintf("%snode/%s/%s/%s/%s", server.WebAPIPath, uuid, data.DataName(),
+	rangereq := fmt.Sprintf("%snode/%s/%s/keyrange/%s/%s", server.WebAPIPath, uuid, data.DataName(),
 		"my", "zebra")
 	returnValue = server.TestHTTP(t, "GET", rangereq, nil)
 
