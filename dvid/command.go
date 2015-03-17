@@ -146,6 +146,11 @@ func (c *Config) Remove(keys ...string) {
 	}
 }
 
+// Clear removes all configuration data.
+func (c *Config) Clear() {
+	c.values = nil
+}
+
 // Response provides a few string fields to pass information back from
 // a remote operation.
 type Response struct {

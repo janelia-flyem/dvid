@@ -117,7 +117,6 @@ func TestKeyvalueRepoPersistence(t *testing.T) {
 
 	// Make labels and set various properties
 	config := dvid.NewConfig()
-	config.Set("MaxKeySize", "31")
 	dataservice, err := repo.NewData(kvtype, "mykv", config)
 	if err != nil {
 		t.Errorf("Unable to create keyvalue instance: %s\n", err.Error())
@@ -262,7 +261,7 @@ func TestKeyvalueVersioning(t *testing.T) {
 	server.TestHTTP(t, "POST", key2req, strings.NewReader(value2))
 
 	// Create a new version in repo
-	if err = repo.Lock(uuid, []string{"my commit msg"}); err != nil {
+	if err = repo.Commit(uuid, "my commit msg", []string{"stuff one", "stuff two"}); err != nil {
 		t.Errorf("Unable to lock root node %s: %s\n", uuid, err.Error())
 	}
 	uuid2, err := repo.NewVersion(uuid)

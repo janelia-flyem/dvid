@@ -611,7 +611,7 @@ func (m *repoManager) Types() (map[dvid.URLString]TypeService, error) {
 // Note that changes to the DAG, e.g., adding a child node, will need updates
 // to the cached maps in the RepoManager, so there is a pointer to it.
 type repoT struct {
-	mu sync.Mutex // Currently, we lock entire repo for any changes since
+	mu sync.RWMutex // Currently, we lock entire repo for any changes since
 	// repo mods should be relatively infrequent
 	repoID dvid.RepoID
 	rootID dvid.UUID
@@ -727,8 +727,8 @@ func (r *repoT) SetProperties(props map[string]interface{}) error {
 }
 
 func (r *repoT) GetRepoLog() ([]string, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	return r.log, nil
 }
 
@@ -739,8 +739,8 @@ func (r *repoT) AddToRepoLog(hx string) error {
 }
 
 func (r *repoT) GetNodeLog(uuid dvid.UUID) ([]string, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	versionID, found := r.manager.UUIDToVersion[uuid]
 	if !found {
 		return nil, fmt.Errorf("could not find uuid %s", uuid)
@@ -865,6 +865,9 @@ func (r *repoT) MarshalJSON() ([]byte, error) {
 }
 
 func (r *repoT) String() string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
 	json, err := r.MarshalJSON()
 	if err != nil {
 		return fmt.Sprintf("Repo print error: %s", err.Error())
@@ -887,14 +890,14 @@ func (r *repoT) GetAllData() (map[dvid.InstanceName]DataService, error) {
 // GetDataByName returns a DatasService with the given name or if not found,
 // returns an error.
 func (r *repoT) GetDataByName(name dvid.InstanceName) (DataService, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	return r.getDataByName(name)
 }
 
 func (r *repoT) GetIterator(versionID dvid.VersionID) (storage.VersionIterator, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	return r.dag.getIterator(versionID)
 }
 
@@ -935,6 +938,8 @@ func (r *repoT) NewData(t TypeService, name dvid.InstanceName, c dvid.Config) (D
 // ModifyData modifies preexisting Data within a Repo.  Settings can be passed
 // via the 'config' argument.  Only settings within the passed config are modified.
 func (r *repoT) ModifyData(name dvid.InstanceName, config dvid.Config) error {
+	r.mu.Lock()
+	defer r.mu.RUnlock()
 	dataservice, err := r.GetDataByName(name)
 	if err != nil {
 		return err
@@ -1015,7 +1020,21 @@ func (r *repoT) Save() error {
 	return r.save()
 }
 
-func (r *repoT) Lock(uuid dvid.UUID, log []string) error {
+func (r *repoT) Locked(uuid dvid.UUID) (bool, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	versionID, found := r.manager.UUIDToVersion[uuid]
+	if !found {
+		return false, fmt.Errorf("Could not LOCK missing version (uuid %s)", uuid)
+	}
+	node, found := r.dag.nodes[versionID]
+	if !found {
+		return false, fmt.Errorf("Could not LOCK missing version (id %d)", versionID)
+	}
+	return node.locked, nil
+}
+
+func (r *repoT) Commit(uuid dvid.UUID, note string, log []string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	versionID, found := r.manager.UUIDToVersion[uuid]
@@ -1028,6 +1047,10 @@ func (r *repoT) Lock(uuid dvid.UUID, log []string) error {
 	}
 	node.locked = true
 	r.updated = time.Now()
+
+	if len(note) != 0 {
+		node.note = note
+	}
 
 	if len(log) != 0 {
 		if err := node.addToLog(log); err != nil {
@@ -1050,6 +1073,9 @@ func (r *repoT) Lock(uuid dvid.UUID, log []string) error {
 }
 
 func (r *repoT) Types() (map[dvid.URLString]TypeService, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
 	datatypes := make(map[dvid.URLString]TypeService)
 	for _, dataservice := range r.data {
 		t := dataservice.GetType()

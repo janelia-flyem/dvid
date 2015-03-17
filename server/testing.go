@@ -34,6 +34,19 @@ func TestHTTP(t *testing.T, method, urlStr string, payload io.Reader) []byte {
 	return w.Body.Bytes()
 }
 
+// TestBadHTTP expects a HTTP response with an error status code.
+func TestBadHTTP(t *testing.T, method, urlStr string, payload io.Reader) {
+	req, err := http.NewRequest(method, urlStr, payload)
+	if err != nil {
+		t.Fatalf("Unsuccessful %s on %q: %s\n", method, urlStr, err.Error())
+	}
+	w := httptest.NewRecorder()
+	ServeSingleHTTP(w, req)
+	if w.Code == http.StatusOK {
+		t.Fatalf("Expected bad server response to %s on %q, got %d instead.\n", method, urlStr, w.Code)
+	}
+}
+
 // NewTestRepo returns a repo on a running server suitable for testing.
 func NewTestRepo(t *testing.T) (uuid string) {
 	metadata := `{"alias": "testRepo", "description": "A test repository"}`
@@ -50,13 +63,10 @@ func NewTestRepo(t *testing.T) (uuid string) {
 	return parsedResponse.Root
 }
 
-func CreateTestInstance(t *testing.T, uuid dvid.UUID, typename, name string, config map[string]interface{}) {
-	if config == nil {
-		config = make(map[string]interface{})
-	}
-	config["typename"] = typename
-	config["dataname"] = name
-	jsonData, err := json.Marshal(config)
+func CreateTestInstance(t *testing.T, uuid dvid.UUID, typename, name string, config dvid.Config) {
+	config.Set("typename", typename)
+	config.Set("dataname", name)
+	jsonData, err := config.MarshalJSON()
 	if err != nil {
 		t.Fatalf("Unable to make JSON for instance creation: %v\n", config)
 	}

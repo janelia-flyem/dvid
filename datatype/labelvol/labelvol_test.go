@@ -254,13 +254,11 @@ func TestSparseVolumes(t *testing.T) {
 	// Create testbed volume and data instances
 	repo, _ := initTestRepo()
 	uuid := repo.RootUUID()
-	config := map[string]interface{}{
-		"sync": "bodies",
-	}
+	var config dvid.Config
+	config.Set("sync", "bodies")
 	server.CreateTestInstance(t, uuid, "labelblk", "labels", config)
-	config = map[string]interface{}{
-		"sync": "labels",
-	}
+	config.Clear()
+	config.Set("sync", "labels")
 	server.CreateTestInstance(t, uuid, "labelvol", "bodies", config)
 
 	// Populte the labels, which should automatically populate the labelvol
@@ -309,13 +307,11 @@ func TestMergeLabels(t *testing.T) {
 	// Create testbed volume and data instances
 	repo, _ := initTestRepo()
 	uuid := repo.RootUUID()
-	config := map[string]interface{}{
-		"sync": "bodies",
-	}
+	var config dvid.Config
+	config.Set("sync", "bodies")
 	server.CreateTestInstance(t, uuid, "labelblk", "labels", config)
-	config = map[string]interface{}{
-		"sync": "labels",
-	}
+	config.Clear()
+	config.Set("sync", "labels")
 	server.CreateTestInstance(t, uuid, "labelvol", "bodies", config)
 
 	vol := createLabelTestVolume(t, uuid, "labels")
@@ -380,13 +376,11 @@ func TestSplitLabel(t *testing.T) {
 	// Create testbed volume and data instances
 	repo, _ := initTestRepo()
 	uuid := repo.RootUUID()
-	config := map[string]interface{}{
-		"sync": "bodies",
-	}
+	var config dvid.Config
+	config.Set("sync", "bodies")
 	server.CreateTestInstance(t, uuid, "labelblk", "labels", config)
-	config = map[string]interface{}{
-		"sync": "labels",
-	}
+	config.Clear()
+	config.Set("sync", "labels")
 	server.CreateTestInstance(t, uuid, "labelvol", "bodies", config)
 
 	// Store body 4 in as labels

@@ -142,16 +142,19 @@ const WebHelp = `
 	data usable by clients to reconstruct the types of operation done to that version
 	of data.
 
-POST /api/node/{uuid}/lock
+POST /api/node/{uuid}/commit
 
-	Locks the node (version) with given UUID.  This is required before a version can 
+	Commits (locks) the node/version with given UUID.  This is required before a version can 
 	be branched or pushed to a remote server.  The post body should be JSON of the 
 	following format: 
 
-	{ "log": [ "provenance data...", "provenance data...", ..., "human readable message"] }
+	{ 
+		"note": "this is a description of what I did on this commit",
+		"log": [ "provenance data...", "provenance data...", ...] 
+	}
 
-	The log is a list of strings, the last of which will be considered a human-readable
-	commit message.  Any number of strings can precede the commit message.
+	The note is a human-readable commit message.  The log is a slice of strings that may
+	be computer-readable.
 
  POST /api/node/{uuid}/branch
 
@@ -310,7 +313,7 @@ func initRoutes() {
 	nodeMux.Use(repoSelector)
 	nodeMux.Get("/api/node/:uuid/log", getNodeLogHandler)
 	nodeMux.Post("/api/node/:uuid/log", postNodeLogHandler)
-	nodeMux.Post("/api/node/:uuid/lock", repoLockHandler)
+	nodeMux.Post("/api/node/:uuid/commit", repoCommitHandler)
 	nodeMux.Post("/api/node/:uuid/branch", repoBranchHandler)
 
 	instanceMux := web.New()
@@ -407,12 +410,26 @@ func repoSelector(c *web.C, h http.Handler) http.Handler {
 			return
 		}
 		c.Env["uuid"] = uuid
-		c.Env["repo"], err = datastore.RepoFromUUID(uuid)
+		repo, err := datastore.RepoFromUUID(uuid)
 		if err != nil {
 			BadRequest(w, r, err.Error())
-		} else {
-			h.ServeHTTP(w, r)
+			return
 		}
+		c.Env["repo"] = repo
+
+		// Make sure locked nodes can't use anything besides GET and HEAD
+		locked, err := repo.Locked(uuid)
+		if err != nil {
+			BadRequest(w, r, err.Error())
+			return
+		}
+		branchRequest := (c.URLParams["action"] == "branch")
+		if locked && !branchRequest && action != "get" && action != "head" {
+			BadRequest(w, r, "Cannot do %s on locked node %s", action, uuid)
+			return
+		}
+
+		h.ServeHTTP(w, r)
 	}
 	return http.HandlerFunc(fn)
 }
@@ -763,7 +780,7 @@ func postNodeLogHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func repoLockHandler(c web.C, w http.ResponseWriter, r *http.Request) {
+func repoCommitHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	uuid, ok := c.Env["uuid"].(dvid.UUID)
 	if !ok {
 		msg := fmt.Sprintf("Bad format for UUID %q\n", c.Env["uuid"])
@@ -775,24 +792,27 @@ func repoLockHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 		BadRequest(w, r, err.Error())
 		return
 	}
+	data, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		BadRequest(w, r, err.Error())
+		return
+	}
 
-	jsonData := make(map[string][]string)
-	decoder := json.NewDecoder(r.Body)
-	if err := decoder.Decode(&jsonData); err != nil && err != io.EOF {
+	jsonData := struct {
+		Note string   `json:"note"`
+		Log  []string `json:"log"`
+	}{}
+	if err := json.Unmarshal(data, &jsonData); err != nil {
 		BadRequest(w, r, fmt.Sprintf("Malformed JSON request in body: %s", err.Error()))
 		return
 	}
-	logdata, ok := jsonData["log"]
-	if !ok {
-		logdata = []string{}
-	}
 
-	err = repo.Lock(uuid, logdata)
+	err = repo.Commit(uuid, jsonData.Note, jsonData.Log)
 	if err != nil {
 		BadRequest(w, r, err.Error())
 	} else {
 		w.Header().Set("Content-Type", "text/plain")
-		fmt.Fprintf(w, "Lock on node %s successful.\n", uuid)
+		fmt.Fprintf(w, "Node %s committed and locked.\n", uuid)
 	}
 }
 

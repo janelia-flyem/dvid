@@ -95,10 +95,12 @@ type DAGManager interface {
 	GetNodeLog(dvid.UUID) ([]string, error)
 	AddToNodeLog(dvid.UUID, []string) error
 
-	// Lock "locks" the given node of the DAG to be read-only and appends the
-	// slice of string to the log file for the locked node.  By convention,
-	// the last string should be a human-readable commit message.
-	Lock(dvid.UUID, []string) error
+	// Commit "locks" the given node of the DAG to be read-only, attaches a human-readable
+	// note, and appends a slice of strings to the log.
+	Commit(uuid dvid.UUID, note string, log []string) error
+
+	// Locked returns true if a node is locked from a commit.
+	Locked(dvid.UUID) (bool, error)
 
 	// NewVersion creates a new child node off a LOCKED parent node.  Will return
 	// an error if the parent node has not been locked.

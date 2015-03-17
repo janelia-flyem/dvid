@@ -95,10 +95,33 @@ func TestLog(t *testing.T) {
 	}
 }
 
-func TestLock(t *testing.T) {
+func TestCommitAndBranch(t *testing.T) {
+	tests.UseStore()
+	defer tests.CloseStore()
 
-}
+	uuid := createRepo(t)
 
-func TestBranch(t *testing.T) {
+	// Shouldn't be able to create branch on open node.
+	branchReq := fmt.Sprintf("%snode/%s/branch", WebAPIPath, uuid)
+	TestBadHTTP(t, "POST", branchReq, nil)
 
+	// Commit it.
+	payload := bytes.NewBufferString(`{"note": "This is my test commit", "log": ["line1", "line2", "some more stuff in a line"]}`)
+	apiStr := fmt.Sprintf("%snode/%s/commit", WebAPIPath, uuid)
+	TestHTTP(t, "POST", apiStr, payload)
+
+	// Make sure committed nodes can only be read.
+	// We shouldn't be able to write to log.
+	payload = bytes.NewBufferString(`{"log": ["line1", "line2", "some more stuff in a line"]}`)
+	apiStr = fmt.Sprintf("%snode/%s/log", WebAPIPath, uuid)
+	TestBadHTTP(t, "POST", apiStr, payload)
+
+	// Should be able to create branch now that we've committed parent.
+	respData := TestHTTP(t, "POST", branchReq, nil)
+	resp := struct {
+		Child string `json:"child"`
+	}{}
+	if err := json.Unmarshal(respData, &resp); err != nil {
+		t.Errorf("Expected 'child' JSON response.  Got %s\n", string(respData))
+	}
 }
