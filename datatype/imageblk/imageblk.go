@@ -148,7 +148,14 @@ GET  <api URL>/node/<UUID>/<data name>/metadata
 GET  <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?throttle=true][?queryopts]
 POST <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>]
 
-    Retrieves or puts voxel data.
+    Retrieves or puts voxel data.  GETs will return either 2d images (PNG by default) or 3d
+    binary data, depending on the dims parameter.  The 3d binary data response has
+    "Content-type" set to "application/octet-stream" and simply an array of voxel values
+    with X iterating most quickly.
+
+    NOTE on POST: All POSTed data must be block-aligned using the block sizes defined for 
+    this data instance.  For example, if the BlockSize = 32, offset and size must by
+    multiples of 32.
 
     Example: 
 

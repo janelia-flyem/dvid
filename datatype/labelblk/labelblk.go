@@ -146,17 +146,20 @@ GET  <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?th
 GET  <api URL>/node/<UUID>/<data name>/isotropic/<dims>/<size>/<offset>[/<format>][?throttle=true]
 POST <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?throttle=true]
 
-    Retrieves or puts label data as binary blob using schema above.  Binary data is simply
-    packed 64-bit data.  See 'voxels' API for discussion of 'raw' versus 'isotropic'
+    Retrieves or puts label data as either a 2D PNG or a 3D binary blob depending on the
+    dims parameter.  The 2D PNG uses RGBA images with 16 bits per channel.  Binary data is simply
+    packed 64-bit data with "Content-type" of the HTTP response set to 
+    "application/octet-stream".  See 'voxels' API for discussion of 'raw' versus 'isotropic'
 
+    NOTE on POST: All POSTed data must be block-aligned using the block sizes defined for 
+    this data instance.  For example, if the BlockSize = 32, offset and size must by
+    multiples of 32.
     Example: 
 
     GET <api URL>/node/3f8c/superpixels/0_1/512_256/0_0_100
 
     Returns an XY slice (0th and 1st dimensions) with width (x) of 512 voxels and
-    height (y) of 256 voxels with offset (0,0,100) in binary format.
-    The example offset assumes the "grayscale" data in version node "3f8c" is 3d.
-    The "Content-type" of the HTTP response will be "application/octet-stream".
+    height (y) of 256 voxels with offset (0,0,100) in PNG format.
 
     Throttling can be enabled by passing a "throttle=true" query string.  Throttling makes sure
     only one compute-intense operation (all API calls that can be throttled) is handled.
@@ -175,6 +178,7 @@ POST <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?th
     Query-string Options:
 
     roi       	  Name of roi data instance used to mask the requested data.
+
 
 (Assumes labels were loaded using without "proc=noindex")
 
