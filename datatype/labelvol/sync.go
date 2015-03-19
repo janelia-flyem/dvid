@@ -122,20 +122,22 @@ func (d *Data) handleBlockEvent(in <-chan datastore.SyncMessage, done <-chan str
 			}
 
 			// Store the RLEs for each label in this block.
-			ctx := datastore.NewVersionedContext(d, msg.Version)
-			batch := batcher.NewBatch(ctx)
-			blockStr := block.Index.ToIZYXString()
-			for label, rles := range labelRLEs {
-				index := NewIndex(label, blockStr)
-				rleBytes, err := rles.MarshalBinary()
-				if err != nil {
-					dvid.Errorf("Bad encoding labelvol keys for label %d: %s\n", label, err.Error())
-					continue
+			if maxLabel > 0 {
+				ctx := datastore.NewVersionedContext(d, msg.Version)
+				batch := batcher.NewBatch(ctx)
+				blockStr := block.Index.ToIZYXString()
+				for label, rles := range labelRLEs {
+					index := NewIndex(label, blockStr)
+					rleBytes, err := rles.MarshalBinary()
+					if err != nil {
+						dvid.Errorf("Bad encoding labelvol keys for label %d: %s\n", label, err.Error())
+						continue
+					}
+					batch.Put(index, rleBytes)
 				}
-				batch.Put(index, rleBytes)
+				// compare-and-set MaxLabel and batch commit
+				d.casMaxLabel(batch, msg.Version, maxLabel)
 			}
-			// compare-and-set MaxLabel and batch commit
-			d.casMaxLabel(batch, msg.Version, maxLabel)
 		}
 	}
 }
