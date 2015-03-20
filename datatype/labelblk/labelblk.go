@@ -765,6 +765,27 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, string(jsonBytes))
 
+	case "label":
+		// GET <api URL>/node/<UUID>/<data name>/label/<coord>
+		if len(parts) < 5 {
+			server.BadRequest(w, r, "ERROR: DVID requires coord to follow 'label' command")
+			return
+		}
+		coord, err := dvid.StringToPoint(parts[4], "_")
+		if err != nil {
+			server.BadRequest(w, r, err.Error())
+			return
+		}
+		label, err := d.GetLabelAtPoint(versionID, coord)
+		if err != nil {
+			server.BadRequest(w, r, err.Error())
+			return
+		}
+		w.Header().Set("Content-type", "application/json")
+		jsonStr := fmt.Sprintf(`{"Label": %d}`, label)
+		fmt.Fprintf(w, jsonStr)
+		timedLog.Infof("HTTP %s: label at %s (%s)", r.Method, coord, r.URL)
+
 	case "raw", "isotropic":
 		if len(parts) < 7 {
 			server.BadRequest(w, r, "'%s' must be followed by shape/size/offset", parts[3])
@@ -942,6 +963,9 @@ func (d *Data) GetLabelBytesAtPoint(v dvid.VersionID, pt dvid.Point) ([]byte, er
 	serialization, err := store.Get(ctx, blockIndex)
 	if err != nil {
 		return nil, fmt.Errorf("Error getting '%s' block for index %s\n", d.DataName(), blockCoord)
+	}
+	if serialization == nil {
+		return zeroLabelBytes, nil
 	}
 	labelData, _, err := dvid.DeserializeData(serialization, true)
 	if err != nil {
