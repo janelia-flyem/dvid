@@ -87,6 +87,10 @@ func (d *Data) MergeLabels(v dvid.VersionID, m labels.MergeOp) error {
 			return fmt.Errorf("Can't get block-level RLEs for label %d: %s", fromLabel, err.Error())
 		}
 		fromLabelSize := fromLabelRLEs.NumVoxels()
+		if fromLabelSize == 0 || len(fromLabelRLEs) == 0 {
+			dvid.Debugf("Label %d is empty.  Skipping.\n", fromLabel)
+			continue
+		}
 		addedVoxels += fromLabelSize
 
 		// Notify linked labelsz instances
@@ -123,6 +127,11 @@ func (d *Data) MergeLabels(v dvid.VersionID, m labels.MergeOp) error {
 		if err := store.DeleteRange(ctx, minIndex, maxIndex); err != nil {
 			return fmt.Errorf("Can't delete label %d RLEs: %s", fromLabel, err.Error())
 		}
+	}
+
+	if len(blocksChanged) == 0 {
+		dvid.Debugf("No changes needed when merging %s into %d.  Aborting.\n", m.Merged, m.Target)
+		return nil
 	}
 
 	// Publish block-level merge
