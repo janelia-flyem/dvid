@@ -2,7 +2,6 @@ package imageblk
 
 import (
 	"bytes"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -324,28 +323,25 @@ func TestBlockAPI(t *testing.T) {
 	returnedData := server.TestHTTP(t, "GET", blockReq, nil)
 
 	// make sure blocks are same
-	totBytes := 4 + testBlocks*int(numBlockBytes)
+	totBytes := testBlocks * int(numBlockBytes)
 	if len(returnedData) != totBytes {
 		t.Errorf("Returned %d bytes, expected %d bytes", len(returnedData), totBytes)
 	}
-	if !reflect.DeepEqual(returnedData[4:], blockData) {
+	if !reflect.DeepEqual(returnedData, blockData) {
 		t.Errorf("Returned block data != original block data\n")
 	}
 
-	// We shouldn't be able to get blocks at different z
+	// We should get blank blocks at different z
 	z += 1
 	blockReq = fmt.Sprintf("%snode/%s/grayscale/blocks/%d_%d_%d/%d", server.WebAPIPath, uuid, x, y, z, testBlocks)
 	returnedData = server.TestHTTP(t, "GET", blockReq, nil)
-	if len(returnedData) != 4 {
-		t.Errorf("Expected only 0 blocks header, got %d bytes instead", len(returnedData))
+	if len(returnedData) != totBytes {
+		t.Errorf("Returned %d bytes, expected %d bytes", len(returnedData), totBytes)
 	}
-	var numBlocks int32
-	buf := bytes.NewReader(returnedData)
-	if err := binary.Read(buf, binary.LittleEndian, &numBlocks); err != nil {
-		t.Errorf("Error reading # blocks header: %s\n", err.Error())
-	}
-	if numBlocks != 0 {
-		t.Errorf("Expected 0 blocks for empty area, got %d instead", numBlocks)
+	for i, b := range returnedData {
+		if b != 0 {
+			t.Fatalf("Expected 0 at returned byte %d, got %d instead.\n", i, b)
+		}
 	}
 }
 

@@ -268,14 +268,14 @@ POST <api URL>/node/<UUID>/<data name>/blocks/<block coord>/<spanX>
     GET <api URL>/node/3f8c/grayscale/blocks/10_20_30/8
 
     Returns blocks where first block has given block coordinate and number
-    of blocks returned along x axis is "spanX".  The data is sent in the following 
-    format with all integers in little-endian format:
+    of blocks returned along x axis is "spanX".  The data is sent in the following format:
 
-    if GET: <int32: # of blocks actually retrieved>
     <block 0 byte array>
     <block 1 byte array>
     ... 
     <block N byte array>
+
+    Each byte array iterates in X, then Y, then Z for that block.
 
     Arguments:
 
@@ -1439,7 +1439,7 @@ func (d *Data) ServeHTTP(reqCtx context.Context, w http.ResponseWriter, r *http.
 			return
 		}
 		if action == "get" {
-			data, err := d.GetBlocks(versionID, blockCoord, span)
+			data, err := d.GetBlocks(versionID, blockCoord, int32(span))
 			if err != nil {
 				server.BadRequest(w, r, err.Error())
 				return

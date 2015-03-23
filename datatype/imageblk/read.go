@@ -1,7 +1,6 @@
 package imageblk
 
 import (
-	"bytes"
 	"encoding/binary"
 	"fmt"
 	"log"
@@ -364,45 +363,85 @@ func (d *Data) GetVoxels(v dvid.VersionID, vox *Voxels, r *ROI) error {
 }
 
 // GetBlocks returns a slice of bytes corresponding to all the blocks along a span in X
-func (d *Data) GetBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int) ([]byte, error) {
+func (d *Data) GetBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int32) ([]byte, error) {
 	store, err := storage.BigDataStore()
 	if err != nil {
 		return nil, fmt.Errorf("Data type imageblk had error initializing store: %s\n", err.Error())
 	}
 
 	indexBeg := dvid.IndexZYX(start)
+	sx, sy, sz := indexBeg.Unpack()
+
 	end := start
 	end[0] += int32(span - 1)
 	indexEnd := dvid.IndexZYX(end)
-	voxelBlockBeg := NewIndex(&indexBeg)
-	voxelBlockEnd := NewIndex(&indexEnd)
+	keyBeg := NewIndex(&indexBeg)
+	keyEnd := NewIndex(&indexEnd)
 
+	// Allocate one uncompressed-sized slice with background values.
+	blockBytes := int32(d.BlockSize().Prod()) * d.Values.BytesPerElement()
+	numBytes := blockBytes * span
+
+	buf := make([]byte, numBytes, numBytes)
+	if d.Background != 0 {
+		for i := range buf {
+			buf[i] = byte(d.Background)
+		}
+	}
+
+	// Write the blocks that we can get concurrently on this byte slice.
 	ctx := datastore.NewVersionedContext(d, v)
-	keyvalues, err := store.GetRange(ctx, voxelBlockBeg, voxelBlockEnd)
+
+	var wg sync.WaitGroup
+	err = store.ProcessRange(ctx, keyBeg, keyEnd, &storage.ChunkOp{}, storage.ChunkProcessor(func(c *storage.Chunk) error {
+		if c == nil || c.KeyValue == nil {
+			return nil
+		}
+		kv := c.KeyValue
+		if kv.V == nil {
+			return nil
+		}
+
+		// Determine which block this is.
+		indexZYX, err := DecodeKey(kv.K)
+		if err != nil {
+			return err
+		}
+		x, y, z := indexZYX.Unpack()
+		if z != sz || y != sy || x < sx || x >= sx+int32(span) {
+			return fmt.Errorf("Received key-value for %s, not supposed to be within span range %s, length %d", *indexZYX, start, span)
+		}
+		n := x - sx
+		i := n * blockBytes
+		j := i + blockBytes
+
+		// Spawn goroutine to transfer data
+		wg.Add(1)
+		go xferBlock(buf[i:j], c, &wg)
+		return nil
+	}))
 	if err != nil {
 		return nil, err
 	}
+	wg.Wait()
+	return buf, nil
+}
 
-	var buf bytes.Buffer
+func xferBlock(buf []byte, chunk *storage.Chunk, wg *sync.WaitGroup) {
+	defer wg.Done()
 
-	// Save the # of keyvalues actually obtained.
-	numkv := len(keyvalues)
-	binary.Write(&buf, binary.LittleEndian, int32(numkv))
-
-	// Write the block indices in XYZ little-endian format + the size of each block
+	kv := chunk.KeyValue
 	uncompress := true
-	for _, kv := range keyvalues {
-		block, _, err := dvid.DeserializeData(kv.V, uncompress)
-		if err != nil {
-			return nil, fmt.Errorf("Unable to deserialize block, %s (%v): %s", ctx, kv.K, err.Error())
-		}
-		_, err = buf.Write(block)
-		if err != nil {
-			return nil, err
-		}
+	block, _, err := dvid.DeserializeData(kv.V, uncompress)
+	if err != nil {
+		dvid.Errorf("Unable to deserialize block (%v): %s", kv.K, err.Error())
+		return
 	}
-
-	return buf.Bytes(), nil
+	if len(block) != len(buf) {
+		dvid.Errorf("Deserialized block length (%d) != allocated block length (%d)", len(block), len(buf))
+		return
+	}
+	copy(buf, block)
 }
 
 // Loads blocks with old data if they exist.
