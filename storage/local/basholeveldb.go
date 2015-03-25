@@ -603,24 +603,61 @@ func (db *LevelDB) ProcessRange(ctx storage.Context, kStart, kEnd []byte, op *st
 func (db *LevelDB) Put(ctx storage.Context, k, v []byte) error {
 	dvid.StartCgo()
 	wo := db.options.WriteOptions
-	key := constructKey(ctx, k)
-	err := db.ldb.Put(wo, key, v)
-	//log.Printf("  PUT index %v, %d bytes\n", k, len(v))
-	//log.Printf("  PUT key %v\n", key)
+
+	var key []byte
+	var err error
+
+	if ctx == nil || !ctx.Versioned() {
+		key = constructKey(ctx, k)
+		err = db.ldb.Put(wo, key, v)
+	} else {
+		vctx, ok := ctx.(storage.VersionedContext)
+		if !ok {
+			return fmt.Errorf("Non-versioned context that says it's versioned received in Put(): %v", ctx)
+		}
+		key = vctx.ConstructKey(k)
+		tombstoneKey := vctx.TombstoneKey(k)
+		batch := db.NewBatch(vctx).(*goBatch)
+		batch.WriteBatch.Delete(tombstoneKey)
+		batch.WriteBatch.Put(key, v)
+		if err = batch.Commit(); err != nil {
+			err = fmt.Errorf("Error on PUT: %s\n", err.Error())
+		}
+	}
+
 	dvid.StopCgo()
+
 	storage.StoreKeyBytesWritten <- len(key)
 	storage.StoreValueBytesWritten <- len(v)
 	return err
 }
 
 // Delete removes a value with given key.
-func (db *LevelDB) Delete(ctx storage.Context, k []byte) (err error) {
+func (db *LevelDB) Delete(ctx storage.Context, k []byte) error {
 	dvid.StartCgo()
 	wo := db.options.WriteOptions
-	key := constructKey(ctx, k)
-	err = db.ldb.Delete(wo, key)
+
+	var err error
+	if ctx == nil || !ctx.Versioned() {
+		key := constructKey(ctx, k)
+		err = db.ldb.Delete(wo, key)
+	} else {
+		vctx, ok := ctx.(storage.VersionedContext)
+		if !ok {
+			return fmt.Errorf("Non-versioned context that says it's versioned received in Put(): %v", ctx)
+		}
+		key := vctx.ConstructKey(k)
+		tombstoneKey := vctx.TombstoneKey(k)
+		batch := db.NewBatch(vctx).(*goBatch)
+		batch.WriteBatch.Delete(key)
+		batch.WriteBatch.Put(tombstoneKey, dvid.EmptyValue())
+		if err = batch.Commit(); err != nil {
+			err = fmt.Errorf("Error on PUT: %s\n", err.Error())
+		}
+	}
+
 	dvid.StopCgo()
-	return
+	return err
 }
 
 // ---- OrderedKeyValueSetter interface ------
@@ -636,16 +673,37 @@ func (db *LevelDB) PutRange(ctx storage.Context, values []storage.KeyValue) erro
 		dvid.StopCgo()
 	}()
 	var keyBytesPut, valueBytesPut int
-	for _, kv := range values {
-		key := constructKey(ctx, kv.K)
-		wb.Put(key, kv.V)
-		keyBytesPut += len(key)
-		valueBytesPut += len(kv.V)
+
+	if ctx == nil || !ctx.Versioned() {
+		for _, kv := range values {
+			key := constructKey(ctx, kv.K)
+			wb.Put(key, kv.V)
+			keyBytesPut += len(key)
+			valueBytesPut += len(kv.V)
+		}
+		err := db.ldb.Write(wo, wb)
+		if err != nil {
+			return err
+		}
+	} else {
+		vctx, ok := ctx.(storage.VersionedContext)
+		if !ok {
+			return fmt.Errorf("Non-versioned context that says it's versioned received in Put(): %v", ctx)
+		}
+		for _, kv := range values {
+			key := vctx.ConstructKey(kv.K)
+			tombstoneKey := vctx.TombstoneKey(kv.K)
+			wb.Delete(tombstoneKey)
+			wb.Put(key, kv.V)
+			keyBytesPut += len(key)
+			valueBytesPut += len(kv.V)
+		}
+		err := db.ldb.Write(wo, wb)
+		if err != nil {
+			return err
+		}
 	}
-	err := db.ldb.Write(wo, wb)
-	if err != nil {
-		return err
-	}
+
 	storage.StoreKeyBytesWritten <- keyBytesPut
 	storage.StoreValueBytesWritten <- valueBytesPut
 	return nil
@@ -686,12 +744,17 @@ func (db *LevelDB) DeleteRange(ctx storage.Context, kStart, kEnd []byte) error {
 		if ctx == nil || !ctx.Versioned() {
 			batch.WriteBatch.Delete(result.KeyValue.K)
 		} else {
-			vctx := ctx.(storage.VersionedContext)
+			vctx, ok := ctx.(storage.VersionedContext)
+			if !ok {
+				return fmt.Errorf("Non-versioned context that says it's versioned received in Put(): %v", ctx)
+			}
 			idx, err := vctx.IndexFromKey(result.KeyValue.K)
 			if err != nil {
 				return err
 			}
+			key := vctx.ConstructKey(idx)
 			tombstone := vctx.TombstoneKey(idx) // This will now have current version
+			batch.WriteBatch.Delete(key)
 			batch.WriteBatch.Put(tombstone, dvid.EmptyValue())
 		}
 		dvid.StopCgo()
@@ -716,7 +779,8 @@ func (db *LevelDB) DeleteRange(ctx storage.Context, kStart, kEnd []byte) error {
 // --- Batcher interface ----
 
 type goBatch struct {
-	ctx storage.Context
+	ctx  storage.Context
+	vctx storage.VersionedContext
 	*levigo.WriteBatch
 	wo  *levigo.WriteOptions
 	ldb *levigo.DB
@@ -727,7 +791,15 @@ func (db *LevelDB) NewBatch(ctx storage.Context) storage.Batch {
 	//fmt.Printf("  NewBatch with ctx %v\n", ctx)
 	dvid.StartCgo()
 	defer dvid.StopCgo()
-	return &goBatch{ctx, levigo.NewWriteBatch(), db.options.WriteOptions, db.ldb}
+
+	var vctx storage.VersionedContext
+	var ok bool
+	vctx, ok = ctx.(storage.VersionedContext)
+	if !ok {
+		dvid.Errorf("Non-versioned context that says it's versioned received in batch Delete(): %v", ctx)
+		vctx = nil
+	}
+	return &goBatch{ctx, vctx, levigo.NewWriteBatch(), db.options.WriteOptions, db.ldb}
 }
 
 // --- Batch interface ---
@@ -735,12 +807,13 @@ func (db *LevelDB) NewBatch(ctx storage.Context) storage.Batch {
 func (batch *goBatch) Delete(k []byte) {
 	dvid.StartCgo()
 	defer dvid.StopCgo()
-	if batch.ctx == nil || !batch.ctx.Versioned() {
+	if batch.ctx == nil || batch.vctx == nil {
 		key := constructKey(batch.ctx, k)
 		batch.WriteBatch.Delete(key)
 	} else {
-		vctx := batch.ctx.(storage.VersionedContext)
-		tombstone := vctx.TombstoneKey(k) // This will now have current version
+		key := batch.vctx.ConstructKey(k)
+		tombstone := batch.vctx.TombstoneKey(k) // This will now have current version
+		batch.WriteBatch.Delete(key)
 		batch.WriteBatch.Put(tombstone, dvid.EmptyValue())
 	}
 }
@@ -748,9 +821,17 @@ func (batch *goBatch) Delete(k []byte) {
 func (batch *goBatch) Put(k, v []byte) {
 	dvid.StartCgo()
 	defer dvid.StopCgo()
-	key := constructKey(batch.ctx, k)
-	//log.Printf("  PUT index %v, %d bytes\n", k, len(v))
-	//log.Printf("  PUT key %v\n", key)
+
+	var key []byte
+	if batch.ctx == nil || batch.vctx == nil {
+		key = constructKey(batch.ctx, k)
+	} else {
+		key = batch.vctx.ConstructKey(k)
+		tombstone := batch.vctx.TombstoneKey(k) // This will now have current version
+		batch.WriteBatch.Delete(tombstone)
+	}
+	batch.WriteBatch.Put(key, v)
+
 	storage.StoreKeyBytesWritten <- len(key)
 	storage.StoreValueBytesWritten <- len(v)
 	batch.WriteBatch.Put(key, v)
