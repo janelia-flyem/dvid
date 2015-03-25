@@ -190,12 +190,28 @@ else ()
         DEPENDS     ${golang_NAME}
         COMMENT     "Adding CGo Lightning MDB...")
 
+    # Compile command to generate DVID source code version info.
+    add_custom_target (dvid-gen-version
+        ${BUILDEM_ENV_STRING} ${GO_ENV} ${CGO_FLAGS} go build -o ${BUILDEM_BIN_DIR}/dvid-gen-version 
+        -v -tags '${DVID_BUILD_TAGS}' cmd/gen-version/main.go 
+        WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
+        DEPENDS     ${golang_NAME}
+        COMMENT     "Compiling and installing dvid version generation command...")
+
+    # Handle DVID code generation before we build the main DVID executable.
+    add_custom_target (dvid-code-gen
+        ${BUILDEM_BIN_DIR}/dvid-gen-version -o ${CMAKE_CURRENT_SOURCE_DIR}/server/version.go
+        WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
+        DEPENDS     ${golang_NAME} dvid-gen-version
+        COMMENT     "Generating extra DVID code before building main executable...")
+
     # Build DVID with chosen backend
     add_custom_target (dvid-exe
         ${BUILDEM_ENV_STRING} ${GO_ENV} ${CGO_FLAGS} go build -o ${BUILDEM_BIN_DIR}/dvid 
         -v -tags '${DVID_BACKEND} ${DVID_GRAPHBACKEND} ${DVID_BUILD_TAGS}' cmd/dvid/main.go 
         WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
         DEPENDS     ${golang_NAME} ${nanomsg_NAME} ${DVID_BACKEND_DEPEND} ${DVID_DEP_GO_PACKAGES} ${hdf5_NAME}
+                    dvid-code-gen
         COMMENT     "Compiling and installing dvid executable...")
 
     # Build DVID with embedded console 

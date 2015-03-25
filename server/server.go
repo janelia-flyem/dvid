@@ -79,6 +79,12 @@ var (
 	// Read-only mode ignores all HTTP requests but GET and HEAD
 	readonly bool
 
+	// gitVersion is a git-derived string that allows recovery of the exact source code
+	// used for this version of the DVID server.  This package variable is exposed through
+	// the read-only Version() function and is set by build-time code generation using
+	// the "git describe" command.  See the CMakeLists.txt file for the code generation.
+	gitVersion string
+
 	config      Config
 	initialized bool
 )
@@ -129,6 +135,12 @@ func init() {
 	}()
 }
 
+// GitVersion returns a git-derived string that allows recovery of the exact source code
+// used for this DVID server.
+func GitVersion() string {
+	return gitVersion
+}
+
 // GotInteractiveRequest can be called to track the # of interactive requests that
 // require some amount of computation.  Don't use this to track simple polling APIs.
 // This routine will not block.
@@ -161,11 +173,12 @@ func SetReadOnly(on bool) {
 // AboutJSON returns a JSON string describing the properties of this server.
 func AboutJSON() (jsonStr string, err error) {
 	data := map[string]string{
-		"Cores":           fmt.Sprintf("%d", dvid.NumCPU),
-		"Maximum Cores":   fmt.Sprintf("%d", runtime.NumCPU()),
-		"DVID datastore":  datastore.Version,
-		"Storage backend": storage.EnginesAvailable(),
-		"Server uptime":   time.Since(startupTime).String(),
+		"Cores":             fmt.Sprintf("%d", dvid.NumCPU),
+		"Maximum Cores":     fmt.Sprintf("%d", runtime.NumCPU()),
+		"Datastore Version": datastore.Version,
+		"DVID Version":      gitVersion,
+		"Storage backend":   storage.EnginesAvailable(),
+		"Server uptime":     time.Since(startupTime).String(),
 	}
 	m, err := json.Marshal(data)
 	if err != nil {
