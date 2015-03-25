@@ -532,8 +532,9 @@ func (rles *RLEs) UnmarshalBinaryReader(r io.Reader, numRLEs uint32) error {
 // Add adds the given RLEs to the receiver when there's a possibility of overlapping RLEs.
 // If you are guaranteed the RLEs are disjoint, e.g., the passed and receiver RLEs are in
 // different subvolumes, then just concatenate the RLEs instead of calling this function.
+// The returned "voxelsAdded" gives the # of non-overlapping voxels added.
 // TODO: If this is a bottleneck, employ better than this brute force insertion method.
-func (rles *RLEs) Add(rles2 RLEs) {
+func (rles *RLEs) Add(rles2 RLEs) (voxelsAdded int64) {
 	for _, rle2 := range rles2 {
 		var found bool
 		for i, rle := range *rles {
@@ -550,9 +551,11 @@ func (rles *RLEs) Add(rles2 RLEs) {
 					continue
 				}
 				if x0 > cur_x0 {
+					voxelsAdded += int64(x0 - cur_x0)
 					x0 = cur_x0
 				}
 				if x1 < cur_x1 {
+					voxelsAdded += int64(cur_x1 - x1)
 					x1 = cur_x1
 				}
 				rle.start[0] = x0
@@ -564,8 +567,10 @@ func (rles *RLEs) Add(rles2 RLEs) {
 		}
 		if !found {
 			*rles = append(*rles, rle2)
+			voxelsAdded += int64(rle2.length)
 		}
 	}
+	return
 }
 
 // Stats returns the total number of voxels and runs.

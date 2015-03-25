@@ -255,7 +255,7 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser) 
 	}
 
 	// Write the split sparse vol.
-	if err = d.writeLabelVol(v, toLabel, splitblks, splitmap); err != nil {
+	if err = d.writeLabelVol(v, toLabel, splitmap, splitblks); err != nil {
 		return
 	}
 
@@ -404,7 +404,8 @@ func (d *Data) diffBlock(split, orig dvid.RLEs) (modified dvid.RLEs, dup bool, e
 	return modified, false, nil
 }
 
-func (d *Data) writeLabelVol(v dvid.VersionID, label uint64, blks []dvid.IZYXString, brles dvid.BlockRLEs) error {
+// write label volume in sorted order if available.
+func (d *Data) writeLabelVol(v dvid.VersionID, label uint64, brles dvid.BlockRLEs, sortblks []dvid.IZYXString) error {
 	store, err := storage.SmallDataStore()
 	if err != nil {
 		return fmt.Errorf("Data type labelvol had error initializing store: %s\n", err.Error())
@@ -416,12 +417,22 @@ func (d *Data) writeLabelVol(v dvid.VersionID, label uint64, blks []dvid.IZYXStr
 
 	ctx := datastore.NewVersionedContext(d, v)
 	batch := batcher.NewBatch(ctx)
-	for _, s := range blks {
-		serialization, err := brles[s].MarshalBinary()
-		if err != nil {
-			return fmt.Errorf("Error serializing RLEs for label %d: %s\n", label, err.Error())
+	if sortblks != nil {
+		for _, izyxStr := range sortblks {
+			serialization, err := brles[izyxStr].MarshalBinary()
+			if err != nil {
+				return fmt.Errorf("Error serializing RLEs for label %d: %s\n", label, err.Error())
+			}
+			batch.Put(NewIndex(label, izyxStr), serialization)
 		}
-		batch.Put(NewIndex(label, s), serialization)
+	} else {
+		for izyxStr, rles := range brles {
+			serialization, err := rles.MarshalBinary()
+			if err != nil {
+				return fmt.Errorf("Error serializing RLEs for label %d: %s\n", label, err.Error())
+			}
+			batch.Put(NewIndex(label, izyxStr), serialization)
+		}
 	}
 	if err := batch.Commit(); err != nil {
 		return fmt.Errorf("Error on updating RLEs for label %d: %s\n", label, err.Error())

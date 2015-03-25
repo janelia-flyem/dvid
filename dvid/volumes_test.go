@@ -52,7 +52,8 @@ func (s *VolumeTest) TestRLE(c *C) {
 		{Point3d{8, 5, 7}, 13},
 	}
 
-	s.rles.Add(toAdd)
+	voxelsAdded := s.rles.Add(toAdd)
+	c.Assert(voxelsAdded, Equals, int64(17))
 	c.Assert(s.rles, DeepEquals, expectedRLEs)
 }
 

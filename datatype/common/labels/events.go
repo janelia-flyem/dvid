@@ -95,15 +95,23 @@ type DeltaSplitEnd struct {
 	NewLabel uint64
 }
 
+// DeltaSparsevol describes a change to an existing label.
+type DeltaSparsevol struct {
+	Label uint64
+	Mods  dvid.BlockRLEs
+}
+
 // Label change event identifiers
 const (
-	ChangeBlockEvent     = imageblk.ChangeBlockEvent
-	ChangeSparsevolEvent = "SPARSEVOL_CHANGE"
-	ChangeSizeEvent      = "LABEL_SIZE_CHANGE"
-	MergeStartEvent      = "MERGE_START"
-	MergeBlockEvent      = "MERGE_BLOCK"
-	MergeEndEvent        = "MERGE_END"
-	SplitStartEvent      = "SPLIT_START"
-	SplitLabelEvent      = "SPLIT_LABEL"
-	SplitEndEvent        = "SPLIT_END"
+	ChangeBlockEvent    = imageblk.ChangeBlockEvent
+	SparsevolStartEvent = "SPARSEVOL_START"
+	SparsevolModEvent   = "SPARSEVOL_MOD"
+	SparsevolEndEvent   = "SPARSEVOL_END"
+	ChangeSizeEvent     = "LABEL_SIZE_CHANGE"
+	MergeStartEvent     = "MERGE_START"
+	MergeBlockEvent     = "MERGE_BLOCK"
+	MergeEndEvent       = "MERGE_END"
+	SplitStartEvent     = "SPLIT_START"
+	SplitLabelEvent     = "SPLIT_LABEL"
+	SplitEndEvent       = "SPLIT_END"
 )

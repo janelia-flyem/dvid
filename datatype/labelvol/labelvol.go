@@ -10,6 +10,7 @@ import (
 	"encoding/gob"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"net/http"
 	"strconv"
@@ -92,9 +93,11 @@ POST <api URL>/node/<UUID>/<data name>/info
     data name     Name of labelvol data.
 
 
-GET <api URL>/node/<UUID>/<data name>/sparsevol/<label>?<options>
+GET  <api URL>/node/<UUID>/<data name>/sparsevol/<label>?<options>
+POST <api URL>/node/<UUID>/<data name>/sparsevol/<label>
 
-	Returns a sparse volume with voxels of the given label in encoded RLE format.
+	Returns or stores a sparse volume with voxels of the given label in encoded RLE format.
+
 	The encoding has the following format where integers are little endian and the order
 	of data is exactly as specified below:
 
@@ -116,7 +119,15 @@ GET <api URL>/node/<UUID>/<data name>/sparsevol/<label>?<options>
 	        bytes   Optional payload dependent on first byte descriptor
 			  ...
 
-    Query-string Options:
+	POST considerations:
+
+	The POSTed sparse volume will be added to the label's current sparse volume.
+
+	Note that the client must be careful in choice of label ID on POST.  The specified label
+	must be an existing label and not a new label since new labels should be governed purely
+	by DVID or a central supervisor, not individual clients.
+
+    GET Query-string Options:
 
     minx    Spans must be equal to or larger than this minimum x voxel coordinate.
     maxx    Spans must be equal to or smaller than this maximum x voxel coordinate.
@@ -177,6 +188,8 @@ POST <api URL>/node/<UUID>/<data name>/merge
 	[toLabel1, fromLabel1, fromLabel2, fromLabel3, ...]
 
 	The first element of the JSON array specifies the label to be used as the merge result.
+	Note that it's computationally more efficient to group a number of merges into the
+	same toLabel as a single merge request instead of multiple merge requests.
 
 
 POST <api URL>/node/<UUID>/<data name>/split/<label>
@@ -557,6 +570,7 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 
 	case "sparsevol":
 		// GET <api URL>/node/<UUID>/<data name>/sparsevol/<label>
+		// POST <api URL>/node/<UUID>/<data name>/sparsevol/<label>
 		if len(parts) < 5 {
 			server.BadRequest(w, r, "ERROR: DVID requires label ID to follow 'sparsevol' command")
 			return
@@ -566,24 +580,35 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 			server.BadRequest(w, r, err.Error())
 			return
 		}
-		queryValues := r.URL.Query()
-		var b Bounds
-		b.VoxelBounds, err = dvid.BoundsFromQueryString(r)
-		if err != nil {
-			server.BadRequest(w, r, "Error parsing bounds from query string: %s\n", err.Error())
-			return
-		}
-		b.BlockBounds = b.VoxelBounds.Divide(d.BlockSize)
-		b.Exact = queryValues.Get("exact") == "true"
-		data, err := GetSparseVol(storeCtx, label, b)
-		if err != nil {
-			server.BadRequest(w, r, err.Error())
-			return
-		}
-		w.Header().Set("Content-type", "application/octet-stream")
-		_, err = w.Write(data)
-		if err != nil {
-			server.BadRequest(w, r, err.Error())
+		switch action {
+		case "get":
+			queryValues := r.URL.Query()
+			var b Bounds
+			b.VoxelBounds, err = dvid.BoundsFromQueryString(r)
+			if err != nil {
+				server.BadRequest(w, r, "Error parsing bounds from query string: %s\n", err.Error())
+				return
+			}
+			b.BlockBounds = b.VoxelBounds.Divide(d.BlockSize)
+			b.Exact = queryValues.Get("exact") == "true"
+			data, err := GetSparseVol(storeCtx, label, b)
+			if err != nil {
+				server.BadRequest(w, r, err.Error())
+				return
+			}
+			w.Header().Set("Content-type", "application/octet-stream")
+			_, err = w.Write(data)
+			if err != nil {
+				server.BadRequest(w, r, err.Error())
+				return
+			}
+		case "post":
+			if err := d.PutSparseVol(versionID, label, r.Body); err != nil {
+				server.BadRequest(w, r, err.Error())
+				return
+			}
+		default:
+			server.BadRequest(w, r, "Unable to handle HTTP action %s on sparsevol endpoint", action)
 			return
 		}
 		timedLog.Infof("HTTP %s: sparsevol on label %d (%s)", r.Method, label, r.URL)
@@ -967,29 +992,122 @@ func GetSparseVol(ctx storage.Context, label uint64, bounds Bounds) ([]byte, err
 }
 
 // PutSparseVol stores an encoded sparse volume that stays within a given forward label.
+// Note that this encoded sparse volume is added to any existing sparse volume for
+// a body rather than replace it.  To carve out a part of an existing sparse volume,
+// use the SplitLabels().
+//
 // This function handles modification/deletion of all denormalized data touched by this
 // sparse label volume.
-func PutSparseVol(ctx storage.Context, label uint64, data []byte) error {
-	/*
-		bigdata, err := storage.BigDataStore()
+//
+// EVENTS
+//
+//
+func (d *Data) PutSparseVol(v dvid.VersionID, label uint64, r io.Reader) error {
+	store, err := storage.SmallDataStore()
+	if err != nil {
+		return fmt.Errorf("Data type labelvol had error initializing store: %s\n", err.Error())
+	}
+	batcher, ok := store.(storage.KeyValueBatcher)
+	if !ok {
+		return fmt.Errorf("Data type labelvol requires batch-enabled store, which %q is not\n", store)
+	}
+
+	// Mark the label as dirty until done.
+	iv := dvid.InstanceVersion{d.DataName(), v}
+	dirtyLabels.Incr(iv, label)
+	defer dirtyLabels.Decr(iv, label)
+
+	// TODO -- Signal that we are starting a label modification.
+
+	// Read the sparse volume from reader.
+	header := make([]byte, 8)
+	if _, err = io.ReadFull(r, header); err != nil {
+		return err
+	}
+	if header[0] != dvid.EncodingBinary {
+		return fmt.Errorf("sparse vol for split has unknown encoding format: %v", header[0])
+	}
+	var numSpans uint32
+	if err = binary.Read(r, binary.LittleEndian, &numSpans); err != nil {
+		return err
+	}
+	var mods dvid.RLEs
+	if err = mods.UnmarshalBinaryReader(r, numSpans); err != nil {
+		return err
+	}
+
+	// Partition the mods spans into blocks.
+	var modmap dvid.BlockRLEs
+	modmap, err = mods.Partition(d.BlockSize)
+	if err != nil {
+		return err
+	}
+
+	// Publish sparsevol mod event
+	evt := datastore.SyncEvent{d.DataName(), labels.SparsevolModEvent}
+	msg := datastore.SyncMessage{v, labels.DeltaSparsevol{label, modmap}}
+	if err := datastore.NotifySubscribers(evt, msg); err != nil {
+		return err
+	}
+
+	// Get a sorted list of blocks that cover mods.
+	modblks := modmap.SortedKeys()
+
+	ctx := datastore.NewVersionedContext(d, v)
+	batch := batcher.NewBatch(ctx)
+	var voxelsAdded int64
+
+	for _, modblk := range modblks {
+
+		// Get original block
+		idx := NewIndex(label, modblk)
+		val, err := store.Get(ctx, idx)
 		if err != nil {
-			return fmt.Errorf("Cannot get datastore that handles big data: %s\n", err.Error())
+			return err
 		}
 
-		if data[0] != dvid.EncodingBinary {
-			return fmt.Errorf("Received corrupt sparse volume -- first byte not %d", dvid.EncodingBinary)
+		// If there's no original block, just write the mod block.
+		if val == nil || len(val) == 0 {
+			numVoxels, _ := modmap[modblk].Stats()
+			voxelsAdded += int64(numVoxels)
+			rleBytes, err := modmap[modblk].MarshalBinary()
+			if err != nil {
+				return fmt.Errorf("can't serialize modified RLEs for %d: %s\n", label, err.Error())
+			}
+			batch.Put(idx, rleBytes)
+			continue
 		}
-		if data[1] != 3 {
-			return fmt.Errorf("Can't process sparse volume with # of dimensions = %d", data[1])
-		}
-		if data[2] != 0 {
-			return fmt.Errorf("Can't process sparse volumes with runs encoded in dimension %d", data[2])
-		}
-		// numVoxels := binary.LittleEndian.Uint32(data[4:8])  [not used right now]
-		numSpans := binary.LittleEndian.Uint32(data[8:12])
 
-		//
-	*/
+		// if there's an original, integrate and write merged RLE.
+		var rles dvid.RLEs
+		if err := rles.UnmarshalBinary(val); err != nil {
+			return fmt.Errorf("Unable to unmarshal RLE for original labels in block %s", modblk.Print())
+		}
+		voxelsAdded += rles.Add(modmap[modblk])
+		rleBytes, err := rles.MarshalBinary()
+		if err != nil {
+			return fmt.Errorf("can't serialize modified RLEs of %d: %s\n", label, err.Error())
+		}
+		batch.Put(idx, rleBytes)
+	}
+
+	if err := batch.Commit(); err != nil {
+		return fmt.Errorf("Batch commit during mod of %s label %d: %s\n", d.DataName(), label, err.Error())
+	}
+
+	// Publish change in label sizes.
+	delta := labels.DeltaModSize{
+		Label:      label,
+		SizeChange: voxelsAdded,
+	}
+	evt = datastore.SyncEvent{d.DataName(), labels.ChangeSizeEvent}
+	msg = datastore.SyncMessage{v, delta}
+	if err := datastore.NotifySubscribers(evt, msg); err != nil {
+		return err
+	}
+
+	// TODO -- Publish label mod end
+
 	return nil
 }
 
