@@ -644,7 +644,7 @@ func (db *LevelDB) Delete(ctx storage.Context, k []byte) error {
 	} else {
 		vctx, ok := ctx.(storage.VersionedContext)
 		if !ok {
-			return fmt.Errorf("Non-versioned context that says it's versioned received in Put(): %v", ctx)
+			return fmt.Errorf("Non-versioned context that says it's versioned received in Delete(): %v", ctx)
 		}
 		key := vctx.ConstructKey(k)
 		tombstoneKey := vctx.TombstoneKey(k)
@@ -688,7 +688,7 @@ func (db *LevelDB) PutRange(ctx storage.Context, values []storage.KeyValue) erro
 	} else {
 		vctx, ok := ctx.(storage.VersionedContext)
 		if !ok {
-			return fmt.Errorf("Non-versioned context that says it's versioned received in Put(): %v", ctx)
+			return fmt.Errorf("Non-versioned context that says it's versioned received in PutRange(): %v", ctx)
 		}
 		for _, kv := range values {
 			key := vctx.ConstructKey(kv.K)
@@ -746,7 +746,7 @@ func (db *LevelDB) DeleteRange(ctx storage.Context, kStart, kEnd []byte) error {
 		} else {
 			vctx, ok := ctx.(storage.VersionedContext)
 			if !ok {
-				return fmt.Errorf("Non-versioned context that says it's versioned received in Put(): %v", ctx)
+				return fmt.Errorf("Non-versioned context that says it's versioned received in DeleteRange(): %v", ctx)
 			}
 			idx, err := vctx.IndexFromKey(result.KeyValue.K)
 			if err != nil {
@@ -796,7 +796,6 @@ func (db *LevelDB) NewBatch(ctx storage.Context) storage.Batch {
 	var ok bool
 	vctx, ok = ctx.(storage.VersionedContext)
 	if !ok {
-		dvid.Errorf("Non-versioned context that says it's versioned received in batch Delete(): %v", ctx)
 		vctx = nil
 	}
 	return &goBatch{ctx, vctx, levigo.NewWriteBatch(), db.options.WriteOptions, db.ldb}
