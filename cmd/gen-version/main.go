@@ -8,6 +8,7 @@ import (
 	"io/ioutil"
 	"os"
 	"os/exec"
+	"strings"
 )
 
 var (
@@ -27,8 +28,7 @@ Usage: dvid-gen-version -o version.go
 
 `
 
-const code = `
-package server
+const code = `package server
 
 func init() {
 	gitVersion = %q
@@ -68,7 +68,8 @@ func main() {
 	}
 
 	// Inject the version string into Go code that gets written to desired location.
-	goCode := fmt.Sprintf(code, string(out))
+	versionID := strings.TrimSpace(string(out))
+	goCode := fmt.Sprintf(code, versionID)
 	if err := ioutil.WriteFile(*outputfile, []byte(goCode), 0644); err != nil {
 		fmt.Printf("Error save go code: %s\n", err.Error())
 		os.Exit(1)
