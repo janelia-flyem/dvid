@@ -306,6 +306,9 @@ type getOperation struct {
 
 // GetVoxels copies voxels from the storage engine to Voxels, a requested subvolume or 2d image.
 func (d *Data) GetVoxels(v dvid.VersionID, vox *Voxels, r *ROI) error {
+    timedLog := dvid.NewTimeLog()
+    defer timedLog.Infof("GetVoxels %s", vox)
+    
 	store, err := storage.BigDataStore()
 	if err != nil {
 		return fmt.Errorf("Data type imageblk had error initializing store: %s\n", err.Error())
@@ -364,6 +367,9 @@ func (d *Data) GetVoxels(v dvid.VersionID, vox *Voxels, r *ROI) error {
 
 // GetBlocks returns a slice of bytes corresponding to all the blocks along a span in X
 func (d *Data) GetBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int32) ([]byte, error) {
+    timedLog := dvid.NewTimeLog()
+    defer timedLog.Infof("GetBlocks %s, span %d", start, span)
+
 	store, err := storage.BigDataStore()
 	if err != nil {
 		return nil, fmt.Errorf("Data type imageblk had error initializing store: %s\n", err.Error())
