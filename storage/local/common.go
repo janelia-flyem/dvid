@@ -20,7 +20,7 @@ func Initialize(path string, config dvid.Config) error {
 	if err != nil {
 		return err
 	}
-	return storage.Initialize(kvEngine, Version)
+	return storage.Initialize(kvEngine, kvEngine.String())
 }
 
 // CreateBlankStore creates a new local key-value database at the given path,

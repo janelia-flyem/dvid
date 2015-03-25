@@ -24,11 +24,10 @@ import (
 	// Declare the data types this DVID executable will support
 	_ "github.com/janelia-flyem/dvid/datatype/googlevoxels"
 	_ "github.com/janelia-flyem/dvid/datatype/imageblk"
-	//_ "github.com/janelia-flyem/dvid/datatype/imagetile"
+	_ "github.com/janelia-flyem/dvid/datatype/imagetile"
 	_ "github.com/janelia-flyem/dvid/datatype/keyvalue"
 	_ "github.com/janelia-flyem/dvid/datatype/labelblk"
 	_ "github.com/janelia-flyem/dvid/datatype/labelgraph"
-	//_ "github.com/janelia-flyem/dvid/datatype/labelmap"
 	//_ "github.com/janelia-flyem/dvid/datatype/labelsurf"
 	_ "github.com/janelia-flyem/dvid/datatype/labelsz"
 	_ "github.com/janelia-flyem/dvid/datatype/labelvol"
@@ -185,7 +184,7 @@ func DoCommand(cmd dvid.Command) error {
 	case "repair":
 		return DoRepair(cmd)
 	case "about":
-		fmt.Println(datastore.Versions())
+		fmt.Println(server.About())
 	// Send everything else to server via DVID terminal
 	default:
 		client, err := server.NewClient(*rpcAddress)

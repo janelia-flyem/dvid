@@ -188,6 +188,24 @@ func AboutJSON() (jsonStr string, err error) {
 	return
 }
 
+// About returns a chart of version identifiers for the DVID source code, DVID datastore, and
+// all component data types for this executable.
+func About() string {
+	var text string = "\nCompile-time version information for this DVID executable:\n\n"
+	writeLine := func(name dvid.TypeString, version string) {
+		text += fmt.Sprintf("%-20s   %s\n", name, version)
+	}
+	writeLine("Name", "Version")
+	writeLine("DVID Version", gitVersion)
+	writeLine("Datastore Version", datastore.Version)
+	text += "\n"
+	writeLine("Storage engines", storage.EnginesAvailable())
+	for _, t := range datastore.Compiled {
+		writeLine(t.GetTypeName(), t.GetTypeVersion())
+	}
+	return text
+}
+
 // Shutdown handles graceful cleanup of server functions before exiting DVID.
 // This may not be so graceful if the chunk handler uses cgo since the interrupt
 // may be caught during cgo execution.

@@ -206,19 +206,3 @@ func FromContext(ctx context.Context) (Repo, []dvid.VersionID, error) {
 	}
 	return value.repo, value.versions, nil
 }
-
-// Versions returns a chart of version identifiers for data types and and DVID's datastore
-// fixed at compile-time for this DVID executable
-func Versions() string {
-	var text string = "\nCompile-time version information for this DVID executable:\n\n"
-	writeLine := func(name dvid.TypeString, version string) {
-		text += fmt.Sprintf("%-15s   %s\n", name, version)
-	}
-	writeLine("Name", "Version")
-	writeLine("DVID datastore", Version)
-	writeLine("Storage engines", storage.EnginesAvailable())
-	for _, t := range Compiled {
-		writeLine(t.GetTypeName(), t.GetTypeVersion())
-	}
-	return text
-}
