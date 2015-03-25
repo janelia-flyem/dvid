@@ -91,7 +91,7 @@ func (d *Data) GetLabels(v dvid.VersionID, vox *Labels, r *imageblk.ROI) error {
 	ctx := datastore.NewVersionedContext(d, v)
 
 	iv := dvid.InstanceVersion{d.DataName(), v}
-	mapping := mergeCache.LabelMap(iv)
+	mapping := labels.MergeCache.LabelMap(iv)
 
 	wg := new(sync.WaitGroup)
 	for it, err := vox.IndexIterator(d.BlockSize()); err == nil && it.Valid(); it.NextSpan() {
@@ -155,7 +155,7 @@ func (d *Data) GetBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int) ([
 	ctx := datastore.NewVersionedContext(d, v)
 
 	iv := dvid.InstanceVersion{d.DataName(), v}
-	mapping := mergeCache.LabelMap(iv)
+	mapping := labels.MergeCache.LabelMap(iv)
 
 	keyvalues, err := store.GetRange(ctx, voxelBlockBeg, voxelBlockEnd)
 	if err != nil {

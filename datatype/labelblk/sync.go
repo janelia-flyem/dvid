@@ -24,7 +24,6 @@ import (
 //   block and the changes.
 
 var (
-	mergeCache labels.MergeCache
 	splitCache labels.DirtyCache
 )
 
@@ -158,12 +157,12 @@ func (d *Data) syncMerge(name dvid.InstanceName, in <-chan datastore.SyncMessage
 				// from the merge cache since all labels will have completed.
 				go func(wg *sync.WaitGroup) {
 					wg.Wait()
-					mergeCache.Remove(iv, delta.MergeOp)
+					labels.MergeCache.Remove(iv, delta.MergeOp)
 				}(wg)
 
 			case labels.DeltaMergeStart:
 				// Add this merge into the cached blockRLEs
-				mergeCache.Add(iv, delta.MergeOp)
+				labels.MergeCache.Add(iv, delta.MergeOp)
 
 			default:
 				dvid.Criticalf("bad delta in merge event: %v\n", delta)

@@ -12,6 +12,71 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 )
 
+var (
+	// MergeCache is a thread-safe cache for merge operations that provides
+	// the current label mapping for any version of a data instance.
+	MergeCache mergeCache
+)
+
+type mergeCache struct {
+	sync.RWMutex
+	m map[dvid.InstanceVersion]Mapping
+}
+
+func (mc *mergeCache) Add(iv dvid.InstanceVersion, op MergeOp) {
+	mc.Lock()
+	defer mc.Unlock()
+
+	if mc.m == nil {
+		mc.m = make(map[dvid.InstanceVersion]Mapping)
+	}
+	mapping, found := mc.m[iv]
+	if !found {
+		mapping = Mapping{m: make(map[uint64]uint64, len(op.Merged))}
+	}
+	for merged := range op.Merged {
+		mapping.set(merged, op.Target)
+	}
+	mc.m[iv] = mapping
+}
+
+func (mc *mergeCache) Remove(iv dvid.InstanceVersion, op MergeOp) {
+	mc.Lock()
+	defer mc.Unlock()
+
+	if mc.m == nil {
+		mc.m = make(map[dvid.InstanceVersion]Mapping)
+		return
+	}
+	mapping, found := mc.m[iv]
+	if !found {
+		return
+	}
+	for merged := range op.Merged {
+		mapping.delete(merged)
+	}
+	mc.m[iv] = mapping
+}
+
+// LabelMap returns a label mapping for a version of a data instance.
+// If no label mapping is available, a nil is returned.
+func (mc *mergeCache) LabelMap(iv dvid.InstanceVersion) *Mapping {
+	mc.RLock()
+	defer mc.RUnlock()
+
+	if mc.m == nil {
+		return nil
+	}
+	mapping, found := mc.m[iv]
+	if found {
+		if len(mapping.m) == 0 {
+			return nil
+		}
+		return &mapping
+	}
+	return nil
+}
+
 // Mapping is an immutable thread-safe mapping of labels to labels.
 type Mapping struct {
 	sync.RWMutex
@@ -130,67 +195,6 @@ func (c *Counts) Empty() bool {
 		return true
 	}
 	return false
-}
-
-// MergeCache is a thread-safe cache for merge operations that provides
-// mapping at any point in time.
-type MergeCache struct {
-	sync.RWMutex
-	m map[dvid.InstanceVersion]Mapping
-}
-
-func (mc *MergeCache) Add(iv dvid.InstanceVersion, op MergeOp) {
-	mc.Lock()
-	defer mc.Unlock()
-
-	if mc.m == nil {
-		mc.m = make(map[dvid.InstanceVersion]Mapping)
-	}
-	mapping, found := mc.m[iv]
-	if !found {
-		mapping = Mapping{m: make(map[uint64]uint64, len(op.Merged))}
-	}
-	for merged := range op.Merged {
-		mapping.set(merged, op.Target)
-	}
-	mc.m[iv] = mapping
-}
-
-func (mc *MergeCache) Remove(iv dvid.InstanceVersion, op MergeOp) {
-	mc.Lock()
-	defer mc.Unlock()
-
-	if mc.m == nil {
-		mc.m = make(map[dvid.InstanceVersion]Mapping)
-		return
-	}
-	mapping, found := mc.m[iv]
-	if !found {
-		return
-	}
-	for merged := range op.Merged {
-		mapping.delete(merged)
-	}
-	mc.m[iv] = mapping
-}
-
-// LabelMap returns a label mapping for a version of a data instance.
-// If no label mapping is available, a nil is returned.
-func (mc *MergeCache) LabelMap(iv dvid.InstanceVersion) *Mapping {
-	mc.RLock()
-	defer mc.RUnlock()
-
-	if mc.m == nil {
-		return nil
-	}
-	mapping, found := mc.m[iv]
-	if found {
-		if len(mapping.m) == 0 {
-			return nil
-		}
-		return &mapping
-	}
-	return nil
 }
 
 // DirtyCache tracks dirty labels across versions

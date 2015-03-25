@@ -106,22 +106,21 @@ func TestMergeCache(t *testing.T) {
 
 	iv := dvid.InstanceVersion{"foobar", 23}
 	iv2 := dvid.InstanceVersion{"foobar", 24}
-	var m MergeCache
 	for _, tuple := range merges {
 		op, err := tuple.Op()
 		if err != nil {
 			t.Errorf("Error converting tuple %v to MergeOp: %s\n", tuple, err.Error())
 		}
-		m.Add(iv, op)
+		MergeCache.Add(iv, op)
 	}
 	for _, tuple := range merges2 {
 		op, err := tuple.Op()
 		if err != nil {
 			t.Errorf("Error converting tuple %v to MergeOp: %s\n", tuple, err.Error())
 		}
-		m.Add(iv2, op)
+		MergeCache.Add(iv2, op)
 	}
-	mapping := m.LabelMap(iv)
+	mapping := MergeCache.LabelMap(iv)
 	for a, b := range expectmap {
 		c, ok := mapping.Get(a)
 		if !ok || c != b {
