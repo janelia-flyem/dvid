@@ -181,13 +181,16 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 			reply.Text = fmt.Sprintf("Data %q [%s] added to node %s\n", dataname, typename, uuid)
 			repo.AddToRepoLog(cmd.String())
 		case "push":
-			var target string
-			cmd.CommandArgs(3, &target)
-			config := cmd.Settings()
-			if err = datastore.Push(repo, target, config); err != nil {
-				return err
-			}
-			reply.Text = fmt.Sprintf("Repo %q pushed to %q\n", repo.RootUUID(), target)
+			/*
+				var target string
+				cmd.CommandArgs(3, &target)
+				config := cmd.Settings()
+				if err = datastore.Push(repo, target, config); err != nil {
+					return err
+				}
+				reply.Text = fmt.Sprintf("Repo %q pushed to %q\n", repo.RootUUID(), target)
+			*/
+			return fmt.Errorf("push command has been temporarily suspended")
 		default:
 			return fmt.Errorf("Unknown command: %q", cmd)
 		}
