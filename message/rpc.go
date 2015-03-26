@@ -58,9 +58,6 @@ func (c *RPCConnection) ReceiveMessage(m Message, ok *bool) error {
 	return nil
 }
 
-// Note: no "pull" socket necessary like nanomsg implementation in message package is necessary,
-// because we use RPCConnection struct that is already registered.
-
 // Returns an RPC "socket" that can push data to remote.
 func NewPushSocket(target string) (*rpcSocket, error) {
 	client, err := rpc.DialHTTP("tcp", target)

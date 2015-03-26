@@ -134,7 +134,7 @@ else ()
 
     add_custom_target (gopackages-install
         ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go get ${GO_GET} -u github.com/janelia-flyem/go
-        DEPENDS     ${golang_NAME} ${nanomsg_NAME}
+        DEPENDS     ${golang_NAME}
         COMMENT     "Adding go package dependencies for janelia-flyem projects...")
 
     add_custom_target (gopackages
@@ -210,8 +210,7 @@ else ()
         ${BUILDEM_ENV_STRING} ${GO_ENV} ${CGO_FLAGS} go build -o ${BUILDEM_BIN_DIR}/dvid 
         -v -tags '${DVID_BACKEND} ${DVID_GRAPHBACKEND} ${DVID_BUILD_TAGS}' cmd/dvid/main.go 
         WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
-        DEPENDS     ${golang_NAME} ${nanomsg_NAME} ${DVID_BACKEND_DEPEND} ${DVID_DEP_GO_PACKAGES} ${hdf5_NAME}
-                    dvid-code-gen
+        DEPENDS     ${golang_NAME} ${DVID_BACKEND_DEPEND} ${DVID_DEP_GO_PACKAGES} ${hdf5_NAME} dvid-code-gen
         COMMENT     "Compiling and installing dvid executable...")
 
     # Build DVID with embedded console 

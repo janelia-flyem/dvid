@@ -92,7 +92,7 @@ func (q PostProcQueue) Run() {
 	}
 }
 
-// Establishes a nanomsg pipeline receiver.
+// OpTYpe specifies the type of message being transmitted.
 type OpType uint8
 
 const (
