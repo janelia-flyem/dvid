@@ -146,8 +146,8 @@ GET  <api URL>/node/<UUID>/<data name>/metadata
 	of bytes returned for n-d images.
 
 
-GET  <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?throttle=true]
-GET  <api URL>/node/<UUID>/<data name>/isotropic/<dims>/<size>/<offset>[/<format>][?throttle=true]
+GET  <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?throttle=true,compression=...]
+GET  <api URL>/node/<UUID>/<data name>/isotropic/<dims>/<size>/<offset>[/<format>][?throttle=true,compression=...]
 POST <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?throttle=true,compression=...]
 
     Retrieves or puts label data as either a 2D PNG or a 3D binary blob depending on the
@@ -182,11 +182,10 @@ POST <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?th
     Query-string Options:
 
     roi       	  Name of roi data instance used to mask the requested data.
-    compression   For POST commands, allows submission of 3d data in "lz4" and "gzip"
-                  compressed format.
+    compression   Allows retrieval or submission of 3d data in "lz4" and "gzip"
+                  compressed format.  The 2d data will ignore this and use
+                  the image-based codec.
 
-
-(Assumes labels were loaded using without "proc=noindex")
 
 `
 
@@ -896,9 +895,35 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 					return
 				}
 				w.Header().Set("Content-type", "application/octet-stream")
-				_, err = w.Write(data)
-				if err != nil {
-					server.BadRequest(w, r, err.Error())
+				switch compression {
+				case "":
+					_, err = w.Write(data)
+					if err != nil {
+						server.BadRequest(w, r, err.Error())
+						return
+					}
+				case "lz4":
+					compressed := make([]byte, lz4.CompressBound(data))
+					if _, err = lz4.Compress(data, compressed); err != nil {
+						server.BadRequest(w, r, err.Error())
+						return
+					}
+					if _, err = w.Write(compressed); err != nil {
+						server.BadRequest(w, r, err.Error())
+						return
+					}
+				case "gzip":
+					gw := gzip.NewWriter(w)
+					if _, err = gw.Write(data); err != nil {
+						server.BadRequest(w, r, err.Error())
+						return
+					}
+					if err = gw.Close(); err != nil {
+						server.BadRequest(w, r, err.Error())
+						return
+					}
+				default:
+					server.BadRequest(w, r, "unknown compression type %q", compression)
 					return
 				}
 			} else {
