@@ -16,6 +16,8 @@ import (
 	"net/http"
 	"strings"
 
+	"compress/gzip"
+
 	"code.google.com/p/go.net/context"
 
 	"github.com/janelia-flyem/dvid/datastore"
@@ -25,6 +27,8 @@ import (
 	"github.com/janelia-flyem/dvid/message"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
+
+	lz4 "github.com/janelia-flyem/go/golz4"
 )
 
 const (
@@ -144,7 +148,7 @@ GET  <api URL>/node/<UUID>/<data name>/metadata
 
 GET  <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?throttle=true]
 GET  <api URL>/node/<UUID>/<data name>/isotropic/<dims>/<size>/<offset>[/<format>][?throttle=true]
-POST <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?throttle=true]
+POST <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?throttle=true,compression=...]
 
     Retrieves or puts label data as either a 2D PNG or a 3D binary blob depending on the
     dims parameter.  The 2D PNG uses RGBA images with 16 bits per channel.  Binary data is simply
@@ -178,6 +182,8 @@ POST <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?th
     Query-string Options:
 
     roi       	  Name of roi data instance used to mask the requested data.
+    compression   For POST commands, allows submission of 3d data in "lz4" and "gzip"
+                  compressed format.
 
 
 (Assumes labels were loaded using without "proc=noindex")
@@ -865,6 +871,7 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 					return
 				}
 			}
+			compression := queryValues.Get("compression")
 			subvol, err := dvid.NewSubvolumeFromStrings(offsetStr, sizeStr, "_")
 			if err != nil {
 				server.BadRequest(w, r, err.Error())
@@ -905,9 +912,52 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 					return
 				}
 
-				data, err := ioutil.ReadAll(r.Body)
-				if err != nil {
-					server.BadRequest(w, r, err.Error())
+				var data []byte
+				switch compression {
+				case "":
+					tlog := dvid.NewTimeLog()
+					data, err = ioutil.ReadAll(r.Body)
+					if err != nil {
+						server.BadRequest(w, r, err.Error())
+						return
+					}
+					tlog.Debugf("read 3d uncompressed POST")
+				case "lz4":
+					tlog := dvid.NewTimeLog()
+					data, err = ioutil.ReadAll(r.Body)
+					if err != nil {
+						server.BadRequest(w, r, err.Error())
+						return
+					}
+					tlog.Debugf("read 3d lz4 POST")
+					tlog = dvid.NewTimeLog()
+					uncompressed := make([]byte, subvol.NumVoxels()*8)
+					err = lz4.Uncompress(data, uncompressed)
+					if err != nil {
+						server.BadRequest(w, r, err.Error())
+						return
+					}
+					data = uncompressed
+					tlog.Debugf("uncompressed 3d lz4 POST")
+				case "gzip":
+					tlog := dvid.NewTimeLog()
+					gr, err := gzip.NewReader(r.Body)
+					if err != nil {
+						server.BadRequest(w, r, err.Error())
+						return
+					}
+					data, err = ioutil.ReadAll(gr)
+					if err != nil {
+						server.BadRequest(w, r, err.Error())
+						return
+					}
+					if err = gr.Close(); err != nil {
+						server.BadRequest(w, r, err.Error())
+						return
+					}
+					tlog.Debugf("read and uncompress 3d gzip POST")
+				default:
+					server.BadRequest(w, r, "unknown compression type %q", compression)
 					return
 				}
 				lbl, err := d.NewLabels(subvol, data)
