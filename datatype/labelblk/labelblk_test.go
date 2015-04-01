@@ -151,7 +151,7 @@ func TestLabelblkDirectAPI(t *testing.T) {
 		}
 	}
 }
-func TestLabels64RepoPersistence(t *testing.T) {
+func TestLabelblkRepoPersistence(t *testing.T) {
 	tests.UseStore()
 	defer tests.CloseStore()
 

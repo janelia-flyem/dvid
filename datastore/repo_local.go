@@ -146,10 +146,9 @@ func Initialize() error {
 
 // ---- RepoManager persistence to MetaData storage -----
 
-func (m *repoManager) loadData(t keyType, data interface{}) (found bool, err error) {
+func (m *repoManager) loadData(t storage.TKeyClass, data interface{}) (found bool, err error) {
 	var ctx storage.MetadataContext
-	idx := metadataIndex{t: t}
-	value, err := m.store.Get(ctx, idx.Bytes())
+	value, err := m.store.Get(ctx, storage.NewTKey(t, nil))
 	if err != nil {
 		return false, fmt.Errorf("Bad metadata GET: %s", err.Error())
 	}
@@ -165,22 +164,20 @@ func (m *repoManager) loadData(t keyType, data interface{}) (found bool, err err
 	return true, nil
 }
 
-func (m *repoManager) putData(t keyType, data interface{}) error {
+func (m *repoManager) putData(t storage.TKeyClass, data interface{}) error {
 	var ctx storage.MetadataContext
-	idx := metadataIndex{t: t}
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
 	if err := enc.Encode(data); err != nil {
 		return err
 	}
-	return m.store.Put(ctx, idx.Bytes(), buf.Bytes())
+	return m.store.Put(ctx, storage.NewTKey(t, nil), buf.Bytes())
 }
 
 // Load the next ids to be used for RepoID, VersionID, and InstanceID.
 func (m *repoManager) loadNewIDs() error {
 	var ctx storage.MetadataContext
-	idx := metadataIndex{t: newIDsKey}
-	value, err := m.store.Get(ctx, idx.Bytes())
+	value, err := m.store.Get(ctx, storage.NewTKey(newIDsKey, nil))
 	if err != nil {
 		return err
 	}
@@ -198,10 +195,9 @@ func (m *repoManager) loadNewIDs() error {
 
 func (m *repoManager) putNewIDs() error {
 	var ctx storage.MetadataContext
-	idx := metadataIndex{t: newIDsKey}
 	value := append(m.newRepoID.Bytes(), m.newVersionID.Bytes()...)
 	value = append(value, m.newInstanceID.Bytes()...)
-	return m.store.Put(ctx, idx.Bytes(), value)
+	return m.store.Put(ctx, storage.NewTKey(newIDsKey, nil), value)
 }
 
 func (m *repoManager) putCaches() error {
@@ -246,28 +242,28 @@ func (m *repoManager) loadMetadata() error {
 
 	// Load all the repo data
 	var ctx storage.MetadataContext
-	minIndex := metadataIndex{t: repoKey, repoID: dvid.RepoID(0)}
-	maxIndex := metadataIndex{t: repoKey, repoID: dvid.MaxRepoID}
-	kvList, err := m.store.GetRange(ctx, minIndex.Bytes(), maxIndex.Bytes())
+	minRepo := dvid.RepoID(0)
+	maxRepo := dvid.RepoID(dvid.MaxRepoID)
+
+	minTKey := storage.NewTKey(repoKey, minRepo.Bytes())
+	maxTKey := storage.NewTKey(repoKey, maxRepo.Bytes())
+	kvList, err := m.store.GetRange(ctx, minTKey, maxTKey)
 	if err != nil {
 		return err
 	}
 
 	var saveCache bool
-	var index metadataIndex
 	for _, kv := range kvList {
-		indexBytes, err := ctx.IndexFromKey(kv.K)
+		ibytes, err := kv.K.ClassBytes(repoKey)
 		if err != nil {
 			return err
 		}
-		err = index.IndexFromBytes(indexBytes)
-		if err != nil {
-			return err
-		}
+		repoID := dvid.RepoIDFromBytes(ibytes)
+
 		// Load each repo
-		_, found := m.repoToUUID[index.repoID]
+		_, found := m.repoToUUID[repoID]
 		if !found {
-			return fmt.Errorf("Retrieved repo with id %d that is not in map.  Corrupt DB?", index.repoID)
+			return fmt.Errorf("Retrieved repo with id %d that is not in map.  Corrupt DB?", repoID)
 		}
 		repo := &repoT{
 			log:        []string{},
@@ -275,7 +271,7 @@ func (m *repoManager) loadMetadata() error {
 			data:       make(map[dvid.InstanceName]DataService),
 		}
 		if err = dvid.Deserialize(kv.V, repo); err != nil {
-			return fmt.Errorf("Error gob decoding repo %d: %s", index.repoID, err.Error())
+			return fmt.Errorf("Error gob decoding repo %d: %s", repoID, err.Error())
 		}
 		repo.manager = m
 
@@ -960,7 +956,7 @@ func (r *repoT) DeleteDataByName(name dvid.InstanceName) error {
 	}
 
 	// For all data tiers of storage, remove data key-value pairs that would be associated with this instance id.
-	if err = storage.DeleteDataInstance(dataservice.InstanceID()); err != nil {
+	if err = storage.DeleteDataInstance(dataservice); err != nil {
 		return err
 	}
 
@@ -1129,9 +1125,7 @@ func (r *repoT) save() error {
 	}
 
 	var ctx storage.MetadataContext
-	idx := metadataIndex{t: repoKey, repoID: r.repoID}
-
-	return r.manager.store.Put(ctx, idx.Bytes(), serialization)
+	return r.manager.store.Put(ctx, storage.NewTKey(repoKey, r.repoID.Bytes()), serialization)
 }
 
 func (r *repoT) newDAG(uuid dvid.UUID, versionID dvid.VersionID) *dagT {

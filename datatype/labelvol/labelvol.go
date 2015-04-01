@@ -402,37 +402,50 @@ func GetByUUID(uuid dvid.UUID, name dvid.InstanceName) (*Data, error) {
 // for each version.
 func (d *Data) LoadMutable() error {
 	ctx := storage.NewDataContext(d, 0)
-	minKey, err := ctx.MinVersionKey(NewMaxLabelIndex())
-	if err != nil {
-		return err
-	}
-	maxKey, err := ctx.MaxVersionKey(NewMaxLabelIndex())
-	if err != nil {
-		return err
-	}
 	store, err := storage.SmallDataStore()
 	if err != nil {
 		return fmt.Errorf("Data type labelvol had error initializing store: %s\n", err.Error())
 	}
 	var maxes int
 	d.MaxLabel = make(map[dvid.VersionID]uint64)
-	var f storage.ChunkProcessor = func(chunk *storage.Chunk) error {
-		v, err := ctx.VersionFromKey(chunk.K)
-		if err != nil {
-			return fmt.Errorf("Can't decode key when loading mutable data for %s", d.DataName())
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	ch := make(chan *storage.KeyValue)
+	go func() {
+		for {
+			kv := <-ch
+			if kv == nil {
+				wg.Done()
+				return
+			}
+			v, err := ctx.VersionFromKey(kv.K)
+			if err != nil {
+				dvid.Errorf("Can't decode key when loading mutable data for %s", d.DataName())
+				continue
+			}
+			if len(kv.V) != 8 {
+				dvid.Errorf("Got bad value.  Expected 64-bit label, got %v", kv.V)
+				continue
+			}
+			label := binary.LittleEndian.Uint64(kv.V)
+			d.MaxLabel[v] = label
+			maxes++
 		}
-		if len(chunk.V) != 8 {
-			return fmt.Errorf("Got bad value.  Expected 64-bit label, got %v", chunk.V)
-		}
-		label := binary.LittleEndian.Uint64(chunk.V)
-		d.MaxLabel[v] = label
-		maxes++
-		return nil
-	}
-	err = store.ProcessRange(nil, minKey, maxKey, &storage.ChunkOp{}, f)
+	}()
+	minKey, err := ctx.MinVersionKey(maxLabelTKey)
 	if err != nil {
 		return err
 	}
+	maxKey, err := ctx.MaxVersionKey(maxLabelTKey)
+	if err != nil {
+		return err
+	}
+	keysOnly := false
+	if err = store.SendRange(minKey, maxKey, keysOnly, ch); err != nil {
+		return err
+	}
+	wg.Wait()
 	dvid.Infof("Loaded %d maximum label values for labelvol %q\n", maxes, d.DataName())
 	return nil
 }
@@ -782,7 +795,7 @@ func (d *Data) casMaxLabel(batch storage.Batch, v dvid.VersionID, label uint64) 
 	if save {
 		buf := make([]byte, 8)
 		binary.LittleEndian.PutUint64(buf, label)
-		batch.Put(NewMaxLabelIndex(), buf)
+		batch.Put(maxLabelTKey, buf)
 		d.MaxLabel[v] = maxLabel
 	}
 	if err := batch.Commit(); err != nil {
@@ -826,7 +839,7 @@ func (d *Data) NewLabel(v dvid.VersionID) (uint64, error) {
 	buf := make([]byte, 8)
 	binary.LittleEndian.PutUint64(buf, label)
 	ctx := datastore.NewVersionedContext(d, v)
-	store.Put(ctx, NewMaxLabelIndex(), buf)
+	store.Put(ctx, maxLabelTKey, buf)
 	return label, nil
 }
 
@@ -839,18 +852,17 @@ func (d *Data) GetLabelRLEs(v dvid.VersionID, label uint64) (dvid.BlockRLEs, err
 	}
 
 	// Get the start/end indices for this body's KeyLabelSpatialMap (b + s) keys.
-	begIndex := NewIndex(label, dvid.MinIndexZYX.ToIZYXString())
-	endIndex := NewIndex(label, dvid.MaxIndexZYX.ToIZYXString())
+	begIndex := NewTKey(label, dvid.MinIndexZYX.ToIZYXString())
+	endIndex := NewTKey(label, dvid.MaxIndexZYX.ToIZYXString())
 
 	// Process all the b+s keys and their values, which contain RLE runs for that label.
 	labelRLEs := dvid.BlockRLEs{}
-	var f storage.ChunkProcessor = func(chunk *storage.Chunk) error {
+	var f storage.ChunkFunc = func(chunk *storage.Chunk) error {
 		// Get the block index where the fromLabel is present
-		_, blockBytes, err := DecodeKey(chunk.K)
+		_, blockStr, err := DecodeTKey(chunk.K)
 		if err != nil {
 			return fmt.Errorf("Can't recover block index with chunk key %v: %s\n", chunk.K, err.Error())
 		}
-		blockStr := dvid.IZYXString(blockBytes)
 
 		var blockRLEs dvid.RLEs
 		if err := blockRLEs.UnmarshalBinary(chunk.V); err != nil {
@@ -934,8 +946,8 @@ func GetSparseVol(ctx storage.Context, label uint64, bounds Bounds) ([]byte, err
 	if maxZ, ok := blockBounds.MaxZ(); ok {
 		maxZYX[2] = maxZ
 	}
-	begIndex := NewIndex(label, minZYX.ToIZYXString())
-	endIndex := NewIndex(label, maxZYX.ToIZYXString())
+	begTKey := NewTKey(label, minZYX.ToIZYXString())
+	endTKey := NewTKey(label, maxZYX.ToIZYXString())
 
 	// Process all the b+s keys and their values, which contain RLE runs for that label.
 	// TODO -- Make processing asynchronous so can overlap with range disk read now that
@@ -943,10 +955,10 @@ func GetSparseVol(ctx storage.Context, label uint64, bounds Bounds) ([]byte, err
 	var numRuns, numBlocks uint32
 	encoding := buf.Bytes()
 
-	var f storage.ChunkProcessor = func(chunk *storage.Chunk) error {
+	var f storage.ChunkFunc = func(chunk *storage.Chunk) error {
 		// Make sure this block is within the optinonal bounding.
 		if blockBounds.BoundedX() || blockBounds.BoundedY() {
-			_, blockStr, err := DecodeKey(chunk.K)
+			_, blockStr, err := DecodeTKey(chunk.K)
 			if err != nil {
 				return fmt.Errorf("Error decoding sparse volume key (%v): %s\n", chunk.K, err.Error())
 			}
@@ -982,7 +994,7 @@ func GetSparseVol(ctx storage.Context, label uint64, bounds Bounds) ([]byte, err
 		return nil
 	}
 
-	if err := store.ProcessRange(ctx, begIndex, endIndex, &storage.ChunkOp{}, f); err != nil {
+	if err := store.ProcessRange(ctx, begTKey, endTKey, &storage.ChunkOp{}, f); err != nil {
 		return nil, err
 	}
 	binary.LittleEndian.PutUint32(encoding[8:12], numRuns)
@@ -1060,8 +1072,8 @@ func (d *Data) PutSparseVol(v dvid.VersionID, label uint64, r io.Reader) error {
 	for _, modblk := range modblks {
 
 		// Get original block
-		idx := NewIndex(label, modblk)
-		val, err := store.Get(ctx, idx)
+		tk := NewTKey(label, modblk)
+		val, err := store.Get(ctx, tk)
 		if err != nil {
 			return err
 		}
@@ -1074,7 +1086,7 @@ func (d *Data) PutSparseVol(v dvid.VersionID, label uint64, r io.Reader) error {
 			if err != nil {
 				return fmt.Errorf("can't serialize modified RLEs for %d: %s\n", label, err.Error())
 			}
-			batch.Put(idx, rleBytes)
+			batch.Put(tk, rleBytes)
 			continue
 		}
 
@@ -1088,7 +1100,7 @@ func (d *Data) PutSparseVol(v dvid.VersionID, label uint64, r io.Reader) error {
 		if err != nil {
 			return fmt.Errorf("can't serialize modified RLEs of %d: %s\n", label, err.Error())
 		}
-		batch.Put(idx, rleBytes)
+		batch.Put(tk, rleBytes)
 	}
 
 	if err := batch.Commit(); err != nil {
@@ -1141,20 +1153,20 @@ func GetSparseCoarseVol(ctx storage.Context, label uint64) ([]byte, error) {
 	encoding := buf.Bytes()
 
 	// Get the start/end indices for this body's KeyLabelSpatialMap (b + s) keys.
-	begIndex := NewIndex(label, dvid.MinIndexZYX.ToIZYXString())
-	endIndex := NewIndex(label, dvid.MaxIndexZYX.ToIZYXString())
+	begTKey := NewTKey(label, dvid.MinIndexZYX.ToIZYXString())
+	endTKey := NewTKey(label, dvid.MaxIndexZYX.ToIZYXString())
 
 	// Process all the b+s keys and their values, which contain RLE runs for that label.
 	var numBlocks uint32
 	var span *dvid.Span
 	var spans dvid.Spans
-	keys, err := store.KeysInRange(ctx, begIndex, endIndex)
+	keys, err := store.KeysInRange(ctx, begTKey, endTKey)
 	if err != nil {
 		return nil, fmt.Errorf("Cannot get keys for coarse sparse volume: %s", err.Error())
 	}
-	for _, key := range keys {
+	for _, tk := range keys {
 		numBlocks++
-		_, blockStr, err := DecodeKey(key)
+		_, blockStr, err := DecodeTKey(tk)
 		if err != nil {
 			return nil, fmt.Errorf("Error retrieving RLE runs for label %d: %s", label, err.Error())
 		}

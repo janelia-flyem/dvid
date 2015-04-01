@@ -11,57 +11,36 @@ import (
 	"github.com/janelia-flyem/dvid/storage"
 )
 
-// keyType is the first byte of a type-specific index, allowing partitioning of the
-// type-specific key space.
-type keyType byte
-
 const (
 	// keyUnknown should never be used and is a check for corrupt or incorrectly set keys
-	keyUnknown keyType = 0
+	keyUnknown storage.TKeyClass = 0
 
 	// since we are reusing imageblk read code, need to use the same key.
 	keyLabelBlock = 23
 )
 
-func (t keyType) String() string {
-	switch t {
-	case keyLabelBlock:
-		return "Label block"
-	default:
-		return "Unknown Key Type"
-	}
+// NewTKeyByCoord returns a TKey for a block coord in string format.
+func NewTKeyByCoord(izyx dvid.IZYXString) storage.TKey {
+	return storage.NewTKey(keyLabelBlock, []byte(izyx))
 }
 
-// NewIndexByCoord returns an index for a block coord in string format.
-func NewIndexByCoord(bcoord dvid.IZYXString) []byte {
-	sz := len(bcoord)
-	ibytes := make([]byte, 1+sz)
-	ibytes[0] = byte(keyLabelBlock)
-	copy(ibytes[1:], []byte(bcoord))
-	return ibytes
-}
-
-// NewIndex returns an index for a label block, which is a slice suitable for
+// NewTKey returns a TKey for a label block, which is a slice suitable for
 // lexicographical ordering on zyx coordinates.
-func NewIndex(idx dvid.Index) []byte {
+func NewTKey(idx dvid.Index) storage.TKey {
 	izyx := idx.(*dvid.IndexZYX)
-	return NewIndexByCoord(izyx.ToIZYXString())
+	return NewTKeyByCoord(izyx.ToIZYXString())
 }
 
 // DecodeKey returns a spatial index from a label block key.
 // TODO: Extend this when necessary to allow any form of spatial indexing like CZYX.
-func DecodeKey(key []byte) (*dvid.IndexZYX, error) {
-	var ctx storage.DataContext
-	ibytes, err := ctx.IndexFromKey(key)
+func DecodeTKey(tk storage.TKey) (*dvid.IndexZYX, error) {
+	ibytes, err := tk.ClassBytes(keyLabelBlock)
 	if err != nil {
 		return nil, err
 	}
-	if ibytes[0] != byte(keyLabelBlock) {
-		return nil, fmt.Errorf("Expected keyLabelBlock index, got %d byte instead", ibytes[0])
-	}
 	var zyx dvid.IndexZYX
-	if err = zyx.IndexFromBytes(ibytes[1:]); err != nil {
-		return nil, fmt.Errorf("Cannot recover ZYX index from key %v: %s\n", key, err.Error())
+	if err = zyx.IndexFromBytes(ibytes); err != nil {
+		return nil, fmt.Errorf("Cannot recover ZYX index from image block key %v: %s\n", tk, err.Error())
 	}
 	return &zyx, nil
 }

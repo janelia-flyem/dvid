@@ -97,7 +97,7 @@ func (d *Data) GetArbitraryImage(ctx storage.Context, tlStr, trStr, blStr, resSt
 	keyF := func(pt dvid.Point3d) []byte {
 		chunkPt := pt.Chunk(d.BlockSize()).(dvid.ChunkPoint3d)
 		idx := dvid.IndexZYX(chunkPt)
-		return NewIndex(&idx)
+		return NewTKey(&idx)
 	}
 
 	// TODO: Add concurrency.

@@ -121,10 +121,10 @@ func (d *Data) MergeLabels(v dvid.VersionID, m labels.MergeOp) error {
 		}
 
 		// Delete all fromLabel RLEs since they are all integrated into toLabel RLEs
-		minIndex := NewIndex(fromLabel, dvid.MinIndexZYX.ToIZYXString())
-		maxIndex := NewIndex(fromLabel, dvid.MaxIndexZYX.ToIZYXString())
+		minTKey := NewTKey(fromLabel, dvid.MinIndexZYX.ToIZYXString())
+		maxTKey := NewTKey(fromLabel, dvid.MaxIndexZYX.ToIZYXString())
 		ctx := datastore.NewVersionedContext(d, v)
-		if err := store.DeleteRange(ctx, minIndex, maxIndex); err != nil {
+		if err := store.DeleteRange(ctx, minTKey, maxTKey); err != nil {
 			return fmt.Errorf("Can't delete label %d RLEs: %s", fromLabel, err.Error())
 		}
 	}
@@ -145,12 +145,12 @@ func (d *Data) MergeLabels(v dvid.VersionID, m labels.MergeOp) error {
 	ctx := datastore.NewVersionedContext(d, v)
 	batch := batcher.NewBatch(ctx)
 	for blockStr := range blocksChanged {
-		index := NewIndex(toLabel, blockStr)
+		tk := NewTKey(toLabel, blockStr)
 		serialization, err := toLabelRLEs[blockStr].MarshalBinary()
 		if err != nil {
 			return fmt.Errorf("Error serializing RLEs for label %d: %s\n", toLabel, err.Error())
 		}
-		batch.Put(index, serialization)
+		batch.Put(tk, serialization)
 	}
 	if err := batch.Commit(); err != nil {
 		dvid.Errorf("Error on updating RLEs for label %d: %s\n", toLabel, err.Error())
@@ -270,8 +270,8 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser) 
 	for _, splitblk := range splitblks {
 
 		// Get original block
-		idx := NewIndex(fromLabel, splitblk)
-		val, err := store.Get(ctx, idx)
+		tk := NewTKey(fromLabel, splitblk)
+		val, err := store.Get(ctx, tk)
 		if err != nil {
 			return toLabel, err
 		}
@@ -290,13 +290,13 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser) 
 			return toLabel, err
 		}
 		if dup {
-			batch.Delete(idx)
+			batch.Delete(tk)
 		} else {
 			rleBytes, err := modified.MarshalBinary()
 			if err != nil {
 				return toLabel, fmt.Errorf("can't serialize modified RLEs for split of %d: %s\n", fromLabel, err.Error())
 			}
-			batch.Put(idx, rleBytes)
+			batch.Put(tk, rleBytes)
 		}
 	}
 
@@ -423,7 +423,7 @@ func (d *Data) writeLabelVol(v dvid.VersionID, label uint64, brles dvid.BlockRLE
 			if err != nil {
 				return fmt.Errorf("Error serializing RLEs for label %d: %s\n", label, err.Error())
 			}
-			batch.Put(NewIndex(label, izyxStr), serialization)
+			batch.Put(NewTKey(label, izyxStr), serialization)
 		}
 	} else {
 		for izyxStr, rles := range brles {
@@ -431,7 +431,7 @@ func (d *Data) writeLabelVol(v dvid.VersionID, label uint64, brles dvid.BlockRLE
 			if err != nil {
 				return fmt.Errorf("Error serializing RLEs for label %d: %s\n", label, err.Error())
 			}
-			batch.Put(NewIndex(label, izyxStr), serialization)
+			batch.Put(NewTKey(label, izyxStr), serialization)
 		}
 	}
 	if err := batch.Commit(); err != nil {

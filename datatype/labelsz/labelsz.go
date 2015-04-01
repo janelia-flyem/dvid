@@ -206,8 +206,8 @@ func (d *Data) GetSize(v dvid.VersionID, label uint64) (uint64, error) {
 	}
 
 	// Get the start/end keys for the label.
-	firstKey := NewLabelSizeIndex(label, 0)
-	lastKey := NewLabelSizeIndex(label, math.MaxUint64)
+	firstKey := NewLabelSizeTKey(label, 0)
+	lastKey := NewLabelSizeTKey(label, math.MaxUint64)
 
 	// Grab all keys for this range in one sequential read.
 	ctx := datastore.NewVersionedContext(d, v)
@@ -222,7 +222,7 @@ func (d *Data) GetSize(v dvid.VersionID, label uint64) (uint64, error) {
 	if len(keys) > 1 {
 		return 0, fmt.Errorf("found %d sizes for label %d!", len(keys), label)
 	}
-	_, size, err := DecodeLabelSizeKey(keys[0])
+	_, size, err := DecodeLabelSizeTKey(keys[0])
 	return size, err
 }
 
@@ -235,14 +235,14 @@ func (d *Data) GetSizeRange(v dvid.VersionID, minSize, maxSize uint64) (string, 
 	}
 
 	// Get the start/end keys for the size range.
-	firstKey := NewSizeLabelIndex(minSize, 0)
+	firstKey := NewSizeLabelTKey(minSize, 0)
 	var upperBound uint64
 	if maxSize != 0 {
 		upperBound = maxSize
 	} else {
 		upperBound = math.MaxUint64
 	}
-	lastKey := NewSizeLabelIndex(upperBound, math.MaxUint64)
+	lastKey := NewSizeLabelTKey(upperBound, math.MaxUint64)
 
 	// Grab all keys for this range in one sequential read.
 	ctx := datastore.NewVersionedContext(d, v)
@@ -254,7 +254,7 @@ func (d *Data) GetSizeRange(v dvid.VersionID, minSize, maxSize uint64) (string, 
 	// Convert them to a JSON compatible structure.
 	labels := make([]uint64, len(keys))
 	for i, key := range keys {
-		labels[i], _, err = DecodeSizeLabelKey(key)
+		labels[i], _, err = DecodeSizeLabelTKey(key)
 		if err != nil {
 			return "{}", err
 		}

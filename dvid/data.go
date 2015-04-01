@@ -28,7 +28,7 @@ const (
 )
 
 // Bytes returns a sequence of bytes encoding this LocalID.  Binary representation
-// will be big-endian to make integers lexigraphically
+// will be big-endian to make integers lexigraphically ordered.
 func (id LocalID) Bytes() []byte {
 	buf := make([]byte, LocalIDSize, LocalIDSize)
 	binary.BigEndian.PutUint16(buf, uint16(id))

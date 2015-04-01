@@ -15,8 +15,7 @@ import (
 // Context allows encapsulation of data that defines the partitioning of the DVID
 // key space.  To prevent conflicting implementations, Context is an opaque interface type
 // that requires use of an implementation from the storage package, either directly or
-// through embedding.  The storage engines should accept a nil Context, which allows
-// direct saving of a raw key without use of a ConstructKey() transformation.
+// through embedding.
 //
 // For a description of Go language opaque types, see the following:
 //   http://www.onebigfluke.com/2014/04/gos-power-is-in-emergent-behavior.html
@@ -25,13 +24,12 @@ type Context interface {
 	// If not versioned, the version is the root ID.
 	VersionID() dvid.VersionID
 
-	// ConstructKey takes an index, a type-specific slice of bytes, and generates a
+	// ConstructKey takes a type-specific key component, and generates a
 	// namespaced key that fits with the DVID-wide key space partitioning.
-	ConstructKey(index []byte) []byte
+	ConstructKey(TKey) Key
 
-	// IndexFromKey returns an index, the type-specific component of the key, from
-	// an entire storage key.
-	IndexFromKey(key []byte) (index []byte, err error)
+	// TKeyFromKey returns the type-specific component of the key.
+	TKeyFromKey(Key) (TKey, error)
 
 	// String prints a description of the Context
 	String() string
@@ -52,21 +50,21 @@ type Context interface {
 type VersionedContext interface {
 	Context
 
-	// TombstoneKey takes an index and returns a type-specific slice of bytes that
+	// TombstoneKey takes a type-specific key component and returns a key that
 	// signals a deletion of any ancestor values.
-	TombstoneKey(index []byte) []byte
+	TombstoneKey(TKey) Key
 
-	// IsTombstoneKey is true if the given storage key (not index) is a tombstone key.
-	IsTombstoneKey(key []byte) bool
+	// IsTombstoneKey is true if the given storage key is a tombstone key.
+	IsTombstoneKey(Key) bool
 
 	// GetIterator returns an iterator up a version DAG.
 	GetIterator() (VersionIterator, error)
 
-	// Returns lower bound key for versions of given byte slice index.
-	MinVersionKey(index []byte) (key []byte, err error)
+	// Returns lower bound key for versions.
+	MinVersionKey(TKey) (Key, error)
 
-	// Returns upper bound key for versions of given byte slice index.
-	MaxVersionKey(index []byte) (key []byte, err error)
+	// Returns upper bound key for versions.
+	MaxVersionKey(TKey) (Key, error)
 
 	// VersionedKeyValue returns the key-value pair corresponding to this key's version
 	// given a list of key-value pairs across many versions.  If no suitable key-value
@@ -108,15 +106,15 @@ func (ctx MetadataContext) VersionID() dvid.VersionID {
 	return 1 // Only one version of Metadata
 }
 
-func (ctx MetadataContext) ConstructKey(index []byte) []byte {
-	return append([]byte{metadataKeyPrefix}, index...)
+func (ctx MetadataContext) ConstructKey(tk TKey) Key {
+	return Key(append([]byte{metadataKeyPrefix}, tk...))
 }
 
-func (ctx MetadataContext) IndexFromKey(key []byte) ([]byte, error) {
+func (ctx MetadataContext) TKeyFromKey(key Key) (TKey, error) {
 	if key[0] != metadataKeyPrefix {
 		return nil, fmt.Errorf("Cannot extract MetadataContext index from different key")
 	}
-	return key[1:], nil
+	return TKey(key[1:]), nil
 }
 
 var metadataMutex sync.Mutex
@@ -133,21 +131,8 @@ func (ctx MetadataContext) Versioned() bool {
 	return false
 }
 
-// DataContextKeyRange returns the minimum and maximum key for data with a given local
-// instance id.  Note that the returned keys are not type-specific indices but full DVID
-// keys to be used with nil storage.Context.
-func DataContextKeyRange(id dvid.InstanceID) (minKey, maxKey []byte) {
-	minKey = make([]byte, 1+dvid.InstanceIDSize)
-	maxKey = make([]byte, 1+dvid.InstanceIDSize)
-	minKey[0] = dataKeyPrefix
-	maxKey[0] = dataKeyPrefix
-	copy(minKey[1:], id.Bytes())
-	copy(maxKey[1:], (id + 1).Bytes())
-	return minKey, maxKey
-}
-
 // KeyToLocalIDs parses a key under a DataContext and returns instance, version and client ids.
-func KeyToLocalIDs(k []byte) (dvid.InstanceID, dvid.VersionID, dvid.ClientID, error) {
+func DataKeyToLocalIDs(k Key) (dvid.InstanceID, dvid.VersionID, dvid.ClientID, error) {
 	if k[0] != dataKeyPrefix {
 		return 0, 0, 0, fmt.Errorf("Cannot extract local IDs from a non-DataContext key")
 	}
@@ -159,9 +144,9 @@ func KeyToLocalIDs(k []byte) (dvid.InstanceID, dvid.VersionID, dvid.ClientID, er
 	return instanceID, versionID, clientID, nil
 }
 
-func UpdateDataContextKey(k []byte, instance dvid.InstanceID, version dvid.VersionID, client dvid.ClientID) error {
+func UpdateDataKey(k Key, instance dvid.InstanceID, version dvid.VersionID, client dvid.ClientID) error {
 	if k[0] != dataKeyPrefix {
-		return fmt.Errorf("Cannot update non-DataContext key")
+		return fmt.Errorf("Cannot update non-DataContext key: %v", k)
 	}
 	copy(k[1:1+dvid.InstanceIDSize], instance.Bytes())
 	start := len(k) - dvid.VersionIDSize - dvid.ClientIDSize - 1
@@ -207,23 +192,23 @@ const (
 	byteTombstone = 0x4F
 )
 
-func (ctx *DataContext) ConstructKey(index []byte) []byte {
+func (ctx *DataContext) ConstructKey(tk TKey) Key {
 	key := append([]byte{dataKeyPrefix}, ctx.data.InstanceID().Bytes()...)
-	key = append(key, index...)
+	key = append(key, tk...)
 	key = append(key, ctx.version.Bytes()...)
 	key = append(key, ctx.client.Bytes()...)
-	return append(key, byteData)
+	return Key(append(key, byteData))
 }
 
-func (ctx *DataContext) TombstoneKey(index []byte) []byte {
+func (ctx *DataContext) TombstoneKey(tk TKey) Key {
 	key := append([]byte{dataKeyPrefix}, ctx.data.InstanceID().Bytes()...)
-	key = append(key, index...)
+	key = append(key, tk...)
 	key = append(key, ctx.version.Bytes()...)
 	key = append(key, ctx.client.Bytes()...)
-	return append(key, byteTombstone)
+	return Key(append(key, byteTombstone))
 }
 
-func (ctx *DataContext) IsTombstoneKey(key []byte) bool {
+func (ctx *DataContext) IsTombstoneKey(key Key) bool {
 	sz := len(key)
 	if sz == 0 {
 		return false
@@ -239,19 +224,19 @@ func (ctx *DataContext) IsTombstoneKey(key []byte) bool {
 	return false
 }
 
-func (ctx *DataContext) IndexFromKey(key []byte) ([]byte, error) {
+func (ctx *DataContext) TKeyFromKey(key Key) (TKey, error) {
 	if key == nil {
-		return nil, fmt.Errorf("Cannot extract DataContext index from nil key")
+		return nil, fmt.Errorf("Cannot extract DataContext type-specific key component from nil key")
 	}
 	if key[0] != dataKeyPrefix {
-		return nil, fmt.Errorf("Cannot extract DataContext index from different key")
+		return nil, fmt.Errorf("Cannot extract DataContext type-specific key component from key type %v", key[0])
 	}
 	start := 1 + dvid.InstanceIDSize
 	end := len(key) - dvid.VersionIDSize - dvid.ClientIDSize - 1 // substract version, client, and tombstone
-	return key[start:end], nil
+	return TKey(key[start:end]), nil
 }
 
-func (ctx *DataContext) VersionFromKey(key []byte) (dvid.VersionID, error) {
+func (ctx *DataContext) VersionFromKey(key Key) (dvid.VersionID, error) {
 	if key == nil {
 		return 0, fmt.Errorf("Cannot extract DataContext version from nil key")
 	}
@@ -262,7 +247,7 @@ func (ctx *DataContext) VersionFromKey(key []byte) (dvid.VersionID, error) {
 	return dvid.VersionIDFromBytes(key[start : start+dvid.VersionIDSize]), nil
 }
 
-func (ctx *DataContext) ClientFromKey(key []byte) (dvid.ClientID, error) {
+func (ctx *DataContext) ClientFromKey(key Key) (dvid.ClientID, error) {
 	if key == nil {
 		return 0, fmt.Errorf("Cannot extract DataContext client from nil key")
 	}
@@ -307,18 +292,18 @@ func (ctx *DataContext) String() string {
 // ----- partial storage.VersionedContext implementation
 
 // Returns lower bound key for versions of given byte slice key representation.
-func (ctx *DataContext) MinVersionKey(index []byte) ([]byte, error) {
+func (ctx *DataContext) MinVersionKey(tk TKey) (Key, error) {
 	key := append([]byte{dataKeyPrefix}, ctx.data.InstanceID().Bytes()...)
-	key = append(key, index...)
+	key = append(key, tk...)
 	key = append(key, dvid.VersionID(0).Bytes()...)
 	key = append(key, dvid.ClientID(0).Bytes()...)
 	return append(key, 0), nil
 }
 
 // Returns upper bound key for versions of given byte slice key representation.
-func (ctx *DataContext) MaxVersionKey(index []byte) ([]byte, error) {
+func (ctx *DataContext) MaxVersionKey(tk TKey) (Key, error) {
 	key := append([]byte{dataKeyPrefix}, ctx.data.InstanceID().Bytes()...)
-	key = append(key, index...)
+	key = append(key, tk...)
 	key = append(key, dvid.VersionID(dvid.MaxVersionID).Bytes()...)
 	key = append(key, dvid.ClientID(dvid.MaxClientID).Bytes()...)
 	return append(key, 0xFF), nil

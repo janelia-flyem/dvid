@@ -10,7 +10,6 @@ import (
 	"encoding/gob"
 	"encoding/json"
 	"errors"
-	"fmt"
 
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
@@ -154,67 +153,11 @@ type Repo interface {
 
 // ---- Key space handling for metadata
 
-type keyType byte
-
 const (
-	repoToUUIDKey keyType = iota
+	keyUnknown storage.TKeyClass = iota
+	repoToUUIDKey
 	versionToUUIDKey
 	newIDsKey
 	repoKey
-	formatKey // Stores MetadataVersion
+	formatKey
 )
-
-// NetadataVersion is the version of the metadata so we can add new metadata
-// without breaking db.
-const MetadataVersion uint64 = 1
-
-func (t keyType) String() string {
-	switch t {
-	case repoToUUIDKey:
-		return "repo to UUID map"
-	case versionToUUIDKey:
-		return "version to UUID map"
-	case newIDsKey:
-		return "next new local ids"
-	case repoKey:
-		return "repository metadata"
-	default:
-		return fmt.Sprintf("unknown metadata key: %v", t)
-	}
-}
-
-type metadataIndex struct {
-	t      keyType
-	repoID dvid.RepoID // Only used for repoKey
-}
-
-func (i *metadataIndex) Duplicate() dvid.Index {
-	dup := *i
-	return &dup
-}
-
-func (i *metadataIndex) String() string {
-	return fmt.Sprintf("Metadata key type %d, repo ID %d", i.t, i.repoID)
-}
-
-func (i *metadataIndex) Bytes() []byte {
-	return append([]byte{byte(i.t)}, i.repoID.Bytes()...)
-}
-
-func (i *metadataIndex) Scheme() string {
-	return "Metadata Index"
-}
-
-func (i *metadataIndex) IndexFromBytes(b []byte) error {
-	if len(b) == 0 {
-		return fmt.Errorf("Cannot parse index of zero-length slice of bytes")
-	}
-	i.t = keyType(b[0])
-	if i.t == repoKey {
-		if len(b) != 1+dvid.RepoIDSize {
-			return fmt.Errorf("Bad index for repo: length %d", len(b))
-		}
-		i.repoID = dvid.RepoIDFromBytes(b[1 : 1+dvid.RepoIDSize])
-	}
-	return nil
-}

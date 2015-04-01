@@ -129,20 +129,12 @@ DEL  <api URL>/node/<UUID>/<data name>/key/<key>
     key           An alphanumeric key.
 `
 
-var (
-	minKey, maxKey string
-)
-
 func init() {
 	datastore.Register(NewType())
 
 	// Need to register types that will be used to fulfill interfaces.
 	gob.Register(&Type{})
 	gob.Register(&Data{})
-
-	// Create min and max key
-	minKey = string([]byte{0})
-	maxKey = string([]byte{0xFF})
 }
 
 // Type embeds the datastore's Type to create a unique type for keyvalue functions.
@@ -226,11 +218,11 @@ func (d *Data) GetKeysInRange(ctx storage.Context, keyBeg, keyEnd string) ([]str
 	}
 
 	// Compute first and last key for range
-	first, err := NewIndex(keyBeg)
+	first, err := NewTKey(keyBeg)
 	if err != nil {
 		return nil, err
 	}
-	last, err := NewIndex(keyEnd)
+	last, err := NewTKey(keyEnd)
 	if err != nil {
 		return nil, err
 	}
@@ -240,7 +232,7 @@ func (d *Data) GetKeysInRange(ctx storage.Context, keyBeg, keyEnd string) ([]str
 	}
 	keyList := []string{}
 	for _, key := range keys {
-		keyStr, err := DecodeKey(key)
+		keyStr, err := DecodeTKey(key)
 		if err != nil {
 			return nil, err
 		}
@@ -256,21 +248,15 @@ func (d *Data) GetKeys(ctx storage.Context) ([]string, error) {
 	}
 
 	// Compute first and last key for range
-	first, err := newIndex(minKey)
-	if err != nil {
-		return nil, err
-	}
-	last, err := newIndex(maxKey)
-	if err != nil {
-		return nil, err
-	}
+	first := storage.MinTKey(keyStandard)
+	last := storage.MaxTKey(keyStandard)
 	keys, err := db.KeysInRange(ctx, first, last)
 	if err != nil {
 		return nil, err
 	}
 	keyList := []string{}
 	for _, key := range keys {
-		keyStr, err := DecodeKey(key)
+		keyStr, err := DecodeTKey(key)
 		if err != nil {
 			return nil, err
 		}
@@ -285,11 +271,11 @@ func (d *Data) GetData(ctx storage.Context, keyStr string) ([]byte, bool, error)
 	if err != nil {
 		return nil, false, err
 	}
-	idx, err := NewIndex(keyStr)
+	tk, err := NewTKey(keyStr)
 	if err != nil {
 		return nil, false, err
 	}
-	data, err := db.Get(ctx, idx)
+	data, err := db.Get(ctx, tk)
 	if err != nil {
 		return nil, false, fmt.Errorf("Error in retrieving key '%s': %s", keyStr, err.Error())
 	}
@@ -314,11 +300,11 @@ func (d *Data) PutData(ctx storage.Context, keyStr string, value []byte) error {
 	if err != nil {
 		return fmt.Errorf("Unable to serialize data: %s\n", err.Error())
 	}
-	idx, err := NewIndex(keyStr)
+	tk, err := NewTKey(keyStr)
 	if err != nil {
 		return err
 	}
-	return db.Put(ctx, idx, serialization)
+	return db.Put(ctx, tk, serialization)
 }
 
 // DeleteData deletes a key-value pair
@@ -327,11 +313,11 @@ func (d *Data) DeleteData(ctx storage.Context, keyStr string) error {
 	if err != nil {
 		return err
 	}
-	idx, err := NewIndex(keyStr)
+	tk, err := NewTKey(keyStr)
 	if err != nil {
 		return err
 	}
-	return db.Delete(ctx, idx)
+	return db.Delete(ctx, tk)
 }
 
 // put handles a PUT command-line request.

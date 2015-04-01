@@ -144,7 +144,7 @@ func (d *Data) SyncOnNodeLock(uuid dvid.UUID) {
 
 		// Process the labels chunks for this Z
 		chunkOp := &storage.ChunkOp{op, wg}
-		err = bigdata.ProcessRange(ctx, begIndex, endIndex, chunkOp, storage.ChunkProcessor(d.CreateChunkRLEs))
+		err = bigdata.ProcessRange(ctx, begIndex, endIndex, chunkOp, storage.ChunkFunc(d.CreateChunkRLEs))
 		wg.Wait()
 
 		layerLog.Debugf("Processed all %q blocks for layer %d/%d", d.DataName(), z-minIndexZ+1, maxIndexZ-minIndexZ+1)
@@ -181,7 +181,7 @@ func (d *Data) SyncOnNodeLock(uuid dvid.UUID) {
 		}
 	}()
 
-	var f storage.ChunkProcessor = func(chunk *storage.Chunk) error {
+	var f storage.ChunkFunc = func(chunk *storage.Chunk) error {
 		// Get label associated with this sparse volume.
 		indexBytes, err := ctx.IndexFromKey(chunk.K)
 		if err != nil {
@@ -259,7 +259,7 @@ func (d *Data) denormFunc(versionID dvid.VersionID, mods imageblk.BlockChannel) 
 	wg.Add(1)
 	go ComputeSurface(ctx, d, surfaceCh, wg)
 
-	var f storage.ChunkProcessor = func(chunk *storage.Chunk) error {
+	var f storage.ChunkFunc = func(chunk *storage.Chunk) error {
 		// Get label associated with this sparse volume.
 		indexBytes, err := ctx.IndexFromKey(chunk.K)
 		if err != nil {

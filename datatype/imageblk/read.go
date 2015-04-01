@@ -21,19 +21,10 @@ type ROI struct {
 
 // ComputeTransform determines the block coordinate and beginning + ending voxel points
 // for the data corresponding to the given Block.
-func (v *Voxels) ComputeTransform(block *storage.KeyValue, blockSize dvid.Point) (blockBeg, dataBeg, dataEnd dvid.Point, err error) {
-	ptIndex := v.NewChunkIndex()
-
-	var indexBytes []byte
-	ctx := &storage.DataContext{}
-	indexBytes, err = ctx.IndexFromKey(block.K)
+func (v *Voxels) ComputeTransform(block *storage.TKeyValue, blockSize dvid.Point) (blockBeg, dataBeg, dataEnd dvid.Point, err error) {
+	var ptIndex *dvid.IndexZYX
+	ptIndex, err = DecodeTKey(block.K)
 	if err != nil {
-		return
-	}
-	if indexBytes[0] != byte(keyImageBlock) {
-		err = fmt.Errorf("Block key (%v) has non-VoxelBlock index", block.K)
-	}
-	if err = ptIndex.IndexFromBytes(indexBytes[1:]); err != nil {
 		return
 	}
 
@@ -60,14 +51,14 @@ func (v *Voxels) ComputeTransform(block *storage.KeyValue, blockSize dvid.Point)
 }
 
 // ReadBlock reads the possibly intersecting block data into the receiver Voxels.
-func (v *Voxels) ReadBlock(block *storage.KeyValue, blockSize dvid.Point, attenuation uint8) error {
+func (v *Voxels) ReadBlock(block *storage.TKeyValue, blockSize dvid.Point, attenuation uint8) error {
 	if attenuation != 0 {
 		return v.readScaledBlock(block, blockSize, attenuation)
 	}
 	return v.readBlock(block, blockSize)
 }
 
-func (v *Voxels) readScaledBlock(block *storage.KeyValue, blockSize dvid.Point, attenuation uint8) error {
+func (v *Voxels) readScaledBlock(block *storage.TKeyValue, blockSize dvid.Point, attenuation uint8) error {
 	if blockSize.NumDims() > 3 {
 		return fmt.Errorf("DVID voxel blocks currently only supports up to 3d, not 4+ dimensions")
 	}
@@ -158,7 +149,7 @@ func (v *Voxels) readScaledBlock(block *storage.KeyValue, blockSize dvid.Point, 
 	return nil
 }
 
-func (v *Voxels) readBlock(block *storage.KeyValue, blockSize dvid.Point) error {
+func (v *Voxels) readBlock(block *storage.TKeyValue, blockSize dvid.Point) error {
 	if blockSize.NumDims() > 3 {
 		return fmt.Errorf("DVID voxel blocks currently only supports up to 3d, not 4+ dimensions")
 	}
@@ -306,9 +297,9 @@ type getOperation struct {
 
 // GetVoxels copies voxels from the storage engine to Voxels, a requested subvolume or 2d image.
 func (d *Data) GetVoxels(v dvid.VersionID, vox *Voxels, r *ROI) error {
-    timedLog := dvid.NewTimeLog()
-    defer timedLog.Infof("GetVoxels %s", vox)
-    
+	timedLog := dvid.NewTimeLog()
+	defer timedLog.Infof("GetVoxels %s", vox)
+
 	store, err := storage.BigDataStore()
 	if err != nil {
 		return fmt.Errorf("Data type imageblk had error initializing store: %s\n", err.Error())
@@ -326,8 +317,8 @@ func (d *Data) GetVoxels(v dvid.VersionID, vox *Voxels, r *ROI) error {
 		if err != nil {
 			return err
 		}
-		blockBeg := NewIndex(indexBeg)
-		blockEnd := NewIndex(indexEnd)
+		begTKey := NewTKey(indexBeg)
+		endTKey := NewTKey(indexEnd)
 
 		// Get set of blocks in ROI if ROI provided
 		var chunkOp *storage.ChunkOp
@@ -353,7 +344,7 @@ func (d *Data) GetVoxels(v dvid.VersionID, vox *Voxels, r *ROI) error {
 		}
 
 		// Send the entire range of key-value pairs to chunk processor
-		err = store.ProcessRange(ctx, blockBeg, blockEnd, chunkOp, storage.ChunkProcessor(d.ReadChunk))
+		err = store.ProcessRange(ctx, begTKey, endTKey, chunkOp, storage.ChunkFunc(d.ReadChunk))
 		if err != nil {
 			return fmt.Errorf("Unable to GET data %s: %s", ctx, err.Error())
 		}
@@ -367,8 +358,8 @@ func (d *Data) GetVoxels(v dvid.VersionID, vox *Voxels, r *ROI) error {
 
 // GetBlocks returns a slice of bytes corresponding to all the blocks along a span in X
 func (d *Data) GetBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int32) ([]byte, error) {
-    timedLog := dvid.NewTimeLog()
-    defer timedLog.Infof("GetBlocks %s, span %d", start, span)
+	timedLog := dvid.NewTimeLog()
+	defer timedLog.Infof("GetBlocks %s, span %d", start, span)
 
 	store, err := storage.BigDataStore()
 	if err != nil {
@@ -381,8 +372,8 @@ func (d *Data) GetBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int32) 
 	end := start
 	end[0] += int32(span - 1)
 	indexEnd := dvid.IndexZYX(end)
-	keyBeg := NewIndex(&indexBeg)
-	keyEnd := NewIndex(&indexEnd)
+	keyBeg := NewTKey(&indexBeg)
+	keyEnd := NewTKey(&indexEnd)
 
 	// Allocate one uncompressed-sized slice with background values.
 	blockBytes := int32(d.BlockSize().Prod()) * d.Values.BytesPerElement()
@@ -399,17 +390,17 @@ func (d *Data) GetBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int32) 
 	ctx := datastore.NewVersionedContext(d, v)
 
 	var wg sync.WaitGroup
-	err = store.ProcessRange(ctx, keyBeg, keyEnd, &storage.ChunkOp{}, storage.ChunkProcessor(func(c *storage.Chunk) error {
-		if c == nil || c.KeyValue == nil {
+	err = store.ProcessRange(ctx, keyBeg, keyEnd, &storage.ChunkOp{}, func(c *storage.Chunk) error {
+		if c == nil || c.TKeyValue == nil {
 			return nil
 		}
-		kv := c.KeyValue
+		kv := c.TKeyValue
 		if kv.V == nil {
 			return nil
 		}
 
 		// Determine which block this is.
-		indexZYX, err := DecodeKey(kv.K)
+		indexZYX, err := DecodeTKey(kv.K)
 		if err != nil {
 			return err
 		}
@@ -425,7 +416,7 @@ func (d *Data) GetBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int32) 
 		wg.Add(1)
 		go xferBlock(buf[i:j], c, &wg)
 		return nil
-	}))
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -436,7 +427,7 @@ func (d *Data) GetBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int32) 
 func xferBlock(buf []byte, chunk *storage.Chunk, wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	kv := chunk.KeyValue
+	kv := chunk.TKeyValue
 	uncompress := true
 	block, _, err := dvid.DeserializeData(kv.V, uncompress)
 	if err != nil {
@@ -451,7 +442,7 @@ func xferBlock(buf []byte, chunk *storage.Chunk, wg *sync.WaitGroup) {
 }
 
 // Loads blocks with old data if they exist.
-func (d *Data) loadOldBlocks(v dvid.VersionID, vox *Voxels, blocks storage.KeyValues) error {
+func (d *Data) loadOldBlocks(v dvid.VersionID, vox *Voxels, blocks storage.TKeyValues) error {
 	store, err := storage.BigDataStore()
 	if err != nil {
 		return fmt.Errorf("Data type imageblk had error initializing store: %s\n", err.Error())
@@ -460,7 +451,7 @@ func (d *Data) loadOldBlocks(v dvid.VersionID, vox *Voxels, blocks storage.KeyVa
 	ctx := datastore.NewVersionedContext(d, v)
 
 	// Create a map of old blocks indexed by the index
-	oldBlocks := map[string]([]byte){}
+	oldBlocks := map[dvid.IZYXString]([]byte){}
 
 	// Iterate through index space for this data using ZYX ordering.
 	blockSize := d.BlockSize()
@@ -470,16 +461,16 @@ func (d *Data) loadOldBlocks(v dvid.VersionID, vox *Voxels, blocks storage.KeyVa
 		if err != nil {
 			return err
 		}
-		begBytes := NewIndex(indexBeg)
-		endBytes := NewIndex(indexEnd)
+		begTKey := NewTKey(indexBeg)
+		endTKey := NewTKey(indexEnd)
 
 		// Get previous data.
-		keyvalues, err := store.GetRange(ctx, begBytes, endBytes)
+		keyvalues, err := store.GetRange(ctx, begTKey, endTKey)
 		if err != nil {
 			return err
 		}
 		for _, kv := range keyvalues {
-			indexBytes, err := ctx.IndexFromKey(kv.K)
+			indexZYX, err := DecodeTKey(kv.K)
 			if err != nil {
 				return err
 			}
@@ -487,7 +478,7 @@ func (d *Data) loadOldBlocks(v dvid.VersionID, vox *Voxels, blocks storage.KeyVa
 			if err != nil {
 				return fmt.Errorf("Unable to deserialize block, %s: %s", ctx, err.Error())
 			}
-			oldBlocks[string(indexBytes)] = block
+			oldBlocks[indexZYX.ToIZYXString()] = block
 		}
 
 		// Load previous data into blocks
@@ -499,9 +490,9 @@ func (d *Data) loadOldBlocks(v dvid.VersionID, vox *Voxels, blocks storage.KeyVa
 		for x := begX; x <= endX; x++ {
 			c[0] = x
 			curIndex := dvid.IndexZYX(c)
-			curIndexBytes := NewIndex(&curIndex)
-			blocks[blockNum].K = ctx.ConstructKey(curIndexBytes)
-			block, ok := oldBlocks[string(curIndexBytes)]
+			curTKey := NewTKey(&curIndex)
+			blocks[blockNum].K = curTKey
+			block, ok := oldBlocks[curIndex.ToIZYXString()]
 			if ok {
 				copy(blocks[blockNum].V, block)
 			}
@@ -549,7 +540,7 @@ func (d *Data) readChunk(chunk *storage.Chunk) {
 	// If there's an ROI, if outside ROI, use blank buffer or allow scaling via attenuation.
 	var zeroOut bool
 	var attenuation uint8
-	indexZYX, err := DecodeKey(chunk.K)
+	indexZYX, err := DecodeTKey(chunk.K)
 	if err != nil {
 		dvid.Errorf("Error processing voxel block: %s\n", err.Error())
 		return
@@ -579,7 +570,7 @@ func (d *Data) readChunk(chunk *storage.Chunk) {
 	}
 
 	// Perform the operation.
-	block := &storage.KeyValue{chunk.K, blockData}
+	block := &storage.TKeyValue{chunk.K, blockData}
 	if err = op.voxels.ReadBlock(block, d.BlockSize(), attenuation); err != nil {
 		dvid.Errorf("Unable to ReadFromBlock() in %q: %s\n", d.DataName(), err.Error())
 		return

@@ -1000,75 +1000,9 @@ type SendOp struct {
 	socket message.Socket
 }
 
-// Send transfers all key-value pairs pertinent to this data type as well as
-// the storage.DataStoreType for them.
-// TODO -- handle versioning of the ROI coming.  For not, only allow root version of ROI.
+// Stub for versioned sync to remote DVID.
 func (d *Data) Send(s message.Socket, roiname string, uuid dvid.UUID) error {
-	store, err := storage.BigDataStore()
-	if err != nil {
-		return fmt.Errorf("Data type imageblk had error initializing store: %s\n", err.Error())
-	}
-
-	server.SpawnGoroutineMutex.Lock()
-	defer server.SpawnGoroutineMutex.Unlock()
-
-	// Get the ROI
-	var roiIterator *roi.Iterator
-	if len(roiname) != 0 {
-		versionID, err := datastore.VersionFromUUID(uuid)
-		if err != nil {
-			return err
-		}
-		roiIterator, err = roi.NewIterator(dvid.InstanceName(roiname), versionID, d)
-		if err != nil {
-			return err
-		}
-	}
-
-	// Get the entire range of keys for this instance's voxel blocks
-	begIndex := NewIndex(d.Properties.Extents.MinIndex)
-	ctx := storage.NewDataContext(d, 0)
-	begKey := ctx.ConstructKey(begIndex)
-
-	endIndex := NewIndex(d.Properties.Extents.MaxIndex)
-	ctx = storage.NewDataContext(d, dvid.MaxVersionID)
-	endKey := ctx.ConstructKey(endIndex)
-
-	// Define the chunk processing
-	var blocksTotal, blocksSent int
-	var f storage.ChunkProcessor = func(chunk *storage.Chunk) error {
-		if chunk.KeyValue == nil {
-			return fmt.Errorf("Received nil keyvalue sending voxel chunks")
-		}
-		blocksTotal++
-		indexZYX, err := DecodeKey(chunk.K)
-		if err != nil {
-			return fmt.Errorf("Error in sending voxel block: %s", err.Error())
-		}
-		if roiIterator != nil && !roiIterator.InsideFast(*indexZYX) {
-			return nil
-		}
-		blocksSent++
-		if err := s.SendKeyValue("voxels", storage.BigData, chunk.KeyValue); err != nil {
-			return fmt.Errorf("Error sending voxel chunks through nanomsg socket: %s", err.Error())
-		}
-		return nil
-	}
-
-	// Send this instance's voxel blocks down the socket
-	chunkOp := &storage.ChunkOp{&SendOp{s}, nil}
-	err = store.ProcessRange(nil, begKey, endKey, chunkOp, f)
-	if err != nil {
-		return fmt.Errorf("Error in voxels %q range query: %s", d.DataName(), err.Error())
-	}
-
-	if roiIterator == nil {
-		dvid.Infof("Sent %d %s voxel blocks\n", blocksTotal, d.DataName())
-	} else {
-		dvid.Infof("Sent %d %s voxel blocks (out of %d total) within ROI %q\n",
-			blocksSent, d.DataName(), blocksTotal, roiname)
-	}
-	return nil
+	return fmt.Errorf("Versioned inter-DVID syncs not supported yet")
 }
 
 // ForegroundROI creates a new ROI by determining all non-background blocks.
@@ -1149,10 +1083,8 @@ func (d *Data) foregroundROI(v dvid.VersionID, dest *roi.Data, background dvid.P
 	var numBatches int
 	var span *dvid.Span
 	spans := []dvid.Span{}
-	minIndex := NewIndex(&dvid.MinIndexZYX)
-	maxIndex := NewIndex(&dvid.MaxIndexZYX)
 
-	var f storage.ChunkProcessor = func(chunk *storage.Chunk) error {
+	var f storage.ChunkFunc = func(chunk *storage.Chunk) error {
 		if chunk == nil || chunk.V == nil {
 			return nil
 		}
@@ -1176,7 +1108,7 @@ func (d *Data) foregroundROI(v dvid.VersionID, dest *roi.Data, background dvid.P
 			}
 		}
 		if foreground {
-			indexZYX, err := DecodeKey(chunk.K)
+			indexZYX, err := DecodeTKey(chunk.K)
 			if err != nil {
 				return fmt.Errorf("Error decoding voxel block key: %s\n", err.Error())
 			}
@@ -1203,7 +1135,11 @@ func (d *Data) foregroundROI(v dvid.VersionID, dest *roi.Data, background dvid.P
 		server.BlockOnInteractiveRequests("voxels [compute foreground ROI]")
 		return nil
 	}
-	err = store.ProcessRange(ctx, minIndex, maxIndex, &storage.ChunkOp{}, f)
+
+	minTKey := storage.MinTKey(keyImageBlock)
+	maxTKey := storage.MaxTKey(keyImageBlock)
+
+	err = store.ProcessRange(ctx, minTKey, maxTKey, &storage.ChunkOp{}, f)
 	if err != nil {
 		dvid.Errorf("Error in processing chunks in ROI: %s\n", err.Error())
 		return

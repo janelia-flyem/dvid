@@ -269,16 +269,19 @@ func (db *LevelDB) Close() {
 // ---- OrderedKeyValueGetter interface ------
 
 // Get returns a value given a key.
-func (db *LevelDB) Get(ctx storage.Context, k []byte) ([]byte, error) {
-	if ctx != nil && ctx.Versioned() {
+func (db *LevelDB) Get(ctx storage.Context, tk storage.TKey) ([]byte, error) {
+	if ctx == nil {
+		return nil, fmt.Errorf("Received nil context in Get()")
+	}
+	if ctx.Versioned() {
 		vctx, ok := ctx.(storage.VersionedContext)
 		if !ok {
-			return nil, fmt.Errorf("Bad Get(): context is versioned but doesn't fulfill storage.VersionedContext")
+			return nil, fmt.Errorf("Bad Get(): context is versioned but doesn't fulfill interface: %v", ctx)
 		}
 
 		// Get all versions of this key and return the most recent
 		// log.Printf("  basholeveldb versioned get of key %v\n", k)
-		values, err := db.getSingleKeyVersions(vctx, k)
+		values, err := db.getSingleKeyVersions(vctx, tk)
 		// log.Printf("            got back %v\n", values)
 		if err != nil {
 			return nil, err
@@ -290,7 +293,7 @@ func (db *LevelDB) Get(ctx storage.Context, k []byte) ([]byte, error) {
 		}
 		return nil, err
 	} else {
-		key := constructKey(ctx, k)
+		key := ctx.ConstructKey(tk)
 		dvid.StartCgo()
 		ro := db.options.ReadOptions
 		// log.Printf("  basholeveldb unversioned get of key %v\n", key)
@@ -348,13 +351,6 @@ func (db *LevelDB) getSingleKeyVersions(vctx storage.VersionedContext, k []byte)
 	}
 }
 
-func constructKey(ctx storage.Context, index []byte) []byte {
-	if ctx != nil {
-		return ctx.ConstructKey(index)
-	}
-	return index
-}
-
 type errorableKV struct {
 	*storage.KeyValue
 	error
@@ -376,7 +372,7 @@ func sendKV(vctx storage.VersionedContext, values []*storage.KeyValue, ch chan e
 }
 
 // versionedRange sends a range of key-value pairs for a particular version down a channel.
-func (db *LevelDB) versionedRange(vctx storage.VersionedContext, kStart, kEnd []byte, ch chan errorableKV, keysOnly bool) {
+func (db *LevelDB) versionedRange(vctx storage.VersionedContext, kStart, kEnd storage.TKey, ch chan errorableKV, keysOnly bool) {
 	dvid.StartCgo()
 	ro := levigo.NewReadOptions()
 	it := db.ldb.NewIterator(ro)
@@ -420,7 +416,7 @@ func (db *LevelDB) versionedRange(vctx storage.VersionedContext, kStart, kEnd []
 
 			// Did we pass all versions for last key read?
 			if bytes.Compare(itKey, maxVersionKey) > 0 {
-				indexBytes, err := vctx.IndexFromKey(itKey)
+				indexBytes, err := vctx.TKeyFromKey(itKey)
 				if err != nil {
 					ch <- errorableKV{nil, err}
 					return
@@ -458,7 +454,7 @@ func (db *LevelDB) versionedRange(vctx storage.VersionedContext, kStart, kEnd []
 }
 
 // unversionedRange sends a range of key-value pairs down a channel.
-func (db *LevelDB) unversionedRange(ctx storage.Context, kStart, kEnd []byte, ch chan errorableKV, keysOnly bool) {
+func (db *LevelDB) unversionedRange(ctx storage.Context, kStart, kEnd storage.TKey, ch chan errorableKV, keysOnly bool) {
 	dvid.StartCgo()
 	ro := levigo.NewReadOptions()
 	it := db.ldb.NewIterator(ro)
@@ -468,8 +464,8 @@ func (db *LevelDB) unversionedRange(ctx storage.Context, kStart, kEnd []byte, ch
 	}()
 
 	// Apply context if applicable
-	keyBeg := constructKey(ctx, kStart)
-	keyEnd := constructKey(ctx, kEnd)
+	keyBeg := ctx.ConstructKey(kStart)
+	keyEnd := ctx.ConstructKey(kEnd)
 
 	// fmt.Printf("unversionedRange():\n")
 	// fmt.Printf("    index beg: %v\n", kStart)
@@ -509,12 +505,15 @@ func (db *LevelDB) unversionedRange(ctx storage.Context, kStart, kEnd []byte, ch
 // KeysInRange returns a range of present keys spanning (kStart, kEnd).  Values
 // associated with the keys are not read.   If the keys are versioned, only keys
 // in the ancestor path of the current context's version will be returned.
-func (db *LevelDB) KeysInRange(ctx storage.Context, kStart, kEnd []byte) ([][]byte, error) {
+func (db *LevelDB) KeysInRange(ctx storage.Context, kStart, kEnd storage.TKey) ([]storage.TKey, error) {
+	if ctx == nil {
+		return nil, fmt.Errorf("Received nil context in KeysInRange()")
+	}
 	ch := make(chan errorableKV)
 
 	// Run the range query on a potentially versioned key in a goroutine.
 	go func() {
-		if ctx == nil || !ctx.Versioned() {
+		if !ctx.Versioned() {
 			db.unversionedRange(ctx, kStart, kEnd, ch, true)
 		} else {
 			db.versionedRange(ctx.(storage.VersionedContext), kStart, kEnd, ch, true)
@@ -522,7 +521,7 @@ func (db *LevelDB) KeysInRange(ctx storage.Context, kStart, kEnd []byte) ([][]by
 	}()
 
 	// Consume the keys.
-	values := [][]byte{}
+	values := []storage.TKey{}
 	for {
 		result := <-ch
 		if result.KeyValue == nil {
@@ -531,14 +530,21 @@ func (db *LevelDB) KeysInRange(ctx storage.Context, kStart, kEnd []byte) ([][]by
 		if result.error != nil {
 			return nil, result.error
 		}
-		values = append(values, result.KeyValue.K)
+		tk, err := ctx.TKeyFromKey(result.KeyValue.K)
+		if err != nil {
+			return nil, err
+		}
+		values = append(values, tk)
 	}
 }
 
 // GetRange returns a range of values spanning (kStart, kEnd) keys.  These key-value
 // pairs will be sorted in ascending key order.  If the keys are versioned, all key-value
 // pairs for the particular version will be returned.
-func (db *LevelDB) GetRange(ctx storage.Context, kStart, kEnd []byte) ([]*storage.KeyValue, error) {
+func (db *LevelDB) GetRange(ctx storage.Context, kStart, kEnd storage.TKey) ([]*storage.TKeyValue, error) {
+	if ctx == nil {
+		return nil, fmt.Errorf("Received nil context in GetRange()")
+	}
 	ch := make(chan errorableKV)
 
 	// Run the range query on a potentially versioned key in a goroutine.
@@ -551,7 +557,7 @@ func (db *LevelDB) GetRange(ctx storage.Context, kStart, kEnd []byte) ([]*storag
 	}()
 
 	// Consume the key-value pairs.
-	values := []*storage.KeyValue{}
+	values := []*storage.TKeyValue{}
 	for {
 		result := <-ch
 		if result.KeyValue == nil {
@@ -560,13 +566,21 @@ func (db *LevelDB) GetRange(ctx storage.Context, kStart, kEnd []byte) ([]*storag
 		if result.error != nil {
 			return nil, result.error
 		}
-		values = append(values, result.KeyValue)
+		tk, err := ctx.TKeyFromKey(result.KeyValue.K)
+		if err != nil {
+			return nil, err
+		}
+		tkv := storage.TKeyValue{tk, result.KeyValue.V}
+		values = append(values, &tkv)
 	}
 }
 
 // ProcessRange sends a range of key-value pairs to chunk handlers.  If the keys are versioned,
 // only key-value pairs for kStart's version will be transmitted.
-func (db *LevelDB) ProcessRange(ctx storage.Context, kStart, kEnd []byte, op *storage.ChunkOp, f storage.ChunkProcessor) error {
+func (db *LevelDB) ProcessRange(ctx storage.Context, kStart, kEnd storage.TKey, op *storage.ChunkOp, f storage.ChunkFunc) error {
+	if ctx == nil {
+		return fmt.Errorf("Received nil context in ProcessRange()")
+	}
 	ch := make(chan errorableKV)
 
 	// Run the range query on a potentially versioned key in a goroutine.
@@ -590,33 +604,80 @@ func (db *LevelDB) ProcessRange(ctx storage.Context, kStart, kEnd []byte, op *st
 		if op.Wg != nil {
 			op.Wg.Add(1)
 		}
-		chunk := &storage.Chunk{op, result.KeyValue}
+		tk, err := ctx.TKeyFromKey(result.KeyValue.K)
+		if err != nil {
+			return err
+		}
+		tkv := storage.TKeyValue{tk, result.KeyValue.V}
+		chunk := &storage.Chunk{op, &tkv}
 		if err := f(chunk); err != nil {
 			return err
 		}
 	}
 }
 
+// SendRange sends a range of full keys.  This is to be used for low-level data
+// retrieval like DVID-to-DVID communication and should not be used by data type
+// implementations if possible.  A nil is sent down the channel when the
+// range is complete.
+func (db *LevelDB) SendRange(kStart, kEnd storage.Key, keysOnly bool, out chan *storage.KeyValue) error {
+	dvid.StartCgo()
+	ro := levigo.NewReadOptions()
+	it := db.ldb.NewIterator(ro)
+	defer func() {
+		it.Close()
+		dvid.StopCgo()
+	}()
+
+	var itValue []byte
+	it.Seek(kStart)
+	for {
+		if it.Valid() {
+			if !keysOnly {
+				itValue = it.Value()
+				storage.StoreValueBytesRead <- len(itValue)
+			}
+			itKey := it.Key()
+			storage.StoreKeyBytesRead <- len(itKey)
+			// Did we pass the final key?
+			if bytes.Compare(itKey, kEnd) > 0 {
+				break
+			}
+			kv := storage.KeyValue{itKey, itValue}
+			out <- &kv
+			it.Next()
+		} else {
+			break
+		}
+	}
+	out <- nil
+	if err := it.GetError(); err != nil {
+		return err
+	}
+	return nil
+}
+
 // ---- KeyValueSetter interface ------
 
 // Put writes a value with given key.
-func (db *LevelDB) Put(ctx storage.Context, k, v []byte) error {
+func (db *LevelDB) Put(ctx storage.Context, tk storage.TKey, v []byte) error {
+	if ctx == nil {
+		return fmt.Errorf("Received nil context in Put()")
+	}
 	dvid.StartCgo()
 	wo := db.options.WriteOptions
 
-	var key []byte
 	var err error
 
-	if ctx == nil || !ctx.Versioned() {
-		key = constructKey(ctx, k)
+	key := ctx.ConstructKey(tk)
+	if !ctx.Versioned() {
 		err = db.ldb.Put(wo, key, v)
 	} else {
 		vctx, ok := ctx.(storage.VersionedContext)
 		if !ok {
 			return fmt.Errorf("Non-versioned context that says it's versioned received in Put(): %v", ctx)
 		}
-		key = vctx.ConstructKey(k)
-		tombstoneKey := vctx.TombstoneKey(k)
+		tombstoneKey := vctx.TombstoneKey(tk)
 		batch := db.NewBatch(vctx).(*goBatch)
 		batch.WriteBatch.Delete(tombstoneKey)
 		batch.WriteBatch.Put(key, v)
@@ -633,26 +694,28 @@ func (db *LevelDB) Put(ctx storage.Context, k, v []byte) error {
 }
 
 // Delete removes a value with given key.
-func (db *LevelDB) Delete(ctx storage.Context, k []byte) error {
+func (db *LevelDB) Delete(ctx storage.Context, tk storage.TKey) error {
+	if ctx == nil {
+		return fmt.Errorf("Received nil context in Delete()")
+	}
 	dvid.StartCgo()
 	wo := db.options.WriteOptions
 
 	var err error
-	if ctx == nil || !ctx.Versioned() {
-		key := constructKey(ctx, k)
+	key := ctx.ConstructKey(tk)
+	if !ctx.Versioned() {
 		err = db.ldb.Delete(wo, key)
 	} else {
 		vctx, ok := ctx.(storage.VersionedContext)
 		if !ok {
 			return fmt.Errorf("Non-versioned context that says it's versioned received in Delete(): %v", ctx)
 		}
-		key := vctx.ConstructKey(k)
-		tombstoneKey := vctx.TombstoneKey(k)
+		tombstoneKey := vctx.TombstoneKey(tk)
 		batch := db.NewBatch(vctx).(*goBatch)
 		batch.WriteBatch.Delete(key)
 		batch.WriteBatch.Put(tombstoneKey, dvid.EmptyValue())
 		if err = batch.Commit(); err != nil {
-			err = fmt.Errorf("Error on PUT: %s\n", err.Error())
+			err = fmt.Errorf("Error on Delete: %s\n", err.Error())
 		}
 	}
 
@@ -662,9 +725,12 @@ func (db *LevelDB) Delete(ctx storage.Context, k []byte) error {
 
 // ---- OrderedKeyValueSetter interface ------
 
-// PutRange puts key-value pairs that have been sorted in sequential key order.
+// PutRange puts type key-value pairs that have been sorted in sequential key order.
 // Current implementation in levigo driver simply does a batch write.
-func (db *LevelDB) PutRange(ctx storage.Context, values []storage.KeyValue) error {
+func (db *LevelDB) PutRange(ctx storage.Context, kvs []storage.TKeyValue) error {
+	if ctx == nil {
+		return fmt.Errorf("Received nil context in PutRange()")
+	}
 	dvid.StartCgo()
 	wo := db.options.WriteOptions
 	wb := levigo.NewWriteBatch()
@@ -674,9 +740,9 @@ func (db *LevelDB) PutRange(ctx storage.Context, values []storage.KeyValue) erro
 	}()
 	var keyBytesPut, valueBytesPut int
 
-	if ctx == nil || !ctx.Versioned() {
-		for _, kv := range values {
-			key := constructKey(ctx, kv.K)
+	if !ctx.Versioned() {
+		for _, kv := range kvs {
+			key := ctx.ConstructKey(kv.K)
 			wb.Put(key, kv.V)
 			keyBytesPut += len(key)
 			valueBytesPut += len(kv.V)
@@ -690,7 +756,7 @@ func (db *LevelDB) PutRange(ctx storage.Context, values []storage.KeyValue) erro
 		if !ok {
 			return fmt.Errorf("Non-versioned context that says it's versioned received in PutRange(): %v", ctx)
 		}
-		for _, kv := range values {
+		for _, kv := range kvs {
 			key := vctx.ConstructKey(kv.K)
 			tombstoneKey := vctx.TombstoneKey(kv.K)
 			wb.Delete(tombstoneKey)
@@ -710,7 +776,11 @@ func (db *LevelDB) PutRange(ctx storage.Context, values []storage.KeyValue) erro
 }
 
 // DeleteRange removes all key-value pairs with keys in the given range.
-func (db *LevelDB) DeleteRange(ctx storage.Context, kStart, kEnd []byte) error {
+func (db *LevelDB) DeleteRange(ctx storage.Context, kStart, kEnd storage.TKey) error {
+	if ctx == nil {
+		return fmt.Errorf("Received nil context in DeleteRange()")
+	}
+
 	// For leveldb, we just iterate over keys in range and delete each one using batch.
 	const BATCH_SIZE = 10000
 	batch := db.NewBatch(ctx).(*goBatch)
@@ -741,19 +811,19 @@ func (db *LevelDB) DeleteRange(ctx storage.Context, kStart, kEnd []byte) error {
 		// The key coming down channel is not index but full key, so no need to construct key using context.
 		// If versioned, write a tombstone using current version id since we don't want to delete locked ancestors.
 		// If unversioned, just delete.
-		if ctx == nil || !ctx.Versioned() {
+		if !ctx.Versioned() {
 			batch.WriteBatch.Delete(result.KeyValue.K)
 		} else {
 			vctx, ok := ctx.(storage.VersionedContext)
 			if !ok {
 				return fmt.Errorf("Non-versioned context that says it's versioned received in DeleteRange(): %v", ctx)
 			}
-			idx, err := vctx.IndexFromKey(result.KeyValue.K)
+			tk, err := vctx.TKeyFromKey(result.KeyValue.K)
 			if err != nil {
 				return err
 			}
-			key := vctx.ConstructKey(idx)
-			tombstone := vctx.TombstoneKey(idx) // This will now have current version
+			key := vctx.ConstructKey(tk)
+			tombstone := vctx.TombstoneKey(tk) // This will now have current version
 			batch.WriteBatch.Delete(key)
 			batch.WriteBatch.Put(tombstone, dvid.EmptyValue())
 		}
@@ -776,6 +846,83 @@ func (db *LevelDB) DeleteRange(ctx storage.Context, kStart, kEnd []byte) error {
 	return nil
 }
 
+// DeleteAll deletes all key-value associated with a context (data instance and version).
+func (db *LevelDB) DeleteAll(ctx storage.Context, allVersions bool) error {
+	if ctx == nil {
+		return fmt.Errorf("Received nil context in Delete()")
+	}
+	dvid.StartCgo()
+
+	// Don't have to worry about tombstones.  Delete all keys from all versions for this instance id.
+	minTKey := storage.MinTKey(storage.TKeyMinClass)
+	maxTKey := storage.MaxTKey(storage.TKeyMaxClass)
+	vctx, ok := ctx.(storage.VersionedContext)
+	if !ok {
+		return fmt.Errorf("Non-versioned context passed to DELETE ALL VERSIONS in basholeveldb driver: %v", ctx)
+	}
+	minKey, err := vctx.MinVersionKey(minTKey)
+	if err != nil {
+		return err
+	}
+	maxKey, err := vctx.MaxVersionKey(maxTKey)
+	if err != nil {
+		return err
+	}
+
+	const BATCH_SIZE = 10000
+	batch := db.NewBatch(ctx).(*goBatch)
+
+	ro := levigo.NewReadOptions()
+	it := db.ldb.NewIterator(ro)
+	defer func() {
+		it.Close()
+		dvid.StopCgo()
+	}()
+
+	numKV := 0
+	it.Seek(minKey)
+	deleteVersion := ctx.VersionID()
+	for {
+		if it.Valid() {
+			itKey := it.Key()
+			storage.StoreKeyBytesRead <- len(itKey)
+			// Did we pass the final key?
+			if bytes.Compare(itKey, maxKey) > 0 {
+				break
+			}
+			if !allVersions {
+				_, v, _, err := storage.DataKeyToLocalIDs(itKey)
+				if err != nil {
+					return fmt.Errorf("Error on DELETE ALL for version %d: %s", ctx.VersionID(), err.Error())
+				}
+				if v != deleteVersion {
+					it.Next()
+					continue
+				}
+			}
+			batch.WriteBatch.Delete(itKey)
+			if (numKV+1)%BATCH_SIZE == 0 {
+				if err := batch.Commit(); err != nil {
+					return fmt.Errorf("Error on DELETE ALL at key-value pair %d: %s", numKV, err.Error())
+				}
+				batch = db.NewBatch(ctx).(*goBatch)
+			}
+			numKV++
+
+			it.Next()
+		} else {
+			break
+		}
+	}
+	if numKV%BATCH_SIZE != 0 {
+		if err := batch.Commit(); err != nil {
+			return fmt.Errorf("Error on last batch DELETE: %s\n", err.Error())
+		}
+	}
+	dvid.Debugf("Deleted %d key-value pairs via DELETE ALL for %s.\n", numKV, ctx)
+	return nil
+}
+
 // --- Batcher interface ----
 
 type goBatch struct {
@@ -788,7 +935,10 @@ type goBatch struct {
 
 // NewBatch returns an implementation that allows batch writes
 func (db *LevelDB) NewBatch(ctx storage.Context) storage.Batch {
-	//fmt.Printf("  NewBatch with ctx %v\n", ctx)
+	if ctx == nil {
+		dvid.Criticalf("Received nil context in NewBatch()")
+		return nil
+	}
 	dvid.StartCgo()
 	defer dvid.StopCgo()
 
@@ -803,30 +953,33 @@ func (db *LevelDB) NewBatch(ctx storage.Context) storage.Batch {
 
 // --- Batch interface ---
 
-func (batch *goBatch) Delete(k []byte) {
+func (batch *goBatch) Delete(tk storage.TKey) {
+	if batch == nil || batch.ctx == nil {
+		dvid.Criticalf("Received nil batch or nil batch context in Delete()\n")
+		return
+	}
 	dvid.StartCgo()
 	defer dvid.StopCgo()
-	if batch.ctx == nil || batch.vctx == nil {
-		key := constructKey(batch.ctx, k)
-		batch.WriteBatch.Delete(key)
-	} else {
-		key := batch.vctx.ConstructKey(k)
-		tombstone := batch.vctx.TombstoneKey(k) // This will now have current version
-		batch.WriteBatch.Delete(key)
+
+	key := batch.ctx.ConstructKey(tk)
+	if batch.vctx != nil {
+		tombstone := batch.vctx.TombstoneKey(tk) // This will now have current version
 		batch.WriteBatch.Put(tombstone, dvid.EmptyValue())
 	}
+	batch.WriteBatch.Delete(key)
 }
 
-func (batch *goBatch) Put(k, v []byte) {
+func (batch *goBatch) Put(tk storage.TKey, v []byte) {
+	if batch == nil || batch.ctx == nil {
+		dvid.Criticalf("Received nil batch or nil batch context in Delete()\n")
+		return
+	}
 	dvid.StartCgo()
 	defer dvid.StopCgo()
 
-	var key []byte
-	if batch.ctx == nil || batch.vctx == nil {
-		key = constructKey(batch.ctx, k)
-	} else {
-		key = batch.vctx.ConstructKey(k)
-		tombstone := batch.vctx.TombstoneKey(k) // This will now have current version
+	key := batch.ctx.ConstructKey(tk)
+	if batch.vctx != nil {
+		tombstone := batch.vctx.TombstoneKey(tk) // This will now have current version
 		batch.WriteBatch.Delete(tombstone)
 	}
 	batch.WriteBatch.Put(key, v)
@@ -839,6 +992,7 @@ func (batch *goBatch) Put(k, v []byte) {
 func (batch *goBatch) Commit() error {
 	dvid.StartCgo()
 	defer dvid.StopCgo()
+
 	err := batch.ldb.Write(batch.wo, batch.WriteBatch)
 	batch.WriteBatch.Close()
 	return err

@@ -1,6 +1,5 @@
 /*
-	This file defines datatype-specific components of keys that provide an index into
-	the key-value pairs associated with a data instance.
+	This file defines index types that can be used as datatype-specific components of keys (TKey).
 */
 
 package dvid
@@ -28,10 +27,9 @@ func init() {
 	gob.Register(&IndexCZYX{})
 }
 
-// Index is the datatype-specific (usually spatiotemporal) key that allows
-// partitioning of the data.  In the case of voxels, this could be an IndexZYX
-// implementation that uses a 3d coordinate packed into a slice of bytes.  For
-// the keyvalue datatype, the index is simply a string.
+// Index provides partioning of the data, typically in spatiotemporal ways.
+// In the case of voxels, this could be an IndexZYX implementation that uses a
+// 3d coordinate packed into a slice of bytes.  It can be used to fill a TKey.
 type Index interface {
 	// Duplicate returns a duplicate Index
 	Duplicate() Index

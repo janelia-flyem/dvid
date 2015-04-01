@@ -27,14 +27,6 @@ const RPCHelpMessage = `Commands executed on the server (rpc address = %s):
 
 	repo <UUID> new <datatype name> <data name> <datatype-specific config>...
 
-	repo <UUID> push <remote DVID address> <settings...>
-
-		where <settings> are optional "key=value" strings that provide:
-
-		roi=<roiname>
-
-		data=<data1>[,<data2>[,<data3>...]]
-
 	node <UUID> <data name> <type-specific commands>
 
 For further information, use a web browser to visit the server for this

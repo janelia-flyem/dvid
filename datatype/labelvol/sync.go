@@ -127,13 +127,13 @@ func (d *Data) handleBlockEvent(in <-chan datastore.SyncMessage, done <-chan str
 				batch := batcher.NewBatch(ctx)
 				blockStr := block.Index.ToIZYXString()
 				for label, rles := range labelRLEs {
-					index := NewIndex(label, blockStr)
+					tk := NewTKey(label, blockStr)
 					rleBytes, err := rles.MarshalBinary()
 					if err != nil {
 						dvid.Errorf("Bad encoding labelvol keys for label %d: %s\n", label, err.Error())
 						continue
 					}
-					batch.Put(index, rleBytes)
+					batch.Put(tk, rleBytes)
 				}
 				// compare-and-set MaxLabel and batch commit
 				d.casMaxLabel(batch, msg.Version, maxLabel)

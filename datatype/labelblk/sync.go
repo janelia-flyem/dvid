@@ -184,8 +184,8 @@ func (d *Data) mergeBlock(in <-chan mergeOp) {
 	blockBytes := int(d.BlockSize().Prod() * 8)
 
 	for op := range in {
-		k := NewIndexByCoord(op.izyx)
-		data, err := store.Get(op.ctx, k)
+		tk := NewTKeyByCoord(op.izyx)
+		data, err := store.Get(op.ctx, tk)
 		if err != nil {
 			dvid.Errorf("Error on GET of labelblk with coord string %q\n", op.izyx)
 			op.wg.Done()
@@ -224,8 +224,8 @@ func (d *Data) mergeBlock(in <-chan mergeOp) {
 			op.wg.Done()
 			continue
 		}
-		if err := store.Put(op.ctx, k, serialization); err != nil {
-			dvid.Errorf("Error in putting key %v: %s\n", k, err.Error())
+		if err := store.Put(op.ctx, tk, serialization); err != nil {
+			dvid.Errorf("Error in putting key %v: %s\n", tk, err.Error())
 		}
 		op.wg.Done()
 	}
@@ -293,8 +293,8 @@ func (d *Data) splitBlock(in <-chan splitOp) {
 		batch := batcher.NewBatch(&op.ctx)
 		for _, zyxStr := range op.SortedBlocks {
 			// Read the block.
-			idx := NewIndexByCoord(zyxStr)
-			data, err := store.Get(&op.ctx, idx)
+			tk := NewTKeyByCoord(zyxStr)
+			data, err := store.Get(&op.ctx, tk)
 			if err != nil {
 				dvid.Errorf("Error on GET of labelblk with coord string %v\n", []byte(zyxStr))
 				continue
@@ -330,7 +330,7 @@ func (d *Data) splitBlock(in <-chan splitOp) {
 				dvid.Criticalf("Unable to serialize block in %q: %s\n", d.DataName(), err.Error())
 				continue
 			}
-			batch.Put(idx, serialization)
+			batch.Put(tk, serialization)
 		}
 		if err := batch.Commit(); err != nil {
 			dvid.Errorf("Batch PUT during %q block split of %d: %s\n", d.DataName(), op.OldLabel, err.Error())

@@ -380,6 +380,7 @@ func (img *Image) Deserialize(b []byte) error {
 	return img.UnmarshalBinary(data)
 }
 
+// DataPtr returns a slice of bytes corresponding to the value at point (x,y) in image.
 func (img *Image) DataPtr(x, y int32) ([]byte, error) {
 	if img == nil {
 		return nil, fmt.Errorf("Can't get DataPtr for nil dvid.Image")

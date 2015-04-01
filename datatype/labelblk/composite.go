@@ -87,9 +87,9 @@ func (d *Data) CreateComposite(request datastore.Request, reply *datastore.Respo
 	}
 	ctx := datastore.NewVersionedContext(d, versionID)
 	extents := d.Extents()
-	blockBeg := imageblk.NewIndex(extents.MinIndex)
-	blockEnd := imageblk.NewIndex(extents.MaxIndex)
-	err = store.ProcessRange(ctx, blockBeg, blockEnd, chunkOp, storage.ChunkProcessor(d.CreateCompositeChunk))
+	blockBeg := imageblk.NewTKey(extents.MinIndex)
+	blockEnd := imageblk.NewTKey(extents.MaxIndex)
+	err = store.ProcessRange(ctx, blockBeg, blockEnd, chunkOp, storage.ChunkFunc(d.CreateCompositeChunk))
 	wg.Wait()
 
 	// Set new mapped data to same extents.
@@ -129,12 +129,11 @@ func (d *Data) createCompositeChunk(chunk *storage.Chunk) {
 	op := chunk.Op.(*blockOp)
 
 	// Get the spatial index associated with this chunk.
-	zyx, err := imageblk.DecodeKey(chunk.K)
+	zyx, err := imageblk.DecodeTKey(chunk.K)
 	if err != nil {
 		dvid.Errorf("Error in %s.ChunkApplyMap(): %s", d.Data.DataName(), err.Error())
 		return
 	}
-	blockIndex := imageblk.NewIndex(zyx)
 
 	// Initialize the label buffers.  For voxels, this data needs to be uncompressed and deserialized.
 	curZMutex.Lock()
@@ -164,7 +163,7 @@ func (d *Data) createCompositeChunk(chunk *storage.Chunk) {
 		return
 	}
 	grayscaleCtx := datastore.NewVersionedContext(op.grayscale, op.versionID)
-	blockData, err := bigdata.Get(grayscaleCtx, blockIndex)
+	blockData, err := bigdata.Get(grayscaleCtx, chunk.K)
 	if err != nil {
 		dvid.Errorf("Error getting grayscale block for index %s\n", zyx)
 		return
@@ -198,7 +197,7 @@ func (d *Data) createCompositeChunk(chunk *storage.Chunk) {
 		return
 	}
 	compositeCtx := datastore.NewVersionedContext(op.composite, op.versionID)
-	err = bigdata.Put(compositeCtx, blockIndex, serialization)
+	err = bigdata.Put(compositeCtx, chunk.K, serialization)
 	if err != nil {
 		dvid.Errorf("Unable to PUT composite block %s: %s\n", zyx, err.Error())
 		return

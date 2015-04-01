@@ -94,9 +94,7 @@ $ dvid node <UUID> <data name> load <offset> <image glob> <settings...>
     Configuration Settings (case-insensitive keys)
 
     Proc          "noindex": prevents creation of denormalized data to speed up obtaining sparse 
-    				 volumes and size query responses using the loaded labels.  This is not necessary 
-    				 for data that will evaluated using labelmap data, e.g., Raveler superpixels,
-    				 and is automatically set if LabelType is "Raveler".
+    				 volumes and size query responses using the loaded labels.
 
 $ dvid node <UUID> <data name> composite <uint8 data name> <new rgba8 data name>
 
@@ -1031,11 +1029,10 @@ func (d *Data) GetLabelBytesAtPoint(v dvid.VersionID, pt dvid.Point) ([]byte, er
 	blockSize := d.BlockSize()
 	blockCoord := coord.Chunk(blockSize).(dvid.ChunkPoint3d)
 	index := dvid.IndexZYX(blockCoord)
-	blockIndex := NewIndex(&index)
 
 	// Retrieve the block of labels
 	ctx := datastore.NewVersionedContext(d, v)
-	serialization, err := store.Get(ctx, blockIndex)
+	serialization, err := store.Get(ctx, NewTKey(&index))
 	if err != nil {
 		return nil, fmt.Errorf("Error getting '%s' block for index %s\n", d.DataName(), blockCoord)
 	}

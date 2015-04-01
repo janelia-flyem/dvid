@@ -17,19 +17,10 @@ import (
 
 // ComputeTransform determines the block coordinate and beginning + ending voxel points
 // for the data corresponding to the given Block.
-func (v *Labels) ComputeTransform(block *storage.KeyValue, blockSize dvid.Point) (blockBeg, dataBeg, dataEnd dvid.Point, err error) {
-	ptIndex := v.NewChunkIndex()
-
-	var indexBytes []byte
-	ctx := &storage.DataContext{}
-	indexBytes, err = ctx.IndexFromKey(block.K)
+func (v *Labels) ComputeTransform(block *storage.TKeyValue, blockSize dvid.Point) (blockBeg, dataBeg, dataEnd dvid.Point, err error) {
+	var ptIndex *dvid.IndexZYX
+	ptIndex, err = DecodeTKey(block.K)
 	if err != nil {
-		return
-	}
-	if indexBytes[0] != byte(keyLabelBlock) {
-		err = fmt.Errorf("Block key (%v) has non-labelblk index", block.K)
-	}
-	if err = ptIndex.IndexFromBytes(indexBytes[1:]); err != nil {
 		return
 	}
 
@@ -99,8 +90,8 @@ func (d *Data) GetLabels(v dvid.VersionID, vox *Labels, r *imageblk.ROI) error {
 		if err != nil {
 			return err
 		}
-		blockBeg := NewIndex(indexBeg)
-		blockEnd := NewIndex(indexEnd)
+		begTKey := NewTKey(indexBeg)
+		endTKey := NewTKey(indexEnd)
 
 		// Get set of blocks in ROI if ROI provided
 		var chunkOp *storage.ChunkOp
@@ -126,7 +117,7 @@ func (d *Data) GetLabels(v dvid.VersionID, vox *Labels, r *imageblk.ROI) error {
 		}
 
 		// Send the entire range of key-value pairs to chunk processor
-		err = store.ProcessRange(ctx, blockBeg, blockEnd, chunkOp, storage.ChunkProcessor(d.ReadChunk))
+		err = store.ProcessRange(ctx, begTKey, endTKey, chunkOp, storage.ChunkFunc(d.ReadChunk))
 		if err != nil {
 			return fmt.Errorf("Unable to GET data %s: %s", ctx, err.Error())
 		}
@@ -149,15 +140,15 @@ func (d *Data) GetBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int) ([
 	end := start
 	end[0] += int32(span - 1)
 	indexEnd := dvid.IndexZYX(end)
-	voxelBlockBeg := NewIndex(&indexBeg)
-	voxelBlockEnd := NewIndex(&indexEnd)
+	begTKey := NewTKey(&indexBeg)
+	endTKey := NewTKey(&indexEnd)
 
 	ctx := datastore.NewVersionedContext(d, v)
 
 	iv := dvid.InstanceVersion{d.DataName(), v}
 	mapping := labels.MergeCache.LabelMap(iv)
 
-	keyvalues, err := store.GetRange(ctx, voxelBlockBeg, voxelBlockEnd)
+	keyvalues, err := store.GetRange(ctx, begTKey, endTKey)
 	if err != nil {
 		return nil, err
 	}
@@ -199,7 +190,7 @@ func (d *Data) GetBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int) ([
 
 // Loads blocks with old data if they exist.  Only used with ingestion so no need to worry
 // about mapping changes.
-func (d *Data) loadOldBlocks(v dvid.VersionID, vox *Labels, blocks storage.KeyValues) error {
+func (d *Data) loadOldBlocks(v dvid.VersionID, vox *Labels, blocks storage.TKeyValues) error {
 	store, err := storage.BigDataStore()
 	if err != nil {
 		return fmt.Errorf("Data type imageblk had error initializing store: %s\n", err.Error())
@@ -208,7 +199,7 @@ func (d *Data) loadOldBlocks(v dvid.VersionID, vox *Labels, blocks storage.KeyVa
 	ctx := datastore.NewVersionedContext(d, v)
 
 	// Create a map of old blocks indexed by the index
-	oldBlocks := map[string]([]byte){}
+	oldBlocks := map[dvid.IZYXString]([]byte){}
 
 	// Iterate through index space for this data using ZYX ordering.
 	blockSize := d.BlockSize()
@@ -218,16 +209,16 @@ func (d *Data) loadOldBlocks(v dvid.VersionID, vox *Labels, blocks storage.KeyVa
 		if err != nil {
 			return err
 		}
-		begBytes := NewIndex(indexBeg)
-		endBytes := NewIndex(indexEnd)
+		begTKey := NewTKey(indexBeg)
+		endTKey := NewTKey(indexEnd)
 
 		// Get previous data.
-		keyvalues, err := store.GetRange(ctx, begBytes, endBytes)
+		keyvalues, err := store.GetRange(ctx, begTKey, endTKey)
 		if err != nil {
 			return err
 		}
 		for _, kv := range keyvalues {
-			indexBytes, err := ctx.IndexFromKey(kv.K)
+			indexZYX, err := DecodeTKey(kv.K)
 			if err != nil {
 				return err
 			}
@@ -235,7 +226,7 @@ func (d *Data) loadOldBlocks(v dvid.VersionID, vox *Labels, blocks storage.KeyVa
 			if err != nil {
 				return fmt.Errorf("Unable to deserialize block, %s: %s", ctx, err.Error())
 			}
-			oldBlocks[string(indexBytes)] = block
+			oldBlocks[indexZYX.ToIZYXString()] = block
 		}
 
 		// Load previous data into blocks
@@ -247,9 +238,9 @@ func (d *Data) loadOldBlocks(v dvid.VersionID, vox *Labels, blocks storage.KeyVa
 		for x := begX; x <= endX; x++ {
 			c[0] = x
 			curIndex := dvid.IndexZYX(c)
-			curIndexBytes := NewIndex(&curIndex)
-			blocks[blockNum].K = ctx.ConstructKey(curIndexBytes)
-			block, ok := oldBlocks[string(curIndexBytes)]
+			curTKey := NewTKey(&curIndex)
+			blocks[blockNum].K = curTKey
+			block, ok := oldBlocks[curIndex.ToIZYXString()]
 			if ok {
 				copy(blocks[blockNum].V, block)
 			}
@@ -296,7 +287,7 @@ func (d *Data) readChunk(chunk *storage.Chunk) {
 
 	// If there's an ROI, if outside ROI, use blank buffer.
 	var zeroOut bool
-	indexZYX, err := DecodeKey(chunk.K)
+	indexZYX, err := DecodeTKey(chunk.K)
 	if err != nil {
 		dvid.Errorf("Error processing voxel block: %s\n", err.Error())
 		return
@@ -323,7 +314,7 @@ func (d *Data) readChunk(chunk *storage.Chunk) {
 	}
 
 	// Perform the operation.
-	block := &storage.KeyValue{chunk.K, blockData}
+	block := &storage.TKeyValue{chunk.K, blockData}
 	if op.mapping != nil {
 		err := op.voxels.readMappedBlock(block, d.BlockSize(), op.mapping)
 		if err != nil {
@@ -337,7 +328,7 @@ func (d *Data) readChunk(chunk *storage.Chunk) {
 	}
 }
 
-func (v *Labels) readMappedBlock(block *storage.KeyValue, blockSize dvid.Point, m *labels.Mapping) error {
+func (v *Labels) readMappedBlock(block *storage.TKeyValue, blockSize dvid.Point, m *labels.Mapping) error {
 	if blockSize.NumDims() > 3 {
 		return fmt.Errorf("DVID voxel blocks currently only supports up to 3d, not 4+ dimensions")
 	}
@@ -457,7 +448,7 @@ func (v *Labels) readMappedBlock(block *storage.KeyValue, blockSize dvid.Point, 
 	return nil
 }
 
-func (v *Labels) readBlock(block *storage.KeyValue, blockSize dvid.Point) error {
+func (v *Labels) readBlock(block *storage.TKeyValue, blockSize dvid.Point) error {
 	if blockSize.NumDims() > 3 {
 		return fmt.Errorf("DVID voxel blocks currently only supports up to 3d, not 4+ dimensions")
 	}

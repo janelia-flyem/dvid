@@ -13,11 +13,11 @@ import (
 )
 
 // WriteBlock writes a subvolume or 2d image into a possibly intersecting block.
-func (v *Voxels) WriteBlock(block *storage.KeyValue, blockSize dvid.Point) error {
+func (v *Voxels) WriteBlock(block *storage.TKeyValue, blockSize dvid.Point) error {
 	return v.writeBlock(block, blockSize)
 }
 
-func (v *Voxels) writeBlock(block *storage.KeyValue, blockSize dvid.Point) error {
+func (v *Voxels) writeBlock(block *storage.TKeyValue, blockSize dvid.Point) error {
 	if blockSize.NumDims() > 3 {
 		return fmt.Errorf("DVID voxel blocks currently only supports up to 3d, not 4+ dimensions")
 	}
@@ -123,7 +123,6 @@ func (d *Data) PutVoxels(v dvid.VersionID, vox *Voxels, roi *ROI) error {
 	}
 
 	wg := new(sync.WaitGroup)
-	ctx := datastore.NewVersionedContext(d, v)
 
 	// Only do one request at a time, although each request can start many goroutines.
 	server.SpawnGoroutineMutex.Lock()
@@ -174,8 +173,7 @@ func (d *Data) PutVoxels(v dvid.VersionID, vox *Voxels, roi *ROI) error {
 				continue
 			}
 
-			curIndexBytes := NewIndex(&curIndex)
-			kv := &storage.KeyValue{K: ctx.ConstructKey(curIndexBytes)}
+			kv := &storage.TKeyValue{K: NewTKey(&curIndex)}
 			putOp := &putOperation{vox, curIndex, v}
 			op := &storage.ChunkOp{putOp, wg}
 			d.PutChunk(&storage.Chunk{op, kv})
@@ -227,13 +225,12 @@ func (d *Data) PutBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int, da
 			return fmt.Errorf("Expected %d bytes in block read, got %d instead!  Aborting.", numBlockBytes, readBytes)
 		}
 
-		zyx := dvid.IndexZYX(chunkPt)
-		blockIndex := NewIndex(&zyx)
 		serialization, err := dvid.SerializeData(buf, d.Compression(), d.Checksum())
 		if err != nil {
 			return err
 		}
-		batch.Put(blockIndex, serialization)
+		zyx := dvid.IndexZYX(chunkPt)
+		batch.Put(NewTKey(&zyx), serialization)
 
 		// Notify any subscribers that you've changed block.
 		evt := datastore.SyncEvent{d.DataName(), ChangeBlockEvent}
@@ -309,7 +306,7 @@ func (d *Data) putChunk(chunk *storage.Chunk) {
 	}
 
 	// Perform the operation.
-	block := &storage.KeyValue{K: chunk.K, V: blockData}
+	block := &storage.TKeyValue{K: chunk.K, V: blockData}
 	if err = op.voxels.WriteBlock(block, d.BlockSize()); err != nil {
 		dvid.Errorf("Unable to WriteBlock() in %q: %s\n", d.DataName(), err.Error())
 		return
@@ -325,7 +322,8 @@ func (d *Data) putChunk(chunk *storage.Chunk) {
 		dvid.Errorf("Data type imageblk had error initializing store: %s\n", err.Error())
 		return
 	}
-	if err := store.Put(nil, chunk.K, serialization); err != nil {
+	ctx := datastore.NewVersionedContext(d, op.version)
+	if err := store.Put(ctx, chunk.K, serialization); err != nil {
 		dvid.Errorf("Unable to PUT voxel data for key %v: %s\n", chunk.K, err.Error())
 		return
 	}
@@ -340,7 +338,7 @@ func (d *Data) putChunk(chunk *storage.Chunk) {
 
 // Writes a XY image into the blocks that intersect it.  This function assumes the
 // blocks have been allocated and if necessary, filled with old data.
-func (d *Data) writeXYImage(v dvid.VersionID, vox *Voxels, b storage.KeyValues) (extentChanged bool, err error) {
+func (d *Data) writeXYImage(v dvid.VersionID, vox *Voxels, b storage.TKeyValues) (extentChanged bool, err error) {
 
 	// Setup concurrency in image -> block transfers.
 	var wg sync.WaitGroup
@@ -349,7 +347,6 @@ func (d *Data) writeXYImage(v dvid.VersionID, vox *Voxels, b storage.KeyValues) 
 	}()
 
 	// Iterate through index space for this data using ZYX ordering.
-	ctx := datastore.NewVersionedContext(d, v)
 	blockSize := d.BlockSize()
 	var startingBlock int32
 
@@ -378,8 +375,7 @@ func (d *Data) writeXYImage(v dvid.VersionID, vox *Voxels, b storage.KeyValues) 
 			for x := begX; x <= endX; x++ {
 				c[0] = x
 				curIndex := dvid.IndexZYX(c)
-				curIndexBytes := NewIndex(&curIndex)
-				b[blockNum].K = ctx.ConstructKey(curIndexBytes)
+				b[blockNum].K = NewTKey(&curIndex)
 
 				// Write this slice data into the block.
 				vox.WriteBlock(&(b[blockNum]), blockSize)
@@ -399,7 +395,7 @@ const KVWriteSize = 500
 
 // TODO -- Clean up all the writing and simplify now that we have block-aligned writes.
 // writeBlocks persists blocks of voxel data asynchronously using batch writes.
-func (d *Data) writeBlocks(v dvid.VersionID, b storage.KeyValues, wg1, wg2 *sync.WaitGroup) error {
+func (d *Data) writeBlocks(v dvid.VersionID, b storage.TKeyValues, wg1, wg2 *sync.WaitGroup) error {
 	store, err := storage.BigDataStore()
 	if err != nil {
 		return fmt.Errorf("Data type imageblk had error initializing store: %s\n", err.Error())
@@ -411,6 +407,7 @@ func (d *Data) writeBlocks(v dvid.VersionID, b storage.KeyValues, wg1, wg2 *sync
 
 	preCompress, postCompress := 0, 0
 
+	ctx := datastore.NewVersionedContext(d, v)
 	evt := datastore.SyncEvent{d.DataName(), ChangeBlockEvent}
 
 	<-server.HandlerToken
@@ -422,7 +419,7 @@ func (d *Data) writeBlocks(v dvid.VersionID, b storage.KeyValues, wg1, wg2 *sync
 			server.HandlerToken <- 1
 		}()
 
-		batch := batcher.NewBatch(nil)
+		batch := batcher.NewBatch(ctx)
 		for i, block := range b {
 			serialization, err := dvid.SerializeData(block.V, d.Compression(), d.Checksum())
 			preCompress += len(block.V)
@@ -433,7 +430,7 @@ func (d *Data) writeBlocks(v dvid.VersionID, b storage.KeyValues, wg1, wg2 *sync
 			}
 			batch.Put(block.K, serialization)
 
-			indexZYX, err := DecodeKey(block.K)
+			indexZYX, err := DecodeTKey(block.K)
 			if err != nil {
 				dvid.Errorf("Unable to recover index from block key: %v\n", block.K)
 				return
@@ -450,7 +447,7 @@ func (d *Data) writeBlocks(v dvid.VersionID, b storage.KeyValues, wg1, wg2 *sync
 					dvid.Errorf("Error on trying to write batch: %s\n", err.Error())
 					return
 				}
-				batch = batcher.NewBatch(nil)
+				batch = batcher.NewBatch(ctx)
 			}
 		}
 		if err := batch.Commit(); err != nil {
