@@ -902,12 +902,20 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 					}
 				case "lz4":
 					compressed := make([]byte, lz4.CompressBound(data))
-					if _, err = lz4.Compress(data, compressed); err != nil {
+					var n, outSize int
+					if outSize, err = lz4.Compress(data, compressed); err != nil {
 						server.BadRequest(w, r, err.Error())
 						return
 					}
-					if _, err = w.Write(compressed); err != nil {
+					compressed = compressed[:outSize]
+					if n, err = w.Write(compressed); err != nil {
 						server.BadRequest(w, r, err.Error())
+						return
+					}
+					if n != outSize {
+						errmsg := fmt.Sprintf("Only able to write %d of %d lz4 compressed bytes\n", n, outSize)
+						dvid.Errorf(errmsg)
+						server.BadRequest(w, r, errmsg)
 						return
 					}
 				case "gzip":
