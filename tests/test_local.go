@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/janelia-flyem/go/go-uuid/uuid"
+	"github.com/janelia-flyem/go/uuid"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -34,7 +34,7 @@ func UseStore() {
 	mu.Lock()
 	defer mu.Unlock()
 	if count == 0 {
-		dbpath = filepath.Join(os.TempDir(), fmt.Sprintf("dvid-test-%s", uuid.NewUUID()))
+		dbpath = filepath.Join(os.TempDir(), fmt.Sprintf("dvid-test-%s", uuid.NewV4()))
 		var err error
 		engine, err = local.CreateBlankStore(dbpath)
 		if err != nil {

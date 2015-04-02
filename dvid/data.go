@@ -8,7 +8,7 @@ import (
 	"encoding/binary"
 	"fmt"
 
-	"github.com/janelia-flyem/go/go-uuid/uuid"
+	"github.com/janelia-flyem/go/uuid"
 )
 
 // LocalID is a unique id for some data in a DVID instance.  This unique id is a much
@@ -64,11 +64,11 @@ type UUID string
 
 // NewUUID returns a UUID
 func NewUUID() UUID {
-	u := uuid.NewUUID()
-	if u == nil || len(u) != 16 {
+	u := uuid.NewV4()
+	if u == nil {
 		return UUID("")
 	}
-	return UUID(fmt.Sprintf("%032x", []byte(u)))
+	return UUID(fmt.Sprintf("%032x", u.Bytes()))
 }
 
 const NilUUID = UUID("")
