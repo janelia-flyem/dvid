@@ -110,6 +110,10 @@ type DAGManager interface {
 	GetIterator(dvid.VersionID) (storage.VersionIterator, error)
 }
 
+type Shutdowner interface {
+	Shutdown()
+}
+
 type Repo interface {
 	Describer
 	DAGManager

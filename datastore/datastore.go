@@ -25,6 +25,15 @@ var (
 
 // ---- Aliased package functions for Repo management.
 
+func Shutdown() {
+	if Manager != nil {
+		s, ok := Manager.(Shutdowner)
+		if ok {
+			s.Shutdown()
+		}
+	}
+}
+
 func NewInstanceID() (dvid.InstanceID, error) {
 	if Manager == nil {
 		return 0, fmt.Errorf("datastore not initialized")

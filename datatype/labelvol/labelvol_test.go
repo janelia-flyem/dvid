@@ -266,7 +266,7 @@ func TestSparseVolumes(t *testing.T) {
 
 	// TODO -- Remove this hack in favor of whatever will be the method
 	// for discerning denormalizations are not yet complete.
-	time.Sleep(10 * time.Second)
+	time.Sleep(5 * time.Second)
 
 	for _, label := range []uint64{1, 3, 4} {
 		// Get the coarse sparse volumes for each label and make sure they are correct.
@@ -318,7 +318,7 @@ func TestMergeLabels(t *testing.T) {
 
 	// TODO -- Remove this hack in favor of whatever will be the method
 	// for discerning denormalizations are not yet complete.
-	time.Sleep(10 * time.Second)
+	time.Sleep(5 * time.Second)
 
 	// Make sure max label is consistent
 	reqStr := fmt.Sprintf("%snode/%s/%s/maxlabel", server.WebAPIPath, uuid, "bodies")
@@ -390,7 +390,7 @@ func TestSplitLabel(t *testing.T) {
 
 	// TODO -- Remove this hack in favor of whatever will be the method
 	// for discerning denormalizations are not yet complete.
-	time.Sleep(10 * time.Second)
+	time.Sleep(5 * time.Second)
 
 	// Create the sparsevol encoding for body 4a
 	numspans := len(bodysplit.voxelSpans)
