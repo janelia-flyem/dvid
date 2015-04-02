@@ -17,38 +17,6 @@ import (
 	_ "github.com/janelia-flyem/dvid/datatype/roi"
 )
 
-type tuple [4]int
-
-var labelsROI = []tuple{
-	tuple{3, 3, 2, 4}, tuple{3, 4, 2, 3}, tuple{3, 5, 3, 3},
-	tuple{4, 3, 2, 5}, tuple{4, 4, 3, 4}, tuple{4, 5, 2, 4},
-	//tuple{5, 2, 3, 4}, tuple{5, 3, 3, 3}, tuple{5, 4, 2, 3}, tuple{5, 5, 2, 2},
-}
-
-func labelsJSON() string {
-	b, err := json.Marshal(labelsROI)
-	if err != nil {
-		return ""
-	}
-	return string(b)
-}
-
-func inroi(x, y, z int) bool {
-	for _, span := range labelsROI {
-		if span[0] != z {
-			continue
-		}
-		if span[1] != y {
-			continue
-		}
-		if span[2] > x || span[3] < x {
-			continue
-		}
-		return true
-	}
-	return false
-}
-
 type labelVol struct {
 	size      dvid.Point3d
 	blockSize dvid.Point3d

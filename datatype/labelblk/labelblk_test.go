@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -12,7 +13,6 @@ import (
 	"testing"
 
 	"github.com/janelia-flyem/dvid/datastore"
-	"github.com/janelia-flyem/dvid/datatype/imageblk"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/tests"
@@ -204,26 +204,62 @@ func TestLabelblkRepoPersistence(t *testing.T) {
 	}
 }
 
+type tuple [4]int32
+
+var labelsROI = []tuple{
+	tuple{3, 3, 2, 4}, tuple{3, 4, 2, 3}, tuple{3, 5, 3, 3},
+	tuple{4, 3, 2, 5}, tuple{4, 4, 3, 4}, tuple{4, 5, 2, 4},
+	//tuple{5, 2, 3, 4}, tuple{5, 3, 3, 3}, tuple{5, 4, 2, 3}, tuple{5, 5, 2, 2},
+}
+
+func labelsJSON() string {
+	b, err := json.Marshal(labelsROI)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+func inroi(x, y, z int32) bool {
+	for _, span := range labelsROI {
+		if span[0] != z {
+			continue
+		}
+		if span[1] != y {
+			continue
+		}
+		if span[2] > x || span[3] < x {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
 type labelVol struct {
-	size      dvid.Point3d
-	blockSize dvid.Point3d
-	offset    dvid.Point3d
-	name      string
-	data      []byte
+	size       dvid.Point3d
+	blockSize  dvid.Point3d
+	offset     dvid.Point3d
+	startLabel uint64
+	name       string
+	data       []byte
 }
 
 // Create a new label volume and post it to the test datastore.
 // Each voxel in volume has sequential labels in X, Y, then Z order.
-func (vol *labelVol) postLabelVolume(t *testing.T, uuid dvid.UUID, labelsName, compression string) {
-	vol.name = labelsName
-	server.CreateTestInstance(t, uuid, "labelblk", labelsName, dvid.Config{})
+func (vol *labelVol) postLabelVolume(t *testing.T, uuid dvid.UUID, labelsName, compression, roi string, startLabel uint64) {
+	vol.startLabel = startLabel
+	if vol.name == "" {
+		server.CreateTestInstance(t, uuid, "labelblk", labelsName, dvid.Config{})
+		vol.name = labelsName
+	}
 
 	nx := vol.size[0] * vol.blockSize[0]
 	ny := vol.size[1] * vol.blockSize[1]
 	nz := vol.size[2] * vol.blockSize[2]
 
 	vol.data = make([]byte, nx*ny*nz*8)
-	var label uint64
+	label := startLabel
 	var x, y, z, v int32
 	for z = 0; z < nz; z++ {
 		for y = 0; y < ny; y++ {
@@ -236,30 +272,47 @@ func (vol *labelVol) postLabelVolume(t *testing.T, uuid dvid.UUID, labelsName, c
 	}
 	apiStr := fmt.Sprintf("%snode/%s/%s/raw/0_1_2/%d_%d_%d/%d_%d_%d", server.WebAPIPath,
 		uuid, labelsName, nx, ny, nz, vol.offset[0], vol.offset[1], vol.offset[2])
+	query := true
 	switch compression {
 	case "lz4":
 		apiStr += "?compression=lz4"
 	case "gzip":
 		apiStr += "?compression=gzip"
 	default:
+		query = false
+	}
+	if roi != "" {
+		if query {
+			apiStr += "&roi=" + roi
+		} else {
+			apiStr += "?roi=" + roi
+		}
 	}
 	server.TestHTTP(t, "POST", apiStr, bytes.NewBuffer(vol.data))
 }
 
-func (vol labelVol) testGetLabelVolume(t *testing.T, uuid dvid.UUID, compression string) {
-
+func (vol labelVol) getLabelVolume(t *testing.T, uuid dvid.UUID, compression, roi string) []byte {
 	nx := vol.size[0] * vol.blockSize[0]
 	ny := vol.size[1] * vol.blockSize[1]
 	nz := vol.size[2] * vol.blockSize[2]
 
 	apiStr := fmt.Sprintf("%snode/%s/%s/raw/0_1_2/%d_%d_%d/%d_%d_%d", server.WebAPIPath,
 		uuid, vol.name, nx, ny, nz, vol.offset[0], vol.offset[1], vol.offset[2])
+	query := true
 	switch compression {
 	case "lz4":
 		apiStr += "?compression=lz4"
 	case "gzip":
 		apiStr += "?compression=gzip"
 	default:
+		query = false
+	}
+	if roi != "" {
+		if query {
+			apiStr += "&roi=" + roi
+		} else {
+			apiStr += "?roi=" + roi
+		}
 	}
 	data := server.TestHTTP(t, "GET", apiStr, nil)
 	switch compression {
@@ -288,9 +341,18 @@ func (vol labelVol) testGetLabelVolume(t *testing.T, uuid dvid.UUID, compression
 	if len(data) != int(nx*ny*nz*8) {
 		t.Errorf("Expected %d uncompressed bytes from 3d labelblk GET.  Got %d instead.", nx*ny*nz*8, len(data))
 	}
+	return data
+}
+
+func (vol labelVol) testGetLabelVolume(t *testing.T, uuid dvid.UUID, compression, roi string) []byte {
+	data := vol.getLabelVolume(t, uuid, compression, roi)
+
+	nx := vol.size[0] * vol.blockSize[0]
+	ny := vol.size[1] * vol.blockSize[1]
+	nz := vol.size[2] * vol.blockSize[2]
 
 	// run test to make sure it's same volume as we posted.
-	var label uint64
+	label := vol.startLabel
 	var x, y, z, v int32
 	for z = 0; z < nz; z++ {
 		for y = 0; y < ny; y++ {
@@ -298,13 +360,15 @@ func (vol labelVol) testGetLabelVolume(t *testing.T, uuid dvid.UUID, compression
 				label++
 				got := binary.LittleEndian.Uint64(data[v : v+8])
 				if label != got {
-					t.Errorf("Error on 3d GET compression (%q): expected %d, got %d\n", compression, label, got)
-					return
+					t.Fatalf("Error on 3d GET compression (%q): expected %d, got %d\n", compression, label, got)
+					return nil
 				}
 				v += 8
 			}
 		}
 	}
+
+	return data
 }
 
 // the label in the test volume should just be the voxel index + 1 when iterating in ZYX order.
@@ -413,7 +477,7 @@ func TestLabels(t *testing.T) {
 		blockSize: dvid.Point3d{32, 32, 32},
 		offset:    dvid.Point3d{32, 64, 96},
 	}
-	vol.postLabelVolume(t, uuid, "labels", "")
+	vol.postLabelVolume(t, uuid, "labels", "", "", 0)
 
 	// Verify XY slice.
 	sliceOffset := vol.offset
@@ -475,10 +539,10 @@ func TestLabels(t *testing.T) {
 	}
 	slice.testLabel(t, vol, img)
 
-	// Verify various GET 3d volume with compressions.
-	vol.testGetLabelVolume(t, uuid, "")
-	vol.testGetLabelVolume(t, uuid, "lz4")
-	vol.testGetLabelVolume(t, uuid, "gzip")
+	// Verify various GET 3d volume with compressions and no ROI.
+	vol.testGetLabelVolume(t, uuid, "", "")
+	vol.testGetLabelVolume(t, uuid, "lz4", "")
+	vol.testGetLabelVolume(t, uuid, "gzip", "")
 
 	// Create a new ROI instance.
 	roiName := "myroi"
@@ -488,54 +552,13 @@ func TestLabels(t *testing.T) {
 	apiStr = fmt.Sprintf("%snode/%s/%s/roi", server.WebAPIPath, uuid, roiName)
 	server.TestHTTP(t, "POST", apiStr, bytes.NewBufferString(labelsJSON()))
 
-	// Post updated labels without ROI.
-	p := make([]byte, 8*blocksz)
-	payload := new(bytes.Buffer)
-	label = 200000
-	for z := 0; z < nz*blocksz; z++ {
-		for y := 0; y < ny*blocksz; y++ {
-			for x := 0; x < nx; x++ {
-				label++
-				for i := 0; i < blocksz; i++ {
-					binary.LittleEndian.PutUint64(p[i*8:(i+1)*8], label)
-				}
-				n, err := payload.Write(p)
-				if n != 8*blocksz {
-					t.Fatalf("Could not write test data: %d bytes instead of %d\n", n, 8*blocksz)
-				}
-				if err != nil {
-					t.Fatalf("Could not write test data: %s\n", err.Error())
-				}
-			}
-		}
-	}
-	apiStr = fmt.Sprintf("%snode/%s/%s/raw/0_1_2/%d_%d_%d/32_64_96", server.WebAPIPath,
-		uuid, "labels", nx*blocksz, ny*blocksz, nz*blocksz)
-	server.TestHTTP(t, "POST", apiStr, payload)
-
-	// Verify 3d volume read returns modified data.
-	apiStr = fmt.Sprintf("%snode/%s/%s/raw/0_1_2/%d_%d_%d/32_64_96", server.WebAPIPath,
-		uuid, "labels", nx*blocksz, ny*blocksz, nz*blocksz)
-	xyz = server.TestHTTP(t, "GET", apiStr, nil)
-	if len(xyz) != 160*160*160*8 {
-		t.Errorf("Expected %d bytes from 3d labelblk GET.  Got %d instead.", 160*160*160*8, len(xyz))
-	}
-	label = 200000
-	j = 0
-	for z := 0; z < nz*blocksz; z++ {
-		for y := 0; y < ny*blocksz; y++ {
-			for x := 0; x < nx; x++ {
-				label++
-				for i := 0; i < blocksz; i++ {
-					gotlabel := binary.LittleEndian.Uint64(xyz[j : j+8])
-					if gotlabel != label {
-						t.Fatalf("Bad label %d instead of expected modified %d at (%d,%d,%d)\n",
-							gotlabel, label, x*blocksz+i, y, z)
-					}
-					j += 8
-				}
-			}
-		}
+	// Post updated labels without ROI and make sure it returns those values.
+	var labelNoROI uint64 = 20000
+	vol.postLabelVolume(t, uuid, "labels", "", "", labelNoROI)
+	returned := vol.testGetLabelVolume(t, uuid, "", "")
+	startLabel := binary.LittleEndian.Uint64(returned[0:8])
+	if startLabel != labelNoROI+1 {
+		t.Errorf("Expected first voxel to be label %d and got %d instead\n", labelNoROI+1, startLabel)
 	}
 
 	// TODO - Use the ROI to retrieve a 2d xy image.
@@ -543,111 +566,71 @@ func TestLabels(t *testing.T) {
 	// TODO - Make sure we aren't getting labels back in non-ROI points.
 
 	// Post again but now with ROI
-	payload = new(bytes.Buffer)
-	label = 400000
-	for z := 0; z < nz*blocksz; z++ {
-		for y := 0; y < ny*blocksz; y++ {
-			for x := 0; x < nx; x++ {
-				label++
-				for i := 0; i < blocksz; i++ {
-					binary.LittleEndian.PutUint64(p[i*8:(i+1)*8], label)
-				}
-				n, err := payload.Write(p)
-				if n != 8*blocksz {
-					t.Fatalf("Could not write test data: %d bytes instead of %d\n", n, 8*blocksz)
-				}
-				if err != nil {
-					t.Fatalf("Could not write test data: %s\n", err.Error())
-				}
-			}
-		}
-	}
-	apiStr = fmt.Sprintf("%snode/%s/%s/raw/0_1_2/%d_%d_%d/32_64_96?roi=%s", server.WebAPIPath,
-		uuid, "labels", nx*blocksz, ny*blocksz, nz*blocksz, roiName)
-	server.TestHTTP(t, "POST", apiStr, payload)
+	var labelWithROI uint64 = 40000
+	vol.postLabelVolume(t, uuid, "labels", "", roiName, labelWithROI)
 
-	// Verify ROI masking on GET.
-	apiStr = fmt.Sprintf("%snode/%s/%s/raw/0_1_2/%d_%d_%d/32_64_96?roi=%s", server.WebAPIPath,
-		uuid, "labels", nx*blocksz, ny*blocksz, nz*blocksz, roiName)
-	xyz2 := server.TestHTTP(t, "GET", apiStr, nil)
-	if len(xyz) != 160*160*160*8 {
-		t.Errorf("Expected %d bytes from 3d labelblk GET.  Got %d instead.", 160*160*160*8, len(xyz))
-	}
-	var newlabel uint64 = 400000
-	var oldlabel uint64 = 200000
-	j = 0
-	offsetx := 16
-	offsety := 48
-	offsetz := 70
-	for z := 0; z < nz*blocksz; z++ {
-		voxz := z + offsetz
-		blockz := voxz / int(imageblk.DefaultBlockSize)
-		for y := 0; y < ny*blocksz; y++ {
-			voxy := y + offsety
-			blocky := voxy / int(imageblk.DefaultBlockSize)
-			for x := 0; x < nx; x++ {
-				newlabel++
+	// Verify ROI masking of POST where anything outside ROI is old labels.
+	returned = vol.getLabelVolume(t, uuid, "", "")
+	var newlabel uint64 = labelWithROI
+	var oldlabel uint64 = labelNoROI
+
+	nx := vol.size[0] * vol.blockSize[0]
+	ny := vol.size[1] * vol.blockSize[1]
+	nz := vol.size[2] * vol.blockSize[2]
+	var x, y, z, v int32
+	for z = 0; z < nz; z++ {
+		voxz := z + vol.offset[2]
+		blockz := voxz / DefaultBlockSize
+		for y = 0; y < ny; y++ {
+			voxy := y + vol.offset[1]
+			blocky := voxy / DefaultBlockSize
+			for x = 0; x < nx; x++ {
+				voxx := x + vol.offset[0]
+				blockx := voxx / DefaultBlockSize
 				oldlabel++
-				voxx := x*blocksz + offsetx
-				for i := 0; i < blocksz; i++ {
-					blockx := voxx / int(imageblk.DefaultBlockSize)
-					gotlabel := binary.LittleEndian.Uint64(xyz2[j : j+8])
-					if inroi(blockx, blocky, blockz) {
-						if gotlabel != newlabel {
-							t.Fatalf("Got label %d instead of in-ROI label %d at (%d,%d,%d)\n",
-								gotlabel, newlabel, voxx, voxy, voxz)
-						}
-					} else {
-						if gotlabel != 0 {
-							t.Fatalf("Got label %d instead of 0 at (%d,%d,%d) outside ROI\n",
-								gotlabel, voxx, voxy, voxz)
-						}
+				newlabel++
+				got := binary.LittleEndian.Uint64(returned[v : v+8])
+				if inroi(blockx, blocky, blockz) {
+					if got != newlabel {
+						t.Fatalf("Expected %d in ROI, got %d\n", newlabel, got)
 					}
-					j += 8
-					voxx++
+				} else {
+					if got != oldlabel {
+						t.Fatalf("Expected %d outside ROI, got %d\n", oldlabel, got)
+					}
 				}
+				v += 8
 			}
 		}
 	}
 
-	// Verify everything in mask is new and everything out of mask is old, and everything in mask
-	// is new.
-	apiStr = fmt.Sprintf("%snode/%s/%s/raw/0_1_2/%d_%d_%d/32_64_96", server.WebAPIPath,
-		uuid, "labels", nx*blocksz, ny*blocksz, nz*blocksz)
-	xyz2 = server.TestHTTP(t, "GET", apiStr, nil)
-	if len(xyz) != 160*160*160*8 {
-		t.Errorf("Expected %d bytes from 3d labelblk GET.  Got %d instead.", 160*160*160*8, len(xyz))
-	}
-	newlabel = 400000
-	oldlabel = 200000
-	j = 0
-	for z := 0; z < nz*blocksz; z++ {
-		voxz := z + offsetz
-		blockz := voxz / int(imageblk.DefaultBlockSize)
-		for y := 0; y < ny*blocksz; y++ {
-			voxy := y + offsety
-			blocky := voxy / int(imageblk.DefaultBlockSize)
-			for x := 0; x < nx; x++ {
-				newlabel++
+	// Verify that a ROI-enabled GET has zeros everywhere outside ROI.
+	returned = vol.getLabelVolume(t, uuid, "", roiName)
+	newlabel = labelWithROI
+
+	x, y, z, v = 0, 0, 0, 0
+	for z = 0; z < nz; z++ {
+		voxz := z + vol.offset[2]
+		blockz := voxz / DefaultBlockSize
+		for y = 0; y < ny; y++ {
+			voxy := y + vol.offset[1]
+			blocky := voxy / DefaultBlockSize
+			for x = 0; x < nx; x++ {
+				voxx := x + vol.offset[0]
+				blockx := voxx / DefaultBlockSize
 				oldlabel++
-				voxx := x*blocksz + offsetx
-				for i := 0; i < blocksz; i++ {
-					blockx := voxx / int(imageblk.DefaultBlockSize)
-					gotlabel := binary.LittleEndian.Uint64(xyz2[j : j+8])
-					if inroi(blockx, blocky, blockz) {
-						if gotlabel != newlabel {
-							t.Fatalf("Got label %d instead of in-ROI label %d at (%d,%d,%d)\n",
-								gotlabel, newlabel, voxx, voxy, voxz)
-						}
-					} else {
-						if gotlabel != oldlabel {
-							t.Fatalf("Got label %d instead of label %d at (%d,%d,%d) outside ROI\n",
-								gotlabel, oldlabel, voxx, voxy, voxz)
-						}
+				newlabel++
+				got := binary.LittleEndian.Uint64(returned[v : v+8])
+				if inroi(blockx, blocky, blockz) {
+					if got != newlabel {
+						t.Fatalf("Expected %d in ROI, got %d\n", newlabel, got)
 					}
-					j += 8
-					voxx++
+				} else {
+					if got != 0 {
+						t.Fatalf("Expected zero outside ROI, got %d\n", got)
+					}
 				}
+				v += 8
 			}
 		}
 	}
