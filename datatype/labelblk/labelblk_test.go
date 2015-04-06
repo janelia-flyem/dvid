@@ -237,48 +237,81 @@ func inroi(x, y, z int32) bool {
 }
 
 type labelVol struct {
-	size       dvid.Point3d
-	blockSize  dvid.Point3d
-	offset     dvid.Point3d
+	size      dvid.Point3d
+	blockSize dvid.Point3d
+	offset    dvid.Point3d
+	name      string
+	data      []byte
+
+	nx, ny, nz int32
+
+	sync.RWMutex
 	startLabel uint64
-	name       string
-	data       []byte
 }
 
-// Create a new label volume and post it to the test datastore.
-// Each voxel in volume has sequential labels in X, Y, then Z order.
-func (vol *labelVol) postLabelVolume(t *testing.T, uuid dvid.UUID, labelsName, compression, roi string, startLabel uint64) {
-	vol.startLabel = startLabel
-	if vol.name == "" {
-		server.CreateTestInstance(t, uuid, "labelblk", labelsName, dvid.Config{})
-		vol.name = labelsName
+func (vol *labelVol) makeLabelVolume(t *testing.T, uuid dvid.UUID, startLabel uint64) {
+	if vol.startLabel == startLabel && vol.data != nil {
+		return
 	}
 
-	nx := vol.size[0] * vol.blockSize[0]
-	ny := vol.size[1] * vol.blockSize[1]
-	nz := vol.size[2] * vol.blockSize[2]
+	vol.startLabel = startLabel
 
-	vol.data = make([]byte, nx*ny*nz*8)
+	vol.nx = vol.size[0] * vol.blockSize[0]
+	vol.ny = vol.size[1] * vol.blockSize[1]
+	vol.nz = vol.size[2] * vol.blockSize[2]
+
+	vol.data = make([]byte, vol.numBytes())
 	label := startLabel
 	var x, y, z, v int32
-	for z = 0; z < nz; z++ {
-		for y = 0; y < ny; y++ {
-			for x = 0; x < nx; x++ {
+	for z = 0; z < vol.nz; z++ {
+		for y = 0; y < vol.ny; y++ {
+			for x = 0; x < vol.nx; x++ {
 				label++
 				binary.LittleEndian.PutUint64(vol.data[v:v+8], label)
 				v += 8
 			}
 		}
 	}
+	return
+}
+
+func (vol *labelVol) numBytes() int32 {
+	return vol.nx * vol.ny * vol.nz * 8
+}
+
+// Create a new label volume and post it to the test datastore.
+// Each voxel in volume has sequential labels in X, Y, then Z order.
+func (vol *labelVol) postLabelVolume(t *testing.T, uuid dvid.UUID, compression, roi string, startLabel uint64) {
+	vol.makeLabelVolume(t, uuid, startLabel)
+
 	apiStr := fmt.Sprintf("%snode/%s/%s/raw/0_1_2/%d_%d_%d/%d_%d_%d", server.WebAPIPath,
-		uuid, labelsName, nx, ny, nz, vol.offset[0], vol.offset[1], vol.offset[2])
+		uuid, vol.name, vol.nx, vol.ny, vol.nz, vol.offset[0], vol.offset[1], vol.offset[2])
 	query := true
+
+	var data []byte
+	var err error
 	switch compression {
 	case "lz4":
 		apiStr += "?compression=lz4"
+		compressed := make([]byte, lz4.CompressBound(vol.data))
+		var outSize int
+		if outSize, err = lz4.Compress(vol.data, compressed); err != nil {
+			t.Fatal(err.Error())
+		}
+		data = compressed[:outSize]
 	case "gzip":
 		apiStr += "?compression=gzip"
+		var buf bytes.Buffer
+		gw := gzip.NewWriter(&buf)
+		if _, err = gw.Write(vol.data); err != nil {
+			t.Fatal(err.Error())
+		}
+		data = buf.Bytes()
+		if err = gw.Close(); err != nil {
+			t.Fatal(err.Error())
+		}
 	default:
+		data = vol.data
 		query = false
 	}
 	if roi != "" {
@@ -288,16 +321,12 @@ func (vol *labelVol) postLabelVolume(t *testing.T, uuid dvid.UUID, labelsName, c
 			apiStr += "?roi=" + roi
 		}
 	}
-	server.TestHTTP(t, "POST", apiStr, bytes.NewBuffer(vol.data))
+	server.TestHTTP(t, "POST", apiStr, bytes.NewBuffer(data))
 }
 
 func (vol labelVol) getLabelVolume(t *testing.T, uuid dvid.UUID, compression, roi string) []byte {
-	nx := vol.size[0] * vol.blockSize[0]
-	ny := vol.size[1] * vol.blockSize[1]
-	nz := vol.size[2] * vol.blockSize[2]
-
 	apiStr := fmt.Sprintf("%snode/%s/%s/raw/0_1_2/%d_%d_%d/%d_%d_%d", server.WebAPIPath,
-		uuid, vol.name, nx, ny, nz, vol.offset[0], vol.offset[1], vol.offset[2])
+		uuid, vol.name, vol.nx, vol.ny, vol.nz, vol.offset[0], vol.offset[1], vol.offset[2])
 	query := true
 	switch compression {
 	case "lz4":
@@ -317,7 +346,7 @@ func (vol labelVol) getLabelVolume(t *testing.T, uuid dvid.UUID, compression, ro
 	data := server.TestHTTP(t, "GET", apiStr, nil)
 	switch compression {
 	case "lz4":
-		uncompressed := make([]byte, nx*ny*nz*8)
+		uncompressed := make([]byte, vol.numBytes())
 		if err := lz4.Uncompress(data, uncompressed); err != nil {
 			t.Fatalf("Unable to uncompress LZ4 data (%s), %d bytes: %s\n", apiStr, len(data), err.Error())
 		}
@@ -338,8 +367,8 @@ func (vol labelVol) getLabelVolume(t *testing.T, uuid dvid.UUID, compression, ro
 		data = uncompressed
 	default:
 	}
-	if len(data) != int(nx*ny*nz*8) {
-		t.Errorf("Expected %d uncompressed bytes from 3d labelblk GET.  Got %d instead.", nx*ny*nz*8, len(data))
+	if len(data) != int(vol.numBytes()) {
+		t.Errorf("Expected %d uncompressed bytes from 3d labelblk GET.  Got %d instead.", vol.numBytes(), len(data))
 	}
 	return data
 }
@@ -347,16 +376,12 @@ func (vol labelVol) getLabelVolume(t *testing.T, uuid dvid.UUID, compression, ro
 func (vol labelVol) testGetLabelVolume(t *testing.T, uuid dvid.UUID, compression, roi string) []byte {
 	data := vol.getLabelVolume(t, uuid, compression, roi)
 
-	nx := vol.size[0] * vol.blockSize[0]
-	ny := vol.size[1] * vol.blockSize[1]
-	nz := vol.size[2] * vol.blockSize[2]
-
 	// run test to make sure it's same volume as we posted.
 	label := vol.startLabel
 	var x, y, z, v int32
-	for z = 0; z < nz; z++ {
-		for y = 0; y < ny; y++ {
-			for x = 0; x < nx; x++ {
+	for z = 0; z < vol.nz; z++ {
+		for y = 0; y < vol.ny; y++ {
+			for x = 0; x < vol.nx; x++ {
 				label++
 				got := binary.LittleEndian.Uint64(data[v : v+8])
 				if label != got {
@@ -371,7 +396,7 @@ func (vol labelVol) testGetLabelVolume(t *testing.T, uuid dvid.UUID, compression
 	return data
 }
 
-// the label in the test volume should just be the voxel index + 1 when iterating in ZYX order.
+// the label in the test volume should just be the start label + voxel index + 1 when iterating in ZYX order.
 // The passed (x,y,z) should be world coordinates, not relative to the volume offset.
 func (vol labelVol) label(x, y, z int32) uint64 {
 	if x < vol.offset[0] || x >= vol.offset[0]+vol.size[0]*vol.blockSize[0] {
@@ -388,7 +413,7 @@ func (vol labelVol) label(x, y, z int32) uint64 {
 	z -= vol.offset[2]
 	nx := vol.size[0] * vol.blockSize[0]
 	nxy := nx * vol.size[1] * vol.blockSize[1]
-	return uint64(z*nxy) + uint64(y*nx) + uint64(x+1)
+	return vol.startLabel + uint64(z*nxy) + uint64(y*nx) + uint64(x+1)
 }
 
 type sliceTester struct {
@@ -462,30 +487,14 @@ func (s sliceTester) testLabel(t *testing.T, vol labelVol, img *dvid.Image) {
 	}
 }
 
-func TestLabels(t *testing.T) {
-	tests.UseStore()
-	defer tests.CloseStore()
-
-	uuid := dvid.UUID(server.NewTestRepo(t))
-	if len(uuid) < 5 {
-		t.Fatalf("Bad root UUID for new repo: %s\n", uuid)
-	}
-
-	// Create a labelblk instance
-	vol := labelVol{
-		size:      dvid.Point3d{5, 5, 5}, // in blocks
-		blockSize: dvid.Point3d{32, 32, 32},
-		offset:    dvid.Point3d{32, 64, 96},
-	}
-	vol.postLabelVolume(t, uuid, "labels", "", "", 0)
-
+func (vol labelVol) testSlices(t *testing.T, uuid dvid.UUID) {
 	// Verify XY slice.
 	sliceOffset := vol.offset
 	sliceOffset[0] += 51
 	sliceOffset[1] += 11
 	sliceOffset[2] += 23
 	slice := sliceTester{"xy", 67, 83, sliceOffset}
-	apiStr := slice.apiStr(uuid, "labels")
+	apiStr := slice.apiStr(uuid, vol.name)
 	xy := server.TestHTTP(t, "GET", apiStr, nil)
 	img, format, err := dvid.ImageFromBytes(xy, EncodeFormat(), false)
 	if err != nil {
@@ -505,7 +514,7 @@ func TestLabels(t *testing.T) {
 	sliceOffset[1] += 4
 	sliceOffset[2] += 3
 	slice = sliceTester{"xz", 67, 83, sliceOffset}
-	apiStr = slice.apiStr(uuid, "labels")
+	apiStr = slice.apiStr(uuid, vol.name)
 	xz := server.TestHTTP(t, "GET", apiStr, nil)
 	img, format, err = dvid.ImageFromBytes(xz, EncodeFormat(), false)
 	if err != nil {
@@ -525,7 +534,7 @@ func TestLabels(t *testing.T) {
 	sliceOffset[1] += 33
 	sliceOffset[2] += 33
 	slice = sliceTester{"yz", 67, 83, sliceOffset}
-	apiStr = slice.apiStr(uuid, "labels")
+	apiStr = slice.apiStr(uuid, vol.name)
 	yz := server.TestHTTP(t, "GET", apiStr, nil)
 	img, format, err = dvid.ImageFromBytes(yz, EncodeFormat(), false)
 	if err != nil {
@@ -539,6 +548,92 @@ func TestLabels(t *testing.T) {
 	}
 	slice.testLabel(t, vol, img)
 
+}
+
+func TestLabels(t *testing.T) {
+	tests.UseStore()
+	defer tests.CloseStore()
+
+	uuid := dvid.UUID(server.NewTestRepo(t))
+	if len(uuid) < 5 {
+		t.Fatalf("Bad root UUID for new repo: %s\n", uuid)
+	}
+
+	// Create a labelblk instance
+	server.CreateTestInstance(t, uuid, "labelblk", "labels", dvid.Config{})
+
+	vol := labelVol{
+		size:      dvid.Point3d{5, 5, 5}, // in blocks
+		blockSize: dvid.Point3d{32, 32, 32},
+		offset:    dvid.Point3d{32, 64, 96},
+		name:      "labels",
+	}
+	vol.postLabelVolume(t, uuid, "", "", 0)
+
+	// Repost the label volume 3 more times with increasing starting values.
+	vol.postLabelVolume(t, uuid, "", "", 2100)
+	vol.postLabelVolume(t, uuid, "", "", 8176)
+	vol.postLabelVolume(t, uuid, "", "", 16623)
+
+	vol.testSlices(t, uuid)
+
+	// Try to post last volume concurrently 3x and then check result.
+	wg := new(sync.WaitGroup)
+	wg.Add(3)
+	go func() {
+		vol.postLabelVolume(t, uuid, "", "", 16623)
+		wg.Done()
+	}()
+	go func() {
+		vol.postLabelVolume(t, uuid, "", "", 16623)
+		wg.Done()
+	}()
+	go func() {
+		vol.postLabelVolume(t, uuid, "", "", 16623)
+		wg.Done()
+	}()
+	wg.Wait()
+	vol.testGetLabelVolume(t, uuid, "", "")
+
+	// Try concurrent write of disjoint subvolumes.
+	vol2 := labelVol{
+		size:      dvid.Point3d{5, 5, 5}, // in blocks
+		blockSize: dvid.Point3d{32, 32, 32},
+		offset:    dvid.Point3d{192, 64, 96},
+		name:      "labels",
+	}
+	vol3 := labelVol{
+		size:      dvid.Point3d{5, 5, 5}, // in blocks
+		blockSize: dvid.Point3d{32, 32, 32},
+		offset:    dvid.Point3d{192, 224, 96},
+		name:      "labels",
+	}
+	vol4 := labelVol{
+		size:      dvid.Point3d{5, 5, 5}, // in blocks
+		blockSize: dvid.Point3d{32, 32, 32},
+		offset:    dvid.Point3d{32, 224, 96},
+		name:      "labels",
+	}
+
+	wg.Add(3)
+	go func() {
+		vol2.postLabelVolume(t, uuid, "lz4", "", 4000)
+		wg.Done()
+	}()
+	go func() {
+		vol3.postLabelVolume(t, uuid, "lz4", "", 8000)
+		wg.Done()
+	}()
+	go func() {
+		vol4.postLabelVolume(t, uuid, "lz4", "", 1200)
+		wg.Done()
+	}()
+	wg.Wait()
+	vol.testGetLabelVolume(t, uuid, "", "")
+	vol2.testGetLabelVolume(t, uuid, "", "")
+	vol3.testGetLabelVolume(t, uuid, "", "")
+	vol4.testGetLabelVolume(t, uuid, "", "")
+
 	// Verify various GET 3d volume with compressions and no ROI.
 	vol.testGetLabelVolume(t, uuid, "", "")
 	vol.testGetLabelVolume(t, uuid, "lz4", "")
@@ -549,12 +644,12 @@ func TestLabels(t *testing.T) {
 	server.CreateTestInstance(t, uuid, "roi", roiName, dvid.Config{})
 
 	// Add ROI data
-	apiStr = fmt.Sprintf("%snode/%s/%s/roi", server.WebAPIPath, uuid, roiName)
+	apiStr := fmt.Sprintf("%snode/%s/%s/roi", server.WebAPIPath, uuid, roiName)
 	server.TestHTTP(t, "POST", apiStr, bytes.NewBufferString(labelsJSON()))
 
 	// Post updated labels without ROI and make sure it returns those values.
 	var labelNoROI uint64 = 20000
-	vol.postLabelVolume(t, uuid, "labels", "", "", labelNoROI)
+	vol.postLabelVolume(t, uuid, "", "", labelNoROI)
 	returned := vol.testGetLabelVolume(t, uuid, "", "")
 	startLabel := binary.LittleEndian.Uint64(returned[0:8])
 	if startLabel != labelNoROI+1 {
@@ -567,7 +662,7 @@ func TestLabels(t *testing.T) {
 
 	// Post again but now with ROI
 	var labelWithROI uint64 = 40000
-	vol.postLabelVolume(t, uuid, "labels", "", roiName, labelWithROI)
+	vol.postLabelVolume(t, uuid, "", roiName, labelWithROI)
 
 	// Verify ROI masking of POST where anything outside ROI is old labels.
 	returned = vol.getLabelVolume(t, uuid, "", "")

@@ -463,7 +463,7 @@ func (d *Data) NewLabels(geom dvid.Geometry, img interface{}) (*Labels, error) {
 			actualLen := int64(len(data))
 			expectedLen := int64(bytesPerVoxel) * geom.NumVoxels()
 			if actualLen != expectedLen {
-				return nil, fmt.Errorf("PUT data was %d bytes, expected %d bytes for %s",
+				return nil, fmt.Errorf("labels data was %d bytes, expected %d bytes for %s",
 					actualLen, expectedLen, geom)
 			}
 		default:
@@ -958,6 +958,10 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 					data, err = ioutil.ReadAll(r.Body)
 					if err != nil {
 						server.BadRequest(w, r, err.Error())
+						return
+					}
+					if len(data) == 0 {
+						server.BadRequest(w, r, "received 0 LZ4 compressed bytes")
 						return
 					}
 					tlog.Debugf("read 3d lz4 POST")

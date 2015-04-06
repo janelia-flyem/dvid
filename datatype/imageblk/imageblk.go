@@ -923,7 +923,7 @@ func (d *Data) NewVoxels(geom dvid.Geometry, img interface{}) (*Voxels, error) {
 			actualLen := int64(len(voxels.data))
 			expectedLen := int64(bytesPerVoxel) * geom.NumVoxels()
 			if actualLen != expectedLen {
-				return nil, fmt.Errorf("PUT data was %d bytes, expected %d bytes for %s",
+				return nil, fmt.Errorf("voxels data was %d bytes, expected %d bytes for %s",
 					actualLen, expectedLen, geom)
 			}
 		default:
