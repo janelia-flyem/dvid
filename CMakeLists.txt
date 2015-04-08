@@ -86,12 +86,6 @@ else ()
     
     # flag for building graph backend (currently just using specified key-value store
     set (DVID_GRAPHBACKEND "graphkeyvalue" CACHE TYPE STRING)
-
-    # flag for building with FUSE support for key-value
-    set (DVID_FUSE FALSE CACHE TYPE BOOL)
-    if (${DVID_FUSE})
-        set (DVID_BUILD_TAGS "fuse")
-    endif ()
     
     message ("Using DVID_BACKEND: ${DVID_BACKEND}")
 

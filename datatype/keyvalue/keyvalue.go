@@ -47,12 +47,6 @@ $ dvid repo <UUID> new keyvalue <data name> <settings...>
     data name      Name of data to create, e.g., "myblobs"
     settings       Configuration settings in "key=value" format separated by spaces.
 
-$ dvid node <UUID> <data name> mount <directory>
-
-	Creates a FUSE file system at given mount directory.  Each version will have
-	a separate directory with the UUID as name.  Reading and writing files in this
-	directory will be the same as reading and writing keyvalue data to DVID.
-	
 $ dvid -stdin node <UUID> <data name> put <key> < data
 
 	Puts stdin data into the keyvalue data instance under the given key.
@@ -375,8 +369,6 @@ func (d *Data) Send(s message.Socket, roiname string, uuid dvid.UUID) error {
 // DoRPC acts as a switchboard for RPC commands.
 func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error {
 	switch request.TypeCommand() {
-	case "mount":
-		return d.mount(request, reply)
 	case "put":
 		return d.put(request, reply)
 	default:

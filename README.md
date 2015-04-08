@@ -40,10 +40,9 @@ Each of the above is handled by built-in data types via a
 implemented by Go language packages within the *datatype* directory.
 
 DVID is primarily written in Go and supports different storage backends, a REST HTTP API,
-command-line access (likely minimized in near future), and a FUSE frontend to at least 
-one of its data types.  Some components are written in C, e.g., storage engines like Leveldb and
-fast codecs like lz4.  DVID has been tested on both MacOS X and Linux (Fedora 16, CentOS 6, Ubuntu) 
-but not on Windows.
+and command-line access (likely minimized in near future).  Some components are written in 
+C, e.g., storage engines like Leveldb and fast codecs like lz4.  DVID has been tested on 
+both MacOS X and Linux (Fedora 16, CentOS 6, Ubuntu) but not on Windows.
 
 Command-line and HTTP API documentation is currently distributed over data types and can be 
 found in [help constants within packages](https://github.com/janelia-flyem/dvid/blob/master/datatype/labelvol/labelvol.go#L34) 
