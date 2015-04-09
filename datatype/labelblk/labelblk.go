@@ -184,7 +184,15 @@ POST <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?th
                   compressed format.  The 2d data will ignore this and use
                   the image-based codec.
 
+GET <api URL>/node/<UUID>/<data name>/label/<coord>
 
+	Returns JSON for the label at the given coordinate:
+	{ "Label": 23 }
+	
+    Arguments:
+    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    data name     Name of label data.
+    coord     	  Coordinate of voxel with underscore as separator, e.g., 10_20_30
 `
 
 var (
