@@ -3,11 +3,19 @@
 package datastore
 
 import (
+	"fmt"
+	"log"
+	"os"
+	"path/filepath"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/janelia-flyem/dvid/dvid"
+	"github.com/janelia-flyem/dvid/storage"
+	"github.com/janelia-flyem/dvid/storage/local"
+	"github.com/janelia-flyem/go/uuid"
 )
 
 func TestRepoGobEncoding(t *testing.T) {
@@ -63,65 +71,189 @@ func TestRepoGobEncoding(t *testing.T) {
 	}
 }
 
-/*
-func TestNewDAG(t *testing.T) {
-	dag := NewVersionDAG()
-	c.Assert(dag.NewVersionID, Equals, dvid.VersionLocalID(1))
-	c.Assert(dag.Nodes, HasLen, 1)
-	c.Assert(dag.VersionMap, HasLen, 1)
+const (
+	WebAddress   = "localhost:8657"
+	RPCAddress   = "localhost:8658"
+	WebClientDir = ""
+)
+
+var (
+	engine storage.Engine
+	count  int
+	dbpath string
+	mu     sync.Mutex
+)
+
+func useStore() {
+	mu.Lock()
+	defer mu.Unlock()
+	if count == 0 {
+		dbpath = filepath.Join(os.TempDir(), fmt.Sprintf("dvid-test-%s", uuid.NewV4()))
+		var err error
+		engine, err = local.CreateBlankStore(dbpath)
+		if err != nil {
+			log.Fatalf("Can't create a blank test datastore: %s\n", err.Error())
+		}
+		if err = storage.Initialize(engine, "testdb"); err != nil {
+			log.Fatalf("Can't initialize test datastore: %s\n", err.Error())
+		}
+		if err = InitMetadata(engine); err != nil {
+			log.Fatalf("Can't write blank datastore metadata: %s\n", err.Error())
+		}
+		if err = Initialize(); err != nil {
+			log.Fatalf("Can't initialize datastore management: %s\n", err.Error())
+		}
+	}
+	count++
+}
+
+// closeReopenStore forces close of the underlying storage engine and then reopening
+// the datastore.  Useful for testing metadata persistence.
+func closeReopenStore() {
+	mu.Lock()
+	defer mu.Unlock()
+	dvid.BlockOnActiveCgo()
+	if engine == nil {
+		log.Fatalf("Attempted to close and reopen non-existant engine!")
+	}
+	engine.Close()
+
+	var err error
+	create := false
+	engine, err = local.NewKeyValueStore(dbpath, create, dvid.Config{})
+	if err != nil {
+		log.Fatalf("Error reopening test db at %s: %s\n", dbpath, err.Error())
+	}
+	if err = storage.Initialize(engine, "testdb"); err != nil {
+		log.Fatalf("Can't initialize test datastore: %s\n", err.Error())
+	}
+	if err = Initialize(); err != nil {
+		log.Fatalf("Can't initialize datastore management: %s\n", err.Error())
+	}
+}
+
+func closeStore() {
+	mu.Lock()
+	defer mu.Unlock()
+	count--
+	if count == 0 {
+		dvid.BlockOnActiveCgo()
+		if engine == nil {
+			log.Fatalf("Attempted to close non-existant engine!")
+		}
+		// Close engine and delete store.
+		engine.Close()
+		engine = nil
+		if err := os.RemoveAll(dbpath); err != nil {
+			log.Fatalf("Unable to cleanup test store: %s\n", dbpath)
+		}
+	}
+}
+
+func TestCommandLine(t *testing.T) {
+	useStore()
+	defer closeStore()
 }
 
 func TestRepoPersistence(t *testing.T) {
-	dir := c.MkDir()
+	useStore()
 
-	// Create a new datastore.
-	err := Init(dir, true, dvid.Config{})
-	c.Assert(err, IsNil)
+	repo, err := NewRepo("test repo", "test repo description", nil)
+	if err != nil {
+		t.Fatal(err.Error())
+	}
 
-	// Open the datastore
-	service, err := Open(dir)
-	c.Assert(err, IsNil)
+	if err := repo.Commit(repo.RootUUID(), "root node", nil); err != nil {
+		t.Fatal(err.Error())
+	}
 
-	root, _, err := service.NewRepo()
-	c.Assert(err, IsNil)
+	child1, err := repo.NewVersion(repo.RootUUID(), nil)
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+	if err := repo.Commit(child1, "child 1", nil); err != nil {
+		t.Fatal(err.Error())
+	}
 
-	c.Assert(service.Lock(root), IsNil)
+	child2, err := repo.NewVersion(repo.RootUUID(), nil)
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+	if err := repo.Commit(child2, "child 2", nil); err != nil {
+		t.Fatal(err.Error())
+	}
 
-	child1, err := service.NewVersion(root)
-	c.Assert(err, IsNil)
+	// Save this metadata
+	jsonBytes, err := Manager.MarshalJSON()
+	if err != nil {
+		t.Fatal(err.Error())
+	}
 
-	_, err = service.NewVersion(root)
-	c.Assert(err, IsNil)
+	// Shutdown and restart.
+	closeReopenStore()
+	defer closeStore()
 
-	c.Assert(service.Lock(child1), IsNil)
-
-	_, err = service.NewVersion(child1)
-	c.Assert(err, IsNil)
-
-	oldJSON, err := service.ReposAllJSON()
-	c.Assert(err, IsNil)
-
-	service.Shutdown()
-
-	// Open using different service
-	service2, err := Open(dir)
-	c.Assert(err, IsNil)
-
-	newJSON, err := service2.ReposAllJSON()
-	c.Assert(err, IsNil)
-
-	c.Assert(newJSON, DeepEquals, oldJSON)
+	// Check if metadata is same
+	jsonBytes2, err := Manager.MarshalJSON()
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+	if !reflect.DeepEqual(jsonBytes, jsonBytes2) {
+		t.Errorf("\nRepo metadata JSON changes on close/reopen:\n\nOld:\n%s\n\nNew:\n%s\n", string(jsonBytes), string(jsonBytes2))
+	}
 }
 
 // Make sure each new repo has a different local ID.
 func TestNewRepoDifferent(t *testing.T) {
-	root1, repoID1, err := s.service.NewRepo()
-	c.Assert(err, IsNil)
+	useStore()
+	defer closeStore()
 
-	root2, repoID2, err := s.service.NewRepo()
-	c.Assert(err, IsNil)
+	repo1, err := NewRepo("test repo 1", "test repo 1 description", nil)
+	if err != nil {
+		t.Fatal(err.Error())
+	}
 
-	c.Assert(repoID1, Not(Equals), repoID2)
-	c.Assert(root1, Not(Equals), root2)
+	repo2, err := NewRepo("test repo 1", "test repo 1 description", nil)
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+
+	if repo1.RepoID() == repo2.RepoID() {
+		t.Errorf("New repos share repo id: %d\n", repo1.RepoID())
+	}
 }
-*/
+
+func TestUUIDAssignment(t *testing.T) {
+	useStore()
+	defer closeStore()
+
+	myuuid := dvid.UUID("de305d5475b4431badb2eb6b9e546014")
+	repo, err := NewRepo("test repo", "test repo description", &myuuid)
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+	if repo.RootUUID() != myuuid {
+		t.Errorf("Assigned root UUID %q != created root UUID %q\n", myuuid, repo.RootUUID())
+	}
+
+	// Check if branches can also have assigned UUIDs
+	if err := repo.Commit(repo.RootUUID(), "root node", nil); err != nil {
+		t.Fatal(err.Error())
+	}
+	myuuid2 := dvid.UUID("8fa05d5475b4431badb2eb6b9e0123014")
+	child, err := repo.NewVersion(myuuid, &myuuid2)
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+	if child != myuuid2 {
+		t.Errorf("Assigned child UUID %q != created child UUID %q\n", myuuid2, child)
+	}
+
+	// Should be able to find both nodes
+	if _, err := RepoFromUUID(myuuid); err != nil {
+		t.Errorf("Couldn't lookup assigned root uuid %s\n", myuuid)
+	}
+	if _, err := RepoFromUUID(myuuid2); err != nil {
+		t.Errorf("Couldn't lookup assigned child uuid %s\n", myuuid2)
+	}
+}

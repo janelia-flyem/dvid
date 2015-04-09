@@ -23,7 +23,9 @@ const RPCHelpMessage = `Commands executed on the server (rpc address = %s):
 	help
 	shutdown
 
-	repos new  <alias> <description>
+	repos new  <alias> <description> [optional UUID]
+
+	repo <UUID> branch [optional UUID]
 
 	repo <UUID> new <datatype name> <data name> <datatype-specific config>...
 
@@ -121,11 +123,18 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 		}
 
 	case "repos":
-		var subcommand, alias, description string
-		cmd.CommandArgs(1, &subcommand, &alias, &description)
+		var subcommand, alias, description, uuidStr string
+		cmd.CommandArgs(1, &subcommand, &alias, &description, &uuidStr)
 		switch subcommand {
 		case "new":
-			repo, err := datastore.NewRepo(alias, description)
+			var assign *dvid.UUID
+			if uuidStr == "" {
+				assign = nil
+			} else {
+				u := dvid.UUID(uuidStr)
+				assign = &u
+			}
+			repo, err := datastore.NewRepo(alias, description, assign)
 			if err != nil {
 				return err
 			}
@@ -172,6 +181,24 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 			}
 			reply.Text = fmt.Sprintf("Data %q [%s] added to node %s\n", dataname, typename, uuid)
 			repo.AddToRepoLog(cmd.String())
+
+		case "branch":
+			cmd.CommandArgs(3, &uuidStr)
+
+			var assign *dvid.UUID
+			if uuidStr == "" {
+				assign = nil
+			} else {
+				u := dvid.UUID(uuidStr)
+				assign = &u
+			}
+			child, err := repo.NewVersion(uuid, assign)
+			if err != nil {
+				return err
+			}
+			reply.Text = fmt.Sprintf("Branch %s added to node %s\n", child, uuid)
+			repo.AddToRepoLog(cmd.String())
+
 		case "push":
 			/*
 				var target string

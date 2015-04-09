@@ -370,12 +370,18 @@ func (m *repoManager) NewVersionID(uuid dvid.UUID) (dvid.VersionID, error) {
 	return curid, m.putNewIDs()
 }
 
-// NewUUID returns an atomically generated UUID and its associated local VersionID.
-func (m *repoManager) NewUUID() (dvid.UUID, dvid.VersionID, error) {
+// NewUUID a local VersionID for either a provided UUID or if none is a provided, an
+// automatically generated one.
+func (m *repoManager) NewUUID(assign *dvid.UUID) (dvid.UUID, dvid.VersionID, error) {
 	m.idMutex.Lock()
 	defer m.idMutex.Unlock()
 
-	uuid := dvid.NewUUID()
+	var uuid dvid.UUID
+	if assign == nil {
+		uuid = dvid.NewUUID()
+	} else {
+		uuid = *assign
+	}
 	curid := m.newVersionID
 	m.versionToUUID[curid] = uuid
 	m.UUIDToVersion[uuid] = curid
@@ -531,11 +537,12 @@ func (m *repoManager) RepoFromID(repoID dvid.RepoID) (Repo, error) {
 	return repo, nil
 }
 
-// NewRepo creates a new Repo with a unique UUID
-func (m *repoManager) NewRepo(alias, description string) (Repo, error) {
+// NewRepo creates a new Repo with a new unique UUID unless one is provided as last parameter.
+func (m *repoManager) NewRepo(alias, description string, assign *dvid.UUID) (Repo, error) {
 	m.Lock()
 	defer m.Unlock()
-	repo, _, err := newRepo(m)
+
+	repo, _, err := newRepo(m, assign)
 	if err != nil {
 		return nil, err
 	}
@@ -637,12 +644,19 @@ type repoT struct {
 }
 
 // newRepo creates a new repository, updating the version id within the RepoManager.
-func newRepo(m *repoManager) (*repoT, dvid.VersionID, error) {
-	repoID, err := m.NewRepoID()
+// If a UUID is provided it is used, else a new one is created.
+func newRepo(m *repoManager, assign *dvid.UUID) (*repoT, dvid.VersionID, error) {
+	if assign != nil {
+		// Make sure there's not already a repo with this UUID.
+		if _, found := m.repos[*assign]; found {
+			return nil, 0, fmt.Errorf("UUID %s already exists", *assign)
+		}
+	}
+	uuid, versionID, err := m.NewUUID(assign)
 	if err != nil {
 		return nil, 0, err
 	}
-	uuid, versionID, err := m.NewUUID()
+	repoID, err := m.NewRepoID()
 	if err != nil {
 		return nil, 0, err
 	}
@@ -976,25 +990,26 @@ func (r *repoT) DeleteDataByName(name dvid.InstanceName) error {
 	return r.save()
 }
 
-func (r *repoT) NewVersion(uuid dvid.UUID) (dvid.UUID, error) {
+func (r *repoT) NewVersion(parent dvid.UUID, assign *dvid.UUID) (dvid.UUID, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
 	// Make sure parent is available and locked.
-	parentVersionID, found := r.manager.UUIDToVersion[uuid]
+	parentVersionID, found := r.manager.UUIDToVersion[parent]
 	if !found {
-		return dvid.NilUUID, fmt.Errorf("No parent version found with uuid %s", uuid)
+		return dvid.NilUUID, fmt.Errorf("No parent version found with uuid %s", parent)
 	}
 	parentNode, found := r.dag.nodes[parentVersionID]
 	if !found {
-		return dvid.NilUUID, fmt.Errorf("No parent version found with uuid %s (version %d)", uuid,
+		return dvid.NilUUID, fmt.Errorf("No parent version found with uuid %s (version %d)", parent,
 			parentVersionID)
 	}
 	if !parentNode.locked {
-		return dvid.NilUUID, fmt.Errorf("Cannot create child on unlocked parent node %s", uuid)
+		return dvid.NilUUID, fmt.Errorf("Cannot create child on unlocked parent node %s", parent)
 	}
 
 	// Add the child node.  Since it's new and unavailable, no need to lock it.
-	childNode, err := r.addNode()
+	childNode, err := r.addNode(assign)
 	if err != nil {
 		return dvid.NilUUID, err
 	}
@@ -1021,11 +1036,11 @@ func (r *repoT) Locked(uuid dvid.UUID) (bool, error) {
 	defer r.mu.RUnlock()
 	versionID, found := r.manager.UUIDToVersion[uuid]
 	if !found {
-		return false, fmt.Errorf("Could not LOCK missing version (uuid %s)", uuid)
+		return false, fmt.Errorf("No version found wtih uuid %s", uuid)
 	}
 	node, found := r.dag.nodes[versionID]
 	if !found {
-		return false, fmt.Errorf("Could not LOCK missing version (id %d)", versionID)
+		return false, fmt.Errorf("No version found with id %d", versionID)
 	}
 	return node.locked, nil
 }
@@ -1138,8 +1153,8 @@ func (r *repoT) newDAG(uuid dvid.UUID, versionID dvid.VersionID) *dagT {
 	return dag
 }
 
-func (r *repoT) addNode() (*nodeT, error) {
-	uuid, versionID, err := r.manager.NewUUID()
+func (r *repoT) addNode(assign *dvid.UUID) (*nodeT, error) {
+	uuid, versionID, err := r.manager.NewUUID(assign)
 	if err != nil {
 		return nil, err
 	}

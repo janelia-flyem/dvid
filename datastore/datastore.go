@@ -48,11 +48,11 @@ func NewRepoID() (dvid.RepoID, error) {
 	return Manager.NewRepoID()
 }
 
-func NewUUID() (dvid.UUID, dvid.VersionID, error) {
+func NewUUID(assign *dvid.UUID) (dvid.UUID, dvid.VersionID, error) {
 	if Manager == nil {
 		return dvid.NilUUID, 0, fmt.Errorf("datastore not initialized")
 	}
-	return Manager.NewUUID()
+	return Manager.NewUUID(assign)
 }
 
 func UUIDFromVersion(v dvid.VersionID) (dvid.UUID, error) {
@@ -105,12 +105,13 @@ func RepoFromID(repoID dvid.RepoID) (Repo, error) {
 	return Manager.RepoFromID(repoID)
 }
 
-// NewRepo creates and returns a new Repo.
-func NewRepo(alias, description string) (Repo, error) {
+// NewRepo creates and returns a new Repo, either using an assigned UUID if
+// provided or creating a new UUID.
+func NewRepo(alias, description string, assign *dvid.UUID) (Repo, error) {
 	if Manager == nil {
 		return nil, fmt.Errorf("datastore not initialized")
 	}
-	return Manager.NewRepo(alias, description)
+	return Manager.NewRepo(alias, description, assign)
 }
 
 // SaveRepo persists a Repo to the MetaDataStore.

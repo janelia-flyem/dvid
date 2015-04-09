@@ -629,6 +629,8 @@ func reposInfoHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, string(jsonBytes))
 }
 
+// TODO -- Maybe allow assignment of child UUID via JSON in POST.  Right now, we only
+// allow this potentially dangerous function via command-line.
 func reposPostHandler(w http.ResponseWriter, r *http.Request) {
 	config := dvid.NewConfig()
 	if r.Body != nil {
@@ -650,7 +652,7 @@ func reposPostHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	repo, err := datastore.NewRepo(alias, description)
+	repo, err := datastore.NewRepo(alias, description, nil)
 	if err != nil {
 		BadRequest(w, r, err.Error())
 		return
@@ -833,6 +835,8 @@ func repoCommitHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// TODO -- Might allow specification of UUID for child via HTTP.  Currently, only
+// allow this potentially dangerous op via command line.
 func repoBranchHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	uuid, ok := c.Env["uuid"].(dvid.UUID)
 	if !ok {
@@ -846,7 +850,7 @@ func repoBranchHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	newuuid, err := repo.NewVersion(uuid)
+	newuuid, err := repo.NewVersion(uuid, nil)
 	if err != nil {
 		BadRequest(w, r, err.Error())
 	} else {

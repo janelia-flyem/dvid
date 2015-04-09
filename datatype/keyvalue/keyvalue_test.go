@@ -264,7 +264,7 @@ func TestKeyvalueVersioning(t *testing.T) {
 	if err = repo.Commit(uuid, "my commit msg", []string{"stuff one", "stuff two"}); err != nil {
 		t.Errorf("Unable to lock root node %s: %s\n", uuid, err.Error())
 	}
-	uuid2, err := repo.NewVersion(uuid)
+	uuid2, err := repo.NewVersion(uuid, nil)
 	if err != nil {
 		t.Fatalf("Unable to create new version off node %s: %s\n", uuid, err.Error())
 	}

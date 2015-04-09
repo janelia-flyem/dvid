@@ -18,7 +18,7 @@ func init() {
 
 // NewRepo returns a new datastore.Repo suitable for testing.
 func NewRepo() (datastore.Repo, dvid.VersionID) {
-	repo, err := datastore.NewRepo("testRepo", "A test repository")
+	repo, err := datastore.NewRepo("testRepo", "A test repository", nil)
 	if err != nil {
 		log.Fatalf("Unable to create new testing repo: %s\n", err.Error())
 	}

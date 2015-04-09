@@ -31,8 +31,8 @@ type IDManager interface {
 	// in p2p transmission of data that keeps the remote UUID.
 	NewVersionID(dvid.UUID) (dvid.VersionID, error)
 
-	// Creates a UUID and its associated local version ID.
-	NewUUID() (dvid.UUID, dvid.VersionID, error)
+	// Creates a UUID or uses a given UUID and returns a local version ID to track it with.
+	NewUUID(assign *dvid.UUID) (dvid.UUID, dvid.VersionID, error)
 
 	UUIDFromVersion(dvid.VersionID) (dvid.UUID, error)
 	VersionFromUUID(dvid.UUID) (dvid.VersionID, error)
@@ -51,8 +51,8 @@ type RepoManager interface {
 	// RepoFromID returns a Repo from a RepoID.  Returns error if not found.
 	RepoFromID(dvid.RepoID) (Repo, error)
 
-	// NewRepo creates and returns a new Repo.
-	NewRepo(alias, description string) (Repo, error)
+	// NewRepo creates and returns a new Repo if none is provided.
+	NewRepo(alias, description string, assign *dvid.UUID) (Repo, error)
 
 	// AddRepo adds a preallocated Repo.
 	AddRepo(Repo) error
@@ -101,9 +101,10 @@ type DAGManager interface {
 	// Locked returns true if a node is locked from a commit.
 	Locked(dvid.UUID) (bool, error)
 
-	// NewVersion creates a new child node off a LOCKED parent node.  Will return
-	// an error if the parent node has not been locked.
-	NewVersion(dvid.UUID) (dvid.UUID, error)
+	// NewVersion creates a new child node off a LOCKED parent node, either using an
+	// assigned UUID if provided or generating a new UUID.  Will return an error if
+	// the parent node has not been locked.
+	NewVersion(parent dvid.UUID, assign *dvid.UUID) (dvid.UUID, error)
 
 	// GetIterator returns a VersionIterator capable of ascending ancestor path from
 	// a particular version in the DAG.
