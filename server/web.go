@@ -17,6 +17,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"code.google.com/p/go.net/context"
 
@@ -25,7 +26,6 @@ import (
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
-	"github.com/zenazn/goji/graceful"
 	"github.com/zenazn/goji/web"
 	"github.com/zenazn/goji/web/middleware"
 )
@@ -205,6 +205,12 @@ const (
 
 	// The relative URL path to our Level 2 REST API
 	WebAPIPath = "/api/" + WebAPIVersion
+
+	// WriteTimeout is the maximum time in seconds DVID will wait to write data down HTTP connection.
+	WriteTimeout = 300 * time.Second
+
+	// ReadTimeout is the maximum time in seconds DVID will wait to read data from HTTP connection.
+	ReadTimeout = 300 * time.Second
 )
 
 type WebMux struct {
@@ -252,11 +258,22 @@ func serveHttp(address, clientDir string) {
 	// This allows packages like expvar to continue working as expected.  (From goji.go)
 	http.Handle("/", webMux)
 
-	graceful.HandleSignals()
-	if err := graceful.ListenAndServe(address, http.DefaultServeMux); err != nil {
-		log.Fatal(err)
+	// TODO: Could have used "graceful" goji package but doesn't allow tailoring of timeouts
+	// unless package is modified.  Not sure graceful features needed whereas tailoring
+	// of server is more important.
+
+	s := &http.Server{
+		Addr:         address,
+		WriteTimeout: WriteTimeout,
+		ReadTimeout:  ReadTimeout,
 	}
-	graceful.Wait()
+	log.Fatal(s.ListenAndServe())
+
+	// graceful.HandleSignals()
+	// if err := graceful.ListenAndServe(address, http.DefaultServeMux); err != nil {
+	// 	log.Fatal(err)
+	// }
+	// graceful.Wait()
 }
 
 // High-level switchboard for DVID HTTP API.
