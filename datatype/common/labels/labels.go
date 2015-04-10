@@ -18,6 +18,17 @@ var (
 	MergeCache mergeCache
 )
 
+const (
+	// MaxAllowedLabel is the largest label that should be allowed by DVID if we want to take
+	// into account the maximum integer size within Javascript (due to its underlying use of
+	// a double float for numbers).
+	// This would circumvent the need to use strings within JSON (e.g., the Google solution)
+	// to represent integer labels that could exceed the max javascript number.  It would
+	// require adding a value check on each label voxel of a mutation request, which might
+	// be too much of a hit to handle an edge case.
+	MaxAllowedLabel = 9007199254740991
+)
+
 type mergeCache struct {
 	sync.RWMutex
 	m map[dvid.InstanceVersion]Mapping
