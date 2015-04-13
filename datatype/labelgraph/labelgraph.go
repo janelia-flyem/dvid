@@ -671,14 +671,16 @@ func (d *Data) handleSubgraphBulk(ctx storage.Context, db storage.GraphDB, w htt
 		var vertices []dvid.GraphVertex
 		var edges []dvid.GraphEdge
 		if len(labelgraph.Vertices) > 0 {
+			used_vertices := make(map[dvid.VertexID]struct{})
 			for _, vertex := range labelgraph.Vertices {
+				used_vertices[vertex.Id] = struct{}{}
 				storedvert, err := db.GetVertex(ctx, vertex.Id)
 				if err != nil {
 					return fmt.Errorf("Failed to retrieve vertix %d: %s\n", vertex.Id, err.Error())
 				}
 				vertices = append(vertices, storedvert)
 				for _, vert2 := range storedvert.Vertices {
-					if storedvert.Id < vert2 {
+					if _, ok := used_vertices[vert2]; !ok {
 						edge, err := db.GetEdge(ctx, storedvert.Id, vert2)
 						if err != nil {
 							return fmt.Errorf("Failed to retrieve edge %d-%d: %s\n", storedvert.Id, vert2, err.Error())
