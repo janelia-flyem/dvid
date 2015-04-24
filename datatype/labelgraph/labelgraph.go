@@ -42,8 +42,7 @@ const graphSchema = `
       "properties": {
         "Id": { "type": "number", "description": "64 bit ID for vertex" },
         "Trans": {"type": "number", "description": "64 bit transaction number" }
-      },
-      "required": ["Vertex", "Num"]
+      }
     },
     "vertex": {
       "description": "Describes a vertex in a graph",
