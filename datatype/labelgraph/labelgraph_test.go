@@ -25,7 +25,7 @@ func getTestGraph() LabelGraph {
 	graph.Vertices = append(graph.Vertices, labelVertex{1, 2.3})
 	graph.Vertices = append(graph.Vertices, labelVertex{2, 10.1})
 	graph.Edges = append(graph.Edges, labelEdge{1, 2, 10})
-	//graph.Transactions = make([]transactionItem, 0)
+	graph.Transactions = make([]transactionItem, 0)
 
 	return *graph
 }
@@ -34,7 +34,7 @@ func getTestGraph() LabelGraph {
 func getGraphJSON() io.Reader {
 	graph := getTestGraph()
 	// graph json should add transaction information
-	graph.Transactions = make([]transactionItem, 0)
+	//graph.Transactions = make([]transactionItem, 0)
 	jsonBytes, err := json.Marshal(graph)
 	if err != nil {
 		log.Fatalf("Can't encode graph into JSON: %s\n", err.Error())
@@ -179,7 +179,7 @@ func TestLabelgraphPostAndDelete(t *testing.T) {
 
 	// Subgraph should now be empty
 	returnedData = server.TestHTTP(t, "GET", subgraphRequest, nil)
-	expectedResp := "{\"Transactions\":null,\"Vertices\":null,\"Edges\":null}"
+	expectedResp := "{\"Transactions\":[],\"Vertices\":[],\"Edges\":[]}"
 	if string(returnedData) != expectedResp {
 		t.Errorf("Bad ROI after ROI delete.  Should be %s got: %s\n", expectedResp, string(returnedData))
 	}

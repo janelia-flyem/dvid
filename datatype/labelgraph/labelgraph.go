@@ -42,7 +42,8 @@ const graphSchema = `
       "properties": {
         "Id": { "type": "number", "description": "64 bit ID for vertex" },
         "Trans": {"type": "number", "description": "64 bit transaction number" }
-      }
+      },
+      "required": ["Id", "Trans"]
     },
     "vertex": {
       "description": "Describes a vertex in a graph",
@@ -67,7 +68,7 @@ const graphSchema = `
   "properties": {
     "Transactions": {
         "description": "array of transactions",
-        "type": "array",
+        "type": ["array", "null"],
         "items": {"$ref": "#/definitions/transaction"},
         "uniqueItems": true
     },
@@ -154,6 +155,10 @@ DELETE  <api URL>/node/<UUID>/<data name>/subgraph
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add/retrieve.
 
+    Query-string Options:
+
+    unsafe        Disable check of incoming JSON file (since schema verification is slow currently).
+                  Default false.
     
 POST  <api URL>/node/<UUID>/<data name>/merge/[nohistory]
 
@@ -650,13 +655,16 @@ func (d *Data) getGraphContext(ctx context.Context) (storage.Context, storage.Gr
 // handleSubgraph loads, retrieves, or deletes a subgraph (more description in REST interface)
 func (d *Data) handleSubgraphBulk(ctx storage.Context, db storage.GraphDB, w http.ResponseWriter, labelgraph *LabelGraph, method string) error {
 	var err error
-
 	if !d.setBusy() {
 		return fmt.Errorf("Server busy with bulk transaction")
 	}
 	defer d.setNotBusy()
 
+	// initial new graph
 	labelgraph2 := new(LabelGraph)
+	labelgraph2.Transactions = make([]transactionItem, 0)
+	labelgraph2.Vertices = make([]labelVertex, 0)
+	labelgraph2.Edges = make([]labelEdge, 0)
 
 	// ?! do not grab edges that connect to outside vertices
 	if method == "get" {
@@ -1255,7 +1263,7 @@ func (d *Data) handleProperty(ctx storage.Context, db storage.GraphDB, w http.Re
 
 // ExtractGraph takes the client's supplied JSON, verifies that it conforms to the
 // schema, and loads it into the LabelGraph data structure
-func (d *Data) ExtractGraph(r *http.Request) (*LabelGraph, error) {
+func (d *Data) ExtractGraph(r *http.Request, disableSchema bool) (*LabelGraph, error) {
 	labelgraph := new(LabelGraph)
 	if r.Body == nil {
 		return labelgraph, nil
@@ -1272,27 +1280,33 @@ func (d *Data) ExtractGraph(r *http.Request) (*LabelGraph, error) {
 
 	// load data labelgraph and generic string-inteface{} map
 	err = json.Unmarshal(data, labelgraph)
-	var json_data map[string]interface{}
-	err = json.Unmarshal(data, &json_data)
 
 	if err != nil {
 		return labelgraph, err
 	}
 
-	// check schema
-	var schema_data interface{}
-	json.Unmarshal([]byte(graphSchema), &schema_data)
+	if !disableSchema {
+		// check schema
+		var schema_data interface{}
+		json.Unmarshal([]byte(graphSchema), &schema_data)
 
-	schema, err := gojsonschema.NewJsonSchemaDocument(schema_data)
-	if err != nil {
-		err = fmt.Errorf("JSON schema did not build")
-		return labelgraph, err
-	}
+		schema, err := gojsonschema.NewJsonSchemaDocument(schema_data)
+		if err != nil {
+			err = fmt.Errorf("JSON schema did not build")
+			return labelgraph, err
+		}
 
-	validationResult := schema.Validate(json_data)
-	if !validationResult.Valid() {
-		err = fmt.Errorf("JSON did not pass validation")
-		return labelgraph, err
+		var json_data map[string]interface{}
+		err = json.Unmarshal(data, &json_data)
+		if err != nil {
+			return labelgraph, err
+		}
+
+		validationResult := schema.Validate(json_data)
+		if !validationResult.Valid() {
+			err = fmt.Errorf("JSON did not pass validation")
+			return labelgraph, err
+		}
 	}
 
 	return labelgraph, err
@@ -1356,7 +1370,14 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, string(jsonBytes))
 	case "subgraph":
-		labelgraph, err := d.ExtractGraph(r)
+		// disable json schema validation (will speedup POST command)
+		queryValues := r.URL.Query()
+		disableSchemaT := dvid.InstanceName(queryValues.Get("unsafe"))
+		disableSchema := false
+		if len(disableSchemaT) != 0 && disableSchemaT == "true" {
+			disableSchema = true
+		}
+		labelgraph, err := d.ExtractGraph(r, disableSchema)
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
 			return
@@ -1381,7 +1402,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 			server.BadRequest(w, r, "Only supports POSTs")
 			return
 		}
-		labelgraph, err := d.ExtractGraph(r)
+		labelgraph, err := d.ExtractGraph(r, false)
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
 			return
@@ -1396,7 +1417,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 			server.BadRequest(w, r, "Only supports POSTs")
 			return
 		}
-		labelgraph, err := d.ExtractGraph(r)
+		labelgraph, err := d.ExtractGraph(r, false)
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
 			return
