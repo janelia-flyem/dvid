@@ -43,7 +43,7 @@ func (d *Data) InitSync(name dvid.InstanceName) []datastore.SyncSub {
 
 	subs := []datastore.SyncSub{
 		// datastore.SyncSub{
-		// 	Event:  datastore.SyncEvent{name, labels.ChangeSparsevolEvent},
+		// 	Event:  datastore.SyncEvent{name, labels.SparsevolModEvent},
 		// 	Notify: d.DataName(),
 		// 	Ch:     make(chan datastore.SyncMessage, 100),
 		// 	Done:   make(chan struct{}),
@@ -87,7 +87,7 @@ func (d *Data) InitSync(name dvid.InstanceName) []datastore.SyncSub {
 	}
 
 	// Launch go routines to handle sync events.
-	go d.syncSparsevolChange(name, subs[0].Ch, subs[0].Done)
+	//go d.syncSparsevolChange(name, subs[0].Ch, subs[0].Done)
 	go d.syncMerge(name, mergeCh, mergeDone)
 	go d.syncSplit(name, splitCh, splitDone)
 

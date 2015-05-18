@@ -552,7 +552,7 @@ func (p Point3d) Prod() int64 {
 }
 
 func (p Point3d) String() string {
-	return fmt.Sprintf("(%d,%d,%d)", p[0], p[1], p[2])
+	return fmt.Sprintf("dvid.Point3d{%d,%d,%d}", p[0], p[1], p[2])
 }
 
 // --- Chunkable interface support -----

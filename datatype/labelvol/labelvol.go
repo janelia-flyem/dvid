@@ -94,7 +94,6 @@ POST <api URL>/node/<UUID>/<data name>/info
 
 
 GET  <api URL>/node/<UUID>/<data name>/sparsevol/<label>?<options>
-POST <api URL>/node/<UUID>/<data name>/sparsevol/<label>
 
 	Returns or stores a sparse volume with voxels of the given label in encoded RLE format.
 
@@ -118,14 +117,6 @@ POST <api URL>/node/<UUID>/<data name>/sparsevol/<label>
 	        int32   Length of run
 	        bytes   Optional payload dependent on first byte descriptor
 			  ...
-
-	POST considerations:
-
-	The POSTed sparse volume will be added to the label's current sparse volume.
-
-	Note that the client must be careful in choice of label ID on POST.  The specified label
-	must be an existing label and not a new label since new labels should be governed purely
-	by DVID or a central supervisor, not individual clients.
 
     GET Query-string Options:
 
@@ -616,10 +607,12 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 				return
 			}
 		case "post":
-			if err := d.PutSparseVol(versionID, label, r.Body); err != nil {
-				server.BadRequest(w, r, err.Error())
-				return
-			}
+			server.BadRequest(w, r, "POST of sparsevol not currently implemented\n")
+			return
+			// if err := d.PutSparseVol(versionID, label, r.Body); err != nil {
+			// 	server.BadRequest(w, r, err.Error())
+			// 	return
+			// }
 		default:
 			server.BadRequest(w, r, "Unable to handle HTTP action %s on sparsevol endpoint", action)
 			return

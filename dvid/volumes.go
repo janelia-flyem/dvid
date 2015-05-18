@@ -327,11 +327,26 @@ func (rle RLE) Length() int32 {
 }
 
 func (rle RLE) String() string {
-	return fmt.Sprintf("RLE{%s, len %d} ", rle.start, rle.length)
+	return fmt.Sprintf("dvid.NewRLE{%s, %d}", rle.start, rle.length)
+}
+
+func (rle RLE) Intersects(rle2 RLE) bool {
+	if rle.start[2] != rle2.start[2] || rle.start[1] != rle2.start[1] {
+		return false
+	}
+	x0 := rle.start[0]
+	x1 := x0 + rle.length - 1
+	sx0 := rle2.start[0]
+	sx1 := sx0 + rle2.length - 1
+	if x0 > sx1 || x1 < sx0 {
+		return false
+	}
+	return true
 }
 
 // Excise returns the portion of the receiver that is not in the passed RLE.
-// If the RLEs do not intersect, nil is returned.
+// If the RLEs do not intersect, nil is returned.  Up to two fragments can
+// be generated and they will be in sorted in start X.
 func (rle RLE) Excise(rle2 RLE) RLEs {
 	if rle.start[2] != rle2.start[2] || rle.start[1] != rle2.start[1] {
 		return nil
@@ -374,6 +389,25 @@ func (rle RLE) Less(rle2 RLE) bool {
 // RLEs are simply a slice of RLE.  Sorting only takes into account
 // the start point and not the length.
 type RLEs []RLE
+
+func ReadRLEs(r io.Reader) (RLEs, error) {
+	header := make([]byte, 8)
+	if _, err := io.ReadFull(r, header); err != nil {
+		return nil, err
+	}
+	if header[0] != EncodingBinary {
+		return nil, fmt.Errorf("sparse vol is not binary: %v", header[0])
+	}
+	var numSpans uint32
+	if err := binary.Read(r, binary.LittleEndian, &numSpans); err != nil {
+		return nil, err
+	}
+	var rles RLEs
+	if err := rles.UnmarshalBinaryReader(r, numSpans); err != nil {
+		return nil, err
+	}
+	return rles, nil
+}
 
 // --- sort interface
 

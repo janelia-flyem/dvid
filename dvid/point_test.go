@@ -30,7 +30,7 @@ func (s *DataSuite) TestPoint3d(c *C) {
 	dist := d.Distance(e)
 	c.Assert(dist, Equals, int32(5))
 
-	c.Assert(a.String(), Equals, "(10,21,837821)")
+	c.Assert(a.String(), Equals, "dvid.Point3d{10,21,837821}")
 
 	result = a.AddScalar(10)
 	c.Assert(result, Equals, Point3d{20, 31, 837831})
@@ -57,7 +57,7 @@ func (s *DataSuite) TestPoint3d(c *C) {
 	c.Assert(result.Value(1), Equals, a[1]-b[1])
 	c.Assert(result.Value(2), Equals, a[2]-b[2])
 
-	c.Assert(a.String(), Equals, "(123,8191,32001)")
+	c.Assert(a.String(), Equals, "dvid.Point3d{123,8191,32001}")
 
 	result, _ = a.Max(b)
 	c.Assert(result, Equals, Point3d{2980, 8191, 32001})
