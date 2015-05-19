@@ -773,7 +773,10 @@ func (r *repoT) AddToNodeLog(uuid dvid.UUID, hx []string) error {
 	if !found {
 		return fmt.Errorf("could not find version (id %d)", versionID)
 	}
-	return node.addToLog(hx)
+	if err := node.addToLog(hx); err != nil {
+		return err
+	}
+	return r.save()
 }
 
 // ---- Repo interface implementation -----------

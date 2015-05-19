@@ -158,6 +158,8 @@ func SendNotification(message string, recipients []string) error {
 // Serve starts HTTP and RPC servers.
 func Serve(httpAddress, webClientDir, rpcAddress string) error {
 	// Set the package-level config variable
+	dvid.Infof("------------------\n")
+	dvid.Infof("DVID code version: %s\n", gitVersion)
 	dvid.Infof("Serving HTTP on %s\n", httpAddress)
 	dvid.Infof("Serving command-line use via RPC %s\n", rpcAddress)
 	dvid.Infof("Using web client files from %s\n", webClientDir)
