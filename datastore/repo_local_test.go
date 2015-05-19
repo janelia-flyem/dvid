@@ -179,9 +179,20 @@ func TestRepoPersistence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err.Error())
 	}
-	if err := repo.Commit(child2, "child 2", nil); err != nil {
+	log2 := []string{"This is line 1 of log", "This is line 2 of log", "Last line for multiline log"}
+	if err := repo.Commit(child2, "child 2", log2); err != nil {
 		t.Fatal(err.Error())
 	}
+
+	child3, err := repo.NewVersion(repo.RootUUID(), nil)
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+	nodelog := []string{`My first node-level log line.!(;#)}`, "Second line is here!!!"}
+	if err := repo.AddToNodeLog(child3, nodelog); err != nil {
+		t.Fatalf(err.Error())
+	}
+	// Don't save this child.
 
 	// Save this metadata
 	jsonBytes, err := Manager.MarshalJSON()
