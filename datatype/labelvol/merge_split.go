@@ -271,18 +271,16 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser) 
 		}
 
 		// Compare and process based on modifications required.
-		modified, err := rles.Split(splitmap[splitblk])
+		remain, err := rles.Split(splitmap[splitblk])
 		if err != nil {
 			return toLabel, err
 		}
-		if len(modified) == 0 {
-			fmt.Printf("Deleting label %d block %s\n", fromLabel, splitblk.Print())
+		if len(remain) == 0 {
 			batch.Delete(tk)
 		} else {
-			fmt.Printf("Storing modified block %s:\n%v\n", splitblk.Print(), modified)
-			rleBytes, err := modified.MarshalBinary()
+			rleBytes, err := remain.MarshalBinary()
 			if err != nil {
-				return toLabel, fmt.Errorf("can't serialize modified RLEs for split of %d: %s\n", fromLabel, err.Error())
+				return toLabel, fmt.Errorf("can't serialize remain RLEs for split of %d: %s\n", fromLabel, err.Error())
 			}
 			batch.Put(tk, rleBytes)
 		}
