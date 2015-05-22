@@ -6,6 +6,7 @@ package dvid
 
 import (
 	"bytes"
+	"container/list"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -421,6 +422,115 @@ func (rles RLEs) Swap(i, j int) {
 
 func (rles RLEs) Less(i, j int) bool {
 	return rles[i].Less(rles[j])
+}
+
+// Normalize returns a sorted slice of RLEs where there are no directly adjacent RLEs along X.
+func (rles RLEs) Normalize() RLEs {
+	if rles == nil || len(rles) == 0 {
+		return RLEs{}
+	}
+
+	// Sort the RLE
+	norm := make(RLEs, len(rles)) // We know # normalized RLEs <= current # RLEs
+	copy(norm, rles)
+	sort.Sort(norm)
+	nOrig := len(norm)
+
+	// Iterate through each (y,z) and combine adjacent spans.
+	var old *RLE
+	n := 0 // current position of normalized slice end
+	for o := 0; o < nOrig; o++ {
+		pt := norm[o].start
+		if old == nil {
+			old = &RLE{pt, norm[o].length}
+		} else {
+			// Handle new normalized RLE by saving old one.
+			if pt[1] != old.start[1] || pt[2] != old.start[2] || pt[0] != old.start[0]+old.length {
+				norm[n] = *old
+				n++
+				old.start = pt
+				old.length = norm[o].length
+			} else {
+				old.length += norm[o].length
+			}
+		}
+	}
+	norm[n] = *old
+	return norm[:n+1]
+}
+
+// Split removes RLEs, which must be a subset of current RLEs, from the receiver and returns the remainder.
+func (rles RLEs) Split(splits RLEs) (RLEs, error) {
+	if splits == nil || len(splits) == 0 {
+		return rles, nil
+	}
+
+	// Normalize the two RLEs so they are sorted and all contiguous RLE are joined.
+	orles := rles.Normalize() // original RLEs
+	srles := splits.Normalize()
+
+	// Make a list of current RLEs
+	out := list.New()
+	for _, rle := range orles {
+		out.PushBack(rle)
+	}
+	orles = nil
+
+	// Perform all the splits.
+	e := out.Front()
+	for _, split := range srles {
+		// Fast forward until we have the intersecting RLE
+		for {
+			if e == nil {
+				return nil, fmt.Errorf("Split RLE %s is not contained in original RLEs", split)
+			}
+			orle := e.Value.(RLE)
+
+			frags := orle.Excise(split)
+			if frags == nil { // no intersection, move forward
+				e = e.Next()
+				continue
+			}
+			switch len(frags) {
+			case 0:
+				// Split fully covers.  Cannot be larger than underlying RLE due to subset requirement
+				// and normalization.
+				next := e.Next()
+				out.Remove(e)
+				e = next
+
+			case 1:
+				// Replace the current RLE
+				next := out.InsertAfter(frags[0], e)
+				out.Remove(e)
+				e = next
+
+			case 2:
+				// There's a left and right portion.  All future splits can only intersect right one
+				// since splits are also sorted in X.
+				out.InsertBefore(frags[0], e)
+				next := out.InsertAfter(frags[1], e)
+				out.Remove(e)
+				e = next
+
+			default:
+				return nil, fmt.Errorf("bad RLE excision - %d fragments for split %s by %s\n", len(frags), orle, split)
+			}
+			break
+		}
+	}
+
+	numRLEs := out.Len()
+	if numRLEs == 0 {
+		return RLEs{}, nil
+	}
+	remain := make(RLEs, numRLEs)
+	i := 0
+	for e := out.Front(); e != nil; e = e.Next() {
+		remain[i] = e.Value.(RLE)
+		i++
+	}
+	return remain, nil
 }
 
 // Partition splits RLEs up into block-sized RLEs using the given block size.

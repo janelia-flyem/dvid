@@ -6,10 +6,8 @@
 package labelvol
 
 import (
-	"container/list"
 	"fmt"
 	"io"
-	"sort"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
@@ -273,11 +271,11 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser) 
 		}
 
 		// Compare and process based on modifications required.
-		modified, dup, err := diffRLEs(splitmap[splitblk], rles)
+		modified, err := rles.Split(splitmap[splitblk])
 		if err != nil {
 			return toLabel, err
 		}
-		if dup {
+		if len(modified) == 0 {
 			fmt.Printf("Deleting label %d block %s\n", fromLabel, splitblk.Print())
 			batch.Delete(tk)
 		} else {
@@ -323,101 +321,6 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser) 
 	}
 
 	return toLabel, nil
-}
-
-// Assumes split is a subset of original RLE.  Removes the split from the original
-// and returns the result and a bool if split was a duplicate.
-func diffRLEs(split, orig dvid.RLEs) (modified dvid.RLEs, dup bool, err error) {
-	if split == nil || len(split) == 0 {
-		err = fmt.Errorf("diffRLEs called with no splits")
-		return
-	}
-
-	// Copy the original and split RLEs, then sort them.
-	srles := make(dvid.RLEs, len(split))
-	copy(srles, split)
-	orles := make(dvid.RLEs, len(orig))
-	copy(orles, orig)
-
-	sort.Sort(srles)
-	sort.Sort(orles)
-
-	// Make original RLEs into a linked list
-	out := list.New()
-	for _, rle := range orles {
-		out.PushBack(rle)
-	}
-	orles = nil
-
-	// Iterate through all splits until we are done.
-	e := out.Front()
-	spos := 0
-	for {
-		if spos >= len(srles) {
-			break
-		}
-		srle := srles[spos]
-
-		// Fast forward original (superset of splits) until it meets this split.
-		for {
-			if e == nil {
-				err = fmt.Errorf("Split RLE %s is not contained in original RLE", srle)
-				return
-			}
-			orle := e.Value.(dvid.RLE)
-
-			frags := orle.Excise(srle)
-			if frags == nil { // no intersection, move forward
-				e = e.Next()
-				continue
-			}
-			switch len(frags) {
-			case 0:
-				// Split fully covers and could be larger than RLE
-				next := e.Next()
-				out.Remove(e)
-				e = next
-				if e != nil {
-					peek := e.Value.(dvid.RLE)
-					if srle.Intersects(peek) { // Split is larger than RLE so reuse it.
-						continue
-					}
-				}
-			case 1:
-				// Replace the current RLE
-				next := out.InsertAfter(frags[0], e)
-				out.Remove(e)
-				e = next
-			case 2:
-				// There's a left and right portion.  All future splits can only intersect right one.
-				out.InsertBefore(frags[0], e)
-				next := out.InsertAfter(frags[1], e)
-				out.Remove(e)
-				e = next
-			default:
-				err = fmt.Errorf("bad excise results - %d fragments", len(frags))
-				return
-			}
-			break
-		}
-
-		// Move to the next split
-		spos++
-	}
-
-	numRLEs := out.Len()
-	if numRLEs == 0 {
-		dup = true
-		return
-	}
-	dup = false
-	modified = make(dvid.RLEs, numRLEs)
-	i := 0
-	for e := out.Front(); e != nil; e = e.Next() {
-		modified[i] = e.Value.(dvid.RLE)
-		i++
-	}
-	return
 }
 
 // write label volume in sorted order if available.
