@@ -21,6 +21,8 @@ const (
 	keyLabelBlockRLE = 227
 
 	keyLabelMax = 228
+
+	keyRepoLabelMax = 229
 )
 
 // NewTKey returns a TKey for storing a "label + spatial index", where
@@ -47,5 +49,6 @@ func DecodeTKey(tk storage.TKey) (label uint64, block dvid.IZYXString, err error
 }
 
 var (
-	maxLabelTKey = storage.NewTKey(keyLabelMax, nil)
+	maxLabelTKey     = storage.NewTKey(keyLabelMax, nil)
+	maxRepoLabelTKey = storage.NewTKey(keyRepoLabelMax, nil)
 )

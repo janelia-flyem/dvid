@@ -160,8 +160,15 @@ type DataService interface {
 // on startup.  It is assumed that the data instances store data whenever
 // its data mutates, e.g., extents for labelblk or max label for labelvol.
 type InstanceMutator interface {
-	// Loads all mutable properties.
-	LoadMutable() error
+	// Loads all mutable properties and applies any necessary migration to
+	// transform the internal data from the stored to expected version.
+	LoadMutable(dag DAGManager, storedVersion, expectedVersion uint64) (saveNeeded bool, err error)
+}
+
+// VersionInitializer provides a hook for data instances to receive new version
+// events and modify their properties as needed.
+type VersionInitializer interface {
+	InitVersion(DAGManager, dvid.UUID, dvid.VersionID) error
 }
 
 // SyncEvent identifies an event in which a data instance has modified its data

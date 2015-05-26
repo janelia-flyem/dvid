@@ -25,6 +25,11 @@ import (
 	"github.com/janelia-flyem/dvid/storage/local"
 )
 
+const (
+	// The current repo metadata format version
+	RepoFormatVersion = 1
+)
+
 // --- In the case of a single DVID process, return new ids requires only a lock.
 // --- This becomes more tricky when dealing with multiple DVID processes working
 // --- off shared storage engines.
@@ -134,7 +139,7 @@ func Initialize() error {
 		return err
 	}
 
-	// Try to load metadata from the MetaData store.
+	// Load the repo metadata
 	if err = m.loadMetadata(); err != nil {
 		return fmt.Errorf("Error loading metadata: %s", err.Error())
 	}
@@ -210,20 +215,7 @@ func (m *repoManager) putCaches() error {
 	return nil
 }
 
-// Loads all data necessary for repoManager.
-func (m *repoManager) loadMetadata() error {
-	// Check the version of the metadata
-	found, err := m.loadData(formatKey, &(m.formatVersion))
-	if err != nil {
-		return fmt.Errorf("Error in loading metadata format version: %s\n", err.Error())
-	}
-	if found {
-		dvid.Infof("Loading metadata with format version %d...\n", m.formatVersion)
-	} else {
-		dvid.Infof("Loading metadata without format version...\n")
-		m.formatVersion = 0
-	}
-
+func (m *repoManager) loadVersion0() error {
 	// Load the maps
 	if _, err := m.loadData(repoToUUIDKey, &(m.repoToUUID)); err != nil {
 		return fmt.Errorf("Error loading repo to UUID map: %s", err)
@@ -254,6 +246,8 @@ func (m *repoManager) loadMetadata() error {
 
 	var saveCache bool
 	for _, kv := range kvList {
+		var saveRepo bool
+
 		ibytes, err := kv.K.ClassBytes(repoKey)
 		if err != nil {
 			return err
@@ -303,23 +297,65 @@ func (m *repoManager) loadMetadata() error {
 		for _, dataservice := range repo.data {
 			mutator, mutable := dataservice.(InstanceMutator)
 			if mutable {
-				if err := mutator.LoadMutable(); err != nil {
+				saveRepo, err = mutator.LoadMutable(repo, m.formatVersion, RepoFormatVersion)
+				if err != nil {
 					return err
 				}
+			}
+		}
+
+		// If updates had to be made, save the migrated repo metadata.
+		if saveRepo {
+			dvid.Infof("Re-saved repo with root %s due to migrations.\n", repo.RootUUID())
+			if err := repo.save(); err != nil {
+				return err
 			}
 		}
 	}
 	if err := m.verifyCompiledTypes(); err != nil {
 		return err
 	}
+
 	// If we noticed missing cache entries, save current metadata.
 	if saveCache {
 		if err := m.putCaches(); err != nil {
 			return err
 		}
 	}
+
+	if m.formatVersion != RepoFormatVersion {
+		dvid.Infof("Updated metadata from version %d to version %d\n", m.formatVersion, RepoFormatVersion)
+		m.formatVersion = RepoFormatVersion
+		if err := m.putData(formatKey, &(m.formatVersion)); err != nil {
+			return err
+		}
+	}
 	dvid.Infof("Loaded %d repositories from metadata store.", len(m.repos))
 	return nil
+}
+
+func (m *repoManager) loadMetadata() error {
+	// Check the version of the metadata
+	found, err := m.loadData(formatKey, &(m.formatVersion))
+	if err != nil {
+		return fmt.Errorf("Error in loading metadata format version: %s\n", err.Error())
+	}
+	if found {
+		dvid.Infof("Loading metadata with format version %d...\n", m.formatVersion)
+	} else {
+		dvid.Infof("Loading metadata without format version. Setting it to format version 0.\n")
+		m.formatVersion = 0
+	}
+
+	switch m.formatVersion {
+	case 0:
+		return m.loadVersion0()
+	case 1:
+		// We aren't changing any of the metadata, just the labelvol datatype props.
+		return m.loadVersion0()
+	default:
+		return fmt.Errorf("Unknown metadata format %d", m.formatVersion)
+	}
 }
 
 // TODO: Verify that the datatypes used by the repo data have been compiled into this server.
@@ -896,6 +932,15 @@ func (r *repoT) RootUUID() dvid.UUID {
 	return r.rootID
 }
 
+func (r *repoT) RootVersion() dvid.VersionID {
+	v, err := VersionFromUUID(r.rootID)
+	if err != nil {
+		dvid.Criticalf("Could not get version id from root uuid %s\n", r.rootID)
+		return 0
+	}
+	return v
+}
+
 func (r *repoT) GetAllData() (map[dvid.InstanceName]DataService, error) {
 	return r.data, nil
 }
@@ -912,6 +957,14 @@ func (r *repoT) GetIterator(versionID dvid.VersionID) (storage.VersionIterator, 
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.dag.getIterator(versionID)
+}
+
+func (r *repoT) GetChildren(v dvid.VersionID) ([]dvid.VersionID, error) {
+	node, found := r.dag.nodes[v]
+	if !found {
+		return nil, fmt.Errorf("could not find version id %d", v)
+	}
+	return node.children, nil
 }
 
 func (r *repoT) NewData(t TypeService, name dvid.InstanceName, c dvid.Config) (DataService, error) {
@@ -1024,6 +1077,16 @@ func (r *repoT) NewVersion(parent dvid.UUID, assign *dvid.UUID) (dvid.UUID, erro
 	parentNode.updated = time.Now()
 	parentNode.Unlock()
 	r.updated = time.Now()
+
+	// Notify data instances that we have a new child in case they have to do some kind of initialization.
+	for _, dataservice := range r.data {
+		initializer, ok := dataservice.(VersionInitializer)
+		if ok {
+			if err := initializer.InitVersion(r, childNode.uuid, childNode.versionID); err != nil {
+				return dvid.NilUUID, err
+			}
+		}
+	}
 
 	return childNode.uuid, r.save()
 }

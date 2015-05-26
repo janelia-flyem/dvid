@@ -90,6 +90,7 @@ type Describer interface {
 
 type DAGManager interface {
 	RootUUID() dvid.UUID
+	RootVersion() dvid.VersionID
 
 	GetNodeLog(dvid.UUID) ([]string, error)
 	AddToNodeLog(dvid.UUID, []string) error
@@ -109,6 +110,10 @@ type DAGManager interface {
 	// GetIterator returns a VersionIterator capable of ascending ancestor path from
 	// a particular version in the DAG.
 	GetIterator(dvid.VersionID) (storage.VersionIterator, error)
+
+	// GetChildren returns the children of a given version.  This allows you to
+	// move through the entire DAG.
+	GetChildren(dvid.VersionID) ([]dvid.VersionID, error)
 }
 
 type Shutdowner interface {

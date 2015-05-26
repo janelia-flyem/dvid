@@ -167,9 +167,28 @@ GET <api URL>/node/<UUID>/<data name>/sparsevol-coarse/<label>
 
 GET <api URL>/node/<UUID>/<data name>/maxlabel
 
-	Returns the maximum label for the version of data in JSON form:
+	GET returns the maximum label for the version of data in JSON form:
 
 		{ "maxlabel": <label #> }
+
+
+GET <api URL>/node/<UUID>/<data name>/nextlabel
+POST <api URL>/node/<UUID>/<data name>/nextlabel
+
+	GET returns the next label for the version of data in JSON form:
+
+		{ "nextlabel": <label #> }
+
+	POST allows the client to request some # of labels that will be reserved.
+	This is used if the client wants to introduce new labels.
+
+	The request:
+
+		{ "needed": <# of labels> }
+
+	Response:
+
+		{ "start": <starting label #>, "end": <ending label #> }
 
 
 POST <api URL>/node/<UUID>/<data name>/merge
@@ -256,6 +275,11 @@ func NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.
 		Properties: *props,
 	}
 	data.Properties.MaxLabel = make(map[dvid.VersionID]uint64)
+	v, err := datastore.VersionFromUUID(uuid)
+	if err != nil {
+		return nil, err
+	}
+	data.Properties.MaxLabel[v] = 0
 	return data, nil
 }
 
@@ -282,10 +306,14 @@ type Properties struct {
 	// Block size for this repo
 	BlockSize dvid.Point3d
 
-	ml_mu sync.RWMutex // For atomic access of MaxLabel
+	ml_mu sync.RWMutex // For atomic access of MaxLabel and MaxRepoLabel
 
-	// The maximum label id found in this dataset.
+	// The maximum label id found in each version of this instance.
 	MaxLabel map[dvid.VersionID]uint64
+
+	// The maximum label for this instance in the entire repo.  This allows us to do
+	// conflict-free merges without any relabeling.
+	MaxRepoLabel uint64
 }
 
 func (p Properties) MarshalJSON() ([]byte, error) {
@@ -387,58 +415,197 @@ func GetByUUID(uuid dvid.UUID, name dvid.InstanceName) (*Data, error) {
 	return data, nil
 }
 
+// --- datastore.VersionInitializer interface ----
+
+// InitVersion initializes max label tracking for a new version if it has a parent
+func (d *Data) InitVersion(dag datastore.DAGManager, uuid dvid.UUID, v dvid.VersionID) error {
+	// Get the parent max label
+	it, err := dag.GetIterator(v)
+	if err != nil {
+		return err
+	}
+	it.Next()
+
+	if it.Valid() {
+		parent := it.VersionID()
+		maxLabel, ok := d.MaxLabel[parent]
+		if !ok {
+			return fmt.Errorf("parent of uuid %s had no max label", uuid)
+		}
+		d.MaxLabel[v] = maxLabel
+
+		buf := make([]byte, 8)
+		binary.LittleEndian.PutUint64(buf, maxLabel)
+		ctx := datastore.NewVersionedContext(d, v)
+		store, err := storage.SmallDataStore()
+		if err != nil {
+			return fmt.Errorf("data type labelvol had error initializing store: %s\n", err.Error())
+		}
+		store.Put(ctx, maxLabelTKey, buf)
+	}
+	return nil
+}
+
 // --- datastore.InstanceMutator interface -----
 
 // LoadMutable loads mutable properties of label volumes like the maximum labels
-// for each version.
-func (d *Data) LoadMutable() error {
+// for each version.  Note that we load these max labels from key-value pairs
+// rather than data instance properties persistence, because in the case of a crash,
+// the actually stored repo data structure may be out-of-date compared to the guaranteed
+// up-to-date key-value pairs for max labels.
+func (d *Data) LoadMutable(dag datastore.DAGManager, storedVersion, expectedVersion uint64) (bool, error) {
 	ctx := storage.NewDataContext(d, 0)
 	store, err := storage.SmallDataStore()
 	if err != nil {
-		return fmt.Errorf("Data type labelvol had error initializing store: %s\n", err.Error())
+		return false, fmt.Errorf("Data type labelvol had error initializing store: %s\n", err.Error())
 	}
-	var maxes int
-	d.MaxLabel = make(map[dvid.VersionID]uint64)
 
-	var wg sync.WaitGroup
+	wg := new(sync.WaitGroup)
 	wg.Add(1)
 	ch := make(chan *storage.KeyValue)
-	go func() {
-		for {
-			kv := <-ch
-			if kv == nil {
-				wg.Done()
-				return
-			}
-			v, err := ctx.VersionFromKey(kv.K)
-			if err != nil {
-				dvid.Errorf("Can't decode key when loading mutable data for %s", d.DataName())
-				continue
-			}
-			if len(kv.V) != 8 {
-				dvid.Errorf("Got bad value.  Expected 64-bit label, got %v", kv.V)
-				continue
-			}
-			label := binary.LittleEndian.Uint64(kv.V)
-			d.MaxLabel[v] = label
-			maxes++
+
+	// Start appropriate migration function if any.
+	var saveRequired bool
+
+	switch storedVersion {
+	case 0:
+		// Need to update all max labels and set repo-level max label.
+		saveRequired = true
+		go d.migrateMaxLabels(dag, wg, ch)
+	default:
+		// Load in each version max label without migration.
+		go d.loadMaxLabels(wg, ch)
+
+		// Load in the repo-wide max label.
+		data, err := store.Get(ctx, maxRepoLabelTKey)
+		if err != nil {
+			return false, err
 		}
-	}()
+		d.MaxRepoLabel = binary.LittleEndian.Uint64(data)
+	}
+
+	// Send the max label data per version
 	minKey, err := ctx.MinVersionKey(maxLabelTKey)
 	if err != nil {
-		return err
+		return false, err
 	}
 	maxKey, err := ctx.MaxVersionKey(maxLabelTKey)
 	if err != nil {
-		return err
+		return false, err
 	}
 	keysOnly := false
 	if err = store.SendRange(minKey, maxKey, keysOnly, ch); err != nil {
-		return err
+		return false, err
 	}
 	wg.Wait()
-	dvid.Infof("Loaded %d maximum label values for labelvol %q\n", maxes, d.DataName())
+
+	dvid.Infof("Loaded max label values for labelvol %q with repo-wide max %d\n", d.DataName(), d.MaxRepoLabel)
+	return saveRequired, nil
+}
+
+func (d *Data) migrateMaxLabels(dag datastore.DAGManager, wg *sync.WaitGroup, ch chan *storage.KeyValue) {
+	ctx := storage.NewDataContext(d, 0)
+	store, err := storage.SmallDataStore()
+	if err != nil {
+		dvid.Errorf("Can't initializing small data store: %s\n", err.Error())
+	}
+
+	var maxRepoLabel uint64
+	d.MaxLabel = make(map[dvid.VersionID]uint64)
+	for {
+		kv := <-ch
+		if kv == nil {
+			break
+		}
+		v, err := ctx.VersionFromKey(kv.K)
+		if err != nil {
+			dvid.Errorf("Can't decode key when loading mutable data for %s", d.DataName())
+			continue
+		}
+		if len(kv.V) != 8 {
+			dvid.Errorf("Got bad value.  Expected 64-bit label, got %v", kv.V)
+			continue
+		}
+		label := binary.LittleEndian.Uint64(kv.V)
+		d.MaxLabel[v] = label
+		if label > maxRepoLabel {
+			maxRepoLabel = label
+		}
+	}
+
+	// Adjust the MaxLabel data to make sure we correct for any case of child max < parent max.
+	d.adjustMaxLabels(store, dag, dag.RootVersion())
+
+	// Set the repo-wide max label.
+	d.MaxRepoLabel = maxRepoLabel
+
+	buf := make([]byte, 8)
+	binary.LittleEndian.PutUint64(buf, maxRepoLabel)
+	store.Put(ctx, maxRepoLabelTKey, buf)
+
+	wg.Done()
+	return
+}
+
+func (d *Data) adjustMaxLabels(store storage.SmallDataStorer, dag datastore.DAGManager, v dvid.VersionID) error {
+	buf := make([]byte, 8)
+
+	parentMax, ok := d.MaxLabel[v]
+	if !ok {
+		return fmt.Errorf("can't adjust version id %d since none exists in metadata", v)
+	}
+	childIDs, err := dag.GetChildren(v)
+	if err != nil {
+		return err
+	}
+	for _, childID := range childIDs {
+		var save bool
+		childMax, ok := d.MaxLabel[childID]
+		if !ok {
+			// set to parent max
+			d.MaxLabel[childID] = parentMax
+			save = true
+		} else if childMax < parentMax {
+			d.MaxLabel[childID] = parentMax + childMax + 1
+			save = true
+		}
+
+		// save the key-value
+		if save {
+			binary.LittleEndian.PutUint64(buf, d.MaxLabel[childID])
+			ctx := datastore.NewVersionedContext(d, childID)
+			store.Put(ctx, maxLabelTKey, buf)
+		}
+
+		// recurse for depth-first
+		if err := d.adjustMaxLabels(store, dag, childID); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+func (d *Data) loadMaxLabels(wg *sync.WaitGroup, ch chan *storage.KeyValue) {
+	ctx := storage.NewDataContext(d, 0)
+	d.MaxLabel = make(map[dvid.VersionID]uint64)
+	for {
+		kv := <-ch
+		if kv == nil {
+			wg.Done()
+			return
+		}
+		v, err := ctx.VersionFromKey(kv.K)
+		if err != nil {
+			dvid.Errorf("Can't decode key when loading mutable data for %s", d.DataName())
+			continue
+		}
+		if len(kv.V) != 8 {
+			dvid.Errorf("Got bad value.  Expected 64-bit label, got %v", kv.V)
+			continue
+		}
+		label := binary.LittleEndian.Uint64(kv.V)
+		d.MaxLabel[v] = label
+	}
 }
 
 // --- datastore.DataService interface ---------
@@ -679,17 +846,35 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 
 	case "maxlabel":
 		// GET <api URL>/node/<UUID>/<data name>/maxlabel
-		if action != "get" {
-			server.BadRequest(w, r, "Can only do GET on maxlabel endpoint.")
-			return
-		}
-		maxlabel, ok := d.MaxLabel[versionID]
-		if !ok {
-			server.BadRequest(w, r, "No maximum label found for %s version %d\n", d.DataName(), versionID)
-			return
-		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, "{%q: %d}", "maxlabel", maxlabel)
+		switch action {
+		case "get":
+			maxlabel, ok := d.MaxLabel[versionID]
+			if !ok {
+				server.BadRequest(w, r, "No maximum label found for %s version %d\n", d.DataName(), versionID)
+				return
+			}
+			fmt.Fprintf(w, "{%q: %d}", "maxlabel", maxlabel)
+		default:
+			server.BadRequest(w, r, "Unknown action %q requested: %s\n", action, r.URL)
+			return
+		}
+		timedLog.Infof("HTTP maxlabel request (%s)", r.URL)
+
+	case "nextlabel":
+		// GET <api URL>/node/<UUID>/<data name>/nextlabel
+		// POST <api URL>/node/<UUID>/<data name>/nextlabel
+		w.Header().Set("Content-Type", "application/json")
+		switch action {
+		case "get":
+			fmt.Fprintf(w, "{%q: %d}", "nextlabel", d.MaxRepoLabel)
+		case "post":
+			server.BadRequest(w, r, "POST on maxlabel is not supported yet.\n")
+			return
+		default:
+			server.BadRequest(w, r, "Unknown action %q requested: %s\n", action, r.URL)
+			return
+		}
 		timedLog.Infof("HTTP maxlabel request (%s)", r.URL)
 
 	case "split":
@@ -761,25 +946,16 @@ func (d *Data) GetMaxLabel(v dvid.VersionID) (uint64, error) {
 	return max, nil
 }
 
+// Given a stored label, make sure our max label tracking is updated.
 func (d *Data) casMaxLabel(batch storage.Batch, v dvid.VersionID, label uint64) {
 	d.ml_mu.Lock()
 	defer d.ml_mu.Unlock()
+
 	save := false
 	maxLabel, found := d.MaxLabel[v]
 	if !found {
-		// Get parent's max or start with 1.
-		parent, found, err := datastore.GetParentByVersion(v)
-		if !found || err != nil {
-			maxLabel = 1
-		} else {
-			maxLabel, found = d.MaxLabel[parent]
-			if found {
-				maxLabel++
-			} else {
-				maxLabel = 1
-			}
-		}
-		save = true
+		dvid.Errorf("Bad max label of version %d -- none found!\n", v)
+		maxLabel = 0
 	}
 	if maxLabel < label {
 		maxLabel = label
@@ -787,9 +963,20 @@ func (d *Data) casMaxLabel(batch storage.Batch, v dvid.VersionID, label uint64) 
 	}
 	if save {
 		buf := make([]byte, 8)
-		binary.LittleEndian.PutUint64(buf, label)
+		binary.LittleEndian.PutUint64(buf, maxLabel)
 		batch.Put(maxLabelTKey, buf)
 		d.MaxLabel[v] = maxLabel
+
+		if d.MaxRepoLabel < maxLabel {
+			d.MaxRepoLabel = maxLabel
+			ctx := storage.NewDataContext(d, 0)
+			store, err := storage.SmallDataStore()
+			if err != nil {
+				dvid.Errorf("Data type labelvol had error initializing store: %s\n", err.Error())
+			} else {
+				store.Put(ctx, maxRepoLabelTKey, buf)
+			}
+		}
 	}
 	if err := batch.Commit(); err != nil {
 		dvid.Errorf("batch put: %s\n", err.Error())
@@ -802,38 +989,32 @@ func (d *Data) NewLabel(v dvid.VersionID) (uint64, error) {
 	d.ml_mu.Lock()
 	defer d.ml_mu.Unlock()
 
-	var label uint64
-
-	max, found := d.MaxLabel[v]
-	if found {
-		label = max + 1
-	} else {
-		// Get max from parent
-		parent, found, err := datastore.GetParentByVersion(v)
-		if err != nil {
-			return 0, err
-		}
-		if found {
-			maxP, found := d.MaxLabel[parent]
-			if found {
-				label = maxP + 1
-			} else {
-				label = 1
-			}
-		} else {
-			label = 1
-		}
+	// Make sure we aren't trying to increment a label on a locked node.
+	locked, err := datastore.LockedVersion(v)
+	if err != nil {
+		return 0, err
 	}
-	d.MaxLabel[v] = label
+	if locked {
+		return 0, fmt.Errorf("can't ask for new label in a locked version id %d", v)
+	}
+
+	// Increment and store.
+	d.MaxRepoLabel++
+	d.MaxLabel[v] = d.MaxRepoLabel
+
 	store, err := storage.SmallDataStore()
 	if err != nil {
 		return 0, fmt.Errorf("can't initializing small data store: %s\n", err.Error())
 	}
 	buf := make([]byte, 8)
-	binary.LittleEndian.PutUint64(buf, label)
+	binary.LittleEndian.PutUint64(buf, d.MaxRepoLabel)
 	ctx := datastore.NewVersionedContext(d, v)
 	store.Put(ctx, maxLabelTKey, buf)
-	return label, nil
+
+	ctx2 := storage.NewDataContext(d, 0)
+	store.Put(ctx2, maxRepoLabelTKey, buf)
+
+	return d.MaxRepoLabel, nil
 }
 
 // Returns RLEs for a given label where the key of the returned map is the block index

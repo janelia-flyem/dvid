@@ -144,6 +144,15 @@ GET  <api URL>/node/<UUID>/<data name>/metadata
 	Retrieves a JSON schema (application/vnd.dvid-nd-data+json) that describes the layout
 	of bytes returned for n-d images.
 
+GET <api URL>/node/<UUID>/<data name>/rawkey?x=<block x>&y=<block y>&z=<block z>
+
+    Returns JSON describing hex-encoded binary key used to store a block of data at the given block coordinate:
+
+    {
+        "Key": "FF3801AD78BBD4829A3"
+    }
+
+    The query options for block x, y, and z must be supplied or this request will return an error.
 
 GET  <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?throttle=true][?queryopts]
 POST <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>]
@@ -1356,6 +1365,13 @@ func (d *Data) ServeHTTP(reqCtx context.Context, w http.ResponseWriter, r *http.
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, string(jsonBytes))
 		return
+
+	case "rawkey":
+		// GET <api URL>/node/<UUID>/<data name>/rawkey?x=<block x>&y=<block y>&z=<block z>
+		if len(parts) != 4 {
+			server.BadRequest(w, r, "rawkey endpoint should be followed by query strings (x, y, and z) giving block coord")
+			return
+		}
 
 	case "blocks":
 		// GET  <api URL>/node/<UUID>/<data name>/blocks/<block coord>/<spanX>

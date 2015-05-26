@@ -260,8 +260,9 @@ type OrderedKeyValueGetter interface {
 
 	// SendRange sends a range of full keys.  This is to be used for low-level data
 	// retrieval like DVID-to-DVID communication and should not be used by data type
-	// implementations if possible.  A nil is sent down the channel when the
-	// range is complete.
+	// implementations if possible because each version's key-value pairs are sent
+	// without filtering by the current version and its ancestor graph.  A nil is sent
+	// down the channel when the range is complete.
 	SendRange(kStart, kEnd Key, keysOnly bool, out chan *KeyValue) error
 }
 

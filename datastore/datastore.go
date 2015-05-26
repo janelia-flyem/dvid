@@ -188,6 +188,19 @@ func GetParentByVersion(v dvid.VersionID) (parent dvid.VersionID, found bool, er
 	return it.VersionID(), it.Valid(), nil
 }
 
+// LockedVersion returns true if a given version is locked.
+func LockedVersion(v dvid.VersionID) (bool, error) {
+	uuid, err := UUIDFromVersion(v)
+	if err != nil {
+		return false, err
+	}
+	repo, err := RepoFromUUID(uuid)
+	if err != nil {
+		return false, err
+	}
+	return repo.Locked(uuid)
+}
+
 // ---- Server Context code, not to be confused with storage.Context.
 
 // The ctxkey type is unexported to prevent collisions with context keys defined in

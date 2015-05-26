@@ -111,8 +111,6 @@ func (b testBody) checkSparseVol(t *testing.T, encoding []byte, bounds dvid.Boun
 			}
 		}
 		t.Errorf("Expected spans for label %d:\n%s\nGot spans:\n%s\n", b.label, expected, spans)
-	} else {
-		fmt.Printf("Got sparse vol:\n%s\n", spans)
 	}
 }
 
@@ -444,6 +442,14 @@ func TestSplitLabel(t *testing.T) {
 		t.Errorf("Unable to serialize RLEs: %s\n", err.Error())
 	}
 	buf.Write(rleBytes)
+
+	// Verify the max label is 4
+	reqStr = fmt.Sprintf("%snode/%s/%s/maxlabel", server.WebAPIPath, uuid, "bodies")
+	jsonStr := server.TestHTTP(t, "GET", reqStr, nil)
+	expected := `{"maxlabel": 4}`
+	if string(jsonStr) != expected {
+		t.Errorf("Expected this JSON returned from maxlabel:\n%s\nGot:\n%s\n", expected, string(jsonStr))
+	}
 
 	// Submit the split sparsevol for body 4a
 	reqStr = fmt.Sprintf("%snode/%s/%s/split/%d", server.WebAPIPath, uuid, "bodies", 4)
