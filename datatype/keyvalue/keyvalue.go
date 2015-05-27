@@ -461,6 +461,10 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 		comment = fmt.Sprintf("HTTP GET keyrange [%q, %q]", keyBeg, keyEnd)
 
 	case "key":
+        if len(parts) < 5 {
+            server.BadRequest(w, r, "expect key string to follow 'key' endpoint")
+            return
+        }
 		keyStr := parts[4]
 
 		switch action {
