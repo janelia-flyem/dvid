@@ -954,8 +954,9 @@ func (r *repoT) GetDataByName(name dvid.InstanceName) (DataService, error) {
 }
 
 func (r *repoT) GetIterator(versionID dvid.VersionID) (storage.VersionIterator, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
+	// TODO Resolve deadlock by refactor in following commit
+	// r.mu.RLock()
+	// defer r.mu.RUnlock()
 	return r.dag.getIterator(versionID)
 }
 
@@ -1178,9 +1179,7 @@ func (r *repoT) NotifySubscribers(e SyncEvent, m SyncMessage) error {
 //  function level, just so I don't stupidly get into deadlock.
 
 func (r *repoT) getDataByName(name dvid.InstanceName) (DataService, error) {
-	elements := strings.Split(string(name), "-")
-	stem := elements[0]
-	data, found := r.data[dvid.InstanceName(stem)]
+	data, found := r.data[name]
 	if !found {
 		return nil, fmt.Errorf("No data instance %q found in repo %s", name, r.rootID)
 	}
