@@ -164,7 +164,7 @@ func main() {
 
 	// Launch background process to do rsync of sst files
 	go func() {
-		cmd := exec.Command(rsyncPath, "-a", snapshotDir+"/", pathBackup)
+		cmd := exec.Command(rsyncPath, "-a", "--delete", snapshotDir+"/", pathBackup)
 		err = cmd.Run()
 		if err != nil {
 			fmt.Printf("Error running rsync: %s\n", err.Error())
