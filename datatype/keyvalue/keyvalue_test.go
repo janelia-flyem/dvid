@@ -179,6 +179,10 @@ func testRequest(t *testing.T, repo datastore.Repo, versionID dvid.VersionID, na
 		t.Errorf("Error on key %q: expected %s, got %s\n", key1, value1, string(returnValue))
 	}
 
+	// Expect error if no key used.
+	badrequest := fmt.Sprintf("%snode/%s/%s/key/", server.WebAPIPath, uuid, data.DataName())
+	server.TestBadHTTP(t, "GET", badrequest, nil)
+
 	// Add 2nd k/v
 	key2 := "my2ndkey"
 	value2 := "more good stuff"

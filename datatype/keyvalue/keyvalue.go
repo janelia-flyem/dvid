@@ -461,10 +461,10 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 		comment = fmt.Sprintf("HTTP GET keyrange [%q, %q]", keyBeg, keyEnd)
 
 	case "key":
-        if len(parts) < 5 {
-            server.BadRequest(w, r, "expect key string to follow 'key' endpoint")
-            return
-        }
+		if len(parts) < 5 {
+			server.BadRequest(w, r, "expect key string to follow 'key' endpoint")
+			return
+		}
 		keyStr := parts[4]
 
 		switch action {
@@ -479,11 +479,13 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 				http.Error(w, fmt.Sprintf("Key %q not found", keyStr), http.StatusNotFound)
 				return
 			}
-			w.Header().Set("Content-Type", "application/octet-stream")
-			_, err = w.Write(value)
-			if err != nil {
-				server.BadRequest(w, r, err.Error())
-				return
+			if value != nil || len(value) > 0 {
+				_, err = w.Write(value)
+				if err != nil {
+					server.BadRequest(w, r, err.Error())
+					return
+				}
+				w.Header().Set("Content-Type", "application/octet-stream")
 			}
 			comment = fmt.Sprintf("HTTP GET key %q of keyvalue %q: %d bytes (%s)\n", keyStr, d.DataName(), len(value), url)
 
