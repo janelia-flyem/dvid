@@ -15,8 +15,6 @@ import (
 	"strings"
 	"sync"
 
-	"code.google.com/p/go.net/context"
-
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/message"
@@ -631,29 +629,8 @@ func (d *Data) setNotBusy() {
 	d.busy = false
 }
 
-// getGraphContext retrieves the GraphDB interface and the Context defining the graph space
-func (d *Data) getGraphContext(ctx context.Context) (storage.Context, storage.GraphDB, error) {
-	// Get repo and version ID of this request
-	_, versions, err := datastore.FromContext(ctx)
-	if err != nil {
-		return nil, nil, fmt.Errorf("Error: %q has invalid context: %s\n", d.DataName, err.Error())
-	}
-
-	// Construct storage.Context using a particular version of this Data
-	var versionID dvid.VersionID
-	if len(versions) > 0 {
-		versionID = versions[0]
-	}
-	db, err := storage.GraphStore()
-	if err != nil {
-		return nil, nil, err
-	}
-
-	return datastore.NewVersionedContext(d, versionID), db, err
-}
-
 // handleSubgraph loads, retrieves, or deletes a subgraph (more description in REST interface)
-func (d *Data) handleSubgraphBulk(ctx storage.Context, db storage.GraphDB, w http.ResponseWriter, labelgraph *LabelGraph, method string) error {
+func (d *Data) handleSubgraphBulk(ctx *datastore.VersionedCtx, db storage.GraphDB, w http.ResponseWriter, labelgraph *LabelGraph, method string) error {
 	var err error
 	if !d.setBusy() {
 		return fmt.Errorf("Server busy with bulk transaction")
@@ -776,7 +753,7 @@ func (d *Data) extractOpenVertices(labelgraph *LabelGraph) []transactionItem {
 
 // handleWeightUpdate POST vertex/edge weight increment/decrement.  POSTing to an uncreated
 // node or edge will create the node or edge (default 0 weight).  Limit of 1000 vertices and 1000 edges.
-func (d *Data) handleWeightUpdate(ctx storage.Context, db storage.GraphDB, w http.ResponseWriter, labelgraph *LabelGraph) error {
+func (d *Data) handleWeightUpdate(ctx *datastore.VersionedCtx, db storage.GraphDB, w http.ResponseWriter, labelgraph *LabelGraph) error {
 
 	// collect all vertices that need to be locked and wrap in transaction ("read only")
 	open_vertices := d.extractOpenVertices(labelgraph)
@@ -876,7 +853,7 @@ func (d *Data) handleWeightUpdate(ctx storage.Context, db storage.GraphDB, w htt
 }
 
 // handleMerge merges a list of vertices onto the final vertex in the Vertices list
-func (d *Data) handleMerge(ctx storage.Context, db storage.GraphDB, w http.ResponseWriter, labelgraph *LabelGraph) error {
+func (d *Data) handleMerge(ctx *datastore.VersionedCtx, db storage.GraphDB, w http.ResponseWriter, labelgraph *LabelGraph) error {
 
 	numverts := len(labelgraph.Vertices)
 	if numverts < 2 {
@@ -984,7 +961,7 @@ func (d *Data) handleMerge(ctx storage.Context, db storage.GraphDB, w http.Respo
 // (Should I protect this transaction like the update weight function?  It is probably
 // unnecessary because any update based on retrieved information will be written to a
 // property which has transactional protection)
-func (d *Data) handleNeighbors(ctx storage.Context, db storage.GraphDB, w http.ResponseWriter, path []string) error {
+func (d *Data) handleNeighbors(ctx *datastore.VersionedCtx, db storage.GraphDB, w http.ResponseWriter, path []string) error {
 	labelgraph := new(LabelGraph)
 
 	temp, err := strconv.Atoi(path[0])
@@ -1022,7 +999,7 @@ func (d *Data) handleNeighbors(ctx storage.Context, db storage.GraphDB, w http.R
 }
 
 // handelPropertyTransaction allows gets/posts (really puts) of edge or vertex properties.
-func (d *Data) handlePropertyTransaction(ctx storage.Context, db storage.GraphDB, w http.ResponseWriter, r *http.Request, path []string, method string) error {
+func (d *Data) handlePropertyTransaction(ctx *datastore.VersionedCtx, db storage.GraphDB, w http.ResponseWriter, r *http.Request, path []string, method string) error {
 	if len(path) < 2 {
 		return fmt.Errorf("Must specify edges or vertices in URI and property name")
 	}
@@ -1177,7 +1154,7 @@ func (d *Data) handlePropertyTransaction(ctx storage.Context, db storage.GraphDB
 
 // handleProperty retrieves or deletes properties that can be added to a vertex or edge -- data posted
 // or retrieved uses default compression
-func (d *Data) handleProperty(ctx storage.Context, db storage.GraphDB, w http.ResponseWriter, r *http.Request, path []string, method string) error {
+func (d *Data) handleProperty(ctx *datastore.VersionedCtx, db storage.GraphDB, w http.ResponseWriter, r *http.Request, path []string, method string) error {
 
 	edgemode := false
 	var propertyname string
@@ -1329,13 +1306,13 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 }
 
 // ServeHTTP handles all incoming HTTP requests for this data.
-func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *http.Request) {
+func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {
 	// --- Don't time labelgraph ops because they are very small and frequent.
 	// --- TODO -- Implement monitoring system that aggregates logged ops instead of
 	// ----------- printing out each one.
 	// timedLog := dvid.NewTimeLog()
 
-	storeCtx, db, err := d.getGraphContext(requestCtx)
+	db, err := storage.GraphStore()
 	if err != nil {
 		server.BadRequest(w, r, err.Error())
 		return
@@ -1384,7 +1361,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 			server.BadRequest(w, r, err.Error())
 			return
 		}
-		err = d.handleSubgraphBulk(storeCtx, db, w, labelgraph, method)
+		err = d.handleSubgraphBulk(ctx, db, w, labelgraph, method)
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
 			return
@@ -1394,7 +1371,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 			server.BadRequest(w, r, "Only supports GETs")
 			return
 		}
-		err := d.handleNeighbors(storeCtx, db, w, parts[4:])
+		err := d.handleNeighbors(ctx, db, w, parts[4:])
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
 			return
@@ -1409,7 +1386,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 			server.BadRequest(w, r, err.Error())
 			return
 		}
-		err = d.handleMerge(storeCtx, db, w, labelgraph)
+		err = d.handleMerge(ctx, db, w, labelgraph)
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
 			return
@@ -1424,19 +1401,19 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 			server.BadRequest(w, r, err.Error())
 			return
 		}
-		err = d.handleWeightUpdate(storeCtx, db, w, labelgraph)
+		err = d.handleWeightUpdate(ctx, db, w, labelgraph)
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
 			return
 		}
 	case "propertytransaction":
-		err := d.handlePropertyTransaction(storeCtx, db, w, r, parts[4:], method)
+		err := d.handlePropertyTransaction(ctx, db, w, r, parts[4:], method)
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
 			return
 		}
 	case "property":
-		err := d.handleProperty(storeCtx, db, w, r, parts[4:], method)
+		err := d.handleProperty(ctx, db, w, r, parts[4:], method)
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
 			return

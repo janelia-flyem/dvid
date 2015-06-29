@@ -71,10 +71,10 @@ func CloseReopenStore() {
 		log.Fatalf("Error reopening test db at %s: %s\n", dbpath, err.Error())
 	}
 	if err = storage.Initialize(engine, "testdb"); err != nil {
-		log.Fatalf("Can't initialize test datastore: %s\n", err.Error())
+		log.Fatalf("CloseReopenStore: bad storage.Initialize(): %s\n", err.Error())
 	}
 	if err = datastore.Initialize(); err != nil {
-		log.Fatalf("Can't initialize datastore management: %s\n", err.Error())
+		log.Fatalf("CloseReopenStore: can't initialize datastore management: %s\n", err.Error())
 	}
 }
 

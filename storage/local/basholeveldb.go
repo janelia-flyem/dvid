@@ -274,7 +274,7 @@ func (db *LevelDB) Get(ctx storage.Context, tk storage.TKey) ([]byte, error) {
 		return nil, fmt.Errorf("Received nil context in Get()")
 	}
 	if ctx.Versioned() {
-		vctx, ok := ctx.(storage.VersionedContext)
+		vctx, ok := ctx.(storage.VersionedCtx)
 		if !ok {
 			return nil, fmt.Errorf("Bad Get(): context is versioned but doesn't fulfill interface: %v", ctx)
 		}
@@ -305,8 +305,8 @@ func (db *LevelDB) Get(ctx storage.Context, tk storage.TKey) ([]byte, error) {
 }
 
 // getSingleKeyVersions returns all versions of a key.  These key-value pairs will be sorted
-// in ascending key order.
-func (db *LevelDB) getSingleKeyVersions(vctx storage.VersionedContext, k []byte) ([]*storage.KeyValue, error) {
+// in ascending key order and could include a tombstone key.
+func (db *LevelDB) getSingleKeyVersions(vctx storage.VersionedCtx, k []byte) ([]*storage.KeyValue, error) {
 	dvid.StartCgo()
 	ro := levigo.NewReadOptions()
 	it := db.ldb.NewIterator(ro)
@@ -329,7 +329,6 @@ func (db *LevelDB) getSingleKeyVersions(vctx storage.VersionedContext, k []byte)
 	for {
 		if it.Valid() {
 			itKey := it.Key()
-			// log.Printf("got key  %v\n", itKey)
 			storage.StoreKeyBytesRead <- len(itKey)
 			if bytes.Compare(itKey, kEnd) > 0 {
 				// log.Printf("key past %v\n", kEnd)
@@ -356,7 +355,7 @@ type errorableKV struct {
 	error
 }
 
-func sendKV(vctx storage.VersionedContext, values []*storage.KeyValue, ch chan errorableKV) {
+func sendKV(vctx storage.VersionedCtx, values []*storage.KeyValue, ch chan errorableKV) {
 	// fmt.Printf("sendKV: values %v\n", values)
 	if len(values) != 0 {
 		kv, err := vctx.VersionedKeyValue(values)
@@ -372,7 +371,7 @@ func sendKV(vctx storage.VersionedContext, values []*storage.KeyValue, ch chan e
 }
 
 // versionedRange sends a range of key-value pairs for a particular version down a channel.
-func (db *LevelDB) versionedRange(vctx storage.VersionedContext, kStart, kEnd storage.TKey, ch chan errorableKV, keysOnly bool) {
+func (db *LevelDB) versionedRange(vctx storage.VersionedCtx, kStart, kEnd storage.TKey, ch chan errorableKV, keysOnly bool) {
 	dvid.StartCgo()
 	ro := levigo.NewReadOptions()
 	it := db.ldb.NewIterator(ro)
@@ -516,7 +515,7 @@ func (db *LevelDB) KeysInRange(ctx storage.Context, kStart, kEnd storage.TKey) (
 		if !ctx.Versioned() {
 			db.unversionedRange(ctx, kStart, kEnd, ch, true)
 		} else {
-			db.versionedRange(ctx.(storage.VersionedContext), kStart, kEnd, ch, true)
+			db.versionedRange(ctx.(storage.VersionedCtx), kStart, kEnd, ch, true)
 		}
 	}()
 
@@ -552,7 +551,7 @@ func (db *LevelDB) GetRange(ctx storage.Context, kStart, kEnd storage.TKey) ([]*
 		if ctx == nil || !ctx.Versioned() {
 			db.unversionedRange(ctx, kStart, kEnd, ch, false)
 		} else {
-			db.versionedRange(ctx.(storage.VersionedContext), kStart, kEnd, ch, false)
+			db.versionedRange(ctx.(storage.VersionedCtx), kStart, kEnd, ch, false)
 		}
 	}()
 
@@ -588,7 +587,7 @@ func (db *LevelDB) ProcessRange(ctx storage.Context, kStart, kEnd storage.TKey, 
 		if ctx == nil || !ctx.Versioned() {
 			db.unversionedRange(ctx, kStart, kEnd, ch, false)
 		} else {
-			db.versionedRange(ctx.(storage.VersionedContext), kStart, kEnd, ch, false)
+			db.versionedRange(ctx.(storage.VersionedCtx), kStart, kEnd, ch, false)
 		}
 	}()
 
@@ -673,7 +672,7 @@ func (db *LevelDB) Put(ctx storage.Context, tk storage.TKey, v []byte) error {
 	if !ctx.Versioned() {
 		err = db.ldb.Put(wo, key, v)
 	} else {
-		vctx, ok := ctx.(storage.VersionedContext)
+		vctx, ok := ctx.(storage.VersionedCtx)
 		if !ok {
 			return fmt.Errorf("Non-versioned context that says it's versioned received in Put(): %v", ctx)
 		}
@@ -706,7 +705,7 @@ func (db *LevelDB) Delete(ctx storage.Context, tk storage.TKey) error {
 	if !ctx.Versioned() {
 		err = db.ldb.Delete(wo, key)
 	} else {
-		vctx, ok := ctx.(storage.VersionedContext)
+		vctx, ok := ctx.(storage.VersionedCtx)
 		if !ok {
 			return fmt.Errorf("Non-versioned context that says it's versioned received in Delete(): %v", ctx)
 		}
@@ -752,7 +751,7 @@ func (db *LevelDB) PutRange(ctx storage.Context, kvs []storage.TKeyValue) error 
 			return err
 		}
 	} else {
-		vctx, ok := ctx.(storage.VersionedContext)
+		vctx, ok := ctx.(storage.VersionedCtx)
 		if !ok {
 			return fmt.Errorf("Non-versioned context that says it's versioned received in PutRange(): %v", ctx)
 		}
@@ -792,7 +791,7 @@ func (db *LevelDB) DeleteRange(ctx storage.Context, kStart, kEnd storage.TKey) e
 		if ctx == nil || !ctx.Versioned() {
 			db.unversionedRange(ctx, kStart, kEnd, ch, true)
 		} else {
-			db.versionedRange(ctx.(storage.VersionedContext), kStart, kEnd, ch, true)
+			db.versionedRange(ctx.(storage.VersionedCtx), kStart, kEnd, ch, true)
 		}
 	}()
 
@@ -814,7 +813,7 @@ func (db *LevelDB) DeleteRange(ctx storage.Context, kStart, kEnd storage.TKey) e
 		if !ctx.Versioned() {
 			batch.WriteBatch.Delete(result.KeyValue.K)
 		} else {
-			vctx, ok := ctx.(storage.VersionedContext)
+			vctx, ok := ctx.(storage.VersionedCtx)
 			if !ok {
 				return fmt.Errorf("Non-versioned context that says it's versioned received in DeleteRange(): %v", ctx)
 			}
@@ -856,7 +855,7 @@ func (db *LevelDB) DeleteAll(ctx storage.Context, allVersions bool) error {
 	// Don't have to worry about tombstones.  Delete all keys from all versions for this instance id.
 	minTKey := storage.MinTKey(storage.TKeyMinClass)
 	maxTKey := storage.MaxTKey(storage.TKeyMaxClass)
-	vctx, ok := ctx.(storage.VersionedContext)
+	vctx, ok := ctx.(storage.VersionedCtx)
 	if !ok {
 		return fmt.Errorf("Non-versioned context passed to DELETE ALL VERSIONS in basholeveldb driver: %v", ctx)
 	}
@@ -927,7 +926,7 @@ func (db *LevelDB) DeleteAll(ctx storage.Context, allVersions bool) error {
 
 type goBatch struct {
 	ctx  storage.Context
-	vctx storage.VersionedContext
+	vctx storage.VersionedCtx
 	*levigo.WriteBatch
 	wo  *levigo.WriteOptions
 	ldb *levigo.DB
@@ -942,9 +941,9 @@ func (db *LevelDB) NewBatch(ctx storage.Context) storage.Batch {
 	dvid.StartCgo()
 	defer dvid.StopCgo()
 
-	var vctx storage.VersionedContext
+	var vctx storage.VersionedCtx
 	var ok bool
-	vctx, ok = ctx.(storage.VersionedContext)
+	vctx, ok = ctx.(storage.VersionedCtx)
 	if !ok {
 		vctx = nil
 	}

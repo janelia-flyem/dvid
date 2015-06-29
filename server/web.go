@@ -19,8 +19,6 @@ import (
 	"sync"
 	"time"
 
-	"code.google.com/p/go.net/context"
-
 	"github.com/janelia-flyem/go/nrsc"
 
 	"github.com/janelia-flyem/dvid/datastore"
@@ -129,6 +127,18 @@ const WebHelp = `
  DELETE /api/repo/{uuid}/{dataname}?imsure=true
 
 	Deletes a data instance of given name from the repository holding a node with UUID.	
+
+  GET /api/repo/{uuid}/log
+ POST /api/repo/{uuid}/log
+
+	GETs or POSTs log data to the repo with given UUID.  The get or post body should 
+	be JSON of the following format: 
+
+	{ "log": [ "provenance data...", "provenance data...", ...] }
+
+	The log is a list of strings that will be appended to the repo's log.  They should be
+	descriptions for the entire repo and not just one node.  For particular versions, use
+	node-level logging (below).
 
   GET /api/node/{uuid}/log
  POST /api/node/{uuid}/log
@@ -323,6 +333,8 @@ func initRoutes() {
 	repoMux.Get("/api/repo/:uuid/info", repoInfoHandler)
 	repoMux.Post("/api/repo/:uuid/instance", repoNewDataHandler)
 	repoMux.Delete("/api/repo/:uuid/:dataname", repoDeleteHandler)
+	repoMux.Get("/api/repo/:uuid/log", getRepoLogHandler)
+	repoMux.Post("/api/repo/:uuid/log", postRepoLogHandler)
 
 	nodeMux := web.New()
 	mainMux.Handle("/api/node/:uuid", nodeMux)
@@ -427,15 +439,9 @@ func repoSelector(c *web.C, h http.Handler) http.Handler {
 			return
 		}
 		c.Env["uuid"] = uuid
-		repo, err := datastore.RepoFromUUID(uuid)
-		if err != nil {
-			BadRequest(w, r, err.Error())
-			return
-		}
-		c.Env["repo"] = repo
 
 		// Make sure locked nodes can't use anything besides GET and HEAD
-		locked, err := repo.Locked(uuid)
+		locked, err := datastore.LockedUUID(uuid)
 		if err != nil {
 			BadRequest(w, r, err.Error())
 			return
@@ -463,21 +469,16 @@ func instanceSelector(c *web.C, h http.Handler) http.Handler {
 			BadRequest(w, r, msg)
 			return
 		}
-		repo, err := datastore.RepoFromUUID(uuid)
+		data, err := datastore.GetDataByUUID(uuid, dataname)
 		if err != nil {
 			BadRequest(w, r, err.Error())
 			return
 		}
-		versionID, err := datastore.VersionFromUUID(uuid)
+		v, err := datastore.VersionFromUUID(uuid)
 		if err != nil {
 			BadRequest(w, r, err.Error())
-			return
 		}
-		dataservice, err := repo.GetDataByName(dataname)
-		if err != nil {
-			BadRequest(w, r, err.Error())
-			return
-		}
+		ctx := datastore.NewVersionedCtx(data, v)
 
 		// Handle DVID-wide query string commands like non-interactive call designations
 		queryValues := r.URL.Query()
@@ -488,9 +489,8 @@ func instanceSelector(c *web.C, h http.Handler) http.Handler {
 			GotInteractiveRequest()
 		}
 
-		// Construct the Context
-		ctx := datastore.NewServerContext(context.Background(), repo, versionID)
-		dataservice.ServeHTTP(ctx, w, r)
+		// TODO: setup routing for data instances as well.
+		data.ServeHTTP(uuid, ctx, w, r)
 	}
 	return http.HandlerFunc(fn)
 }
@@ -620,7 +620,7 @@ func serverTypesHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func reposInfoHandler(w http.ResponseWriter, r *http.Request) {
-	jsonBytes, err := datastore.Manager.MarshalJSON()
+	jsonBytes, err := datastore.MarshalJSON()
 	if err != nil {
 		BadRequest(w, r, err.Error())
 		return
@@ -652,33 +652,39 @@ func reposPostHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	repo, err := datastore.NewRepo(alias, description, nil)
+	root, err := datastore.NewRepo(alias, description, nil)
 	if err != nil {
 		BadRequest(w, r, err.Error())
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, "{%q: %q}", "root", repo.RootUUID())
+	fmt.Fprintf(w, "{%q: %q}", "root", root)
 }
 
 func repoHeadHandler(c web.C, w http.ResponseWriter, r *http.Request) {
-	repo := (c.Env["repo"]).(datastore.Repo)
+	uuid := (c.Env["uuid"]).(dvid.UUID)
+	root, err := datastore.GetRepoRoot(uuid)
+	if err != nil {
+		BadRequest(w, r, err.Error())
+		return
+	}
 	w.Header().Set("Content-Type", "text/plain")
-	fmt.Fprintf(w, "Repo available with root UUID %s\n", repo.RootUUID())
+	fmt.Fprintf(w, "Repo available with root UUID %s\n", root)
 }
 
 func repoInfoHandler(c web.C, w http.ResponseWriter, r *http.Request) {
-	repo := (c.Env["repo"]).(datastore.Repo)
-	jsonBytes, err := repo.MarshalJSON()
+	uuid := (c.Env["uuid"]).(dvid.UUID)
+	jsonStr, err := datastore.GetRepoJSON(uuid)
 	if err != nil {
 		BadRequest(w, r, err.Error())
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, string(jsonBytes))
+	fmt.Fprintf(w, jsonStr)
 }
 
 func repoDeleteHandler(c web.C, w http.ResponseWriter, r *http.Request) {
+	uuid := c.Env["uuid"].(dvid.UUID)
 	queryValues := r.URL.Query()
 	imsure := queryValues.Get("imsure")
 	if imsure != "true" {
@@ -686,7 +692,6 @@ func repoDeleteHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	repo := (c.Env["repo"]).(datastore.Repo)
 	dataname, ok := c.URLParams["dataname"]
 	if !ok {
 		BadRequest(w, r, "Error in retrieving data instance name from URL parameters")
@@ -695,7 +700,7 @@ func repoDeleteHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 
 	// Do the deletion asynchronously since they can take a very long time.
 	go func() {
-		if err := repo.DeleteDataByName(dvid.InstanceName(dataname)); err != nil {
+		if err := datastore.DeleteDataByUUID(uuid, dvid.InstanceName(dataname)); err != nil {
 			dvid.Errorf("Error in deleting data instance %q: %s", dataname, err.Error())
 		}
 	}()
@@ -703,11 +708,11 @@ func repoDeleteHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	// Just respond that deletion was successfully started
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, `{"result": "Started deletion of data instance %q from repo with root %s"}`,
-		dataname, repo.RootUUID())
+		dataname, uuid)
 }
 
 func repoNewDataHandler(c web.C, w http.ResponseWriter, r *http.Request) {
-	repo := (c.Env["repo"]).(datastore.Repo)
+	uuid := c.Env["uuid"].(dvid.UUID)
 	config := dvid.NewConfig()
 	if err := config.SetByJSON(r.Body); err != nil {
 		BadRequest(w, r, fmt.Sprintf("Error decoding POSTed JSON config for 'new': %s", err.Error()))
@@ -730,29 +735,56 @@ func repoNewDataHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 		BadRequest(w, r, err.Error())
 		return
 	}
-	_, err = repo.NewData(typeservice, dvid.InstanceName(dataname), config)
+	_, err = datastore.NewData(uuid, typeservice, dvid.InstanceName(dataname), config)
 	if err != nil {
 		BadRequest(w, r, err.Error())
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, "{%q: 'Added %s [%s] to node %s'}", "result", dataname, typename, repo.RootUUID())
+	fmt.Fprintf(w, "{%q: 'Added %s [%s] to node %s'}", "result", dataname, typename, uuid)
 }
 
-func getNodeLogHandler(c web.C, w http.ResponseWriter, r *http.Request) {
-	uuid, ok := c.Env["uuid"].(dvid.UUID)
-	if !ok {
-		msg := fmt.Sprintf("Bad format for UUID %q\n", c.Env["uuid"])
-		BadRequest(w, r, msg)
-		return
-	}
-	repo, err := datastore.RepoFromUUID(uuid)
+func getRepoLogHandler(c web.C, w http.ResponseWriter, r *http.Request) {
+	uuid := c.Env["uuid"].(dvid.UUID)
+	logdata, err := datastore.GetRepoLog(uuid)
 	if err != nil {
 		BadRequest(w, r, err.Error())
 		return
 	}
+	w.Header().Set("Content-Type", "application/json")
+	jsonStr, err := json.Marshal(struct {
+		Log []string `json:"log"`
+	}{
+		logdata,
+	})
+	if err != nil {
+		BadRequest(w, r, err.Error())
+		return
+	}
+	fmt.Fprintf(w, string(jsonStr))
+}
 
-	logdata, err := repo.GetNodeLog(uuid)
+func postRepoLogHandler(c web.C, w http.ResponseWriter, r *http.Request) {
+	uuid := c.Env["uuid"].(dvid.UUID)
+	jsonData := make(map[string][]string)
+	decoder := json.NewDecoder(r.Body)
+	if err := decoder.Decode(&jsonData); err != nil && err != io.EOF {
+		BadRequest(w, r, fmt.Sprintf("Malformed JSON request in body: %s", err.Error()))
+		return
+	}
+	logdata, ok := jsonData["log"]
+	if !ok {
+		BadRequest(w, r, "Could not find 'log' value in POSTed JSON.")
+	}
+	if err := datastore.AddToRepoLog(uuid, logdata); err != nil {
+		BadRequest(w, r, err.Error())
+		return
+	}
+}
+
+func getNodeLogHandler(c web.C, w http.ResponseWriter, r *http.Request) {
+	uuid := c.Env["uuid"].(dvid.UUID)
+	logdata, err := datastore.GetNodeLog(uuid)
 	if err != nil {
 		BadRequest(w, r, err.Error())
 		return
@@ -771,18 +803,7 @@ func getNodeLogHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 }
 
 func postNodeLogHandler(c web.C, w http.ResponseWriter, r *http.Request) {
-	uuid, ok := c.Env["uuid"].(dvid.UUID)
-	if !ok {
-		msg := fmt.Sprintf("Bad format for UUID %q\n", c.Env["uuid"])
-		BadRequest(w, r, msg)
-		return
-	}
-	repo, err := datastore.RepoFromUUID(uuid)
-	if err != nil {
-		BadRequest(w, r, err.Error())
-		return
-	}
-
+	uuid := c.Env["uuid"].(dvid.UUID)
 	jsonData := make(map[string][]string)
 	decoder := json.NewDecoder(r.Body)
 	if err := decoder.Decode(&jsonData); err != nil && err != io.EOF {
@@ -793,24 +814,14 @@ func postNodeLogHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		BadRequest(w, r, "Could not find 'log' value in POSTed JSON.")
 	}
-	if err := repo.AddToNodeLog(uuid, logdata); err != nil {
+	if err := datastore.AddToNodeLog(uuid, logdata); err != nil {
 		BadRequest(w, r, err.Error())
 		return
 	}
 }
 
 func repoCommitHandler(c web.C, w http.ResponseWriter, r *http.Request) {
-	uuid, ok := c.Env["uuid"].(dvid.UUID)
-	if !ok {
-		msg := fmt.Sprintf("Bad format for UUID %q\n", c.Env["uuid"])
-		BadRequest(w, r, msg)
-		return
-	}
-	repo, err := datastore.RepoFromUUID(uuid)
-	if err != nil {
-		BadRequest(w, r, err.Error())
-		return
-	}
+	uuid := c.Env["uuid"].(dvid.UUID)
 	data, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		BadRequest(w, r, err.Error())
@@ -826,7 +837,7 @@ func repoCommitHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = repo.Commit(uuid, jsonData.Note, jsonData.Log)
+	err = datastore.Commit(uuid, jsonData.Note, jsonData.Log)
 	if err != nil {
 		BadRequest(w, r, err.Error())
 	} else {
@@ -838,19 +849,8 @@ func repoCommitHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 // TODO -- Might allow specification of UUID for child via HTTP.  Currently, only
 // allow this potentially dangerous op via command line.
 func repoBranchHandler(c web.C, w http.ResponseWriter, r *http.Request) {
-	uuid, ok := c.Env["uuid"].(dvid.UUID)
-	if !ok {
-		msg := fmt.Sprintf("Bad format for UUID %q\n", c.Env["uuid"])
-		BadRequest(w, r, msg)
-		return
-	}
-	repo, err := datastore.RepoFromUUID(uuid)
-	if err != nil {
-		BadRequest(w, r, err.Error())
-		return
-	}
-
-	newuuid, err := repo.NewVersion(uuid, nil)
+	uuid := c.Env["uuid"].(dvid.UUID)
+	newuuid, err := datastore.NewVersion(uuid, nil)
 	if err != nil {
 		BadRequest(w, r, err.Error())
 	} else {

@@ -118,7 +118,7 @@ func hashStr(s dvid.IZYXString, n int) int {
 
 type mergeOp struct {
 	labels.MergeOp
-	ctx  *datastore.VersionedContext
+	ctx  *datastore.VersionedCtx
 	izyx dvid.IZYXString
 	wg   *sync.WaitGroup
 }
@@ -146,7 +146,7 @@ func (d *Data) syncMerge(name dvid.InstanceName, in <-chan datastore.SyncMessage
 			iv := dvid.InstanceVersion{name, msg.Version}
 			switch delta := msg.Delta.(type) {
 			case labels.DeltaMerge:
-				ctx := datastore.NewVersionedContext(d, msg.Version)
+				ctx := datastore.NewVersionedCtx(d, msg.Version)
 				wg := new(sync.WaitGroup)
 				for izyxStr := range delta.Blocks {
 					n := hashStr(izyxStr, numprocs)
@@ -233,7 +233,7 @@ func (d *Data) mergeBlock(in <-chan mergeOp) {
 
 type splitOp struct {
 	labels.DeltaSplit
-	ctx datastore.VersionedContext
+	ctx datastore.VersionedCtx
 }
 
 func (d *Data) syncSplit(name dvid.InstanceName, in <-chan datastore.SyncMessage, done <-chan struct{}) {
@@ -257,7 +257,7 @@ func (d *Data) syncSplit(name dvid.InstanceName, in <-chan datastore.SyncMessage
 		default:
 			switch delta := msg.Delta.(type) {
 			case labels.DeltaSplit:
-				ctx := datastore.NewVersionedContext(d, msg.Version)
+				ctx := datastore.NewVersionedCtx(d, msg.Version)
 				n := delta.OldLabel % numprocs
 				pch[n] <- splitOp{delta, *ctx}
 			case labels.DeltaSplitStart:

@@ -34,7 +34,7 @@ func (d *Data) LoadImages(v dvid.VersionID, offset dvid.Point, filenames []strin
 		loadMutex.Unlock()
 
 		if load.extentChanged.Value() {
-			err := datastore.SaveRepoByVersionID(v)
+			err := datastore.SaveDataByVersion(v, d)
 			if err != nil {
 				dvid.Errorf("Error in trying to save repo for voxel extent change: %s\n", err.Error())
 			}

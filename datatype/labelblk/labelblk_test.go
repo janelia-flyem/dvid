@@ -26,7 +26,7 @@ var (
 )
 
 // Sets package-level testRepo and TestVersionID
-func initTestRepo() (datastore.Repo, dvid.VersionID) {
+func initTestRepo() (dvid.UUID, dvid.VersionID) {
 	testMu.Lock()
 	defer testMu.Unlock()
 	if labelsT == nil {
@@ -86,9 +86,9 @@ func makeVolume(offset, size dvid.Point3d) []byte {
 }
 
 // Creates a new data instance for labelblk
-func newDataInstance(repo datastore.Repo, t *testing.T, name dvid.InstanceName) *Data {
+func newDataInstance(uuid dvid.UUID, t *testing.T, name dvid.InstanceName) *Data {
 	config := dvid.NewConfig()
-	dataservice, err := repo.NewData(labelsT, name, config)
+	dataservice, err := datastore.NewData(uuid, labelsT, name, config)
 	if err != nil {
 		t.Errorf("Unable to create labelblk instance %q: %s\n", name, err.Error())
 	}
@@ -103,9 +103,9 @@ func TestLabelblkDirectAPI(t *testing.T) {
 	tests.UseStore()
 	defer tests.CloseStore()
 
-	repo, versionID := initTestRepo()
-	labels := newDataInstance(repo, t, "mylabels")
-	labelsCtx := datastore.NewVersionedContext(labels, versionID)
+	uuid, versionID := initTestRepo()
+	labels := newDataInstance(uuid, t, "mylabels")
+	labelsCtx := datastore.NewVersionedCtx(labels, versionID)
 
 	// Create a fake block-aligned label volume
 	offset := dvid.Point3d{32, 0, 64}
@@ -163,14 +163,14 @@ func TestLabelblkRepoPersistence(t *testing.T) {
 	tests.UseStore()
 	defer tests.CloseStore()
 
-	repo, _ := initTestRepo()
+	uuid, _ := initTestRepo()
 
 	// Make labels and set various properties
 	config := dvid.NewConfig()
 	config.Set("BlockSize", "12,13,14")
 	config.Set("VoxelSize", "1.1,2.8,11")
 	config.Set("VoxelUnits", "microns,millimeters,nanometers")
-	dataservice, err := repo.NewData(labelsT, "mylabels", config)
+	dataservice, err := datastore.NewData(uuid, labelsT, "mylabels", config)
 	if err != nil {
 		t.Errorf("Unable to create labels instance: %s\n", err.Error())
 	}
@@ -181,17 +181,12 @@ func TestLabelblkRepoPersistence(t *testing.T) {
 	oldData := *labels
 
 	// Restart test datastore and see if datasets are still there.
-	if err = repo.Save(); err != nil {
+	if err = datastore.SaveDataByUUID(uuid, labels); err != nil {
 		t.Fatalf("Unable to save repo during labels persistence test: %s\n", err.Error())
 	}
-	oldUUID := repo.RootUUID()
 	tests.CloseReopenStore()
 
-	repo2, err := datastore.RepoFromUUID(oldUUID)
-	if err != nil {
-		t.Fatalf("Can't get repo %s from reloaded test db: %s\n", oldUUID, err.Error())
-	}
-	dataservice2, err := repo2.GetDataByName("mylabels")
+	dataservice2, err := datastore.GetDataByUUID(uuid, "mylabels")
 	if err != nil {
 		t.Fatalf("Can't get labels instance from reloaded test db: %s\n", err.Error())
 	}

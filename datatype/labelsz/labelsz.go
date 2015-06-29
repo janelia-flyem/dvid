@@ -13,8 +13,6 @@ import (
 	"strconv"
 	"strings"
 
-	"code.google.com/p/go.net/context"
-
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/labelvol"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -210,7 +208,7 @@ func (d *Data) GetSize(v dvid.VersionID, label uint64) (uint64, error) {
 	lastKey := NewLabelSizeTKey(label, math.MaxUint64)
 
 	// Grab all keys for this range in one sequential read.
-	ctx := datastore.NewVersionedContext(d, v)
+	ctx := datastore.NewVersionedCtx(d, v)
 	keys, err := store.KeysInRange(ctx, firstKey, lastKey)
 	if err != nil {
 		return 0, err
@@ -245,7 +243,7 @@ func (d *Data) GetSizeRange(v dvid.VersionID, minSize, maxSize uint64) (string, 
 	lastKey := NewSizeLabelTKey(upperBound, math.MaxUint64)
 
 	// Grab all keys for this range in one sequential read.
-	ctx := datastore.NewVersionedContext(d, v)
+	ctx := datastore.NewVersionedCtx(d, v)
 	keys, err := store.KeysInRange(ctx, firstKey, lastKey)
 	if err != nil {
 		return "{}", err
@@ -290,22 +288,8 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 }
 
 // ServeHTTP handles all incoming HTTP requests for this data.
-func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {
 	timedLog := dvid.NewTimeLog()
-
-	// Get repo and version ID of this request
-	_, versions, err := datastore.FromContext(ctx)
-	if err != nil {
-		server.BadRequest(w, r, "Error: %q ServeHTTP has invalid context: %s\n",
-			d.DataName, err.Error())
-		return
-	}
-
-	// Construct storage.Context using a particular version of this Data
-	var versionID dvid.VersionID
-	if len(versions) > 0 {
-		versionID = versions[0]
-	}
 
 	// Check the action
 	action := strings.ToLower(r.Method)
@@ -352,7 +336,7 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 			server.BadRequest(w, r, err.Error())
 			return
 		}
-		size, err := d.GetSize(versionID, label)
+		size, err := d.GetSize(ctx.VersionID(), label)
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
 			return
@@ -380,7 +364,7 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 				return
 			}
 		}
-		jsonStr, err := d.GetSizeRange(versionID, minSize, maxSize)
+		jsonStr, err := d.GetSizeRange(ctx.VersionID(), minSize, maxSize)
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
 			return

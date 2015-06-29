@@ -32,9 +32,9 @@ dvid-backup does a cold backup of a local leveldb storage engine.
 
 Usage: dvid-backup [options] <database directory> <backup directory>
 
-      -delete     (flag)    Remove old snapshot directory.
+	  -delete     (flag)    Remove old snapshot directory.
 	  -verbose    (flag)    Run in verbose mode.
-      -h, -help   (flag)    Show help message
+	  -h, -help   (flag)    Show help message
 
 `
 

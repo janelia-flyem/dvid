@@ -132,7 +132,7 @@ func (d *Data) PutVoxels(v dvid.VersionID, vox *Voxels, roi *ROI) error {
 	var extentChanged bool
 	defer func() {
 		if extentChanged {
-			err := datastore.SaveRepoByVersionID(v)
+			err := datastore.SaveDataByVersion(v, d)
 			if err != nil {
 				dvid.Infof("Error in trying to save repo on change: %s\n", err.Error())
 			}
@@ -195,7 +195,7 @@ func (d *Data) PutBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int, da
 		return fmt.Errorf("Data type imageblk requires batch-enabled store, which %q is not\n", store)
 	}
 
-	ctx := datastore.NewVersionedContext(d, v)
+	ctx := datastore.NewVersionedCtx(d, v)
 	batch := batcher.NewBatch(ctx)
 
 	// Read blocks from the stream until we can output a batch put.
@@ -322,7 +322,7 @@ func (d *Data) putChunk(chunk *storage.Chunk) {
 		dvid.Errorf("Data type imageblk had error initializing store: %s\n", err.Error())
 		return
 	}
-	ctx := datastore.NewVersionedContext(d, op.version)
+	ctx := datastore.NewVersionedCtx(d, op.version)
 	if err := store.Put(ctx, chunk.K, serialization); err != nil {
 		dvid.Errorf("Unable to PUT voxel data for key %v: %s\n", chunk.K, err.Error())
 		return
@@ -407,7 +407,7 @@ func (d *Data) writeBlocks(v dvid.VersionID, b storage.TKeyValues, wg1, wg2 *syn
 
 	preCompress, postCompress := 0, 0
 
-	ctx := datastore.NewVersionedContext(d, v)
+	ctx := datastore.NewVersionedCtx(d, v)
 	evt := datastore.SyncEvent{d.DataName(), ChangeBlockEvent}
 
 	<-server.HandlerToken

@@ -11,8 +11,6 @@ import (
 	"strconv"
 	"strings"
 
-	"code.google.com/p/go.net/context"
-
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/message"
@@ -280,23 +278,8 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 }
 
 // ServeHTTP handles all incoming HTTP requests for this data.
-func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {
 	timedLog := dvid.NewTimeLog()
-
-	// Get repo and version ID of this request
-	_, versions, err := datastore.FromContext(ctx)
-	if err != nil {
-		server.BadRequest(w, r, "Error: %q ServeHTTP has invalid context: %s\n",
-			d.DataName, err.Error())
-		return
-	}
-
-	// Construct storage.Context using a particular version of this Data
-	var versionID dvid.VersionID
-	if len(versions) > 0 {
-		versionID = versions[0]
-	}
-	storeCtx := datastore.NewVersionedContext(d, versionID)
 
 	// Check the action
 	action := strings.ToLower(r.Method)
@@ -344,7 +327,7 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 			server.BadRequest(w, r, err.Error())
 			return
 		}
-		gzipData, found, err := GetSurface(storeCtx, label)
+		gzipData, found, err := GetSurface(ctx, label)
 		if err != nil {
 			server.BadRequest(w, r, "Error on getting surface for label %d: %s", label, err.Error())
 			return
@@ -371,12 +354,12 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 			server.BadRequest(w, r, err.Error())
 			return
 		}
-		label, err := d.GetLabelAtPoint(versionID, coord)
+		label, err := d.GetLabelAtPoint(ctx.VersionID(), coord)
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
 			return
 		}
-		gzipData, found, err := GetSurface(storeCtx, label)
+		gzipData, found, err := GetSurface(ctx, label)
 		if err != nil {
 			server.BadRequest(w, r, "Error on getting surface for label %d: %s", label, err.Error())
 			return

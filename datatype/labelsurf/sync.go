@@ -59,7 +59,7 @@ func (d *Data) handleMergeEvent(in <-chan datastore.SyncMessage, done <-chan str
 			dvid.Criticalf("Cannot sync labelsz.  Got unexpected delta: %v", msg)
 			return
 		}
-		ctx := datastore.NewVersionedContext(d, msg.Version)
+		ctx := datastore.NewVersionedCtx(d, msg.Version)
 		batch := batcher.NewBatch(ctx)
 		for _, delta := range deltas {
 			oldKey := NewIndex(delta.OldSize, label)
@@ -86,7 +86,7 @@ func (d *Data) handleMergeEvent(in <-chan datastore.SyncMessage, done <-chan str
 
 // TODO -- sync from labelvol changes
 // recomputeSurface refreshes the computed surface from a label's RLEs.
-func (d *Data) recomputeSurface(ctx *datastore.VersionedContext, label uint64, rles labels.BlockRLEs) {
+func (d *Data) recomputeSurface(ctx *datastore.VersionedCtx, label uint64, rles labels.BlockRLEs) {
 	var curVol dvid.SparseVol
 	curVol.SetLabel(label)
 	for _, rle := range rles {
@@ -122,7 +122,7 @@ func (d *Data) SyncOnNodeLock(uuid dvid.UUID) {
 		dvid.Errorf("Cannot get datastore that handles small data: %s\n", err.Error())
 		return
 	}
-	ctx := datastore.NewVersionedContext(d, versionID)
+	ctx := datastore.NewVersionedCtx(d, versionID)
 
 	// Iterate through all labels chunks incrementally in Z, loading and then using the maps
 	// for all blocks in that layer.
@@ -250,7 +250,7 @@ func (d *Data) denormFunc(versionID dvid.VersionID, mods imageblk.BlockChannel) 
 	}
 
 	// Setup goroutines for processing label size and surface.
-	ctx := datastore.NewVersionedContext(d, versionID)
+	ctx := datastore.NewVersionedCtx(d, versionID)
 	wg := new(sync.WaitGroup)
 	sizeCh := make(chan *storage.Chunk, 1000)
 	wg.Add(1)

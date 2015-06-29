@@ -1,37 +1,40 @@
 package datastore
 
 import (
-	"reflect"
 	"testing"
-
-	"code.google.com/p/go.net/context"
+	"time"
 
 	"github.com/janelia-flyem/dvid/dvid"
 )
 
-// Returns a mockRepo with limited functionality for testing.
-func mockRepo() *repoT {
-	return &repoT{
-		repoID:     0,
-		rootID:     dvid.UUID("test uuid"),
-		properties: make(map[string]interface{}),
-		data:       make(map[dvid.InstanceName]DataService),
-	}
-}
+// Make sure we get unique IDs even when doing things concurrently.
+func TestNewInstanceIDs(t *testing.T) {
+	useStore()
+	defer closeStore()
 
-func TestServerContext(t *testing.T) {
-	repo := mockRepo()
-	versionID := dvid.VersionID(1003)
-	ctx := NewServerContext(context.Background(), repo, versionID)
-	repo2, versions, err := FromContext(ctx)
-	if err != nil {
-		t.Errorf("Server context retrieval error: %s\n", err.Error())
+	n := 1000 // number of IDs
+	ch := make(chan dvid.InstanceID, n)
+	for i := 0; i < n; i++ {
+		go func() {
+			id, err := NewInstanceID()
+			if err != nil {
+				t.Fatalf("error getting instance id: %v\n", err)
+			}
+			ch <- id
+		}()
 	}
-	if !reflect.DeepEqual(repo, repo2) {
-		t.Errorf("Server context retrieval error: bad repo\n")
-	}
-	if len(versions) != 1 {
-		t.Errorf("Server context retrieval error: bad versions %v (expected just %d)\n",
-			versions, versionID)
+	got := make(map[dvid.InstanceID]struct{}, n)
+	for i := 0; i < n; i++ {
+		select {
+		case id := <-ch:
+			_, found := got[id]
+			if found {
+				t.Fatalf("duplicate instance id created: %d\n", id)
+			}
+			got[id] = struct{}{}
+		case <-time.After(time.Second * 2):
+			t.Fatalf("took longer than 2 seconds to run duplicate instance id test")
+			break
+		}
 	}
 }

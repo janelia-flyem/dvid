@@ -29,6 +29,14 @@ const RPCHelpMessage = `Commands executed on the server (rpc address = %s):
 
 	repo <UUID> new <datatype name> <data name> <datatype-specific config>...
 
+	repo <UUID> merge <UUID> [, <UUID>, ...]
+
+		This requires all UUIDs to be committed and generates a new
+		child with merged data.  This merge assumes the parents
+		have no conflicts, i.e., each data type can easily resolve
+		the merging of key-value pairs, and will generate an error
+		message if this is not the case.
+
 	node <UUID> <data name> <type-specific commands>
 
 For further information, use a web browser to visit the server for this
@@ -134,17 +142,17 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 				u := dvid.UUID(uuidStr)
 				assign = &u
 			}
-			repo, err := datastore.NewRepo(alias, description, assign)
+			root, err := datastore.NewRepo(alias, description, assign)
 			if err != nil {
 				return err
 			}
-			if err := repo.SetAlias(alias); err != nil {
+			if err := datastore.SetRepoAlias(root, alias); err != nil {
 				return err
 			}
-			if err := repo.SetDescription(description); err != nil {
+			if err := datastore.SetRepoDescription(root, description); err != nil {
 				return err
 			}
-			reply.Text = fmt.Sprintf("New repo %q created with head node %s\n", alias, repo.RootUUID())
+			reply.Text = fmt.Sprintf("New repo %q created with head node %s\n", alias, root)
 		default:
 			return fmt.Errorf("Unknown repos command: %q", subcommand)
 		}
@@ -153,11 +161,6 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 		var uuidStr, subcommand string
 		cmd.CommandArgs(1, &uuidStr, &subcommand)
 		uuid, _, err := datastore.MatchingUUID(uuidStr)
-		if err != nil {
-			return err
-		}
-		// Get Repo
-		repo, err := datastore.RepoFromUUID(uuid)
 		if err != nil {
 			return err
 		}
@@ -175,12 +178,12 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 
 			// Create new data
 			config := cmd.Settings()
-			_, err = repo.NewData(typeservice, dvid.InstanceName(dataname), config)
+			_, err = datastore.NewData(uuid, typeservice, dvid.InstanceName(dataname), config)
 			if err != nil {
 				return err
 			}
 			reply.Text = fmt.Sprintf("Data %q [%s] added to node %s\n", dataname, typename, uuid)
-			repo.AddToRepoLog(cmd.String())
+			datastore.AddToRepoLog(uuid, []string{cmd.String()})
 
 		case "branch":
 			cmd.CommandArgs(3, &uuidStr)
@@ -192,12 +195,29 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 				u := dvid.UUID(uuidStr)
 				assign = &u
 			}
-			child, err := repo.NewVersion(uuid, assign)
+			child, err := datastore.NewVersion(uuid, assign)
 			if err != nil {
 				return err
 			}
 			reply.Text = fmt.Sprintf("Branch %s added to node %s\n", child, uuid)
-			repo.AddToRepoLog(cmd.String())
+			datastore.AddToRepoLog(uuid, []string{cmd.String()})
+
+		case "merge":
+			uuids := cmd.CommandArgs(2)
+
+			parents := make([]dvid.UUID, len(uuids)+1)
+			parents[0] = dvid.UUID(uuid)
+			i := 1
+			for uuid := range uuids {
+				parents[i] = dvid.UUID(uuid)
+				i++
+			}
+			child, err := datastore.Merge(parents, datastore.MergeConflictFree)
+			if err != nil {
+				return err
+			}
+			reply.Text = fmt.Sprintf("Parents %v merged into node %s\n", parents, child)
+			datastore.AddToRepoLog(uuid, []string{cmd.String()})
 
 		case "push":
 			/*
@@ -222,17 +242,11 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 			return err
 		}
 
-		// Get Repo
-		repo, err := datastore.RepoFromUUID(uuid)
-		if err != nil {
-			return err
-		}
-
 		// Get the DataService
 		dataname := dvid.InstanceName(descriptor)
 		var subcommand string
 		cmd.CommandArgs(3, &subcommand)
-		dataservice, err := repo.GetDataByName(dataname)
+		dataservice, err := datastore.GetDataByUUID(uuid, dataname)
 		if err != nil {
 			return err
 		}

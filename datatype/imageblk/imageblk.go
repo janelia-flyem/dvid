@@ -18,8 +18,6 @@ import (
 	"strconv"
 	"strings"
 
-	"code.google.com/p/go.net/context"
-
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/roi"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -881,11 +879,9 @@ func (d *Data) PutLocal(request datastore.Request, reply *datastore.Response) er
 		offset = offset.Add(dvid.Point3d{0, 0, 1})
 	}
 
-	repo, err := datastore.RepoFromUUID(uuid)
-	if err != nil {
+	if err := datastore.AddToNodeLog(uuid, []string{request.Command.String()}); err != nil {
 		return err
 	}
-	repo.AddToNodeLog(uuid, []string{request.Command.String()})
 	timedLog.Infof("RPC put local (%s) completed", addedFiles)
 	return nil
 }
@@ -997,6 +993,7 @@ func (d *Data) GobEncode() ([]byte, error) {
 func (d *Data) Help() string {
 	return fmt.Sprintf(HelpMessage, DefaultBlockSize)
 }
+
 func (d *Data) ModifyConfig(config dvid.Config) error {
 	p := &(d.Properties)
 	if err := p.setByConfig(config); err != nil {
@@ -1029,11 +1026,7 @@ func (d *Data) ForegroundROI(req datastore.Request, reply *datastore.Response) e
 	if err != nil {
 		return err
 	}
-	repo, err := datastore.RepoFromUUID(uuid)
-	if err != nil {
-		return err
-	}
-	if err = repo.AddToNodeLog(uuid, []string{req.Command.String()}); err != nil {
+	if err = datastore.AddToNodeLog(uuid, []string{req.Command.String()}); err != nil {
 		return err
 	}
 
@@ -1046,7 +1039,7 @@ func (d *Data) ForegroundROI(req datastore.Request, reply *datastore.Response) e
 		if err != nil {
 			return err
 		}
-		dataservice, err := repo.NewData(typeservice, dvid.InstanceName(destName), config)
+		dataservice, err := datastore.NewData(uuid, typeservice, dvid.InstanceName(destName), config)
 		if err != nil {
 			return err
 		}
@@ -1081,7 +1074,7 @@ func (d *Data) foregroundROI(v dvid.VersionID, dest *roi.Data, background dvid.P
 
 	// Iterate through all voxel blocks, loading and then checking blocks
 	// for any foreground voxels.
-	ctx := datastore.NewVersionedContext(d, v)
+	ctx := datastore.NewVersionedCtx(d, v)
 
 	backgroundBytes := make([]byte, len(background))
 	for i, b := range background {
@@ -1206,11 +1199,7 @@ func (d *Data) DoRPC(req datastore.Request, reply *datastore.Response) error {
 		if err != nil {
 			return err
 		}
-		repo, err := datastore.RepoFromUUID(uuid)
-		if err != nil {
-			return err
-		}
-		if err = repo.AddToNodeLog(uuid, []string{req.Command.String()}); err != nil {
+		if err = datastore.AddToNodeLog(uuid, []string{req.Command.String()}); err != nil {
 			return err
 		}
 		return d.LoadImages(versionID, offset, filenames)
@@ -1258,23 +1247,8 @@ func debugData(img image.Image, message string) {
 }
 
 // ServeHTTP handles all incoming HTTP requests for this data.
-func (d *Data) ServeHTTP(reqCtx context.Context, w http.ResponseWriter, r *http.Request) {
+func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {
 	timedLog := dvid.NewTimeLog()
-
-	// Get repo and version ID of this request
-	repo, versions, err := datastore.FromContext(reqCtx)
-	if err != nil {
-		server.BadRequest(w, r, "Error: %q ServeHTTP has invalid context: %s\n",
-			d.DataName, err.Error())
-		return
-	}
-
-	// Construct storage.Context using a particular version of this Data
-	var versionID dvid.VersionID
-	if len(versions) > 0 {
-		versionID = versions[0]
-	}
-	storeCtx := datastore.NewVersionedContext(d, versionID)
 
 	// Get the action (GET, POST)
 	action := strings.ToLower(r.Method)
@@ -1326,7 +1300,7 @@ func (d *Data) ServeHTTP(reqCtx context.Context, w http.ResponseWriter, r *http.
 			server.BadRequest(w, r, err.Error())
 			return
 		}
-		if err := repo.Save(); err != nil {
+		if err := datastore.SaveDataByUUID(uuid, d); err != nil {
 			server.BadRequest(w, r, err.Error())
 			return
 		}
@@ -1391,7 +1365,7 @@ func (d *Data) ServeHTTP(reqCtx context.Context, w http.ResponseWriter, r *http.
 			return
 		}
 		if action == "get" {
-			data, err := d.GetBlocks(versionID, blockCoord, int32(span))
+			data, err := d.GetBlocks(ctx.VersionID(), blockCoord, int32(span))
 			if err != nil {
 				server.BadRequest(w, r, err.Error())
 				return
@@ -1403,7 +1377,7 @@ func (d *Data) ServeHTTP(reqCtx context.Context, w http.ResponseWriter, r *http.
 				return
 			}
 		} else {
-			if err := d.PutBlocks(versionID, blockCoord, span, r.Body); err != nil {
+			if err := d.PutBlocks(ctx.VersionID(), blockCoord, span, r.Body); err != nil {
 				server.BadRequest(w, r, err.Error())
 				return
 			}
@@ -1432,7 +1406,7 @@ func (d *Data) ServeHTTP(reqCtx context.Context, w http.ResponseWriter, r *http.
 				return
 			}
 		}
-		img, err := d.GetArbitraryImage(storeCtx, parts[4], parts[5], parts[6], parts[7])
+		img, err := d.GetArbitraryImage(ctx, parts[4], parts[5], parts[6], parts[7])
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
 			return
@@ -1484,13 +1458,13 @@ func (d *Data) ServeHTTP(reqCtx context.Context, w http.ResponseWriter, r *http.
 				return
 			}
 			if roiptr != nil {
-				roiptr.Iter, err = roi.NewIterator(roiname, versionID, vox)
+				roiptr.Iter, err = roi.NewIterator(roiname, ctx.VersionID(), vox)
 				if err != nil {
 					server.BadRequest(w, r, err.Error())
 					return
 				}
 			}
-			img, err := d.GetImage(versionID, vox, roiptr)
+			img, err := d.GetImage(ctx.VersionID(), vox, roiptr)
 			if err != nil {
 				server.BadRequest(w, r, err.Error())
 				return
@@ -1542,13 +1516,13 @@ func (d *Data) ServeHTTP(reqCtx context.Context, w http.ResponseWriter, r *http.
 					return
 				}
 				if roiptr != nil {
-					roiptr.Iter, err = roi.NewIterator(roiname, versionID, vox)
+					roiptr.Iter, err = roi.NewIterator(roiname, ctx.VersionID(), vox)
 					if err != nil {
 						server.BadRequest(w, r, err.Error())
 						return
 					}
 				}
-				data, err := d.GetVolume(versionID, vox, roiptr)
+				data, err := d.GetVolume(ctx.VersionID(), vox, roiptr)
 				if err != nil {
 					server.BadRequest(w, r, err.Error())
 					return
@@ -1582,13 +1556,13 @@ func (d *Data) ServeHTTP(reqCtx context.Context, w http.ResponseWriter, r *http.
 					return
 				}
 				if roiptr != nil {
-					roiptr.Iter, err = roi.NewIterator(roiname, versionID, vox)
+					roiptr.Iter, err = roi.NewIterator(roiname, ctx.VersionID(), vox)
 					if err != nil {
 						server.BadRequest(w, r, err.Error())
 						return
 					}
 				}
-				if err = d.PutVoxels(versionID, vox, roiptr); err != nil {
+				if err = d.PutVoxels(ctx.VersionID(), vox, roiptr); err != nil {
 					server.BadRequest(w, r, err.Error())
 					return
 				}

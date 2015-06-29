@@ -17,8 +17,6 @@ import (
 	"strings"
 	"sync"
 
-	"code.google.com/p/go.net/context"
-
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
 	"github.com/janelia-flyem/dvid/datatype/labelblk"
@@ -418,17 +416,17 @@ func GetByUUID(uuid dvid.UUID, name dvid.InstanceName) (*Data, error) {
 // --- datastore.VersionInitializer interface ----
 
 // InitVersion initializes max label tracking for a new version if it has a parent
-func (d *Data) InitVersion(dag datastore.DAGManager, uuid dvid.UUID, v dvid.VersionID) error {
+func (d *Data) InitVersion(uuid dvid.UUID, v dvid.VersionID) error {
 	// Get the parent max label
-	it, err := dag.GetIterator(v)
+	parents, err := datastore.GetParentsByVersion(v)
 	if err != nil {
 		return err
 	}
-	it.Next()
-
-	if it.Valid() {
-		parent := it.VersionID()
-		maxLabel, ok := d.MaxLabel[parent]
+	switch len(parents) {
+	case 0:
+		return fmt.Errorf("InitVersion(%s, %d) called on node with no parents, which shouldn't be possible for branch", uuid, v)
+	case 1:
+		maxLabel, ok := d.MaxLabel[parents[0]]
 		if !ok {
 			return fmt.Errorf("parent of uuid %s had no max label", uuid)
 		}
@@ -436,14 +434,16 @@ func (d *Data) InitVersion(dag datastore.DAGManager, uuid dvid.UUID, v dvid.Vers
 
 		buf := make([]byte, 8)
 		binary.LittleEndian.PutUint64(buf, maxLabel)
-		ctx := datastore.NewVersionedContext(d, v)
+		ctx := datastore.NewVersionedCtx(d, v)
 		store, err := storage.SmallDataStore()
 		if err != nil {
 			return fmt.Errorf("data type labelvol had error initializing store: %s\n", err.Error())
 		}
 		store.Put(ctx, maxLabelTKey, buf)
+		return nil
+	default:
+		return fmt.Errorf("InitVersion(%s, %d) called on node with more than one parent: %v", uuid, v, parents)
 	}
-	return nil
 }
 
 // --- datastore.InstanceMutator interface -----
@@ -453,7 +453,7 @@ func (d *Data) InitVersion(dag datastore.DAGManager, uuid dvid.UUID, v dvid.Vers
 // rather than data instance properties persistence, because in the case of a crash,
 // the actually stored repo data structure may be out-of-date compared to the guaranteed
 // up-to-date key-value pairs for max labels.
-func (d *Data) LoadMutable(dag datastore.DAGManager, storedVersion, expectedVersion uint64) (bool, error) {
+func (d *Data) LoadMutable(root dvid.VersionID, storedVersion, expectedVersion uint64) (bool, error) {
 	ctx := storage.NewDataContext(d, 0)
 	store, err := storage.SmallDataStore()
 	if err != nil {
@@ -471,7 +471,7 @@ func (d *Data) LoadMutable(dag datastore.DAGManager, storedVersion, expectedVers
 	case 0:
 		// Need to update all max labels and set repo-level max label.
 		saveRequired = true
-		go d.migrateMaxLabels(dag, wg, ch)
+		go d.migrateMaxLabels(root, wg, ch)
 	default:
 		// Load in each version max label without migration.
 		go d.loadMaxLabels(wg, ch)
@@ -503,7 +503,7 @@ func (d *Data) LoadMutable(dag datastore.DAGManager, storedVersion, expectedVers
 	return saveRequired, nil
 }
 
-func (d *Data) migrateMaxLabels(dag datastore.DAGManager, wg *sync.WaitGroup, ch chan *storage.KeyValue) {
+func (d *Data) migrateMaxLabels(root dvid.VersionID, wg *sync.WaitGroup, ch chan *storage.KeyValue) {
 	ctx := storage.NewDataContext(d, 0)
 	store, err := storage.SmallDataStore()
 	if err != nil {
@@ -534,7 +534,7 @@ func (d *Data) migrateMaxLabels(dag datastore.DAGManager, wg *sync.WaitGroup, ch
 	}
 
 	// Adjust the MaxLabel data to make sure we correct for any case of child max < parent max.
-	d.adjustMaxLabels(store, dag, dag.RootVersion())
+	d.adjustMaxLabels(store, root)
 
 	// Set the repo-wide max label.
 	d.MaxRepoLabel = maxRepoLabel
@@ -547,14 +547,14 @@ func (d *Data) migrateMaxLabels(dag datastore.DAGManager, wg *sync.WaitGroup, ch
 	return
 }
 
-func (d *Data) adjustMaxLabels(store storage.SmallDataStorer, dag datastore.DAGManager, v dvid.VersionID) error {
+func (d *Data) adjustMaxLabels(store storage.SmallDataStorer, root dvid.VersionID) error {
 	buf := make([]byte, 8)
 
-	parentMax, ok := d.MaxLabel[v]
+	parentMax, ok := d.MaxLabel[root]
 	if !ok {
-		return fmt.Errorf("can't adjust version id %d since none exists in metadata", v)
+		return fmt.Errorf("can't adjust version id %d since none exists in metadata", root)
 	}
-	childIDs, err := dag.GetChildren(v)
+	childIDs, err := datastore.GetChildrenByVersion(root)
 	if err != nil {
 		return err
 	}
@@ -573,12 +573,12 @@ func (d *Data) adjustMaxLabels(store storage.SmallDataStorer, dag datastore.DAGM
 		// save the key-value
 		if save {
 			binary.LittleEndian.PutUint64(buf, d.MaxLabel[childID])
-			ctx := datastore.NewVersionedContext(d, childID)
+			ctx := datastore.NewVersionedCtx(d, childID)
 			store.Put(ctx, maxLabelTKey, buf)
 		}
 
 		// recurse for depth-first
-		if err := d.adjustMaxLabels(store, dag, childID); err != nil {
+		if err := d.adjustMaxLabels(store, childID); err != nil {
 			return err
 		}
 	}
@@ -672,23 +672,9 @@ type Bounds struct {
 }
 
 // ServeHTTP handles all incoming HTTP requests for this data.
-func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {
 	timedLog := dvid.NewTimeLog()
-
-	// Get repo and version ID of this request
-	repo, versions, err := datastore.FromContext(ctx)
-	if err != nil {
-		server.BadRequest(w, r, "Error: %q ServeHTTP has invalid context: %s\n",
-			d.DataName, err.Error())
-		return
-	}
-
-	// Construct storage.Context using a particular version of this Data
-	var versionID dvid.VersionID
-	if len(versions) > 0 {
-		versionID = versions[0]
-	}
-	storeCtx := datastore.NewVersionedContext(d, versionID)
+	versionID := ctx.VersionID()
 
 	// Get the action (GET, POST)
 	action := strings.ToLower(r.Method)
@@ -711,7 +697,7 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 			server.BadRequest(w, r, err.Error())
 			return
 		}
-		if err := repo.Save(); err != nil {
+		if err := datastore.SaveDataByUUID(uuid, d); err != nil {
 			server.BadRequest(w, r, err.Error())
 			return
 		}
@@ -762,7 +748,7 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 			}
 			b.BlockBounds = b.VoxelBounds.Divide(d.BlockSize)
 			b.Exact = queryValues.Get("exact") == "true"
-			data, err := GetSparseVol(storeCtx, label, b)
+			data, err := GetSparseVol(ctx, label, b)
 			if err != nil {
 				server.BadRequest(w, r, err.Error())
 				return
@@ -802,12 +788,12 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 			server.BadRequest(w, r, err.Error())
 			return
 		}
-		label, err := source.GetLabelAtPoint(versionID, coord)
+		label, err := source.GetLabelAtPoint(ctx.VersionID(), coord)
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
 			return
 		}
-		data, err := GetSparseVol(storeCtx, label, Bounds{})
+		data, err := GetSparseVol(ctx, label, Bounds{})
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
 			return
@@ -831,7 +817,7 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 			server.BadRequest(w, r, err.Error())
 			return
 		}
-		data, err := GetSparseCoarseVol(storeCtx, label)
+		data, err := GetSparseCoarseVol(ctx, label)
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
 			return
@@ -867,7 +853,7 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 		w.Header().Set("Content-Type", "application/json")
 		switch action {
 		case "get":
-			fmt.Fprintf(w, "{%q: %d}", "nextlabel", d.MaxRepoLabel)
+			fmt.Fprintf(w, "{%q: %d}", "nextlabel", d.MaxRepoLabel+1)
 		case "post":
 			server.BadRequest(w, r, "POST on maxlabel is not supported yet.\n")
 			return
@@ -892,7 +878,7 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 			server.BadRequest(w, r, err.Error())
 			return
 		}
-		toLabel, err := d.SplitLabels(versionID, fromLabel, r.Body)
+		toLabel, err := d.SplitLabels(ctx.VersionID(), fromLabel, r.Body)
 		if err != nil {
 			server.BadRequest(w, r, fmt.Sprintf("Error on split: %s", err.Error()))
 			return
@@ -922,7 +908,7 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 			server.BadRequest(w, r, err.Error())
 			return
 		}
-		if err := d.MergeLabels(versionID, mergeOp); err != nil {
+		if err := d.MergeLabels(ctx.VersionID(), mergeOp); err != nil {
 			server.BadRequest(w, r, fmt.Sprintf("Error on merge: %s", err.Error()))
 			return
 		}
@@ -1008,7 +994,7 @@ func (d *Data) NewLabel(v dvid.VersionID) (uint64, error) {
 	}
 	buf := make([]byte, 8)
 	binary.LittleEndian.PutUint64(buf, d.MaxRepoLabel)
-	ctx := datastore.NewVersionedContext(d, v)
+	ctx := datastore.NewVersionedCtx(d, v)
 	store.Put(ctx, maxLabelTKey, buf)
 
 	ctx2 := storage.NewDataContext(d, 0)
@@ -1045,7 +1031,7 @@ func (d *Data) GetLabelRLEs(v dvid.VersionID, label uint64) (dvid.BlockRLEs, err
 		labelRLEs[blockStr] = blockRLEs
 		return nil
 	}
-	ctx := datastore.NewVersionedContext(d, v)
+	ctx := datastore.NewVersionedCtx(d, v)
 	err = store.ProcessRange(ctx, begIndex, endIndex, &storage.ChunkOp{}, f)
 	if err != nil {
 		return nil, err
@@ -1239,7 +1225,7 @@ func (d *Data) PutSparseVol(v dvid.VersionID, label uint64, r io.Reader) error {
 	// Get a sorted list of blocks that cover mods.
 	modblks := modmap.SortedKeys()
 
-	ctx := datastore.NewVersionedContext(d, v)
+	ctx := datastore.NewVersionedCtx(d, v)
 	batch := batcher.NewBatch(ctx)
 	var voxelsAdded int64
 

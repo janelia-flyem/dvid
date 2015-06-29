@@ -17,8 +17,6 @@ import (
 	"strconv"
 	"strings"
 
-	"code.google.com/p/go.net/context"
-
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/message"
@@ -261,11 +259,7 @@ func (d *Data) Equals(d2 *Data) bool {
 
 // GetByUUID returns a pointer to ROI data given a version (UUID) and data name.
 func GetByUUID(uuid dvid.UUID, name dvid.InstanceName) (*Data, error) {
-	repo, err := datastore.RepoFromUUID(uuid)
-	if err != nil {
-		return nil, err
-	}
-	source, err := repo.GetDataByName(name)
+	source, err := datastore.GetDataByUUID(uuid, name)
 	if err != nil {
 		return nil, err
 	}
@@ -365,7 +359,7 @@ func maxIndexByBlockZ(z int32) indexRLE {
 }
 
 // Returns all (z, y, x0, x1) Spans in sorted order: z, then y, then x0.
-func getSpans(ctx storage.VersionedContext, minIndex, maxIndex indexRLE) ([]dvid.Span, error) {
+func getSpans(ctx storage.VersionedCtx, minIndex, maxIndex indexRLE) ([]dvid.Span, error) {
 	db, err := storage.SmallDataStore()
 	if err != nil {
 		return nil, err
@@ -395,13 +389,13 @@ func getSpans(ctx storage.VersionedContext, minIndex, maxIndex indexRLE) ([]dvid
 }
 
 // Returns all (z, y, x0, x1) Spans in sorted order: z, then y, then x0.
-func GetSpans(ctx storage.VersionedContext) ([]dvid.Span, error) {
+func GetSpans(ctx storage.VersionedCtx) ([]dvid.Span, error) {
 	return getSpans(ctx, minIndexRLE, maxIndexRLE)
 }
 
 // Get returns a JSON-encoded byte slice of the ROI in the form of 4-Spans,
 // where each Span is [z, y, xstart, xend]
-func Get(ctx storage.VersionedContext) ([]byte, error) {
+func Get(ctx storage.VersionedCtx) ([]byte, error) {
 	spans, err := GetSpans(ctx)
 	if err != nil {
 		return nil, err
@@ -414,7 +408,7 @@ func Get(ctx storage.VersionedContext) ([]byte, error) {
 }
 
 // Deletes an ROI.
-func (d *Data) Delete(ctx storage.VersionedContext) error {
+func (d *Data) Delete(ctx storage.VersionedCtx) error {
 	smalldata, err := storage.SmallDataStore()
 	if err != nil {
 		return err
@@ -429,7 +423,7 @@ func (d *Data) Delete(ctx storage.VersionedContext) error {
 
 	d.MinZ = math.MaxInt32
 	d.MaxZ = math.MinInt32
-	if err := datastore.SaveRepoByVersionID(ctx.VersionID()); err != nil {
+	if err := datastore.SaveDataByVersion(ctx.VersionID(), d); err != nil {
 		return fmt.Errorf("Error in trying to save repo on roi extent change: %s\n", err.Error())
 	}
 
@@ -444,7 +438,7 @@ func (d *Data) Delete(ctx storage.VersionedContext) error {
 // If the init parameter is true, all previous spans of this ROI are deleted before
 // writing these spans.
 func (d *Data) PutSpans(versionID dvid.VersionID, spans []dvid.Span, init bool) error {
-	ctx := datastore.NewVersionedContext(d, versionID)
+	ctx := datastore.NewVersionedCtx(d, versionID)
 
 	db, err := storage.SmallDataStore()
 	if err != nil {
@@ -470,7 +464,7 @@ func (d *Data) PutSpans(versionID dvid.VersionID, spans []dvid.Span, init bool) 
 
 	// Save new extents after finished.
 	defer func() {
-		err := datastore.SaveRepoByVersionID(ctx.VersionID())
+		err := datastore.SaveDataByVersion(ctx.VersionID(), d)
 		if err != nil {
 			dvid.Errorf("Error in trying to save repo on roi extent change: %s\n", err.Error())
 		}
@@ -542,7 +536,7 @@ func voxelRange(blockSize, begBlock, endBlock, begVoxel, endVoxel int32) (int32,
 
 // GetMask returns a binary volume of subvol size where each element is 1 if inside the ROI
 // and 0 if outside the ROI.
-func (d *Data) GetMask(ctx storage.VersionedContext, subvol *dvid.Subvolume) ([]byte, error) {
+func (d *Data) GetMask(ctx storage.VersionedCtx, subvol *dvid.Subvolume) ([]byte, error) {
 	pt0 := subvol.StartPoint()
 	pt1 := subvol.EndPoint()
 	minBlockZ := pt0.Value(2) / d.BlockSize[2]
@@ -628,7 +622,7 @@ func seekSpan(pt dvid.ChunkPoint3d, spans []dvid.Span, curSpanI int) (int, bool)
 
 // PointQuery checks if a JSON-encoded list of voxel points are within an ROI.
 // It returns a JSON list of bools, each corresponding to the original list of points.
-func (d *Data) PointQuery(ctx storage.VersionedContext, jsonBytes []byte) ([]byte, error) {
+func (d *Data) PointQuery(ctx storage.VersionedCtx, jsonBytes []byte) ([]byte, error) {
 	list, err := dvid.ListChunkPoint3dFromVoxels(jsonBytes, d.BlockSize)
 	if err != nil {
 		return nil, err
@@ -1157,22 +1151,8 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 }
 
 // ServeHTTP handles all incoming HTTP requests for this data.
-func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *http.Request) {
+func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {
 	timedLog := dvid.NewTimeLog()
-
-	// Get repo and version ID of this request
-	_, versions, err := datastore.FromContext(requestCtx)
-	if err != nil {
-		server.BadRequest(w, r, "Error: %q ServeHTTP has invalid context: %s\n", d.DataName, err.Error())
-		return
-	}
-
-	// Construct storage.Context using a particular version of this Data
-	var versionID dvid.VersionID
-	if len(versions) > 0 {
-		versionID = versions[0]
-	}
-	storeCtx := datastore.NewVersionedContext(d, versionID)
 
 	// Break URL request into arguments
 	url := r.URL.Path[len(server.WebAPIPath):]
@@ -1215,7 +1195,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 			if !d.Ready {
 				w.WriteHeader(http.StatusPartialContent)
 			}
-			jsonBytes, err := Get(storeCtx)
+			jsonBytes, err := Get(ctx)
 			if err != nil {
 				server.BadRequest(w, r, err.Error())
 				return
@@ -1229,14 +1209,14 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 				server.BadRequest(w, r, err.Error())
 				return
 			}
-			err = d.PutJSON(versionID, data)
+			err = d.PutJSON(ctx.VersionID(), data)
 			if err != nil {
 				server.BadRequest(w, r, err.Error())
 				return
 			}
 			comment = fmt.Sprintf("HTTP POST ROI %q: %d bytes\n", d.DataName(), len(data))
 		case "delete":
-			if err := d.Delete(storeCtx); err != nil {
+			if err := d.Delete(ctx); err != nil {
 				server.BadRequest(w, r, err.Error())
 				return
 			}
@@ -1265,7 +1245,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 				server.BadRequest(w, r, err.Error())
 				return
 			}
-			data, err := d.GetMask(storeCtx, subvol)
+			data, err := d.GetMask(ctx, subvol)
 			if err != nil {
 				server.BadRequest(w, r, err.Error())
 				return
@@ -1291,7 +1271,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 				server.BadRequest(w, r, err.Error())
 				return
 			}
-			jsonBytes, err := d.PointQuery(storeCtx, data)
+			jsonBytes, err := d.PointQuery(ctx, data)
 			if err != nil {
 				server.BadRequest(w, r, err.Error())
 				return
@@ -1318,10 +1298,10 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 		dvid.Infof("queryvalues = %v\n", queryValues)
 		if optimizedStr == "true" || optimizedStr == "on" {
 			dvid.Infof("Perform optimized partitioning into subvolumes using batchsize %d\n", batchsize)
-			jsonBytes, err = d.Partition(storeCtx, int32(batchsize))
+			jsonBytes, err = d.Partition(ctx, int32(batchsize))
 		} else {
 			dvid.Infof("Performing simple partitioning into subvolumes using batchsize %d\n", batchsize)
-			jsonBytes, err = d.SimplePartition(storeCtx, int32(batchsize))
+			jsonBytes, err = d.SimplePartition(ctx, int32(batchsize))
 		}
 		if err != nil {
 			server.BadRequest(w, r, err.Error())

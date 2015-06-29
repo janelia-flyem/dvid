@@ -32,22 +32,18 @@ func (d *Data) CreateComposite(request datastore.Request, reply *datastore.Respo
 	request.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &grayscaleName, &destName)
 
 	// Get the version
-	uuid, versionID, err := datastore.MatchingUUID(uuidStr)
+	uuid, v, err := datastore.MatchingUUID(uuidStr)
 	if err != nil {
 		return err
 	}
 
-	// Get this repo and log request.
-	repo, err := datastore.RepoFromUUID(uuid)
-	if err != nil {
-		return err
-	}
-	if err = repo.AddToNodeLog(uuid, []string{request.Command.String()}); err != nil {
+	// Log request
+	if err = datastore.AddToNodeLog(uuid, []string{request.Command.String()}); err != nil {
 		return err
 	}
 
 	// Get the grayscale data.
-	dataservice, err := repo.GetDataByName(dvid.InstanceName(grayscaleName))
+	dataservice, err := datastore.GetDataByUUID(uuid, dvid.InstanceName(grayscaleName))
 	if err != nil {
 		return err
 	}
@@ -58,7 +54,7 @@ func (d *Data) CreateComposite(request datastore.Request, reply *datastore.Respo
 
 	// Create a new rgba8blk data.
 	var compservice datastore.DataService
-	compservice, err = repo.GetDataByName(dvid.InstanceName(destName))
+	compservice, err = datastore.GetDataByUUID(uuid, dvid.InstanceName(destName))
 	if err == nil {
 		return fmt.Errorf("Data instance with name %q already exists", destName)
 	}
@@ -67,7 +63,7 @@ func (d *Data) CreateComposite(request datastore.Request, reply *datastore.Respo
 		return fmt.Errorf("Could not get rgba8 type service from DVID")
 	}
 	config := dvid.NewConfig()
-	compservice, err = repo.NewData(typeService, dvid.InstanceName(destName), config)
+	compservice, err = datastore.NewData(uuid, typeService, dvid.InstanceName(destName), config)
 	if err != nil {
 		return err
 	}
@@ -78,14 +74,14 @@ func (d *Data) CreateComposite(request datastore.Request, reply *datastore.Respo
 
 	// Iterate through all labels and grayscale chunks incrementally in Z, a layer at a time.
 	wg := new(sync.WaitGroup)
-	op := &blockOp{grayscale, composite, versionID}
+	op := &blockOp{grayscale, composite, v}
 	chunkOp := &storage.ChunkOp{op, wg}
 
 	store, err := storage.BigDataStore()
 	if err != nil {
 		return err
 	}
-	ctx := datastore.NewVersionedContext(d, versionID)
+	ctx := datastore.NewVersionedCtx(d, v)
 	extents := d.Extents()
 	blockBeg := imageblk.NewTKey(extents.MinIndex)
 	blockEnd := imageblk.NewTKey(extents.MaxIndex)
@@ -94,7 +90,7 @@ func (d *Data) CreateComposite(request datastore.Request, reply *datastore.Respo
 
 	// Set new mapped data to same extents.
 	composite.Properties.Extents = grayscale.Properties.Extents
-	if err := repo.Save(); err != nil {
+	if err := datastore.SaveDataByUUID(uuid, composite); err != nil {
 		dvid.Infof("Could not save new data '%s': %s\n", destName, err.Error())
 	}
 
@@ -162,7 +158,7 @@ func (d *Data) createCompositeChunk(chunk *storage.Chunk) {
 		dvid.Errorf("Unable to retrieve big data store: %s\n", err.Error())
 		return
 	}
-	grayscaleCtx := datastore.NewVersionedContext(op.grayscale, op.versionID)
+	grayscaleCtx := datastore.NewVersionedCtx(op.grayscale, op.versionID)
 	blockData, err := bigdata.Get(grayscaleCtx, chunk.K)
 	if err != nil {
 		dvid.Errorf("Error getting grayscale block for index %s\n", zyx)
@@ -196,7 +192,7 @@ func (d *Data) createCompositeChunk(chunk *storage.Chunk) {
 		dvid.Errorf("Unable to serialize composite block %s: %s\n", zyx, err.Error())
 		return
 	}
-	compositeCtx := datastore.NewVersionedContext(op.composite, op.versionID)
+	compositeCtx := datastore.NewVersionedCtx(op.composite, op.versionID)
 	err = bigdata.Put(compositeCtx, chunk.K, serialization)
 	if err != nil {
 		dvid.Errorf("Unable to PUT composite block %s: %s\n", zyx, err.Error())

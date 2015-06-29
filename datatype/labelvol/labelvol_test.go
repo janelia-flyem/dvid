@@ -26,7 +26,7 @@ var (
 )
 
 // Sets package-level testRepo and TestVersionID
-func initTestRepo() (datastore.Repo, dvid.VersionID) {
+func initTestRepo() (dvid.UUID, dvid.VersionID) {
 	testMu.Lock()
 	defer testMu.Unlock()
 	if labelsT == nil {
@@ -274,8 +274,7 @@ func TestSparseVolumes(t *testing.T) {
 	defer tests.CloseStore()
 
 	// Create testbed volume and data instances
-	repo, _ := initTestRepo()
-	uuid := repo.RootUUID()
+	uuid, _ := initTestRepo()
 	var config dvid.Config
 	config.Set("sync", "bodies")
 	server.CreateTestInstance(t, uuid, "labelblk", "labels", config)
@@ -327,8 +326,7 @@ func TestMergeLabels(t *testing.T) {
 	defer tests.CloseStore()
 
 	// Create testbed volume and data instances
-	repo, _ := initTestRepo()
-	uuid := repo.RootUUID()
+	uuid, _ := initTestRepo()
 	var config dvid.Config
 	config.Set("sync", "bodies")
 	server.CreateTestInstance(t, uuid, "labelblk", "labels", config)
@@ -396,8 +394,7 @@ func TestSplitLabel(t *testing.T) {
 	defer tests.CloseStore()
 
 	// Create testbed volume and data instances
-	repo, _ := initTestRepo()
-	uuid := repo.RootUUID()
+	uuid, _ := initTestRepo()
 	var config dvid.Config
 	config.Set("sync", "bodies")
 	server.CreateTestInstance(t, uuid, "labelblk", "labels", config)

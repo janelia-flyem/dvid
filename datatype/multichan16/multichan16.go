@@ -28,8 +28,6 @@ import (
 	"strconv"
 	"strings"
 
-	"code.google.com/p/go.net/context"
-
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/imageblk"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -317,22 +315,8 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 }
 
 // ServeHTTP handles all incoming HTTP requests for this data.
-func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *http.Request) {
+func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {
 	timedLog := dvid.NewTimeLog()
-
-	// Get repo and version ID of this request
-	_, versions, err := datastore.FromContext(requestCtx)
-	if err != nil {
-		server.BadRequest(w, r, "Error: %q ServeHTTP has invalid context: %s\n",
-			d.DataName, err.Error())
-		return
-	}
-
-	// Construct storage.Context using a particular version of this Data
-	var versionID dvid.VersionID
-	if len(versions) > 0 {
-		versionID = versions[0]
-	}
 
 	// Get the action (GET, POST)
 	action := strings.ToLower(r.Method)
@@ -432,7 +416,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 				Voxels:     v,
 				channelNum: channelNum,
 			}
-			img, err := d.GetImage(versionID, channel.Voxels, nil)
+			img, err := d.GetImage(ctx.VersionID(), channel.Voxels, nil)
 			var formatStr string
 			if len(parts) >= 7 {
 				formatStr = parts[6]
@@ -513,11 +497,7 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 	}
 
 	// Get repo and save it.
-	repo, err := datastore.RepoFromUUID(uuid)
-	if err != nil {
-		return err
-	}
-	if err := repo.Save(); err != nil {
+	if err := datastore.SaveDataByUUID(uuid, d); err != nil {
 		return err
 	}
 

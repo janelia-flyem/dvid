@@ -54,7 +54,7 @@ func (d *Data) handleSizeEvent(in <-chan datastore.SyncMessage, done <-chan stru
 	}
 
 	for msg := range in {
-		ctx := datastore.NewVersionedContext(d, msg.Version)
+		ctx := datastore.NewVersionedCtx(d, msg.Version)
 
 		select {
 		case <-done:

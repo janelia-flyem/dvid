@@ -12,8 +12,6 @@ import (
 	"net/http"
 	"strings"
 
-	"code.google.com/p/go.net/context"
-
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/message"
@@ -325,14 +323,13 @@ func (d *Data) put(cmd datastore.Request, reply *datastore.Response) error {
 	var uuidStr, dataName, cmdStr, keyStr string
 	cmd.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &keyStr)
 
-	// Get repo.
 	_, versionID, err := datastore.MatchingUUID(uuidStr)
 	if err != nil {
 		return err
 	}
 
 	// Store data
-	ctx := datastore.NewVersionedContext(d, versionID)
+	ctx := datastore.NewVersionedCtx(d, versionID)
 	if err = d.PutData(ctx, keyStr, cmd.Input); err != nil {
 		return fmt.Errorf("Error on put to key %q for keyvalue %q: %s\n", keyStr, d.DataName(),
 			err.Error())
@@ -379,22 +376,8 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 }
 
 // ServeHTTP handles all incoming HTTP requests for this data.
-func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *http.Request) {
+func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {
 	timedLog := dvid.NewTimeLog()
-
-	// Get repo and version ID of this request
-	_, versions, err := datastore.FromContext(requestCtx)
-	if err != nil {
-		server.BadRequest(w, r, "Error: %q ServeHTTP has invalid context: %s\n", d.DataName, err.Error())
-		return
-	}
-
-	// Construct storage.Context using a particular version of this Data
-	var versionID dvid.VersionID
-	if len(versions) > 0 {
-		versionID = versions[0]
-	}
-	storeCtx := datastore.NewVersionedContext(d, versionID)
 
 	// Break URL request into arguments
 	url := r.URL.Path[len(server.WebAPIPath):]
@@ -428,7 +411,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 		return
 
 	case "keys":
-		keyList, err := d.GetKeys(storeCtx)
+		keyList, err := d.GetKeys(ctx)
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
 			return
@@ -446,7 +429,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 		// Return JSON list of keys
 		keyBeg := parts[4]
 		keyEnd := parts[5]
-		keyList, err := d.GetKeysInRange(storeCtx, keyBeg, keyEnd)
+		keyList, err := d.GetKeysInRange(ctx, keyBeg, keyEnd)
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
 			return
@@ -470,7 +453,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 		switch action {
 		case "get":
 			// Return value of single key
-			value, found, err := d.GetData(storeCtx, keyStr)
+			value, found, err := d.GetData(ctx, keyStr)
 			if err != nil {
 				server.BadRequest(w, r, err.Error())
 				return
@@ -490,7 +473,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 			comment = fmt.Sprintf("HTTP GET key %q of keyvalue %q: %d bytes (%s)\n", keyStr, d.DataName(), len(value), url)
 
 		case "delete":
-			if err := d.DeleteData(storeCtx, keyStr); err != nil {
+			if err := d.DeleteData(ctx, keyStr); err != nil {
 				server.BadRequest(w, r, err.Error())
 				return
 			}
@@ -502,7 +485,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 				server.BadRequest(w, r, err.Error())
 				return
 			}
-			err = d.PutData(storeCtx, keyStr, data)
+			err = d.PutData(ctx, keyStr, data)
 			if err != nil {
 				server.BadRequest(w, r, err.Error())
 				return

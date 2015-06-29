@@ -10,7 +10,6 @@ import (
 	"reflect"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
@@ -19,25 +18,23 @@ import (
 )
 
 func TestRepoGobEncoding(t *testing.T) {
-	now := time.Now()
-	repo := &repoT{
-		repoID: 3,
-		rootID: dvid.UUID("23f8"),
-		log: []string{
-			"Did this",
-			"Then that",
-			"And the other thing",
-		},
-		properties: map[string]interface{}{
-			"foo": 42,
-			"bar": "some string",
-			"baz": []int{3, 9, 7},
-		},
-		dag:     &dagT{},
-		data:    make(map[dvid.InstanceName]DataService),
-		created: now,
-		updated: now,
+	uuid := dvid.UUID("19b87f38f873481b9f3ac688877dff0d")
+	versionID := dvid.VersionID(23)
+	repoID := dvid.RepoID(13)
+
+	repo := newRepo(uuid, versionID, repoID)
+	repo.alias = "just some alias"
+	repo.log = []string{
+		"Did this",
+		"Then that",
+		"And the other thing",
 	}
+	repo.properties = map[string]interface{}{
+		"foo": 42,
+		"bar": "some string",
+		"baz": []int{3, 9, 7},
+	}
+
 	encoding, err := repo.GobEncode()
 	if err != nil {
 		t.Fatalf("Could not encode repo: %s\n", err.Error())
@@ -46,7 +43,8 @@ func TestRepoGobEncoding(t *testing.T) {
 	if err = received.GobDecode(encoding); err != nil {
 		t.Fatalf("Could not decode repo: %s\n", err.Error())
 	}
-	// Test DAG elsewhere
+
+	// Did we serialize OK
 	repo.dag = nil
 	received.dag = nil
 	if len(received.properties) != 3 {
@@ -125,10 +123,10 @@ func closeReopenStore() {
 		log.Fatalf("Error reopening test db at %s: %s\n", dbpath, err.Error())
 	}
 	if err = storage.Initialize(engine, "testdb"); err != nil {
-		log.Fatalf("Can't initialize test datastore: %s\n", err.Error())
+		log.Fatalf("CloseReopenStore: bad storage.Initialize(): %s\n", err.Error())
 	}
 	if err = Initialize(); err != nil {
-		log.Fatalf("Can't initialize datastore management: %s\n", err.Error())
+		log.Fatalf("CloseReopenStore: can't initialize datastore management: %s\n", err.Error())
 	}
 }
 
@@ -153,49 +151,58 @@ func closeStore() {
 func TestCommandLine(t *testing.T) {
 	useStore()
 	defer closeStore()
+
+}
+
+func makeTestVersions(t *testing.T) {
+	root, err := NewRepo("test repo", "test repo description", nil)
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+
+	if err := Commit(root, "root node", nil); err != nil {
+		t.Fatal(err.Error())
+	}
+
+	child1, err := NewVersion(root, nil)
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+
+	if err := Commit(child1, "child 1", nil); err != nil {
+		t.Fatal(err.Error())
+	}
+
+	// Test ability to set UUID of child
+	assignedUUID := dvid.UUID("0c8bc973dba74729880dd1bdfd8d0c5e")
+	child2, err := NewVersion(root, &assignedUUID)
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+
+	log2 := []string{"This is line 1 of log", "This is line 2 of log", "Last line for multiline log"}
+	if err := Commit(child2, "child 2 assigned", log2); err != nil {
+		t.Fatal(err.Error())
+	}
+
+	// Make uncommitted child 3
+	child3, err := NewVersion(root, nil)
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+	nodelog := []string{`My first node-level log line.!(;#)}`, "Second line is here!!!"}
+	if err := AddToNodeLog(child3, nodelog); err != nil {
+		t.Fatalf(err.Error())
+	}
 }
 
 func TestRepoPersistence(t *testing.T) {
 	useStore()
 
-	repo, err := NewRepo("test repo", "test repo description", nil)
-	if err != nil {
-		t.Fatal(err.Error())
-	}
-
-	if err := repo.Commit(repo.RootUUID(), "root node", nil); err != nil {
-		t.Fatal(err.Error())
-	}
-
-	child1, err := repo.NewVersion(repo.RootUUID(), nil)
-	if err != nil {
-		t.Fatal(err.Error())
-	}
-	if err := repo.Commit(child1, "child 1", nil); err != nil {
-		t.Fatal(err.Error())
-	}
-
-	child2, err := repo.NewVersion(repo.RootUUID(), nil)
-	if err != nil {
-		t.Fatal(err.Error())
-	}
-	log2 := []string{"This is line 1 of log", "This is line 2 of log", "Last line for multiline log"}
-	if err := repo.Commit(child2, "child 2", log2); err != nil {
-		t.Fatal(err.Error())
-	}
-
-	child3, err := repo.NewVersion(repo.RootUUID(), nil)
-	if err != nil {
-		t.Fatal(err.Error())
-	}
-	nodelog := []string{`My first node-level log line.!(;#)}`, "Second line is here!!!"}
-	if err := repo.AddToNodeLog(child3, nodelog); err != nil {
-		t.Fatalf(err.Error())
-	}
-	// Don't save this child.
+	makeTestVersions(t)
 
 	// Save this metadata
-	jsonBytes, err := Manager.MarshalJSON()
+	jsonBytes, err := MarshalJSON()
 	if err != nil {
 		t.Fatal(err.Error())
 	}
@@ -205,7 +212,7 @@ func TestRepoPersistence(t *testing.T) {
 	defer closeStore()
 
 	// Check if metadata is same
-	jsonBytes2, err := Manager.MarshalJSON()
+	jsonBytes2, err := MarshalJSON()
 	if err != nil {
 		t.Fatal(err.Error())
 	}
@@ -219,18 +226,36 @@ func TestNewRepoDifferent(t *testing.T) {
 	useStore()
 	defer closeStore()
 
-	repo1, err := NewRepo("test repo 1", "test repo 1 description", nil)
+	root1, err := NewRepo("test repo 1", "test repo 1 description", nil)
 	if err != nil {
 		t.Fatal(err.Error())
 	}
 
-	repo2, err := NewRepo("test repo 1", "test repo 1 description", nil)
+	root2, err := NewRepo("test repo 2", "test repo 2 description", nil)
 	if err != nil {
 		t.Fatal(err.Error())
 	}
 
-	if repo1.RepoID() == repo2.RepoID() {
-		t.Errorf("New repos share repo id: %d\n", repo1.RepoID())
+	// Delve down into private methods to make sure internal IDs are different.
+	repo1, err := manager.repoFromUUID(root1)
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+	repo2, err := manager.repoFromUUID(root2)
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+	if root1 == root2 {
+		t.Errorf("New repos share uuid: %d\n", root1)
+	}
+	if repo1.id == repo2.id {
+		t.Errorf("New repos share repo id: %d\n", repo1.id)
+	}
+	if repo1.version == repo2.version {
+		t.Errorf("New repos share version id: %d\n", repo1.version)
+	}
+	if repo1.alias == repo2.alias {
+		t.Errorf("New repos share alias: %s\n", repo1.alias)
 	}
 }
 
@@ -238,21 +263,23 @@ func TestUUIDAssignment(t *testing.T) {
 	useStore()
 	defer closeStore()
 
-	myuuid := dvid.UUID("de305d5475b4431badb2eb6b9e546014")
-	repo, err := NewRepo("test repo", "test repo description", &myuuid)
+	uuidStr1 := "de305d5475b4431badb2eb6b9e546014"
+	myuuid := dvid.UUID(uuidStr1)
+	root, err := NewRepo("test repo", "test repo description", &myuuid)
 	if err != nil {
 		t.Fatal(err.Error())
 	}
-	if repo.RootUUID() != myuuid {
-		t.Errorf("Assigned root UUID %q != created root UUID %q\n", myuuid, repo.RootUUID())
+	if root != myuuid {
+		t.Errorf("Assigned root UUID %q != created root UUID %q\n", myuuid, root)
 	}
 
 	// Check if branches can also have assigned UUIDs
-	if err := repo.Commit(repo.RootUUID(), "root node", nil); err != nil {
+	if err := Commit(root, "root node", nil); err != nil {
 		t.Fatal(err.Error())
 	}
-	myuuid2 := dvid.UUID("8fa05d5475b4431badb2eb6b9e0123014")
-	child, err := repo.NewVersion(myuuid, &myuuid2)
+	uuidStr2 := "8fa05d5475b4431badb2eb6b9e0123014"
+	myuuid2 := dvid.UUID(uuidStr2)
+	child, err := NewVersion(myuuid, &myuuid2)
 	if err != nil {
 		t.Fatal(err.Error())
 	}
@@ -260,11 +287,13 @@ func TestUUIDAssignment(t *testing.T) {
 		t.Errorf("Assigned child UUID %q != created child UUID %q\n", myuuid2, child)
 	}
 
-	// Should be able to find both nodes
-	if _, err := RepoFromUUID(myuuid); err != nil {
-		t.Errorf("Couldn't lookup assigned root uuid %s\n", myuuid)
+	// Make sure we can lookup assigned UUIDs
+	uuid, _, err := MatchingUUID(uuidStr1[:10])
+	if err != nil {
+		t.Errorf("Error matching UUID fragment %s: %v\n", uuidStr1[:10], err)
 	}
-	if _, err := RepoFromUUID(myuuid2); err != nil {
-		t.Errorf("Couldn't lookup assigned child uuid %s\n", myuuid2)
+	if uuid != myuuid {
+		t.Errorf("Error getting back correct UUID %s from %s\n", myuuid, uuid)
 	}
+
 }

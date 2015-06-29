@@ -309,7 +309,7 @@ func (d *Data) GetVoxels(v dvid.VersionID, vox *Voxels, r *ROI) error {
 	server.SpawnGoroutineMutex.Lock()
 	defer server.SpawnGoroutineMutex.Unlock()
 
-	ctx := datastore.NewVersionedContext(d, v)
+	ctx := datastore.NewVersionedCtx(d, v)
 
 	wg := new(sync.WaitGroup)
 	for it, err := vox.IndexIterator(d.BlockSize()); err == nil && it.Valid(); it.NextSpan() {
@@ -387,7 +387,7 @@ func (d *Data) GetBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int32) 
 	}
 
 	// Write the blocks that we can get concurrently on this byte slice.
-	ctx := datastore.NewVersionedContext(d, v)
+	ctx := datastore.NewVersionedCtx(d, v)
 
 	var wg sync.WaitGroup
 	err = store.ProcessRange(ctx, keyBeg, keyEnd, &storage.ChunkOp{}, func(c *storage.Chunk) error {
@@ -448,7 +448,7 @@ func (d *Data) loadOldBlocks(v dvid.VersionID, vox *Voxels, blocks storage.TKeyV
 		return fmt.Errorf("Data type imageblk had error initializing store: %s\n", err.Error())
 	}
 
-	ctx := datastore.NewVersionedContext(d, v)
+	ctx := datastore.NewVersionedCtx(d, v)
 
 	// Create a map of old blocks indexed by the index
 	oldBlocks := map[dvid.IZYXString]([]byte){}

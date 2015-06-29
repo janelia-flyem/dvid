@@ -35,7 +35,7 @@ func NewIterator(roiName dvid.InstanceName, versionID dvid.VersionID, b dvid.Bou
 	minIndex := minIndexByBlockZ(minBlockCoord.Value(2))
 	maxIndex := maxIndexByBlockZ(maxBlockCoord.Value(2))
 
-	ctx := datastore.NewVersionedContext(data, versionID)
+	ctx := datastore.NewVersionedCtx(data, versionID)
 	it := new(Iterator)
 	it.spans, err = getSpans(ctx, minIndex, maxIndex)
 	return it, err

@@ -27,7 +27,7 @@ var (
 )
 
 // Sets package-level testRepo and TestVersionID
-func initTestRepo() (datastore.Repo, dvid.VersionID) {
+func initTestRepo() (dvid.UUID, dvid.VersionID) {
 	testMu.Lock()
 	defer testMu.Unlock()
 	if grayscaleT == nil {
@@ -89,9 +89,9 @@ func makeVolume(offset, size dvid.Point3d) []byte {
 	return volume
 }
 
-func makeGrayscale(repo datastore.Repo, t *testing.T, name string) *Data {
+func makeGrayscale(uuid dvid.UUID, t *testing.T, name string) *Data {
 	config := dvid.NewConfig()
-	dataservice, err := repo.NewData(grayscaleT, dvid.InstanceName(name), config)
+	dataservice, err := datastore.NewData(uuid, grayscaleT, dvid.InstanceName(name), config)
 	if err != nil {
 		t.Errorf("Unable to create grayscale instance %q: %s\n", name, err.Error())
 	}
@@ -165,8 +165,8 @@ func TestForegroundROI(t *testing.T) {
 	tests.UseStore()
 	defer tests.CloseStore()
 
-	repo, _ := initTestRepo()
-	grayscale := makeGrayscale(repo, t, "grayscale")
+	uuid, _ := initTestRepo()
+	grayscale := makeGrayscale(uuid, t, "grayscale")
 
 	// Create a fake 128^3 volume with inner 64^3 foreground and
 	// outer background split between 0 and 255 at z = 63,64
@@ -188,12 +188,12 @@ func TestForegroundROI(t *testing.T) {
 
 	// Put the volume so it's block-aligned
 	buf := bytes.NewBuffer(data)
-	putRequest := fmt.Sprintf("%snode/%s/grayscale/raw/0_1_2/128_128_128/160_64_128", server.WebAPIPath, repo.RootUUID())
+	putRequest := fmt.Sprintf("%snode/%s/grayscale/raw/0_1_2/128_128_128/160_64_128", server.WebAPIPath, uuid)
 	server.TestHTTP(t, "POST", putRequest, buf)
 
 	// Request a foreground ROI
 	var reply datastore.Response
-	cmd := dvid.Command{"node", string(repo.RootUUID()), "grayscale", "roi", "foreground", "0,255"}
+	cmd := dvid.Command{"node", string(uuid), "grayscale", "roi", "foreground", "0,255"}
 	if err := grayscale.DoRPC(datastore.Request{Command: cmd}, &reply); err != nil {
 		t.Fatalf("Error running foreground ROI command: %s\n", err.Error())
 	}
@@ -201,7 +201,7 @@ func TestForegroundROI(t *testing.T) {
 	// Check results, making sure it's valid (200).
 	var roiJSON string
 	for {
-		roiRequest := fmt.Sprintf("%snode/%s/foreground/roi", server.WebAPIPath, repo.RootUUID())
+		roiRequest := fmt.Sprintf("%snode/%s/foreground/roi", server.WebAPIPath, uuid)
 		req, err := http.NewRequest("GET", roiRequest, nil)
 		if err != nil {
 			t.Fatalf("Unsuccessful GET on foreground ROI: %s", err.Error())
@@ -231,9 +231,9 @@ func TestDirectCalls(t *testing.T) {
 	tests.UseStore()
 	defer tests.CloseStore()
 
-	repo, versionID := initTestRepo()
-	grayscale := makeGrayscale(repo, t, "grayscale")
-	grayscaleCtx := datastore.NewVersionedContext(grayscale, versionID)
+	uuid, versionID := initTestRepo()
+	grayscale := makeGrayscale(uuid, t, "grayscale")
+	grayscaleCtx := datastore.NewVersionedCtx(grayscale, versionID)
 
 	// Create a block-aligned 8-bit grayscale image
 	offset := dvid.Point3d{512, 32, 1024}
@@ -296,9 +296,8 @@ func TestBlockAPI(t *testing.T) {
 	tests.UseStore()
 	defer tests.CloseStore()
 
-	repo, _ := initTestRepo()
-	grayscale := makeGrayscale(repo, t, "grayscale")
-	uuid := repo.RootUUID()
+	uuid, _ := initTestRepo()
+	grayscale := makeGrayscale(uuid, t, "grayscale")
 
 	// construct random blocks of data.
 	numBlockBytes := int32(grayscale.BlockSize().Prod())
@@ -451,14 +450,14 @@ func TestGrayscaleRepoPersistence(t *testing.T) {
 	tests.UseStore()
 	defer tests.CloseStore()
 
-	repo, _ := initTestRepo()
+	uuid, _ := initTestRepo()
 
 	// Make grayscale and set various properties
 	config := dvid.NewConfig()
 	config.Set("BlockSize", "12,13,14")
 	config.Set("VoxelSize", "1.1,2.8,11")
 	config.Set("VoxelUnits", "microns,millimeters,nanometers")
-	dataservice, err := repo.NewData(grayscaleT, "mygrayscale", config)
+	dataservice, err := datastore.NewData(uuid, grayscaleT, "mygrayscale", config)
 	if err != nil {
 		t.Errorf("Unable to create grayscale instance: %s\n", err.Error())
 	}
@@ -469,17 +468,12 @@ func TestGrayscaleRepoPersistence(t *testing.T) {
 	oldData := *grayscale
 
 	// Restart test datastore and see if datasets are still there.
-	if err = repo.Save(); err != nil {
+	if err = datastore.SaveDataByUUID(uuid, grayscale); err != nil {
 		t.Fatalf("Unable to save repo during grayscale persistence test: %s\n", err.Error())
 	}
-	oldUUID := repo.RootUUID()
 	tests.CloseReopenStore()
 
-	repo2, err := datastore.RepoFromUUID(oldUUID)
-	if err != nil {
-		t.Fatalf("Can't get repo %s from reloaded test db: %s\n", oldUUID, err.Error())
-	}
-	dataservice2, err := repo2.GetDataByName("mygrayscale")
+	dataservice2, err := datastore.GetDataByUUID(uuid, "mygrayscale")
 	if err != nil {
 		t.Fatalf("Can't get grayscale instance from reloaded test db: %s\n", err.Error())
 	}

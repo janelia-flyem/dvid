@@ -123,7 +123,7 @@ func (d *Data) handleBlockEvent(in <-chan datastore.SyncMessage, done <-chan str
 
 			// Store the RLEs for each label in this block.
 			if maxLabel > 0 {
-				ctx := datastore.NewVersionedContext(d, msg.Version)
+				ctx := datastore.NewVersionedCtx(d, msg.Version)
 				batch := batcher.NewBatch(ctx)
 				blockStr := block.Index.ToIZYXString()
 				for label, rles := range labelRLEs {

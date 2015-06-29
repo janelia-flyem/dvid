@@ -18,8 +18,6 @@ import (
 
 	"compress/gzip"
 
-	"code.google.com/p/go.net/context"
-
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/imageblk"
 	"github.com/janelia-flyem/dvid/datatype/roi"
@@ -651,17 +649,13 @@ func (d *Data) DoRPC(req datastore.Request, reply *datastore.Response) error {
 		if err != nil {
 			return err
 		}
-		repo, err := datastore.RepoFromUUID(uuid)
-		if err != nil {
-			return err
-		}
-		if err = repo.AddToNodeLog(uuid, []string{req.Command.String()}); err != nil {
+		if err = datastore.AddToNodeLog(uuid, []string{req.Command.String()}); err != nil {
 			return err
 		}
 		if err = d.LoadImages(versionID, offset, filenames); err != nil {
 			return err
 		}
-		if err := datastore.SaveRepo(uuid); err != nil {
+		if err := datastore.SaveDataByUUID(uuid, d); err != nil {
 			return err
 		}
 		return nil
@@ -686,22 +680,8 @@ type Bounds struct {
 }
 
 // ServeHTTP handles all incoming HTTP requests for this data.
-func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {
 	timedLog := dvid.NewTimeLog()
-
-	// Get repo and version ID of this request
-	repo, versions, err := datastore.FromContext(ctx)
-	if err != nil {
-		server.BadRequest(w, r, "Error: %q ServeHTTP has invalid context: %s\n",
-			d.DataName, err.Error())
-		return
-	}
-
-	// Construct storage.Context using a particular version of this Data
-	var versionID dvid.VersionID
-	if len(versions) > 0 {
-		versionID = versions[0]
-	}
 
 	// Get the action (GET, POST)
 	action := strings.ToLower(r.Method)
@@ -739,7 +719,7 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 			server.BadRequest(w, r, err.Error())
 			return
 		}
-		if err := repo.Save(); err != nil {
+		if err := datastore.SaveDataByUUID(uuid, d); err != nil {
 			server.BadRequest(w, r, err.Error())
 			return
 		}
@@ -787,7 +767,7 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 			server.BadRequest(w, r, err.Error())
 			return
 		}
-		label, err := d.GetLabelAtPoint(versionID, coord)
+		label, err := d.GetLabelAtPoint(ctx.VersionID(), coord)
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
 			return
@@ -828,13 +808,13 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 				return
 			}
 			if roiptr != nil {
-				roiptr.Iter, err = roi.NewIterator(roiname, versionID, lbl)
+				roiptr.Iter, err = roi.NewIterator(roiname, ctx.VersionID(), lbl)
 				if err != nil {
 					server.BadRequest(w, r, err.Error())
 					return
 				}
 			}
-			img, err := d.GetImage(versionID, lbl, roiptr)
+			img, err := d.GetImage(ctx.VersionID(), lbl, roiptr)
 			if err != nil {
 				server.BadRequest(w, r, err.Error())
 				return
@@ -889,13 +869,13 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 					return
 				}
 				if roiptr != nil {
-					roiptr.Iter, err = roi.NewIterator(roiname, versionID, lbl)
+					roiptr.Iter, err = roi.NewIterator(roiname, ctx.VersionID(), lbl)
 					if err != nil {
 						server.BadRequest(w, r, err.Error())
 						return
 					}
 				}
-				data, err := d.GetVolume(versionID, lbl, roiptr)
+				data, err := d.GetVolume(ctx.VersionID(), lbl, roiptr)
 				if err != nil {
 					server.BadRequest(w, r, err.Error())
 					return
@@ -1009,13 +989,13 @@ func (d *Data) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Req
 					return
 				}
 				if roiptr != nil {
-					roiptr.Iter, err = roi.NewIterator(roiname, versionID, lbl)
+					roiptr.Iter, err = roi.NewIterator(roiname, ctx.VersionID(), lbl)
 					if err != nil {
 						server.BadRequest(w, r, err.Error())
 						return
 					}
 				}
-				if err = d.PutVoxels(versionID, lbl.Voxels, roiptr); err != nil {
+				if err = d.PutVoxels(ctx.VersionID(), lbl.Voxels, roiptr); err != nil {
 					server.BadRequest(w, r, err.Error())
 					return
 				}
@@ -1051,7 +1031,7 @@ func (d *Data) GetLabelBytesAtPoint(v dvid.VersionID, pt dvid.Point) ([]byte, er
 	index := dvid.IndexZYX(blockCoord)
 
 	// Retrieve the block of labels
-	ctx := datastore.NewVersionedContext(d, v)
+	ctx := datastore.NewVersionedCtx(d, v)
 	serialization, err := store.Get(ctx, NewTKey(&index))
 	if err != nil {
 		return nil, fmt.Errorf("Error getting '%s' block for index %s\n", d.DataName(), blockCoord)

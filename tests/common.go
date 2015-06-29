@@ -17,17 +17,17 @@ func init() {
 }
 
 // NewRepo returns a new datastore.Repo suitable for testing.
-func NewRepo() (datastore.Repo, dvid.VersionID) {
-	repo, err := datastore.NewRepo("testRepo", "A test repository", nil)
+func NewRepo() (dvid.UUID, dvid.VersionID) {
+	uuid, err := datastore.NewRepo("testRepo", "A test repository", nil)
 	if err != nil {
 		log.Fatalf("Unable to create new testing repo: %s\n", err.Error())
 	}
 
-	versionID, err := datastore.VersionFromUUID(repo.RootUUID())
+	versionID, err := datastore.VersionFromUUID(uuid)
 	if err != nil {
-		log.Fatalf("Unable to get version ID from repo root UUID %s\n", repo.RootUUID())
+		log.Fatalf("Unable to get version ID from repo root UUID %s\n", uuid)
 	}
-	return repo, versionID
+	return uuid, versionID
 }
 
 // RandomBytes returns a slices of random bytes.

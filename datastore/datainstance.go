@@ -15,8 +15,6 @@ import (
 	"strings"
 	"sync"
 
-	"code.google.com/p/go.net/context"
-
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/message"
 	"github.com/janelia-flyem/dvid/storage"
@@ -57,36 +55,24 @@ func (r *Response) Write(w io.Writer) error {
 
 // ------------------------
 
-// VersionedContext implements storage.VersionedContext for data instances that
+// VersionedCtx implements storage.VersionedCtx for data instances that
 // have a version DAG.
-type VersionedContext struct {
+type VersionedCtx struct {
 	*storage.DataContext
 }
 
-func NewVersionedContext(data dvid.Data, versionID dvid.VersionID) *VersionedContext {
-	return &VersionedContext{storage.NewDataContext(data, versionID)}
-}
-
-func (ctx *VersionedContext) GetIterator() (storage.VersionIterator, error) {
-	uuid, err := UUIDFromVersion(ctx.VersionID())
-	if err != nil {
-		return nil, err
-	}
-	repo, err := RepoFromUUID(uuid)
-	if err != nil {
-		return nil, err
-	}
-	return repo.GetIterator(ctx.VersionID())
+func NewVersionedCtx(data dvid.Data, versionID dvid.VersionID) *VersionedCtx {
+	return &VersionedCtx{storage.NewDataContext(data, versionID)}
 }
 
 // VersionedKeyValue returns the key-value pair corresponding to this key's version
 // given a list of key-value pairs across many versions.  If no suitable key-value
 // pair is found or a tombstone is encounterd closest to version, nil is returned.
-func (ctx *VersionedContext) VersionedKeyValue(values []*storage.KeyValue) (*storage.KeyValue, error) {
+func (vctx *VersionedCtx) VersionedKeyValue(values []*storage.KeyValue) (*storage.KeyValue, error) {
 	// Set up a map[VersionID]KeyValue
-	versionMap := make(map[dvid.VersionID]*storage.KeyValue, len(values))
+	versionMap := make(kvVersions, len(values))
 	for _, kv := range values {
-		vid, err := ctx.VersionFromKey(kv.K)
+		vid, err := vctx.VersionFromKey(kv.K)
 		if err != nil {
 			return nil, err
 		}
@@ -94,32 +80,19 @@ func (ctx *VersionedContext) VersionedKeyValue(values []*storage.KeyValue) (*sto
 		// fmt.Printf("Found version %d for %s\n", vid, ctx)
 	}
 
-	// Iterate from the current node up the ancestors in the version DAG, checking if
-	// current best is present.
-	it, err := ctx.GetIterator()
-	if err != nil {
-		return nil, fmt.Errorf("Couldn't get versioned data iterator: %s\n", err.Error())
-	}
-	for {
-		if it.Valid() {
-			if kv, found := versionMap[it.VersionID()]; found {
-				if ctx.IsTombstoneKey(kv.K) {
-					// fmt.Printf("Found tombstone and returning nil value.\n")
-					return nil, nil
-				}
-				// fmt.Printf("Found version %d and returning value %d bytes\n", it.VersionID(), len(kv.V))
-				return kv, nil
-			}
-		} else {
-			break
-		}
-		it.Next()
-	}
-	return nil, nil
+	// Get the correct key-value for this version among all ancestors, some of which might have
+	// a value.
+	kv, _, err := versionMap.FindMatch(vctx.VersionID())
+	return kv, err
 }
 
-func (ctx *VersionedContext) Versioned() bool {
+func (vctx *VersionedCtx) Versioned() bool {
 	return true
+}
+
+func (vctx *VersionedCtx) String() string {
+	return fmt.Sprintf("Versioned data context for %q (local id %d, version id %d)", vctx.DataName(),
+		vctx.InstanceID(), vctx.VersionID())
 }
 
 // DataService is an interface for operations on an instance of a supported datatype.
@@ -129,14 +102,13 @@ type DataService interface {
 	GetType() TypeService
 
 	// ModifyConfig modifies a configuration in a type-specific way.
-	ModifyConfig(config dvid.Config) error
+	ModifyConfig(dvid.Config) error
 
 	// DoRPC handles command line and RPC commands specific to a data type
-	DoRPC(request Request, reply *Response) error
+	DoRPC(Request, *Response) error
 
-	// ServeHTTP handles HTTP requests in the context of a particular version of a Repo
-	// for this instance of a datatype.
-	ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request)
+	// ServeHTTP handles HTTP requests in the context of a particular version.
+	ServeHTTP(dvid.UUID, *VersionedCtx, http.ResponseWriter, *http.Request)
 
 	Help() string
 
@@ -162,13 +134,13 @@ type DataService interface {
 type InstanceMutator interface {
 	// Loads all mutable properties and applies any necessary migration to
 	// transform the internal data from the stored to expected version.
-	LoadMutable(dag DAGManager, storedVersion, expectedVersion uint64) (saveNeeded bool, err error)
+	LoadMutable(root dvid.VersionID, storedVersion, expectedVersion uint64) (saveNeeded bool, err error)
 }
 
-// VersionInitializer provides a hook for data instances to receive new version
+// VersionInitializer provides a hook for data instances to receive branch (new version)
 // events and modify their properties as needed.
 type VersionInitializer interface {
-	InitVersion(DAGManager, dvid.UUID, dvid.VersionID) error
+	InitVersion(dvid.UUID, dvid.VersionID) error
 }
 
 // SyncEvent identifies an event in which a data instance has modified its data
@@ -204,16 +176,26 @@ type Syncer interface {
 	SyncedNames() []dvid.InstanceName
 }
 
+// CommitSyncer want to be notified when a node is committed.
+type CommitSyncer interface {
+	// SyncOnCommit is an asynchronous function that should be called when a node is committed.
+	SyncOnCommit(dvid.UUID, dvid.VersionID)
+}
+
 // NotifySubscribers sends a message to any data instances subscribed to the event.
 func NotifySubscribers(e SyncEvent, m SyncMessage) error {
+	if manager == nil {
+		return ErrManagerNotInitialized
+	}
+
 	// Get the repo from the version
-	repo, err := RepoFromVersionID(m.Version)
+	repo, err := manager.repoFromVersion(m.Version)
 	if err != nil {
 		return err
 	}
 
 	// Use the repo notification system
-	return repo.NotifySubscribers(e, m)
+	return repo.notifySubscribers(e, m)
 }
 
 // Data is the base struct of repo-specific data instances.  It should be embedded

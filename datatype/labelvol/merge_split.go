@@ -120,7 +120,7 @@ func (d *Data) MergeLabels(v dvid.VersionID, m labels.MergeOp) error {
 		// Delete all fromLabel RLEs since they are all integrated into toLabel RLEs
 		minTKey := NewTKey(fromLabel, dvid.MinIndexZYX.ToIZYXString())
 		maxTKey := NewTKey(fromLabel, dvid.MaxIndexZYX.ToIZYXString())
-		ctx := datastore.NewVersionedContext(d, v)
+		ctx := datastore.NewVersionedCtx(d, v)
 		if err := store.DeleteRange(ctx, minTKey, maxTKey); err != nil {
 			return fmt.Errorf("Can't delete label %d RLEs: %s", fromLabel, err.Error())
 		}
@@ -139,7 +139,7 @@ func (d *Data) MergeLabels(v dvid.VersionID, m labels.MergeOp) error {
 	}
 
 	// Update datastore with all toLabel RLEs that were changed
-	ctx := datastore.NewVersionedContext(d, v)
+	ctx := datastore.NewVersionedCtx(d, v)
 	batch := batcher.NewBatch(ctx)
 	for blockStr := range blocksChanged {
 		tk := NewTKey(toLabel, blockStr)
@@ -250,7 +250,7 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser) 
 	// TODO: Modifications should be transactional since it's GET-PUT, therefore use
 	// hash on block coord to direct it to block-specific goroutine; we serialize
 	// requests to handle concurrency.
-	ctx := datastore.NewVersionedContext(d, v)
+	ctx := datastore.NewVersionedCtx(d, v)
 	batch := batcher.NewBatch(ctx)
 
 	for _, splitblk := range splitblks {
@@ -332,7 +332,7 @@ func (d *Data) writeLabelVol(v dvid.VersionID, label uint64, brles dvid.BlockRLE
 		return fmt.Errorf("Data type labelvol requires batch-enabled store, which %q is not\n", store)
 	}
 
-	ctx := datastore.NewVersionedContext(d, v)
+	ctx := datastore.NewVersionedCtx(d, v)
 	batch := batcher.NewBatch(ctx)
 	if sortblks != nil {
 		for _, izyxStr := range sortblks {

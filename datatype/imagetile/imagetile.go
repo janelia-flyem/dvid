@@ -22,8 +22,6 @@ import (
 	"strings"
 	"sync"
 
-	"code.google.com/p/go.net/context"
-
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/imageblk"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -60,7 +58,7 @@ $ dvid repo <UUID> new imagetile <data name> <settings...>
 
     Configuration Settings (case-insensitive keys)
 
-    Format         "lz4" (default), "jpg", or "png".  In the case of "lz4", decoding/encoding is done at
+    Format         "lz4", "jpg", or "png" (default).  In the case of "lz4", decoding/encoding is done at
                       tile request time and is a better choice if you primarily ask for arbitrary sized images
                       (via GET .../raw/... or .../isotropic/...) instead of tiles (via GET .../tile/...)
     Versioned      "true" or "false" (default)
@@ -263,7 +261,7 @@ func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.
 	if err != nil {
 		return nil, err
 	}
-	format := LZ4
+	format := PNG
 	if found {
 		switch strings.ToLower(encoding) {
 		case "lz4":
@@ -485,12 +483,7 @@ func (d *Data) DefaultTileSpec(uuidStr string) (TileSpec, error) {
 	if err != nil {
 		return nil, err
 	}
-	repo, err := datastore.RepoFromUUID(uuid)
-	if err != nil {
-		return nil, err
-	}
-
-	source, err := repo.GetDataByName(d.Source)
+	source, err := datastore.GetDataByUUID(uuid, d.Source)
 	if err != nil {
 		return nil, err
 	}
@@ -649,23 +642,8 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 }
 
 // ServeHTTP handles all incoming HTTP requests for this data.
-func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *http.Request) {
+func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {
 	timedLog := dvid.NewTimeLog()
-
-	// Get repo and version ID of this request
-	repo, versions, err := datastore.FromContext(requestCtx)
-	if err != nil {
-		server.BadRequest(w, r, "Error: %q ServeHTTP has invalid context: %s\n",
-			d.DataName(), err.Error())
-		return
-	}
-
-	// Construct storage.Context using a particular version of this Data
-	var versionID dvid.VersionID
-	if len(versions) > 0 {
-		versionID = versions[0]
-	}
-	storeCtx := datastore.NewVersionedContext(d, versionID)
 
 	action := strings.ToLower(r.Method)
 	switch action {
@@ -706,7 +684,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 			server.BadRequest(w, r, "DVID does not yet support POST of imagetile")
 			return
 		}
-		if err := d.ServeTile(repo, storeCtx, w, r, parts); err != nil {
+		if err := d.ServeTile(uuid, ctx, w, r, parts); err != nil {
 			server.BadRequest(w, r, err.Error())
 			return
 		}
@@ -737,7 +715,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 			server.BadRequest(w, r, err.Error())
 			return
 		}
-		source, err := repo.GetDataByName(d.Source)
+		source, err := datastore.GetDataByUUID(uuid, d.Source)
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
 			return
@@ -747,7 +725,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 			server.BadRequest(w, r, "Cannot construct imagetile for non-voxels data: %s", d.Source)
 			return
 		}
-		img, err := d.GetImage(storeCtx, src, slice, parts[3] == "isotropic")
+		img, err := d.GetImage(ctx, src, slice, parts[3] == "isotropic")
 		if err != nil {
 			server.BadRequest(w, r, err.Error())
 			return
@@ -852,7 +830,7 @@ func (d *Data) GetImage(ctx storage.Context, src *imageblk.Data, geom dvid.Geome
 }
 
 // ServeTile returns a tile with appropriate Content-Type set.
-func (d *Data) ServeTile(repo datastore.Repo, ctx storage.Context, w http.ResponseWriter,
+func (d *Data) ServeTile(uuid dvid.UUID, ctx storage.Context, w http.ResponseWriter,
 	r *http.Request, parts []string) error {
 
 	if len(parts) < 7 {
@@ -906,7 +884,7 @@ func (d *Data) ServeTile(repo datastore.Repo, ctx storage.Context, w http.Respon
 			http.NotFound(w, r)
 			return nil
 		}
-		img, err := d.getBlankTileImage(repo, shape, Scaling(scaling))
+		img, err := d.getBlankTileImage(uuid, shape, Scaling(scaling))
 		if err != nil {
 			return err
 		}
@@ -996,7 +974,7 @@ func (d *Data) getTileData(ctx storage.Context, shape dvid.DataShape, scaling Sc
 }
 
 // getBlankTileData returns zero 2d tile data with a given scaling and format.
-func (d *Data) getBlankTileImage(repo datastore.Repo, shape dvid.DataShape, scaling Scaling) (image.Image, error) {
+func (d *Data) getBlankTileImage(uuid dvid.UUID, shape dvid.DataShape, scaling Scaling) (image.Image, error) {
 	levelSpec, found := d.Levels[scaling]
 	if !found {
 		return nil, fmt.Errorf("Could not extract tiles for unspecified scale level %d", scaling)
@@ -1005,14 +983,13 @@ func (d *Data) getBlankTileImage(repo datastore.Repo, shape dvid.DataShape, scal
 	if err != nil {
 		return nil, err
 	}
-	source, err := repo.GetDataByName(d.Source)
+	source, err := datastore.GetDataByUUID(uuid, d.Source)
 	if err != nil {
 		return nil, err
 	}
 	src, ok := source.(*imageblk.Data)
 	if !ok {
-		return nil, fmt.Errorf("Data instance %q for uuid %q is not imageblk.Data", d.Source,
-			repo.RootUUID())
+		return nil, fmt.Errorf("Data instance %q for uuid %q is not imageblk.Data", d.Source, uuid)
 	}
 	bytesPerVoxel := src.Values.BytesPerElement()
 	switch bytesPerVoxel {
@@ -1102,7 +1079,7 @@ func (d *Data) putTileFunc(versionID dvid.VersionID) (outFunc, error) {
 	if err != nil {
 		return nil, fmt.Errorf("Cannot open big data store: %s\n", err.Error())
 	}
-	ctx := datastore.NewVersionedContext(d, versionID)
+	ctx := datastore.NewVersionedCtx(d, versionID)
 
 	return func(index *IndexTile, tile *dvid.Image) error {
 		var err error
@@ -1133,15 +1110,11 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, request datasto
 	if err != nil {
 		return err
 	}
-	repo, err := datastore.RepoFromUUID(uuid)
-	if err != nil {
-		return err
-	}
-	if err = repo.AddToNodeLog(uuid, []string{request.Command.String()}); err != nil {
+	if err = datastore.AddToNodeLog(uuid, []string{request.Command.String()}); err != nil {
 		return err
 	}
 
-	source, err := repo.GetDataByName(d.Source)
+	source, err := datastore.GetDataByUUID(uuid, d.Source)
 	if err != nil {
 		return err
 	}
@@ -1152,7 +1125,7 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, request datasto
 
 	// Save the current tile specification
 	d.Levels = tileSpec
-	if err := repo.Save(); err != nil {
+	if err := datastore.SaveDataByUUID(uuid, d); err != nil {
 		return err
 	}
 

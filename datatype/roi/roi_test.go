@@ -12,8 +12,6 @@ import (
 	"sync"
 	"testing"
 
-	"code.google.com/p/go.net/context"
-
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
@@ -85,7 +83,7 @@ func putInclusionJSON(data []byte) ([]bool, error) {
 }
 
 // Sets package-level testRepo and TestVersionID
-func initTestRepo() (datastore.Repo, dvid.VersionID) {
+func initTestRepo() (dvid.UUID, dvid.VersionID) {
 	testMu.Lock()
 	defer testMu.Unlock()
 	if roitype == nil {
@@ -150,14 +148,10 @@ func TestROIRequests(t *testing.T) {
 	defer tests.CloseStore()
 
 	// Create the ROI dataservice.
-	repo, versionID := initTestRepo()
-	uuid, err := datastore.UUIDFromVersion(versionID)
-	if err != nil {
-		t.Errorf(err.Error())
-	}
+	uuid, _ := initTestRepo()
 
 	config := dvid.NewConfig()
-	dataservice, err := repo.NewData(roitype, "roi", config)
+	dataservice, err := datastore.NewData(uuid, roitype, "roi", config)
 	if err != nil {
 		t.Errorf("Error creating new roi instance: %s\n", err.Error())
 	}
@@ -294,14 +288,10 @@ func TestROIPostAndDelete(t *testing.T) {
 	defer tests.CloseStore()
 
 	// Create the ROI dataservice.
-	repo, versionID := initTestRepo()
-	uuid, err := datastore.UUIDFromVersion(versionID)
-	if err != nil {
-		t.Errorf(err.Error())
-	}
+	uuid, _ := initTestRepo()
 
 	config := dvid.NewConfig()
-	dataservice, err := repo.NewData(roitype, "roi", config)
+	dataservice, err := datastore.NewData(uuid, roitype, "roi", config)
 	if err != nil {
 		t.Errorf("Error creating new roi instance: %s\n", err.Error())
 	}
@@ -340,11 +330,11 @@ func TestROICreateAndSerialize(t *testing.T) {
 	tests.UseStore()
 	defer tests.CloseStore()
 
-	repo, _ := initTestRepo()
+	uuid, _ := initTestRepo()
 
 	// Add data
 	config := dvid.NewConfig()
-	dataservice1, err := repo.NewData(roitype, "myroi", config)
+	dataservice1, err := datastore.NewData(uuid, roitype, "myroi", config)
 	if err != nil {
 		t.Errorf("Error creating new roi instance: %s\n", err.Error())
 	}
@@ -358,7 +348,7 @@ func TestROICreateAndSerialize(t *testing.T) {
 	}
 
 	config.Set("BlockSize", "15,16,17")
-	dataservice2, err := repo.NewData(roitype, "myroi2", config)
+	dataservice2, err := datastore.NewData(uuid, roitype, "myroi2", config)
 	if err != nil {
 		t.Errorf("Error creating new roi instance: %s\n", err.Error())
 	}
@@ -401,14 +391,10 @@ func TestROIPartition(t *testing.T) {
 	defer tests.CloseStore()
 
 	// Create the ROI dataservice.
-	repo, versionID := initTestRepo()
-	uuid, err := datastore.UUIDFromVersion(versionID)
-	if err != nil {
-		t.Errorf(err.Error())
-	}
+	uuid, versionID := initTestRepo()
 
 	config := dvid.NewConfig()
-	dataservice, err := repo.NewData(roitype, "roi", config)
+	dataservice, err := datastore.NewData(uuid, roitype, "roi", config)
 	if err != nil {
 		t.Errorf("Error creating new roi instance: %s\n", err.Error())
 	}
@@ -423,9 +409,9 @@ func TestROIPartition(t *testing.T) {
 	if err != nil {
 		t.Errorf("Unsuccessful POST request (%s): %s\n", roiRequest, err.Error())
 	}
-	serverCtx := datastore.NewServerContext(context.Background(), repo, versionID)
+	ctx := datastore.NewVersionedCtx(data, versionID)
 	w := httptest.NewRecorder()
-	data.ServeHTTP(serverCtx, w, req)
+	data.ServeHTTP(uuid, ctx, w, req)
 	if w.Code != http.StatusOK {
 		t.Errorf("Bad server response roi POST, status %s, for roi %q\n", w.Code, data.DataName())
 	}
@@ -438,7 +424,7 @@ func TestROIPartition(t *testing.T) {
 		t.Errorf("Unsuccessful GET request (%s): %s\n", partitionReq, err.Error())
 	}
 	w = httptest.NewRecorder()
-	data.ServeHTTP(serverCtx, w, req)
+	data.ServeHTTP(uuid, ctx, w, req)
 	if w.Code != http.StatusOK {
 		t.Errorf("Bad server response roi GET, status %s, for roi %q\n", w.Code, data.DataName())
 	}
@@ -459,14 +445,10 @@ func TestROISimplePartition(t *testing.T) {
 	defer tests.CloseStore()
 
 	// Create the ROI dataservice.
-	repo, versionID := initTestRepo()
-	uuid, err := datastore.UUIDFromVersion(versionID)
-	if err != nil {
-		t.Errorf(err.Error())
-	}
+	uuid, versionID := initTestRepo()
 
 	config := dvid.NewConfig()
-	dataservice, err := repo.NewData(roitype, "roi", config)
+	dataservice, err := datastore.NewData(uuid, roitype, "roi", config)
 	if err != nil {
 		t.Errorf("Error creating new roi instance: %s\n", err.Error())
 	}
@@ -481,9 +463,9 @@ func TestROISimplePartition(t *testing.T) {
 	if err != nil {
 		t.Errorf("Unsuccessful POST request (%s): %s\n", roiRequest, err.Error())
 	}
-	serverCtx := datastore.NewServerContext(context.Background(), repo, versionID)
+	ctx := datastore.NewVersionedCtx(data, versionID)
 	w := httptest.NewRecorder()
-	data.ServeHTTP(serverCtx, w, req)
+	data.ServeHTTP(uuid, ctx, w, req)
 	if w.Code != http.StatusOK {
 		t.Errorf("Bad server response roi POST, status %s, for roi %q\n", w.Code, data.DataName())
 	}
@@ -496,7 +478,7 @@ func TestROISimplePartition(t *testing.T) {
 		t.Errorf("Unsuccessful GET request (%s): %s\n", partitionReq, err.Error())
 	}
 	w = httptest.NewRecorder()
-	data.ServeHTTP(serverCtx, w, req)
+	data.ServeHTTP(uuid, ctx, w, req)
 	if w.Code != http.StatusOK {
 		t.Errorf("Bad server response roi GET, status %s, for roi %q\n", w.Code, data.DataName())
 	}
@@ -872,11 +854,11 @@ func TestROIRepoPersistence(t *testing.T) {
 	tests.UseStore()
 	defer tests.CloseStore()
 
-	repo, _ := initTestRepo()
+	uuid, _ := initTestRepo()
 
 	// Add data
 	config := dvid.NewConfig()
-	dataservice1, err := repo.NewData(roitype, "myroi", config)
+	dataservice1, err := datastore.NewData(uuid, roitype, "myroi", config)
 	if err != nil {
 		t.Errorf("Error creating new roi instance: %s\n", err.Error())
 	}
@@ -890,7 +872,7 @@ func TestROIRepoPersistence(t *testing.T) {
 	}
 
 	config.Set("BlockSize", "15,16,17")
-	dataservice2, err := repo.NewData(roitype, "myroi2", config)
+	dataservice2, err := datastore.NewData(uuid, roitype, "myroi2", config)
 	if err != nil {
 		t.Errorf("Error creating new roi instance: %s\n", err.Error())
 	}
@@ -909,18 +891,16 @@ func TestROIRepoPersistence(t *testing.T) {
 	}
 
 	// Restart test datastore and see if datasets are still there.
-	if err = repo.Save(); err != nil {
-		t.Fatalf("Unable to save repo during ROI persistence test: %s\n", err.Error())
+	if err = datastore.SaveDataByUUID(uuid, dataservice1); err != nil {
+		t.Fatalf("Unable to save data1 during ROI persistence test: %s\n", err.Error())
 	}
-	oldRepoUUID := repo.RootUUID()
+	if err = datastore.SaveDataByUUID(uuid, dataservice2); err != nil {
+		t.Fatalf("Unable to save data2 during ROI persistence test: %s\n", err.Error())
+	}
 
 	tests.CloseReopenStore()
 
-	repo2, err := datastore.RepoFromUUID(oldRepoUUID)
-	if err != nil {
-		t.Fatalf("Can't get repo %s from reloaded test db: %s\n", oldRepoUUID, err.Error())
-	}
-	dataservice3, err := repo2.GetDataByName("myroi2")
+	dataservice3, err := datastore.GetDataByUUID(uuid, "myroi2")
 	if err != nil {
 		t.Fatalf("Can't get first ROI instance from reloaded test db: %s\n", err.Error())
 	}

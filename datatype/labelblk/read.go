@@ -79,7 +79,7 @@ func (d *Data) GetLabels(v dvid.VersionID, vox *Labels, r *imageblk.ROI) error {
 	server.SpawnGoroutineMutex.Lock()
 	defer server.SpawnGoroutineMutex.Unlock()
 
-	ctx := datastore.NewVersionedContext(d, v)
+	ctx := datastore.NewVersionedCtx(d, v)
 
 	iv := dvid.InstanceVersion{d.DataName(), v}
 	mapping := labels.MergeCache.LabelMap(iv)
@@ -143,7 +143,7 @@ func (d *Data) GetBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int) ([
 	begTKey := NewTKey(&indexBeg)
 	endTKey := NewTKey(&indexEnd)
 
-	ctx := datastore.NewVersionedContext(d, v)
+	ctx := datastore.NewVersionedCtx(d, v)
 
 	iv := dvid.InstanceVersion{d.DataName(), v}
 	mapping := labels.MergeCache.LabelMap(iv)
@@ -196,7 +196,7 @@ func (d *Data) loadOldBlocks(v dvid.VersionID, vox *Labels, blocks storage.TKeyV
 		return fmt.Errorf("Data type imageblk had error initializing store: %s\n", err.Error())
 	}
 
-	ctx := datastore.NewVersionedContext(d, v)
+	ctx := datastore.NewVersionedCtx(d, v)
 
 	// Create a map of old blocks indexed by the index
 	oldBlocks := map[dvid.IZYXString]([]byte){}

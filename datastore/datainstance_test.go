@@ -6,8 +6,6 @@ import (
 	"reflect"
 	"testing"
 
-	"code.google.com/p/go.net/context"
-
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/message"
 )
@@ -45,7 +43,7 @@ func (d *TestData) DoRPC(request Request, reply *Response) error {
 	return nil
 }
 
-func (d *TestData) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *http.Request) {
+func (d *TestData) ServeHTTP(uuid dvid.UUID, ctx *VersionedCtx, w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *TestData) Help() string {

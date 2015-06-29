@@ -1,231 +1,334 @@
 /*
-	This file provides the highest-level view of the datastore via a Service.
+	This file provides the exported view of the datastore metadata handling functions.
+	All platform-specific code is isolated to the *_local, *_cluster, and similarly named files.
+
+	The repo management functions are package-level functions to avoid lower-level exported
+	types like Repo, which invariably depend on global version ids and coordination with the
+	singleton repo manager.
 */
 
 package datastore
 
 import (
-	"fmt"
-
-	"code.google.com/p/go.net/context"
+	"sync"
 
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
 )
 
 const (
-	Version = "0.9"
+	Version = "0.9.2"
 )
 
 var (
-	// Manager provides high-level repository management for DVID and is initialized
-	// on start.  Package functions provide a quick alias to this default RepoManager.
-	Manager RepoManager
+	// manager provides high-level repository management for DVID and is initialized
+	// on start.  Package functions provide a quick alias to this platform-specific repo manager.
+	manager *repoManager
+
+	migrator_mu sync.RWMutex
+	migrators   map[string]MigrationFunc
 )
 
-// ---- Aliased package functions for Repo management.
+type MigrationFunc func()
 
-func Shutdown() {
-	if Manager != nil {
-		s, ok := Manager.(Shutdowner)
-		if ok {
-			s.Shutdown()
-		}
+func RegisterAsyncMigration(f MigrationFunc, desc string) {
+	migrator_mu.Lock()
+	defer migrator_mu.Unlock()
+
+	if migrators == nil {
+		migrators = make(map[string]MigrationFunc)
 	}
+	migrators[desc] = f
 }
 
-func NewInstanceID() (dvid.InstanceID, error) {
-	if Manager == nil {
-		return 0, fmt.Errorf("datastore not initialized")
+func Shutdown() {
+	// TODO: make sure any kind of shutdown is graceful.
+}
+
+func Types() (map[dvid.URLString]TypeService, error) {
+	if manager == nil {
+		return nil, ErrManagerNotInitialized
 	}
-	return Manager.NewInstanceID()
+	return manager.types()
+}
+
+// MarshalJSON returns JSON of object where each repo is a property with root UUID name
+// and value corresponding to repo info.
+func MarshalJSON() ([]byte, error) {
+	if manager == nil {
+		return nil, ErrManagerNotInitialized
+	}
+	return manager.MarshalJSON()
+}
+
+// ---- Datastore ID functions ----------
+
+func NewInstanceID() (dvid.InstanceID, error) {
+	if manager == nil {
+		return 0, ErrManagerNotInitialized
+	}
+	return manager.newInstanceID()
 }
 
 func NewRepoID() (dvid.RepoID, error) {
-	if Manager == nil {
-		return 0, fmt.Errorf("datastore not initialized")
+	if manager == nil {
+		return 0, ErrManagerNotInitialized
 	}
-	return Manager.NewRepoID()
+	return manager.newRepoID()
 }
 
 func NewUUID(assign *dvid.UUID) (dvid.UUID, dvid.VersionID, error) {
-	if Manager == nil {
-		return dvid.NilUUID, 0, fmt.Errorf("datastore not initialized")
+	if manager == nil {
+		return dvid.NilUUID, 0, ErrManagerNotInitialized
 	}
-	return Manager.NewUUID(assign)
+	return manager.newUUID(assign)
 }
 
 func UUIDFromVersion(v dvid.VersionID) (dvid.UUID, error) {
-	if Manager == nil {
-		return dvid.NilUUID, fmt.Errorf("datastore not initialized")
+	if manager == nil {
+		return dvid.NilUUID, ErrManagerNotInitialized
 	}
-	return Manager.UUIDFromVersion(v)
+	return manager.uuidFromVersion(v)
 }
 
 func VersionFromUUID(uuid dvid.UUID) (dvid.VersionID, error) {
-	if Manager == nil {
-		return 0, fmt.Errorf("datastore not initialized")
+	if manager == nil {
+		return 0, ErrManagerNotInitialized
 	}
-	return Manager.VersionFromUUID(uuid)
+	return manager.versionFromUUID(uuid)
 }
 
 // MatchingUUID returns version identifiers that uniquely matches a uuid string.
 func MatchingUUID(uuidStr string) (dvid.UUID, dvid.VersionID, error) {
-	if Manager == nil {
-		return dvid.NilUUID, 0, fmt.Errorf("datastore not initialized")
+	if manager == nil {
+		return dvid.NilUUID, 0, ErrManagerNotInitialized
 	}
-	return Manager.MatchingUUID(uuidStr)
+	return manager.matchingUUID(uuidStr)
 }
 
-// RepoFromUUID returns a Repo given a UUID.  Returns nil Repo if not found.
-func RepoFromUUID(uuid dvid.UUID) (Repo, error) {
-	if Manager == nil {
-		return nil, fmt.Errorf("datastore not initialized")
-	}
-	return Manager.RepoFromUUID(uuid)
-}
+// ----- Repo functions -----------
 
-// RepoFromVersionID returns a Repo given a version id.
-func RepoFromVersionID(v dvid.VersionID) (Repo, error) {
-	if Manager == nil {
-		return nil, fmt.Errorf("datastore not initialized")
-	}
-	uuid, err := Manager.UUIDFromVersion(v)
-	if err != nil {
-		return nil, err
-	}
-	return Manager.RepoFromUUID(uuid)
-}
-
-// RepoFromID returns a Repo from a RepoID.  Returns error if not found.
-func RepoFromID(repoID dvid.RepoID) (Repo, error) {
-	if Manager == nil {
-		return nil, fmt.Errorf("datastore not initialized")
-	}
-	return Manager.RepoFromID(repoID)
-}
-
-// NewRepo creates and returns a new Repo, either using an assigned UUID if
+// NewRepo creates a new Repo and returns its UUID, either an assigned UUID if
 // provided or creating a new UUID.
-func NewRepo(alias, description string, assign *dvid.UUID) (Repo, error) {
-	if Manager == nil {
-		return nil, fmt.Errorf("datastore not initialized")
+func NewRepo(alias, description string, assign *dvid.UUID) (dvid.UUID, error) {
+	if manager == nil {
+		return dvid.NilUUID, ErrManagerNotInitialized
 	}
-	return Manager.NewRepo(alias, description, assign)
+	r, err := manager.newRepo(alias, description, assign)
+	return r.uuid, err
 }
 
-// SaveRepo persists a Repo to the MetaDataStore.
-func SaveRepo(uuid dvid.UUID) error {
-	if Manager == nil {
-		return fmt.Errorf("datastore not initialized")
+func GetRepoRoot(uuid dvid.UUID) (dvid.UUID, error) {
+	if manager == nil {
+		return dvid.NilUUID, ErrManagerNotInitialized
 	}
-	return Manager.SaveRepo(uuid)
+	return manager.getRepoRoot(uuid)
 }
 
-func SaveRepoByVersionID(v dvid.VersionID) error {
-	if Manager == nil {
-		return fmt.Errorf("datastore not initialized")
+func GetRepoJSON(uuid dvid.UUID) (string, error) {
+	if manager == nil {
+		return "", ErrManagerNotInitialized
 	}
-	return Manager.SaveRepoByVersionID(v)
+	return manager.getRepoJSON(uuid)
 }
 
-func Types() (map[dvid.URLString]TypeService, error) {
-	if Manager == nil {
-		return nil, fmt.Errorf("datastore not initialized")
+func GetRepoAlias(uuid dvid.UUID) (string, error) {
+	if manager == nil {
+		return "", ErrManagerNotInitialized
 	}
-	return Manager.Types()
+	return manager.getRepoAlias(uuid)
 }
 
-func GetDataByVersion(v dvid.VersionID, name dvid.InstanceName) (DataService, error) {
-	if Manager == nil {
-		return nil, fmt.Errorf("datastore not initialized")
+func SetRepoAlias(uuid dvid.UUID, alias string) error {
+	if manager == nil {
+		return ErrManagerNotInitialized
 	}
-	uuid, err := Manager.UUIDFromVersion(v)
-	if err != nil {
-		return nil, err
-	}
-	repo, err := Manager.RepoFromUUID(uuid)
-	if err != nil {
-		return nil, err
-	}
-	return repo.GetDataByName(name)
+	return manager.setRepoAlias(uuid, alias)
 }
 
-func GetDataByUUID(uuid dvid.UUID, name dvid.InstanceName) (DataService, error) {
-	if Manager == nil {
-		return nil, fmt.Errorf("datastore not initialized")
+func GetRepoDescription(uuid dvid.UUID) (string, error) {
+	if manager == nil {
+		return "", ErrManagerNotInitialized
 	}
-	repo, err := Manager.RepoFromUUID(uuid)
-	if err != nil {
-		return nil, err
-	}
-	return repo.GetDataByName(name)
+	return manager.getRepoDescription(uuid)
 }
 
-// GetParent returns the parent node of the given node.
-func GetParentByVersion(v dvid.VersionID) (parent dvid.VersionID, found bool, err error) {
-	if Manager == nil {
-		err = fmt.Errorf("datastore not initialized")
-		return
+func SetRepoDescription(uuid dvid.UUID, desc string) error {
+	if manager == nil {
+		return ErrManagerNotInitialized
 	}
-	var uuid dvid.UUID
-	uuid, err = Manager.UUIDFromVersion(v)
-	if err != nil {
-		return
+	return manager.setRepoDescription(uuid, desc)
+}
+
+func GetRepoLog(uuid dvid.UUID) ([]string, error) {
+	if manager == nil {
+		return nil, ErrManagerNotInitialized
 	}
-	var repo Repo
-	repo, err = Manager.RepoFromUUID(uuid)
-	if err != nil {
-		return
+	return manager.getRepoLog(uuid)
+}
+
+func AddToRepoLog(uuid dvid.UUID, msgs []string) error {
+	if manager == nil {
+		return ErrManagerNotInitialized
 	}
-	// Get version iterator and check first ancestor.
-	var it storage.VersionIterator
-	it, err = repo.GetIterator(v)
-	if err != nil {
-		return
+	return manager.addToRepoLog(uuid, msgs)
+}
+
+func GetNodeLog(uuid dvid.UUID) ([]string, error) {
+	if manager == nil {
+		return nil, ErrManagerNotInitialized
 	}
-	it.Next()
-	return it.VersionID(), it.Valid(), nil
+	return manager.getNodeLog(uuid)
+}
+
+func AddToNodeLog(uuid dvid.UUID, msgs []string) error {
+	if manager == nil {
+		return ErrManagerNotInitialized
+	}
+	return manager.addToNodeLog(uuid, msgs)
+}
+
+// ----- Repo-level DAG functions ----------
+
+// NewVersion creates a new version as a child of the given parent.  If the
+// assign parameter is not nil, the new node is given the UUID.
+func NewVersion(parent dvid.UUID, assign *dvid.UUID) (dvid.UUID, error) {
+	if manager == nil {
+		return dvid.NilUUID, ErrManagerNotInitialized
+	}
+	return manager.newVersion(parent, assign)
+}
+
+// GetParents returns the parent nodes of the given version id.
+func GetParentsByVersion(v dvid.VersionID) ([]dvid.VersionID, error) {
+	if manager == nil {
+		return nil, ErrManagerNotInitialized
+	}
+	return manager.getParentsByVersion(v)
+}
+
+// GetChildren returns the child nodes of the given version id.
+func GetChildrenByVersion(v dvid.VersionID) ([]dvid.VersionID, error) {
+	if manager == nil {
+		return nil, ErrManagerNotInitialized
+	}
+	return manager.getChildrenByVersion(v)
+}
+
+// LockedVersion returns true if a given UUID is locked.
+func LockedUUID(uuid dvid.UUID) (bool, error) {
+	if manager == nil {
+		return false, ErrManagerNotInitialized
+	}
+	return manager.lockedUUID(uuid)
 }
 
 // LockedVersion returns true if a given version is locked.
 func LockedVersion(v dvid.VersionID) (bool, error) {
-	uuid, err := UUIDFromVersion(v)
-	if err != nil {
-		return false, err
+	if manager == nil {
+		return false, ErrManagerNotInitialized
 	}
-	repo, err := RepoFromUUID(uuid)
-	if err != nil {
-		return false, err
-	}
-	return repo.Locked(uuid)
+	return manager.lockedVersion(v)
 }
 
-// ---- Server Context code, not to be confused with storage.Context.
-
-// The ctxkey type is unexported to prevent collisions with context keys defined in
-// other packages.  See Context article at http://blog.golang.org/context
-type ctxkey int
-
-const repoCtxKey ctxkey = 0
-
-type repoContext struct {
-	repo     Repo
-	versions []dvid.VersionID
-}
-
-// NewServerContext returns a server Context extended with the Repo and optionally one or more
-// versions within that Repo for this request.
-func NewServerContext(ctx context.Context, repo Repo, versions ...dvid.VersionID) context.Context {
-	return context.WithValue(ctx, repoCtxKey, repoContext{repo, versions})
-}
-
-// FromContext returns Repo and optional versions within that Repo from a server Context.
-func FromContext(ctx context.Context) (Repo, []dvid.VersionID, error) {
-	repoCtxValue := ctx.Value(repoCtxKey)
-	value, ok := repoCtxValue.(repoContext)
-	if !ok {
-		return value.repo, value.versions, fmt.Errorf("Server context has bad value: %v", repoCtxValue)
+func Commit(uuid dvid.UUID, note string, log []string) error {
+	if manager == nil {
+		return ErrManagerNotInitialized
 	}
-	return value.repo, value.versions, nil
+	return manager.commit(uuid, note, log)
+}
+
+func Merge(parents []dvid.UUID, mt MergeType) (dvid.UUID, error) {
+	if manager == nil {
+		return dvid.NilUUID, ErrManagerNotInitialized
+	}
+	return manager.merge(parents, mt)
+}
+
+// ----- Data Instance functions -----------
+
+// NewData adds a new, named instance of a datatype to repo.  Settings can be passed
+// via the 'config' argument.  For example, config["versioned"] with a bool value
+// will specify whether the data is versioned.
+func NewData(uuid dvid.UUID, t TypeService, name dvid.InstanceName, c dvid.Config) (DataService, error) {
+	if manager == nil {
+		return nil, ErrManagerNotInitialized
+	}
+	return manager.newData(uuid, t, name, c)
+}
+
+// SaveDataByUUID persists metadata for a data instance with given uuid.
+// TODO -- Make this more efficient by storing data metadata separately from repo.
+//   Currently we save entire repo.
+func SaveDataByUUID(uuid dvid.UUID, data DataService) error {
+	if manager == nil {
+		return ErrManagerNotInitialized
+	}
+	return manager.saveRepoByUUID(uuid)
+}
+
+// SaveDataByVersion persists metadata for a data instance with given version.
+// TODO -- Make this more efficient by storing data metadata separately from repo.
+//   Currently we save entire repo.
+func SaveDataByVersion(v dvid.VersionID, data DataService) error {
+	if manager == nil {
+		return ErrManagerNotInitialized
+	}
+	return manager.saveRepoByVersion(v)
+}
+
+// GetDataByUUID returns a data service given an instance name and UUID.
+func GetDataByUUID(uuid dvid.UUID, name dvid.InstanceName) (DataService, error) {
+	if manager == nil {
+		return nil, ErrManagerNotInitialized
+	}
+	return manager.getDataByUUID(uuid, name)
+}
+
+// GetDataByVersion returns a data service given an instance name and version.
+func GetDataByVersion(v dvid.VersionID, name dvid.InstanceName) (DataService, error) {
+	if manager == nil {
+		return nil, ErrManagerNotInitialized
+	}
+	return manager.getDataByVersion(v, name)
+}
+
+// DeleteDataByUUID returns a data service given an instance name and UUID.
+func DeleteDataByUUID(uuid dvid.UUID, name dvid.InstanceName) error {
+	if manager == nil {
+		return ErrManagerNotInitialized
+	}
+	return manager.deleteDataByUUID(uuid, name)
+}
+
+// DeleteDataByVersion returns a data service given an instance name and UUID.
+func DeleteDataByVersion(v dvid.VersionID, name dvid.InstanceName) error {
+	if manager == nil {
+		return ErrManagerNotInitialized
+	}
+	return manager.deleteDataByVersion(v, name)
+}
+
+func ModifyDataConfigByUUID(uuid dvid.UUID, name dvid.InstanceName, c dvid.Config) error {
+	if manager == nil {
+		return ErrManagerNotInitialized
+	}
+	return manager.modifyDataByUUID(uuid, name, c)
+}
+
+// ------ Cross-platform k/v pair matching for given version, necessary for versioned get.
+
+type kvVersions map[dvid.VersionID]*storage.KeyValue
+
+// FindMatch returns the correct key-value pair for a given version and which version
+// that key-value pair came from.
+func (kvv kvVersions) FindMatch(v dvid.VersionID) (*storage.KeyValue, dvid.VersionID, error) {
+	// Get the ancestor graph for this version.
+	if manager == nil {
+		return nil, 0, ErrManagerNotInitialized
+	}
+
+	// Start from current version and traverse the ancestor graph.  Whenever there's a branch, make
+	// sure we only have one matching key.
+	return manager.findMatch(kvv, v)
 }

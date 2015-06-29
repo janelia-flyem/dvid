@@ -37,28 +37,22 @@ type Context interface {
 	// Returns a sync.Mutex specific to this context.
 	Mutex() *sync.Mutex
 
-	// Versioned is true if this Context is also a VersionedContext.
+	// Versioned is true if this Context is also a VersionedCtx.
 	Versioned() bool
 
 	// Enforces opaque data type.
 	implementsOpaque()
 }
 
-// VersionedContext extends a Context with the minimal functions necessary to handle
-// versioning in storage engines.  For DataContext, only GetIterator() needs to be
-// implemented at higher levels where the version DAG is available.
-type VersionedContext interface {
+// VersionedCtx extends a Context with the minimal functions necessary to handle
+// versioning in storage engines.
+type VersionedCtx interface {
 	Context
 
 	// TombstoneKey takes a type-specific key component and returns a key that
-	// signals a deletion of any ancestor values.
+	// signals a deletion of any ancestor values.  The returned key must have
+	// as its last byte storage.MarkTombstone.
 	TombstoneKey(TKey) Key
-
-	// IsTombstoneKey is true if the given storage key is a tombstone key.
-	IsTombstoneKey(Key) bool
-
-	// GetIterator returns an iterator up a version DAG.
-	GetIterator() (VersionIterator, error)
 
 	// Returns lower bound key for versions.
 	MinVersionKey(TKey) (Key, error)
@@ -72,12 +66,30 @@ type VersionedContext interface {
 	VersionedKeyValue([]*KeyValue) (*KeyValue, error)
 }
 
-// VersionIterator allows iteration through ancestors of version DAG.  It is assumed
-// only one parent is needed based on how merge operations are handled.
-type VersionIterator interface {
-	Valid() bool
-	VersionID() dvid.VersionID
-	Next()
+const (
+	// MarkData is a byte indicating real data stored and should be the last byte of any
+	// versioned key.
+	MarkData = 0x03
+
+	// MarkTombstone is a byte indicating a tombstone -- a marker for deleted data.
+	MarkTombstone = 0x4F
+)
+
+// IsTombstone returns true if the given key is a tombstone key.
+func (k Key) IsTombstone() bool {
+	sz := len(k)
+	if sz == 0 {
+		return false
+	}
+	switch k[sz-1] {
+	case MarkData:
+		return false
+	case MarkTombstone:
+		return true
+	default:
+		dvid.Criticalf("Illegal key checked for tombstone marker: %v\n", k)
+	}
+	return false
 }
 
 var contextMutexes map[mutexID]*sync.Mutex
@@ -164,7 +176,7 @@ type DataContext struct {
 }
 
 // NewDataContext provides a way for datatypes to create a Context that adheres to DVID
-// key space partitioning.  Since Context and VersionedContext interfaces are opaque, i.e., can
+// key space partitioning.  Since Context and VersionedCtx interfaces are opaque, i.e., can
 // only be implemented within package storage, we force compatible implementations to embed
 // DataContext and initialize it via this function.
 func NewDataContext(data dvid.Data, versionID dvid.VersionID) *DataContext {
@@ -179,6 +191,10 @@ func (ctx *DataContext) DataName() dvid.InstanceName {
 	return ctx.data.DataName()
 }
 
+func (ctx *DataContext) InstanceID() dvid.InstanceID {
+	return ctx.data.InstanceID()
+}
+
 // ---- storage.Context implementation
 
 func (ctx *DataContext) implementsOpaque() {}
@@ -187,17 +203,12 @@ func (ctx *DataContext) VersionID() dvid.VersionID {
 	return ctx.version
 }
 
-const (
-	byteData      = 0x03
-	byteTombstone = 0x4F
-)
-
 func (ctx *DataContext) ConstructKey(tk TKey) Key {
 	key := append([]byte{dataKeyPrefix}, ctx.data.InstanceID().Bytes()...)
 	key = append(key, tk...)
 	key = append(key, ctx.version.Bytes()...)
 	key = append(key, ctx.client.Bytes()...)
-	return Key(append(key, byteData))
+	return Key(append(key, MarkData))
 }
 
 func (ctx *DataContext) TombstoneKey(tk TKey) Key {
@@ -205,23 +216,7 @@ func (ctx *DataContext) TombstoneKey(tk TKey) Key {
 	key = append(key, tk...)
 	key = append(key, ctx.version.Bytes()...)
 	key = append(key, ctx.client.Bytes()...)
-	return Key(append(key, byteTombstone))
-}
-
-func (ctx *DataContext) IsTombstoneKey(key Key) bool {
-	sz := len(key)
-	if sz == 0 {
-		return false
-	}
-	switch key[sz-1] {
-	case byteData:
-		return false
-	case byteTombstone:
-		return true
-	default:
-		dvid.Criticalf("Illegal key checked for tombstone marker: %v\n", key)
-	}
-	return false
+	return Key(append(key, MarkTombstone))
 }
 
 func (ctx *DataContext) TKeyFromKey(key Key) (TKey, error) {
@@ -259,7 +254,7 @@ func (ctx *DataContext) ClientFromKey(key Key) (dvid.ClientID, error) {
 }
 
 // Versioned returns false.  This can be overriden by embedding DataContext in structures
-// that will support the VersionedContext interface.
+// that will support the VersionedCtx interface.
 func (ctx *DataContext) Versioned() bool {
 	return false
 }
@@ -285,11 +280,11 @@ func (ctx *DataContext) Mutex() *sync.Mutex {
 }
 
 func (ctx *DataContext) String() string {
-	return fmt.Sprintf("Data Context for %q (local id %d, version id %d)", ctx.data.DataName(),
+	return fmt.Sprintf("Unversioned Data Context for %q (local id %d, version id %d)", ctx.data.DataName(),
 		ctx.data.InstanceID(), ctx.version)
 }
 
-// ----- partial storage.VersionedContext implementation
+// ----- partial storage.VersionedCtx implementation
 
 // Returns lower bound key for versions of given byte slice key representation.
 func (ctx *DataContext) MinVersionKey(tk TKey) (Key, error) {

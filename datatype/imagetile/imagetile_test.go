@@ -2,6 +2,7 @@ package imagetile
 
 import (
 	"log"
+	"reflect"
 	"sync"
 	"testing"
 
@@ -17,7 +18,7 @@ var (
 )
 
 // Sets package-level testRepo and TestVersionID
-func initTestRepo() (datastore.Repo, dvid.VersionID) {
+func initTestRepo() (dvid.UUID, dvid.VersionID) {
 	testMu.Lock()
 	defer testMu.Unlock()
 	if mstype == nil {
@@ -34,9 +35,9 @@ func initTestRepo() (datastore.Repo, dvid.VersionID) {
 	return tests.NewRepo()
 }
 
-func makeGrayscale(repo datastore.Repo, t *testing.T, name dvid.InstanceName) *imageblk.Data {
+func makeGrayscale(uuid dvid.UUID, t *testing.T, name dvid.InstanceName) *imageblk.Data {
 	config := dvid.NewConfig()
-	dataservice, err := repo.NewData(grayscaleT, name, config)
+	dataservice, err := datastore.NewData(uuid, grayscaleT, name, config)
 	if err != nil {
 		t.Errorf("Unable to create grayscale instance %q: %s\n", name, err.Error())
 	}
@@ -56,7 +57,6 @@ const testTileSpec = `
 }
 `
 
-/*
 func TestLoadTileSpec(t *testing.T) {
 	tileSpec, err := LoadTileSpec([]byte(testTileSpec))
 	if err != nil {
@@ -77,17 +77,16 @@ func TestMultiscale2dRepoPersistence(t *testing.T) {
 	tests.UseStore()
 	defer tests.CloseStore()
 
-	repo, _ := initTestRepo()
-
 	// Make source
-	makeGrayscale(repo, t, "grayscale")
+	uuid, _ := initTestRepo()
+	makeGrayscale(uuid, t, "grayscale")
 
 	// Make labels and set various properties
 	config := dvid.NewConfig()
 	config.Set("Placeholder", "true")
 	config.Set("Format", "jpg")
 	config.Set("Source", "grayscale")
-	dataservice, err := repo.NewData(mstype, "myimagetile", config)
+	dataservice, err := datastore.NewData(uuid, mstype, "myimagetile", config)
 	if err != nil {
 		t.Errorf("Unable to create imagetile instance: %s\n", err.Error())
 	}
@@ -98,17 +97,12 @@ func TestMultiscale2dRepoPersistence(t *testing.T) {
 	oldData := *msdata
 
 	// Restart test datastore and see if datasets are still there.
-	if err = repo.Save(); err != nil {
+	if err = datastore.SaveDataByUUID(uuid, msdata); err != nil {
 		t.Fatalf("Unable to save repo during imagetile persistence test: %s\n", err.Error())
 	}
-	oldUUID := repo.RootUUID()
 	tests.CloseReopenStore()
 
-	repo2, err := datastore.RepoFromUUID(oldUUID)
-	if err != nil {
-		t.Fatalf("Can't get repo %s from reloaded test db: %s\n", oldUUID, err.Error())
-	}
-	dataservice2, err := repo2.GetDataByName("myimagetile")
+	dataservice2, err := datastore.GetDataByUUID(uuid, "myimagetile")
 	if err != nil {
 		t.Fatalf("Can't get keyvalue instance from reloaded test db: %s\n", err.Error())
 	}
@@ -116,8 +110,8 @@ func TestMultiscale2dRepoPersistence(t *testing.T) {
 	if !ok {
 		t.Errorf("Returned new data instance 2 is not imagetile.Data\n")
 	}
-	if !reflect.DeepEqual(oldData, *msdata2) {
-		t.Errorf("Expected %v, got %v\n", oldData, *msdata)
+
+	if !reflect.DeepEqual(oldData.Properties, msdata2.Properties) {
+		t.Errorf("Expected properties %v, got %v\n", oldData.Properties, msdata2.Properties)
 	}
 }
-*/
