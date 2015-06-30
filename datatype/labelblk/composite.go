@@ -91,7 +91,7 @@ func (d *Data) CreateComposite(request datastore.Request, reply *datastore.Respo
 	// Set new mapped data to same extents.
 	composite.Properties.Extents = grayscale.Properties.Extents
 	if err := datastore.SaveDataByUUID(uuid, composite); err != nil {
-		dvid.Infof("Could not save new data '%s': %s\n", destName, err.Error())
+		dvid.Infof("Could not save new data '%s': %v\n", destName, err)
 	}
 
 	timedLog.Infof("Created composite of %s and %s", grayscaleName, destName)
@@ -127,7 +127,7 @@ func (d *Data) createCompositeChunk(chunk *storage.Chunk) {
 	// Get the spatial index associated with this chunk.
 	zyx, err := imageblk.DecodeTKey(chunk.K)
 	if err != nil {
-		dvid.Errorf("Error in %s.ChunkApplyMap(): %s", d.Data.DataName(), err.Error())
+		dvid.Errorf("Error in %s.ChunkApplyMap(): %v", d.Data.DataName(), err)
 		return
 	}
 
@@ -143,7 +143,7 @@ func (d *Data) createCompositeChunk(chunk *storage.Chunk) {
 
 	labelData, _, err := dvid.DeserializeData(chunk.V, true)
 	if err != nil {
-		dvid.Infof("Unable to deserialize block in '%s': %s\n", d.DataName(), err.Error())
+		dvid.Infof("Unable to deserialize block in '%s': %v\n", d.DataName(), err)
 		return
 	}
 	blockBytes := len(labelData)
@@ -155,7 +155,7 @@ func (d *Data) createCompositeChunk(chunk *storage.Chunk) {
 	// Get the corresponding grayscale block.
 	bigdata, err := storage.BigDataStore()
 	if err != nil {
-		dvid.Errorf("Unable to retrieve big data store: %s\n", err.Error())
+		dvid.Errorf("Unable to retrieve big data store: %s\n", err)
 		return
 	}
 	grayscaleCtx := datastore.NewVersionedCtx(op.grayscale, op.versionID)
@@ -166,7 +166,7 @@ func (d *Data) createCompositeChunk(chunk *storage.Chunk) {
 	}
 	grayscaleData, _, err := dvid.DeserializeData(blockData, true)
 	if err != nil {
-		dvid.Errorf("Unable to deserialize block in '%s': %s\n", op.grayscale.DataName(), err.Error())
+		dvid.Errorf("Unable to deserialize block in '%s': %v\n", op.grayscale.DataName(), err)
 		return
 	}
 
@@ -189,13 +189,13 @@ func (d *Data) createCompositeChunk(chunk *storage.Chunk) {
 	// Store the composite block into the rgba8 data.
 	serialization, err := dvid.SerializeData(compositeData, d.Compression(), d.Checksum())
 	if err != nil {
-		dvid.Errorf("Unable to serialize composite block %s: %s\n", zyx, err.Error())
+		dvid.Errorf("Unable to serialize composite block %s: %v\n", zyx, err)
 		return
 	}
 	compositeCtx := datastore.NewVersionedCtx(op.composite, op.versionID)
 	err = bigdata.Put(compositeCtx, chunk.K, serialization)
 	if err != nil {
-		dvid.Errorf("Unable to PUT composite block %s: %s\n", zyx, err.Error())
+		dvid.Errorf("Unable to PUT composite block %s: %v\n", zyx, err)
 		return
 	}
 }

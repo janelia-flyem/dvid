@@ -24,7 +24,7 @@ import (
 func TestHTTP(t *testing.T, method, urlStr string, payload io.Reader) []byte {
 	req, err := http.NewRequest(method, urlStr, payload)
 	if err != nil {
-		t.Fatalf("Unsuccessful %s on %q: %s\n", method, urlStr, err.Error())
+		t.Fatalf("Unsuccessful %s on %q: %v\n", method, urlStr, err)
 	}
 	w := httptest.NewRecorder()
 	ServeSingleHTTP(w, req)
@@ -38,7 +38,7 @@ func TestHTTP(t *testing.T, method, urlStr string, payload io.Reader) []byte {
 func TestBadHTTP(t *testing.T, method, urlStr string, payload io.Reader) {
 	req, err := http.NewRequest(method, urlStr, payload)
 	if err != nil {
-		t.Fatalf("Unsuccessful %s on %q: %s\n", method, urlStr, err.Error())
+		t.Fatalf("Unsuccessful %s on %q: %v\n", method, urlStr, err)
 	}
 	w := httptest.NewRecorder()
 	ServeSingleHTTP(w, req)
@@ -58,7 +58,7 @@ func NewTestRepo(t *testing.T) (uuid string) {
 		Root string
 	}{}
 	if err := json.Unmarshal(response, &parsedResponse); err != nil {
-		t.Fatalf("Couldn't decode JSON response to new repo request: %s\n", err.Error())
+		t.Fatalf("Couldn't decode JSON response to new repo request: %v\n", err)
 	}
 	return parsedResponse.Root
 }

@@ -115,7 +115,7 @@ func (d *Data) GetArbitraryImage(ctx storage.Context, tlStr, trStr, blStr, resSt
 			for x := int32(0); x < arb.size[0]; x++ {
 				value, err := d.computeValue(curPt, ctx, KeyFunc(keyF), cache)
 				if err != nil {
-					dvid.Errorf("Error in concurrent arbitrary image calc: %s", err.Error())
+					dvid.Errorf("Error in concurrent arbitrary image calc: %v", err)
 					return
 				}
 				copy(arb.data[dstI:dstI+arb.bytesPerVoxel], value)
@@ -291,7 +291,7 @@ func (d *Data) computeValue(pt dvid.Vector3d, ctx storage.Context, keyF KeyFunc,
 		} else {
 			deserializedData, _, err = dvid.DeserializeData(serializedData, true)
 			if err != nil {
-				return nil, fmt.Errorf("Unable to deserialize block: %s", err.Error())
+				return nil, fmt.Errorf("Unable to deserialize block: %v", err)
 			}
 		}
 		return deserializedData, nil

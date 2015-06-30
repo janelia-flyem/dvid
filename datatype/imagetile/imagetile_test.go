@@ -39,7 +39,7 @@ func makeGrayscale(uuid dvid.UUID, t *testing.T, name dvid.InstanceName) *imageb
 	config := dvid.NewConfig()
 	dataservice, err := datastore.NewData(uuid, grayscaleT, name, config)
 	if err != nil {
-		t.Errorf("Unable to create grayscale instance %q: %s\n", name, err.Error())
+		t.Errorf("Unable to create grayscale instance %q: %v\n", name, err)
 	}
 	grayscale, ok := dataservice.(*imageblk.Data)
 	if !ok {
@@ -60,7 +60,7 @@ const testTileSpec = `
 func TestLoadTileSpec(t *testing.T) {
 	tileSpec, err := LoadTileSpec([]byte(testTileSpec))
 	if err != nil {
-		t.Errorf("Unable to load tile spec: %s\n", err.Error())
+		t.Errorf("Unable to load tile spec: %v\n", err)
 	}
 	if len(tileSpec) != 4 {
 		t.Errorf("Bad tile spec load: only %d elements != 4\n", len(tileSpec))
@@ -88,7 +88,7 @@ func TestMultiscale2dRepoPersistence(t *testing.T) {
 	config.Set("Source", "grayscale")
 	dataservice, err := datastore.NewData(uuid, mstype, "myimagetile", config)
 	if err != nil {
-		t.Errorf("Unable to create imagetile instance: %s\n", err.Error())
+		t.Errorf("Unable to create imagetile instance: %v\n", err)
 	}
 	msdata, ok := dataservice.(*Data)
 	if !ok {
@@ -98,13 +98,13 @@ func TestMultiscale2dRepoPersistence(t *testing.T) {
 
 	// Restart test datastore and see if datasets are still there.
 	if err = datastore.SaveDataByUUID(uuid, msdata); err != nil {
-		t.Fatalf("Unable to save repo during imagetile persistence test: %s\n", err.Error())
+		t.Fatalf("Unable to save repo during imagetile persistence test: %v\n", err)
 	}
 	tests.CloseReopenStore()
 
 	dataservice2, err := datastore.GetDataByUUID(uuid, "myimagetile")
 	if err != nil {
-		t.Fatalf("Can't get keyvalue instance from reloaded test db: %s\n", err.Error())
+		t.Fatalf("Can't get keyvalue instance from reloaded test db: %v\n", err)
 	}
 	msdata2, ok := dataservice2.(*Data)
 	if !ok {

@@ -45,7 +45,7 @@ func TestNewKeyvalueDifferent(t *testing.T) {
 	config := dvid.NewConfig()
 	dataservice1, err := datastore.NewData(uuid, kvtype, "instance1", config)
 	if err != nil {
-		t.Errorf("Error creating new keyvalue instance: %s\n", err.Error())
+		t.Errorf("Error creating new keyvalue instance: %v\n", err)
 	}
 	kv1, ok := dataservice1.(*Data)
 	if !ok {
@@ -58,7 +58,7 @@ func TestNewKeyvalueDifferent(t *testing.T) {
 
 	dataservice2, err := datastore.NewData(uuid, kvtype, "instance2", config)
 	if err != nil {
-		t.Errorf("Error creating new keyvalue instance: %s\n", err.Error())
+		t.Errorf("Error creating new keyvalue instance: %v\n", err)
 	}
 	kv2, ok := dataservice2.(*Data)
 	if !ok {
@@ -81,7 +81,7 @@ func TestKeyvalueRoundTrip(t *testing.T) {
 	config := dvid.NewConfig()
 	dataservice, err := datastore.NewData(uuid, kvtype, "roundtripper", config)
 	if err != nil {
-		t.Errorf("Error creating new keyvalue instance: %s\n", err.Error())
+		t.Errorf("Error creating new keyvalue instance: %v\n", err)
 	}
 	kvdata, ok := dataservice.(*Data)
 	if !ok {
@@ -94,12 +94,12 @@ func TestKeyvalueRoundTrip(t *testing.T) {
 	value := []byte("I like Japan and this is some unicode: \u65e5\u672c\u8a9e")
 
 	if err = kvdata.PutData(ctx, keyStr, value); err != nil {
-		t.Errorf("Could not put keyvalue data: %s\n", err.Error())
+		t.Errorf("Could not put keyvalue data: %v\n", err)
 	}
 
 	retrieved, found, err := kvdata.GetData(ctx, keyStr)
 	if err != nil {
-		t.Fatalf("Could not get keyvalue data: %s\n", err.Error())
+		t.Fatalf("Could not get keyvalue data: %v\n", err)
 	}
 	if !found {
 		t.Fatalf("Could not find put keyvalue\n")
@@ -119,7 +119,7 @@ func TestKeyvalueRepoPersistence(t *testing.T) {
 	config := dvid.NewConfig()
 	dataservice, err := datastore.NewData(uuid, kvtype, "mykv", config)
 	if err != nil {
-		t.Errorf("Unable to create keyvalue instance: %s\n", err.Error())
+		t.Errorf("Unable to create keyvalue instance: %v\n", err)
 	}
 	kvdata, ok := dataservice.(*Data)
 	if !ok {
@@ -129,13 +129,13 @@ func TestKeyvalueRepoPersistence(t *testing.T) {
 
 	// Restart test datastore and see if datasets are still there.
 	if err = datastore.SaveDataByUUID(uuid, kvdata); err != nil {
-		t.Fatalf("Unable to save repo during keyvalue persistence test: %s\n", err.Error())
+		t.Fatalf("Unable to save repo during keyvalue persistence test: %v\n", err)
 	}
 	tests.CloseReopenStore()
 
 	dataservice2, err := datastore.GetDataByUUID(uuid, "mykv")
 	if err != nil {
-		t.Fatalf("Can't get keyvalue instance from reloaded test db: %s\n", err.Error())
+		t.Fatalf("Can't get keyvalue instance from reloaded test db: %v\n", err)
 	}
 	kvdata2, ok := dataservice2.(*Data)
 	if !ok {
@@ -150,7 +150,7 @@ func testRequest(t *testing.T, uuid dvid.UUID, versionID dvid.VersionID, name dv
 	config := dvid.NewConfig()
 	dataservice, err := datastore.NewData(uuid, kvtype, name, config)
 	if err != nil {
-		t.Fatalf("Error creating new keyvalue instance: %s\n", err.Error())
+		t.Fatalf("Error creating new keyvalue instance: %v\n", err)
 	}
 	data, ok := dataservice.(*Data)
 	if !ok {
@@ -192,7 +192,7 @@ func testRequest(t *testing.T, uuid dvid.UUID, versionID dvid.VersionID, name dv
 
 	var retrievedKeys []string
 	if err = json.Unmarshal(returnValue, &retrievedKeys); err != nil {
-		t.Errorf("Bad key range request unmarshal: %s\n", err.Error())
+		t.Errorf("Bad key range request unmarshal: %v\n", err)
 	}
 	if len(retrievedKeys) != 2 || retrievedKeys[1] != "mykey" && retrievedKeys[0] != "my2ndKey" {
 		t.Errorf("Bad key range request return.  Expected: [%q,%q].  Got: %s\n",
@@ -204,7 +204,7 @@ func testRequest(t *testing.T, uuid dvid.UUID, versionID dvid.VersionID, name dv
 	returnValue = server.TestHTTP(t, "GET", allkeyreq, nil)
 
 	if err = json.Unmarshal(returnValue, &retrievedKeys); err != nil {
-		t.Errorf("Bad key range request unmarshal: %s\n", err.Error())
+		t.Errorf("Bad key range request unmarshal: %v\n", err)
 	}
 	if len(retrievedKeys) != 3 || retrievedKeys[0] != "heresanotherkey" && retrievedKeys[1] != "my2ndKey" && retrievedKeys[2] != "mykey" {
 		t.Errorf("Bad all key request return.  Expected: [%q,%q,%q].  Got: %s\n",
@@ -230,7 +230,7 @@ func TestKeyvalueVersioning(t *testing.T) {
 	config := dvid.NewConfig()
 	dataservice, err := datastore.NewData(uuid, kvtype, "versiontest", config)
 	if err != nil {
-		t.Fatalf("Error creating new keyvalue instance: %s\n", err.Error())
+		t.Fatalf("Error creating new keyvalue instance: %v\n", err)
 	}
 	data, ok := dataservice.(*Data)
 	if !ok {
@@ -251,15 +251,15 @@ func TestKeyvalueVersioning(t *testing.T) {
 
 	// Create a new version in repo
 	if err = datastore.Commit(uuid, "my commit msg", []string{"stuff one", "stuff two"}); err != nil {
-		t.Errorf("Unable to lock root node %s: %s\n", uuid, err.Error())
+		t.Errorf("Unable to lock root node %s: %v\n", uuid, err)
 	}
 	uuid2, err := datastore.NewVersion(uuid, nil)
 	if err != nil {
-		t.Fatalf("Unable to create new version off node %s: %s\n", uuid, err.Error())
+		t.Fatalf("Unable to create new version off node %s: %v\n", uuid, err)
 	}
 	_, err = datastore.VersionFromUUID(uuid2)
 	if err != nil {
-		t.Fatalf("Unable to get version ID from new uuid %s: %s\n", uuid2, err.Error())
+		t.Fatalf("Unable to get version ID from new uuid %s: %v\n", uuid2, err)
 	}
 
 	// Change the 2nd k/v
@@ -286,7 +286,7 @@ func TestKeyvalueVersioning(t *testing.T) {
 
 	var retrievedKeys []string
 	if err = json.Unmarshal(returnValue, &retrievedKeys); err != nil {
-		t.Errorf("Bad key range request unmarshal: %s\n", err.Error())
+		t.Errorf("Bad key range request unmarshal: %v\n", err)
 	}
 	if len(retrievedKeys) != 2 || retrievedKeys[1] != "mykey" && retrievedKeys[0] != "my2ndKey" {
 		t.Errorf("Bad key range request return.  Expected: [%q,%q].  Got: %s\n",
@@ -295,11 +295,11 @@ func TestKeyvalueVersioning(t *testing.T) {
 
 	// Commit the repo
 	if err = datastore.Commit(uuid2, "my 2nd commit msg", []string{"changed 2nd k/v"}); err != nil {
-		t.Errorf("Unable to commit node %s: %s\n", uuid2, err.Error())
+		t.Errorf("Unable to commit node %s: %v\n", uuid2, err)
 	}
 	uuid3, err := datastore.NewVersion(uuid2, nil)
 	if err != nil {
-		t.Fatalf("Unable to create new version off node %s: %s\n", uuid2, err.Error())
+		t.Fatalf("Unable to create new version off node %s: %v\n", uuid2, err)
 	}
 
 	// Delete the 2nd k/v
@@ -320,11 +320,11 @@ func TestKeyvalueVersioning(t *testing.T) {
 
 	// Make a child
 	if err = datastore.Commit(uuid3, "my 3rd commit msg", []string{"deleted 2nd k/v"}); err != nil {
-		t.Errorf("Unable to commit node %s: %s\n", uuid2, err.Error())
+		t.Errorf("Unable to commit node %s: %v\n", uuid2, err)
 	}
 	uuid4, err := datastore.NewVersion(uuid3, nil)
 	if err != nil {
-		t.Fatalf("Unable to create new version off node %s: %s\n", uuid3, err.Error())
+		t.Fatalf("Unable to create new version off node %s: %v\n", uuid3, err)
 	}
 
 	// Change the 2nd k/v
@@ -352,7 +352,7 @@ func TestKeyvalueVersioning(t *testing.T) {
 	// Make a child off the 2nd version from root.
 	uuid5, err := datastore.NewVersion(uuid2, nil)
 	if err != nil {
-		t.Fatalf("Unable to create new version off node %s: %s\n", uuid2, err.Error())
+		t.Fatalf("Unable to create new version off node %s: %v\n", uuid2, err)
 	}
 
 	// Store new stuff in 2nd k/v
@@ -367,11 +367,11 @@ func TestKeyvalueVersioning(t *testing.T) {
 
 	// Commit node, branch, and then delete 2nd k/v and commit.
 	if err = datastore.Commit(uuid5, "forked node", []string{"we modified stuff"}); err != nil {
-		t.Errorf("Unable to commit node %s: %s\n", uuid5, err.Error())
+		t.Errorf("Unable to commit node %s: %v\n", uuid5, err)
 	}
 	uuid6, err := datastore.NewVersion(uuid5, nil)
 	if err != nil {
-		t.Fatalf("Unable to create new version off node %s: %s\n", uuid5, err.Error())
+		t.Fatalf("Unable to create new version off node %s: %v\n", uuid5, err)
 	}
 
 	uuid6req := fmt.Sprintf("%snode/%s/%s/key/%s", server.WebAPIPath, uuid6, data.DataName(), key2)
@@ -379,13 +379,13 @@ func TestKeyvalueVersioning(t *testing.T) {
 	server.TestBadHTTP(t, "GET", uuid6req, nil)
 
 	if err = datastore.Commit(uuid6, "deleted forked node 2nd k/v", []string{"we modified stuff"}); err != nil {
-		t.Errorf("Unable to commit node %s: %s\n", uuid6, err.Error())
+		t.Errorf("Unable to commit node %s: %s\n", uuid6, err)
 	}
 
 	// Merge the two branches.
 
 	if err = datastore.Commit(uuid4, "commit node 4 before merge", []string{"we modified stuff"}); err != nil {
-		t.Errorf("Unable to commit node %s: %s\n", uuid4, err.Error())
+		t.Errorf("Unable to commit node %s: %v\n", uuid4, err)
 	}
 
 	child, err := datastore.Merge([]dvid.UUID{uuid4, uuid6}, datastore.MergeConflictFree)

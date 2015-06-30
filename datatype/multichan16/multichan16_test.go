@@ -23,7 +23,7 @@ func initTestRepo() (dvid.UUID, dvid.VersionID) {
 		var err error
 		dtype, err = datastore.TypeServiceByName(TypeName)
 		if err != nil {
-			log.Fatalf("Can't get multichan16 type: %s\n", err)
+			log.Fatalf("Can't get multichan16 type: %v\n", err)
 		}
 	}
 	return tests.NewRepo()
@@ -38,7 +38,7 @@ func TestBasic(t *testing.T) {
 	config := dvid.NewConfig()
 	_, err := datastore.NewData(uuid, dtype, "instance1", config)
 	if err != nil {
-		t.Errorf("Error creating new multichan16 instance: %s\n", err.Error())
+		t.Errorf("Error creating new multichan16 instance: %v\n", err)
 	}
 }
 
@@ -52,7 +52,7 @@ func TestMultichan16RepoPersistence(t *testing.T) {
 	config := dvid.NewConfig()
 	dataservice, err := datastore.NewData(uuid, dtype, "mymultichan16", config)
 	if err != nil {
-		t.Errorf("Unable to create multichan16 instance: %s\n", err.Error())
+		t.Errorf("Unable to create multichan16 instance: %v\n", err)
 	}
 	mcdata, ok := dataservice.(*Data)
 	if !ok {
@@ -62,13 +62,13 @@ func TestMultichan16RepoPersistence(t *testing.T) {
 
 	// Restart test datastore and see if datasets are still there.
 	if err = datastore.SaveDataByUUID(uuid, mcdata); err != nil {
-		t.Fatalf("Unable to save repo during multichan16 persistence test: %s\n", err.Error())
+		t.Fatalf("Unable to save repo during multichan16 persistence test: %v\n", err)
 	}
 	tests.CloseReopenStore()
 
 	dataservice2, err := datastore.GetDataByUUID(uuid, "mymultichan16")
 	if err != nil {
-		t.Fatalf("Can't get multichan16 instance from reloaded test db: %s\n", err.Error())
+		t.Fatalf("Can't get multichan16 instance from reloaded test db: %v\n", err)
 	}
 	mcdata2, ok := dataservice2.(*Data)
 	if !ok {

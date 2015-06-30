@@ -36,7 +36,7 @@ func (d *Data) LoadImages(v dvid.VersionID, offset dvid.Point, filenames []strin
 		if load.extentChanged.Value() {
 			err := datastore.SaveDataByVersion(v, d)
 			if err != nil {
-				dvid.Errorf("Error in trying to save repo for voxel extent change: %s\n", err.Error())
+				dvid.Errorf("Error in trying to save repo for voxel extent change: %v\n", err)
 			}
 		}
 	}()
@@ -127,7 +127,7 @@ func (d *Data) loadXYImages(load *bulkLoadInfo) error {
 			// Process an XY image (slice).
 			changed, err := d.writeXYImage(load.versionID, vox, blocks[curBlocks])
 			if err != nil {
-				dvid.Infof("Error writing XY image: %s\n", err.Error())
+				dvid.Infof("Error writing XY image: %v\n", err)
 			}
 			if changed {
 				load.extentChanged.SetTrue()
@@ -146,7 +146,7 @@ func (d *Data) loadXYImages(load *bulkLoadInfo) error {
 					curBlocks, d.Compression(), d.Checksum())
 				err := d.writeBlocks(load.versionID, blocks[curBlocks], &layerWritten[curBlocks], &waitForWrites)
 				if err != nil {
-					dvid.Errorf("Error in async write of voxel blocks: %s", err.Error())
+					dvid.Errorf("Error in async write of voxel blocks: %v", err)
 				}
 			}(curBlocks)
 			// We can't move to buffer X until all blocks from buffer X have already been written.
@@ -173,7 +173,7 @@ func (d *Data) loadXYImage(filename string, offset dvid.Point) (*Voxels, error) 
 	}
 	slice, err := dvid.NewOrthogSlice(dvid.XY, offset, dvid.RectSize(img.Bounds()))
 	if err != nil {
-		return nil, fmt.Errorf("Unable to determine slice: %s", err.Error())
+		return nil, fmt.Errorf("Unable to determine slice: %v", err)
 	}
 	vox, err := d.NewVoxels(slice, img)
 	if err != nil {

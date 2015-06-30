@@ -72,7 +72,7 @@ type getOperation struct {
 func (d *Data) GetLabels(v dvid.VersionID, vox *Labels, r *imageblk.ROI) error {
 	store, err := storage.BigDataStore()
 	if err != nil {
-		return fmt.Errorf("Data type imageblk had error initializing store: %s\n", err.Error())
+		return fmt.Errorf("Data type imageblk had error initializing store: %v\n", err)
 	}
 
 	// Only do one request at a time, although each request can start many goroutines.
@@ -119,7 +119,7 @@ func (d *Data) GetLabels(v dvid.VersionID, vox *Labels, r *imageblk.ROI) error {
 		// Send the entire range of key-value pairs to chunk processor
 		err = store.ProcessRange(ctx, begTKey, endTKey, chunkOp, storage.ChunkFunc(d.ReadChunk))
 		if err != nil {
-			return fmt.Errorf("Unable to GET data %s: %s", ctx, err.Error())
+			return fmt.Errorf("Unable to GET data %s: %v", ctx, err)
 		}
 	}
 	if err != nil {
@@ -133,7 +133,7 @@ func (d *Data) GetLabels(v dvid.VersionID, vox *Labels, r *imageblk.ROI) error {
 func (d *Data) GetBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int) ([]byte, error) {
 	store, err := storage.BigDataStore()
 	if err != nil {
-		return nil, fmt.Errorf("Data type imageblk had error initializing store: %s\n", err.Error())
+		return nil, fmt.Errorf("Data type imageblk had error initializing store: %v\n", err)
 	}
 
 	indexBeg := dvid.IndexZYX(start)
@@ -164,7 +164,7 @@ func (d *Data) GetBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int) ([
 	for _, kv := range keyvalues {
 		block, _, err := dvid.DeserializeData(kv.V, uncompress)
 		if err != nil {
-			return nil, fmt.Errorf("Unable to deserialize block, %s (%v): %s", ctx, kv.K, err.Error())
+			return nil, fmt.Errorf("Unable to deserialize block, %s (%v): %v", ctx, kv.K, err)
 		}
 		if mapping != nil {
 			n := len(block) / 8
@@ -193,7 +193,7 @@ func (d *Data) GetBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int) ([
 func (d *Data) loadOldBlocks(v dvid.VersionID, vox *Labels, blocks storage.TKeyValues) error {
 	store, err := storage.BigDataStore()
 	if err != nil {
-		return fmt.Errorf("Data type imageblk had error initializing store: %s\n", err.Error())
+		return fmt.Errorf("Data type imageblk had error initializing store: %v\n", err)
 	}
 
 	ctx := datastore.NewVersionedCtx(d, v)
@@ -224,7 +224,7 @@ func (d *Data) loadOldBlocks(v dvid.VersionID, vox *Labels, blocks storage.TKeyV
 			}
 			block, _, err := dvid.DeserializeData(kv.V, true)
 			if err != nil {
-				return fmt.Errorf("Unable to deserialize block, %s: %s", ctx, err.Error())
+				return fmt.Errorf("Unable to deserialize block, %s: %v", ctx, err)
 			}
 			oldBlocks[indexZYX.ToIZYXString()] = block
 		}
@@ -289,7 +289,7 @@ func (d *Data) readChunk(chunk *storage.Chunk) {
 	var zeroOut bool
 	indexZYX, err := DecodeTKey(chunk.K)
 	if err != nil {
-		dvid.Errorf("Error processing voxel block: %s\n", err.Error())
+		dvid.Errorf("Error processing voxel block: %s\n", err)
 		return
 	}
 	if op.blocksInROI != nil {
@@ -308,7 +308,7 @@ func (d *Data) readChunk(chunk *storage.Chunk) {
 	} else {
 		blockData, _, err = dvid.DeserializeData(chunk.V, true)
 		if err != nil {
-			dvid.Errorf("Unable to deserialize block in '%s': %s\n", d.DataName(), err.Error())
+			dvid.Errorf("Unable to deserialize block in '%s': %v\n", d.DataName(), err)
 			return
 		}
 	}
@@ -318,12 +318,12 @@ func (d *Data) readChunk(chunk *storage.Chunk) {
 	if op.mapping != nil {
 		err := op.voxels.readMappedBlock(block, d.BlockSize(), op.mapping)
 		if err != nil {
-			dvid.Errorf("readMappedBlock, key %v in %q: %s\n", chunk.K, d.DataName(), err.Error())
+			dvid.Errorf("readMappedBlock, key %v in %q: %v\n", chunk.K, d.DataName(), err)
 		}
 	} else {
 		err := op.voxels.readBlock(block, d.BlockSize())
 		if err != nil {
-			dvid.Errorf("readBlock, key %v in %q: %s\n", chunk.K, d.DataName(), err.Error())
+			dvid.Errorf("readBlock, key %v in %q: %v\n", chunk.K, d.DataName(), err)
 		}
 	}
 }

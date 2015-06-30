@@ -55,7 +55,7 @@ func main() {
 	// Make sure we have rsync
 	gitPath, err := exec.LookPath("git")
 	if err != nil {
-		fmt.Printf("Unable to find git command; alter PATH?\nError: %s\n", err.Error())
+		fmt.Printf("Unable to find git command; alter PATH?\nError: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -63,7 +63,7 @@ func main() {
 	cmd := exec.Command(gitPath, "describe", "--abbrev=8", "--dirty", "--always", "--tags")
 	out, err := cmd.Output()
 	if err != nil {
-		fmt.Printf("Error running git: %s\n", err.Error())
+		fmt.Printf("Error running git: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -71,7 +71,7 @@ func main() {
 	versionID := strings.TrimSpace(string(out))
 	goCode := fmt.Sprintf(code, versionID)
 	if err := ioutil.WriteFile(*outputfile, []byte(goCode), 0644); err != nil {
-		fmt.Printf("Error save go code: %s\n", err.Error())
+		fmt.Printf("Error save go code: %v\n", err)
 		os.Exit(1)
 	}
 }

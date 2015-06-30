@@ -425,7 +425,7 @@ func (d *Data) Checksum() dvid.Checksum {
 func (d *Data) GetType() TypeService {
 	typeservice, err := TypeServiceByURL(d.typeurl)
 	if err != nil {
-		dvid.Errorf("Data %q: %s\n", d.name, err.Error())
+		dvid.Errorf("Data %q: %v\n", d.name, err)
 	}
 	return typeservice
 }

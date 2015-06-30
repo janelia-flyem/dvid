@@ -302,7 +302,7 @@ func (d *Data) GetVoxels(v dvid.VersionID, vox *Voxels, r *ROI) error {
 
 	store, err := storage.BigDataStore()
 	if err != nil {
-		return fmt.Errorf("Data type imageblk had error initializing store: %s\n", err.Error())
+		return fmt.Errorf("Data type imageblk had error initializing store: %v\n", err)
 	}
 
 	// Only do one request at a time, although each request can start many goroutines.
@@ -346,7 +346,7 @@ func (d *Data) GetVoxels(v dvid.VersionID, vox *Voxels, r *ROI) error {
 		// Send the entire range of key-value pairs to chunk processor
 		err = store.ProcessRange(ctx, begTKey, endTKey, chunkOp, storage.ChunkFunc(d.ReadChunk))
 		if err != nil {
-			return fmt.Errorf("Unable to GET data %s: %s", ctx, err.Error())
+			return fmt.Errorf("Unable to GET data %s: %v", ctx, err)
 		}
 	}
 	if err != nil {
@@ -363,7 +363,7 @@ func (d *Data) GetBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int32) 
 
 	store, err := storage.BigDataStore()
 	if err != nil {
-		return nil, fmt.Errorf("Data type imageblk had error initializing store: %s\n", err.Error())
+		return nil, fmt.Errorf("Data type imageblk had error initializing store: %v\n", err)
 	}
 
 	indexBeg := dvid.IndexZYX(start)
@@ -431,7 +431,7 @@ func xferBlock(buf []byte, chunk *storage.Chunk, wg *sync.WaitGroup) {
 	uncompress := true
 	block, _, err := dvid.DeserializeData(kv.V, uncompress)
 	if err != nil {
-		dvid.Errorf("Unable to deserialize block (%v): %s", kv.K, err.Error())
+		dvid.Errorf("Unable to deserialize block (%v): %v", kv.K, err)
 		return
 	}
 	if len(block) != len(buf) {
@@ -445,7 +445,7 @@ func xferBlock(buf []byte, chunk *storage.Chunk, wg *sync.WaitGroup) {
 func (d *Data) loadOldBlocks(v dvid.VersionID, vox *Voxels, blocks storage.TKeyValues) error {
 	store, err := storage.BigDataStore()
 	if err != nil {
-		return fmt.Errorf("Data type imageblk had error initializing store: %s\n", err.Error())
+		return fmt.Errorf("Data type imageblk had error initializing store: %v\n", err)
 	}
 
 	ctx := datastore.NewVersionedCtx(d, v)
@@ -476,7 +476,7 @@ func (d *Data) loadOldBlocks(v dvid.VersionID, vox *Voxels, blocks storage.TKeyV
 			}
 			block, _, err := dvid.DeserializeData(kv.V, true)
 			if err != nil {
-				return fmt.Errorf("Unable to deserialize block, %s: %s", ctx, err.Error())
+				return fmt.Errorf("Unable to deserialize block, %s: %v", ctx, err)
 			}
 			oldBlocks[indexZYX.ToIZYXString()] = block
 		}
@@ -542,7 +542,7 @@ func (d *Data) readChunk(chunk *storage.Chunk) {
 	var attenuation uint8
 	indexZYX, err := DecodeTKey(chunk.K)
 	if err != nil {
-		dvid.Errorf("Error processing voxel block: %s\n", err.Error())
+		dvid.Errorf("Error processing voxel block: %v\n", err)
 		return
 	}
 	if op.blocksInROI != nil {
@@ -564,7 +564,7 @@ func (d *Data) readChunk(chunk *storage.Chunk) {
 	} else {
 		blockData, _, err = dvid.DeserializeData(chunk.V, true)
 		if err != nil {
-			dvid.Errorf("Unable to deserialize block in '%s': %s\n", d.DataName(), err.Error())
+			dvid.Errorf("Unable to deserialize block in '%s': %v\n", d.DataName(), err)
 			return
 		}
 	}
@@ -572,7 +572,7 @@ func (d *Data) readChunk(chunk *storage.Chunk) {
 	// Perform the operation.
 	block := &storage.TKeyValue{chunk.K, blockData}
 	if err = op.voxels.ReadBlock(block, d.BlockSize(), attenuation); err != nil {
-		dvid.Errorf("Unable to ReadFromBlock() in %q: %s\n", d.DataName(), err.Error())
+		dvid.Errorf("Unable to ReadFromBlock() in %q: %v\n", d.DataName(), err)
 		return
 	}
 }

@@ -44,7 +44,7 @@ func (d *Data) InitSync(name dvid.InstanceName) []datastore.SyncSub {
 func (d *Data) handleSizeEvent(in <-chan datastore.SyncMessage, done <-chan struct{}) {
 	store, err := storage.SmallDataStore()
 	if err != nil {
-		dvid.Errorf("Data type labelvol had error initializing store: %s\n", err.Error())
+		dvid.Errorf("Data type labelvol had error initializing store: %v\n", err)
 		return
 	}
 	batcher, ok := store.(storage.KeyValueBatcher)
@@ -68,7 +68,7 @@ func (d *Data) handleSizeEvent(in <-chan datastore.SyncMessage, done <-chan stru
 				newKey = NewLabelSizeTKey(delta.Label, delta.Size)
 				batch.Put(newKey, dvid.EmptyValue())
 				if err := batch.Commit(); err != nil {
-					dvid.Errorf("Error on updating label sizes on %s: %s\n", ctx, err.Error())
+					dvid.Errorf("Error on updating label sizes on %s: %v\n", ctx, err)
 				}
 
 			case labels.DeltaDeleteSize:
@@ -79,7 +79,7 @@ func (d *Data) handleSizeEvent(in <-chan datastore.SyncMessage, done <-chan stru
 					oldKey = NewLabelSizeTKey(delta.Label, delta.OldSize)
 					batch.Delete(oldKey)
 					if err := batch.Commit(); err != nil {
-						dvid.Errorf("Error on updating label sizes on %s: %s\n", ctx, err.Error())
+						dvid.Errorf("Error on updating label sizes on %s: %v\n", ctx, err)
 					}
 				} else {
 					// TODO -- Make transactional or force sequentially to label-specific goroutine
@@ -87,7 +87,7 @@ func (d *Data) handleSizeEvent(in <-chan datastore.SyncMessage, done <-chan stru
 					endKey := NewLabelSizeTKey(delta.Label, math.MaxUint64)
 					keys, err := store.KeysInRange(ctx, begKey, endKey)
 					if err != nil {
-						dvid.Errorf("Unable to get size keys for label %d: %s\n", delta.Label, err.Error())
+						dvid.Errorf("Unable to get size keys for label %d: %v\n", delta.Label, err)
 						continue
 					}
 					if len(keys) != 1 {
@@ -107,7 +107,7 @@ func (d *Data) handleSizeEvent(in <-chan datastore.SyncMessage, done <-chan stru
 					oldKey = NewLabelSizeTKey(delta.Label, oldSize)
 					batch.Delete(oldKey)
 					if err := batch.Commit(); err != nil {
-						dvid.Errorf("Error on updating label sizes on %s: %s\n", ctx, err.Error())
+						dvid.Errorf("Error on updating label sizes on %s: %v\n", ctx, err)
 					}
 				}
 
@@ -118,7 +118,7 @@ func (d *Data) handleSizeEvent(in <-chan datastore.SyncMessage, done <-chan stru
 				endKey := NewLabelSizeTKey(delta.Label, math.MaxUint64)
 				keys, err := store.KeysInRange(ctx, begKey, endKey)
 				if err != nil {
-					dvid.Errorf("Unable to get size keys for label %d: %s\n", delta.Label, err.Error())
+					dvid.Errorf("Unable to get size keys for label %d: %v\n", delta.Label, err)
 					continue
 				}
 				if len(keys) != 1 {
@@ -151,7 +151,7 @@ func (d *Data) handleSizeEvent(in <-chan datastore.SyncMessage, done <-chan stru
 				batch.Put(newKey, dvid.EmptyValue())
 
 				if err := batch.Commit(); err != nil {
-					dvid.Errorf("Error on updating label sizes on %s: %s\n", ctx, err.Error())
+					dvid.Errorf("Error on updating label sizes on %s: %v\n", ctx, err)
 				}
 
 			case labels.DeltaReplaceSize:
@@ -165,7 +165,7 @@ func (d *Data) handleSizeEvent(in <-chan datastore.SyncMessage, done <-chan stru
 				newKey = NewLabelSizeTKey(delta.Label, delta.NewSize)
 				batch.Put(newKey, dvid.EmptyValue())
 				if err := batch.Commit(); err != nil {
-					dvid.Errorf("Error on updating label sizes on %s: %s\n", ctx, err.Error())
+					dvid.Errorf("Error on updating label sizes on %s: %v\n", ctx, err)
 				}
 
 			default:

@@ -348,7 +348,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	case "info":
 		jsonBytes, err := d.MarshalJSON()
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -365,8 +365,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	} else {
 		n, err := strconv.ParseInt(channumStr, 10, 32)
 		if err != nil {
-			server.BadRequest(w, r, "Error parsing channel number from data name '%s': %s",
-				parts[2], err.Error())
+			server.BadRequest(w, r, "Error parsing channel number from data name '%s': %v", parts[2], err)
 			return
 		}
 		if int(n) > d.NumChannels {
@@ -392,7 +391,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		sizeStr, offsetStr := parts[4], parts[5]
 		slice, err := dvid.NewSliceFromStrings(shapeStr, offsetStr, sizeStr, "_")
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		if action == "post" {
@@ -424,7 +423,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			//dvid.ElapsedTime(dvid.Normal, startTime, "%s %s upto image formatting", op, slice)
 			err = dvid.WriteImageHttp(w, img.Get(), formatStr)
 			if err != nil {
-				server.BadRequest(w, r, err.Error())
+				server.BadRequest(w, r, err)
 				return
 			}
 		}
@@ -432,7 +431,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		sizeStr, offsetStr := parts[4], parts[5]
 		_, err := dvid.NewSubvolumeFromStrings(offsetStr, sizeStr, "_")
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		if action == "get" {
@@ -461,7 +460,7 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 	// Get the uuid from a uniquely identifiable string
 	uuid, versionID, err := datastore.MatchingUUID(uuidStr)
 	if err != nil {
-		return fmt.Errorf("Could not find node with UUID %s: %s", uuidStr, err.Error())
+		return fmt.Errorf("Could not find node with UUID %s: %v", uuidStr, err)
 	}
 
 	// Load the V3D Raw file.

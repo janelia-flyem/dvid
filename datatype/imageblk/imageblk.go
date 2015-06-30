@@ -828,7 +828,7 @@ func (d *Data) PutLocal(request datastore.Request, reply *datastore.Response) er
 	// Get offset
 	offset, err := dvid.StringToPoint(offsetStr, ",")
 	if err != nil {
-		return fmt.Errorf("Illegal offset specification: %s: %s", offsetStr, err.Error())
+		return fmt.Errorf("Illegal offset specification: %s: %v", offsetStr, err)
 	}
 
 	// Get list of files to add
@@ -858,12 +858,11 @@ func (d *Data) PutLocal(request datastore.Request, reply *datastore.Response) er
 		sliceLog := dvid.NewTimeLog()
 		img, _, err := dvid.GoImageFromFile(filename)
 		if err != nil {
-			return fmt.Errorf("Error after %d images successfully added: %s",
-				numSuccessful, err.Error())
+			return fmt.Errorf("Error after %d images successfully added: %v", numSuccessful, err)
 		}
 		slice, err := dvid.NewOrthogSlice(plane, offset, dvid.RectSize(img.Bounds()))
 		if err != nil {
-			return fmt.Errorf("Unable to determine slice: %s", err.Error())
+			return fmt.Errorf("Unable to determine slice: %v", err)
 		}
 
 		vox, err := d.NewVoxels(slice, img)
@@ -1065,7 +1064,7 @@ func (d *Data) foregroundROI(v dvid.VersionID, dest *roi.Data, background dvid.P
 
 	store, err := storage.BigDataStore()
 	if err != nil {
-		dvid.Criticalf("Data type imageblk had error initializing store: %s\n", err.Error())
+		dvid.Criticalf("Data type imageblk had error initializing store: %v\n", err)
 		return
 	}
 
@@ -1092,7 +1091,7 @@ func (d *Data) foregroundROI(v dvid.VersionID, dest *roi.Data, background dvid.P
 		}
 		data, _, err := dvid.DeserializeData(chunk.V, true)
 		if err != nil {
-			return fmt.Errorf("Error decoding block: %s\n", err.Error())
+			return fmt.Errorf("Error decoding block: %v\n", err)
 		}
 		numVoxels := d.BlockSize().Prod()
 		var foreground bool
@@ -1112,7 +1111,7 @@ func (d *Data) foregroundROI(v dvid.VersionID, dest *roi.Data, background dvid.P
 		if foreground {
 			indexZYX, err := DecodeTKey(chunk.K)
 			if err != nil {
-				return fmt.Errorf("Error decoding voxel block key: %s\n", err.Error())
+				return fmt.Errorf("Error decoding voxel block key: %v\n", err)
 			}
 			x, y, z := indexZYX.Unpack()
 			if span == nil {
@@ -1124,7 +1123,7 @@ func (d *Data) foregroundROI(v dvid.VersionID, dest *roi.Data, background dvid.P
 					numBatches++
 					go func(spans []dvid.Span) {
 						if err := dest.PutSpans(v, spans, init); err != nil {
-							dvid.Errorf("Error in storing ROI: %s\n", err.Error())
+							dvid.Errorf("Error in storing ROI: %v\n", err)
 						} else {
 							timedLog.Debugf("-- Wrote batch %d of spans for foreground ROI %q", numBatches, dest.DataName())
 						}
@@ -1143,7 +1142,7 @@ func (d *Data) foregroundROI(v dvid.VersionID, dest *roi.Data, background dvid.P
 
 	err = store.ProcessRange(ctx, minTKey, maxTKey, &storage.ChunkOp{}, f)
 	if err != nil {
-		dvid.Errorf("Error in processing chunks in ROI: %s\n", err.Error())
+		dvid.Errorf("Error in processing chunks in ROI: %v\n", err)
 		return
 	}
 	if span != nil {
@@ -1153,7 +1152,7 @@ func (d *Data) foregroundROI(v dvid.VersionID, dest *roi.Data, background dvid.P
 	// Save new ROI
 	if len(spans) > 0 {
 		if err := dest.PutSpans(v, spans, numBatches == 0); err != nil {
-			dvid.Errorf("Error in storing ROI: %s\n", err.Error())
+			dvid.Errorf("Error in storing ROI: %v\n", err)
 			return
 		}
 	}
@@ -1183,7 +1182,7 @@ func (d *Data) DoRPC(req datastore.Request, reply *datastore.Response) error {
 		// Get offset
 		offset, err := dvid.StringToPoint(offsetStr, ",")
 		if err != nil {
-			return fmt.Errorf("Illegal offset specification: %s: %s", offsetStr, err.Error())
+			return fmt.Errorf("Illegal offset specification: %s: %v", offsetStr, err)
 		}
 
 		// Get list of files to add
@@ -1277,7 +1276,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		if len(attenuationStr) != 0 {
 			attenuation, err := strconv.Atoi(attenuationStr)
 			if err != nil {
-				server.BadRequest(w, r, err.Error())
+				server.BadRequest(w, r, err)
 				return
 			}
 			if attenuation < 1 || attenuation > 7 {
@@ -1293,15 +1292,15 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		fmt.Printf("Setting configuration of data '%s'\n", d.DataName())
 		config, err := server.DecodeJSON(r)
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		if err := d.ModifyConfig(config); err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		if err := datastore.SaveDataByUUID(uuid, d); err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		fmt.Fprintf(w, "Changed '%s' based on received configuration:\n%s\n", d.DataName(), config)
@@ -1323,7 +1322,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	case "metadata":
 		jsonStr, err := d.NdDataMetadata()
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/vnd.dvid-nd-data+json")
@@ -1333,7 +1332,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	case "info":
 		jsonBytes, err := d.MarshalJSON()
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -1356,29 +1355,29 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 		blockCoord, err := dvid.StringToChunkPoint3d(parts[4], "_")
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		span, err := strconv.Atoi(parts[5])
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		if action == "get" {
 			data, err := d.GetBlocks(ctx.VersionID(), blockCoord, int32(span))
 			if err != nil {
-				server.BadRequest(w, r, err.Error())
+				server.BadRequest(w, r, err)
 				return
 			}
 			w.Header().Set("Content-type", "application/octet-stream")
 			_, err = w.Write(data)
 			if err != nil {
-				server.BadRequest(w, r, err.Error())
+				server.BadRequest(w, r, err)
 				return
 			}
 		} else {
 			if err := d.PutBlocks(ctx.VersionID(), blockCoord, span, r.Body); err != nil {
-				server.BadRequest(w, r, err.Error())
+				server.BadRequest(w, r, err)
 				return
 			}
 		}
@@ -1408,7 +1407,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 		img, err := d.GetArbitraryImage(ctx, parts[4], parts[5], parts[6], parts[7])
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		var formatStr string
@@ -1417,7 +1416,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 		err = dvid.WriteImageHttp(w, img.Get(), formatStr)
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		timedLog.Infof("HTTP %s: Arbitrary image (%s)", r.Method, r.URL)
@@ -1433,14 +1432,14 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		planeStr := dvid.DataShapeString(shapeStr)
 		plane, err := planeStr.DataShape()
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		switch plane.ShapeDimensions() {
 		case 2:
 			slice, err := dvid.NewSliceFromStrings(planeStr, offsetStr, sizeStr, "_")
 			if err != nil {
-				server.BadRequest(w, r, err.Error())
+				server.BadRequest(w, r, err)
 				return
 			}
 			if action != "get" {
@@ -1449,24 +1448,24 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			}
 			rawSlice, err := dvid.Isotropy2D(d.Properties.VoxelSize, slice, isotropic)
 			if err != nil {
-				server.BadRequest(w, r, err.Error())
+				server.BadRequest(w, r, err)
 				return
 			}
 			vox, err := d.NewVoxels(rawSlice, nil)
 			if err != nil {
-				server.BadRequest(w, r, err.Error())
+				server.BadRequest(w, r, err)
 				return
 			}
 			if roiptr != nil {
 				roiptr.Iter, err = roi.NewIterator(roiname, ctx.VersionID(), vox)
 				if err != nil {
-					server.BadRequest(w, r, err.Error())
+					server.BadRequest(w, r, err)
 					return
 				}
 			}
 			img, err := d.GetImage(ctx.VersionID(), vox, roiptr)
 			if err != nil {
-				server.BadRequest(w, r, err.Error())
+				server.BadRequest(w, r, err)
 				return
 			}
 			if isotropic {
@@ -1474,7 +1473,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 				dstH := int(slice.Size().Value(1))
 				img, err = img.ScaleImage(dstW, dstH)
 				if err != nil {
-					server.BadRequest(w, r, err.Error())
+					server.BadRequest(w, r, err)
 					return
 				}
 			}
@@ -1484,7 +1483,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			}
 			err = dvid.WriteImageHttp(w, img.Get(), formatStr)
 			if err != nil {
-				server.BadRequest(w, r, err.Error())
+				server.BadRequest(w, r, err)
 				return
 			}
 			timedLog.Infof("HTTP %s: %s (%s)", r.Method, plane, r.URL)
@@ -1506,37 +1505,37 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			}
 			subvol, err := dvid.NewSubvolumeFromStrings(offsetStr, sizeStr, "_")
 			if err != nil {
-				server.BadRequest(w, r, err.Error())
+				server.BadRequest(w, r, err)
 				return
 			}
 			if action == "get" {
 				vox, err := d.NewVoxels(subvol, nil)
 				if err != nil {
-					server.BadRequest(w, r, err.Error())
+					server.BadRequest(w, r, err)
 					return
 				}
 				if roiptr != nil {
 					roiptr.Iter, err = roi.NewIterator(roiname, ctx.VersionID(), vox)
 					if err != nil {
-						server.BadRequest(w, r, err.Error())
+						server.BadRequest(w, r, err)
 						return
 					}
 				}
 				data, err := d.GetVolume(ctx.VersionID(), vox, roiptr)
 				if err != nil {
-					server.BadRequest(w, r, err.Error())
+					server.BadRequest(w, r, err)
 					return
 				}
 				w.Header().Set("Content-type", "application/octet-stream")
 				_, err = w.Write(data)
 				if err != nil {
-					server.BadRequest(w, r, err.Error())
+					server.BadRequest(w, r, err)
 					return
 				}
 			} else {
 				if isotropic {
 					err := fmt.Errorf("can only PUT 'raw' not 'isotropic' images")
-					server.BadRequest(w, r, err.Error())
+					server.BadRequest(w, r, err)
 					return
 				}
 				// Make sure vox is block-aligned
@@ -1547,23 +1546,23 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 
 				data, err := ioutil.ReadAll(r.Body)
 				if err != nil {
-					server.BadRequest(w, r, err.Error())
+					server.BadRequest(w, r, err)
 					return
 				}
 				vox, err := d.NewVoxels(subvol, data)
 				if err != nil {
-					server.BadRequest(w, r, err.Error())
+					server.BadRequest(w, r, err)
 					return
 				}
 				if roiptr != nil {
 					roiptr.Iter, err = roi.NewIterator(roiname, ctx.VersionID(), vox)
 					if err != nil {
-						server.BadRequest(w, r, err.Error())
+						server.BadRequest(w, r, err)
 						return
 					}
 				}
 				if err = d.PutVoxels(ctx.VersionID(), vox, roiptr); err != nil {
-					server.BadRequest(w, r, err.Error())
+					server.BadRequest(w, r, err)
 					return
 				}
 			}

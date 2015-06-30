@@ -134,7 +134,7 @@ func (d *Data) PutVoxels(v dvid.VersionID, vox *Voxels, roi *ROI) error {
 		if extentChanged {
 			err := datastore.SaveDataByVersion(v, d)
 			if err != nil {
-				dvid.Infof("Error in trying to save repo on change: %s\n", err.Error())
+				dvid.Infof("Error in trying to save repo on change: %v\n", err)
 			}
 		}
 	}()
@@ -188,7 +188,7 @@ func (d *Data) PutVoxels(v dvid.VersionID, vox *Voxels, roi *ROI) error {
 func (d *Data) PutBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int, data io.ReadCloser) error {
 	store, err := storage.BigDataStore()
 	if err != nil {
-		return fmt.Errorf("Data type imageblk had error initializing store: %s\n", err.Error())
+		return fmt.Errorf("Data type imageblk had error initializing store: %v\n", err)
 	}
 	batcher, ok := store.(storage.KeyValueBatcher)
 	if !ok {
@@ -217,7 +217,7 @@ func (d *Data) PutBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int, da
 				return fmt.Errorf("Block data ceased before all block data read")
 			}
 			if err != nil {
-				return fmt.Errorf("Error reading blocks: %s\n", err.Error())
+				return fmt.Errorf("Error reading blocks: %v\n", err)
 			}
 		}
 
@@ -245,7 +245,7 @@ func (d *Data) PutBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int, da
 		finish := (readBlocks == span)
 		if finish || readBlocks%BatchSize == 0 {
 			if err := batch.Commit(); err != nil {
-				return fmt.Errorf("Error on batch commit, block %d: %s\n", readBlocks, err.Error())
+				return fmt.Errorf("Error on batch commit, block %d: %v\n", readBlocks, err)
 			}
 			batch = batcher.NewBatch(ctx)
 		}
@@ -300,7 +300,7 @@ func (d *Data) putChunk(chunk *storage.Chunk) {
 	} else {
 		blockData, _, err = dvid.DeserializeData(chunk.V, true)
 		if err != nil {
-			dvid.Errorf("Unable to deserialize block in '%s': %s\n", d.DataName(), err.Error())
+			dvid.Errorf("Unable to deserialize block in '%s': %v\n", d.DataName(), err)
 			return
 		}
 	}
@@ -308,23 +308,23 @@ func (d *Data) putChunk(chunk *storage.Chunk) {
 	// Perform the operation.
 	block := &storage.TKeyValue{K: chunk.K, V: blockData}
 	if err = op.voxels.WriteBlock(block, d.BlockSize()); err != nil {
-		dvid.Errorf("Unable to WriteBlock() in %q: %s\n", d.DataName(), err.Error())
+		dvid.Errorf("Unable to WriteBlock() in %q: %v\n", d.DataName(), err)
 		return
 	}
 	serialization, err := dvid.SerializeData(blockData, d.Compression(), d.Checksum())
 	if err != nil {
-		dvid.Errorf("Unable to serialize block in %q: %s\n", d.DataName(), err.Error())
+		dvid.Errorf("Unable to serialize block in %q: %v\n", d.DataName(), err)
 		return
 	}
 
 	store, err := storage.BigDataStore()
 	if err != nil {
-		dvid.Errorf("Data type imageblk had error initializing store: %s\n", err.Error())
+		dvid.Errorf("Data type imageblk had error initializing store: %v\n", err)
 		return
 	}
 	ctx := datastore.NewVersionedCtx(d, op.version)
 	if err := store.Put(ctx, chunk.K, serialization); err != nil {
-		dvid.Errorf("Unable to PUT voxel data for key %v: %s\n", chunk.K, err.Error())
+		dvid.Errorf("Unable to PUT voxel data for key %v: %v\n", chunk.K, err)
 		return
 	}
 
@@ -398,7 +398,7 @@ const KVWriteSize = 500
 func (d *Data) writeBlocks(v dvid.VersionID, b storage.TKeyValues, wg1, wg2 *sync.WaitGroup) error {
 	store, err := storage.BigDataStore()
 	if err != nil {
-		return fmt.Errorf("Data type imageblk had error initializing store: %s\n", err.Error())
+		return fmt.Errorf("Data type imageblk had error initializing store: %v\n", err)
 	}
 	batcher, ok := store.(storage.KeyValueBatcher)
 	if !ok {
@@ -425,7 +425,7 @@ func (d *Data) writeBlocks(v dvid.VersionID, b storage.TKeyValues, wg1, wg2 *syn
 			preCompress += len(block.V)
 			postCompress += len(serialization)
 			if err != nil {
-				dvid.Errorf("Unable to serialize block: %s\n", err.Error())
+				dvid.Errorf("Unable to serialize block: %v\n", err)
 				return
 			}
 			batch.Put(block.K, serialization)
@@ -444,14 +444,14 @@ func (d *Data) writeBlocks(v dvid.VersionID, b storage.TKeyValues, wg1, wg2 *syn
 			// Check if we should commit
 			if i%KVWriteSize == KVWriteSize-1 {
 				if err := batch.Commit(); err != nil {
-					dvid.Errorf("Error on trying to write batch: %s\n", err.Error())
+					dvid.Errorf("Error on trying to write batch: %v\n", err)
 					return
 				}
 				batch = batcher.NewBatch(ctx)
 			}
 		}
 		if err := batch.Commit(); err != nil {
-			dvid.Errorf("Error on trying to write batch: %s\n", err.Error())
+			dvid.Errorf("Error on trying to write batch: %v\n", err)
 			return
 		}
 	}()

@@ -110,7 +110,7 @@ var (
 func TestSplit(t *testing.T) {
 	modified, err := bodyRLEs.Split(splitDupRLEs)
 	if err != nil {
-		t.Errorf("Bad split on dup case: %s\n", err.Error())
+		t.Errorf("Bad split on dup case: %v\n", err)
 	}
 	if len(modified) != 0 {
 		t.Errorf("Expected split of duplicate should complete erase original RLEs but it did not.\n")
@@ -122,7 +122,7 @@ func TestSplit(t *testing.T) {
 	// Test edge cases
 	modified, err = bodyRLEs.Split(splitTestRLEs)
 	if err != nil {
-		t.Errorf("Bad split on edge cases: %s\n", err.Error())
+		t.Errorf("Bad split on edge cases: %v\n", err)
 	}
 	if len(modified) == 0 {
 		t.Errorf("Expected split to say edge cases were not duplicate but got no modifications\n")

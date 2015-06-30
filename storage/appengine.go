@@ -352,7 +352,7 @@ func (b *batch) Delete(k Key) {
 		dvid.StartCgo()
 		defer dvid.StopCgo()
 		if err := b.txn.Del(b.dbi, k.Bytes(), nil); err != nil {
-			dvid.Error("Error in batch Delete: %s", err.Error())
+			dvid.Error("Error in batch Delete: %v", err)
 		}
 	}
 }
@@ -366,7 +366,7 @@ func (b *batch) Put(k Key, v []byte) {
 			v = []byte{0}
 		}
 		if err := b.txn.Put(b.dbi, kBytes, v, 0); err != nil {
-			dvid.Error("Error in batch Put: %s", err.Error())
+			dvid.Error("Error in batch Put: %v", err)
 			return
 		}
 		StoreKeyBytesWritten <- len(kBytes)

@@ -200,7 +200,7 @@ type Data struct {
 func (d *Data) GetSize(v dvid.VersionID, label uint64) (uint64, error) {
 	store, err := storage.SmallDataStore()
 	if err != nil {
-		return 0, fmt.Errorf("Data type imagesz had error initializing store: %s\n", err.Error())
+		return 0, fmt.Errorf("Data type imagesz had error initializing store: %v\n", err)
 	}
 
 	// Get the start/end keys for the label.
@@ -229,7 +229,7 @@ func (d *Data) GetSize(v dvid.VersionID, label uint64) (uint64, error) {
 func (d *Data) GetSizeRange(v dvid.VersionID, minSize, maxSize uint64) (string, error) {
 	store, err := storage.SmallDataStore()
 	if err != nil {
-		return "{}", fmt.Errorf("Data type imagesz had error initializing store: %s\n", err.Error())
+		return "{}", fmt.Errorf("Data type imagesz had error initializing store: %v\n", err)
 	}
 
 	// Get the start/end keys for the size range.
@@ -319,7 +319,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	case "info":
 		jsonBytes, err := d.MarshalJSON()
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -333,12 +333,12 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 		label, err := strconv.ParseUint(parts[4], 10, 64)
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		size, err := d.GetSize(ctx.VersionID(), label)
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		w.Header().Set("Content-type", "application/json")
@@ -353,20 +353,20 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 		minSize, err := strconv.ParseUint(parts[4], 10, 64)
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		var maxSize uint64
 		if len(parts) >= 6 {
 			maxSize, err = strconv.ParseUint(parts[5], 10, 64)
 			if err != nil {
-				server.BadRequest(w, r, err.Error())
+				server.BadRequest(w, r, err)
 				return
 			}
 		}
 		jsonStr, err := d.GetSizeRange(ctx.VersionID(), minSize, maxSize)
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		w.Header().Set("Content-type", "application/json")

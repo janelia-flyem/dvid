@@ -437,7 +437,7 @@ func (d *Data) InitVersion(uuid dvid.UUID, v dvid.VersionID) error {
 		ctx := datastore.NewVersionedCtx(d, v)
 		store, err := storage.SmallDataStore()
 		if err != nil {
-			return fmt.Errorf("data type labelvol had error initializing store: %s\n", err.Error())
+			return fmt.Errorf("data type labelvol had error initializing store: %v\n", err)
 		}
 		store.Put(ctx, maxLabelTKey, buf)
 		return nil
@@ -457,7 +457,7 @@ func (d *Data) LoadMutable(root dvid.VersionID, storedVersion, expectedVersion u
 	ctx := storage.NewDataContext(d, 0)
 	store, err := storage.SmallDataStore()
 	if err != nil {
-		return false, fmt.Errorf("Data type labelvol had error initializing store: %s\n", err.Error())
+		return false, fmt.Errorf("Data type labelvol had error initializing store: %v\n", err)
 	}
 
 	wg := new(sync.WaitGroup)
@@ -507,7 +507,7 @@ func (d *Data) migrateMaxLabels(root dvid.VersionID, wg *sync.WaitGroup, ch chan
 	ctx := storage.NewDataContext(d, 0)
 	store, err := storage.SmallDataStore()
 	if err != nil {
-		dvid.Errorf("Can't initializing small data store: %s\n", err.Error())
+		dvid.Errorf("Can't initializing small data store: %v\n", err)
 	}
 
 	var maxRepoLabel uint64
@@ -690,15 +690,15 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	if len(parts) == 3 && action == "put" {
 		config, err := server.DecodeJSON(r)
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		if err := d.ModifyConfig(config); err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		if err := datastore.SaveDataByUUID(uuid, d); err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		fmt.Fprintf(w, "Changed '%s' based on received configuration:\n%s\n", d.DataName(), config)
@@ -719,7 +719,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	case "info":
 		jsonBytes, err := d.MarshalJSON()
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -734,7 +734,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 		label, err := strconv.ParseUint(parts[4], 10, 64)
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		switch action {
@@ -743,27 +743,27 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			var b Bounds
 			b.VoxelBounds, err = dvid.BoundsFromQueryString(r)
 			if err != nil {
-				server.BadRequest(w, r, "Error parsing bounds from query string: %s\n", err.Error())
+				server.BadRequest(w, r, "Error parsing bounds from query string: %v\n", err)
 				return
 			}
 			b.BlockBounds = b.VoxelBounds.Divide(d.BlockSize)
 			b.Exact = queryValues.Get("exact") == "true"
 			data, err := GetSparseVol(ctx, label, b)
 			if err != nil {
-				server.BadRequest(w, r, err.Error())
+				server.BadRequest(w, r, err)
 				return
 			}
 			w.Header().Set("Content-type", "application/octet-stream")
 			_, err = w.Write(data)
 			if err != nil {
-				server.BadRequest(w, r, err.Error())
+				server.BadRequest(w, r, err)
 				return
 			}
 		case "post":
 			server.BadRequest(w, r, "POST of sparsevol not currently implemented\n")
 			return
 			// if err := d.PutSparseVol(versionID, label, r.Body); err != nil {
-			// 	server.BadRequest(w, r, err.Error())
+			// 	server.BadRequest(w, r, err)
 			// 	return
 			// }
 		default:
@@ -780,28 +780,28 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 		coord, err := dvid.StringToPoint(parts[4], "_")
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		source, err := d.GetSyncedLabelblk(versionID)
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		label, err := source.GetLabelAtPoint(ctx.VersionID(), coord)
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		data, err := GetSparseVol(ctx, label, Bounds{})
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		w.Header().Set("Content-type", "application/octet-stream")
 		_, err = w.Write(data)
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		timedLog.Infof("HTTP %s: sparsevol-by-point at %s (%s)", r.Method, coord, r.URL)
@@ -814,18 +814,18 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 		label, err := strconv.ParseUint(parts[4], 10, 64)
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		data, err := GetSparseCoarseVol(ctx, label)
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		w.Header().Set("Content-type", "application/octet-stream")
 		_, err = w.Write(data)
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		timedLog.Infof("HTTP %s: sparsevol-coarse on label %d (%s)", r.Method, label, r.URL)
@@ -875,12 +875,12 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 		fromLabel, err := strconv.ParseUint(parts[4], 10, 64)
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		toLabel, err := d.SplitLabels(ctx.VersionID(), fromLabel, r.Body)
 		if err != nil {
-			server.BadRequest(w, r, fmt.Sprintf("Error on split: %s", err.Error()))
+			server.BadRequest(w, r, fmt.Sprintf("Error on split: %v", err))
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -900,16 +900,16 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 		var tuple labels.MergeTuple
 		if err := json.Unmarshal(data, &tuple); err != nil {
-			server.BadRequest(w, r, fmt.Sprintf("Bad merge op JSON: %s", err.Error()))
+			server.BadRequest(w, r, fmt.Sprintf("Bad merge op JSON: %v", err))
 			return
 		}
 		mergeOp, err := tuple.Op()
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		if err := d.MergeLabels(ctx.VersionID(), mergeOp); err != nil {
-			server.BadRequest(w, r, fmt.Sprintf("Error on merge: %s", err.Error()))
+			server.BadRequest(w, r, fmt.Sprintf("Error on merge: %v", err))
 			return
 		}
 		timedLog.Infof("HTTP merge request (%s)", r.URL)
@@ -958,14 +958,14 @@ func (d *Data) casMaxLabel(batch storage.Batch, v dvid.VersionID, label uint64) 
 			ctx := storage.NewDataContext(d, 0)
 			store, err := storage.SmallDataStore()
 			if err != nil {
-				dvid.Errorf("Data type labelvol had error initializing store: %s\n", err.Error())
+				dvid.Errorf("Data type labelvol had error initializing store: %v\n", err)
 			} else {
 				store.Put(ctx, maxRepoLabelTKey, buf)
 			}
 		}
 	}
 	if err := batch.Commit(); err != nil {
-		dvid.Errorf("batch put: %s\n", err.Error())
+		dvid.Errorf("batch put: %v\n", err)
 		return
 	}
 }
@@ -990,7 +990,7 @@ func (d *Data) NewLabel(v dvid.VersionID) (uint64, error) {
 
 	store, err := storage.SmallDataStore()
 	if err != nil {
-		return 0, fmt.Errorf("can't initializing small data store: %s\n", err.Error())
+		return 0, fmt.Errorf("can't initializing small data store: %v\n", err)
 	}
 	buf := make([]byte, 8)
 	binary.LittleEndian.PutUint64(buf, d.MaxRepoLabel)
@@ -1008,7 +1008,7 @@ func (d *Data) NewLabel(v dvid.VersionID) (uint64, error) {
 func (d *Data) GetLabelRLEs(v dvid.VersionID, label uint64) (dvid.BlockRLEs, error) {
 	store, err := storage.SmallDataStore()
 	if err != nil {
-		return nil, fmt.Errorf("Data type labelvol had error initializing store: %s\n", err.Error())
+		return nil, fmt.Errorf("Data type labelvol had error initializing store: %v\n", err)
 	}
 
 	// Get the start/end indices for this body's KeyLabelSpatialMap (b + s) keys.
@@ -1021,7 +1021,7 @@ func (d *Data) GetLabelRLEs(v dvid.VersionID, label uint64) (dvid.BlockRLEs, err
 		// Get the block index where the fromLabel is present
 		_, blockStr, err := DecodeTKey(chunk.K)
 		if err != nil {
-			return fmt.Errorf("Can't recover block index with chunk key %v: %s\n", chunk.K, err.Error())
+			return fmt.Errorf("Can't recover block index with chunk key %v: %v\n", chunk.K, err)
 		}
 
 		var blockRLEs dvid.RLEs
@@ -1081,7 +1081,7 @@ func boundRLEs(b []byte, bounds *dvid.Bounds) ([]byte, error) {
 func GetSparseVol(ctx storage.Context, label uint64, bounds Bounds) ([]byte, error) {
 	store, err := storage.SmallDataStore()
 	if err != nil {
-		return nil, fmt.Errorf("Data type labelvol had error initializing store: %s\n", err.Error())
+		return nil, fmt.Errorf("Data type labelvol had error initializing store: %v\n", err)
 	}
 
 	// Create the sparse volume header
@@ -1120,12 +1120,11 @@ func GetSparseVol(ctx storage.Context, label uint64, bounds Bounds) ([]byte, err
 		if blockBounds.BoundedX() || blockBounds.BoundedY() {
 			_, blockStr, err := DecodeTKey(chunk.K)
 			if err != nil {
-				return fmt.Errorf("Error decoding sparse volume key (%v): %s\n", chunk.K, err.Error())
+				return fmt.Errorf("Error decoding sparse volume key (%v): %v\n", chunk.K, err)
 			}
 			indexZYX, err := blockStr.IndexZYX()
 			if err != nil {
-				return fmt.Errorf("Error decoding block coordinate (%v) for sparse volume: %s\n",
-					blockStr, err.Error())
+				return fmt.Errorf("Error decoding block coordinate (%v) for sparse volume: %v\n", blockStr, err)
 			}
 			blockX, blockY, _ := indexZYX.Unpack()
 			if blockBounds.OutsideX(blockX) || blockBounds.OutsideY(blockY) {
@@ -1139,7 +1138,7 @@ func GetSparseVol(ctx storage.Context, label uint64, bounds Bounds) ([]byte, err
 		if bounds.Exact && bounds.VoxelBounds.IsSet() {
 			rles, err = boundRLEs(chunk.V, bounds.VoxelBounds)
 			if err != nil {
-				return fmt.Errorf("Error in adjusting RLEs to bounds: %s\n", err.Error())
+				return fmt.Errorf("Error in adjusting RLEs to bounds: %v\n", err)
 			}
 		} else {
 			rles = chunk.V
@@ -1177,7 +1176,7 @@ func GetSparseVol(ctx storage.Context, label uint64, bounds Bounds) ([]byte, err
 func (d *Data) PutSparseVol(v dvid.VersionID, label uint64, r io.Reader) error {
 	store, err := storage.SmallDataStore()
 	if err != nil {
-		return fmt.Errorf("Data type labelvol had error initializing store: %s\n", err.Error())
+		return fmt.Errorf("Data type labelvol had error initializing store: %v\n", err)
 	}
 	batcher, ok := store.(storage.KeyValueBatcher)
 	if !ok {
@@ -1244,7 +1243,7 @@ func (d *Data) PutSparseVol(v dvid.VersionID, label uint64, r io.Reader) error {
 			voxelsAdded += int64(numVoxels)
 			rleBytes, err := modmap[modblk].MarshalBinary()
 			if err != nil {
-				return fmt.Errorf("can't serialize modified RLEs for %d: %s\n", label, err.Error())
+				return fmt.Errorf("can't serialize modified RLEs for %d: %v\n", label, err)
 			}
 			batch.Put(tk, rleBytes)
 			continue
@@ -1258,13 +1257,13 @@ func (d *Data) PutSparseVol(v dvid.VersionID, label uint64, r io.Reader) error {
 		voxelsAdded += rles.Add(modmap[modblk])
 		rleBytes, err := rles.MarshalBinary()
 		if err != nil {
-			return fmt.Errorf("can't serialize modified RLEs of %d: %s\n", label, err.Error())
+			return fmt.Errorf("can't serialize modified RLEs of %d: %v\n", label, err)
 		}
 		batch.Put(tk, rleBytes)
 	}
 
 	if err := batch.Commit(); err != nil {
-		return fmt.Errorf("Batch commit during mod of %s label %d: %s\n", d.DataName(), label, err.Error())
+		return fmt.Errorf("Batch commit during mod of %s label %d: %v\n", d.DataName(), label, err)
 	}
 
 	// Publish change in label sizes.
@@ -1300,7 +1299,7 @@ func (d *Data) PutSparseVol(v dvid.VersionID, label uint64, r io.Reader) error {
 func GetSparseCoarseVol(ctx storage.Context, label uint64) ([]byte, error) {
 	store, err := storage.SmallDataStore()
 	if err != nil {
-		return nil, fmt.Errorf("Data type labelvol had error initializing store: %s\n", err.Error())
+		return nil, fmt.Errorf("Data type labelvol had error initializing store: %v\n", err)
 	}
 
 	// Create the sparse volume header
@@ -1322,18 +1321,17 @@ func GetSparseCoarseVol(ctx storage.Context, label uint64) ([]byte, error) {
 	var spans dvid.Spans
 	keys, err := store.KeysInRange(ctx, begTKey, endTKey)
 	if err != nil {
-		return nil, fmt.Errorf("Cannot get keys for coarse sparse volume: %s", err.Error())
+		return nil, fmt.Errorf("Cannot get keys for coarse sparse volume: %v", err)
 	}
 	for _, tk := range keys {
 		numBlocks++
 		_, blockStr, err := DecodeTKey(tk)
 		if err != nil {
-			return nil, fmt.Errorf("Error retrieving RLE runs for label %d: %s", label, err.Error())
+			return nil, fmt.Errorf("Error retrieving RLE runs for label %d: %v", label, err)
 		}
 		indexZYX, err := blockStr.IndexZYX()
 		if err != nil {
-			return nil, fmt.Errorf("Error decoding block coordinate (%v) for sparse volume: %s\n",
-				blockStr, err.Error())
+			return nil, fmt.Errorf("Error decoding block coordinate (%v) for sparse volume: %v\n", blockStr, err)
 		}
 		x, y, z := indexZYX.Unpack()
 		if span == nil {

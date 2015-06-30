@@ -18,7 +18,7 @@ type Iterator struct {
 func NewIterator(roiName dvid.InstanceName, versionID dvid.VersionID, b dvid.Bounder) (*Iterator, error) {
 	dataservice, err := datastore.GetDataByVersion(versionID, roiName)
 	if err != nil {
-		return nil, fmt.Errorf("Can't get ROI with name %q: %s", roiName, err.Error())
+		return nil, fmt.Errorf("Can't get ROI with name %q: %v", roiName, err)
 	}
 	data, ok := dataservice.(*Data)
 	if !ok {

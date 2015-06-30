@@ -90,7 +90,7 @@ func newDataInstance(uuid dvid.UUID, t *testing.T, name dvid.InstanceName) *Data
 	config := dvid.NewConfig()
 	dataservice, err := datastore.NewData(uuid, labelsT, name, config)
 	if err != nil {
-		t.Errorf("Unable to create labelblk instance %q: %s\n", name, err.Error())
+		t.Errorf("Unable to create labelblk instance %q: %v\n", name, err)
 	}
 	labels, ok := dataservice.(*Data)
 	if !ok {
@@ -116,10 +116,10 @@ func TestLabelblkDirectAPI(t *testing.T) {
 	// Store it into datastore at root
 	v, err := labels.NewVoxels(subvol, data)
 	if err != nil {
-		t.Fatalf("Unable to make new labels Voxels: %s\n", err.Error())
+		t.Fatalf("Unable to make new labels Voxels: %v\n", err)
 	}
 	if err = labels.PutVoxels(versionID, v, nil); err != nil {
-		t.Errorf("Unable to put labels for %s: %s\n", labelsCtx, err.Error())
+		t.Errorf("Unable to put labels for %s: %v\n", labelsCtx, err)
 	}
 	if v.NumVoxels() != int64(len(data))/8 {
 		t.Errorf("# voxels (%d) after PutVoxels != # original voxels (%d)\n",
@@ -129,10 +129,10 @@ func TestLabelblkDirectAPI(t *testing.T) {
 	// Read the stored image
 	v2, err := labels.NewVoxels(subvol, nil)
 	if err != nil {
-		t.Errorf("Unable to make new labels ExtHandler: %s\n", err.Error())
+		t.Errorf("Unable to make new labels ExtHandler: %v\n", err)
 	}
 	if err = labels.GetVoxels(versionID, v2, nil); err != nil {
-		t.Errorf("Unable to get voxels for %s: %s\n", labelsCtx, err.Error())
+		t.Errorf("Unable to get voxels for %s: %v\n", labelsCtx, err)
 	}
 
 	// Make sure the retrieved image matches the original
@@ -172,7 +172,7 @@ func TestLabelblkRepoPersistence(t *testing.T) {
 	config.Set("VoxelUnits", "microns,millimeters,nanometers")
 	dataservice, err := datastore.NewData(uuid, labelsT, "mylabels", config)
 	if err != nil {
-		t.Errorf("Unable to create labels instance: %s\n", err.Error())
+		t.Errorf("Unable to create labels instance: %v\n", err)
 	}
 	labels, ok := dataservice.(*Data)
 	if !ok {
@@ -182,13 +182,13 @@ func TestLabelblkRepoPersistence(t *testing.T) {
 
 	// Restart test datastore and see if datasets are still there.
 	if err = datastore.SaveDataByUUID(uuid, labels); err != nil {
-		t.Fatalf("Unable to save repo during labels persistence test: %s\n", err.Error())
+		t.Fatalf("Unable to save repo during labels persistence test: %v\n", err)
 	}
 	tests.CloseReopenStore()
 
 	dataservice2, err := datastore.GetDataByUUID(uuid, "mylabels")
 	if err != nil {
-		t.Fatalf("Can't get labels instance from reloaded test db: %s\n", err.Error())
+		t.Fatalf("Can't get labels instance from reloaded test db: %v\n", err)
 	}
 	labels2, ok := dataservice2.(*Data)
 	if !ok {
@@ -291,7 +291,7 @@ func (vol *labelVol) postLabelVolume(t *testing.T, uuid dvid.UUID, compression, 
 		compressed := make([]byte, lz4.CompressBound(vol.data))
 		var outSize int
 		if outSize, err = lz4.Compress(vol.data, compressed); err != nil {
-			t.Fatal(err.Error())
+			t.Fatal(err)
 		}
 		data = compressed[:outSize]
 	case "gzip":
@@ -299,11 +299,11 @@ func (vol *labelVol) postLabelVolume(t *testing.T, uuid dvid.UUID, compression, 
 		var buf bytes.Buffer
 		gw := gzip.NewWriter(&buf)
 		if _, err = gw.Write(vol.data); err != nil {
-			t.Fatal(err.Error())
+			t.Fatal(err)
 		}
 		data = buf.Bytes()
 		if err = gw.Close(); err != nil {
-			t.Fatal(err.Error())
+			t.Fatal(err)
 		}
 	default:
 		data = vol.data
@@ -343,21 +343,21 @@ func (vol labelVol) getLabelVolume(t *testing.T, uuid dvid.UUID, compression, ro
 	case "lz4":
 		uncompressed := make([]byte, vol.numBytes())
 		if err := lz4.Uncompress(data, uncompressed); err != nil {
-			t.Fatalf("Unable to uncompress LZ4 data (%s), %d bytes: %s\n", apiStr, len(data), err.Error())
+			t.Fatalf("Unable to uncompress LZ4 data (%s), %d bytes: %v\n", apiStr, len(data), err)
 		}
 		data = uncompressed
 	case "gzip":
 		buf := bytes.NewBuffer(data)
 		gr, err := gzip.NewReader(buf)
 		if err != nil {
-			t.Fatalf("Error on gzip new reader: %s\n", err.Error())
+			t.Fatalf("Error on gzip new reader: %v\n", err)
 		}
 		uncompressed, err := ioutil.ReadAll(gr)
 		if err != nil {
-			t.Fatalf("Error on reading gzip: %s\n", err.Error())
+			t.Fatalf("Error on reading gzip: %v\n", err)
 		}
 		if err = gr.Close(); err != nil {
-			t.Fatalf("Error on closing gzip: %s\n", err.Error())
+			t.Fatalf("Error on closing gzip: %v\n", err)
 		}
 		data = uncompressed
 	default:
@@ -493,7 +493,7 @@ func (vol labelVol) testSlices(t *testing.T, uuid dvid.UUID) {
 	xy := server.TestHTTP(t, "GET", apiStr, nil)
 	img, format, err := dvid.ImageFromBytes(xy, EncodeFormat(), false)
 	if err != nil {
-		t.Fatalf("Error on XY labels GET: %s\n", err.Error())
+		t.Fatalf("Error on XY labels GET: %v\n", err)
 	}
 	if format != "png" {
 		t.Errorf("Expected XY labels GET to return %q image, got %q instead.\n", "png", format)
@@ -513,7 +513,7 @@ func (vol labelVol) testSlices(t *testing.T, uuid dvid.UUID) {
 	xz := server.TestHTTP(t, "GET", apiStr, nil)
 	img, format, err = dvid.ImageFromBytes(xz, EncodeFormat(), false)
 	if err != nil {
-		t.Fatalf("Error on XZ labels GET: %s\n", err.Error())
+		t.Fatalf("Error on XZ labels GET: %v\n", err)
 	}
 	if format != "png" {
 		t.Errorf("Expected XZ labels GET to return %q image, got %q instead.\n", "png", format)
@@ -533,7 +533,7 @@ func (vol labelVol) testSlices(t *testing.T, uuid dvid.UUID) {
 	yz := server.TestHTTP(t, "GET", apiStr, nil)
 	img, format, err = dvid.ImageFromBytes(yz, EncodeFormat(), false)
 	if err != nil {
-		t.Fatalf("Error on YZ labels GET: %s\n", err.Error())
+		t.Fatalf("Error on YZ labels GET: %v\n", err)
 	}
 	if format != "png" {
 		t.Errorf("Expected YZ labels GET to return %q image, got %q instead.\n", "png", format)

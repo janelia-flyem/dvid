@@ -66,11 +66,11 @@ func TestDataGobEncoding(t *testing.T) {
 
 	encoding, err := data.GobEncode()
 	if err != nil {
-		t.Fatalf("Couldn't Gob encode test data: %s\n", err.Error())
+		t.Fatalf("Couldn't Gob encode test data: %v\n", err)
 	}
 	data2 := &TestData{new(Data)}
 	if err = data2.GobDecode(encoding); err != nil {
-		t.Fatalf("Couldn't Gob decode test data: %s\n", err.Error())
+		t.Fatalf("Couldn't Gob decode test data: %v\n", err)
 	}
 	if !reflect.DeepEqual(data, data2) {
 		t.Errorf("Bad Gob roundtrip:\nOriginal: %v\nReturned: %v\n", data, data2)

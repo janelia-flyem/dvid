@@ -49,7 +49,7 @@ func (c *Config) SetByJSON(jsonData io.Reader) error {
 	}
 	decoder := json.NewDecoder(jsonData)
 	if err := decoder.Decode(&(c.values)); err != nil && err != io.EOF {
-		return fmt.Errorf("Malformed JSON request in body: %s", err.Error())
+		return fmt.Errorf("Malformed JSON request in body: %v", err)
 	}
 	// Convert all keys to lower case.
 	for key, _ := range c.values {

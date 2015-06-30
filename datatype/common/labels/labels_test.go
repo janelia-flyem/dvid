@@ -109,14 +109,14 @@ func TestMergeCache(t *testing.T) {
 	for _, tuple := range merges {
 		op, err := tuple.Op()
 		if err != nil {
-			t.Errorf("Error converting tuple %v to MergeOp: %s\n", tuple, err.Error())
+			t.Errorf("Error converting tuple %v to MergeOp: %v\n", tuple, err)
 		}
 		MergeCache.Add(iv, op)
 	}
 	for _, tuple := range merges2 {
 		op, err := tuple.Op()
 		if err != nil {
-			t.Errorf("Error converting tuple %v to MergeOp: %s\n", tuple, err.Error())
+			t.Errorf("Error converting tuple %v to MergeOp: %v\n", tuple, err)
 		}
 		MergeCache.Add(iv2, op)
 	}

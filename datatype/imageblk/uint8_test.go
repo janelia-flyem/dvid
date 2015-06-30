@@ -93,7 +93,7 @@ func makeGrayscale(uuid dvid.UUID, t *testing.T, name string) *Data {
 	config := dvid.NewConfig()
 	dataservice, err := datastore.NewData(uuid, grayscaleT, dvid.InstanceName(name), config)
 	if err != nil {
-		t.Errorf("Unable to create grayscale instance %q: %s\n", name, err.Error())
+		t.Errorf("Unable to create grayscale instance %q: %v\n", name, err)
 	}
 	grayscale, ok := dataservice.(*Data)
 	if !ok {
@@ -134,7 +134,7 @@ func TestVoxelsInstanceCreation(t *testing.T) {
 		}
 	}{}
 	if err := json.Unmarshal(result, &parsed); err != nil {
-		t.Fatalf("Error parsing JSON response of new instance metadata: %s\n", err.Error())
+		t.Fatalf("Error parsing JSON response of new instance metadata: %v\n", err)
 	}
 	if parsed.Base.Name != name {
 		t.Errorf("Parsed new instance has unexpected name: %s != %s (expected)\n",
@@ -195,7 +195,7 @@ func TestForegroundROI(t *testing.T) {
 	var reply datastore.Response
 	cmd := dvid.Command{"node", string(uuid), "grayscale", "roi", "foreground", "0,255"}
 	if err := grayscale.DoRPC(datastore.Request{Command: cmd}, &reply); err != nil {
-		t.Fatalf("Error running foreground ROI command: %s\n", err.Error())
+		t.Fatalf("Error running foreground ROI command: %v\n", err)
 	}
 
 	// Check results, making sure it's valid (200).
@@ -204,7 +204,7 @@ func TestForegroundROI(t *testing.T) {
 		roiRequest := fmt.Sprintf("%snode/%s/foreground/roi", server.WebAPIPath, uuid)
 		req, err := http.NewRequest("GET", roiRequest, nil)
 		if err != nil {
-			t.Fatalf("Unsuccessful GET on foreground ROI: %s", err.Error())
+			t.Fatalf("Unsuccessful GET on foreground ROI: %v", err)
 		}
 		w := httptest.NewRecorder()
 		server.ServeSingleHTTP(w, req)
@@ -246,10 +246,10 @@ func TestDirectCalls(t *testing.T) {
 	// Store it into datastore at root
 	v, err := grayscale.NewVoxels(subvol, data)
 	if err != nil {
-		t.Fatalf("Unable to make new grayscale voxels: %s\n", err.Error())
+		t.Fatalf("Unable to make new grayscale voxels: %v\n", err)
 	}
 	if err = grayscale.PutVoxels(versionID, v, nil); err != nil {
-		t.Errorf("Unable to put voxels for %s: %s\n", grayscaleCtx, err.Error())
+		t.Errorf("Unable to put voxels for %s: %v\n", grayscaleCtx, err)
 	}
 	if v.NumVoxels() != int64(len(origData)) {
 		t.Errorf("# voxels (%d) after PutVoxels != # original voxels (%d)\n",
@@ -259,10 +259,10 @@ func TestDirectCalls(t *testing.T) {
 	// Read the stored image
 	v2, err := grayscale.NewVoxels(subvol, nil)
 	if err != nil {
-		t.Errorf("Unable to make new grayscale ExtHandler: %s\n", err.Error())
+		t.Errorf("Unable to make new grayscale ExtHandler: %v\n", err)
 	}
 	if err = grayscale.GetVoxels(versionID, v2, nil); err != nil {
-		t.Errorf("Unable to get voxels for %s: %s\n", grayscaleCtx, err.Error())
+		t.Errorf("Unable to get voxels for %s: %v\n", grayscaleCtx, err)
 	}
 
 	// Make sure the retrieved image matches the original
@@ -353,7 +353,7 @@ func TestROIMaskGrayscale8(t *testing.T) {
 	size := dvid.Point2d{100, 100}
 	slice, err := dvid.NewOrthogSlice(dvid.XY, offset, size)
 	if err != nil {
-		t.Fatalf("Problem getting new orthogonal slice: %s\n", err.Error())
+		t.Fatalf("Problem getting new orthogonal slice: %s\n", err)
 	}
 	testData := storeGrayscale(t, "XY", slice, nil)
 
@@ -361,7 +361,7 @@ func TestROIMaskGrayscale8(t *testing.T) {
 	config := dvid.NewConfig()
 	dataservice, err := testData.repo.NewData(roiT, "roi", config)
 	if err != nil {
-		t.Fatalf("Error creating new roi instance: %s\n", err.Error())
+		t.Fatalf("Error creating new roi instance: %s\n", err)
 	}
 	roiData, ok := dataservice.(*roi.Data)
 	if !ok {
@@ -370,18 +370,18 @@ func TestROIMaskGrayscale8(t *testing.T) {
 
 	// write ROI
 	if err = roiData.PutJSON(testData.versionID, []byte(testROIJson)); err != nil {
-		t.Fatalf("Unable to PUT test ROI: %s\n", err.Error())
+		t.Fatalf("Unable to PUT test ROI: %s\n", err)
 	}
 
 	// Get the buffer for the retrieved ROI-enabled grayscale slice
 	roiSlice, err := testData.data.NewVoxels(slice, nil)
 	if err != nil {
-		t.Fatalf("Could not create ExtHandler: %s\n", err.Error())
+		t.Fatalf("Could not create ExtHandler: %s\n", err)
 	}
 
 	// Read without ROI
 	if err := testData.data.GetVoxels(testData.versionID, roiSlice, nil); err != nil {
-		t.Fatalf("Unable to get image for %s: %s\n", testData.ctx, err.Error())
+		t.Fatalf("Unable to get image for %s: %s\n", testData.ctx, err)
 	}
 
 	// Check points in and outside ROI are set appropriately.
@@ -400,12 +400,12 @@ func TestROIMaskGrayscale8(t *testing.T) {
 	var roiObj ROI
 	roiObj.Iter, err = roi.NewIterator("roi", testData.versionID, roiSlice)
 	if err != nil {
-		t.Fatalf("Error making ROI iterator: %s\n", err.Error())
+		t.Fatalf("Error making ROI iterator: %s\n", err)
 	}
 
 	// Read grayscale using ROI
 	if err := testData.data.GetVoxels(testData.versionID, roiSlice, &roiObj); err != nil {
-		t.Fatalf("Unable to get image for %s: %s\n", testData.ctx, err.Error())
+		t.Fatalf("Unable to get image for %s: %s\n", testData.ctx, err)
 	}
 
 	// Make sure few points are zero and others aren't
@@ -426,12 +426,12 @@ func TestROIMaskGrayscale8(t *testing.T) {
 	// Get the buffer for the retrieved ROI-enabled grayscale slice
 	roiSlice2, err := testData.data.NewVoxels(slice, nil)
 	if err != nil {
-		t.Fatalf("Could not create ExtHandler: %s\n", err.Error())
+		t.Fatalf("Could not create ExtHandler: %s\n", err)
 	}
 
 	// Read without ROI
 	if err := testData2.data.GetVoxels(testData2.versionID, roiSlice2, nil); err != nil {
-		t.Fatalf("Unable to get image for %s: %s\n", testData2.ctx, err.Error())
+		t.Fatalf("Unable to get image for %s: %s\n", testData2.ctx, err)
 	}
 
 	// Make sure points outside ROI are black and the one inside is on.
@@ -459,7 +459,7 @@ func TestGrayscaleRepoPersistence(t *testing.T) {
 	config.Set("VoxelUnits", "microns,millimeters,nanometers")
 	dataservice, err := datastore.NewData(uuid, grayscaleT, "mygrayscale", config)
 	if err != nil {
-		t.Errorf("Unable to create grayscale instance: %s\n", err.Error())
+		t.Errorf("Unable to create grayscale instance: %s\n", err)
 	}
 	grayscale, ok := dataservice.(*Data)
 	if !ok {
@@ -469,13 +469,13 @@ func TestGrayscaleRepoPersistence(t *testing.T) {
 
 	// Restart test datastore and see if datasets are still there.
 	if err = datastore.SaveDataByUUID(uuid, grayscale); err != nil {
-		t.Fatalf("Unable to save repo during grayscale persistence test: %s\n", err.Error())
+		t.Fatalf("Unable to save repo during grayscale persistence test: %v\n", err)
 	}
 	tests.CloseReopenStore()
 
 	dataservice2, err := datastore.GetDataByUUID(uuid, "mygrayscale")
 	if err != nil {
-		t.Fatalf("Can't get grayscale instance from reloaded test db: %s\n", err.Error())
+		t.Fatalf("Can't get grayscale instance from reloaded test db: %v\n", err)
 	}
 	grayscale2, ok := dataservice2.(*Data)
 	if !ok {
@@ -498,7 +498,7 @@ func TestGrayscale8HTTPAPI(t *testing.T) {
 	_, versionID := initTestRepo()
 	uuid, err := datastore.UUIDFromVersion(versionID)
 	if err != nil {
-		t.Errorf(err.Error())
+		t.Errorf(err)
 	}
 
 	// Create a data instance
@@ -509,7 +509,7 @@ func TestGrayscale8HTTPAPI(t *testing.T) {
 	apiStr := fmt.Sprintf("%srepo/%s/instance", server.WebAPIPath, uuid)
 	req, err := http.NewRequest("POST", apiStr, config)
 	if err != nil {
-		t.Fatalf("Unsuccessful POST request (%s): %s\n", apiStr, err.Error())
+		t.Fatalf("Unsuccessful POST request (%s): %s\n", apiStr, err)
 	}
 	w := httptest.NewRecorder()
 	server.WebMux.ServeHTTP(w, req)
@@ -522,7 +522,7 @@ func TestGrayscale8HTTPAPI(t *testing.T) {
 	apiStr = fmt.Sprintf("%snode/%s/%s/raw/0_1_2/250_250/0_0_0", server.WebAPIPath, uuid, name)
 	req, err = http.NewRequest("GET", apiStr, nil)
 	if err != nil {
-		t.Fatalf("Unsuccessful POST request (%s): %s\n", apiStr, err.Error())
+		t.Fatalf("Unsuccessful POST request (%s): %s\n", apiStr, err)
 	}
 	w = httptest.NewRecorder()
 	server.WebMux.ServeHTTP(w, req)

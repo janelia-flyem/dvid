@@ -87,7 +87,7 @@ func (q PostProcQueue) Run() {
 			continue
 		}
 		if err := callback(command.data); err != nil {
-			dvid.Errorf("Error in post-proc command %q: %s\n", command.data, err.Error())
+			dvid.Errorf("Error in post-proc command %q: %v\n", command.data, err)
 		}
 	}
 }

@@ -653,14 +653,14 @@ func (d *Data) handleSubgraphBulk(ctx *datastore.VersionedCtx, db storage.GraphD
 				used_vertices[vertex.Id] = struct{}{}
 				storedvert, err := db.GetVertex(ctx, vertex.Id)
 				if err != nil {
-					return fmt.Errorf("Failed to retrieve vertix %d: %s\n", vertex.Id, err.Error())
+					return fmt.Errorf("Failed to retrieve vertix %d: %v\n", vertex.Id, err)
 				}
 				vertices = append(vertices, storedvert)
 				for _, vert2 := range storedvert.Vertices {
 					if _, ok := used_vertices[vert2]; !ok {
 						edge, err := db.GetEdge(ctx, storedvert.Id, vert2)
 						if err != nil {
-							return fmt.Errorf("Failed to retrieve edge %d-%d: %s\n", storedvert.Id, vert2, err.Error())
+							return fmt.Errorf("Failed to retrieve edge %d-%d: %v\n", storedvert.Id, vert2, err)
 						}
 						edges = append(edges, edge)
 					}
@@ -670,11 +670,11 @@ func (d *Data) handleSubgraphBulk(ctx *datastore.VersionedCtx, db storage.GraphD
 			// if no set of vertices are supplied, just grab the whole graph
 			vertices, err = db.GetVertices(ctx)
 			if err != nil {
-				return fmt.Errorf("Failed to retrieve vertices: %s\n", err.Error())
+				return fmt.Errorf("Failed to retrieve vertices: %v\n", err)
 			}
 			edges, err = db.GetEdges(ctx)
 			if err != nil {
-				return fmt.Errorf("Failed to retrieve edges: %s\n", err.Error())
+				return fmt.Errorf("Failed to retrieve edges: %v\n", err)
 			}
 		}
 		for _, vertex := range vertices {
@@ -694,13 +694,13 @@ func (d *Data) handleSubgraphBulk(ctx *datastore.VersionedCtx, db storage.GraphD
 		for _, vertex := range labelgraph.Vertices {
 			err := db.AddVertex(ctx, vertex.Id, vertex.Weight)
 			if err != nil {
-				return fmt.Errorf("Failed to add vertex: %s\n", err.Error())
+				return fmt.Errorf("Failed to add vertex: %v\n", err)
 			}
 		}
 		for _, edge := range labelgraph.Edges {
 			err := db.AddEdge(ctx, edge.Id1, edge.Id2, edge.Weight)
 			if err != nil {
-				return fmt.Errorf("Failed to add edge: %s\n", err.Error())
+				return fmt.Errorf("Failed to add edge: %v\n", err)
 			}
 		}
 	} else if method == "delete" {
@@ -715,7 +715,7 @@ func (d *Data) handleSubgraphBulk(ctx *datastore.VersionedCtx, db storage.GraphD
 		} else {
 			err = db.RemoveGraph(ctx)
 			if err != nil {
-				return fmt.Errorf("Failed to remove graph: %s\n", err.Error())
+				return fmt.Errorf("Failed to remove graph: %v\n", err)
 			}
 		}
 	} else {
@@ -788,14 +788,14 @@ func (d *Data) handleWeightUpdate(ctx *datastore.VersionedCtx, db storage.GraphD
 				err = db.AddVertex(ctx, vertex.Id, vertex.Weight)
 				if err != nil {
 					transaction_group.closeTransaction()
-					return fmt.Errorf("Failed to add vertex: %s\n", err.Error())
+					return fmt.Errorf("Failed to add vertex: %v\n", err)
 				}
 			} else {
 				// increment/decrement weight
 				err = db.SetVertexWeight(ctx, vertex.Id, storedvert.Weight+vertex.Weight)
 				if err != nil {
 					transaction_group.closeTransaction()
-					return fmt.Errorf("Failed to add vertex: %s\n", err.Error())
+					return fmt.Errorf("Failed to add vertex: %v\n", err)
 				}
 			}
 
@@ -822,14 +822,14 @@ func (d *Data) handleWeightUpdate(ctx *datastore.VersionedCtx, db storage.GraphD
 				err = db.AddEdge(ctx, edge.Id1, edge.Id2, edge.Weight)
 				if err != nil {
 					transaction_group.closeTransaction()
-					return fmt.Errorf("Failed to add edge: %s\n", err.Error())
+					return fmt.Errorf("Failed to add edge: %v\n", err)
 				}
 			} else {
 				// increment/decrement weight
 				err = db.SetEdgeWeight(ctx, edge.Id1, edge.Id2, storededge.Weight+edge.Weight)
 				if err != nil {
 					transaction_group.closeTransaction()
-					return fmt.Errorf("Failed to update edge: %s\n", err.Error())
+					return fmt.Errorf("Failed to update edge: %v\n", err)
 				}
 			}
 
@@ -870,7 +870,7 @@ func (d *Data) handleMerge(ctx *datastore.VersionedCtx, db storage.GraphDB, w ht
 	for i, vertex := range labelgraph.Vertices {
 		vert, err := db.GetVertex(ctx, vertex.Id)
 		if err != nil {
-			return fmt.Errorf("Failed to retrieve vertex %d: %s\n", vertex.Id, err.Error())
+			return fmt.Errorf("Failed to retrieve vertex %d: %v\n", vertex.Id, err)
 		}
 		allverts[vert.Id] = struct{}{}
 		vertweight += vert.Weight
@@ -881,7 +881,7 @@ func (d *Data) handleMerge(ctx *datastore.VersionedCtx, db storage.GraphDB, w ht
 			for _, vert2 := range vert.Vertices {
 				edge, err := db.GetEdge(ctx, vert.Id, vert2)
 				if err != nil {
-					return fmt.Errorf("Failed to retrieve edge %d-%d: %s\n", vertex.Id, vert2, err.Error())
+					return fmt.Errorf("Failed to retrieve edge %d-%d: %v\n", vertex.Id, vert2, err)
 				}
 				overlapweights[vert2] += edge.Weight
 			}
@@ -892,7 +892,7 @@ func (d *Data) handleMerge(ctx *datastore.VersionedCtx, db storage.GraphDB, w ht
 	for _, vert2 := range keepvertex.Vertices {
 		edge, err := db.GetEdge(ctx, keepvertex.Id, vert2)
 		if err != nil {
-			return fmt.Errorf("Failed to retrieve edge %d-%d: %s\n", keepvertex.Id, vert2, err.Error())
+			return fmt.Errorf("Failed to retrieve edge %d-%d: %v\n", keepvertex.Id, vert2, err)
 		}
 		overlapweights[vert2] += edge.Weight
 		keepverts[vert2] = struct{}{}
@@ -926,13 +926,13 @@ func (d *Data) handleMerge(ctx *datastore.VersionedCtx, db storage.GraphDB, w ht
 				// if not in keepverts create new edge
 				err := db.AddEdge(ctx, keepvertex.Id, id2, newweight)
 				if err != nil {
-					return fmt.Errorf("Failed to create edge %d-%d: %s\n", keepvertex.Id, id2, err.Error())
+					return fmt.Errorf("Failed to create edge %d-%d: %v\n", keepvertex.Id, id2, err)
 				}
 			} else {
 				// else just update weight
 				err := db.SetEdgeWeight(ctx, keepvertex.Id, id2, newweight)
 				if err != nil {
-					return fmt.Errorf("Failed to update weight on edge %d-%d: %s\n", keepvertex.Id, id2, err.Error())
+					return fmt.Errorf("Failed to update weight on edge %d-%d: %v\n", keepvertex.Id, id2, err)
 				}
 			}
 		}
@@ -941,7 +941,7 @@ func (d *Data) handleMerge(ctx *datastore.VersionedCtx, db storage.GraphDB, w ht
 	// update vertex weight
 	err := db.SetVertexWeight(ctx, labelgraph.Vertices[numverts-1].Id, vertweight)
 	if err != nil {
-		return fmt.Errorf("Failed to update weight on vertex %d: %s\n", keepvertex.Id, err.Error())
+		return fmt.Errorf("Failed to update weight on vertex %d: %v\n", keepvertex.Id, err)
 	}
 
 	// remove old vertices which will remove the old edges
@@ -951,7 +951,7 @@ func (d *Data) handleMerge(ctx *datastore.VersionedCtx, db storage.GraphDB, w ht
 		}
 		err := db.RemoveVertex(ctx, vertex.Id)
 		if err != nil {
-			return fmt.Errorf("Failed to remove vertex %d: %s\n", vertex.Id, err.Error())
+			return fmt.Errorf("Failed to remove vertex %d: %v\n", vertex.Id, err)
 		}
 	}
 	return nil
@@ -972,7 +972,7 @@ func (d *Data) handleNeighbors(ctx *datastore.VersionedCtx, db storage.GraphDB, 
 
 	storedvert, err := db.GetVertex(ctx, id)
 	if err != nil {
-		return fmt.Errorf("Failed to retrieve vertix %d: %s\n", id, err.Error())
+		return fmt.Errorf("Failed to retrieve vertix %d: %v\n", id, err)
 	}
 
 	labelgraph.Vertices = append(labelgraph.Vertices, labelVertex{storedvert.Id, storedvert.Weight})
@@ -980,12 +980,12 @@ func (d *Data) handleNeighbors(ctx *datastore.VersionedCtx, db storage.GraphDB, 
 	for _, vert2 := range storedvert.Vertices {
 		vertex, err := db.GetVertex(ctx, vert2)
 		if err != nil {
-			return fmt.Errorf("Failed to retrieve vertex %d: %s\n", vertex.Id, err.Error())
+			return fmt.Errorf("Failed to retrieve vertex %d: %v\n", vertex.Id, err)
 		}
 		labelgraph.Vertices = append(labelgraph.Vertices, labelVertex{vertex.Id, vertex.Weight})
 		edge, err := db.GetEdge(ctx, id, vert2)
 		if err != nil {
-			return fmt.Errorf("Failed to retrieve edge %d-%d: %s\n", vertex.Id, vert2, err.Error())
+			return fmt.Errorf("Failed to retrieve edge %d-%d: %v\n", vertex.Id, vert2, err)
 		}
 		labelgraph.Edges = append(labelgraph.Edges, labelEdge{edge.Vertexpair.Vertex1, edge.Vertexpair.Vertex2, edge.Weight})
 	}
@@ -1025,7 +1025,7 @@ func (d *Data) handlePropertyTransaction(ctx *datastore.VersionedCtx, db storage
 	transactions, start, err := d.transaction_log.createTransactionGroupBinary(data, readonly)
 	defer transactions.closeTransaction()
 	if err != nil {
-		return fmt.Errorf("Failed to create property transaction: %s", err.Error())
+		return fmt.Errorf("Failed to create property transaction: %v", err)
 	}
 
 	returned_data := transactions.exportTransactionsBinary()
@@ -1069,7 +1069,7 @@ func (d *Data) handlePropertyTransaction(ctx *datastore.VersionedCtx, db storage
 			// execute post
 			serialization, err := dvid.SerializeData(data[data_begin:data_end], d.Compression(), d.Checksum())
 			if err != nil {
-				return fmt.Errorf("Unable to serialize data: %s\n", err.Error())
+				return fmt.Errorf("Unable to serialize data: %v\n", err)
 			}
 			if edgemode {
 				err = db.SetEdgeProperty(ctx, id, id2, propertyname, serialization)
@@ -1077,7 +1077,7 @@ func (d *Data) handlePropertyTransaction(ctx *datastore.VersionedCtx, db storage
 				err = db.SetVertexProperty(ctx, id, propertyname, serialization)
 			}
 			if err != nil {
-				return fmt.Errorf("Failed to add property %s: %s\n", propertyname, err.Error())
+				return fmt.Errorf("Failed to add property %s: %v\n", propertyname, err)
 			}
 		}
 	} else {
@@ -1126,7 +1126,7 @@ func (d *Data) handlePropertyTransaction(ctx *datastore.VersionedCtx, db storage
 				uncompress := true
 				data_serialized, _, err = dvid.DeserializeData(dataout, uncompress)
 				if err != nil {
-					return fmt.Errorf("Unable to deserialize data for property '%s': %s\n", propertyname, err.Error())
+					return fmt.Errorf("Unable to deserialize data for property '%s': %v\n", propertyname, err)
 				}
 			}
 
@@ -1187,12 +1187,12 @@ func (d *Data) handleProperty(ctx *datastore.VersionedCtx, db storage.GraphDB, w
 		if edgemode {
 			db.RemoveEdgeProperty(ctx, id1, id2, propertyname)
 			if err != nil {
-				return fmt.Errorf("Failed to remove edge property %d-%d %s: %s\n", id1, id2, propertyname, err.Error())
+				return fmt.Errorf("Failed to remove edge property %d-%d %s: %v\n", id1, id2, propertyname, err)
 			}
 		} else {
 			db.RemoveVertexProperty(ctx, id1, propertyname)
 			if err != nil {
-				return fmt.Errorf("Failed to remove vertex property %d %s: %s\n", id1, propertyname, err.Error())
+				return fmt.Errorf("Failed to remove vertex property %d %s: %v\n", id1, propertyname, err)
 			}
 		}
 	} else if method == "get" {
@@ -1203,12 +1203,12 @@ func (d *Data) handleProperty(ctx *datastore.VersionedCtx, db storage.GraphDB, w
 			data, err = db.GetVertexProperty(ctx, id1, propertyname)
 		}
 		if err != nil {
-			return fmt.Errorf("Failed to get property %s: %s\n", propertyname, err.Error())
+			return fmt.Errorf("Failed to get property %s: %v\n", propertyname, err)
 		}
 		uncompress := true
 		value, _, e := dvid.DeserializeData(data, uncompress)
 		if e != nil {
-			err = fmt.Errorf("Unable to deserialize data for property '%s': %s\n", propertyname, e.Error())
+			err = fmt.Errorf("Unable to deserialize data for property '%s': %v\n", propertyname, e.Error())
 			return err
 		}
 
@@ -1225,7 +1225,7 @@ func (d *Data) handleProperty(ctx *datastore.VersionedCtx, db storage.GraphDB, w
 		}
 		serialization, err := dvid.SerializeData(data, d.Compression(), d.Checksum())
 		if err != nil {
-			return fmt.Errorf("Unable to serialize data: %s\n", err.Error())
+			return fmt.Errorf("Unable to serialize data: %v\n", err)
 		}
 		if edgemode {
 			err = db.SetEdgeProperty(ctx, id1, id2, propertyname, serialization)
@@ -1233,7 +1233,7 @@ func (d *Data) handleProperty(ctx *datastore.VersionedCtx, db storage.GraphDB, w
 			err = db.SetVertexProperty(ctx, id1, propertyname, serialization)
 		}
 		if err != nil {
-			return fmt.Errorf("Failed to add property %s: %s\n", propertyname, err.Error())
+			return fmt.Errorf("Failed to add property %s: %v\n", propertyname, err)
 		}
 	}
 
@@ -1314,7 +1314,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 
 	db, err := storage.GraphStore()
 	if err != nil {
-		server.BadRequest(w, r, err.Error())
+		server.BadRequest(w, r, err)
 		return
 	}
 
@@ -1343,7 +1343,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	case "info":
 		jsonBytes, err := d.MarshalJSON()
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -1358,12 +1358,12 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 		labelgraph, err := d.ExtractGraph(r, disableSchema)
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		err = d.handleSubgraphBulk(ctx, db, w, labelgraph, method)
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 	case "neighbors":
@@ -1373,7 +1373,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 		err := d.handleNeighbors(ctx, db, w, parts[4:])
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 	case "merge":
@@ -1383,12 +1383,12 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 		labelgraph, err := d.ExtractGraph(r, false)
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		err = d.handleMerge(ctx, db, w, labelgraph)
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 	case "weight":
@@ -1398,24 +1398,24 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 		labelgraph, err := d.ExtractGraph(r, false)
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		err = d.handleWeightUpdate(ctx, db, w, labelgraph)
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 	case "propertytransaction":
 		err := d.handlePropertyTransaction(ctx, db, w, r, parts[4:], method)
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 	case "property":
 		err := d.handleProperty(ctx, db, w, r, parts[4:], method)
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 	case "undomerge":

@@ -673,7 +673,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	case "info":
 		jsonBytes, err := d.MarshalJSON()
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -685,7 +685,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			return
 		}
 		if err := d.ServeTile(uuid, ctx, w, r, parts); err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		timedLog.Infof("HTTP %s: tile (%s)", r.Method, r.URL)
@@ -703,7 +703,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		planeStr := dvid.DataShapeString(shapeStr)
 		plane, err := planeStr.DataShape()
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		if plane.ShapeDimensions() != 2 {
@@ -712,12 +712,12 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 		slice, err := dvid.NewSliceFromStrings(planeStr, offsetStr, sizeStr, "_")
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		source, err := datastore.GetDataByUUID(uuid, d.Source)
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		src, ok := source.(*imageblk.Data)
@@ -727,7 +727,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 		img, err := d.GetImage(ctx, src, slice, parts[3] == "isotropic")
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		var formatStr string
@@ -736,7 +736,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 		err = dvid.WriteImageHttp(w, img.Get(), formatStr)
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		timedLog.Infof("HTTP %s: tile-accelerated %s %s (%s)", r.Method, planeStr, parts[3], r.URL)
@@ -852,31 +852,31 @@ func (d *Data) ServeTile(uuid dvid.UUID, ctx storage.Context, w http.ResponseWri
 	plane := dvid.DataShapeString(planeStr)
 	shape, err := plane.DataShape()
 	if err != nil {
-		err = fmt.Errorf("Illegal tile plane: %s (%s)", planeStr, err.Error())
-		server.BadRequest(w, r, err.Error())
+		err = fmt.Errorf("Illegal tile plane: %s (%v)", planeStr, err)
+		server.BadRequest(w, r, err)
 		return err
 	}
 	scaling, err := strconv.ParseUint(scalingStr, 10, 8)
 	if err != nil {
-		err = fmt.Errorf("Illegal tile scale: %s (%s)", scalingStr, err.Error())
-		server.BadRequest(w, r, err.Error())
+		err = fmt.Errorf("Illegal tile scale: %s (%v)", scalingStr, err)
+		server.BadRequest(w, r, err)
 		return err
 	}
 	tileCoord, err := dvid.StringToPoint(coordStr, "_")
 	if err != nil {
-		err = fmt.Errorf("Illegal tile coordinate: %s (%s)", coordStr, err.Error())
-		server.BadRequest(w, r, err.Error())
+		err = fmt.Errorf("Illegal tile coordinate: %s (%v)", coordStr, err)
+		server.BadRequest(w, r, err)
 		return err
 	}
 	if tileCoord.NumDims() != 3 {
 		err = fmt.Errorf("Expected 3d tile coordinate, got %s", coordStr)
-		server.BadRequest(w, r, err.Error())
+		server.BadRequest(w, r, err)
 		return err
 	}
 	indexZYX := dvid.IndexZYX{tileCoord.Value(0), tileCoord.Value(1), tileCoord.Value(2)}
 	data, err := d.getTileData(ctx, shape, Scaling(scaling), indexZYX)
 	if err != nil {
-		server.BadRequest(w, r, err.Error())
+		server.BadRequest(w, r, err)
 		return err
 	}
 	if data == nil {
@@ -905,7 +905,7 @@ func (d *Data) ServeTile(uuid dvid.UUID, ctx storage.Context, w http.ResponseWri
 		w.Header().Set("Content-type", "image/jpeg")
 	}
 	if err != nil {
-		server.BadRequest(w, r, err.Error())
+		server.BadRequest(w, r, err)
 		return err
 	}
 	if _, err = w.Write(data); err != nil {
@@ -968,7 +968,7 @@ func (d *Data) getTileData(ctx storage.Context, shape dvid.DataShape, scaling Sc
 	tileIndex := &IndexTile{&index, shape, scaling}
 	data, err := bigdata.Get(ctx, tileIndex.Bytes())
 	if err != nil {
-		return nil, fmt.Errorf("Error trying to GET from datastore: %s", err.Error())
+		return nil, fmt.Errorf("Error trying to GET from datastore: %v", err)
 	}
 	return data, nil
 }
@@ -1077,7 +1077,7 @@ func (d *Data) extractTiles(v *imageblk.Voxels, offset dvid.Point, scaling Scali
 func (d *Data) putTileFunc(versionID dvid.VersionID) (outFunc, error) {
 	bigdata, err := storage.BigDataStore()
 	if err != nil {
-		return nil, fmt.Errorf("Cannot open big data store: %s\n", err.Error())
+		return nil, fmt.Errorf("Cannot open big data store: %v\n", err)
 	}
 	ctx := datastore.NewVersionedCtx(d, versionID)
 
@@ -1225,16 +1225,16 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, request datasto
 						scaling := Scaling(key)
 						levelSpec := tileSpec[scaling]
 						if err != nil {
-							dvid.Errorf("Error in tiling: %s\n", err.Error())
+							dvid.Errorf("Error in tiling: %v\n", err)
 							return
 						}
 						if err := d.extractTiles(sliceBuffers[bufferNum], offset, scaling, outF); err != nil {
-							dvid.Errorf("Error in tiling: %s\n", err.Error())
+							dvid.Errorf("Error in tiling: %v\n", err)
 							return
 						}
 						if int(scaling) < len(tileSpec)-1 {
 							if err := sliceBuffers[bufferNum].DownRes(levelSpec.levelMag); err != nil {
-								dvid.Errorf("Error in tiling: %s\n", err.Error())
+								dvid.Errorf("Error in tiling: %v\n", err)
 								return
 							}
 						}
@@ -1278,16 +1278,16 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, request datasto
 						scaling := Scaling(key)
 						levelSpec := tileSpec[scaling]
 						if err != nil {
-							dvid.Errorf("Error in tiling: %s\n", err.Error())
+							dvid.Errorf("Error in tiling: %v\n", err)
 							return
 						}
 						if err := d.extractTiles(sliceBuffers[bufferNum], offset, scaling, outF); err != nil {
-							dvid.Errorf("Error in tiling: %s\n", err.Error())
+							dvid.Errorf("Error in tiling: %v\n", err)
 							return
 						}
 						if int(scaling) < len(tileSpec)-1 {
 							if err := sliceBuffers[bufferNum].DownRes(levelSpec.levelMag); err != nil {
-								dvid.Errorf("Error in tiling: %s\n", err.Error())
+								dvid.Errorf("Error in tiling: %v\n", err)
 								return
 							}
 						}
@@ -1332,16 +1332,16 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, request datasto
 						levelSpec := tileSpec[scaling]
 						outF, err := d.putTileFunc(versionID)
 						if err != nil {
-							dvid.Errorf("Error in tiling: %s\n", err.Error())
+							dvid.Errorf("Error in tiling: %v\n", err)
 							return
 						}
 						if err := d.extractTiles(sliceBuffers[bufferNum], offset, scaling, outF); err != nil {
-							dvid.Errorf("Error in tiling: %s\n", err.Error())
+							dvid.Errorf("Error in tiling: %v\n", err)
 							return
 						}
 						if int(scaling) < len(tileSpec)-1 {
 							if err := sliceBuffers[bufferNum].DownRes(levelSpec.levelMag); err != nil {
-								dvid.Errorf("Error in tiling: %s\n", err.Error())
+								dvid.Errorf("Error in tiling: %v\n", err)
 								return
 							}
 						}

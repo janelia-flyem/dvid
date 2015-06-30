@@ -178,7 +178,7 @@ func (d *Data) syncMerge(name dvid.InstanceName, in <-chan datastore.SyncMessage
 func (d *Data) mergeBlock(in <-chan mergeOp) {
 	store, err := storage.BigDataStore()
 	if err != nil {
-		dvid.Errorf("Data type labelblk had error initializing store: %s\n", err.Error())
+		dvid.Errorf("Data type labelblk had error initializing store: %v\n", err)
 		return
 	}
 	blockBytes := int(d.BlockSize().Prod() * 8)
@@ -199,7 +199,7 @@ func (d *Data) mergeBlock(in <-chan mergeOp) {
 
 		blockData, _, err := dvid.DeserializeData(data, true)
 		if err != nil {
-			dvid.Criticalf("unable to deserialize label block in '%s': %s\n", d.DataName(), err.Error())
+			dvid.Criticalf("unable to deserialize label block in '%s': %v\n", d.DataName(), err)
 			op.wg.Done()
 			continue
 		}
@@ -220,12 +220,12 @@ func (d *Data) mergeBlock(in <-chan mergeOp) {
 		// Store this block.
 		serialization, err := dvid.SerializeData(blockData, d.Compression(), d.Checksum())
 		if err != nil {
-			dvid.Criticalf("Unable to serialize block in %q: %s\n", d.DataName(), err.Error())
+			dvid.Criticalf("Unable to serialize block in %q: %v\n", d.DataName(), err)
 			op.wg.Done()
 			continue
 		}
 		if err := store.Put(op.ctx, tk, serialization); err != nil {
-			dvid.Errorf("Error in putting key %v: %s\n", tk, err.Error())
+			dvid.Errorf("Error in putting key %v: %v\n", tk, err)
 		}
 		op.wg.Done()
 	}
@@ -276,7 +276,7 @@ func (d *Data) syncSplit(name dvid.InstanceName, in <-chan datastore.SyncMessage
 func (d *Data) splitBlock(in <-chan splitOp) {
 	store, err := storage.BigDataStore()
 	if err != nil {
-		dvid.Errorf("Data type labelblk had error initializing store: %s\n", err.Error())
+		dvid.Errorf("Data type labelblk had error initializing store: %v\n", err)
 		return
 	}
 	batcher, ok := store.(storage.KeyValueBatcher)
@@ -305,7 +305,7 @@ func (d *Data) splitBlock(in <-chan splitOp) {
 			}
 			bdata, _, err := dvid.DeserializeData(data, true)
 			if err != nil {
-				dvid.Criticalf("unable to deserialize label block in '%s' key %v: %s\n", d.DataName(), []byte(zyxStr), err.Error())
+				dvid.Criticalf("unable to deserialize label block in '%s' key %v: %v\n", d.DataName(), []byte(zyxStr), err)
 				continue
 			}
 			if len(bdata) != blockBytes {
@@ -327,13 +327,13 @@ func (d *Data) splitBlock(in <-chan splitOp) {
 			// Write the modified block.
 			serialization, err := dvid.SerializeData(bdata, d.Compression(), d.Checksum())
 			if err != nil {
-				dvid.Criticalf("Unable to serialize block in %q: %s\n", d.DataName(), err.Error())
+				dvid.Criticalf("Unable to serialize block in %q: %v\n", d.DataName(), err)
 				continue
 			}
 			batch.Put(tk, serialization)
 		}
 		if err := batch.Commit(); err != nil {
-			dvid.Errorf("Batch PUT during %q block split of %d: %s\n", d.DataName(), op.OldLabel, err.Error())
+			dvid.Errorf("Batch PUT during %q block split of %d: %v\n", d.DataName(), op.OldLabel, err)
 		}
 		splitCache.Decr(op.ctx.InstanceVersion(), op.OldLabel)
 		timedLog.Debugf("labelblk sync complete for split of %d -> %d", op.OldLabel, op.NewLabel)

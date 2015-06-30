@@ -20,7 +20,7 @@ func init() {
 func NewRepo() (dvid.UUID, dvid.VersionID) {
 	uuid, err := datastore.NewRepo("testRepo", "A test repository", nil)
 	if err != nil {
-		log.Fatalf("Unable to create new testing repo: %s\n", err.Error())
+		log.Fatalf("Unable to create new testing repo: %v\n", err)
 	}
 
 	versionID, err := datastore.VersionFromUUID(uuid)

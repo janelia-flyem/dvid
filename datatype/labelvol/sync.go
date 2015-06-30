@@ -50,7 +50,7 @@ func (d *Data) InitSync(name dvid.InstanceName) []datastore.SyncSub {
 func (d *Data) handleBlockEvent(in <-chan datastore.SyncMessage, done <-chan struct{}) {
 	store, err := storage.SmallDataStore()
 	if err != nil {
-		dvid.Errorf("Data type labelvol had error initializing store: %s\n", err.Error())
+		dvid.Errorf("Data type labelvol had error initializing store: %v\n", err)
 		return
 	}
 	batcher, ok := store.(storage.KeyValueBatcher)
@@ -130,7 +130,7 @@ func (d *Data) handleBlockEvent(in <-chan datastore.SyncMessage, done <-chan str
 					tk := NewTKey(label, blockStr)
 					rleBytes, err := rles.MarshalBinary()
 					if err != nil {
-						dvid.Errorf("Bad encoding labelvol keys for label %d: %s\n", label, err.Error())
+						dvid.Errorf("Bad encoding labelvol keys for label %d: %v\n", label, err)
 						continue
 					}
 					batch.Put(tk, rleBytes)

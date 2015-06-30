@@ -197,7 +197,7 @@ func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.
 	url := fmt.Sprintf("https://www.googleapis.com/brainmaps/v1beta1/volumes/%s?key=%s", volumeid, authkey)
 	resp, err := http.Get(url)
 	if err != nil {
-		return nil, fmt.Errorf("Error getting volume metadata from Google: %s", err.Error())
+		return nil, fmt.Errorf("Error getting volume metadata from Google: %v", err)
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("Unexpected status code %d returned when getting volume metadata for %q", resp.StatusCode, volumeid)
@@ -210,7 +210,7 @@ func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.
 		Geoms Geometries `json:"geometrys"`
 	}
 	if err := json.Unmarshal(metadata, &m); err != nil {
-		return nil, fmt.Errorf("Error decoding volume JSON metadata: %s", err.Error())
+		return nil, fmt.Errorf("Error decoding volume JSON metadata: %v", err)
 	}
 
 	// Compute the mapping from tile scale/orientation to scaled volume index.
@@ -410,19 +410,19 @@ func (u *uint3d) UnmarshalJSON(b []byte) error {
 	}
 	x, err := strconv.Atoi(m.X)
 	if err != nil {
-		return fmt.Errorf("Could not parse X coordinate with unsigned long: %s", err.Error())
+		return fmt.Errorf("Could not parse X coordinate with unsigned long: %v", err)
 	}
 	u.X = uint32(x)
 
 	y, err := strconv.Atoi(m.Y)
 	if err != nil {
-		return fmt.Errorf("Could not parse Y coordinate with unsigned long: %s", err.Error())
+		return fmt.Errorf("Could not parse Y coordinate with unsigned long: %v", err)
 	}
 	u.Y = uint32(y)
 
 	z, err := strconv.Atoi(m.Z)
 	if err != nil {
-		return fmt.Errorf("Could not parse Z coordinate with unsigned long: %s", err.Error())
+		return fmt.Errorf("Could not parse Z coordinate with unsigned long: %v", err)
 	}
 	u.Z = uint32(z)
 	return nil
@@ -459,7 +459,7 @@ func (g *Geometry) UnmarshalJSON(b []byte) error {
 	g.PixelSize = dvid.NdFloat32{m.PixelSize.X, m.PixelSize.Y, m.PixelSize.Z}
 	channels, err := strconv.Atoi(m.ChannelCount)
 	if err != nil {
-		return fmt.Errorf("Could not parse channelCount: %s", err.Error())
+		return fmt.Errorf("Could not parse channelCount: %v", err)
 	}
 	g.ChannelCount = uint32(channels)
 	g.ChannelType = m.ChannelType
@@ -878,7 +878,7 @@ func (d *Data) ServeImage(w http.ResponseWriter, r *http.Request, parts []string
 	if scalingStr != "" {
 		scale64, err := strconv.ParseUint(scalingStr, 10, 8)
 		if err != nil {
-			return fmt.Errorf("Illegal tile scale: %s (%s)", scalingStr, err.Error())
+			return fmt.Errorf("Illegal tile scale: %s (%v)", scalingStr, err)
 		}
 		scale = Scaling(scale64)
 	}
@@ -931,20 +931,20 @@ func (d *Data) ServeTile(w http.ResponseWriter, r *http.Request, parts []string)
 	plane := dvid.DataShapeString(planeStr)
 	shape, err := plane.DataShape()
 	if err != nil {
-		err = fmt.Errorf("Illegal tile plane: %s (%s)", planeStr, err.Error())
-		server.BadRequest(w, r, err.Error())
+		err = fmt.Errorf("Illegal tile plane: %s (%v)", planeStr, err)
+		server.BadRequest(w, r, err)
 		return err
 	}
 	scale, err := strconv.ParseUint(scalingStr, 10, 8)
 	if err != nil {
-		err = fmt.Errorf("Illegal tile scale: %s (%s)", scalingStr, err.Error())
-		server.BadRequest(w, r, err.Error())
+		err = fmt.Errorf("Illegal tile scale: %s (%s)", scalingStr, err)
+		server.BadRequest(w, r, err)
 		return err
 	}
 	tileCoord, err := dvid.StringToPoint(coordStr, "_")
 	if err != nil {
-		err = fmt.Errorf("Illegal tile coordinate: %s (%s)", coordStr, err.Error())
-		server.BadRequest(w, r, err.Error())
+		err = fmt.Errorf("Illegal tile coordinate: %s (%s)", coordStr, err)
+		server.BadRequest(w, r, err)
 		return err
 	}
 
@@ -970,7 +970,7 @@ func (d *Data) ServeTile(w http.ResponseWriter, r *http.Request, parts []string)
 	// Determine how this request sits in the available scaled volumes.
 	googleTile, err := d.GetGoogleSpec(Scaling(scale), shape, dvid.Point3d{ox, oy, oz}, size)
 	if err != nil {
-		server.BadRequest(w, r, err.Error())
+		server.BadRequest(w, r, err)
 		return err
 	}
 
@@ -1015,7 +1015,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	case "info":
 		jsonBytes, err := d.MarshalJSON()
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -1023,14 +1023,14 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 
 	case "tile":
 		if err := d.ServeTile(w, r, parts); err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		timedLog.Infof("HTTP %s: tile (%s)", r.Method, r.URL)
 
 	case "raw":
 		if err := d.ServeImage(w, r, parts); err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		timedLog.Infof("HTTP %s: image (%s)", r.Method, r.URL)

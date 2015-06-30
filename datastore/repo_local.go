@@ -113,7 +113,7 @@ func Initialize() error {
 
 	// Load the repo metadata
 	if err = m.loadMetadata(); err != nil {
-		return fmt.Errorf("Error loading metadata: %s", err.Error())
+		return fmt.Errorf("Error loading metadata: %v", err)
 	}
 
 	// Set the package variable.  We are good to go...
@@ -244,7 +244,7 @@ func (m *repoManager) loadData(t storage.TKeyClass, data interface{}) (found boo
 	var ctx storage.MetadataContext
 	value, err := m.store.Get(ctx, storage.NewTKey(t, nil))
 	if err != nil {
-		return false, fmt.Errorf("Bad metadata GET: %s", err.Error())
+		return false, fmt.Errorf("Bad metadata GET: %v", err)
 	}
 	if value == nil {
 		return false, nil
@@ -252,8 +252,7 @@ func (m *repoManager) loadData(t storage.TKeyClass, data interface{}) (found boo
 	buf := bytes.NewBuffer(value)
 	dec := gob.NewDecoder(buf)
 	if err := dec.Decode(data); err != nil {
-		return false, fmt.Errorf("Could not decode Gob encoded metadata (len %d): %s",
-			len(value), err.Error())
+		return false, fmt.Errorf("Could not decode Gob encoded metadata (len %d): %v", len(value), err)
 	}
 	return true, nil
 }
@@ -354,7 +353,7 @@ func (m *repoManager) loadVersion0() error {
 			data:       make(map[dvid.InstanceName]DataService),
 		}
 		if err = dvid.Deserialize(kv.V, r); err != nil {
-			return fmt.Errorf("Error gob decoding repo %d: %s", repoID, err.Error())
+			return fmt.Errorf("Error gob decoding repo %d: %v", repoID, err)
 		}
 
 		// Cache all UUID from nodes into our high-level cache
@@ -425,7 +424,7 @@ func (m *repoManager) loadMetadata() error {
 	// Check the version of the metadata
 	found, err := m.loadData(formatKey, &(m.formatVersion))
 	if err != nil {
-		return fmt.Errorf("Error in loading metadata format version: %s\n", err.Error())
+		return fmt.Errorf("Error in loading metadata format version: %v\n", err)
 	}
 	if found {
 		dvid.Infof("Loading metadata with format version %d...\n", m.formatVersion)
@@ -1432,7 +1431,7 @@ func (r *repoT) MarshalJSON() ([]byte, error) {
 func (r *repoT) String() string {
 	json, err := r.MarshalJSON()
 	if err != nil {
-		return fmt.Sprintf("Repo print error: %s", err.Error())
+		return fmt.Sprintf("Repo print error: %v", err)
 	}
 	return string(json)
 }
@@ -1721,7 +1720,7 @@ func (dag *dagT) MarshalJSON() ([]byte, error) {
 func (dag *dagT) String() string {
 	json, err := dag.MarshalJSON()
 	if err != nil {
-		return fmt.Sprintf("DAG print error: %s", err.Error())
+		return fmt.Sprintf("DAG print error: %v", err)
 	}
 	return string(json)
 }

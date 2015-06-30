@@ -37,7 +37,7 @@ func getGraphJSON() io.Reader {
 	//graph.Transactions = make([]transactionItem, 0)
 	jsonBytes, err := json.Marshal(graph)
 	if err != nil {
-		log.Fatalf("Can't encode graph into JSON: %s\n", err.Error())
+		log.Fatalf("Can't encode graph into JSON: %v\n", err)
 	}
 	return bytes.NewReader(jsonBytes)
 }
@@ -57,7 +57,7 @@ func initTestRepo() (dvid.UUID, dvid.VersionID) {
 		var err error
 		dtype, err = datastore.TypeServiceByName(TypeName)
 		if err != nil {
-			log.Fatalf("Can't get labelgraph type: %s\n", err)
+			log.Fatalf("Can't get labelgraph type: %v\n", err)
 		}
 	}
 	return tests.NewRepo()
@@ -74,7 +74,7 @@ func TestNewLabelgraphDifferent(t *testing.T) {
 	config := dvid.NewConfig()
 	dataservice1, err := datastore.NewData(uuid, dtype, "lg1", config)
 	if err != nil {
-		t.Errorf("Error creating new labelgraph instance 1: %s\n", err.Error())
+		t.Errorf("Error creating new labelgraph instance 1: %v\n", err)
 	}
 	data1, ok := dataservice1.(*Data)
 	if !ok {
@@ -82,7 +82,7 @@ func TestNewLabelgraphDifferent(t *testing.T) {
 	}
 	dataservice2, err := datastore.NewData(uuid, dtype, "lg2", config)
 	if err != nil {
-		t.Errorf("Error creating new labelgraph instance 2: %s\n", err.Error())
+		t.Errorf("Error creating new labelgraph instance 2: %v\n", err)
 	}
 	data2, ok := dataservice2.(*Data)
 	if !ok {
@@ -104,7 +104,7 @@ func TestLabelgraphRepoPersistence(t *testing.T) {
 	config := dvid.NewConfig()
 	dataservice, err := datastore.NewData(uuid, dtype, "lg", config)
 	if err != nil {
-		t.Errorf("Unable to create labelgraph instance: %s\n", err.Error())
+		t.Errorf("Unable to create labelgraph instance: %v\n", err)
 	}
 	lgdata, ok := dataservice.(*Data)
 	if !ok {
@@ -114,13 +114,13 @@ func TestLabelgraphRepoPersistence(t *testing.T) {
 
 	// Restart test datastore and see if datasets are still there.
 	if err = datastore.SaveDataByUUID(uuid, lgdata); err != nil {
-		t.Fatalf("Unable to save repo during labelgraph persistence test: %s\n", err.Error())
+		t.Fatalf("Unable to save repo during labelgraph persistence test: %v\n", err)
 	}
 	tests.CloseReopenStore()
 
 	dataservice2, err := datastore.GetDataByUUID(uuid, "lg")
 	if err != nil {
-		t.Fatalf("Can't get labelgraph instance from reloaded test db: %s\n", err.Error())
+		t.Fatalf("Can't get labelgraph instance from reloaded test db: %v\n", err)
 	}
 	lgdata2, ok := dataservice2.(*Data)
 	if !ok {
@@ -142,7 +142,7 @@ func TestLabelgraphPostAndDelete(t *testing.T) {
 	config := dvid.NewConfig()
 	dataservice, err := datastore.NewData(uuid, dtype, "lg", config)
 	if err != nil {
-		t.Errorf("Error creating new labelgraph instance: %s\n", err.Error())
+		t.Errorf("Error creating new labelgraph instance: %v\n", err)
 	}
 	data, ok := dataservice.(*Data)
 	if !ok {
@@ -157,7 +157,7 @@ func TestLabelgraphPostAndDelete(t *testing.T) {
 	returnedData := server.TestHTTP(t, "GET", subgraphRequest, nil)
 	retgraph, err := loadGraphJSON(returnedData)
 	if err != nil {
-		t.Errorf("Error on getting back JSON from roi GET: %s\n", err.Error())
+		t.Errorf("Error on getting back JSON from roi GET: %v\n", err)
 	}
 
 	// Make sure the two are the same.

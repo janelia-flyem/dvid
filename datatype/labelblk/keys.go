@@ -40,7 +40,7 @@ func DecodeTKey(tk storage.TKey) (*dvid.IndexZYX, error) {
 	}
 	var zyx dvid.IndexZYX
 	if err = zyx.IndexFromBytes(ibytes); err != nil {
-		return nil, fmt.Errorf("Cannot recover ZYX index from image block key %v: %s\n", tk, err.Error())
+		return nil, fmt.Errorf("Cannot recover ZYX index from image block key %v: %v\n", tk, err)
 	}
 	return &zyx, nil
 }

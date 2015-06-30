@@ -681,7 +681,7 @@ func (db *LevelDB) Put(ctx storage.Context, tk storage.TKey, v []byte) error {
 		batch.WriteBatch.Delete(tombstoneKey)
 		batch.WriteBatch.Put(key, v)
 		if err = batch.Commit(); err != nil {
-			err = fmt.Errorf("Error on PUT: %s\n", err.Error())
+			err = fmt.Errorf("Error on PUT: %v\n", err)
 		}
 	}
 
@@ -714,7 +714,7 @@ func (db *LevelDB) Delete(ctx storage.Context, tk storage.TKey) error {
 		batch.WriteBatch.Delete(key)
 		batch.WriteBatch.Put(tombstoneKey, dvid.EmptyValue())
 		if err = batch.Commit(); err != nil {
-			err = fmt.Errorf("Error on Delete: %s\n", err.Error())
+			err = fmt.Errorf("Error on Delete: %v\n", err)
 		}
 	}
 
@@ -830,7 +830,7 @@ func (db *LevelDB) DeleteRange(ctx storage.Context, kStart, kEnd storage.TKey) e
 
 		if (numKV+1)%BATCH_SIZE == 0 {
 			if err := batch.Commit(); err != nil {
-				return fmt.Errorf("Error on batch DELETE at key-value pair %d: %s\n", numKV, err.Error())
+				return fmt.Errorf("Error on batch DELETE at key-value pair %d: %v\n", numKV, err)
 			}
 			batch = db.NewBatch(ctx).(*goBatch)
 		}
@@ -838,7 +838,7 @@ func (db *LevelDB) DeleteRange(ctx storage.Context, kStart, kEnd storage.TKey) e
 	}
 	if numKV%BATCH_SIZE != 0 {
 		if err := batch.Commit(); err != nil {
-			return fmt.Errorf("Error on last batch DELETE: %s\n", err.Error())
+			return fmt.Errorf("Error on last batch DELETE: %v\n", err)
 		}
 	}
 	dvid.Debugf("Deleted %d key-value pairs via delete range for %s.\n", numKV, ctx)
@@ -892,7 +892,7 @@ func (db *LevelDB) DeleteAll(ctx storage.Context, allVersions bool) error {
 			if !allVersions {
 				_, v, _, err := storage.DataKeyToLocalIDs(itKey)
 				if err != nil {
-					return fmt.Errorf("Error on DELETE ALL for version %d: %s", ctx.VersionID(), err.Error())
+					return fmt.Errorf("Error on DELETE ALL for version %d: %v", ctx.VersionID(), err)
 				}
 				if v != deleteVersion {
 					it.Next()
@@ -902,7 +902,7 @@ func (db *LevelDB) DeleteAll(ctx storage.Context, allVersions bool) error {
 			batch.WriteBatch.Delete(itKey)
 			if (numKV+1)%BATCH_SIZE == 0 {
 				if err := batch.Commit(); err != nil {
-					return fmt.Errorf("Error on DELETE ALL at key-value pair %d: %s", numKV, err.Error())
+					return fmt.Errorf("Error on DELETE ALL at key-value pair %d: %v", numKV, err)
 				}
 				batch = db.NewBatch(ctx).(*goBatch)
 			}
@@ -915,7 +915,7 @@ func (db *LevelDB) DeleteAll(ctx storage.Context, allVersions bool) error {
 	}
 	if numKV%BATCH_SIZE != 0 {
 		if err := batch.Commit(); err != nil {
-			return fmt.Errorf("Error on last batch DELETE: %s\n", err.Error())
+			return fmt.Errorf("Error on last batch DELETE: %v\n", err)
 		}
 	}
 	dvid.Debugf("Deleted %d key-value pairs via DELETE ALL for %s.\n", numKV, ctx)

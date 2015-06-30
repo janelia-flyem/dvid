@@ -333,7 +333,7 @@ func (i *indexRLE) Bytes() []byte {
 	buf := new(bytes.Buffer)
 	_, err := buf.Write(i.start.Bytes())
 	if err != nil {
-		dvid.Errorf("Error in roi.go, indexRLE.Bytes(): %s\n", err.Error())
+		dvid.Errorf("Error in roi.go, indexRLE.Bytes(): %v\n", err)
 	}
 	binary.Write(buf, binary.BigEndian, i.span)
 	return buf.Bytes()
@@ -373,7 +373,7 @@ func getSpans(ctx storage.VersionedCtx, minIndex, maxIndex indexRLE) ([]dvid.Spa
 		}
 		index := new(indexRLE)
 		if err = index.IndexFromBytes(ibytes); err != nil {
-			return fmt.Errorf("Unable to get indexRLE out of []byte encoding: %s\n", err.Error())
+			return fmt.Errorf("Unable to get indexRLE out of []byte encoding: %v\n", err)
 		}
 		z := index.start.Value(2)
 		y := index.start.Value(1)
@@ -424,7 +424,7 @@ func (d *Data) Delete(ctx storage.VersionedCtx) error {
 	d.MinZ = math.MaxInt32
 	d.MaxZ = math.MinInt32
 	if err := datastore.SaveDataByVersion(ctx.VersionID(), d); err != nil {
-		return fmt.Errorf("Error in trying to save repo on roi extent change: %s\n", err.Error())
+		return fmt.Errorf("Error in trying to save repo on roi extent change: %v\n", err)
 	}
 
 	// Delete all spans for this ROI for just this version.
@@ -466,7 +466,7 @@ func (d *Data) PutSpans(versionID dvid.VersionID, spans []dvid.Span, init bool) 
 	defer func() {
 		err := datastore.SaveDataByVersion(ctx.VersionID(), d)
 		if err != nil {
-			dvid.Errorf("Error in trying to save repo on roi extent change: %s\n", err.Error())
+			dvid.Errorf("Error in trying to save repo on roi extent change: %v\n", err)
 		}
 		putMutex.Unlock()
 	}()
@@ -492,14 +492,14 @@ func (d *Data) PutSpans(versionID dvid.VersionID, spans []dvid.Span, init bool) 
 		batch.Put(tk, dvid.EmptyValue())
 		if (i+1)%BATCH_SIZE == 0 {
 			if err := batch.Commit(); err != nil {
-				return fmt.Errorf("Error on batch PUT at span %d: %s\n", i, err.Error())
+				return fmt.Errorf("Error on batch PUT at span %d: %v\n", i, err)
 			}
 			batch = batcher.NewBatch(ctx)
 		}
 	}
 	if len(spans)%BATCH_SIZE != 0 {
 		if err := batch.Commit(); err != nil {
-			return fmt.Errorf("Error on last batch PUT: %s\n", err.Error())
+			return fmt.Errorf("Error on last batch PUT: %v\n", err)
 		}
 	}
 	return nil
@@ -510,7 +510,7 @@ func (d *Data) PutJSON(versionID dvid.VersionID, jsonBytes []byte) error {
 	spans := []dvid.Span{}
 	err := json.Unmarshal(jsonBytes, &spans)
 	if err != nil {
-		return fmt.Errorf("Error trying to parse POSTed JSON: %s", err.Error())
+		return fmt.Errorf("Error trying to parse POSTed JSON: %v", err)
 	}
 	if err := d.PutSpans(versionID, spans, true); err != nil {
 		return err
@@ -947,7 +947,7 @@ func (d *Data) Partition(ctx storage.Context, batchsize int32) ([]byte, error) {
 		}
 		index := new(indexRLE)
 		if err = index.IndexFromBytes(ibytes); err != nil {
-			return fmt.Errorf("Unable to get indexRLE out of []byte encoding: %s\n", err.Error())
+			return fmt.Errorf("Unable to get indexRLE out of []byte encoding: %v\n", err)
 		}
 
 		// If we are in new layer, process last one.
@@ -1088,7 +1088,7 @@ func (d *Data) SimplePartition(ctx storage.Context, batchsize int32) ([]byte, er
 		}
 		index := new(indexRLE)
 		if err = index.IndexFromBytes(ibytes); err != nil {
-			return fmt.Errorf("Unable to get indexRLE out of []byte encoding: %s\n", err.Error())
+			return fmt.Errorf("Unable to get indexRLE out of []byte encoding: %v\n", err)
 		}
 
 		// If we are in new layer, process last one.
@@ -1175,7 +1175,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	case "info":
 		jsonBytes, err := d.MarshalJSON()
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -1197,7 +1197,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			}
 			jsonBytes, err := Get(ctx)
 			if err != nil {
-				server.BadRequest(w, r, err.Error())
+				server.BadRequest(w, r, err)
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
@@ -1206,18 +1206,18 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		case "post":
 			data, err := ioutil.ReadAll(r.Body)
 			if err != nil {
-				server.BadRequest(w, r, err.Error())
+				server.BadRequest(w, r, err)
 				return
 			}
 			err = d.PutJSON(ctx.VersionID(), data)
 			if err != nil {
-				server.BadRequest(w, r, err.Error())
+				server.BadRequest(w, r, err)
 				return
 			}
 			comment = fmt.Sprintf("HTTP POST ROI %q: %d bytes\n", d.DataName(), len(data))
 		case "delete":
 			if err := d.Delete(ctx); err != nil {
-				server.BadRequest(w, r, err.Error())
+				server.BadRequest(w, r, err)
 				return
 			}
 			comment = fmt.Sprintf("HTTP DELETE ROI %q\n", d.DataName())
@@ -1235,25 +1235,25 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		planeStr := dvid.DataShapeString(shapeStr)
 		plane, err := planeStr.DataShape()
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		switch plane.ShapeDimensions() {
 		case 3:
 			subvol, err := dvid.NewSubvolumeFromStrings(offsetStr, sizeStr, "_")
 			if err != nil {
-				server.BadRequest(w, r, err.Error())
+				server.BadRequest(w, r, err)
 				return
 			}
 			data, err := d.GetMask(ctx, subvol)
 			if err != nil {
-				server.BadRequest(w, r, err.Error())
+				server.BadRequest(w, r, err)
 				return
 			}
 			w.Header().Set("Content-type", "application/octet-stream")
 			_, err = w.Write(data)
 			if err != nil {
-				server.BadRequest(w, r, err.Error())
+				server.BadRequest(w, r, err)
 				return
 			}
 		default:
@@ -1268,12 +1268,12 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		case "post":
 			data, err := ioutil.ReadAll(r.Body)
 			if err != nil {
-				server.BadRequest(w, r, err.Error())
+				server.BadRequest(w, r, err)
 				return
 			}
 			jsonBytes, err := d.PointQuery(ctx, data)
 			if err != nil {
-				server.BadRequest(w, r, err.Error())
+				server.BadRequest(w, r, err)
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
@@ -1289,7 +1289,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		batchsizeStr := queryValues.Get("batchsize")
 		batchsize, err := strconv.Atoi(batchsizeStr)
 		if err != nil {
-			server.BadRequest(w, r, fmt.Sprintf("Error reading batchsize query string: %s", err.Error()))
+			server.BadRequest(w, r, fmt.Sprintf("Error reading batchsize query string: %v", err))
 			return
 		}
 
@@ -1304,7 +1304,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			jsonBytes, err = d.SimplePartition(ctx, int32(batchsize))
 		}
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")

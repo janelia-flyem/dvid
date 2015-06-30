@@ -269,7 +269,7 @@ func (d *Data) GetData(ctx storage.Context, keyStr string) ([]byte, bool, error)
 	}
 	data, err := db.Get(ctx, tk)
 	if err != nil {
-		return nil, false, fmt.Errorf("Error in retrieving key '%s': %s", keyStr, err.Error())
+		return nil, false, fmt.Errorf("Error in retrieving key '%s': %v", keyStr, err)
 	}
 	if data == nil {
 		return nil, false, nil
@@ -277,7 +277,7 @@ func (d *Data) GetData(ctx storage.Context, keyStr string) ([]byte, bool, error)
 	uncompress := true
 	value, _, err := dvid.DeserializeData(data, uncompress)
 	if err != nil {
-		return nil, false, fmt.Errorf("Unable to deserialize data for key '%s': %s\n", keyStr, err.Error())
+		return nil, false, fmt.Errorf("Unable to deserialize data for key '%s': %v\n", keyStr, err)
 	}
 	return value, true, nil
 }
@@ -290,7 +290,7 @@ func (d *Data) PutData(ctx storage.Context, keyStr string, value []byte) error {
 	}
 	serialization, err := dvid.SerializeData(value, d.Compression(), d.Checksum())
 	if err != nil {
-		return fmt.Errorf("Unable to serialize data: %s\n", err.Error())
+		return fmt.Errorf("Unable to serialize data: %v\n", err)
 	}
 	tk, err := NewTKey(keyStr)
 	if err != nil {
@@ -331,8 +331,7 @@ func (d *Data) put(cmd datastore.Request, reply *datastore.Response) error {
 	// Store data
 	ctx := datastore.NewVersionedCtx(d, versionID)
 	if err = d.PutData(ctx, keyStr, cmd.Input); err != nil {
-		return fmt.Errorf("Error on put to key %q for keyvalue %q: %s\n", keyStr, d.DataName(),
-			err.Error())
+		return fmt.Errorf("Error on put to key %q for keyvalue %q: %v\n", keyStr, d.DataName(), err)
 	}
 
 	reply.Output = []byte(fmt.Sprintf("Put %d bytes into key %q for keyvalue %q, uuid %s\n",
@@ -403,7 +402,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	case "info":
 		jsonStr, err := d.JSONString()
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -413,12 +412,12 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	case "keys":
 		keyList, err := d.GetKeys(ctx)
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		jsonBytes, err := json.Marshal(keyList)
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -431,12 +430,12 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		keyEnd := parts[5]
 		keyList, err := d.GetKeysInRange(ctx, keyBeg, keyEnd)
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		jsonBytes, err := json.Marshal(keyList)
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -455,7 +454,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			// Return value of single key
 			value, found, err := d.GetData(ctx, keyStr)
 			if err != nil {
-				server.BadRequest(w, r, err.Error())
+				server.BadRequest(w, r, err)
 				return
 			}
 			if !found {
@@ -465,7 +464,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			if value != nil || len(value) > 0 {
 				_, err = w.Write(value)
 				if err != nil {
-					server.BadRequest(w, r, err.Error())
+					server.BadRequest(w, r, err)
 					return
 				}
 				w.Header().Set("Content-Type", "application/octet-stream")
@@ -474,7 +473,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 
 		case "delete":
 			if err := d.DeleteData(ctx, keyStr); err != nil {
-				server.BadRequest(w, r, err.Error())
+				server.BadRequest(w, r, err)
 				return
 			}
 			comment = fmt.Sprintf("HTTP DELETE data with key %q of keyvalue %q (%s)\n", keyStr, d.DataName(), url)
@@ -482,12 +481,12 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		case "post":
 			data, err := ioutil.ReadAll(r.Body)
 			if err != nil {
-				server.BadRequest(w, r, err.Error())
+				server.BadRequest(w, r, err)
 				return
 			}
 			err = d.PutData(ctx, keyStr, data)
 			if err != nil {
-				server.BadRequest(w, r, err.Error())
+				server.BadRequest(w, r, err)
 				return
 			}
 			comment = fmt.Sprintf("HTTP POST keyvalue '%s': %d bytes (%s)\n", d.DataName(), len(data), url)

@@ -42,7 +42,7 @@ type sizeChange struct {
 func (d *Data) MergeLabels(v dvid.VersionID, m labels.MergeOp) error {
 	store, err := storage.SmallDataStore()
 	if err != nil {
-		return fmt.Errorf("Data type labelvol had error initializing store: %s\n", err.Error())
+		return fmt.Errorf("Data type labelvol had error initializing store: %v\n", err)
 	}
 	batcher, ok := store.(storage.KeyValueBatcher)
 	if !ok {
@@ -70,7 +70,7 @@ func (d *Data) MergeLabels(v dvid.VersionID, m labels.MergeOp) error {
 	toLabel := m.Target
 	toLabelRLEs, err := d.GetLabelRLEs(v, toLabel)
 	if err != nil {
-		return fmt.Errorf("Can't get block-level RLEs for label %d: %s", toLabel, err.Error())
+		return fmt.Errorf("Can't get block-level RLEs for label %d: %v", toLabel, err)
 	}
 	toLabelSize := toLabelRLEs.NumVoxels()
 
@@ -81,7 +81,7 @@ func (d *Data) MergeLabels(v dvid.VersionID, m labels.MergeOp) error {
 
 		fromLabelRLEs, err := d.GetLabelRLEs(v, fromLabel)
 		if err != nil {
-			return fmt.Errorf("Can't get block-level RLEs for label %d: %s", fromLabel, err.Error())
+			return fmt.Errorf("Can't get block-level RLEs for label %d: %v", fromLabel, err)
 		}
 		fromLabelSize := fromLabelRLEs.NumVoxels()
 		if fromLabelSize == 0 || len(fromLabelRLEs) == 0 {
@@ -122,7 +122,7 @@ func (d *Data) MergeLabels(v dvid.VersionID, m labels.MergeOp) error {
 		maxTKey := NewTKey(fromLabel, dvid.MaxIndexZYX.ToIZYXString())
 		ctx := datastore.NewVersionedCtx(d, v)
 		if err := store.DeleteRange(ctx, minTKey, maxTKey); err != nil {
-			return fmt.Errorf("Can't delete label %d RLEs: %s", fromLabel, err.Error())
+			return fmt.Errorf("Can't delete label %d RLEs: %v", fromLabel, err)
 		}
 	}
 
@@ -145,12 +145,12 @@ func (d *Data) MergeLabels(v dvid.VersionID, m labels.MergeOp) error {
 		tk := NewTKey(toLabel, blockStr)
 		serialization, err := toLabelRLEs[blockStr].MarshalBinary()
 		if err != nil {
-			return fmt.Errorf("Error serializing RLEs for label %d: %s\n", toLabel, err.Error())
+			return fmt.Errorf("Error serializing RLEs for label %d: %v\n", toLabel, err)
 		}
 		batch.Put(tk, serialization)
 	}
 	if err := batch.Commit(); err != nil {
-		dvid.Errorf("Error on updating RLEs for label %d: %s\n", toLabel, err.Error())
+		dvid.Errorf("Error on updating RLEs for label %d: %v\n", toLabel, err)
 	}
 	delta := labels.DeltaReplaceSize{
 		Label:   toLabel,
@@ -187,7 +187,7 @@ func (d *Data) MergeLabels(v dvid.VersionID, m labels.MergeOp) error {
 func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser) (toLabel uint64, err error) {
 	store, err := storage.SmallDataStore()
 	if err != nil {
-		err = fmt.Errorf("Data type labelvol had error initializing store: %s\n", err.Error())
+		err = fmt.Errorf("Data type labelvol had error initializing store: %v\n", err)
 		return
 	}
 	batcher, ok := store.(storage.KeyValueBatcher)
@@ -280,14 +280,14 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser) 
 		} else {
 			rleBytes, err := remain.MarshalBinary()
 			if err != nil {
-				return toLabel, fmt.Errorf("can't serialize remain RLEs for split of %d: %s\n", fromLabel, err.Error())
+				return toLabel, fmt.Errorf("can't serialize remain RLEs for split of %d: %v\n", fromLabel, err)
 			}
 			batch.Put(tk, rleBytes)
 		}
 	}
 
 	if err := batch.Commit(); err != nil {
-		dvid.Errorf("Batch PUT during split of %q label %d: %s\n", d.DataName(), fromLabel, err.Error())
+		dvid.Errorf("Batch PUT during split of %q label %d: %v\n", d.DataName(), fromLabel, err)
 	}
 
 	// Publish change in label sizes.
@@ -325,7 +325,7 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser) 
 func (d *Data) writeLabelVol(v dvid.VersionID, label uint64, brles dvid.BlockRLEs, sortblks []dvid.IZYXString) error {
 	store, err := storage.SmallDataStore()
 	if err != nil {
-		return fmt.Errorf("Data type labelvol had error initializing store: %s\n", err.Error())
+		return fmt.Errorf("Data type labelvol had error initializing store: %v\n", err)
 	}
 	batcher, ok := store.(storage.KeyValueBatcher)
 	if !ok {
@@ -338,7 +338,7 @@ func (d *Data) writeLabelVol(v dvid.VersionID, label uint64, brles dvid.BlockRLE
 		for _, izyxStr := range sortblks {
 			serialization, err := brles[izyxStr].MarshalBinary()
 			if err != nil {
-				return fmt.Errorf("Error serializing RLEs for label %d: %s\n", label, err.Error())
+				return fmt.Errorf("Error serializing RLEs for label %d: %v\n", label, err)
 			}
 			batch.Put(NewTKey(label, izyxStr), serialization)
 		}
@@ -346,13 +346,13 @@ func (d *Data) writeLabelVol(v dvid.VersionID, label uint64, brles dvid.BlockRLE
 		for izyxStr, rles := range brles {
 			serialization, err := rles.MarshalBinary()
 			if err != nil {
-				return fmt.Errorf("Error serializing RLEs for label %d: %s\n", label, err.Error())
+				return fmt.Errorf("Error serializing RLEs for label %d: %v\n", label, err)
 			}
 			batch.Put(NewTKey(label, izyxStr), serialization)
 		}
 	}
 	if err := batch.Commit(); err != nil {
-		return fmt.Errorf("Error on updating RLEs for label %d: %s\n", label, err.Error())
+		return fmt.Errorf("Error on updating RLEs for label %d: %v\n", label, err)
 	}
 	return nil
 }

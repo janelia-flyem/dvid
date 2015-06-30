@@ -261,7 +261,7 @@ func (i *IndexZYX) UnmarshalBinary(b []byte) error {
 	for dim := 0; dim < 3; dim++ {
 		var value int32
 		if err := binary.Read(buf, binary.LittleEndian, &value); err != nil {
-			return fmt.Errorf("Bad IndexZYX elem %d read: %s", dim, err.Error())
+			return fmt.Errorf("Bad IndexZYX elem %d read: %v", dim, err)
 		}
 		(*i)[dim] = value
 	}

@@ -55,7 +55,7 @@ type Client struct {
 func NewClient(rpcAddress string) (*Client, error) {
 	client, err := rpc.DialHTTP("tcp", rpcAddress)
 	if err != nil {
-		return nil, fmt.Errorf("Did not find DVID server for RPC at %s [%s]\n", rpcAddress, err.Error())
+		return nil, fmt.Errorf("Did not find DVID server for RPC at %s [%v]\n", rpcAddress, err)
 	}
 	return &Client{rpcAddress, client}, nil
 }
@@ -66,7 +66,7 @@ func (c *Client) Send(request datastore.Request) error {
 	if c.client != nil {
 		err := c.client.Call("RPCConnection.Do", request, &reply)
 		if err != nil {
-			return fmt.Errorf("RPC error for '%s': %s", request.Command, err.Error())
+			return fmt.Errorf("RPC error for '%s': %v", request.Command, err)
 		}
 	} else {
 		reply.Output = []byte(fmt.Sprintf("No DVID server is available: %s\n", request.Command))

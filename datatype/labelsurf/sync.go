@@ -47,7 +47,7 @@ func (d *Data) handleMergeEvent(in <-chan datastore.SyncMessage, done <-chan str
 
 		surfaceIndex := imageblk.NewLabelSurfaceIndex(fromLabel)
 		if err := bigdata.Delete(ctx, surfaceIndex); err != nil {
-			return fmt.Errorf("Can't delete label %d surface: %s", fromLabel, err.Error())
+			return fmt.Errorf("Can't delete label %d surface: %s", fromLabel, err)
 		}
 
 	// Recompute the toLabel surface
@@ -68,7 +68,7 @@ func (d *Data) handleMergeEvent(in <-chan datastore.SyncMessage, done <-chan str
 			batch.Delete(oldKey)
 		}
 		if err := batch.Commit(); err != nil {
-			dvid.Errorf("Error on updating label sizes on %s: %s\n", ctx, err.Error())
+			dvid.Errorf("Error on updating label sizes on %s: %s\n", ctx, err)
 		}
 		select {
 		case <-done:
@@ -93,7 +93,7 @@ func (d *Data) recomputeSurface(ctx *datastore.VersionedCtx, label uint64, rles 
 		curVol.AddRLE(rle)
 	}
 	if err := d.computeAndSaveSurface(ctx, &curVol); err != nil {
-		dvid.Errorf("Error on computing surface and normals for label %d: %s\n", label, err.Error())
+		dvid.Errorf("Error on computing surface and normals for label %d: %s\n", label, err)
 	}
 }
 
@@ -114,12 +114,12 @@ func (d *Data) SyncOnNodeLock(uuid dvid.UUID) {
 
 	bigdata, err := storage.BigDataStore()
 	if err != nil {
-		dvid.Errorf("Cannot get datastore that handles big data: %s\n", err.Error())
+		dvid.Errorf("Cannot get datastore that handles big data: %s\n", err)
 		return
 	}
 	smalldata, err := storage.SmallDataStore()
 	if err != nil {
-		dvid.Errorf("Cannot get datastore that handles small data: %s\n", err.Error())
+		dvid.Errorf("Cannot get datastore that handles small data: %s\n", err)
 		return
 	}
 	ctx := datastore.NewVersionedCtx(d, versionID)
@@ -177,7 +177,7 @@ func (d *Data) SyncOnNodeLock(uuid dvid.UUID) {
 		d.Ready = true
 		if err := datastore.SaveRepo(uuid); err != nil {
 			dvid.Errorf("Could not save READY state to data '%s', uuid %s: %s",
-				d.DataName(), uuid, err.Error())
+				d.DataName(), uuid, err)
 		}
 	}()
 
@@ -185,7 +185,7 @@ func (d *Data) SyncOnNodeLock(uuid dvid.UUID) {
 		// Get label associated with this sparse volume.
 		indexBytes, err := ctx.IndexFromKey(chunk.K)
 		if err != nil {
-			return fmt.Errorf("Could not get %q index bytes from chunk key: %s\n", d.DataName(), err.Error())
+			return fmt.Errorf("Could not get %q index bytes from chunk key: %s\n", d.DataName(), err)
 		}
 		label := binary.BigEndian.Uint64(indexBytes[1:9])
 		chunk.ChunkOp = &storage.ChunkOp{label, nil}
@@ -202,7 +202,7 @@ func (d *Data) SyncOnNodeLock(uuid dvid.UUID) {
 	endIndex := NewIndex(math.MaxUint64, dvid.MaxIndexZYX.Bytes())
 	err = smalldata.ProcessRange(ctx, begIndex, endIndex, &storage.ChunkOp{}, f)
 	if err != nil {
-		dvid.Errorf("Error indexing sizes for %s: %s\n", d.DataName(), err.Error())
+		dvid.Errorf("Error indexing sizes for %s: %s\n", d.DataName(), err)
 		return
 	}
 	sizeCh <- nil
@@ -219,7 +219,7 @@ func (d *Data) SyncOnNodeLock(uuid dvid.UUID) {
 func (d *Data) denormFunc(versionID dvid.VersionID, mods imageblk.BlockChannel) {
 	smalldata, err := storage.SmallDataStore()
 	if err != nil {
-		dvid.Errorf("Cannot get datastore that handles small data: %s\n", err.Error())
+		dvid.Errorf("Cannot get datastore that handles small data: %s\n", err)
 		return
 	}
 
@@ -263,7 +263,7 @@ func (d *Data) denormFunc(versionID dvid.VersionID, mods imageblk.BlockChannel) 
 		// Get label associated with this sparse volume.
 		indexBytes, err := ctx.IndexFromKey(chunk.K)
 		if err != nil {
-			return fmt.Errorf("Could not get %q index bytes from chunk key: %s\n", d.DataName(), err.Error())
+			return fmt.Errorf("Could not get %q index bytes from chunk key: %s\n", d.DataName(), err)
 		}
 		label := binary.BigEndian.Uint64(indexBytes[1:9])
 		chunk.ChunkOp = &storage.ChunkOp{label, nil}
@@ -282,7 +282,7 @@ func (d *Data) denormFunc(versionID dvid.VersionID, mods imageblk.BlockChannel) 
 		endIndex := NewIndex(label, dvid.MaxIndexZYX.Bytes())
 		err := smalldata.ProcessRange(ctx, begIndex, endIndex, &storage.ChunkOp{}, f)
 		if err != nil {
-			dvid.Errorf("Error denormalizing %s: %s\n", d.DataName(), err.Error())
+			dvid.Errorf("Error denormalizing %s: %s\n", d.DataName(), err)
 			return
 		}
 	}
@@ -318,7 +318,7 @@ func ComputeSurface(ctx storage.Context, data *Data, ch chan *storage.Chunk, wg 
 		if chunk == nil {
 			if notFirst {
 				if err := data.computeAndSaveSurface(ctx, &curVol); err != nil {
-					dvid.Errorf("Error on computing surface and normals: %s\n", err.Error())
+					dvid.Errorf("Error on computing surface and normals: %s\n", err)
 					return
 				}
 			}
@@ -328,7 +328,7 @@ func ComputeSurface(ctx storage.Context, data *Data, ch chan *storage.Chunk, wg 
 		if label != curLabel || label == 0 {
 			if notFirst {
 				if err := data.computeAndSaveSurface(ctx, &curVol); err != nil {
-					dvid.Errorf("Error on computing surface and normals: %s\n", err.Error())
+					dvid.Errorf("Error on computing surface and normals: %s\n", err)
 					return
 				}
 			}
@@ -337,7 +337,7 @@ func ComputeSurface(ctx storage.Context, data *Data, ch chan *storage.Chunk, wg 
 		}
 
 		if err := curVol.AddSerializedRLEs(chunk.V); err != nil {
-			dvid.Errorf("Error adding RLE for label %d: %s\n", label, err.Error())
+			dvid.Errorf("Error adding RLE for label %d: %s\n", label, err)
 			return
 		}
 		curLabel = label
@@ -360,7 +360,7 @@ func (d *Data) computeAndSaveSurface(ctx storage.Context, vol *dvid.SparseVol) e
 	compression, _ := dvid.NewCompression(dvid.Gzip, dvid.DefaultCompression)
 	serialization, err := dvid.SerializeData(surfaceBytes, compression, dvid.NoChecksum)
 	if err != nil {
-		return fmt.Errorf("Unable to serialize data in surface computation: %s\n", err.Error())
+		return fmt.Errorf("Unable to serialize data in surface computation: %s\n", err)
 	}
 	key := imageblk.NewLabelSurfaceIndex(vol.Label())
 	return store.Put(ctx, key, serialization)

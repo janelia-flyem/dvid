@@ -33,7 +33,7 @@ func initTestRepo() (dvid.UUID, dvid.VersionID) {
 		var err error
 		labelsT, err = datastore.TypeServiceByName("labelblk")
 		if err != nil {
-			log.Fatalf("Can't get labelblk type: %s\n", err)
+			log.Fatalf("Can't get labelblk type: %v\n", err)
 		}
 	}
 	return tests.NewRepo()
@@ -53,7 +53,7 @@ func (b testBody) checkCoarse(t *testing.T, encoding []byte) {
 	spansEncoding := encoding[8:]
 	var spans dvid.Spans
 	if err := spans.UnmarshalBinary(spansEncoding); err != nil {
-		t.Errorf("Error in decoding coarse sparse volume: %s\n", err.Error())
+		t.Errorf("Error in decoding coarse sparse volume: %v\n", err)
 		return
 	}
 
@@ -69,7 +69,7 @@ func (b testBody) checkSparseVol(t *testing.T, encoding []byte, bounds dvid.Boun
 	spansEncoding := encoding[8:]
 	var spans dvid.Spans
 	if err := spans.UnmarshalBinary(spansEncoding); err != nil {
-		t.Errorf("Error in decoding sparse volume: %s\n", err.Error())
+		t.Errorf("Error in decoding sparse volume: %v\n", err)
 		return
 	}
 
@@ -119,7 +119,7 @@ func checkSpans(t *testing.T, encoding []byte, minx, maxx int32) {
 	spansEncoding := encoding[8:]
 	var spans dvid.Spans
 	if err := spans.UnmarshalBinary(spansEncoding); err != nil {
-		t.Errorf("Error in decoding coarse sparse volume: %s\n", err.Error())
+		t.Errorf("Error in decoding coarse sparse volume: %v\n", err)
 		return
 	}
 	for _, span := range spans {
@@ -436,7 +436,7 @@ func TestSplitLabel(t *testing.T) {
 	binary.Write(buf, binary.LittleEndian, uint32(numspans)) // Placeholder for # spans
 	rleBytes, err := rles.MarshalBinary()
 	if err != nil {
-		t.Errorf("Unable to serialize RLEs: %s\n", err.Error())
+		t.Errorf("Unable to serialize RLEs: %v\n", err)
 	}
 	buf.Write(rleBytes)
 

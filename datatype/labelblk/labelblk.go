@@ -633,7 +633,7 @@ func (d *Data) DoRPC(req datastore.Request, reply *datastore.Response) error {
 		// Get offset
 		offset, err := dvid.StringToPoint(offsetStr, ",")
 		if err != nil {
-			return fmt.Errorf("Illegal offset specification: %s: %s", offsetStr, err.Error())
+			return fmt.Errorf("Illegal offset specification: %s: %v", offsetStr, err)
 		}
 
 		// Get list of files to add
@@ -712,15 +712,15 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	if len(parts) == 3 && action == "post" {
 		config, err := server.DecodeJSON(r)
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		if err := d.ModifyConfig(config); err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		if err := datastore.SaveDataByUUID(uuid, d); err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		fmt.Fprintf(w, "Changed '%s' based on received configuration:\n%s\n", d.DataName(), config)
@@ -741,7 +741,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	case "metadata":
 		jsonStr, err := d.NdDataMetadata()
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/vnd.dvid-nd-data+json")
@@ -750,7 +750,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	case "info":
 		jsonBytes, err := d.MarshalJSON()
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -764,12 +764,12 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 		coord, err := dvid.StringToPoint(parts[4], "_")
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		label, err := d.GetLabelAtPoint(ctx.VersionID(), coord)
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		w.Header().Set("Content-type", "application/json")
@@ -787,14 +787,14 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		planeStr := dvid.DataShapeString(shapeStr)
 		plane, err := planeStr.DataShape()
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		switch plane.ShapeDimensions() {
 		case 2:
 			slice, err := dvid.NewSliceFromStrings(planeStr, offsetStr, sizeStr, "_")
 			if err != nil {
-				server.BadRequest(w, r, err.Error())
+				server.BadRequest(w, r, err)
 				return
 			}
 			if action != "get" {
@@ -804,19 +804,19 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			rawSlice, err := dvid.Isotropy2D(d.Properties.VoxelSize, slice, isotropic)
 			lbl, err := d.NewLabels(rawSlice, nil)
 			if err != nil {
-				server.BadRequest(w, r, err.Error())
+				server.BadRequest(w, r, err)
 				return
 			}
 			if roiptr != nil {
 				roiptr.Iter, err = roi.NewIterator(roiname, ctx.VersionID(), lbl)
 				if err != nil {
-					server.BadRequest(w, r, err.Error())
+					server.BadRequest(w, r, err)
 					return
 				}
 			}
 			img, err := d.GetImage(ctx.VersionID(), lbl, roiptr)
 			if err != nil {
-				server.BadRequest(w, r, err.Error())
+				server.BadRequest(w, r, err)
 				return
 			}
 			if isotropic {
@@ -824,7 +824,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 				dstH := int(slice.Size().Value(1))
 				img, err = img.ScaleImage(dstW, dstH)
 				if err != nil {
-					server.BadRequest(w, r, err.Error())
+					server.BadRequest(w, r, err)
 					return
 				}
 			}
@@ -835,7 +835,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			//dvid.ElapsedTime(dvid.Normal, startTime, "%s %s upto image formatting", op, slice)
 			err = dvid.WriteImageHttp(w, img.Get(), formatStr)
 			if err != nil {
-				server.BadRequest(w, r, err.Error())
+				server.BadRequest(w, r, err)
 				return
 			}
 			timedLog.Infof("HTTP %s: %s (%s)", r.Method, plane, r.URL)
@@ -859,25 +859,25 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			compression := queryValues.Get("compression")
 			subvol, err := dvid.NewSubvolumeFromStrings(offsetStr, sizeStr, "_")
 			if err != nil {
-				server.BadRequest(w, r, err.Error())
+				server.BadRequest(w, r, err)
 				return
 			}
 			if action == "get" {
 				lbl, err := d.NewLabels(subvol, nil)
 				if err != nil {
-					server.BadRequest(w, r, err.Error())
+					server.BadRequest(w, r, err)
 					return
 				}
 				if roiptr != nil {
 					roiptr.Iter, err = roi.NewIterator(roiname, ctx.VersionID(), lbl)
 					if err != nil {
-						server.BadRequest(w, r, err.Error())
+						server.BadRequest(w, r, err)
 						return
 					}
 				}
 				data, err := d.GetVolume(ctx.VersionID(), lbl, roiptr)
 				if err != nil {
-					server.BadRequest(w, r, err.Error())
+					server.BadRequest(w, r, err)
 					return
 				}
 				w.Header().Set("Content-type", "application/octet-stream")
@@ -885,19 +885,19 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 				case "":
 					_, err = w.Write(data)
 					if err != nil {
-						server.BadRequest(w, r, err.Error())
+						server.BadRequest(w, r, err)
 						return
 					}
 				case "lz4":
 					compressed := make([]byte, lz4.CompressBound(data))
 					var n, outSize int
 					if outSize, err = lz4.Compress(data, compressed); err != nil {
-						server.BadRequest(w, r, err.Error())
+						server.BadRequest(w, r, err)
 						return
 					}
 					compressed = compressed[:outSize]
 					if n, err = w.Write(compressed); err != nil {
-						server.BadRequest(w, r, err.Error())
+						server.BadRequest(w, r, err)
 						return
 					}
 					if n != outSize {
@@ -909,11 +909,11 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 				case "gzip":
 					gw := gzip.NewWriter(w)
 					if _, err = gw.Write(data); err != nil {
-						server.BadRequest(w, r, err.Error())
+						server.BadRequest(w, r, err)
 						return
 					}
 					if err = gw.Close(); err != nil {
-						server.BadRequest(w, r, err.Error())
+						server.BadRequest(w, r, err)
 						return
 					}
 				default:
@@ -937,7 +937,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 					tlog := dvid.NewTimeLog()
 					data, err = ioutil.ReadAll(r.Body)
 					if err != nil {
-						server.BadRequest(w, r, err.Error())
+						server.BadRequest(w, r, err)
 						return
 					}
 					tlog.Debugf("read 3d uncompressed POST")
@@ -945,7 +945,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 					tlog := dvid.NewTimeLog()
 					data, err = ioutil.ReadAll(r.Body)
 					if err != nil {
-						server.BadRequest(w, r, err.Error())
+						server.BadRequest(w, r, err)
 						return
 					}
 					if len(data) == 0 {
@@ -957,7 +957,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 					uncompressed := make([]byte, subvol.NumVoxels()*8)
 					err = lz4.Uncompress(data, uncompressed)
 					if err != nil {
-						server.BadRequest(w, r, err.Error())
+						server.BadRequest(w, r, err)
 						return
 					}
 					data = uncompressed
@@ -966,16 +966,16 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 					tlog := dvid.NewTimeLog()
 					gr, err := gzip.NewReader(r.Body)
 					if err != nil {
-						server.BadRequest(w, r, err.Error())
+						server.BadRequest(w, r, err)
 						return
 					}
 					data, err = ioutil.ReadAll(gr)
 					if err != nil {
-						server.BadRequest(w, r, err.Error())
+						server.BadRequest(w, r, err)
 						return
 					}
 					if err = gr.Close(); err != nil {
-						server.BadRequest(w, r, err.Error())
+						server.BadRequest(w, r, err)
 						return
 					}
 					tlog.Debugf("read and uncompress 3d gzip POST")
@@ -985,18 +985,18 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 				}
 				lbl, err := d.NewLabels(subvol, data)
 				if err != nil {
-					server.BadRequest(w, r, err.Error())
+					server.BadRequest(w, r, err)
 					return
 				}
 				if roiptr != nil {
 					roiptr.Iter, err = roi.NewIterator(roiname, ctx.VersionID(), lbl)
 					if err != nil {
-						server.BadRequest(w, r, err.Error())
+						server.BadRequest(w, r, err)
 						return
 					}
 				}
 				if err = d.PutVoxels(ctx.VersionID(), lbl.Voxels, roiptr); err != nil {
-					server.BadRequest(w, r, err.Error())
+					server.BadRequest(w, r, err)
 					return
 				}
 			}
@@ -1041,8 +1041,7 @@ func (d *Data) GetLabelBytesAtPoint(v dvid.VersionID, pt dvid.Point) ([]byte, er
 	}
 	labelData, _, err := dvid.DeserializeData(serialization, true)
 	if err != nil {
-		return nil, fmt.Errorf("Unable to deserialize block %s in '%s': %s\n",
-			blockCoord, d.DataName(), err.Error())
+		return nil, fmt.Errorf("Unable to deserialize block %s in '%s': %v\n", blockCoord, d.DataName(), err)
 	}
 
 	// Retrieve the particular label within the block.

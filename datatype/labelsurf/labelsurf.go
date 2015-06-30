@@ -205,13 +205,13 @@ type Data struct {
 func GetSurface(ctx storage.Context, label uint64) ([]byte, bool, error) {
 	bigdata, err := storage.BigDataStore()
 	if err != nil {
-		return nil, false, fmt.Errorf("Cannot get datastore that handles big data: %s\n", err.Error())
+		return nil, false, fmt.Errorf("Cannot get datastore that handles big data: %v\n", err)
 	}
 
 	// Retrieve the precomputed surface or that it's not available.
 	data, err := bigdata.Get(ctx, NewLabelSurfaceIndex(label))
 	if err != nil {
-		return nil, false, fmt.Errorf("Error in retrieving surface for label %d: %s", label, err.Error())
+		return nil, false, fmt.Errorf("Error in retrieving surface for label %d: %v", label, err)
 	}
 	if data == nil {
 		return []byte{}, false, nil
@@ -219,7 +219,7 @@ func GetSurface(ctx storage.Context, label uint64) ([]byte, bool, error) {
 	uncompress := false
 	surfaceBytes, _, err := dvid.DeserializeData(data, uncompress)
 	if err != nil {
-		return nil, false, fmt.Errorf("Unable to deserialize surface for label %d: %s\n", label, err.Error())
+		return nil, false, fmt.Errorf("Unable to deserialize surface for label %d: %v\n", label, err)
 	}
 	return surfaceBytes, true, nil
 }
@@ -309,7 +309,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	case "info":
 		jsonBytes, err := d.MarshalJSON()
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -324,12 +324,12 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		label, err := strconv.ParseUint(parts[4], 10, 64)
 		fmt.Printf("Getting surface for label %d\n", label)
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		gzipData, found, err := GetSurface(ctx, label)
 		if err != nil {
-			server.BadRequest(w, r, "Error on getting surface for label %d: %s", label, err.Error())
+			server.BadRequest(w, r, "Error on getting surface for label %d: %v", label, err)
 			return
 		}
 		if !found {
@@ -338,7 +338,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 		w.Header().Set("Content-type", "application/octet-stream")
 		if err := dvid.WriteGzip(gzipData, w, r); err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		timedLog.Infof("HTTP %s: surface on label %d (%s)", r.Method, label, r.URL)
@@ -351,17 +351,17 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 		coord, err := dvid.StringToPoint(parts[4], "_")
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		label, err := d.GetLabelAtPoint(ctx.VersionID(), coord)
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		gzipData, found, err := GetSurface(ctx, label)
 		if err != nil {
-			server.BadRequest(w, r, "Error on getting surface for label %d: %s", label, err.Error())
+			server.BadRequest(w, r, "Error on getting surface for label %d: %v", label, err)
 			return
 		}
 		if !found {
@@ -371,7 +371,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		fmt.Printf("Found surface for label %d: %d bytes (gzip payload)\n", label, len(gzipData))
 		w.Header().Set("Content-type", "application/octet-stream")
 		if err := dvid.WriteGzip(gzipData, w, r); err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		timedLog.Infof("HTTP %s: surface-by-point at %s (%s)", r.Method, coord, r.URL)
