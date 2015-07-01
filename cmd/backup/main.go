@@ -32,30 +32,30 @@ dvid-backup does a cold backup of a local leveldb storage engine.
 
 Usage: dvid-backup [options] <database directory> <backup directory>
 
-      -delete     (flag)    Remove old snapshot directory.
+	  -delete     (flag)    Remove old snapshot directory.
 	  -verbose    (flag)    Run in verbose mode.
-      -h, -help   (flag)    Show help message
+	  -h, -help   (flag)    Show help message
 
 `
 
 func duplicateFile(src, dst string) {
 	r, err := os.Open(src)
 	if err != nil {
-		fmt.Printf("Could not open file %q for copy: %s\n", src, err.Error())
+		fmt.Printf("Could not open file %q for copy: %v\n", src, err)
 		os.Exit(1)
 	}
 	defer r.Close()
 
 	w, err := os.Create(dst)
 	if err != nil {
-		fmt.Printf("Could not create %q: %s\n", dst, err.Error())
+		fmt.Printf("Could not create %q: %v\n", dst, err)
 		os.Exit(1)
 	}
 	defer w.Close()
 
 	_, err = io.Copy(w, r)
 	if err != nil {
-		fmt.Printf("Error copying %q: %s\n", src, err.Error())
+		fmt.Printf("Error copying %q: %v\n", src, err)
 		os.Exit(1)
 	}
 }
@@ -75,7 +75,7 @@ func main() {
 	// Make sure we have rsync
 	rsyncPath, err := exec.LookPath("rsync")
 	if err != nil {
-		fmt.Printf("Unable to find rsync command; alter PATH?\nError: %s\n", err.Error())
+		fmt.Printf("Unable to find rsync command; alter PATH?\nError: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -98,7 +98,7 @@ func main() {
 		fmt.Printf("Creating backup directory: %s\n", pathBackup)
 		err := os.MkdirAll(pathBackup, 0744)
 		if err != nil {
-			fmt.Printf("Can't make backup directory: %s\n", err.Error())
+			fmt.Printf("Can't make backup directory: %v\n", err)
 			os.Exit(1)
 		}
 	} else if !fileinfo.IsDir() {
@@ -114,7 +114,7 @@ func main() {
 		if *deleteSnapshot {
 			err = os.RemoveAll(snapshotDir)
 			if err != nil {
-				fmt.Printf("Error removing snapshot directory %q: %s\n", snapshotDir, err.Error())
+				fmt.Printf("Error removing snapshot directory %q: %v\n", snapshotDir, err)
 				os.Exit(1)
 			}
 		} else {
@@ -131,14 +131,14 @@ func main() {
 	// Make hard links of all files in sst folders and copy files not in sst_* directories.
 	err = filepath.Walk(pathDb, func(fullpath string, f os.FileInfo, err error) error {
 		if err != nil {
-			fmt.Printf("Error traversing the database directory @ %s: %s\n", fullpath, err.Error())
+			fmt.Printf("Error traversing the database directory @ %s: %v\n", fullpath, err)
 			os.Exit(1)
 		}
 		srcpath, name := path.Split(fullpath)
 		if strings.HasPrefix(name, "sst_") && f.IsDir() {
 			err = os.MkdirAll(path.Join(snapshotDir, name), 0744)
 			if err != nil {
-				fmt.Printf("Error trying to create new SST directory: %s\n", err.Error())
+				fmt.Printf("Error trying to create new SST directory: %v\n", err)
 				os.Exit(1)
 			}
 			return nil
@@ -164,10 +164,10 @@ func main() {
 
 	// Launch background process to do rsync of sst files
 	go func() {
-		cmd := exec.Command(rsyncPath, "-a", snapshotDir+"/", pathBackup)
+		cmd := exec.Command(rsyncPath, "-a", "--delete", snapshotDir+"/", pathBackup)
 		err = cmd.Run()
 		if err != nil {
-			fmt.Printf("Error running rsync: %s\n", err.Error())
+			fmt.Printf("Error running rsync: %v\n", err)
 			os.Exit(1)
 		}
 	}()

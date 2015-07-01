@@ -86,12 +86,6 @@ else ()
     
     # flag for building graph backend (currently just using specified key-value store
     set (DVID_GRAPHBACKEND "graphkeyvalue" CACHE TYPE STRING)
-
-    # flag for building with FUSE support for key-value
-    set (DVID_FUSE FALSE CACHE TYPE BOOL)
-    if (${DVID_FUSE})
-        set (DVID_BUILD_TAGS "fuse")
-    endif ()
     
     message ("Using DVID_BACKEND: ${DVID_BACKEND}")
 
@@ -134,7 +128,7 @@ else ()
 
     add_custom_target (gopackages-install
         ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go get ${GO_GET} -u github.com/janelia-flyem/go
-        DEPENDS     ${golang_NAME} ${nanomsg_NAME}
+        DEPENDS     ${golang_NAME}
         COMMENT     "Adding go package dependencies for janelia-flyem projects...")
 
     add_custom_target (gopackages
@@ -190,12 +184,27 @@ else ()
         DEPENDS     ${golang_NAME}
         COMMENT     "Adding CGo Lightning MDB...")
 
+    # Compile command to generate DVID source code version info.
+    add_custom_target (dvid-gen-version
+        ${BUILDEM_ENV_STRING} ${GO_ENV} ${CGO_FLAGS} go build -o ${BUILDEM_BIN_DIR}/dvid-gen-version 
+        -v -tags '${DVID_BUILD_TAGS}' cmd/gen-version/main.go 
+        WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
+        DEPENDS     ${golang_NAME}
+        COMMENT     "Compiling and installing dvid version generation command...")
+
+    # Handle DVID code generation before we build the main DVID executable.
+    add_custom_target (dvid-code-gen
+        ${BUILDEM_BIN_DIR}/dvid-gen-version -o ${CMAKE_CURRENT_SOURCE_DIR}/server/version.go
+        WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
+        DEPENDS     ${golang_NAME} dvid-gen-version
+        COMMENT     "Generating extra DVID code before building main executable...")
+
     # Build DVID with chosen backend
     add_custom_target (dvid-exe
         ${BUILDEM_ENV_STRING} ${GO_ENV} ${CGO_FLAGS} go build -o ${BUILDEM_BIN_DIR}/dvid 
         -v -tags '${DVID_BACKEND} ${DVID_GRAPHBACKEND} ${DVID_BUILD_TAGS}' cmd/dvid/main.go 
         WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
-        DEPENDS     ${golang_NAME} ${nanomsg_NAME} ${DVID_BACKEND_DEPEND} ${DVID_DEP_GO_PACKAGES} ${hdf5_NAME}
+        DEPENDS     ${golang_NAME} ${DVID_BACKEND_DEPEND} ${DVID_DEP_GO_PACKAGES} ${hdf5_NAME} dvid-code-gen
         COMMENT     "Compiling and installing dvid executable...")
 
     # Build DVID with embedded console 
@@ -206,11 +215,15 @@ else ()
         COMMENT     "Adding embedded console into dvid executable..."
     )
 
-    set (DVID_PACKAGES ${DVID_GO}/datastore ${DVID_GO}/datatype/... ${DVID_GO}/dvid ${DVID_GO}/server
-                       ${DVID_GO}/storage/... ${DVID_GO}/tests ${DVID_GO}/tests_integration)
+    set (DVID_PACKAGES ${DVID_GO}/dvid ${DVID_GO}/storage/... ${DVID_GO}/datastore ${DVID_GO}/server
+                       ${DVID_GO}/datatype/... ${DVID_GO}/tests ${DVID_GO}/tests_integration)
 
    add_custom_target (test
         ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go test -tags '${DVID_BACKEND} ${DVID_GRAPHBACKEND}' 
+            ${DVID_PACKAGES})
+
+   add_custom_target (test-verbose
+        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go test -v -tags '${DVID_BACKEND} ${DVID_GRAPHBACKEND}' 
             ${DVID_PACKAGES})
 
    add_custom_target (coverage

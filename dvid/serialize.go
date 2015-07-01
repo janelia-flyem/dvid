@@ -175,6 +175,10 @@ func DecodeSerializationFormat(s SerializationFormat) (CompressionFormat, Checks
 // Checksum will be ignored if the underlying compression already employs
 // checksums, e.g., Gzip.
 func SerializeData(data []byte, compress Compression, checksum Checksum) ([]byte, error) {
+	if data == nil || len(data) == 0 {
+		return []byte{}, nil
+	}
+
 	var buffer bytes.Buffer
 
 	// Don't duplicate checksum if using Gzip, which already has checksum & length checks.
@@ -263,12 +267,15 @@ func Serialize(object interface{}, compress Compression, checksum Checksum) ([]b
 // DeserializeData deserializes a slice of bytes using stored compression, checksum.
 // If uncompress parameter is false, the data is not uncompressed.
 func DeserializeData(s []byte, uncompress bool) ([]byte, CompressionFormat, error) {
+	if s == nil || len(s) == 0 {
+		return []byte{}, Uncompressed, nil
+	}
 	buffer := bytes.NewBuffer(s)
 
 	// Get the stored compression and checksum
 	var format SerializationFormat
 	if err := binary.Read(buffer, binary.LittleEndian, &format); err != nil {
-		return nil, 0, fmt.Errorf("Could not read serialization format info: %s", err.Error())
+		return nil, 0, fmt.Errorf("Could not read serialization format info from %d byte input: %v", len(s), err)
 	}
 	compression, checksum := DecodeSerializationFormat(format)
 
@@ -278,7 +285,7 @@ func DeserializeData(s []byte, uncompress bool) ([]byte, CompressionFormat, erro
 	case NoChecksum:
 	case CRC32:
 		if err := binary.Read(buffer, binary.LittleEndian, &storedCrc32); err != nil {
-			return nil, 0, fmt.Errorf("Error reading checksum: %s", err.Error())
+			return nil, 0, fmt.Errorf("Error reading checksum: %v", err)
 		}
 	default:
 		return nil, 0, fmt.Errorf("Illegal checksum in deserializing data")

@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/janelia-flyem/go/go-uuid/uuid"
+	"github.com/janelia-flyem/go/uuid"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -34,20 +34,20 @@ func UseStore() {
 	mu.Lock()
 	defer mu.Unlock()
 	if count == 0 {
-		dbpath = filepath.Join(os.TempDir(), fmt.Sprintf("dvid-test-%s", uuid.NewUUID()))
+		dbpath = filepath.Join(os.TempDir(), fmt.Sprintf("dvid-test-%s", uuid.NewV4()))
 		var err error
 		engine, err = local.CreateBlankStore(dbpath)
 		if err != nil {
-			log.Fatalf("Can't create a blank test datastore: %s\n", err.Error())
+			log.Fatalf("Can't create a blank test datastore: %v\n", err)
 		}
 		if err = storage.Initialize(engine, "testdb"); err != nil {
-			log.Fatalf("Can't initialize test datastore: %s\n", err.Error())
+			log.Fatalf("Can't initialize test datastore: %v\n", err)
 		}
 		if err = datastore.InitMetadata(engine); err != nil {
-			log.Fatalf("Can't write blank datastore metadata: %s\n", err.Error())
+			log.Fatalf("Can't write blank datastore metadata: %v\n", err)
 		}
 		if err = datastore.Initialize(); err != nil {
-			log.Fatalf("Can't initialize datastore management: %s\n", err.Error())
+			log.Fatalf("Can't initialize datastore management: %v\n", err)
 		}
 	}
 	count++
@@ -68,13 +68,13 @@ func CloseReopenStore() {
 	create := false
 	engine, err = local.NewKeyValueStore(dbpath, create, dvid.Config{})
 	if err != nil {
-		log.Fatalf("Error reopening test db at %s: %s\n", dbpath, err.Error())
+		log.Fatalf("Error reopening test db at %s: %v\n", dbpath, err)
 	}
 	if err = storage.Initialize(engine, "testdb"); err != nil {
-		log.Fatalf("Can't initialize test datastore: %s\n", err.Error())
+		log.Fatalf("CloseReopenStore: bad storage.Initialize(): %v\n", err)
 	}
 	if err = datastore.Initialize(); err != nil {
-		log.Fatalf("Can't initialize datastore management: %s\n", err.Error())
+		log.Fatalf("CloseReopenStore: can't initialize datastore management: %v\n", err)
 	}
 }
 

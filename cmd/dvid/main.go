@@ -23,14 +23,16 @@ import (
 
 	// Declare the data types this DVID executable will support
 	_ "github.com/janelia-flyem/dvid/datatype/googlevoxels"
+	_ "github.com/janelia-flyem/dvid/datatype/imageblk"
+	_ "github.com/janelia-flyem/dvid/datatype/imagetile"
 	_ "github.com/janelia-flyem/dvid/datatype/keyvalue"
+	_ "github.com/janelia-flyem/dvid/datatype/labelblk"
 	_ "github.com/janelia-flyem/dvid/datatype/labelgraph"
-	_ "github.com/janelia-flyem/dvid/datatype/labelmap"
-	_ "github.com/janelia-flyem/dvid/datatype/labels64"
+	//_ "github.com/janelia-flyem/dvid/datatype/labelsurf"
+	_ "github.com/janelia-flyem/dvid/datatype/labelsz"
+	_ "github.com/janelia-flyem/dvid/datatype/labelvol"
 	_ "github.com/janelia-flyem/dvid/datatype/multichan16"
-	_ "github.com/janelia-flyem/dvid/datatype/multiscale2d"
 	_ "github.com/janelia-flyem/dvid/datatype/roi"
-	_ "github.com/janelia-flyem/dvid/datatype/voxels"
 )
 
 var (
@@ -105,8 +107,8 @@ var usage = func() {
 	// Print server DVID help if available
 	err := DoCommand(dvid.Command([]string{"help"}))
 	if err != nil {
-		fmt.Printf("Unable to get 'help' from DVID server at %q.\n%s\n",
-			server.DefaultWebAddress, err.Error())
+		fmt.Printf("Unable to get 'help' from DVID server at %q.\n%v\n",
+			server.DefaultWebAddress, err)
 	}
 }
 
@@ -182,7 +184,7 @@ func DoCommand(cmd dvid.Command) error {
 	case "repair":
 		return DoRepair(cmd)
 	case "about":
-		fmt.Println(datastore.Versions())
+		fmt.Println(server.About())
 	// Send everything else to server via DVID terminal
 	default:
 		client, err := server.NewClient(*rpcAddress)
@@ -194,7 +196,7 @@ func DoCommand(cmd dvid.Command) error {
 			var err error
 			request.Input, err = ioutil.ReadAll(os.Stdin)
 			if err != nil {
-				return fmt.Errorf("Error in reading from standard input: %s", err.Error())
+				return fmt.Errorf("Error in reading from standard input: %v", err)
 			}
 		}
 		return client.Send(request)
@@ -255,7 +257,7 @@ func DoServe(cmd dvid.Command) error {
 	// Check if there is a configuration file, and if so, set logger.
 	logConfig, err := server.LoadConfig(*configfile)
 	if err != nil {
-		return fmt.Errorf("Error loading configuration file %q: %s\n", *configfile, err.Error())
+		return fmt.Errorf("Error loading configuration file %q: %v\n", *configfile, err)
 	}
 	logConfig.SetLogger()
 
@@ -265,10 +267,10 @@ func DoServe(cmd dvid.Command) error {
 		return fmt.Errorf("serve command must be followed by the path to the datastore")
 	}
 	if err := local.Initialize(dbpath, cmd.Settings()); err != nil {
-		return fmt.Errorf("Unable to initialize local storage: %s\n", err.Error())
+		return fmt.Errorf("Unable to initialize local storage: %v\n", err)
 	}
 	if err := datastore.Initialize(); err != nil {
-		return fmt.Errorf("Unable to initialize datastore: %s\n", err.Error())
+		return fmt.Errorf("Unable to initialize datastore: %v\n", err)
 	}
 
 	// Serve HTTP and RPC

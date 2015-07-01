@@ -110,10 +110,10 @@ func Initialize(kvEngine Engine, description string) error {
 	return nil
 }
 
-// DeleteDataInstance removes all data context key-value pairs from all tiers of storage.
-func DeleteDataInstance(instanceID dvid.InstanceID) error {
+// DeleteDataInstance removes a data instance across all versions and tiers of storage.
+func DeleteDataInstance(data dvid.Data) error {
 	if !manager.setup {
-		return fmt.Errorf("Can't delete data instance %d before storage manager is initialized", instanceID)
+		return fmt.Errorf("Can't delete data instance %q before storage manager is initialized", data.DataName())
 	}
 
 	// Determine all database tiers that are distinct.
@@ -123,9 +123,9 @@ func DeleteDataInstance(instanceID dvid.InstanceID) error {
 	}
 
 	// For each storage tier, remove all key-values with the given instance id.
+	ctx := NewDataContext(data, 0)
 	for _, db := range dbs {
-		minKey, maxKey := DataContextKeyRange(instanceID)
-		if err := db.DeleteRange(nil, minKey, maxKey); err != nil {
+		if err := db.DeleteAll(ctx, true); err != nil {
 			return err
 		}
 	}

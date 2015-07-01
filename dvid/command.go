@@ -49,7 +49,7 @@ func (c *Config) SetByJSON(jsonData io.Reader) error {
 	}
 	decoder := json.NewDecoder(jsonData)
 	if err := decoder.Decode(&(c.values)); err != nil && err != io.EOF {
-		return fmt.Errorf("Malformed JSON request in body: %s", err.Error())
+		return fmt.Errorf("Malformed JSON request in body: %v", err)
 	}
 	// Convert all keys to lower case.
 	for key, _ := range c.values {
@@ -60,43 +60,6 @@ func (c *Config) SetByJSON(jsonData io.Reader) error {
 		}
 	}
 	return nil
-}
-
-// IsVersioned returns true if we want this data versioned.
-func (c Config) IsVersioned() (versioned bool, err error) {
-	if c.values == nil {
-		err = fmt.Errorf("Config data structure has not been initialized")
-		return
-	}
-	param, found := c.values["versioned"]
-	if !found {
-		c.values["versioned"] = "false"
-		return false, nil
-	}
-	s, ok := param.(string)
-	if !ok {
-		return false, fmt.Errorf("'versioned' in DVID configuration must be 'true' or 'false'")
-	}
-	switch s {
-	case "true":
-		return true, nil
-	case "false":
-		return false, nil
-	default:
-		return false, fmt.Errorf(
-			"'versioned' in DVID configuration must be 'true' or 'false', not '%s'", s)
-	}
-}
-
-func (c *Config) SetVersioned(versioned bool) {
-	if c.values == nil {
-		c.values = make(map[string]interface{})
-	}
-	if versioned {
-		c.values["versioned"] = "true"
-	} else {
-		c.values["versioned"] = "false"
-	}
 }
 
 func (c *Config) Set(key string, value interface{}) {
@@ -183,6 +146,11 @@ func (c *Config) Remove(keys ...string) {
 	}
 }
 
+// Clear removes all configuration data.
+func (c *Config) Clear() {
+	c.values = nil
+}
+
 // Response provides a few string fields to pass information back from
 // a remote operation.
 type Response struct {
@@ -193,7 +161,7 @@ type Response struct {
 
 // Command supports command-line interaction with DVID.
 // The first item in the string slice is the command, which may be "help"
-// or the name of DVID data name ("grayscale8").  If the first item is the name
+// or the name of DVID data name ("uint8").  If the first item is the name
 // of a data type, the second item will have a type-specific command like "get".
 // The other arguments are command arguments or optional settings of the form
 // "<key>=<value>".

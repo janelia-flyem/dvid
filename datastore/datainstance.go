@@ -13,8 +13,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-
-	"code.google.com/p/go.net/context"
+	"sync"
 
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/message"
@@ -56,58 +55,44 @@ func (r *Response) Write(w io.Writer) error {
 
 // ------------------------
 
-// VersionedContext implements storage.VersionedContext for data instances that
+// VersionedCtx implements storage.VersionedCtx for data instances that
 // have a version DAG.
-type VersionedContext struct {
+type VersionedCtx struct {
 	*storage.DataContext
 }
 
-func NewVersionedContext(data dvid.Data, versionID dvid.VersionID) *VersionedContext {
-	return &VersionedContext{storage.NewDataContext(data, versionID)}
-}
-
-func (ctx *VersionedContext) GetIterator() (storage.VersionIterator, error) {
-	uuid, err := UUIDFromVersion(ctx.VersionID())
-	if err != nil {
-		return nil, err
-	}
-	repo, err := RepoFromUUID(uuid)
-	if err != nil {
-		return nil, err
-	}
-	return repo.GetIterator(ctx.VersionID())
+func NewVersionedCtx(data dvid.Data, versionID dvid.VersionID) *VersionedCtx {
+	return &VersionedCtx{storage.NewDataContext(data, versionID)}
 }
 
 // VersionedKeyValue returns the key-value pair corresponding to this key's version
 // given a list of key-value pairs across many versions.  If no suitable key-value
-// pair is found, nil is returned.
-func (ctx *VersionedContext) VersionedKeyValue(values []*storage.KeyValue) (*storage.KeyValue, error) {
-
+// pair is found or a tombstone is encounterd closest to version, nil is returned.
+func (vctx *VersionedCtx) VersionedKeyValue(values []*storage.KeyValue) (*storage.KeyValue, error) {
 	// Set up a map[VersionID]KeyValue
-	versionMap := make(map[dvid.VersionID]*storage.KeyValue, len(values))
+	versionMap := make(kvVersions, len(values))
 	for _, kv := range values {
-		pos := len(kv.K) - dvid.VersionIDSize
-		vid := dvid.VersionIDFromBytes(kv.K[pos:])
+		vid, err := vctx.VersionFromKey(kv.K)
+		if err != nil {
+			return nil, err
+		}
 		versionMap[vid] = kv
+		// fmt.Printf("Found version %d for %s\n", vid, ctx)
 	}
 
-	// Iterate from the current node up the ancestors in the version DAG, checking if
-	// current best is present.
-	it, err := ctx.GetIterator()
-	if err != nil {
-		return nil, fmt.Errorf("Couldn't get versioned data iterator: %s\n", err.Error())
-	}
-	for {
-		if it.Valid() {
-			if kv, found := versionMap[it.VersionID()]; found {
-				return kv, nil
-			}
-		} else {
-			break
-		}
-		it.Next()
-	}
-	return nil, nil
+	// Get the correct key-value for this version among all ancestors, some of which might have
+	// a value.
+	kv, _, err := versionMap.FindMatch(vctx.VersionID())
+	return kv, err
+}
+
+func (vctx *VersionedCtx) Versioned() bool {
+	return true
+}
+
+func (vctx *VersionedCtx) String() string {
+	return fmt.Sprintf("Versioned data context for %q (local id %d, version id %d)", vctx.DataName(),
+		vctx.InstanceID(), vctx.VersionID())
 }
 
 // DataService is an interface for operations on an instance of a supported datatype.
@@ -117,14 +102,13 @@ type DataService interface {
 	GetType() TypeService
 
 	// ModifyConfig modifies a configuration in a type-specific way.
-	ModifyConfig(config dvid.Config) error
+	ModifyConfig(dvid.Config) error
 
 	// DoRPC handles command line and RPC commands specific to a data type
-	DoRPC(request Request, reply *Response) error
+	DoRPC(Request, *Response) error
 
-	// ServeHTTP handles HTTP requests in the context of a particular version of a Repo
-	// for this instance of a datatype.
-	ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request)
+	// ServeHTTP handles HTTP requests in the context of a particular version.
+	ServeHTTP(dvid.UUID, *VersionedCtx, http.ResponseWriter, *http.Request)
 
 	Help() string
 
@@ -144,32 +128,74 @@ type DataService interface {
 	//gob.GobDecoder
 }
 
-// Persistence indicates the level of persistence needed for data within this instance.
-// It's a method to mark how critical it is to protect data.
-type Persistence uint8
+// InstanceMutator provides a hook for data instances to load mutable data
+// on startup.  It is assumed that the data instances store data whenever
+// its data mutates, e.g., extents for labelblk or max label for labelvol.
+type InstanceMutator interface {
+	// Loads all mutable properties and applies any necessary migration to
+	// transform the internal data from the stored to expected version.
+	LoadMutable(root dvid.VersionID, storedVersion, expectedVersion uint64) (saveNeeded bool, err error)
+}
 
-const (
-	// DataDefault  - no backups made.  Normal replication using redundant copies or erasure coding.
-	DataDefault Persistence = iota
+// VersionInitializer provides a hook for data instances to receive branch (new version)
+// events and modify their properties as needed.
+type VersionInitializer interface {
+	InitVersion(dvid.UUID, dvid.VersionID) error
+}
 
-	// DataCritical - must be serializable and DVID will asynchronously backup data in cheaper storage.
-	DataCritical
+// SyncEvent identifies an event in which a data instance has modified its data
+type SyncEvent struct {
+	Instance dvid.InstanceName
+	Event    string
+}
 
-	// DataCached - can be deleted after X hours, say 48 hours.
-	DataCached
-)
+// SyncMessage describes changes to a data instance for a given version.
+type SyncMessage struct {
+	Version dvid.VersionID
+	Delta   interface{}
+}
 
-func (p Persistence) String() string {
-	switch p {
-	case DataDefault:
-		return "standard data persistence"
-	case DataCritical:
-		return "critical data persistence"
-	case DataCached:
-		return "cached data"
-	default:
-		return "unknown persistence model"
+// SyncSub is a subscription request from an instance to be notified via a channel when
+// a given data instance has a given event.
+type SyncSub struct {
+	Event  SyncEvent
+	Notify dvid.InstanceName
+	Ch     chan SyncMessage
+	Done   chan struct{}
+}
+
+// Syncer types support syncing of data between different data instances.
+type Syncer interface {
+	// InitSync establishes a sync link between the receiver data instance and the
+	// named instance.  It returns the subscriptions that need to be created to keep this data
+	// synced and also launches any necessary goroutines that will consume inbound channels of changes
+	// from associated data.
+	InitSync(dvid.InstanceName) []SyncSub
+
+	// SyncedNames returns a slice of instance names to which the receiver is synced.
+	SyncedNames() []dvid.InstanceName
+}
+
+// CommitSyncer want to be notified when a node is committed.
+type CommitSyncer interface {
+	// SyncOnCommit is an asynchronous function that should be called when a node is committed.
+	SyncOnCommit(dvid.UUID, dvid.VersionID)
+}
+
+// NotifySubscribers sends a message to any data instances subscribed to the event.
+func NotifySubscribers(e SyncEvent, m SyncMessage) error {
+	if manager == nil {
+		return ErrManagerNotInitialized
 	}
+
+	// Get the repo from the version
+	repo, err := manager.repoFromVersion(m.Version)
+	if err != nil {
+		return err
+	}
+
+	// Use the repo notification system
+	return repo.notifySubscribers(e, m)
 }
 
 // Data is the base struct of repo-specific data instances.  It should be embedded
@@ -179,7 +205,7 @@ type Data struct {
 	typeurl     dvid.URLString
 	typeversion string
 
-	name dvid.DataString
+	name dvid.InstanceName
 	id   dvid.InstanceID
 	uuid dvid.UUID // Root uuid of repo
 
@@ -189,11 +215,38 @@ type Data struct {
 	// Checksum approach for serialized data.
 	checksum dvid.Checksum
 
-	// Persistence describes how data should be persisted.
-	persistence Persistence
+	// a list of the instances to which this data should be synced
+	syncs []dvid.InstanceName
 
-	// If true (default), we allow changes along nodes.
-	versioned bool
+	// these sync management vars aren't serialized
+	syncmu     sync.RWMutex
+	syncInited map[dvid.InstanceName]struct{}
+}
+
+// IsSyncEstablished returns true if a sync subscriptions have already been marked
+// as established to the given data instance.  Thread-safe.
+func (d *Data) IsSyncEstablished(name dvid.InstanceName) bool {
+	d.syncmu.RLock()
+	defer d.syncmu.RUnlock()
+	if _, found := d.syncInited[name]; found {
+		return true
+	}
+	return false
+}
+
+// SyncEstablished marks the establishment of sync subscriptions with the given
+// data instance.  Thread-safe.
+func (d *Data) SyncEstablished(name dvid.InstanceName) {
+	d.syncmu.Lock()
+	defer d.syncmu.Unlock()
+	if d.syncInited == nil {
+		d.syncInited = make(map[dvid.InstanceName]struct{})
+	}
+	d.syncInited[name] = struct{}{}
+}
+
+func (d *Data) SyncedNames() []dvid.InstanceName {
+	return d.syncs
 }
 
 func (d *Data) MarshalJSON() ([]byte, error) {
@@ -201,12 +254,11 @@ func (d *Data) MarshalJSON() ([]byte, error) {
 		TypeName    dvid.TypeString
 		TypeURL     dvid.URLString
 		TypeVersion string
-		Name        dvid.DataString
+		Name        dvid.InstanceName
 		RepoUUID    dvid.UUID
 		Compression string
 		Checksum    string
-		Persistence string
-		Versioned   bool
+		Syncs       []dvid.InstanceName
 	}{
 		TypeName:    d.typename,
 		TypeURL:     d.typeurl,
@@ -215,29 +267,35 @@ func (d *Data) MarshalJSON() ([]byte, error) {
 		RepoUUID:    d.uuid,
 		Compression: d.compression.String(),
 		Checksum:    d.checksum.String(),
-		Persistence: d.persistence.String(),
-		Versioned:   d.versioned,
+		Syncs:       d.syncs,
 	})
+}
+
+var reservedNames = map[string]struct{}{
+	"log":    struct{}{},
+	"lock":   struct{}{},
+	"branch": struct{}{},
 }
 
 // NewDataService returns a new Data instance that fulfills the DataService interface.
 // The UUID passed in corresponds to the root UUID of the repo that should hold the data.
 // This returned Data struct is usually embedded by datatype-specific data instances.
 // By default, LZ4 and the default checksum is used.
-func NewDataService(t TypeService, uuid dvid.UUID, id dvid.InstanceID, name dvid.DataString, c dvid.Config) (*Data, error) {
+func NewDataService(t TypeService, uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.Config) (*Data, error) {
+	if _, reserved := reservedNames[string(name)]; reserved {
+		return nil, fmt.Errorf("cannot use reserved name %q", name)
+	}
 	compression, _ := dvid.NewCompression(dvid.LZ4, dvid.DefaultCompression)
-	dtype := t.GetType()
 	data := &Data{
-		typename:    dtype.Name,
-		typeurl:     dtype.URL,
-		typeversion: dtype.Version,
+		typename:    t.GetTypeName(),
+		typeurl:     t.GetTypeURL(),
+		typeversion: t.GetTypeVersion(),
 		name:        name,
 		id:          id,
 		uuid:        uuid,
 		compression: compression,
 		checksum:    dvid.DefaultChecksum,
-		persistence: DataDefault,
-		versioned:   true,
+		syncs:       []dvid.InstanceName{},
 	}
 	err := data.ModifyConfig(c)
 	return data, err
@@ -245,7 +303,7 @@ func NewDataService(t TypeService, uuid dvid.UUID, id dvid.InstanceID, name dvid
 
 // ---- dvid.Data implementation ----
 
-func (d *Data) DataName() dvid.DataString { return d.name }
+func (d *Data) DataName() dvid.InstanceName { return d.name }
 
 func (d *Data) InstanceID() dvid.InstanceID { return d.id }
 
@@ -258,8 +316,6 @@ func (d *Data) TypeName() dvid.TypeString { return d.typename }
 func (d *Data) TypeURL() dvid.URLString { return d.typeurl }
 
 func (d *Data) TypeVersion() string { return d.typeversion }
-
-func (d *Data) Versioned() bool { return d.versioned }
 
 func (d *Data) GobDecode(b []byte) error {
 	buf := bytes.NewBuffer(b)
@@ -288,10 +344,7 @@ func (d *Data) GobDecode(b []byte) error {
 	if err := dec.Decode(&(d.checksum)); err != nil {
 		return err
 	}
-	if err := dec.Decode(&(d.persistence)); err != nil {
-		return err
-	}
-	if err := dec.Decode(&(d.versioned)); err != nil {
+	if err := dec.Decode(&(d.syncs)); err != nil {
 		return err
 	}
 	return nil
@@ -324,13 +377,37 @@ func (d *Data) GobEncode() ([]byte, error) {
 	if err := enc.Encode(d.checksum); err != nil {
 		return nil, err
 	}
-	if err := enc.Encode(d.persistence); err != nil {
-		return nil, err
-	}
-	if err := enc.Encode(d.versioned); err != nil {
+	if err := enc.Encode(d.syncs); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+func (d *Data) Equals(d2 *Data) bool {
+	if d.typename != d2.typename ||
+		d.typeurl != d2.typeurl ||
+		d.typeversion != d2.typeversion ||
+		d.name != d2.name ||
+		d.id != d2.id ||
+		d.uuid != d2.uuid ||
+		d.compression != d2.compression ||
+		d.checksum != d2.checksum ||
+		!syncsEqual(d.syncs, d2.syncs) {
+		return false
+	}
+	return true
+}
+
+func syncsEqual(a, b []dvid.InstanceName) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // -----------
@@ -343,27 +420,17 @@ func (d *Data) Checksum() dvid.Checksum {
 	return d.checksum
 }
 
-func (d *Data) Persistence() Persistence {
-	return d.persistence
-}
-
 // --- DataService implementation -----
 
 func (d *Data) GetType() TypeService {
 	typeservice, err := TypeServiceByURL(d.typeurl)
 	if err != nil {
-		dvid.Errorf("Data %q: %s\n", d.name, err.Error())
+		dvid.Errorf("Data %q: %v\n", d.name, err)
 	}
 	return typeservice
 }
 
 func (d *Data) ModifyConfig(config dvid.Config) error {
-	versioned, err := config.IsVersioned()
-	if err != nil {
-		return err
-	}
-	d.versioned = versioned
-
 	// Set compression for this instance
 	s, found, err := config.GetString("Compression")
 	if err != nil {
@@ -409,6 +476,20 @@ func (d *Data) ModifyConfig(config dvid.Config) error {
 			d.checksum = dvid.CRC32
 		default:
 			return fmt.Errorf("Illegal checksum specified: %s", s)
+		}
+	}
+
+	// Set data instances for syncing.
+	s, found, err = config.GetString("sync")
+	if err != nil {
+		return err
+	}
+	if found {
+		names := strings.Split(s, ",")
+		if len(names) > 0 {
+			for _, name := range names {
+				d.syncs = append(d.syncs, dvid.InstanceName(name))
+			}
 		}
 	}
 	return nil

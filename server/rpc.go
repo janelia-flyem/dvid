@@ -23,17 +23,19 @@ const RPCHelpMessage = `Commands executed on the server (rpc address = %s):
 	help
 	shutdown
 
-	repos new  <alias> <description>
+	repos new  <alias> <description> [optional UUID]
+
+	repo <UUID> branch [optional UUID]
 
 	repo <UUID> new <datatype name> <data name> <datatype-specific config>...
 
-	repo <UUID> push <remote DVID address> <settings...>
+	repo <UUID> merge <UUID> [, <UUID>, ...]
 
-		where <settings> are optional "key=value" strings that provide:
-
-		roi=<roiname>
-
-		data=<data1>[,<data2>[,<data3>...]]
+		This requires all UUIDs to be committed and generates a new
+		child with merged data.  This merge assumes the parents
+		have no conflicts, i.e., each data type can easily resolve
+		the merging of key-value pairs, and will generate an error
+		message if this is not the case.
 
 	node <UUID> <data name> <type-specific commands>
 
@@ -53,7 +55,7 @@ type Client struct {
 func NewClient(rpcAddress string) (*Client, error) {
 	client, err := rpc.DialHTTP("tcp", rpcAddress)
 	if err != nil {
-		return nil, fmt.Errorf("Did not find DVID server for RPC at %s [%s]\n", rpcAddress, err.Error())
+		return nil, fmt.Errorf("Did not find DVID server for RPC at %s [%v]\n", rpcAddress, err)
 	}
 	return &Client{rpcAddress, client}, nil
 }
@@ -64,7 +66,7 @@ func (c *Client) Send(request datastore.Request) error {
 	if c.client != nil {
 		err := c.client.Call("RPCConnection.Do", request, &reply)
 		if err != nil {
-			return fmt.Errorf("RPC error for '%s': %s", request.Command, err.Error())
+			return fmt.Errorf("RPC error for '%s': %v", request.Command, err)
 		}
 	} else {
 		reply.Output = []byte(fmt.Sprintf("No DVID server is available: %s\n", request.Command))
@@ -112,7 +114,7 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 				return fmt.Errorf("Error trying to retrieve data types within this DVID server!")
 			}
 			for url, typeservice := range mapTypes {
-				text += fmt.Sprintf("%-20s %s\n", typeservice.GetType().Name, url)
+				text += fmt.Sprintf("%-20s %s\n", typeservice.GetTypeName(), url)
 			}
 			reply.Text = text
 		} else {
@@ -129,21 +131,28 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 		}
 
 	case "repos":
-		var subcommand, alias, description string
-		cmd.CommandArgs(1, &subcommand, &alias, &description)
+		var subcommand, alias, description, uuidStr string
+		cmd.CommandArgs(1, &subcommand, &alias, &description, &uuidStr)
 		switch subcommand {
 		case "new":
-			repo, err := datastore.NewRepo(alias, description)
+			var assign *dvid.UUID
+			if uuidStr == "" {
+				assign = nil
+			} else {
+				u := dvid.UUID(uuidStr)
+				assign = &u
+			}
+			root, err := datastore.NewRepo(alias, description, assign)
 			if err != nil {
 				return err
 			}
-			if err := repo.SetAlias(alias); err != nil {
+			if err := datastore.SetRepoAlias(root, alias); err != nil {
 				return err
 			}
-			if err := repo.SetDescription(description); err != nil {
+			if err := datastore.SetRepoDescription(root, description); err != nil {
 				return err
 			}
-			reply.Text = fmt.Sprintf("New repo %q created with head node %s\n", alias, repo.RootUUID())
+			reply.Text = fmt.Sprintf("New repo %q created with head node %s\n", alias, root)
 		default:
 			return fmt.Errorf("Unknown repos command: %q", subcommand)
 		}
@@ -152,11 +161,6 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 		var uuidStr, subcommand string
 		cmd.CommandArgs(1, &uuidStr, &subcommand)
 		uuid, _, err := datastore.MatchingUUID(uuidStr)
-		if err != nil {
-			return err
-		}
-		// Get Repo
-		repo, err := datastore.RepoFromUUID(uuid)
 		if err != nil {
 			return err
 		}
@@ -174,20 +178,58 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 
 			// Create new data
 			config := cmd.Settings()
-			_, err = repo.NewData(typeservice, dvid.DataString(dataname), config)
+			_, err = datastore.NewData(uuid, typeservice, dvid.InstanceName(dataname), config)
 			if err != nil {
 				return err
 			}
 			reply.Text = fmt.Sprintf("Data %q [%s] added to node %s\n", dataname, typename, uuid)
-			repo.AddToLog(cmd.String())
-		case "push":
-			var target string
-			cmd.CommandArgs(3, &target)
-			config := cmd.Settings()
-			if err = datastore.Push(repo, target, config); err != nil {
+			datastore.AddToRepoLog(uuid, []string{cmd.String()})
+
+		case "branch":
+			cmd.CommandArgs(3, &uuidStr)
+
+			var assign *dvid.UUID
+			if uuidStr == "" {
+				assign = nil
+			} else {
+				u := dvid.UUID(uuidStr)
+				assign = &u
+			}
+			child, err := datastore.NewVersion(uuid, assign)
+			if err != nil {
 				return err
 			}
-			reply.Text = fmt.Sprintf("Repo %q pushed to %q\n", repo.RootUUID(), target)
+			reply.Text = fmt.Sprintf("Branch %s added to node %s\n", child, uuid)
+			datastore.AddToRepoLog(uuid, []string{cmd.String()})
+
+		case "merge":
+			uuids := cmd.CommandArgs(2)
+
+			parents := make([]dvid.UUID, len(uuids)+1)
+			parents[0] = dvid.UUID(uuid)
+			i := 1
+			for uuid := range uuids {
+				parents[i] = dvid.UUID(uuid)
+				i++
+			}
+			child, err := datastore.Merge(parents, datastore.MergeConflictFree)
+			if err != nil {
+				return err
+			}
+			reply.Text = fmt.Sprintf("Parents %v merged into node %s\n", parents, child)
+			datastore.AddToRepoLog(uuid, []string{cmd.String()})
+
+		case "push":
+			/*
+				var target string
+				cmd.CommandArgs(3, &target)
+				config := cmd.Settings()
+				if err = datastore.Push(repo, target, config); err != nil {
+					return err
+				}
+				reply.Text = fmt.Sprintf("Repo %q pushed to %q\n", repo.RootUUID(), target)
+			*/
+			return fmt.Errorf("push command has been temporarily suspended")
 		default:
 			return fmt.Errorf("Unknown command: %q", cmd)
 		}
@@ -200,17 +242,11 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 			return err
 		}
 
-		// Get Repo
-		repo, err := datastore.RepoFromUUID(uuid)
-		if err != nil {
-			return err
-		}
-
 		// Get the DataService
-		dataname := dvid.DataString(descriptor)
+		dataname := dvid.InstanceName(descriptor)
 		var subcommand string
 		cmd.CommandArgs(3, &subcommand)
-		dataservice, err := repo.GetDataByName(dataname)
+		dataservice, err := datastore.GetDataByUUID(uuid, dataname)
 		if err != nil {
 			return err
 		}

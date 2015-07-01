@@ -6,10 +6,13 @@ package dvid
 
 import (
 	"bytes"
+	"container/list"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
+	"sort"
 	"strconv"
 )
 
@@ -313,16 +316,253 @@ type RLE struct {
 	length int32
 }
 
-func (rle RLE) String() string {
-	return fmt.Sprintf("RLE{%s, len %d} ", rle.start, rle.length)
-}
-
 func NewRLE(start Point3d, length int32) RLE {
 	return RLE{start, length}
 }
 
-// RLEs are simply a slice of RLE.
+func (rle RLE) StartPt() Point3d {
+	return rle.start
+}
+func (rle RLE) Length() int32 {
+	return rle.length
+}
+
+func (rle RLE) String() string {
+	return fmt.Sprintf("dvid.NewRLE{%s, %d}", rle.start, rle.length)
+}
+
+func (rle RLE) Intersects(rle2 RLE) bool {
+	if rle.start[2] != rle2.start[2] || rle.start[1] != rle2.start[1] {
+		return false
+	}
+	x0 := rle.start[0]
+	x1 := x0 + rle.length - 1
+	sx0 := rle2.start[0]
+	sx1 := sx0 + rle2.length - 1
+	if x0 > sx1 || x1 < sx0 {
+		return false
+	}
+	return true
+}
+
+// Excise returns the portion of the receiver that is not in the passed RLE.
+// If the RLEs do not intersect, nil is returned.  Up to two fragments can
+// be generated and they will be in sorted in start X.
+func (rle RLE) Excise(rle2 RLE) RLEs {
+	if rle.start[2] != rle2.start[2] || rle.start[1] != rle2.start[1] {
+		return nil
+	}
+	z := rle.start[2]
+	y := rle.start[1]
+	x0 := rle.start[0]
+	x1 := x0 + rle.length - 1
+	sx0 := rle2.start[0]
+	sx1 := sx0 + rle2.length - 1
+	if x0 > sx1 || x1 < sx0 {
+		return nil
+	}
+	frags := RLEs{}
+	if sx0 > x0 {
+		frags = append(frags, RLE{Point3d{x0, y, z}, sx0 - x0})
+	}
+	if sx1 < x1 {
+		frags = append(frags, RLE{Point3d{sx1 + 1, y, z}, x1 - sx1})
+	}
+	return frags
+}
+
+func (rle RLE) Less(rle2 RLE) bool {
+	if rle.start[2] < rle2.start[2] {
+		return true
+	}
+	if rle.start[2] > rle2.start[2] {
+		return false
+	}
+	if rle.start[1] < rle2.start[1] {
+		return true
+	}
+	if rle.start[1] > rle2.start[1] {
+		return false
+	}
+	return rle.start[0] < rle2.start[0]
+}
+
+// RLEs are simply a slice of RLE.  Sorting only takes into account
+// the start point and not the length.
 type RLEs []RLE
+
+func ReadRLEs(r io.Reader) (RLEs, error) {
+	header := make([]byte, 8)
+	if _, err := io.ReadFull(r, header); err != nil {
+		return nil, err
+	}
+	if header[0] != EncodingBinary {
+		return nil, fmt.Errorf("sparse vol is not binary: %v", header[0])
+	}
+	var numSpans uint32
+	if err := binary.Read(r, binary.LittleEndian, &numSpans); err != nil {
+		return nil, err
+	}
+	var rles RLEs
+	if err := rles.UnmarshalBinaryReader(r, numSpans); err != nil {
+		return nil, err
+	}
+	return rles, nil
+}
+
+// --- sort interface
+
+func (rles RLEs) Len() int {
+	return len(rles)
+}
+
+func (rles RLEs) Swap(i, j int) {
+	rles[i], rles[j] = rles[j], rles[i]
+}
+
+func (rles RLEs) Less(i, j int) bool {
+	return rles[i].Less(rles[j])
+}
+
+// Normalize returns a sorted slice of RLEs where there are no directly adjacent RLEs along X.
+func (rles RLEs) Normalize() RLEs {
+	if rles == nil || len(rles) == 0 {
+		return RLEs{}
+	}
+
+	// Sort the RLE
+	norm := make(RLEs, len(rles)) // We know # normalized RLEs <= current # RLEs
+	copy(norm, rles)
+	sort.Sort(norm)
+	nOrig := len(norm)
+
+	// Iterate through each (y,z) and combine adjacent spans.
+	var old *RLE
+	n := 0 // current position of normalized slice end
+	for o := 0; o < nOrig; o++ {
+		pt := norm[o].start
+		if old == nil {
+			old = &RLE{pt, norm[o].length}
+		} else {
+			// Handle new normalized RLE by saving old one.
+			if pt[1] != old.start[1] || pt[2] != old.start[2] || pt[0] != old.start[0]+old.length {
+				norm[n] = *old
+				n++
+				old.start = pt
+				old.length = norm[o].length
+			} else {
+				old.length += norm[o].length
+			}
+		}
+	}
+	norm[n] = *old
+	return norm[:n+1]
+}
+
+// Split removes RLEs, which must be a subset of current RLEs, from the receiver and returns the remainder.
+func (rles RLEs) Split(splits RLEs) (RLEs, error) {
+	if splits == nil || len(splits) == 0 {
+		return rles, nil
+	}
+
+	// Normalize the two RLEs so they are sorted and all contiguous RLE are joined.
+	orles := rles.Normalize() // original RLEs
+	srles := splits.Normalize()
+
+	// Make a list of current RLEs
+	out := list.New()
+	for _, rle := range orles {
+		out.PushBack(rle)
+	}
+	orles = nil
+
+	// Perform all the splits.
+	e := out.Front()
+	for _, split := range srles {
+		// Fast forward until we have the intersecting RLE
+		for {
+			if e == nil {
+				return nil, fmt.Errorf("Split RLE %s is not contained in original RLEs", split)
+			}
+			orle := e.Value.(RLE)
+
+			frags := orle.Excise(split)
+			if frags == nil { // no intersection, move forward
+				e = e.Next()
+				continue
+			}
+			switch len(frags) {
+			case 0:
+				// Split fully covers.  Cannot be larger than underlying RLE due to subset requirement
+				// and normalization.
+				next := e.Next()
+				out.Remove(e)
+				e = next
+
+			case 1:
+				// Replace the current RLE
+				next := out.InsertAfter(frags[0], e)
+				out.Remove(e)
+				e = next
+
+			case 2:
+				// There's a left and right portion.  All future splits can only intersect right one
+				// since splits are also sorted in X.
+				out.InsertBefore(frags[0], e)
+				next := out.InsertAfter(frags[1], e)
+				out.Remove(e)
+				e = next
+
+			default:
+				return nil, fmt.Errorf("bad RLE excision - %d fragments for split %s by %s\n", len(frags), orle, split)
+			}
+			break
+		}
+	}
+
+	numRLEs := out.Len()
+	if numRLEs == 0 {
+		return RLEs{}, nil
+	}
+	remain := make(RLEs, numRLEs)
+	i := 0
+	for e := out.Front(); e != nil; e = e.Next() {
+		remain[i] = e.Value.(RLE)
+		i++
+	}
+	return remain, nil
+}
+
+// Partition splits RLEs up into block-sized RLEs using the given block size.
+// The return is a map of RLEs with stringified ZYX block coordinate keys.
+func (rles RLEs) Partition(blockSize Point3d) (BlockRLEs, error) {
+	brles := make(BlockRLEs, 100)
+	for _, rle := range rles {
+		// Get the block coord for starting point.
+		bcoord := rle.start.Chunk(blockSize).(ChunkPoint3d)
+
+		// Iterate block coord in X until block end is past span, storing fragments in block map.
+		bBegX := bcoord[0] * blockSize[0]
+		rx := rle.start[0]
+		remain := rle.length
+		for remain >= 1 {
+			// Store block-clipped rle
+			dx := bBegX + blockSize[0] - rx
+			if remain < dx {
+				brles.appendBlockRLE(bcoord, rx, rle.start[1], rle.start[2], remain)
+			} else {
+				brles.appendBlockRLE(bcoord, rx, rle.start[1], rle.start[2], dx)
+			}
+
+			// Go to next block
+			bcoord[0]++
+			bBegX += blockSize[0]
+			rx += dx
+			remain -= dx
+		}
+	}
+	return brles, nil
+}
 
 // FitToBounds returns a copy that has been adjusted to fit
 // within the given optional bounds.
@@ -411,11 +651,34 @@ func (rles *RLEs) UnmarshalBinary(b []byte) error {
 	return nil
 }
 
+// UnmarshalBinaryReader reads from a reader instead of a static slice of bytes.
+// This will likely be more efficient for very large RLEs that are being streamed
+// into the server.
+func (rles *RLEs) UnmarshalBinaryReader(r io.Reader, numRLEs uint32) error {
+	*rles = make(RLEs, numRLEs, numRLEs)
+	for i := uint32(0); i < numRLEs; i++ {
+		if err := binary.Read(r, binary.LittleEndian, &((*rles)[i].start[0])); err != nil {
+			return err
+		}
+		if err := binary.Read(r, binary.LittleEndian, &((*rles)[i].start[1])); err != nil {
+			return err
+		}
+		if err := binary.Read(r, binary.LittleEndian, &((*rles)[i].start[2])); err != nil {
+			return err
+		}
+		if err := binary.Read(r, binary.LittleEndian, &((*rles)[i].length)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Add adds the given RLEs to the receiver when there's a possibility of overlapping RLEs.
 // If you are guaranteed the RLEs are disjoint, e.g., the passed and receiver RLEs are in
 // different subvolumes, then just concatenate the RLEs instead of calling this function.
+// The returned "voxelsAdded" gives the # of non-overlapping voxels added.
 // TODO: If this is a bottleneck, employ better than this brute force insertion method.
-func (rles *RLEs) Add(rles2 RLEs) {
+func (rles *RLEs) Add(rles2 RLEs) (voxelsAdded int64) {
 	for _, rle2 := range rles2 {
 		var found bool
 		for i, rle := range *rles {
@@ -432,9 +695,11 @@ func (rles *RLEs) Add(rles2 RLEs) {
 					continue
 				}
 				if x0 > cur_x0 {
+					voxelsAdded += int64(x0 - cur_x0)
 					x0 = cur_x0
 				}
 				if x1 < cur_x1 {
+					voxelsAdded += int64(cur_x1 - x1)
 					x1 = cur_x1
 				}
 				rle.start[0] = x0
@@ -446,19 +711,67 @@ func (rles *RLEs) Add(rles2 RLEs) {
 		}
 		if !found {
 			*rles = append(*rles, rle2)
+			voxelsAdded += int64(rle2.length)
 		}
 	}
+	return
 }
 
 // Stats returns the total number of voxels and runs.
-func (rles RLEs) Stats() (numVoxels, numRuns int32) {
+func (rles RLEs) Stats() (numVoxels uint64, numRuns int32) {
 	if rles == nil || len(rles) == 0 {
 		return 0, 0
 	}
 	for _, rle := range rles {
-		numVoxels += rle.length
+		numVoxels += uint64(rle.length)
 	}
 	return numVoxels, int32(len(rles))
+}
+
+// BlockRLEs is a single label's map of block coordinates to RLEs for that label.
+// The key is a string of the serialized block coordinate.
+type BlockRLEs map[IZYXString]RLEs
+
+func (brles BlockRLEs) appendBlockRLE(bcoord ChunkPoint3d, x, y, z, n int32) error {
+	rle := RLE{Point3d{x, y, z}, n}
+	idx := IndexZYX(bcoord)
+	s := idx.ToIZYXString()
+
+	rles, found := brles[s]
+	if !found || rles == nil {
+		brles[s] = RLEs{rle}
+	} else {
+		brles[s] = append(brles[s], rle)
+	}
+	return nil
+}
+
+// NumVoxels is the number of voxels contained within a label's block RLEs.
+func (brles BlockRLEs) NumVoxels() uint64 {
+	var size uint64
+	for _, rles := range brles {
+		numVoxels, _ := rles.Stats()
+		size += uint64(numVoxels)
+	}
+	return size
+}
+
+type izyxSlice []IZYXString
+
+func (i izyxSlice) Len() int           { return len(i) }
+func (i izyxSlice) Swap(a, b int)      { i[a], i[b] = i[b], i[a] }
+func (i izyxSlice) Less(a, b int) bool { return i[a] < i[b] }
+
+// SortedKeys returns a slice of IZYXString sorted in ascending order.
+func (brles BlockRLEs) SortedKeys() []IZYXString {
+	sk := make([]IZYXString, len(brles))
+	var i int
+	for k := range brles {
+		sk[i] = k
+		i++
+	}
+	sort.Sort(izyxSlice(sk))
+	return sk
 }
 
 // SparseVol represents a collection of voxels that may be in an arbitrary shape and have a label.

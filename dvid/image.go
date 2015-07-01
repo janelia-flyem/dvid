@@ -294,10 +294,10 @@ func (img Image) GetPNG() ([]byte, error) {
 }
 
 // GetJPEG returns bytes in JPEG format where quality is 1-100, higher is better,
-// and quality 0 is default (50)
+// and quality 0 is DefaultJPEGQuality.
 func (img Image) GetJPEG(quality int) ([]byte, error) {
 	if quality == 0 { // default
-		quality = 50
+		quality = DefaultJPEGQuality
 	}
 	var goImg image.Image
 	switch img.Which {
@@ -380,6 +380,7 @@ func (img *Image) Deserialize(b []byte) error {
 	return img.UnmarshalBinary(data)
 }
 
+// DataPtr returns a slice of bytes corresponding to the value at point (x,y) in image.
 func (img *Image) DataPtr(x, y int32) ([]byte, error) {
 	if img == nil {
 		return nil, fmt.Errorf("Can't get DataPtr for nil dvid.Image")

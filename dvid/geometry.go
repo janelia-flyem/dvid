@@ -3,6 +3,7 @@ package dvid
 import (
 	"fmt"
 	"strings"
+	"sync"
 )
 
 type Bounder interface {
@@ -27,6 +28,75 @@ type Geometry interface {
 	NumVoxels() int64
 
 	String() string
+}
+
+// Extents holds the extents of a volume in both absolute voxel coordinates
+// and lexicographically sorted chunk indices.
+type Extents struct {
+	MinPoint Point
+	MaxPoint Point
+
+	MinIndex ChunkIndexer
+	MaxIndex ChunkIndexer
+
+	pointMu sync.Mutex
+	indexMu sync.Mutex
+}
+
+// --- dvid.Bounder interface ----
+
+// StartPoint returns the offset to first point of data.
+func (ext *Extents) StartPoint() Point {
+	return ext.MinPoint
+}
+
+// EndPoint returns the last point.
+func (ext *Extents) EndPoint() Point {
+	return ext.MaxPoint
+}
+
+// --------
+
+// AdjustPoints modifies extents based on new voxel coordinates in concurrency-safe manner.
+func (ext *Extents) AdjustPoints(pointBeg, pointEnd Point) bool {
+	ext.pointMu.Lock()
+	defer ext.pointMu.Unlock()
+
+	var changed bool
+	if ext.MinPoint == nil {
+		ext.MinPoint = pointBeg
+		changed = true
+	} else {
+		ext.MinPoint, changed = ext.MinPoint.Min(pointBeg)
+	}
+	if ext.MaxPoint == nil {
+		ext.MaxPoint = pointEnd
+		changed = true
+	} else {
+		ext.MaxPoint, changed = ext.MaxPoint.Max(pointEnd)
+	}
+	return changed
+}
+
+// AdjustIndices modifies extents based on new block indices in concurrency-safe manner.
+func (ext *Extents) AdjustIndices(indexBeg, indexEnd ChunkIndexer) bool {
+	ext.indexMu.Lock()
+	defer ext.indexMu.Unlock()
+
+	var changed bool
+	if ext.MinIndex == nil {
+		ext.MinIndex = indexBeg
+		changed = true
+	} else {
+		ext.MinIndex, changed = ext.MinIndex.Min(indexBeg)
+	}
+	if ext.MaxIndex == nil {
+		ext.MaxIndex = indexEnd
+		changed = true
+	} else {
+		ext.MaxIndex, changed = ext.MaxIndex.Max(indexEnd)
+	}
+	return changed
 }
 
 // GetNumBlocks returns the number of n-d blocks necessary to cover the given geometry.

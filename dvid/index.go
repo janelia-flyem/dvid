@@ -1,6 +1,5 @@
 /*
-	This file defines datatype-specific components of keys that provide an index into
-	the key-value pairs associated with a data instance.
+	This file defines index types that can be used as datatype-specific components of keys (TKey).
 */
 
 package dvid
@@ -13,6 +12,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"math"
+	"sync"
 )
 
 func init() {
@@ -27,10 +27,9 @@ func init() {
 	gob.Register(&IndexCZYX{})
 }
 
-// Index is the datatype-specific (usually spatiotemporal) key that allows
-// partitioning of the data.  In the case of voxels, this could be an IndexZYX
-// implementation that uses a 3d coordinate packed into a slice of bytes.  For
-// the keyvalue datatype, the index is simply a string.
+// Index provides partioning of the data, typically in spatiotemporal ways.
+// In the case of voxels, this could be an IndexZYX implementation that uses a
+// 3d coordinate packed into a slice of bytes.  It can be used to fill a TKey.
 type Index interface {
 	// Duplicate returns a duplicate Index
 	Duplicate() Index
@@ -225,6 +224,10 @@ func (i *IndexZYX) Unpack() (x, y, z int32) {
 	return i[0], i[1], i[2]
 }
 
+func (i *IndexZYX) ToIZYXString() IZYXString {
+	return IZYXString(i.Bytes())
+}
+
 // Hash returns an integer [0, n) where the returned values should be reasonably
 // spread among the range of returned values.  This implementation makes sure
 // that any range query along x, y, or z direction will map to different handlers.
@@ -258,7 +261,7 @@ func (i *IndexZYX) UnmarshalBinary(b []byte) error {
 	for dim := 0; dim < 3; dim++ {
 		var value int32
 		if err := binary.Read(buf, binary.LittleEndian, &value); err != nil {
-			return fmt.Errorf("Bad IndexZYX elem %d read: %s", dim, err.Error())
+			return fmt.Errorf("Bad IndexZYX elem %d read: %v", dim, err)
 		}
 		(*i)[dim] = value
 	}
@@ -272,8 +275,13 @@ func (i *IndexZYX) Duplicate() Index {
 	return &dup
 }
 
+// String produces a pretty printable string of the index in hex format.
 func (i *IndexZYX) String() string {
 	return hex.EncodeToString(i.Bytes())
+}
+
+func (i *IndexZYX) Scheme() string {
+	return "ZYX Indexing"
 }
 
 // Bytes returns a byte representation of the Index.  This should layout
@@ -287,11 +295,7 @@ func (i *IndexZYX) Bytes() []byte {
 	return buf.Bytes()
 }
 
-func (i *IndexZYX) Scheme() string {
-	return "ZYX Indexing"
-}
-
-// IndexFromBytes returns an index from bytes.  The passed Index is used just
+// IndexFromBytes returns an index from key bytes.  The passed Index is used just
 // to choose the appropriate byte decoding scheme.
 func (i *IndexZYX) IndexFromBytes(b []byte) error {
 	if len(b) != 12 {
@@ -361,6 +365,174 @@ func (i *IndexZYX) Max(idx ChunkIndexer) (ChunkIndexer, bool) {
 		changed = true
 	}
 	return &max, changed
+}
+
+// IZYXString is the stringified version of IndexZYX.Bytes(), optimized for lexicographic
+// ordering.
+type IZYXString string
+
+// IndexZYX returns an index from a string representation of the coordinate.
+func (i IZYXString) IndexZYX() (IndexZYX, error) {
+	var idx IndexZYX
+	if err := idx.IndexFromBytes([]byte(i)); err != nil {
+		return idx, err
+	}
+	return idx, nil
+}
+
+func (i IZYXString) Z() (int32, error) {
+	idx, err := i.IndexZYX()
+	if err != nil {
+		return 0, err
+	}
+	return idx[2], nil
+}
+
+func (i IZYXString) ToChunkPoint3d() (ChunkPoint3d, error) {
+	var idx IndexZYX
+	err := idx.IndexFromBytes([]byte(i))
+	return ChunkPoint3d(idx), err
+}
+
+// Print returns a nicely formatted string of the 3d block coordinate or "corrupted coordinate".
+func (i IZYXString) Print() string {
+	idx, err := i.IndexZYX()
+	if err != nil {
+		return "corrupted coordinate"
+	}
+	return fmt.Sprintf("(%d, %d, %d)", idx[0], idx[1], idx[2])
+}
+
+// Hash returns an integer [0, n) where the returned values should be reasonably
+// spread among the range of returned values.  This implementation makes sure
+// that any range query along x, y, or z direction will map to different handlers.
+func (i IZYXString) Hash(n int) int {
+	h := fnv.New32a()
+	h.Write([]byte(i))
+	return int(h.Sum32()) % n
+}
+
+// BlockCounts is a thread-safe type for counting block references.
+type BlockCounts struct {
+	sync.RWMutex
+	m map[IZYXString]int
+}
+
+// Incr increments the count for a block.
+func (c *BlockCounts) Incr(block IZYXString) {
+	if c.m == nil {
+		c.m = make(map[IZYXString]int)
+	}
+	c.Lock()
+	defer c.Unlock()
+	c.m[block] = c.m[block] + 1
+}
+
+// Decr decrements the count for a block.
+func (c *BlockCounts) Decr(block IZYXString) {
+	if c.m == nil {
+		c.m = make(map[IZYXString]int)
+	}
+	c.Lock()
+	defer c.Unlock()
+	c.m[block] = c.m[block] - 1
+	if c.m[block] == 0 {
+		delete(c.m, block)
+	}
+}
+
+// Value returns the count for a block.
+func (c *BlockCounts) Value(block IZYXString) int {
+	if c.m == nil {
+		return 0
+	}
+	c.RLock()
+	defer c.RUnlock()
+	return c.m[block]
+}
+
+// Empty returns true if there are no counts.
+func (c *BlockCounts) Empty() bool {
+	if len(c.m) == 0 {
+		return true
+	}
+	return false
+}
+
+// DirtyBlocks tracks dirty labels across versions
+type DirtyBlocks struct {
+	sync.RWMutex
+	dirty map[InstanceVersion]*BlockCounts
+}
+
+func (d *DirtyBlocks) Incr(iv InstanceVersion, block IZYXString) {
+	d.Lock()
+	defer d.Unlock()
+
+	if d.dirty == nil {
+		d.dirty = make(map[InstanceVersion]*BlockCounts)
+	}
+	d.incr(iv, block)
+}
+
+func (d *DirtyBlocks) Decr(iv InstanceVersion, block IZYXString) {
+	d.Lock()
+	defer d.Unlock()
+
+	if d.dirty == nil {
+		d.dirty = make(map[InstanceVersion]*BlockCounts)
+	}
+	d.decr(iv, block)
+}
+
+func (d *DirtyBlocks) IsDirty(iv InstanceVersion, block IZYXString) bool {
+	d.RLock()
+	defer d.RUnlock()
+
+	if d.dirty == nil {
+		return false
+	}
+
+	cnts, found := d.dirty[iv]
+	if !found || cnts == nil {
+		return false
+	}
+	if cnts.Value(block) == 0 {
+		return false
+	}
+	return true
+}
+
+func (d *DirtyBlocks) Empty(iv InstanceVersion) bool {
+	d.RLock()
+	defer d.RUnlock()
+
+	if len(d.dirty) == 0 {
+		return true
+	}
+	cnts, found := d.dirty[iv]
+	if !found || cnts == nil {
+		return true
+	}
+	return cnts.Empty()
+}
+
+func (d *DirtyBlocks) incr(iv InstanceVersion, block IZYXString) {
+	cnts, found := d.dirty[iv]
+	if !found || cnts == nil {
+		cnts = new(BlockCounts)
+		d.dirty[iv] = cnts
+	}
+	cnts.Incr(block)
+}
+
+func (d *DirtyBlocks) decr(iv InstanceVersion, block IZYXString) {
+	cnts, found := d.dirty[iv]
+	if !found || cnts == nil {
+		Errorf("decremented non-existant count for block %s, version %v\n", block.Print(), iv)
+		return
+	}
+	cnts.Decr(block)
 }
 
 // ----- IndexIterator implementation ------------

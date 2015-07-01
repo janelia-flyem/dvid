@@ -70,24 +70,80 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 )
 
-// KeyValue stores a key-value pair.
+// Key is the slice of bytes used to store a value in a storage engine.  It internally
+// represents a number of DVID features like a data instance ID, version, and a
+// type-specific key component.
+type Key []byte
+
+// TKey is the type-specific component of a key.  Each data instance will insert
+// key components into a class of TKey.
+type TKey []byte
+
+const (
+	tkeyMinByte      = 0x00
+	tkeyStandardByte = 0x01
+	tkeyMaxByte      = 0xFF
+
+	TKeyMinClass = 0x00
+	TKeyMaxClass = 0xFF
+)
+
+// TKeyClass partitions the TKey space into a maximum of 256 classes.
+type TKeyClass byte
+
+func NewTKey(class TKeyClass, tkey []byte) TKey {
+	b := make([]byte, 2+len(tkey))
+	b[0] = byte(class)
+	b[1] = tkeyStandardByte
+	if tkey != nil {
+		copy(b[2:], tkey)
+	}
+	return TKey(b)
+}
+
+// MinTKey returns the lexicographically smallest TKey for this class.
+func MinTKey(class TKeyClass) TKey {
+	return TKey([]byte{byte(class), tkeyMinByte})
+}
+
+// MaxTKey returns the lexicographically largest TKey for this class.
+func MaxTKey(class TKeyClass) TKey {
+	return TKey([]byte{byte(class), tkeyMaxByte})
+}
+
+// ClassBytes returns the bytes for a class of TKey, suitable for decoding by
+// each data instance.
+func (tk TKey) ClassBytes(class TKeyClass) ([]byte, error) {
+	if tk[0] != byte(class) {
+		return nil, fmt.Errorf("bad type-specific key: expected class %v got %v", class, tk[0])
+	}
+	return tk[2:], nil
+}
+
+// KeyValue stores a full storage key-value pair.
 type KeyValue struct {
-	K []byte
+	K Key
 	V []byte
 }
 
-// Deserialize returns a key-value pair where the value has been deserialized.
-func (kv KeyValue) Deserialize(uncompress bool) (KeyValue, error) {
-	value, _, err := dvid.DeserializeData(kv.V, uncompress)
-	return KeyValue{kv.K, value}, err
+// TKeyValue stores a type-specific key-value pair.
+type TKeyValue struct {
+	K TKey
+	V []byte
 }
 
-// KeyValues is a slice of key-value pairs that can be sorted.
-type KeyValues []KeyValue
+// Deserialize returns a type key-value pair where the value has been deserialized.
+func (kv TKeyValue) Deserialize(uncompress bool) (TKeyValue, error) {
+	value, _, err := dvid.DeserializeData(kv.V, uncompress)
+	return TKeyValue{kv.K, value}, err
+}
 
-func (kv KeyValues) Len() int      { return len(kv) }
-func (kv KeyValues) Swap(i, j int) { kv[i], kv[j] = kv[j], kv[i] }
-func (kv KeyValues) Less(i, j int) bool {
+// KeyValues is a slice of type key-value pairs that can be sorted.
+type TKeyValues []TKeyValue
+
+func (kv TKeyValues) Len() int      { return len(kv) }
+func (kv TKeyValues) Swap(i, j int) { kv[i], kv[j] = kv[j], kv[i] }
+func (kv TKeyValues) Less(i, j int) bool {
 	return bytes.Compare(kv[i].K, kv[j].K) <= 0
 }
 
@@ -165,11 +221,11 @@ type ChunkOp struct {
 // from lower-level database access functions to type-specific chunk processing.
 type Chunk struct {
 	*ChunkOp
-	*KeyValue
+	*TKeyValue
 }
 
-// ChunkProcessor is a function that accepts a Chunk.
-type ChunkProcessor func(*Chunk) error
+// ChunkFunc is a function that accepts a Chunk.
+type ChunkFunc func(*Chunk) error
 
 // Requirements lists required backend interfaces for a type.
 type Requirements struct {
@@ -183,33 +239,39 @@ type Requirements struct {
 
 type KeyValueGetter interface {
 	// Get returns a value given a key.
-	Get(ctx Context, k []byte) ([]byte, error)
+	Get(ctx Context, k TKey) ([]byte, error)
 }
 
 type OrderedKeyValueGetter interface {
 	KeyValueGetter
 
 	// GetRange returns a range of values spanning (kStart, kEnd) keys.
-	GetRange(ctx Context, kStart, kEnd []byte) (values []*KeyValue, err error)
+	GetRange(ctx Context, kStart, kEnd TKey) ([]*TKeyValue, error)
 
-	// KeysInRange returns a range of full keys spanning (kStart, kEnd).  Note that
-	// the returned keys are the full keys (including context from ctx.ConstructKey()).
-	KeysInRange(ctx Context, kStart, kEnd []byte) (keys [][]byte, err error)
+	// KeysInRange returns a range of type-specific key components spanning (kStart, kEnd).
+	KeysInRange(ctx Context, kStart, kEnd TKey) ([]TKey, error)
 
-	// ProcessRange sends a range of key-value pairs to type-specific chunk handlers,
+	// ProcessRange sends a range of type key-value pairs to type-specific chunk handlers,
 	// allowing chunk processing to be concurrent with key-value sequential reads.
 	// Since the chunks are typically sent during sequential read iteration, the
 	// receiving function can be organized as a pool of chunk handling goroutines.
-	// See datatype.voxels.ProcessChunk() for an example.
-	ProcessRange(ctx Context, kStart, kEnd []byte, op *ChunkOp, f ChunkProcessor) error
+	// See datatype/imageblk.ProcessChunk() for an example.
+	ProcessRange(ctx Context, kStart, kEnd TKey, op *ChunkOp, f ChunkFunc) error
+
+	// SendRange sends a range of full keys.  This is to be used for low-level data
+	// retrieval like DVID-to-DVID communication and should not be used by data type
+	// implementations if possible because each version's key-value pairs are sent
+	// without filtering by the current version and its ancestor graph.  A nil is sent
+	// down the channel when the range is complete.
+	SendRange(kStart, kEnd Key, keysOnly bool, out chan *KeyValue) error
 }
 
 type KeyValueSetter interface {
 	// Put writes a value with given key.
-	Put(ctx Context, k, v []byte) error
+	Put(Context, TKey, []byte) error
 
 	// Delete removes an entry given key.
-	Delete(ctx Context, k []byte) error
+	Delete(Context, TKey) error
 }
 
 type OrderedKeyValueSetter interface {
@@ -218,10 +280,14 @@ type OrderedKeyValueSetter interface {
 	// Put key-value pairs.  Note that it could be more efficient to use the Batcher
 	// interface so you don't have to create and keep a slice of KeyValue.  Some
 	// databases like leveldb will copy on batch put anyway.
-	PutRange(ctx Context, values []KeyValue) error
+	PutRange(Context, []TKeyValue) error
 
 	// DeleteRange removes all key-value pairs with keys in the given range.
-	DeleteRange(ctx Context, kStart, kEnd []byte) error
+	DeleteRange(ctx Context, kStart, kEnd TKey) error
+
+	// DeleteAll removes all key-value pairs for the context.  If allVersions is true,
+	// then all versions of the data instance are deleted.
+	DeleteAll(ctx Context, allVersions bool) error
 }
 
 // KeyValueDB provides an interface to the simplest storage API: a key-value store.
@@ -252,10 +318,10 @@ type KeyValueBatcher interface {
 // that commits then closes rather than something that clears.
 type Batch interface {
 	// Delete removes from the batch a put using the given key.
-	Delete(k []byte)
+	Delete(TKey)
 
 	// Put adds to the batch a put using the given key-value.
-	Put(k, v []byte)
+	Put(k TKey, v []byte)
 
 	// Commits a batch of operations and closes the write batch.
 	Commit() error

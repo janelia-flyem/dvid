@@ -34,7 +34,7 @@ func (c *RPCConnection) ReceiveMessage(m Message, ok *bool) error {
 			// TODO -- handle concurrent pipeline requests
 			session, err := sessionCreator(&m)
 			if err != nil {
-				return fmt.Errorf("Error handling command %q: %s\n", m.Name, err.Error())
+				return fmt.Errorf("Error handling command %q: %v\n", m.Name, err)
 			}
 
 			// Save the session
@@ -58,14 +58,11 @@ func (c *RPCConnection) ReceiveMessage(m Message, ok *bool) error {
 	return nil
 }
 
-// Note: no "pull" socket necessary like nanomsg implementation in message package is necessary,
-// because we use RPCConnection struct that is already registered.
-
 // Returns an RPC "socket" that can push data to remote.
 func NewPushSocket(target string) (*rpcSocket, error) {
 	client, err := rpc.DialHTTP("tcp", target)
 	if err != nil {
-		return nil, fmt.Errorf("Could not find DVID server to message at %s [%s]\n", target, err.Error())
+		return nil, fmt.Errorf("Could not find DVID server to message at %s [%v]\n", target, err)
 	}
 	msg := Message{Session: string(dvid.NewUUID())}
 	return &rpcSocket{target, client, msg}, nil
@@ -82,7 +79,7 @@ func (s *rpcSocket) sendMessage() error {
 	if s.client != nil {
 		err := s.client.Call("RPCConnection.ReceiveMessage", s.msg, &ok)
 		if err != nil {
-			return fmt.Errorf("RPC error for message %s: %s", s.msg.Type, err.Error())
+			return fmt.Errorf("RPC error for message %s: %v", s.msg.Type, err)
 		}
 		if !ok {
 			return fmt.Errorf("Bad send message for %s detected on client-side!", s.msg.Type)

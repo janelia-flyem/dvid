@@ -16,10 +16,8 @@ import (
 	"strconv"
 	"strings"
 
-	"code.google.com/p/go.net/context"
-
 	"github.com/janelia-flyem/dvid/datastore"
-	"github.com/janelia-flyem/dvid/datatype/multiscale2d"
+	"github.com/janelia-flyem/dvid/datatype/imagetile"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/message"
 	"github.com/janelia-flyem/dvid/server"
@@ -178,7 +176,7 @@ func NewType() *Type {
 // --- TypeService interface ---
 
 // NewData returns a pointer to new googlevoxels data with default values.
-func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.DataString, c dvid.Config) (datastore.DataService, error) {
+func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.Config) (datastore.DataService, error) {
 	// Make sure we have needed volumeid and authentication key.
 	volumeid, found, err := c.GetString("volumeid")
 	if err != nil {
@@ -199,7 +197,7 @@ func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.
 	url := fmt.Sprintf("https://www.googleapis.com/brainmaps/v1beta1/volumes/%s?key=%s", volumeid, authkey)
 	resp, err := http.Get(url)
 	if err != nil {
-		return nil, fmt.Errorf("Error getting volume metadata from Google: %s", err.Error())
+		return nil, fmt.Errorf("Error getting volume metadata from Google: %v", err)
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("Unexpected status code %d returned when getting volume metadata for %q", resp.StatusCode, volumeid)
@@ -212,7 +210,7 @@ func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.
 		Geoms Geometries `json:"geometrys"`
 	}
 	if err := json.Unmarshal(metadata, &m); err != nil {
-		return nil, fmt.Errorf("Error decoding volume JSON metadata: %s", err.Error())
+		return nil, fmt.Errorf("Error decoding volume JSON metadata: %v", err)
 	}
 
 	// Compute the mapping from tile scale/orientation to scaled volume index.
@@ -412,19 +410,19 @@ func (u *uint3d) UnmarshalJSON(b []byte) error {
 	}
 	x, err := strconv.Atoi(m.X)
 	if err != nil {
-		return fmt.Errorf("Could not parse X coordinate with unsigned long: %s", err.Error())
+		return fmt.Errorf("Could not parse X coordinate with unsigned long: %v", err)
 	}
 	u.X = uint32(x)
 
 	y, err := strconv.Atoi(m.Y)
 	if err != nil {
-		return fmt.Errorf("Could not parse Y coordinate with unsigned long: %s", err.Error())
+		return fmt.Errorf("Could not parse Y coordinate with unsigned long: %v", err)
 	}
 	u.Y = uint32(y)
 
 	z, err := strconv.Atoi(m.Z)
 	if err != nil {
-		return fmt.Errorf("Could not parse Z coordinate with unsigned long: %s", err.Error())
+		return fmt.Errorf("Could not parse Z coordinate with unsigned long: %v", err)
 	}
 	u.Z = uint32(z)
 	return nil
@@ -461,7 +459,7 @@ func (g *Geometry) UnmarshalJSON(b []byte) error {
 	g.PixelSize = dvid.NdFloat32{m.PixelSize.X, m.PixelSize.Y, m.PixelSize.Z}
 	channels, err := strconv.Atoi(m.ChannelCount)
 	if err != nil {
-		return fmt.Errorf("Could not parse channelCount: %s", err.Error())
+		return fmt.Errorf("Could not parse channelCount: %v", err)
 	}
 	g.ChannelCount = uint32(channels)
 	g.ChannelType = m.ChannelType
@@ -623,8 +621,8 @@ type Properties struct {
 }
 
 // MarshalJSON handles JSON serialization for googlevoxels Data.  It adds "Levels" metadata equivalent
-// to multiscale2d's tile specification so clients can treat googlevoxels tile API identically to
-// multiscale2d.  Sensitive information like AuthKey are withheld.
+// to imagetile's tile specification so clients can treat googlevoxels tile API identically to
+// imagetile.  Sensitive information like AuthKey are withheld.
 func (p Properties) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		VolumeID     string
@@ -632,7 +630,7 @@ func (p Properties) MarshalJSON() ([]byte, error) {
 		TileMap      GeometryMap
 		Scales       Geometries
 		HighResIndex GeometryIndex
-		Levels       multiscale2d.TileSpec
+		Levels       imagetile.TileSpec
 	}{
 		p.VolumeID,
 		p.TileSize,
@@ -643,9 +641,9 @@ func (p Properties) MarshalJSON() ([]byte, error) {
 	})
 }
 
-// Converts Google BrainMaps scaling to multiscale2d-style tile specifications.
+// Converts Google BrainMaps scaling to imagetile-style tile specifications.
 // This assumes that Google levels always downsample by 2.
-func getTileSpec(tileSize int32, hires Geometry, tileMap GeometryMap) multiscale2d.TileSpec {
+func getTileSpec(tileSize int32, hires Geometry, tileMap GeometryMap) imagetile.TileSpec {
 	// Determine how many levels we have by the max of any orientation.
 	// TODO -- Warn user in some way if BrainMaps API has levels in one orientation but not in other.
 	var maxScale Scaling
@@ -656,15 +654,15 @@ func getTileSpec(tileSize int32, hires Geometry, tileMap GeometryMap) multiscale
 	}
 
 	// Create the levels from 0 (hires) to max level.
-	levelSpec := multiscale2d.LevelSpec{
+	levelSpec := imagetile.LevelSpec{
 		TileSize: dvid.Point3d{tileSize, tileSize, tileSize},
 	}
 	levelSpec.Resolution = make(dvid.NdFloat32, 3)
 	copy(levelSpec.Resolution, hires.PixelSize)
-	ms2dTileSpec := make(multiscale2d.TileSpec, maxScale+1)
+	ms2dTileSpec := make(imagetile.TileSpec, maxScale+1)
 	for scale := Scaling(0); scale <= maxScale; scale++ {
 		curSpec := levelSpec.Duplicate()
-		ms2dTileSpec[multiscale2d.Scaling(scale)] = multiscale2d.TileScaleSpec{LevelSpec: curSpec}
+		ms2dTileSpec[imagetile.Scaling(scale)] = imagetile.TileScaleSpec{LevelSpec: curSpec}
 		levelSpec.Resolution[0] *= 2
 		levelSpec.Resolution[1] *= 2
 		levelSpec.Resolution[2] *= 2
@@ -739,8 +737,7 @@ func (d *Data) Help() string {
 // Send transfers all key-value pairs pertinent to this data type as well as
 // the storage.DataStoreType for them.
 func (d *Data) Send(s message.Socket, roiname string, uuid dvid.UUID) error {
-	dvid.Criticalf("googlevoxels.Send() is not implemented yet, so push/pull will not work for this data type.\n")
-	return nil
+	return fmt.Errorf("googlevoxels.Send() is not implemented yet, so push/pull will not work for this data type.\n")
 }
 
 // getBlankTileData returns a background 2d tile data
@@ -881,7 +878,7 @@ func (d *Data) ServeImage(w http.ResponseWriter, r *http.Request, parts []string
 	if scalingStr != "" {
 		scale64, err := strconv.ParseUint(scalingStr, 10, 8)
 		if err != nil {
-			return fmt.Errorf("Illegal tile scale: %s (%s)", scalingStr, err.Error())
+			return fmt.Errorf("Illegal tile scale: %s (%v)", scalingStr, err)
 		}
 		scale = Scaling(scale64)
 	}
@@ -906,7 +903,7 @@ func (d *Data) ServeTile(w http.ResponseWriter, r *http.Request, parts []string)
 	queryValues := r.URL.Query()
 
 	var noblanks bool
-	noblanksStr := dvid.DataString(queryValues.Get("noblanks"))
+	noblanksStr := dvid.InstanceName(queryValues.Get("noblanks"))
 	if noblanksStr == "true" {
 		noblanks = true
 	}
@@ -934,20 +931,20 @@ func (d *Data) ServeTile(w http.ResponseWriter, r *http.Request, parts []string)
 	plane := dvid.DataShapeString(planeStr)
 	shape, err := plane.DataShape()
 	if err != nil {
-		err = fmt.Errorf("Illegal tile plane: %s (%s)", planeStr, err.Error())
-		server.BadRequest(w, r, err.Error())
+		err = fmt.Errorf("Illegal tile plane: %s (%v)", planeStr, err)
+		server.BadRequest(w, r, err)
 		return err
 	}
 	scale, err := strconv.ParseUint(scalingStr, 10, 8)
 	if err != nil {
-		err = fmt.Errorf("Illegal tile scale: %s (%s)", scalingStr, err.Error())
-		server.BadRequest(w, r, err.Error())
+		err = fmt.Errorf("Illegal tile scale: %s (%s)", scalingStr, err)
+		server.BadRequest(w, r, err)
 		return err
 	}
 	tileCoord, err := dvid.StringToPoint(coordStr, "_")
 	if err != nil {
-		err = fmt.Errorf("Illegal tile coordinate: %s (%s)", coordStr, err.Error())
-		server.BadRequest(w, r, err.Error())
+		err = fmt.Errorf("Illegal tile coordinate: %s (%s)", coordStr, err)
+		server.BadRequest(w, r, err)
 		return err
 	}
 
@@ -973,7 +970,7 @@ func (d *Data) ServeTile(w http.ResponseWriter, r *http.Request, parts []string)
 	// Determine how this request sits in the available scaled volumes.
 	googleTile, err := d.GetGoogleSpec(Scaling(scale), shape, dvid.Point3d{ox, oy, oz}, size)
 	if err != nil {
-		server.BadRequest(w, r, err.Error())
+		server.BadRequest(w, r, err)
 		return err
 	}
 
@@ -987,7 +984,7 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 }
 
 // ServeHTTP handles all incoming HTTP requests for this data.
-func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *http.Request) {
+func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {
 	timedLog := dvid.NewTimeLog()
 
 	action := strings.ToLower(r.Method)
@@ -1018,7 +1015,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 	case "info":
 		jsonBytes, err := d.MarshalJSON()
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -1026,14 +1023,14 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 
 	case "tile":
 		if err := d.ServeTile(w, r, parts); err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		timedLog.Infof("HTTP %s: tile (%s)", r.Method, r.URL)
 
 	case "raw":
 		if err := d.ServeImage(w, r, parts); err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		timedLog.Infof("HTTP %s: image (%s)", r.Method, r.URL)

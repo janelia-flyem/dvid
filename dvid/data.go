@@ -8,7 +8,7 @@ import (
 	"encoding/binary"
 	"fmt"
 
-	"github.com/janelia-flyem/go/go-uuid/uuid"
+	"github.com/janelia-flyem/go/uuid"
 )
 
 // LocalID is a unique id for some data in a DVID instance.  This unique id is a much
@@ -28,7 +28,7 @@ const (
 )
 
 // Bytes returns a sequence of bytes encoding this LocalID.  Binary representation
-// will be big-endian to make integers lexigraphically
+// will be big-endian to make integers lexigraphically ordered.
 func (id LocalID) Bytes() []byte {
 	buf := make([]byte, LocalIDSize, LocalIDSize)
 	binary.BigEndian.PutUint16(buf, uint16(id))
@@ -64,16 +64,16 @@ type UUID string
 
 // NewUUID returns a UUID
 func NewUUID() UUID {
-	u := uuid.NewUUID()
-	if u == nil || len(u) != 16 {
+	u := uuid.NewV4()
+	if u == nil {
 		return UUID("")
 	}
-	return UUID(fmt.Sprintf("%032x", []byte(u)))
+	return UUID(fmt.Sprintf("%032x", u.Bytes()))
 }
 
 const NilUUID = UUID("")
 
-// Note: TypeString and DataString are types to add static checks and prevent conflation
+// Note: TypeString and InstanceName are types to add static checks and prevent conflation
 // of the two types of identifiers.
 
 // TypeString is a string that is the name of a DVID data type.
@@ -82,8 +82,8 @@ type TypeString string
 // URLString is a string representing a URL.
 type URLString string
 
-// DataString is a string that is the name of DVID data.
-type DataString string
+// InstanceName is a string that is the name of DVID data.
+type InstanceName string
 
 // InstanceID is a DVID server-specific identifier for data instances.  Each InstanceID
 // is only used within one repo, so all key/values for a repo can be obtained by
@@ -102,6 +102,12 @@ func (id InstanceID) Bytes() []byte {
 // Note: No error checking is done to ensure byte slice has sufficient bytes for InstanceID.
 func InstanceIDFromBytes(b []byte) InstanceID {
 	return InstanceID(binary.BigEndian.Uint32(b))
+}
+
+// InstanceVersion identifies a particular version of a data instance.
+type InstanceVersion struct {
+	Name    InstanceName
+	Version VersionID
 }
 
 // RepoID is a DVID server-specific identifier for a particular Repo.  Valid RepoIDs
@@ -147,17 +153,37 @@ const (
 	MaxInstanceID = MaxLocalID32
 	MaxRepoID     = MaxLocalID32
 	MaxVersionID  = MaxLocalID32
+	MaxClientID   = MaxLocalID32
 
 	InstanceIDSize = 4
 	RepoIDSize     = 4
 	VersionIDSize  = 4
+	ClientIDSize   = 4
 )
+
+// ClientID is a DVID server-specific identifier of an authorized client.  It is used with data keys
+// to track key-values on a per-client basis.
+type ClientID LocalID32
+
+// Bytes returns a sequence of bytes encoding this ClientID.  Binary representation is big-endian
+// to preserve lexicographic order.
+func (id ClientID) Bytes() []byte {
+	buf := make([]byte, LocalID32Size, LocalID32Size)
+	binary.BigEndian.PutUint32(buf, uint32(id))
+	return buf
+}
+
+// ClientIDFromBytes returns a VersionID from the start of the slice and the number of bytes used.
+// Note: No error checking is done to ensure byte slice has sufficient bytes for ClientID.
+func ClientIDFromBytes(b []byte) ClientID {
+	return ClientID(binary.BigEndian.Uint32(b))
+}
 
 // Data is the minimal interface for datatype-specific data that is implemented
 // in datatype packages.  It's required to say it's name, unique local instance ID,
 // as well as whether it supports versioning.
 type Data interface {
-	DataName() DataString
+	DataName() InstanceName
 	InstanceID() InstanceID
 
 	SetInstanceID(InstanceID) // Necessary to support transmission of data to remote DVID.
@@ -165,8 +191,6 @@ type Data interface {
 	TypeName() TypeString
 	TypeURL() URLString
 	TypeVersion() string
-
-	Versioned() bool
 }
 
 // Axis enumerates differnt types of axis (x, y, z, time, etc)

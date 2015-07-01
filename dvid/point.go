@@ -123,6 +123,30 @@ func NewPoint(values []int32) (Point, error) {
 	}
 }
 
+// BlockAligned returns true if the bounds for a n-d volume are aligned to blocks
+// of the given size.  Alignment requires that the start point is the first voxel
+// in a block and the end point is the last voxel in a block.
+func BlockAligned(geom Bounder, blockSize Point) bool {
+	pt0 := geom.StartPoint()
+	pt1 := geom.EndPoint()
+	if pt0.NumDims() != pt1.NumDims() || pt1.NumDims() != blockSize.NumDims() {
+		Criticalf("Can't check block alignment when bounder %v and block size %v have differing dimensions\n",
+			geom, blockSize)
+		return false
+	}
+
+	var dim uint8
+	for dim = 0; dim < blockSize.NumDims(); dim++ {
+		if pt0.Value(dim)%blockSize.Value(dim) != 0 {
+			return false
+		}
+		if (pt1.Value(dim)+1)%blockSize.Value(dim) != 0 {
+			return false
+		}
+	}
+	return true
+}
+
 // --- Implementations of the above interfaces in 2d and 3d ---------
 
 const CoordinateBits = 32
@@ -528,7 +552,7 @@ func (p Point3d) Prod() int64 {
 }
 
 func (p Point3d) String() string {
-	return fmt.Sprintf("(%d,%d,%d)", p[0], p[1], p[2])
+	return fmt.Sprintf("dvid.Point3d{%d,%d,%d}", p[0], p[1], p[2])
 }
 
 // --- Chunkable interface support -----
@@ -1529,4 +1553,26 @@ func (s *Spans) UnmarshalBinary(b []byte) error {
 		(*s)[i][3] = (*s)[i][2] + length - 1
 	}
 	return nil
+}
+
+type Resolution struct {
+	// Resolution of voxels in volume
+	VoxelSize NdFloat32
+
+	// Units of resolution, e.g., "nanometers"
+	VoxelUnits NdString
+}
+
+// Returns true if resolution in all dimensions is equal.
+func (r Resolution) IsIsotropic() bool {
+	if len(r.VoxelSize) <= 1 {
+		return true
+	}
+	curRes := r.VoxelSize[0]
+	for _, res := range r.VoxelSize[1:] {
+		if res != curRes {
+			return false
+		}
+	}
+	return true
 }

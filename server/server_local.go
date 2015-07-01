@@ -88,7 +88,7 @@ func LoadConfig(filename string) (*dvid.LogConfig, error) {
 		return nil, nil
 	}
 	if _, err := toml.DecodeFile(filename, &(localConfig.settings)); err != nil {
-		return nil, fmt.Errorf("Could not decode TOML config: %s\n", err.Error())
+		return nil, fmt.Errorf("Could not decode TOML config: %v\n", err)
 	}
 	return &(localConfig.settings.Server.Logging), nil
 }
@@ -137,13 +137,13 @@ func SendNotification(message string, recipients []string) error {
 
 		t := template.New("emailTemplate")
 		if t, err = t.Parse(emailTemplate); err != nil {
-			return fmt.Errorf("error trying to parse mail template: %s", err.Error())
+			return fmt.Errorf("error trying to parse mail template: %v", err)
 		}
 
 		// Apply the values we have initialized in our struct context to the template.
 		var doc bytes.Buffer
 		if err = t.Execute(&doc, context); err != nil {
-			return fmt.Errorf("error trying to execute mail template: %s", err.Error())
+			return fmt.Errorf("error trying to execute mail template: %v", err)
 		}
 
 		// Send notification
@@ -158,6 +158,8 @@ func SendNotification(message string, recipients []string) error {
 // Serve starts HTTP and RPC servers.
 func Serve(httpAddress, webClientDir, rpcAddress string) error {
 	// Set the package-level config variable
+	dvid.Infof("------------------\n")
+	dvid.Infof("DVID code version: %s\n", gitVersion)
 	dvid.Infof("Serving HTTP on %s\n", httpAddress)
 	dvid.Infof("Serving command-line use via RPC %s\n", rpcAddress)
 	dvid.Infof("Using web client files from %s\n", webClientDir)
@@ -172,7 +174,7 @@ func Serve(httpAddress, webClientDir, rpcAddress string) error {
 
 	// Launch the rpc server
 	if err := serveRpc(rpcAddress); err != nil {
-		return fmt.Errorf("Could not start RPC server: %s\n", err.Error())
+		return fmt.Errorf("Could not start RPC server: %v\n", err)
 	}
 	return nil
 }

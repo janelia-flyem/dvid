@@ -56,7 +56,7 @@ var (
 	MaxChunkHandlers = runtime.NumCPU()
 
 	// HandlerToken is buffered channel to limit spawning of goroutines.
-	// See ProcessChunk() in datatype/voxels for example.
+	// See ProcessChunk() in datatype/imageblk for example.
 	HandlerToken = make(chan int, MaxChunkHandlers)
 
 	// Throttle allows server-wide throttling of operations.  This is used for voxels-based
@@ -78,6 +78,12 @@ var (
 
 	// Read-only mode ignores all HTTP requests but GET and HEAD
 	readonly bool
+
+	// gitVersion is a git-derived string that allows recovery of the exact source code
+	// used for this version of the DVID server.  This package variable is exposed through
+	// the read-only Version() function and is set by build-time code generation using
+	// the "git describe" command.  See the CMakeLists.txt file for the code generation.
+	gitVersion string
 
 	config      Config
 	initialized bool
@@ -129,6 +135,12 @@ func init() {
 	}()
 }
 
+// GitVersion returns a git-derived string that allows recovery of the exact source code
+// used for this DVID server.
+func GitVersion() string {
+	return gitVersion
+}
+
 // GotInteractiveRequest can be called to track the # of interactive requests that
 // require some amount of computation.  Don't use this to track simple polling APIs.
 // This routine will not block.
@@ -161,11 +173,12 @@ func SetReadOnly(on bool) {
 // AboutJSON returns a JSON string describing the properties of this server.
 func AboutJSON() (jsonStr string, err error) {
 	data := map[string]string{
-		"Cores":           fmt.Sprintf("%d", dvid.NumCPU),
-		"Maximum Cores":   fmt.Sprintf("%d", runtime.NumCPU()),
-		"DVID datastore":  datastore.Version,
-		"Storage backend": storage.EnginesAvailable(),
-		"Server uptime":   time.Since(startupTime).String(),
+		"Cores":             fmt.Sprintf("%d", dvid.NumCPU),
+		"Maximum Cores":     fmt.Sprintf("%d", runtime.NumCPU()),
+		"Datastore Version": datastore.Version,
+		"DVID Version":      gitVersion,
+		"Storage backend":   storage.EnginesAvailable(),
+		"Server uptime":     time.Since(startupTime).String(),
 	}
 	m, err := json.Marshal(data)
 	if err != nil {
@@ -173,6 +186,24 @@ func AboutJSON() (jsonStr string, err error) {
 	}
 	jsonStr = string(m)
 	return
+}
+
+// About returns a chart of version identifiers for the DVID source code, DVID datastore, and
+// all component data types for this executable.
+func About() string {
+	var text string = "\nCompile-time version information for this DVID executable:\n\n"
+	writeLine := func(name dvid.TypeString, version string) {
+		text += fmt.Sprintf("%-20s   %s\n", name, version)
+	}
+	writeLine("Name", "Version")
+	writeLine("DVID Version", gitVersion)
+	writeLine("Datastore Version", datastore.Version)
+	text += "\n"
+	writeLine("Storage engines", storage.EnginesAvailable())
+	for _, t := range datastore.Compiled {
+		writeLine(t.GetTypeName(), t.GetTypeVersion())
+	}
+	return text
 }
 
 // Shutdown handles graceful cleanup of server functions before exiting DVID.
@@ -194,6 +225,7 @@ func Shutdown() {
 		}
 		time.Sleep(1 * time.Second)
 	}
+	datastore.Shutdown()
 	storage.Shutdown()
 	dvid.BlockOnActiveCgo()
 }

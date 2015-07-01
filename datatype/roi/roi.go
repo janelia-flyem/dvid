@@ -12,11 +12,10 @@ import (
 	"io/ioutil"
 	"math"
 	"net/http"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
-
-	"code.google.com/p/go.net/context"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -201,7 +200,7 @@ func NewType() *Type {
 // --- TypeService interface ---
 
 // NewData returns a pointer to new ROI data with default values.
-func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.DataString, c dvid.Config) (datastore.DataService, error) {
+func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.Config) (datastore.DataService, error) {
 	basedata, err := datastore.NewDataService(dtype, uuid, id, name, c)
 	if err != nil {
 		return nil, err
@@ -249,13 +248,18 @@ type Data struct {
 	Ready bool
 }
 
-// GetByUUID returns a pointer to ROI data given a version (UUID) and data name.
-func GetByUUID(uuid dvid.UUID, name dvid.DataString) (*Data, error) {
-	repo, err := datastore.RepoFromUUID(uuid)
-	if err != nil {
-		return nil, err
+func (d *Data) Equals(d2 *Data) bool {
+	if !d.Data.Equals(d2.Data) ||
+		!reflect.DeepEqual(d.Properties, d2.Properties) ||
+		d.Ready != d2.Ready {
+		return false
 	}
-	source, err := repo.GetDataByName(name)
+	return true
+}
+
+// GetByUUID returns a pointer to ROI data given a version (UUID) and data name.
+func GetByUUID(uuid dvid.UUID, name dvid.InstanceName) (*Data, error) {
+	source, err := datastore.GetDataByUUID(uuid, name)
 	if err != nil {
 		return nil, err
 	}
@@ -304,6 +308,14 @@ type ZRange struct {
 	MinZ, MaxZ int32
 }
 
+const (
+	// keyUnknown should never be used and is a check for corrupt or incorrectly set keys
+	keyUnknown storage.TKeyClass = iota
+
+	// keyROI are keys for ROI RLEs
+	keyROI = 90
+)
+
 var (
 	minIndexRLE = indexRLE{dvid.MinIndexZYX, 0}
 	maxIndexRLE = indexRLE{dvid.MaxIndexZYX, math.MaxUint32}
@@ -321,7 +333,7 @@ func (i *indexRLE) Bytes() []byte {
 	buf := new(bytes.Buffer)
 	_, err := buf.Write(i.start.Bytes())
 	if err != nil {
-		dvid.Errorf("Error in roi.go, indexRLE.Bytes(): %s\n", err.Error())
+		dvid.Errorf("Error in roi.go, indexRLE.Bytes(): %v\n", err)
 	}
 	binary.Write(buf, binary.BigEndian, i.span)
 	return buf.Bytes()
@@ -347,21 +359,21 @@ func maxIndexByBlockZ(z int32) indexRLE {
 }
 
 // Returns all (z, y, x0, x1) Spans in sorted order: z, then y, then x0.
-func getSpans(ctx storage.VersionedContext, minIndex, maxIndex indexRLE) ([]dvid.Span, error) {
+func getSpans(ctx storage.VersionedCtx, minIndex, maxIndex indexRLE) ([]dvid.Span, error) {
 	db, err := storage.SmallDataStore()
 	if err != nil {
 		return nil, err
 	}
 	spans := []dvid.Span{}
 
-	var f storage.ChunkProcessor = func(chunk *storage.Chunk) error {
-		indexBytes, err := ctx.IndexFromKey(chunk.K)
+	var f storage.ChunkFunc = func(chunk *storage.Chunk) error {
+		ibytes, err := chunk.K.ClassBytes(keyROI)
 		if err != nil {
-			return fmt.Errorf("Unable to recover roi RLE from chunk key %v: %s\n", chunk.K, err.Error())
+			return err
 		}
 		index := new(indexRLE)
-		if err = index.IndexFromBytes(indexBytes); err != nil {
-			return fmt.Errorf("Unable to get indexRLE out of []byte encoding: %s\n", err.Error())
+		if err = index.IndexFromBytes(ibytes); err != nil {
+			return fmt.Errorf("Unable to get indexRLE out of []byte encoding: %v\n", err)
 		}
 		z := index.start.Value(2)
 		y := index.start.Value(1)
@@ -370,18 +382,20 @@ func getSpans(ctx storage.VersionedContext, minIndex, maxIndex indexRLE) ([]dvid
 		spans = append(spans, dvid.Span{z, y, x0, x1})
 		return nil
 	}
-	err = db.ProcessRange(ctx, minIndex.Bytes(), maxIndex.Bytes(), &storage.ChunkOp{}, f)
+	mintk := storage.NewTKey(keyROI, minIndex.Bytes())
+	maxtk := storage.NewTKey(keyROI, maxIndex.Bytes())
+	err = db.ProcessRange(ctx, mintk, maxtk, &storage.ChunkOp{}, f)
 	return spans, err
 }
 
 // Returns all (z, y, x0, x1) Spans in sorted order: z, then y, then x0.
-func GetSpans(ctx storage.VersionedContext) ([]dvid.Span, error) {
+func GetSpans(ctx storage.VersionedCtx) ([]dvid.Span, error) {
 	return getSpans(ctx, minIndexRLE, maxIndexRLE)
 }
 
 // Get returns a JSON-encoded byte slice of the ROI in the form of 4-Spans,
 // where each Span is [z, y, xstart, xend]
-func Get(ctx storage.VersionedContext) ([]byte, error) {
+func Get(ctx storage.VersionedCtx) ([]byte, error) {
 	spans, err := GetSpans(ctx)
 	if err != nil {
 		return nil, err
@@ -394,7 +408,7 @@ func Get(ctx storage.VersionedContext) ([]byte, error) {
 }
 
 // Deletes an ROI.
-func (d *Data) Delete(ctx storage.VersionedContext) error {
+func (d *Data) Delete(ctx storage.VersionedCtx) error {
 	smalldata, err := storage.SmallDataStore()
 	if err != nil {
 		return err
@@ -409,13 +423,12 @@ func (d *Data) Delete(ctx storage.VersionedContext) error {
 
 	d.MinZ = math.MaxInt32
 	d.MaxZ = math.MinInt32
-	if err := datastore.SaveRepoByVersionID(ctx.VersionID()); err != nil {
-		return fmt.Errorf("Error in trying to save repo on roi extent change: %s\n", err.Error())
+	if err := datastore.SaveDataByVersion(ctx.VersionID(), d); err != nil {
+		return fmt.Errorf("Error in trying to save repo on roi extent change: %v\n", err)
 	}
 
-	// Delete all spans for this ROI
-	minKey, maxKey := storage.DataContextKeyRange(d.InstanceID())
-	if err := smalldata.DeleteRange(nil, minKey, maxKey); err != nil {
+	// Delete all spans for this ROI for just this version.
+	if err := smalldata.DeleteAll(ctx, false); err != nil {
 		return err
 	}
 	return nil
@@ -425,7 +438,7 @@ func (d *Data) Delete(ctx storage.VersionedContext) error {
 // If the init parameter is true, all previous spans of this ROI are deleted before
 // writing these spans.
 func (d *Data) PutSpans(versionID dvid.VersionID, spans []dvid.Span, init bool) error {
-	ctx := datastore.NewVersionedContext(d, versionID)
+	ctx := datastore.NewVersionedCtx(d, versionID)
 
 	db, err := storage.SmallDataStore()
 	if err != nil {
@@ -451,9 +464,9 @@ func (d *Data) PutSpans(versionID dvid.VersionID, spans []dvid.Span, init bool) 
 
 	// Save new extents after finished.
 	defer func() {
-		err := datastore.SaveRepoByVersionID(ctx.VersionID())
+		err := datastore.SaveDataByVersion(ctx.VersionID(), d)
 		if err != nil {
-			dvid.Errorf("Error in trying to save repo on roi extent change: %s\n", err.Error())
+			dvid.Errorf("Error in trying to save repo on roi extent change: %v\n", err)
 		}
 		putMutex.Unlock()
 	}()
@@ -475,18 +488,18 @@ func (d *Data) PutSpans(versionID dvid.VersionID, spans []dvid.Span, init bool) 
 			start: dvid.IndexZYX{span[2], span[1], span[0]},
 			span:  uint32(span[3] - span[2] + 1),
 		}
-
-		batch.Put(index.Bytes(), dvid.EmptyValue())
+		tk := storage.NewTKey(keyROI, index.Bytes())
+		batch.Put(tk, dvid.EmptyValue())
 		if (i+1)%BATCH_SIZE == 0 {
 			if err := batch.Commit(); err != nil {
-				return fmt.Errorf("Error on batch PUT at span %d: %s\n", i, err.Error())
+				return fmt.Errorf("Error on batch PUT at span %d: %v\n", i, err)
 			}
 			batch = batcher.NewBatch(ctx)
 		}
 	}
 	if len(spans)%BATCH_SIZE != 0 {
 		if err := batch.Commit(); err != nil {
-			return fmt.Errorf("Error on last batch PUT: %s\n", err.Error())
+			return fmt.Errorf("Error on last batch PUT: %v\n", err)
 		}
 	}
 	return nil
@@ -497,7 +510,7 @@ func (d *Data) PutJSON(versionID dvid.VersionID, jsonBytes []byte) error {
 	spans := []dvid.Span{}
 	err := json.Unmarshal(jsonBytes, &spans)
 	if err != nil {
-		return fmt.Errorf("Error trying to parse POSTed JSON: %s", err.Error())
+		return fmt.Errorf("Error trying to parse POSTed JSON: %v", err)
 	}
 	if err := d.PutSpans(versionID, spans, true); err != nil {
 		return err
@@ -523,7 +536,7 @@ func voxelRange(blockSize, begBlock, endBlock, begVoxel, endVoxel int32) (int32,
 
 // GetMask returns a binary volume of subvol size where each element is 1 if inside the ROI
 // and 0 if outside the ROI.
-func (d *Data) GetMask(ctx storage.VersionedContext, subvol *dvid.Subvolume) ([]byte, error) {
+func (d *Data) GetMask(ctx storage.VersionedCtx, subvol *dvid.Subvolume) ([]byte, error) {
 	pt0 := subvol.StartPoint()
 	pt1 := subvol.EndPoint()
 	minBlockZ := pt0.Value(2) / d.BlockSize[2]
@@ -609,7 +622,7 @@ func seekSpan(pt dvid.ChunkPoint3d, spans []dvid.Span, curSpanI int) (int, bool)
 
 // PointQuery checks if a JSON-encoded list of voxel points are within an ROI.
 // It returns a JSON list of bools, each corresponding to the original list of points.
-func (d *Data) PointQuery(ctx storage.VersionedContext, jsonBytes []byte) ([]byte, error) {
+func (d *Data) PointQuery(ctx storage.VersionedCtx, jsonBytes []byte) ([]byte, error) {
 	list, err := dvid.ListChunkPoint3dFromVoxels(jsonBytes, d.BlockSize)
 	if err != nil {
 		return nil, err
@@ -927,14 +940,14 @@ func (d *Data) Partition(ctx storage.Context, batchsize int32) ([]byte, error) {
 		return nil, err
 	}
 	merge := true
-	var f storage.ChunkProcessor = func(chunk *storage.Chunk) error {
-		indexBytes, err := ctx.IndexFromKey(chunk.K)
+	var f storage.ChunkFunc = func(chunk *storage.Chunk) error {
+		ibytes, err := chunk.K.ClassBytes(keyROI)
 		if err != nil {
-			return fmt.Errorf("Unable to recover roi RLE from chunk key %v: %s\n", chunk.K, err.Error())
+			return err
 		}
 		index := new(indexRLE)
-		if err = index.IndexFromBytes(indexBytes); err != nil {
-			return fmt.Errorf("Unable to get indexRLE out of []byte encoding: %s\n", err.Error())
+		if err = index.IndexFromBytes(ibytes); err != nil {
+			return fmt.Errorf("Unable to get indexRLE out of []byte encoding: %v\n", err)
 		}
 
 		// If we are in new layer, process last one.
@@ -959,7 +972,9 @@ func (d *Data) Partition(ctx storage.Context, batchsize int32) ([]byte, error) {
 		layer.extend(index)
 		return nil
 	}
-	err = db.ProcessRange(ctx, minIndexRLE.Bytes(), maxIndexRLE.Bytes(), &storage.ChunkOp{}, f)
+	mintk := storage.MinTKey(keyROI)
+	maxtk := storage.MaxTKey(keyROI)
+	err = db.ProcessRange(ctx, mintk, maxtk, &storage.ChunkOp{}, f)
 	if err != nil {
 		return nil, err
 	}
@@ -1066,14 +1081,14 @@ func (d *Data) SimplePartition(ctx storage.Context, batchsize int32) ([]byte, er
 	if err != nil {
 		return nil, err
 	}
-	var f storage.ChunkProcessor = func(chunk *storage.Chunk) error {
-		indexBytes, err := ctx.IndexFromKey(chunk.K)
+	var f storage.ChunkFunc = func(chunk *storage.Chunk) error {
+		ibytes, err := chunk.K.ClassBytes(keyROI)
 		if err != nil {
-			return fmt.Errorf("Unable to recover roi RLE from chunk key %v: %s\n", chunk.K, err.Error())
+			return err
 		}
 		index := new(indexRLE)
-		if err = index.IndexFromBytes(indexBytes); err != nil {
-			return fmt.Errorf("Unable to get indexRLE out of []byte encoding: %s\n", err.Error())
+		if err = index.IndexFromBytes(ibytes); err != nil {
+			return fmt.Errorf("Unable to get indexRLE out of []byte encoding: %v\n", err)
 		}
 
 		// If we are in new layer, process last one.
@@ -1093,7 +1108,9 @@ func (d *Data) SimplePartition(ctx storage.Context, batchsize int32) ([]byte, er
 		layer.extend(index)
 		return nil
 	}
-	err = db.ProcessRange(ctx, minIndexRLE.Bytes(), maxIndexRLE.Bytes(), &storage.ChunkOp{}, f)
+	mintk := storage.MinTKey(keyROI)
+	maxtk := storage.MaxTKey(keyROI)
+	err = db.ProcessRange(ctx, mintk, maxtk, &storage.ChunkOp{}, f)
 	if err != nil {
 		return nil, err
 	}
@@ -1134,22 +1151,8 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 }
 
 // ServeHTTP handles all incoming HTTP requests for this data.
-func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *http.Request) {
+func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {
 	timedLog := dvid.NewTimeLog()
-
-	// Get repo and version ID of this request
-	_, versions, err := datastore.FromContext(requestCtx)
-	if err != nil {
-		server.BadRequest(w, r, "Error: %q ServeHTTP has invalid context: %s\n", d.DataName, err.Error())
-		return
-	}
-
-	// Construct storage.Context using a particular version of this Data
-	var versionID dvid.VersionID
-	if len(versions) > 0 {
-		versionID = versions[0]
-	}
-	storeCtx := datastore.NewVersionedContext(d, versionID)
 
 	// Break URL request into arguments
 	url := r.URL.Path[len(server.WebAPIPath):]
@@ -1172,7 +1175,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 	case "info":
 		jsonBytes, err := d.MarshalJSON()
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -1192,9 +1195,9 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 			if !d.Ready {
 				w.WriteHeader(http.StatusPartialContent)
 			}
-			jsonBytes, err := Get(storeCtx)
+			jsonBytes, err := Get(ctx)
 			if err != nil {
-				server.BadRequest(w, r, err.Error())
+				server.BadRequest(w, r, err)
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
@@ -1203,18 +1206,18 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 		case "post":
 			data, err := ioutil.ReadAll(r.Body)
 			if err != nil {
-				server.BadRequest(w, r, err.Error())
+				server.BadRequest(w, r, err)
 				return
 			}
-			err = d.PutJSON(versionID, data)
+			err = d.PutJSON(ctx.VersionID(), data)
 			if err != nil {
-				server.BadRequest(w, r, err.Error())
+				server.BadRequest(w, r, err)
 				return
 			}
 			comment = fmt.Sprintf("HTTP POST ROI %q: %d bytes\n", d.DataName(), len(data))
 		case "delete":
-			if err := d.Delete(storeCtx); err != nil {
-				server.BadRequest(w, r, err.Error())
+			if err := d.Delete(ctx); err != nil {
+				server.BadRequest(w, r, err)
 				return
 			}
 			comment = fmt.Sprintf("HTTP DELETE ROI %q\n", d.DataName())
@@ -1232,25 +1235,25 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 		planeStr := dvid.DataShapeString(shapeStr)
 		plane, err := planeStr.DataShape()
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		switch plane.ShapeDimensions() {
 		case 3:
 			subvol, err := dvid.NewSubvolumeFromStrings(offsetStr, sizeStr, "_")
 			if err != nil {
-				server.BadRequest(w, r, err.Error())
+				server.BadRequest(w, r, err)
 				return
 			}
-			data, err := d.GetMask(storeCtx, subvol)
+			data, err := d.GetMask(ctx, subvol)
 			if err != nil {
-				server.BadRequest(w, r, err.Error())
+				server.BadRequest(w, r, err)
 				return
 			}
 			w.Header().Set("Content-type", "application/octet-stream")
 			_, err = w.Write(data)
 			if err != nil {
-				server.BadRequest(w, r, err.Error())
+				server.BadRequest(w, r, err)
 				return
 			}
 		default:
@@ -1265,12 +1268,12 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 		case "post":
 			data, err := ioutil.ReadAll(r.Body)
 			if err != nil {
-				server.BadRequest(w, r, err.Error())
+				server.BadRequest(w, r, err)
 				return
 			}
-			jsonBytes, err := d.PointQuery(storeCtx, data)
+			jsonBytes, err := d.PointQuery(ctx, data)
 			if err != nil {
-				server.BadRequest(w, r, err.Error())
+				server.BadRequest(w, r, err)
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
@@ -1286,7 +1289,7 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 		batchsizeStr := queryValues.Get("batchsize")
 		batchsize, err := strconv.Atoi(batchsizeStr)
 		if err != nil {
-			server.BadRequest(w, r, fmt.Sprintf("Error reading batchsize query string: %s", err.Error()))
+			server.BadRequest(w, r, fmt.Sprintf("Error reading batchsize query string: %v", err))
 			return
 		}
 
@@ -1295,13 +1298,13 @@ func (d *Data) ServeHTTP(requestCtx context.Context, w http.ResponseWriter, r *h
 		dvid.Infof("queryvalues = %v\n", queryValues)
 		if optimizedStr == "true" || optimizedStr == "on" {
 			dvid.Infof("Perform optimized partitioning into subvolumes using batchsize %d\n", batchsize)
-			jsonBytes, err = d.Partition(storeCtx, int32(batchsize))
+			jsonBytes, err = d.Partition(ctx, int32(batchsize))
 		} else {
 			dvid.Infof("Performing simple partitioning into subvolumes using batchsize %d\n", batchsize)
-			jsonBytes, err = d.SimplePartition(storeCtx, int32(batchsize))
+			jsonBytes, err = d.SimplePartition(ctx, int32(batchsize))
 		}
 		if err != nil {
-			server.BadRequest(w, r, err.Error())
+			server.BadRequest(w, r, err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")

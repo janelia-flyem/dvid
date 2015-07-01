@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"math"
 
 	"github.com/janelia-flyem/dvid/dvid"
 )
@@ -150,59 +151,224 @@ func (db *GraphKeyValueDB) Close() {
 
 // -- Add Serialization Capabilities for Vertex and Edge
 
-// SerializableVertex defines a vertex that is easily serializable
-type SerializableVertex struct {
-	Properties dvid.ElementProperties
-	Weight     float64
-	Id         dvid.VertexID
-	Vertices   []dvid.VertexID
-}
-
-// SerializableEdge defines an edge that is easily serializable
-type SerializableEdge struct {
-	Properties dvid.ElementProperties
-	Weight     float64
-	Vertex1    dvid.VertexID
-	Vertex2    dvid.VertexID
-}
-
 // serializeVertex serializes a dvid.GraphVertex (compression turned off for now)
 func (db *GraphKeyValueDB) serializeVertex(vert dvid.GraphVertex) []byte {
-	vertexser := SerializableVertex{vert.Properties, vert.Weight, vert.Id, vert.Vertices}
+	// encode: vertex id, vertex weight, num vertices, vertex array,
+	// num properties, property array
+	total_size := 24 + 8*len(vert.Vertices) + 8
+
+	// find size for property strings (account for null character)
+	for propname, _ := range vert.Properties {
+		total_size += len(propname) + 1
+	}
+
+	// create byte buffer
+	buf := make([]byte, total_size, total_size)
+
+	// encode vertex id
+	start := 0
+	binary.LittleEndian.PutUint64(buf[start:], uint64(vert.Id))
+	start += 8
+
+	// encode vertex weight
+	floatbits := math.Float64bits(vert.Weight)
+	binary.LittleEndian.PutUint64(buf[start:], floatbits)
+	start += 8
+
+	// encode number of vertices
+	binary.LittleEndian.PutUint64(buf[start:], uint64(len(vert.Vertices)))
+	start += 8
+
+	// encode vertex partners
+	for _, vertpartner := range vert.Vertices {
+		binary.LittleEndian.PutUint64(buf[start:], uint64(vertpartner))
+		start += 8
+	}
+
+	// encode number of properties
+	binary.LittleEndian.PutUint64(buf[start:], uint64(len(vert.Properties)))
+	start += 8
+
+	// encode property strings
+	for propname, _ := range vert.Properties {
+		for _, propchar := range propname {
+			buf[start] = byte(propchar)
+			start += 1
+		}
+		buf[start] = byte(0)
+		start += 1
+	}
+
+	// encode DVID related info (currenlty compression is disabled)
 	compression, _ := dvid.NewCompression(dvid.Uncompressed, dvid.DefaultCompression)
-	data, _ := dvid.Serialize(vertexser, compression, dvid.NoChecksum)
-	return data
+	finalbuf, _ := dvid.SerializeData(buf, compression, dvid.NoChecksum)
+
+	return finalbuf
 }
 
 // serializeEdge serializes a dvid.GraphEdge (compression turned off for now)
 func (db *GraphKeyValueDB) serializeEdge(edge dvid.GraphEdge) []byte {
-	edgeser := SerializableEdge{edge.Properties, edge.Weight, edge.Vertexpair.Vertex1, edge.Vertexpair.Vertex2}
+	// encode: vertex1 id, vertex2 id, weight,
+	// num properties, property array
+	total_size := 32
+
+	// find size for property strings (account for null character)
+	for propname, _ := range edge.Properties {
+		total_size += len(propname) + 1
+	}
+
+	// create byte buffer
+	buf := make([]byte, total_size, total_size)
+
+	// encode vertex 1
+	start := 0
+	binary.LittleEndian.PutUint64(buf[start:], uint64(edge.Vertexpair.Vertex1))
+	start += 8
+
+	// encode vertex 2
+	binary.LittleEndian.PutUint64(buf[start:], uint64(edge.Vertexpair.Vertex2))
+	start += 8
+
+	// encode weight
+	floatbits := math.Float64bits(edge.Weight)
+	binary.LittleEndian.PutUint64(buf[start:], floatbits)
+	start += 8
+
+	// encode number of properties
+	binary.LittleEndian.PutUint64(buf[start:], uint64(len(edge.Properties)))
+	start += 8
+
+	// encode property strings
+	for propname, _ := range edge.Properties {
+		for _, propchar := range propname {
+			buf[start] = byte(propchar)
+			start += 1
+		}
+		buf[start] = byte(0)
+		start += 1
+	}
+
+	// encode DVID related info (currenlty compression is disabled)
 	compression, _ := dvid.NewCompression(dvid.Uncompressed, dvid.DefaultCompression)
-	data, _ := dvid.Serialize(edgeser, compression, dvid.NoChecksum)
-	return data
+	finalbuf, _ := dvid.SerializeData(buf, compression, dvid.NoChecksum)
+
+	return finalbuf
 }
 
 // deserializeVertex deserializes a dvid.GraphVertex (compression turned off for now)
 func (db *GraphKeyValueDB) deserializeVertex(vertexdata []byte) (dvid.GraphVertex, error) {
-	vertexser := new(SerializableVertex)
-	var vertex dvid.GraphVertex
-	err := dvid.Deserialize(vertexdata, vertexser)
-	if err != nil {
-		return vertex, err
+	// create vertex to be returned
+	vert := dvid.GraphVertex{GraphElement: &dvid.GraphElement{}}
+
+	// if vertexdata is empty return an error
+	if vertexdata == nil || len(vertexdata) == 0 {
+		return vert, fmt.Errorf("Vertex data empty")
 	}
-	vertex = dvid.GraphVertex{&dvid.GraphElement{vertexser.Properties, vertexser.Weight}, vertexser.Id, vertexser.Vertices}
-	return vertex, nil
+
+	// boilerplate deserialization from DVID
+	data, _, err := dvid.DeserializeData(vertexdata, true)
+	if err != nil {
+		return vert, err
+	}
+
+	// load data from vertex (vertex id, vertex weight, num vertices,
+	// vertex array, num properties, property array
+
+	// load vertex id
+	start := 0
+	vert.Id = dvid.VertexID(binary.LittleEndian.Uint64(data[start:]))
+	start += 8
+
+	// load vertex weight
+	floatbits := binary.LittleEndian.Uint64(data[start:])
+	vert.Weight = math.Float64frombits(floatbits)
+	start += 8
+
+	// number of vertices
+	count := binary.LittleEndian.Uint64(data[start:])
+	start += 8
+
+	vert.Vertices = make([]dvid.VertexID, count, count)
+	// load vertices
+	for i := uint64(0); i < count; i++ {
+		vert.Vertices[i] = dvid.VertexID(binary.LittleEndian.Uint64(data[start:]))
+		start += 8
+	}
+
+	// number of properties
+	vert.Properties = make(dvid.ElementProperties)
+	count = binary.LittleEndian.Uint64(data[start:])
+	start += 8
+
+	// create property strings
+	for i := uint64(0); i < count; i++ {
+		propertyname := string("")
+		// null separated strings
+		for data[start] != byte(0) {
+			propertyname += string(data[start])
+			start += 1
+		}
+		vert.Properties[propertyname] = struct{}{}
+
+		// increment beyond null
+		start += 1
+	}
+
+	return vert, nil
 }
 
 // deserializeEdge deserializes a dvid.GraphEdge (compression turned off for now)
 func (db *GraphKeyValueDB) deserializeEdge(edgedata []byte) (dvid.GraphEdge, error) {
-	edgeser := new(SerializableEdge)
-	err := dvid.Deserialize(edgedata, edgeser)
-	var edge dvid.GraphEdge
+	// create edge to be returned
+	edge := dvid.GraphEdge{GraphElement: &dvid.GraphElement{}}
+
+	// if edgedata is empty return an error
+	if edgedata == nil || len(edgedata) == 0 {
+		return edge, fmt.Errorf("Edge data empty")
+	}
+
+	// boilerplate deserialization from DVID
+	data, _, err := dvid.DeserializeData(edgedata, true)
 	if err != nil {
 		return edge, err
 	}
-	edge = dvid.GraphEdge{&dvid.GraphElement{edgeser.Properties, edgeser.Weight}, dvid.VertexPairID{edgeser.Vertex1, edgeser.Vertex2}}
+
+	// load data from edge (vertex1 id, vertex2 id, edge weight,
+	// num properties, property array
+
+	// load vertex1 id
+	start := 0
+	edge.Vertexpair.Vertex1 = dvid.VertexID(binary.LittleEndian.Uint64(data[start:]))
+	start += 8
+
+	// load vertex2 id
+	edge.Vertexpair.Vertex2 = dvid.VertexID(binary.LittleEndian.Uint64(data[start:]))
+	start += 8
+
+	// load edge weight
+	floatbits := binary.LittleEndian.Uint64(data[start:])
+	edge.Weight = math.Float64frombits(floatbits)
+	start += 8
+
+	// number of properties
+	count := binary.LittleEndian.Uint64(data[start:])
+	start += 8
+
+	// create property strings
+	edge.Properties = make(dvid.ElementProperties)
+	for i := uint64(0); i < count; i++ {
+		propertyname := string("")
+		// null separated strings
+		for data[start] != 0 {
+			propertyname += string(data[start])
+			start += 1
+		}
+		edge.Properties[propertyname] = struct{}{}
+
+		// increment beyond null
+		start += 1
+	}
+
 	return edge, nil
 }
 

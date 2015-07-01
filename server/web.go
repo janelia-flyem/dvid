@@ -8,6 +8,7 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -16,15 +17,13 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-
-	"code.google.com/p/go.net/context"
+	"time"
 
 	"github.com/janelia-flyem/go/nrsc"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
-	"github.com/zenazn/goji/graceful"
 	"github.com/zenazn/goji/web"
 	"github.com/zenazn/goji/web/middleware"
 )
@@ -99,7 +98,7 @@ const WebHelp = `
 
 	Creates a new repository.  Expects configuration data in JSON as the body of the POST.
 	Configuration is a JSON object with optional "alias" and "description" properties.
-	Returns the root UUID of the newly created repo in JSON object: {"Root": uuid}
+	Returns the root UUID of the newly created repo in JSON object: {"root": uuid}
 
  GET  /api/repos/info
 
@@ -114,27 +113,68 @@ const WebHelp = `
 	Returns JSON for just the repository with given root UUID.  The UUID string can be
 	shortened as long as it is uniquely identifiable across the managed repositories.
 
- POST /api/repo/{uuid}/lock
-
-	Locks the node (version) with given UUID.  This is required before a version can 
-	be branched or pushed to a remote server.
-
- POST /api/repo/{uuid}/branch
-
-	Creates a new child node (version) of the node with given UUID.
-
  POST /api/repo/{uuid}/instance
 
 	Creates a new instance of the given data type.  Expects configuration data in JSON
 	as the body of the POST.  Configuration data is a JSON object with each property
 	corresponding to a configuration keyword for the particular data type.  Two properties
 	are required: "typename" should be set to the type name of the new instance, and
-	"dataname" should be set to the desired name of the new instance.
+	"dataname" should be set to the desired name of the new instance.  The "sync" value
+	can be set to a comma-separated list of instance names; this makes the new data
+	instance subscribe to changes in the given data instances.
 
 	
  DELETE /api/repo/{uuid}/{dataname}?imsure=true
 
 	Deletes a data instance of given name from the repository holding a node with UUID.	
+
+  GET /api/repo/{uuid}/log
+ POST /api/repo/{uuid}/log
+
+	GETs or POSTs log data to the repo with given UUID.  The get or post body should 
+	be JSON of the following format: 
+
+	{ "log": [ "provenance data...", "provenance data...", ...] }
+
+	The log is a list of strings that will be appended to the repo's log.  They should be
+	descriptions for the entire repo and not just one node.  For particular versions, use
+	node-level logging (below).
+
+  GET /api/node/{uuid}/log
+ POST /api/node/{uuid}/log
+
+	GETs or POSTs log data to the node (version) with given UUID.  The get or post body should 
+	be JSON of the following format: 
+
+	{ "log": [ "provenance data...", "provenance data...", ...] }
+
+	The log is a list of strings that will be appended to the node's log.  They should be
+	data usable by clients to reconstruct the types of operation done to that version
+	of data.
+
+POST /api/node/{uuid}/commit
+
+	Commits (locks) the node/version with given UUID.  This is required before a version can 
+	be branched or pushed to a remote server.  The post body should be JSON of the 
+	following format: 
+
+	{ 
+		"note": "this is a description of what I did on this commit",
+		"log": [ "provenance data...", "provenance data...", ...] 
+	}
+
+	The note is a human-readable commit message.  The log is a slice of strings that may
+	be computer-readable.
+
+ POST /api/node/{uuid}/branch
+
+	Creates a new child node (version) of the node with given UUID.  A JSON response
+	will be sent with the following format:
+
+	{ "child": "3f01a8856" }
+
+	The response includes the UUID of the new child node.
+
 		</pre>
 
 		<h4>Data type commands</h4>
@@ -175,6 +215,12 @@ const (
 
 	// The relative URL path to our Level 2 REST API
 	WebAPIPath = "/api/" + WebAPIVersion
+
+	// WriteTimeout is the maximum time in seconds DVID will wait to write data down HTTP connection.
+	WriteTimeout = 300 * time.Second
+
+	// ReadTimeout is the maximum time in seconds DVID will wait to read data from HTTP connection.
+	ReadTimeout = 300 * time.Second
 )
 
 type WebMux struct {
@@ -222,11 +268,22 @@ func serveHttp(address, clientDir string) {
 	// This allows packages like expvar to continue working as expected.  (From goji.go)
 	http.Handle("/", webMux)
 
-	graceful.HandleSignals()
-	if err := graceful.ListenAndServe(address, http.DefaultServeMux); err != nil {
-		log.Fatal(err)
+	// TODO: Could have used "graceful" goji package but doesn't allow tailoring of timeouts
+	// unless package is modified.  Not sure graceful features needed whereas tailoring
+	// of server is more important.
+
+	s := &http.Server{
+		Addr:         address,
+		WriteTimeout: WriteTimeout,
+		ReadTimeout:  ReadTimeout,
 	}
-	graceful.Wait()
+	log.Fatal(s.ListenAndServe())
+
+	// graceful.HandleSignals()
+	// if err := graceful.ListenAndServe(address, http.DefaultServeMux); err != nil {
+	// 	log.Fatal(err)
+	// }
+	// graceful.Wait()
 }
 
 // High-level switchboard for DVID HTTP API.
@@ -275,9 +332,18 @@ func initRoutes() {
 	repoMux.Head("/api/repo/:uuid", repoHeadHandler)
 	repoMux.Get("/api/repo/:uuid/info", repoInfoHandler)
 	repoMux.Post("/api/repo/:uuid/instance", repoNewDataHandler)
-	repoMux.Post("/api/repo/:uuid/lock", repoLockHandler)
-	repoMux.Post("/api/repo/:uuid/branch", repoBranchHandler)
 	repoMux.Delete("/api/repo/:uuid/:dataname", repoDeleteHandler)
+	repoMux.Get("/api/repo/:uuid/log", getRepoLogHandler)
+	repoMux.Post("/api/repo/:uuid/log", postRepoLogHandler)
+
+	nodeMux := web.New()
+	mainMux.Handle("/api/node/:uuid", nodeMux)
+	mainMux.Handle("/api/node/:uuid/:action", nodeMux)
+	nodeMux.Use(repoSelector)
+	nodeMux.Get("/api/node/:uuid/log", getNodeLogHandler)
+	nodeMux.Post("/api/node/:uuid/log", postNodeLogHandler)
+	nodeMux.Post("/api/node/:uuid/commit", repoCommitHandler)
+	nodeMux.Post("/api/node/:uuid/branch", repoBranchHandler)
 
 	instanceMux := web.New()
 	mainMux.Handle("/api/node/:uuid/:dataname/:keyword", instanceMux)
@@ -307,7 +373,7 @@ func recoverHandler(c *web.C, h http.Handler) http.Handler {
 				dvid.Criticalf("%s\n", message)
 
 				if err := SendNotification(message, nil); err != nil {
-					dvid.Criticalf("Couldn't send email notifcation: %s\n", err.Error())
+					dvid.Criticalf("Couldn't send email notifcation: %v\n", err)
 				}
 
 				http.Error(w, http.StatusText(500), 500)
@@ -325,11 +391,23 @@ func NotFound(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, errorMsg, http.StatusNotFound)
 }
 
-func BadRequest(w http.ResponseWriter, r *http.Request, message string, args ...interface{}) {
-	if len(args) > 0 {
-		message = fmt.Sprintf(message, args)
+func BadRequest(w http.ResponseWriter, r *http.Request, format interface{}, args ...interface{}) {
+	var message string
+	switch v := format.(type) {
+	case string:
+		message = v
+	case error:
+		message = v.Error()
+	case fmt.Stringer:
+		message = v.String()
+	default:
+		dvid.Criticalf("BadRequest called with unknown format type: %v\n", format)
+		return
 	}
-	errorMsg := fmt.Sprintf("ERROR: %s (%s).", message, r.URL.Path)
+	if len(args) > 0 {
+		message = fmt.Sprintf(message, args...)
+	}
+	errorMsg := fmt.Sprintf("%s (%s).", message, r.URL.Path)
 	dvid.Errorf(errorMsg)
 	http.Error(w, errorMsg, http.StatusBadRequest)
 }
@@ -338,7 +416,7 @@ func BadRequest(w http.ResponseWriter, r *http.Request, message string, args ...
 func DecodeJSON(r *http.Request) (dvid.Config, error) {
 	config := dvid.NewConfig()
 	if err := config.SetByJSON(r.Body); err != nil {
-		return dvid.Config{}, fmt.Errorf("Malformed JSON request in body: %s", err.Error())
+		return dvid.Config{}, fmt.Errorf("Malformed JSON request in body: %v", err)
 	}
 	return config, nil
 }
@@ -369,16 +447,24 @@ func repoSelector(c *web.C, h http.Handler) http.Handler {
 		var err error
 		var uuid dvid.UUID
 		if uuid, c.Env["versionID"], err = datastore.MatchingUUID(c.URLParams["uuid"]); err != nil {
-			BadRequest(w, r, err.Error())
+			BadRequest(w, r, err)
 			return
 		}
 		c.Env["uuid"] = uuid
-		c.Env["repo"], err = datastore.RepoFromUUID(uuid)
+
+		// Make sure locked nodes can't use anything besides GET and HEAD
+		locked, err := datastore.LockedUUID(uuid)
 		if err != nil {
-			BadRequest(w, r, err.Error())
-		} else {
-			h.ServeHTTP(w, r)
+			BadRequest(w, r, err)
+			return
 		}
+		branchRequest := (c.URLParams["action"] == "branch")
+		if locked && !branchRequest && action != "get" && action != "head" {
+			BadRequest(w, r, "Cannot do %s on locked node %s", action, uuid)
+			return
+		}
+
+		h.ServeHTTP(w, r)
 	}
 	return http.HandlerFunc(fn)
 }
@@ -388,28 +474,23 @@ func repoSelector(c *web.C, h http.Handler) http.Handler {
 func instanceSelector(c *web.C, h http.Handler) http.Handler {
 	fn := func(w http.ResponseWriter, r *http.Request) {
 		var err error
-		dataname := dvid.DataString(c.URLParams["dataname"])
+		dataname := dvid.InstanceName(c.URLParams["dataname"])
 		uuid, ok := c.Env["uuid"].(dvid.UUID)
 		if !ok {
 			msg := fmt.Sprintf("Bad format for UUID %q\n", c.Env["uuid"])
 			BadRequest(w, r, msg)
 			return
 		}
-		repo, err := datastore.RepoFromUUID(uuid)
+		data, err := datastore.GetDataByUUID(uuid, dataname)
 		if err != nil {
-			BadRequest(w, r, err.Error())
+			BadRequest(w, r, err)
 			return
 		}
-		versionID, err := datastore.VersionFromUUID(uuid)
+		v, err := datastore.VersionFromUUID(uuid)
 		if err != nil {
-			BadRequest(w, r, err.Error())
-			return
+			BadRequest(w, r, err)
 		}
-		dataservice, err := repo.GetDataByName(dataname)
-		if err != nil {
-			BadRequest(w, r, err.Error())
-			return
-		}
+		ctx := datastore.NewVersionedCtx(data, v)
 
 		// Handle DVID-wide query string commands like non-interactive call designations
 		queryValues := r.URL.Query()
@@ -420,9 +501,8 @@ func instanceSelector(c *web.C, h http.Handler) http.Handler {
 			GotInteractiveRequest()
 		}
 
-		// Construct the Context
-		ctx := datastore.NewServerContext(context.Background(), repo, versionID)
-		dataservice.ServeHTTP(ctx, w, r)
+		// TODO: setup routing for data instances as well.
+		data.ServeHTTP(uuid, ctx, w, r)
 	}
 	return http.HandlerFunc(fn)
 }
@@ -440,7 +520,7 @@ func helpHandler(w http.ResponseWriter, r *http.Request) {
 	// Get help from all compiled-in data types.
 	html := "<ul>"
 	for _, typeservice := range datastore.Compiled {
-		name := typeservice.GetType().Name
+		name := typeservice.GetTypeName()
 		html += "<li>"
 		html += fmt.Sprintf("<a href='/api/help/%s'>%s</a>", name, name)
 		html += "</li>"
@@ -456,7 +536,7 @@ func typehelpHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	typename := dvid.TypeString(c.URLParams["typename"])
 	typeservice, err := datastore.TypeServiceByName(typename)
 	if err != nil {
-		fmt.Fprintf(w, err.Error())
+		BadRequest(w, r, err)
 		return
 	}
 	fmt.Fprintf(w, typeservice.Help())
@@ -483,12 +563,12 @@ func mainHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		rsrc, err := resource.Open()
 		if err != nil {
-			BadRequest(w, r, err.Error())
+			BadRequest(w, r, err)
 			return
 		}
 		data, err := ioutil.ReadAll(rsrc)
 		if err != nil {
-			BadRequest(w, r, err.Error())
+			BadRequest(w, r, err)
 			return
 		}
 		dvid.SendHTTP(w, r, path, data)
@@ -513,7 +593,7 @@ func loadHandler(w http.ResponseWriter, r *http.Request) {
 		"goroutines":          runtime.NumGoroutine(),
 	})
 	if err != nil {
-		BadRequest(w, r, err.Error())
+		BadRequest(w, r, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -523,7 +603,7 @@ func loadHandler(w http.ResponseWriter, r *http.Request) {
 func serverInfoHandler(w http.ResponseWriter, r *http.Request) {
 	jsonStr, err := AboutJSON()
 	if err != nil {
-		BadRequest(w, r, err.Error())
+		BadRequest(w, r, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -534,17 +614,16 @@ func serverTypesHandler(w http.ResponseWriter, r *http.Request) {
 	jsonMap := make(map[dvid.TypeString]string)
 	typemap, err := datastore.Types()
 	if err != nil {
-		msg := fmt.Sprintf("Cannot return server datatypes: %s\n", err.Error())
+		msg := fmt.Sprintf("Cannot return server datatypes: %v\n", err)
 		BadRequest(w, r, msg)
 		return
 	}
-	for _, typeservice := range typemap {
-		t := typeservice.GetType()
-		jsonMap[t.Name] = string(t.URL)
+	for _, t := range typemap {
+		jsonMap[t.GetTypeName()] = string(t.GetTypeURL())
 	}
 	m, err := json.Marshal(jsonMap)
 	if err != nil {
-		msg := fmt.Sprintf("Cannot marshal JSON datatype info: %v (%s)\n", jsonMap, err.Error())
+		msg := fmt.Sprintf("Cannot marshal JSON datatype info: %v (%v)\n", jsonMap, err)
 		BadRequest(w, r, msg)
 		return
 	}
@@ -553,59 +632,71 @@ func serverTypesHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func reposInfoHandler(w http.ResponseWriter, r *http.Request) {
-	jsonBytes, err := datastore.Manager.MarshalJSON()
+	jsonBytes, err := datastore.MarshalJSON()
 	if err != nil {
-		BadRequest(w, r, err.Error())
+		BadRequest(w, r, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, string(jsonBytes))
 }
 
+// TODO -- Maybe allow assignment of child UUID via JSON in POST.  Right now, we only
+// allow this potentially dangerous function via command-line.
 func reposPostHandler(w http.ResponseWriter, r *http.Request) {
 	config := dvid.NewConfig()
-	if err := config.SetByJSON(r.Body); err != nil {
-		BadRequest(w, r, fmt.Sprintf("Error decoding POSTed JSON config for new repo: %s", err.Error()))
-		return
+	if r.Body != nil {
+		fmt.Printf("r.Body = %v\n", r.Body)
+		if err := config.SetByJSON(r.Body); err != nil {
+			BadRequest(w, r, fmt.Sprintf("Error decoding POSTed JSON config for new repo: %v", err))
+			return
+		}
 	}
 
 	alias, _, err := config.GetString("alias")
 	if err != nil {
-		BadRequest(w, r, "POST on repos endpoint requires valid 'alias': %s", err.Error())
+		BadRequest(w, r, "POST on repos endpoint requires valid 'alias': %v", err)
 		return
 	}
 	description, _, err := config.GetString("description")
 	if err != nil {
-		BadRequest(w, r, "POST on repos endpoint requires valid 'description': %s", err.Error())
+		BadRequest(w, r, "POST on repos endpoint requires valid 'description': %v", err)
 		return
 	}
 
-	repo, err := datastore.NewRepo(alias, description)
+	root, err := datastore.NewRepo(alias, description, nil)
 	if err != nil {
-		BadRequest(w, r, err.Error())
+		BadRequest(w, r, err)
+		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, "{%q: %q}", "Root", repo.RootUUID())
+	fmt.Fprintf(w, "{%q: %q}", "root", root)
 }
 
 func repoHeadHandler(c web.C, w http.ResponseWriter, r *http.Request) {
-	repo := (c.Env["repo"]).(datastore.Repo)
+	uuid := (c.Env["uuid"]).(dvid.UUID)
+	root, err := datastore.GetRepoRoot(uuid)
+	if err != nil {
+		BadRequest(w, r, err)
+		return
+	}
 	w.Header().Set("Content-Type", "text/plain")
-	fmt.Fprintf(w, "Repo available with root UUID %s\n", repo.RootUUID())
+	fmt.Fprintf(w, "Repo available with root UUID %s\n", root)
 }
 
 func repoInfoHandler(c web.C, w http.ResponseWriter, r *http.Request) {
-	repo := (c.Env["repo"]).(datastore.Repo)
-	jsonBytes, err := repo.MarshalJSON()
+	uuid := (c.Env["uuid"]).(dvid.UUID)
+	jsonStr, err := datastore.GetRepoJSON(uuid)
 	if err != nil {
-		BadRequest(w, r, err.Error())
+		BadRequest(w, r, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, string(jsonBytes))
+	fmt.Fprintf(w, jsonStr)
 }
 
 func repoDeleteHandler(c web.C, w http.ResponseWriter, r *http.Request) {
+	uuid := c.Env["uuid"].(dvid.UUID)
 	queryValues := r.URL.Query()
 	imsure := queryValues.Get("imsure")
 	if imsure != "true" {
@@ -613,7 +704,6 @@ func repoDeleteHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	repo := (c.Env["repo"]).(datastore.Repo)
 	dataname, ok := c.URLParams["dataname"]
 	if !ok {
 		BadRequest(w, r, "Error in retrieving data instance name from URL parameters")
@@ -622,22 +712,22 @@ func repoDeleteHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 
 	// Do the deletion asynchronously since they can take a very long time.
 	go func() {
-		if err := repo.DeleteDataByName(dvid.DataString(dataname)); err != nil {
-			dvid.Errorf("Error in deleting data instance %q: %s", dataname, err.Error())
+		if err := datastore.DeleteDataByUUID(uuid, dvid.InstanceName(dataname)); err != nil {
+			dvid.Errorf("Error in deleting data instance %q: %v", dataname, err)
 		}
 	}()
 
 	// Just respond that deletion was successfully started
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, `{"result": "Started deletion of data instance %q from repo with root %s"}`,
-		dataname, repo.RootUUID())
+		dataname, uuid)
 }
 
 func repoNewDataHandler(c web.C, w http.ResponseWriter, r *http.Request) {
-	repo := (c.Env["repo"]).(datastore.Repo)
+	uuid := c.Env["uuid"].(dvid.UUID)
 	config := dvid.NewConfig()
 	if err := config.SetByJSON(r.Body); err != nil {
-		BadRequest(w, r, fmt.Sprintf("Error decoding POSTed JSON config for 'new': %s", err.Error()))
+		BadRequest(w, r, fmt.Sprintf("Error decoding POSTed JSON config for 'new': %v", err))
 		return
 	}
 
@@ -654,48 +744,129 @@ func repoNewDataHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	}
 	typeservice, err := datastore.TypeServiceByName(dvid.TypeString(typename))
 	if err != nil {
-		BadRequest(w, r, err.Error())
+		BadRequest(w, r, err)
 		return
 	}
-	_, err = repo.NewData(typeservice, dvid.DataString(dataname), config)
+	_, err = datastore.NewData(uuid, typeservice, dvid.InstanceName(dataname), config)
 	if err != nil {
-		BadRequest(w, r, err.Error())
+		BadRequest(w, r, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, "{%q: 'Added %s [%s] to node %s'}", "result", dataname, typename, repo.RootUUID())
+	fmt.Fprintf(w, "{%q: 'Added %s [%s] to node %s'}", "result", dataname, typename, uuid)
 }
 
-func repoLockHandler(c web.C, w http.ResponseWriter, r *http.Request) {
-	repo := (c.Env["repo"]).(datastore.Repo)
-	uuid, _, err := datastore.MatchingUUID(c.URLParams["uuid"])
+func getRepoLogHandler(c web.C, w http.ResponseWriter, r *http.Request) {
+	uuid := c.Env["uuid"].(dvid.UUID)
+	logdata, err := datastore.GetRepoLog(uuid)
 	if err != nil {
-		BadRequest(w, r, err.Error())
+		BadRequest(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	jsonStr, err := json.Marshal(struct {
+		Log []string `json:"log"`
+	}{
+		logdata,
+	})
+	if err != nil {
+		BadRequest(w, r, err)
+		return
+	}
+	fmt.Fprintf(w, string(jsonStr))
+}
+
+func postRepoLogHandler(c web.C, w http.ResponseWriter, r *http.Request) {
+	uuid := c.Env["uuid"].(dvid.UUID)
+	jsonData := make(map[string][]string)
+	decoder := json.NewDecoder(r.Body)
+	if err := decoder.Decode(&jsonData); err != nil && err != io.EOF {
+		BadRequest(w, r, fmt.Sprintf("Malformed JSON request in body: %s", err))
+		return
+	}
+	logdata, ok := jsonData["log"]
+	if !ok {
+		BadRequest(w, r, "Could not find 'log' value in POSTed JSON.")
+	}
+	if err := datastore.AddToRepoLog(uuid, logdata); err != nil {
+		BadRequest(w, r, err)
+		return
+	}
+}
+
+func getNodeLogHandler(c web.C, w http.ResponseWriter, r *http.Request) {
+	uuid := c.Env["uuid"].(dvid.UUID)
+	logdata, err := datastore.GetNodeLog(uuid)
+	if err != nil {
+		BadRequest(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	jsonStr, err := json.Marshal(struct {
+		Log []string `json:"log"`
+	}{
+		logdata,
+	})
+	if err != nil {
+		BadRequest(w, r, err)
+		return
+	}
+	fmt.Fprintf(w, string(jsonStr))
+}
+
+func postNodeLogHandler(c web.C, w http.ResponseWriter, r *http.Request) {
+	uuid := c.Env["uuid"].(dvid.UUID)
+	jsonData := make(map[string][]string)
+	decoder := json.NewDecoder(r.Body)
+	if err := decoder.Decode(&jsonData); err != nil && err != io.EOF {
+		BadRequest(w, r, fmt.Sprintf("Malformed JSON request in body: %s", err))
+		return
+	}
+	logdata, ok := jsonData["log"]
+	if !ok {
+		BadRequest(w, r, "Could not find 'log' value in POSTed JSON.")
+	}
+	if err := datastore.AddToNodeLog(uuid, logdata); err != nil {
+		BadRequest(w, r, err)
+		return
+	}
+}
+
+func repoCommitHandler(c web.C, w http.ResponseWriter, r *http.Request) {
+	uuid := c.Env["uuid"].(dvid.UUID)
+	data, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		BadRequest(w, r, err)
 		return
 	}
 
-	err = repo.Lock(uuid)
+	jsonData := struct {
+		Note string   `json:"note"`
+		Log  []string `json:"log"`
+	}{}
+	if err := json.Unmarshal(data, &jsonData); err != nil {
+		BadRequest(w, r, fmt.Sprintf("Malformed JSON request in body: %v", err))
+		return
+	}
+
+	err = datastore.Commit(uuid, jsonData.Note, jsonData.Log)
 	if err != nil {
-		BadRequest(w, r, err.Error())
+		BadRequest(w, r, err)
 	} else {
 		w.Header().Set("Content-Type", "text/plain")
-		fmt.Fprintf(w, "Lock on node %s successful.\n", uuid)
+		fmt.Fprintf(w, "Node %s committed and locked.\n", uuid)
 	}
 }
 
+// TODO -- Might allow specification of UUID for child via HTTP.  Currently, only
+// allow this potentially dangerous op via command line.
 func repoBranchHandler(c web.C, w http.ResponseWriter, r *http.Request) {
-	repo := (c.Env["repo"]).(datastore.Repo)
-	uuid, _, err := datastore.MatchingUUID(c.URLParams["uuid"])
+	uuid := c.Env["uuid"].(dvid.UUID)
+	newuuid, err := datastore.NewVersion(uuid, nil)
 	if err != nil {
-		BadRequest(w, r, err.Error())
-		return
-	}
-
-	newuuid, err := repo.NewVersion(uuid)
-	if err != nil {
-		BadRequest(w, r, err.Error())
+		BadRequest(w, r, err)
 	} else {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, "{%q: %q}", "Child", newuuid)
+		fmt.Fprintf(w, "{%q: %q}", "child", newuuid)
 	}
 }
