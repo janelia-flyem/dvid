@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"testing"
 
 	"github.com/janelia-flyem/dvid/dvid"
@@ -27,6 +28,18 @@ func createRepo(t *testing.T) dvid.UUID {
 		t.Fatalf("Couldn't cast returned 'root' data (%v) into string.\n", v)
 	}
 	return dvid.UUID(uuid)
+}
+
+func testLog(t *testing.T, got, expect string) {
+	re := regexp.MustCompile(`\S+\s+(.+)$`)
+	matches := re.FindStringSubmatch(got)
+	if len(matches) != 2 {
+		t.Errorf("Unable to match log line.  Got %q, expected %q: %v\n", got, expect, matches)
+		return
+	}
+	if matches[1] != expect {
+		t.Errorf("Bad log line. Got %q, expected %q\n", matches[1], expect)
+	}
 }
 
 func TestLog(t *testing.T) {
@@ -56,15 +69,9 @@ func TestLog(t *testing.T) {
 	if len(data) != 3 {
 		t.Fatalf("Got wrong # of lines in log: %v\n", data)
 	}
-	if data[0][27:] != "line1" {
-		t.Errorf("Got bad log line: %q\n", data[0])
-	}
-	if data[1][27:] != "line2" {
-		t.Errorf("Got bad log line: %q\n", data[1])
-	}
-	if data[2][27:] != "some more stuff in a line" {
-		t.Errorf("Got bad log line: %q\n", data[2])
-	}
+	testLog(t, data[0], "line1")
+	testLog(t, data[1], "line2")
+	testLog(t, data[2], "some more stuff in a line")
 
 	// Add some more to log
 	payload = bytes.NewBufferString(`{"log": ["line4", "line5"]}`)
@@ -87,12 +94,8 @@ func TestLog(t *testing.T) {
 	if len(data) != 5 {
 		t.Errorf("Got wrong # of lines in log: %v\n", data)
 	}
-	if data[3][27:] != "line4" {
-		t.Errorf("Got bad log line: %q\n", data[3])
-	}
-	if data[4][27:] != "line5" {
-		t.Errorf("Got bad log line: %q\n", data[4])
-	}
+	testLog(t, data[3], "line4")
+	testLog(t, data[4], "line5")
 }
 
 func TestCommitAndBranch(t *testing.T) {
