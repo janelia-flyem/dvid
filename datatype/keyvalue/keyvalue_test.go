@@ -332,6 +332,10 @@ func TestKeyvalueVersioning(t *testing.T) {
 	uuid4req := fmt.Sprintf("%snode/%s/%s/key/%s", server.WebAPIPath, uuid4, data.DataName(), key2)
 	server.TestHTTP(t, "POST", uuid4req, strings.NewReader(uuid4val))
 
+	if err = datastore.Commit(uuid4, "commit node 4", []string{"we modified stuff"}); err != nil {
+		t.Errorf("Unable to commit node %s: %v\n", uuid4, err)
+	}
+
 	// Make sure the 2nd k/v is correct for each of previous versions.
 	returnValue = server.TestHTTP(t, "GET", key2req, nil)
 	if string(returnValue) != value2 {
@@ -365,10 +369,21 @@ func TestKeyvalueVersioning(t *testing.T) {
 		t.Errorf("Error on merged child, key %q: expected %q, got %q\n", key2, uuid5val, string(returnValue))
 	}
 
-	// Commit node, branch, and then delete 2nd k/v and commit.
+	// Commit node
 	if err = datastore.Commit(uuid5, "forked node", []string{"we modified stuff"}); err != nil {
 		t.Errorf("Unable to commit node %s: %v\n", uuid5, err)
 	}
+
+	// Should be able to merge using conflict-free (disjoint at key level) merge even though
+	// its conflicted.  Will get lazy error on request.
+	badChild, err := datastore.Merge([]dvid.UUID{uuid4, uuid5}, datastore.MergeConflictFree)
+	if err != nil {
+		t.Errorf("Error doing merge: %v\n", err)
+	}
+	childreq := fmt.Sprintf("%snode/%s/%s/key/%s", server.WebAPIPath, badChild, data.DataName(), key2)
+	server.TestBadHTTP(t, "GET", childreq, nil)
+
+	// Branch, and then delete 2nd k/v and commit.
 	uuid6, err := datastore.NewVersion(uuid5, nil)
 	if err != nil {
 		t.Fatalf("Unable to create new version off node %s: %v\n", uuid5, err)
@@ -382,19 +397,14 @@ func TestKeyvalueVersioning(t *testing.T) {
 		t.Errorf("Unable to commit node %s: %s\n", uuid6, err)
 	}
 
-	// Merge the two branches.
-
-	if err = datastore.Commit(uuid4, "commit node 4 before merge", []string{"we modified stuff"}); err != nil {
-		t.Errorf("Unable to commit node %s: %v\n", uuid4, err)
-	}
-
-	child, err := datastore.Merge([]dvid.UUID{uuid4, uuid6}, datastore.MergeConflictFree)
+	// Should now be able to correctly merge the two branches.
+	goodChild, err := datastore.Merge([]dvid.UUID{uuid4, uuid6}, datastore.MergeConflictFree)
 	if err != nil {
 		t.Errorf("Error doing merge: %v\n", err)
 	}
 
 	// We should be able to see just the original uuid4 value of the 2nd k/v
-	childreq := fmt.Sprintf("%snode/%s/%s/key/%s", server.WebAPIPath, child, data.DataName(), key2)
+	childreq = fmt.Sprintf("%snode/%s/%s/key/%s", server.WebAPIPath, goodChild, data.DataName(), key2)
 	returnValue = server.TestHTTP(t, "GET", childreq, nil)
 	if string(returnValue) != uuid4val {
 		t.Errorf("Error on merged child, key %q: expected %q, got %q\n", key2, uuid4val, string(returnValue))

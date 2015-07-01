@@ -937,13 +937,13 @@ func (d *Data) ServeTile(w http.ResponseWriter, r *http.Request, parts []string)
 	}
 	scale, err := strconv.ParseUint(scalingStr, 10, 8)
 	if err != nil {
-		err = fmt.Errorf("Illegal tile scale: %s (%s)", scalingStr, err)
+		err = fmt.Errorf("Illegal tile scale: %s (%v)", scalingStr, err)
 		server.BadRequest(w, r, err)
 		return err
 	}
 	tileCoord, err := dvid.StringToPoint(coordStr, "_")
 	if err != nil {
-		err = fmt.Errorf("Illegal tile coordinate: %s (%s)", coordStr, err)
+		err = fmt.Errorf("Illegal tile coordinate: %s (%v)", coordStr, err)
 		server.BadRequest(w, r, err)
 		return err
 	}
