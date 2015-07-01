@@ -28,7 +28,7 @@ variety of ways:
 
 * subvolumes
 * images in XY, XZ, YZ, and arbitrary orientation
-* multiscale 2d and 3d, similar to quadtrees and octrees
+* multiscale 2d, similar to quadtrees
 * sparse volumes determined by a label
 * label maps that handle mapping of labels X -> Y
 * label graphs
@@ -44,8 +44,7 @@ and command-line access (likely minimized in near future).  Some components are 
 C, e.g., storage engines like Leveldb and fast codecs like lz4.  DVID has been tested on 
 both MacOS X and Linux (Fedora 16, CentOS 6, Ubuntu) but not on Windows.
 
-Command-line and HTTP API documentation is currently distributed over data types and can be 
-found in [help constants within packages](https://github.com/janelia-flyem/dvid/blob/master/datatype/labelvol/labelvol.go#L34) 
-or by visiting the **/api/help**
+Command-line and HTTP API documentation can be 
+found in [help constants within packages](https://github.com/janelia-flyem/dvid/blob/master/datatype/labelvol/labelvol.go#L34) or by visiting the **/api/help**
 HTTP endpoint on a running DVID server.  We are in the process of 
 figuring out a nice way to document the APIs either through RAML or Swagger.
