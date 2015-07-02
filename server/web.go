@@ -946,8 +946,13 @@ func repoMergeHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 
 	// Convert JSON of parents into []UUID
 	parents := make([]dvid.UUID, len(jsonData.Parents))
-	for i, parent := range jsonData.Parents {
-		parents[i] = dvid.UUID(parent)
+	for i, uuidFrag := range jsonData.Parents {
+		uuid, _, err := datastore.MatchingUUID(uuidFrag)
+		if err != nil {
+			BadRequest(w, r, fmt.Sprintf("can't match parent %q: %v", uuidFrag, err))
+			return
+		}
+		parents[i] = uuid
 	}
 
 	// Convert merge type designation

@@ -146,7 +146,7 @@ func TestCommitBranchMerge(t *testing.T) {
 	TestHTTP(t, "POST", apiStr, payload)
 
 	// Merge the two disjoint branches.
-	mergeJSON := fmt.Sprintf(`{"mergeType": "conflict-free", "note": "This is my merged node", "parents": [%q, %q]}`, parent1, parent2)
+	mergeJSON := fmt.Sprintf(`{"mergeType": "conflict-free", "note": "This is my merged node", "parents": [%q, %q]}`, parent1[:7], parent2)
 	payload = bytes.NewBufferString(mergeJSON)
 	apiStr = fmt.Sprintf("%srepo/%s/merge", WebAPIPath, parent1)
 	TestHTTP(t, "POST", apiStr, payload)
