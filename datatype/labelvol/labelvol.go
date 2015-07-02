@@ -422,28 +422,30 @@ func (d *Data) InitVersion(uuid dvid.UUID, v dvid.VersionID) error {
 	if err != nil {
 		return err
 	}
-	switch len(parents) {
-	case 0:
+	if len(parents) < 1 {
 		return fmt.Errorf("InitVersion(%s, %d) called on node with no parents, which shouldn't be possible for branch", uuid, v)
-	case 1:
-		maxLabel, ok := d.MaxLabel[parents[0]]
+	}
+	var maxMax uint64
+	for _, parent := range parents {
+		maxLabel, ok := d.MaxLabel[parent]
 		if !ok {
 			return fmt.Errorf("parent of uuid %s had no max label", uuid)
 		}
-		d.MaxLabel[v] = maxLabel
-
-		buf := make([]byte, 8)
-		binary.LittleEndian.PutUint64(buf, maxLabel)
-		ctx := datastore.NewVersionedCtx(d, v)
-		store, err := storage.SmallDataStore()
-		if err != nil {
-			return fmt.Errorf("data type labelvol had error initializing store: %v\n", err)
+		if maxLabel > maxMax {
+			maxMax = maxLabel
 		}
-		store.Put(ctx, maxLabelTKey, buf)
-		return nil
-	default:
-		return fmt.Errorf("InitVersion(%s, %d) called on node with more than one parent: %v", uuid, v, parents)
 	}
+	d.MaxLabel[v] = maxMax
+
+	buf := make([]byte, 8)
+	binary.LittleEndian.PutUint64(buf, maxMax)
+	ctx := datastore.NewVersionedCtx(d, v)
+	store, err := storage.SmallDataStore()
+	if err != nil {
+		return fmt.Errorf("data type labelvol had error initializing store: %v\n", err)
+	}
+	store.Put(ctx, maxLabelTKey, buf)
+	return nil
 }
 
 // --- datastore.InstanceMutator interface -----
