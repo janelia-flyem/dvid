@@ -195,7 +195,7 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 				u := dvid.UUID(uuidStr)
 				assign = &u
 			}
-			child, err := datastore.NewVersion(uuid, assign)
+			child, err := datastore.NewVersion(uuid, fmt.Sprintf("branch of %s", uuid), assign)
 			if err != nil {
 				return err
 			}
@@ -212,7 +212,7 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 				parents[i] = dvid.UUID(uuid)
 				i++
 			}
-			child, err := datastore.Merge(parents, datastore.MergeConflictFree)
+			child, err := datastore.Merge(parents, fmt.Sprintf("merge of parents %v", parents), datastore.MergeConflictFree)
 			if err != nil {
 				return err
 			}

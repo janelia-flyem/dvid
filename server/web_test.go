@@ -98,7 +98,7 @@ func TestLog(t *testing.T) {
 	testLog(t, data[4], "line5")
 }
 
-func TestCommitAndBranch(t *testing.T) {
+func TestCommitBranchMerge(t *testing.T) {
 	tests.UseStore()
 	defer tests.CloseStore()
 
@@ -127,4 +127,27 @@ func TestCommitAndBranch(t *testing.T) {
 	if err := json.Unmarshal(respData, &resp); err != nil {
 		t.Errorf("Expected 'child' JSON response.  Got %s\n", string(respData))
 	}
+	parent1 := dvid.UUID(resp.Child)
+
+	// Create a sibling.
+	respData = TestHTTP(t, "POST", branchReq, nil)
+	if err := json.Unmarshal(respData, &resp); err != nil {
+		t.Errorf("Expected 'child' JSON response.  Got %s\n", string(respData))
+	}
+	parent2 := dvid.UUID(resp.Child)
+
+	// Commit both parents
+	payload = bytes.NewBufferString(`{"note": "This is first parent"}`)
+	apiStr = fmt.Sprintf("%snode/%s/commit", WebAPIPath, parent1)
+	TestHTTP(t, "POST", apiStr, payload)
+
+	payload = bytes.NewBufferString(`{"note": "This is second parent"}`)
+	apiStr = fmt.Sprintf("%snode/%s/commit", WebAPIPath, parent2)
+	TestHTTP(t, "POST", apiStr, payload)
+
+	// Merge the two disjoint branches.
+	mergeJSON := fmt.Sprintf(`{"mergeType": "conflict-free", "note": "This is my merged node", "parents": [%q, %q]}`, parent1, parent2)
+	payload = bytes.NewBufferString(mergeJSON)
+	apiStr = fmt.Sprintf("%srepo/%s/merge", WebAPIPath, parent1)
+	TestHTTP(t, "POST", apiStr, payload)
 }

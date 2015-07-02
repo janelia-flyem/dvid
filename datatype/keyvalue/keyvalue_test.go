@@ -253,7 +253,7 @@ func TestKeyvalueVersioning(t *testing.T) {
 	if err = datastore.Commit(uuid, "my commit msg", []string{"stuff one", "stuff two"}); err != nil {
 		t.Errorf("Unable to lock root node %s: %v\n", uuid, err)
 	}
-	uuid2, err := datastore.NewVersion(uuid, nil)
+	uuid2, err := datastore.NewVersion(uuid, "some child", nil)
 	if err != nil {
 		t.Fatalf("Unable to create new version off node %s: %v\n", uuid, err)
 	}
@@ -297,7 +297,7 @@ func TestKeyvalueVersioning(t *testing.T) {
 	if err = datastore.Commit(uuid2, "my 2nd commit msg", []string{"changed 2nd k/v"}); err != nil {
 		t.Errorf("Unable to commit node %s: %v\n", uuid2, err)
 	}
-	uuid3, err := datastore.NewVersion(uuid2, nil)
+	uuid3, err := datastore.NewVersion(uuid2, "some child", nil)
 	if err != nil {
 		t.Fatalf("Unable to create new version off node %s: %v\n", uuid2, err)
 	}
@@ -322,7 +322,7 @@ func TestKeyvalueVersioning(t *testing.T) {
 	if err = datastore.Commit(uuid3, "my 3rd commit msg", []string{"deleted 2nd k/v"}); err != nil {
 		t.Errorf("Unable to commit node %s: %v\n", uuid2, err)
 	}
-	uuid4, err := datastore.NewVersion(uuid3, nil)
+	uuid4, err := datastore.NewVersion(uuid3, "some child", nil)
 	if err != nil {
 		t.Fatalf("Unable to create new version off node %s: %v\n", uuid3, err)
 	}
@@ -354,7 +354,7 @@ func TestKeyvalueVersioning(t *testing.T) {
 	// Let's try a merge!
 
 	// Make a child off the 2nd version from root.
-	uuid5, err := datastore.NewVersion(uuid2, nil)
+	uuid5, err := datastore.NewVersion(uuid2, "some child", nil)
 	if err != nil {
 		t.Fatalf("Unable to create new version off node %s: %v\n", uuid2, err)
 	}
@@ -376,7 +376,7 @@ func TestKeyvalueVersioning(t *testing.T) {
 
 	// Should be able to merge using conflict-free (disjoint at key level) merge even though
 	// its conflicted.  Will get lazy error on request.
-	badChild, err := datastore.Merge([]dvid.UUID{uuid4, uuid5}, datastore.MergeConflictFree)
+	badChild, err := datastore.Merge([]dvid.UUID{uuid4, uuid5}, "some child", datastore.MergeConflictFree)
 	if err != nil {
 		t.Errorf("Error doing merge: %v\n", err)
 	}
@@ -384,7 +384,7 @@ func TestKeyvalueVersioning(t *testing.T) {
 	server.TestBadHTTP(t, "GET", childreq, nil)
 
 	// Branch, and then delete 2nd k/v and commit.
-	uuid6, err := datastore.NewVersion(uuid5, nil)
+	uuid6, err := datastore.NewVersion(uuid5, "some child", nil)
 	if err != nil {
 		t.Fatalf("Unable to create new version off node %s: %v\n", uuid5, err)
 	}
@@ -398,7 +398,7 @@ func TestKeyvalueVersioning(t *testing.T) {
 	}
 
 	// Should now be able to correctly merge the two branches.
-	goodChild, err := datastore.Merge([]dvid.UUID{uuid4, uuid6}, datastore.MergeConflictFree)
+	goodChild, err := datastore.Merge([]dvid.UUID{uuid4, uuid6}, "merging stuff", datastore.MergeConflictFree)
 	if err != nil {
 		t.Errorf("Error doing merge: %v\n", err)
 	}

@@ -192,11 +192,11 @@ func AddToNodeLog(uuid dvid.UUID, msgs []string) error {
 
 // NewVersion creates a new version as a child of the given parent.  If the
 // assign parameter is not nil, the new node is given the UUID.
-func NewVersion(parent dvid.UUID, assign *dvid.UUID) (dvid.UUID, error) {
+func NewVersion(parent dvid.UUID, note string, assign *dvid.UUID) (dvid.UUID, error) {
 	if manager == nil {
 		return dvid.NilUUID, ErrManagerNotInitialized
 	}
-	return manager.newVersion(parent, assign)
+	return manager.newVersion(parent, note, assign)
 }
 
 // GetParents returns the parent nodes of the given version id.
@@ -238,11 +238,11 @@ func Commit(uuid dvid.UUID, note string, log []string) error {
 	return manager.commit(uuid, note, log)
 }
 
-func Merge(parents []dvid.UUID, mt MergeType) (dvid.UUID, error) {
+func Merge(parents []dvid.UUID, note string, mt MergeType) (dvid.UUID, error) {
 	if manager == nil {
 		return dvid.NilUUID, ErrManagerNotInitialized
 	}
-	return manager.merge(parents, mt)
+	return manager.merge(parents, note, mt)
 }
 
 // ----- Data Instance functions -----------

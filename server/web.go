@@ -140,6 +140,29 @@ const WebHelp = `
 	descriptions for the entire repo and not just one node.  For particular versions, use
 	node-level logging (below).
 
+ POST /api/repo/{uuid}/merge
+
+	Merges a set of committed parent UUIDs into a child.  The post body should be JSON of the 
+	following format: 
+
+	{ 
+		"mergeType": "conflict-free",
+		"parents": [ "parent-uuid1", "parent-uuid2", ... ],
+		"note": "this is a description of what I did on this commit"
+	}
+
+	The elements of the JSON object are:
+
+		mergeType:  must be "conflict-free".  We will introduce other merge options in future.
+		parents:    a list of the parent UUIDs to be merged. 
+		note:       any note that should be set for the child version.
+
+	A JSON response will be sent with the following format:
+
+	{ "child": "3f01a8856" }
+
+	The response includes the UUID of the new merged, child node.
+
   GET /api/node/{uuid}/log
  POST /api/node/{uuid}/log
 
@@ -152,7 +175,7 @@ const WebHelp = `
 	data usable by clients to reconstruct the types of operation done to that version
 	of data.
 
-POST /api/node/{uuid}/commit
+ POST /api/node/{uuid}/commit
 
 	Commits (locks) the node/version with given UUID.  This is required before a version can 
 	be branched or pushed to a remote server.  The post body should be JSON of the 
@@ -168,8 +191,13 @@ POST /api/node/{uuid}/commit
 
  POST /api/node/{uuid}/branch
 
-	Creates a new child node (version) of the node with given UUID.  A JSON response
-	will be sent with the following format:
+	Creates a new child node (version) of the node with given UUID.  
+
+	An optional post body should be in JSON format:
+
+	{ "note": "this is what we'll be doing on this version" }
+
+	A JSON response will be sent with the following format:
 
 	{ "child": "3f01a8856" }
 
@@ -327,7 +355,7 @@ func initRoutes() {
 
 	repoMux := web.New()
 	mainMux.Handle("/api/repo/:uuid", repoMux)
-	mainMux.Handle("/api/repo/:uuid/*", repoMux)
+	mainMux.Handle("/api/repo/:uuid/:action", repoMux)
 	repoMux.Use(repoSelector)
 	repoMux.Head("/api/repo/:uuid", repoHeadHandler)
 	repoMux.Get("/api/repo/:uuid/info", repoInfoHandler)
@@ -335,6 +363,7 @@ func initRoutes() {
 	repoMux.Delete("/api/repo/:uuid/:dataname", repoDeleteHandler)
 	repoMux.Get("/api/repo/:uuid/log", getRepoLogHandler)
 	repoMux.Post("/api/repo/:uuid/log", postRepoLogHandler)
+	repoMux.Post("/api/repo/:uuid/merge", repoMergeHandler)
 
 	nodeMux := web.New()
 	mainMux.Handle("/api/node/:uuid", nodeMux)
@@ -459,7 +488,8 @@ func repoSelector(c *web.C, h http.Handler) http.Handler {
 			return
 		}
 		branchRequest := (c.URLParams["action"] == "branch")
-		if locked && !branchRequest && action != "get" && action != "head" {
+		mergeRequest := (c.URLParams["action"] == "merge")
+		if locked && !branchRequest && !mergeRequest && action != "get" && action != "head" {
 			BadRequest(w, r, "Cannot do %s on locked node %s", action, uuid)
 			return
 		}
@@ -858,11 +888,80 @@ func repoCommitHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// TODO -- Might allow specification of UUID for child via HTTP.  Currently, only
+// TODO -- Might allow specification of UUID for child via HTTP, or only
 // allow this potentially dangerous op via command line.
 func repoBranchHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	uuid := c.Env["uuid"].(dvid.UUID)
-	newuuid, err := datastore.NewVersion(uuid, nil)
+	jsonData := struct {
+		Note string `json:"note"`
+	}{}
+	if r.Body != nil {
+		data, err := ioutil.ReadAll(r.Body)
+		if err != nil {
+			BadRequest(w, r, err)
+			return
+		}
+
+		if len(data) > 0 {
+			if err := json.Unmarshal(data, &jsonData); err != nil {
+				BadRequest(w, r, fmt.Sprintf("Malformed JSON request in body: %v", err))
+				return
+			}
+		}
+
+	}
+	newuuid, err := datastore.NewVersion(uuid, jsonData.Note, nil)
+	if err != nil {
+		BadRequest(w, r, err)
+	} else {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, "{%q: %q}", "child", newuuid)
+	}
+}
+
+func repoMergeHandler(c web.C, w http.ResponseWriter, r *http.Request) {
+	if r.Body == nil {
+		BadRequest(w, r, "merge requires JSON to be POSTed per API documentation")
+		return
+	}
+	data, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		BadRequest(w, r, err)
+		return
+	}
+
+	jsonData := struct {
+		MergeType string   `json:"mergeType"`
+		Note      string   `json:"note"`
+		Parents   []string `json:"parents"`
+	}{}
+	if err := json.Unmarshal(data, &jsonData); err != nil {
+		BadRequest(w, r, fmt.Sprintf("Malformed JSON request in body: %v", err))
+		return
+	}
+	if len(jsonData.Parents) < 2 {
+		BadRequest(w, r, "Must specify at least two parent UUIDs using 'parents' field")
+		return
+	}
+
+	// Convert JSON of parents into []UUID
+	parents := make([]dvid.UUID, len(jsonData.Parents))
+	for i, parent := range jsonData.Parents {
+		parents[i] = dvid.UUID(parent)
+	}
+
+	// Convert merge type designation
+	var mt datastore.MergeType
+	switch jsonData.MergeType {
+	case "conflict-free":
+		mt = datastore.MergeConflictFree
+	default:
+		BadRequest(w, r, fmt.Sprintf("'mergeType' must be 'conflict-free' at this time"))
+		return
+	}
+
+	// Do the merge
+	newuuid, err := datastore.Merge(parents, jsonData.Note, mt)
 	if err != nil {
 		BadRequest(w, r, err)
 	} else {

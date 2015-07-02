@@ -953,7 +953,7 @@ func (m *repoManager) commit(uuid dvid.UUID, note string, log []string) error {
 
 // newVersion creates a new version as a child of the given parent.  If the
 // assign parameter is not nil, the new node is given the UUID.
-func (m *repoManager) newVersion(parent dvid.UUID, assign *dvid.UUID) (dvid.UUID, error) {
+func (m *repoManager) newVersion(parent dvid.UUID, note string, assign *dvid.UUID) (dvid.UUID, error) {
 	r, found := m.repos[parent]
 	if !found {
 		return dvid.NilUUID, ErrInvalidUUID
@@ -989,6 +989,7 @@ func (m *repoManager) newVersion(parent dvid.UUID, assign *dvid.UUID) (dvid.UUID
 
 	m.repos[childUUID] = r
 
+	node.note = note
 	node.children = append(node.children, childV)
 	node.updated = time.Now()
 
@@ -1009,7 +1010,7 @@ func (m *repoManager) newVersion(parent dvid.UUID, assign *dvid.UUID) (dvid.UUID
 	return child.uuid, r.save()
 }
 
-func (m *repoManager) merge(parents []dvid.UUID, mt MergeType) (dvid.UUID, error) {
+func (m *repoManager) merge(parents []dvid.UUID, note string, mt MergeType) (dvid.UUID, error) {
 	m.Lock()
 	defer m.Unlock()
 
@@ -1028,6 +1029,7 @@ func (m *repoManager) merge(parents []dvid.UUID, mt MergeType) (dvid.UUID, error
 		return dvid.NilUUID, err
 	}
 	child := newNode(childUUID, childV)
+	child.note = note
 
 	m.repos[childUUID] = r
 

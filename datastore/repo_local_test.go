@@ -164,7 +164,7 @@ func makeTestVersions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	child1, err := NewVersion(root, nil)
+	child1, err := NewVersion(root, "note describing child 1", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +175,7 @@ func makeTestVersions(t *testing.T) {
 
 	// Test ability to set UUID of child
 	assignedUUID := dvid.UUID("0c8bc973dba74729880dd1bdfd8d0c5e")
-	child2, err := NewVersion(root, &assignedUUID)
+	child2, err := NewVersion(root, "note describing child 2", &assignedUUID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +186,7 @@ func makeTestVersions(t *testing.T) {
 	}
 
 	// Make uncommitted child 3
-	child3, err := NewVersion(root, nil)
+	child3, err := NewVersion(root, "note describing child 3", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -279,7 +279,7 @@ func TestUUIDAssignment(t *testing.T) {
 	}
 	uuidStr2 := "8fa05d5475b4431badb2eb6b9e0123014"
 	myuuid2 := dvid.UUID(uuidStr2)
-	child, err := NewVersion(myuuid, &myuuid2)
+	child, err := NewVersion(myuuid, "note describing uuid2", &myuuid2)
 	if err != nil {
 		t.Fatal(err)
 	}
