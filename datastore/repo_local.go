@@ -28,12 +28,11 @@ import (
 	"github.com/janelia-flyem/dvid/storage/local"
 )
 
+// The current repo metadata format version
+const RepoFormatVersion = 1
+
+// Key space handling for metadata
 const (
-	// The current repo metadata format version
-	RepoFormatVersion = 1
-
-	// ---- Key space handling for metadata
-
 	keyUnknown storage.TKeyClass = iota
 	repoToUUIDKey
 	versionToUUIDKey
