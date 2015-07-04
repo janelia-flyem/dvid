@@ -370,6 +370,7 @@ func initRoutes() {
 	mainMux.Handle("/api/node/:uuid/:action", nodeMux)
 	nodeMux.Use(repoSelector)
 	nodeMux.Get("/api/node/:uuid/log", getNodeLogHandler)
+	nodeMux.Post("/api/node/:uuid/log", postNodeNoteHandler)
 	nodeMux.Post("/api/node/:uuid/log", postNodeLogHandler)
 	nodeMux.Post("/api/node/:uuid/commit", repoCommitHandler)
 	nodeMux.Post("/api/node/:uuid/branch", repoBranchHandler)
@@ -842,6 +843,24 @@ func getNodeLogHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	fmt.Fprintf(w, string(jsonStr))
+}
+
+func postNodeNoteHandler(c web.C, w http.ResponseWriter, r *http.Request) {
+	uuid := c.Env["uuid"].(dvid.UUID)
+	jsonData := make(map[string]string)
+	decoder := json.NewDecoder(r.Body)
+	if err := decoder.Decode(&jsonData); err != nil && err != io.EOF {
+		BadRequest(w, r, fmt.Sprintf("Malformed JSON request in body: %s", err))
+		return
+	}
+	note, ok := jsonData["note"]
+	if !ok {
+		BadRequest(w, r, "Could not find 'note' value in POSTed JSON.")
+	}
+	if err := datastore.SetNodeNote(uuid, note); err != nil {
+		BadRequest(w, r, err)
+		return
+	}
 }
 
 func postNodeLogHandler(c web.C, w http.ResponseWriter, r *http.Request) {

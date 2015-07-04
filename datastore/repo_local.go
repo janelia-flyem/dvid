@@ -800,6 +800,32 @@ func (m *repoManager) addToRepoLog(uuid dvid.UUID, msgs []string) error {
 	return r.save()
 }
 
+func (m *repoManager) setNodeNote(uuid dvid.UUID, note string) error {
+	r, found := m.repos[uuid]
+	if !found {
+		return ErrInvalidUUID
+	}
+
+	v, err := m.versionFromUUID(uuid)
+	if err != nil {
+		return err
+	}
+
+	r.Lock()
+	defer r.Unlock()
+	node, found := r.dag.nodes[v]
+	if !found {
+		return ErrInvalidVersion
+	}
+
+	node.Lock()
+	defer node.Unlock()
+	node.note = note
+	t := time.Now()
+	r.updated, node.updated = t, t
+	return r.save()
+}
+
 func (m *repoManager) getNodeLog(uuid dvid.UUID) ([]string, error) {
 	r, found := m.repos[uuid]
 	if !found {
@@ -986,10 +1012,10 @@ func (m *repoManager) newVersion(parent dvid.UUID, note string, assign *dvid.UUI
 	}
 	child := newNode(childUUID, childV)
 	child.parents = []dvid.VersionID{v}
+	child.note = note
 
 	m.repos[childUUID] = r
 
-	node.note = note
 	node.children = append(node.children, childV)
 	node.updated = time.Now()
 
