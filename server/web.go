@@ -370,7 +370,7 @@ func initRoutes() {
 	mainMux.Handle("/api/node/:uuid/:action", nodeMux)
 	nodeMux.Use(repoSelector)
 	nodeMux.Get("/api/node/:uuid/log", getNodeLogHandler)
-	nodeMux.Post("/api/node/:uuid/log", postNodeNoteHandler)
+	nodeMux.Post("/api/node/:uuid/note", postNodeNoteHandler)
 	nodeMux.Post("/api/node/:uuid/log", postNodeLogHandler)
 	nodeMux.Post("/api/node/:uuid/commit", repoCommitHandler)
 	nodeMux.Post("/api/node/:uuid/branch", repoBranchHandler)
