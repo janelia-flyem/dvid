@@ -1149,7 +1149,8 @@ func (m *repoManager) findMatch(kvv kvVersions, v dvid.VersionID) (*storage.KeyV
 	default:
 		// We have multiple parents so this is a merge.  Traverse each path up.
 		var foundKV *storage.KeyValue
-		foundV := []dvid.VersionID{}
+		var foundV dvid.VersionID
+		foundVs := make(map[dvid.VersionID]struct{})
 		for _, parent := range parents {
 			matchKV, matchV, err := m.findMatch(kvv, parent)
 			if err != nil {
@@ -1157,13 +1158,14 @@ func (m *repoManager) findMatch(kvv kvVersions, v dvid.VersionID) (*storage.KeyV
 			}
 			if matchKV != nil && matchKV.K != nil && !matchKV.K.IsTombstone() {
 				foundKV = matchKV
-				foundV = append(foundV, matchV)
+				foundV = matchV
+				foundVs[matchV] = struct{}{}
 			}
 		}
 		// Make sure we have only one kv on all paths up because if we do not,
 		// it's a failure in the past merge -- we should've had a kv at this
 		// or lower nodes.
-		switch len(foundV) {
+		switch len(foundVs) {
 		case 0:
 			return nil, 0, nil
 		case 1:
@@ -1175,9 +1177,9 @@ func (m *repoManager) findMatch(kvv kvVersions, v dvid.VersionID) (*storage.KeyV
 				return nil, v, nil
 			}
 			// Else return found kv pair
-			return foundKV, foundV[0], nil
+			return foundKV, foundV, nil
 		default:
-			return nil, 0, fmt.Errorf("found multiple kv for key %v among parents: versions %v", foundKV.K, foundV)
+			return nil, 0, fmt.Errorf("found multiple kv for key %v among parents: versions %v", foundKV.K, foundVs)
 		}
 	}
 }

@@ -410,3 +410,57 @@ func TestKeyvalueVersioning(t *testing.T) {
 		t.Errorf("Error on merged child, key %q: expected %q, got %q\n", key2, uuid4val, string(returnValue))
 	}
 }
+
+// Test added after error in getting two paths to the same ancestor k/v after merge.
+func TestDiamondGetOnMerge(t *testing.T) {
+	tests.UseStore()
+	defer tests.CloseStore()
+
+	uuid, _ := initTestRepo()
+
+	config := dvid.NewConfig()
+	dataservice, err := datastore.NewData(uuid, kvtype, "mergetest", config)
+	if err != nil {
+		t.Fatalf("Error creating new keyvalue instance: %v\n", err)
+	}
+	data, ok := dataservice.(*Data)
+	if !ok {
+		t.Fatalf("Returned new data instance is not roi.Data\n")
+	}
+
+	// PUT a value
+	key1 := "mykey"
+	value1 := "some stuff"
+	key1req := fmt.Sprintf("%snode/%s/%s/key/%s", server.WebAPIPath, uuid, data.DataName(), key1)
+	server.TestHTTP(t, "POST", key1req, strings.NewReader(value1))
+
+	if err = datastore.Commit(uuid, "my commit msg", []string{"stuff one", "stuff two"}); err != nil {
+		t.Errorf("Unable to lock root node %s: %v\n", uuid, err)
+	}
+	uuid2, err := datastore.NewVersion(uuid, "first child", nil)
+	if err != nil {
+		t.Fatalf("Unable to create 1st child off root %s: %v\n", uuid, err)
+	}
+	if err = datastore.Commit(uuid2, "first child", nil); err != nil {
+		t.Errorf("Unable to commit node %s: %v\n", uuid2, err)
+	}
+	uuid3, err := datastore.NewVersion(uuid, "second child", nil)
+	if err != nil {
+		t.Fatalf("Unable to create 2nd child off root %s: %v\n", uuid, err)
+	}
+	if err = datastore.Commit(uuid3, "second child", nil); err != nil {
+		t.Errorf("Unable to commit node %s: %v\n", uuid3, err)
+	}
+
+	child, err := datastore.Merge([]dvid.UUID{uuid2, uuid3}, "merging stuff", datastore.MergeConflictFree)
+	if err != nil {
+		t.Errorf("Error doing merge: %v\n", err)
+	}
+
+	// We should be able to see just the original uuid value of the k/v
+	childreq := fmt.Sprintf("%snode/%s/%s/key/%s", server.WebAPIPath, child, data.DataName(), key1)
+	returnValue := server.TestHTTP(t, "GET", childreq, nil)
+	if string(returnValue) != value1 {
+		t.Errorf("Error on merged child, key %q: expected %q, got %q\n", key1, value1, string(returnValue))
+	}
+}
