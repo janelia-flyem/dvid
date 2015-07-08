@@ -1,7 +1,7 @@
 DVID       [![Picture](https://raw.github.com/janelia-flyem/janelia-flyem.github.com/master/images/HHMI_Janelia_Color_Alternate_180x40.png)](http://www.janelia.org)
 ====
 
-*Status: In development, being tested at Janelia, and not ready for external use due to possible breaking changes.*
+*Status: In development, being tested at Janelia, and not ready for external use due to possible breaking changes.  In near future, the label data types (labelblk, labelvol, and currently non-working labelsz and labelsurf) will be combined into one "labels64" type for better performance in some operations.*
 
 [![GoDoc](https://godoc.org/github.com/janelia-flyem/dvid?status.png)](https://godoc.org/github.com/janelia-flyem/dvid) [![Build Status](https://drone.io/github.com/janelia-flyem/dvid/status.png)](https://drone.io/github.com/janelia-flyem/dvid/latest)
 
@@ -23,17 +23,15 @@ server can manage multiple repositories, each of which contains an image-oriente
 with related data like an image volume, labels, and skeletons.  The goal is to provide scientists 
 with a github-like web client + server that can push/pull data to a collaborator's DVID server.
 
-DVID's initial focus is on efficiently storing and retrieving 3d grayscale and label data in a 
-variety of ways:
+DVID's initial focus is on efficiently handling data essential for Janelia's connectomics research:
 
-* subvolumes
-* images in XY, XZ, YZ, and arbitrary orientation
-* multiscale 2d, similar to quadtrees
-* sparse volumes determined by a label
-* label maps that handle mapping of labels X -> Y
+* image and 64-bit label 3d volumes
+* 2d images in XY, XZ, YZ, and arbitrary orientation
+* multiscale 2d images in XY, XZ, and YZ, similar to quadtrees
+* low-latency sparse volumes corresponding to each unique label in a volume
 * label graphs
 * regions of interest represented via a coarse subdivision of space using block indices
-* tiles and images in XY, XZ, and YZ orientation using Google BrainMaps API
+* 2d and 3d image and label data using Google BrainMaps API
 
 Each of the above is handled by built-in data types via a
 [Level 2 REST HTTP API](http://martinfowler.com/articles/richardsonMaturityModel.html)
