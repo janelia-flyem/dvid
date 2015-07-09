@@ -622,6 +622,7 @@ func loadHandler(w http.ResponseWriter, r *http.Request) {
 		"PUT requests":        storage.PutsPerSec,
 		"handlers active":     int(100 * ActiveHandlers / MaxChunkHandlers),
 		"goroutines":          runtime.NumGoroutine(),
+		"active CGo routines": dvid.NumberActiveCGo(),
 	})
 	if err != nil {
 		BadRequest(w, r, err)

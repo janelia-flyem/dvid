@@ -235,6 +235,9 @@ type Requirements struct {
 	GraphDB    bool
 }
 
+// KeyChan is a channel of full (not type-specific) keys.
+type KeyChan chan Key
+
 // ---- Storage interfaces ------
 
 type KeyValueGetter interface {
@@ -250,6 +253,9 @@ type OrderedKeyValueGetter interface {
 
 	// KeysInRange returns a range of type-specific key components spanning (kStart, kEnd).
 	KeysInRange(ctx Context, kStart, kEnd TKey) ([]TKey, error)
+
+	// SendKeysInRange sends a range of keys down a key channel.
+	SendKeysInRange(ctx Context, kStart, kEnd TKey, ch KeyChan) error
 
 	// ProcessRange sends a range of type key-value pairs to type-specific chunk handlers,
 	// allowing chunk processing to be concurrent with key-value sequential reads.

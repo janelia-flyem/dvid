@@ -20,7 +20,8 @@ const (
 
 var (
 	// CgoActive is a buffered channel for signaling cgo routines that are active.
-	cgoActive chan cgoStatus
+	cgoActive    chan cgoStatus
+	cgoActive_mu sync.RWMutex
 
 	cgoNumActive int
 	startCgo     sync.Mutex
@@ -35,9 +36,13 @@ func init() {
 		for {
 			switch <-cgoActive {
 			case cgoStarted:
+				cgoActive_mu.Lock()
 				cgoNumActive++
+				cgoActive_mu.Unlock()
 			case cgoStopped:
+				cgoActive_mu.Lock()
 				cgoNumActive--
+				cgoActive_mu.Unlock()
 			}
 		}
 	}()
@@ -55,7 +60,7 @@ func BlockOnActiveCgo() {
 	Infof("Checking for any active cgo routines...\n")
 	waits := 0
 	for {
-		if (cgoNumActive == 0 && len(cgoActive) == 0) || waits >= 5 {
+		if (cgoNumActive == 0 && len(cgoActive) == 0) || waits >= 10 {
 			return
 		}
 		Infof("Waited %d seconds for %d active cgo routines (%d messages to be processed)...\n",
@@ -75,4 +80,12 @@ func StartCgo() {
 
 func StopCgo() {
 	cgoActive <- cgoStopped
+}
+
+// NumberActiveCGo returns the number of active CGo routines, typically involved with database operations.
+func NumberActiveCGo() int {
+	cgoActive_mu.RLock()
+	defer cgoActive_mu.RUnlock()
+
+	return cgoNumActive
 }
