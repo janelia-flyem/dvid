@@ -125,7 +125,7 @@ POST <api URL>/node/<UUID>/<data name>/info
 
     Example: 
 
-    GET <api URL>/node/3f8c/grayscale/info
+    GET <api URL>/node/3f8c/segmentation/info
 
     Returns JSON with configuration settings that include location in DVID space and
     min/max block indices.
@@ -156,7 +156,7 @@ POST <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?th
     multiples of 32.
     Example: 
 
-    GET <api URL>/node/3f8c/superpixels/0_1/512_256/0_0_100
+    GET <api URL>/node/3f8c/segmentation/0_1/512_256/0_0_100
 
     Returns an XY slice (0th and 1st dimensions) with width (x) of 512 voxels and
     height (y) of 256 voxels with offset (0,0,100) in PNG format.
@@ -181,6 +181,35 @@ POST <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?th
     compression   Allows retrieval or submission of 3d data in "lz4" and "gzip"
                   compressed format.  The 2d data will ignore this and use
                   the image-based codec.
+
+GET  <api URL>/node/<UUID>/<data name>/pseudocolor/<dims>/<size>/<offset>[/<format>][?throttle=true]
+
+    Retrieves label data as pseudocolored 2D PNG color images where each label hashed to a different RGB.
+
+    Example: 
+
+    GET <api URL>/node/3f8c/segmentation/pseudocolor/0_1/512_256/0_0_100
+
+    Returns an XY slice (0th and 1st dimensions) with width (x) of 512 voxels and
+    height (y) of 256 voxels with offset (0,0,100) in PNG format.
+
+    Throttling can be enabled by passing a "throttle=true" query string.  Throttling makes sure
+    only one compute-intense operation (all API calls that can be throttled) is handled.
+    If the server can't initiate the API call right away, a 503 (Service Unavailable) status
+    code is returned.
+
+    Arguments:
+
+    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    data name     Name of data to add.
+    dims          The axes of data extraction.  Example: "0_2" can be XZ.
+                    Slice strings ("xy", "xz", or "yz") are also accepted.
+    size          Size in voxels along each dimension specified in <dims>.
+    offset        Gives coordinate of first voxel using dimensionality of data.
+
+    Query-string Options:
+
+    roi       	  Name of roi data instance used to mask the requested data.
 
 GET <api URL>/node/<UUID>/<data name>/label/<coord>
 
@@ -679,6 +708,31 @@ type Bounds struct {
 	Exact       bool // All RLEs must respect the voxel bounds.  If false, just screen on blocks.
 }
 
+func colorImage(labels *dvid.Image) (image.Image, error) {
+	if labels == nil || labels.Which != 3 || labels.NRGBA64 == nil {
+		return nil, fmt.Errorf("writePseudoColor can't use labels image with wrong format: %v\n", labels)
+	}
+	src := labels.NRGBA64
+	srcRect := src.Bounds()
+	srcW := srcRect.Dx()
+	srcH := srcRect.Dy()
+
+	dst := image.NewNRGBA(image.Rect(0, 0, srcW, srcH))
+
+	for y := 0; y < srcH; y++ {
+		srcI := src.PixOffset(0, y)
+		dstI := dst.PixOffset(0, y)
+		for x := 0; x < srcW; x++ {
+			murmurhash3(src.Pix[srcI:srcI+8], dst.Pix[dstI:dstI+4])
+			dst.Pix[dstI+3] = 255
+
+			srcI += 8
+			dstI += 4
+		}
+	}
+	return dst, nil
+}
+
 // ServeHTTP handles all incoming HTTP requests for this data.
 func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {
 	timedLog := dvid.NewTimeLog()
@@ -776,6 +830,70 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		jsonStr := fmt.Sprintf(`{"Label": %d}`, label)
 		fmt.Fprintf(w, jsonStr)
 		timedLog.Infof("HTTP %s: label at %s (%s)", r.Method, coord, r.URL)
+
+	case "pseudocolor":
+		if len(parts) < 7 {
+			server.BadRequest(w, r, "'%s' must be followed by shape/size/offset", parts[3])
+			return
+		}
+		shapeStr, sizeStr, offsetStr := parts[4], parts[5], parts[6]
+		planeStr := dvid.DataShapeString(shapeStr)
+		plane, err := planeStr.DataShape()
+		if err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+		switch plane.ShapeDimensions() {
+		case 2:
+			slice, err := dvid.NewSliceFromStrings(planeStr, offsetStr, sizeStr, "_")
+			if err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+			if action != "get" {
+				server.BadRequest(w, r, "DVID does not permit 2d mutations, only 3d block-aligned stores")
+				return
+			}
+			lbl, err := d.NewLabels(slice, nil)
+			if err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+			if roiptr != nil {
+				roiptr.Iter, err = roi.NewIterator(roiname, ctx.VersionID(), lbl)
+				if err != nil {
+					server.BadRequest(w, r, err)
+					return
+				}
+			}
+			img, err := d.GetImage(ctx.VersionID(), lbl, roiptr)
+			if err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+
+			// Convert to pseudocolor
+			pseudoColor, err := colorImage(img)
+			if err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+
+			//dvid.ElapsedTime(dvid.Normal, startTime, "%s %s upto image formatting", op, slice)
+			var formatStr string
+			if len(parts) >= 8 {
+				formatStr = parts[7]
+			}
+			err = dvid.WriteImageHttp(w, pseudoColor, formatStr)
+			if err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+			timedLog.Infof("HTTP %s: %s (%s)", r.Method, plane, r.URL)
+		default:
+			server.BadRequest(w, r, "DVID currently supports only 2d pseudocolor image requests")
+			return
+		}
 
 	case "raw", "isotropic":
 		if len(parts) < 7 {
