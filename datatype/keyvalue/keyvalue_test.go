@@ -429,10 +429,19 @@ func TestKeyvalueVersioning(t *testing.T) {
 	if err != nil {
 		t.Errorf("Error doing merge: %v\n", err)
 	}
+	merge3, err := datastore.Merge([]dvid.UUID{uuid7, goodChild}, "merging a useless path in reverse order", datastore.MergeConflictFree)
+	if err != nil {
+		t.Errorf("Error doing merge: %v\n", err)
+	}
 
 	// We should still be conflict free since 2nd key in left parent path will take precedent over shared 2nd key
 	// in root.  This tests our invalidation of ancestors.
 	toughreq := fmt.Sprintf("%snode/%s/%s/key/%s", server.WebAPIPath, merge2, data.DataName(), key2)
+	returnValue = server.TestHTTP(t, "GET", toughreq, nil)
+	if string(returnValue) != uuid4val {
+		t.Errorf("Error on merged child, key %q: expected %q, got %q\n", key2, uuid4val, string(returnValue))
+	}
+	toughreq = fmt.Sprintf("%snode/%s/%s/key/%s", server.WebAPIPath, merge3, data.DataName(), key2)
 	returnValue = server.TestHTTP(t, "GET", toughreq, nil)
 	if string(returnValue) != uuid4val {
 		t.Errorf("Error on merged child, key %q: expected %q, got %q\n", key2, uuid4val, string(returnValue))

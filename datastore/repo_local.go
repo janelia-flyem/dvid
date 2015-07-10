@@ -1189,6 +1189,22 @@ func (m *repoManager) findMatch(kvv kvVersions, v dvid.VersionID) (*storage.KeyV
 				foundVs[matchV] = struct{}{}
 			}
 		}
+		// Remove any matches that are in invalidated versions.
+		badV := []dvid.VersionID{}
+		for fv := range foundVs {
+			n, found := kvv[fv]
+			if !found {
+				return nil, 0, fmt.Errorf("Got match (version %d) that wasn't in possible k/v!", fv)
+			}
+			if n.invalid {
+				badV = append(badV, fv)
+			}
+		}
+		if len(badV) > 0 {
+			for _, bv := range badV {
+				delete(foundVs, bv)
+			}
+		}
 		// Make sure we have only one kv on all paths up because if we do not,
 		// it's a failure in the past merge -- we should've had a kv at this
 		// or lower nodes.
