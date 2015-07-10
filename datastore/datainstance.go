@@ -76,7 +76,7 @@ func (vctx *VersionedCtx) VersionedKeyValue(values []*storage.KeyValue) (*storag
 		if err != nil {
 			return nil, err
 		}
-		versionMap[vid] = kv
+		versionMap[vid] = kvvNode{kv: kv}
 		// fmt.Printf("Found version %d for %s\n", vid, ctx)
 	}
 

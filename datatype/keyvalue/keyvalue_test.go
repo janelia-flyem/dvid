@@ -297,6 +297,8 @@ func TestKeyvalueVersioning(t *testing.T) {
 	if err = datastore.Commit(uuid2, "my 2nd commit msg", []string{"changed 2nd k/v"}); err != nil {
 		t.Errorf("Unable to commit node %s: %v\n", uuid2, err)
 	}
+
+	// Make grandchild of root
 	uuid3, err := datastore.NewVersion(uuid2, "some child", nil)
 	if err != nil {
 		t.Fatalf("Unable to create new version off node %s: %v\n", uuid2, err)
@@ -406,6 +408,32 @@ func TestKeyvalueVersioning(t *testing.T) {
 	// We should be able to see just the original uuid4 value of the 2nd k/v
 	childreq = fmt.Sprintf("%snode/%s/%s/key/%s", server.WebAPIPath, goodChild, data.DataName(), key2)
 	returnValue = server.TestHTTP(t, "GET", childreq, nil)
+	if string(returnValue) != uuid4val {
+		t.Errorf("Error on merged child, key %q: expected %q, got %q\n", key2, uuid4val, string(returnValue))
+	}
+
+	// Introduce a child off root but don't add 2nd k/v to it.
+	uuid7, err := datastore.NewVersion(uuid, "2nd child off root", nil)
+	if err != nil {
+		t.Fatalf("Unable to create new version off node %s: %v\n", uuid, err)
+	}
+	if err = datastore.Commit(uuid7, "useless node", []string{"we modified nothing!"}); err != nil {
+		t.Errorf("Unable to commit node %s: %v\n", uuid7, err)
+	}
+
+	// Now merge the previously merged node with the newly created "blank" child off root.
+	if err = datastore.Commit(goodChild, "this was a good merge", []string{}); err != nil {
+		t.Errorf("Unable to commit node %s: %v\n", goodChild, err)
+	}
+	merge2, err := datastore.Merge([]dvid.UUID{goodChild, uuid7}, "merging a useless path", datastore.MergeConflictFree)
+	if err != nil {
+		t.Errorf("Error doing merge: %v\n", err)
+	}
+
+	// We should still be conflict free since 2nd key in left parent path will take precedent over shared 2nd key
+	// in root.  This tests our invalidation of ancestors.
+	toughreq := fmt.Sprintf("%snode/%s/%s/key/%s", server.WebAPIPath, merge2, data.DataName(), key2)
+	returnValue = server.TestHTTP(t, "GET", toughreq, nil)
 	if string(returnValue) != uuid4val {
 		t.Errorf("Error on merged child, key %q: expected %q, got %q\n", key2, uuid4val, string(returnValue))
 	}

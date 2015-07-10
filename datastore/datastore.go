@@ -325,7 +325,11 @@ func ModifyDataConfigByUUID(uuid dvid.UUID, name dvid.InstanceName, c dvid.Confi
 
 // ------ Cross-platform k/v pair matching for given version, necessary for versioned get.
 
-type kvVersions map[dvid.VersionID]*storage.KeyValue
+type kvvNode struct {
+	kv      *storage.KeyValue
+	invalid bool
+}
+type kvVersions map[dvid.VersionID]kvvNode
 
 // FindMatch returns the correct key-value pair for a given version and which version
 // that key-value pair came from.

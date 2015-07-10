@@ -1123,15 +1123,42 @@ func (m *repoManager) merge(parents []dvid.UUID, note string, mt MergeType) (dvi
 	return child.uuid, r.save()
 }
 
+func (m *repoManager) invalidateAncestors(kvv kvVersions, v dvid.VersionID) error {
+	parents, err := m.getParentsByVersion(v)
+	if err != nil {
+		return err
+	}
+	for _, parent := range parents {
+		n, found := kvv[parent]
+		if found {
+			if n.invalid {
+				continue
+			}
+			n.invalid = true
+			kvv[parent] = n
+		}
+		if err := m.invalidateAncestors(kvv, parent); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // recursive ancestor path following used to determine appropriate k/v pairs for given version.
 func (m *repoManager) findMatch(kvv kvVersions, v dvid.VersionID) (*storage.KeyValue, dvid.VersionID, error) {
 	// If we have a kv for this version, we're done.
-	kv, found := kvv[v]
+	n, found := kvv[v]
 	if found {
-		if kv.K.IsTombstone() {
+		if n.invalid {
 			return nil, v, nil
 		}
-		return kv, v, nil
+		if err := m.invalidateAncestors(kvv, v); err != nil {
+			return nil, v, err
+		}
+		if n.kv.K.IsTombstone() {
+			return nil, v, nil
+		}
+		return n.kv, v, nil
 	}
 
 	// If we have a single parent, ascend.
