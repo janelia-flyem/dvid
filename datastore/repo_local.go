@@ -1263,9 +1263,11 @@ func (m *repoManager) newData(uuid dvid.UUID, t TypeService, name dvid.InstanceN
 	}
 
 	// Add to log and save repo
+	tm := time.Now()
+	r.updated = tm
 	msg := fmt.Sprintf("New data instance %q of type %q with config %v", name, dataservice.TypeName(), c)
-	r.log = append(r.log, msg)
-	r.updated = time.Now()
+	message := fmt.Sprintf("%s  %s", tm.Format(time.RFC3339), msg)
+	r.log = append(r.log, message)
 	return dataservice, r.save()
 }
 
@@ -1670,9 +1672,11 @@ func (r *repoT) deleteData(name dvid.InstanceName) error {
 	}
 
 	// Remove this data instance from the repository and persist.
+	tm := time.Now()
+	r.updated = tm
 	msg := fmt.Sprintf("Delete data instance '%s' of type '%s'", name, data.TypeName())
-	r.updated = time.Now()
-	r.log = append(r.log, msg)
+	message := fmt.Sprintf("%s  %s", tm.Format(time.RFC3339), msg)
+	r.log = append(r.log, message)
 	r.dag.deleteDataInstance(name)
 	delete(r.data, name)
 	return nil
