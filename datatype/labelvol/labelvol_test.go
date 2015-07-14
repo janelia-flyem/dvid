@@ -1,5 +1,6 @@
 // Tests sparsevol variants and merge/split.
 // Test body data is at end of file.
+// TODO: Remove hardwiring of tests to assume block size = 32, including data.
 
 package labelvol
 
@@ -112,6 +113,31 @@ func (b testBody) checkSparseVol(t *testing.T, encoding []byte, bounds dvid.Boun
 		}
 		t.Errorf("Expected spans for label %d:\n%s\nGot spans:\n%s\n", b.label, expected, spans)
 	}
+}
+
+// Sees if the given block span has any of this test body label in it.
+func (b testBody) isDeleted(t *testing.T, encoding []byte, bspan dvid.Span) bool {
+	// Get to the  # spans and RLE in encoding
+	spansEncoding := encoding[8:]
+	var spans dvid.Spans
+	if err := spans.UnmarshalBinary(spansEncoding); err != nil {
+		t.Fatalf("Error in decoding sparse volume: %v\n", err)
+		return false
+	}
+
+	// Iterate true spans to see if any are in the blocks given.
+	for _, span := range spans {
+		bx0 := span[2] / 32
+		bx1 := span[3] / 32
+		by := span[1] / 32
+		bz := span[0] / 32
+
+		within_x := (bx0 >= bspan[2] && bx0 <= bspan[3]) || (bx1 >= bspan[2] && bx1 <= bspan[3])
+		if bz == bspan[0] && by == bspan[1] && within_x {
+			return false
+		}
+	}
+	return true
 }
 
 func checkSpans(t *testing.T, encoding []byte, minx, maxx int32) {
@@ -318,6 +344,45 @@ func TestSparseVolumes(t *testing.T) {
 		reqStr = fmt.Sprintf("%snode/%s/%s/sparsevol/%d?minx=%d&maxx=%d&exact=true", server.WebAPIPath, uuid, "bodies", label, minx, maxx)
 		encoding = server.TestHTTP(t, "GET", reqStr, nil)
 		checkSpans(t, encoding, minx, maxx)
+	}
+
+	// Commit this node and create branch for deletion testing.
+	if err := datastore.Commit(uuid, "base segmentation", nil); err != nil {
+		t.Errorf("Unable to lock root node %s: %v\n", uuid, err)
+	}
+	uuid2, err := datastore.NewVersion(uuid, "deletion test", nil)
+	if err != nil {
+		t.Fatalf("Unable to create new version off node %s: %v\n", uuid, err)
+	}
+
+	// Delete a few blocks.
+	delReq := fmt.Sprintf("%snode/%s/%s/blocks/0_1_1/2", server.WebAPIPath, uuid2, "labels")
+	server.TestHTTP(t, "DELETE", delReq, nil)
+
+	time.Sleep(5 * time.Second) // TODO: Replace with notifier that denorm is done.
+
+	// Read those blocks to make sure they are gone.
+	reqStr := fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid2, "bodies", 2)
+	encoding := server.TestHTTP(t, "GET", reqStr, nil)
+	if !bodies[1].isDeleted(t, encoding, dvid.Span{1, 1, 0, 1}) {
+		t.Errorf("Expected RLEs to be deleted from label 2 deleted blocks.  Failed.\n")
+	}
+	reqStr = fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid2, "bodies", 1)
+	encoding = server.TestHTTP(t, "GET", reqStr, nil)
+	if !bodies[0].isDeleted(t, encoding, dvid.Span{1, 1, 0, 1}) {
+		t.Errorf("Expected RLEs to be deleted from label 1 deleted blocks.  Failed.\n")
+	}
+
+	// Make sure those blocks are still in the root uuid.
+	reqStr = fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid, "bodies", 2)
+	encoding = server.TestHTTP(t, "GET", reqStr, nil)
+	if bodies[1].isDeleted(t, encoding, dvid.Span{1, 1, 0, 1}) {
+		t.Errorf("Expected RLEs to be presented in label 2 root undeleted blocks.  Failed.\n")
+	}
+	reqStr = fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid, "bodies", 1)
+	encoding = server.TestHTTP(t, "GET", reqStr, nil)
+	if bodies[0].isDeleted(t, encoding, dvid.Span{1, 1, 0, 1}) {
+		t.Errorf("Expected RLEs to be presented in label 1 root undeleted blocks.  Failed.\n")
 	}
 }
 

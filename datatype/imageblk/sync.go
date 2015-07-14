@@ -5,6 +5,7 @@ import "github.com/janelia-flyem/dvid/dvid"
 // Events for imageblk
 const (
 	ChangeBlockEvent = "BLOCK_CHANGE"
+	DeleteBlockEvent = "BLOCK_DELETE"
 )
 
 // Block encodes a 3d block coordinate and block data.  It is the unit of delta for

@@ -14,11 +14,13 @@ import (
 	"image"
 	"io/ioutil"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"compress/gzip"
 
 	"github.com/janelia-flyem/dvid/datastore"
+	"github.com/janelia-flyem/dvid/datatype/common/labels"
 	"github.com/janelia-flyem/dvid/datatype/imageblk"
 	"github.com/janelia-flyem/dvid/datatype/roi"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -220,6 +222,27 @@ GET <api URL>/node/<UUID>/<data name>/label/<coord>
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
     data name     Name of label data.
     coord     	  Coordinate of voxel with underscore as separator, e.g., 10_20_30
+
+DELETE <api URL>/node/<UUID>/<data name>/blocks/<block coord>/<spanX>
+
+    Deletes "spanX" blocks of label data along X starting from given block coordinate.
+    This will delete both the labelblk as well as any associated labelvol structures within this block.
+
+    Example: 
+
+    GET <api URL>/node/3f8c/segmentation/blocks/10_20_30/8
+
+    Delete 8 blocks where first block has given block coordinate and number
+    of blocks returned along x axis is "spanX". 
+
+    Arguments:
+
+    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    data name     Name of data to add.
+    block coord   The block coordinate of the first block in X_Y_Z format.  Block coordinates
+                  can be derived from voxel coordinates by dividing voxel coordinates by
+                  the block size for a data type.
+
 `
 
 var (
@@ -619,6 +642,70 @@ func (d *Data) addLabelZ(geom dvid.Geometry, data32 []uint8, stride int32) ([]by
 	return data64, nil
 }
 
+func (d *Data) DeleteBlocks(ctx *datastore.VersionedCtx, start dvid.ChunkPoint3d, span int) error {
+	store, err := storage.BigDataStore()
+	if err != nil {
+		return fmt.Errorf("Data type labelblk had error initializing store: %v\n", err)
+	}
+	batcher, ok := store.(storage.KeyValueBatcher)
+	if !ok {
+		return fmt.Errorf("Data type labelblk requires batch-enabled store, which %q is not\n", store)
+	}
+
+	indexBeg := dvid.IndexZYX(start)
+	end := start
+	end[0] += int32(span - 1)
+	indexEnd := dvid.IndexZYX(end)
+	begTKey := NewTKey(&indexBeg)
+	endTKey := NewTKey(&indexEnd)
+
+	iv := dvid.InstanceVersion{d.DataName(), ctx.VersionID()}
+	mapping := labels.MergeCache.LabelMap(iv)
+
+	kvs, err := store.GetRange(ctx, begTKey, endTKey)
+	if err != nil {
+		return err
+	}
+
+	batch := batcher.NewBatch(ctx)
+	uncompress := true
+	for _, kv := range kvs {
+		izyx, err := DecodeTKey(kv.K)
+		if err != nil {
+			return err
+		}
+
+		// Delete the labelblk (really tombstones it)
+		batch.Delete(kv.K)
+
+		// Send data to delete associated labelvol for labels in this block
+		block, _, err := dvid.DeserializeData(kv.V, uncompress)
+		if err != nil {
+			return fmt.Errorf("Unable to deserialize block, %s (%v): %v", ctx, kv.K, err)
+		}
+		if mapping != nil {
+			n := len(block) / 8
+			for i := 0; i < n; i++ {
+				orig := binary.LittleEndian.Uint64(block[i*8 : i*8+8])
+				mapped, found := mapping.FinalLabel(orig)
+				if !found {
+					mapped = orig
+				}
+				binary.LittleEndian.PutUint64(block[i*8:i*8+8], mapped)
+			}
+		}
+
+		// Notify any subscribers that we've deleted this block.
+		evt := datastore.SyncEvent{d.DataName(), labels.DeleteBlockEvent}
+		msg := datastore.SyncMessage{ctx.VersionID(), labels.DeleteBlock{izyx, block}}
+		if err := datastore.NotifySubscribers(evt, msg); err != nil {
+			return err
+		}
+
+	}
+	return batch.Commit()
+}
+
 // RavelerSuperpixelBytes returns an encoded slice for Raveler (slice, superpixel) tuple.
 // TODO -- Move Raveler-specific functions out of DVID.
 func RavelerSuperpixelBytes(slice, superpixel32 uint32) []byte {
@@ -742,8 +829,9 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	switch action {
 	case "get":
 	case "post":
+	case "delete":
 	default:
-		server.BadRequest(w, r, "labelblk only handle GET or POST HTTP verbs")
+		server.BadRequest(w, r, "labelblk only handles GET, POST, and DELETE HTTP verbs")
 		return
 	}
 
@@ -813,7 +901,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	case "label":
 		// GET <api URL>/node/<UUID>/<data name>/label/<coord>
 		if len(parts) < 5 {
-			server.BadRequest(w, r, "ERROR: DVID requires coord to follow 'label' command")
+			server.BadRequest(w, r, "DVID requires coord to follow 'label' command")
 			return
 		}
 		coord, err := dvid.StringToPoint(parts[4], "_")
@@ -830,6 +918,32 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		jsonStr := fmt.Sprintf(`{"Label": %d}`, label)
 		fmt.Fprintf(w, jsonStr)
 		timedLog.Infof("HTTP %s: label at %s (%s)", r.Method, coord, r.URL)
+
+	case "blocks":
+		// DELETE <api URL>/node/<UUID>/<data name>/blocks/<block coord>/<spanX>
+		if len(parts) < 6 {
+			server.BadRequest(w, r, "DVID requires starting block coord and # of blocks along X to follow 'blocks' endpoint.")
+			return
+		}
+		blockCoord, err := dvid.StringToChunkPoint3d(parts[4], "_")
+		if err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+		span, err := strconv.Atoi(parts[5])
+		if err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+		if action != "delete" {
+			server.BadRequest(w, r, "DVID currently accepts only DELETE on the 'blocks' endpoint")
+			return
+		}
+		if err := d.DeleteBlocks(ctx, blockCoord, span); err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+		timedLog.Infof("HTTP %s: delete %d blocks from %s (%s)", r.Method, span, blockCoord, r.URL)
 
 	case "pseudocolor":
 		if len(parts) < 7 {

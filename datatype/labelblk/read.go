@@ -171,11 +171,10 @@ func (d *Data) GetBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int) ([
 			for i := 0; i < n; i++ {
 				orig := binary.LittleEndian.Uint64(block[i*8 : i*8+8])
 				mapped, found := mapping.FinalLabel(orig)
-				if found {
-					binary.LittleEndian.PutUint64(block[i*8:i*8+8], mapped)
-				} else {
+				if !found {
 					mapped = orig
 				}
+				binary.LittleEndian.PutUint64(block[i*8:i*8+8], mapped)
 			}
 		}
 

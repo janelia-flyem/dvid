@@ -32,6 +32,9 @@ func (t MergeTuple) Op() (MergeOp, error) {
 	return op, nil
 }
 
+// DeleteBlock encapsulates data necessary to delete blocks of labels.
+type DeleteBlock imageblk.Block
+
 // DeltaNewSize is a new label being introduced.
 type DeltaNewSize struct {
 	Label uint64
@@ -104,6 +107,7 @@ type DeltaSparsevol struct {
 // Label change event identifiers
 const (
 	ChangeBlockEvent    = imageblk.ChangeBlockEvent
+	DeleteBlockEvent    = imageblk.DeleteBlockEvent
 	SparsevolStartEvent = "SPARSEVOL_START"
 	SparsevolModEvent   = "SPARSEVOL_MOD"
 	SparsevolEndEvent   = "SPARSEVOL_END"
