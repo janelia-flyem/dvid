@@ -110,13 +110,13 @@ func Initialize() error {
 		return err
 	}
 
+	// Set the package variable.  We are good to go...
+	manager = m
+
 	// Load the repo metadata
 	if err = m.loadMetadata(); err != nil {
 		return fmt.Errorf("Error loading metadata: %v", err)
 	}
-
-	// Set the package variable.  We are good to go...
-	manager = m
 
 	// If there are any migrations registered, run them.
 	migrator_mu.RLock()
