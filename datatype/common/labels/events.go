@@ -27,6 +27,9 @@ func (t MergeTuple) Op() (MergeOp, error) {
 	op.Target = t[0]
 	op.Merged = make(Set, len(t)-1)
 	for _, label := range t[1:] {
+		if label == 0 {
+			return op, fmt.Errorf("invalid merge tuple %v -- cannot contain background label 0", t)
+		}
 		op.Merged[label] = struct{}{}
 	}
 	return op, nil

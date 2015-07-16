@@ -315,6 +315,9 @@ func TestSparseVolumes(t *testing.T) {
 	// for discerning denormalizations are not yet complete.
 	time.Sleep(5 * time.Second)
 
+	badReqStr := fmt.Sprintf("%snode/%s/%s/sparsevol/0", server.WebAPIPath, uuid, "bodies")
+	server.TestBadHTTP(t, "GET", badReqStr, nil)
+
 	for _, label := range []uint64{1, 3, 4} {
 		// Get the coarse sparse volumes for each label and make sure they are correct.
 		reqStr := fmt.Sprintf("%snode/%s/%s/sparsevol-coarse/%d", server.WebAPIPath, uuid, "bodies", label)

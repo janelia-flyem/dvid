@@ -739,6 +739,10 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			server.BadRequest(w, r, err)
 			return
 		}
+		if label == 0 {
+			server.BadRequest(w, r, "Label 0 is protected background value and cannot be used as sparse volume.\n")
+			return
+		}
 		switch action {
 		case "get":
 			queryValues := r.URL.Query()
@@ -798,6 +802,10 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			server.BadRequest(w, r, err)
 			return
 		}
+		if label == 0 {
+			server.BadRequest(w, r, "Label 0 is protected background value and cannot be used as sparse volume.\n")
+			return
+		}
 		data, err := GetSparseVol(ctx, label, Bounds{})
 		if err != nil {
 			server.BadRequest(w, r, err)
@@ -814,12 +822,16 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	case "sparsevol-coarse":
 		// GET <api URL>/node/<UUID>/<data name>/sparsevol-coarse/<label>
 		if len(parts) < 5 {
-			server.BadRequest(w, r, "ERROR: DVID requires label ID to follow 'sparsevol-coarse' command")
+			server.BadRequest(w, r, "DVID requires label ID to follow 'sparsevol-coarse' command")
 			return
 		}
 		label, err := strconv.ParseUint(parts[4], 10, 64)
 		if err != nil {
 			server.BadRequest(w, r, err)
+			return
+		}
+		if label == 0 {
+			server.BadRequest(w, r, "Label 0 is protected background value and cannot be used as sparse volume.\n")
 			return
 		}
 		data, err := GetSparseCoarseVol(ctx, label)
@@ -881,6 +893,10 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		fromLabel, err := strconv.ParseUint(parts[4], 10, 64)
 		if err != nil {
 			server.BadRequest(w, r, err)
+			return
+		}
+		if fromLabel == 0 {
+			server.BadRequest(w, r, "Label 0 is protected background value and cannot be used as sparse volume.\n")
 			return
 		}
 		toLabel, err := d.SplitLabels(ctx.VersionID(), fromLabel, r.Body)
