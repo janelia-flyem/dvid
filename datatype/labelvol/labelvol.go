@@ -124,8 +124,8 @@ GET  <api URL>/node/<UUID>/<data name>/sparsevol/<label>?<options>
     maxy    Spans must be equal to or smaller than this maximum y voxel coordinate.
     minz    Spans must be equal to or larger than this minimum z voxel coordinate.
     maxz    Spans must be equal to or smaller than this maximum z voxel coordinate.
-    exact   "true" if all RLEs should respect voxel bounds.
-            "false" if RLEs can extend a bit outside voxel bounds within border blocks.   
+    exact   "false" if RLEs can extend a bit outside voxel bounds within border blocks.
+            This will give slightly faster responses. 
 
 
 GET <api URL>/node/<UUID>/<data name>/sparsevol-by-point/<coord>
@@ -749,7 +749,10 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 				return
 			}
 			b.BlockBounds = b.VoxelBounds.Divide(d.BlockSize)
-			b.Exact = queryValues.Get("exact") == "true"
+			b.Exact = true
+			if queryValues.Get("exact") == "false" {
+				b.Exact = false
+			}
 			data, err := GetSparseVol(ctx, label, b)
 			if err != nil {
 				server.BadRequest(w, r, err)

@@ -329,7 +329,7 @@ func TestSparseVolumes(t *testing.T) {
 		bodies[label-1].checkSparseVol(t, encoding, dvid.Bounds{})
 
 		// Check Y/Z restriction
-		reqStr = fmt.Sprintf("%snode/%s/%s/sparsevol/%d?miny=30&maxy=50&minz=20&maxz=40&exact=true", server.WebAPIPath, uuid, "bodies", label)
+		reqStr = fmt.Sprintf("%snode/%s/%s/sparsevol/%d?miny=30&maxy=50&minz=20&maxz=40", server.WebAPIPath, uuid, "bodies", label)
 		encoding = server.TestHTTP(t, "GET", reqStr, nil)
 		var bound dvid.Bounds
 		bound.SetMinY(30)
@@ -341,7 +341,7 @@ func TestSparseVolumes(t *testing.T) {
 		// Check X restriction
 		minx := int32(20)
 		maxx := int32(47)
-		reqStr = fmt.Sprintf("%snode/%s/%s/sparsevol/%d?minx=%d&maxx=%d&exact=true", server.WebAPIPath, uuid, "bodies", label, minx, maxx)
+		reqStr = fmt.Sprintf("%snode/%s/%s/sparsevol/%d?minx=%d&maxx=%d", server.WebAPIPath, uuid, "bodies", label, minx, maxx)
 		encoding = server.TestHTTP(t, "GET", reqStr, nil)
 		checkSpans(t, encoding, minx, maxx)
 	}
