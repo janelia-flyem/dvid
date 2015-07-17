@@ -425,6 +425,11 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		comment = "HTTP GET keys"
 
 	case "keyrange":
+		if len(parts) < 6 {
+			server.BadRequest(w, r, "expect beginning and end keys to follow 'keyrange' endpoint")
+			return
+		}
+
 		// Return JSON list of keys
 		keyBeg := parts[4]
 		keyEnd := parts[5]
