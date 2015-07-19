@@ -133,6 +133,35 @@ func (c Config) GetBool(key string) (value, found bool, err error) {
 	return
 }
 
+// GetRange returns two int32 from a string where each integer is delimited
+// by a separator.  If the key is not found, nils are returned.
+func (c Config) GetRange(key, separator string) (*int32, *int32, error) {
+	s, found, err := c.GetString(key)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !found {
+		return nil, nil, nil
+	}
+
+	var i0, i1 int32
+	parts := strings.Split(s, separator)
+	if len(parts) != 2 {
+		return nil, nil, fmt.Errorf("range option must have 2 parts separated by %q", separator)
+	}
+	if i, err := strconv.Atoi(parts[0]); err == nil {
+		i0 = int32(i)
+	} else {
+		return nil, nil, err
+	}
+	if i, err := strconv.Atoi(parts[1]); err == nil {
+		i1 = int32(i)
+	} else {
+		return nil, nil, err
+	}
+	return &i0, &i1, nil
+}
+
 // Remove removes the key/value pairs with the given keys.
 func (c *Config) Remove(keys ...string) {
 	toDelete := []string{}

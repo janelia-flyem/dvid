@@ -82,7 +82,7 @@ $ dvid -stdin node <UUID> <data name> generate [settings] < config.json
 	Example:
 
 	$ dvid repo 3f8c myimagetile generate /path/to/config.json
-	$ dvid -stdin repo 3f8c myimagetile generate planes="yz;0,1" < /path/to/config.json 
+	$ dvid -stdin repo 3f8c myimagetile generate xrange=100,700 planes="yz;0,1" < /path/to/config.json 
 
     Arguments:
 
@@ -95,6 +95,9 @@ $ dvid -stdin node <UUID> <data name> generate [settings] < config.json
     planes          List of one or more planes separated by semicolon.  Each plane can be
                        designated using either axis number ("0,1") or xyz nomenclature ("xy").
                        Example:  planes="0,1;yz"
+    zrange			Only render XY tiles containing pixels between this minimum and maximum in z.
+    yrange			Only render XZ tiles containing pixels between this minimum and maximum in y.
+    xrange			Only render YZ tiles containing pixels between this minimum and maximum in x.
     filename        Filename of JSON file specifying multiscale tile resolutions as below.
 
     Sample config.json:
@@ -1174,12 +1177,32 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, request datasto
 
 	// Get the planes we should tile.
 	planes, err := config.GetShapes("planes", ";")
+	if err != nil {
+		return err
+	}
 	if planes == nil {
 		// If no planes are specified, construct imagetile for 3 orthogonal planes.
 		planes = []dvid.DataShape{dvid.XY, dvid.XZ, dvid.YZ}
 	}
 
 	outF, err := d.putTileFunc(versionID)
+	if err != nil {
+		return err
+	}
+
+	// Get bounds for tiling if specified
+	minx, maxx, err := config.GetRange("xrange", ",")
+	if err != nil {
+		return err
+	}
+	miny, maxy, err := config.GetRange("yrange", ",")
+	if err != nil {
+		return err
+	}
+	minz, maxz, err := config.GetRange("zrange", ",")
+	if err != nil {
+		return err
+	}
 
 	// sort the tile spec keys to iterate from highest to lowest resolution
 	var sortedKeys []int
@@ -1200,7 +1223,15 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, request datasto
 				return err
 			}
 			dvid.Debugf("Tiling XY image %d x %d pixels\n", width, height)
-			for z := src.MinPoint.Value(2); z <= src.MaxPoint.Value(2); z++ {
+			z0 := src.MinPoint.Value(2)
+			z1 := src.MaxPoint.Value(2)
+			if minz != nil && z0 < *minz {
+				z0 = *minz
+			}
+			if maxz != nil && z1 > *maxz {
+				z1 = *maxz
+			}
+			for z := z0; z <= z1; z++ {
 				server.BlockOnInteractiveRequests("imagetile.ConstructTiles [xy]")
 
 				sliceLog := dvid.NewTimeLog()
@@ -1253,7 +1284,15 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, request datasto
 				return err
 			}
 			dvid.Debugf("Tiling XZ image %d x %d pixels\n", width, height)
-			for y := src.MinPoint.Value(1); y <= src.MaxPoint.Value(1); y++ {
+			y0 := src.MinPoint.Value(1)
+			y1 := src.MaxPoint.Value(1)
+			if miny != nil && y0 < *miny {
+				y0 = *miny
+			}
+			if maxy != nil && y1 > *maxy {
+				y1 = *maxy
+			}
+			for y := y0; y <= y1; y++ {
 				server.BlockOnInteractiveRequests("imagetile.ConstructTiles [xz]")
 
 				sliceLog := dvid.NewTimeLog()
@@ -1306,7 +1345,15 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, request datasto
 				return err
 			}
 			dvid.Debugf("Tiling YZ image %d x %d pixels\n", width, height)
-			for x := src.MinPoint.Value(0); x <= src.MaxPoint.Value(0); x++ {
+			x0 := src.MinPoint.Value(0)
+			x1 := src.MaxPoint.Value(0)
+			if minx != nil && x0 < *minx {
+				x0 = *minx
+			}
+			if maxz != nil && x1 > *maxx {
+				x1 = *maxx
+			}
+			for x := x0; x <= x1; x++ {
 				server.BlockOnInteractiveRequests("imagetile.ConstructTiles [yz]")
 
 				sliceLog := dvid.NewTimeLog()
