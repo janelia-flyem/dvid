@@ -715,7 +715,6 @@ func (db *LevelDB) Put(ctx storage.Context, tk storage.TKey, v []byte) error {
 		batch.WriteBatch.Delete(tombstoneKey)
 		batch.WriteBatch.Put(key, v)
 		if err = batch.Commit(); err != nil {
-			batch.Close()
 			err = fmt.Errorf("Error on PUT: %v\n", err)
 		}
 	}
@@ -748,7 +747,6 @@ func (db *LevelDB) Delete(ctx storage.Context, tk storage.TKey) error {
 		batch.WriteBatch.Delete(key)
 		batch.WriteBatch.Put(tombstoneKey, dvid.EmptyValue())
 		if err = batch.Commit(); err != nil {
-			batch.Close()
 			err = fmt.Errorf("Error on Delete: %v\n", err)
 		}
 	}
@@ -769,7 +767,6 @@ func (db *LevelDB) PutRange(ctx storage.Context, kvs []storage.TKeyValue) error 
 		batch.Put(kv.K, kv.V)
 	}
 	if err := batch.Commit(); err != nil {
-		batch.Close()
 		return err
 	}
 	return nil
@@ -818,7 +815,6 @@ func (db *LevelDB) DeleteRange(ctx storage.Context, kStart, kEnd storage.TKey) e
 
 		if (numKV+1)%BATCH_SIZE == 0 {
 			if err := batch.Commit(); err != nil {
-				batch.Close()
 				return fmt.Errorf("Error on batch DELETE at key-value pair %d: %v\n", numKV, err)
 			}
 			batch = db.NewBatch(ctx).(*goBatch)
@@ -827,7 +823,6 @@ func (db *LevelDB) DeleteRange(ctx storage.Context, kStart, kEnd storage.TKey) e
 	}
 	if numKV%BATCH_SIZE != 0 {
 		if err := batch.Commit(); err != nil {
-			batch.Close()
 			return fmt.Errorf("Error on last batch DELETE: %v\n", err)
 		}
 	}
@@ -892,7 +887,6 @@ func (db *LevelDB) DeleteAll(ctx storage.Context, allVersions bool) error {
 			batch.WriteBatch.Delete(itKey)
 			if (numKV+1)%BATCH_SIZE == 0 {
 				if err := batch.Commit(); err != nil {
-					batch.Close()
 					return fmt.Errorf("Error on DELETE ALL at key-value pair %d: %v", numKV, err)
 				}
 				batch = db.NewBatch(ctx).(*goBatch)
@@ -906,7 +900,6 @@ func (db *LevelDB) DeleteAll(ctx storage.Context, allVersions bool) error {
 	}
 	if numKV%BATCH_SIZE != 0 {
 		if err := batch.Commit(); err != nil {
-			batch.Close()
 			return fmt.Errorf("Error on last batch DELETE: %v\n", err)
 		}
 	}
