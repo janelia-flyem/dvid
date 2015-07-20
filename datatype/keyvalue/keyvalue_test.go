@@ -90,7 +90,7 @@ func TestKeyvalueRoundTrip(t *testing.T) {
 
 	ctx := datastore.NewVersionedCtx(dataservice, versionID)
 
-	keyStr := "testkey"
+	keyStr := "testkey.-{}03`~| %@\x01"
 	value := []byte("I like Japan and this is some unicode: \u65e5\u672c\u8a9e")
 
 	if err = kvdata.PutData(ctx, keyStr, value); err != nil {

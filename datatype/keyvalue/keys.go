@@ -6,7 +6,6 @@ package keyvalue
 
 import (
 	"fmt"
-	"regexp"
 
 	"github.com/janelia-flyem/dvid/storage"
 )
@@ -19,22 +18,15 @@ const (
 	keyStandard = 177
 )
 
-var (
-	validRE = regexp.MustCompile(`^[a-zA-Z0-9_/\-]*$`)
-)
-
-// no checking of key
-func newTKey(key string) storage.TKey {
-	return storage.NewTKey(keyStandard, append([]byte(key), 0))
-}
-
 // NewTKey returns the "key" key component.
 func NewTKey(key string) (storage.TKey, error) {
-	// Make sure the key is suitable
-	if !validRE.MatchString(key) {
-		return nil, fmt.Errorf("key %q is not composed of just alphanumeric, underscore, forward slash and hyphen characters", key)
+	// Make sure the key has no embedded 0 values
+	for i := 0; i < len(key); i++ {
+		if key[i] == 0 {
+			return nil, fmt.Errorf("key cannot have embedded 0 value")
+		}
 	}
-	return newTKey(key), nil
+	return storage.NewTKey(keyStandard, append([]byte(key), 0)), nil
 }
 
 // DecodeTKey returns the string key used for this keyvalue.
