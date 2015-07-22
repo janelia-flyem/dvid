@@ -477,13 +477,6 @@ func (d *Data) LoadMutable(root dvid.VersionID, storedVersion, expectedVersion u
 	default:
 		// Load in each version max label without migration.
 		go d.loadMaxLabels(wg, ch)
-
-		// Load in the repo-wide max label.
-		data, err := store.Get(ctx, maxRepoLabelTKey)
-		if err != nil {
-			return false, err
-		}
-		d.MaxRepoLabel = binary.LittleEndian.Uint64(data)
 	}
 
 	// Send the max label data per version
@@ -589,12 +582,12 @@ func (d *Data) adjustMaxLabels(store storage.SmallDataStorer, root dvid.VersionI
 
 func (d *Data) loadMaxLabels(wg *sync.WaitGroup, ch chan *storage.KeyValue) {
 	ctx := storage.NewDataContext(d, 0)
+	var repoMax uint64
 	d.MaxLabel = make(map[dvid.VersionID]uint64)
 	for {
 		kv := <-ch
 		if kv == nil {
-			wg.Done()
-			return
+			break
 		}
 		v, err := ctx.VersionFromKey(kv.K)
 		if err != nil {
@@ -607,7 +600,34 @@ func (d *Data) loadMaxLabels(wg *sync.WaitGroup, ch chan *storage.KeyValue) {
 		}
 		label := binary.LittleEndian.Uint64(kv.V)
 		d.MaxLabel[v] = label
+		if label > repoMax {
+			repoMax = label
+		}
 	}
+
+	// Load in the repo-wide max label.
+	store, err := storage.SmallDataStore()
+	if err != nil {
+		dvid.Errorf("Data type labelvol had error initializing store: %v\n", err)
+		return
+	}
+	data, err := store.Get(ctx, maxRepoLabelTKey)
+	if err != nil {
+		dvid.Errorf("Error getting repo-wide max label: %v\n", err)
+		return
+	}
+	if data == nil || len(data) != 8 {
+		dvid.Errorf("Could not load repo-wide max label for instance %q.  Only got %d bytes, not 64-bit label.\n", d.DataName(), len(data))
+		dvid.Errorf("Using max label across versions: %d\n", repoMax)
+		d.MaxRepoLabel = repoMax
+	} else {
+		d.MaxRepoLabel = binary.LittleEndian.Uint64(data)
+		if d.MaxRepoLabel < repoMax {
+			dvid.Errorf("Saved repo-wide max for instance %q was %d, changed to largest version max %d\n", d.DataName(), d.MaxRepoLabel, repoMax)
+			d.MaxRepoLabel = repoMax
+		}
+	}
+	wg.Done()
 }
 
 // --- datastore.DataService interface ---------
