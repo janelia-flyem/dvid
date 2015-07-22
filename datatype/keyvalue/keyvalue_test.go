@@ -221,6 +221,10 @@ func TestKeyvalueRequests(t *testing.T) {
 	testRequest(t, uuid, versionID, "mykeyvalue")
 }
 
+type resolveResp struct {
+	Child dvid.UUID `json:"child"`
+}
+
 func TestKeyvalueVersioning(t *testing.T) {
 	tests.UseStore()
 	defer tests.CloseStore()
@@ -385,7 +389,7 @@ func TestKeyvalueVersioning(t *testing.T) {
 	childreq := fmt.Sprintf("%snode/%s/%s/key/%s", server.WebAPIPath, badChild, data.DataName(), key2)
 	server.TestBadHTTP(t, "GET", childreq, nil)
 
-	// Branch, and then delete 2nd k/v and commit.
+	// Manually fix conflict: Branch, and then delete 2nd k/v and commit.
 	uuid6, err := datastore.NewVersion(uuid5, "some child", nil)
 	if err != nil {
 		t.Fatalf("Unable to create new version off node %s: %v\n", uuid5, err)
@@ -410,6 +414,24 @@ func TestKeyvalueVersioning(t *testing.T) {
 	returnValue = server.TestHTTP(t, "GET", childreq, nil)
 	if string(returnValue) != uuid4val {
 		t.Errorf("Error on merged child, key %q: expected %q, got %q\n", key2, uuid4val, string(returnValue))
+	}
+
+	// Apply the automatic conflict resolution using ordering.
+	payload := fmt.Sprintf(`{"data":["versiontest"],"parents":[%q,%q],"note":"automatic resolved merge"}`, uuid5, uuid4)
+	resolveReq := fmt.Sprintf("%srepo/%s/resolve", server.WebAPIPath, uuid4)
+	returnValue = server.TestHTTP(t, "POST", resolveReq, bytes.NewBufferString(payload))
+	resolveResp := struct {
+		Child dvid.UUID `json:"child"`
+	}{}
+	if err := json.Unmarshal(returnValue, &resolveResp); err != nil {
+		t.Fatalf("Can't parse return of resolve request: %s\n", string(returnValue))
+	}
+
+	// We should now see the uuid5 version of the 2nd k/v in the returned merged node.
+	childreq = fmt.Sprintf("%snode/%s/%s/key/%s", server.WebAPIPath, resolveResp.Child, data.DataName(), key2)
+	returnValue = server.TestHTTP(t, "GET", childreq, nil)
+	if string(returnValue) != uuid5val {
+		t.Errorf("Error on auto merged child, key %q: expected %q, got %q\n", key2, uuid5val, string(returnValue))
 	}
 
 	// Introduce a child off root but don't add 2nd k/v to it.

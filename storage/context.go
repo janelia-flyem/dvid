@@ -31,6 +31,9 @@ type Context interface {
 	// TKeyFromKey returns the type-specific component of the key.
 	TKeyFromKey(Key) (TKey, error)
 
+	// KeyRange returns the minimum and maximum keys for this context.
+	KeyRange() (min, max Key)
+
 	// String prints a description of the Context
 	String() string
 
@@ -129,6 +132,12 @@ func (ctx MetadataContext) TKeyFromKey(key Key) (TKey, error) {
 	return TKey(key[1:]), nil
 }
 
+func (ctx MetadataContext) KeyRange() (min, max Key) {
+	// since all keys starting with dataKeyPrefix have additional bytes, the
+	// shorter array with just dataKeyPrefix should precede all data keys.
+	return []byte{metadataKeyPrefix}, []byte{dataKeyPrefix}
+}
+
 var metadataMutex sync.Mutex
 
 func (ctx MetadataContext) Mutex() *sync.Mutex {
@@ -219,6 +228,7 @@ func (ctx *DataContext) TombstoneKey(tk TKey) Key {
 	return Key(append(key, MarkTombstone))
 }
 
+// TKeyFromKey returns a type-specific key from a full key.  Any DataContext is sufficient as receiver.
 func (ctx *DataContext) TKeyFromKey(key Key) (TKey, error) {
 	if key == nil {
 		return nil, fmt.Errorf("Cannot extract DataContext type-specific key component from nil key")
@@ -231,6 +241,17 @@ func (ctx *DataContext) TKeyFromKey(key Key) (TKey, error) {
 	return TKey(key[start:end]), nil
 }
 
+// KeyRange returns the min and max full keys.  The DataContext can have any version since min/max keys for a data instance
+// is independent of the current context's version.
+func (ctx *DataContext) KeyRange() (min, max Key) {
+	id := ctx.data.InstanceID()
+	min = append([]byte{dataKeyPrefix}, id.Bytes()...)
+	id++
+	max = append([]byte{dataKeyPrefix}, id.Bytes()...)
+	return min, max
+}
+
+// VersionFromKey returns a version ID from a full key.  Any DataContext is sufficient as receiver.
 func (ctx *DataContext) VersionFromKey(key Key) (dvid.VersionID, error) {
 	if key == nil {
 		return 0, fmt.Errorf("Cannot extract DataContext version from nil key")

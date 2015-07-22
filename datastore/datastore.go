@@ -10,6 +10,8 @@
 package datastore
 
 import (
+	"bytes"
+	"fmt"
 	"sync"
 
 	"github.com/janelia-flyem/dvid/dvid"
@@ -334,7 +336,6 @@ type kvVersions map[dvid.VersionID]kvvNode
 // FindMatch returns the correct key-value pair for a given version and which version
 // that key-value pair came from.
 func (kvv kvVersions) FindMatch(v dvid.VersionID) (*storage.KeyValue, dvid.VersionID, error) {
-	// Get the ancestor graph for this version.
 	if manager == nil {
 		return nil, 0, ErrManagerNotInitialized
 	}
@@ -342,4 +343,185 @@ func (kvv kvVersions) FindMatch(v dvid.VersionID) (*storage.KeyValue, dvid.Versi
 	// Start from current version and traverse the ancestor graph.  Whenever there's a branch, make
 	// sure we only have one matching key.
 	return manager.findMatch(kvv, v)
+}
+
+// FindConflicts returns any keys that would conflict for the given parents ordered by priority,
+// where first parent takes most precendence, second parent is second most important, etc.
+func (kvv kvVersions) FindConflicts(parents []dvid.VersionID) (toDelete map[dvid.VersionID]storage.Key, err error) {
+	if manager == nil {
+		return nil, ErrManagerNotInitialized
+	}
+	if len(parents) < 2 {
+		return nil, fmt.Errorf("Must have more than one parent to find conflicts for future merge.")
+	}
+
+	// Get kv-pair for each parent in priority order.  If highest priority parent has conflict/error, it's an error
+	// since it should've been handled earlier.  Otherwise, we will put this on our toDelete list of keys.
+	toDelete = make(map[dvid.VersionID]storage.Key)
+	first := true
+	for _, parentV := range parents {
+		kv, _, err := manager.findMatch(kvv, parentV)
+		if first {
+			if err != nil {
+				return nil, fmt.Errorf("error retrieving k/v with precendence: %v", err)
+			}
+			if kv != nil && kv.K != nil {
+				first = false // we have a valid kv that gets priority
+			}
+		} else {
+			if err != nil {
+				// We can handle errors except those without a key since we plan on just putting
+				// tombstone on key.  Tombstone will be reached before any ancestor conflicts.
+				if kv == nil || kv.K == nil {
+					return nil, fmt.Errorf("error getting secondary k/v in FindConflicts: %v", err)
+				}
+			}
+			toDelete[parentV] = kv.K
+		}
+	}
+
+	return toDelete, nil
+}
+
+// Describes an extra node that we can apply deletions.
+type extensionNode struct {
+	oldUUID dvid.UUID
+	newUUID dvid.UUID
+	newV    dvid.VersionID
+}
+
+func deleteConflict(data DataService, extnode *extensionNode, k storage.Key) error {
+	// TODO -- Since all datastores resolve to basho leveldb right now, we can do this, but
+	// this should be datatype-specific for its particular type of storage.
+	store, err := storage.BigDataStore()
+	if err != nil {
+		return fmt.Errorf("error initializing store: %v\n", err)
+	}
+
+	// Create new node if necessary
+	if extnode.newUUID == dvid.NilUUID {
+		childUUID, err := manager.newVersion(extnode.oldUUID, "Version for deleting conflicts before merge", nil)
+		if err != nil {
+			return err
+		}
+		extnode.newUUID = childUUID
+		childV, err := manager.versionFromUUID(childUUID)
+		if err != nil {
+			return err
+		}
+		extnode.newV = childV
+	}
+
+	// Perform the deletion.
+	ctx := NewVersionedCtx(data, extnode.newV)
+	tk, err := ctx.TKeyFromKey(k)
+	if err != nil {
+		return err
+	}
+	return store.Delete(ctx, tk)
+}
+
+// DeleteConflicts removes all conflicted kv pairs for the given data instance using the priority
+// established by parents.  As a side effect, newParents can be populated by new children of parents.
+func DeleteConflicts(uuid dvid.UUID, data DataService, oldParents, newParents []dvid.UUID) error {
+	if manager == nil {
+		return ErrManagerNotInitialized
+	}
+
+	// Convert UUIDs to versions + bool for whether it's a child suitable for add deletions.
+	parents := make(map[dvid.VersionID]*extensionNode, len(oldParents))
+	parentsV := make([]dvid.VersionID, len(oldParents))
+	for i, oldUUID := range oldParents {
+		oldV, err := manager.versionFromUUID(oldUUID)
+		if err != nil {
+			return err
+		}
+		parentsV[i] = oldV
+		if newParents[i] != dvid.NilUUID {
+			newV, err := manager.versionFromUUID(newParents[i])
+			if err != nil {
+				return err
+			}
+			parents[oldV] = &extensionNode{oldUUID, newParents[i], newV}
+		} else {
+			parents[oldV] = &extensionNode{oldUUID, dvid.NilUUID, 0}
+		}
+	}
+
+	// Process stream of incoming kv pair for this data instance.
+	baseCtx := NewVersionedCtx(data, 0)
+	ch := make(chan *storage.KeyValue, 1000)
+	go func() {
+		var err error
+		var curV dvid.VersionID
+		var curTK, batchTK storage.TKey
+		kvv := kvVersions{}
+		for {
+			kv := <-ch
+			if kv == nil {
+				curTK = nil
+			} else {
+				curV, err = baseCtx.VersionFromKey(kv.K)
+				if err != nil {
+					dvid.Errorf("Can't decode key when deleting conflicts for %s", data.DataName())
+					continue
+				}
+
+				// If we have a different TKey, then process the batch of versions.
+				curTK, err := baseCtx.TKeyFromKey(kv.K)
+				if err != nil {
+					dvid.Errorf("Error in processing kv pairs in DeleteConflicts: %v\n", err)
+					continue
+				}
+				if batchTK == nil {
+					batchTK = curTK
+				}
+			}
+			if !bytes.Equal(curTK, batchTK) {
+				// Get conflicts.
+				toDelete, err := kvv.FindConflicts(parentsV)
+				if err != nil {
+					dvid.Errorf("Error finding conflicts: %v\n", err)
+					continue
+				}
+
+				// Create new node if necessary to apply deletions, and if so, store new node.
+				for v, k := range toDelete {
+					if err := deleteConflict(data, parents[v], k); err != nil {
+						dvid.Errorf("Unable to delete conflict: %v\n", err)
+						continue
+					}
+				}
+
+				// Delete the stash of kv pairs
+				kvv = kvVersions{}
+			}
+			if kv == nil {
+				return
+			}
+			kvv[curV] = kvvNode{kv: kv}
+		}
+	}()
+
+	// Iterate through all k/v for this data instance.
+	// TODO -- Since all datastores resolve to basho leveldb right now, we can do this, but
+	// this should be datatype-specific for its particular type of storage.
+	store, err := storage.BigDataStore()
+	if err != nil {
+		return fmt.Errorf("error initializing store: %v\n", err)
+	}
+
+	minKey, maxKey := baseCtx.KeyRange()
+	keysOnly := true
+	if err := store.SendRange(minKey, maxKey, keysOnly, ch); err != nil {
+		return err
+	}
+
+	// Return the new parents which were needed for deletions.
+	newParents = make([]dvid.UUID, len(oldParents))
+	for i, oldV := range parentsV {
+		newParents[i] = parents[oldV].newUUID
+	}
+
+	return nil
 }

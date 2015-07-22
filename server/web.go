@@ -142,8 +142,12 @@ const WebHelp = `
 
  POST /api/repo/{uuid}/merge
 
-	Merges a set of committed parent UUIDs into a child.  The post body should be JSON of the 
-	following format: 
+	Creates a conflict-free merge of a set of committed parent UUIDs into a child.  Note
+	the merge will not necessarily create an error immediately, but later GETs that
+	detect conflicts will produce an error at that time.  These can be resolved by
+	doing a POST on the "resolve" endpoint below.
+
+	The post body should be JSON of the following format: 
 
 	{ 
 		"mergeType": "conflict-free",
@@ -156,6 +160,39 @@ const WebHelp = `
 		mergeType:  must be "conflict-free".  We will introduce other merge options in future.
 		parents:    a list of the parent UUIDs to be merged. 
 		note:       any note that should be set for the child version.
+
+	A JSON response will be sent with the following format:
+
+	{ "child": "3f01a8856" }
+
+	The response includes the UUID of the new merged, child node.
+
+ POST /api/repo/{uuid}/resolve
+
+	Forces a merge of a set of committed parent UUIDs into a child by specifying a
+	UUID order that establishes priorities in case of conflicts (see "parents" description
+	below.  
+
+	Unlike the very fast but lazily-enforced 'merge' endpoint, this request spawns an 
+	asynchronous routine that checks all data for the given data instances (see "data" in
+	JSON post), creates versions to delete conflicts, and then performs the conflict-free 
+	merge to a final child.  
+
+	The post body should be JSON of the following format: 
+
+	{ 
+		"data": [ "instance-name-1", "instance-name2", ... ],
+		"parents": [ "parent-uuid1", "parent-uuid2", ... ],
+		"note": "this is a description of what I did on this commit"
+	}
+
+	The elements of the JSON object are:
+
+		data:       A list of the data instance names to be scanned for possible conflicts.
+		parents:    A list of the parent UUIDs to be merged in order of priority.  If 
+		             there is a conflict between the second and third UUID, the conflicting
+		             data in the third UUID will be deleted in favor of the second UUID.
+		note:       Any note that should be set for the child version.
 
 	A JSON response will be sent with the following format:
 
@@ -364,6 +401,7 @@ func initRoutes() {
 	repoMux.Get("/api/repo/:uuid/log", getRepoLogHandler)
 	repoMux.Post("/api/repo/:uuid/log", postRepoLogHandler)
 	repoMux.Post("/api/repo/:uuid/merge", repoMergeHandler)
+	repoMux.Post("/api/repo/:uuid/resolve", repoResolveHandler)
 
 	nodeMux := web.New()
 	mainMux.Handle("/api/node/:uuid", nodeMux)
@@ -490,11 +528,11 @@ func repoSelector(c *web.C, h http.Handler) http.Handler {
 		}
 		branchRequest := (c.URLParams["action"] == "branch")
 		mergeRequest := (c.URLParams["action"] == "merge")
-		if locked && !branchRequest && !mergeRequest && action != "get" && action != "head" {
+		resolveRequest := (c.URLParams["action"] == "resolve")
+		if locked && !branchRequest && !mergeRequest && !resolveRequest && action != "get" && action != "head" {
 			BadRequest(w, r, "Cannot do %s on locked node %s", action, uuid)
 			return
 		}
-
 		h.ServeHTTP(w, r)
 	}
 	return http.HandlerFunc(fn)
@@ -987,6 +1025,80 @@ func repoMergeHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 
 	// Do the merge
 	newuuid, err := datastore.Merge(parents, jsonData.Note, mt)
+	if err != nil {
+		BadRequest(w, r, err)
+	} else {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, "{%q: %q}", "child", newuuid)
+	}
+}
+
+func repoResolveHandler(c web.C, w http.ResponseWriter, r *http.Request) {
+	uuid, _, err := datastore.MatchingUUID(c.URLParams["uuid"])
+	if err != nil {
+		BadRequest(w, r, err)
+		return
+	}
+	if r.Body == nil {
+		BadRequest(w, r, "merge resolving requires JSON to be POSTed per API documentation")
+		return
+	}
+	data, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		BadRequest(w, r, err)
+		return
+	}
+
+	jsonData := struct {
+		Data    []dvid.InstanceName `json:"data"`
+		Note    string              `json:"note"`
+		Parents []string            `json:"parents"`
+	}{}
+	if err := json.Unmarshal(data, &jsonData); err != nil {
+		BadRequest(w, r, fmt.Sprintf("Malformed JSON request in body: %v", err))
+		return
+	}
+	if len(jsonData.Data) == 0 {
+		BadRequest(w, r, "Must specify at least one data instance using 'data' field")
+		return
+	}
+	if len(jsonData.Parents) < 2 {
+		BadRequest(w, r, "Must specify at least two parent UUIDs using 'parents' field")
+		return
+	}
+
+	// Convert JSON of parents into []UUID and whether we need a child for them to add deletions.
+	numParents := len(jsonData.Parents)
+	oldParents := make([]dvid.UUID, numParents)
+	newParents := make([]dvid.UUID, numParents, numParents) // UUID of any parent extension for deletions.
+	for i, uuidFrag := range jsonData.Parents {
+		uuid, _, err := datastore.MatchingUUID(uuidFrag)
+		if err != nil {
+			BadRequest(w, r, fmt.Sprintf("can't match parent %q: %v", uuidFrag, err))
+			return
+		}
+		oldParents[i] = uuid
+		newParents[i] = dvid.NilUUID
+	}
+
+	// Iterate through all k/v for given data instances, making sure we find any conflicts.
+	// If any are found, remove them with first UUIDs taking priority.
+	for _, name := range jsonData.Data {
+		data, err := datastore.GetDataByUUID(uuid, name)
+		if err != nil {
+			BadRequest(w, r, err)
+			return
+		}
+
+		if err := datastore.DeleteConflicts(uuid, data, oldParents, newParents); err != nil {
+			BadRequest(w, r, fmt.Errorf("Conflict deletion error for data %q: %v", data.DataName(), err))
+			return
+		}
+	}
+
+	// Do the merge
+	mt := datastore.MergeConflictFree
+	newuuid, err := datastore.Merge(newParents, jsonData.Note, mt)
 	if err != nil {
 		BadRequest(w, r, err)
 	} else {
