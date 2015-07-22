@@ -1077,7 +1077,7 @@ func (d *Data) GetLabelRLEs(v dvid.VersionID, label uint64) (dvid.BlockRLEs, err
 	if err != nil {
 		return nil, err
 	}
-	fmt.Printf("Found %d blocks with label %d\n", len(labelRLEs), label)
+	dvid.Infof("Found %d blocks with label %d\n", len(labelRLEs), label)
 	return labelRLEs, nil
 }
 

@@ -380,7 +380,7 @@ func LoadTileSpec(data []byte) (TileSpec, error) {
 	// Store resolution and tile sizes per level.
 	var hires, lores float64
 	for scaleStr, levelSpec := range config {
-		fmt.Printf("scale %s, levelSpec %v\n", scaleStr, levelSpec)
+		dvid.Infof("scale %s, levelSpec %v\n", scaleStr, levelSpec)
 		scaleLevel, err := strconv.Atoi(scaleStr)
 		if err != nil {
 			return nil, fmt.Errorf("Scaling '%s' needs to be a number for the scale level.", scaleStr)
