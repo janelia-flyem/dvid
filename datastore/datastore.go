@@ -358,29 +358,21 @@ func (kvv kvVersions) FindConflicts(parents []dvid.VersionID) (toDelete map[dvid
 	// Get kv-pair for each parent in priority order.  If highest priority parent has conflict/error, it's an error
 	// since it should've been handled earlier.  Otherwise, we will put this on our toDelete list of keys.
 	toDelete = make(map[dvid.VersionID]storage.Key)
-	first := true
+	var first *storage.KeyValue
 	for _, parentV := range parents {
 		kv, _, err := manager.findMatch(kvv, parentV)
-		if first {
-			if err != nil {
-				return nil, fmt.Errorf("error retrieving k/v with precendence: %v", err)
-			}
+		if err != nil {
+			return nil, fmt.Errorf("error retrieving k/v with precendence: %v", err)
+		}
+		if first == nil {
 			if kv != nil && kv.K != nil {
-				first = false // we have a valid kv that gets priority
+				first = kv // we have a valid kv that gets priority
 			}
-		} else {
-			if err != nil {
-				// We can handle errors except those without a key since we plan on just putting
-				// tombstone on key.  Tombstone will be reached before any ancestor conflicts.
-				if kv == nil || kv.K == nil {
-					return nil, fmt.Errorf("error getting secondary k/v in FindConflicts: %v", err)
-				}
-			}
+		} else if kv != nil && kv.K != nil && !bytes.Equal(kv.K, first.K) {
 			toDelete[parentV] = kv.K
 		}
 	}
-
-	return toDelete, nil
+	return
 }
 
 // Describes an extra node that we can apply deletions.
@@ -422,7 +414,7 @@ func deleteConflict(data DataService, extnode *extensionNode, k storage.Key) err
 }
 
 // DeleteConflicts removes all conflicted kv pairs for the given data instance using the priority
-// established by parents.  As a side effect, newParents can be populated by new children of parents.
+// established by parents.  As a side effect, newParents are modified by new children of parents.
 func DeleteConflicts(uuid dvid.UUID, data DataService, oldParents, newParents []dvid.UUID) error {
 	if manager == nil {
 		return ErrManagerNotInitialized
@@ -451,7 +443,11 @@ func DeleteConflicts(uuid dvid.UUID, data DataService, oldParents, newParents []
 	// Process stream of incoming kv pair for this data instance.
 	baseCtx := NewVersionedCtx(data, 0)
 	ch := make(chan *storage.KeyValue, 1000)
+	wg := new(sync.WaitGroup)
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
+
 		var err error
 		var curV dvid.VersionID
 		var curTK, batchTK storage.TKey
@@ -468,7 +464,7 @@ func DeleteConflicts(uuid dvid.UUID, data DataService, oldParents, newParents []
 				}
 
 				// If we have a different TKey, then process the batch of versions.
-				curTK, err := baseCtx.TKeyFromKey(kv.K)
+				curTK, err = baseCtx.TKeyFromKey(kv.K)
 				if err != nil {
 					dvid.Errorf("Error in processing kv pairs in DeleteConflicts: %v\n", err)
 					continue
@@ -495,6 +491,8 @@ func DeleteConflicts(uuid dvid.UUID, data DataService, oldParents, newParents []
 
 				// Delete the stash of kv pairs
 				kvv = kvVersions{}
+
+				batchTK = curTK
 			}
 			if kv == nil {
 				return
@@ -516,11 +514,16 @@ func DeleteConflicts(uuid dvid.UUID, data DataService, oldParents, newParents []
 	if err := store.SendRange(minKey, maxKey, keysOnly, ch); err != nil {
 		return err
 	}
+	wg.Wait()
 
 	// Return the new parents which were needed for deletions.
-	newParents = make([]dvid.UUID, len(oldParents))
+	//newParents = make([]dvid.UUID, len(oldParents))
 	for i, oldV := range parentsV {
-		newParents[i] = parents[oldV].newUUID
+		if parents[oldV].newUUID == dvid.NilUUID {
+			newParents[i] = parents[oldV].oldUUID
+		} else {
+			newParents[i] = parents[oldV].newUUID
+		}
 	}
 
 	return nil

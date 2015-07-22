@@ -716,7 +716,6 @@ func reposInfoHandler(w http.ResponseWriter, r *http.Request) {
 func reposPostHandler(w http.ResponseWriter, r *http.Request) {
 	config := dvid.NewConfig()
 	if r.Body != nil {
-		fmt.Printf("r.Body = %v\n", r.Body)
 		if err := config.SetByJSON(r.Body); err != nil {
 			BadRequest(w, r, fmt.Sprintf("Error decoding POSTed JSON config for new repo: %v", err))
 			return
@@ -1093,6 +1092,17 @@ func repoResolveHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 		if err := datastore.DeleteConflicts(uuid, data, oldParents, newParents); err != nil {
 			BadRequest(w, r, fmt.Errorf("Conflict deletion error for data %q: %v", data.DataName(), err))
 			return
+		}
+	}
+
+	// If we have any new nodes to accomodate deletions, commit them.
+	for i, oldUUID := range oldParents {
+		if newParents[i] != oldUUID {
+			err := datastore.Commit(newParents[i], "Version for deleting conflicts before merge", nil)
+			if err != nil {
+				BadRequest(w, r, "Error while creating new nodes to handle required deletions: %v", err)
+				return
+			}
 		}
 	}
 

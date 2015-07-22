@@ -980,8 +980,6 @@ func (m *repoManager) commit(uuid dvid.UUID, note string, log []string) error {
 // newVersion creates a new version as a child of the given parent.  If the
 // assign parameter is not nil, the new node is given the UUID.
 func (m *repoManager) newVersion(parent dvid.UUID, note string, assign *dvid.UUID) (dvid.UUID, error) {
-	fmt.Printf("Trying to make child of %q\n", parent)
-
 	r, found := m.repos[parent]
 	if !found {
 		return dvid.NilUUID, ErrInvalidUUID
