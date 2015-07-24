@@ -649,11 +649,11 @@ func (db *LevelDB) ProcessRange(ctx storage.Context, kStart, kEnd storage.TKey, 
 	}
 }
 
-// SendRange sends a range of full keys.  This is to be used for low-level data
+// RawRangeQuery sends a range of full keys.  This is to be used for low-level data
 // retrieval like DVID-to-DVID communication and should not be used by data type
 // implementations if possible.  A nil is sent down the channel when the
 // range is complete.
-func (db *LevelDB) SendRange(kStart, kEnd storage.Key, keysOnly bool, out chan *storage.KeyValue) error {
+func (db *LevelDB) RawRangeQuery(kStart, kEnd storage.Key, keysOnly bool, out chan *storage.KeyValue) error {
 	dvid.StartCgo()
 	ro := levigo.NewReadOptions()
 	it := db.ldb.NewIterator(ro)
@@ -725,6 +725,22 @@ func (db *LevelDB) Put(ctx storage.Context, tk storage.TKey, v []byte) error {
 	return err
 }
 
+// RawPut is a low-level function that puts a key-value pair using full keys.
+// This can be used in conjunction with RawRangeQuery.
+func (db *LevelDB) RawPut(k storage.Key, v []byte) error {
+	wo := db.options.WriteOptions
+	dvid.StartCgo()
+	defer dvid.StopCgo()
+
+	if err := db.ldb.Put(wo, k, v); err != nil {
+		return err
+	}
+
+	storage.StoreKeyBytesWritten <- len(k)
+	storage.StoreValueBytesWritten <- len(v)
+	return nil
+}
+
 // Delete removes a value with given key.
 func (db *LevelDB) Delete(ctx storage.Context, tk storage.TKey) error {
 	if ctx == nil {
@@ -754,6 +770,15 @@ func (db *LevelDB) Delete(ctx storage.Context, tk storage.TKey) error {
 	}
 
 	return err
+}
+
+// RawDelete is a low-level function.  It deletes a key-value pair using full keys
+// without any context.  This can be used in conjunction with RawRangeQuery.
+func (db *LevelDB) RawDelete(k storage.Key) error {
+	wo := db.options.WriteOptions
+	dvid.StartCgo()
+	defer dvid.StopCgo()
+	return db.ldb.Delete(wo, k)
 }
 
 // ---- OrderedKeyValueSetter interface ------

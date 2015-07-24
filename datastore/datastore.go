@@ -511,7 +511,7 @@ func DeleteConflicts(uuid dvid.UUID, data DataService, oldParents, newParents []
 
 	minKey, maxKey := baseCtx.KeyRange()
 	keysOnly := true
-	if err := store.SendRange(minKey, maxKey, keysOnly, ch); err != nil {
+	if err := store.RawRangeQuery(minKey, maxKey, keysOnly, ch); err != nil {
 		return err
 	}
 	wg.Wait()

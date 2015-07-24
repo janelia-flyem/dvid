@@ -264,20 +264,28 @@ type OrderedKeyValueGetter interface {
 	// See datatype/imageblk.ProcessChunk() for an example.
 	ProcessRange(ctx Context, kStart, kEnd TKey, op *ChunkOp, f ChunkFunc) error
 
-	// SendRange sends a range of full keys.  This is to be used for low-level data
+	// RawRangeQuery sends a range of full keys.  This is to be used for low-level data
 	// retrieval like DVID-to-DVID communication and should not be used by data type
 	// implementations if possible because each version's key-value pairs are sent
 	// without filtering by the current version and its ancestor graph.  A nil is sent
 	// down the channel when the range is complete.
-	SendRange(kStart, kEnd Key, keysOnly bool, out chan *KeyValue) error
+	RawRangeQuery(kStart, kEnd Key, keysOnly bool, out chan *KeyValue) error
 }
 
 type KeyValueSetter interface {
-	// Put writes a value with given key.
+	// Put writes a value with given key in a possibly versioned context.
 	Put(Context, TKey, []byte) error
 
-	// Delete removes an entry given key.
+	// Delete deletes a key-value pair so that subsequent Get on the key returns nil.
 	Delete(Context, TKey) error
+
+	// RawPut is a low-level function that puts a key-value pair using full keys.
+	// This can be used in conjunction with RawRangeQuery.
+	RawPut(Key, []byte) error
+
+	// RawDelete is a low-level function.  It deletes a key-value pair using full keys
+	// without any context.  This can be used in conjunction with RawRangeQuery.
+	RawDelete(Key) error
 }
 
 type OrderedKeyValueSetter interface {
