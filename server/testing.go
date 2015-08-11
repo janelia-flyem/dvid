@@ -21,17 +21,26 @@ import (
 	"encoding/json"
 )
 
-func TestHTTP(t *testing.T, method, urlStr string, payload io.Reader) []byte {
+// TestHTTPResponse returns a response from a test run of the DVID server.
+// Use TestHTTP if you just want the response body bytes.
+func TestHTTPResponse(t *testing.T, method, urlStr string, payload io.Reader) *httptest.ResponseRecorder {
 	req, err := http.NewRequest(method, urlStr, payload)
 	if err != nil {
 		t.Fatalf("Unsuccessful %s on %q: %v\n", method, urlStr, err)
 	}
-	w := httptest.NewRecorder()
-	ServeSingleHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("Bad server response (%d) to %s on %q\n", w.Code, method, urlStr)
+	resp := httptest.NewRecorder()
+	ServeSingleHTTP(resp, req)
+	return resp
+}
+
+// TestHTTP returns the response body bytes for a test request, making sure any response has
+// status OK.
+func TestHTTP(t *testing.T, method, urlStr string, payload io.Reader) []byte {
+	resp := TestHTTPResponse(t, method, urlStr, payload)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("Bad server response (%d) to %s on %q\n", resp.Code, method, urlStr)
 	}
-	return w.Body.Bytes()
+	return resp.Body.Bytes()
 }
 
 // TestBadHTTP expects a HTTP response with an error status code.

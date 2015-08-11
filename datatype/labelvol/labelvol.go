@@ -93,7 +93,7 @@ POST <api URL>/node/<UUID>/<data name>/info
 
 GET  <api URL>/node/<UUID>/<data name>/sparsevol/<label>?<options>
 
-	Returns or stores a sparse volume with voxels of the given label in encoded RLE format.
+	Returns a sparse volume with voxels of the given label in encoded RLE format.
 
 	The encoding has the following format where integers are little endian and the order
 	of data is exactly as specified below:
@@ -126,6 +126,22 @@ GET  <api URL>/node/<UUID>/<data name>/sparsevol/<label>?<options>
     maxz    Spans must be equal to or smaller than this maximum z voxel coordinate.
     exact   "false" if RLEs can extend a bit outside voxel bounds within border blocks.
             This will give slightly faster responses. 
+
+
+HEAD <api URL>/node/<UUID>/<data name>/sparsevol/<label>?<options>
+
+	Returns:
+		200 (OK) if a sparse volume of the given label exists within any optional bounds.
+		204 (No Content) if there is no sparse volume for the given label within any optional bounds.
+
+    GET Query-string Options:
+
+    minx    Spans must be equal to or larger than this minimum x voxel coordinate.
+    maxx    Spans must be equal to or smaller than this maximum x voxel coordinate.
+    miny    Spans must be equal to or larger than this minimum y voxel coordinate.
+    maxy    Spans must be equal to or smaller than this maximum y voxel coordinate.
+    minz    Spans must be equal to or larger than this minimum z voxel coordinate.
+    maxz    Spans must be equal to or smaller than this maximum z voxel coordinate.
 
 
 GET <api URL>/node/<UUID>/<data name>/sparsevol-by-point/<coord>
@@ -776,6 +792,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	case "sparsevol":
 		// GET <api URL>/node/<UUID>/<data name>/sparsevol/<label>
 		// POST <api URL>/node/<UUID>/<data name>/sparsevol/<label>
+		// HEAD <api URL>/node/<UUID>/<data name>/sparsevol/<label>
 		if len(parts) < 5 {
 			server.BadRequest(w, r, "ERROR: DVID requires label ID to follow 'sparsevol' command")
 			return
@@ -789,20 +806,21 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			server.BadRequest(w, r, "Label 0 is protected background value and cannot be used as sparse volume.\n")
 			return
 		}
+		queryValues := r.URL.Query()
+		var b Bounds
+		b.VoxelBounds, err = dvid.BoundsFromQueryString(r)
+		if err != nil {
+			server.BadRequest(w, r, "Error parsing bounds from query string: %v\n", err)
+			return
+		}
+		b.BlockBounds = b.VoxelBounds.Divide(d.BlockSize)
+		b.Exact = true
+		if queryValues.Get("exact") == "false" {
+			b.Exact = false
+		}
+
 		switch action {
 		case "get":
-			queryValues := r.URL.Query()
-			var b Bounds
-			b.VoxelBounds, err = dvid.BoundsFromQueryString(r)
-			if err != nil {
-				server.BadRequest(w, r, "Error parsing bounds from query string: %v\n", err)
-				return
-			}
-			b.BlockBounds = b.VoxelBounds.Divide(d.BlockSize)
-			b.Exact = true
-			if queryValues.Get("exact") == "false" {
-				b.Exact = false
-			}
 			data, err := GetSparseVol(ctx, label, b)
 			if err != nil {
 				server.BadRequest(w, r, err)
@@ -814,6 +832,21 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 				server.BadRequest(w, r, err)
 				return
 			}
+
+		case "head":
+			w.Header().Set("Content-type", "text/html")
+			found, err := FoundSparseVol(ctx, label, b)
+			if err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+			if found {
+				w.WriteHeader(http.StatusOK)
+			} else {
+				w.WriteHeader(http.StatusNoContent)
+			}
+			return
+
 		case "post":
 			server.BadRequest(w, r, "POST of sparsevol not currently implemented\n")
 			return
@@ -1152,6 +1185,80 @@ func boundRLEs(b []byte, bounds *dvid.Bounds) ([]byte, error) {
 	}
 	newRLEs := oldRLEs.FitToBounds(bounds)
 	return newRLEs.MarshalBinary()
+}
+
+// FoundSparseVol returns true if a sparse volume is found for the given label
+// within the given bounds.
+func FoundSparseVol(ctx storage.Context, label uint64, bounds Bounds) (bool, error) {
+	store, err := storage.SmallDataStore()
+	if err != nil {
+		return false, fmt.Errorf("Data type labelvol had error initializing store: %v\n", err)
+	}
+
+	// Get the start/end indices for this body's KeyLabelSpatialMap (b + s) keys.
+	minZYX := dvid.MinIndexZYX
+	maxZYX := dvid.MaxIndexZYX
+	blockBounds := bounds.BlockBounds
+	if blockBounds == nil {
+		blockBounds = new(dvid.Bounds)
+	}
+	if minZ, ok := blockBounds.MinZ(); ok {
+		minZYX[2] = minZ
+	}
+	if maxZ, ok := blockBounds.MaxZ(); ok {
+		maxZYX[2] = maxZ
+	}
+	begTKey := NewTKey(label, minZYX.ToIZYXString())
+	endTKey := NewTKey(label, maxZYX.ToIZYXString())
+
+	// Scan through all keys for this range to see if we have any hits.
+	var found bool
+	keyCh := make(storage.KeyChan, 100)
+	wg := new(sync.WaitGroup)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			key := <-keyCh
+			if key == nil {
+				return
+			}
+
+			// Make sure this block is within the optinonal bounding.
+			tk, err := ctx.TKeyFromKey(key)
+			if err != nil {
+				dvid.Errorf("Unable to get TKey from Key (%v): %v\n", key, err)
+				return
+			}
+			if blockBounds.BoundedX() || blockBounds.BoundedY() {
+				_, blockStr, err := DecodeTKey(tk)
+				if err != nil {
+					dvid.Errorf("Error decoding sparse volume key (%v): %v\n", key, err)
+					return
+				}
+				indexZYX, err := blockStr.IndexZYX()
+				if err != nil {
+					dvid.Errorf("Error decoding block coordinate (%v) for sparse volume: %v\n", blockStr, err)
+					return
+				}
+				blockX, blockY, _ := indexZYX.Unpack()
+				if blockBounds.OutsideX(blockX) || blockBounds.OutsideY(blockY) {
+					continue
+				}
+			}
+
+			// We have a valid key
+			found = true
+			return
+		}
+	}()
+
+	if err := store.SendKeysInRange(ctx, begTKey, endTKey, keyCh); err != nil {
+		return false, err
+	}
+	wg.Wait()
+
+	return found, nil
 }
 
 // GetSparseVol returns an encoded sparse volume given a label.  The encoding has the

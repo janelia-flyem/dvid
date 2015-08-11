@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"reflect"
 	"sync"
 	"testing"
@@ -310,8 +311,14 @@ func TestSparseVolumes(t *testing.T) {
 	}
 
 	for _, label := range []uint64{1, 2, 3, 4} {
-		// Check full sparse volumes
+		// Check fast HEAD requests
 		reqStr := fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid, "bodies", label)
+		resp := server.TestHTTPResponse(t, "HEAD", reqStr, nil)
+		if resp.Code != http.StatusOK {
+			t.Errorf("HEAD on %s did not return OK.  Status = %d\n", reqStr, resp.Code)
+		}
+
+		// Check full sparse volumes
 		encoding := server.TestHTTP(t, "GET", reqStr, nil)
 		bodies[label-1].checkSparseVol(t, encoding, dvid.Bounds{})
 
@@ -331,6 +338,13 @@ func TestSparseVolumes(t *testing.T) {
 		reqStr = fmt.Sprintf("%snode/%s/%s/sparsevol/%d?minx=%d&maxx=%d", server.WebAPIPath, uuid, "bodies", label, minx, maxx)
 		encoding = server.TestHTTP(t, "GET", reqStr, nil)
 		checkSpans(t, encoding, minx, maxx)
+	}
+
+	// Make sure non-existent bodies return proper HEAD responses.
+	headReq := fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid, "bodies", 10)
+	resp := server.TestHTTPResponse(t, "HEAD", headReq, nil)
+	if resp.Code != http.StatusNoContent {
+		t.Errorf("HEAD on %s did not return 204 (No Content).  Status = %d\n", headReq, resp.Code)
 	}
 
 	// Commit this node and create branch for deletion testing.
