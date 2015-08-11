@@ -134,6 +134,9 @@ HEAD <api URL>/node/<UUID>/<data name>/sparsevol/<label>?<options>
 		200 (OK) if a sparse volume of the given label exists within any optional bounds.
 		204 (No Content) if there is no sparse volume for the given label within any optional bounds.
 
+	Note that for speed, the optional bounds are always expanded to the block-aligned containing
+	subvolume, i.e., it's as if exact=false for the corresponding GET.
+
     GET Query-string Options:
 
     minx    Spans must be equal to or larger than this minimum x voxel coordinate.
