@@ -6,9 +6,11 @@ package labelvol
 
 import (
 	"bytes"
+	"compress/gzip"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"reflect"
@@ -20,6 +22,8 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/tests"
+
+	lz4 "github.com/janelia-flyem/go/golz4"
 )
 
 var (
@@ -320,6 +324,33 @@ func TestSparseVolumes(t *testing.T) {
 
 		// Check full sparse volumes
 		encoding := server.TestHTTP(t, "GET", reqStr, nil)
+		bodies[label-1].checkSparseVol(t, encoding, dvid.Bounds{})
+
+		// Check with lz4 compression
+		compressed := server.TestHTTP(t, "GET", reqStr+"?compression=lz4", nil)
+		if err := lz4.Uncompress(compressed, encoding); err != nil {
+			t.Fatalf("error uncompressing lz4: %v\n", err)
+		}
+		bodies[label-1].checkSparseVol(t, encoding, dvid.Bounds{})
+
+		// Check with gzip compression
+		compressed = server.TestHTTP(t, "GET", reqStr+"?compression=gzip", nil)
+		b := bytes.NewBuffer(compressed)
+		var err error
+		r, err := gzip.NewReader(b)
+		if err != nil {
+			t.Fatalf("error creating gzip reader: %v\n", err)
+		}
+		var buffer bytes.Buffer
+		_, err = io.Copy(&buffer, r)
+		if err != nil {
+			t.Fatalf("error copying gzip data: %v\n", err)
+		}
+		err = r.Close()
+		if err != nil {
+			t.Fatalf("error closing gzip: %v\n", err)
+		}
+		encoding = buffer.Bytes()
 		bodies[label-1].checkSparseVol(t, encoding, dvid.Bounds{})
 
 		// Check Y/Z restriction

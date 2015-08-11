@@ -6,6 +6,7 @@ package labelvol
 
 import (
 	"bytes"
+	"compress/gzip"
 	"encoding/binary"
 	"encoding/gob"
 	"encoding/json"
@@ -24,6 +25,8 @@ import (
 	"github.com/janelia-flyem/dvid/message"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
+
+	lz4 "github.com/janelia-flyem/go/golz4"
 )
 
 const (
@@ -93,7 +96,8 @@ POST <api URL>/node/<UUID>/<data name>/info
 
 GET  <api URL>/node/<UUID>/<data name>/sparsevol/<label>?<options>
 
-	Returns a sparse volume with voxels of the given label in encoded RLE format.
+	Returns a sparse volume with voxels of the given label in encoded RLE format.  The returned
+	data can be optionally compressed using the "compression" option below.
 
 	The encoding has the following format where integers are little endian and the order
 	of data is exactly as specified below:
@@ -126,6 +130,9 @@ GET  <api URL>/node/<UUID>/<data name>/sparsevol/<label>?<options>
     maxz    Spans must be equal to or smaller than this maximum z voxel coordinate.
     exact   "false" if RLEs can extend a bit outside voxel bounds within border blocks.
             This will give slightly faster responses. 
+
+    compression   Allows retrieval of data in "lz4" and "gzip"
+                  compressed format.
 
 
 HEAD <api URL>/node/<UUID>/<data name>/sparsevol/<label>?<options>
@@ -822,6 +829,8 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			b.Exact = false
 		}
 
+		compression := queryValues.Get("compression")
+
 		switch action {
 		case "get":
 			data, err := GetSparseVol(ctx, label, b)
@@ -830,9 +839,43 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 				return
 			}
 			w.Header().Set("Content-type", "application/octet-stream")
-			_, err = w.Write(data)
-			if err != nil {
-				server.BadRequest(w, r, err)
+			switch compression {
+			case "":
+				_, err = w.Write(data)
+				if err != nil {
+					server.BadRequest(w, r, err)
+					return
+				}
+			case "lz4":
+				compressed := make([]byte, lz4.CompressBound(data))
+				var n, outSize int
+				if outSize, err = lz4.Compress(data, compressed); err != nil {
+					server.BadRequest(w, r, err)
+					return
+				}
+				compressed = compressed[:outSize]
+				if n, err = w.Write(compressed); err != nil {
+					server.BadRequest(w, r, err)
+					return
+				}
+				if n != outSize {
+					errmsg := fmt.Sprintf("Only able to write %d of %d lz4 compressed bytes\n", n, outSize)
+					dvid.Errorf(errmsg)
+					server.BadRequest(w, r, errmsg)
+					return
+				}
+			case "gzip":
+				gw := gzip.NewWriter(w)
+				if _, err = gw.Write(data); err != nil {
+					server.BadRequest(w, r, err)
+					return
+				}
+				if err = gw.Close(); err != nil {
+					server.BadRequest(w, r, err)
+					return
+				}
+			default:
+				server.BadRequest(w, r, "unknown compression type %q", compression)
 				return
 			}
 

@@ -822,6 +822,8 @@ func colorImage(labels *dvid.Image) (image.Image, error) {
 
 // ServeHTTP handles all incoming HTTP requests for this data.
 func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {
+	// TODO -- Refactor this method to break it up and make it simpler.  Use the web routing for the endpoints.
+
 	timedLog := dvid.NewTimeLog()
 
 	// Get the action (GET, POST)
