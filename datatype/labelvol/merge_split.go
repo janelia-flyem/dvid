@@ -8,6 +8,7 @@ package labelvol
 import (
 	"fmt"
 	"io"
+	"sort"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
@@ -317,6 +318,145 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser) 
 	if err := datastore.NotifySubscribers(evt, msg); err != nil {
 		return 0, err
 	}
+
+	return toLabel, nil
+}
+
+// SplitCoarseLabels splits a portion of a label's voxels into a new label, which is returned.
+// The input is a binary sparse volume defined by block coordinates and should be the smaller portion
+// of a labeled region-to-be-split.
+//
+// EVENTS
+//
+// labels.SplitStartEvent occurs at very start of split and transmits labels.DeltaSplitStart struct.
+//
+// labels.SplitBlockEvent occurs for every block of a split label and transmits labels.DeltaSplit struct.
+//
+// labels.SplitEndEvent occurs at end of split and transmits labels.DeltaSplitEnd struct.
+//
+func (d *Data) SplitCoarseLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser) (toLabel uint64, err error) {
+	store, err := storage.SmallDataStore()
+	if err != nil {
+		err = fmt.Errorf("Data type labelvol had error initializing store: %v\n", err)
+		return
+	}
+	batcher, ok := store.(storage.KeyValueBatcher)
+	if !ok {
+		err = fmt.Errorf("Data type labelvol requires batch-enabled store, which %q is not\n", store)
+		return
+	}
+
+	// Mark these labels as dirty until done.
+	iv := dvid.InstanceVersion{d.DataName(), v}
+	dirtyLabels.Incr(iv, fromLabel)
+	defer dirtyLabels.Decr(iv, fromLabel)
+
+	// Create a new label id for this version that will persist to store
+	toLabel, err = d.NewLabel(v)
+	if err != nil {
+		return
+	}
+	dvid.Debugf("Splitting coarse subset of label %d into label %d ...\n", fromLabel, toLabel)
+
+	// Signal that we are starting a split.
+	evt := datastore.SyncEvent{d.DataName(), labels.SplitStartEvent}
+	msg := datastore.SyncMessage{v, labels.DeltaSplitStart{fromLabel, toLabel}}
+	if err := datastore.NotifySubscribers(evt, msg); err != nil {
+		return 0, err
+	}
+
+	// Read the sparse volume from reader.
+	var splits dvid.RLEs
+	splits, err = dvid.ReadRLEs(r)
+	if err != nil {
+		return
+	}
+	numBlocks, _ := splits.Stats()
+
+	// Order the split blocks
+	splitblks := make(dvid.IZYXSlice, numBlocks)
+	n := 0
+	for _, rle := range splits {
+		p := rle.StartPt()
+		run := rle.Length()
+		for i := int32(0); i < run; i++ {
+			izyx := dvid.IndexZYX{p[0] + i, p[1], p[2]}
+			splitblks[n] = izyx.ToIZYXString()
+			n++
+		}
+	}
+	sort.Sort(splitblks)
+
+	// Publish split event
+	evt = datastore.SyncEvent{d.DataName(), labels.SplitLabelEvent}
+	msg = datastore.SyncMessage{v, labels.DeltaSplit{fromLabel, toLabel, nil, splitblks}}
+	if err := datastore.NotifySubscribers(evt, msg); err != nil {
+		return 0, err
+	}
+
+	// Iterate through the split blocks, read the original block and change labels.
+	// TODO: Modifications should be transactional since it's GET-PUT, therefore use
+	// hash on block coord to direct it to block-specific goroutine; we serialize
+	// requests to handle concurrency.
+	ctx := datastore.NewVersionedCtx(d, v)
+	batch := batcher.NewBatch(ctx)
+
+	var toLabelSize uint64
+	for _, splitblk := range splitblks {
+		// Get original block
+		tk := NewTKey(fromLabel, splitblk)
+		val, err := store.Get(ctx, tk)
+		if err != nil {
+			return toLabel, err
+		}
+		if val == nil {
+			continue // There isn't any label in this splitblk, so just skip it.
+		}
+		var rles dvid.RLEs
+		if err := rles.UnmarshalBinary(val); err != nil {
+			return toLabel, fmt.Errorf("Unable to unmarshal RLE for original labels in block %s", splitblk.Print())
+		}
+		numVoxels, _ := rles.Stats()
+		toLabelSize += numVoxels
+
+		// Delete the old block and save the sparse volume but under a new label.
+		batch.Delete(tk)
+		tk2 := NewTKey(toLabel, splitblk)
+		batch.Put(tk2, val)
+	}
+
+	if err := batch.Commit(); err != nil {
+		dvid.Errorf("Batch PUT during split of %q label %d: %v\n", d.DataName(), fromLabel, err)
+	}
+
+	// Publish change in label sizes.
+	delta := labels.DeltaNewSize{
+		Label: toLabel,
+		Size:  toLabelSize,
+	}
+	evt = datastore.SyncEvent{d.DataName(), labels.ChangeSizeEvent}
+	msg = datastore.SyncMessage{v, delta}
+	if err := datastore.NotifySubscribers(evt, msg); err != nil {
+		return 0, err
+	}
+
+	delta2 := labels.DeltaModSize{
+		Label:      fromLabel,
+		SizeChange: int64(-toLabelSize),
+	}
+	evt = datastore.SyncEvent{d.DataName(), labels.ChangeSizeEvent}
+	msg = datastore.SyncMessage{v, delta2}
+	if err := datastore.NotifySubscribers(evt, msg); err != nil {
+		return 0, err
+	}
+
+	// Publish split end
+	evt = datastore.SyncEvent{d.DataName(), labels.SplitEndEvent}
+	msg = datastore.SyncMessage{v, labels.DeltaSplitEnd{fromLabel, toLabel}}
+	if err := datastore.NotifySubscribers(evt, msg); err != nil {
+		return 0, err
+	}
+	dvid.Infof("Split %d voxels from label %d to label %d\n", toLabelSize, fromLabel, toLabel)
 
 	return toLabel, nil
 }

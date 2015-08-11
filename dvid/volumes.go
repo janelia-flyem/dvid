@@ -756,21 +756,21 @@ func (brles BlockRLEs) NumVoxels() uint64 {
 	return size
 }
 
-type izyxSlice []IZYXString
+type IZYXSlice []IZYXString
 
-func (i izyxSlice) Len() int           { return len(i) }
-func (i izyxSlice) Swap(a, b int)      { i[a], i[b] = i[b], i[a] }
-func (i izyxSlice) Less(a, b int) bool { return i[a] < i[b] }
+func (i IZYXSlice) Len() int           { return len(i) }
+func (i IZYXSlice) Swap(a, b int)      { i[a], i[b] = i[b], i[a] }
+func (i IZYXSlice) Less(a, b int) bool { return i[a] < i[b] }
 
 // SortedKeys returns a slice of IZYXString sorted in ascending order.
-func (brles BlockRLEs) SortedKeys() []IZYXString {
-	sk := make([]IZYXString, len(brles))
+func (brles BlockRLEs) SortedKeys() IZYXSlice {
+	sk := make(IZYXSlice, len(brles))
 	var i int
 	for k := range brles {
 		sk[i] = k
 		i++
 	}
-	sort.Sort(izyxSlice(sk))
+	sort.Sort(sk)
 	return sk
 }
 

@@ -48,6 +48,14 @@ type testBody struct {
 	voxelSpans   dvid.Spans
 }
 
+var emptyBody = testBody{
+	label:      0,
+	offset:     dvid.Point3d{},
+	size:       dvid.Point3d{},
+	blockSpans: dvid.Spans{},
+	voxelSpans: dvid.Spans{},
+}
+
 // Makes sure the coarse sparse volume encoding matches the body.
 func (b testBody) checkCoarse(t *testing.T, encoding []byte) {
 	// Get to the  # spans and RLE in encoding
@@ -172,20 +180,15 @@ func newTestVolume(nx, ny, nz int32) *testVolume {
 	}
 }
 
-// Sets voxels in body to given label or if 0, the label of the passed testBody
+// Sets voxels in body to given label.
 func (v *testVolume) add(body testBody, label uint64) {
-	if label == 0 {
-		label = body.label
-	}
 	nx := v.size[0]
 	nxy := nx * v.size[1]
-	for z := body.offset[2]; z < body.offset[2]+body.size[2]; z++ {
-		for y := body.offset[1]; y < body.offset[1]+body.size[1]; y++ {
-			i := (z*nxy + y*nx + body.offset[0]) * 8
-			for x := int32(0); x < body.size[0]; x++ {
-				binary.LittleEndian.PutUint64(v.data[i:i+8], label)
-				i += 8
-			}
+	for _, span := range body.voxelSpans {
+		z, y, x0, x1 := span.Unpack()
+		p := (z*nxy + y*nx) * 8
+		for i := p + x0*8; i <= p+x1*8; i += 8 {
+			binary.LittleEndian.PutUint64(v.data[i:i+8], label)
 		}
 	}
 }
@@ -212,33 +215,24 @@ func (v *testVolume) equals(v2 *testVolume) bool {
 	}
 	for i, value := range v.data {
 		if value != v2.data[i] {
+			fmt.Printf("For element %d, found value %d != %d\n", i, value, v2.data[i])
 			return false
 		}
 	}
 	return true
 }
 
-// Returns true if all voxels in test volume has given label.
+// Returns true if all voxels in test volume for given body has label.
 func (v *testVolume) isLabel(label uint64, body *testBody) bool {
-	var offset, size dvid.Point3d
-	if body == nil {
-		offset = dvid.Point3d{0, 0, 0}
-		size = v.size
-	} else {
-		offset = body.offset
-		size = body.size
-	}
 	nx := v.size[0]
 	nxy := nx * v.size[1]
-	for z := offset[2]; z < offset[2]+size[2]; z++ {
-		for y := offset[1]; y < offset[1]+size[1]; y++ {
-			i := (z*nxy + y*nx + offset[0]) * 8
-			for x := int32(0); x < size[0]; x++ {
-				curLabel := binary.LittleEndian.Uint64(v.data[i : i+8])
-				if curLabel != label {
-					return false
-				}
-				i += 8
+	for _, span := range body.voxelSpans {
+		z, y, x0, x1 := span.Unpack()
+		p := (z*nxy + y*nx) * 8
+		for i := p + x0*8; i <= p+x1*8; i += 8 {
+			curLabel := binary.LittleEndian.Uint64(v.data[i : i+8])
+			if curLabel != label {
+				return false
 			}
 		}
 	}
@@ -247,25 +241,15 @@ func (v *testVolume) isLabel(label uint64, body *testBody) bool {
 
 // Returns true if any voxel in test volume has given label.
 func (v *testVolume) hasLabel(label uint64, body *testBody) bool {
-	var offset, size dvid.Point3d
-	if body == nil {
-		offset = dvid.Point3d{0, 0, 0}
-		size = v.size
-	} else {
-		offset = body.offset
-		size = body.size
-	}
 	nx := v.size[0]
 	nxy := nx * v.size[1]
-	for z := offset[2]; z < offset[2]+size[2]; z++ {
-		for y := offset[1]; y < offset[1]+size[1]; y++ {
-			i := (z*nxy + y*nx + offset[0]) * 8
-			for x := int32(0); x < size[0]; x++ {
-				curLabel := binary.LittleEndian.Uint64(v.data[i : i+8])
-				if curLabel == label {
-					return true
-				}
-				i += 8
+	for _, span := range body.voxelSpans {
+		z, y, x0, x1 := span.Unpack()
+		p := (z*nxy + y*nx) * 8
+		for i := p + x0*8; i <= p+x1*8; i += 8 {
+			curLabel := binary.LittleEndian.Uint64(v.data[i : i+8])
+			if curLabel == label {
+				return true
 			}
 		}
 	}
@@ -282,13 +266,13 @@ func (mjson mergeJSON) send(t *testing.T, uuid dvid.UUID, name string) {
 func createLabelTestVolume(t *testing.T, uuid dvid.UUID, name string) *testVolume {
 	// Setup test label blocks that are non-intersecting.
 	volume := newTestVolume(128, 128, 128)
-	volume.add(body1, 0)
-	volume.add(body2, 0)
+	volume.add(body1, 1)
+	volume.add(body2, 2)
 	if !volume.isLabel(2, &body2) {
 		t.Errorf("Label 2 was incorrectly written in createLabelTestVolume!")
 	}
-	volume.add(body3, 0)
-	volume.add(body4, 0)
+	volume.add(body3, 3)
+	volume.add(body4, 4)
 
 	// Send data over HTTP to populate a data instance
 	volume.put(t, uuid, name)
@@ -402,7 +386,8 @@ func TestMergeLabels(t *testing.T) {
 	config.Set("sync", "labels")
 	server.CreateTestInstance(t, uuid, "labelvol", "bodies", config)
 
-	vol := createLabelTestVolume(t, uuid, "labels")
+	expected := createLabelTestVolume(t, uuid, "labels")
+	expected.add(body3, 2)
 
 	// TODO -- Remove this hack in favor of whatever will be the method
 	// for discerning denormalizations are not yet complete.
@@ -423,21 +408,16 @@ func TestMergeLabels(t *testing.T) {
 		t.Errorf("Expected max label to be 4, instead got %d\n", maxlabel)
 	}
 
-	expected := newTestVolume(128, 128, 128)
-	expected.add(body1, 0)
-	expected.add(body2, 0)
-	expected.add(body3, 2)
-	expected.add(body4, 0)
-
-	if !vol.isLabel(2, &body2) {
-		t.Errorf("Label 2 was incorrectly written!")
-	}
-
-	// Test merge 1
+	// Test merge of 3 into 2
 	testMerge := mergeJSON(`[2, 3]`)
 	testMerge.send(t, uuid, "bodies")
 
-	// Make sure changes are correct after completion
+	// Make sure label 3 sparsevol has been removed.
+	reqStr = fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid, "bodies", 3)
+	encoding := server.TestHTTP(t, "GET", reqStr, nil)
+	emptyBody.checkSparseVol(t, encoding, dvid.Bounds{})
+
+	// Make sure label changes are correct after completion
 	retrieved := newTestVolume(128, 128, 128)
 	retrieved.get(t, uuid, "labels")
 	if len(retrieved.data) != 8*128*128*128 {
@@ -446,7 +426,7 @@ func TestMergeLabels(t *testing.T) {
 	if !retrieved.isLabel(2, &body2) {
 		t.Errorf("Expected label 2 original voxels to remain.  Instead some were removed.\n")
 	}
-	if retrieved.hasLabel(3, nil) {
+	if retrieved.hasLabel(3, &body3) {
 		t.Errorf("Found label 3 when all label 3 should have been merged into label 2!\n")
 	}
 	if !retrieved.isLabel(2, &body3) {
@@ -470,10 +450,10 @@ func TestSplitLabel(t *testing.T) {
 	config.Set("sync", "labels")
 	server.CreateTestInstance(t, uuid, "labelvol", "bodies", config)
 
-	// Store body 4 in as labels
-	labels := newTestVolume(128, 128, 128)
-	labels.add(body4, 0)
-	labels.put(t, uuid, "labels")
+	// Post label volume and setup expected volume after split.
+	expected := createLabelTestVolume(t, uuid, "labels")
+	expected.add(bodyleft, 4)
+	expected.add(bodysplit, 5)
 
 	// TODO -- Remove this hack in favor of whatever will be the method
 	// for discerning denormalizations are not yet complete.
@@ -511,9 +491,9 @@ func TestSplitLabel(t *testing.T) {
 	// Verify the max label is 4
 	reqStr = fmt.Sprintf("%snode/%s/%s/maxlabel", server.WebAPIPath, uuid, "bodies")
 	jsonStr := server.TestHTTP(t, "GET", reqStr, nil)
-	expected := `{"maxlabel": 4}`
-	if string(jsonStr) != expected {
-		t.Errorf("Expected this JSON returned from maxlabel:\n%s\nGot:\n%s\n", expected, string(jsonStr))
+	expectedJSON := `{"maxlabel": 4}`
+	if string(jsonStr) != expectedJSON {
+		t.Errorf("Expected this JSON returned from maxlabel:\n%s\nGot:\n%s\n", expectedJSON, string(jsonStr))
 	}
 
 	// Submit the split sparsevol for body 4a
@@ -531,19 +511,129 @@ func TestSplitLabel(t *testing.T) {
 		t.Errorf("Expected split label to be 5, instead got %d\n", newlabel)
 	}
 
-	// Make sure labels are correct
+	// TODO -- Remove this hack in favor of whatever will be the method
+	// for discerning denormalizations are not yet complete.
+	time.Sleep(5 * time.Second)
+
+	retrieved := newTestVolume(128, 128, 128)
+	retrieved.get(t, uuid, "labels")
+	if len(retrieved.data) != 8*128*128*128 {
+		t.Errorf("Retrieved post-split volume is incorrect size\n")
+	}
+	if !retrieved.equals(expected) {
+		t.Errorf("Split label volume not equal to expected volume\n")
+	}
 
 	// Make sure new body 5 is what we sent
 	reqStr = fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid, "bodies", 5)
 	encoding = server.TestHTTP(t, "GET", reqStr, nil)
-	fmt.Printf("Checking new body 5 is what we sent\n")
 	bodysplit.checkSparseVol(t, encoding, dvid.Bounds{})
 
 	// Make sure sparsevol for original body 4 is correct
 	reqStr = fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid, "bodies", 4)
 	encoding = server.TestHTTP(t, "GET", reqStr, nil)
-	fmt.Printf("Checking left over body 4 is correct\n")
 	bodyleft.checkSparseVol(t, encoding, dvid.Bounds{})
+}
+
+func TestSplitCoarseLabel(t *testing.T) {
+	tests.UseStore()
+	defer tests.CloseStore()
+
+	// Create testbed volume and data instances
+	uuid, _ := initTestRepo()
+	var config dvid.Config
+	config.Set("sync", "bodies")
+	server.CreateTestInstance(t, uuid, "labelblk", "labels", config)
+	config.Clear()
+	config.Set("sync", "labels")
+	server.CreateTestInstance(t, uuid, "labelvol", "bodies", config)
+
+	// Post label volume and setup expected volume after split of block coords (2, 1, 1) and (3, 1, 2)
+	expected := createLabelTestVolume(t, uuid, "labels")
+	fromLabel := uint64(4)
+	toLabel := uint64(5)
+	nx := expected.size[0]
+	nxy := nx * expected.size[1]
+	var x, y, z int32
+	for z = 0; z < 128; z++ {
+		bz := z / DefaultBlockSize
+		if bz != 1 && bz != 2 {
+			continue
+		}
+		for y = 0; y < 128; y++ {
+			by := y / DefaultBlockSize
+			if by != 1 {
+				continue
+			}
+			for x = 0; x < 128; x++ {
+				bx := x / DefaultBlockSize
+				if (bz == 1 && bx == 2) || (bz == 2 && bx == 2) {
+					i := (z*nxy + y*nx + x) * 8
+					label := binary.LittleEndian.Uint64(expected.data[i : i+8])
+					if label == fromLabel {
+						binary.LittleEndian.PutUint64(expected.data[i:i+8], toLabel)
+					}
+				}
+			}
+		}
+	}
+
+	// TODO -- Remove this hack in favor of whatever will be the method
+	// for discerning denormalizations are not yet complete.
+	time.Sleep(5 * time.Second)
+
+	// Make sure sparsevol for original body 4 is correct
+	reqStr := fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid, "bodies", 4)
+	encoding := server.TestHTTP(t, "GET", reqStr, nil)
+	fmt.Printf("Checking original body 4 is correct\n")
+	body4.checkSparseVol(t, encoding, dvid.Bounds{})
+
+	// Create the encoding for split area in block coordinates.
+	rles := dvid.RLEs{
+		dvid.NewRLE(dvid.Point3d{2, 1, 1}, 1),
+		dvid.NewRLE(dvid.Point3d{2, 1, 2}, 1),
+	}
+	buf := new(bytes.Buffer)
+	buf.WriteByte(dvid.EncodingBinary)
+	binary.Write(buf, binary.LittleEndian, uint8(3))  // # of dimensions
+	binary.Write(buf, binary.LittleEndian, byte(0))   // dimension of run (X = 0)
+	buf.WriteByte(byte(0))                            // reserved for later
+	binary.Write(buf, binary.LittleEndian, uint32(0)) // Placeholder for # voxels
+	binary.Write(buf, binary.LittleEndian, uint32(2)) // Placeholder for # spans
+	rleBytes, err := rles.MarshalBinary()
+	if err != nil {
+		t.Errorf("Unable to serialize RLEs: %v\n", err)
+	}
+	buf.Write(rleBytes)
+
+	// Submit the coarse split
+	reqStr = fmt.Sprintf("%snode/%s/%s/split-coarse/%d", server.WebAPIPath, uuid, "bodies", 4)
+	r := server.TestHTTP(t, "POST", reqStr, buf)
+	jsonVal := make(map[string]uint64)
+	if err := json.Unmarshal(r, &jsonVal); err != nil {
+		t.Errorf("Unable to get new label from split.  Instead got: %v\n", jsonVal)
+	}
+	newlabel, ok := jsonVal["label"]
+	if !ok {
+		t.Errorf("The split request did not yield label value.  Instead got: %v\n", jsonVal)
+	}
+	if newlabel != 5 {
+		t.Errorf("Expected split label to be 5, instead got %d\n", newlabel)
+	}
+
+	// TODO -- Remove this hack in favor of whatever will be the method
+	// for discerning denormalizations are not yet complete.
+	time.Sleep(5 * time.Second)
+
+	// Make sure labels are correct
+	retrieved := newTestVolume(128, 128, 128)
+	retrieved.get(t, uuid, "labels")
+	if len(retrieved.data) != 8*128*128*128 {
+		t.Errorf("Retrieved post-split volume is incorrect size\n")
+	}
+	if !retrieved.equals(expected) {
+		t.Errorf("Split label volume not equal to expected volume\n")
+	}
 }
 
 // test diffBlock() function by making sure these RLEs are duplicates

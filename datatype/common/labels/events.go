@@ -81,12 +81,13 @@ type DeltaMergeEnd struct {
 	MergeOp
 }
 
-// DeltaSplit describes the voxels modified during a split operation
+// DeltaSplit describes the voxels modified during a split operation.
+// The Split field may be null if this is a coarse split only defined by block indices.
 type DeltaSplit struct {
 	OldLabel     uint64
 	NewLabel     uint64
 	Split        dvid.BlockRLEs
-	SortedBlocks []dvid.IZYXString
+	SortedBlocks dvid.IZYXSlice
 }
 
 // DeltaSplitStart is the data sent during a SplitStartEvent.

@@ -226,6 +226,32 @@ POST <api URL>/node/<UUID>/<data name>/split/<label>
 			  ...
 	        int32   Length of run
 
+POST <api URL>/node/<UUID>/<data name>/split-coarse/<label>
+
+	Splits a blocks of a label's voxels into a new label.  Returns the following JSON:
+
+		{ "label": <new label> }
+
+	This request requires a binary sparse volume in the POSTed body with the following 
+	encoded RLE format, which is similar to the "split" request format but uses block
+	instead of voxel coordinates:
+
+		All integers are in little-endian format.
+
+	    byte     Payload descriptor:
+	               Set to 0 to indicate it's a binary sparse volume.
+	    uint8    Number of dimensions
+	    uint8    Dimension of run (typically 0 = X)
+	    byte     Reserved (to be used later)
+	    uint32    # Blocks [TODO.  0 for now]
+	    uint32    # Spans
+	    Repeating unit of:
+	        int32   Coordinate of run start (dimension 0)
+	        int32   Coordinate of run start (dimension 1)
+	        int32   Coordinate of run start (dimension 2)
+			  ...
+	        int32   Length of run
+
 `
 
 var (
@@ -921,12 +947,40 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 		toLabel, err := d.SplitLabels(ctx.VersionID(), fromLabel, r.Body)
 		if err != nil {
-			server.BadRequest(w, r, fmt.Sprintf("Error on split: %v", err))
+			server.BadRequest(w, r, fmt.Sprintf("split: %v", err))
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, "{%q: %d}", "label", toLabel)
 		timedLog.Infof("HTTP split request (%s)", r.URL)
+
+	case "split-coarse":
+		// POST <api URL>/node/<UUID>/<data name>/split-coarse/<label>
+		if action != "post" {
+			server.BadRequest(w, r, "Split-coarse requests must be POST actions.")
+			return
+		}
+		if len(parts) < 5 {
+			server.BadRequest(w, r, "ERROR: DVID requires label ID to follow 'split' command")
+			return
+		}
+		fromLabel, err := strconv.ParseUint(parts[4], 10, 64)
+		if err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+		if fromLabel == 0 {
+			server.BadRequest(w, r, "Label 0 is protected background value and cannot be used as sparse volume.\n")
+			return
+		}
+		toLabel, err := d.SplitCoarseLabels(ctx.VersionID(), fromLabel, r.Body)
+		if err != nil {
+			server.BadRequest(w, r, fmt.Sprintf("split-coarse: %v", err))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, "{%q: %d}", "label", toLabel)
+		timedLog.Infof("HTTP split-coarse request (%s)", r.URL)
 
 	case "merge":
 		// POST <api URL>/node/<UUID>/<data name>/merge

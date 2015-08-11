@@ -313,21 +313,29 @@ func (d *Data) splitBlock(in <-chan splitOp) {
 				continue
 			}
 
-			// Modify the block.
-			rles, found := op.Split[zyxStr]
-			if !found {
-				dvid.Errorf("split block %v not present in block RLEs\n", []byte(zyxStr))
-				continue
-			}
-			if err := d.storeRLEs(zyxStr, bdata, op.NewLabel, rles); err != nil {
-				dvid.Errorf("can't store RLEs into block %v\n", []byte(zyxStr))
-				continue
+			// Modify the block using either voxel-level changes or coarser block-level mods.
+			if op.Split != nil {
+				rles, found := op.Split[zyxStr]
+				if !found {
+					dvid.Errorf("split block %s not present in block RLEs\n", zyxStr.Print())
+					continue
+				}
+				if err := d.storeRLEs(bdata, op.NewLabel, zyxStr, rles); err != nil {
+					dvid.Errorf("can't store label %d RLEs into block %s: %v\n", op.NewLabel, zyxStr.Print(), err)
+					continue
+				}
+			} else {
+				// We are doing coarse split and will replace all
+				if err := d.replaceLabel(bdata, op.OldLabel, op.NewLabel); err != nil {
+					dvid.Errorf("can't replace label %d with %d in block %s: %v\n", op.OldLabel, op.NewLabel, zyxStr.Print(), err)
+					continue
+				}
 			}
 
 			// Write the modified block.
 			serialization, err := dvid.SerializeData(bdata, d.Compression(), d.Checksum())
 			if err != nil {
-				dvid.Criticalf("Unable to serialize block in %q: %v\n", d.DataName(), err)
+				dvid.Criticalf("Unable to serialize block %s in %q: %v\n", zyxStr.Print(), d.DataName(), err)
 				continue
 			}
 			batch.Put(tk, serialization)
@@ -340,7 +348,23 @@ func (d *Data) splitBlock(in <-chan splitOp) {
 	}
 }
 
-func (d *Data) storeRLEs(zyxStr dvid.IZYXString, data []byte, label uint64, rles dvid.RLEs) error {
+// Replace a label in a block.
+func (d *Data) replaceLabel(data []byte, fromLabel, toLabel uint64) error {
+	n := len(data)
+	if n%8 != 0 {
+		return fmt.Errorf("label data in block not aligned to uint64: %d bytes", n)
+	}
+	for i := 0; i < n; i += 8 {
+		label := binary.LittleEndian.Uint64(data[i : i+8])
+		if label == fromLabel {
+			binary.LittleEndian.PutUint64(data[i:i+8], toLabel)
+		}
+	}
+	return nil
+}
+
+// Store a label into a block using RLEs.
+func (d *Data) storeRLEs(data []byte, toLabel uint64, zyxStr dvid.IZYXString, rles dvid.RLEs) error {
 	// Get the block coordinate
 	bcoord, err := zyxStr.ToChunkPoint3d()
 	if err != nil {
@@ -358,7 +382,7 @@ func (d *Data) storeRLEs(zyxStr dvid.IZYXString, data []byte, label uint64, rles
 		p := rle.StartPt().Sub(offset)
 		i := p.Value(2)*nxy + p.Value(1)*nx + p.Value(0)*8
 		for n := int32(0); n < rle.Length(); n++ {
-			binary.LittleEndian.PutUint64(data[i:i+8], label)
+			binary.LittleEndian.PutUint64(data[i:i+8], toLabel)
 			i += 8
 		}
 	}
