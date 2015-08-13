@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"runtime"
@@ -20,6 +21,7 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage/local"
+	"github.com/janelia-flyem/go/profiler"
 
 	// Declare the data types this DVID executable will support
 	_ "github.com/janelia-flyem/dvid/datatype/googlevoxels"
@@ -272,6 +274,15 @@ func DoServe(cmd dvid.Command) error {
 	if err := datastore.Initialize(); err != nil {
 		return fmt.Errorf("Unable to initialize datastore: %v\n", err)
 	}
+
+	// add handlers to help us track memory usage - they don't track memory until they're told to
+	profiler.AddMemoryProfilingHandlers()
+
+	// Uncomment if you want to start profiling automatically
+	// profiler.StartProfiling()
+
+	// listen on port 6060 (pick a port)
+	go http.ListenAndServe(":6060", nil)
 
 	// Serve HTTP and RPC
 	if err := server.Serve(*httpAddress, *clientDir, *rpcAddress); err != nil {
