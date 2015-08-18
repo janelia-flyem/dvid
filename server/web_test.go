@@ -98,6 +98,21 @@ func TestLog(t *testing.T) {
 	testLog(t, data[4], "line5")
 }
 
+func TestDeleteInstance(t *testing.T) {
+	tests.UseStore()
+	defer tests.CloseStore()
+
+	uuid := createRepo(t)
+
+	// Shouldn't be able to delete instance without "imsure"
+	delReq := fmt.Sprintf("%srepo/%s/%s", WebAPIPath, uuid, "absent-name")
+	TestBadHTTP(t, "DELETE", delReq, nil)
+
+	// Shouldn't be able to delete an instance that doesn't exist.
+	delReq = fmt.Sprintf("%srepo/%s/%s?imsure=true", WebAPIPath, uuid, "absent-name")
+	TestBadHTTP(t, "DELETE", delReq, nil)
+}
+
 func TestCommitBranchMerge(t *testing.T) {
 	tests.UseStore()
 	defer tests.CloseStore()

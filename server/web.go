@@ -94,6 +94,10 @@ const WebHelp = `
 
 	Returns JSON with datatype names and their URLs.
 
+-------------------------
+Repo-Level REST endpoints
+-------------------------
+
  POST /api/repos
 
 	Creates a new repository.  Expects configuration data in JSON as the body of the POST.
@@ -199,6 +203,11 @@ const WebHelp = `
 	{ "child": "3f01a8856" }
 
 	The response includes the UUID of the new merged, child node.
+
+
+-------------------------
+Node-Level REST endpoints
+-------------------------
 
   GET /api/node/{uuid}/log
  POST /api/node/{uuid}/log
@@ -776,6 +785,13 @@ func repoDeleteHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	dataname, ok := c.URLParams["dataname"]
 	if !ok {
 		BadRequest(w, r, "Error in retrieving data instance name from URL parameters")
+		return
+	}
+
+	// Make sure this instance exists.
+	_, err := datastore.GetDataByUUID(uuid, dvid.InstanceName(dataname))
+	if err != nil {
+		BadRequest(w, r, "Error in trying to delete %q for UUID %s: %v", dataname, uuid, err)
 		return
 	}
 
