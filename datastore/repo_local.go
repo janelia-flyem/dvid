@@ -1310,14 +1310,7 @@ func (m *repoManager) deleteDataByUUID(uuid dvid.UUID, name dvid.InstanceName) e
 	if err != nil {
 		return err
 	}
-
-	r.Lock()
-	defer r.Unlock()
-
-	if err := r.deleteData(name); err != nil {
-		return err
-	}
-	return nil
+	return m.deleteData(r, name)
 }
 
 func (m *repoManager) deleteDataByVersion(v dvid.VersionID, name dvid.InstanceName) error {
@@ -1325,13 +1318,40 @@ func (m *repoManager) deleteDataByVersion(v dvid.VersionID, name dvid.InstanceNa
 	if err != nil {
 		return err
 	}
+	return m.deleteData(r, name)
+}
 
+func (m *repoManager) deleteData(r *repoT, name dvid.InstanceName) error {
 	r.Lock()
 	defer r.Unlock()
 
-	if err := r.deleteData(name); err != nil {
-		return err
+	data, found := r.data[name]
+	if !found {
+		return ErrInvalidDataName
 	}
+
+	// Delete entries in the sync graph if this data needs to be synced with another data instance.
+	_, syncable := data.(Syncer)
+	if syncable {
+		r.deleteSyncGraph(name)
+	}
+
+	// Remove this data instance from the repository and persist.
+	tm := time.Now()
+	r.updated = tm
+	msg := fmt.Sprintf("Delete data instance '%s' of type '%s'", name, data.TypeName())
+	message := fmt.Sprintf("%s  %s", tm.Format(time.RFC3339), msg)
+	r.log = append(r.log, message)
+	r.dag.deleteDataInstance(name)
+	delete(r.data, name)
+
+	// For all data tiers of storage, remove data key-value pairs that would be associated with this instance id.
+	go func() {
+		if err := storage.DeleteDataInstance(data); err != nil {
+			dvid.Errorf("Error trying to do async data instance deletion: %v\n", err)
+		}
+	}()
+
 	return r.save()
 }
 
@@ -1652,34 +1672,6 @@ func (r *repoT) deleteSyncGraph(name dvid.InstanceName) {
 	for _, evt := range todelete {
 		delete(r.subs, evt)
 	}
-}
-
-func (r *repoT) deleteData(name dvid.InstanceName) error {
-	data, found := r.data[name]
-	if !found {
-		return ErrInvalidDataName
-	}
-
-	// For all data tiers of storage, remove data key-value pairs that would be associated with this instance id.
-	if err := storage.DeleteDataInstance(data); err != nil {
-		return err
-	}
-
-	// Delete entries in the sync graph if this data needs to be synced with another data instance.
-	_, syncable := data.(Syncer)
-	if syncable {
-		r.deleteSyncGraph(name)
-	}
-
-	// Remove this data instance from the repository and persist.
-	tm := time.Now()
-	r.updated = tm
-	msg := fmt.Sprintf("Delete data instance '%s' of type '%s'", name, data.TypeName())
-	message := fmt.Sprintf("%s  %s", tm.Format(time.RFC3339), msg)
-	r.log = append(r.log, message)
-	r.dag.deleteDataInstance(name)
-	delete(r.data, name)
-	return nil
 }
 
 // --------------------------------------

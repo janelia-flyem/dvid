@@ -795,12 +795,11 @@ func repoDeleteHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Do the deletion asynchronously since they can take a very long time.
-	go func() {
-		if err := datastore.DeleteDataByUUID(uuid, dvid.InstanceName(dataname)); err != nil {
-			dvid.Errorf("Error in deleting data instance %q: %v", dataname, err)
-		}
-	}()
+	// Do the deletion.  Under hood, modifies metadata immediately and launches async k/v deletion.
+	if err := datastore.DeleteDataByUUID(uuid, dvid.InstanceName(dataname)); err != nil {
+		BadRequest(w, r, "Error in deleting data instance %q: %v", dataname, err)
+		return
+	}
 
 	// Just respond that deletion was successfully started
 	w.Header().Set("Content-Type", "application/json")
