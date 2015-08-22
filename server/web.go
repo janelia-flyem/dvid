@@ -128,10 +128,6 @@ Repo-Level REST endpoints
 	instance subscribe to changes in the given data instances.
 
 	
- DELETE /api/repo/{uuid}/{dataname}?imsure=true
-
-	Deletes a data instance of given name from the repository holding a node with UUID.	
-
   GET /api/repo/{uuid}/log
  POST /api/repo/{uuid}/log
 
@@ -203,6 +199,16 @@ Repo-Level REST endpoints
 	{ "child": "3f01a8856" }
 
 	The response includes the UUID of the new merged, child node.
+
+
+ DELETE /api/repo/{uuid}?imsure=true
+
+	Deletes the repository holding a node with UUID.  
+
+
+ DELETE /api/repo/{uuid}/{dataname}?imsure=true
+
+	Deletes a data instance of given name from the repository holding a node with UUID.	
 
 
 -------------------------
@@ -399,14 +405,18 @@ func initRoutes() {
 	}
 	mainMux.Get("/api/repos/info", reposInfoHandler)
 
+	repoRawMux := web.New()
+	mainMux.Handle("/api/repo/:uuid", repoRawMux)
+	repoRawMux.Use(repoRawSelector)
+	repoRawMux.Head("/api/repo/:uuid", repoHeadHandler)
+	repoRawMux.Delete("/api/repo/:uuid", repoDeleteHandler)
+
 	repoMux := web.New()
-	mainMux.Handle("/api/repo/:uuid", repoMux)
 	mainMux.Handle("/api/repo/:uuid/:action", repoMux)
 	repoMux.Use(repoSelector)
-	repoMux.Head("/api/repo/:uuid", repoHeadHandler)
 	repoMux.Get("/api/repo/:uuid/info", repoInfoHandler)
 	repoMux.Post("/api/repo/:uuid/instance", repoNewDataHandler)
-	repoMux.Delete("/api/repo/:uuid/:dataname", repoDeleteHandler)
+	repoMux.Delete("/api/repo/:uuid/:dataname", repoDeleteInstanceHandler)
 	repoMux.Get("/api/repo/:uuid/log", getRepoLogHandler)
 	repoMux.Post("/api/repo/:uuid/log", postRepoLogHandler)
 	repoMux.Post("/api/repo/:uuid/merge", repoMergeHandler)
@@ -511,8 +521,25 @@ func corsHandler(c *web.C, h http.Handler) http.Handler {
 	return http.HandlerFunc(fn)
 }
 
+// repoRawSelector retrieves the particular repo from a potentially partial string that uniquely
+// identifies the repo without any access restrictions.
+func repoRawSelector(c *web.C, h http.Handler) http.Handler {
+	fn := func(w http.ResponseWriter, r *http.Request) {
+		var err error
+		var uuid dvid.UUID
+		if uuid, c.Env["versionID"], err = datastore.MatchingUUID(c.URLParams["uuid"]); err != nil {
+			BadRequest(w, r, err)
+			return
+		}
+		c.Env["uuid"] = uuid
+
+		h.ServeHTTP(w, r)
+	}
+	return http.HandlerFunc(fn)
+}
+
 // repoSelector retrieves the particular repo from a potentially partial string that uniquely
-// identifies the repo.
+// identifies the repo, and imposes restrictions depending on read-only mode and locked nodes.
 func repoSelector(c *web.C, h http.Handler) http.Handler {
 	fn := func(w http.ResponseWriter, r *http.Request) {
 		action := strings.ToLower(r.Method)
@@ -529,7 +556,7 @@ func repoSelector(c *web.C, h http.Handler) http.Handler {
 		}
 		c.Env["uuid"] = uuid
 
-		// Make sure locked nodes can't use anything besides GET and HEAD
+		// Make sure locked nodes can't use anything besides GET and HEAD unless we are deleting whole repo.
 		locked, err := datastore.LockedUUID(uuid)
 		if err != nil {
 			BadRequest(w, r, err)
@@ -778,26 +805,46 @@ func repoDeleteHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	queryValues := r.URL.Query()
 	imsure := queryValues.Get("imsure")
 	if imsure != "true" {
+		BadRequest(w, r, "Cannot delete repo unless query string 'imsure=true' is present!")
+		return
+	}
+
+	err := datastore.DeleteRepo(uuid)
+	if err != nil {
+		BadRequest(w, r, "Error trying to delete repo with UUID %s: %v", uuid, err)
+		return
+	}
+
+	// Just respond that deletion was successfully started
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, `{"result": "Started deletion of repo containing UUID %s"}`, uuid)
+}
+
+func repoDeleteInstanceHandler(c web.C, w http.ResponseWriter, r *http.Request) {
+	uuid := c.Env["uuid"].(dvid.UUID)
+	queryValues := r.URL.Query()
+	imsure := queryValues.Get("imsure")
+	if imsure != "true" {
 		BadRequest(w, r, "Cannot delete instance unless query string 'imsure=true' is present!")
 		return
 	}
 
 	dataname, ok := c.URLParams["dataname"]
 	if !ok {
-		BadRequest(w, r, "Error in retrieving data instance name from URL parameters")
+		BadRequest(w, r, "Error retrieving data instance name from URL parameters")
 		return
 	}
 
 	// Make sure this instance exists.
 	_, err := datastore.GetDataByUUID(uuid, dvid.InstanceName(dataname))
 	if err != nil {
-		BadRequest(w, r, "Error in trying to delete %q for UUID %s: %v", dataname, uuid, err)
+		BadRequest(w, r, "Error trying to delete %q for UUID %s: %v", dataname, uuid, err)
 		return
 	}
 
 	// Do the deletion.  Under hood, modifies metadata immediately and launches async k/v deletion.
 	if err := datastore.DeleteDataByUUID(uuid, dvid.InstanceName(dataname)); err != nil {
-		BadRequest(w, r, "Error in deleting data instance %q: %v", dataname, err)
+		BadRequest(w, r, "Error deleting data instance %q: %v", dataname, err)
 		return
 	}
 

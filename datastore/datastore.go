@@ -120,6 +120,14 @@ func NewRepo(alias, description string, assign *dvid.UUID) (dvid.UUID, error) {
 	return r.uuid, err
 }
 
+// DeleteRepo deletes a Repo holding a node with UUID.
+func DeleteRepo(uuid dvid.UUID) error {
+	if manager == nil {
+		return ErrManagerNotInitialized
+	}
+	return manager.deleteRepo(uuid)
+}
+
 func GetRepoRoot(uuid dvid.UUID) (dvid.UUID, error) {
 	if manager == nil {
 		return dvid.NilUUID, ErrManagerNotInitialized

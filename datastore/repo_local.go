@@ -517,7 +517,7 @@ func (m *repoManager) uuidFromVersion(versionID dvid.VersionID) (dvid.UUID, erro
 
 	uuid, found := m.versionToUUID[versionID]
 	if !found {
-		return dvid.NilUUID, fmt.Errorf("No UUID found for version id %d", versionID)
+		return dvid.NilUUID, ErrInvalidVersion
 	}
 	return uuid, nil
 }
@@ -528,7 +528,7 @@ func (m *repoManager) versionFromUUID(uuid dvid.UUID) (dvid.VersionID, error) {
 
 	versionID, found := m.uuidToVersion[uuid]
 	if !found {
-		return 0, fmt.Errorf("No version ID found for uuid %s", uuid)
+		return 0, ErrInvalidUUID
 	}
 	return versionID, nil
 }
@@ -559,6 +559,50 @@ func (m *repoManager) matchingUUID(str string) (dvid.UUID, dvid.VersionID, error
 		err = fmt.Errorf("Could not find UUID with partial match to %s!", str)
 	}
 	return bestUUID, bestVersion, err
+}
+
+func (m *repoManager) deleteRepo(uuid dvid.UUID) error {
+	m.Lock()
+	defer m.Unlock()
+
+	m.idMutex.RLock()
+	defer m.idMutex.RUnlock()
+
+	r, found := m.repos[uuid]
+	if !found {
+		return ErrInvalidUUID
+	}
+
+	r.Lock()
+
+	// Start deletion of all data instances.
+	for name, data := range r.data {
+		go func(name dvid.InstanceName) {
+			if err := storage.DeleteDataInstance(data); err != nil {
+				dvid.Errorf("Error trying to do async data instance %q deletion: %v\n", name, err)
+			}
+		}(name)
+	}
+
+	// Delete the repo off the datastore.
+	if err := r.delete(); err != nil {
+		return fmt.Errorf("Unable to delete repo from datastore: %v", err)
+	}
+	r.Unlock()
+
+	// Delete all UUIDs in this repo from metadata
+	delete(m.repoToUUID, r.id)
+	for v := range r.dag.nodes {
+		u, found := m.versionToUUID[v]
+		if !found {
+			dvid.Errorf("Found version id %d with no corresponding UUID on delete of repo %s!\n", v, uuid)
+			continue
+		}
+		delete(m.repos, u)
+		delete(m.uuidToVersion, u)
+		delete(m.versionToUUID, v)
+	}
+	return nil
 }
 
 // ---- Repo-level properties functions -------
@@ -1563,6 +1607,12 @@ func (r *repoT) save() error {
 
 	var ctx storage.MetadataContext
 	return manager.store.Put(ctx, storage.NewTKey(repoKey, r.id.Bytes()), serialization)
+}
+
+func (r *repoT) delete() error {
+	var ctx storage.MetadataContext
+	tkey := storage.NewTKey(repoKey, r.id.Bytes())
+	return manager.store.Delete(ctx, tkey)
 }
 
 // Given a transmitted repo where you assume all local IDs (instance and version ids)

@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"testing"
 
+	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/tests"
 )
@@ -113,7 +114,7 @@ func TestDeleteInstance(t *testing.T) {
 	TestBadHTTP(t, "DELETE", delReq, nil)
 }
 
-func TestCommitBranchMerge(t *testing.T) {
+func TestCommitBranchMergeDelete(t *testing.T) {
 	tests.UseStore()
 	defer tests.CloseStore()
 
@@ -165,4 +166,41 @@ func TestCommitBranchMerge(t *testing.T) {
 	payload = bytes.NewBufferString(mergeJSON)
 	apiStr = fmt.Sprintf("%srepo/%s/merge", WebAPIPath, parent1)
 	TestHTTP(t, "POST", apiStr, payload)
+
+	// Get root version to check after delete repo.
+	rootV, err := datastore.VersionFromUUID(uuid)
+	if err != nil {
+		t.Errorf("Got unexpected error on getting version from root UUID: %v\n", err)
+	}
+
+	// Delete the entire repo including all branches.
+	apiStr = fmt.Sprintf("%srepo/%s", WebAPIPath, parent2)
+	TestBadHTTP(t, "DELETE", apiStr, nil) // Requires query string
+	apiStr = fmt.Sprintf("%srepo/%s?imsure=true", WebAPIPath, parent2)
+	TestHTTP(t, "DELETE", apiStr, nil) // Requires query string
+
+	// Make sure none of the repo is still accessible.
+	jsonResp, err := datastore.GetRepoJSON(uuid)
+	if err == nil {
+		t.Errorf("Expected invalid UUID after repo delete but got json back: %s\n", jsonResp)
+	}
+	if err != datastore.ErrInvalidUUID {
+		t.Errorf("Expected invalid UUID after repo delete but got unexpected error: %v\n", err)
+	}
+	_, err = datastore.VersionFromUUID(uuid)
+	if err != datastore.ErrInvalidUUID {
+		t.Errorf("Expected invalid rot UUID after repo delete but got unexpected error: %v\n", err)
+	}
+	_, err = datastore.VersionFromUUID(parent1)
+	if err != datastore.ErrInvalidUUID {
+		t.Errorf("Expected invalid UUID for 1st parent after repo delete but got unexpected error: %v\n", err)
+	}
+	_, err = datastore.VersionFromUUID(parent2)
+	if err != datastore.ErrInvalidUUID {
+		t.Errorf("Expected invalid UUID for 2nd parent after repo delete but got unexpected error: %v\n", err)
+	}
+	_, err = datastore.UUIDFromVersion(rootV)
+	if err != datastore.ErrInvalidVersion {
+		t.Errorf("Expected invalid version id for root after repo delete but got unexpected error: %v\n", err)
+	}
 }
