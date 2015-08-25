@@ -186,7 +186,7 @@ func (d *Data) PutVoxels(v dvid.VersionID, vox *Voxels, roi *ROI) error {
 
 // PutBlocks stores blocks of data in a span along X
 func (d *Data) PutBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int, data io.ReadCloser) error {
-	store, err := storage.BigDataStore()
+	store, err := storage.MutableStore()
 	if err != nil {
 		return fmt.Errorf("Data type imageblk had error initializing store: %v\n", err)
 	}
@@ -317,7 +317,7 @@ func (d *Data) putChunk(chunk *storage.Chunk) {
 		return
 	}
 
-	store, err := storage.BigDataStore()
+	store, err := storage.MutableStore()
 	if err != nil {
 		dvid.Errorf("Data type imageblk had error initializing store: %v\n", err)
 		return
@@ -396,7 +396,7 @@ const KVWriteSize = 500
 // TODO -- Clean up all the writing and simplify now that we have block-aligned writes.
 // writeBlocks persists blocks of voxel data asynchronously using batch writes.
 func (d *Data) writeBlocks(v dvid.VersionID, b storage.TKeyValues, wg1, wg2 *sync.WaitGroup) error {
-	store, err := storage.BigDataStore()
+	store, err := storage.MutableStore()
 	if err != nil {
 		return fmt.Errorf("Data type imageblk had error initializing store: %v\n", err)
 	}

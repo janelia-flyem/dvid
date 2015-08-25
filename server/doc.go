@@ -3,8 +3,8 @@
 	to the type of DVID platform: local (e.g., running on MacBook Pro), clustered, or
 	using cloud-based services like Google Cloud.
 
-	Datatypes should use one of the three tiers of storage (MetaData, SmallData, BigData)
-	that provide a layer of storage semantics (latency, value size, etc) on top of
+	Datatypes can use any of the three tiers of storage (MetaData, Mutable, Immutable)
+	that provide a layer of storage semantics (latency, mutability, etc) on top of
 	underlying storage engines.
 
 	The DVID web client is also managed from this package.	For a DVID web console, see the

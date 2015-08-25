@@ -112,12 +112,12 @@ func (d *Data) SyncOnNodeLock(uuid dvid.UUID) {
 		return
 	}
 
-	bigdata, err := storage.BigDataStore()
+	bigdata, err := storage.MutableStore()
 	if err != nil {
 		dvid.Errorf("Cannot get datastore that handles big data: %s\n", err)
 		return
 	}
-	smalldata, err := storage.SmallDataStore()
+	smalldata, err := storage.MutableStore()
 	if err != nil {
 		dvid.Errorf("Cannot get datastore that handles small data: %s\n", err)
 		return
@@ -217,7 +217,7 @@ func (d *Data) SyncOnNodeLock(uuid dvid.UUID) {
 // On return from this function, block-level RLEs have been written but size and surface
 // data are handled asynchronously.
 func (d *Data) denormFunc(versionID dvid.VersionID, mods imageblk.BlockChannel) {
-	smalldata, err := storage.SmallDataStore()
+	smalldata, err := storage.MutableStore()
 	if err != nil {
 		dvid.Errorf("Cannot get datastore that handles small data: %s\n", err)
 		return
@@ -350,7 +350,7 @@ func (d *Data) computeAndSaveSurface(ctx storage.Context, vol *dvid.SparseVol) e
 	if err != nil {
 		return err
 	}
-	store, err := storage.BigDataStore()
+	store, err := storage.MutableStore()
 	if err != nil {
 		return err
 	}

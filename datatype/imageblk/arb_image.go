@@ -259,7 +259,7 @@ func (vc *ValueCache) Clear() {
 
 // Calculates value of a 3d real world point in space defined by underlying data resolution.
 func (d *Data) computeValue(pt dvid.Vector3d, ctx storage.Context, keyF KeyFunc, cache *ValueCache) ([]byte, error) {
-	db, err := storage.BigDataStore()
+	db, err := storage.MutableStore()
 	if err != nil {
 		return nil, err
 	}

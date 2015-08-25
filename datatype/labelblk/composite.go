@@ -77,7 +77,7 @@ func (d *Data) CreateComposite(request datastore.Request, reply *datastore.Respo
 	op := &blockOp{grayscale, composite, v}
 	chunkOp := &storage.ChunkOp{op, wg}
 
-	store, err := storage.BigDataStore()
+	store, err := storage.MutableStore()
 	if err != nil {
 		return err
 	}
@@ -153,13 +153,13 @@ func (d *Data) createCompositeChunk(chunk *storage.Chunk) {
 	}
 
 	// Get the corresponding grayscale block.
-	bigdata, err := storage.BigDataStore()
+	store, err := storage.MutableStore()
 	if err != nil {
 		dvid.Errorf("Unable to retrieve big data store: %s\n", err)
 		return
 	}
 	grayscaleCtx := datastore.NewVersionedCtx(op.grayscale, op.versionID)
-	blockData, err := bigdata.Get(grayscaleCtx, chunk.K)
+	blockData, err := store.Get(grayscaleCtx, chunk.K)
 	if err != nil {
 		dvid.Errorf("Error getting grayscale block for index %s\n", zyx)
 		return
@@ -193,7 +193,7 @@ func (d *Data) createCompositeChunk(chunk *storage.Chunk) {
 		return
 	}
 	compositeCtx := datastore.NewVersionedCtx(op.composite, op.versionID)
-	err = bigdata.Put(compositeCtx, chunk.K, serialization)
+	err = store.Put(compositeCtx, chunk.K, serialization)
 	if err != nil {
 		dvid.Errorf("Unable to PUT composite block %s: %v\n", zyx, err)
 		return

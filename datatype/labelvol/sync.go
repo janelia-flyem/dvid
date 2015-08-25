@@ -54,7 +54,7 @@ func (d *Data) InitSync(name dvid.InstanceName) []datastore.SyncSub {
 // might not always hold in future, so stick with incremental update
 // until proven to be a bottleneck.
 func (d *Data) handleBlockEvent(in <-chan datastore.SyncMessage, done <-chan struct{}) {
-	store, err := storage.SmallDataStore()
+	store, err := storage.MutableStore()
 	if err != nil {
 		dvid.Errorf("Data type labelvol had error initializing store: %v\n", err)
 		return

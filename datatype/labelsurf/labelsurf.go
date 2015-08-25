@@ -203,13 +203,13 @@ type Data struct {
 // GetSurface returns a gzipped byte array with # voxels and float32 arrays for vertices and
 // normals.
 func GetSurface(ctx storage.Context, label uint64) ([]byte, bool, error) {
-	bigdata, err := storage.BigDataStore()
+	store, err := storage.MutableStore()
 	if err != nil {
 		return nil, false, fmt.Errorf("Cannot get datastore that handles big data: %v\n", err)
 	}
 
 	// Retrieve the precomputed surface or that it's not available.
-	data, err := bigdata.Get(ctx, NewLabelSurfaceIndex(label))
+	data, err := store.Get(ctx, NewLabelSurfaceIndex(label))
 	if err != nil {
 		return nil, false, fmt.Errorf("Error in retrieving surface for label %d: %v", label, err)
 	}

@@ -167,36 +167,38 @@ type DataStoreType uint8
 const (
 	UnknownData DataStoreType = iota
 	MetaData
-	SmallData
-	BigData
+	Mutable
+	Immutable
 )
 
 // MetaDataStorer is the interface for storing DVID datastore metadata like the
 // repositories, associated DAGs, and datatype-specific data that needs to be
 // coordinated across front-end DVID servers.  It is characterized by the following:
 // (1) not big data, (2) ideally in memory, (3) strongly consistent across all
-// DVID processes, e.g., all front-end DVID apps.  Of the three tiers of storage
-// (Metadata, SmallData, BigData), MetaData should have the smallest capacity and
-// the lowest latency.
+// DVID processes, e.g., all front-end DVID apps.  Of all types of persistence, it
+// should have lowest latency and smallest storage capacity.
 type MetaDataStorer interface {
 	OrderedKeyValueDB
 }
 
-// SmallDataStorer is the interface for storing key-only or small key-value pairs that
-// require much more aggregate capacity and allow higher latency than MetaData.  This is
-// typically used for indexing where the values aren't too large.
-type SmallDataStorer interface {
+// MutableStorer is the interface for mutable data storage, i.e., data stored in uncommitted
+// leaves of the DAG.  The presumption is that the Mutable store will be smaller
+// than an Immutable store, trading off $$/TB for speed to handle distributed
+// transactions and other thorny issues when dealing with distributed, mutable data.
+type MutableStorer interface {
 	OrderedKeyValueDB
 }
 
-// BigDataStorer is the interface for storing DVID key-value pairs that are relatively
-// large compared to key-value pairs used in SmallData.  This interface should be used
-// for blocks of voxels and large denormalized data like the multi-scale surface of a
-// given label.  This store should have considerably more capacity and potentially
-// higher latency than SmallData.  While this type embeds an ordered key-value store,
-// it could be implemented by a wrapper around an unordered key-value store due to the
-// relaxation in the required access times, e.g., brute force search of generated keys.
-type BigDataStorer interface {
+// ImmutableStorer is the interface for immutable data storage, i.e., data stored
+// in interior nodes of the DAG or from datatypes known to operate with immutable data,
+// particularly during ingestion (e.g., grayscale image data).  The implementation
+// of an ImmutableStorer benefits from knowing its data is immutable, allowing better
+// caching and handling of distributed data without worry of coordination.
+//
+// NOTE: Although the interface is identical to a mutable store, its use requires an
+// an immutable pattern, e.g., calling a second Put() on the same key should return
+// an error.
+type ImmutableStorer interface {
 	OrderedKeyValueDB
 }
 

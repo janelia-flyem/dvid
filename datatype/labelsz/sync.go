@@ -42,7 +42,7 @@ func (d *Data) InitSync(name dvid.InstanceName) []datastore.SyncSub {
 }
 
 func (d *Data) handleSizeEvent(in <-chan datastore.SyncMessage, done <-chan struct{}) {
-	store, err := storage.SmallDataStore()
+	store, err := storage.MutableStore()
 	if err != nil {
 		dvid.Errorf("Data type labelvol had error initializing store: %v\n", err)
 		return

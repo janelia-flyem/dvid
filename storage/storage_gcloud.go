@@ -21,11 +21,11 @@ func MetaDataStore() (MetaDataStorer, error) {
 	return nil, nil
 }
 
-func SmallDataStore() (SmallDataStorer, error) {
+func MutableStore() (MutableStorer, error) {
 	return nil, nil
 }
 
-func BigDataStore() (BigDataStorer, error) {
+func ImmutableStore() (ImmutableStorer, error) {
 	return nil, nil
 }
 

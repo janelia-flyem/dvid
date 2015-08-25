@@ -1062,7 +1062,7 @@ func (d *Data) ForegroundROI(req datastore.Request, reply *datastore.Response) e
 func (d *Data) foregroundROI(v dvid.VersionID, dest *roi.Data, background dvid.PointNd) {
 	dest.Ready = false
 
-	store, err := storage.BigDataStore()
+	store, err := storage.MutableStore()
 	if err != nil {
 		dvid.Criticalf("Data type imageblk had error initializing store: %v\n", err)
 		return

@@ -962,14 +962,14 @@ func (d *Data) getTileData(ctx storage.Context, shape dvid.DataShape, scaling Sc
 	if d.Levels == nil {
 		return nil, fmt.Errorf("Tiles have not been generated.")
 	}
-	bigdata, err := storage.BigDataStore()
+	imstore, err := storage.ImmutableStore()
 	if err != nil {
 		return nil, err
 	}
 
 	// Retrieve the tile data from datastore
 	tileIndex := &IndexTile{&index, shape, scaling}
-	data, err := bigdata.Get(ctx, tileIndex.Bytes())
+	data, err := imstore.Get(ctx, tileIndex.Bytes())
 	if err != nil {
 		return nil, fmt.Errorf("Error trying to GET from datastore: %v", err)
 	}
@@ -1078,9 +1078,9 @@ func (d *Data) extractTiles(v *imageblk.Voxels, offset dvid.Point, scaling Scali
 
 // Returns function that stores a tile as an optionally compressed PNG image.
 func (d *Data) putTileFunc(versionID dvid.VersionID) (outFunc, error) {
-	bigdata, err := storage.BigDataStore()
+	imstore, err := storage.ImmutableStore()
 	if err != nil {
-		return nil, fmt.Errorf("Cannot open big data store: %v\n", err)
+		return nil, fmt.Errorf("Cannot open immutable store: %v\n", err)
 	}
 	ctx := datastore.NewVersionedCtx(d, versionID)
 
@@ -1103,7 +1103,7 @@ func (d *Data) putTileFunc(versionID dvid.VersionID) (outFunc, error) {
 		if err != nil {
 			return err
 		}
-		return bigdata.Put(ctx, index.Bytes(), data)
+		return imstore.Put(ctx, index.Bytes(), data)
 	}, nil
 }
 

@@ -41,7 +41,7 @@ type sizeChange struct {
 // labels.MergeEndEvent occurs at end of merge and transmits labels.DeltaMergeEnd struct.
 //
 func (d *Data) MergeLabels(v dvid.VersionID, m labels.MergeOp) error {
-	store, err := storage.SmallDataStore()
+	store, err := storage.MutableStore()
 	if err != nil {
 		return fmt.Errorf("Data type labelvol had error initializing store: %v\n", err)
 	}
@@ -186,7 +186,7 @@ func (d *Data) MergeLabels(v dvid.VersionID, m labels.MergeOp) error {
 // labels.SplitEndEvent occurs at end of split and transmits labels.DeltaSplitEnd struct.
 //
 func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser) (toLabel uint64, err error) {
-	store, err := storage.SmallDataStore()
+	store, err := storage.MutableStore()
 	if err != nil {
 		err = fmt.Errorf("Data type labelvol had error initializing store: %v\n", err)
 		return
@@ -335,7 +335,7 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser) 
 // labels.SplitEndEvent occurs at end of split and transmits labels.DeltaSplitEnd struct.
 //
 func (d *Data) SplitCoarseLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser) (toLabel uint64, err error) {
-	store, err := storage.SmallDataStore()
+	store, err := storage.MutableStore()
 	if err != nil {
 		err = fmt.Errorf("Data type labelvol had error initializing store: %v\n", err)
 		return
@@ -463,7 +463,7 @@ func (d *Data) SplitCoarseLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCl
 
 // write label volume in sorted order if available.
 func (d *Data) writeLabelVol(v dvid.VersionID, label uint64, brles dvid.BlockRLEs, sortblks []dvid.IZYXString) error {
-	store, err := storage.SmallDataStore()
+	store, err := storage.MutableStore()
 	if err != nil {
 		return fmt.Errorf("Data type labelvol had error initializing store: %v\n", err)
 	}

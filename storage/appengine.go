@@ -1,5 +1,8 @@
 // +build gcloud
 
+// This is a placeholder and not ready for use.
+// TODO: Either finish or move to Google Bigtable service.
+
 package storage
 
 import (

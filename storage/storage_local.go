@@ -19,8 +19,8 @@ type managerT struct {
 
 	// Tiers
 	metadata  MetaDataStorer
-	smalldata SmallDataStorer
-	bigdata   BigDataStorer
+	mutable   MutableStorer
+	immutable ImmutableStorer
 
 	// Cached type-asserted interfaces
 	graphEngine Engine
@@ -38,18 +38,18 @@ func MetaDataStore() (MetaDataStorer, error) {
 	return manager.metadata, nil
 }
 
-func SmallDataStore() (SmallDataStorer, error) {
+func MutableStore() (MutableStorer, error) {
 	if !manager.setup {
-		return nil, fmt.Errorf("Key-value store not initialized before requesting SmallDataStore")
+		return nil, fmt.Errorf("Key-value store not initialized before requesting MutableStore")
 	}
-	return manager.smalldata, nil
+	return manager.mutable, nil
 }
 
-func BigDataStore() (BigDataStorer, error) {
+func ImmutableStore() (ImmutableStorer, error) {
 	if !manager.setup {
-		return nil, fmt.Errorf("Key-value store not initialized before requesting BigaDataStore")
+		return nil, fmt.Errorf("Key-value store not initialized before requesting ImmutableStorer")
 	}
-	return manager.bigdata, nil
+	return manager.immutable, nil
 }
 
 func GraphStore() (GraphDB, error) {
@@ -101,8 +101,8 @@ func Initialize(kvEngine Engine, description string) error {
 	// embedded storage engines, it's simpler because we don't worry about cross-process
 	// synchronization.
 	manager.metadata = kvDB
-	manager.smalldata = kvDB
-	manager.bigdata = kvDB
+	manager.mutable = kvDB
+	manager.immutable = kvDB
 
 	manager.enginesAvail = append(manager.enginesAvail, description)
 
@@ -117,9 +117,9 @@ func DeleteDataInstance(data dvid.Data) error {
 	}
 
 	// Determine all database tiers that are distinct.
-	dbs := []OrderedKeyValueDB{manager.smalldata}
-	if manager.smalldata != manager.bigdata {
-		dbs = append(dbs, manager.bigdata)
+	dbs := []OrderedKeyValueDB{manager.mutable}
+	if manager.mutable != manager.immutable {
+		dbs = append(dbs, manager.immutable)
 	}
 
 	// For each storage tier, remove all key-values with the given instance id.

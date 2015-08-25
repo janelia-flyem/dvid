@@ -360,7 +360,7 @@ func maxIndexByBlockZ(z int32) indexRLE {
 
 // Returns all (z, y, x0, x1) Spans in sorted order: z, then y, then x0.
 func getSpans(ctx storage.VersionedCtx, minIndex, maxIndex indexRLE) ([]dvid.Span, error) {
-	db, err := storage.SmallDataStore()
+	db, err := storage.MutableStore()
 	if err != nil {
 		return nil, err
 	}
@@ -409,7 +409,7 @@ func Get(ctx storage.VersionedCtx) ([]byte, error) {
 
 // Deletes an ROI.
 func (d *Data) Delete(ctx storage.VersionedCtx) error {
-	smalldata, err := storage.SmallDataStore()
+	db, err := storage.MutableStore()
 	if err != nil {
 		return err
 	}
@@ -428,7 +428,7 @@ func (d *Data) Delete(ctx storage.VersionedCtx) error {
 	}
 
 	// Delete all spans for this ROI for just this version.
-	if err := smalldata.DeleteAll(ctx, false); err != nil {
+	if err := db.DeleteAll(ctx, false); err != nil {
 		return err
 	}
 	return nil
@@ -440,7 +440,7 @@ func (d *Data) Delete(ctx storage.VersionedCtx) error {
 func (d *Data) PutSpans(versionID dvid.VersionID, spans []dvid.Span, init bool) error {
 	ctx := datastore.NewVersionedCtx(d, versionID)
 
-	db, err := storage.SmallDataStore()
+	db, err := storage.MutableStore()
 	if err != nil {
 		return err
 	}
@@ -935,7 +935,7 @@ func (d *Data) Partition(ctx storage.Context, batchsize int32) ([]byte, error) {
 
 	layer := d.newLayer(layerBegZ, layerEndZ)
 
-	db, err := storage.SmallDataStore()
+	db, err := storage.MutableStore()
 	if err != nil {
 		return nil, err
 	}
@@ -1077,7 +1077,7 @@ func (d *Data) SimplePartition(ctx storage.Context, batchsize int32) ([]byte, er
 
 	layer := d.newLayer(layerBegZ, layerEndZ)
 
-	db, err := storage.SmallDataStore()
+	db, err := storage.MutableStore()
 	if err != nil {
 		return nil, err
 	}

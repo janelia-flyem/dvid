@@ -300,7 +300,7 @@ func (d *Data) GetVoxels(v dvid.VersionID, vox *Voxels, r *ROI) error {
 	timedLog := dvid.NewTimeLog()
 	defer timedLog.Infof("GetVoxels %s", vox)
 
-	store, err := storage.BigDataStore()
+	store, err := storage.MutableStore()
 	if err != nil {
 		return fmt.Errorf("Data type imageblk had error initializing store: %v\n", err)
 	}
@@ -361,7 +361,7 @@ func (d *Data) GetBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int32) 
 	timedLog := dvid.NewTimeLog()
 	defer timedLog.Infof("GetBlocks %s, span %d", start, span)
 
-	store, err := storage.BigDataStore()
+	store, err := storage.MutableStore()
 	if err != nil {
 		return nil, fmt.Errorf("Data type imageblk had error initializing store: %v\n", err)
 	}
@@ -443,7 +443,7 @@ func xferBlock(buf []byte, chunk *storage.Chunk, wg *sync.WaitGroup) {
 
 // Loads blocks with old data if they exist.
 func (d *Data) loadOldBlocks(v dvid.VersionID, vox *Voxels, blocks storage.TKeyValues) error {
-	store, err := storage.BigDataStore()
+	store, err := storage.MutableStore()
 	if err != nil {
 		return fmt.Errorf("Data type imageblk had error initializing store: %v\n", err)
 	}

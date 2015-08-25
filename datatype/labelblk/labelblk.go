@@ -643,7 +643,7 @@ func (d *Data) addLabelZ(geom dvid.Geometry, data32 []uint8, stride int32) ([]by
 }
 
 func (d *Data) DeleteBlocks(ctx *datastore.VersionedCtx, start dvid.ChunkPoint3d, span int) error {
-	store, err := storage.BigDataStore()
+	store, err := storage.MutableStore()
 	if err != nil {
 		return fmt.Errorf("Data type labelblk had error initializing store: %v\n", err)
 	}
@@ -1250,7 +1250,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 
 // GetLabelBytesAtPoint returns the 8 byte slice corresponding to a 64-bit label at a point.
 func (d *Data) GetLabelBytesAtPoint(v dvid.VersionID, pt dvid.Point) ([]byte, error) {
-	store, err := storage.BigDataStore()
+	store, err := storage.MutableStore()
 	if err != nil {
 		return nil, err
 	}
