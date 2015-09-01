@@ -5,32 +5,15 @@
 	storage engines should satisfy.
 
 	Keys are specified as a combination of Context and a datatype-specific byte slice,
-	typically called an "index" in DVID docs and code.  The Context provides DVID-wide
-	namespacing and as such, must use one of the Context implementations within the
-	storage package.  (This is enforced by making Context a Go opaque interface.)
-	The datatype-specific byte slice (index) formatting is entirely up to the datatype
-	designer, although use of dvid.Index is suggested.
-
-	NOTE: Versioned data instances MUST have fixed index sizes because versioning
-	is added to end.  For example, the keyvalue data type cannot accept arbitrary
-	key lengths if the data instance is versioned.  A MaxKeySize configuration can
-	be optionally set for versioned keyvalue data instances.
-
-	The storage engines should accept a nil Context, which allows direct saving of a
-	raw key without use of a ConstructKey() transformation.  In general, though,
-	keys passed are considered within a namespace provided by a non-nil Context.
+	typically called an "type-specific key" (TKey) in DVID docs and code.  The Context
+	provides DVID-wide namespacing and as such, must use one of the Context implementations
+	within the storage package.  (This is enforced by making Context a Go opaque interface.)
+	The type-specific key formatting is entirely up to the datatype designer, although
+	use of dvid.Index is suggested.
 
 	Initially we are concentrating on key-value backends but expect to support
 	graph and perhaps relational databases, either using specialized databases
 	or software layers on top of an ordered key-value store.
-
-	Each local key-value engine must implement the following package function:
-
-	func NewKeyValueStore(path string, create bool, options *Options) (Engine, error)
-
-	If DVID is compiled without gcloud or clustered build flags, a local storage engine
-	is selected through build tags, e.g., "hyperleveldb", "basholeveldb", or "bolt".
-
 
 	Although we assume lexicographically ordering for range queries, there is some
 	variation in how variable size keys are treated.  We assume all storage engines,
