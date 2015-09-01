@@ -1270,7 +1270,7 @@ func FoundSparseVol(ctx storage.Context, label uint64, bounds Bounds) (bool, err
 				return
 			}
 
-			// Make sure this block is within the optinonal bounding.
+			// Make sure this block is within the optional bounding.
 			tk, err := ctx.TKeyFromKey(key)
 			if err != nil {
 				dvid.Errorf("Unable to get TKey from Key (%v): %v\n", key, err)
