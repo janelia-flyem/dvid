@@ -301,7 +301,7 @@ func (ctx *DataContext) Mutex() *sync.Mutex {
 }
 
 func (ctx *DataContext) String() string {
-	return fmt.Sprintf("Unversioned Data Context for %q (local id %d, version id %d)", ctx.data.DataName(),
+	return fmt.Sprintf("unversioned data ctx %q (local id %d, version id %d)", ctx.data.DataName(),
 		ctx.data.InstanceID(), ctx.version)
 }
 

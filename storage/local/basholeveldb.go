@@ -863,17 +863,24 @@ func (db *LevelDB) DeleteRange(ctx storage.Context, kStart, kEnd storage.TKey) e
 // DeleteAll deletes all key-value associated with a context (data instance and version).
 func (db *LevelDB) DeleteAll(ctx storage.Context, allVersions bool) error {
 	if ctx == nil {
-		return fmt.Errorf("Received nil context in Delete()")
+		return fmt.Errorf("Received nil context in DeleteAll()")
 	}
+	if allVersions {
+		return db.deleteAllVersions(ctx)
+	} else {
+		vctx, versioned := ctx.(storage.VersionedCtx)
+		if !versioned {
+			return fmt.Errorf("Can't ask for versioned delete from unversioned context: %s", ctx)
+		}
+		return db.deleteSingleVersion(vctx)
+	}
+}
+
+func (db *LevelDB) deleteSingleVersion(vctx storage.VersionedCtx) error {
 	dvid.StartCgo()
 
-	// Don't have to worry about tombstones.  Delete all keys from all versions for this instance id.
 	minTKey := storage.MinTKey(storage.TKeyMinClass)
 	maxTKey := storage.MaxTKey(storage.TKeyMaxClass)
-	vctx, ok := ctx.(storage.VersionedCtx)
-	if !ok {
-		return fmt.Errorf("Non-versioned context passed to DELETE ALL VERSIONS in basholeveldb driver: %v", ctx)
-	}
 	minKey, err := vctx.MinVersionKey(minTKey)
 	if err != nil {
 		return err
@@ -884,19 +891,23 @@ func (db *LevelDB) DeleteAll(ctx storage.Context, allVersions bool) error {
 	}
 
 	const BATCH_SIZE = 10000
-	batch := db.NewBatch(ctx).(*goBatch)
+	batch := db.NewBatch(vctx).(*goBatch)
 
 	ro := levigo.NewReadOptions()
 	it := db.ldb.NewIterator(ro)
 	defer func() {
-		it.Close()
+		// TODO -- Determine why deallocating the C struct underneath iterator causes error in some situations.
+		//it.Close()
 		dvid.StopCgo()
 	}()
 
 	numKV := 0
 	it.Seek(minKey)
-	deleteVersion := ctx.VersionID()
+	deleteVersion := vctx.VersionID()
 	for {
+		if err := it.GetError(); err != nil {
+			return fmt.Errorf("Error iterating during DeleteAll for %s: %v", vctx, err)
+		}
 		if it.Valid() {
 			itKey := it.Key()
 			storage.StoreKeyBytesRead <- len(itKey)
@@ -904,16 +915,86 @@ func (db *LevelDB) DeleteAll(ctx storage.Context, allVersions bool) error {
 			if bytes.Compare(itKey, maxKey) > 0 {
 				break
 			}
-			if !allVersions {
-				_, v, _, err := storage.DataKeyToLocalIDs(itKey)
-				if err != nil {
-					return fmt.Errorf("Error on DELETE ALL for version %d: %v", ctx.VersionID(), err)
-				}
-				if v != deleteVersion {
-					it.Next()
-					continue
-				}
+			_, v, _, err := storage.DataKeyToLocalIDs(itKey)
+			if err != nil {
+				return fmt.Errorf("Error on DELETE ALL for version %d: %v", vctx.VersionID(), err)
 			}
+			if v == deleteVersion {
+				batch.WriteBatch.Delete(itKey)
+				if (numKV+1)%BATCH_SIZE == 0 {
+					if err := batch.Commit(); err != nil {
+						dvid.Criticalf("Error on batch commit of DeleteAll at key-value pair %d: %v\n", numKV, err)
+						return fmt.Errorf("Error on batch commit of DeleteAll at key-value pair %d: %v", numKV, err)
+					}
+					batch = db.NewBatch(vctx).(*goBatch)
+					dvid.Debugf("Deleted %d key-value pairs in ongoing DELETE ALL for %s.\n", numKV, vctx)
+				}
+				numKV++
+			}
+
+			it.Next()
+		} else {
+			break
+		}
+	}
+	if numKV%BATCH_SIZE != 0 {
+		if err := batch.Commit(); err != nil {
+			dvid.Criticalf("Error on last batch commit of DeleteAll: %v\n", err)
+			return fmt.Errorf("Error on last batch commit of DeleteAll: %v", err)
+		}
+	}
+	dvid.Debugf("Deleted %d key-value pairs via DELETE ALL for %s.\n", numKV, vctx)
+	return nil
+}
+
+func (db *LevelDB) deleteAllVersions(ctx storage.Context) error {
+	dvid.StartCgo()
+
+	var err error
+	var minKey, maxKey storage.Key
+
+	vctx, versioned := ctx.(storage.VersionedCtx)
+	if versioned {
+		// Don't have to worry about tombstones.  Delete all keys from all versions for this instance id.
+		minTKey := storage.MinTKey(storage.TKeyMinClass)
+		maxTKey := storage.MaxTKey(storage.TKeyMaxClass)
+		minKey, err = vctx.MinVersionKey(minTKey)
+		if err != nil {
+			return err
+		}
+		maxKey, err = vctx.MaxVersionKey(maxTKey)
+		if err != nil {
+			return err
+		}
+	} else {
+		minKey, maxKey = ctx.KeyRange()
+	}
+
+	const BATCH_SIZE = 10000
+	batch := db.NewBatch(ctx).(*goBatch)
+
+	ro := levigo.NewReadOptions()
+	it := db.ldb.NewIterator(ro)
+	defer func() {
+		// TODO -- Determine why deallocating the C struct underneath iterator causes error in some situations.
+		// it.Close()
+		dvid.StopCgo()
+	}()
+
+	numKV := 0
+	it.Seek(minKey)
+	for {
+		if err := it.GetError(); err != nil {
+			return fmt.Errorf("Error iterating during DeleteAll for %s: %v", ctx, err)
+		}
+		if it.Valid() {
+			itKey := it.Key()
+			storage.StoreKeyBytesRead <- len(itKey)
+			// Did we pass the final key?
+			if bytes.Compare(itKey, maxKey) > 0 {
+				break
+			}
+
 			batch.WriteBatch.Delete(itKey)
 			if (numKV+1)%BATCH_SIZE == 0 {
 				if err := batch.Commit(); err != nil {
@@ -921,9 +1002,9 @@ func (db *LevelDB) DeleteAll(ctx storage.Context, allVersions bool) error {
 					return fmt.Errorf("Error on batch commit of DeleteAll at key-value pair %d: %v", numKV, err)
 				}
 				batch = db.NewBatch(ctx).(*goBatch)
+				dvid.Debugf("Deleted %d key-value pairs in ongoing DELETE ALL for %s.\n", numKV, ctx)
 			}
 			numKV++
-
 			it.Next()
 		} else {
 			break
