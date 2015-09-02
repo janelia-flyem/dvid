@@ -927,7 +927,7 @@ func (db *LevelDB) deleteSingleVersion(vctx storage.VersionedCtx) error {
 						return fmt.Errorf("Error on batch commit of DeleteAll at key-value pair %d: %v", numKV, err)
 					}
 					batch = db.NewBatch(vctx).(*goBatch)
-					dvid.Debugf("Deleted %d key-value pairs in ongoing DELETE ALL for %s.\n", numKV, vctx)
+					dvid.Debugf("Deleted %d key-value pairs in ongoing DELETE ALL for %s.\n", numKV+1, vctx)
 				}
 				numKV++
 			}
@@ -1002,7 +1002,7 @@ func (db *LevelDB) deleteAllVersions(ctx storage.Context) error {
 					return fmt.Errorf("Error on batch commit of DeleteAll at key-value pair %d: %v", numKV, err)
 				}
 				batch = db.NewBatch(ctx).(*goBatch)
-				dvid.Debugf("Deleted %d key-value pairs in ongoing DELETE ALL for %s.\n", numKV, ctx)
+				dvid.Debugf("Deleted %d key-value pairs in ongoing DELETE ALL for %s.\n", numKV+1, ctx)
 			}
 			numKV++
 			it.Next()
