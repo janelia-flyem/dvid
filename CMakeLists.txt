@@ -46,18 +46,6 @@ else ()
     set (CMAKE_MODULE_PATH ${BUILDEM_REPO_DIR})
     message("Using cmake modules from ${BUILDEM_REPO_DIR}")
 
-    # Download and compile dependencies.
-    # NOTE: To prevent build of Go, you can set the environment variable CI_ENV.  This is
-    #  particularly useful when using a continuous integration system with its own reasonable
-    #  Go toolset.
-    if (DEFINED ENV{CI_ENV})
-        message("Building under $ENV{CI_ENV} continuous integration system.  Using standard Go.")
-        set (golang_NAME "")
-    else ()
-        message("Including Go language build...")
-        include (golang)
-    endif ()
-
     # Download web console and API help
     message ("Downloading web console and API help...")
     ExternalProject_Add(dvid-console
@@ -128,7 +116,6 @@ else ()
 
     add_custom_target (gopackages-install
         ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go get ${GO_GET} -u github.com/janelia-flyem/go
-        DEPENDS     ${golang_NAME}
         COMMENT     "Adding go package dependencies for janelia-flyem projects...")
 
     add_custom_target (gopackages
@@ -140,22 +127,18 @@ else ()
     
     add_custom_target (gojsonschema
         ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/janelia-flyem/gojsonschema
-        DEPENDS     ${golang_NAME}
         COMMENT     "Adding gojsonschema library...")
 
     add_custom_target (goji
         ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/zenazn/goji
-        DEPENDS     ${golang_NAME}
         COMMENT     "Adding goji web routing library...")
 
     add_custom_target (context
         ${BUILDEM_ENV_STRING} go get ${GO_GET} code.google.com/p/go.net/context
-        DEPENDS     ${golang_NAME}
         COMMENT     "Adding go.net context")
 
     add_custom_target (lumberjack
         ${BUILDEM_ENV_STRING} go get ${GO_GET} gopkg.in/natefinch/lumberjack.v2
-        DEPENDS     ${golang_NAME}
         COMMENT     "Adding lumberjack library...")
 
     set (DVID_DEP_GO_PACKAGES gopackages gojsonschema goji context lumberjack)
@@ -169,19 +152,16 @@ else ()
     if (${DVID_FUSE})
         add_custom_target (gofuse
             ${BUILDEM_ENV_STRING} go get ${GO_GET} bazil.org/fuse
-            DEPENDS     ${golang_NAME}
             COMMENT     "Adding FUSE Go library...")
         set (DVID_DEP_GO_PACKAGES ${DVID_DEP_GO_PACKAGES} gofuse)
     endif()
 
     add_custom_target (gobolt
         ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/boltdb/bolt
-        DEPENDS     ${golang_NAME}
         COMMENT     "Adding BoltDB package...")
 
     add_custom_target (gomdb
         ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/DocSavage/gomdb
-        DEPENDS     ${golang_NAME}
         COMMENT     "Adding CGo Lightning MDB...")
 
     # Compile command to generate DVID source code version info.
@@ -189,14 +169,13 @@ else ()
         ${BUILDEM_ENV_STRING} ${GO_ENV} ${CGO_FLAGS} go build -o ${BUILDEM_BIN_DIR}/dvid-gen-version 
         -v -tags '${DVID_BUILD_TAGS}' cmd/gen-version/main.go 
         WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
-        DEPENDS     ${golang_NAME}
         COMMENT     "Compiling and installing dvid version generation command...")
 
     # Handle DVID code generation before we build the main DVID executable.
     add_custom_target (dvid-code-gen
         ${BUILDEM_BIN_DIR}/dvid-gen-version -o ${CMAKE_CURRENT_SOURCE_DIR}/server/version.go
         WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
-        DEPENDS     ${golang_NAME} dvid-gen-version
+        DEPENDS     dvid-gen-version
         COMMENT     "Generating extra DVID code before building main executable...")
 
     # Build DVID with chosen backend
@@ -204,7 +183,7 @@ else ()
         ${BUILDEM_ENV_STRING} ${GO_ENV} ${CGO_FLAGS} go build -o ${BUILDEM_BIN_DIR}/dvid 
         -v -tags '${DVID_BACKEND} ${DVID_GRAPHBACKEND} ${DVID_BUILD_TAGS}' cmd/dvid/main.go 
         WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
-        DEPENDS     ${golang_NAME} ${DVID_BACKEND_DEPEND} ${DVID_DEP_GO_PACKAGES} ${hdf5_NAME} dvid-code-gen
+        DEPENDS     ${DVID_BACKEND_DEPEND} ${DVID_DEP_GO_PACKAGES} ${hdf5_NAME} dvid-code-gen
         COMMENT     "Compiling and installing dvid executable...")
 
     # Build DVID with embedded console 
@@ -245,7 +224,6 @@ else ()
         ${BUILDEM_ENV_STRING} ${GO_ENV} ${CGO_FLAGS} go build -o ${BUILDEM_BIN_DIR}/dvid-backup 
         -v -tags '${DVID_BACKEND} ${DVID_GRAPHBACKEND} ${DVID_BUILD_TAGS}' cmd/backup/main.go 
         WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
-        DEPENDS     ${golang_NAME}
         COMMENT     "Compiling and installing dvid backup command...")
 
     ###############################################################################
