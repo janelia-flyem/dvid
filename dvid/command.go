@@ -24,7 +24,6 @@ type Config struct {
 
 func NewConfig() Config {
 	c := Config{make(map[string]interface{})}
-	c.values["versioned"] = "false"
 	return c
 }
 

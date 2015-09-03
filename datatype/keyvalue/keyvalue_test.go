@@ -225,6 +225,137 @@ type resolveResp struct {
 	Child dvid.UUID `json:"child"`
 }
 
+func TestKeyvalueUnversioned(t *testing.T) {
+	tests.UseStore()
+	defer tests.CloseStore()
+
+	uuid, _ := initTestRepo()
+
+	config := dvid.NewConfig()
+	config.Set("versioned", "false")
+	dataservice, err := datastore.NewData(uuid, kvtype, "unversiontest", config)
+	if err != nil {
+		t.Fatalf("Error creating new keyvalue instance: %v\n", err)
+	}
+	data, ok := dataservice.(*Data)
+	if !ok {
+		t.Fatalf("Returned new data instance is not roi.Data\n")
+	}
+
+	// PUT a value
+	key1 := "mykey"
+	value1 := "some stuff"
+	key1req := fmt.Sprintf("%snode/%s/%s/key/%s", server.WebAPIPath, uuid, data.DataName(), key1)
+	server.TestHTTP(t, "POST", key1req, strings.NewReader(value1))
+
+	// Add 2nd k/v
+	key2 := "my2ndkey"
+	value2 := "more good stuff"
+	key2req := fmt.Sprintf("%snode/%s/%s/key/%s", server.WebAPIPath, uuid, data.DataName(), key2)
+	server.TestHTTP(t, "POST", key2req, strings.NewReader(value2))
+
+	// Create a new version in repo
+	if err = datastore.Commit(uuid, "my commit msg", []string{"stuff one", "stuff two"}); err != nil {
+		t.Errorf("Unable to lock root node %s: %v\n", uuid, err)
+	}
+	uuid2, err := datastore.NewVersion(uuid, "some child", nil)
+	if err != nil {
+		t.Fatalf("Unable to create new version off node %s: %v\n", uuid, err)
+	}
+	_, err = datastore.VersionFromUUID(uuid2)
+	if err != nil {
+		t.Fatalf("Unable to get version ID from new uuid %s: %v\n", uuid2, err)
+	}
+
+	// Change the 2nd k/v
+	uuid2val := "this is completely different"
+	uuid2req := fmt.Sprintf("%snode/%s/%s/key/%s", server.WebAPIPath, uuid2, data.DataName(), key2)
+	server.TestHTTP(t, "POST", uuid2req, strings.NewReader(uuid2val))
+
+	// Now the first version value should equal the new value
+	returnValue := server.TestHTTP(t, "GET", key2req, nil)
+	if string(returnValue) != uuid2val {
+		t.Errorf("Error on unversioned key %q: expected %s, got %s\n", key2, uuid2val, string(returnValue))
+	}
+
+	// Get the second version value
+	returnValue = server.TestHTTP(t, "GET", uuid2req, nil)
+	if string(returnValue) != uuid2val {
+		t.Errorf("Error on unversioned key %q: expected %s, got %s\n", key2, uuid2val, string(returnValue))
+	}
+
+	// Check return of first two keys in range.
+	rangereq := fmt.Sprintf("%snode/%s/%s/keyrange/%s/%s", server.WebAPIPath, uuid, data.DataName(),
+		"my", "zebra")
+	returnValue = server.TestHTTP(t, "GET", rangereq, nil)
+
+	var retrievedKeys []string
+	if err = json.Unmarshal(returnValue, &retrievedKeys); err != nil {
+		t.Errorf("Bad key range request unmarshal: %v\n", err)
+	}
+	if len(retrievedKeys) != 2 || retrievedKeys[1] != "mykey" && retrievedKeys[0] != "my2ndKey" {
+		t.Errorf("Bad key range request return.  Expected: [%q,%q].  Got: %s\n",
+			key1, key2, string(returnValue))
+	}
+
+	// Commit the repo
+	if err = datastore.Commit(uuid2, "my 2nd commit msg", []string{"changed 2nd k/v"}); err != nil {
+		t.Errorf("Unable to commit node %s: %v\n", uuid2, err)
+	}
+
+	// Make grandchild of root
+	uuid3, err := datastore.NewVersion(uuid2, "some child", nil)
+	if err != nil {
+		t.Fatalf("Unable to create new version off node %s: %v\n", uuid2, err)
+	}
+
+	// Delete the 2nd k/v
+	uuid3req := fmt.Sprintf("%snode/%s/%s/key/%s", server.WebAPIPath, uuid3, data.DataName(), key2)
+	server.TestHTTP(t, "DELETE", uuid3req, nil)
+
+	server.TestBadHTTP(t, "GET", uuid3req, nil)
+
+	// Make sure the 2nd k/v is now missing for previous versions.
+	server.TestBadHTTP(t, "GET", key2req, nil)
+	server.TestBadHTTP(t, "GET", uuid2req, nil)
+
+	// Make a child
+	if err = datastore.Commit(uuid3, "my 3rd commit msg", []string{"deleted 2nd k/v"}); err != nil {
+		t.Errorf("Unable to commit node %s: %v\n", uuid2, err)
+	}
+	uuid4, err := datastore.NewVersion(uuid3, "some child", nil)
+	if err != nil {
+		t.Fatalf("Unable to create new version off node %s: %v\n", uuid3, err)
+	}
+
+	// Change the 2nd k/v
+	uuid4val := "we are reintroducing this k/v"
+	uuid4req := fmt.Sprintf("%snode/%s/%s/key/%s", server.WebAPIPath, uuid4, data.DataName(), key2)
+	server.TestHTTP(t, "POST", uuid4req, strings.NewReader(uuid4val))
+
+	if err = datastore.Commit(uuid4, "commit node 4", []string{"we modified stuff"}); err != nil {
+		t.Errorf("Unable to commit node %s: %v\n", uuid4, err)
+	}
+
+	// Make sure the 2nd k/v is correct for each of previous versions.
+	returnValue = server.TestHTTP(t, "GET", key2req, nil)
+	if string(returnValue) != uuid4val {
+		t.Errorf("Error on first version, key %q: expected %s, got %s\n", key2, uuid4val, string(returnValue))
+	}
+	returnValue = server.TestHTTP(t, "GET", uuid2req, nil)
+	if string(returnValue) != uuid4val {
+		t.Errorf("Error on second version, key %q: expected %s, got %s\n", key2, uuid4val, string(returnValue))
+	}
+	returnValue = server.TestHTTP(t, "GET", uuid3req, nil)
+	if string(returnValue) != uuid4val {
+		t.Errorf("Error on third version, key %q: expected %s, got %s\n", key2, uuid4val, string(returnValue))
+	}
+	returnValue = server.TestHTTP(t, "GET", uuid4req, nil)
+	if string(returnValue) != uuid4val {
+		t.Errorf("Error on fourth version, key %q: expected %s, got %s\n", key2, uuid4val, string(returnValue))
+	}
+}
+
 func TestKeyvalueVersioning(t *testing.T) {
 	tests.UseStore()
 	defer tests.CloseStore()

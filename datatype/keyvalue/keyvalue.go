@@ -45,6 +45,14 @@ $ dvid repo <UUID> new keyvalue <data name> <settings...>
     data name      Name of data to create, e.g., "myblobs"
     settings       Configuration settings in "key=value" format separated by spaces.
 
+    Configuration Settings (case-insensitive keys):
+
+    Versioned      Set to "false" or "0" if the keyvalue instance is unversioned (repo-wide).
+                   An unversioned keyvalue will only use the UUIDs to look up the repo and
+                   not differentiate between versions in the same repo.  Note that unlike
+                   versioned data, distribution (push/pull) of unversioned data is not defined 
+                   at this time.
+
 $ dvid -stdin node <UUID> <data name> put <key> < data
 
 	Puts stdin data into the keyvalue data instance under the given key.
@@ -329,6 +337,13 @@ func (d *Data) put(cmd datastore.Request, reply *datastore.Response) error {
 	}
 
 	// Store data
+	if !d.Versioned() {
+		// Map everything to root version.
+		versionID, err = datastore.GetRepoRootVersion(versionID)
+		if err != nil {
+			return err
+		}
+	}
 	ctx := datastore.NewVersionedCtx(d, versionID)
 	if err = d.PutData(ctx, keyStr, cmd.Input); err != nil {
 		return fmt.Errorf("Error on put to key %q for keyvalue %q: %v\n", keyStr, d.DataName(), err)

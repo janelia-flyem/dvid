@@ -218,6 +218,12 @@ type Data struct {
 	// a list of the instances to which this data should be synced
 	syncs []dvid.InstanceName
 
+	// unversioned = true if all UUIDs should be mapped to the root UUID.
+	// Only one version exists for an entire repo, so it's repo-wide.
+	// Requires the data type to actually check if versioned and handle
+	// UUIDs differently.  (See keyvalue type.)
+	unversioned bool
+
 	// these sync management vars aren't serialized
 	syncmu     sync.RWMutex
 	syncInited map[dvid.InstanceName]struct{}
@@ -259,6 +265,7 @@ func (d *Data) MarshalJSON() ([]byte, error) {
 		Compression string
 		Checksum    string
 		Syncs       []dvid.InstanceName
+		Versioned   bool
 	}{
 		TypeName:    d.typename,
 		TypeURL:     d.typeurl,
@@ -268,6 +275,7 @@ func (d *Data) MarshalJSON() ([]byte, error) {
 		Compression: d.compression.String(),
 		Checksum:    d.checksum.String(),
 		Syncs:       d.syncs,
+		Versioned:   !d.unversioned,
 	})
 }
 
@@ -296,6 +304,7 @@ func NewDataService(t TypeService, uuid dvid.UUID, id dvid.InstanceID, name dvid
 		compression: compression,
 		checksum:    dvid.DefaultChecksum,
 		syncs:       []dvid.InstanceName{},
+		unversioned: false,
 	}
 	err := data.ModifyConfig(c)
 	return data, err
@@ -316,6 +325,8 @@ func (d *Data) TypeName() dvid.TypeString { return d.typename }
 func (d *Data) TypeURL() dvid.URLString { return d.typeurl }
 
 func (d *Data) TypeVersion() string { return d.typeversion }
+
+func (d *Data) Versioned() bool { return !d.unversioned }
 
 func (d *Data) GobDecode(b []byte) error {
 	buf := bytes.NewBuffer(b)
@@ -346,6 +357,10 @@ func (d *Data) GobDecode(b []byte) error {
 	}
 	if err := dec.Decode(&(d.syncs)); err != nil {
 		return err
+	}
+	err := dec.Decode(&(d.unversioned))
+	if err != nil {
+		dvid.Infof("Data %q had no explicit versioning flag: assume it's versioned.\n", d.name)
 	}
 	return nil
 }
@@ -378,6 +393,9 @@ func (d *Data) GobEncode() ([]byte, error) {
 		return nil, err
 	}
 	if err := enc.Encode(d.syncs); err != nil {
+		return nil, err
+	}
+	if err := enc.Encode(d.unversioned); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
@@ -490,6 +508,23 @@ func (d *Data) ModifyConfig(config dvid.Config) error {
 			for _, name := range names {
 				d.syncs = append(d.syncs, dvid.InstanceName(name))
 			}
+		}
+	}
+
+	// Set versioning
+	s, found, err = config.GetString("Versioned")
+	if err != nil {
+		return err
+	}
+	if found {
+		versioned := strings.ToLower(s)
+		switch versioned {
+		case "false", "0":
+			d.unversioned = true
+		case "true", "1":
+			d.unversioned = false
+		default:
+			return fmt.Errorf("Illegal setting for 'versioned' (needs to be 'false', '0', 'true', or '1'): %s", s)
 		}
 	}
 	return nil

@@ -121,12 +121,16 @@ Repo-Level REST endpoints
 
 	Creates a new instance of the given data type.  Expects configuration data in JSON
 	as the body of the POST.  Configuration data is a JSON object with each property
-	corresponding to a configuration keyword for the particular data type.  Two properties
-	are required: "typename" should be set to the type name of the new instance, and
-	"dataname" should be set to the desired name of the new instance.  The "sync" value
-	can be set to a comma-separated list of instance names; this makes the new data
-	instance subscribe to changes in the given data instances.
+	corresponding to a configuration keyword for the particular data type.  
 
+	JSON name/value pairs:
+
+	REQUIRED "typename"   Type name of the new instance,
+	REQUIRED "dataname"   Name of the new instance
+	OPTIONAL "sync"       Comma-separated list of instance names. This makes the new data
+	                      instance subscribe to changes in the given data instances.
+	OPTIONAL "versioned"  If "false" or "0", the data is unversioned and acts as if 
+	                      all UUIDs within a repo become the root repo UUID.  (True by default.)
 	
   GET /api/repo/{uuid}/log
  POST /api/repo/{uuid}/log
@@ -594,6 +598,17 @@ func instanceSelector(c *web.C, h http.Handler) http.Handler {
 		v, err := datastore.VersionFromUUID(uuid)
 		if err != nil {
 			BadRequest(w, r, err)
+			return
+		}
+
+		// Check if this is unversioned.
+		if !data.Versioned() {
+			// Map everything to root version.
+			v, err = datastore.GetRepoRootVersion(v)
+			if err != nil {
+				BadRequest(w, r, err)
+				return
+			}
 		}
 		ctx := datastore.NewVersionedCtx(data, v)
 

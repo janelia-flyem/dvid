@@ -576,12 +576,12 @@ func (m *repoManager) deleteRepo(uuid dvid.UUID) error {
 	r.Lock()
 
 	// Start deletion of all data instances.
-	for name, data := range r.data {
-		go func(name dvid.InstanceName) {
+	for _, data := range r.data {
+		go func(data dvid.Data) {
 			if err := storage.DeleteDataInstance(data); err != nil {
-				dvid.Errorf("Error trying to do async data instance %q deletion: %v\n", name, err)
+				dvid.Errorf("Error trying to do async data instance %q deletion: %v\n", data.DataName(), err)
 			}
-		}(name)
+		}(data)
 	}
 
 	// Delete the repo off the datastore.
@@ -707,6 +707,18 @@ func (m *repoManager) getRepoRoot(uuid dvid.UUID) (dvid.UUID, error) {
 		return "", ErrInvalidUUID
 	}
 	return r.uuid, nil
+}
+
+func (m *repoManager) getRepoRootVersion(v dvid.VersionID) (dvid.VersionID, error) {
+	uuid, found := m.versionToUUID[v]
+	if !found {
+		return 0, ErrInvalidVersion
+	}
+	r, found := m.repos[uuid]
+	if !found {
+		return 0, ErrInvalidVersion
+	}
+	return r.version, nil
 }
 
 func (m *repoManager) getRepoJSON(uuid dvid.UUID) (string, error) {
@@ -1609,6 +1621,7 @@ func (r *repoT) save() error {
 	return manager.store.Put(ctx, storage.NewTKey(repoKey, r.id.Bytes()), serialization)
 }
 
+// deletes a Repo from the datastore
 func (r *repoT) delete() error {
 	var ctx storage.MetadataContext
 	tkey := storage.NewTKey(repoKey, r.id.Bytes())

@@ -191,6 +191,9 @@ type Data interface {
 	TypeName() TypeString
 	TypeURL() URLString
 	TypeVersion() string
+
+	// Versioned returns false if this data has only one version for an entire repo.
+	Versioned() bool
 }
 
 // Axis enumerates differnt types of axis (x, y, z, time, etc)

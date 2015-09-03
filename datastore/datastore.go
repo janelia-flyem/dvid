@@ -135,6 +135,13 @@ func GetRepoRoot(uuid dvid.UUID) (dvid.UUID, error) {
 	return manager.getRepoRoot(uuid)
 }
 
+func GetRepoRootVersion(v dvid.VersionID) (dvid.VersionID, error) {
+	if manager == nil {
+		return 0, ErrManagerNotInitialized
+	}
+	return manager.getRepoRootVersion(v)
+}
+
 func GetRepoJSON(uuid dvid.UUID) (string, error) {
 	if manager == nil {
 		return "", ErrManagerNotInitialized
