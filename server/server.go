@@ -178,6 +178,7 @@ func AboutJSON() (jsonStr string, err error) {
 		"Datastore Version": datastore.Version,
 		"DVID Version":      gitVersion,
 		"Storage backend":   storage.EnginesAvailable(),
+		"Server time":       time.Now().String(),
 		"Server uptime":     time.Since(startupTime).String(),
 	}
 	m, err := json.Marshal(data)
