@@ -325,11 +325,6 @@ func NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.
 		Properties: *props,
 	}
 	data.Properties.MaxLabel = make(map[dvid.VersionID]uint64)
-	v, err := datastore.VersionFromUUID(uuid)
-	if err != nil {
-		return nil, err
-	}
-	data.Properties.MaxLabel[v] = 0
 	return data, nil
 }
 
@@ -359,10 +354,17 @@ type Properties struct {
 	ml_mu sync.RWMutex // For atomic access of MaxLabel and MaxRepoLabel
 
 	// The maximum label id found in each version of this instance.
+	// Can be unset if no new label was added at that version, in which case
+	// you must traverse DAG to find max label of parent.
 	MaxLabel map[dvid.VersionID]uint64
 
 	// The maximum label for this instance in the entire repo.  This allows us to do
-	// conflict-free merges without any relabeling.
+	// conflict-free merges without any relabeling.  Note that relabeling (rebasing)
+	// is required if we move data between repos, e.g., when pushing remote nodes,
+	// since we have no control over which labels were created remotely and there
+	// could be conflicts between the local and remote repos.  When mutations only
+	// occur within a single repo, however, this atomic label allows us to prevent
+	// conflict across all versions within this repo.
 	MaxRepoLabel uint64
 }
 
@@ -465,41 +467,6 @@ func GetByUUID(uuid dvid.UUID, name dvid.InstanceName) (*Data, error) {
 	return data, nil
 }
 
-// --- datastore.VersionInitializer interface ----
-
-// InitVersion initializes max label tracking for a new version if it has a parent
-func (d *Data) InitVersion(uuid dvid.UUID, v dvid.VersionID) error {
-	// Get the parent max label
-	parents, err := datastore.GetParentsByVersion(v)
-	if err != nil {
-		return err
-	}
-	if len(parents) < 1 {
-		return fmt.Errorf("InitVersion(%s, %d) called on node with no parents, which shouldn't be possible for branch", uuid, v)
-	}
-	var maxMax uint64
-	for _, parent := range parents {
-		maxLabel, ok := d.MaxLabel[parent]
-		if !ok {
-			return fmt.Errorf("parent of uuid %s had no max label", uuid)
-		}
-		if maxLabel > maxMax {
-			maxMax = maxLabel
-		}
-	}
-	d.MaxLabel[v] = maxMax
-
-	buf := make([]byte, 8)
-	binary.LittleEndian.PutUint64(buf, maxMax)
-	ctx := datastore.NewVersionedCtx(d, v)
-	store, err := storage.MutableStore()
-	if err != nil {
-		return fmt.Errorf("data type labelvol had error initializing store: %v\n", err)
-	}
-	store.Put(ctx, maxLabelTKey, buf)
-	return nil
-}
-
 // --- datastore.InstanceMutator interface -----
 
 // LoadMutable loads mutable properties of label volumes like the maximum labels
@@ -525,6 +492,7 @@ func (d *Data) LoadMutable(root dvid.VersionID, storedVersion, expectedVersion u
 	case 0:
 		// Need to update all max labels and set repo-level max label.
 		saveRequired = true
+		dvid.Infof("Migrating old version of labelvol %q to new version\n", d.DataName())
 		go d.migrateMaxLabels(root, wg, ch)
 	default:
 		// Load in each version max label without migration.
@@ -1092,18 +1060,6 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		server.BadRequest(w, r, "Unrecognized API call %q for labelvol data %q.  See API help.",
 			parts[3], d.DataName())
 	}
-}
-
-// MaxLabel returns the maximum recorded label for the given version.
-func (d *Data) GetMaxLabel(v dvid.VersionID) (uint64, error) {
-	d.ml_mu.RLock()
-	defer d.ml_mu.RUnlock()
-
-	max, found := d.MaxLabel[v]
-	if !found {
-		return 0, fmt.Errorf("no max label found for version %d", v)
-	}
-	return max, nil
 }
 
 // Given a stored label, make sure our max label tracking is updated.
