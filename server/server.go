@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"runtime"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -89,7 +90,13 @@ var (
 	initialized bool
 )
 
+const defaultGCPercent = 400
+
 func init() {
+	// Set the GC closer to old Go 1.4 setting
+	old := debug.SetGCPercent(defaultGCPercent)
+	dvid.Infof("DVID server GC target percentage changed from %d to %d\n", old, defaultGCPercent)
+
 	// Initialize the number of throttled ops available.
 	for i := 0; i < MaxThrottledOps; i++ {
 		Throttle <- 1

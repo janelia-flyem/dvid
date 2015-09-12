@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -93,6 +94,14 @@ const WebHelp = `
  GET  /api/server/types
 
 	Returns JSON with datatype names and their URLs.
+
+POST  /api/server/gc
+
+	Sets the garbage collection target percentage.  This is a low-level server tuning
+	request that can affect overall request latency.
+	See: https://golang.org/pkg/runtime/debug/#SetGCPercent
+
+	Expects JSON to be posted {"percent": 500}.
 
 -------------------------
 Repo-Level REST endpoints
@@ -403,6 +412,7 @@ func initRoutes() {
 	mainMux.Get("/api/server/info/", serverInfoHandler)
 	mainMux.Get("/api/server/types", serverTypesHandler)
 	mainMux.Get("/api/server/types/", serverTypesHandler)
+	mainMux.Post("/api/server/gc", serverGCHandler)
 
 	if !readonly {
 		mainMux.Post("/api/repos", reposPostHandler)
@@ -750,6 +760,22 @@ func serverTypesHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, string(m))
+}
+
+func serverGCHandler(c web.C, w http.ResponseWriter, r *http.Request) {
+	config := dvid.NewConfig()
+	if err := config.SetByJSON(r.Body); err != nil {
+		BadRequest(w, r, fmt.Sprintf("Error decoding POSTed JSON config for 'new': %v", err))
+		return
+	}
+	percent, found, err := config.GetInt("percent")
+	if !found || err != nil {
+		BadRequest(w, r, "POST on gc endpoint requires specification of valid 'percent' number")
+		return
+	}
+	old := debug.SetGCPercent(percent)
+	w.Header().Set("Content-Type", "text/plain")
+	fmt.Fprintf(w, "DVID server garbage collection target percentage set to %d from %d\n", percent, old)
 }
 
 func reposInfoHandler(w http.ResponseWriter, r *http.Request) {
