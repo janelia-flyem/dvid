@@ -81,6 +81,8 @@ else ()
     if ("${DVID_BACKEND}" STREQUAL "lmdb")
         set (DVID_BACKEND_DEPEND    "gomdb")
         message ("Installing Lightning MDB with modified Go driver for DVID storage engine")
+    elseif ("${DVID_BACKEND}" STREQUAL "kvautobus")
+        message ("Installing Janelia KVAutobus for DVID storage engine.")
     elseif ("${DVID_BACKEND}" STREQUAL "hyperleveldb")
         set (DVID_BACKEND_DEPEND    ${hyperleveldb_NAME})
         message ("Installing HyperLevelDB for DVID storage engine.")
@@ -133,6 +135,10 @@ else ()
         ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/zenazn/goji
         COMMENT     "Adding goji web routing library...")
 
+    add_custom_target (msgp
+        ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/tinylib/msgp
+        COMMENT     "Adding msgp messagepack library...")
+
     add_custom_target (context
         ${BUILDEM_ENV_STRING} go get ${GO_GET} code.google.com/p/go.net/context
         COMMENT     "Adding go.net context")
@@ -141,7 +147,7 @@ else ()
         ${BUILDEM_ENV_STRING} go get ${GO_GET} gopkg.in/natefinch/lumberjack.v2
         COMMENT     "Adding lumberjack library...")
 
-    set (DVID_DEP_GO_PACKAGES gopackages gojsonschema goji context lumberjack)
+    set (DVID_DEP_GO_PACKAGES gopackages gojsonschema goji msgp context lumberjack)
 
     add_custom_target (nrsc
         ${BUILDEM_ENV_STRING} ${GO_ENV} go build -o ${BUILDEM_BIN_DIR}/nrsc

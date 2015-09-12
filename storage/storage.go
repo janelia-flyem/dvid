@@ -262,6 +262,8 @@ type KeyValueSetter interface {
 	Put(Context, TKey, []byte) error
 
 	// Delete deletes a key-value pair so that subsequent Get on the key returns nil.
+	// For versioned data in mutable stores, Delete() will create a tombstone for the version
+	// unlike RawDelete or DeleteAll.
 	Delete(Context, TKey) error
 
 	// RawPut is a low-level function that puts a key-value pair using full keys.
@@ -282,6 +284,8 @@ type OrderedKeyValueSetter interface {
 	PutRange(Context, []TKeyValue) error
 
 	// DeleteRange removes all key-value pairs with keys in the given range.
+	// If versioned data in mutable stores, this will create tombstones in the version
+	// unlike RawDelete or DeleteAll.
 	DeleteRange(ctx Context, kStart, kEnd TKey) error
 
 	// DeleteAll removes all key-value pairs for the context.  If allVersions is true,

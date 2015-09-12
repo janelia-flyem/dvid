@@ -1052,7 +1052,7 @@ func (db *LevelDB) NewBatch(ctx storage.Context) storage.Batch {
 
 func (batch *goBatch) Delete(tk storage.TKey) {
 	if batch == nil || batch.ctx == nil {
-		dvid.Criticalf("Received nil batch or nil batch context in Delete()\n")
+		dvid.Criticalf("Received nil batch or nil batch context in batch.Delete()\n")
 		return
 	}
 	dvid.StartCgo()
@@ -1068,7 +1068,7 @@ func (batch *goBatch) Delete(tk storage.TKey) {
 
 func (batch *goBatch) Put(tk storage.TKey, v []byte) {
 	if batch == nil || batch.ctx == nil {
-		dvid.Criticalf("Received nil batch or nil batch context in Delete()\n")
+		dvid.Criticalf("Received nil batch or nil batch context in batch.Put()\n")
 		return
 	}
 	dvid.StartCgo()
