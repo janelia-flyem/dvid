@@ -79,11 +79,11 @@ func (db *KVAutobus) RawGet(key storage.Key) ([]byte, error) {
 	defer resp.Body.Close()
 
 	reader := msgp.NewReader(resp.Body)
-	var bin *Binary
+	var bin Binary
 	if err := bin.DecodeMsg(reader); err != nil {
 		return nil, err
 	}
-	return []byte(*bin), nil
+	return []byte(bin), nil
 }
 
 // call KVAutobus key_range API
