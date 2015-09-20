@@ -1,6 +1,6 @@
 // +build kvautobus
 
-package local
+package kvautobus
 
 import (
 	"bytes"
@@ -11,37 +11,51 @@ import (
 
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
+	"github.com/janelia-flyem/go/semver"
 
 	"github.com/tinylib/msgp/msgp"
 )
 
-const (
-	Version = "Janelia KVAutobus"
-
-	Driver = "github.com/janelia-flyem/dvid/storage/local/kvautobus.go"
-)
-
-// --- The HTTP client for KVAutobus must satisfy the storage.Engine interface ----
-
-type KVAutobus struct {
-	host string
-
-	// Config at time of Open()
-	config dvid.Config
+func init() {
+	e := Engine{"kvautobus", "Janelia KVAutobus", semver.Make("0.1.0")}
+	storage.RegisterEngine(e)
 }
 
-// NewKeyValueStore returns a KVAutobus backend.
-// Create parameter is ignored.
-func NewKeyValueStore(path string, create bool, config dvid.Config) (storage.Engine, error) {
+// --- Engine Implementation ------
+
+type Engine struct {
+	name   string
+	desc   string
+	semver semver.Version
+}
+
+func (e Engine) GetName() string {
+	return e.name
+}
+
+func (e Engine) GetDescription() string {
+	return e.desc
+}
+
+func (e Engine) GetSemVer() semver.Version {
+	return e.semver
+}
+
+// NewImmutableStore returns a leveldb suitable for immutable storage.
+// The passed Config must contain "host" string.
+func (e Engine) NewImmutableStore(config dvid.Config) (storage.ImmutableStorer, error) {
+	path, found, err := config.GetString("host")
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, fmt.Errorf("Engine %q requires the 'path' string in config to create new store", e.name)
+	}
 	kv := &KVAutobus{
 		host:   path,
 		config: config,
 	}
 	return kv, nil
-}
-
-func RepairStore(path string, config dvid.Config) error {
-	return nil
 }
 
 func encodeKey(k []byte) string {
@@ -52,14 +66,15 @@ func decodeKey(b64key string) ([]byte, error) {
 	return base64.URLEncoding.DecodeString(b64key)
 }
 
-// ---- Engine interface ----
+type KVAutobus struct {
+	host string
+
+	// Config at time of Open()
+	config dvid.Config
+}
 
 func (db *KVAutobus) String() string {
 	return "Janelia KVAutobus"
-}
-
-func (db *KVAutobus) GetConfig() dvid.Config {
-	return db.config
 }
 
 func (db *KVAutobus) Close() {

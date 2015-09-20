@@ -12,7 +12,6 @@ import (
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
-	"github.com/janelia-flyem/dvid/tests"
 )
 
 var (
@@ -31,13 +30,13 @@ func initTestRepo() (dvid.UUID, dvid.VersionID) {
 			log.Fatalf("Can't get keyvalue type: %s\n", err)
 		}
 	}
-	return tests.NewRepo()
+	return datastore.NewTestRepo()
 }
 
 // Make sure new keyvalue data have different IDs.
 func TestNewKeyvalueDifferent(t *testing.T) {
-	tests.UseStore()
-	defer tests.CloseStore()
+	datastore.OpenTest()
+	defer datastore.CloseTest()
 
 	uuid, _ := initTestRepo()
 
@@ -72,8 +71,8 @@ func TestNewKeyvalueDifferent(t *testing.T) {
 }
 
 func TestKeyvalueRoundTrip(t *testing.T) {
-	tests.UseStore()
-	defer tests.CloseStore()
+	datastore.OpenTest()
+	defer datastore.CloseTest()
 
 	uuid, versionID := initTestRepo()
 
@@ -110,8 +109,8 @@ func TestKeyvalueRoundTrip(t *testing.T) {
 }
 
 func TestKeyvalueRepoPersistence(t *testing.T) {
-	tests.UseStore()
-	defer tests.CloseStore()
+	datastore.OpenTest()
+	defer datastore.CloseTest()
 
 	uuid, _ := initTestRepo()
 
@@ -131,7 +130,7 @@ func TestKeyvalueRepoPersistence(t *testing.T) {
 	if err = datastore.SaveDataByUUID(uuid, kvdata); err != nil {
 		t.Fatalf("Unable to save repo during keyvalue persistence test: %v\n", err)
 	}
-	tests.CloseReopenStore()
+	datastore.CloseReopenTest()
 
 	dataservice2, err := datastore.GetDataByUUID(uuid, "mykv")
 	if err != nil {
@@ -213,8 +212,8 @@ func testRequest(t *testing.T, uuid dvid.UUID, versionID dvid.VersionID, name dv
 }
 
 func TestKeyvalueRequests(t *testing.T) {
-	tests.UseStore()
-	defer tests.CloseStore()
+	datastore.OpenTest()
+	defer datastore.CloseTest()
 
 	uuid, versionID := initTestRepo()
 
@@ -226,8 +225,8 @@ type resolveResp struct {
 }
 
 func TestKeyvalueUnversioned(t *testing.T) {
-	tests.UseStore()
-	defer tests.CloseStore()
+	datastore.OpenTest()
+	defer datastore.CloseTest()
 
 	uuid, _ := initTestRepo()
 
@@ -357,8 +356,8 @@ func TestKeyvalueUnversioned(t *testing.T) {
 }
 
 func TestKeyvalueVersioning(t *testing.T) {
-	tests.UseStore()
-	defer tests.CloseStore()
+	datastore.OpenTest()
+	defer datastore.CloseTest()
 
 	uuid, _ := initTestRepo()
 
@@ -603,8 +602,8 @@ func TestKeyvalueVersioning(t *testing.T) {
 
 // Test added after error in getting two paths to the same ancestor k/v after merge.
 func TestDiamondGetOnMerge(t *testing.T) {
-	tests.UseStore()
-	defer tests.CloseStore()
+	datastore.OpenTest()
+	defer datastore.CloseTest()
 
 	uuid, _ := initTestRepo()
 

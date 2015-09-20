@@ -15,7 +15,6 @@ import (
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
-	"github.com/janelia-flyem/dvid/tests"
 )
 
 var (
@@ -93,7 +92,7 @@ func initTestRepo() (dvid.UUID, dvid.VersionID) {
 			log.Fatalf("Can't get ROI type: %v\n", err)
 		}
 	}
-	return tests.NewRepo()
+	return datastore.NewTestRepo()
 }
 
 func TestTuples(t *testing.T) {
@@ -144,8 +143,8 @@ func TestTuples(t *testing.T) {
 }
 
 func TestROIRequests(t *testing.T) {
-	tests.UseStore()
-	defer tests.CloseStore()
+	datastore.OpenTest()
+	defer datastore.CloseTest()
 
 	// Create the ROI dataservice.
 	uuid, _ := initTestRepo()
@@ -284,8 +283,8 @@ func TestROIRequests(t *testing.T) {
 }
 
 func TestROIPostAndDelete(t *testing.T) {
-	tests.UseStore()
-	defer tests.CloseStore()
+	datastore.OpenTest()
+	defer datastore.CloseTest()
 
 	// Create the ROI dataservice.
 	uuid, _ := initTestRepo()
@@ -327,8 +326,8 @@ func TestROIPostAndDelete(t *testing.T) {
 }
 
 func TestROICreateAndSerialize(t *testing.T) {
-	tests.UseStore()
-	defer tests.CloseStore()
+	datastore.OpenTest()
+	defer datastore.CloseTest()
 
 	uuid, _ := initTestRepo()
 
@@ -387,8 +386,8 @@ func TestROICreateAndSerialize(t *testing.T) {
 }
 
 func TestROIPartition(t *testing.T) {
-	tests.UseStore()
-	defer tests.CloseStore()
+	datastore.OpenTest()
+	defer datastore.CloseTest()
 
 	// Create the ROI dataservice.
 	uuid, versionID := initTestRepo()
@@ -441,8 +440,8 @@ func TestROIPartition(t *testing.T) {
 }
 
 func TestROISimplePartition(t *testing.T) {
-	tests.UseStore()
-	defer tests.CloseStore()
+	datastore.OpenTest()
+	defer datastore.CloseTest()
 
 	// Create the ROI dataservice.
 	uuid, versionID := initTestRepo()
@@ -850,8 +849,8 @@ const expectedSimplePartition = `
 `
 
 func TestROIRepoPersistence(t *testing.T) {
-	tests.UseStore()
-	defer tests.CloseStore()
+	datastore.OpenTest()
+	defer datastore.CloseTest()
 
 	uuid, _ := initTestRepo()
 
@@ -897,7 +896,7 @@ func TestROIRepoPersistence(t *testing.T) {
 		t.Fatalf("Unable to save data2 during ROI persistence test: %v\n", err)
 	}
 
-	tests.CloseReopenStore()
+	datastore.CloseReopenTest()
 
 	dataservice3, err := datastore.GetDataByUUID(uuid, "myroi2")
 	if err != nil {

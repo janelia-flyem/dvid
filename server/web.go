@@ -675,9 +675,6 @@ func typehelpHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 // Handler for web client and other static content
 func mainHandler(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
-	if config == nil {
-		log.Fatalf("mainHandler() called when server was not configured!\n")
-	}
 
 	// Serve from embedded files in executable if not web client directory was specified
 	if config.WebClient() == "" {

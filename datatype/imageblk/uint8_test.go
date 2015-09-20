@@ -15,7 +15,6 @@ import (
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
-	"github.com/janelia-flyem/dvid/tests"
 )
 
 var (
@@ -45,7 +44,7 @@ func initTestRepo() (dvid.UUID, dvid.VersionID) {
 			log.Fatalf("Can't get ROI type: %s\n", err)
 		}
 	}
-	return tests.NewRepo()
+	return datastore.NewTestRepo()
 }
 
 // Data from which to construct repeatable 3d images where adjacent voxels have different values.
@@ -103,8 +102,8 @@ func makeGrayscale(uuid dvid.UUID, t *testing.T, name string) *Data {
 }
 
 func TestVoxelsInstanceCreation(t *testing.T) {
-	tests.UseStore()
-	defer tests.CloseStore()
+	datastore.OpenTest()
+	defer datastore.CloseTest()
 
 	uuid := dvid.UUID(server.NewTestRepo(t))
 
@@ -162,8 +161,8 @@ func TestVoxelsInstanceCreation(t *testing.T) {
 }
 
 func TestForegroundROI(t *testing.T) {
-	tests.UseStore()
-	defer tests.CloseStore()
+	datastore.OpenTest()
+	defer datastore.CloseTest()
 
 	uuid, _ := initTestRepo()
 	grayscale := makeGrayscale(uuid, t, "grayscale")
@@ -228,8 +227,8 @@ func TestForegroundROI(t *testing.T) {
 }
 
 func TestDirectCalls(t *testing.T) {
-	tests.UseStore()
-	defer tests.CloseStore()
+	datastore.OpenTest()
+	defer datastore.CloseTest()
 
 	uuid, versionID := initTestRepo()
 	grayscale := makeGrayscale(uuid, t, "grayscale")
@@ -293,8 +292,8 @@ func TestDirectCalls(t *testing.T) {
 }
 
 func TestBlockAPI(t *testing.T) {
-	tests.UseStore()
-	defer tests.CloseStore()
+	datastore.OpenTest()
+	defer datastore.CloseTest()
 
 	uuid, _ := initTestRepo()
 	grayscale := makeGrayscale(uuid, t, "grayscale")
@@ -304,7 +303,7 @@ func TestBlockAPI(t *testing.T) {
 	testBlocks := 1001
 	var blockData []byte
 	for i := 0; i < testBlocks; i++ {
-		blockData = append(blockData, tests.RandomBytes(numBlockBytes)...)
+		blockData = append(blockData, dvid.RandomBytes(numBlockBytes)...)
 	}
 
 	// set start of span
@@ -346,8 +345,8 @@ func TestBlockAPI(t *testing.T) {
 
 /*
 func TestROIMaskGrayscale8(t *testing.T) {
-	tests.UseStore()
-	defer tests.CloseStore()
+	datastore.OpenTest()
+	defer datastore.CloseTest()
 
 	offset := dvid.Point3d{312, 87, 67}
 	size := dvid.Point2d{100, 100}
@@ -447,8 +446,8 @@ func TestROIMaskGrayscale8(t *testing.T) {
 */
 
 func TestGrayscaleRepoPersistence(t *testing.T) {
-	tests.UseStore()
-	defer tests.CloseStore()
+	datastore.OpenTest()
+	defer datastore.CloseTest()
 
 	uuid, _ := initTestRepo()
 
@@ -471,7 +470,7 @@ func TestGrayscaleRepoPersistence(t *testing.T) {
 	if err = datastore.SaveDataByUUID(uuid, grayscale); err != nil {
 		t.Fatalf("Unable to save repo during grayscale persistence test: %v\n", err)
 	}
-	tests.CloseReopenStore()
+	datastore.CloseReopenTest()
 
 	dataservice2, err := datastore.GetDataByUUID(uuid, "mygrayscale")
 	if err != nil {
@@ -492,8 +491,8 @@ const testROIJson = "[[2,3,10,10],[2,4,12,13]]"
 /*
 // Create, store, and retrieve data using HTTP API
 func TestGrayscale8HTTPAPI(t *testing.T) {
-	tests.UseStore()
-	defer tests.CloseStore()
+	datastore.OpenTest()
+	defer datastore.CloseTest()
 
 	_, versionID := initTestRepo()
 	uuid, err := datastore.UUIDFromVersion(versionID)

@@ -48,9 +48,12 @@ package storage
 import (
 	"bytes"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/janelia-flyem/dvid/dvid"
+
+	"github.com/janelia-flyem/go/semver"
 )
 
 // Key is the slice of bytes used to store a value in a storage engine.  It internally
@@ -130,30 +133,6 @@ func (kv TKeyValues) Less(i, j int) bool {
 	return bytes.Compare(kv[i].K, kv[j].K) <= 0
 }
 
-// Engine implementations can fulfill a variety of interfaces and can be checked by
-// runtime cast checks, e.g., myGetter, ok := myEngine.(OrderedKeyValueGetter)
-// Data types can throw a warning at init time if the backend doesn't support required
-// interfaces, or they can choose to implement multiple ways of handling data.
-type Engine interface {
-	fmt.Stringer
-
-	GetConfig() dvid.Config
-	Close()
-}
-
-// --- The three tiers of storage might gain new interfaces when we add cluster
-// --- support to DVID.
-
-// DataStoreType describes the semantics of a particular data store.
-type DataStoreType uint8
-
-const (
-	UnknownData DataStoreType = iota
-	MetaData
-	Mutable
-	Immutable
-)
-
 // MetaDataStorer is the interface for storing DVID datastore metadata like the
 // repositories, associated DAGs, and datatype-specific data that needs to be
 // coordinated across front-end DVID servers.  It is characterized by the following:
@@ -183,6 +162,133 @@ type MutableStorer interface {
 // an error.
 type ImmutableStorer interface {
 	OrderedKeyValueDB
+}
+
+// DataStoreType describes the semantics of a particular data store.
+type DataStoreType uint8
+
+const (
+	UnknownData DataStoreType = iota
+	MetaData
+	Mutable
+	Immutable
+)
+
+// Engine implementations can fulfill a variety of interfaces and can be checked by
+// runtime cast checks, e.g., myGetter, ok := myEngine.(OrderedKeyValueGetter)
+// Data types can throw a warning at init time if the backend doesn't support required
+// interfaces, or they can choose to implement multiple ways of handling data.
+// Each Engine implementation should call storage.Register() to register its availability.
+type Engine interface {
+	fmt.Stringer
+
+	// GetName returns a simple identifier like "basholeveldb", "kvautobus" or "bigtable".
+	GetName() string
+
+	// GetSemVer returns the semantic versioning info.
+	GetSemVer() semver.Version
+}
+
+type MetaDataEngine interface {
+	Engine
+	NewMetaDataStore(dvid.EngineConfig) (db MetaDataStorer, created bool, err error)
+}
+
+type MutableEngine interface {
+	Engine
+	NewMutableStore(dvid.EngineConfig) (db MutableStorer, created bool, err error)
+}
+
+type ImmutableEngine interface {
+	Engine
+	NewImmutableStore(dvid.EngineConfig) (db ImmutableStorer, created bool, err error)
+}
+
+type RepairableEngine interface {
+	Engine
+	Repair(path string) error
+}
+
+// TestableEngine is an engine that allows creation and deletion of
+// some data using a name.
+type TestableEngine interface {
+	Engine
+	Delete(dvid.EngineConfig) error
+}
+
+var (
+	availEngines map[string]Engine
+)
+
+// EnginesAvailable returns a description of the available storage engines.
+func EnginesAvailable() string {
+	var engines []string
+	for e := range availEngines {
+		engines = append(engines, e)
+	}
+	return strings.Join(engines, "; ")
+}
+
+// RegisterEngine registers an Engine for DVID use.
+func RegisterEngine(e Engine) {
+	dvid.Infof("Engine %q registered with DVID server.\n", e)
+	if availEngines == nil {
+		availEngines = map[string]Engine{e.GetName(): e}
+	} else {
+		availEngines[e.GetName()] = e
+	}
+}
+
+// GetEngine returns an Engine of the given name.
+func GetEngine(name string) Engine {
+	if availEngines == nil {
+		return nil
+	}
+	e, found := availEngines[name]
+	if !found {
+		return nil
+	}
+	return e
+}
+
+// GetMutableEngine returns a Mutable engine if one has been compiled in.
+// Returns nil if none are available.
+func GetMutableEngine() MutableEngine {
+	for _, e := range availEngines {
+		mutableEng, ok := e.(MutableEngine)
+		if ok {
+			return mutableEng
+		}
+	}
+	return nil
+}
+
+// GetTestableEngine returns a Mutable engine that is also Testable
+// (has ability to create and delete database).
+func GetTestableEngine() TestableEngine {
+	for _, e := range availEngines {
+		mutableEng, ok := e.(MutableEngine)
+		if ok {
+			testableEng, ok := mutableEng.(TestableEngine)
+			if ok {
+				return testableEng
+			}
+		}
+	}
+	return nil
+}
+
+// Repair repairs a named engine's store at given path.
+func Repair(name, path string) error {
+	e := GetEngine(name)
+	if e == nil {
+		return fmt.Errorf("Could not find engine with name %q", name)
+	}
+	repairer, ok := e.(RepairableEngine)
+	if !ok {
+		return fmt.Errorf("Engine %q has no capability to be repaired.", name)
+	}
+	return repairer.Repair(path)
 }
 
 // Op enumerates the types of single key-value operations that can be performed for storage engines.
@@ -224,6 +330,10 @@ type Requirements struct {
 type KeyChan chan Key
 
 // ---- Storage interfaces ------
+
+type Closer interface {
+	Close()
+}
 
 type KeyValueGetter interface {
 	// Get returns a value given a key.
@@ -296,17 +406,17 @@ type OrderedKeyValueSetter interface {
 // KeyValueDB provides an interface to the simplest storage API: a key-value store.
 type KeyValueDB interface {
 	fmt.Stringer
-
 	KeyValueGetter
 	KeyValueSetter
+	Closer
 }
 
 // OrderedKeyValueDB addes range queries and range puts to a base KeyValueDB.
 type OrderedKeyValueDB interface {
 	fmt.Stringer
-
 	OrderedKeyValueGetter
 	OrderedKeyValueSetter
+	Closer
 }
 
 // KeyValueBatcher allow batching operations into an atomic update or transaction.
@@ -394,4 +504,6 @@ type GraphGetter interface {
 type GraphDB interface {
 	GraphSetter
 	GraphGetter
+
+	Close()
 }

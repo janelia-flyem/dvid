@@ -9,8 +9,8 @@ import (
 
 // Make sure we get unique IDs even when doing things concurrently.
 func TestNewInstanceIDs(t *testing.T) {
-	useStore()
-	defer closeStore()
+	OpenTest()
+	defer CloseTest()
 
 	n := 1000 // number of IDs
 	ch := make(chan dvid.InstanceID, n)

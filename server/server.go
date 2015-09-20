@@ -233,7 +233,6 @@ func Shutdown() {
 		}
 		time.Sleep(1 * time.Second)
 	}
-	datastore.Shutdown()
-	storage.Shutdown()
+	datastore.Close()
 	dvid.BlockOnActiveCgo()
 }

@@ -12,7 +12,6 @@ import (
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
-	"github.com/janelia-flyem/dvid/tests"
 )
 
 var (
@@ -60,13 +59,13 @@ func initTestRepo() (dvid.UUID, dvid.VersionID) {
 			log.Fatalf("Can't get labelgraph type: %v\n", err)
 		}
 	}
-	return tests.NewRepo()
+	return datastore.NewTestRepo()
 }
 
 // Make sure new labelgraph data have different IDs.
 func TestNewLabelgraphDifferent(t *testing.T) {
-	tests.UseStore()
-	defer tests.CloseStore()
+	datastore.OpenTest()
+	defer datastore.CloseTest()
 
 	uuid, _ := initTestRepo()
 
@@ -95,8 +94,8 @@ func TestNewLabelgraphDifferent(t *testing.T) {
 }
 
 func TestLabelgraphRepoPersistence(t *testing.T) {
-	tests.UseStore()
-	defer tests.CloseStore()
+	datastore.OpenTest()
+	defer datastore.CloseTest()
 
 	uuid, _ := initTestRepo()
 
@@ -116,7 +115,7 @@ func TestLabelgraphRepoPersistence(t *testing.T) {
 	if err = datastore.SaveDataByUUID(uuid, lgdata); err != nil {
 		t.Fatalf("Unable to save repo during labelgraph persistence test: %v\n", err)
 	}
-	tests.CloseReopenStore()
+	datastore.CloseReopenTest()
 
 	dataservice2, err := datastore.GetDataByUUID(uuid, "lg")
 	if err != nil {
@@ -133,8 +132,8 @@ func TestLabelgraphRepoPersistence(t *testing.T) {
 
 // check subgraph endpoint
 func TestLabelgraphPostAndDelete(t *testing.T) {
-	tests.UseStore()
-	defer tests.CloseStore()
+	datastore.OpenTest()
+	defer datastore.CloseTest()
 
 	// Create the ROI dataservice.
 	uuid, _ := initTestRepo()

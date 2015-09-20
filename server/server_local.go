@@ -37,60 +37,55 @@ const (
 	MaxThrottledOps = 1
 )
 
-var localConfig configT
-
-type configT struct {
-	httpAddress  string
-	rpcAddress   string
-	webClientDir string
-	settings     tomlConfig
-}
-
-func (c configT) HTTPAddress() string {
-	return c.httpAddress
-}
-
-func (c configT) RPCAddress() string {
-	return c.rpcAddress
-}
-
-func (c configT) WebClient() string {
-	return c.webClientDir
-}
-
-func init() {
-	config = &localConfig
-}
+var tc tomlConfig
 
 type tomlConfig struct {
-	Server serverConfig
+	Server  serverConfig
+	Email   emailConfig
+	Logging dvid.LogConfig
+	Store   dvid.StoreConfig
+}
+
+func (c *tomlConfig) HTTPAddress() string {
+	return c.Server.HTTPAddress
+}
+
+func (c *tomlConfig) RPCAddress() string {
+	return c.Server.RPCAddress
+}
+
+func (c *tomlConfig) WebClient() string {
+	return c.Server.WebClient
 }
 
 type serverConfig struct {
-	Notify  []string
-	Logging dvid.LogConfig
-	Email   smtpServer
+	HTTPAddress string
+	RPCAddress  string
+	WebClient   string
 }
 
-type smtpServer struct {
+type emailConfig struct {
+	Notify   []string
 	Username string
 	Password string
 	Server   string
 	Port     int
 }
 
-func (s smtpServer) Host() string {
-	return fmt.Sprintf("%s:%d", s.Server, s.Port)
+func (e emailConfig) Host() string {
+	return fmt.Sprintf("%s:%d", e.Server, e.Port)
 }
 
-func LoadConfig(filename string) (*dvid.LogConfig, error) {
+func LoadConfig(filename string) (*dvid.LogConfig, *dvid.StoreConfig, error) {
 	if filename == "" {
-		return nil, nil
+		return nil, nil, fmt.Errorf("No server TOML configuration file provided")
 	}
-	if _, err := toml.DecodeFile(filename, &(localConfig.settings)); err != nil {
-		return nil, fmt.Errorf("Could not decode TOML config: %v\n", err)
+	if _, err := toml.DecodeFile(filename, &tc); err != nil {
+		return nil, nil, fmt.Errorf("Could not decode TOML config: %v\n", err)
 	}
-	return &(localConfig.settings.Server.Logging), nil
+	// The server config could be local, cluster, gcloud-specific config.  Here it is local.
+	config = &tc
+	return &(tc.Logging), &(tc.Store), nil
 }
 
 type emailData struct {
@@ -116,7 +111,7 @@ DVID at {{.Host}}
 // SendNotification sends e-mail to the given recipients or the default emails loaded
 // during configuration.
 func SendNotification(message string, recipients []string) error {
-	e := localConfig.settings.Server.Email
+	e := tc.Email
 	var auth smtp.Auth
 	if e.Password != "" {
 		auth = smtp.PlainAuth("", e.Username, e.Password, e.Server)
@@ -126,7 +121,7 @@ func SendNotification(message string, recipients []string) error {
 		hostname = "Unknown host"
 	}
 
-	for _, recipient := range localConfig.settings.Server.Notify {
+	for _, recipient := range e.Notify {
 		context := &emailData{
 			From:    e.Username,
 			To:      recipient,
@@ -155,25 +150,29 @@ func SendNotification(message string, recipients []string) error {
 	return nil
 }
 
-// Serve starts HTTP and RPC servers.
-func Serve(httpAddress, webClientDir, rpcAddress string) error {
-	// Set the package-level config variable
+// Serve starts HTTP and RPC servers.  If passed strings are empty, it will use
+// the configuration info from the toml.
+func Serve() error {
+	// Use defaults if not set via TOML config file.
+	if tc.Server.HTTPAddress == "" {
+		tc.Server.HTTPAddress = DefaultWebAddress
+	}
+	if tc.Server.RPCAddress == "" {
+		tc.Server.RPCAddress = DefaultRPCAddress
+	}
+
 	dvid.Infof("------------------\n")
 	dvid.Infof("DVID code version: %s\n", gitVersion)
-	dvid.Infof("Serving HTTP on %s\n", httpAddress)
-	dvid.Infof("Serving command-line use via RPC %s\n", rpcAddress)
-	dvid.Infof("Using web client files from %s\n", webClientDir)
+	dvid.Infof("Serving HTTP on %s\n", tc.Server.HTTPAddress)
+	dvid.Infof("Serving command-line use via RPC %s\n", tc.Server.RPCAddress)
+	dvid.Infof("Using web client files from %s\n", tc.Server.WebClient)
 	dvid.Infof("Using %d of %d logical CPUs for DVID.\n", dvid.NumCPU, runtime.NumCPU())
-	c := config.(*configT)
-	c.httpAddress = httpAddress
-	c.rpcAddress = rpcAddress
-	c.webClientDir = webClientDir
 
 	// Launch the web server
-	go serveHttp(httpAddress, webClientDir)
+	go serveHttp(tc.Server.HTTPAddress, tc.Server.WebClient)
 
 	// Launch the rpc server
-	if err := serveRpc(rpcAddress); err != nil {
+	if err := serveRpc(tc.Server.RPCAddress); err != nil {
 		return fmt.Errorf("Could not start RPC server: %v\n", err)
 	}
 	return nil

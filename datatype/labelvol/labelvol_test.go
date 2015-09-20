@@ -21,7 +21,6 @@ import (
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
-	"github.com/janelia-flyem/dvid/tests"
 
 	lz4 "github.com/janelia-flyem/go/golz4"
 )
@@ -42,7 +41,7 @@ func initTestRepo() (dvid.UUID, dvid.VersionID) {
 			log.Fatalf("Can't get labelblk type: %v\n", err)
 		}
 	}
-	return tests.NewRepo()
+	return datastore.NewTestRepo()
 }
 
 // A single label block within the volume
@@ -285,8 +284,8 @@ func createLabelTestVolume(t *testing.T, uuid dvid.UUID, name string) *testVolum
 }
 
 func TestSparseVolumes(t *testing.T) {
-	tests.UseStore()
-	defer tests.CloseStore()
+	datastore.OpenTest()
+	defer datastore.CloseTest()
 
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
@@ -419,8 +418,8 @@ func TestSparseVolumes(t *testing.T) {
 }
 
 func TestMergeLabels(t *testing.T) {
-	tests.UseStore()
-	defer tests.CloseStore()
+	datastore.OpenTest()
+	defer datastore.CloseTest()
 
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
@@ -483,8 +482,8 @@ func TestMergeLabels(t *testing.T) {
 }
 
 func TestSplitLabel(t *testing.T) {
-	tests.UseStore()
-	defer tests.CloseStore()
+	datastore.OpenTest()
+	defer datastore.CloseTest()
 
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
@@ -581,8 +580,8 @@ func TestSplitLabel(t *testing.T) {
 }
 
 func TestSplitCoarseLabel(t *testing.T) {
-	tests.UseStore()
-	defer tests.CloseStore()
+	datastore.OpenTest()
+	defer datastore.CloseTest()
 
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()

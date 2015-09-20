@@ -4,7 +4,6 @@ package storage
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/janelia-flyem/dvid/dvid"
 )
@@ -14,7 +13,6 @@ var manager managerT
 // managerT should be implemented for each type of storage implementation (local, clustered, gcloud)
 // and it should fulfill a storage.Manager interface.
 type managerT struct {
-	// True if Setupmanager and SetupTiers have been called.
 	setup bool
 
 	// Tiers
@@ -22,13 +20,13 @@ type managerT struct {
 	mutable   MutableStorer
 	immutable ImmutableStorer
 
+	uniqueDBs []Closer // Keep track of unique stores for closing.
+
 	// Cached type-asserted interfaces
 	graphEngine Engine
 	graphDB     GraphDB
 	graphSetter GraphSetter
 	graphGetter GraphGetter
-
-	enginesAvail []string
 }
 
 func MetaDataStore() (MetaDataStorer, error) {
@@ -59,55 +57,104 @@ func GraphStore() (GraphDB, error) {
 	return manager.graphDB, nil
 }
 
-// EnginesAvailable returns a description of the available storage engines.
-func EnginesAvailable() string {
-	return strings.Join(manager.enginesAvail, "; ")
-}
-
-// Shutdown handles any storage-specific shutdown procedures.
-func Shutdown() {
-	// Place to be put any storage engine shutdown code.
-}
-
-// Initialize the storage systems given a configuration, path to datastore.  Unlike cluster
-// and google cloud storage systems, which get initialized on DVID start using init(), the
-// local storage system waits until it receives a path and configuration data from a
-// "serve" command.
-func Initialize(kvEngine Engine, description string) error {
-	kvDB, ok := kvEngine.(OrderedKeyValueDB)
-	if !ok {
-		return fmt.Errorf("Database %q is not a valid ordered key-value database", kvEngine.String())
+// Close handles any storage-specific shutdown procedures.
+func Close() {
+	if manager.setup {
+		dvid.Infof("Closing datastore...\n")
+		for _, store := range manager.uniqueDBs {
+			store.Close()
+		}
 	}
+}
 
-	var err error
-	manager.graphEngine, err = NewGraphStore(kvDB)
+// Initialize the storage systems.  Returns a bool + error where the bool is
+// true if the metadata store is newly created and needs initialization.
+func Initialize(cmdline dvid.Config, sc *dvid.StoreConfig) (created bool, err error) {
+	// Initialize the proper engines.
+	engine := GetEngine(sc.Mutable.Engine)
+	if engine == nil {
+		return false, fmt.Errorf("Can't get mutable store %q", sc.Mutable.Engine)
+	}
+	mutableEng, ok := engine.(MutableEngine)
+	if !ok {
+		return false, fmt.Errorf("Mutable engine %q does not support NewMutableStore()", sc.Mutable.Engine)
+	}
+	mutableDB, newMutable, err := mutableEng.NewMutableStore(sc.Mutable)
 	if err != nil {
-		return err
+		return false, err
 	}
-	manager.graphDB, ok = manager.graphEngine.(GraphDB)
-	if !ok {
-		return fmt.Errorf("Database %q cannot support a graph database", kvEngine.String())
-	}
-	manager.graphSetter, ok = manager.graphEngine.(GraphSetter)
-	if !ok {
-		return fmt.Errorf("Database %q cannot support a graph setter", kvEngine.String())
-	}
-	manager.graphGetter, ok = manager.graphEngine.(GraphGetter)
-	if !ok {
-		return fmt.Errorf("Database %q cannot support a graph getter", kvEngine.String())
+	manager.uniqueDBs = []Closer{mutableDB}
+
+	var metadataDB MetaDataStorer
+	var newMetadata bool
+	engine = GetEngine(sc.MetaData.Engine)
+	if engine == nil {
+		// Reuse mutable.
+		metadataDB, ok = mutableDB.(MetaDataStorer)
+		if !ok {
+			return false, fmt.Errorf("No MetaData store specified and Mutable store %q cannot fulfill interface", sc.Mutable.Engine)
+		}
+		dvid.Infof("No dedicated MetaData store.  Using mutable store %q\n", sc.Mutable.Engine)
+		newMetadata = newMutable
+	} else {
+		metadataEng, ok := engine.(MetaDataEngine)
+		if !ok {
+			return false, fmt.Errorf("MetaData engine %q does not support NewMetaDataStore()", sc.MetaData.Engine)
+		}
+		metadataDB, newMetadata, err = metadataEng.NewMetaDataStore(sc.MetaData)
+		if err != nil {
+			return false, err
+		}
+		manager.uniqueDBs = append(manager.uniqueDBs, metadataDB)
 	}
 
-	// Setup the three tiers of storage.  In the case of a single local server with
-	// embedded storage engines, it's simpler because we don't worry about cross-process
-	// synchronization.
-	manager.metadata = kvDB
-	manager.mutable = kvDB
-	manager.immutable = kvDB
+	var immutableDB ImmutableStorer
+	engine = GetEngine(sc.Immutable.Engine)
+	if engine == nil {
+		// Reuse mutable.
+		immutableDB, ok = mutableDB.(ImmutableStorer)
+		if !ok {
+			return false, fmt.Errorf("No MetaData store specified and Mutable store %q cannot fulfill interface", sc.Mutable.Engine)
+		}
+		dvid.Infof("No dedicated Immutable store.  Using mutable store %q\n", sc.Mutable.Engine)
+	} else {
+		immutableEng, ok := engine.(ImmutableEngine)
+		if !ok {
+			return false, fmt.Errorf("Immutable engine %q does not support NewImmutableStore()", sc.Immutable.Engine)
+		}
+		immutableDB, _, err = immutableEng.NewImmutableStore(sc.Immutable)
+		if err != nil {
+			return false, err
+		}
+		manager.uniqueDBs = append(manager.uniqueDBs, immutableDB)
+	}
 
-	manager.enginesAvail = append(manager.enginesAvail, description)
+	// Initialize the stores using the engines.
+	manager.metadata = metadataDB
+	manager.mutable = mutableDB
+	manager.immutable = immutableDB
 
 	manager.setup = true
-	return nil
+
+	// Setup the graph store using mutable store.
+	kvDB, ok := mutableDB.(OrderedKeyValueDB)
+	if !ok {
+		return false, fmt.Errorf("Mutable DB %q is not a valid ordered key-value database", mutableDB)
+	}
+
+	manager.graphDB, err = NewGraphStore(kvDB)
+	if err != nil {
+		return false, err
+	}
+	manager.graphSetter, ok = manager.graphDB.(GraphSetter)
+	if !ok {
+		return false, fmt.Errorf("Database %q cannot support a graph setter", kvDB)
+	}
+	manager.graphGetter, ok = manager.graphDB.(GraphGetter)
+	if !ok {
+		return false, fmt.Errorf("Database %q cannot support a graph getter", kvDB)
+	}
+	return newMetadata, nil
 }
 
 // DeleteDataInstance removes a data instance across all versions and tiers of storage.

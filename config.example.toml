@@ -1,18 +1,29 @@
-# Example server configuration for DVID
+# Example configuration for DVID
 
 [server]
-# Who to send email in case of panic
-notify = ["foo@someplace.edu"]
+httpAddress = localhost:8000
+rpcAddress = localhost:8001
+webClient = 
 
-    [server.logging]
-    logfile = "/demo/logs/dvid.log"
-    max_log_size = 500 # MB
-    max_log_age = 30   # days
+# Email server to use for notifications and server issuing email-based authorization tokens.
+[email]
+notify = ["foo@someplace.edu"] # Who to send email in case of panic
+username = 
+password = 
+server = 
+port = 25
 
-    # Email server to use for notifications and server issuing email-based authorization tokens.
-    [server.email]
-    username = 
-    password = 
-    server = 
-    port = 25
+[logging]
+logfile = "/demo/logs/dvid.log"
+max_log_size = 500 # MB
+max_log_age = 30   # days
 
+[store]   
+    # if no store.metadata is provided, it defaults to store.mutable configuration
+    [store.mutable]
+    engine = "basholeveldb"
+    path = "/demo/dbs/basholeveldb"
+
+    [store.immutable]
+    engine = "kvautobus"
+    path = "http://tem-dvid.int.janelia.org:9000"

@@ -7,7 +7,6 @@ import (
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/janelia-flyem/dvid/tests"
 )
 
 var (
@@ -26,12 +25,12 @@ func initTestRepo() (dvid.UUID, dvid.VersionID) {
 			log.Fatalf("Can't get multichan16 type: %v\n", err)
 		}
 	}
-	return tests.NewRepo()
+	return datastore.NewTestRepo()
 }
 
 func TestBasic(t *testing.T) {
-	tests.UseStore()
-	defer tests.CloseStore()
+	datastore.OpenTest()
+	defer datastore.CloseTest()
 
 	uuid, _ := initTestRepo()
 
@@ -43,8 +42,8 @@ func TestBasic(t *testing.T) {
 }
 
 func TestMultichan16RepoPersistence(t *testing.T) {
-	tests.UseStore()
-	defer tests.CloseStore()
+	datastore.OpenTest()
+	defer datastore.CloseTest()
 
 	uuid, _ := initTestRepo()
 
@@ -64,7 +63,7 @@ func TestMultichan16RepoPersistence(t *testing.T) {
 	if err = datastore.SaveDataByUUID(uuid, mcdata); err != nil {
 		t.Fatalf("Unable to save repo during multichan16 persistence test: %v\n", err)
 	}
-	tests.CloseReopenStore()
+	datastore.CloseReopenTest()
 
 	dataservice2, err := datastore.GetDataByUUID(uuid, "mymultichan16")
 	if err != nil {

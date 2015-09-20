@@ -10,7 +10,6 @@ import (
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
-	"github.com/janelia-flyem/dvid/tests"
 
 	// Declare the data types the DVID server should support
 	_ "github.com/janelia-flyem/dvid/datatype/keyvalue"
@@ -145,8 +144,8 @@ func (s sliceTester) testLabel(t *testing.T, vol labelVol, img *dvid.Image) {
 }
 
 func TestLabelsSyncing(t *testing.T) {
-	tests.UseStore()
-	defer tests.CloseStore()
+	datastore.OpenTest()
+	defer datastore.CloseTest()
 
 	uuid := dvid.UUID(server.NewTestRepo(t))
 	if len(uuid) < 5 {
@@ -165,8 +164,8 @@ func TestLabelsSyncing(t *testing.T) {
 }
 
 func TestCommitAndBranch(t *testing.T) {
-	tests.UseStore()
-	defer tests.CloseStore()
+	datastore.OpenTest()
+	defer datastore.CloseTest()
 
 	apiStr := fmt.Sprintf("%srepos", server.WebAPIPath)
 	r := server.TestHTTP(t, "POST", apiStr, nil)
@@ -217,8 +216,8 @@ func TestCommitAndBranch(t *testing.T) {
 }
 
 func TestDeleteInstance(t *testing.T) {
-	tests.UseStore()
-	defer tests.CloseStore()
+	datastore.OpenTest()
+	defer datastore.CloseTest()
 
 	apiStr := fmt.Sprintf("%srepos", server.WebAPIPath)
 	r := server.TestHTTP(t, "POST", apiStr, nil)

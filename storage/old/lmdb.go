@@ -110,10 +110,6 @@ func (db *LMDB) String() string {
 	return "lmdb Cgo database"
 }
 
-func (db *LMDB) GetConfig() dvid.Config {
-	return db.config
-}
-
 // Close closes the db.
 func (db *LMDB) Close() {
 	if db.env != nil {

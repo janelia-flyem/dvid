@@ -1,6 +1,6 @@
 //go:generate msgp
 
-package local
+package kvautobus
 
 // --- MessagePack encoding
 

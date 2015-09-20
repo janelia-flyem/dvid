@@ -83,10 +83,6 @@ func (bdb *BoltDB) String() string {
 	return "bolt Go database"
 }
 
-func (bdb *BoltDB) GetConfig() dvid.Config {
-	return bdb.config
-}
-
 // Close closes the leveldb and then the I/O abstraction for leveldb.
 func (bdb *BoltDB) Close() {
 	if bdb.db != nil {

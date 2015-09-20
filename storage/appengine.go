@@ -84,11 +84,6 @@ func (ds *AppEngineDatastore) String() string {
 	return "Google AppEngine datastore"
 }
 
-// GetConfig returns configuration data at time of datastore initialization.
-func (ds *AppEngineDatastore) GetConfig() dvid.Config {
-	return ds.config
-}
-
 // Close is a null op for Google datastore service.
 func (ds *AppEngineDatastore) Close() {}
 

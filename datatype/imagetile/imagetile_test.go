@@ -9,7 +9,6 @@ import (
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/imageblk"
 	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/janelia-flyem/dvid/tests"
 )
 
 var (
@@ -32,7 +31,7 @@ func initTestRepo() (dvid.UUID, dvid.VersionID) {
 			log.Fatalf("Can't get grayscale type: %s\n", err)
 		}
 	}
-	return tests.NewRepo()
+	return datastore.NewTestRepo()
 }
 
 func makeGrayscale(uuid dvid.UUID, t *testing.T, name dvid.InstanceName) *imageblk.Data {
@@ -74,8 +73,8 @@ func TestLoadTileSpec(t *testing.T) {
 }
 
 func TestMultiscale2dRepoPersistence(t *testing.T) {
-	tests.UseStore()
-	defer tests.CloseStore()
+	datastore.OpenTest()
+	defer datastore.CloseTest()
 
 	// Make source
 	uuid, _ := initTestRepo()
@@ -100,7 +99,7 @@ func TestMultiscale2dRepoPersistence(t *testing.T) {
 	if err = datastore.SaveDataByUUID(uuid, msdata); err != nil {
 		t.Fatalf("Unable to save repo during imagetile persistence test: %v\n", err)
 	}
-	tests.CloseReopenStore()
+	datastore.CloseReopenTest()
 
 	dataservice2, err := datastore.GetDataByUUID(uuid, "myimagetile")
 	if err != nil {

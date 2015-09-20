@@ -9,7 +9,6 @@ import (
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/janelia-flyem/dvid/tests"
 )
 
 func createRepo(t *testing.T) dvid.UUID {
@@ -44,8 +43,8 @@ func testLog(t *testing.T, got, expect string) {
 }
 
 func TestLog(t *testing.T) {
-	tests.UseStore()
-	defer tests.CloseStore()
+	datastore.OpenTest()
+	defer datastore.CloseTest()
 
 	uuid := createRepo(t)
 
@@ -100,8 +99,8 @@ func TestLog(t *testing.T) {
 }
 
 func TestDeleteInstance(t *testing.T) {
-	tests.UseStore()
-	defer tests.CloseStore()
+	datastore.OpenTest()
+	defer datastore.CloseTest()
 
 	uuid := createRepo(t)
 
@@ -115,8 +114,8 @@ func TestDeleteInstance(t *testing.T) {
 }
 
 func TestCommitBranchMergeDelete(t *testing.T) {
-	tests.UseStore()
-	defer tests.CloseStore()
+	datastore.OpenTest()
+	defer datastore.CloseTest()
 
 	uuid := createRepo(t)
 

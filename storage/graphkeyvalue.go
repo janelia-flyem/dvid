@@ -125,7 +125,7 @@ type GraphKeyValueDB struct {
 
 // NewGraphStore returns a graph backend that uses the provided keyvalue datastore.
 // If a first-class graph store is used in the future, this function must be changed.
-func NewGraphStore(kvdb OrderedKeyValueDB) (Engine, error) {
+func NewGraphStore(kvdb OrderedKeyValueDB) (GraphDB, error) {
 	dbbatch, ok := kvdb.(KeyValueBatcher)
 	var err error
 	if !ok {
@@ -138,11 +138,6 @@ func NewGraphStore(kvdb OrderedKeyValueDB) (Engine, error) {
 // GetName returns the name of theengien
 func (db *GraphKeyValueDB) String() string {
 	return "graph db using key value datastore"
-}
-
-// GetConfig returns the configuration for the graph (no configuration currently supported)
-func (db *GraphKeyValueDB) GetConfig() dvid.Config {
-	return dvid.Config{}
 }
 
 // Close does nothing, explicitly close the key value DB instead

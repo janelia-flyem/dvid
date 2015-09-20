@@ -20,7 +20,7 @@ import (
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
-	"github.com/janelia-flyem/dvid/storage/local"
+	"github.com/janelia-flyem/dvid/storage"
 	"github.com/janelia-flyem/go/profiler"
 
 	// Declare the data types this DVID executable will support
@@ -44,18 +44,10 @@ var (
 	// Read-only server.  Will only allow GET and HEAD requests.
 	readonly = flag.Bool("readonly", false, "")
 
-	// Name of file for TOML configuration.
-	configfile = flag.String("config", "", "")
-
 	// Run in verbose mode if true.
 	runVerbose = flag.Bool("verbose", false, "")
 
-	// Path to web client directory.  Leave unset for default pages.
-	clientDir = flag.String("webclient", "", "")
-
 	rpcAddress = flag.String("rpc", server.DefaultRPCAddress, "")
-
-	httpAddress = flag.String("http", server.DefaultWebAddress, "")
 
 	// msgAddress = flag.String("message", message.DefaultAddress, "")
 
@@ -78,10 +70,7 @@ dvid is a command-line interface to a distributed, versioned image-oriented data
 Usage: dvid [options] <command>
 
 	  -readonly   (flag)    HTTP API ignores anything but GET and HEAD requests.
-	  -config     =string   File name for TOML config.  Command-line flags take precedence.
-	  -webclient  =string   Path to web client directory.  Leave unset for default pages.
 	  -rpc        =string   Address for RPC communication.
-	  -http       =string   Address for HTTP communication.
 	  -cpuprofile =string   Write CPU profile to this file.
 	  -memprofile =string   Write memory profile to this file on ctrl-C.
 	  -numcpu     =number   Number of logical CPUs to use for DVID.
@@ -89,17 +78,18 @@ Usage: dvid [options] <command>
 	  -verbose    (flag)    Run in verbose mode.
   -h, -help       (flag)    Show help message
 
-  For profiling, please refer to this excellent article:
-  http://blog.golang.org/2011/06/profiling-go-programs.html
-
 Commands that can be performed without a running server:
 
 	about
 	help
-	create <datastore path>
-	serve  <datastore path>
-	repair <datastore path>
+	serve  <configuration path>
 
+For storage engines that have repair ability (e.g., basholeveldb):
+
+	repair <engine name> <database path>
+
+		The <engine name> refers to the name of the engine: "basholeveldb", "kvautobus", etc.
+		The <database path> is the file path to the directory.
 `
 
 var usage = func() {
@@ -179,8 +169,6 @@ func DoCommand(cmd dvid.Command) error {
 
 	switch cmd.Name() {
 	// Handle commands that don't require server connection
-	case "create":
-		return DoCreate(cmd)
 	case "serve":
 		return DoServe(cmd)
 	case "repair":
@@ -206,26 +194,17 @@ func DoCommand(cmd dvid.Command) error {
 	return nil
 }
 
-// DoCreate creates a new DVID datastore.
-func DoCreate(cmd dvid.Command) error {
-	datastorePath := cmd.Argument(1)
-	if datastorePath == "" {
-		return fmt.Errorf("create command must be followed by the path to the datastore")
-	}
-	kvCanStoreMetadata := true // We assume this for local key value stores.
-	return datastore.Create(datastorePath, kvCanStoreMetadata, cmd.Settings())
-}
-
 // DoRepair performs the "repair" command, trying to repair a storage engine
 func DoRepair(cmd dvid.Command) error {
-	datastorePath := cmd.Argument(1)
-	if datastorePath == "" {
-		return fmt.Errorf("repair command must be followed by the path to the datastore")
+	engineName := cmd.Argument(1)
+	path := cmd.Argument(2)
+	if path == "" {
+		return fmt.Errorf("repair command must be followed by engine name and path to the datastore")
 	}
-	if err := datastore.Repair(datastorePath, cmd.Settings()); err != nil {
+	if err := storage.Repair(engineName, path); err != nil {
 		return err
 	}
-	fmt.Printf("Ran repair on database at %s.\n", datastorePath)
+	fmt.Printf("Ran repair on %q database at %s.\n", engineName, path)
 	return nil
 }
 
@@ -256,22 +235,23 @@ func DoServe(cmd dvid.Command) error {
 	}()
 	signal.Notify(stopSig, os.Interrupt, os.Kill, syscall.SIGTERM)
 
-	// Check if there is a configuration file, and if so, set logger.
-	logConfig, err := server.LoadConfig(*configfile)
+	// Load server configuration.
+	configPath := cmd.Argument(1)
+	if configPath == "" {
+		return fmt.Errorf("serve command must be followed by the path to the TOML configuration file")
+	}
+	logConfig, storeConfig, err := server.LoadConfig(configPath)
 	if err != nil {
-		return fmt.Errorf("Error loading configuration file %q: %v\n", *configfile, err)
+		return fmt.Errorf("Error loading configuration file %q: %v\n", configPath, err)
 	}
 	logConfig.SetLogger()
 
-	// Load datastore metadata and initialize datastore
-	dbpath := cmd.Argument(1)
-	if dbpath == "" {
-		return fmt.Errorf("serve command must be followed by the path to the datastore")
+	// Initialize storage and datastore layer
+	initMetadata, err := storage.Initialize(cmd.Settings(), storeConfig)
+	if err != nil {
+		return fmt.Errorf("Unable to initialize storage: %v\n", err)
 	}
-	if err := local.Initialize(dbpath, cmd.Settings()); err != nil {
-		return fmt.Errorf("Unable to initialize local storage: %v\n", err)
-	}
-	if err := datastore.Initialize(); err != nil {
+	if err := datastore.Initialize(initMetadata); err != nil {
 		return fmt.Errorf("Unable to initialize datastore: %v\n", err)
 	}
 
@@ -281,11 +261,11 @@ func DoServe(cmd dvid.Command) error {
 	// Uncomment if you want to start profiling automatically
 	// profiler.StartProfiling()
 
-	// listen on port 6060 (pick a port)
+	// listen on port 6060 (pick a port) for profiling.
 	go http.ListenAndServe(":6060", nil)
 
 	// Serve HTTP and RPC
-	if err := server.Serve(*httpAddress, *clientDir, *rpcAddress); err != nil {
+	if err := server.Serve(); err != nil {
 		return err
 	}
 	return nil

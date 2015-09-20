@@ -3,18 +3,10 @@
 package datastore
 
 import (
-	"fmt"
-	"log"
-	"os"
-	"path/filepath"
 	"reflect"
-	"sync"
 	"testing"
 
 	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/janelia-flyem/dvid/storage"
-	"github.com/janelia-flyem/dvid/storage/local"
-	"github.com/janelia-flyem/go/uuid"
 )
 
 func TestRepoGobEncoding(t *testing.T) {
@@ -69,91 +61,6 @@ func TestRepoGobEncoding(t *testing.T) {
 	}
 }
 
-const (
-	WebAddress   = "localhost:8657"
-	RPCAddress   = "localhost:8658"
-	WebClientDir = ""
-)
-
-var (
-	engine storage.Engine
-	count  int
-	dbpath string
-	mu     sync.Mutex
-)
-
-func useStore() {
-	mu.Lock()
-	defer mu.Unlock()
-	if count == 0 {
-		dbpath = filepath.Join(os.TempDir(), fmt.Sprintf("dvid-test-%s", uuid.NewV4()))
-		var err error
-		engine, err = local.CreateBlankStore(dbpath)
-		if err != nil {
-			log.Fatalf("Can't create a blank test datastore: %v\n", err)
-		}
-		if err = storage.Initialize(engine, "testdb"); err != nil {
-			log.Fatalf("Can't initialize test datastore: %v\n", err)
-		}
-		if err = InitMetadata(engine); err != nil {
-			log.Fatalf("Can't write blank datastore metadata: %v\n", err)
-		}
-		if err = Initialize(); err != nil {
-			log.Fatalf("Can't initialize datastore management: %v\n", err)
-		}
-	}
-	count++
-}
-
-// closeReopenStore forces close of the underlying storage engine and then reopening
-// the datastore.  Useful for testing metadata persistence.
-func closeReopenStore() {
-	mu.Lock()
-	defer mu.Unlock()
-	dvid.BlockOnActiveCgo()
-	if engine == nil {
-		log.Fatalf("Attempted to close and reopen non-existant engine!")
-	}
-	engine.Close()
-
-	var err error
-	create := false
-	engine, err = local.NewKeyValueStore(dbpath, create, dvid.Config{})
-	if err != nil {
-		log.Fatalf("Error reopening test db at %s: %v\n", dbpath, err)
-	}
-	if err = storage.Initialize(engine, "testdb"); err != nil {
-		log.Fatalf("CloseReopenStore: bad storage.Initialize(): %v\n", err)
-	}
-	if err = Initialize(); err != nil {
-		log.Fatalf("CloseReopenStore: can't initialize datastore management: %v\n", err)
-	}
-}
-
-func closeStore() {
-	mu.Lock()
-	defer mu.Unlock()
-	count--
-	if count == 0 {
-		dvid.BlockOnActiveCgo()
-		if engine == nil {
-			log.Fatalf("Attempted to close non-existant engine!")
-		}
-		// Close engine and delete store.
-		engine.Close()
-		engine = nil
-		if err := os.RemoveAll(dbpath); err != nil {
-			log.Fatalf("Unable to cleanup test store: %s\n", dbpath)
-		}
-	}
-}
-
-func TestCommandLine(t *testing.T) {
-	useStore()
-	defer closeStore()
-
-}
-
 func makeTestVersions(t *testing.T) {
 	root, err := NewRepo("test repo", "test repo description", nil)
 	if err != nil {
@@ -197,7 +104,7 @@ func makeTestVersions(t *testing.T) {
 }
 
 func TestRepoPersistence(t *testing.T) {
-	useStore()
+	OpenTest()
 
 	makeTestVersions(t)
 
@@ -208,8 +115,8 @@ func TestRepoPersistence(t *testing.T) {
 	}
 
 	// Shutdown and restart.
-	closeReopenStore()
-	defer closeStore()
+	CloseReopenTest()
+	defer CloseTest()
 
 	// Check if metadata is same
 	jsonBytes2, err := MarshalJSON()
@@ -223,8 +130,8 @@ func TestRepoPersistence(t *testing.T) {
 
 // Make sure each new repo has a different local ID.
 func TestNewRepoDifferent(t *testing.T) {
-	useStore()
-	defer closeStore()
+	OpenTest()
+	defer CloseTest()
 
 	root1, err := NewRepo("test repo 1", "test repo 1 description", nil)
 	if err != nil {
@@ -260,8 +167,8 @@ func TestNewRepoDifferent(t *testing.T) {
 }
 
 func TestUUIDAssignment(t *testing.T) {
-	useStore()
-	defer closeStore()
+	OpenTest()
+	defer CloseTest()
 
 	uuidStr1 := "de305d5475b4431badb2eb6b9e546014"
 	myuuid := dvid.UUID(uuidStr1)

@@ -25,7 +25,6 @@ import (
 
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
-	"github.com/janelia-flyem/dvid/storage/local"
 )
 
 // The current repo metadata format version
@@ -41,59 +40,14 @@ const (
 	formatKey
 )
 
-// Create creates a new local key-value store and if it is designated for
-// metadata storage (metadata = true), also stores a blank RepoManager
-// into the newly created key-value store.  Any preexisting data at the
-// path is retained.
-func Create(path string, metadata bool, config dvid.Config) error {
-	// Make the local key value store
-	create := true
-	kvEngine, err := local.NewKeyValueStore(path, create, config)
-	if err != nil {
-		return err
-	}
-
-	// Put a blank RepoManager onto the key value store.
-	if err = InitMetadata(kvEngine); err != nil {
-		return err
-	}
+func Close() error {
+	// TODO -- any kind of cleanup necessary.
+	storage.Close()
 	return nil
-}
-
-// InitMetadata initializes a MetaData store with blank Repo management support.
-// Note this is a destructive call and will delete stored metadata.
-func InitMetadata(store storage.Engine) error {
-	// Verify that our engine satisfies a MetaDataStorer.
-	metadataStore, ok := store.(storage.MetaDataStorer)
-	if !ok {
-		return fmt.Errorf("Store (%v) cannot satisfy MetaData store", store)
-	}
-
-	m := &repoManager{
-		store:         metadataStore,
-		repoToUUID:    make(map[dvid.RepoID]dvid.UUID),
-		versionToUUID: make(map[dvid.VersionID]dvid.UUID),
-		uuidToVersion: make(map[dvid.UUID]dvid.VersionID),
-		repos:         make(map[dvid.UUID]*repoT),
-	}
-	// Store repo management data
-	if err := m.putNewIDs(); err != nil {
-		return err
-	}
-	if err := m.putCaches(); err != nil {
-		return err
-	}
-	return nil
-}
-
-// Repair repairs the datastore.  Currently this just launchs repair of the underlying
-// storage engine.
-func Repair(path string, config dvid.Config) error {
-	return local.RepairStore(path, config)
 }
 
 // Initialize creates a repositories manager that is handled through package functions.
-func Initialize() error {
+func Initialize(initMetadata bool) error {
 	m := &repoManager{
 		repoToUUID:    make(map[dvid.RepoID]dvid.UUID),
 		versionToUUID: make(map[dvid.VersionID]dvid.UUID),
@@ -113,18 +67,30 @@ func Initialize() error {
 	// Set the package variable.  We are good to go...
 	manager = m
 
-	// Load the repo metadata
-	if err = m.loadMetadata(); err != nil {
-		return fmt.Errorf("Error loading metadata: %v", err)
-	}
+	if initMetadata {
+		// Initialize repo management data in storage
+		dvid.Infof("Initializing repo management data in storage...\n")
+		if err := m.putNewIDs(); err != nil {
+			return err
+		}
+		if err := m.putCaches(); err != nil {
+			return err
+		}
+	} else {
+		// Load the repo metadata
+		dvid.Infof("Loading metadata from storage...\n")
+		if err = m.loadMetadata(); err != nil {
+			return fmt.Errorf("Error loading metadata: %v", err)
+		}
 
-	// If there are any migrations registered, run them.
-	migrator_mu.RLock()
-	defer migrator_mu.RUnlock()
+		// If there are any migrations registered, run them.
+		migrator_mu.RLock()
+		defer migrator_mu.RUnlock()
 
-	for desc, f := range migrators {
-		dvid.Infof("Running migration: %s\n", desc)
-		go f()
+		for desc, f := range migrators {
+			dvid.Infof("Running migration: %s\n", desc)
+			go f()
+		}
 	}
 	return nil
 }

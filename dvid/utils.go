@@ -8,12 +8,14 @@ import (
 	"io"
 	"io/ioutil"
 	"math"
+	"math/rand"
 	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
 const (
@@ -64,6 +66,24 @@ func MinInt32(a, b int32) int32 {
 		return a
 	}
 	return b
+}
+
+// RandomBytes returns a slices of random bytes.
+func RandomBytes(numBytes int32) []byte {
+	buf := make([]byte, numBytes)
+	src := rand.NewSource(time.Now().UnixNano())
+	var offset int32
+	for {
+		val := int64(src.Int63())
+		for i := 0; i < 8; i++ {
+			if offset >= numBytes {
+				return buf
+			}
+			buf[offset] = byte(val)
+			offset++
+			val >>= 8
+		}
+	}
 }
 
 // EstimateGoroutines returns the # of goroutines that can be launched

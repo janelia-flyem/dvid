@@ -15,7 +15,6 @@ import (
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
-	"github.com/janelia-flyem/dvid/tests"
 
 	lz4 "github.com/janelia-flyem/go/golz4"
 )
@@ -40,7 +39,7 @@ func initTestRepo() (dvid.UUID, dvid.VersionID) {
 			log.Fatalf("Can't get rgba8blk type: %s\n", err)
 		}
 	}
-	return tests.NewRepo()
+	return datastore.NewTestRepo()
 }
 
 // Data from which to construct repeatable 3d images where adjacent voxels have different values.
@@ -100,8 +99,8 @@ func newDataInstance(uuid dvid.UUID, t *testing.T, name dvid.InstanceName) *Data
 }
 
 func TestLabelblkDirectAPI(t *testing.T) {
-	tests.UseStore()
-	defer tests.CloseStore()
+	datastore.OpenTest()
+	defer datastore.CloseTest()
 
 	uuid, versionID := initTestRepo()
 	labels := newDataInstance(uuid, t, "mylabels")
@@ -160,8 +159,8 @@ func TestLabelblkDirectAPI(t *testing.T) {
 	}
 }
 func TestLabelblkRepoPersistence(t *testing.T) {
-	tests.UseStore()
-	defer tests.CloseStore()
+	datastore.OpenTest()
+	defer datastore.CloseTest()
 
 	uuid, _ := initTestRepo()
 
@@ -184,7 +183,7 @@ func TestLabelblkRepoPersistence(t *testing.T) {
 	if err = datastore.SaveDataByUUID(uuid, labels); err != nil {
 		t.Fatalf("Unable to save repo during labels persistence test: %v\n", err)
 	}
-	tests.CloseReopenStore()
+	datastore.CloseReopenTest()
 
 	dataservice2, err := datastore.GetDataByUUID(uuid, "mylabels")
 	if err != nil {
@@ -549,8 +548,8 @@ type labelResp struct {
 }
 
 func TestLabels(t *testing.T) {
-	tests.UseStore()
-	defer tests.CloseStore()
+	datastore.OpenTest()
+	defer datastore.CloseTest()
 
 	uuid := dvid.UUID(server.NewTestRepo(t))
 	if len(uuid) < 5 {
