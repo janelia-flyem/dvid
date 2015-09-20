@@ -51,19 +51,12 @@ func (e Engine) String() string {
 
 // NewImmutableStore returns a leveldb suitable for immutable storage.
 // The passed Config must contain "host" string.
-func (e Engine) NewImmutableStore(config dvid.Config) (storage.ImmutableStorer, error) {
-	path, found, err := config.GetString("host")
-	if err != nil {
-		return nil, err
-	}
-	if !found {
-		return nil, fmt.Errorf("Engine %q requires the 'path' string in config to create new store", e.name)
-	}
+func (e Engine) NewImmutableStore(config dvid.EngineConfig) (storage.ImmutableStorer, bool, error) {
 	kv := &KVAutobus{
-		host:   path,
+		host:   config.Path,
 		config: config,
 	}
-	return kv, nil
+	return kv, false, nil
 }
 
 func encodeKey(k []byte) string {
@@ -78,7 +71,7 @@ type KVAutobus struct {
 	host string
 
 	// Config at time of Open()
-	config dvid.Config
+	config dvid.EngineConfig
 }
 
 func (db *KVAutobus) String() string {
