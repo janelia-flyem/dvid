@@ -17,7 +17,11 @@ import (
 )
 
 func init() {
-	e := Engine{"kvautobus", "Janelia KVAutobus", semver.Make("0.1.0")}
+	ver, err := semver.Make("0.1.0")
+	if err != nil {
+		dvid.Errorf("Unable to make semver in kvautobus: %v\n", err)
+	}
+	e := Engine{"kvautobus", "Janelia KVAutobus", ver}
 	storage.RegisterEngine(e)
 }
 
@@ -39,6 +43,10 @@ func (e Engine) GetDescription() string {
 
 func (e Engine) GetSemVer() semver.Version {
 	return e.semver
+}
+
+func (e Engine) String() string {
+	return fmt.Sprintf("%s [%s]", e.name, e.semver)
 }
 
 // NewImmutableStore returns a leveldb suitable for immutable storage.
