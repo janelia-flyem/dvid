@@ -76,6 +76,7 @@ func Initialize(initMetadata bool) error {
 		if err := m.putCaches(); err != nil {
 			return err
 		}
+		m.formatVersion = RepoFormatVersion
 	} else {
 		// Load the repo metadata
 		dvid.Infof("Loading metadata from storage...\n")
@@ -573,11 +574,11 @@ func (m *repoManager) deleteRepo(uuid dvid.UUID) error {
 
 // ---- Repo-level properties functions -------
 
-// repoFromUUID returns a repo given a UUID.  It will return nil if not found.
+// repoFromUUID returns a repo given a UUID.  It will return an error if not found.
 func (m *repoManager) repoFromUUID(uuid dvid.UUID) (*repoT, error) {
 	repo, found := m.repos[uuid]
 	if !found {
-		return nil, nil
+		return nil, fmt.Errorf("repo %s not found", uuid)
 	}
 	return repo, nil
 }
@@ -633,6 +634,10 @@ func (m *repoManager) newRepo(alias, description string, assign *dvid.UUID) (*re
 	r.alias = alias
 	r.description = description
 
+	if err := r.save(); err != nil {
+		return r, err
+	}
+	dvid.Infof("Created and saved new repo %q, id %d\n", uuid, id)
 	return r, m.putCaches()
 }
 
