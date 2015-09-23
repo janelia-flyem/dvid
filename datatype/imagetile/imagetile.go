@@ -173,6 +173,30 @@ POST
   				  will return a blank image.
 
 
+GET  <api URL>/node/<UUID>/<data name>/tilekey/<dims>/<scaling>/<tile coord>
+
+    Retrieves the internal key for a tile of named data within a version node.  
+    This lets external systems bypass DVID and store tiles directly into immutable stores.
+
+    Returns JSON with "key" key and a hexadecimal string giving binary key.
+
+    Example: 
+
+    GET  <api URL>/node/3f8c/myimagetile/tilekey/xy/0/10_10_20
+
+    Returns:
+    { "key": <hexadecimal string of key> }
+
+    Arguments:
+
+    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    data name     Name of data to add.
+    dims          The axes of data extraction in form "i_j_k,..."  Example: "0_2" can be XZ.
+                    Slice strings ("xy", "xz", or "yz") are also accepted.
+    scaling       Value from 0 (original resolution) to N where each step is downres by 2.
+    tile coord    The tile coordinate in "x_y_z" format.  See discussion of scaling above.
+
+
 GET  <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>]
 
     Retrieves raw image of named data within a version node using the precomputed imagetile.
@@ -261,13 +285,10 @@ func NewType() *Type {
 
 // NewData returns a pointer to new tile data with default values.
 func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.Config) (datastore.DataService, error) {
-	// Make sure we have a valid DataService source
+	// See if we have a valid DataService source
 	sourcename, found, err := c.GetString("Source")
 	if err != nil {
 		return nil, err
-	}
-	if !found {
-		return nil, fmt.Errorf("Cannot make imagetile data without valid 'Source' setting.")
 	}
 
 	// See if we want placeholder imagetile.
@@ -749,6 +770,23 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 		timedLog.Infof("HTTP %s: tile (%s)", r.Method, r.URL)
 
+	case "tilekey":
+		switch action {
+		case "get":
+			var err error
+			var hexkey string
+			if hexkey, err = d.GetTileKey(uuid, ctx, w, r, parts); err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintf(w, `{"key": "%s"}`, hexkey)
+			timedLog.Infof("HTTP %s: tilekey (%s) returns %s", r.Method, r.URL, hexkey)
+		default:
+			server.BadRequest(w, r, fmt.Errorf("Cannot use HTTP %s for tilekey endpoint", action))
+			return
+		}
+
 	case "raw", "isotropic":
 		if action == "post" {
 			server.BadRequest(w, r, "imagetile '%s' can only PUT tiles not images", d.DataName())
@@ -1001,6 +1039,19 @@ func (d *Data) ServeTile(uuid dvid.UUID, ctx storage.Context, w http.ResponseWri
 		return err
 	}
 	return nil
+}
+
+// GetTileKey returns the internal key as a hexadecimal string
+func (d *Data) GetTileKey(uuid dvid.UUID, ctx storage.Context, w http.ResponseWriter,
+	r *http.Request, parts []string) (string, error) {
+
+	req, err := d.parseTileReq(r, parts)
+	if err != nil {
+		return "", err
+	}
+	tileIndex := &IndexTile{&req.indexZYX, req.shape, req.scaling}
+	key := tileIndex.Bytes()
+	return fmt.Sprintf("%x", key), nil
 }
 
 // GetTile returns a 2d tile image or a placeholder
