@@ -1,9 +1,9 @@
 # Example configuration for DVID
 
 [server]
-httpAddress = localhost:8000
-rpcAddress = localhost:8001
-webClient = 
+httpAddress = "localhost:8000"
+rpcAddress = "localhost:8001"
+webClient = "/path/to/webclient"
 
 # Email server to use for notifications and server issuing email-based authorization tokens.
 [email]
