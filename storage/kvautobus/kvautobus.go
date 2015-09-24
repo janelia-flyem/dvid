@@ -169,9 +169,8 @@ func (db *KVAutobus) putRange(kvs []storage.KeyValue) error {
 	// Create pipe from encoding to posting
 	pr, pw := io.Pipe()
 	w := msgp.NewWriter(pw)
-	errChan := make(chan error)
 	go func() {
-		errChan <- mkvs.EncodeMsg(w)
+		mkvs.EncodeMsg(w)
 		w.Flush()
 		pw.Close()
 	}()
@@ -185,7 +184,7 @@ func (db *KVAutobus) putRange(kvs []storage.KeyValue) error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("Bad status code returned (%d) from put range request: %s", resp.StatusCode, url)
 	}
-	return <-errChan
+	return nil
 }
 
 func (db *KVAutobus) deleteRange(kStart, kEnd storage.Key) error {
@@ -242,10 +241,9 @@ func (db *KVAutobus) RawPut(key storage.Key, value []byte) error {
 	// Create pipe from encoding to posting
 	pr, pw := io.Pipe()
 	w := msgp.NewWriter(pw)
-	errChan := make(chan error)
 	go func() {
 		dvid.Debugf("Starting msgpack encoding...\n")
-		errChan <- bin.EncodeMsg(w)
+		bin.EncodeMsg(w)
 		w.Flush()
 		pw.Close()
 		dvid.Debugf("Done msgpack encoding.\n")
@@ -260,7 +258,7 @@ func (db *KVAutobus) RawPut(key storage.Key, value []byte) error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("Bad status code returned (%d) from put request: %s", resp.StatusCode, url)
 	}
-	return <-errChan
+	return nil
 }
 
 func (db *KVAutobus) RawDelete(key storage.Key) error {
