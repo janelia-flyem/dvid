@@ -167,10 +167,13 @@ func (db *KVAutobus) putRange(kvs []storage.KeyValue) error {
 	}
 
 	// Create pipe from encoding to posting
-	reader, writer := io.Pipe()
+	pr, pw := io.Pipe()
+	w := msgp.NewWriter(pw)
 	errChan := make(chan error)
 	go func() {
-		errChan <- msgp.Encode(writer, mkvs)
+		errChan <- mkvs.EncodeMsg(w)
+		w.Flush()
+		pw.Close()
 	}()
 
 	// Send the data
@@ -234,29 +237,30 @@ func (db *KVAutobus) RawPut(key storage.Key, value []byte) error {
 	url := fmt.Sprintf("%s/kvautobus/api/value/%s/", db.host, b64key)
 	bin := Binary(value)
 
-    dvid.Debugf("Begin RawPut on %d bytes...\n", len(bin))
-    
+	dvid.Debugf("Begin RawPut on %d bytes...\n", len(bin))
+
 	// Create pipe from encoding to posting
 	pr, pw := io.Pipe()
-    w := msgp.NewWriter(pw)
+	w := msgp.NewWriter(pw)
+	errChan := make(chan error)
 	go func() {
-        dvid.Debugf("Starting msgpack encoding...\n")
-		bin.EncodeMsg(w)
-        w.Flush()
-        pw.Close()
-        dvid.Debugf("Done msgpack encoding.\n")
+		dvid.Debugf("Starting msgpack encoding...\n")
+		errChan <- bin.EncodeMsg(w)
+		w.Flush()
+		pw.Close()
+		dvid.Debugf("Done msgpack encoding.\n")
 	}()
 
-    dvid.Debugf("Beginning POST to kvautobus: %s\n", url)
+	dvid.Debugf("Beginning POST to kvautobus: %s\n", url)
 	resp, err := http.Post(url, "application/x-msgpack", pr)
-    dvid.Debugf("Done POST with err %v\n", err)
+	dvid.Debugf("Done POST with err %v\n", err)
 	if err != nil {
 		return err
 	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("Bad status code returned (%d) from put request: %s", resp.StatusCode, url)
 	}
-	return err
+	return <-errChan
 }
 
 func (db *KVAutobus) RawDelete(key storage.Key) error {
