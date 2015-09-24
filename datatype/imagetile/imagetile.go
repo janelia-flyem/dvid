@@ -759,7 +759,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		case "post":
 			err := d.PostTile(uuid, ctx, w, r, parts)
 			if err != nil {
-				server.BadRequest(w, r, "Error in posting tile with URL: %s", url)
+				server.BadRequest(w, r, "Error in posting tile with URL %q: %v\n", url, err)
 				return
 			}
 		case "get":

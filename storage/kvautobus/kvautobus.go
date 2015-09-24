@@ -234,21 +234,29 @@ func (db *KVAutobus) RawPut(key storage.Key, value []byte) error {
 	url := fmt.Sprintf("%s/kvautobus/api/value/%s/", db.host, b64key)
 	bin := Binary(value)
 
+    dvid.Debugf("Begin RawPut on %d bytes...\n", len(bin))
+    
 	// Create pipe from encoding to posting
-	reader, writer := io.Pipe()
-	errChan := make(chan error)
+	pr, pw := io.Pipe()
+    w := msgp.NewWriter(pw)
 	go func() {
-		errChan <- msgp.Encode(writer, bin)
+        dvid.Debugf("Starting msgpack encoding...\n")
+		bin.EncodeMsg(w)
+        w.Flush()
+        pw.Close()
+        dvid.Debugf("Done msgpack encoding.\n")
 	}()
 
-	resp, err := http.Post(url, "application/x-msgpack", reader)
+    dvid.Debugf("Beginning POST to kvautobus: %s\n", url)
+	resp, err := http.Post(url, "application/x-msgpack", pr)
+    dvid.Debugf("Done POST with err %v\n", err)
 	if err != nil {
 		return err
 	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("Bad status code returned (%d) from put request: %s", resp.StatusCode, url)
 	}
-	return <-errChan
+	return err
 }
 
 func (db *KVAutobus) RawDelete(key storage.Key) error {
