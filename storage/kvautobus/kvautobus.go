@@ -178,7 +178,7 @@ func (db *KVAutobus) putRange(kvs []storage.KeyValue) error {
 
 	// Send the data
 	url := fmt.Sprintf("%s/kvautobus/api/keyvalue_range/", db.host)
-	resp, err := http.Post(url, "application/x-msgpack", reader)
+	resp, err := http.Post(url, "application/x-msgpack", pr)
 	if err != nil {
 		return err
 	}
