@@ -3,8 +3,10 @@
 package kvautobus
 
 import (
+    "bufio"
 	"bytes"
 	"encoding/base64"
+    "encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -94,9 +96,9 @@ func (db *KVAutobus) RawGet(key storage.Key) ([]byte, error) {
 	timedLog.Infof("PROXY get to %s returned %d\n", db.host, resp.StatusCode)
 	defer resp.Body.Close()
 
-	reader := msgp.NewReader(resp.Body)
+	r := msgp.NewReader(bufio.NewReader(resp.Body))
 	var bin Binary
-	if err := bin.DecodeMsg(reader); err != nil {
+	if err := bin.DecodeMsg(r); err != nil {
 		return nil, err
 	}
 	return []byte(bin), nil
@@ -115,8 +117,9 @@ func (db *KVAutobus) getKeyRange(kStart, kEnd storage.Key) (Ks, error) {
 	}
 	defer resp.Body.Close()
 
+    r := msgp.NewReader(bufio.NewReader(resp.Body))
 	var mks Ks
-	if err := msgp.Decode(resp.Body, &mks); err != nil {
+	if err := mks.DecodeMsg(r); err != nil {
 		return nil, err
 	}
 	timedLog.Infof("PROXY key_range to %s returned %d (%d keys)\n", db.host, resp.StatusCode, len(mks))
@@ -136,11 +139,14 @@ func (db *KVAutobus) getKVRange(kStart, kEnd storage.Key) (KVs, error) {
 	}
 	defer resp.Body.Close()
 
+    r := msgp.NewReader(bufio.NewReader(resp.Body))
 	var mkvs KVs
-	if err := msgp.Decode(resp.Body, &mkvs); err != nil {
+	if err := mkvs.DecodeMsg(r); err != nil {
+        dvid.Errorf("Couldn't decode getKVRange return\n")
 		return nil, err
 	}
-	timedLog.Infof("PROXY keyvalue_range to %s returned %d (%d kv pairs)\n", db.host, resp.StatusCode, len(mkvs))
+	
+    timedLog.Infof("PROXY keyvalue_range to %s returned %d (%d kv pairs)\n", db.host, resp.StatusCode, len(mkvs))
 	return mkvs, nil
 }
 
@@ -236,7 +242,7 @@ func (db *KVAutobus) RawPut(key storage.Key, value []byte) error {
 	url := fmt.Sprintf("%s/kvautobus/api/value/%s/", db.host, b64key)
 	bin := Binary(value)
 
-	dvid.Debugf("Begin RawPut on %d bytes...\n", len(bin))
+	dvid.Debugf("Begin RawPut on key %s (%d bytes)\n", hex.EncodeToString(key), len(bin))
 
 	// Create pipe from encoding to posting
 	pr, pw := io.Pipe()
@@ -280,6 +286,8 @@ func (db *KVAutobus) Get(ctx storage.Context, tk storage.TKey) ([]byte, error) {
 
 		// Get all versions of this key and return the most recent
 		// log.Printf("  kvautobus versioned get of key %v\n", k)
+        key := ctx.ConstructKey(tk)
+        dvid.Infof("   Get on key: %s\n", hex.EncodeToString(key))
 		values, err := db.getSingleKeyVersions(vctx, tk)
 		// log.Printf("            got back %v\n", values)
 		if err != nil {

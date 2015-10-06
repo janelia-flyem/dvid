@@ -932,6 +932,11 @@ type tileReq struct {
 	indexZYX dvid.IndexZYX
 }
 
+func (tr tileReq) Bytes() []byte {
+    tileIndex := &IndexTile{&tr.indexZYX, tr.shape, tr.scaling}
+    return tileIndex.Bytes()
+}
+
 func (d *Data) parseTileReq(r *http.Request, parts []string) (tileReq, error) {
 	if len(parts) < 7 {
 		return tileReq{}, fmt.Errorf("'tile' request must be following by plane, scale level, and tile coordinate")
@@ -981,7 +986,7 @@ func (d *Data) PostTile(uuid dvid.UUID, ctx storage.Context, w http.ResponseWrit
 	if err != nil {
 		return fmt.Errorf("Cannot open immutable store: %v\n", err)
 	}
-	return imstore.Put(ctx, tileReq.indexZYX.Bytes(), data)
+	return imstore.Put(ctx, tileReq.Bytes(), data)
 }
 
 // ServeTile returns a tile with appropriate Content-Type set.
@@ -1049,9 +1054,7 @@ func (d *Data) GetTileKey(uuid dvid.UUID, ctx storage.Context, w http.ResponseWr
 	if err != nil {
 		return "", err
 	}
-	tileIndex := &IndexTile{&req.indexZYX, req.shape, req.scaling}
-	key := tileIndex.Bytes()
-	return fmt.Sprintf("%x", key), nil
+	return fmt.Sprintf("%x", req.Bytes()), nil
 }
 
 // GetTile returns a 2d tile image or a placeholder
@@ -1060,14 +1063,13 @@ func (d *Data) GetTile(ctx storage.Context, req tileReq) (image.Image, error) {
 	if err != nil {
 		return nil, err
 	}
-	tileIndex := &IndexTile{&req.indexZYX, req.shape, req.scaling}
 
 	if data == nil {
 		if d.Placeholder {
 			if d.Levels == nil || req.scaling < 0 || req.scaling >= Scaling(len(d.Levels)) {
 				return nil, fmt.Errorf("Could not find tile specification at given scale %d", req.scaling)
 			}
-			message := fmt.Sprintf("%s Tile coord %s @ scale %d", req.shape, tileIndex, req.scaling)
+			message := fmt.Sprintf("%s Tile coord %s @ scale %d", req.shape, req.indexZYX, req.scaling)
 			return dvid.PlaceholderImage(req.shape, d.Levels[req.scaling].TileSize, message)
 		}
 		return nil, nil // Not found
@@ -1096,17 +1098,16 @@ func (d *Data) GetTile(ctx storage.Context, req tileReq) (image.Image, error) {
 
 // getTileData returns 2d tile data straight from storage without decoding.
 func (d *Data) getTileData(ctx storage.Context, req tileReq) ([]byte, error) {
-	if d.Levels == nil {
-		return nil, fmt.Errorf("Tiles have not been generated.")
-	}
+//  if d.Levels == nil {
+//		return nil, fmt.Errorf("Tiles have not been generated.")
+//	}
 	imstore, err := storage.ImmutableStore()
 	if err != nil {
 		return nil, err
 	}
 
 	// Retrieve the tile data from datastore
-	tileIndex := &IndexTile{&req.indexZYX, req.shape, req.scaling}
-	data, err := imstore.Get(ctx, tileIndex.Bytes())
+	data, err := imstore.Get(ctx, req.Bytes())
 	if err != nil {
 		return nil, fmt.Errorf("Error trying to GET from datastore: %v", err)
 	}
