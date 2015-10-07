@@ -223,6 +223,20 @@ GET <api URL>/node/<UUID>/<data name>/label/<coord>
     data name     Name of label data.
     coord     	  Coordinate of voxel with underscore as separator, e.g., 10_20_30
 
+POST <api URL>/node/<UUID>/<data name>/labels
+
+	Returns JSON for the labels at a list of coordinates.  Expects JSON in POST body:
+
+	[ [x0, y0, z0], [x1, y1, z1], ...]
+
+	Returns for each POSTed coordinate the corresponding label:
+
+	[ 23, 911, ...]
+	
+    Arguments:
+    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    data name     Name of label data.
+
 DELETE <api URL>/node/<UUID>/<data name>/blocks/<block coord>/<spanX>
 
     Deletes "spanX" blocks of label data along X starting from given block coordinate.
@@ -920,6 +934,40 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		jsonStr := fmt.Sprintf(`{"Label": %d}`, label)
 		fmt.Fprintf(w, jsonStr)
 		timedLog.Infof("HTTP %s: label at %s (%s)", r.Method, coord, r.URL)
+
+	case "labels":
+		// POST <api URL>/node/<UUID>/<data name>/labels
+		if action != "post" {
+			server.BadRequest(w, r, "Batch labels query must be a POST request")
+			return
+		}
+		data, err := ioutil.ReadAll(r.Body)
+		if err != nil {
+			server.BadRequest(w, r, "Bad POSTed data for batch reverse query.  Should be JSON.")
+			return
+		}
+		var coords []dvid.Point3d
+		if err := json.Unmarshal(data, &coords); err != nil {
+			server.BadRequest(w, r, fmt.Sprintf("Bad labels request JSON: %v", err))
+			return
+		}
+		w.Header().Set("Content-type", "application/json")
+		fmt.Fprintf(w, "[")
+		sep := false
+		for _, coord := range coords {
+			label, err := d.GetLabelAtPoint(ctx.VersionID(), coord)
+			if err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+			if sep {
+				fmt.Fprintf(w, ",")
+			}
+			fmt.Fprintf(w, "%d", label)
+			sep = true
+		}
+		fmt.Fprintf(w, "]")
+		timedLog.Infof("HTTP batch label-at-point query (%d coordinates)", len(coords))
 
 	case "blocks":
 		// DELETE <api URL>/node/<UUID>/<data name>/blocks/<block coord>/<spanX>

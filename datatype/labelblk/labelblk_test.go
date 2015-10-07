@@ -542,7 +542,10 @@ func (vol labelVol) testSlices(t *testing.T, uuid dvid.UUID) {
 		t.Errorf("Expected %d bytes from YZ labelblk GET.  Got %d instead.", 67*83*8, img.NumBytes())
 	}
 	slice.testLabel(t, vol, img)
+}
 
+type labelResp struct {
+	Label uint64
 }
 
 func TestLabels(t *testing.T) {
@@ -564,6 +567,35 @@ func TestLabels(t *testing.T) {
 		name:      "labels",
 	}
 	vol.postLabelVolume(t, uuid, "", "", 0)
+
+	// Test the "label" endpoint.
+	apiStr := fmt.Sprintf("%snode/%s/%s/label/100_64_96", server.WebAPIPath, uuid, "labels")
+	jsonResp := server.TestHTTP(t, "GET", apiStr, nil)
+	var r labelResp
+	if err := json.Unmarshal(jsonResp, &r); err != nil {
+		t.Errorf("Unable to parse 'label' endpoint response: %s\n", jsonResp)
+	}
+	if r.Label != 69 {
+		t.Errorf("Expected label %d @ (100, 64, 96) got label %d\n", vol.label(100, 64, 96), r.Label)
+	}
+
+	// Test the "labels" endpoint.
+	apiStr = fmt.Sprintf("%snode/%s/%s/labels", server.WebAPIPath, uuid, "labels")
+	payload := `[[100,64,96],[78,93,156],[104,65,97]]`
+	jsonResp = server.TestHTTP(t, "POST", apiStr, bytes.NewBufferString(payload))
+	var labels [3]uint64
+	if err := json.Unmarshal(jsonResp, &labels); err != nil {
+		t.Errorf("Unable to parse 'labels' endpoint response: %s\n", jsonResp)
+	}
+	if labels[0] != vol.label(100, 64, 96) {
+		t.Errorf("Expected label %d @ (100, 64, 96) got label %d\n", vol.label(100, 64, 96), labels[0])
+	}
+	if labels[1] != vol.label(78, 93, 156) {
+		t.Errorf("Expected label %d @ (78, 93, 156) got label %d\n", vol.label(78, 93, 156), labels[1])
+	}
+	if labels[2] != vol.label(104, 65, 97) {
+		t.Errorf("Expected label %d @ (104, 65, 97) got label %d\n", vol.label(104, 65, 97), labels[2])
+	}
 
 	// Repost the label volume 3 more times with increasing starting values.
 	vol.postLabelVolume(t, uuid, "", "", 2100)
@@ -639,7 +671,7 @@ func TestLabels(t *testing.T) {
 	server.CreateTestInstance(t, uuid, "roi", roiName, dvid.Config{})
 
 	// Add ROI data
-	apiStr := fmt.Sprintf("%snode/%s/%s/roi", server.WebAPIPath, uuid, roiName)
+	apiStr = fmt.Sprintf("%snode/%s/%s/roi", server.WebAPIPath, uuid, roiName)
 	server.TestHTTP(t, "POST", apiStr, bytes.NewBufferString(labelsJSON()))
 
 	// Post updated labels without ROI and make sure it returns those values.
