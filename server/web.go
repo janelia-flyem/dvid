@@ -925,7 +925,7 @@ func repoNewDataHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, "{%q: 'Added %s [%s] to node %s'}", "result", dataname, typename, uuid)
+	fmt.Fprintf(w, `{%q: "Added %s [%s] to node %s"}`, "result", dataname, typename, uuid)
 }
 
 func getRepoLogHandler(c web.C, w http.ResponseWriter, r *http.Request) {
