@@ -3,10 +3,10 @@
 package kvautobus
 
 import (
-    "bufio"
+	"bufio"
 	"bytes"
 	"encoding/base64"
-    "encoding/hex"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -95,6 +95,9 @@ func (db *KVAutobus) RawGet(key storage.Key) ([]byte, error) {
 	}
 	timedLog.Infof("PROXY get to %s returned %d\n", db.host, resp.StatusCode)
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil // Handle no key found.
+	}
 
 	r := msgp.NewReader(bufio.NewReader(resp.Body))
 	var bin Binary
@@ -116,8 +119,11 @@ func (db *KVAutobus) getKeyRange(kStart, kEnd storage.Key) (Ks, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil // Handle no keys found.
+	}
 
-    r := msgp.NewReader(bufio.NewReader(resp.Body))
+	r := msgp.NewReader(bufio.NewReader(resp.Body))
 	var mks Ks
 	if err := mks.DecodeMsg(r); err != nil {
 		return nil, err
@@ -138,15 +144,18 @@ func (db *KVAutobus) getKVRange(kStart, kEnd storage.Key) (KVs, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil // Handle no keys found.
+	}
 
-    r := msgp.NewReader(bufio.NewReader(resp.Body))
+	r := msgp.NewReader(bufio.NewReader(resp.Body))
 	var mkvs KVs
 	if err := mkvs.DecodeMsg(r); err != nil {
-        dvid.Errorf("Couldn't decode getKVRange return\n")
+		dvid.Errorf("Couldn't decode getKVRange return\n")
 		return nil, err
 	}
-	
-    timedLog.Infof("PROXY keyvalue_range to %s returned %d (%d kv pairs)\n", db.host, resp.StatusCode, len(mkvs))
+
+	timedLog.Infof("PROXY keyvalue_range to %s returned %d (%d kv pairs)\n", db.host, resp.StatusCode, len(mkvs))
 	return mkvs, nil
 }
 
@@ -186,6 +195,9 @@ func (db *KVAutobus) putRange(kvs []storage.KeyValue) error {
 	resp, err := http.Post(url, "application/x-msgpack", pr)
 	if err != nil {
 		return err
+	}
+	if resp.StatusCode != http.StatusConflict {
+		return fmt.Errorf("Can't POST to an already stored key.  KVAutobus returned status %d (%s)", resp.StatusCode, url)
 	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("Bad status code returned (%d) from put range request: %s", resp.StatusCode, url)
@@ -261,6 +273,9 @@ func (db *KVAutobus) RawPut(key storage.Key, value []byte) error {
 	if err != nil {
 		return err
 	}
+	if resp.StatusCode != http.StatusConflict {
+		return fmt.Errorf("Can't POST to an already stored key.  KVAutobus returned status %d (%s)", resp.StatusCode, url)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("Bad status code returned (%d) from put request: %s", resp.StatusCode, url)
 	}
@@ -286,8 +301,8 @@ func (db *KVAutobus) Get(ctx storage.Context, tk storage.TKey) ([]byte, error) {
 
 		// Get all versions of this key and return the most recent
 		// log.Printf("  kvautobus versioned get of key %v\n", k)
-        key := ctx.ConstructKey(tk)
-        dvid.Infof("   Get on key: %s\n", hex.EncodeToString(key))
+		key := ctx.ConstructKey(tk)
+		dvid.Infof("   Get on key: %s\n", hex.EncodeToString(key))
 		values, err := db.getSingleKeyVersions(vctx, tk)
 		// log.Printf("            got back %v\n", values)
 		if err != nil {
