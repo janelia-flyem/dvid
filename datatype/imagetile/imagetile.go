@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"encoding/gob"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	"image/draw"
@@ -246,6 +247,10 @@ GET  <api URL>/node/<UUID>/<data name>/isotropic/<dims>/<size>/<offset>[/<format
                     jpg allows lossy quality setting, e.g., "jpg:80"
 
 `
+
+var (
+	ErrNoMetadataSet = errors.New("Tile metadata has not been POSTed yet.  GET requests require metadata to be POST.")
+)
 
 func init() {
 	datastore.Register(NewType())
@@ -848,8 +853,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 func (d *Data) GetImage(ctx storage.Context, src *imageblk.Data, geom dvid.Geometry, isotropic bool) (*dvid.Image, error) {
 	// Iterate through tiles that intersect our geometry.
 	if d.Levels == nil || len(d.Levels) == 0 {
-		return nil, fmt.Errorf("%s has no specification for tiles at highest resolution",
-			d.DataName())
+		return nil, ErrNoMetadataSet
 	}
 	levelSpec := d.Levels[0]
 	minSlice, err := dvid.Isotropy2D(src.VoxelSize, geom, isotropic)
@@ -933,8 +937,8 @@ type tileReq struct {
 }
 
 func (tr tileReq) Bytes() []byte {
-    tileIndex := &IndexTile{&tr.indexZYX, tr.shape, tr.scaling}
-    return tileIndex.Bytes()
+	tileIndex := &IndexTile{&tr.indexZYX, tr.shape, tr.scaling}
+	return tileIndex.Bytes()
 }
 
 func (d *Data) parseTileReq(r *http.Request, parts []string) (tileReq, error) {
@@ -993,6 +997,9 @@ func (d *Data) PostTile(uuid dvid.UUID, ctx storage.Context, w http.ResponseWrit
 func (d *Data) ServeTile(uuid dvid.UUID, ctx storage.Context, w http.ResponseWriter,
 	r *http.Request, parts []string) error {
 
+	if d.Levels == nil || len(d.Levels) == 0 {
+		return ErrNoMetadataSet
+	}
 	tileReq, err := d.parseTileReq(r, parts)
 
 	queryValues := r.URL.Query()
@@ -1059,6 +1066,9 @@ func (d *Data) GetTileKey(uuid dvid.UUID, ctx storage.Context, w http.ResponseWr
 
 // GetTile returns a 2d tile image or a placeholder
 func (d *Data) GetTile(ctx storage.Context, req tileReq) (image.Image, error) {
+	if d.Levels == nil || len(d.Levels) == 0 {
+		return nil, ErrNoMetadataSet
+	}
 	data, err := d.getTileData(ctx, req)
 	if err != nil {
 		return nil, err
@@ -1066,7 +1076,7 @@ func (d *Data) GetTile(ctx storage.Context, req tileReq) (image.Image, error) {
 
 	if data == nil {
 		if d.Placeholder {
-			if d.Levels == nil || req.scaling < 0 || req.scaling >= Scaling(len(d.Levels)) {
+			if req.scaling < 0 || req.scaling >= Scaling(len(d.Levels)) {
 				return nil, fmt.Errorf("Could not find tile specification at given scale %d", req.scaling)
 			}
 			message := fmt.Sprintf("%s Tile coord %s @ scale %d", req.shape, req.indexZYX, req.scaling)
@@ -1098,9 +1108,6 @@ func (d *Data) GetTile(ctx storage.Context, req tileReq) (image.Image, error) {
 
 // getTileData returns 2d tile data straight from storage without decoding.
 func (d *Data) getTileData(ctx storage.Context, req tileReq) ([]byte, error) {
-//  if d.Levels == nil {
-//		return nil, fmt.Errorf("Tiles have not been generated.")
-//	}
 	imstore, err := storage.ImmutableStore()
 	if err != nil {
 		return nil, err

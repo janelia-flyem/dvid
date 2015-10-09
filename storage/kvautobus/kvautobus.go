@@ -196,7 +196,7 @@ func (db *KVAutobus) putRange(kvs []storage.KeyValue) error {
 	if err != nil {
 		return err
 	}
-    defer resp.Body.Close()
+	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusConflict {
 		return fmt.Errorf("Can't POST to an already stored key.  KVAutobus returned status %d (%s)", resp.StatusCode, url)
 	}
@@ -220,7 +220,7 @@ func (db *KVAutobus) deleteRange(kStart, kEnd storage.Key) error {
 	if err != nil {
 		return err
 	}
-    resp.Body.Close()
+	resp.Body.Close()
 	timedLog.Infof("PROXY delete keyvalue_range to %s returned %d\n", db.host, resp.StatusCode)
 	return nil
 }
@@ -275,7 +275,7 @@ func (db *KVAutobus) RawPut(key storage.Key, value []byte) error {
 	if err != nil {
 		return err
 	}
-    defer resp.Body.Close()
+	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusConflict {
 		return fmt.Errorf("Can't POST to an already stored key.  KVAutobus returned status %d (%s)", resp.StatusCode, url)
 	}
