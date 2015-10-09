@@ -19,6 +19,7 @@ import (
 	"encoding/gob"
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"strings"
 	"sync"
 	"time"
@@ -420,9 +421,15 @@ func (m *repoManager) newInstanceID() (dvid.InstanceID, error) {
 	m.idMutex.Lock()
 	defer m.idMutex.Unlock()
 
-	curid := m.instanceID
-	m.instanceID++
-	return curid, m.putNewIDs()
+	// curid := m.instanceID
+	// m.instanceID++
+
+	// TODO: Replace this cheap hack when KVAutobus supports buckets or partitioning across apps.
+	s1 := rand.NewSource(time.Now().UnixNano())
+	r1 := rand.New(s1)
+	curid := dvid.InstanceID(r1.Int31())
+
+	return curid, nil //, m.putNewIDs()
 }
 
 func (m *repoManager) newRepoID() (dvid.RepoID, error) {
