@@ -1121,7 +1121,7 @@ func (d *Data) getTileData(ctx storage.Context, req tileReq) ([]byte, error) {
 	return data, nil
 }
 
-// getBlankTileData returns zero 2d tile data with a given scaling and format.
+// getBlankTileData returns zero 2d tile image.
 func (d *Data) getBlankTileImage(uuid dvid.UUID, req tileReq) (image.Image, error) {
 	levelSpec, found := d.Levels[req.scaling]
 	if !found {
@@ -1131,24 +1131,8 @@ func (d *Data) getBlankTileImage(uuid dvid.UUID, req tileReq) (image.Image, erro
 	if err != nil {
 		return nil, err
 	}
-	source, err := datastore.GetDataByUUID(uuid, d.Source)
-	if err != nil {
-		return nil, err
-	}
-	src, ok := source.(*imageblk.Data)
-	if !ok {
-		return nil, fmt.Errorf("Data instance %q for uuid %q is not imageblk.Data", d.Source, uuid)
-	}
-	bytesPerVoxel := src.Values.BytesPerElement()
-	switch bytesPerVoxel {
-	case 1, 2, 4, 8:
-		numBytes := tileW * tileH * bytesPerVoxel
-		data := make([]byte, numBytes, numBytes)
-		return dvid.GoImageFromData(data, int(tileW), int(tileH))
-	default:
-		return nil, fmt.Errorf("Cannot construct blank tile for data %q with %d bytes/voxel",
-			d.Source, src.Values.BytesPerElement())
-	}
+	img := image.NewGray(image.Rect(0, 0, int(tileW), int(tileH)))
+	return img, nil
 }
 
 // pow2 returns the power of 2 with the passed exponent.
