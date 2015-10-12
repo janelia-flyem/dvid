@@ -21,8 +21,6 @@ const (
 
 type testStoreT struct {
 	sync.Mutex
-	using  *sync.WaitGroup
-	reopen *sync.WaitGroup
 	config *dvid.StoreConfig
 }
 
@@ -72,63 +70,30 @@ func openStore(create bool) {
 		log.Fatalf("Can't initialize datastore management: %v\n", err)
 	}
 	dvid.Infof("Storage initialized.  initMetadata = %v\n", initMetadata)
-
-	// Run the deferred close of database.
-	go func() {
-		testStore.using.Wait()
-		dvid.Infof("Closing test datastore...\n")
-		storage.Close()
-		if testStore.reopen != nil {
-			dvid.Infof("Reopening test datastore...\n")
-			testStore.using.Add(1)
-			openStore(false)
-			testStore.reopen.Done()
-		} else {
-			dvid.Infof("Deleting test datastore...\n")
-			testableEng := storage.GetTestableEngine()
-			if testableEng == nil {
-				log.Fatalf("Could not find a storage engine that was testable")
-			}
-			testableEng.Delete(testStore.config.Mutable)
-		}
-	}()
 }
 
 func OpenTest() {
 	testStore.Lock()
-	defer testStore.Unlock()
 
-	if testStore.using == nil {
-		testStore.using = new(sync.WaitGroup)
-		testStore.using.Add(1)
-		openStore(true)
-	} else {
-		testStore.using.Add(1)
-	}
+	dvid.Infof("Opening test datastore...\n")
+	openStore(true)
 }
 
 // CloseReopenTest forces close and then reopening of the datastore, useful for testing
 // persistence.  We only allow close/reopen when all tests not avaiting close/reopen are finished.
 func CloseReopenTest() {
-	testStore.Lock()
-
-	var firstReopen bool
-	if testStore.reopen == nil {
-		firstReopen = true
-		testStore.reopen = new(sync.WaitGroup)
-		testStore.reopen.Add(1)
-	}
-	testStore.using.Done()
-	testStore.Unlock()
-
-	testStore.reopen.Wait() // Wait until we've closed and then reopened.
-	if !firstReopen {       // There's an add already done during reopen.
-		testStore.using.Add(1)
-	}
+	dvid.Infof("Reopening test datastore...\n")
+	storage.Close()
+	openStore(false)
 }
 
 func CloseTest() {
-	testStore.Lock()
-	testStore.using.Done()
+	dvid.Infof("Closing and deleting test datastore...\n")
+	testableEng := storage.GetTestableEngine()
+	if testableEng == nil {
+		log.Fatalf("Could not find a storage engine that was testable")
+	}
+	testableEng.Delete(testStore.config.Mutable)
+
 	testStore.Unlock()
 }
