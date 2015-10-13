@@ -240,7 +240,7 @@ func DoServe(cmd dvid.Command) error {
 	if configPath == "" {
 		return fmt.Errorf("serve command must be followed by the path to the TOML configuration file")
 	}
-	logConfig, storeConfig, err := server.LoadConfig(configPath)
+	instanceConfig, logConfig, storeConfig, err := server.LoadConfig(configPath)
 	if err != nil {
 		return fmt.Errorf("Error loading configuration file %q: %v\n", configPath, err)
 	}
@@ -251,7 +251,7 @@ func DoServe(cmd dvid.Command) error {
 	if err != nil {
 		return fmt.Errorf("Unable to initialize storage: %v\n", err)
 	}
-	if err := datastore.Initialize(initMetadata); err != nil {
+	if err := datastore.Initialize(initMetadata, instanceConfig); err != nil {
 		return fmt.Errorf("Unable to initialize datastore: %v\n", err)
 	}
 

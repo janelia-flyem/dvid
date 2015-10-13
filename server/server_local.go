@@ -19,6 +19,7 @@ import (
 	"runtime"
 	"text/template"
 
+	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/go/toml"
 )
@@ -62,6 +63,9 @@ type serverConfig struct {
 	HTTPAddress string
 	RPCAddress  string
 	WebClient   string
+
+	IIDGen   string `toml:"instance_id_gen"`
+	IIDStart uint32 `toml:"instance_id_start"`
 }
 
 type emailConfig struct {
@@ -76,16 +80,18 @@ func (e emailConfig) Host() string {
 	return fmt.Sprintf("%s:%d", e.Server, e.Port)
 }
 
-func LoadConfig(filename string) (*dvid.LogConfig, *dvid.StoreConfig, error) {
+func LoadConfig(filename string) (*datastore.InstanceConfig, *dvid.LogConfig, *dvid.StoreConfig, error) {
 	if filename == "" {
-		return nil, nil, fmt.Errorf("No server TOML configuration file provided")
+		return nil, nil, nil, fmt.Errorf("No server TOML configuration file provided")
 	}
 	if _, err := toml.DecodeFile(filename, &tc); err != nil {
-		return nil, nil, fmt.Errorf("Could not decode TOML config: %v\n", err)
+		return nil, nil, nil, fmt.Errorf("Could not decode TOML config: %v\n", err)
 	}
+
 	// The server config could be local, cluster, gcloud-specific config.  Here it is local.
 	config = &tc
-	return &(tc.Logging), &(tc.Store), nil
+	ic := datastore.InstanceConfig{tc.Server.IIDGen, dvid.InstanceID(tc.Server.IIDStart)}
+	return &ic, &(tc.Logging), &(tc.Store), nil
 }
 
 type emailData struct {

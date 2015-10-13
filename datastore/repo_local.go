@@ -47,16 +47,32 @@ func Close() error {
 	return nil
 }
 
+// InstanceConfig specifies how new instance IDs are generated
+type InstanceConfig struct {
+	Gen   string
+	Start dvid.InstanceID
+}
+
 // Initialize creates a repositories manager that is handled through package functions.
-func Initialize(initMetadata bool) error {
+func Initialize(initMetadata bool, iconfig *InstanceConfig) error {
 	m := &repoManager{
-		repoToUUID:    make(map[dvid.RepoID]dvid.UUID),
-		versionToUUID: make(map[dvid.VersionID]dvid.UUID),
-		uuidToVersion: make(map[dvid.UUID]dvid.VersionID),
-		repos:         make(map[dvid.UUID]*repoT),
-		repoID:        1,
-		versionID:     1,
-		instanceID:    1,
+		repoToUUID:      make(map[dvid.RepoID]dvid.UUID),
+		versionToUUID:   make(map[dvid.VersionID]dvid.UUID),
+		uuidToVersion:   make(map[dvid.UUID]dvid.VersionID),
+		repos:           make(map[dvid.UUID]*repoT),
+		repoID:          1,
+		versionID:       1,
+		iids:            make(map[dvid.InstanceID]DataService),
+		instanceIDGen:   iconfig.Gen,
+		instanceIDStart: iconfig.Start,
+	}
+	if iconfig.Gen == "" {
+		m.instanceIDGen = "sequential"
+	}
+	if iconfig.Start > 1 {
+		m.instanceID = iconfig.Start
+	} else {
+		m.instanceID = 1
 	}
 
 	var err error
@@ -123,10 +139,18 @@ type repoManager struct {
 	// default zero value.
 	repoID     dvid.RepoID
 	versionID  dvid.VersionID
-	instanceID dvid.InstanceID
+	instanceID dvid.InstanceID // Can be set by the configuration file.
 
 	// Mapping of all UUIDs to the repositories where that node sits.
 	repos map[dvid.UUID]*repoT
+
+	// Mapping of all instance IDs to the data service they provide.
+	// Not persisted but created on load and maintained.
+	iids map[dvid.InstanceID]DataService
+
+	// instance id generation
+	instanceIDGen   string
+	instanceIDStart dvid.InstanceID
 
 	// Verified metadata storage for ease of use.
 	store storage.MetaDataStorer
@@ -336,6 +360,11 @@ func (m *repoManager) loadVersion0() error {
 			m.repos[uuid] = r
 		}
 
+		// Populate the instance id -> dataservice map.
+		for _, dataservice := range r.data {
+			m.iids[dataservice.InstanceID()] = dataservice
+		}
+
 		// Update the sync graph with all syncable data instances in this repo
 		for _, dataservice := range r.data {
 			syncedData, syncable := dataservice.(Syncer)
@@ -409,6 +438,13 @@ func (m *repoManager) loadMetadata() error {
 	default:
 		return fmt.Errorf("Unknown metadata format %d", m.formatVersion)
 	}
+
+	// Handle instance ID management
+	if m.instanceIDGen == "sequential" && m.instanceIDStart > m.instanceID {
+		m.instanceID = m.instanceIDStart
+		return m.putNewIDs()
+	}
+	return nil
 }
 
 // TODO: Verify that the datatypes used by the repo data have been compiled into this server.
@@ -421,15 +457,27 @@ func (m *repoManager) newInstanceID() (dvid.InstanceID, error) {
 	m.idMutex.Lock()
 	defer m.idMutex.Unlock()
 
-	// curid := m.instanceID
-	// m.instanceID++
-
-	// TODO: Replace this cheap hack when KVAutobus supports buckets or partitioning across apps.
-	s1 := rand.NewSource(time.Now().UnixNano())
-	r1 := rand.New(s1)
-	curid := dvid.InstanceID(r1.Int31())
-
-	return curid, nil //, m.putNewIDs()
+	// Generate a new instance ID based on the method in configuration.
+	var err error
+	var curid dvid.InstanceID
+	invalidID := true
+	for invalidID {
+		switch m.instanceIDGen {
+		case "sequential":
+			curid = m.instanceID
+			m.instanceID++
+			err = m.putNewIDs()
+		case "random":
+			s1 := rand.NewSource(time.Now().UnixNano())
+			r1 := rand.New(s1)
+			curid = dvid.InstanceID(r1.Uint32())
+		}
+		_, found := m.iids[curid]
+		if !found {
+			invalidID = false
+		}
+	}
+	return curid, err
 }
 
 func (m *repoManager) newRepoID() (dvid.RepoID, error) {
@@ -1286,6 +1334,7 @@ func (m *repoManager) newData(uuid dvid.UUID, t TypeService, name dvid.InstanceN
 		return nil, err
 	}
 	r.data[name] = dataservice
+	m.iids[id] = dataservice
 	r.updated = time.Now()
 
 	// Update the sync graph if this data needs to be synced with another data instance.
