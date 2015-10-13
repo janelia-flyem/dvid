@@ -18,12 +18,13 @@ visualization efforts.  It's goal is to provide:
 * A framework for thinking of distribution and versioning of data similar to distributed version 
 control systems like [git](http://git-scm.com).
 
-Long-term, DVID aspires to be a "github for large image-oriented data" because each DVID
+DVID aspires to be a "github for large image-oriented data" because each DVID
 server can manage multiple repositories, each of which contains an image-oriented repo
 with related data like an image volume, labels, and skeletons.  The goal is to provide scientists 
 with a github-like web client + server that can push/pull data to a collaborator's DVID server.
 
-DVID's initial focus is on efficiently handling data essential for Janelia's connectomics research:
+Although DVID is easily extensible by adding custom *data types*, each of which fulfill a
+minimal interface (e.g., HTTP request handling), DVID's initial focus is on efficiently handling data essential for Janelia's connectomics research:
 
 * image and 64-bit label 3d volumes
 * 2d images in XY, XZ, YZ, and arbitrary orientation
@@ -31,11 +32,14 @@ DVID's initial focus is on efficiently handling data essential for Janelia's con
 * low-latency sparse volumes corresponding to each unique label in a volume
 * label graphs
 * regions of interest represented via a coarse subdivision of space using block indices
-* 2d and 3d image and label data using Google BrainMaps API or other cloud-based services
+* 2d and 3d image and label data using Google BrainMaps API and other cloud-based services
 
 Each of the above is handled by built-in data types via a
 [Level 2 REST HTTP API](http://martinfowler.com/articles/richardsonMaturityModel.html)
-implemented by Go language packages within the *datatype* directory.
+implemented by Go language packages within the *datatype* directory.  When dealing with novel data,
+we typically use the generic *keyvalue* datatype and store JSON-encoded or binary data
+until we understand the desired access patterns and API.  When we outgrow the *keyvalue* type's
+GET, POST, and DELETE operations, we create a custom datatype package with a specialized HTTP API.
 
 DVID is primarily written in Go and supports different storage backends, a REST HTTP API,
 and command-line access (likely minimized in near future).  Some components are written in 
