@@ -206,6 +206,7 @@ func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.
 	if err != nil {
 		return nil, err
 	}
+	resp.Body.Close()
 	var m struct {
 		Geoms Geometries `json:"geometrys"`
 	}
