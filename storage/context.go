@@ -43,6 +43,9 @@ type Context interface {
 	// Versioned is true if this Context is also a VersionedCtx.
 	Versioned() bool
 
+	//SplitKey returns key components useful to store all versiones in a familyColumn if the storage engine supports it
+	SplitKey(tk TKey) (Key, []byte, error)
+
 	// Enforces opaque data type.
 	implementsOpaque()
 }
@@ -101,23 +104,39 @@ func (k Key) IsTombstone() bool {
 	return false
 }
 
-// UnversionedKey returns key components depending on whether the passed Key
+// SplitKey returns key components depending on whether the passed Key
 // is a metadata or data key.  If metadata, it returns the key and a 0 version id.
 // If it is a data key, it returns the unversioned portion of the Key and the
 // version id.
-func UnversionedKey(k Key) (isMetadata bool, unversioned Key, v dvid.VersionID, err error) {
+func SplitKey(k Key) (unversioned Key, versioned Key, err error) {
 	switch k[0] {
 	case metadataKeyPrefix:
-		isMetadata = true
 		unversioned = k
+		versioned = make([]byte, 0)
 	case dataKeyPrefix:
 		start := len(k) - dvid.VersionIDSize - dvid.ClientIDSize - 1 // substract version, client, and tombstone
-		v = dvid.VersionIDFromBytes(k[start : start+dvid.VersionIDSize])
 		unversioned = k[:start]
+		versioned = k[start:len(k)]
 	default:
 		err = fmt.Errorf("Bad Key given to UnversionedKey().  Key prefix = %d", k[0])
 	}
 	return
+}
+
+func (ctx MetadataContext) SplitKey(tk TKey) (Key, []byte, error) {
+	unvKey := append([]byte{metadataKeyPrefix}, tk...)
+	verKey := make([]byte, 0)
+	return Key(unvKey), verKey, nil
+}
+
+//Split the key in two parts: the first one call unversioned key,
+//and the second one called versioned key
+func (ctx *DataContext) SplitKey(tk TKey) (Key, []byte, error) {
+	unvKey := append([]byte{dataKeyPrefix}, ctx.data.InstanceID().Bytes()...)
+	unvKey = append(unvKey, tk...)
+	verKey := append(ctx.version.Bytes(), ctx.client.Bytes()...)
+	verKey = append(verKey, MarkData)
+	return Key(unvKey), verKey, nil
 }
 
 var contextMutexes map[mutexID]*sync.Mutex
@@ -340,6 +359,11 @@ func (ctx *DataContext) UnversionedKey(tk TKey) (Key, dvid.VersionID, error) {
 	key := append([]byte{dataKeyPrefix}, ctx.data.InstanceID().Bytes()...)
 	key = append(key, tk...)
 	return Key(key), ctx.version, nil
+}
+
+func MergeKey(unvKey Key, verKey []byte) Key {
+
+	return Key(append([]byte(unvKey), verKey...))
 }
 
 // Returns lower bound key for versions of given byte slice key representation.

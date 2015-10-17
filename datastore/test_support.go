@@ -7,6 +7,8 @@ import (
 	"log"
 	"sync"
 
+	"google.golang.org/cloud/bigtable/bttest"
+
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
 
@@ -48,9 +50,30 @@ func GetTestStoreConfig() (*dvid.StoreConfig, error) {
 	if testableEng == nil {
 		return nil, fmt.Errorf("Could not find a storage engine that was testable")
 	}
-	dbname := fmt.Sprintf("dvid-test-%x", uuid.NewV4().Bytes())
-	engConfig := dvid.EngineConfig{Engine: testableEng.GetName(), Path: dbname, Testing: true}
-	return &dvid.StoreConfig{Mutable: engConfig}, nil
+
+	if testableEng.GetName() == "bigtable" {
+
+		testSrv, err := bttest.NewServer() //TODO close the testSrv if neccesary
+		if err != nil {
+			return nil, fmt.Errorf("Unable to create bigTable local test server. %v", err)
+		}
+
+		table := fmt.Sprintf("dvid-test-%x", uuid.NewV4().Bytes())
+		engConfig := dvid.EngineConfig{Engine: testableEng.GetName(),
+			Project: "project",
+			Zone:    "zone",
+			Cluster: "cluster",
+			Table:   table,
+			Testing: true,
+			TestSrv: testSrv,
+		}
+
+		return &dvid.StoreConfig{Mutable: engConfig}, nil
+	} else {
+		dbname := fmt.Sprintf("dvid-test-%x", uuid.NewV4().Bytes())
+		engConfig := dvid.EngineConfig{Engine: testableEng.GetName(), Path: dbname, Testing: true}
+		return &dvid.StoreConfig{Mutable: engConfig}, nil
+	}
 }
 
 func openStore(create bool) {
@@ -74,7 +97,6 @@ func openStore(create bool) {
 
 func OpenTest() {
 	testStore.Lock()
-
 	dvid.Infof("Opening test datastore...\n")
 	openStore(true)
 }

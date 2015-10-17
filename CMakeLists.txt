@@ -108,6 +108,8 @@ else ()
         elseif ("${BACKEND}" STREQUAL "bolt")
             set (DVID_BACKEND_DEPEND    "gobolt" ${DVID_BACKEND_DEPEND})
             message ("Installing pure Go LMDB-inspired Bolt key-value store.")
+        elseif ("${BACKEND}" STREQUAL "bigtable")
+            message ("Installing Google's Cloud BigTable key-value store.")
         elseif ("${BACKEND}" STREQUAL "couchbase" ${DVID_BACKEND_DEPEND})
             message (FATAL_ERROR "Couchbase is currently not supported as a DVID storage engine.")
         endif ()
@@ -149,7 +151,12 @@ else ()
         ${BUILDEM_ENV_STRING} go get ${GO_GET} gopkg.in/natefinch/lumberjack.v2
         COMMENT     "Adding lumberjack library...")
 
-    set (DVID_DEP_GO_PACKAGES gopackages gojsonschema goji msgp context lumberjack)
+    add_custom_target (gcloud
+        ${BUILDEM_ENV_STRING} go get ${GO_GET} golang.org/x/net/context
+        COMMAND ${BUILDEM_ENV_STRING} go get ${GO_GET} google.golang.org/cloud/bigtable
+        COMMENT     "Adding gcloud packages...")  
+
+    set (DVID_DEP_GO_PACKAGES gopackages gojsonschema goji msgp context lumberjack gcloud)
 
     add_custom_target (nrsc
         ${BUILDEM_ENV_STRING} ${GO_ENV} go build -o ${BUILDEM_BIN_DIR}/nrsc
@@ -199,8 +206,7 @@ else ()
         ${BUILDEM_ENV_STRING} nrsc ${BUILDEM_BIN_DIR}/dvid dvid-console
         WORKING_DIRECTORY   ${BUILDEM_DIR}/src
         DEPENDS     dvid-exe nrsc dvid-console dvid-backup
-        COMMENT     "Adding embedded console into dvid executable..."
-    )
+        COMMENT     "Adding embedded console into dvid executable...")
 
     set (DVID_PACKAGES ${DVID_GO}/dvid ${DVID_GO}/storage/... ${DVID_GO}/datastore ${DVID_GO}/server
                        ${DVID_GO}/datatype/... ${DVID_GO}/tests_integration)
