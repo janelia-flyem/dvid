@@ -52,6 +52,12 @@ type Context interface {
 type VersionedCtx interface {
 	Context
 
+	// UnversionedKey returns a unversioned Key and the version id
+	// as separate components.  This can be useful for storage systems
+	// like column stores where the row key is the unversioned Key and
+	// the column qualifier is the version id.
+	UnversionedKey(TKey) (Key, dvid.VersionID, error)
+
 	// TombstoneKey takes a type-specific key component and returns a key that
 	// signals a deletion of any ancestor values.  The returned key must have
 	// as its last byte storage.MarkTombstone.
@@ -306,6 +312,16 @@ func (ctx *DataContext) String() string {
 }
 
 // ----- partial storage.VersionedCtx implementation
+
+// UnversionedKey returns a unversioned Key and the version id
+// as separate components.  This can be useful for storage systems
+// like column stores where the row key is the unversioned Key and
+// the column qualifier is the version id.
+func (ctx *DataContext) UnversionedKey(tk TKey) (Key, dvid.VersionID, error) {
+	key := append([]byte{dataKeyPrefix}, ctx.data.InstanceID().Bytes()...)
+	key = append(key, tk...)
+	return Key(key), ctx.version, nil
+}
 
 // Returns lower bound key for versions of given byte slice key representation.
 func (ctx *DataContext) MinVersionKey(tk TKey) (Key, error) {
