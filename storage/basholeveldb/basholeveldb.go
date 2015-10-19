@@ -724,7 +724,7 @@ func (db *LevelDB) ProcessRange(ctx storage.Context, kStart, kEnd storage.TKey, 
 		if result.error != nil {
 			return result.error
 		}
-		if op.Wg != nil {
+		if op != nil && op.Wg != nil {
 			op.Wg.Add(1)
 		}
 		tk, err := ctx.TKeyFromKey(result.KeyValue.K)

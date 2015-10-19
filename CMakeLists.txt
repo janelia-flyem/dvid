@@ -128,6 +128,10 @@ else ()
         DEPENDS     gopackages-install
         WORKING_DIRECTORY $ENV{GOPATH}/src/github.com/janelia-flyem/go
         COMMENT     "Updating required Go packages...")
+
+    add_custom_target (goprotobuf
+        ${BUILDEM_ENV_STRING} go get ${GO_GET} -u github.com/golang/protobuf/{proto,protoc-gen-go}
+        COMMENT     "Adding goprotobuf support...")
     
     add_custom_target (gojsonschema
         ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/janelia-flyem/gojsonschema
@@ -149,7 +153,7 @@ else ()
         ${BUILDEM_ENV_STRING} go get ${GO_GET} gopkg.in/natefinch/lumberjack.v2
         COMMENT     "Adding lumberjack library...")
 
-    set (DVID_DEP_GO_PACKAGES gopackages gojsonschema goji msgp context lumberjack)
+    set (DVID_DEP_GO_PACKAGES gopackages goprotobuf gojsonschema goji msgp context lumberjack)
 
     add_custom_target (nrsc
         ${BUILDEM_ENV_STRING} ${GO_ENV} go build -o ${BUILDEM_BIN_DIR}/nrsc

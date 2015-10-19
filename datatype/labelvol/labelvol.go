@@ -62,10 +62,10 @@ $ dvid repo <UUID> new labelvol <data name> <settings...>
 
     Configuration Settings (case-insensitive keys)
 
+    Sync           Name of labelblk data to which this labelvol data should be synced.
     BlockSize      Size in pixels  (default: %s)
     VoxelSize      Resolution of voxels (default: 8.0, 8.0, 8.0)
     VoxelUnits     Resolution units (default: "nanometers")
-	
 	
     ------------------
 
@@ -1159,10 +1159,14 @@ func (d *Data) NewLabel(v dvid.VersionID) (uint64, error) {
 	buf := make([]byte, 8)
 	binary.LittleEndian.PutUint64(buf, d.MaxRepoLabel)
 	ctx := datastore.NewVersionedCtx(d, v)
-	store.Put(ctx, maxLabelTKey, buf)
+	if err := store.Put(ctx, maxLabelTKey, buf); err != nil {
+		return 0, err
+	}
 
 	ctx2 := storage.NewDataContext(d, 0)
-	store.Put(ctx2, maxRepoLabelTKey, buf)
+	if err := store.Put(ctx2, maxRepoLabelTKey, buf); err != nil {
+		return 0, err
+	}
 
 	return d.MaxRepoLabel, nil
 }

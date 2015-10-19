@@ -346,8 +346,36 @@ func (p Point2d) PointInChunk(size Point) Point {
 // Point3d is an ordered list of three 32-bit signed integers that implements the Point interface.
 type Point3d [3]int32
 
+var (
+	MaxPoint3d = Point3d{math.MaxInt32, math.MaxInt32, math.MaxInt32}
+	MinPoint3d = Point3d{math.MinInt32, math.MinInt32, math.MinInt32}
+)
+
+func (p Point3d) MapKey() string {
+	return string(p.Bytes())
+}
+
 func (p Point3d) Equals(p2 Point3d) bool {
 	return p[0] == p2[0] && p[1] == p2[1] && p[2] == p2[2]
+}
+
+func (p Point3d) Less(p2 Point3d) bool {
+	if p[2] < p2[2] {
+		return true
+	}
+	if p[2] > p2[2] {
+		return false
+	}
+	if p[1] < p2[1] {
+		return true
+	}
+	if p[1] > p2[2] {
+		return false
+	}
+	if p[0] < p2[0] {
+		return true
+	}
+	return false
 }
 
 // Bytes returns a byte representation of the Point3d in little endian format.
@@ -998,6 +1026,11 @@ func (p *ChunkPoint3d) SetMaximum(p2 ChunkPoint3d) {
 	}
 }
 
+func (p ChunkPoint3d) ToIZYXString() IZYXString {
+	i := IndexZYX(p)
+	return i.ToIZYXString()
+}
+
 // --------- ChunkPoint interface -------------
 
 func (c ChunkPoint3d) NumDims() uint8 {
@@ -1340,6 +1373,24 @@ type Extents3d struct {
 	MaxPoint Point3d
 }
 
+// NewExtents3dFromStrings returns an Extents3d given string representations of
+// offset and size in voxels.
+func NewExtents3dFromStrings(offsetStr, sizeStr, sep string) (*Extents3d, error) {
+	offset, err := StringToPoint3d(offsetStr, sep)
+	if err != nil {
+		return nil, err
+	}
+	size, err := StringToPoint3d(sizeStr, sep)
+	if err != nil {
+		return nil, err
+	}
+	ext := Extents3d{
+		MinPoint: offset,
+		MaxPoint: Point3d{offset[0] + size[0] - 1, offset[1] + size[1] - 1, offset[2] + size[2] - 1},
+	}
+	return &ext, nil
+}
+
 func (ext *Extents3d) ExtendDim(dim int, val int32) bool {
 	var changed bool
 	if ext == nil {
@@ -1386,6 +1437,62 @@ func (ext *Extents3d) Extend(pt Point3d) bool {
 		changed = true
 	}
 	return changed
+}
+
+// VoxelWithin returns true if given point is within the extents.
+func (ext *Extents3d) VoxelWithin(pt Point3d) bool {
+	if pt[2] < ext.MinPoint[2] {
+		return false
+	}
+	if pt[2] > ext.MaxPoint[2] {
+		return false
+	}
+	if pt[1] < ext.MinPoint[1] {
+		return false
+	}
+	if pt[1] > ext.MaxPoint[1] {
+		return false
+	}
+	if pt[0] < ext.MinPoint[0] {
+		return false
+	}
+	if pt[0] > ext.MaxPoint[0] {
+		return false
+	}
+	return true
+}
+
+// BlockWithin returns true if given block coord is within the extents partitioned
+// using the give block size, or false if it is not given a 3d point size or block coord.
+func (ext *Extents3d) BlockWithin(size Point3d, coord ChunkPoint3d) bool {
+	min, max := ext.BlockRange(size)
+	if coord[2] < min[2] {
+		return false
+	}
+	if coord[2] > max[2] {
+		return false
+	}
+	if coord[1] < min[1] {
+		return false
+	}
+	if coord[1] > max[1] {
+		return false
+	}
+	if coord[0] < min[0] {
+		return false
+	}
+	if coord[0] > max[0] {
+		return false
+	}
+	return true
+}
+
+// BlockRange returns the starting and ending block coordinate for given extents
+// and block size.
+func (ext *Extents3d) BlockRange(size Point3d) (min, max ChunkPoint3d) {
+	min = ext.MinPoint.Chunk(size).(ChunkPoint3d)
+	max = ext.MaxPoint.Chunk(size).(ChunkPoint3d)
+	return
 }
 
 // ChunkExtents3d defines a 3d volume of chunks
