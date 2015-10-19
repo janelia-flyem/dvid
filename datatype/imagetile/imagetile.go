@@ -258,7 +258,6 @@ func init() {
 	// Need to register types that will be used to fulfill interfaces.
 	gob.Register(&Type{})
 	gob.Register(&Data{})
-	gob.Register(&IndexTile{})
 }
 
 // Type embeds the datastore's Type to create a unique type with tile functions.
@@ -762,13 +761,13 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	case "tile":
 		switch action {
 		case "post":
-			err := d.PostTile(uuid, ctx, w, r, parts)
+			err := d.PostTile(ctx, w, r, parts)
 			if err != nil {
 				server.BadRequest(w, r, "Error in posting tile with URL %q: %v\n", url, err)
 				return
 			}
 		case "get":
-			if err := d.ServeTile(uuid, ctx, w, r, parts); err != nil {
+			if err := d.ServeTile(ctx, w, r, parts); err != nil {
 				server.BadRequest(w, r, err)
 				return
 			}
@@ -780,7 +779,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		case "get":
 			var err error
 			var hexkey string
-			if hexkey, err = d.GetTileKey(uuid, ctx, w, r, parts); err != nil {
+			if hexkey, err = d.GetTileKey(ctx, w, r, parts); err != nil {
 				server.BadRequest(w, r, err)
 				return
 			}
@@ -897,7 +896,7 @@ func (d *Data) GetImage(ctx storage.Context, src *imageblk.Data, geom dvid.Geome
 
 				// Get this tile from datastore
 				tileCoord, err := slice.PlaneToChunkPoint3d(x0, y0, minSlice.StartPoint(), levelSpec.TileSize)
-				goImg, err := d.GetTile(ctx, tileReq{slice, 0, dvid.IndexZYX(tileCoord)})
+				goImg, err := d.GetTile(ctx, TileReq{tileCoord, slice, 0})
 				if err != nil || goImg == nil {
 					return
 				}
@@ -930,77 +929,30 @@ func (d *Data) GetImage(ctx storage.Context, src *imageblk.Data, geom dvid.Geome
 	return dst, nil
 }
 
-type tileReq struct {
-	shape    dvid.DataShape
-	scaling  Scaling
-	indexZYX dvid.IndexZYX
-}
-
-func (tr tileReq) Bytes() []byte {
-	tileIndex := &IndexTile{&tr.indexZYX, tr.shape, tr.scaling}
-	return tileIndex.Bytes()
-}
-
-func (d *Data) parseTileReq(r *http.Request, parts []string) (tileReq, error) {
-	if len(parts) < 7 {
-		return tileReq{}, fmt.Errorf("'tile' request must be following by plane, scale level, and tile coordinate")
-	}
-	planeStr, scalingStr, coordStr := parts[4], parts[5], parts[6]
-
-	// Construct the index for this tile
-	plane := dvid.DataShapeString(planeStr)
-	shape, err := plane.DataShape()
-	if err != nil {
-		err = fmt.Errorf("Illegal tile plane: %s (%v)", planeStr, err)
-		return tileReq{}, err
-	}
-	scaling, err := strconv.ParseUint(scalingStr, 10, 8)
-	if err != nil {
-		err = fmt.Errorf("Illegal tile scale: %s (%v)", scalingStr, err)
-		return tileReq{}, err
-	}
-	tileCoord, err := dvid.StringToPoint(coordStr, "_")
-	if err != nil {
-		err = fmt.Errorf("Illegal tile coordinate: %s (%v)", coordStr, err)
-		return tileReq{}, err
-	}
-	if tileCoord.NumDims() != 3 {
-		err = fmt.Errorf("Expected 3d tile coordinate, got %s", coordStr)
-		return tileReq{}, err
-	}
-	indexZYX := dvid.IndexZYX{tileCoord.Value(0), tileCoord.Value(1), tileCoord.Value(2)}
-	return tileReq{shape, Scaling(scaling), indexZYX}, nil
-}
-
 // PostTile stores a tile.
-func (d *Data) PostTile(uuid dvid.UUID, ctx storage.Context, w http.ResponseWriter,
-	r *http.Request, parts []string) error {
-
-	tileReq, err := d.parseTileReq(r, parts)
+func (d *Data) PostTile(ctx storage.Context, w http.ResponseWriter, r *http.Request, parts []string) error {
+	req, err := d.ParseTileReq(r, parts)
 	if err != nil {
 		return err
 	}
-
 	data, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		return err
 	}
-
 	imstore, err := storage.ImmutableStore()
 	if err != nil {
 		return fmt.Errorf("Cannot open immutable store: %v\n", err)
 	}
-	return imstore.Put(ctx, tileReq.Bytes(), data)
+	return imstore.Put(ctx, NewTKeyByTileReq(req), data)
 }
 
 // ServeTile returns a tile with appropriate Content-Type set.
-func (d *Data) ServeTile(uuid dvid.UUID, ctx storage.Context, w http.ResponseWriter,
-	r *http.Request, parts []string) error {
+func (d *Data) ServeTile(ctx storage.Context, w http.ResponseWriter, r *http.Request, parts []string) error {
 
 	if d.Levels == nil || len(d.Levels) == 0 {
 		return ErrNoMetadataSet
 	}
-	tileReq, err := d.parseTileReq(r, parts)
+	tileReq, err := d.ParseTileReq(r, parts)
 
 	queryValues := r.URL.Query()
 	noblanksStr := dvid.InstanceName(queryValues.Get("noblanks"))
@@ -1023,7 +975,7 @@ func (d *Data) ServeTile(uuid dvid.UUID, ctx storage.Context, w http.ResponseWri
 			http.NotFound(w, r)
 			return nil
 		}
-		img, err := d.getBlankTileImage(uuid, tileReq)
+		img, err := d.getBlankTileImage(tileReq)
 		if err != nil {
 			return err
 		}
@@ -1054,18 +1006,18 @@ func (d *Data) ServeTile(uuid dvid.UUID, ctx storage.Context, w http.ResponseWri
 }
 
 // GetTileKey returns the internal key as a hexadecimal string
-func (d *Data) GetTileKey(uuid dvid.UUID, ctx storage.Context, w http.ResponseWriter,
-	r *http.Request, parts []string) (string, error) {
-
-	req, err := d.parseTileReq(r, parts)
+func (d *Data) GetTileKey(ctx storage.Context, w http.ResponseWriter, r *http.Request, parts []string) (string, error) {
+	req, err := d.ParseTileReq(r, parts)
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("%x", req.Bytes()), nil
+	tk := NewTKeyByTileReq(req)
+	key := ctx.ConstructKey(tk)
+	return fmt.Sprintf("%x", key), nil
 }
 
 // GetTile returns a 2d tile image or a placeholder
-func (d *Data) GetTile(ctx storage.Context, req tileReq) (image.Image, error) {
+func (d *Data) GetTile(ctx storage.Context, req TileReq) (image.Image, error) {
 	if d.Levels == nil || len(d.Levels) == 0 {
 		return nil, ErrNoMetadataSet
 	}
@@ -1076,11 +1028,11 @@ func (d *Data) GetTile(ctx storage.Context, req tileReq) (image.Image, error) {
 
 	if data == nil {
 		if d.Placeholder {
-			if req.scaling < 0 || req.scaling >= Scaling(len(d.Levels)) {
-				return nil, fmt.Errorf("Could not find tile specification at given scale %d", req.scaling)
+			if req.scale < 0 || req.scale >= Scaling(len(d.Levels)) {
+				return nil, fmt.Errorf("Could not find tile specification at given scale %d", req.scale)
 			}
-			message := fmt.Sprintf("%s Tile coord %s @ scale %d", req.shape, req.indexZYX, req.scaling)
-			return dvid.PlaceholderImage(req.shape, d.Levels[req.scaling].TileSize, message)
+			message := fmt.Sprintf("%s Tile coord %s @ scale %d", req.plane, req.tile, req.scale)
+			return dvid.PlaceholderImage(req.plane, d.Levels[req.scale].TileSize, message)
 		}
 		return nil, nil // Not found
 	}
@@ -1107,14 +1059,14 @@ func (d *Data) GetTile(ctx storage.Context, req tileReq) (image.Image, error) {
 }
 
 // getTileData returns 2d tile data straight from storage without decoding.
-func (d *Data) getTileData(ctx storage.Context, req tileReq) ([]byte, error) {
+func (d *Data) getTileData(ctx storage.Context, req TileReq) ([]byte, error) {
 	imstore, err := storage.ImmutableStore()
 	if err != nil {
 		return nil, err
 	}
 
 	// Retrieve the tile data from datastore
-	data, err := imstore.Get(ctx, req.Bytes())
+	data, err := imstore.Get(ctx, NewTKeyByTileReq(req))
 	if err != nil {
 		return nil, fmt.Errorf("Error trying to GET from datastore: %v", err)
 	}
@@ -1122,12 +1074,12 @@ func (d *Data) getTileData(ctx storage.Context, req tileReq) ([]byte, error) {
 }
 
 // getBlankTileData returns zero 2d tile image.
-func (d *Data) getBlankTileImage(uuid dvid.UUID, req tileReq) (image.Image, error) {
-	levelSpec, found := d.Levels[req.scaling]
+func (d *Data) getBlankTileImage(req TileReq) (image.Image, error) {
+	levelSpec, found := d.Levels[req.scale]
 	if !found {
-		return nil, fmt.Errorf("Could not extract tiles for unspecified scale level %d", req.scaling)
+		return nil, fmt.Errorf("Could not extract tiles for unspecified scale level %d", req.scale)
 	}
-	tileW, tileH, err := req.shape.GetSize2D(levelSpec.TileSize)
+	tileW, tileH, err := req.plane.GetSize2D(levelSpec.TileSize)
 	if err != nil {
 		return nil, err
 	}
@@ -1157,17 +1109,17 @@ func log2(value int32) uint8 {
 	}
 }
 
-type outFunc func(index *IndexTile, img *dvid.Image) error
+type outFunc func(TileReq, *dvid.Image) error
 
 // Construct all tiles for an image with offset and send to out function.  extractTiles assumes
 // the image and offset are in the XY plane.
-func (d *Data) extractTiles(v *imageblk.Voxels, offset dvid.Point, scaling Scaling, outF outFunc) error {
-	if d.Levels == nil || scaling < 0 || scaling >= Scaling(len(d.Levels)) {
-		return fmt.Errorf("Bad scaling level specified: %d", scaling)
+func (d *Data) extractTiles(v *imageblk.Voxels, offset dvid.Point, scale Scaling, outF outFunc) error {
+	if d.Levels == nil || scale < 0 || scale >= Scaling(len(d.Levels)) {
+		return fmt.Errorf("Bad scaling level specified: %d", scale)
 	}
-	levelSpec, found := d.Levels[scaling]
+	levelSpec, found := d.Levels[scale]
 	if !found {
-		return fmt.Errorf("No scaling specs available for scaling level %d", scaling)
+		return fmt.Errorf("No scaling specs available for scaling level %d", scale)
 	}
 	srcW := v.Size().Value(0)
 	srcH := v.Size().Value(1)
@@ -1194,8 +1146,8 @@ func (d *Data) extractTiles(v *imageblk.Voxels, offset dvid.Point, scaling Scali
 			}
 			tileCoord, err := v.DataShape().PlaneToChunkPoint3d(x0, y0, offset, levelSpec.TileSize)
 			// fmt.Printf("Tile Coord: %s > %s\n", tileCoord, tileRect)
-			tileIndex := NewIndexTile(dvid.IndexZYX(tileCoord), v.DataShape(), Scaling(scaling))
-			if err = outF(tileIndex, tile); err != nil {
+			req := NewTileReq(tileCoord, v.DataShape(), scale)
+			if err = outF(req, tile); err != nil {
 				return err
 			}
 			x1 += tileW
@@ -1213,7 +1165,7 @@ func (d *Data) putTileFunc(versionID dvid.VersionID) (outFunc, error) {
 	}
 	ctx := datastore.NewVersionedCtx(d, versionID)
 
-	return func(index *IndexTile, tile *dvid.Image) error {
+	return func(req TileReq, tile *dvid.Image) error {
 		var err error
 		var data []byte
 
@@ -1232,7 +1184,7 @@ func (d *Data) putTileFunc(versionID dvid.VersionID) (outFunc, error) {
 		if err != nil {
 			return err
 		}
-		return imstore.Put(ctx, index.Bytes(), data)
+		return imstore.Put(ctx, NewTKeyByTileReq(req), data)
 	}, nil
 }
 
