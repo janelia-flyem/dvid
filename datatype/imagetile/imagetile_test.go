@@ -1,6 +1,9 @@
 package imagetile
 
 import (
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
 	"log"
 	"reflect"
 	"sync"
@@ -9,6 +12,8 @@ import (
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/imageblk"
 	"github.com/janelia-flyem/dvid/dvid"
+	"github.com/janelia-flyem/dvid/server"
+	"github.com/janelia-flyem/dvid/storage"
 )
 
 var (
@@ -112,5 +117,49 @@ func TestMultiscale2dRepoPersistence(t *testing.T) {
 
 	if !reflect.DeepEqual(oldData.Properties, msdata2.Properties) {
 		t.Errorf("Expected properties %v, got %v\n", oldData.Properties, msdata2.Properties)
+	}
+}
+
+func TestTileKey(t *testing.T) {
+	datastore.OpenTest()
+	defer datastore.CloseTest()
+
+	uuid, _ := initTestRepo()
+	server.CreateTestInstance(t, uuid, "imagetile", "tiles", dvid.Config{})
+
+	keyURL := fmt.Sprintf("%snode/%s/tiles/tilekey/xy/0/1_2_3", server.WebAPIPath, uuid)
+	respStr := server.TestHTTP(t, "GET", keyURL, nil)
+	keyResp := struct {
+		Key string `json:"key"`
+	}{}
+	if err := json.Unmarshal(respStr, &keyResp); err != nil {
+		t.Fatalf("Couldn't parse JSON response to tilekey request (%v):\n%s\n", err, keyResp)
+	}
+	kb := make([]byte, hex.DecodedLen(len(keyResp.Key)))
+	_, err := hex.Decode(kb, []byte(keyResp.Key))
+	if err != nil {
+		t.Fatalf("Couldn't parse return hex key: %s", keyResp.Key)
+	}
+
+	// Decipher TKey portion to make sure it's correct.
+	key := storage.Key(kb)
+	var ctx storage.DataContext
+	tk, err := ctx.TKeyFromKey(key)
+	if err != nil {
+		t.Fatalf("Couldn't get TKey from returned key (%v): %x", err, kb)
+	}
+	tile, plane, scale, err := DecodeTKey(tk)
+	if err != nil {
+		t.Fatalf("Bad decode of TKey (%v): %x", err, tk)
+	}
+	expectTile := dvid.ChunkPoint3d{1, 2, 3}
+	if tile != expectTile {
+		t.Errorf("Expected tile %v, got %v\n", expectTile, tile)
+	}
+	if !plane.Equals(dvid.XY) {
+		t.Errorf("Expected plane to be XY, got %v\n", plane)
+	}
+	if scale != 0 {
+		t.Errorf("Expected scale to be 0, got %d\n", scale)
 	}
 }
