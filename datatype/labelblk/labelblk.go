@@ -389,6 +389,7 @@ func (l *Labels) Interpolable() bool {
 type Data struct {
 	*imageblk.Data
 	Labeling LabelType
+	datastore.Updater
 }
 
 func (d *Data) Equals(d2 *Data) bool {

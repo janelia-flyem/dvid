@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"sync"
+	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
@@ -26,6 +27,20 @@ import (
 var (
 	splitCache labels.DirtyCache
 )
+
+// BlockOnUpdating blocks until the given data is not updating from syncs.
+// This is primarily used during testing.
+func BlockOnUpdating(uuid dvid.UUID, name dvid.InstanceName) error {
+	d, err := GetByUUID(uuid, name)
+	if err != nil {
+		return err
+	}
+	time.Sleep(100 * time.Millisecond)
+	for d.Updating() {
+		time.Sleep(50 * time.Millisecond)
+	}
+	return nil
+}
 
 // InitSync implements the datastore.Syncer interface
 func (d *Data) InitSync(name dvid.InstanceName) []datastore.SyncSub {
@@ -146,6 +161,8 @@ func (d *Data) syncMerge(name dvid.InstanceName, in <-chan datastore.SyncMessage
 			iv := dvid.InstanceVersion{name, msg.Version}
 			switch delta := msg.Delta.(type) {
 			case labels.DeltaMerge:
+				d.StartUpdate()
+
 				ctx := datastore.NewVersionedCtx(d, msg.Version)
 				wg := new(sync.WaitGroup)
 				for izyxStr := range delta.Blocks {
@@ -160,9 +177,13 @@ func (d *Data) syncMerge(name dvid.InstanceName, in <-chan datastore.SyncMessage
 					labels.MergeCache.Remove(iv, delta.MergeOp)
 				}(wg)
 
+				d.StopUpdate()
+
 			case labels.DeltaMergeStart:
 				// Add this merge into the cached blockRLEs
+				d.StartUpdate()
 				labels.MergeCache.Add(iv, delta.MergeOp)
+				d.StopUpdate()
 
 			default:
 				dvid.Criticalf("bad delta in merge event: %v\n", delta)
@@ -257,13 +278,17 @@ func (d *Data) syncSplit(name dvid.InstanceName, in <-chan datastore.SyncMessage
 		default:
 			switch delta := msg.Delta.(type) {
 			case labels.DeltaSplit:
+				d.StartUpdate()
 				ctx := datastore.NewVersionedCtx(d, msg.Version)
 				n := delta.OldLabel % numprocs
 				pch[n] <- splitOp{delta, *ctx}
+				d.StopUpdate()
 			case labels.DeltaSplitStart:
 				// Mark the old label is under transition
+				d.StartUpdate()
 				iv := dvid.InstanceVersion{name, msg.Version}
 				splitCache.Incr(iv, delta.OldLabel)
+				d.StopUpdate()
 			default:
 				dvid.Criticalf("bad delta in split event: %v\n", delta)
 				continue

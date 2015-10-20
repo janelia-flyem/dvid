@@ -198,6 +198,31 @@ func NotifySubscribers(e SyncEvent, m SyncMessage) error {
 	return repo.notifySubscribers(e, m)
 }
 
+type Updater struct {
+	updates uint32
+	sync.RWMutex
+}
+
+func (u *Updater) StartUpdate() {
+	u.Lock()
+	u.updates++
+	u.Unlock()
+}
+
+func (u *Updater) StopUpdate() {
+	u.Lock()
+	u.updates--
+	u.Unlock()
+}
+
+// Returns true if the data is currently being updated.
+func (u *Updater) Updating() bool {
+	u.RLock()
+	updating := u.updates > 0
+	u.RUnlock()
+	return updating
+}
+
 // Data is the base struct of repo-specific data instances.  It should be embedded
 // in a datatype's DataService implementation and handle datastore-wide key partitioning.
 type Data struct {

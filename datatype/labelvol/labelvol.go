@@ -441,6 +441,11 @@ func (p *Properties) setByConfig(config dvid.Config) error {
 type Data struct {
 	*datastore.Data
 	Properties
+
+	// Keep track of sync operations that could be updating the data.
+	// TODO: Think about making this per label since sync status is pessimistic, assuming
+	// all labels are being updated.
+	datastore.Updater
 }
 
 func (d *Data) GetSyncedLabelblk(v dvid.VersionID) (*labelblk.Data, error) {
@@ -1070,8 +1075,8 @@ func (d *Data) casMaxLabel(batch storage.Batch, v dvid.VersionID, label uint64) 
 	save := false
 	maxLabel, found := d.MaxLabel[v]
 	if !found {
-		dvid.Errorf("Bad max label of version %d -- none found!\n", v)
-		maxLabel = 0
+		dvid.Infof("Bad max label of version %d -- none found!\n", v)
+		maxLabel = 1
 	}
 	if maxLabel < label {
 		maxLabel = label

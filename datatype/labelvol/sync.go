@@ -2,6 +2,7 @@ package labelvol
 
 import (
 	"encoding/binary"
+	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
@@ -17,6 +18,20 @@ var (
 
 // Number of change messages we can buffer before blocking on sync channel.
 const syncBufferSize = 100
+
+// BlockOnUpdating blocks until the given data is not updating from syncs.
+// This is primarily used during testing.
+func BlockOnUpdating(uuid dvid.UUID, name dvid.InstanceName) error {
+	time.Sleep(100 * time.Millisecond)
+	d, err := GetByUUID(uuid, name)
+	if err != nil {
+		return err
+	}
+	for d.Updating() {
+		time.Sleep(50 * time.Millisecond)
+	}
+	return nil
+}
 
 // InitSync implements the datastore.Syncer interface
 func (d *Data) InitSync(name dvid.InstanceName) []datastore.SyncSub {
@@ -70,6 +85,7 @@ func (d *Data) handleBlockEvent(in <-chan datastore.SyncMessage, done <-chan str
 		case <-done:
 			return
 		default:
+			d.StartUpdate()
 			ctx := datastore.NewVersionedCtx(d, msg.Version)
 			switch delta := msg.Delta.(type) {
 			case imageblk.Block:
@@ -79,6 +95,7 @@ func (d *Data) handleBlockEvent(in <-chan datastore.SyncMessage, done <-chan str
 			default:
 				dvid.Criticalf("Cannot sync labelvol from block event.  Got unexpected delta: %v\n", msg)
 			}
+			d.StopUpdate()
 		}
 	}
 }

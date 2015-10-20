@@ -16,9 +16,9 @@ import (
 	"reflect"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
+	"github.com/janelia-flyem/dvid/datatype/labelblk"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 
@@ -299,9 +299,9 @@ func TestSparseVolumes(t *testing.T) {
 	// Populte the labels, which should automatically populate the labelvol
 	_ = createLabelTestVolume(t, uuid, "labels")
 
-	// TODO -- Remove this hack in favor of whatever will be the method
-	// for discerning denormalizations are not yet complete.
-	time.Sleep(5 * time.Second)
+	if err := BlockOnUpdating(uuid, "bodies"); err != nil {
+		t.Fatalf("Error blocking on sync of labels -> bodies: %v\n", err)
+	}
 
 	badReqStr := fmt.Sprintf("%snode/%s/%s/sparsevol/0", server.WebAPIPath, uuid, "bodies")
 	server.TestBadHTTP(t, "GET", badReqStr, nil)
@@ -390,7 +390,9 @@ func TestSparseVolumes(t *testing.T) {
 	delReq := fmt.Sprintf("%snode/%s/%s/blocks/0_1_1/2", server.WebAPIPath, uuid2, "labels")
 	server.TestHTTP(t, "DELETE", delReq, nil)
 
-	time.Sleep(5 * time.Second) // TODO: Replace with notifier that denorm is done.
+	if err := BlockOnUpdating(uuid, "bodies"); err != nil {
+		t.Fatalf("Error blocking on sync of labels -> bodies: %v\n", err)
+	}
 
 	// Read those blocks to make sure they are gone.
 	reqStr := fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid2, "bodies", 2)
@@ -433,9 +435,9 @@ func TestMergeLabels(t *testing.T) {
 	expected := createLabelTestVolume(t, uuid, "labels")
 	expected.add(body3, 2)
 
-	// TODO -- Remove this hack in favor of whatever will be the method
-	// for discerning denormalizations are not yet complete.
-	time.Sleep(5 * time.Second)
+	if err := BlockOnUpdating(uuid, "bodies"); err != nil {
+		t.Fatalf("Error blocking on sync of labels -> bodies: %v\n", err)
+	}
 
 	// Make sure max label is consistent
 	reqStr := fmt.Sprintf("%snode/%s/%s/maxlabel", server.WebAPIPath, uuid, "bodies")
@@ -499,9 +501,9 @@ func TestSplitLabel(t *testing.T) {
 	expected.add(bodyleft, 4)
 	expected.add(bodysplit, 5)
 
-	// TODO -- Remove this hack in favor of whatever will be the method
-	// for discerning denormalizations are not yet complete.
-	time.Sleep(5 * time.Second)
+	if err := BlockOnUpdating(uuid, "bodies"); err != nil {
+		t.Fatalf("Error blocking on sync of labels -> bodies: %v\n", err)
+	}
 
 	// Make sure sparsevol for original body 4 is correct
 	reqStr := fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid, "bodies", 4)
@@ -555,9 +557,9 @@ func TestSplitLabel(t *testing.T) {
 		t.Errorf("Expected split label to be 5, instead got %d\n", newlabel)
 	}
 
-	// TODO -- Remove this hack in favor of whatever will be the method
-	// for discerning denormalizations are not yet complete.
-	time.Sleep(5 * time.Second)
+	if err := labelblk.BlockOnUpdating(uuid, "labels"); err != nil {
+		t.Fatalf("Error blocking on sync of bodies -> labels: %v\n", err)
+	}
 
 	retrieved := newTestVolume(128, 128, 128)
 	retrieved.get(t, uuid, "labels")
@@ -622,9 +624,9 @@ func TestSplitCoarseLabel(t *testing.T) {
 		}
 	}
 
-	// TODO -- Remove this hack in favor of whatever will be the method
-	// for discerning denormalizations are not yet complete.
-	time.Sleep(5 * time.Second)
+	if err := BlockOnUpdating(uuid, "bodies"); err != nil {
+		t.Fatalf("Error blocking on sync of labels -> bodies: %v\n", err)
+	}
 
 	// Make sure sparsevol for original body 4 is correct
 	reqStr := fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid, "bodies", 4)
@@ -665,9 +667,9 @@ func TestSplitCoarseLabel(t *testing.T) {
 		t.Errorf("Expected split label to be 5, instead got %d\n", newlabel)
 	}
 
-	// TODO -- Remove this hack in favor of whatever will be the method
-	// for discerning denormalizations are not yet complete.
-	time.Sleep(5 * time.Second)
+	if err := labelblk.BlockOnUpdating(uuid, "labels"); err != nil {
+		t.Fatalf("Error blocking on sync of bodies -> labels: %v\n", err)
+	}
 
 	// Make sure labels are correct
 	retrieved := newTestVolume(128, 128, 128)
