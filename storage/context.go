@@ -101,6 +101,25 @@ func (k Key) IsTombstone() bool {
 	return false
 }
 
+// UnversionedKey returns key components depending on whether the passed Key
+// is a metadata or data key.  If metadata, it returns the key and a 0 version id.
+// If it is a data key, it returns the unversioned portion of the Key and the
+// version id.
+func UnversionedKey(k Key) (isMetadata bool, unversioned Key, v dvid.VersionID, err error) {
+	switch k[0] {
+	case metadataKeyPrefix:
+		isMetadata = true
+		unversioned = k
+	case dataKeyPrefix:
+		start := len(k) - dvid.VersionIDSize - dvid.ClientIDSize - 1 // substract version, client, and tombstone
+		v = dvid.VersionIDFromBytes(k[start : start+dvid.VersionIDSize])
+		unversioned = k[:start]
+	default:
+		err = fmt.Errorf("Bad Key given to UnversionedKey().  Key prefix = %d", k[0])
+	}
+	return
+}
+
 var contextMutexes map[mutexID]*sync.Mutex
 
 func init() {
