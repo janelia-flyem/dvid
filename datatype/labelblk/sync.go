@@ -175,9 +175,8 @@ func (d *Data) syncMerge(name dvid.InstanceName, in <-chan datastore.SyncMessage
 				go func(wg *sync.WaitGroup) {
 					wg.Wait()
 					labels.MergeCache.Remove(iv, delta.MergeOp)
+					d.StopUpdate()
 				}(wg)
-
-				d.StopUpdate()
 
 			case labels.DeltaMergeStart:
 				// Add this merge into the cached blockRLEs
