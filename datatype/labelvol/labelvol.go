@@ -226,9 +226,10 @@ POST <api URL>/node/<UUID>/<data name>/merge
 	same toLabel as a single merge request instead of multiple merge requests.
 
 
-POST <api URL>/node/<UUID>/<data name>/split/<label>
+POST <api URL>/node/<UUID>/<data name>/split/<label>[?splitlabel=X]
 
-	Splits a portion of a label's voxels into a new label.  Returns the following JSON:
+	Splits a portion of a label's voxels into a new label or, if "splitlabel" is specified
+	as an optional query string, the given split label.  Returns the following JSON:
 
 		{ "label": <new label> }
 
@@ -251,6 +252,11 @@ POST <api URL>/node/<UUID>/<data name>/split/<label>
 	        int32   Coordinate of run start (dimension 2)
 			  ...
 	        int32   Length of run
+
+	NOTE: If a split label is specified, it is the client's responsibility to make sure the given
+	label will not create conflict with labels in other versions.  It should primarily be used in
+	chain operations like "split-coarse" followed by "split" using voxels, where the new label
+	created by the split coarse is used as the split label for the smaller, higher-res "split".
 
 POST <api URL>/node/<UUID>/<data name>/split-coarse/<label>
 
@@ -979,7 +985,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		timedLog.Infof("HTTP maxlabel request (%s)", r.URL)
 
 	case "split":
-		// POST <api URL>/node/<UUID>/<data name>/split/<label>
+		// POST <api URL>/node/<UUID>/<data name>/split/<label>[?splitlabel=X]
 		if action != "post" {
 			server.BadRequest(w, r, "Split requests must be POST actions.")
 			return
@@ -997,7 +1003,16 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			server.BadRequest(w, r, "Label 0 is protected background value and cannot be used as sparse volume.\n")
 			return
 		}
-		toLabel, err := d.SplitLabels(ctx.VersionID(), fromLabel, r.Body)
+		var splitLabel uint64
+		queryValues := r.URL.Query()
+		splitStr := queryValues.Get("splitlabel")
+		if splitStr != "" {
+			splitLabel, err = strconv.ParseUint(splitStr, 10, 64)
+			if err != nil {
+				server.BadRequest(w, r, "Bad parameter for 'splitlabel' query string (%q).  Must be uint64.\n", splitStr)
+			}
+		}
+		toLabel, err := d.SplitLabels(ctx.VersionID(), fromLabel, splitLabel, r.Body)
 		if err != nil {
 			server.BadRequest(w, r, fmt.Sprintf("split: %v", err))
 			return

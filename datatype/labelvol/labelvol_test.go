@@ -581,6 +581,68 @@ func TestSplitLabel(t *testing.T) {
 	bodyleft.checkSparseVol(t, encoding, dvid.Bounds{})
 }
 
+// Same as TestSplitLabel but now designate the actual split label
+func TestSplitGivenLabel(t *testing.T) {
+	datastore.OpenTest()
+	defer datastore.CloseTest()
+
+	// Create testbed volume and data instances
+	uuid, _ := initTestRepo()
+	var config dvid.Config
+	config.Set("sync", "bodies")
+	server.CreateTestInstance(t, uuid, "labelblk", "labels", config)
+	config.Clear()
+	config.Set("sync", "labels")
+	server.CreateTestInstance(t, uuid, "labelvol", "bodies", config)
+
+	// Post label volume and setup expected volume after split.
+	expected := createLabelTestVolume(t, uuid, "labels")
+	expected.add(bodyleft, 4)
+	expected.add(bodysplit, 23)
+
+	if err := BlockOnUpdating(uuid, "bodies"); err != nil {
+		t.Fatalf("Error blocking on sync of labels -> bodies: %v\n", err)
+	}
+
+	// Create the sparsevol encoding for split area
+	numspans := len(bodysplit.voxelSpans)
+	rles := make(dvid.RLEs, numspans, numspans)
+	for i, span := range bodysplit.voxelSpans {
+		start := dvid.Point3d{span[2], span[1], span[0]}
+		length := span[3] - span[2] + 1
+		rles[i] = dvid.NewRLE(start, length)
+	}
+
+	// Create the split sparse volume binary
+	buf := new(bytes.Buffer)
+	buf.WriteByte(dvid.EncodingBinary)
+	binary.Write(buf, binary.LittleEndian, uint8(3))         // # of dimensions
+	binary.Write(buf, binary.LittleEndian, byte(0))          // dimension of run (X = 0)
+	buf.WriteByte(byte(0))                                   // reserved for later
+	binary.Write(buf, binary.LittleEndian, uint32(0))        // Placeholder for # voxels
+	binary.Write(buf, binary.LittleEndian, uint32(numspans)) // Placeholder for # spans
+	rleBytes, err := rles.MarshalBinary()
+	if err != nil {
+		t.Errorf("Unable to serialize RLEs: %v\n", err)
+	}
+	buf.Write(rleBytes)
+
+	// Submit the split sparsevol for body 4a
+	reqStr := fmt.Sprintf("%snode/%s/%s/split/%d?splitlabel=23", server.WebAPIPath, uuid, "bodies", 4)
+	r := server.TestHTTP(t, "POST", reqStr, buf)
+	jsonVal := make(map[string]uint64)
+	if err := json.Unmarshal(r, &jsonVal); err != nil {
+		t.Errorf("Unable to get new label from split.  Instead got: %v\n", jsonVal)
+	}
+	newlabel, ok := jsonVal["label"]
+	if !ok {
+		t.Errorf("The split request did not yield label value.  Instead got: %v\n", jsonVal)
+	}
+	if newlabel != 23 {
+		t.Errorf("Expected split label to be assigned label 23, instead got %d\n", newlabel)
+	}
+}
+
 func TestSplitCoarseLabel(t *testing.T) {
 	datastore.OpenTest()
 	defer datastore.CloseTest()
