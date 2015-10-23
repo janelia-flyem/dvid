@@ -328,9 +328,9 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel, splitLabel uint64, r io.
 	return toLabel, nil
 }
 
-// SplitCoarseLabels splits a portion of a label's voxels into a new label, which is returned.
-// The input is a binary sparse volume defined by block coordinates and should be the smaller portion
-// of a labeled region-to-be-split.
+// SplitCoarseLabels splits a portion of a label's voxels into a given split label or, if the given split
+// label is 0, a new label, which is returned.  The input is a binary sparse volume defined by block
+// coordinates and should be the smaller portion of a labeled region-to-be-split.
 //
 // EVENTS
 //
@@ -340,7 +340,7 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel, splitLabel uint64, r io.
 //
 // labels.SplitEndEvent occurs at end of split and transmits labels.DeltaSplitEnd struct.
 //
-func (d *Data) SplitCoarseLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser) (toLabel uint64, err error) {
+func (d *Data) SplitCoarseLabels(v dvid.VersionID, fromLabel, splitLabel uint64, r io.ReadCloser) (toLabel uint64, err error) {
 	store, err := storage.MutableStore()
 	if err != nil {
 		err = fmt.Errorf("Data type labelvol had error initializing store: %v\n", err)
@@ -358,11 +358,16 @@ func (d *Data) SplitCoarseLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCl
 	defer dirtyLabels.Decr(iv, fromLabel)
 
 	// Create a new label id for this version that will persist to store
-	toLabel, err = d.NewLabel(v)
-	if err != nil {
-		return
+	if splitLabel != 0 {
+		toLabel = splitLabel
+		dvid.Debugf("Splitting coarse subset of label %d into given label %d ...\n", fromLabel, splitLabel)
+	} else {
+		toLabel, err = d.NewLabel(v)
+		if err != nil {
+			return
+		}
+		dvid.Debugf("Splitting coarse subset of label %d into new label %d ...\n", fromLabel, toLabel)
 	}
-	dvid.Debugf("Splitting coarse subset of label %d into label %d ...\n", fromLabel, toLabel)
 
 	// Signal that we are starting a split.
 	evt := datastore.SyncEvent{d.DataName(), labels.SplitStartEvent}

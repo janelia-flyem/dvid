@@ -258,9 +258,10 @@ POST <api URL>/node/<UUID>/<data name>/split/<label>[?splitlabel=X]
 	chain operations like "split-coarse" followed by "split" using voxels, where the new label
 	created by the split coarse is used as the split label for the smaller, higher-res "split".
 
-POST <api URL>/node/<UUID>/<data name>/split-coarse/<label>
+POST <api URL>/node/<UUID>/<data name>/split-coarse/<label>[?splitlabel=X]
 
-	Splits a blocks of a label's voxels into a new label.  Returns the following JSON:
+	Splits a portion of a label's blocks into a new label or, if "splitlabel" is specified
+	as an optional query string, the given split label.  Returns the following JSON:
 
 		{ "label": <new label> }
 
@@ -1022,7 +1023,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		timedLog.Infof("HTTP split request (%s)", r.URL)
 
 	case "split-coarse":
-		// POST <api URL>/node/<UUID>/<data name>/split-coarse/<label>
+		// POST <api URL>/node/<UUID>/<data name>/split-coarse/<label>[?splitlabel=X]
 		if action != "post" {
 			server.BadRequest(w, r, "Split-coarse requests must be POST actions.")
 			return
@@ -1040,7 +1041,16 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			server.BadRequest(w, r, "Label 0 is protected background value and cannot be used as sparse volume.\n")
 			return
 		}
-		toLabel, err := d.SplitCoarseLabels(ctx.VersionID(), fromLabel, r.Body)
+		var splitLabel uint64
+		queryValues := r.URL.Query()
+		splitStr := queryValues.Get("splitlabel")
+		if splitStr != "" {
+			splitLabel, err = strconv.ParseUint(splitStr, 10, 64)
+			if err != nil {
+				server.BadRequest(w, r, "Bad parameter for 'splitlabel' query string (%q).  Must be uint64.\n", splitStr)
+			}
+		}
+		toLabel, err := d.SplitCoarseLabels(ctx.VersionID(), fromLabel, splitLabel, r.Body)
 		if err != nil {
 			server.BadRequest(w, r, fmt.Sprintf("split-coarse: %v", err))
 			return

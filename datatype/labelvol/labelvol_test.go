@@ -744,6 +744,101 @@ func TestSplitCoarseLabel(t *testing.T) {
 	}
 }
 
+func TestSplitCoarseGivenLabel(t *testing.T) {
+	datastore.OpenTest()
+	defer datastore.CloseTest()
+
+	// Create testbed volume and data instances
+	uuid, _ := initTestRepo()
+	var config dvid.Config
+	config.Set("sync", "bodies")
+	server.CreateTestInstance(t, uuid, "labelblk", "labels", config)
+	config.Clear()
+	config.Set("sync", "labels")
+	server.CreateTestInstance(t, uuid, "labelvol", "bodies", config)
+
+	// Post label volume and setup expected volume after split of block coords (2, 1, 1) and (3, 1, 2)
+	expected := createLabelTestVolume(t, uuid, "labels")
+	fromLabel := uint64(4)
+	toLabel := uint64(8127)
+	nx := expected.size[0]
+	nxy := nx * expected.size[1]
+	var x, y, z int32
+	for z = 0; z < 128; z++ {
+		bz := z / DefaultBlockSize
+		if bz != 1 && bz != 2 {
+			continue
+		}
+		for y = 0; y < 128; y++ {
+			by := y / DefaultBlockSize
+			if by != 1 {
+				continue
+			}
+			for x = 0; x < 128; x++ {
+				bx := x / DefaultBlockSize
+				if (bz == 1 && bx == 2) || (bz == 2 && bx == 2) {
+					i := (z*nxy + y*nx + x) * 8
+					label := binary.LittleEndian.Uint64(expected.data[i : i+8])
+					if label == fromLabel {
+						binary.LittleEndian.PutUint64(expected.data[i:i+8], toLabel)
+					}
+				}
+			}
+		}
+	}
+
+	if err := BlockOnUpdating(uuid, "bodies"); err != nil {
+		t.Fatalf("Error blocking on sync of labels -> bodies: %v\n", err)
+	}
+
+	// Create the encoding for split area in block coordinates.
+	rles := dvid.RLEs{
+		dvid.NewRLE(dvid.Point3d{2, 1, 1}, 1),
+		dvid.NewRLE(dvid.Point3d{2, 1, 2}, 1),
+	}
+	buf := new(bytes.Buffer)
+	buf.WriteByte(dvid.EncodingBinary)
+	binary.Write(buf, binary.LittleEndian, uint8(3))  // # of dimensions
+	binary.Write(buf, binary.LittleEndian, byte(0))   // dimension of run (X = 0)
+	buf.WriteByte(byte(0))                            // reserved for later
+	binary.Write(buf, binary.LittleEndian, uint32(0)) // Placeholder for # voxels
+	binary.Write(buf, binary.LittleEndian, uint32(2)) // Placeholder for # spans
+	rleBytes, err := rles.MarshalBinary()
+	if err != nil {
+		t.Errorf("Unable to serialize RLEs: %v\n", err)
+	}
+	buf.Write(rleBytes)
+
+	// Submit the coarse split
+	reqStr := fmt.Sprintf("%snode/%s/%s/split-coarse/%d?splitlabel=8127", server.WebAPIPath, uuid, "bodies", 4)
+	r := server.TestHTTP(t, "POST", reqStr, buf)
+	jsonVal := make(map[string]uint64)
+	if err := json.Unmarshal(r, &jsonVal); err != nil {
+		t.Errorf("Unable to get new label from split.  Instead got: %v\n", jsonVal)
+	}
+	newlabel, ok := jsonVal["label"]
+	if !ok {
+		t.Errorf("The split request did not yield label value.  Instead got: %v\n", jsonVal)
+	}
+	if newlabel != 8127 {
+		t.Errorf("Expected split label to be 8127, instead got %d\n", newlabel)
+	}
+
+	if err := labelblk.BlockOnUpdating(uuid, "labels"); err != nil {
+		t.Fatalf("Error blocking on sync of bodies -> labels: %v\n", err)
+	}
+
+	// Make sure labels are correct
+	retrieved := newTestVolume(128, 128, 128)
+	retrieved.get(t, uuid, "labels")
+	if len(retrieved.data) != 8*128*128*128 {
+		t.Errorf("Retrieved post-split volume is incorrect size\n")
+	}
+	if !retrieved.equals(expected) {
+		t.Errorf("Split label volume not equal to expected volume\n")
+	}
+}
+
 // test diffBlock() function by making sure these RLEs are duplicates
 
 var (
