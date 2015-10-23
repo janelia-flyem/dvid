@@ -253,7 +253,10 @@ POST <api URL>/node/<UUID>/<data name>/split/<label>[?splitlabel=X]
 			  ...
 	        int32   Length of run
 
-	NOTE: If a split label is specified, it is the client's responsibility to make sure the given
+	NOTE 1: The POSTed split sparse volume must be a subset of the given label's voxels.  You cannot
+	give an arbitrary sparse volume that may span multiple labels.
+
+	NOTE 2: If a split label is specified, it is the client's responsibility to make sure the given
 	label will not create conflict with labels in other versions.  It should primarily be used in
 	chain operations like "split-coarse" followed by "split" using voxels, where the new label
 	created by the split coarse is used as the split label for the smaller, higher-res "split".
@@ -285,6 +288,7 @@ POST <api URL>/node/<UUID>/<data name>/split-coarse/<label>[?splitlabel=X]
 			  ...
 	        int32   Length of run
 
+	The Notes for "split" endpoint above are applicable to this "split-coarse" endpoint.
 `
 
 var (

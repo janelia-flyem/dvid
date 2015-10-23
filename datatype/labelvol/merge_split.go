@@ -176,7 +176,9 @@ func (d *Data) MergeLabels(v dvid.VersionID, m labels.MergeOp) error {
 // SplitLabels splits a portion of a label's voxels into a given split label or, if the given split
 // label is 0, a new label, which is returned.  The input is a binary sparse volume and should
 // preferably be the smaller portion of a labeled region.  In other words, the caller should chose
-// to submit for relabeling the smaller portion of any split.
+// to submit for relabeling the smaller portion of any split.  It is assumed that the given split
+// voxels are within the fromLabel set of voxels and will generate unspecified behavior if this is
+// not the case.
 //
 // EVENTS
 //
@@ -421,7 +423,7 @@ func (d *Data) SplitCoarseLabels(v dvid.VersionID, fromLabel, splitLabel uint64,
 			return toLabel, err
 		}
 		if val == nil {
-			continue // There isn't any label in this splitblk, so just skip it.
+			return toLabel, fmt.Errorf("Split block %s is not part of original label %d", splitblk.Print(), fromLabel)
 		}
 		var rles dvid.RLEs
 		if err := rles.UnmarshalBinary(val); err != nil {
