@@ -64,7 +64,7 @@ $ dvid repo <UUID> new imagetile <data name> <settings...>
                       tile request time and is a better choice if you primarily ask for arbitrary sized images
                       (via GET .../raw/... or .../isotropic/...) instead of tiles (via GET .../tile/...)
     Versioned      "true" or "false" (default)
-    Source         Name of data source (required)
+    Source         Name of uint8blk data instance if using the tile "generate" command below.
     Placeholder    Bool ("false", "true", "0", or "1").  Return placeholder tile if missing.
 
 
@@ -138,7 +138,7 @@ POST <api URL>/node/<UUID>/<data name>/metadata
 
 	Sets the resolution and expected tile sizes for stored tiles.   This should be used in conjunction
 	with POST to the tile endpoints to populate an imagetile data instance with externally generated
-	data.
+	data.  For example POST payload, see the sample config.json above in "generate" command line.
 
 	Note that until metadata is set, any call to the "raw" or "isotropic" endpoints will return
 	a status code 400 (Bad Request) and a message that the metadata needs to be set.
