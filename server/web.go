@@ -93,7 +93,13 @@ const WebHelp = `
 
  GET  /api/server/types
 
-	Returns JSON with datatype names and their URLs.
+	Returns JSON with the datatypes of currently stored data instances.  Datatypes are represented
+	by a name and the URL of the reference implementation.  To see all possible datatypes, i.e., the
+	list of compiled datatypes, use the "compiled-types" endpoint.
+
+ GET  /api/server/compiled-types
+
+ 	Returns JSON of all possible datatypes for this server, i.e., the list of compiled datatypes.
 
 POST  /api/server/gc
 
@@ -412,6 +418,8 @@ func initRoutes() {
 	mainMux.Get("/api/server/info/", serverInfoHandler)
 	mainMux.Get("/api/server/types", serverTypesHandler)
 	mainMux.Get("/api/server/types/", serverTypesHandler)
+	mainMux.Get("/api/server/compiled-types", serverCompiledTypesHandler)
+	mainMux.Get("/api/server/compiled-types/", serverCompiledTypesHandler)
 	mainMux.Post("/api/server/gc", serverGCHandler)
 
 	if !readonly {
@@ -747,6 +755,21 @@ func serverTypesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, t := range typemap {
+		jsonMap[t.GetTypeName()] = string(t.GetTypeURL())
+	}
+	m, err := json.Marshal(jsonMap)
+	if err != nil {
+		msg := fmt.Sprintf("Cannot marshal JSON datatype info: %v (%v)\n", jsonMap, err)
+		BadRequest(w, r, msg)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, string(m))
+}
+
+func serverCompiledTypesHandler(w http.ResponseWriter, r *http.Request) {
+	jsonMap := make(map[dvid.TypeString]string)
+	for _, t := range datastore.Compiled {
 		jsonMap[t.GetTypeName()] = string(t.GetTypeURL())
 	}
 	m, err := json.Marshal(jsonMap)
