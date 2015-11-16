@@ -25,6 +25,9 @@ var (
 
 	// Run in verbose mode if true.
 	runVerbose = flag.Bool("verbose", false, "")
+
+	// Just make snapshot
+	snapshotOnly = flag.Bool("snapshot", false, "")
 )
 
 const helpMessage = `
@@ -33,6 +36,7 @@ dvid-backup does a cold backup of a local leveldb storage engine.
 Usage: dvid-backup [options] <database directory> <backup directory>
 
 	  -delete     (flag)    Remove old snapshot directory.
+	  -snapshot   (flag)    Only create snapshot directory; don't rsync.
 	  -verbose    (flag)    Run in verbose mode.
 	  -h, -help   (flag)    Show help message
 
@@ -93,17 +97,19 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Create backup directory if it doesn't exist
-	if fileinfo, err = os.Stat(pathBackup); os.IsNotExist(err) {
-		fmt.Printf("Creating backup directory: %s\n", pathBackup)
-		err := os.MkdirAll(pathBackup, 0744)
-		if err != nil {
-			fmt.Printf("Can't make backup directory: %v\n", err)
+	if !(*snapshotOnly) {
+		// Create backup directory if it doesn't exist
+		if fileinfo, err = os.Stat(pathBackup); os.IsNotExist(err) {
+			fmt.Printf("Creating backup directory: %s\n", pathBackup)
+			err := os.MkdirAll(pathBackup, 0744)
+			if err != nil {
+				fmt.Printf("Can't make backup directory: %v\n", err)
+				os.Exit(1)
+			}
+		} else if !fileinfo.IsDir() {
+			fmt.Printf("Supplied backup path (%s) is not a directory.", pathBackup)
 			os.Exit(1)
 		}
-	} else if !fileinfo.IsDir() {
-		fmt.Printf("Supplied backup path (%s) is not a directory.", pathBackup)
-		os.Exit(1)
 	}
 
 	// Create snapshot directory for hard SST links in sibling directory to pathDb.
@@ -162,15 +168,19 @@ func main() {
 		return nil
 	})
 
-	// Launch background process to do rsync of sst files
-	go func() {
-		cmd := exec.Command(rsyncPath, "-a", "--delete", snapshotDir+"/", pathBackup)
-		err = cmd.Run()
-		if err != nil {
-			fmt.Printf("Error running rsync: %v\n", err)
-			os.Exit(1)
-		}
-	}()
-	time.Sleep(1 * time.Second) // Hack to allow time for goroutine to spawn.
-	fmt.Printf("Running rsync in background: %s -> %s\n", snapshotDir, pathBackup)
+	if *snapshotOnly {
+		fmt.Printf("Stored snapshot of %s in %s\n", pathDb, snapshotDir)
+	} else {
+		// Launch background process to do rsync of sst files
+		go func() {
+			cmd := exec.Command(rsyncPath, "-a", "--delete", snapshotDir+"/", pathBackup)
+			err = cmd.Run()
+			if err != nil {
+				fmt.Printf("Error running rsync: %v\n", err)
+				os.Exit(1)
+			}
+		}()
+		time.Sleep(1 * time.Second) // Hack to allow time for goroutine to spawn.
+		fmt.Printf("Running rsync in background: %s -> %s\n", snapshotDir, pathBackup)
+	}
 }
