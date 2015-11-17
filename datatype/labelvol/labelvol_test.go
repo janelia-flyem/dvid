@@ -464,6 +464,10 @@ func TestMergeLabels(t *testing.T) {
 	emptyBody.checkSparseVol(t, encoding, dvid.Bounds{})
 
 	// Make sure label changes are correct after completion
+	if err := BlockOnUpdating(uuid, "labels"); err != nil {
+		t.Fatalf("Error blocking on sync of bodies -> labels: %v\n", err)
+	}
+
 	retrieved := newTestVolume(128, 128, 128)
 	retrieved.get(t, uuid, "labels")
 	if len(retrieved.data) != 8*128*128*128 {
