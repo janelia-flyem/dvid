@@ -1,6 +1,7 @@
 package imagetile
 
 import (
+	"bytes"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -65,6 +66,59 @@ func TestLoadTileSpec(t *testing.T) {
 	tileSpec, err := LoadTileSpec([]byte(testTileSpec))
 	if err != nil {
 		t.Errorf("Unable to load tile spec: %v\n", err)
+	}
+	if len(tileSpec) != 4 {
+		t.Errorf("Bad tile spec load: only %d elements != 4\n", len(tileSpec))
+	}
+	if tileSpec[2].Resolution.GetMax() != 40.0 {
+		t.Errorf("Bad tile spec at level 2: %v\n", tileSpec[2])
+	}
+	if tileSpec[3].TileSize.Value(2) != 512 {
+		t.Errorf("Bad tile spec at level 3: %v\n", tileSpec[3])
+	}
+}
+
+const testMetadata = `
+{
+	"MinTileCoord": [0,0,0],
+	"MaxTileCoord": [5,5,4],
+	"Levels": {
+	    "0": {  "Resolution": [10.0, 10.0, 10.0], "TileSize": [512, 512, 512] },
+	    "1": {  "Resolution": [20.0, 20.0, 20.0], "TileSize": [512, 512, 512] },
+	    "2": {  "Resolution": [40.0, 40.0, 40.0], "TileSize": [512, 512, 512] },
+	    "3": {  "Resolution": [80.0, 80.0, 80.0], "TileSize": [512, 512, 512] }
+	}
+}
+`
+
+func TestSetMetadata(t *testing.T) {
+	datastore.OpenTest()
+	defer datastore.CloseTest()
+
+	uuid, _ := initTestRepo()
+	server.CreateTestInstance(t, uuid, "imagetile", "tiles", dvid.Config{})
+
+	// Store Metadata
+	url := fmt.Sprintf("%snode/%s/tiles/metadata", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", url, bytes.NewBufferString(testMetadata))
+
+	// Check instance really has it set.
+	var metadata metadataJSON
+	respStr := server.TestHTTP(t, "GET", url, nil)
+	if err := json.Unmarshal(respStr, &metadata); err != nil {
+		t.Fatalf("Couldn't parse JSON response to metadata request (%v):\n%s\n", err, respStr)
+	}
+	expectMin := dvid.Point3d{0, 0, 0}
+	expectMax := dvid.Point3d{5, 5, 4}
+	if !expectMin.Equals(metadata.MinTileCoord) {
+		t.Errorf("Expected min tile coord %s, got %s\n", expectMin, metadata.MinTileCoord)
+	}
+	if !expectMax.Equals(metadata.MaxTileCoord) {
+		t.Errorf("Expected max tile coord %s, got %s\n", expectMax, metadata.MaxTileCoord)
+	}
+	tileSpec, err := parseTileSpec(metadata.Levels)
+	if err != nil {
+		t.Errorf("Error parsing returned tile level spec:\n%v\n", metadata.Levels)
 	}
 	if len(tileSpec) != 4 {
 		t.Errorf("Bad tile spec load: only %d elements != 4\n", len(tileSpec))
