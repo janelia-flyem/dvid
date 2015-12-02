@@ -104,6 +104,7 @@ func sendLabels(src *LabelMetadata, name, srcURL string) {
 	fmt.Printf("Number of strips per layer: %d\n", strips)
 	fmt.Printf("Total uncompressed bytes per file: %d MB\n", vx*vy*vz*8/(strips*1000000))
 
+	var err error
 	ox := minIndex[0] * blockSize[0]
 	for z := minIndex[2]; z <= maxIndex[2]; z++ {
 		oz := z * blockSize[2]
@@ -126,11 +127,11 @@ func sendLabels(src *LabelMetadata, name, srcURL string) {
 			if *roi != "" {
 				getURL += fmt.Sprintf("?roi=%s", *roi)
 			}
-			var resp http.Response
+			var resp *http.Response
 			if *dryrun {
 				fmt.Printf("-- would GET %s\n", getURL)
 			} else {
-				resp, err := http.Get(getURL)
+				resp, err = http.Get(getURL)
 				if err != nil {
 					fmt.Printf("Receive error: %s\n", err.Error())
 					os.Exit(1)
@@ -171,7 +172,6 @@ func sendLabels(src *LabelMetadata, name, srcURL string) {
 }
 
 func writeFile(data io.ReadCloser, filename string) error {
-	fmt.Printf("Writing data to %s\n", filename)
 	if *dryrun {
 		return nil
 	}
@@ -194,7 +194,12 @@ func writeFile(data io.ReadCloser, filename string) error {
 		return fmt.Errorf("Can't compress to type %q, only %q\n", *compression, "gzip")
 	}
 
-	io.Copy(out, data)
+	written, err := io.Copy(out, data)
+	if err != nil {
+		fmt.Printf("Error on copy of data from DVID to file: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("Wrote %d MB to %s\n", written/1000000, filename)
 	return nil
 }
 
