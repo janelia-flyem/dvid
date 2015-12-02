@@ -28,7 +28,8 @@ var (
 )
 
 const helpMessage = `
-dvid-transfer moves label data from one DVID server to another using HTTP API calls.
+dvid-transfer copies label data from one DVID server to either a set of optionally compressed
+files or to another DVID server using HTTP API calls.
 
 Usage: dvid-transfer [options] host uuid name
 
@@ -36,8 +37,7 @@ Usage: dvid-transfer [options] host uuid name
         uuid = the UUID with sufficient characters to distinguish version
         name = name of the label data instance 
 
-  If the destination UUID doesn't already exist, there is an error.
-  If the destination data name doesn't exist, it is created.
+  Either the -outdir or -url option must be present.
 
 	-outdir         =string   Output directory for file output
 	-url            =string   POST URL for DVID, e.g., "http://dvidserver.com/api/653/dataname"
