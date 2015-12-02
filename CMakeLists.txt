@@ -202,7 +202,7 @@ else ()
     add_custom_target (dvid
         ${BUILDEM_ENV_STRING} nrsc ${BUILDEM_BIN_DIR}/dvid dvid-console
         WORKING_DIRECTORY   ${BUILDEM_DIR}/src
-        DEPENDS     dvid-exe nrsc dvid-console dvid-backup
+        DEPENDS     dvid-exe nrsc dvid-console dvid-backup dvid-transfer
         COMMENT     "Adding embedded console into dvid executable..."
     )
 
@@ -237,6 +237,13 @@ else ()
         -v -tags '${DVID_BACKEND} ${DVID_GRAPHBACKEND} ${DVID_BUILD_TAGS}' cmd/backup/main.go 
         WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
         COMMENT     "Compiling and installing dvid backup command...")
+
+    # Build transfer command 
+    add_custom_target (dvid-transfer
+        ${BUILDEM_ENV_STRING} ${GO_ENV} ${CGO_FLAGS} go build -o ${BUILDEM_BIN_DIR}/dvid-transfer 
+        -v -tags '${DVID_BACKEND} ${DVID_GRAPHBACKEND} ${DVID_BUILD_TAGS}' cmd/transfer/*.go
+        WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
+        COMMENT     "Compiling and installing dvid transfer command...")
 
     ###############################################################################
 endif()
