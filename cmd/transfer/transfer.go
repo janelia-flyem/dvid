@@ -97,11 +97,12 @@ func sendLabels(src *LabelMetadata, name, srcURL string) {
 	vz := blockSize[2]
 
 	strips := 1
-	// if vx*vy*vz*8 > 2000000000 {
-	// 	strips = (vx*vy*vz*8)/2000000000 + 1
-	// }
+	if vx*vy*vz*8 > 2000000000 {
+		strips = (vx*vy*vz*8)/2000000000 + 1
+	}
 	byPerStrip := ny / strips
-	fmt.Printf("Total uncompressed bytes per file: %d MB\n", vx*vy*vz*8/1000000)
+	fmt.Printf("Number of strips per layer: %d\n", strips)
+	fmt.Printf("Total uncompressed bytes per file: %d MB\n", vx*vy*vz*8/(strips*1000000))
 
 	ox := minIndex[0] * blockSize[0]
 	for z := minIndex[2]; z <= maxIndex[2]; z++ {
