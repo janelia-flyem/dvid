@@ -190,6 +190,7 @@ func writeFile(data io.ReadCloser, filename string) error {
 		out = f
 	case "gzip":
 		out = gzip.NewWriter(f)
+		defer out.Close()
 	default:
 		return fmt.Errorf("Can't compress to type %q, only %q\n", *compression, "gzip")
 	}
