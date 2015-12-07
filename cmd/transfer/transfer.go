@@ -32,21 +32,21 @@ func getLabelMetadata(dstURL string) *LabelMetadata {
 	infoUrl := dstURL + "/info"
 	resp, err := http.Get(infoUrl)
 	if err != nil {
-		fmt.Printf("Error on getting metadata: %s\n", err.Error())
+		fmt.Printf("Error on getting metadata (%s): %v\n", infoUrl, err.Error())
 		os.Exit(1)
 	}
 	if resp.StatusCode != http.StatusOK {
-		fmt.Printf("Bad status on getting metadata: %d\n", resp.StatusCode)
+		fmt.Printf("Bad status on getting metadata (%s): %d\n", infoUrl, resp.StatusCode)
 		os.Exit(1)
 	}
 	metadata, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		fmt.Printf("Could not read metadata: %s\n", err.Error())
+		fmt.Printf("Could not read metadata from labels (%s): %v\n", infoUrl, err.Error())
 		os.Exit(1)
 	}
 	m := new(LabelMetadata)
 	if err := json.Unmarshal(metadata, m); err != nil {
-		fmt.Printf("Error parsing metadata: %s\n", err.Error())
+		fmt.Printf("Error parsing metadata from labels: %s\n", err.Error())
 		os.Exit(1)
 	}
 	return m
@@ -184,7 +184,7 @@ func writeFile(data io.ReadCloser, filename string) error {
 	}
 	defer f.Close()
 
-	var out io.Writer
+	var out io.WriteCloser
 	switch *compression {
 	case "none":
 		out = f
