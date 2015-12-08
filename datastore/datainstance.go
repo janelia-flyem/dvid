@@ -176,7 +176,7 @@ type Syncer interface {
 	// named instance.  It returns the subscriptions that need to be created to keep this data
 	// synced and also launches any necessary goroutines that will consume inbound channels of changes
 	// from associated data.
-	InitSync(dvid.InstanceName) []SyncSub
+	InitSync(dvid.InstanceName, dvid.TypeString) []SyncSub
 
 	// SyncedNames returns a slice of instance names to which the receiver is synced.
 	SyncedNames() []dvid.InstanceName

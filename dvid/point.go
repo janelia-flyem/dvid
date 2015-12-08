@@ -636,6 +636,30 @@ func (p Point3d) PointInChunk(size Point) Point {
 
 // -------
 
+// Point3dInChunk returns a point in containing block (chunk) space for the given point.
+func (p Point3d) Point3dInChunk(size Point3d) Point3d {
+	var p0, p1, p2 int32
+	s0 := size[0]
+	s1 := size[1]
+	s2 := size[2]
+	if p[0] < 0 {
+		p0 = s0 - ((p[0] + 1) % s0) - 1
+	} else {
+		p0 = p[0] % s0
+	}
+	if p[1] < 0 {
+		p1 = s1 - ((p[1] + 1) % s1) - 1
+	} else {
+		p1 = p[1] % s1
+	}
+	if p[2] < 0 {
+		p2 = s2 - ((p[2] + 1) % s2) - 1
+	} else {
+		p2 = p[2] % s2
+	}
+	return Point3d{p0, p1, p2}
+}
+
 // GetPoint3dFrom2d returns a 3d point from a 2d point in a plane.  The fill
 // is used for the dimension not on the plane.
 func GetPoint3dFrom2d(plane DataShape, p2d Point2d, fill int32) (Point3d, error) {
@@ -1030,6 +1054,22 @@ func (p *ChunkPoint3d) SetMaximum(p2 ChunkPoint3d) {
 func (p ChunkPoint3d) ToIZYXString() IZYXString {
 	i := IndexZYX(p)
 	return i.ToIZYXString()
+}
+
+// BoundingVoxels returns the minimum and maximum voxel coordinates
+// for a given chunk where each chunk is of the given block size.
+func (c ChunkPoint3d) BoundingVoxels(blockSize Point3d) (minBlockVoxel, maxBlockVoxel Point3d) {
+	minBlockVoxel = Point3d{
+		c[0] * blockSize[0],
+		c[1] * blockSize[1],
+		c[2] * blockSize[2],
+	}
+	maxBlockVoxel = Point3d{
+		(c[0]+1)*blockSize[0] - 1,
+		(c[1]+1)*blockSize[1] - 1,
+		(c[2]+1)*blockSize[2] - 1,
+	}
+	return
 }
 
 // --------- ChunkPoint interface -------------

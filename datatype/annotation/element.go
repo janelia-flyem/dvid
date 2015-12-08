@@ -5,12 +5,14 @@ package annotation
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/gob"
 	"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"net/http"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -18,6 +20,7 @@ import (
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/labelblk"
+	"github.com/janelia-flyem/dvid/datatype/labelvol"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/message"
 	"github.com/janelia-flyem/dvid/server"
@@ -52,8 +55,8 @@ $ dvid repo <UUID> new synapse <data name> <settings...>
 
     Configuration Settings (case-insensitive keys)
 	
-    Sync           Name of labelblk data to which this annotation data should be synced.  Changes
-    			   in the synced labelblk data will change results of "label" endpoint requests (see REST API).
+    Sync           Name of labelblk and/or labelvol data to which this annotation data should be synced.  Changes
+    			   in the synced label data will change results of "label" endpoint requests (see REST API).
 	
     ------------------
 
@@ -294,17 +297,19 @@ type Relationship struct {
 
 // Element describes a synaptic element's properties.
 type Element struct {
-	Pos  dvid.Point3d
-	Kind ElementType
-	Rels Relationships
-	Tags Tags              // Indexed
-	Prop map[string]string // Non-Indexed
+	Pos   dvid.Point3d
+	Kind  ElementType
+	Label uint64
+	Rels  Relationships
+	Tags  Tags              // Indexed
+	Prop  map[string]string // Non-Indexed
 }
 
 func (e Element) Copy() *Element {
 	c := new(Element)
 	c.Pos = e.Pos
 	c.Kind = e.Kind
+	c.Label = e.Label
 	c.Rels = make(Relationships, len(e.Rels))
 	copy(c.Rels, e.Rels)
 	c.Tags = make(Tags, len(e.Tags))
@@ -367,6 +372,15 @@ func (t Tags) Swap(i, j int) {
 
 type Elements []Element
 
+// helper function that just returns slice of positions suitable for intersect calcs in dvid package.
+func (elems Elements) positions() []dvid.Point3d {
+	pts := make([]dvid.Point3d, len(elems))
+	for i, elem := range elems {
+		pts[i] = elem.Pos
+	}
+	return pts
+}
+
 // Returns Elements that can be used for DeepEqual because all positions, relationships, and tags are sorted.
 func (elems Elements) Normalize() Elements {
 	// For every element, create a duplicate that has sorted relationships and sorted tags.
@@ -374,6 +388,7 @@ func (elems Elements) Normalize() Elements {
 	for i, elem := range elems {
 		out[i].Pos = elem.Pos
 		out[i].Kind = elem.Kind
+		out[i].Label = elem.Label
 		out[i].Rels = make(Relationships, len(elem.Rels))
 		copy(out[i].Rels, elem.Rels)
 		out[i].Tags = make(Tags, len(elem.Tags))
@@ -393,7 +408,7 @@ func (elems Elements) Normalize() Elements {
 	return out
 }
 
-// Adds element but if element at position already exists, it replaces the properties of that element.
+// Adds elements but if element at position already exists, it replaces the properties of that element.
 func (elems *Elements) add(toAdd Elements) {
 	emap := make(map[string]int)
 	for i, elem := range *elems {
@@ -576,6 +591,27 @@ func putElements(ctx *datastore.VersionedCtx, tk storage.TKey, elems Elements) e
 	return nil
 }
 
+// Returns elements within the sparse volume represented by the blocks of RLEs.
+func getElementsInRLE(ctx *datastore.VersionedCtx, brles dvid.BlockRLEs) (Elements, error) {
+	rleElems := Elements{}
+	for izyx, rles := range brles {
+		// Get elements for this block
+		blockCoord, err := izyx.ToChunkPoint3d()
+		tk := NewBlockTKey(blockCoord)
+		elems, err := getElements(ctx, tk)
+		if err != nil {
+			return nil, err
+		}
+
+		// Append the elements in current block RLE
+		in := rles.Within(elems.positions())
+		for _, idx := range in {
+			rleElems = append(rleElems, elems[idx])
+		}
+	}
+	return rleElems, nil
+}
+
 // Properties are additional properties for data beyond those in standard datastore.Data.
 type Properties struct {
 	// Currently unused since block sizes are either default or taken from synced labelblk.
@@ -589,29 +625,60 @@ type Data struct {
 	// Keep track of sync operations that could be updating the data.
 	datastore.Updater
 
-	sync.RWMutex // For CAS ops.  TODO: Make more specific for efficiency.
+	// Cached in-memory so we only have to lookup block size once.
+	cachedBlockSize *dvid.Point3d
+
+	sync.RWMutex // For CAS ops.  TODO: Make more specific (e.g., point locks) for efficiency.
 }
 
 func (d *Data) Equals(d2 *Data) bool {
 	if !d.Data.Equals(d2.Data) {
 		return false
 	}
-	return true
+	return reflect.DeepEqual(d.Properties, d2.Properties)
 }
 
 // blockSize is either defined by any synced labelblk or by the default block size.
+// Also checks to make sure that synced data is consistent.
 func (d *Data) blockSize(v dvid.VersionID) dvid.Point3d {
-	labelData, err := d.GetSyncedLabelblk(v)
-	if err != nil {
-		return dvid.Point3d{labelblk.DefaultBlockSize, labelblk.DefaultBlockSize, labelblk.DefaultBlockSize}
+	if d.cachedBlockSize != nil {
+		return *d.cachedBlockSize
 	}
-	return labelData.BlockSize().(dvid.Point3d)
+	var bsize dvid.Point3d
+	lb, err := d.GetSyncedLabelblk(v)
+	if err == nil && lb != nil {
+		bsize = lb.BlockSize().(dvid.Point3d)
+	}
+	lv, err := d.GetSyncedLabelvol(v)
+	if err == nil && lv != nil {
+		if len(bsize) != 0 && !bsize.Equals(lv.BlockSize) {
+			dvid.Errorf("annotations %q is synced to labelblk and labelvol with different block sizes!\n", d.DataName())
+		} else {
+			bsize = lv.BlockSize
+		}
+	}
+	if len(bsize) != 0 {
+		bsize = dvid.Point3d{DefaultBlockSize, DefaultBlockSize, DefaultBlockSize}
+	}
+	d.cachedBlockSize = &bsize
+	return bsize
 }
 
 func (d *Data) GetSyncedLabelblk(v dvid.VersionID) (*labelblk.Data, error) {
 	// Go through all synced names, and checking if there's a valid source.
 	for _, name := range d.SyncedNames() {
 		source, err := labelblk.GetByVersion(v, name)
+		if err == nil {
+			return source, nil
+		}
+	}
+	return nil, fmt.Errorf("no labelblk data is syncing with %d", d.DataName())
+}
+
+func (d *Data) GetSyncedLabelvol(v dvid.VersionID) (*labelvol.Data, error) {
+	// Go through all synced names, and checking if there's a valid source.
+	for _, name := range d.SyncedNames() {
+		source, err := labelvol.GetByVersion(v, name)
 		if err == nil {
 			return source, nil
 		}
@@ -640,6 +707,26 @@ func (d *Data) deleteElementInTags(ctx *datastore.VersionedCtx, pt dvid.Point3d,
 		if err := putElements(ctx, tk, elems); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func (d *Data) deleteElementInLabel(ctx *datastore.VersionedCtx, pt dvid.Point3d) error {
+	labelData, err := d.GetSyncedLabelblk(ctx.VersionID())
+	if err != nil {
+		return err
+	}
+	label, err := labelData.GetLabelAtPoint(ctx.VersionID(), pt)
+	if err != nil {
+		return err
+	}
+	tk := NewLabelTKey(label)
+	elems, err := getElements(ctx, tk)
+	if err != nil {
+		return fmt.Errorf("err getting elements for label %d: %v\n", label, err)
+	}
+	if _, changed := elems.delete(pt); changed {
+		return putElements(ctx, tk, elems)
 	}
 	return nil
 }
@@ -695,6 +782,46 @@ func (d *Data) moveElementInTags(ctx *datastore.VersionedCtx, from, to dvid.Poin
 	return nil
 }
 
+func (d *Data) moveElementInLabels(ctx *datastore.VersionedCtx, from, to dvid.Point3d, moved *Element) error {
+	labelData, err := d.GetSyncedLabelblk(ctx.VersionID())
+	if err != nil {
+		return err
+	}
+	oldLabel, err := labelData.GetLabelAtPoint(ctx.VersionID(), from)
+	if err != nil {
+		return err
+	}
+	newLabel, err := labelData.GetLabelAtPoint(ctx.VersionID(), to)
+	if err != nil {
+		return err
+	}
+	if oldLabel == newLabel {
+		return nil
+	}
+	if oldLabel != 0 {
+		tk := NewLabelTKey(oldLabel)
+		elems, err := getElements(ctx, tk)
+		if err != nil {
+			return fmt.Errorf("err getting elements for label %d: %v", oldLabel, err)
+		}
+		if _, changed := elems.delete(from); changed {
+			if err := putElements(ctx, tk, elems); err != nil {
+				return fmt.Errorf("err putting deleted label %d element: %v", oldLabel, err)
+			}
+		}
+	}
+	if newLabel != 0 {
+		tk := NewLabelTKey(newLabel)
+		elems, err := getElements(ctx, tk)
+		if err != nil {
+			return fmt.Errorf("err getting elements for label %d: %v", newLabel, err)
+		}
+		elems.add(Elements{*moved})
+		return putElements(ctx, tk, elems)
+	}
+	return nil
+}
+
 // move all reference to given element point in the related points.
 // This is private method and assumes outer locking.
 func (d *Data) moveElementInRelationships(ctx *datastore.VersionedCtx, from, to dvid.Point3d, rels []Relationship) error {
@@ -742,14 +869,15 @@ func (d *Data) ModifyElements(ctx *datastore.VersionedCtx, tk storage.TKey, toAd
 	return putElements(ctx, tk, storeE)
 }
 
-// StoreBlockElements stores synaptic elements arranged by block, replacing any
+// stores synaptic elements arranged by block, replacing any
 // elements at same position.
-func (d *Data) StoreBlockElements(ctx *datastore.VersionedCtx, be blockElements) error {
+func (d *Data) storeBlockElements(ctx *datastore.VersionedCtx, be blockElements) error {
 	for izyxStr, elems := range be {
 		blockCoord, err := izyxStr.ToChunkPoint3d()
 		if err != nil {
 			return err
 		}
+		// Modify the block annotations
 		tk := NewBlockTKey(blockCoord)
 		if err := d.ModifyElements(ctx, tk, elems); err != nil {
 			return err
@@ -758,9 +886,76 @@ func (d *Data) StoreBlockElements(ctx *datastore.VersionedCtx, be blockElements)
 	return nil
 }
 
-// StoreTagElements stores synaptic elements arranged by tag, replacing any
+// stores synaptic elements arranged by label, replacing any
 // elements at same position.
-func (d *Data) StoreTagElements(ctx *datastore.VersionedCtx, te tagElements) error {
+func (d *Data) storeLabelElements(ctx *datastore.VersionedCtx, be blockElements) error {
+	store, err := storage.MutableStore()
+	if err != nil {
+		return fmt.Errorf("Data type annotation had error initializing store: %v\n", err)
+	}
+	batcher, ok := store.(storage.KeyValueBatcher)
+	if !ok {
+		return fmt.Errorf("Data type annotation requires batch-enabled store, which %q is not\n", store)
+	}
+	labelData, err := d.GetSyncedLabelblk(ctx.VersionID())
+	if err != nil {
+		return err
+	}
+
+	// Compute the strides (in bytes)
+	blockSize := d.blockSize(ctx.VersionID())
+	bX := blockSize[0] * 8
+	bY := blockSize[1] * bX
+
+	toAdd := LabelElements{}
+	for izyxStr, elems := range be {
+		blockCoord, err := izyxStr.ToChunkPoint3d()
+		if err != nil {
+			return err
+		}
+
+		// Get the labels for this block
+		labels, err := labelData.GetLabelBlock(ctx.VersionID(), blockCoord)
+		if err != nil {
+			return err
+		}
+
+		// Group annotations by label
+		for _, elem := range elems {
+			pt := elem.Pos.Point3dInChunk(blockSize)
+			i := (pt[2]*bY+pt[1])*bX + pt[0]*8
+			label := binary.LittleEndian.Uint64(labels[i : i+8])
+			if label != 0 {
+				toAdd.add(label, elem)
+			}
+		}
+	}
+
+	// Store all the added annotations to the appropriate labels.
+	batch := batcher.NewBatch(ctx)
+	for label, additions := range toAdd {
+		tk := NewLabelTKey(label)
+		elems, err := getElements(ctx, tk)
+		if err != nil {
+			return fmt.Errorf("err getting elements for label %d: %v\n", label, err)
+		}
+		elems.add(additions)
+		val, err := json.Marshal(elems)
+		if err != nil {
+			return fmt.Errorf("couldn't serialize label %d annotations in instance %q: %v\n", label, d.DataName(), err)
+		}
+		batch.Put(tk, val)
+	}
+	if err := batch.Commit(); err != nil {
+		dvid.Criticalf("bad commit in store annotations %q: %v\n", d.DataName(), err)
+	}
+
+	return nil
+}
+
+// stores synaptic elements arranged by tag, replacing any
+// elements at same position.
+func (d *Data) storeTagElements(ctx *datastore.VersionedCtx, te tagElements) error {
 	for tag, elems := range te {
 		tk := NewTagTKey(tag)
 		if err := d.ModifyElements(ctx, tk, elems); err != nil {
@@ -771,13 +966,19 @@ func (d *Data) StoreTagElements(ctx *datastore.VersionedCtx, te tagElements) err
 }
 
 // GetLabelSynapses returns synapse elements for a given label.
-func GetLabelSynapses(ctx *datastore.VersionedCtx, label uint64) (Elements, error) {
+func (d *Data) GetLabelSynapses(ctx *datastore.VersionedCtx, label uint64) (Elements, error) {
+	// d.RLock()
+	// defer d.RUnlock()
+
 	tk := NewLabelTKey(label)
 	return getElements(ctx, tk)
 }
 
 // GetTagSynapses returns synapse elements for a given tag.
-func GetTagSynapses(ctx *datastore.VersionedCtx, tag Tag) (Elements, error) {
+func (d *Data) GetTagSynapses(ctx *datastore.VersionedCtx, tag Tag) (Elements, error) {
+	// d.RLock()
+	// defer d.RUnlock()
+
 	tk := NewTagTKey(tag)
 	return getElements(ctx, tk)
 }
@@ -795,6 +996,9 @@ func (d *Data) GetRegionSynapses(ctx *datastore.VersionedCtx, ext *dvid.Extents3
 
 	begTKey := NewBlockTKey(begBlockCoord)
 	endTKey := NewBlockTKey(endBlockCoord)
+
+	// d.RLock()
+	// defer d.RUnlock()
 
 	// Iterate through all synapse elements block k/v, making sure the elements are also within the given subvolume.
 	var elements Elements
@@ -835,6 +1039,9 @@ func (d *Data) StoreSynapses(ctx *datastore.VersionedCtx, r io.Reader) error {
 		return err
 	}
 
+	// d.Lock()
+	// defer d.Unlock()
+
 	dvid.Infof("%d synaptic elements received via POST", len(elements))
 
 	blockSize := d.blockSize(ctx.VersionID())
@@ -861,19 +1068,20 @@ func (d *Data) StoreSynapses(ctx *datastore.VersionedCtx, r io.Reader) error {
 				tagE[tag] = te
 			}
 		}
-
-		// TODO: Write to background label key or handle
 	}
 
 	// Store the new block elements
-	fmt.Printf("Storing block elements\n")
-	if err := d.StoreBlockElements(ctx, blockE); err != nil {
+	if err := d.storeBlockElements(ctx, blockE); err != nil {
+		return err
+	}
+
+	// Store new elements among label denormalizations
+	if err := d.storeLabelElements(ctx, blockE); err != nil {
 		return err
 	}
 
 	// Store the new tag elements
-	fmt.Printf("Storing tag elements\n")
-	if err := d.StoreTagElements(ctx, tagE); err != nil {
+	if err := d.storeTagElements(ctx, tagE); err != nil {
 		return err
 	}
 
@@ -886,8 +1094,8 @@ func (d *Data) DeleteElement(ctx *datastore.VersionedCtx, pt dvid.Point3d) error
 	blockCoord := pt.Chunk(blockSize).(dvid.ChunkPoint3d)
 	tk := NewBlockTKey(blockCoord)
 
-	d.Lock()
-	defer d.Unlock()
+	// d.Lock()
+	// defer d.Unlock()
 
 	elems, err := getElements(ctx, tk)
 	if err != nil {
@@ -905,7 +1113,10 @@ func (d *Data) DeleteElement(ctx *datastore.VersionedCtx, pt dvid.Point3d) error
 		return err
 	}
 
-	// TODO: Delete in label key
+	// Delete in label key
+	if err := d.deleteElementInLabel(ctx, deleted.Pos); err != nil {
+		return err
+	}
 
 	// Delete element in any tags
 	if err := d.deleteElementInTags(ctx, deleted.Pos, deleted.Tags); err != nil {
@@ -929,8 +1140,8 @@ func (d *Data) MoveElement(ctx *datastore.VersionedCtx, from, to dvid.Point3d) e
 	toCoord := to.Chunk(blockSize).(dvid.ChunkPoint3d)
 	toTk := NewBlockTKey(toCoord)
 
-	d.Lock()
-	defer d.Unlock()
+	// d.Lock()
+	// defer d.Unlock()
 
 	// Handle from block
 	fromElems, err := getElements(ctx, fromTk)
@@ -961,7 +1172,10 @@ func (d *Data) MoveElement(ctx *datastore.VersionedCtx, from, to dvid.Point3d) e
 		}
 	}
 
-	// TODO: Move in label key
+	// Move in label key
+	if err := d.moveElementInLabels(ctx, from, to, moved); err != nil {
+		return err
+	}
 
 	// Move element in any tags
 	if err := d.moveElementInTags(ctx, from, to, moved.Tags); err != nil {
@@ -1124,7 +1338,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			server.BadRequest(w, r, "Label 0 is protected background value and cannot be used for query.")
 			return
 		}
-		elements, err := GetLabelSynapses(ctx, label)
+		elements, err := d.GetLabelSynapses(ctx, label)
 		if err != nil {
 			server.BadRequest(w, r, err)
 			return
@@ -1151,7 +1365,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			return
 		}
 		tag := Tag(parts[4])
-		elements, err := GetTagSynapses(ctx, tag)
+		elements, err := d.GetTagSynapses(ctx, tag)
 		if err != nil {
 			server.BadRequest(w, r, err)
 			return
@@ -1173,7 +1387,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		case "get":
 			// GET <api URL>/node/<UUID>/<data name>/elements/<size>/<offset>
 			if len(parts) < 6 {
-				server.BadRequest(w, r, "Expect size and offset to follow 'elements' in URL")
+				server.BadRequest(w, r, "Expect size and offset to follow 'elements' in GET request")
 				return
 			}
 			sizeStr, offsetStr := parts[4], parts[5]

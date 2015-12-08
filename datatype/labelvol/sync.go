@@ -11,10 +11,11 @@ import (
 	"github.com/janelia-flyem/dvid/storage"
 )
 
-var (
-	// These are the labels that are in the process of modification from merge, split, or other sync events.
-	dirtyBlocks dvid.DirtyBlocks
-)
+// TODO
+// var (
+// 	// These are the labels that are in the process of modification from merge, split, or other sync events.
+// 	dirtyBlocks dvid.DirtyBlocks
+// )
 
 // Number of change messages we can buffer before blocking on sync channel.
 const syncBufferSize = 100
@@ -34,7 +35,7 @@ func BlockOnUpdating(uuid dvid.UUID, name dvid.InstanceName) error {
 }
 
 // InitSync implements the datastore.Syncer interface
-func (d *Data) InitSync(name dvid.InstanceName) []datastore.SyncSub {
+func (d *Data) InitSync(name dvid.InstanceName, typename dvid.TypeString) []datastore.SyncSub {
 	// This should only be called once for any synced instance.
 	if d.IsSyncEstablished(name) {
 		return nil

@@ -483,6 +483,19 @@ func GetByUUID(uuid dvid.UUID, name dvid.InstanceName) (*Data, error) {
 	return data, nil
 }
 
+// GetByVersion returns a pointer to labelblk data given a UUID and data name.
+func GetByVersion(v dvid.VersionID, name dvid.InstanceName) (*Data, error) {
+	source, err := datastore.GetDataByVersion(v, name)
+	if err != nil {
+		return nil, err
+	}
+	data, ok := source.(*Data)
+	if !ok {
+		return nil, fmt.Errorf("Instance '%s' is not a labelvol datatype!", name)
+	}
+	return data, nil
+}
+
 // --- datastore.InstanceMutator interface -----
 
 // LoadMutable loads mutable properties of label volumes like the maximum labels

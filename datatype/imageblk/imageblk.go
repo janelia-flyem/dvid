@@ -756,11 +756,10 @@ type Data struct {
 }
 
 func (d *Data) Equals(d2 *Data) bool {
-	if !d.Data.Equals(d2.Data) ||
-		!reflect.DeepEqual(d.Properties, d2.Properties) {
+	if !d.Data.Equals(d2.Data) {
 		return false
 	}
-	return true
+	return reflect.DeepEqual(d.Properties, d2.Properties)
 }
 
 // BlankImage initializes a blank image of appropriate size and depth for the

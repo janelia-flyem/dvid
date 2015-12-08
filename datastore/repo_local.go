@@ -378,10 +378,15 @@ func (m *repoManager) loadVersion0() error {
 
 		// Update the sync graph with all syncable data instances in this repo
 		for _, dataservice := range r.data {
-			syncedData, syncable := dataservice.(Syncer)
+			sdata, syncable := dataservice.(Syncer)
 			if syncable {
-				for _, name := range syncedData.SyncedNames() {
-					r.addSyncGraph(syncedData.InitSync(name))
+				for _, name := range sdata.SyncedNames() {
+					// get the dataservice associated with this synced data.
+					syncedData, found := r.data[name]
+					if !found {
+						return fmt.Errorf("Unable to get synced data named %q for uuid %s: %v", name, r.uuid, err)
+					}
+					r.addSyncGraph(sdata.InitSync(name, syncedData.TypeName()))
 				}
 			}
 		}
@@ -1352,10 +1357,14 @@ func (m *repoManager) newData(uuid dvid.UUID, t TypeService, name dvid.InstanceN
 	r.updated = time.Now()
 
 	// Update the sync graph if this data needs to be synced with another data instance.
-	syncedData, syncable := dataservice.(Syncer)
+	sdata, syncable := dataservice.(Syncer)
 	if syncable {
-		for _, name := range syncedData.SyncedNames() {
-			r.addSyncGraph(syncedData.InitSync(name))
+		for _, name := range sdata.SyncedNames() {
+			syncedData, err := m.getDataByUUID(uuid, name)
+			if err != nil {
+				return nil, fmt.Errorf("Unable to get synced data named %q: %v", name, err)
+			}
+			r.addSyncGraph(sdata.InitSync(name, syncedData.TypeName()))
 		}
 	}
 

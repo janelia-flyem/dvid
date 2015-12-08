@@ -331,6 +331,16 @@ func (rle RLE) String() string {
 	return fmt.Sprintf("dvid.NewRLE{%s, %d}", rle.start, rle.length)
 }
 
+func (rle RLE) Within(pt Point3d) bool {
+	if pt[2] != rle.start[2] || pt[1] != rle.start[1] {
+		return false
+	}
+	if pt[0] < rle.start[0] || pt[0] >= rle.start[0]+rle.length {
+		return false
+	}
+	return true
+}
+
 func (rle RLE) Intersects(rle2 RLE) bool {
 	if rle.start[2] != rle2.start[2] || rle.start[1] != rle2.start[1] {
 		return false
@@ -408,6 +418,26 @@ func ReadRLEs(r io.Reader) (RLEs, error) {
 		return nil, err
 	}
 	return rles, nil
+}
+
+// Within returns a slice of indices to the given pts that are within
+// the RLEs.
+func (rles RLEs) Within(pts []Point3d) (in []int) {
+	inset := make(map[int]struct{})
+	for _, rle := range rles {
+		for i, pt := range pts {
+			if rle.Within(pt) {
+				inset[i] = struct{}{}
+			}
+		}
+	}
+	in = make([]int, len(inset))
+	i := 0
+	for k := range inset {
+		in[i] = k
+		i++
+	}
+	return
 }
 
 // --- sort interface
@@ -602,6 +632,8 @@ func (rles RLEs) FitToBounds(bounds *Bounds) RLEs {
 	}
 	return newRLEs
 }
+
+//
 
 // MarshalBinary fulfills the encoding.BinaryMarshaler interface.
 func (rles RLEs) MarshalBinary() ([]byte, error) {

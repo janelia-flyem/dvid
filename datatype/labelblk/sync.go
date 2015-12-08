@@ -43,7 +43,7 @@ func BlockOnUpdating(uuid dvid.UUID, name dvid.InstanceName) error {
 }
 
 // InitSync implements the datastore.Syncer interface
-func (d *Data) InitSync(name dvid.InstanceName) []datastore.SyncSub {
+func (d *Data) InitSync(name dvid.InstanceName, typename dvid.TypeString) []datastore.SyncSub {
 	// This should only be called once for any synced instance.
 	if d.IsSyncEstablished(name) {
 		return nil

@@ -1346,24 +1346,16 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 
 // --------- Other functions on labelblk Data -----------------
 
-// GetLabelBytesAtPoint returns the 8 byte slice corresponding to a 64-bit label at a point.
-func (d *Data) GetLabelBytesAtPoint(v dvid.VersionID, pt dvid.Point) ([]byte, error) {
+// GetLabelBlock returns a block of labels corresponding to the block coordinate.
+func (d *Data) GetLabelBlock(v dvid.VersionID, blockCoord dvid.ChunkPoint3d) ([]byte, error) {
 	store, err := storage.MutableStore()
 	if err != nil {
 		return nil, err
 	}
 
-	// Compute the block key that contains the given point.
-	coord, ok := pt.(dvid.Chunkable)
-	if !ok {
-		return nil, fmt.Errorf("Can't determine block of point %s", pt)
-	}
-	blockSize := d.BlockSize()
-	blockCoord := coord.Chunk(blockSize).(dvid.ChunkPoint3d)
-	index := dvid.IndexZYX(blockCoord)
-
 	// Retrieve the block of labels
 	ctx := datastore.NewVersionedCtx(d, v)
+	index := dvid.IndexZYX(blockCoord)
 	serialization, err := store.Get(ctx, NewTKey(&index))
 	if err != nil {
 		return nil, fmt.Errorf("Error getting '%s' block for index %s\n", d.DataName(), blockCoord)
@@ -1374,6 +1366,22 @@ func (d *Data) GetLabelBytesAtPoint(v dvid.VersionID, pt dvid.Point) ([]byte, er
 	labelData, _, err := dvid.DeserializeData(serialization, true)
 	if err != nil {
 		return nil, fmt.Errorf("Unable to deserialize block %s in '%s': %v\n", blockCoord, d.DataName(), err)
+	}
+	return labelData, nil
+}
+
+// GetLabelBytesAtPoint returns the 8 byte slice corresponding to a 64-bit label at a point.
+func (d *Data) GetLabelBytesAtPoint(v dvid.VersionID, pt dvid.Point) ([]byte, error) {
+	coord, ok := pt.(dvid.Chunkable)
+	if !ok {
+		return nil, fmt.Errorf("Can't determine block of point %s", pt)
+	}
+	blockSize := d.BlockSize()
+	blockCoord := coord.Chunk(blockSize).(dvid.ChunkPoint3d)
+
+	labelData, err := d.GetLabelBlock(v, blockCoord)
+	if err != nil {
+		return nil, err
 	}
 
 	// Retrieve the particular label within the block.
