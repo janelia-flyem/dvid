@@ -1073,6 +1073,10 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			server.BadRequest(w, r, "Only GET action is available on 'label' endpoint.")
 			return
 		}
+		if len(parts) < 5 {
+			server.BadRequest(w, r, "Must include label after 'label' endpoint.")
+			return
+		}
 		label, err := strconv.ParseUint(parts[4], 10, 64)
 		if err != nil {
 			server.BadRequest(w, r, err)
@@ -1172,6 +1176,10 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			server.BadRequest(w, r, "Only DELETE action is available on 'element' endpoint.")
 			return
 		}
+		if len(parts) < 5 {
+			server.BadRequest(w, r, "Must include coordinate after DELETE on 'element' endpoint.")
+			return
+		}
 		pt, err := dvid.StringToPoint3d(parts[4], "_")
 		if err != nil {
 			server.BadRequest(w, r, err)
@@ -1187,6 +1195,10 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		// POST <api URL>/node/<UUID>/<data name>/move/<from_coord>/<to_coord>
 		if action != "post" {
 			server.BadRequest(w, r, "Only POST action is available on 'move' endpoint.")
+			return
+		}
+		if len(parts) < 6 {
+			server.BadRequest(w, r, "Must include 'from' and 'to' coordinate after 'move' endpoint.")
 			return
 		}
 		fromPt, err := dvid.StringToPoint3d(parts[4], "_")
