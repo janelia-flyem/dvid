@@ -1104,6 +1104,10 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			server.BadRequest(w, r, "Only GET action is available on 'tag' endpoint.")
 			return
 		}
+		if len(parts) < 5 {
+			server.BadRequest(w, r, "Must include tag string after 'tag' endpoint.")
+			return
+		}
 		tag := Tag(parts[4])
 		elements, err := GetTagSynapses(ctx, tag)
 		if err != nil {
