@@ -159,7 +159,7 @@ Example JSON Format of synapse elements with ... marking omitted elements:
 
 The "Kind" property can be one of "Unknown", "PostSyn", "PreSyn", or "Gap".
 
-The "Rel" property can be one of "UnknownRelationship", "PostSynTo", "PreSynTo", of "ConvergentTo".
+The "Rel" property can be one of "UnknownRelationship", "PostSynTo", "PreSynTo", "ConvergentTo", or "GroupedWith".
 
 The "Tags" property will be indexed and so can be costly if used for very large numbers of synapse elements.
 
@@ -242,6 +242,7 @@ const (
 	PostSynTo
 	PreSynTo
 	ConvergentTo
+	GroupedWith
 )
 
 func (r RelationType) MarshalJSON() ([]byte, error) {
@@ -254,6 +255,8 @@ func (r RelationType) MarshalJSON() ([]byte, error) {
 		return []byte(`"PreSynTo"`), nil
 	case ConvergentTo:
 		return []byte(`"ConvergentTo"`), nil
+	case GroupedWith:
+		return []byte(`"GroupedWith"`), nil
 	default:
 		return nil, fmt.Errorf("Unknown relation type: %d", r)
 	}
@@ -261,7 +264,7 @@ func (r RelationType) MarshalJSON() ([]byte, error) {
 
 func (r *RelationType) UnmarshalJSON(b []byte) error {
 	switch string(b) {
-	case `"UnknownPrelationship"`:
+	case `"UnknownRelationship"`:
 		*r = UnknownRel
 	case `"PostSynTo"`:
 		*r = PostSynTo
@@ -269,8 +272,10 @@ func (r *RelationType) UnmarshalJSON(b []byte) error {
 		*r = PreSynTo
 	case `"ConvergentTo"`:
 		*r = ConvergentTo
+	case `"GroupedWith"`:
+		*r = GroupedWith
 	default:
-		return fmt.Errorf("Unkown relationship type in JSON: %s", string(b))
+		return fmt.Errorf("Unknown relationship type in JSON: %s", string(b))
 	}
 	return nil
 }
@@ -328,11 +333,12 @@ func (r Relationships) Swap(i, j int) {
 	r[i], r[j] = r[j], r[i]
 }
 
+// given a list of element indices to be deleted, it returns slice of remaining Relationships
 func (r Relationships) delete(todel []int) Relationships {
 	out := make(Relationships, len(r)-len(todel))
 	j, k := 0, 0
 	for i, rel := range r {
-		if i != todel[k] {
+		if k >= len(todel) || i != todel[k] {
 			out[j] = rel
 			j++
 		} else {
@@ -418,6 +424,13 @@ func (elems *Elements) delete(pt dvid.Point3d) (deleted *Element, changed bool) 
 	}
 
 	// Delete any relationships with the point.
+	if elems.deleteRel(pt) {
+		changed = true
+	}
+	return
+}
+
+func (elems *Elements) deleteRel(pt dvid.Point3d) (changed bool) {
 	for i, elem := range *elems {
 		// Remove any relationship with given pt.
 		var todel []int
@@ -641,8 +654,8 @@ func (d *Data) deleteElementInRelationships(ctx *datastore.VersionedCtx, pt dvid
 			return err
 		}
 
-		// Delete the point
-		if _, changed := elems.delete(pt); !changed {
+		// Delete the point in relationships
+		if !elems.deleteRel(pt) {
 			continue
 		}
 

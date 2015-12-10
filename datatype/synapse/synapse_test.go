@@ -114,7 +114,7 @@ var testData = Elements{
 	{
 		Pos:  dvid.Point3d{88, 47, 80},
 		Kind: PostSyn,
-		Rels: []Relationship{{Rel: PostSynTo, To: dvid.Point3d{128, 63, 99}}},
+		Rels: []Relationship{{Rel: GroupedWith, To: dvid.Point3d{14, 25, 37}}, {Rel: PostSynTo, To: dvid.Point3d{128, 63, 99}}, {Rel: GroupedWith, To: dvid.Point3d{20, 30, 40}}},
 		Tags: []Tag{"Synapse2"},
 	},
 	{
@@ -189,7 +189,7 @@ var afterMove = Elements{
 	{
 		Pos:  dvid.Point3d{88, 47, 80},
 		Kind: PostSyn,
-		Rels: []Relationship{{Rel: PostSynTo, To: dvid.Point3d{127, 64, 100}}},
+		Rels: []Relationship{{Rel: GroupedWith, To: dvid.Point3d{14, 25, 37}}, {Rel: PostSynTo, To: dvid.Point3d{127, 64, 100}}, {Rel: GroupedWith, To: dvid.Point3d{20, 30, 40}}},
 		Tags: []Tag{"Synapse2"},
 	},
 	{
@@ -239,7 +239,7 @@ var afterDelete = Elements{
 	{
 		Pos:  dvid.Point3d{88, 47, 80},
 		Kind: PostSyn,
-		Rels: []Relationship{},
+		Rels: []Relationship{{Rel: GroupedWith, To: dvid.Point3d{14, 25, 37}}, {Rel: GroupedWith, To: dvid.Point3d{20, 30, 40}}},
 		Tags: []Tag{"Synapse2"},
 	},
 	{
