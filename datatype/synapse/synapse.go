@@ -126,7 +126,11 @@ Example JSON Format of synapse elements with ... marking omitted elements:
 		"Rels":[ 
 			{"Rel":"PostSynTo", "To":[15,27,35]} 
 		],
-		"Tags":["Synapse1"]
+		"Tags":["Synapse1"],
+		"Prop": {
+			"SomeVar": "SomeValue",
+			"Another Var": "A More Complex Value"
+		}
 	},
 	{
 		"Pos":[15,27,35],
@@ -144,7 +148,11 @@ Example JSON Format of synapse elements with ... marking omitted elements:
 		"Rels":[
 			{"Rel":"PostSynTo","To":[15,27,35]}
 		],
-		"Tags":["Synapse1"]
+		"Tags":["Synapse1"],
+		"Prop": {
+			"SomeVar": "SomeValue",
+			"Another Var 2": "A More Complex Value 2"
+		}
 	},
 	...
 ]
@@ -152,6 +160,10 @@ Example JSON Format of synapse elements with ... marking omitted elements:
 The "Kind" property can be one of "Unknown", "PostSyn", "PreSyn", or "Gap".
 
 The "Rel" property can be one of "UnknownRelationship", "PostSynTo", "PreSynTo", of "ConvergentTo".
+
+The "Tags" property will be indexed and so can be costly if used for very large numbers of synapse elements.
+
+The "Prop" property is an arbitrary object with string values.  The "Prop" object's key are not indexed.
 `
 
 var (
@@ -277,7 +289,8 @@ type Element struct {
 	Pos  dvid.Point3d
 	Kind ElementType
 	Rels Relationships
-	Tags Tags
+	Tags Tags              // Indexed
+	Prop map[string]string // Non-Indexed
 }
 
 func (e Element) Copy() *Element {
@@ -288,6 +301,10 @@ func (e Element) Copy() *Element {
 	copy(c.Rels, e.Rels)
 	c.Tags = make(Tags, len(e.Tags))
 	copy(c.Tags, e.Tags)
+	c.Prop = make(map[string]string, len(e.Prop))
+	for k, v := range e.Prop {
+		c.Prop[k] = v
+	}
 	return c
 }
 
@@ -352,6 +369,11 @@ func (elems Elements) Normalize() Elements {
 		copy(out[i].Rels, elem.Rels)
 		out[i].Tags = make(Tags, len(elem.Tags))
 		copy(out[i].Tags, elem.Tags)
+
+		out[i].Prop = make(map[string]string, len(elem.Prop))
+		for k, v := range elem.Prop {
+			out[i].Prop[k] = v
+		}
 
 		sort.Sort(out[i].Rels)
 		sort.Sort(out[i].Tags)

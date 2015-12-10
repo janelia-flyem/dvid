@@ -76,6 +76,11 @@ var testData = Elements{
 		Kind: PreSyn,
 		Rels: []Relationship{{Rel: PreSynTo, To: dvid.Point3d{20, 30, 40}}, {Rel: PreSynTo, To: dvid.Point3d{14, 25, 37}}, {Rel: PreSynTo, To: dvid.Point3d{33, 30, 31}}},
 		Tags: []Tag{"Synapse1"},
+		Prop: map[string]string{
+			"Im a T-Bar":         "yes",
+			"I'm not a PSD":      "sure",
+			"i'm really special": "",
+		},
 	},
 	{
 		Pos:  dvid.Point3d{20, 30, 40},
@@ -100,6 +105,11 @@ var testData = Elements{
 		Kind: PreSyn,
 		Rels: []Relationship{{Rel: PreSynTo, To: dvid.Point3d{88, 47, 80}}, {Rel: PreSynTo, To: dvid.Point3d{120, 65, 100}}, {Rel: PreSynTo, To: dvid.Point3d{151, 67, 98}}},
 		Tags: []Tag{"Synapse2"},
+		Prop: map[string]string{
+			"Im a T-Bar":             "no",
+			"I'm not a PSD":          "not really",
+			"i'm not really special": "at all",
+		},
 	},
 	{
 		Pos:  dvid.Point3d{88, 47, 80},
@@ -127,6 +137,11 @@ var expected3 = Elements{
 		Kind: PreSyn,
 		Rels: []Relationship{{Rel: PreSynTo, To: dvid.Point3d{88, 47, 80}}, {Rel: PreSynTo, To: dvid.Point3d{120, 65, 100}}, {Rel: PreSynTo, To: dvid.Point3d{151, 67, 98}}},
 		Tags: []Tag{"Synapse2"},
+		Prop: map[string]string{
+			"Im a T-Bar":             "no",
+			"I'm not a PSD":          "not really",
+			"i'm not really special": "at all",
+		},
 	},
 }
 
@@ -136,6 +151,11 @@ var afterMove = Elements{
 		Kind: PreSyn,
 		Rels: []Relationship{{Rel: PreSynTo, To: dvid.Point3d{20, 30, 40}}, {Rel: PreSynTo, To: dvid.Point3d{14, 25, 37}}, {Rel: PreSynTo, To: dvid.Point3d{33, 30, 31}}},
 		Tags: []Tag{"Synapse1"},
+		Prop: map[string]string{
+			"Im a T-Bar":         "yes",
+			"I'm not a PSD":      "sure",
+			"i'm really special": "",
+		},
 	},
 	{
 		Pos:  dvid.Point3d{20, 30, 40},
@@ -160,6 +180,11 @@ var afterMove = Elements{
 		Kind: PreSyn,
 		Rels: []Relationship{{Rel: PreSynTo, To: dvid.Point3d{88, 47, 80}}, {Rel: PreSynTo, To: dvid.Point3d{120, 65, 100}}, {Rel: PreSynTo, To: dvid.Point3d{151, 67, 98}}},
 		Tags: []Tag{"Synapse2"},
+		Prop: map[string]string{
+			"Im a T-Bar":             "no",
+			"I'm not a PSD":          "not really",
+			"i'm not really special": "at all",
+		},
 	},
 	{
 		Pos:  dvid.Point3d{88, 47, 80},
@@ -187,6 +212,11 @@ var afterDelete = Elements{
 		Kind: PreSyn,
 		Rels: []Relationship{{Rel: PreSynTo, To: dvid.Point3d{20, 30, 40}}, {Rel: PreSynTo, To: dvid.Point3d{14, 25, 37}}, {Rel: PreSynTo, To: dvid.Point3d{33, 30, 31}}},
 		Tags: []Tag{"Synapse1"},
+		Prop: map[string]string{
+			"Im a T-Bar":         "yes",
+			"I'm not a PSD":      "sure",
+			"i'm really special": "",
+		},
 	},
 	{
 		Pos:  dvid.Point3d{20, 30, 40},
@@ -334,7 +364,7 @@ func TestRequests(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(afterDelete.Normalize(), got.Normalize()) {
-		t.Errorf("Error after delete.  Got:\n%s\n", string(returnValue))
+		t.Errorf("Error after delete.  Got:\n%v\nExpected:\n%v\n", got.Normalize(), afterDelete.Normalize())
 	}
 
 	// --- check tag
