@@ -49,3 +49,5 @@ both MacOS X and Linux (Fedora 16, CentOS 6, Ubuntu) but not on Windows.
 Command-line and HTTP API documentation can be 
 found in [help constants within packages](https://github.com/janelia-flyem/dvid/blob/master/datatype/labelvol/labelvol.go#L34) or by visiting the **/api/help**
 HTTP endpoint on a running DVID server.
+
+![Web app for 3d inspection being served from and sending requests to DVID](https://raw.githubusercontent.com/janelia-flyem/dvid/master/images/webapp.png)
