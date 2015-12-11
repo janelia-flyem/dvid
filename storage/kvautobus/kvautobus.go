@@ -104,6 +104,7 @@ func (db *KVAutobus) RawGet(key storage.Key) ([]byte, error) {
 	if err := bin.DecodeMsg(r); err != nil {
 		return nil, err
 	}
+	storage.StoreValueBytesRead <- len(bin)
 	return []byte(bin), nil
 }
 
@@ -127,6 +128,9 @@ func (db *KVAutobus) getKeyRange(kStart, kEnd storage.Key) (Ks, error) {
 	var mks Ks
 	if err := mks.DecodeMsg(r); err != nil {
 		return nil, err
+	}
+	for _, mk := range mks {
+		storage.StoreKeyBytesRead <- len(mk)
 	}
 	timedLog.Infof("PROXY key_range to %s returned %d (%d keys)\n", db.host, resp.StatusCode, len(mks))
 	return mks, nil
@@ -153,6 +157,10 @@ func (db *KVAutobus) getKVRange(kStart, kEnd storage.Key) (KVs, error) {
 	if err := mkvs.DecodeMsg(r); err != nil {
 		dvid.Errorf("Couldn't decode getKVRange return\n")
 		return nil, err
+	}
+	for _, mkv := range mkvs {
+		storage.StoreKeyBytesRead <- len(mkv[0])
+		storage.StoreValueBytesRead <- len(mkv[1])
 	}
 
 	timedLog.Infof("PROXY keyvalue_range to %s returned %d (%d kv pairs)\n", db.host, resp.StatusCode, len(mkvs))
@@ -256,22 +264,19 @@ func (db *KVAutobus) RawPut(key storage.Key, value []byte) error {
 	url := fmt.Sprintf("%s/kvautobus/api/value/%s/", db.host, b64key)
 	bin := Binary(value)
 
-	dvid.Debugf("Begin RawPut on key %s (%d bytes)\n", hex.EncodeToString(key), len(bin))
+	storage.StoreKeyBytesWritten <- len(key)
+	storage.StoreValueBytesWritten <- len(value)
 
 	// Create pipe from encoding to posting
 	pr, pw := io.Pipe()
 	w := msgp.NewWriter(pw)
 	go func() {
-		dvid.Debugf("Starting msgpack encoding...\n")
 		bin.EncodeMsg(w)
 		w.Flush()
 		pw.Close()
-		dvid.Debugf("Done msgpack encoding.\n")
 	}()
 
-	dvid.Debugf("Beginning POST to kvautobus: %s\n", url)
 	resp, err := http.Post(url, "application/x-msgpack", pr)
-	dvid.Debugf("Done POST with err %v\n", err)
 	if err != nil {
 		return err
 	}
@@ -388,10 +393,6 @@ func (db *KVAutobus) versionedRange(vctx storage.VersionedCtx, kStart, kEnd stor
 	}
 	versions := []*storage.KeyValue{}
 	for _, kv := range kvs {
-		if !keysOnly {
-			storage.StoreValueBytesRead <- len(kv.V)
-		}
-		storage.StoreKeyBytesRead <- len(kv.K)
 		// Did we pass all versions for last key read?
 		if bytes.Compare(kv.K, maxVersionKey) > 0 {
 			indexBytes, err := vctx.TKeyFromKey(kv.K)
@@ -431,10 +432,6 @@ func (db *KVAutobus) unversionedRange(ctx storage.Context, kStart, kEnd storage.
 		ch <- errorableKV{nil, err}
 	}
 	for _, kv := range kvs {
-		if !keysOnly {
-			storage.StoreValueBytesRead <- len(kv.V)
-		}
-		storage.StoreKeyBytesRead <- len(kv.K)
 		ch <- errorableKV{kv, nil}
 	}
 	ch <- errorableKV{nil, nil}
@@ -603,8 +600,6 @@ func (db *KVAutobus) Put(ctx storage.Context, tk storage.TKey, v []byte) error {
 	if err != nil {
 		return err
 	}
-	storage.StoreKeyBytesWritten <- len(key)
-	storage.StoreValueBytesWritten <- len(v)
 	return nil
 }
 
@@ -694,8 +689,6 @@ func (batch *goBatch) Put(tk storage.TKey, v []byte) {
 	}
 	key := batch.ctx.ConstructKey(tk)
 	batch.kvs = append(batch.kvs, storage.KeyValue{key, v})
-	storage.StoreKeyBytesWritten <- len(key)
-	storage.StoreValueBytesWritten <- len(v)
 }
 
 func (batch *goBatch) Commit() error {
