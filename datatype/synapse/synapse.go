@@ -1171,6 +1171,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			// GET <api URL>/node/<UUID>/<data name>/elements/<size>/<offset>
 			if len(parts) < 6 {
 				server.BadRequest(w, r, "Expect size and offset to follow 'elements' in URL")
+				return
 			}
 			sizeStr, offsetStr := parts[4], parts[5]
 			ext3d, err := dvid.NewExtents3dFromStrings(offsetStr, sizeStr, "_")
