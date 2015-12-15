@@ -1197,8 +1197,6 @@ func (batch *goBatch) Put(tk storage.TKey, v []byte) {
 		tombstone := batch.vctx.TombstoneKey(tk) // This will now have current version
 		batch.WriteBatch.Delete(tombstone)
 	}
-	batch.WriteBatch.Put(key, v)
-
 	storage.StoreKeyBytesWritten <- len(key)
 	storage.StoreValueBytesWritten <- len(v)
 	batch.WriteBatch.Put(key, v)
