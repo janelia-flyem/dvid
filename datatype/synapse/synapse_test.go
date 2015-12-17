@@ -75,7 +75,7 @@ var testData = Elements{
 		Pos:  dvid.Point3d{15, 27, 35},
 		Kind: PreSyn,
 		Rels: []Relationship{{Rel: PreSynTo, To: dvid.Point3d{20, 30, 40}}, {Rel: PreSynTo, To: dvid.Point3d{14, 25, 37}}, {Rel: PreSynTo, To: dvid.Point3d{33, 30, 31}}},
-		Tags: []Tag{"Synapse1"},
+		Tags: []Tag{"Synapse1", "Zlt90"},
 		Prop: map[string]string{
 			"Im a T-Bar":         "yes",
 			"I'm not a PSD":      "sure",
@@ -92,13 +92,13 @@ var testData = Elements{
 		Pos:  dvid.Point3d{14, 25, 37},
 		Kind: PostSyn,
 		Rels: []Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
-		Tags: []Tag{"Synapse1"},
+		Tags: []Tag{"Synapse1", "Zlt90"},
 	},
 	{
 		Pos:  dvid.Point3d{33, 30, 31},
 		Kind: PostSyn,
 		Rels: []Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
-		Tags: []Tag{"Synapse1"},
+		Tags: []Tag{"Synapse1", "Zlt90"},
 	},
 	{
 		Pos:  dvid.Point3d{128, 63, 99},
@@ -150,7 +150,7 @@ var afterMove = Elements{
 		Pos:  dvid.Point3d{15, 27, 35},
 		Kind: PreSyn,
 		Rels: []Relationship{{Rel: PreSynTo, To: dvid.Point3d{20, 30, 40}}, {Rel: PreSynTo, To: dvid.Point3d{14, 25, 37}}, {Rel: PreSynTo, To: dvid.Point3d{33, 30, 31}}},
-		Tags: []Tag{"Synapse1"},
+		Tags: []Tag{"Synapse1", "Zlt90"},
 		Prop: map[string]string{
 			"Im a T-Bar":         "yes",
 			"I'm not a PSD":      "sure",
@@ -167,13 +167,13 @@ var afterMove = Elements{
 		Pos:  dvid.Point3d{14, 25, 37},
 		Kind: PostSyn,
 		Rels: []Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
-		Tags: []Tag{"Synapse1"},
+		Tags: []Tag{"Synapse1", "Zlt90"},
 	},
 	{
 		Pos:  dvid.Point3d{33, 30, 31},
 		Kind: PostSyn,
 		Rels: []Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
-		Tags: []Tag{"Synapse1"},
+		Tags: []Tag{"Synapse1", "Zlt90"},
 	},
 	{
 		Pos:  dvid.Point3d{127, 64, 100},
@@ -211,7 +211,7 @@ var afterDelete = Elements{
 		Pos:  dvid.Point3d{15, 27, 35},
 		Kind: PreSyn,
 		Rels: []Relationship{{Rel: PreSynTo, To: dvid.Point3d{20, 30, 40}}, {Rel: PreSynTo, To: dvid.Point3d{14, 25, 37}}, {Rel: PreSynTo, To: dvid.Point3d{33, 30, 31}}},
-		Tags: []Tag{"Synapse1"},
+		Tags: []Tag{"Synapse1", "Zlt90"},
 		Prop: map[string]string{
 			"Im a T-Bar":         "yes",
 			"I'm not a PSD":      "sure",
@@ -228,13 +228,13 @@ var afterDelete = Elements{
 		Pos:  dvid.Point3d{14, 25, 37},
 		Kind: PostSyn,
 		Rels: []Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
-		Tags: []Tag{"Synapse1"},
+		Tags: []Tag{"Synapse1", "Zlt90"},
 	},
 	{
 		Pos:  dvid.Point3d{33, 30, 31},
 		Kind: PostSyn,
 		Rels: []Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
-		Tags: []Tag{"Synapse1"},
+		Tags: []Tag{"Synapse1", "Zlt90"},
 	},
 	{
 		Pos:  dvid.Point3d{88, 47, 80},
@@ -315,7 +315,7 @@ func TestRequests(t *testing.T) {
 		t.Errorf("Error on subset GET of synaptic elements. Got:\n%s\n", string(returnValue))
 	}
 
-	// Test Tag GET
+	// Test Tag 1
 	tag := Tag("Synapse2")
 	url4 := fmt.Sprintf("%snode/%s/%s/tag/%s", server.WebAPIPath, uuid, data.DataName(), tag)
 	returnValue = server.TestHTTP(t, "GET", url4, nil)
@@ -326,6 +326,19 @@ func TestRequests(t *testing.T) {
 	synapse2 := getTag(tag, testData)
 	if !reflect.DeepEqual(synapse2.Normalize(), got.Normalize()) {
 		t.Errorf("Error on tag %q GET.  Got:\n%s\n", tag, string(returnValue))
+	}
+
+	// Test Tag 2
+	tag2 := Tag("Zlt90")
+	url4a := fmt.Sprintf("%snode/%s/%s/tag/%s", server.WebAPIPath, uuid, data.DataName(), tag2)
+	returnValue = server.TestHTTP(t, "GET", url4a, nil)
+	got = Elements{}
+	if err := json.Unmarshal(returnValue, &got); err != nil {
+		t.Fatal(err)
+	}
+	zlt90 := getTag(tag2, testData)
+	if !reflect.DeepEqual(zlt90.Normalize(), got.Normalize()) {
+		t.Errorf("Error on tag %q GET.  Got:\n%s\n", tag2, string(returnValue))
 	}
 
 	// Test move
