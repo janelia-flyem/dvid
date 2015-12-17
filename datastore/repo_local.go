@@ -360,8 +360,17 @@ func (m *repoManager) loadVersion0() error {
 			m.repos[uuid] = r
 		}
 
-		// Populate the instance id -> dataservice map.
+		// Populate the instance id -> dataservice map and convert any deprecated data instance.
 		for _, dataservice := range r.data {
+			migrator, doMigrate := dataservice.(TypeMigrator)
+			if doMigrate {
+				dvid.Infof("Migrating instance %q of type %q to ...\n", dataservice.DataName(), dataservice.TypeName())
+				dataservice, err = migrator.MigrateData()
+				if err != nil {
+					return fmt.Errorf("Error migrating data instance: %v", err)
+				}
+				dvid.Infof("Now instance %q of type %q ...\n", dataservice.DataName(), dataservice.TypeName())
+			}
 			m.iids[dataservice.InstanceID()] = dataservice
 		}
 
@@ -433,7 +442,7 @@ func (m *repoManager) loadMetadata() error {
 	case 0:
 		return m.loadVersion0()
 	case 1:
-		// We aren't changing any of the metadata, just the labelvol datatype props.
+		// We aren't changing any metadata, just the labelvol datatype props.
 		return m.loadVersion0()
 	default:
 		return fmt.Errorf("Unknown metadata format %d", m.formatVersion)

@@ -1,9 +1,7 @@
-//go:generate protoc --go_out=. *.proto
-
 /*
-	Package synapse supports synapse management and queries.
+	Package annotation supports point annotation management and queries.
 */
-package synapse
+package annotation
 
 import (
 	"bytes"
@@ -28,12 +26,12 @@ import (
 
 const (
 	Version  = "0.1"
-	RepoURL  = "github.com/janelia-flyem/dvid/datatype/synapse"
-	TypeName = "synapse"
+	RepoURL  = "github.com/janelia-flyem/dvid/datatype/annotation"
+	TypeName = "annotation"
 )
 
 const HelpMessage = `
-API for synapse data type (github.com/janelia-flyem/dvid/datatype/synapse)
+API for synapse data type (github.com/janelia-flyem/dvid/datatype/annotation)
 =======================================================================================
 
 Command-line:
@@ -44,7 +42,7 @@ $ dvid repo <UUID> new synapse <data name> <settings...>
 
 	Example:
 
-	$ dvid repo 3f8c new synapse synapses
+	$ dvid repo 3f8c new annotation synapses
 
     Arguments:
 
@@ -54,7 +52,7 @@ $ dvid repo <UUID> new synapse <data name> <settings...>
 
     Configuration Settings (case-insensitive keys)
 	
-    Sync           Name of labelblk data to which this synapse data should be synced.  Changes
+    Sync           Name of labelblk data to which this annotation data should be synced.  Changes
     			   in the synced labelblk data will change results of "label" endpoint requests (see REST API).
 	
     ------------------
@@ -80,7 +78,7 @@ POST <api URL>/node/<UUID>/<data name>/info
     Arguments:
 
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
-    data name     Name of synapse data.
+    data name     Name of annotation data.
 
 
 Note: For the following URL endpoints that return and accept POSTed JSON values, see the JSON format
@@ -88,36 +86,36 @@ at end of this documentation.
 
 GET <api URL>/node/<UUID>/<data name>/label/<label>
 
-	Returns all synaptic elements within the given label as an array of elements.
+	Returns all point annotations within the given label as an array of elements.
 
 GET <api URL>/node/<UUID>/<data name>/tag/<tag>
 
-	Returns all synaptic elements with the given tag as an array of elements.
+	Returns all point annotations with the given tag as an array of elements.
 
 DELETE <api URL>/node/<UUID>/<data name>/element/<coord>
 
-	Deletes a synaptic element given its location.
+	Deletes a point annotation given its location.
 
 GET <api URL>/node/<UUID>/<data name>/elements/<size>/<offset>
 
-	Returns all synaptic elements within subvolume of given size with upper left corner
+	Returns all point annotations within subvolume of given size with upper left corner
 	at given offset.  The size and offset should be voxels separated by underscore, e.g.,
 	"400_300_200" can describe a 400 x 300 x 200 volume or an offset of (400,300,200).
 
-	The returned synaptic elements will be an array of elements.
+	The returned point annotations will be an array of elements.
 
 POST <api URL>/node/<UUID>/<data name>/elements
 
-	Adds or modifies synaptic elements.  The POSTed content is an array of elements.
+	Adds or modifies point annotations.  The POSTed content is an array of elements.
 
 POST <api URL>/node/<UUID>/<data name>/move/<from_coord>/<to_coord>
 
-	Moves the synaptic element from <from_coord> to <to_coord> where
+	Moves the point annotation from <from_coord> to <to_coord> where
 	<from_coord> and <to_coord> are of the form X_Y_Z.
 
 ------
 
-Example JSON Format of synapse elements with ... marking omitted elements:
+Example JSON Format of point annotation elements with ... marking omitted elements:
 
 [
 	{
@@ -157,7 +155,7 @@ Example JSON Format of synapse elements with ... marking omitted elements:
 	...
 ]
 
-The "Kind" property can be one of "Unknown", "PostSyn", "PreSyn", or "Gap".
+The "Kind" property can be one of "Unknown", "PostSyn", "PreSyn", "Gap", or "Note".
 
 The "Rel" property can be one of "UnknownRelationship", "PostSynTo", "PreSynTo", "ConvergentTo", or "GroupedWith".
 
@@ -199,6 +197,7 @@ const (
 	PostSyn                 // Post-synaptic element
 	PreSyn                  // Pre-synaptic element
 	Gap                     // Gap junction
+	Note                    // A note or bookmark with some description
 )
 
 // ElementType gives the type of a synaptic element.
@@ -214,6 +213,8 @@ func (e ElementType) MarshalJSON() ([]byte, error) {
 		return []byte(`"PreSyn"`), nil
 	case Gap:
 		return []byte(`"Gap"`), nil
+	case Note:
+		return []byte(`"Note"`), nil
 	default:
 		return nil, fmt.Errorf("Unknown element type: %e", e)
 	}
@@ -229,6 +230,8 @@ func (e *ElementType) UnmarshalJSON(b []byte) error {
 		*e = PreSyn
 	case `"Gap"`:
 		*e = Gap
+	case `"Note"`:
+		*e = Note
 	default:
 		return fmt.Errorf("Unknown element type in JSON: %s", string(b))
 	}
@@ -501,7 +504,7 @@ func (elems Elements) Swap(i, j int) {
 type blockElements map[dvid.IZYXString]Elements
 type tagElements map[Tag]Elements
 
-// NewData returns a pointer to labelvol data.
+// NewData returns a pointer to annotation data.
 func NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.Config) (*Data, error) {
 	// Initialize the Data for this data type
 	basedata, err := datastore.NewDataService(dtype, uuid, id, name, c)

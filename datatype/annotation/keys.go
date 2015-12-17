@@ -1,8 +1,8 @@
 /*
-	This file supports keyspaces for synapse data type.
+	This file supports keyspaces for point annotation data type.
 */
 
-package synapse
+package annotation
 
 import (
 	"encoding/binary"

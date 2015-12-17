@@ -128,6 +128,12 @@ type DataService interface {
 	//gob.GobDecoder
 }
 
+// TypeMigrator is an interface for a DataService that can migrate itself to another DataService.
+// A deprecated DataService implementation can implement this interface to auto-convert on metadata load.
+type TypeMigrator interface {
+	MigrateData() (DataService, error)
+}
+
 // InstanceMutator provides a hook for data instances to load mutable data
 // on startup.  It is assumed that the data instances store data whenever
 // its data mutates, e.g., extents for labelblk or max label for labelvol.
@@ -252,6 +258,26 @@ type Data struct {
 	// these sync management vars aren't serialized
 	syncmu     sync.RWMutex
 	syncInited map[dvid.InstanceName]struct{}
+}
+
+// CloneToType returns a clone of Data with modified data type information but same instance id.
+// This is useful for migrating data from one type to another.
+func (d *Data) CloneToType(typename dvid.TypeString, typeurl dvid.URLString, typeversion string) *Data {
+	d2 := new(Data)
+	d2.typename = typename
+	d2.typeurl = typeurl
+	d2.typeversion = typeversion
+
+	d2.name = d.name
+	d2.id = d.id
+	d2.uuid = d.uuid
+
+	d2.compression = d.compression
+	d2.checksum = d.checksum
+	copy(d2.syncs, d.syncs)
+	d2.unversioned = d.unversioned
+
+	return d2
 }
 
 // IsSyncEstablished returns true if a sync subscriptions have already been marked
