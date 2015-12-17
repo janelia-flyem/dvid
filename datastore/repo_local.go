@@ -361,7 +361,7 @@ func (m *repoManager) loadVersion0() error {
 		}
 
 		// Populate the instance id -> dataservice map and convert any deprecated data instance.
-		for _, dataservice := range r.data {
+		for dataname, dataservice := range r.data {
 			migrator, doMigrate := dataservice.(TypeMigrator)
 			if doMigrate {
 				dvid.Infof("Migrating instance %q of type %q to ...\n", dataservice.DataName(), dataservice.TypeName())
@@ -369,6 +369,8 @@ func (m *repoManager) loadVersion0() error {
 				if err != nil {
 					return fmt.Errorf("Error migrating data instance: %v", err)
 				}
+                r.data[dataname] = dataservice
+                saveRepo = true
 				dvid.Infof("Now instance %q of type %q ...\n", dataservice.DataName(), dataservice.TypeName())
 			}
 			m.iids[dataservice.InstanceID()] = dataservice
@@ -388,10 +390,13 @@ func (m *repoManager) loadVersion0() error {
 		for _, dataservice := range r.data {
 			mutator, mutable := dataservice.(InstanceMutator)
 			if mutable {
-				saveRepo, err = mutator.LoadMutable(r.version, m.formatVersion, RepoFormatVersion)
+				modified, err := mutator.LoadMutable(r.version, m.formatVersion, RepoFormatVersion)
 				if err != nil {
 					return err
 				}
+                if modified {
+                    saveRepo = true
+                }
 			}
 		}
 
