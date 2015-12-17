@@ -17,4 +17,7 @@ type EngineConfig struct {
 
 	// Testing is true if this store is to be used for testing.
 	Testing bool
+
+	// Bucket is name of Google Bucket
+	Bucket string
 }
