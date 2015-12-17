@@ -369,8 +369,8 @@ func (m *repoManager) loadVersion0() error {
 				if err != nil {
 					return fmt.Errorf("Error migrating data instance: %v", err)
 				}
-                r.data[dataname] = dataservice
-                saveRepo = true
+				r.data[dataname] = dataservice
+				saveRepo = true
 				dvid.Infof("Now instance %q of type %q ...\n", dataservice.DataName(), dataservice.TypeName())
 			}
 			m.iids[dataservice.InstanceID()] = dataservice
@@ -394,9 +394,9 @@ func (m *repoManager) loadVersion0() error {
 				if err != nil {
 					return err
 				}
-                if modified {
-                    saveRepo = true
-                }
+				if modified {
+					saveRepo = true
+				}
 			}
 		}
 
