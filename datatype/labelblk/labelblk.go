@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"image"
+	"io"
 	"io/ioutil"
 	"net/http"
 	"strconv"
@@ -22,7 +23,6 @@ import (
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
 	"github.com/janelia-flyem/dvid/datatype/imageblk"
-	"github.com/janelia-flyem/dvid/datatype/roi"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/message"
 	"github.com/janelia-flyem/dvid/server"
@@ -181,8 +181,12 @@ POST <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?th
 
     roi       	  Name of roi data instance used to mask the requested data.
     compression   Allows retrieval or submission of 3d data in "lz4" and "gzip"
-                  compressed format.  The 2d data will ignore this and use
-                  the image-based codec.
+                    compressed format.  The 2d data will ignore this and use
+                    the image-based codec.
+    mutate        Only valid for POST.  Default is "false" and means POST is initial
+            	    ingest for the block-aligned subvolume.  Any additional POSTs should
+            	    be marked as "mutate=true" and will be slower because of required
+            	    cleanup of past label denormalizations.e
 
 GET  <api URL>/node/<UUID>/<data name>/pseudocolor/<dims>/<size>/<offset>[/<format>][?throttle=true]
 
@@ -835,6 +839,93 @@ func colorImage(labels *dvid.Image) (image.Image, error) {
 	return dst, nil
 }
 
+func sendBinaryData(compression string, data []byte, w http.ResponseWriter) error {
+	var err error
+	w.Header().Set("Content-type", "application/octet-stream")
+	switch compression {
+	case "":
+		_, err = w.Write(data)
+		if err != nil {
+			return err
+		}
+	case "lz4":
+		compressed := make([]byte, lz4.CompressBound(data))
+		var n, outSize int
+		if outSize, err = lz4.Compress(data, compressed); err != nil {
+			return err
+		}
+		compressed = compressed[:outSize]
+		if n, err = w.Write(compressed); err != nil {
+			return err
+		}
+		if n != outSize {
+			errmsg := fmt.Sprintf("Only able to write %d of %d lz4 compressed bytes\n", n, outSize)
+			dvid.Errorf(errmsg)
+			return err
+		}
+	case "gzip":
+		gw := gzip.NewWriter(w)
+		if _, err = gw.Write(data); err != nil {
+			return err
+		}
+		if err = gw.Close(); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("unknown compression type %q", compression)
+	}
+	return nil
+}
+
+func getBinaryData(compression string, in io.ReadCloser, estsize int64) ([]byte, error) {
+	var err error
+	var data []byte
+	switch compression {
+	case "":
+		tlog := dvid.NewTimeLog()
+		data, err = ioutil.ReadAll(in)
+		if err != nil {
+			return nil, err
+		}
+		tlog.Debugf("read 3d uncompressed POST")
+	case "lz4":
+		tlog := dvid.NewTimeLog()
+		data, err = ioutil.ReadAll(in)
+		if err != nil {
+			return nil, err
+		}
+		if len(data) == 0 {
+			return nil, fmt.Errorf("received 0 LZ4 compressed bytes")
+		}
+		tlog.Debugf("read 3d lz4 POST")
+		tlog = dvid.NewTimeLog()
+		uncompressed := make([]byte, estsize)
+		err = lz4.Uncompress(data, uncompressed)
+		if err != nil {
+			return nil, err
+		}
+		data = uncompressed
+		tlog.Debugf("uncompressed 3d lz4 POST")
+	case "gzip":
+		tlog := dvid.NewTimeLog()
+		gr, err := gzip.NewReader(in)
+		if err != nil {
+			return nil, err
+		}
+		data, err = ioutil.ReadAll(gr)
+		if err != nil {
+			return nil, err
+		}
+		if err = gr.Close(); err != nil {
+			return nil, err
+		}
+		tlog.Debugf("read and uncompress 3d gzip POST")
+	default:
+		return nil, fmt.Errorf("unknown compression type %q", compression)
+	}
+	return data, nil
+}
+
 // ServeHTTP handles all incoming HTTP requests for this data.
 func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {
 	// TODO -- Refactor this method to break it up and make it simpler.  Use the web routing for the endpoints.
@@ -860,12 +951,8 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	}
 
 	// Get query strings and possible roi
-	var roiptr *imageblk.ROI
 	queryValues := r.URL.Query()
 	roiname := dvid.InstanceName(queryValues.Get("roi"))
-	if len(roiname) != 0 {
-		roiptr = new(imageblk.ROI)
-	}
 
 	// Handle POST on data -> setting of configuration
 	if len(parts) == 3 && action == "post" {
@@ -1024,14 +1111,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 				server.BadRequest(w, r, err)
 				return
 			}
-			if roiptr != nil {
-				roiptr.Iter, err = roi.NewIterator(roiname, ctx.VersionID(), lbl)
-				if err != nil {
-					server.BadRequest(w, r, err)
-					return
-				}
-			}
-			img, err := d.GetImage(ctx.VersionID(), lbl, roiptr)
+			img, err := d.GetImage(ctx.VersionID(), lbl, roiname)
 			if err != nil {
 				server.BadRequest(w, r, err)
 				return
@@ -1090,14 +1170,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 				server.BadRequest(w, r, err)
 				return
 			}
-			if roiptr != nil {
-				roiptr.Iter, err = roi.NewIterator(roiname, ctx.VersionID(), lbl)
-				if err != nil {
-					server.BadRequest(w, r, err)
-					return
-				}
-			}
-			img, err := d.GetImage(ctx.VersionID(), lbl, roiptr)
+			img, err := d.GetImage(ctx.VersionID(), lbl, roiname)
 			if err != nil {
 				server.BadRequest(w, r, err)
 				return
@@ -1123,8 +1196,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			}
 			timedLog.Infof("HTTP %s: %s (%s)", r.Method, plane, r.URL)
 		case 3:
-			queryStrings := r.URL.Query()
-			throttle := queryStrings.Get("throttle")
+			throttle := queryValues.Get("throttle")
 			if throttle == "true" || throttle == "on" {
 				select {
 				case <-server.Throttle:
@@ -1151,56 +1223,13 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 					server.BadRequest(w, r, err)
 					return
 				}
-				if roiptr != nil {
-					roiptr.Iter, err = roi.NewIterator(roiname, ctx.VersionID(), lbl)
-					if err != nil {
-						server.BadRequest(w, r, err)
-						return
-					}
-				}
-				data, err := d.GetVolume(ctx.VersionID(), lbl, roiptr)
+				data, err := d.GetVolume(ctx.VersionID(), lbl, roiname)
 				if err != nil {
 					server.BadRequest(w, r, err)
 					return
 				}
-				w.Header().Set("Content-type", "application/octet-stream")
-				switch compression {
-				case "":
-					_, err = w.Write(data)
-					if err != nil {
-						server.BadRequest(w, r, err)
-						return
-					}
-				case "lz4":
-					compressed := make([]byte, lz4.CompressBound(data))
-					var n, outSize int
-					if outSize, err = lz4.Compress(data, compressed); err != nil {
-						server.BadRequest(w, r, err)
-						return
-					}
-					compressed = compressed[:outSize]
-					if n, err = w.Write(compressed); err != nil {
-						server.BadRequest(w, r, err)
-						return
-					}
-					if n != outSize {
-						errmsg := fmt.Sprintf("Only able to write %d of %d lz4 compressed bytes\n", n, outSize)
-						dvid.Errorf(errmsg)
-						server.BadRequest(w, r, errmsg)
-						return
-					}
-				case "gzip":
-					gw := gzip.NewWriter(w)
-					if _, err = gw.Write(data); err != nil {
-						server.BadRequest(w, r, err)
-						return
-					}
-					if err = gw.Close(); err != nil {
-						server.BadRequest(w, r, err)
-						return
-					}
-				default:
-					server.BadRequest(w, r, "unknown compression type %q", compression)
+				if err := sendBinaryData(compression, data, w); err != nil {
+					server.BadRequest(w, r, err)
 					return
 				}
 			} else {
@@ -1208,62 +1237,15 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 					server.BadRequest(w, r, "can only POST 'raw' not 'isotropic' images")
 					return
 				}
-				// Make sure vox is block-aligned
+				// Make sure posted subvolume is block-aligned
 				if !dvid.BlockAligned(subvol, d.BlockSize()) {
 					server.BadRequest(w, r, "cannot store labels in non-block aligned geometry %s -> %s", subvol.StartPoint(), subvol.EndPoint())
 					return
 				}
-
-				var data []byte
-				switch compression {
-				case "":
-					tlog := dvid.NewTimeLog()
-					data, err = ioutil.ReadAll(r.Body)
-					if err != nil {
-						server.BadRequest(w, r, err)
-						return
-					}
-					tlog.Debugf("read 3d uncompressed POST")
-				case "lz4":
-					tlog := dvid.NewTimeLog()
-					data, err = ioutil.ReadAll(r.Body)
-					if err != nil {
-						server.BadRequest(w, r, err)
-						return
-					}
-					if len(data) == 0 {
-						server.BadRequest(w, r, "received 0 LZ4 compressed bytes")
-						return
-					}
-					tlog.Debugf("read 3d lz4 POST")
-					tlog = dvid.NewTimeLog()
-					uncompressed := make([]byte, subvol.NumVoxels()*8)
-					err = lz4.Uncompress(data, uncompressed)
-					if err != nil {
-						server.BadRequest(w, r, err)
-						return
-					}
-					data = uncompressed
-					tlog.Debugf("uncompressed 3d lz4 POST")
-				case "gzip":
-					tlog := dvid.NewTimeLog()
-					gr, err := gzip.NewReader(r.Body)
-					if err != nil {
-						server.BadRequest(w, r, err)
-						return
-					}
-					data, err = ioutil.ReadAll(gr)
-					if err != nil {
-						server.BadRequest(w, r, err)
-						return
-					}
-					if err = gr.Close(); err != nil {
-						server.BadRequest(w, r, err)
-						return
-					}
-					tlog.Debugf("read and uncompress 3d gzip POST")
-				default:
-					server.BadRequest(w, r, "unknown compression type %q", compression)
+				estsize := subvol.NumVoxels() * 8
+				data, err := getBinaryData(compression, r.Body, estsize)
+				if err != nil {
+					server.BadRequest(w, r, err)
 					return
 				}
 				lbl, err := d.NewLabels(subvol, data)
@@ -1271,14 +1253,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 					server.BadRequest(w, r, err)
 					return
 				}
-				if roiptr != nil {
-					roiptr.Iter, err = roi.NewIterator(roiname, ctx.VersionID(), lbl)
-					if err != nil {
-						server.BadRequest(w, r, err)
-						return
-					}
-				}
-				if err = d.PutVoxels(ctx.VersionID(), lbl.Voxels, roiptr); err != nil {
+				if err = d.PutVoxels(ctx.VersionID(), lbl.Voxels, roiname); err != nil {
 					server.BadRequest(w, r, err)
 					return
 				}

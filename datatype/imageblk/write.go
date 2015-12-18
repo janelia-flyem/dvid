@@ -115,7 +115,11 @@ type putOperation struct {
 // into those blocks, and then writing the result all within a transaction. It is
 // difficult to scale without requiring GETs within transactions and more complicated
 // coordination when moving to distributed front-end DVIDs.
-func (d *Data) PutVoxels(v dvid.VersionID, vox *Voxels, roi *ROI) error {
+func (d *Data) PutVoxels(v dvid.VersionID, vox *Voxels, roiname dvid.InstanceName) error {
+	r, err := GetROI(v, roiname, vox)
+	if err != nil {
+		return err
+	}
 
 	// Make sure vox is block-aligned
 	if !dvid.BlockAligned(vox, d.BlockSize()) {
@@ -168,7 +172,7 @@ func (d *Data) PutVoxels(v dvid.VersionID, vox *Voxels, roi *ROI) error {
 			curIndex := dvid.IndexZYX(c)
 
 			// Don't PUT if this index is outside a specified ROI
-			if roi != nil && roi.Iter != nil && !roi.Iter.InsideFast(curIndex) {
+			if r != nil && r.Iter != nil && !r.Iter.InsideFast(curIndex) {
 				wg.Done()
 				continue
 			}

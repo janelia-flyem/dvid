@@ -870,7 +870,7 @@ func (d *Data) PutLocal(request datastore.Request, reply *datastore.Response) er
 			return err
 		}
 		storage.FileBytesRead <- len(vox.Data())
-		if err = d.PutVoxels(versionID, vox, nil); err != nil {
+		if err = d.PutVoxels(versionID, vox, ""); err != nil {
 			return err
 		}
 		sliceLog.Debugf("%s put local %s", d.DataName(), slice)
@@ -1456,14 +1456,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 				server.BadRequest(w, r, err)
 				return
 			}
-			if roiptr != nil {
-				roiptr.Iter, err = roi.NewIterator(roiname, ctx.VersionID(), vox)
-				if err != nil {
-					server.BadRequest(w, r, err)
-					return
-				}
-			}
-			img, err := d.GetImage(ctx.VersionID(), vox, roiptr)
+			img, err := d.GetImage(ctx.VersionID(), vox, roiname)
 			if err != nil {
 				server.BadRequest(w, r, err)
 				return
@@ -1514,14 +1507,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 					server.BadRequest(w, r, err)
 					return
 				}
-				if roiptr != nil {
-					roiptr.Iter, err = roi.NewIterator(roiname, ctx.VersionID(), vox)
-					if err != nil {
-						server.BadRequest(w, r, err)
-						return
-					}
-				}
-				data, err := d.GetVolume(ctx.VersionID(), vox, roiptr)
+				data, err := d.GetVolume(ctx.VersionID(), vox, roiname)
 				if err != nil {
 					server.BadRequest(w, r, err)
 					return
@@ -1554,14 +1540,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 					server.BadRequest(w, r, err)
 					return
 				}
-				if roiptr != nil {
-					roiptr.Iter, err = roi.NewIterator(roiname, ctx.VersionID(), vox)
-					if err != nil {
-						server.BadRequest(w, r, err)
-						return
-					}
-				}
-				if err = d.PutVoxels(ctx.VersionID(), vox, roiptr); err != nil {
+				if err = d.PutVoxels(ctx.VersionID(), vox, roiname); err != nil {
 					server.BadRequest(w, r, err)
 					return
 				}

@@ -415,7 +415,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 				Voxels:     v,
 				channelNum: channelNum,
 			}
-			img, err := d.GetImage(ctx.VersionID(), channel.Voxels, nil)
+			img, err := d.GetImage(ctx.VersionID(), channel.Voxels, "")
 			var formatStr string
 			if len(parts) >= 7 {
 				formatStr = parts[6]
@@ -503,7 +503,7 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 	// PUT each channel of the file into the datastore using a separate data name.
 	for _, channel := range channels {
 		dvid.Infof("Processing channel %d... \n", channel.channelNum)
-		err = d.PutVoxels(versionID, channel.Voxels, nil)
+		err = d.PutVoxels(versionID, channel.Voxels, "")
 		if err != nil {
 			return err
 		}
@@ -588,5 +588,5 @@ func (d *Data) storeComposite(v dvid.VersionID, channels []*Channel) error {
 	}
 
 	// Store the result
-	return d.PutVoxels(v, composite.Voxels, nil)
+	return d.PutVoxels(v, composite.Voxels, "")
 }

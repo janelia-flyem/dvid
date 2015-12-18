@@ -247,7 +247,7 @@ func TestDirectCalls(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unable to make new grayscale voxels: %v\n", err)
 	}
-	if err = grayscale.PutVoxels(versionID, v, nil); err != nil {
+	if err = grayscale.PutVoxels(versionID, v, ""); err != nil {
 		t.Errorf("Unable to put voxels for %s: %v\n", grayscaleCtx, err)
 	}
 	if v.NumVoxels() != int64(len(origData)) {
@@ -260,7 +260,7 @@ func TestDirectCalls(t *testing.T) {
 	if err != nil {
 		t.Errorf("Unable to make new grayscale ExtHandler: %v\n", err)
 	}
-	if err = grayscale.GetVoxels(versionID, v2, nil); err != nil {
+	if err = grayscale.GetVoxels(versionID, v2, ""); err != nil {
 		t.Errorf("Unable to get voxels for %s: %v\n", grayscaleCtx, err)
 	}
 

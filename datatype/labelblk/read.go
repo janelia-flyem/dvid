@@ -47,7 +47,11 @@ func (v *Labels) ComputeTransform(block *storage.TKeyValue, blockSize dvid.Point
 }
 
 // GetImage retrieves a 2d image from a version node given a geometry of labels.
-func (d *Data) GetImage(v dvid.VersionID, vox *Labels, r *imageblk.ROI) (*dvid.Image, error) {
+func (d *Data) GetImage(v dvid.VersionID, vox *Labels, roiname dvid.InstanceName) (*dvid.Image, error) {
+	r, err := imageblk.GetROI(v, roiname, vox)
+	if err != nil {
+		return nil, err
+	}
 	if err := d.GetLabels(v, vox, r); err != nil {
 		return nil, err
 	}
@@ -55,7 +59,11 @@ func (d *Data) GetImage(v dvid.VersionID, vox *Labels, r *imageblk.ROI) (*dvid.I
 }
 
 // GetVolume retrieves a n-d volume from a version node given a geometry of labels.
-func (d *Data) GetVolume(v dvid.VersionID, vox *Labels, r *imageblk.ROI) ([]byte, error) {
+func (d *Data) GetVolume(v dvid.VersionID, vox *Labels, roiname dvid.InstanceName) ([]byte, error) {
+	r, err := imageblk.GetROI(v, roiname, vox)
+	if err != nil {
+		return nil, err
+	}
 	if err := d.GetLabels(v, vox, r); err != nil {
 		return nil, err
 	}

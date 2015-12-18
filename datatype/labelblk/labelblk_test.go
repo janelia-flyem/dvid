@@ -117,7 +117,7 @@ func TestLabelblkDirectAPI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unable to make new labels Voxels: %v\n", err)
 	}
-	if err = labels.PutVoxels(versionID, v, nil); err != nil {
+	if err = labels.PutVoxels(versionID, v, ""); err != nil {
 		t.Errorf("Unable to put labels for %s: %v\n", labelsCtx, err)
 	}
 	if v.NumVoxels() != int64(len(data))/8 {
@@ -130,7 +130,7 @@ func TestLabelblkDirectAPI(t *testing.T) {
 	if err != nil {
 		t.Errorf("Unable to make new labels ExtHandler: %v\n", err)
 	}
-	if err = labels.GetVoxels(versionID, v2, nil); err != nil {
+	if err = labels.GetVoxels(versionID, v2, ""); err != nil {
 		t.Errorf("Unable to get voxels for %s: %v\n", labelsCtx, err)
 	}
 
