@@ -1027,8 +1027,8 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	}
 
 	// Get query strings and possible roi
-	queryValues := r.URL.Query()
-	roiname := dvid.InstanceName(queryValues.Get("roi"))
+	queryStrings := r.URL.Query()
+	roiname := dvid.InstanceName(queryStrings.Get("roi"))
 
 	// Handle POST on data -> setting of configuration
 	if len(parts) == 3 && action == "post" {
@@ -1272,22 +1272,13 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			}
 			timedLog.Infof("HTTP %s: %s (%s)", r.Method, plane, r.URL)
 		case 3:
-			throttle := queryValues.Get("throttle")
-			if throttle == "true" || throttle == "on" {
-				select {
-				case <-server.Throttle:
-					// Proceed with operation, returning throttle token to server at end.
-					defer func() {
-						server.Throttle <- 1
-					}()
-				default:
-					throttleMsg := fmt.Sprintf("Server already running maximum of %d throttled operations",
-						server.MaxThrottledOps)
-					http.Error(w, throttleMsg, http.StatusServiceUnavailable)
+			if queryStrings.Get("throttle") == "on" {
+				if server.ThrottledHTTP(w) {
 					return
 				}
+				defer server.ThrottledOpDone()
 			}
-			compression := queryValues.Get("compression")
+			compression := queryStrings.Get("compression")
 			subvol, err := dvid.NewSubvolumeFromStrings(offsetStr, sizeStr, "_")
 			if err != nil {
 				server.BadRequest(w, r, err)
@@ -1329,7 +1320,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 					server.BadRequest(w, r, err)
 					return
 				}
-				if queryValues.Get("mutate") == "true" {
+				if queryStrings.Get("mutate") == "true" {
 					if err = d.MutateVoxels(ctx.VersionID(), lbl.Voxels, roiname); err != nil {
 						server.BadRequest(w, r, err)
 						return

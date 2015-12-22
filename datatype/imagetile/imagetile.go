@@ -1014,8 +1014,8 @@ func (d *Data) ServeTile(ctx storage.Context, w http.ResponseWriter, r *http.Req
 	}
 	tileReq, err := d.ParseTileReq(r, parts)
 
-	queryValues := r.URL.Query()
-	noblanksStr := dvid.InstanceName(queryValues.Get("noblanks"))
+	queryStrings := r.URL.Query()
+	noblanksStr := dvid.InstanceName(queryStrings.Get("noblanks"))
 	var noblanks bool
 	if noblanksStr == "true" {
 		noblanks = true

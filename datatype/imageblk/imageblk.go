@@ -1301,11 +1301,11 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 
 	// Get query strings and possible roi
 	var roiptr *ROI
-	queryValues := r.URL.Query()
-	roiname := dvid.InstanceName(queryValues.Get("roi"))
+	queryStrings := r.URL.Query()
+	roiname := dvid.InstanceName(queryStrings.Get("roi"))
 	if len(roiname) != 0 {
 		roiptr = new(ROI)
-		attenuationStr := queryValues.Get("attenuation")
+		attenuationStr := queryStrings.Get("attenuation")
 		if len(attenuationStr) != 0 {
 			attenuation, err := strconv.Atoi(attenuationStr)
 			if err != nil {
@@ -1409,7 +1409,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 				return
 			}
 		} else {
-			mutate := (queryValues.Get("mutate") == "true")
+			mutate := (queryStrings.Get("mutate") == "true")
 			if err := d.PutBlocks(ctx.VersionID(), blockCoord, span, r.Body, mutate); err != nil {
 				server.BadRequest(w, r, err)
 				return
@@ -1423,21 +1423,11 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			server.BadRequest(w, r, "%q must be followed by top-left/top-right/bottom-left/res", parts[3])
 			return
 		}
-		queryStrings := r.URL.Query()
-		throttle := queryStrings.Get("throttle")
-		if throttle == "true" || throttle == "on" {
-			select {
-			case <-server.Throttle:
-				// Proceed with operation, returning throttle token to server at end.
-				defer func() {
-					server.Throttle <- 1
-				}()
-			default:
-				throttleMsg := fmt.Sprintf("Server already running maximum of %d throttled operations",
-					server.MaxThrottledOps)
-				http.Error(w, throttleMsg, http.StatusServiceUnavailable)
+		if queryStrings.Get("throttle") == "on" {
+			if server.ThrottledHTTP(w) {
 				return
 			}
+			defer server.ThrottledOpDone()
 		}
 		img, err := d.GetArbitraryImage(ctx, parts[4], parts[5], parts[6], parts[7])
 		if err != nil {
@@ -1515,20 +1505,11 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			}
 			timedLog.Infof("HTTP %s: %s (%s)", r.Method, plane, r.URL)
 		case 3:
-			queryStrings := r.URL.Query()
 			if queryStrings.Get("throttle") == "on" {
-				select {
-				case <-server.Throttle:
-					// Proceed with operation, returning throttle token to server at end.
-					defer func() {
-						server.Throttle <- 1
-					}()
-				default:
-					throttleMsg := fmt.Sprintf("Server already running maximum of %d throttled operations",
-						server.MaxThrottledOps)
-					http.Error(w, throttleMsg, http.StatusServiceUnavailable)
+				if server.ThrottledHTTP(w) {
 					return
 				}
+				defer server.ThrottledOpDone()
 			}
 			subvol, err := dvid.NewSubvolumeFromStrings(offsetStr, sizeStr, "_")
 			if err != nil {
@@ -1574,7 +1555,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 					server.BadRequest(w, r, err)
 					return
 				}
-				mutate := (queryValues.Get("mutate") == "true")
+				mutate := (queryStrings.Get("mutate") == "true")
 				if err = d.PutVoxels(ctx.VersionID(), vox, roiname, mutate); err != nil {
 					server.BadRequest(w, r, err)
 					return

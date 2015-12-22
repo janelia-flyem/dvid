@@ -84,10 +84,10 @@ type Bounds struct {
 // BoundsFromQueryString returns Bounds from a set of query strings.
 func BoundsFromQueryString(r *http.Request) (*Bounds, error) {
 	bounds := new(Bounds)
-	queryValues := r.URL.Query()
+	queryStrings := r.URL.Query()
 
 	var minx, maxx, miny, maxy, minz, maxz int32
-	minxStr := queryValues.Get("minx")
+	minxStr := queryStrings.Get("minx")
 	if minxStr != "" {
 		val, err := strconv.ParseInt(minxStr, 10, 32)
 		if err != nil {
@@ -96,7 +96,7 @@ func BoundsFromQueryString(r *http.Request) (*Bounds, error) {
 		minx = int32(val)
 		bounds.minx = &minx
 	}
-	maxxStr := queryValues.Get("maxx")
+	maxxStr := queryStrings.Get("maxx")
 	if maxxStr != "" {
 		val, err := strconv.ParseInt(maxxStr, 10, 32)
 		if err != nil {
@@ -105,7 +105,7 @@ func BoundsFromQueryString(r *http.Request) (*Bounds, error) {
 		maxx = int32(val)
 		bounds.maxx = &maxx
 	}
-	minyStr := queryValues.Get("miny")
+	minyStr := queryStrings.Get("miny")
 	if minyStr != "" {
 		val, err := strconv.ParseInt(minyStr, 10, 32)
 		if err != nil {
@@ -114,7 +114,7 @@ func BoundsFromQueryString(r *http.Request) (*Bounds, error) {
 		miny = int32(val)
 		bounds.miny = &miny
 	}
-	maxyStr := queryValues.Get("maxy")
+	maxyStr := queryStrings.Get("maxy")
 	if maxyStr != "" {
 		val, err := strconv.ParseInt(maxyStr, 10, 32)
 		if err != nil {
@@ -123,7 +123,7 @@ func BoundsFromQueryString(r *http.Request) (*Bounds, error) {
 		maxy = int32(val)
 		bounds.maxy = &maxy
 	}
-	minzStr := queryValues.Get("minz")
+	minzStr := queryStrings.Get("minz")
 	if minzStr != "" {
 		val, err := strconv.ParseInt(minzStr, 10, 32)
 		if err != nil {
@@ -132,7 +132,7 @@ func BoundsFromQueryString(r *http.Request) (*Bounds, error) {
 		minz = int32(val)
 		bounds.minz = &minz
 	}
-	maxzStr := queryValues.Get("maxz")
+	maxzStr := queryStrings.Get("maxz")
 	if maxzStr != "" {
 		val, err := strconv.ParseInt(maxzStr, 10, 32)
 		if err != nil {

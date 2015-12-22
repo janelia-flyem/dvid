@@ -60,11 +60,6 @@ var (
 	// See ProcessChunk() in datatype/imageblk for example.
 	HandlerToken = make(chan int, MaxChunkHandlers)
 
-	// Throttle allows server-wide throttling of operations.  This is used for voxels-based
-	// compute-intensive operations on constrained servers.
-	// TODO: This should be replaced with message queue mechanism for prioritized requests.
-	Throttle = make(chan int, MaxThrottledOps)
-
 	// SpawnGoroutineMutex is a global lock for compute-intense processes that want to
 	// spawn goroutines that consume handler tokens.  This lets processes capture most
 	// if not all available handler tokens in a FIFO basis rather than have multiple
@@ -73,6 +68,15 @@ var (
 
 	// Timeout in seconds for waiting to open a datastore for exclusive access.
 	TimeoutSecs int
+
+	// maxThrottledOps sets the maximum number of concurrent CPU-heavy ops that can be
+	// performed on this server when requests are submitted using "throttled=true" query
+	// strings.  See imageblk and labelblk 3d GET/POST voxel requests.
+	maxThrottledOps int = 1
+
+	// curThrottleOps is the current number of CPU-heavy ops being performed on the server.
+	curThrottledOps int
+	curThrottleMu   sync.Mutex
 
 	// Keep track of the startup time for uptime.
 	startupTime time.Time = time.Now()
@@ -96,11 +100,6 @@ func init() {
 	// Set the GC closer to old Go 1.4 setting
 	old := debug.SetGCPercent(defaultGCPercent)
 	dvid.Infof("DVID server GC target percentage changed from %d to %d\n", old, defaultGCPercent)
-
-	// Initialize the number of throttled ops available.
-	for i := 0; i < MaxThrottledOps; i++ {
-		Throttle <- 1
-	}
 
 	// Initialize the number of handler tokens available.
 	for i := 0; i < MaxChunkHandlers; i++ {
@@ -140,6 +139,12 @@ func init() {
 			}
 		}
 	}()
+}
+
+func SetMaxThrottleOps(maxOps int) {
+	curThrottleMu.Lock()
+	maxThrottledOps = maxOps
+	curThrottleMu.Unlock()
 }
 
 // GitVersion returns a git-derived string that allows recovery of the exact source code

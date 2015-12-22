@@ -1285,8 +1285,8 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			server.BadRequest(w, r, "partition only supports GET request")
 			return
 		}
-		queryValues := r.URL.Query()
-		batchsizeStr := queryValues.Get("batchsize")
+		queryStrings := r.URL.Query()
+		batchsizeStr := queryStrings.Get("batchsize")
 		batchsize, err := strconv.Atoi(batchsizeStr)
 		if err != nil {
 			server.BadRequest(w, r, fmt.Sprintf("Error reading batchsize query string: %v", err))
@@ -1294,8 +1294,8 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 
 		var jsonBytes []byte
-		optimizedStr := queryValues.Get("optimized")
-		dvid.Infof("queryvalues = %v\n", queryValues)
+		optimizedStr := queryStrings.Get("optimized")
+		dvid.Infof("queryvalues = %v\n", queryStrings)
 		if optimizedStr == "true" || optimizedStr == "on" {
 			dvid.Infof("Perform optimized partitioning into subvolumes using batchsize %d\n", batchsize)
 			jsonBytes, err = d.Partition(ctx, int32(batchsize))

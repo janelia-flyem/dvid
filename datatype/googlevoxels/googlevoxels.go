@@ -874,8 +874,8 @@ func (d *Data) ServeImage(w http.ResponseWriter, r *http.Request, parts []string
 
 	// See if scaling was specified in query string, otherwise use high-res (scale 0)
 	var scale Scaling
-	queryValues := r.URL.Query()
-	scalingStr := queryValues.Get("scale")
+	queryStrings := r.URL.Query()
+	scalingStr := queryStrings.Get("scale")
 	if scalingStr != "" {
 		scale64, err := strconv.ParseUint(scalingStr, 10, 8)
 		if err != nil {
@@ -901,16 +901,16 @@ func (d *Data) ServeTile(w http.ResponseWriter, r *http.Request, parts []string)
 		return fmt.Errorf("'tile' request must be following by plane, scale level, and tile coordinate")
 	}
 	planeStr, scalingStr, coordStr := parts[4], parts[5], parts[6]
-	queryValues := r.URL.Query()
+	queryStrings := r.URL.Query()
 
 	var noblanks bool
-	noblanksStr := dvid.InstanceName(queryValues.Get("noblanks"))
+	noblanksStr := dvid.InstanceName(queryStrings.Get("noblanks"))
 	if noblanksStr == "true" {
 		noblanks = true
 	}
 
 	var tilesize int32 = DefaultTileSize
-	tileSizeStr := queryValues.Get("tilesize")
+	tileSizeStr := queryStrings.Get("tilesize")
 	if tileSizeStr != "" {
 		tilesizeInt, err := strconv.Atoi(tileSizeStr)
 		if err != nil {

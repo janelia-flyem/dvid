@@ -33,9 +33,6 @@ const (
 
 	// The name of the server error log, stored in the datastore directory.
 	ErrorLogFilename = "dvid-errors.log"
-
-	// Maximum number of throttled ops we can handle through API
-	MaxThrottledOps = 1
 )
 
 var tc tomlConfig

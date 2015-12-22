@@ -800,7 +800,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			server.BadRequest(w, r, "Label 0 is protected background value and cannot be used as sparse volume.\n")
 			return
 		}
-		queryValues := r.URL.Query()
+		queryStrings := r.URL.Query()
 		var b Bounds
 		b.VoxelBounds, err = dvid.BoundsFromQueryString(r)
 		if err != nil {
@@ -809,11 +809,11 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 		b.BlockBounds = b.VoxelBounds.Divide(d.BlockSize)
 		b.Exact = true
-		if queryValues.Get("exact") == "false" {
+		if queryStrings.Get("exact") == "false" {
 			b.Exact = false
 		}
 
-		compression := queryValues.Get("compression")
+		compression := queryStrings.Get("compression")
 
 		switch action {
 		case "get":
@@ -1009,8 +1009,8 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			return
 		}
 		var splitLabel uint64
-		queryValues := r.URL.Query()
-		splitStr := queryValues.Get("splitlabel")
+		queryStrings := r.URL.Query()
+		splitStr := queryStrings.Get("splitlabel")
 		if splitStr != "" {
 			splitLabel, err = strconv.ParseUint(splitStr, 10, 64)
 			if err != nil {
@@ -1046,8 +1046,8 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			return
 		}
 		var splitLabel uint64
-		queryValues := r.URL.Query()
-		splitStr := queryValues.Get("splitlabel")
+		queryStrings := r.URL.Query()
+		splitStr := queryStrings.Get("splitlabel")
 		if splitStr != "" {
 			splitLabel, err = strconv.ParseUint(splitStr, 10, 64)
 			if err != nil {

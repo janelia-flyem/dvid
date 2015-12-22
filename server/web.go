@@ -101,13 +101,23 @@ const WebHelp = `
 
  	Returns JSON of all possible datatypes for this server, i.e., the list of compiled datatypes.
 
-POST  /api/server/gc
+POST  /api/server/settings
 
-	Sets the garbage collection target percentage.  This is a low-level server tuning
-	request that can affect overall request latency.
-	See: https://golang.org/pkg/runtime/debug/#SetGCPercent
+	Sets server parameters.  Expects JSON to be posted with optional keys denoting parameters:
+	{
+		"gc": 500,
+		"throttle": 2
+	}
 
-	Expects JSON to be posted {"percent": 500}.
+	 
+	Possible keys:
+	gc        Garbage collection target percentage.  This is a low-level server tuning
+	            request that can affect overall request latency.
+	            See: https://golang.org/pkg/runtime/debug/#SetGCPercent
+
+	throttle  Maximum number of CPU-intensive requests that can be executed under throttle mode.
+	            See imageblk and labelblk GET 3d voxels and POST voxels.
+	            Default = 1.
 
 -------------------------
 Repo-Level REST endpoints
@@ -337,6 +347,29 @@ func init() {
 	webMux.Use(middleware.RequestID)
 }
 
+// ThrottledHTTP checks if a request can continue under throttling.  If so, it returns
+// false.  If it cannot (throttled state), it sends a http.StatusServiceUnavailable and
+// returns true.  Throttling is controlled by
+func ThrottledHTTP(w http.ResponseWriter) bool {
+	curThrottleMu.Lock()
+	if curThrottledOps < maxThrottledOps {
+		curThrottledOps++
+		curThrottleMu.Unlock()
+		return false
+	}
+	curThrottleMu.Unlock()
+	msg := fmt.Sprintf("Server already running %d throttled operations (max = %d)\n", curThrottledOps, maxThrottledOps)
+	http.Error(w, msg, http.StatusServiceUnavailable)
+	return true
+}
+
+// ThrottleOpDone marks the end of a throttled operation, allowing another op blocked by ThrottledHTTP() to succeed.
+func ThrottledOpDone() {
+	curThrottleMu.Lock()
+	curThrottledOps--
+	curThrottleMu.Unlock()
+}
+
 // ServeSingleHTTP fulfills one request using the default web Mux.
 func ServeSingleHTTP(w http.ResponseWriter, r *http.Request) {
 	if !webMux.routesSetup {
@@ -420,7 +453,7 @@ func initRoutes() {
 	mainMux.Get("/api/server/types/", serverTypesHandler)
 	mainMux.Get("/api/server/compiled-types", serverCompiledTypesHandler)
 	mainMux.Get("/api/server/compiled-types/", serverCompiledTypesHandler)
-	mainMux.Post("/api/server/gc", serverGCHandler)
+	mainMux.Post("/api/server/settings", serverSettingsHandler)
 
 	if !readonly {
 		mainMux.Post("/api/repos", reposPostHandler)
@@ -631,10 +664,10 @@ func instanceSelector(c *web.C, h http.Handler) http.Handler {
 		ctx := datastore.NewVersionedCtx(data, v)
 
 		// Handle DVID-wide query string commands like non-interactive call designations
-		queryValues := r.URL.Query()
+		queryStrings := r.URL.Query()
 
 		// All HTTP requests are interactive so let server tally request.
-		interactive := queryValues.Get("interactive")
+		interactive := queryStrings.Get("interactive")
 		if interactive == "" || (interactive != "false" && interactive != "0") {
 			GotInteractiveRequest()
 		}
@@ -782,20 +815,36 @@ func serverCompiledTypesHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, string(m))
 }
 
-func serverGCHandler(c web.C, w http.ResponseWriter, r *http.Request) {
+func serverSettingsHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	config := dvid.NewConfig()
 	if err := config.SetByJSON(r.Body); err != nil {
 		BadRequest(w, r, fmt.Sprintf("Error decoding POSTed JSON config for 'new': %v", err))
 		return
 	}
-	percent, found, err := config.GetInt("percent")
-	if !found || err != nil {
-		BadRequest(w, r, "POST on gc endpoint requires specification of valid 'percent' number")
+	w.Header().Set("Content-Type", "text/plain")
+
+	// Handle GC percentage setting
+	percent, found, err := config.GetInt("gc")
+	if err != nil {
+		BadRequest(w, r, "POST on settings endpoint had bad parsing of 'gc' key: %v", err)
 		return
 	}
-	old := debug.SetGCPercent(percent)
-	w.Header().Set("Content-Type", "text/plain")
-	fmt.Fprintf(w, "DVID server garbage collection target percentage set to %d from %d\n", percent, old)
+	if found {
+		old := debug.SetGCPercent(percent)
+		fmt.Fprintf(w, "DVID server garbage collection target percentage set to %d from %d\n", percent, old)
+	}
+
+	// Handle max throttle ops setting
+	maxOps, found, err := config.GetInt("throttle")
+	if err != nil {
+		BadRequest(w, r, "POST on settings endpoint had bad parsing of 'throttle' key: %v", err)
+		return
+	}
+	if found {
+		old := maxThrottledOps
+		SetMaxThrottleOps(maxOps)
+		fmt.Fprintf(w, "Maximum throttled ops set to %d from %d\n", maxOps, old)
+	}
 }
 
 func reposInfoHandler(w http.ResponseWriter, r *http.Request) {
@@ -863,8 +912,8 @@ func repoInfoHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 
 func repoDeleteHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	uuid := c.Env["uuid"].(dvid.UUID)
-	queryValues := r.URL.Query()
-	imsure := queryValues.Get("imsure")
+	queryStrings := r.URL.Query()
+	imsure := queryStrings.Get("imsure")
 	if imsure != "true" {
 		BadRequest(w, r, "Cannot delete repo unless query string 'imsure=true' is present!")
 		return
@@ -883,8 +932,8 @@ func repoDeleteHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 
 func repoDeleteInstanceHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	uuid := c.Env["uuid"].(dvid.UUID)
-	queryValues := r.URL.Query()
-	imsure := queryValues.Get("imsure")
+	queryStrings := r.URL.Query()
+	imsure := queryStrings.Get("imsure")
 	if imsure != "true" {
 		BadRequest(w, r, "Cannot delete instance unless query string 'imsure=true' is present!")
 		return

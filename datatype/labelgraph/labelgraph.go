@@ -1350,8 +1350,8 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		fmt.Fprintf(w, string(jsonBytes))
 	case "subgraph":
 		// disable json schema validation (will speedup POST command)
-		queryValues := r.URL.Query()
-		disableSchemaT := dvid.InstanceName(queryValues.Get("unsafe"))
+		queryStrings := r.URL.Query()
+		disableSchemaT := dvid.InstanceName(queryStrings.Get("unsafe"))
 		disableSchema := false
 		if len(disableSchemaT) != 0 && disableSchemaT == "true" {
 			disableSchema = true
