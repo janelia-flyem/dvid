@@ -110,7 +110,8 @@ type DeltaSparsevol struct {
 
 // Label change event identifiers
 const (
-	ChangeBlockEvent    = imageblk.ChangeBlockEvent
+	IngestBlockEvent    = imageblk.IngestBlockEvent
+	MutateBlockEvent    = imageblk.MutateBlockEvent
 	DeleteBlockEvent    = imageblk.DeleteBlockEvent
 	SparsevolStartEvent = "SPARSEVOL_START"
 	SparsevolModEvent   = "SPARSEVOL_MOD"

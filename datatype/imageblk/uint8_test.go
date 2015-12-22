@@ -247,7 +247,7 @@ func TestDirectCalls(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unable to make new grayscale voxels: %v\n", err)
 	}
-	if err = grayscale.PutVoxels(versionID, v, ""); err != nil {
+	if err = grayscale.IngestVoxels(versionID, v, ""); err != nil {
 		t.Errorf("Unable to put voxels for %s: %v\n", grayscaleCtx, err)
 	}
 	if v.NumVoxels() != int64(len(origData)) {

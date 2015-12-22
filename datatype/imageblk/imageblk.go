@@ -152,17 +152,52 @@ GET <api URL>/node/<UUID>/<data name>/rawkey?x=<block x>&y=<block y>&z=<block z>
 
     The query options for block x, y, and z must be supplied or this request will return an error.
 
-GET  <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?throttle=true][?queryopts]
-POST <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>]
+GET  <api URL>/node/<UUID>/<data name>/isotropic/<dims>/<size>/<offset>[/<format>][?queryopts]
 
-    Retrieves or puts voxel data.  GETs will return either 2d images (PNG by default) or 3d
-    binary data, depending on the dims parameter.  The 3d binary data response has
-    "Content-type" set to "application/octet-stream" and simply an array of voxel values
-    with X iterating most quickly.
+    Retrieves either 2d images (PNG by default) or 3d binary data, depending on the dims parameter.  
+    The 3d binary data response has "Content-type" set to "application/octet-stream" and is an array of 
+    voxel values in ZYX order (X iterates most rapidly).
 
-    NOTE on POST: All POSTed data must be block-aligned using the block sizes defined for 
-    this data instance.  For example, if the BlockSize = 32, offset and size must by
-    multiples of 32.
+    Example: 
+
+    GET <api URL>/node/3f8c/grayscale/isotropic/0_1/512_256/0_0_100/jpg:80
+
+    Returns an isotropic XY slice (0th and 1st dimensions) with width (x) of 512 voxels and
+    height (y) of 256 voxels with offset (0,0,100) in JPG format with quality 80.
+    Additional processing is applied based on voxel resolutions to make sure the retrieved image 
+    has isotropic pixels.  For example, if an XZ image is requested and the image volume has 
+    X resolution 3 nm and Z resolution 40 nm, the returned image's height will be magnified 40/3
+    relative to the raw data.
+    The example offset assumes the "grayscale" data in version node "3f8c" is 3d.
+    The "Content-type" of the HTTP response should agree with the requested format.
+    For example, returned PNGs will have "Content-type" of "image/png", and returned
+    nD data will be "application/octet-stream".
+
+    Arguments:
+
+    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    data name     Name of data to add.
+    dims          The axes of data extraction in form "i_j_k,..."  Example: "0_2" can be XZ.
+                    Slice strings ("xy", "xz", or "yz") are also accepted.
+    size          Size in voxels along each dimension specified in <dims>.
+    offset        Gives coordinate of first voxel using dimensionality of data.
+    format        Valid formats depend on the dimensionality of the request and formats
+                    available in server implementation.
+                  2D: "png", "jpg" (default: "png")
+                    jpg allows lossy quality setting, e.g., "jpg:80"
+                  nD: uses default "octet-stream".
+
+    Query-string Options:
+
+    throttle      Only works for 3d data requests.  If "true", makes sure only N compute-intense operation 
+                    (all API calls that can be throttled) are handled.  If the server can't initiate the API 
+                    call right away, a 503 (Service Unavailable) status code is returned.
+
+GET  <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?queryopts]
+
+    Retrieves either 2d images (PNG by default) or 3d binary data, depending on the dims parameter.  
+    The 3d binary data response has "Content-type" set to "application/octet-stream" and is an array of 
+    voxel values in ZYX order (X iterates most rapidly).
 
     Example: 
 
@@ -176,11 +211,6 @@ POST <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>]
     The "Content-type" of the HTTP response should agree with the requested format.
     For example, returned PNGs will have "Content-type" of "image/png", and returned
     nD data will be "application/octet-stream". 
-
-    Throttling can be enabled by passing a "throttle=true" query string.  Throttling makes sure
-    only one compute-intense operation (all API calls that can be throttled) is handled.
-    If the server can't initiate the API call right away, a 503 (Service Unavailable) status
-    code is returned.
 
     Arguments:
 
@@ -199,29 +229,22 @@ POST <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>]
 
     Query-string Options:
 
-    roi       	  Name of roi data instance used to mask the requested data.
+    roi           Name of roi data instance used to mask the requested data.
     attenuation   For attenuation n, this reduces the intensity of voxels outside ROI by 2^n.
-    			  Valid range is n = 1 to n = 7.  Currently only implemented for 8-bit voxels.
-    			  Default is to zero out voxels outside ROI.
+                  Valid range is n = 1 to n = 7.  Currently only implemented for 8-bit voxels.
+                  Default is to zero out voxels outside ROI.
+    throttle      Only works for 3d data requests.  If "true", makes sure only N compute-intense operation 
+                    (all API calls that can be throttled) are handled.  If the server can't initiate the API 
+                    call right away, a 503 (Service Unavailable) status code is returned.
 
-GET  <api URL>/node/<UUID>/<data name>/isotropic/<dims>/<size>/<offset>[/<format>][?throttle=true]
+POST <api URL>/node/<UUID>/<data name>/raw/0_1_2/<size>/<offset>[?queryopts]
 
-    Retrieves or puts voxel data.
+    Puts block-aligned voxel data using the block sizes defined for  this data instance.  
+    For example, if the BlockSize = 32, offset and size must by multiples of 32.
 
     Example: 
 
-    GET <api URL>/node/3f8c/grayscale/isotropic/0_1/512_256/0_0_100/jpg:80
-
-    Returns an isotropic XY slice (0th and 1st dimensions) with width (x) of 512 voxels and
-    height (y) of 256 voxels with offset (0,0,100) in JPG format with quality 80.
-    Additional processing is applied based on voxel resolutions to make sure the retrieved image 
-    has isotropic pixels.  For example, if an XZ image is requested and the image volume has 
-    X resolution 3 nm and Z resolution 40 nm, the returned image's height will be magnified 40/3
-    relative to the raw data.
-    The example offset assumes the "grayscale" data in version node "3f8c" is 3d.
-    The "Content-type" of the HTTP response should agree with the requested format.
-    For example, returned PNGs will have "Content-type" of "image/png", and returned
-    nD data will be "application/octet-stream".
+    POST <api URL>/node/3f8c/grayscale/raw/0_1_2/512_256_128/0_0_32
 
     Throttling can be enabled by passing a "throttle=true" query string.  Throttling makes sure
     only one compute-intense operation (all API calls that can be throttled) is handled.
@@ -232,17 +255,21 @@ GET  <api URL>/node/<UUID>/<data name>/isotropic/<dims>/<size>/<offset>[/<format
 
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add.
-    dims          The axes of data extraction in form "i_j_k,..."  Example: "0_2" can be XZ.
-                    Slice strings ("xy", "xz", or "yz") are also accepted.
     size          Size in voxels along each dimension specified in <dims>.
     offset        Gives coordinate of first voxel using dimensionality of data.
-    format        Valid formats depend on the dimensionality of the request and formats
-                    available in server implementation.
-                  2D: "png", "jpg" (default: "png")
-                    jpg allows lossy quality setting, e.g., "jpg:80"
-                  nD: uses default "octet-stream".
 
-GET  <api URL>/node/<UUID>/<data name>/arb/<top left>/<top right>/<bottom left>/<res>[/<format>]
+    Query-string Options:
+
+    roi           Name of roi data instance used to mask the requested data.
+    mutate        Default "false" corresponds to ingestion, i.e., the first write of the given block.
+                    Use "true" to indicate the POST is a mutation of prior data, which allows any
+                    synced data instance to cleanup prior denormalizations.  If "mutate=true", the
+                    POST operations will be slower due to a required GET to retrieve past data.
+    throttle      If "true", makes sure only N compute-intense operation 
+                    (all API calls that can be throttled) are handled.  If the server can't initiate the API 
+                    call right away, a 503 (Service Unavailable) status code is returned.
+
+GET  <api URL>/node/<UUID>/<data name>/arb/<top left>/<top right>/<bottom left>/<res>[/<format>][?queryopts]
 
     Retrieves non-orthogonal (arbitrarily oriented planar) image data of named 3d data 
     within a version node.  Returns an image where the top left pixel corresponds to the
@@ -264,6 +291,12 @@ GET  <api URL>/node/<UUID>/<data name>/arb/<top left>/<top right>/<bottom left>/
     res           The resolution/pixel that is used to calculate the returned image size in pixels.
     format        "png", "jpg" (default: "png")  
                     jpg allows lossy quality setting, e.g., "jpg:80"
+
+    Query-string Options:
+
+    throttle      If "true", makes sure only N compute-intense operation 
+                    (all API calls that can be throttled) are handled.  If the server can't initiate the API 
+                    call right away, a 503 (Service Unavailable) status code is returned.
 
  GET <api URL>/node/<UUID>/<data name>/blocks/<block coord>/<spanX>
 POST <api URL>/node/<UUID>/<data name>/blocks/<block coord>/<spanX>
@@ -870,7 +903,7 @@ func (d *Data) PutLocal(request datastore.Request, reply *datastore.Response) er
 			return err
 		}
 		storage.FileBytesRead <- len(vox.Data())
-		if err = d.PutVoxels(versionID, vox, ""); err != nil {
+		if err = d.IngestVoxels(versionID, vox, ""); err != nil {
 			return err
 		}
 		sliceLog.Debugf("%s put local %s", d.DataName(), slice)
@@ -1376,7 +1409,8 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 				return
 			}
 		} else {
-			if err := d.PutBlocks(ctx.VersionID(), blockCoord, span, r.Body); err != nil {
+			mutate := (queryValues.Get("mutate") == "true")
+			if err := d.PutBlocks(ctx.VersionID(), blockCoord, span, r.Body, mutate); err != nil {
 				server.BadRequest(w, r, err)
 				return
 			}
@@ -1540,7 +1574,8 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 					server.BadRequest(w, r, err)
 					return
 				}
-				if err = d.PutVoxels(ctx.VersionID(), vox, roiname); err != nil {
+				mutate := (queryValues.Get("mutate") == "true")
+				if err = d.PutVoxels(ctx.VersionID(), vox, roiname, mutate); err != nil {
 					server.BadRequest(w, r, err)
 					return
 				}

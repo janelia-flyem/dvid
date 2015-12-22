@@ -105,17 +105,29 @@ type putOperation struct {
 	voxels   *Voxels
 	indexZYX dvid.IndexZYX
 	version  dvid.VersionID
+	mutate   bool // if false, we just ingest without needing to GET previous value
+}
+
+// IngestVoxels ingests voxels from a subvolume into the storage engine.
+// The subvolume must be aligned to blocks of the data instance, which simplifies
+// the routine since we are simply replacing a value instead of modifying values (GET + PUT).
+func (d *Data) IngestVoxels(v dvid.VersionID, vox *Voxels, roiname dvid.InstanceName) error {
+	return d.PutVoxels(v, vox, roiname, false)
+}
+
+// MutateVoxels mutates voxels from a subvolume into the storage engine.  This differs from
+// the IngestVoxels function in firing off a MutateBlockEvent instead of an IngestBlockEvent,
+// which tells subscribers that a previous value has changed instead of a completely new
+// key/value being inserted.  There will be some decreased performance due to cleanup of prior
+// denormalizations compared to IngestVoxels.
+func (d *Data) MutateVoxels(v dvid.VersionID, vox *Voxels, roiname dvid.InstanceName) error {
+	return d.PutVoxels(v, vox, roiname, true)
 }
 
 // PutVoxels persists voxels from a subvolume into the storage engine.
-// The subvolume must be aligned to blocks of the data instance.
-//
-// This requirement simplifies the coding quite a bit.  Earlier versions
-// of DVID allowed 2d writes, which required reading blocks, writing subsets of data
-// into those blocks, and then writing the result all within a transaction. It is
-// difficult to scale without requiring GETs within transactions and more complicated
-// coordination when moving to distributed front-end DVIDs.
-func (d *Data) PutVoxels(v dvid.VersionID, vox *Voxels, roiname dvid.InstanceName) error {
+// The subvolume must be aligned to blocks of the data instance, which simplifies
+// the routine if the PUT is a mutation (signals MutateBlockEvent) instead of ingestion.
+func (d *Data) PutVoxels(v dvid.VersionID, vox *Voxels, roiname dvid.InstanceName, mutate bool) error {
 	r, err := GetROI(v, roiname, vox)
 	if err != nil {
 		return err
@@ -178,7 +190,7 @@ func (d *Data) PutVoxels(v dvid.VersionID, vox *Voxels, roiname dvid.InstanceNam
 			}
 
 			kv := &storage.TKeyValue{K: NewTKey(&curIndex)}
-			putOp := &putOperation{vox, curIndex, v}
+			putOp := &putOperation{vox, curIndex, v, mutate}
 			op := &storage.ChunkOp{putOp, wg}
 			d.PutChunk(&storage.Chunk{op, kv})
 		}
@@ -189,7 +201,7 @@ func (d *Data) PutVoxels(v dvid.VersionID, vox *Voxels, roiname dvid.InstanceNam
 }
 
 // PutBlocks stores blocks of data in a span along X
-func (d *Data) PutBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int, data io.ReadCloser) error {
+func (d *Data) PutBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int, data io.ReadCloser, mutate bool) error {
 	store, err := storage.MutableStore()
 	if err != nil {
 		return fmt.Errorf("Data type imageblk had error initializing store: %v\n", err)
@@ -201,6 +213,13 @@ func (d *Data) PutBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int, da
 
 	ctx := datastore.NewVersionedCtx(d, v)
 	batch := batcher.NewBatch(ctx)
+
+	var event string
+	if mutate {
+		event = MutateBlockEvent
+	} else {
+		event = IngestBlockEvent
+	}
 
 	// Read blocks from the stream until we can output a batch put.
 	const BatchSize = 1000
@@ -237,7 +256,7 @@ func (d *Data) PutBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int, da
 		batch.Put(NewTKey(&zyx), serialization)
 
 		// Notify any subscribers that you've changed block.
-		evt := datastore.SyncEvent{d.DataName(), ChangeBlockEvent}
+		evt := datastore.SyncEvent{d.DataName(), event}
 		msg := datastore.SyncMessage{v, Block{&zyx, buf}}
 		if err := datastore.NotifySubscribers(evt, msg); err != nil {
 			return err
@@ -304,7 +323,17 @@ func (d *Data) putChunk(chunk *storage.Chunk) {
 	} else {
 		blockData, _, err = dvid.DeserializeData(chunk.V, true)
 		if err != nil {
-			dvid.Errorf("Unable to deserialize block in '%s': %v\n", d.DataName(), err)
+			dvid.Errorf("Unable to deserialize block in %q: %v\n", d.DataName(), err)
+			return
+		}
+	}
+
+	// If we are mutating, get the previous block of data.
+	var oldBlock []byte
+	if op.mutate {
+		oldBlock, err = d.loadOldBlock(op.version, chunk.K)
+		if err != nil {
+			dvid.Errorf("Unable to load previous block in %q, key %v: %v\n", d.DataName(), chunk.K, err)
 			return
 		}
 	}
@@ -333,10 +362,19 @@ func (d *Data) putChunk(chunk *storage.Chunk) {
 	}
 
 	// Notify any subscribers that you've changed block.
-	evt := datastore.SyncEvent{d.DataName(), ChangeBlockEvent}
-	msg := datastore.SyncMessage{op.version, Block{&op.indexZYX, block.V}}
+	var event string
+	var delta interface{}
+	if op.mutate {
+		event = MutateBlockEvent
+		delta = MutatedBlock{&op.indexZYX, oldBlock, block.V}
+	} else {
+		event = IngestBlockEvent
+		delta = Block{&op.indexZYX, block.V}
+	}
+	evt := datastore.SyncEvent{d.DataName(), event}
+	msg := datastore.SyncMessage{op.version, delta}
 	if err := datastore.NotifySubscribers(evt, msg); err != nil {
-		dvid.Errorf("Unable to notify subscribers of ChangeBlockEvent in %s\n", d.DataName())
+		dvid.Errorf("Unable to notify subscribers of event %s in %s\n", event, d.DataName())
 	}
 }
 
@@ -398,7 +436,7 @@ func (d *Data) writeXYImage(v dvid.VersionID, vox *Voxels, b storage.TKeyValues)
 const KVWriteSize = 500
 
 // TODO -- Clean up all the writing and simplify now that we have block-aligned writes.
-// writeBlocks persists blocks of voxel data asynchronously using batch writes.
+// writeBlocks ingests blocks of voxel data asynchronously using batch writes.
 func (d *Data) writeBlocks(v dvid.VersionID, b storage.TKeyValues, wg1, wg2 *sync.WaitGroup) error {
 	store, err := storage.MutableStore()
 	if err != nil {
@@ -412,7 +450,7 @@ func (d *Data) writeBlocks(v dvid.VersionID, b storage.TKeyValues, wg1, wg2 *syn
 	preCompress, postCompress := 0, 0
 
 	ctx := datastore.NewVersionedCtx(d, v)
-	evt := datastore.SyncEvent{d.DataName(), ChangeBlockEvent}
+	evt := datastore.SyncEvent{d.DataName(), IngestBlockEvent}
 
 	<-server.HandlerToken
 	go func() {
