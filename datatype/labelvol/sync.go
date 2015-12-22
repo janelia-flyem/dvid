@@ -54,6 +54,12 @@ func (d *Data) InitSync(name dvid.InstanceName) []datastore.SyncSub {
 			Done:   doneCh,
 		},
 		datastore.SyncSub{
+			Event:  datastore.SyncEvent{name, labels.MutateBlockEvent},
+			Notify: d.DataName(),
+			Ch:     syncCh,
+			Done:   doneCh,
+		},
+		datastore.SyncSub{
 			Event:  datastore.SyncEvent{name, labels.DeleteBlockEvent},
 			Notify: d.DataName(),
 			Ch:     syncCh,
