@@ -82,8 +82,7 @@ func (b testBody) checkSparseVol(t *testing.T, encoding []byte, bounds dvid.Boun
 	spansEncoding := encoding[8:]
 	var spans dvid.Spans
 	if err := spans.UnmarshalBinary(spansEncoding); err != nil {
-		t.Errorf("Error in decoding sparse volume: %v\n", err)
-		return
+		t.Fatalf("Error in decoding sparse volume: %v\n", err)
 	}
 
 	// Create potentially bounded spans
@@ -100,10 +99,12 @@ func (b testBody) checkSparseVol(t *testing.T, encoding []byte, bounds dvid.Boun
 	}
 
 	// Check those spans match the body voxels.
-	if !reflect.DeepEqual(spans, expected) {
-		for _, got := range spans {
+	gotNorm := spans.Normalize()
+	expectNorm := expected.Normalize()
+	if !reflect.DeepEqual(gotNorm, expectNorm) {
+		for _, got := range gotNorm {
 			bad := true
-			for _, expect := range expected {
+			for _, expect := range expectNorm {
 				if reflect.DeepEqual(got, expect) {
 					bad = false
 				}
@@ -112,9 +113,9 @@ func (b testBody) checkSparseVol(t *testing.T, encoding []byte, bounds dvid.Boun
 				fmt.Printf("Got unexpected span: %s\n", got)
 			}
 		}
-		for _, expect := range expected {
+		for _, expect := range expectNorm {
 			bad := true
-			for _, got := range spans {
+			for _, got := range gotNorm {
 				if reflect.DeepEqual(got, expect) {
 					bad = false
 				}
@@ -123,7 +124,7 @@ func (b testBody) checkSparseVol(t *testing.T, encoding []byte, bounds dvid.Boun
 				fmt.Printf("Never got expected span: %s\n", expect)
 			}
 		}
-		t.Errorf("Expected spans for label %d:\n%s\nGot spans:\n%s\n", b.label, expected, spans)
+		t.Errorf("Expected spans for label %d:\n%s\nGot spans:\n%s\nAfter Norm:%s\n", b.label, expectNorm, spans, gotNorm)
 	}
 }
 
@@ -204,6 +205,12 @@ func (v *testVolume) put(t *testing.T, uuid dvid.UUID, name string) {
 	server.TestHTTP(t, "POST", apiStr, bytes.NewBuffer(v.data))
 }
 
+func (v *testVolume) putMutable(t *testing.T, uuid dvid.UUID, name string) {
+	apiStr := fmt.Sprintf("%snode/%s/%s/raw/0_1_2/%d_%d_%d/0_0_0?mutate=true", server.WebAPIPath,
+		uuid, name, v.size[0], v.size[1], v.size[2])
+	server.TestHTTP(t, "POST", apiStr, bytes.NewBuffer(v.data))
+}
+
 func (v *testVolume) get(t *testing.T, uuid dvid.UUID, name string) {
 	apiStr := fmt.Sprintf("%snode/%s/%s/raw/0_1_2/%d_%d_%d/0_0_0", server.WebAPIPath,
 		uuid, name, v.size[0], v.size[1], v.size[2])
@@ -280,6 +287,17 @@ func createLabelTestVolume(t *testing.T, uuid dvid.UUID, name string) *testVolum
 
 	// Send data over HTTP to populate a data instance
 	volume.put(t, uuid, name)
+	return volume
+}
+
+func createLabelTest2Volume(t *testing.T, uuid dvid.UUID, name string) *testVolume {
+	// Setup test label blocks that are non-intersecting.
+	volume := newTestVolume(128, 128, 128)
+	volume.add(body6, 6)
+	volume.add(body7, 7)
+
+	// Send data over HTTP to populate a data instance using mutable flag
+	volume.putMutable(t, uuid, name)
 	return volume
 }
 
@@ -843,7 +861,84 @@ func TestSplitCoarseGivenLabel(t *testing.T) {
 	}
 }
 
-// test diffBlock() function by making sure these RLEs are duplicates
+// Test that mutable labelblk POST will accurately remove prior bodies.
+func TestMutableLabelblkPOST(t *testing.T) {
+	datastore.OpenTest()
+	defer datastore.CloseTest()
+
+	// Create testbed volume and data instances
+	uuid, _ := initTestRepo()
+	var config dvid.Config
+	config.Set("sync", "bodies")
+	server.CreateTestInstance(t, uuid, "labelblk", "labels", config)
+	config.Clear()
+	config.Set("sync", "labels")
+	server.CreateTestInstance(t, uuid, "labelvol", "bodies", config)
+
+	// Post labels 1-4
+	createLabelTestVolume(t, uuid, "labels")
+
+	if err := BlockOnUpdating(uuid, "bodies"); err != nil {
+		t.Fatalf("Error blocking on sync of labels -> bodies: %v\n", err)
+	}
+
+	// Make sure we have labels 1-4 sparsevol
+	for _, label := range []uint64{1, 2, 3, 4} {
+		// Check fast HEAD requests
+		reqStr := fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid, "bodies", label)
+		resp := server.TestHTTPResponse(t, "HEAD", reqStr, nil)
+		if resp.Code != http.StatusOK {
+			t.Errorf("HEAD on %s did not return OK.  Status = %d\n", reqStr, resp.Code)
+		}
+
+		// Check full sparse volumes
+		encoding := server.TestHTTP(t, "GET", reqStr, nil)
+		bodies[label-1].checkSparseVol(t, encoding, dvid.Bounds{})
+	}
+
+	// Post labels 6-7
+	createLabelTest2Volume(t, uuid, "labels")
+
+	if err := BlockOnUpdating(uuid, "bodies"); err != nil {
+		t.Fatalf("Error blocking on sync of labels -> bodies: %v\n", err)
+	}
+
+	// Make sure that labels 1-4 have no more sparse vol.
+	for _, label := range []uint64{1, 2, 3, 4} {
+		// Check full sparse volumes aren't retrievable anymore
+		reqStr := fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid, "bodies", label)
+		//server.TestBadHTTP(t, "GET", reqStr, nil)
+		encoding := server.TestHTTP(t, "GET", reqStr, nil)
+		spansEncoding := encoding[8:]
+		var spans dvid.Spans
+		if err := spans.UnmarshalBinary(spansEncoding); err != nil {
+			t.Fatalf("Error in decoding sparse volume: %v\n", err)
+		}
+		if len(spans) != 0 {
+			t.Errorf("Got %d spans from sparsevol %d GET request after mutate POST\n", len(spans), label)
+		}
+
+		// Make sure non-existent bodies return proper HEAD responses.
+		resp := server.TestHTTPResponse(t, "HEAD", reqStr, nil)
+		if resp.Code != http.StatusNoContent {
+			t.Errorf("HEAD on %s did not return 204 (No Content).  Status = %d\n", reqStr, resp.Code)
+		}
+	}
+
+	// Make sure labels 6-7 are available as sparse vol.
+	for _, label := range []uint64{6, 7} {
+		// Check fast HEAD requests
+		reqStr := fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid, "bodies", label)
+		resp := server.TestHTTPResponse(t, "HEAD", reqStr, nil)
+		if resp.Code != http.StatusOK {
+			t.Errorf("HEAD on %s did not return OK.  Status = %d\n", reqStr, resp.Code)
+		}
+
+		// Check full sparse volumes
+		encoding := server.TestHTTP(t, "GET", reqStr, nil)
+		bodies[label].checkSparseVol(t, encoding, dvid.Bounds{})
+	}
+}
 
 var (
 	bodies = []testBody{
@@ -2190,6 +2285,145 @@ var (
 				{89, 50, 75, 94}, {89, 51, 75, 94}, {89, 52, 75, 94}, {89, 53, 75, 94}, {89, 54, 75, 94},
 				{89, 55, 75, 94}, {89, 56, 75, 94}, {89, 57, 75, 94}, {89, 58, 75, 94}, {89, 59, 75, 94},
 			},
+		}, {
+			label:  6,
+			offset: dvid.Point3d{8, 10, 7},
+			size:   dvid.Point3d{52, 50, 10},
+			blockSpans: []dvid.Span{
+				{0, 0, 0, 1},
+				{0, 1, 0, 1},
+			},
+			voxelSpans: []dvid.Span{
+				{8, 11, 9, 31}, {8, 12, 9, 59}, {8, 13, 9, 59}, {8, 14, 9, 59},
+				{8, 15, 19, 59}, {8, 16, 19, 59}, {8, 17, 19, 59}, {8, 18, 19, 59},
+				{8, 19, 29, 59}, {8, 20, 29, 59}, {8, 21, 29, 59}, {8, 22, 29, 59},
+				{8, 23, 39, 59}, {8, 24, 39, 59}, {8, 25, 39, 59}, {8, 26, 39, 59},
+				{8, 23, 39, 59}, {8, 24, 39, 59}, {8, 25, 39, 59}, {8, 26, 39, 59},
+				{8, 27, 39, 59}, {8, 28, 39, 59}, {8, 29, 39, 59}, {8, 30, 39, 59},
+				{8, 31, 39, 59}, {8, 32, 39, 59}, {8, 33, 39, 59}, {8, 34, 39, 59},
+				{8, 35, 39, 59}, {8, 36, 39, 59}, {8, 37, 45, 59}, {8, 38, 39, 59},
+				{8, 39, 39, 59}, {8, 40, 39, 59}, {8, 41, 42, 59}, {8, 42, 39, 56},
+				{8, 43, 39, 59}, {8, 44, 39, 59}, {8, 45, 39, 59}, {8, 46, 39, 50},
+
+				{8, 11, 9, 59}, {8, 12, 9, 59}, {8, 13, 9, 59}, {8, 14, 9, 59},
+				{8, 15, 19, 59}, {8, 16, 19, 59}, {8, 17, 19, 59}, {8, 18, 19, 59},
+				{8, 19, 29, 59}, {8, 20, 29, 59}, {8, 21, 29, 59}, {8, 22, 29, 59},
+				{8, 23, 39, 59}, {8, 24, 39, 59}, {8, 25, 39, 59}, {8, 26, 39, 59},
+				{8, 23, 39, 59}, {8, 24, 39, 59}, {8, 25, 39, 59}, {8, 26, 39, 59},
+				{8, 27, 39, 59}, {8, 28, 39, 59}, {8, 29, 39, 59}, {8, 30, 39, 59},
+				{8, 31, 39, 59}, {8, 32, 39, 59}, {8, 33, 39, 59}, {8, 34, 39, 59},
+				{8, 35, 39, 59}, {8, 36, 39, 59}, {8, 37, 45, 59}, {8, 38, 39, 59},
+				{8, 39, 39, 59}, {8, 40, 39, 59}, {8, 41, 42, 59}, {8, 42, 39, 56},
+				{8, 43, 39, 59}, {8, 44, 39, 59}, {8, 45, 39, 59}, {8, 46, 39, 50},
+
+				{9, 11, 9, 59}, {9, 12, 9, 59}, {9, 13, 9, 59}, {9, 14, 9, 59},
+				{9, 15, 19, 59}, {9, 16, 19, 59}, {9, 17, 19, 59}, {9, 18, 19, 59},
+				{9, 19, 29, 59}, {9, 20, 29, 59}, {9, 21, 29, 59}, {9, 22, 29, 59},
+				{9, 23, 39, 59}, {9, 24, 39, 59}, {9, 25, 39, 59}, {9, 26, 39, 59},
+				{9, 23, 39, 59}, {9, 24, 39, 59}, {9, 25, 39, 59}, {9, 26, 39, 59},
+				{9, 27, 39, 59}, {9, 28, 39, 59}, {9, 29, 39, 59}, {9, 30, 39, 59},
+				{9, 31, 39, 59}, {9, 32, 39, 59}, {9, 33, 39, 59}, {9, 34, 39, 59},
+				{9, 35, 39, 59}, {9, 36, 39, 59}, {9, 37, 45, 59}, {9, 38, 39, 59},
+				{9, 39, 39, 59}, {9, 40, 39, 59}, {9, 41, 42, 59}, {9, 42, 39, 56},
+				{9, 43, 39, 59}, {9, 44, 39, 59}, {9, 45, 39, 59}, {9, 46, 39, 50},
+
+				{10, 11, 9, 59}, {10, 12, 9, 59}, {10, 13, 9, 59}, {10, 14, 9, 59},
+				{10, 15, 19, 59}, {10, 16, 19, 59}, {10, 17, 19, 59}, {10, 18, 19, 59},
+				{10, 19, 29, 59}, {10, 20, 29, 59}, {10, 21, 29, 59}, {10, 22, 29, 59},
+				{10, 23, 39, 59}, {10, 24, 39, 59}, {10, 25, 39, 59}, {10, 26, 39, 59},
+				{10, 23, 39, 59}, {10, 24, 39, 59}, {10, 25, 39, 59}, {10, 26, 39, 59},
+				{10, 27, 39, 59}, {10, 28, 39, 59}, {10, 29, 39, 59}, {10, 30, 39, 59},
+				{10, 31, 39, 59}, {10, 32, 39, 59}, {10, 33, 39, 59}, {10, 34, 39, 59},
+				{10, 35, 39, 59}, {10, 36, 39, 59}, {10, 37, 45, 59}, {10, 38, 39, 59},
+				{10, 39, 39, 59}, {10, 40, 39, 59}, {10, 41, 42, 59}, {10, 42, 39, 56},
+				{10, 43, 39, 59}, {10, 44, 39, 59}, {10, 45, 39, 59}, {10, 46, 39, 50},
+
+				{11, 11, 9, 59}, {11, 12, 9, 59}, {11, 13, 9, 59}, {11, 14, 9, 59},
+				{11, 15, 19, 59}, {11, 16, 19, 59}, {11, 17, 19, 59}, {11, 18, 19, 59},
+				{11, 19, 29, 59}, {11, 20, 29, 59}, {11, 21, 29, 59}, {11, 22, 29, 59},
+				{11, 23, 39, 59}, {11, 24, 39, 59}, {11, 25, 39, 59}, {11, 26, 39, 59},
+				{11, 23, 39, 59}, {11, 24, 39, 59}, {11, 25, 39, 59}, {11, 26, 39, 59},
+				{11, 27, 39, 59}, {11, 28, 39, 59}, {11, 29, 39, 59}, {11, 30, 39, 59},
+				{11, 31, 39, 59}, {11, 32, 39, 59}, {11, 33, 39, 59}, {11, 34, 39, 59},
+				{11, 35, 39, 59}, {11, 36, 39, 59}, {11, 37, 45, 59}, {11, 38, 39, 59},
+				{11, 39, 39, 59}, {11, 40, 39, 59}, {11, 41, 42, 59}, {11, 42, 39, 56},
+				{11, 43, 39, 59}, {11, 44, 39, 59}, {11, 45, 39, 59}, {11, 46, 39, 50},
+
+				{12, 11, 9, 59}, {12, 12, 9, 59}, {12, 13, 9, 59}, {12, 14, 9, 59},
+				{12, 15, 19, 59}, {12, 16, 19, 59}, {12, 17, 19, 59}, {12, 18, 19, 59},
+				{12, 19, 29, 59}, {12, 20, 29, 59}, {12, 21, 29, 59}, {12, 22, 29, 59},
+				{12, 23, 39, 59}, {12, 24, 39, 59}, {12, 25, 39, 59}, {12, 26, 39, 59},
+				{12, 23, 39, 59}, {12, 24, 39, 59}, {12, 25, 39, 59}, {12, 26, 39, 59},
+				{12, 27, 39, 59}, {12, 28, 39, 59}, {12, 29, 39, 59}, {12, 30, 39, 59},
+				{12, 31, 39, 59}, {12, 32, 39, 59}, {12, 33, 39, 59}, {12, 34, 39, 59},
+				{12, 35, 39, 59}, {12, 36, 39, 59}, {12, 37, 45, 59}, {12, 38, 39, 59},
+				{12, 39, 39, 59}, {12, 40, 39, 59}, {12, 41, 42, 59}, {12, 42, 39, 56},
+				{12, 43, 39, 59}, {12, 44, 39, 59}, {12, 45, 39, 59}, {12, 46, 39, 50},
+			},
+		}, {
+			label:  7,
+			offset: dvid.Point3d{68, 10, 7},
+			size:   dvid.Point3d{52, 50, 10},
+			blockSpans: []dvid.Span{
+				{2, 0, 0, 1},
+				{2, 1, 0, 1},
+			},
+			voxelSpans: []dvid.Span{
+				{78, 11, 9, 59}, {78, 12, 9, 59}, {78, 13, 9, 59}, {78, 14, 9, 59},
+				{78, 15, 19, 59}, {78, 16, 19, 59}, {78, 17, 19, 59}, {78, 18, 19, 59},
+				{78, 19, 29, 59}, {78, 20, 29, 59}, {78, 21, 29, 59}, {78, 22, 29, 59},
+				{78, 23, 39, 59}, {78, 24, 39, 59}, {78, 25, 39, 59}, {78, 26, 39, 59},
+				{78, 23, 39, 59}, {78, 24, 39, 59}, {78, 25, 39, 59}, {78, 26, 39, 59},
+				{78, 27, 39, 59}, {78, 28, 39, 59}, {78, 29, 39, 59}, {78, 30, 39, 59},
+				{78, 31, 39, 59}, {78, 32, 39, 59}, {78, 33, 39, 59}, {78, 34, 39, 59},
+				{78, 35, 39, 59}, {78, 36, 39, 59}, {78, 37, 45, 59}, {78, 38, 39, 59},
+				{78, 39, 39, 59}, {78, 40, 39, 59}, {78, 41, 42, 59}, {78, 42, 39, 56},
+				{78, 43, 39, 59}, {78, 44, 39, 59}, {78, 45, 39, 59}, {78, 46, 39, 50},
+
+				{79, 11, 9, 59}, {79, 12, 9, 59}, {79, 13, 9, 59}, {79, 14, 9, 59},
+				{79, 15, 19, 59}, {79, 16, 19, 59}, {79, 17, 19, 59}, {79, 18, 19, 59},
+				{79, 19, 29, 59}, {79, 20, 29, 59}, {79, 21, 29, 59}, {79, 22, 29, 59},
+				{79, 23, 39, 59}, {79, 24, 39, 59}, {79, 25, 39, 59}, {79, 26, 39, 59},
+				{79, 23, 39, 59}, {79, 24, 39, 59}, {79, 25, 39, 59}, {79, 26, 39, 59},
+				{79, 27, 39, 59}, {79, 28, 39, 59}, {79, 29, 39, 59}, {79, 30, 39, 59},
+				{79, 31, 39, 59}, {79, 32, 39, 59}, {79, 33, 39, 59}, {79, 34, 39, 59},
+				{79, 35, 39, 59}, {79, 36, 39, 59}, {79, 37, 45, 59}, {79, 38, 39, 59},
+				{79, 39, 39, 59}, {79, 40, 39, 59}, {79, 41, 42, 59}, {79, 42, 39, 56},
+				{79, 43, 39, 59}, {79, 44, 39, 59}, {79, 45, 39, 59}, {79, 46, 39, 50},
+
+				{80, 11, 9, 59}, {80, 12, 9, 59}, {80, 13, 9, 59}, {80, 14, 9, 59},
+				{80, 15, 19, 59}, {80, 16, 19, 59}, {80, 17, 19, 59}, {80, 18, 19, 59},
+				{80, 19, 29, 59}, {80, 20, 29, 59}, {80, 21, 29, 59}, {80, 22, 29, 59},
+				{80, 23, 39, 59}, {80, 24, 39, 59}, {80, 25, 39, 59}, {80, 26, 39, 59},
+				{80, 23, 39, 59}, {80, 24, 39, 59}, {80, 25, 39, 59}, {80, 26, 39, 59},
+				{80, 27, 39, 59}, {80, 28, 39, 59}, {80, 29, 39, 59}, {80, 30, 39, 59},
+				{80, 31, 39, 59}, {80, 32, 39, 59}, {80, 33, 39, 59}, {80, 34, 39, 59},
+				{80, 35, 39, 59}, {80, 36, 39, 59}, {80, 37, 45, 59}, {80, 38, 39, 59},
+				{80, 39, 39, 59}, {80, 40, 39, 59}, {80, 41, 42, 59}, {80, 42, 39, 56},
+				{80, 43, 39, 59}, {80, 44, 39, 59}, {80, 45, 39, 59}, {80, 46, 39, 50},
+
+				{81, 11, 9, 59}, {81, 12, 9, 59}, {81, 13, 9, 59}, {81, 14, 9, 59},
+				{81, 15, 19, 59}, {81, 16, 19, 59}, {81, 17, 19, 59}, {81, 18, 19, 59},
+				{81, 19, 29, 59}, {81, 20, 29, 59}, {81, 21, 29, 59}, {81, 22, 29, 59},
+				{81, 23, 39, 59}, {81, 24, 39, 59}, {81, 25, 39, 59}, {81, 26, 39, 59},
+				{81, 23, 39, 59}, {81, 24, 39, 59}, {81, 25, 39, 59}, {81, 26, 39, 59},
+				{81, 27, 39, 59}, {81, 28, 39, 59}, {81, 29, 39, 59}, {81, 30, 39, 59},
+				{81, 31, 39, 59}, {81, 32, 39, 59}, {81, 33, 39, 59}, {81, 34, 39, 59},
+				{81, 35, 39, 59}, {81, 36, 39, 59}, {81, 37, 45, 59}, {81, 38, 39, 59},
+				{81, 39, 39, 59}, {81, 40, 39, 59}, {81, 41, 42, 59}, {81, 42, 39, 56},
+				{81, 43, 39, 59}, {81, 44, 39, 59}, {81, 45, 39, 59}, {81, 46, 39, 50},
+
+				{82, 11, 9, 59}, {82, 12, 9, 59}, {82, 13, 9, 59}, {82, 14, 9, 59},
+				{82, 15, 19, 59}, {82, 16, 19, 59}, {82, 17, 19, 59}, {82, 18, 19, 59},
+				{82, 19, 29, 59}, {82, 20, 29, 59}, {82, 21, 29, 59}, {82, 22, 29, 59},
+				{82, 23, 39, 59}, {82, 24, 39, 59}, {82, 25, 39, 59}, {82, 26, 39, 59},
+				{82, 23, 39, 59}, {82, 24, 39, 59}, {82, 25, 39, 59}, {82, 26, 39, 59},
+				{82, 27, 39, 59}, {82, 28, 39, 59}, {82, 29, 39, 59}, {82, 30, 39, 59},
+				{82, 31, 39, 59}, {82, 32, 39, 59}, {82, 33, 39, 59}, {82, 34, 39, 59},
+				{82, 35, 39, 59}, {82, 36, 39, 59}, {82, 37, 45, 59}, {82, 38, 39, 59},
+				{82, 39, 39, 59}, {82, 40, 39, 59}, {82, 41, 42, 59}, {82, 42, 39, 56},
+				{82, 43, 39, 59}, {82, 44, 39, 59}, {82, 45, 39, 59}, {82, 46, 39, 50},
+			},
 		},
 	}
 	body1     = bodies[0]
@@ -2198,4 +2432,6 @@ var (
 	body4     = bodies[3]
 	bodyleft  = bodies[4]
 	bodysplit = bodies[5]
+	body6     = bodies[6]
+	body7     = bodies[7]
 )

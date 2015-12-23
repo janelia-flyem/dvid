@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"image"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -1572,7 +1573,29 @@ func (s Span) Unpack() (z, y, x0, x1 int32) {
 	return s[0], s[1], s[2], s[3]
 }
 
-func (s Span) Less(block ChunkPoint3d) bool {
+func (s Span) Less(s2 Span) bool {
+	if s[0] < s2[0] {
+		return true
+	}
+	if s[0] > s2[0] {
+		return false
+	}
+	if s[1] < s2[1] {
+		return true
+	}
+	if s[1] > s2[1] {
+		return false
+	}
+	if s[2] < s2[2] {
+		return true
+	}
+	if s[2] > s2[2] {
+		return false
+	}
+	return s[3] < s2[3]
+}
+
+func (s Span) LessChunkPoint3d(block ChunkPoint3d) bool {
 	if s[0] < block[2] {
 		return true
 	}
@@ -1660,6 +1683,52 @@ func (s *Spans) UnmarshalBinary(b []byte) error {
 		(*s)[i][3] = (*s)[i][2] + length - 1
 	}
 	return nil
+}
+
+// --- Sort interface -----
+
+func (s Spans) Len() int {
+	return len(s)
+}
+
+func (s Spans) Swap(i, j int) {
+	s[i], s[j] = s[j], s[i]
+}
+
+func (s Spans) Less(i, j int) bool {
+	return s[i].Less(s[j])
+}
+
+// Normalize returns a sorted and merged list of Span.  Spans are in z, y, then x order.
+// Any adjacent spans are merged into a larger span.
+func (s Spans) Normalize() Spans {
+	if s == nil || len(s) == 0 {
+		return Spans{}
+	}
+
+	// Sort all spans in (z,y) keys
+	nOrig := len(s)
+	norm := make(Spans, nOrig)
+	copy(norm, s)
+	sort.Sort(norm)
+
+	// Iterate through each (y,z) and combine adjacent spans.
+	n := 0 // current position of normalized slice end
+	for o := 1; o < nOrig; o++ {
+		// If non-contiguous span
+		if norm[n][0] != norm[o][0] || norm[n][1] != norm[o][1] || norm[n][3]+1 < norm[o][2] {
+			n++
+			if n < nOrig {
+				norm[n] = norm[o]
+			}
+		} else if norm[o][3] > norm[n][3] {
+			norm[n][3] = norm[o][3]
+		}
+	}
+	if n+1 <= nOrig {
+		n++
+	}
+	return norm[:n]
 }
 
 type Resolution struct {

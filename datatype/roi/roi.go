@@ -605,7 +605,7 @@ func seekSpan(pt dvid.ChunkPoint3d, spans []dvid.Span, curSpanI int) (int, bool)
 	// Keep going through spans until we are equal to or past the chunk point.
 	for {
 		curSpan := spans[curSpanI]
-		if curSpan.Less(pt) {
+		if curSpan.LessChunkPoint3d(pt) {
 			curSpanI++
 		} else {
 			if curSpan.Includes(pt) {

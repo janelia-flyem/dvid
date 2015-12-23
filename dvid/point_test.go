@@ -1,6 +1,11 @@
 package dvid
 
-import . "github.com/janelia-flyem/go/gocheck"
+import (
+	"reflect"
+	"testing"
+
+	. "github.com/janelia-flyem/go/gocheck"
+)
 
 func (s *DataSuite) TestPoint3d(c *C) {
 	a := Point3d{10, 21, 837821}
@@ -159,4 +164,21 @@ func (s *DataSuite) TestChunk(c *C) {
 
 	result := d.PointInChunk(blockSize)
 	c.Assert(result, Equals, Point3d{11, 3, 0})
+}
+
+var (
+	testSpans = Spans{
+		{1, 1, 3, 8}, {1, 1, 6, 21}, {2, 4, 10, 23}, {1, 1, 21, 39}, {2, 4, 22, 28},
+	}
+	testSpansNorm = Spans{
+		{1, 1, 3, 39},
+		{2, 4, 10, 28},
+	}
+)
+
+func TestSpans(t *testing.T) {
+	normalized := testSpans.Normalize()
+	if !reflect.DeepEqual(normalized, testSpansNorm) {
+		t.Errorf("Expected normalized spans of:\n%v\nGot this:\n%v\n", testSpansNorm, normalized)
+	}
 }

@@ -97,22 +97,22 @@ func initTestRepo() (dvid.UUID, dvid.VersionID) {
 
 func TestTuples(t *testing.T) {
 	tup := dvid.Span{10, 11, 20, 30}
-	if tup.Less(dvid.ChunkPoint3d{20, 11, 10}) {
+	if tup.LessChunkPoint3d(dvid.ChunkPoint3d{20, 11, 10}) {
 		t.Errorf("Bad tuple.Less()\n")
 	}
-	if tup.Less(dvid.ChunkPoint3d{30, 11, 10}) {
+	if tup.LessChunkPoint3d(dvid.ChunkPoint3d{30, 11, 10}) {
 		t.Errorf("Bad tuple.Less()\n")
 	}
-	if !tup.Less(dvid.ChunkPoint3d{31, 11, 10}) {
+	if !tup.LessChunkPoint3d(dvid.ChunkPoint3d{31, 11, 10}) {
 		t.Errorf("Bad tuple.Less()\n")
 	}
-	if !tup.Less(dvid.ChunkPoint3d{20, 11, 11}) {
+	if !tup.LessChunkPoint3d(dvid.ChunkPoint3d{20, 11, 11}) {
 		t.Errorf("Bad tuple.Less()\n")
 	}
-	if tup.Less(dvid.ChunkPoint3d{20, 11, 9}) {
+	if tup.LessChunkPoint3d(dvid.ChunkPoint3d{20, 11, 9}) {
 		t.Errorf("Bad tuple.Less()\n")
 	}
-	if !tup.Less(dvid.ChunkPoint3d{20, 11, 11}) {
+	if !tup.LessChunkPoint3d(dvid.ChunkPoint3d{20, 11, 11}) {
 		t.Errorf("Bad tuple.Less()\n")
 	}
 
