@@ -404,7 +404,7 @@ func (db *GBucket) SendKeysInRange(ctx storage.Context, TkBeg, TkEnd storage.TKe
 	for _, key := range keys {
 		ch <- key
 	}
-
+	ch <- nil
 	return nil
 }
 
