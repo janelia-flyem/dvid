@@ -110,7 +110,7 @@ func parseConfig(config dvid.EngineConfig) (*GBucket, error) {
 	return gb, nil
 }
 
-// Set up admin client, tables, and column families.
+// newGBucket sets up admin client (bucket must already exist)
 func (e *Engine) newGBucket(config dvid.EngineConfig) (*GBucket, bool, error) {
 	gb, err := parseConfig(config)
 	if err != nil {
