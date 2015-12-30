@@ -73,39 +73,36 @@ func TestUnversionedKey(t *testing.T) {
 	dk := dctx.ConstructKey(tk)
 
 	// When we decompose the metadata key we should get proper components.
-	isMetadata, unversK, v, err := UnversionedKey(mk)
+	unversK, v, err := SplitKey(mk)
 	if err != nil {
-		t.Errorf("Error on UnversionedKey(mk): %v\n", err)
+		t.Errorf("Error on SplitKey(mk): %v\n", err)
 	}
-	if !isMetadata {
-		t.Errorf("Expected metadata key returned from UnversionedKey(mk)\n")
-	}
-	if bytes.Compare(unversK, mk) != 0 {
+	if !bytes.Equal(unversK, mk) {
 		t.Errorf("Expected unversioned metadata key to equal metadata key\n")
 	}
-	if v != 0 {
+
+	empty := make([]byte, 0)
+	if !bytes.Equal(v, empty) {
 		t.Errorf("Expected metadata key to return no version\n")
 	}
 
 	// When we decompose the data key we should get proper components.
-	isMetadata2, unversK2, v2, err := UnversionedKey(dk)
+	unversK2, v2, err := SplitKey(dk)
 	if err != nil {
-		t.Errorf("Error on UnversionedKey(dk): %v\n", err)
+		t.Errorf("Error on SplitKey(dk): %v\n", err)
 	}
-	if isMetadata2 {
-		t.Errorf("Expected data key returned from UnversionedKey(dk)\n")
-	}
-	unversK3, v3, err := dctx.UnversionedKey(tk)
+
+	unversK3, v3, err := dctx.SplitKey(tk)
 	if err != nil {
-		t.Errorf("Error getting UnversionedKey from data ctx: %v\n", err)
+		t.Errorf("Error getting SplitKey from data ctx: %v\n", err)
 	}
-	if bytes.Compare(unversK2, unversK3) != 0 {
+	if !bytes.Equal(unversK2, unversK3) {
 		t.Errorf("Expected unversioned data key to be same when deciphering full key and using context.\n")
 	}
-	if v2 != 3 {
+	if bytes.Equal(v2, []byte{0x02}) {
 		t.Errorf("Expected version id of data key from full key to be 3, got %d\n", v2)
 	}
-	if v3 != 3 {
+	if bytes.Equal(v3, []byte{0x03}) {
 		t.Errorf("Expected version id of data key from using context to be 3, got %d\n", v3)
 	}
 }
