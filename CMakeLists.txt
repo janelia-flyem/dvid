@@ -110,6 +110,8 @@ else ()
             message ("Installing pure Go LMDB-inspired Bolt key-value store.")
         elseif ("${BACKEND}" STREQUAL "bigtable")
             message ("Installing Google's Cloud BigTable key-value store.")
+        elseif ("${BACKEND}" STREQUAL "gbucket")
+            message ("Installing Google's Bucket store.")
         elseif ("${BACKEND}" STREQUAL "couchbase" ${DVID_BACKEND_DEPEND})
             message (FATAL_ERROR "Couchbase is currently not supported as a DVID storage engine.")
         endif ()
@@ -157,7 +159,8 @@ else ()
 
     add_custom_target (gcloud
         ${BUILDEM_ENV_STRING} go get ${GO_GET} golang.org/x/net/context
-        COMMAND ${BUILDEM_ENV_STRING} go get ${GO_GET} google.golang.org/cloud/bigtable
+        COMMAND ${BUILDEM_ENV_STRING} go get ${GO_GET} -u google.golang.org/cloud/bigtable
+        COMMAND ${BUILDEM_ENV_STRING} go get ${GO_GET} -u google.golang.org/cloud/storage
         COMMENT     "Adding gcloud packages...")  
 
     set (DVID_DEP_GO_PACKAGES gopackages gojsonschema goji msgp context lumberjack gcloud)
