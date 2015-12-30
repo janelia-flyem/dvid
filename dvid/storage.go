@@ -38,4 +38,6 @@ type EngineConfig struct {
 
 	// --- Used for big table
 
+	// Bucket is name of Google Bucket
+	Bucket string
 }
