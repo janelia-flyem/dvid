@@ -782,6 +782,7 @@ type opType int
 
 const (
 	delOp opType = iota
+	delOpIgnoreExists
 	delRangeOp
 	putOp
 	getOp
@@ -854,7 +855,7 @@ func (db *goBuffer) Put(ctx storage.Context, tkey storage.TKey, value []byte) er
 			return fmt.Errorf("Non-versioned context that says it's versioned received in Put(): %v", ctx)
 		}
 		tombstoneKey := vctx.TombstoneKey(tkey)
-		db.ops = append(db.ops, dbOp{op: delOp, key: tombstoneKey})
+		db.ops = append(db.ops, dbOp{op: delOpIgnoreExists, key: tombstoneKey})
 		db.ops = append(db.ops, dbOp{op: putOp, key: key, value: value})
 		if err != nil {
 			dvid.Criticalf("Error on data put: %v\n", err)
@@ -945,7 +946,6 @@ func (db *goBuffer) DeleteRange(ctx storage.Context, TkBeg, TkEnd storage.TKey) 
 // Flush the buffer
 func (buffer *goBuffer) Flush() error {
 	retVals := make(chan error, len(buffer.ops))
-
 	// limits the number of simultaneous requests (should this be global)
 	workQueue := make(chan interface{}, MAXCONNECTIONS)
 
@@ -959,6 +959,8 @@ func (buffer *goBuffer) Flush() error {
 			err = nil
 			if opdata.op == delOp {
 				err = buffer.db.deleteV(opdata.key)
+			} else if opdata.op == delOpIgnoreExists {
+				buffer.db.deleteV(opdata.key)
 			} else if opdata.op == delRangeOp {
 				err = buffer.deleteRangeLocal(buffer.ctx, opdata.tkBeg, opdata.tkEnd, workQueue)
 			} else if opdata.op == putOp {
@@ -1047,6 +1049,7 @@ func (db *goBuffer) processRangeLocal(ctx storage.Context, TkBeg, TkEnd storage.
 	for _, key := range keys {
 		// use available threads
 		workQueue <- nil
+		wg.Add(1)
 		go func(lkey storage.Key) {
 			defer func() {
 				<-workQueue
