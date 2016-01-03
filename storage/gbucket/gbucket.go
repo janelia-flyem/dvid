@@ -12,6 +12,7 @@ TODO:
 Explore tradeoff between smaller parallel requests and single big requests.
 * Restrict the number of parallel requests.
 * Refactor to call batcher for any calls that require multiple requests
+* DeleteAll should page deletion to avoid memory issues for very large deletes
 
 Note:
 
@@ -471,62 +472,17 @@ func (db *GBucket) GetRange(ctx storage.Context, TkBeg, TkEnd storage.TKey) ([]*
 // receiving function can be organized as a pool of chunk handling goroutines.
 // See datatype/imageblk.ProcessChunk() for an example.
 func (db *GBucket) ProcessRange(ctx storage.Context, TkBeg, TkEnd storage.TKey, op *storage.ChunkOp, f storage.ChunkFunc) error {
-	if db == nil {
-		return fmt.Errorf("Can't call GetRange() on nil GBucket")
+	// use buffer interface
+	buffer := db.NewBuffer(ctx)
+
+	err := buffer.ProcessRange(ctx, TkBeg, TkEnd, op, f)
+
+	if err != nil {
+		return err
 	}
-	if ctx == nil {
-		return fmt.Errorf("Received nil context in GetRange()")
-	}
 
-	// grab keys
-	keys, _ := db.getKeysInRange(ctx, TkBeg, TkEnd)
-
-	// process keys in parallel
-	kvmap := make(map[string][]byte)
-	for _, key := range keys {
-
-		kvmap[string(key)] = nil
-	}
-	var wg sync.WaitGroup
-	for _, key := range keys {
-		wg.Add(1)
-		go func(lkey storage.Key) {
-			defer wg.Done()
-			value, err := db.getV(lkey)
-			if value == nil || err != nil {
-				kvmap[string(lkey)] = nil
-			} else {
-				kvmap[string(lkey)] = value
-			}
-
-		}(key)
-
-	}
-	wg.Wait()
-
-	var err error
-	err = nil
-	// return keyvalues
-	for key, val := range kvmap {
-		tk, err := ctx.TKeyFromKey(storage.Key(key))
-		if err != nil {
-			return err
-		}
-
-		if val == nil {
-			return fmt.Errorf("Could not retrieve value")
-		}
-
-		if op != nil && op.Wg != nil {
-			op.Wg.Add(1)
-		}
-
-		tkv := storage.TKeyValue{tk, val}
-		chunk := &storage.Chunk{op, &tkv}
-		if err := f(chunk); err != nil {
-			return err
-		}
-	}
+	// commit changes
+	err = buffer.Flush()
 
 	return err
 }
@@ -579,83 +535,55 @@ func (db *GBucket) RawRangeQuery(kStart, kEnd storage.Key, keysOnly bool, out ch
 
 // Put writes a value with given key in a possibly versioned context.
 func (db *GBucket) Put(ctx storage.Context, tkey storage.TKey, value []byte) error {
-	if db == nil {
-		return fmt.Errorf("Can't call Put() on nil Google Bucket")
-	}
-	if ctx == nil {
-		return fmt.Errorf("Received nil context in Put()")
+	// use buffer interface
+	buffer := db.NewBuffer(ctx)
+
+	err := buffer.Put(ctx, tkey, value)
+
+	if err != nil {
+		return err
 	}
 
-	var err error
-	key := ctx.ConstructKey(tkey)
-	if !ctx.Versioned() {
-		err = db.putV(key, value)
-	} else {
-		vctx, ok := ctx.(storage.VersionedCtx)
-		if !ok {
-			return fmt.Errorf("Non-versioned context that says it's versioned received in Put(): %v", ctx)
-		}
-		tombstoneKey := vctx.TombstoneKey(tkey)
-		db.deleteV(tombstoneKey)
-		err = db.putV(key, value)
-		if err != nil {
-			dvid.Criticalf("Error on data put: %v\n", err)
-			err = fmt.Errorf("Error on data put: %v", err)
-		}
-	}
+	// commit changes
+	err = buffer.Flush()
 
-	storage.StoreKeyBytesWritten <- len(key)
-	storage.StoreValueBytesWritten <- len(value)
 	return err
-
 }
 
 // RawPut is a low-level function that puts a key-value pair using full keys.
 // This can be used in conjunction with RawRangeQuery.
 func (db *GBucket) RawPut(k storage.Key, v []byte) error {
-	if db == nil {
-		return fmt.Errorf("Can't call Put() on nil Google Bucket")
-	}
+	// make dummy context for buffer interface
+	ctx := storage.NewMetadataContext()
 
-	if err := db.putV(k, v); err != nil {
+	// use buffer interface
+	buffer := db.NewBuffer(ctx)
+
+	err := buffer.RawPut(k, v)
+
+	if err != nil {
 		return err
 	}
 
-	storage.StoreKeyBytesWritten <- len(k)
-	storage.StoreValueBytesWritten <- len(v)
-	return nil
+	// commit changes
+	err = buffer.Flush()
+
+	return err
 }
 
 // Delete deletes a key-value pair so that subsequent Get on the key returns nil.
 func (db *GBucket) Delete(ctx storage.Context, tkey storage.TKey) error {
-	if db == nil {
-		return fmt.Errorf("Can't call Delete on nil LevelDB")
-	}
-	if ctx == nil {
-		return fmt.Errorf("Received nil context in Delete()")
+	// use buffer interface
+	buffer := db.NewBuffer(ctx)
+
+	err := buffer.Delete(ctx, tkey)
+
+	if err != nil {
+		return err
 	}
 
-	var err error
-	key := ctx.ConstructKey(tkey)
-	if !ctx.Versioned() {
-		err = db.deleteV(key)
-	} else {
-		vctx, ok := ctx.(storage.VersionedCtx)
-		if !ok {
-			return fmt.Errorf("Non-versioned context that says it's versioned received in Delete(): %v", ctx)
-		}
-		tombstoneKey := vctx.TombstoneKey(tkey)
-		err = db.deleteV(tombstoneKey)
-		if err != nil {
-			dvid.Criticalf("Error on delete: %v\n", err)
-			err = fmt.Errorf("Error on delete: %v", err)
-		}
-		err = db.putV(tombstoneKey, dvid.EmptyValue())
-		if err != nil {
-			dvid.Criticalf("Error on tombstone put: %v\n", err)
-			err = fmt.Errorf("Error on tombstone put: %v", err)
-		}
-	}
+	// commit changes
+	err = buffer.Flush()
 
 	return err
 }
@@ -663,69 +591,62 @@ func (db *GBucket) Delete(ctx storage.Context, tkey storage.TKey) error {
 // RawDelete is a low-level function.  It deletes a key-value pair using full keys
 // without any context.  This can be used in conjunction with RawRangeQuery.
 func (db *GBucket) RawDelete(fullKey storage.Key) error {
-	if db == nil {
-		return fmt.Errorf("Can't call RawDelete on nil LevelDB")
+	// make dummy context for buffer interface
+	ctx := storage.NewMetadataContext()
+
+	// use buffer interface
+	buffer := db.NewBuffer(ctx)
+
+	err := buffer.RawDelete(fullKey)
+
+	if err != nil {
+		return err
 	}
-	return db.deleteV(fullKey)
+
+	// commit changes
+	err = buffer.Flush()
+
+	return err
 }
 
 // ---- OrderedKeyValueSetter interface ------
 
 // Put key-value pairs.  This is currently executed with parallel requests.
 func (db *GBucket) PutRange(ctx storage.Context, kvs []storage.TKeyValue) error {
-	if db == nil {
-		return fmt.Errorf("Can't call PutRange() on nil Google Bucket")
-	}
-	if ctx == nil {
-		return fmt.Errorf("Received nil context in PutRange()")
-	}
+	// use buffer interface
+	buffer := db.NewBuffer(ctx)
 
-	// wait for all puts to complete
-	var wg sync.WaitGroup
-	for _, kv := range kvs {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			db.Put(ctx, kv.K, kv.V)
-		}()
-	}
-	wg.Wait()
+	err := buffer.PutRange(ctx, kvs)
 
-	return nil
-}
-
-// DeleteRange removes all key-value pairs with keys in the given range.
-func (db *GBucket) DeleteRange(ctx storage.Context, TkBeg, TkEnd storage.TKey) error {
-	if db == nil {
-		return fmt.Errorf("Can't call DeleteRange() on nil Google bucket")
-	}
-	if ctx == nil {
-		return fmt.Errorf("Received nil context in DeleteRange()")
-	}
-
-	// get all the keys within range, latest version, no tombstone
-	keys, err := db.getKeysInRange(ctx, TkBeg, TkEnd)
 	if err != nil {
 		return err
 	}
 
-	// wait for all deletes to complete
-	var wg sync.WaitGroup
-	for _, key := range keys {
-		wg.Add(1)
-		go func(lkey storage.Key) {
-			defer wg.Done()
-			tk, _ := ctx.TKeyFromKey(lkey)
-			db.Delete(ctx, tk)
-		}(key)
-	}
-	wg.Wait()
+	// commit changes
+	err = buffer.Flush()
 
-	return nil
+	return err
+}
+
+// DeleteRange removes all key-value pairs with keys in the given range.
+func (db *GBucket) DeleteRange(ctx storage.Context, TkBeg, TkEnd storage.TKey) error {
+	// use buffer interface
+	buffer := db.NewBuffer(ctx)
+
+	err := buffer.DeleteRange(ctx, TkBeg, TkEnd)
+
+	if err != nil {
+		return err
+	}
+
+	// commit changes
+	err = buffer.Flush()
+
+	return err
 }
 
 // DeleteAll removes all key-value pairs for the context.  If allVersions is true,
-// then all versions of the data instance are deleted.  Will not produce any tombstones
+// then all versions of the data instance are deleted.  Will not produce any tombstones.
 func (db *GBucket) DeleteAll(ctx storage.Context, allVersions bool) error {
 	if db == nil {
 		return fmt.Errorf("Can't call DeleteAll() on nil Google bucket")
@@ -820,7 +741,7 @@ func (db *GBucket) Close() {
 // --- Batcher interface ----
 
 type goBatch struct {
-	db  *GBucket
+	db  storage.RequestBuffer
 	ctx storage.Context
 }
 
@@ -830,7 +751,7 @@ func (db *GBucket) NewBatch(ctx storage.Context) storage.Batch {
 		dvid.Criticalf("Received nil context in NewBatch()")
 		return nil
 	}
-	return &goBatch{db, ctx}
+	return &goBatch{db.NewBuffer(ctx), ctx}
 }
 
 // --- Batch interface ---
@@ -847,16 +768,333 @@ func (batch *goBatch) Put(tkey storage.TKey, value []byte) {
 	}
 
 	batch.db.Put(batch.ctx, tkey, value)
-
-	storage.StoreKeyBytesWritten <- len(tkey)
-	storage.StoreValueBytesWritten <- len(value)
 }
 
-// Commit is a no-op; Delete and Put are just handled as they come in
+// Commit flushes the buffer
 func (batch *goBatch) Commit() error {
+	return batch.db.Flush()
+}
+
+// --- Buffer interface ----
+
+// opType defines different DB operation types
+type opType int
+
+const (
+	delOp opType = iota
+	delOpIgnoreExists
+	delRangeOp
+	putOp
+	getOp
+)
+
+// dbOp is element for buffered db operations
+type dbOp struct {
+	op        opType
+	key       storage.Key
+	value     []byte
+	tkBeg     storage.TKey
+	tkEnd     storage.TKey
+	chunkop   *storage.ChunkOp
+	chunkfunc storage.ChunkFunc
+}
+
+// goBuffer allow operations to be submitted in parallel
+type goBuffer struct {
+	db  *GBucket
+	ctx storage.Context
+	ops []dbOp
+}
+
+// NewBatch returns an implementation that allows batch writes
+func (db *GBucket) NewBuffer(ctx storage.Context) storage.RequestBuffer {
+	if ctx == nil {
+		dvid.Criticalf("Received nil context in NewBatch()")
+		return nil
+	}
+	return &goBuffer{db, ctx, make([]dbOp, 0)}
+}
+
+// --- implement RequestBuffer interface ---
+
+// ProcessRange sends a range of type key-value pairs to type-specific chunk handlers,
+// allowing chunk processing to be concurrent with key-value sequential reads.
+// Since the chunks are typically sent during sequential read iteration, the
+// receiving function can be organized as a pool of chunk handling goroutines.
+// See datatype/imageblk.ProcessChunk() for an example.
+func (db *goBuffer) ProcessRange(ctx storage.Context, TkBeg, TkEnd storage.TKey, op *storage.ChunkOp, f storage.ChunkFunc) error {
+	if db == nil {
+		return fmt.Errorf("Can't call GetRange() on nil GBucket")
+	}
+	if ctx == nil {
+		return fmt.Errorf("Received nil context in GetRange()")
+	}
+
+	db.ops = append(db.ops, dbOp{getOp, nil, nil, TkBeg, TkEnd, op, f})
 
 	return nil
+}
 
+// Put writes a value with given key in a possibly versioned context.
+func (db *goBuffer) Put(ctx storage.Context, tkey storage.TKey, value []byte) error {
+	if db == nil {
+		return fmt.Errorf("Can't call Put() on nil Google Bucket")
+	}
+	if ctx == nil {
+		return fmt.Errorf("Received nil context in Put()")
+	}
+
+	var err error
+	err = nil
+	key := ctx.ConstructKey(tkey)
+	if !ctx.Versioned() {
+		db.ops = append(db.ops, dbOp{op: putOp, key: key, value: value})
+	} else {
+		vctx, ok := ctx.(storage.VersionedCtx)
+		if !ok {
+			return fmt.Errorf("Non-versioned context that says it's versioned received in Put(): %v", ctx)
+		}
+		tombstoneKey := vctx.TombstoneKey(tkey)
+		db.ops = append(db.ops, dbOp{op: delOpIgnoreExists, key: tombstoneKey})
+		db.ops = append(db.ops, dbOp{op: putOp, key: key, value: value})
+		if err != nil {
+			dvid.Criticalf("Error on data put: %v\n", err)
+			err = fmt.Errorf("Error on data put: %v", err)
+		}
+	}
+
+	return err
+
+}
+
+// RawPut is a low-level function that puts a key-value pair using full keys.
+// This can be used in conjunction with RawRangeQuery.
+func (db *goBuffer) RawPut(k storage.Key, v []byte) error {
+	if db == nil {
+		return fmt.Errorf("Can't call Put() on nil Google Bucket")
+	}
+
+	db.ops = append(db.ops, dbOp{op: putOp, key: k, value: v})
+	return nil
+}
+
+// Delete deletes a key-value pair so that subsequent Get on the key returns nil.
+func (db *goBuffer) Delete(ctx storage.Context, tkey storage.TKey) error {
+	if db == nil {
+		return fmt.Errorf("Can't call Delete on nil LevelDB")
+	}
+	if ctx == nil {
+		return fmt.Errorf("Received nil context in Delete()")
+	}
+
+	key := ctx.ConstructKey(tkey)
+	if !ctx.Versioned() {
+		db.ops = append(db.ops, dbOp{op: delOp, key: key})
+	} else {
+		vctx, ok := ctx.(storage.VersionedCtx)
+		if !ok {
+			return fmt.Errorf("Non-versioned context that says it's versioned received in Delete(): %v", ctx)
+		}
+		db.ops = append(db.ops, dbOp{op: delOp, key: key})
+		tombstoneKey := vctx.TombstoneKey(tkey)
+		db.ops = append(db.ops, dbOp{op: putOp, key: tombstoneKey, value: dvid.EmptyValue()})
+	}
+
+	return nil
+}
+
+// RawDelete is a low-level function.  It deletes a key-value pair using full keys
+// without any context.  This can be used in conjunction with RawRangeQuery.
+func (db *goBuffer) RawDelete(fullKey storage.Key) error {
+	if db == nil {
+		return fmt.Errorf("Can't call RawDelete on nil LevelDB")
+	}
+
+	db.ops = append(db.ops, dbOp{op: delOp, key: fullKey})
+	return nil
+}
+
+// Put key-value pairs.  This is currently executed with parallel requests.
+func (db *goBuffer) PutRange(ctx storage.Context, kvs []storage.TKeyValue) error {
+	if db == nil {
+		return fmt.Errorf("Can't call PutRange() on nil Google Bucket")
+	}
+	if ctx == nil {
+		return fmt.Errorf("Received nil context in PutRange()")
+	}
+
+	for _, kv := range kvs {
+		db.Put(ctx, kv.K, kv.V)
+	}
+
+	return nil
+}
+
+// DeleteRange removes all key-value pairs with keys in the given range.
+func (db *goBuffer) DeleteRange(ctx storage.Context, TkBeg, TkEnd storage.TKey) error {
+	if db == nil {
+		return fmt.Errorf("Can't call DeleteRange() on nil Google bucket")
+	}
+	if ctx == nil {
+		return fmt.Errorf("Received nil context in DeleteRange()")
+	}
+	db.ops = append(db.ops, dbOp{delRangeOp, nil, nil, TkBeg, TkEnd, nil, nil})
+
+	return nil
+}
+
+// Flush the buffer
+func (buffer *goBuffer) Flush() error {
+	retVals := make(chan error, len(buffer.ops))
+	// limits the number of simultaneous requests (should this be global)
+	workQueue := make(chan interface{}, MAXCONNECTIONS)
+
+	for _, operation := range buffer.ops {
+		workQueue <- nil
+		go func(opdata dbOp) {
+			defer func() {
+				<-workQueue
+			}()
+			var err error
+			err = nil
+			if opdata.op == delOp {
+				err = buffer.db.deleteV(opdata.key)
+			} else if opdata.op == delOpIgnoreExists {
+				buffer.db.deleteV(opdata.key)
+			} else if opdata.op == delRangeOp {
+				err = buffer.deleteRangeLocal(buffer.ctx, opdata.tkBeg, opdata.tkEnd, workQueue)
+			} else if opdata.op == putOp {
+				err = buffer.db.putV(opdata.key, opdata.value)
+				storage.StoreKeyBytesWritten <- len(opdata.key)
+				storage.StoreValueBytesWritten <- len(opdata.value)
+			} else if opdata.op == getOp {
+				err = buffer.processRangeLocal(buffer.ctx, opdata.tkBeg, opdata.tkEnd, opdata.chunkop, opdata.chunkfunc, workQueue)
+			} else {
+				err = fmt.Errorf("Incorrect buffer operation specified")
+			}
+
+			// add errors to queue
+			retVals <- err
+		}(operation)
+	}
+
+	// check return values
+	for range buffer.ops {
+		err := <-retVals
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// deleteRangeLocal implements DeleteRange but with workQueue awareness.
+func (db *goBuffer) deleteRangeLocal(ctx storage.Context, TkBeg, TkEnd storage.TKey, workQueue chan interface{}) error {
+	if db == nil {
+		return fmt.Errorf("Can't call DeleteRange() on nil Google bucket")
+	}
+	if ctx == nil {
+		return fmt.Errorf("Received nil context in DeleteRange()")
+	}
+
+	// get all the keys within range, latest version, no tombstone
+	keys, err := db.db.getKeysInRange(ctx, TkBeg, TkEnd)
+	if err != nil {
+		return err
+	}
+
+	// hackish -- release resource
+	<-workQueue
+
+	// wait for all deletes to complete
+	var wg sync.WaitGroup
+	for _, key := range keys {
+		wg.Add(1)
+		// use available threads
+		workQueue <- nil
+		go func(lkey storage.Key) {
+			defer func() {
+				<-workQueue
+				wg.Done()
+			}()
+			tk, _ := ctx.TKeyFromKey(lkey)
+			db.Delete(ctx, tk)
+		}(key)
+	}
+	wg.Wait()
+
+	// hackish -- reask for resource
+	workQueue <- nil
+
+	return nil
+}
+
+// processRangeLocal implements ProcessRange functionality but with workQueue awareness
+func (db *goBuffer) processRangeLocal(ctx storage.Context, TkBeg, TkEnd storage.TKey, op *storage.ChunkOp, f storage.ChunkFunc, workQueue chan interface{}) error {
+	// grab keys
+	keys, _ := db.db.getKeysInRange(ctx, TkBeg, TkEnd)
+
+	// process keys in parallel
+	kvmap := make(map[string][]byte)
+	for _, key := range keys {
+
+		kvmap[string(key)] = nil
+	}
+
+	// hackish -- release resource
+	<-workQueue
+
+	var wg sync.WaitGroup
+	for _, key := range keys {
+		// use available threads
+		workQueue <- nil
+		wg.Add(1)
+		go func(lkey storage.Key) {
+			defer func() {
+				<-workQueue
+				wg.Done()
+			}()
+			value, err := db.db.getV(lkey)
+			if value == nil || err != nil {
+				kvmap[string(lkey)] = nil
+			} else {
+				kvmap[string(lkey)] = value
+			}
+
+		}(key)
+
+	}
+	wg.Wait()
+
+	// hackish -- reask for resource
+	workQueue <- nil
+
+	var err error
+	err = nil
+	// return keyvalues
+	for key, val := range kvmap {
+		tk, err := ctx.TKeyFromKey(storage.Key(key))
+		if err != nil {
+			return err
+		}
+
+		if val == nil {
+			return fmt.Errorf("Could not retrieve value")
+		}
+
+		if op != nil && op.Wg != nil {
+			op.Wg.Add(1)
+		}
+
+		tkv := storage.TKeyValue{tk, val}
+		chunk := &storage.Chunk{op, &tkv}
+		if err := f(chunk); err != nil {
+			return err
+		}
+	}
+
+	return err
 }
 
 // --- Helper function ----

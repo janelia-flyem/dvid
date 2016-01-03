@@ -341,6 +341,14 @@ func (d *Data) GetVoxels(v dvid.VersionID, vox *Voxels, roiname dvid.InstanceNam
 	ctx := datastore.NewVersionedCtx(d, v)
 
 	wg := new(sync.WaitGroup)
+
+	okv := store.(storage.BufferableOps)
+	// extract buffer interface
+	req, hasbuffer := okv.(storage.KeyValueRequester)
+	if hasbuffer {
+		okv = req.NewBuffer(ctx)
+	}
+
 	for it, err := vox.IndexIterator(d.BlockSize()); err == nil && it.Valid(); it.NextSpan() {
 		indexBeg, indexEnd, err := it.IndexSpan()
 		if err != nil {
@@ -373,11 +381,22 @@ func (d *Data) GetVoxels(v dvid.VersionID, vox *Voxels, roiname dvid.InstanceNam
 		}
 
 		// Send the entire range of key-value pairs to chunk processor
-		err = store.ProcessRange(ctx, begTKey, endTKey, chunkOp, storage.ChunkFunc(d.ReadChunk))
+		err = okv.ProcessRange(ctx, begTKey, endTKey, chunkOp, storage.ChunkFunc(d.ReadChunk))
 		if err != nil {
 			return fmt.Errorf("Unable to GET data %s: %v", ctx, err)
 		}
 	}
+
+	if hasbuffer {
+		// submit the entire buffer to the DB
+		err = okv.(storage.RequestBuffer).Flush()
+
+		if err != nil {
+			return fmt.Errorf("Unable to GET data %s: %v", ctx, err)
+
+		}
+	}
+
 	if err != nil {
 		return err
 	}

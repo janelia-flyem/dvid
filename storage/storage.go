@@ -425,6 +425,43 @@ type KeyValueBatcher interface {
 	NewBatch(ctx Context) Batch
 }
 
+// KeyValueRequester allows operations to be queued so that
+// they can be handled as a batch job.  (See RequestBuffer for
+// more information.)
+type KeyValueRequester interface {
+	NewBuffer(ctx Context) RequestBuffer
+}
+
+// RequestBufferSubset implements a subset of the ordered key/value interface.
+// It declares interface common to both ordered key value and RequestBuffer
+type BufferableOps interface {
+	KeyValueSetter
+
+	// Put key-value pairs.  Note that it could be more efficient to use the Batcher
+	// interface so you don't have to create and keep a slice of KeyValue.  Some
+	// databases like leveldb will copy on batch put anyway.
+	PutRange(Context, []TKeyValue) error
+
+	// DeleteRange removes all key-value pairs with keys in the given range.
+	// If versioned data in mutable stores, this will create tombstones in the version
+	// unlike RawDelete or DeleteAll.
+	DeleteRange(ctx Context, kStart, kEnd TKey) error
+
+	// ProcessRange will process all gets when flush is called
+	ProcessRange(ctx Context, kStart, kEnd TKey, op *ChunkOp, f ChunkFunc) error
+}
+
+// RequestBuffer allows one to queue up several requests and then process
+// them all as a batch operation (if the driver supports batch
+// operations).  There is no guarantee on the order or atomicity
+// of these operations.
+type RequestBuffer interface {
+	BufferableOps
+
+	// Flush processes all the queued jobs
+	Flush() error
+}
+
 // Batch groups operations into a transaction.
 // Clear() and Close() were removed due to how other key-value stores implement batches.
 // It's easier to implement cross-database handling of a simple write/delete batch
