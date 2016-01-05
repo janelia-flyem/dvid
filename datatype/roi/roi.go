@@ -98,6 +98,9 @@ DEL  <api URL>/node/<UUID>/<data name>/roi
     GET <api URL>/node/3f8c/medulla/roi
 
     Returns the data associated with the "medulla" ROI at version 3f8c.
+    If an ROI is currently being created asynchronously, e.g., during an imageblk
+    foreground command, then a HTTP status code 206 (Partial Content) is returned
+    until the ROI is completely stored (HTTP status code 200).
 
     The "Content-type" of the HTTP response (and usually the request) are
     "application/json" for arbitrary binary data.  Returns a list of 4-tuples:
