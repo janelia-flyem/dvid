@@ -222,7 +222,7 @@ func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.
 	} else {
 		blockSize = dvid.Point3d{DefaultBlockSize, DefaultBlockSize, DefaultBlockSize}
 	}
-	return &Data{basedata, Properties{blockSize, math.MaxInt32, math.MinInt32}, false}, nil
+	return &Data{basedata, Properties{blockSize, math.MaxInt32, math.MinInt32}, make(map[dvid.VersionID]bool)}, nil
 }
 
 func (dtype *Type) Help() string {
@@ -245,14 +245,26 @@ type Properties struct {
 type Data struct {
 	*datastore.Data
 	Properties
-	Ready bool
+	Ready map[dvid.VersionID]bool
 }
 
+// Equals returns false if any version of the ROI is different in terms of readiness or the properties of the ROI
+// are different.  This does not return the equality of two ROI data.
 func (d *Data) Equals(d2 *Data) bool {
-	if !d.Data.Equals(d2.Data) ||
-		!reflect.DeepEqual(d.Properties, d2.Properties) ||
-		d.Ready != d2.Ready {
+	if !d.Data.Equals(d2.Data) || !reflect.DeepEqual(d.Properties, d2.Properties) {
 		return false
+	}
+	if len(d.Ready) != len(d2.Ready) {
+		return false
+	}
+	for k, v := range d.Ready {
+		v2, ok := d2.Ready[k]
+		if !ok {
+			return false
+		}
+		if v != v2 {
+			return false
+		}
 	}
 	return true
 }
@@ -439,11 +451,11 @@ func (d *Data) Delete(ctx storage.VersionedCtx) error {
 // writing these spans.
 func (d *Data) PutSpans(versionID dvid.VersionID, spans []dvid.Span, init bool) error {
 	ctx := datastore.NewVersionedCtx(d, versionID)
-
 	db, err := storage.MutableStore()
 	if err != nil {
 		return err
 	}
+	d.Ready[versionID] = false
 
 	// Delete the old key/values
 	if init {
@@ -502,20 +514,21 @@ func (d *Data) PutSpans(versionID dvid.VersionID, spans []dvid.Span, init bool) 
 			return fmt.Errorf("Error on last batch PUT: %v\n", err)
 		}
 	}
+
+	d.Ready[versionID] = true
 	return nil
 }
 
 // PutJSON saves JSON-encoded data representing an ROI into the datastore.
-func (d *Data) PutJSON(versionID dvid.VersionID, jsonBytes []byte) error {
+func (d *Data) PutJSON(v dvid.VersionID, jsonBytes []byte) error {
 	spans := []dvid.Span{}
 	err := json.Unmarshal(jsonBytes, &spans)
 	if err != nil {
 		return fmt.Errorf("Error trying to parse POSTed JSON: %v", err)
 	}
-	if err := d.PutSpans(versionID, spans, true); err != nil {
+	if err := d.PutSpans(v, spans, true); err != nil {
 		return err
 	}
-	d.Ready = true
 	return nil
 }
 
@@ -1192,7 +1205,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	case "roi":
 		switch method {
 		case "get":
-			if !d.Ready {
+			if !d.Ready[ctx.VersionID()] {
 				w.WriteHeader(http.StatusPartialContent)
 			}
 			jsonBytes, err := Get(ctx)

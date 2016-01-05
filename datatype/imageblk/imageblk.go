@@ -1093,7 +1093,7 @@ func (d *Data) ForegroundROI(req datastore.Request, reply *datastore.Response) e
 }
 
 func (d *Data) foregroundROI(v dvid.VersionID, dest *roi.Data, background dvid.PointNd) {
-	dest.Ready = false
+	dest.Ready[v] = false
 
 	store, err := storage.MutableStore()
 	if err != nil {
@@ -1190,7 +1190,7 @@ func (d *Data) foregroundROI(v dvid.VersionID, dest *roi.Data, background dvid.P
 		}
 	}
 	timedLog.Infof("Created foreground ROI %q for %s", dest.DataName(), d.DataName())
-	dest.Ready = true
+	dest.Ready[v] = true
 }
 
 // DoRPC acts as a switchboard for RPC commands.
