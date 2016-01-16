@@ -1423,7 +1423,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			server.BadRequest(w, r, "%q must be followed by top-left/top-right/bottom-left/res", parts[3])
 			return
 		}
-		if queryStrings.Get("throttle") == "on" {
+		if throttle := queryStrings.Get("throttle"); throttle == "on" || throttle == "true" {
 			if server.ThrottledHTTP(w) {
 				return
 			}
@@ -1505,7 +1505,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			}
 			timedLog.Infof("HTTP %s: %s (%s)", r.Method, plane, r.URL)
 		case 3:
-			if queryStrings.Get("throttle") == "on" {
+			if throttle := queryStrings.Get("throttle"); throttle == "on" || throttle == "true" {
 				if server.ThrottledHTTP(w) {
 					return
 				}

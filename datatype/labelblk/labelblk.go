@@ -1272,7 +1272,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			}
 			timedLog.Infof("HTTP %s: %s (%s)", r.Method, plane, r.URL)
 		case 3:
-			if queryStrings.Get("throttle") == "on" {
+			if throttle := queryStrings.Get("throttle"); throttle == "on" || throttle == "true" {
 				if server.ThrottledHTTP(w) {
 					return
 				}
