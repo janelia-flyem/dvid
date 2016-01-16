@@ -153,7 +153,6 @@ func NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.
 	if _, err = labelvol.GetByUUID(uuid, srcname); err != nil {
 		return nil, err
 	}
-	c.Set("sync", s) // This will set base data sync list
 
 	// Initialize the Data for this data type
 	basedata, err := datastore.NewDataService(dtype, uuid, id, name, c)

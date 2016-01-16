@@ -170,13 +170,31 @@ type SyncSub struct {
 	Done   chan struct{}
 }
 
+// SyncSubs is a slice of sync subscriptions.
+type SyncSubs []SyncSub
+
+// Add returns a SyncSubs with the added SyncSub, making sure that only one subscription exists for any
+// (Event, Notify) tuple.  If a previous (Event, Notify) exists, it is replaced by the passed SyncSub.
+func (subs SyncSubs) Add(added SyncSub) SyncSubs {
+	if len(subs) == 0 {
+		return SyncSubs{added}
+	}
+	for i, sub := range subs {
+		if sub.Event == added.Event && sub.Notify == added.Notify {
+			subs[i] = added
+			return subs
+		}
+	}
+	return append(subs, added)
+}
+
 // Syncer types support syncing of data between different data instances.
 type Syncer interface {
-	// InitSync establishes a sync link between the receiver data instance and the
-	// named instance.  It returns the subscriptions that need to be created to keep this data
-	// synced and also launches any necessary goroutines that will consume inbound channels of changes
+	// InitSync establishes a sync link between the receiver data instance and the given
+	// instance.  It returns the subscriptions that need to be created to keep this data
+	// synced and may launch goroutines that will consume inbound channels of changes
 	// from associated data.
-	InitSync(dvid.InstanceName, dvid.TypeString) []SyncSub
+	InitSync(dvid.Data) SyncSubs
 
 	// SyncedNames returns a slice of instance names to which the receiver is synced.
 	SyncedNames() []dvid.InstanceName
@@ -278,28 +296,6 @@ func (d *Data) CloneToType(typename dvid.TypeString, typeurl dvid.URLString, typ
 	d2.unversioned = d.unversioned
 
 	return d2
-}
-
-// IsSyncEstablished returns true if a sync subscriptions have already been marked
-// as established to the given data instance.  Thread-safe.
-func (d *Data) IsSyncEstablished(name dvid.InstanceName) bool {
-	d.syncmu.RLock()
-	defer d.syncmu.RUnlock()
-	if _, found := d.syncInited[name]; found {
-		return true
-	}
-	return false
-}
-
-// SyncEstablished marks the establishment of sync subscriptions with the given
-// data instance.  Thread-safe.
-func (d *Data) SyncEstablished(name dvid.InstanceName) {
-	d.syncmu.Lock()
-	defer d.syncmu.Unlock()
-	if d.syncInited == nil {
-		d.syncInited = make(map[dvid.InstanceName]struct{})
-	}
-	d.syncInited[name] = struct{}{}
 }
 
 func (d *Data) SyncedNames() []dvid.InstanceName {

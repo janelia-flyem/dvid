@@ -376,17 +376,17 @@ func (m *repoManager) loadVersion0() error {
 			m.iids[dataservice.InstanceID()] = dataservice
 		}
 
-		// Update the sync graph with all syncable data instances in this repo
+		// Recreate the sync graph for this repo
 		for _, dataservice := range r.data {
-			sdata, syncable := dataservice.(Syncer)
+			curData, syncable := dataservice.(Syncer)
 			if syncable {
-				for _, name := range sdata.SyncedNames() {
+				for _, name := range curData.SyncedNames() {
 					// get the dataservice associated with this synced data.
 					syncedData, found := r.data[name]
 					if !found {
 						return fmt.Errorf("Unable to get synced data named %q for uuid %s: %v", name, r.uuid, err)
 					}
-					r.addSyncGraph(sdata.InitSync(name, syncedData.TypeName()))
+					r.addSyncGraph(curData.InitSync(syncedData))
 				}
 			}
 		}
@@ -1335,7 +1335,6 @@ func (m *repoManager) newData(uuid dvid.UUID, t TypeService, name dvid.InstanceN
 	if err != nil {
 		return nil, err
 	}
-
 	r, err := m.repoFromUUID(uuid)
 	if err != nil {
 		return nil, err
@@ -1356,18 +1355,6 @@ func (m *repoManager) newData(uuid dvid.UUID, t TypeService, name dvid.InstanceN
 	m.iids[id] = dataservice
 	r.updated = time.Now()
 
-	// Update the sync graph if this data needs to be synced with another data instance.
-	sdata, syncable := dataservice.(Syncer)
-	if syncable {
-		for _, name := range sdata.SyncedNames() {
-			syncedData, err := m.getDataByUUID(uuid, name)
-			if err != nil {
-				return nil, fmt.Errorf("Unable to get synced data named %q: %v", name, err)
-			}
-			r.addSyncGraph(sdata.InitSync(name, syncedData.TypeName()))
-		}
-	}
-
 	// Add to log and save repo
 	tm := time.Now()
 	r.updated = tm
@@ -1375,6 +1362,43 @@ func (m *repoManager) newData(uuid dvid.UUID, t TypeService, name dvid.InstanceN
 	message := fmt.Sprintf("%s  %s", tm.Format(time.RFC3339), msg)
 	r.log = append(r.log, message)
 	return dataservice, r.save()
+}
+
+func (m *repoManager) newSync(uuid dvid.UUID, name dvid.InstanceName, syncs dvid.InstanceNames) error {
+	r, err := m.repoFromUUID(uuid)
+	if err != nil {
+		return err
+	}
+
+	dataservice, found := r.data[name]
+	if !found {
+		return ErrInvalidDataName
+	}
+
+	r.Lock()
+	defer r.Unlock()
+
+	// Replace the syncs for the data instance with the given syncs.
+	receiver, syncable := dataservice.(Syncer)
+	if syncable {
+		for _, syncName := range syncs {
+			syncedData, found := r.data[syncName]
+			if !found {
+				return fmt.Errorf("Unable to get synced data instance %q: %v", syncName)
+			}
+			r.addSyncGraph(receiver.InitSync(syncedData))
+		}
+	} else {
+		return fmt.Errorf("Can't create syncs for instance %q, which is not syncable", name)
+	}
+
+	// Add to log and save repo
+	tm := time.Now()
+	r.updated = tm
+	msg := fmt.Sprintf("Data instance %q set to sync wtih %s", name, syncs)
+	message := fmt.Sprintf("%s  %s", tm.Format(time.RFC3339), msg)
+	r.log = append(r.log, message)
+	return r.save()
 }
 
 func (m *repoManager) getDataByUUID(uuid dvid.UUID, name dvid.InstanceName) (DataService, error) {
@@ -1510,7 +1534,7 @@ type repoT struct {
 	data map[dvid.InstanceName]DataService
 
 	// subs holds subscriptions to change events for each data instance
-	subs map[SyncEvent]([]SyncSub)
+	subs map[SyncEvent]SyncSubs
 }
 
 // newRepo creates a new repository given a UUID, version, and RepoID,
@@ -1722,17 +1746,17 @@ func (r *repoT) remapLocalIDs() (dvid.InstanceMap, dvid.VersionMap, error) {
 	return instanceMap, versionMap, nil
 }
 
-// Adds subscriptions for data instance events.
-func (r *repoT) addSyncGraph(subs []SyncSub) {
+// Adds subscriptions for data instance events. making sure that duplicates are avoided.
+func (r *repoT) addSyncGraph(subs SyncSubs) {
 	if r.subs == nil {
-		r.subs = make(map[SyncEvent]([]SyncSub))
+		r.subs = make(map[SyncEvent]SyncSubs)
 	}
 	for _, sub := range subs {
-		evtsubs, found := r.subs[sub.Event]
+		_, found := r.subs[sub.Event]
 		if !found {
-			r.subs[sub.Event] = []SyncSub{sub}
+			r.subs[sub.Event] = SyncSubs{sub}
 		} else {
-			r.subs[sub.Event] = append(evtsubs, sub)
+			r.subs[sub.Event] = r.subs[sub.Event].Add(sub)
 		}
 	}
 }

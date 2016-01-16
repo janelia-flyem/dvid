@@ -1,6 +1,8 @@
 package annotation
 
 import (
+	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -392,7 +394,6 @@ func TestRequests(t *testing.T) {
 	testResponse(t, synapse2, "%snode/%s/%s/tag/%s", server.WebAPIPath, uuid, data.DataName(), tag)
 }
 
-/*
 func TestLabels(t *testing.T) {
 	datastore.OpenTest()
 	defer datastore.CloseTest()
@@ -400,11 +401,12 @@ func TestLabels(t *testing.T) {
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
 	var config dvid.Config
-	config.Set("sync", "bodies")
 	server.CreateTestInstance(t, uuid, "labelblk", "labels", config)
-	config.Clear()
-	config.Set("sync", "labels")
 	server.CreateTestInstance(t, uuid, "labelvol", "bodies", config)
+
+	// Establish syncs
+	server.CreateTestSync(t, uuid, "labels", "bodies")
+	server.CreateTestSync(t, uuid, "bodies", "labels")
 
 	// Populate the labels, which should automatically populate the labelvol
 	_ = createLabelTestVolume(t, uuid, "labels")
@@ -414,8 +416,8 @@ func TestLabels(t *testing.T) {
 	}
 
 	// Add annotations syncing with "labels" instance.
-	config.Set("sync", "bodies,labels")
 	server.CreateTestInstance(t, uuid, "annotation", "mysynapses", config)
+	server.CreateTestSync(t, uuid, "mysynapses", "labels,bodies")
 
 	// PUT first batch of synapses
 	testJSON, err := json.Marshal(testData)
@@ -541,4 +543,3 @@ var (
 	body3 = bodies[2]
 	body4 = bodies[3]
 )
-*/

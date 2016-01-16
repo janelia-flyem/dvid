@@ -7,6 +7,7 @@ package dvid
 import (
 	"encoding/binary"
 	"fmt"
+	"strings"
 
 	"github.com/janelia-flyem/go/uuid"
 )
@@ -84,6 +85,17 @@ type URLString string
 
 // InstanceName is a string that is the name of DVID data.
 type InstanceName string
+
+// InstanceNames is a slice of DVID data instance names.
+type InstanceNames []InstanceName
+
+func (i InstanceNames) String() string {
+	s := make([]string, len(i))
+	for j, name := range i {
+		s[j] = string(name)
+	}
+	return strings.Join(s, ", ")
+}
 
 // InstanceID is a DVID server-specific identifier for data instances.  Each InstanceID
 // is only used within one repo, so all key/values for a repo can be obtained by

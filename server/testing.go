@@ -14,6 +14,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/janelia-flyem/dvid/dvid"
@@ -81,4 +82,10 @@ func CreateTestInstance(t *testing.T, uuid dvid.UUID, typename, name string, con
 	}
 	apiStr := fmt.Sprintf("%srepo/%s/instance", WebAPIPath, uuid)
 	TestHTTP(t, "POST", apiStr, bytes.NewBuffer(jsonData))
+}
+
+func CreateTestSync(t *testing.T, uuid dvid.UUID, name string, syncs ...string) {
+	url := fmt.Sprintf("%snode/%s/%s/sync", WebAPIPath, uuid, name)
+	msg := fmt.Sprintf(`{"sync": "%s"}`, strings.Join(syncs, ","))
+	TestHTTP(t, "POST", url, strings.NewReader(msg))
 }

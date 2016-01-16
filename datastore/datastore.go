@@ -281,6 +281,13 @@ func NewData(uuid dvid.UUID, t TypeService, name dvid.InstanceName, c dvid.Confi
 	return manager.newData(uuid, t, name, c)
 }
 
+func SyncData(uuid dvid.UUID, name dvid.InstanceName, syncedNames ...dvid.InstanceName) error {
+	if manager == nil {
+		return ErrManagerNotInitialized
+	}
+	return manager.newSync(uuid, name, syncedNames)
+}
+
 // SaveDataByUUID persists metadata for a data instance with given uuid.
 // TODO -- Make this more efficient by storing data metadata separately from repo.
 //   Currently we save entire repo.

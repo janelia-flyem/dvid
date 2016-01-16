@@ -84,6 +84,18 @@ POST <api URL>/node/<UUID>/<data name>/info
     data name     Name of annotation data.
 
 
+POST <api URL>/node/<UUID>/<data name>/sync
+
+    Establishes data instances with which the annotations are synced.  Expects JSON to be POSTed
+    with the following format:
+
+    { "sync": "labels,bodies" }
+
+    The "sync" property should be followed by a comma-delimited list of data instances that MUST
+    already exist.  Currently, syncs should be created before any annotations are pushed to
+    the server.  If annotations already exist, these are currently not synced.
+
+
 Note: For the following URL endpoints that return and accept POSTed JSON values, see the JSON format
 at end of this documentation.
 

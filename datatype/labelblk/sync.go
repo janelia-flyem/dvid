@@ -43,13 +43,7 @@ func BlockOnUpdating(uuid dvid.UUID, name dvid.InstanceName) error {
 }
 
 // InitSync implements the datastore.Syncer interface
-func (d *Data) InitSync(name dvid.InstanceName, typename dvid.TypeString) []datastore.SyncSub {
-	// This should only be called once for any synced instance.
-	if d.IsSyncEstablished(name) {
-		return nil
-	}
-	d.SyncEstablished(name)
-
+func (d *Data) InitSync(syncData dvid.Data) []datastore.SyncSub {
 	mergeCh := make(chan datastore.SyncMessage, 100)
 	mergeDone := make(chan struct{})
 
@@ -64,37 +58,37 @@ func (d *Data) InitSync(name dvid.InstanceName, typename dvid.TypeString) []data
 		// 	Done:   make(chan struct{}),
 		// },
 		datastore.SyncSub{
-			Event:  datastore.SyncEvent{name, labels.MergeStartEvent},
+			Event:  datastore.SyncEvent{syncData.DataName(), labels.MergeStartEvent},
 			Notify: d.DataName(),
 			Ch:     mergeCh,
 			Done:   mergeDone,
 		},
 		// datastore.SyncSub{
-		// 	Event:  datastore.SyncEvent{name, labels.MergeEndEvent},
+		// 	Event:  datastore.SyncEvent{syncData.DataName(), labels.MergeEndEvent},
 		// 	Notify: d.DataName(),
 		// 	Ch:     mergeCh,
 		// 	Done:   mergeDone,
 		// },
 		datastore.SyncSub{
-			Event:  datastore.SyncEvent{name, labels.MergeBlockEvent},
+			Event:  datastore.SyncEvent{syncData.DataName(), labels.MergeBlockEvent},
 			Notify: d.DataName(),
 			Ch:     mergeCh,
 			Done:   mergeDone,
 		},
 		datastore.SyncSub{
-			Event:  datastore.SyncEvent{name, labels.SplitStartEvent},
+			Event:  datastore.SyncEvent{syncData.DataName(), labels.SplitStartEvent},
 			Notify: d.DataName(),
 			Ch:     splitCh,
 			Done:   splitDone,
 		},
 		// datastore.SyncSub{
-		// 	Event:  datastore.SyncEvent{name, labels.SplitEndEvent},
+		// 	Event:  datastore.SyncEvent{syncData.DataName(), labels.SplitEndEvent},
 		// 	Notify: d.DataName(),
 		// 	Ch:     splitCh,
 		// 	Done:   splitDone,
 		// },
 		datastore.SyncSub{
-			Event:  datastore.SyncEvent{name, labels.SplitLabelEvent},
+			Event:  datastore.SyncEvent{syncData.DataName(), labels.SplitLabelEvent},
 			Notify: d.DataName(),
 			Ch:     splitCh,
 			Done:   splitDone,
@@ -103,8 +97,8 @@ func (d *Data) InitSync(name dvid.InstanceName, typename dvid.TypeString) []data
 
 	// Launch go routines to handle sync events.
 	//go d.syncSparsevolChange(name, subs[0].Ch, subs[0].Done)
-	go d.syncMerge(name, mergeCh, mergeDone)
-	go d.syncSplit(name, splitCh, splitDone)
+	go d.syncMerge(syncData.DataName(), mergeCh, mergeDone)
+	go d.syncSplit(syncData.DataName(), splitCh, splitDone)
 
 	return subs
 }

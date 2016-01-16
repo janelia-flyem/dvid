@@ -60,22 +60,17 @@ func (lp LabelPoints) add(label uint64, pt dvid.Point3d) {
 	}
 }
 
-// InitSync implements the datastore.Syncer interface
-func (d *Data) InitSync(name dvid.InstanceName, typename dvid.TypeString) []datastore.SyncSub {
-	// This should only be called once for any synced instance.
-	if d.IsSyncEstablished(name) {
-		return nil
-	}
-	d.SyncEstablished(name)
-
+// InitSync implements the datastore.Syncer interface.  Returns a list of subscriptions
+// to the sync data instance that will notify the receiver.
+func (d *Data) InitSync(syncData dvid.Data) []datastore.SyncSub {
 	// Our syncing depends on the datatype we are syncing.
-	switch typename {
+	switch syncData.TypeName() {
 	case "labelblk":
-		return d.initSyncLabelblk(name)
+		return d.initSyncLabelblk(syncData.DataName())
 	case "labelvol":
-		return d.initSyncLabelvol(name)
+		return d.initSyncLabelvol(syncData.DataName())
 	default:
-		dvid.Errorf("Unable to sync %s with %s since datatype %q is not supported.", d.DataName(), name, typename)
+		dvid.Errorf("Unable to sync %s with %s since datatype %q is not supported.", d.DataName(), syncData.DataName(), syncData.TypeName())
 	}
 	return nil
 }

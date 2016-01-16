@@ -227,6 +227,10 @@ else ()
         ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go test -v -tags '${DVID_BACKEND} ${DVID_GRAPHBACKEND}' 
             ${DVID_PACKAGES})
 
+   add_custom_target (test-labelvol
+        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go test -v -tags '${DVID_BACKEND} ${DVID_GRAPHBACKEND}' 
+            ${DVID_GO}/datatype/labelvol)
+
    add_custom_target (coverage
         ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go test -cover -tags '${DVID_BACKEND} ${DVID_GRAPHBACKEND}' 
             ${DVID_PACKAGES})

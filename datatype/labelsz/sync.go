@@ -17,19 +17,13 @@ import (
 const syncBuffer = 100
 
 // InitSync implements the datastore.Syncer interface
-func (d *Data) InitSync(name dvid.InstanceName) []datastore.SyncSub {
-	// This should only be called once for any synced instance.
-	if d.IsSyncEstablished(name) {
-		return nil
-	}
-	d.SyncEstablished(name)
-
+func (d *Data) InitSync(syncData dvid.Data) []datastore.SyncSub {
 	syncCh := make(chan datastore.SyncMessage, syncBuffer)
 	doneCh := make(chan struct{})
 
 	go d.handleSizeEvent(syncCh, doneCh)
 
-	evt := datastore.SyncEvent{name, labels.ChangeSizeEvent}
+	evt := datastore.SyncEvent{syncData.DataName(), labels.ChangeSizeEvent}
 	subs := []datastore.SyncSub{
 		datastore.SyncSub{
 			Event:  evt,

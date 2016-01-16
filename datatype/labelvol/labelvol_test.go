@@ -308,11 +308,10 @@ func TestSparseVolumes(t *testing.T) {
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
 	var config dvid.Config
-	config.Set("sync", "bodies")
 	server.CreateTestInstance(t, uuid, "labelblk", "labels", config)
-	config.Clear()
-	config.Set("sync", "labels")
 	server.CreateTestInstance(t, uuid, "labelvol", "bodies", config)
+	server.CreateTestSync(t, uuid, "labels", "bodies")
+	server.CreateTestSync(t, uuid, "bodies", "labels")
 
 	// Populate the labels, which should automatically populate the labelvol
 	_ = createLabelTestVolume(t, uuid, "labels")
@@ -444,11 +443,10 @@ func TestMergeLabels(t *testing.T) {
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
 	var config dvid.Config
-	config.Set("sync", "bodies")
 	server.CreateTestInstance(t, uuid, "labelblk", "labels", config)
-	config.Clear()
-	config.Set("sync", "labels")
 	server.CreateTestInstance(t, uuid, "labelvol", "bodies", config)
+	server.CreateTestSync(t, uuid, "labels", "bodies")
+	server.CreateTestSync(t, uuid, "bodies", "labels")
 
 	expected := createLabelTestVolume(t, uuid, "labels")
 	expected.add(body3, 2)
@@ -512,11 +510,10 @@ func TestSplitLabel(t *testing.T) {
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
 	var config dvid.Config
-	config.Set("sync", "bodies")
 	server.CreateTestInstance(t, uuid, "labelblk", "labels", config)
-	config.Clear()
-	config.Set("sync", "labels")
 	server.CreateTestInstance(t, uuid, "labelvol", "bodies", config)
+	server.CreateTestSync(t, uuid, "labels", "bodies")
+	server.CreateTestSync(t, uuid, "bodies", "labels")
 
 	// Post label volume and setup expected volume after split.
 	expected := createLabelTestVolume(t, uuid, "labels")
@@ -611,11 +608,10 @@ func TestSplitGivenLabel(t *testing.T) {
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
 	var config dvid.Config
-	config.Set("sync", "bodies")
 	server.CreateTestInstance(t, uuid, "labelblk", "labels", config)
-	config.Clear()
-	config.Set("sync", "labels")
 	server.CreateTestInstance(t, uuid, "labelvol", "bodies", config)
+	server.CreateTestSync(t, uuid, "labels", "bodies")
+	server.CreateTestSync(t, uuid, "bodies", "labels")
 
 	// Post label volume and setup expected volume after split.
 	expected := createLabelTestVolume(t, uuid, "labels")
@@ -672,11 +668,10 @@ func TestSplitCoarseLabel(t *testing.T) {
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
 	var config dvid.Config
-	config.Set("sync", "bodies")
 	server.CreateTestInstance(t, uuid, "labelblk", "labels", config)
-	config.Clear()
-	config.Set("sync", "labels")
 	server.CreateTestInstance(t, uuid, "labelvol", "bodies", config)
+	server.CreateTestSync(t, uuid, "labels", "bodies")
+	server.CreateTestSync(t, uuid, "bodies", "labels")
 
 	// Post label volume and setup expected volume after split of block coords (2, 1, 1) and (3, 1, 2)
 	expected := createLabelTestVolume(t, uuid, "labels")
@@ -773,11 +768,10 @@ func TestSplitCoarseGivenLabel(t *testing.T) {
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
 	var config dvid.Config
-	config.Set("sync", "bodies")
 	server.CreateTestInstance(t, uuid, "labelblk", "labels", config)
-	config.Clear()
-	config.Set("sync", "labels")
 	server.CreateTestInstance(t, uuid, "labelvol", "bodies", config)
+	server.CreateTestSync(t, uuid, "labels", "bodies")
+	server.CreateTestSync(t, uuid, "bodies", "labels")
 
 	// Post label volume and setup expected volume after split of block coords (2, 1, 1) and (3, 1, 2)
 	expected := createLabelTestVolume(t, uuid, "labels")
@@ -869,11 +863,10 @@ func TestMutableLabelblkPOST(t *testing.T) {
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
 	var config dvid.Config
-	config.Set("sync", "bodies")
 	server.CreateTestInstance(t, uuid, "labelblk", "labels", config)
-	config.Clear()
-	config.Set("sync", "labels")
 	server.CreateTestInstance(t, uuid, "labelvol", "bodies", config)
+	server.CreateTestSync(t, uuid, "labels", "bodies")
+	server.CreateTestSync(t, uuid, "bodies", "labels")
 
 	// Post labels 1-4
 	createLabelTestVolume(t, uuid, "labels")
