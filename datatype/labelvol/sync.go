@@ -232,7 +232,12 @@ func (d *Data) mutateBlock(ctx *datastore.VersionedCtx, block imageblk.MutatedBl
 	for z = firstPt.Value(2); z <= lastPt.Value(2); z++ {
 		for y = firstPt.Value(1); y <= lastPt.Value(1); y++ {
 			for x = firstPt.Value(0); x <= lastPt.Value(0); x++ {
-				pastLabel := binary.LittleEndian.Uint64(block.Prev[start : start+8])
+				var pastLabel uint64
+				if block.Prev == nil || len(block.Prev) == 0 {
+					pastLabel = 0
+				} else {
+					pastLabel = binary.LittleEndian.Uint64(block.Prev[start : start+8])
+				}
 				voxelLabel = binary.LittleEndian.Uint64(block.Data[start : start+8])
 				if maxLabel < voxelLabel {
 					maxLabel = voxelLabel
