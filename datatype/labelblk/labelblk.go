@@ -1078,6 +1078,16 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, string(jsonBytes))
 
+	case "sync":
+		if action != "post" {
+			server.BadRequest(w, r, "Only POST allowed to sync endpoint")
+			return
+		}
+		if err := d.SetSync(uuid, r.Body); err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+
 	case "label":
 		// GET <api URL>/node/<UUID>/<data name>/label/<coord>
 		if len(parts) < 5 {

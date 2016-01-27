@@ -1025,6 +1025,10 @@ func (c ChunkPoint3d) String() string {
 	return fmt.Sprintf("(%d,%d,%d)", c[0], c[1], c[2])
 }
 
+func (c ChunkPoint3d) Equals(c2 ChunkPoint3d) bool {
+	return c[0] == c2[0] && c[1] == c2[1] && c[2] == c2[2]
+}
+
 // SetMinimum sets the point to the minimum elements of current and passed points.
 func (p *ChunkPoint3d) SetMinimum(p2 ChunkPoint3d) {
 	if p[0] > p2[0] {

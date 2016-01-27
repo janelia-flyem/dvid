@@ -467,7 +467,7 @@ func (d *Data) GetSyncedLabelblk(v dvid.VersionID) (*labelblk.Data, error) {
 			return source, nil
 		}
 	}
-	return nil, fmt.Errorf("no labelblk data is syncing with %d", d.DataName())
+	return nil, fmt.Errorf("no labelblk data is syncing with %s", d.DataName())
 }
 
 // GetByUUID returns a pointer to labelvol data given a version (UUID) and data name.
@@ -795,6 +795,16 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, string(jsonBytes))
+
+	case "sync":
+		if action != "post" {
+			server.BadRequest(w, r, "Only POST allowed to sync endpoint")
+			return
+		}
+		if err := d.SetSync(uuid, r.Body); err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
 
 	case "sparsevol":
 		// GET <api URL>/node/<UUID>/<data name>/sparsevol/<label>

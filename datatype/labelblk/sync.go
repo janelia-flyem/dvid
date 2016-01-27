@@ -42,52 +42,52 @@ func BlockOnUpdating(uuid dvid.UUID, name dvid.InstanceName) error {
 	return nil
 }
 
-// InitSync implements the datastore.Syncer interface
-func (d *Data) InitSync(syncData dvid.Data) []datastore.SyncSub {
+// GetSyncSubs implements the datastore.Syncer interface
+func (d *Data) GetSyncSubs(syncData dvid.Data) datastore.SyncSubs {
 	mergeCh := make(chan datastore.SyncMessage, 100)
 	mergeDone := make(chan struct{})
 
 	splitCh := make(chan datastore.SyncMessage, 10) // Splits can be a lot bigger due to sparsevol
 	splitDone := make(chan struct{})
 
-	subs := []datastore.SyncSub{
-		// datastore.SyncSub{
+	subs := datastore.SyncSubs{
+		// {
 		// 	Event:  datastore.SyncEvent{name, labels.SparsevolModEvent},
 		// 	Notify: d.DataName(),
 		// 	Ch:     make(chan datastore.SyncMessage, 100),
 		// 	Done:   make(chan struct{}),
 		// },
-		datastore.SyncSub{
+		{
 			Event:  datastore.SyncEvent{syncData.DataName(), labels.MergeStartEvent},
 			Notify: d.DataName(),
 			Ch:     mergeCh,
 			Done:   mergeDone,
 		},
-		// datastore.SyncSub{
+		// {
 		// 	Event:  datastore.SyncEvent{syncData.DataName(), labels.MergeEndEvent},
 		// 	Notify: d.DataName(),
 		// 	Ch:     mergeCh,
 		// 	Done:   mergeDone,
 		// },
-		datastore.SyncSub{
+		{
 			Event:  datastore.SyncEvent{syncData.DataName(), labels.MergeBlockEvent},
 			Notify: d.DataName(),
 			Ch:     mergeCh,
 			Done:   mergeDone,
 		},
-		datastore.SyncSub{
+		{
 			Event:  datastore.SyncEvent{syncData.DataName(), labels.SplitStartEvent},
 			Notify: d.DataName(),
 			Ch:     splitCh,
 			Done:   splitDone,
 		},
-		// datastore.SyncSub{
+		// {
 		// 	Event:  datastore.SyncEvent{syncData.DataName(), labels.SplitEndEvent},
 		// 	Notify: d.DataName(),
 		// 	Ch:     splitCh,
 		// 	Done:   splitDone,
 		// },
-		datastore.SyncSub{
+		{
 			Event:  datastore.SyncEvent{syncData.DataName(), labels.SplitLabelEvent},
 			Notify: d.DataName(),
 			Ch:     splitCh,

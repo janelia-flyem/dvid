@@ -34,27 +34,27 @@ func BlockOnUpdating(uuid dvid.UUID, name dvid.InstanceName) error {
 	return nil
 }
 
-// InitSync implements the datastore.Syncer interface
-func (d *Data) InitSync(syncData dvid.Data) []datastore.SyncSub {
+// GetSyncSubs implements the datastore.Syncer interface
+func (d *Data) GetSyncSubs(syncData dvid.Data) datastore.SyncSubs {
 	syncCh := make(chan datastore.SyncMessage, syncBufferSize)
 	doneCh := make(chan struct{})
 
 	go d.handleBlockEvent(syncCh, doneCh)
 
-	subs := []datastore.SyncSub{
-		datastore.SyncSub{
+	subs := datastore.SyncSubs{
+		{
 			Event:  datastore.SyncEvent{syncData.DataName(), labels.IngestBlockEvent},
 			Notify: d.DataName(),
 			Ch:     syncCh,
 			Done:   doneCh,
 		},
-		datastore.SyncSub{
+		{
 			Event:  datastore.SyncEvent{syncData.DataName(), labels.MutateBlockEvent},
 			Notify: d.DataName(),
 			Ch:     syncCh,
 			Done:   doneCh,
 		},
-		datastore.SyncSub{
+		{
 			Event:  datastore.SyncEvent{syncData.DataName(), labels.DeleteBlockEvent},
 			Notify: d.DataName(),
 			Ch:     syncCh,

@@ -190,11 +190,14 @@ func (subs SyncSubs) Add(added SyncSub) SyncSubs {
 
 // Syncer types support syncing of data between different data instances.
 type Syncer interface {
-	// InitSync establishes a sync link between the receiver data instance and the given
-	// instance.  It returns the subscriptions that need to be created to keep this data
+	// SetSync establishes a sync link between the receiver data instance and a list of named
+	// data instances.
+	SetSync(uuid dvid.UUID, in io.ReadCloser) error
+
+	// GetSyncSubs returns the subscriptions that need to be created to keep this data
 	// synced and may launch goroutines that will consume inbound channels of changes
 	// from associated data.
-	InitSync(dvid.Data) SyncSubs
+	GetSyncSubs(dvid.Data) SyncSubs
 
 	// SyncedNames returns a slice of instance names to which the receiver is synced.
 	SyncedNames() []dvid.InstanceName
@@ -298,9 +301,40 @@ func (d *Data) CloneToType(typename dvid.TypeString, typeurl dvid.URLString, typ
 	return d2
 }
 
+// -- Syncer interface implementation is in base Data type because generic implementations will do.
+
+func (d *Data) SetSync(uuid dvid.UUID, in io.ReadCloser) error {
+	if manager == nil {
+		return ErrManagerNotInitialized
+	}
+	jsonData := make(map[string]string)
+	decoder := json.NewDecoder(in)
+	if err := decoder.Decode(&jsonData); err != nil && err != io.EOF {
+		return fmt.Errorf("Malformed JSON request in sync request: %v", err)
+	}
+	syncedCSV, ok := jsonData["sync"]
+	if !ok {
+		return fmt.Errorf("Could not find 'sync' value in POSTed JSON to sync request.")
+	}
+
+	syncedNames := strings.Split(syncedCSV, ",")
+	if len(syncedNames) == 0 {
+		return nil
+	}
+	for _, name := range syncedNames {
+		d.syncs = append(d.syncs, dvid.InstanceName(name))
+	}
+	if err := SyncData(uuid, dvid.InstanceName(d.DataName()), syncedNames...); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (d *Data) SyncedNames() []dvid.InstanceName {
 	return d.syncs
 }
+
+// ---------------------------------------
 
 func (d *Data) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
@@ -541,20 +575,6 @@ func (d *Data) ModifyConfig(config dvid.Config) error {
 			d.checksum = dvid.CRC32
 		default:
 			return fmt.Errorf("Illegal checksum specified: %s", s)
-		}
-	}
-
-	// Set data instances for syncing.
-	s, found, err = config.GetString("sync")
-	if err != nil {
-		return err
-	}
-	if found {
-		names := strings.Split(s, ",")
-		if len(names) > 0 {
-			for _, name := range names {
-				d.syncs = append(d.syncs, dvid.InstanceName(name))
-			}
 		}
 	}
 

@@ -16,8 +16,8 @@ import (
 // Number of change messages we can buffer before blocking on sync channel.
 const syncBuffer = 100
 
-// InitSync implements the datastore.Syncer interface
-func (d *Data) InitSync(syncData dvid.Data) []datastore.SyncSub {
+// GetSyncSubs implements the datastore.Syncer interface
+func (d *Data) GetSyncSubs(syncData dvid.Data) []datastore.SyncSub {
 	syncCh := make(chan datastore.SyncMessage, syncBuffer)
 	doneCh := make(chan struct{})
 

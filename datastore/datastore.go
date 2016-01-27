@@ -281,7 +281,7 @@ func NewData(uuid dvid.UUID, t TypeService, name dvid.InstanceName, c dvid.Confi
 	return manager.newData(uuid, t, name, c)
 }
 
-func SyncData(uuid dvid.UUID, name dvid.InstanceName, syncedNames ...dvid.InstanceName) error {
+func SyncData(uuid dvid.UUID, name dvid.InstanceName, syncedNames ...string) error {
 	if manager == nil {
 		return ErrManagerNotInitialized
 	}

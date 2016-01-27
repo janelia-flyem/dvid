@@ -386,7 +386,7 @@ func (m *repoManager) loadVersion0() error {
 					if !found {
 						return fmt.Errorf("Unable to get synced data named %q for uuid %s: %v", name, r.uuid, err)
 					}
-					r.addSyncGraph(curData.InitSync(syncedData))
+					r.addSyncGraph(curData.GetSyncSubs(syncedData))
 				}
 			}
 		}
@@ -1364,7 +1364,7 @@ func (m *repoManager) newData(uuid dvid.UUID, t TypeService, name dvid.InstanceN
 	return dataservice, r.save()
 }
 
-func (m *repoManager) newSync(uuid dvid.UUID, name dvid.InstanceName, syncs dvid.InstanceNames) error {
+func (m *repoManager) newSync(uuid dvid.UUID, name dvid.InstanceName, syncs []string) error {
 	r, err := m.repoFromUUID(uuid)
 	if err != nil {
 		return err
@@ -1382,11 +1382,11 @@ func (m *repoManager) newSync(uuid dvid.UUID, name dvid.InstanceName, syncs dvid
 	receiver, syncable := dataservice.(Syncer)
 	if syncable {
 		for _, syncName := range syncs {
-			syncedData, found := r.data[syncName]
+			syncedData, found := r.data[dvid.InstanceName(syncName)]
 			if !found {
-				return fmt.Errorf("Unable to get synced data instance %q: %v", syncName)
+				return fmt.Errorf("Unable to find synced data instance %q", syncName)
 			}
-			r.addSyncGraph(receiver.InitSync(syncedData))
+			r.addSyncGraph(receiver.GetSyncSubs(syncedData))
 		}
 	} else {
 		return fmt.Errorf("Can't create syncs for instance %q, which is not syncable", name)

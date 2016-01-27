@@ -657,45 +657,45 @@ func (d *Data) blockSize(v dvid.VersionID) dvid.Point3d {
 		return *d.cachedBlockSize
 	}
 	var bsize dvid.Point3d
-	lb, err := d.GetSyncedLabelblk(v)
-	if err == nil && lb != nil {
+	d.cachedBlockSize = &bsize
+	if lb := d.GetSyncedLabelblk(v); lb != nil {
 		bsize = lb.BlockSize().(dvid.Point3d)
+		return bsize
 	}
-	lv, err := d.GetSyncedLabelvol(v)
-	if err == nil && lv != nil {
+	if lv := d.GetSyncedLabelvol(v); lv != nil {
 		if len(bsize) != 0 && !bsize.Equals(lv.BlockSize) {
 			dvid.Errorf("annotations %q is synced to labelblk and labelvol with different block sizes!\n", d.DataName())
 		} else {
 			bsize = lv.BlockSize
+			return bsize
 		}
 	}
 	if len(bsize) != 0 {
 		bsize = dvid.Point3d{DefaultBlockSize, DefaultBlockSize, DefaultBlockSize}
 	}
-	d.cachedBlockSize = &bsize
 	return bsize
 }
 
-func (d *Data) GetSyncedLabelblk(v dvid.VersionID) (*labelblk.Data, error) {
+func (d *Data) GetSyncedLabelblk(v dvid.VersionID) *labelblk.Data {
 	// Go through all synced names, and checking if there's a valid source.
 	for _, name := range d.SyncedNames() {
 		source, err := labelblk.GetByVersion(v, name)
 		if err == nil {
-			return source, nil
+			return source
 		}
 	}
-	return nil, fmt.Errorf("no labelblk data is syncing with %d", d.DataName())
+	return nil
 }
 
-func (d *Data) GetSyncedLabelvol(v dvid.VersionID) (*labelvol.Data, error) {
+func (d *Data) GetSyncedLabelvol(v dvid.VersionID) *labelvol.Data {
 	// Go through all synced names, and checking if there's a valid source.
 	for _, name := range d.SyncedNames() {
 		source, err := labelvol.GetByVersion(v, name)
 		if err == nil {
-			return source, nil
+			return source
 		}
 	}
-	return nil, fmt.Errorf("no labelblk data is syncing with %d", d.DataName())
+	return nil
 }
 
 // delete all reference to given element point in the slice of tags.
@@ -724,9 +724,9 @@ func (d *Data) deleteElementInTags(ctx *datastore.VersionedCtx, pt dvid.Point3d,
 }
 
 func (d *Data) deleteElementInLabel(ctx *datastore.VersionedCtx, pt dvid.Point3d) error {
-	labelData, err := d.GetSyncedLabelblk(ctx.VersionID())
-	if err != nil {
-		return err
+	labelData := d.GetSyncedLabelblk(ctx.VersionID())
+	if labelData == nil {
+		return nil // no synced labels
 	}
 	label, err := labelData.GetLabelAtPoint(ctx.VersionID(), pt)
 	if err != nil {
@@ -795,9 +795,9 @@ func (d *Data) moveElementInTags(ctx *datastore.VersionedCtx, from, to dvid.Poin
 }
 
 func (d *Data) moveElementInLabels(ctx *datastore.VersionedCtx, from, to dvid.Point3d, moved *Element) error {
-	labelData, err := d.GetSyncedLabelblk(ctx.VersionID())
-	if err != nil {
-		return err
+	labelData := d.GetSyncedLabelblk(ctx.VersionID())
+	if labelData == nil {
+		return nil // no label denormalization possible
 	}
 	oldLabel, err := labelData.GetLabelAtPoint(ctx.VersionID(), from)
 	if err != nil {
@@ -834,13 +834,29 @@ func (d *Data) moveElementInLabels(ctx *datastore.VersionedCtx, from, to dvid.Po
 	return nil
 }
 
-// move all reference to given element point in the related points.
-// This is private method and assumes outer locking.
+// move all reference to given element point in the related points in different blocks.
+// This is private method and assumes outer locking as well as current "from" block already being modified,
+// including relationships.
 func (d *Data) moveElementInRelationships(ctx *datastore.VersionedCtx, from, to dvid.Point3d, rels []Relationship) error {
 	blockSize := d.blockSize(ctx.VersionID())
+	fromBlockCoord := from.Chunk(blockSize).(dvid.ChunkPoint3d)
+
+	// Get list of blocks with related points.
+	relBlocks := make(map[dvid.IZYXString]struct{})
 	for _, rel := range rels {
-		// Get the block elements containing the related element.
 		blockCoord := rel.To.Chunk(blockSize).(dvid.ChunkPoint3d)
+		if blockCoord.Equals(fromBlockCoord) {
+			continue // relationships are almoved in from block
+		}
+		relBlocks[blockCoord.ToIZYXString()] = struct{}{}
+	}
+
+	// Alter the moved points in those related blocks.
+	for izyxstr := range relBlocks {
+		blockCoord, err := izyxstr.ToChunkPoint3d()
+		if err != nil {
+			return err
+		}
 		tk := NewBlockTKey(blockCoord)
 		elems, err := getElements(ctx, tk)
 		if err != nil {
@@ -849,7 +865,7 @@ func (d *Data) moveElementInRelationships(ctx *datastore.VersionedCtx, from, to 
 
 		// Move element in related element.
 		if _, changed := elems.move(from, to, false); !changed {
-			dvid.Errorf("Unable to find moved element %s in related element %s:\n%v\n", from, rel.To, elems)
+			dvid.Errorf("Unable to find moved element %s in related element @ block %s:\n%v\n", from, blockCoord, elems)
 			continue
 		}
 
@@ -901,6 +917,10 @@ func (d *Data) storeBlockElements(ctx *datastore.VersionedCtx, be blockElements)
 // stores synaptic elements arranged by label, replacing any
 // elements at same position.
 func (d *Data) storeLabelElements(ctx *datastore.VersionedCtx, be blockElements) error {
+	labelData := d.GetSyncedLabelblk(ctx.VersionID())
+	if labelData == nil {
+		return nil // no synced labels
+	}
 	store, err := storage.MutableStore()
 	if err != nil {
 		return fmt.Errorf("Data type annotation had error initializing store: %v\n", err)
@@ -909,15 +929,12 @@ func (d *Data) storeLabelElements(ctx *datastore.VersionedCtx, be blockElements)
 	if !ok {
 		return fmt.Errorf("Data type annotation requires batch-enabled store, which %q is not\n", store)
 	}
-	labelData, err := d.GetSyncedLabelblk(ctx.VersionID())
-	if err != nil {
-		return err
-	}
 
 	// Compute the strides (in bytes)
 	blockSize := d.blockSize(ctx.VersionID())
 	bX := blockSize[0] * 8
 	bY := blockSize[1] * bX
+	blockBytes := int(blockSize[0] * blockSize[1] * blockSize[2] * 8)
 
 	toAdd := LabelElements{}
 	for izyxStr, elems := range be {
@@ -931,11 +948,17 @@ func (d *Data) storeLabelElements(ctx *datastore.VersionedCtx, be blockElements)
 		if err != nil {
 			return err
 		}
+		if len(labels) == 0 {
+			continue
+		}
+		if len(labels) != blockBytes {
+			return fmt.Errorf("Expected %d bytes in %q label block, got %d instead.  Aborting.", d.DataName(), blockBytes, len(labels))
+		}
 
 		// Group annotations by label
 		for _, elem := range elems {
 			pt := elem.Pos.Point3dInChunk(blockSize)
-			i := (pt[2]*bY+pt[1])*bX + pt[0]*8
+			i := pt[2]*bY + pt[1]*bX + pt[0]*8
 			label := binary.LittleEndian.Uint64(labels[i : i+8])
 			if label != 0 {
 				toAdd.add(label, elem)
@@ -1064,7 +1087,10 @@ func (d *Data) StoreSynapses(ctx *datastore.VersionedCtx, r io.Reader) error {
 	// Note: we do not check for redundancy and guarantee uniqueness at this stage.
 	for _, elem := range elements {
 		// Get block coord for this element.
-		blockCoord := elem.Pos.Chunk(blockSize).(dvid.ChunkPoint3d)
+		blockCoord, ok := elem.Pos.Chunk(blockSize).(dvid.ChunkPoint3d)
+		if !ok {
+			return fmt.Errorf("error converting element position %s into chunk", elem.Pos)
+		}
 		izyxStr := blockCoord.ToIZYXString()
 
 		// Append to block
@@ -1202,7 +1228,7 @@ func (d *Data) MoveElement(ctx *datastore.VersionedCtx, from, to dvid.Point3d) e
 	return nil
 }
 
-// GetByUUID returns a pointer to labelvol data given a version (UUID) and data name.
+// GetByUUID returns a pointer to annotation data given a version (UUID) and data name.
 func GetByUUID(uuid dvid.UUID, name dvid.InstanceName) (*Data, error) {
 	source, err := datastore.GetDataByUUID(uuid, name)
 	if err != nil {
@@ -1210,7 +1236,7 @@ func GetByUUID(uuid dvid.UUID, name dvid.InstanceName) (*Data, error) {
 	}
 	data, ok := source.(*Data)
 	if !ok {
-		return nil, fmt.Errorf("Instance '%s' is not a labelvol datatype!", name)
+		return nil, fmt.Errorf("Instance '%s' is not an annotation datatype!", name)
 	}
 	return data, nil
 }
@@ -1331,6 +1357,16 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, string(jsonBytes))
+
+	case "sync":
+		if action != "post" {
+			server.BadRequest(w, r, "Only POST allowed to sync endpoint")
+			return
+		}
+		if err := d.SetSync(uuid, r.Body); err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
 
 	case "label":
 		if action != "get" {

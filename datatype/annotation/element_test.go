@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/janelia-flyem/dvid/datastore"
+	"github.com/janelia-flyem/dvid/datatype/labelblk"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 )
@@ -376,7 +377,7 @@ func TestRequests(t *testing.T) {
 	testResponse(t, zlt90, "%snode/%s/%s/tag/%s", server.WebAPIPath, uuid, data.DataName(), tag2)
 
 	// Test move
-	url5 := fmt.Sprintf("%snode/%s/%s/move/128_63_99/127_64_100", server.WebAPIPath, uuid, data.DataName())
+	url5 := fmt.Sprintf("%snode/%s/%s/move/127_63_99/127_64_100", server.WebAPIPath, uuid, data.DataName())
 	server.TestHTTP(t, "POST", url5, nil)
 	testResponse(t, afterMove, "%snode/%s/%s/elements/1000_1000_1000/0_0_0", server.WebAPIPath, uuid, data.DataName())
 
@@ -411,8 +412,8 @@ func TestLabels(t *testing.T) {
 	// Populate the labels, which should automatically populate the labelvol
 	_ = createLabelTestVolume(t, uuid, "labels")
 
-	if err := BlockOnUpdating(uuid, "bodies"); err != nil {
-		t.Fatalf("Error blocking on sync of labels -> bodies: %v\n", err)
+	if err := labelblk.BlockOnUpdating(uuid, "labels"); err != nil {
+		t.Fatalf("Error blocking on sync of labels: %v\n", err)
 	}
 
 	// Add annotations syncing with "labels" instance.

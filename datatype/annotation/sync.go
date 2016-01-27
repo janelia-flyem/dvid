@@ -60,9 +60,9 @@ func (lp LabelPoints) add(label uint64, pt dvid.Point3d) {
 	}
 }
 
-// InitSync implements the datastore.Syncer interface.  Returns a list of subscriptions
+// GetSyncSubs implements the datastore.Syncer interface.  Returns a list of subscriptions
 // to the sync data instance that will notify the receiver.
-func (d *Data) InitSync(syncData dvid.Data) []datastore.SyncSub {
+func (d *Data) GetSyncSubs(syncData dvid.Data) datastore.SyncSubs {
 	// Our syncing depends on the datatype we are syncing.
 	switch syncData.TypeName() {
 	case "labelblk":
@@ -75,24 +75,24 @@ func (d *Data) InitSync(syncData dvid.Data) []datastore.SyncSub {
 	return nil
 }
 
-func (d *Data) initSyncLabelblk(name dvid.InstanceName) []datastore.SyncSub {
+func (d *Data) initSyncLabelblk(name dvid.InstanceName) datastore.SyncSubs {
 	syncCh := make(chan datastore.SyncMessage, syncBufferSize)
 	doneCh := make(chan struct{})
 
-	subs := []datastore.SyncSub{
-		datastore.SyncSub{
+	subs := datastore.SyncSubs{
+		{
 			Event:  datastore.SyncEvent{name, labels.IngestBlockEvent},
 			Notify: d.DataName(),
 			Ch:     syncCh,
 			Done:   doneCh,
 		},
-		datastore.SyncSub{
+		{
 			Event:  datastore.SyncEvent{name, labels.MutateBlockEvent},
 			Notify: d.DataName(),
 			Ch:     syncCh,
 			Done:   doneCh,
 		},
-		datastore.SyncSub{
+		{
 			Event:  datastore.SyncEvent{name, labels.DeleteBlockEvent},
 			Notify: d.DataName(),
 			Ch:     syncCh,
@@ -106,14 +106,14 @@ func (d *Data) initSyncLabelblk(name dvid.InstanceName) []datastore.SyncSub {
 	return subs
 }
 
-func (d *Data) initSyncLabelvol(name dvid.InstanceName) []datastore.SyncSub {
+func (d *Data) initSyncLabelvol(name dvid.InstanceName) datastore.SyncSubs {
 	mergeCh := make(chan datastore.SyncMessage, 100)
 	mergeDone := make(chan struct{})
 
 	splitCh := make(chan datastore.SyncMessage, 10) // Splits can be a lot bigger due to sparsevol
 	splitDone := make(chan struct{})
 
-	subs := []datastore.SyncSub{
+	subs := datastore.SyncSubs{
 		datastore.SyncSub{
 			Event:  datastore.SyncEvent{name, labels.MergeBlockEvent},
 			Notify: d.DataName(),
