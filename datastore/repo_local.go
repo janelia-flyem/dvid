@@ -383,10 +383,11 @@ func (m *repoManager) loadVersion0() error {
 				for _, name := range curData.SyncedNames() {
 					// get the dataservice associated with this synced data.
 					syncedData, found := r.data[name]
-					if !found {
-						return fmt.Errorf("Unable to get synced data named %q for uuid %s: %v", name, r.uuid, err)
+					if found {
+						r.addSyncGraph(curData.GetSyncSubs(syncedData))
+					} else {
+						dvid.Errorf("Skipping bad sync of %q with missing %q for uuid %s: %v", dataservice.DataName(), name, r.uuid, err)
 					}
-					r.addSyncGraph(curData.GetSyncSubs(syncedData))
 				}
 			}
 		}
