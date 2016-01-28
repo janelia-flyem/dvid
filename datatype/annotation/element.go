@@ -885,6 +885,10 @@ func (d *Data) ModifyElements(ctx *datastore.VersionedCtx, tk storage.TKey, toAd
 	d.Lock()
 	defer d.Unlock()
 
+	return d.modifyElements(ctx, tk, toAdd)
+}
+
+func (d *Data) modifyElements(ctx *datastore.VersionedCtx, tk storage.TKey, toAdd Elements) error {
 	storeE, err := getElements(ctx, tk)
 	if err != nil {
 		return err
@@ -907,7 +911,7 @@ func (d *Data) storeBlockElements(ctx *datastore.VersionedCtx, be blockElements)
 		}
 		// Modify the block annotations
 		tk := NewBlockTKey(blockCoord)
-		if err := d.ModifyElements(ctx, tk, elems); err != nil {
+		if err := d.modifyElements(ctx, tk, elems); err != nil {
 			return err
 		}
 	}
@@ -993,7 +997,7 @@ func (d *Data) storeLabelElements(ctx *datastore.VersionedCtx, be blockElements)
 func (d *Data) storeTagElements(ctx *datastore.VersionedCtx, te tagElements) error {
 	for tag, elems := range te {
 		tk := NewTagTKey(tag)
-		if err := d.ModifyElements(ctx, tk, elems); err != nil {
+		if err := d.modifyElements(ctx, tk, elems); err != nil {
 			return err
 		}
 	}
@@ -1002,8 +1006,8 @@ func (d *Data) storeTagElements(ctx *datastore.VersionedCtx, te tagElements) err
 
 // GetLabelSynapses returns synapse elements for a given label.
 func (d *Data) GetLabelSynapses(ctx *datastore.VersionedCtx, label uint64) (Elements, error) {
-	// d.RLock()
-	// defer d.RUnlock()
+	d.RLock()
+	defer d.RUnlock()
 
 	tk := NewLabelTKey(label)
 	return getElements(ctx, tk)
@@ -1011,8 +1015,8 @@ func (d *Data) GetLabelSynapses(ctx *datastore.VersionedCtx, label uint64) (Elem
 
 // GetTagSynapses returns synapse elements for a given tag.
 func (d *Data) GetTagSynapses(ctx *datastore.VersionedCtx, tag Tag) (Elements, error) {
-	// d.RLock()
-	// defer d.RUnlock()
+	d.RLock()
+	defer d.RUnlock()
 
 	tk := NewTagTKey(tag)
 	return getElements(ctx, tk)
@@ -1032,8 +1036,8 @@ func (d *Data) GetRegionSynapses(ctx *datastore.VersionedCtx, ext *dvid.Extents3
 	begTKey := NewBlockTKey(begBlockCoord)
 	endTKey := NewBlockTKey(endBlockCoord)
 
-	// d.RLock()
-	// defer d.RUnlock()
+	d.RLock()
+	defer d.RUnlock()
 
 	// Iterate through all synapse elements block k/v, making sure the elements are also within the given subvolume.
 	var elements Elements
@@ -1074,8 +1078,8 @@ func (d *Data) StoreSynapses(ctx *datastore.VersionedCtx, r io.Reader) error {
 		return err
 	}
 
-	// d.Lock()
-	// defer d.Unlock()
+	d.Lock()
+	defer d.Unlock()
 
 	dvid.Infof("%d synaptic elements received via POST", len(elements))
 
@@ -1132,8 +1136,8 @@ func (d *Data) DeleteElement(ctx *datastore.VersionedCtx, pt dvid.Point3d) error
 	blockCoord := pt.Chunk(blockSize).(dvid.ChunkPoint3d)
 	tk := NewBlockTKey(blockCoord)
 
-	// d.Lock()
-	// defer d.Unlock()
+	d.Lock()
+	defer d.Unlock()
 
 	elems, err := getElements(ctx, tk)
 	if err != nil {
@@ -1178,8 +1182,8 @@ func (d *Data) MoveElement(ctx *datastore.VersionedCtx, from, to dvid.Point3d) e
 	toCoord := to.Chunk(blockSize).(dvid.ChunkPoint3d)
 	toTk := NewBlockTKey(toCoord)
 
-	// d.Lock()
-	// defer d.Unlock()
+	d.Lock()
+	defer d.Unlock()
 
 	// Handle from block
 	fromElems, err := getElements(ctx, fromTk)
