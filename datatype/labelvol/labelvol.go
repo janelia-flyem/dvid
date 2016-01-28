@@ -94,6 +94,20 @@ POST <api URL>/node/<UUID>/<data name>/info
     data name     Name of labelvol data.
 
 
+POST <api URL>/node/<UUID>/<data name>/sync
+
+    Establishes labelblk data instances with which the annotations are synced.  Expects JSON to be POSTed
+    with the following format:
+
+    { "sync": "labels" }
+
+    The "sync" property should be followed by a comma-delimited list of data instances that MUST
+    already exist.  Currently, syncs should be created before any annotations are pushed to
+    the server.  If annotations already exist, these are currently not synced.
+
+    The labelvol data type only accepts syncs to labelblk data instances.
+
+
 GET  <api URL>/node/<UUID>/<data name>/sparsevol/<label>?<options>
 
 	Returns a sparse volume with voxels of the given label in encoded RLE format.  The returned

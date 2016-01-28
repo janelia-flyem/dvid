@@ -138,6 +138,20 @@ POST <api URL>/node/<UUID>/<data name>/info
     data name     Name of voxels data.
 
 
+POST <api URL>/node/<UUID>/<data name>/sync
+
+    Establishes labelvol data instances with which the annotations are synced.  Expects JSON to be POSTed
+    with the following format:
+
+    { "sync": "bodies" }
+
+    The "sync" property should be followed by a comma-delimited list of data instances that MUST
+    already exist.  Currently, syncs should be created before any annotations are pushed to
+    the server.  If annotations already exist, these are currently not synced.
+
+    The labelblk data type only accepts syncs to labelvol data instances.
+
+
 GET  <api URL>/node/<UUID>/<data name>/metadata
 
 	Retrieves a JSON schema (application/vnd.dvid-nd-data+json) that describes the layout
@@ -324,7 +338,7 @@ DELETE <api URL>/node/<UUID>/<data name>/blocks/<block coord>/<spanX>
 
     Example: 
 
-    GET <api URL>/node/3f8c/segmentation/blocks/10_20_30/8
+    DELETE <api URL>/node/3f8c/segmentation/blocks/10_20_30/8
 
     Delete 8 blocks where first block has given block coordinate and number
     of blocks returned along x axis is "spanX". 

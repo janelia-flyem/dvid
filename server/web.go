@@ -152,8 +152,6 @@ Repo-Level REST endpoints
 
 	REQUIRED "typename"   Type name of the new instance,
 	REQUIRED "dataname"   Name of the new instance
-	OPTIONAL "sync"       Comma-separated list of instance names. This makes the new data
-	                      instance subscribe to changes in the given data instances.
 	OPTIONAL "versioned"  If "false" or "0", the data is unversioned and acts as if 
 	                      all UUIDs within a repo become the root repo UUID.  (True by default.)
 	

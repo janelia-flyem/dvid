@@ -95,6 +95,8 @@ POST <api URL>/node/<UUID>/<data name>/sync
     already exist.  Currently, syncs should be created before any annotations are pushed to
     the server.  If annotations already exist, these are currently not synced.
 
+    The annotations data type only accepts syncs to labelblk and labelvol data instances.
+
 
 Note: For the following URL endpoints that return and accept POSTed JSON values, see the JSON format
 at end of this documentation.

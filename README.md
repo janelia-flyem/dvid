@@ -30,6 +30,7 @@ minimal interface (e.g., HTTP request handling), DVID's initial focus is on effi
 * 2d images in XY, XZ, YZ, and arbitrary orientation
 * multiscale 2d images in XY, XZ, and YZ, similar to quadtrees
 * low-latency sparse volumes corresponding to each unique label in a volume
+* point annotations (e.g., synapse elements) that can be quickly accessed via subvolumes or labels
 * label graphs
 * regions of interest represented via a coarse subdivision of space using block indices
 * 2d and 3d image and label data using Google BrainMaps API and other cloud-based services
