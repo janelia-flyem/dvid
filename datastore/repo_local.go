@@ -386,7 +386,7 @@ func (m *repoManager) loadVersion0() error {
 					if found {
 						r.addSyncGraph(curData.GetSyncSubs(syncedData))
 					} else {
-						dvid.Errorf("Skipping bad sync of %q with missing %q for uuid %s: %v", dataservice.DataName(), name, r.uuid, err)
+						dvid.Errorf("Skipping bad sync of %q with missing %q for uuid %s", dataservice.DataName(), name, r.uuid)
 					}
 				}
 			}
