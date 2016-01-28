@@ -247,9 +247,12 @@ func (d *Data) mutateBlock(ctx *datastore.VersionedCtx, block imageblk.MutatedBl
 	toDel := LabelPoints{}
 	for _, elem := range elems {
 		pt := elem.Pos.Point3dInChunk(blockSize)
-		i := (pt[2]*bY+pt[1])*bX + pt[0]*8
+		i := pt[2]*bY + pt[1]*bX + pt[0]*8
 		label := binary.LittleEndian.Uint64(block.Data[i : i+8])
-		prev := binary.LittleEndian.Uint64(block.Prev[i : i+8])
+		var prev uint64
+		if len(block.Prev) != 0 {
+			prev = binary.LittleEndian.Uint64(block.Prev[i : i+8])
+		}
 		if label == prev {
 			continue
 		}
@@ -317,7 +320,7 @@ func (d *Data) deleteBlock(ctx *datastore.VersionedCtx, block labels.DeleteBlock
 	toDel := LabelPoints{}
 	for _, elem := range elems {
 		pt := elem.Pos.Point3dInChunk(blockSize)
-		i := (pt[2]*bY+pt[1])*bX + pt[0]*8
+		i := pt[2]*bY + pt[1]*bX + pt[0]*8
 		label := binary.LittleEndian.Uint64(block.Data[i : i+8])
 		toDel.add(label, elem.Pos)
 	}

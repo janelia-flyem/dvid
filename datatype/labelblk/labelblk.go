@@ -1371,7 +1371,7 @@ func (d *Data) GetLabelBlock(v dvid.VersionID, blockCoord dvid.ChunkPoint3d) ([]
 		return nil, fmt.Errorf("Error getting '%s' block for index %s\n", d.DataName(), blockCoord)
 	}
 	if serialization == nil {
-		return zeroLabelBytes, nil
+		return []byte{}, nil
 	}
 	labelData, _, err := dvid.DeserializeData(serialization, true)
 	if err != nil {

@@ -952,7 +952,7 @@ func (d *Data) storeLabelElements(ctx *datastore.VersionedCtx, be blockElements)
 			continue
 		}
 		if len(labels) != blockBytes {
-			return fmt.Errorf("Expected %d bytes in %q label block, got %d instead.  Aborting.", d.DataName(), blockBytes, len(labels))
+			return fmt.Errorf("Expected %d bytes in %q label block, got %d instead.  Aborting.", blockBytes, d.DataName(), len(labels))
 		}
 
 		// Group annotations by label

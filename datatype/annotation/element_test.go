@@ -157,12 +157,67 @@ var expectedLabel2 = Elements{
 	},
 }
 
+var expectedLabel2a = Elements{
+	{
+		Pos:  dvid.Point3d{14, 25, 37}, // Label 3
+		Kind: PostSyn,
+		Rels: []Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
+		Tags: []Tag{"Synapse1", "Zlt90"},
+	},
+}
+
+var expectedLabel2b = Elements{
+	{
+		Pos:  dvid.Point3d{14, 25, 37}, // Label 3
+		Kind: PostSyn,
+		Rels: []Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
+		Tags: []Tag{"Synapse1", "Zlt90"},
+	},
+	{
+		Pos:  dvid.Point3d{20, 30, 40}, // Label 2
+		Kind: PostSyn,
+		Rels: []Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
+		Tags: []Tag{"Synapse1"},
+	},
+	{
+		Pos:  dvid.Point3d{127, 63, 99}, // Label 3
+		Kind: PreSyn,
+		Rels: []Relationship{{Rel: PreSynTo, To: dvid.Point3d{88, 47, 80}}, {Rel: PreSynTo, To: dvid.Point3d{120, 65, 100}}, {Rel: PreSynTo, To: dvid.Point3d{126, 67, 98}}},
+		Tags: []Tag{"Synapse2"},
+		Prop: map[string]string{
+			"Im a T-Bar":             "no",
+			"I'm not a PSD":          "not really",
+			"i'm not really special": "at all",
+		},
+	},
+}
+
 var expectedLabel3 = Elements{
 	{
 		Pos:  dvid.Point3d{14, 25, 37}, // Label 3
 		Kind: PostSyn,
 		Rels: []Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
 		Tags: []Tag{"Synapse1", "Zlt90"},
+	},
+	{
+		Pos:  dvid.Point3d{127, 63, 99}, // Label 3
+		Kind: PreSyn,
+		Rels: []Relationship{{Rel: PreSynTo, To: dvid.Point3d{88, 47, 80}}, {Rel: PreSynTo, To: dvid.Point3d{120, 65, 100}}, {Rel: PreSynTo, To: dvid.Point3d{126, 67, 98}}},
+		Tags: []Tag{"Synapse2"},
+		Prop: map[string]string{
+			"Im a T-Bar":             "no",
+			"I'm not a PSD":          "not really",
+			"i'm not really special": "at all",
+		},
+	},
+}
+
+var expectedLabel3a = Elements{
+	{
+		Pos:  dvid.Point3d{20, 30, 40}, // Label 2
+		Kind: PostSyn,
+		Rels: []Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
+		Tags: []Tag{"Synapse1"},
 	},
 	{
 		Pos:  dvid.Point3d{127, 63, 99}, // Label 3
@@ -436,9 +491,75 @@ func TestLabels(t *testing.T) {
 	testResponse(t, expectedLabel3, "%snode/%s/mysynapses/label/3", server.WebAPIPath, uuid)
 	testResponse(t, expectedLabel4, "%snode/%s/mysynapses/label/4", server.WebAPIPath, uuid)
 
-	// Make change to labelblk and make sure our label synapses have been adjusted
+	// Make change to labelblk and make sure our label synapses have been adjusted (case A)
 
-	// Make change to labelvol and make sure our label synapses have been adjusted
+	_ = modifyLabelTestVolume(t, uuid, "labels")
+
+	if err := BlockOnUpdating(uuid, "mysynapses"); err != nil {
+		t.Fatalf("Error blocking on sync of labels->annotations: %v\n", err)
+	}
+
+	testResponse(t, expectedLabel1, "%snode/%s/mysynapses/label/1", server.WebAPIPath, uuid)
+	testResponse(t, expectedLabel2a, "%snode/%s/mysynapses/label/2", server.WebAPIPath, uuid)
+	testResponse(t, expectedLabel3a, "%snode/%s/mysynapses/label/3", server.WebAPIPath, uuid)
+	testResponse(t, expectedLabel4, "%snode/%s/mysynapses/label/4", server.WebAPIPath, uuid)
+
+	// Make change to labelvol and make sure our label synapses have been adjusted (case B).
+	// Merge 3 into 2.
+	testMerge := mergeJSON(`[2, 3]`)
+	testMerge.send(t, uuid, "bodies")
+
+	if err := labelblk.BlockOnUpdating(uuid, "labels"); err != nil {
+		t.Fatalf("Error blocking on sync of labels: %v\n", err)
+	}
+
+	testResponse(t, expectedLabel1, "%snode/%s/mysynapses/label/1", server.WebAPIPath, uuid)
+	testResponse(t, expectedLabel2b, "%snode/%s/mysynapses/label/2", server.WebAPIPath, uuid)
+	testResponse(t, Elements{}, "%snode/%s/mysynapses/label/3", server.WebAPIPath, uuid)
+	testResponse(t, expectedLabel4, "%snode/%s/mysynapses/label/4", server.WebAPIPath, uuid)
+}
+
+func TestNewLabels(t *testing.T) {
+	datastore.OpenTest()
+	defer datastore.CloseTest()
+
+	// Create testbed volume and data instances
+	uuid, _ := initTestRepo()
+	var config dvid.Config
+	server.CreateTestInstance(t, uuid, "labelblk", "labels", config)
+	server.CreateTestInstance(t, uuid, "labelvol", "bodies", config)
+
+	// Establish syncs
+	server.CreateTestSync(t, uuid, "labels", "bodies")
+	server.CreateTestSync(t, uuid, "bodies", "labels")
+
+	// Add annotations syncing with "labels" instance.
+	server.CreateTestInstance(t, uuid, "annotation", "mysynapses", config)
+	server.CreateTestSync(t, uuid, "mysynapses", "labels,bodies")
+
+	// PUT first batch of synapses
+	testJSON, err := json.Marshal(testData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	url1 := fmt.Sprintf("%snode/%s/mysynapses/elements", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", url1, strings.NewReader(string(testJSON)))
+
+	// Populate the labels, which should automatically populate the labelvol
+	_ = createLabelTestVolume(t, uuid, "labels")
+
+	if err := BlockOnUpdating(uuid, "mysynapses"); err != nil {
+		t.Fatalf("Error blocking on sync of labels->annotations: %v\n", err)
+	}
+
+	// Test if labels were properly denormalized.  For the POST we have synchronized label denormalization.
+	// If this were to become asynchronous, we'd want to block on updating like the labelblk<->labelvol sync.
+
+	testResponse(t, expectedLabel1, "%snode/%s/mysynapses/label/1", server.WebAPIPath, uuid)
+	testResponse(t, expectedLabel2, "%snode/%s/mysynapses/label/2", server.WebAPIPath, uuid)
+	testResponse(t, expectedLabel3, "%snode/%s/mysynapses/label/3", server.WebAPIPath, uuid)
+	testResponse(t, expectedLabel4, "%snode/%s/mysynapses/label/4", server.WebAPIPath, uuid)
+
 }
 
 // A single label block within the volume
@@ -477,7 +598,7 @@ func (v *testVolume) add(body testBody, label uint64) {
 
 // Put label data into given data instance.
 func (v *testVolume) put(t *testing.T, uuid dvid.UUID, name string) {
-	apiStr := fmt.Sprintf("%snode/%s/%s/raw/0_1_2/%d_%d_%d/0_0_0", server.WebAPIPath,
+	apiStr := fmt.Sprintf("%snode/%s/%s/raw/0_1_2/%d_%d_%d/0_0_0?mutate=true", server.WebAPIPath,
 		uuid, name, v.size[0], v.size[1], v.size[2])
 	server.TestHTTP(t, "POST", apiStr, bytes.NewBuffer(v.data))
 }
@@ -492,6 +613,25 @@ func createLabelTestVolume(t *testing.T, uuid dvid.UUID, name string) *testVolum
 	// Send data over HTTP to populate a data instance
 	volume.put(t, uuid, name)
 	return volume
+}
+
+func modifyLabelTestVolume(t *testing.T, uuid dvid.UUID, name string) *testVolume {
+	volume := newTestVolume(128, 128, 128)
+	volume.add(body1, 1)
+	volume.add(body2a, 2)
+	volume.add(body3a, 3)
+	volume.add(body4, 4)
+
+	// Send data over HTTP to populate a data instance
+	volume.put(t, uuid, name)
+	return volume
+}
+
+type mergeJSON string
+
+func (mjson mergeJSON) send(t *testing.T, uuid dvid.UUID, name string) {
+	apiStr := fmt.Sprintf("%snode/%s/%s/merge", server.WebAPIPath, uuid, name)
+	server.TestHTTP(t, "POST", apiStr, bytes.NewBuffer([]byte(mjson)))
 }
 
 var (
@@ -537,10 +677,33 @@ var (
 			voxelSpans: []dvid.Span{
 				{80, 47, 87, 89},
 			},
+		}, { // Modification to original label 2 body where we switch a span that was in label 3
+			label:  2,
+			offset: dvid.Point3d{10, 24, 35},
+			size:   dvid.Point3d{30, 10, 10},
+			blockSpans: []dvid.Span{
+				{1, 0, 0, 0},
+			},
+			voxelSpans: []dvid.Span{
+				{37, 25, 13, 15},
+			},
+		}, { // Modification to original label 3 body where we switch in a span that was in label 2
+			label:  3,
+			offset: dvid.Point3d{10, 20, 36},
+			size:   dvid.Point3d{120, 45, 65},
+			blockSpans: []dvid.Span{
+				{1, 0, 0, 0},
+				{3, 2, 4, 4},
+			},
+			voxelSpans: []dvid.Span{
+				{40, 30, 12, 20}, {99, 63, 126, 127},
+			},
 		},
 	}
-	body1 = bodies[0]
-	body2 = bodies[1]
-	body3 = bodies[2]
-	body4 = bodies[3]
+	body1  = bodies[0]
+	body2  = bodies[1]
+	body3  = bodies[2]
+	body4  = bodies[3]
+	body2a = bodies[4]
+	body3a = bodies[5]
 )
