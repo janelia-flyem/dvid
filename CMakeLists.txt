@@ -150,7 +150,7 @@ else ()
         COMMENT     "Adding msgp messagepack library...")
 
     add_custom_target (context
-        ${BUILDEM_ENV_STRING} go get ${GO_GET} code.google.com/p/go.net/context
+        ${BUILDEM_ENV_STRING} go get ${GO_GET} golang.org/x/net/context
         COMMENT     "Adding go.net context")
 
     add_custom_target (lumberjack
