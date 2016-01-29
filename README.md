@@ -45,7 +45,8 @@ GET, POST, and DELETE operations, we create a custom datatype package with a spe
 DVID is primarily written in Go and supports different storage backends, a REST HTTP API,
 and command-line access (likely minimized in near future).  Some components are written in 
 C, e.g., storage engines like Leveldb and fast codecs like lz4.  DVID has been tested on 
-both MacOS X and Linux (Fedora 16, CentOS 6, Ubuntu) but not on Windows.
+both MacOS X and Linux (Fedora 16, CentOS 6, Ubuntu) but not on Windows.  It comes out-of-the-box
+with an embedded leveldb for storage although you can configure other storage backends.
 
 Command-line and HTTP API documentation can be 
 found in [help constants within packages](https://github.com/janelia-flyem/dvid/blob/master/datatype/labelvol/labelvol.go#L34) or by visiting the **/api/help**
