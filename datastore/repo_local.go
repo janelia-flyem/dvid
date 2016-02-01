@@ -1832,9 +1832,6 @@ func (r *repoT) deleteSyncGraph(name dvid.InstanceName) {
 	for evt, subs := range r.subs {
 		// Remove all subs to the named instance
 		if evt.Instance == name {
-			for _, sub := range r.subs[evt] {
-				close(sub.Done)
-			}
 			r.subs[evt] = nil
 			todelete = append(todelete, evt)
 			continue
