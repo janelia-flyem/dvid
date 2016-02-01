@@ -258,3 +258,53 @@ func TestDeleteInstance(t *testing.T) {
 		t.Errorf("Shouldn't be able to access a deleted data instance 'foo'\n")
 	}
 }
+
+func TestReloadMetadata(t *testing.T) {
+	datastore.OpenTest()
+	defer datastore.CloseTest()
+
+	uuid, _ := datastore.NewTestRepo()
+
+	// Add data instances
+	var config dvid.Config
+	server.CreateTestInstance(t, uuid, "keyvalue", "foo", config)
+	server.CreateTestInstance(t, uuid, "labelblk", "labels", config)
+	server.CreateTestInstance(t, uuid, "roi", "someroi", config)
+
+	// Reload the metadata
+	apiStr := fmt.Sprintf("%sserver/reload-metadata", server.WebAPIPath)
+	server.TestHTTP(t, "POST", apiStr, nil)
+
+	// Make sure repo UUID still there
+	jsonStr, err := datastore.MarshalJSON()
+	if err != nil {
+		t.Fatalf("can't get repos JSON: %v\n", err)
+	}
+	var jsonResp map[string](map[string]interface{})
+
+	if err := json.Unmarshal(jsonStr, &jsonResp); err != nil {
+		t.Fatalf("Unable to unmarshal repos info response: %s\n", jsonStr)
+	}
+	if len(jsonResp) != 1 {
+		t.Errorf("reloaded repos had more than one repo: %v\n", jsonResp)
+	}
+	for k := range jsonResp {
+		if dvid.UUID(k) != uuid {
+			t.Fatalf("Expected uuid %s, got %s.  Full JSON:\n%v\n", uuid, k, jsonResp)
+		}
+	}
+
+	// Make sure the data instances are still there.
+	_, err = datastore.GetDataByUUID(uuid, "foo")
+	if err != nil {
+		t.Errorf("Couldn't get keyvalue data instance after reload\n")
+	}
+	_, err = datastore.GetDataByUUID(uuid, "labels")
+	if err != nil {
+		t.Errorf("Couldn't get labelblk data instance after reload\n")
+	}
+	_, err = datastore.GetDataByUUID(uuid, "someroi")
+	if err != nil {
+		t.Errorf("Couldn't get roi data instance after reload\n")
+	}
+}

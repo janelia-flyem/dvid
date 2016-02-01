@@ -119,6 +119,16 @@ POST  /api/server/settings
 	            See imageblk and labelblk GET 3d voxels and POST voxels.
 	            Default = 1.
 
+
+POST  /api/server/reload-metadata
+
+	Reloads the metadata from storage.  This is useful when using multiple DVID frontends with 
+	a shared storage backend.  Typically, one DVID is designated "master" and handles any
+	modifications of the repositories and data instances.  Other DVIDs simply reload the metadata 
+	when prompted by an external coordinator, allowing the "slave" DVIDs to see changes made by
+	the master DVID.
+
+
 -------------------------
 Repo-Level REST endpoints
 -------------------------
@@ -452,6 +462,8 @@ func initRoutes() {
 	mainMux.Get("/api/server/compiled-types", serverCompiledTypesHandler)
 	mainMux.Get("/api/server/compiled-types/", serverCompiledTypesHandler)
 	mainMux.Post("/api/server/settings", serverSettingsHandler)
+	mainMux.Post("/api/server/reload-metadata", serverReload)
+	mainMux.Post("/api/server/reload-metadata/", serverReload)
 
 	if !readonly {
 		mainMux.Post("/api/repos", reposPostHandler)
@@ -842,6 +854,13 @@ func serverSettingsHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 		old := maxThrottledOps
 		SetMaxThrottleOps(maxOps)
 		fmt.Fprintf(w, "Maximum throttled ops set to %d from %d\n", maxOps, old)
+	}
+}
+
+func serverReload(c web.C, w http.ResponseWriter, r *http.Request) {
+	if err := datastore.ReloadMetadata(); err != nil {
+		BadRequest(w, r, fmt.Sprintf("Can't reload metadata: %v\n", err))
+		dvid.Criticalf("Can't reload metadata: %v\n", err)
 	}
 }
 

@@ -83,6 +83,10 @@ func Initialize(initMetadata bool, iconfig *InstanceConfig) error {
 
 	// Set the package variable.  We are good to go...
 	manager = m
+	m.Lock()
+	defer m.Unlock()
+	m.idMutex.Lock()
+	defer m.idMutex.Unlock()
 
 	if initMetadata {
 		// Initialize repo management data in storage
@@ -110,6 +114,61 @@ func Initialize(initMetadata bool, iconfig *InstanceConfig) error {
 			go f()
 		}
 	}
+	return nil
+}
+
+// ReloadMetadata reloads the repositories manager from an existing metadata store.
+func ReloadMetadata() error {
+	if manager == nil {
+		return ErrManagerNotInitialized
+	}
+	m := &repoManager{
+		repoToUUID:      make(map[dvid.RepoID]dvid.UUID),
+		versionToUUID:   make(map[dvid.VersionID]dvid.UUID),
+		uuidToVersion:   make(map[dvid.UUID]dvid.VersionID),
+		repos:           make(map[dvid.UUID]*repoT),
+		repoID:          manager.repoID,
+		versionID:       manager.versionID,
+		iids:            make(map[dvid.InstanceID]DataService),
+		instanceIDGen:   manager.instanceIDGen,
+		instanceIDStart: manager.instanceIDStart,
+	}
+
+	var err error
+	m.store, err = storage.MetaDataStore()
+	if err != nil {
+		return err
+	}
+
+	// Set the package variable.  We are good to go...
+	old_manager := manager
+	manager = m
+	m.Lock()
+	defer m.Unlock()
+	m.idMutex.Lock()
+	defer m.idMutex.Unlock()
+
+	// Load the repo metadata
+	dvid.Infof("Loading metadata from storage...\n")
+	if err = m.loadMetadata(); err != nil {
+		return fmt.Errorf("Error loading metadata: %v", err)
+	}
+
+	// If there are any migrations registered, run them.
+	migrator_mu.RLock()
+	defer migrator_mu.RUnlock()
+
+	for desc, f := range migrators {
+		dvid.Infof("Running migration: %s\n", desc)
+		go f()
+	}
+
+	// Explicitly remove old manager maps.
+	old_manager.repoToUUID = nil
+	old_manager.versionToUUID = nil
+	old_manager.uuidToVersion = nil
+	old_manager.repos = nil
+	old_manager.iids = nil
 	return nil
 }
 
