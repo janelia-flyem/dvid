@@ -3,7 +3,7 @@ DVID       [![Picture](https://raw.github.com/janelia-flyem/janelia-flyem.github
 
 *Status: In development, being tested at Janelia, and not ready for external use due to possible breaking changes.*
 
-[![GoDoc](https://godoc.org/github.com/janelia-flyem/dvid?status.png)](https://godoc.org/github.com/janelia-flyem/dvid) [![Build Status](https://drone.io/github.com/janelia-flyem/dvid/status.svg)](https://drone.io/github.com/janelia-flyem/dvid/latest)
+[![GoDoc](https://godoc.org/github.com/janelia-flyem/dvid?status.png)](https://godoc.org/github.com/janelia-flyem/dvid) [![Build Status](https://drone.io/github.com/janelia-flyem/dvid/status.png)](https://drone.io/github.com/janelia-flyem/dvid/latest)
 
 See the [DVID Wiki](https://github.com/janelia-flyem/dvid/wiki) for more information including installation and examples of use.
 
