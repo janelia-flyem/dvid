@@ -278,7 +278,7 @@ POST <api URL>/node/<UUID>/<data name>/raw/0_1_2/<size>/<offset>[?queryopts]
                     are handled.  If the server can't initiate the API call right away, a 503 (Service Unavailable) 
                     status code is returned.
 
-GET  <api URL>/node/<UUID>/<data name>/pseudocolor/<dims>/<size>/<offset>[/<format>][?queryopts]
+GET  <api URL>/node/<UUID>/<data name>/pseudocolor/<dims>/<size>/<offset>[?queryopts]
 
     Retrieves label data as pseudocolored 2D PNG color images where each label hashed to a different RGB.
 
@@ -331,6 +331,62 @@ POST <api URL>/node/<UUID>/<data name>/labels
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
     data name     Name of label data.
 
+GET <api URL>/node/<UUID>/<data name>/blocks/<block coord>/<spanX>[?queryopts]
+
+    Retrieves "spanX" blocks of label data along X starting from given block coordinate as the internal,
+    possibly compressed, values.  This is the most server-efficient way of retrieving labelblk data,
+    where data read from the underlying storage engine is written directly to the HTTP connection.
+
+    Example: 
+
+    GET <api URL>/node/3f8c/segmentation/blocks/10_20_30/8
+
+    Retrieves 8 blocks where first block has given block coordinate and number
+    of blocks returned along x axis is "spanX". The returned byte stream has consecutive "spanX" block, 
+    each with a leading block coordinate (3 x int32) plus int32 giving the # of bytes in this block, and 
+    then the bytes for the value.  If blocks are unset within the span, they will not appear in the stream,
+    so the returned data will be equal to or less than spanX blocks worth of data.  
+
+    The returned data format has the following format where int32 is in little endian and the bytes of
+    block data have been compressed in LZ4 format.
+
+        int32  Block 1 coordinate X (Note that this may not be starting block coordinate if it is unset.)
+        int32  Block 1 coordinate Y
+        int32  Block 1 coordinate Z
+        int32  # bytes for first block (N1)
+        byte0  Bytes of block data in LZ4-compressed format.
+        byte1
+        ...
+        byteN1
+
+        int32  Block 2 coordinate X
+        int32  Block 2 coordinate Y
+        int32  Block 2 coordinate Z
+        int32  # bytes for second block (N2)
+        byte0  Bytes of block data in LZ4-compressed format.
+        byte1
+        ...
+        byteN2
+
+        ...
+
+    If no data is available for given block span, nothing is returned.
+
+    Arguments:
+
+    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    data name     Name of data to add.
+    block coord   The block coordinate of the first block in X_Y_Z format.  Block coordinates
+                    can be derived from voxel coordinates by dividing voxel coordinates by
+                    the block size for a data type.
+    spanX         The number of blocks along X.
+
+
+    Query-string Options:
+
+    compression   Allows retrieval of block data in "lz4" (default) or "uncompressed".
+
+
 DELETE <api URL>/node/<UUID>/<data name>/blocks/<block coord>/<spanX>
 
     Deletes "spanX" blocks of label data along X starting from given block coordinate.
@@ -348,8 +404,9 @@ DELETE <api URL>/node/<UUID>/<data name>/blocks/<block coord>/<spanX>
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add.
     block coord   The block coordinate of the first block in X_Y_Z format.  Block coordinates
-                  can be derived from voxel coordinates by dividing voxel coordinates by
-                  the block size for a data type.
+                    can be derived from voxel coordinates by dividing voxel coordinates by
+                    the block size for a data type.
+    spanX         The number of blocks along X.
 
 `
 
@@ -749,6 +806,121 @@ func (d *Data) addLabelZ(geom dvid.Geometry, data32 []uint8, stride int32) ([]by
 		}
 	}
 	return data64, nil
+}
+
+func sendBlockLZ4(w http.ResponseWriter, x, y, z int32, v []byte, compression string) error {
+	// Check internal format and see if it's valid with compression choice.
+	format, checksum := dvid.DecodeSerializationFormat(dvid.SerializationFormat(v[0]))
+	if (compression == "lz4" || compression == "") && format != dvid.LZ4 {
+		return fmt.Errorf("Expected internal block data to be LZ4, was %s instead.", format)
+	}
+
+	// Send block coordinate and size of data.
+	if err := binary.Write(w, binary.LittleEndian, x); err != nil {
+		return err
+	}
+	if err := binary.Write(w, binary.LittleEndian, y); err != nil {
+		return err
+	}
+	if err := binary.Write(w, binary.LittleEndian, z); err != nil {
+		return err
+	}
+
+	start := 5
+	if checksum == dvid.CRC32 {
+		start += 4
+	}
+
+	// Do any adjustment of sent data based on compression request
+	var data []byte
+	if compression == "uncompressed" {
+		var err error
+		data, _, err = dvid.DeserializeData(v, true)
+		if err != nil {
+			return err
+		}
+	} else {
+		data = v[start:]
+	}
+	n := len(data)
+	if err := binary.Write(w, binary.LittleEndian, int32(n)); err != nil {
+		return err
+	}
+
+	// Send data itself, skipping the first byte for internal format and next 4 for uncompressed length.
+	if written, err := w.Write(data); err != nil || written != n {
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("could not write %d bytes of value: only %d bytes written", n, written)
+	}
+	return nil
+}
+
+// GetBlocks returns a slice of bytes corresponding to all the blocks along a span in X
+func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, start dvid.ChunkPoint3d, span int, compression string) error {
+	if compression != "uncompressed" && compression != "lz4" && compression != "" {
+		return fmt.Errorf("don't understand 'compression' query string value: %s", compression)
+	}
+	timedLog := dvid.NewTimeLog()
+	defer timedLog.Infof("SendBlocks %s, span %d", start, span)
+
+	store, err := storage.MutableStore()
+	if err != nil {
+		return fmt.Errorf("Data type labelblk had error initializing store: %v\n", err)
+	}
+
+	w.Header().Set("Content-type", "application/octet-stream")
+
+	indexBeg := dvid.IndexZYX(start)
+	keyBeg := NewTKey(&indexBeg)
+
+	if span == 0 {
+		return nil
+	}
+
+	if span == 1 {
+		value, err := store.Get(ctx, keyBeg)
+		if err != nil {
+			return err
+		}
+		if err := sendBlockLZ4(w, start[0], start[1], start[2], value, compression); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	// Handle span > 1
+	sx, sy, sz := indexBeg.Unpack()
+	end := start
+	end[0] += int32(span - 1)
+	indexEnd := dvid.IndexZYX(end)
+	keyEnd := NewTKey(&indexEnd)
+
+	// Write the blocks
+	return store.ProcessRange(ctx, keyBeg, keyEnd, &storage.ChunkOp{}, func(c *storage.Chunk) error {
+		if c == nil || c.TKeyValue == nil {
+			return nil
+		}
+		kv := c.TKeyValue
+		if kv.V == nil {
+			return nil
+		}
+
+		// Determine which block this is.
+		indexZYX, err := DecodeTKey(kv.K)
+		if err != nil {
+			return err
+		}
+		x, y, z := indexZYX.Unpack()
+		if z != sz || y != sy || x < sx || x >= sx+int32(span) {
+			return nil
+		}
+		if err := sendBlockLZ4(w, x, y, z, kv.V, compression); err != nil {
+			return err
+		}
+		return nil
+	})
 }
 
 func (d *Data) DeleteBlocks(ctx *datastore.VersionedCtx, start dvid.ChunkPoint3d, span int) error {
@@ -1158,6 +1330,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		timedLog.Infof("HTTP batch label-at-point query (%d coordinates)", len(coords))
 
 	case "blocks":
+		// GET <api URL>/node/<UUID>/<data name>/blocks/<block coord>/<spanX>[?compression=...]
 		// DELETE <api URL>/node/<UUID>/<data name>/blocks/<block coord>/<spanX>
 		if len(parts) < 6 {
 			server.BadRequest(w, r, "DVID requires starting block coord and # of blocks along X to follow 'blocks' endpoint.")
@@ -1173,15 +1346,23 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			server.BadRequest(w, r, err)
 			return
 		}
-		if action != "delete" {
-			server.BadRequest(w, r, "DVID currently accepts only DELETE on the 'blocks' endpoint")
+		switch action {
+		case "delete":
+			if err := d.DeleteBlocks(ctx, blockCoord, span); err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+		case "get":
+			compression := queryStrings.Get("compression")
+			if err := d.SendBlocks(ctx, w, blockCoord, span, compression); err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+		default:
+			server.BadRequest(w, r, "DVID does not accept the %s action on the 'blocks' endpoint", action)
 			return
 		}
-		if err := d.DeleteBlocks(ctx, blockCoord, span); err != nil {
-			server.BadRequest(w, r, err)
-			return
-		}
-		timedLog.Infof("HTTP %s: delete %d blocks from %s (%s)", r.Method, span, blockCoord, r.URL)
+		timedLog.Infof("HTTP %s: %d blocks from %s (%s)", r.Method, span, blockCoord, r.URL)
 
 	case "pseudocolor":
 		if len(parts) < 7 {

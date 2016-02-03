@@ -390,6 +390,83 @@ func (vol labelVol) testGetLabelVolume(t *testing.T, uuid dvid.UUID, compression
 	return data
 }
 
+func (vol labelVol) testBlock(t *testing.T, bx, by, bz int32, data []byte) {
+	// Get offset of this block in label volume
+	ox := bx*32 - vol.offset[0]
+	oy := by*32 - vol.offset[1]
+	oz := bz*32 - vol.offset[2]
+
+	// Get label strides over size of this subvolume
+	labelDy := vol.size[0] * vol.blockSize[0]
+	labelDz := labelDy * vol.size[1] * vol.blockSize[1]
+
+	p := 0
+	var x, y, z int32
+	for z = 0; z < 32; z++ {
+		for y = 0; y < 32; y++ {
+			label := vol.startLabel + 1 + uint64((z+oz)*labelDz+(y+oy)*labelDy+ox)
+			for x = 0; x < 32; x++ {
+				got := binary.LittleEndian.Uint64(data[p : p+8])
+				if label != got {
+					t.Fatalf("Error on block (%d,%d,%d) at voxel (%d,%d,%d): expected %d, got %d\n", bx, by, bz, x, y, z, label, got)
+				}
+				p += 8
+				label++
+			}
+		}
+	}
+}
+
+func (vol labelVol) testBlocks(t *testing.T, uuid dvid.UUID, compression, roi string) {
+	span := 5
+	apiStr := fmt.Sprintf("%snode/%s/%s/blocks/%d_%d_%d/%d", server.WebAPIPath,
+		uuid, vol.name, vol.offset[0]/32, vol.offset[1]/32, vol.offset[2]/32, span)
+	if compression == "uncompressed" {
+		apiStr += "?compression=uncompressed"
+	}
+	data := server.TestHTTP(t, "GET", apiStr, nil)
+	fmt.Printf("Got %d bytes of data\n", len(data))
+
+	blockBytes := 32 * 32 * 32 * 8
+
+	// Check if values are what we expect
+	bx := vol.offset[0] / 32
+	by := vol.offset[1] / 32
+	bz := vol.offset[2] / 32
+	b := 0
+	for i := 0; i < span; i++ {
+		// Get block coord + block size
+		if b+16 > len(data) {
+			t.Fatalf("Only got %d bytes back from block API call, yet next coord in span would put index @ %d\n", len(data), b+16)
+		}
+		x := int32(binary.LittleEndian.Uint32(data[b : b+4]))
+		b += 4
+		y := int32(binary.LittleEndian.Uint32(data[b : b+4]))
+		b += 4
+		z := int32(binary.LittleEndian.Uint32(data[b : b+4]))
+		b += 4
+		n := int(binary.LittleEndian.Uint32(data[b : b+4]))
+		b += 4
+		if x != bx || y != by || z != bz {
+			t.Errorf("Bad block coordinate: expected (%d,%d,%d), got (%d,%d,%d)\n", bx, by, bz, x, y, z)
+		}
+
+		// Read in the block data as assumed LZ4 and check it.
+		var uncompressed []byte
+		if compression != "uncompressed" {
+			uncompressed = make([]byte, blockBytes)
+			if err := lz4.Uncompress(data[b:b+n], uncompressed); err != nil {
+				t.Fatalf("Unable to uncompress LZ4 data (%s), %d bytes: %v\n", apiStr, n, err)
+			}
+		} else {
+			uncompressed = data[b : b+n]
+		}
+		vol.testBlock(t, x, y, z, uncompressed)
+		b += n
+		bx++
+	}
+}
+
 // the label in the test volume should just be the start label + voxel index + 1 when iterating in ZYX order.
 // The passed (x,y,z) should be world coordinates, not relative to the volume offset.
 func (vol labelVol) label(x, y, z int32) uint64 {
@@ -560,12 +637,17 @@ func TestLabels(t *testing.T) {
 	server.CreateTestInstance(t, uuid, "labelblk", "labels", dvid.Config{})
 
 	vol := labelVol{
-		size:      dvid.Point3d{5, 5, 5}, // in blocks
-		blockSize: dvid.Point3d{32, 32, 32},
-		offset:    dvid.Point3d{32, 64, 96},
-		name:      "labels",
+		startLabel: 2,
+		size:       dvid.Point3d{5, 5, 5}, // in blocks
+		blockSize:  dvid.Point3d{32, 32, 32},
+		offset:     dvid.Point3d{32, 64, 96},
+		name:       "labels",
 	}
 	vol.postLabelVolume(t, uuid, "", "", 0)
+
+	// Test the blocks API
+	vol.testBlocks(t, uuid, "", "")
+	vol.testBlocks(t, uuid, "uncompressed", "")
 
 	// Test the "label" endpoint.
 	apiStr := fmt.Sprintf("%snode/%s/%s/label/100_64_96", server.WebAPIPath, uuid, "labels")
