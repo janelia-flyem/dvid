@@ -1588,6 +1588,9 @@ func (d *Data) GetLabelBytesAtPoint(v dvid.VersionID, pt dvid.Point) ([]byte, er
 	if err != nil {
 		return nil, err
 	}
+	if len(labelData) == 0 {
+		return zeroLabelBytes, nil
+	}
 
 	// Retrieve the particular label within the block.
 	ptInBlock := coord.PointInChunk(blockSize)

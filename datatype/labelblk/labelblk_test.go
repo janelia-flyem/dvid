@@ -660,6 +660,15 @@ func TestLabels(t *testing.T) {
 		t.Errorf("Expected label %d @ (100, 64, 96) got label %d\n", vol.label(100, 64, 96), r.Label)
 	}
 
+	apiStr = fmt.Sprintf("%snode/%s/%s/label/10000_64000_9600121", server.WebAPIPath, uuid, "labels")
+	jsonResp = server.TestHTTP(t, "GET", apiStr, nil)
+	if err := json.Unmarshal(jsonResp, &r); err != nil {
+		t.Errorf("Unable to parse 'label' endpoint response: %s\n", jsonResp)
+	}
+	if r.Label != 0 {
+		t.Errorf("Expected label 0 at random huge point, got label %d\n", r.Label)
+	}
+
 	// Test the "labels" endpoint.
 	apiStr = fmt.Sprintf("%snode/%s/%s/labels", server.WebAPIPath, uuid, "labels")
 	payload := `[[100,64,96],[78,93,156],[104,65,97]]`
