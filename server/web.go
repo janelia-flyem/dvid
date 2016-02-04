@@ -673,6 +673,9 @@ func instanceSelector(c *web.C, h http.Handler) http.Handler {
 		}
 		ctx := datastore.NewVersionedCtx(data, v)
 
+		// Also set the web request information in case logging needs it downstream.
+		ctx.SetRequestID(middleware.GetReqID(*c))
+
 		// Handle DVID-wide query string commands like non-interactive call designations
 		queryStrings := r.URL.Query()
 

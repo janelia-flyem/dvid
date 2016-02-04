@@ -43,7 +43,7 @@ type Context interface {
 	// Versioned is true if this Context is also a VersionedCtx.
 	Versioned() bool
 
-	//SplitKey returns key components useful to store all versiones in a familyColumn if the storage engine supports it
+	// SplitKey returns key components useful to store all versiones in a familyColumn if the storage engine supports it
 	SplitKey(tk TKey) (Key, []byte, error)
 
 	// Enforces opaque data type.
@@ -76,6 +76,16 @@ type VersionedCtx interface {
 	// given a list of key-value pairs across many versions.  If no suitable key-value
 	// pair is found, nil is returned.
 	VersionedKeyValue([]*KeyValue) (*KeyValue, error)
+}
+
+// RequestCtx is associated with a particular request (typically a web request) and can
+// set and retrieve information about it.
+type RequestCtx interface {
+	// GetRequestID returns a string identifier or the empty string if none have been set.
+	GetRequestID() string
+
+	// SetRequestID sets a string identifier.
+	SetRequestID(id string)
 }
 
 const (
@@ -196,6 +206,10 @@ func (ctx MetadataContext) Versioned() bool {
 	return false
 }
 
+func (ctx MetadataContext) RequestID() string {
+	return ""
+}
+
 // KeyToLocalIDs parses a key under a DataContext and returns instance, version and client ids.
 func DataKeyToLocalIDs(k Key) (dvid.InstanceID, dvid.VersionID, dvid.ClientID, error) {
 	if k[0] != dataKeyPrefix {
@@ -226,6 +240,7 @@ type DataContext struct {
 	data    dvid.Data
 	version dvid.VersionID
 	client  dvid.ClientID
+	reqID   string
 }
 
 // NewDataContext provides a way for datatypes to create a Context that adheres to DVID
@@ -233,7 +248,7 @@ type DataContext struct {
 // only be implemented within package storage, we force compatible implementations to embed
 // DataContext and initialize it via this function.
 func NewDataContext(data dvid.Data, versionID dvid.VersionID) *DataContext {
-	return &DataContext{data, versionID, 0}
+	return &DataContext{data, versionID, 0, ""}
 }
 
 func (ctx *DataContext) InstanceVersion() dvid.InstanceVersion {
@@ -246,6 +261,18 @@ func (ctx *DataContext) DataName() dvid.InstanceName {
 
 func (ctx *DataContext) InstanceID() dvid.InstanceID {
 	return ctx.data.InstanceID()
+}
+
+// ---- storage.RequestCtx implementation
+
+// GetRequestID returns a string identifier or the empty string if none have been set.
+func (ctx *DataContext) GetRequestID() string {
+	return ctx.reqID
+}
+
+// SetRequestID sets a string identifier.
+func (ctx *DataContext) SetRequestID(id string) {
+	ctx.reqID = id
 }
 
 // ---- storage.Context implementation
@@ -322,6 +349,10 @@ func (ctx *DataContext) ClientFromKey(key Key) (dvid.ClientID, error) {
 // that will support the VersionedCtx interface.
 func (ctx *DataContext) Versioned() bool {
 	return false
+}
+
+func (ctx *DataContext) RequestID() string {
+	return ""
 }
 
 type mutexID struct {

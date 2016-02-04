@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
@@ -137,10 +138,21 @@ func (db *KVAutobus) getKeyRange(kStart, kEnd storage.Key) (Ks, error) {
 }
 
 // call KVAutobus keyvalue_range API
-func (db *KVAutobus) getKVRange(kStart, kEnd storage.Key) (KVs, error) {
+func (db *KVAutobus) getKVRange(ctx storage.Context, kStart, kEnd storage.Key) (KVs, error) {
+	// Get any request context and pass to kvautobus for tracking.
+	reqctx, ok := ctx.(storage.RequestCtx)
+	var reqID string
+	if ok {
+		parts := strings.Split(reqctx.GetRequestID(), "/")
+		if len(parts) > 0 {
+			reqID = parts[len(parts)-1]
+		}
+	}
+
+	// Construct the KVAutobus URL
 	b64key1 := encodeKey(kStart)
 	b64key2 := encodeKey(kEnd)
-	url := fmt.Sprintf("%s/kvautobus/api/keyvalue_range/%s/%s/", db.host, b64key1, b64key2)
+	url := fmt.Sprintf("%s/kvautobus/api/keyvalue_range/%s/%s/?=%s", db.host, b64key1, b64key2, reqID)
 
 	timedLog := dvid.NewTimeLog()
 	resp, err := http.Get(url)
@@ -163,13 +175,13 @@ func (db *KVAutobus) getKVRange(kStart, kEnd storage.Key) (KVs, error) {
 		storage.StoreValueBytesRead <- len(mkv[1])
 	}
 
-	timedLog.Infof("PROXY keyvalue_range to %s returned %d (%d kv pairs)\n", db.host, resp.StatusCode, len(mkvs))
+	timedLog.Infof("[%s] PROXY keyvalue_range to %s returned %d (%d kv pairs)\n", reqID, db.host, resp.StatusCode, len(mkvs))
 	return mkvs, nil
 }
 
 // call KVAutobus keyvalue_range API and covert to slice of storage.KeyValue
-func (db *KVAutobus) getRange(kStart, kEnd storage.Key) ([]*storage.KeyValue, error) {
-	mkvs, err := db.getKVRange(kStart, kEnd)
+func (db *KVAutobus) getRange(ctx storage.Context, kStart, kEnd storage.Key) ([]*storage.KeyValue, error) {
+	mkvs, err := db.getKVRange(ctx, kStart, kEnd)
 	if err != nil {
 		return nil, err
 	}
@@ -248,7 +260,7 @@ func (db *KVAutobus) RawRangeQuery(kStart, kEnd storage.Key, keysOnly bool, out 
 			out <- &storage.KeyValue{storage.Key(key), value}
 		}
 	} else {
-		kvs, err := db.getKVRange(kStart, kEnd)
+		kvs, err := db.getKVRange(nil, kStart, kEnd)
 		if err != nil {
 			return err
 		}
@@ -342,7 +354,7 @@ func (db *KVAutobus) getSingleKeyVersions(vctx storage.VersionedCtx, k []byte) (
 	if err != nil {
 		return nil, err
 	}
-	kvs, err := db.getRange(kStart, kEnd)
+	kvs, err := db.getRange(vctx, kStart, kEnd)
 	if err != nil {
 		return nil, err
 	}
@@ -386,7 +398,7 @@ func (db *KVAutobus) versionedRange(vctx storage.VersionedCtx, kStart, kEnd stor
 		return
 	}
 
-	kvs, err := db.getRange(minKey, maxKey)
+	kvs, err := db.getRange(vctx, minKey, maxKey)
 	if err != nil {
 		ch <- errorableKV{nil, err}
 		return
@@ -427,7 +439,7 @@ func (db *KVAutobus) unversionedRange(ctx storage.Context, kStart, kEnd storage.
 	keyBeg := ctx.ConstructKey(kStart)
 	keyEnd := ctx.ConstructKey(kEnd)
 
-	kvs, err := db.getRange(keyBeg, keyEnd)
+	kvs, err := db.getRange(ctx, keyBeg, keyEnd)
 	if err != nil {
 		ch <- errorableKV{nil, err}
 	}
