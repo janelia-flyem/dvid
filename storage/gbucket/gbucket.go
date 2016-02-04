@@ -785,6 +785,7 @@ const (
 	delOpIgnoreExists
 	delRangeOp
 	putOp
+	putOpCallback
 	getOp
 )
 
@@ -797,6 +798,7 @@ type dbOp struct {
 	tkEnd     storage.TKey
 	chunkop   *storage.ChunkOp
 	chunkfunc storage.ChunkFunc
+	callback  func()
 }
 
 // goBuffer allow operations to be submitted in parallel
@@ -830,7 +832,7 @@ func (db *goBuffer) ProcessRange(ctx storage.Context, TkBeg, TkEnd storage.TKey,
 		return fmt.Errorf("Received nil context in GetRange()")
 	}
 
-	db.ops = append(db.ops, dbOp{getOp, nil, nil, TkBeg, TkEnd, op, f})
+	db.ops = append(db.ops, dbOp{getOp, nil, nil, TkBeg, TkEnd, op, f, nil})
 
 	return nil
 }
@@ -857,6 +859,38 @@ func (db *goBuffer) Put(ctx storage.Context, tkey storage.TKey, value []byte) er
 		tombstoneKey := vctx.TombstoneKey(tkey)
 		db.ops = append(db.ops, dbOp{op: delOpIgnoreExists, key: tombstoneKey})
 		db.ops = append(db.ops, dbOp{op: putOp, key: key, value: value})
+		if err != nil {
+			dvid.Criticalf("Error on data put: %v\n", err)
+			err = fmt.Errorf("Error on data put: %v", err)
+		}
+	}
+
+	return err
+
+}
+
+// PutCallback writes a value with given key in a possibly versioned context and call the callback.
+func (db *goBuffer) PutCallback(ctx storage.Context, tkey storage.TKey, value []byte, callback func()) error {
+	if db == nil {
+		return fmt.Errorf("Can't call Put() on nil Google Bucket")
+	}
+	if ctx == nil {
+		return fmt.Errorf("Received nil context in Put()")
+	}
+
+	var err error
+	err = nil
+	key := ctx.ConstructKey(tkey)
+	if !ctx.Versioned() {
+		db.ops = append(db.ops, dbOp{op: putOpCallback, key: key, value: value, callback: callback})
+	} else {
+		vctx, ok := ctx.(storage.VersionedCtx)
+		if !ok {
+			return fmt.Errorf("Non-versioned context that says it's versioned received in Put(): %v", ctx)
+		}
+		tombstoneKey := vctx.TombstoneKey(tkey)
+		db.ops = append(db.ops, dbOp{op: delOpIgnoreExists, key: tombstoneKey})
+		db.ops = append(db.ops, dbOp{op: putOpCallback, key: key, value: value, callback: callback})
 		if err != nil {
 			dvid.Criticalf("Error on data put: %v\n", err)
 			err = fmt.Errorf("Error on data put: %v", err)
@@ -938,7 +972,7 @@ func (db *goBuffer) DeleteRange(ctx storage.Context, TkBeg, TkEnd storage.TKey) 
 	if ctx == nil {
 		return fmt.Errorf("Received nil context in DeleteRange()")
 	}
-	db.ops = append(db.ops, dbOp{delRangeOp, nil, nil, TkBeg, TkEnd, nil, nil})
+	db.ops = append(db.ops, dbOp{delRangeOp, nil, nil, TkBeg, TkEnd, nil, nil, nil})
 
 	return nil
 }
@@ -967,6 +1001,11 @@ func (buffer *goBuffer) Flush() error {
 				err = buffer.db.putV(opdata.key, opdata.value)
 				storage.StoreKeyBytesWritten <- len(opdata.key)
 				storage.StoreValueBytesWritten <- len(opdata.value)
+			} else if opdata.op == putOpCallback {
+				err = buffer.db.putV(opdata.key, opdata.value)
+				storage.StoreKeyBytesWritten <- len(opdata.key)
+				storage.StoreValueBytesWritten <- len(opdata.value)
+				opdata.callback()
 			} else if opdata.op == getOp {
 				err = buffer.processRangeLocal(buffer.ctx, opdata.tkBeg, opdata.tkEnd, opdata.chunkop, opdata.chunkfunc, workQueue)
 			} else {

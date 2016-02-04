@@ -197,6 +197,16 @@ func (d *Data) PutVoxels(v dvid.VersionID, vox *Voxels, roiname dvid.InstanceNam
 	}
 
 	wg.Wait()
+
+	// if a bufferable op, flush
+	store, err := storage.MutableStore()
+	if err != nil {
+		return fmt.Errorf("Data type imageblk had error initializing store: %v\n", err)
+	}
+	if rb, ok := store.(storage.RequestBuffer); ok {
+		rb.Flush()
+	}
+
 	return nil
 }
 
@@ -355,26 +365,36 @@ func (d *Data) putChunk(chunk *storage.Chunk) {
 		dvid.Errorf("Data type imageblk had error initializing store: %v\n", err)
 		return
 	}
-	ctx := datastore.NewVersionedCtx(d, op.version)
-	if err := store.Put(ctx, chunk.K, serialization); err != nil {
-		dvid.Errorf("Unable to PUT voxel data for key %v: %v\n", chunk.K, err)
-		return
+
+	callback := func() {
+		// Notify any subscribers that you've changed block.
+		var event string
+		var delta interface{}
+		if op.mutate {
+			event = MutateBlockEvent
+			delta = MutatedBlock{&op.indexZYX, oldBlock, block.V}
+		} else {
+			event = IngestBlockEvent
+			delta = Block{&op.indexZYX, block.V}
+		}
+		evt := datastore.SyncEvent{d.DataName(), event}
+		msg := datastore.SyncMessage{op.version, delta}
+		if err := datastore.NotifySubscribers(evt, msg); err != nil {
+			dvid.Errorf("Unable to notify subscribers of event %s in %s\n", event, d.DataName())
+		}
 	}
 
-	// Notify any subscribers that you've changed block.
-	var event string
-	var delta interface{}
-	if op.mutate {
-		event = MutateBlockEvent
-		delta = MutatedBlock{&op.indexZYX, oldBlock, block.V}
+	// put data: check if store supports bufferable operations
+	ctx := datastore.NewVersionedCtx(d, op.version)
+	if rb, ok := store.(storage.RequestBuffer); ok {
+		rb.PutCallback(ctx, chunk.K, serialization, callback)
 	} else {
-		event = IngestBlockEvent
-		delta = Block{&op.indexZYX, block.V}
-	}
-	evt := datastore.SyncEvent{d.DataName(), event}
-	msg := datastore.SyncMessage{op.version, delta}
-	if err := datastore.NotifySubscribers(evt, msg); err != nil {
-		dvid.Errorf("Unable to notify subscribers of event %s in %s\n", event, d.DataName())
+		if err := store.Put(ctx, chunk.K, serialization); err != nil {
+			dvid.Errorf("Unable to PUT voxel data for key %v: %v\n", chunk.K, err)
+			return
+		}
+
+		callback()
 	}
 }
 
