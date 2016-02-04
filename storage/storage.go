@@ -437,9 +437,6 @@ type KeyValueRequester interface {
 type BufferableOps interface {
 	KeyValueSetter
 
-	// PutCallback writes a value with given key in a possibly versioned context and calls the call back when finished.
-	PutCallback(Context, TKey, []byte, func()) error
-
 	// Put key-value pairs.  Note that it could be more efficient to use the Batcher
 	// interface so you don't have to create and keep a slice of KeyValue.  Some
 	// databases like leveldb will copy on batch put anyway.
@@ -460,6 +457,9 @@ type BufferableOps interface {
 // of these operations.
 type RequestBuffer interface {
 	BufferableOps
+
+	// PutCallback writes a value with given key in a possibly versioned context and calls the call back when finished.
+	PutCallback(Context, TKey, []byte, func()) error
 
 	// Flush processes all the queued jobs
 	Flush() error
