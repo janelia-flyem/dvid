@@ -458,6 +458,9 @@ type BufferableOps interface {
 type RequestBuffer interface {
 	BufferableOps
 
+	// PutCallback writes a value with given key in a possibly versioned context and calls the call back when finished.
+	PutCallback(Context, TKey, []byte, func()) error
+
 	// Flush processes all the queued jobs
 	Flush() error
 }

@@ -161,6 +161,17 @@ func (d *Data) PutVoxels(v dvid.VersionID, vox *Voxels, roiname dvid.InstanceNam
 		extentChanged = true
 	}
 
+	// extract buffer interface if it exists
+	var putbuffer storage.RequestBuffer
+	store, err := storage.MutableStore()
+	if err != nil {
+		return fmt.Errorf("Data type imageblk had error initializing store: %v\n", err)
+	}
+	if req, ok := store.(storage.KeyValueRequester); ok {
+		ctx := datastore.NewVersionedCtx(d, v)
+		putbuffer = req.NewBuffer(ctx)
+	}
+
 	// Iterate through index space for this data.
 	for it, err := vox.IndexIterator(d.BlockSize()); err == nil && it.Valid(); it.NextSpan() {
 		i0, i1, err := it.IndexSpan()
@@ -192,11 +203,17 @@ func (d *Data) PutVoxels(v dvid.VersionID, vox *Voxels, roiname dvid.InstanceNam
 			kv := &storage.TKeyValue{K: NewTKey(&curIndex)}
 			putOp := &putOperation{vox, curIndex, v, mutate}
 			op := &storage.ChunkOp{putOp, wg}
-			d.PutChunk(&storage.Chunk{op, kv})
+			d.PutChunk(&storage.Chunk{op, kv}, putbuffer)
 		}
 	}
 
 	wg.Wait()
+
+	// if a bufferable op, flush
+	if putbuffer != nil {
+		putbuffer.Flush()
+	}
+
 	return nil
 }
 
@@ -282,13 +299,13 @@ func (d *Data) PutBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int, da
 // PutChunk puts a chunk of data as part of a mapped operation.
 // Only some multiple of the # of CPU cores can be used for chunk handling before
 // it waits for chunk processing to abate via the buffered server.HandlerToken channel.
-func (d *Data) PutChunk(chunk *storage.Chunk) error {
+func (d *Data) PutChunk(chunk *storage.Chunk, putbuffer storage.RequestBuffer) error {
 	<-server.HandlerToken
-	go d.putChunk(chunk)
+	go d.putChunk(chunk, putbuffer)
 	return nil
 }
 
-func (d *Data) putChunk(chunk *storage.Chunk) {
+func (d *Data) putChunk(chunk *storage.Chunk, putbuffer storage.RequestBuffer) {
 	defer func() {
 		// After processing a chunk, return the token.
 		server.HandlerToken <- 1
@@ -355,26 +372,36 @@ func (d *Data) putChunk(chunk *storage.Chunk) {
 		dvid.Errorf("Data type imageblk had error initializing store: %v\n", err)
 		return
 	}
-	ctx := datastore.NewVersionedCtx(d, op.version)
-	if err := store.Put(ctx, chunk.K, serialization); err != nil {
-		dvid.Errorf("Unable to PUT voxel data for key %v: %v\n", chunk.K, err)
-		return
+
+	callback := func() {
+		// Notify any subscribers that you've changed block.
+		var event string
+		var delta interface{}
+		if op.mutate {
+			event = MutateBlockEvent
+			delta = MutatedBlock{&op.indexZYX, oldBlock, block.V}
+		} else {
+			event = IngestBlockEvent
+			delta = Block{&op.indexZYX, block.V}
+		}
+		evt := datastore.SyncEvent{d.DataName(), event}
+		msg := datastore.SyncMessage{op.version, delta}
+		if err := datastore.NotifySubscribers(evt, msg); err != nil {
+			dvid.Errorf("Unable to notify subscribers of event %s in %s\n", event, d.DataName())
+		}
 	}
 
-	// Notify any subscribers that you've changed block.
-	var event string
-	var delta interface{}
-	if op.mutate {
-		event = MutateBlockEvent
-		delta = MutatedBlock{&op.indexZYX, oldBlock, block.V}
+	// put data -- use buffer if available
+	ctx := datastore.NewVersionedCtx(d, op.version)
+	if putbuffer != nil {
+		putbuffer.PutCallback(ctx, chunk.K, serialization, callback)
 	} else {
-		event = IngestBlockEvent
-		delta = Block{&op.indexZYX, block.V}
-	}
-	evt := datastore.SyncEvent{d.DataName(), event}
-	msg := datastore.SyncMessage{op.version, delta}
-	if err := datastore.NotifySubscribers(evt, msg); err != nil {
-		dvid.Errorf("Unable to notify subscribers of event %s in %s\n", event, d.DataName())
+		if err := store.Put(ctx, chunk.K, serialization); err != nil {
+			dvid.Errorf("Unable to PUT voxel data for key %v: %v\n", chunk.K, err)
+			return
+		}
+
+		callback()
 	}
 }
 
