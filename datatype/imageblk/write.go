@@ -163,7 +163,6 @@ func (d *Data) PutVoxels(v dvid.VersionID, vox *Voxels, roiname dvid.InstanceNam
 
 	// extract buffer interface if it exists
 	var putbuffer storage.RequestBuffer
-	putbuffer = nil
 	store, err := storage.MutableStore()
 	if err != nil {
 		return fmt.Errorf("Data type imageblk had error initializing store: %v\n", err)
