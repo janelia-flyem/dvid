@@ -143,6 +143,9 @@ func ReloadMetadata() error {
 	old_manager := manager
 	old_manager.Lock()
 	defer old_manager.Unlock()
+	old_manager.idMutex.Lock()
+	defer old_manager.idMutex.Unlock()
+
 	manager = m
 
 	return nil
