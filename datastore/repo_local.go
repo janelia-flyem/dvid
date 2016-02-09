@@ -104,20 +104,12 @@ func Initialize(initMetadata bool, iconfig *InstanceConfig) error {
 		if err = m.loadMetadata(); err != nil {
 			return fmt.Errorf("Error loading metadata: %v", err)
 		}
-
-		// If there are any migrations registered, run them.
-		migrator_mu.RLock()
-		defer migrator_mu.RUnlock()
-
-		for desc, f := range migrators {
-			dvid.Infof("Running migration: %s\n", desc)
-			go f()
-		}
 	}
 	return nil
 }
 
 // ReloadMetadata reloads the repositories manager from an existing metadata store.
+// This should only be called while no other requests are ongoing to the datastore package.
 func ReloadMetadata() error {
 	if manager == nil {
 		return ErrManagerNotInitialized
@@ -140,35 +132,19 @@ func ReloadMetadata() error {
 		return err
 	}
 
-	// Set the package variable.  We are good to go...
-	old_manager := manager
-	manager = m
-	m.Lock()
-	defer m.Unlock()
-	m.idMutex.Lock()
-	defer m.idMutex.Unlock()
-
 	// Load the repo metadata
 	dvid.Infof("Loading metadata from storage...\n")
 	if err = m.loadMetadata(); err != nil {
 		return fmt.Errorf("Error loading metadata: %v", err)
 	}
 
-	// If there are any migrations registered, run them.
-	migrator_mu.RLock()
-	defer migrator_mu.RUnlock()
+	// Swap the manager out.  This is dangerous and is why no requests on datastore package
+	// should be ongoing at time of this function.
+	old_manager := manager
+	old_manager.Lock()
+	defer old_manager.Unlock()
+	manager = m
 
-	for desc, f := range migrators {
-		dvid.Infof("Running migration: %s\n", desc)
-		go f()
-	}
-
-	// Explicitly remove old manager maps.
-	old_manager.repoToUUID = nil
-	old_manager.versionToUUID = nil
-	old_manager.uuidToVersion = nil
-	old_manager.repos = nil
-	old_manager.iids = nil
 	return nil
 }
 

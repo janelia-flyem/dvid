@@ -26,22 +26,7 @@ var (
 	// manager provides high-level repository management for DVID and is initialized
 	// on start.  Package functions provide a quick alias to this platform-specific repo manager.
 	manager *repoManager
-
-	migrator_mu sync.RWMutex
-	migrators   map[string]MigrationFunc
 )
-
-type MigrationFunc func()
-
-func RegisterAsyncMigration(f MigrationFunc, desc string) {
-	migrator_mu.Lock()
-	defer migrator_mu.Unlock()
-
-	if migrators == nil {
-		migrators = make(map[string]MigrationFunc)
-	}
-	migrators[desc] = f
-}
 
 func Shutdown() {
 	// TODO: make sure any kind of shutdown is graceful.
