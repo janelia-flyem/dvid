@@ -702,6 +702,28 @@ func (p Point3d) Expand2d(plane DataShape, size Point2d) (Point3d, error) {
 	return pt, nil
 }
 
+// ToIZYXString returns an encoded string for a point, suitable for use in maps.
+func (p Point3d) ToIZYXString(size Point3d) IZYXString {
+	var c0, c1, c2 int32
+	if p[0] < 0 {
+		c0 = (p[0] - size[0] + 1) / size[0]
+	} else {
+		c0 = p[0] / size[0]
+	}
+	if p[1] < 0 {
+		c1 = (p[1] - size[1] + 1) / size[1]
+	} else {
+		c1 = p[1] / size[1]
+	}
+	if p[2] < 0 {
+		c2 = (p[2] - size[2] + 1) / size[2]
+	} else {
+		c2 = p[2] / size[2]
+	}
+	idx := IndexZYX{c0, c1, c2}
+	return idx.ToIZYXString()
+}
+
 type ListChunkPoint3d struct {
 	Points  []ChunkPoint3d
 	Indices []int

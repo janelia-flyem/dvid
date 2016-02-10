@@ -456,9 +456,17 @@ func (d *Data) syncSplit(in <-chan datastore.SyncMessage, done <-chan struct{}) 
 			case labels.DeltaSplitStart:
 				// Don't worry about it.
 			case labels.DeltaSplit:
-				if d.splitLabels(batcher, msg.Version, delta); err != nil {
-					dvid.Errorf("error on splitting label for data %q: %v\n", d.DataName(), err)
-					continue
+				if delta.Split == nil {
+					// This is a coarse split.
+					if d.splitLabelsCoarse(batcher, msg.Version, delta); err != nil {
+						dvid.Errorf("error on splitting label for data %q: %v\n", d.DataName(), err)
+						continue
+					}
+				} else {
+					if d.splitLabelsFine(batcher, msg.Version, delta); err != nil {
+						dvid.Errorf("error on splitting label for data %q: %v\n", d.DataName(), err)
+						continue
+					}
 				}
 			default:
 				dvid.Criticalf("bad delta in split event: %v\n", delta)
@@ -468,11 +476,89 @@ func (d *Data) syncSplit(in <-chan datastore.SyncMessage, done <-chan struct{}) 
 	}
 }
 
-func (d *Data) splitLabels(batcher storage.KeyValueBatcher, v dvid.VersionID, op labels.DeltaSplit) error {
+func (d *Data) splitLabelsCoarse(batcher storage.KeyValueBatcher, v dvid.VersionID, op labels.DeltaSplit) error {
 	d.Lock()
 	defer d.Unlock()
 
 	d.StartUpdate()
+	defer d.StopUpdate()
+
+	ctx := datastore.NewVersionedCtx(d, v)
+	batch := batcher.NewBatch(ctx)
+
+	// Get the elements for the old label.
+	oldTk := NewLabelTKey(op.OldLabel)
+	oldElems, err := getElements(ctx, oldTk)
+	if err != nil {
+		return fmt.Errorf("unable to get annotations for instance %q, label %d in syncSplit: %v\n", d.DataName(), op.OldLabel, err)
+	}
+
+	// Create a map to test each point.
+	splitBlocks := make(map[dvid.IZYXString]struct{})
+	for _, zyxStr := range op.SortedBlocks {
+		splitBlocks[zyxStr] = struct{}{}
+	}
+
+	// Separate any elements that are within the split blocks.
+	toDel := make(map[int]struct{})
+	toAdd := Elements{}
+	blockSize := d.blockSize(ctx.VersionID())
+	for i, elem := range oldElems {
+		zyxStr := elem.Pos.ToIZYXString(blockSize)
+		if _, found := splitBlocks[zyxStr]; found {
+			toDel[i] = struct{}{}
+			toAdd = append(toAdd, elem)
+		}
+	}
+	if len(toDel) == 0 {
+		return nil
+	}
+
+	// Store split elements into new label elements.
+	newTk := NewLabelTKey(op.NewLabel)
+	newElems, err := getElements(ctx, newTk)
+	if err != nil {
+		return fmt.Errorf("unable to get annotations for instance %q, label %d in syncSplit: %v\n", d.DataName(), op.NewLabel, err)
+	}
+	newElems.add(toAdd)
+	val, err := json.Marshal(newElems)
+	if err != nil {
+		return fmt.Errorf("couldn't serialize annotation elements in instance %q: %v\n", d.DataName(), err)
+	}
+	batch.Put(newTk, val)
+
+	// Delete any split from old label elements.
+	filtered := oldElems[:0]
+	for i, elem := range oldElems {
+		if _, found := toDel[i]; !found {
+			filtered = append(filtered, elem)
+		}
+	}
+
+	// Delete or store k/v depending on what remains.
+	if len(filtered) == 0 {
+		batch.Delete(oldTk)
+	} else {
+		val, err := json.Marshal(filtered)
+		if err != nil {
+			return fmt.Errorf("couldn't serialize annotation elements in instance %q: %v\n", d.DataName(), err)
+		}
+		batch.Put(oldTk, val)
+	}
+
+	if err := batch.Commit(); err != nil {
+		return fmt.Errorf("bad commit in annotations %q after split: %v\n", d.DataName(), err)
+	}
+	return nil
+}
+
+func (d *Data) splitLabelsFine(batcher storage.KeyValueBatcher, v dvid.VersionID, op labels.DeltaSplit) error {
+	d.Lock()
+	defer d.Unlock()
+
+	d.StartUpdate()
+	defer d.StopUpdate()
+
 	ctx := datastore.NewVersionedCtx(d, v)
 	batch := batcher.NewBatch(ctx)
 
@@ -552,7 +638,5 @@ func (d *Data) splitLabels(batcher storage.KeyValueBatcher, v dvid.VersionID, op
 	if err := batch.Commit(); err != nil {
 		return fmt.Errorf("bad commit in annotations %q after split: %v\n", d.DataName(), err)
 	}
-
-	d.StopUpdate()
 	return nil
 }

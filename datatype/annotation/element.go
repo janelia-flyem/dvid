@@ -1093,11 +1093,7 @@ func (d *Data) StoreSynapses(ctx *datastore.VersionedCtx, r io.Reader) error {
 	// Note: we do not check for redundancy and guarantee uniqueness at this stage.
 	for _, elem := range elements {
 		// Get block coord for this element.
-		blockCoord, ok := elem.Pos.Chunk(blockSize).(dvid.ChunkPoint3d)
-		if !ok {
-			return fmt.Errorf("error converting element position %s into chunk", elem.Pos)
-		}
-		izyxStr := blockCoord.ToIZYXString()
+		izyxStr := elem.Pos.ToIZYXString(blockSize)
 
 		// Append to block
 		be := blockE[izyxStr]
