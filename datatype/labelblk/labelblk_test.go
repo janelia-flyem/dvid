@@ -672,7 +672,7 @@ func TestLabels(t *testing.T) {
 	// Test the "labels" endpoint.
 	apiStr = fmt.Sprintf("%snode/%s/%s/labels", server.WebAPIPath, uuid, "labels")
 	payload := `[[100,64,96],[78,93,156],[104,65,97]]`
-	jsonResp = server.TestHTTP(t, "POST", apiStr, bytes.NewBufferString(payload))
+	jsonResp = server.TestHTTP(t, "GET", apiStr, bytes.NewBufferString(payload))
 	var labels [3]uint64
 	if err := json.Unmarshal(jsonResp, &labels); err != nil {
 		t.Errorf("Unable to parse 'labels' endpoint response: %s\n", jsonResp)

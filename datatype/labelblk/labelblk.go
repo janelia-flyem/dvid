@@ -7,6 +7,7 @@ package labelblk
 
 import (
 	"bytes"
+	"crypto/md5"
 	"encoding/binary"
 	"encoding/gob"
 	"encoding/json"
@@ -317,9 +318,9 @@ GET <api URL>/node/<UUID>/<data name>/label/<coord>
     data name     Name of label data.
     coord     	  Coordinate of voxel with underscore as separator, e.g., 10_20_30
 
-POST <api URL>/node/<UUID>/<data name>/labels
+GET <api URL>/node/<UUID>/<data name>/labels[?queryopts]
 
-	Returns JSON for the labels at a list of coordinates.  Expects JSON in POST body:
+	Returns JSON for the labels at a list of coordinates.  Expects JSON in GET body:
 
 	[ [x0, y0, z0], [x1, y1, z1], ...]
 
@@ -330,6 +331,10 @@ POST <api URL>/node/<UUID>/<data name>/labels
     Arguments:
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
     data name     Name of label data.
+
+    Query-string Options:
+
+    hash          MD5 hash of request body content in hexidecimal string format.
 
 GET <api URL>/node/<UUID>/<data name>/blocks/<block coord>/<spanX>[?queryopts]
 
@@ -1188,6 +1193,18 @@ func getBinaryData(compression string, in io.ReadCloser, estsize int64) ([]byte,
 	return data, nil
 }
 
+// if hash is not empty, make sure it is hash of data.
+func checkContentHash(hash string, data []byte) error {
+	if hash == "" {
+		return nil
+	}
+	hexHash := fmt.Sprintf("%x", md5.Sum(data))
+	if hexHash != hash {
+		return fmt.Errorf("content hash incorrect.  expected %s, got %s", hash, hexHash)
+	}
+	return nil
+}
+
 // ServeHTTP handles all incoming HTTP requests for this data.
 func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {
 	// TODO -- Refactor this method to break it up and make it simpler.  Use the web routing for the endpoints.
@@ -1297,13 +1314,18 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 
 	case "labels":
 		// POST <api URL>/node/<UUID>/<data name>/labels
-		if action != "post" {
-			server.BadRequest(w, r, "Batch labels query must be a POST request")
+		if action != "get" {
+			server.BadRequest(w, r, "Batch labels query must be a GET request")
 			return
 		}
 		data, err := ioutil.ReadAll(r.Body)
 		if err != nil {
-			server.BadRequest(w, r, "Bad POSTed data for batch reverse query.  Should be JSON.")
+			server.BadRequest(w, r, "Bad GET request body for batch query: %v", err)
+			return
+		}
+		hash := queryStrings.Get("hash")
+		if err := checkContentHash(hash, data); err != nil {
+			server.BadRequest(w, r, err)
 			return
 		}
 		var coords []dvid.Point3d
