@@ -18,16 +18,6 @@ import (
 	"github.com/janelia-flyem/dvid/storage"
 )
 
-// Dirty labels can occur from splits and merges.
-// If merge, we can use cache of merges and create an integrated label map for any name+version and
-//   apply the map on GET for a label block.
-// If split, we need the block RLEs of the split fragments to create an integrated map of any modified
-//   block and the changes.
-
-var (
-	splitCache labels.DirtyCache
-)
-
 // BlockOnUpdating blocks until the given data is not updating from syncs.
 // This is primarily used during testing.
 func BlockOnUpdating(uuid dvid.UUID, name dvid.InstanceName) error {
@@ -155,8 +145,6 @@ func (d *Data) syncMerge(name dvid.InstanceName, in <-chan datastore.SyncMessage
 			iv := dvid.InstanceVersion{name, msg.Version}
 			switch delta := msg.Delta.(type) {
 			case labels.DeltaMerge:
-				d.StartUpdate()
-
 				ctx := datastore.NewVersionedCtx(d, msg.Version)
 				wg := new(sync.WaitGroup)
 				for izyxStr := range delta.Blocks {
@@ -168,14 +156,13 @@ func (d *Data) syncMerge(name dvid.InstanceName, in <-chan datastore.SyncMessage
 				// from the merge cache since all labels will have completed.
 				go func(wg *sync.WaitGroup) {
 					wg.Wait()
-					labels.MergeCache.Remove(iv, delta.MergeOp)
-					d.StopUpdate()
+					labels.MergeStop(iv, delta.MergeOp)
 				}(wg)
 
 			case labels.DeltaMergeStart:
 				// Add this merge into the cached blockRLEs
 				d.StartUpdate()
-				labels.MergeCache.Add(iv, delta.MergeOp)
+				labels.MergeStart(iv, delta.MergeOp)
 				d.StopUpdate()
 
 			default:
@@ -276,14 +263,8 @@ func (d *Data) syncSplit(name dvid.InstanceName, in <-chan datastore.SyncMessage
 				n := delta.OldLabel % numprocs
 				pch[n] <- splitOp{delta, *ctx}
 				d.StopUpdate()
-			case labels.DeltaSplitStart:
-				// Mark the old label is under transition
-				d.StartUpdate()
-				iv := dvid.InstanceVersion{name, msg.Version}
-				splitCache.Incr(iv, delta.OldLabel)
-				d.StopUpdate()
 			default:
-				dvid.Criticalf("bad delta in split event: %v\n", delta)
+				// Don't need to process other events
 				continue
 			}
 		}
@@ -305,9 +286,15 @@ func (d *Data) splitBlock(in <-chan splitOp) {
 	blockBytes := int(d.BlockSize().Prod() * 8)
 
 	for op := range in {
+		splitOpStart := labels.DeltaSplitStart{op.OldLabel, op.NewLabel}
+		splitOpEnd := labels.DeltaSplitEnd{op.OldLabel, op.NewLabel}
+
+		// Mark the old label is under transition
+		labels.SplitStart(op.ctx.InstanceVersion(), splitOpStart)
+		defer labels.SplitStop(op.ctx.InstanceVersion(), splitOpEnd)
+
 		// Iterate through all the modified blocks, inserting the new label using the RLEs for that block.
 		timedLog := dvid.NewTimeLog()
-		splitCache.Incr(op.ctx.InstanceVersion(), op.OldLabel)
 		batch := batcher.NewBatch(&op.ctx)
 		for _, zyxStr := range op.SortedBlocks {
 			// Read the block.
@@ -361,7 +348,6 @@ func (d *Data) splitBlock(in <-chan splitOp) {
 		if err := batch.Commit(); err != nil {
 			dvid.Errorf("Batch PUT during %q block split of %d: %v\n", d.DataName(), op.OldLabel, err)
 		}
-		splitCache.Decr(op.ctx.InstanceVersion(), op.OldLabel)
 		timedLog.Debugf("labelblk sync complete for split of %d -> %d", op.OldLabel, op.NewLabel)
 	}
 }

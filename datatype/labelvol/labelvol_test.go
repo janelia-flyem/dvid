@@ -78,6 +78,10 @@ func (b testBody) checkCoarse(t *testing.T, encoding []byte) {
 
 // Makes sure the sparse volume encoding matches the actual body voxels.
 func (b testBody) checkSparseVol(t *testing.T, encoding []byte, bounds dvid.Bounds) {
+	if len(encoding) < 12 {
+		t.Fatalf("Bad encoded sparsevol received.  Only %d bytes\n", len(encoding))
+	}
+
 	// Get to the  # spans and RLE in encoding
 	spansEncoding := encoding[8:]
 	var spans dvid.Spans
@@ -476,8 +480,7 @@ func TestMergeLabels(t *testing.T) {
 
 	// Make sure label 3 sparsevol has been removed.
 	reqStr = fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid, "bodies", 3)
-	encoding := server.TestHTTP(t, "GET", reqStr, nil)
-	emptyBody.checkSparseVol(t, encoding, dvid.Bounds{})
+	server.TestBadHTTP(t, "GET", reqStr, nil)
 
 	// Make sure label changes are correct after completion
 	if err := labelblk.BlockOnUpdating(uuid, "labels"); err != nil {

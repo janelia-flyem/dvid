@@ -11,7 +11,6 @@ import (
 	"encoding/gob"
 	"encoding/json"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"net/http"
 	"strconv"
@@ -854,9 +853,13 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 
 		switch action {
 		case "get":
-			data, err := GetSparseVol(ctx, label, b)
+			data, err := d.GetSparseVol(ctx, label, b)
 			if err != nil {
 				server.BadRequest(w, r, err)
+				return
+			}
+			if data == nil {
+				w.WriteHeader(http.StatusNotFound)
 				return
 			}
 			w.Header().Set("Content-type", "application/octet-stream")
@@ -902,7 +905,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 
 		case "head":
 			w.Header().Set("Content-type", "text/html")
-			found, err := FoundSparseVol(ctx, label, b)
+			found, err := d.FoundSparseVol(ctx, label, b)
 			if err != nil {
 				server.BadRequest(w, r, err)
 				return
@@ -952,9 +955,13 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			server.BadRequest(w, r, "Label 0 is protected background value and cannot be used as sparse volume.\n")
 			return
 		}
-		data, err := GetSparseVol(ctx, label, Bounds{})
+		data, err := d.GetSparseVol(ctx, label, Bounds{})
 		if err != nil {
 			server.BadRequest(w, r, err)
+			return
+		}
+		if data == nil {
+			w.WriteHeader(http.StatusNotFound)
 			return
 		}
 		w.Header().Set("Content-type", "application/octet-stream")
@@ -980,9 +987,13 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			server.BadRequest(w, r, "Label 0 is protected background value and cannot be used as sparse volume.\n")
 			return
 		}
-		data, err := GetSparseCoarseVol(ctx, label)
+		data, err := d.GetSparseCoarseVol(ctx, label)
 		if err != nil {
 			server.BadRequest(w, r, err)
+			return
+		}
+		if data == nil {
+			w.WriteHeader(http.StatusNotFound)
 			return
 		}
 		w.Header().Set("Content-type", "application/octet-stream")
@@ -1266,7 +1277,7 @@ func boundRLEs(b []byte, bounds *dvid.Bounds) ([]byte, error) {
 
 // FoundSparseVol returns true if a sparse volume is found for the given label
 // within the given bounds.
-func FoundSparseVol(ctx storage.Context, label uint64, bounds Bounds) (bool, error) {
+func (d *Data) FoundSparseVol(ctx storage.Context, label uint64, bounds Bounds) (bool, error) {
 	store, err := storage.MutableStore()
 	if err != nil {
 		return false, fmt.Errorf("Data type labelvol had error initializing store: %v\n", err)
@@ -1285,36 +1296,57 @@ func FoundSparseVol(ctx storage.Context, label uint64, bounds Bounds) (bool, err
 	if maxZ, ok := blockBounds.MaxZ(); ok {
 		maxZYX[2] = maxZ
 	}
-	begTKey := NewTKey(label, minZYX.ToIZYXString())
-	endTKey := NewTKey(label, maxZYX.ToIZYXString())
 
-	// Scan through all keys for this range to see if we have any hits.
+	// Scan through all keys coming from label blocks to see if we have any hits.
 	var found bool
+	var done int
+	var constituents labels.Set
+
+	iv := d.getMergeIV(ctx.VersionID())
+	mapping := labels.LabelMap(iv)
+
+	if mapping == nil {
+		constituents = labels.Set{label: struct{}{}}
+	} else {
+		// Check if this label has been merged.
+		if _, found := mapping.Get(label); found {
+			return false, nil
+		}
+
+		// If not, see if labels have been merged into it.
+		constituents = mapping.ConstituentLabels(label)
+	}
+
 	keyCh := make(storage.KeyChan, 100)
 	wg := new(sync.WaitGroup)
-	wg.Add(1)
 	go func() {
-		defer wg.Done()
 		for {
 			key := <-keyCh
 			if key == nil {
-				return
+				wg.Done()
+				done++
+				if done == len(constituents) {
+					return
+				}
 			}
 
 			// Make sure this block is within the optional bounding.
 			tk, err := ctx.TKeyFromKey(key)
 			if err != nil {
+				wg.Done()
 				dvid.Errorf("Unable to get TKey from Key (%v): %v\n", key, err)
 				return
 			}
 			if blockBounds.BoundedX() || blockBounds.BoundedY() {
 				_, blockStr, err := DecodeTKey(tk)
 				if err != nil {
+					wg.Done()
 					dvid.Errorf("Error decoding sparse volume key (%v): %v\n", key, err)
 					return
 				}
 				indexZYX, err := blockStr.IndexZYX()
 				if err != nil {
+					wg.Done()
 					dvid.Errorf("Error decoding block coordinate (%v) for sparse volume: %v\n", blockStr, err)
 					return
 				}
@@ -1326,13 +1358,21 @@ func FoundSparseVol(ctx storage.Context, label uint64, bounds Bounds) (bool, err
 
 			// We have a valid key
 			found = true
+			wg.Done()
 			return
 		}
 	}()
 
-	if err := store.SendKeysInRange(ctx, begTKey, endTKey, keyCh); err != nil {
-		return false, err
+	// Iterate through each constituent label.
+	for constituent := range constituents {
+		wg.Add(1)
+		begTKey := NewTKey(constituent, minZYX.ToIZYXString())
+		endTKey := NewTKey(constituent, maxZYX.ToIZYXString())
+		if err := store.SendKeysInRange(ctx, begTKey, endTKey, keyCh); err != nil {
+			return false, err
+		}
 	}
+	dvid.Debugf("Checked for sparse volume with label %d, composed of labels %s\n", label, constituents)
 	wg.Wait()
 
 	return found, nil
@@ -1357,7 +1397,16 @@ func FoundSparseVol(ctx storage.Context, label uint64, bounds Bounds) (bool, err
 //        int32   Length of run
 //        bytes   Optional payload dependent on first byte descriptor
 //
-func GetSparseVol(ctx storage.Context, label uint64, bounds Bounds) ([]byte, error) {
+func (d *Data) GetSparseVol(ctx storage.Context, label uint64, bounds Bounds) ([]byte, error) {
+	iv := d.getMergeIV(ctx.VersionID())
+	mapping := labels.LabelMap(iv)
+	if mapping != nil {
+		// Check if this label has been merged.
+		if _, found := mapping.FinalLabel(label); found {
+			return nil, nil
+		}
+	}
+
 	store, err := storage.MutableStore()
 	if err != nil {
 		return nil, fmt.Errorf("Data type labelvol had error initializing store: %v\n", err)
@@ -1385,9 +1434,6 @@ func GetSparseVol(ctx storage.Context, label uint64, bounds Bounds) ([]byte, err
 	if maxZ, ok := blockBounds.MaxZ(); ok {
 		maxZYX[2] = maxZ
 	}
-	begTKey := NewTKey(label, minZYX.ToIZYXString())
-	endTKey := NewTKey(label, maxZYX.ToIZYXString())
-
 	// Process all the b+s keys and their values, which contain RLE runs for that label.
 	// TODO -- Make processing asynchronous so can overlap with range disk read now that
 	//   there could be more processing due to bounding calcs.
@@ -1432,13 +1478,141 @@ func GetSparseVol(ctx storage.Context, label uint64, bounds Bounds) ([]byte, err
 		return nil
 	}
 
-	if err := store.ProcessRange(ctx, begTKey, endTKey, &storage.ChunkOp{}, f); err != nil {
-		return nil, err
+	// Iterate through each constituent label.
+	if mapping == nil {
+		begTKey := NewTKey(label, minZYX.ToIZYXString())
+		endTKey := NewTKey(label, maxZYX.ToIZYXString())
+		if err := store.ProcessRange(ctx, begTKey, endTKey, &storage.ChunkOp{}, f); err != nil {
+			return nil, err
+		}
+	} else {
+		// Find all labels merged into this label.
+		constituents := mapping.ConstituentLabels(label)
+		for constituent := range constituents {
+			begTKey := NewTKey(constituent, minZYX.ToIZYXString())
+			endTKey := NewTKey(constituent, maxZYX.ToIZYXString())
+			if err := store.ProcessRange(ctx, begTKey, endTKey, &storage.ChunkOp{}, f); err != nil {
+				return nil, err
+			}
+		}
+		dvid.Debugf("Returning sparse volume for label %d, composed of labels %s\n", label, constituents)
 	}
+
 	binary.LittleEndian.PutUint32(encoding[8:12], numRuns)
 
 	dvid.Debugf("[%s] label %d: found %d blocks, %d runs\n", ctx, label, numBlocks, numRuns)
 	return encoding, nil
+}
+
+// GetSparseCoarseVol returns an encoded sparse volume given a label.  The encoding has the
+// following format where integers are little endian:
+// 		byte     Set to 0
+// 		uint8    Number of dimensions
+// 		uint8    Dimension of run (typically 0 = X)
+// 		byte     Reserved (to be used later)
+// 		uint32    # Blocks [TODO.  0 for now]
+// 		uint32    # Spans
+// 		Repeating unit of:
+//     		int32   Block coordinate of run start (dimension 0)
+//     		int32   Block coordinate of run start (dimension 1)
+//     		int32   Block coordinate of run start (dimension 2)
+//     		int32   Length of run
+//
+func (d *Data) GetSparseCoarseVol(ctx storage.Context, label uint64) ([]byte, error) {
+	iv := d.getMergeIV(ctx.VersionID())
+	mapping := labels.LabelMap(iv)
+	if mapping != nil {
+		// Check if this label has been merged.
+		if _, found := mapping.FinalLabel(label); found {
+			return nil, nil
+		}
+	}
+
+	// Create the sparse volume header
+	buf := new(bytes.Buffer)
+	buf.WriteByte(dvid.EncodingBinary)
+	binary.Write(buf, binary.LittleEndian, uint8(3))  // # of dimensions
+	binary.Write(buf, binary.LittleEndian, byte(0))   // dimension of run (X = 0)
+	buf.WriteByte(byte(0))                            // reserved for later
+	binary.Write(buf, binary.LittleEndian, uint32(0)) // Placeholder for # blocks
+	encoding := buf.Bytes()
+
+	// Iterate through each constituent label, appending to the spans.
+	var numBlocks uint32
+	var spans dvid.Spans
+
+	if mapping == nil {
+		var err error
+		numBlocks, spans, err = getSparseVolBlocks(ctx, label)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		// Find all labels merged into this label.
+		constituents := mapping.ConstituentLabels(label)
+		for constituent := range constituents {
+			curBlocks, curSpans, err := getSparseVolBlocks(ctx, constituent)
+			if err != nil {
+				return nil, err
+			}
+			numBlocks += curBlocks
+			spans = append(spans, curSpans...)
+		}
+		dvid.Debugf("Returning coarse sparse volume for label %d, composed of labels %s\n", label, constituents)
+	}
+
+	spansBytes, err := spans.MarshalBinary()
+	if err != nil {
+		return nil, err
+	}
+	encoding = append(encoding, spansBytes...)
+	dvid.Debugf("[%s] coarse subvol for label %d: found %d blocks\n", ctx, label, numBlocks)
+	return encoding, nil
+}
+
+func getSparseVolBlocks(ctx storage.Context, label uint64) (numBlocks uint32, spans dvid.Spans, err error) {
+	store, err := storage.MutableStore()
+	if err != nil {
+		return 0, nil, fmt.Errorf("Data type labelvol had error initializing store: %v\n", err)
+	}
+
+	var span *dvid.Span
+
+	// Get the start/end indices for this body's KeyLabelSpatialMap (b + s) keys.
+	begTKey := NewTKey(label, dvid.MinIndexZYX.ToIZYXString())
+	endTKey := NewTKey(label, dvid.MaxIndexZYX.ToIZYXString())
+
+	// Process all the b+s keys and their values, which contain RLE runs for that label.
+	keys, err := store.KeysInRange(ctx, begTKey, endTKey)
+	if err != nil {
+		return 0, nil, fmt.Errorf("Cannot get keys for coarse sparse volume: %v", err)
+	}
+
+	for _, tk := range keys {
+		numBlocks++
+		_, blockStr, err := DecodeTKey(tk)
+		if err != nil {
+			return 0, nil, fmt.Errorf("Error retrieving RLE runs for label %d: %v", label, err)
+		}
+		indexZYX, err := blockStr.IndexZYX()
+		if err != nil {
+			return 0, nil, fmt.Errorf("Error decoding block coordinate (%v) for sparse volume: %v\n", blockStr, err)
+		}
+		x, y, z := indexZYX.Unpack()
+		if span == nil {
+			span = &dvid.Span{z, y, x, x}
+		} else if !span.Extends(x, y, z) {
+			spans = append(spans, *span)
+			span = &dvid.Span{z, y, x, x}
+		}
+	}
+	if err != nil {
+		return 0, nil, err
+	}
+	if span != nil {
+		spans = append(spans, *span)
+	}
+	return
 }
 
 // PutSparseVol stores an encoded sparse volume that stays within a given forward label.
@@ -1452,6 +1626,7 @@ func GetSparseVol(ctx storage.Context, label uint64, bounds Bounds) ([]byte, err
 // EVENTS
 //
 //
+/*
 func (d *Data) PutSparseVol(v dvid.VersionID, label uint64, r io.Reader) error {
 	store, err := storage.MutableStore()
 	if err != nil {
@@ -1464,8 +1639,8 @@ func (d *Data) PutSparseVol(v dvid.VersionID, label uint64, r io.Reader) error {
 
 	// Mark the label as dirty until done.
 	iv := dvid.InstanceVersion{d.DataName(), v}
-	dirtyLabels.Incr(iv, label)
-	defer dirtyLabels.Decr(iv, label)
+	labels.DirtyCache.Incr(iv, label)
+	defer labels.DirtyCache.Decr(iv, label)
 
 	// TODO -- Signal that we are starting a label modification.
 
@@ -1560,77 +1735,4 @@ func (d *Data) PutSparseVol(v dvid.VersionID, label uint64, r io.Reader) error {
 
 	return nil
 }
-
-// GetSparseCoarseVol returns an encoded sparse volume given a label.  The encoding has the
-// following format where integers are little endian:
-// 		byte     Set to 0
-// 		uint8    Number of dimensions
-// 		uint8    Dimension of run (typically 0 = X)
-// 		byte     Reserved (to be used later)
-// 		uint32    # Blocks [TODO.  0 for now]
-// 		uint32    # Spans
-// 		Repeating unit of:
-//     		int32   Block coordinate of run start (dimension 0)
-//     		int32   Block coordinate of run start (dimension 1)
-//     		int32   Block coordinate of run start (dimension 2)
-//     		int32   Length of run
-//
-func GetSparseCoarseVol(ctx storage.Context, label uint64) ([]byte, error) {
-	store, err := storage.MutableStore()
-	if err != nil {
-		return nil, fmt.Errorf("Data type labelvol had error initializing store: %v\n", err)
-	}
-
-	// Create the sparse volume header
-	buf := new(bytes.Buffer)
-	buf.WriteByte(dvid.EncodingBinary)
-	binary.Write(buf, binary.LittleEndian, uint8(3))  // # of dimensions
-	binary.Write(buf, binary.LittleEndian, byte(0))   // dimension of run (X = 0)
-	buf.WriteByte(byte(0))                            // reserved for later
-	binary.Write(buf, binary.LittleEndian, uint32(0)) // Placeholder for # blocks
-	encoding := buf.Bytes()
-
-	// Get the start/end indices for this body's KeyLabelSpatialMap (b + s) keys.
-	begTKey := NewTKey(label, dvid.MinIndexZYX.ToIZYXString())
-	endTKey := NewTKey(label, dvid.MaxIndexZYX.ToIZYXString())
-
-	// Process all the b+s keys and their values, which contain RLE runs for that label.
-	var numBlocks uint32
-	var span *dvid.Span
-	var spans dvid.Spans
-	keys, err := store.KeysInRange(ctx, begTKey, endTKey)
-	if err != nil {
-		return nil, fmt.Errorf("Cannot get keys for coarse sparse volume: %v", err)
-	}
-	for _, tk := range keys {
-		numBlocks++
-		_, blockStr, err := DecodeTKey(tk)
-		if err != nil {
-			return nil, fmt.Errorf("Error retrieving RLE runs for label %d: %v", label, err)
-		}
-		indexZYX, err := blockStr.IndexZYX()
-		if err != nil {
-			return nil, fmt.Errorf("Error decoding block coordinate (%v) for sparse volume: %v\n", blockStr, err)
-		}
-		x, y, z := indexZYX.Unpack()
-		if span == nil {
-			span = &dvid.Span{z, y, x, x}
-		} else if !span.Extends(x, y, z) {
-			spans = append(spans, *span)
-			span = &dvid.Span{z, y, x, x}
-		}
-	}
-	if err != nil {
-		return nil, err
-	}
-	if span != nil {
-		spans = append(spans, *span)
-	}
-	spansBytes, err := spans.MarshalBinary()
-	if err != nil {
-		return nil, err
-	}
-	encoding = append(encoding, spansBytes...)
-	dvid.Debugf("[%s] coarse subvol for label %d: found %d blocks\n", ctx, label, numBlocks)
-	return encoding, nil
-}
+*/

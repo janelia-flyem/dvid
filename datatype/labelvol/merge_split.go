@@ -16,13 +16,18 @@ import (
 	"github.com/janelia-flyem/dvid/storage"
 )
 
-var (
-	// These are the labels that are in the process of modification from merge, split, or other sync events.
-	dirtyLabels labels.DirtyCache
-)
-
 type sizeChange struct {
 	oldSize, newSize uint64
+}
+
+// Returns the InstanceVersion for the synced labelblk if available or
+// defaults to its own instance.
+func (d *Data) getMergeIV(v dvid.VersionID) dvid.InstanceVersion {
+	syncedLabelblk, err := d.GetSyncedLabelblk(v)
+	if err != nil {
+		return dvid.InstanceVersion{d.DataName(), v}
+	}
+	return dvid.InstanceVersion{syncedLabelblk.DataName(), v}
 }
 
 // MergeLabels handles merging of any number of labels throughout the various label data
@@ -41,16 +46,14 @@ type sizeChange struct {
 // labels.MergeEndEvent occurs at end of merge and transmits labels.DeltaMergeEnd struct.
 //
 func (d *Data) MergeLabels(v dvid.VersionID, m labels.MergeOp) error {
-	store, err := storage.MutableStore()
-	if err != nil {
-		return fmt.Errorf("Data type labelvol had error initializing store: %v\n", err)
-	}
-	batcher, ok := store.(storage.KeyValueBatcher)
-	if !ok {
-		return fmt.Errorf("Data type labelvol requires batch-enabled store, which %q is not\n", store)
-	}
-
 	dvid.Debugf("Merging %s into label %d ...\n", m.Merged, m.Target)
+	d.StartUpdate()
+
+	// Mark these labels as dirty until done.
+	if err := labels.MergeStart(d.getMergeIV(v), m); err != nil {
+		return err
+	}
+	d.StopUpdate()
 
 	// Signal that we are starting a merge.
 	evt := datastore.SyncEvent{d.DataName(), labels.MergeStartEvent}
@@ -59,10 +62,30 @@ func (d *Data) MergeLabels(v dvid.VersionID, m labels.MergeOp) error {
 		return err
 	}
 
-	// Mark these labels as dirty until done.
-	iv := dvid.InstanceVersion{d.DataName(), v}
-	dirtyLabels.AddMerge(iv, m)
-	defer dirtyLabels.RemoveMerge(iv, m)
+	// Asynchronously perform merge and handle any concurrent requests using the cache map until
+	// labelvol and labelblk are updated and consistent.
+	go d.asyncMergeLabels(v, m)
+
+	return nil
+}
+
+func (d *Data) asyncMergeLabels(v dvid.VersionID, m labels.MergeOp) {
+	// Remove dirty labels and updating flag when done.
+	defer func() {
+		labels.MergeStop(d.getMergeIV(v), m)
+	}()
+
+	// Get storage objects
+	store, err := storage.MutableStore()
+	if err != nil {
+		dvid.Errorf("Data type labelvol had error initializing store: %v\n", err)
+		return
+	}
+	batcher, ok := store.(storage.KeyValueBatcher)
+	if !ok {
+		dvid.Errorf("Data type labelvol requires batch-enabled store, which %q is not\n", store)
+		return
+	}
 
 	// All blocks that have changed during this merge.  Key = string of block index
 	blocksChanged := make(map[dvid.IZYXString]struct{})
@@ -71,7 +94,8 @@ func (d *Data) MergeLabels(v dvid.VersionID, m labels.MergeOp) error {
 	toLabel := m.Target
 	toLabelRLEs, err := d.GetLabelRLEs(v, toLabel)
 	if err != nil {
-		return fmt.Errorf("Can't get block-level RLEs for label %d: %v", toLabel, err)
+		dvid.Criticalf("Can't get block-level RLEs for label %d: %v", toLabel, err)
+		return
 	}
 	toLabelSize := toLabelRLEs.NumVoxels()
 
@@ -82,7 +106,8 @@ func (d *Data) MergeLabels(v dvid.VersionID, m labels.MergeOp) error {
 
 		fromLabelRLEs, err := d.GetLabelRLEs(v, fromLabel)
 		if err != nil {
-			return fmt.Errorf("Can't get block-level RLEs for label %d: %v", fromLabel, err)
+			dvid.Errorf("Can't get block-level RLEs for label %d: %v", fromLabel, err)
+			return
 		}
 		fromLabelSize := fromLabelRLEs.NumVoxels()
 		if fromLabelSize == 0 || len(fromLabelRLEs) == 0 {
@@ -100,7 +125,7 @@ func (d *Data) MergeLabels(v dvid.VersionID, m labels.MergeOp) error {
 		evt := datastore.SyncEvent{d.DataName(), labels.ChangeSizeEvent}
 		msg := datastore.SyncMessage{v, delta}
 		if err := datastore.NotifySubscribers(evt, msg); err != nil {
-			return err
+			dvid.Criticalf("can't notify subscribers for event %v: %v\n", evt, err)
 		}
 
 		// Append or insert RLE runs from fromLabel blocks into toLabel blocks.
@@ -123,20 +148,20 @@ func (d *Data) MergeLabels(v dvid.VersionID, m labels.MergeOp) error {
 		maxTKey := NewTKey(fromLabel, dvid.MaxIndexZYX.ToIZYXString())
 		ctx := datastore.NewVersionedCtx(d, v)
 		if err := store.DeleteRange(ctx, minTKey, maxTKey); err != nil {
-			return fmt.Errorf("Can't delete label %d RLEs: %v", fromLabel, err)
+			dvid.Criticalf("Can't delete label %d RLEs: %v", fromLabel, err)
 		}
 	}
 
 	if len(blocksChanged) == 0 {
 		dvid.Debugf("No changes needed when merging %s into %d.  Aborting.\n", m.Merged, m.Target)
-		return nil
+		return
 	}
 
 	// Publish block-level merge
-	evt = datastore.SyncEvent{d.DataName(), labels.MergeBlockEvent}
-	msg = datastore.SyncMessage{v, labels.DeltaMerge{m, blocksChanged}}
+	evt := datastore.SyncEvent{d.DataName(), labels.MergeBlockEvent}
+	msg := datastore.SyncMessage{v, labels.DeltaMerge{m, blocksChanged}}
 	if err := datastore.NotifySubscribers(evt, msg); err != nil {
-		return err
+		dvid.Errorf("can't notify subscribers for event %v: %v\n", evt, err)
 	}
 
 	// Update datastore with all toLabel RLEs that were changed
@@ -146,7 +171,7 @@ func (d *Data) MergeLabels(v dvid.VersionID, m labels.MergeOp) error {
 		tk := NewTKey(toLabel, blockStr)
 		serialization, err := toLabelRLEs[blockStr].MarshalBinary()
 		if err != nil {
-			return fmt.Errorf("Error serializing RLEs for label %d: %v\n", toLabel, err)
+			dvid.Errorf("Error serializing RLEs for label %d: %v\n", toLabel, err)
 		}
 		batch.Put(tk, serialization)
 	}
@@ -161,16 +186,14 @@ func (d *Data) MergeLabels(v dvid.VersionID, m labels.MergeOp) error {
 	evt = datastore.SyncEvent{d.DataName(), labels.ChangeSizeEvent}
 	msg = datastore.SyncMessage{v, delta}
 	if err := datastore.NotifySubscribers(evt, msg); err != nil {
-		return err
+		dvid.Errorf("can't notify subscribers for event %v: %v\n", evt, err)
 	}
 
 	evt = datastore.SyncEvent{d.DataName(), labels.MergeEndEvent}
 	msg = datastore.SyncMessage{v, labels.DeltaMergeEnd{m}}
 	if err := datastore.NotifySubscribers(evt, msg); err != nil {
-		return err
+		dvid.Errorf("can't notify subscribers for event %v: %v\n", evt, err)
 	}
-
-	return nil
 }
 
 // SplitLabels splits a portion of a label's voxels into a given split label or, if the given split
@@ -200,11 +223,6 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel, splitLabel uint64, r io.
 		return
 	}
 
-	// Mark these labels as dirty until done.
-	iv := dvid.InstanceVersion{d.DataName(), v}
-	dirtyLabels.Incr(iv, fromLabel)
-	defer dirtyLabels.Decr(iv, fromLabel)
-
 	// Create a new label id for this version that will persist to store
 	if splitLabel != 0 {
 		toLabel = splitLabel
@@ -217,9 +235,18 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel, splitLabel uint64, r io.
 		dvid.Debugf("Splitting subset of label %d into new label %d ...\n", fromLabel, toLabel)
 	}
 
-	// Signal that we are starting a split.
 	evt := datastore.SyncEvent{d.DataName(), labels.SplitStartEvent}
-	msg := datastore.SyncMessage{v, labels.DeltaSplitStart{fromLabel, toLabel}}
+	splitOpStart := labels.DeltaSplitStart{fromLabel, toLabel}
+	splitOpEnd := labels.DeltaSplitEnd{fromLabel, toLabel}
+
+	// Make sure we can split given current merges in progress
+	if err := labels.SplitStart(d.getMergeIV(v), splitOpStart); err != nil {
+		return toLabel, err
+	}
+	defer labels.SplitStop(d.getMergeIV(v), splitOpEnd)
+
+	// Signal that we are starting a split.
+	msg := datastore.SyncMessage{v, splitOpStart}
 	if err := datastore.NotifySubscribers(evt, msg); err != nil {
 		return 0, err
 	}
@@ -322,7 +349,7 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel, splitLabel uint64, r io.
 
 	// Publish split end
 	evt = datastore.SyncEvent{d.DataName(), labels.SplitEndEvent}
-	msg = datastore.SyncMessage{v, labels.DeltaSplitEnd{fromLabel, toLabel}}
+	msg = datastore.SyncMessage{v, splitOpEnd}
 	if err := datastore.NotifySubscribers(evt, msg); err != nil {
 		return 0, err
 	}
@@ -354,11 +381,6 @@ func (d *Data) SplitCoarseLabels(v dvid.VersionID, fromLabel, splitLabel uint64,
 		return
 	}
 
-	// Mark these labels as dirty until done.
-	iv := dvid.InstanceVersion{d.DataName(), v}
-	dirtyLabels.Incr(iv, fromLabel)
-	defer dirtyLabels.Decr(iv, fromLabel)
-
 	// Create a new label id for this version that will persist to store
 	if splitLabel != 0 {
 		toLabel = splitLabel
@@ -371,9 +393,18 @@ func (d *Data) SplitCoarseLabels(v dvid.VersionID, fromLabel, splitLabel uint64,
 		dvid.Debugf("Splitting coarse subset of label %d into new label %d ...\n", fromLabel, toLabel)
 	}
 
-	// Signal that we are starting a split.
 	evt := datastore.SyncEvent{d.DataName(), labels.SplitStartEvent}
-	msg := datastore.SyncMessage{v, labels.DeltaSplitStart{fromLabel, toLabel}}
+	splitOpStart := labels.DeltaSplitStart{fromLabel, toLabel}
+	splitOpEnd := labels.DeltaSplitEnd{fromLabel, toLabel}
+
+	// Make sure we can split given current merges in progress
+	if err := labels.SplitStart(d.getMergeIV(v), splitOpStart); err != nil {
+		return toLabel, err
+	}
+	defer labels.SplitStop(d.getMergeIV(v), splitOpEnd)
+
+	// Signal that we are starting a split.
+	msg := datastore.SyncMessage{v, splitOpStart}
 	if err := datastore.NotifySubscribers(evt, msg); err != nil {
 		return 0, err
 	}
@@ -465,7 +496,7 @@ func (d *Data) SplitCoarseLabels(v dvid.VersionID, fromLabel, splitLabel uint64,
 
 	// Publish split end
 	evt = datastore.SyncEvent{d.DataName(), labels.SplitEndEvent}
-	msg = datastore.SyncMessage{v, labels.DeltaSplitEnd{fromLabel, toLabel}}
+	msg = datastore.SyncMessage{v, splitOpEnd}
 	if err := datastore.NotifySubscribers(evt, msg); err != nil {
 		return 0, err
 	}

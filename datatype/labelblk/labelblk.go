@@ -946,7 +946,7 @@ func (d *Data) DeleteBlocks(ctx *datastore.VersionedCtx, start dvid.ChunkPoint3d
 	endTKey := NewTKey(&indexEnd)
 
 	iv := dvid.InstanceVersion{d.DataName(), ctx.VersionID()}
-	mapping := labels.MergeCache.LabelMap(iv)
+	mapping := labels.LabelMap(iv)
 
 	kvs, err := store.GetRange(ctx, begTKey, endTKey)
 	if err != nil {

@@ -469,7 +469,7 @@ func (d *Data) syncSplit(in <-chan datastore.SyncMessage, done <-chan struct{}) 
 					}
 				}
 			default:
-				dvid.Criticalf("bad delta in split event: %v\n", delta)
+				dvid.Criticalf("annotation split sync: bad delta in split event: %v\n", msg.Delta)
 				continue
 			}
 		}

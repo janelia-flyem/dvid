@@ -84,56 +84,73 @@ func TestMergeCache(t *testing.T) {
 		MergeTuple{4, 1, 2, 3},
 		MergeTuple{9, 10, 11, 12},
 		MergeTuple{21, 100, 18, 85, 97, 45},
+		MergeTuple{72, 9, 47},
 	}
 	merges2 := []MergeTuple{
-		MergeTuple{4, 9, 3, 22},
 		MergeTuple{9, 5, 11, 6},
+		MergeTuple{4, 9, 3, 22},
 		MergeTuple{21, 44, 55, 66, 77, 88},
 	}
 	expectmap := map[uint64]uint64{
 		1:   4,
 		2:   4,
 		3:   4,
-		10:  9,
-		11:  9,
-		12:  9,
+		10:  72,
+		11:  72,
+		12:  72,
 		100: 21,
 		18:  21,
 		85:  21,
 		97:  21,
 		45:  21,
+		47:  72,
 	}
 
 	iv := dvid.InstanceVersion{"foobar", 23}
-	iv2 := dvid.InstanceVersion{"foobar", 24}
 	for _, tuple := range merges {
 		op, err := tuple.Op()
 		if err != nil {
 			t.Errorf("Error converting tuple %v to MergeOp: %v\n", tuple, err)
 		}
-		MergeCache.Add(iv, op)
+		if err := MergeStart(iv, op); err != nil {
+			t.Errorf("Error on starting merge (%v): %v\n", op, err)
+		}
 	}
+
+	iv2 := dvid.InstanceVersion{"foobar", 24}
 	for _, tuple := range merges2 {
 		op, err := tuple.Op()
 		if err != nil {
 			t.Errorf("Error converting tuple %v to MergeOp: %v\n", tuple, err)
 		}
-		MergeCache.Add(iv2, op)
+		if err := MergeStart(iv2, op); err != nil {
+			t.Errorf("Error on starting merge (%v): %v\n", op, err)
+		}
 	}
-	mapping := MergeCache.LabelMap(iv)
+
+	mapping := LabelMap(iv)
 	for a, b := range expectmap {
-		c, ok := mapping.Get(a)
+		c, ok := mapping.FinalLabel(a)
 		if !ok || c != b {
 			t.Errorf("Expected mapping of %d -> %d, got %d (%t) instead\n", a, b, c, ok)
 		}
 	}
-	if _, ok := mapping.Get(66); ok {
+	if _, ok := mapping.FinalLabel(66); ok {
 		t.Errorf("Got mapping even though none existed for this version.")
 	}
+	if label, ok := mapping.FinalLabel(1); !ok || label != 4 {
+		t.Errorf("Bad final mapping of label 1.  Got %d, expected 4\n", label)
+	}
+
+	// Shouldn't be able to do a split when there's a merge going on
+
+	// Mark the end of the merges.
+
+	// Now should be able to do merge.
 }
 
 func TestDirtyCache(t *testing.T) {
-	var c DirtyCache
+	var c dirtyCache
 	iv := dvid.InstanceVersion{"foobar", 23}
 	iv2 := dvid.InstanceVersion{"foobar", 24}
 	if !c.Empty(iv) && !c.Empty(iv2) {

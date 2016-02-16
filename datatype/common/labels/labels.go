@@ -13,15 +13,15 @@ import (
 )
 
 var (
-	// MergeCache is a thread-safe cache for merge operations that provides
-	// the current label mapping for any version of a data instance.
-	MergeCache mergeCache
+	mc              mergeCache
+	labelsMerging   dirtyCache
+	labelsSplitting dirtyCache
 )
 
 const (
 	// MaxAllowedLabel is the largest label that should be allowed by DVID if we want to take
 	// into account the maximum integer size within Javascript (due to its underlying use of
-	// a double float for numbers).
+	// a double float for numbers, leading to max int = 2^53 - 1).
 	// This would circumvent the need to use strings within JSON (e.g., the Google solution)
 	// to represent integer labels that could exceed the max javascript number.  It would
 	// require adding a value check on each label voxel of a mutation request, which might
@@ -29,12 +29,73 @@ const (
 	MaxAllowedLabel = 9007199254740991
 )
 
+// LabelMap returns a label mapping for a version of a data instance.
+// If no label mapping is available, a nil is returned.
+func LabelMap(iv dvid.InstanceVersion) *Mapping {
+	return mc.LabelMap(iv)
+}
+
+// MergeStart handles label map caches during an active merge operation.  Note that if there are
+// multiple synced label instances, the InstanceVersion always be the labelblk instance.
+func MergeStart(iv dvid.InstanceVersion, op MergeOp) error {
+	// Don't allow a merge to start in the middle of a concurrent split.
+	if labelsSplitting.IsDirty(iv, op.Target) { // we might be able to relax this one.
+		return fmt.Errorf("can't merge into label %d while it has an ongoing split", op.Target)
+	}
+	for merged := range op.Merged {
+		if labelsSplitting.IsDirty(iv, merged) {
+			return fmt.Errorf("can't merge label %d while it has an ongoing split", merged)
+		}
+	}
+
+	// Add the merge to the mapping.
+	if err := mc.Add(iv, op); err != nil {
+		return err
+	}
+
+	// Adjust the dirty counts on the involved labels.
+	labelsMerging.AddMerge(iv, op)
+
+	return nil
+}
+
+// MergeStop marks the end of a merge operation.
+func MergeStop(iv dvid.InstanceVersion, op MergeOp) {
+	// Adjust the dirty counts on the involved labels.
+	labelsMerging.RemoveMerge(iv, op)
+
+	// If the instance version's dirty cache is empty, we can delete the merge cache.
+	if labelsMerging.Empty(iv) {
+		mc.DeleteMap(iv)
+	}
+}
+
+// SplitStart checks current label map to see if the split conflicts.
+func SplitStart(iv dvid.InstanceVersion, op DeltaSplitStart) error {
+	if labelsMerging.IsDirty(iv, op.NewLabel) {
+		return fmt.Errorf("can't split into label %d while it is undergoing a merge", op.NewLabel)
+	}
+	if labelsMerging.IsDirty(iv, op.OldLabel) {
+		return fmt.Errorf("can't split label %d while it is undergoing a merge", op.OldLabel)
+	}
+	labelsSplitting.Incr(iv, op.NewLabel)
+	labelsSplitting.Incr(iv, op.OldLabel)
+	return nil
+}
+
+// SplitStop marks the end of a split operation.
+func SplitStop(iv dvid.InstanceVersion, op DeltaSplitEnd) {
+	labelsSplitting.Decr(iv, op.NewLabel)
+	labelsSplitting.Decr(iv, op.OldLabel)
+}
+
 type mergeCache struct {
 	sync.RWMutex
 	m map[dvid.InstanceVersion]Mapping
 }
 
-func (mc *mergeCache) Add(iv dvid.InstanceVersion, op MergeOp) {
+// Add adds a merge operation to the given InstanceVersion's cache.
+func (mc *mergeCache) Add(iv dvid.InstanceVersion, op MergeOp) error {
 	mc.Lock()
 	defer mc.Unlock()
 
@@ -43,30 +104,18 @@ func (mc *mergeCache) Add(iv dvid.InstanceVersion, op MergeOp) {
 	}
 	mapping, found := mc.m[iv]
 	if !found {
-		mapping = Mapping{m: make(map[uint64]uint64, len(op.Merged))}
+		mapping = Mapping{
+			f: make(map[uint64]uint64, len(op.Merged)),
+			r: make(map[uint64]Set),
+		}
 	}
 	for merged := range op.Merged {
-		mapping.set(merged, op.Target)
+		if err := mapping.set(merged, op.Target); err != nil {
+			return err
+		}
 	}
 	mc.m[iv] = mapping
-}
-
-func (mc *mergeCache) Remove(iv dvid.InstanceVersion, op MergeOp) {
-	mc.Lock()
-	defer mc.Unlock()
-
-	if mc.m == nil {
-		mc.m = make(map[dvid.InstanceVersion]Mapping)
-		return
-	}
-	mapping, found := mc.m[iv]
-	if !found {
-		return
-	}
-	for merged := range op.Merged {
-		mapping.delete(merged)
-	}
-	mc.m[iv] = mapping
+	return nil
 }
 
 // LabelMap returns a label mapping for a version of a data instance.
@@ -80,7 +129,7 @@ func (mc *mergeCache) LabelMap(iv dvid.InstanceVersion) *Mapping {
 	}
 	mapping, found := mc.m[iv]
 	if found {
-		if len(mapping.m) == 0 {
+		if len(mapping.f) == 0 {
 			return nil
 		}
 		return &mapping
@@ -88,10 +137,41 @@ func (mc *mergeCache) LabelMap(iv dvid.InstanceVersion) *Mapping {
 	return nil
 }
 
-// Mapping is an immutable thread-safe mapping of labels to labels.
+// DeleteMap removes a mapping of the given InstanceVersion.
+func (mc *mergeCache) DeleteMap(iv dvid.InstanceVersion) {
+	mc.Lock()
+	defer mc.Unlock()
+
+	if mc.m != nil {
+		delete(mc.m, iv)
+	}
+}
+
+// Mapping is a thread-safe, mapping of labels to labels in both forward and backward direction.
+// Mutation of a Mapping instance can only be done through labels.MergeCache.
 type Mapping struct {
 	sync.RWMutex
-	m map[uint64]uint64
+	f map[uint64]uint64
+	r map[uint64]Set
+}
+
+// ConstituentLabels returns a set of labels that will be mapped to the given label.
+// The function will return a set of just the given label if there are no other
+// original labels that map to it.
+func (m Mapping) ConstituentLabels(final uint64) Set {
+	m.RLock()
+	defer m.RUnlock()
+
+	if m.r == nil {
+		return Set{final: struct{}{}}
+	}
+	// We need to return all labels that will eventually have the given final label
+	// including any intermediate ones that were subsequently merged.
+	s, found := m.r[final]
+	if !found {
+		return Set{final: struct{}{}}
+	}
+	return s
 }
 
 // FinalLabel follows mappings from a start label until
@@ -100,13 +180,13 @@ func (m Mapping) FinalLabel(start uint64) (uint64, bool) {
 	m.RLock()
 	defer m.RUnlock()
 
-	if m.m == nil {
+	if m.f == nil {
 		return start, false
 	}
 	cur := start
 	found := false
 	for {
-		v, ok := m.m[cur]
+		v, ok := m.f[cur]
 		if !ok {
 			break
 		}
@@ -121,32 +201,49 @@ func (m Mapping) Get(label uint64) (uint64, bool) {
 	m.RLock()
 	defer m.RUnlock()
 
-	if m.m == nil {
+	if m.f == nil {
 		return 0, false
 	}
-	mapped, found := m.m[label]
+	mapped, found := m.f[label]
 	if found {
 		return mapped, true
 	}
 	return 0, false
 }
 
-func (m *Mapping) set(a, b uint64) {
+// set returns error if b is currently being mapped to another label.
+func (m *Mapping) set(a, b uint64) error {
 	m.Lock()
 	defer m.Unlock()
 
-	if m.m == nil {
-		m.m = make(map[uint64]uint64)
+	if m.f == nil {
+		m.f = make(map[uint64]uint64)
+		m.r = make(map[uint64]Set)
+	} else {
+		if c, found := m.f[b]; found {
+			return fmt.Errorf("label %d is currently getting merged into label %d", b, c)
+		}
 	}
-	m.m[a] = b
+	m.f[a] = b
+	m.r[b] = Set{a: struct{}{}}
+	return nil
 }
 
 func (m *Mapping) delete(label uint64) {
 	m.Lock()
 	defer m.Unlock()
 
-	if m.m != nil {
-		delete(m.m, label)
+	if m.f != nil {
+		mapped, found := m.f[label]
+		if !found {
+			return
+		}
+		delete(m.f, label)
+		s, found := m.r[mapped]
+		if found {
+			delete(s, label)
+			m.r[mapped] = s
+		}
 	}
 }
 
@@ -208,13 +305,18 @@ func (c *Counts) Empty() bool {
 	return false
 }
 
-// DirtyCache tracks dirty labels across versions
-type DirtyCache struct {
+// dirtyCache is a thread-safe cache for tracking dirty labels across versions, which is necessary when we
+// don't know exactly how a label is being transformed.  For example, when merging
+// we can easily track what a label will be, however during a split, we don't know whether
+// a particular voxel with label X will become label Y unless we also store the split
+// voxels.  So DirtyCache is good for tracking "changing" status in splits while MergeCache
+// can give us complete label transformation of non-dirty labels.
+type dirtyCache struct {
 	sync.RWMutex
 	dirty map[dvid.InstanceVersion]*Counts
 }
 
-func (d *DirtyCache) Incr(iv dvid.InstanceVersion, label uint64) {
+func (d *dirtyCache) Incr(iv dvid.InstanceVersion, label uint64) {
 	d.Lock()
 	defer d.Unlock()
 
@@ -224,7 +326,7 @@ func (d *DirtyCache) Incr(iv dvid.InstanceVersion, label uint64) {
 	d.incr(iv, label)
 }
 
-func (d *DirtyCache) Decr(iv dvid.InstanceVersion, label uint64) {
+func (d *dirtyCache) Decr(iv dvid.InstanceVersion, label uint64) {
 	d.Lock()
 	defer d.Unlock()
 
@@ -234,7 +336,7 @@ func (d *DirtyCache) Decr(iv dvid.InstanceVersion, label uint64) {
 	d.decr(iv, label)
 }
 
-func (d *DirtyCache) IsDirty(iv dvid.InstanceVersion, label uint64) bool {
+func (d *dirtyCache) IsDirty(iv dvid.InstanceVersion, label uint64) bool {
 	d.RLock()
 	defer d.RUnlock()
 
@@ -252,7 +354,7 @@ func (d *DirtyCache) IsDirty(iv dvid.InstanceVersion, label uint64) bool {
 	return true
 }
 
-func (d *DirtyCache) Empty(iv dvid.InstanceVersion) bool {
+func (d *dirtyCache) Empty(iv dvid.InstanceVersion) bool {
 	d.RLock()
 	defer d.RUnlock()
 
@@ -266,7 +368,7 @@ func (d *DirtyCache) Empty(iv dvid.InstanceVersion) bool {
 	return cnts.Empty()
 }
 
-func (d *DirtyCache) AddMerge(iv dvid.InstanceVersion, op MergeOp) {
+func (d *dirtyCache) AddMerge(iv dvid.InstanceVersion, op MergeOp) {
 	d.Lock()
 	defer d.Unlock()
 
@@ -280,7 +382,7 @@ func (d *DirtyCache) AddMerge(iv dvid.InstanceVersion, op MergeOp) {
 	}
 }
 
-func (d *DirtyCache) RemoveMerge(iv dvid.InstanceVersion, op MergeOp) {
+func (d *dirtyCache) RemoveMerge(iv dvid.InstanceVersion, op MergeOp) {
 	d.Lock()
 	defer d.Unlock()
 
@@ -294,7 +396,7 @@ func (d *DirtyCache) RemoveMerge(iv dvid.InstanceVersion, op MergeOp) {
 	}
 }
 
-func (d *DirtyCache) incr(iv dvid.InstanceVersion, label uint64) {
+func (d *dirtyCache) incr(iv dvid.InstanceVersion, label uint64) {
 	cnts, found := d.dirty[iv]
 	if !found || cnts == nil {
 		cnts = new(Counts)
@@ -303,7 +405,7 @@ func (d *DirtyCache) incr(iv dvid.InstanceVersion, label uint64) {
 	cnts.Incr(label)
 }
 
-func (d *DirtyCache) decr(iv dvid.InstanceVersion, label uint64) {
+func (d *dirtyCache) decr(iv dvid.InstanceVersion, label uint64) {
 	cnts, found := d.dirty[iv]
 	if !found || cnts == nil {
 		dvid.Errorf("decremented non-existant count for label %d, version %v\n", label, iv)
