@@ -411,9 +411,7 @@ func (d *Data) writeXYImage(v dvid.VersionID, vox *Voxels, b storage.TKeyValues)
 
 	// Setup concurrency in image -> block transfers.
 	var wg sync.WaitGroup
-	defer func() {
-		wg.Wait()
-	}()
+	defer wg.Wait()
 
 	// Iterate through index space for this data using ZYX ordering.
 	blockSize := d.BlockSize()

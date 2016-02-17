@@ -432,9 +432,7 @@ func (d *Data) Delete(ctx storage.VersionedCtx) error {
 	// We only want one PUT on given version for given data to prevent interleaved PUTs.
 	putMutex := ctx.Mutex()
 	putMutex.Lock()
-	defer func() {
-		putMutex.Unlock()
-	}()
+	defer putMutex.Unlock()
 
 	d.MinZ = math.MaxInt32
 	d.MaxZ = math.MinInt32

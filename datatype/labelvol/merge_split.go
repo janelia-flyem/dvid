@@ -71,9 +71,7 @@ func (d *Data) MergeLabels(v dvid.VersionID, m labels.MergeOp) error {
 
 func (d *Data) asyncMergeLabels(v dvid.VersionID, m labels.MergeOp) {
 	// Remove dirty labels and updating flag when done.
-	defer func() {
-		labels.MergeStop(d.getMergeIV(v), m)
-	}()
+	defer labels.MergeStop(d.getMergeIV(v), m)
 
 	// Get storage objects
 	store, err := storage.MutableStore()
