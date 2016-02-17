@@ -66,6 +66,7 @@ func MergeStop(iv dvid.InstanceVersion, op MergeOp) {
 
 	// If the instance version's dirty cache is empty, we can delete the merge cache.
 	if labelsMerging.Empty(iv) {
+		dvid.Debugf("Merge cache now empty for %s\n", iv)
 		mc.DeleteMap(iv)
 	}
 }

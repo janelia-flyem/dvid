@@ -122,6 +122,10 @@ type InstanceVersion struct {
 	Version VersionID
 }
 
+func (iv InstanceVersion) String() string {
+	return fmt.Sprintf("[%s version %d]", iv.Name, iv.Version)
+}
+
 // RepoID is a DVID server-specific identifier for a particular Repo.  Valid RepoIDs
 // should be greater than 0.
 type RepoID LocalID32
