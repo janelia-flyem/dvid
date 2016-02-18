@@ -394,12 +394,12 @@ func ServeSingleHTTP(w http.ResponseWriter, r *http.Request) {
 // connections hog goroutines for more than an hour.
 // See for discussion:
 // http://stackoverflow.com/questions/10971800/golang-http-server-leaving-open-goroutines
-func serveHttp(address, clientDir string) {
+func serveHTTP() {
 	var mode string
 	if readonly {
 		mode = " (read-only mode)"
 	}
-	dvid.Infof("Web server listening at %s%s ...\n", address, mode)
+	dvid.Infof("Web server listening at %s%s ...\n", config.HTTPAddress(), mode)
 	if !webMux.routesSetup {
 		initRoutes()
 	}
@@ -413,7 +413,7 @@ func serveHttp(address, clientDir string) {
 	// of server is more important.
 
 	s := &http.Server{
-		Addr:         address,
+		Addr:         config.HTTPAddress(),
 		WriteTimeout: WriteTimeout,
 		ReadTimeout:  ReadTimeout,
 	}
@@ -566,11 +566,11 @@ func BadRequest(w http.ResponseWriter, r *http.Request, format interface{}, args
 
 // DecodeJSON decodes JSON passed in a request into a dvid.Config.
 func DecodeJSON(r *http.Request) (dvid.Config, error) {
-	config := dvid.NewConfig()
-	if err := config.SetByJSON(r.Body); err != nil {
+	c := dvid.NewConfig()
+	if err := c.SetByJSON(r.Body); err != nil {
 		return dvid.Config{}, fmt.Errorf("Malformed JSON request in body: %v", err)
 	}
-	return config, nil
+	return c, nil
 }
 
 // ---- Middleware -------------

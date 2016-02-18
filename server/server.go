@@ -23,6 +23,11 @@ type Config interface {
 	WebClient() string
 }
 
+// Returns configuration settings for the server, which is set by each platform-specific server code.
+func GetConfig() Config {
+	return config
+}
+
 var (
 	// Don't allow requests that will return more than this amount of data.
 	MaxDataRequest = int64(3) * dvid.Giga
@@ -90,7 +95,9 @@ var (
 	// the "git describe" command.  See the CMakeLists.txt file for the code generation.
 	gitVersion string
 
-	config      Config
+	// configuration for a platform-specific server
+	config Config
+
 	initialized bool
 )
 

@@ -172,7 +172,7 @@ func Serve() error {
 	dvid.Infof("Using %d of %d logical CPUs for DVID.\n", dvid.NumCPU, runtime.NumCPU())
 
 	// Launch the web server
-	go serveHttp(tc.Server.HTTPAddress, tc.Server.WebClient)
+	go serveHTTP()
 
 	// Launch the rpc server
 	if err := serveRpc(tc.Server.RPCAddress); err != nil {
