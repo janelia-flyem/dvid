@@ -21,6 +21,9 @@ type Config interface {
 
 	// Path to web client files
 	WebClient() string
+
+	// Set timing in HTTP header
+	AllowTiming() bool
 }
 
 // Returns configuration settings for the server, which is set by each platform-specific server code.

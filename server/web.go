@@ -579,7 +579,7 @@ func DecodeJSON(r *http.Request) (dvid.Config, error) {
 func corsHandler(c *web.C, h http.Handler) http.Handler {
 	fn := func(w http.ResponseWriter, r *http.Request) {
 		// Allow cross-origin resource sharing.
-		w.Header().Add("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
 
 		h.ServeHTTP(w, r)
 	}
@@ -686,6 +686,9 @@ func instanceSelector(c *web.C, h http.Handler) http.Handler {
 		}
 
 		// TODO: setup routing for data instances as well.
+		if config != nil && config.AllowTiming() {
+			w.Header().Set("Timing-Allow-Origin", "*")
+		}
 		data.ServeHTTP(uuid, ctx, w, r)
 	}
 	return http.HandlerFunc(fn)

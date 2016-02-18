@@ -56,10 +56,15 @@ func (c *tomlConfig) WebClient() string {
 	return c.Server.WebClient
 }
 
+func (c *tomlConfig) AllowTiming() bool {
+	return c.Server.AllowTiming
+}
+
 type serverConfig struct {
 	HTTPAddress string
 	RPCAddress  string
 	WebClient   string
+	AllowTiming bool
 
 	IIDGen   string `toml:"instance_id_gen"`
 	IIDStart uint32 `toml:"instance_id_start"`
