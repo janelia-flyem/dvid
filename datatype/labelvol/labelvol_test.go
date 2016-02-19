@@ -601,6 +601,15 @@ func TestSplitLabel(t *testing.T) {
 	reqStr = fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid, "bodies", 4)
 	encoding = server.TestHTTP(t, "GET", reqStr, nil)
 	bodyleft.checkSparseVol(t, encoding, dvid.Bounds{})
+
+	// Do a merge of two after the split
+	testMerge := mergeJSON(`[4, 5]`)
+	testMerge.send(t, uuid, "bodies")
+
+	// Make sure we wind up with original body 4
+	reqStr = fmt.Sprintf("%snode/%s/%s/sparsevol/4", server.WebAPIPath, uuid, "bodies")
+	encoding = server.TestHTTP(t, "GET", reqStr, nil)
+	body4.checkSparseVol(t, encoding, dvid.Bounds{})
 }
 
 // Same as TestSplitLabel but now designate the actual split label

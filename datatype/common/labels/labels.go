@@ -157,8 +157,7 @@ type Mapping struct {
 }
 
 // ConstituentLabels returns a set of labels that will be mapped to the given label.
-// The function will return a set of just the given label if there are no other
-// original labels that map to it.
+// The set will always include the given label.
 func (m Mapping) ConstituentLabels(final uint64) Set {
 	m.RLock()
 	defer m.RUnlock()
@@ -166,13 +165,30 @@ func (m Mapping) ConstituentLabels(final uint64) Set {
 	if m.r == nil {
 		return Set{final: struct{}{}}
 	}
+
 	// We need to return all labels that will eventually have the given final label
 	// including any intermediate ones that were subsequently merged.
-	s, found := m.r[final]
-	if !found {
-		return Set{final: struct{}{}}
+	constituents := Set{}
+	toCheck := []uint64{final}
+	for {
+		endI := len(toCheck) - 1
+		label := toCheck[endI]
+		toCheck = toCheck[:endI]
+
+		constituents[label] = struct{}{}
+
+		s, found := m.r[label]
+		if found {
+			// push these labels onto stack
+			for c := range s {
+				toCheck = append(toCheck, c)
+			}
+		}
+		if len(toCheck) == 0 {
+			break
+		}
 	}
-	return s
+	return constituents
 }
 
 // FinalLabel follows mappings from a start label until
@@ -226,7 +242,13 @@ func (m *Mapping) set(a, b uint64) error {
 		}
 	}
 	m.f[a] = b
-	m.r[b] = Set{a: struct{}{}}
+	s, found := m.r[b]
+	if found {
+		s[a] = struct{}{}
+		m.r[b] = s
+	} else {
+		m.r[b] = Set{a: struct{}{}}
+	}
 	return nil
 }
 

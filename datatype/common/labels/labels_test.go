@@ -14,6 +14,9 @@ func TestMapping(t *testing.T) {
 	m.set(2, 5)
 	m.set(20, 6)
 	m.set(6, 32)
+	m.set(15, 3)
+	m.set(3, 32)
+	m.set(8, 32)
 	m.set(32, 21)
 	if v, ok := m.Get(1); v != 4 || !ok {
 		t.Errorf("Incorrect mapping on Get.  Got %d, %t\n", v, ok)
@@ -32,6 +35,18 @@ func TestMapping(t *testing.T) {
 	}
 	if v, ok := m.FinalLabel(20); v != 21 || !ok {
 		t.Errorf("Couldn't get final mapping label from 20->6->32->21.  Got %d, %t\n", v, ok)
+	}
+
+	c := m.ConstituentLabels(21)
+
+	expected := []uint64{20, 6, 32, 3, 8, 15, 21}
+	if len(c) != len(expected) {
+		t.Errorf("Expected %d constituent labels, got %d instead: %s\n", len(expected), len(c), c)
+	}
+	for _, label := range expected {
+		if _, found := c[label]; !found {
+			t.Errorf("Expected label %d as constituent but wasn't found.\n", label)
+		}
 	}
 }
 

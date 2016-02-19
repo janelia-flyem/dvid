@@ -291,7 +291,6 @@ func (d *Data) splitBlock(in <-chan splitOp) {
 
 		// Mark the old label is under transition
 		labels.SplitStart(op.ctx.InstanceVersion(), splitOpStart)
-		defer labels.SplitStop(op.ctx.InstanceVersion(), splitOpEnd)
 
 		// Iterate through all the modified blocks, inserting the new label using the RLEs for that block.
 		timedLog := dvid.NewTimeLog()
@@ -348,6 +347,7 @@ func (d *Data) splitBlock(in <-chan splitOp) {
 		if err := batch.Commit(); err != nil {
 			dvid.Errorf("Batch PUT during %q block split of %d: %v\n", d.DataName(), op.OldLabel, err)
 		}
+		labels.SplitStop(op.ctx.InstanceVersion(), splitOpEnd)
 		timedLog.Debugf("labelblk sync complete for split of %d -> %d", op.OldLabel, op.NewLabel)
 	}
 }

@@ -1402,7 +1402,8 @@ func (d *Data) GetSparseVol(ctx storage.Context, label uint64, bounds Bounds) ([
 	mapping := labels.LabelMap(iv)
 	if mapping != nil {
 		// Check if this label has been merged.
-		if _, found := mapping.FinalLabel(label); found {
+		if mapped, found := mapping.FinalLabel(label); found {
+			dvid.Debugf("Label %d has already been merged into label %d.  Skipping sparse vol retrieval.\n", label, mapped)
 			return nil, nil
 		}
 	}
