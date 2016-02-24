@@ -278,6 +278,10 @@ Node-Level REST endpoints
 	The note is a human-readable commit message.  The log is a slice of strings that may
 	be computer-readable.
 
+	If successful, a valid JSON response will be sent with the following format:
+
+	{ "committed": "3f01a8856" }
+
  POST /api/node/{uuid}/branch
 
 	Creates a new child node (version) of the node with given UUID.  
@@ -1135,8 +1139,8 @@ func repoCommitHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		BadRequest(w, r, err)
 	} else {
-		w.Header().Set("Content-Type", "text/plain")
-		fmt.Fprintf(w, "Node %s committed and locked.\n", uuid)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, "{%q: %q}", "committed", uuid)
 	}
 }
 
