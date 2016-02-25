@@ -913,7 +913,7 @@ func (d *Data) serveTile(w http.ResponseWriter, r *http.Request, tile *GoogleTil
 	if err != nil {
 		return err
 	}
-	timedLog.Infof("PROXY HTTP to Google: %s, returned %d", url, resp.StatusCode)
+	timedLog.Infof("PROXY HTTP to Google: %s, returned response %d", url, resp.StatusCode)
 	defer resp.Body.Close()
 
 	// Set the image header
@@ -925,7 +925,7 @@ func (d *Data) serveTile(w http.ResponseWriter, r *http.Request, tile *GoogleTil
 	if tile.edge {
 		// We need to read whole thing in to pad it.
 		data, err := ioutil.ReadAll(resp.Body)
-		dvid.Infof("Got edge tile from Google, %d bytes\n", len(data))
+		timedLog.Infof("Got edge tile from Google, %d bytes\n", len(data))
 		if err != nil {
 			return err
 		}
@@ -963,7 +963,7 @@ func (d *Data) serveTile(w http.ResponseWriter, r *http.Request, tile *GoogleTil
 			break
 		}
 	}
-	dvid.Infof("Got non-edge tile from Google, %d bytes\n", respBytes)
+	timedLog.Infof("Got non-edge tile from Google, %d bytes\n", respBytes)
 	return nil
 }
 
