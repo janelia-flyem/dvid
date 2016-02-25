@@ -124,7 +124,7 @@ func main() {
 	}
 
 	if *runVerbose {
-		dvid.Verbose = true
+		dvid.SetLogMode(dvid.DebugMode)
 	}
 	if *showHelp || flag.NArg() == 0 {
 		flag.Usage()

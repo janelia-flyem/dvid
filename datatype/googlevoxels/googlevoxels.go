@@ -22,6 +22,9 @@ import (
 	"github.com/janelia-flyem/dvid/message"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
+
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
 )
 
 const (
@@ -42,7 +45,7 @@ $ dvid repo <UUID> new googlevoxels <data name> <settings...>
 
 	Example:
 
-	$ dvid repo 3f8c new googlevoxels grayscale volumeid=281930192:stanford authkey=Jna3jrna984l
+	$ dvid repo 3f8c new googlevoxels grayscale volumeid=281930192:stanford jwtfile=/foo/myname-319.json
 
     Arguments:
 
@@ -53,11 +56,29 @@ $ dvid repo <UUID> new googlevoxels <data name> <settings...>
     Required Configuration Settings (case-insensitive keys)
 
     volumeid       The globally unique identifier of the volume within Google BrainMaps API.
-    authkey        The API key required for Google BrainMaps API requests.
+    jwtfile        Path to JSON Web Token file downloaded from http://console.developers.google.com.
+                   Under the BrainMaps API, visit the Credentials area, create credentials for a
+                   service account key, then download that JWT file.
 
     Optional Configuration Settings (case-insensitive keys)
 
     tilesize       Default size in pixels along one dimension of square tile.  If unspecified, 512.
+
+
+$ dvid googlevoxels volumes <jwtfile>
+
+	Contacts Google BrainMaps API and returns the available volume ids for a user identified by a 
+	JSON Web Token (JWT) file.
+
+	Example:
+
+	$ dvid googlevoxels volumes /foo/myname-319.json
+
+    Arguments:
+
+    jwtfile        Path to JSON Web Token file downloaded from http://console.developers.google.com.
+                   Under the BrainMaps API, visit the Credentials area, create credentials for a
+                   service account key, then download that JWT file.
 
 
     ------------------
@@ -146,6 +167,7 @@ func init() {
 var (
 	DefaultTileSize   int32  = 512
 	DefaultTileFormat string = "png"
+	bmapsPrefix       string = "https://brainmaps.googleapis.com/v1beta2"
 )
 
 // Type embeds the datastore's Type to create a unique type with tile functions.
@@ -185,17 +207,28 @@ func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.
 	if !found {
 		return nil, fmt.Errorf("Cannot make googlevoxels data without valid 'volumeid' setting.")
 	}
-	authkey, found, err := c.GetString("authkey")
+	jwtfile, found, err := c.GetString("jwtfile")
 	if err != nil {
 		return nil, err
 	}
 	if !found {
-		return nil, fmt.Errorf("Cannot make googlevoxels data without valid 'authkey' setting.")
+		return nil, fmt.Errorf("Cannot make googlevoxels data without valid 'jwtfile' specifying path to JSON Web Token")
 	}
 
+	// Read in the JSON Web Token
+	jwtdata, err := ioutil.ReadFile(jwtfile)
+	if err != nil {
+		return nil, fmt.Errorf("Cannot load JSON Web Token file (%s): %v", jwtfile, err)
+	}
+	conf, err := google.JWTConfigFromJSON(jwtdata, "https://www.googleapis.com/auth/brainmaps")
+	if err != nil {
+		return nil, fmt.Errorf("Cannot establish JWT Config file from Google: %v", err)
+	}
+	client := conf.Client(oauth2.NoContext)
+
 	// Make URL call to get the available scaled volumes.
-	url := fmt.Sprintf("https://www.googleapis.com/brainmaps/v1beta1/volumes/%s?key=%s", volumeid, authkey)
-	resp, err := http.Get(url)
+	url := fmt.Sprintf("%s/volumes/%s", bmapsPrefix, volumeid)
+	resp, err := client.Get(url)
 	if err != nil {
 		return nil, fmt.Errorf("Error getting volume metadata from Google: %v", err)
 	}
@@ -208,11 +241,12 @@ func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.
 	}
 	resp.Body.Close()
 	var m struct {
-		Geoms Geometries `json:"geometrys"`
+		Geoms Geometries `json:"geometry"`
 	}
 	if err := json.Unmarshal(metadata, &m); err != nil {
 		return nil, fmt.Errorf("Error decoding volume JSON metadata: %v", err)
 	}
+	dvid.Infof("Successfully got geometries:\nmetadata:\n%s\nparsed JSON:\n%v\n", metadata, m)
 
 	// Compute the mapping from tile scale/orientation to scaled volume index.
 	tileMap := GeometryMap{}
@@ -267,6 +301,8 @@ func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.
 		}
 	}
 
+	// Create a client that will be authorized and authenticated on behalf of the account.
+
 	// Initialize the googlevoxels data
 	basedata, err := datastore.NewDataService(dtype, uuid, id, name, c)
 	if err != nil {
@@ -276,14 +312,53 @@ func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.
 		Data: basedata,
 		Properties: Properties{
 			VolumeID:     volumeid,
-			AuthKey:      authkey,
+			JWT:          string(jwtdata),
 			TileSize:     DefaultTileSize,
 			TileMap:      tileMap,
 			Scales:       m.Geoms,
 			HighResIndex: highResIndex,
 		},
+		client: client,
 	}
 	return data, nil
+}
+
+// Do handles command-line requests to the Google BrainMaps API
+func (dtype *Type) Do(cmd datastore.Request, reply *datastore.Response) error {
+	switch cmd.Argument(1) {
+	case "volumes":
+		// Read in the JSON Web Token
+		jwtdata, err := ioutil.ReadFile(cmd.Argument(2))
+		if err != nil {
+			return fmt.Errorf("Cannot load JSON Web Token file (%s): %v", cmd.Argument(2), err)
+		}
+		conf, err := google.JWTConfigFromJSON(jwtdata, "https://www.googleapis.com/auth/brainmaps")
+		if err != nil {
+			return fmt.Errorf("Cannot establish JWT Config file from Google: %v", err)
+		}
+		client := conf.Client(oauth2.NoContext)
+
+		// Make the call.
+		url := fmt.Sprintf("%s/volumes", bmapsPrefix)
+		resp, err := client.Get(url)
+		if err != nil {
+			return fmt.Errorf("Error getting volumes metadata from Google: %v", err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("Unexpected status code %d returned when getting volumes for user", resp.StatusCode)
+		}
+		metadata, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			return err
+		}
+		resp.Body.Close()
+		reply.Text = string(metadata)
+		return nil
+
+	default:
+		return fmt.Errorf("unknown command for type %s", dtype.GetTypeName())
+	}
+	return nil
 }
 
 // log2 returns the power of 2 necessary to cover the given value.
@@ -515,11 +590,11 @@ func (d *Data) GetGoogleSpec(scaling Scaling, plane dvid.DataShape, offset dvid.
 
 	// Get the # bytes for each pixel
 	switch geom.ChannelType {
-	case "uint8":
+	case "UINT8":
 		tile.bytesPerVoxel = 1
-	case "float":
+	case "FLOAT":
 		tile.bytesPerVoxel = 4
-	case "uint64":
+	case "UINT64":
 		tile.bytesPerVoxel = 8
 	default:
 		return nil, fmt.Errorf("Unknown volume channel type in %s: %s", d.DataName(), geom.ChannelType)
@@ -552,17 +627,23 @@ func (d *Data) GetGoogleSpec(scaling Scaling, plane dvid.DataShape, offset dvid.
 // level follows the image format and a colon.  Leave formatStr empty for default.
 func (gts GoogleTileSpec) GetURL(volumeid, formatStr string) (string, error) {
 
-	url := fmt.Sprintf("https://www.googleapis.com/brainmaps/v1beta1/volumes/%s:tile?", volumeid)
-	url += fmt.Sprintf("corner=%d,%d,%d&", gts.offset[0], gts.offset[1], gts.offset[2])
-	url += fmt.Sprintf("size=%d,%d,%d&", gts.size[0], gts.size[1], gts.size[2])
-	url += fmt.Sprintf("scale=%d", gts.gi)
+	url := fmt.Sprintf("%s/volumes/%s/binary/tile", bmapsPrefix, volumeid)
+	url += fmt.Sprintf("/corner=%d,%d,%d", gts.offset[0], gts.offset[1], gts.offset[2])
+	url += fmt.Sprintf("/size=%d,%d,%d", gts.size[0], gts.size[1], gts.size[2])
+	url += fmt.Sprintf("/scale=%d", gts.gi)
 
 	if formatStr != "" {
 		format := strings.Split(formatStr, ":")
-		if format[0] == "jpg" {
-			format[0] = "jpeg"
+		var gformat string
+		switch format[0] {
+		case "jpg", "jpeg", "JPG":
+			gformat = "JPEG"
+		case "png":
+			gformat = "PNG"
+		default:
+			return "", fmt.Errorf("Google tiles only support JPEG or PNG formats, not %q", format[0])
 		}
-		url += fmt.Sprintf("&format=%s", format[0])
+		url += fmt.Sprintf("/imageFormat=%s", gformat)
 		if len(format) > 1 {
 			level, err := strconv.Atoi(format[1])
 			if err != nil {
@@ -570,12 +651,14 @@ func (gts GoogleTileSpec) GetURL(volumeid, formatStr string) (string, error) {
 			}
 			switch format[0] {
 			case "jpeg":
-				url += fmt.Sprintf("&jpegQuality=%d", level)
+				url += fmt.Sprintf("/jpegQuality=%d", level)
 			case "png":
-				url += fmt.Sprintf("&pngCompressionLevel=%d", level)
+				url += fmt.Sprintf("/pngCompressionLevel=%d", level)
 			}
 		}
 	}
+	url += "?alt=media"
+
 	return url, nil
 }
 
@@ -606,7 +689,7 @@ func (gts GoogleTileSpec) padTile(data []byte) ([]byte, error) {
 type Properties struct {
 	// Necessary information to select data from Google BrainMaps API.
 	VolumeID string
-	AuthKey  string
+	JWT      string
 
 	// Default size in pixels along one dimension of square tile.
 	TileSize int32
@@ -619,14 +702,36 @@ type Properties struct {
 
 	// HighResIndex is the geometry that is the highest resolution among the available scaled volumes.
 	HighResIndex GeometryIndex
+
+	// OAuth2 configuration
+	oa2conf *oauth2.Config
 }
 
 // MarshalJSON handles JSON serialization for googlevoxels Data.  It adds "Levels" metadata equivalent
 // to imagetile's tile specification so clients can treat googlevoxels tile API identically to
 // imagetile.  Sensitive information like AuthKey are withheld.
 func (p Properties) MarshalJSON() ([]byte, error) {
+	var minTileCoord, maxTileCoord dvid.Point3d
+	if len(p.Scales) > 0 {
+		vol := p.Scales[0].VolumeSize
+		maxX := vol[0] / p.TileSize
+		if vol[0]%p.TileSize > 0 {
+			maxX++
+		}
+		maxY := vol[1] / p.TileSize
+		if vol[1]%p.TileSize > 0 {
+			maxY++
+		}
+		maxZ := vol[2] / p.TileSize
+		if vol[2]%p.TileSize > 0 {
+			maxZ++
+		}
+		maxTileCoord = dvid.Point3d{maxX, maxY, maxZ}
+	}
 	return json.Marshal(struct {
 		VolumeID     string
+		MinTileCoord dvid.Point3d
+		MaxTileCoord dvid.Point3d
 		TileSize     int32
 		TileMap      GeometryMap
 		Scales       Geometries
@@ -634,6 +739,8 @@ func (p Properties) MarshalJSON() ([]byte, error) {
 		Levels       imagetile.TileSpec
 	}{
 		p.VolumeID,
+		minTileCoord,
+		maxTileCoord,
 		p.TileSize,
 		p.TileMap,
 		p.Scales,
@@ -675,6 +782,26 @@ func getTileSpec(tileSize int32, hires Geometry, tileMap GeometryMap) imagetile.
 type Data struct {
 	*datastore.Data
 	Properties
+
+	client *http.Client // HTTP client that provides Authorization headers
+}
+
+// Returns a potentially cached client that handles authorization to Google.
+// Assumes a JSON Web Token has been loaded into Data or else returns an error.
+func (d *Data) GetClient() (*http.Client, error) {
+	if d.client != nil {
+		return d.client, nil
+	}
+	if d.Properties.JWT == "" {
+		return nil, fmt.Errorf("No JSON Web Token has been set for this data")
+	}
+	conf, err := google.JWTConfigFromJSON([]byte(d.Properties.JWT), "https://www.googleapis.com/auth/brainmaps")
+	if err != nil {
+		return nil, fmt.Errorf("Cannot establish JWT Config file from Google: %v", err)
+	}
+	client := conf.Client(oauth2.NoContext)
+	d.client = client
+	return client, nil
 }
 
 func (d *Data) GetVoxelSize(ts *TileSpec) (dvid.NdFloat32, error) {
@@ -775,15 +902,18 @@ func (d *Data) serveTile(w http.ResponseWriter, r *http.Request, tile *GoogleTil
 	if err != nil {
 		return err
 	}
-	urlSansKey := url
-	url += fmt.Sprintf("&key=%s", d.AuthKey)
 
 	timedLog := dvid.NewTimeLog()
-	resp, err := http.Get(url)
+	client, err := d.GetClient()
+	if err != nil {
+		dvid.Errorf("Can't get OAuth2 connection to Google: %v\n", err)
+		return err
+	}
+	resp, err := client.Get(url)
 	if err != nil {
 		return err
 	}
-	timedLog.Infof("PROXY HTTP to Google: %s, returned %d", urlSansKey, resp.StatusCode)
+	timedLog.Infof("PROXY HTTP to Google: %s, returned %d", url, resp.StatusCode)
 	defer resp.Body.Close()
 
 	// Set the image header

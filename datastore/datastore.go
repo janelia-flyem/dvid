@@ -32,6 +32,7 @@ func Shutdown() {
 	// TODO: make sure any kind of shutdown is graceful.
 }
 
+// Types returns the types currently within the DVID server.
 func Types() (map[dvid.URLString]TypeService, error) {
 	if manager == nil {
 		return nil, ErrManagerNotInitialized

@@ -109,7 +109,7 @@ const defaultGCPercent = 400
 func init() {
 	// Set the GC closer to old Go 1.4 setting
 	old := debug.SetGCPercent(defaultGCPercent)
-	dvid.Infof("DVID server GC target percentage changed from %d to %d\n", old, defaultGCPercent)
+	dvid.Debugf("DVID server GC target percentage changed from %d to %d\n", old, defaultGCPercent)
 
 	// Initialize the number of handler tokens available.
 	for i := 0; i < MaxChunkHandlers; i++ {

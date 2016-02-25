@@ -158,7 +158,7 @@ else ()
         COMMENT     "Adding lumberjack library...")
 
     add_custom_target (gcloud
-        ${BUILDEM_ENV_STRING} go get ${GO_GET} golang.org/x/net/context
+        ${BUILDEM_ENV_STRING} go get ${GO_GET} golang.org/x/oauth2
         COMMAND ${BUILDEM_ENV_STRING} go get ${GO_GET} google.golang.org/cloud/bigtable
         COMMAND ${BUILDEM_ENV_STRING} go get ${GO_GET} google.golang.org/cloud/storage
         COMMENT     "Adding gcloud packages...")  

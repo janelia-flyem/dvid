@@ -231,7 +231,7 @@ func EnginesAvailable() string {
 
 // RegisterEngine registers an Engine for DVID use.
 func RegisterEngine(e Engine) {
-	dvid.Infof("Engine %q registered with DVID server.\n", e)
+	dvid.Debugf("Engine %q registered with DVID server.\n", e)
 	if availEngines == nil {
 		availEngines = map[string]Engine{e.GetName(): e}
 	} else {

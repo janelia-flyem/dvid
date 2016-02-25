@@ -44,6 +44,11 @@ func (t *Type) GetStorageRequirements() *storage.Requirements {
 	return t.Requirements
 }
 
+// Do error message.  Do should be overridden
+func (t *Type) Do(cmd Request, reply *Response) error {
+	return fmt.Errorf("data type %q has not been setup to handle the given command", t.Name)
+}
+
 // TypeService is an interface all datatype implementations must fulfill.
 // New types can be made by embedding Type and will automatically fulfill the Get* functions.
 type TypeService interface {
@@ -61,6 +66,9 @@ type TypeService interface {
 
 	// Help returns a string explaining how to use a datatype's service
 	Help() string
+
+	// Do executes type-specific commands from command line.
+	Do(Request, *Response) error
 }
 
 var (
@@ -77,13 +85,14 @@ func Register(t TypeService) {
 	Compiled[t.GetTypeURL()] = t
 }
 
-// CompiledNames returns a list of datatype names compiled into this DVID.
-func CompiledNames() string {
-	var names []string
+// CompiledTypes returns a map of datatypes compiled into this DVID.
+func CompiledTypes() map[dvid.TypeString]TypeService {
+	types := make(map[dvid.TypeString]TypeService, len(Compiled))
 	for _, typeservice := range Compiled {
-		names = append(names, string(typeservice.GetTypeName()))
+		name := typeservice.GetTypeName()
+		types[name] = typeservice
 	}
-	return strings.Join(names, ", ")
+	return types
 }
 
 // CompiledURLs returns a list of datatype urls supported by this DVID.

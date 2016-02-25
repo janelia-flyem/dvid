@@ -257,6 +257,15 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 		return dataservice.DoRPC(cmd, reply)
 
 	default:
+		// Check to see if it's a name of a compiled data type, in which case we refer it to the data type.
+		types := datastore.CompiledTypes()
+		for name, typeservice := range types {
+			//dvid.Infof("checking %q vs %q\n", name, cmd.Argument(0))
+			if name == dvid.TypeString(cmd.Argument(0)) {
+				return typeservice.Do(cmd, reply)
+			}
+		}
+
 		return fmt.Errorf("Unknown command: '%s'", cmd)
 	}
 	return nil

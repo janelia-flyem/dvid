@@ -14,11 +14,8 @@ const (
 )
 
 var (
-	// Verbose is set when we want to be exceptionally verbose.
-	Verbose bool
-
 	// Mode is a global variable set to the run modes of this DVID process.
-	mode ModeFlag
+	mode ModeFlag = InfoMode
 )
 
 // Logger provides a way for the application to log messages at different severities.
