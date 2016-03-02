@@ -215,10 +215,14 @@ func (db *GBucket) putV(k storage.Key, value []byte) (err error) {
 		_, err = obj.Write(value)
 
 		// close will flush buffer
-		err = obj.Close()
+		err2 := obj.Close()
 
-		if err == nil {
+		if err2 == nil && err == nil {
 			break
+		}
+
+		if err2 != nil {
+			err = err2
 		}
 	}
 
