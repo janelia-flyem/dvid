@@ -214,7 +214,7 @@ func (db *GBucket) putV(k storage.Key, value []byte) (err error) {
 		// write data to buffer
 		numwrite, err2 := obj.Write(value)
 
-		if err2 != nil {
+		if err2 == nil {
 			if numwrite != len(value) {
 				err2 = fmt.Errorf("correct number of bytes not written")
 			}
