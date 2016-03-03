@@ -33,8 +33,10 @@ import (
 	"github.com/janelia-flyem/dvid/storage"
 	"github.com/janelia-flyem/go/semver"
 	"io/ioutil"
+	"runtime"
 	"sort"
 	"sync"
+	"time"
 
 	"golang.org/x/net/context"
 	api "google.golang.org/cloud/storage"
@@ -53,6 +55,8 @@ const (
 	// limit the number of parallel requests
 	MAXCONNECTIONS = 100
 	INITKEY        = "initialized"
+	// total connection tries
+	NUM_TRIES = 3
 )
 
 // --- Engine Implementation ------
@@ -170,18 +174,24 @@ func (db *GBucket) getV(k storage.Key) ([]byte, error) {
 	// gets handle (no network op)
 	obj_handle := db.bucket.Object(base64.URLEncoding.EncodeToString(k))
 
-	// returns error if it doesn't exist
-	obj, err := obj_handle.NewReader(db.ctx)
+	var err error
+	for i := 0; i < NUM_TRIES; i++ {
+		// returns error if it doesn't exist
+		obj, err2 := obj_handle.NewReader(db.ctx)
 
-	// return nil if not found
-	if err == api.ErrObjectNotExist {
-		return nil, nil
+		// return nil if not found
+		if err2 == api.ErrObjectNotExist {
+			return nil, nil
+		}
+
+		if err2 == nil {
+			value, err2 := ioutil.ReadAll(obj)
+			return value, err2
+		}
+
+		err = err2
 	}
-	if err != nil {
-		return nil, err
-	}
-	value, err := ioutil.ReadAll(obj)
-	return value, err
+	return nil, err
 }
 
 // put value from a given key or an error if nothing exists
@@ -194,26 +204,55 @@ func (db *GBucket) deleteV(k storage.Key) error {
 
 // put value from a given key or an error if nothing exists
 func (db *GBucket) putV(k storage.Key, value []byte) (err error) {
-	// gets handle (no network op)
-	err = nil
-	obj_handle := db.bucket.Object(base64.URLEncoding.EncodeToString(k))
 
-	//debug.PrintStack()
-	// returns error if it doesn't exist
-	obj := obj_handle.NewWriter(db.ctx)
+	/*for i := 0; i < NUM_TRIES; i++ {
+		//debug.PrintStack()
+		// returns error if it doesn't exist
+		obj := obj_handle.NewWriter(db.ctx)
 
-	// close will flush buffer
-	defer func() {
-		err2 := obj.Close()
-		if err == nil {
+		// write data to buffer
+		numwrite, err2 := obj.Write(value)
+
+		if err2 == nil {
+			if numwrite != len(value) {
+				err2 = fmt.Errorf("correct number of bytes not written")
+			}
+		}
+		// close will flush buffer
+		err = obj.Close()
+
+		if err2 == nil && err == nil {
+			break
+		}
+
+		if err2 != nil {
 			err = err2
 		}
-	}()
+	}*/
 
-	// write data to buffer
-	_, err = obj.Write(value)
-	if err != nil {
-		return err
+	for i := 0; i < NUM_TRIES; i++ {
+		// gets handle (no network op)
+		obj_handle := db.bucket.Object(base64.URLEncoding.EncodeToString(k))
+
+		// returns error if it doesn't exist
+		obj := obj_handle.NewWriter(db.ctx)
+
+		// write data to buffer
+		obj.Write(value)
+
+		// close will flush buffer
+		obj.Close()
+
+		// double check post (hopefully unnecessary in future)
+		valcheck, err2 := db.getV(k)
+		if err2 != nil || len(valcheck) != len(value) {
+			err = fmt.Errorf("Error writing object to google bucket")
+			time.Sleep(time.Duration(i+1) * time.Second)
+		} else {
+			err = nil
+			break
+		}
+
 	}
 
 	return err
@@ -248,7 +287,17 @@ func (db *GBucket) getKeysInRangeRaw(minKey, maxKey storage.Key) ([]storage.Key,
 	query := &api.Query{Prefix: base64.URLEncoding.EncodeToString(prefix)}
 	for !extractedlist {
 		// query objects
-		object_list, _ := db.bucket.List(db.ctx, query)
+		object_list, err := db.bucket.List(db.ctx, query)
+		for i := 0; i < (NUM_TRIES - 1); i++ {
+			if err == nil {
+				break
+			}
+			object_list, err = db.bucket.List(db.ctx, query)
+		}
+
+		if err != nil {
+			return []storage.Key(keys), err
+		}
 
 		// filter keys that fall into range
 		for _, object_attr := range object_list.Results {
@@ -447,7 +496,6 @@ func (db *GBucket) GetRange(ctx storage.Context, TkBeg, TkEnd storage.TKey) ([]*
 	wg.Wait()
 
 	var err error
-	err = nil
 	// return keyvalues
 	for key, val := range kvmap {
 		tk, err := ctx.TKeyFromKey(storage.Key(key))
@@ -656,7 +704,6 @@ func (db *GBucket) DeleteAll(ctx storage.Context, allVersions bool) error {
 	}
 
 	var err error
-	err = nil
 	if allVersions {
 		// do batched RAW delete of latest version
 		vctx, versioned := ctx.(storage.VersionedCtx)
@@ -847,7 +894,6 @@ func (db *goBuffer) Put(ctx storage.Context, tkey storage.TKey, value []byte) er
 	}
 
 	var err error
-	err = nil
 	key := ctx.ConstructKey(tkey)
 	if !ctx.Versioned() {
 		db.ops = append(db.ops, dbOp{op: putOp, key: key, value: value})
@@ -879,7 +925,6 @@ func (db *goBuffer) PutCallback(ctx storage.Context, tkey storage.TKey, value []
 	}
 
 	var err error
-	err = nil
 	key := ctx.ConstructKey(tkey)
 	if !ctx.Versioned() {
 		db.ops = append(db.ops, dbOp{op: putOpCallback, key: key, value: value, callback: callback})
@@ -983,14 +1028,13 @@ func (buffer *goBuffer) Flush() error {
 	// limits the number of simultaneous requests (should this be global)
 	workQueue := make(chan interface{}, MAXCONNECTIONS)
 
-	for _, operation := range buffer.ops {
+	for itnum, operation := range buffer.ops {
 		workQueue <- nil
-		go func(opdata dbOp) {
+		go func(opdata dbOp, currnum int) {
 			defer func() {
 				<-workQueue
 			}()
 			var err error
-			err = nil
 			if opdata.op == delOp {
 				err = buffer.db.deleteV(opdata.key)
 			} else if opdata.op == delOpIgnoreExists {
@@ -1012,9 +1056,13 @@ func (buffer *goBuffer) Flush() error {
 				err = fmt.Errorf("Incorrect buffer operation specified")
 			}
 
+			if currnum%MAXCONNECTIONS == (MAXCONNECTIONS - 1) {
+				runtime.GC()
+			}
+
 			// add errors to queue
 			retVals <- err
-		}(operation)
+		}(operation, itnum)
 	}
 
 	// check return values
@@ -1110,7 +1158,6 @@ func (db *goBuffer) processRangeLocal(ctx storage.Context, TkBeg, TkEnd storage.
 	workQueue <- nil
 
 	var err error
-	err = nil
 	// return keyvalues
 	for key, val := range kvmap {
 		tk, err := ctx.TKeyFromKey(storage.Key(key))
