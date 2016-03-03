@@ -249,6 +249,7 @@ func (db *GBucket) putV(k storage.Key, value []byte) (err error) {
 			err = fmt.Errorf("Error writing object to google bucket")
 			time.Sleep(time.Duration(i+1) * time.Second)
 		} else {
+			err = nil
 			break
 		}
 
