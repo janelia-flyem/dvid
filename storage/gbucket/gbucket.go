@@ -36,6 +36,7 @@ import (
 	"runtime"
 	"sort"
 	"sync"
+	"time"
 
 	"golang.org/x/net/context"
 	api "google.golang.org/cloud/storage"
@@ -203,10 +204,8 @@ func (db *GBucket) deleteV(k storage.Key) error {
 
 // put value from a given key or an error if nothing exists
 func (db *GBucket) putV(k storage.Key, value []byte) (err error) {
-	// gets handle (no network op)
-	obj_handle := db.bucket.Object(base64.URLEncoding.EncodeToString(k))
 
-	for i := 0; i < NUM_TRIES; i++ {
+	/*for i := 0; i < NUM_TRIES; i++ {
 		//debug.PrintStack()
 		// returns error if it doesn't exist
 		obj := obj_handle.NewWriter(db.ctx)
@@ -229,6 +228,30 @@ func (db *GBucket) putV(k storage.Key, value []byte) (err error) {
 		if err2 != nil {
 			err = err2
 		}
+	}*/
+
+	for i := 0; i < NUM_TRIES; i++ {
+		// gets handle (no network op)
+		obj_handle := db.bucket.Object(base64.URLEncoding.EncodeToString(k))
+
+		// returns error if it doesn't exist
+		obj := obj_handle.NewWriter(db.ctx)
+
+		// write data to buffer
+		obj.Write(value)
+
+		// close will flush buffer
+		obj.Close()
+
+		// double check post (hopefully unnecessary in future)
+		valcheck, err2 := db.getV(k)
+		if err2 != nil || len(valcheck) != len(value) {
+			err = fmt.Errorf("Error writing object to google bucket")
+			time.Sleep(time.Duration(i+1) * time.Second)
+		} else {
+			break
+		}
+
 	}
 
 	return err
