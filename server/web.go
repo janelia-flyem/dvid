@@ -494,7 +494,7 @@ func initRoutes() {
 	nodeMux := web.New()
 	mainMux.Handle("/api/node/:uuid", nodeMux)
 	mainMux.Handle("/api/node/:uuid/:action", nodeMux)
-	nodeMux.Use(repoSelector)
+	nodeMux.Use(nodeSelector)
 	nodeMux.Get("/api/node/:uuid/log", getNodeLogHandler)
 	nodeMux.Post("/api/node/:uuid/note", postNodeNoteHandler)
 	nodeMux.Post("/api/node/:uuid/log", postNodeLogHandler)
@@ -504,7 +504,7 @@ func initRoutes() {
 	instanceMux := web.New()
 	mainMux.Handle("/api/node/:uuid/:dataname/:keyword", instanceMux)
 	mainMux.Handle("/api/node/:uuid/:dataname/:keyword/*", instanceMux)
-	instanceMux.Use(repoSelector)
+	instanceMux.Use(nodeSelector)
 	instanceMux.Use(instanceSelector)
 	instanceMux.NotFound(NotFound)
 
@@ -607,13 +607,13 @@ func repoRawSelector(c *web.C, h http.Handler) http.Handler {
 	return http.HandlerFunc(fn)
 }
 
-// repoSelector retrieves the particular repo from a potentially partial string that uniquely
-// identifies the repo, and imposes restrictions depending on read-only mode and locked nodes.
-func repoSelector(c *web.C, h http.Handler) http.Handler {
+// nodeSelector retrieves the particular repo from a potentially partial string that uniquely
+// identifies a node, and imposes restrictions depending on read-only mode and locked nodes.
+func nodeSelector(c *web.C, h http.Handler) http.Handler {
 	fn := func(w http.ResponseWriter, r *http.Request) {
 		action := strings.ToLower(r.Method)
 		if readonly && action != "get" && action != "head" {
-			BadRequest(w, r, "Server in read-only mode and will only accept GET and HEAD requests")
+			BadRequest(w, r, "Server in read-only mode and will only accept GET and HEAD requestcs")
 			return
 		}
 
@@ -632,12 +632,32 @@ func repoSelector(c *web.C, h http.Handler) http.Handler {
 			return
 		}
 		branchRequest := (c.URLParams["action"] == "branch")
-		mergeRequest := (c.URLParams["action"] == "merge")
-		resolveRequest := (c.URLParams["action"] == "resolve")
-		if locked && !branchRequest && !mergeRequest && !resolveRequest && action != "get" && action != "head" {
+		if locked && !branchRequest && action != "get" && action != "head" {
 			BadRequest(w, r, "Cannot do %s on locked node %s", action, uuid)
 			return
 		}
+		h.ServeHTTP(w, r)
+	}
+	return http.HandlerFunc(fn)
+}
+
+// repoSelector retrieves the particular repo from a potentially partial string that uniquely
+// identifies the repo and enforces read-only mode.
+func repoSelector(c *web.C, h http.Handler) http.Handler {
+	fn := func(w http.ResponseWriter, r *http.Request) {
+		action := strings.ToLower(r.Method)
+		if readonly && action != "get" && action != "head" {
+			BadRequest(w, r, "Server in read-only mode and will only accept GET and HEAD requests")
+			return
+		}
+
+		var err error
+		var uuid dvid.UUID
+		if uuid, c.Env["versionID"], err = datastore.MatchingUUID(c.URLParams["uuid"]); err != nil {
+			BadRequest(w, r, err)
+			return
+		}
+		c.Env["uuid"] = uuid
 		h.ServeHTTP(w, r)
 	}
 	return http.HandlerFunc(fn)

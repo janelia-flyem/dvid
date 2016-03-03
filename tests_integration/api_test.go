@@ -213,6 +213,10 @@ func TestCommitAndBranch(t *testing.T) {
 	// We should be able to write to that keyvalue now in the child.
 	keyReq = fmt.Sprintf("%snode/%s/mykv/key/foo", server.WebAPIPath, resp.Child)
 	server.TestHTTP(t, "POST", keyReq, bytes.NewBufferString("some data"))
+    
+    // We should also be able to write to the repo-wide log.
+    logReq := fmt.Sprintf("%srepo/%s/log", server.WebAPIPath, uuid)
+    server.TestHTTP(t, "POST", logReq, bytes.NewBufferString(`{"log": ["a log mesage"]}`))
 }
 
 func TestDeleteInstance(t *testing.T) {
