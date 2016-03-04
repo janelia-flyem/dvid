@@ -248,7 +248,25 @@ type Properties struct {
 type Data struct {
 	*datastore.Data
 	Properties
-	Ready map[dvid.VersionID]bool
+	ready map[dvid.VersionID]bool
+}
+
+func (d *Data) SetReady(versionID dvid.VersionID, set bool) {
+    if d.ready == nil {
+        d.ready = make(map[dvid.VersionID]bool)
+    }
+    d.ready[versionID] = set
+}
+
+func (d *Data) IsReady(versionID dvid.VersionID) bool {
+    if len(d.ready) == 0 {
+        return false
+    }
+    ready, found := d.ready[versionID]
+    if !found {
+        return false
+    }
+    return ready
 }
 
 // Equals returns false if any version of the ROI is different in terms of readiness or the properties of the ROI
@@ -257,11 +275,11 @@ func (d *Data) Equals(d2 *Data) bool {
 	if !d.Data.Equals(d2.Data) || !reflect.DeepEqual(d.Properties, d2.Properties) {
 		return false
 	}
-	if len(d.Ready) != len(d2.Ready) {
+	if len(d.ready) != len(d2.ready) {
 		return false
 	}
-	for k, v := range d.Ready {
-		v2, ok := d2.Ready[k]
+	for k, v := range d.ready {
+		v2, ok := d2.ready[k]
 		if !ok {
 			return false
 		}
@@ -456,7 +474,8 @@ func (d *Data) PutSpans(versionID dvid.VersionID, spans []dvid.Span, init bool) 
 	if err != nil {
 		return err
 	}
-	d.Ready[versionID] = false
+    d.SetReady(versionID, false)
+
 
 	// Delete the old key/values
 	if init {
@@ -516,7 +535,7 @@ func (d *Data) PutSpans(versionID dvid.VersionID, spans []dvid.Span, init bool) 
 		}
 	}
 
-	d.Ready[versionID] = true
+	d.SetReady(versionID, true)
 	return nil
 }
 
@@ -1206,7 +1225,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	case "roi":
 		switch method {
 		case "get":
-			if !d.Ready[ctx.VersionID()] {
+			if !d.IsReady(ctx.VersionID()) {
 				w.WriteHeader(http.StatusPartialContent)
 			}
 			jsonBytes, err := Get(ctx)
