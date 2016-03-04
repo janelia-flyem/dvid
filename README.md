@@ -17,10 +17,11 @@ visualization efforts.  It's goal is to provide:
 * The ability to use a variety of storage systems by either creating a data type for that system or using a storage engine, currently limited to ordered key/value databases.
 * A framework for thinking of distribution and versioning of data similar to distributed version 
 control systems like [git](http://git-scm.com).
+* A stable science-driven API that can be implemented either by native DVID data types and storage engines or by proxying to other connectomics services like Google BrainMaps or OpenConnectome.
 
 DVID aspires to be a "github for large image-oriented data" because each DVID
 server can manage multiple repositories, each of which contains an image-oriented repo
-with related data like an image volume, labels, and skeletons.  The goal is to provide scientists 
+with related data like an image volume, labels, annotations, and skeletons.  The goal is to provide scientists 
 with a github-like web client + server that can push/pull data to a collaborator's DVID server.
 
 Although DVID is easily extensible by adding custom *data types*, each of which fulfill a
