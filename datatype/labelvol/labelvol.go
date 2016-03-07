@@ -61,7 +61,6 @@ $ dvid repo <UUID> new labelvol <data name> <settings...>
 
     Configuration Settings (case-insensitive keys)
 
-    Sync           Name of labelblk data to which this labelvol data should be synced.
     BlockSize      Size in pixels  (default: %s)
     VoxelSize      Resolution of voxels (default: 8.0, 8.0, 8.0)
     VoxelUnits     Resolution units (default: "nanometers")

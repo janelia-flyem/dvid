@@ -65,7 +65,6 @@ $ dvid repo <UUID> new labelblk <data name> <settings...>
 
     Configuration Settings (case-insensitive keys)
 
-    Sync           Name of labelvol data that should sync with this labelblk data.
     LabelType      "standard" (default) or "raveler" 
     BlockSize      Size in pixels  (default: %s)
     VoxelSize      Resolution of voxels (default: 8.0, 8.0, 8.0)

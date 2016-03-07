@@ -52,11 +52,6 @@ $ dvid repo <UUID> new synapse <data name> <settings...>
     UUID           Hexidecimal string with enough characters to uniquely identify a version node.
     data name      Name of data to create, e.g., "synapses"
     settings       Configuration settings in "key=value" format separated by spaces.
-
-    Configuration Settings (case-insensitive keys)
-	
-    Sync           Name of labelblk and/or labelvol data to which this annotation data should be synced.  Changes
-    			   in the synced label data will change results of "label" endpoint requests (see REST API).
 	
     ------------------
 
