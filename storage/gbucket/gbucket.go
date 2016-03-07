@@ -1,10 +1,8 @@
 // +build gbucket
-
 package gbucket
 
 /*
 TODO:
-
 * (maybe) Allow creation of new bucket (using http API)
 * Encode keys with random test prefix for testing
 * Improve error handling (more expressive print statements)
@@ -214,21 +212,21 @@ func (db *GBucket) putV(k storage.Key, value []byte) (err error) {
 		numwrite, err2 := obj.Write(value)
 
 		if err2 == nil {
-			if numwrite != len(value) {
-				err2 = fmt.Errorf("correct number of bytes not written")
-			}
+		    if numwrite != len(value) {
+			err2 = fmt.Errorf("correct number of bytes not written")
+		    }
 		}
 		// close will flush buffer
 		err = obj.Close()
 
 		if err2 == nil && err == nil {
-			break
+		    break
 		}
 
 		if err2 != nil {
-			err = err2
+		    err = err2
 		}
-	}*/
+	    }*/
 
 	for i := 0; i < NUM_TRIES; i++ {
 		// gets handle (no network op)
@@ -284,7 +282,7 @@ func (db *GBucket) getKeysInRangeRaw(minKey, maxKey storage.Key) ([]storage.Key,
 
 	// iterate through query (default 1000 items at a time)
 	extractedlist := false
-	query := &api.Query{Prefix: base64.URLEncoding.EncodeToString(prefix)}
+	query := &api.Query{Prefix: prefix}
 	for !extractedlist {
 		// query objects
 		object_list, err := db.bucket.List(db.ctx, query)
@@ -1159,8 +1157,9 @@ func (db *goBuffer) processRangeLocal(ctx storage.Context, TkBeg, TkEnd storage.
 
 	var err error
 	// return keyvalues
-	for key, val := range kvmap {
-		tk, err := ctx.TKeyFromKey(storage.Key(key))
+	for _, key := range keys {
+		val := kvmap[string(key)]
+		tk, err := ctx.TKeyFromKey(key)
 		if err != nil {
 			return err
 		}
@@ -1185,7 +1184,7 @@ func (db *goBuffer) processRangeLocal(ctx storage.Context, TkBeg, TkEnd storage.
 
 // --- Helper function ----
 
-func grabPrefix(key1 storage.Key, key2 storage.Key) storage.Key {
+func grabPrefix(key1 storage.Key, key2 storage.Key) string {
 	var prefixe storage.Key
 	key1m := base64.URLEncoding.EncodeToString(key1)
 	key2m := base64.URLEncoding.EncodeToString(key2)
@@ -1195,8 +1194,7 @@ func grabPrefix(key1 storage.Key, key2 storage.Key) storage.Key {
 		}
 		prefixe = append(prefixe, key1m[spot])
 	}
-	prefix, _ := base64.URLEncoding.DecodeString(string(prefixe))
-	return prefix
+	return string(prefixe)
 }
 
 type KeyArray []storage.Key
