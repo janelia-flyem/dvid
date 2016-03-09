@@ -25,6 +25,9 @@ import (
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
+    
+	lz4 "github.com/janelia-flyem/go/golz4"
+	"github.com/golang/snappy"
 )
 
 const (
@@ -131,28 +134,45 @@ GET  <api URL>/node/<UUID>/<data name>/tile/<dims>/<scaling>/<tile coord>[?optio
                     jpeg allows lossy quality setting, e.g., "jpeg:80"  (0 <= quality <= 100)
                     png allows compression levels, e.g., "png:7"  (0 <= level <= 9)
 
-GET  <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?options]
 
-    Retrieves raw image of named data within a version node using the Google BrainMaps API.
+GET  <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?queryopts]
+
+    Retrieves either 2d images (PNG by default) or 3d binary data, depending on the dims parameter.  
+    The 3d binary data response has "Content-type" set to "application/octet-stream" and is an array of 
+    voxel values in ZYX order (X iterates most rapidly).
 
     Example: 
 
-    GET <api URL>/node/3f8c/grayscale/raw/xy/512_256/0_0_100/jpg:80
+    GET <api URL>/node/3f8c/segmentation/raw/0_1/512_256/0_0_100/jpg:80
+
+    Returns a raw XY slice (0th and 1st dimensions) with width (x) of 512 voxels and
+    height (y) of 256 voxels with offset (0,0,100) in JPG format with quality 80.
+    By "raw", we mean that no additional processing is applied based on voxel
+    resolutions to make sure the retrieved image has isotropic pixels.
+    The example offset assumes the "grayscale" data in version node "3f8c" is 3d.
+    The "Content-type" of the HTTP response should agree with the requested format.
+    For example, returned PNGs will have "Content-type" of "image/png", and returned
+    nD data will be "application/octet-stream". 
 
     Arguments:
 
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add.
-    dims          The axes of data extraction in form i_j.  Example: "0_2" can be XZ.
+    dims          The axes of data extraction in form "i_j_k,..."  
                     Slice strings ("xy", "xz", or "yz") are also accepted.
+                    Example: "0_2" is XZ, and "0_1_2" is a 3d subvolume.
     size          Size in voxels along each dimension specified in <dims>.
     offset        Gives coordinate of first voxel using dimensionality of data.
-    format        "png", "jpeg" (default: "png")
-                    jpeg allows lossy quality setting, e.g., "jpeg:80"  (0 <= quality <= 100)
-                    png allows compression levels, e.g., "png:7"  (0 <= level <= 9)
+    format        Valid formats depend on the dimensionality of the request and formats
+                    available in server implementation.
+                  2D: "png", "jpg" (default: "png")
+                    jpg allows lossy quality setting, e.g., "jpg:80"
+                  nD: uses default "octet-stream".
 
-  	Query-string options:
+    Query-string Options:
 
+    compression   Allows retrieval or submission of 3d data in "snappy (default) or "lz4" format.  
+                     The 2d data will ignore this and use the image-based codec.
   	scale         Default is 0.  For scale N, returns an image down-sampled by a factor of 2^N.
 `
 
@@ -249,7 +269,7 @@ func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.
 	dvid.Infof("Successfully got geometries:\nmetadata:\n%s\nparsed JSON:\n%v\n", metadata, m)
 
 	// Compute the mapping from tile scale/orientation to scaled volume index.
-	tileMap := GeometryMap{}
+	geomMap := GeometryMap{}
 
 	// (1) Find the highest resolution geometry.
 	var highResIndex GeometryIndex
@@ -265,25 +285,24 @@ func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.
 	// (2) For all geometries, find out what the scaling is relative to the highest resolution pixel size.
 	for i, geom := range m.Geoms {
 		if i == int(highResIndex) {
-			tileMap[TileSpec{0, XY}] = highResIndex
-			tileMap[TileSpec{0, XZ}] = highResIndex
-			tileMap[TileSpec{0, YZ}] = highResIndex
+			geomMap[GSpec{0, XY}] = highResIndex
+			geomMap[GSpec{0, XZ}] = highResIndex
+			geomMap[GSpec{0, YZ}] = highResIndex
+			geomMap[GSpec{0, XYZ}] = highResIndex
 		} else {
 			scaleX := geom.PixelSize[0] / minVoxelSize[0]
 			scaleY := geom.PixelSize[1] / minVoxelSize[1]
 			scaleZ := geom.PixelSize[2] / minVoxelSize[2]
-			var plane TileOrientation
+			var shape Shape
 			switch {
 			case scaleX > scaleZ && scaleY > scaleZ:
-				plane = XY
+				shape = XY
 			case scaleX > scaleY && scaleZ > scaleY:
-				plane = XZ
+				shape = XZ
 			case scaleY > scaleX && scaleZ > scaleX:
-				plane = YZ
+				shape = YZ
 			default:
-				dvid.Infof("Odd geometry skipped for Google voxels %q with pixel size: %s\n", name, geom.PixelSize)
-				dvid.Infof("  Scaling from highest resolution: %d x %d x %d\n", scaleX, scaleY, scaleZ)
-				continue
+				shape = XYZ
 			}
 			var mag float32
 			if scaleX > mag {
@@ -296,8 +315,8 @@ func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.
 				mag = scaleZ
 			}
 			scaling := log2(mag)
-			tileMap[TileSpec{scaling, plane}] = GeometryIndex(i)
-			dvid.Infof("Plane %s at scaling %d set to geometry %d: resolution %s\n", plane, scaling, i, geom.PixelSize)
+			geomMap[GSpec{scaling, shape}] = GeometryIndex(i)
+			dvid.Infof("%s at scaling %d set to geometry %d: resolution %s\n", shape, scaling, i, geom.PixelSize)
 		}
 	}
 
@@ -314,7 +333,7 @@ func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.
 			VolumeID:     volumeid,
 			JWT:          string(jwtdata),
 			TileSize:     DefaultTileSize,
-			TileMap:      tileMap,
+			GeomMap:      geomMap,
 			Scales:       m.Geoms,
 			HighResIndex: highResIndex,
 		},
@@ -378,62 +397,74 @@ func (dtype *Type) Help() string {
 	return HelpMessage
 }
 
-// TileSpec encapsulates the scale and orientation of a tile.
-type TileSpec struct {
+// GSpec encapsulates the scale and orientation of a tile.
+type GSpec struct {
 	scaling Scaling
-	plane   TileOrientation
+	shape   Shape
 }
 
-func (ts TileSpec) MarshalBinary() ([]byte, error) {
-	return []byte{byte(ts.scaling), byte(ts.plane)}, nil
+func (ts GSpec) MarshalBinary() ([]byte, error) {
+	return []byte{byte(ts.scaling), byte(ts.shape)}, nil
 }
 
-func (ts *TileSpec) UnmarshalBinary(data []byte) error {
+func (ts *GSpec) UnmarshalBinary(data []byte) error {
 	if len(data) != 2 {
-		return fmt.Errorf("TileSpec serialization is 2 bytes.  Got %d bytes instead: %v", len(data), data)
+		return fmt.Errorf("GSpec serialization is 2 bytes.  Got %d bytes instead: %v", len(data), data)
 	}
 	ts.scaling = Scaling(data[0])
-	ts.plane = TileOrientation(data[1])
+	ts.shape = Shape(data[1])
 	return nil
 }
 
-// GetTileSpec returns a TileSpec for a given scale and dvid Geometry.
-func GetTileSpec(scaling Scaling, shape dvid.DataShape) (*TileSpec, error) {
-	ts := new(TileSpec)
+// GetGSpec returns a GSpec for a given scale and dvid Geometry.
+func GetGSpec(scaling Scaling, shape dvid.DataShape) (*GSpec, error) {
+	ts := new(GSpec)
 	ts.scaling = scaling
-	switch {
-	case shape.Equals(dvid.XY):
-		ts.plane = XY
-	case shape.Equals(dvid.XZ):
-		ts.plane = XZ
-	case shape.Equals(dvid.YZ):
-		ts.plane = YZ
-	default:
-		return nil, fmt.Errorf("No Google BrainMaps slice orientation corresponding to DVID %s shape", shape)
-	}
+    if err := ts.shape.FromShape(shape); err != nil {
+        return nil, err
+    }
 	return ts, nil
 }
 
 // Scaling describes the resolution where 0 is the highest resolution
 type Scaling uint8
 
-// TileOrientation describes the orientation of a tile.
-type TileOrientation uint8
+// Shape describes the orientation of a 2d or 3d image.
+type Shape uint8
 
 const (
-	XY TileOrientation = iota
+	XY Shape = iota
 	XZ
 	YZ
+    XYZ
 )
 
-func (t TileOrientation) String() string {
-	switch t {
+func (s *Shape) FromShape(shape dvid.DataShape) error {
+	switch {
+	case shape.Equals(dvid.XY):
+		*s = XY
+	case shape.Equals(dvid.XZ):
+		*s = XZ
+	case shape.Equals(dvid.YZ):
+		*s = YZ
+    case shape.Equals(dvid.Vol3d):
+        *s = XYZ
+	default:
+		return fmt.Errorf("No Google BrainMaps shape corresponds to DVID %s shape", shape)
+	}
+    return nil
+}
+
+func (s Shape) String() string {
+	switch s {
 	case XY:
 		return "XY"
 	case XZ:
 		return "XZ"
 	case YZ:
 		return "YZ"
+    case XYZ:
+        return "XYZ"
 	default:
 		return "Unknown orientation"
 	}
@@ -441,14 +472,14 @@ func (t TileOrientation) String() string {
 
 // GeometryMap provides a mapping from DVID scale (0 is highest res) and tile orientation
 // to the specific geometry (Google "scale" value) that supports it.
-type GeometryMap map[TileSpec]GeometryIndex
+type GeometryMap map[GSpec]GeometryIndex
 
 func (gm GeometryMap) MarshalJSON() ([]byte, error) {
 	s := "{"
 	mapStr := make([]string, len(gm))
 	i := 0
 	for ts, gi := range gm {
-		mapStr[i] = fmt.Sprintf(`"%s:%d": %d`, ts.plane, ts.scaling, gi)
+		mapStr[i] = fmt.Sprintf(`"%s:%d": %d`, ts.shape, ts.scaling, gi)
 		i++
 	}
 	s += strings.Join(mapStr, ",")
@@ -544,9 +575,10 @@ func (g *Geometry) UnmarshalJSON(b []byte) error {
 
 type Geometries []Geometry
 
-// GoogleTileSpec encapsulates all information needed for tile retrieval (aside from authentication)
+// GoogleSubvolGeom encapsulates all information needed for voxel retrieval (aside from authentication)
 // from the Google BrainMaps API, as well as processing the returned data.
-type GoogleTileSpec struct {
+type GoogleSubvolGeom struct {
+    shape    Shape
 	offset   dvid.Point3d
 	size     dvid.Point3d // This is the size we can retrieve, not necessarily the requested size
 	sizeWant dvid.Point3d // This is the requested size.
@@ -560,77 +592,93 @@ type GoogleTileSpec struct {
 	bytesPerVoxel int32
 }
 
-// GetGoogleSpec returns a google-specific tile spec, which includes how the tile is positioned relative to
+// GetGoogleSubvolGeom returns a google-specific voxel spec, which includes how the data is positioned relative to
 // scaled volume boundaries.  Not that the size parameter is the desired size and not what is required to fit
 // within a scaled volume.
-func (d *Data) GetGoogleSpec(scaling Scaling, plane dvid.DataShape, offset dvid.Point3d, size dvid.Point2d) (*GoogleTileSpec, error) {
-	tile := new(GoogleTileSpec)
-	tile.offset = offset
-
-	// Convert combination of plane and size into 3d size.
-	sizeWant, err := dvid.GetPoint3dFrom2d(plane, size, 1)
-	if err != nil {
-		return nil, err
-	}
-	tile.sizeWant = sizeWant
+func (d *Data) GetGoogleSubvolGeom(scaling Scaling, shape dvid.DataShape, offset dvid.Point3d, size dvid.Point) (*GoogleSubvolGeom, error) {
+	gsg := new(GoogleSubvolGeom)
+    if err := gsg.shape.FromShape(shape); err != nil {
+        return nil, err
+    }
+	gsg.offset = offset
+ 
+ 	// If 2d plane, convert combination of plane and size into 3d size.
+    if size.NumDims() == 2 {
+        size2d := size.(dvid.Point2d)
+        sizeWant, err := dvid.GetPoint3dFrom2d(shape, size2d, 1)
+        if err != nil {
+            return nil, err
+        }
+        gsg.sizeWant = sizeWant    
+    } else {
+        var ok bool
+        gsg.sizeWant, ok = size.(dvid.Point3d)
+        if !ok {
+            return nil, fmt.Errorf("Can't convert %v to dvid.Point3d", size)
+        }
+    }
 
 	// Determine which geometry is appropriate given the scaling and the shape/orientation
-	tileSpec, err := GetTileSpec(scaling, plane)
+	tileSpec, err := GetGSpec(scaling, shape)
 	if err != nil {
 		return nil, err
 	}
-	geomIndex, found := d.TileMap[*tileSpec]
+	geomIndex, found := d.GeomMap[*tileSpec]
 	if !found {
-		return nil, fmt.Errorf("Could not find scaled volume in %q for %s with scaling %d", d.DataName(), plane, scaling)
+		return nil, fmt.Errorf("Could not find scaled volume in %q for %s with scaling %d", d.DataName(), shape, scaling)
 	}
 	geom := d.Scales[geomIndex]
-	tile.gi = geomIndex
-	tile.channelCount = geom.ChannelCount
-	tile.channelType = geom.ChannelType
+	gsg.gi = geomIndex
+	gsg.channelCount = geom.ChannelCount
+	gsg.channelType = geom.ChannelType
 
 	// Get the # bytes for each pixel
 	switch geom.ChannelType {
 	case "UINT8":
-		tile.bytesPerVoxel = 1
+		gsg.bytesPerVoxel = 1
 	case "FLOAT":
-		tile.bytesPerVoxel = 4
+		gsg.bytesPerVoxel = 4
 	case "UINT64":
-		tile.bytesPerVoxel = 8
+		gsg.bytesPerVoxel = 8
 	default:
 		return nil, fmt.Errorf("Unknown volume channel type in %s: %s", d.DataName(), geom.ChannelType)
 	}
 
-	// Check if the tile is completely outside the volume.
+	// Check if the requested area is completely outside the volume.
 	volumeSize := geom.VolumeSize
 	if offset[0] >= volumeSize[0] || offset[1] >= volumeSize[1] || offset[2] >= volumeSize[2] {
-		tile.outside = true
-		return tile, nil
+		gsg.outside = true
+		return gsg, nil
 	}
 
-	// Check if the tile is on the edge and adjust size.
-	var adjSize dvid.Point3d = sizeWant
-	maxpt, err := offset.Expand2d(plane, size)
-	for i := 0; i < 3; i++ {
-		if maxpt[i] > volumeSize[i] {
-			tile.edge = true
+	// Check if the requested shape is on the edge and adjust size.
+	adjSize := gsg.sizeWant
+	maxpt := offset.Add(adjSize)
+	for i := uint8(0); i < 3; i++ {
+		if maxpt.Value(i) > volumeSize[i] {
+			gsg.edge = true
 			adjSize[i] = volumeSize[i] - offset[i]
 		}
 	}
-	tile.size = adjSize
+	gsg.size = adjSize
 
-	return tile, nil
+	return gsg, nil
 }
 
-// Returns the base API URL for retrieving an image tile.  Note that the authentication key
+// GetURL returns the base API URL for retrieving an image.  Note that the authentication key
 // or token needs to be added to the returned string to form a valid URL.  The formatStr
 // parameter is of the form "jpeg" or "jpeg:80" or "png:8" where an optional compression
 // level follows the image format and a colon.  Leave formatStr empty for default.
-func (gts GoogleTileSpec) GetURL(volumeid, formatStr string) (string, error) {
-
-	url := fmt.Sprintf("%s/volumes/%s/binary/tile", bmapsPrefix, volumeid)
-	url += fmt.Sprintf("/corner=%d,%d,%d", gts.offset[0], gts.offset[1], gts.offset[2])
-	url += fmt.Sprintf("/size=%d,%d,%d", gts.size[0], gts.size[1], gts.size[2])
-	url += fmt.Sprintf("/scale=%d", gts.gi)
+func (gsg GoogleSubvolGeom) GetURL(volumeid, formatStr string) (string, error) {
+	url := fmt.Sprintf("%s/volumes/%s/binary", bmapsPrefix, volumeid)
+    if gsg.shape == XYZ {
+        url += "/subvolume"
+    } else {
+        url += "/tile"
+    }
+	url += fmt.Sprintf("/corner=%d,%d,%d", gsg.offset[0], gsg.offset[1], gsg.offset[2])
+	url += fmt.Sprintf("/size=%d,%d,%d", gsg.size[0], gsg.size[1], gsg.size[2])
+	url += fmt.Sprintf("/scale=%d", gsg.gi)
 
 	if formatStr != "" {
 		format := strings.Split(formatStr, ":")
@@ -657,26 +705,30 @@ func (gts GoogleTileSpec) GetURL(volumeid, formatStr string) (string, error) {
 			}
 		}
 	}
-	url += "?alt=media"
+    if gsg.shape == XYZ {
+        url += "/subvolumeFormat=raw_zippy"
+    }
+  	url += "?alt=media"
+
 
 	return url, nil
 }
 
-// padTile takes returned data and pads it to full tile size.
-func (gts GoogleTileSpec) padTile(data []byte) ([]byte, error) {
-
-	if gts.size[0]*gts.size[1]*gts.bytesPerVoxel != int32(len(data)) {
+// padData takes returned data and pads it to full expected size.
+// currently assumes that data padding needed on far edges, not near edges.
+func (gsg GoogleSubvolGeom) padData(data []byte) ([]byte, error) {
+	if gsg.size[0]*gsg.size[1]*gsg.size[2]*gsg.bytesPerVoxel != int32(len(data)) {
 		return nil, fmt.Errorf("Before padding, for %d x %d x %d bytes/voxel tile, received %d bytes",
-			gts.size[0], gts.size[1], gts.bytesPerVoxel, len(data))
+			gsg.size[0], gsg.size[1], gsg.bytesPerVoxel, len(data))
 	}
 
-	inRowBytes := gts.size[0] * gts.bytesPerVoxel
-	outRowBytes := gts.sizeWant[0] * gts.bytesPerVoxel
-	outBytes := outRowBytes * gts.sizeWant[1]
+	inRowBytes := gsg.size[0] * gsg.bytesPerVoxel
+	outRowBytes := gsg.sizeWant[0] * gsg.bytesPerVoxel
+	outBytes := outRowBytes * gsg.sizeWant[1]
 	out := make([]byte, outBytes, outBytes)
 	inI := int32(0)
 	outI := int32(0)
-	for y := int32(0); y < gts.size[1]; y++ {
+	for y := int32(0); y < gsg.size[1]; y++ {
 		copy(out[outI:outI+inRowBytes], data[inI:inI+inRowBytes])
 		inI += inRowBytes
 		outI += outRowBytes
@@ -694,8 +746,8 @@ type Properties struct {
 	// Default size in pixels along one dimension of square tile.
 	TileSize int32
 
-	// TileMap provides mapping between scale and tile orientation to Google scaling index.
-	TileMap GeometryMap
+	// GeomMap provides mapping between scale and various image shapes to Google scaling index.
+	GeomMap GeometryMap
 
 	// Scales is the list of available precomputed scales ("geometries" in Google terms) for this data.
 	Scales Geometries
@@ -733,7 +785,7 @@ func (p Properties) MarshalJSON() ([]byte, error) {
 		MinTileCoord dvid.Point3d
 		MaxTileCoord dvid.Point3d
 		TileSize     int32
-		TileMap      GeometryMap
+		GeomMap      GeometryMap
 		Scales       Geometries
 		HighResIndex GeometryIndex
 		Levels       imagetile.TileSpec
@@ -742,20 +794,20 @@ func (p Properties) MarshalJSON() ([]byte, error) {
 		minTileCoord,
 		maxTileCoord,
 		p.TileSize,
-		p.TileMap,
+		p.GeomMap,
 		p.Scales,
 		p.HighResIndex,
-		getTileSpec(p.TileSize, p.Scales[p.HighResIndex], p.TileMap),
+		getGSpec(p.TileSize, p.Scales[p.HighResIndex], p.GeomMap),
 	})
 }
 
 // Converts Google BrainMaps scaling to imagetile-style tile specifications.
 // This assumes that Google levels always downsample by 2.
-func getTileSpec(tileSize int32, hires Geometry, tileMap GeometryMap) imagetile.TileSpec {
+func getGSpec(tileSize int32, hires Geometry, geomMap GeometryMap) imagetile.TileSpec {
 	// Determine how many levels we have by the max of any orientation.
 	// TODO -- Warn user in some way if BrainMaps API has levels in one orientation but not in other.
 	var maxScale Scaling
-	for tileSpec := range tileMap {
+	for tileSpec := range geomMap {
 		if tileSpec.scaling > maxScale {
 			maxScale = tileSpec.scaling
 		}
@@ -767,15 +819,15 @@ func getTileSpec(tileSize int32, hires Geometry, tileMap GeometryMap) imagetile.
 	}
 	levelSpec.Resolution = make(dvid.NdFloat32, 3)
 	copy(levelSpec.Resolution, hires.PixelSize)
-	ms2dTileSpec := make(imagetile.TileSpec, maxScale+1)
+	ms2dGSpec := make(imagetile.TileSpec, maxScale+1)
 	for scale := Scaling(0); scale <= maxScale; scale++ {
 		curSpec := levelSpec.Duplicate()
-		ms2dTileSpec[imagetile.Scaling(scale)] = imagetile.TileScaleSpec{LevelSpec: curSpec}
+		ms2dGSpec[imagetile.Scaling(scale)] = imagetile.TileScaleSpec{LevelSpec: curSpec}
 		levelSpec.Resolution[0] *= 2
 		levelSpec.Resolution[1] *= 2
 		levelSpec.Resolution[2] *= 2
 	}
-	return ms2dTileSpec
+	return ms2dGSpec
 }
 
 // Data embeds the datastore's Data and extends it with voxel-specific properties.
@@ -804,17 +856,17 @@ func (d *Data) GetClient() (*http.Client, error) {
 	return client, nil
 }
 
-func (d *Data) GetVoxelSize(ts *TileSpec) (dvid.NdFloat32, error) {
+func (d *Data) GetVoxelSize(ts *GSpec) (dvid.NdFloat32, error) {
 	if d.Scales == nil || len(d.Scales) == 0 {
 		return nil, fmt.Errorf("%s has no geometries and therefore no volumes for access", d.DataName())
 	}
-	if d.TileMap == nil {
+	if d.GeomMap == nil {
 		return nil, fmt.Errorf("%d has not been initialized and can't return voxel sizes", d.DataName())
 	}
 	if ts == nil {
 		return nil, fmt.Errorf("Can't get voxel sizes for nil tile spec!")
 	}
-	scaleIndex := d.TileMap[*ts]
+	scaleIndex := d.GeomMap[*ts]
 	if int(scaleIndex) > len(d.Scales) {
 		return nil, fmt.Errorf("Can't map tile spec (%v) to available geometries", *ts)
 	}
@@ -869,7 +921,7 @@ func (d *Data) Send(s message.Socket, roiname string, uuid dvid.UUID) error {
 }
 
 // getBlankTileData returns a background 2d tile data
-func (d *Data) getBlankTileImage(tile *GoogleTileSpec) (image.Image, error) {
+func (d *Data) getBlankTileImage(tile *GoogleSubvolGeom) (image.Image, error) {
 	if tile == nil {
 		return nil, fmt.Errorf("Can't get blank tile for unknown tile spec")
 	}
@@ -883,14 +935,14 @@ func (d *Data) getBlankTileImage(tile *GoogleTileSpec) (image.Image, error) {
 	return dvid.GoImageFromData(data, int(tile.sizeWant[0]), int(tile.sizeWant[1]))
 }
 
-func (d *Data) serveTile(w http.ResponseWriter, r *http.Request, tile *GoogleTileSpec, formatStr string, noblanks bool) error {
+func (d *Data) serveTile(w http.ResponseWriter, r *http.Request, geom *GoogleSubvolGeom, formatStr string, noblanks bool) error {
 	// If it's outside, write blank tile unless user wants no blanks.
-	if tile.outside {
+	if geom.outside {
 		if noblanks {
 			http.NotFound(w, r)
 			return fmt.Errorf("Requested tile is outside of available volume.")
 		}
-		img, err := d.getBlankTileImage(tile)
+		img, err := d.getBlankTileImage(geom)
 		if err != nil {
 			return err
 		}
@@ -898,7 +950,7 @@ func (d *Data) serveTile(w http.ResponseWriter, r *http.Request, tile *GoogleTil
 	}
 
 	// If we are within volume, get data from Google.
-	url, err := tile.GetURL(d.VolumeID, formatStr)
+	url, err := geom.GetURL(d.VolumeID, formatStr)
 	if err != nil {
 		return err
 	}
@@ -922,14 +974,14 @@ func (d *Data) serveTile(w http.ResponseWriter, r *http.Request, tile *GoogleTil
 	}
 
 	// If it's on edge, we need to pad the tile to the tile size.
-	if tile.edge {
+	if geom.edge {
 		// We need to read whole thing in to pad it.
 		data, err := ioutil.ReadAll(resp.Body)
 		timedLog.Infof("Got edge tile from Google, %d bytes\n", len(data))
 		if err != nil {
 			return err
 		}
-		paddedData, err := tile.padTile(data)
+		paddedData, err := geom.padData(data)
 		if err != nil {
 			return err
 		}
@@ -967,10 +1019,124 @@ func (d *Data) serveTile(w http.ResponseWriter, r *http.Request, tile *GoogleTil
 	return nil
 }
 
-// ServeImage returns an image with appropriate Content-Type set.  This function differs
-// from ServeTile in the way parameters are passed to it.  ServeTile accepts a tile coordinate.
+func (d *Data) serveVolume(w http.ResponseWriter, r *http.Request, geom *GoogleSubvolGeom, noblanks bool) error {
+	// If it's outside, write blank tile unless user wants no blanks.
+	if geom.outside {
+		if noblanks {
+			http.NotFound(w, r)
+			return fmt.Errorf("Requested subvolume is outside of available volume.")
+		}
+		return nil
+	}
+
+	// If we are within volume, get data from Google.
+	url, err := geom.GetURL(d.VolumeID, "")
+	if err != nil {
+		return err
+	}
+
+	timedLog := dvid.NewTimeLog()
+	client, err := d.GetClient()
+	if err != nil {
+		dvid.Errorf("Can't get OAuth2 connection to Google: %v\n", err)
+		return err
+	}
+	resp, err := client.Get(url)
+	if err != nil {
+		return err
+	}
+	timedLog.Infof("PROXY HTTP to Google: %s, returned response %d", url, resp.StatusCode)
+	defer resp.Body.Close()
+
+	// If it's on edge, we need to pad the subvolume to the requested size.
+	if geom.edge {
+        return fmt.Errorf("Googlevoxels subvolume GET does not pad data on edge at this time")
+	}
+
+	// If we aren't on edge or outside, our return status should be OK.
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("Unexpected status code %d on tile request (%q, volume id %q)", resp.StatusCode, d.DataName(), d.VolumeID)
+	}
+
+	w.Header().Set("Content-type", "application/octet-stream")
+    
+    queryStrings := r.URL.Query()
+    compression := queryStrings.Get("compression")
+    
+    switch compression {
+        case "lz4":
+            // Decompress snappy
+            sdata, err := ioutil.ReadAll(resp.Body)
+            timedLog.Infof("Got snappy-encoded subvolume from Google, %d bytes\n", len(sdata))
+            if err != nil {
+                return err
+            }
+            data, err := snappy.Decode(nil, sdata)
+            if err != nil {
+                return err
+            }       
+            // Recompress and transmit as lz4
+            lz4data := make([]byte, lz4.CompressBound(data))
+            outSize, err := lz4.Compress(data, lz4data)
+            if err != nil {
+                return err
+            }
+            if _, err := w.Write(lz4data[:outSize]); err != nil {
+                return err
+            }
+            timedLog.Infof("Sent lz4-encoded subvolume from DVID, %d bytes\n", outSize)
+            
+        default:  // "snappy"
+            // Just stream data from Google
+            respBytes := 0
+            const BufferSize = 32 * 1024
+            buf := make([]byte, BufferSize)
+            for {
+                n, err := resp.Body.Read(buf)
+                respBytes += n
+                eof := (err == io.EOF)
+                if err != nil && !eof {
+                    return err
+                }
+                if _, err = w.Write(buf[:n]); err != nil {
+                    return err
+                }
+                if f, ok := w.(http.Flusher); ok {
+                    f.Flush()
+                }
+                if eof {
+                    break
+                }
+            }
+            timedLog.Infof("Proxied snappy-encoded subvolume from Google, %d bytes\n", respBytes)   
+    }
+
+	return nil
+}
+
+// See if scaling was specified in query string, otherwise return high-res (scale 0)
+func getScale(r *http.Request) (Scaling, error) {
+	var scale Scaling
+	queryStrings := r.URL.Query()
+	scalingStr := queryStrings.Get("scale")
+	if scalingStr != "" {
+		scale64, err := strconv.ParseUint(scalingStr, 10, 8)
+		if err != nil {
+			return 0, fmt.Errorf("Illegal tile scale: %s (%v)", scalingStr, err)
+		}
+		scale = Scaling(scale64)
+	}
+    return scale, nil
+}
+
+func (d *Data) handleImage2d(w http.ResponseWriter, r *http.Request, parts []string) error {
+    return nil
+}
+
+// handleImageReq returns an image with appropriate Content-Type set.  This function differs
+// from handleTileReq in the way parameters are passed to it.  handleTileReq accepts a tile coordinate.
 // This function allows arbitrary offset and size, unconstrained by tile sizes.
-func (d *Data) ServeImage(w http.ResponseWriter, r *http.Request, parts []string) error {
+func (d *Data) handleImageReq(w http.ResponseWriter, r *http.Request, parts []string) error {
 	if len(parts) < 7 {
 		return fmt.Errorf("%q must be followed by shape/size/offset", parts[3])
 	}
@@ -980,52 +1146,45 @@ func (d *Data) ServeImage(w http.ResponseWriter, r *http.Request, parts []string
 	if err != nil {
 		return err
 	}
-	if plane.ShapeDimensions() != 2 {
-		return fmt.Errorf("Quadtrees can only return 2d images not %s", plane)
-	}
 
-	size, err := dvid.StringToPoint2d(sizeStr, "_")
-	if err != nil {
-		return err
-	}
-
+    var size dvid.Point
+    if size, err = dvid.StringToPoint(sizeStr, "_"); err != nil {
+        return err
+    }
 	offset, err := dvid.StringToPoint3d(offsetStr, "_")
 	if err != nil {
 		return err
 	}
 
-	var formatStr string
-	if len(parts) >= 8 {
-		formatStr = parts[7]
-	}
-	if formatStr == "" {
-		formatStr = DefaultTileFormat
-	}
-
-	// See if scaling was specified in query string, otherwise use high-res (scale 0)
-	var scale Scaling
-	queryStrings := r.URL.Query()
-	scalingStr := queryStrings.Get("scale")
-	if scalingStr != "" {
-		scale64, err := strconv.ParseUint(scalingStr, 10, 8)
-		if err != nil {
-			return fmt.Errorf("Illegal tile scale: %s (%v)", scalingStr, err)
-		}
-		scale = Scaling(scale64)
-	}
-
 	// Determine how this request sits in the available scaled volumes.
-	googleTile, err := d.GetGoogleSpec(scale, plane, offset, size)
-	if err != nil {
-		return err
-	}
+    scale, err := getScale(r)
+    if err != nil {
+        return err
+    }
+    geom, err := d.GetGoogleSubvolGeom(scale, plane, offset, size)
+    if err != nil {
+        return err
+    }
+            
+    switch plane.ShapeDimensions() {
+        case 2:
+            var formatStr string
+            if len(parts) >= 8 {
+                formatStr = parts[7]
+            }
+            if formatStr == "" {
+                formatStr = DefaultTileFormat
+            }
 
-	// Send the tile.
-	return d.serveTile(w, r, googleTile, formatStr, true)
+            return d.serveTile(w, r, geom, formatStr, false)
+       case 3:
+            return d.serveVolume(w, r, geom, false)
+    }
+    return nil
 }
 
-// ServeTile returns a tile with appropriate Content-Type set.
-func (d *Data) ServeTile(w http.ResponseWriter, r *http.Request, parts []string) error {
+// handleTileReq returns a tile with appropriate Content-Type set.
+func (d *Data) handleTileReq(w http.ResponseWriter, r *http.Request, parts []string) error {
 
 	if len(parts) < 7 {
 		return fmt.Errorf("'tile' request must be following by plane, scale level, and tile coordinate")
@@ -1099,14 +1258,14 @@ func (d *Data) ServeTile(w http.ResponseWriter, r *http.Request, parts []string)
 	}
 
 	// Determine how this request sits in the available scaled volumes.
-	googleTile, err := d.GetGoogleSpec(Scaling(scale), shape, dvid.Point3d{ox, oy, oz}, size)
-	if err != nil {
+    geom, err := d.GetGoogleSubvolGeom(Scaling(scale), shape, dvid.Point3d{ox, oy, oz}, size)
+    if err != nil {
 		server.BadRequest(w, r, err)
-		return err
-	}
+        return err
+    }
 
 	// Send the tile.
-	return d.serveTile(w, r, googleTile, formatStr, noblanks)
+	return d.serveTile(w, r, geom, formatStr, noblanks)
 }
 
 // DoRPC handles the 'generate' command.
@@ -1153,14 +1312,14 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		fmt.Fprintf(w, string(jsonBytes))
 
 	case "tile":
-		if err := d.ServeTile(w, r, parts); err != nil {
+		if err := d.handleTileReq(w, r, parts); err != nil {
 			server.BadRequest(w, r, err)
 			return
 		}
 		timedLog.Infof("HTTP %s: tile (%s)", r.Method, r.URL)
 
 	case "raw":
-		if err := d.ServeImage(w, r, parts); err != nil {
+		if err := d.handleImageReq(w, r, parts); err != nil {
 			server.BadRequest(w, r, err)
 			return
 		}

@@ -16,7 +16,7 @@ import (
 	_ "log"
 
 	lz4 "github.com/janelia-flyem/go/golz4"
-	"github.com/janelia-flyem/go/snappy-go/snappy"
+	"github.com/golang/snappy"
 )
 
 // Compression is the format of compression for storing data.
@@ -143,7 +143,7 @@ const (
 // DefaultChecksum is the type of checksum employed for all data operations.
 // Note that many database engines already implement some form of corruption test
 // and checksum can be set on each datatype instance.
-var DefaultChecksum Checksum = NoChecksum
+var DefaultChecksum = NoChecksum
 
 func (checksum Checksum) String() string {
 	switch checksum {
@@ -171,7 +171,7 @@ func DecodeSerializationFormat(s SerializationFormat) (CompressionFormat, Checks
 	return format, checksum
 }
 
-// Serialize a slice of bytes using optional compression, checksum.
+// SerializeData serializes a slice of bytes using optional compression, checksum.
 // Checksum will be ignored if the underlying compression already employs
 // checksums, e.g., Gzip.
 func SerializeData(data []byte, compress Compression, checksum Checksum) ([]byte, error) {
@@ -199,10 +199,7 @@ func SerializeData(data []byte, compress Compression, checksum Checksum) ([]byte
 	case Uncompressed:
 		byteData = data
 	case Snappy:
-		byteData, err = snappy.Encode(nil, data)
-		if err != nil {
-			return nil, err
-		}
+		byteData = snappy.Encode(nil, data)
 	case LZ4:
 		origSize := uint32(len(data))
 		byteData = make([]byte, lz4.CompressBound(data)+4)
@@ -250,7 +247,7 @@ func SerializeData(data []byte, compress Compression, checksum Checksum) ([]byte
 	return buffer.Bytes(), nil
 }
 
-// Serializes an arbitrary Go object using Gob encoding and optional compression, checksum.
+// Serialize an arbitrary Go object using Gob encoding and optional compression, checksum.
 // If your object is []byte, you should preferentially use SerializeData since the Gob encoding
 // process adds some overhead in performance as well as size of wire format to describe the
 // transmitted types.
@@ -306,46 +303,45 @@ func DeserializeData(s []byte, uncompress bool) ([]byte, CompressionFormat, erro
 	// Return data with optional compression
 	if !uncompress || compression == Uncompressed {
 		return cdata, compression, nil
-	} else {
-		switch compression {
-		case Snappy:
-			if data, err := snappy.Decode(nil, cdata); err != nil {
-				return nil, 0, err
-			} else {
-				return data, compression, nil
-			}
-		case LZ4:
-			origSize := binary.LittleEndian.Uint32(cdata[0:4])
-			data := make([]byte, int(origSize))
-			if err := lz4.Uncompress(cdata[4:], data); err != nil {
-				return nil, 0, err
-			} else {
-				return data, compression, nil
-			}
-		case Gzip:
-			b := bytes.NewBuffer(cdata)
-			var err error
-			r, err := gzip.NewReader(b)
-			if err != nil {
-				return nil, 0, err
-			}
-			var buffer bytes.Buffer
-			_, err = io.Copy(&buffer, r)
-			if err != nil {
-				return nil, 0, err
-			}
-			err = r.Close()
-			if err != nil {
-				return nil, 0, err
-			}
-			return buffer.Bytes(), compression, nil
-		default:
-			return nil, 0, fmt.Errorf("Illegal compression format (%d) in deserialization", compression)
-		}
 	}
+        
+    switch compression {
+    case Snappy:
+        data, err := snappy.Decode(nil, cdata)
+        if err != nil {
+            return nil, 0, err
+        } 
+        return data, compression, nil
+    case LZ4:
+        origSize := binary.LittleEndian.Uint32(cdata[0:4])
+        data := make([]byte, int(origSize))
+        if err := lz4.Uncompress(cdata[4:], data); err != nil {
+            return nil, 0, err
+        } 
+        return data, compression, nil
+    case Gzip:
+        b := bytes.NewBuffer(cdata)
+        var err error
+        r, err := gzip.NewReader(b)
+        if err != nil {
+            return nil, 0, err
+        }
+        var buffer bytes.Buffer
+        _, err = io.Copy(&buffer, r)
+        if err != nil {
+            return nil, 0, err
+        }
+        err = r.Close()
+        if err != nil {
+            return nil, 0, err
+        }
+        return buffer.Bytes(), compression, nil
+    default:
+        return nil, 0, fmt.Errorf("Illegal compression format (%d) in deserialization", compression)
+    }
 }
 
-// Deserializes a Go object using Gob encoding
+// Deserialize a Go object using Gob encoding
 func Deserialize(s []byte, object interface{}) error {
 	// Get the bytes for the Gob-encoded object
 	data, _, err := DeserializeData(s, true)

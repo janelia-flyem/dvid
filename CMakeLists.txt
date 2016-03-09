@@ -157,13 +157,17 @@ else ()
         ${BUILDEM_ENV_STRING} go get ${GO_GET} gopkg.in/natefinch/lumberjack.v2
         COMMENT     "Adding lumberjack library...")
 
+    add_custom_target (snappy
+        ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/golang/snappy
+        COMMENT     "Adding snappy library...")
+
     add_custom_target (gcloud
         ${BUILDEM_ENV_STRING} go get ${GO_GET} golang.org/x/oauth2
         COMMAND ${BUILDEM_ENV_STRING} go get ${GO_GET} google.golang.org/cloud/bigtable
         COMMAND ${BUILDEM_ENV_STRING} go get ${GO_GET} google.golang.org/cloud/storage
         COMMENT     "Adding gcloud packages...")  
 
-    set (DVID_DEP_GO_PACKAGES gopackages gojsonschema goji msgp context lumberjack gcloud)
+    set (DVID_DEP_GO_PACKAGES gopackages gojsonschema goji msgp context lumberjack snappy gcloud)
 
     add_custom_target (nrsc
         ${BUILDEM_ENV_STRING} ${GO_ENV} go build -o ${BUILDEM_BIN_DIR}/nrsc
