@@ -452,6 +452,11 @@ func (db *GBucket) SendKeysInRange(ctx storage.Context, TkBeg, TkEnd storage.TKe
 	return nil
 }
 
+type keyvalue_t struct {
+	key   storage.Key
+	value []byte
+}
+
 // GetRange returns a range of values spanning (TkBeg, kEnd) keys.
 func (db *GBucket) GetRange(ctx storage.Context, TkBeg, TkEnd storage.TKey) ([]*storage.TKeyValue, error) {
 	if db == nil {
@@ -466,32 +471,28 @@ func (db *GBucket) GetRange(ctx storage.Context, TkBeg, TkEnd storage.TKey) ([]*
 	// grab keys
 	keys, _ := db.getKeysInRange(ctx, TkBeg, TkEnd)
 
-	// process keys in parallel
-	kvmap := make(map[string][]byte)
+	keyvalchan := make(chan keyvalue_t, len(keys))
 	for _, key := range keys {
-		kvmap[string(key)] = nil
-	}
-
-	var wg sync.WaitGroup
-	for _, key := range keys {
-		wg.Add(1)
 		go func(lkey storage.Key) {
-			defer wg.Done()
 			value, err := db.getV(lkey)
 			if value == nil || err != nil {
-				kvmap[string(lkey)] = nil
+				keyvalchan <- keyvalue_t{lkey, nil}
 			} else {
-				kvmap[string(lkey)] = value
+				keyvalchan <- keyvalue_t{lkey, value}
 			}
-
 		}(key)
-
 	}
-	wg.Wait()
+
+	kvmap := make(map[string][]byte)
+	for range keys {
+		keyval := <-keyvalchan
+		kvmap[string(keyval.key)] = keyval.value
+	}
 
 	var err error
 	// return keyvalues
-	for key, val := range kvmap {
+	for _, key := range keys {
+		val := kvmap[string(key)]
 		tk, err := ctx.TKeyFromKey(storage.Key(key))
 		if err != nil {
 			return nil, err
@@ -541,30 +542,27 @@ func (db *GBucket) RawRangeQuery(kStart, kEnd storage.Key, keysOnly bool, out ch
 	// grab keys
 	keys, _ := db.getKeysInRangeRaw(kStart, kEnd)
 
-	// process keys in parallel
-	kvmap := make(map[string][]byte)
+	keyvalchan := make(chan keyvalue_t, len(keys))
 	for _, key := range keys {
-		kvmap[string(key)] = nil
-	}
-	var wg sync.WaitGroup
-	for _, key := range keys {
-		wg.Add(1)
 		go func(lkey storage.Key) {
-			defer wg.Done()
 			value, err := db.getV(lkey)
 			if value == nil || err != nil {
-				kvmap[string(lkey)] = nil
+				keyvalchan <- keyvalue_t{lkey, nil}
 			} else {
-				kvmap[string(lkey)] = value
+				keyvalchan <- keyvalue_t{lkey, value}
 			}
-
 		}(key)
-
 	}
-	wg.Wait()
+
+	kvmap := make(map[string][]byte)
+	for range keys {
+		keyval := <-keyvalchan
+		kvmap[string(keyval.key)] = keyval.value
+	}
 
 	// return keyvalues
-	for key, val := range kvmap {
+	for _, key := range keys {
+		val := kvmap[string(key)]
 		if val == nil {
 			return fmt.Errorf("Could not retrieve value")
 		}
@@ -1109,11 +1107,6 @@ func (db *goBuffer) deleteRangeLocal(ctx storage.Context, TkBeg, TkEnd storage.T
 	workQueue <- nil
 
 	return nil
-}
-
-type keyvalue_t struct {
-	key   storage.Key
-	value []byte
 }
 
 // processRangeLocal implements ProcessRange functionality but with workQueue awareness
