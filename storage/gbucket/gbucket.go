@@ -11,18 +11,13 @@ Explore tradeoff between smaller parallel requests and single big requests.
 * Restrict the number of parallel requests.
 * Refactor to call batcher for any calls that require multiple requests
 * DeleteAll should page deletion to avoid memory issues for very large deletes
-
 Note:
-
 * Range calls require a list query to find potentially matching objects.  After this
 call, specific objects can be fetched.
 * Lists are eventually consistent and objects are strongly consistent after object post/change.
 It is possible to post an object and not see the object when searching the list.
 * The Batcher implementation does not wrap operations into an atomic transaction.
-
-
 */
-
 import (
 	"bytes"
 	"encoding/base64"
@@ -202,31 +197,32 @@ func (db *GBucket) deleteV(k storage.Key) error {
 
 // put value from a given key or an error if nothing exists
 func (db *GBucket) putV(k storage.Key, value []byte) (err error) {
+	/*
+		for i := 0; i < NUM_TRIES; i++ {
+		    //debug.PrintStack()
+		    // returns error if it doesn't exist
+		    obj := obj_handle.NewWriter(db.ctx)
 
-	/*for i := 0; i < NUM_TRIES; i++ {
-		//debug.PrintStack()
-		// returns error if it doesn't exist
-		obj := obj_handle.NewWriter(db.ctx)
+		    // write data to buffer
+		    numwrite, err2 := obj.Write(value)
 
-		// write data to buffer
-		numwrite, err2 := obj.Write(value)
+		    if err2 == nil {
+			if numwrite != len(value) {
+			    err2 = fmt.Errorf("correct number of bytes not written")
+			}
+		    }
+		    // close will flush buffer
+		    err = obj.Close()
 
-		if err2 == nil {
-		    if numwrite != len(value) {
-			err2 = fmt.Errorf("correct number of bytes not written")
+		    if err2 == nil && err == nil {
+			break
+		    }
+
+		    if err2 != nil {
+			err = err2
 		    }
 		}
-		// close will flush buffer
-		err = obj.Close()
-
-		if err2 == nil && err == nil {
-		    break
-		}
-
-		if err2 != nil {
-		    err = err2
-		}
-	    }*/
+	*/
 
 	for i := 0; i < NUM_TRIES; i++ {
 		// gets handle (no network op)
@@ -843,7 +839,7 @@ type dbOp struct {
 	tkEnd     storage.TKey
 	chunkop   *storage.ChunkOp
 	chunkfunc storage.ChunkFunc
-	callback  func()
+	readychan chan error
 }
 
 // goBuffer allow operations to be submitted in parallel
@@ -913,8 +909,8 @@ func (db *goBuffer) Put(ctx storage.Context, tkey storage.TKey, value []byte) er
 
 }
 
-// PutCallback writes a value with given key in a possibly versioned context and call the callback.
-func (db *goBuffer) PutCallback(ctx storage.Context, tkey storage.TKey, value []byte, callback func()) error {
+// PutCallback writes a value with given key in a possibly versioned context and notify the callback function.
+func (db *goBuffer) PutCallback(ctx storage.Context, tkey storage.TKey, value []byte, ready chan error) error {
 	if db == nil {
 		return fmt.Errorf("Can't call Put() on nil Google Bucket")
 	}
@@ -925,7 +921,7 @@ func (db *goBuffer) PutCallback(ctx storage.Context, tkey storage.TKey, value []
 	var err error
 	key := ctx.ConstructKey(tkey)
 	if !ctx.Versioned() {
-		db.ops = append(db.ops, dbOp{op: putOpCallback, key: key, value: value, callback: callback})
+		db.ops = append(db.ops, dbOp{op: putOpCallback, key: key, value: value, readychan: ready})
 	} else {
 		vctx, ok := ctx.(storage.VersionedCtx)
 		if !ok {
@@ -933,7 +929,7 @@ func (db *goBuffer) PutCallback(ctx storage.Context, tkey storage.TKey, value []
 		}
 		tombstoneKey := vctx.TombstoneKey(tkey)
 		db.ops = append(db.ops, dbOp{op: delOpIgnoreExists, key: tombstoneKey})
-		db.ops = append(db.ops, dbOp{op: putOpCallback, key: key, value: value, callback: callback})
+		db.ops = append(db.ops, dbOp{op: putOpCallback, key: key, value: value, readychan: ready})
 		if err != nil {
 			dvid.Criticalf("Error on data put: %v\n", err)
 			err = fmt.Errorf("Error on data put: %v", err)
@@ -1047,7 +1043,7 @@ func (buffer *goBuffer) Flush() error {
 				err = buffer.db.putV(opdata.key, opdata.value)
 				storage.StoreKeyBytesWritten <- len(opdata.key)
 				storage.StoreValueBytesWritten <- len(opdata.value)
-				opdata.callback()
+				opdata.readychan <- err
 			} else if opdata.op == getOp {
 				err = buffer.processRangeLocal(buffer.ctx, opdata.tkBeg, opdata.tkEnd, opdata.chunkop, opdata.chunkfunc, workQueue)
 			} else {
@@ -1115,55 +1111,54 @@ func (db *goBuffer) deleteRangeLocal(ctx storage.Context, TkBeg, TkEnd storage.T
 	return nil
 }
 
+type keyvalue_t struct {
+	key   storage.Key
+	value []byte
+}
+
 // processRangeLocal implements ProcessRange functionality but with workQueue awareness
 func (db *goBuffer) processRangeLocal(ctx storage.Context, TkBeg, TkEnd storage.TKey, op *storage.ChunkOp, f storage.ChunkFunc, workQueue chan interface{}) error {
 	// grab keys
 	keys, _ := db.db.getKeysInRange(ctx, TkBeg, TkEnd)
 
-	// process keys in parallel
-	kvmap := make(map[string][]byte)
-	for _, key := range keys {
-
-		kvmap[string(key)] = nil
-	}
-
 	// hackish -- release resource
 	<-workQueue
 
-	var wg sync.WaitGroup
+	keyvalchan := make(chan keyvalue_t, len(keys))
 	for _, key := range keys {
 		// use available threads
 		workQueue <- nil
-		wg.Add(1)
 		go func(lkey storage.Key) {
 			defer func() {
 				<-workQueue
-				wg.Done()
 			}()
 			value, err := db.db.getV(lkey)
 			if value == nil || err != nil {
-				kvmap[string(lkey)] = nil
+				keyvalchan <- keyvalue_t{lkey, nil}
 			} else {
-				kvmap[string(lkey)] = value
+				keyvalchan <- keyvalue_t{lkey, value}
 			}
 
 		}(key)
 
 	}
-	wg.Wait()
+
+	kvmap := make(map[string][]byte)
+	for range keys {
+		keyval := <-keyvalchan
+		kvmap[string(keyval.key)] = keyval.value
+	}
 
 	// hackish -- reask for resource
 	workQueue <- nil
 
 	var err error
-	// return keyvalues
 	for _, key := range keys {
 		val := kvmap[string(key)]
 		tk, err := ctx.TKeyFromKey(key)
 		if err != nil {
 			return err
 		}
-
 		if val == nil {
 			return fmt.Errorf("Could not retrieve value")
 		}

@@ -2,21 +2,19 @@ package imageblk
 
 import (
 	"fmt"
-	"io"
-	"log"
-	"sync"
-
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
+	"io"
+	"log"
+	"sync"
 )
 
 // WriteBlock writes a subvolume or 2d image into a possibly intersecting block.
 func (v *Voxels) WriteBlock(block *storage.TKeyValue, blockSize dvid.Point) error {
 	return v.writeBlock(block, blockSize)
 }
-
 func (v *Voxels) writeBlock(block *storage.TKeyValue, blockSize dvid.Point) error {
 	if blockSize.NumDims() > 3 {
 		return fmt.Errorf("DVID voxel blocks currently only supports up to 3d, not 4+ dimensions")
@@ -373,8 +371,13 @@ func (d *Data) putChunk(chunk *storage.Chunk, putbuffer storage.RequestBuffer) {
 		return
 	}
 
+	ready := make(chan error, 1)
 	callback := func() {
 		// Notify any subscribers that you've changed block.
+		resperr := <-ready
+		if resperr != nil {
+			return
+		}
 		var event string
 		var delta interface{}
 		if op.mutate {
@@ -394,13 +397,14 @@ func (d *Data) putChunk(chunk *storage.Chunk, putbuffer storage.RequestBuffer) {
 	// put data -- use buffer if available
 	ctx := datastore.NewVersionedCtx(d, op.version)
 	if putbuffer != nil {
-		putbuffer.PutCallback(ctx, chunk.K, serialization, callback)
+		go callback()
+		putbuffer.PutCallback(ctx, chunk.K, serialization, ready)
 	} else {
 		if err := store.Put(ctx, chunk.K, serialization); err != nil {
 			dvid.Errorf("Unable to PUT voxel data for key %v: %v\n", chunk.K, err)
 			return
 		}
-
+		ready <- nil
 		callback()
 	}
 }
