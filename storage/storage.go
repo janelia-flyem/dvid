@@ -458,8 +458,8 @@ type BufferableOps interface {
 type RequestBuffer interface {
 	BufferableOps
 
-	// PutCallback writes a value with given key in a possibly versioned context and calls the call back when finished.
-	PutCallback(Context, TKey, []byte, func()) error
+	// PutCallback writes a value with given key in a possibly versioned context and signals the callback
+	PutCallback(Context, TKey, []byte, chan error) error
 
 	// Flush processes all the queued jobs
 	Flush() error
@@ -499,22 +499,16 @@ type GraphSetter interface {
 
 	// SetVertexProperty adds arbitrary data to a vertex using a string key
 	SetVertexProperty(ctx Context, id dvid.VertexID, key string, value []byte) error
-
 	// SetEdgeProperty adds arbitrary data to an edge using a string key
 	SetEdgeProperty(ctx Context, id1 dvid.VertexID, id2 dvid.VertexID, key string, value []byte) error
-
 	// RemoveVertex removes the vertex and its properties and edges
 	RemoveVertex(ctx Context, id dvid.VertexID) error
-
 	// RemoveEdge removes the edge defined by id1 and id2 and its properties
 	RemoveEdge(ctx Context, id1 dvid.VertexID, id2 dvid.VertexID) error
-
 	// RemoveGraph removes the entire graph including all vertices, edges, and properties
 	RemoveGraph(ctx Context) error
-
 	// RemoveVertexProperty removes the property data for vertex id at the key
 	RemoveVertexProperty(ctx Context, id dvid.VertexID, key string) error
-
 	// RemoveEdgeProperty removes the property data for edge at the key
 	RemoveEdgeProperty(ctx Context, id1 dvid.VertexID, id2 dvid.VertexID, key string) error
 }
@@ -523,19 +517,14 @@ type GraphSetter interface {
 type GraphGetter interface {
 	// GetVertices retrieves a list of all vertices in the graph
 	GetVertices(ctx Context) ([]dvid.GraphVertex, error)
-
 	// GetEdges retrieves a list of all edges in the graph
 	GetEdges(ctx Context) ([]dvid.GraphEdge, error)
-
 	// GetVertex retrieves a vertex given a vertex id
 	GetVertex(ctx Context, id dvid.VertexID) (dvid.GraphVertex, error)
-
 	// GetVertex retrieves an edges between two vertex IDs
 	GetEdge(ctx Context, id1 dvid.VertexID, id2 dvid.VertexID) (dvid.GraphEdge, error)
-
 	// GetVertexProperty retrieves a property as a byte array given a vertex id
 	GetVertexProperty(ctx Context, id dvid.VertexID, key string) ([]byte, error)
-
 	// GetEdgeProperty retrieves a property as a byte array given an edge defined by id1 and id2
 	GetEdgeProperty(ctx Context, id1 dvid.VertexID, id2 dvid.VertexID, key string) ([]byte, error)
 }
@@ -544,6 +533,5 @@ type GraphGetter interface {
 type GraphDB interface {
 	GraphSetter
 	GraphGetter
-
 	Close()
 }
