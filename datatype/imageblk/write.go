@@ -376,6 +376,7 @@ func (d *Data) putChunk(chunk *storage.Chunk, putbuffer storage.RequestBuffer) {
 		// Notify any subscribers that you've changed block.
 		resperr := <-ready
 		if resperr != nil {
+			dvid.Errorf("Unable to PUT voxel data for key %v: %v\n", chunk.K, resperr)
 			return
 		}
 		var event string
