@@ -854,7 +854,7 @@ func (db *GBucket) NewBuffer(ctx storage.Context) storage.RequestBuffer {
 		dvid.Criticalf("Received nil context in NewBatch()")
 		return nil
 	}
-	return &goBuffer{db: db, ctx: ctx, ops: make([]dbOp, 0)}
+	return &goBuffer{db: db, ctx: ctx}
 }
 
 // --- implement RequestBuffer interface ---
