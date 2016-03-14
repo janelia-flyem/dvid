@@ -842,9 +842,10 @@ type dbOp struct {
 
 // goBuffer allow operations to be submitted in parallel
 type goBuffer struct {
-	db  *GBucket
-	ctx storage.Context
-	ops []dbOp
+	db    *GBucket
+	ctx   storage.Context
+	ops   []dbOp
+	mutex sync.Mutex
 }
 
 // NewBatch returns an implementation that allows batch writes
@@ -853,7 +854,7 @@ func (db *GBucket) NewBuffer(ctx storage.Context) storage.RequestBuffer {
 		dvid.Criticalf("Received nil context in NewBatch()")
 		return nil
 	}
-	return &goBuffer{db, ctx, make([]dbOp, 0)}
+	return &goBuffer{db: db, ctx: ctx, ops: make([]dbOp, 0)}
 }
 
 // --- implement RequestBuffer interface ---
@@ -871,7 +872,9 @@ func (db *goBuffer) ProcessRange(ctx storage.Context, TkBeg, TkEnd storage.TKey,
 		return fmt.Errorf("Received nil context in GetRange()")
 	}
 
+	db.mutex.Lock()
 	db.ops = append(db.ops, dbOp{getOp, nil, nil, TkBeg, TkEnd, op, f, nil})
+	db.mutex.Unlock()
 
 	return nil
 }
@@ -888,15 +891,19 @@ func (db *goBuffer) Put(ctx storage.Context, tkey storage.TKey, value []byte) er
 	var err error
 	key := ctx.ConstructKey(tkey)
 	if !ctx.Versioned() {
+		db.mutex.Lock()
 		db.ops = append(db.ops, dbOp{op: putOp, key: key, value: value})
+		db.mutex.Unlock()
 	} else {
 		vctx, ok := ctx.(storage.VersionedCtx)
 		if !ok {
 			return fmt.Errorf("Non-versioned context that says it's versioned received in Put(): %v", ctx)
 		}
 		tombstoneKey := vctx.TombstoneKey(tkey)
+		db.mutex.Lock()
 		db.ops = append(db.ops, dbOp{op: delOpIgnoreExists, key: tombstoneKey})
 		db.ops = append(db.ops, dbOp{op: putOp, key: key, value: value})
+		db.mutex.Unlock()
 		if err != nil {
 			dvid.Criticalf("Error on data put: %v\n", err)
 			err = fmt.Errorf("Error on data put: %v", err)
@@ -919,15 +926,19 @@ func (db *goBuffer) PutCallback(ctx storage.Context, tkey storage.TKey, value []
 	var err error
 	key := ctx.ConstructKey(tkey)
 	if !ctx.Versioned() {
+		db.mutex.Lock()
 		db.ops = append(db.ops, dbOp{op: putOpCallback, key: key, value: value, readychan: ready})
+		db.mutex.Unlock()
 	} else {
 		vctx, ok := ctx.(storage.VersionedCtx)
 		if !ok {
 			return fmt.Errorf("Non-versioned context that says it's versioned received in Put(): %v", ctx)
 		}
 		tombstoneKey := vctx.TombstoneKey(tkey)
+		db.mutex.Lock()
 		db.ops = append(db.ops, dbOp{op: delOpIgnoreExists, key: tombstoneKey})
 		db.ops = append(db.ops, dbOp{op: putOpCallback, key: key, value: value, readychan: ready})
+		db.mutex.Unlock()
 		if err != nil {
 			dvid.Criticalf("Error on data put: %v\n", err)
 			err = fmt.Errorf("Error on data put: %v", err)
@@ -944,8 +955,9 @@ func (db *goBuffer) RawPut(k storage.Key, v []byte) error {
 	if db == nil {
 		return fmt.Errorf("Can't call Put() on nil Google Bucket")
 	}
-
+	db.mutex.Lock()
 	db.ops = append(db.ops, dbOp{op: putOp, key: k, value: v})
+	db.mutex.Unlock()
 	return nil
 }
 
@@ -960,15 +972,19 @@ func (db *goBuffer) Delete(ctx storage.Context, tkey storage.TKey) error {
 
 	key := ctx.ConstructKey(tkey)
 	if !ctx.Versioned() {
+		db.mutex.Lock()
 		db.ops = append(db.ops, dbOp{op: delOp, key: key})
+		db.mutex.Unlock()
 	} else {
 		vctx, ok := ctx.(storage.VersionedCtx)
 		if !ok {
 			return fmt.Errorf("Non-versioned context that says it's versioned received in Delete(): %v", ctx)
 		}
+		db.mutex.Lock()
 		db.ops = append(db.ops, dbOp{op: delOp, key: key})
 		tombstoneKey := vctx.TombstoneKey(tkey)
 		db.ops = append(db.ops, dbOp{op: putOp, key: tombstoneKey, value: dvid.EmptyValue()})
+		db.mutex.Unlock()
 	}
 
 	return nil
@@ -981,7 +997,9 @@ func (db *goBuffer) RawDelete(fullKey storage.Key) error {
 		return fmt.Errorf("Can't call RawDelete on nil LevelDB")
 	}
 
+	db.mutex.Lock()
 	db.ops = append(db.ops, dbOp{op: delOp, key: fullKey})
+	db.mutex.Unlock()
 	return nil
 }
 
@@ -1009,7 +1027,9 @@ func (db *goBuffer) DeleteRange(ctx storage.Context, TkBeg, TkEnd storage.TKey) 
 	if ctx == nil {
 		return fmt.Errorf("Received nil context in DeleteRange()")
 	}
+	db.mutex.Lock()
 	db.ops = append(db.ops, dbOp{delRangeOp, nil, nil, TkBeg, TkEnd, nil, nil, nil})
+	db.mutex.Unlock()
 
 	return nil
 }
