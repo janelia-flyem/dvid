@@ -101,9 +101,8 @@ func (s *rpcSocket) SendPostProc(command string, data []byte) error {
 	return s.sendMessage()
 }
 
-func (s *rpcSocket) SendKeyValue(desc string, store storage.DataStoreType, kv *storage.KeyValue) error {
+func (s *rpcSocket) SendKeyValue(desc string, kv *storage.KeyValue) error {
 	s.msg.Type = KeyValueType
-	s.msg.SType = store
 	s.msg.KV = kv
 	return s.sendMessage()
 }

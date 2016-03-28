@@ -2,13 +2,14 @@ package imageblk
 
 import (
 	"fmt"
+	"io"
+	"log"
+	"sync"
+
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
-	"io"
-	"log"
-	"sync"
 )
 
 // WriteBlock writes a subvolume or 2d image into a possibly intersecting block.
@@ -161,7 +162,7 @@ func (d *Data) PutVoxels(v dvid.VersionID, vox *Voxels, roiname dvid.InstanceNam
 
 	// extract buffer interface if it exists
 	var putbuffer storage.RequestBuffer
-	store, err := storage.MutableStore()
+	store, err := d.GetOrderedKeyValueDB()
 	if err != nil {
 		return fmt.Errorf("Data type imageblk had error initializing store: %v\n", err)
 	}
@@ -217,13 +218,9 @@ func (d *Data) PutVoxels(v dvid.VersionID, vox *Voxels, roiname dvid.InstanceNam
 
 // PutBlocks stores blocks of data in a span along X
 func (d *Data) PutBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int, data io.ReadCloser, mutate bool) error {
-	store, err := storage.MutableStore()
+	batcher, err := d.GetKeyValueBatcher()
 	if err != nil {
-		return fmt.Errorf("Data type imageblk had error initializing store: %v\n", err)
-	}
-	batcher, ok := store.(storage.KeyValueBatcher)
-	if !ok {
-		return fmt.Errorf("Data type imageblk requires batch-enabled store, which %q is not\n", store)
+		return err
 	}
 
 	ctx := datastore.NewVersionedCtx(d, v)
@@ -365,7 +362,7 @@ func (d *Data) putChunk(chunk *storage.Chunk, putbuffer storage.RequestBuffer) {
 		return
 	}
 
-	store, err := storage.MutableStore()
+	store, err := d.GetOrderedKeyValueDB()
 	if err != nil {
 		dvid.Errorf("Data type imageblk had error initializing store: %v\n", err)
 		return
@@ -468,13 +465,9 @@ const KVWriteSize = 500
 // TODO -- Clean up all the writing and simplify now that we have block-aligned writes.
 // writeBlocks ingests blocks of voxel data asynchronously using batch writes.
 func (d *Data) writeBlocks(v dvid.VersionID, b storage.TKeyValues, wg1, wg2 *sync.WaitGroup) error {
-	store, err := storage.MutableStore()
+	batcher, err := d.GetKeyValueBatcher()
 	if err != nil {
-		return fmt.Errorf("Data type imageblk had error initializing store: %v\n", err)
-	}
-	batcher, ok := store.(storage.KeyValueBatcher)
-	if !ok {
-		return fmt.Errorf("Data type imageblk requires batch-enabled store, which %q is not\n", store)
+		return err
 	}
 
 	preCompress, postCompress := 0, 0

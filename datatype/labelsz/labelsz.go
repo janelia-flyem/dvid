@@ -197,7 +197,7 @@ type Data struct {
 
 // GetSize returns the size in voxels of the given label.
 func (d *Data) GetSize(v dvid.VersionID, label uint64) (uint64, error) {
-	store, err := storage.MutableStore()
+	store, err := d.GetOrderedKeyValueDB()
 	if err != nil {
 		return 0, fmt.Errorf("Data type imagesz had error initializing store: %v\n", err)
 	}
@@ -226,7 +226,7 @@ func (d *Data) GetSize(v dvid.VersionID, label uint64) (uint64, error) {
 // GetSizeRange returns a JSON list of mapped labels that have volumes within the given range.
 // If maxSize is 0, all mapped labels are returned >= minSize.
 func (d *Data) GetSizeRange(v dvid.VersionID, minSize, maxSize uint64) (string, error) {
-	store, err := storage.MutableStore()
+	store, err := d.GetOrderedKeyValueDB()
 	if err != nil {
 		return "{}", fmt.Errorf("Data type imagesz had error initializing store: %v\n", err)
 	}

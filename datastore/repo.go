@@ -31,11 +31,14 @@ var (
 	ErrManagerNotInitialized = errors.New("datastore repo manager not initialized")
 	ErrBadMergeType          = errors.New("bad merge type")
 
-	ErrInvalidUUID     = errors.New("UUID is not present in datastore")
-	ErrInvalidVersion  = errors.New("server-specific version id is invalid")
-	ErrInvalidRepoID   = errors.New("server-specific repo id is invalid")
-	ErrExistingUUID    = errors.New("UUID already exists in datastore")
-	ErrInvalidDataName = errors.New("invalid data instance name")
+	ErrInvalidUUID         = errors.New("UUID is not present in datastore")
+	ErrInvalidVersion      = errors.New("server-specific version id is invalid")
+	ErrInvalidRepoID       = errors.New("server-specific repo id is invalid")
+	ErrExistingUUID        = errors.New("UUID already exists in datastore")
+	ErrInvalidDataName     = errors.New("invalid data instance name")
+	ErrInvalidDataInstance = errors.New("invalid data instance id")
+
+	ErrInvalidStore = errors.New("invalid data store")
 
 	ErrModifyLockedNode   = errors.New("can't modify locked node")
 	ErrBranchUnlockedNode = errors.New("can't branch an unlocked node")

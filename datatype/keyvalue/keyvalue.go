@@ -212,7 +212,7 @@ func (d *Data) GobEncode() ([]byte, error) {
 }
 
 func (d *Data) GetKeysInRange(ctx storage.Context, keyBeg, keyEnd string) ([]string, error) {
-	db, err := storage.MutableStore()
+	db, err := d.GetOrderedKeyValueDB()
 	if err != nil {
 		return nil, err
 	}
@@ -242,7 +242,7 @@ func (d *Data) GetKeysInRange(ctx storage.Context, keyBeg, keyEnd string) ([]str
 }
 
 func (d *Data) GetKeys(ctx storage.Context) ([]string, error) {
-	db, err := storage.MutableStore()
+	db, err := d.GetOrderedKeyValueDB()
 	if err != nil {
 		return nil, err
 	}
@@ -267,7 +267,7 @@ func (d *Data) GetKeys(ctx storage.Context) ([]string, error) {
 
 // GetData gets a value using a key
 func (d *Data) GetData(ctx storage.Context, keyStr string) ([]byte, bool, error) {
-	db, err := storage.MutableStore()
+	db, err := d.GetOrderedKeyValueDB()
 	if err != nil {
 		return nil, false, err
 	}
@@ -292,7 +292,7 @@ func (d *Data) GetData(ctx storage.Context, keyStr string) ([]byte, bool, error)
 
 // PutData puts a key-value at a given uuid
 func (d *Data) PutData(ctx storage.Context, keyStr string, value []byte) error {
-	db, err := storage.MutableStore()
+	db, err := d.GetOrderedKeyValueDB()
 	if err != nil {
 		return err
 	}
@@ -309,7 +309,7 @@ func (d *Data) PutData(ctx storage.Context, keyStr string, value []byte) error {
 
 // DeleteData deletes a key-value pair
 func (d *Data) DeleteData(ctx storage.Context, keyStr string) error {
-	db, err := storage.MutableStore()
+	db, err := d.GetOrderedKeyValueDB()
 	if err != nil {
 		return err
 	}

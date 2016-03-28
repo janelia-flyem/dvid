@@ -999,11 +999,11 @@ func (d *Data) PostTile(ctx storage.Context, w http.ResponseWriter, r *http.Requ
 	if err != nil {
 		return err
 	}
-	imstore, err := storage.ImmutableStore()
+	db, err := d.GetKeyValueDB()
 	if err != nil {
-		return fmt.Errorf("Cannot open immutable store: %v\n", err)
+		return fmt.Errorf("Cannot open imagetile store: %v\n", err)
 	}
-	return imstore.Put(ctx, NewTKeyByTileReq(req), data)
+	return db.Put(ctx, NewTKeyByTileReq(req), data)
 }
 
 // ServeTile returns a tile with appropriate Content-Type set.
@@ -1120,13 +1120,13 @@ func (d *Data) GetTile(ctx storage.Context, req TileReq) (image.Image, error) {
 
 // getTileData returns 2d tile data straight from storage without decoding.
 func (d *Data) getTileData(ctx storage.Context, req TileReq) ([]byte, error) {
-	imstore, err := storage.ImmutableStore()
+	db, err := d.GetKeyValueDB()
 	if err != nil {
 		return nil, err
 	}
 
 	// Retrieve the tile data from datastore
-	data, err := imstore.Get(ctx, NewTKeyByTileReq(req))
+	data, err := db.Get(ctx, NewTKeyByTileReq(req))
 	if err != nil {
 		return nil, fmt.Errorf("Error trying to GET from datastore: %v", err)
 	}
@@ -1219,9 +1219,9 @@ func (d *Data) extractTiles(v *imageblk.Voxels, offset dvid.Point, scale Scaling
 
 // Returns function that stores a tile as an optionally compressed PNG image.
 func (d *Data) putTileFunc(versionID dvid.VersionID) (outFunc, error) {
-	imstore, err := storage.ImmutableStore()
+	db, err := d.GetKeyValueDB()
 	if err != nil {
-		return nil, fmt.Errorf("Cannot open immutable store: %v\n", err)
+		return nil, fmt.Errorf("Cannot open imagetile store: %v\n", err)
 	}
 	ctx := datastore.NewVersionedCtx(d, versionID)
 
@@ -1244,7 +1244,7 @@ func (d *Data) putTileFunc(versionID dvid.VersionID) (outFunc, error) {
 		if err != nil {
 			return err
 		}
-		return imstore.Put(ctx, NewTKeyByTileReq(req), data)
+		return db.Put(ctx, NewTKeyByTileReq(req), data)
 	}, nil
 }
 

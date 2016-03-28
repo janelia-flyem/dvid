@@ -255,6 +255,10 @@ func (ctx *DataContext) InstanceVersion() dvid.InstanceVersion {
 	return dvid.InstanceVersion{ctx.data.DataName(), ctx.version}
 }
 
+func (ctx *DataContext) Data() dvid.Data {
+	return ctx.data
+}
+
 func (ctx *DataContext) DataName() dvid.InstanceName {
 	return ctx.data.DataName()
 }

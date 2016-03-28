@@ -869,7 +869,7 @@ func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, st
 	timedLog := dvid.NewTimeLog()
 	defer timedLog.Infof("SendBlocks %s, span %d", start, span)
 
-	store, err := storage.MutableStore()
+	store, err := d.GetOrderedKeyValueDB()
 	if err != nil {
 		return fmt.Errorf("Data type labelblk had error initializing store: %v\n", err)
 	}
@@ -928,7 +928,7 @@ func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, st
 }
 
 func (d *Data) DeleteBlocks(ctx *datastore.VersionedCtx, start dvid.ChunkPoint3d, span int) error {
-	store, err := storage.MutableStore()
+	store, err := d.GetOrderedKeyValueDB()
 	if err != nil {
 		return fmt.Errorf("Data type labelblk had error initializing store: %v\n", err)
 	}
@@ -1574,7 +1574,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 
 // GetLabelBlock returns a block of labels corresponding to the block coordinate.
 func (d *Data) GetLabelBlock(v dvid.VersionID, blockCoord dvid.ChunkPoint3d) ([]byte, error) {
-	store, err := storage.MutableStore()
+	store, err := d.GetOrderedKeyValueDB()
 	if err != nil {
 		return nil, err
 	}

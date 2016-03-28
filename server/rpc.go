@@ -24,6 +24,22 @@ const RPCHelpMessage = `Commands executed on the server (rpc address = %s):
 	shutdown
 
 	repos new  <alias> <description> [optional UUID]
+    
+	repo <UUID> push <remote DVID address> <settings...>
+
+		where <settings> are optional "key=value" strings that provide:
+
+		roi=<roiname>
+		data=<data1>[,<data2>[,<data3>...]]
+        transmit=[all | flatten | deltas]
+        
+        A transmit "all" will send the entire repo (all versions).
+        A transmit "flatten" will send just the version specified and
+            flatten the key/values so there is no history.
+        A transmit "deltas" (default behavior) sends the version and
+            all ancestor deltas necessary to synchronize that portion
+            of the DAG with the remote DVID server.
+
 
 	repo <UUID> branch [optional UUID]
 
@@ -220,16 +236,13 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 			datastore.AddToRepoLog(uuid, []string{cmd.String()})
 
 		case "push":
-			/*
-				var target string
-				cmd.CommandArgs(3, &target)
-				config := cmd.Settings()
-				if err = datastore.Push(repo, target, config); err != nil {
-					return err
-				}
-				reply.Text = fmt.Sprintf("Repo %q pushed to %q\n", repo.RootUUID(), target)
-			*/
-			return fmt.Errorf("push command has been temporarily suspended")
+			var target string
+			cmd.CommandArgs(3, &target)
+			config := cmd.Settings()
+			if err = datastore.Push(uuid, target, config); err != nil {
+				return err
+			}
+			reply.Text = fmt.Sprintf("Repo %s pushed to %q\n", uuid, target)
 		default:
 			return fmt.Errorf("Unknown command: %q", cmd)
 		}

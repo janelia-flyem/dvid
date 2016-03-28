@@ -23,7 +23,7 @@ const (
 
 type testStoreT struct {
 	sync.Mutex
-	config *dvid.StoreConfig
+	config map[string]dvid.StoreConfig
 }
 
 var (
@@ -45,21 +45,20 @@ func NewTestRepo() (dvid.UUID, dvid.VersionID) {
 }
 
 // GetTestStoreConfig returns a configuration, amenable to testing, based on compiled-in engines.
-func GetTestStoreConfig() (*dvid.StoreConfig, error) {
+func GetTestStoreConfig() (map[string]dvid.StoreConfig, error) {
 	testableEng := storage.GetTestableEngine()
 	if testableEng == nil {
 		return nil, fmt.Errorf("Could not find a storage engine that was testable")
 	}
-
+	testConfig := make(map[string]dvid.StoreConfig, 1)
 	if testableEng.GetName() == "bigtable" {
-
 		testSrv, err := bttest.NewServer() //TODO close the testSrv if neccesary
 		if err != nil {
 			return nil, fmt.Errorf("Unable to create bigTable local test server. %v", err)
 		}
 
 		table := fmt.Sprintf("dvid-test-%x", uuid.NewV4().Bytes())
-		engConfig := dvid.EngineConfig{Engine: testableEng.GetName(),
+		testConfig["default"] = dvid.StoreConfig{Engine: testableEng.GetName(),
 			Project: "project",
 			Zone:    "zone",
 			Cluster: "cluster",
@@ -67,13 +66,11 @@ func GetTestStoreConfig() (*dvid.StoreConfig, error) {
 			Testing: true,
 			TestSrv: testSrv,
 		}
-
-		return &dvid.StoreConfig{Mutable: engConfig}, nil
 	} else {
 		dbname := fmt.Sprintf("dvid-test-%x", uuid.NewV4().Bytes())
-		engConfig := dvid.EngineConfig{Engine: testableEng.GetName(), Path: dbname, Testing: true}
-		return &dvid.StoreConfig{Mutable: engConfig}, nil
+		testConfig["default"] = dvid.StoreConfig{Engine: testableEng.GetName(), Path: dbname, Testing: true}
 	}
+	return testConfig, nil
 }
 
 func openStore(create bool) {
@@ -115,7 +112,7 @@ func CloseTest() {
 	if testableEng == nil {
 		log.Fatalf("Could not find a storage engine that was testable")
 	}
-	testableEng.Delete(testStore.config.Mutable)
+	testableEng.Delete(testStore.config["default"])
 
 	testStore.Unlock()
 }

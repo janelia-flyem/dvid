@@ -21,7 +21,6 @@ import (
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/roi"
 	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/janelia-flyem/dvid/message"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
 )
@@ -1033,15 +1032,6 @@ func (d *Data) ModifyConfig(config dvid.Config) error {
 	return nil
 }
 
-type SendOp struct {
-	socket message.Socket
-}
-
-// Stub for versioned sync to remote DVID.
-func (d *Data) Send(s message.Socket, roiname string, uuid dvid.UUID) error {
-	return fmt.Errorf("Versioned inter-DVID syncs not supported yet")
-}
-
 // ForegroundROI creates a new ROI by determining all non-background blocks.
 func (d *Data) ForegroundROI(req datastore.Request, reply *datastore.Response) error {
 	if d.Values.BytesPerElement() != 1 {
@@ -1094,7 +1084,7 @@ func (d *Data) ForegroundROI(req datastore.Request, reply *datastore.Response) e
 func (d *Data) foregroundROI(v dvid.VersionID, dest *roi.Data, background dvid.PointNd) {
 	dest.SetReady(v, false)
 
-	store, err := storage.MutableStore()
+	store, err := d.GetOrderedKeyValueDB()
 	if err != nil {
 		dvid.Criticalf("Data type imageblk had error initializing store: %v\n", err)
 		return

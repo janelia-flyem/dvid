@@ -92,7 +92,7 @@ func (q PostProcQueue) Run() {
 	}
 }
 
-// OpTYpe specifies the type of message being transmitted.
+// OpType specifies the type of message being transmitted.
 type OpType uint8
 
 const (
@@ -147,7 +147,6 @@ type Message struct {
 	Type    OpType
 	Name    string
 	Session string
-	SType   storage.DataStoreType
 	KV      *storage.KeyValue
 	Data    []byte
 }
@@ -155,6 +154,6 @@ type Message struct {
 type Socket interface {
 	SendCommand(command string) error
 	SendPostProc(command string, data []byte) error
-	SendKeyValue(desc string, store storage.DataStoreType, kv *storage.KeyValue) error
+	SendKeyValue(desc string, kv *storage.KeyValue) error
 	SendBinary(desc string, data []byte) error
 }

@@ -36,7 +36,7 @@ func (d *Data) GetSyncSubs(syncData dvid.Data) []datastore.SyncSub {
 }
 
 func (d *Data) handleSizeEvent(in <-chan datastore.SyncMessage, done <-chan struct{}) {
-	store, err := storage.MutableStore()
+	store, err := d.GetOrderedKeyValueDB()
 	if err != nil {
 		dvid.Errorf("Data type labelvol had error initializing store: %v\n", err)
 		return

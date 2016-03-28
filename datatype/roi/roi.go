@@ -252,21 +252,21 @@ type Data struct {
 }
 
 func (d *Data) SetReady(versionID dvid.VersionID, set bool) {
-    if d.ready == nil {
-        d.ready = make(map[dvid.VersionID]bool)
-    }
-    d.ready[versionID] = set
+	if d.ready == nil {
+		d.ready = make(map[dvid.VersionID]bool)
+	}
+	d.ready[versionID] = set
 }
 
 func (d *Data) IsReady(versionID dvid.VersionID) bool {
-    if len(d.ready) == 0 {
-        return false
-    }
-    ready, found := d.ready[versionID]
-    if !found {
-        return false
-    }
-    return ready
+	if len(d.ready) == 0 {
+		return false
+	}
+	ready, found := d.ready[versionID]
+	if !found {
+		return false
+	}
+	return ready
 }
 
 // Equals returns false if any version of the ROI is different in terms of readiness or the properties of the ROI
@@ -392,8 +392,8 @@ func maxIndexByBlockZ(z int32) indexRLE {
 }
 
 // Returns all (z, y, x0, x1) Spans in sorted order: z, then y, then x0.
-func getSpans(ctx storage.VersionedCtx, minIndex, maxIndex indexRLE) ([]dvid.Span, error) {
-	db, err := storage.MutableStore()
+func getSpans(ctx *datastore.VersionedCtx, minIndex, maxIndex indexRLE) ([]dvid.Span, error) {
+	db, err := ctx.GetOrderedKeyValueDB()
 	if err != nil {
 		return nil, err
 	}
@@ -422,13 +422,13 @@ func getSpans(ctx storage.VersionedCtx, minIndex, maxIndex indexRLE) ([]dvid.Spa
 }
 
 // Returns all (z, y, x0, x1) Spans in sorted order: z, then y, then x0.
-func GetSpans(ctx storage.VersionedCtx) ([]dvid.Span, error) {
+func GetSpans(ctx *datastore.VersionedCtx) ([]dvid.Span, error) {
 	return getSpans(ctx, minIndexRLE, maxIndexRLE)
 }
 
 // Get returns a JSON-encoded byte slice of the ROI in the form of 4-Spans,
 // where each Span is [z, y, xstart, xend]
-func Get(ctx storage.VersionedCtx) ([]byte, error) {
+func Get(ctx *datastore.VersionedCtx) ([]byte, error) {
 	spans, err := GetSpans(ctx)
 	if err != nil {
 		return nil, err
@@ -442,7 +442,7 @@ func Get(ctx storage.VersionedCtx) ([]byte, error) {
 
 // Deletes an ROI.
 func (d *Data) Delete(ctx storage.VersionedCtx) error {
-	db, err := storage.MutableStore()
+	db, err := d.GetOrderedKeyValueDB()
 	if err != nil {
 		return err
 	}
@@ -470,12 +470,11 @@ func (d *Data) Delete(ctx storage.VersionedCtx) error {
 // writing these spans.
 func (d *Data) PutSpans(versionID dvid.VersionID, spans []dvid.Span, init bool) error {
 	ctx := datastore.NewVersionedCtx(d, versionID)
-	db, err := storage.MutableStore()
+	db, err := d.GetOrderedKeyValueDB()
 	if err != nil {
 		return err
 	}
-    d.SetReady(versionID, false)
-
+	d.SetReady(versionID, false)
 
 	// Delete the old key/values
 	if init {
@@ -569,7 +568,7 @@ func voxelRange(blockSize, begBlock, endBlock, begVoxel, endVoxel int32) (int32,
 
 // GetMask returns a binary volume of subvol size where each element is 1 if inside the ROI
 // and 0 if outside the ROI.
-func (d *Data) GetMask(ctx storage.VersionedCtx, subvol *dvid.Subvolume) ([]byte, error) {
+func (d *Data) GetMask(ctx *datastore.VersionedCtx, subvol *dvid.Subvolume) ([]byte, error) {
 	pt0 := subvol.StartPoint()
 	pt1 := subvol.EndPoint()
 	minBlockZ := pt0.Value(2) / d.BlockSize[2]
@@ -655,7 +654,7 @@ func seekSpan(pt dvid.ChunkPoint3d, spans []dvid.Span, curSpanI int) (int, bool)
 
 // PointQuery checks if a JSON-encoded list of voxel points are within an ROI.
 // It returns a JSON list of bools, each corresponding to the original list of points.
-func (d *Data) PointQuery(ctx storage.VersionedCtx, jsonBytes []byte) ([]byte, error) {
+func (d *Data) PointQuery(ctx *datastore.VersionedCtx, jsonBytes []byte) ([]byte, error) {
 	list, err := dvid.ListChunkPoint3dFromVoxels(jsonBytes, d.BlockSize)
 	if err != nil {
 		return nil, err
@@ -968,7 +967,7 @@ func (d *Data) Partition(ctx storage.Context, batchsize int32) ([]byte, error) {
 
 	layer := d.newLayer(layerBegZ, layerEndZ)
 
-	db, err := storage.MutableStore()
+	db, err := d.GetOrderedKeyValueDB()
 	if err != nil {
 		return nil, err
 	}
@@ -1110,7 +1109,7 @@ func (d *Data) SimplePartition(ctx storage.Context, batchsize int32) ([]byte, er
 
 	layer := d.newLayer(layerBegZ, layerEndZ)
 
-	db, err := storage.MutableStore()
+	db, err := d.GetOrderedKeyValueDB()
 	if err != nil {
 		return nil, err
 	}

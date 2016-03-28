@@ -567,7 +567,7 @@ const (
 )
 
 func getElements(ctx *datastore.VersionedCtx, tk storage.TKey) (Elements, error) {
-	store, err := storage.MutableStore()
+	store, err := ctx.GetOrderedKeyValueDB()
 	if err != nil {
 		return nil, err
 	}
@@ -590,7 +590,7 @@ func putElements(ctx *datastore.VersionedCtx, tk storage.TKey, elems Elements) e
 	if err != nil {
 		return err
 	}
-	store, err := storage.MutableStore()
+	store, err := ctx.GetOrderedKeyValueDB()
 	if err != nil {
 		return err
 	}
@@ -922,9 +922,9 @@ func (d *Data) storeLabelElements(ctx *datastore.VersionedCtx, be blockElements)
 	if labelData == nil {
 		return nil // no synced labels
 	}
-	store, err := storage.MutableStore()
+	store, err := d.BackendStore()
 	if err != nil {
-		return fmt.Errorf("Data type annotation had error initializing store: %v\n", err)
+		return err
 	}
 	batcher, ok := store.(storage.KeyValueBatcher)
 	if !ok {
@@ -1021,9 +1021,9 @@ func (d *Data) GetTagSynapses(ctx *datastore.VersionedCtx, tag Tag) (Elements, e
 
 // GetRegionSynapses returns synapse elements for a given subvolume of image space.
 func (d *Data) GetRegionSynapses(ctx *datastore.VersionedCtx, ext *dvid.Extents3d) (Elements, error) {
-	store, err := storage.MutableStore()
+	store, err := d.GetOrderedKeyValueDB()
 	if err != nil {
-		return nil, fmt.Errorf("Data type synapse had error initializing store: %v\n", err)
+		return nil, err
 	}
 
 	// Setup block bounds for synapse element query in supplied Z range.

@@ -8,8 +8,7 @@
 	Repo to determine keys for the shared storage engine.
 
 	For a clustered, non-cloud (i.e., run locally as opposed to at Google or Amazon) group of
-	DVID servers, we can either use Consul for the MetadataStore or a compbination of
-	Groupcache + a clustered MetadataStore.
+	DVID servers, we can use Consul, etcd, or some other in-memory distributed kv store.
 */
 
 package datastore

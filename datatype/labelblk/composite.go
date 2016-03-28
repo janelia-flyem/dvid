@@ -77,7 +77,7 @@ func (d *Data) CreateComposite(request datastore.Request, reply *datastore.Respo
 	op := &blockOp{grayscale, composite, v}
 	chunkOp := &storage.ChunkOp{op, wg}
 
-	store, err := storage.MutableStore()
+	store, err := d.GetOrderedKeyValueDB()
 	if err != nil {
 		return err
 	}
@@ -153,9 +153,9 @@ func (d *Data) createCompositeChunk(chunk *storage.Chunk) {
 	}
 
 	// Get the corresponding grayscale block.
-	store, err := storage.MutableStore()
+	store, err := op.grayscale.GetOrderedKeyValueDB()
 	if err != nil {
-		dvid.Errorf("Unable to retrieve big data store: %s\n", err)
+		dvid.Errorf("Unable to retrieve store for %q: %v\n", op.grayscale.DataName(), err)
 		return
 	}
 	grayscaleCtx := datastore.NewVersionedCtx(op.grayscale, op.versionID)

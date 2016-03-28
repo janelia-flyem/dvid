@@ -137,14 +137,9 @@ func (d *Data) initSyncLabelvol(name dvid.InstanceName) datastore.SyncSubs {
 
 // Processes each labelblk change as we get it.
 func (d *Data) handleBlockEvent(in <-chan datastore.SyncMessage, done <-chan struct{}) {
-	store, err := storage.MutableStore()
+	batcher, err := d.GetKeyValueBatcher()
 	if err != nil {
-		dvid.Errorf("Data type labelvol had error initializing store: %v\n", err)
-		return
-	}
-	batcher, ok := store.(storage.KeyValueBatcher)
-	if !ok {
-		dvid.Errorf("Data type labelvol requires batch-enabled store, which %q is not\n", store)
+		dvid.Errorf("handleBlockEvent %v\n", err)
 		return
 	}
 
@@ -361,17 +356,11 @@ func (d *Data) deleteBlock(ctx *datastore.VersionedCtx, block labels.DeleteBlock
 
 // If one or more labels are merged, remove old label->elements k/v and add to target label.
 func (d *Data) syncMerge(in <-chan datastore.SyncMessage, done <-chan struct{}) {
-	store, err := storage.MutableStore()
+	batcher, err := d.GetKeyValueBatcher()
 	if err != nil {
-		dvid.Errorf("Data type annotation had error initializing store: %v\n", err)
+		dvid.Errorf("syncMerge %v\n", err)
 		return
 	}
-	batcher, ok := store.(storage.KeyValueBatcher)
-	if !ok {
-		err = fmt.Errorf("Data type annotation requires batch-enabled store, which %q is not\n", store)
-		return
-	}
-
 	for msg := range in {
 		select {
 		case <-done:
@@ -437,14 +426,9 @@ func (d *Data) mergeLabels(batcher storage.KeyValueBatcher, v dvid.VersionID, op
 }
 
 func (d *Data) syncSplit(in <-chan datastore.SyncMessage, done <-chan struct{}) {
-	store, err := storage.MutableStore()
+	batcher, err := d.GetKeyValueBatcher()
 	if err != nil {
-		dvid.Errorf("Data type labelblk had error initializing store: %v\n", err)
-		return
-	}
-	batcher, ok := store.(storage.KeyValueBatcher)
-	if !ok {
-		err = fmt.Errorf("Data type labelblk requires batch-enabled store, which %q is not\n", store)
+		dvid.Errorf("syncSplit: %v\n", err)
 		return
 	}
 	for msg := range in {

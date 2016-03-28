@@ -41,7 +41,7 @@ type tomlConfig struct {
 	Server  serverConfig
 	Email   emailConfig
 	Logging dvid.LogConfig
-	Store   dvid.StoreConfig
+	Store   map[string]dvid.StoreConfig
 }
 
 func (c *tomlConfig) HTTPAddress() string {
@@ -82,7 +82,7 @@ func (e emailConfig) Host() string {
 	return fmt.Sprintf("%s:%d", e.Server, e.Port)
 }
 
-func LoadConfig(filename string) (*datastore.InstanceConfig, *dvid.LogConfig, *dvid.StoreConfig, error) {
+func LoadConfig(filename string) (*datastore.InstanceConfig, *dvid.LogConfig, map[string]dvid.StoreConfig, error) {
 	if filename == "" {
 		return nil, nil, nil, fmt.Errorf("No server TOML configuration file provided")
 	}
@@ -93,7 +93,7 @@ func LoadConfig(filename string) (*datastore.InstanceConfig, *dvid.LogConfig, *d
 	// The server config could be local, cluster, gcloud-specific config.  Here it is local.
 	config = &tc
 	ic := datastore.InstanceConfig{tc.Server.IIDGen, dvid.InstanceID(tc.Server.IIDStart)}
-	return &ic, &(tc.Logging), &(tc.Store), nil
+	return &ic, &(tc.Logging), tc.Store, nil
 }
 
 type emailData struct {

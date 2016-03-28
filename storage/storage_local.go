@@ -15,12 +15,12 @@ var manager managerT
 type managerT struct {
 	setup bool
 
-	// Tiers
-	metadata  MetaDataStorer
-	mutable   MutableStorer
-	immutable ImmutableStorer
+	// cache the default stores at both global and datatype level
+	defaultStore  dvid.Store
+	metadataStore dvid.Store
+	datatypeStore map[dvid.TypeString]dvid.Store
 
-	uniqueDBs []Closer // Keep track of unique stores for closing.
+	uniqueDBs []dvid.Store // Keep track of unique stores for closing.
 
 	// Cached type-asserted interfaces
 	graphEngine Engine
@@ -29,32 +29,66 @@ type managerT struct {
 	graphGetter GraphGetter
 }
 
-func MetaDataStore() (MetaDataStorer, error) {
+func DefaultStore() (dvid.Store, error) {
 	if !manager.setup {
-		return nil, fmt.Errorf("Key-value store not initialized before requesting MetaDataStore")
+		return nil, fmt.Errorf("Storage manager not initialized before requesting default store")
 	}
-	return manager.metadata, nil
+	if manager.defaultStore == nil {
+		return nil, fmt.Errorf("No default store has been initialized")
+	}
+	return manager.defaultStore, nil
 }
 
-func MutableStore() (MutableStorer, error) {
+func MetaDataKVStore() (OrderedKeyValueDB, error) {
 	if !manager.setup {
-		return nil, fmt.Errorf("Key-value store not initialized before requesting MutableStore")
+		return nil, fmt.Errorf("Storage manager not initialized before requesting MetaDataStore")
 	}
-	return manager.mutable, nil
+	kvstore, ok := manager.metadataStore.(OrderedKeyValueDB)
+	if !ok {
+		return nil, fmt.Errorf("Metadata store %q is not an ordered key-value store!", manager.metadataStore)
+	}
+	return kvstore, nil
 }
 
-func ImmutableStore() (ImmutableStorer, error) {
+func DefaultKVStore() (KeyValueDB, error) {
 	if !manager.setup {
-		return nil, fmt.Errorf("Key-value store not initialized before requesting ImmutableStorer")
+		return nil, fmt.Errorf("Storage manager not initialized before requesting DefaultStore")
 	}
-	return manager.immutable, nil
+	kvstore, ok := manager.defaultStore.(KeyValueDB)
+	if !ok {
+		return nil, fmt.Errorf("Default store %q is not a key-value store!", manager.defaultStore)
+	}
+	return kvstore, nil
+}
+
+func DefaultOrderedKVStore() (OrderedKeyValueDB, error) {
+	if !manager.setup {
+		return nil, fmt.Errorf("Storage manager not initialized before requesting DefaultStore")
+	}
+	kvstore, ok := manager.defaultStore.(OrderedKeyValueDB)
+	if !ok {
+		return nil, fmt.Errorf("Default store %q is not an ordered key-value store!", manager.defaultStore)
+	}
+	return kvstore, nil
 }
 
 func GraphStore() (GraphDB, error) {
 	if !manager.setup {
-		return nil, fmt.Errorf("Graph DB not initialized before requesting it")
+		return nil, fmt.Errorf("Storage manager not initialized before requesting GraphStore")
 	}
 	return manager.graphDB, nil
+}
+
+// GetAssignedStore returns the store assigned to a particular datatype.
+func GetAssignedStore(typename dvid.TypeString) (dvid.Store, error) {
+	if !manager.setup {
+		return nil, fmt.Errorf("Storage manager not initialized before requesting store for %s", typename)
+	}
+	store, found := manager.datatypeStore[typename]
+	if !found {
+		return manager.defaultStore, nil
+	}
+	return store, nil
 }
 
 // Close handles any storage-specific shutdown procedures.
@@ -67,115 +101,114 @@ func Close() {
 	}
 }
 
+// check if this configuration has already been setup; if not, setup and record availability
+func addUniqueDB(c dvid.StoreConfig) (dvid.Store, bool, error) {
+	// Check if this store configuration already has been setup
+	for _, db := range manager.uniqueDBs {
+		if db.Equal(c) {
+			return db, false, nil
+		}
+	}
+
+	// Open new store given this configuration
+	db, created, err := NewStore(c)
+	if err != nil {
+		manager.uniqueDBs = append(manager.uniqueDBs, db)
+	}
+	return db, created, err
+}
+
 // Initialize the storage systems.  Returns a bool + error where the bool is
 // true if the metadata store is newly created and needs initialization.
-func Initialize(cmdline dvid.Config, sc *dvid.StoreConfig) (created bool, err error) {
-	// Initialize the proper engines.
-	engine := GetEngine(sc.Mutable.Engine)
-	if engine == nil {
-		return false, fmt.Errorf("Can't get mutable store %q", sc.Mutable.Engine)
+// The map of store configurations should be keyed by either a datatype name,
+// "default", or "metadata".
+func Initialize(cmdline dvid.Config, sc map[string]dvid.StoreConfig) (created bool, err error) {
+	// Get required default store.
+	defaultConfig, found := sc["default"]
+	if !found {
+		return false, fmt.Errorf("storage.default needs to be set in configuration TOML file")
 	}
-	mutableEng, ok := engine.(MutableEngine)
-	if !ok {
-		return false, fmt.Errorf("Mutable engine %q does not support NewMutableStore()", sc.Mutable.Engine)
-	}
-	mutableDB, newMutable, err := mutableEng.NewMutableStore(sc.Mutable)
+	var defaultStore dvid.Store
+	defaultStore, created, err = NewStore(defaultConfig)
 	if err != nil {
-		return false, err
+		return
 	}
-	manager.uniqueDBs = []Closer{mutableDB}
+	manager.defaultStore = defaultStore
+	manager.uniqueDBs = []dvid.Store{defaultStore}
 
-	var metadataDB MetaDataStorer
-	var newMetadata bool
-	engine = GetEngine(sc.MetaData.Engine)
-	if engine == nil {
-		// Reuse mutable.
-		metadataDB, ok = mutableDB.(MetaDataStorer)
-		if !ok {
-			return false, fmt.Errorf("No MetaData store specified and Mutable store %q cannot fulfill interface", sc.Mutable.Engine)
-		}
-		dvid.Infof("No dedicated MetaData store.  Using mutable store %q\n", sc.Mutable.Engine)
-		newMetadata = newMutable
-	} else {
-		metadataEng, ok := engine.(MetaDataEngine)
-		if !ok {
-			return false, fmt.Errorf("MetaData engine %q does not support NewMetaDataStore()", sc.MetaData.Engine)
-		}
-		metadataDB, newMetadata, err = metadataEng.NewMetaDataStore(sc.MetaData)
+	// Was a metadata store configured?
+	var metadataStore dvid.Store
+	metadataConfig, found := sc["metadata"]
+	if found && !defaultStore.Equal(metadataConfig) {
+		metadataStore, created, err = addUniqueDB(metadataConfig)
 		if err != nil {
-			return false, err
+			return
 		}
-		manager.uniqueDBs = append(manager.uniqueDBs, metadataDB)
-	}
-
-	var immutableDB ImmutableStorer
-	engine = GetEngine(sc.Immutable.Engine)
-	if engine == nil {
-		// Reuse mutable.
-		immutableDB, ok = mutableDB.(ImmutableStorer)
-		if !ok {
-			return false, fmt.Errorf("No MetaData store specified and Mutable store %q cannot fulfill interface", sc.Mutable.Engine)
-		}
-		dvid.Infof("No dedicated Immutable store.  Using mutable store %q\n", sc.Mutable.Engine)
 	} else {
-		immutableEng, ok := engine.(ImmutableEngine)
-		if !ok {
-			return false, fmt.Errorf("Immutable engine %q does not support NewImmutableStore()", sc.Immutable.Engine)
-		}
-		immutableDB, _, err = immutableEng.NewImmutableStore(sc.Immutable)
-		if err != nil {
-			return false, err
-		}
-		manager.uniqueDBs = append(manager.uniqueDBs, immutableDB)
+		metadataStore = defaultStore
 	}
+	manager.metadataStore = metadataStore
 
-	// Initialize the stores using the engines.
-	manager.metadata = metadataDB
-	manager.mutable = mutableDB
-	manager.immutable = immutableDB
-
+	// Load any datatype-specific stores, checking to see if it's already handled.
+	for name, c := range sc {
+		if name == "default" || name == "metadata" {
+			continue
+		}
+		var store dvid.Store
+		store, _, err = addUniqueDB(c)
+		if err != nil {
+			return
+		}
+		manager.datatypeStore[dvid.TypeString(name)] = store
+	}
 	manager.setup = true
 
-	// Setup the graph store using mutable store.
-	kvDB, ok := mutableDB.(OrderedKeyValueDB)
-	if !ok {
-		return false, fmt.Errorf("Mutable DB %q is not a valid ordered key-value database", mutableDB)
+	// Setup the graph store
+	var store dvid.Store
+	store, err = GetAssignedStore("labelgraph")
+	if err != nil {
+		return
 	}
-
-	manager.graphDB, err = NewGraphStore(kvDB)
+	var ok bool
+	kvdb, ok := store.(OrderedKeyValueDB)
+	if !ok {
+		return false, fmt.Errorf("assigned labelgraph store %q isn't ordered kv db", store)
+	}
+	manager.graphDB, err = NewGraphStore(kvdb)
 	if err != nil {
 		return false, err
 	}
 	manager.graphSetter, ok = manager.graphDB.(GraphSetter)
 	if !ok {
-		return false, fmt.Errorf("Database %q cannot support a graph setter", kvDB)
+		return false, fmt.Errorf("Database %q cannot support a graph setter", kvdb)
 	}
 	manager.graphGetter, ok = manager.graphDB.(GraphGetter)
 	if !ok {
-		return false, fmt.Errorf("Database %q cannot support a graph getter", kvDB)
+		return false, fmt.Errorf("Database %q cannot support a graph getter", kvdb)
 	}
-	return newMetadata, nil
+	return
 }
 
-// DeleteDataInstance removes a data instance across all versions and tiers of storage.
+// DeleteDataInstance removes a data instance.
 func DeleteDataInstance(data dvid.Data) error {
 	if !manager.setup {
 		return fmt.Errorf("Can't delete data instance %q before storage manager is initialized", data.DataName())
 	}
 
-	// Determine all database tiers that are distinct.
-	dbs := []OrderedKeyValueDB{manager.mutable}
-	if manager.mutable != manager.immutable {
-		dbs = append(dbs, manager.immutable)
+	// Get the store for the data instance.
+	store, err := data.BackendStore()
+	if err != nil {
+		return err
+	}
+	db, ok := store.(OrderedKeyValueDB)
+	if !ok {
+		return fmt.Errorf("store assigned to data %q is not an ordered kv db with ability to delete all", data.DataName())
 	}
 
-	// For each storage tier, remove all key-values with the given instance id.
 	dvid.Infof("Starting delete of instance %d: name %q, type %s\n", data.InstanceID(), data.DataName(), data.TypeName())
 	ctx := NewDataContext(data, 0)
-	for _, db := range dbs {
-		if err := db.DeleteAll(ctx, true); err != nil {
-			return err
-		}
+	if err := db.DeleteAll(ctx, true); err != nil {
+		return err
 	}
 	return nil
 }

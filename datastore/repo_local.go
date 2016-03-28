@@ -76,7 +76,7 @@ func Initialize(initMetadata bool, iconfig *InstanceConfig) error {
 	}
 
 	var err error
-	m.store, err = storage.MetaDataStore()
+	m.store, err = storage.MetaDataKVStore()
 	if err != nil {
 		return err
 	}
@@ -127,7 +127,7 @@ func ReloadMetadata() error {
 	}
 
 	var err error
-	m.store, err = storage.MetaDataStore()
+	m.store, err = storage.MetaDataKVStore()
 	if err != nil {
 		return err
 	}
@@ -191,7 +191,7 @@ type repoManager struct {
 	instanceIDStart dvid.InstanceID
 
 	// Verified metadata storage for ease of use.
-	store storage.MetaDataStorer
+	store storage.OrderedKeyValueDB
 
 	// Mutexes for concurrent use of ids and their maps.
 	idMutex sync.RWMutex
@@ -639,6 +639,29 @@ func (m *repoManager) matchingUUID(str string) (dvid.UUID, dvid.VersionID, error
 		err = fmt.Errorf("Could not find UUID with partial match to %s!", str)
 	}
 	return bestUUID, bestVersion, err
+}
+
+// addRepo adds a preallocated repo then persists the repo to metadata store.
+func (m *repoManager) addRepo(r *repoT) error {
+	m.Lock()
+	defer m.Unlock()
+
+	m.repos[r.uuid] = r
+	m.repoToUUID[r.id] = r.uuid
+	for _, dataservice := range r.data {
+		iid := dataservice.InstanceID()
+		m.iids[iid] = dataservice
+	}
+	for v, node := range r.dag.nodes {
+		m.versionToUUID[v] = node.uuid
+		m.uuidToVersion[node.uuid] = v
+	}
+
+	// Persist the changes
+	if err := m.putCaches(); err != nil {
+		return err
+	}
+	return r.save()
 }
 
 func (m *repoManager) deleteRepo(uuid dvid.UUID) error {
@@ -1987,7 +2010,7 @@ func (dag *dagT) getParents(v dvid.VersionID) ([]dvid.VersionID, error) {
 }
 
 func (dag *dagT) deleteDataInstance(name dvid.InstanceName) {
-	for i, _ := range dag.nodes {
+	for i := range dag.nodes {
 		delete(dag.nodes[i].avail, name)
 	}
 }

@@ -117,27 +117,14 @@ func (e Engine) String() string {
 	return fmt.Sprintf("%s [%s]", e.name, e.semver)
 }
 
-// NewMetaDataStore returns a leveldb suitable for MetaData storage.
-// The passed Config must contain "path" string and "create" bool.
-func (e Engine) NewMetaDataStore(config dvid.EngineConfig) (storage.MetaDataStorer, bool, error) {
+// NewStore returns a leveldb. The passed Config must contain "path" string.
+func (e Engine) NewStore(config dvid.StoreConfig) (dvid.Store, bool, error) {
 	return e.newLevelDB(config)
 }
 
-// NewMutableStore returns a leveldb suitable for mutable storage.
-// The passed Config must contain "path" string and "create" bool.
-func (e Engine) NewMutableStore(config dvid.EngineConfig) (storage.MutableStorer, bool, error) {
-	return e.newLevelDB(config)
-}
-
-// NewImmutableStore returns a leveldb suitable for immutable storage.
-// The passed Config must contain "path" string and "create" bool.
-func (e Engine) NewImmutableStore(config dvid.EngineConfig) (storage.ImmutableStorer, bool, error) {
-	return e.newLevelDB(config)
-}
-
-// newLevelDB returns a leveldb backend.  If create is true, the leveldb
-// will be created at the path if it doesn't already exist.
-func (e Engine) newLevelDB(config dvid.EngineConfig) (*LevelDB, bool, error) {
+// newLevelDB returns a leveldb backend, creating leveldb
+// at the path if it doesn't already exist.
+func (e Engine) newLevelDB(config dvid.StoreConfig) (*LevelDB, bool, error) {
 	// Create path depending on whether it is testing database or not.
 	path := config.Path
 	if config.Testing {
@@ -201,7 +188,7 @@ func (e Engine) Repair(path string) error {
 
 // Delete implements the TestableEngine interface by providing a way to dispose
 // of testing databases.
-func (e Engine) Delete(config dvid.EngineConfig) error {
+func (e Engine) Delete(config dvid.StoreConfig) error {
 	// Create path depending on whether it is testing database or not.
 	path := config.Path
 	if config.Testing {
@@ -228,7 +215,7 @@ type LevelDB struct {
 	directory string
 
 	// Config at time of Open()
-	config dvid.EngineConfig
+	config dvid.StoreConfig
 
 	options *leveldbOptions
 	ldb     *levigo.DB
@@ -339,6 +326,14 @@ func (db *LevelDB) Close() {
 		db.ldb = nil
 		db.options = nil
 	}
+}
+
+// Equal returns true if the leveldb matches the given store configuration.
+func (db *LevelDB) Equal(c dvid.StoreConfig) bool {
+	if db.directory == c.Path {
+		return true
+	}
+	return false
 }
 
 // ---- OrderedKeyValueGetter interface ------

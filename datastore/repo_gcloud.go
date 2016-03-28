@@ -7,7 +7,7 @@
 	a Repo must be easily synced across distributed systems, each of which will be using the
 	Repo to determine keys for the shared storage engine.
 
-	For the Google cloud implementation, we use the memcache and datastore APIs to implement
+	For the Google cloud implementation, we would use the memcache and datastore APIs to implement
 	the MetadataStore.
 */
 

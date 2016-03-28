@@ -27,11 +27,18 @@ max_log_size = 500 # MB
 max_log_age = 30   # days
 
 [store]   
-    # if no store.metadata is provided, it defaults to store.mutable configuration
-    [store.mutable]
+    # Stores can be specified in three ways (default setting required):
+    # store.default  = default storage engine if not otherwise specified
+    # store.metadata = configuration for metadata store
+    # store.datatype = storage engine to use for the given "datatype"
+    #
+    # TODO: Individual data instances will be able to have an assigned
+    #   storage engine at the time of creation.
+    
+    [store.default]
     engine = "basholeveldb"
     path = "/demo/dbs/basholeveldb"
 
-    [store.immutable]
+    [store.imagetile]
     engine = "kvautobus"
     path = "http://tem-dvid.int.janelia.org:9000"

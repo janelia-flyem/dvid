@@ -196,8 +196,9 @@ func ClientIDFromBytes(b []byte) ClientID {
 }
 
 // Data is the minimal interface for datatype-specific data that is implemented
-// in datatype packages.  It's required to say it's name, unique local instance ID,
-// as well as whether it supports versioning.
+// in datatype packages.  This interface is defined in the low-level dvid package so it
+// is accessible at all levels of dvid, although the implementation of this interface
+// occurs at the datastore and datatype-level packages.
 type Data interface {
 	DataName() InstanceName
 	InstanceID() InstanceID
@@ -210,6 +211,9 @@ type Data interface {
 
 	// Versioned returns false if this data has only one version for an entire repo.
 	Versioned() bool
+
+	// BackendStore returns the data store used for this data.
+	BackendStore() (Store, error)
 }
 
 // Axis enumerates differnt types of axis (x, y, z, time, etc)

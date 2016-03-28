@@ -61,19 +61,7 @@ func (e Engine) String() string {
 	return fmt.Sprintf("%s [%s]", e.name, e.semver)
 }
 
-// NewMetaDataStore returns a leveldb suitable for MetaData storage.
-// The passed Config must contain:
-// "project-id" string  ex: "janelia-flyem-project"
-// "zone" string ex: "us-central1-b"
-// "cluster" string ex: "dvid-cluster"
-// "table" string ex: "metadata"
-// BigTable cluster can't be created from the go API
-// to create a cluster read https://cloud.google.com/bigtable/docs/creating-cluster
-func (e Engine) NewMetaDataStore(config dvid.EngineConfig) (storage.MetaDataStorer, bool, error) {
-	return e.newBigTable(config)
-}
-
-// NewMutableStore returns a leveldb suitable for mutable storage.
+// NewStore returns a leveldb suitable for mutable storage.
 // The passed Config must contain:
 // "project-id" string  ex: "janelia-flyem-project"
 // "zone" string ex: "us-central1-b"
@@ -81,23 +69,11 @@ func (e Engine) NewMetaDataStore(config dvid.EngineConfig) (storage.MetaDataStor
 // "table" string ex: "mutable"
 // BigTable cluster can't be created from the go API
 // to create a cluster read https://cloud.google.com/bigtable/docs/creating-cluster
-func (e Engine) NewMutableStore(config dvid.EngineConfig) (storage.MutableStorer, bool, error) {
+func (e Engine) NewStore(config dvid.StoreConfig) (dvid.Store, bool, error) {
 	return e.newBigTable(config)
 }
 
-// NewImmutableStore returns a leveldb suitable for immutable storage.
-// The passed Config must contain:
-// "project-id" string  ex: "janelia-flyem-project"
-// "zone" string ex: "us-central1-b"
-// "cluster" string ex: "dvid-cluster"
-// "table" string ex: "inmutable"
-// BigTable cluster can't be created from the go API
-// to create a cluster read https://cloud.google.com/bigtable/docs/creating-cluster
-func (e Engine) NewImmutableStore(config dvid.EngineConfig) (storage.ImmutableStorer, bool, error) {
-	return e.newBigTable(config)
-}
-
-func parseConfig(config dvid.EngineConfig) (*BigTable, error) {
+func parseConfig(config dvid.StoreConfig) (*BigTable, error) {
 
 	bt := &BigTable{
 		project: config.Project,
@@ -159,7 +135,7 @@ func NewClient(bt *BigTable) (client *api.Client, err error) {
 }
 
 // Set up admin client, tables, and column families.
-func (e *Engine) newBigTable(config dvid.EngineConfig) (*BigTable, bool, error) {
+func (e *Engine) newBigTable(config dvid.StoreConfig) (*BigTable, bool, error) {
 	bt, err := parseConfig(config)
 	if err != nil {
 		return nil, false, fmt.Errorf("Error in newBigTable() %s\n", err)
@@ -216,7 +192,7 @@ func (e *Engine) newBigTable(config dvid.EngineConfig) (*BigTable, bool, error) 
 	return bt, created, nil
 }
 
-func (e Engine) Delete(config dvid.EngineConfig) error {
+func (e Engine) Delete(config dvid.StoreConfig) error {
 
 	bt, err := parseConfig(config)
 	if err != nil {
@@ -874,6 +850,13 @@ func (db *BigTable) Close() {
 	if client != nil {
 		client.Close()
 	}
+}
+
+func (db *BigTable) Equal(c dvid.StoreConfig) bool {
+	if db.project == c.Project && db.zone == c.Zone && db.cluster == c.Cluster && db.table == c.Table {
+		return true
+	}
+	return false
 }
 
 // Util

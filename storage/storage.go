@@ -133,37 +133,6 @@ func (kv TKeyValues) Less(i, j int) bool {
 	return bytes.Compare(kv[i].K, kv[j].K) <= 0
 }
 
-// MetaDataStorer is the interface for storing DVID datastore metadata like the
-// repositories, associated DAGs, and datatype-specific data that needs to be
-// coordinated across front-end DVID servers.  It is characterized by the following:
-// (1) not big data, (2) ideally in memory, (3) strongly consistent across all
-// DVID processes, e.g., all front-end DVID apps.  Of all types of persistence, it
-// should have lowest latency and smallest storage capacity.
-type MetaDataStorer interface {
-	OrderedKeyValueDB
-}
-
-// MutableStorer is the interface for mutable data storage, i.e., data stored in uncommitted
-// leaves of the DAG.  The presumption is that the Mutable store will be smaller
-// than an Immutable store, trading off $$/TB for speed to handle distributed
-// transactions and other thorny issues when dealing with distributed, mutable data.
-type MutableStorer interface {
-	OrderedKeyValueDB
-}
-
-// ImmutableStorer is the interface for immutable data storage, i.e., data stored
-// in interior nodes of the DAG or from datatypes known to operate with immutable data,
-// particularly during ingestion (e.g., grayscale image data).  The implementation
-// of an ImmutableStorer benefits from knowing its data is immutable, allowing better
-// caching and handling of distributed data without worry of coordination.
-//
-// NOTE: Although the interface is identical to a mutable store, its use requires an
-// an immutable pattern, e.g., calling a second Put() on the same key should return
-// an error.
-type ImmutableStorer interface {
-	OrderedKeyValueDB
-}
-
 // DataStoreType describes the semantics of a particular data store.
 type DataStoreType uint8
 
@@ -182,41 +151,31 @@ const (
 type Engine interface {
 	fmt.Stringer
 
-	// GetName returns a simple identifier like "basholeveldb", "kvautobus" or "bigtable".
+	// GetName returns a simple driver identifier like "basholeveldb", "kvautobus" or "bigtable".
 	GetName() string
 
 	// GetSemVer returns the semantic versioning info.
 	GetSemVer() semver.Version
+
+	// NewStore returns a new storage engine given the passed configuration.
+	NewStore(dvid.StoreConfig) (db dvid.Store, created bool, err error)
 }
 
-type MetaDataEngine interface {
-	Engine
-	NewMetaDataStore(dvid.EngineConfig) (db MetaDataStorer, created bool, err error)
-}
-
-type MutableEngine interface {
-	Engine
-	NewMutableStore(dvid.EngineConfig) (db MutableStorer, created bool, err error)
-}
-
-type ImmutableEngine interface {
-	Engine
-	NewImmutableStore(dvid.EngineConfig) (db ImmutableStorer, created bool, err error)
-}
-
+// RepairableEngine is a storage engine that can be repaired.
 type RepairableEngine interface {
 	Engine
 	Repair(path string) error
 }
 
-// TestableEngine is an engine that allows creation and deletion of
+// TestableEngine is a storage engine that allows creation and deletion of
 // some data using a name.
 type TestableEngine interface {
 	Engine
-	Delete(dvid.EngineConfig) error
+	Delete(dvid.StoreConfig) error
 }
 
 var (
+	// initialized by RegisterEngine() calls during init() within each storage engine
 	availEngines map[string]Engine
 )
 
@@ -251,31 +210,27 @@ func GetEngine(name string) Engine {
 	return e
 }
 
-// GetMutableEngine returns a Mutable engine if one has been compiled in.
-// Returns nil if none are available.
-func GetMutableEngine() MutableEngine {
+// GetTestableEngine returns a Testable engine, i.e. has ability to create and delete database.
+func GetTestableEngine() TestableEngine {
 	for _, e := range availEngines {
-		mutableEng, ok := e.(MutableEngine)
+		testableEng, ok := e.(TestableEngine)
 		if ok {
-			return mutableEng
+			return testableEng
 		}
 	}
 	return nil
 }
 
-// GetTestableEngine returns a Mutable engine that is also Testable
-// (has ability to create and delete database).
-func GetTestableEngine() TestableEngine {
-	for _, e := range availEngines {
-		mutableEng, ok := e.(MutableEngine)
-		if ok {
-			testableEng, ok := mutableEng.(TestableEngine)
-			if ok {
-				return testableEng
-			}
-		}
+// NewStore returns a store given a StoreConfig.
+func NewStore(c dvid.StoreConfig) (db dvid.Store, created bool, err error) {
+	if availEngines == nil {
+		return nil, false, fmt.Errorf("No available storage engines")
 	}
-	return nil
+	e, found := availEngines[c.Engine]
+	if !found {
+		return nil, false, fmt.Errorf("No engine %q available", c.Engine)
+	}
+	return e.NewStore(c)
 }
 
 // Repair repairs a named engine's store at given path.
@@ -331,8 +286,14 @@ type KeyChan chan Key
 
 // ---- Storage interfaces ------
 
-type Closer interface {
-	Close()
+// Accessor provides a variety of convenience functions for getting
+// different types of stores.  For each accessor function, a nil
+// store means it is not available.
+type Accessor interface {
+	GetKeyValueDB() (KeyValueDB, error)
+	GetOrderedKeyValueDB() (OrderedKeyValueDB, error)
+	GetKeyValueBatcher() (KeyValueBatcher, error)
+	GetGraphDB() (GraphDB, error)
 }
 
 type KeyValueGetter interface {
@@ -405,18 +366,16 @@ type OrderedKeyValueSetter interface {
 
 // KeyValueDB provides an interface to the simplest storage API: a key-value store.
 type KeyValueDB interface {
-	fmt.Stringer
+	dvid.Store
 	KeyValueGetter
 	KeyValueSetter
-	Closer
 }
 
 // OrderedKeyValueDB addes range queries and range puts to a base KeyValueDB.
 type OrderedKeyValueDB interface {
-	fmt.Stringer
+	dvid.Store
 	OrderedKeyValueGetter
 	OrderedKeyValueSetter
-	Closer
 }
 
 // KeyValueBatcher allow batching operations into an atomic update or transaction.

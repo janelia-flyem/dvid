@@ -517,7 +517,7 @@ func GetByVersion(v dvid.VersionID, name dvid.InstanceName) (*Data, error) {
 // up-to-date key-value pairs for max labels.
 func (d *Data) LoadMutable(root dvid.VersionID, storedVersion, expectedVersion uint64) (bool, error) {
 	ctx := storage.NewDataContext(d, 0)
-	store, err := storage.MutableStore()
+	store, err := d.GetOrderedKeyValueDB()
 	if err != nil {
 		return false, fmt.Errorf("Data type labelvol had error initializing store: %v\n", err)
 	}
@@ -561,9 +561,9 @@ func (d *Data) LoadMutable(root dvid.VersionID, storedVersion, expectedVersion u
 
 func (d *Data) migrateMaxLabels(root dvid.VersionID, wg *sync.WaitGroup, ch chan *storage.KeyValue) {
 	ctx := storage.NewDataContext(d, 0)
-	store, err := storage.MutableStore()
+	store, err := d.GetOrderedKeyValueDB()
 	if err != nil {
-		dvid.Errorf("Can't initializing small data store: %v\n", err)
+		dvid.Errorf("Can't initialize store for labelvol %q: %v\n", d.DataName(), err)
 	}
 
 	var maxRepoLabel uint64
@@ -603,7 +603,7 @@ func (d *Data) migrateMaxLabels(root dvid.VersionID, wg *sync.WaitGroup, ch chan
 	return
 }
 
-func (d *Data) adjustMaxLabels(store storage.MutableStorer, root dvid.VersionID) error {
+func (d *Data) adjustMaxLabels(store storage.KeyValueSetter, root dvid.VersionID) error {
 	buf := make([]byte, 8)
 
 	parentMax, ok := d.MaxLabel[root]
@@ -667,7 +667,7 @@ func (d *Data) loadMaxLabels(wg *sync.WaitGroup, ch chan *storage.KeyValue) {
 	}
 
 	// Load in the repo-wide max label.
-	store, err := storage.MutableStore()
+	store, err := d.GetOrderedKeyValueDB()
 	if err != nil {
 		dvid.Errorf("Data type labelvol had error initializing store: %v\n", err)
 		return
@@ -1167,7 +1167,7 @@ func (d *Data) casMaxLabel(batch storage.Batch, v dvid.VersionID, label uint64) 
 		if d.MaxRepoLabel < maxLabel {
 			d.MaxRepoLabel = maxLabel
 			ctx := storage.NewDataContext(d, 0)
-			store, err := storage.MutableStore()
+			store, err := d.GetOrderedKeyValueDB()
 			if err != nil {
 				dvid.Errorf("Data type labelvol had error initializing store: %v\n", err)
 			} else {
@@ -1199,9 +1199,9 @@ func (d *Data) NewLabel(v dvid.VersionID) (uint64, error) {
 	d.MaxRepoLabel++
 	d.MaxLabel[v] = d.MaxRepoLabel
 
-	store, err := storage.MutableStore()
+	store, err := d.GetOrderedKeyValueDB()
 	if err != nil {
-		return 0, fmt.Errorf("can't initializing small data store: %v\n", err)
+		return 0, err
 	}
 	buf := make([]byte, 8)
 	binary.LittleEndian.PutUint64(buf, d.MaxRepoLabel)
@@ -1221,7 +1221,7 @@ func (d *Data) NewLabel(v dvid.VersionID) (uint64, error) {
 // Returns RLEs for a given label where the key of the returned map is the block index
 // in string format.
 func (d *Data) GetLabelRLEs(v dvid.VersionID, label uint64) (dvid.BlockRLEs, error) {
-	store, err := storage.MutableStore()
+	store, err := d.GetOrderedKeyValueDB()
 	if err != nil {
 		return nil, fmt.Errorf("Data type labelvol had error initializing store: %v\n", err)
 	}
@@ -1276,8 +1276,8 @@ func boundRLEs(b []byte, bounds *dvid.Bounds) ([]byte, error) {
 
 // FoundSparseVol returns true if a sparse volume is found for the given label
 // within the given bounds.
-func (d *Data) FoundSparseVol(ctx storage.Context, label uint64, bounds Bounds) (bool, error) {
-	store, err := storage.MutableStore()
+func (d *Data) FoundSparseVol(ctx *datastore.VersionedCtx, label uint64, bounds Bounds) (bool, error) {
+	store, err := d.GetOrderedKeyValueDB()
 	if err != nil {
 		return false, fmt.Errorf("Data type labelvol had error initializing store: %v\n", err)
 	}
@@ -1396,7 +1396,7 @@ func (d *Data) FoundSparseVol(ctx storage.Context, label uint64, bounds Bounds) 
 //        int32   Length of run
 //        bytes   Optional payload dependent on first byte descriptor
 //
-func (d *Data) GetSparseVol(ctx storage.Context, label uint64, bounds Bounds) ([]byte, error) {
+func (d *Data) GetSparseVol(ctx *datastore.VersionedCtx, label uint64, bounds Bounds) ([]byte, error) {
 	iv := d.getMergeIV(ctx.VersionID())
 	mapping := labels.LabelMap(iv)
 	if mapping != nil {
@@ -1407,7 +1407,7 @@ func (d *Data) GetSparseVol(ctx storage.Context, label uint64, bounds Bounds) ([
 		}
 	}
 
-	store, err := storage.MutableStore()
+	store, err := d.GetOrderedKeyValueDB()
 	if err != nil {
 		return nil, fmt.Errorf("Data type labelvol had error initializing store: %v\n", err)
 	}
@@ -1518,7 +1518,7 @@ func (d *Data) GetSparseVol(ctx storage.Context, label uint64, bounds Bounds) ([
 //     		int32   Block coordinate of run start (dimension 2)
 //     		int32   Length of run
 //
-func (d *Data) GetSparseCoarseVol(ctx storage.Context, label uint64) ([]byte, error) {
+func (d *Data) GetSparseCoarseVol(ctx *datastore.VersionedCtx, label uint64) ([]byte, error) {
 	iv := d.getMergeIV(ctx.VersionID())
 	mapping := labels.LabelMap(iv)
 	if mapping != nil {
@@ -1570,8 +1570,8 @@ func (d *Data) GetSparseCoarseVol(ctx storage.Context, label uint64) ([]byte, er
 	return encoding, nil
 }
 
-func getSparseVolBlocks(ctx storage.Context, label uint64) (numBlocks uint32, spans dvid.Spans, err error) {
-	store, err := storage.MutableStore()
+func getSparseVolBlocks(ctx *datastore.VersionedCtx, label uint64) (numBlocks uint32, spans dvid.Spans, err error) {
+	store, err := ctx.GetOrderedKeyValueDB()
 	if err != nil {
 		return 0, nil, fmt.Errorf("Data type labelvol had error initializing store: %v\n", err)
 	}

@@ -202,8 +202,8 @@ type Data struct {
 
 // GetSurface returns a gzipped byte array with # voxels and float32 arrays for vertices and
 // normals.
-func GetSurface(ctx storage.Context, label uint64) ([]byte, bool, error) {
-	store, err := storage.MutableStore()
+func GetSurface(ctx *datastore.VersionedCtx, label uint64) ([]byte, bool, error) {
+	store, err := ctx.GetOrderedKeyValueDB()
 	if err != nil {
 		return nil, false, fmt.Errorf("Cannot get datastore that handles big data: %v\n", err)
 	}

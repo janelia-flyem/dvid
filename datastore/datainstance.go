@@ -95,10 +95,43 @@ func (vctx *VersionedCtx) String() string {
 		vctx.InstanceID(), vctx.VersionID())
 }
 
+// GetKeyValueDB returns a key-value store associated with this context on an
+// error if one is unavailable.
+func (vctx *VersionedCtx) GetKeyValueDB() (storage.KeyValueDB, error) {
+	d := vctx.DataContext.Data()
+	if d == nil {
+		return nil, fmt.Errorf("invalid data %v in GetKeyValueDB", d)
+	}
+	return getKeyValueDB(d)
+}
+
+// GetOrderedKeyValueDB returns an ordered key-value store associated with this
+// context or an error if one is unavailable.
+func (vctx *VersionedCtx) GetOrderedKeyValueDB() (storage.OrderedKeyValueDB, error) {
+	d := vctx.DataContext.Data()
+	if d == nil {
+		return nil, fmt.Errorf("invalid data %v in GetOrderedKeyValueDB", d)
+	}
+	return getOrderedKeyValueDB(d)
+}
+
+// GetGraphDB returns a graph store associated with this context or an error
+// if one is not available.
+func (vctx *VersionedCtx) GetGraphDB() (storage.GraphDB, error) {
+	d := vctx.DataContext.Data()
+	if d == nil {
+		return nil, fmt.Errorf("invalid data %v in GetGraphDB", d)
+	}
+	return getGraphDB(d)
+}
+
 // DataService is an interface for operations on an instance of a supported datatype.
 type DataService interface {
 	dvid.Data
+	storage.Accessor
+	json.Marshaler
 
+	Help() string
 	GetType() TypeService
 
 	// ModifyConfig modifies a configuration in a type-specific way.
@@ -110,17 +143,12 @@ type DataService interface {
 	// ServeHTTP handles HTTP requests in the context of a particular version.
 	ServeHTTP(dvid.UUID, *VersionedCtx, http.ResponseWriter, *http.Request)
 
-	Help() string
-
 	// Send allows peer-to-peer transmission of data instance metadata and
 	// all normalized key-value pairs associated with it.  Transmitted data
 	// can be delimited by an optional ROI, specified by the ROI data name
 	// and its UUID.  Use an empty string for the roiname parameter to transmit
 	// the full extents.
 	Send(s message.Socket, roiname string, uuid dvid.UUID) error
-
-	// DataService must allow serialization into JSON and binary I/O
-	json.Marshaler
 
 	// NOTE: Requiring these interfaces breaks Gob encoding/decoding
 	//  TODO -- figure out why
@@ -276,6 +304,10 @@ type Data struct {
 	// UUIDs differently.  (See keyvalue type.)
 	unversioned bool
 
+	// the assigned backend store for a data instance.  If nil, we
+	// will use the default store.
+	store dvid.Store
+
 	// these sync management vars aren't serialized
 	syncmu     sync.RWMutex
 	syncInited map[dvid.InstanceName]struct{}
@@ -374,6 +406,14 @@ func NewDataService(t TypeService, uuid dvid.UUID, id dvid.InstanceID, name dvid
 	if _, reserved := reservedNames[string(name)]; reserved {
 		return nil, fmt.Errorf("cannot use reserved name %q", name)
 	}
+
+	// Get the store for this particular data instance.
+	store, err := storage.GetAssignedStore(t.GetTypeName())
+	if err != nil {
+		return nil, err
+	}
+
+	// Setup the basic data instance structure.
 	compression, _ := dvid.NewCompression(dvid.LZ4, dvid.DefaultCompression)
 	data := &Data{
 		typename:    t.GetTypeName(),
@@ -386,9 +426,9 @@ func NewDataService(t TypeService, uuid dvid.UUID, id dvid.InstanceID, name dvid
 		checksum:    dvid.DefaultChecksum,
 		syncs:       []dvid.InstanceName{},
 		unversioned: false,
+		store:       store,
 	}
-	err := data.ModifyConfig(c)
-	return data, err
+	return data, data.ModifyConfig(c)
 }
 
 // ---- dvid.Data implementation ----
@@ -408,6 +448,15 @@ func (d *Data) TypeURL() dvid.URLString { return d.typeurl }
 func (d *Data) TypeVersion() string { return d.typeversion }
 
 func (d *Data) Versioned() bool { return !d.unversioned }
+
+func (d *Data) BackendStore() (dvid.Store, error) {
+	if d.store == nil {
+		return storage.DefaultStore()
+	}
+	return d.store, nil
+}
+
+// ---------------
 
 func (d *Data) GobDecode(b []byte) error {
 	buf := bytes.NewBuffer(b)
@@ -597,7 +646,114 @@ func (d *Data) ModifyConfig(config dvid.Config) error {
 	return nil
 }
 
-func (d *Data) UnknownCommand(request Request) error {
-	return fmt.Errorf("Unknown command.  Data type '%s' [%s] does not support '%s' command.",
-		d.name, d.TypeName(), request.TypeCommand())
+// Send is the default peer-to-peer transmission of data for an instance
+// that ignores any filtering per the ROI specification.  Filtering of
+// transmitted data needs to be implemented in the datatype-specific
+// implementation.
+func (d *Data) Send(s message.Socket, roiname string, uuid dvid.UUID) error {
+	return nil
+}
+
+// Returns a KeyValueDB by instance ID.
+func getInstanceKeyValueDB(iid dvid.InstanceID) (storage.KeyValueDB, error) {
+	if manager == nil {
+		return nil, ErrManagerNotInitialized
+	}
+
+	// Get batcher associated with this instance ID
+	data, found := manager.iids[iid]
+	if !found {
+		return nil, ErrInvalidDataInstance
+	}
+	return data.GetKeyValueDB()
+}
+
+// ------ storage.Accessor interface implementation -------
+
+func getKeyValueDB(d dvid.Data) (db storage.KeyValueDB, err error) {
+	store, err := d.BackendStore()
+	if err != nil {
+		return nil, err
+	}
+	if store == nil {
+		return nil, ErrInvalidStore
+	}
+	var ok bool
+	db, ok = store.(storage.KeyValueDB)
+	if !ok {
+		return nil, fmt.Errorf("Store assigned to data %q (%s) is not a key-value db", d.DataName(), store)
+	}
+	return
+}
+
+func getOrderedKeyValueDB(d dvid.Data) (db storage.OrderedKeyValueDB, err error) {
+	store, err := d.BackendStore()
+	if err != nil {
+		return nil, err
+	}
+	if store == nil {
+		return nil, ErrInvalidStore
+	}
+	var ok bool
+	db, ok = store.(storage.OrderedKeyValueDB)
+	if !ok {
+		return nil, fmt.Errorf("Store assigned to data %q (%s) is not an ordered key-value db", d.DataName(), store)
+	}
+	return
+}
+
+func getKeyValueBatcher(d dvid.Data) (db storage.KeyValueBatcher, err error) {
+	store, err := d.BackendStore()
+	if err != nil {
+		return nil, err
+	}
+	if store == nil {
+		return nil, ErrInvalidStore
+	}
+	var ok bool
+	db, ok = store.(storage.KeyValueBatcher)
+	if !ok {
+		return nil, fmt.Errorf("Store assigned to data %q (%s) is not able to batch key-value ops", d.DataName(), store)
+	}
+	return
+}
+
+func getGraphDB(d dvid.Data) (db storage.GraphDB, err error) {
+	store, err := d.BackendStore()
+	if err != nil {
+		return nil, err
+	}
+	if store == nil {
+		return nil, ErrInvalidStore
+	}
+	var ok bool
+	db, ok = store.(storage.GraphDB)
+	if !ok {
+		return nil, fmt.Errorf("Store assigned to data %q (%s) is not a graph db", d.DataName(), store)
+	}
+	return
+}
+
+// GetKeyValueDB returns a kv data store assigned to this data instance.
+// If the store is nil or not available, an error is returned.
+func (d *Data) GetKeyValueDB() (storage.KeyValueDB, error) {
+	return getKeyValueDB(d)
+}
+
+// GetOrderedKeyValueDB returns the ordered kv data store assigned to this data instance.
+// If the store is nil or not available, an error is returned.
+func (d *Data) GetOrderedKeyValueDB() (storage.OrderedKeyValueDB, error) {
+	return getOrderedKeyValueDB(d)
+}
+
+// GetKeyValueBatcher returns a batch-capable kv data store assigned to this data instance.
+// If the store is nil or not available, an error is returned.
+func (d *Data) GetKeyValueBatcher() (storage.KeyValueBatcher, error) {
+	return getKeyValueBatcher(d)
+}
+
+// GetGraphDB returns a graph store assigned to this data instance.
+// If the store is nil or not available, an error is returned.
+func (d *Data) GetGraphDB() (storage.GraphDB, error) {
+	return getGraphDB(d)
 }

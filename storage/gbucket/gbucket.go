@@ -22,14 +22,15 @@ import (
 	"bytes"
 	"encoding/base64"
 	"fmt"
-	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/janelia-flyem/dvid/storage"
-	"github.com/janelia-flyem/go/semver"
 	"io/ioutil"
 	"runtime"
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/janelia-flyem/dvid/dvid"
+	"github.com/janelia-flyem/dvid/storage"
+	"github.com/janelia-flyem/go/semver"
 
 	"golang.org/x/net/context"
 	api "google.golang.org/cloud/storage"
@@ -76,29 +77,15 @@ func (e Engine) String() string {
 	return fmt.Sprintf("%s [%s]", e.name, e.semver)
 }
 
-// NewMetaDataStore returns a storage bucket suitable for MetaData storage.
+// NewStore returns a storage bucket suitable as a general storage engine.
 // The passed Config must contain:
 // "bucket": name of bucket
-func (e Engine) NewMetaDataStore(config dvid.EngineConfig) (storage.MetaDataStorer, bool, error) {
-	return e.newGBucket(config)
-}
-
-// NewMetaDataStore returns a storage bucket suitable for MetaData storage.
-// The passed Config must contain:
-// "bucket": name of bucket
-func (e Engine) NewMutableStore(config dvid.EngineConfig) (storage.MutableStorer, bool, error) {
-	return e.newGBucket(config)
-}
-
-// NewMetaDataStore returns a storage bucket suitable for MetaData storage.
-// The passed Config must contain:
-// "bucket": name of bucket
-func (e Engine) NewImmutableStore(config dvid.EngineConfig) (storage.ImmutableStorer, bool, error) {
+func (e Engine) NewStore(config dvid.StoreConfig) (dvid.Store, bool, error) {
 	return e.newGBucket(config)
 }
 
 // parseConfig initializes GBucket from config
-func parseConfig(config dvid.EngineConfig) (*GBucket, error) {
+func parseConfig(config dvid.StoreConfig) (*GBucket, error) {
 
 	gb := &GBucket{
 		bname: config.Bucket,
@@ -109,7 +96,7 @@ func parseConfig(config dvid.EngineConfig) (*GBucket, error) {
 }
 
 // newGBucket sets up admin client (bucket must already exist)
-func (e *Engine) newGBucket(config dvid.EngineConfig) (*GBucket, bool, error) {
+func (e *Engine) newGBucket(config dvid.StoreConfig) (*GBucket, bool, error) {
 	gb, err := parseConfig(config)
 	if err != nil {
 		return nil, false, fmt.Errorf("Error in newGBucket() %s\n", err)
@@ -144,7 +131,7 @@ func (e *Engine) newGBucket(config dvid.EngineConfig) (*GBucket, bool, error) {
 }
 
 // cannot Delete bucket from API
-func (e Engine) Delete(config dvid.EngineConfig) error {
+func (e Engine) Delete(config dvid.StoreConfig) error {
 	return nil
 }
 
@@ -775,6 +762,13 @@ func (db *GBucket) Close() {
 	if db.client != nil {
 		db.client.Close()
 	}
+}
+
+func (db *GBucket) Equal(c dvid.StoreConfig) bool {
+	if db.bname == c.Bucket {
+		return true
+	}
+	return false
 }
 
 // --- Batcher interface ----

@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	Version = "0.9.2"
+	Version = "0.10.0"
 )
 
 var (
@@ -391,11 +391,9 @@ type extensionNode struct {
 }
 
 func deleteConflict(data DataService, extnode *extensionNode, k storage.Key) error {
-	// TODO -- Since all datastores resolve to basho leveldb right now, we can do this, but
-	// this should be datatype-specific for its particular type of storage.
-	store, err := storage.MutableStore()
+	store, err := getOrderedKeyValueDB(data)
 	if err != nil {
-		return fmt.Errorf("error initializing store: %v\n", err)
+		return err
 	}
 
 	// Create new node if necessary
@@ -510,11 +508,9 @@ func DeleteConflicts(uuid dvid.UUID, data DataService, oldParents, newParents []
 	}()
 
 	// Iterate through all k/v for this data instance.
-	// TODO -- Since all datastores resolve to basho leveldb right now, we can do this, but
-	// this should be datatype-specific for its particular type of storage.
-	store, err := storage.MutableStore()
+	store, err := getOrderedKeyValueDB(data)
 	if err != nil {
-		return fmt.Errorf("error initializing store: %v\n", err)
+		return err
 	}
 
 	minKey, maxKey := baseCtx.KeyRange()

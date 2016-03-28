@@ -53,6 +53,10 @@ func (d *testData) TypeVersion() string {
 	return "1.0"
 }
 
+func (d *testData) BackendStore() (dvid.Store, error) {
+	return DefaultStore()
+}
+
 func GetTestDataContext(uuid dvid.UUID, name string, instanceID dvid.InstanceID) *DataContext {
 	versionID, found := testUUIDToVersion[uuid]
 	if !found {

@@ -177,7 +177,7 @@ func (d *Data) syncMerge(name dvid.InstanceName, in <-chan datastore.SyncMessage
 // Since the same block coordinate always gets mapped to the same goroutine, we handle
 // concurrency by serializing GET/PUT for a particular block coordinate.
 func (d *Data) mergeBlock(in <-chan mergeOp) {
-	store, err := storage.MutableStore()
+	store, err := d.GetOrderedKeyValueDB()
 	if err != nil {
 		dvid.Errorf("Data type labelblk had error initializing store: %v\n", err)
 		return
@@ -273,7 +273,7 @@ func (d *Data) syncSplit(name dvid.InstanceName, in <-chan datastore.SyncMessage
 
 // Goroutine that handles splits across a lot of blocks for one label.
 func (d *Data) splitBlock(in <-chan splitOp) {
-	store, err := storage.MutableStore()
+	store, err := d.GetOrderedKeyValueDB()
 	if err != nil {
 		dvid.Errorf("Data type labelblk had error initializing store: %v\n", err)
 		return
