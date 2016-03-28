@@ -29,7 +29,7 @@ var (
 
 const helpMessage = `
 dvid-transfer copies label data from one DVID server to either a set of optionally compressed
-files or to another DVID server using HTTP API calls.
+files or to another DVID server using HTTP API calls (with lz4 compression).
 
 Usage: dvid-transfer [options] host uuid name
 
@@ -42,7 +42,7 @@ Usage: dvid-transfer [options] host uuid name
 	-outdir         =string   Output directory for file output
 	-url            =string   POST URL for DVID, e.g., "http://dvidserver.com/api/653/dataname"
 
-	-compress       =string   Compression for output files.  default "gzip" but allows "none".
+	-compress       =string   Compression for output files (not HTTP).  default "gzip" but allows "none".
 
 	-roi            =string   Instance name of ROI to delimit labels saved
 

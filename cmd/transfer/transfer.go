@@ -123,9 +123,9 @@ func sendLabels(src *LabelMetadata, name, srcURL string) {
 
 			oy := by0 * blockSize[1]
 			vy := (by1 - by0 + 1) * blockSize[1]
-			getURL := fmt.Sprintf("%s/raw/0_1_2/%d_%d_%d/%d_%d_%d", srcURL, vx, vy, vz, ox, oy, oz)
+			getURL := fmt.Sprintf("%s/raw/0_1_2/%d_%d_%d/%d_%d_%d?compression=lz4", srcURL, vx, vy, vz, ox, oy, oz)
 			if *roi != "" {
-				getURL += fmt.Sprintf("?roi=%s", *roi)
+				getURL += fmt.Sprintf("&roi=%s", *roi)
 			}
 			var resp *http.Response
 			if *dryrun {
@@ -142,7 +142,7 @@ func sendLabels(src *LabelMetadata, name, srcURL string) {
 				}
 			}
 			if *url != "" {
-				postURL := fmt.Sprintf("%s/raw/0_1_2/%d_%d_%d/%d_%d_%d", *url, vx, vy, vz, ox, oy, oz)
+				postURL := fmt.Sprintf("%s/raw/0_1_2/%d_%d_%d/%d_%d_%d?compression=lz4", *url, vx, vy, vz, ox, oy, oz)
 				if *dryrun {
 					fmt.Printf("-- would POST %s\n", postURL)
 				} else {
