@@ -113,8 +113,9 @@ func addUniqueDB(c dvid.StoreConfig) (dvid.Store, bool, error) {
 	// Open new store given this configuration
 	db, created, err := NewStore(c)
 	if err != nil {
-		manager.uniqueDBs = append(manager.uniqueDBs, db)
+		return nil, false, err
 	}
+	manager.uniqueDBs = append(manager.uniqueDBs, db)
 	return db, created, err
 }
 
@@ -126,7 +127,12 @@ func Initialize(cmdline dvid.Config, sc map[string]dvid.StoreConfig) (created bo
 	// Get required default store.
 	defaultConfig, found := sc["default"]
 	if !found {
-		return false, fmt.Errorf("storage.default needs to be set in configuration TOML file")
+		// Check if legacy "mutable" is available
+		defaultConfig, found = sc["mutable"]
+		if !found {
+			return false, fmt.Errorf("storage.default needs to be set in configuration TOML file")
+		}
+		dvid.Warningf("storage.mutable in TOML config has been deprecated; please use storage.default\n")
 	}
 	var defaultStore dvid.Store
 	defaultStore, created, err = NewStore(defaultConfig)
@@ -150,6 +156,7 @@ func Initialize(cmdline dvid.Config, sc map[string]dvid.StoreConfig) (created bo
 	manager.metadataStore = metadataStore
 
 	// Load any datatype-specific stores, checking to see if it's already handled.
+	manager.datatypeStore = make(map[dvid.TypeString]dvid.Store)
 	for name, c := range sc {
 		if name == "default" || name == "metadata" {
 			continue
@@ -157,6 +164,7 @@ func Initialize(cmdline dvid.Config, sc map[string]dvid.StoreConfig) (created bo
 		var store dvid.Store
 		store, _, err = addUniqueDB(c)
 		if err != nil {
+			err = fmt.Errorf("storage.%s %v", name, err)
 			return
 		}
 		manager.datatypeStore[dvid.TypeString(name)] = store

@@ -224,11 +224,11 @@ func GetTestableEngine() TestableEngine {
 // NewStore returns a store given a StoreConfig.
 func NewStore(c dvid.StoreConfig) (db dvid.Store, created bool, err error) {
 	if availEngines == nil {
-		return nil, false, fmt.Errorf("No available storage engines")
+		return nil, false, fmt.Errorf("no available storage engines")
 	}
 	e, found := availEngines[c.Engine]
 	if !found {
-		return nil, false, fmt.Errorf("No engine %q available", c.Engine)
+		return nil, false, fmt.Errorf("engine %q not available", c.Engine)
 	}
 	return e.NewStore(c)
 }
