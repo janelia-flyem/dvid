@@ -296,6 +296,15 @@ type Accessor interface {
 	GetGraphDB() (GraphDB, error)
 }
 
+// KeyValueIngestable implementations allow ingestion of data without necessarily allowing
+// immediate reads of the ingested data.
+type KeyValueIngestable interface {
+	// KeyValueIngest accepts mutations without any guarantee that the ingested key value
+	// will be immediately readable.  This allows immutable stores to accept data that will
+	// be later processed into its final readable, immutable form.
+	KeyValueIngest(Context, TKey, []byte) error
+}
+
 type KeyValueGetter interface {
 	// Get returns a value given a key.
 	Get(ctx Context, k TKey) ([]byte, error)
