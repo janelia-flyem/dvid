@@ -34,9 +34,6 @@ import (
 	_ "github.com/janelia-flyem/dvid/datatype/labelvol"
 	_ "github.com/janelia-flyem/dvid/datatype/multichan16"
 	_ "github.com/janelia-flyem/dvid/datatype/roi"
-	_ "github.com/janelia-flyem/dvid/datatype/synapse"
-	//_ "github.com/janelia-flyem/dvid/datatype/labelsurf"
-	//_ "github.com/janelia-flyem/dvid/datatype/labelsz"
 )
 
 var (
