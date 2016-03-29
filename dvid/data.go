@@ -214,6 +214,9 @@ type Data interface {
 
 	// BackendStore returns the data store used for this data.
 	BackendStore() (Store, error)
+
+	// SetBackendStore sets the data store used for this data.
+	SetBackendStore(Store)
 }
 
 // Axis enumerates differnt types of axis (x, y, z, time, etc)

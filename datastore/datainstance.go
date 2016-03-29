@@ -456,6 +456,10 @@ func (d *Data) BackendStore() (dvid.Store, error) {
 	return d.store, nil
 }
 
+func (d *Data) SetBackendStore(store dvid.Store) {
+	d.store = store
+}
+
 // ---------------
 
 func (d *Data) GobDecode(b []byte) error {

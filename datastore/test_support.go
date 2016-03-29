@@ -44,8 +44,8 @@ func NewTestRepo() (dvid.UUID, dvid.VersionID) {
 	return uuid, versionID
 }
 
-// GetTestStoreConfig returns a configuration, amenable to testing, based on compiled-in engines.
-func GetTestStoreConfig() (map[string]dvid.StoreConfig, error) {
+// getTestStoreConfig returns a configuration, amenable to testing, based on compiled-in engines.
+func getTestStoreConfig() (map[string]dvid.StoreConfig, error) {
 	testableEng := storage.GetTestableEngine()
 	if testableEng == nil {
 		return nil, fmt.Errorf("Could not find a storage engine that was testable")
@@ -77,7 +77,7 @@ func openStore(create bool) {
 	dvid.Infof("Opening test datastore.  Create = %v\n", create)
 	if create {
 		var err error
-		testStore.config, err = GetTestStoreConfig()
+		testStore.config, err = getTestStoreConfig()
 		if err != nil {
 			log.Fatalf("Unable to get testable storage configuration: %v\n", err)
 		}

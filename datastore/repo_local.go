@@ -412,6 +412,13 @@ func (m *repoManager) loadVersion0() error {
 				dvid.Infof("Now instance %q of type %q ...\n", dataservice.DataName(), dataservice.TypeName())
 			}
 			m.iids[dataservice.InstanceID()] = dataservice
+
+			// Cache the assigned store.
+			store, err := storage.GetAssignedStore(dataservice.TypeName())
+			if err != nil {
+				return fmt.Errorf("Cannot get assigned store for data %q, type %q", dataservice.DataName(), dataservice.TypeName())
+			}
+			dataservice.SetBackendStore(store)
 		}
 
 		// Recreate the sync graph for this repo

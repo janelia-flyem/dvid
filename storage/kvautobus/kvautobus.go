@@ -192,6 +192,9 @@ func (db *KVAutobus) getRange(ctx storage.Context, kStart, kEnd storage.Key) ([]
 	if err != nil {
 		return nil, err
 	}
+	if mkvs == nil {
+		return nil, nil
+	}
 	kvs := make([]*storage.KeyValue, len(mkvs))
 	for i, mkv := range mkvs {
 		kvs[i] = &storage.KeyValue{storage.Key(mkv[0]), []byte(mkv[1])}
@@ -433,12 +436,12 @@ func (db *KVAutobus) versionedRange(vctx storage.VersionedCtx, kStart, kEnd stor
 			if len(versions) > 0 {
 				sendKV(vctx, versions, ch)
 			}
-			ch <- errorableKV{nil, nil}
-			return
+			break
 		}
 		// log.Printf("Appending value with key %v\n", itKey)
 		versions = append(versions, kv)
 	}
+	ch <- errorableKV{nil, nil}
 }
 
 // unversionedRange sends a range of key-value pairs down a channel.
@@ -454,7 +457,6 @@ func (db *KVAutobus) unversionedRange(ctx storage.Context, kStart, kEnd storage.
 		ch <- errorableKV{kv, nil}
 	}
 	ch <- errorableKV{nil, nil}
-	return
 }
 
 // KeysInRange returns a range of present keys spanning (kStart, kEnd).  Values

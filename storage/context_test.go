@@ -23,6 +23,7 @@ type testData struct {
 	uuid       dvid.UUID
 	name       dvid.InstanceName
 	instanceID dvid.InstanceID
+	store      dvid.Store
 }
 
 func (d *testData) DataName() dvid.InstanceName {
@@ -54,7 +55,14 @@ func (d *testData) TypeVersion() string {
 }
 
 func (d *testData) BackendStore() (dvid.Store, error) {
+	if d.store != nil {
+		return d.store, nil
+	}
 	return DefaultStore()
+}
+
+func (d *testData) SetBackendStore(store dvid.Store) {
+	d.store = store
 }
 
 func GetTestDataContext(uuid dvid.UUID, name string, instanceID dvid.InstanceID) *DataContext {
@@ -62,7 +70,7 @@ func GetTestDataContext(uuid dvid.UUID, name string, instanceID dvid.InstanceID)
 	if !found {
 		return nil
 	}
-	data := &testData{uuid, dvid.InstanceName(name), instanceID}
+	data := &testData{uuid, dvid.InstanceName(name), instanceID, nil}
 	return NewDataContext(data, versionID)
 }
 
