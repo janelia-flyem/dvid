@@ -185,7 +185,7 @@ func (t *txStats) addKV(kv *storage.KeyValue) {
 	t.numV10m++
 
 	// Print progress?
-	if elapsed := time.Since(t.lastTime); elapsed > time.Minute {
+	if elapsed := time.Since(t.lastTime); elapsed > 20 * time.Second {
 		mb := float64(t.lastBytes) / 1000000
 		sec := elapsed.Seconds()
 		throughput := mb / sec
@@ -403,8 +403,8 @@ func Push(uuid dvid.UUID, target string, config dvid.Config) error {
 		return err
 	}
 
-	// Get the push configuration
-	roiname, err := getROI(config)
+	// Get any filter
+	filter, found, err := config.GetString("filter")
 	if err != nil {
 		return err
 	}
@@ -457,7 +457,7 @@ func Push(uuid dvid.UUID, target string, config dvid.Config) error {
 	// For each data instance, send the data delimited by the roi
 	for _, d := range txRepo.data {
 		dvid.Infof("Sending instance %q data to %q\n", d.DataName(), target)
-		if err := d.Send(s, transmit, roiname, versions); err != nil {
+		if err := d.Send(s, transmit, filter, versions); err != nil {
 			dvid.Errorf("Aborting send of instance %q data\n", d.DataName())
 			return err
 		}
@@ -472,18 +472,6 @@ func Pull(repo Repo, target string, config dvid.Config) error {
 	return nil
 }
 */
-
-// Return roi name or empty string
-func getROI(config dvid.Config) (string, error) {
-	roiname, found, err := config.GetString("roi")
-	if err != nil {
-		return "", err
-	}
-	if !found {
-		return "", nil
-	}
-	return roiname, nil
-}
 
 // Make a copy of a repository, customizing it via config.
 func (r *repoT) customize(v dvid.VersionID, config dvid.Config) (*repoT, rpc.Transmit, error) {

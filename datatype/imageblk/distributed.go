@@ -16,9 +16,11 @@ func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter string, version
 	// if there's no filter, just use base Data send.
 	roiIterator, found, err := roi.NewIteratorBySpec(filter, d)
 	if err != nil {
+        dvid.Debugf("No filter found that was parsable: %s\n", filter)
 		return err
 	}
 	if !found || roiIterator == nil {
+        dvid.Debugf("No ROI found so using generic data push.\n")
 		return d.Data.Send(s, transmit, filter, versions)
 	}
 

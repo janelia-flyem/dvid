@@ -754,9 +754,11 @@ func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter string, version
 	}
 	roiIterator, found, err := roi.NewIteratorBySpec(filter, lblk)
 	if err != nil {
+        dvid.Debugf("No parseable ROI filter found: %s\n", filter)
 		return err
 	}
 	if !found || roiIterator == nil {
+        dvid.Debugf("No usable ROI available.  Using generic data push for labelvol\n")
 		return d.Data.Send(s, transmit, filter, versions)
 	}
 
