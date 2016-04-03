@@ -518,8 +518,8 @@ func (m *repoManager) verifyCompiledTypes() error {
 	return nil
 }
 
-// generates new instance ID and if passed true will persist.
-func (m *repoManager) newInstanceID(save bool) (dvid.InstanceID, error) {
+// generates new instance ID.
+func (m *repoManager) newInstanceID() (dvid.InstanceID, error) {
 	m.idMutex.Lock()
 	defer m.idMutex.Unlock()
 
@@ -532,9 +532,7 @@ func (m *repoManager) newInstanceID(save bool) (dvid.InstanceID, error) {
 		case "sequential":
 			curid = m.instanceID
 			m.instanceID++
-			if save {
-				err = m.putNewIDs()
-			}
+			err = m.putNewIDs()
 		case "random":
 			s1 := rand.NewSource(time.Now().UnixNano())
 			r1 := rand.New(s1)
@@ -578,9 +576,8 @@ func (m *repoManager) newVersionID(uuid dvid.UUID, save bool) (dvid.VersionID, e
 		if err := m.putCaches(); err != nil {
 			return curid, err
 		}
-		return curid, m.putNewIDs()
 	}
-	return curid, nil
+	return curid, m.putNewIDs()
 }
 
 // newUUID a local VersionID for either a provided UUID or if none is a provided, an
@@ -1408,7 +1405,7 @@ func (m *repoManager) findMatch(kvv kvVersions, v dvid.VersionID) (*storage.KeyV
 // ----- Repo-level data instance functions -----
 
 func (m *repoManager) newData(uuid dvid.UUID, t TypeService, name dvid.InstanceName, c dvid.Config) (DataService, error) {
-	id, err := m.newInstanceID(true)
+	id, err := m.newInstanceID()
 	if err != nil {
 		return nil, err
 	}
@@ -1829,6 +1826,17 @@ func (r *repoT) delete() error {
 	return manager.store.Delete(ctx, tkey)
 }
 
+// relatively slow function compared to manager's cache, but can be used for
+// shadow repos not tied into manager.
+func (r *repoT) versionFromUUID(uuid dvid.UUID) (dvid.VersionID, error) {
+	for v, node := range r.dag.nodes {
+		if node.uuid == uuid {
+			return v, nil
+		}
+	}
+	return 0, ErrInvalidUUID
+}
+
 // Given a transmitted repo where you assume all local IDs (instance and version ids)
 // are incorrect, make new local IDs and keep track of the mapping for later key updates.
 // The current repo manager is NOT modified until addRepo().
@@ -1841,7 +1849,7 @@ func (r *repoT) remapLocalIDs() (dvid.InstanceMap, dvid.VersionMap, error) {
 	modifyManager := false
 	instanceMap := make(dvid.InstanceMap, len(r.data))
 	for dataname, dataservice := range r.data {
-		instanceID, err := manager.newInstanceID(modifyManager)
+		instanceID, err := manager.newInstanceID()
 		if err != nil {
 			return nil, nil, err
 		}

@@ -232,6 +232,10 @@ func (p *pusher) readRepo(m *repoTxMsg) (map[dvid.VersionID]struct{}, error) {
 	if err := p.repo.GobDecode(m.Repo); err != nil {
 		return nil, err
 	}
+	remoteV, err := p.repo.versionFromUUID(m.UUID) // do this before we remap the repo's IDs
+	if err != nil {
+		return nil, err
+	}
 	repoID, err := manager.newRepoID()
 	if err != nil {
 		return nil, err
@@ -246,12 +250,8 @@ func (p *pusher) readRepo(m *repoTxMsg) (map[dvid.VersionID]struct{}, error) {
 	var versions map[dvid.VersionID]struct{}
 	switch m.Transmit {
 	case rpc.TransmitFlatten:
-		v, found := manager.uuidToVersion[m.UUID]
-		if !found {
-			return nil, ErrInvalidUUID
-		}
 		versions = map[dvid.VersionID]struct{}{
-			v: struct{}{},
+			remoteV: struct{}{},
 		}
 	case rpc.TransmitAll:
 		versions, err = getDeltaAll(p.repo, m.UUID)

@@ -16,7 +16,7 @@ func TestNewInstanceIDs(t *testing.T) {
 	ch := make(chan dvid.InstanceID, n)
 	for i := 0; i < n; i++ {
 		go func() {
-			id, err := manager.newInstanceID(true)
+			id, err := manager.newInstanceID()
 			if err != nil {
 				t.Fatalf("error getting instance id: %v\n", err)
 			}
