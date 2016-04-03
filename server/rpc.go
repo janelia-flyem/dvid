@@ -26,7 +26,7 @@ Commands executed on the server (rpc address = %s):
 	shutdown
 
 	repos new  <alias> <description> [optional UUID]
-    
+	
 
 	repo <UUID> branch [optional UUID]
 
@@ -41,23 +41,23 @@ EXPERIMENTAL COMMANDS
 		where <settings> are optional "key=value" strings:
 
 		data=<data1>[,<data2>[,<data3>...]]
-        
-            If supplied, the transmitted data will be limited to the listed
-            data instance names.
-                
+		
+			If supplied, the transmitted data will be limited to the listed
+			data instance names.
+				
 		filter=roi:<roiname>,<uuid>
-        
-            Currently, only the ROI filter exists.  It is specified by an
-            roiname and a UUID for that ROI.  In the future, additional
-            datatype-specific filters can be added.
-        
-		transmit=[deltas | flatten]
+		
+			Currently, only the ROI filter exists.  It is specified by an
+			roiname and a UUID for that ROI.  In the future, additional
+			datatype-specific filters can be added.
+		
+		transmit=[all | branch | flatten]
 
-		    The default transmit "deltas" sends all versions necessary to 
-            make the remote equivalent or a superset of the local repo.
-            
-            A transmit "flatten" will send just the version specified and
-            flatten the key/values so there is no history.
+			The default transmit "deltas" sends all versions necessary to 
+			make the remote equivalent or a superset of the local repo.
+			
+			A transmit "flatten" will send just the version specified and
+			flatten the key/values so there is no history.
 
 	repo <UUID> merge <UUID> [, <UUID>, ...]
 
@@ -118,13 +118,13 @@ func handleCommand(cmd *datastore.Request) (reply *datastore.Response, err error
 		reply.Text = fmt.Sprintf(RPCHelpMessage, config.RPCAddress(), config.HTTPAddress())
 
 	case "shutdown":
-		Shutdown()
 		// Make this process shutdown in a second to allow time for RPC to finish.
 		// TODO -- Better way to do this?
-		log.Printf("DVID server halted due to 'shutdown' command.")
-		reply.Text = fmt.Sprintf("DVID server at %s has been halted.\n", config.RPCAddress())
+		log.Printf("DVID server halting due to 'shutdown' command.")
+		reply.Text = fmt.Sprintf("DVID server at %s is being shutdown...\n", config.RPCAddress())
 		go func() {
 			time.Sleep(1 * time.Second)
+			Shutdown()
 			os.Exit(0)
 		}()
 

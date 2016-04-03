@@ -51,20 +51,6 @@ func MarshalJSON() ([]byte, error) {
 
 // ---- Datastore ID functions ----------
 
-func NewInstanceID() (dvid.InstanceID, error) {
-	if manager == nil {
-		return 0, ErrManagerNotInitialized
-	}
-	return manager.newInstanceID()
-}
-
-func NewRepoID() (dvid.RepoID, error) {
-	if manager == nil {
-		return 0, ErrManagerNotInitialized
-	}
-	return manager.newRepoID()
-}
-
 func NewUUID(assign *dvid.UUID) (dvid.UUID, dvid.VersionID, error) {
 	if manager == nil {
 		return dvid.NilUUID, 0, ErrManagerNotInitialized

@@ -791,6 +791,7 @@ func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter string, version
 					if _, err := s.Call()(datastore.PutKVMsg, endmsg); err != nil {
 						dvid.Errorf("couldn't send data instance termination: %v\n", err)
 					}
+					s.StopJob()
 					return
 				}
 				blocksTotal++
@@ -820,6 +821,7 @@ func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter string, version
 		}()
 
 		// Define range via NewTKey to avoid sending label maxes.
+		s.StartJob()
 		begKey := NewTKey(0, "")
 		endKey := NewTKey(math.MaxUint64, dvid.MaxIndexZYX.ToIZYXString())
 		err := store.ProcessRange(ctx, begKey, endKey, &storage.ChunkOp{}, func(c *storage.Chunk) error {
@@ -843,6 +845,7 @@ func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter string, version
 					if _, err := s.Call()(datastore.PutKVMsg, endmsg); err != nil {
 						dvid.Errorf("couldn't send data instance termination: %v\n", err)
 					}
+					s.StopJob()
 					return
 				}
 				if !ctx.ValidKV(kv, versions) {
@@ -875,6 +878,7 @@ func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter string, version
 			}
 		}()
 
+		s.StartJob()
 		begKey, endKey := ctx.KeyRange()
 		if err = store.RawRangeQuery(begKey, endKey, keysOnly, ch); err != nil {
 			return fmt.Errorf("Error in voxels %q range query: %v", d.DataName(), err)

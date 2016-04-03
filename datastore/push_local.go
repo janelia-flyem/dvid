@@ -218,24 +218,14 @@ func (p *pusher) Close() error {
 	return nil
 }
 
-/*
-func (p *pusher) ProcessMessage(msg interface{}) (interface{}, error) {
-	switch msg := msg.(type) {
-	case *repoTxMsg:
-		return p.readRepo(msg)
-	case *DataTxInit:
-		return p.startData(msg)
-	case *KVMessage:
-		return p.putData(msg)
-	default:
-		return nil, fmt.Errorf("unknown message %v received by push handler", msg)
-	}
-}
-*/
 // --- the functions at each state of FSM
 
 func (p *pusher) readRepo(m *repoTxMsg) (map[dvid.VersionID]struct{}, error) {
 	dvid.Debugf("Reading Repo message...\n")
+
+	if manager == nil {
+		return nil, ErrManagerNotInitialized
+	}
 
 	// Get the repo metadata
 	p.repo = new(repoT)
@@ -256,7 +246,13 @@ func (p *pusher) readRepo(m *repoTxMsg) (map[dvid.VersionID]struct{}, error) {
 	var versions map[dvid.VersionID]struct{}
 	switch m.Transmit {
 	case rpc.TransmitFlatten:
-		versions = nil // versions not needed because remote will flatten and send just the version.
+		v, found := manager.uuidToVersion[m.UUID]
+		if !found {
+			return nil, ErrInvalidUUID
+		}
+		versions = map[dvid.VersionID]struct{}{
+			v: struct{}{},
+		}
 	case rpc.TransmitAll:
 		versions, err = getDeltaAll(p.repo, m.UUID)
 		if err != nil {
@@ -268,20 +264,29 @@ func (p *pusher) readRepo(m *repoTxMsg) (map[dvid.VersionID]struct{}, error) {
 			return nil, err
 		}
 	}
+	if versions == nil {
+		return nil, fmt.Errorf("no push required -- remote has necessary versions")
+	}
 	return versions, nil
 }
 
 // compares remote Repo with local one, determining a list of versions that
 // need to be sent from remote to bring the local DVID up-to-date.
 func getDeltaAll(remote *repoT, uuid dvid.UUID) (map[dvid.VersionID]struct{}, error) {
-	// Get the local repo that has this UUID
-
-	// If we don't have any intersection of remote DAG locally, then return nil so
-	// the entire remote DAG is copied over.
-
-	// Determine all version ids of remote DAG nodes that aren't in the local DAG
-
-	return nil, nil
+	// Determine all version ids of remote DAG nodes that aren't in the local DAG.
+	// Since VersionID can differ among DVID servers, we need to compare using UUIDs
+	// then convert to VersionID.
+	delta := make(map[dvid.VersionID]struct{})
+	for _, rnode := range remote.dag.nodes {
+		lv, found := manager.uuidToVersion[rnode.uuid]
+		if found {
+			dvid.Debugf("Both remote and local have uuid %s... skipping\n", rnode.uuid)
+		} else {
+			dvid.Debugf("Found version %s in remote not in local: sending local version id %d\n", rnode.uuid, lv)
+			delta[lv] = struct{}{}
+		}
+	}
+	return delta, nil
 }
 
 // compares remote Repo with local one, determining a list of versions that
@@ -403,20 +408,16 @@ func Push(uuid dvid.UUID, target string, config dvid.Config) error {
 	if err != nil {
 		return err
 	}
+	if resp == nil {
+		return fmt.Errorf("push unnecessary -- versions at remote are already present")
+	}
 
 	// We should get back a version set to send, or nil = send all versions.
-	var versions map[dvid.VersionID]struct{}
-	if resp == nil {
-		versions = txRepo.versionSet()
-		dvid.Debugf("Remote didn't return versions to send so sending entire DAG\n")
-	} else {
-		var ok bool
-		versions, ok = resp.(map[dvid.VersionID]struct{})
-		if !ok {
-			return fmt.Errorf("received response during repo push that wasn't expected set of delta versions")
-		}
-		dvid.Debugf("Remote sent list of %d versions to send\n", len(versions))
+	versions, ok := resp.(map[dvid.VersionID]struct{})
+	if !ok {
+		return fmt.Errorf("received response during repo push that wasn't expected set of delta versions")
 	}
+	dvid.Debugf("Remote sent list of %d versions to send\n", len(versions))
 
 	// For each data instance, send the data delimited by the roi
 	for _, d := range txRepo.data {

@@ -518,7 +518,8 @@ func (m *repoManager) verifyCompiledTypes() error {
 	return nil
 }
 
-func (m *repoManager) newInstanceID() (dvid.InstanceID, error) {
+// generates new instance ID and if passed true will persist.
+func (m *repoManager) newInstanceID(save bool) (dvid.InstanceID, error) {
 	m.idMutex.Lock()
 	defer m.idMutex.Unlock()
 
@@ -531,7 +532,9 @@ func (m *repoManager) newInstanceID() (dvid.InstanceID, error) {
 		case "sequential":
 			curid = m.instanceID
 			m.instanceID++
-			err = m.putNewIDs()
+			if save {
+				err = m.putNewIDs()
+			}
 		case "random":
 			s1 := rand.NewSource(time.Now().UnixNano())
 			r1 := rand.New(s1)
@@ -556,8 +559,8 @@ func (m *repoManager) newRepoID() (dvid.RepoID, error) {
 
 // newVersionID returns a new local VersionID for the given UUID.  Will return an error if
 // the given UUID already exists locally, so mainly used in p2p transmission of data that
-// keeps the remote UUID.
-func (m *repoManager) newVersionID(uuid dvid.UUID) (dvid.VersionID, error) {
+// keeps the remote UUID.  If save is true, will modify the repoManager mappings and persist.
+func (m *repoManager) newVersionID(uuid dvid.UUID, save bool) (dvid.VersionID, error) {
 	m.idMutex.Lock()
 	defer m.idMutex.Unlock()
 
@@ -567,13 +570,17 @@ func (m *repoManager) newVersionID(uuid dvid.UUID) (dvid.VersionID, error) {
 	}
 
 	curid := m.versionID
-	m.versionToUUID[curid] = uuid
-	m.uuidToVersion[uuid] = curid
 	m.versionID++
-	if err := m.putCaches(); err != nil {
-		return curid, err
+
+	if save {
+		m.versionToUUID[curid] = uuid
+		m.uuidToVersion[uuid] = curid
+		if err := m.putCaches(); err != nil {
+			return curid, err
+		}
+		return curid, m.putNewIDs()
 	}
-	return curid, m.putNewIDs()
+	return curid, nil
 }
 
 // newUUID a local VersionID for either a provided UUID or if none is a provided, an
@@ -648,7 +655,8 @@ func (m *repoManager) matchingUUID(str string) (dvid.UUID, dvid.VersionID, error
 	return bestUUID, bestVersion, err
 }
 
-// addRepo adds a preallocated repo then persists the repo to metadata store.
+// addRepo adds a preallocated repo with valid local instance and version IDs to
+// the repoManager.
 func (m *repoManager) addRepo(r *repoT) error {
 	m.Lock()
 	defer m.Unlock()
@@ -1400,7 +1408,7 @@ func (m *repoManager) findMatch(kvv kvVersions, v dvid.VersionID) (*storage.KeyV
 // ----- Repo-level data instance functions -----
 
 func (m *repoManager) newData(uuid dvid.UUID, t TypeService, name dvid.InstanceName, c dvid.Config) (DataService, error) {
-	id, err := m.newInstanceID()
+	id, err := m.newInstanceID(true)
 	if err != nil {
 		return nil, err
 	}
@@ -1823,17 +1831,17 @@ func (r *repoT) delete() error {
 
 // Given a transmitted repo where you assume all local IDs (instance and version ids)
 // are incorrect, make new local IDs and keep track of the mapping for later key updates.
-// Note that this is not for updates to a current repo but the addition of an entirely
-// new repo.
+// The current repo manager is NOT modified until addRepo().
 func (r *repoT) remapLocalIDs() (dvid.InstanceMap, dvid.VersionMap, error) {
 	if manager == nil {
 		return nil, nil, ErrManagerNotInitialized
 	}
 
 	// Convert the transmitted local ids to this DVID server's local ids.
+	modifyManager := false
 	instanceMap := make(dvid.InstanceMap, len(r.data))
 	for dataname, dataservice := range r.data {
-		instanceID, err := manager.newInstanceID()
+		instanceID, err := manager.newInstanceID(modifyManager)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -1846,7 +1854,7 @@ func (r *repoT) remapLocalIDs() (dvid.InstanceMap, dvid.VersionMap, error) {
 	versionMap := make(dvid.VersionMap, len(r.dag.nodes))
 	for oldVersionID, nodePtr := range r.dag.nodes {
 		// keep the old uuid but get a new version id
-		newVersionID, err := manager.newVersionID(nodePtr.uuid)
+		newVersionID, err := manager.newVersionID(nodePtr.uuid, modifyManager)
 		if err != nil {
 			return nil, nil, err
 		}

@@ -695,6 +695,7 @@ func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter string, version
 					if _, err := s.Call()(PutKVMsg, endmsg); err != nil {
 						dvid.Errorf("couldn't send data instance termination: %v\n", err)
 					}
+					s.StopJob()
 					return
 				}
 				kv := storage.KeyValue{
@@ -708,6 +709,7 @@ func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter string, version
 			}
 		}()
 
+		s.StartJob()
 		begKey, endKey := ctx.TKeyRange()
 		err := store.ProcessRange(ctx, begKey, endKey, &storage.ChunkOp{}, func(c *storage.Chunk) error {
 			if c == nil {
@@ -730,6 +732,7 @@ func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter string, version
 					if _, err := s.Call()(PutKVMsg, endmsg); err != nil {
 						dvid.Errorf("couldn't send data instance termination: %v\n", err)
 					}
+					s.StopJob()
 					return
 				}
 				if !ctx.ValidKV(kv, versions) {
@@ -742,6 +745,7 @@ func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter string, version
 			}
 		}()
 
+		s.StartJob()
 		begKey, endKey := ctx.KeyRange()
 		if err = store.RawRangeQuery(begKey, endKey, keysOnly, ch); err != nil {
 			return fmt.Errorf("%q all/branch transmit range query: %v", d.DataName(), err)

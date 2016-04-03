@@ -6,7 +6,9 @@ package rpc
 
 import (
 	"fmt"
+	"sync"
 
+	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/valyala/gorpc"
 )
 
@@ -21,6 +23,7 @@ type Caller func(string, interface{}) (interface{}, error)
 // Session provides ability to send data to remote DVID using multiple
 // RPCs.
 type Session struct {
+	sync.WaitGroup
 	c  *gorpc.Client
 	dc *gorpc.DispatcherClient
 	id SessionID
@@ -49,7 +52,7 @@ func NewSession(addr string, mid MessageID) (Session, error) {
 	}
 
 	// Create the session.
-	return Session{c, dc, sid}, nil
+	return Session{c: c, dc: dc, id: sid}, nil
 }
 
 func (s *Session) ID() SessionID {
@@ -60,8 +63,23 @@ func (s *Session) Call() Caller {
 	return s.dc.Call
 }
 
+// StartJob marks the start of a sequence of calls that may
+// be handled concurrently.  A session will wait for StopJob()
+// before allowing proceeding with any closing of the session.
+func (s *Session) StartJob() {
+	s.Add(1)
+}
+
+func (s *Session) StopJob() {
+	s.Done()
+}
+
 func (s *Session) Close() error {
+	dvid.Debugf("session %d close: waiting for any jobs to complete...\n", s.id)
+	s.Wait()
+	dvid.Debugf("sending session end to remote...\n")
 	_, err := s.dc.Call(sendEndSession, s.id)
+	dvid.Debugf("stopping client...\n")
 	s.c.Stop()
 	return err
 }
