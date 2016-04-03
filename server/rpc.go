@@ -250,10 +250,12 @@ func handleCommand(cmd *datastore.Request) (reply *datastore.Response, err error
 			var target string
 			cmd.CommandArgs(3, &target)
 			config := cmd.Settings()
-			if err = datastore.Push(uuid, target, config); err != nil {
-				return
-			}
-			reply.Text = fmt.Sprintf("Repo %s pushed to %q\n", uuid, target)
+			go func() {
+				if err = datastore.Push(uuid, target, config); err != nil {
+					dvid.Errorf("push error: %v\n", err)
+				}
+			}()
+			reply.Text = fmt.Sprintf("Started push of repo %s to %q...\n", uuid, target)
 
 			/*
 				case "pull":

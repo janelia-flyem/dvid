@@ -18,6 +18,7 @@ package datastore
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/rpc"
@@ -125,6 +126,9 @@ type pusher struct {
 	dname dvid.InstanceName
 	stats *txStats
 	store storage.KeyValueDB
+
+	startTime time.Time
+	received  uint64 // bytes received over entire push
 }
 
 type txStats struct {
@@ -133,12 +137,19 @@ type txStats struct {
 
 	// stats on value sizes on logarithmic scale to 10 MB
 	numV0, numV1, numV10, numV100, numV1k, numV10k, numV100k, numV1m, numV10m uint64
+
+	// some stats for timing
+	lastTime  time.Time
+	lastBytes uint64 // bytes received since lastTime
 }
 
 // record stats on size of values
-func (t *txStats) addKV(v []byte) {
+func (t *txStats) addKV(kv *storage.KeyValue) {
 	t.numKV++
-	sz := len(v)
+
+	sz := len(kv.V)
+	t.lastBytes += uint64(sz + len(kv.K))
+
 	if sz == 0 {
 		t.numV0++
 		return
@@ -172,6 +183,17 @@ func (t *txStats) addKV(v []byte) {
 		return
 	}
 	t.numV10m++
+
+	// Print progress?
+	if elapsed := time.Since(t.lastTime); elapsed > time.Minute {
+		mb := float64(t.lastBytes) / 1000000
+		sec := elapsed.Seconds()
+		throughput := mb / sec
+		dvid.Debugf("Push throughput: %5.2f MB/s (%.1f MB in %3f seconds)\n", throughput, mb, sec)
+
+		t.lastTime = time.Now()
+		t.lastBytes = 0
+	}
 }
 
 func (p *pusher) printStats() {
@@ -203,10 +225,14 @@ func (p *pusher) ID() rpc.SessionID {
 func (p *pusher) Open(sid rpc.SessionID) error {
 	dvid.Debugf("Push start, session %d\n", sid)
 	p.sessionID = sid
+	p.startTime = time.Now()
 	return nil
 }
 
 func (p *pusher) Close() error {
+	gb := float64(p.received) / 1000000000
+	dvid.Debugf("Closing push of uuid %s: received %.1f GBytes in %s\n", p.repo.uuid, gb, time.Since(p.startTime))
+
 	// Add this repo to current DVID server
 	if err := manager.addRepo(p.repo); err != nil {
 		return err
@@ -217,11 +243,12 @@ func (p *pusher) Close() error {
 // --- the functions at each state of FSM
 
 func (p *pusher) readRepo(m *repoTxMsg) (map[dvid.VersionID]struct{}, error) {
-	dvid.Debugf("Reading Repo message...\n")
+	dvid.Debugf("Reading repo for push of %s...\n", m.UUID)
 
 	if manager == nil {
 		return nil, ErrManagerNotInitialized
 	}
+	p.received += uint64(len(m.Repo))
 
 	// Get the repo metadata
 	p.repo = new(repoT)
@@ -271,6 +298,7 @@ func (p *pusher) readRepo(m *repoTxMsg) (map[dvid.VersionID]struct{}, error) {
 	if versions == nil {
 		return nil, fmt.Errorf("no push required -- remote has necessary versions")
 	}
+	dvid.Debugf("Finished comparing repos -- requesting %d versions from source.\n", len(versions))
 	return versions, nil
 }
 
@@ -302,6 +330,9 @@ func getDeltaBranch(remote *repoT, branch dvid.UUID) (map[dvid.VersionID]struct{
 
 func (p *pusher) startData(d *DataTxInit) error {
 	p.stats = new(txStats)
+	p.stats.lastTime = time.Now()
+	p.stats.lastBytes = 0
+
 	p.dname = d.DataName
 
 	// Get the store associated with this data instance.
@@ -314,6 +345,7 @@ func (p *pusher) startData(d *DataTxInit) error {
 	if !ok {
 		return fmt.Errorf("backend store %q for data type %q of tx data %q is not KeyValueDB-compatable", p.store, d.TypeName, d.DataName)
 	}
+	dvid.Debugf("Push (session %d) starting transfer of data %q...\n", p.sessionID, d.DataName)
 	return nil
 }
 
@@ -345,8 +377,9 @@ func (p *pusher) putData(kvmsg *KVMessage) error {
 	if err := storage.UpdateDataKey(kv.K, newInstanceID, newVersionID, 0); err != nil {
 		return fmt.Errorf("Unable to update data key %v: %v", kv.K, err)
 	}
-	p.stats.addKV(kv.V)
+	p.stats.addKV(kv)
 	p.store.RawPut(kv.K, kv.V)
+	p.received += uint64(len(kv.V) + len(kv.K))
 	return nil
 }
 
