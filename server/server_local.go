@@ -11,9 +11,6 @@ package server
 import (
 	"bytes"
 	"fmt"
-	"net"
-	"net/http"
-	"net/rpc"
 	"net/smtp"
 	"os"
 	"runtime"
@@ -21,6 +18,8 @@ import (
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
+	"github.com/janelia-flyem/dvid/rpc"
+
 	"github.com/janelia-flyem/go/toml"
 )
 
@@ -180,22 +179,8 @@ func Serve() error {
 	go serveHTTP()
 
 	// Launch the rpc server
-	if err := serveRpc(tc.Server.RPCAddress); err != nil {
+	if err := rpc.StartServer(tc.Server.RPCAddress); err != nil {
 		return fmt.Errorf("Could not start RPC server: %v\n", err)
 	}
-	return nil
-}
-
-// Listen and serve RPC requests using address.  Should not return if successful.
-func serveRpc(address string) error {
-	c := new(RPCConnection)
-	c.RPCConnection.Address = address
-	rpc.Register(c)
-	rpc.HandleHTTP()
-	listener, err := net.Listen("tcp", address)
-	if err != nil {
-		return err
-	}
-	http.Serve(listener, nil)
 	return nil
 }

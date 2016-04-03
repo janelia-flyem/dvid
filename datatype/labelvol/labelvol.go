@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -20,8 +21,9 @@ import (
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
 	"github.com/janelia-flyem/dvid/datatype/labelblk"
+	"github.com/janelia-flyem/dvid/datatype/roi"
 	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/janelia-flyem/dvid/message"
+	"github.com/janelia-flyem/dvid/rpc"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
 
@@ -733,8 +735,154 @@ func (d *Data) GobEncode() ([]byte, error) {
 
 // Send transfers all key-value pairs pertinent to this data type as well as
 // the storage.DataStoreType for them.
-func (d *Data) Send(s message.Socket, roiname string, uuid dvid.UUID) error {
-	dvid.Errorf("labelvol.Send() is not implemented yet, so push/pull will not work for this data type.\n")
+func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter string, versions map[dvid.VersionID]struct{}) error {
+	// pick any version because flatten transmit will only have one version, and all or branch transmit will
+	// be looking at all versions anyway.
+	if len(versions) == 0 {
+		return fmt.Errorf("need at least one version to send")
+	}
+	var v dvid.VersionID
+	for v = range versions {
+		break
+	}
+
+	// Get associated labelblk.  If none, we can't use roi filter so just do standard data send.
+	lblk, err := d.GetSyncedLabelblk(v)
+	if err != nil {
+		dvid.Infof("Unable to get synced labelblk for labelvol %q.  Unable to do any ROI-based filtering.\n", d.DataName())
+		return d.Data.Send(s, transmit, filter, versions)
+	}
+	roiIterator, found, err := roi.NewIteratorBySpec(filter, lblk)
+	if err != nil {
+		return err
+	}
+	if !found || roiIterator == nil {
+		return d.Data.Send(s, transmit, filter, versions)
+	}
+
+	store, err := d.GetOrderedKeyValueDB()
+	if err != nil {
+		return fmt.Errorf("Data type labelvol had error initializing store: %v\n", err)
+	}
+	ctx := storage.NewDataContext(d, v)
+
+	// Send the initial data instance start message
+	dmsg := datastore.DataTxInit{
+		Session:    s.ID(),
+		DataName:   d.DataName(),
+		TypeName:   d.TypeName(),
+		InstanceID: d.InstanceID(),
+	}
+	if _, err := s.Call()(datastore.StartDataMsg, dmsg); err != nil {
+		dvid.Errorf("couldn't send data instance start: %v\n", err)
+	}
+
+	// Send all blocks that are within ROI
+	var blocksTotal, blocksSent int
+	keysOnly := false
+	if transmit == rpc.TransmitFlatten {
+		// Start goroutine to receive key-value pairs and transmit to remote.
+		ch := make(chan *storage.TKeyValue, 1000)
+		go func() {
+			for {
+				tkv := <-ch
+				if tkv == nil {
+					endmsg := datastore.KVMessage{Session: s.ID(), Terminate: true}
+					if _, err := s.Call()(datastore.PutKVMsg, endmsg); err != nil {
+						dvid.Errorf("couldn't send data instance termination: %v\n", err)
+					}
+					return
+				}
+				blocksTotal++
+				_, block, err := DecodeTKey(tkv.K)
+				if err != nil {
+					dvid.Errorf("key (%v) cannot be decoded as labelvol key: %v", tkv.K, err)
+					continue
+				}
+				indexZYX, err := block.IndexZYX()
+				if err != nil {
+					dvid.Errorf("unable to convert labelvol block %s into IndexZYX", block.Print())
+					continue
+				}
+				if !roiIterator.InsideFast(indexZYX) {
+					continue
+				}
+				blocksSent++
+				kv := storage.KeyValue{
+					K: ctx.ConstructKey(tkv.K),
+					V: tkv.V,
+				}
+				kvmsg := datastore.KVMessage{s.ID(), kv, false}
+				if _, err := s.Call()(datastore.PutKVMsg, kvmsg); err != nil {
+					dvid.Errorf("Error sending labelvol block to remote: %v", err)
+				}
+			}
+		}()
+
+		// Define range via NewTKey to avoid sending label maxes.
+		begKey := NewTKey(0, "")
+		endKey := NewTKey(math.MaxUint64, dvid.MaxIndexZYX.ToIZYXString())
+		err := store.ProcessRange(ctx, begKey, endKey, &storage.ChunkOp{}, func(c *storage.Chunk) error {
+			if c == nil {
+				return fmt.Errorf("received nil chunk in labelvol flatten push")
+			}
+			ch <- c.TKeyValue
+			return nil
+		})
+		if err != nil {
+			return fmt.Errorf("error in labelvol %q flatten push: %v", d.DataName(), err)
+		}
+	} else {
+		// Start goroutine to receive key-value pairs and transmit to remote.
+		ch := make(chan *storage.KeyValue, 1000)
+		go func() {
+			for {
+				kv := <-ch
+				if kv == nil {
+					endmsg := datastore.KVMessage{Session: s.ID(), Terminate: true}
+					if _, err := s.Call()(datastore.PutKVMsg, endmsg); err != nil {
+						dvid.Errorf("couldn't send data instance termination: %v\n", err)
+					}
+					return
+				}
+				if !ctx.ValidKV(kv, versions) {
+					continue
+				}
+				blocksTotal++
+				tkey, err := ctx.TKeyFromKey(kv.K)
+				if err != nil {
+					dvid.Errorf("Unable to decode TKey from key (%v): %v\n", kv.K, err)
+					continue
+				}
+				_, block, err := DecodeTKey(tkey)
+				if err != nil {
+					dvid.Errorf("key (%v) cannot be decoded as labelvol key: %v", tkey, err)
+					continue
+				}
+				indexZYX, err := block.IndexZYX()
+				if err != nil {
+					dvid.Errorf("unable to convert labelvol block %s into IndexZYX", block.Print())
+					continue
+				}
+				if !roiIterator.InsideFast(indexZYX) {
+					continue
+				}
+				blocksSent++
+				kvmsg := datastore.KVMessage{s.ID(), *kv, false}
+				if _, err := s.Call()(datastore.PutKVMsg, kvmsg); err != nil {
+					dvid.Errorf("Error sending labelvol block to remote: %v", err)
+				}
+			}
+		}()
+
+		begKey, endKey := ctx.KeyRange()
+		if err = store.RawRangeQuery(begKey, endKey, keysOnly, ch); err != nil {
+			return fmt.Errorf("Error in voxels %q range query: %v", d.DataName(), err)
+		}
+	}
+
+	dvid.Infof("Sent %d %s labelvol blocks (out of %d total) with filter %q\n",
+		blocksSent, d.DataName(), blocksTotal, filter)
 	return nil
 }
 

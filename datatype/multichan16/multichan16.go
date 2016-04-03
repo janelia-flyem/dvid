@@ -31,7 +31,6 @@ import (
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/imageblk"
 	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/janelia-flyem/dvid/message"
 	"github.com/janelia-flyem/dvid/server"
 )
 
@@ -294,13 +293,6 @@ func (d *Data) GobEncode() ([]byte, error) {
 }
 
 // --- DataService interface ---
-
-// Send transfers all key-value pairs pertinent to this data type as well as
-// the storage.DataStoreType for them.
-func (d *Data) Send(s message.Socket, roiname string, uuid dvid.UUID) error {
-	dvid.Criticalf("multichan16.Send() is not implemented yet, so push/pull will not work for this data type.\n")
-	return nil
-}
 
 // Do acts as a switchboard for RPC commands.
 func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error {

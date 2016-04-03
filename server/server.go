@@ -11,6 +11,7 @@ import (
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
+	"github.com/janelia-flyem/dvid/rpc"
 	"github.com/janelia-flyem/dvid/storage"
 )
 
@@ -250,4 +251,5 @@ func Shutdown() {
 	}
 	datastore.Close()
 	dvid.BlockOnActiveCgo()
+	rpc.Shutdown()
 }

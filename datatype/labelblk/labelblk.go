@@ -25,7 +25,7 @@ import (
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
 	"github.com/janelia-flyem/dvid/datatype/imageblk"
 	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/janelia-flyem/dvid/message"
+	"github.com/janelia-flyem/dvid/rpc"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
 
@@ -1006,9 +1006,9 @@ func RavelerSuperpixelBytes(slice, superpixel32 uint32) []byte {
 
 // Send transfers all key-value pairs pertinent to this data type as well as
 // the storage.DataStoreType for them.
-func (d *Data) Send(s message.Socket, roiname string, uuid dvid.UUID) error {
+func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter string, versions map[dvid.VersionID]struct{}) error {
 	// Send the label voxel blocks
-	if err := d.Data.Send(s, roiname, uuid); err != nil {
+	if err := d.Data.Send(s, transmit, filter, versions); err != nil {
 		return err
 	}
 	return nil

@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/janelia-flyem/dvid/message"
+	"github.com/janelia-flyem/dvid/rpc"
 )
 
 func init() {
@@ -35,7 +35,7 @@ type TestData struct {
 	*Data
 }
 
-func (d *TestData) Send(s message.Socket, roiname string, uuid dvid.UUID) error {
+func (d *TestData) Send(s rpc.Session, t rpc.Transmit, roiname string, v map[dvid.VersionID]struct{}) error {
 	return nil
 }
 

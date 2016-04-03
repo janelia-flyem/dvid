@@ -1624,6 +1624,56 @@ func newRepo(uuid dvid.UUID, v dvid.VersionID, id dvid.RepoID) *repoT {
 	return repo
 }
 
+// duplicate returns a duped repo optionally limited by the given
+// version ID set and a list of data instance names.  Note that the
+// underlying data instances aren't duplicated.
+func (r *repoT) duplicate(versions map[dvid.VersionID]struct{}, names dvid.InstanceNames) (*repoT, error) {
+	dup := new(repoT)
+
+	dup.id = r.id
+	dup.uuid = r.uuid
+	dup.version = r.version
+
+	dup.alias = r.alias
+	dup.description = r.description
+
+	dup.log = make([]string, len(r.log))
+	copy(dup.log, r.log)
+
+	dup.properties = make(map[string]interface{}, len(r.properties))
+	for k, v := range r.properties {
+		dup.properties[k] = v
+	}
+
+	dup.created = r.created
+	dup.updated = r.updated
+
+	dup.dag = r.dag.duplicate(versions, names)
+
+	if len(names) == 0 {
+		dup.data = make(map[dvid.InstanceName]DataService, len(r.data))
+		for k, v := range r.data {
+			dup.data[k] = v
+		}
+	} else {
+		dup.data = make(map[dvid.InstanceName]DataService, len(names))
+		for _, name := range names {
+			d, found := r.data[name]
+			if !found {
+				return nil, fmt.Errorf("cannot duplicate data instance %q which cannot be found", name)
+			}
+			dup.data[name] = d
+		}
+	}
+
+	dup.subs = make(map[SyncEvent]SyncSubs, len(r.subs))
+	for k, v := range r.subs {
+		dup.subs[k] = v
+	}
+
+	return dup, nil
+}
+
 func (r *repoT) GobDecode(b []byte) error {
 	buf := bytes.NewBuffer(b)
 	dec := gob.NewDecoder(buf)
@@ -1773,6 +1823,8 @@ func (r *repoT) delete() error {
 
 // Given a transmitted repo where you assume all local IDs (instance and version ids)
 // are incorrect, make new local IDs and keep track of the mapping for later key updates.
+// Note that this is not for updates to a current repo but the addition of an entirely
+// new repo.
 func (r *repoT) remapLocalIDs() (dvid.InstanceMap, dvid.VersionMap, error) {
 	if manager == nil {
 		return nil, nil, ErrManagerNotInitialized
@@ -1877,6 +1929,18 @@ func (r *repoT) deleteSyncGraph(name dvid.InstanceName) {
 	}
 }
 
+// makes a set of VersionID out of the current DAG
+func (r *repoT) versionSet() map[dvid.VersionID]struct{} {
+	if r.dag == nil || r.dag.nodes == nil || len(r.dag.nodes) == 0 {
+		return nil
+	}
+	vset := make(map[dvid.VersionID]struct{}, len(r.dag.nodes))
+	for v := range r.dag.nodes {
+		vset[v] = struct{}{}
+	}
+	return vset
+}
+
 // --------------------------------------
 
 // DataAvail gives the availability of data within a node or whether parent nodes
@@ -1931,6 +1995,31 @@ func newDAG(uuid dvid.UUID, v dvid.VersionID) *dagT {
 			v: newNode(uuid, v),
 		},
 	}
+}
+
+// returns duplicate of DAG limited by any set of version IDs or a
+// list of instance names.
+func (d *dagT) duplicate(versions map[dvid.VersionID]struct{}, names dvid.InstanceNames) *dagT {
+	dup := new(dagT)
+	dup.root = d.root
+	dup.rootV = d.rootV
+
+	if len(versions) == 0 {
+		dup.nodes = make(map[dvid.VersionID]*nodeT, len(d.nodes))
+		for v, node := range d.nodes {
+			dup.nodes[v] = node.duplicate(versions, names)
+		}
+	} else {
+		dup.nodes = make(map[dvid.VersionID]*nodeT, len(versions))
+		for v := range versions {
+			node, found := d.nodes[v]
+			if !found {
+				continue
+			}
+			dup.nodes[v] = node.duplicate(versions, names)
+		}
+	}
+	return dup
 }
 
 // ------  Serializations ----------
@@ -2047,6 +2136,63 @@ type nodeT struct {
 
 	created time.Time
 	updated time.Time
+}
+
+// duplicate creates a duplicate node, limiting the data instances
+// to passed names and versions if provided.  If a parent or child is
+// not included in the versions, it is not copied.  Therefore if versions
+// are supplied, they must be contiguous and not random nodes in DAG.
+func (node *nodeT) duplicate(versions map[dvid.VersionID]struct{}, names dvid.InstanceNames) *nodeT {
+	dup := new(nodeT)
+	dup.note = node.note
+	dup.log = make([]string, len(node.log))
+	copy(dup.log, node.log)
+
+	if len(names) == 0 {
+		dup.avail = make(map[dvid.InstanceName]DataAvail, len(node.avail))
+		for k, v := range node.avail {
+			dup.avail[k] = v
+		}
+	} else {
+		dup.avail = make(map[dvid.InstanceName]DataAvail, len(names))
+		for name, avail := range node.avail {
+			dup.avail[name] = avail
+		}
+	}
+
+	dup.uuid = node.uuid
+	dup.version = node.version
+	dup.locked = node.locked
+
+	dup.parents = make([]dvid.VersionID, len(node.parents))
+	dup.children = make([]dvid.VersionID, len(node.children))
+
+	if len(versions) == 0 {
+		copy(dup.parents, node.parents)
+		copy(dup.children, node.children)
+	} else {
+		n := 0
+		for _, parent := range node.parents {
+			if _, found := versions[parent]; found {
+				dup.parents[n] = parent
+				n++
+			}
+		}
+		dup.parents = dup.parents[:n]
+		n = 0
+		for _, child := range node.children {
+			if _, found := versions[child]; found {
+				dup.children[n] = child
+				n++
+			}
+		}
+		dup.children = dup.children[:n]
+	}
+
+	dup.created = node.created
+	dup.updated = node.updated
+
+	return dup
 }
 
 func (node *nodeT) GobDecode(b []byte) error {

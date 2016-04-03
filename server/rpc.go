@@ -9,41 +9,55 @@ package server
 import (
 	"fmt"
 	"log"
-	"net/rpc"
 	"os"
 	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/janelia-flyem/dvid/message"
+	"github.com/janelia-flyem/dvid/rpc"
+	"github.com/valyala/gorpc"
 )
 
-const RPCHelpMessage = `Commands executed on the server (rpc address = %s):
+const RPCHelpMessage = `
+
+Commands executed on the server (rpc address = %s):
 
 	help
 	shutdown
 
 	repos new  <alias> <description> [optional UUID]
     
-	repo <UUID> push <remote DVID address> <settings...>
-
-		where <settings> are optional "key=value" strings that provide:
-
-		roi=<roiname>
-		data=<data1>[,<data2>[,<data3>...]]
-        transmit=[all | flatten | deltas]
-        
-        A transmit "all" will send the entire repo (all versions).
-        A transmit "flatten" will send just the version specified and
-            flatten the key/values so there is no history.
-        A transmit "deltas" (default behavior) sends the version and
-            all ancestor deltas necessary to synchronize that portion
-            of the DAG with the remote DVID server.
-
 
 	repo <UUID> branch [optional UUID]
 
 	repo <UUID> new <datatype name> <data name> <datatype-specific config>...
+
+	node <UUID> <data name> <type-specific commands>
+
+EXPERIMENTAL COMMANDS
+
+	repo <UUID> push <remote DVID address> <settings...>
+
+		where <settings> are optional "key=value" strings:
+
+		data=<data1>[,<data2>[,<data3>...]]
+        
+            If supplied, the transmitted data will be limited to the listed
+            data instance names.
+                
+		filter=roi:<roiname>,<uuid>
+        
+            Currently, only the ROI filter exists.  It is specified by an
+            roiname and a UUID for that ROI.  In the future, additional
+            datatype-specific filters can be added.
+        
+		transmit=[deltas | flatten]
+
+		    The default transmit "deltas" sends all versions necessary to 
+            make the remote equivalent or a superset of the local repo.
+            
+            A transmit "flatten" will send just the version specified and
+            flatten the key/values so there is no history.
 
 	repo <UUID> merge <UUID> [, <UUID>, ...]
 
@@ -53,7 +67,6 @@ const RPCHelpMessage = `Commands executed on the server (rpc address = %s):
 		the merging of key-value pairs, and will generate an error
 		message if this is not the case.
 
-	node <UUID> <data name> <type-specific commands>
 
 For further information, use a web browser to visit the server for this
 datastore:  
@@ -61,49 +74,43 @@ datastore:
 	http://%s
 `
 
-// Client provides RPC access to a DVID server.
-type Client struct {
-	rpcAddress string
-	client     *rpc.Client
+const (
+	commandMsg = "server.Command"
+)
+
+func init() {
+	d := rpc.Dispatcher()
+	d.AddFunc(commandMsg, handleCommand)
+
+	gorpc.RegisterType(&datastore.Request{})
 }
 
-// NewClient returns an RPC client to the given address.
-func NewClient(rpcAddress string) (*Client, error) {
-	client, err := rpc.DialHTTP("tcp", rpcAddress)
+// SendRPC sends a request to a remote DVID.
+func SendRPC(addr string, req datastore.Request) error {
+	c := gorpc.NewTCPClient(addr)
+	c.Start()
+	defer c.Stop()
+
+	dc := rpc.Dispatcher().NewFuncClient(c)
+	resp, err := dc.Call(commandMsg, req)
 	if err != nil {
-		return nil, fmt.Errorf("Did not find DVID server for RPC at %s [%v]\n", rpcAddress, err)
+		return fmt.Errorf("RPC error for %q: %v", req.Command, err)
 	}
-	return &Client{rpcAddress, client}, nil
-}
 
-// Send transmits an RPC command if a server is available.
-func (c *Client) Send(request datastore.Request) error {
-	var reply datastore.Response
-	if c.client != nil {
-		err := c.client.Call("RPCConnection.Do", request, &reply)
-		if err != nil {
-			return fmt.Errorf("RPC error for '%s': %v", request.Command, err)
-		}
-	} else {
-		reply.Output = []byte(fmt.Sprintf("No DVID server is available: %s\n", request.Command))
+	reply, ok := resp.(*datastore.Response)
+	if !ok {
+		return fmt.Errorf("bad response to request %s: %v", req, resp)
 	}
 	return reply.Write(os.Stdout)
 }
 
-// RPCConnection will export all of its functions for rpc access.
-type RPCConnection struct {
-	message.RPCConnection
-}
-
-// Do acts as a switchboard for remote command execution
-func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) error {
-	if reply == nil {
-		dvid.Debugf("reply is nil coming in!\n")
-		return nil
-	}
+// switchboard for remote command execution
+func handleCommand(cmd *datastore.Request) (reply *datastore.Response, err error) {
 	if cmd.Name() == "" {
-		return fmt.Errorf("Server error: got empty command!")
+		err = fmt.Errorf("Server error: got empty command!")
+		return
 	}
+	reply = new(datastore.Response)
 
 	switch cmd.Name() {
 
@@ -125,9 +132,10 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 		if len(cmd.Command) == 1 {
 			text := "\nData Types within this DVID Server\n"
 			text += "----------------------------------\n"
-			mapTypes, err := datastore.Types()
-			if err != nil {
-				return fmt.Errorf("Error trying to retrieve data types within this DVID server!")
+			var mapTypes map[dvid.URLString]datastore.TypeService
+			if mapTypes, err = datastore.Types(); err != nil {
+				err = fmt.Errorf("Error trying to retrieve data types within this DVID server!")
+				return
 			}
 			for url, typeservice := range mapTypes {
 				text += fmt.Sprintf("%-20s %s\n", typeservice.GetTypeName(), url)
@@ -135,13 +143,14 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 			reply.Text = text
 		} else {
 			if len(cmd.Command) != 3 || cmd.Command[2] != "help" {
-				return fmt.Errorf("Unknown types command: %q", cmd.Command)
+				err = fmt.Errorf("Unknown types command: %q", cmd.Command)
+				return
 			}
 			var typename string
+			var typeservice datastore.TypeService
 			cmd.CommandArgs(1, &typename)
-			typeservice, err := datastore.TypeServiceByName(dvid.TypeString(typename))
-			if err != nil {
-				return err
+			if typeservice, err = datastore.TypeServiceByName(dvid.TypeString(typename)); err != nil {
+				return
 			}
 			reply.Text = typeservice.Help()
 		}
@@ -158,27 +167,29 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 				u := dvid.UUID(uuidStr)
 				assign = &u
 			}
-			root, err := datastore.NewRepo(alias, description, assign)
+			var root dvid.UUID
+			root, err = datastore.NewRepo(alias, description, assign)
 			if err != nil {
-				return err
+				return
 			}
-			if err := datastore.SetRepoAlias(root, alias); err != nil {
-				return err
+			if err = datastore.SetRepoAlias(root, alias); err != nil {
+				return
 			}
-			if err := datastore.SetRepoDescription(root, description); err != nil {
-				return err
+			if err = datastore.SetRepoDescription(root, description); err != nil {
+				return
 			}
 			reply.Text = fmt.Sprintf("New repo %q created with head node %s\n", alias, root)
 		default:
-			return fmt.Errorf("Unknown repos command: %q", subcommand)
+			err = fmt.Errorf("Unknown repos command: %q", subcommand)
+			return
 		}
 
 	case "repo":
 		var uuidStr, subcommand string
 		cmd.CommandArgs(1, &uuidStr, &subcommand)
-		uuid, _, err := datastore.MatchingUUID(uuidStr)
-		if err != nil {
-			return err
+		var uuid dvid.UUID
+		if uuid, _, err = datastore.MatchingUUID(uuidStr); err != nil {
+			return
 		}
 
 		switch subcommand {
@@ -187,16 +198,15 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 			cmd.CommandArgs(3, &typename, &dataname)
 
 			// Get TypeService
-			typeservice, err := datastore.TypeServiceByName(dvid.TypeString(typename))
-			if err != nil {
-				return err
+			var typeservice datastore.TypeService
+			if typeservice, err = datastore.TypeServiceByName(dvid.TypeString(typename)); err != nil {
+				return
 			}
 
 			// Create new data
 			config := cmd.Settings()
-			_, err = datastore.NewData(uuid, typeservice, dvid.InstanceName(dataname), config)
-			if err != nil {
-				return err
+			if _, err = datastore.NewData(uuid, typeservice, dvid.InstanceName(dataname), config); err != nil {
+				return
 			}
 			reply.Text = fmt.Sprintf("Data %q [%s] added to node %s\n", dataname, typename, uuid)
 			datastore.AddToRepoLog(uuid, []string{cmd.String()})
@@ -211,9 +221,9 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 				u := dvid.UUID(uuidStr)
 				assign = &u
 			}
-			child, err := datastore.NewVersion(uuid, fmt.Sprintf("branch of %s", uuid), assign)
-			if err != nil {
-				return err
+			var child dvid.UUID
+			if child, err = datastore.NewVersion(uuid, fmt.Sprintf("branch of %s", uuid), assign); err != nil {
+				return
 			}
 			reply.Text = fmt.Sprintf("Branch %s added to node %s\n", child, uuid)
 			datastore.AddToRepoLog(uuid, []string{cmd.String()})
@@ -228,9 +238,10 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 				parents[i] = dvid.UUID(uuid)
 				i++
 			}
-			child, err := datastore.Merge(parents, fmt.Sprintf("merge of parents %v", parents), datastore.MergeConflictFree)
+			var child dvid.UUID
+			child, err = datastore.Merge(parents, fmt.Sprintf("merge of parents %v", parents), datastore.MergeConflictFree)
 			if err != nil {
-				return err
+				return
 			}
 			reply.Text = fmt.Sprintf("Parents %v merged into node %s\n", parents, child)
 			datastore.AddToRepoLog(uuid, []string{cmd.String()})
@@ -240,46 +251,48 @@ func (c *RPCConnection) Do(cmd datastore.Request, reply *datastore.Response) err
 			cmd.CommandArgs(3, &target)
 			config := cmd.Settings()
 			if err = datastore.Push(uuid, target, config); err != nil {
-				return err
+				return
 			}
 			reply.Text = fmt.Sprintf("Repo %s pushed to %q\n", uuid, target)
 		default:
-			return fmt.Errorf("Unknown command: %q", cmd)
+			err = fmt.Errorf("Unknown command: %q", cmd)
+			return
 		}
 
 	case "node":
 		var uuidStr, descriptor string
 		cmd.CommandArgs(1, &uuidStr, &descriptor)
-		uuid, _, err := datastore.MatchingUUID(uuidStr)
-		if err != nil {
-			return err
+		var uuid dvid.UUID
+		if uuid, _, err = datastore.MatchingUUID(uuidStr); err != nil {
+			return
 		}
 
 		// Get the DataService
 		dataname := dvid.InstanceName(descriptor)
 		var subcommand string
 		cmd.CommandArgs(3, &subcommand)
-		dataservice, err := datastore.GetDataByUUID(uuid, dataname)
-		if err != nil {
-			return err
+		var dataservice datastore.DataService
+		if dataservice, err = datastore.GetDataByUUID(uuid, dataname); err != nil {
+			return
 		}
 		if subcommand == "help" {
 			reply.Text = dataservice.Help()
-			return nil
+			return
 		}
-		return dataservice.DoRPC(cmd, reply)
+		err = dataservice.DoRPC(*cmd, reply)
+		return
 
 	default:
 		// Check to see if it's a name of a compiled data type, in which case we refer it to the data type.
 		types := datastore.CompiledTypes()
 		for name, typeservice := range types {
-			//dvid.Infof("checking %q vs %q\n", name, cmd.Argument(0))
 			if name == dvid.TypeString(cmd.Argument(0)) {
-				return typeservice.Do(cmd, reply)
+				err = typeservice.Do(*cmd, reply)
+				return
 			}
 		}
 
-		return fmt.Errorf("Unknown command: '%s'", cmd)
+		err = fmt.Errorf("Unknown command: '%s'", *cmd)
 	}
-	return nil
+	return
 }

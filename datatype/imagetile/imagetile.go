@@ -27,7 +27,6 @@ import (
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/imageblk"
 	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/janelia-flyem/dvid/message"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
 )
@@ -690,13 +689,6 @@ func (d *Data) GobEncode() ([]byte, error) {
 
 func (d *Data) Help() string {
 	return HelpMessage
-}
-
-// Send transfers all key-value pairs pertinent to this data type as well as
-// the storage.DataStoreType for them.
-func (d *Data) Send(s message.Socket, roiname string, uuid dvid.UUID) error {
-	dvid.Criticalf("imagetile.Send() is not implemented yet, so push/pull will not work for this data type.\n")
-	return nil
 }
 
 // DoRPC handles the 'generate' command.

@@ -12,6 +12,19 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 )
 
+var (
+	minTKey, maxTKey TKey
+)
+
+func init() {
+	minTKey = []byte{0}
+	sz := 128
+	maxTKey = make([]byte, sz)
+	for i := 0; i < sz; i++ {
+		maxTKey[i] = 0xFF
+	}
+}
+
 // Context allows encapsulation of data that defines the partitioning of the DVID
 // key space.  To prevent conflicting implementations, Context is an opaque interface type
 // that requires use of an implementation from the storage package, either directly or
@@ -326,6 +339,12 @@ func (ctx *DataContext) KeyRange() (min, max Key) {
 	return min, max
 }
 
+// TKeyRange returns min and max type-specific keys.  The max key is not guaranteed to be the theoretical maximum TKey but
+// should be so for any TKey of 128 bytes or less.  The DataContext can be nil.
+func (ctx *DataContext) TKeyRange() (min, max TKey) {
+	return minTKey, maxTKey
+}
+
 // VersionFromKey returns a version ID from a full key.  Any DataContext is sufficient as receiver.
 func (ctx *DataContext) VersionFromKey(key Key) (dvid.VersionID, error) {
 	if key == nil {
@@ -347,6 +366,20 @@ func (ctx *DataContext) ClientFromKey(key Key) (dvid.ClientID, error) {
 	}
 	start := len(key) - dvid.ClientIDSize - 1 // substract client, and tombstone
 	return dvid.ClientIDFromBytes(key[start : start+dvid.ClientIDSize]), nil
+}
+
+// ValidKV returns true if a key-value pair is in an allowed set of versions.
+// A nil kv always returns true.  An uninterpretable key returns false.
+func (ctx *DataContext) ValidKV(kv *KeyValue, versions map[dvid.VersionID]struct{}) bool {
+	if kv == nil {
+		return true
+	}
+	v, err := ctx.VersionFromKey(kv.K)
+	if err != nil {
+		return false
+	}
+	_, found := versions[v]
+	return found
 }
 
 // Versioned returns false.  This can be overriden by embedding DataContext in structures

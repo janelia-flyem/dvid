@@ -22,7 +22,6 @@ import (
 	"github.com/janelia-flyem/dvid/datatype/labelblk"
 	"github.com/janelia-flyem/dvid/datatype/labelvol"
 	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/janelia-flyem/dvid/message"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
 )
@@ -1276,13 +1275,6 @@ func (d *Data) GobEncode() ([]byte, error) {
 		return nil, err
 	}
 	return buf.Bytes(), nil
-}
-
-// Send transfers all key-value pairs pertinent to this data type as well as
-// the storage.DataStoreType for them.
-func (d *Data) Send(s message.Socket, roiname string, uuid dvid.UUID) error {
-	dvid.Errorf("labelvol.Send() is not implemented yet, so push/pull will not work for this data type.\n")
-	return nil
 }
 
 // DoRPC acts as a switchboard for RPC commands.

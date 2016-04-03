@@ -19,15 +19,14 @@ import (
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/imagetile"
 	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/janelia-flyem/dvid/message"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
-    
-	lz4 "github.com/janelia-flyem/go/golz4"
+
 	"github.com/golang/snappy"
+	lz4 "github.com/janelia-flyem/go/golz4"
 )
 
 const (
@@ -420,9 +419,9 @@ func (ts *GSpec) UnmarshalBinary(data []byte) error {
 func GetGSpec(scaling Scaling, shape dvid.DataShape) (*GSpec, error) {
 	ts := new(GSpec)
 	ts.scaling = scaling
-    if err := ts.shape.FromShape(shape); err != nil {
-        return nil, err
-    }
+	if err := ts.shape.FromShape(shape); err != nil {
+		return nil, err
+	}
 	return ts, nil
 }
 
@@ -436,7 +435,7 @@ const (
 	XY Shape = iota
 	XZ
 	YZ
-    XYZ
+	XYZ
 )
 
 func (s *Shape) FromShape(shape dvid.DataShape) error {
@@ -447,12 +446,12 @@ func (s *Shape) FromShape(shape dvid.DataShape) error {
 		*s = XZ
 	case shape.Equals(dvid.YZ):
 		*s = YZ
-    case shape.Equals(dvid.Vol3d):
-        *s = XYZ
+	case shape.Equals(dvid.Vol3d):
+		*s = XYZ
 	default:
 		return fmt.Errorf("No Google BrainMaps shape corresponds to DVID %s shape", shape)
 	}
-    return nil
+	return nil
 }
 
 func (s Shape) String() string {
@@ -463,8 +462,8 @@ func (s Shape) String() string {
 		return "XZ"
 	case YZ:
 		return "YZ"
-    case XYZ:
-        return "XYZ"
+	case XYZ:
+		return "XYZ"
 	default:
 		return "Unknown orientation"
 	}
@@ -578,7 +577,7 @@ type Geometries []Geometry
 // GoogleSubvolGeom encapsulates all information needed for voxel retrieval (aside from authentication)
 // from the Google BrainMaps API, as well as processing the returned data.
 type GoogleSubvolGeom struct {
-    shape    Shape
+	shape    Shape
 	offset   dvid.Point3d
 	size     dvid.Point3d // This is the size we can retrieve, not necessarily the requested size
 	sizeWant dvid.Point3d // This is the requested size.
@@ -597,26 +596,26 @@ type GoogleSubvolGeom struct {
 // within a scaled volume.
 func (d *Data) GetGoogleSubvolGeom(scaling Scaling, shape dvid.DataShape, offset dvid.Point3d, size dvid.Point) (*GoogleSubvolGeom, error) {
 	gsg := new(GoogleSubvolGeom)
-    if err := gsg.shape.FromShape(shape); err != nil {
-        return nil, err
-    }
+	if err := gsg.shape.FromShape(shape); err != nil {
+		return nil, err
+	}
 	gsg.offset = offset
- 
- 	// If 2d plane, convert combination of plane and size into 3d size.
-    if size.NumDims() == 2 {
-        size2d := size.(dvid.Point2d)
-        sizeWant, err := dvid.GetPoint3dFrom2d(shape, size2d, 1)
-        if err != nil {
-            return nil, err
-        }
-        gsg.sizeWant = sizeWant    
-    } else {
-        var ok bool
-        gsg.sizeWant, ok = size.(dvid.Point3d)
-        if !ok {
-            return nil, fmt.Errorf("Can't convert %v to dvid.Point3d", size)
-        }
-    }
+
+	// If 2d plane, convert combination of plane and size into 3d size.
+	if size.NumDims() == 2 {
+		size2d := size.(dvid.Point2d)
+		sizeWant, err := dvid.GetPoint3dFrom2d(shape, size2d, 1)
+		if err != nil {
+			return nil, err
+		}
+		gsg.sizeWant = sizeWant
+	} else {
+		var ok bool
+		gsg.sizeWant, ok = size.(dvid.Point3d)
+		if !ok {
+			return nil, fmt.Errorf("Can't convert %v to dvid.Point3d", size)
+		}
+	}
 
 	// Determine which geometry is appropriate given the scaling and the shape/orientation
 	tileSpec, err := GetGSpec(scaling, shape)
@@ -671,11 +670,11 @@ func (d *Data) GetGoogleSubvolGeom(scaling Scaling, shape dvid.DataShape, offset
 // level follows the image format and a colon.  Leave formatStr empty for default.
 func (gsg GoogleSubvolGeom) GetURL(volumeid, formatStr string) (string, error) {
 	url := fmt.Sprintf("%s/volumes/%s/binary", bmapsPrefix, volumeid)
-    if gsg.shape == XYZ {
-        url += "/subvolume"
-    } else {
-        url += "/tile"
-    }
+	if gsg.shape == XYZ {
+		url += "/subvolume"
+	} else {
+		url += "/tile"
+	}
 	url += fmt.Sprintf("/corner=%d,%d,%d", gsg.offset[0], gsg.offset[1], gsg.offset[2])
 	url += fmt.Sprintf("/size=%d,%d,%d", gsg.size[0], gsg.size[1], gsg.size[2])
 	url += fmt.Sprintf("/scale=%d", gsg.gi)
@@ -705,11 +704,10 @@ func (gsg GoogleSubvolGeom) GetURL(volumeid, formatStr string) (string, error) {
 			}
 		}
 	}
-    if gsg.shape == XYZ {
-        url += "/subvolumeFormat=raw_zippy"
-    }
-  	url += "?alt=media"
-
+	if gsg.shape == XYZ {
+		url += "/subvolumeFormat=raw_snappy"
+	}
+	url += "?alt=media"
 
 	return url, nil
 }
@@ -914,12 +912,6 @@ func (d *Data) Help() string {
 	return HelpMessage
 }
 
-// Send transfers all key-value pairs pertinent to this data type as well as
-// the storage.DataStoreType for them.
-func (d *Data) Send(s message.Socket, roiname string, uuid dvid.UUID) error {
-	return fmt.Errorf("googlevoxels.Send() is not implemented yet, so push/pull will not work for this data type.\n")
-}
-
 // getBlankTileData returns a background 2d tile data
 func (d *Data) getBlankTileImage(tile *GoogleSubvolGeom) (image.Image, error) {
 	if tile == nil {
@@ -1050,7 +1042,7 @@ func (d *Data) serveVolume(w http.ResponseWriter, r *http.Request, geom *GoogleS
 
 	// If it's on edge, we need to pad the subvolume to the requested size.
 	if geom.edge {
-        return fmt.Errorf("Googlevoxels subvolume GET does not pad data on edge at this time")
+		return fmt.Errorf("Googlevoxels subvolume GET does not pad data on edge at this time")
 	}
 
 	// If we aren't on edge or outside, our return status should be OK.
@@ -1059,57 +1051,57 @@ func (d *Data) serveVolume(w http.ResponseWriter, r *http.Request, geom *GoogleS
 	}
 
 	w.Header().Set("Content-type", "application/octet-stream")
-    
-    queryStrings := r.URL.Query()
-    compression := queryStrings.Get("compression")
-    
-    switch compression {
-        case "lz4":
-            // Decompress snappy
-            sdata, err := ioutil.ReadAll(resp.Body)
-            timedLog.Infof("Got snappy-encoded subvolume from Google, %d bytes\n", len(sdata))
-            if err != nil {
-                return err
-            }
-            data, err := snappy.Decode(nil, sdata)
-            if err != nil {
-                return err
-            }       
-            // Recompress and transmit as lz4
-            lz4data := make([]byte, lz4.CompressBound(data))
-            outSize, err := lz4.Compress(data, lz4data)
-            if err != nil {
-                return err
-            }
-            if _, err := w.Write(lz4data[:outSize]); err != nil {
-                return err
-            }
-            timedLog.Infof("Sent lz4-encoded subvolume from DVID, %d bytes\n", outSize)
-            
-        default:  // "snappy"
-            // Just stream data from Google
-            respBytes := 0
-            const BufferSize = 32 * 1024
-            buf := make([]byte, BufferSize)
-            for {
-                n, err := resp.Body.Read(buf)
-                respBytes += n
-                eof := (err == io.EOF)
-                if err != nil && !eof {
-                    return err
-                }
-                if _, err = w.Write(buf[:n]); err != nil {
-                    return err
-                }
-                if f, ok := w.(http.Flusher); ok {
-                    f.Flush()
-                }
-                if eof {
-                    break
-                }
-            }
-            timedLog.Infof("Proxied snappy-encoded subvolume from Google, %d bytes\n", respBytes)   
-    }
+
+	queryStrings := r.URL.Query()
+	compression := queryStrings.Get("compression")
+
+	switch compression {
+	case "lz4":
+		// Decompress snappy
+		sdata, err := ioutil.ReadAll(resp.Body)
+		timedLog.Infof("Got snappy-encoded subvolume from Google, %d bytes\n", len(sdata))
+		if err != nil {
+			return err
+		}
+		data, err := snappy.Decode(nil, sdata)
+		if err != nil {
+			return err
+		}
+		// Recompress and transmit as lz4
+		lz4data := make([]byte, lz4.CompressBound(data))
+		outSize, err := lz4.Compress(data, lz4data)
+		if err != nil {
+			return err
+		}
+		if _, err := w.Write(lz4data[:outSize]); err != nil {
+			return err
+		}
+		timedLog.Infof("Sent lz4-encoded subvolume from DVID, %d bytes\n", outSize)
+
+	default: // "snappy"
+		// Just stream data from Google
+		respBytes := 0
+		const BufferSize = 32 * 1024
+		buf := make([]byte, BufferSize)
+		for {
+			n, err := resp.Body.Read(buf)
+			respBytes += n
+			eof := (err == io.EOF)
+			if err != nil && !eof {
+				return err
+			}
+			if _, err = w.Write(buf[:n]); err != nil {
+				return err
+			}
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+			if eof {
+				break
+			}
+		}
+		timedLog.Infof("Proxied snappy-encoded subvolume from Google, %d bytes\n", respBytes)
+	}
 
 	return nil
 }
@@ -1126,11 +1118,11 @@ func getScale(r *http.Request) (Scaling, error) {
 		}
 		scale = Scaling(scale64)
 	}
-    return scale, nil
+	return scale, nil
 }
 
 func (d *Data) handleImage2d(w http.ResponseWriter, r *http.Request, parts []string) error {
-    return nil
+	return nil
 }
 
 // handleImageReq returns an image with appropriate Content-Type set.  This function differs
@@ -1147,40 +1139,40 @@ func (d *Data) handleImageReq(w http.ResponseWriter, r *http.Request, parts []st
 		return err
 	}
 
-    var size dvid.Point
-    if size, err = dvid.StringToPoint(sizeStr, "_"); err != nil {
-        return err
-    }
+	var size dvid.Point
+	if size, err = dvid.StringToPoint(sizeStr, "_"); err != nil {
+		return err
+	}
 	offset, err := dvid.StringToPoint3d(offsetStr, "_")
 	if err != nil {
 		return err
 	}
 
 	// Determine how this request sits in the available scaled volumes.
-    scale, err := getScale(r)
-    if err != nil {
-        return err
-    }
-    geom, err := d.GetGoogleSubvolGeom(scale, plane, offset, size)
-    if err != nil {
-        return err
-    }
-            
-    switch plane.ShapeDimensions() {
-        case 2:
-            var formatStr string
-            if len(parts) >= 8 {
-                formatStr = parts[7]
-            }
-            if formatStr == "" {
-                formatStr = DefaultTileFormat
-            }
+	scale, err := getScale(r)
+	if err != nil {
+		return err
+	}
+	geom, err := d.GetGoogleSubvolGeom(scale, plane, offset, size)
+	if err != nil {
+		return err
+	}
 
-            return d.serveTile(w, r, geom, formatStr, false)
-       case 3:
-            return d.serveVolume(w, r, geom, false)
-    }
-    return nil
+	switch plane.ShapeDimensions() {
+	case 2:
+		var formatStr string
+		if len(parts) >= 8 {
+			formatStr = parts[7]
+		}
+		if formatStr == "" {
+			formatStr = DefaultTileFormat
+		}
+
+		return d.serveTile(w, r, geom, formatStr, false)
+	case 3:
+		return d.serveVolume(w, r, geom, false)
+	}
+	return nil
 }
 
 // handleTileReq returns a tile with appropriate Content-Type set.
@@ -1258,11 +1250,11 @@ func (d *Data) handleTileReq(w http.ResponseWriter, r *http.Request, parts []str
 	}
 
 	// Determine how this request sits in the available scaled volumes.
-    geom, err := d.GetGoogleSubvolGeom(Scaling(scale), shape, dvid.Point3d{ox, oy, oz}, size)
-    if err != nil {
+	geom, err := d.GetGoogleSubvolGeom(Scaling(scale), shape, dvid.Point3d{ox, oy, oz}, size)
+	if err != nil {
 		server.BadRequest(w, r, err)
-        return err
-    }
+		return err
+	}
 
 	// Send the tile.
 	return d.serveTile(w, r, geom, formatStr, noblanks)

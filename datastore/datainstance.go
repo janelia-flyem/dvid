@@ -16,7 +16,7 @@ import (
 	"sync"
 
 	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/janelia-flyem/dvid/message"
+	"github.com/janelia-flyem/dvid/rpc"
 	"github.com/janelia-flyem/dvid/storage"
 )
 
@@ -145,10 +145,10 @@ type DataService interface {
 
 	// Send allows peer-to-peer transmission of data instance metadata and
 	// all normalized key-value pairs associated with it.  Transmitted data
-	// can be delimited by an optional ROI, specified by the ROI data name
-	// and its UUID.  Use an empty string for the roiname parameter to transmit
+	// can be delimited by an optional filter specification (e.g., "roi:roiname,uuid")
+	// and set of versions.  Use an empty string for the roiname parameter to transmit
 	// the full extents.
-	Send(s message.Socket, roiname string, uuid dvid.UUID) error
+	Send(s rpc.Session, t rpc.Transmit, filter string, versions map[dvid.VersionID]struct{}) error
 
 	// NOTE: Requiring these interfaces breaks Gob encoding/decoding
 	//  TODO -- figure out why
@@ -654,22 +654,101 @@ func (d *Data) ModifyConfig(config dvid.Config) error {
 // that ignores any filtering per the ROI specification.  Filtering of
 // transmitted data needs to be implemented in the datatype-specific
 // implementation.
-func (d *Data) Send(s message.Socket, roiname string, uuid dvid.UUID) error {
+func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter string, versions map[dvid.VersionID]struct{}) error {
+	store, err := d.GetOrderedKeyValueDB()
+	if err != nil {
+		return err
+	}
+
+	// pick any version because flatten transmit will only have one version, and all or branch transmit will
+	// be looking at all versions anyway.
+	if len(versions) == 0 {
+		return fmt.Errorf("need at least one version to send")
+	}
+	var v dvid.VersionID
+	for v = range versions {
+		break
+	}
+	ctx := storage.NewDataContext(d, v)
+
+	// Send the initial data instance start message
+	dmsg := DataTxInit{
+		Session:    s.ID(),
+		DataName:   d.DataName(),
+		TypeName:   d.TypeName(),
+		InstanceID: d.InstanceID(),
+	}
+	if _, err := s.Call()(StartDataMsg, dmsg); err != nil {
+		dvid.Errorf("couldn't send data instance start: %v\n", err)
+	}
+
+	// Send all the key-value pairs
+	keysOnly := false
+	if transmit == rpc.TransmitFlatten {
+		// Start goroutine to receive tkey-value pairs and transmit to remote.
+		ch := make(chan *storage.TKeyValue, 1000)
+		go func() {
+			for {
+				tkv := <-ch
+				if tkv == nil {
+					endmsg := KVMessage{Session: s.ID(), Terminate: true}
+					if _, err := s.Call()(PutKVMsg, endmsg); err != nil {
+						dvid.Errorf("couldn't send data instance termination: %v\n", err)
+					}
+					return
+				}
+				kv := storage.KeyValue{
+					K: ctx.ConstructKey(tkv.K),
+					V: tkv.V,
+				}
+				kvmsg := KVMessage{s.ID(), kv, false}
+				if _, err := s.Call()(PutKVMsg, kvmsg); err != nil {
+					dvid.Errorf("Error sending voxel block through socket: %v", err)
+				}
+			}
+		}()
+
+		begKey, endKey := ctx.TKeyRange()
+		err := store.ProcessRange(ctx, begKey, endKey, &storage.ChunkOp{}, func(c *storage.Chunk) error {
+			if c == nil {
+				return fmt.Errorf("got nil chunk in datainstance flatten send")
+			}
+			ch <- c.TKeyValue
+			return nil
+		})
+		if err != nil {
+			return fmt.Errorf("%q flatten range query: %v\n", d.DataName(), err)
+		}
+	} else {
+		// Start goroutine to receive key-value pairs and transmit to remote.
+		ch := make(chan *storage.KeyValue, 1000)
+		go func() {
+			for {
+				kv := <-ch
+				if kv == nil {
+					endmsg := KVMessage{Session: s.ID(), Terminate: true}
+					if _, err := s.Call()(PutKVMsg, endmsg); err != nil {
+						dvid.Errorf("couldn't send data instance termination: %v\n", err)
+					}
+					return
+				}
+				if !ctx.ValidKV(kv, versions) {
+					continue
+				}
+				kvmsg := KVMessage{s.ID(), *kv, false}
+				if _, err := s.Call()(PutKVMsg, kvmsg); err != nil {
+					dvid.Errorf("Error sending voxel block through socket: %v", err)
+				}
+			}
+		}()
+
+		begKey, endKey := ctx.KeyRange()
+		if err = store.RawRangeQuery(begKey, endKey, keysOnly, ch); err != nil {
+			return fmt.Errorf("%q all/branch transmit range query: %v", d.DataName(), err)
+		}
+	}
+
 	return nil
-}
-
-// Returns a KeyValueDB by instance ID.
-func getInstanceKeyValueDB(iid dvid.InstanceID) (storage.KeyValueDB, error) {
-	if manager == nil {
-		return nil, ErrManagerNotInitialized
-	}
-
-	// Get batcher associated with this instance ID
-	data, found := manager.iids[iid]
-	if !found {
-		return nil, ErrInvalidDataInstance
-	}
-	return data.GetKeyValueDB()
 }
 
 // ------ storage.Accessor interface implementation -------

@@ -2,6 +2,7 @@ package roi
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -39,6 +40,30 @@ func NewIterator(roiName dvid.InstanceName, versionID dvid.VersionID, b dvid.Bou
 	it := new(Iterator)
 	it.spans, err = getSpans(ctx, minIndex, maxIndex)
 	return it, err
+}
+
+// NewIteratorBySpec returns a ROI iterator based on a string specification of the form
+// "roi:<roiname>,<uuid>" where the ROI instance name and uniquely identifying string form
+// of uuid are given.  If the given string is not parsable, the "found" return value is false.
+func NewIteratorBySpec(spec string, b dvid.Bounder) (it *Iterator, found bool, err error) {
+	// See if the spec is an ROI filter specification.
+	parts := strings.Split(spec, ":")
+	if parts[0] != "roi" || len(parts) != 2 {
+		return nil, false, nil
+	}
+	roispec := strings.Split(parts[1], ",")
+	if len(roispec) != 2 {
+		return nil, false, nil
+	}
+	roiName := dvid.InstanceName(roispec[0])
+	_, v, err := datastore.MatchingUUID(roispec[1])
+	if err != nil {
+		return nil, false, err
+	}
+
+	// Create new iterator based on spec.
+	it, err = NewIterator(roiName, v, b)
+	return it, true, err
 }
 
 func (it *Iterator) Reset() {

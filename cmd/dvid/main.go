@@ -176,10 +176,6 @@ func DoCommand(cmd dvid.Command) error {
 		fmt.Println(server.About())
 	// Send everything else to server via DVID terminal
 	default:
-		client, err := server.NewClient(*rpcAddress)
-		if err != nil {
-			return err
-		}
 		request := datastore.Request{Command: cmd}
 		if *useStdin {
 			var err error
@@ -188,7 +184,7 @@ func DoCommand(cmd dvid.Command) error {
 				return fmt.Errorf("Error in reading from standard input: %v", err)
 			}
 		}
-		return client.Send(request)
+		return server.SendRPC(*rpcAddress, request)
 	}
 	return nil
 }
