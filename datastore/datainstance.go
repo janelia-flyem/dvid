@@ -287,6 +287,7 @@ type Data struct {
 
 	name dvid.InstanceName
 	id   dvid.InstanceID
+
 	uuid dvid.UUID // Root uuid of repo
 
 	// Compression of serialized data, e.g., the value in a key-value.
@@ -437,8 +438,14 @@ func (d *Data) DataName() dvid.InstanceName { return d.name }
 
 func (d *Data) InstanceID() dvid.InstanceID { return d.id }
 
+func (d *Data) UUID() dvid.UUID { return d.uuid }
+
 func (d *Data) SetInstanceID(id dvid.InstanceID) {
 	d.id = id
+}
+
+func (d *Data) SetUUID(uuid dvid.UUID) {
+	d.uuid = uuid
 }
 
 func (d *Data) TypeName() dvid.TypeString { return d.typename }

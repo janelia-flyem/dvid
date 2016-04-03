@@ -202,8 +202,7 @@ func ClientIDFromBytes(b []byte) ClientID {
 type Data interface {
 	DataName() InstanceName
 	InstanceID() InstanceID
-
-	SetInstanceID(InstanceID) // Necessary to support transmission of data to remote DVID.
+	UUID() UUID
 
 	TypeName() TypeString
 	TypeURL() URLString
@@ -217,6 +216,10 @@ type Data interface {
 
 	// SetBackendStore sets the data store used for this data.
 	SetBackendStore(Store)
+
+	// Necessary to support transmission of data to remote DVID.
+	SetInstanceID(InstanceID)
+	SetUUID(UUID)
 }
 
 // Axis enumerates differnt types of axis (x, y, z, time, etc)

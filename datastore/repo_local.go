@@ -1636,8 +1636,24 @@ func (r *repoT) duplicate(versions map[dvid.VersionID]struct{}, names dvid.Insta
 	dup := new(repoT)
 
 	dup.id = r.id
-	dup.uuid = r.uuid
-	dup.version = r.version
+
+	// if the root is no longer an allowed version, we know it's a flattened.
+	if _, found := versions[r.version]; found {
+		dup.uuid = r.uuid
+		dup.version = r.version
+	} else {
+		// Since this needs to be rerooted, data instances rerooted on remote reception.
+		if len(versions) > 1 {
+			dvid.Criticalf("r.duplicate() called with %d versions (> 1) but none are root\n", len(versions))
+		}
+		var v dvid.VersionID
+		for v = range versions {
+			break
+		}
+		dup.version = v
+		dup.uuid = r.dag.nodes[v].uuid
+		dvid.Debugf("duplicated restricted repo without root %s; using root %s\n", r.uuid, dup.uuid)
+	}
 
 	dup.alias = r.alias
 	dup.description = r.description
@@ -2014,26 +2030,35 @@ func newDAG(uuid dvid.UUID, v dvid.VersionID) *dagT {
 }
 
 // returns duplicate of DAG limited by any set of version IDs or a
-// list of instance names.
+// list of instance names.  If the root UUID is not in the list of allowed versions,
+// there must be only one version allowed (flattened)
 func (d *dagT) duplicate(versions map[dvid.VersionID]struct{}, names dvid.InstanceNames) *dagT {
 	dup := new(dagT)
-	dup.root = d.root
-	dup.rootV = d.rootV
 
-	if len(versions) == 0 {
-		dup.nodes = make(map[dvid.VersionID]*nodeT, len(d.nodes))
-		for v, node := range d.nodes {
-			dup.nodes[v] = node.duplicate(versions, names)
-		}
+	// if the root is no longer an allowed version, we know it's a flattened
+	if _, found := versions[d.rootV]; found {
+		dup.root = d.root
+		dup.rootV = d.rootV
 	} else {
-		dup.nodes = make(map[dvid.VersionID]*nodeT, len(versions))
-		for v := range versions {
-			node, found := d.nodes[v]
-			if !found {
-				continue
-			}
-			dup.nodes[v] = node.duplicate(versions, names)
+		if len(versions) > 1 {
+			dvid.Criticalf("dag.duplicate() called with %d versions but none are root\n", len(versions))
 		}
+		var v dvid.VersionID
+		for v = range versions {
+			break
+		}
+		dup.rootV = v
+		dup.root = d.nodes[v].uuid
+		dvid.Debugf("duplicated restricted DAG without root %s; using root %s\n", d.root, dup.root)
+	}
+
+	dup.nodes = make(map[dvid.VersionID]*nodeT, len(versions))
+	for v := range versions {
+		node, found := d.nodes[v]
+		if !found {
+			continue
+		}
+		dup.nodes[v] = node.duplicate(versions, names)
 	}
 	return dup
 }

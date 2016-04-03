@@ -253,6 +253,14 @@ func (p *pusher) readRepo(m *repoTxMsg) (map[dvid.VersionID]struct{}, error) {
 		versions = map[dvid.VersionID]struct{}{
 			remoteV: struct{}{},
 		}
+		// Also have to make sure any data instances are rerooted if the root
+		// no longer exists.
+		for name, d := range p.repo.data {
+			_, found := manager.uuidToVersion[d.UUID()]
+			if !found {
+				p.repo.data[name].SetUUID(m.UUID)
+			}
+		}
 	case rpc.TransmitAll:
 		versions, err = getDeltaAll(p.repo, m.UUID)
 		if err != nil {
@@ -391,6 +399,7 @@ func Push(uuid dvid.UUID, target string, config dvid.Config) error {
 	if err != nil {
 		return fmt.Errorf("Unable to connect (%s) for push: %s", target, err.Error())
 	}
+	defer s.Close() // TODO -- check if can hang if error occurs during job
 
 	// Send the repo metadata, transmit type, and other useful data for remote server.
 	dvid.Infof("Sending repo %s data to %q\n", uuid, target)
@@ -428,17 +437,12 @@ func Push(uuid dvid.UUID, target string, config dvid.Config) error {
 		}
 	}
 
-	// Terminate session.
-	if err := s.Close(); err != nil {
-		return err
-	}
 	return nil
 }
 
 /*
 func Pull(repo Repo, target string, config dvid.Config) error {
 	// To Pull() we initiate a push from target.
-	// It's up to target whether it will push or not.
 	return nil
 }
 */

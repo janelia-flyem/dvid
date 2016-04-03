@@ -254,6 +254,18 @@ func handleCommand(cmd *datastore.Request) (reply *datastore.Response, err error
 				return
 			}
 			reply.Text = fmt.Sprintf("Repo %s pushed to %q\n", uuid, target)
+
+			/*
+				case "pull":
+					var target string
+					cmd.CommandArgs(3, &target)
+					config := cmd.Settings()
+					if err = datastore.Pull(uuid, target, config); err != nil {
+						return
+					}
+					reply.Text = fmt.Sprintf("Repo %s pulled from %q\n", uuid, target)
+			*/
+
 		default:
 			err = fmt.Errorf("Unknown command: %q", cmd)
 			return
