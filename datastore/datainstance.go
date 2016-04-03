@@ -711,7 +711,7 @@ func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter string, version
 				}
 				kvmsg := KVMessage{s.ID(), kv, false}
 				if _, err := s.Call()(PutKVMsg, kvmsg); err != nil {
-					dvid.Errorf("Error sending voxel block through socket: %v", err)
+					dvid.Errorf("Error pushing data %q: %v", d.DataName(), err)
 				}
 			}
 		}()
@@ -747,7 +747,7 @@ func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter string, version
 				}
 				kvmsg := KVMessage{s.ID(), *kv, false}
 				if _, err := s.Call()(PutKVMsg, kvmsg); err != nil {
-					dvid.Errorf("Error sending voxel block through socket: %v", err)
+					dvid.Errorf("Error pushing data %q: %v", d.DataName(), err)
 				}
 			}
 		}()

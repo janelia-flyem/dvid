@@ -34,8 +34,16 @@ func (d *testData) InstanceID() dvid.InstanceID {
 	return d.instanceID
 }
 
+func (d *testData) UUID() dvid.UUID {
+    return d.uuid
+}
+
 func (d *testData) SetInstanceID(id dvid.InstanceID) {
 	d.instanceID = id
+}
+
+func (d *testData) SetUUID(uuid dvid.UUID) {
+    d.uuid = uuid
 }
 
 func (d *testData) Versioned() bool {

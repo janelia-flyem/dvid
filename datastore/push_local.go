@@ -121,10 +121,6 @@ type pusher struct {
 	instanceMap dvid.InstanceMap // map from pushed to local instance ids
 	versionMap  dvid.VersionMap  // map from pushed to local version ids
 
-	// tracking variables when reading in the key-value pairs
-	instanceID dvid.InstanceID
-	versionID  dvid.VersionID
-
 	// current stats for data instance transfer
 	dname dvid.InstanceName
 	stats *txStats
@@ -333,9 +329,6 @@ func (p *pusher) putData(kvmsg *KVMessage) error {
 	oldInstance, oldVersion, _, err := storage.DataKeyToLocalIDs(kv.K)
 	if err != nil {
 		return err
-	}
-	if oldInstance != p.instanceID {
-		return fmt.Errorf("received key (remote instance %d) != expected instance %d", oldInstance, p.instanceID)
 	}
 
 	// Modify the transmitted key-value to have local instance and version ids.
