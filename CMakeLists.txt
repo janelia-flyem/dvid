@@ -137,63 +137,12 @@ else ()
     #     ${BUILDEM_ENV_STRING} go get ${GO_GET} -u github.com/golang/protobuf/{proto,protoc-gen-go}
     #     COMMENT     "Adding goprotobuf support...")
     
-    add_custom_target (gojsonschema
-        ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/janelia-flyem/gojsonschema
-        COMMENT     "Adding gojsonschema library...")
-
-    add_custom_target (goji
-        ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/zenazn/goji
-        COMMENT     "Adding goji web routing library...")
-
-    add_custom_target (msgp
-        ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/tinylib/msgp
-        COMMENT     "Adding msgp messagepack library...")
-
-    add_custom_target (context
-        ${BUILDEM_ENV_STRING} go get ${GO_GET} golang.org/x/net/context
-        COMMENT     "Adding go.net context")
-
-    add_custom_target (lumberjack
-        ${BUILDEM_ENV_STRING} go get ${GO_GET} gopkg.in/natefinch/lumberjack.v2
-        COMMENT     "Adding lumberjack library...")
-
-    add_custom_target (snappy
-        ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/golang/snappy
-        COMMENT     "Adding snappy library...")
-
-    add_custom_target (gcloud
-        ${BUILDEM_ENV_STRING} go get ${GO_GET} golang.org/x/oauth2
-        COMMAND ${BUILDEM_ENV_STRING} go get ${GO_GET} google.golang.org/cloud/bigtable
-        COMMAND ${BUILDEM_ENV_STRING} go get ${GO_GET} google.golang.org/cloud/storage
-        COMMENT     "Adding gcloud packages...")  
-
-    add_custom_target (gorpc
-        ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/valyala/gorpc
-        COMMENT     "Adding gorpc library...")
-
-    set (DVID_DEP_GO_PACKAGES gopackages gojsonschema goji msgp context lumberjack snappy gcloud gorpc)
-
     add_custom_target (nrsc
         ${BUILDEM_ENV_STRING} ${GO_ENV} go build -o ${BUILDEM_BIN_DIR}/nrsc
         DEPENDS     gopackages
         WORKING_DIRECTORY $ENV{GOPATH}/src/github.com/janelia-flyem/go/nrsc/nrsc
         COMMENT     "Building nrsc resource compiler...")
     
-    if (${DVID_FUSE})
-        add_custom_target (gofuse
-            ${BUILDEM_ENV_STRING} go get ${GO_GET} bazil.org/fuse
-            COMMENT     "Adding FUSE Go library...")
-        set (DVID_DEP_GO_PACKAGES ${DVID_DEP_GO_PACKAGES} gofuse)
-    endif()
-
-    add_custom_target (gobolt
-        ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/boltdb/bolt
-        COMMENT     "Adding BoltDB package...")
-
-    add_custom_target (gomdb
-        ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/DocSavage/gomdb
-        COMMENT     "Adding CGo Lightning MDB...")
-
     # Compile command to generate DVID source code version info.
     add_custom_target (dvid-gen-version
         ${BUILDEM_ENV_STRING} ${GO_ENV} ${CGO_FLAGS} go build -o ${BUILDEM_BIN_DIR}/dvid-gen-version 
