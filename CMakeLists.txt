@@ -213,7 +213,7 @@ else ()
         ${BUILDEM_ENV_STRING} ${GO_ENV} ${CGO_FLAGS} go build -o ${BUILDEM_BIN_DIR}/dvid 
         -v -tags '${DVID_BACKEND} ${DVID_GRAPHBACKEND} ${DVID_BUILD_TAGS}' cmd/dvid/main.go 
         WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
-        DEPENDS     ${DVID_BACKEND_DEPEND} ${DVID_DEP_GO_PACKAGES} ${hdf5_NAME} dvid-code-gen
+        DEPENDS     ${DVID_BACKEND_DEPEND} ${DVID_DEP_GO_PACKAGES} dvid-code-gen
         COMMENT     "Compiling and installing dvid executable...")
 
     # Build DVID with embedded console 

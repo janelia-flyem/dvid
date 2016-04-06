@@ -52,7 +52,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Make sure we have rsync
+	// Make sure we have git
 	gitPath, err := exec.LookPath("git")
 	if err != nil {
 		fmt.Printf("Unable to find git command; alter PATH?\nError: %v\n", err)
@@ -60,7 +60,7 @@ func main() {
 	}
 
 	// Get version string
-	cmd := exec.Command(gitPath, "describe", "--abbrev=8", "--dirty", "--always", "--tags")
+	cmd := exec.Command(gitPath, "describe", "--abbrev=5", "--tags")
 	out, err := cmd.Output()
 	if err != nil {
 		fmt.Printf("Error running git: %v\n", err)
