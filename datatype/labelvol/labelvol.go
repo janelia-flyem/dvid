@@ -754,11 +754,11 @@ func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter string, version
 	}
 	roiIterator, found, err := roi.NewIteratorBySpec(filter, lblk)
 	if err != nil {
-        dvid.Debugf("No parseable ROI filter found: %s\n", filter)
+		dvid.Debugf("No parseable ROI filter found: %s\n", filter)
 		return err
 	}
 	if !found || roiIterator == nil {
-        dvid.Debugf("No usable ROI available.  Using generic data push for labelvol\n")
+		dvid.Debugf("No usable ROI available.  Using generic data push for labelvol\n")
 		return d.Data.Send(s, transmit, filter, versions)
 	}
 
@@ -824,7 +824,7 @@ func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter string, version
 
 		// Define range via NewTKey to avoid sending label maxes.
 		s.StartJob()
-		begKey := NewTKey(0, "")
+		begKey := NewTKey(0, dvid.MinIndexZYX.ToIZYXString())
 		endKey := NewTKey(math.MaxUint64, dvid.MaxIndexZYX.ToIZYXString())
 		err := store.ProcessRange(ctx, begKey, endKey, &storage.ChunkOp{}, func(c *storage.Chunk) error {
 			if c == nil {
