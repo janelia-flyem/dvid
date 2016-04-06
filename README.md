@@ -1,7 +1,7 @@
 DVID       [![Picture](https://raw.github.com/janelia-flyem/janelia-flyem.github.com/master/images/HHMI_Janelia_Color_Alternate_180x40.png)](http://www.janelia.org)
 ====
 
-*Status: In production use at Janelia.  See [wiki page for outside lab use of DVID](State-of-DVID-for-External-Use).*
+*Status: In production use at Janelia.  See [wiki page for outside lab use of DVID](https://github.com/janelia-flyem/dvid/wiki/State-of-DVID-for-External-Use).*
 
 [![GoDoc](https://godoc.org/github.com/janelia-flyem/dvid?status.png)](https://godoc.org/github.com/janelia-flyem/dvid) [![Build Status](https://drone.io/github.com/janelia-flyem/dvid/status.png?ts=1)](https://drone.io/github.com/janelia-flyem/dvid/latest)
 
