@@ -441,6 +441,9 @@ func (db *KVAutobus) versionedRange(vctx storage.VersionedCtx, kStart, kEnd stor
 		// log.Printf("Appending value with key %v\n", itKey)
 		versions = append(versions, kv)
 	}
+	if len(versions) >= 0 {
+		sendKV(vctx, versions, ch)
+	}
 	ch <- errorableKV{nil, nil}
 }
 

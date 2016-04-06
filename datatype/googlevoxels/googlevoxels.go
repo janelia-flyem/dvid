@@ -1047,7 +1047,7 @@ func (d *Data) serveVolume(w http.ResponseWriter, r *http.Request, geom *GoogleS
 
 	// If we aren't on edge or outside, our return status should be OK.
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("Unexpected status code %d on tile request (%q, volume id %q)", resp.StatusCode, d.DataName(), d.VolumeID)
+		return fmt.Errorf("Unexpected status code %d on volume request (%q, volume id %q)", resp.StatusCode, d.DataName(), d.VolumeID)
 	}
 
 	w.Header().Set("Content-type", "application/octet-stream")

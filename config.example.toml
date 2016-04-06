@@ -32,8 +32,8 @@ max_log_age = 30   # days
     # store.metadata = configuration for metadata store
     # store.datatype = storage engine to use for the given "datatype"
     #
-    # TODO: Individual data instances will be able to have an assigned
-    #   storage engine at the time of creation.
+    # TODO:
+    # store."name:uuid" = storage engine for a particular data instance
     
     [store.default]
     engine = "basholeveldb"
