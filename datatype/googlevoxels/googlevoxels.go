@@ -1,6 +1,6 @@
 /*
-	Package googlevoxels implements DVID support for multi-scale tiles and volumes in XY, XZ,
-	and YZ orientation using the Google BrainMaps API.
+Package googlevoxels implements DVID support for multi-scale tiles and volumes in XY, XZ,
+and YZ orientation using the Google BrainMaps API.
 */
 package googlevoxels
 
@@ -173,6 +173,9 @@ GET  <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?qu
     compression   Allows retrieval or submission of 3d data in "snappy (default) or "lz4" format.  
                      The 2d data will ignore this and use the image-based codec.
   	scale         Default is 0.  For scale N, returns an image down-sampled by a factor of 2^N.
+    throttle      Only works for 3d data requests.  If "true", makes sure only N compute-intense operation 
+    				(all API calls that can be throttled) are handled.  If the server can't initiate the API 
+    				call right away, a 503 (Service Unavailable) status code is returned.
 `
 
 func init() {
@@ -1311,6 +1314,13 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		timedLog.Infof("HTTP %s: tile (%s)", r.Method, r.URL)
 
 	case "raw":
+		queryStrings := r.URL.Query()
+		if throttle := queryStrings.Get("throttle"); throttle == "on" || throttle == "true" {
+			if server.ThrottledHTTP(w) {
+				return
+			}
+			defer server.ThrottledOpDone()
+		}
 		if err := d.handleImageReq(w, r, parts); err != nil {
 			server.BadRequest(w, r, err)
 			return
