@@ -25,12 +25,23 @@ Commands executed on the server (rpc address = %s):
 	help
 	shutdown
 
-	repos new  <alias> <description> [optional UUID]
+	repos new  <alias> <description> <settings...>
+		where <settings> are optional "key=value" strings:
+		
+		uuid=<uuid>
+		
+		passcode=<passcode>
 	
+			The optional passcode will have to be provided to delete the repo
+			or any contained data instance.
+	
+	repos delete <UUID> <repo passcode if any>
 
 	repo <UUID> branch [optional UUID]
 
 	repo <UUID> new <datatype name> <data name> <datatype-specific config>...
+	
+	repo <UUID> delete <data name> <repo passcode if any>
 
 	node <UUID> <data name> <type-specific commands>
 
@@ -156,19 +167,32 @@ func handleCommand(cmd *datastore.Request) (reply *datastore.Response, err error
 		}
 
 	case "repos":
-		var subcommand, alias, description, uuidStr string
-		cmd.CommandArgs(1, &subcommand, &alias, &description, &uuidStr)
+		var subcommand string
+		cmd.CommandArgs(1, &subcommand)
+
 		switch subcommand {
 		case "new":
+			var alias, description string
+			cmd.CommandArgs(2, &alias, &description)
+
+			config := cmd.Settings()
+			var uuidStr, passcode string
+			var found bool
+			if uuidStr, found, err = config.GetString("uuid"); err != nil {
+				return
+			}
 			var assign *dvid.UUID
-			if uuidStr == "" {
+			if !found {
 				assign = nil
 			} else {
-				u := dvid.UUID(uuidStr)
-				assign = &u
+				uuid := dvid.UUID(uuidStr)
+				assign = &uuid
+			}
+			if passcode, found, err = config.GetString("passcode"); err != nil {
+				return
 			}
 			var root dvid.UUID
-			root, err = datastore.NewRepo(alias, description, assign)
+			root, err = datastore.NewRepo(alias, description, assign, passcode)
 			if err != nil {
 				return
 			}
@@ -179,6 +203,20 @@ func handleCommand(cmd *datastore.Request) (reply *datastore.Response, err error
 				return
 			}
 			reply.Text = fmt.Sprintf("New repo %q created with head node %s\n", alias, root)
+
+		case "delete":
+			var uuidStr, passcode string
+			cmd.CommandArgs(2, &uuidStr, &passcode)
+
+			var uuid dvid.UUID
+			if uuid, _, err = datastore.MatchingUUID(uuidStr); err != nil {
+				return
+			}
+			if err = datastore.DeleteRepo(uuid, passcode); err != nil {
+				return
+			}
+			reply.Text = fmt.Sprintf("Started deletion of repo %s.\n", uuid)
+
 		default:
 			err = fmt.Errorf("Unknown repos command: %q", subcommand)
 			return
@@ -267,6 +305,23 @@ func handleCommand(cmd *datastore.Request) (reply *datastore.Response, err error
 					}
 					reply.Text = fmt.Sprintf("Repo %s pulled from %q\n", uuid, target)
 			*/
+
+		case "delete":
+			var dataname, passcode string
+			cmd.CommandArgs(3, &dataname, &passcode)
+
+			// Make sure this instance exists.
+			if _, err = datastore.GetDataByUUID(uuid, dvid.InstanceName(dataname)); err != nil {
+				err = fmt.Errorf("Error trying to delete %q for UUID %s: %v", dataname, uuid, err)
+				return
+			}
+
+			// Do the deletion.  Under hood, modifies metadata immediately and launches async k/v deletion.
+			if err = datastore.DeleteDataByUUID(uuid, dvid.InstanceName(dataname), passcode); err != nil {
+				err = fmt.Errorf("Error deleting data instance %q: %v", dataname, err)
+				return
+			}
+			reply.Text = fmt.Sprintf("Started deletion of data instance %q from repo with root %s\n", dataname, uuid)
 
 		default:
 			err = fmt.Errorf("Unknown command: %q", cmd)

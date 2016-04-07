@@ -213,54 +213,10 @@ func TestCommitAndBranch(t *testing.T) {
 	// We should be able to write to that keyvalue now in the child.
 	keyReq = fmt.Sprintf("%snode/%s/mykv/key/foo", server.WebAPIPath, resp.Child)
 	server.TestHTTP(t, "POST", keyReq, bytes.NewBufferString("some data"))
-    
-    // We should also be able to write to the repo-wide log.
-    logReq := fmt.Sprintf("%srepo/%s/log", server.WebAPIPath, uuid)
-    server.TestHTTP(t, "POST", logReq, bytes.NewBufferString(`{"log": ["a log mesage"]}`))
-}
 
-func TestDeleteInstance(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
-
-	apiStr := fmt.Sprintf("%srepos", server.WebAPIPath)
-	r := server.TestHTTP(t, "POST", apiStr, nil)
-	var jsonResp map[string]interface{}
-
-	if err := json.Unmarshal(r, &jsonResp); err != nil {
-		t.Fatalf("Unable to unmarshal repo creation response: %s\n", string(r))
-	}
-	v, ok := jsonResp["root"]
-	if !ok {
-		t.Fatalf("No 'root' metadata returned: %s\n", string(r))
-	}
-	uuidStr, ok := v.(string)
-	if !ok {
-		t.Fatalf("Couldn't cast returned 'root' data (%v) into string.\n", v)
-	}
-	uuid := dvid.UUID(uuidStr)
-
-	// Add a data instance.
-	var config dvid.Config
-	server.CreateTestInstance(t, uuid, "keyvalue", "foo", config)
-
-	// Make sure it exists.
-	_, err := datastore.GetDataByUUID(uuid, "foo")
-	if err != nil {
-		t.Errorf("Couldn't create data instance 'foo'\n")
-	}
-
-	// Shouldn't be able to delete instance without "imsure"
-	delReq := fmt.Sprintf("%srepo/%s/%s", server.WebAPIPath, uuid, "foo")
-	server.TestBadHTTP(t, "DELETE", delReq, nil)
-	delReq = fmt.Sprintf("%srepo/%s/%s?imsure=true", server.WebAPIPath, uuid, "foo")
-	server.TestHTTP(t, "DELETE", delReq, nil)
-
-	// Make sure it no longer exists.
-	_, err = datastore.GetDataByUUID(uuid, "foo")
-	if err == nil {
-		t.Errorf("Shouldn't be able to access a deleted data instance 'foo'\n")
-	}
+	// We should also be able to write to the repo-wide log.
+	logReq := fmt.Sprintf("%srepo/%s/log", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", logReq, bytes.NewBufferString(`{"log": ["a log mesage"]}`))
 }
 
 func TestReloadMetadata(t *testing.T) {

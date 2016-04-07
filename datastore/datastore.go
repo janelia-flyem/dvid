@@ -84,20 +84,20 @@ func MatchingUUID(uuidStr string) (dvid.UUID, dvid.VersionID, error) {
 
 // NewRepo creates a new Repo and returns its UUID, either an assigned UUID if
 // provided or creating a new UUID.
-func NewRepo(alias, description string, assign *dvid.UUID) (dvid.UUID, error) {
+func NewRepo(alias, description string, assign *dvid.UUID, passcode string) (dvid.UUID, error) {
 	if manager == nil {
 		return dvid.NilUUID, ErrManagerNotInitialized
 	}
-	r, err := manager.newRepo(alias, description, assign)
+	r, err := manager.newRepo(alias, description, assign, passcode)
 	return r.uuid, err
 }
 
 // DeleteRepo deletes a Repo holding a node with UUID.
-func DeleteRepo(uuid dvid.UUID) error {
+func DeleteRepo(uuid dvid.UUID, passcode string) error {
 	if manager == nil {
 		return ErrManagerNotInitialized
 	}
-	return manager.deleteRepo(uuid)
+	return manager.deleteRepo(uuid, passcode)
 }
 
 func GetRepoRoot(uuid dvid.UUID) (dvid.UUID, error) {
@@ -297,19 +297,19 @@ func GetDataByVersion(v dvid.VersionID, name dvid.InstanceName) (DataService, er
 }
 
 // DeleteDataByUUID returns a data service given an instance name and UUID.
-func DeleteDataByUUID(uuid dvid.UUID, name dvid.InstanceName) error {
+func DeleteDataByUUID(uuid dvid.UUID, name dvid.InstanceName, passcode string) error {
 	if manager == nil {
 		return ErrManagerNotInitialized
 	}
-	return manager.deleteDataByUUID(uuid, name)
+	return manager.deleteDataByUUID(uuid, name, passcode)
 }
 
 // DeleteDataByVersion returns a data service given an instance name and UUID.
-func DeleteDataByVersion(v dvid.VersionID, name dvid.InstanceName) error {
+func DeleteDataByVersion(v dvid.VersionID, name dvid.InstanceName, passcode string) error {
 	if manager == nil {
 		return ErrManagerNotInitialized
 	}
-	return manager.deleteDataByVersion(v, name)
+	return manager.deleteDataByVersion(v, name, passcode)
 }
 
 func ModifyDataConfigByUUID(uuid dvid.UUID, name dvid.InstanceName, c dvid.Config) error {

@@ -14,7 +14,7 @@ func TestRepoGobEncoding(t *testing.T) {
 	versionID := dvid.VersionID(23)
 	repoID := dvid.RepoID(13)
 
-	repo := newRepo(uuid, versionID, repoID)
+	repo := newRepo(uuid, versionID, repoID, "foobar")
 	repo.alias = "just some alias"
 	repo.log = []string{
 		"Did this",
@@ -62,7 +62,7 @@ func TestRepoGobEncoding(t *testing.T) {
 }
 
 func makeTestVersions(t *testing.T) {
-	root, err := NewRepo("test repo", "test repo description", nil)
+	root, err := NewRepo("test repo", "test repo description", nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,12 +133,12 @@ func TestNewRepoDifferent(t *testing.T) {
 	OpenTest()
 	defer CloseTest()
 
-	root1, err := NewRepo("test repo 1", "test repo 1 description", nil)
+	root1, err := NewRepo("test repo 1", "test repo 1 description", nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	root2, err := NewRepo("test repo 2", "test repo 2 description", nil)
+	root2, err := NewRepo("test repo 2", "test repo 2 description", nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +172,7 @@ func TestUUIDAssignment(t *testing.T) {
 
 	uuidStr1 := "de305d5475b4431badb2eb6b9e546014"
 	myuuid := dvid.UUID(uuidStr1)
-	root, err := NewRepo("test repo", "test repo description", &myuuid)
+	root, err := NewRepo("test repo", "test repo description", &myuuid, "")
 	if err != nil {
 		t.Fatal(err)
 	}

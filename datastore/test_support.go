@@ -32,7 +32,7 @@ var (
 
 // NewTestRepo returns a new datastore.Repo suitable for testing.
 func NewTestRepo() (dvid.UUID, dvid.VersionID) {
-	uuid, err := NewRepo("testRepo", "A test repository", nil)
+	uuid, err := NewRepo("testRepo", "A test repository", nil, "foobar")
 	if err != nil {
 		log.Fatalf("Unable to create new testing repo: %v\n", err)
 	}

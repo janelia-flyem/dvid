@@ -676,7 +676,7 @@ func (m *repoManager) addRepo(r *repoT) error {
 	return r.save()
 }
 
-func (m *repoManager) deleteRepo(uuid dvid.UUID) error {
+func (m *repoManager) deleteRepo(uuid dvid.UUID, passcode string) error {
 	m.Lock()
 	defer m.Unlock()
 
@@ -686,6 +686,10 @@ func (m *repoManager) deleteRepo(uuid dvid.UUID) error {
 	r, found := m.repos[uuid]
 	if !found {
 		return ErrInvalidUUID
+	}
+
+	if r.passcode != "" && r.passcode != passcode {
+		return fmt.Errorf("Passcode does not match repo %s passcode", uuid)
 	}
 
 	r.Lock()
@@ -757,7 +761,7 @@ func (m *repoManager) repoFromID(repoID dvid.RepoID) (*repoT, error) {
 }
 
 // newRepo creates a new Repo with a new unique UUID unless one is provided as last parameter.
-func (m *repoManager) newRepo(alias, description string, assign *dvid.UUID) (*repoT, error) {
+func (m *repoManager) newRepo(alias, description string, assign *dvid.UUID, passcode string) (*repoT, error) {
 	if assign != nil {
 		// Make sure there's not already a repo with this UUID.
 		if _, found := m.repos[*assign]; found {
@@ -772,7 +776,7 @@ func (m *repoManager) newRepo(alias, description string, assign *dvid.UUID) (*re
 	if err != nil {
 		return nil, err
 	}
-	r := newRepo(uuid, v, id)
+	r := newRepo(uuid, v, id, passcode)
 
 	m.Lock()
 	defer m.Unlock()
@@ -1509,23 +1513,27 @@ func (m *repoManager) getDataByVersion(v dvid.VersionID, name dvid.InstanceName)
 
 // deleteDataByUUID deletes all data associated with the data instance and removes
 // it from the Repo.
-func (m *repoManager) deleteDataByUUID(uuid dvid.UUID, name dvid.InstanceName) error {
+func (m *repoManager) deleteDataByUUID(uuid dvid.UUID, name dvid.InstanceName, passcode string) error {
 	r, err := m.repoFromUUID(uuid)
 	if err != nil {
 		return err
 	}
-	return m.deleteData(r, name)
+	return m.deleteData(r, name, passcode)
 }
 
-func (m *repoManager) deleteDataByVersion(v dvid.VersionID, name dvid.InstanceName) error {
+func (m *repoManager) deleteDataByVersion(v dvid.VersionID, name dvid.InstanceName, passcode string) error {
 	r, err := m.repoFromVersion(v)
 	if err != nil {
 		return err
 	}
-	return m.deleteData(r, name)
+	return m.deleteData(r, name, passcode)
 }
 
-func (m *repoManager) deleteData(r *repoT, name dvid.InstanceName) error {
+func (m *repoManager) deleteData(r *repoT, name dvid.InstanceName, passcode string) error {
+	if r.passcode != "" && r.passcode != passcode {
+		return fmt.Errorf("incorrect passcode for repo %s", r.uuid)
+	}
+
 	r.Lock()
 	defer r.Unlock()
 
@@ -1590,6 +1598,10 @@ type repoT struct {
 	uuid    dvid.UUID
 	version dvid.VersionID
 
+	// passcode, if supplied, must be used during deletes of repo
+	// or data instances.
+	passcode string
+
 	// alias is an optional user-supplied string to identify this repo
 	// in a more friendly way than a UUID.  There are no guarantees that
 	// this string is unique across all repos.
@@ -1613,12 +1625,14 @@ type repoT struct {
 
 // newRepo creates a new repository given a UUID, version, and RepoID,
 // setting up the initial DAG with root node.
-func newRepo(uuid dvid.UUID, v dvid.VersionID, id dvid.RepoID) *repoT {
+func newRepo(uuid dvid.UUID, v dvid.VersionID, id dvid.RepoID, passcode string) *repoT {
 	t := time.Now()
+	dvid.Infof("new repo with passcode %s\n", passcode)
 	repo := &repoT{
 		id:         id,
 		uuid:       uuid,
 		version:    v,
+		passcode:   passcode,
 		log:        []string{},
 		properties: make(map[string]interface{}),
 		data:       make(map[dvid.InstanceName]DataService),
@@ -1728,6 +1742,10 @@ func (r *repoT) GobDecode(b []byte) error {
 	if err := dec.Decode(&(r.dag)); err != nil {
 		return err
 	}
+	// passcode may not exist.
+	if err := dec.Decode(&(r.passcode)); err != nil {
+		r.passcode = ""
+	}
 	r.version = r.dag.rootV
 	return nil
 }
@@ -1763,6 +1781,9 @@ func (r *repoT) GobEncode() ([]byte, error) {
 		return nil, err
 	}
 	if err := enc.Encode(r.dag); err != nil {
+		return nil, err
+	}
+	if err := enc.Encode(r.passcode); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
