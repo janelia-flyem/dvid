@@ -820,7 +820,7 @@ func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter string, version
 					K: ctx.ConstructKey(tkv.K),
 					V: tkv.V,
 				}
-				kvmsg := datastore.KVMessage{s.ID(), kv, false}
+				kvmsg := datastore.KVMessage{Session: s.ID(), KV: kv, Terminate: false}
 				if _, err := s.Call()(datastore.PutKVMsg, kvmsg); err != nil {
 					dvid.Errorf("Error sending labelvol block to remote: %v", err)
 				}
@@ -839,6 +839,7 @@ func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter string, version
 			ch <- c.TKeyValue
 			return nil
 		})
+		ch <- nil
 		if err != nil {
 			return fmt.Errorf("error in labelvol %q flatten push: %v", d.DataName(), err)
 		}
