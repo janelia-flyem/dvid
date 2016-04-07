@@ -782,6 +782,7 @@ func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter string, version
 	// Send all blocks that are within ROI
 	var blocksTotal, blocksSent int
 	keysOnly := false
+	var curLabel uint64
 	if transmit == rpc.TransmitFlatten {
 		// Start goroutine to receive key-value pairs and transmit to remote.
 		ch := make(chan *storage.TKeyValue, 1000)
@@ -797,7 +798,7 @@ func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter string, version
 					return
 				}
 				blocksTotal++
-				_, block, err := DecodeTKey(tkv.K)
+				label, block, err := DecodeTKey(tkv.K)
 				if err != nil {
 					dvid.Errorf("key (%v) cannot be decoded as labelvol key: %v", tkv.K, err)
 					continue
@@ -806,6 +807,10 @@ func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter string, version
 				if err != nil {
 					dvid.Errorf("unable to convert labelvol block %s into IndexZYX", block.Print())
 					continue
+				}
+				if label != curLabel {
+					roiIterator.Reset()
+					curLabel = label
 				}
 				if !roiIterator.InsideFast(indexZYX) {
 					continue
@@ -824,7 +829,8 @@ func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter string, version
 
 		// Define range via NewTKey to avoid sending label maxes.
 		s.StartJob()
-		begKey := NewTKey(0, dvid.MinIndexZYX.ToIZYXString())
+		zero := dvid.IndexZYX{0, 0, 0} // TODO: Go to dvid.MinIndexZYX after fixing IndexZYX Bytes()
+		begKey := NewTKey(0, zero.ToIZYXString())
 		endKey := NewTKey(math.MaxUint64, dvid.MaxIndexZYX.ToIZYXString())
 		err := store.ProcessRange(ctx, begKey, endKey, &storage.ChunkOp{}, func(c *storage.Chunk) error {
 			if c == nil {
@@ -859,7 +865,7 @@ func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter string, version
 					dvid.Errorf("Unable to decode TKey from key (%v): %v\n", kv.K, err)
 					continue
 				}
-				_, block, err := DecodeTKey(tkey)
+				label, block, err := DecodeTKey(tkey)
 				if err != nil {
 					dvid.Errorf("key (%v) cannot be decoded as labelvol key: %v", tkey, err)
 					continue
@@ -868,6 +874,10 @@ func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter string, version
 				if err != nil {
 					dvid.Errorf("unable to convert labelvol block %s into IndexZYX", block.Print())
 					continue
+				}
+				if label != curLabel {
+					roiIterator.Reset()
+					curLabel = label
 				}
 				if !roiIterator.InsideFast(indexZYX) {
 					continue

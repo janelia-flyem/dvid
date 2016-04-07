@@ -705,7 +705,7 @@ func (gsg GoogleSubvolGeom) GetURL(volumeid, formatStr string) (string, error) {
 		}
 	}
 	if gsg.shape == XYZ {
-		url += "/subvolumeFormat=raw_snappy"
+		url += "/subvolumeFormat=raw_zippy"
 	}
 	url += "?alt=media"
 
