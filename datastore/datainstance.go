@@ -644,6 +644,7 @@ func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter string, version
 			ch <- c.TKeyValue
 			return nil
 		})
+		ch <- nil
 		if err != nil {
 			return fmt.Errorf("%q flatten range query: %v\n", d.DataName(), err)
 		}

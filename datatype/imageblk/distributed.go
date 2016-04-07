@@ -66,6 +66,8 @@ func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter string, version
 						dvid.Errorf("couldn't send data instance termination: %v\n", err)
 					}
 					s.StopJob()
+					dvid.Infof("Sent %d %s voxel blocks (out of %d total) [flattened] with filter %q\n",
+						blocksSent, d.DataName(), blocksTotal, filter)
 					return
 				}
 				blocksTotal++
@@ -114,6 +116,8 @@ func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter string, version
 						dvid.Errorf("couldn't send data instance termination: %v\n", err)
 					}
 					s.StopJob()
+					dvid.Infof("Sent %d %s voxel blocks (out of %d total) with filter %q\n",
+						blocksSent, d.DataName(), blocksTotal, filter)
 					return
 				}
 				if !ctx.ValidKV(kv, versions) {
@@ -147,8 +151,5 @@ func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter string, version
 			return fmt.Errorf("error in push voxels %q range query: %v", d.DataName(), err)
 		}
 	}
-
-	dvid.Infof("Sent %d %s voxel blocks (out of %d total) with filter %q\n",
-		blocksSent, d.DataName(), blocksTotal, filter)
 	return nil
 }
