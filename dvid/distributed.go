@@ -5,6 +5,7 @@
 package dvid
 
 import (
+	"strings"
 	"sync"
 	"time"
 )
@@ -26,6 +27,38 @@ var (
 	cgoNumActive int
 	startCgo     sync.Mutex
 )
+
+// Filter is a string specification of type-specific filters to apply to key-value pairs
+// before sending them to a remote DVID.  For example, a Filter could look like:
+//
+//    roi:seven_column,3f8a;tile:xy,xz
+//
+// The above specifies two filters joined by a semicolon.  The first is an "roi" filters
+// that lists a ROI data instance name ("seven_column") and its version as a partial, unique
+// UUID.  The second is a "tile" filter that specifies two types of tile plane: xy and xz.
+type Filter string
+
+// GetFilter parses a Filter and returns the value of the given filter type.
+// If no filter of ftype is available, the second argument is false.
+func (f Filter) GetFilter(ftype string) (value string, found bool) {
+	// Separate filters.
+	fs := strings.Split(string(f), ";")
+	if len(fs) == 0 {
+		return
+	}
+
+	// Scan each filter to see if its the given ftype.
+	for _, filter := range fs {
+		parts := strings.Split(filter, ":")
+		if parts[0] == ftype {
+			if len(parts) != 2 {
+				return
+			}
+			return parts[1], true
+		}
+	}
+	return
+}
 
 func init() {
 	// Create CgoActive channel to keep tract of the # of active cgo routines.

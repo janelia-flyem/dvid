@@ -64,11 +64,14 @@ EXPERIMENTAL COMMANDS
 		
 		transmit=[all | branch | flatten]
 
-			The default transmit "deltas" sends all versions necessary to 
+			The default transmit "all" sends all versions necessary to 
 			make the remote equivalent or a superset of the local repo.
 			
 			A transmit "flatten" will send just the version specified and
 			flatten the key/values so there is no history.
+			
+			A transmit "branch" will send just the ancestor path of the
+			version specified.
 
 	repo <UUID> merge <UUID> [, <UUID>, ...]
 

@@ -35,7 +35,7 @@ type TestData struct {
 	*Data
 }
 
-func (d *TestData) Send(s rpc.Session, t rpc.Transmit, roiname string, v map[dvid.VersionID]struct{}) error {
+func (d *TestData) Send(s rpc.Session, t rpc.Transmit, filter dvid.Filter, v map[dvid.VersionID]struct{}) error {
 	return nil
 }
 

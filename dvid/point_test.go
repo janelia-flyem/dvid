@@ -182,3 +182,38 @@ func TestSpans(t *testing.T) {
 		t.Errorf("Expected normalized spans of:\n%v\nGot this:\n%v\n", testSpansNorm, normalized)
 	}
 }
+
+func TestTileExtents(t *testing.T) {
+	ext, err := GetTileExtents(ChunkPoint3d{11, 15, 31}, XY, Point3d{32, 32, 32})
+	if err != nil {
+		t.Error(err)
+	}
+	if !ext.MinPoint.Equals(Point3d{352, 480, 31}) {
+		t.Errorf("bad GetTileExtents compute of MinPoint, got %v\n", ext.MinPoint)
+	}
+	if !ext.MaxPoint.Equals(Point3d{383, 511, 31}) {
+		t.Errorf("bad GetTileExtents compute of MaxPoint, got %v\n", ext.MaxPoint)
+	}
+
+	ext, err = GetTileExtents(ChunkPoint3d{11, 15, 31}, XZ, Point3d{32, 32, 32})
+	if err != nil {
+		t.Error(err)
+	}
+	if !ext.MinPoint.Equals(Point3d{352, 15, 992}) {
+		t.Errorf("bad GetTileExtents compute of MinPoint, got %v\n", ext.MinPoint)
+	}
+	if !ext.MaxPoint.Equals(Point3d{383, 15, 1023}) {
+		t.Errorf("bad GetTileExtents compute of MaxPoint, got %v\n", ext.MaxPoint)
+	}
+
+	ext, err = GetTileExtents(ChunkPoint3d{11, 15, 31}, YZ, Point3d{32, 32, 32})
+	if err != nil {
+		t.Error(err)
+	}
+	if !ext.MinPoint.Equals(Point3d{11, 480, 992}) {
+		t.Errorf("bad GetTileExtents compute of MinPoint, got %v\n", ext.MinPoint)
+	}
+	if !ext.MaxPoint.Equals(Point3d{11, 511, 1023}) {
+		t.Errorf("bad GetTileExtents compute of MaxPoint, got %v\n", ext.MaxPoint)
+	}
+}

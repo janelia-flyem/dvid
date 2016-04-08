@@ -753,7 +753,7 @@ func (d *Data) GobEncode() ([]byte, error) {
 
 // Send transfers all key-value pairs pertinent to this data type as well as
 // the storage.DataStoreType for them.
-func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter string, versions map[dvid.VersionID]struct{}) error {
+func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter dvid.Filter, versions map[dvid.VersionID]struct{}) error {
 	// pick any version because flatten transmit will only have one version, and all or branch transmit will
 	// be looking at all versions anyway.
 	if len(versions) == 0 {

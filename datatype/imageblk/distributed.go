@@ -13,7 +13,7 @@ import (
 
 // Send transfers all key-value pairs pertinent to this data type as well as
 // the storage.DataStoreType for them.
-func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter string, versions map[dvid.VersionID]struct{}) error {
+func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter dvid.Filter, versions map[dvid.VersionID]struct{}) error {
 	// if there's no filter, just use base Data send.
 	roiIterator, found, err := roi.NewIteratorBySpec(filter, d)
 	if err != nil {

@@ -455,7 +455,7 @@ func Push(uuid dvid.UUID, target string, config dvid.Config) error {
 	// For each data instance, send the data delimited by the roi
 	for _, d := range txRepo.data {
 		dvid.Infof("Sending instance %q data to %q\n", d.DataName(), target)
-		if err := d.Send(s, transmit, filter, versions); err != nil {
+		if err := d.Send(s, transmit, dvid.Filter(filter), versions); err != nil {
 			dvid.Errorf("Aborting send of instance %q data\n", d.DataName())
 			return err
 		}

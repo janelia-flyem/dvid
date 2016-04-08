@@ -47,12 +47,12 @@ func TestVoxelBoundsInside(t *testing.T) {
 	if inside, err := VoxelBoundsInside(ext, size, testSpans); err != nil || !inside {
 		t.Errorf("Bad intersection of ext %v and test spans: err %v\n", ext, err)
 	}
-	ext = dvid.Extents3d{dvid.Point3d{2130, 1010, 200}, dvid.Point3d{2900, 1040, 900}}
+	ext = dvid.Extents3d{dvid.Point3d{2130, 1010, 200}, dvid.Point3d{2130, 1040, 900}}
 	if inside, err := VoxelBoundsInside(ext, size, testSpans); err != nil || inside {
 		t.Errorf("Bad intersection of ext %v and test spans: err %v\n", ext, err)
 	}
-	ext = dvid.Extents3d{dvid.Point3d{2130, 1010, 1040}, dvid.Point3d{2900, 1040, 1040}}
-	if inside, err := VoxelBoundsInside(ext, size, testSpans); err != nil || inside {
+	ext = dvid.Extents3d{dvid.Point3d{2130, 1040, 1000}, dvid.Point3d{2900, 1040, 2000}}
+	if inside, err := VoxelBoundsInside(ext, size, testSpans); err != nil || !inside {
 		t.Errorf("Bad intersection of ext %v and test spans: err %v\n", ext, err)
 	}
 }

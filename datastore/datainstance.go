@@ -148,7 +148,7 @@ type DataService interface {
 	// can be delimited by an optional filter specification (e.g., "roi:roiname,uuid")
 	// and set of versions.  Use an empty string for the roiname parameter to transmit
 	// the full extents.
-	Send(s rpc.Session, t rpc.Transmit, filter string, versions map[dvid.VersionID]struct{}) error
+	Send(rpc.Session, rpc.Transmit, dvid.Filter, map[dvid.VersionID]struct{}) error
 }
 
 // TypeMigrator is an interface for a DataService that can migrate itself to another DataService.
@@ -587,7 +587,7 @@ func (d *Data) ModifyConfig(config dvid.Config) error {
 // that ignores any filtering per the ROI specification.  Filtering of
 // transmitted data needs to be implemented in the datatype-specific
 // implementation.
-func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter string, versions map[dvid.VersionID]struct{}) error {
+func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter dvid.Filter, versions map[dvid.VersionID]struct{}) error {
 	store, err := d.GetOrderedKeyValueDB()
 	if err != nil {
 		return err

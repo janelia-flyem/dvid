@@ -45,13 +45,9 @@ func NewIterator(roiName dvid.InstanceName, versionID dvid.VersionID, b dvid.Bou
 // NewIteratorBySpec returns a ROI iterator based on a string specification of the form
 // "roi:<roiname>,<uuid>" where the ROI instance name and uniquely identifying string form
 // of uuid are given.  If the given string is not parsable, the "found" return value is false.
-func NewIteratorBySpec(spec string, b dvid.Bounder) (it *Iterator, found bool, err error) {
-	// See if the spec is an ROI filter specification.
-	parts := strings.Split(spec, ":")
-	if parts[0] != "roi" || len(parts) != 2 {
-		return nil, false, nil
-	}
-	roispec := strings.Split(parts[1], ",")
+func NewIteratorBySpec(spec dvid.Filter, b dvid.Bounder) (it *Iterator, found bool, err error) {
+	filterval, found := spec.GetFilter("roi")
+	roispec := strings.Split(filterval, ",")
 	if len(roispec) != 2 {
 		return nil, false, nil
 	}

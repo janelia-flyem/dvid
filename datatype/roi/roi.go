@@ -252,13 +252,9 @@ type Data struct {
 
 // DataBySpec returns a ROI Data based on a string specification of the form
 // "roi:<roiname>,<uuid>". If the given string is not parsable, the "found" return value is false.
-func DataBySpec(spec string) (d *Data, v dvid.VersionID, found bool, err error) {
-	// See if the spec is an ROI filter specification.
-	parts := strings.Split(spec, ":")
-	if parts[0] != "roi" || len(parts) != 2 {
-		return
-	}
-	roispec := strings.Split(parts[1], ",")
+func DataBySpec(spec dvid.Filter) (d *Data, v dvid.VersionID, found bool, err error) {
+	filterval, found := spec.GetFilter("roi")
+	roispec := strings.Split(filterval, ",")
 	if len(roispec) != 2 {
 		return
 	}
@@ -453,10 +449,10 @@ func getSpans(ctx *datastore.VersionedCtx, minIndex, maxIndex indexRLE) ([]dvid.
 }
 
 // VoxelBoundsInside returns true if the given voxel extents intersects the spans.
-func VoxelBoundsInside(e dvid.Extents3d, size dvid.Point3d, spans []dvid.Span) (bool, error) {
-	// Convert the voxel bounds to block coordinates.
-	emin := e.MinPoint.Chunk(size).(dvid.ChunkPoint3d)
-	emax := e.MaxPoint.Chunk(size).(dvid.ChunkPoint3d)
+func VoxelBoundsInside(e dvid.Extents3d, blocksize dvid.Point3d, spans []dvid.Span) (bool, error) {
+	// Convert the voxel bounds to block coordinates
+	emin := e.MinPoint.Chunk(blocksize).(dvid.ChunkPoint3d)
+	emax := e.MaxPoint.Chunk(blocksize).(dvid.ChunkPoint3d)
 
 	// Iterate through the spans to see if there's intersection between
 	// the extents and span.

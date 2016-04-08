@@ -53,20 +53,20 @@ $ dvid repo <UUID> new imagetile <data name> <settings...>
 
 	$ dvid repo 3f8c new imagetile myimagetile source=mygrayscale format=jpg
 
-    Arguments:
+	Arguments:
 
-    UUID           Hexidecimal string with enough characters to uniquely identify a version node.
-    data name      Name of data to create, e.g., "mygrayscale"
-    settings       Configuration settings in "key=value" format separated by spaces.
+	UUID           Hexidecimal string with enough characters to uniquely identify a version node.
+	data name      Name of data to create, e.g., "mygrayscale"
+	settings       Configuration settings in "key=value" format separated by spaces.
 
-    Configuration Settings (case-insensitive keys)
+	Configuration Settings (case-insensitive keys)
 
-    Format         "lz4", "jpg", or "png" (default).  In the case of "lz4", decoding/encoding is done at
-                      tile request time and is a better choice if you primarily ask for arbitrary sized images
-                      (via GET .../raw/... or .../isotropic/...) instead of tiles (via GET .../tile/...)
-    Versioned      "true" or "false" (default)
-    Source         Name of uint8blk data instance if using the tile "generate" command below.
-    Placeholder    Bool ("false", "true", "0", or "1").  Return placeholder tile if missing.
+	Format         "lz4", "jpg", or "png" (default).  In the case of "lz4", decoding/encoding is done at
+					  tile request time and is a better choice if you primarily ask for arbitrary sized images
+					  (via GET .../raw/... or .../isotropic/...) instead of tiles (via GET .../tile/...)
+	Versioned      "true" or "false" (default)
+	Source         Name of uint8blk data instance if using the tile "generate" command below.
+	Placeholder    Bool ("false", "true", "0", or "1").  Return placeholder tile if missing.
 
 
 $ dvid node <UUID> <data name> generate [settings]
@@ -87,32 +87,64 @@ $ dvid -stdin node <UUID> <data name> generate [settings] < config.json
 	$ dvid repo 3f8c myimagetile generate /path/to/config.json
 	$ dvid -stdin repo 3f8c myimagetile generate xrange=100,700 planes="yz;0,1" < /path/to/config.json 
 
-    Arguments:
+	Arguments:
 
-    UUID            Hexidecimal string with enough characters to uniquely identify a version node.
-    data name       Name of data to create, e.g., "mygrayscale".
-    settings        Optional file name of tile specifications for tile generation.
+	UUID            Hexidecimal string with enough characters to uniquely identify a version node.
+	data name       Name of data to create, e.g., "mygrayscale".
+	settings        Optional file name of tile specifications for tile generation.
 
-    Configuration Settings (case-insensitive keys)
+	Configuration Settings (case-insensitive keys)
 
-    planes          List of one or more planes separated by semicolon.  Each plane can be
-                       designated using either axis number ("0,1") or xyz nomenclature ("xy").
-                       Example:  planes="0,1;yz"
-    zrange			Only render XY tiles containing pixels between this minimum and maximum in z.
-    yrange			Only render XZ tiles containing pixels between this minimum and maximum in y.
-    xrange			Only render YZ tiles containing pixels between this minimum and maximum in x.
-    filename        Filename of JSON file specifying multiscale tile resolutions as below.
+	planes          List of one or more planes separated by semicolon.  Each plane can be
+					   designated using either axis number ("0,1") or xyz nomenclature ("xy").
+					   Example:  planes="0,1;yz"
+	zrange			Only render XY tiles containing pixels between this minimum and maximum in z.
+	yrange			Only render XZ tiles containing pixels between this minimum and maximum in y.
+	xrange			Only render YZ tiles containing pixels between this minimum and maximum in x.
+	filename        Filename of JSON file specifying multiscale tile resolutions as below.
 
-    Sample config.json:
+	Sample config.json:
 
 	{
-	    "0": {  "Resolution": [10.0, 10.0, 10.0], "TileSize": [512, 512, 512] },
-	    "1": {  "Resolution": [20.0, 20.0, 20.0], "TileSize": [512, 512, 512] },
-	    "2": {  "Resolution": [40.0, 40.0, 40.0], "TileSize": [512, 512, 512] },
-	    "3": {  "Resolution": [80.0, 80.0, 80.0], "TileSize": [512, 512, 512] }
+		"0": {  "Resolution": [10.0, 10.0, 10.0], "TileSize": [512, 512, 512] },
+		"1": {  "Resolution": [20.0, 20.0, 20.0], "TileSize": [512, 512, 512] },
+		"2": {  "Resolution": [40.0, 40.0, 40.0], "TileSize": [512, 512, 512] },
+		"3": {  "Resolution": [80.0, 80.0, 80.0], "TileSize": [512, 512, 512] }
 	}
+	
+ $ dvid repo <UUID> push <remote DVID address> <settings...>
+ 
+		Push tiles to remote DVID.
 
-    ------------------
+		where <settings> are optional "key=value" strings:
+
+		data=<data1>[,<data2>[,<data3>...]]
+		
+			If supplied, the transmitted data will be limited to the listed
+			data instance names.
+				
+		filter=roi:<roiname>,<uuid>;tile:<plane>,<plane>
+        
+            Example: filter=roi:seven_column,38af;tile:xy,xz
+		
+			There are two usable filters for imagetile:
+            The "roi" filter is followed by an roiname and a UUID for that ROI.
+            The "tile" filter is followed by one or more plane specifications (xy, xz, yz).  
+            If omitted all planes are pushed.
+		
+		transmit=[all | branch | flatten]
+
+			The default transmit "all" sends all versions necessary to 
+			make the remote equivalent or a superset of the local repo.
+			
+			A transmit "flatten" will send just the version specified and
+			flatten the key/values so there is no history.
+            
+            A transmit "branch" will send just the ancestor path of the
+            version specified.
+
+
+	------------------
 
 HTTP API (Level 2 REST):
 
@@ -123,16 +155,16 @@ GET  <api URL>/node/<UUID>/<data name>/help
 
 GET  <api URL>/node/<UUID>/<data name>/info
 
-    Retrieves characteristics of this tile data like the tile size and number of scales present.
+	Retrieves characteristics of this tile data like the tile size and number of scales present.
 
-    Example: 
+	Example: 
 
-    GET <api URL>/node/3f8c/myimagetile/info
+	GET <api URL>/node/3f8c/myimagetile/info
 
-    Arguments:
+	Arguments:
 
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
-    data name     Name of imagetile data.
+	UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+	data name     Name of imagetile data.
 
 
 GET  <api URL>/node/<UUID>/<data name>/metadata
@@ -154,10 +186,10 @@ POST <api URL>/node/<UUID>/<data name>/metadata
 		"MinTileCoord": [0, 0, 0],
 		"MaxTileCoord": [5, 5, 4],
 		"Levels": {
-		    "0": {  "Resolution": [10.0, 10.0, 10.0], "TileSize": [512, 512, 512] },
-		    "1": {  "Resolution": [20.0, 20.0, 20.0], "TileSize": [512, 512, 512] },
-		    "2": {  "Resolution": [40.0, 40.0, 40.0], "TileSize": [512, 512, 512] },
-		    "3": {  "Resolution": [80.0, 80.0, 80.0], "TileSize": [512, 512, 512] }
+			"0": {  "Resolution": [10.0, 10.0, 10.0], "TileSize": [512, 512, 512] },
+			"1": {  "Resolution": [20.0, 20.0, 20.0], "TileSize": [512, 512, 512] },
+			"2": {  "Resolution": [40.0, 40.0, 40.0], "TileSize": [512, 512, 512] },
+			"3": {  "Resolution": [80.0, 80.0, 80.0], "TileSize": [512, 512, 512] }
 		}
 	}
 
@@ -167,28 +199,28 @@ POST <api URL>/node/<UUID>/<data name>/metadata
 
 GET  <api URL>/node/<UUID>/<data name>/tile/<dims>/<scaling>/<tile coord>[?noblanks=true]
 POST
-    Retrieves or adds PNG tile of named data within a version node.  This GET call should be the fastest
-    way to retrieve image data since internally it has already been stored in a pre-computed, optionally
-    compression format, whereas arbitrary geometry calls require the DVID server to stitch images
-    together.
+	Retrieves or adds PNG tile of named data within a version node.  This GET call should be the fastest
+	way to retrieve image data since internally it has already been stored in a pre-computed, optionally
+	compression format, whereas arbitrary geometry calls require the DVID server to stitch images
+	together.
 
-    Note on POSTs: The data of the body in the POST is assumed to match the data instance's 
-    chosen compression and tile sizes.  Currently, no checks are performed to make sure the
-    POSTed data meets the specification.
+	Note on POSTs: The data of the body in the POST is assumed to match the data instance's 
+	chosen compression and tile sizes.  Currently, no checks are performed to make sure the
+	POSTed data meets the specification.
 
-    Example: 
+	Example: 
 
-    GET  <api URL>/node/3f8c/myimagetile/tile/xy/0/10_10_20
-    POST <api URL>/node/3f8c/myimagetile/tile/xy/0/10_10_20
+	GET  <api URL>/node/3f8c/myimagetile/tile/xy/0/10_10_20
+	POST <api URL>/node/3f8c/myimagetile/tile/xy/0/10_10_20
 
-    Arguments:
+	Arguments:
 
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
-    data name     Name of data to add.
-    dims          The axes of data extraction in form "i_j_k,..."  Example: "0_2" can be XZ.
-                    Slice strings ("xy", "xz", or "yz") are also accepted.
-    scaling       Value from 0 (original resolution) to N where each step is downres by 2.
-    tile coord    The tile coordinate in "x_y_z" format.  See discussion of scaling above.
+	UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+	data name     Name of data to add.
+	dims          The axes of data extraction in form "i_j_k,..."  Example: "0_2" can be XZ.
+					Slice strings ("xy", "xz", or "yz") are also accepted.
+	scaling       Value from 0 (original resolution) to N where each step is downres by 2.
+	tile coord    The tile coordinate in "x_y_z" format.  See discussion of scaling above.
 
   	Query-string options:
 
@@ -198,75 +230,75 @@ POST
 
 GET  <api URL>/node/<UUID>/<data name>/tilekey/<dims>/<scaling>/<tile coord>
 
-    Retrieves the internal key for a tile of named data within a version node.  
-    This lets external systems bypass DVID and store tiles directly into immutable stores.
+	Retrieves the internal key for a tile of named data within a version node.  
+	This lets external systems bypass DVID and store tiles directly into immutable stores.
 
-    Returns JSON with "key" key and a hexadecimal string giving binary key.
+	Returns JSON with "key" key and a hexadecimal string giving binary key.
 
-    Example: 
+	Example: 
 
-    GET  <api URL>/node/3f8c/myimagetile/tilekey/xy/0/10_10_20
+	GET  <api URL>/node/3f8c/myimagetile/tilekey/xy/0/10_10_20
 
-    Returns:
-    { "key": <hexadecimal string of key> }
+	Returns:
+	{ "key": <hexadecimal string of key> }
 
-    Arguments:
+	Arguments:
 
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
-    data name     Name of data to add.
-    dims          The axes of data extraction in form "i_j_k,..."  Example: "0_2" can be XZ.
-                    Slice strings ("xy", "xz", or "yz") are also accepted.
-    scaling       Value from 0 (original resolution) to N where each step is downres by 2.
-    tile coord    The tile coordinate in "x_y_z" format.  See discussion of scaling above.
+	UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+	data name     Name of data to add.
+	dims          The axes of data extraction in form "i_j_k,..."  Example: "0_2" can be XZ.
+					Slice strings ("xy", "xz", or "yz") are also accepted.
+	scaling       Value from 0 (original resolution) to N where each step is downres by 2.
+	tile coord    The tile coordinate in "x_y_z" format.  See discussion of scaling above.
 
 
 GET  <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>]
 
-    Retrieves raw image of named data within a version node using the precomputed imagetile.
-    By "raw", we mean that no additional processing is applied based on voxel resolutions
-    to make sure the retrieved image has isotropic pixels.  For example, if an XZ image
-    is requested and the image volume has X resolution 3 nm and Z resolution 40 nm, the
-    returned image will be heavily anisotropic and should be scaled by 40/3 in Y by client.
+	Retrieves raw image of named data within a version node using the precomputed imagetile.
+	By "raw", we mean that no additional processing is applied based on voxel resolutions
+	to make sure the retrieved image has isotropic pixels.  For example, if an XZ image
+	is requested and the image volume has X resolution 3 nm and Z resolution 40 nm, the
+	returned image will be heavily anisotropic and should be scaled by 40/3 in Y by client.
 
-    Example: 
+	Example: 
 
-    GET <api URL>/node/3f8c/myimagetile/raw/xy/512_256/0_0_100/jpg:80
+	GET <api URL>/node/3f8c/myimagetile/raw/xy/512_256/0_0_100/jpg:80
 
-    Arguments:
+	Arguments:
 
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
-    data name     Name of data to add.
-    dims          The axes of data extraction in form i_j.  Example: "0_2" can be XZ.
-                    Slice strings ("xy", "xz", or "yz") are also accepted.
-                    Note that only 2d images are returned for imagetiles.
-    size          Size in voxels along each dimension specified in <dims>.
-    offset        Gives coordinate of first voxel using dimensionality of data.
-    format        "png", "jpg" (default: "png")
-                    jpg allows lossy quality setting, e.g., "jpg:80"
+	UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+	data name     Name of data to add.
+	dims          The axes of data extraction in form i_j.  Example: "0_2" can be XZ.
+					Slice strings ("xy", "xz", or "yz") are also accepted.
+					Note that only 2d images are returned for imagetiles.
+	size          Size in voxels along each dimension specified in <dims>.
+	offset        Gives coordinate of first voxel using dimensionality of data.
+	format        "png", "jpg" (default: "png")
+					jpg allows lossy quality setting, e.g., "jpg:80"
 
 GET  <api URL>/node/<UUID>/<data name>/isotropic/<dims>/<size>/<offset>[/<format>]
 
-    Retrieves isotropic image of named data within a version node using the precomputed imagetile.
-    Additional processing is applied based on voxel resolutions to make sure the retrieved image 
-    has isotropic pixels.  For example, if an XZ image is requested and the image volume has 
-    X resolution 3 nm and Z resolution 40 nm, the returned image's height will be magnified 40/3
-    relative to the raw data.
+	Retrieves isotropic image of named data within a version node using the precomputed imagetile.
+	Additional processing is applied based on voxel resolutions to make sure the retrieved image 
+	has isotropic pixels.  For example, if an XZ image is requested and the image volume has 
+	X resolution 3 nm and Z resolution 40 nm, the returned image's height will be magnified 40/3
+	relative to the raw data.
 
-    Example: 
+	Example: 
 
-    GET <api URL>/node/3f8c/myimagetile/isotropic/xy/512_256/0_0_100/jpg:80
+	GET <api URL>/node/3f8c/myimagetile/isotropic/xy/512_256/0_0_100/jpg:80
 
-    Arguments:
+	Arguments:
 
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
-    data name     Name of data to add.
-    dims          The axes of data extraction in form i_j.  Example: "0_2" can be XZ.
-                    Slice strings ("xy", "xz", or "yz") are also accepted.
-                    Note that only 2d images are returned for imagetiles.
-    size          Size in voxels along each dimension specified in <dims>.
-    offset        Gives coordinate of first voxel using dimensionality of data.
-    format        "png", "jpg" (default: "png")
-                    jpg allows lossy quality setting, e.g., "jpg:80"
+	UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+	data name     Name of data to add.
+	dims          The axes of data extraction in form i_j.  Example: "0_2" can be XZ.
+					Slice strings ("xy", "xz", or "yz") are also accepted.
+					Note that only 2d images are returned for imagetiles.
+	size          Size in voxels along each dimension specified in <dims>.
+	offset        Gives coordinate of first voxel using dimensionality of data.
+	format        "png", "jpg" (default: "png")
+					jpg allows lossy quality setting, e.g., "jpg:80"
 
 `
 
@@ -581,15 +613,22 @@ type Data struct {
 
 // Returns the bounds in voxels for a given tile.
 func (d *Data) computeVoxelBounds(tileCoord dvid.ChunkPoint3d, plane dvid.DataShape, scale Scaling) (dvid.Extents3d, error) {
-	spec, found := d.Properties.Levels[scale]
-	if !found {
-		return dvid.Extents3d{}, fmt.Errorf("no tile spec for scale %d", scale)
+	// Get magnification at the given scale of the tile sizes.
+	mag := dvid.Point3d{1, 1, 1}
+	var tileSize dvid.Point3d
+	for s := Scaling(0); s <= scale; s++ {
+		spec, found := d.Properties.Levels[s]
+		if !found {
+			return dvid.Extents3d{}, fmt.Errorf("no tile spec for scale %d", scale)
+		}
+		tileSize = spec.TileSize.Mult(mag).(dvid.Point3d)
+		mag = mag.Mult(spec.levelMag).(dvid.Point3d)
 	}
-	return dvid.GetTileExtents(tileCoord, plane, spec.TileSize)
+	return dvid.GetTileExtents(tileCoord, plane, tileSize)
 }
 
-// Returns the default tile spec that will fully cover the source extents and scaling 0
-// uses the original voxel resolutions with each subsequent scale causing a 2x zoom out.
+// DefaultTileSpec returns the default tile spec that will fully cover the source extents and
+// scaling 0 uses the original voxel resolutions with each subsequent scale causing a 2x zoom out.
 func (d *Data) DefaultTileSpec(uuidStr string) (TileSpec, error) {
 	uuid, _, err := datastore.MatchingUUID(uuidStr)
 	if err != nil {
@@ -703,16 +742,22 @@ func (d *Data) Help() string {
 }
 
 // Send transfers all key-value pairs for imagetile optionally limiting the send by any ROI filter.
-func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter string, versions map[dvid.VersionID]struct{}) error {
+func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter dvid.Filter, versions map[dvid.VersionID]struct{}) error {
 	// if there's no filter, just use base Data send.
-	roidata, roiV, found, err := roi.DataBySpec(filter)
+	roidata, roiV, roiFound, err := roi.DataBySpec(filter)
 	if err != nil {
 		dvid.Debugf("No filter found that was parsable: %s\n", filter)
 		return err
 	}
-	if !found || roidata == nil {
-		dvid.Debugf("No ROI found for imagetile push, so using generic data push.\n")
+	tilespec, tilespecFound := filter.GetFilter("tile")
+
+	if (!roiFound || roidata == nil) && !tilespecFound {
+		dvid.Debugf("No ROI or tile filter found for imagetile push, so using generic data push.\n")
 		return d.Data.Send(s, transmit, filter, versions)
+	}
+	var planesSend []string
+	if tilespecFound {
+		planesSend = strings.Split(tilespec, ",")
 	}
 
 	// Get the spans once from datastore.
@@ -775,6 +820,26 @@ func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter string, version
 				if err != nil {
 					dvid.Errorf("key (%v) cannot be decoded as tile: %v", tkv.K, err)
 					continue
+				}
+				if len(planesSend) != 0 {
+					var allowed bool
+					for _, allowedPlane := range planesSend {
+						if allowedPlane == "xy" && plane.Equals(dvid.XY) {
+							allowed = true
+							break
+						}
+						if allowedPlane == "xz" && plane.Equals(dvid.XZ) {
+							allowed = true
+							break
+						}
+						if allowedPlane == "yz" && plane.Equals(dvid.YZ) {
+							allowed = true
+							break
+						}
+					}
+					if !allowed {
+						continue
+					}
 				}
 				extents, err := d.computeVoxelBounds(tileCoord, plane, scale)
 				if err != nil {
