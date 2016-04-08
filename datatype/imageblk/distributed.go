@@ -84,7 +84,7 @@ func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter string, version
 					K: ctx.ConstructKey(tkv.K),
 					V: tkv.V,
 				}
-				kvmsg := datastore.KVMessage{s.ID(), kv, false}
+				kvmsg := datastore.KVMessage{Session: s.ID(), KV: kv, Terminate: false}
 				if _, err := s.Call()(datastore.PutKVMsg, kvmsg); err != nil {
 					dvid.Errorf("Error sending voxel block to remote: %v", err)
 				}
@@ -138,7 +138,7 @@ func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter string, version
 					continue
 				}
 				blocksSent++
-				kvmsg := datastore.KVMessage{s.ID(), *kv, false}
+				kvmsg := datastore.KVMessage{Session: s.ID(), KV: *kv, Terminate: false}
 				if _, err := s.Call()(datastore.PutKVMsg, kvmsg); err != nil {
 					dvid.Errorf("Error sending voxel block to remote: %v", err)
 				}

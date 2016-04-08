@@ -29,6 +29,34 @@ var testSpans = []dvid.Span{
 	dvid.Span{103, 101, 200, 210}, dvid.Span{103, 103, 200, 210}, dvid.Span{103, 105, 201, 212},
 }
 
+func TestVoxelBoundsInside(t *testing.T) {
+	size := dvid.Point3d{10, 10, 10}
+	ext := dvid.Extents3d{dvid.Point3d{2030, 1010, 990}, dvid.Point3d{2040, 1040, 990}}
+	if inside, err := VoxelBoundsInside(ext, size, testSpans); err != nil || inside {
+		t.Errorf("Bad intersection of ext %v and test spans: err %v\n", ext, err)
+	}
+	ext = dvid.Extents3d{dvid.Point3d{2030, 1010, 1000}, dvid.Point3d{2040, 1040, 1000}}
+	if inside, err := VoxelBoundsInside(ext, size, testSpans); err != nil || !inside {
+		t.Errorf("Bad intersection of ext %v and test spans: err %v\n", ext, err)
+	}
+	ext = dvid.Extents3d{dvid.Point3d{2130, 1010, 1000}, dvid.Point3d{2900, 1040, 1000}}
+	if inside, err := VoxelBoundsInside(ext, size, testSpans); err != nil || inside {
+		t.Errorf("Bad intersection of ext %v and test spans: err %v\n", ext, err)
+	}
+	ext = dvid.Extents3d{dvid.Point3d{2129, 1030, 1000}, dvid.Point3d{2900, 1040, 1000}}
+	if inside, err := VoxelBoundsInside(ext, size, testSpans); err != nil || !inside {
+		t.Errorf("Bad intersection of ext %v and test spans: err %v\n", ext, err)
+	}
+	ext = dvid.Extents3d{dvid.Point3d{2130, 1010, 200}, dvid.Point3d{2900, 1040, 900}}
+	if inside, err := VoxelBoundsInside(ext, size, testSpans); err != nil || inside {
+		t.Errorf("Bad intersection of ext %v and test spans: err %v\n", ext, err)
+	}
+	ext = dvid.Extents3d{dvid.Point3d{2130, 1010, 1040}, dvid.Point3d{2900, 1040, 1040}}
+	if inside, err := VoxelBoundsInside(ext, size, testSpans); err != nil || inside {
+		t.Errorf("Bad intersection of ext %v and test spans: err %v\n", ext, err)
+	}
+}
+
 func getSpansJSON(spans []dvid.Span) io.Reader {
 	jsonBytes, err := json.Marshal(spans)
 	if err != nil {

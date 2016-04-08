@@ -26,7 +26,9 @@ import (
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/imageblk"
+	"github.com/janelia-flyem/dvid/datatype/roi"
 	"github.com/janelia-flyem/dvid/dvid"
+	"github.com/janelia-flyem/dvid/rpc"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
 )
@@ -577,6 +579,15 @@ type Data struct {
 	Properties
 }
 
+// Returns the bounds in voxels for a given tile.
+func (d *Data) computeVoxelBounds(tileCoord dvid.ChunkPoint3d, plane dvid.DataShape, scale Scaling) (dvid.Extents3d, error) {
+	spec, found := d.Properties.Levels[scale]
+	if !found {
+		return dvid.Extents3d{}, fmt.Errorf("no tile spec for scale %d", scale)
+	}
+	return dvid.GetTileExtents(tileCoord, plane, spec.TileSize)
+}
+
 // Returns the default tile spec that will fully cover the source extents and scaling 0
 // uses the original voxel resolutions with each subsequent scale causing a 2x zoom out.
 func (d *Data) DefaultTileSpec(uuidStr string) (TileSpec, error) {
@@ -689,6 +700,171 @@ func (d *Data) GobEncode() ([]byte, error) {
 
 func (d *Data) Help() string {
 	return HelpMessage
+}
+
+// Send transfers all key-value pairs for imagetile optionally limiting the send by any ROI filter.
+func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter string, versions map[dvid.VersionID]struct{}) error {
+	// if there's no filter, just use base Data send.
+	roidata, roiV, found, err := roi.DataBySpec(filter)
+	if err != nil {
+		dvid.Debugf("No filter found that was parsable: %s\n", filter)
+		return err
+	}
+	if !found || roidata == nil {
+		dvid.Debugf("No ROI found for imagetile push, so using generic data push.\n")
+		return d.Data.Send(s, transmit, filter, versions)
+	}
+
+	// Get the spans once from datastore.
+	roiSpans, err := roidata.GetSpans(roiV)
+	if err != nil {
+		return err
+	}
+
+	// pick any version because flatten transmit will only have one version, and all or branch transmit will
+	// be looking at all versions anyway.
+	if len(versions) == 0 {
+		return fmt.Errorf("need at least one version to send")
+	}
+	var v dvid.VersionID
+	for v = range versions {
+		break
+	}
+	ctx := storage.NewDataContext(d, v)
+
+	store, err := d.GetOrderedKeyValueDB()
+	if err != nil {
+		return fmt.Errorf("Data type imageblk had error initializing store: %v\n", err)
+	}
+
+	// Send the initial data instance start message
+	dmsg := datastore.DataTxInit{
+		Session:    s.ID(),
+		DataName:   d.DataName(),
+		TypeName:   d.TypeName(),
+		InstanceID: d.InstanceID(),
+	}
+	if _, err := s.Call()(datastore.StartDataMsg, dmsg); err != nil {
+		dvid.Errorf("couldn't send data instance start: %v\n", err)
+	}
+
+	// Send this instance's voxel blocks down the socket
+	var tilesTotal, tilesSent int
+	keysOnly := false
+	if transmit == rpc.TransmitFlatten {
+		// Start goroutine to receive key-value pairs and transmit to remote.
+		ch := make(chan *storage.TKeyValue, 1000)
+		go func() {
+			for {
+				tkv := <-ch
+				if tkv == nil {
+					endmsg := datastore.KVMessage{Session: s.ID(), Terminate: true}
+					if _, err := s.Call()(datastore.PutKVMsg, endmsg); err != nil {
+						dvid.Errorf("couldn't send data instance termination: %v\n", err)
+					}
+					s.StopJob()
+					dvid.Infof("Sent %d %s tiles (out of %d total) [flattened] with filter %q\n",
+						tilesSent, d.DataName(), tilesTotal, filter)
+					return
+				}
+				tilesTotal++
+				tileCoord, plane, scale, err := DecodeTKey(tkv.K)
+				if err != nil {
+					dvid.Errorf("key (%v) cannot be decoded as tile: %v", tkv.K, err)
+					continue
+				}
+				extents, err := d.computeVoxelBounds(tileCoord, plane, scale)
+				if err != nil {
+					dvid.Errorf("Error computing voxel bounds of tile: %v\n", err)
+					continue
+				}
+				if inside, err := roi.VoxelBoundsInside(extents, roidata.BlockSize, roiSpans); err != nil {
+					dvid.Errorf("can't determine intersection of tile and roi: %v\n", err)
+					continue
+				} else if !inside {
+					continue
+				}
+				tilesSent++
+				kv := storage.KeyValue{
+					K: ctx.ConstructKey(tkv.K),
+					V: tkv.V,
+				}
+				kvmsg := datastore.KVMessage{Session: s.ID(), KV: kv, Terminate: false}
+				if _, err := s.Call()(datastore.PutKVMsg, kvmsg); err != nil {
+					dvid.Errorf("Error sending voxel block to remote: %v", err)
+				}
+			}
+		}()
+
+		s.StartJob()
+		begKey, endKey := ctx.TKeyRange()
+		err := store.ProcessRange(ctx, begKey, endKey, &storage.ChunkOp{}, func(c *storage.Chunk) error {
+			if c == nil {
+				return fmt.Errorf("received nil chunk in flatten push for imageblk")
+			}
+			ch <- c.TKeyValue
+			return nil
+		})
+		ch <- nil
+		if err != nil {
+			return fmt.Errorf("error in flatten push for data %q: %v", d.DataName(), err)
+		}
+	} else {
+		// Start goroutine to receive key-value pairs and transmit to remote.
+		ch := make(chan *storage.KeyValue, 1000)
+		go func() {
+			for {
+				kv := <-ch
+				if kv == nil {
+					endmsg := datastore.KVMessage{Session: s.ID(), Terminate: true}
+					if _, err := s.Call()(datastore.PutKVMsg, endmsg); err != nil {
+						dvid.Errorf("couldn't send data instance termination: %v\n", err)
+					}
+					s.StopJob()
+					dvid.Infof("Sent %d %s tiles (out of %d total) with filter %q\n",
+						tilesSent, d.DataName(), tilesTotal, filter)
+					return
+				}
+				if !ctx.ValidKV(kv, versions) {
+					continue
+				}
+				tilesTotal++
+				tkey, err := ctx.TKeyFromKey(kv.K)
+				if err != nil {
+					dvid.Errorf("Unable to decode TKey from key (%v): %v\n", kv.K, err)
+					continue
+				}
+				tileCoord, plane, scale, err := DecodeTKey(tkey)
+				if err != nil {
+					dvid.Errorf("key (%v) cannot be decoded as tile: %v", tkey, err)
+					continue
+				}
+				extents, err := d.computeVoxelBounds(tileCoord, plane, scale)
+				if err != nil {
+					dvid.Errorf("Error computing voxel bounds of tile: %v\n", err)
+					continue
+				}
+				if inside, err := roi.VoxelBoundsInside(extents, roidata.BlockSize, roiSpans); err != nil {
+					dvid.Errorf("can't determine intersection of tile and roi: %v\n", err)
+					continue
+				} else if !inside {
+					continue
+				}
+				tilesSent++
+				kvmsg := datastore.KVMessage{Session: s.ID(), KV: *kv, Terminate: false}
+				if _, err := s.Call()(datastore.PutKVMsg, kvmsg); err != nil {
+					dvid.Errorf("Error sending voxel block to remote: %v", err)
+				}
+			}
+		}()
+
+		s.StartJob()
+		begKey, endKey := ctx.KeyRange()
+		if err = store.RawRangeQuery(begKey, endKey, keysOnly, ch); err != nil {
+			return fmt.Errorf("error in push voxels %q range query: %v", d.DataName(), err)
+		}
+	}
+	return nil
 }
 
 // DoRPC handles the 'generate' command.

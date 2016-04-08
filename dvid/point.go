@@ -1440,6 +1440,36 @@ type Extents3d struct {
 	MaxPoint Point3d
 }
 
+// GetTileExtents returns the extents of a tile in voxels.
+func GetTileExtents(tileCoord ChunkPoint3d, plane DataShape, tileSize Point3d) (e Extents3d, err error) {
+	switch {
+	case plane.Equals(XY):
+		e.MinPoint[2] = tileCoord[2]
+		e.MaxPoint[2] = tileCoord[2]
+		e.MinPoint[0] = tileCoord[0] * tileSize[0]
+		e.MaxPoint[0] = (tileCoord[0]+1)*tileSize[0] - 1
+		e.MinPoint[1] = tileCoord[1] * tileSize[1]
+		e.MaxPoint[1] = (tileCoord[1]+1)*tileSize[1] - 1
+	case plane.Equals(XZ):
+		e.MinPoint[1] = tileCoord[1]
+		e.MaxPoint[1] = tileCoord[1]
+		e.MinPoint[0] = tileCoord[0] * tileSize[0]
+		e.MaxPoint[0] = (tileCoord[0]+1)*tileSize[0] - 1
+		e.MinPoint[2] = tileCoord[2] * tileSize[2]
+		e.MaxPoint[2] = (tileCoord[2]+1)*tileSize[2] - 1
+	case plane.Equals(YZ):
+		e.MinPoint[0] = tileCoord[0]
+		e.MaxPoint[0] = tileCoord[0]
+		e.MinPoint[1] = tileCoord[1] * tileSize[1]
+		e.MaxPoint[1] = (tileCoord[1]+1)*tileSize[1] - 1
+		e.MinPoint[2] = tileCoord[2] * tileSize[2]
+		e.MaxPoint[2] = (tileCoord[2]+1)*tileSize[2] - 1
+	default:
+		err = fmt.Errorf("can't compute extents for unknown tile shape %s", plane)
+	}
+	return
+}
+
 // NewExtents3dFromStrings returns an Extents3d given string representations of
 // offset and size in voxels.
 func NewExtents3dFromStrings(offsetStr, sizeStr, sep string) (*Extents3d, error) {

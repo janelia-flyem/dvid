@@ -250,6 +250,38 @@ type Data struct {
 	ready map[dvid.VersionID]bool
 }
 
+// DataBySpec returns a ROI Data based on a string specification of the form
+// "roi:<roiname>,<uuid>". If the given string is not parsable, the "found" return value is false.
+func DataBySpec(spec string) (d *Data, v dvid.VersionID, found bool, err error) {
+	// See if the spec is an ROI filter specification.
+	parts := strings.Split(spec, ":")
+	if parts[0] != "roi" || len(parts) != 2 {
+		return
+	}
+	roispec := strings.Split(parts[1], ",")
+	if len(roispec) != 2 {
+		return
+	}
+	roiName := dvid.InstanceName(roispec[0])
+	_, v, err = datastore.MatchingUUID(roispec[1])
+	if err != nil {
+		return
+	}
+	var data datastore.DataService
+	data, err = datastore.GetDataByVersion(v, roiName)
+	if err != nil {
+		return
+	}
+	var ok bool
+	d, ok = data.(*Data)
+	if !ok {
+		err = fmt.Errorf("Data instance %q is not ROI instance", roiName)
+		return
+	}
+	found = true
+	return
+}
+
 func (d *Data) SetReady(versionID dvid.VersionID, set bool) {
 	if d.ready == nil {
 		d.ready = make(map[dvid.VersionID]bool)
@@ -420,8 +452,37 @@ func getSpans(ctx *datastore.VersionedCtx, minIndex, maxIndex indexRLE) ([]dvid.
 	return spans, err
 }
 
-// Returns all (z, y, x0, x1) Spans in sorted order: z, then y, then x0.
+// VoxelBoundsInside returns true if the given voxel extents intersects the spans.
+func VoxelBoundsInside(e dvid.Extents3d, size dvid.Point3d, spans []dvid.Span) (bool, error) {
+	// Convert the voxel bounds to block coordinates.
+	emin := e.MinPoint.Chunk(size).(dvid.ChunkPoint3d)
+	emax := e.MaxPoint.Chunk(size).(dvid.ChunkPoint3d)
+
+	// Iterate through the spans to see if there's intersection between
+	// the extents and span.
+	for _, span := range spans {
+		bz, by, bx0, bx1 := span[0], span[1], span[2], span[3]
+		if bz > emax[2] || by > emax[1] {
+			return false, nil
+		}
+		if bx0 > emax[0] || bx1 < emin[0] {
+			continue
+		}
+		if by >= emin[1] && by <= emax[1] && bz >= emin[2] && bz <= emax[2] {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// GetSpans returns all (z, y, x0, x1) Spans in sorted order: z, then y, then x0.
 func GetSpans(ctx *datastore.VersionedCtx) ([]dvid.Span, error) {
+	return getSpans(ctx, minIndexRLE, maxIndexRLE)
+}
+
+// GetSpans returns all (z, y, x0, x1) Spans in sorted order: z, then y, then x0.
+func (d *Data) GetSpans(v dvid.VersionID) ([]dvid.Span, error) {
+	ctx := datastore.NewVersionedCtx(d, v)
 	return getSpans(ctx, minIndexRLE, maxIndexRLE)
 }
 
@@ -439,7 +500,7 @@ func Get(ctx *datastore.VersionedCtx) ([]byte, error) {
 	return jsonBytes, nil
 }
 
-// Deletes an ROI.
+// Delete removes an ROI.
 func (d *Data) Delete(ctx storage.VersionedCtx) error {
 	db, err := d.GetOrderedKeyValueDB()
 	if err != nil {
