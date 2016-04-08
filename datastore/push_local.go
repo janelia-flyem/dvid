@@ -150,42 +150,29 @@ func (t *txStats) addKV(kv *storage.KeyValue) {
 	sz := len(kv.V)
 	t.lastBytes += uint64(sz + len(kv.K))
 
-	if sz == 0 {
+	switch {
+	case sz == 0:
 		t.numV0++
-		return
-	}
-	if sz < 10 {
+	case sz < 10:
 		t.numV1++
-		return
-	}
-	if sz < 100 {
+	case sz < 100:
 		t.numV10++
-		return
-	}
-	if sz < 1000 {
+	case sz < 1000:
 		t.numV100++
-		return
-	}
-	if sz < 10000 {
+	case sz < 10000:
 		t.numV1k++
-		return
-	}
-	if sz < 100000 {
+	case sz < 100000:
 		t.numV10k++
-		return
-	}
-	if sz < 1000000 {
+	case sz < 1000000:
 		t.numV100k++
-		return
-	}
-	if sz < 10 {
+	case sz < 10000000:
 		t.numV1m++
-		return
+	default:
+		t.numV10m++
 	}
-	t.numV10m++
 
 	// Print progress?
-	if elapsed := time.Since(t.lastTime); elapsed > 20 * time.Second {
+	if elapsed := time.Since(t.lastTime); elapsed > time.Minute {
 		mb := float64(t.lastBytes) / 1000000
 		sec := elapsed.Seconds()
 		throughput := mb / sec
