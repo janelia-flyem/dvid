@@ -257,6 +257,17 @@ func (p *pusher) readRepo(m *repoTxMsg) (map[dvid.VersionID]struct{}, error) {
 		return nil, err
 	}
 
+	// For all data instances, see if it needs to adjust
+	// properties based on versions.
+	for _, d := range p.repo.data {
+		dv, needsUpdate := d.(VersionRemapper)
+		if needsUpdate {
+			if err := dv.RemapVersions(p.versionMap); err != nil {
+				return nil, err
+			}
+		}
+	}
+
 	var versions map[dvid.VersionID]struct{}
 	switch m.Transmit {
 	case rpc.TransmitFlatten:

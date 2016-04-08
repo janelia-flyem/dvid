@@ -473,6 +473,24 @@ type Data struct {
 	datastore.Updater
 }
 
+// RemapVersions modifies internal data instance properties that rely
+// on server-specific version ids.  This is necessary after DVID-to-DVID
+// transmission.
+func (d *Data) RemapVersions(vmap dvid.VersionMap) error {
+	maxLabels := make(map[dvid.VersionID]uint64, len(d.Properties.MaxLabel))
+	for oldv, label := range d.Properties.MaxLabel {
+		newv, found := vmap[oldv]
+		if !found {
+			return fmt.Errorf("Can't convert version %d in data %q to new local version", oldv, d.DataName())
+		}
+		maxLabels[newv] = label
+	}
+	d.Properties.MaxLabel = maxLabels
+	return nil
+}
+
+// GetSyncedLabelblk returns the synced labelblk data instance or returns
+// an error if there is no synced labelblk.
 func (d *Data) GetSyncedLabelblk(v dvid.VersionID) (*labelblk.Data, error) {
 	// Go through all synced names, and checking if there's a valid source.
 	for _, name := range d.SyncedNames() {

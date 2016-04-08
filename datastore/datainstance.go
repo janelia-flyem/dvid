@@ -172,6 +172,13 @@ type VersionInitializer interface {
 	InitVersion(dvid.UUID, dvid.VersionID) error
 }
 
+// VersionRemapper provides a hook for data instances to remap properties
+// that depend on server-specific version ids.  During DVID-to-DVID transfer
+// of data, these version ids need to be remapped as part of the push/pull.
+type VersionRemapper interface {
+	RemapVersions(dvid.VersionMap) error
+}
+
 type Updater struct {
 	updates uint32
 	sync.RWMutex
