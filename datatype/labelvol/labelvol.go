@@ -780,6 +780,9 @@ func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter string, version
 	}
 
 	// Send all blocks that are within ROI
+	var wg sync.WaitGroup
+	wg.Add(1)
+
 	var blocksTotal, blocksSent int
 	keysOnly := false
 	var curLabel uint64
@@ -794,7 +797,7 @@ func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter string, version
 					if _, err := s.Call()(datastore.PutKVMsg, endmsg); err != nil {
 						dvid.Errorf("couldn't send data instance termination: %v\n", err)
 					}
-					s.StopJob()
+					wg.Done()
 					dvid.Infof("Sent %d %s labelvol blocks (out of %d total) [flattened] with filter %q\n",
 						blocksSent, d.DataName(), blocksTotal, filter)
 					return
@@ -830,7 +833,6 @@ func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter string, version
 		}()
 
 		// Define range via NewTKey to avoid sending label maxes.
-		s.StartJob()
 		zero := dvid.IndexZYX{0, 0, 0} // TODO: Go to dvid.MinIndexZYX after fixing IndexZYX Bytes()
 		begKey := NewTKey(0, zero.ToIZYXString())
 		endKey := NewTKey(math.MaxUint64, dvid.MaxIndexZYX.ToIZYXString())
@@ -856,7 +858,7 @@ func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter string, version
 					if _, err := s.Call()(datastore.PutKVMsg, endmsg); err != nil {
 						dvid.Errorf("couldn't send data instance termination: %v\n", err)
 					}
-					s.StopJob()
+					wg.Done()
 					dvid.Infof("Sent %d %s labelvol blocks (out of %d total) with filter %q\n",
 						blocksSent, d.DataName(), blocksTotal, filter)
 					return
@@ -895,12 +897,12 @@ func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter string, version
 			}
 		}()
 
-		s.StartJob()
 		begKey, endKey := ctx.KeyRange()
 		if err = store.RawRangeQuery(begKey, endKey, keysOnly, ch); err != nil {
 			return fmt.Errorf("Error in voxels %q range query: %v", d.DataName(), err)
 		}
 	}
+	wg.Wait()
 	return nil
 }
 

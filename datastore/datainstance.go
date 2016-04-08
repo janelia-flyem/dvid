@@ -609,6 +609,9 @@ func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter string, version
 	}
 
 	// Send all the key-value pairs
+	var wg sync.WaitGroup
+	wg.Add(1)
+
 	keysOnly := false
 	if transmit == rpc.TransmitFlatten {
 		// Start goroutine to receive tkey-value pairs and transmit to remote.
@@ -621,7 +624,7 @@ func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter string, version
 					if _, err := s.Call()(PutKVMsg, endmsg); err != nil {
 						dvid.Errorf("couldn't send data instance termination: %v\n", err)
 					}
-					s.StopJob()
+					wg.Done()
 					return
 				}
 				kv := storage.KeyValue{
@@ -635,7 +638,6 @@ func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter string, version
 			}
 		}()
 
-		s.StartJob()
 		begKey, endKey := ctx.TKeyRange()
 		err := store.ProcessRange(ctx, begKey, endKey, &storage.ChunkOp{}, func(c *storage.Chunk) error {
 			if c == nil {
@@ -659,7 +661,7 @@ func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter string, version
 					if _, err := s.Call()(PutKVMsg, endmsg); err != nil {
 						dvid.Errorf("couldn't send data instance termination: %v\n", err)
 					}
-					s.StopJob()
+					wg.Done()
 					return
 				}
 				if !ctx.ValidKV(kv, versions) {
@@ -672,13 +674,12 @@ func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter string, version
 			}
 		}()
 
-		s.StartJob()
 		begKey, endKey := ctx.KeyRange()
 		if err = store.RawRangeQuery(begKey, endKey, keysOnly, ch); err != nil {
 			return fmt.Errorf("%q all/branch transmit range query: %v", d.DataName(), err)
 		}
 	}
-
+	wg.Wait()
 	return nil
 }
 

@@ -2,6 +2,7 @@ package imageblk
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/roi"
@@ -52,6 +53,9 @@ func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter string, version
 	}
 
 	// Send this instance's voxel blocks down the socket
+	var wg sync.WaitGroup
+	wg.Add(1)
+
 	var blocksTotal, blocksSent int
 	keysOnly := false
 	if transmit == rpc.TransmitFlatten {
@@ -65,7 +69,7 @@ func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter string, version
 					if _, err := s.Call()(datastore.PutKVMsg, endmsg); err != nil {
 						dvid.Errorf("couldn't send data instance termination: %v\n", err)
 					}
-					s.StopJob()
+					wg.Done()
 					dvid.Infof("Sent %d %s voxel blocks (out of %d total) [flattened] with filter %q\n",
 						blocksSent, d.DataName(), blocksTotal, filter)
 					return
@@ -91,7 +95,6 @@ func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter string, version
 			}
 		}()
 
-		s.StartJob()
 		begKey, endKey := ctx.TKeyRange()
 		err := store.ProcessRange(ctx, begKey, endKey, &storage.ChunkOp{}, func(c *storage.Chunk) error {
 			if c == nil {
@@ -115,7 +118,7 @@ func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter string, version
 					if _, err := s.Call()(datastore.PutKVMsg, endmsg); err != nil {
 						dvid.Errorf("couldn't send data instance termination: %v\n", err)
 					}
-					s.StopJob()
+					wg.Done()
 					dvid.Infof("Sent %d %s voxel blocks (out of %d total) with filter %q\n",
 						blocksSent, d.DataName(), blocksTotal, filter)
 					return
@@ -145,11 +148,11 @@ func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter string, version
 			}
 		}()
 
-		s.StartJob()
 		begKey, endKey := ctx.KeyRange()
 		if err = store.RawRangeQuery(begKey, endKey, keysOnly, ch); err != nil {
 			return fmt.Errorf("error in push voxels %q range query: %v", d.DataName(), err)
 		}
 	}
+	wg.Wait()
 	return nil
 }
