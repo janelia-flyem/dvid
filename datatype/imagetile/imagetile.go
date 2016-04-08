@@ -123,9 +123,9 @@ $ dvid -stdin node <UUID> <data name> generate [settings] < config.json
 			If supplied, the transmitted data will be limited to the listed
 			data instance names.
 				
-		filter=roi:<roiname>,<uuid>;tile:<plane>,<plane>
+		filter=roi:<roiname>,<uuid>/tile:<plane>,<plane>
         
-            Example: filter=roi:seven_column,38af;tile:xy,xz
+            Example: filter=roi:seven_column,38af/tile:xy,xz
 		
 			There are two usable filters for imagetile:
             The "roi" filter is followed by an roiname and a UUID for that ROI.

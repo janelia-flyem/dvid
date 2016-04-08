@@ -31,9 +31,9 @@ var (
 // Filter is a string specification of type-specific filters to apply to key-value pairs
 // before sending them to a remote DVID.  For example, a Filter could look like:
 //
-//    roi:seven_column,3f8a;tile:xy,xz
+//    roi:seven_column,3f8a/tile:xy,xz
 //
-// The above specifies two filters joined by a semicolon.  The first is an "roi" filters
+// The above specifies two filters joined by a forward slash.  The first is an "roi" filters
 // that lists a ROI data instance name ("seven_column") and its version as a partial, unique
 // UUID.  The second is a "tile" filter that specifies two types of tile plane: xy and xz.
 type Filter string
@@ -42,7 +42,7 @@ type Filter string
 // If no filter of ftype is available, the second argument is false.
 func (f Filter) GetFilter(ftype string) (value string, found bool) {
 	// Separate filters.
-	fs := strings.Split(string(f), ";")
+	fs := strings.Split(string(f), "/")
 	if len(fs) == 0 {
 		return
 	}

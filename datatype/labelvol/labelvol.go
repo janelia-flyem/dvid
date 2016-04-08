@@ -481,7 +481,8 @@ func (d *Data) RemapVersions(vmap dvid.VersionMap) error {
 	for oldv, label := range d.Properties.MaxLabel {
 		newv, found := vmap[oldv]
 		if !found {
-			return fmt.Errorf("Can't convert version %d in data %q to new local version", oldv, d.DataName())
+			dvid.Errorf("No version %d in labelvol %q... discarding max label", oldv, d.DataName())
+            continue
 		}
 		maxLabels[newv] = label
 	}

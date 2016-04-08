@@ -56,11 +56,11 @@ EXPERIMENTAL COMMANDS
 			If supplied, the transmitted data will be limited to the listed
 			data instance names.
 				
-		filter=roi:<roiname>,<uuid>
+		filter=<filter0>/<filter1>/...
 		
-			Currently, only the ROI filter exists.  It is specified by an
-			roiname and a UUID for that ROI.  In the future, additional
-			datatype-specific filters can be added.
+			Separate filters by the forward slash.  See datatype help
+            for the types of filters they will use for pushes.  Examples
+            include "roi:name,uuid" and "tile:xy,xz".
 		
 		transmit=[all | branch | flatten]
 
