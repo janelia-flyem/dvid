@@ -6,6 +6,7 @@ import (
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
+	"github.com/janelia-flyem/dvid/storage"
 )
 
 // Iterator is optimized for detecting whether given keys are within an ROI.
@@ -42,24 +43,38 @@ func NewIterator(roiName dvid.InstanceName, versionID dvid.VersionID, b dvid.Bou
 	return it, err
 }
 
+// ParseFilterSpec returns the specified ROI instance name and version within a FilterSpec.
+// Currently, only one ROI can be specified in a FilterSpec.  Multiple ROIs should use a
+// different FilterSpec like "intersect" instead of "roi".
+func ParseFilterSpec(spec storage.FilterSpec) (name dvid.InstanceName, v dvid.VersionID, found bool, err error) {
+	var filterval string
+	filterval, found = spec.GetFilterSpec("roi")
+	if !found {
+		return
+	}
+	roispec := strings.Split(filterval, ",")
+	if len(roispec) != 2 {
+		err = fmt.Errorf("bad ROI spec: %s", filterval)
+		return
+	}
+	name = dvid.InstanceName(roispec[0])
+	_, v, err = datastore.MatchingUUID(roispec[1])
+	return
+}
+
 // NewIteratorBySpec returns a ROI iterator based on a string specification of the form
 // "roi:<roiname>,<uuid>" where the ROI instance name and uniquely identifying string form
 // of uuid are given.  If the given string is not parsable, the "found" return value is false.
-func NewIteratorBySpec(spec dvid.Filter, b dvid.Bounder) (it *Iterator, found bool, err error) {
-	filterval, found := spec.GetFilter("roi")
-	roispec := strings.Split(filterval, ",")
-	if len(roispec) != 2 {
-		return nil, false, nil
-	}
-	roiName := dvid.InstanceName(roispec[0])
-	_, v, err := datastore.MatchingUUID(roispec[1])
-	if err != nil {
-		return nil, false, err
+func NewIteratorBySpec(spec storage.FilterSpec, b dvid.Bounder) (it *Iterator, v dvid.VersionID, found bool, err error) {
+	var name dvid.InstanceName
+	name, v, found, err = ParseFilterSpec(spec)
+	if err != nil || !found {
+		return
 	}
 
 	// Create new iterator based on spec.
-	it, err = NewIterator(roiName, v, b)
-	return it, true, err
+	it, err = NewIterator(name, v, b)
+	return
 }
 
 func (it *Iterator) Reset() {

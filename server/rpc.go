@@ -292,7 +292,7 @@ func handleCommand(cmd *datastore.Request) (reply *datastore.Response, err error
 			cmd.CommandArgs(3, &target)
 			config := cmd.Settings()
 			go func() {
-				if err = datastore.Push(uuid, target, config); err != nil {
+				if err = datastore.PushRepo(uuid, target, config); err != nil {
 					dvid.Errorf("push error: %v\n", err)
 				}
 			}()

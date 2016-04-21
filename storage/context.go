@@ -41,9 +41,6 @@ type Context interface {
 	// namespaced key that fits with the DVID-wide key space partitioning.
 	ConstructKey(TKey) Key
 
-	// TKeyFromKey returns the type-specific component of the key.
-	TKeyFromKey(Key) (TKey, error)
-
 	// KeyRange returns the minimum and maximum keys for this context.
 	KeyRange() (min, max Key)
 
@@ -127,6 +124,24 @@ func (k Key) IsTombstone() bool {
 	return false
 }
 
+// TKeyFromKey returns a type-specific key from a full key.  An error is returned if the key is
+// not one with a type-specific key component.
+func TKeyFromKey(key Key) (TKey, error) {
+	if key == nil {
+		return nil, fmt.Errorf("Cannot extract DataContext type-specific key component from nil key")
+	}
+	switch key[0] {
+	case metadataKeyPrefix:
+		return TKey(key[1:]), nil
+	case dataKeyPrefix:
+		start := 1 + dvid.InstanceIDSize
+		end := len(key) - dvid.VersionIDSize - dvid.ClientIDSize - 1 // substract version, client, and tombstone
+		return TKey(key[start:end]), nil
+	default:
+		return nil, fmt.Errorf("Cannot extract type-specific key component from key type %v", key[0])
+	}
+}
+
 // SplitKey returns key components depending on whether the passed Key
 // is a metadata or data key.  If metadata, it returns the key and a 0 version id.
 // If it is a data key, it returns the unversioned portion of the Key and the
@@ -190,13 +205,6 @@ func (ctx MetadataContext) VersionID() dvid.VersionID {
 
 func (ctx MetadataContext) ConstructKey(tk TKey) Key {
 	return Key(append([]byte{metadataKeyPrefix}, tk...))
-}
-
-func (ctx MetadataContext) TKeyFromKey(key Key) (TKey, error) {
-	if key[0] != metadataKeyPrefix {
-		return nil, fmt.Errorf("Cannot extract MetadataContext index from different key")
-	}
-	return TKey(key[1:]), nil
 }
 
 func (ctx MetadataContext) KeyRange() (min, max Key) {
@@ -314,19 +322,6 @@ func (ctx *DataContext) TombstoneKey(tk TKey) Key {
 	key = append(key, ctx.version.Bytes()...)
 	key = append(key, ctx.client.Bytes()...)
 	return Key(append(key, MarkTombstone))
-}
-
-// TKeyFromKey returns a type-specific key from a full key.  Any DataContext is sufficient as receiver.
-func (ctx *DataContext) TKeyFromKey(key Key) (TKey, error) {
-	if key == nil {
-		return nil, fmt.Errorf("Cannot extract DataContext type-specific key component from nil key")
-	}
-	if key[0] != dataKeyPrefix {
-		return nil, fmt.Errorf("Cannot extract DataContext type-specific key component from key type %v", key[0])
-	}
-	start := 1 + dvid.InstanceIDSize
-	end := len(key) - dvid.VersionIDSize - dvid.ClientIDSize - 1 // substract version, client, and tombstone
-	return TKey(key[start:end]), nil
 }
 
 // KeyRange returns the min and max full keys.  The DataContext can have any version since min/max keys for a data instance

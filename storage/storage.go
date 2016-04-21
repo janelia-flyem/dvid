@@ -97,6 +97,14 @@ func MaxTKey(class TKeyClass) TKey {
 	return TKey([]byte{byte(class), tkeyMaxByte})
 }
 
+// Class returns the TKeyClass of a TKey.
+func (tk TKey) Class() (TKeyClass, error) {
+	if len(tk) == 0 {
+		return 0, fmt.Errorf("can't get class of length 0 TKey")
+	}
+	return TKeyClass(tk[0]), nil
+}
+
 // ClassBytes returns the bytes for a class of TKey, suitable for decoding by
 // each data instance.
 func (tk TKey) ClassBytes(class TKeyClass) ([]byte, error) {
@@ -124,7 +132,7 @@ func (kv TKeyValue) Deserialize(uncompress bool) (TKeyValue, error) {
 	return TKeyValue{kv.K, value}, err
 }
 
-// KeyValues is a slice of type key-value pairs that can be sorted.
+// TKeyValues is a slice of type-specific key-value pairs that can be sorted.
 type TKeyValues []TKeyValue
 
 func (kv TKeyValues) Len() int      { return len(kv) }

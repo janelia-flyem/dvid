@@ -338,7 +338,7 @@ func (db *GBucket) getKeysInRange(ctx storage.Context, TkBeg, TkEnd storage.TKey
 		vkeys := make([]storage.Key, 0)
 		versionkeymap := make(map[string][]storage.Key)
 		for _, key := range keys {
-			tk, _ := ctx.TKeyFromKey(key)
+			tk, _ := storage.TKeyFromKey(key)
 			versionkeymap[string(tk)] = append(versionkeymap[string(tk)], key)
 		}
 
@@ -409,7 +409,7 @@ func (db *GBucket) KeysInRange(ctx storage.Context, TkBeg, TkEnd storage.TKey) (
 
 	// grab only object names within range
 	for _, key := range keys {
-		tk, err := ctx.TKeyFromKey(key)
+		tk, err := storage.TKeyFromKey(key)
 		if err != nil {
 			return nil, err
 		}
@@ -480,7 +480,7 @@ func (db *GBucket) GetRange(ctx storage.Context, TkBeg, TkEnd storage.TKey) ([]*
 	// return keyvalues
 	for _, key := range keys {
 		val := kvmap[string(key)]
-		tk, err := ctx.TKeyFromKey(storage.Key(key))
+		tk, err := storage.TKeyFromKey(storage.Key(key))
 		if err != nil {
 			return nil, err
 		}
@@ -738,7 +738,7 @@ func (db *GBucket) DeleteAll(ctx storage.Context, allVersions bool) error {
 		var wg sync.WaitGroup
 		for _, key := range keys {
 			// filter keys that are not current version
-			tkey, _ := ctx.TKeyFromKey(key)
+			tkey, _ := storage.TKeyFromKey(key)
 			if string(ctx.ConstructKey(tkey)) == string(key) {
 				wg.Add(1)
 				go func(lkey storage.Key) {
@@ -1111,7 +1111,7 @@ func (db *goBuffer) deleteRangeLocal(ctx storage.Context, TkBeg, TkEnd storage.T
 				<-workQueue
 				wg.Done()
 			}()
-			tk, _ := ctx.TKeyFromKey(lkey)
+			tk, _ := storage.TKeyFromKey(lkey)
 			db.Delete(ctx, tk)
 		}(key)
 	}
@@ -1162,7 +1162,7 @@ func (db *goBuffer) processRangeLocal(ctx storage.Context, TkBeg, TkEnd storage.
 	var err error
 	for _, key := range keys {
 		val := kvmap[string(key)]
-		tk, err := ctx.TKeyFromKey(key)
+		tk, err := storage.TKeyFromKey(key)
 		if err != nil {
 			return err
 		}

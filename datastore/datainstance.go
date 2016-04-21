@@ -16,7 +16,6 @@ import (
 	"sync"
 
 	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/janelia-flyem/dvid/rpc"
 	"github.com/janelia-flyem/dvid/storage"
 )
 
@@ -143,12 +142,12 @@ type DataService interface {
 	// ServeHTTP handles HTTP requests in the context of a particular version.
 	ServeHTTP(dvid.UUID, *VersionedCtx, http.ResponseWriter, *http.Request)
 
-	// Send allows peer-to-peer transmission of data instance metadata and
-	// all normalized key-value pairs associated with it.  Transmitted data
-	// can be delimited by an optional filter specification (e.g., "roi:roiname,uuid")
-	// and set of versions.  Use an empty string for the roiname parameter to transmit
-	// the full extents.
-	Send(rpc.Session, rpc.Transmit, dvid.Filter, map[dvid.VersionID]struct{}) error
+	// PushData handles DVID-to-DVID transmission of key-value pairs, optionally
+	// delimited by type-specific filter specifications (e.g., "roi:roiname,uuid")
+	// and a set of versions.  DataService implementations can automatically embed
+	// this via datastore.Data or can add filters by providing their own PushData(),
+	// Filterer, and Filter implementations.  (datatype/imageblk/distributed.go)
+	PushData(*PushSession) error
 }
 
 // TypeMigrator is an interface for a DataService that can migrate itself to another DataService.
@@ -583,111 +582,10 @@ func (d *Data) ModifyConfig(config dvid.Config) error {
 	return nil
 }
 
-// Send is the default peer-to-peer transmission of data for an instance
-// that ignores any filtering per the ROI specification.  Filtering of
-// transmitted data needs to be implemented in the datatype-specific
-// implementation.
-func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter dvid.Filter, versions map[dvid.VersionID]struct{}) error {
-	store, err := d.GetOrderedKeyValueDB()
-	if err != nil {
-		return err
-	}
-
-	// pick any version because flatten transmit will only have one version, and all or branch transmit will
-	// be looking at all versions anyway.
-	if len(versions) == 0 {
-		return fmt.Errorf("need at least one version to send")
-	}
-	var v dvid.VersionID
-	for v = range versions {
-		break
-	}
-	ctx := storage.NewDataContext(d, v)
-
-	// Send the initial data instance start message
-	dmsg := DataTxInit{
-		Session:    s.ID(),
-		DataName:   d.DataName(),
-		TypeName:   d.TypeName(),
-		InstanceID: d.InstanceID(),
-	}
-	if _, err := s.Call()(StartDataMsg, dmsg); err != nil {
-		dvid.Errorf("couldn't send data instance start: %v\n", err)
-	}
-
-	// Send all the key-value pairs
-	var wg sync.WaitGroup
-	wg.Add(1)
-
-	keysOnly := false
-	if transmit == rpc.TransmitFlatten {
-		// Start goroutine to receive tkey-value pairs and transmit to remote.
-		ch := make(chan *storage.TKeyValue, 1000)
-		go func() {
-			for {
-				tkv := <-ch
-				if tkv == nil {
-					endmsg := KVMessage{Session: s.ID(), Terminate: true}
-					if _, err := s.Call()(PutKVMsg, endmsg); err != nil {
-						dvid.Errorf("couldn't send data instance termination: %v\n", err)
-					}
-					wg.Done()
-					return
-				}
-				kv := storage.KeyValue{
-					K: ctx.ConstructKey(tkv.K),
-					V: tkv.V,
-				}
-				kvmsg := KVMessage{s.ID(), kv, false}
-				if _, err := s.Call()(PutKVMsg, kvmsg); err != nil {
-					dvid.Errorf("Error pushing data %q: %v", d.DataName(), err)
-				}
-			}
-		}()
-
-		begKey, endKey := ctx.TKeyRange()
-		err := store.ProcessRange(ctx, begKey, endKey, &storage.ChunkOp{}, func(c *storage.Chunk) error {
-			if c == nil {
-				return fmt.Errorf("got nil chunk in datainstance flatten send")
-			}
-			ch <- c.TKeyValue
-			return nil
-		})
-		ch <- nil
-		if err != nil {
-			return fmt.Errorf("%q flatten range query: %v\n", d.DataName(), err)
-		}
-	} else {
-		// Start goroutine to receive key-value pairs and transmit to remote.
-		ch := make(chan *storage.KeyValue, 1000)
-		go func() {
-			for {
-				kv := <-ch
-				if kv == nil {
-					endmsg := KVMessage{Session: s.ID(), Terminate: true}
-					if _, err := s.Call()(PutKVMsg, endmsg); err != nil {
-						dvid.Errorf("couldn't send data instance termination: %v\n", err)
-					}
-					wg.Done()
-					return
-				}
-				if !ctx.ValidKV(kv, versions) {
-					continue
-				}
-				kvmsg := KVMessage{s.ID(), *kv, false}
-				if _, err := s.Call()(PutKVMsg, kvmsg); err != nil {
-					dvid.Errorf("Error pushing data %q: %v", d.DataName(), err)
-				}
-			}
-		}()
-
-		begKey, endKey := ctx.KeyRange()
-		if err = store.RawRangeQuery(begKey, endKey, keysOnly, ch); err != nil {
-			return fmt.Errorf("%q all/branch transmit range query: %v", d.DataName(), err)
-		}
-	}
-	wg.Wait()
-	return nil
+// PushData is the base implementation of pushing data instance key-value pairs
+// to a remote DVID without any datatype-specific filtering of data.
+func (d *Data) PushData(p *PushSession) error {
+	return PushData(d, p)
 }
 
 // ------ storage.Accessor interface implementation -------

@@ -252,8 +252,8 @@ type Data struct {
 
 // DataBySpec returns a ROI Data based on a string specification of the form
 // "roi:<roiname>,<uuid>". If the given string is not parsable, the "found" return value is false.
-func DataBySpec(spec dvid.Filter) (d *Data, v dvid.VersionID, found bool, err error) {
-	filterval, found := spec.GetFilter("roi")
+func DataBySpec(spec storage.FilterSpec) (d *Data, v dvid.VersionID, found bool, err error) {
+	filterval, found := spec.GetFilterSpec("roi")
 	roispec := strings.Split(filterval, ",")
 	if len(roispec) != 2 {
 		return

@@ -488,7 +488,7 @@ func (db *LevelDB) versionedRange(vctx storage.VersionedCtx, kStart, kEnd storag
 
 			// Did we pass all versions for last key read?
 			if bytes.Compare(itKey, maxVersionKey) > 0 {
-				indexBytes, err := vctx.TKeyFromKey(itKey)
+				indexBytes, err := storage.TKeyFromKey(itKey)
 				if err != nil {
 					ch <- errorableKV{nil, err}
 					return
@@ -605,7 +605,7 @@ func (db *LevelDB) KeysInRange(ctx storage.Context, kStart, kEnd storage.TKey) (
 		if result.error != nil {
 			return nil, result.error
 		}
-		tk, err := ctx.TKeyFromKey(result.KeyValue.K)
+		tk, err := storage.TKeyFromKey(result.KeyValue.K)
 		if err != nil {
 			return nil, err
 		}
@@ -681,7 +681,7 @@ func (db *LevelDB) GetRange(ctx storage.Context, kStart, kEnd storage.TKey) ([]*
 		if result.error != nil {
 			return nil, result.error
 		}
-		tk, err := ctx.TKeyFromKey(result.KeyValue.K)
+		tk, err := storage.TKeyFromKey(result.KeyValue.K)
 		if err != nil {
 			return nil, err
 		}
@@ -722,7 +722,7 @@ func (db *LevelDB) ProcessRange(ctx storage.Context, kStart, kEnd storage.TKey, 
 		if op != nil && op.Wg != nil {
 			op.Wg.Add(1)
 		}
-		tk, err := ctx.TKeyFromKey(result.KeyValue.K)
+		tk, err := storage.TKeyFromKey(result.KeyValue.K)
 		if err != nil {
 			return err
 		}
@@ -941,7 +941,7 @@ func (db *LevelDB) DeleteRange(ctx storage.Context, kStart, kEnd storage.TKey) e
 		// The key coming down channel is not index but full key, so no need to construct key using context.
 		// If versioned, write a tombstone using current version id since we don't want to delete locked ancestors.
 		// If unversioned, just delete.
-		tk, err := ctx.TKeyFromKey(result.KeyValue.K)
+		tk, err := storage.TKeyFromKey(result.KeyValue.K)
 		if err != nil {
 			return err
 		}

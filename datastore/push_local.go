@@ -18,6 +18,7 @@ package datastore
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/janelia-flyem/dvid/dvid"
@@ -25,6 +26,266 @@ import (
 	"github.com/janelia-flyem/dvid/storage"
 	"github.com/valyala/gorpc"
 )
+
+// PushRepo pushes a Repo to a remote DVID server at the target address.
+func PushRepo(uuid dvid.UUID, target string, config dvid.Config) error {
+	if manager == nil {
+		return ErrManagerNotInitialized
+	}
+
+	if target == "" {
+		target = rpc.DefaultAddress
+		dvid.Infof("No target specified for push, defaulting to %q\n", rpc.DefaultAddress)
+	}
+
+	// Get the full local repo
+	thisRepo, err := manager.repoFromUUID(uuid)
+	if err != nil {
+		return err
+	}
+
+	// Get any filter
+	filter, found, err := config.GetString("filter")
+	if err != nil {
+		return err
+	}
+
+	// Create a repo that is tailored by the push configuration, e.g.,
+	// keeping just given data instances, etc.
+	v, found := manager.uuidToVersion[uuid]
+	if !found {
+		return ErrInvalidUUID
+	}
+	txRepo, transmit, err := thisRepo.customize(v, config)
+	if err != nil {
+		return err
+	}
+
+	// Establish session with target, which may be itself
+	s, err := rpc.NewSession(target, pushMessageID)
+	if err != nil {
+		return fmt.Errorf("Unable to connect (%s) for push: %s", target, err.Error())
+	}
+	defer s.Close() // TODO -- check if can hang if error occurs during job
+
+	// Send the repo metadata, transmit type, and other useful data for remote server.
+	dvid.Infof("Sending repo %s data to %q\n", uuid, target)
+	repoSerialization, err := txRepo.GobEncode()
+	if err != nil {
+		return err
+	}
+	repoMsg := repoTxMsg{
+		Session:  s.ID(),
+		Transmit: transmit,
+		UUID:     uuid,
+		Repo:     repoSerialization,
+	}
+	resp, err := s.Call()(sendRepoMsg, repoMsg)
+	if err != nil {
+		return err
+	}
+	if resp == nil {
+		return fmt.Errorf("push unnecessary -- versions at remote are already present")
+	}
+
+	// We should get back a version set to send, or nil = send all versions.
+	versions, ok := resp.(map[dvid.VersionID]struct{})
+	if !ok {
+		return fmt.Errorf("received response during repo push that wasn't expected set of delta versions")
+	}
+	dvid.Debugf("Remote sent list of %d versions to send\n", len(versions))
+
+	// For each data instance, send the data with optional datatype-specific filtering.
+	ps := &PushSession{s, transmit, storage.FilterSpec(filter), versions}
+	for _, d := range txRepo.data {
+		dvid.Infof("Sending instance %q data to %q\n", d.DataName(), target)
+		if err := d.PushData(ps); err != nil {
+			dvid.Errorf("Aborting send of instance %q data\n", d.DataName())
+			return err
+		}
+	}
+
+	return nil
+}
+
+/*
+func Pull(repo Repo, target string, config dvid.Config) error {
+	// To Pull() we initiate a push from target.
+	return nil
+}
+*/
+
+// PushSession encapsulates parameters necessary for DVID-to-DVID push/pull processing.
+type PushSession struct {
+	s  rpc.Session
+	t  rpc.Transmit
+	fs storage.FilterSpec
+	v  map[dvid.VersionID]struct{}
+}
+
+// PushData transfers all key-value pairs pertinent to the given data instance.
+// Each datatype can implement filters that can restrict the transmitted key-value pairs
+// based on the given FilterSpec.
+func PushData(d dvid.Data, p *PushSession) error {
+	// We should be able to get the backing store (only ordered kv for now)
+	storer, ok := d.(storage.Accessor)
+	if !ok {
+		return fmt.Errorf("unable to push data %q: unable to access backing store", d.DataName())
+	}
+	store, err := storer.GetOrderedKeyValueDB()
+	if err != nil {
+		return fmt.Errorf("unable to get backing store for data %q: %v\n", d.DataName(), err)
+	}
+
+	// See if this data instance implements a Send filter.
+	var filter storage.Filter
+	filterer, ok := d.(storage.Filterer)
+	if ok {
+		var err error
+		filter, err = filterer.NewFilter(p.fs)
+		if err != nil {
+			return err
+		}
+	}
+
+	// pick any version because flatten transmit will only have one version, and all or branch transmit will
+	// be looking at all versions anyway.
+	if len(p.v) == 0 {
+		return fmt.Errorf("need at least one version to send")
+	}
+	var v dvid.VersionID
+	for v = range p.v {
+		break
+	}
+	ctx := storage.NewDataContext(d, v)
+
+	// Send the initial data instance start message
+	dmsg := DataTxInit{
+		Session:    p.s.ID(),
+		DataName:   d.DataName(),
+		TypeName:   d.TypeName(),
+		InstanceID: d.InstanceID(),
+	}
+	if _, err := p.s.Call()(StartDataMsg, dmsg); err != nil {
+		dvid.Errorf("couldn't send data instance start: %v\n", err)
+	}
+
+	// Send this instance's key-value pairs
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	var kvTotal, kvSent int
+	keysOnly := false
+	if p.t == rpc.TransmitFlatten {
+		// Start goroutine to receive flattened key-value pairs and transmit to remote.
+		ch := make(chan *storage.TKeyValue, 1000)
+		go func() {
+			for {
+				tkv := <-ch
+				if tkv == nil {
+					endmsg := KVMessage{Session: p.s.ID(), Terminate: true}
+					if _, err := p.s.Call()(PutKVMsg, endmsg); err != nil {
+						dvid.Errorf("couldn't send data instance termination: %v\n", err)
+					}
+					wg.Done()
+					if filter != nil {
+						filter.EndInfof(kvSent, kvTotal)
+					} else {
+						dvid.Infof("Sent %d %s key-value pairs (out of %d total) [flattened]\n",
+							kvSent, d.DataName(), kvTotal)
+					}
+					return
+				}
+				kvTotal++
+				if filter != nil {
+					skip, err := filter.Check(tkv)
+					if err != nil {
+						dvid.Errorf("problem applying filter on data %q: %v\n", d.DataName(), err)
+						continue
+					}
+					if skip {
+						continue
+					}
+				}
+				kvSent++
+				kv := storage.KeyValue{
+					K: ctx.ConstructKey(tkv.K),
+					V: tkv.V,
+				}
+				kvmsg := KVMessage{Session: p.s.ID(), KV: kv, Terminate: false}
+				if _, err := p.s.Call()(PutKVMsg, kvmsg); err != nil {
+					dvid.Errorf("Error sending voxel block to remote: %v", err)
+				}
+			}
+		}()
+
+		begKey, endKey := ctx.TKeyRange()
+		err := store.ProcessRange(ctx, begKey, endKey, &storage.ChunkOp{}, func(c *storage.Chunk) error {
+			if c == nil {
+				return fmt.Errorf("received nil chunk in flatten push for data %s", d.DataName())
+			}
+			ch <- c.TKeyValue
+			return nil
+		})
+		ch <- nil
+		if err != nil {
+			return fmt.Errorf("error in flatten push for data %q: %v", d.DataName(), err)
+		}
+	} else {
+		// Start goroutine to receive all key-value pairs and transmit to remote.
+		ch := make(chan *storage.KeyValue, 1000)
+		go func() {
+			for {
+				kv := <-ch
+				if kv == nil {
+					endmsg := KVMessage{Session: p.s.ID(), Terminate: true}
+					if _, err := p.s.Call()(PutKVMsg, endmsg); err != nil {
+						dvid.Errorf("couldn't send data instance termination: %v\n", err)
+					}
+					wg.Done()
+					if filter != nil {
+						filter.EndInfof(kvSent, kvTotal)
+					} else {
+						dvid.Infof("Sent %d %s key-value pairs (out of %d total)\n",
+							kvSent, d.DataName(), kvTotal)
+					}
+					return
+				}
+				if !ctx.ValidKV(kv, p.v) {
+					continue
+				}
+				kvTotal++
+				if filter != nil {
+					tkey, err := storage.TKeyFromKey(kv.K)
+					if err != nil {
+						dvid.Errorf("couldn't get %q TKey from Key %v: %v\n", d.DataName(), kv.K, err)
+						continue
+					}
+					skip, err := filter.Check(&storage.TKeyValue{K: tkey, V: kv.V})
+					if err != nil {
+						dvid.Errorf("problem applying filter on data %q: %v\n", d.DataName(), err)
+						continue
+					}
+					if skip {
+						continue
+					}
+				}
+				kvSent++
+				kvmsg := KVMessage{Session: p.s.ID(), KV: *kv, Terminate: false}
+				if _, err := p.s.Call()(PutKVMsg, kvmsg); err != nil {
+					dvid.Errorf("Error pushing data %q to remote: %v", d.DataName(), err)
+				}
+			}
+		}()
+
+		begKey, endKey := ctx.KeyRange()
+		if err = store.RawRangeQuery(begKey, endKey, keysOnly, ch); err != nil {
+			return fmt.Errorf("push voxels %q range query: %v", d.DataName(), err)
+		}
+	}
+	wg.Wait()
+	return nil
+}
 
 var (
 	pushMessageID rpc.MessageID = "datastore.Push"
@@ -380,96 +641,6 @@ func (p *pusher) putData(kvmsg *KVMessage) error {
 	p.received += uint64(len(kv.V) + len(kv.K))
 	return nil
 }
-
-// ---- The following is the client side of a push command ----
-
-// Push pushes a Repo to a remote DVID server at the target address.  An ROI delimiter
-// can be specified in the Config.
-func Push(uuid dvid.UUID, target string, config dvid.Config) error {
-	if manager == nil {
-		return ErrManagerNotInitialized
-	}
-
-	if target == "" {
-		target = rpc.DefaultAddress
-		dvid.Infof("No target specified for push, defaulting to %q\n", rpc.DefaultAddress)
-	}
-
-	// Get the full local repo
-	thisRepo, err := manager.repoFromUUID(uuid)
-	if err != nil {
-		return err
-	}
-
-	// Get any filter
-	filter, found, err := config.GetString("filter")
-	if err != nil {
-		return err
-	}
-
-	// Create a repo that is tailored by the push configuration, e.g.,
-	// keeping just given data instances, etc.
-	v, found := manager.uuidToVersion[uuid]
-	if !found {
-		return ErrInvalidUUID
-	}
-	txRepo, transmit, err := thisRepo.customize(v, config)
-	if err != nil {
-		return err
-	}
-
-	// Establish session with target, which may be itself
-	s, err := rpc.NewSession(target, pushMessageID)
-	if err != nil {
-		return fmt.Errorf("Unable to connect (%s) for push: %s", target, err.Error())
-	}
-	defer s.Close() // TODO -- check if can hang if error occurs during job
-
-	// Send the repo metadata, transmit type, and other useful data for remote server.
-	dvid.Infof("Sending repo %s data to %q\n", uuid, target)
-	repoSerialization, err := txRepo.GobEncode()
-	if err != nil {
-		return err
-	}
-	repoMsg := repoTxMsg{
-		Session:  s.ID(),
-		Transmit: transmit,
-		UUID:     uuid,
-		Repo:     repoSerialization,
-	}
-	resp, err := s.Call()(sendRepoMsg, repoMsg)
-	if err != nil {
-		return err
-	}
-	if resp == nil {
-		return fmt.Errorf("push unnecessary -- versions at remote are already present")
-	}
-
-	// We should get back a version set to send, or nil = send all versions.
-	versions, ok := resp.(map[dvid.VersionID]struct{})
-	if !ok {
-		return fmt.Errorf("received response during repo push that wasn't expected set of delta versions")
-	}
-	dvid.Debugf("Remote sent list of %d versions to send\n", len(versions))
-
-	// For each data instance, send the data delimited by the roi
-	for _, d := range txRepo.data {
-		dvid.Infof("Sending instance %q data to %q\n", d.DataName(), target)
-		if err := d.Send(s, transmit, dvid.Filter(filter), versions); err != nil {
-			dvid.Errorf("Aborting send of instance %q data\n", d.DataName())
-			return err
-		}
-	}
-
-	return nil
-}
-
-/*
-func Pull(repo Repo, target string, config dvid.Config) error {
-	// To Pull() we initiate a push from target.
-	return nil
-}
-*/
 
 // Make a copy of a repository, customizing it via config.
 func (r *repoT) customize(v dvid.VersionID, config dvid.Config) (*repoT, rpc.Transmit, error) {

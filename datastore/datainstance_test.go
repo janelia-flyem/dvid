@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/janelia-flyem/dvid/rpc"
 )
 
 func init() {
@@ -33,10 +32,6 @@ func (t *TestType) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.
 
 type TestData struct {
 	*Data
-}
-
-func (d *TestData) Send(s rpc.Session, t rpc.Transmit, filter dvid.Filter, v map[dvid.VersionID]struct{}) error {
-	return nil
 }
 
 func (d *TestData) DoRPC(request Request, reply *Response) error {

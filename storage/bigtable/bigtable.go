@@ -301,9 +301,9 @@ func (db *BigTable) GetRange(ctx storage.Context, TkBeg, TkEnd storage.TKey) ([]
 
 			fullKey := storage.MergeKey(unvKeyRow, verKey)
 			// dvid.Infof("colum key= %v , timestamp = %v", verKey, readItem.Timestamp)
-			tkey, err := ctx.TKeyFromKey(fullKey)
+			tkey, err := storage.TKeyFromKey(fullKey)
 			if err != nil {
-				dvid.Errorf("Error in GetRange() ctx.TKeyFromKey(fullKey): %v\n", err)
+				dvid.Errorf("Error in GetRange() storage.TKeyFromKey(fullKey): %v\n", err)
 				return false
 			}
 
@@ -360,7 +360,7 @@ func (db *BigTable) KeysInRange(ctx storage.Context, TkBeg, TkEnd storage.TKey) 
 		}
 
 		fullKey := storage.MergeKey(unvKeyRow, verKeyRow)
-		tkey, err := ctx.TKeyFromKey(fullKey)
+		tkey, err := storage.TKeyFromKey(fullKey)
 		if err != nil {
 			dvid.Errorf("Error in KeysInRange(): %v\n", err)
 			return false
@@ -468,7 +468,7 @@ func (db *BigTable) ProcessRange(ctx storage.Context, TkBeg, TkEnd storage.TKey,
 		}
 
 		fullKey := storage.MergeKey(unvKeyRow, verKeyRow)
-		tkey, err := ctx.TKeyFromKey(fullKey)
+		tkey, err := storage.TKeyFromKey(fullKey)
 		if err != nil {
 			dvid.Errorf("Error in ProcessRange(): %v\n", err)
 			return false

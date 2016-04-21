@@ -397,11 +397,11 @@ func deleteConflict(data DataService, extnode *extensionNode, k storage.Key) err
 	}
 
 	// Perform the deletion.
-	ctx := NewVersionedCtx(data, extnode.newV)
-	tk, err := ctx.TKeyFromKey(k)
+	tk, err := storage.TKeyFromKey(k)
 	if err != nil {
 		return err
 	}
+	ctx := NewVersionedCtx(data, extnode.newV)
 	return store.Delete(ctx, tk)
 }
 
@@ -456,7 +456,7 @@ func DeleteConflicts(uuid dvid.UUID, data DataService, oldParents, newParents []
 				}
 
 				// If we have a different TKey, then process the batch of versions.
-				curTK, err = baseCtx.TKeyFromKey(kv.K)
+				curTK, err = storage.TKeyFromKey(kv.K)
 				if err != nil {
 					dvid.Errorf("Error in processing kv pairs in DeleteConflicts: %v\n", err)
 					continue

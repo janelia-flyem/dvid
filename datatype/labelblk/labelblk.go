@@ -25,7 +25,6 @@ import (
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
 	"github.com/janelia-flyem/dvid/datatype/imageblk"
 	"github.com/janelia-flyem/dvid/dvid"
-	"github.com/janelia-flyem/dvid/rpc"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
 
@@ -1004,14 +1003,10 @@ func RavelerSuperpixelBytes(slice, superpixel32 uint32) []byte {
 
 // --- datastore.DataService interface ---------
 
-// Send transfers all key-value pairs pertinent to this data type as well as
-// the storage.DataStoreType for them.
-func (d *Data) Send(s rpc.Session, transmit rpc.Transmit, filter dvid.Filter, versions map[dvid.VersionID]struct{}) error {
-	// Send the label voxel blocks
-	if err := d.Data.Send(s, transmit, filter, versions); err != nil {
-		return err
-	}
-	return nil
+// PushData pushes labelblk data to a remote DVID.
+func (d *Data) PushData(p *datastore.PushSession) error {
+	// Delegate to imageblk's implementation.
+	return d.Data.PushData(p)
 }
 
 // DoRPC acts as a switchboard for RPC commands.

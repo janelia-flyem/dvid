@@ -197,8 +197,7 @@ func TestTileKey(t *testing.T) {
 
 	// Decipher TKey portion to make sure it's correct.
 	key := storage.Key(kb)
-	var ctx storage.DataContext
-	tk, err := ctx.TKeyFromKey(key)
+	tk, err := storage.TKeyFromKey(key)
 	if err != nil {
 		t.Fatalf("Couldn't get TKey from returned key (%v): %x", err, kb)
 	}
