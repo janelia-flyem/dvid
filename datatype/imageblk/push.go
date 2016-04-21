@@ -48,8 +48,3 @@ func (f Filter) Check(tkv *storage.TKeyValue) (skip bool, err error) {
 	}
 	return false, nil
 }
-
-func (f Filter) EndInfof(kvSent, kvTotal int) {
-	dvid.Infof("Sent %d %s voxel blocks (out of %d total) with ROI filter %s\n",
-		kvSent, f.DataName(), kvTotal, f.fs)
-}

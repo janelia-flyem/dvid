@@ -50,7 +50,4 @@ type Filterer interface {
 type Filter interface {
 	// Check filters type-specific key-value pairs.
 	Check(tkv *TKeyValue) (skip bool, err error)
-
-	// EndInfof logs the end of a data instance push using supplied kv pairs sent vs total.
-	EndInfof(kvSent, kvTotal int)
 }

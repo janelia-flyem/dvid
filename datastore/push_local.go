@@ -24,6 +24,8 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/rpc"
 	"github.com/janelia-flyem/dvid/storage"
+
+	"github.com/dustin/go-humanize"
 	"github.com/valyala/gorpc"
 )
 
@@ -175,6 +177,7 @@ func PushData(d dvid.Data, p *PushSession) error {
 	wg.Add(1)
 
 	var kvTotal, kvSent int
+	var bytesTotal, bytesSent uint64
 	keysOnly := false
 	if p.t == rpc.TransmitFlatten {
 		// Start goroutine to receive flattened key-value pairs and transmit to remote.
@@ -188,15 +191,13 @@ func PushData(d dvid.Data, p *PushSession) error {
 						dvid.Errorf("couldn't send data instance termination: %v\n", err)
 					}
 					wg.Done()
-					if filter != nil {
-						filter.EndInfof(kvSent, kvTotal)
-					} else {
-						dvid.Infof("Sent %d %s key-value pairs (out of %d total) [flattened]\n",
-							kvSent, d.DataName(), kvTotal)
-					}
+					dvid.Infof("Sent %d %q key-value pairs (%s, out of %d kv pairs, %s) [flattened]\n",
+						kvSent, d.DataName(), humanize.Bytes(bytesSent), kvTotal, humanize.Bytes(bytesTotal))
 					return
 				}
 				kvTotal++
+				curBytes := uint64(len(tkv.V) + len(tkv.K))
+				bytesTotal += curBytes
 				if filter != nil {
 					skip, err := filter.Check(tkv)
 					if err != nil {
@@ -208,6 +209,7 @@ func PushData(d dvid.Data, p *PushSession) error {
 					}
 				}
 				kvSent++
+				bytesSent += curBytes
 				kv := storage.KeyValue{
 					K: ctx.ConstructKey(tkv.K),
 					V: tkv.V,
@@ -243,18 +245,16 @@ func PushData(d dvid.Data, p *PushSession) error {
 						dvid.Errorf("couldn't send data instance termination: %v\n", err)
 					}
 					wg.Done()
-					if filter != nil {
-						filter.EndInfof(kvSent, kvTotal)
-					} else {
-						dvid.Infof("Sent %d %s key-value pairs (out of %d total)\n",
-							kvSent, d.DataName(), kvTotal)
-					}
+					dvid.Infof("Sent %d %q key-value pairs (%s, out of %d kv pairs, %s) [flattened]\n",
+						kvSent, d.DataName(), humanize.Bytes(bytesSent), kvTotal, humanize.Bytes(bytesTotal))
 					return
 				}
 				if !ctx.ValidKV(kv, p.v) {
 					continue
 				}
 				kvTotal++
+				curBytes := uint64(len(kv.V) + len(kv.K))
+				bytesTotal += curBytes
 				if filter != nil {
 					tkey, err := storage.TKeyFromKey(kv.K)
 					if err != nil {
@@ -271,6 +271,7 @@ func PushData(d dvid.Data, p *PushSession) error {
 					}
 				}
 				kvSent++
+				bytesSent += curBytes
 				kvmsg := KVMessage{Session: p.s.ID(), KV: *kv, Terminate: false}
 				if _, err := p.s.Call()(PutKVMsg, kvmsg); err != nil {
 					dvid.Errorf("Error pushing data %q to remote: %v", d.DataName(), err)

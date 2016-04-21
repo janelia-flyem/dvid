@@ -86,8 +86,3 @@ func (f *Filter) Check(tkv *storage.TKeyValue) (skip bool, err error) {
 	}
 	return false, nil
 }
-
-func (f Filter) EndInfof(kvSent, kvTotal int) {
-	dvid.Infof("Sent %d %s tiles (out of %d total) with filter %q\n",
-		kvSent, f.DataName(), kvTotal, f.fs)
-}
