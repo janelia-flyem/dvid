@@ -417,7 +417,7 @@ func (db *KVAutobus) versionedRange(vctx storage.VersionedCtx, kStart, kEnd stor
 	for _, kv := range kvs {
 		// Did we pass all versions for last key read?
 		if bytes.Compare(kv.K, maxVersionKey) > 0 {
-			indexBytes, err := TKeyFromKey(kv.K)
+			indexBytes, err := storage.TKeyFromKey(kv.K)
 			if err != nil {
 				ch <- errorableKV{nil, err}
 				return
@@ -490,7 +490,7 @@ func (db *KVAutobus) KeysInRange(ctx storage.Context, kStart, kEnd storage.TKey)
 		if result.error != nil {
 			return nil, result.error
 		}
-		tk, err := TKeyFromKey(result.KeyValue.K)
+		tk, err := storage.TKeyFromKey(result.KeyValue.K)
 		if err != nil {
 			return nil, err
 		}
@@ -560,7 +560,7 @@ func (db *KVAutobus) GetRange(ctx storage.Context, kStart, kEnd storage.TKey) ([
 		if result.error != nil {
 			return nil, result.error
 		}
-		tk, err := TKeyFromKey(result.KeyValue.K)
+		tk, err := storage.TKeyFromKey(result.KeyValue.K)
 		if err != nil {
 			return nil, err
 		}
@@ -598,7 +598,7 @@ func (db *KVAutobus) ProcessRange(ctx storage.Context, kStart, kEnd storage.TKey
 		if op.Wg != nil {
 			op.Wg.Add(1)
 		}
-		tk, err := TKeyFromKey(result.KeyValue.K)
+		tk, err := storage.TKeyFromKey(result.KeyValue.K)
 		if err != nil {
 			return err
 		}
