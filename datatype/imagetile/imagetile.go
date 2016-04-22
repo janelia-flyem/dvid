@@ -620,7 +620,11 @@ func (d *Data) computeVoxelBounds(tileCoord dvid.ChunkPoint3d, plane dvid.DataSh
 			return dvid.Extents3d{}, fmt.Errorf("no tile spec for scale %d", scale)
 		}
 		tileSize = spec.TileSize.Mult(mag).(dvid.Point3d)
-		mag = mag.Mult(spec.levelMag).(dvid.Point3d)
+		// mag = mag.Mult(spec.levelMag).(dvid.Point3d)
+		// TODO -- figure out why mag level not working for some imagetile instances.
+		mag[0] *= 2
+		mag[1] *= 2
+		mag[2] *= 2
 	}
 	return dvid.GetTileExtents(tileCoord, plane, tileSize)
 }

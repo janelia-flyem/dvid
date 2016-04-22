@@ -458,15 +458,16 @@ func VoxelBoundsInside(e dvid.Extents3d, blocksize dvid.Point3d, spans []dvid.Sp
 	// the extents and span.
 	for _, span := range spans {
 		bz, by, bx0, bx1 := span[0], span[1], span[2], span[3]
-		if bz > emax[2] || by > emax[1] {
+		if bz > emax[2] {
 			return false, nil
 		}
-		if bx0 > emax[0] || bx1 < emin[0] {
+		if bz < emin[2] || by < emin[1] || bx1 < emin[0] {
 			continue
 		}
-		if by >= emin[1] && by <= emax[1] && bz >= emin[2] && bz <= emax[2] {
-			return true, nil
+		if by > emax[1] || bx0 > emax[0] {
+			continue
 		}
+		return true, nil
 	}
 	return false, nil
 }
