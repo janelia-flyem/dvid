@@ -24,8 +24,8 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/rpc"
 	"github.com/janelia-flyem/dvid/storage"
+	"github.com/janelia-flyem/go/go-humanize"
 
-	"github.com/dustin/go-humanize"
 	"github.com/valyala/gorpc"
 )
 
