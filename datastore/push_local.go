@@ -401,33 +401,37 @@ type txStats struct {
 	numV0, numV1, numV10, numV100, numV1k, numV10k, numV100k, numV1m, numV10m uint64
 
 	// some stats for timing
-	lastTime  time.Time
-	lastBytes uint64 // bytes received since lastTime
+	lastTime   time.Time
+	lastBytes  uint64 // bytes received since lastTime
+	totalBytes uint64
 }
 
 // record stats on size of values
 func (t *txStats) addKV(kv *storage.KeyValue) {
 	t.numKV++
 
-	sz := len(kv.V)
-	t.lastBytes += uint64(sz + len(kv.K))
+	vBytes := len(kv.V)
+	kBytes := len(kv.K)
+	curBytes := uint64(kBytes + vBytes)
+	t.lastBytes += curBytes
+	t.totalBytes += curBytes
 
 	switch {
-	case sz == 0:
+	case vBytes == 0:
 		t.numV0++
-	case sz < 10:
+	case vBytes < 10:
 		t.numV1++
-	case sz < 100:
+	case vBytes < 100:
 		t.numV10++
-	case sz < 1000:
+	case vBytes < 1000:
 		t.numV100++
-	case sz < 10000:
+	case vBytes < 10000:
 		t.numV1k++
-	case sz < 100000:
+	case vBytes < 100000:
 		t.numV10k++
-	case sz < 1000000:
+	case vBytes < 1000000:
 		t.numV100k++
-	case sz < 10000000:
+	case vBytes < 10000000:
 		t.numV1m++
 	default:
 		t.numV10m++
@@ -438,7 +442,7 @@ func (t *txStats) addKV(kv *storage.KeyValue) {
 		mb := float64(t.lastBytes) / 1000000
 		sec := elapsed.Seconds()
 		throughput := mb / sec
-		dvid.Debugf("Push throughput: %5.2f MB/s (%.1f MB in %3f seconds)\n", throughput, mb, sec)
+		dvid.Debugf("Push throughput: %5.2f MB/s (%.1f MB in %3f seconds).  Total %s\n", throughput, humanize.Bytes(t.lastBytes), sec, humanize.Bytes(t.totalBytes))
 
 		t.lastTime = time.Now()
 		t.lastBytes = 0
@@ -447,6 +451,7 @@ func (t *txStats) addKV(kv *storage.KeyValue) {
 
 func (p *pusher) printStats() {
 	dvid.Infof("Stats for transfer of data %q:\n", p.dname)
+	dvid.Infof("Total size: %s\n", humanize.Bytes(p.stats.totalBytes))
 	dvid.Infof("# kv pairs: %d\n", p.stats.numKV)
 	dvid.Infof("Size of values transferred (bytes):\n")
 	dvid.Infof(" key only:   %d", p.stats.numV0)
