@@ -47,8 +47,27 @@ Commands executed on the server (rpc address = %s):
 
 EXPERIMENTAL COMMANDS
 
+	repo <UUID> copy <source instance name> <clone instance name> <settings...>
+    
+        A local data instance copy with optional datatype-specific delimiter,
+        where <settings> are optional "key=value" strings:
+				
+		filter=<filter0>/<filter1>/...
+		
+			Separate filters by the forward slash.  See datatype help
+            for the types of filters they will use for pushes.  Examples
+            include "roi:name,uuid" and "tile:xy,xz".
+		
+		transmit=[all | flatten]
+
+			The default transmit "all" copies all versions of the source.
+			
+			A transmit "flatten" will copy just the version specified and
+			flatten the key/values so there is no history.
+
 	repo <UUID> push <remote DVID address> <settings...>
 
+        A DVID-to-DVID repo copy with optional datatype-specific delimiter,
 		where <settings> are optional "key=value" strings:
 
 		data=<data1>[,<data2>[,<data3>...]]
@@ -286,6 +305,17 @@ func handleCommand(cmd *datastore.Request) (reply *datastore.Response, err error
 			}
 			reply.Text = fmt.Sprintf("Parents %v merged into node %s\n", parents, child)
 			datastore.AddToRepoLog(uuid, []string{cmd.String()})
+
+		case "copy":
+			var source, target string
+			cmd.CommandArgs(3, &source, &target)
+			config := cmd.Settings()
+			go func() {
+				if err = datastore.CopyInstance(uuid, dvid.InstanceName(source), dvid.InstanceName(target), config); err != nil {
+					dvid.Errorf("copy error: %v\n", err)
+				}
+			}()
+			reply.Text = fmt.Sprintf("Started copy of uuid %s data instance %q to %q...\n", uuid, source, target)
 
 		case "push":
 			var target string

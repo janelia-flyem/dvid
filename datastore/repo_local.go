@@ -414,9 +414,10 @@ func (m *repoManager) loadVersion0() error {
 			m.iids[dataservice.InstanceID()] = dataservice
 
 			// Cache the assigned store.
-			store, err := storage.GetAssignedStore(dataservice.TypeName())
+			typename := dataservice.TypeName()
+			store, err := storage.GetAssignedStore(dataname, r.uuid, typename)
 			if err != nil {
-				return fmt.Errorf("Cannot get assigned store for data %q, type %q", dataservice.DataName(), dataservice.TypeName())
+				return err
 			}
 			dataservice.SetBackendStore(store)
 		}
@@ -1442,7 +1443,8 @@ func (m *repoManager) newData(uuid dvid.UUID, t TypeService, name dvid.InstanceN
 	return dataservice, r.save()
 }
 
-func (m *repoManager) newSync(uuid dvid.UUID, name dvid.InstanceName, syncs []string) error {
+// Replaces any previous syncs with given ones.  Can also be used to delete syncs by passing nil syncs.
+func (m *repoManager) setSync(uuid dvid.UUID, name dvid.InstanceName, syncs []string) error {
 	r, err := m.repoFromUUID(uuid)
 	if err != nil {
 		return err

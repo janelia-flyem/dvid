@@ -257,7 +257,7 @@ func SyncData(uuid dvid.UUID, name dvid.InstanceName, syncedNames ...string) err
 	if manager == nil {
 		return ErrManagerNotInitialized
 	}
-	return manager.newSync(uuid, name, syncedNames)
+	return manager.setSync(uuid, name, syncedNames)
 }
 
 // SaveDataByUUID persists metadata for a data instance with given uuid.

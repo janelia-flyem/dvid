@@ -31,9 +31,8 @@ max_log_age = 30   # days
     # store.default  = default storage engine if not otherwise specified
     # store.metadata = configuration for metadata store
     # store.datatype = storage engine to use for the given "datatype"
-    #
-    # TODO:
-    # store."name:uuid" = storage engine for a particular data instance
+    # store."name:uuid" = storage engine for a particular data instance, 
+    #   where uuid is the full UUID of the repo's root.
     
     [store.default]
     engine = "basholeveldb"

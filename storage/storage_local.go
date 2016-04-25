@@ -4,6 +4,7 @@ package storage
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/janelia-flyem/dvid/dvid"
 )
@@ -18,6 +19,8 @@ type managerT struct {
 	// cache the default stores at both global and datatype level
 	defaultStore  dvid.Store
 	metadataStore dvid.Store
+
+	instanceStore map[string]dvid.Store
 	datatypeStore map[dvid.TypeString]dvid.Store
 
 	uniqueDBs []dvid.Store // Keep track of unique stores for closing.
@@ -79,8 +82,38 @@ func GraphStore() (GraphDB, error) {
 	return manager.graphDB, nil
 }
 
-// GetAssignedStore returns the store assigned to a particular datatype.
-func GetAssignedStore(typename dvid.TypeString) (dvid.Store, error) {
+// GetAssignedStore returns the store assigned based on instance or type.
+func GetAssignedStore(dataname dvid.InstanceName, uuid dvid.UUID, typename dvid.TypeString) (dvid.Store, error) {
+	store, found, err := GetAssignedStoreByInstance(dataname, uuid)
+	if err != nil {
+		return nil, err
+	}
+	if found {
+		return store, nil
+	}
+	store, err = GetAssignedStoreByType(typename)
+	if err != nil {
+		return nil, fmt.Errorf("Cannot get assigned store for data %q, type %q", dataname, typename)
+	}
+	return store, nil
+}
+
+// GetAssignedStoreByInstance returns the store assigned to a particular data instance.
+func GetAssignedStoreByInstance(name dvid.InstanceName, root dvid.UUID) (store dvid.Store, found bool, err error) {
+	if !manager.setup {
+		err = fmt.Errorf("Storage manager not initialized before requesting store for %s/%s", name, root)
+		return
+	}
+	// For now, return the root UUID of the DAG containing the given UUID.
+	// TODO: Adjust when we make UUID-based data instances.
+
+	dataid := string(name) + string(root)
+	store, found = manager.instanceStore[dataid]
+	return
+}
+
+// GetAssignedStoreByType returns the store assigned to a particular datatype.
+func GetAssignedStoreByType(typename dvid.TypeString) (dvid.Store, error) {
 	if !manager.setup {
 		return nil, fmt.Errorf("Storage manager not initialized before requesting store for %s", typename)
 	}
@@ -141,6 +174,7 @@ func Initialize(cmdline dvid.Config, sc map[string]dvid.StoreConfig) (created bo
 	}
 	manager.defaultStore = defaultStore
 	manager.uniqueDBs = []dvid.Store{defaultStore}
+	dvid.Infof("default store -> %s\n", defaultStore)
 
 	// Was a metadata store configured?
 	var metadataStore dvid.Store
@@ -154,8 +188,11 @@ func Initialize(cmdline dvid.Config, sc map[string]dvid.StoreConfig) (created bo
 		metadataStore = defaultStore
 	}
 	manager.metadataStore = metadataStore
+	dvid.Infof("metadata store -> %s\n", metadataStore)
 
-	// Load any datatype-specific stores, checking to see if it's already handled.
+	// Load any data instance or datatype-specific stores, checking
+	// to see if it's already handled.
+	manager.instanceStore = make(map[string]dvid.Store)
 	manager.datatypeStore = make(map[dvid.TypeString]dvid.Store)
 	for name, c := range sc {
 		if name == "default" || name == "metadata" {
@@ -164,16 +201,27 @@ func Initialize(cmdline dvid.Config, sc map[string]dvid.StoreConfig) (created bo
 		var store dvid.Store
 		store, _, err = addUniqueDB(c)
 		if err != nil {
-			err = fmt.Errorf("storage.%s %v", name, err)
+			err = fmt.Errorf("storage.%s: %v", name, err)
 			return
 		}
-		manager.datatypeStore[dvid.TypeString(name)] = store
+
+		// Cache the store to datatype or data instance.
+		parts := strings.Split(name, ":")
+		switch len(parts) {
+		case 1:
+			manager.datatypeStore[dvid.TypeString(name)] = store
+		case 2:
+			manager.instanceStore[parts[0]+parts[1]] = store
+		default:
+			err = fmt.Errorf("bad store name specification %q", name)
+			return
+		}
 	}
 	manager.setup = true
 
 	// Setup the graph store
 	var store dvid.Store
-	store, err = GetAssignedStore("labelgraph")
+	store, err = GetAssignedStoreByType("labelgraph")
 	if err != nil {
 		return
 	}

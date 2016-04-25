@@ -333,8 +333,8 @@ func NewDataService(t TypeService, uuid dvid.UUID, id dvid.InstanceID, name dvid
 		return nil, fmt.Errorf("cannot use reserved name %q", name)
 	}
 
-	// Get the store for this particular data instance.
-	store, err := storage.GetAssignedStore(t.GetTypeName())
+	// See if a store was defined for a particular data instance.
+	store, err := storage.GetAssignedStore(name, uuid, t.GetTypeName())
 	if err != nil {
 		return nil, err
 	}

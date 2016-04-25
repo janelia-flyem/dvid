@@ -1,11 +1,8 @@
 // +build !clustered,!gcloud
 
 /*
-	This file contains local server code supporting push/pull with
-	optional delimiting using an ROI.  Note that the actual sending of data is implemented at the
-    datatype level (if supporting ROI filtering) or the generic datastore package level if
-    no ROI filtering is necessary.  In the latter case, we do not have to interpret the keys
-    to determine their spatial context.
+	This file contains local server code supporting push/pull with optional delimiting
+	using datatype-specific filters.
 
     TODO: When we actually have multiple varieties of target platform (cluster, gcloud managed vm, amzn ec2),
     the repo/DAG data structure needs to be cross-platform since the receiving DVID could be an entirely
@@ -379,6 +376,7 @@ func handlePutKV(m *KVMessage) error {
 
 type pusher struct {
 	sessionID rpc.SessionID
+	uuid      dvid.UUID
 	repo      *repoT
 
 	instanceMap dvid.InstanceMap // map from pushed to local instance ids
@@ -494,8 +492,6 @@ func (p *pusher) Close() error {
 	return nil
 }
 
-// --- the functions at each state of FSM
-
 func (p *pusher) readRepo(m *repoTxMsg) (map[dvid.VersionID]struct{}, error) {
 	dvid.Debugf("Reading repo for push of %s...\n", m.UUID)
 
@@ -509,6 +505,7 @@ func (p *pusher) readRepo(m *repoTxMsg) (map[dvid.VersionID]struct{}, error) {
 	if err := p.repo.GobDecode(m.Repo); err != nil {
 		return nil, err
 	}
+	p.uuid = m.UUID
 	remoteV, err := p.repo.versionFromUUID(m.UUID) // do this before we remap the repo's IDs
 	if err != nil {
 		return nil, err
@@ -601,7 +598,7 @@ func (p *pusher) startData(d *DataTxInit) error {
 	p.dname = d.DataName
 
 	// Get the store associated with this data instance.
-	store, err := storage.GetAssignedStore(d.TypeName)
+	store, err := storage.GetAssignedStore(d.DataName, p.uuid, d.TypeName)
 	if err != nil {
 		return err
 	}
