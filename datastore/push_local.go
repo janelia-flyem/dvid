@@ -391,76 +391,9 @@ type pusher struct {
 	received  uint64 // bytes received over entire push
 }
 
-type txStats struct {
-	// num key-value pairs
-	numKV uint64
-
-	// stats on value sizes on logarithmic scale to 10 MB
-	numV0, numV1, numV10, numV100, numV1k, numV10k, numV100k, numV1m, numV10m uint64
-
-	// some stats for timing
-	lastTime   time.Time
-	lastBytes  uint64 // bytes received since lastTime
-	totalBytes uint64
-}
-
-// record stats on size of values
-func (t *txStats) addKV(kv *storage.KeyValue) {
-	t.numKV++
-
-	vBytes := len(kv.V)
-	kBytes := len(kv.K)
-	curBytes := uint64(kBytes + vBytes)
-	t.lastBytes += curBytes
-	t.totalBytes += curBytes
-
-	switch {
-	case vBytes == 0:
-		t.numV0++
-	case vBytes < 10:
-		t.numV1++
-	case vBytes < 100:
-		t.numV10++
-	case vBytes < 1000:
-		t.numV100++
-	case vBytes < 10000:
-		t.numV1k++
-	case vBytes < 100000:
-		t.numV10k++
-	case vBytes < 1000000:
-		t.numV100k++
-	case vBytes < 10000000:
-		t.numV1m++
-	default:
-		t.numV10m++
-	}
-
-	// Print progress?
-	if elapsed := time.Since(t.lastTime); elapsed > time.Minute {
-		mb := float64(t.lastBytes) / 1000000
-		sec := elapsed.Seconds()
-		throughput := mb / sec
-		dvid.Debugf("Push throughput: %5.2f MB/s (%.1f MB in %3f seconds).  Total %s\n", throughput, humanize.Bytes(t.lastBytes), sec, humanize.Bytes(t.totalBytes))
-
-		t.lastTime = time.Now()
-		t.lastBytes = 0
-	}
-}
-
 func (p *pusher) printStats() {
 	dvid.Infof("Stats for transfer of data %q:\n", p.dname)
-	dvid.Infof("Total size: %s\n", humanize.Bytes(p.stats.totalBytes))
-	dvid.Infof("# kv pairs: %d\n", p.stats.numKV)
-	dvid.Infof("Size of values transferred (bytes):\n")
-	dvid.Infof(" key only:   %d", p.stats.numV0)
-	dvid.Infof(" [1,9):      %d", p.stats.numV1)
-	dvid.Infof(" [10,99):    %d\n", p.stats.numV10)
-	dvid.Infof(" [100,999):  %d\n", p.stats.numV100)
-	dvid.Infof(" [1k,10k):   %d\n", p.stats.numV1k)
-	dvid.Infof(" [10k,100k): %d\n", p.stats.numV10k)
-	dvid.Infof(" [100k,1m):  %d\n", p.stats.numV100k)
-	dvid.Infof(" [1m,10m):   %d\n", p.stats.numV1m)
-	dvid.Infof("  >= 10m:    %d\n", p.stats.numV10m)
+	p.stats.printStats()
 }
 
 func makePushSession(rpc.MessageID) (rpc.SessionHandler, error) {
@@ -639,7 +572,7 @@ func (p *pusher) putData(kvmsg *KVMessage) error {
 	if err := storage.UpdateDataKey(kv.K, newInstanceID, newVersionID, 0); err != nil {
 		return fmt.Errorf("Unable to update data key %v: %v", kv.K, err)
 	}
-	p.stats.addKV(kv)
+	p.stats.addKV(kv.K, kv.V)
 	p.store.RawPut(kv.K, kv.V)
 	p.received += uint64(len(kv.V) + len(kv.K))
 	return nil

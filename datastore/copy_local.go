@@ -10,11 +10,83 @@ package datastore
 import (
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
 	"github.com/janelia-flyem/go/go-humanize"
 )
+
+type txStats struct {
+	// num key-value pairs
+	numKV uint64
+
+	// stats on value sizes on logarithmic scale to 10 MB
+	numV0, numV1, numV10, numV100, numV1k, numV10k, numV100k, numV1m, numV10m uint64
+
+	// some stats for timing
+	lastTime   time.Time
+	lastBytes  uint64 // bytes received since lastTime
+	totalBytes uint64
+}
+
+// record stats on size of values
+func (t *txStats) addKV(k, v []byte) {
+	t.numKV++
+
+	vBytes := len(v)
+	kBytes := len(k)
+	curBytes := uint64(kBytes + vBytes)
+	t.lastBytes += curBytes
+	t.totalBytes += curBytes
+
+	switch {
+	case vBytes == 0:
+		t.numV0++
+	case vBytes < 10:
+		t.numV1++
+	case vBytes < 100:
+		t.numV10++
+	case vBytes < 1000:
+		t.numV100++
+	case vBytes < 10000:
+		t.numV1k++
+	case vBytes < 100000:
+		t.numV10k++
+	case vBytes < 1000000:
+		t.numV100k++
+	case vBytes < 10000000:
+		t.numV1m++
+	default:
+		t.numV10m++
+	}
+
+	// Print progress?
+	if elapsed := time.Since(t.lastTime); elapsed > time.Minute {
+		mb := float64(t.lastBytes) / 1000000
+		sec := elapsed.Seconds()
+		throughput := mb / sec
+		dvid.Debugf("Push throughput: %5.2f MB/s (%.1f MB in %3f seconds).  Total %s\n", throughput, humanize.Bytes(t.lastBytes), sec, humanize.Bytes(t.totalBytes))
+
+		t.lastTime = time.Now()
+		t.lastBytes = 0
+	}
+}
+
+func (t *txStats) printStats() {
+	dvid.Infof("Total size: %s\n", humanize.Bytes(t.totalBytes))
+	dvid.Infof("# kv pairs: %d\n", t.numKV)
+	dvid.Infof("Size of values transferred (bytes):\n")
+	dvid.Infof(" key only:   %d", t.numV0)
+	dvid.Infof(" [1,9):      %d", t.numV1)
+	dvid.Infof(" [10,99):    %d\n", t.numV10)
+	dvid.Infof(" [100,999):  %d\n", t.numV100)
+	dvid.Infof(" [1k,10k):   %d\n", t.numV1k)
+	dvid.Infof(" [10k,100k): %d\n", t.numV10k)
+	dvid.Infof(" [100k,1m):  %d\n", t.numV100k)
+	dvid.Infof(" [1m,10m):   %d\n", t.numV1m)
+	dvid.Infof("  >= 10m:    %d\n", t.numV10m)
+}
 
 // CopyInstance copies a data instance locally, perhaps to a different storage
 // engine if the new instance uses a different backend per a data instance-specific configuration.
@@ -118,6 +190,9 @@ func CopyData(d, d2 dvid.Data, uuid dvid.UUID, fs storage.FilterSpec, flatten bo
 	var wg sync.WaitGroup
 	wg.Add(1)
 
+	stats := new(txStats)
+	stats.lastTime = time.Now()
+
 	var kvTotal, kvSent int
 	var bytesTotal, bytesSent uint64
 	keysOnly := false
@@ -131,6 +206,7 @@ func CopyData(d, d2 dvid.Data, uuid dvid.UUID, fs storage.FilterSpec, flatten bo
 					wg.Done()
 					dvid.Infof("Copied %d %q key-value pairs (%s, out of %d kv pairs, %s) [flattened]\n",
 						kvSent, d.DataName(), humanize.Bytes(bytesSent), kvTotal, humanize.Bytes(bytesTotal))
+					stats.printStats()
 					return
 				}
 				kvTotal++
@@ -151,6 +227,7 @@ func CopyData(d, d2 dvid.Data, uuid dvid.UUID, fs storage.FilterSpec, flatten bo
 				if err := store2.Put(dstCtx, tkv.K, tkv.V); err != nil {
 					dvid.Errorf("can't put k/v pair to destination instance %q: %v\n", d2.DataName(), err)
 				}
+				stats.addKV(tkv.K, tkv.V)
 			}
 		}()
 
@@ -176,6 +253,7 @@ func CopyData(d, d2 dvid.Data, uuid dvid.UUID, fs storage.FilterSpec, flatten bo
 					wg.Done()
 					dvid.Infof("Sent %d %q key-value pairs (%s, out of %d kv pairs, %s) [flattened]\n",
 						kvSent, d.DataName(), humanize.Bytes(bytesSent), kvTotal, humanize.Bytes(bytesTotal))
+					stats.printStats()
 					return
 				}
 				tkey, err := storage.TKeyFromKey(kv.K)
@@ -202,6 +280,7 @@ func CopyData(d, d2 dvid.Data, uuid dvid.UUID, fs storage.FilterSpec, flatten bo
 				if err := store2.Put(dstCtx, tkey, kv.V); err != nil {
 					dvid.Errorf("can't put k/v pair to destination instance %q: %v\n", d2.DataName(), err)
 				}
+				stats.addKV(kv.K, kv.V)
 			}
 		}()
 
