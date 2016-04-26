@@ -1,5 +1,3 @@
-// +build graphkeyvalue
-
 package storage_test
 
 import (

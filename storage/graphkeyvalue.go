@@ -1,5 +1,3 @@
-// +build graphkeyvalue
-
 /*
    Package interacts with a key-value datastore to satisfy the GraphDB interface.
    For now, this is the only functionality that implements the GraphDB interface.  In the future,

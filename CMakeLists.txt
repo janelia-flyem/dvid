@@ -70,18 +70,16 @@ else ()
     include (basholeveldb)
     include (hyperleveldb)
 
+    # This is the default local storage backend.
     set (DVID_BACKEND "basholeveldb" CACHE TYPE STRING)
-    
-    # flag for building graph backend (currently just using specified key-value store
-    set (DVID_GRAPHBACKEND "graphkeyvalue" CACHE TYPE STRING)
-    
+        
     message ("Using DVID_BACKEND: ${DVID_BACKEND}")
 
     # Make sure we have all dependencies for the backend
 
 	# Defaults to standard leveldb
     foreach (BACKEND ${DVID_BACKEND})
-        if ("${BACKEND}" STREQUAL "lmdb")
+       if ("${BACKEND}" STREQUAL "lmdb")
             set (DVID_BACKEND_DEPEND  "gomdb" ${DVID_BACKEND_DEPEND})
             message ("Installing Lightning MDB with modified Go driver for DVID storage engine")
         elseif ("${BACKEND}" STREQUAL "kvautobus")
@@ -93,7 +91,7 @@ else ()
             set (DVID_BACKEND_DEPEND    ${leveldb_NAME} ${DVID_BACKEND_DEPEND})
             message ("Installing standard Google leveldb for DVID storage engine")
         elseif ("${BACKEND}" STREQUAL "basholeveldb")
-            set (DVID_BACKEND_DEPEND    ${basholeveldb_NAME} ${DVID_BACKEND_DEPEND})
+           set (DVID_BACKEND_DEPEND    ${basholeveldb_NAME} ${DVID_BACKEND_DEPEND})
             message ("Installing Basho-tuned leveldb for DVID storage engine")
             if (CMAKE_SYSTEM_NAME MATCHES "Linux")
                 if (EXISTS "/etc/issue")
@@ -197,7 +195,7 @@ else ()
     # Compile command to generate DVID source code version info.
     add_custom_target (dvid-gen-version
         ${BUILDEM_ENV_STRING} ${GO_ENV} ${CGO_FLAGS} go build -o ${BUILDEM_BIN_DIR}/dvid-gen-version 
-        -v -tags '${DVID_BUILD_TAGS}' cmd/gen-version/main.go 
+        -v -tags '${DVID_BACKEND}' cmd/gen-version/main.go 
         WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
         COMMENT     "Compiling and installing dvid version generation command...")
 
@@ -211,7 +209,7 @@ else ()
     # Build DVID with chosen backend
     add_custom_target (dvid-exe
         ${BUILDEM_ENV_STRING} ${GO_ENV} ${CGO_FLAGS} go build -o ${BUILDEM_BIN_DIR}/dvid 
-        -v -tags '${DVID_BACKEND} ${DVID_GRAPHBACKEND} ${DVID_BUILD_TAGS}' cmd/dvid/main.go 
+        -v -tags '${DVID_BACKEND}' cmd/dvid/main.go 
         WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
         DEPENDS     ${DVID_BACKEND_DEPEND} ${DVID_DEP_GO_PACKAGES} dvid-code-gen
         COMMENT     "Compiling and installing dvid executable...")
@@ -228,42 +226,42 @@ else ()
                        ${DVID_GO}/datatype/... ${DVID_GO}/tests_integration)
 
    add_custom_target (test
-        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go test -tags '${DVID_BACKEND} ${DVID_GRAPHBACKEND}' 
+        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go test -tags '${DVID_BACKEND}' 
             ${DVID_PACKAGES})
 
    add_custom_target (test-verbose
-        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go test -v -tags '${DVID_BACKEND} ${DVID_GRAPHBACKEND}' 
+        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go test -v -tags '${DVID_BACKEND}' 
             ${DVID_PACKAGES})
 
    add_custom_target (test-labelvol
-        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go test -v -tags '${DVID_BACKEND} ${DVID_GRAPHBACKEND}' 
+        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go test -v -tags '${DVID_BACKEND}' 
             ${DVID_GO}/datatype/labelvol)
 
    add_custom_target (coverage
-        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go test -cover -tags '${DVID_BACKEND} ${DVID_GRAPHBACKEND}' 
+        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go test -cover -tags '${DVID_BACKEND}' 
             ${DVID_PACKAGES})
 
    # Add benchmarking
    add_custom_target (test-bench
-        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go test -bench -i -tags '${DVID_BACKEND} ${DVID_GRAPHBACKEND}' 
+        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go test -bench -i -tags '${DVID_BACKEND}' 
             ${DVID_GO}/test ${DVID_GO}/dvid ${DVID_GO}/datastore)
 
    add_custom_target (bench
-        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go test -bench -tags '${DVID_BACKEND} ${DVID_GRAPHBACKEND}' 
+        ${BUILDEM_ENV_STRING} ${CGO_FLAGS} go test -bench -tags '${DVID_BACKEND}' 
             ${DVID_PACKAGES}
         DEPENDS test-bench)
 
     # Build backup command 
     add_custom_target (dvid-backup
         ${BUILDEM_ENV_STRING} ${GO_ENV} ${CGO_FLAGS} go build -o ${BUILDEM_BIN_DIR}/dvid-backup 
-        -v -tags '${DVID_BACKEND} ${DVID_GRAPHBACKEND} ${DVID_BUILD_TAGS}' cmd/backup/main.go 
+        -v -tags '${DVID_BACKEND}' cmd/backup/main.go 
         WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
         COMMENT     "Compiling and installing dvid backup command...")
 
     # Build transfer command 
     add_custom_target (dvid-transfer
         ${BUILDEM_ENV_STRING} ${GO_ENV} ${CGO_FLAGS} go build -o ${BUILDEM_BIN_DIR}/dvid-transfer 
-        -v -tags '${DVID_BACKEND} ${DVID_GRAPHBACKEND} ${DVID_BUILD_TAGS}' cmd/transfer/*.go
+        -v -tags '${DVID_BACKEND}' cmd/transfer/*.go
         WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
         COMMENT     "Compiling and installing dvid transfer command...")
 
