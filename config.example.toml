@@ -41,3 +41,5 @@ max_log_age = 30   # days
     [store.imagetile]
     engine = "kvautobus"
     path = "http://tem-dvid.int.janelia.org:9000"
+    timeout = 10   # allow max 10 seconds per request to above HTTP service
+                   # use 0 for no timeout.

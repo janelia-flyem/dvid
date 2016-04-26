@@ -34,6 +34,9 @@ type StoreConfig struct {
 	// Path can be a file path or URL stem
 	Path string
 
+	// Timeout specifies a time limit for storage service requests in seconds.
+	Timeout int
+
 	// Testing is true if this store is to be used for testing.
 	Testing bool
 

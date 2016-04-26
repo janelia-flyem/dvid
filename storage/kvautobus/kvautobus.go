@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
@@ -55,9 +56,14 @@ func (e Engine) String() string {
 // NewStore returns KVAutobus store.  The passed StoreConfig must have a valid Path to the
 // KVAutobus server.
 func (e Engine) NewStore(config dvid.StoreConfig) (dvid.Store, bool, error) {
+	var timeout time.Duration
+	if config.Timeout != 0 {
+		timeout = time.Duration(config.Timeout) * time.Second
+	}
 	kv := &KVAutobus{
 		host:   config.Path,
 		config: config,
+		client: http.Client{Timeout: timeout},
 	}
 	return kv, false, nil
 }
@@ -75,6 +81,9 @@ type KVAutobus struct {
 
 	// Config at time of Open()
 	config dvid.StoreConfig
+
+	// http client for KVAutobus service
+	client http.Client
 }
 
 func (db *KVAutobus) String() string {
@@ -97,7 +106,7 @@ func (db *KVAutobus) RawGet(key storage.Key) ([]byte, error) {
 	url := fmt.Sprintf("%s/kvautobus/api/value/%s/", db.host, b64key)
 
 	timedLog := dvid.NewTimeLog()
-	resp, err := http.Get(url)
+	resp, err := db.client.Get(url)
 	if err != nil {
 		return nil, err
 	}
@@ -123,7 +132,7 @@ func (db *KVAutobus) getKeyRange(kStart, kEnd storage.Key) (Ks, error) {
 	url := fmt.Sprintf("%s/kvautobus/api/key_range/%s/%s/", db.host, b64key1, b64key2)
 
 	timedLog := dvid.NewTimeLog()
-	resp, err := http.Get(url)
+	resp, err := db.client.Get(url)
 	if err != nil {
 		return nil, err
 	}
@@ -162,7 +171,7 @@ func (db *KVAutobus) getKVRange(ctx storage.Context, kStart, kEnd storage.Key) (
 	url := fmt.Sprintf("%s/kvautobus/api/keyvalue_range/%s/%s/?=%s", db.host, b64key1, b64key2, reqID)
 
 	timedLog := dvid.NewTimeLog()
-	resp, err := http.Get(url)
+	resp, err := db.client.Get(url)
 	if err != nil {
 		return nil, err
 	}
@@ -222,7 +231,7 @@ func (db *KVAutobus) putRange(kvs []storage.KeyValue) error {
 
 	// Send the data
 	url := fmt.Sprintf("%s/kvautobus/api/keyvalue_range/", db.host)
-	resp, err := http.Post(url, "application/x-msgpack", pr)
+	resp, err := db.client.Post(url, "application/x-msgpack", pr)
 	if err != nil {
 		return err
 	}
@@ -246,7 +255,7 @@ func (db *KVAutobus) deleteRange(kStart, kEnd storage.Key) error {
 	if err != nil {
 		return err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := db.client.Do(req)
 	if err != nil {
 		return err
 	}
@@ -298,7 +307,7 @@ func (db *KVAutobus) RawPut(key storage.Key, value []byte) error {
 		pw.Close()
 	}()
 
-	resp, err := http.Post(url, "application/x-msgpack", pr)
+	resp, err := db.client.Post(url, "application/x-msgpack", pr)
 	if err != nil {
 		return err
 	}
