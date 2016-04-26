@@ -142,24 +142,20 @@ func CopyInstance(uuid dvid.UUID, source, target dvid.InstanceName, c dvid.Confi
 	if err != nil {
 		return err
 	}
-
+    
 	// Populate the new data instance properties from source.
 	copier, ok := d2.(PropertyCopier)
 	if ok {
 		if err := copier.CopyPropertiesFrom(d1, fs); err != nil {
-			dvid.Errorf("Couldn't copy properties from data %q to %q: %v\n", d1.DataName(), d2.DataName(), err)
+			return err
 		}
-		// Save modified data
-		return SaveDataByUUID(uuid, d2)
+		if err := SaveDataByUUID(uuid, d2); err != nil {
+            return err
+        }
 	}
 
 	// Copy data with optional datatype-specific filtering.
-	if err := CopyData(d1, d2, uuid, fs, flatten); err != nil {
-		dvid.Errorf("Aborting send of instance %q data\n", d1.DataName())
-		return err
-	}
-
-	return nil
+	return CopyData(d1, d2, uuid, fs, flatten)
 }
 
 // CopyData copies all key-value pairs pertinent to the given data instance.
@@ -183,6 +179,8 @@ func CopyData(d, d2 dvid.Data, uuid dvid.UUID, fs storage.FilterSpec, flatten bo
 	if err != nil {
 		return fmt.Errorf("unable to get backing store for data %q: %v\n", d2.DataName(), err)
 	}
+
+    dvid.Infof("Copying data %q (%s) to data %q (%s)...\n", d.DataName(), store, d2.DataName(), store2)
 
 	// See if this data instance implements a Send filter.
 	var filter storage.Filter
