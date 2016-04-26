@@ -614,10 +614,40 @@ type Properties struct {
 
 	dvid.Resolution
 
-	dvid.Extents
+	dvid.Extents // The only mutable property.  TODO -- move to in-memory store.
 
 	// Background value for data
 	Background uint8
+}
+
+// CopyPropertiesFrom copies the data instance-specific properties from a given
+// data instance into the receiver's properties.
+func (d *Data) CopyPropertiesFrom(src datastore.DataService, fs storage.FilterSpec) error {
+	d2, ok := src.(*Data)
+	if !ok {
+		return fmt.Errorf("unable to copy properties from non-imageblk data %q", src.DataName())
+	}
+	d.Properties.copyImmutable(&(d2.Properties))
+
+	// TODO -- Handle mutable data that could be potentially altered by filter.
+	d.Properties.Extents = d2.Properties.Extents.Duplicate()
+
+	return nil
+}
+
+func (p *Properties) copyImmutable(p2 *Properties) {
+	p.Values = make([]dvid.DataValue, len(p2.Values))
+	copy(p.Values, p2.Values)
+	p.Interpolable = p2.Interpolable
+
+	p.BlockSize = p2.BlockSize.Duplicate()
+
+	p.Resolution.VoxelSize = make(dvid.NdFloat32, 3)
+	copy(p.Resolution.VoxelSize, p2.Resolution.VoxelSize)
+	p.Resolution.VoxelUnits = make(dvid.NdString, 3)
+	copy(p.Resolution.VoxelUnits, p2.Resolution.VoxelUnits)
+
+	p.Background = p2.Background
 }
 
 // setDefault sets Voxels properties to default values.

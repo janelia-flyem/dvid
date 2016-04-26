@@ -66,6 +66,9 @@ type ChunkIndexer interface {
 
 	// Max returns a ChunkIndexer that is the maximum of its value and the passed one.
 	Max(ChunkIndexer) (max ChunkIndexer, changed bool)
+
+	// DuplicateChunkIndexer returns a duplicate that can act as a ChunkIndexer.
+	DuplicateChunkIndexer() ChunkIndexer
 }
 
 // IndexIterator is a function that returns a sequence of indices and ends with nil.
@@ -327,6 +330,12 @@ func (i *IndexZYX) MinPoint(size Point) Point {
 // MaxPoint returns the maximum voxel coordinate for a chunk.
 func (i *IndexZYX) MaxPoint(size Point) Point {
 	return ChunkPoint3d(*i).MaxPoint(size)
+}
+
+// DuplicateChunkIndexer returns a duplicate that can act as a ChunkIndexer.
+func (i *IndexZYX) DuplicateChunkIndexer() ChunkIndexer {
+	dup := *i
+	return &dup
 }
 
 // Min returns a ChunkIndexer that is the minimum of its value and the passed one.

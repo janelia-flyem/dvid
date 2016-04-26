@@ -250,6 +250,22 @@ type Data struct {
 	ready map[dvid.VersionID]bool
 }
 
+// CopyPropertiesFrom copies the data instance-specific properties from a given
+// data instance into the receiver's properties.
+func (d *Data) CopyPropertiesFrom(src datastore.DataService, fs storage.FilterSpec) error {
+	d2, ok := src.(*Data)
+	if !ok {
+		return fmt.Errorf("unable to copy properties from non-roi data %q", src.DataName())
+	}
+	d.Properties.BlockSize = d2.Properties.BlockSize
+
+	// TODO -- Handle mutable data that could be potentially altered by filter.
+	d.Properties.MinZ = d2.Properties.MinZ
+	d.Properties.MaxZ = d2.Properties.MaxZ
+
+	return nil
+}
+
 // DataBySpec returns a ROI Data based on a string specification of the form
 // "roi:<roiname>,<uuid>". If the given string is not parsable, the "found" return value is false.
 func DataBySpec(spec storage.FilterSpec) (d *Data, v dvid.VersionID, found bool, err error) {

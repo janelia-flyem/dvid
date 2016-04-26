@@ -390,6 +390,34 @@ type Properties struct {
 	MaxRepoLabel uint64
 }
 
+// CopyPropertiesFrom copies the data instance-specific properties from a given
+// data instance into the receiver's properties.
+func (d *Data) CopyPropertiesFrom(src datastore.DataService, fs storage.FilterSpec) error {
+	d2, ok := src.(*Data)
+	if !ok {
+		return fmt.Errorf("unable to copy properties from non-labelvol data %q", src.DataName())
+	}
+	d.Properties.copyImmutable(&(d2.Properties))
+
+	// TODO -- Handle mutable data that could be potentially altered by filter.
+	d.MaxLabel = make(map[dvid.VersionID]uint64, len(d2.MaxLabel))
+	for k, v := range d2.MaxLabel {
+		d.MaxLabel[k] = v
+	}
+	d.MaxRepoLabel = d2.MaxRepoLabel
+
+	return nil
+}
+
+func (p *Properties) copyImmutable(p2 *Properties) {
+	p.BlockSize = p2.BlockSize
+
+	p.Resolution.VoxelSize = make(dvid.NdFloat32, 3)
+	copy(p.Resolution.VoxelSize, p2.Resolution.VoxelSize)
+	p.Resolution.VoxelUnits = make(dvid.NdString, 3)
+	copy(p.Resolution.VoxelUnits, p2.Resolution.VoxelUnits)
+}
+
 func (p Properties) MarshalJSON() ([]byte, error) {
 	maxLabels := make(map[string]uint64)
 	for v, max := range p.MaxLabel {

@@ -760,6 +760,25 @@ type Properties struct {
 	oa2conf *oauth2.Config
 }
 
+// CopyPropertiesFrom copies the data instance-specific properties from a given
+// data instance into the receiver's properties.
+func (d *Data) CopyPropertiesFrom(src datastore.DataService, fs storage.FilterSpec) error {
+	d2, ok := src.(*Data)
+	if !ok {
+		return fmt.Errorf("unable to copy properties from non-imageblk data %q", src.DataName())
+	}
+	// These should all be immutable so can have shared reference with source.
+	d.VolumeID = d2.VolumeID
+	d.JWT = d2.JWT
+	d.TileSize = d2.TileSize
+	d.GeomMap = d2.GeomMap
+	d.Scales = d2.Scales
+	d.HighResIndex = d2.HighResIndex
+	d.oa2conf = d2.oa2conf
+
+	return nil
+}
+
 // MarshalJSON handles JSON serialization for googlevoxels Data.  It adds "Levels" metadata equivalent
 // to imagetile's tile specification so clients can treat googlevoxels tile API identically to
 // imagetile.  Sensitive information like AuthKey are withheld.

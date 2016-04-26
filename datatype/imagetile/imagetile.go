@@ -609,6 +609,34 @@ type Data struct {
 	Properties
 }
 
+// CopyPropertiesFrom copies the data instance-specific properties from a given
+// data instance into the receiver's properties.
+func (d *Data) CopyPropertiesFrom(src datastore.DataService, fs storage.FilterSpec) error {
+	d2, ok := src.(*Data)
+	if !ok {
+		return fmt.Errorf("unable to copy properties from non-imagetile data %q", src.DataName())
+	}
+	d.Properties.copyImmutable(&(d2.Properties))
+
+	// TODO -- Handle mutable data that could be potentially altered by filter.
+	d.MinTileCoord = d2.MinTileCoord
+	d.MaxTileCoord = d2.MaxTileCoord
+
+	return nil
+}
+
+func (p *Properties) copyImmutable(p2 *Properties) {
+	p.Source = p2.Source
+
+	p.Levels = make(TileSpec, len(p2.Levels))
+	for scale, spec := range p2.Levels {
+		p.Levels[scale] = TileScaleSpec{spec.LevelSpec.Duplicate(), spec.levelMag}
+	}
+	p.Placeholder = p2.Placeholder
+	p.Encoding = p2.Encoding
+	p.Quality = p2.Quality
+}
+
 // Returns the bounds in voxels for a given tile.
 func (d *Data) computeVoxelBounds(tileCoord dvid.ChunkPoint3d, plane dvid.DataShape, scale Scaling) (dvid.Extents3d, error) {
 	// Get magnification at the given scale of the tile sizes.

@@ -17,6 +17,13 @@ import (
 	"github.com/janelia-flyem/go/go-humanize"
 )
 
+// PropertyCopier are types that can copy data instance properties from another (typically identically typed)
+// data instance with an optional filter.  This is used to create copies of data instances locally or
+// when pushing to a remote DVID.
+type PropertyCopier interface {
+	CopyPropertiesFrom(DataService, storage.FilterSpec) error
+}
+
 type txStats struct {
 	// num key-value pairs
 	numKV uint64
@@ -136,6 +143,16 @@ func CopyInstance(uuid dvid.UUID, source, target dvid.InstanceName, c dvid.Confi
 		return err
 	}
 
+	// Populate the new data instance properties from source.
+	copier, ok := d2.(PropertyCopier)
+	if ok {
+		if err := copier.CopyPropertiesFrom(d1, fs); err != nil {
+			dvid.Errorf("Couldn't copy properties from data %q to %q: %v\n", d1.DataName(), d2.DataName(), err)
+		}
+		// Save modified data
+		return SaveDataByUUID(uuid, d2)
+	}
+
 	// Copy data with optional datatype-specific filtering.
 	if err := CopyData(d1, d2, uuid, fs, flatten); err != nil {
 		dvid.Errorf("Aborting send of instance %q data\n", d1.DataName())
@@ -183,8 +200,8 @@ func CopyData(d, d2 dvid.Data, uuid dvid.UUID, fs storage.FilterSpec, flatten bo
 	if err != nil {
 		return err
 	}
-	srcCtx := storage.NewDataContext(d, v)
-	dstCtx := storage.NewDataContext(d2, v)
+	srcCtx := NewVersionedCtx(d, v)
+	dstCtx := NewVersionedCtx(d2, v)
 
 	// Send this instance's key-value pairs
 	var wg sync.WaitGroup
@@ -251,7 +268,7 @@ func CopyData(d, d2 dvid.Data, uuid dvid.UUID, fs storage.FilterSpec, flatten bo
 				kv := <-ch
 				if kv == nil {
 					wg.Done()
-					dvid.Infof("Sent %d %q key-value pairs (%s, out of %d kv pairs, %s) [flattened]\n",
+					dvid.Infof("Sent %d %q key-value pairs (%s, out of %d kv pairs, %s)\n",
 						kvSent, d.DataName(), humanize.Bytes(bytesSent), kvTotal, humanize.Bytes(bytesTotal))
 					stats.printStats()
 					return

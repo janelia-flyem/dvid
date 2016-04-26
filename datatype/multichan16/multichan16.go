@@ -32,6 +32,7 @@ import (
 	"github.com/janelia-flyem/dvid/datatype/imageblk"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
+	"github.com/janelia-flyem/dvid/storage"
 )
 
 const (
@@ -253,6 +254,18 @@ func (d *Data) Equals(d2 *Data) bool {
 type propertiesT struct {
 	imageblk.Properties
 	NumChannels int
+}
+
+// CopyPropertiesFrom copies the data instance-specific properties from a given
+// data instance into the receiver's properties.
+func (d *Data) CopyPropertiesFrom(src datastore.DataService, fs storage.FilterSpec) error {
+	d2, ok := src.(*Data)
+	if !ok {
+		return fmt.Errorf("unable to copy properties from non-multichan16 data %q", src.DataName())
+	}
+	d.NumChannels = d2.NumChannels
+
+	return nil
 }
 
 func (d *Data) MarshalJSON() ([]byte, error) {

@@ -156,7 +156,7 @@ func PushData(d dvid.Data, p *PushSession) error {
 	for v = range p.v {
 		break
 	}
-	ctx := storage.NewDataContext(d, v)
+	ctx := NewVersionedCtx(d, v)
 
 	// Send the initial data instance start message
 	dmsg := DataTxInit{
@@ -242,7 +242,7 @@ func PushData(d dvid.Data, p *PushSession) error {
 						dvid.Errorf("couldn't send data instance termination: %v\n", err)
 					}
 					wg.Done()
-					dvid.Infof("Sent %d %q key-value pairs (%s, out of %d kv pairs, %s) [flattened]\n",
+					dvid.Infof("Sent %d %q key-value pairs (%s, out of %d kv pairs, %s)\n",
 						kvSent, d.DataName(), humanize.Bytes(bytesSent), kvTotal, humanize.Bytes(bytesTotal))
 					return
 				}
@@ -579,6 +579,7 @@ func (p *pusher) putData(kvmsg *KVMessage) error {
 }
 
 // Make a copy of a repository, customizing it via config.
+// TODO -- modify data instance properties based on filters.
 func (r *repoT) customize(v dvid.VersionID, config dvid.Config) (*repoT, rpc.Transmit, error) {
 	// Since we can have names separated by commas, split them
 	namesStr, found, err := config.GetString("data")

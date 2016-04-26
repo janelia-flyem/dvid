@@ -43,6 +43,16 @@ type Extents struct {
 	indexMu sync.Mutex
 }
 
+// Duplicate creates a duplicate Extents.
+func (ext Extents) Duplicate() Extents {
+	var dup Extents
+	dup.MinPoint = ext.MinPoint.Duplicate()
+	dup.MaxPoint = ext.MaxPoint.Duplicate()
+	dup.MinIndex = ext.MinIndex.DuplicateChunkIndexer()
+	dup.MaxIndex = ext.MaxIndex.DuplicateChunkIndexer()
+	return dup
+}
+
 // --- dvid.Bounder interface ----
 
 // StartPoint returns the offset to first point of data.
