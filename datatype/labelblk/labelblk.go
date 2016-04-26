@@ -554,6 +554,17 @@ func (d *Data) Equals(d2 *Data) bool {
 	return true
 }
 
+// CopyPropertiesFrom copies the data instance-specific properties from a given
+// data instance into the receiver's properties.
+func (d *Data) CopyPropertiesFrom(src datastore.DataService, fs storage.FilterSpec) error {
+	d2, ok := src.(*Data)
+	if !ok {
+		return fmt.Errorf("unable to copy properties from non-labelblk data %q", src.DataName())
+	}
+	d.Labeling = d2.Labeling
+	return d.Data.CopyPropertiesFrom(d2.Data, fs)
+}
+
 // NewData returns a pointer to labelblk data.
 func NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.Config) (*Data, error) {
 	imgblkData, err := dtype.Type.NewData(uuid, id, name, c)
