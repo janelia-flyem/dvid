@@ -569,6 +569,7 @@ func (p *pusher) putData(kvmsg *KVMessage) error {
 	}
 
 	// Compute the updated key-value
+	// TODO: When client IDs are used, need to transmit list of pertinent clients and their IDs or just use 0 as here.
 	if err := storage.UpdateDataKey(kv.K, newInstanceID, newVersionID, 0); err != nil {
 		return fmt.Errorf("Unable to update data key %v: %v", kv.K, err)
 	}

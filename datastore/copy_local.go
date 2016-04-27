@@ -292,7 +292,10 @@ func CopyData(d, d2 dvid.Data, uuid dvid.UUID, fs storage.FilterSpec, flatten bo
 				}
 				kvSent++
 				bytesSent += curBytes
-				if err := store2.Put(dstCtx, tkey, kv.V); err != nil {
+				if err := dstCtx.UpdateInstance(kv.K); err != nil {
+					dvid.Errorf("can't update raw key to new data instance %q: %v\n", d2.DataName(), err)
+				}
+				if err := store2.RawPut(kv.K, kv.V); err != nil {
 					dvid.Errorf("can't put k/v pair to destination instance %q: %v\n", d2.DataName(), err)
 				}
 				stats.addKV(kv.K, kv.V)

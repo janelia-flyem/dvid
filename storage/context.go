@@ -272,6 +272,14 @@ func NewDataContext(data dvid.Data, versionID dvid.VersionID) *DataContext {
 	return &DataContext{data, versionID, 0, ""}
 }
 
+func (ctx *DataContext) UpdateInstance(k Key) error {
+	if k[0] != dataKeyPrefix {
+		return fmt.Errorf("Cannot update non-DataContext key: %v", k)
+	}
+	copy(k[1:1+dvid.InstanceIDSize], ctx.data.InstanceID().Bytes())
+	return nil
+}
+
 func (ctx *DataContext) InstanceVersion() dvid.InstanceVersion {
 	return dvid.InstanceVersion{ctx.data.DataName(), ctx.version}
 }
@@ -286,6 +294,10 @@ func (ctx *DataContext) DataName() dvid.InstanceName {
 
 func (ctx *DataContext) InstanceID() dvid.InstanceID {
 	return ctx.data.InstanceID()
+}
+
+func (ctx *DataContext) ClientID() dvid.ClientID {
+	return ctx.client
 }
 
 // ---- storage.RequestCtx implementation
