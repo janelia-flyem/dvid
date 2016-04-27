@@ -206,6 +206,7 @@ func Initialize(cmdline dvid.Config, sc map[string]dvid.StoreConfig) (created bo
 		}
 
 		// Cache the store to datatype or data instance.
+		name = strings.Trim(name, "\"")
 		parts := strings.Split(name, ":")
 		switch len(parts) {
 		case 1:
