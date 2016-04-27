@@ -73,7 +73,7 @@ func (t *txStats) addKV(k, v []byte) {
 		mb := float64(t.lastBytes) / 1000000
 		sec := elapsed.Seconds()
 		throughput := mb / sec
-		dvid.Debugf("Push throughput: %5.2f MB/s (%.1f MB in %3f seconds).  Total %s\n", throughput, humanize.Bytes(t.lastBytes), sec, humanize.Bytes(t.totalBytes))
+		dvid.Debugf("Transfer throughput: %5.2f MB/s (%s in %4.1f seconds).  Total %s\n", throughput, humanize.Bytes(t.lastBytes), sec, humanize.Bytes(t.totalBytes))
 
 		t.lastTime = time.Now()
 		t.lastBytes = 0
@@ -142,7 +142,7 @@ func CopyInstance(uuid dvid.UUID, source, target dvid.InstanceName, c dvid.Confi
 	if err != nil {
 		return err
 	}
-    
+
 	// Populate the new data instance properties from source.
 	copier, ok := d2.(PropertyCopier)
 	if ok {
@@ -150,8 +150,8 @@ func CopyInstance(uuid dvid.UUID, source, target dvid.InstanceName, c dvid.Confi
 			return err
 		}
 		if err := SaveDataByUUID(uuid, d2); err != nil {
-            return err
-        }
+			return err
+		}
 	}
 
 	// Copy data with optional datatype-specific filtering.
@@ -180,7 +180,7 @@ func CopyData(d, d2 dvid.Data, uuid dvid.UUID, fs storage.FilterSpec, flatten bo
 		return fmt.Errorf("unable to get backing store for data %q: %v\n", d2.DataName(), err)
 	}
 
-    dvid.Infof("Copying data %q (%s) to data %q (%s)...\n", d.DataName(), store, d2.DataName(), store2)
+	dvid.Infof("Copying data %q (%s) to data %q (%s)...\n", d.DataName(), store, d2.DataName(), store2)
 
 	// See if this data instance implements a Send filter.
 	var filter storage.Filter
