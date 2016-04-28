@@ -16,7 +16,6 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"compress/gzip"
@@ -335,19 +334,20 @@ GET <api URL>/node/<UUID>/<data name>/labels[?queryopts]
 
     hash          MD5 hash of request body content in hexidecimal string format.
 
-GET <api URL>/node/<UUID>/<data name>/blocks/<block coord>/<spanX>[?queryopts]
+GET  <api URL>/node/<UUID>/<data name>/blocks/<size>/<offset>[?queryopts]
 
-    Retrieves "spanX" blocks of label data along X starting from given block coordinate as the internal,
-    possibly compressed, values.  This is the most server-efficient way of retrieving labelblk data,
-    where data read from the underlying storage engine is written directly to the HTTP connection.
+    Retrieves blocks corresponding to the extents specified by the size and offset.  The
+    subvolume request must be block aligned.  This is the most server-efficient way of
+    retrieving labelblk data, where data read from the underlying storage engine
+    is written directly to the HTTP connection.
 
     Example: 
 
-    GET <api URL>/node/3f8c/segmentation/blocks/10_20_30/8
+    GET <api URL>/node/3f8c/segmentation/blocks/64_64_64/0_0_0
 
-    Retrieves 8 blocks where first block has given block coordinate and number
-    of blocks returned along x axis is "spanX". The returned byte stream has consecutive "spanX" block, 
-    each with a leading block coordinate (3 x int32) plus int32 giving the # of bytes in this block, and 
+    Retrieves 8 blocks where first block is at 0, 0, 0
+    The returned byte stream has is a list of blocks with a leading block coordinate
+    (3 x int32) plus int32 giving the # of bytes in this block, and 
     then the bytes for the value.  If blocks are unset within the span, they will not appear in the stream,
     so the returned data will be equal to or less than spanX blocks worth of data.  
 
@@ -380,15 +380,15 @@ GET <api URL>/node/<UUID>/<data name>/blocks/<block coord>/<spanX>[?queryopts]
 
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add.
-    block coord   The block coordinate of the first block in X_Y_Z format.  Block coordinates
-                    can be derived from voxel coordinates by dividing voxel coordinates by
-                    the block size for a data type.
-    spanX         The number of blocks along X.
-
+    size          Size in voxels along each dimension specified in <dims>.
+    offset        Gives coordinate of first voxel using dimensionality of data.
 
     Query-string Options:
 
     compression   Allows retrieval of block data in "lz4" (default) or "uncompressed".
+    throttle      If "true", makes sure only N compute-intense operation (all API calls that can be throttled) 
+                    are handled.  If the server can't initiate the API call right away, a 503 (Service Unavailable) 
+                    status code is returned.
 
 
 DELETE <api URL>/node/<UUID>/<data name>/blocks/<block coord>/<spanX>
@@ -862,69 +862,104 @@ func sendBlockLZ4(w http.ResponseWriter, x, y, z int32, v []byte, compression st
 }
 
 // GetBlocks returns a slice of bytes corresponding to all the blocks along a span in X
-func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, start dvid.ChunkPoint3d, span int, compression string) error {
+func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, subvol *dvid.Subvolume, compression string) error {
+	w.Header().Set("Content-type", "application/octet-stream")
+
 	if compression != "uncompressed" && compression != "lz4" && compression != "" {
 		return fmt.Errorf("don't understand 'compression' query string value: %s", compression)
 	}
+
+	// convert x,y,z coordinates to block coordinates
+	blocksize := subvol.Size().Div(d.BlockSize())
+	blockoffset := subvol.StartPoint().Div(d.BlockSize())
+
 	timedLog := dvid.NewTimeLog()
-	defer timedLog.Infof("SendBlocks %s, span %d", start, span)
+	defer timedLog.Infof("SendBlocks %s, span x %d, span y %d, span z %d", blockoffset, blocksize.Value(0), blocksize.Value(1), blocksize.Value(2))
 
 	store, err := d.GetOrderedKeyValueDB()
 	if err != nil {
 		return fmt.Errorf("Data type labelblk had error initializing store: %v\n", err)
 	}
 
-	w.Header().Set("Content-type", "application/octet-stream")
+	// if only one block is requested, avoid the range query
+	if blocksize.Value(0) == int32(1) && blocksize.Value(2) == int32(1) && blocksize.Value(3) == int32(1) {
+		indexBeg := dvid.IndexZYX(dvid.ChunkPoint3d{blockoffset.Value(0), blockoffset.Value(1), blockoffset.Value(2)})
+		keyBeg := NewTKey(&indexBeg)
 
-	indexBeg := dvid.IndexZYX(start)
-	keyBeg := NewTKey(&indexBeg)
-
-	if span == 0 {
-		return nil
-	}
-
-	if span == 1 {
 		value, err := store.Get(ctx, keyBeg)
 		if err != nil {
 			return err
 		}
-		if err := sendBlockLZ4(w, start[0], start[1], start[2], value, compression); err != nil {
+		if err := sendBlockLZ4(w, blockoffset.Value(0), blockoffset.Value(1), blockoffset.Value(2), value, compression); err != nil {
 			return err
 		}
 		return nil
 	}
 
-	// Handle span > 1
-	sx, sy, sz := indexBeg.Unpack()
-	end := start
-	end[0] += int32(span - 1)
-	indexEnd := dvid.IndexZYX(end)
-	keyEnd := NewTKey(&indexEnd)
+	// only do one request at a time, although each request can start many goroutines.
+	server.SpawnGoroutineMutex.Lock()
+	defer server.SpawnGoroutineMutex.Unlock()
 
-	// Write the blocks
-	return store.ProcessRange(ctx, keyBeg, keyEnd, &storage.ChunkOp{}, func(c *storage.Chunk) error {
-		if c == nil || c.TKeyValue == nil {
-			return nil
-		}
-		kv := c.TKeyValue
-		if kv.V == nil {
-			return nil
-		}
+	okv := store.(storage.BufferableOps)
+	// extract buffer interface
+	req, hasbuffer := okv.(storage.KeyValueRequester)
+	if hasbuffer {
+		okv = req.NewBuffer(ctx)
+	}
 
-		// Determine which block this is.
-		indexZYX, err := DecodeTKey(kv.K)
+	for ziter := int32(0); ziter < blocksize.Value(2); ziter++ {
+		for yiter := int32(0); yiter < blocksize.Value(1); yiter++ {
+			beginPoint := dvid.ChunkPoint3d{blockoffset.Value(0), blockoffset.Value(1) + yiter, blockoffset.Value(2) + ziter}
+			endPoint := dvid.ChunkPoint3d{blockoffset.Value(0) + blocksize.Value(0) - 1, blockoffset.Value(1) + yiter, blockoffset.Value(2) + ziter}
+
+			indexBeg := dvid.IndexZYX(beginPoint)
+			sx, sy, sz := indexBeg.Unpack()
+			begTKey := NewTKey(&indexBeg)
+			indexEnd := dvid.IndexZYX(endPoint)
+			endTKey := NewTKey(&indexEnd)
+
+			// Send the entire range of key-value pairs to chunk processor
+			err = okv.ProcessRange(ctx, begTKey, endTKey, &storage.ChunkOp{}, func(c *storage.Chunk) error {
+				if c == nil || c.TKeyValue == nil {
+					return nil
+				}
+				kv := c.TKeyValue
+				if kv.V == nil {
+					return nil
+				}
+
+				// Determine which block this is.
+				indexZYX, err := DecodeTKey(kv.K)
+				if err != nil {
+					return err
+				}
+				x, y, z := indexZYX.Unpack()
+				if z != sz || y != sy || x < sx || x >= sx+int32(blocksize.Value(0)) {
+					return nil
+				}
+				if err := sendBlockLZ4(w, x, y, z, kv.V, compression); err != nil {
+					return err
+				}
+				return nil
+			})
+
+			if err != nil {
+				return fmt.Errorf("Unable to GET data %s: %v", ctx, err)
+			}
+		}
+	}
+
+	if hasbuffer {
+		// submit the entire buffer to the DB
+		err = okv.(storage.RequestBuffer).Flush()
+
 		if err != nil {
-			return err
+			return fmt.Errorf("Unable to GET data %s: %v", ctx, err)
+
 		}
-		x, y, z := indexZYX.Unpack()
-		if z != sz || y != sy || x < sx || x >= sx+int32(span) {
-			return nil
-		}
-		if err := sendBlockLZ4(w, x, y, z, kv.V, compression); err != nil {
-			return err
-		}
-		return nil
-	})
+	}
+
+	return err
 }
 
 func (d *Data) DeleteBlocks(ctx *datastore.VersionedCtx, start dvid.ChunkPoint3d, span int) error {
@@ -1351,40 +1386,43 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		timedLog.Infof("HTTP batch label-at-point query (%d coordinates)", len(coords))
 
 	case "blocks":
-		// GET <api URL>/node/<UUID>/<data name>/blocks/<block coord>/<spanX>[?compression=...]
-		// DELETE <api URL>/node/<UUID>/<data name>/blocks/<block coord>/<spanX>
-		if len(parts) < 6 {
-			server.BadRequest(w, r, "DVID requires starting block coord and # of blocks along X to follow 'blocks' endpoint.")
-			return
+		// GET <api URL>/node/<UUID>/<data name>/blocks/<coord>/<offset>[?compression=...]
+		sizeStr, offsetStr := parts[4], parts[5]
+
+		if throttle := queryStrings.Get("throttle"); throttle == "on" || throttle == "true" {
+			if server.ThrottledHTTP(w) {
+				return
+			}
+			defer server.ThrottledOpDone()
 		}
-		blockCoord, err := dvid.StringToChunkPoint3d(parts[4], "_")
+		compression := queryStrings.Get("compression")
+		subvol, err := dvid.NewSubvolumeFromStrings(offsetStr, sizeStr, "_")
 		if err != nil {
 			server.BadRequest(w, r, err)
 			return
 		}
-		span, err := strconv.Atoi(parts[5])
-		if err != nil {
-			server.BadRequest(w, r, err)
+
+		if subvol.StartPoint().NumDims() != 3 || subvol.Size().NumDims() != 3 {
+			server.BadRequest(w, r, "must specify 3D subvolumes", subvol.StartPoint(), subvol.EndPoint())
 			return
 		}
-		switch action {
-		case "delete":
-			if err := d.DeleteBlocks(ctx, blockCoord, span); err != nil {
+
+		// Make sure subvolume gets align with blocks
+		if !dvid.BlockAligned(subvol, d.BlockSize()) {
+			server.BadRequest(w, r, "cannot store labels in non-block aligned geometry %s -> %s", subvol.StartPoint(), subvol.EndPoint())
+			return
+		}
+
+		if action == "get" {
+			if err := d.SendBlocks(ctx, w, subvol, compression); err != nil {
 				server.BadRequest(w, r, err)
 				return
 			}
-		case "get":
-			compression := queryStrings.Get("compression")
-			if err := d.SendBlocks(ctx, w, blockCoord, span, compression); err != nil {
-				server.BadRequest(w, r, err)
-				return
-			}
-		default:
+			timedLog.Infof("HTTP %s: %s (%s)", r.Method, subvol, r.URL)
+		} else {
 			server.BadRequest(w, r, "DVID does not accept the %s action on the 'blocks' endpoint", action)
 			return
 		}
-		timedLog.Infof("HTTP %s: %d blocks from %s (%s)", r.Method, span, blockCoord, r.URL)
-
 	case "pseudocolor":
 		if len(parts) < 7 {
 			server.BadRequest(w, r, "'%s' must be followed by shape/size/offset", parts[3])

@@ -419,8 +419,8 @@ func (vol labelVol) testBlock(t *testing.T, bx, by, bz int32, data []byte) {
 
 func (vol labelVol) testBlocks(t *testing.T, uuid dvid.UUID, compression, roi string) {
 	span := 5
-	apiStr := fmt.Sprintf("%snode/%s/%s/blocks/%d_%d_%d/%d", server.WebAPIPath,
-		uuid, vol.name, vol.offset[0]/32, vol.offset[1]/32, vol.offset[2]/32, span)
+	apiStr := fmt.Sprintf("%snode/%s/%s/blocks/%d_%d_%d/%d_%d_%d", server.WebAPIPath,
+		uuid, vol.name, 160, 32, 32, vol.offset[0], vol.offset[1], vol.offset[2])
 	if compression == "uncompressed" {
 		apiStr += "?compression=uncompressed"
 	}
