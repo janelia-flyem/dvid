@@ -11,6 +11,7 @@ import (
 
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
+    
 	"github.com/janelia-flyem/go/semver"
 
 	"golang.org/x/net/context"
@@ -74,19 +75,83 @@ func (e Engine) NewStore(config dvid.StoreConfig) (dvid.Store, bool, error) {
 }
 
 func parseConfig(config dvid.StoreConfig) (*BigTable, error) {
+    c := config.GetAll()
+    
+    v, found := c["Project"]
+    if !found {
+        return nil, fmt.Errorf("%q must be specified for BigTable configuration", "Project")
+    }
+    project, ok := v.(string)
+    if !ok {
+        return nil, fmt.Errorf("%q setting must be a string (%v)", "Project", v)
+    }
+
+    v, found = c["Zone"]
+    if !found {
+        return nil, fmt.Errorf("%q must be specified for BigTable configuration", "Zone")
+    }
+    zone, ok := v.(string)
+    if !ok {
+        return nil, fmt.Errorf("%q setting must be a string (%v)", "Zone", v)
+    }
+
+    v, found = c["Cluster"]
+    if !found {
+        return nil, fmt.Errorf("%q must be specified for BigTable configuration", "Cluster")
+    }
+    cluster, ok := v.(string)
+    if !ok {
+        return nil, fmt.Errorf("%q setting must be a string (%v)", "Cluster", v)
+    }
+
+    v, found = c["Table"]
+    if !found {
+        return nil, fmt.Errorf("%q must be specified for BigTable configuration", "Table")
+    }
+    table, ok := v.(string)
+    if !ok {
+        return nil, fmt.Errorf("%q setting must be a string (%v)", "Table", v)
+    }
+
+    v, found = c["Testing"]
+    if !found {
+        return nil, fmt.Errorf("%q must be specified for BigTable configuration", "Testing")
+    }
+    testing, ok := v.(bool)
+    if !ok {
+        return nil, fmt.Errorf("%q setting must be a bool (%v)", "Testing", v)
+    }
 
 	bt := &BigTable{
-		project: config.Project,
-		zone:    config.Zone,
-		cluster: config.Cluster,
-		table:   config.Table,
-		testing: config.Testing,
-		testSrv: config.TestSrv,
+		project: project,
+		zone:    zone,
+		cluster: cluster,
+		table:   table,
+		testing: testing,
 		ctx:     context.Background(),
 	}
 
 	return bt, nil
 }
+
+// TODO -- Work on testable BigTable implementation.
+/*
+func (e Engine) GetTestConfig() (map[string]*dvid.StoreConfig, error) {
+    tc := map[string]interface{} {
+        "Project": "project",
+        "Zone":    "zone",
+        "Cluster": "cluster",
+        "Table":   fmt.Sprintf("dvid-test-%x", uuid.NewV4().Bytes()),
+        "Testing": true,
+    }
+    var c dvid.Config 
+    c.SetAll(tc) 
+	testConfig := map[string]dvid.StoreConfig{
+        "default": &dvid.StoreConfig{Config: c, Engine: "bigtable"},
+    }
+    return testConfig, nil
+}
+*/
 
 func NewAdminClient(bt *BigTable) (adminClient *api.AdminClient, err error) {
 
@@ -113,10 +178,12 @@ func NewAdminClient(bt *BigTable) (adminClient *api.AdminClient, err error) {
 }
 
 func NewClient(bt *BigTable) (client *api.Client, err error) {
-
 	if bt.testing {
-
-		testConn, err := grpc.Dial(bt.testSrv.Addr, grpc.WithInsecure())
+		testSrv, err := bttest.NewServer() //TODO close the testSrv if neccesary
+		if err != nil {
+			return nil, fmt.Errorf("Unable to create bigTable local test server. %v", err)
+		}
+		testConn, err := grpc.Dial(testSrv.Addr, grpc.WithInsecure())
 		if err != nil {
 			return nil, fmt.Errorf("Unable to create bigTable local test server. %v", err)
 		}
@@ -130,7 +197,6 @@ func NewClient(bt *BigTable) (client *api.Client, err error) {
 	if err != nil {
 		return nil, fmt.Errorf("Unable to create a table client. %v", err)
 	}
-
 	return
 }
 
@@ -853,7 +919,12 @@ func (db *BigTable) Close() {
 }
 
 func (db *BigTable) Equal(c dvid.StoreConfig) bool {
-	if db.project == c.Project && db.zone == c.Zone && db.cluster == c.Cluster && db.table == c.Table {
+    bt, err := parseConfig(c)
+    if err != nil {
+        dvid.Errorf("unable to compare store config (%v) to BigTable: %v\n", c, err)
+        return false
+    }
+	if db.project == bt.project && db.zone == bt.zone && db.cluster == bt.cluster && db.table == bt.table {
 		return true
 	}
 	return false

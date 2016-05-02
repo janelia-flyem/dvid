@@ -179,6 +179,7 @@ type RepairableEngine interface {
 // some data using a name.
 type TestableEngine interface {
 	Engine
+	GetTestConfig() (map[string]*dvid.StoreConfig, error)
 	Delete(dvid.StoreConfig) error
 }
 
@@ -229,7 +230,8 @@ func GetTestableEngine() TestableEngine {
 	return nil
 }
 
-// NewStore returns a store given a StoreConfig.
+// NewStore checks if a given engine is available and if so, returns
+// a store opened with the configuration.
 func NewStore(c dvid.StoreConfig) (db dvid.Store, created bool, err error) {
 	if availEngines == nil {
 		return nil, false, fmt.Errorf("no available storage engines")

@@ -53,15 +53,41 @@ func (e Engine) String() string {
 	return fmt.Sprintf("%s [%s]", e.name, e.semver)
 }
 
+func parseConfig(config dvid.StoreConfig) (path string, timeout time.Duration, err error) {
+	c := config.GetAll()
+	v, found := c["Path"]
+	if !found {
+		err = fmt.Errorf("%q must be specified for kvautobus configuration", "Path")
+		return
+	}
+	var ok bool
+	path, ok = v.(string)
+	if !ok {
+		err = fmt.Errorf("%q setting must be a string (%v)", "Path", v)
+	}
+	v, found = c["Timeout"]
+	if !found {
+		return
+	}
+	t, ok := v.(int)
+	if !ok {
+		err = fmt.Errorf("%q setting must be an int for # seconds (%v)", "Timeout", v)
+	}
+	if t != 0 {
+		timeout = time.Duration(t) * time.Second
+	}
+	return
+}
+
 // NewStore returns KVAutobus store.  The passed StoreConfig must have a valid Path to the
 // KVAutobus server.
 func (e Engine) NewStore(config dvid.StoreConfig) (dvid.Store, bool, error) {
-	var timeout time.Duration
-	if config.Timeout != 0 {
-		timeout = time.Duration(config.Timeout) * time.Second
+	path, timeout, err := parseConfig(config)
+	if err != nil {
+		return nil, false, err
 	}
 	kv := &KVAutobus{
-		host:   config.Path,
+		host:   path,
 		config: config,
 		client: http.Client{Timeout: timeout},
 	}
@@ -95,7 +121,11 @@ func (db *KVAutobus) Close() {
 }
 
 func (db *KVAutobus) Equal(c dvid.StoreConfig) bool {
-	if db.host == c.Path {
+	path, _, err := parseConfig(c)
+	if err != nil {
+		return false
+	}
+	if db.host == path {
 		return true
 	}
 	return false

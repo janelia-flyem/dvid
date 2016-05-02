@@ -156,19 +156,14 @@ func addUniqueDB(c dvid.StoreConfig) (dvid.Store, bool, error) {
 // true if the metadata store is newly created and needs initialization.
 // The map of store configurations should be keyed by either a datatype name,
 // "default", or "metadata".
-func Initialize(cmdline dvid.Config, sc map[string]dvid.StoreConfig) (created bool, err error) {
+func Initialize(cmdline dvid.Config, backend map[string]*dvid.StoreConfig) (created bool, err error) {
 	// Get required default store.
-	defaultConfig, found := sc["default"]
+	defaultConfig, found := backend["default"]
 	if !found {
-		// Check if legacy "mutable" is available
-		defaultConfig, found = sc["mutable"]
-		if !found {
-			return false, fmt.Errorf("storage.default needs to be set in configuration TOML file")
-		}
-		dvid.Warningf("storage.mutable in TOML config has been deprecated; please use storage.default\n")
+		return false, fmt.Errorf("either backend.default or a single store must be set in configuration TOML file")
 	}
 	var defaultStore dvid.Store
-	defaultStore, created, err = NewStore(defaultConfig)
+	defaultStore, created, err = NewStore(*defaultConfig)
 	if err != nil {
 		return
 	}
@@ -178,9 +173,9 @@ func Initialize(cmdline dvid.Config, sc map[string]dvid.StoreConfig) (created bo
 
 	// Was a metadata store configured?
 	var metadataStore dvid.Store
-	metadataConfig, found := sc["metadata"]
-	if found && !defaultStore.Equal(metadataConfig) {
-		metadataStore, created, err = addUniqueDB(metadataConfig)
+	metadataConfig, found := backend["metadata"]
+	if found && !defaultStore.Equal(*metadataConfig) {
+		metadataStore, created, err = addUniqueDB(*metadataConfig)
 		if err != nil {
 			return
 		}
@@ -194,12 +189,12 @@ func Initialize(cmdline dvid.Config, sc map[string]dvid.StoreConfig) (created bo
 	// to see if it's already handled.
 	manager.instanceStore = make(map[string]dvid.Store)
 	manager.datatypeStore = make(map[dvid.TypeString]dvid.Store)
-	for name, c := range sc {
+	for name, c := range backend {
 		if name == "default" || name == "metadata" {
 			continue
 		}
 		var store dvid.Store
-		store, _, err = addUniqueDB(c)
+		store, _, err = addUniqueDB(*c)
 		if err != nil {
 			err = fmt.Errorf("storage.%s: %v", name, err)
 			return

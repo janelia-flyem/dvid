@@ -69,6 +69,10 @@ func (c *Config) Set(key string, value interface{}) {
 	c.values[lowerkey] = value
 }
 
+func (c *Config) SetAll(kv map[string]interface{}) {
+	c.values = kv
+}
+
 func (c *Config) Get(key string) (interface{}, bool) {
 	lowerkey := strings.ToLower(key)
 	value, ok := c.values[lowerkey]
@@ -99,8 +103,8 @@ func (c Config) GetString(key string) (s string, found bool, err error) {
 	return
 }
 
-// GetInt returns an int value of the given key.  If setting of key is not
-// parseable as an int, returns an error.
+// GetInt returns an int value of the given key with string value.  Returns an
+// error if the key's value is not parsable as int.
 func (c Config) GetInt(key string) (i int, found bool, err error) {
 	var s string
 	s, found, err = c.GetString(key)
@@ -111,7 +115,7 @@ func (c Config) GetInt(key string) (i int, found bool, err error) {
 	return
 }
 
-// GetBool returns a bool value of the given key.  If setting of key is not
+// GetBool returns a bool value of the given key with string value.  If setting of key is not
 // parseable as a bool ("false", "true", "0", or "1"), returns an error.  If the key
 // is not found, it will also return a false bool (the Go zero value for bool).
 func (c Config) GetBool(key string) (value, found bool, err error) {

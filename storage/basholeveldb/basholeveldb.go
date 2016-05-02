@@ -11,6 +11,8 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
 
+	"github.com/janelia-flyem/go/uuid"
+
 	levigo "github.com/janelia-flyem/go/basholeveldb"
 	humanize "github.com/janelia-flyem/go/go-humanize"
 
@@ -122,13 +124,42 @@ func (e Engine) NewStore(config dvid.StoreConfig) (dvid.Store, bool, error) {
 	return e.newLevelDB(config)
 }
 
+func parseConfig(config dvid.StoreConfig) (path string, testing bool, err error) {
+    c := config.GetAll()
+    
+	v, found := c["Path"]
+	if !found {
+		err = fmt.Errorf("%q must be specified for leveldb configuration", "Path")
+		return
+	}
+    var ok bool
+    path, ok = v.(string)
+    if !ok {
+        err = fmt.Errorf("%q setting must be a string (%v)", "Path", v)
+        return
+    }
+    v, found = c["Testing"]
+    if !found {
+        err = fmt.Errorf("%q must be specified for leveldb configuration", "Testing")
+        return
+    }
+    testing, ok = v.(bool)
+    if !ok {
+        err = fmt.Errorf("%q setting must be a bool (%v)", "Testing", v)
+        return
+    }
+	if testing {
+		path = filepath.Join(os.TempDir(), path)
+	}
+    return
+}
+
 // newLevelDB returns a leveldb backend, creating leveldb
 // at the path if it doesn't already exist.
 func (e Engine) newLevelDB(config dvid.StoreConfig) (*LevelDB, bool, error) {
-	// Create path depending on whether it is testing database or not.
-	path := config.Path
-	if config.Testing {
-		path = filepath.Join(os.TempDir(), config.Path)
+    path, _, err := parseConfig(config)
+	if err != nil {
+		return nil, false, err
 	}
 
 	// Is there a database already at this path?  If not, create.
@@ -168,6 +199,23 @@ func (e Engine) newLevelDB(config dvid.StoreConfig) (*LevelDB, bool, error) {
 	return leveldb, created, nil
 }
 
+// ---- TestableEngine interface implementation -------
+
+// GetTestConfig returns a set of store configurations suitable for testing
+// a basho-leveldb storage system.
+func (e Engine) GetTestConfig() (map[string]*dvid.StoreConfig, error) {
+    tc := map[string]interface{} {
+        "Path": fmt.Sprintf("dvid-test-%x", uuid.NewV4().Bytes()),
+        "Testing": true,
+    }
+    var c dvid.Config 
+    c.SetAll(tc) 
+	testConfig := map[string]*dvid.StoreConfig{
+        "default": &dvid.StoreConfig{Config: c, Engine: "basholeveldb"},
+    }
+    return testConfig, nil
+}
+
 // Repair tries to repair a damaged leveldb.  Requires "path" string.  Implements
 // the RepairableEngine interface.
 func (e Engine) Repair(path string) error {
@@ -189,11 +237,10 @@ func (e Engine) Repair(path string) error {
 // Delete implements the TestableEngine interface by providing a way to dispose
 // of testing databases.
 func (e Engine) Delete(config dvid.StoreConfig) error {
-	// Create path depending on whether it is testing database or not.
-	path := config.Path
-	if config.Testing {
-		path = filepath.Join(os.TempDir(), config.Path)
-	}
+    path, _, err := parseConfig(config)
+    if err != nil {
+        return err
+    }
 
 	// Delete the directory if it exists
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
@@ -329,8 +376,12 @@ func (db *LevelDB) Close() {
 }
 
 // Equal returns true if the leveldb matches the given store configuration.
-func (db *LevelDB) Equal(c dvid.StoreConfig) bool {
-	if db.directory == c.Path {
+func (db *LevelDB) Equal(config dvid.StoreConfig) bool {
+	path, _, err := parseConfig(config)
+	if err != nil {
+		return false
+	}
+	if db.directory == path {
 		return true
 	}
 	return false

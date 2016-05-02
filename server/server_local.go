@@ -41,6 +41,7 @@ type tomlConfig struct {
 	Email   emailConfig
 	Logging dvid.LogConfig
 	Store   map[string]dvid.StoreConfig
+	Backend map[string]backendConfig
 }
 
 func (c *tomlConfig) HTTPAddress() string {
@@ -69,6 +70,10 @@ type serverConfig struct {
 	IIDStart uint32 `toml:"instance_id_start"`
 }
 
+type backendConfig struct {
+	Store string // should correspond to the string key used in Store map[string]StoreConfig.
+}
+
 type emailConfig struct {
 	Notify   []string
 	Username string
@@ -81,7 +86,8 @@ func (e emailConfig) Host() string {
 	return fmt.Sprintf("%s:%d", e.Server, e.Port)
 }
 
-func LoadConfig(filename string) (*datastore.InstanceConfig, *dvid.LogConfig, map[string]dvid.StoreConfig, error) {
+// LoadConfig loads DVID server configuration from a TOML file.
+func LoadConfig(filename string) (*datastore.InstanceConfig, *dvid.LogConfig, map[string]*dvid.StoreConfig, error) {
 	if filename == "" {
 		return nil, nil, nil, fmt.Errorf("No server TOML configuration file provided")
 	}
@@ -89,10 +95,48 @@ func LoadConfig(filename string) (*datastore.InstanceConfig, *dvid.LogConfig, ma
 		return nil, nil, nil, fmt.Errorf("Could not decode TOML config: %v\n", err)
 	}
 
+	// Get default store nickname if there's only one store defined.
+	var defaultConfig *dvid.StoreConfig
+	if len(tc.Store) == 1 {
+		for _, v := range tc.Store {
+			defaultConfig = &v
+		}
+	}
+
+	// Create the backend mapping.
+	backend := make(map[string]*dvid.StoreConfig)
+	for k, v := range tc.Backend {
+		// lookup store config
+		config, found := tc.Store[v.Store]
+		if !found {
+			return nil, nil, nil, fmt.Errorf("Backend for %q specifies unknown store %q", k, v.Store)
+		}
+		backend[k] = &config
+	}
+	_, found := backend["default"]
+	if len(backend) == 0 || !found {
+		// Set default.
+		if defaultConfig == nil {
+			return nil, nil, nil, fmt.Errorf("if no default backend specified, must have exactly one store defined in config file")
+		}
+		backend["default"] = defaultConfig
+	}
+	_, found = backend["metadata"]
+	if len(backend) == 0 || !found {
+		// Set metadata
+		if defaultConfig == nil {
+			return nil, nil, nil, fmt.Errorf("if no default backend specified, must have exactly one store defined in config file")
+		}
+		backend["metadata"] = defaultConfig
+	}
+
 	// The server config could be local, cluster, gcloud-specific config.  Here it is local.
 	config = &tc
-	ic := datastore.InstanceConfig{tc.Server.IIDGen, dvid.InstanceID(tc.Server.IIDStart)}
-	return &ic, &(tc.Logging), tc.Store, nil
+	ic := datastore.InstanceConfig{
+		Gen:   tc.Server.IIDGen,
+		Start: dvid.InstanceID(tc.Server.IIDStart),
+	}
+	return &ic, &(tc.Logging), backend, nil
 }
 
 type emailData struct {

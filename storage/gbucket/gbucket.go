@@ -86,12 +86,19 @@ func (e Engine) NewStore(config dvid.StoreConfig) (dvid.Store, bool, error) {
 
 // parseConfig initializes GBucket from config
 func parseConfig(config dvid.StoreConfig) (*GBucket, error) {
-
+	c := config.GetAll()
+	v, found := c["Bucket"]
+	if !found {
+		return nil, fmt.Errorf("%q must be specified for gbucket configuration", "Bucket")
+	}
+	bucket, ok := v.(string)
+	if !ok {
+		return nil, fmt.Errorf("%q setting must be a string (%v)", "Bucket", v)
+	}
 	gb := &GBucket{
-		bname: config.Bucket,
+		bname: bucket,
 		ctx:   context.Background(),
 	}
-
 	return gb, nil
 }
 
@@ -765,7 +772,11 @@ func (db *GBucket) Close() {
 }
 
 func (db *GBucket) Equal(c dvid.StoreConfig) bool {
-	if db.bname == c.Bucket {
+	gb, err := parseConfig(c)
+	if err != nil {
+		return false
+	}
+	if db.bname == gb.bname {
 		return true
 	}
 	return false

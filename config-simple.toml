@@ -1,0 +1,27 @@
+# Example simple configuration for DVID with single database backend.
+# See config-multidb.toml for full range of configurations including
+# email notifications, authentication, and backend assignments.
+
+[server]
+httpAddress = "localhost:8000"
+rpcAddress = "localhost:8001"
+webClient = "/path/to/webclient"
+
+[logging]
+logfile = "/demo/logs/dvid.log"
+max_log_size = 500 # MB
+max_log_age = 30   # days
+
+# If no backend is specified, DVID will return an error unless there is only
+# one store, which will automatically be backend.default, as in this example.
+#   See config-full.toml for example of [backend] use.
+
+
+# List the different storage systems available for metadata, data instances, etc.
+# Any nickname can be used for a store.  In this case, it's "raid6" to reflect
+# that the directory is on a RAID-6 drive system.
+[store]
+    [store.raid6]
+    engine = "basholeveldb"
+    path = "/demo/dbs/basholeveldb"
+   

@@ -235,14 +235,14 @@ func DoServe(cmd dvid.Command) error {
 	if configPath == "" {
 		return fmt.Errorf("serve command must be followed by the path to the TOML configuration file")
 	}
-	instanceConfig, logConfig, storeConfig, err := server.LoadConfig(configPath)
+	instanceConfig, logConfig, backend, err := server.LoadConfig(configPath)
 	if err != nil {
 		return fmt.Errorf("Error loading configuration file %q: %v\n", configPath, err)
 	}
 	logConfig.SetLogger()
 
 	// Initialize storage and datastore layer
-	initMetadata, err := storage.Initialize(cmd.Settings(), storeConfig)
+	initMetadata, err := storage.Initialize(cmd.Settings(), backend)
 	if err != nil {
 		return fmt.Errorf("Unable to initialize storage: %v\n", err)
 	}

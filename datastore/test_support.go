@@ -7,12 +7,8 @@ import (
 	"log"
 	"sync"
 
-	"google.golang.org/cloud/bigtable/bttest"
-
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
-
-	"github.com/janelia-flyem/go/uuid"
 )
 
 const (
@@ -23,7 +19,7 @@ const (
 
 type testStoreT struct {
 	sync.Mutex
-	config map[string]dvid.StoreConfig
+	backend map[string]*dvid.StoreConfig
 }
 
 var (
@@ -45,44 +41,24 @@ func NewTestRepo() (dvid.UUID, dvid.VersionID) {
 }
 
 // getTestStoreConfig returns a configuration, amenable to testing, based on compiled-in engines.
-func getTestStoreConfig() (map[string]dvid.StoreConfig, error) {
+func getTestStoreConfig() (map[string]*dvid.StoreConfig, error) {
 	testableEng := storage.GetTestableEngine()
 	if testableEng == nil {
 		return nil, fmt.Errorf("Could not find a storage engine that was testable")
 	}
-	testConfig := make(map[string]dvid.StoreConfig, 1)
-	if testableEng.GetName() == "bigtable" {
-		testSrv, err := bttest.NewServer() //TODO close the testSrv if neccesary
-		if err != nil {
-			return nil, fmt.Errorf("Unable to create bigTable local test server. %v", err)
-		}
-
-		table := fmt.Sprintf("dvid-test-%x", uuid.NewV4().Bytes())
-		testConfig["default"] = dvid.StoreConfig{Engine: testableEng.GetName(),
-			Project: "project",
-			Zone:    "zone",
-			Cluster: "cluster",
-			Table:   table,
-			Testing: true,
-			TestSrv: testSrv,
-		}
-	} else {
-		dbname := fmt.Sprintf("dvid-test-%x", uuid.NewV4().Bytes())
-		testConfig["default"] = dvid.StoreConfig{Engine: testableEng.GetName(), Path: dbname, Testing: true}
-	}
-	return testConfig, nil
+	return testableEng.GetTestConfig()
 }
 
 func openStore(create bool) {
 	dvid.Infof("Opening test datastore.  Create = %v\n", create)
 	if create {
 		var err error
-		testStore.config, err = getTestStoreConfig()
+		testStore.backend, err = getTestStoreConfig()
 		if err != nil {
 			log.Fatalf("Unable to get testable storage configuration: %v\n", err)
 		}
 	}
-	initMetadata, err := storage.Initialize(dvid.Config{}, testStore.config)
+	initMetadata, err := storage.Initialize(dvid.Config{}, testStore.backend)
 	if err != nil {
 		log.Fatalf("Can't initialize test datastore: %v\n", err)
 	}
@@ -112,7 +88,7 @@ func CloseTest() {
 	if testableEng == nil {
 		log.Fatalf("Could not find a storage engine that was testable")
 	}
-	testableEng.Delete(testStore.config["default"])
+	testableEng.Delete(*testStore.backend["default"])
 
 	testStore.Unlock()
 }
