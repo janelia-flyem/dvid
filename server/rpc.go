@@ -15,6 +15,7 @@ import (
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/rpc"
+	"github.com/janelia-flyem/dvid/storage"
 	"github.com/valyala/gorpc"
 )
 
@@ -46,6 +47,22 @@ Commands executed on the server (rpc address = %s):
 	node <UUID> <data name> <type-specific commands>
 
 EXPERIMENTAL COMMANDS
+
+	repo <UUID> migrate <instance name> <old store config nickname> <settings...>
+    
+        Migrates all data from an old store (specified by the nickname in TOML file)
+		to the current store designated for this instance name.  Before running this
+		command, you must modify the config TOML file so the given data instance
+		will use the target store and then restart the DVID server.
+		If successful, this command will initiate a delete on the old store of this
+		data instance.
+			
+		transmit=[all | flatten]
+
+			The default transmit "all" copies all versions of the source.
+			
+			A transmit "flatten" will copy just the version specified and
+			flatten the key/values so there is no history.
 
 	repo <UUID> copy <source instance name> <clone instance name> <settings...>
     
@@ -305,6 +322,22 @@ func handleCommand(cmd *datastore.Request) (reply *datastore.Response, err error
 			}
 			reply.Text = fmt.Sprintf("Parents %v merged into node %s\n", parents, child)
 			datastore.AddToRepoLog(uuid, []string{cmd.String()})
+
+		case "migrate":
+			var source, oldStoreName string
+			cmd.CommandArgs(3, &source, &oldStoreName)
+			var store dvid.Store
+			store, err = storage.GetStoreByAlias(storage.Alias(oldStoreName))
+			if err != nil {
+				return
+			}
+			config := cmd.Settings()
+			go func() {
+				if err = datastore.MigrateInstance(uuid, dvid.InstanceName(source), store, config); err != nil {
+					dvid.Errorf("migrate error: %v\n", err)
+				}
+			}()
+			reply.Text = fmt.Sprintf("Started migration of uuid %s data instance %q from old store %q...\n", uuid, source, oldStoreName)
 
 		case "copy":
 			var source, target string

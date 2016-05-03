@@ -29,3 +29,14 @@ type StoreConfig struct {
 	// Engine is a simple name describing the engine, e.g., "basholeveldb"
 	Engine string
 }
+
+// DataSpecifier is either a TypeString or a (InstanceName, UUID) tuple, allowing
+// an immutable specification of a datatype or data instance.  The DataSpecifier
+// can be used as the key of a map, and is useful when configuring which data is
+// stored using different storage engines.
+type DataSpecifier string
+
+// GetDataSpecifier returns an DataSpecifier given an instance name and UUID.
+func GetDataSpecifier(name InstanceName, uuid UUID) DataSpecifier {
+	return DataSpecifier(name) + DataSpecifier(uuid)
+}

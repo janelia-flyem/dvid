@@ -150,7 +150,7 @@ type GBucket struct {
 }
 
 func (db *GBucket) String() string {
-	return "Google's storage bucket"
+	return fmt.Sprintf("google cloud storage, bucket %s", db.bname)
 }
 
 // ---- OrderedKeyValueGetter interface ------

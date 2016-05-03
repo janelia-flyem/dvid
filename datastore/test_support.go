@@ -19,7 +19,7 @@ const (
 
 type testStoreT struct {
 	sync.Mutex
-	backend map[string]*dvid.StoreConfig
+	backend *storage.Backend
 }
 
 var (
@@ -41,7 +41,7 @@ func NewTestRepo() (dvid.UUID, dvid.VersionID) {
 }
 
 // getTestStoreConfig returns a configuration, amenable to testing, based on compiled-in engines.
-func getTestStoreConfig() (map[string]*dvid.StoreConfig, error) {
+func getTestStoreConfig() (*storage.Backend, error) {
 	testableEng := storage.GetTestableEngine()
 	if testableEng == nil {
 		return nil, fmt.Errorf("Could not find a storage engine that was testable")
@@ -77,8 +77,9 @@ func OpenTest() {
 // CloseReopenTest forces close and then reopening of the datastore, useful for testing
 // persistence.  We only allow close/reopen when all tests not avaiting close/reopen are finished.
 func CloseReopenTest() {
-	dvid.Infof("Reopening test datastore...\n")
+	dvid.Infof("Closing test datastore for reopen test...\n")
 	storage.Close()
+	dvid.Infof("Reopening test datastore...\n")
 	openStore(false)
 }
 
@@ -88,7 +89,7 @@ func CloseTest() {
 	if testableEng == nil {
 		log.Fatalf("Could not find a storage engine that was testable")
 	}
-	testableEng.Delete(*testStore.backend["default"])
-
+	config, _ := testStore.backend.StoreConfig("default")
+	testableEng.Delete(config)
 	testStore.Unlock()
 }

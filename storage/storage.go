@@ -151,8 +151,42 @@ const (
 	Immutable
 )
 
-// Engine implementations can fulfill a variety of interfaces and can be checked by
-// runtime cast checks, e.g., myGetter, ok := myEngine.(OrderedKeyValueGetter)
+// Alias is a nickname for a storage configuration, e.g., "raid6" for basholeveldb on RAID6 drives.
+// It is used in the DVID TOML configuration file like [storage.alias]
+type Alias string
+
+// Backend provide data instance to store mappings gleaned from DVID configuration.
+type Backend struct {
+	Default  Alias // The store that should be used by default.
+	Metadata Alias // The store that should be used for metadata storage.
+	Stores   map[Alias]dvid.StoreConfig
+	Mapping  map[dvid.DataSpecifier]Alias
+}
+
+// StoreConfig returns a data specifier's assigned store configuration.
+// The DataSpecifier can be "default" or "metadata" as well as datatype names
+// and data instance specifications.
+func (b Backend) StoreConfig(d dvid.DataSpecifier) (config dvid.StoreConfig, found bool) {
+	if d == "default" {
+		config, found = b.Stores[b.Default]
+		return
+	}
+	if d == "metadata" {
+		config, found = b.Stores[b.Metadata]
+		return
+	}
+	alias, ok := b.Mapping[d]
+	if !ok {
+		return
+	}
+	config, found = b.Stores[alias]
+	return
+}
+
+// Engine is a storage engine that can create a storage instance, dvid.Store, which could be
+// a database directory in the case of an embedded database Engine implementation.
+// Engine implementations can fulfill a variety of interfaces, checkable by runtime cast checks,
+// e.g., myGetter, ok := myEngine.(OrderedKeyValueGetter)
 // Data types can throw a warning at init time if the backend doesn't support required
 // interfaces, or they can choose to implement multiple ways of handling data.
 // Each Engine implementation should call storage.Register() to register its availability.
@@ -179,7 +213,7 @@ type RepairableEngine interface {
 // some data using a name.
 type TestableEngine interface {
 	Engine
-	GetTestConfig() (map[string]*dvid.StoreConfig, error)
+	GetTestConfig() (*Backend, error)
 	Delete(dvid.StoreConfig) error
 }
 

@@ -190,6 +190,7 @@ func (e Engine) newLevelDB(config dvid.StoreConfig) (*LevelDB, bool, error) {
 		options:   opt,
 	}
 
+	dvid.Infof("Opening basholeveldb @ path %s\n", path)
 	ldb, err := levigo.Open(path, opt.Options)
 	if err != nil {
 		return nil, false, err
@@ -202,18 +203,21 @@ func (e Engine) newLevelDB(config dvid.StoreConfig) (*LevelDB, bool, error) {
 // ---- TestableEngine interface implementation -------
 
 // GetTestConfig returns a set of store configurations suitable for testing
-// a basho-leveldb storage system.
-func (e Engine) GetTestConfig() (map[string]*dvid.StoreConfig, error) {
+// a basholeveldb storage system.
+func (e Engine) GetTestConfig() (*storage.Backend, error) {
     tc := map[string]interface{} {
         "Path": fmt.Sprintf("dvid-test-%x", uuid.NewV4().Bytes()),
         "Testing": true,
     }
     var c dvid.Config 
     c.SetAll(tc) 
-	testConfig := map[string]*dvid.StoreConfig{
-        "default": &dvid.StoreConfig{Config: c, Engine: "basholeveldb"},
+	testConfig := map[storage.Alias]dvid.StoreConfig{
+        "default": dvid.StoreConfig{Config: c, Engine: "basholeveldb"},
     }
-    return testConfig, nil
+	backend := storage.Backend{
+		Stores: testConfig,
+	}
+    return &backend, nil
 }
 
 // Repair tries to repair a damaged leveldb.  Requires "path" string.  Implements
@@ -252,7 +256,7 @@ func (e Engine) Delete(config dvid.StoreConfig) error {
 }
 
 func (db *LevelDB) String() string {
-	return "basho-tuned leveldb + levigo driver"
+	return fmt.Sprintf("basholeveldb @ %s", db.directory)
 }
 
 // --- The Leveldb Implementation must satisfy a Engine interface ----
@@ -393,6 +397,9 @@ func (db *LevelDB) Equal(config dvid.StoreConfig) bool {
 func (db *LevelDB) Get(ctx storage.Context, tk storage.TKey) ([]byte, error) {
 	if db == nil {
 		return nil, fmt.Errorf("Can't call GET on nil LevelDB")
+	}
+	if db.options == nil {
+		return nil, fmt.Errorf("Can't call GET on db with nil options: %v", db)
 	}
 	if ctx == nil {
 		return nil, fmt.Errorf("Received nil context in Get()")

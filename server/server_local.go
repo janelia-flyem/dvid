@@ -19,6 +19,7 @@ import (
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/rpc"
+	"github.com/janelia-flyem/dvid/storage"
 
 	"github.com/janelia-flyem/go/toml"
 )
@@ -40,8 +41,8 @@ type tomlConfig struct {
 	Server  serverConfig
 	Email   emailConfig
 	Logging dvid.LogConfig
-	Store   map[string]dvid.StoreConfig
-	Backend map[string]backendConfig
+	Store   map[storage.Alias]dvid.StoreConfig
+	Backend map[dvid.DataSpecifier]backendConfig
 }
 
 func (c *tomlConfig) HTTPAddress() string {
@@ -71,7 +72,7 @@ type serverConfig struct {
 }
 
 type backendConfig struct {
-	Store string // should correspond to the string key used in Store map[string]StoreConfig.
+	Store storage.Alias
 }
 
 type emailConfig struct {
@@ -87,7 +88,7 @@ func (e emailConfig) Host() string {
 }
 
 // LoadConfig loads DVID server configuration from a TOML file.
-func LoadConfig(filename string) (*datastore.InstanceConfig, *dvid.LogConfig, map[string]*dvid.StoreConfig, error) {
+func LoadConfig(filename string) (*datastore.InstanceConfig, *dvid.LogConfig, *storage.Backend, error) {
 	if filename == "" {
 		return nil, nil, nil, fmt.Errorf("No server TOML configuration file provided")
 	}
@@ -95,39 +96,43 @@ func LoadConfig(filename string) (*datastore.InstanceConfig, *dvid.LogConfig, ma
 		return nil, nil, nil, fmt.Errorf("Could not decode TOML config: %v\n", err)
 	}
 
-	// Get default store nickname if there's only one store defined.
-	var defaultConfig *dvid.StoreConfig
+	// Remember all defined stores.
+	backend := new(storage.Backend)
+	backend.Stores = tc.Store
+
+	// Get default store if there's only one store defined.
 	if len(tc.Store) == 1 {
-		for _, v := range tc.Store {
-			defaultConfig = &v
+		for k := range tc.Store {
+			backend.Default = k
 		}
 	}
 
 	// Create the backend mapping.
-	backend := make(map[string]*dvid.StoreConfig)
+	backend.Mapping = make(map[dvid.DataSpecifier]storage.Alias)
 	for k, v := range tc.Backend {
 		// lookup store config
-		config, found := tc.Store[v.Store]
+		_, found := backend.Stores[v.Store]
 		if !found {
 			return nil, nil, nil, fmt.Errorf("Backend for %q specifies unknown store %q", k, v.Store)
 		}
-		backend[k] = &config
+		backend.Mapping[k] = v.Store
 	}
-	_, found := backend["default"]
-	if len(backend) == 0 || !found {
-		// Set default.
-		if defaultConfig == nil {
+	defaultAlias, found := backend.Mapping["default"]
+	if found {
+		backend.Default = defaultAlias
+	} else {
+		if backend.Default == "" {
 			return nil, nil, nil, fmt.Errorf("if no default backend specified, must have exactly one store defined in config file")
 		}
-		backend["default"] = defaultConfig
 	}
-	_, found = backend["metadata"]
-	if len(backend) == 0 || !found {
-		// Set metadata
-		if defaultConfig == nil {
+	defaultMetadataName, found := backend.Mapping["metadata"]
+	if found {
+		backend.Metadata = defaultMetadataName
+	} else {
+		if backend.Default == "" {
 			return nil, nil, nil, fmt.Errorf("if no default backend specified, must have exactly one store defined in config file")
 		}
-		backend["metadata"] = defaultConfig
+		backend.Metadata = backend.Default
 	}
 
 	// The server config could be local, cluster, gcloud-specific config.  Here it is local.

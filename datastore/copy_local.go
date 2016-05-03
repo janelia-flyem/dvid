@@ -1,8 +1,9 @@
 // +build !clustered,!gcloud
 
 /*
-	This file contains local server code supporting local data instance cloning with
-	optional delimiting using datatype-specific filters.
+	This file contains local server code supporting local data instance copying with
+	optional delimiting using datatype-specific filters, and migration between storage
+	engines.
 */
 
 package datastore
@@ -95,6 +96,70 @@ func (t *txStats) printStats() {
 	dvid.Infof("  >= 10m:    %d\n", t.numV10m)
 }
 
+// MigrateInstance migrates a data instance locally from an old storage
+// engine to the current configured storage.  After completion of the copy,
+// the data instance in the old storage is deleted.
+func MigrateInstance(uuid dvid.UUID, source dvid.InstanceName, oldStore dvid.Store, c dvid.Config) error {
+	if manager == nil {
+		return ErrManagerNotInitialized
+	}
+
+	// Get flatten or not
+	transmit, _, err := c.GetString("transmit")
+	if err != nil {
+		return err
+	}
+	var flatten bool
+	if transmit == "flatten" {
+		flatten = true
+	}
+
+	// Get the source data instance.
+	d, err := manager.getDataByUUID(uuid, source)
+	if err != nil {
+		return err
+	}
+
+	// Get the current store for this data instance.
+	storer, ok := d.(storage.Accessor)
+	if !ok {
+		return fmt.Errorf("unable to migrate data %q: unable to access backing store", d.DataName())
+	}
+	curKV, err := storer.GetOrderedKeyValueDB()
+	if err != nil {
+		return fmt.Errorf("unable to get backing store for data %q: %v\n", source, err)
+	}
+
+	// Get the old store.
+	oldKV, ok := oldStore.(storage.OrderedKeyValueDB)
+	if !ok {
+		return fmt.Errorf("unable to migrate data %q from store %s which isn't ordered kv store", source)
+	}
+
+	// Abort if the two stores are the same.
+	if curKV == oldKV {
+		return fmt.Errorf("old store for data %q seems same as current store", source)
+	}
+
+	// Migrate data asynchronously.
+	go func() {
+		if err := copyData(oldKV, curKV, d, nil, uuid, nil, flatten); err != nil {
+			dvid.Errorf("error in migration of data %q: %v\n", source, err)
+			return
+		}
+		// delete data off old store.
+		dvid.Infof("Starting delete of instance %q from old storage %q\n", d.DataName(), oldKV)
+		ctx := storage.NewDataContext(d, 0)
+		if err := oldKV.DeleteAll(ctx, true); err != nil {
+			dvid.Errorf("deleting instance %q from %q after copy to %q: %v\n", d.DataName(), oldKV, curKV, err)
+			return
+		}
+	}()
+
+	dvid.Infof("Migrating data %q from store %q to store %q ...\n", d.DataName(), oldKV, curKV)
+	return nil
+}
+
 // CopyInstance copies a data instance locally, perhaps to a different storage
 // engine if the new instance uses a different backend per a data instance-specific configuration.
 // (See sample config.example.toml file in root dvid source directory.)
@@ -154,37 +219,29 @@ func CopyInstance(uuid dvid.UUID, source, target dvid.InstanceName, c dvid.Confi
 		}
 	}
 
-	// Copy data with optional datatype-specific filtering.
-	return CopyData(d1, d2, uuid, fs, flatten)
-}
-
-// CopyData copies all key-value pairs pertinent to the given data instance.
-// Each datatype can implement filters that can restrict the transmitted key-value pairs
-// based on the given FilterSpec.
-func CopyData(d, d2 dvid.Data, uuid dvid.UUID, fs storage.FilterSpec, flatten bool) error {
 	// We should be able to get the backing store (only ordered kv for now)
-	storer, ok := d.(storage.Accessor)
+	storer, ok := d1.(storage.Accessor)
 	if !ok {
-		return fmt.Errorf("unable to push data %q: unable to access backing store", d.DataName())
+		return fmt.Errorf("unable to push data %q: unable to access backing store", d1.DataName())
 	}
-	store, err := storer.GetOrderedKeyValueDB()
+	oldKV, err := storer.GetOrderedKeyValueDB()
 	if err != nil {
-		return fmt.Errorf("unable to get backing store for data %q: %v\n", d.DataName(), err)
+		return fmt.Errorf("unable to get backing store for data %q: %v\n", d1.DataName(), err)
 	}
 	storer, ok = d2.(storage.Accessor)
 	if !ok {
 		return fmt.Errorf("unable to push data %q: unable to access backing store", d2.DataName())
 	}
-	store2, err := storer.GetOrderedKeyValueDB()
+	newKV, err := storer.GetOrderedKeyValueDB()
 	if err != nil {
 		return fmt.Errorf("unable to get backing store for data %q: %v\n", d2.DataName(), err)
 	}
 
-	dvid.Infof("Copying data %q (%s) to data %q (%s)...\n", d.DataName(), store, d2.DataName(), store2)
+	dvid.Infof("Copying data %q (%s) to data %q (%s)...\n", d1.DataName(), oldKV, d2.DataName(), newKV)
 
 	// See if this data instance implements a Send filter.
 	var filter storage.Filter
-	filterer, ok := d.(storage.Filterer)
+	filterer, ok := d1.(storage.Filterer)
 	if ok && fs != "" {
 		var err error
 		filter, err = filterer.NewFilter(fs)
@@ -193,13 +250,28 @@ func CopyData(d, d2 dvid.Data, uuid dvid.UUID, fs storage.FilterSpec, flatten bo
 		}
 	}
 
+	// copy data with optional datatype-specific filtering.
+	return copyData(oldKV, newKV, d1, d2, uuid, filter, flatten)
+}
+
+// copyData copies all key-value pairs pertinent to the given data instance d2.  If d2 is nil,
+// the destination data instance is d1, useful for migration of data to a new store.
+// Each datatype can implement filters that can restrict the transmitted key-value pairs
+// based on the given FilterSpec.
+func copyData(oldKV, newKV storage.OrderedKeyValueDB, d1, d2 dvid.Data, uuid dvid.UUID, f storage.Filter, flatten bool) error {
 	// Get data context for this UUID.
 	v, err := VersionFromUUID(uuid)
 	if err != nil {
 		return err
 	}
-	srcCtx := NewVersionedCtx(d, v)
-	dstCtx := NewVersionedCtx(d2, v)
+	srcCtx := NewVersionedCtx(d1, v)
+	var dstCtx *VersionedCtx
+	if d2 == nil {
+		d2 = d1
+		dstCtx = srcCtx
+	} else {
+		dstCtx = NewVersionedCtx(d2, v)
+	}
 
 	// Send this instance's key-value pairs
 	var wg sync.WaitGroup
@@ -220,17 +292,17 @@ func CopyData(d, d2 dvid.Data, uuid dvid.UUID, fs storage.FilterSpec, flatten bo
 				if tkv == nil {
 					wg.Done()
 					dvid.Infof("Copied %d %q key-value pairs (%s, out of %d kv pairs, %s) [flattened]\n",
-						kvSent, d.DataName(), humanize.Bytes(bytesSent), kvTotal, humanize.Bytes(bytesTotal))
+						kvSent, d1.DataName(), humanize.Bytes(bytesSent), kvTotal, humanize.Bytes(bytesTotal))
 					stats.printStats()
 					return
 				}
 				kvTotal++
 				curBytes := uint64(len(tkv.V) + len(tkv.K))
 				bytesTotal += curBytes
-				if filter != nil {
-					skip, err := filter.Check(tkv)
+				if f != nil {
+					skip, err := f.Check(tkv)
 					if err != nil {
-						dvid.Errorf("problem applying filter on data %q: %v\n", d.DataName(), err)
+						dvid.Errorf("problem applying filter on data %q: %v\n", d1.DataName(), err)
 						continue
 					}
 					if skip {
@@ -239,7 +311,7 @@ func CopyData(d, d2 dvid.Data, uuid dvid.UUID, fs storage.FilterSpec, flatten bo
 				}
 				kvSent++
 				bytesSent += curBytes
-				if err := store2.Put(dstCtx, tkv.K, tkv.V); err != nil {
+				if err := newKV.Put(dstCtx, tkv.K, tkv.V); err != nil {
 					dvid.Errorf("can't put k/v pair to destination instance %q: %v\n", d2.DataName(), err)
 				}
 				stats.addKV(tkv.K, tkv.V)
@@ -247,16 +319,16 @@ func CopyData(d, d2 dvid.Data, uuid dvid.UUID, fs storage.FilterSpec, flatten bo
 		}()
 
 		begKey, endKey := srcCtx.TKeyRange()
-		err := store.ProcessRange(srcCtx, begKey, endKey, &storage.ChunkOp{}, func(c *storage.Chunk) error {
+		err := oldKV.ProcessRange(srcCtx, begKey, endKey, &storage.ChunkOp{}, func(c *storage.Chunk) error {
 			if c == nil {
-				return fmt.Errorf("received nil chunk in flatten push for data %s", d.DataName())
+				return fmt.Errorf("received nil chunk in flatten push for data %s", d1.DataName())
 			}
 			ch <- c.TKeyValue
 			return nil
 		})
 		ch <- nil
 		if err != nil {
-			return fmt.Errorf("error in flatten push for data %q: %v", d.DataName(), err)
+			return fmt.Errorf("error in flatten push for data %q: %v", d1.DataName(), err)
 		}
 	} else {
 		// Start goroutine to receive all key-value pairs and store them.
@@ -267,23 +339,23 @@ func CopyData(d, d2 dvid.Data, uuid dvid.UUID, fs storage.FilterSpec, flatten bo
 				if kv == nil {
 					wg.Done()
 					dvid.Infof("Sent %d %q key-value pairs (%s, out of %d kv pairs, %s)\n",
-						kvSent, d.DataName(), humanize.Bytes(bytesSent), kvTotal, humanize.Bytes(bytesTotal))
+						kvSent, d1.DataName(), humanize.Bytes(bytesSent), kvTotal, humanize.Bytes(bytesTotal))
 					stats.printStats()
 					return
 				}
 				tkey, err := storage.TKeyFromKey(kv.K)
 				if err != nil {
-					dvid.Errorf("couldn't get %q TKey from Key %v: %v\n", d.DataName(), kv.K, err)
+					dvid.Errorf("couldn't get %q TKey from Key %v: %v\n", d1.DataName(), kv.K, err)
 					continue
 				}
 
 				kvTotal++
 				curBytes := uint64(len(kv.V) + len(kv.K))
 				bytesTotal += curBytes
-				if filter != nil {
-					skip, err := filter.Check(&storage.TKeyValue{K: tkey, V: kv.V})
+				if f != nil {
+					skip, err := f.Check(&storage.TKeyValue{K: tkey, V: kv.V})
 					if err != nil {
-						dvid.Errorf("problem applying filter on data %q: %v\n", d.DataName(), err)
+						dvid.Errorf("problem applying filter on data %q: %v\n", d1.DataName(), err)
 						continue
 					}
 					if skip {
@@ -292,10 +364,13 @@ func CopyData(d, d2 dvid.Data, uuid dvid.UUID, fs storage.FilterSpec, flatten bo
 				}
 				kvSent++
 				bytesSent += curBytes
-				if err := dstCtx.UpdateInstance(kv.K); err != nil {
-					dvid.Errorf("can't update raw key to new data instance %q: %v\n", d2.DataName(), err)
+				if dstCtx != nil {
+					err := dstCtx.UpdateInstance(kv.K)
+					if err != nil {
+						dvid.Errorf("can't update raw key to new data instance %q: %v\n", d2.DataName(), err)
+					}
 				}
-				if err := store2.RawPut(kv.K, kv.V); err != nil {
+				if err := newKV.RawPut(kv.K, kv.V); err != nil {
 					dvid.Errorf("can't put k/v pair to destination instance %q: %v\n", d2.DataName(), err)
 				}
 				stats.addKV(kv.K, kv.V)
@@ -303,8 +378,8 @@ func CopyData(d, d2 dvid.Data, uuid dvid.UUID, fs storage.FilterSpec, flatten bo
 		}()
 
 		begKey, endKey := srcCtx.KeyRange()
-		if err = store.RawRangeQuery(begKey, endKey, keysOnly, ch); err != nil {
-			return fmt.Errorf("push voxels %q range query: %v", d.DataName(), err)
+		if err = oldKV.RawRangeQuery(begKey, endKey, keysOnly, ch); err != nil {
+			return fmt.Errorf("push voxels %q range query: %v", d1.DataName(), err)
 		}
 	}
 	wg.Wait()

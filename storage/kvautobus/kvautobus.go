@@ -113,7 +113,7 @@ type KVAutobus struct {
 }
 
 func (db *KVAutobus) String() string {
-	return "Janelia KVAutobus"
+	return fmt.Sprintf("KVAutobus @ %s", db.host)
 }
 
 func (db *KVAutobus) Close() {

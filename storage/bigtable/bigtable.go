@@ -136,7 +136,7 @@ func parseConfig(config dvid.StoreConfig) (*BigTable, error) {
 
 // TODO -- Work on testable BigTable implementation.
 /*
-func (e Engine) GetTestConfig() (map[string]*dvid.StoreConfig, error) {
+func (e Engine) GetTestConfig() (*Backend, error) {
     tc := map[string]interface{} {
         "Project": "project",
         "Zone":    "zone",
@@ -291,7 +291,7 @@ type BigTable struct {
 }
 
 func (db *BigTable) String() string {
-	return "Google's clooud BigTable"
+	return fmt.Sprintf("google bigtable, project %s, table %s", db.project, db.table)
 }
 
 // Get returns a value given a key.

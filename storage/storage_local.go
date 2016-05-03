@@ -20,10 +20,9 @@ type managerT struct {
 	defaultStore  dvid.Store
 	metadataStore dvid.Store
 
-	instanceStore map[string]dvid.Store
+	stores        map[Alias]dvid.Store
+	instanceStore map[dvid.DataSpecifier]dvid.Store
 	datatypeStore map[dvid.TypeString]dvid.Store
-
-	uniqueDBs []dvid.Store // Keep track of unique stores for closing.
 
 	// Cached type-asserted interfaces
 	graphEngine Engine
@@ -82,6 +81,18 @@ func GraphStore() (GraphDB, error) {
 	return manager.graphDB, nil
 }
 
+// GetStoreByAlias returns a store by the alias given to it in the configuration TOML file, e.g., "raid6".
+func GetStoreByAlias(alias Alias) (dvid.Store, error) {
+	if !manager.setup {
+		return nil, fmt.Errorf("Storage manager not initialized before requesting GetStoreByAlias")
+	}
+	store, found := manager.stores[alias]
+	if !found {
+		return nil, fmt.Errorf("could not find store with alias %q in TOML config file", alias)
+	}
+	return store, nil
+}
+
 // GetAssignedStore returns the store assigned based on instance or type.
 func GetAssignedStore(dataname dvid.InstanceName, uuid dvid.UUID, typename dvid.TypeString) (dvid.Store, error) {
 	store, found, err := GetAssignedStoreByInstance(dataname, uuid)
@@ -107,7 +118,7 @@ func GetAssignedStoreByInstance(name dvid.InstanceName, root dvid.UUID) (store d
 	// For now, return the root UUID of the DAG containing the given UUID.
 	// TODO: Adjust when we make UUID-based data instances.
 
-	dataid := string(name) + string(root)
+	dataid := dvid.GetDataSpecifier(name, root)
 	store, found = manager.instanceStore[dataid]
 	return
 }
@@ -127,89 +138,94 @@ func GetAssignedStoreByType(typename dvid.TypeString) (dvid.Store, error) {
 // Close handles any storage-specific shutdown procedures.
 func Close() {
 	if manager.setup {
-		dvid.Infof("Closing datastore...\n")
-		for _, store := range manager.uniqueDBs {
+		for alias, store := range manager.stores {
+			dvid.Infof("Closing store %q: %s...\n", alias, store)
 			store.Close()
 		}
+		manager.setup = false
 	}
-}
-
-// check if this configuration has already been setup; if not, setup and record availability
-func addUniqueDB(c dvid.StoreConfig) (dvid.Store, bool, error) {
-	// Check if this store configuration already has been setup
-	for _, db := range manager.uniqueDBs {
-		if db.Equal(c) {
-			return db, false, nil
-		}
-	}
-
-	// Open new store given this configuration
-	db, created, err := NewStore(c)
-	if err != nil {
-		return nil, false, err
-	}
-	manager.uniqueDBs = append(manager.uniqueDBs, db)
-	return db, created, err
+	manager.stores = nil
+	manager.instanceStore = nil
+	manager.datatypeStore = nil
+	manager.defaultStore = nil
+	manager.metadataStore = nil
 }
 
 // Initialize the storage systems.  Returns a bool + error where the bool is
 // true if the metadata store is newly created and needs initialization.
 // The map of store configurations should be keyed by either a datatype name,
 // "default", or "metadata".
-func Initialize(cmdline dvid.Config, backend map[string]*dvid.StoreConfig) (created bool, err error) {
-	// Get required default store.
-	defaultConfig, found := backend["default"]
-	if !found {
-		return false, fmt.Errorf("either backend.default or a single store must be set in configuration TOML file")
-	}
-	var defaultStore dvid.Store
-	defaultStore, created, err = NewStore(*defaultConfig)
-	if err != nil {
-		return
-	}
-	manager.defaultStore = defaultStore
-	manager.uniqueDBs = []dvid.Store{defaultStore}
-	dvid.Infof("default store -> %s\n", defaultStore)
-
-	// Was a metadata store configured?
-	var metadataStore dvid.Store
-	metadataConfig, found := backend["metadata"]
-	if found && !defaultStore.Equal(*metadataConfig) {
-		metadataStore, created, err = addUniqueDB(*metadataConfig)
-		if err != nil {
-			return
+func Initialize(cmdline dvid.Config, backend *Backend) (createdMetadata bool, err error) {
+	// Open all the backend stores
+	manager.stores = make(map[Alias]dvid.Store, len(backend.Stores))
+	var gotDefault, gotMetadata, createdDefault, lastCreated bool
+	var lastStore dvid.Store
+	for alias, dbconfig := range backend.Stores {
+		var store dvid.Store
+		for dbalias, db := range manager.stores {
+			if db.Equal(dbconfig) {
+				return false, fmt.Errorf("Store %q configuration is duplicate of store %q", alias, dbalias)
+			}
 		}
-	} else {
-		metadataStore = defaultStore
+		store, created, err := NewStore(dbconfig)
+		if err != nil {
+			return false, err
+		}
+		switch alias {
+		case backend.Metadata:
+			gotMetadata = true
+			createdMetadata = created
+			manager.metadataStore = store
+		case backend.Default:
+			gotDefault = true
+			createdDefault = created
+			manager.defaultStore = store
+		}
+		manager.stores[alias] = store
+		lastStore = store
+		lastCreated = created
 	}
-	manager.metadataStore = metadataStore
-	dvid.Infof("metadata store -> %s\n", metadataStore)
 
-	// Load any data instance or datatype-specific stores, checking
-	// to see if it's already handled.
-	manager.instanceStore = make(map[string]dvid.Store)
+	// Return if we don't have default or metadata stores.  Should really be caught
+	// at configuration loading, but here as well as double check.
+	if !gotDefault {
+		if len(backend.Stores) == 1 {
+			manager.defaultStore = lastStore
+			createdDefault = lastCreated
+		} else {
+			return false, fmt.Errorf("either backend.default or a single store must be set in configuration TOML file")
+		}
+	}
+	if !gotMetadata {
+		manager.metadataStore = manager.defaultStore
+		createdMetadata = createdDefault
+	}
+	dvid.Infof("Default store: %s\n", manager.defaultStore)
+	dvid.Infof("Metadata store: %s\n", manager.metadataStore)
+
+	// Make all data instance or datatype-specific store assignments.
+	manager.instanceStore = make(map[dvid.DataSpecifier]dvid.Store)
 	manager.datatypeStore = make(map[dvid.TypeString]dvid.Store)
-	for name, c := range backend {
-		if name == "default" || name == "metadata" {
+	for dataspec, alias := range backend.Mapping {
+		if dataspec == "default" || dataspec == "metadata" {
 			continue
 		}
-		var store dvid.Store
-		store, _, err = addUniqueDB(*c)
-		if err != nil {
-			err = fmt.Errorf("storage.%s: %v", name, err)
+		store, found := manager.stores[alias]
+		if !found {
+			err = fmt.Errorf("bad backend store alias: %q -> %q", dataspec, alias)
 			return
 		}
-
-		// Cache the store to datatype or data instance.
-		name = strings.Trim(name, "\"")
+		// Cache the store for mapped datatype or data instance.
+		name := strings.Trim(string(dataspec), "\"")
 		parts := strings.Split(name, ":")
 		switch len(parts) {
 		case 1:
 			manager.datatypeStore[dvid.TypeString(name)] = store
 		case 2:
-			manager.instanceStore[parts[0]+parts[1]] = store
+			dataid := dvid.GetDataSpecifier(dvid.InstanceName(parts[0]), dvid.UUID(parts[1]))
+			manager.instanceStore[dataid] = store
 		default:
-			err = fmt.Errorf("bad store name specification %q", name)
+			err = fmt.Errorf("bad backend data specification: %s", dataspec)
 			return
 		}
 	}
