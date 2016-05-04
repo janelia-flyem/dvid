@@ -1,6 +1,6 @@
 // +build bigtable
 
-// It doesn't use thombstones when deleting
+// It doesn't use tombstones when deleting
 package bigtable
 
 import (
@@ -77,49 +77,49 @@ func (e Engine) NewStore(config dvid.StoreConfig) (dvid.Store, bool, error) {
 func parseConfig(config dvid.StoreConfig) (*BigTable, error) {
     c := config.GetAll()
     
-    v, found := c["Project"]
+    v, found := c["project"]
     if !found {
-        return nil, fmt.Errorf("%q must be specified for BigTable configuration", "Project")
+        return nil, fmt.Errorf("%q must be specified for BigTable configuration", "project")
     }
     project, ok := v.(string)
     if !ok {
-        return nil, fmt.Errorf("%q setting must be a string (%v)", "Project", v)
+        return nil, fmt.Errorf("%q setting must be a string (%v)", "project", v)
     }
 
-    v, found = c["Zone"]
+    v, found = c["zone"]
     if !found {
-        return nil, fmt.Errorf("%q must be specified for BigTable configuration", "Zone")
+        return nil, fmt.Errorf("%q must be specified for BigTable configuration", "zone")
     }
     zone, ok := v.(string)
     if !ok {
-        return nil, fmt.Errorf("%q setting must be a string (%v)", "Zone", v)
+        return nil, fmt.Errorf("%q setting must be a string (%v)", "zone", v)
     }
 
-    v, found = c["Cluster"]
+    v, found = c["cluster"]
     if !found {
-        return nil, fmt.Errorf("%q must be specified for BigTable configuration", "Cluster")
+        return nil, fmt.Errorf("%q must be specified for BigTable configuration", "cluster")
     }
     cluster, ok := v.(string)
     if !ok {
-        return nil, fmt.Errorf("%q setting must be a string (%v)", "Cluster", v)
+        return nil, fmt.Errorf("%q setting must be a string (%v)", "cluster", v)
     }
 
-    v, found = c["Table"]
+    v, found = c["table"]
     if !found {
-        return nil, fmt.Errorf("%q must be specified for BigTable configuration", "Table")
+        return nil, fmt.Errorf("%q must be specified for BigTable configuration", "table")
     }
     table, ok := v.(string)
     if !ok {
-        return nil, fmt.Errorf("%q setting must be a string (%v)", "Table", v)
+        return nil, fmt.Errorf("%q setting must be a string (%v)", "table", v)
     }
 
-    v, found = c["Testing"]
+	var testing bool
+    v, found = c["testing"]
     if !found {
-        return nil, fmt.Errorf("%q must be specified for BigTable configuration", "Testing")
-    }
-    testing, ok := v.(bool)
-    if !ok {
-        return nil, fmt.Errorf("%q setting must be a bool (%v)", "Testing", v)
+		testing, ok = v.(bool)
+		if !ok {
+			return nil, fmt.Errorf("%q setting must be a bool (%v)", "testing", v)
+		}
     }
 
 	bt := &BigTable{
@@ -138,11 +138,11 @@ func parseConfig(config dvid.StoreConfig) (*BigTable, error) {
 /*
 func (e Engine) GetTestConfig() (*Backend, error) {
     tc := map[string]interface{} {
-        "Project": "project",
-        "Zone":    "zone",
-        "Cluster": "cluster",
-        "Table":   fmt.Sprintf("dvid-test-%x", uuid.NewV4().Bytes()),
-        "Testing": true,
+        "project": "project",
+        "zone":    "zone",
+        "cluster": "cluster",
+        "table":   fmt.Sprintf("dvid-test-%x", uuid.NewV4().Bytes()),
+        "testing": true,
     }
     var c dvid.Config 
     c.SetAll(tc) 

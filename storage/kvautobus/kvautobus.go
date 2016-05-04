@@ -55,23 +55,23 @@ func (e Engine) String() string {
 
 func parseConfig(config dvid.StoreConfig) (path string, timeout time.Duration, err error) {
 	c := config.GetAll()
-	v, found := c["Path"]
+	v, found := c["path"]
 	if !found {
-		err = fmt.Errorf("%q must be specified for kvautobus configuration", "Path")
+		err = fmt.Errorf("%q must be specified for kvautobus configuration", "path")
 		return
 	}
 	var ok bool
 	path, ok = v.(string)
 	if !ok {
-		err = fmt.Errorf("%q setting must be a string (%v)", "Path", v)
+		err = fmt.Errorf("%q setting must be a string (%v)", "path", v)
 	}
-	v, found = c["Timeout"]
+	v, found = c["timeout"]
 	if !found {
 		return
 	}
 	t, ok := v.(int)
 	if !ok {
-		err = fmt.Errorf("%q setting must be an int for # seconds (%v)", "Timeout", v)
+		err = fmt.Errorf("%q setting must be an int for # seconds (%v)", "timeout", v)
 	}
 	if t != 0 {
 		timeout = time.Duration(t) * time.Second

@@ -156,6 +156,7 @@ func Close() {
 // The map of store configurations should be keyed by either a datatype name,
 // "default", or "metadata".
 func Initialize(cmdline dvid.Config, backend *Backend) (createdMetadata bool, err error) {
+	dvid.Infof("backend:\n%v\n", *backend)
 	// Open all the backend stores
 	manager.stores = make(map[Alias]dvid.Store, len(backend.Stores))
 	var gotDefault, gotMetadata, createdDefault, lastCreated bool
@@ -169,7 +170,7 @@ func Initialize(cmdline dvid.Config, backend *Backend) (createdMetadata bool, er
 		}
 		store, created, err := NewStore(dbconfig)
 		if err != nil {
-			return false, err
+			return false, fmt.Errorf("bad store %q: %v", alias, err)
 		}
 		switch alias {
 		case backend.Metadata:

@@ -87,13 +87,13 @@ func (e Engine) NewStore(config dvid.StoreConfig) (dvid.Store, bool, error) {
 // parseConfig initializes GBucket from config
 func parseConfig(config dvid.StoreConfig) (*GBucket, error) {
 	c := config.GetAll()
-	v, found := c["Bucket"]
+	v, found := c["bucket"]
 	if !found {
-		return nil, fmt.Errorf("%q must be specified for gbucket configuration", "Bucket")
+		return nil, fmt.Errorf("%q must be specified for gbucket configuration", "bucket")
 	}
 	bucket, ok := v.(string)
 	if !ok {
-		return nil, fmt.Errorf("%q setting must be a string (%v)", "Bucket", v)
+		return nil, fmt.Errorf("%q setting must be a string (%v)", "bucket", v)
 	}
 	gb := &GBucket{
 		bname: bucket,

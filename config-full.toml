@@ -53,7 +53,8 @@ max_log_age = 30   # days
 # List the different storage systems available for metadata, data instances, etc.
 # Any nickname can be used for a backend.  In this case, it's "raid6" to reflect
 # that the directory is on a RAID-6 drive system, "ssd" for a directory mounted on
-# a SSD, and "kvautobus" for an internal Janelia HTTP dataservice.
+# a SSD, and "kvautobus" for an internal Janelia HTTP dataservice.  Note that all
+# store properties like "engine" and "path" should be lower-case by convention.
 [store]
     [store.raid6]
     engine = "basholeveldb"

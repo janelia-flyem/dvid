@@ -19,7 +19,8 @@ max_log_age = 30   # days
 
 # List the different storage systems available for metadata, data instances, etc.
 # Any nickname can be used for a store.  In this case, it's "raid6" to reflect
-# that the directory is on a RAID-6 drive system.
+# that the directory is on a RAID-6 drive system.  Note that all store properties
+# like "engine" and "path" should be lower-case by convention.
 [store]
     [store.raid6]
     engine = "basholeveldb"

@@ -25,13 +25,13 @@ import (
 )
 
 const (
-	// The default URL of the DVID web server
+	// DefaultWebAddress is the default URL of the DVID web server
 	DefaultWebAddress = "localhost:8000"
 
-	// The default RPC address for command-line use of a remote DVID server
+	// DefaultRPCAddress is the default RPC address for command-line use of a remote DVID server
 	DefaultRPCAddress = "localhost:8001"
 
-	// The name of the server error log, stored in the datastore directory.
+	// ErrorLogFilename is the name of the server error log, stored in the datastore directory.
 	ErrorLogFilename = "dvid-errors.log"
 )
 
@@ -41,8 +41,29 @@ type tomlConfig struct {
 	Server  serverConfig
 	Email   emailConfig
 	Logging dvid.LogConfig
-	Store   map[storage.Alias]dvid.StoreConfig
+	Store   map[storage.Alias]storeConfig
 	Backend map[dvid.DataSpecifier]backendConfig
+}
+
+func (c tomlConfig) Stores() (map[storage.Alias]dvid.StoreConfig, error) {
+	stores := make(map[storage.Alias]dvid.StoreConfig, len(c.Store))
+	for alias, sc := range c.Store {
+		e, ok := sc["engine"]
+		if !ok {
+			return nil, fmt.Errorf("store configurations must have %q set to valid driver", "engine")
+		}
+		engine, ok := e.(string)
+		if !ok {
+			return nil, fmt.Errorf("engine set for store %q must be a string", alias)
+		}
+		var config dvid.Config
+		config.SetAll(sc)
+		stores[alias] = dvid.StoreConfig{
+			Config: config,
+			Engine: engine,
+		}
+	}
+	return stores, nil
 }
 
 func (c *tomlConfig) HTTPAddress() string {
@@ -71,6 +92,8 @@ type serverConfig struct {
 	IIDStart uint32 `toml:"instance_id_start"`
 }
 
+type storeConfig map[string]interface{}
+
 type backendConfig struct {
 	Store storage.Alias
 }
@@ -96,13 +119,17 @@ func LoadConfig(filename string) (*datastore.InstanceConfig, *dvid.LogConfig, *s
 		return nil, nil, nil, fmt.Errorf("Could not decode TOML config: %v\n", err)
 	}
 
-	// Remember all defined stores.
+	// Get all defined stores.
 	backend := new(storage.Backend)
-	backend.Stores = tc.Store
+	var err error
+	backend.Stores, err = tc.Stores()
+	if err != nil {
+		return nil, nil, nil, err
+	}
 
 	// Get default store if there's only one store defined.
-	if len(tc.Store) == 1 {
-		for k := range tc.Store {
+	if len(backend.Stores) == 1 {
+		for k := range backend.Stores {
 			backend.Default = k
 		}
 	}
