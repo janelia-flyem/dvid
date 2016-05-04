@@ -14,6 +14,7 @@ import (
 	"net/smtp"
 	"os"
 	"runtime"
+	"strings"
 	"text/template"
 
 	"github.com/janelia-flyem/dvid/datastore"
@@ -130,7 +131,7 @@ func LoadConfig(filename string) (*datastore.InstanceConfig, *dvid.LogConfig, *s
 	// Get default store if there's only one store defined.
 	if len(backend.Stores) == 1 {
 		for k := range backend.Stores {
-			backend.Default = k
+			backend.Default = storage.Alias(strings.Trim(string(k), "\""))
 		}
 	}
 
@@ -142,7 +143,8 @@ func LoadConfig(filename string) (*datastore.InstanceConfig, *dvid.LogConfig, *s
 		if !found {
 			return nil, nil, nil, fmt.Errorf("Backend for %q specifies unknown store %q", k, v.Store)
 		}
-		backend.Mapping[k] = v.Store
+		spec := dvid.DataSpecifier(strings.Trim(string(k), "\""))
+		backend.Mapping[spec] = v.Store
 	}
 	defaultAlias, found := backend.Mapping["default"]
 	if found {
@@ -157,7 +159,7 @@ func LoadConfig(filename string) (*datastore.InstanceConfig, *dvid.LogConfig, *s
 		backend.Metadata = defaultMetadataName
 	} else {
 		if backend.Default == "" {
-			return nil, nil, nil, fmt.Errorf("if no default backend specified, must have exactly one store defined in config file")
+			return nil, nil, nil, fmt.Errorf("can't set metadata if no default backend specified, must have exactly one store defined in config file")
 		}
 		backend.Metadata = backend.Default
 	}

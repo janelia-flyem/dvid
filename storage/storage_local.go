@@ -172,12 +172,12 @@ func Initialize(cmdline dvid.Config, backend *Backend) (createdMetadata bool, er
 		if err != nil {
 			return false, fmt.Errorf("bad store %q: %v", alias, err)
 		}
-		switch alias {
-		case backend.Metadata:
+		if alias == backend.Metadata {
 			gotMetadata = true
 			createdMetadata = created
 			manager.metadataStore = store
-		case backend.Default:
+		}
+		if alias == backend.Default {
 			gotDefault = true
 			createdDefault = created
 			manager.defaultStore = store
