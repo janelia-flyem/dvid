@@ -26,12 +26,7 @@ func init() {
 }
 
 // Context allows encapsulation of data that defines the partitioning of the DVID
-// key space.  To prevent conflicting implementations, Context is an opaque interface type
-// that requires use of an implementation from the storage package, either directly or
-// through embedding.
-//
-// For a description of Go language opaque types, see the following:
-//   http://www.onebigfluke.com/2014/04/gos-power-is-in-emergent-behavior.html
+// key space.
 type Context interface {
 	// VersionID returns the local version ID of the DAG node being operated on.
 	// If not versioned, the version is the root ID.
@@ -55,9 +50,6 @@ type Context interface {
 
 	// SplitKey returns key components useful to store all versiones in a familyColumn if the storage engine supports it
 	SplitKey(tk TKey) (Key, []byte, error)
-
-	// Enforces opaque data type.
-	implementsOpaque()
 }
 
 // VersionedCtx extends a Context with the minimal functions necessary to handle

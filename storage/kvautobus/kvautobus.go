@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"reflect"
 	"strings"
 	"time"
 
@@ -53,8 +54,9 @@ func (e Engine) String() string {
 	return fmt.Sprintf("%s [%s]", e.name, e.semver)
 }
 
-func parseConfig(config dvid.StoreConfig) (path string, timeout time.Duration, err error) {
+func parseConfig(config dvid.StoreConfig) (path string, timeout time.Duration, owner string, collection dvid.UUID, err error) {
 	c := config.GetAll()
+
 	v, found := c["path"]
 	if !found {
 		err = fmt.Errorf("%q must be specified for kvautobus configuration", "path")
@@ -64,17 +66,42 @@ func parseConfig(config dvid.StoreConfig) (path string, timeout time.Duration, e
 	path, ok = v.(string)
 	if !ok {
 		err = fmt.Errorf("%q setting must be a string (%v)", "path", v)
-	}
-	v, found = c["timeout"]
-	if !found {
 		return
 	}
-	t, ok := v.(int)
-	if !ok {
-		err = fmt.Errorf("%q setting must be an int for # seconds (%v)", "timeout", v)
+
+	v, found = c["timeout"]
+	if found {
+		t, ok := v.(int64)
+		if !ok {
+			err = fmt.Errorf("%q setting must be an int64 for # seconds, not %s (%v)", "timeout", reflect.TypeOf(v), v)
+			return
+		}
+		if t != 0 {
+			timeout = time.Duration(t) * time.Second
+		}
 	}
-	if t != 0 {
-		timeout = time.Duration(t) * time.Second
+
+	v, found = c["collection"]
+	if !found {
+		err = fmt.Errorf("kvautobus store must have collection specification for billing.")
+		return
+	}
+	cstr, ok := v.(string)
+	if !ok {
+		err = fmt.Errorf("%q setting must be a string, not %s (%v)", "collection", reflect.TypeOf(v), v)
+		return
+	}
+	collection = dvid.UUID(cstr)
+
+	v, found = c["owner"]
+	if !found {
+		err = fmt.Errorf("kvautobus store must have owner specification for billing.")
+		return
+	}
+	owner, ok = v.(string)
+	if !ok {
+		err = fmt.Errorf("%q setting must be a string, not %s (%v)", "owner", reflect.TypeOf(v), v)
+		return
 	}
 	return
 }
@@ -82,14 +109,19 @@ func parseConfig(config dvid.StoreConfig) (path string, timeout time.Duration, e
 // NewStore returns KVAutobus store.  The passed StoreConfig must have a valid Path to the
 // KVAutobus server.
 func (e Engine) NewStore(config dvid.StoreConfig) (dvid.Store, bool, error) {
-	path, timeout, err := parseConfig(config)
+	path, timeout, owner, collection, err := parseConfig(config)
 	if err != nil {
 		return nil, false, err
 	}
 	kv := &KVAutobus{
-		host:   path,
-		config: config,
-		client: http.Client{Timeout: timeout},
+		host:       path,
+		config:     config,
+		client:     http.Client{Timeout: timeout},
+		owner:      owner,
+		collection: collection,
+	}
+	if err := kv.sendOwnership(); err != nil {
+		return nil, false, err
 	}
 	return kv, false, nil
 }
@@ -110,6 +142,27 @@ type KVAutobus struct {
 
 	// http client for KVAutobus service
 	client http.Client
+
+	// owner id for billing
+	owner string
+
+	// collection id for this store
+	collection dvid.UUID
+}
+
+// notify KVAutobus what the current billing ids are for the registered datasets.
+func (db *KVAutobus) sendOwnership() error {
+	payload := fmt.Sprintf("{%s: %s}", db.owner, db.collection)
+
+	url := fmt.Sprintf("%s/kvautobus/api/billing", db.host)
+	resp, err := db.client.Post(url, "application/json", strings.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("Bad status code returned (%d) from POST to billing map: %s", resp.StatusCode, url)
+	}
+	return nil
 }
 
 func (db *KVAutobus) String() string {
@@ -121,11 +174,11 @@ func (db *KVAutobus) Close() {
 }
 
 func (db *KVAutobus) Equal(c dvid.StoreConfig) bool {
-	path, _, err := parseConfig(c)
+	path, _, _, collection, err := parseConfig(c)
 	if err != nil {
 		return false
 	}
-	if db.host == path {
+	if db.host == path && db.collection == collection {
 		return true
 	}
 	return false
@@ -133,7 +186,7 @@ func (db *KVAutobus) Equal(c dvid.StoreConfig) bool {
 
 func (db *KVAutobus) RawGet(key storage.Key) ([]byte, error) {
 	b64key := encodeKey(key)
-	url := fmt.Sprintf("%s/kvautobus/api/value/%s/", db.host, b64key)
+	url := fmt.Sprintf("%s/kvautobus/api/value/%s/%s/", db.host, db.collection, b64key)
 
 	timedLog := dvid.NewTimeLog()
 	resp, err := db.client.Get(url)
@@ -159,7 +212,7 @@ func (db *KVAutobus) RawGet(key storage.Key) ([]byte, error) {
 func (db *KVAutobus) getKeyRange(kStart, kEnd storage.Key) (Ks, error) {
 	b64key1 := encodeKey(kStart)
 	b64key2 := encodeKey(kEnd)
-	url := fmt.Sprintf("%s/kvautobus/api/key_range/%s/%s/", db.host, b64key1, b64key2)
+	url := fmt.Sprintf("%s/kvautobus/api/key_range/%s/%s/%s/", db.host, db.collection, b64key1, b64key2)
 
 	timedLog := dvid.NewTimeLog()
 	resp, err := db.client.Get(url)
@@ -198,7 +251,7 @@ func (db *KVAutobus) getKVRange(ctx storage.Context, kStart, kEnd storage.Key) (
 	// Construct the KVAutobus URL
 	b64key1 := encodeKey(kStart)
 	b64key2 := encodeKey(kEnd)
-	url := fmt.Sprintf("%s/kvautobus/api/keyvalue_range/%s/%s/?=%s", db.host, b64key1, b64key2, reqID)
+	url := fmt.Sprintf("%s/kvautobus/api/keyvalue_range/%s/%s/%s/?=%s", db.host, db.collection, b64key1, b64key2, reqID)
 
 	timedLog := dvid.NewTimeLog()
 	resp, err := db.client.Get(url)
@@ -260,7 +313,7 @@ func (db *KVAutobus) putRange(kvs []storage.KeyValue) error {
 	}()
 
 	// Send the data
-	url := fmt.Sprintf("%s/kvautobus/api/keyvalue_range/", db.host)
+	url := fmt.Sprintf("%s/kvautobus/api/keyvalue_range/%s", db.host, db.collection)
 	resp, err := db.client.Post(url, "application/x-msgpack", pr)
 	if err != nil {
 		return err
@@ -278,7 +331,7 @@ func (db *KVAutobus) putRange(kvs []storage.KeyValue) error {
 func (db *KVAutobus) deleteRange(kStart, kEnd storage.Key) error {
 	b64key1 := encodeKey(kStart)
 	b64key2 := encodeKey(kEnd)
-	url := fmt.Sprintf("%s/kvautobus/api/keyvalue_range/%s/%s/", db.host, b64key1, b64key2)
+	url := fmt.Sprintf("%s/kvautobus/api/keyvalue_range/%s/%s/%s/", db.host, db.collection, b64key1, b64key2)
 
 	timedLog := dvid.NewTimeLog()
 	req, err := http.NewRequest("DELETE", url, nil)
@@ -322,7 +375,7 @@ func (db *KVAutobus) RawRangeQuery(kStart, kEnd storage.Key, keysOnly bool, out 
 
 func (db *KVAutobus) RawPut(key storage.Key, value []byte) error {
 	b64key := encodeKey(key)
-	url := fmt.Sprintf("%s/kvautobus/api/value/%s/", db.host, b64key)
+	url := fmt.Sprintf("%s/kvautobus/api/value/%s/%s/", db.host, db.collection, b64key)
 	bin := Binary(value)
 
 	storage.StoreKeyBytesWritten <- len(key)

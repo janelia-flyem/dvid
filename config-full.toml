@@ -39,6 +39,7 @@ max_log_age = 30   # days
 #
 # If no backend is specified, DVID will return an error unless there is only
 # one store, which will automatically be backend.default.
+
 [backend]
     [backend.default]
     store = "raid6"
@@ -55,6 +56,7 @@ max_log_age = 30   # days
 # that the directory is on a RAID-6 drive system, "ssd" for a directory mounted on
 # a SSD, and "kvautobus" for an internal Janelia HTTP dataservice.  Note that all
 # store properties like "engine" and "path" should be lower-case by convention.
+
 [store]
     [store.raid6]
     engine = "basholeveldb"
@@ -67,5 +69,13 @@ max_log_age = 30   # days
     [store.kvautobus]
     engine = "kvautobus"
     path = "http://tem-dvid.int.janelia.org:9000"
+    collection = "99ef22cd85f143f58a623bd22aad0ef7"
+    owner = "flyEM"
     timeout = 30   # allow max 30 seconds per request to above HTTP service
                    # use 0 for no timeout.
+
+    [store.kvautobus2]
+    engine = "kvautobus"
+    path = "http://tem-dvid.int.janelia.org:9000"
+    collection = "389a22cd85f143f511923bd22aac776b"
+    owner = "otherTeam"
