@@ -152,7 +152,8 @@ type KVAutobus struct {
 
 // notify KVAutobus what the current billing ids are for the registered datasets.
 func (db *KVAutobus) sendOwnership() error {
-	payload := fmt.Sprintf("{%s: %s}", db.owner, db.collection)
+	payload := fmt.Sprintf("{%q: %q}", db.owner, db.collection)
+    dvid.Infof("Sending billing info to %s:\n%s\n", db, payload)
 
 	url := fmt.Sprintf("%s/kvautobus/api/billing", db.host)
 	resp, err := db.client.Post(url, "application/json", strings.NewReader(payload))
