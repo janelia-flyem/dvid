@@ -120,10 +120,14 @@ func (e Engine) NewStore(config dvid.StoreConfig) (dvid.Store, bool, error) {
 		owner:      owner,
 		collection: collection,
 	}
-	if err := kv.sendOwnership(); err != nil {
+	exists, err := kv.metadataExists()
+	if err != nil {
 		return nil, false, err
 	}
-	return kv, false, nil
+	if err := kv.sendOwnership(); err != nil {
+		return nil, !exists, err
+	}
+	return kv, !exists, nil
 }
 
 func encodeKey(k []byte) string {
@@ -150,10 +154,40 @@ type KVAutobus struct {
 	collection dvid.UUID
 }
 
+// check if any metadata has been written into this store.
+func (db *KVAutobus) metadataExists() (bool, error) {
+	var ctx storage.MetadataContext
+	kStart, kEnd := ctx.KeyRange()
+	b64key1 := encodeKey(kStart)
+	b64key2 := encodeKey(kEnd)
+	url := fmt.Sprintf("%s/kvautobus/api/key_range/%s/%s/%s/", db.host, db.collection, b64key1, b64key2)
+
+	timedLog := dvid.NewTimeLog()
+	resp, err := db.client.Get(url)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return true, nil // Handle no keys found.
+	}
+
+	r := msgp.NewReader(bufio.NewReader(resp.Body))
+	var mks Ks
+	if err := mks.DecodeMsg(r); err != nil {
+		return false, err
+	}
+	timedLog.Infof("PROXY key_range metadata to %s returned %d (%d keys)\n", db.host, resp.StatusCode, len(mks))
+	if len(mks) == 0 {
+		return true, nil
+	}
+	return false, nil
+}
+
 // notify KVAutobus what the current billing ids are for the registered datasets.
 func (db *KVAutobus) sendOwnership() error {
 	payload := fmt.Sprintf("{%q: %q}", db.owner, db.collection)
-    dvid.Infof("Sending billing info to %s:\n%s\n", db, payload)
+	dvid.Infof("Sending billing info to %s:\n%s\n", db, payload)
 
 	url := fmt.Sprintf("%s/kvautobus/api/billing", db.host)
 	resp, err := db.client.Post(url, "application/json", strings.NewReader(payload))
