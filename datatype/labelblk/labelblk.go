@@ -892,7 +892,7 @@ func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, su
 	}
 
 	// if only one block is requested, avoid the range query
-	if blocksize.Value(0) == int32(1) && blocksize.Value(2) == int32(1) && blocksize.Value(3) == int32(1) {
+	if blocksize.Value(0) == int32(1) && blocksize.Value(1) == int32(1) && blocksize.Value(2) == int32(1) {
 		indexBeg := dvid.IndexZYX(dvid.ChunkPoint3d{blockoffset.Value(0), blockoffset.Value(1), blockoffset.Value(2)})
 		keyBeg := NewTKey(&indexBeg)
 
