@@ -179,9 +179,9 @@ func (db *KVAutobus) metadataExists() (bool, error) {
 	}
 	timedLog.Infof("PROXY key_range metadata to %s returned %d (%d keys)\n", db.host, resp.StatusCode, len(mks))
 	if len(mks) == 0 {
-		return true, nil
+		return false, nil
 	}
-	return false, nil
+	return true, nil
 }
 
 // notify KVAutobus what the current billing ids are for the registered datasets.

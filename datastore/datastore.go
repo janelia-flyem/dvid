@@ -89,6 +89,9 @@ func NewRepo(alias, description string, assign *dvid.UUID, passcode string) (dvi
 		return dvid.NilUUID, ErrManagerNotInitialized
 	}
 	r, err := manager.newRepo(alias, description, assign, passcode)
+	if err != nil {
+		return dvid.NilUUID, err
+	}
 	return r.uuid, err
 }
 
