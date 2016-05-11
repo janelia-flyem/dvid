@@ -22,7 +22,7 @@ import (
 )
 
 func init() {
-	ver, err := semver.Make("0.1.0")
+	ver, err := semver.Make("0.2.0")
 	if err != nil {
 		dvid.Errorf("Unable to make semver in kvautobus: %v\n", err)
 	}
@@ -186,7 +186,7 @@ func (db *KVAutobus) metadataExists() (bool, error) {
 
 // notify KVAutobus what the current billing ids are for the registered datasets.
 func (db *KVAutobus) sendOwnership() error {
-	payload := fmt.Sprintf("{%q: %q}", db.owner, db.collection)
+	payload := fmt.Sprintf("{%q: %q}", db.collection, db.owner)
 	dvid.Infof("Sending billing info to %s:\n%s\n", db, payload)
 
 	url := fmt.Sprintf("%s/kvautobus/api/billing", db.host)
