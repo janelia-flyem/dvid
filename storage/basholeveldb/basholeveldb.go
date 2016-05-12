@@ -194,8 +194,20 @@ func (e Engine) newLevelDB(config dvid.StoreConfig) (*LevelDB, bool, error) {
 		return nil, false, err
 	}
 	leveldb.ldb = ldb
+	
+	// if we know it's newly created, just return.
+	if created {
+		return leveldb, created, nil
+	}
+	
+	// otherwise, check if there's been any metadata or we need to initialize it.
+	metadataExists, err := leveldb.metadataExists()
+	if err != nil {
+		leveldb.Close()
+		return nil, false, err
+	}
 
-	return leveldb, created, nil
+	return leveldb, !metadataExists, nil
 }
 
 // ---- TestableEngine interface implementation -------
@@ -387,6 +399,35 @@ func (db *LevelDB) Equal(config dvid.StoreConfig) bool {
 		return true
 	}
 	return false
+}
+
+func (db *LevelDB) metadataExists() (bool, error) {
+	var ctx storage.MetadataContext
+	keyBeg, keyEnd := ctx.KeyRange()
+	dvid.StartCgo()
+	ro := levigo.NewReadOptions()
+	it := db.ldb.NewIterator(ro)
+	defer func() {
+		it.Close()
+		dvid.StopCgo()
+	}()
+
+	it.Seek(keyBeg)
+	for {
+		if it.Valid() {
+			// Did we pass the final key?
+			if bytes.Compare(it.Key(), keyEnd) > 0 {
+				break
+			}
+			return true, nil
+		} 
+		break
+	}
+	if err := it.GetError(); err != nil {
+		return false, err
+	}
+	dvid.Infof("No metadata found for %s...\n", db)
+	return false, nil
 }
 
 // ---- OrderedKeyValueGetter interface ------

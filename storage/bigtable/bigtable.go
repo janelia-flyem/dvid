@@ -255,7 +255,19 @@ func (e *Engine) newBigTable(config dvid.StoreConfig) (*BigTable, bool, error) {
 
 	tbl = client.Open(bt.table)
 
-	return bt, created, nil
+	// if we know it's newly created, just return.
+	if created {
+		return bt, created, nil
+	}
+
+	// otherwise, check if there's been any metadata or we need to initialize it.
+	metadataExists, err := bt.metadataExists()
+	if err != nil {
+		bt.Close()
+		return nil, false, err
+	}
+
+	return bt, !metadataExists, nil
 }
 
 func (e Engine) Delete(config dvid.StoreConfig) error {
@@ -292,6 +304,24 @@ type BigTable struct {
 
 func (db *BigTable) String() string {
 	return fmt.Sprintf("google bigtable, project %s, table %s", db.project, db.table)
+}
+
+func (db *BigTable) metadataExists() (bool, error) {
+	if db == nil {
+		return false, fmt.Errorf("Can't call metadataExists() on nil BigTable")
+	}
+
+	var ctx storage.MetadataContext
+	unvKeyBeg, unvKeyEnd := ctx.KeyRange()
+
+	rr := api.NewRange(encodeKey(unvKeyBeg), encodeKey(unvKeyEnd))
+
+	var found bool
+	err := tbl.ReadRows(db.ctx, rr, func(r api.Row) bool {
+		found = true
+		return false
+	})
+	return found, err
 }
 
 // Get returns a value given a key.

@@ -200,7 +200,8 @@ type Engine interface {
 	GetSemVer() semver.Version
 
 	// NewStore returns a new storage engine given the passed configuration.
-	NewStore(dvid.StoreConfig) (db dvid.Store, created bool, err error)
+	// Should return true for initMetadata if the store needs initialization of metadata.
+	NewStore(dvid.StoreConfig) (db dvid.Store, initMetadata bool, err error)
 }
 
 // RepairableEngine is a storage engine that can be repaired.

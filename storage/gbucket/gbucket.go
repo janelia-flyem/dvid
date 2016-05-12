@@ -134,7 +134,19 @@ func (e *Engine) newGBucket(config dvid.StoreConfig) (*GBucket, bool, error) {
 		}
 	}
 
-	return gb, created, nil
+	// if we know it's newly created, just return.
+	if created {
+		return gb, created, nil
+	}
+
+	// otherwise, check if there's been any metadata or we need to initialize it.
+	metadataExists, err := gb.metadataExists()
+	if err != nil {
+		gb.Close()
+		return nil, false, err
+	}
+
+	return gb, !metadataExists, nil
 }
 
 // cannot Delete bucket from API
@@ -151,6 +163,19 @@ type GBucket struct {
 
 func (db *GBucket) String() string {
 	return fmt.Sprintf("google cloud storage, bucket %s", db.bname)
+}
+
+func (db *GBucket) metadataExists() (bool, error) {
+	if db == nil {
+		return false, fmt.Errorf("Can't call metadataExists() on nil Google bucket")
+	}
+	var ctx storage.MetadataContext
+	keyBeg, keyEnd := ctx.KeyRange()
+	keys, err := db.getKeysInRangeRaw(keyBeg, keyEnd)
+	if err != nil {
+		return false, err
+	}
+	return len(keys) > 0, nil
 }
 
 // ---- OrderedKeyValueGetter interface ------
