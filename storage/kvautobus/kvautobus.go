@@ -161,6 +161,7 @@ func (db *KVAutobus) metadataExists() (bool, error) {
 	b64key1 := encodeKey(kStart)
 	b64key2 := encodeKey(kEnd)
 	url := fmt.Sprintf("%s/kvautobus/api/key_range/%s/%s/%s/", db.host, db.collection, b64key1, b64key2)
+	dvid.Infof("metdataExists: doing GET on %s\n", url)
 
 	timedLog := dvid.NewTimeLog()
 	resp, err := db.client.Get(url)
@@ -335,7 +336,11 @@ func (db *KVAutobus) putRange(kvs []storage.KeyValue) error {
 	for i, kv := range kvs {
 		storage.StoreKeyBytesWritten <- len(kv.K)
 		storage.StoreValueBytesWritten <- len(kv.V)
-		mkvs[i] = KV{Binary(kv.K), Binary(kv.V)}
+		if kv.V == nil {
+			mkvs[i] = KV{Binary(kv.K), Binary{}}
+		} else {
+			mkvs[i] = KV{Binary(kv.K), Binary(kv.V)}
+		}
 	}
 
 	// Create pipe from encoding to posting
@@ -349,6 +354,7 @@ func (db *KVAutobus) putRange(kvs []storage.KeyValue) error {
 
 	// Send the data
 	url := fmt.Sprintf("%s/kvautobus/api/keyvalue_range/%s", db.host, db.collection)
+
 	resp, err := db.client.Post(url, "application/x-msgpack", pr)
 	if err != nil {
 		return err
@@ -411,7 +417,12 @@ func (db *KVAutobus) RawRangeQuery(kStart, kEnd storage.Key, keysOnly bool, out 
 func (db *KVAutobus) RawPut(key storage.Key, value []byte) error {
 	b64key := encodeKey(key)
 	url := fmt.Sprintf("%s/kvautobus/api/value/%s/%s/", db.host, db.collection, b64key)
-	bin := Binary(value)
+	var bin Binary
+	if value == nil {
+		bin = Binary{}
+	} else {
+		bin = Binary(value)
+	}
 
 	storage.StoreKeyBytesWritten <- len(key)
 	storage.StoreValueBytesWritten <- len(value)
