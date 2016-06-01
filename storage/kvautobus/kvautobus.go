@@ -190,8 +190,8 @@ func (db *KVAutobus) sendOwnership() error {
 	payload := fmt.Sprintf("{%q: %q}", db.collection, db.owner)
 	dvid.Infof("Sending billing info to %s:\n%s\n", db, payload)
 
-	url := fmt.Sprintf("%s/kvautobus/api/billing", db.host)
-	resp, err := db.client.Post(url, "application/json/", strings.NewReader(payload))
+	url := fmt.Sprintf("%s/kvautobus/api/billing/", db.host)
+	resp, err := db.client.Post(url, "application/json", strings.NewReader(payload))
 	if err != nil {
 		return err
 	}
