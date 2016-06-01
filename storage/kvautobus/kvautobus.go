@@ -191,7 +191,7 @@ func (db *KVAutobus) sendOwnership() error {
 	dvid.Infof("Sending billing info to %s:\n%s\n", db, payload)
 
 	url := fmt.Sprintf("%s/kvautobus/api/billing", db.host)
-	resp, err := db.client.Post(url, "application/json", strings.NewReader(payload))
+	resp, err := db.client.Post(url, "application/json/", strings.NewReader(payload))
 	if err != nil {
 		return err
 	}
@@ -354,7 +354,7 @@ func (db *KVAutobus) putRange(kvs []storage.KeyValue) error {
 	defer pw.Close()
 
 	// Send the data
-	url := fmt.Sprintf("%s/kvautobus/api/keyvalue_range/%s", db.host, db.collection)
+	url := fmt.Sprintf("%s/kvautobus/api/keyvalue_range/%s/", db.host, db.collection)
 
 	resp, err := db.client.Post(url, "application/x-msgpack", pr)
 	if err != nil {
