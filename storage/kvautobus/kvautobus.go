@@ -349,9 +349,8 @@ func (db *KVAutobus) putRange(kvs []storage.KeyValue) error {
 	go func() {
 		mkvs.EncodeMsg(w)
 		w.Flush()
+		pw.Close()
 	}()
-	defer pr.Close()
-	defer pw.Close()
 
 	// Send the data
 	url := fmt.Sprintf("%s/kvautobus/api/keyvalue_range/%s/", db.host, db.collection)
@@ -434,9 +433,8 @@ func (db *KVAutobus) RawPut(key storage.Key, value []byte) error {
 	go func() {
 		bin.EncodeMsg(w)
 		w.Flush()
+		pw.Close()
 	}()
-	defer pr.Close()
-	defer pw.Close()
 
 	resp, err := db.client.Post(url, "application/x-msgpack", pr)
 	if err != nil {
