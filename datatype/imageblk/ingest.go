@@ -43,14 +43,19 @@ func (d *Data) LoadImages(v dvid.VersionID, offset dvid.Point, filenames []strin
 
 	// Use different loading techniques if we have a potentially multidimensional HDF5 file
 	// or many 2d images.
+	var err error
 	if dvid.Filename(filenames[0]).HasExtensionPrefix("hdf", "h5") {
-		d.loadHDF(load)
+		err = d.loadHDF(load)
 	} else {
-		d.loadXYImages(load)
+		err = d.loadXYImages(load)
 	}
 
-	timedLog.Infof("RPC load of %d files completed", len(filenames))
-	return nil
+	if err != nil {
+		timedLog.Infof("RPC load of %d files had error: %v\n", err)
+	} else {
+		timedLog.Infof("RPC load of %d files completed.\n", len(filenames))
+	}
+	return err
 }
 
 // Optimized bulk loading of XY images by loading all slices for a block before processing.
@@ -71,6 +76,7 @@ func (d *Data) loadXYImages(load *bulkLoadInfo) error {
 
 	// Iterate through XY slices batched into the Z length of blocks.
 	fileNum := 1
+	errs := make(chan error, 10) // keep track of async errors.
 	for _, filename := range load.filenames {
 		server.BlockOnInteractiveRequests("imageblk.loadXYImages")
 
@@ -127,7 +133,11 @@ func (d *Data) loadXYImages(load *bulkLoadInfo) error {
 			// Process an XY image (slice).
 			changed, err := d.writeXYImage(load.versionID, vox, blocks[curBlocks])
 			if err != nil {
-				dvid.Infof("Error writing XY image: %v\n", err)
+				err = fmt.Errorf("Error writing XY image: %v\n", err)
+				if len(errs) < 10 {
+					errs <- err
+				}
+				return
 			}
 			if changed {
 				load.extentChanged.SetTrue()
@@ -146,7 +156,10 @@ func (d *Data) loadXYImages(load *bulkLoadInfo) error {
 					curBlocks, d.Compression(), d.Checksum())
 				err := d.writeBlocks(load.versionID, blocks[curBlocks], &layerWritten[curBlocks], &waitForWrites)
 				if err != nil {
-					dvid.Errorf("Error in async write of voxel blocks: %v", err)
+					err = fmt.Errorf("Error in async write of voxel blocks: %v", err)
+					if len(errs) < 10 {
+						errs <- err
+					}
 				}
 			}(curBlocks)
 			// We can't move to buffer X until all blocks from buffer X have already been written.
@@ -162,7 +175,17 @@ func (d *Data) loadXYImages(load *bulkLoadInfo) error {
 		timedLog.Infof("Loaded %s slice %s", d.DataName(), vox)
 	}
 	waitForWrites.Wait()
-	return nil
+	var firsterr error
+	if len(errs) > 0 {
+		dvid.Errorf("Had at least %d errors in image loading:\n", len(errs))
+		for err := range errs {
+			dvid.Errorf("  Error: %v\n", err)
+			if firsterr == nil {
+				firsterr = err
+			}
+		}
+	}
+	return firsterr
 }
 
 // Loads a XY oriented image at given offset, returning Voxels.
