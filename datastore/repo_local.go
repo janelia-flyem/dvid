@@ -1444,11 +1444,12 @@ func (m *repoManager) newData(uuid dvid.UUID, t TypeService, name dvid.InstanceN
 }
 
 // Replaces any previous syncs with given ones.  Can also be used to delete syncs by passing nil syncs.
-func (m *repoManager) setSync(uuid dvid.UUID, name dvid.InstanceName, syncs []string) error {
+func (m *repoManager) setSync(uuid dvid.UUID, name dvid.InstanceName, syncs []dvid.InstanceName) error {
 	r, err := m.repoFromUUID(uuid)
 	if err != nil {
 		return err
 	}
+	dvid.Infof("Setting sync for instance %q with %v\n", name, syncs)
 
 	dataservice, found := r.data[name]
 	if !found {
@@ -1462,7 +1463,7 @@ func (m *repoManager) setSync(uuid dvid.UUID, name dvid.InstanceName, syncs []st
 	receiver, syncable := dataservice.(Syncer)
 	if syncable {
 		for _, syncName := range syncs {
-			syncedData, found := r.data[dvid.InstanceName(syncName)]
+			syncedData, found := r.data[syncName]
 			if !found {
 				return fmt.Errorf("Unable to find synced data instance %q", syncName)
 			}

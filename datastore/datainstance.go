@@ -279,17 +279,36 @@ func (d *Data) SetSync(uuid dvid.UUID, in io.ReadCloser) error {
 	if len(syncedNames) == 0 {
 		return nil
 	}
+	uniqsyncs := make(map[dvid.InstanceName]struct{}, len(d.syncs)+len(syncedNames))
 	for _, name := range syncedNames {
-		d.syncs = append(d.syncs, dvid.InstanceName(name))
+		uniqsyncs[dvid.InstanceName(name)] = struct{}{}
 	}
-	if err := SyncData(uuid, dvid.InstanceName(d.DataName()), syncedNames...); err != nil {
+	d.syncs = []dvid.InstanceName{}
+	for name := range uniqsyncs {
+		d.syncs = append(d.syncs, name)
+	}
+	if err := SyncData(uuid, dvid.InstanceName(d.DataName()), d.syncs...); err != nil {
 		return err
 	}
 	return nil
 }
 
+// SyncedNames returns a de-dupped list of synced names.
 func (d *Data) SyncedNames() []dvid.InstanceName {
-	return d.syncs
+	if len(d.syncs) <= 1 {
+		return d.syncs
+	}
+	uniqsyncs := make(map[dvid.InstanceName]struct{}, len(d.syncs))
+	for _, name := range d.syncs {
+		uniqsyncs[name] = struct{}{}
+	}
+	syncs := make([]dvid.InstanceName, len(uniqsyncs))
+	i := 0
+	for name := range uniqsyncs {
+		syncs[i] = name
+		i++
+	}
+	return syncs
 }
 
 // ---------------------------------------
