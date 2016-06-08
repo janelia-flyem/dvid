@@ -183,7 +183,7 @@ func init() {
 }
 
 const (
-	UnknownLmeta LabelmetaType = iota
+	UnknownLmeta LabelmetaStatus = iota
 	NotExamined                 // labelmeta has status NotExamined
         PartiallyTraced             // labelmeta has status PartiallyTraced
         HardToTrace                 // labelmeta has status Hard to Trace
@@ -192,10 +192,10 @@ const (
 	Finalized                   // labelmeta has status Finalized
 )
 
-// LabelmetaType gives the type of a labelmeta.
-type LabelmetaType uint8
+// LabelmetaStatus gives the type of a labelmeta.
+type LabelmetaStatus uint8
 
-func (e LabelmetaType) MarshalJSON() ([]byte, error) {
+func (e LabelmetaStatus) MarshalJSON() ([]byte, error) {
 	switch e {
 	case UnknownLmeta:
 		return []byte(`"Unknown"`), nil
@@ -216,7 +216,7 @@ func (e LabelmetaType) MarshalJSON() ([]byte, error) {
 	}
 }
 
-func (e *LabelmetaType) UnmarshalJSON(b []byte) error {
+func (e *LabelmetaStatus) UnmarshalJSON(b []byte) error {
 	switch string(b) {
 	case `"Unknown"`:
 		*e = UnknownLmeta
@@ -244,7 +244,7 @@ type Tag string
 // Labelmeta describes a labelmeta's properties.
 type Labelmeta struct {
 	Pos   dvid.Point3d
-	Status  LabelmetaType
+	Status  LabelmetaStatus
 	Label uint64            // Indexed
 	Tags  Tags              // Indexed
 	Prop  map[string]string // Non-Indexed
