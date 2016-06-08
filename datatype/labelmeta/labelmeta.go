@@ -183,7 +183,7 @@ func init() {
 }
 
 const (
-	UnknownLmeta LabelmetaStatus = iota
+	UnknownStatus LabelmetaStatus = iota
 	NotExamined                 // labelmeta has status NotExamined
         PartiallyTraced             // labelmeta has status PartiallyTraced
         HardToTrace                 // labelmeta has status Hard to Trace
@@ -197,7 +197,7 @@ type LabelmetaStatus uint8
 
 func (e LabelmetaStatus) MarshalJSON() ([]byte, error) {
 	switch e {
-	case UnknownLmeta:
+	case UnknownStatus:
 		return []byte(`"Unknown"`), nil
         case NotExamined:
                 return []byte(`"NotExamined"`), nil
@@ -219,7 +219,7 @@ func (e LabelmetaStatus) MarshalJSON() ([]byte, error) {
 func (e *LabelmetaStatus) UnmarshalJSON(b []byte) error {
 	switch string(b) {
 	case `"Unknown"`:
-		*e = UnknownLmeta
+		*e = UnknownStatus
         case `"NotExamined"`:
                 *e = NotExamined
         case `"PartiallyTraced"`:
