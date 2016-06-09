@@ -411,7 +411,7 @@ func (lmetas Labelmetas) Swap(i, j int) {
 
 // LabelID is a unique id for label
 
-type blockLabelmetas map[dvid.IZYXString]Labelmetas
+//type blockLabelmetas map[dvid.IZYXString]Labelmetas
 type labelLabelmetas map[uint64]Labelmetas
 type tagLabelmetas map[Tag]Labelmetas
 
@@ -630,20 +630,20 @@ func (d *Data) modifyLabelmetas(ctx *datastore.VersionedCtx, tk storage.TKey, to
 
 // stores labelmetas arranged by block, replacing any
 // labelmetas at same position.
-func (d *Data) storeBlockLabelmetas(ctx *datastore.VersionedCtx, bm blockLabelmetas) error {
-	for izyxStr, lmetas := range bm {
-		blockCoord, err := izyxStr.ToChunkPoint3d()
-		if err != nil {
-			return err
-		}
-		// Modify the block labelmeta
-		tk := NewBlockTKey(blockCoord)
-		if err := d.modifyLabelmetas(ctx, tk, lmetas); err != nil {
-			return err
-		}
-	}
-	return nil
-}
+//func (d *Data) storeBlockLabelmetas(ctx *datastore.VersionedCtx, bm blockLabelmetas) error {
+//	for izyxStr, lmetas := range bm {
+//		blockCoord, err := izyxStr.ToChunkPoint3d()
+//		if err != nil {
+//			return err
+//		}
+//		// Modify the block labelmeta
+//		tk := NewBlockTKey(blockCoord)
+//		if err := d.modifyLabelmetas(ctx, tk, lmetas); err != nil {
+//			return err
+//		}
+//	}
+//	return nil
+//}
 
 // stores labelmetas arranged by label, replacing any
 // labelmetas at same position.
@@ -911,8 +911,8 @@ func (d *Data) StoreLabelMeta(ctx *datastore.VersionedCtx, r io.Reader) error {
 
 	dvid.Infof("%d labelmetas received via POST", len(labelmetas))
 
-	blockSize := d.blockSize(ctx.VersionID())
-	blockM := make(blockLabelmetas)
+	//blockSize := d.blockSize(ctx.VersionID())
+	//blockM := make(blockLabelmetas)
 	labelM := make(labelLabelmetas)
 	tagM := make(tagLabelmetas)
 
@@ -927,14 +927,14 @@ func (d *Data) StoreLabelMeta(ctx *datastore.VersionedCtx, r io.Reader) error {
 	        lm = append(lm, lmeta)
                 labelM[label] = lm
 				
-		// Get block coord for this labelmeta. This will need to optional
-		izyxStr := lmeta.Pos.ToIZYXString(blockSize)
+		// Get block coord for this labelmeta. This will need to optional // removing since it doesn't make sense to index using position anymore.
+		//izyxStr := lmeta.Pos.ToIZYXString(blockSize)
 		// Append to block
-		if len(izyxStr) > 0 {
-		   	bm := blockM[izyxStr]
-			bm = append(bm, lmeta)
-			blockM[izyxStr] = bm
-		}
+		//if len(izyxStr) > 0 {
+		//   	bm := blockM[izyxStr]
+		//	bm = append(bm, lmeta)
+		//	blockM[izyxStr] = bm
+		//}
 
 		// Append to tags if present
 		if len(lmeta.Tags) > 0 {
@@ -947,9 +947,9 @@ func (d *Data) StoreLabelMeta(ctx *datastore.VersionedCtx, r io.Reader) error {
 	}
 
 	// Store the new block labelmetas. Index with POS if exists in metadata
-	if err := d.storeBlockLabelmetas(ctx, blockM); err != nil {
-		return err
-	}
+	//if err := d.storeBlockLabelmetas(ctx, blockM); err != nil {
+	//	return err
+	//}
 
 	// Store new labelmetas among label denormalizations... 
 	if err := d.storeLabelLabelmetas(ctx, labelM); err != nil {
@@ -1236,6 +1236,79 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
                         return
                 }
                 timedLog.Infof("HTTP %s: get all labelmeta label ids (%s)", r.Method, r.URL)
+
+	case "status":
+	        if action != "get" {
+                        server.BadRequest(w, r, "Only GET action is available on 'tag' endpoint.")
+                        return
+                }
+		if len(parts) < 5 {
+                        server.BadRequest(w, r, "Must include status string after 'status' endpoint.")
+                        return
+                }
+
+		store, err := d.GetOrderedKeyValueDB()
+                if err != nil {
+		        server.BadRequest(w, r, err)
+                        return
+                }
+	        first := storage.MinTKey(keyLabel)
+                last := storage.MaxTKey(keyLabel)
+
+                keys, err := store.KeysInRange(ctx, first, last)
+                if err != nil {
+		        server.BadRequest(w, r, err)
+                        return 
+                }
+     
+                var thischeck string
+		//thischeck = "\"HardToTrace\""
+		thischeck = "\"" + parts[4] + "\""
+		checkBytes := []byte(thischeck)
+
+		var checkJSON string
+		checkJSON = "[{\"Status\":\"" + parts[4] + "\"}]"
+		checkJBytes := []byte(checkJSON)
+
+                var lms Labelmetas
+                if err := json.Unmarshal(checkJBytes, &lms); err != nil {
+		            server.BadRequest(w, r, err)
+                            return
+                }
+		for _, lm := range lms {
+		           fmt.Fprintf(w, "%s", lm.Status)
+                }
+		fmt.Fprintf(w, ",")
+
+		if _, err := w.Write(checkBytes); err != nil {
+                            server.BadRequest(w, r, err)
+                            return
+                }
+		fmt.Fprintf(w, "\n")		
+
+                for _, key := range keys {
+                        keyVal, err := DecodeLabelTKey(key)
+	                labelmetas, err := d.GetLabelMeta(ctx, keyVal)
+                        if err != nil {
+			        server.BadRequest(w, r, err)
+	                        return
+                        }
+	                for _, lmeta := range labelmetas {
+			        jsonBytes, err := json.Marshal(lmeta.Status)
+				if err != nil {
+                                   server.BadRequest(w, r, err)
+                                   return
+                        	}
+				if bytes.Equal(checkBytes,jsonBytes) {							
+				      if _, err := w.Write(jsonBytes); err != nil {
+                                           server.BadRequest(w, r, err)
+                                           return
+                                      }
+				      fmt.Fprintf(w, ",")
+                                      fmt.Fprintf(w, "%s", lmeta.Status)
+				}
+                        }	    
+                }		
 
 	case "tag":
 		if action != "get" {
