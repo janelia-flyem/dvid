@@ -197,10 +197,16 @@ POST <api URL>/node/<UUID>/<data name>/metadata
 
 GET  <api URL>/node/<UUID>/<data name>/tile/<dims>/<scaling>/<tile coord>[?noblanks=true]
 POST
-	Retrieves or adds PNG tile of named data within a version node.  This GET call should be the fastest
+	Retrieves or adds tile of named data within a version node.  This GET call should be the fastest
 	way to retrieve image data since internally it has already been stored in a pre-computed, optionally
 	compression format, whereas arbitrary geometry calls require the DVID server to stitch images
 	together.
+
+	The returned image format is dictated by the imagetile encoding.  PNG tiles are returned
+	if internal encoding is either lz4 or png.  JPG tiles are returned if internal encoding is JPG.
+	The only reason to use lz4 for internal encoding is if the majority of endpoint use for
+	the data instance is via the "raw" endpoint where many tiles need to be stitched before
+	sending the requested image back.
 
 	Note on POSTs: The data of the body in the POST is assumed to match the data instance's 
 	chosen compression and tile sizes.  Currently, no checks are performed to make sure the
