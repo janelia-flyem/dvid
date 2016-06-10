@@ -724,6 +724,13 @@ func (p Point3d) ToIZYXString(size Point3d) IZYXString {
 	return idx.ToIZYXString()
 }
 
+// ChunkIndexer returns an chunk indexer from a 3d point.
+func (p Point3d) ChunkIndexer(size Point3d) ChunkIndexer {
+	// Get the chunk coord.
+	i := IndexZYX(p.Chunk(size).(ChunkPoint3d))
+	return &i
+}
+
 type ListChunkPoint3d struct {
 	Points  []ChunkPoint3d
 	Indices []int
