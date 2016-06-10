@@ -141,6 +141,16 @@ GET  <api URL>/node/<UUID>/<data name>/metadata
 	Retrieves a JSON schema (application/vnd.dvid-nd-data+json) that describes the layout
 	of bytes returned for n-d images.
 
+POST  <api URL>/node/<UUID>/<data name>/extents
+
+	Sets the extents for the image volume.
+
+	Extents should be in JSON in the following format:
+	{
+	    "MinPoint": [0,0,0],
+	    "MaxPoint": [300,400,500]
+	}
+
 GET <api URL>/node/<UUID>/<data name>/rawkey?x=<block x>&y=<block y>&z=<block z>
 
     Returns JSON describing hex-encoded binary key used to store a block of data at the given block coordinate:
@@ -778,6 +788,53 @@ func (p *Properties) NdDataMetadata() (string, error) {
 	return string(m), nil
 }
 
+type extentsJSON struct {
+	MinPoint dvid.Point3d
+	MaxPoint dvid.Point3d
+}
+
+// SetExtents loads JSON data giving MinPoint and MaxPoint.
+func (d *Data) SetExtents(uuid dvid.UUID, jsonBytes []byte) error {
+	var config extentsJSON
+	if err := json.Unmarshal(jsonBytes, &config); err != nil {
+		return err
+	}
+	d.MinPoint = config.MinPoint
+	d.MaxPoint = config.MaxPoint
+
+	// derive corresponding block coordinate
+	min_index := d.MinPoint.Div(d.BlockSize()).(dvid.Point3d)
+	if d.MinPoint.Value(0) < 0 {
+		min_index[0] -= 1
+	}
+	if d.MinPoint.Value(1) < 0 {
+		min_index[1] -= 1
+	}
+	if d.MinPoint.Value(2) < 0 {
+		min_index[2] -= 1
+	}
+	min_index_temp := dvid.IndexZYX(min_index)
+	d.MinIndex = &min_index_temp
+
+	max_index := d.MaxPoint.Div(d.BlockSize()).(dvid.Point3d)
+	if d.MaxPoint.Value(0) < 0 {
+		max_index[0] -= 1
+	}
+	if d.MaxPoint.Value(1) < 0 {
+		max_index[1] -= 1
+	}
+	if d.MaxPoint.Value(2) < 0 {
+		max_index[2] -= 1
+	}
+	max_index_temp := dvid.IndexZYX(max_index)
+	d.MaxIndex = &max_index_temp
+
+	if err := datastore.SaveDataByUUID(uuid, d); err != nil {
+		return err
+	}
+	return nil
+}
+
 // Data embeds the datastore's Data and extends it with voxel-specific properties.
 type Data struct {
 	*datastore.Data
@@ -1380,6 +1437,17 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		w.Header().Set("Content-Type", "application/vnd.dvid-nd-data+json")
 		fmt.Fprintln(w, jsonStr)
 		return
+
+	case "extents":
+		jsonBytes, err := ioutil.ReadAll(r.Body)
+		if err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+		if err := d.SetExtents(uuid, jsonBytes); err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
 
 	case "info":
 		jsonBytes, err := d.MarshalJSON()
