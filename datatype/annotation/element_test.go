@@ -517,9 +517,20 @@ func TestLabels(t *testing.T) {
 		t.Fatalf("Error blocking on sync of labels: %v\n", err)
 	}
 
-	// Add annotations syncing with "labels" instance.
+	// Add annotations syncing with "labels" instance checking for deduplication.
 	server.CreateTestInstance(t, uuid, "annotation", "mysynapses", config)
-	server.CreateTestSync(t, uuid, "mysynapses", "labels,bodies")
+	server.CreateTestSync(t, uuid, "mysynapses", "labels,bodies,labels,bodies,labels,bodies")
+	dataservice, err := datastore.GetDataByUUID(uuid, "mysynapses")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, ok := dataservice.(*Data)
+	if !ok {
+		t.Fatalf("Can't convert dataservice %v into datastore.Data\n", dataservice)
+	}
+	if len(data.SyncedNames()) != 2 {
+		t.Fatalf("Expected 2 syncs [labels,bodies], got %v\n", data.SyncedNames())
+	}
 
 	// PUT first batch of synapses
 	testJSON, err := json.Marshal(testData)
