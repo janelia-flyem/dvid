@@ -371,7 +371,9 @@ type OrderedKeyValueGetter interface {
 	// allowing chunk processing to be concurrent with key-value sequential reads.
 	// Since the chunks are typically sent during sequential read iteration, the
 	// receiving function can be organized as a pool of chunk handling goroutines.
-	// See datatype/imageblk.ProcessChunk() for an example.
+	// See datatype/imageblk.ProcessChunk() for an example.  If the ChunkFunc returns
+	// an error, it is expected that the ProcessRange should immediately terminate and
+	// propagate the error.
 	ProcessRange(ctx Context, kStart, kEnd TKey, op *ChunkOp, f ChunkFunc) error
 
 	// RawRangeQuery sends a range of full keys.  This is to be used for low-level data

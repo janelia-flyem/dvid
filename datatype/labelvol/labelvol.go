@@ -1336,10 +1336,7 @@ func (d *Data) FoundSparseVol(ctx *datastore.VersionedCtx, label uint64, bounds 
 	}
 
 	// Scan through all keys coming from label blocks to see if we have any hits.
-	var found bool
-	var done int
 	var constituents labels.Set
-
 	iv := d.getMergeIV(ctx.VersionID())
 	mapping := labels.LabelMap(iv)
 
@@ -1355,65 +1352,40 @@ func (d *Data) FoundSparseVol(ctx *datastore.VersionedCtx, label uint64, bounds 
 		constituents = mapping.ConstituentLabels(label)
 	}
 
-	keyCh := make(storage.KeyChan, 100)
-	wg := new(sync.WaitGroup)
-	go func() {
-		for {
-			key := <-keyCh
-			if key == nil {
-				wg.Done()
-				done++
-				if done == len(constituents) {
-					return
-				}
-			}
-
-			// Make sure this block is within the optional bounding.
-			tk, err := storage.TKeyFromKey(key)
+	shortCircuitErr := fmt.Errorf("Found data, aborting.")
+	var f storage.ChunkFunc = func(chunk *storage.Chunk) error {
+		// Make sure this block is within the optinonal bounding.
+		if blockBounds.BoundedX() || blockBounds.BoundedY() {
+			_, blockStr, err := DecodeTKey(chunk.K)
 			if err != nil {
-				wg.Done()
-				dvid.Errorf("Unable to get TKey from Key (%v): %v\n", key, err)
-				return
+				return fmt.Errorf("Error decoding sparse volume key (%v): %v\n", chunk.K, err)
 			}
-			if blockBounds.BoundedX() || blockBounds.BoundedY() {
-				_, blockStr, err := DecodeTKey(tk)
-				if err != nil {
-					wg.Done()
-					dvid.Errorf("Error decoding sparse volume key (%v): %v\n", key, err)
-					return
-				}
-				indexZYX, err := blockStr.IndexZYX()
-				if err != nil {
-					wg.Done()
-					dvid.Errorf("Error decoding block coordinate (%v) for sparse volume: %v\n", blockStr, err)
-					return
-				}
-				blockX, blockY, _ := indexZYX.Unpack()
-				if blockBounds.OutsideX(blockX) || blockBounds.OutsideY(blockY) {
-					continue
-				}
+			indexZYX, err := blockStr.IndexZYX()
+			if err != nil {
+				return fmt.Errorf("Error decoding block coordinate (%v) for sparse volume: %v\n", blockStr, err)
 			}
-
-			// We have a valid key
-			found = true
-			wg.Done()
-			return
+			blockX, blockY, _ := indexZYX.Unpack()
+			if blockBounds.OutsideX(blockX) || blockBounds.OutsideY(blockY) {
+				return nil
+			}
 		}
-	}()
+		return shortCircuitErr
+	}
 
 	// Iterate through each constituent label.
 	for constituent := range constituents {
-		wg.Add(1)
 		begTKey := NewTKey(constituent, minZYX.ToIZYXString())
 		endTKey := NewTKey(constituent, maxZYX.ToIZYXString())
-		if err := store.SendKeysInRange(ctx, begTKey, endTKey, keyCh); err != nil {
+		err := store.ProcessRange(ctx, begTKey, endTKey, &storage.ChunkOp{}, f)
+		if err == shortCircuitErr {
+			return true, nil
+		}
+		if err != nil {
 			return false, err
 		}
 	}
-	dvid.Debugf("Checked for sparse volume with label %d, composed of labels %s\n", label, constituents)
-	wg.Wait()
-
-	return found, nil
+	dvid.Debugf("Found no sparse volume with label %d, composed of labels %s\n", label, constituents)
+	return false, nil
 }
 
 // GetSparseVol returns an encoded sparse volume given a label.  The encoding has the

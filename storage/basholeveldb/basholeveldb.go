@@ -541,7 +541,7 @@ func sendKV(vctx storage.VersionedCtx, values []*storage.KeyValue, ch chan error
 }
 
 // versionedRange sends a range of key-value pairs for a particular version down a channel.
-func (db *LevelDB) versionedRange(vctx storage.VersionedCtx, kStart, kEnd storage.TKey, ch chan errorableKV, keysOnly bool) {
+func (db *LevelDB) versionedRange(vctx storage.VersionedCtx, begTKey, endTKey storage.TKey, ch chan errorableKV, done <-chan struct{}, keysOnly bool) {
 	dvid.StartCgo()
 	ro := levigo.NewReadOptions()
 	it := db.ldb.NewIterator(ro)
@@ -550,19 +550,19 @@ func (db *LevelDB) versionedRange(vctx storage.VersionedCtx, kStart, kEnd storag
 		dvid.StopCgo()
 	}()
 
-	minKey, err := vctx.MinVersionKey(kStart)
+	minKey, err := vctx.MinVersionKey(begTKey)
 	if err != nil {
 		ch <- errorableKV{nil, err}
 		return
 	}
-	maxKey, err := vctx.MaxVersionKey(kEnd)
+	maxKey, err := vctx.MaxVersionKey(endTKey)
 	if err != nil {
 		ch <- errorableKV{nil, err}
 		return
 	}
 
 	values := []*storage.KeyValue{}
-	maxVersionKey, err := vctx.MaxVersionKey(kStart)
+	maxVersionKey, err := vctx.MaxVersionKey(begTKey)
 	if err != nil {
 		ch <- errorableKV{nil, err}
 		return
@@ -574,6 +574,12 @@ func (db *LevelDB) versionedRange(vctx storage.VersionedCtx, kStart, kEnd storag
 	it.Seek(minKey)
 	var itValue []byte
 	for {
+		select {
+			case <-done:  // only happens if we don't care about rest of data. 
+				ch <- errorableKV{nil, nil}
+				return
+			default:
+		}
 		if it.Valid() {
 			if !keysOnly {
 				itValue = it.Value()
@@ -608,7 +614,7 @@ func (db *LevelDB) versionedRange(vctx storage.VersionedCtx, kStart, kEnd storag
 				return
 			}
 			// log.Printf("Appending value with key %v\n", itKey)
-			values = append(values, &storage.KeyValue{itKey, itValue})
+			values = append(values, &storage.KeyValue{K: itKey, V: itValue})
 			it.Next()
 		} else {
 			if err = it.GetError(); err != nil {
@@ -623,7 +629,7 @@ func (db *LevelDB) versionedRange(vctx storage.VersionedCtx, kStart, kEnd storag
 }
 
 // unversionedRange sends a range of key-value pairs down a channel.
-func (db *LevelDB) unversionedRange(ctx storage.Context, kStart, kEnd storage.TKey, ch chan errorableKV, keysOnly bool) {
+func (db *LevelDB) unversionedRange(ctx storage.Context, begTKey, endTKey storage.TKey, ch chan errorableKV,  done <-chan struct{}, keysOnly bool) {
 	dvid.StartCgo()
 	ro := levigo.NewReadOptions()
 	it := db.ldb.NewIterator(ro)
@@ -633,8 +639,8 @@ func (db *LevelDB) unversionedRange(ctx storage.Context, kStart, kEnd storage.TK
 	}()
 
 	// Apply context if applicable
-	keyBeg := ctx.ConstructKey(kStart)
-	keyEnd := ctx.ConstructKey(kEnd)
+	begKey := ctx.ConstructKey(begTKey)
+	endKey := ctx.ConstructKey(endTKey)
 
 	// fmt.Printf("unversionedRange():\n")
 	// fmt.Printf("    index beg: %v\n", kStart)
@@ -643,7 +649,7 @@ func (db *LevelDB) unversionedRange(ctx storage.Context, kStart, kEnd storage.TK
 	// fmt.Printf("      key end: %v\n", keyEnd)
 
 	var itValue []byte
-	it.Seek(keyBeg)
+	it.Seek(begKey)
 	for {
 		if it.Valid() {
 			// fmt.Printf("unversioned found key %v, %d bytes value\n", it.Key(), len(it.Value()))
@@ -654,11 +660,16 @@ func (db *LevelDB) unversionedRange(ctx storage.Context, kStart, kEnd storage.TK
 			itKey := it.Key()
 			storage.StoreKeyBytesRead <- len(itKey)
 			// Did we pass the final key?
-			if bytes.Compare(itKey, keyEnd) > 0 {
+			if bytes.Compare(itKey, endKey) > 0 {
 				break
 			}
-			ch <- errorableKV{&storage.KeyValue{itKey, itValue}, nil}
-			it.Next()
+			select {
+				case <-done:
+					ch <- errorableKV{nil, nil}
+					return
+				case ch <- errorableKV{&storage.KeyValue{K: itKey, V:itValue}, nil}:
+					it.Next()
+			}
 		} else {
 			break
 		}
@@ -682,13 +693,15 @@ func (db *LevelDB) KeysInRange(ctx storage.Context, kStart, kEnd storage.TKey) (
 		return nil, fmt.Errorf("Received nil context in KeysInRange()")
 	}
 	ch := make(chan errorableKV)
+	done := make(chan struct{})
+	defer close(done)
 
 	// Run the range query on a potentially versioned key in a goroutine.
 	go func() {
 		if !ctx.Versioned() {
-			db.unversionedRange(ctx, kStart, kEnd, ch, true)
+			db.unversionedRange(ctx, kStart, kEnd, ch, done, true)
 		} else {
-			db.versionedRange(ctx.(storage.VersionedCtx), kStart, kEnd, ch, true)
+			db.versionedRange(ctx.(storage.VersionedCtx), kStart, kEnd, ch, done, true)
 		}
 	}()
 
@@ -722,13 +735,15 @@ func (db *LevelDB) SendKeysInRange(ctx storage.Context, kStart, kEnd storage.TKe
 		return fmt.Errorf("Received nil context in SendKeysInRange()")
 	}
 	ch := make(chan errorableKV)
+	done := make(chan struct{})
+	defer close(done)
 
 	// Run the range query on a potentially versioned key in a goroutine.
 	go func() {
 		if !ctx.Versioned() {
-			db.unversionedRange(ctx, kStart, kEnd, ch, true)
+			db.unversionedRange(ctx, kStart, kEnd, ch, done, true)
 		} else {
-			db.versionedRange(ctx.(storage.VersionedCtx), kStart, kEnd, ch, true)
+			db.versionedRange(ctx.(storage.VersionedCtx), kStart, kEnd, ch, done, true)
 		}
 	}()
 
@@ -758,13 +773,15 @@ func (db *LevelDB) GetRange(ctx storage.Context, kStart, kEnd storage.TKey) ([]*
 		return nil, fmt.Errorf("Received nil context in GetRange()")
 	}
 	ch := make(chan errorableKV)
+	done := make(chan struct{})
+	defer close(done)
 
 	// Run the range query on a potentially versioned key in a goroutine.
 	go func() {
 		if ctx == nil || !ctx.Versioned() {
-			db.unversionedRange(ctx, kStart, kEnd, ch, false)
+			db.unversionedRange(ctx, kStart, kEnd, ch, done, false)
 		} else {
-			db.versionedRange(ctx.(storage.VersionedCtx), kStart, kEnd, ch, false)
+			db.versionedRange(ctx.(storage.VersionedCtx), kStart, kEnd, ch, done, false)
 		}
 	}()
 
@@ -788,7 +805,8 @@ func (db *LevelDB) GetRange(ctx storage.Context, kStart, kEnd storage.TKey) ([]*
 }
 
 // ProcessRange sends a range of key-value pairs to chunk handlers.  If the keys are versioned,
-// only key-value pairs for kStart's version will be transmitted.
+// only key-value pairs for kStart's version will be transmitted.  If f returns an error, the
+// function is immediately terminated and returns an error.
 func (db *LevelDB) ProcessRange(ctx storage.Context, kStart, kEnd storage.TKey, op *storage.ChunkOp, f storage.ChunkFunc) error {
 	if db == nil {
 		return fmt.Errorf("Can't call ProcessRange on nil LevelDB")
@@ -797,13 +815,15 @@ func (db *LevelDB) ProcessRange(ctx storage.Context, kStart, kEnd storage.TKey, 
 		return fmt.Errorf("Received nil context in ProcessRange()")
 	}
 	ch := make(chan errorableKV)
+	done := make(chan struct{})
+	defer close(done)
 
 	// Run the range query on a potentially versioned key in a goroutine.
 	go func() {
 		if ctx == nil || !ctx.Versioned() {
-			db.unversionedRange(ctx, kStart, kEnd, ch, false)
+			db.unversionedRange(ctx, kStart, kEnd, ch, done, false)
 		} else {
-			db.versionedRange(ctx.(storage.VersionedCtx), kStart, kEnd, ch, false)
+			db.versionedRange(ctx.(storage.VersionedCtx), kStart, kEnd, ch, done, false)
 		}
 	}()
 
@@ -1014,13 +1034,15 @@ func (db *LevelDB) DeleteRange(ctx storage.Context, kStart, kEnd storage.TKey) e
 	batch := db.NewBatch(ctx).(*goBatch)
 
 	ch := make(chan errorableKV)
+	done := make(chan struct{})
+	defer close(done)
 
 	// Run the keys-only range query in a goroutine.
 	go func() {
 		if ctx == nil || !ctx.Versioned() {
-			db.unversionedRange(ctx, kStart, kEnd, ch, true)
+			db.unversionedRange(ctx, kStart, kEnd, ch, done, true)
 		} else {
-			db.versionedRange(ctx.(storage.VersionedCtx), kStart, kEnd, ch, true)
+			db.versionedRange(ctx.(storage.VersionedCtx), kStart, kEnd, ch, done, true)
 		}
 	}()
 
