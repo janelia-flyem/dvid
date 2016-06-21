@@ -344,11 +344,11 @@ GET  <api URL>/node/<UUID>/<data name>/blocks/<size>/<offset>[?queryopts]
 
     GET <api URL>/node/3f8c/segmentation/blocks/64_64_64/0_0_0
 
-    Retrieves 8 blocks where first block is at 0, 0, 0
-    The returned byte stream has is a list of blocks with a leading block coordinate
-    (3 x int32) plus int32 giving the # of bytes in this block, and 
-    then the bytes for the value.  If blocks are unset within the span, they will not appear in the stream,
-    so the returned data will be equal to or less than spanX blocks worth of data.  
+	If block size is 32x32x32, this call retrieves up to 8 blocks where the first potential
+	block is at 0, 0, 0.  The returned byte stream has a list of blocks with a leading block 
+	coordinate (3 x int32) plus int32 giving the # of bytes in this block, and  then the 
+	bytes for the value.  If blocks are unset within the span, they will not appear in the stream,
+	so the returned data will be equal to or less than spanX blocks worth of data.  
 
     The returned data format has the following format where int32 is in little endian and the bytes of
     block data have been compressed in LZ4 format.
@@ -900,8 +900,8 @@ func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, su
 		if err != nil {
 			return err
 		}
-		if err := sendBlockLZ4(w, blockoffset.Value(0), blockoffset.Value(1), blockoffset.Value(2), value, compression); err != nil {
-			return err
+		if len(value) > 0 {
+			return sendBlockLZ4(w, blockoffset.Value(0), blockoffset.Value(1), blockoffset.Value(2), value, compression)
 		}
 		return nil
 	}
