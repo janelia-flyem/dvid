@@ -1292,7 +1292,13 @@ func (d *Data) DoRPC(req datastore.Request, reply *datastore.Response) error {
 		if err = datastore.AddToNodeLog(uuid, []string{req.Command.String()}); err != nil {
 			return err
 		}
-		return d.LoadImages(versionID, offset, filenames)
+		reply.Text = fmt.Sprintf("Loading %d files into data instance %q @ node %s...\n", len(filenames), dataName, uuidStr)
+		go func() {
+			err := d.LoadImages(versionID, offset, filenames)
+			if err != nil {
+				dvid.Errorf("Cannot load images into data instance %q @ node %s: %v\n", dataName, uuidStr, err)
+			}
+		}()
 
 	case "put":
 		if len(req.Command) < 7 {

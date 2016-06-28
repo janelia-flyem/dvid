@@ -818,7 +818,14 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 			}
 		}
 	}
-	return d.ConstructTiles(uuidStr, tileSpec, request)
+	reply.Text = fmt.Sprintf("Tiling data instance %q @ node %s...\n", dataName, uuidStr)
+	go func() {
+		err := d.ConstructTiles(uuidStr, tileSpec, request)
+		if err != nil {
+			dvid.Errorf("Cannot construct tiles for data instance %q @ node %s: %v\n", dataName, uuidStr, err)
+		}
+	}()
+	return nil
 }
 
 // ServeHTTP handles all incoming HTTP requests for this data.
@@ -1332,13 +1339,14 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, request datasto
 	if err != nil {
 		return err
 	}
+
 	if err = datastore.AddToNodeLog(uuid, []string{request.Command.String()}); err != nil {
 		return err
 	}
 
 	source, err := datastore.GetDataByUUID(uuid, d.Source)
 	if err != nil {
-		return err
+		return fmt.Errorf("Cannot get source %q for %q tile construction: %v", d.Source, d.DataName(), err)
 	}
 	src, ok := source.(*imageblk.Data)
 	if !ok {
