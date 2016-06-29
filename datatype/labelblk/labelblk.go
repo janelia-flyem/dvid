@@ -1609,8 +1609,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 
 	default:
-		server.BadRequest(w, r, "Unrecognized API call %q for labelblk data %q.  See API help.",
-			parts[3], d.DataName())
+		server.BadAPIRequest(w, r, d)
 	}
 }
 

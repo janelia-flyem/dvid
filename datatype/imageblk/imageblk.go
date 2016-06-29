@@ -1641,6 +1641,6 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			server.BadRequest(w, r, "DVID currently supports shapes of only 2 and 3 dimensions")
 		}
 	default:
-		server.BadRequest(w, r, "Unrecognized API call for voxels %q.  See API help.", d.DataName())
+		server.BadAPIRequest(w, r, d)
 	}
 }

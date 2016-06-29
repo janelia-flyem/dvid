@@ -1508,7 +1508,6 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		timedLog.Infof("HTTP %s: move synaptic element from %s to %s (%s)", r.Method, fromPt, toPt, r.URL)
 
 	default:
-		server.BadRequest(w, r, "Unrecognized API call %q for labelvol data %q.  See API help.",
-			parts[3], d.DataName())
+		server.BadAPIRequest(w, r, d)
 	}
 }

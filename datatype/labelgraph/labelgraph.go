@@ -1415,7 +1415,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		server.BadRequest(w, r, "undomerge not yet implemented")
 		return
 	default:
-		server.BadRequest(w, r, "%s not found", parts[3])
+		server.BadAPIRequest(w, r, d)
 		return
 	}
 	//timedLog.Infof("Successful labelgraph op %s on %q", parts[3], d.DataName())

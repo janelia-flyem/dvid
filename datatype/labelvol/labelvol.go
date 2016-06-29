@@ -1177,8 +1177,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		timedLog.Infof("HTTP merge request (%s)", r.URL)
 
 	default:
-		server.BadRequest(w, r, "Unrecognized API call %q for labelvol data %q.  See API help.",
-			parts[3], d.DataName())
+		server.BadAPIRequest(w, r, d)
 	}
 }
 

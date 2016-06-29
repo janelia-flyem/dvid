@@ -1260,7 +1260,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	}
 
 	if len(parts) < 4 {
-		server.BadRequest(w, r, "incomplete API specification")
+		server.BadAPIRequest(w, r, d)
 		return
 	}
 
@@ -1410,8 +1410,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		comment = fmt.Sprintf("HTTP partition '%s' with batch size %d\n",
 			d.DataName(), batchsize)
 	default:
-		w.Header().Set("Content-Type", "text/plain")
-		server.BadRequest(w, r, "Can only handle GET or POST HTTP verbs")
+		server.BadAPIRequest(w, r, d)
 		return
 	}
 

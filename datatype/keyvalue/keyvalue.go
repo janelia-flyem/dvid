@@ -507,7 +507,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 
 	default:
-		server.BadRequest(w, r, "unknown action %q requested", parts[3])
+		server.BadAPIRequest(w, r, d)
 		return
 	}
 

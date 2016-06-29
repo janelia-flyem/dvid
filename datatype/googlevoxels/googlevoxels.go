@@ -1346,6 +1346,6 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 		timedLog.Infof("HTTP %s: image (%s)", r.Method, r.URL)
 	default:
-		server.BadRequest(w, r, "Illegal request for googlevoxels data.  See 'help' for REST API")
+		server.BadAPIRequest(w, r, d)
 	}
 }

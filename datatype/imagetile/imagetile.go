@@ -987,7 +987,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 		timedLog.Infof("HTTP %s: tile-accelerated %s %s (%s)", r.Method, planeStr, parts[3], r.URL)
 	default:
-		server.BadRequest(w, r, "Illegal request for imagetile data.  See 'help' for REST API")
+		server.BadAPIRequest(w, r, d)
 	}
 }
 
