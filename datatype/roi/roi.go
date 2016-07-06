@@ -270,8 +270,12 @@ func (d *Data) CopyPropertiesFrom(src datastore.DataService, fs storage.FilterSp
 // "roi:<roiname>,<uuid>". If the given string is not parsable, the "found" return value is false.
 func DataBySpec(spec storage.FilterSpec) (d *Data, v dvid.VersionID, found bool, err error) {
 	filterval, found := spec.GetFilterSpec("roi")
+	if !found {
+		return
+	}
 	roispec := strings.Split(filterval, ",")
 	if len(roispec) != 2 {
+		err = fmt.Errorf("Expect ROI filters to have format %q, but got %q", "roi:<roiname>,<uuid>", spec)
 		return
 	}
 	roiName := dvid.InstanceName(roispec[0])

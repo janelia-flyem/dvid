@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"reflect"
 	"sync"
@@ -12,14 +13,15 @@ import (
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/imageblk"
+	"github.com/janelia-flyem/dvid/datatype/roi"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
 )
 
 var (
-	mstype, grayscaleT datastore.TypeService
-	testMu             sync.Mutex
+	mstype, grayscaleT, roitype datastore.TypeService
+	testMu                      sync.Mutex
 )
 
 // Sets package-level testRepo and TestVersionID
@@ -35,6 +37,10 @@ func initTestRepo() (dvid.UUID, dvid.VersionID) {
 		grayscaleT, err = datastore.TypeServiceByName("uint8blk")
 		if err != nil {
 			log.Fatalf("Can't get grayscale type: %s\n", err)
+		}
+		roitype, err = datastore.TypeServiceByName(roi.TypeName)
+		if err != nil {
+			log.Fatalf("Can't get ROI type: %v\n", err)
 		}
 	}
 	return datastore.NewTestRepo()
@@ -215,4 +221,129 @@ func TestTileKey(t *testing.T) {
 	if scale != 0 {
 		t.Errorf("Expected scale to be 0, got %d\n", scale)
 	}
+}
+
+const testMetadata2 = `
+{
+	"MinTileCoord": [0,0,0],
+	"MaxTileCoord": [30,30,30],
+	"Levels": {
+	    "0": {  "Resolution": [10.0, 10.0, 10.0], "TileSize": [512, 512, 512] },
+	    "1": {  "Resolution": [20.0, 20.0, 20.0], "TileSize": [512, 512, 512] },
+	    "2": {  "Resolution": [40.0, 40.0, 40.0], "TileSize": [512, 512, 512] },
+	    "3": {  "Resolution": [80.0, 80.0, 80.0], "TileSize": [512, 512, 512] }
+	}
+}
+`
+
+var testSpans = []dvid.Span{
+	dvid.Span{100, 101, 200, 210}, dvid.Span{100, 102, 200, 210}, dvid.Span{100, 103, 201, 212},
+	dvid.Span{101, 101, 201, 213}, dvid.Span{101, 102, 202, 215}, dvid.Span{101, 103, 202, 216},
+	dvid.Span{102, 101, 200, 210}, dvid.Span{102, 103, 201, 216}, dvid.Span{102, 104, 203, 217},
+	dvid.Span{103, 101, 200, 210}, dvid.Span{103, 103, 200, 210}, dvid.Span{103, 105, 201, 212},
+}
+
+func getSpansJSON(spans []dvid.Span) io.Reader {
+	jsonBytes, err := json.Marshal(spans)
+	if err != nil {
+		log.Fatalf("Can't encode spans into JSON: %v\n", err)
+	}
+	return bytes.NewReader(jsonBytes)
+}
+
+func TestTileCheck(t *testing.T) {
+	datastore.OpenTest()
+	defer datastore.CloseTest()
+
+	// Make source
+	uuid, _ := initTestRepo()
+	makeGrayscale(uuid, t, "grayscale")
+
+	// Make imagetile and set various properties
+	config := dvid.NewConfig()
+	config.Set("Placeholder", "true")
+	config.Set("Format", "jpg")
+	config.Set("Source", "grayscale")
+	tileservice, err := datastore.NewData(uuid, mstype, "myimagetile", config)
+	if err != nil {
+		t.Errorf("Unable to create imagetile instance: %v\n", err)
+	}
+	msdata, ok := tileservice.(*Data)
+	if !ok {
+		t.Fatalf("Can't cast imagetile data service into imagetile.Data\n")
+	}
+
+	// Store Metadata
+	url := fmt.Sprintf("%snode/%s/myimagetile/metadata", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", url, bytes.NewBufferString(testMetadata2))
+
+	// Create the ROI
+	_, err = datastore.NewData(uuid, roitype, "myroi", dvid.NewConfig())
+	if err != nil {
+		t.Errorf("Error creating new roi instance: %v\n", err)
+	}
+
+	// PUT an ROI
+	roiRequest := fmt.Sprintf("%snode/%s/myroi/roi", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", roiRequest, getSpansJSON(testSpans))
+
+	// Create fake filter
+	spec := fmt.Sprintf("roi:myroi,%s", uuid)
+	f, err := msdata.NewFilter(storage.FilterSpec(spec))
+	if err != nil {
+		t.Errorf("Couldn't make filter: %v\n", err)
+	}
+	if f == nil {
+		t.Fatalf("Couldn't detect myroi data instance\n")
+	}
+
+	// Check various key values for proper spatial checks.
+	var tx, ty int32
+	tx = (205 * 32) / 512
+	ty = (101 * 32) / 512
+	tile := dvid.ChunkPoint3d{tx, ty, 101 * 32}
+	scale := Scaling(0)
+	tkv := &storage.TKeyValue{K: NewTKey(tile, dvid.XY, scale)}
+	skip, err := f.Check(tkv)
+	if err != nil {
+		t.Errorf("Error on Check of key %q: %v\n", tkv.K, err)
+	}
+	if skip {
+		t.Errorf("Expected false skip, got %v for tile %s\n", skip, tile)
+	}
+
+	tile = dvid.ChunkPoint3d{tx, ty, 106 * 32}
+	tkv = &storage.TKeyValue{K: NewTKey(tile, dvid.XY, scale)}
+	skip, err = f.Check(tkv)
+	if err != nil {
+		t.Errorf("Error on Check of key %q: %v\n", tkv.K, err)
+	}
+	if !skip {
+		t.Errorf("Expected true skip, got %v for tile %s\n", skip, tile)
+	}
+
+	tx = (205 * 32) / 512
+	ty = (121 * 32) / 512
+	tile = dvid.ChunkPoint3d{tx, ty, 101 * 32}
+	tkv = &storage.TKeyValue{K: NewTKey(tile, dvid.XY, scale)}
+	skip, err = f.Check(tkv)
+	if err != nil {
+		t.Errorf("Error on Check of key %q: %v\n", tkv.K, err)
+	}
+	if !skip {
+		t.Errorf("Expected true skip, got %v for tile %s\n", skip, tile)
+	}
+
+	tx = (225 * 32) / 512
+	ty = (101 * 32) / 512
+	tile = dvid.ChunkPoint3d{tx, ty, 101 * 32}
+	tkv = &storage.TKeyValue{K: NewTKey(tile, dvid.XY, scale)}
+	skip, err = f.Check(tkv)
+	if err != nil {
+		t.Errorf("Error on Check of key %q: %v\n", tkv.K, err)
+	}
+	if !skip {
+		t.Errorf("Expected true skip, got %v for tile %s\n", skip, tile)
+	}
+
 }
