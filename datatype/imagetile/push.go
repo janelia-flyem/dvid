@@ -4,10 +4,16 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/roi"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
 )
+
+// PushData does an imagetile-specific push using optional ROI and tile filters.
+func (d *Data) PushData(p *datastore.PushSession) error {
+	return datastore.PushData(d, p)
+}
 
 // --- dvid.Filterer implementatino -----
 
