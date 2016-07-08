@@ -497,12 +497,16 @@ func (m *repoManager) loadMetadata() error {
 
 	switch m.formatVersion {
 	case 0:
-		return m.loadVersion0()
+		err = m.loadVersion0()
 	case 1:
 		// We aren't changing any metadata, just the labelvol datatype props.
-		return m.loadVersion0()
+		err = m.loadVersion0()
 	default:
-		return fmt.Errorf("Unknown metadata format %d", m.formatVersion)
+		err = fmt.Errorf("Unknown metadata format %d", m.formatVersion)
+	}
+
+	if err != nil {
+		return err
 	}
 
 	saveIDs := false
