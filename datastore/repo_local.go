@@ -1912,6 +1912,7 @@ func (r *repoT) remapLocalIDs() (dvid.InstanceMap, dvid.VersionMap, error) {
 
 	// Pass 2 on DAG: now that we know the version mapping, modify all nodes.
 	for _, nodePtr := range r.dag.nodes {
+		nodePtr.version = versionMap[nodePtr.version]
 		for i, oldVersionID := range nodePtr.parents {
 			nodePtr.parents[i] = versionMap[oldVersionID]
 		}
