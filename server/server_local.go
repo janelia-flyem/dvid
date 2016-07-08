@@ -235,8 +235,7 @@ func SendNotification(message string, recipients []string) error {
 	return nil
 }
 
-// Serve starts HTTP and RPC servers.  If passed strings are empty, it will use
-// the configuration info from the toml.
+// Serve starts HTTP and RPC servers.
 func Serve() error {
 	// Use defaults if not set via TOML config file.
 	if tc.Server.HTTPAddress == "" {

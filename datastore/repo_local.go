@@ -505,9 +505,25 @@ func (m *repoManager) loadMetadata() error {
 		return fmt.Errorf("Unknown metadata format %d", m.formatVersion)
 	}
 
+	saveIDs := false
+
 	// Handle instance ID management
 	if m.instanceIDGen == "sequential" && m.instanceIDStart > m.instanceID {
 		m.instanceID = m.instanceIDStart
+		saveIDs = true
+	}
+
+	// Handle version ID management, making sure our internal local version ID is
+	// always greater than whatever we currently have.  (Corrects issues in metadata from early bug.)
+	for v := range m.versionToUUID {
+		if v > m.versionID {
+			dvid.Errorf("Found data version %d >= current new local version ID %d.  Correcting metadata...\n", v, m.versionID)
+			m.versionID = v + 1
+			saveIDs = true
+		}
+	}
+
+	if saveIDs {
 		return m.putNewIDs()
 	}
 	return nil
