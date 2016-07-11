@@ -195,14 +195,34 @@ func ClientIDFromBytes(b []byte) ClientID {
 	return ClientID(binary.BigEndian.Uint32(b))
 }
 
+// DataID returns unique identifiers for a data instance.  A data instance can be identified
+// by a globally-unique, invariant UUID or a changing two-tuple (name, data root UUID).
+type DataID struct {
+	// DataUUID is a globally unique identifier for this particular data instance,
+	// whether it gets renamed or a portion of its DAG gets distributed to another
+	// server.
+	DataUUID UUID
+
+	// Name, which can be changed over time.
+	Name InstanceName
+
+	// RootUUID is the root of the subgraph in which this data instance is defined.
+	// Because a portion of data can be distributed to other servers, the current
+	// DAG might be truncated, so the RootUUID can also be a child of the data
+	// instance's original RootUUID.
+	RootUUID UUID
+}
+
 // Data is the minimal interface for datatype-specific data that is implemented
 // in datatype packages.  This interface is defined in the low-level dvid package so it
 // is accessible at all levels of dvid, although the implementation of this interface
 // occurs at the datastore and datatype-level packages.
 type Data interface {
-	DataName() InstanceName
 	InstanceID() InstanceID
-	UUID() UUID
+
+	DataUUID() UUID
+	DataName() InstanceName
+	RootUUID() UUID
 
 	TypeName() TypeString
 	TypeURL() URLString
@@ -219,7 +239,9 @@ type Data interface {
 
 	// Necessary to support transmission of data to remote DVID.
 	SetInstanceID(InstanceID)
-	SetUUID(UUID)
+	SetDataUUID(UUID)
+	SetName(InstanceName)
+	SetRootUUID(UUID)
 }
 
 // Axis enumerates differnt types of axis (x, y, z, time, etc)

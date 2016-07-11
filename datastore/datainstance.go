@@ -210,10 +210,12 @@ type Data struct {
 	typeurl     dvid.URLString
 	typeversion string
 
-	name dvid.InstanceName
-	id   dvid.InstanceID
+	id dvid.InstanceID // local data instance id
 
-	uuid dvid.UUID // Root uuid of repo
+	dataUUID dvid.UUID // Unique id for this data instance.
+
+	name     dvid.InstanceName // name, which can be changed.
+	rootUUID dvid.UUID         // Root uuid of sub-DAG for this data instance, which can be changed on flattening.
 
 	// Compression of serialized data, e.g., the value in a key-value.
 	compression dvid.Compression
@@ -237,26 +239,6 @@ type Data struct {
 	// these sync management vars aren't serialized
 	syncmu     sync.RWMutex
 	syncInited map[dvid.InstanceName]struct{}
-}
-
-// CloneToType returns a clone of Data with modified data type information but same instance id.
-// This is useful for migrating data from one type to another.
-func (d *Data) CloneToType(typename dvid.TypeString, typeurl dvid.URLString, typeversion string) *Data {
-	d2 := new(Data)
-	d2.typename = typename
-	d2.typeurl = typeurl
-	d2.typeversion = typeversion
-
-	d2.name = d.name
-	d2.id = d.id
-	d2.uuid = d.uuid
-
-	d2.compression = d.compression
-	d2.checksum = d.checksum
-	copy(d2.syncs, d.syncs)
-	d2.unversioned = d.unversioned
-
-	return d2
 }
 
 // -- Syncer interface implementation is in base Data type because generic implementations will do.
@@ -318,6 +300,7 @@ func (d *Data) MarshalJSON() ([]byte, error) {
 		TypeName    dvid.TypeString
 		TypeURL     dvid.URLString
 		TypeVersion string
+		DataUUID    dvid.UUID
 		Name        dvid.InstanceName
 		RepoUUID    dvid.UUID
 		Compression string
@@ -328,8 +311,9 @@ func (d *Data) MarshalJSON() ([]byte, error) {
 		TypeName:    d.typename,
 		TypeURL:     d.typeurl,
 		TypeVersion: d.typeversion,
+		DataUUID:    d.dataUUID,
 		Name:        d.name,
-		RepoUUID:    d.uuid,
+		RepoUUID:    d.rootUUID,
 		Compression: d.compression.String(),
 		Checksum:    d.checksum.String(),
 		Syncs:       d.syncs,
@@ -344,18 +328,24 @@ var reservedNames = map[string]struct{}{
 }
 
 // NewDataService returns a new Data instance that fulfills the DataService interface.
-// The UUID passed in corresponds to the root UUID of the repo that should hold the data.
+// The UUID passed in corresponds to the root UUID of the DAG subgraph that should hold the data.
 // This returned Data struct is usually embedded by datatype-specific data instances.
 // By default, LZ4 and the default checksum is used.
-func NewDataService(t TypeService, uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.Config) (*Data, error) {
+func NewDataService(t TypeService, rootUUID dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.Config) (*Data, error) {
 	if _, reserved := reservedNames[string(name)]; reserved {
 		return nil, fmt.Errorf("cannot use reserved name %q", name)
 	}
 
 	// See if a store was defined for a particular data instance.
-	store, err := storage.GetAssignedStore(name, uuid, t.GetTypeName())
+	store, err := storage.GetAssignedStore(name, rootUUID, t.GetTypeName())
 	if err != nil {
 		return nil, err
+	}
+
+	// Make sure we generate a valid UUID for the data instance.
+	dataUUID := dvid.NewUUID()
+	if dataUUID == dvid.NilUUID {
+		return nil, fmt.Errorf("Unable to generate new UUID for data %q creation", name)
 	}
 
 	// Setup the basic data instance structure.
@@ -364,9 +354,10 @@ func NewDataService(t TypeService, uuid dvid.UUID, id dvid.InstanceID, name dvid
 		typename:    t.GetTypeName(),
 		typeurl:     t.GetTypeURL(),
 		typeversion: t.GetTypeVersion(),
-		name:        name,
+		dataUUID:    dataUUID,
 		id:          id,
-		uuid:        uuid,
+		name:        name,
+		rootUUID:    rootUUID,
 		compression: compression,
 		checksum:    dvid.DefaultChecksum,
 		syncs:       []dvid.InstanceName{},
@@ -378,18 +369,28 @@ func NewDataService(t TypeService, uuid dvid.UUID, id dvid.InstanceID, name dvid
 
 // ---- dvid.Data implementation ----
 
-func (d *Data) DataName() dvid.InstanceName { return d.name }
-
 func (d *Data) InstanceID() dvid.InstanceID { return d.id }
 
-func (d *Data) UUID() dvid.UUID { return d.uuid }
+func (d *Data) DataName() dvid.InstanceName { return d.name }
+
+func (d *Data) DataUUID() dvid.UUID { return d.dataUUID }
+
+func (d *Data) RootUUID() dvid.UUID { return d.rootUUID }
 
 func (d *Data) SetInstanceID(id dvid.InstanceID) {
 	d.id = id
 }
 
-func (d *Data) SetUUID(uuid dvid.UUID) {
-	d.uuid = uuid
+func (d *Data) SetDataUUID(uuid dvid.UUID) {
+	d.dataUUID = uuid
+}
+
+func (d *Data) SetRootUUID(uuid dvid.UUID) {
+	d.rootUUID = uuid
+}
+
+func (d *Data) SetName(name dvid.InstanceName) {
+	d.name = name
 }
 
 func (d *Data) TypeName() dvid.TypeString { return d.typename }
@@ -431,7 +432,7 @@ func (d *Data) GobDecode(b []byte) error {
 	if err := dec.Decode(&(d.id)); err != nil {
 		return err
 	}
-	if err := dec.Decode(&(d.uuid)); err != nil {
+	if err := dec.Decode(&(d.rootUUID)); err != nil {
 		return err
 	}
 	if err := dec.Decode(&(d.compression)); err != nil {
@@ -443,9 +444,12 @@ func (d *Data) GobDecode(b []byte) error {
 	if err := dec.Decode(&(d.syncs)); err != nil {
 		return err
 	}
-	err := dec.Decode(&(d.unversioned))
-	if err != nil {
+	if err := dec.Decode(&(d.unversioned)); err != nil {
 		dvid.Infof("Data %q had no explicit versioning flag: assume it's versioned.\n", d.name)
+	}
+	if err := dec.Decode(&(d.dataUUID)); err != nil {
+		d.dataUUID = dvid.NewUUID()
+		dvid.Infof("Data %q had no data UUID so assigning new UUID: %s\n", d.dataUUID)
 	}
 	return nil
 }
@@ -468,7 +472,7 @@ func (d *Data) GobEncode() ([]byte, error) {
 	if err := enc.Encode(d.id); err != nil {
 		return nil, err
 	}
-	if err := enc.Encode(d.uuid); err != nil {
+	if err := enc.Encode(d.rootUUID); err != nil {
 		return nil, err
 	}
 	if err := enc.Encode(d.compression); err != nil {
@@ -483,16 +487,22 @@ func (d *Data) GobEncode() ([]byte, error) {
 	if err := enc.Encode(d.unversioned); err != nil {
 		return nil, err
 	}
+	if err := enc.Encode(d.dataUUID); err != nil {
+		return nil, err
+	}
 	return buf.Bytes(), nil
 }
 
+// Equals returns true if the two data instances are identical, not just referring
+// to the same data instance (e.g., different names but same data UUID, etc).
 func (d *Data) Equals(d2 *Data) bool {
 	if d.typename != d2.typename ||
 		d.typeurl != d2.typeurl ||
 		d.typeversion != d2.typeversion ||
-		d.name != d2.name ||
+		d.dataUUID != d2.dataUUID ||
 		d.id != d2.id ||
-		d.uuid != d2.uuid ||
+		d.name != d2.name ||
+		d.rootUUID != d2.rootUUID ||
 		d.compression != d2.compression ||
 		d.checksum != d2.checksum ||
 		!syncsEqual(d.syncs, d2.syncs) {

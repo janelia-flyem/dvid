@@ -20,7 +20,8 @@ var (
 
 // Satisfies dvid.Data interface
 type testData struct {
-	uuid       dvid.UUID
+	dataUUID   dvid.UUID
+	rootUUID   dvid.UUID
 	name       dvid.InstanceName
 	instanceID dvid.InstanceID
 	store      dvid.Store
@@ -34,16 +35,28 @@ func (d *testData) InstanceID() dvid.InstanceID {
 	return d.instanceID
 }
 
-func (d *testData) UUID() dvid.UUID {
-    return d.uuid
+func (d *testData) RootUUID() dvid.UUID {
+	return d.rootUUID
+}
+
+func (d *testData) DataUUID() dvid.UUID {
+	return d.dataUUID
 }
 
 func (d *testData) SetInstanceID(id dvid.InstanceID) {
 	d.instanceID = id
 }
 
-func (d *testData) SetUUID(uuid dvid.UUID) {
-    d.uuid = uuid
+func (d *testData) SetDataUUID(uuid dvid.UUID) {
+	d.dataUUID = uuid
+}
+
+func (d *testData) SetRootUUID(uuid dvid.UUID) {
+	d.rootUUID = uuid
+}
+
+func (d *testData) SetName(name dvid.InstanceName) {
+	d.name = name
 }
 
 func (d *testData) Versioned() bool {
@@ -78,7 +91,12 @@ func GetTestDataContext(uuid dvid.UUID, name string, instanceID dvid.InstanceID)
 	if !found {
 		return nil
 	}
-	data := &testData{uuid, dvid.InstanceName(name), instanceID, nil}
+	data := &testData{
+		dataUUID:   dvid.NewUUID(),
+		rootUUID:   uuid,
+		name:       dvid.InstanceName(name),
+		instanceID: instanceID,
+	}
 	return NewDataContext(data, versionID)
 }
 

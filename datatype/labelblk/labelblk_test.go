@@ -89,11 +89,11 @@ func newDataInstance(uuid dvid.UUID, t *testing.T, name dvid.InstanceName) *Data
 	config := dvid.NewConfig()
 	dataservice, err := datastore.NewData(uuid, labelsT, name, config)
 	if err != nil {
-		t.Errorf("Unable to create labelblk instance %q: %v\n", name, err)
+		t.Fatalf("Unable to create labelblk instance %q: %v\n", name, err)
 	}
 	labels, ok := dataservice.(*Data)
 	if !ok {
-		t.Errorf("Can't cast labels data service into Data\n")
+		t.Fatalf("Can't cast labels data service into Data\n")
 	}
 	return labels
 }

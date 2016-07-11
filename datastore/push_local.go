@@ -474,9 +474,9 @@ func (p *pusher) readRepo(m *repoTxMsg) (map[dvid.VersionID]struct{}, error) {
 		// Also have to make sure any data instances are rerooted if the root
 		// no longer exists.
 		for name, d := range p.repo.data {
-			_, found := manager.uuidToVersion[d.UUID()]
+			_, found := manager.uuidToVersion[d.RootUUID()]
 			if !found {
-				p.repo.data[name].SetUUID(m.UUID)
+				p.repo.data[name].SetRootUUID(m.UUID)
 			}
 		}
 	case rpc.TransmitAll:
