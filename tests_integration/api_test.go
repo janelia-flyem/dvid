@@ -143,25 +143,7 @@ func (s sliceTester) testLabel(t *testing.T, vol labelVol, img *dvid.Image) {
 	}
 }
 
-func TestLabelsSyncing(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
-
-	uuid := dvid.UUID(server.NewTestRepo(t))
-	if len(uuid) < 5 {
-		t.Fatalf("Bad root UUID for new repo: %s\n", uuid)
-	}
-
-	// Create a labelblk instance
-	vol := labelVol{
-		size:      dvid.Point3d{5, 5, 5}, // in blocks
-		blockSize: dvid.Point3d{32, 32, 32},
-		offset:    dvid.Point3d{32, 64, 96},
-	}
-	vol.postLabelVolume(t, "labels", uuid)
-
-	// TODO -- Test syncing across labelblk, labelvol, labelsz.
-}
+// Note: Sync tests between labelblk, labelvol, and annotations are handled in those packages.
 
 func TestCommitAndBranch(t *testing.T) {
 	datastore.OpenTest()
@@ -255,15 +237,15 @@ func TestReloadMetadata(t *testing.T) {
 	}
 
 	// Make sure the data instances are still there.
-	_, err = datastore.GetDataByUUID(uuid, "foo")
+	_, err = datastore.GetDataByUUIDName(uuid, "foo")
 	if err != nil {
 		t.Errorf("Couldn't get keyvalue data instance after reload\n")
 	}
-	_, err = datastore.GetDataByUUID(uuid, "labels")
+	_, err = datastore.GetDataByUUIDName(uuid, "labels")
 	if err != nil {
 		t.Errorf("Couldn't get labelblk data instance after reload\n")
 	}
-	_, err = datastore.GetDataByUUID(uuid, "someroi")
+	_, err = datastore.GetDataByUUIDName(uuid, "someroi")
 	if err != nil {
 		t.Errorf("Couldn't get roi data instance after reload\n")
 	}

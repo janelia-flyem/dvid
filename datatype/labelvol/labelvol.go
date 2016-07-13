@@ -517,10 +517,10 @@ func (d *Data) RemapVersions(vmap dvid.VersionMap) error {
 
 // GetSyncedLabelblk returns the synced labelblk data instance or returns
 // an error if there is no synced labelblk.
-func (d *Data) GetSyncedLabelblk(v dvid.VersionID) (*labelblk.Data, error) {
+func (d *Data) GetSyncedLabelblk() (*labelblk.Data, error) {
 	// Go through all synced names, and checking if there's a valid source.
-	for _, name := range d.SyncedNames() {
-		source, err := labelblk.GetByVersion(v, name)
+	for dataUUID := range d.SyncedData() {
+		source, err := labelblk.GetByDataUUID(dataUUID)
 		if err == nil {
 			return source, nil
 		}
@@ -528,9 +528,22 @@ func (d *Data) GetSyncedLabelblk(v dvid.VersionID) (*labelblk.Data, error) {
 	return nil, fmt.Errorf("no labelblk data is syncing with %s", d.DataName())
 }
 
-// GetByUUID returns a pointer to labelvol data given a version (UUID) and data name.
-func GetByUUID(uuid dvid.UUID, name dvid.InstanceName) (*Data, error) {
-	source, err := datastore.GetDataByUUID(uuid, name)
+// GetByDataUUID returns a pointer to labelvol data given a data UUID.
+func GetByDataUUID(dataUUID dvid.UUID) (*Data, error) {
+	source, err := datastore.GetDataByDataUUID(dataUUID)
+	if err != nil {
+		return nil, err
+	}
+	data, ok := source.(*Data)
+	if !ok {
+		return nil, fmt.Errorf("Instance '%s' is not a labelvol datatype!", source.DataName())
+	}
+	return data, nil
+}
+
+// GetByUUIDName returns a pointer to labelvol data given a version (UUID) and data name.
+func GetByUUIDName(uuid dvid.UUID, name dvid.InstanceName) (*Data, error) {
+	source, err := datastore.GetDataByUUIDName(uuid, name)
 	if err != nil {
 		return nil, err
 	}
@@ -541,9 +554,9 @@ func GetByUUID(uuid dvid.UUID, name dvid.InstanceName) (*Data, error) {
 	return data, nil
 }
 
-// GetByVersion returns a pointer to labelblk data given a UUID and data name.
-func GetByVersion(v dvid.VersionID, name dvid.InstanceName) (*Data, error) {
-	source, err := datastore.GetDataByVersion(v, name)
+// GetByVersionName returns a pointer to labelblk data given a UUID and data name.
+func GetByVersionName(v dvid.VersionID, name dvid.InstanceName) (*Data, error) {
+	source, err := datastore.GetDataByVersionName(v, name)
 	if err != nil {
 		return nil, err
 	}
@@ -852,7 +865,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			server.BadRequest(w, r, "Only POST allowed to sync endpoint")
 			return
 		}
-		if err := d.SetSync(uuid, r.Body); err != nil {
+		if err := datastore.SetSyncByJSON(d, uuid, r.Body); err != nil {
 			server.BadRequest(w, r, err)
 			return
 		}
@@ -979,7 +992,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			server.BadRequest(w, r, err)
 			return
 		}
-		source, err := d.GetSyncedLabelblk(versionID)
+		source, err := d.GetSyncedLabelblk()
 		if err != nil {
 			server.BadRequest(w, r, err)
 			return
@@ -1679,7 +1692,7 @@ func (d *Data) PutSparseVol(v dvid.VersionID, label uint64, r io.Reader) error {
 	}
 
 	// Publish sparsevol mod event
-	evt := datastore.SyncEvent{d.DataName(), labels.SparsevolModEvent}
+	evt := datastore.SyncEvent{d.DataUUID(), labels.SparsevolModEvent}
 	msg := datastore.SyncMessage{v, labels.DeltaSparsevol{label, modmap}}
 	if err := datastore.NotifySubscribers(evt, msg); err != nil {
 		return err
@@ -1735,7 +1748,7 @@ func (d *Data) PutSparseVol(v dvid.VersionID, label uint64, r io.Reader) error {
 		Label:      label,
 		SizeChange: voxelsAdded,
 	}
-	evt = datastore.SyncEvent{d.DataName(), labels.ChangeSizeEvent}
+	evt = datastore.SyncEvent{d.DataUUID(), labels.ChangeSizeEvent}
 	msg = datastore.SyncMessage{v, delta}
 	if err := datastore.NotifySubscribers(evt, msg); err != nil {
 		return err

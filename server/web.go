@@ -676,7 +676,7 @@ func instanceSelector(c *web.C, h http.Handler) http.Handler {
 			BadRequest(w, r, msg)
 			return
 		}
-		data, err := datastore.GetDataByUUID(uuid, dataname)
+		data, err := datastore.GetDataByUUIDName(uuid, dataname)
 		if err != nil {
 			BadRequest(w, r, err)
 			return
@@ -1257,7 +1257,7 @@ func repoResolveHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	// Iterate through all k/v for given data instances, making sure we find any conflicts.
 	// If any are found, remove them with first UUIDs taking priority.
 	for _, name := range jsonData.Data {
-		data, err := datastore.GetDataByUUID(uuid, name)
+		data, err := datastore.GetDataByUUIDName(uuid, name)
 		if err != nil {
 			BadRequest(w, r, err)
 			return

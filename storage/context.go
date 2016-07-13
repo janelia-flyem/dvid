@@ -273,7 +273,7 @@ func (ctx *DataContext) UpdateInstance(k Key) error {
 }
 
 func (ctx *DataContext) InstanceVersion() dvid.InstanceVersion {
-	return dvid.InstanceVersion{ctx.data.DataName(), ctx.version}
+	return dvid.InstanceVersion{ctx.data.DataUUID(), ctx.version}
 }
 
 func (ctx *DataContext) Data() dvid.Data {

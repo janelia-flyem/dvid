@@ -89,7 +89,7 @@ func (d *Data) GetLabels(v dvid.VersionID, vox *Labels, r *imageblk.ROI) error {
 
 	ctx := datastore.NewVersionedCtx(d, v)
 
-	iv := dvid.InstanceVersion{d.DataName(), v}
+	iv := dvid.InstanceVersion{d.DataUUID(), v}
 	mapping := labels.LabelMap(iv)
 
 	wg := new(sync.WaitGroup)
@@ -172,7 +172,7 @@ func (d *Data) GetBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int) ([
 
 	ctx := datastore.NewVersionedCtx(d, v)
 
-	iv := dvid.InstanceVersion{d.DataName(), v}
+	iv := dvid.InstanceVersion{d.DataUUID(), v}
 	mapping := labels.LabelMap(iv)
 
 	keyvalues, err := store.GetRange(ctx, begTKey, endTKey)

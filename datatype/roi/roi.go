@@ -284,7 +284,7 @@ func DataBySpec(spec storage.FilterSpec) (d *Data, v dvid.VersionID, found bool,
 		return
 	}
 	var data datastore.DataService
-	data, err = datastore.GetDataByVersion(v, roiName)
+	data, err = datastore.GetDataByVersionName(v, roiName)
 	if err != nil {
 		return
 	}
@@ -337,9 +337,9 @@ func (d *Data) Equals(d2 *Data) bool {
 	return true
 }
 
-// GetByUUID returns a pointer to ROI data given a version (UUID) and data name.
-func GetByUUID(uuid dvid.UUID, name dvid.InstanceName) (*Data, error) {
-	source, err := datastore.GetDataByUUID(uuid, name)
+// GetByUUIDName returns a pointer to ROI data given a version (UUID) and data name.
+func GetByUUIDName(uuid dvid.UUID, name dvid.InstanceName) (*Data, error) {
+	source, err := datastore.GetDataByUUIDName(uuid, name)
 	if err != nil {
 		return nil, err
 	}

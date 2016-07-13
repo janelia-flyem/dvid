@@ -25,6 +25,7 @@ type testData struct {
 	name       dvid.InstanceName
 	instanceID dvid.InstanceID
 	store      dvid.Store
+	syncData   dvid.UUIDSet
 }
 
 func (d *testData) DataName() dvid.InstanceName {
@@ -57,6 +58,10 @@ func (d *testData) SetRootUUID(uuid dvid.UUID) {
 
 func (d *testData) SetName(name dvid.InstanceName) {
 	d.name = name
+}
+
+func (d *testData) SetSync(syncs dvid.UUIDSet) {
+	d.syncData = syncs
 }
 
 func (d *testData) Versioned() bool {

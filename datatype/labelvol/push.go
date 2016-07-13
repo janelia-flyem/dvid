@@ -20,17 +20,8 @@ func (d *Data) PushData(p *datastore.PushSession) error {
 func (d *Data) NewFilter(fs storage.FilterSpec) (storage.Filter, error) {
 	filter := &Filter{Data: d, fs: fs}
 
-	_, v, found, err := roi.ParseFilterSpec(fs)
-	if err != nil {
-		return nil, fmt.Errorf("can't parse filter spec (%s): %v\n", fs, err)
-	}
-	if !found {
-		dvid.Infof("no ROI filtering found for labelvol %q.\n", d.DataName())
-		return nil, nil
-	}
-
 	// Get associated labelblk.  If none, we can't use roi filter so just do standard data send.
-	lblk, err := d.GetSyncedLabelblk(v)
+	lblk, err := d.GetSyncedLabelblk()
 	if err != nil {
 		dvid.Infof("Unable to get synced labelblk for labelvol %q.  Unable to do any ROI-based filtering.\n", d.DataName())
 		return nil, nil

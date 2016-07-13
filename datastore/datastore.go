@@ -256,13 +256,6 @@ func NewData(uuid dvid.UUID, t TypeService, name dvid.InstanceName, c dvid.Confi
 	return manager.newData(uuid, t, name, c)
 }
 
-func SyncData(uuid dvid.UUID, name dvid.InstanceName, syncedNames ...dvid.InstanceName) error {
-	if manager == nil {
-		return ErrManagerNotInitialized
-	}
-	return manager.setSync(uuid, name, syncedNames)
-}
-
 // SaveDataByUUID persists metadata for a data instance with given uuid.
 // TODO -- Make this more efficient by storing data metadata separately from repo.
 //   Currently we save entire repo.
@@ -283,28 +276,44 @@ func SaveDataByVersion(v dvid.VersionID, data DataService) error {
 	return manager.saveRepoByVersion(v)
 }
 
-// GetDataByUUID returns a data service given an instance name and UUID.
-func GetDataByUUID(uuid dvid.UUID, name dvid.InstanceName) (DataService, error) {
+// GetDataByDataUUID returns a data service given a data UUID.
+func GetDataByDataUUID(dataUUID dvid.UUID) (DataService, error) {
 	if manager == nil {
 		return nil, ErrManagerNotInitialized
 	}
-	return manager.getDataByUUID(uuid, name)
+	return manager.getDataByDataUUID(dataUUID)
 }
 
-// GetDataByVersion returns a data service given an instance name and version.
-func GetDataByVersion(v dvid.VersionID, name dvid.InstanceName) (DataService, error) {
+// GetDataByUUIDName returns a data service given an instance name and UUID.
+func GetDataByUUIDName(uuid dvid.UUID, name dvid.InstanceName) (DataService, error) {
 	if manager == nil {
 		return nil, ErrManagerNotInitialized
 	}
-	return manager.getDataByVersion(v, name)
+	return manager.getDataByUUIDName(uuid, name)
 }
 
-// DeleteDataByUUID returns a data service given an instance name and UUID.
-func DeleteDataByUUID(uuid dvid.UUID, name dvid.InstanceName, passcode string) error {
+// GetDataByVersionName returns a data service given an instance name and version.
+func GetDataByVersionName(v dvid.VersionID, name dvid.InstanceName) (DataService, error) {
+	if manager == nil {
+		return nil, ErrManagerNotInitialized
+	}
+	return manager.getDataByVersionName(v, name)
+}
+
+// DeleteDataByName returns a data service given an instance name and UUID.
+func DeleteDataByName(uuid dvid.UUID, name dvid.InstanceName, passcode string) error {
 	if manager == nil {
 		return ErrManagerNotInitialized
 	}
-	return manager.deleteDataByUUID(uuid, name, passcode)
+	return manager.deleteDataByName(uuid, name, passcode)
+}
+
+// RenameData renames a data service given an old instance name and UUID.
+func RenameData(uuid dvid.UUID, oldname, newname dvid.InstanceName, passcode string) error {
+	if manager == nil {
+		return ErrManagerNotInitialized
+	}
+	return manager.renameDataByName(uuid, oldname, newname, passcode)
 }
 
 // DeleteDataByVersion returns a data service given an instance name and UUID.
@@ -315,11 +324,11 @@ func DeleteDataByVersion(v dvid.VersionID, name dvid.InstanceName, passcode stri
 	return manager.deleteDataByVersion(v, name, passcode)
 }
 
-func ModifyDataConfigByUUID(uuid dvid.UUID, name dvid.InstanceName, c dvid.Config) error {
+func ModifyDataConfigByName(uuid dvid.UUID, name dvid.InstanceName, c dvid.Config) error {
 	if manager == nil {
 		return ErrManagerNotInitialized
 	}
-	return manager.modifyDataByUUID(uuid, name, c)
+	return manager.modifyDataByName(uuid, name, c)
 }
 
 // ------ Cross-platform k/v pair matching for given version, necessary for versioned get.

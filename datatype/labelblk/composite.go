@@ -43,7 +43,7 @@ func (d *Data) CreateComposite(request datastore.Request, reply *datastore.Respo
 	}
 
 	// Get the grayscale data.
-	dataservice, err := datastore.GetDataByUUID(uuid, dvid.InstanceName(grayscaleName))
+	dataservice, err := datastore.GetDataByUUIDName(uuid, dvid.InstanceName(grayscaleName))
 	if err != nil {
 		return err
 	}
@@ -54,7 +54,7 @@ func (d *Data) CreateComposite(request datastore.Request, reply *datastore.Respo
 
 	// Create a new rgba8blk data.
 	var compservice datastore.DataService
-	compservice, err = datastore.GetDataByUUID(uuid, dvid.InstanceName(destName))
+	compservice, err = datastore.GetDataByUUIDName(uuid, dvid.InstanceName(destName))
 	if err == nil {
 		return fmt.Errorf("Data instance with name %q already exists", destName)
 	}

@@ -63,6 +63,7 @@ func Initialize(initMetadata bool, iconfig *InstanceConfig) error {
 		repoID:          1,
 		versionID:       1,
 		iids:            make(map[dvid.InstanceID]DataService),
+		dataByUUID:      make(map[dvid.UUID]DataService),
 		instanceIDGen:   iconfig.Gen,
 		instanceIDStart: iconfig.Start,
 	}
@@ -122,6 +123,7 @@ func ReloadMetadata() error {
 		repoID:          manager.repoID,
 		versionID:       manager.versionID,
 		iids:            make(map[dvid.InstanceID]DataService),
+		dataByUUID:      make(map[dvid.UUID]DataService),
 		instanceIDGen:   manager.instanceIDGen,
 		instanceIDStart: manager.instanceIDStart,
 	}
@@ -182,9 +184,13 @@ type repoManager struct {
 	// Mapping of all UUIDs to the repositories where that node sits.
 	repos map[dvid.UUID]*repoT
 
-	// Mapping of all instance IDs to the data service they provide.
+	// Mapping of all instance IDs to the data service they represent.
 	// Not persisted but created on load and maintained.
 	iids map[dvid.InstanceID]DataService
+
+	// Mapping of all data UUIDs to the data service they represent.
+	// Not persisted but created on load and maintained.
+	dataByUUID map[dvid.UUID]DataService
 
 	// instance id generation
 	instanceIDGen   string
@@ -412,6 +418,7 @@ func (m *repoManager) loadVersion0() error {
 				dvid.Infof("Now instance %q of type %q ...\n", dataservice.DataName(), dataservice.TypeName())
 			}
 			m.iids[dataservice.InstanceID()] = dataservice
+			m.dataByUUID[dataservice.DataUUID()] = dataservice
 
 			// Cache the assigned store.
 			typename := dataservice.TypeName()
@@ -422,18 +429,40 @@ func (m *repoManager) loadVersion0() error {
 			dataservice.SetBackendStore(store)
 		}
 
-		// Recreate the sync graph for this repo
+		// Recreate the sync graph for this repo, taking into account possible legacy sync names.
 		for _, dataservice := range r.data {
-			curData, syncable := dataservice.(Syncer)
+			syncer, syncable := dataservice.(Syncer)
 			if syncable {
-				for _, name := range curData.SyncedNames() {
-					// get the dataservice associated with this synced data.
-					syncedData, found := r.data[name]
-					if found {
-						r.addSyncGraph(curData.GetSyncSubs(syncedData))
-					} else {
-						dvid.Errorf("Skipping bad sync of %q with missing %q for uuid %s", dataservice.DataName(), name, r.uuid)
+				syncUUIDs := syncer.SyncedData()
+				if len(syncUUIDs) != 0 {
+					for u := range syncUUIDs {
+						// get the dataservice associated with this synced data.
+						syncedData, found := m.dataByUUID[u]
+						if found {
+							r.addSyncGraph(syncer.GetSyncSubs(syncedData))
+						} else {
+							dvid.Errorf("Skipping bad sync of %q with missing data uuid %s", dataservice.DataName(), u)
+						}
 					}
+				} else {
+					syncNames := syncer.SyncedNames()
+					if len(syncNames) == 0 {
+						continue
+					}
+					syncs := dvid.UUIDSet{}
+					for _, name := range syncNames {
+						// get the dataservice associated with this synced data.
+						syncedData, found := r.data[name]
+						if found {
+							r.addSyncGraph(syncer.GetSyncSubs(syncedData))
+							// convert the sync names to data UUIDs
+							syncs[syncedData.DataUUID()] = struct{}{}
+						} else {
+							dvid.Errorf("Skipping bad sync of %q with missing %q for uuid %s", dataservice.DataName(), name, r.uuid)
+						}
+					}
+					dataservice.SetSync(syncs)
+					saveRepo = true
 				}
 			}
 		}
@@ -684,6 +713,7 @@ func (m *repoManager) addRepo(r *repoT) error {
 	for _, dataservice := range r.data {
 		iid := dataservice.InstanceID()
 		m.iids[iid] = dataservice
+		m.dataByUUID[dataservice.DataUUID()] = dataservice
 	}
 	for v, node := range r.dag.nodes {
 		m.versionToUUID[v] = node.uuid
@@ -1452,6 +1482,8 @@ func (m *repoManager) newData(uuid dvid.UUID, t TypeService, name dvid.InstanceN
 	}
 	r.data[name] = dataservice
 	m.iids[id] = dataservice
+	m.dataByUUID[dataservice.DataUUID()] = dataservice
+
 	r.updated = time.Now()
 
 	// Add to log and save repo
@@ -1463,47 +1495,50 @@ func (m *repoManager) newData(uuid dvid.UUID, t TypeService, name dvid.InstanceN
 	return dataservice, r.save()
 }
 
-// Replaces any previous syncs with given ones.  Can also be used to delete syncs by passing nil syncs.
-func (m *repoManager) setSync(uuid dvid.UUID, name dvid.InstanceName, syncs []dvid.InstanceName) error {
-	r, err := m.repoFromUUID(uuid)
+// Replaces any previous syncs with given ones and sets up the sync graph for pub/sub.
+func (m *repoManager) setSync(d dvid.Data, syncs dvid.UUIDSet) error {
+	r, err := m.repoFromUUID(d.RootUUID())
 	if err != nil {
 		return err
-	}
-	dvid.Infof("Setting sync for instance %q with %v\n", name, syncs)
-
-	dataservice, found := r.data[name]
-	if !found {
-		return ErrInvalidDataName
 	}
 
 	r.Lock()
 	defer r.Unlock()
 
 	// Replace the syncs for the data instance with the given syncs.
-	receiver, syncable := dataservice.(Syncer)
+	d.SetSync(syncs)
+	syncer, syncable := d.(Syncer)
 	if syncable {
-		for _, syncName := range syncs {
-			syncedData, found := r.data[syncName]
+		for uuid := range syncs {
+			syncedData, found := m.dataByUUID[uuid]
 			if !found {
-				return fmt.Errorf("Unable to find synced data instance %q", syncName)
+				return ErrInvalidDataUUID
 			}
-			r.addSyncGraph(receiver.GetSyncSubs(syncedData))
+			r.addSyncGraph(syncer.GetSyncSubs(syncedData))
 		}
 	} else {
-		return fmt.Errorf("Can't create syncs for instance %q, which is not syncable", name)
+		return fmt.Errorf("Can't create syncs for instance %q, which is not syncable: %v", d.DataName(), d)
 	}
 
 	// Add to log and save repo
 	tm := time.Now()
 	r.updated = tm
-	msg := fmt.Sprintf("Data instance %q set to sync wtih %s", name, syncs)
+	msg := fmt.Sprintf("Data instance %q set to sync wtih %s", d.DataName(), syncs)
 	message := fmt.Sprintf("%s  %s", tm.Format(time.RFC3339), msg)
 	r.log = append(r.log, message)
 	return r.save()
 }
 
-func (m *repoManager) getDataByUUID(uuid dvid.UUID, name dvid.InstanceName) (DataService, error) {
-	r, err := m.repoFromUUID(uuid)
+func (m *repoManager) getDataByDataUUID(dataUUID dvid.UUID) (DataService, error) {
+	d, found := m.dataByUUID[dataUUID]
+	if !found {
+		return nil, ErrInvalidDataUUID
+	}
+	return d, nil
+}
+
+func (m *repoManager) getDataByUUIDName(rootUUID dvid.UUID, name dvid.InstanceName) (DataService, error) {
+	r, err := m.repoFromUUID(rootUUID)
 	if err != nil {
 		return nil, err
 	}
@@ -1518,7 +1553,7 @@ func (m *repoManager) getDataByUUID(uuid dvid.UUID, name dvid.InstanceName) (Dat
 	return data, nil
 }
 
-func (m *repoManager) getDataByVersion(v dvid.VersionID, name dvid.InstanceName) (DataService, error) {
+func (m *repoManager) getDataByVersionName(v dvid.VersionID, name dvid.InstanceName) (DataService, error) {
 	r, err := m.repoFromVersion(v)
 	if err != nil {
 		return nil, err
@@ -1534,9 +1569,38 @@ func (m *repoManager) getDataByVersion(v dvid.VersionID, name dvid.InstanceName)
 	return data, nil
 }
 
-// deleteDataByUUID deletes all data associated with the data instance and removes
+func (m *repoManager) renameDataByName(uuid dvid.UUID, oldname, newname dvid.InstanceName, passcode string) error {
+	r, err := m.repoFromUUID(uuid)
+	if err != nil {
+		return err
+	}
+	if r.passcode != "" && r.passcode != passcode {
+		return fmt.Errorf("incorrect passcode for repo %s", r.uuid)
+	}
+
+	r.Lock()
+	defer r.Unlock()
+
+	_, found := r.data[oldname]
+	if !found {
+		return ErrInvalidDataName
+	}
+
+	// Rename this data instance in the repository and persist.
+	tm := time.Now()
+	r.updated = tm
+	msg := fmt.Sprintf("Renamed data instance %q to %q", oldname, newname)
+	message := fmt.Sprintf("%s  %s", tm.Format(time.RFC3339), msg)
+	r.log = append(r.log, message)
+	r.data[newname] = r.data[oldname]
+	delete(r.data, oldname)
+
+	return r.save()
+}
+
+// deleteDataByName deletes all data associated with the data instance and removes
 // it from the Repo.
-func (m *repoManager) deleteDataByUUID(uuid dvid.UUID, name dvid.InstanceName, passcode string) error {
+func (m *repoManager) deleteDataByName(uuid dvid.UUID, name dvid.InstanceName, passcode string) error {
 	r, err := m.repoFromUUID(uuid)
 	if err != nil {
 		return err
@@ -1568,7 +1632,7 @@ func (m *repoManager) deleteData(r *repoT, name dvid.InstanceName, passcode stri
 	// Delete entries in the sync graph if this data needs to be synced with another data instance.
 	_, syncable := data.(Syncer)
 	if syncable {
-		r.deleteSyncGraph(name)
+		r.deleteSyncGraph(data)
 	}
 
 	// Remove this data instance from the repository and persist.
@@ -1577,7 +1641,6 @@ func (m *repoManager) deleteData(r *repoT, name dvid.InstanceName, passcode stri
 	msg := fmt.Sprintf("Delete data instance '%s' of type '%s'", name, data.TypeName())
 	message := fmt.Sprintf("%s  %s", tm.Format(time.RFC3339), msg)
 	r.log = append(r.log, message)
-	r.dag.deleteDataInstance(name)
 	delete(r.data, name)
 
 	// For all data tiers of storage, remove data key-value pairs that would be associated with this instance id.
@@ -1592,7 +1655,7 @@ func (m *repoManager) deleteData(r *repoT, name dvid.InstanceName, passcode stri
 
 // modifyData modifies preexisting Data within a Repo.  Settings can be passed
 // via the 'config' argument.  Only settings within the passed config are modified.
-func (m *repoManager) modifyDataByUUID(uuid dvid.UUID, name dvid.InstanceName, config dvid.Config) error {
+func (m *repoManager) modifyDataByName(uuid dvid.UUID, name dvid.InstanceName, config dvid.Config) error {
 	r, err := m.repoFromUUID(uuid)
 	if err != nil {
 		return err
@@ -1639,7 +1702,6 @@ type repoT struct {
 
 	dag *dagT
 
-	// data holds instances of data types.
 	data map[dvid.InstanceName]DataService
 
 	// subs holds subscriptions to change events for each data instance
@@ -1706,7 +1768,7 @@ func (r *repoT) duplicate(versions map[dvid.VersionID]struct{}, names dvid.Insta
 	dup.created = r.created
 	dup.updated = r.updated
 
-	dup.dag = r.dag.duplicate(versions, names)
+	dup.dag = r.dag.duplicate(versions)
 
 	if len(names) == 0 {
 		dup.data = make(map[dvid.InstanceName]DataService, len(r.data))
@@ -1961,7 +2023,7 @@ func (r *repoT) addSyncGraph(subs SyncSubs) {
 
 // Deletes subscriptions to and from a data instance.
 // Sends done signal to whatever is listening to the subscribed channel.
-func (r *repoT) deleteSyncGraph(name dvid.InstanceName) {
+func (r *repoT) deleteSyncGraph(data dvid.Data) {
 	if r.subs == nil {
 		return
 	}
@@ -1969,7 +2031,7 @@ func (r *repoT) deleteSyncGraph(name dvid.InstanceName) {
 	todelete := []SyncEvent{}
 	for evt, subs := range r.subs {
 		// Remove all subs to the named instance
-		if evt.Instance == name {
+		if evt.Data == data.DataUUID() {
 			r.subs[evt] = nil
 			todelete = append(todelete, evt)
 			continue
@@ -1978,7 +2040,7 @@ func (r *repoT) deleteSyncGraph(name dvid.InstanceName) {
 		// Remove all subs from the named instance
 		var deletions int
 		for _, sub := range subs {
-			if sub.Notify == name {
+			if sub.Notify == data.DataUUID() {
 				deletions++
 			}
 		}
@@ -1991,7 +2053,7 @@ func (r *repoT) deleteSyncGraph(name dvid.InstanceName) {
 			newsubs := make([]SyncSub, len(subs)-deletions)
 			j := 0
 			for _, sub := range subs {
-				if sub.Notify != name {
+				if sub.Notify != data.DataUUID() {
 					newsubs[j] = sub
 					j++
 				} else {
@@ -2074,10 +2136,9 @@ func newDAG(uuid dvid.UUID, v dvid.VersionID) *dagT {
 	}
 }
 
-// returns duplicate of DAG limited by any set of version IDs or a
-// list of instance names.  If the root UUID is not in the list of allowed versions,
-// there must be only one version allowed (flattened)
-func (d *dagT) duplicate(versions map[dvid.VersionID]struct{}, names dvid.InstanceNames) *dagT {
+// returns duplicate of DAG limited by any set of version IDs.  If the root UUID is not in the
+// list of allowed versions, there must be only one version allowed (flattened)
+func (d *dagT) duplicate(versions map[dvid.VersionID]struct{}) *dagT {
 	dup := new(dagT)
 
 	// if the root is no longer an allowed version, we know it's a flattened
@@ -2103,7 +2164,7 @@ func (d *dagT) duplicate(versions map[dvid.VersionID]struct{}, names dvid.Instan
 		if !found {
 			continue
 		}
-		dup.nodes[v] = node.duplicate(versions, names)
+		dup.nodes[v] = node.duplicate(versions)
 	}
 	return dup
 }
@@ -2191,24 +2252,11 @@ func (dag *dagT) getParents(v dvid.VersionID) ([]dvid.VersionID, error) {
 	return parents, nil
 }
 
-func (dag *dagT) deleteDataInstance(name dvid.InstanceName) {
-	for i := range dag.nodes {
-		delete(dag.nodes[i].avail, name)
-	}
-}
-
 type nodeT struct {
 	sync.RWMutex
 
 	note string
 	log  []string
-
-	// avail is used for data compression/deltas in version DAG, depending on
-	// type of data (e.g., versioned) and whether nodes are archived or not.
-	// If there is no map or data availability is not explicitly set, we use
-	// the default for that data, e.g., DataComplete if versioned or DataRoot
-	// if unversioned.
-	avail map[dvid.InstanceName]DataAvail
 
 	uuid    dvid.UUID
 	version dvid.VersionID
@@ -2225,26 +2273,14 @@ type nodeT struct {
 }
 
 // duplicate creates a duplicate node, limiting the data instances
-// to passed names and versions if provided.  If a parent or child is
+// to passed versions if provided.  If a parent or child is
 // not included in the versions, it is not copied.  Therefore if versions
 // are supplied, they must be contiguous and not random nodes in DAG.
-func (node *nodeT) duplicate(versions map[dvid.VersionID]struct{}, names dvid.InstanceNames) *nodeT {
+func (node *nodeT) duplicate(versions map[dvid.VersionID]struct{}) *nodeT {
 	dup := new(nodeT)
 	dup.note = node.note
 	dup.log = make([]string, len(node.log))
 	copy(dup.log, node.log)
-
-	if len(names) == 0 {
-		dup.avail = make(map[dvid.InstanceName]DataAvail, len(node.avail))
-		for k, v := range node.avail {
-			dup.avail[k] = v
-		}
-	} else {
-		dup.avail = make(map[dvid.InstanceName]DataAvail, len(names))
-		for name, avail := range node.avail {
-			dup.avail[name] = avail
-		}
-	}
 
 	dup.uuid = node.uuid
 	dup.version = node.version
@@ -2284,7 +2320,6 @@ func (node *nodeT) duplicate(versions map[dvid.VersionID]struct{}, names dvid.In
 func (node *nodeT) GobDecode(b []byte) error {
 	// Set zero values since gob doesn't transmit zero values down wire.
 	node.log = []string{}
-	node.avail = make(map[dvid.InstanceName]DataAvail)
 	node.parents = []dvid.VersionID{}
 	node.children = []dvid.VersionID{}
 
@@ -2296,9 +2331,13 @@ func (node *nodeT) GobDecode(b []byte) error {
 	if err := dec.Decode(&(node.log)); err != nil {
 		return err
 	}
-	if err := dec.Decode(&(node.avail)); err != nil {
+
+	// TODO - Deprecated and to be removed with full refactor of metadata
+	avail := make(map[dvid.InstanceName]DataAvail)
+	if err := dec.Decode(&avail); err != nil {
 		return err
 	}
+
 	if err := dec.Decode(&(node.uuid)); err != nil {
 		return err
 	}
@@ -2332,9 +2371,13 @@ func (node *nodeT) GobEncode() ([]byte, error) {
 	if err := enc.Encode(node.log); err != nil {
 		return nil, err
 	}
-	if err := enc.Encode(node.avail); err != nil {
+
+	// Deprecated and to be removed with full refactor of metadata
+	avail := make(map[dvid.InstanceName]DataAvail)
+	if err := enc.Encode(avail); err != nil {
 		return nil, err
 	}
+
 	if err := enc.Encode(node.uuid); err != nil {
 		return nil, err
 	}
@@ -2363,7 +2406,6 @@ func (node *nodeT) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		Note      string
 		Log       []string
-		Data      map[dvid.InstanceName]DataAvail
 		UUID      dvid.UUID
 		VersionID dvid.VersionID
 		Locked    bool
@@ -2374,7 +2416,6 @@ func (node *nodeT) MarshalJSON() ([]byte, error) {
 	}{
 		node.note,
 		node.log,
-		node.avail,
 		node.uuid,
 		node.version,
 		node.locked,
@@ -2389,7 +2430,6 @@ func newNode(uuid dvid.UUID, versionID dvid.VersionID) *nodeT {
 	t := time.Now()
 	return &nodeT{
 		log:      []string{},
-		avail:    make(map[dvid.InstanceName]DataAvail),
 		uuid:     uuid,
 		version:  versionID,
 		parents:  []dvid.VersionID{},

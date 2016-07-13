@@ -115,7 +115,7 @@ func MigrateInstance(uuid dvid.UUID, source dvid.InstanceName, oldStore dvid.Sto
 	}
 
 	// Get the source data instance.
-	d, err := manager.getDataByUUID(uuid, source)
+	d, err := manager.getDataByUUIDName(uuid, source)
 	if err != nil {
 		return err
 	}
@@ -193,7 +193,7 @@ func CopyInstance(uuid dvid.UUID, source, target dvid.InstanceName, c dvid.Confi
 	}
 
 	// Get the source data instance.
-	d1, err := manager.getDataByUUID(uuid, source)
+	d1, err := manager.getDataByUUIDName(uuid, source)
 	if err != nil {
 		return err
 	}

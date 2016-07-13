@@ -44,6 +44,8 @@ Commands executed on the server (rpc address = %s):
 	
 	repo <UUID> delete <data name> <repo passcode if any>
 
+	repo <UUID> rename <old data name> <new data name> <repo passcode if any>
+
 	node <UUID> <data name> <type-specific commands>
 
 EXPERIMENTAL COMMANDS
@@ -288,6 +290,25 @@ func handleCommand(cmd *datastore.Request) (reply *datastore.Response, err error
 			reply.Text = fmt.Sprintf("Data %q [%s] added to node %s\n", dataname, typename, uuid)
 			datastore.AddToRepoLog(uuid, []string{cmd.String()})
 
+		case "rename":
+			var name1, name2, passcode string
+			cmd.CommandArgs(3, &name1, &name2, &passcode)
+			oldname := dvid.InstanceName(name1)
+			newname := dvid.InstanceName(name2)
+
+			// Make sure this instance exists.
+			if _, err = datastore.GetDataByUUIDName(uuid, oldname); err != nil {
+				err = fmt.Errorf("Error trying to rename %q for UUID %s: %v", oldname, uuid, err)
+				return
+			}
+
+			// Do the rename.
+			if err = datastore.RenameData(uuid, oldname, newname, passcode); err != nil {
+				err = fmt.Errorf("Error renaming data instance %q to %q: %v", oldname, newname, err)
+				return
+			}
+			reply.Text = fmt.Sprintf("Renamed data instance %q to %q from DAG subgraph @ root %s\n", oldname, newname, uuid)
+
 		case "branch":
 			cmd.CommandArgs(3, &uuidStr)
 
@@ -377,13 +398,13 @@ func handleCommand(cmd *datastore.Request) (reply *datastore.Response, err error
 			cmd.CommandArgs(3, &dataname, &passcode)
 
 			// Make sure this instance exists.
-			if _, err = datastore.GetDataByUUID(uuid, dvid.InstanceName(dataname)); err != nil {
+			if _, err = datastore.GetDataByUUIDName(uuid, dvid.InstanceName(dataname)); err != nil {
 				err = fmt.Errorf("Error trying to delete %q for UUID %s: %v", dataname, uuid, err)
 				return
 			}
 
 			// Do the deletion.  Under hood, modifies metadata immediately and launches async k/v deletion.
-			if err = datastore.DeleteDataByUUID(uuid, dvid.InstanceName(dataname), passcode); err != nil {
+			if err = datastore.DeleteDataByName(uuid, dvid.InstanceName(dataname), passcode); err != nil {
 				err = fmt.Errorf("Error deleting data instance %q: %v", dataname, err)
 				return
 			}
@@ -407,7 +428,7 @@ func handleCommand(cmd *datastore.Request) (reply *datastore.Response, err error
 		var subcommand string
 		cmd.CommandArgs(3, &subcommand)
 		var dataservice datastore.DataService
-		if dataservice, err = datastore.GetDataByUUID(uuid, dataname); err != nil {
+		if dataservice, err = datastore.GetDataByUUIDName(uuid, dataname); err != nil {
 			return
 		}
 		if subcommand == "help" {

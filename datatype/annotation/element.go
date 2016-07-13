@@ -648,17 +648,17 @@ func (d *Data) Equals(d2 *Data) bool {
 
 // blockSize is either defined by any synced labelblk or by the default block size.
 // Also checks to make sure that synced data is consistent.
-func (d *Data) blockSize(v dvid.VersionID) dvid.Point3d {
+func (d *Data) blockSize() dvid.Point3d {
 	if d.cachedBlockSize != nil {
 		return *d.cachedBlockSize
 	}
 	var bsize dvid.Point3d
 	d.cachedBlockSize = &bsize
-	if lb := d.GetSyncedLabelblk(v); lb != nil {
+	if lb := d.GetSyncedLabelblk(); lb != nil {
 		bsize = lb.BlockSize().(dvid.Point3d)
 		return bsize
 	}
-	if lv := d.GetSyncedLabelvol(v); lv != nil {
+	if lv := d.GetSyncedLabelvol(); lv != nil {
 		if len(bsize) != 0 && !bsize.Equals(lv.BlockSize) {
 			dvid.Errorf("annotations %q is synced to labelblk and labelvol with different block sizes!\n", d.DataName())
 		} else {
@@ -672,10 +672,9 @@ func (d *Data) blockSize(v dvid.VersionID) dvid.Point3d {
 	return bsize
 }
 
-func (d *Data) GetSyncedLabelblk(v dvid.VersionID) *labelblk.Data {
-	// Go through all synced names, and checking if there's a valid source.
-	for _, name := range d.SyncedNames() {
-		source, err := labelblk.GetByVersion(v, name)
+func (d *Data) GetSyncedLabelblk() *labelblk.Data {
+	for dataUUID := range d.SyncedData() {
+		source, err := labelblk.GetByDataUUID(dataUUID)
 		if err == nil {
 			return source
 		}
@@ -683,10 +682,9 @@ func (d *Data) GetSyncedLabelblk(v dvid.VersionID) *labelblk.Data {
 	return nil
 }
 
-func (d *Data) GetSyncedLabelvol(v dvid.VersionID) *labelvol.Data {
-	// Go through all synced names, and checking if there's a valid source.
-	for _, name := range d.SyncedNames() {
-		source, err := labelvol.GetByVersion(v, name)
+func (d *Data) GetSyncedLabelvol() *labelvol.Data {
+	for dataUUID := range d.SyncedData() {
+		source, err := labelvol.GetByDataUUID(dataUUID)
 		if err == nil {
 			return source
 		}
@@ -720,7 +718,7 @@ func (d *Data) deleteElementInTags(ctx *datastore.VersionedCtx, pt dvid.Point3d,
 }
 
 func (d *Data) deleteElementInLabel(ctx *datastore.VersionedCtx, pt dvid.Point3d) error {
-	labelData := d.GetSyncedLabelblk(ctx.VersionID())
+	labelData := d.GetSyncedLabelblk()
 	if labelData == nil {
 		return nil // no synced labels
 	}
@@ -742,7 +740,7 @@ func (d *Data) deleteElementInLabel(ctx *datastore.VersionedCtx, pt dvid.Point3d
 // delete all reference to given element point in the related points.
 // This is private method and assumes outer locking.
 func (d *Data) deleteElementInRelationships(ctx *datastore.VersionedCtx, pt dvid.Point3d, rels []Relationship) error {
-	blockSize := d.blockSize(ctx.VersionID())
+	blockSize := d.blockSize()
 	for _, rel := range rels {
 		// Get the block elements containing the related element.
 		blockCoord := rel.To.Chunk(blockSize).(dvid.ChunkPoint3d)
@@ -791,7 +789,7 @@ func (d *Data) moveElementInTags(ctx *datastore.VersionedCtx, from, to dvid.Poin
 }
 
 func (d *Data) moveElementInLabels(ctx *datastore.VersionedCtx, from, to dvid.Point3d, moved *Element) error {
-	labelData := d.GetSyncedLabelblk(ctx.VersionID())
+	labelData := d.GetSyncedLabelblk()
 	if labelData == nil {
 		return nil // no label denormalization possible
 	}
@@ -834,7 +832,7 @@ func (d *Data) moveElementInLabels(ctx *datastore.VersionedCtx, from, to dvid.Po
 // This is private method and assumes outer locking as well as current "from" block already being modified,
 // including relationships.
 func (d *Data) moveElementInRelationships(ctx *datastore.VersionedCtx, from, to dvid.Point3d, rels []Relationship) error {
-	blockSize := d.blockSize(ctx.VersionID())
+	blockSize := d.blockSize()
 	fromBlockCoord := from.Chunk(blockSize).(dvid.ChunkPoint3d)
 
 	// Get list of blocks with related points.
@@ -917,8 +915,9 @@ func (d *Data) storeBlockElements(ctx *datastore.VersionedCtx, be blockElements)
 // stores synaptic elements arranged by label, replacing any
 // elements at same position.
 func (d *Data) storeLabelElements(ctx *datastore.VersionedCtx, be blockElements) error {
-	labelData := d.GetSyncedLabelblk(ctx.VersionID())
+	labelData := d.GetSyncedLabelblk()
 	if labelData == nil {
+		dvid.Infof("No synced labels for annotation %q, skipping label-aware denormalization.\n", d.DataName())
 		return nil // no synced labels
 	}
 	store, err := d.BackendStore()
@@ -931,7 +930,7 @@ func (d *Data) storeLabelElements(ctx *datastore.VersionedCtx, be blockElements)
 	}
 
 	// Compute the strides (in bytes)
-	blockSize := d.blockSize(ctx.VersionID())
+	blockSize := d.blockSize()
 	bX := blockSize[0] * 8
 	bY := blockSize[1] * bX
 	blockBytes := int(blockSize[0] * blockSize[1] * blockSize[2] * 8)
@@ -1026,7 +1025,7 @@ func (d *Data) GetRegionSynapses(ctx *datastore.VersionedCtx, ext *dvid.Extents3
 	}
 
 	// Setup block bounds for synapse element query in supplied Z range.
-	blockSize := d.blockSize(ctx.VersionID())
+	blockSize := d.blockSize()
 	begBlockCoord, endBlockCoord := ext.BlockRange(blockSize)
 
 	begTKey := NewBlockTKey(begBlockCoord)
@@ -1064,6 +1063,8 @@ func (d *Data) GetRegionSynapses(ctx *datastore.VersionedCtx, ext *dvid.Extents3
 	return elements, nil
 }
 
+// StoreSynapses performs a synchronous store of synapses in JSON format, not
+// returning until the data and its denormalizations are complete.
 func (d *Data) StoreSynapses(ctx *datastore.VersionedCtx, r io.Reader) error {
 	jsonBytes, err := ioutil.ReadAll(r)
 	if err != nil {
@@ -1079,7 +1080,7 @@ func (d *Data) StoreSynapses(ctx *datastore.VersionedCtx, r io.Reader) error {
 
 	dvid.Infof("%d synaptic elements received via POST", len(elements))
 
-	blockSize := d.blockSize(ctx.VersionID())
+	blockSize := d.blockSize()
 	blockE := make(blockElements)
 	tagE := make(tagElements)
 
@@ -1124,7 +1125,7 @@ func (d *Data) StoreSynapses(ctx *datastore.VersionedCtx, r io.Reader) error {
 
 func (d *Data) DeleteElement(ctx *datastore.VersionedCtx, pt dvid.Point3d) error {
 	// Get from block key
-	blockSize := d.blockSize(ctx.VersionID())
+	blockSize := d.blockSize()
 	blockCoord := pt.Chunk(blockSize).(dvid.ChunkPoint3d)
 	tk := NewBlockTKey(blockCoord)
 
@@ -1167,7 +1168,7 @@ func (d *Data) DeleteElement(ctx *datastore.VersionedCtx, pt dvid.Point3d) error
 
 func (d *Data) MoveElement(ctx *datastore.VersionedCtx, from, to dvid.Point3d) error {
 	// Calc block keys
-	blockSize := d.blockSize(ctx.VersionID())
+	blockSize := d.blockSize()
 	fromCoord := from.Chunk(blockSize).(dvid.ChunkPoint3d)
 	fromTk := NewBlockTKey(fromCoord)
 
@@ -1224,9 +1225,9 @@ func (d *Data) MoveElement(ctx *datastore.VersionedCtx, from, to dvid.Point3d) e
 	return nil
 }
 
-// GetByUUID returns a pointer to annotation data given a version (UUID) and data name.
-func GetByUUID(uuid dvid.UUID, name dvid.InstanceName) (*Data, error) {
-	source, err := datastore.GetDataByUUID(uuid, name)
+// GetByUUIDName returns a pointer to annotation data given a version (UUID) and data name.
+func GetByUUIDName(uuid dvid.UUID, name dvid.InstanceName) (*Data, error) {
+	source, err := datastore.GetDataByUUIDName(uuid, name)
 	if err != nil {
 		return nil, err
 	}
@@ -1352,7 +1353,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			server.BadRequest(w, r, "Only POST allowed to sync endpoint")
 			return
 		}
-		if err := d.SetSync(uuid, r.Body); err != nil {
+		if err := datastore.SetSyncByJSON(d, uuid, r.Body); err != nil {
 			server.BadRequest(w, r, err)
 			return
 		}

@@ -1122,7 +1122,7 @@ func (d *Data) ForegroundROI(req datastore.Request, reply *datastore.Response) e
 
 	// Use existing destination data or a new ROI data.
 	var dest *roi.Data
-	dest, err = roi.GetByUUID(uuid, dvid.InstanceName(destName))
+	dest, err = roi.GetByUUIDName(uuid, dvid.InstanceName(destName))
 	if err != nil {
 		config := dvid.NewConfig()
 		typeservice, err := datastore.TypeServiceByName("roi")

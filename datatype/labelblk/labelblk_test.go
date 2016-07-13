@@ -185,7 +185,7 @@ func TestLabelblkRepoPersistence(t *testing.T) {
 	}
 	datastore.CloseReopenTest()
 
-	dataservice2, err := datastore.GetDataByUUID(uuid, "mylabels")
+	dataservice2, err := datastore.GetDataByUUIDName(uuid, "mylabels")
 	if err != nil {
 		t.Fatalf("Can't get labels instance from reloaded test db: %v\n", err)
 	}

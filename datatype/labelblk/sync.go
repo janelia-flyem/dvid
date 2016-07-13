@@ -21,7 +21,7 @@ import (
 // BlockOnUpdating blocks until the given data is not updating from syncs.
 // This is primarily used during testing.
 func BlockOnUpdating(uuid dvid.UUID, name dvid.InstanceName) error {
-	d, err := GetByUUID(uuid, name)
+	d, err := GetByUUIDName(uuid, name)
 	if err != nil {
 		return err
 	}
@@ -33,7 +33,7 @@ func BlockOnUpdating(uuid dvid.UUID, name dvid.InstanceName) error {
 }
 
 // GetSyncSubs implements the datastore.Syncer interface
-func (d *Data) GetSyncSubs(syncData dvid.Data) datastore.SyncSubs {
+func (d *Data) GetSyncSubs(synced dvid.Data) datastore.SyncSubs {
 	mergeCh := make(chan datastore.SyncMessage, 100)
 	mergeDone := make(chan struct{})
 
@@ -42,58 +42,58 @@ func (d *Data) GetSyncSubs(syncData dvid.Data) datastore.SyncSubs {
 
 	subs := datastore.SyncSubs{
 		// {
-		// 	Event:  datastore.SyncEvent{name, labels.SparsevolModEvent},
-		// 	Notify: d.DataName(),
+		// 	Event:  datastore.SyncEvent{synced.DataUUID(), labels.SparsevolModEvent},
+		//  Notify: d.DataUUID(),
 		// 	Ch:     make(chan datastore.SyncMessage, 100),
 		// 	Done:   make(chan struct{}),
 		// },
 		{
-			Event:  datastore.SyncEvent{syncData.DataName(), labels.MergeStartEvent},
-			Notify: d.DataName(),
+			Event:  datastore.SyncEvent{synced.DataUUID(), labels.MergeStartEvent},
+			Notify: d.DataUUID(),
 			Ch:     mergeCh,
 			Done:   mergeDone,
 		},
 		// {
-		// 	Event:  datastore.SyncEvent{syncData.DataName(), labels.MergeEndEvent},
-		// 	Notify: d.DataName(),
+		// 	Event:  datastore.SyncEvent{synced.DataUUID(), labels.MergeEndEvent},
+		//  Notify: d.DataUUID(),
 		// 	Ch:     mergeCh,
 		// 	Done:   mergeDone,
 		// },
 		{
-			Event:  datastore.SyncEvent{syncData.DataName(), labels.MergeBlockEvent},
-			Notify: d.DataName(),
+			Event:  datastore.SyncEvent{synced.DataUUID(), labels.MergeBlockEvent},
+			Notify: d.DataUUID(),
 			Ch:     mergeCh,
 			Done:   mergeDone,
 		},
 		{
-			Event:  datastore.SyncEvent{syncData.DataName(), labels.SplitStartEvent},
-			Notify: d.DataName(),
+			Event:  datastore.SyncEvent{synced.DataUUID(), labels.SplitStartEvent},
+			Notify: d.DataUUID(),
 			Ch:     splitCh,
 			Done:   splitDone,
 		},
 		// {
-		// 	Event:  datastore.SyncEvent{syncData.DataName(), labels.SplitEndEvent},
-		// 	Notify: d.DataName(),
+		// 	Event:  datastore.SyncEvent{synced.DataUUID(), labels.SplitEndEvent},
+		//  Notify: d.DataUUID(),
 		// 	Ch:     splitCh,
 		// 	Done:   splitDone,
 		// },
 		{
-			Event:  datastore.SyncEvent{syncData.DataName(), labels.SplitLabelEvent},
-			Notify: d.DataName(),
+			Event:  datastore.SyncEvent{synced.DataUUID(), labels.SplitLabelEvent},
+			Notify: d.DataUUID(),
 			Ch:     splitCh,
 			Done:   splitDone,
 		},
 	}
 
 	// Launch go routines to handle sync events.
-	//go d.syncSparsevolChange(name, subs[0].Ch, subs[0].Done)
-	go d.syncMerge(syncData.DataName(), mergeCh, mergeDone)
-	go d.syncSplit(syncData.DataName(), splitCh, splitDone)
+	//go d.syncSparsevolChange(synced.DataUUID(), subs[0].Ch, subs[0].Done)
+	go d.syncMerge(synced.DataUUID(), mergeCh, mergeDone)
+	go d.syncSplit(splitCh, splitDone)
 
 	return subs
 }
 
-func (d *Data) syncSparsevolChange(name dvid.InstanceName, in <-chan datastore.SyncMessage, done <-chan struct{}) {
+func (d *Data) syncSparsevolChange(synced dvid.UUID, in <-chan datastore.SyncMessage, done <-chan struct{}) {
 	/*
 		for msg := range in {
 			select {
@@ -122,7 +122,7 @@ type mergeOp struct {
 	wg   *sync.WaitGroup
 }
 
-func (d *Data) syncMerge(name dvid.InstanceName, in <-chan datastore.SyncMessage, done <-chan struct{}) {
+func (d *Data) syncMerge(synced dvid.UUID, in <-chan datastore.SyncMessage, done <-chan struct{}) {
 	// Start N goroutines to process blocks.  Don't need transactional support for
 	// GET-PUT combo if each spatial coordinate (block) is only handled serially by a one goroutine.
 	const numprocs = 32
@@ -142,7 +142,7 @@ func (d *Data) syncMerge(name dvid.InstanceName, in <-chan datastore.SyncMessage
 			}
 			return
 		default:
-			iv := dvid.InstanceVersion{name, msg.Version}
+			iv := dvid.InstanceVersion{synced, msg.Version}
 			switch delta := msg.Delta.(type) {
 			case labels.DeltaMerge:
 				ctx := datastore.NewVersionedCtx(d, msg.Version)
@@ -237,7 +237,7 @@ type splitOp struct {
 	ctx datastore.VersionedCtx
 }
 
-func (d *Data) syncSplit(name dvid.InstanceName, in <-chan datastore.SyncMessage, done <-chan struct{}) {
+func (d *Data) syncSplit(in <-chan datastore.SyncMessage, done <-chan struct{}) {
 	// Start N goroutines to process blocks.  Don't need transactional support for
 	// GET-PUT combo if each spatial coordinate (block) is only handled serially by a one goroutine.
 	const numprocs = 32

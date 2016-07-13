@@ -132,7 +132,7 @@ func TestKeyvalueRepoPersistence(t *testing.T) {
 	}
 	datastore.CloseReopenTest()
 
-	dataservice2, err := datastore.GetDataByUUID(uuid, "mykv")
+	dataservice2, err := datastore.GetDataByUUIDName(uuid, "mykv")
 	if err != nil {
 		t.Fatalf("Can't get keyvalue instance from reloaded test db: %v\n", err)
 	}

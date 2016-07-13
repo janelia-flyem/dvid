@@ -20,7 +20,7 @@ const syncBufferSize = 100
 // This is primarily used during testing.
 func BlockOnUpdating(uuid dvid.UUID, name dvid.InstanceName) error {
 	time.Sleep(100 * time.Millisecond)
-	d, err := GetByUUID(uuid, name)
+	d, err := GetByUUIDName(uuid, name)
 	if err != nil {
 		return err
 	}
@@ -66,35 +66,35 @@ func (d *Data) GetSyncSubs(syncData dvid.Data) datastore.SyncSubs {
 	// Our syncing depends on the datatype we are syncing.
 	switch syncData.TypeName() {
 	case "labelblk":
-		return d.initSyncLabelblk(syncData.DataName())
+		return d.initSyncLabelblk(syncData)
 	case "labelvol":
-		return d.initSyncLabelvol(syncData.DataName())
+		return d.initSyncLabelvol(syncData)
 	default:
 		dvid.Errorf("Unable to sync %s with %s since datatype %q is not supported.", d.DataName(), syncData.DataName(), syncData.TypeName())
 	}
 	return nil
 }
 
-func (d *Data) initSyncLabelblk(name dvid.InstanceName) datastore.SyncSubs {
+func (d *Data) initSyncLabelblk(synced dvid.Data) datastore.SyncSubs {
 	syncCh := make(chan datastore.SyncMessage, syncBufferSize)
 	doneCh := make(chan struct{})
 
 	subs := datastore.SyncSubs{
 		{
-			Event:  datastore.SyncEvent{name, labels.IngestBlockEvent},
-			Notify: d.DataName(),
+			Event:  datastore.SyncEvent{synced.DataUUID(), labels.IngestBlockEvent},
+			Notify: d.DataUUID(),
 			Ch:     syncCh,
 			Done:   doneCh,
 		},
 		{
-			Event:  datastore.SyncEvent{name, labels.MutateBlockEvent},
-			Notify: d.DataName(),
+			Event:  datastore.SyncEvent{synced.DataUUID(), labels.MutateBlockEvent},
+			Notify: d.DataUUID(),
 			Ch:     syncCh,
 			Done:   doneCh,
 		},
 		{
-			Event:  datastore.SyncEvent{name, labels.DeleteBlockEvent},
-			Notify: d.DataName(),
+			Event:  datastore.SyncEvent{synced.DataUUID(), labels.DeleteBlockEvent},
+			Notify: d.DataUUID(),
 			Ch:     syncCh,
 			Done:   doneCh,
 		},
@@ -106,7 +106,7 @@ func (d *Data) initSyncLabelblk(name dvid.InstanceName) datastore.SyncSubs {
 	return subs
 }
 
-func (d *Data) initSyncLabelvol(name dvid.InstanceName) datastore.SyncSubs {
+func (d *Data) initSyncLabelvol(synced dvid.Data) datastore.SyncSubs {
 	mergeCh := make(chan datastore.SyncMessage, 100)
 	mergeDone := make(chan struct{})
 
@@ -115,14 +115,14 @@ func (d *Data) initSyncLabelvol(name dvid.InstanceName) datastore.SyncSubs {
 
 	subs := datastore.SyncSubs{
 		datastore.SyncSub{
-			Event:  datastore.SyncEvent{name, labels.MergeBlockEvent},
-			Notify: d.DataName(),
+			Event:  datastore.SyncEvent{synced.DataUUID(), labels.MergeBlockEvent},
+			Notify: d.DataUUID(),
 			Ch:     mergeCh,
 			Done:   mergeDone,
 		},
 		datastore.SyncSub{
-			Event:  datastore.SyncEvent{name, labels.SplitLabelEvent},
-			Notify: d.DataName(),
+			Event:  datastore.SyncEvent{synced.DataUUID(), labels.SplitLabelEvent},
+			Notify: d.DataUUID(),
 			Ch:     splitCh,
 			Done:   splitDone,
 		},
@@ -178,7 +178,7 @@ func (d *Data) ingestBlock(ctx *datastore.VersionedCtx, block imageblk.Block, ba
 	if len(elems) == 0 {
 		return
 	}
-	blockSize := d.blockSize(ctx.VersionID())
+	blockSize := d.blockSize()
 	batch := batcher.NewBatch(ctx)
 
 	// Compute the strides (in bytes)
@@ -229,7 +229,7 @@ func (d *Data) mutateBlock(ctx *datastore.VersionedCtx, block imageblk.MutatedBl
 	if len(elems) == 0 {
 		return
 	}
-	blockSize := d.blockSize(ctx.VersionID())
+	blockSize := d.blockSize()
 	batch := batcher.NewBatch(ctx)
 
 	// Compute the strides (in bytes)
@@ -304,7 +304,7 @@ func (d *Data) deleteBlock(ctx *datastore.VersionedCtx, block labels.DeleteBlock
 	if len(elems) == 0 {
 		return
 	}
-	blockSize := d.blockSize(ctx.VersionID())
+	blockSize := d.blockSize()
 	batch := batcher.NewBatch(ctx)
 
 	// Compute the strides (in bytes)
@@ -486,7 +486,7 @@ func (d *Data) splitLabelsCoarse(batcher storage.KeyValueBatcher, v dvid.Version
 	// Separate any elements that are within the split blocks.
 	toDel := make(map[int]struct{})
 	toAdd := Elements{}
-	blockSize := d.blockSize(ctx.VersionID())
+	blockSize := d.blockSize()
 	for i, elem := range oldElems {
 		zyxStr := elem.Pos.ToIZYXString(blockSize)
 		if _, found := splitBlocks[zyxStr]; found {

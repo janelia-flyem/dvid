@@ -74,6 +74,22 @@ func NewUUID() UUID {
 
 const NilUUID = UUID("")
 
+// UUIDSet is a set of UUIDs.
+type UUIDSet map[UUID]struct{}
+
+// Equals returns true if the two UUIDSets have the same elements.
+func (uset UUIDSet) Equals(uset2 UUIDSet) bool {
+	if len(uset) != len(uset2) {
+		return false
+	}
+	for uuid := range uset {
+		if uset[uuid] != uset2[uuid] {
+			return false
+		}
+	}
+	return true
+}
+
 // Note: TypeString and InstanceName are types to add static checks and prevent conflation
 // of the two types of identifiers.
 
@@ -118,12 +134,12 @@ func InstanceIDFromBytes(b []byte) InstanceID {
 
 // InstanceVersion identifies a particular version of a data instance.
 type InstanceVersion struct {
-	Name    InstanceName
+	Data    UUID
 	Version VersionID
 }
 
 func (iv InstanceVersion) String() string {
-	return fmt.Sprintf("[%s version %d]", iv.Name, iv.Version)
+	return fmt.Sprintf("[%s version %d]", iv.Data, iv.Version)
 }
 
 // RepoID is a DVID server-specific identifier for a particular Repo.  Valid RepoIDs
@@ -242,6 +258,9 @@ type Data interface {
 	SetDataUUID(UUID)
 	SetName(InstanceName)
 	SetRootUUID(UUID)
+
+	// SetSync defines a set of data UUIDs for syncing with this data instance.
+	SetSync(UUIDSet)
 }
 
 // Axis enumerates differnt types of axis (x, y, z, time, etc)

@@ -166,7 +166,7 @@ func TestMultiscale2dRepoPersistence(t *testing.T) {
 	}
 	datastore.CloseReopenTest()
 
-	dataservice2, err := datastore.GetDataByUUID(uuid, "myimagetile")
+	dataservice2, err := datastore.GetDataByUUIDName(uuid, "myimagetile")
 	if err != nil {
 		t.Fatalf("Can't get keyvalue instance from reloaded test db: %v\n", err)
 	}

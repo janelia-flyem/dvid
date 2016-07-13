@@ -472,7 +472,7 @@ func TestGrayscaleRepoPersistence(t *testing.T) {
 	}
 	datastore.CloseReopenTest()
 
-	dataservice2, err := datastore.GetDataByUUID(uuid, "mygrayscale")
+	dataservice2, err := datastore.GetDataByUUIDName(uuid, "mygrayscale")
 	if err != nil {
 		t.Fatalf("Can't get grayscale instance from reloaded test db: %v\n", err)
 	}

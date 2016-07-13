@@ -224,7 +224,8 @@ type Data struct {
 	checksum dvid.Checksum
 
 	// a list of the instances to which this data should be synced
-	syncs []dvid.InstanceName
+	syncNames []dvid.InstanceName // deprecated but used for legacy serialization
+	syncData  dvid.UUIDSet        // data UUIDs of syncs.
 
 	// unversioned = true if all UUIDs should be mapped to the root UUID.
 	// Only one version exists for an entire repo, so it's repo-wide.
@@ -241,56 +242,17 @@ type Data struct {
 	syncInited map[dvid.InstanceName]struct{}
 }
 
-// -- Syncer interface implementation is in base Data type because generic implementations will do.
+// -- Syncer interface partial implementation for base getters.
 
-func (d *Data) SetSync(uuid dvid.UUID, in io.ReadCloser) error {
-	if manager == nil {
-		return ErrManagerNotInitialized
-	}
-	jsonData := make(map[string]string)
-	decoder := json.NewDecoder(in)
-	if err := decoder.Decode(&jsonData); err != nil && err != io.EOF {
-		return fmt.Errorf("Malformed JSON request in sync request: %v", err)
-	}
-	syncedCSV, ok := jsonData["sync"]
-	if !ok {
-		return fmt.Errorf("Could not find 'sync' value in POSTed JSON to sync request.")
-	}
-
-	syncedNames := strings.Split(syncedCSV, ",")
-	if len(syncedNames) == 0 {
-		return nil
-	}
-	uniqsyncs := make(map[dvid.InstanceName]struct{}, len(d.syncs)+len(syncedNames))
-	for _, name := range syncedNames {
-		uniqsyncs[dvid.InstanceName(name)] = struct{}{}
-	}
-	d.syncs = []dvid.InstanceName{}
-	for name := range uniqsyncs {
-		d.syncs = append(d.syncs, name)
-	}
-	if err := SyncData(uuid, dvid.InstanceName(d.DataName()), d.syncs...); err != nil {
-		return err
-	}
-	return nil
+// SyncedData returns a set of data UUIDs to which it is synced.
+func (d *Data) SyncedData() dvid.UUIDSet {
+	return d.syncData
 }
 
-// SyncedNames returns a de-dupped list of synced names.
+// SyncedNames returns a set of data instance names to which it is synced.
+// Legacy and will be removed after metadata refactor.
 func (d *Data) SyncedNames() []dvid.InstanceName {
-	if len(d.syncs) <= 1 {
-		return d.syncs
-	}
-	uniqsyncs := make(map[dvid.InstanceName]struct{}, len(d.syncs))
-	for _, name := range d.syncs {
-		uniqsyncs[name] = struct{}{}
-	}
-	syncs := make([]dvid.InstanceName, len(uniqsyncs))
-	i := 0
-	for name := range uniqsyncs {
-		syncs[i] = name
-		i++
-	}
-	return syncs
+	return d.syncNames
 }
 
 // ---------------------------------------
@@ -305,7 +267,7 @@ func (d *Data) MarshalJSON() ([]byte, error) {
 		RepoUUID    dvid.UUID
 		Compression string
 		Checksum    string
-		Syncs       []dvid.InstanceName
+		Syncs       dvid.UUIDSet
 		Versioned   bool
 	}{
 		TypeName:    d.typename,
@@ -316,7 +278,7 @@ func (d *Data) MarshalJSON() ([]byte, error) {
 		RepoUUID:    d.rootUUID,
 		Compression: d.compression.String(),
 		Checksum:    d.checksum.String(),
-		Syncs:       d.syncs,
+		Syncs:       d.syncData,
 		Versioned:   !d.unversioned,
 	})
 }
@@ -335,6 +297,12 @@ func NewDataService(t TypeService, rootUUID dvid.UUID, id dvid.InstanceID, name 
 	if _, reserved := reservedNames[string(name)]; reserved {
 		return nil, fmt.Errorf("cannot use reserved name %q", name)
 	}
+
+	// // Don't allow identical names to be used in the same repo.
+	// d, err := GetDataByUUIDName(rootUUID, name)
+	// if err == nil && d != nil {
+	// 	return nil, fmt.Errorf("cannot create data instance %q when one already exists in repo with UUID %s", name, rootUUID)
+	// }
 
 	// See if a store was defined for a particular data instance.
 	store, err := storage.GetAssignedStore(name, rootUUID, t.GetTypeName())
@@ -360,7 +328,8 @@ func NewDataService(t TypeService, rootUUID dvid.UUID, id dvid.InstanceID, name 
 		rootUUID:    rootUUID,
 		compression: compression,
 		checksum:    dvid.DefaultChecksum,
-		syncs:       []dvid.InstanceName{},
+		syncNames:   []dvid.InstanceName{},
+		syncData:    dvid.UUIDSet{},
 		unversioned: false,
 		store:       store,
 	}
@@ -391,6 +360,13 @@ func (d *Data) SetRootUUID(uuid dvid.UUID) {
 
 func (d *Data) SetName(name dvid.InstanceName) {
 	d.name = name
+}
+
+// SetSync sets the list of synced UUIDs for this data instance.  It does not modify
+// the sync graph.
+func (d *Data) SetSync(syncs dvid.UUIDSet) {
+	d.syncData = syncs
+	d.syncNames = nil
 }
 
 func (d *Data) TypeName() dvid.TypeString { return d.typename }
@@ -441,15 +417,23 @@ func (d *Data) GobDecode(b []byte) error {
 	if err := dec.Decode(&(d.checksum)); err != nil {
 		return err
 	}
-	if err := dec.Decode(&(d.syncs)); err != nil {
+
+	// legacy: we load but in future will be removed.
+	if err := dec.Decode(&(d.syncNames)); err != nil {
 		return err
 	}
+
 	if err := dec.Decode(&(d.unversioned)); err != nil {
 		dvid.Infof("Data %q had no explicit versioning flag: assume it's versioned.\n", d.name)
 	}
 	if err := dec.Decode(&(d.dataUUID)); err != nil {
 		d.dataUUID = dvid.NewUUID()
 		dvid.Infof("Data %q had no data UUID so assigning new UUID: %s\n", d.dataUUID)
+	}
+	if err := dec.Decode(&(d.syncData)); err != nil {
+		if len(d.syncNames) != 0 {
+			dvid.Infof("Data %q has legacy sync names, will convert to data UUIDs...\n", d.name)
+		}
 	}
 	return nil
 }
@@ -481,13 +465,17 @@ func (d *Data) GobEncode() ([]byte, error) {
 	if err := enc.Encode(d.checksum); err != nil {
 		return nil, err
 	}
-	if err := enc.Encode(d.syncs); err != nil {
+	oldsyncs := []dvid.InstanceName{}
+	if err := enc.Encode(oldsyncs); err != nil {
 		return nil, err
 	}
 	if err := enc.Encode(d.unversioned); err != nil {
 		return nil, err
 	}
 	if err := enc.Encode(d.dataUUID); err != nil {
+		return nil, err
+	}
+	if err := enc.Encode(d.syncData); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
@@ -505,20 +493,8 @@ func (d *Data) Equals(d2 *Data) bool {
 		d.rootUUID != d2.rootUUID ||
 		d.compression != d2.compression ||
 		d.checksum != d2.checksum ||
-		!syncsEqual(d.syncs, d2.syncs) {
+		!d.syncData.Equals(d2.syncData) {
 		return false
-	}
-	return true
-}
-
-func syncsEqual(a, b []dvid.InstanceName) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
 	}
 	return true
 }

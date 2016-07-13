@@ -474,9 +474,22 @@ func (dtype *Type) Help() string {
 
 // -------
 
-// GetByUUID returns a pointer to labelblk data given a UUID and data name.
-func GetByUUID(uuid dvid.UUID, name dvid.InstanceName) (*Data, error) {
-	source, err := datastore.GetDataByUUID(uuid, name)
+// GetByDataUUID returns a pointer to labelblk data given a data UUID.
+func GetByDataUUID(dataUUID dvid.UUID) (*Data, error) {
+	source, err := datastore.GetDataByDataUUID(dataUUID)
+	if err != nil {
+		return nil, err
+	}
+	data, ok := source.(*Data)
+	if !ok {
+		return nil, fmt.Errorf("Instance '%s' is not a labelblk datatype!", source.DataName())
+	}
+	return data, nil
+}
+
+// GetByUUIDName returns a pointer to labelblk data given a UUID and data name.
+func GetByUUIDName(uuid dvid.UUID, name dvid.InstanceName) (*Data, error) {
+	source, err := datastore.GetDataByUUIDName(uuid, name)
 	if err != nil {
 		return nil, err
 	}
@@ -487,9 +500,9 @@ func GetByUUID(uuid dvid.UUID, name dvid.InstanceName) (*Data, error) {
 	return data, nil
 }
 
-// GetByVersion returns a pointer to labelblk data given a UUID and data name.
-func GetByVersion(v dvid.VersionID, name dvid.InstanceName) (*Data, error) {
-	source, err := datastore.GetDataByVersion(v, name)
+// GetByVersionName returns a pointer to labelblk data given a version and data name.
+func GetByVersionName(v dvid.VersionID, name dvid.InstanceName) (*Data, error) {
+	source, err := datastore.GetDataByVersionName(v, name)
 	if err != nil {
 		return nil, err
 	}
@@ -989,7 +1002,7 @@ func (d *Data) DeleteBlocks(ctx *datastore.VersionedCtx, start dvid.ChunkPoint3d
 	begTKey := NewTKey(&indexBeg)
 	endTKey := NewTKey(&indexEnd)
 
-	iv := dvid.InstanceVersion{d.DataName(), ctx.VersionID()}
+	iv := dvid.InstanceVersion{d.DataUUID(), ctx.VersionID()}
 	mapping := labels.LabelMap(iv)
 
 	kvs, err := store.GetRange(ctx, begTKey, endTKey)
@@ -1026,7 +1039,7 @@ func (d *Data) DeleteBlocks(ctx *datastore.VersionedCtx, start dvid.ChunkPoint3d
 		}
 
 		// Notify any subscribers that we've deleted this block.
-		evt := datastore.SyncEvent{d.DataName(), labels.DeleteBlockEvent}
+		evt := datastore.SyncEvent{d.DataUUID(), labels.DeleteBlockEvent}
 		msg := datastore.SyncMessage{ctx.VersionID(), labels.DeleteBlock{izyx, block}}
 		if err := datastore.NotifySubscribers(evt, msg); err != nil {
 			return err
@@ -1326,7 +1339,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			server.BadRequest(w, r, "Only POST allowed to sync endpoint")
 			return
 		}
-		if err := d.SetSync(uuid, r.Body); err != nil {
+		if err := datastore.SetSyncByJSON(d, uuid, r.Body); err != nil {
 			server.BadRequest(w, r, err)
 			return
 		}

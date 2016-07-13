@@ -60,7 +60,7 @@ func TestSynapseRepoPersistence(t *testing.T) {
 	}
 	datastore.CloseReopenTest()
 
-	dataservice2, err := datastore.GetDataByUUID(uuid, "synapses")
+	dataservice2, err := datastore.GetDataByUUIDName(uuid, "synapses")
 	if err != nil {
 		t.Fatalf("Can't get synapse instance from reloaded test db: %v\n", err)
 	}
@@ -416,7 +416,7 @@ func testResponse(t *testing.T, expected Elements, template string, args ...inte
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(expected.Normalize(), got.Normalize()) {
-		t.Errorf("Expected:\n%v\nGot:\n%v\n", expected.Normalize(), got.Normalize())
+		t.Errorf("Expected for %s:\n%v\nGot:\n%v\n", url, expected.Normalize(), got.Normalize())
 	}
 }
 
@@ -520,7 +520,7 @@ func TestLabels(t *testing.T) {
 	// Add annotations syncing with "labels" instance checking for deduplication.
 	server.CreateTestInstance(t, uuid, "annotation", "mysynapses", config)
 	server.CreateTestSync(t, uuid, "mysynapses", "labels,bodies,labels,bodies,labels,bodies")
-	dataservice, err := datastore.GetDataByUUID(uuid, "mysynapses")
+	dataservice, err := datastore.GetDataByUUIDName(uuid, "mysynapses")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -528,8 +528,8 @@ func TestLabels(t *testing.T) {
 	if !ok {
 		t.Fatalf("Can't convert dataservice %v into datastore.Data\n", dataservice)
 	}
-	if len(data.SyncedNames()) != 2 {
-		t.Fatalf("Expected 2 syncs [labels,bodies], got %v\n", data.SyncedNames())
+	if len(data.SyncedData()) != 2 {
+		t.Fatalf("Expected 2 syncs (uuids for labels and bodies], got %v\n", data.SyncedData())
 	}
 
 	// PUT first batch of synapses
@@ -599,7 +599,17 @@ func TestLabels(t *testing.T) {
 		t.Fatalf("Error blocking on sync of split->annotations: %v\n", err)
 	}
 	testResponse(t, expectedLabel2c, "%snode/%s/mysynapses/label/2", server.WebAPIPath, uuid)
-	testResponse(t, expectedLabel7, "%snode/%s/mysynapses/label/7", server.WebAPIPath, uuid)
+	url2 := fmt.Sprintf("%snode/%s/mysynapses/label/7", server.WebAPIPath, uuid)
+	testResponse(t, expectedLabel7, url2)
+
+	// Change the name of the annotations.
+	if err = datastore.RenameData(uuid, "mysynapses", "renamedData", "foobar"); err != nil {
+		t.Fatalf("Error renaming annotations: %v", err)
+	}
+
+	// Make sure the old name is no longer there and the new one is.
+	server.TestBadHTTP(t, "GET", url2, nil)
+	testResponse(t, expectedLabel2c, "%snode/%s/renamedData/label/2", server.WebAPIPath, uuid)
 
 	// Try a coarse split.
 
@@ -618,11 +628,11 @@ func TestLabels(t *testing.T) {
 	}
 
 	// Verify that the annotations are correct.
-	if err := BlockOnUpdating(uuid, "mysynapses"); err != nil {
+	if err := BlockOnUpdating(uuid, "renamedData"); err != nil {
 		t.Fatalf("Error blocking on sync of split->annotations: %v\n", err)
 	}
-	testResponse(t, expectedLabel2c, "%snode/%s/mysynapses/label/8", server.WebAPIPath, uuid)
-	testResponse(t, Elements{}, "%snode/%s/mysynapses/label/2", server.WebAPIPath, uuid)
+	testResponse(t, expectedLabel2c, "%snode/%s/renamedData/label/8", server.WebAPIPath, uuid)
+	testResponse(t, Elements{}, "%snode/%s/renamedData/label/2", server.WebAPIPath, uuid)
 }
 
 // A single label block within the volume

@@ -117,7 +117,7 @@ func TestLabelgraphRepoPersistence(t *testing.T) {
 	}
 	datastore.CloseReopenTest()
 
-	dataservice2, err := datastore.GetDataByUUID(uuid, "lg")
+	dataservice2, err := datastore.GetDataByUUIDName(uuid, "lg")
 	if err != nil {
 		t.Fatalf("Can't get labelgraph instance from reloaded test db: %v\n", err)
 	}

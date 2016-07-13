@@ -670,7 +670,7 @@ func (d *Data) DefaultTileSpec(uuidStr string) (TileSpec, error) {
 	if err != nil {
 		return nil, err
 	}
-	source, err := datastore.GetDataByUUID(uuid, d.Source)
+	source, err := datastore.GetDataByUUIDName(uuid, d.Source)
 	if err != nil {
 		return nil, err
 	}
@@ -961,7 +961,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			server.BadRequest(w, r, err)
 			return
 		}
-		source, err := datastore.GetDataByUUID(uuid, d.Source)
+		source, err := datastore.GetDataByUUIDName(uuid, d.Source)
 		if err != nil {
 			server.BadRequest(w, r, err)
 			return
@@ -1344,7 +1344,7 @@ func (d *Data) ConstructTiles(uuidStr string, tileSpec TileSpec, request datasto
 		return err
 	}
 
-	source, err := datastore.GetDataByUUID(uuid, d.Source)
+	source, err := datastore.GetDataByUUIDName(uuid, d.Source)
 	if err != nil {
 		return fmt.Errorf("Cannot get source %q for %q tile construction: %v", d.Source, d.DataName(), err)
 	}

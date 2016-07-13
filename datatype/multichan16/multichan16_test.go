@@ -65,7 +65,7 @@ func TestMultichan16RepoPersistence(t *testing.T) {
 	}
 	datastore.CloseReopenTest()
 
-	dataservice2, err := datastore.GetDataByUUID(uuid, "mymultichan16")
+	dataservice2, err := datastore.GetDataByUUIDName(uuid, "mymultichan16")
 	if err != nil {
 		t.Fatalf("Can't get multichan16 instance from reloaded test db: %v\n", err)
 	}

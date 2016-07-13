@@ -268,7 +268,7 @@ func (d *Data) PutBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int, da
 		batch.Put(NewTKey(&zyx), serialization)
 
 		// Notify any subscribers that you've changed block.
-		evt := datastore.SyncEvent{d.DataName(), event}
+		evt := datastore.SyncEvent{d.DataUUID(), event}
 		msg := datastore.SyncMessage{v, Block{&zyx, buf}}
 		if err := datastore.NotifySubscribers(evt, msg); err != nil {
 			return err
@@ -385,7 +385,7 @@ func (d *Data) putChunk(chunk *storage.Chunk, putbuffer storage.RequestBuffer) {
 			event = IngestBlockEvent
 			delta = Block{&op.indexZYX, block.V}
 		}
-		evt := datastore.SyncEvent{d.DataName(), event}
+		evt := datastore.SyncEvent{d.DataUUID(), event}
 		msg := datastore.SyncMessage{op.version, delta}
 		if err := datastore.NotifySubscribers(evt, msg); err != nil {
 			dvid.Errorf("Unable to notify subscribers of event %s in %s\n", event, d.DataName())
@@ -473,7 +473,7 @@ func (d *Data) writeBlocks(v dvid.VersionID, b storage.TKeyValues, wg1, wg2 *syn
 	preCompress, postCompress := 0, 0
 
 	ctx := datastore.NewVersionedCtx(d, v)
-	evt := datastore.SyncEvent{d.DataName(), IngestBlockEvent}
+	evt := datastore.SyncEvent{d.DataUUID(), IngestBlockEvent}
 
 	<-server.HandlerToken
 	go func() {

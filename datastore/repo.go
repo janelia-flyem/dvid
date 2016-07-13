@@ -37,6 +37,7 @@ var (
 	ErrExistingUUID        = errors.New("UUID already exists in datastore")
 	ErrInvalidDataName     = errors.New("invalid data instance name")
 	ErrInvalidDataInstance = errors.New("invalid data instance id")
+	ErrInvalidDataUUID     = errors.New("invalid data instance UUID")
 
 	ErrInvalidStore = errors.New("invalid data store")
 

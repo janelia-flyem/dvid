@@ -926,7 +926,7 @@ func TestROIRepoPersistence(t *testing.T) {
 
 	datastore.CloseReopenTest()
 
-	dataservice3, err := datastore.GetDataByUUID(uuid, "myroi2")
+	dataservice3, err := datastore.GetDataByUUIDName(uuid, "myroi2")
 	if err != nil {
 		t.Fatalf("Can't get first ROI instance from reloaded test db: %v\n", err)
 	}

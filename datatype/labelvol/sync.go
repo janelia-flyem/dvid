@@ -24,7 +24,7 @@ const syncBufferSize = 100
 // This is primarily used during testing.
 func BlockOnUpdating(uuid dvid.UUID, name dvid.InstanceName) error {
 	time.Sleep(100 * time.Millisecond)
-	d, err := GetByUUID(uuid, name)
+	d, err := GetByUUIDName(uuid, name)
 	if err != nil {
 		return err
 	}
@@ -35,7 +35,7 @@ func BlockOnUpdating(uuid dvid.UUID, name dvid.InstanceName) error {
 }
 
 // GetSyncSubs implements the datastore.Syncer interface
-func (d *Data) GetSyncSubs(syncData dvid.Data) datastore.SyncSubs {
+func (d *Data) GetSyncSubs(synced dvid.Data) datastore.SyncSubs {
 	syncCh := make(chan datastore.SyncMessage, syncBufferSize)
 	doneCh := make(chan struct{})
 
@@ -43,20 +43,20 @@ func (d *Data) GetSyncSubs(syncData dvid.Data) datastore.SyncSubs {
 
 	subs := datastore.SyncSubs{
 		{
-			Event:  datastore.SyncEvent{syncData.DataName(), labels.IngestBlockEvent},
-			Notify: d.DataName(),
+			Event:  datastore.SyncEvent{synced.DataUUID(), labels.IngestBlockEvent},
+			Notify: d.DataUUID(),
 			Ch:     syncCh,
 			Done:   doneCh,
 		},
 		{
-			Event:  datastore.SyncEvent{syncData.DataName(), labels.MutateBlockEvent},
-			Notify: d.DataName(),
+			Event:  datastore.SyncEvent{synced.DataUUID(), labels.MutateBlockEvent},
+			Notify: d.DataUUID(),
 			Ch:     syncCh,
 			Done:   doneCh,
 		},
 		{
-			Event:  datastore.SyncEvent{syncData.DataName(), labels.DeleteBlockEvent},
-			Notify: d.DataName(),
+			Event:  datastore.SyncEvent{synced.DataUUID(), labels.DeleteBlockEvent},
+			Notify: d.DataUUID(),
 			Ch:     syncCh,
 			Done:   doneCh,
 		},

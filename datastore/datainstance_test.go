@@ -57,7 +57,7 @@ func TestDataGobEncoding(t *testing.T) {
 		dataUUID:    dvid.NewUUID(),
 		compression: compression,
 		checksum:    dvid.DefaultChecksum,
-		syncs:       []dvid.InstanceName{"moo", "bar", "baz"},
+		syncData:    dvid.UUIDSet{"moo": struct{}{}, "bar": struct{}{}, "baz": struct{}{}},
 	}}
 
 	encoding, err := data.GobEncode()
