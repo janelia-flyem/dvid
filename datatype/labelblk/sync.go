@@ -86,23 +86,10 @@ func (d *Data) GetSyncSubs(synced dvid.Data) datastore.SyncSubs {
 	}
 
 	// Launch go routines to handle sync events.
-	//go d.syncSparsevolChange(synced.DataUUID(), subs[0].Ch, subs[0].Done)
 	go d.syncMerge(synced.DataUUID(), mergeCh, mergeDone)
 	go d.syncSplit(splitCh, splitDone)
 
 	return subs
-}
-
-func (d *Data) syncSparsevolChange(synced dvid.UUID, in <-chan datastore.SyncMessage, done <-chan struct{}) {
-	/*
-		for msg := range in {
-			select {
-			case <-done:
-				return
-			default:
-			}
-		}
-	*/
 }
 
 func hashStr(s dvid.IZYXString, n int) int {

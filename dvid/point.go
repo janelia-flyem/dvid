@@ -581,7 +581,7 @@ func (p Point3d) Prod() int64 {
 }
 
 func (p Point3d) String() string {
-	return fmt.Sprintf("dvid.Point3d{%d,%d,%d}", p[0], p[1], p[2])
+	return fmt.Sprintf("(%d,%d,%d)", p[0], p[1], p[2])
 }
 
 // --- Chunkable interface support -----
@@ -702,8 +702,8 @@ func (p Point3d) Expand2d(plane DataShape, size Point2d) (Point3d, error) {
 	return pt, nil
 }
 
-// ToIZYXString returns an encoded string for a point, suitable for use in maps.
-func (p Point3d) ToIZYXString(size Point3d) IZYXString {
+// ToBlockIZYXString returns an encoded string for a point's block, suitable for use in maps.
+func (p Point3d) ToBlockIZYXString(size Point3d) IZYXString {
 	var c0, c1, c2 int32
 	if p[0] < 0 {
 		c0 = (p[0] - size[0] + 1) / size[0]

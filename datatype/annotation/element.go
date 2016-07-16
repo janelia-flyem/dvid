@@ -432,7 +432,7 @@ func (elems *Elements) add(toAdd Elements) {
 	}
 }
 
-// Deletes element position as well as relationships.
+// Deletes element position as well as relationships that reference that element.
 func (elems *Elements) delete(pt dvid.Point3d) (deleted *Element, changed bool) {
 	// Delete any elements at point.
 	var cut = -1
@@ -1088,7 +1088,7 @@ func (d *Data) StoreSynapses(ctx *datastore.VersionedCtx, r io.Reader) error {
 	// Note: we do not check for redundancy and guarantee uniqueness at this stage.
 	for _, elem := range elements {
 		// Get block coord for this element.
-		izyxStr := elem.Pos.ToIZYXString(blockSize)
+		izyxStr := elem.Pos.ToBlockIZYXString(blockSize)
 
 		// Append to block
 		be := blockE[izyxStr]

@@ -221,6 +221,15 @@ var expectedLabel7 = Elements{
 	},
 }
 
+var afterDeleteOn7 = Elements{
+	{
+		Pos:  dvid.Point3d{14, 25, 37},
+		Kind: PostSyn,
+		Rels: []Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
+		Tags: []Tag{"Synapse1", "Zlt90"},
+	},
+}
+
 var expectedLabel3 = Elements{
 	{
 		Pos:  dvid.Point3d{14, 25, 37}, // Label 3
@@ -416,7 +425,7 @@ func testResponse(t *testing.T, expected Elements, template string, args ...inte
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(expected.Normalize(), got.Normalize()) {
-		t.Errorf("Expected for %s:\n%v\nGot:\n%v\n", url, expected.Normalize(), got.Normalize())
+		t.Fatalf("Expected for %s:\n%v\nGot:\n%v\n", url, expected.Normalize(), got.Normalize())
 	}
 }
 
@@ -561,7 +570,7 @@ func TestLabels(t *testing.T) {
 	testResponse(t, expectedLabel4, "%snode/%s/mysynapses/label/4", server.WebAPIPath, uuid)
 
 	// Make change to labelvol and make sure our label synapses have been adjusted (case B).
-	// Merge 3 into 2.
+	// Merge 3a into 2a.
 	testMerge := mergeJSON(`[2, 3]`)
 	testMerge.send(t, uuid, "bodies")
 
@@ -633,6 +642,11 @@ func TestLabels(t *testing.T) {
 	}
 	testResponse(t, expectedLabel2c, "%snode/%s/renamedData/label/8", server.WebAPIPath, uuid)
 	testResponse(t, Elements{}, "%snode/%s/renamedData/label/2", server.WebAPIPath, uuid)
+
+	// Delete a labeled annotation and make sure it's not in label
+	delurl := fmt.Sprintf("%snode/%s/%s/element/20_30_40", server.WebAPIPath, uuid, "renamedData")
+	server.TestHTTP(t, "DELETE", delurl, nil)
+	testResponse(t, afterDeleteOn7, "%snode/%s/%s/label/7", server.WebAPIPath, uuid, "renamedData")
 }
 
 // A single label block within the volume
@@ -750,15 +764,17 @@ var (
 			voxelSpans: []dvid.Span{
 				{80, 47, 87, 89},
 			},
-		}, { // Modification to original label 2 body where we switch a span that was in label 3
+		}, { // Modification to original label 2 body where we switch a span that was in label 3 and enlarge
 			label:  2,
 			offset: dvid.Point3d{10, 24, 35},
 			size:   dvid.Point3d{30, 10, 10},
 			blockSpans: []dvid.Span{
+				{0, 0, 0, 0},
 				{1, 0, 0, 0},
 			},
 			voxelSpans: []dvid.Span{
-				{37, 25, 13, 15},
+				{12, 8, 0, 10},
+				{37, 25, 8, 15},
 			},
 		}, { // Modification to original label 3 body where we switch in a span that was in label 2
 			label:  3,
@@ -780,7 +796,9 @@ var (
 				{0, 0, 0, 0},
 			},
 			voxelSpans: []dvid.Span{
-				{37, 25, 10, 15},
+				{12, 8, 4, 8},
+				{37, 25, 8, 10},
+				{37, 25, 13, 15},
 				{40, 30, 19, 21},
 			},
 		},

@@ -483,12 +483,12 @@ func (d *Data) splitLabelsCoarse(batcher storage.KeyValueBatcher, v dvid.Version
 		splitBlocks[zyxStr] = struct{}{}
 	}
 
-	// Separate any elements that are within the split blocks.
+	// Move any elements that are within the split blocks.
 	toDel := make(map[int]struct{})
 	toAdd := Elements{}
 	blockSize := d.blockSize()
 	for i, elem := range oldElems {
-		zyxStr := elem.Pos.ToIZYXString(blockSize)
+		zyxStr := elem.Pos.ToBlockIZYXString(blockSize)
 		if _, found := splitBlocks[zyxStr]; found {
 			toDel[i] = struct{}{}
 			toAdd = append(toAdd, elem)
@@ -511,7 +511,9 @@ func (d *Data) splitLabelsCoarse(batcher storage.KeyValueBatcher, v dvid.Version
 	}
 	batch.Put(newTk, val)
 
-	// Delete any split from old label elements.
+	// Delete any split from old label elements without removing the relationships.
+	// This filters without allocating, using fact that a slice shares the same backing array and
+	// capacity as the original, so storage is reused.
 	filtered := oldElems[:0]
 	for i, elem := range oldElems {
 		if _, found := toDel[i]; !found {
@@ -547,7 +549,7 @@ func (d *Data) splitLabelsFine(batcher storage.KeyValueBatcher, v dvid.VersionID
 	batch := batcher.NewBatch(ctx)
 
 	toAdd := Elements{}
-	toDel := []dvid.Point3d{}
+	toDel := make(map[string]struct{})
 
 	// Iterate through each split block, get the elements, and then modify the previous and new label k/v.
 	for izyx, rles := range op.Split {
@@ -559,10 +561,8 @@ func (d *Data) splitLabelsFine(batcher storage.KeyValueBatcher, v dvid.VersionID
 		tk := NewBlockTKey(blockPt)
 		elems, err := getElements(ctx, tk)
 		if err != nil {
-			return fmt.Errorf("err getting elements for block %s: %v\n", blockPt, err)
-		}
-		if len(elems) == 0 {
-			return nil
+			dvid.Errorf("getting annotations for block %s on split of %d from %d: %v\n", blockPt, op.NewLabel, op.OldLabel, err)
+			continue
 		}
 
 		// For any element within the split RLEs, add to the delete and addition lists.
@@ -570,7 +570,7 @@ func (d *Data) splitLabelsFine(batcher storage.KeyValueBatcher, v dvid.VersionID
 			for _, rle := range rles {
 				if rle.Within(elem.Pos) {
 					toAdd = append(toAdd, elem)
-					toDel = append(toDel, elem.Pos)
+					toDel[elem.Pos.String()] = struct{}{}
 					break
 				}
 			}
@@ -582,24 +582,23 @@ func (d *Data) splitLabelsFine(batcher storage.KeyValueBatcher, v dvid.VersionID
 		tk := NewLabelTKey(op.OldLabel)
 		elems, err := getElements(ctx, tk)
 		if err != nil {
-			return fmt.Errorf("unable to get annotations for instance %q, label %d in syncSplit: %v\n", d.DataName(), op.OldLabel, err)
-		}
-		save := false
-		for _, pt := range toDel {
-			_, changed := elems.delete(pt)
-			if changed {
-				save = true
+			dvid.Errorf("unable to get annotations for instance %q, old label %d in syncSplit: %v\n", d.DataName(), op.OldLabel, err)
+		} else {
+			filtered := elems[:0]
+			for _, elem := range elems {
+				if _, found := toDel[elem.Pos.String()]; !found {
+					filtered = append(filtered, elem)
+				}
 			}
-		}
-		if save {
-			if len(elems) == 0 {
+			if len(filtered) == 0 {
 				batch.Delete(tk)
 			} else {
-				val, err := json.Marshal(elems)
+				val, err := json.Marshal(filtered)
 				if err != nil {
-					return fmt.Errorf("couldn't serialize annotation elements in instance %q: %v\n", d.DataName(), err)
+					dvid.Errorf("couldn't serialize annotation elements in instance %q: %v\n", d.DataName(), err)
+				} else {
+					batch.Put(tk, val)
 				}
-				batch.Put(tk, val)
 			}
 		}
 	}
@@ -609,14 +608,16 @@ func (d *Data) splitLabelsFine(batcher storage.KeyValueBatcher, v dvid.VersionID
 		tk := NewLabelTKey(op.NewLabel)
 		elems, err := getElements(ctx, tk)
 		if err != nil {
-			return fmt.Errorf("unable to get annotations for instance %q, label %d in syncSplit: %v\n", d.DataName(), op.NewLabel, err)
+			dvid.Errorf("unable to get annotations for instance %q, label %d in syncSplit: %v\n", d.DataName(), op.NewLabel, err)
+		} else {
+			elems.add(toAdd)
+			val, err := json.Marshal(elems)
+			if err != nil {
+				dvid.Errorf("couldn't serialize annotation elements in instance %q: %v\n", d.DataName(), err)
+			} else {
+				batch.Put(tk, val)
+			}
 		}
-		elems.add(toAdd)
-		val, err := json.Marshal(elems)
-		if err != nil {
-			return fmt.Errorf("couldn't serialize annotation elements in instance %q: %v\n", d.DataName(), err)
-		}
-		batch.Put(tk, val)
 	}
 
 	if err := batch.Commit(); err != nil {
