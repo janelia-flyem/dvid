@@ -258,6 +258,17 @@ func (d *Data) SyncedNames() []dvid.InstanceName {
 // ---------------------------------------
 
 func (d *Data) MarshalJSON() ([]byte, error) {
+    // convert sync UUIDs to names so its more understandable.
+    syncs := []dvid.InstanceName{}
+    for uuid := range d.syncData {
+        synced, err := GetDataByDataUUID(uuid)
+        if err != nil {
+            syncs = append(syncs, "undefined")
+            dvid.Errorf("In data %q found synced data UUID %q that cannot be found: %v\n", d.DataName(), uuid, err)
+        } else {
+            syncs = append(syncs, synced.DataName())
+        }
+    }
 	return json.Marshal(struct {
 		TypeName    dvid.TypeString
 		TypeURL     dvid.URLString
@@ -267,7 +278,7 @@ func (d *Data) MarshalJSON() ([]byte, error) {
 		RepoUUID    dvid.UUID
 		Compression string
 		Checksum    string
-		Syncs       dvid.UUIDSet
+		Syncs       []dvid.InstanceName
 		Versioned   bool
 	}{
 		TypeName:    d.typename,
@@ -278,7 +289,7 @@ func (d *Data) MarshalJSON() ([]byte, error) {
 		RepoUUID:    d.rootUUID,
 		Compression: d.compression.String(),
 		Checksum:    d.checksum.String(),
-		Syncs:       d.syncData,
+		Syncs:       syncs,
 		Versioned:   !d.unversioned,
 	})
 }
@@ -427,8 +438,7 @@ func (d *Data) GobDecode(b []byte) error {
 		dvid.Infof("Data %q had no explicit versioning flag: assume it's versioned.\n", d.name)
 	}
 	if err := dec.Decode(&(d.dataUUID)); err != nil {
-		d.dataUUID = dvid.NewUUID()
-		dvid.Infof("Data %q had no data UUID so assigning new UUID: %s\n", d.name, d.dataUUID)
+		dvid.Infof("Data %q had no data UUID.\n", d.name)
 	}
 	if err := dec.Decode(&(d.syncData)); err != nil {
 		if len(d.syncNames) != 0 {

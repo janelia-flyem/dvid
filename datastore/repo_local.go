@@ -406,6 +406,13 @@ func (m *repoManager) loadVersion0() error {
 
 		// Populate the instance id -> dataservice map and convert any deprecated data instance.
 		for dataname, dataservice := range r.data {
+            dataUUID := dataservice.DataUUID()
+            if dataUUID == "" {
+                dataUUID = dvid.NewUUID()
+                dataservice.SetDataUUID(dataUUID)
+                dvid.Infof("Assigned data %q to data UUID %s.\n", dataname, dataservice.DataUUID())
+                saveRepo = true
+            }
 			migrator, doMigrate := dataservice.(TypeMigrator)
 			if doMigrate {
 				dvid.Infof("Migrating instance %q of type %q to ...\n", dataservice.DataName(), dataservice.TypeName())
@@ -449,7 +456,7 @@ func (m *repoManager) loadVersion0() error {
 					if len(syncNames) == 0 {
 						continue
 					}
-					dvid.Infof("Converting %d legacy sync names to data UUIDs...\n", len(syncNames))
+					dvid.Infof("Converting data %q %d legacy sync names to data UUIDs...\n", dataservice.DataName(), len(syncNames))
 					syncs := dvid.UUIDSet{}
 					for _, name := range syncNames {
 						// get the dataservice associated with this synced data.
@@ -463,7 +470,9 @@ func (m *repoManager) loadVersion0() error {
 							dvid.Errorf(" Skipping sync of %q with missing data %q for repo @ %s", dataservice.DataName(), name, r.uuid)
 						}
 					}
+                    dvid.Infof("After conversion data %q has syncs: %v\n", dataservice.DataName(), syncs)
 					dataservice.SetSync(syncs)
+                    dvid.Infof("After calling SetSync we get back: %v\n", syncer.SyncedData())
 					saveRepo = true
 				}
 			}
