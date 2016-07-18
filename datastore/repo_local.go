@@ -449,6 +449,7 @@ func (m *repoManager) loadVersion0() error {
 					if len(syncNames) == 0 {
 						continue
 					}
+					dvid.Infof("Converting %d legacy sync names to data UUIDs...\n", len(syncNames))
 					syncs := dvid.UUIDSet{}
 					for _, name := range syncNames {
 						// get the dataservice associated with this synced data.
@@ -457,8 +458,9 @@ func (m *repoManager) loadVersion0() error {
 							r.addSyncGraph(syncer.GetSyncSubs(syncedData))
 							// convert the sync names to data UUIDs
 							syncs[syncedData.DataUUID()] = struct{}{}
+							dvid.Infof("  Converted synced data %q to its UUID: %s\n", name, syncedData.DataUUID())
 						} else {
-							dvid.Errorf("Skipping bad sync of %q with missing %q for uuid %s", dataservice.DataName(), name, r.uuid)
+							dvid.Errorf(" Skipping sync of %q with missing data %q for repo @ %s", dataservice.DataName(), name, r.uuid)
 						}
 					}
 					dataservice.SetSync(syncs)

@@ -428,7 +428,7 @@ func (d *Data) GobDecode(b []byte) error {
 	}
 	if err := dec.Decode(&(d.dataUUID)); err != nil {
 		d.dataUUID = dvid.NewUUID()
-		dvid.Infof("Data %q had no data UUID so assigning new UUID: %s\n", d.dataUUID)
+		dvid.Infof("Data %q had no data UUID so assigning new UUID: %s\n", d.name, d.dataUUID)
 	}
 	if err := dec.Decode(&(d.syncData)); err != nil {
 		if len(d.syncNames) != 0 {
