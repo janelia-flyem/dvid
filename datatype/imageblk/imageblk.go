@@ -152,6 +152,13 @@ POST  <api URL>/node/<UUID>/<data name>/extents
   	    "MaxPoint": [300,400,500]
   	}
 
+POST  <api URL>/node/<UUID>/<data name>/resolution
+  
+  	Sets the resolution for the image volume. 
+  
+  	Extents should be in JSON in the following format:
+  	[8,8,8]
+
 GET <api URL>/node/<UUID>/<data name>/rawkey?x=<block x>&y=<block y>&z=<block z>
 
     Returns JSON describing hex-encoded binary key used to store a block of data at the given block coordinate:
@@ -817,6 +824,19 @@ func (d *Data) SetExtents(uuid dvid.UUID, jsonBytes []byte) error {
 	return nil
 }
 
+// SetResolution loads JSON data giving Resolution.
+func (d *Data) SetResolution(uuid dvid.UUID, jsonBytes []byte) error {
+	config := make(dvid.NdFloat32, 3)
+	if err := json.Unmarshal(jsonBytes, &config); err != nil {
+		return err
+	}
+	d.Properties.VoxelSize = config
+	if err := datastore.SaveDataByUUID(uuid, d); err != nil {
+		return err
+	}
+	return nil
+}
+
 // Data embeds the datastore's Data and extends it with voxel-specific properties.
 type Data struct {
 	*datastore.Data
@@ -1433,6 +1453,17 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			return
 		}
 		if err := d.SetExtents(uuid, jsonBytes); err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+
+	case "resolution":
+		jsonBytes, err := ioutil.ReadAll(r.Body)
+		if err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+		if err := d.SetResolution(uuid, jsonBytes); err != nil {
 			server.BadRequest(w, r, err)
 			return
 		}
