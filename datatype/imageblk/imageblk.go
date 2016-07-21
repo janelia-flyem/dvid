@@ -1628,16 +1628,50 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 					server.BadRequest(w, r, err)
 					return
 				}
-				data, err := d.GetVolume(ctx.VersionID(), vox, roiname)
-				if err != nil {
-					server.BadRequest(w, r, err)
-					return
-				}
-				w.Header().Set("Content-type", "application/octet-stream")
-				_, err = w.Write(data)
-				if err != nil {
-					server.BadRequest(w, r, err)
-					return
+
+				if len(parts) >= 8 && (parts[7] == "jpeg" || parts[7] == "jpg") {
+
+					// extract volume
+					if err := d.GetVoxels(ctx.VersionID(), vox, roiname); err != nil {
+						server.BadRequest(w, r, err)
+						return
+					}
+
+					// convert 3D volume to an 2D image
+					size3d := vox.Geometry.Size()
+					size2d := dvid.Point2d{size3d.Value(0), size3d.Value(1) * size3d.Value(2)}
+					geo2d, err := dvid.NewOrthogSlice(dvid.XY, vox.Geometry.StartPoint(), size2d)
+					if err != nil {
+						server.BadRequest(w, r, err)
+						return
+					}
+					vox.Geometry = geo2d
+
+					img, err := vox.GetImage2d()
+					if err != nil {
+						server.BadRequest(w, r, err)
+						return
+					}
+
+					formatStr := parts[7]
+					err = dvid.WriteImageHttp(w, img.Get(), formatStr)
+					if err != nil {
+						server.BadRequest(w, r, err)
+						return
+					}
+				} else {
+
+					data, err := d.GetVolume(ctx.VersionID(), vox, roiname)
+					if err != nil {
+						server.BadRequest(w, r, err)
+						return
+					}
+					w.Header().Set("Content-type", "application/octet-stream")
+					_, err = w.Write(data)
+					if err != nil {
+						server.BadRequest(w, r, err)
+						return
+					}
 				}
 			} else {
 				if isotropic {
