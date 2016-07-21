@@ -135,6 +135,12 @@ POST <api URL>/node/<UUID>/<data name>/info
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
     data name     Name of voxels data.
 
+POST  <api URL>/node/<UUID>/<data name>/resolution
+  
+  	Sets the resolution for the image volume. 
+  
+  	Extents should be in JSON in the following format:
+  	[8,8,8]
 
 POST <api URL>/node/<UUID>/<data name>/sync
 
@@ -1246,6 +1252,19 @@ func getBinaryData(compression string, in io.ReadCloser, estsize int64) ([]byte,
 	return data, nil
 }
 
+// SetResolution loads JSON data giving Resolution.
+func (d *Data) SetResolution(uuid dvid.UUID, jsonBytes []byte) error {
+	config := make(dvid.NdFloat32, 3)
+	if err := json.Unmarshal(jsonBytes, &config); err != nil {
+		return err
+	}
+	d.Properties.VoxelSize = config
+	if err := datastore.SaveDataByUUID(uuid, d); err != nil {
+		return err
+	}
+	return nil
+}
+
 // if hash is not empty, make sure it is hash of data.
 func checkContentHash(hash string, data []byte) error {
 	if hash == "" {
@@ -1324,6 +1343,17 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 		w.Header().Set("Content-Type", "application/vnd.dvid-nd-data+json")
 		fmt.Fprintln(w, jsonStr)
+
+	case "resolution":
+		jsonBytes, err := ioutil.ReadAll(r.Body)
+		if err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+		if err := d.SetResolution(uuid, jsonBytes); err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
 
 	case "info":
 		jsonBytes, err := d.MarshalJSON()
