@@ -152,6 +152,13 @@ POST  <api URL>/node/<UUID>/<data name>/extents
   	    "MaxPoint": [300,400,500]
   	}
 
+POST  <api URL>/node/<UUID>/<data name>/resolution
+  
+  	Sets the resolution for the image volume. 
+  
+  	Extents should be in JSON in the following format:
+  	[8,8,8]
+
 GET <api URL>/node/<UUID>/<data name>/rawkey?x=<block x>&y=<block y>&z=<block z>
 
     Returns JSON describing hex-encoded binary key used to store a block of data at the given block coordinate:
@@ -817,6 +824,19 @@ func (d *Data) SetExtents(uuid dvid.UUID, jsonBytes []byte) error {
 	return nil
 }
 
+// SetResolution loads JSON data giving Resolution.
+func (d *Data) SetResolution(uuid dvid.UUID, jsonBytes []byte) error {
+	config := make(dvid.NdFloat32, 3)
+	if err := json.Unmarshal(jsonBytes, &config); err != nil {
+		return err
+	}
+	d.Properties.VoxelSize = config
+	if err := datastore.SaveDataByUUID(uuid, d); err != nil {
+		return err
+	}
+	return nil
+}
+
 // Data embeds the datastore's Data and extends it with voxel-specific properties.
 type Data struct {
 	*datastore.Data
@@ -1437,6 +1457,17 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			return
 		}
 
+	case "resolution":
+		jsonBytes, err := ioutil.ReadAll(r.Body)
+		if err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+		if err := d.SetResolution(uuid, jsonBytes); err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+
 	case "info":
 		jsonBytes, err := d.MarshalJSON()
 		if err != nil {
@@ -1597,16 +1628,50 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 					server.BadRequest(w, r, err)
 					return
 				}
-				data, err := d.GetVolume(ctx.VersionID(), vox, roiname)
-				if err != nil {
-					server.BadRequest(w, r, err)
-					return
-				}
-				w.Header().Set("Content-type", "application/octet-stream")
-				_, err = w.Write(data)
-				if err != nil {
-					server.BadRequest(w, r, err)
-					return
+
+				if len(parts) >= 8 && (parts[7] == "jpeg" || parts[7] == "jpg") {
+
+					// extract volume
+					if err := d.GetVoxels(ctx.VersionID(), vox, roiname); err != nil {
+						server.BadRequest(w, r, err)
+						return
+					}
+
+					// convert 3D volume to an 2D image
+					size3d := vox.Geometry.Size()
+					size2d := dvid.Point2d{size3d.Value(0), size3d.Value(1) * size3d.Value(2)}
+					geo2d, err := dvid.NewOrthogSlice(dvid.XY, vox.Geometry.StartPoint(), size2d)
+					if err != nil {
+						server.BadRequest(w, r, err)
+						return
+					}
+					vox.Geometry = geo2d
+
+					img, err := vox.GetImage2d()
+					if err != nil {
+						server.BadRequest(w, r, err)
+						return
+					}
+
+					formatStr := parts[7]
+					err = dvid.WriteImageHttp(w, img.Get(), formatStr)
+					if err != nil {
+						server.BadRequest(w, r, err)
+						return
+					}
+				} else {
+
+					data, err := d.GetVolume(ctx.VersionID(), vox, roiname)
+					if err != nil {
+						server.BadRequest(w, r, err)
+						return
+					}
+					w.Header().Set("Content-type", "application/octet-stream")
+					_, err = w.Write(data)
+					if err != nil {
+						server.BadRequest(w, r, err)
+						return
+					}
 				}
 			} else {
 				if isotropic {
