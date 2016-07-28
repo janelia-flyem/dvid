@@ -1185,8 +1185,13 @@ func compressGoogle(data []byte, subvol *dvid.Subvolume) ([]byte, error) {
 		return nil, fmt.Errorf("volume must be a multiple of the block size")
 	}
 
+	// add initial 4 byte to designate as a header for the compressed data
 	// 64 bit headers for each 8x8x8 block and pre-allocate some data based on expected data size
-	datagoogle := make([]byte, gx*gy*gz*8, xsize*ysize*zsize*8/10)
+	dword := 4
+	globaloffset := dword
+
+	datagoogle := make([]byte, gx*gy*gz*8+int32(globaloffset), xsize*ysize*zsize*8/10)
+	datagoogle[0] = byte(globaloffset / dword) // compressed data starts after first 4 bytes
 
 	// everything is written out little-endian
 	for gziter := int32(0); gziter < gz; gziter++ {
@@ -1217,7 +1222,7 @@ func compressGoogle(data []byte, subvol *dvid.Subvolume) ([]byte, error) {
 				}
 
 				// write-out compressed data
-				encodedBits := uint32(math.Log2(float64(len(unique_vals))))
+				encodedBits := uint32(math.Ceil(math.Log2(float64(len(unique_vals)))))
 				switch {
 				case encodedBits == 0, encodedBits == 1, encodedBits == 2:
 				case encodedBits <= 4:
@@ -1230,7 +1235,7 @@ func compressGoogle(data []byte, subvol *dvid.Subvolume) ([]byte, error) {
 
 				// starting location for writing out data
 				currpos2 := len(datagoogle)
-				compressstart := len(datagoogle) / 4 // in 4-byte units
+				compressstart := len(datagoogle) / dword // in 4-byte units
 				// number of bytes to add (encode bytes + table size of 8 byte numbers)
 				addedBytes := uint32(encodedBits*uint32(BLKSIZE*BLKSIZE*BLKSIZE)/8) + uint32(len(unique_vals)*8) // will always be a multiple of 4 bytes
 				datagoogle = append(datagoogle, make([]byte, addedBytes)...)
@@ -1251,11 +1256,11 @@ func compressGoogle(data []byte, subvol *dvid.Subvolume) ([]byte, error) {
 									// write two bytes worth of data
 									datagoogle[currpos2] = byte(255 & mappedval)
 									currpos2++
-									datagoogle[currpos2] = byte(255 & mappedval >> 8)
+									datagoogle[currpos2] = byte(255 & (mappedval >> 8))
 									currpos2++
 								} else {
 									// write bit-shifted data
-									datagoogle[currpos2] |= byte(mappedval << startbit)
+									datagoogle[currpos2] |= byte(255 & (mappedval << startbit))
 								}
 								if int(startbit) == (8 - int(encodedBits)) {
 									currpos2++
@@ -1267,7 +1272,7 @@ func compressGoogle(data []byte, subvol *dvid.Subvolume) ([]byte, error) {
 						currpos += (xsize*ysize - (xsize * (BLKSIZE))) * 8
 					}
 				}
-				tablestart := currpos2 / 4 // in 4-byte units
+				tablestart := currpos2 / dword // in 4-byte units
 				// write-out lookup table
 				for _, val := range unique_list {
 					for bytespot := uint32(0); bytespot < uint32(8); bytespot++ {
@@ -1277,9 +1282,11 @@ func compressGoogle(data []byte, subvol *dvid.Subvolume) ([]byte, error) {
 				}
 
 				// write-out block header
-				headerpos := (gziter*(gy*gx) + gyiter*gx + gxiter) * 8
+				// 8 bytes per header entry
+				headerpos := (gziter*(gy*gx)+gyiter*gx+gxiter)*8 + int32(globaloffset) // shift start by global offset
 
 				// write out lookup table start
+				tablestart -= (globaloffset / dword) // relative to the start of the compressed data
 				datagoogle[headerpos] = byte(255 & tablestart)
 				headerpos++
 				datagoogle[headerpos] = byte(255 & (tablestart >> 8))
@@ -1292,6 +1299,7 @@ func compressGoogle(data []byte, subvol *dvid.Subvolume) ([]byte, error) {
 				headerpos++
 
 				// write out block compress start
+				compressstart -= (globaloffset / dword) // relative to the start of the compressed data
 				datagoogle[headerpos] = byte(255 & compressstart)
 				headerpos++
 				datagoogle[headerpos] = byte(255 & (compressstart >> 8))
@@ -1344,6 +1352,7 @@ func sendBinaryData(compression string, data []byte, subvol *dvid.Subvolume, w h
 			return err
 		}
 		if compression == "googlegzip" {
+			w.Header().Set("Content-encoding", "gzip")
 			gw := gzip.NewWriter(w)
 			if _, err = gw.Write(datagoogle); err != nil {
 				return err
