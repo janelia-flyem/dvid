@@ -156,6 +156,13 @@ type TypeMigrator interface {
 	MigrateData() (DataService, error)
 }
 
+// TypeUpgrader is an interface for a DataService that can upgrade itself to another version of data storage.
+// A deprecated DataService implementation can implement this interface to auto-convert on metadata load.
+type TypeUpgrader interface {
+	DataService
+	UpgradeData() (upgraded bool, err error)
+}
+
 // InstanceMutator provides a hook for data instances to load mutable data
 // on startup.  It is assumed that the data instances store data whenever
 // its data mutates, e.g., extents for labelblk or max label for labelvol.
@@ -258,17 +265,17 @@ func (d *Data) SyncedNames() []dvid.InstanceName {
 // ---------------------------------------
 
 func (d *Data) MarshalJSON() ([]byte, error) {
-    // convert sync UUIDs to names so its more understandable.
-    syncs := []dvid.InstanceName{}
-    for uuid := range d.syncData {
-        synced, err := GetDataByDataUUID(uuid)
-        if err != nil {
-            syncs = append(syncs, "undefined")
-            dvid.Errorf("In data %q found synced data UUID %q that cannot be found: %v\n", d.DataName(), uuid, err)
-        } else {
-            syncs = append(syncs, synced.DataName())
-        }
-    }
+	// convert sync UUIDs to names so its more understandable.
+	syncs := []dvid.InstanceName{}
+	for uuid := range d.syncData {
+		synced, err := GetDataByDataUUID(uuid)
+		if err != nil {
+			syncs = append(syncs, "undefined")
+			dvid.Errorf("In data %q found synced data UUID %q that cannot be found: %v\n", d.DataName(), uuid, err)
+		} else {
+			syncs = append(syncs, synced.DataName())
+		}
+	}
 	return json.Marshal(struct {
 		TypeName    dvid.TypeString
 		TypeURL     dvid.URLString

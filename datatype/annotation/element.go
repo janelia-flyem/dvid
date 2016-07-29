@@ -38,7 +38,7 @@ API for synapse data type (github.com/janelia-flyem/dvid/datatype/annotation)
 
 Command-line:
 
-$ dvid repo <UUID> new synapse <data name> <settings...>
+$ dvid repo <UUID> new annotation <data name> <settings...>
 
 	Adds newly named data of the 'type name' to repo with specified UUID.
 
@@ -95,13 +95,35 @@ POST <api URL>/node/<UUID>/<data name>/sync
 Note: For the following URL endpoints that return and accept POSTed JSON values, see the JSON format
 at end of this documentation.
 
-GET <api URL>/node/<UUID>/<data name>/label/<label>
+GET <api URL>/node/<UUID>/<data name>/label/<label>?<options>
 
 	Returns all point annotations within the given label as an array of elements.
+	This endpoint is only available if the annotation data instance is synced with
+	a labelblk data instance.
+	
+	GET Query-string Option:
+
+	relationships   Set to true to return all relationships for each annotation.
+
+	Example:
+
+	GET http://foo.com/api/node/83af/myannotations/label/23?relationships=true
+
 
 GET <api URL>/node/<UUID>/<data name>/tag/<tag>
 
 	Returns all point annotations with the given tag as an array of elements.
+	By default, the Relationships of an annotation to other annotations is not
+	returned.  If you want the Relationships, use the query string below.
+
+	GET Query-string Option:
+
+	relationships   Set to true to return all relationships for each annotation.
+
+	Example:
+
+	GET http://foo.com/api/node/83af/myannotations/tag/goodstuff?relationships=true
+	
 
 DELETE <api URL>/node/<UUID>/<data name>/element/<coord>
 
@@ -214,6 +236,37 @@ const (
 // ElementType gives the type of a synaptic element.
 type ElementType uint8
 
+// StringToElementType converts a string
+func StringToElementType(s string) ElementType {
+	switch s {
+	case "PostSyn":
+		return PostSyn
+	case "PreSyn":
+		return PreSyn
+	case "Gap":
+		return Gap
+	case "Note":
+		return Note
+	default:
+		return UnknownElem
+	}
+}
+
+func (e ElementType) String() string {
+	switch e {
+	case PostSyn:
+		return "PostSyn"
+	case PreSyn:
+		return "PreSyn"
+	case Gap:
+		return "Gap"
+	case Note:
+		return "Note"
+	default:
+	}
+	return fmt.Sprintf("Unknown element type %q", e)
+}
+
 func (e ElementType) MarshalJSON() ([]byte, error) {
 	switch e {
 	case UnknownElem:
@@ -303,32 +356,6 @@ type Relationship struct {
 	To  dvid.Point3d
 }
 
-// Element describes a synaptic element's properties.
-type Element struct {
-	Pos   dvid.Point3d
-	Kind  ElementType
-	Label uint64
-	Rels  Relationships
-	Tags  Tags              // Indexed
-	Prop  map[string]string // Non-Indexed
-}
-
-func (e Element) Copy() *Element {
-	c := new(Element)
-	c.Pos = e.Pos
-	c.Kind = e.Kind
-	c.Label = e.Label
-	c.Rels = make(Relationships, len(e.Rels))
-	copy(c.Rels, e.Rels)
-	c.Tags = make(Tags, len(e.Tags))
-	copy(c.Tags, e.Tags)
-	c.Prop = make(map[string]string, len(e.Prop))
-	for k, v := range e.Prop {
-		c.Prop[k] = v
-	}
-	return c
-}
-
 type Relationships []Relationship
 
 func (r Relationships) Len() int {
@@ -376,6 +403,86 @@ func (t Tags) Less(i, j int) bool {
 
 func (t Tags) Swap(i, j int) {
 	t[i], t[j] = t[j], t[i]
+}
+
+// ElementNR describes a synaptic element's properties with No Relationships (NR),
+// used purely for label and tag annotations.
+type ElementNR struct {
+	Pos   dvid.Point3d
+	Kind  ElementType
+	Label uint64
+	Tags  Tags              // Indexed
+	Prop  map[string]string // Non-Indexed
+}
+
+// Element describes a synaptic element's properties, including Relationships.
+type Element struct {
+	ElementNR
+	Rels Relationships
+}
+
+func (e Element) Copy() *Element {
+	c := new(Element)
+	c.Pos = e.Pos
+	c.Kind = e.Kind
+	c.Label = e.Label
+	c.Rels = make(Relationships, len(e.Rels))
+	copy(c.Rels, e.Rels)
+	c.Tags = make(Tags, len(e.Tags))
+	copy(c.Tags, e.Tags)
+	c.Prop = make(map[string]string, len(e.Prop))
+	for k, v := range e.Prop {
+		c.Prop[k] = v
+	}
+	return c
+}
+
+type ElementsNR []ElementNR
+
+// Normalize returns ElementsNR that can be used for DeepEqual because all positions and tags are sorted.
+func (elems ElementsNR) Normalize() ElementsNR {
+	// For every element, create a duplicate that has sorted relationships and sorted tags.
+	out := make(ElementsNR, len(elems), len(elems))
+	for i, elem := range elems {
+		out[i].Pos = elem.Pos
+		out[i].Kind = elem.Kind
+		out[i].Label = elem.Label
+		out[i].Tags = make(Tags, len(elem.Tags))
+		copy(out[i].Tags, elem.Tags)
+
+		out[i].Prop = make(map[string]string, len(elem.Prop))
+		for k, v := range elem.Prop {
+			out[i].Prop[k] = v
+		}
+
+		sort.Sort(out[i].Tags)
+	}
+
+	// Sort all elements based on their position.
+	sort.Sort(out)
+	return out
+}
+
+// --- Sort interface
+
+func (elems ElementsNR) Len() int {
+	return len(elems)
+}
+
+// Less returns true if element[i] < element[j] where ordering is determined by
+// Pos and Kind in that order.  Tags are not considered in ordering.
+func (elems ElementsNR) Less(i, j int) bool {
+	if elems[i].Pos.Less(elems[j].Pos) {
+		return true
+	}
+	if elems[i].Pos.Equals(elems[j].Pos) {
+		return elems[i].Kind < elems[j].Kind
+	}
+	return false
+}
+
+func (elems ElementsNR) Swap(i, j int) {
+	elems[i], elems[j] = elems[j], elems[i]
 }
 
 type Elements []Element
@@ -541,7 +648,7 @@ func NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.
 	return data, nil
 }
 
-// --- Labelvol Datatype -----
+// --- Annotation Datatype -----
 
 type Type struct {
 	datastore.Type
@@ -582,6 +689,35 @@ func getElements(ctx *datastore.VersionedCtx, tk storage.TKey) (Elements, error)
 		return nil, err
 	}
 	return elems, nil
+}
+
+// makes sure that no relationships are returned since they could be out of date.
+func getElementsNR(ctx *datastore.VersionedCtx, tk storage.TKey) (ElementsNR, error) {
+	store, err := ctx.GetOrderedKeyValueDB()
+	if err != nil {
+		return nil, err
+	}
+	val, err := store.Get(ctx, tk)
+	if err != nil {
+		return nil, err
+	}
+	if val == nil {
+		return nil, nil
+	}
+	var elems ElementsNR
+	if err := json.Unmarshal(val, &elems); err != nil {
+		return nil, err
+	}
+	return elems, nil
+}
+
+func putBatchElements(batch storage.Batch, tk storage.TKey, elems Elements) error {
+	val, err := json.Marshal(elems)
+	if err != nil {
+		return err
+	}
+	batch.Put(tk, val)
+	return nil
 }
 
 func putElements(ctx *datastore.VersionedCtx, tk storage.TKey, elems Elements) error {
@@ -692,9 +828,71 @@ func (d *Data) GetSyncedLabelvol() *labelvol.Data {
 	return nil
 }
 
+// returns Elements with Relationships added by querying the block-indexed elements.
+func (d *Data) getExpandedElements(ctx *datastore.VersionedCtx, tk storage.TKey) (Elements, error) {
+	elems, err := getElements(ctx, tk)
+	if err != nil {
+		return elems, err
+	}
+
+	// Batch each element into blocks.
+	blockSize := d.blockSize()
+	blockE := make(blockElements)
+	for _, elem := range elems {
+		// Get block coord for this element.
+		izyxStr := elem.Pos.ToBlockIZYXString(blockSize)
+
+		// Append to block
+		be := blockE[izyxStr]
+		be = append(be, elem)
+		blockE[izyxStr] = be
+	}
+
+	expanded := make(Elements, 0, len(elems))
+	for izyx, be := range blockE {
+		// Read the block-indexed elements
+		chunkPt, err := izyx.ToChunkPoint3d()
+		if err != nil {
+			return nil, err
+		}
+		btk := NewBlockTKey(chunkPt)
+		relElems, err := getElements(ctx, btk)
+		if err != nil {
+			return nil, err
+		}
+
+		// Construct a point map for quick lookup to element data
+		emap := make(map[string]int)
+		for i, relem := range relElems {
+			emap[relem.Pos.MapKey()] = i
+		}
+
+		// Expand.
+		for _, elem := range be {
+			i, found := emap[elem.Pos.MapKey()]
+			if found {
+				expanded = append(expanded, relElems[i])
+			} else {
+				dvid.Errorf("Can't expand relationships for data %q, element @ %s, didn't find it in block %s!\n", d.DataName(), elem.Pos, izyx)
+			}
+		}
+	}
+	return expanded, nil
+}
+
 // delete all reference to given element point in the slice of tags.
 // This is private method and assumes outer locking.
 func (d *Data) deleteElementInTags(ctx *datastore.VersionedCtx, pt dvid.Point3d, tags []Tag) error {
+	store, err := d.BackendStore()
+	if err != nil {
+		return err
+	}
+	batcher, ok := store.(storage.KeyValueBatcher)
+	if !ok {
+		return fmt.Errorf("Data type annotation requires batch-enabled store, which %q is not\n", store)
+	}
+	batch := batcher.NewBatch(ctx)
+
 	for _, tag := range tags {
 		// Get the elements in tag.
 		tk := NewTagTKey(tag)
@@ -710,11 +908,11 @@ func (d *Data) deleteElementInTags(ctx *datastore.VersionedCtx, pt dvid.Point3d,
 		}
 
 		// Save the tag.
-		if err := putElements(ctx, tk, elems); err != nil {
+		if err := putBatchElements(batch, tk, elems); err != nil {
 			return err
 		}
 	}
-	return nil
+	return batch.Commit()
 }
 
 func (d *Data) deleteElementInLabel(ctx *datastore.VersionedCtx, pt dvid.Point3d) error {
@@ -731,15 +929,25 @@ func (d *Data) deleteElementInLabel(ctx *datastore.VersionedCtx, pt dvid.Point3d
 	if err != nil {
 		return fmt.Errorf("err getting elements for label %d: %v\n", label, err)
 	}
-	if _, changed := elems.delete(pt); changed {
-		return putElements(ctx, tk, elems)
+	if _, changed := elems.delete(pt); !changed {
+		return nil
 	}
-	return nil
+	return putElements(ctx, tk, elems)
 }
 
 // delete all reference to given element point in the related points.
 // This is private method and assumes outer locking.
 func (d *Data) deleteElementInRelationships(ctx *datastore.VersionedCtx, pt dvid.Point3d, rels []Relationship) error {
+	store, err := d.BackendStore()
+	if err != nil {
+		return err
+	}
+	batcher, ok := store.(storage.KeyValueBatcher)
+	if !ok {
+		return fmt.Errorf("Data type annotation requires batch-enabled store, which %q is not\n", store)
+	}
+	batch := batcher.NewBatch(ctx)
+
 	blockSize := d.blockSize()
 	for _, rel := range rels {
 		// Get the block elements containing the related element.
@@ -756,16 +964,26 @@ func (d *Data) deleteElementInRelationships(ctx *datastore.VersionedCtx, pt dvid
 		}
 
 		// Save the block elements.
-		if err := putElements(ctx, tk, elems); err != nil {
+		if err := putBatchElements(batch, tk, elems); err != nil {
 			return err
 		}
 	}
-	return nil
+	return batch.Commit()
 }
 
 // move all reference to given element point in the slice of tags.
 // This is private method and assumes outer locking.
 func (d *Data) moveElementInTags(ctx *datastore.VersionedCtx, from, to dvid.Point3d, tags []Tag) error {
+	store, err := d.BackendStore()
+	if err != nil {
+		return err
+	}
+	batcher, ok := store.(storage.KeyValueBatcher)
+	if !ok {
+		return fmt.Errorf("Data type annotation requires batch-enabled store, which %q is not\n", store)
+	}
+	batch := batcher.NewBatch(ctx)
+
 	for _, tag := range tags {
 		// Get the elements in tag.
 		tk := NewTagTKey(tag)
@@ -781,11 +999,11 @@ func (d *Data) moveElementInTags(ctx *datastore.VersionedCtx, from, to dvid.Poin
 		}
 
 		// Save the tag.
-		if err := putElements(ctx, tk, elems); err != nil {
+		if err := putBatchElements(batch, tk, elems); err != nil {
 			return err
 		}
 	}
-	return nil
+	return batch.Commit()
 }
 
 func (d *Data) moveElementInLabels(ctx *datastore.VersionedCtx, from, to dvid.Point3d, moved *Element) error {
@@ -804,6 +1022,17 @@ func (d *Data) moveElementInLabels(ctx *datastore.VersionedCtx, from, to dvid.Po
 	if oldLabel == newLabel {
 		return nil
 	}
+	store, err := d.BackendStore()
+	if err != nil {
+		return err
+	}
+	batcher, ok := store.(storage.KeyValueBatcher)
+	if !ok {
+		return fmt.Errorf("Data type annotation requires batch-enabled store, which %q is not\n", store)
+	}
+	batch := batcher.NewBatch(ctx)
+
+	var delta DeltaModifyElements
 	if oldLabel != 0 {
 		tk := NewLabelTKey(oldLabel)
 		elems, err := getElements(ctx, tk)
@@ -811,9 +1040,10 @@ func (d *Data) moveElementInLabels(ctx *datastore.VersionedCtx, from, to dvid.Po
 			return fmt.Errorf("err getting elements for label %d: %v", oldLabel, err)
 		}
 		if _, changed := elems.delete(from); changed {
-			if err := putElements(ctx, tk, elems); err != nil {
+			if err := putBatchElements(batch, tk, elems); err != nil {
 				return fmt.Errorf("err putting deleted label %d element: %v", oldLabel, err)
 			}
+			delta.Del = append(delta.Del, ElementPos{Label: oldLabel, Kind: moved.Kind, Pos: from})
 		}
 	}
 	if newLabel != 0 {
@@ -823,9 +1053,22 @@ func (d *Data) moveElementInLabels(ctx *datastore.VersionedCtx, from, to dvid.Po
 			return fmt.Errorf("err getting elements for label %d: %v", newLabel, err)
 		}
 		elems.add(Elements{*moved})
-		return putElements(ctx, tk, elems)
+		if err := putBatchElements(batch, tk, elems); err != nil {
+			return err
+		}
+		delta.Add = append(delta.Add, ElementPos{Label: newLabel, Kind: moved.Kind, Pos: from})
 	}
-	return nil
+
+	// Notify any subscribers of label annotation changes.
+	if len(delta.Del) != 0 || len(delta.Add) != 0 {
+		evt := datastore.SyncEvent{Data: d.DataUUID(), Event: ModifyElementsEvent}
+		msg := datastore.SyncMessage{Version: ctx.VersionID(), Delta: delta}
+		if err := datastore.NotifySubscribers(evt, msg); err != nil {
+			return err
+		}
+	}
+
+	return batch.Commit()
 }
 
 // move all reference to given element point in the related points in different blocks.
@@ -844,6 +1087,16 @@ func (d *Data) moveElementInRelationships(ctx *datastore.VersionedCtx, from, to 
 		}
 		relBlocks[blockCoord.ToIZYXString()] = struct{}{}
 	}
+
+	store, err := d.BackendStore()
+	if err != nil {
+		return err
+	}
+	batcher, ok := store.(storage.KeyValueBatcher)
+	if !ok {
+		return fmt.Errorf("Data type annotation requires batch-enabled store, which %q is not\n", store)
+	}
+	batch := batcher.NewBatch(ctx)
 
 	// Alter the moved points in those related blocks.
 	for izyxstr := range relBlocks {
@@ -864,22 +1117,11 @@ func (d *Data) moveElementInRelationships(ctx *datastore.VersionedCtx, from, to 
 		}
 
 		// Save the block elements.
-		if err := putElements(ctx, tk, elems); err != nil {
+		if err := putBatchElements(batch, tk, elems); err != nil {
 			return err
 		}
 	}
-	return nil
-}
-
-// Replace the synaptic elements at the given TKey with the passed elements.
-// TODO: this needs to be transactional for this version + TKey but for now
-// we just make sure it has mutex for all requests, so less efficient if
-// there's many parallel changes.
-func (d *Data) ModifyElements(ctx *datastore.VersionedCtx, tk storage.TKey, toAdd Elements) error {
-	d.Lock()
-	defer d.Unlock()
-
-	return d.modifyElements(ctx, tk, toAdd)
+	return batch.Commit()
 }
 
 func (d *Data) modifyElements(ctx *datastore.VersionedCtx, tk storage.TKey, toAdd Elements) error {
@@ -966,6 +1208,7 @@ func (d *Data) storeLabelElements(ctx *datastore.VersionedCtx, be blockElements)
 	}
 
 	// Store all the added annotations to the appropriate labels.
+	var delta DeltaModifyElements
 	batch := batcher.NewBatch(ctx)
 	for label, additions := range toAdd {
 		tk := NewLabelTKey(label)
@@ -973,18 +1216,34 @@ func (d *Data) storeLabelElements(ctx *datastore.VersionedCtx, be blockElements)
 		if err != nil {
 			return fmt.Errorf("err getting elements for label %d: %v\n", label, err)
 		}
-		elems.add(additions)
-		val, err := json.Marshal(elems)
-		if err != nil {
+
+		// Check if these annotations already exist.
+		emap := make(map[string]int)
+		for i, elem := range elems {
+			emap[elem.Pos.MapKey()] = i
+		}
+		for _, elem := range additions {
+			i, found := emap[elem.Pos.MapKey()]
+			if !found {
+				elems = append(elems, elem)
+				delta.Add = append(delta.Add, ElementPos{Label: label, Kind: elem.Kind, Pos: elem.Pos})
+			} else {
+				elems[i] = elem // replace properties if same position
+			}
+		}
+		if err := putBatchElements(batch, tk, elems); err != nil {
 			return fmt.Errorf("couldn't serialize label %d annotations in instance %q: %v\n", label, d.DataName(), err)
 		}
-		batch.Put(tk, val)
-	}
-	if err := batch.Commit(); err != nil {
-		dvid.Criticalf("bad commit in store annotations %q: %v\n", d.DataName(), err)
 	}
 
-	return nil
+	// Notify any subscribers of label annotation changes.
+	evt := datastore.SyncEvent{Data: d.DataUUID(), Event: ModifyElementsEvent}
+	msg := datastore.SyncMessage{Version: ctx.VersionID(), Delta: delta}
+	if err := datastore.NotifySubscribers(evt, msg); err != nil {
+		return err
+	}
+
+	return batch.Commit()
 }
 
 // stores synaptic elements arranged by tag, replacing any
@@ -999,13 +1258,53 @@ func (d *Data) storeTagElements(ctx *datastore.VersionedCtx, te tagElements) err
 	return nil
 }
 
+// GetLabelJSON returns JSON for synapse elements in a given label.
+func (d *Data) GetLabelJSON(ctx *datastore.VersionedCtx, label uint64, addRels bool) ([]byte, error) {
+	d.RLock()
+	defer d.RUnlock()
+
+	tk := NewLabelTKey(label)
+	if addRels {
+		elems, err := d.getExpandedElements(ctx, tk)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(elems)
+	}
+	elems, err := getElementsNR(ctx, tk)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(elems)
+}
+
 // GetLabelSynapses returns synapse elements for a given label.
 func (d *Data) GetLabelSynapses(ctx *datastore.VersionedCtx, label uint64) (Elements, error) {
 	d.RLock()
 	defer d.RUnlock()
 
 	tk := NewLabelTKey(label)
-	return getElements(ctx, tk)
+	return d.getExpandedElements(ctx, tk)
+}
+
+// GetTagJSON returns JSON for synapse elements in a given tag.
+func (d *Data) GetTagJSON(ctx *datastore.VersionedCtx, tag Tag, addRels bool) ([]byte, error) {
+	d.RLock()
+	defer d.RUnlock()
+
+	tk := NewTagTKey(tag)
+	if addRels {
+		elems, err := d.getExpandedElements(ctx, tk)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(elems)
+	}
+	elems, err := getElementsNR(ctx, tk)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(elems)
 }
 
 // GetTagSynapses returns synapse elements for a given tag.
@@ -1014,7 +1313,7 @@ func (d *Data) GetTagSynapses(ctx *datastore.VersionedCtx, tag Tag) (Elements, e
 	defer d.RUnlock()
 
 	tk := NewTagTKey(tag)
-	return getElements(ctx, tk)
+	return d.getExpandedElements(ctx, tk)
 }
 
 // GetRegionSynapses returns synapse elements for a given subvolume of image space.
@@ -1070,15 +1369,15 @@ func (d *Data) StoreSynapses(ctx *datastore.VersionedCtx, r io.Reader) error {
 	if err != nil {
 		return err
 	}
-	var elements Elements
-	if err := json.Unmarshal(jsonBytes, &elements); err != nil {
+	var elems Elements
+	if err := json.Unmarshal(jsonBytes, &elems); err != nil {
 		return err
 	}
 
 	d.Lock()
 	defer d.Unlock()
 
-	dvid.Infof("%d synaptic elements received via POST", len(elements))
+	dvid.Infof("%d synaptic elements received via POST", len(elems))
 
 	blockSize := d.blockSize()
 	blockE := make(blockElements)
@@ -1086,7 +1385,7 @@ func (d *Data) StoreSynapses(ctx *datastore.VersionedCtx, r io.Reader) error {
 
 	// Iterate through elements, organizing them into blocks and tags.
 	// Note: we do not check for redundancy and guarantee uniqueness at this stage.
-	for _, elem := range elements {
+	for _, elem := range elems {
 		// Get block coord for this element.
 		izyxStr := elem.Pos.ToBlockIZYXString(blockSize)
 
@@ -1104,6 +1403,9 @@ func (d *Data) StoreSynapses(ctx *datastore.VersionedCtx, r io.Reader) error {
 			}
 		}
 	}
+
+	// TODO -- If we group these in batch transaction might be too many k/v mutations.
+	// Really should be done via mutate log + mutation id for long-lived denormalizations.
 
 	// Store the new block elements
 	if err := d.storeBlockElements(ctx, blockE); err != nil {
@@ -1223,6 +1525,19 @@ func (d *Data) MoveElement(ctx *datastore.VersionedCtx, from, to dvid.Point3d) e
 	}
 
 	return nil
+}
+
+// GetByDataUUID returns a pointer to annotation data given a data UUID.
+func GetByDataUUID(dataUUID dvid.UUID) (*Data, error) {
+	source, err := datastore.GetDataByDataUUID(dataUUID)
+	if err != nil {
+		return nil, err
+	}
+	data, ok := source.(*Data)
+	if !ok {
+		return nil, fmt.Errorf("Instance '%s' is not an annotation datatype!", source.DataName())
+	}
+	return data, nil
 }
 
 // GetByUUIDName returns a pointer to annotation data given a version (UUID) and data name.
@@ -1376,17 +1691,13 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			server.BadRequest(w, r, "Label 0 is protected background value and cannot be used for query.")
 			return
 		}
-		elements, err := d.GetLabelSynapses(ctx, label)
+		queryStrings := r.URL.Query()
+		jsonBytes, err := d.GetLabelJSON(ctx, label, queryStrings.Get("relationships") == "true")
 		if err != nil {
 			server.BadRequest(w, r, err)
 			return
 		}
 		w.Header().Set("Content-type", "application/json")
-		jsonBytes, err := json.Marshal(elements)
-		if err != nil {
-			server.BadRequest(w, r, err)
-			return
-		}
 		if _, err := w.Write(jsonBytes); err != nil {
 			server.BadRequest(w, r, err)
 			return
@@ -1403,17 +1714,13 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			return
 		}
 		tag := Tag(parts[4])
-		elements, err := d.GetTagSynapses(ctx, tag)
+		queryStrings := r.URL.Query()
+		jsonBytes, err := d.GetTagJSON(ctx, tag, queryStrings.Get("relationships") == "true")
 		if err != nil {
 			server.BadRequest(w, r, err)
 			return
 		}
 		w.Header().Set("Content-type", "application/json")
-		jsonBytes, err := json.Marshal(elements)
-		if err != nil {
-			server.BadRequest(w, r, err)
-			return
-		}
 		if _, err := w.Write(jsonBytes); err != nil {
 			server.BadRequest(w, r, err)
 			return

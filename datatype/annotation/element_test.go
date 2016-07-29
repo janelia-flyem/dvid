@@ -75,172 +75,230 @@ func TestSynapseRepoPersistence(t *testing.T) {
 
 var testData = Elements{
 	{
-		Pos:  dvid.Point3d{15, 27, 35}, // Label 1
-		Kind: PreSyn,
-		Rels: []Relationship{{Rel: PreSynTo, To: dvid.Point3d{20, 30, 40}}, {Rel: PreSynTo, To: dvid.Point3d{14, 25, 37}}, {Rel: PreSynTo, To: dvid.Point3d{33, 30, 31}}},
-		Tags: []Tag{"Synapse1", "Zlt90"},
-		Prop: map[string]string{
-			"Im a T-Bar":         "yes",
-			"I'm not a PSD":      "sure",
-			"i'm really special": "",
+		ElementNR{
+			Pos:  dvid.Point3d{15, 27, 35}, // Label 1
+			Kind: PreSyn,
+			Tags: []Tag{"Synapse1", "Zlt90"},
+			Prop: map[string]string{
+				"Im a T-Bar":         "yes",
+				"I'm not a PSD":      "sure",
+				"i'm really special": "",
+			},
 		},
+		[]Relationship{{Rel: PreSynTo, To: dvid.Point3d{20, 30, 40}}, {Rel: PreSynTo, To: dvid.Point3d{14, 25, 37}}, {Rel: PreSynTo, To: dvid.Point3d{33, 30, 31}}},
 	},
 	{
-		Pos:  dvid.Point3d{20, 30, 40}, // Label 2
-		Kind: PostSyn,
-		Rels: []Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
-		Tags: []Tag{"Synapse1"},
-	},
-	{
-		Pos:  dvid.Point3d{14, 25, 37}, // Label 3
-		Kind: PostSyn,
-		Rels: []Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
-		Tags: []Tag{"Synapse1", "Zlt90"},
-	},
-	{
-		Pos:  dvid.Point3d{33, 30, 31},
-		Kind: PostSyn,
-		Rels: []Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
-		Tags: []Tag{"Synapse1", "Zlt90"},
-	},
-	{
-		Pos:  dvid.Point3d{127, 63, 99}, // Label 3
-		Kind: PreSyn,
-		Rels: []Relationship{{Rel: PreSynTo, To: dvid.Point3d{88, 47, 80}}, {Rel: PreSynTo, To: dvid.Point3d{120, 65, 100}}, {Rel: PreSynTo, To: dvid.Point3d{126, 67, 98}}},
-		Tags: []Tag{"Synapse2"},
-		Prop: map[string]string{
-			"Im a T-Bar":             "no",
-			"I'm not a PSD":          "not really",
-			"i'm not really special": "at all",
+		ElementNR{
+			Pos:  dvid.Point3d{20, 30, 40}, // Label 2
+			Kind: PostSyn,
+			Tags: []Tag{"Synapse1"},
 		},
+		[]Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
 	},
 	{
-		Pos:  dvid.Point3d{88, 47, 80}, // Label 4
-		Kind: PostSyn,
-		Rels: []Relationship{{Rel: GroupedWith, To: dvid.Point3d{14, 25, 37}}, {Rel: PostSynTo, To: dvid.Point3d{127, 63, 99}}, {Rel: GroupedWith, To: dvid.Point3d{20, 30, 40}}},
-		Tags: []Tag{"Synapse2"},
+		ElementNR{
+			Pos:  dvid.Point3d{14, 25, 37}, // Label 3
+			Kind: PostSyn,
+			Tags: []Tag{"Synapse1", "Zlt90"},
+		},
+		[]Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
 	},
 	{
-		Pos:  dvid.Point3d{120, 65, 100},
-		Kind: PostSyn,
-		Rels: []Relationship{{Rel: PostSynTo, To: dvid.Point3d{127, 63, 99}}},
-		Tags: []Tag{"Synapse2"},
+		ElementNR{
+			Pos:  dvid.Point3d{33, 30, 31},
+			Kind: PostSyn,
+			Tags: []Tag{"Synapse1", "Zlt90"},
+		},
+		[]Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
 	},
 	{
-		Pos:  dvid.Point3d{126, 67, 98},
-		Kind: PostSyn,
-		Rels: []Relationship{{Rel: PostSynTo, To: dvid.Point3d{127, 63, 99}}},
-		Tags: []Tag{"Synapse2"},
+		ElementNR{
+			Pos:  dvid.Point3d{127, 63, 99}, // Label 3
+			Kind: PreSyn,
+			Tags: []Tag{"Synapse2"},
+			Prop: map[string]string{
+				"Im a T-Bar":             "no",
+				"I'm not a PSD":          "not really",
+				"i'm not really special": "at all",
+			},
+		},
+		[]Relationship{{Rel: PreSynTo, To: dvid.Point3d{88, 47, 80}}, {Rel: PreSynTo, To: dvid.Point3d{120, 65, 100}}, {Rel: PreSynTo, To: dvid.Point3d{126, 67, 98}}},
+	},
+	{
+		ElementNR{
+			Pos:  dvid.Point3d{88, 47, 80}, // Label 4
+			Kind: PostSyn,
+			Tags: []Tag{"Synapse2"},
+		},
+		[]Relationship{{Rel: GroupedWith, To: dvid.Point3d{14, 25, 37}}, {Rel: PostSynTo, To: dvid.Point3d{127, 63, 99}}, {Rel: GroupedWith, To: dvid.Point3d{20, 30, 40}}},
+	},
+	{
+		ElementNR{
+			Pos:  dvid.Point3d{120, 65, 100},
+			Kind: PostSyn,
+			Tags: []Tag{"Synapse2"},
+		},
+		[]Relationship{{Rel: PostSynTo, To: dvid.Point3d{127, 63, 99}}},
+	},
+	{
+		ElementNR{
+			Pos:  dvid.Point3d{126, 67, 98},
+			Kind: PostSyn,
+			Tags: []Tag{"Synapse2"},
+		},
+		[]Relationship{{Rel: PostSynTo, To: dvid.Point3d{127, 63, 99}}},
 	},
 }
 
 var expectedLabel1 = Elements{
 	{
-		Pos:  dvid.Point3d{15, 27, 35}, // Label 1
-		Kind: PreSyn,
-		Rels: []Relationship{{Rel: PreSynTo, To: dvid.Point3d{20, 30, 40}}, {Rel: PreSynTo, To: dvid.Point3d{14, 25, 37}}, {Rel: PreSynTo, To: dvid.Point3d{33, 30, 31}}},
-		Tags: []Tag{"Synapse1", "Zlt90"},
-		Prop: map[string]string{
-			"Im a T-Bar":         "yes",
-			"I'm not a PSD":      "sure",
-			"i'm really special": "",
+		ElementNR{
+			Pos:  dvid.Point3d{15, 27, 35}, // Label 1
+			Kind: PreSyn,
+			Tags: []Tag{"Synapse1", "Zlt90"},
+			Prop: map[string]string{
+				"Im a T-Bar":         "yes",
+				"I'm not a PSD":      "sure",
+				"i'm really special": "",
+			},
 		},
+		[]Relationship{{Rel: PreSynTo, To: dvid.Point3d{20, 30, 40}}, {Rel: PreSynTo, To: dvid.Point3d{14, 25, 37}}, {Rel: PreSynTo, To: dvid.Point3d{33, 30, 31}}},
 	},
 }
 
 var expectedLabel2 = Elements{
 	{
-		Pos:  dvid.Point3d{20, 30, 40}, // Label 2
-		Kind: PostSyn,
-		Rels: []Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
-		Tags: []Tag{"Synapse1"},
+		ElementNR{
+			Pos:  dvid.Point3d{20, 30, 40}, // Label 2
+			Kind: PostSyn,
+			Tags: []Tag{"Synapse1"},
+		},
+		[]Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
 	},
 }
 
 var expectedLabel2a = Elements{
 	{
-		Pos:  dvid.Point3d{14, 25, 37}, // Label 3
-		Kind: PostSyn,
-		Rels: []Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
-		Tags: []Tag{"Synapse1", "Zlt90"},
+		ElementNR{
+			Pos:  dvid.Point3d{14, 25, 37}, // Label 3
+			Kind: PostSyn,
+			Tags: []Tag{"Synapse1", "Zlt90"},
+		},
+		[]Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
 	},
 }
 
 var expectedLabel2b = Elements{
 	{
-		Pos:  dvid.Point3d{14, 25, 37}, // Originally Label 3
-		Kind: PostSyn,
-		Rels: []Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
-		Tags: []Tag{"Synapse1", "Zlt90"},
-	},
-	{
-		Pos:  dvid.Point3d{20, 30, 40}, // Originally Label 2
-		Kind: PostSyn,
-		Rels: []Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
-		Tags: []Tag{"Synapse1"},
-	},
-	{
-		Pos:  dvid.Point3d{127, 63, 99}, // Originally Label 3
-		Kind: PreSyn,
-		Rels: []Relationship{{Rel: PreSynTo, To: dvid.Point3d{88, 47, 80}}, {Rel: PreSynTo, To: dvid.Point3d{120, 65, 100}}, {Rel: PreSynTo, To: dvid.Point3d{126, 67, 98}}},
-		Tags: []Tag{"Synapse2"},
-		Prop: map[string]string{
-			"Im a T-Bar":             "no",
-			"I'm not a PSD":          "not really",
-			"i'm not really special": "at all",
+		ElementNR{
+			Pos:  dvid.Point3d{14, 25, 37}, // Originally Label 3
+			Kind: PostSyn,
+			Tags: []Tag{"Synapse1", "Zlt90"},
 		},
+		[]Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
+	},
+	{
+		ElementNR{
+			Pos:  dvid.Point3d{20, 30, 40}, // Originally Label 2
+			Kind: PostSyn,
+			Tags: []Tag{"Synapse1"},
+		},
+		[]Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
+	},
+	{
+		ElementNR{
+			Pos:  dvid.Point3d{127, 63, 99}, // Originally Label 3
+			Kind: PreSyn,
+			Tags: []Tag{"Synapse2"},
+			Prop: map[string]string{
+				"Im a T-Bar":             "no",
+				"I'm not a PSD":          "not really",
+				"i'm not really special": "at all",
+			},
+		},
+		[]Relationship{{Rel: PreSynTo, To: dvid.Point3d{88, 47, 80}}, {Rel: PreSynTo, To: dvid.Point3d{120, 65, 100}}, {Rel: PreSynTo, To: dvid.Point3d{126, 67, 98}}},
 	},
 }
 
 var expectedLabel2c = Elements{
 	{
-		Pos:  dvid.Point3d{127, 63, 99},
-		Kind: PreSyn,
-		Rels: []Relationship{{Rel: PreSynTo, To: dvid.Point3d{88, 47, 80}}, {Rel: PreSynTo, To: dvid.Point3d{120, 65, 100}}, {Rel: PreSynTo, To: dvid.Point3d{126, 67, 98}}},
-		Tags: []Tag{"Synapse2"},
-		Prop: map[string]string{
-			"Im a T-Bar":             "no",
-			"I'm not a PSD":          "not really",
-			"i'm not really special": "at all",
+		ElementNR{
+			Pos:  dvid.Point3d{127, 63, 99},
+			Kind: PreSyn,
+			Tags: []Tag{"Synapse2"},
+			Prop: map[string]string{
+				"Im a T-Bar":             "no",
+				"I'm not a PSD":          "not really",
+				"i'm not really special": "at all",
+			},
 		},
+		[]Relationship{{Rel: PreSynTo, To: dvid.Point3d{88, 47, 80}}, {Rel: PreSynTo, To: dvid.Point3d{120, 65, 100}}, {Rel: PreSynTo, To: dvid.Point3d{126, 67, 98}}},
 	},
 }
 
 var expectedLabel7 = Elements{
 	{
-		Pos:  dvid.Point3d{14, 25, 37},
-		Kind: PostSyn,
-		Rels: []Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
-		Tags: []Tag{"Synapse1", "Zlt90"},
+		ElementNR{
+			Pos:  dvid.Point3d{14, 25, 37},
+			Kind: PostSyn,
+			Tags: []Tag{"Synapse1", "Zlt90"},
+		},
+		[]Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
 	},
 	{
-		Pos:  dvid.Point3d{20, 30, 40},
-		Kind: PostSyn,
-		Rels: []Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
-		Tags: []Tag{"Synapse1"},
+		ElementNR{
+			Pos:  dvid.Point3d{20, 30, 40},
+			Kind: PostSyn,
+			Tags: []Tag{"Synapse1"},
+		},
+		[]Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
 	},
 }
 
 var afterDeleteOn7 = Elements{
 	{
-		Pos:  dvid.Point3d{14, 25, 37},
-		Kind: PostSyn,
-		Rels: []Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
-		Tags: []Tag{"Synapse1", "Zlt90"},
+		ElementNR{
+			Pos:  dvid.Point3d{14, 25, 37},
+			Kind: PostSyn,
+			Tags: []Tag{"Synapse1", "Zlt90"},
+		},
+		[]Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
 	},
 }
 
 var expectedLabel3 = Elements{
 	{
+		ElementNR{
+			Pos:  dvid.Point3d{14, 25, 37}, // Label 3
+			Kind: PostSyn,
+			Tags: []Tag{"Synapse1", "Zlt90"},
+		},
+		[]Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
+	},
+	{
+		ElementNR{
+			Pos:  dvid.Point3d{127, 63, 99}, // Label 3
+			Kind: PreSyn,
+			Tags: []Tag{"Synapse2"},
+			Prop: map[string]string{
+				"Im a T-Bar":             "no",
+				"I'm not a PSD":          "not really",
+				"i'm not really special": "at all",
+			},
+		},
+		[]Relationship{{Rel: PreSynTo, To: dvid.Point3d{88, 47, 80}}, {Rel: PreSynTo, To: dvid.Point3d{120, 65, 100}}, {Rel: PreSynTo, To: dvid.Point3d{126, 67, 98}}},
+	},
+}
+
+var expectedLabel3NoRel = ElementsNR{
+	{
 		Pos:  dvid.Point3d{14, 25, 37}, // Label 3
 		Kind: PostSyn,
-		Rels: []Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
 		Tags: []Tag{"Synapse1", "Zlt90"},
 	},
 	{
 		Pos:  dvid.Point3d{127, 63, 99}, // Label 3
 		Kind: PreSyn,
-		Rels: []Relationship{{Rel: PreSynTo, To: dvid.Point3d{88, 47, 80}}, {Rel: PreSynTo, To: dvid.Point3d{120, 65, 100}}, {Rel: PreSynTo, To: dvid.Point3d{126, 67, 98}}},
 		Tags: []Tag{"Synapse2"},
 		Prop: map[string]string{
 			"Im a T-Bar":             "no",
@@ -252,155 +310,201 @@ var expectedLabel3 = Elements{
 
 var expectedLabel3a = Elements{
 	{
-		Pos:  dvid.Point3d{20, 30, 40}, // Label 2
-		Kind: PostSyn,
-		Rels: []Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
-		Tags: []Tag{"Synapse1"},
+		ElementNR{
+			Pos:  dvid.Point3d{20, 30, 40}, // Label 2
+			Kind: PostSyn,
+			Tags: []Tag{"Synapse1"},
+		},
+		[]Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
 	},
 	{
-		Pos:  dvid.Point3d{127, 63, 99}, // Label 3
-		Kind: PreSyn,
-		Rels: []Relationship{{Rel: PreSynTo, To: dvid.Point3d{88, 47, 80}}, {Rel: PreSynTo, To: dvid.Point3d{120, 65, 100}}, {Rel: PreSynTo, To: dvid.Point3d{126, 67, 98}}},
-		Tags: []Tag{"Synapse2"},
-		Prop: map[string]string{
-			"Im a T-Bar":             "no",
-			"I'm not a PSD":          "not really",
-			"i'm not really special": "at all",
+		ElementNR{
+			Pos:  dvid.Point3d{127, 63, 99}, // Label 3
+			Kind: PreSyn,
+			Tags: []Tag{"Synapse2"},
+			Prop: map[string]string{
+				"Im a T-Bar":             "no",
+				"I'm not a PSD":          "not really",
+				"i'm not really special": "at all",
+			},
 		},
+		[]Relationship{{Rel: PreSynTo, To: dvid.Point3d{88, 47, 80}}, {Rel: PreSynTo, To: dvid.Point3d{120, 65, 100}}, {Rel: PreSynTo, To: dvid.Point3d{126, 67, 98}}},
 	},
 }
 
 var expectedLabel4 = Elements{
 	{
+		ElementNR{
+			Pos:  dvid.Point3d{88, 47, 80}, // Label 4
+			Kind: PostSyn,
+			Tags: []Tag{"Synapse2"},
+		},
+		[]Relationship{{Rel: GroupedWith, To: dvid.Point3d{14, 25, 37}}, {Rel: PostSynTo, To: dvid.Point3d{127, 63, 99}}, {Rel: GroupedWith, To: dvid.Point3d{20, 30, 40}}},
+	},
+}
+
+var expectedLabel4NoRel = ElementsNR{
+	{
 		Pos:  dvid.Point3d{88, 47, 80}, // Label 4
 		Kind: PostSyn,
-		Rels: []Relationship{{Rel: GroupedWith, To: dvid.Point3d{14, 25, 37}}, {Rel: PostSynTo, To: dvid.Point3d{127, 63, 99}}, {Rel: GroupedWith, To: dvid.Point3d{20, 30, 40}}},
 		Tags: []Tag{"Synapse2"},
 	},
 }
 
 var expected3 = Elements{
 	{
-		Pos:  dvid.Point3d{127, 63, 99},
-		Kind: PreSyn,
-		Rels: []Relationship{{Rel: PreSynTo, To: dvid.Point3d{88, 47, 80}}, {Rel: PreSynTo, To: dvid.Point3d{120, 65, 100}}, {Rel: PreSynTo, To: dvid.Point3d{126, 67, 98}}},
-		Tags: []Tag{"Synapse2"},
-		Prop: map[string]string{
-			"Im a T-Bar":             "no",
-			"I'm not a PSD":          "not really",
-			"i'm not really special": "at all",
+		ElementNR{
+			Pos:  dvid.Point3d{127, 63, 99},
+			Kind: PreSyn,
+			Tags: []Tag{"Synapse2"},
+			Prop: map[string]string{
+				"Im a T-Bar":             "no",
+				"I'm not a PSD":          "not really",
+				"i'm not really special": "at all",
+			},
 		},
+		[]Relationship{{Rel: PreSynTo, To: dvid.Point3d{88, 47, 80}}, {Rel: PreSynTo, To: dvid.Point3d{120, 65, 100}}, {Rel: PreSynTo, To: dvid.Point3d{126, 67, 98}}},
 	},
 }
 
 var afterMove = Elements{
 	{
-		Pos:  dvid.Point3d{15, 27, 35},
-		Kind: PreSyn,
-		Rels: []Relationship{{Rel: PreSynTo, To: dvid.Point3d{20, 30, 40}}, {Rel: PreSynTo, To: dvid.Point3d{14, 25, 37}}, {Rel: PreSynTo, To: dvid.Point3d{33, 30, 31}}},
-		Tags: []Tag{"Synapse1", "Zlt90"},
-		Prop: map[string]string{
-			"Im a T-Bar":         "yes",
-			"I'm not a PSD":      "sure",
-			"i'm really special": "",
+		ElementNR{
+			Pos:  dvid.Point3d{15, 27, 35},
+			Kind: PreSyn,
+			Tags: []Tag{"Synapse1", "Zlt90"},
+			Prop: map[string]string{
+				"Im a T-Bar":         "yes",
+				"I'm not a PSD":      "sure",
+				"i'm really special": "",
+			},
 		},
+		[]Relationship{{Rel: PreSynTo, To: dvid.Point3d{20, 30, 40}}, {Rel: PreSynTo, To: dvid.Point3d{14, 25, 37}}, {Rel: PreSynTo, To: dvid.Point3d{33, 30, 31}}},
 	},
 	{
-		Pos:  dvid.Point3d{20, 30, 40},
-		Kind: PostSyn,
-		Rels: []Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
-		Tags: []Tag{"Synapse1"},
-	},
-	{
-		Pos:  dvid.Point3d{14, 25, 37},
-		Kind: PostSyn,
-		Rels: []Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
-		Tags: []Tag{"Synapse1", "Zlt90"},
-	},
-	{
-		Pos:  dvid.Point3d{33, 30, 31},
-		Kind: PostSyn,
-		Rels: []Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
-		Tags: []Tag{"Synapse1", "Zlt90"},
-	},
-	{
-		Pos:  dvid.Point3d{127, 64, 100},
-		Kind: PreSyn,
-		Rels: []Relationship{{Rel: PreSynTo, To: dvid.Point3d{88, 47, 80}}, {Rel: PreSynTo, To: dvid.Point3d{120, 65, 100}}, {Rel: PreSynTo, To: dvid.Point3d{126, 67, 98}}},
-		Tags: []Tag{"Synapse2"},
-		Prop: map[string]string{
-			"Im a T-Bar":             "no",
-			"I'm not a PSD":          "not really",
-			"i'm not really special": "at all",
+		ElementNR{
+			Pos:  dvid.Point3d{20, 30, 40},
+			Kind: PostSyn,
+			Tags: []Tag{"Synapse1"},
 		},
+		[]Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
 	},
 	{
-		Pos:  dvid.Point3d{88, 47, 80},
-		Kind: PostSyn,
-		Rels: []Relationship{{Rel: GroupedWith, To: dvid.Point3d{14, 25, 37}}, {Rel: PostSynTo, To: dvid.Point3d{127, 64, 100}}, {Rel: GroupedWith, To: dvid.Point3d{20, 30, 40}}},
-		Tags: []Tag{"Synapse2"},
+		ElementNR{
+			Pos:  dvid.Point3d{14, 25, 37},
+			Kind: PostSyn,
+			Tags: []Tag{"Synapse1", "Zlt90"},
+		},
+		[]Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
 	},
 	{
-		Pos:  dvid.Point3d{120, 65, 100},
-		Kind: PostSyn,
-		Rels: []Relationship{{Rel: PostSynTo, To: dvid.Point3d{127, 64, 100}}},
-		Tags: []Tag{"Synapse2"},
+		ElementNR{
+			Pos:  dvid.Point3d{33, 30, 31},
+			Kind: PostSyn,
+			Tags: []Tag{"Synapse1", "Zlt90"},
+		},
+		[]Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
 	},
 	{
-		Pos:  dvid.Point3d{126, 67, 98},
-		Kind: PostSyn,
-		Rels: []Relationship{{Rel: PostSynTo, To: dvid.Point3d{127, 64, 100}}},
-		Tags: []Tag{"Synapse2"},
+		ElementNR{
+			Pos:  dvid.Point3d{127, 64, 100},
+			Kind: PreSyn,
+			Tags: []Tag{"Synapse2"},
+			Prop: map[string]string{
+				"Im a T-Bar":             "no",
+				"I'm not a PSD":          "not really",
+				"i'm not really special": "at all",
+			},
+		},
+		[]Relationship{{Rel: PreSynTo, To: dvid.Point3d{88, 47, 80}}, {Rel: PreSynTo, To: dvid.Point3d{120, 65, 100}}, {Rel: PreSynTo, To: dvid.Point3d{126, 67, 98}}},
+	},
+	{
+		ElementNR{
+			Pos:  dvid.Point3d{88, 47, 80},
+			Kind: PostSyn,
+			Tags: []Tag{"Synapse2"},
+		},
+		[]Relationship{{Rel: GroupedWith, To: dvid.Point3d{14, 25, 37}}, {Rel: PostSynTo, To: dvid.Point3d{127, 64, 100}}, {Rel: GroupedWith, To: dvid.Point3d{20, 30, 40}}},
+	},
+	{
+		ElementNR{
+			Pos:  dvid.Point3d{120, 65, 100},
+			Kind: PostSyn,
+			Tags: []Tag{"Synapse2"},
+		},
+		[]Relationship{{Rel: PostSynTo, To: dvid.Point3d{127, 64, 100}}},
+	},
+	{
+		ElementNR{
+			Pos:  dvid.Point3d{126, 67, 98},
+			Kind: PostSyn,
+			Tags: []Tag{"Synapse2"},
+		},
+		[]Relationship{{Rel: PostSynTo, To: dvid.Point3d{127, 64, 100}}},
 	},
 }
 
 var afterDelete = Elements{
 	{
-		Pos:  dvid.Point3d{15, 27, 35},
-		Kind: PreSyn,
-		Rels: []Relationship{{Rel: PreSynTo, To: dvid.Point3d{20, 30, 40}}, {Rel: PreSynTo, To: dvid.Point3d{14, 25, 37}}, {Rel: PreSynTo, To: dvid.Point3d{33, 30, 31}}},
-		Tags: []Tag{"Synapse1", "Zlt90"},
-		Prop: map[string]string{
-			"Im a T-Bar":         "yes",
-			"I'm not a PSD":      "sure",
-			"i'm really special": "",
+		ElementNR{
+			Pos:  dvid.Point3d{15, 27, 35},
+			Kind: PreSyn,
+			Tags: []Tag{"Synapse1", "Zlt90"},
+			Prop: map[string]string{
+				"Im a T-Bar":         "yes",
+				"I'm not a PSD":      "sure",
+				"i'm really special": "",
+			},
 		},
+		[]Relationship{{Rel: PreSynTo, To: dvid.Point3d{20, 30, 40}}, {Rel: PreSynTo, To: dvid.Point3d{14, 25, 37}}, {Rel: PreSynTo, To: dvid.Point3d{33, 30, 31}}},
 	},
 	{
-		Pos:  dvid.Point3d{20, 30, 40},
-		Kind: PostSyn,
-		Rels: []Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
-		Tags: []Tag{"Synapse1"},
+		ElementNR{
+			Pos:  dvid.Point3d{20, 30, 40},
+			Kind: PostSyn,
+			Tags: []Tag{"Synapse1"},
+		},
+		[]Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
 	},
 	{
-		Pos:  dvid.Point3d{14, 25, 37},
-		Kind: PostSyn,
-		Rels: []Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
-		Tags: []Tag{"Synapse1", "Zlt90"},
+		ElementNR{
+			Pos:  dvid.Point3d{14, 25, 37},
+			Kind: PostSyn,
+			Tags: []Tag{"Synapse1", "Zlt90"},
+		},
+		[]Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
 	},
 	{
-		Pos:  dvid.Point3d{33, 30, 31},
-		Kind: PostSyn,
-		Rels: []Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
-		Tags: []Tag{"Synapse1", "Zlt90"},
+		ElementNR{
+			Pos:  dvid.Point3d{33, 30, 31},
+			Kind: PostSyn,
+			Tags: []Tag{"Synapse1", "Zlt90"},
+		},
+		[]Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
 	},
 	{
-		Pos:  dvid.Point3d{88, 47, 80},
-		Kind: PostSyn,
-		Rels: []Relationship{{Rel: GroupedWith, To: dvid.Point3d{14, 25, 37}}, {Rel: GroupedWith, To: dvid.Point3d{20, 30, 40}}},
-		Tags: []Tag{"Synapse2"},
+		ElementNR{
+			Pos:  dvid.Point3d{88, 47, 80},
+			Kind: PostSyn,
+			Tags: []Tag{"Synapse2"},
+		},
+		[]Relationship{{Rel: GroupedWith, To: dvid.Point3d{14, 25, 37}}, {Rel: GroupedWith, To: dvid.Point3d{20, 30, 40}}},
 	},
 	{
-		Pos:  dvid.Point3d{120, 65, 100},
-		Kind: PostSyn,
-		Rels: []Relationship{},
-		Tags: []Tag{"Synapse2"},
+		ElementNR{
+			Pos:  dvid.Point3d{120, 65, 100},
+			Kind: PostSyn,
+			Tags: []Tag{"Synapse2"},
+		},
+		[]Relationship{},
 	},
 	{
-		Pos:  dvid.Point3d{126, 67, 98},
-		Kind: PostSyn,
-		Rels: []Relationship{},
-		Tags: []Tag{"Synapse2"},
+		ElementNR{
+			Pos:  dvid.Point3d{126, 67, 98},
+			Kind: PostSyn,
+			Tags: []Tag{"Synapse2"},
+		},
+		[]Relationship{},
 	},
 }
 
@@ -426,6 +530,53 @@ func testResponse(t *testing.T, expected Elements, template string, args ...inte
 	}
 	if !reflect.DeepEqual(expected.Normalize(), got.Normalize()) {
 		t.Fatalf("Expected for %s:\n%v\nGot:\n%v\n", url, expected.Normalize(), got.Normalize())
+	}
+}
+
+func testResponseLabel(t *testing.T, expected interface{}, template string, args ...interface{}) {
+	var useRels bool
+	if strings.HasSuffix(template, "?relationships=true") {
+		useRels = true
+	}
+	url := fmt.Sprintf(template, args...)
+	returnValue := server.TestHTTP(t, "GET", url, nil)
+
+	if useRels {
+		var elems Elements
+		if expected == nil {
+			elems = Elements{}
+		} else {
+			var ok bool
+			elems, ok = expected.(Elements)
+			if !ok {
+				t.Fatalf("testResponseLabel with template %q didn't get passed Elements for expected: %v\n", template, expected)
+			}
+		}
+		got := Elements{}
+		if err := json.Unmarshal(returnValue, &got); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(elems.Normalize(), got.Normalize()) {
+			t.Fatalf("Expected for %s:\n%v\nGot:\n%v\n", url, elems.Normalize(), got.Normalize())
+		}
+	} else {
+		var elems ElementsNR
+		if expected == nil {
+			elems = ElementsNR{}
+		} else {
+			var ok bool
+			elems, ok = expected.(ElementsNR)
+			if !ok {
+				t.Fatalf("testResponseLabel with template %q didn't get passed ElementsNR for expected: %v\n", template, expected)
+			}
+		}
+		got := ElementsNR{}
+		if err := json.Unmarshal(returnValue, &got); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(elems.Normalize(), got.Normalize()) {
+			t.Fatalf("Expected for %s:\n%v\nGot:\n%v\n", url, elems.Normalize(), got.Normalize())
+		}
 	}
 }
 
@@ -462,12 +613,12 @@ func TestRequests(t *testing.T) {
 	// Test Tag 1
 	tag := Tag("Synapse2")
 	synapse2 := getTag(tag, testData)
-	testResponse(t, synapse2, "%snode/%s/%s/tag/%s", server.WebAPIPath, uuid, data.DataName(), tag)
+	testResponse(t, synapse2, "%snode/%s/%s/tag/%s?relationships=true", server.WebAPIPath, uuid, data.DataName(), tag)
 
 	// Test Tag 2
 	tag2 := Tag("Zlt90")
 	zlt90 := getTag(tag2, testData)
-	testResponse(t, zlt90, "%snode/%s/%s/tag/%s", server.WebAPIPath, uuid, data.DataName(), tag2)
+	testResponse(t, zlt90, "%snode/%s/%s/tag/%s?relationships=true", server.WebAPIPath, uuid, data.DataName(), tag2)
 
 	// Test move
 	url5 := fmt.Sprintf("%snode/%s/%s/move/127_63_99/127_64_100", server.WebAPIPath, uuid, data.DataName())
@@ -476,7 +627,7 @@ func TestRequests(t *testing.T) {
 
 	// --- check tag
 	synapse2 = getTag(tag, afterMove)
-	testResponse(t, synapse2, "%snode/%s/%s/tag/%s", server.WebAPIPath, uuid, data.DataName(), tag)
+	testResponse(t, synapse2, "%snode/%s/%s/tag/%s?relationships=true", server.WebAPIPath, uuid, data.DataName(), tag)
 
 	// Test delete
 	url6 := fmt.Sprintf("%snode/%s/%s/element/127_64_100", server.WebAPIPath, uuid, data.DataName())
@@ -485,7 +636,7 @@ func TestRequests(t *testing.T) {
 
 	// --- check tag
 	synapse2 = getTag(tag, afterDelete)
-	testResponse(t, synapse2, "%snode/%s/%s/tag/%s", server.WebAPIPath, uuid, data.DataName(), tag)
+	testResponse(t, synapse2, "%snode/%s/%s/tag/%s?relationships=true", server.WebAPIPath, uuid, data.DataName(), tag)
 }
 
 func getBytesRLE(t *testing.T, rles dvid.RLEs) *bytes.Buffer {
@@ -552,10 +703,11 @@ func TestLabels(t *testing.T) {
 	// Test if labels were properly denormalized.  For the POST we have synchronized label denormalization.
 	// If this were to become asynchronous, we'd want to block on updating like the labelblk<->labelvol sync.
 
-	testResponse(t, expectedLabel1, "%snode/%s/mysynapses/label/1", server.WebAPIPath, uuid)
-	testResponse(t, expectedLabel2, "%snode/%s/mysynapses/label/2", server.WebAPIPath, uuid)
-	testResponse(t, expectedLabel3, "%snode/%s/mysynapses/label/3", server.WebAPIPath, uuid)
-	testResponse(t, expectedLabel4, "%snode/%s/mysynapses/label/4", server.WebAPIPath, uuid)
+	testResponseLabel(t, expectedLabel1, "%snode/%s/mysynapses/label/1?relationships=true", server.WebAPIPath, uuid)
+	testResponseLabel(t, expectedLabel2, "%snode/%s/mysynapses/label/2?relationships=true", server.WebAPIPath, uuid)
+	testResponseLabel(t, expectedLabel3, "%snode/%s/mysynapses/label/3?relationships=true", server.WebAPIPath, uuid)
+	testResponseLabel(t, expectedLabel3NoRel, "%snode/%s/mysynapses/label/3", server.WebAPIPath, uuid)
+	testResponseLabel(t, expectedLabel4, "%snode/%s/mysynapses/label/4?relationships=true", server.WebAPIPath, uuid)
 
 	// Make change to labelblk and make sure our label synapses have been adjusted (case A)
 	_ = modifyLabelTestVolume(t, uuid, "labels")
@@ -564,10 +716,11 @@ func TestLabels(t *testing.T) {
 		t.Fatalf("Error blocking on sync of labels->annotations: %v\n", err)
 	}
 
-	testResponse(t, expectedLabel1, "%snode/%s/mysynapses/label/1", server.WebAPIPath, uuid)
-	testResponse(t, expectedLabel2a, "%snode/%s/mysynapses/label/2", server.WebAPIPath, uuid)
-	testResponse(t, expectedLabel3a, "%snode/%s/mysynapses/label/3", server.WebAPIPath, uuid)
-	testResponse(t, expectedLabel4, "%snode/%s/mysynapses/label/4", server.WebAPIPath, uuid)
+	testResponseLabel(t, expectedLabel1, "%snode/%s/mysynapses/label/1?relationships=true", server.WebAPIPath, uuid)
+	testResponseLabel(t, expectedLabel2a, "%snode/%s/mysynapses/label/2?relationships=true", server.WebAPIPath, uuid)
+	testResponseLabel(t, expectedLabel3a, "%snode/%s/mysynapses/label/3?relationships=true", server.WebAPIPath, uuid)
+	testResponseLabel(t, expectedLabel4, "%snode/%s/mysynapses/label/4?relationships=true", server.WebAPIPath, uuid)
+	testResponseLabel(t, expectedLabel4NoRel, "%snode/%s/mysynapses/label/4", server.WebAPIPath, uuid)
 
 	// Make change to labelvol and make sure our label synapses have been adjusted (case B).
 	// Merge 3a into 2a.
@@ -578,10 +731,10 @@ func TestLabels(t *testing.T) {
 		t.Fatalf("Error blocking on sync of labels: %v\n", err)
 	}
 
-	testResponse(t, expectedLabel1, "%snode/%s/mysynapses/label/1", server.WebAPIPath, uuid)
-	testResponse(t, expectedLabel2b, "%snode/%s/mysynapses/label/2", server.WebAPIPath, uuid)
-	testResponse(t, Elements{}, "%snode/%s/mysynapses/label/3", server.WebAPIPath, uuid)
-	testResponse(t, expectedLabel4, "%snode/%s/mysynapses/label/4", server.WebAPIPath, uuid)
+	testResponseLabel(t, expectedLabel1, "%snode/%s/mysynapses/label/1?relationships=true", server.WebAPIPath, uuid)
+	testResponseLabel(t, expectedLabel2b, "%snode/%s/mysynapses/label/2?relationships=true", server.WebAPIPath, uuid)
+	testResponseLabel(t, nil, "%snode/%s/mysynapses/label/3?relationships=true", server.WebAPIPath, uuid)
+	testResponseLabel(t, expectedLabel4, "%snode/%s/mysynapses/label/4?relationships=true", server.WebAPIPath, uuid)
 
 	// Now split label 2b off and check if annotations also split
 
@@ -607,9 +760,9 @@ func TestLabels(t *testing.T) {
 	if err := BlockOnUpdating(uuid, "mysynapses"); err != nil {
 		t.Fatalf("Error blocking on sync of split->annotations: %v\n", err)
 	}
-	testResponse(t, expectedLabel2c, "%snode/%s/mysynapses/label/2", server.WebAPIPath, uuid)
-	url2 := fmt.Sprintf("%snode/%s/mysynapses/label/7", server.WebAPIPath, uuid)
-	testResponse(t, expectedLabel7, url2)
+	testResponseLabel(t, expectedLabel2c, "%snode/%s/mysynapses/label/2?relationships=true", server.WebAPIPath, uuid)
+	url2 := fmt.Sprintf("%snode/%s/mysynapses/label/7?relationships=true", server.WebAPIPath, uuid)
+	testResponseLabel(t, expectedLabel7, url2)
 
 	// Change the name of the annotations.
 	if err = datastore.RenameData(uuid, "mysynapses", "renamedData", "foobar"); err != nil {
@@ -618,7 +771,7 @@ func TestLabels(t *testing.T) {
 
 	// Make sure the old name is no longer there and the new one is.
 	server.TestBadHTTP(t, "GET", url2, nil)
-	testResponse(t, expectedLabel2c, "%snode/%s/renamedData/label/2", server.WebAPIPath, uuid)
+	testResponseLabel(t, expectedLabel2c, "%snode/%s/renamedData/label/2?relationships=true", server.WebAPIPath, uuid)
 
 	// Try a coarse split.
 
@@ -640,13 +793,13 @@ func TestLabels(t *testing.T) {
 	if err := BlockOnUpdating(uuid, "renamedData"); err != nil {
 		t.Fatalf("Error blocking on sync of split->annotations: %v\n", err)
 	}
-	testResponse(t, expectedLabel2c, "%snode/%s/renamedData/label/8", server.WebAPIPath, uuid)
-	testResponse(t, Elements{}, "%snode/%s/renamedData/label/2", server.WebAPIPath, uuid)
+	testResponseLabel(t, expectedLabel2c, "%snode/%s/renamedData/label/8?relationships=true", server.WebAPIPath, uuid)
+	testResponseLabel(t, nil, "%snode/%s/renamedData/label/2?relationships=true", server.WebAPIPath, uuid)
 
 	// Delete a labeled annotation and make sure it's not in label
 	delurl := fmt.Sprintf("%snode/%s/%s/element/20_30_40", server.WebAPIPath, uuid, "renamedData")
 	server.TestHTTP(t, "DELETE", delurl, nil)
-	testResponse(t, afterDeleteOn7, "%snode/%s/%s/label/7", server.WebAPIPath, uuid, "renamedData")
+	testResponseLabel(t, afterDeleteOn7, "%snode/%s/%s/label/7?relationships=true", server.WebAPIPath, uuid, "renamedData")
 }
 
 // A single label block within the volume

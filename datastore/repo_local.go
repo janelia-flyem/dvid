@@ -404,15 +404,15 @@ func (m *repoManager) loadVersion0() error {
 			m.repos[uuid] = r
 		}
 
-		// Populate the instance id -> dataservice map and convert any deprecated data instance.
+		// Populate the instance id -> dataservice map and convert/upgrade any deprecated data instance.
 		for dataname, dataservice := range r.data {
-            dataUUID := dataservice.DataUUID()
-            if dataUUID == "" {
-                dataUUID = dvid.NewUUID()
-                dataservice.SetDataUUID(dataUUID)
-                dvid.Infof("Assigned data %q to data UUID %s.\n", dataname, dataservice.DataUUID())
-                saveRepo = true
-            }
+			dataUUID := dataservice.DataUUID()
+			if dataUUID == "" {
+				dataUUID = dvid.NewUUID()
+				dataservice.SetDataUUID(dataUUID)
+				dvid.Infof("Assigned data %q to data UUID %s.\n", dataname, dataservice.DataUUID())
+				saveRepo = true
+			}
 			migrator, doMigrate := dataservice.(TypeMigrator)
 			if doMigrate {
 				dvid.Infof("Migrating instance %q of type %q to ...\n", dataservice.DataName(), dataservice.TypeName())
@@ -423,6 +423,19 @@ func (m *repoManager) loadVersion0() error {
 				r.data[dataname] = dataservice
 				saveRepo = true
 				dvid.Infof("Now instance %q of type %q ...\n", dataservice.DataName(), dataservice.TypeName())
+			}
+			upgrader, upgradable := dataservice.(TypeUpgrader)
+			if upgradable {
+				oldV := dataservice.TypeVersion()
+				dvid.Infof("Upgrading instance %q, type %q from version %s...\n", dataservice.DataName(), dataservice.TypeName(), oldV)
+				upgraded, err := upgrader.UpgradeData()
+				if err != nil {
+					return fmt.Errorf("Error upgrading data instance %q: %v", dataservice.DataName(), err)
+				}
+				if upgraded {
+					saveRepo = true
+					dvid.Infof("Upgraded instance %q, type %q from version %s to %s\n", dataservice.DataName(), dataservice.TypeName(), oldV, dataservice.TypeVersion())
+				}
 			}
 			m.iids[dataservice.InstanceID()] = dataservice
 			m.dataByUUID[dataservice.DataUUID()] = dataservice
@@ -470,9 +483,9 @@ func (m *repoManager) loadVersion0() error {
 							dvid.Errorf(" Skipping sync of %q with missing data %q for repo @ %s", dataservice.DataName(), name, r.uuid)
 						}
 					}
-                    dvid.Infof("After conversion data %q has syncs: %v\n", dataservice.DataName(), syncs)
+					dvid.Infof("After conversion data %q has syncs: %v\n", dataservice.DataName(), syncs)
 					dataservice.SetSync(syncs)
-                    dvid.Infof("After calling SetSync we get back: %v\n", syncer.SyncedData())
+					dvid.Infof("After calling SetSync we get back: %v\n", syncer.SyncedData())
 					saveRepo = true
 				}
 			}

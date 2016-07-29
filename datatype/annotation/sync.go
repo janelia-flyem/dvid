@@ -13,6 +13,29 @@ import (
 	"github.com/janelia-flyem/dvid/storage"
 )
 
+type ElementPos struct {
+	Label uint64
+	Kind  ElementType
+	Pos   dvid.Point3d
+}
+
+// DeltaModifyElements is a change in the elements assigned to a label.
+type DeltaModifyElements struct {
+	Add []ElementPos
+	Del []ElementPos
+}
+
+// DeltaSetElements is a replacement of elements assigned to a label.
+type DeltaSetElements struct {
+	Set []ElementPos
+}
+
+// Annotation number change event identifiers.
+const (
+	ModifyElementsEvent = "ANNOTATION_MOD_ELEMENTS"
+	SetElementsEvent    = "ANNOTATION_SET_ELEMENTS"
+)
+
 // Number of change messages we can buffer before blocking on sync channel.
 const syncBufferSize = 100
 
