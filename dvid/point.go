@@ -370,7 +370,7 @@ func (p Point3d) Less(p2 Point3d) bool {
 	if p[1] < p2[1] {
 		return true
 	}
-	if p[1] > p2[2] {
+	if p[1] > p2[1] {
 		return false
 	}
 	if p[0] < p2[0] {
