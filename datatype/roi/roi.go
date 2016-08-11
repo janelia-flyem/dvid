@@ -243,6 +243,54 @@ type Properties struct {
 	MaxZ int32
 }
 
+// Immutable is an ROI fixed to a particular version that you can check
+// voxel coordinates against.
+type Immutable struct {
+	version   dvid.VersionID
+	blockSize dvid.Point3d
+	blocks    map[dvid.IZYXString]struct{}
+}
+
+func (i Immutable) VoxelWithin(p dvid.Point3d) bool {
+	izyx := p.ToBlockIZYXString(i.blockSize)
+	_, found := i.blocks[izyx]
+	return found
+}
+
+// ImmutableBySpec returns an Immutable ROI (or nil if not available) given
+// a name and uuid using string format "<roiname>,<uuid>"
+func ImmutableBySpec(spec string) (*Immutable, error) {
+	d, v, found, err := DataBySpec(spec)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, nil
+	}
+
+	// Read the ROI from this version.
+	spans, err := d.GetSpans(v)
+	if err != nil {
+		return nil, err
+	}
+
+	// Setup the immutable.
+	im := Immutable{
+		version:   v,
+		blockSize: d.BlockSize,
+		blocks:    make(map[dvid.IZYXString]struct{}),
+	}
+	for _, span := range spans {
+		z, y, x0, x1 := span[0], span[1], span[2], span[3]
+		for x := x0; x <= x1; x++ {
+			c := dvid.ChunkPoint3d{x, y, z}
+			izyx := c.ToIZYXString()
+			im.blocks[izyx] = struct{}{}
+		}
+	}
+	return &im, nil
+}
+
 // Data embeds the datastore's Data and extends it with keyvalue properties (none for now).
 type Data struct {
 	*datastore.Data
@@ -267,13 +315,9 @@ func (d *Data) CopyPropertiesFrom(src datastore.DataService, fs storage.FilterSp
 }
 
 // DataBySpec returns a ROI Data based on a string specification of the form
-// "roi:<roiname>,<uuid>". If the given string is not parsable, the "found" return value is false.
-func DataBySpec(spec storage.FilterSpec) (d *Data, v dvid.VersionID, found bool, err error) {
-	filterval, found := spec.GetFilterSpec("roi")
-	if !found {
-		return
-	}
-	roispec := strings.Split(filterval, ",")
+// "<roiname>,<uuid>". If the given string is not parsable, the "found" return value is false.
+func DataBySpec(spec string) (d *Data, v dvid.VersionID, found bool, err error) {
+	roispec := strings.Split(spec, ",")
 	if len(roispec) != 2 {
 		err = fmt.Errorf("Expect ROI filters to have format %q, but got %q", "roi:<roiname>,<uuid>", spec)
 		return
@@ -296,6 +340,16 @@ func DataBySpec(spec storage.FilterSpec) (d *Data, v dvid.VersionID, found bool,
 	}
 	found = true
 	return
+}
+
+// DataByFilter returns a ROI Data based on a string specification of the form
+// "roi:<roiname>,<uuid>". If the given string is not parsable, the "found" return value is false.
+func DataByFilter(spec storage.FilterSpec) (d *Data, v dvid.VersionID, found bool, err error) {
+	filterval, found := spec.GetFilterSpec("roi")
+	if !found {
+		return
+	}
+	return DataBySpec(filterval)
 }
 
 func (d *Data) SetReady(versionID dvid.VersionID, set bool) {

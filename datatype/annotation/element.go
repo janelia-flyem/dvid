@@ -140,6 +140,7 @@ GET <api URL>/node/<UUID>/<data name>/elements/<size>/<offset>
 POST <api URL>/node/<UUID>/<data name>/elements
 
 	Adds or modifies point annotations.  The POSTed content is an array of elements.
+	Note that deletes are handled via a separate API (see above).
 
 POST <api URL>/node/<UUID>/<data name>/move/<from_coord>/<to_coord>
 
@@ -235,6 +236,16 @@ const (
 
 // ElementType gives the type of a synaptic element.
 type ElementType uint8
+
+// IsSynaptic returns true if the ElementType is some synaptic component.
+func (e ElementType) IsSynaptic() bool {
+	switch e {
+	case PostSyn, PreSyn, Gap:
+		return true
+	default:
+		return false
+	}
+}
 
 // StringToElementType converts a string
 func StringToElementType(s string) ElementType {
@@ -873,7 +884,7 @@ func (d *Data) getExpandedElements(ctx *datastore.VersionedCtx, tk storage.TKey)
 			if found {
 				expanded = append(expanded, relElems[i])
 			} else {
-				dvid.Errorf("Can't expand relationships for data %q, element @ %s, didn't find it in block %s!\n", d.DataName(), elem.Pos, izyx)
+				dvid.Errorf("Can't expand relationships for data %q, element @ %s, didn't find it in block %s!\n", d.DataName(), elem.Pos, izyx.Print())
 			}
 		}
 	}
@@ -901,10 +912,23 @@ func (d *Data) deleteElementInTags(ctx *datastore.VersionedCtx, pt dvid.Point3d,
 			return err
 		}
 
-		// Delete the point
-		if _, changed := elems.delete(pt); !changed {
-			dvid.Errorf("Unable to find deleted element %s in tag %q", pt, tag)
-			continue
+		// Note all elements to be deleted.
+		var toDel []int
+		for i, elem := range elems {
+			if pt.Equals(elem.Pos) {
+				toDel = append(toDel, i)
+			}
+		}
+		if len(toDel) == 0 {
+			return nil
+		}
+
+		// Delete them from high index to low index due while reusing slice.
+		for i := len(toDel) - 1; i >= 0; i-- {
+			d := toDel[i]
+			elems[d] = elems[len(elems)-1]
+			elems[len(elems)-1] = Element{}
+			elems = elems[:len(elems)-1]
 		}
 
 		// Save the tag.
@@ -929,10 +953,40 @@ func (d *Data) deleteElementInLabel(ctx *datastore.VersionedCtx, pt dvid.Point3d
 	if err != nil {
 		return fmt.Errorf("err getting elements for label %d: %v\n", label, err)
 	}
-	if _, changed := elems.delete(pt); !changed {
+
+	// Note all elements to be deleted.
+	var delta DeltaModifyElements
+	var toDel []int
+	for i, elem := range elems {
+		if pt.Equals(elem.Pos) {
+			delta.Del = append(delta.Del, ElementPos{Label: label, Kind: elem.Kind, Pos: elem.Pos})
+			toDel = append(toDel, i)
+		}
+	}
+	if len(toDel) == 0 {
 		return nil
 	}
-	return putElements(ctx, tk, elems)
+
+	// Delete them from high index to low index due while reusing slice.
+	for i := len(toDel) - 1; i >= 0; i-- {
+		d := toDel[i]
+		elems[d] = elems[len(elems)-1]
+		elems[len(elems)-1] = Element{}
+		elems = elems[:len(elems)-1]
+	}
+
+	// Put the modified list of elements
+	if err := putElements(ctx, tk, elems); err != nil {
+		return err
+	}
+
+	// Notify any subscribers of label annotation changes.
+	evt := datastore.SyncEvent{Data: d.DataUUID(), Event: ModifyElementsEvent}
+	msg := datastore.SyncMessage{Version: ctx.VersionID(), Delta: delta}
+	if err := datastore.NotifySubscribers(evt, msg); err != nil {
+		return err
+	}
+	return nil
 }
 
 // delete all reference to given element point in the related points.

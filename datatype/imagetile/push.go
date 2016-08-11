@@ -22,7 +22,7 @@ func (d *Data) NewFilter(fs storage.FilterSpec) (storage.Filter, error) {
 	filter := &Filter{Data: d, fs: fs}
 
 	// if there's no filter, just use base Data send.
-	roidata, roiV, roiFound, err := roi.DataBySpec(fs)
+	roidata, roiV, roiFound, err := roi.DataByFilter(fs)
 	if err != nil {
 		return nil, fmt.Errorf("No filter found that was parsable (%s): %v\n", fs, err)
 	}

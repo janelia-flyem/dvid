@@ -20,6 +20,7 @@ type ElementPos struct {
 }
 
 // DeltaModifyElements is a change in the elements assigned to a label.
+// Need positions of elements because subscribers may have ROI filtering.
 type DeltaModifyElements struct {
 	Add []ElementPos
 	Del []ElementPos
@@ -209,15 +210,22 @@ func (d *Data) ingestBlock(ctx *datastore.VersionedCtx, block imageblk.Block, ba
 	bY := blockSize[1] * bX
 
 	// Iterate through all element positions, finding corresponding label and storing elements.
+	added := 0
 	toAdd := LabelElements{}
 	for _, elem := range elems {
 		pt := elem.Pos.Point3dInChunk(blockSize)
 		i := (pt[2]*bY+pt[1])*bX + pt[0]*8
 		label := binary.LittleEndian.Uint64(block.Data[i : i+8])
-		toAdd.add(label, elem)
+		if label != 0 {
+			toAdd.add(label, elem)
+			added++
+		}
 	}
 
 	// Add any non-zero label elements to their respective label k/v.
+	var delta DeltaModifyElements
+	delta.Add = make([]ElementPos, added)
+	i := 0
 	for label, addElems := range toAdd {
 		tk := NewLabelTKey(label)
 		elems, err := getElements(ctx, tk)
@@ -232,10 +240,23 @@ func (d *Data) ingestBlock(ctx *datastore.VersionedCtx, block imageblk.Block, ba
 			return
 		}
 		batch.Put(tk, val)
+
+		for _, addElem := range addElems {
+			delta.Add[i] = ElementPos{Label: label, Kind: addElem.Kind, Pos: addElem.Pos}
+			i++
+		}
 	}
 
 	if err := batch.Commit(); err != nil {
 		dvid.Criticalf("bad commit in annotations %q after delete block: %v\n", d.DataName(), err)
+		return
+	}
+
+	// Notify any subscribers of label annotation changes.
+	evt := datastore.SyncEvent{Data: d.DataUUID(), Event: ModifyElementsEvent}
+	msg := datastore.SyncMessage{Version: ctx.VersionID(), Delta: delta}
+	if err := datastore.NotifySubscribers(evt, msg); err != nil {
+		dvid.Criticalf("unable to notify subscribers of event %s: %v\n", evt, err)
 	}
 }
 
@@ -260,6 +281,7 @@ func (d *Data) mutateBlock(ctx *datastore.VersionedCtx, block imageblk.MutatedBl
 	bY := blockSize[1] * bX
 
 	// Iterate through all element positions, finding corresponding label and storing elements.
+	var delta DeltaModifyElements
 	labels := make(map[uint64]struct{})
 	toAdd := LabelElements{}
 	toDel := LabelPoints{}
@@ -277,10 +299,12 @@ func (d *Data) mutateBlock(ctx *datastore.VersionedCtx, block imageblk.MutatedBl
 		if label != 0 {
 			toAdd.add(label, elem)
 			labels[label] = struct{}{}
+			delta.Add = append(delta.Add, ElementPos{Label: label, Kind: elem.Kind, Pos: elem.Pos})
 		}
 		if prev != 0 {
 			toDel.add(prev, elem.Pos)
 			labels[prev] = struct{}{}
+			delta.Del = append(delta.Del, ElementPos{Label: prev, Kind: elem.Kind, Pos: elem.Pos})
 		}
 	}
 
@@ -311,6 +335,14 @@ func (d *Data) mutateBlock(ctx *datastore.VersionedCtx, block imageblk.MutatedBl
 	}
 	if err := batch.Commit(); err != nil {
 		dvid.Criticalf("bad commit in annotations %q after delete block: %v\n", d.DataName(), err)
+		return
+	}
+
+	// Notify any subscribers of label annotation changes.
+	evt := datastore.SyncEvent{Data: d.DataUUID(), Event: ModifyElementsEvent}
+	msg := datastore.SyncMessage{Version: ctx.VersionID(), Delta: delta}
+	if err := datastore.NotifySubscribers(evt, msg); err != nil {
+		dvid.Criticalf("unable to notify subscribers of event %s: %v\n", evt, err)
 	}
 }
 
@@ -344,6 +376,7 @@ func (d *Data) deleteBlock(ctx *datastore.VersionedCtx, block labels.DeleteBlock
 	}
 
 	// Delete any non-zero label elements from their respective label k/v.
+	var delta DeltaModifyElements
 	for label, pts := range toDel {
 		tk := NewLabelTKey(label)
 		elems, err := getElements(ctx, tk)
@@ -353,9 +386,10 @@ func (d *Data) deleteBlock(ctx *datastore.VersionedCtx, block labels.DeleteBlock
 		}
 		save := false
 		for _, pt := range pts {
-			_, changed := elems.delete(pt)
+			deleted, changed := elems.delete(pt)
 			if changed {
 				save = true
+				delta.Del = append(delta.Del, ElementPos{Label: label, Kind: deleted.Kind, Pos: pt})
 			}
 		}
 		if save {
@@ -374,6 +408,14 @@ func (d *Data) deleteBlock(ctx *datastore.VersionedCtx, block labels.DeleteBlock
 
 	if err := batch.Commit(); err != nil {
 		dvid.Criticalf("bad commit in annotations %q after delete block: %v\n", d.DataName(), err)
+		return
+	}
+
+	// Notify any subscribers of label annotation changes.
+	evt := datastore.SyncEvent{Data: d.DataUUID(), Event: ModifyElementsEvent}
+	msg := datastore.SyncMessage{Version: ctx.VersionID(), Delta: delta}
+	if err := datastore.NotifySubscribers(evt, msg); err != nil {
+		dvid.Criticalf("unable to notify subscribers of event %s: %v\n", evt, err)
 	}
 }
 
