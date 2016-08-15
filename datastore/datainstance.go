@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
@@ -208,6 +209,28 @@ func (u *Updater) Updating() bool {
 	updating := u.updates > 0
 	u.RUnlock()
 	return updating
+}
+
+type updatingData interface {
+	Updating() bool
+}
+
+// BlockOnUpdating blocks until the given data is not updating from syncs.
+// This is primarily used during testing.
+func BlockOnUpdating(uuid dvid.UUID, name dvid.InstanceName) error {
+	time.Sleep(100 * time.Millisecond)
+	d, err := GetDataByUUIDName(uuid, name)
+	if err != nil {
+		return err
+	}
+	updater, ok := d.(updatingData)
+	if !ok {
+		return fmt.Errorf("Data %q @ uuid %s does not implement an Updater!", name, uuid)
+	}
+	for updater.Updating() {
+		time.Sleep(50 * time.Millisecond)
+	}
+	return nil
 }
 
 // Data is the base struct of repo-specific data instances.  It should be embedded

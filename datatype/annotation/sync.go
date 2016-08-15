@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
@@ -20,6 +19,7 @@ type ElementPos struct {
 }
 
 // DeltaModifyElements is a change in the elements assigned to a label.
+// Need positions of elements because subscribers may have ROI filtering.
 type DeltaModifyElements struct {
 	Add []ElementPos
 	Del []ElementPos
@@ -38,20 +38,6 @@ const (
 
 // Number of change messages we can buffer before blocking on sync channel.
 const syncBufferSize = 100
-
-// BlockOnUpdating blocks until the given data is not updating from syncs.
-// This is primarily used during testing.
-func BlockOnUpdating(uuid dvid.UUID, name dvid.InstanceName) error {
-	time.Sleep(100 * time.Millisecond)
-	d, err := GetByUUIDName(uuid, name)
-	if err != nil {
-		return err
-	}
-	for d.Updating() {
-		time.Sleep(50 * time.Millisecond)
-	}
-	return nil
-}
 
 type LabelElements map[uint64]Elements
 
@@ -209,15 +195,22 @@ func (d *Data) ingestBlock(ctx *datastore.VersionedCtx, block imageblk.Block, ba
 	bY := blockSize[1] * bX
 
 	// Iterate through all element positions, finding corresponding label and storing elements.
+	added := 0
 	toAdd := LabelElements{}
 	for _, elem := range elems {
 		pt := elem.Pos.Point3dInChunk(blockSize)
 		i := (pt[2]*bY+pt[1])*bX + pt[0]*8
 		label := binary.LittleEndian.Uint64(block.Data[i : i+8])
-		toAdd.add(label, elem)
+		if label != 0 {
+			toAdd.add(label, elem)
+			added++
+		}
 	}
 
 	// Add any non-zero label elements to their respective label k/v.
+	var delta DeltaModifyElements
+	delta.Add = make([]ElementPos, added)
+	i := 0
 	for label, addElems := range toAdd {
 		tk := NewLabelTKey(label)
 		elems, err := getElements(ctx, tk)
@@ -232,10 +225,23 @@ func (d *Data) ingestBlock(ctx *datastore.VersionedCtx, block imageblk.Block, ba
 			return
 		}
 		batch.Put(tk, val)
+
+		for _, addElem := range addElems {
+			delta.Add[i] = ElementPos{Label: label, Kind: addElem.Kind, Pos: addElem.Pos}
+			i++
+		}
 	}
 
 	if err := batch.Commit(); err != nil {
 		dvid.Criticalf("bad commit in annotations %q after delete block: %v\n", d.DataName(), err)
+		return
+	}
+
+	// Notify any subscribers of label annotation changes.
+	evt := datastore.SyncEvent{Data: d.DataUUID(), Event: ModifyElementsEvent}
+	msg := datastore.SyncMessage{Version: ctx.VersionID(), Delta: delta}
+	if err := datastore.NotifySubscribers(evt, msg); err != nil {
+		dvid.Criticalf("unable to notify subscribers of event %s: %v\n", evt, err)
 	}
 }
 
@@ -260,6 +266,7 @@ func (d *Data) mutateBlock(ctx *datastore.VersionedCtx, block imageblk.MutatedBl
 	bY := blockSize[1] * bX
 
 	// Iterate through all element positions, finding corresponding label and storing elements.
+	var delta DeltaModifyElements
 	labels := make(map[uint64]struct{})
 	toAdd := LabelElements{}
 	toDel := LabelPoints{}
@@ -277,10 +284,12 @@ func (d *Data) mutateBlock(ctx *datastore.VersionedCtx, block imageblk.MutatedBl
 		if label != 0 {
 			toAdd.add(label, elem)
 			labels[label] = struct{}{}
+			delta.Add = append(delta.Add, ElementPos{Label: label, Kind: elem.Kind, Pos: elem.Pos})
 		}
 		if prev != 0 {
 			toDel.add(prev, elem.Pos)
 			labels[prev] = struct{}{}
+			delta.Del = append(delta.Del, ElementPos{Label: prev, Kind: elem.Kind, Pos: elem.Pos})
 		}
 	}
 
@@ -311,6 +320,14 @@ func (d *Data) mutateBlock(ctx *datastore.VersionedCtx, block imageblk.MutatedBl
 	}
 	if err := batch.Commit(); err != nil {
 		dvid.Criticalf("bad commit in annotations %q after delete block: %v\n", d.DataName(), err)
+		return
+	}
+
+	// Notify any subscribers of label annotation changes.
+	evt := datastore.SyncEvent{Data: d.DataUUID(), Event: ModifyElementsEvent}
+	msg := datastore.SyncMessage{Version: ctx.VersionID(), Delta: delta}
+	if err := datastore.NotifySubscribers(evt, msg); err != nil {
+		dvid.Criticalf("unable to notify subscribers of event %s: %v\n", evt, err)
 	}
 }
 
@@ -344,6 +361,7 @@ func (d *Data) deleteBlock(ctx *datastore.VersionedCtx, block labels.DeleteBlock
 	}
 
 	// Delete any non-zero label elements from their respective label k/v.
+	var delta DeltaModifyElements
 	for label, pts := range toDel {
 		tk := NewLabelTKey(label)
 		elems, err := getElements(ctx, tk)
@@ -353,9 +371,10 @@ func (d *Data) deleteBlock(ctx *datastore.VersionedCtx, block labels.DeleteBlock
 		}
 		save := false
 		for _, pt := range pts {
-			_, changed := elems.delete(pt)
+			deleted, changed := elems.delete(pt)
 			if changed {
 				save = true
+				delta.Del = append(delta.Del, ElementPos{Label: label, Kind: deleted.Kind, Pos: pt})
 			}
 		}
 		if save {
@@ -374,6 +393,14 @@ func (d *Data) deleteBlock(ctx *datastore.VersionedCtx, block labels.DeleteBlock
 
 	if err := batch.Commit(); err != nil {
 		dvid.Criticalf("bad commit in annotations %q after delete block: %v\n", d.DataName(), err)
+		return
+	}
+
+	// Notify any subscribers of label annotation changes.
+	evt := datastore.SyncEvent{Data: d.DataUUID(), Event: ModifyElementsEvent}
+	msg := datastore.SyncMessage{Version: ctx.VersionID(), Delta: delta}
+	if err := datastore.NotifySubscribers(evt, msg); err != nil {
+		dvid.Criticalf("unable to notify subscribers of event %s: %v\n", evt, err)
 	}
 }
 
@@ -391,8 +418,9 @@ func (d *Data) syncMerge(in <-chan datastore.SyncMessage, done <-chan struct{}) 
 		default:
 			switch delta := msg.Delta.(type) {
 			case labels.DeltaMergeStart:
-				// don't worry about it.
+				// ignore
 			case labels.DeltaMerge:
+				// process annotation type
 				if err := d.mergeLabels(batcher, msg.Version, delta.MergeOp); err != nil {
 					dvid.Errorf("error on merging labels for data %q: %v\n", d.DataName(), err)
 					continue
@@ -420,6 +448,7 @@ func (d *Data) mergeLabels(batcher storage.KeyValueBatcher, v dvid.VersionID, op
 	}
 
 	// Iterate through each merged label, read old elements, delete that k/v, then add it to the current target elements.
+	var delta DeltaModifyElements
 	elemsAdded := 0
 	for label := range op.Merged {
 		tk := NewLabelTKey(label)
@@ -433,6 +462,12 @@ func (d *Data) mergeLabels(batcher storage.KeyValueBatcher, v dvid.VersionID, op
 		batch.Delete(tk)
 		elemsAdded += len(elems)
 		targetElems = append(targetElems, elems...)
+
+		// for labelsz.  TODO, only do this computation if really subscribed.
+		for _, elem := range elems {
+			delta.Add = append(delta.Add, ElementPos{Label: op.Target, Kind: elem.Kind, Pos: elem.Pos})
+			delta.Del = append(delta.Del, ElementPos{Label: label, Kind: elem.Kind, Pos: elem.Pos})
+		}
 	}
 	if elemsAdded > 0 {
 		val, err := json.Marshal(targetElems)
@@ -445,6 +480,13 @@ func (d *Data) mergeLabels(batcher storage.KeyValueBatcher, v dvid.VersionID, op
 		}
 	}
 	d.StopUpdate()
+
+	// Notify any subscribers of label annotation changes.
+	evt := datastore.SyncEvent{Data: d.DataUUID(), Event: ModifyElementsEvent}
+	msg := datastore.SyncMessage{Version: ctx.VersionID(), Delta: delta}
+	if err := datastore.NotifySubscribers(evt, msg); err != nil {
+		dvid.Criticalf("unable to notify subscribers of event %s: %v\n", evt, err)
+	}
 	return nil
 }
 
@@ -461,7 +503,7 @@ func (d *Data) syncSplit(in <-chan datastore.SyncMessage, done <-chan struct{}) 
 		default:
 			switch delta := msg.Delta.(type) {
 			case labels.DeltaSplitStart:
-				// Don't worry about it.
+				// ignore for now
 			case labels.DeltaSplit:
 				if delta.Split == nil {
 					// This is a coarse split.
@@ -507,6 +549,7 @@ func (d *Data) splitLabelsCoarse(batcher storage.KeyValueBatcher, v dvid.Version
 	}
 
 	// Move any elements that are within the split blocks.
+	var delta DeltaModifyElements
 	toDel := make(map[int]struct{})
 	toAdd := Elements{}
 	blockSize := d.blockSize()
@@ -515,6 +558,10 @@ func (d *Data) splitLabelsCoarse(batcher storage.KeyValueBatcher, v dvid.Version
 		if _, found := splitBlocks[zyxStr]; found {
 			toDel[i] = struct{}{}
 			toAdd = append(toAdd, elem)
+
+			// for downstream annotation syncs like labelsz.  TODO: only perform if subscribed.  Better: do ROI filtering here.
+			delta.Del = append(delta.Del, ElementPos{Label: op.OldLabel, Kind: elem.Kind, Pos: elem.Pos})
+			delta.Add = append(delta.Add, ElementPos{Label: op.NewLabel, Kind: elem.Kind, Pos: elem.Pos})
 		}
 	}
 	if len(toDel) == 0 {
@@ -558,6 +605,13 @@ func (d *Data) splitLabelsCoarse(batcher storage.KeyValueBatcher, v dvid.Version
 	if err := batch.Commit(); err != nil {
 		return fmt.Errorf("bad commit in annotations %q after split: %v\n", d.DataName(), err)
 	}
+
+	// Notify any subscribers of label annotation changes.
+	evt := datastore.SyncEvent{Data: d.DataUUID(), Event: ModifyElementsEvent}
+	msg := datastore.SyncMessage{Version: ctx.VersionID(), Delta: delta}
+	if err := datastore.NotifySubscribers(evt, msg); err != nil {
+		dvid.Criticalf("unable to notify subscribers of event %s: %v\n", evt, err)
+	}
 	return nil
 }
 
@@ -571,6 +625,7 @@ func (d *Data) splitLabelsFine(batcher storage.KeyValueBatcher, v dvid.VersionID
 	ctx := datastore.NewVersionedCtx(d, v)
 	batch := batcher.NewBatch(ctx)
 
+	var delta DeltaModifyElements
 	toAdd := Elements{}
 	toDel := make(map[string]struct{})
 
@@ -594,6 +649,10 @@ func (d *Data) splitLabelsFine(batcher storage.KeyValueBatcher, v dvid.VersionID
 				if rle.Within(elem.Pos) {
 					toAdd = append(toAdd, elem)
 					toDel[elem.Pos.String()] = struct{}{}
+
+					// for downstream annotation syncs like labelsz.  TODO: only perform if subscribed.  Better: do ROI filtering here.
+					delta.Del = append(delta.Del, ElementPos{Label: op.OldLabel, Kind: elem.Kind, Pos: elem.Pos})
+					delta.Add = append(delta.Add, ElementPos{Label: op.NewLabel, Kind: elem.Kind, Pos: elem.Pos})
 					break
 				}
 			}
@@ -645,6 +704,13 @@ func (d *Data) splitLabelsFine(batcher storage.KeyValueBatcher, v dvid.VersionID
 
 	if err := batch.Commit(); err != nil {
 		return fmt.Errorf("bad commit in annotations %q after split: %v\n", d.DataName(), err)
+	}
+
+	// Notify any subscribers of label annotation changes.
+	evt := datastore.SyncEvent{Data: d.DataUUID(), Event: ModifyElementsEvent}
+	msg := datastore.SyncMessage{Version: ctx.VersionID(), Delta: delta}
+	if err := datastore.NotifySubscribers(evt, msg); err != nil {
+		dvid.Criticalf("unable to notify subscribers of event %s: %v\n", evt, err)
 	}
 	return nil
 }

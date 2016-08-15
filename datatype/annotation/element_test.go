@@ -12,7 +12,6 @@ import (
 	"testing"
 
 	"github.com/janelia-flyem/dvid/datastore"
-	"github.com/janelia-flyem/dvid/datatype/labelblk"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 )
@@ -673,7 +672,7 @@ func TestLabels(t *testing.T) {
 	// Populate the labels, which should automatically populate the labelvol
 	_ = createLabelTestVolume(t, uuid, "labels")
 
-	if err := labelblk.BlockOnUpdating(uuid, "labels"); err != nil {
+	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
 		t.Fatalf("Error blocking on sync of labels: %v\n", err)
 	}
 
@@ -712,7 +711,7 @@ func TestLabels(t *testing.T) {
 	// Make change to labelblk and make sure our label synapses have been adjusted (case A)
 	_ = modifyLabelTestVolume(t, uuid, "labels")
 
-	if err := BlockOnUpdating(uuid, "mysynapses"); err != nil {
+	if err := datastore.BlockOnUpdating(uuid, "mysynapses"); err != nil {
 		t.Fatalf("Error blocking on sync of labels->annotations: %v\n", err)
 	}
 
@@ -727,8 +726,12 @@ func TestLabels(t *testing.T) {
 	testMerge := mergeJSON(`[2, 3]`)
 	testMerge.send(t, uuid, "bodies")
 
-	if err := labelblk.BlockOnUpdating(uuid, "labels"); err != nil {
+	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
 		t.Fatalf("Error blocking on sync of labels: %v\n", err)
+	}
+
+	if err := datastore.BlockOnUpdating(uuid, "mysynapses"); err != nil {
+		t.Fatalf("Error blocking on sync of synapses: %v\n", err)
 	}
 
 	testResponseLabel(t, expectedLabel1, "%snode/%s/mysynapses/label/1?relationships=true", server.WebAPIPath, uuid)
@@ -757,7 +760,7 @@ func TestLabels(t *testing.T) {
 	}
 
 	// Verify that the annotations are correct.
-	if err := BlockOnUpdating(uuid, "mysynapses"); err != nil {
+	if err := datastore.BlockOnUpdating(uuid, "mysynapses"); err != nil {
 		t.Fatalf("Error blocking on sync of split->annotations: %v\n", err)
 	}
 	testResponseLabel(t, expectedLabel2c, "%snode/%s/mysynapses/label/2?relationships=true", server.WebAPIPath, uuid)
@@ -790,7 +793,7 @@ func TestLabels(t *testing.T) {
 	}
 
 	// Verify that the annotations are correct.
-	if err := BlockOnUpdating(uuid, "renamedData"); err != nil {
+	if err := datastore.BlockOnUpdating(uuid, "renamedData"); err != nil {
 		t.Fatalf("Error blocking on sync of split->annotations: %v\n", err)
 	}
 	testResponseLabel(t, expectedLabel2c, "%snode/%s/renamedData/label/8?relationships=true", server.WebAPIPath, uuid)

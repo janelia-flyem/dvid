@@ -2,7 +2,6 @@ package labelvol
 
 import (
 	"encoding/binary"
-	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
@@ -19,20 +18,6 @@ import (
 
 // Number of change messages we can buffer before blocking on sync channel.
 const syncBufferSize = 100
-
-// BlockOnUpdating blocks until the given data is not updating from syncs.
-// This is primarily used during testing.
-func BlockOnUpdating(uuid dvid.UUID, name dvid.InstanceName) error {
-	time.Sleep(100 * time.Millisecond)
-	d, err := GetByUUIDName(uuid, name)
-	if err != nil {
-		return err
-	}
-	for d.Updating() {
-		time.Sleep(50 * time.Millisecond)
-	}
-	return nil
-}
 
 // GetSyncSubs implements the datastore.Syncer interface
 func (d *Data) GetSyncSubs(synced dvid.Data) datastore.SyncSubs {
