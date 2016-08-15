@@ -10,27 +10,12 @@ import (
 	"fmt"
 	"hash/fnv"
 	"sync"
-	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
 )
-
-// BlockOnUpdating blocks until the given data is not updating from syncs.
-// This is primarily used during testing.
-func BlockOnUpdating(uuid dvid.UUID, name dvid.InstanceName) error {
-	d, err := GetByUUIDName(uuid, name)
-	if err != nil {
-		return err
-	}
-	time.Sleep(100 * time.Millisecond)
-	for d.Updating() {
-		time.Sleep(50 * time.Millisecond)
-	}
-	return nil
-}
 
 // GetSyncSubs implements the datastore.Syncer interface
 func (d *Data) GetSyncSubs(synced dvid.Data) datastore.SyncSubs {

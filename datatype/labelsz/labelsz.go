@@ -169,16 +169,15 @@ func (s LabelSizes) Swap(i, j int) {
 func NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.Config) (*Data, error) {
 	// See if we have a valid DataService ROI
 	var roistr string
-	str, found, err := c.GetString("ROI")
+	roistr, found, err := c.GetString("ROI")
 	if err != nil {
 		return nil, err
 	}
 	if found {
-		parts := strings.Split(str, ",")
+		parts := strings.Split(roistr, ",")
 		if len(parts) != 2 {
-			return nil, fmt.Errorf("bad ROI value (%q) expected %q", str, "<roiname>,<uuid>")
+			return nil, fmt.Errorf("bad ROI value (%q) expected %q", roistr, "<roiname>,<uuid>")
 		}
-		roistr = "roi:" + str
 	}
 
 	// Initialize the Data for this data type
@@ -296,6 +295,7 @@ func (d *Data) GetTopElementType(ctx *datastore.VersionedCtx, n int, i IndexType
 	rank := 0
 	err = store.ProcessRange(ctx, begTKey, endTKey, nil, func(chunk *storage.Chunk) error {
 		idxType, sz, label, err := DecodeTypeSizeLabelTKey(chunk.K)
+		dvid.Infof("Got index type %s, sz %d, label %d\n", idxType, sz, label)
 		if err != nil {
 			return err
 		}
@@ -312,7 +312,7 @@ func (d *Data) GetTopElementType(ctx *datastore.VersionedCtx, n int, i IndexType
 	if err != shortCircuitErr && err != nil {
 		return nil, err
 	}
-	return lsz, nil
+	return lsz[:rank], nil
 }
 
 // GetByUUIDName returns a pointer to annotation data given a version (UUID) and data name.

@@ -3,7 +3,6 @@ package labelsz
 import (
 	"encoding/binary"
 	"fmt"
-	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/annotation"
@@ -13,20 +12,6 @@ import (
 
 // Number of change messages we can buffer before blocking on sync channel.
 const syncBufferSize = 100
-
-// BlockOnUpdating blocks until the given data is not updating from syncs.
-// This is primarily used during testing.
-func BlockOnUpdating(uuid dvid.UUID, name dvid.InstanceName) error {
-	time.Sleep(100 * time.Millisecond)
-	d, err := GetByUUIDName(uuid, name)
-	if err != nil {
-		return err
-	}
-	for d.Updating() {
-		time.Sleep(50 * time.Millisecond)
-	}
-	return nil
-}
 
 // GetSyncSubs implements the datastore.Syncer interface.  Returns a list of subscriptions
 // to the sync data instance that will notify the receiver.
@@ -175,6 +160,15 @@ func (d *Data) modifyElements(ctx *datastore.VersionedCtx, delta annotation.Delt
 			change = int32(-count)
 		}
 		newcount := uint32(int32(count) + change)
+
+		// If it's at zero, we've merged or removed it so delete the count.
+		if newcount == 0 {
+			batch.Delete(NewTypeLabelTKey(i, label))
+			batch.Delete(NewTypeSizeLabelTKey(i, newcount, label))
+			continue
+		}
+
+		// store the data.
 		buf := make([]byte, 4)
 		binary.LittleEndian.PutUint32(buf, newcount)
 		batch.Put(NewTypeLabelTKey(i, label), buf)

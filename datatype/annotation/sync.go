@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
@@ -39,20 +38,6 @@ const (
 
 // Number of change messages we can buffer before blocking on sync channel.
 const syncBufferSize = 100
-
-// BlockOnUpdating blocks until the given data is not updating from syncs.
-// This is primarily used during testing.
-func BlockOnUpdating(uuid dvid.UUID, name dvid.InstanceName) error {
-	time.Sleep(100 * time.Millisecond)
-	d, err := GetByUUIDName(uuid, name)
-	if err != nil {
-		return err
-	}
-	for d.Updating() {
-		time.Sleep(50 * time.Millisecond)
-	}
-	return nil
-}
 
 type LabelElements map[uint64]Elements
 
@@ -433,8 +418,9 @@ func (d *Data) syncMerge(in <-chan datastore.SyncMessage, done <-chan struct{}) 
 		default:
 			switch delta := msg.Delta.(type) {
 			case labels.DeltaMergeStart:
-				// don't worry about it.
+				// ignore
 			case labels.DeltaMerge:
+				// process annotation type
 				if err := d.mergeLabels(batcher, msg.Version, delta.MergeOp); err != nil {
 					dvid.Errorf("error on merging labels for data %q: %v\n", d.DataName(), err)
 					continue
@@ -462,6 +448,7 @@ func (d *Data) mergeLabels(batcher storage.KeyValueBatcher, v dvid.VersionID, op
 	}
 
 	// Iterate through each merged label, read old elements, delete that k/v, then add it to the current target elements.
+	var delta DeltaModifyElements
 	elemsAdded := 0
 	for label := range op.Merged {
 		tk := NewLabelTKey(label)
@@ -475,6 +462,12 @@ func (d *Data) mergeLabels(batcher storage.KeyValueBatcher, v dvid.VersionID, op
 		batch.Delete(tk)
 		elemsAdded += len(elems)
 		targetElems = append(targetElems, elems...)
+
+		// for labelsz.  TODO, only do this computation if really subscribed.
+		for _, elem := range elems {
+			delta.Add = append(delta.Add, ElementPos{Label: op.Target, Kind: elem.Kind, Pos: elem.Pos})
+			delta.Del = append(delta.Del, ElementPos{Label: label, Kind: elem.Kind, Pos: elem.Pos})
+		}
 	}
 	if elemsAdded > 0 {
 		val, err := json.Marshal(targetElems)
@@ -487,6 +480,13 @@ func (d *Data) mergeLabels(batcher storage.KeyValueBatcher, v dvid.VersionID, op
 		}
 	}
 	d.StopUpdate()
+
+	// Notify any subscribers of label annotation changes.
+	evt := datastore.SyncEvent{Data: d.DataUUID(), Event: ModifyElementsEvent}
+	msg := datastore.SyncMessage{Version: ctx.VersionID(), Delta: delta}
+	if err := datastore.NotifySubscribers(evt, msg); err != nil {
+		dvid.Criticalf("unable to notify subscribers of event %s: %v\n", evt, err)
+	}
 	return nil
 }
 
@@ -503,7 +503,7 @@ func (d *Data) syncSplit(in <-chan datastore.SyncMessage, done <-chan struct{}) 
 		default:
 			switch delta := msg.Delta.(type) {
 			case labels.DeltaSplitStart:
-				// Don't worry about it.
+				// ignore for now
 			case labels.DeltaSplit:
 				if delta.Split == nil {
 					// This is a coarse split.
@@ -549,6 +549,7 @@ func (d *Data) splitLabelsCoarse(batcher storage.KeyValueBatcher, v dvid.Version
 	}
 
 	// Move any elements that are within the split blocks.
+	var delta DeltaModifyElements
 	toDel := make(map[int]struct{})
 	toAdd := Elements{}
 	blockSize := d.blockSize()
@@ -557,6 +558,10 @@ func (d *Data) splitLabelsCoarse(batcher storage.KeyValueBatcher, v dvid.Version
 		if _, found := splitBlocks[zyxStr]; found {
 			toDel[i] = struct{}{}
 			toAdd = append(toAdd, elem)
+
+			// for downstream annotation syncs like labelsz.  TODO: only perform if subscribed.  Better: do ROI filtering here.
+			delta.Del = append(delta.Del, ElementPos{Label: op.OldLabel, Kind: elem.Kind, Pos: elem.Pos})
+			delta.Add = append(delta.Add, ElementPos{Label: op.NewLabel, Kind: elem.Kind, Pos: elem.Pos})
 		}
 	}
 	if len(toDel) == 0 {
@@ -600,6 +605,13 @@ func (d *Data) splitLabelsCoarse(batcher storage.KeyValueBatcher, v dvid.Version
 	if err := batch.Commit(); err != nil {
 		return fmt.Errorf("bad commit in annotations %q after split: %v\n", d.DataName(), err)
 	}
+
+	// Notify any subscribers of label annotation changes.
+	evt := datastore.SyncEvent{Data: d.DataUUID(), Event: ModifyElementsEvent}
+	msg := datastore.SyncMessage{Version: ctx.VersionID(), Delta: delta}
+	if err := datastore.NotifySubscribers(evt, msg); err != nil {
+		dvid.Criticalf("unable to notify subscribers of event %s: %v\n", evt, err)
+	}
 	return nil
 }
 
@@ -613,6 +625,7 @@ func (d *Data) splitLabelsFine(batcher storage.KeyValueBatcher, v dvid.VersionID
 	ctx := datastore.NewVersionedCtx(d, v)
 	batch := batcher.NewBatch(ctx)
 
+	var delta DeltaModifyElements
 	toAdd := Elements{}
 	toDel := make(map[string]struct{})
 
@@ -636,6 +649,10 @@ func (d *Data) splitLabelsFine(batcher storage.KeyValueBatcher, v dvid.VersionID
 				if rle.Within(elem.Pos) {
 					toAdd = append(toAdd, elem)
 					toDel[elem.Pos.String()] = struct{}{}
+
+					// for downstream annotation syncs like labelsz.  TODO: only perform if subscribed.  Better: do ROI filtering here.
+					delta.Del = append(delta.Del, ElementPos{Label: op.OldLabel, Kind: elem.Kind, Pos: elem.Pos})
+					delta.Add = append(delta.Add, ElementPos{Label: op.NewLabel, Kind: elem.Kind, Pos: elem.Pos})
 					break
 				}
 			}
@@ -687,6 +704,13 @@ func (d *Data) splitLabelsFine(batcher storage.KeyValueBatcher, v dvid.VersionID
 
 	if err := batch.Commit(); err != nil {
 		return fmt.Errorf("bad commit in annotations %q after split: %v\n", d.DataName(), err)
+	}
+
+	// Notify any subscribers of label annotation changes.
+	evt := datastore.SyncEvent{Data: d.DataUUID(), Event: ModifyElementsEvent}
+	msg := datastore.SyncMessage{Version: ctx.VersionID(), Delta: delta}
+	if err := datastore.NotifySubscribers(evt, msg); err != nil {
+		dvid.Criticalf("unable to notify subscribers of event %s: %v\n", evt, err)
 	}
 	return nil
 }

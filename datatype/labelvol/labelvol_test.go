@@ -18,7 +18,6 @@ import (
 	"testing"
 
 	"github.com/janelia-flyem/dvid/datastore"
-	"github.com/janelia-flyem/dvid/datatype/labelblk"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 
@@ -320,7 +319,7 @@ func TestSparseVolumes(t *testing.T) {
 	// Populate the labels, which should automatically populate the labelvol
 	_ = createLabelTestVolume(t, uuid, "labels")
 
-	if err := BlockOnUpdating(uuid, "bodies"); err != nil {
+	if err := datastore.BlockOnUpdating(uuid, "bodies"); err != nil {
 		t.Fatalf("Error blocking on sync of labels -> bodies: %v\n", err)
 	}
 
@@ -458,7 +457,7 @@ func TestMergeLabels(t *testing.T) {
 	expected := createLabelTestVolume(t, uuid, "labels")
 	expected.add(body3, 2)
 
-	if err := BlockOnUpdating(uuid, "bodies"); err != nil {
+	if err := datastore.BlockOnUpdating(uuid, "bodies"); err != nil {
 		t.Fatalf("Error blocking on sync of labels -> bodies: %v\n", err)
 	}
 
@@ -486,7 +485,7 @@ func TestMergeLabels(t *testing.T) {
 	server.TestBadHTTP(t, "GET", reqStr, nil)
 
 	// Make sure label changes are correct after completion
-	if err := labelblk.BlockOnUpdating(uuid, "labels"); err != nil {
+	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
 		t.Fatalf("Error blocking on sync of bodies -> labels: %v\n", err)
 	}
 
@@ -526,7 +525,7 @@ func TestSplitLabel(t *testing.T) {
 	expected.add(bodyleft, 4)
 	expected.add(bodysplit, 5)
 
-	if err := BlockOnUpdating(uuid, "bodies"); err != nil {
+	if err := datastore.BlockOnUpdating(uuid, "bodies"); err != nil {
 		t.Fatalf("Error blocking on sync of labels -> bodies: %v\n", err)
 	}
 
@@ -582,7 +581,7 @@ func TestSplitLabel(t *testing.T) {
 		t.Errorf("Expected split label to be 5, instead got %d\n", newlabel)
 	}
 
-	if err := labelblk.BlockOnUpdating(uuid, "labels"); err != nil {
+	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
 		t.Fatalf("Error blocking on sync of bodies -> labels: %v\n", err)
 	}
 
@@ -633,7 +632,7 @@ func TestSplitGivenLabel(t *testing.T) {
 	expected.add(bodyleft, 4)
 	expected.add(bodysplit, 23)
 
-	if err := BlockOnUpdating(uuid, "bodies"); err != nil {
+	if err := datastore.BlockOnUpdating(uuid, "bodies"); err != nil {
 		t.Fatalf("Error blocking on sync of labels -> bodies: %v\n", err)
 	}
 
@@ -718,7 +717,7 @@ func TestSplitCoarseLabel(t *testing.T) {
 		}
 	}
 
-	if err := BlockOnUpdating(uuid, "bodies"); err != nil {
+	if err := datastore.BlockOnUpdating(uuid, "bodies"); err != nil {
 		t.Fatalf("Error blocking on sync of labels -> bodies: %v\n", err)
 	}
 
@@ -761,7 +760,7 @@ func TestSplitCoarseLabel(t *testing.T) {
 		t.Errorf("Expected split label to be 5, instead got %d\n", newlabel)
 	}
 
-	if err := labelblk.BlockOnUpdating(uuid, "labels"); err != nil {
+	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
 		t.Fatalf("Error blocking on sync of bodies -> labels: %v\n", err)
 	}
 
@@ -818,7 +817,7 @@ func TestSplitCoarseGivenLabel(t *testing.T) {
 		}
 	}
 
-	if err := BlockOnUpdating(uuid, "bodies"); err != nil {
+	if err := datastore.BlockOnUpdating(uuid, "bodies"); err != nil {
 		t.Fatalf("Error blocking on sync of labels -> bodies: %v\n", err)
 	}
 
@@ -855,7 +854,7 @@ func TestSplitCoarseGivenLabel(t *testing.T) {
 		t.Errorf("Expected split label to be 8127, instead got %d\n", newlabel)
 	}
 
-	if err := labelblk.BlockOnUpdating(uuid, "labels"); err != nil {
+	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
 		t.Fatalf("Error blocking on sync of bodies -> labels: %v\n", err)
 	}
 
@@ -886,7 +885,7 @@ func TestMutableLabelblkPOST(t *testing.T) {
 	// Post labels 1-4
 	createLabelTestVolume(t, uuid, "labels")
 
-	if err := BlockOnUpdating(uuid, "bodies"); err != nil {
+	if err := datastore.BlockOnUpdating(uuid, "bodies"); err != nil {
 		t.Fatalf("Error blocking on sync of labels -> bodies: %v\n", err)
 	}
 
@@ -907,7 +906,7 @@ func TestMutableLabelblkPOST(t *testing.T) {
 	// Post labels 6-7
 	createLabelTest2Volume(t, uuid, "labels")
 
-	if err := BlockOnUpdating(uuid, "bodies"); err != nil {
+	if err := datastore.BlockOnUpdating(uuid, "bodies"); err != nil {
 		t.Fatalf("Error blocking on sync of labels -> bodies: %v\n", err)
 	}
 
