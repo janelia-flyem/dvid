@@ -84,6 +84,7 @@ func createLabelTestVolume(t *testing.T, uuid dvid.UUID, name string) *testVolum
 	return volume
 }
 
+// test ROI has offset (32, 32, 32) and size (64, 64, 64)
 var testSpans = []dvid.Span{
 	dvid.Span{1, 1, 1, 2}, dvid.Span{1, 2, 1, 2},
 	dvid.Span{2, 1, 1, 2}, dvid.Span{2, 2, 1, 2},
@@ -210,13 +211,13 @@ func TestLabels(t *testing.T) {
 	url = fmt.Sprintf("%snode/%s/noroi/top/3/PreSyn", server.WebAPIPath, uuid)
 	data := server.TestHTTP(t, "GET", url, nil)
 	if string(data) != `[{"Label":100,"Size":16384},{"Label":200,"Size":8192},{"Label":300,"Size":8192}]` {
-		t.Errorf("Got back incorrect could PreSyn noroi ranking:\n%v\n", string(data))
+		t.Errorf("Got back incorrect PreSyn noroi ranking:\n%v\n", string(data))
 	}
 
 	url = fmt.Sprintf("%snode/%s/noroi/top/3/PostSyn", server.WebAPIPath, uuid)
 	data = server.TestHTTP(t, "GET", url, nil)
 	if string(data) != `[{"Label":100,"Size":14415},{"Label":300,"Size":7936},{"Label":200,"Size":7440}]` {
-		t.Errorf("Got back incorrect could PostSyn noroi ranking:\n%v\n", string(data))
+		t.Errorf("Got back incorrect PostSyn noroi ranking:\n%v\n", string(data))
 	}
 
 	// Check if we have correct sequencing for ROI labelsz.
@@ -230,13 +231,13 @@ func TestLabels(t *testing.T) {
 	url = fmt.Sprintf("%snode/%s/withroi/top/3/PreSyn", server.WebAPIPath, uuid)
 	data = server.TestHTTP(t, "GET", url, nil)
 	if string(data) != `[{"Label":100,"Size":2048},{"Label":200,"Size":1024},{"Label":300,"Size":1024}]` {
-		t.Errorf("Got back incorrect could PreSyn noroi ranking:\n%v\n", string(data))
+		t.Errorf("Got back incorrect PreSyn withroi ranking:\n%v\n", string(data))
 	}
 
 	url = fmt.Sprintf("%snode/%s/withroi/top/3/PostSyn", server.WebAPIPath, uuid)
 	data = server.TestHTTP(t, "GET", url, nil)
 	if string(data) != `[{"Label":100,"Size":2048},{"Label":200,"Size":1024},{"Label":300,"Size":1024}]` {
-		t.Errorf("Got back incorrect could PostSyn noroi ranking:\n%v\n", string(data))
+		t.Errorf("Got back incorrect PostSyn withroi ranking:\n%v\n", string(data))
 	}
 
 	// Check fewer and larger N requests.
@@ -262,11 +263,21 @@ func TestLabels(t *testing.T) {
 	if err := datastore.BlockOnUpdating(uuid, "noroi"); err != nil {
 		t.Fatalf("Error blocking on sync of noroi labelsz: %v\n", err)
 	}
-
 	url = fmt.Sprintf("%snode/%s/noroi/top/3/PostSyn", server.WebAPIPath, uuid)
 	data = server.TestHTTP(t, "GET", url, nil)
 	if string(data) != `[{"Label":100,"Size":14414},{"Label":300,"Size":7938},{"Label":200,"Size":7439}]` {
-		t.Errorf("Got back incorrect could PostSyn noroi ranking after move from label 100->300:\n%v\n", string(data))
+		t.Errorf("Got back incorrect PostSyn noroi ranking after move from label 100->300:\n%v\n", string(data))
+	}
+
+	// First move took synapse out of ROI so there should be one less for label 100.
+	if err := datastore.BlockOnUpdating(uuid, "withroi"); err != nil {
+		t.Fatalf("Error blocking on sync of labelsz: %v\n", err)
+	}
+
+	url = fmt.Sprintf("%snode/%s/withroi/top/5/PostSyn", server.WebAPIPath, uuid)
+	data = server.TestHTTP(t, "GET", url, nil)
+	if string(data) != `[{"Label":100,"Size":2047},{"Label":200,"Size":1024},{"Label":300,"Size":1024}]` {
+		t.Errorf("Got back incorrect post-move PostSyn withroi ranking:\n%v\n", string(data))
 	}
 
 	// Test annotation deletion of moved PostSyn from label 300
@@ -283,7 +294,7 @@ func TestLabels(t *testing.T) {
 	url = fmt.Sprintf("%snode/%s/noroi/top/3/PostSyn", server.WebAPIPath, uuid)
 	data = server.TestHTTP(t, "GET", url, nil)
 	if string(data) != `[{"Label":100,"Size":14414},{"Label":300,"Size":7936},{"Label":200,"Size":7439}]` {
-		t.Errorf("Got back incorrect could PostSyn noroi ranking after deletions from label 300:\n%v\n", string(data))
+		t.Errorf("Got back incorrect PostSyn noroi ranking after deletions from label 300:\n%v\n", string(data))
 	}
 
 	// Check sync on merge.
@@ -301,6 +312,15 @@ func TestLabels(t *testing.T) {
 	}
 	if err := datastore.BlockOnUpdating(uuid, "noroi"); err != nil {
 		t.Fatalf("Error blocking on sync of labelsz: %v\n", err)
+	}
+	if err := datastore.BlockOnUpdating(uuid, "withroi"); err != nil {
+		t.Fatalf("Error blocking on sync of labelsz: %v\n", err)
+	}
+
+	url = fmt.Sprintf("%snode/%s/withroi/top/5/PostSyn", server.WebAPIPath, uuid)
+	data = server.TestHTTP(t, "GET", url, nil)
+	if string(data) != `[{"Label":200,"Size":2048},{"Label":100,"Size":2047}]` {
+		t.Errorf("Got back incorrect post-merge PostSyn withroi ranking:\n%v\n", string(data))
 	}
 
 	url = fmt.Sprintf("%snode/%s/noroi/top/3/PreSyn", server.WebAPIPath, uuid)
@@ -397,5 +417,30 @@ func TestLabels(t *testing.T) {
 	data = server.TestHTTP(t, "GET", url, nil)
 	if string(data) != `[{"Label":200,"Size":14351},{"Label":100,"Size":14350},{"Label":250,"Size":1024},{"Label":150,"Size":64}]` {
 		t.Errorf("Got back incorrect post-coarsesplit PostSyn noroi ranking:\n%v\n", string(data))
+	}
+
+	url = fmt.Sprintf("%snode/%s/noroi/top/5/AllSyn", server.WebAPIPath, uuid)
+	data = server.TestHTTP(t, "GET", url, nil)
+	if string(data) != `[{"Label":100,"Size":30609},{"Label":200,"Size":29711},{"Label":250,"Size":2048},{"Label":150,"Size":189}]` {
+		t.Errorf("Got back incorrect post-coarsesplit AllSyn noroi ranking:\n%v\n", string(data))
+	}
+
+	// Check the ROI-restricted labelsz instance which should only be affected by merge.
+	url = fmt.Sprintf("%snode/%s/withroi/top/5/PreSyn", server.WebAPIPath, uuid)
+	data = server.TestHTTP(t, "GET", url, nil)
+	if string(data) != `[{"Label":100,"Size":2048},{"Label":200,"Size":2048}]` {
+		t.Errorf("Got back incorrect post-coarsesplit PreSyn withroi ranking:\n%v\n", string(data))
+	}
+
+	url = fmt.Sprintf("%snode/%s/withroi/top/5/PostSyn", server.WebAPIPath, uuid)
+	data = server.TestHTTP(t, "GET", url, nil)
+	if string(data) != `[{"Label":200,"Size":2048},{"Label":100,"Size":2047}]` {
+		t.Errorf("Got back incorrect post-coarsesplit PostSyn withroi ranking:\n%v\n", string(data))
+	}
+
+	url = fmt.Sprintf("%snode/%s/withroi/top/5/AllSyn", server.WebAPIPath, uuid)
+	data = server.TestHTTP(t, "GET", url, nil)
+	if string(data) != `[{"Label":200,"Size":4096},{"Label":100,"Size":4095}]` {
+		t.Errorf("Got back incorrect post-coarsesplit AllSyn withroi ranking:\n%v\n", string(data))
 	}
 }

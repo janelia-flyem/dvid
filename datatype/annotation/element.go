@@ -1110,7 +1110,7 @@ func (d *Data) moveElementInLabels(ctx *datastore.VersionedCtx, from, to dvid.Po
 		if err := putBatchElements(batch, tk, elems); err != nil {
 			return err
 		}
-		delta.Add = append(delta.Add, ElementPos{Label: newLabel, Kind: moved.Kind, Pos: from})
+		delta.Add = append(delta.Add, ElementPos{Label: newLabel, Kind: moved.Kind, Pos: to})
 	}
 
 	// Notify any subscribers of label annotation changes.
