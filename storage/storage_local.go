@@ -29,6 +29,9 @@ type managerT struct {
 	graphDB     GraphDB
 	graphSetter GraphSetter
 	graphGetter GraphGetter
+
+	// groupcache support
+	gcache groupcacheT
 }
 
 func DefaultStore() (dvid.Store, error) {
@@ -94,37 +97,36 @@ func GetStoreByAlias(alias Alias) (dvid.Store, error) {
 }
 
 // GetAssignedStore returns the store assigned based on instance or type.
+// In some cases, this store may include a caching wrapper if the data instance has been
+// configured to use groupcache.
 func GetAssignedStore(dataname dvid.InstanceName, uuid dvid.UUID, typename dvid.TypeString) (dvid.Store, error) {
-	store, found, err := GetAssignedStoreByInstance(dataname, uuid)
-	if err != nil {
-		return nil, err
+	if !manager.setup {
+		return nil, fmt.Errorf("Storage manager not initialized before requesting store for %s/%s", dataname, uuid)
 	}
-	if found {
-		return store, nil
+	dataid := dvid.GetDataSpecifier(dataname, uuid)
+	store, found := manager.instanceStore[dataid]
+	var err error
+	if !found {
+		store, err = assignedStoreByType(typename)
+		if err != nil {
+			return nil, fmt.Errorf("Cannot get assigned store for data %q, type %q", dataname, typename)
+		}
 	}
-	store, err = GetAssignedStoreByType(typename)
-	if err != nil {
-		return nil, fmt.Errorf("Cannot get assigned store for data %q, type %q", dataname, typename)
+
+	// See if this is using caching and if so, establish a wrapper around it.
+	if _, supported := manager.gcache.supported[dataid]; supported {
+		store, err = wrapGroupcache(store, manager.gcache.cache)
+		if err != nil {
+			dvid.Errorf("Unable to wrap groupcache around store %s for data instance %q (uuid %s): %v\n", store, dataname, uuid, err)
+		} else {
+			dvid.Infof("Returning groupcache-wrapped store %s for data instance %q @ %s\n", store, dataname, uuid)
+		}
 	}
 	return store, nil
 }
 
-// GetAssignedStoreByInstance returns the store assigned to a particular data instance.
-func GetAssignedStoreByInstance(name dvid.InstanceName, root dvid.UUID) (store dvid.Store, found bool, err error) {
-	if !manager.setup {
-		err = fmt.Errorf("Storage manager not initialized before requesting store for %s/%s", name, root)
-		return
-	}
-	// For now, return the root UUID of the DAG containing the given UUID.
-	// TODO: Adjust when we make UUID-based data instances.
-
-	dataid := dvid.GetDataSpecifier(name, root)
-	store, found = manager.instanceStore[dataid]
-	return
-}
-
-// GetAssignedStoreByType returns the store assigned to a particular datatype.
-func GetAssignedStoreByType(typename dvid.TypeString) (dvid.Store, error) {
+// assignedStoreByType returns the store assigned to a particular datatype.
+func assignedStoreByType(typename dvid.TypeString) (dvid.Store, error) {
 	if !manager.setup {
 		return nil, fmt.Errorf("Storage manager not initialized before requesting store for %s", typename)
 	}
@@ -204,6 +206,12 @@ func Initialize(cmdline dvid.Config, backend *Backend) (createdMetadata bool, er
 	dvid.Infof("Default store: %s\n", manager.defaultStore)
 	dvid.Infof("Metadata store: %s\n", manager.metadataStore)
 
+	// Setup the groupcache if specified.
+	err = setupGroupcache(backend.Groupcache)
+	if err != nil {
+		return
+	}
+
 	// Make all data instance or datatype-specific store assignments.
 	manager.instanceStore = make(map[dvid.DataSpecifier]dvid.Store)
 	manager.datatypeStore = make(map[dvid.TypeString]dvid.Store)
@@ -234,7 +242,7 @@ func Initialize(cmdline dvid.Config, backend *Backend) (createdMetadata bool, er
 
 	// Setup the graph store
 	var store dvid.Store
-	store, err = GetAssignedStoreByType("labelgraph")
+	store, err = assignedStoreByType("labelgraph")
 	if err != nil {
 		return
 	}

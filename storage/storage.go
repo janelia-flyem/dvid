@@ -157,10 +157,19 @@ type Alias string
 
 // Backend provide data instance to store mappings gleaned from DVID configuration.
 type Backend struct {
-	Default  Alias // The store that should be used by default.
-	Metadata Alias // The store that should be used for metadata storage.
-	Stores   map[Alias]dvid.StoreConfig
-	Mapping  map[dvid.DataSpecifier]Alias
+	Default    Alias // The store that should be used by default.
+	Metadata   Alias // The store that should be used for metadata storage.
+	Stores     map[Alias]dvid.StoreConfig
+	Mapping    map[dvid.DataSpecifier]Alias
+	Groupcache GroupcacheConfig
+}
+
+// GroupcacheConfig handles settings for the groupcache library.
+type GroupcacheConfig struct {
+	GB        int
+	Host      string   // The http address of this DVID server's groupcache port.
+	Peers     []string // The http addresses of the peer groupcache group.
+	Instances []string // Data instances that use groupcache in form "<name>:<uuid>""
 }
 
 // StoreConfig returns a data specifier's assigned store configuration.

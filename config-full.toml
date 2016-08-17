@@ -47,7 +47,7 @@ max_log_age = 30   # days
     [backend.labelblk]
     store = "ssd"
 
-    [backend."grayscale:99ef22cd85f143f58a623bd22aad0ef7]
+    [backend."grayscale:99ef22cd85f143f58a623bd22aad0ef7"]
     store = "kvautobus"
 
 
@@ -79,3 +79,15 @@ max_log_age = 30   # days
     path = "http://tem-dvid.int.janelia.org:9000"
     collection = "389a22cd85f143f511923bd22aac776b"
     owner = "otherTeam"
+
+# Groupcache support lets you cache GETs from particular data instances.  The
+# configuration below marks some data instances as both immutable and
+# using a non-ordered key-value store for GETs.  These instances may be versioned.
+# An example case would be imagetile, which is immutable after some initial set
+# of ingestions that may be spread across a few versions at the top of the DAG.
+
+[groupcache]
+gb = 60  # 60 GB if we have a beefy server
+me = "http://localhost:8003"
+peers = ["http://10.0.0.2", "http://10.0.0.3"]
+instances = ["graytiles:99ef22cd85f143f58a623bd22aad0ef7"]
