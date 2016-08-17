@@ -96,14 +96,14 @@ func GetStoreByAlias(alias Alias) (dvid.Store, error) {
 	return store, nil
 }
 
-// GetAssignedStore returns the store assigned based on instance or type.
+// GetAssignedStore returns the store assigned based on (instance name, root uuid) or type.
 // In some cases, this store may include a caching wrapper if the data instance has been
 // configured to use groupcache.
-func GetAssignedStore(dataname dvid.InstanceName, uuid dvid.UUID, typename dvid.TypeString) (dvid.Store, error) {
+func GetAssignedStore(dataname dvid.InstanceName, root dvid.UUID, typename dvid.TypeString) (dvid.Store, error) {
 	if !manager.setup {
-		return nil, fmt.Errorf("Storage manager not initialized before requesting store for %s/%s", dataname, uuid)
+		return nil, fmt.Errorf("Storage manager not initialized before requesting store for %s/%s", dataname, root)
 	}
-	dataid := dvid.GetDataSpecifier(dataname, uuid)
+	dataid := dvid.GetDataSpecifier(dataname, root)
 	store, found := manager.instanceStore[dataid]
 	var err error
 	if !found {
@@ -117,9 +117,9 @@ func GetAssignedStore(dataname dvid.InstanceName, uuid dvid.UUID, typename dvid.
 	if _, supported := manager.gcache.supported[dataid]; supported {
 		store, err = wrapGroupcache(store, manager.gcache.cache)
 		if err != nil {
-			dvid.Errorf("Unable to wrap groupcache around store %s for data instance %q (uuid %s): %v\n", store, dataname, uuid, err)
+			dvid.Errorf("Unable to wrap groupcache around store %s for data instance %q (uuid %s): %v\n", store, dataname, root, err)
 		} else {
-			dvid.Infof("Returning groupcache-wrapped store %s for data instance %q @ %s\n", store, dataname, uuid)
+			dvid.Infof("Returning groupcache-wrapped store %s for data instance %q @ %s\n", store, dataname, root)
 		}
 	}
 	return store, nil

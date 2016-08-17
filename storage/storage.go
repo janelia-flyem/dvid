@@ -164,14 +164,6 @@ type Backend struct {
 	Groupcache GroupcacheConfig
 }
 
-// GroupcacheConfig handles settings for the groupcache library.
-type GroupcacheConfig struct {
-	GB        int
-	Host      string   // The http address of this DVID server's groupcache port.
-	Peers     []string // The http addresses of the peer groupcache group.
-	Instances []string // Data instances that use groupcache in form "<name>:<uuid>""
-}
-
 // StoreConfig returns a data specifier's assigned store configuration.
 // The DataSpecifier can be "default" or "metadata" as well as datatype names
 // and data instance specifications.

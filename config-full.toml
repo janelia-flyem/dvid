@@ -88,6 +88,6 @@ max_log_age = 30   # days
 
 [groupcache]
 gb = 60  # 60 GB if we have a beefy server
-me = "http://localhost:8003"
-peers = ["http://10.0.0.2", "http://10.0.0.3"]
+host = "http://10.0.0.1:8003"
+peers = ["http://10.0.0.2:8002", "http://10.0.0.3:8002"]  # currently not used
 instances = ["graytiles:99ef22cd85f143f58a623bd22aad0ef7"]
