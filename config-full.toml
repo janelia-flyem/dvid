@@ -35,7 +35,7 @@ max_log_age = 30   # days
 # backend.metadata = store to use for metadata
 # backend.<datatype> = store to use for the given "datatype"
 # backend."<name>:<uuid>" = store to use for a particular data instance, 
-#   where uuid is the full UUID of the repo's root.
+#   where uuid is the full UUID of the data instance's root in the DAG.
 #
 # If no backend is specified, DVID will return an error unless there is only
 # one store, which will automatically be backend.default.

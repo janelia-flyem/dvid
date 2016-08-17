@@ -35,6 +35,7 @@ var (
 	ErrInvalidVersion      = errors.New("server-specific version id is invalid")
 	ErrInvalidRepoID       = errors.New("server-specific repo id is invalid")
 	ErrExistingUUID        = errors.New("UUID already exists in datastore")
+	ErrExistingDataName    = errors.New("data name already exists")
 	ErrInvalidDataName     = errors.New("invalid data instance name")
 	ErrInvalidDataInstance = errors.New("invalid data instance id")
 	ErrInvalidDataUUID     = errors.New("invalid data instance UUID")
