@@ -1205,6 +1205,12 @@ func (d *Data) GetTile(ctx storage.Context, req TileReq) (image.Image, error) {
 
 // getTileData returns 2d tile data straight from storage without decoding.
 func (d *Data) getTileData(ctx storage.Context, req TileReq) ([]byte, error) {
+	// Don't allow negative tile coordinates for now.
+	// TODO: Fully check negative coordinates for both tiles and voxels.
+	if req.tile.Value(0) < 0 || req.tile.Value(1) < 0 || req.tile.Value(2) < 0 {
+		return nil, nil
+	}
+
 	db, err := d.GetKeyValueDB()
 	if err != nil {
 		return nil, err
