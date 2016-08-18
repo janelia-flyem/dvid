@@ -173,7 +173,7 @@ else ()
         ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/valyala/gorpc
         COMMENT     "Adding gorpc library...")
 
-    set (DVID_DEP_GO_PACKAGES gopackages gojsonschema goji msgp context lumberjack snappy gcloud gorpc)
+    set (DVID_DEP_GO_PACKAGES gopackages gojsonschema goji msgp context lumberjack snappy gcloud gorpc groupcache)
 
     add_custom_target (nrsc
         ${BUILDEM_ENV_STRING} ${GO_ENV} go build -o ${BUILDEM_BIN_DIR}/nrsc
