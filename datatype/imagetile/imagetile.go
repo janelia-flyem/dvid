@@ -1115,7 +1115,7 @@ func (d *Data) ServeTile(ctx storage.Context, w http.ResponseWriter, r *http.Req
 		server.BadRequest(w, r, err)
 		return err
 	}
-	if data == nil {
+	if len(data) == 0 {
 		if noblanks {
 			http.NotFound(w, r)
 			return nil
