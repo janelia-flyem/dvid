@@ -672,7 +672,7 @@ func (d *Data) Extents() *dvid.Extents {
 // If img is passed in, the function will initialize Voxels with data from the image.
 // Otherwise, it will allocate a zero buffer of appropriate size.
 //
-// TODO : Unlike the standard imageblk.NewVoxels, the labelblk version can modify the
+// TODO : Unlike the standard imageblk data.NewVoxels, the labelblk version can modify the
 // labels based on the z-coordinate of the given geometry for Raveler labeling.
 // This will be removed when Raveler-specific labels are moved outside DVID.
 func (d *Data) NewLabels(geom dvid.Geometry, img interface{}) (*Labels, error) {

@@ -519,6 +519,10 @@ func (img *Image) MarshalBinary() ([]byte, error) {
 
 // UnmarshalBinary fulfills the encoding.BinaryUnmarshaler interface.
 func (img *Image) UnmarshalBinary(b []byte) error {
+	if len(b) < 4 {
+		return nil // nothing to unmarshal
+	}
+
 	// Deserialize the data format
 	lenDataFormat := int(binary.LittleEndian.Uint32(b[0:4]))
 	img.DataFormat.UnmarshalBinary(b[4 : 4+lenDataFormat])

@@ -768,8 +768,11 @@ func TestLabels(t *testing.T) {
 	testResponseLabel(t, expectedLabel7, url2)
 
 	// Change the name of the annotations.
+	if err = datastore.RenameData(uuid, "mysynapses", "bodies", "foobar"); err == nil {
+		t.Fatalf("Should have been prevented from renaming data 'mysynapses' to existing data 'bodies'!\n")
+	}
 	if err = datastore.RenameData(uuid, "mysynapses", "renamedData", "foobar"); err != nil {
-		t.Fatalf("Error renaming annotations: %v", err)
+		t.Fatalf("Error renaming annotations: %v\n", err)
 	}
 
 	// Make sure the old name is no longer there and the new one is.
