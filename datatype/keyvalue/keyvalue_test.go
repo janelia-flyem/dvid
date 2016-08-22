@@ -368,7 +368,7 @@ func TestKeyvalueVersioning(t *testing.T) {
 	}
 	data, ok := dataservice.(*Data)
 	if !ok {
-		t.Fatalf("Returned new data instance is not roi.Data\n")
+		t.Fatalf("Returned new data instance is not keyvalue.Data\n")
 	}
 
 	// PUT a value
@@ -597,6 +597,61 @@ func TestKeyvalueVersioning(t *testing.T) {
 	returnValue = server.TestHTTP(t, "GET", toughreq, nil)
 	if string(returnValue) != uuid4val {
 		t.Errorf("Error on merged child, key %q: expected %q, got %q\n", key2, uuid4val, string(returnValue))
+	}
+
+	// Create a new keyvalue data instance at an interior non-root node.
+	uuid8, err := datastore.NewVersion(uuid7, "open leaf child", nil)
+	if err != nil {
+		t.Fatalf("Unable to create new version off %s: %v\n", uuid7, err)
+	}
+	dataservice, err = datastore.NewData(uuid8, kvtype, "leafdata", config)
+	if err != nil {
+		t.Fatalf("Error creating new keyvalue instance: %v\n", err)
+	}
+	leafdata, ok := dataservice.(*Data)
+	if !ok {
+		t.Fatalf("Returned new data instance is not keyvalue.Data\n")
+	}
+
+	// PUT a value
+	key1req = fmt.Sprintf("%snode/%s/%s/key/%s", server.WebAPIPath, uuid8, leafdata.DataName(), key1)
+	server.TestHTTP(t, "POST", key1req, strings.NewReader(value1))
+
+	// Add 2nd k/v
+	key2req = fmt.Sprintf("%snode/%s/%s/key/%s", server.WebAPIPath, uuid8, leafdata.DataName(), key2)
+	server.TestHTTP(t, "POST", key2req, strings.NewReader(value2))
+
+	// Change the 2nd k/v
+	server.TestHTTP(t, "POST", key2req, strings.NewReader(uuid2val))
+
+	// Check the values
+	returnValue = server.TestHTTP(t, "GET", key1req, nil)
+	if string(returnValue) != value1 {
+		t.Errorf("Key %q: expected %s, got %s\n", key1, value1, string(returnValue))
+	}
+	returnValue = server.TestHTTP(t, "GET", key2req, nil)
+	if string(returnValue) != uuid2val {
+		t.Errorf("Key %q: expected %s, got %s\n", key2, uuid2val, string(returnValue))
+	}
+
+	// Change the name of the interior data.
+	if err = datastore.RenameData(uuid8, "leafdata", "versiontest", "foobar"); err == nil {
+		t.Fatalf("Should have been prevented from renaming data 'leafdata' to existing data 'versiontest'!\n")
+	}
+	if err = datastore.RenameData(uuid8, "leafdata", "renamedData", "foobar"); err != nil {
+		t.Fatalf("Error renaming leafdata: %v\n", err)
+	}
+
+	// Check the values
+	key1req = fmt.Sprintf("%snode/%s/renamedData/key/%s", server.WebAPIPath, uuid8, key1)
+	key2req = fmt.Sprintf("%snode/%s/renamedData/key/%s", server.WebAPIPath, uuid8, key2)
+	returnValue = server.TestHTTP(t, "GET", key1req, nil)
+	if string(returnValue) != value1 {
+		t.Errorf("Key %q: expected %s, got %s\n", key1, value1, string(returnValue))
+	}
+	returnValue = server.TestHTTP(t, "GET", key2req, nil)
+	if string(returnValue) != uuid2val {
+		t.Errorf("Key %q: expected %s, got %s\n", key2, uuid2val, string(returnValue))
 	}
 }
 

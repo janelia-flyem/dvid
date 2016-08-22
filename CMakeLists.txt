@@ -159,6 +159,10 @@ else ()
         ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/golang/snappy
         COMMENT     "Adding snappy library...")
 
+    add_custom_target (groupcache
+        ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/golang/groupcache
+        COMMENT     "Adding groupcache library...")
+
     add_custom_target (gcloud
         ${BUILDEM_ENV_STRING} go get ${GO_GET} golang.org/x/oauth2
         COMMAND ${BUILDEM_ENV_STRING} go get ${GO_GET} google.golang.org/cloud/bigtable
@@ -169,7 +173,7 @@ else ()
         ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/valyala/gorpc
         COMMENT     "Adding gorpc library...")
 
-    set (DVID_DEP_GO_PACKAGES gopackages gojsonschema goji msgp context lumberjack snappy gcloud gorpc)
+    set (DVID_DEP_GO_PACKAGES gopackages gojsonschema goji msgp context lumberjack snappy gcloud gorpc groupcache)
 
     add_custom_target (nrsc
         ${BUILDEM_ENV_STRING} ${GO_ENV} go build -o ${BUILDEM_BIN_DIR}/nrsc

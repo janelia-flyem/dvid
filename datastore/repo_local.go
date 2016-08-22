@@ -442,7 +442,7 @@ func (m *repoManager) loadVersion0() error {
 
 			// Cache the assigned store.
 			typename := dataservice.TypeName()
-			store, err := storage.GetAssignedStore(dataname, r.uuid, typename)
+			store, err := storage.GetAssignedStore(dataname, dataservice.RootUUID(), typename)
 			if err != nil {
 				return err
 			}
@@ -1500,7 +1500,7 @@ func (m *repoManager) newData(uuid dvid.UUID, t TypeService, name dvid.InstanceN
 	if _, found := r.data[name]; found {
 		return nil, fmt.Errorf("Data named %q already exists in repo (root %s)", name, r.uuid)
 	}
-	dataservice, err := t.NewDataService(r.uuid, id, name, c)
+	dataservice, err := t.NewDataService(uuid, id, name, c)
 	if err != nil {
 		return nil, err
 	}
@@ -1561,8 +1561,10 @@ func (m *repoManager) getDataByDataUUID(dataUUID dvid.UUID) (DataService, error)
 	return d, nil
 }
 
-func (m *repoManager) getDataByUUIDName(rootUUID dvid.UUID, name dvid.InstanceName) (DataService, error) {
-	r, err := m.repoFromUUID(rootUUID)
+// Since only one data instance name can exist per repo, we can get repo from any uuid in DAG,
+// then lookup by name.
+func (m *repoManager) getDataByUUIDName(uuid dvid.UUID, name dvid.InstanceName) (DataService, error) {
+	r, err := m.repoFromUUID(uuid)
 	if err != nil {
 		return nil, err
 	}
@@ -1608,6 +1610,10 @@ func (m *repoManager) renameDataByName(uuid dvid.UUID, oldname, newname dvid.Ins
 	_, found := r.data[oldname]
 	if !found {
 		return ErrInvalidDataName
+	}
+	_, found = r.data[newname]
+	if found {
+		return ErrExistingDataName
 	}
 
 	// Rename this data instance in the repository and persist.

@@ -102,6 +102,11 @@ const WebHelp = `
 
  	Returns JSON of all possible datatypes for this server, i.e., the list of compiled datatypes.
 
+ GET  /api/server/groupcache
+
+ 	Returns JSON for groupcache statistics for this server.  See github.com/golang/groupcache package
+	Stats and CacheStats for MainCache and HotCache.
+
 POST  /api/server/settings
 
 	Sets server parameters.  Expects JSON to be posted with optional keys denoting parameters:
@@ -456,6 +461,8 @@ func initRoutes() {
 	mainMux.Get("/api/server/types/", serverTypesHandler)
 	mainMux.Get("/api/server/compiled-types", serverCompiledTypesHandler)
 	mainMux.Get("/api/server/compiled-types/", serverCompiledTypesHandler)
+	mainMux.Get("/api/server/groupcache", serverGroupcacheHandler)
+	mainMux.Get("/api/server/groupcache/", serverGroupcacheHandler)
 	mainMux.Post("/api/server/settings", serverSettingsHandler)
 	mainMux.Post("/api/server/reload-metadata", serverReload)
 	mainMux.Post("/api/server/reload-metadata/", serverReload)
@@ -849,6 +856,22 @@ func serverCompiledTypesHandler(w http.ResponseWriter, r *http.Request) {
 	m, err := json.Marshal(jsonMap)
 	if err != nil {
 		msg := fmt.Sprintf("Cannot marshal JSON datatype info: %v (%v)\n", jsonMap, err)
+		BadRequest(w, r, msg)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, string(m))
+}
+
+func serverGroupcacheHandler(w http.ResponseWriter, r *http.Request) {
+	stats, err := storage.GetGroupcacheStats()
+	if err != nil {
+		BadRequest(w, r, fmt.Sprintf("cannot get groupcache stats: %v", err))
+		return
+	}
+	m, err := json.Marshal(stats)
+	if err != nil {
+		msg := fmt.Sprintf("Cannot marshal JSON groupcache stats info: %v (%v)\n", stats, err)
 		BadRequest(w, r, msg)
 		return
 	}

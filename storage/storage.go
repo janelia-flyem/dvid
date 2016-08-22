@@ -157,10 +157,11 @@ type Alias string
 
 // Backend provide data instance to store mappings gleaned from DVID configuration.
 type Backend struct {
-	Default  Alias // The store that should be used by default.
-	Metadata Alias // The store that should be used for metadata storage.
-	Stores   map[Alias]dvid.StoreConfig
-	Mapping  map[dvid.DataSpecifier]Alias
+	Default    Alias // The store that should be used by default.
+	Metadata   Alias // The store that should be used for metadata storage.
+	Stores     map[Alias]dvid.StoreConfig
+	Mapping    map[dvid.DataSpecifier]Alias
+	Groupcache GroupcacheConfig
 }
 
 // StoreConfig returns a data specifier's assigned store configuration.

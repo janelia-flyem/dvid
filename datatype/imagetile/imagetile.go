@@ -1041,7 +1041,7 @@ func (d *Data) GetImage(ctx storage.Context, src *imageblk.Data, geom dvid.Geome
 
 				// Get this tile from datastore
 				tileCoord, err := slice.PlaneToChunkPoint3d(x0, y0, minSlice.StartPoint(), levelSpec.TileSize)
-				goImg, err := d.GetTile(ctx, TileReq{tileCoord, slice, 0})
+				goImg, err := d.getTileImage(ctx, TileReq{tileCoord, slice, 0})
 				if err != nil || goImg == nil {
 					return
 				}
@@ -1115,7 +1115,7 @@ func (d *Data) ServeTile(ctx storage.Context, w http.ResponseWriter, r *http.Req
 		server.BadRequest(w, r, err)
 		return err
 	}
-	if data == nil {
+	if len(data) == 0 {
 		if noblanks {
 			http.NotFound(w, r)
 			return nil
@@ -1161,8 +1161,9 @@ func (d *Data) GetTileKey(ctx storage.Context, w http.ResponseWriter, r *http.Re
 	return fmt.Sprintf("%x", key), nil
 }
 
-// GetTile returns a 2d tile image or a placeholder
-func (d *Data) GetTile(ctx storage.Context, req TileReq) (image.Image, error) {
+// getTileImage returns a 2d tile image or a placeholder, useful for further stitching before
+// delivery of a final image.
+func (d *Data) getTileImage(ctx storage.Context, req TileReq) (image.Image, error) {
 	if d.Levels == nil || len(d.Levels) == 0 {
 		return nil, ErrNoMetadataSet
 	}
@@ -1171,7 +1172,7 @@ func (d *Data) GetTile(ctx storage.Context, req TileReq) (image.Image, error) {
 		return nil, err
 	}
 
-	if data == nil {
+	if len(data) == 0 {
 		if d.Placeholder {
 			if req.scale < 0 || req.scale >= Scaling(len(d.Levels)) {
 				return nil, fmt.Errorf("Could not find tile specification at given scale %d", req.scale)
@@ -1205,6 +1206,12 @@ func (d *Data) GetTile(ctx storage.Context, req TileReq) (image.Image, error) {
 
 // getTileData returns 2d tile data straight from storage without decoding.
 func (d *Data) getTileData(ctx storage.Context, req TileReq) ([]byte, error) {
+	// Don't allow negative tile coordinates for now.
+	// TODO: Fully check negative coordinates for both tiles and voxels.
+	if req.tile.Value(0) < 0 || req.tile.Value(1) < 0 || req.tile.Value(2) < 0 {
+		return nil, nil
+	}
+
 	db, err := d.GetKeyValueDB()
 	if err != nil {
 		return nil, err

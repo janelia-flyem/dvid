@@ -63,8 +63,7 @@ func main() {
 	cmd := exec.Command(gitPath, "describe", "--abbrev=5", "--tags")
 	out, err := cmd.Output()
 	if err != nil {
-		fmt.Printf("Error running git: %v\n", err)
-		os.Exit(1)
+		out = []byte("notag")
 	}
 
 	// Inject the version string into Go code that gets written to desired location.

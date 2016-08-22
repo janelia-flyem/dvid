@@ -39,11 +39,12 @@ const (
 var tc tomlConfig
 
 type tomlConfig struct {
-	Server  serverConfig
-	Email   emailConfig
-	Logging dvid.LogConfig
-	Store   map[storage.Alias]storeConfig
-	Backend map[dvid.DataSpecifier]backendConfig
+	Server     serverConfig
+	Email      emailConfig
+	Logging    dvid.LogConfig
+	Store      map[storage.Alias]storeConfig
+	Backend    map[dvid.DataSpecifier]backendConfig
+	Groupcache storage.GroupcacheConfig
 }
 
 func (c tomlConfig) Stores() (map[storage.Alias]dvid.StoreConfig, error) {
@@ -122,6 +123,7 @@ func LoadConfig(filename string) (*datastore.InstanceConfig, *dvid.LogConfig, *s
 
 	// Get all defined stores.
 	backend := new(storage.Backend)
+	backend.Groupcache = tc.Groupcache
 	var err error
 	backend.Stores, err = tc.Stores()
 	if err != nil {
