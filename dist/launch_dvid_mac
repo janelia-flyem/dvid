@@ -1,0 +1,4 @@
+export DVID_DIR=/path/to/untarred/dvid-distro
+export PATH=$DVID_DIR/bin:$PATH
+export DYLD_LIBRARY_PATH=$DVID_DIR/lib:$DYLD_LIBRARY_PATH
+nohup $DVID_DIR/bin/dvid -verbose server $DVID_DIR/dvid.toml >> /path/to/logs/dvid.log &

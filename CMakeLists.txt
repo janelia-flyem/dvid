@@ -59,6 +59,16 @@ else ()
     )
     set (CONSOLE_DIR ${BUILDEM_DIR}/src/dvid-console)
 
+    ExternalProject_Add(dvid-console-dist
+        PREFIX ${BUILDEM_DIR}
+        URL https://github.com/janelia-flyem/dvid-console/releases/download/v1.13.1/dvid-console-1.13.1.tar.gz
+        UPDATE_COMMAND ""
+        PATCH_COMMAND ""
+        CONFIGURE_COMMAND ""
+        BUILD_COMMAND ""
+        INSTALL_COMMAND ""
+    )
+
     # TODO: use hdf5 after writing Go interface for simple read & write.
     #include (hdf5)
 
@@ -268,6 +278,41 @@ else ()
         -v -tags '${DVID_BACKEND}' cmd/transfer/*.go
         WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
         COMMENT     "Compiling and installing dvid transfer command...")
+
+    # Create dvid-distro directory off buildem directory
+    set (DISTRO_DIR ${BUILDEM_DIR}/dvid-distro)
+    add_custom_target (mkdir-distro
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${DISTRO_DIR}
+        DEPENDS dvid-console-dist
+        COMMENT     "Creating dvid distro directory in ${BUILDEM_DIR} ...")  
+    
+    # Unpack dvid console web app 
+    add_custom_target (console-distro
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${DISTRO_DIR}
+        COMMAND ${CMAKE_COMMAND} -E tar zxf ${BUILDEM_DIR}/src/dvid-console-1.13.1.tar.gz
+        WORKING_DIRECTORY ${DISTRO_DIR}
+        DEPENDS mkdir-distro
+        COMMENT     "Creating dvid console in distro...")  
+
+    # Build binary distribution
+    if (${APPLE})
+        set (LAUNCH_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/dist/launch_dvid_mac")
+    else()
+        set (LAUNCH_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/dist/launch_dvid_linux")
+    endif()
+
+    add_custom_target (distro
+        COMMAND ${CMAKE_COMMAND} -E copy ${LAUNCH_SCRIPT} ${DISTRO_DIR}/launch_dvid
+        COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/dist/README ${DISTRO_DIR}/README
+        COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/config-simple.toml ${DISTRO_DIR}/config-simple.toml
+        COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/config-full.toml ${DISTRO_DIR}/config-full.toml
+        COMMAND ${CMAKE_COMMAND} -E copy_directory ${BUILDEM_BIN_DIR} ${DISTRO_DIR}/bin 
+        COMMAND ${CMAKE_COMMAND} -E copy_directory ${BUILDEM_LIB_DIR} ${DISTRO_DIR}/lib 
+        COMMAND ${CMAKE_COMMAND} -E tar cfz dvid-release.tar.gz dvid-distro
+        WORKING_DIRECTORY ${BUILDEM_DIR}
+        DEPENDS     console-distro
+        COMMENT     "Creating binary distro...")  
+
 
     ###############################################################################
 endif()
