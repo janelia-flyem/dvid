@@ -107,9 +107,6 @@ func (d *Data) modifyElements(ctx *datastore.VersionedCtx, delta annotation.Delt
 	mods := make(map[indexedLabel]int32)
 	for _, elemPos := range delta.Add {
 		if d.inROI(elemPos) {
-			if d.iROI != nil {
-				dvid.Infof("Received add pt %s, label %d and was considered in ROI\n", elemPos.Pos, elemPos.Label)
-			}
 			i := toIndexedLabel(elemPos)
 			mods[i]++
 			if elemPos.Kind.IsSynaptic() {

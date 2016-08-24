@@ -608,6 +608,10 @@ func TestSplitLabel(t *testing.T) {
 	testMerge := mergeJSON(`[4, 5]`)
 	testMerge.send(t, uuid, "bodies")
 
+	if err := datastore.BlockOnUpdating(uuid, "bodies"); err != nil {
+		t.Fatalf("Error blocking on bodies update: %v\n", err)
+	}
+
 	// Make sure we wind up with original body 4
 	reqStr = fmt.Sprintf("%snode/%s/%s/sparsevol/4", server.WebAPIPath, uuid, "bodies")
 	encoding = server.TestHTTP(t, "GET", reqStr, nil)
