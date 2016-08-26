@@ -238,6 +238,12 @@ func TestLabels(t *testing.T) {
 		t.Errorf("Got back incorrect AllSyn noroi threshold:\n%v\n", string(data))
 	}
 
+	url = fmt.Sprintf("%snode/%s/noroi/threshold/1000/AllSyn?offset=8&n=2", server.WebAPIPath, uuid)
+	data = server.TestHTTP(t, "GET", url, nil)
+	if string(data) != `[]` {
+		t.Errorf("Got back incorrect AllSyn noroi threshold:\n%v\n", string(data))
+	}
+
 	// Check if we have correct sequencing for ROI labelsz.
 	// ROI constitutes the inner eight 32^3 blocks.
 	// There are 16 PostSyn in each ROI dimension.
