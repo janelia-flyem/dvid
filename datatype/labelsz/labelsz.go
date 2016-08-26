@@ -116,10 +116,42 @@ GET <api URL>/node/<UUID>/<data name>/top/<N>/<index type>
 
 	[ { "Label": 188,  "PreSyn": 81 }, { "Label": 23, "PreSyn": 65 }, { "Label": 8137, "PreSyn": 58 } ]
 
+GET <api URL>/node/<UUID>/<data name>/threshold/<T>/<index type>[?<options>]
+
+	Returns a list of up to 10,000 labels per request that have # given element types >= T.
+	The "page" size is 10,000 labels so a call without any query string will return the 
+	largest labels with # given element types >= T.  If there are more than 10,000 labels,
+	you can access the next 10,000 by including "?offset=10001".
+
+	The index type may be any annotation element type ("PostSyn", "PreSyn", "Gap", "Note"),
+	the catch-all for synapses "AllSyn", or the number of voxels "Voxels".
+
+	For synapse indexing, the labelsz data instance must be synced with an annotations instance.
+	(future) For # voxel indexing, the labelsz data instance must be synced with a labelvol instance.
+
+    GET Query-string Options:
+
+    offset  The starting rank in the sorted list (in descending order) of labels with # given element types >= T.
+    n       Number of labels to return.
+
+	Example:
+
+	GET <api URL>/node/3f8c/labelrankings/threshold/10/PreSyn?offset=10001&n=3
+
+	Returns:
+
+	[ { "Label": 188,  "PreSyn": 38 }, { "Label": 23, "PreSyn": 38 }, { "Label": 8137, "PreSyn": 37 } ]
+
+	In the above example, the query returns the labels ranked #10,001 to #10,003 in the sorted list, in
+	descending order of # PreSyn >= 10.
 `
 
 var (
 	dtype *Type
+)
+
+const (
+	MaxLabelsReturned = 10000 // Maximum number of labels returned in JSON
 )
 
 func init() {
@@ -295,7 +327,6 @@ func (d *Data) GetTopElementType(ctx *datastore.VersionedCtx, n int, i IndexType
 	rank := 0
 	err = store.ProcessRange(ctx, begTKey, endTKey, nil, func(chunk *storage.Chunk) error {
 		idxType, sz, label, err := DecodeTypeSizeLabelTKey(chunk.K)
-		dvid.Infof("Got index type %s, sz %d, label %d\n", idxType, sz, label)
 		if err != nil {
 			return err
 		}
@@ -313,6 +344,62 @@ func (d *Data) GetTopElementType(ctx *datastore.VersionedCtx, n int, i IndexType
 		return nil, err
 	}
 	return lsz[:rank], nil
+}
+
+// GetLabelsByThreshold returns a sorted list of labels that meet the given minSize threshold.
+// We allow a maximum of MaxLabelsReturned returned labels and start with rank "offset".
+func (d *Data) GetLabelsByThreshold(ctx *datastore.VersionedCtx, i IndexType, minSize uint32, offset, num int) (LabelSizes, error) {
+	var nReturns int
+	if num == 0 {
+		nReturns = MaxLabelsReturned
+	} else if num < 0 {
+		return nil, fmt.Errorf("bad number of requested labels (%d)", num)
+	} else {
+		nReturns = num
+	}
+
+	store, err := d.GetOrderedKeyValueDB()
+	if err != nil {
+		return nil, err
+	}
+
+	// Setup key range for iterating through keys of this ElementType.
+	begTKey := NewTypeSizeLabelTKey(i, math.MaxUint32-1, 0)
+	endTKey := NewTypeSizeLabelTKey(i, 0, math.MaxUint64)
+
+	d.RLock()
+	defer d.RUnlock()
+
+	// Iterate through sorted size list until we get what we need.
+	shortCircuitErr := fmt.Errorf("Found data, aborting.")
+	lsz := make(LabelSizes, nReturns)
+	rank := 0
+	saved := 0
+	err = store.ProcessRange(ctx, begTKey, endTKey, nil, func(chunk *storage.Chunk) error {
+		idxType, sz, label, err := DecodeTypeSizeLabelTKey(chunk.K)
+		if err != nil {
+			return err
+		}
+		if idxType != i {
+			return fmt.Errorf("bad iteration of keys: expected index type %s, got %s", i, idxType)
+		}
+		if sz < minSize {
+			return shortCircuitErr
+		}
+		if rank >= offset && rank < offset+nReturns {
+			lsz[saved] = LabelSize{Label: label, Size: sz}
+			saved++
+			if saved == nReturns {
+				return shortCircuitErr
+			}
+		}
+		rank++
+		return nil
+	})
+	if err != shortCircuitErr && err != nil {
+		return nil, err
+	}
+	return lsz[:saved], nil
 }
 
 // GetByUUIDName returns a pointer to annotation data given a version (UUID) and data name.
@@ -476,6 +563,63 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			return
 		}
 		timedLog.Infof("HTTP %s: get top %d labels for index type %s: %s", r.Method, n, i, r.URL)
+
+	case "threshold":
+		if action != "get" {
+			server.BadRequest(w, r, "Only GET action is available on 'threshold' endpoint.")
+			return
+		}
+		if len(parts) < 6 {
+			server.BadRequest(w, r, "Must include threshold # and element type after 'threshold' endpoint.")
+			return
+		}
+		t, err := strconv.ParseUint(parts[4], 10, 32)
+		if err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+		minSize := uint32(t)
+		i := StringToIndexType(parts[5])
+		if i == UnknownIndex {
+			server.BadRequest(w, r, fmt.Errorf("unknown index type specified (%q)", parts[5]))
+			return
+		}
+
+		queryStrings := r.URL.Query()
+		var num, offset int
+		offsetStr := queryStrings.Get("offset")
+		if offsetStr != "" {
+			offset, err = strconv.Atoi(offsetStr)
+			if err != nil {
+				server.BadRequest(w, r, fmt.Errorf("bad offset specified in query string (%q)", offsetStr))
+				return
+			}
+		}
+		numStr := queryStrings.Get("n")
+		if numStr != "" {
+			num, err = strconv.Atoi(numStr)
+			if err != nil {
+				server.BadRequest(w, r, fmt.Errorf("bad num specified in query string (%q)", numStr))
+				return
+			}
+		}
+
+		labels, err := d.GetLabelsByThreshold(ctx, i, minSize, offset, num)
+		if err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+		w.Header().Set("Content-type", "application/json")
+		jsonBytes, err := json.Marshal(labels)
+		if err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+		if _, err := w.Write(jsonBytes); err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+		timedLog.Infof("HTTP %s: get %d labels for index type %s with threshold %d: %s", r.Method, num, i, t, r.URL)
 
 	default:
 		server.BadAPIRequest(w, r, d)

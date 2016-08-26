@@ -220,6 +220,24 @@ func TestLabels(t *testing.T) {
 		t.Errorf("Got back incorrect PostSyn noroi ranking:\n%v\n", string(data))
 	}
 
+	url = fmt.Sprintf("%snode/%s/noroi/top/3/AllSyn", server.WebAPIPath, uuid)
+	data = server.TestHTTP(t, "GET", url, nil)
+	if string(data) != `[{"Label":100,"Size":30799},{"Label":300,"Size":16128},{"Label":200,"Size":15632}]` {
+		t.Errorf("Got back incorrect AllSync noroi ranking:\n%v\n", string(data))
+	}
+
+	url = fmt.Sprintf("%snode/%s/noroi/threshold/15633/AllSyn", server.WebAPIPath, uuid)
+	data = server.TestHTTP(t, "GET", url, nil)
+	if string(data) != `[{"Label":100,"Size":30799},{"Label":300,"Size":16128}]` {
+		t.Errorf("Got back incorrect AllSyn noroi threshold:\n%v\n", string(data))
+	}
+
+	url = fmt.Sprintf("%snode/%s/noroi/threshold/1000/AllSyn?offset=1&n=2", server.WebAPIPath, uuid)
+	data = server.TestHTTP(t, "GET", url, nil)
+	if string(data) != `[{"Label":300,"Size":16128},{"Label":200,"Size":15632}]` {
+		t.Errorf("Got back incorrect AllSyn noroi threshold:\n%v\n", string(data))
+	}
+
 	// Check if we have correct sequencing for ROI labelsz.
 	// ROI constitutes the inner eight 32^3 blocks.
 	// There are 16 PostSyn in each ROI dimension.
@@ -333,6 +351,38 @@ func TestLabels(t *testing.T) {
 	data = server.TestHTTP(t, "GET", url, nil)
 	if string(data) != `[{"Label":200,"Size":15375},{"Label":100,"Size":14414}]` {
 		t.Errorf("Got back incorrect post-merge PostSyn noroi ranking:\n%v\n", string(data))
+	}
+
+	url = fmt.Sprintf("%snode/%s/noroi/top/3/AllSyn", server.WebAPIPath, uuid)
+	data = server.TestHTTP(t, "GET", url, nil)
+	if string(data) != `[{"Label":200,"Size":31759},{"Label":100,"Size":30798}]` {
+		t.Errorf("Got back incorrect post-merge AllSyn noroi ranking:\n%v\n", string(data))
+	}
+
+	// Check threshold endpoint
+
+	url = fmt.Sprintf("%snode/%s/withroi/threshold/2048/PostSyn", server.WebAPIPath, uuid)
+	data = server.TestHTTP(t, "GET", url, nil)
+	if string(data) != `[{"Label":200,"Size":2048}]` {
+		t.Errorf("Got back incorrect post-merge PostSyn withroi threshold:\n%v\n", string(data))
+	}
+
+	url = fmt.Sprintf("%snode/%s/noroi/threshold/16384/PreSyn", server.WebAPIPath, uuid)
+	data = server.TestHTTP(t, "GET", url, nil)
+	if string(data) != `[{"Label":100,"Size":16384},{"Label":200,"Size":16384}]` {
+		t.Errorf("Got back incorrect post-merge PreSyn noroi threshold:\n%v\n", string(data))
+	}
+
+	url = fmt.Sprintf("%snode/%s/noroi/threshold/15000/PostSyn", server.WebAPIPath, uuid)
+	data = server.TestHTTP(t, "GET", url, nil)
+	if string(data) != `[{"Label":200,"Size":15375}]` {
+		t.Errorf("Got back incorrect post-merge PostSyn noroi threshold:\n%v\n", string(data))
+	}
+
+	url = fmt.Sprintf("%snode/%s/noroi/threshold/0/PostSyn?offset=1&n=1", server.WebAPIPath, uuid)
+	data = server.TestHTTP(t, "GET", url, nil)
+	if string(data) != `[{"Label":100,"Size":14414}]` {
+		t.Errorf("Got back incorrect post-merge PostSyn noroi threshold with offset/n:\n%v\n", string(data))
 	}
 
 	// Create the sparsevol encoding for split area with label 100 -> 150.
