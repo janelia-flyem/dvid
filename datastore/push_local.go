@@ -95,7 +95,7 @@ func PushRepo(uuid dvid.UUID, target string, config dvid.Config) error {
 	dvid.Debugf("Remote sent list of %d versions to send\n", len(versions))
 
 	// For each data instance, send the data with optional datatype-specific filtering.
-	ps := &PushSession{s, transmit, storage.FilterSpec(filter), versions}
+	ps := &PushSession{storage.FilterSpec(filter), versions, s, transmit}
 	for _, d := range txRepo.data {
 		dvid.Infof("Sending instance %q data to %q\n", d.DataName(), target)
 		if err := d.PushData(ps); err != nil {
@@ -116,15 +116,55 @@ func Pull(repo Repo, target string, config dvid.Config) error {
 
 // PushSession encapsulates parameters necessary for DVID-to-DVID push/pull processing.
 type PushSession struct {
-	s  rpc.Session
-	t  rpc.Transmit
-	fs storage.FilterSpec
-	v  map[dvid.VersionID]struct{}
+	Filter   storage.FilterSpec
+	Versions map[dvid.VersionID]struct{}
+
+	s rpc.Session
+	t rpc.Transmit
+}
+
+// StartInstancePush initiates a data instance push.  After some number of Send
+// calls, the EndInstancePush must be called.
+func (p *PushSession) StartInstancePush(d dvid.Data) error {
+	dmsg := DataTxInit{
+		Session:    p.s.ID(),
+		DataName:   d.DataName(),
+		TypeName:   d.TypeName(),
+		InstanceID: d.InstanceID(),
+	}
+	if _, err := p.s.Call()(StartDataMsg, dmsg); err != nil {
+		return fmt.Errorf("couldn't send data instance %q start: %v\n", d.DataName(), err)
+	}
+	return nil
+}
+
+// SendKV sends a key-value pair.  The key-values may be buffered before sending
+// for efficiency of transmission.
+func (p *PushSession) SendKV(kv *storage.KeyValue) error {
+	kvmsg := KVMessage{Session: p.s.ID(), KV: *kv, Terminate: false}
+	if _, err := p.s.Call()(PutKVMsg, kvmsg); err != nil {
+		return fmt.Errorf("error sending key-value to remote: %v", err)
+	}
+	return nil
+}
+
+// EndInstancePush terminates a data instance push.
+func (p *PushSession) EndInstancePush() error {
+	endmsg := KVMessage{Session: p.s.ID(), Terminate: true}
+	if _, err := p.s.Call()(PutKVMsg, endmsg); err != nil {
+		return fmt.Errorf("error sending terminate data to remote: %v", err)
+	}
+	return nil
 }
 
 // PushData transfers all key-value pairs pertinent to the given data instance.
 // Each datatype can implement filters that can restrict the transmitted key-value pairs
-// based on the given FilterSpec.
+// based on the given FilterSpec.  Note that because of the generality of this function,
+// a particular datatype implementation could be much more efficient when implementing
+// filtering.  For example, the imageblk datatype could scan its key-values using the ROI
+// to generate keys (since imageblk keys will likely be a vast superset of ROI spans),
+// while this generic routine will scan every key-value pair for a data instance and
+// query the ROI to see if this key is ok to send.
 func PushData(d dvid.Data, p *PushSession) error {
 	// We should be able to get the backing store (only ordered kv for now)
 	storer, ok := d.(storage.Accessor)
@@ -141,7 +181,7 @@ func PushData(d dvid.Data, p *PushSession) error {
 	filterer, ok := d.(storage.Filterer)
 	if ok {
 		var err error
-		filter, err = filterer.NewFilter(p.fs)
+		filter, err = filterer.NewFilter(p.Filter)
 		if err != nil {
 			return err
 		}
@@ -149,24 +189,18 @@ func PushData(d dvid.Data, p *PushSession) error {
 
 	// pick any version because flatten transmit will only have one version, and all or branch transmit will
 	// be looking at all versions anyway.
-	if len(p.v) == 0 {
+	if len(p.Versions) == 0 {
 		return fmt.Errorf("need at least one version to send")
 	}
 	var v dvid.VersionID
-	for v = range p.v {
+	for v = range p.Versions {
 		break
 	}
 	ctx := NewVersionedCtx(d, v)
 
 	// Send the initial data instance start message
-	dmsg := DataTxInit{
-		Session:    p.s.ID(),
-		DataName:   d.DataName(),
-		TypeName:   d.TypeName(),
-		InstanceID: d.InstanceID(),
-	}
-	if _, err := p.s.Call()(StartDataMsg, dmsg); err != nil {
-		dvid.Errorf("couldn't send data instance start: %v\n", err)
+	if err := p.StartInstancePush(d); err != nil {
+		return err
 	}
 
 	// Send this instance's key-value pairs
@@ -183,9 +217,8 @@ func PushData(d dvid.Data, p *PushSession) error {
 			for {
 				tkv := <-ch
 				if tkv == nil {
-					endmsg := KVMessage{Session: p.s.ID(), Terminate: true}
-					if _, err := p.s.Call()(PutKVMsg, endmsg); err != nil {
-						dvid.Errorf("couldn't send data instance termination: %v\n", err)
+					if err := p.EndInstancePush(); err != nil {
+						dvid.Errorf("Bad data %q termination: %v\n", d.DataName(), err)
 					}
 					wg.Done()
 					dvid.Infof("Sent %d %q key-value pairs (%s, out of %d kv pairs, %s) [flattened]\n",
@@ -211,9 +244,8 @@ func PushData(d dvid.Data, p *PushSession) error {
 					K: ctx.ConstructKey(tkv.K),
 					V: tkv.V,
 				}
-				kvmsg := KVMessage{Session: p.s.ID(), KV: kv, Terminate: false}
-				if _, err := p.s.Call()(PutKVMsg, kvmsg); err != nil {
-					dvid.Errorf("Error sending voxel block to remote: %v", err)
+				if err := p.SendKV(&kv); err != nil {
+					dvid.Errorf("Bad data %q send KV: %v", d.DataName(), err)
 				}
 			}
 		}()
@@ -237,16 +269,15 @@ func PushData(d dvid.Data, p *PushSession) error {
 			for {
 				kv := <-ch
 				if kv == nil {
-					endmsg := KVMessage{Session: p.s.ID(), Terminate: true}
-					if _, err := p.s.Call()(PutKVMsg, endmsg); err != nil {
-						dvid.Errorf("couldn't send data instance termination: %v\n", err)
+					if err := p.EndInstancePush(); err != nil {
+						dvid.Errorf("Bad data %q termination: %v\n", d.DataName(), err)
 					}
 					wg.Done()
 					dvid.Infof("Sent %d %q key-value pairs (%s, out of %d kv pairs, %s)\n",
 						kvSent, d.DataName(), humanize.Bytes(bytesSent), kvTotal, humanize.Bytes(bytesTotal))
 					return
 				}
-				if !ctx.ValidKV(kv, p.v) {
+				if !ctx.ValidKV(kv, p.Versions) {
 					continue
 				}
 				kvTotal++
@@ -269,9 +300,8 @@ func PushData(d dvid.Data, p *PushSession) error {
 				}
 				kvSent++
 				bytesSent += curBytes
-				kvmsg := KVMessage{Session: p.s.ID(), KV: *kv, Terminate: false}
-				if _, err := p.s.Call()(PutKVMsg, kvmsg); err != nil {
-					dvid.Errorf("Error pushing data %q to remote: %v", d.DataName(), err)
+				if err := p.SendKV(kv); err != nil {
+					dvid.Errorf("Bad data %q send KV: %v", d.DataName(), err)
 				}
 			}
 		}()
@@ -294,8 +324,6 @@ const (
 	StartDataMsg = "datastore.startData"
 	PutKVMsg     = "datastore.putKV"
 )
-
-const MaxBatchSize = 1000
 
 func init() {
 	rpc.RegisterSessionMaker(pushMessageID, rpc.NewSessionHandlerFunc(makePushSession))
@@ -454,15 +482,23 @@ func (p *pusher) readRepo(m *repoTxMsg) (map[dvid.VersionID]struct{}, error) {
 		return nil, err
 	}
 
-	// For all data instances, see if it needs to adjust
-	// properties based on versions.
+	// After getting remote repo, adjust data instances for local settings.
 	for _, d := range p.repo.data {
+		// see if it needs to adjust versions.
 		dv, needsUpdate := d.(VersionRemapper)
 		if needsUpdate {
 			if err := dv.RemapVersions(p.versionMap); err != nil {
 				return nil, err
 			}
 		}
+
+		// check if we have an assigned store for this data instance.
+		store, err := storage.GetAssignedStore(d.DataName(), d.RootUUID(), d.TypeName())
+		if err != nil {
+			return nil, err
+		}
+		d.SetBackendStore(store)
+		dvid.Debugf("Assigning as default store of data instance %q @ %s: %s\n", d.DataName(), d.RootUUID(), store)
 	}
 
 	var versions map[dvid.VersionID]struct{}
