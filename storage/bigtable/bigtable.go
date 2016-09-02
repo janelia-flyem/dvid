@@ -630,7 +630,7 @@ func (db *BigTable) RawRangeQuery(kStart, kEnd storage.Key, keysOnly bool, out c
 
 			verKey, err := decodeKey(readItem.Column)
 			if err != nil {
-				fmt.Errorf("Error in RawRangeQuery(): %v\n", err)
+				dvid.Errorf("Error in RawRangeQuery(): %v\n", err)
 				return false
 			}
 

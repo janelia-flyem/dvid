@@ -131,7 +131,7 @@ func (c Config) GetBool(key string) (value, found bool, err error) {
 	case "true", "1":
 		value = true
 	default:
-		err = fmt.Errorf("Cannot parse '%s' as a boolean.  Use 'true', 'false', '0', or '1'.")
+		err = fmt.Errorf("Cannot parse '%s' as a boolean.  Use 'true', 'false', '0', or '1'.", s)
 	}
 	return
 }

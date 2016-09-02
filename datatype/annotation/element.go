@@ -274,8 +274,8 @@ func (e ElementType) String() string {
 	case Note:
 		return "Note"
 	default:
+		return fmt.Sprintf("Unknown element type: %d", e)
 	}
-	return fmt.Sprintf("Unknown element type %q", e)
 }
 
 func (e ElementType) MarshalJSON() ([]byte, error) {
@@ -291,7 +291,7 @@ func (e ElementType) MarshalJSON() ([]byte, error) {
 	case Note:
 		return []byte(`"Note"`), nil
 	default:
-		return nil, fmt.Errorf("Unknown element type: %e", e)
+		return nil, fmt.Errorf("Unknown element type: %s", e)
 	}
 }
 
@@ -1654,7 +1654,6 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 		return fmt.Errorf("Unknown command.  Data type '%s' [%s] does not support '%s' command.",
 			d.DataName(), d.TypeName(), request.TypeCommand())
 	}
-	return nil
 }
 
 type Bounds struct {

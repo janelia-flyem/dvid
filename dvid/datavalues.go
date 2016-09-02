@@ -163,7 +163,7 @@ func (values DataValues) ValueDataType() (DataType, error) {
 	dataType := values[0].T
 	for i := 1; i < len(values); i++ {
 		if values[i].T != dataType {
-			return 0, fmt.Errorf("Data format '%s' has varying value data types within an element.", values)
+			return 0, fmt.Errorf("Data format has varying value data types within an element: %v", values)
 		}
 	}
 	return dataType, nil

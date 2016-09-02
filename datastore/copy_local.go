@@ -133,7 +133,7 @@ func MigrateInstance(uuid dvid.UUID, source dvid.InstanceName, oldStore dvid.Sto
 	// Get the old store.
 	oldKV, ok := oldStore.(storage.OrderedKeyValueDB)
 	if !ok {
-		return fmt.Errorf("unable to migrate data %q from store %s which isn't ordered kv store", source)
+		return fmt.Errorf("unable to migrate data %q from store %s which isn't ordered kv store", source, storer)
 	}
 
 	// Abort if the two stores are the same.

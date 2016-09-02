@@ -582,7 +582,7 @@ func (d *Data) ModifyConfig(config dvid.Config) error {
 			if len(parts) == 2 && parts[0] == "gzip" {
 				level, err := strconv.Atoi(parts[1])
 				if err != nil {
-					return fmt.Errorf("Unable to parse gzip compression level ('%d').  Should be 'gzip:<level>'.", parts[1])
+					return fmt.Errorf("Unable to parse gzip compression level (%q).  Should be 'gzip:<level>'.", parts[1])
 				}
 				d.compression, _ = dvid.NewCompression(dvid.Gzip, dvid.CompressionLevel(level))
 			} else {

@@ -44,7 +44,7 @@ type Extents struct {
 }
 
 // Duplicate creates a duplicate Extents.
-func (ext Extents) Duplicate() Extents {
+func (ext *Extents) Duplicate() Extents {
 	var dup Extents
 	dup.MinPoint = ext.MinPoint.Duplicate()
 	dup.MaxPoint = ext.MaxPoint.Duplicate()

@@ -92,7 +92,7 @@ func SplitStop(iv dvid.InstanceVersion, op DeltaSplitEnd) {
 
 type mergeCache struct {
 	sync.RWMutex
-	m map[dvid.InstanceVersion]Mapping
+	m map[dvid.InstanceVersion]*Mapping
 }
 
 // Add adds a merge operation to the given InstanceVersion's cache.
@@ -101,21 +101,21 @@ func (mc *mergeCache) Add(iv dvid.InstanceVersion, op MergeOp) error {
 	defer mc.Unlock()
 
 	if mc.m == nil {
-		mc.m = make(map[dvid.InstanceVersion]Mapping)
+		mc.m = make(map[dvid.InstanceVersion]*Mapping)
 	}
 	mapping, found := mc.m[iv]
 	if !found {
-		mapping = Mapping{
+		mapping = &Mapping{
 			f: make(map[uint64]uint64, len(op.Merged)),
 			r: make(map[uint64]Set),
 		}
+		mc.m[iv] = mapping
 	}
 	for merged := range op.Merged {
 		if err := mapping.set(merged, op.Target); err != nil {
 			return err
 		}
 	}
-	mc.m[iv] = mapping
 	return nil
 }
 
@@ -133,7 +133,7 @@ func (mc *mergeCache) LabelMap(iv dvid.InstanceVersion) *Mapping {
 		if len(mapping.f) == 0 {
 			return nil
 		}
-		return &mapping
+		return mapping
 	}
 	return nil
 }
@@ -158,7 +158,7 @@ type Mapping struct {
 
 // ConstituentLabels returns a set of labels that will be mapped to the given label.
 // The set will always include the given label.
-func (m Mapping) ConstituentLabels(final uint64) Set {
+func (m *Mapping) ConstituentLabels(final uint64) Set {
 	m.RLock()
 	defer m.RUnlock()
 
@@ -193,7 +193,7 @@ func (m Mapping) ConstituentLabels(final uint64) Set {
 
 // FinalLabel follows mappings from a start label until
 // a final mapped label is reached.
-func (m Mapping) FinalLabel(start uint64) (uint64, bool) {
+func (m *Mapping) FinalLabel(start uint64) (uint64, bool) {
 	m.RLock()
 	defer m.RUnlock()
 
@@ -214,7 +214,7 @@ func (m Mapping) FinalLabel(start uint64) (uint64, bool) {
 }
 
 // Get returns the mapping or false if no mapping exists.
-func (m Mapping) Get(label uint64) (uint64, bool) {
+func (m *Mapping) Get(label uint64) (uint64, bool) {
 	m.RLock()
 	defer m.RUnlock()
 

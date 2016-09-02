@@ -377,7 +377,6 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 		return fmt.Errorf("Unknown command.  Data '%s' [%s] does not support '%s' command.",
 			d.DataName(), d.TypeName(), request.TypeCommand())
 	}
-	return nil
 }
 
 // ServeHTTP handles all incoming HTTP requests for this data.

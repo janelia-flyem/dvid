@@ -216,7 +216,7 @@ func NewValueCache(size int) *ValueCache {
 // Get returns the cached value of a key.  On a miss, it uses the passed PopulateFunc
 // to retrieve the key and stores it in the cache.  If nil is passed for the PopulateFunc,
 // the function just returns a "false" with no value.
-func (vc ValueCache) Get(key []byte, pf PopulateFunc) ([]byte, bool, error) {
+func (vc *ValueCache) Get(key []byte, pf PopulateFunc) ([]byte, bool, error) {
 	vc.Lock()
 	data, found := vc.deserializedBlocks[string(key)]
 	if !found {

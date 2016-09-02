@@ -1133,13 +1133,6 @@ func (d *Data) DoRPC(req datastore.Request, reply *datastore.Response) error {
 		return fmt.Errorf("Unknown command.  Data type '%s' [%s] does not support '%s' command.",
 			d.DataName(), d.TypeName(), req.TypeCommand())
 	}
-	return nil
-}
-
-type Bounds struct {
-	VoxelBounds *dvid.Bounds
-	BlockBounds *dvid.Bounds
-	Exact       bool // All RLEs must respect the voxel bounds.  If false, just screen on blocks.
 }
 
 func colorImage(labels *dvid.Image) (image.Image, error) {

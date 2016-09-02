@@ -213,7 +213,7 @@ func TestROIRequests(t *testing.T) {
 
 	// Make sure the two are the same.
 	if !reflect.DeepEqual(inclusions, expectedInclusions) {
-		t.Errorf("Bad ptquery results\nOriginal:\n%s\nReturned:\n%s\n", expectedInclusions, inclusions)
+		t.Errorf("Bad ptquery results\nOriginal:\n%v\nReturned:\n%v\n", expectedInclusions, inclusions)
 	}
 
 	// Test ROI mask out of range -- should be all 0.
@@ -440,7 +440,7 @@ func TestROIPartition(t *testing.T) {
 	w := httptest.NewRecorder()
 	data.ServeHTTP(uuid, ctx, w, req)
 	if w.Code != http.StatusOK {
-		t.Errorf("Bad server response roi POST, status %s, for roi %q\n", w.Code, data.DataName())
+		t.Errorf("Bad server response roi POST, status %d, for roi %q\n", w.Code, data.DataName())
 	}
 
 	// Request the standard subvolume partitioning
@@ -453,7 +453,7 @@ func TestROIPartition(t *testing.T) {
 	w = httptest.NewRecorder()
 	data.ServeHTTP(uuid, ctx, w, req)
 	if w.Code != http.StatusOK {
-		t.Errorf("Bad server response roi GET, status %s, for roi %q\n", w.Code, data.DataName())
+		t.Errorf("Bad server response roi GET, status %d, for roi %q\n", w.Code, data.DataName())
 	}
 	var subvolJSON, expectedJSON interface{}
 	response := w.Body.Bytes()
@@ -494,7 +494,7 @@ func TestROISimplePartition(t *testing.T) {
 	w := httptest.NewRecorder()
 	data.ServeHTTP(uuid, ctx, w, req)
 	if w.Code != http.StatusOK {
-		t.Errorf("Bad server response roi POST, status %s, for roi %q\n", w.Code, data.DataName())
+		t.Errorf("Bad server response roi POST, status %d, for roi %q\n", w.Code, data.DataName())
 	}
 
 	// Request the standard subvolume partitioning
@@ -507,7 +507,7 @@ func TestROISimplePartition(t *testing.T) {
 	w = httptest.NewRecorder()
 	data.ServeHTTP(uuid, ctx, w, req)
 	if w.Code != http.StatusOK {
-		t.Errorf("Bad server response roi GET, status %s, for roi %q\n", w.Code, data.DataName())
+		t.Errorf("Bad server response roi GET, status %d, for roi %q\n", w.Code, data.DataName())
 	}
 	var subvolJSON, expectedJSON interface{}
 	response := w.Body.Bytes()

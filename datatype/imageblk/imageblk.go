@@ -58,8 +58,8 @@ $ dvid repo <UUID> new imageblk <data name> <settings...>
 
     Configuration Settings (case-insensitive keys)
 
-    BlockSize      Size in pixels  (default: %s)
-    VoxelSize      Resolution of voxels (default: %s)
+    BlockSize      Size in pixels  (default: %d)
+    VoxelSize      Resolution of voxels (default: %f)
     VoxelUnits     Resolution units (default: "nanometers")
     Background     Integer value that signifies background in any element (default: 0)
 
@@ -415,7 +415,7 @@ func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.
 }
 
 func (dtype *Type) Help() string {
-	return fmt.Sprintf(HelpMessage, DefaultBlockSize)
+	return fmt.Sprintf(HelpMessage, DefaultBlockSize, DefaultRes)
 }
 
 type bulkLoadInfo struct {

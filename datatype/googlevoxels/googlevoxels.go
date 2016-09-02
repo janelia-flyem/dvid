@@ -379,7 +379,6 @@ func (dtype *Type) Do(cmd datastore.Request, reply *datastore.Response) error {
 	default:
 		return fmt.Errorf("unknown command for type %s", dtype.GetTypeName())
 	}
-	return nil
 }
 
 // log2 returns the power of 2 necessary to cover the given value.
@@ -1284,7 +1283,7 @@ func (d *Data) handleTileReq(w http.ResponseWriter, r *http.Request, parts []str
 
 // DoRPC handles the 'generate' command.
 func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error {
-	return fmt.Errorf("Unknown command.  Data instance %q does not support any commands.  See API help.")
+	return fmt.Errorf("Unknown command.  Data instance %q does not support any commands.  See API help.", d.DataName())
 }
 
 // ServeHTTP handles all incoming HTTP requests for this data.

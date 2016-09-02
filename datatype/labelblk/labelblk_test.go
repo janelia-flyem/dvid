@@ -239,7 +239,6 @@ type labelVol struct {
 
 	nx, ny, nz int32
 
-	sync.RWMutex
 	startLabel uint64
 }
 
@@ -318,7 +317,7 @@ func (vol *labelVol) postLabelVolume(t *testing.T, uuid dvid.UUID, compression, 
 	server.TestHTTP(t, "POST", apiStr, bytes.NewBuffer(data))
 }
 
-func (vol labelVol) getLabelVolume(t *testing.T, uuid dvid.UUID, compression, roi string) []byte {
+func (vol *labelVol) getLabelVolume(t *testing.T, uuid dvid.UUID, compression, roi string) []byte {
 	apiStr := fmt.Sprintf("%snode/%s/%s/raw/0_1_2/%d_%d_%d/%d_%d_%d", server.WebAPIPath,
 		uuid, vol.name, vol.nx, vol.ny, vol.nz, vol.offset[0], vol.offset[1], vol.offset[2])
 	query := true
@@ -367,7 +366,7 @@ func (vol labelVol) getLabelVolume(t *testing.T, uuid dvid.UUID, compression, ro
 	return data
 }
 
-func (vol labelVol) testGetLabelVolume(t *testing.T, uuid dvid.UUID, compression, roi string) []byte {
+func (vol *labelVol) testGetLabelVolume(t *testing.T, uuid dvid.UUID, compression, roi string) []byte {
 	data := vol.getLabelVolume(t, uuid, compression, roi)
 
 	// run test to make sure it's same volume as we posted.
@@ -390,7 +389,7 @@ func (vol labelVol) testGetLabelVolume(t *testing.T, uuid dvid.UUID, compression
 	return data
 }
 
-func (vol labelVol) testBlock(t *testing.T, bx, by, bz int32, data []byte) {
+func (vol *labelVol) testBlock(t *testing.T, bx, by, bz int32, data []byte) {
 	// Get offset of this block in label volume
 	ox := bx*32 - vol.offset[0]
 	oy := by*32 - vol.offset[1]
@@ -417,7 +416,7 @@ func (vol labelVol) testBlock(t *testing.T, bx, by, bz int32, data []byte) {
 	}
 }
 
-func (vol labelVol) testBlocks(t *testing.T, uuid dvid.UUID, compression, roi string) {
+func (vol *labelVol) testBlocks(t *testing.T, uuid dvid.UUID, compression, roi string) {
 	span := 5
 	apiStr := fmt.Sprintf("%snode/%s/%s/blocks/%d_%d_%d/%d_%d_%d", server.WebAPIPath,
 		uuid, vol.name, 160, 32, 32, vol.offset[0], vol.offset[1], vol.offset[2])
@@ -469,7 +468,7 @@ func (vol labelVol) testBlocks(t *testing.T, uuid dvid.UUID, compression, roi st
 
 // the label in the test volume should just be the start label + voxel index + 1 when iterating in ZYX order.
 // The passed (x,y,z) should be world coordinates, not relative to the volume offset.
-func (vol labelVol) label(x, y, z int32) uint64 {
+func (vol *labelVol) label(x, y, z int32) uint64 {
 	if x < vol.offset[0] || x >= vol.offset[0]+vol.size[0]*vol.blockSize[0] {
 		return 0
 	}
