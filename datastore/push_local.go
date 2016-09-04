@@ -466,6 +466,9 @@ func (p *pusher) readRepo(m *repoTxMsg) (map[dvid.VersionID]struct{}, error) {
 	if err := p.repo.GobDecode(m.Repo); err != nil {
 		return nil, err
 	}
+
+	// TODO: Check to see if the transmitted repo is in current metadata.
+
 	p.uuid = m.UUID
 	remoteV, err := p.repo.versionFromUUID(m.UUID) // do this before we remap the repo's IDs
 	if err != nil {

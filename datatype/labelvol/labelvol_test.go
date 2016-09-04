@@ -25,19 +25,26 @@ import (
 )
 
 var (
-	labelsT datastore.TypeService
-	testMu  sync.Mutex
+	labelsT   datastore.TypeService
+	labelvolT datastore.TypeService
+	testMu    sync.Mutex
 )
 
 // Sets package-level testRepo and TestVersionID
 func initTestRepo() (dvid.UUID, dvid.VersionID) {
 	testMu.Lock()
 	defer testMu.Unlock()
+	var err error
 	if labelsT == nil {
-		var err error
 		labelsT, err = datastore.TypeServiceByName("labelblk")
 		if err != nil {
 			log.Fatalf("Can't get labelblk type: %v\n", err)
+		}
+	}
+	if labelvolT == nil {
+		labelvolT, err = datastore.TypeServiceByName("labelvol")
+		if err != nil {
+			log.Fatalf("Can't get labelvol type: %v\n", err)
 		}
 	}
 	return datastore.NewTestRepo()

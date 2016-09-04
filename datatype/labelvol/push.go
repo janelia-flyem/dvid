@@ -35,6 +35,7 @@ func (d *Data) NewFilter(fs storage.FilterSpec) (storage.Filter, error) {
 		dvid.Debugf("No ROI found so using generic data push for data %q.\n", d.DataName())
 		return nil, nil
 	}
+	filter.it = roiIterator
 
 	return filter, nil
 }
@@ -49,6 +50,13 @@ type Filter struct {
 }
 
 func (f *Filter) Check(tkv *storage.TKeyValue) (skip bool, err error) {
+	if f.Data == nil {
+		return false, fmt.Errorf("bad filter %q: no data", f.fs)
+	}
+	if f.it == nil {
+		return true, nil
+	}
+
 	// Only filter label block RLE kv pairs.
 	class, err := tkv.K.Class()
 	if err != nil {
