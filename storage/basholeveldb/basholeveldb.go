@@ -855,7 +855,7 @@ func (db *LevelDB) ProcessRange(ctx storage.Context, kStart, kEnd storage.TKey, 
 // retrieval like DVID-to-DVID communication and should not be used by data type
 // implementations if possible.  A nil is sent down the channel when the
 // range is complete.
-func (db *LevelDB) RawRangeQuery(kStart, kEnd storage.Key, keysOnly bool, out chan *storage.KeyValue) error {
+func (db *LevelDB) RawRangeQuery(kStart, kEnd storage.Key, keysOnly bool, out chan *storage.KeyValue, cancel <-chan struct{}) error {
 	if db == nil {
 		return fmt.Errorf("Can't call RawRangeQuery on nil LevelDB")
 	}
@@ -882,7 +882,12 @@ func (db *LevelDB) RawRangeQuery(kStart, kEnd storage.Key, keysOnly bool, out ch
 				break
 			}
 			kv := storage.KeyValue{itKey, itValue}
-			out <- &kv
+			select {
+				case out <- &kv:
+				case <-cancel:
+				return nil
+			}
+			//out <- &kv
 			it.Next()
 		} else {
 			break
@@ -1344,6 +1349,20 @@ func (batch *goBatch) Close() {
 	batch.WriteBatch.Close()
 }
 **/
+
+// ---- SizeViewer interface ------
+
+func (db *LevelDB) GetApproximateSizes(ranges []storage.KeyRange) ([]uint64, error) {
+	lr := make([]levigo.Range, len(ranges))
+	for i, kr := range ranges {
+		lr[i] = levigo.Range{
+			Start: []byte(kr.Start),
+			Limit: []byte(kr.OpenEnd),
+		}
+	}
+	sizes := db.ldb.GetApproximateSizes(lr)
+	return sizes, nil
+}
 
 // --- Options ----
 

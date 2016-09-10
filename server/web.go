@@ -88,6 +88,19 @@ const WebHelp = `
 
 	Returns a JSON of server load statistics.
 
+ GET  /api/storage
+
+ 	Returns a JSON object for each backend store where the key is the backend store name.
+	The store object has local instance ID keys with the following object value:
+
+    {
+		"Name": "grayscale",
+		"DataType": "uint8blk",
+		"DataUUID": ...,
+		"RootUUID": ...,  // this is the UUID of this data's root
+		"Bytes": ...
+	}
+
  GET  /api/server/info
 
 	Returns JSON for server properties.
@@ -455,6 +468,8 @@ func initRoutes() {
 	mainMux.Get("/api/help/", helpHandler)
 	mainMux.Get("/api/help/:typename", typehelpHandler)
 
+	mainMux.Get("/api/storage", serverStorageHandler)
+
 	mainMux.Get("/api/server/info", serverInfoHandler)
 	mainMux.Get("/api/server/info/", serverInfoHandler)
 	mainMux.Get("/api/server/types", serverTypesHandler)
@@ -815,6 +830,16 @@ func loadHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, string(m))
+}
+
+func serverStorageHandler(w http.ResponseWriter, r *http.Request) {
+	jsonStr, err := datastore.GetStorageBreakdown()
+	if err != nil {
+		BadRequest(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, jsonStr)
 }
 
 func serverInfoHandler(w http.ResponseWriter, r *http.Request) {

@@ -378,7 +378,7 @@ func copyData(oldKV, newKV storage.OrderedKeyValueDB, d1, d2 dvid.Data, uuid dvi
 		}()
 
 		begKey, endKey := srcCtx.KeyRange()
-		if err = oldKV.RawRangeQuery(begKey, endKey, keysOnly, ch); err != nil {
+		if err = oldKV.RawRangeQuery(begKey, endKey, keysOnly, ch, nil); err != nil {
 			return fmt.Errorf("push voxels %q range query: %v", d1.DataName(), err)
 		}
 	}

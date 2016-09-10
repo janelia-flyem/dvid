@@ -609,7 +609,7 @@ func (d *Data) LoadMutable(root dvid.VersionID, storedVersion, expectedVersion u
 		return false, err
 	}
 	keysOnly := false
-	if err = store.RawRangeQuery(minKey, maxKey, keysOnly, ch); err != nil {
+	if err = store.RawRangeQuery(minKey, maxKey, keysOnly, ch, nil); err != nil {
 		return false, err
 	}
 	wg.Wait()

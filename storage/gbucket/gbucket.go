@@ -554,7 +554,7 @@ func (db *GBucket) ProcessRange(ctx storage.Context, TkBeg, TkEnd storage.TKey, 
 // retrieval like DVID-to-DVID communication and should not be used by data type
 // implementations if possible because each version's key-value pairs are sent
 // without filtering by the current version and its ancestor graph.
-func (db *GBucket) RawRangeQuery(kStart, kEnd storage.Key, keysOnly bool, out chan *storage.KeyValue) error {
+func (db *GBucket) RawRangeQuery(kStart, kEnd storage.Key, keysOnly bool, out chan *storage.KeyValue, cancel <-chan struct{}) error {
 	if db == nil {
 		return fmt.Errorf("Can't call RawRangeQuery() on nil Google bucket")
 	}
@@ -582,6 +582,14 @@ func (db *GBucket) RawRangeQuery(kStart, kEnd storage.Key, keysOnly bool, out ch
 
 	// return keyvalues
 	for _, key := range keys {
+		if cancel != nil {
+			select {
+			case <-cancel:
+				out <- nil
+				return nil
+			default:
+			}
+		}
 		val := kvmap[string(key)]
 		if val == nil {
 			return fmt.Errorf("Could not retrieve value")

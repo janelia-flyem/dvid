@@ -597,7 +597,7 @@ func (db *BigTable) ProcessRange(ctx storage.Context, TkBeg, TkEnd storage.TKey,
 // implementations if possible because each version's key-value pairs are sent
 // without filtering by the current version and its ancestor graph.  A nil is sent
 // down the channel when the range is complete.
-func (db *BigTable) RawRangeQuery(kStart, kEnd storage.Key, keysOnly bool, out chan *storage.KeyValue) error {
+func (db *BigTable) RawRangeQuery(kStart, kEnd storage.Key, keysOnly bool, out chan *storage.KeyValue, cancel <-chan struct{}) error {
 	if db == nil {
 		return fmt.Errorf("Can't call RawRangeQuery() on nil BigTable")
 	}
@@ -617,6 +617,14 @@ func (db *BigTable) RawRangeQuery(kStart, kEnd storage.Key, keysOnly bool, out c
 	rr := api.NewRange(encodeKey(unvKeyBeg), encodeKey(unvKeyEnd))
 
 	err = tbl.ReadRows(db.ctx, rr, func(r api.Row) bool {
+		if cancel != nil {
+			select {
+			case <-cancel:
+				out <- nil
+				return nil
+			default:
+			}
+		}
 
 		unvKeyRow, err := decodeKey(r.Key())
 		if err != nil {

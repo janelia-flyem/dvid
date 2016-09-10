@@ -392,7 +392,7 @@ func (db *KVAutobus) deleteRange(kStart, kEnd storage.Key) error {
 // retrieval like DVID-to-DVID communication and should not be used by data type
 // implementations if possible.  A nil is sent down the channel when the
 // range is complete.
-func (db *KVAutobus) RawRangeQuery(kStart, kEnd storage.Key, keysOnly bool, out chan *storage.KeyValue) error {
+func (db *KVAutobus) RawRangeQuery(kStart, kEnd storage.Key, keysOnly bool, out chan *storage.KeyValue, cancel <-chan struct{}) error {
 	var value []byte
 	if keysOnly {
 		keys, err := db.getKeyRange(kStart, kEnd)

@@ -61,6 +61,12 @@ import (
 // type-specific key component.
 type Key []byte
 
+// KeyRange is a range of keys that is closed at the beginning and open at the end.
+type KeyRange struct {
+	Start   Key // Range includes this Key.
+	OpenEnd Key // Range extend to but does not include this Key.
+}
+
 // TKey is the type-specific component of a key.  Each data instance will insert
 // key components into a class of TKey.
 type TKey []byte
@@ -381,8 +387,9 @@ type OrderedKeyValueGetter interface {
 	// retrieval like DVID-to-DVID communication and should not be used by data type
 	// implementations if possible because each version's key-value pairs are sent
 	// without filtering by the current version and its ancestor graph.  A nil is sent
-	// down the channel when the range is complete.
-	RawRangeQuery(kStart, kEnd Key, keysOnly bool, out chan *KeyValue) error
+	// down the channel when the range is complete.  The query can be cancelled by sending
+	// a value down the cancel channel.
+	RawRangeQuery(kStart, kEnd Key, keysOnly bool, out chan *KeyValue, cancel <-chan struct{}) error
 }
 
 type KeyValueSetter interface {
@@ -550,4 +557,109 @@ type GraphDB interface {
 	GraphSetter
 	GraphGetter
 	Close()
+}
+
+// SizeViewer stores are able to return the size in bytes stored for a given range of Key.
+type SizeViewer interface {
+	GetApproximateSizes(ranges []KeyRange) ([]uint64, error)
+}
+
+// GetDataSizes returns a list of storage sizes in bytes for each data instance in the store.
+// A list of InstanceID can be optionally supplied so only those instances are queried.
+// This requires some scanning of the database so could take longer than normal requests,
+// particularly if a list of instances is not given.
+// Note that the underlying store must support both the OrderedKeyValueGetter and SizeViewer interface.
+func GetDataSizes(store dvid.Store, instances []dvid.InstanceID) (map[dvid.InstanceID]uint64, error) {
+	db, ok := store.(OrderedKeyValueGetter)
+	if !ok {
+		return nil, fmt.Errorf("cannot get data sizes for store %s, which is not an OrderedKeyValueGetter store", db)
+	}
+	sv, ok := db.(SizeViewer)
+	if !ok {
+		return nil, fmt.Errorf("cannot get data sizes for store %s, which is not a SizeViewer store", db)
+	}
+	// Handle prespecified instance IDs.
+	if len(instances) != 0 {
+		return getInstanceSizes(sv, instances)
+	}
+
+	// Scan store and get all instances.
+	var ids []dvid.InstanceID
+	var curID dvid.InstanceID
+	for {
+		var done bool
+		var err error
+		curID, done, err = getNextInstance(db, curID)
+		if err != nil {
+			return nil, err
+		}
+		if done {
+			break
+		}
+		ids = append(ids, curID)
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	return getInstanceSizes(sv, ids)
+}
+
+func getNextInstance(db OrderedKeyValueGetter, curID dvid.InstanceID) (nextID dvid.InstanceID, finished bool, err error) {
+	begKey := constructDataKey(curID+1, 0, 0, minTKey)
+	endKey := constructDataKey(dvid.MaxInstanceID, dvid.MaxVersionID, dvid.MaxClientID, maxTKey)
+
+	ch := make(chan *KeyValue)
+	cancel := make(chan struct{})
+
+	// Process each key received by range query.
+	ctx := DataContext{}
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			kv := <-ch
+			if kv == nil || kv.K == nil {
+				finished = true
+				return
+			}
+			nextID, err = ctx.InstanceFromKey(kv.K)
+			if err != nil {
+				cancel <- struct{}{}
+				return
+			}
+			if nextID != curID {
+				cancel <- struct{}{}
+				return
+			}
+		}
+	}()
+
+	keysOnly := true
+	if queryErr := db.RawRangeQuery(begKey, endKey, keysOnly, ch, cancel); queryErr != nil {
+		err = queryErr
+	}
+	wg.Wait()
+	return
+}
+
+func getInstanceSizes(sv SizeViewer, instances []dvid.InstanceID) (map[dvid.InstanceID]uint64, error) {
+	ranges := make([]KeyRange, len(instances))
+	for i, curID := range instances {
+		beg := constructDataKey(curID, 0, 0, minTKey)
+		end := constructDataKey(curID+1, 0, 0, minTKey)
+		ranges[i] = KeyRange{Start: beg, OpenEnd: end}
+	}
+	s, err := sv.GetApproximateSizes(ranges)
+	if err != nil {
+		return nil, err
+	}
+	if len(s) != len(instances) {
+		return nil, fmt.Errorf("only got back %d instance sizes, not the requested %d instances", len(s), len(instances))
+	}
+	sizes := make(map[dvid.InstanceID]uint64, len(instances))
+	for i, curID := range instances {
+		sizes[curID] = s[i]
+	}
+	return sizes, nil
 }

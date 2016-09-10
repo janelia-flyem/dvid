@@ -313,11 +313,7 @@ func (ctx *DataContext) VersionID() dvid.VersionID {
 }
 
 func (ctx *DataContext) ConstructKey(tk TKey) Key {
-	key := append([]byte{dataKeyPrefix}, ctx.data.InstanceID().Bytes()...)
-	key = append(key, tk...)
-	key = append(key, ctx.version.Bytes()...)
-	key = append(key, ctx.client.Bytes()...)
-	return Key(append(key, MarkData))
+	return constructDataKey(ctx.data.InstanceID(), ctx.version, ctx.client, tk)
 }
 
 func (ctx *DataContext) TombstoneKey(tk TKey) Key {
@@ -326,6 +322,14 @@ func (ctx *DataContext) TombstoneKey(tk TKey) Key {
 	key = append(key, ctx.version.Bytes()...)
 	key = append(key, ctx.client.Bytes()...)
 	return Key(append(key, MarkTombstone))
+}
+
+func constructDataKey(i dvid.InstanceID, v dvid.VersionID, c dvid.ClientID, tk TKey) Key {
+	key := append([]byte{dataKeyPrefix}, i.Bytes()...)
+	key = append(key, tk...)
+	key = append(key, v.Bytes()...)
+	key = append(key, c.Bytes()...)
+	return Key(append(key, MarkData))
 }
 
 // KeyRange returns the min and max full keys.  The DataContext can have any version since min/max keys for a data instance
@@ -344,6 +348,20 @@ func (ctx *DataContext) TKeyRange() (min, max TKey) {
 	return minTKey, maxTKey
 }
 
+// InstanceFromKey returns an InstanceID from a full key.  Any DataContext is sufficient as receiver.
+func (ctx *DataContext) InstanceFromKey(key Key) (dvid.InstanceID, error) {
+	if key == nil {
+		return 0, fmt.Errorf("Cannot extract DataContext instance from nil key")
+	}
+	if key[0] != dataKeyPrefix {
+		return 0, fmt.Errorf("Cannot extract DataContext version from different key type")
+	}
+	if len(key) < 5 {
+		return 0, fmt.Errorf("Cannot get instance from Key %v less than 5 bytes", key)
+	}
+	return dvid.InstanceIDFromBytes(key[1 : 1+dvid.InstanceIDSize]), nil
+}
+
 // VersionFromKey returns a version ID from a full key.  Any DataContext is sufficient as receiver.
 func (ctx *DataContext) VersionFromKey(key Key) (dvid.VersionID, error) {
 	if key == nil {
@@ -352,16 +370,23 @@ func (ctx *DataContext) VersionFromKey(key Key) (dvid.VersionID, error) {
 	if key[0] != dataKeyPrefix {
 		return 0, fmt.Errorf("Cannot extract DataContext version from different key type")
 	}
+	if len(key) < dvid.InstanceIDSize+dvid.VersionIDSize+dvid.ClientIDSize+2 { // TKey must be 0 or larger.
+		return 0, fmt.Errorf("Cannot extract version from DataKey that is only %d bytes", len(key))
+	}
 	start := len(key) - dvid.VersionIDSize - dvid.ClientIDSize - 1 // substract version, client, and tombstone
 	return dvid.VersionIDFromBytes(key[start : start+dvid.VersionIDSize]), nil
 }
 
+// ClientFromKey returns a clientID from a full key.  Any DataContext is sufficient as receiver.
 func (ctx *DataContext) ClientFromKey(key Key) (dvid.ClientID, error) {
 	if key == nil {
 		return 0, fmt.Errorf("Cannot extract DataContext client from nil key")
 	}
 	if key[0] != dataKeyPrefix {
 		return 0, fmt.Errorf("Cannot extract DataContext client from different key type")
+	}
+	if len(key) < dvid.InstanceIDSize+dvid.VersionIDSize+dvid.ClientIDSize+2 { // TKey must be 0 or larger.
+		return 0, fmt.Errorf("Cannot extract client from DataKey that is only %d bytes", len(key))
 	}
 	start := len(key) - dvid.ClientIDSize - 1 // substract client, and tombstone
 	return dvid.ClientIDFromBytes(key[start : start+dvid.ClientIDSize]), nil

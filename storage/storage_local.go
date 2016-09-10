@@ -34,6 +34,13 @@ type managerT struct {
 	gcache groupcacheT
 }
 
+func AllStores() (map[Alias]dvid.Store, error) {
+	if !manager.setup {
+		return nil, fmt.Errorf("Storage manager not initialized before requesting stores")
+	}
+	return manager.stores, nil
+}
+
 func DefaultStore() (dvid.Store, error) {
 	if !manager.setup {
 		return nil, fmt.Errorf("Storage manager not initialized before requesting default store")

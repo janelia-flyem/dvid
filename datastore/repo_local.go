@@ -1553,6 +1553,14 @@ func (m *repoManager) setSync(d dvid.Data, syncs dvid.UUIDSet) error {
 	return r.save()
 }
 
+func (m *repoManager) getDataByInstanceID(id dvid.InstanceID) (DataService, error) {
+	d, found := m.iids[id]
+	if !found {
+		return nil, ErrInvalidDataInstance
+	}
+	return d, nil
+}
+
 func (m *repoManager) getDataByDataUUID(dataUUID dvid.UUID) (DataService, error) {
 	d, found := m.dataByUUID[dataUUID]
 	if !found {

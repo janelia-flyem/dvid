@@ -11,6 +11,7 @@ package datastore
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"sync"
 
@@ -276,6 +277,14 @@ func SaveDataByVersion(v dvid.VersionID, data DataService) error {
 	return manager.saveRepoByVersion(v)
 }
 
+// getDataByInstanceID returns a data service given a server-specific instance ID.
+func getDataByInstanceID(id dvid.InstanceID) (DataService, error) {
+	if manager == nil {
+		return nil, ErrManagerNotInitialized
+	}
+	return manager.getDataByInstanceID(id)
+}
+
 // GetDataByDataUUID returns a data service given a data UUID.
 func GetDataByDataUUID(dataUUID dvid.UUID) (DataService, error) {
 	if manager == nil {
@@ -513,7 +522,7 @@ func DeleteConflicts(uuid dvid.UUID, data DataService, oldParents, newParents []
 
 	minKey, maxKey := baseCtx.KeyRange()
 	keysOnly := true
-	if err := store.RawRangeQuery(minKey, maxKey, keysOnly, ch); err != nil {
+	if err := store.RawRangeQuery(minKey, maxKey, keysOnly, ch, nil); err != nil {
 		return err
 	}
 	wg.Wait()
@@ -529,4 +538,53 @@ func DeleteConflicts(uuid dvid.UUID, data DataService, oldParents, newParents []
 	}
 
 	return nil
+}
+
+// GetStorageBreakdown returns JSON for all the data instances in the stores.
+func GetStorageBreakdown() (string, error) {
+	stores, err := storage.AllStores()
+	if err != nil {
+		return "", err
+	}
+
+	breakdown := make(map[string]map[uint32]interface{}, len(stores))
+	for alias, store := range stores {
+		s, err := storage.GetDataSizes(store, nil)
+		if err != nil {
+			return "", err
+		}
+
+		// For each instance ID, populate the instance info if available.
+		sdata := make(map[uint32]interface{}, len(s))
+		for instanceID, size := range s {
+			idata := struct {
+				Name     string
+				DataType string
+				DataUUID string
+				RootUUID string
+				Bytes    uint64
+			}{
+				Bytes: size,
+			}
+			d, err := getDataByInstanceID(instanceID)
+			if err != nil {
+				// we have no data instance so use placeholders.
+				idata.Name = fmt.Sprintf("unknown-%d", instanceID)
+			} else {
+				idata.Name = string(d.DataName())
+				idata.DataType = string(d.TypeName())
+				idata.DataUUID = string(d.DataUUID())
+				idata.RootUUID = string(d.RootUUID())
+			}
+			sdata[uint32(instanceID)] = idata
+		}
+		breakdown[string(alias)] = sdata
+	}
+
+	// Convert data to JSON string
+	m, err := json.Marshal(breakdown)
+	if err != nil {
+		return "", err
+	}
+	return string(m), nil
 }

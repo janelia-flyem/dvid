@@ -307,7 +307,7 @@ func PushData(d dvid.Data, p *PushSession) error {
 		}()
 
 		begKey, endKey := ctx.KeyRange()
-		if err = store.RawRangeQuery(begKey, endKey, keysOnly, ch); err != nil {
+		if err = store.RawRangeQuery(begKey, endKey, keysOnly, ch, nil); err != nil {
 			return fmt.Errorf("push voxels %q range query: %v", d.DataName(), err)
 		}
 	}
