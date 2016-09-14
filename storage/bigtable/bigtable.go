@@ -15,9 +15,9 @@ import (
 	"github.com/janelia-flyem/go/semver"
 
 	"golang.org/x/net/context"
-	"google.golang.org/cloud"
-	api "google.golang.org/cloud/bigtable"
-	"google.golang.org/cloud/bigtable/bttest"
+	"cloud.google.com/api/option"
+	api "cloud.google.com/go/bigtable"
+	"cloud.google.com/go/bigtable/bttest"
 	"google.golang.org/grpc"
 )
 
@@ -163,7 +163,7 @@ func NewAdminClient(bt *BigTable) (adminClient *api.AdminClient, err error) {
 		}
 		//Connects to a local bigtable with no security;
 		// The project, zone, cluster values are ignored.
-		adminClient, err = api.NewAdminClient(bt.ctx, bt.project, bt.zone, bt.cluster, cloud.WithBaseGRPC(testConn))
+		adminClient, err = api.NewAdminClient(bt.ctx, bt.project, bt.zone, bt.cluster, option.WithGRPCConn(testConn))
 
 	} else {
 
@@ -189,7 +189,7 @@ func NewClient(bt *BigTable) (client *api.Client, err error) {
 		}
 		//Connects to a local bigtable.
 		//It with no security; The project, zone, cluster values are ignored.
-		client, err = api.NewClient(bt.ctx, bt.project, bt.zone, bt.cluster, cloud.WithBaseGRPC(testConn))
+		client, err = api.NewClient(bt.ctx, bt.project, bt.zone, bt.cluster, option.WithGRPCConn(testConn))
 	} else {
 		//Uses Application Default Credentials to authenticate into Google's Cloud.
 		client, err = api.NewClient(bt.ctx, bt.project, bt.zone, bt.cluster)

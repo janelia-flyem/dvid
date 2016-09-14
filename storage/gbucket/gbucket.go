@@ -34,7 +34,7 @@ import (
 	"github.com/janelia-flyem/go/semver"
 
 	"golang.org/x/net/context"
-	api "google.golang.org/cloud/storage"
+	api "cloud.google.com/go/storage"
 )
 
 func init() {

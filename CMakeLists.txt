@@ -175,8 +175,8 @@ else ()
 
     add_custom_target (gcloud
         ${BUILDEM_ENV_STRING} go get ${GO_GET} golang.org/x/oauth2
-        COMMAND ${BUILDEM_ENV_STRING} go get ${GO_GET} google.golang.org/cloud/bigtable
-        COMMAND ${BUILDEM_ENV_STRING} go get ${GO_GET} google.golang.org/cloud/storage
+        COMMAND ${BUILDEM_ENV_STRING} go get ${GO_GET} cloud.google.com/go/bigtable
+        COMMAND ${BUILDEM_ENV_STRING} go get ${GO_GET} cloud.google.com/go/storage
         COMMENT     "Adding gcloud packages...")  
 
     add_custom_target (gorpc
