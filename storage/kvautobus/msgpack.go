@@ -1,3 +1,4 @@
+// +build kvautobus
 //go:generate msgp
 
 package kvautobus

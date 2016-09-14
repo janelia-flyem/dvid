@@ -1,3 +1,5 @@
+// +build kvautobus
+
 package kvautobus
 
 // NOTE: THIS FILE WAS PRODUCED BY THE
