@@ -214,6 +214,18 @@ func TestLabels(t *testing.T) {
 		t.Errorf("Got back incorrect PreSyn noroi ranking:\n%v\n", string(data))
 	}
 
+	url = fmt.Sprintf("%snode/%s/noroi/count/100/PreSyn", server.WebAPIPath, uuid)
+	data = server.TestHTTP(t, "GET", url, nil)
+	if string(data) != `{"Label":100,"PreSyn":16384}` {
+		t.Errorf("Got back incorrect PreSyn noroi count for label 100:\n%v\n", string(data))
+	}
+
+	url = fmt.Sprintf("%snode/%s/noroi/count/200/PreSyn", server.WebAPIPath, uuid)
+	data = server.TestHTTP(t, "GET", url, nil)
+	if string(data) != `{"Label":200,"PreSyn":8192}` {
+		t.Errorf("Got back incorrect PreSyn noroi count for label 200:\n%v\n", string(data))
+	}
+
 	url = fmt.Sprintf("%snode/%s/noroi/top/3/PostSyn", server.WebAPIPath, uuid)
 	data = server.TestHTTP(t, "GET", url, nil)
 	if string(data) != `[{"Label":100,"Size":14415},{"Label":300,"Size":7936},{"Label":200,"Size":7440}]` {
@@ -345,6 +357,12 @@ func TestLabels(t *testing.T) {
 	data = server.TestHTTP(t, "GET", url, nil)
 	if string(data) != `[{"Label":200,"Size":2048},{"Label":100,"Size":2047}]` {
 		t.Errorf("Got back incorrect post-merge PostSyn withroi ranking:\n%v\n", string(data))
+	}
+
+	url = fmt.Sprintf("%snode/%s/withroi/count/100/PostSyn", server.WebAPIPath, uuid)
+	data = server.TestHTTP(t, "GET", url, nil)
+	if string(data) != `{"Label":100,"PostSyn":2047}` {
+		t.Errorf("Got back incorrect post-merge PostSyn withroi count of label 100:\n%v\n", string(data))
 	}
 
 	url = fmt.Sprintf("%snode/%s/noroi/top/3/PreSyn", server.WebAPIPath, uuid)
@@ -481,6 +499,12 @@ func TestLabels(t *testing.T) {
 		t.Errorf("Got back incorrect post-coarsesplit AllSyn noroi ranking:\n%v\n", string(data))
 	}
 
+	url = fmt.Sprintf("%snode/%s/noroi/count/200/AllSyn", server.WebAPIPath, uuid)
+	data = server.TestHTTP(t, "GET", url, nil)
+	if string(data) != `{"Label":200,"AllSyn":29711}` {
+		t.Errorf("Got back incorrect post-coarsesplit AllSyn noroi count of label 200:\n%v\n", string(data))
+	}
+
 	// Check the ROI-restricted labelsz instance which should only be affected by merge.
 	url = fmt.Sprintf("%snode/%s/withroi/top/5/PreSyn", server.WebAPIPath, uuid)
 	data = server.TestHTTP(t, "GET", url, nil)
@@ -498,5 +522,17 @@ func TestLabels(t *testing.T) {
 	data = server.TestHTTP(t, "GET", url, nil)
 	if string(data) != `[{"Label":200,"Size":4096},{"Label":100,"Size":4095}]` {
 		t.Errorf("Got back incorrect post-coarsesplit AllSyn withroi ranking:\n%v\n", string(data))
+	}
+
+	url = fmt.Sprintf("%snode/%s/withroi/count/200/AllSyn", server.WebAPIPath, uuid)
+	data = server.TestHTTP(t, "GET", url, nil)
+	if string(data) != `{"Label":200,"AllSyn":4096}` {
+		t.Errorf("Got back incorrect post-coarsesplit AllSyn withroi count of label 200:\n%v\n", string(data))
+	}
+
+	url = fmt.Sprintf("%snode/%s/withroi/count/100/AllSyn", server.WebAPIPath, uuid)
+	data = server.TestHTTP(t, "GET", url, nil)
+	if string(data) != `{"Label":100,"AllSyn":4095}` {
+		t.Errorf("Got back incorrect post-coarsesplit AllSyn withroi count of label 100:\n%v\n", string(data))
 	}
 }

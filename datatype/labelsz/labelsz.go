@@ -5,6 +5,7 @@ package labelsz
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/gob"
 	"encoding/json"
 	"fmt"
@@ -95,6 +96,23 @@ POST <api URL>/node/<UUID>/<data name>/sync
 
     The labelsz data type only accepts syncs to annotation data instances.
 
+
+GET <api URL>/node/<UUID>/<data name>/count/<label>/<index type>
+
+	Returns the count of the given annotation element type for the given label.
+	The index type may be any annotation element type ("PostSyn", "PreSyn", "Gap", "Note"),
+	the catch-all for synapses "AllSyn", or the number of voxels "Voxels".
+
+	For synapse indexing, the labelsz data instance must be synced with an annotations instance.
+	(future) For # voxel indexing, the labelsz data instance must be synced with a labelvol instance.
+
+	Example:
+
+	GET <api URL>/node/3f8c/labelrankings/size/21847/PreSyn 
+
+	Returns:
+
+	{ "Label": 21847,  "PreSyn": 81 }
 
 Note: For the following URL endpoints that return and accept POSTed JSON values, see the JSON format
 at end of this documentation.
@@ -305,6 +323,30 @@ func (d *Data) inROI(e annotation.ElementPos) bool {
 		return false // ROI cannot be retrieved so use nothing; makes obvious failure since no ranks.
 	}
 	return d.iROI.VoxelWithin(e.Pos)
+}
+
+// GetCountElementType returns a count of the given ElementType for a given label.
+func (d *Data) GetCountElementType(ctx *datastore.VersionedCtx, label uint64, i IndexType) (uint32, error) {
+	store, err := d.GetOrderedKeyValueDB()
+	if err != nil {
+		return 0, err
+	}
+
+	d.RLock()
+	defer d.RUnlock()
+
+	val, err := store.Get(ctx, NewTypeLabelTKey(i, label))
+	if err != nil {
+		return 0, err
+	}
+	if val == nil {
+		return 0, nil
+	}
+	if len(val) != 4 {
+		return 0, fmt.Errorf("bad size in value for index type %s, label %d: value has length %d", i, label, len(val))
+	}
+	count := binary.LittleEndian.Uint32(val)
+	return count, nil
 }
 
 // GetTopElementType returns a sorted list of the top N labels that have the given ElementType.
@@ -526,6 +568,38 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			server.BadRequest(w, r, err)
 			return
 		}
+
+	case "count":
+		if action != "get" {
+			server.BadRequest(w, r, "Only GET action is available on 'count' endpoint.")
+			return
+		}
+		if len(parts) < 6 {
+			server.BadRequest(w, r, "Must include label and element type after 'count' endpoint.")
+			return
+		}
+		label, err := strconv.ParseUint(parts[4], 10, 64)
+		if err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+		i := StringToIndexType(parts[5])
+		if i == UnknownIndex {
+			server.BadRequest(w, r, fmt.Errorf("unknown index type specified (%q)", parts[5]))
+			return
+		}
+		count, err := d.GetCountElementType(ctx, label, i)
+		if err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+		w.Header().Set("Content-type", "application/json")
+		jsonStr := fmt.Sprintf(`{"Label":%d,%q:%d}`, label, i, count)
+		if _, err := w.Write([]byte(jsonStr)); err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+		timedLog.Infof("HTTP %s: get count for label %d, index type %s: %s", r.Method, label, i, r.URL)
 
 	case "top":
 		if action != "get" {
