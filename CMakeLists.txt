@@ -85,14 +85,17 @@ else ()
         
     message ("Using DVID_BACKEND: ${DVID_BACKEND}")
 
-    # Make sure we have all dependencies for the backend
+    # Make sure we have list of all Go package dependencies that we are go getting.
+    set (DVID_DEP_GO_PACKAGES gopackages gojsonschema goji context lumberjack snappy gorpc groupcache)
 
+    # Make sure we have all dependencies for the backend
 	# Defaults to standard leveldb
     foreach (BACKEND ${DVID_BACKEND})
        if ("${BACKEND}" STREQUAL "lmdb")
             set (DVID_BACKEND_DEPEND  "gomdb" ${DVID_BACKEND_DEPEND})
             message ("Installing Lightning MDB with modified Go driver for DVID storage engine")
         elseif ("${BACKEND}" STREQUAL "kvautobus")
+            set (DVID_DEP_GO_PACKAGES   ${DVID_DEP_GO_PACKAGES} msgp)
             message ("Installing Janelia KVAutobus for DVID storage engine.")
         elseif ("${BACKEND}" STREQUAL "hyperleveldb")
             set (DVID_BACKEND_DEPEND    ${hyperleveldb_NAME} ${DVID_BACKEND_DEPEND})
@@ -117,8 +120,10 @@ else ()
             set (DVID_BACKEND_DEPEND    "gobolt" ${DVID_BACKEND_DEPEND})
             message ("Installing pure Go LMDB-inspired Bolt key-value store.")
         elseif ("${BACKEND}" STREQUAL "bigtable")
+            set (DVID_DEP_GO_PACKAGES   ${DVID_DEP_GO_PACKAGES} gcloud)
             message ("Installing Google's Cloud BigTable key-value store.")
         elseif ("${BACKEND}" STREQUAL "gbucket")
+            set (DVID_DEP_GO_PACKAGES   ${DVID_DEP_GO_PACKAGES} gcloud)
             message ("Installing Google's Bucket store.")
         elseif ("${BACKEND}" STREQUAL "couchbase" ${DVID_BACKEND_DEPEND})
             message (FATAL_ERROR "Couchbase is currently not supported as a DVID storage engine.")
@@ -177,13 +182,14 @@ else ()
         ${BUILDEM_ENV_STRING} go get ${GO_GET} golang.org/x/oauth2
         COMMAND ${BUILDEM_ENV_STRING} go get ${GO_GET} cloud.google.com/go/bigtable
         COMMAND ${BUILDEM_ENV_STRING} go get ${GO_GET} cloud.google.com/go/storage
+        COMMAND ${BUILDEM_ENV_STRING} go get ${GO_GET} google.golang.org/api/option
+        COMMAND ${BUILDEM_ENV_STRING} go get ${GO_GET} google.golang.org/grpc
+        COMMAND ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/golang/protobuf/{proto,protoc-gen-go}
         COMMENT     "Adding gcloud packages...")  
 
     add_custom_target (gorpc
         ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/valyala/gorpc
         COMMENT     "Adding gorpc library...")
-
-    set (DVID_DEP_GO_PACKAGES gopackages gojsonschema goji msgp context lumberjack snappy gcloud gorpc groupcache)
 
     add_custom_target (nrsc
         ${BUILDEM_ENV_STRING} ${GO_ENV} go build -o ${BUILDEM_BIN_DIR}/nrsc

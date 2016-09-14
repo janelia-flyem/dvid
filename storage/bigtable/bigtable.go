@@ -15,7 +15,7 @@ import (
 	"github.com/janelia-flyem/go/semver"
 
 	"golang.org/x/net/context"
-	"cloud.google.com/api/option"
+	"google.golang.org/api/option"
 	api "cloud.google.com/go/bigtable"
 	"cloud.google.com/go/bigtable/bttest"
 	"google.golang.org/grpc"
