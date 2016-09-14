@@ -180,6 +180,7 @@ else ()
 
     add_custom_target (oauth2
         ${BUILDEM_ENV_STRING} go get ${GO_GET} golang.org/x/oauth2
+        COMMAND ${BUILDEM_ENV_STRING} go get ${GO_GET} cloud.google.com/go/compute/metadata
         COMMENT     "Adding oauth2 library...")
 
     add_custom_target (gcloud
