@@ -86,7 +86,7 @@ else ()
     message ("Using DVID_BACKEND: ${DVID_BACKEND}")
 
     # Make sure we have list of all Go package dependencies that we are go getting.
-    set (DVID_DEP_GO_PACKAGES gopackages gojsonschema goji context lumberjack snappy gorpc groupcache)
+    set (DVID_DEP_GO_PACKAGES gopackages gojsonschema goji context lumberjack snappy oauth2 gorpc groupcache)
 
     # Make sure we have all dependencies for the backend
 	# Defaults to standard leveldb
@@ -178,8 +178,11 @@ else ()
         ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/golang/groupcache
         COMMENT     "Adding groupcache library...")
 
-    add_custom_target (gcloud
+    add_custom_target (oauth2
         ${BUILDEM_ENV_STRING} go get ${GO_GET} golang.org/x/oauth2
+        COMMENT     "Adding oauth2 library...")
+
+    add_custom_target (gcloud
         COMMAND ${BUILDEM_ENV_STRING} go get ${GO_GET} cloud.google.com/go/bigtable
         COMMAND ${BUILDEM_ENV_STRING} go get ${GO_GET} cloud.google.com/go/storage
         COMMAND ${BUILDEM_ENV_STRING} go get ${GO_GET} google.golang.org/api/option
