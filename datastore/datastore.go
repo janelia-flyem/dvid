@@ -215,7 +215,7 @@ func GetChildrenByVersion(v dvid.VersionID) ([]dvid.VersionID, error) {
 	return manager.getChildrenByVersion(v)
 }
 
-// LockedVersion returns true if a given UUID is locked.
+// LockedUUID returns true if a given UUID is locked.
 func LockedUUID(uuid dvid.UUID) (bool, error) {
 	if manager == nil {
 		return false, ErrManagerNotInitialized

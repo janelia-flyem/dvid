@@ -108,10 +108,24 @@ func TestCommitBranchMergeDelete(t *testing.T) {
 	branchReq := fmt.Sprintf("%snode/%s/branch", WebAPIPath, uuid)
 	TestBadHTTP(t, "POST", branchReq, nil)
 
+	// Check commit status
+	checkReq := fmt.Sprintf("%snode/%s/commit", WebAPIPath, uuid)
+	retVal := TestHTTP(t, "GET", checkReq, nil)
+	if string(retVal) != `{"Locked":false}` {
+		t.Errorf("Expected unlocked commit status, got: %s\n", string(retVal))
+	}
+
 	// Commit it.
 	payload := bytes.NewBufferString(`{"note": "This is my test commit", "log": ["line1", "line2", "some more stuff in a line"]}`)
 	apiStr := fmt.Sprintf("%snode/%s/commit", WebAPIPath, uuid)
 	TestHTTP(t, "POST", apiStr, payload)
+
+	// Check commit status
+	checkReq = fmt.Sprintf("%snode/%s/commit", WebAPIPath, uuid)
+	retVal = TestHTTP(t, "GET", checkReq, nil)
+	if string(retVal) != `{"Locked":true}` {
+		t.Errorf("Expected locked commit status, got: %s\n", string(retVal))
+	}
 
 	// Make sure committed nodes can only be read.
 	// We shouldn't be able to write to log.

@@ -273,6 +273,12 @@ Node-Level REST endpoints
 	data usable by clients to reconstruct the types of operation done to that version
 	of data.
 
+  GET /api/node/{uuid}/commit
+
+    Returns the commit or lock state of the node with given UUID in JSON format:
+
+	{ "Locked": true }
+
  POST /api/node/{uuid}/commit
 
 	Commits (locks) the node/version with given UUID.  This is required before a version can 
@@ -509,6 +515,7 @@ func initRoutes() {
 	nodeMux.Get("/api/node/:uuid/log", getNodeLogHandler)
 	nodeMux.Post("/api/node/:uuid/note", postNodeNoteHandler)
 	nodeMux.Post("/api/node/:uuid/log", postNodeLogHandler)
+	nodeMux.Get("/api/node/:uuid/commit", repoCommitStateHandler)
 	nodeMux.Post("/api/node/:uuid/commit", repoCommitHandler)
 	nodeMux.Post("/api/node/:uuid/branch", repoBranchHandler)
 
@@ -1138,6 +1145,18 @@ func postNodeLogHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	if err := datastore.AddToNodeLog(uuid, logdata); err != nil {
 		BadRequest(w, r, err)
 		return
+	}
+}
+
+func repoCommitStateHandler(c web.C, w http.ResponseWriter, r *http.Request) {
+	uuid := c.Env["uuid"].(dvid.UUID)
+
+	locked, err := datastore.LockedUUID(uuid)
+	if err != nil {
+		BadRequest(w, r, err)
+	} else {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"Locked":%t}`, locked)
 	}
 }
 
