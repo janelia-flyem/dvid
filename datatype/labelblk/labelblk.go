@@ -64,7 +64,6 @@ $ dvid repo <UUID> new labelblk <data name> <settings...>
 
     Configuration Settings (case-insensitive keys)
 
-    LabelType      "standard" (default) or "raveler" 
     BlockSize      Size in pixels  (default: %s)
     VoxelSize      Resolution of voxels (default: 8.0, 8.0, 8.0)
     VoxelUnits     Resolution units (default: "nanometers")
@@ -73,11 +72,6 @@ $ dvid node <UUID> <data name> load <offset> <image glob> <settings...>
 
     Initializes version node to a set of XY label images described by glob of filenames.
     The DVID server must have access to the named files.  Currently, XY images are required.
-    Note that how the loaded data is processed depends on the LabelType of this labelblk data.
-    If LabelType is "Raveler", DVID assumes we are loading Raveler 24-bit labels and will 
-    set the lower 4 bytes of 64-bit label with loaded pixel values and adds the image Z offset 
-    as the higher 4 bytes.  If LabelType is "Standard", we read the loaded data and convert
-    to 64-bit labels.
 
     Example: 
 
@@ -521,30 +515,6 @@ func GetByVersionName(v dvid.VersionID, name dvid.InstanceName) (*Data, error) {
 	return data, nil
 }
 
-// LabelType specifies how the 64-bit label is organized, allowing some bytes to
-// encode particular attributes.  For example, the "Raveler" LabelType includes
-// the Z-axis coordinate.
-type LabelType uint8
-
-const (
-	Standard64bit LabelType = iota
-
-	// RavelerLabel uses the Z offset as the higher-order 4 bytes and the
-	// superpixel label as the lower 4 bytes.
-	RavelerLabel
-)
-
-func (lt LabelType) String() string {
-	switch lt {
-	case Standard64bit:
-		return "standard labels"
-	case RavelerLabel:
-		return "raveler labels"
-	default:
-		return "unknown label types"
-	}
-}
-
 // -------  ExtData interface implementation -------------
 
 // Labels are voxels that have uint64 labels.
@@ -563,13 +533,11 @@ func (l *Labels) Interpolable() bool {
 // Data of labelblk type is an extended form of imageblk Data
 type Data struct {
 	*imageblk.Data
-	Labeling LabelType
 	datastore.Updater
 }
 
 func (d *Data) Equals(d2 *Data) bool {
-	if !d.Data.Equals(d2.Data) ||
-		d.Labeling != d2.Labeling {
+	if !d.Data.Equals(d2.Data) {
 		return false
 	}
 	return true
@@ -582,7 +550,6 @@ func (d *Data) CopyPropertiesFrom(src datastore.DataService, fs storage.FilterSp
 	if !ok {
 		return fmt.Errorf("unable to copy properties from non-labelblk data %q", src.DataName())
 	}
-	d.Labeling = d2.Labeling
 	return d.Data.CopyPropertiesFrom(d2.Data, fs)
 }
 
@@ -593,43 +560,20 @@ func NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.
 		return nil, err
 	}
 
-	// Check if Raveler label.
-	// TODO - Remove Raveler code outside of DVID.
-	var labelType LabelType = Standard64bit
-	s, found, err := c.GetString("LabelType")
-	if found {
-		switch strings.ToLower(s) {
-		case "raveler":
-			labelType = RavelerLabel
-		case "standard":
-		default:
-			return nil, fmt.Errorf("unknown label type specified '%s'", s)
-		}
-	}
-
-	dvid.Infof("Creating labelblk '%s' with %s", name, labelType)
 	data := &Data{
-		Data:     imgblkData,
-		Labeling: labelType,
+		Data: imgblkData,
 	}
-	return data, nil
-}
 
-type propertiesT struct {
-	imageblk.Properties
-	Labeling LabelType
+	return data, nil
 }
 
 func (d *Data) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		Base     *datastore.Data
-		Extended propertiesT
+		Extended imageblk.Properties
 	}{
 		d.Data.Data,
-		propertiesT{
-			d.Data.Properties,
-			d.Labeling,
-		},
+		d.Data.Properties,
 	})
 }
 
@@ -639,9 +583,6 @@ func (d *Data) GobDecode(b []byte) error {
 	if err := dec.Decode(&(d.Data)); err != nil {
 		return err
 	}
-	if err := dec.Decode(&(d.Labeling)); err != nil {
-		return err
-	}
 	return nil
 }
 
@@ -649,9 +590,6 @@ func (d *Data) GobEncode() ([]byte, error) {
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
 	if err := enc.Encode(d.Data); err != nil {
-		return nil, err
-	}
-	if err := enc.Encode(d.Labeling); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
@@ -673,7 +611,7 @@ func (d *Data) Extents() *dvid.Extents {
 // Otherwise, it will allocate a zero buffer of appropriate size.
 //
 // TODO : Unlike the standard imageblk data.NewVoxels, the labelblk version can modify the
-// labels based on the z-coordinate of the given geometry for Raveler labeling.
+// labels based on the z-coordinate of the given geometry for Raveler .
 // This will be removed when Raveler-specific labels are moved outside DVID.
 func (d *Data) NewLabels(geom dvid.Geometry, img interface{}) (*Labels, error) {
 	bytesPerVoxel := d.Properties.Values.BytesPerElement()
@@ -701,20 +639,9 @@ func (d *Data) NewLabels(geom dvid.Geometry, img interface{}) (*Labels, error) {
 				return nil, err
 			}
 			if actualStride != stride {
-				// Need to do some conversion here.
-				switch d.Labeling {
-				case Standard64bit:
-					data, err = d.convertTo64bit(geom, data, int(inputBytesPerVoxel), int(actualStride))
-					if err != nil {
-						return nil, err
-					}
-				case RavelerLabel:
-					data, err = d.addLabelZ(geom, data, actualStride)
-					if err != nil {
-						return nil, err
-					}
-				default:
-					return nil, fmt.Errorf("unexpected label type in labelblk: %s", d.Labeling)
+				data, err = d.convertTo64bit(geom, data, int(inputBytesPerVoxel), int(actualStride))
+				if err != nil {
+					return nil, err
 				}
 			}
 		case []byte:
