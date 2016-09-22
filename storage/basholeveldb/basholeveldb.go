@@ -1129,8 +1129,7 @@ func (db *LevelDB) deleteSingleVersion(vctx storage.VersionedCtx) error {
 	ro := levigo.NewReadOptions()
 	it := db.ldb.NewIterator(ro)
 	defer func() {
-		// TODO -- Determine why deallocating the C struct underneath iterator causes error in some situations.
-		//it.Close()
+		it.Close()
 		dvid.StopCgo()
 	}()
 
@@ -1209,8 +1208,7 @@ func (db *LevelDB) deleteAllVersions(ctx storage.Context) error {
 	ro := levigo.NewReadOptions()
 	it := db.ldb.NewIterator(ro)
 	defer func() {
-		// TODO -- Determine why deallocating the C struct underneath iterator causes error in some situations.
-		// it.Close()
+		it.Close()
 		dvid.StopCgo()
 	}()
 
