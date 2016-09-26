@@ -819,17 +819,18 @@ func mainHandler(w http.ResponseWriter, r *http.Request) {
 
 func loadHandler(w http.ResponseWriter, r *http.Request) {
 	m, err := json.Marshal(map[string]int{
-		"file bytes read":     storage.FileBytesReadPerSec,
-		"file bytes written":  storage.FileBytesWrittenPerSec,
-		"key bytes read":      storage.StoreKeyBytesReadPerSec,
-		"key bytes written":   storage.StoreKeyBytesWrittenPerSec,
-		"value bytes read":    storage.StoreValueBytesReadPerSec,
-		"value bytes written": storage.StoreValueBytesWrittenPerSec,
-		"GET requests":        storage.GetsPerSec,
-		"PUT requests":        storage.PutsPerSec,
-		"handlers active":     int(100 * ActiveHandlers / MaxChunkHandlers),
-		"goroutines":          runtime.NumGoroutine(),
-		"active CGo routines": dvid.NumberActiveCGo(),
+		"file bytes read":      storage.FileBytesReadPerSec,
+		"file bytes written":   storage.FileBytesWrittenPerSec,
+		"key bytes read":       storage.StoreKeyBytesReadPerSec,
+		"key bytes written":    storage.StoreKeyBytesWrittenPerSec,
+		"value bytes read":     storage.StoreValueBytesReadPerSec,
+		"value bytes written":  storage.StoreValueBytesWrittenPerSec,
+		"GET requests":         storage.GetsPerSec,
+		"PUT requests":         storage.PutsPerSec,
+		"handlers active":      int(100 * ActiveHandlers / MaxChunkHandlers),
+		"goroutines":           runtime.NumGoroutine(),
+		"active CGo routines":  dvid.NumberActiveCGo(),
+		"pending log messages": dvid.PendingLogMessages(),
 	})
 	if err != nil {
 		BadRequest(w, r, err)

@@ -1,6 +1,9 @@
 package dvid
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 type ModeFlag uint
 
@@ -14,9 +17,49 @@ const (
 )
 
 var (
-	// Mode is a global variable set to the run modes of this DVID process.
+	// mode is a global variable set to the run modes of this DVID process.
 	mode ModeFlag = InfoMode
+
+	// we use a single goroutine for writing a stream of messages to the log in
+	// an asynchronous manner.
+	logCh chan logMessage
 )
+
+type logFunc func(format string, args ...interface{})
+
+type logMessage struct {
+	f   logFunc
+	msg string
+}
+
+const maxPendingLogMessages = 10000
+
+func init() {
+	logCh = make(chan logMessage, maxPendingLogMessages)
+	go func() {
+		for msg := range logCh {
+			msg.f(msg.msg)
+		}
+	}()
+}
+
+// PendingLogMessages returns the number of log messages that are in queue to be written.
+func PendingLogMessages() int {
+	return len(logCh)
+}
+
+// Shutdown closes any logging, blocking until the log has been flushed of pending messages.
+func Shutdown() {
+	for {
+		if len(logCh) > 0 {
+			Infof("Waiting for %d log messages to write...\n", len(logCh))
+			time.Sleep(1 * time.Second)
+		}
+		close(logCh)
+		Infof("Halting logging...\n")
+		logger.Shutdown()
+	}
+}
 
 // Logger provides a way for the application to log messages at different severities.
 // Implementations will vary if the app is in the cloud or on a local server.
@@ -54,31 +97,31 @@ func SetLogMode(newMode ModeFlag) {
 
 func Debugf(format string, args ...interface{}) {
 	if mode <= DebugMode {
-		logger.Debugf(format, args...)
+		logCh <- logMessage{f: logger.Debugf, msg: fmt.Sprintf(format, args...)}
 	}
 }
 
 func Infof(format string, args ...interface{}) {
 	if mode <= InfoMode {
-		logger.Infof(format, args...)
+		logCh <- logMessage{f: logger.Infof, msg: fmt.Sprintf(format, args...)}
 	}
 }
 
 func Warningf(format string, args ...interface{}) {
 	if mode <= WarningMode {
-		logger.Warningf(format, args...)
+		logCh <- logMessage{f: logger.Warningf, msg: fmt.Sprintf(format, args...)}
 	}
 }
 
 func Errorf(format string, args ...interface{}) {
 	if mode <= ErrorMode {
-		logger.Errorf(format, args...)
+		logCh <- logMessage{f: logger.Errorf, msg: fmt.Sprintf(format, args...)}
 	}
 }
 
 func Criticalf(format string, args ...interface{}) {
 	if mode <= CriticalMode {
-		logger.Criticalf(format, args...)
+		logCh <- logMessage{f: logger.Criticalf, msg: fmt.Sprintf(format, args...)}
 	}
 }
 
@@ -98,31 +141,31 @@ func NewTimeLog() TimeLog {
 
 func (t TimeLog) Debugf(format string, args ...interface{}) {
 	if mode <= DebugMode {
-		t.logger.Debugf(format+": %s\n", append(args, time.Since(t.start))...)
+		logCh <- logMessage{f: t.logger.Debugf, msg: fmt.Sprintf(format+": %s\n", append(args, time.Since(t.start))...)}
 	}
 }
 
 func (t TimeLog) Infof(format string, args ...interface{}) {
 	if mode <= InfoMode {
-		t.logger.Infof(format+": %s\n", append(args, time.Since(t.start))...)
+		logCh <- logMessage{f: t.logger.Infof, msg: fmt.Sprintf(format+": %s\n", append(args, time.Since(t.start))...)}
 	}
 }
 
 func (t TimeLog) Warningf(format string, args ...interface{}) {
 	if mode <= WarningMode {
-		t.logger.Warningf(format+": %s\n", append(args, time.Since(t.start))...)
+		logCh <- logMessage{f: t.logger.Warningf, msg: fmt.Sprintf(format+": %s\n", append(args, time.Since(t.start))...)}
 	}
 }
 
 func (t TimeLog) Errorf(format string, args ...interface{}) {
 	if mode <= ErrorMode {
-		t.logger.Errorf(format+": %s\n", append(args, time.Since(t.start))...)
+		logCh <- logMessage{f: t.logger.Errorf, msg: fmt.Sprintf(format+": %s\n", append(args, time.Since(t.start))...)}
 	}
 }
 
 func (t TimeLog) Criticalf(format string, args ...interface{}) {
 	if mode <= CriticalMode {
-		t.logger.Criticalf(format+": %s\n", append(args, time.Since(t.start))...)
+		logCh <- logMessage{f: t.logger.Criticalf, msg: fmt.Sprintf(format+": %s\n", append(args, time.Since(t.start))...)}
 	}
 }
 

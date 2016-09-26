@@ -194,4 +194,5 @@ func Shutdown() {
 		s.Stop()
 	}
 	servers = nil
+	dvid.Shutdown()
 }
