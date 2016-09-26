@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/valyala/gorpc"
 )
 
@@ -163,6 +164,8 @@ func GetSessionHandler(sid SessionID) (SessionHandler, error) {
 
 // StartServer starts an RPC server.
 func StartServer(address string) error {
+	gorpc.SetErrorLogger(dvid.Errorf) // Send gorpc errors to appropriate error log.
+
 	s := gorpc.NewTCPServer(address, dispatcher.NewHandlerFunc())
 	if servers == nil {
 		servers = make(map[string]*gorpc.Server)

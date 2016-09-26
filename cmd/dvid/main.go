@@ -65,43 +65,44 @@ var (
 )
 
 const helpMessage = `
+
 dvid is a command-line interface to a distributed, versioned image-oriented datastore
 
 Usage: dvid [options] <command>
 
-	  -readonly   (flag)    HTTP API ignores anything but GET and HEAD requests.
-	  -rpc        =string   Address for RPC communication.
-	  -cpuprofile =string   Write CPU profile to this file.
-	  -memprofile =string   Write memory profile to this file on ctrl-C.
-	  -numcpu     =number   Number of logical CPUs to use for DVID.
-	  -stdin      (flag)    Accept and send stdin to server for use in commands.
-	  -verbose    (flag)    Run in verbose mode.
+      -readonly   (flag)    HTTP API ignores anything but GET and HEAD requests.
+      -rpc        =string   Address for RPC communication.
+      -cpuprofile =string   Write CPU profile to this file.
+      -memprofile =string   Write memory profile to this file on ctrl-C.
+      -numcpu     =number   Number of logical CPUs to use for DVID.
+      -stdin      (flag)    Accept and send stdin to server for use in commands.
+      -verbose    (flag)    Run in verbose mode.
   -h, -help       (flag)    Show help message
 
 Commands that can be performed without a running server:
 
-	about
-	help
-	serve  <configuration path>
+    about
+    help
+    serve  <configuration path>
 
 For storage engines that have repair ability (e.g., basholeveldb):
 
-	repair <engine name> <database path>
+    repair <engine name> <database path>
 
-		The <engine name> refers to the name of the engine: "basholeveldb", "kvautobus", etc.
-		The <database path> is the file path to the directory.
+        The <engine name> refers to the name of the engine: "basholeveldb", "kvautobus", etc.
+        The <database path> is the file path to the directory.
+
+To get help for a remote DVID server:
+
+    help server
+
+        Use the -rpc flag to set the remote DVID rpc port if not the default.
+
 `
 
 var usage = func() {
 	// Print local DVID help
 	fmt.Printf(helpMessage)
-
-	// Print server DVID help if available
-	err := DoCommand(dvid.Command([]string{"help"}))
-	if err != nil {
-		fmt.Printf("Unable to get 'help' from DVID server at %q.\n%v\n",
-			server.DefaultWebAddress, err)
-	}
 }
 
 func currentDir() string {
@@ -117,16 +118,30 @@ func main() {
 	flag.Usage = usage
 	flag.Parse()
 
-	if flag.NArg() >= 1 && strings.ToLower(flag.Args()[0]) == "help" {
-		*showHelp = true
+	if flag.NArg() == 0 {
+		flag.Usage()
+		os.Exit(0)
 	}
 
-	if *runVerbose {
-		dvid.SetLogMode(dvid.DebugMode)
+	help := strings.ToLower(flag.Args()[0]) == "help"
+
+	if help && flag.NArg() == 1 {
+		*showHelp = true
 	}
 	if *showHelp || flag.NArg() == 0 {
 		flag.Usage()
 		os.Exit(0)
+	}
+
+	if help && flag.NArg() == 2 && strings.ToLower(flag.Args()[0]) == "server" {
+		if err := DoCommand(dvid.Command([]string{"help"})); err != nil {
+			fmt.Printf("Unable to get 'help' from DVID server at %q.\n%v\n", rpcAddress, err)
+		}
+		os.Exit(0)
+	}
+
+	if *runVerbose {
+		dvid.SetLogMode(dvid.DebugMode)
 	}
 	if *readonly {
 		server.SetReadOnly(true)
