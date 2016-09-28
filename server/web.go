@@ -66,7 +66,7 @@ const WebHelp = `
 		
 		<h3>HTTP API and command line use</h3>
 
-		<p>All API endpoints follow this layout:
+		<p>All API endpoints (except for memory profiling) follow this layout:
 		<pre>
 /serverhost:someport/api/...
 		</pre>
@@ -146,6 +146,27 @@ POST  /api/server/reload-metadata
 	modifications of the repositories and data instances.  Other DVIDs simply reload the metadata 
 	when prompted by an external coordinator, allowing the "slave" DVIDs to see changes made by
 	the master DVID.
+
+-------------------------
+Memory Profiler endpoints
+-------------------------
+
+ GET  /profiler/start
+
+ 	Starts a memory profiler and redirects to a web page where you can see real-time
+	memory usage graphs.
+
+ GET  /profiler/stop
+
+ 	Stops the memory profiler.
+
+ GET  /profiler/info.html
+
+ 	Shows real-time memory usage graphs.
+
+ GET  /profiler/info
+
+ 	Returns JSON of memory usage data.
 
 
 -------------------------
