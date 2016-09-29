@@ -267,18 +267,6 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel, splitLabel uint64, r io.
 	// Get a sorted list of blocks that cover split.
 	splitblks := splitmap.SortedKeys()
 
-	// Publish split event
-	evt = datastore.SyncEvent{d.DataUUID(), labels.SplitLabelEvent}
-	msg = datastore.SyncMessage{v, labels.DeltaSplit{fromLabel, toLabel, splitmap, splitblks}}
-	if err := datastore.NotifySubscribers(evt, msg); err != nil {
-		return 0, err
-	}
-
-	// Write the split sparse vol.
-	if err = d.writeLabelVol(v, toLabel, splitmap, splitblks); err != nil {
-		return
-	}
-
 	// Iterate through the split blocks, read the original block.  If the RLEs
 	// are identical, just delete the original.  If not, modify the original.
 	// TODO: Modifications should be transactional since it's GET-PUT, therefore use
@@ -320,8 +308,21 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel, splitLabel uint64, r io.
 		}
 	}
 
-	if err := batch.Commit(); err != nil {
-		dvid.Errorf("Batch PUT during split of %q label %d: %v\n", d.DataName(), fromLabel, err)
+	if err = batch.Commit(); err != nil {
+		err = fmt.Errorf("Batch PUT during split of %q label %d: %v\n", d.DataName(), fromLabel, err)
+		return
+	}
+
+	// Publish split event
+	evt = datastore.SyncEvent{d.DataUUID(), labels.SplitLabelEvent}
+	msg = datastore.SyncMessage{v, labels.DeltaSplit{fromLabel, toLabel, splitmap, splitblks}}
+	if err = datastore.NotifySubscribers(evt, msg); err != nil {
+		return
+	}
+
+	// Write the split sparse vol.
+	if err = d.writeLabelVol(v, toLabel, splitmap, splitblks); err != nil {
+		return
 	}
 
 	// Publish change in label sizes.
@@ -331,8 +332,8 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel, splitLabel uint64, r io.
 	}
 	evt = datastore.SyncEvent{d.DataUUID(), labels.ChangeSizeEvent}
 	msg = datastore.SyncMessage{v, delta}
-	if err := datastore.NotifySubscribers(evt, msg); err != nil {
-		return 0, err
+	if err = datastore.NotifySubscribers(evt, msg); err != nil {
+		return
 	}
 
 	delta2 := labels.DeltaModSize{
@@ -341,15 +342,15 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel, splitLabel uint64, r io.
 	}
 	evt = datastore.SyncEvent{d.DataUUID(), labels.ChangeSizeEvent}
 	msg = datastore.SyncMessage{v, delta2}
-	if err := datastore.NotifySubscribers(evt, msg); err != nil {
-		return 0, err
+	if err = datastore.NotifySubscribers(evt, msg); err != nil {
+		return
 	}
 
 	// Publish split end
 	evt = datastore.SyncEvent{d.DataUUID(), labels.SplitEndEvent}
 	msg = datastore.SyncMessage{v, splitOpEnd}
-	if err := datastore.NotifySubscribers(evt, msg); err != nil {
-		return 0, err
+	if err = datastore.NotifySubscribers(evt, msg); err != nil {
+		return
 	}
 
 	return toLabel, nil
