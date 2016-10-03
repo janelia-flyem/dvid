@@ -379,11 +379,11 @@ func (db *KVAutobus) deleteRange(kStart, kEnd storage.Key) error {
 	if err != nil {
 		return err
 	}
+	defer resp.Body.Close()
 	resp, err := db.client.Do(req)
 	if err != nil {
 		return err
 	}
-	resp.Body.Close()
 	timedLog.Infof("PROXY delete keyvalue_range to %s returned %d\n", db.host, resp.StatusCode)
 	return nil
 }
