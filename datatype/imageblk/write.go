@@ -283,7 +283,7 @@ func (d *Data) PutBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int, da
 			delta = Block{&zyx, buf}
 		}
 		evt := datastore.SyncEvent{d.DataUUID(), event}
-		msg := datastore.SyncMessage{v, delta}
+		msg := datastore.SyncMessage{event, v, delta}
 		if err := datastore.NotifySubscribers(evt, msg); err != nil {
 			return err
 		}
@@ -400,7 +400,7 @@ func (d *Data) putChunk(chunk *storage.Chunk, putbuffer storage.RequestBuffer) {
 			delta = Block{&op.indexZYX, block.V}
 		}
 		evt := datastore.SyncEvent{d.DataUUID(), event}
-		msg := datastore.SyncMessage{op.version, delta}
+		msg := datastore.SyncMessage{event, op.version, delta}
 		if err := datastore.NotifySubscribers(evt, msg); err != nil {
 			dvid.Errorf("Unable to notify subscribers of event %s in %s\n", event, d.DataName())
 		}
@@ -514,7 +514,7 @@ func (d *Data) writeBlocks(v dvid.VersionID, b storage.TKeyValues, wg1, wg2 *syn
 				dvid.Errorf("Unable to recover index from block key: %v\n", block.K)
 				return
 			}
-			msg := datastore.SyncMessage{v, Block{indexZYX, block.V}}
+			msg := datastore.SyncMessage{IngestBlockEvent, v, Block{indexZYX, block.V}}
 			if err := datastore.NotifySubscribers(evt, msg); err != nil {
 				dvid.Errorf("Unable to notify subscribers of ChangeBlockEvent in %s\n", d.DataName())
 				return

@@ -982,7 +982,7 @@ func (d *Data) DeleteBlocks(ctx *datastore.VersionedCtx, start dvid.ChunkPoint3d
 
 		// Notify any subscribers that we've deleted this block.
 		evt := datastore.SyncEvent{d.DataUUID(), labels.DeleteBlockEvent}
-		msg := datastore.SyncMessage{ctx.VersionID(), labels.DeleteBlock{izyx, block}}
+		msg := datastore.SyncMessage{labels.DeleteBlockEvent, ctx.VersionID(), labels.DeleteBlock{izyx, block}}
 		if err := datastore.NotifySubscribers(evt, msg); err != nil {
 			return err
 		}

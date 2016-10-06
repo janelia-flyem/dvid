@@ -21,6 +21,7 @@ type SyncEvent struct {
 
 // SyncMessage describes changes to a data instance for a given version.
 type SyncMessage struct {
+	Event   string
 	Version dvid.VersionID
 	Delta   interface{}
 }

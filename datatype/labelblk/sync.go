@@ -13,13 +13,20 @@ import (
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
-	"github.com/janelia-flyem/dvid/datatype/imageblk"
 	"github.com/janelia-flyem/dvid/dvid"
 )
 
 const (
 	numBlockHandlers = 32
+
+	DownsizeBlockEvent  = "LABELBLK_MUTATED"
+	DownsizeCommitEvent = "LABELBLK_COMMIT_DOWNSIZE"
 )
+
+type deltaBlock struct {
+	block dvid.IZYXString // block coordinate of the originating labelblk resolution.
+	data  []byte
+}
 
 type procMsg struct {
 	op interface{}
@@ -75,7 +82,10 @@ func (d *Data) GetSyncSubs(synced dvid.Data) datastore.SyncSubs {
 	var evts []string
 	switch synced.TypeName() {
 	case "labelblk":
-		evts = []string{labels.IngestBlockEvent, labels.MutateBlockEvent, labels.DeleteBlockEvent}
+		evts = []string{DownsizeBlockEvent, DownsizeCommitEvent}
+		// TODO -- If multiscale syncs should also handle labelblk POST and other mutations instead
+		//         of just handling split/merge ops, we need to get those events.
+		// evts = []string{labels.IngestBlockEvent, labels.MutateBlockEvent, labels.DeleteBlockEvent}
 	case "labelvol":
 		evts = []string{labels.MergeStartEvent, labels.MergeBlockEvent, labels.SplitStartEvent, labels.SplitLabelEvent}
 	default:
@@ -100,6 +110,11 @@ func (d *Data) GetSyncSubs(synced dvid.Data) datastore.SyncSubs {
 func (d *Data) processEvents(procCh [numBlockHandlers]chan procMsg) {
 	for msg := range d.syncCh {
 		switch delta := msg.Delta.(type) {
+		case deltaBlock:
+			// Buffer result until we are told to downres.
+
+		/* TODO -- Use if we begin to handle labelblk POST for multiscale
+
 		case imageblk.Block:
 			n := delta.Index.Hash(numBlockHandlers)
 			procCh[n] <- procMsg{op: blockOp{blockIngest, delta}, v: msg.Version}
@@ -111,6 +126,7 @@ func (d *Data) processEvents(procCh [numBlockHandlers]chan procMsg) {
 		case labels.DeleteBlock:
 			n := delta.Index.Hash(numBlockHandlers)
 			procCh[n] <- procMsg{op: blockOp{blockDelete, delta}, v: msg.Version}
+		*/
 
 		case labels.DeltaMergeStart:
 			// Add this merge into the cached blockRLEs

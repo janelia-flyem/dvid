@@ -57,7 +57,7 @@ func (d *Data) MergeLabels(v dvid.VersionID, m labels.MergeOp) error {
 
 	// Signal that we are starting a merge.
 	evt := datastore.SyncEvent{d.DataUUID(), labels.MergeStartEvent}
-	msg := datastore.SyncMessage{v, labels.DeltaMergeStart{m}}
+	msg := datastore.SyncMessage{labels.MergeStartEvent, v, labels.DeltaMergeStart{m}}
 	if err := datastore.NotifySubscribers(evt, msg); err != nil {
 		return err
 	}
@@ -121,7 +121,7 @@ func (d *Data) asyncMergeLabels(v dvid.VersionID, m labels.MergeOp) {
 			OldKnown: true,
 		}
 		evt := datastore.SyncEvent{d.DataUUID(), labels.ChangeSizeEvent}
-		msg := datastore.SyncMessage{v, delta}
+		msg := datastore.SyncMessage{labels.ChangeSizeEvent, v, delta}
 		if err := datastore.NotifySubscribers(evt, msg); err != nil {
 			dvid.Criticalf("can't notify subscribers for event %v: %v\n", evt, err)
 		}
@@ -157,7 +157,7 @@ func (d *Data) asyncMergeLabels(v dvid.VersionID, m labels.MergeOp) {
 
 	// Publish block-level merge
 	evt := datastore.SyncEvent{d.DataUUID(), labels.MergeBlockEvent}
-	msg := datastore.SyncMessage{v, labels.DeltaMerge{m, blocksChanged}}
+	msg := datastore.SyncMessage{labels.MergeBlockEvent, v, labels.DeltaMerge{m, blocksChanged}}
 	if err := datastore.NotifySubscribers(evt, msg); err != nil {
 		dvid.Errorf("can't notify subscribers for event %v: %v\n", evt, err)
 	}
@@ -182,13 +182,13 @@ func (d *Data) asyncMergeLabels(v dvid.VersionID, m labels.MergeOp) {
 		NewSize: toLabelSize + addedVoxels,
 	}
 	evt = datastore.SyncEvent{d.DataUUID(), labels.ChangeSizeEvent}
-	msg = datastore.SyncMessage{v, delta}
+	msg = datastore.SyncMessage{labels.ChangeSizeEvent, v, delta}
 	if err := datastore.NotifySubscribers(evt, msg); err != nil {
 		dvid.Errorf("can't notify subscribers for event %v: %v\n", evt, err)
 	}
 
 	evt = datastore.SyncEvent{d.DataUUID(), labels.MergeEndEvent}
-	msg = datastore.SyncMessage{v, labels.DeltaMergeEnd{m}}
+	msg = datastore.SyncMessage{labels.MergeEndEvent, v, labels.DeltaMergeEnd{m}}
 	if err := datastore.NotifySubscribers(evt, msg); err != nil {
 		dvid.Errorf("can't notify subscribers for event %v: %v\n", evt, err)
 	}
@@ -244,7 +244,7 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel, splitLabel uint64, r io.
 	defer labels.SplitStop(d.getMergeIV(v), splitOpEnd)
 
 	// Signal that we are starting a split.
-	msg := datastore.SyncMessage{v, splitOpStart}
+	msg := datastore.SyncMessage{labels.SplitStartEvent, v, splitOpStart}
 	if err := datastore.NotifySubscribers(evt, msg); err != nil {
 		return 0, err
 	}
@@ -315,7 +315,7 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel, splitLabel uint64, r io.
 
 	// Publish split event
 	evt = datastore.SyncEvent{d.DataUUID(), labels.SplitLabelEvent}
-	msg = datastore.SyncMessage{v, labels.DeltaSplit{fromLabel, toLabel, splitmap, splitblks}}
+	msg = datastore.SyncMessage{labels.SplitLabelEvent, v, labels.DeltaSplit{fromLabel, toLabel, splitmap, splitblks}}
 	if err = datastore.NotifySubscribers(evt, msg); err != nil {
 		return
 	}
@@ -331,7 +331,7 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel, splitLabel uint64, r io.
 		Size:  toLabelSize,
 	}
 	evt = datastore.SyncEvent{d.DataUUID(), labels.ChangeSizeEvent}
-	msg = datastore.SyncMessage{v, delta}
+	msg = datastore.SyncMessage{labels.ChangeSizeEvent, v, delta}
 	if err = datastore.NotifySubscribers(evt, msg); err != nil {
 		return
 	}
@@ -341,14 +341,14 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel, splitLabel uint64, r io.
 		SizeChange: int64(-toLabelSize),
 	}
 	evt = datastore.SyncEvent{d.DataUUID(), labels.ChangeSizeEvent}
-	msg = datastore.SyncMessage{v, delta2}
+	msg = datastore.SyncMessage{labels.ChangeSizeEvent, v, delta2}
 	if err = datastore.NotifySubscribers(evt, msg); err != nil {
 		return
 	}
 
 	// Publish split end
 	evt = datastore.SyncEvent{d.DataUUID(), labels.SplitEndEvent}
-	msg = datastore.SyncMessage{v, splitOpEnd}
+	msg = datastore.SyncMessage{labels.SplitEndEvent, v, splitOpEnd}
 	if err = datastore.NotifySubscribers(evt, msg); err != nil {
 		return
 	}
@@ -403,7 +403,7 @@ func (d *Data) SplitCoarseLabels(v dvid.VersionID, fromLabel, splitLabel uint64,
 	defer labels.SplitStop(d.getMergeIV(v), splitOpEnd)
 
 	// Signal that we are starting a split.
-	msg := datastore.SyncMessage{v, splitOpStart}
+	msg := datastore.SyncMessage{labels.SplitStartEvent, v, splitOpStart}
 	if err := datastore.NotifySubscribers(evt, msg); err != nil {
 		return 0, err
 	}
@@ -432,7 +432,7 @@ func (d *Data) SplitCoarseLabels(v dvid.VersionID, fromLabel, splitLabel uint64,
 
 	// Publish split event
 	evt = datastore.SyncEvent{d.DataUUID(), labels.SplitLabelEvent}
-	msg = datastore.SyncMessage{v, labels.DeltaSplit{fromLabel, toLabel, nil, splitblks}}
+	msg = datastore.SyncMessage{labels.SplitLabelEvent, v, labels.DeltaSplit{fromLabel, toLabel, nil, splitblks}}
 	if err := datastore.NotifySubscribers(evt, msg); err != nil {
 		return 0, err
 	}
@@ -478,7 +478,7 @@ func (d *Data) SplitCoarseLabels(v dvid.VersionID, fromLabel, splitLabel uint64,
 		Size:  toLabelSize,
 	}
 	evt = datastore.SyncEvent{d.DataUUID(), labels.ChangeSizeEvent}
-	msg = datastore.SyncMessage{v, delta}
+	msg = datastore.SyncMessage{labels.ChangeSizeEvent, v, delta}
 	if err := datastore.NotifySubscribers(evt, msg); err != nil {
 		return 0, err
 	}
@@ -488,14 +488,14 @@ func (d *Data) SplitCoarseLabels(v dvid.VersionID, fromLabel, splitLabel uint64,
 		SizeChange: int64(-toLabelSize),
 	}
 	evt = datastore.SyncEvent{d.DataUUID(), labels.ChangeSizeEvent}
-	msg = datastore.SyncMessage{v, delta2}
+	msg = datastore.SyncMessage{labels.ChangeSizeEvent, v, delta2}
 	if err := datastore.NotifySubscribers(evt, msg); err != nil {
 		return 0, err
 	}
 
 	// Publish split end
 	evt = datastore.SyncEvent{d.DataUUID(), labels.SplitEndEvent}
-	msg = datastore.SyncMessage{v, splitOpEnd}
+	msg = datastore.SyncMessage{labels.SplitEndEvent, v, splitOpEnd}
 	if err := datastore.NotifySubscribers(evt, msg); err != nil {
 		return 0, err
 	}

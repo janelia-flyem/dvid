@@ -982,7 +982,7 @@ func (d *Data) deleteElementInLabel(ctx *datastore.VersionedCtx, pt dvid.Point3d
 
 	// Notify any subscribers of label annotation changes.
 	evt := datastore.SyncEvent{Data: d.DataUUID(), Event: ModifyElementsEvent}
-	msg := datastore.SyncMessage{Version: ctx.VersionID(), Delta: delta}
+	msg := datastore.SyncMessage{Event: ModifyElementsEvent, Version: ctx.VersionID(), Delta: delta}
 	if err := datastore.NotifySubscribers(evt, msg); err != nil {
 		return err
 	}
@@ -1116,7 +1116,7 @@ func (d *Data) moveElementInLabels(ctx *datastore.VersionedCtx, from, to dvid.Po
 	// Notify any subscribers of label annotation changes.
 	if len(delta.Del) != 0 || len(delta.Add) != 0 {
 		evt := datastore.SyncEvent{Data: d.DataUUID(), Event: ModifyElementsEvent}
-		msg := datastore.SyncMessage{Version: ctx.VersionID(), Delta: delta}
+		msg := datastore.SyncMessage{Event: ModifyElementsEvent, Version: ctx.VersionID(), Delta: delta}
 		if err := datastore.NotifySubscribers(evt, msg); err != nil {
 			return err
 		}
@@ -1292,7 +1292,7 @@ func (d *Data) storeLabelElements(ctx *datastore.VersionedCtx, be blockElements)
 
 	// Notify any subscribers of label annotation changes.
 	evt := datastore.SyncEvent{Data: d.DataUUID(), Event: ModifyElementsEvent}
-	msg := datastore.SyncMessage{Version: ctx.VersionID(), Delta: delta}
+	msg := datastore.SyncMessage{Event: ModifyElementsEvent, Version: ctx.VersionID(), Delta: delta}
 	if err := datastore.NotifySubscribers(evt, msg); err != nil {
 		return err
 	}

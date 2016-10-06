@@ -239,7 +239,7 @@ func (d *Data) ingestBlock(ctx *datastore.VersionedCtx, block imageblk.Block, ba
 
 	// Notify any subscribers of label annotation changes.
 	evt := datastore.SyncEvent{Data: d.DataUUID(), Event: ModifyElementsEvent}
-	msg := datastore.SyncMessage{Version: ctx.VersionID(), Delta: delta}
+	msg := datastore.SyncMessage{Event: ModifyElementsEvent, Version: ctx.VersionID(), Delta: delta}
 	if err := datastore.NotifySubscribers(evt, msg); err != nil {
 		dvid.Criticalf("unable to notify subscribers of event %s: %v\n", evt, err)
 	}
@@ -325,7 +325,7 @@ func (d *Data) mutateBlock(ctx *datastore.VersionedCtx, block imageblk.MutatedBl
 
 	// Notify any subscribers of label annotation changes.
 	evt := datastore.SyncEvent{Data: d.DataUUID(), Event: ModifyElementsEvent}
-	msg := datastore.SyncMessage{Version: ctx.VersionID(), Delta: delta}
+	msg := datastore.SyncMessage{Event: ModifyElementsEvent, Version: ctx.VersionID(), Delta: delta}
 	if err := datastore.NotifySubscribers(evt, msg); err != nil {
 		dvid.Criticalf("unable to notify subscribers of event %s: %v\n", evt, err)
 	}
@@ -398,7 +398,7 @@ func (d *Data) deleteBlock(ctx *datastore.VersionedCtx, block labels.DeleteBlock
 
 	// Notify any subscribers of label annotation changes.
 	evt := datastore.SyncEvent{Data: d.DataUUID(), Event: ModifyElementsEvent}
-	msg := datastore.SyncMessage{Version: ctx.VersionID(), Delta: delta}
+	msg := datastore.SyncMessage{Event: ModifyElementsEvent, Version: ctx.VersionID(), Delta: delta}
 	if err := datastore.NotifySubscribers(evt, msg); err != nil {
 		dvid.Criticalf("unable to notify subscribers of event %s: %v\n", evt, err)
 	}
@@ -483,7 +483,7 @@ func (d *Data) mergeLabels(batcher storage.KeyValueBatcher, v dvid.VersionID, op
 
 	// Notify any subscribers of label annotation changes.
 	evt := datastore.SyncEvent{Data: d.DataUUID(), Event: ModifyElementsEvent}
-	msg := datastore.SyncMessage{Version: ctx.VersionID(), Delta: delta}
+	msg := datastore.SyncMessage{Event: ModifyElementsEvent, Version: ctx.VersionID(), Delta: delta}
 	if err := datastore.NotifySubscribers(evt, msg); err != nil {
 		dvid.Criticalf("unable to notify subscribers of event %s: %v\n", evt, err)
 	}
@@ -608,7 +608,7 @@ func (d *Data) splitLabelsCoarse(batcher storage.KeyValueBatcher, v dvid.Version
 
 	// Notify any subscribers of label annotation changes.
 	evt := datastore.SyncEvent{Data: d.DataUUID(), Event: ModifyElementsEvent}
-	msg := datastore.SyncMessage{Version: ctx.VersionID(), Delta: delta}
+	msg := datastore.SyncMessage{Event: ModifyElementsEvent, Version: ctx.VersionID(), Delta: delta}
 	if err := datastore.NotifySubscribers(evt, msg); err != nil {
 		dvid.Criticalf("unable to notify subscribers of event %s: %v\n", evt, err)
 	}
@@ -708,7 +708,7 @@ func (d *Data) splitLabelsFine(batcher storage.KeyValueBatcher, v dvid.VersionID
 
 	// Notify any subscribers of label annotation changes.
 	evt := datastore.SyncEvent{Data: d.DataUUID(), Event: ModifyElementsEvent}
-	msg := datastore.SyncMessage{Version: ctx.VersionID(), Delta: delta}
+	msg := datastore.SyncMessage{Event: ModifyElementsEvent, Version: ctx.VersionID(), Delta: delta}
 	if err := datastore.NotifySubscribers(evt, msg); err != nil {
 		dvid.Criticalf("unable to notify subscribers of event %s: %v\n", evt, err)
 	}
