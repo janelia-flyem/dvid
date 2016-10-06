@@ -1647,6 +1647,7 @@ func (m *repoManager) renameDataByName(uuid dvid.UUID, oldname, newname dvid.Ins
 	message := fmt.Sprintf("%s  %s", tm.Format(time.RFC3339), msg)
 	r.log = append(r.log, message)
 	r.data[newname] = r.data[oldname]
+	r.data[newname].SetName(newname)
 	delete(r.data, oldname)
 
 	return r.save()
