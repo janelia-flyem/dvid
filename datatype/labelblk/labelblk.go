@@ -534,6 +534,10 @@ func (l *Labels) Interpolable() bool {
 type Data struct {
 	*imageblk.Data
 	datastore.Updater
+
+	// channels for mutations.
+	syncCh   chan datastore.SyncMessage
+	syncDone chan struct{}
 }
 
 func (d *Data) Equals(d2 *Data) bool {
@@ -563,6 +567,9 @@ func NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.
 	data := &Data{
 		Data: imgblkData,
 	}
+
+	dvid.Infof("Creating labelblk '%s' and launching data handlers.", name)
+	data.InitDataHandlers()
 
 	return data, nil
 }

@@ -226,13 +226,6 @@ func (d *Data) PutBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int, da
 	ctx := datastore.NewVersionedCtx(d, v)
 	batch := batcher.NewBatch(ctx)
 
-	var event string
-	if mutate {
-		event = MutateBlockEvent
-	} else {
-		event = IngestBlockEvent
-	}
-
 	// Read blocks from the stream until we can output a batch put.
 	const BatchSize = 1000
 	var readBlocks int
@@ -265,11 +258,32 @@ func (d *Data) PutBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int, da
 			return err
 		}
 		zyx := dvid.IndexZYX(chunkPt)
-		batch.Put(NewTKey(&zyx), serialization)
+		tk := NewTKey(&zyx)
+
+		// If we are mutating, get the previous block of data.
+		var oldBlock []byte
+		if mutate {
+			oldBlock, err = d.loadOldBlock(v, tk)
+			if err != nil {
+				return fmt.Errorf("Unable to load previous block in %q, key %v: %v\n", d.DataName(), tk, err)
+			}
+		}
+
+		// Write the new block
+		batch.Put(tk, serialization)
 
 		// Notify any subscribers that you've changed block.
+		var event string
+		var delta interface{}
+		if mutate {
+			event = MutateBlockEvent
+			delta = MutatedBlock{&zyx, oldBlock, buf}
+		} else {
+			event = IngestBlockEvent
+			delta = Block{&zyx, buf}
+		}
 		evt := datastore.SyncEvent{d.DataUUID(), event}
-		msg := datastore.SyncMessage{v, Block{&zyx, buf}}
+		msg := datastore.SyncMessage{v, delta}
 		if err := datastore.NotifySubscribers(evt, msg); err != nil {
 			return err
 		}

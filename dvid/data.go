@@ -250,10 +250,15 @@ type Data interface {
 	// BackendStore returns the data store used for this data.
 	BackendStore() (Store, error)
 
+	DataSetter
+}
+
+// DataSetter provides interface for setting main properties of Data during
+// initialization and remote transmission.
+type DataSetter interface {
 	// SetBackendStore sets the data store used for this data.
 	SetBackendStore(Store)
 
-	// Necessary to support transmission of data to remote DVID.
 	SetInstanceID(InstanceID)
 	SetDataUUID(UUID)
 	SetName(InstanceName)

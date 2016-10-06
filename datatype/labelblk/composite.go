@@ -17,7 +17,7 @@ import (
 	"github.com/janelia-flyem/dvid/storage"
 )
 
-type blockOp struct {
+type compositeOp struct {
 	grayscale *imageblk.Data
 	composite *imageblk.Data
 	versionID dvid.VersionID
@@ -74,7 +74,7 @@ func (d *Data) CreateComposite(request datastore.Request, reply *datastore.Respo
 
 	// Iterate through all labels and grayscale chunks incrementally in Z, a layer at a time.
 	wg := new(sync.WaitGroup)
-	op := &blockOp{grayscale, composite, v}
+	op := &compositeOp{grayscale, composite, v}
 	chunkOp := &storage.ChunkOp{op, wg}
 
 	store, err := d.GetOrderedKeyValueDB()
@@ -122,7 +122,7 @@ func (d *Data) createCompositeChunk(chunk *storage.Chunk) {
 		}
 	}()
 
-	op := chunk.Op.(*blockOp)
+	op := chunk.Op.(*compositeOp)
 
 	// Get the spatial index associated with this chunk.
 	zyx, err := imageblk.DecodeTKey(chunk.K)

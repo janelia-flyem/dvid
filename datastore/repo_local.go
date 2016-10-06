@@ -406,6 +406,7 @@ func (m *repoManager) loadVersion0() error {
 
 		// Populate the instance id -> dataservice map and convert/upgrade any deprecated data instance.
 		for dataname, dataservice := range r.data {
+
 			dataUUID := dataservice.DataUUID()
 			if dataUUID == "" {
 				dataUUID = dvid.NewUUID()
@@ -413,6 +414,7 @@ func (m *repoManager) loadVersion0() error {
 				dvid.Infof("Assigned data %q to data UUID %s.\n", dataname, dataservice.DataUUID())
 				saveRepo = true
 			}
+
 			migrator, doMigrate := dataservice.(TypeMigrator)
 			if doMigrate {
 				dvid.Infof("Migrating instance %q of type %q to ...\n", dataservice.DataName(), dataservice.TypeName())
@@ -424,6 +426,7 @@ func (m *repoManager) loadVersion0() error {
 				saveRepo = true
 				dvid.Infof("Now instance %q of type %q ...\n", dataservice.DataName(), dataservice.TypeName())
 			}
+
 			upgrader, upgradable := dataservice.(TypeUpgrader)
 			if upgradable {
 				oldV := dataservice.TypeVersion()
@@ -437,6 +440,7 @@ func (m *repoManager) loadVersion0() error {
 					dvid.Infof("Upgraded instance %q, type %q from version %s to %s\n", dataservice.DataName(), dataservice.TypeName(), oldV, dataservice.TypeVersion())
 				}
 			}
+
 			m.iids[dataservice.InstanceID()] = dataservice
 			m.dataByUUID[dataservice.DataUUID()] = dataservice
 
@@ -502,6 +506,18 @@ func (m *repoManager) loadVersion0() error {
 				if modified {
 					saveRepo = true
 				}
+			}
+		}
+
+		// Allow data instance to do initialization before use.
+		for _, dataservice := range r.data {
+			initializer, initializable := dataservice.(DataInitializer)
+			if initializable {
+				err := initializer.InitDataHandlers()
+				if err != nil {
+					return err
+				}
+				dvid.Infof("Initialized data handlers for instance %q on repo load.\n", dataservice.DataName())
 			}
 		}
 

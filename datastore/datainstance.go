@@ -179,6 +179,14 @@ type VersionInitializer interface {
 	InitVersion(dvid.UUID, dvid.VersionID) error
 }
 
+// DataInitializer is a data instance that needs to be initialized, e.g., start
+// long-lived goroutines that handle data syncs, etc.  Initialization should only
+// constitute supporting data and goroutines and not change the data itself like
+// InstanceMutator, so no saveNeeded flag needs to be returned.
+type DataInitializer interface {
+	InitDataHandlers() error
+}
+
 // VersionRemapper provides a hook for data instances to remap properties
 // that depend on server-specific version ids.  During DVID-to-DVID transfer
 // of data, these version ids need to be remapped as part of the push/pull.
@@ -387,6 +395,23 @@ func (d *Data) DataUUID() dvid.UUID { return d.dataUUID }
 
 func (d *Data) RootUUID() dvid.UUID { return d.rootUUID }
 
+func (d *Data) TypeName() dvid.TypeString { return d.typename }
+
+func (d *Data) TypeURL() dvid.URLString { return d.typeurl }
+
+func (d *Data) TypeVersion() string { return d.typeversion }
+
+func (d *Data) Versioned() bool { return !d.unversioned }
+
+func (d *Data) BackendStore() (dvid.Store, error) {
+	if d.store == nil {
+		return storage.DefaultStore()
+	}
+	return d.store, nil
+}
+
+// ---- dvid.DataSetter implementation ----
+
 func (d *Data) SetInstanceID(id dvid.InstanceID) {
 	d.id = id
 }
@@ -408,21 +433,6 @@ func (d *Data) SetName(name dvid.InstanceName) {
 func (d *Data) SetSync(syncs dvid.UUIDSet) {
 	d.syncData = syncs
 	d.syncNames = nil
-}
-
-func (d *Data) TypeName() dvid.TypeString { return d.typename }
-
-func (d *Data) TypeURL() dvid.URLString { return d.typeurl }
-
-func (d *Data) TypeVersion() string { return d.typeversion }
-
-func (d *Data) Versioned() bool { return !d.unversioned }
-
-func (d *Data) BackendStore() (dvid.Store, error) {
-	if d.store == nil {
-		return storage.DefaultStore()
-	}
-	return d.store, nil
 }
 
 func (d *Data) SetBackendStore(store dvid.Store) {
