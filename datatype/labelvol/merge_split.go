@@ -430,13 +430,6 @@ func (d *Data) SplitCoarseLabels(v dvid.VersionID, fromLabel, splitLabel uint64,
 	}
 	sort.Sort(splitblks)
 
-	// Publish split event
-	evt = datastore.SyncEvent{d.DataUUID(), labels.SplitLabelEvent}
-	msg = datastore.SyncMessage{labels.SplitLabelEvent, v, labels.DeltaSplit{fromLabel, toLabel, nil, splitblks}}
-	if err := datastore.NotifySubscribers(evt, msg); err != nil {
-		return 0, err
-	}
-
 	// Iterate through the split blocks, read the original block and change labels.
 	// TODO: Modifications should be transactional since it's GET-PUT, therefore use
 	// hash on block coord to direct it to block-specific goroutine; we serialize
@@ -470,6 +463,13 @@ func (d *Data) SplitCoarseLabels(v dvid.VersionID, fromLabel, splitLabel uint64,
 
 	if err := batch.Commit(); err != nil {
 		dvid.Errorf("Batch PUT during split of %q label %d: %v\n", d.DataName(), fromLabel, err)
+	}
+
+	// Publish split event
+	evt = datastore.SyncEvent{d.DataUUID(), labels.SplitLabelEvent}
+	msg = datastore.SyncMessage{labels.SplitLabelEvent, v, labels.DeltaSplit{fromLabel, toLabel, nil, splitblks}}
+	if err := datastore.NotifySubscribers(evt, msg); err != nil {
+		return 0, err
 	}
 
 	// Publish change in label sizes.
