@@ -275,12 +275,12 @@ type Data struct {
 	// Keep track of sync operations that could be updating the data.
 	datastore.Updater
 
-	sync.RWMutex
-
 	// cache of immutable ROI on which this labelsz is filtered if any.
 	iMutex     sync.Mutex
 	iROI       *roi.Immutable
 	roiChecked bool
+
+	sync.RWMutex
 }
 
 func (d *Data) Equals(d2 *Data) bool {
@@ -351,6 +351,13 @@ func (d *Data) GetCountElementType(ctx *datastore.VersionedCtx, label uint64, i 
 
 // GetTopElementType returns a sorted list of the top N labels that have the given ElementType.
 func (d *Data) GetTopElementType(ctx *datastore.VersionedCtx, n int, i IndexType) (LabelSizes, error) {
+	if n < 0 {
+		return nil, fmt.Errorf("bad N (%d) in top request", n)
+	}
+	if n == 0 {
+		return LabelSizes{}, nil
+	}
+
 	store, err := d.GetOrderedKeyValueDB()
 	if err != nil {
 		return nil, err

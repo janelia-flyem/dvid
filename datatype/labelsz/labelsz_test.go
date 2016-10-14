@@ -264,6 +264,12 @@ func TestLabels(t *testing.T) {
 		t.Fatalf("Error blocking on sync of withroi labelsz: %v\n", err)
 	}
 
+	url = fmt.Sprintf("%snode/%s/withroi/top/0/AllSyn", server.WebAPIPath, uuid)
+	data = server.TestHTTP(t, "GET", url, nil)
+	if string(data) != `[]` {
+		t.Errorf("Incorrectly handled top n=0 case, expected [] got: %v\n", string(data))
+	}
+
 	url = fmt.Sprintf("%snode/%s/withroi/top/3/PreSyn", server.WebAPIPath, uuid)
 	data = server.TestHTTP(t, "GET", url, nil)
 	if string(data) != `[{"Label":100,"Size":2048},{"Label":200,"Size":1024},{"Label":300,"Size":1024}]` {
