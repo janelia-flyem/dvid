@@ -18,6 +18,7 @@ import (
 	"math"
 	"net/http"
 	"strings"
+	"sync"
 
 	"compress/gzip"
 
@@ -537,7 +538,7 @@ type Data struct {
 
 	// unpersisted data: channels for mutations and downres caching.
 	syncCh   chan datastore.SyncMessage
-	syncDone chan struct{}
+	syncDone chan *sync.WaitGroup
 
 	procCh [numBlockHandlers]chan procMsg // channels into block processors.
 	vcache map[dvid.VersionID]blockCache
@@ -570,9 +571,6 @@ func NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.
 	data := &Data{
 		Data: imgblkData,
 	}
-
-	dvid.Infof("Creating labelblk '%s' and launching data handlers.", name)
-	data.InitDataHandlers()
 
 	return data, nil
 }

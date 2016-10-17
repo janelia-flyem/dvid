@@ -8,9 +8,7 @@ package server
 
 import (
 	"fmt"
-	"log"
 	"os"
-	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -170,15 +168,10 @@ func handleCommand(cmd *datastore.Request) (reply *datastore.Response, err error
 		reply.Text = fmt.Sprintf(RPCHelpMessage, config.RPCAddress(), config.HTTPAddress())
 
 	case "shutdown":
-		// Make this process shutdown in a second to allow time for RPC to finish.
-		// TODO -- Better way to do this?
-		log.Printf("DVID server halting due to 'shutdown' command.")
+		dvid.Infof("DVID server halting due to 'shutdown' command.")
 		reply.Text = fmt.Sprintf("DVID server at %s is being shutdown...\n", config.RPCAddress())
-		go func() {
-			time.Sleep(1 * time.Second)
-			Shutdown()
-			os.Exit(0)
-		}()
+		// launch goroutine shutdown so we can concurrently return shutdown message to client.
+		go Shutdown()
 
 	case "types":
 		if len(cmd.Command) == 1 {

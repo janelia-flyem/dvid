@@ -276,8 +276,6 @@ func DoServe(cmd dvid.Command) error {
 	go http.ListenAndServe(":6060", nil)
 
 	// Serve HTTP and RPC
-	if err := server.Serve(); err != nil {
-		return err
-	}
+	server.Serve()
 	return nil
 }

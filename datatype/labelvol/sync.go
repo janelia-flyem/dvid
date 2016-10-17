@@ -2,6 +2,7 @@ package labelvol
 
 import (
 	"encoding/binary"
+	"sync"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
@@ -19,20 +20,23 @@ import (
 // Number of change messages we can buffer before blocking on sync channel.
 const syncBufferSize = 100
 
-// Shutdown terminates background goroutines processing data and fullfills the Shutdowner interface.
-func (d *Data) Shutdown() {
-	if d.syncDone != nil {
-		d.syncDone <- struct{}{}
-	}
-}
-
 // InitDataHandlers launches goroutines to handle each labelvol instance's syncs.
 func (d *Data) InitDataHandlers() error {
 	d.syncCh = make(chan datastore.SyncMessage, syncBufferSize)
-	d.syncDone = make(chan struct{})
+	d.syncDone = make(chan *sync.WaitGroup)
 
 	go d.handleBlockEvent()
 	return nil
+}
+
+// Shutdown terminates blocks until syncs are done then terminates background goroutines processing data.
+func (d *Data) Shutdown() {
+	if d.syncDone != nil {
+		wg := new(sync.WaitGroup)
+		wg.Add(1)
+		d.syncDone <- wg
+		wg.Done() // Block until we are done.
+	}
 }
 
 // GetSyncSubs implements the datastore.Syncer interface
@@ -73,12 +77,21 @@ func (d *Data) handleBlockEvent() {
 		dvid.Errorf("Data type labelvol requires batch-enabled store, which %q is not\n", store)
 		return
 	}
-
-	for msg := range d.syncCh {
+	var stop bool
+	var wg *sync.WaitGroup
+	for {
 		select {
-		case <-d.syncDone:
-			return
-		default:
+		case wg = <-d.syncDone:
+			queued := len(d.syncCh)
+			if queued > 0 {
+				dvid.Infof("Received shutdown signal for %q sync events (%d in queue)\n", d.DataName(), queued)
+				stop = true
+			} else {
+				dvid.Infof("Shutting down sync event handler for instance %q...\n", d.DataName())
+				wg.Done()
+				return
+			}
+		case msg := <-d.syncCh:
 			d.StartUpdate()
 			ctx := datastore.NewVersionedCtx(d, msg.Version)
 			switch delta := msg.Delta.(type) {
@@ -92,6 +105,12 @@ func (d *Data) handleBlockEvent() {
 				dvid.Criticalf("Cannot sync labelvol from block event.  Got unexpected delta: %v\n", msg)
 			}
 			d.StopUpdate()
+
+			if stop && len(d.syncCh) == 0 {
+				dvid.Infof("Shutting down sync even handler for instance %q after draining sync events.\n", d.DataName())
+				wg.Done()
+				return
+			}
 		}
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"sync"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
@@ -69,13 +70,6 @@ func (lp LabelPoints) add(label uint64, pt dvid.Point3d) {
 	}
 }
 
-// Shutdown terminates background goroutines processing data and fullfills the Shutdowner interface.
-func (d *Data) Shutdown() {
-	if d.syncDone != nil {
-		d.syncDone <- struct{}{}
-	}
-}
-
 // InitDataHandlers launches goroutines to handle each labelblk instance's syncs.
 func (d *Data) InitDataHandlers() error {
 	if d.syncCh != nil || d.syncDone != nil {
@@ -83,12 +77,22 @@ func (d *Data) InitDataHandlers() error {
 		return nil
 	}
 	d.syncCh = make(chan datastore.SyncMessage, syncBufferSize)
-	d.syncDone = make(chan struct{})
+	d.syncDone = make(chan *sync.WaitGroup)
 
 	// Launch handlers of sync events.
 	dvid.Infof("Launching sync event handler for data %q...\n", d.DataName())
 	go d.processEvents()
 	return nil
+}
+
+// Shutdown terminates blocks until syncs are done then terminates background goroutines processing data.
+func (d *Data) Shutdown() {
+	if d.syncDone != nil {
+		wg := new(sync.WaitGroup)
+		wg.Add(1)
+		d.syncDone <- wg
+		wg.Done() // Block until we are done.
+	}
 }
 
 // GetSyncSubs implements the datastore.Syncer interface.  Returns a list of subscriptions
@@ -141,16 +145,30 @@ func (d *Data) processEvents() {
 		dvid.Errorf("handleBlockEvent %v\n", err)
 		return
 	}
-
+	var stop bool
+	var wg *sync.WaitGroup
 	for {
 		dvid.Infof("Launching sync event handler for data %q...\n", d.DataName())
 		select {
-		case <-d.syncDone:
-			dvid.Infof("Received shutdown signal.  Closing goroutine for processing %q sync events...\n", d.DataName())
-			return
+		case wg = <-d.syncDone:
+			queued := len(d.syncCh)
+			if queued > 0 {
+				dvid.Infof("Received shutdown signal for %q sync events (%d in queue)\n", d.DataName(), queued)
+				stop = true
+			} else {
+				dvid.Infof("Shutting down sync event handler for instance %q...\n", d.DataName())
+				wg.Done()
+				return
+			}
 		case msg := <-d.syncCh:
 			ctx := datastore.NewVersionedCtx(d, msg.Version)
 			d.handleSyncMessage(ctx, msg, batcher)
+
+			if stop && len(d.syncCh) == 0 {
+				dvid.Infof("Shutting down sync even handler for instance %q after draining sync events.\n", d.DataName())
+				wg.Done()
+				return
+			}
 		}
 	}
 }

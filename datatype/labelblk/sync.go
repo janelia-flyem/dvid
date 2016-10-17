@@ -106,17 +106,14 @@ func (d *Data) serializeOctants(oct octant, blockBuf []byte) ([]byte, error) {
 	return dvid.SerializeData(blockBuf, d.Compression(), d.Checksum())
 }
 
-// Shutdown terminates background goroutines processing data and fullfills the Shutdowner interface.
-func (d *Data) Shutdown() {
-	if d.syncDone != nil {
-		d.syncDone <- struct{}{}
-	}
-}
-
 // InitDataHandlers launches goroutines to handle each labelblk instance's syncs.
 func (d *Data) InitDataHandlers() error {
+	if d.syncCh != nil {
+		dvid.Warningf("Already have initialized d.synchCh!\n")
+		return nil
+	}
 	d.syncCh = make(chan datastore.SyncMessage, 100)
-	d.syncDone = make(chan struct{})
+	d.syncDone = make(chan *sync.WaitGroup)
 
 	// Start N goroutines to process mutations for each block that will be consistently
 	// assigned to one of the N goroutines.
@@ -128,6 +125,16 @@ func (d *Data) InitDataHandlers() error {
 	dvid.Infof("Launching sync event handler for data %q...\n", d.DataName())
 	go d.processEvents()
 	return nil
+}
+
+// Shutdown terminates blocks until syncs are done then terminates background goroutines processing data.
+func (d *Data) Shutdown() {
+	if d.syncDone != nil {
+		wg := new(sync.WaitGroup)
+		wg.Add(1)
+		d.syncDone <- wg
+		wg.Done() // Block until we are done.
+	}
 }
 
 // GetSyncSubs implements the datastore.Syncer interface
@@ -355,11 +362,20 @@ func (d *Data) getOctantInfo(block dvid.IZYXString) (sector, ox, oy, oz int32, e
 // gets all the changes relevant to labelblk, then breaks up any multi-block op into
 // separate block ops and puts them onto channels to index-specific handlers.
 func (d *Data) processEvents() {
+	var stop bool
+	var wg *sync.WaitGroup
 	for {
 		select {
-		case <-d.syncDone:
-			dvid.Infof("Received shutdown signal.  Closing goroutine for processing %q sync events...\n", d.DataName())
-			return
+		case wg = <-d.syncDone:
+			queued := len(d.syncCh)
+			if queued > 0 {
+				dvid.Infof("Received shutdown signal for %q sync events (%d in queue)\n", d.DataName(), queued)
+				stop = true
+			} else {
+				dvid.Infof("Shutting down sync event handler for instance %q...\n", d.DataName())
+				wg.Done()
+				return
+			}
 		case msg := <-d.syncCh:
 			if msg.Event == DownsizeCommitEvent {
 				d.downsizeCommit(msg.Version)
@@ -398,6 +414,12 @@ func (d *Data) processEvents() {
 			*/
 
 			default:
+			}
+
+			if stop && len(d.syncCh) == 0 {
+				dvid.Infof("Shutting down sync even handler for instance %q after draining sync events.\n", d.DataName())
+				wg.Done()
+				return
 			}
 		}
 	}

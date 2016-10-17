@@ -3,7 +3,6 @@ package server
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"runtime"
 	"runtime/debug"
 	"sync"
@@ -103,11 +102,16 @@ var (
 	config Config
 
 	initialized bool
+
+	// signals when we should shutdown server.
+	shutdownCh chan struct{}
 )
 
 const defaultGCPercent = 400
 
 func init() {
+	shutdownCh = make(chan struct{})
+
 	// Set the GC closer to old Go 1.4 setting
 	old := debug.SetGCPercent(defaultGCPercent)
 	dvid.Debugf("DVID server GC target percentage changed from %d to %d\n", old, defaultGCPercent)
@@ -234,23 +238,30 @@ func About() string {
 // This may not be so graceful if the chunk handler uses cgo since the interrupt
 // may be caught during cgo execution.
 func Shutdown() {
+	// Stop accepting HTTP requests.
+	httpAvail = false
+
+	// Wait for chunk handlers.
 	waits := 0
 	for {
 		active := MaxChunkHandlers - len(HandlerToken)
 		if waits >= 20 {
-			log.Printf("Already waited for 20 seconds.  Continuing with shutdown...")
+			dvid.Infof("Already waited for 20 seconds.  Continuing with shutdown...")
 			break
 		} else if active > 0 {
-			log.Printf("Waiting for %d chunk handlers to finish...\n", active)
+			dvid.Infof("Waiting for %d chunk handlers to finish...\n", active)
 			waits++
 		} else {
-			log.Println("No chunk handlers active...")
+			dvid.Infof("No chunk handlers active. Proceeding...\n")
 			break
 		}
 		time.Sleep(1 * time.Second)
 	}
+	dvid.Infof("Waiting 5 seconds for any HTTP requests to drain...\n")
+	time.Sleep(5 * time.Second)
 	datastore.Shutdown()
 	dvid.BlockOnActiveCgo()
 	rpc.Shutdown()
 	dvid.Shutdown()
+	shutdownCh <- struct{}{}
 }

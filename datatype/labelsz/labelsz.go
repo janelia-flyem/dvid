@@ -281,7 +281,7 @@ type Data struct {
 	roiChecked bool
 
 	syncCh   chan datastore.SyncMessage
-	syncDone chan struct{}
+	syncDone chan *sync.WaitGroup
 
 	sync.RWMutex
 }

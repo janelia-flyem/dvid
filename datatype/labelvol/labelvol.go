@@ -499,7 +499,7 @@ type Data struct {
 
 	// channels for mutations and downres caching.
 	syncCh   chan datastore.SyncMessage
-	syncDone chan struct{}
+	syncDone chan *sync.WaitGroup
 }
 
 // RemapVersions modifies internal data instance properties that rely

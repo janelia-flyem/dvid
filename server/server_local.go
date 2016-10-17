@@ -238,7 +238,7 @@ func SendNotification(message string, recipients []string) error {
 }
 
 // Serve starts HTTP and RPC servers.
-func Serve() error {
+func Serve() {
 	// Use defaults if not set via TOML config file.
 	if tc.Server.HTTPAddress == "" {
 		tc.Server.HTTPAddress = DefaultWebAddress
@@ -258,8 +258,11 @@ func Serve() error {
 	go serveHTTP()
 
 	// Launch the rpc server
-	if err := rpc.StartServer(tc.Server.RPCAddress); err != nil {
-		return fmt.Errorf("Could not start RPC server: %v\n", err)
-	}
-	return nil
+	go func() {
+		if err := rpc.StartServer(tc.Server.RPCAddress); err != nil {
+			dvid.Criticalf("Could not start RPC server: %v\n", err)
+		}
+	}()
+
+	<-shutdownCh
 }

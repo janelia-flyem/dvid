@@ -387,7 +387,8 @@ type WebMux struct {
 }
 
 var (
-	webMux WebMux
+	webMux    WebMux
+	httpAvail bool // false if we should return 503 (Service Unavailable) to any HTTP request
 )
 
 func init() {
@@ -427,6 +428,7 @@ func ServeSingleHTTP(w http.ResponseWriter, r *http.Request) {
 	// Allow cross-origin resource sharing.
 	w.Header().Add("Access-Control-Allow-Origin", "*")
 
+	httpAvail = true
 	webMux.ServeHTTP(w, r)
 }
 
@@ -457,6 +459,7 @@ func serveHTTP() {
 		WriteTimeout: WriteTimeout,
 		ReadTimeout:  ReadTimeout,
 	}
+	httpAvail = true
 	log.Fatal(s.ListenAndServe())
 
 	// graceful.HandleSignals()
@@ -628,6 +631,15 @@ func DecodeJSON(r *http.Request) (dvid.Config, error) {
 	return c, nil
 }
 
+// returns true and sends a 503 (Service Unavailable) status code if unavailable.
+func httpUnavailable(w http.ResponseWriter) bool {
+	if httpAvail {
+		return false
+	}
+	http.Error(w, "DVID server is unavailable.", http.StatusServiceUnavailable)
+	return true
+}
+
 // ---- Middleware -------------
 
 // corsHandler adds CORS support via header
@@ -645,6 +657,9 @@ func corsHandler(c *web.C, h http.Handler) http.Handler {
 // identifies the repo without any access restrictions.
 func repoRawSelector(c *web.C, h http.Handler) http.Handler {
 	fn := func(w http.ResponseWriter, r *http.Request) {
+		if httpUnavailable(w) {
+			return
+		}
 		var err error
 		var uuid dvid.UUID
 		if uuid, c.Env["versionID"], err = datastore.MatchingUUID(c.URLParams["uuid"]); err != nil {
@@ -662,6 +677,9 @@ func repoRawSelector(c *web.C, h http.Handler) http.Handler {
 // identifies a node, and imposes restrictions depending on read-only mode and locked nodes.
 func nodeSelector(c *web.C, h http.Handler) http.Handler {
 	fn := func(w http.ResponseWriter, r *http.Request) {
+		if httpUnavailable(w) {
+			return
+		}
 		action := strings.ToLower(r.Method)
 		if readonly && action != "get" && action != "head" {
 			BadRequest(w, r, "Server in read-only mode and will only accept GET and HEAD requestcs")
@@ -696,6 +714,9 @@ func nodeSelector(c *web.C, h http.Handler) http.Handler {
 // identifies the repo and enforces read-only mode.
 func repoSelector(c *web.C, h http.Handler) http.Handler {
 	fn := func(w http.ResponseWriter, r *http.Request) {
+		if httpUnavailable(w) {
+			return
+		}
 		action := strings.ToLower(r.Method)
 		if readonly && action != "get" && action != "head" {
 			BadRequest(w, r, "Server in read-only mode and will only accept GET and HEAD requests")
@@ -718,6 +739,10 @@ func repoSelector(c *web.C, h http.Handler) http.Handler {
 // forwards the request to that instance's HTTP handler.
 func instanceSelector(c *web.C, h http.Handler) http.Handler {
 	fn := func(w http.ResponseWriter, r *http.Request) {
+		if httpUnavailable(w) {
+			return
+		}
+
 		var err error
 		dataname := dvid.InstanceName(c.URLParams["dataname"])
 		uuid, ok := c.Env["uuid"].(dvid.UUID)
@@ -985,6 +1010,10 @@ func reposInfoHandler(w http.ResponseWriter, r *http.Request) {
 // TODO -- Maybe allow assignment of child UUID via JSON in POST.  Right now, we only
 // allow this potentially dangerous function via command-line.
 func reposPostHandler(w http.ResponseWriter, r *http.Request) {
+	if httpUnavailable(w) {
+		return
+	}
+
 	config := dvid.NewConfig()
 	if r.Body != nil {
 		if err := config.SetByJSON(r.Body); err != nil {

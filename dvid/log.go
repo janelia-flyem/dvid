@@ -50,10 +50,11 @@ func PendingLogMessages() int {
 
 // Shutdown closes any logging, blocking until the log has been flushed of pending messages.
 func Shutdown() {
+	logger.Infof("Shutting down DVID core...\n")
 	for {
+		time.Sleep(1 * time.Second)
 		if len(logCh) > 0 {
 			Infof("Waiting for %d log messages to write...\n", len(logCh))
-			time.Sleep(1 * time.Second)
 		} else {
 			break
 		}

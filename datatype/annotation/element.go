@@ -782,7 +782,7 @@ type Data struct {
 
 	// sync channels for receiving subscribed events like merge, split, and block changes.
 	syncCh   chan datastore.SyncMessage
-	syncDone chan struct{}
+	syncDone chan *sync.WaitGroup
 
 	// Cached in-memory so we only have to lookup block size once.
 	cachedBlockSize *dvid.Point3d

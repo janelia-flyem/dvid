@@ -34,6 +34,7 @@ func (c *LogConfig) SetLogger() {
 		MaxAge:   c.MaxAge,  //days
 	}
 	log.SetOutput(l)
+	logger = stdLogger{l}
 }
 
 // --- Logger implementation ----
@@ -66,5 +67,6 @@ func (slog stdLogger) Criticalf(format string, args ...interface{}) {
 }
 
 func (slog stdLogger) Shutdown() {
-	slog.Rotate()
+	log.Printf("Closing log file...\n")
+	slog.Close()
 }
