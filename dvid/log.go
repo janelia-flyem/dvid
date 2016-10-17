@@ -54,11 +54,13 @@ func Shutdown() {
 		if len(logCh) > 0 {
 			Infof("Waiting for %d log messages to write...\n", len(logCh))
 			time.Sleep(1 * time.Second)
+		} else {
+			break
 		}
-		close(logCh)
-		Infof("Halting logging...\n")
-		logger.Shutdown()
 	}
+	close(logCh)
+	logger.Infof("Logging system shutdown.\n")
+	logger.Shutdown()
 }
 
 // Logger provides a way for the application to log messages at different severities.

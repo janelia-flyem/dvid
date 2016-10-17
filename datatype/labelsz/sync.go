@@ -13,49 +13,49 @@ import (
 // Number of change messages we can buffer before blocking on sync channel.
 const syncBufferSize = 100
 
+// InitDataHandlers launches goroutines to handle each labelblk instance's syncs.
+func (d *Data) InitDataHandlers() error {
+	d.syncCh = make(chan datastore.SyncMessage, syncBufferSize)
+	d.syncDone = make(chan struct{})
+
+	// Launch handlers of sync events.
+	fmt.Printf("Launching sync event handler for data %q...\n", d.DataName())
+	go d.processEvents()
+	return nil
+}
+
 // GetSyncSubs implements the datastore.Syncer interface.  Returns a list of subscriptions
 // to the sync data instance that will notify the receiver.
 func (d *Data) GetSyncSubs(synced dvid.Data) datastore.SyncSubs {
-	modifyCh := make(chan datastore.SyncMessage, syncBufferSize)
-	modifyDone := make(chan struct{})
-
-	// setCh := make(chan datastore.SyncMessage, syncBufferSize)
-	// setDone := make(chan struct{})
-
 	subs := datastore.SyncSubs{
 		datastore.SyncSub{
 			Event:  datastore.SyncEvent{synced.DataUUID(), annotation.ModifyElementsEvent},
 			Notify: d.DataUUID(),
-			Ch:     modifyCh,
-			Done:   modifyDone,
+			Ch:     d.syncCh,
 		},
 		// datastore.SyncSub{
 		// 	Event:  datastore.SyncEvent{synced.DataUUID(), annotation.SetElementsEvent},
 		// 	Notify: d.DataUUID(),
-		// 	Ch:     setCh,
-		// 	Done:   setDone,
+		// 	Ch:     d.SyncCh,
 		// },
 	}
-
-	// Launch handlers of sync events.
-	go d.syncElementModify(modifyCh, modifyDone)
-	// go d.syncElementSet(setCh, setDone)
-
 	return subs
 }
 
 // If annotation elements are added or deleted, adjust the label counts.
-func (d *Data) syncElementModify(in <-chan datastore.SyncMessage, done <-chan struct{}) {
+func (d *Data) processEvents() {
 	batcher, err := d.GetKeyValueBatcher()
 	if err != nil {
 		dvid.Errorf("Exiting sync goroutine for labelsz %q after annotation modifications: %v\n", d.DataName(), err)
 		return
 	}
-	for msg := range in {
+	for {
+		fmt.Printf("Launching sync event handler for data %q...\n", d.DataName())
 		select {
-		case <-done:
+		case <-d.syncDone:
+			dvid.Infof("Received shutdown signal.  Closing goroutine for processing %q sync events...\n", d.DataName())
 			return
-		default:
+		case msg := <-d.syncCh:
 			d.StartUpdate()
 			ctx := datastore.NewVersionedCtx(d, msg.Version)
 			switch delta := msg.Delta.(type) {

@@ -203,6 +203,16 @@ type repoManager struct {
 	idMutex sync.RWMutex
 }
 
+func (m *repoManager) Shutdown() {
+	for _, data := range m.iids {
+		d, ok := data.(Shutdowner)
+		if ok {
+			d.Shutdown()
+		}
+	}
+	dvid.Infof("All %d data instances shutdown.\n", len(m.iids))
+}
+
 // MarshalJSON returns JSON of object where each repo is a property with root UUID name
 // and value corresponding to repo info.
 func (m *repoManager) MarshalJSON() ([]byte, error) {
@@ -1526,6 +1536,16 @@ func (m *repoManager) newData(uuid dvid.UUID, t TypeService, name dvid.InstanceN
 
 	r.updated = time.Now()
 
+	// If it can be initialized (e.g., start sync handlers, etc), do it.
+	initializer, initializable := dataservice.(DataInitializer)
+	if initializable {
+		err := initializer.InitDataHandlers()
+		if err != nil {
+			return nil, err
+		}
+		dvid.Infof("Initialized data handlers for instance %q on repo load.\n", dataservice.DataName())
+	}
+
 	// Add to log and save repo
 	tm := time.Now()
 	r.updated = tm
@@ -2111,8 +2131,6 @@ func (r *repoT) deleteSyncGraph(data dvid.Data) {
 				if sub.Notify != data.DataUUID() {
 					newsubs[j] = sub
 					j++
-				} else {
-					close(sub.Done)
 				}
 			}
 			r.subs[evt] = newsubs

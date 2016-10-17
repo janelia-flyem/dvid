@@ -193,6 +193,6 @@ func Shutdown() {
 	for _, s := range servers {
 		s.Stop()
 	}
+	dvid.Infof("Halted %d RPC servers.\n", len(servers))
 	servers = nil
-	dvid.Shutdown()
 }

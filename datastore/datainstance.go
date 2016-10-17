@@ -194,6 +194,12 @@ type VersionRemapper interface {
 	RemapVersions(dvid.VersionMap) error
 }
 
+// Shutdowner is a data instance that has a function to call during shutdown.
+// Typically, this exits goroutines used for background data processing.
+type Shutdowner interface {
+	Shutdown()
+}
+
 type Updater struct {
 	updates uint32
 	sync.RWMutex

@@ -19,31 +19,39 @@ import (
 // Number of change messages we can buffer before blocking on sync channel.
 const syncBufferSize = 100
 
+// Shutdown terminates background goroutines processing data and fullfills the Shutdowner interface.
+func (d *Data) Shutdown() {
+	if d.syncDone != nil {
+		d.syncDone <- struct{}{}
+	}
+}
+
+// InitDataHandlers launches goroutines to handle each labelvol instance's syncs.
+func (d *Data) InitDataHandlers() error {
+	d.syncCh = make(chan datastore.SyncMessage, syncBufferSize)
+	d.syncDone = make(chan struct{})
+
+	go d.handleBlockEvent()
+	return nil
+}
+
 // GetSyncSubs implements the datastore.Syncer interface
 func (d *Data) GetSyncSubs(synced dvid.Data) datastore.SyncSubs {
-	syncCh := make(chan datastore.SyncMessage, syncBufferSize)
-	doneCh := make(chan struct{})
-
-	go d.handleBlockEvent(syncCh, doneCh)
-
 	subs := datastore.SyncSubs{
 		{
 			Event:  datastore.SyncEvent{synced.DataUUID(), labels.IngestBlockEvent},
 			Notify: d.DataUUID(),
-			Ch:     syncCh,
-			Done:   doneCh,
+			Ch:     d.syncCh,
 		},
 		{
 			Event:  datastore.SyncEvent{synced.DataUUID(), labels.MutateBlockEvent},
 			Notify: d.DataUUID(),
-			Ch:     syncCh,
-			Done:   doneCh,
+			Ch:     d.syncCh,
 		},
 		{
 			Event:  datastore.SyncEvent{synced.DataUUID(), labels.DeleteBlockEvent},
 			Notify: d.DataUUID(),
-			Ch:     syncCh,
-			Done:   doneCh,
+			Ch:     d.syncCh,
 		},
 	}
 	return subs
@@ -54,7 +62,7 @@ func (d *Data) GetSyncSubs(synced dvid.Data) datastore.SyncSubs {
 // excessive compaction time?  This assumes LSM storage engine, which
 // might not always hold in future, so stick with incremental update
 // until proven to be a bottleneck.
-func (d *Data) handleBlockEvent(in <-chan datastore.SyncMessage, done <-chan struct{}) {
+func (d *Data) handleBlockEvent() {
 	store, err := d.GetOrderedKeyValueDB()
 	if err != nil {
 		dvid.Errorf("Data type labelvol had error initializing store: %v\n", err)
@@ -66,9 +74,9 @@ func (d *Data) handleBlockEvent(in <-chan datastore.SyncMessage, done <-chan str
 		return
 	}
 
-	for msg := range in {
+	for msg := range d.syncCh {
 		select {
-		case <-done:
+		case <-d.syncDone:
 			return
 		default:
 			d.StartUpdate()
@@ -114,7 +122,7 @@ func (d *Data) deleteBlock(ctx *datastore.VersionedCtx, block labels.DeleteBlock
 	}
 
 	if err := batch.Commit(); err != nil {
-		dvid.Criticalf("Bad sync in labelvol.  Couldn't commit block %s\n", zyx.Print())
+		dvid.Criticalf("Bad sync in labelvol.  Couldn't commit block %s\n", zyx)
 	}
 	return
 }

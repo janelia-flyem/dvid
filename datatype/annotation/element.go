@@ -780,6 +780,10 @@ type Data struct {
 	// Keep track of sync operations that could be updating the data.
 	datastore.Updater
 
+	// sync channels for receiving subscribed events like merge, split, and block changes.
+	syncCh   chan datastore.SyncMessage
+	syncDone chan struct{}
+
 	// Cached in-memory so we only have to lookup block size once.
 	cachedBlockSize *dvid.Point3d
 
@@ -884,7 +888,7 @@ func (d *Data) getExpandedElements(ctx *datastore.VersionedCtx, tk storage.TKey)
 			if found {
 				expanded = append(expanded, relElems[i])
 			} else {
-				dvid.Errorf("Can't expand relationships for data %q, element @ %s, didn't find it in block %s!\n", d.DataName(), elem.Pos, izyx.Print())
+				dvid.Errorf("Can't expand relationships for data %q, element @ %s, didn't find it in block %s!\n", d.DataName(), elem.Pos, izyx)
 			}
 		}
 	}

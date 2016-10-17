@@ -403,8 +403,8 @@ func (i IZYXString) ToChunkPoint3d() (ChunkPoint3d, error) {
 	return ChunkPoint3d(idx), err
 }
 
-// Print returns a nicely formatted string of the 3d block coordinate or "corrupted coordinate".
-func (i IZYXString) Print() string {
+// String returns a nicely formatted string of the 3d block coordinate or "corrupted coordinate".
+func (i IZYXString) String() string {
 	idx, err := i.IndexZYX()
 	if err != nil {
 		return "corrupted coordinate"
@@ -419,6 +419,19 @@ func (i IZYXString) Hash(n int) int {
 	h := fnv.New32a()
 	h.Write([]byte(i))
 	return int(h.Sum32()) % n
+}
+
+// Downres returns an IZYXString representing a chunk point divided in two.
+func (i IZYXString) Downres() (IZYXString, error) {
+	chunkPt, err := i.ToChunkPoint3d()
+	if err != nil {
+		return "", err
+	}
+	dx := chunkPt[0] >> 1
+	dy := chunkPt[1] >> 1
+	dz := chunkPt[2] >> 1
+	downresPt := ChunkPoint3d{dx, dy, dz}
+	return downresPt.ToIZYXString(), nil
 }
 
 // BlockCounts is a thread-safe type for counting block references.
@@ -538,7 +551,7 @@ func (d *DirtyBlocks) incr(iv InstanceVersion, block IZYXString) {
 func (d *DirtyBlocks) decr(iv InstanceVersion, block IZYXString) {
 	cnts, found := d.dirty[iv]
 	if !found || cnts == nil {
-		Errorf("decremented non-existant count for block %s, version %v\n", block.Print(), iv)
+		Errorf("decremented non-existant count for block %s, version %v\n", block, iv)
 		return
 	}
 	cnts.Decr(block)

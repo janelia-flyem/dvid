@@ -73,7 +73,7 @@ func (f *Filter) Check(tkv *storage.TKeyValue) (skip bool, err error) {
 	}
 	indexZYX, err := block.IndexZYX()
 	if err != nil {
-		return true, fmt.Errorf("unable to convert labelvol block %s into IndexZYX", block.Print())
+		return true, fmt.Errorf("unable to convert labelvol block %s into IndexZYX", block)
 	}
 	if label != f.curLabel {
 		f.it.Reset()

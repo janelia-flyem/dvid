@@ -280,6 +280,9 @@ type Data struct {
 	iROI       *roi.Immutable
 	roiChecked bool
 
+	syncCh   chan datastore.SyncMessage
+	syncDone chan struct{}
+
 	sync.RWMutex
 }
 

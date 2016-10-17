@@ -69,108 +69,136 @@ func (lp LabelPoints) add(label uint64, pt dvid.Point3d) {
 	}
 }
 
-// GetSyncSubs implements the datastore.Syncer interface.  Returns a list of subscriptions
-// to the sync data instance that will notify the receiver.
-func (d *Data) GetSyncSubs(syncData dvid.Data) datastore.SyncSubs {
-	// Our syncing depends on the datatype we are syncing.
-	switch syncData.TypeName() {
-	case "labelblk":
-		return d.initSyncLabelblk(syncData)
-	case "labelvol":
-		return d.initSyncLabelvol(syncData)
-	default:
-		dvid.Errorf("Unable to sync %s with %s since datatype %q is not supported.", d.DataName(), syncData.DataName(), syncData.TypeName())
+// Shutdown terminates background goroutines processing data and fullfills the Shutdowner interface.
+func (d *Data) Shutdown() {
+	if d.syncDone != nil {
+		d.syncDone <- struct{}{}
 	}
+}
+
+// InitDataHandlers launches goroutines to handle each labelblk instance's syncs.
+func (d *Data) InitDataHandlers() error {
+	if d.syncCh != nil || d.syncDone != nil {
+		dvid.Criticalf("Data %q has multiple calls to InitDataHandlers()\n", d.DataName())
+		return nil
+	}
+	d.syncCh = make(chan datastore.SyncMessage, syncBufferSize)
+	d.syncDone = make(chan struct{})
+
+	// Launch handlers of sync events.
+	dvid.Infof("Launching sync event handler for data %q...\n", d.DataName())
+	go d.processEvents()
 	return nil
 }
 
-func (d *Data) initSyncLabelblk(synced dvid.Data) datastore.SyncSubs {
-	syncCh := make(chan datastore.SyncMessage, syncBufferSize)
-	doneCh := make(chan struct{})
-
-	subs := datastore.SyncSubs{
-		{
-			Event:  datastore.SyncEvent{synced.DataUUID(), labels.IngestBlockEvent},
-			Notify: d.DataUUID(),
-			Ch:     syncCh,
-			Done:   doneCh,
-		},
-		{
-			Event:  datastore.SyncEvent{synced.DataUUID(), labels.MutateBlockEvent},
-			Notify: d.DataUUID(),
-			Ch:     syncCh,
-			Done:   doneCh,
-		},
-		{
-			Event:  datastore.SyncEvent{synced.DataUUID(), labels.DeleteBlockEvent},
-			Notify: d.DataUUID(),
-			Ch:     syncCh,
-			Done:   doneCh,
-		},
+// GetSyncSubs implements the datastore.Syncer interface.  Returns a list of subscriptions
+// to the sync data instance that will notify the receiver.
+func (d *Data) GetSyncSubs(synced dvid.Data) (subs datastore.SyncSubs) {
+	// Our syncing depends on the datatype we are syncing.
+	switch synced.TypeName() {
+	case "labelblk":
+		subs = datastore.SyncSubs{
+			{
+				Event:  datastore.SyncEvent{synced.DataUUID(), labels.IngestBlockEvent},
+				Notify: d.DataUUID(),
+				Ch:     d.syncCh,
+			},
+			{
+				Event:  datastore.SyncEvent{synced.DataUUID(), labels.MutateBlockEvent},
+				Notify: d.DataUUID(),
+				Ch:     d.syncCh,
+			},
+			{
+				Event:  datastore.SyncEvent{synced.DataUUID(), labels.DeleteBlockEvent},
+				Notify: d.DataUUID(),
+				Ch:     d.syncCh,
+			},
+		}
+	case "labelvol":
+		subs = datastore.SyncSubs{
+			datastore.SyncSub{
+				Event:  datastore.SyncEvent{synced.DataUUID(), labels.MergeBlockEvent},
+				Notify: d.DataUUID(),
+				Ch:     d.syncCh,
+			},
+			datastore.SyncSub{
+				Event:  datastore.SyncEvent{synced.DataUUID(), labels.SplitLabelEvent},
+				Notify: d.DataUUID(),
+				Ch:     d.syncCh,
+			},
+		}
+	default:
+		dvid.Criticalf("Unable to sync %s with %s since datatype %q is not supported.", d.DataName(), synced.DataName(), synced.TypeName())
+		return
 	}
-
-	// Launch handlers of sync events.
-	go d.handleBlockEvent(syncCh, doneCh)
-
-	return subs
-}
-
-func (d *Data) initSyncLabelvol(synced dvid.Data) datastore.SyncSubs {
-	mergeCh := make(chan datastore.SyncMessage, 100)
-	mergeDone := make(chan struct{})
-
-	splitCh := make(chan datastore.SyncMessage, 10) // Splits can be a lot bigger due to sparsevol
-	splitDone := make(chan struct{})
-
-	subs := datastore.SyncSubs{
-		datastore.SyncSub{
-			Event:  datastore.SyncEvent{synced.DataUUID(), labels.MergeBlockEvent},
-			Notify: d.DataUUID(),
-			Ch:     mergeCh,
-			Done:   mergeDone,
-		},
-		datastore.SyncSub{
-			Event:  datastore.SyncEvent{synced.DataUUID(), labels.SplitLabelEvent},
-			Notify: d.DataUUID(),
-			Ch:     splitCh,
-			Done:   splitDone,
-		},
-	}
-
-	// Launch handlers of sync events.
-	go d.syncMerge(mergeCh, mergeDone)
-	go d.syncSplit(splitCh, splitDone)
-
 	return subs
 }
 
 // Processes each labelblk change as we get it.
-func (d *Data) handleBlockEvent(in <-chan datastore.SyncMessage, done <-chan struct{}) {
+func (d *Data) processEvents() {
 	batcher, err := d.GetKeyValueBatcher()
 	if err != nil {
 		dvid.Errorf("handleBlockEvent %v\n", err)
 		return
 	}
 
-	for msg := range in {
+	for {
+		dvid.Infof("Launching sync event handler for data %q...\n", d.DataName())
 		select {
-		case <-done:
+		case <-d.syncDone:
+			dvid.Infof("Received shutdown signal.  Closing goroutine for processing %q sync events...\n", d.DataName())
 			return
-		default:
-			d.StartUpdate()
+		case msg := <-d.syncCh:
 			ctx := datastore.NewVersionedCtx(d, msg.Version)
-			switch delta := msg.Delta.(type) {
-			case imageblk.Block:
-				d.ingestBlock(ctx, delta, batcher)
-			case imageblk.MutatedBlock:
-				d.mutateBlock(ctx, delta, batcher)
-			case labels.DeleteBlock:
-				d.deleteBlock(ctx, delta, batcher)
-			default:
-				dvid.Criticalf("Cannot sync synapse from block event.  Got unexpected delta: %v\n", msg)
-			}
-			d.StopUpdate()
+			d.handleSyncMessage(ctx, msg, batcher)
 		}
+	}
+}
+
+func (d *Data) handleSyncMessage(ctx *datastore.VersionedCtx, msg datastore.SyncMessage, batcher storage.KeyValueBatcher) {
+	d.StartUpdate()
+	dvid.Infof("Starting update...\n")
+	defer func() {
+		dvid.Infof("Stopping update...\n")
+		d.StopUpdate()
+	}()
+
+	switch delta := msg.Delta.(type) {
+
+	case imageblk.Block:
+		d.ingestBlock(ctx, delta, batcher)
+	case imageblk.MutatedBlock:
+		d.mutateBlock(ctx, delta, batcher)
+	case labels.DeleteBlock:
+		d.deleteBlock(ctx, delta, batcher)
+
+	case labels.DeltaMergeStart:
+		// ignore
+	case labels.DeltaMerge:
+		// process annotation type
+		if err := d.mergeLabels(batcher, msg.Version, delta.MergeOp); err != nil {
+			dvid.Errorf("error on merging labels for data %q: %v\n", d.DataName(), err)
+			return
+		}
+
+	case labels.DeltaSplitStart:
+		// ignore for now
+	case labels.DeltaSplit:
+		if delta.Split == nil {
+			// This is a coarse split.
+			if err := d.splitLabelsCoarse(batcher, msg.Version, delta); err != nil {
+				dvid.Errorf("error on splitting label for data %q: %v\n", d.DataName(), err)
+				return
+			}
+		} else {
+			if err := d.splitLabelsFine(batcher, msg.Version, delta); err != nil {
+				dvid.Errorf("error on splitting label for data %q: %v\n", d.DataName(), err)
+				return
+			}
+		}
+
+	default:
+		dvid.Criticalf("Got unexpected delta: %v\n", msg)
 	}
 }
 
@@ -404,34 +432,6 @@ func (d *Data) deleteBlock(ctx *datastore.VersionedCtx, block labels.DeleteBlock
 	}
 }
 
-// If one or more labels are merged, remove old label->elements k/v and add to target label.
-func (d *Data) syncMerge(in <-chan datastore.SyncMessage, done <-chan struct{}) {
-	batcher, err := d.GetKeyValueBatcher()
-	if err != nil {
-		dvid.Errorf("syncMerge %v\n", err)
-		return
-	}
-	for msg := range in {
-		select {
-		case <-done:
-			return
-		default:
-			switch delta := msg.Delta.(type) {
-			case labels.DeltaMergeStart:
-				// ignore
-			case labels.DeltaMerge:
-				// process annotation type
-				if err := d.mergeLabels(batcher, msg.Version, delta.MergeOp); err != nil {
-					dvid.Errorf("error on merging labels for data %q: %v\n", d.DataName(), err)
-					continue
-				}
-			default:
-				dvid.Criticalf("Unknown delta %v received in annotation instance %q\n", delta, d.DataName())
-			}
-		}
-	}
-}
-
 func (d *Data) mergeLabels(batcher storage.KeyValueBatcher, v dvid.VersionID, op labels.MergeOp) error {
 	d.Lock()
 	defer d.Unlock()
@@ -488,41 +488,6 @@ func (d *Data) mergeLabels(batcher storage.KeyValueBatcher, v dvid.VersionID, op
 		dvid.Criticalf("unable to notify subscribers of event %s: %v\n", evt, err)
 	}
 	return nil
-}
-
-func (d *Data) syncSplit(in <-chan datastore.SyncMessage, done <-chan struct{}) {
-	batcher, err := d.GetKeyValueBatcher()
-	if err != nil {
-		dvid.Errorf("syncSplit: %v\n", err)
-		return
-	}
-	for msg := range in {
-		select {
-		case <-done:
-			return
-		default:
-			switch delta := msg.Delta.(type) {
-			case labels.DeltaSplitStart:
-				// ignore for now
-			case labels.DeltaSplit:
-				if delta.Split == nil {
-					// This is a coarse split.
-					if d.splitLabelsCoarse(batcher, msg.Version, delta); err != nil {
-						dvid.Errorf("error on splitting label for data %q: %v\n", d.DataName(), err)
-						continue
-					}
-				} else {
-					if d.splitLabelsFine(batcher, msg.Version, delta); err != nil {
-						dvid.Errorf("error on splitting label for data %q: %v\n", d.DataName(), err)
-						continue
-					}
-				}
-			default:
-				dvid.Criticalf("annotation split sync: bad delta in split event: %v\n", msg.Delta)
-				continue
-			}
-		}
-	}
 }
 
 func (d *Data) splitLabelsCoarse(batcher storage.KeyValueBatcher, v dvid.VersionID, op labels.DeltaSplit) error {

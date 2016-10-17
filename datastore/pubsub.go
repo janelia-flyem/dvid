@@ -32,7 +32,6 @@ type SyncSub struct {
 	Event  SyncEvent
 	Notify dvid.UUID // the data UUID of data instance to notify
 	Ch     chan SyncMessage
-	Done   chan struct{}
 }
 
 // SyncSubs is a slice of sync subscriptions.

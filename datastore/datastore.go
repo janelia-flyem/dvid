@@ -29,8 +29,12 @@ var (
 	manager *repoManager
 )
 
+// Shutdown sends signal for all goroutines for data processing to be terminated.
 func Shutdown() {
-	// TODO: make sure any kind of shutdown is graceful.
+	if manager == nil {
+		return
+	}
+	manager.Shutdown()
 }
 
 // Types returns the types currently within the DVID server.

@@ -19,8 +19,8 @@ import (
 const (
 	numBlockHandlers = 32
 
-	DownsizeBlockEvent  = "LABELBLK_MUTATED"
-	DownsizeCommitEvent = "LABELBLK_COMMIT_DOWNSIZE"
+	DownsizeBlockEvent  = "LABELBLK_DOWNSIZE_ADD"
+	DownsizeCommitEvent = "LABELBLK_DOWNSIZE_COMMIT"
 )
 
 type deltaBlock struct {
@@ -59,6 +59,60 @@ type splitOp struct {
 	block    dvid.IZYXString
 }
 
+// cache of all blocks modified where the ZYX index is the lower-res
+// (down-res by 2x) coordinate.
+type blockCache map[dvid.IZYXString]octant
+
+type octant [8][]byte // octant has nil []byte if not modified.
+
+// serializes octant contents.  requires preallocated block buffer that may have old data.
+func (d *Data) serializeOctants(oct octant, blockBuf []byte) ([]byte, error) {
+	blockSize := d.BlockSize()
+	nx := blockSize.Value(0)
+	nxy := blockSize.Value(1) * nx
+
+	halfx := blockSize.Value(0) >> 1
+	halfy := blockSize.Value(1) >> 1
+	halfz := blockSize.Value(2) >> 1
+	octantBytes := halfx * halfy * halfz * 8
+
+	for sector, data := range oct {
+		if len(data) > 0 {
+			// Get the corner voxel (in block coordinates) for this sector.
+			iz := sector >> 2
+			sector -= iz * 4
+			iy := sector >> 1
+			ix := sector % 2
+
+			ox := int32(ix) * halfx
+			oy := int32(iy) * halfy
+			oz := int32(iz) * halfz
+
+			// Copy data from octant into larger block buffer.
+			oct[sector] = make([]byte, octantBytes)
+			xbytes := halfx * 8
+
+			var oi int32
+			for z := oz; z < oz+halfz; z++ {
+				for y := oy; y < oy+halfy; y++ {
+					di := (z*nxy + y*nx + ox) * 8
+					copy(oct[sector][oi:oi+xbytes], blockBuf[di:di+xbytes])
+					oi += xbytes
+				}
+			}
+		}
+	}
+
+	return dvid.SerializeData(blockBuf, d.Compression(), d.Checksum())
+}
+
+// Shutdown terminates background goroutines processing data and fullfills the Shutdowner interface.
+func (d *Data) Shutdown() {
+	if d.syncDone != nil {
+		d.syncDone <- struct{}{}
+	}
+}
+
 // InitDataHandlers launches goroutines to handle each labelblk instance's syncs.
 func (d *Data) InitDataHandlers() error {
 	d.syncCh = make(chan datastore.SyncMessage, 100)
@@ -66,13 +120,13 @@ func (d *Data) InitDataHandlers() error {
 
 	// Start N goroutines to process mutations for each block that will be consistently
 	// assigned to one of the N goroutines.
-	var procCh [numBlockHandlers]chan procMsg
 	for i := 0; i < numBlockHandlers; i++ {
-		procCh[i] = make(chan procMsg, 100)
-		go d.processBlock(procCh[i])
+		d.procCh[i] = make(chan procMsg, 100)
+		go d.processBlock(d.procCh[i])
 	}
 
-	go d.processEvents(procCh)
+	dvid.Infof("Launching sync event handler for data %q...\n", d.DataName())
+	go d.processEvents()
 	return nil
 }
 
@@ -99,104 +153,325 @@ func (d *Data) GetSyncSubs(synced dvid.Data) datastore.SyncSubs {
 			Event:  datastore.SyncEvent{synced.DataUUID(), evt},
 			Notify: d.DataUUID(),
 			Ch:     d.syncCh,
-			Done:   d.syncDone,
 		}
 	}
 	return subs
 }
 
-// gets all the changes relevant to labelblk, then breaks up any multi-block op into
-// separate block ops and puts them onto channels to index-specific handlers.
-func (d *Data) processEvents(procCh [numBlockHandlers]chan procMsg) {
-	for msg := range d.syncCh {
-		switch delta := msg.Delta.(type) {
-		case deltaBlock:
-			// Buffer result until we are told to downres.
+// Store the cache then relay changes to any downstream instance.
+// If we are getting these events, this particular data instance's goroutines
+// should only be occupied processing the downsize events.
+func (d *Data) downsizeCommit(v dvid.VersionID) {
+	if d.vcache == nil {
+		dvid.Criticalf("downsize commit for %q attempted when no prior blocks were sent!\n", d.DataName())
+		return
+	}
+	bc, found := d.vcache[v]
+	if !found {
+		dvid.Criticalf("downsize commit for %q sent when no cache for version %d was present!\n", d.DataName(), v)
+		return
+	}
 
-		/* TODO -- Use if we begin to handle labelblk POST for multiscale
+	// Allocate block buffer for writing so that it gets reused instead of reallocated over loop.
+	blockSize := d.BlockSize()
+	blockBytes := blockSize.Prod()
+	blockData := make([]byte, blockBytes)
 
-		case imageblk.Block:
-			n := delta.Index.Hash(numBlockHandlers)
-			procCh[n] <- procMsg{op: blockOp{blockIngest, delta}, v: msg.Version}
+	// Do GET/PUT for each block, unless we have all 8 octants and can just do a PUT.
+	// For each block, send to downstream if any.
+	store, err := d.GetKeyValueDB()
+	if err != nil {
+		dvid.Errorf("Data type labelblk had error initializing store: %v\n", err)
+		return
+	}
+	ctx := datastore.NewVersionedCtx(d, v)
+	for block, oct := range bc {
+		tk := NewTKeyByCoord(block)
 
-		case imageblk.MutatedBlock:
-			n := delta.Index.Hash(numBlockHandlers)
-			procCh[n] <- procMsg{op: blockOp{blockMutate, delta}, v: msg.Version}
-
-		case labels.DeleteBlock:
-			n := delta.Index.Hash(numBlockHandlers)
-			procCh[n] <- procMsg{op: blockOp{blockDelete, delta}, v: msg.Version}
-		*/
-
-		case labels.DeltaMergeStart:
-			// Add this merge into the cached blockRLEs
-			iv := dvid.InstanceVersion{d.DataUUID(), msg.Version}
-			d.StartUpdate()
-			labels.MergeStart(iv, delta.MergeOp)
-			d.StopUpdate()
-
-		case labels.DeltaMerge:
-			wg := new(sync.WaitGroup)
-			for izyxStr := range delta.Blocks {
-				n := getHandlerNum(izyxStr)
-				wg.Add(1)
-				op := mergeOp{MergeOp: delta.MergeOp, block: izyxStr}
-				procCh[n] <- procMsg{op: op, v: msg.Version, wg: wg}
+		// Are all 8 octants set?
+		partial := false
+		for _, data := range oct {
+			if data == nil {
+				partial = true
+				break
 			}
-			// When we've processed all the delta blocks, we can remove this merge op
-			// from the merge cache since all labels will have completed.
-			iv := dvid.InstanceVersion{d.DataUUID(), msg.Version}
-			go func() {
-				wg.Wait()
-				labels.MergeStop(iv, delta.MergeOp)
-			}()
+		}
 
-		case labels.DeltaSplit:
-			timedLog := dvid.NewTimeLog()
-			splitOpStart := labels.DeltaSplitStart{delta.OldLabel, delta.NewLabel}
-			splitOpEnd := labels.DeltaSplitEnd{delta.OldLabel, delta.NewLabel}
-			iv := dvid.InstanceVersion{d.DataUUID(), msg.Version}
-			labels.SplitStart(iv, splitOpStart)
-
-			wg := new(sync.WaitGroup)
-			d.StartUpdate()
-			if delta.Split == nil {
-				// Coarse Split
-				for _, izyxStr := range delta.SortedBlocks {
-					n := getHandlerNum(izyxStr)
-					wg.Add(1)
-					op := splitOp{
-						oldLabel: delta.OldLabel,
-						newLabel: delta.NewLabel,
-						block:    izyxStr,
-					}
-					procCh[n] <- procMsg{op: op, v: msg.Version, wg: wg}
-				}
-			} else {
-				// Fine Split
-				for izyxStr, blockRLEs := range delta.Split {
-					n := getHandlerNum(izyxStr)
-					wg.Add(1)
-					op := splitOp{
-						oldLabel: delta.OldLabel,
-						newLabel: delta.NewLabel,
-						rles:     blockRLEs,
-						block:    izyxStr,
-					}
-					procCh[n] <- procMsg{op: op, v: msg.Version, wg: wg}
-				}
+		// If not, GET the previous block data for reintegration and insert into nil octants.
+		if partial {
+			serialization, err := store.Get(ctx, tk)
+			if err != nil {
+				dvid.Errorf("unable to get data for %q, block %s: %v\n", d.DataName(), block, err)
+				continue
 			}
-			// Wait for all blocks to be split then mark end of split op.
-			go func() {
-				wg.Wait()
-				labels.SplitStop(iv, splitOpEnd)
-				timedLog.Debugf("labelblk sync complete for split of %d -> %d", delta.OldLabel, delta.NewLabel)
-				d.StopUpdate()
-			}()
+			uncompress := true
+			deserialized, _, err := dvid.DeserializeData(serialization, uncompress)
+			if err != nil {
+				dvid.Criticalf("Unable to deserialize data for %q, block %s: %v", d.DataName(), block, err)
+				continue
+			}
+			copy(blockData, deserialized)
+		}
 
-		default:
+		// Write the data.
+		serialization, err := d.serializeOctants(oct, blockData)
+		if err != nil {
+			dvid.Errorf("unable to serialize octant data in %q, block %s: %v\n", d.DataName(), block, err)
+			continue
+		}
+		if err := store.Put(ctx, tk, serialization); err != nil {
+			dvid.Errorf("unable to write downsized data in %q, block %s: %v\n", d.DataName(), block, err)
+			continue
 		}
 	}
+}
+
+// Handle upstream mods on a labelblk we are downresing.
+func (d *Data) downsizeAdd(v dvid.VersionID, delta deltaBlock) {
+	// initialize the cache
+	var bc blockCache
+	if d.vcache == nil {
+		d.vcache = make(map[dvid.VersionID]blockCache)
+	} else {
+		var found bool
+		bc, found = d.vcache[v]
+		if !found {
+			bc = nil
+		}
+	}
+	if bc == nil {
+		bc = make(blockCache)
+		d.vcache[v] = bc
+	}
+
+	// Setup the octant buffer and block cache.
+	downresBlock, err := delta.block.Downres()
+	if err != nil {
+		dvid.Criticalf("unable to downres labelblk %q block: %v\n", d.DataName(), err)
+		return
+	}
+	oct := bc[downresBlock]
+	sector, ox, oy, oz, err := d.getOctantInfo(delta.block)
+	if err != nil {
+		dvid.Criticalf("unable to interpret block in labelblk %q downres: %v\n", d.DataName(), err)
+		return
+	}
+	blockSize := d.BlockSize()
+	nbytes := blockSize.Value(0) * blockSize.Value(1) * blockSize.Value(2) // actually / 8 (downres 2^3) then * 8 bytes for label
+	if oct[sector] == nil {
+		oct[sector] = make([]byte, nbytes)
+	}
+
+	// Compute the downres for each group of 8 contiguous voxels by finding most frequent label.
+	nx := blockSize.Value(0) * 8
+	nxy := blockSize.Value(1) * nx
+	dnx := nx >> 1
+	dnxy := (blockSize.Value(1) >> 1) * dnx
+	for z := oz; z < oz+blockSize.Value(2); z += 2 {
+		for y := oy; y < oy+blockSize.Value(1); y += 2 {
+			cornerOff := z*nxy + y*nx + ox*8             // byte offset into corner of higher-res block data
+			off := cornerOff                             // we use this to move in the 8 voxel neighborhood
+			doff := (z>>1)*dnxy + (y>>1)*dnx + (ox>>1)*8 // offset into lower-res block data
+			for x := ox; x < ox+blockSize.Value(0); x += 2 {
+				counts := make(map[uint64]int)
+
+				label := binary.LittleEndian.Uint64(delta.data[off : off+8])
+				counts[label]++
+
+				off += 8
+				label = binary.LittleEndian.Uint64(delta.data[off : off+8])
+				counts[label]++
+
+				off = off - 8 + nx
+				label = binary.LittleEndian.Uint64(delta.data[off : off+8])
+				counts[label]++
+
+				off += 8
+				label = binary.LittleEndian.Uint64(delta.data[off : off+8])
+				counts[label]++
+
+				// next z neighbors
+				off = off - 8 - nx + nxy
+				label = binary.LittleEndian.Uint64(delta.data[off : off+8])
+				counts[label]++
+
+				off += 8
+				label = binary.LittleEndian.Uint64(delta.data[off : off+8])
+				counts[label]++
+
+				off = off - 8 + nx
+				label = binary.LittleEndian.Uint64(delta.data[off : off+8])
+				counts[label]++
+
+				off += 8
+				label = binary.LittleEndian.Uint64(delta.data[off : off+8])
+				counts[label]++
+
+				// get best label and if there's a tie use smaller label
+				var most int
+				var best uint64
+				for label, count := range counts {
+					if count > most {
+						best = label
+					} else if count == most && label < best {
+						best = label
+					}
+				}
+
+				// store into downres cache
+				binary.LittleEndian.PutUint64(oct[sector][doff:doff+8], best)
+
+				// Move to next corner of 8 block voxels
+				doff += 8
+				cornerOff += 16 // 2 * label byte size
+				off = cornerOff
+			}
+		}
+	}
+}
+
+// (ox, oy, oz) is the high-res voxel offset for the corner of the block.
+func (d *Data) getOctantInfo(block dvid.IZYXString) (sector, ox, oy, oz int32, err error) {
+	var chunkPt dvid.ChunkPoint3d
+	chunkPt, err = block.ToChunkPoint3d()
+	if err != nil {
+		return
+	}
+
+	// determine which down-res sector (0-7 where it's x, then y, then z ordering) in 2x2x2 block
+	// the given block will sit.
+	nx := chunkPt[0] % 2
+	ny := chunkPt[1] % 2
+	nz := chunkPt[2] % 2
+	sector = (nz >> 2) + (ny >> 1) + nx
+
+	offset := chunkPt.MinPoint(d.BlockSize())
+	ox = offset.Value(0)
+	oy = offset.Value(1)
+	oz = offset.Value(2)
+	return
+}
+
+// gets all the changes relevant to labelblk, then breaks up any multi-block op into
+// separate block ops and puts them onto channels to index-specific handlers.
+func (d *Data) processEvents() {
+	for {
+		select {
+		case <-d.syncDone:
+			dvid.Infof("Received shutdown signal.  Closing goroutine for processing %q sync events...\n", d.DataName())
+			return
+		case msg := <-d.syncCh:
+			if msg.Event == DownsizeCommitEvent {
+				d.downsizeCommit(msg.Version)
+				continue
+			}
+
+			switch delta := msg.Delta.(type) {
+			case deltaBlock:
+				d.downsizeAdd(msg.Version, delta)
+
+			case labels.DeltaMergeStart:
+				// Add this merge into the cached blockRLEs
+				iv := dvid.InstanceVersion{d.DataUUID(), msg.Version}
+				d.StartUpdate()
+				labels.MergeStart(iv, delta.MergeOp)
+				d.StopUpdate()
+
+			case labels.DeltaMerge:
+				d.processMerge(msg.Version, delta)
+
+			case labels.DeltaSplit:
+				d.processSplit(msg.Version, delta)
+
+			/* TODO -- Use if we begin to handle labelblk POST for multiscale
+			case imageblk.Block:
+				n := delta.Index.Hash(numBlockHandlers)
+				procCh[n] <- procMsg{op: blockOp{blockIngest, delta}, v: msg.Version}
+
+			case imageblk.MutatedBlock:
+				n := delta.Index.Hash(numBlockHandlers)
+				procCh[n] <- procMsg{op: blockOp{blockMutate, delta}, v: msg.Version}
+
+			case labels.DeleteBlock:
+				n := delta.Index.Hash(numBlockHandlers)
+				procCh[n] <- procMsg{op: blockOp{blockDelete, delta}, v: msg.Version}
+			*/
+
+			default:
+			}
+		}
+	}
+}
+
+func (d *Data) savePotentialDownres(v dvid.VersionID) {
+	evt := datastore.SyncEvent{Data: d.DataUUID(), Event: DownsizeCommitEvent}
+	msg := datastore.SyncMessage{Event: DownsizeCommitEvent, Version: v}
+	if err := datastore.NotifySubscribers(evt, msg); err != nil {
+		dvid.Criticalf("unable to notify subscribers of event %s: %v\n", evt, err)
+	}
+}
+
+func (d *Data) processMerge(v dvid.VersionID, delta labels.DeltaMerge) {
+	wg := new(sync.WaitGroup)
+	for izyxStr := range delta.Blocks {
+		n := getHandlerNum(izyxStr)
+		wg.Add(1)
+		op := mergeOp{MergeOp: delta.MergeOp, block: izyxStr}
+		d.procCh[n] <- procMsg{op: op, v: v, wg: wg}
+	}
+	// When we've processed all the delta blocks, we can remove this merge op
+	// from the merge cache since all labels will have completed.
+	iv := dvid.InstanceVersion{d.DataUUID(), v}
+	go func() {
+		wg.Wait()
+		labels.MergeStop(iv, delta.MergeOp)
+		d.savePotentialDownres(v)
+	}()
+}
+
+func (d *Data) processSplit(v dvid.VersionID, delta labels.DeltaSplit) {
+	timedLog := dvid.NewTimeLog()
+	splitOpStart := labels.DeltaSplitStart{delta.OldLabel, delta.NewLabel}
+	splitOpEnd := labels.DeltaSplitEnd{delta.OldLabel, delta.NewLabel}
+	iv := dvid.InstanceVersion{d.DataUUID(), v}
+	labels.SplitStart(iv, splitOpStart)
+
+	wg := new(sync.WaitGroup)
+	d.StartUpdate()
+	if delta.Split == nil {
+		// Coarse Split
+		for _, izyxStr := range delta.SortedBlocks {
+			n := getHandlerNum(izyxStr)
+			wg.Add(1)
+			op := splitOp{
+				oldLabel: delta.OldLabel,
+				newLabel: delta.NewLabel,
+				block:    izyxStr,
+			}
+			d.procCh[n] <- procMsg{op: op, v: v, wg: wg}
+		}
+	} else {
+		// Fine Split
+		for izyxStr, blockRLEs := range delta.Split {
+			n := getHandlerNum(izyxStr)
+			wg.Add(1)
+			op := splitOp{
+				oldLabel: delta.OldLabel,
+				newLabel: delta.NewLabel,
+				rles:     blockRLEs,
+				block:    izyxStr,
+			}
+			d.procCh[n] <- procMsg{op: op, v: v, wg: wg}
+		}
+	}
+	// Wait for all blocks to be split then mark end of split op.
+	go func() {
+		wg.Wait()
+		labels.SplitStop(iv, splitOpEnd)
+		timedLog.Debugf("labelblk sync complete for split of %d -> %d", delta.OldLabel, delta.NewLabel)
+		d.StopUpdate()
+		d.savePotentialDownres(v)
+	}()
 }
 
 func getHandlerNum(s dvid.IZYXString) int {
@@ -217,9 +492,6 @@ func (d *Data) processBlock(ch <-chan procMsg) {
 	for msg := range ch {
 		ctx := datastore.NewVersionedCtx(d, msg.v)
 		switch op := msg.op.(type) {
-		case blockOp:
-			// Handle down-res operation for upstream labelblk.
-
 		case mergeOp:
 			d.mergeBlock(ctx, op)
 			msg.wg.Done()
@@ -231,6 +503,19 @@ func (d *Data) processBlock(ch <-chan procMsg) {
 		default:
 			dvid.Criticalf("Received unknown processing msg in processBlock: %v\n", msg)
 		}
+	}
+}
+
+// Notify any downstream downres instance of block change.
+func (d *Data) publishBlockChange(v dvid.VersionID, block dvid.IZYXString, blockData []byte) {
+	evt := datastore.SyncEvent{d.DataUUID(), DownsizeBlockEvent}
+	delta := deltaBlock{
+		block: block,
+		data:  blockData,
+	}
+	msg := datastore.SyncMessage{DownsizeBlockEvent, v, delta}
+	if err := datastore.NotifySubscribers(evt, msg); err != nil {
+		dvid.Criticalf("unable to notify subscribers of event %s: %v\n", evt, err)
 	}
 }
 
@@ -281,6 +566,9 @@ func (d *Data) mergeBlock(ctx *datastore.VersionedCtx, op mergeOp) {
 	if err := store.Put(ctx, tk, serialization); err != nil {
 		dvid.Errorf("Error in putting key %v: %v\n", tk, err)
 	}
+
+	// Notify any downstream downres instance.
+	d.publishBlockChange(ctx.VersionID(), op.block, blockData)
 }
 
 // Goroutine that handles splits across a lot of blocks for one label.
@@ -302,40 +590,43 @@ func (d *Data) splitBlock(ctx *datastore.VersionedCtx, op splitOp) {
 		dvid.Errorf("nil label block where split was done, coord %v\n", []byte(op.block))
 		return
 	}
-	bdata, _, err := dvid.DeserializeData(data, true)
+	blockData, _, err := dvid.DeserializeData(data, true)
 	if err != nil {
 		dvid.Criticalf("unable to deserialize label block in '%s' key %v: %v\n", d.DataName(), []byte(op.block), err)
 		return
 	}
 	blockBytes := int(d.BlockSize().Prod() * 8)
-	if len(bdata) != blockBytes {
-		dvid.Criticalf("splitBlock: coord %v got back %d bytes, expected %d bytes\n", []byte(op.block), len(bdata), blockBytes)
+	if len(blockData) != blockBytes {
+		dvid.Criticalf("splitBlock: coord %v got back %d bytes, expected %d bytes\n", []byte(op.block), len(blockData), blockBytes)
 		return
 	}
 
 	// Modify the block using either voxel-level changes or coarser block-level mods.
 	if op.rles != nil {
-		if err := d.storeRLEs(bdata, op.newLabel, op.block, op.rles); err != nil {
-			dvid.Errorf("can't store label %d RLEs into block %s: %v\n", op.newLabel, op.block.Print(), err)
+		if err := d.storeRLEs(blockData, op.newLabel, op.block, op.rles); err != nil {
+			dvid.Errorf("can't store label %d RLEs into block %s: %v\n", op.newLabel, op.block, err)
 			return
 		}
 	} else {
 		// We are doing coarse split and will replace all
-		if err := d.replaceLabel(bdata, op.oldLabel, op.newLabel); err != nil {
-			dvid.Errorf("can't replace label %d with %d in block %s: %v\n", op.oldLabel, op.newLabel, op.block.Print(), err)
+		if err := d.replaceLabel(blockData, op.oldLabel, op.newLabel); err != nil {
+			dvid.Errorf("can't replace label %d with %d in block %s: %v\n", op.oldLabel, op.newLabel, op.block, err)
 			return
 		}
 	}
 
 	// Write the modified block.
-	serialization, err := dvid.SerializeData(bdata, d.Compression(), d.Checksum())
+	serialization, err := dvid.SerializeData(blockData, d.Compression(), d.Checksum())
 	if err != nil {
-		dvid.Criticalf("Unable to serialize block %s in %q: %v\n", op.block.Print(), d.DataName(), err)
+		dvid.Criticalf("Unable to serialize block %s in %q: %v\n", op.block, d.DataName(), err)
 		return
 	}
 	if err := store.Put(ctx, tk, serialization); err != nil {
 		dvid.Errorf("Error in putting key %v: %v\n", tk, err)
 	}
+
+	// Notify any downstream downres instance.
+	d.publishBlockChange(ctx.VersionID(), op.block, blockData)
 }
 
 // Replace a label in a block.

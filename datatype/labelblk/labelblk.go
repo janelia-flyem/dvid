@@ -535,9 +535,12 @@ type Data struct {
 	*imageblk.Data
 	datastore.Updater
 
-	// channels for mutations.
+	// unpersisted data: channels for mutations and downres caching.
 	syncCh   chan datastore.SyncMessage
 	syncDone chan struct{}
+
+	procCh [numBlockHandlers]chan procMsg // channels into block processors.
+	vcache map[dvid.VersionID]blockCache
 }
 
 func (d *Data) Equals(d2 *Data) bool {

@@ -285,11 +285,11 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel, splitLabel uint64, r io.
 		}
 
 		if val == nil {
-			return toLabel, fmt.Errorf("Split RLEs at block %s are not part of original label %d", splitblk.Print(), fromLabel)
+			return toLabel, fmt.Errorf("Split RLEs at block %s are not part of original label %d", splitblk, fromLabel)
 		}
 		var rles dvid.RLEs
 		if err := rles.UnmarshalBinary(val); err != nil {
-			return toLabel, fmt.Errorf("Unable to unmarshal RLE for original labels in block %s", splitblk.Print())
+			return toLabel, fmt.Errorf("Unable to unmarshal RLE for original labels in block %s", splitblk)
 		}
 
 		// Compare and process based on modifications required.
@@ -446,11 +446,11 @@ func (d *Data) SplitCoarseLabels(v dvid.VersionID, fromLabel, splitLabel uint64,
 			return toLabel, err
 		}
 		if val == nil {
-			return toLabel, fmt.Errorf("Split block %s is not part of original label %d", splitblk.Print(), fromLabel)
+			return toLabel, fmt.Errorf("Split block %s is not part of original label %d", splitblk, fromLabel)
 		}
 		var rles dvid.RLEs
 		if err := rles.UnmarshalBinary(val); err != nil {
-			return toLabel, fmt.Errorf("Unable to unmarshal RLE for original labels in block %s", splitblk.Print())
+			return toLabel, fmt.Errorf("Unable to unmarshal RLE for original labels in block %s", splitblk)
 		}
 		numVoxels, _ := rles.Stats()
 		toLabelSize += numVoxels

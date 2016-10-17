@@ -496,6 +496,10 @@ type Data struct {
 	// TODO: Think about making this per label since sync status is pessimistic, assuming
 	// all labels are being updated.
 	datastore.Updater
+
+	// channels for mutations and downres caching.
+	syncCh   chan datastore.SyncMessage
+	syncDone chan struct{}
 }
 
 // RemapVersions modifies internal data instance properties that rely
