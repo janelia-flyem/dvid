@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -224,7 +225,12 @@ func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.
 	} else {
 		blockSize = dvid.Point3d{DefaultBlockSize, DefaultBlockSize, DefaultBlockSize}
 	}
-	return &Data{basedata, Properties{blockSize, math.MaxInt32, math.MinInt32}, make(map[dvid.VersionID]bool)}, nil
+	d := &Data{
+		Data:       basedata,
+		Properties: Properties{blockSize, math.MaxInt32, math.MinInt32},
+		ready:      make(map[dvid.VersionID]bool),
+	}
+	return d, nil
 }
 
 func (dtype *Type) Help() string {
@@ -295,7 +301,9 @@ func ImmutableBySpec(spec string) (*Immutable, error) {
 type Data struct {
 	*datastore.Data
 	Properties
-	ready map[dvid.VersionID]bool
+
+	ready   map[dvid.VersionID]bool
+	readyMu sync.RWMutex
 }
 
 // CopyPropertiesFrom copies the data instance-specific properties from a given
@@ -353,13 +361,18 @@ func DataByFilter(spec storage.FilterSpec) (d *Data, v dvid.VersionID, found boo
 }
 
 func (d *Data) SetReady(versionID dvid.VersionID, set bool) {
+	d.readyMu.Lock()
 	if d.ready == nil {
 		d.ready = make(map[dvid.VersionID]bool)
 	}
 	d.ready[versionID] = set
+	d.readyMu.Unlock()
 }
 
 func (d *Data) IsReady(versionID dvid.VersionID) bool {
+	d.readyMu.RLock()
+	defer d.readyMu.RUnlock()
+
 	if len(d.ready) == 0 {
 		return false
 	}
