@@ -476,7 +476,7 @@ func (db *LevelDB) Get(ctx storage.Context, tk storage.TKey) ([]byte, error) {
 
 // getSingleKeyVersions returns all versions of a key.  These key-value pairs will be sorted
 // in ascending key order and could include a tombstone key.
-func (db *LevelDB) getSingleKeyVersions(vctx storage.VersionedCtx, k []byte) ([]*storage.KeyValue, error) {
+func (db *LevelDB) getSingleKeyVersions(vctx storage.VersionedCtx, tk []byte) ([]*storage.KeyValue, error) {
 	dvid.StartCgo()
 	ro := levigo.NewReadOptions()
 	it := db.ldb.NewIterator(ro)
@@ -486,21 +486,21 @@ func (db *LevelDB) getSingleKeyVersions(vctx storage.VersionedCtx, k []byte) ([]
 	}()
 
 	values := []*storage.KeyValue{}
-	kStart, err := vctx.MinVersionKey(k)
+	begKey, err := vctx.MinVersionKey(tk)
 	if err != nil {
 		return nil, err
 	}
-	kEnd, err := vctx.MaxVersionKey(k)
+	endKey, err := vctx.MaxVersionKey(tk)
 	if err != nil {
 		return nil, err
 	}
 
-	it.Seek(kStart)
+	it.Seek(begKey)
 	for {
 		if it.Valid() {
 			itKey := it.Key()
 			storage.StoreKeyBytesRead <- len(itKey)
-			if bytes.Compare(itKey, kEnd) > 0 {
+			if bytes.Compare(itKey, endKey) > 0 {
 				// log.Printf("key past %v\n", kEnd)
 				return values, nil
 			}

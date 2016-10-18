@@ -68,7 +68,12 @@ type KeyRange struct {
 }
 
 // TKey is the type-specific component of a key.  Each data instance will insert
-// key components into a class of TKey.
+// key components into a class of TKey.  Typically, the first byte is unique for
+// a given class of keys within a datatype.  For a given class of type-specific keys,
+// they must either be (1) identical length or (2) if varying length, not share a
+// common prefix.  The second case can be trivially fulfilled by ending a
+// type-specific key with a unique (not occuring within these type-specific keys)
+// termination byte like 0x00.
 type TKey []byte
 
 const (

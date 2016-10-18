@@ -148,7 +148,6 @@ func (d *Data) processEvents() {
 	var stop bool
 	var wg *sync.WaitGroup
 	for {
-		dvid.Infof("Launching sync event handler for data %q...\n", d.DataName())
 		select {
 		case wg = <-d.syncDone:
 			queued := len(d.syncCh)
@@ -175,11 +174,7 @@ func (d *Data) processEvents() {
 
 func (d *Data) handleSyncMessage(ctx *datastore.VersionedCtx, msg datastore.SyncMessage, batcher storage.KeyValueBatcher) {
 	d.StartUpdate()
-	dvid.Infof("Starting update...\n")
-	defer func() {
-		dvid.Infof("Stopping update...\n")
-		d.StopUpdate()
-	}()
+	defer d.StopUpdate()
 
 	switch delta := msg.Delta.(type) {
 

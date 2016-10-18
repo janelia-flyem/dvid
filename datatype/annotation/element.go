@@ -95,7 +95,7 @@ POST <api URL>/node/<UUID>/<data name>/sync
 Note: For the following URL endpoints that return and accept POSTed JSON values, see the JSON format
 at end of this documentation.
 
-GET <api URL>/node/<UUID>/<data name>/label/<label>?<options>
+GET <api URL>/node/<UUID>/<data name>/label/<label>[?<options>]
 
 	Returns all point annotations within the given label as an array of elements.
 	This endpoint is only available if the annotation data instance is synced with
@@ -110,7 +110,7 @@ GET <api URL>/node/<UUID>/<data name>/label/<label>?<options>
 	GET http://foo.com/api/node/83af/myannotations/label/23?relationships=true
 
 
-GET <api URL>/node/<UUID>/<data name>/tag/<tag>
+GET <api URL>/node/<UUID>/<data name>/tag/<tag>[?<options>]
 
 	Returns all point annotations with the given tag as an array of elements.
 	By default, the Relationships of an annotation to other annotations is not
@@ -910,7 +910,10 @@ func (d *Data) deleteElementInTags(ctx *datastore.VersionedCtx, pt dvid.Point3d,
 
 	for _, tag := range tags {
 		// Get the elements in tag.
-		tk := NewTagTKey(tag)
+		tk, err := NewTagTKey(tag)
+		if err != nil {
+			return err
+		}
 		elems, err := getElements(ctx, tk)
 		if err != nil {
 			return err
@@ -1044,7 +1047,10 @@ func (d *Data) moveElementInTags(ctx *datastore.VersionedCtx, from, to dvid.Poin
 
 	for _, tag := range tags {
 		// Get the elements in tag.
-		tk := NewTagTKey(tag)
+		tk, err := NewTagTKey(tag)
+		if err != nil {
+			return err
+		}
 		elems, err := getElements(ctx, tk)
 		if err != nil {
 			return err
@@ -1308,7 +1314,10 @@ func (d *Data) storeLabelElements(ctx *datastore.VersionedCtx, be blockElements)
 // elements at same position.
 func (d *Data) storeTagElements(ctx *datastore.VersionedCtx, te tagElements) error {
 	for tag, elems := range te {
-		tk := NewTagTKey(tag)
+		tk, err := NewTagTKey(tag)
+		if err != nil {
+			return err
+		}
 		if err := d.modifyElements(ctx, tk, elems); err != nil {
 			return err
 		}
@@ -1346,23 +1355,25 @@ func (d *Data) GetLabelSynapses(ctx *datastore.VersionedCtx, label uint64) (Elem
 }
 
 // GetTagJSON returns JSON for synapse elements in a given tag.
-func (d *Data) GetTagJSON(ctx *datastore.VersionedCtx, tag Tag, addRels bool) ([]byte, error) {
+func (d *Data) GetTagJSON(ctx *datastore.VersionedCtx, tag Tag, addRels bool) (jsonBytes []byte, err error) {
 	d.RLock()
 	defer d.RUnlock()
 
-	tk := NewTagTKey(tag)
-	if addRels {
-		elems, err := d.getExpandedElements(ctx, tk)
-		if err != nil {
-			return nil, err
-		}
-		return json.Marshal(elems)
-	}
-	elems, err := getElementsNR(ctx, tk)
+	var tk storage.TKey
+	var elems interface{}
+	tk, err = NewTagTKey(tag)
 	if err != nil {
-		return nil, err
+		return
 	}
-	return json.Marshal(elems)
+	if addRels {
+		elems, err = d.getExpandedElements(ctx, tk)
+	} else {
+		elems, err = getElementsNR(ctx, tk)
+	}
+	if err == nil {
+		jsonBytes, err = json.Marshal(elems)
+	}
+	return
 }
 
 // GetTagSynapses returns synapse elements for a given tag.
@@ -1370,7 +1381,10 @@ func (d *Data) GetTagSynapses(ctx *datastore.VersionedCtx, tag Tag) (Elements, e
 	d.RLock()
 	defer d.RUnlock()
 
-	tk := NewTagTKey(tag)
+	tk, err := NewTagTKey(tag)
+	if err != nil {
+		return nil, err
+	}
 	return d.getExpandedElements(ctx, tk)
 }
 

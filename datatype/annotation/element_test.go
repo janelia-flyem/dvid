@@ -507,6 +507,46 @@ var afterDelete = Elements{
 	},
 }
 
+var testTagData = Elements{
+	{
+		ElementNR{
+			Pos:  dvid.Point3d{15, 27, 35}, // Label 1
+			Kind: PreSyn,
+			Tags: []Tag{"Synapse1", "Zlt90"},
+			Prop: map[string]string{
+				"Im a T-Bar":         "yes",
+				"I'm not a PSD":      "sure",
+				"i'm really special": "",
+			},
+		},
+		[]Relationship{{Rel: PreSynTo, To: dvid.Point3d{20, 30, 40}}, {Rel: PreSynTo, To: dvid.Point3d{14, 25, 37}}, {Rel: PreSynTo, To: dvid.Point3d{33, 30, 31}}},
+	},
+	{
+		ElementNR{
+			Pos:  dvid.Point3d{20, 30, 40}, // Label 2
+			Kind: PostSyn,
+			Tags: []Tag{"Synapse10"},
+		},
+		[]Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
+	},
+	{
+		ElementNR{
+			Pos:  dvid.Point3d{14, 25, 37}, // Label 3
+			Kind: PostSyn,
+			Tags: []Tag{"Synapse11", "Zlt90"},
+		},
+		[]Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
+	},
+	{
+		ElementNR{
+			Pos:  dvid.Point3d{33, 30, 31},
+			Kind: PostSyn,
+			Tags: []Tag{"Synapse111", "Zlt90"},
+		},
+		[]Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
+	},
+}
+
 func getTag(tag Tag, elems Elements) Elements {
 	var result Elements
 	for _, elem := range elems {
@@ -636,6 +676,89 @@ func TestRequests(t *testing.T) {
 	// --- check tag
 	synapse2 = getTag(tag, afterDelete)
 	testResponse(t, synapse2, "%snode/%s/%s/tag/%s?relationships=true", server.WebAPIPath, uuid, data.DataName(), tag)
+}
+
+func TestTagRequests(t *testing.T) {
+	datastore.OpenTest()
+	defer datastore.CloseTest()
+
+	uuid, _ := initTestRepo()
+
+	config := dvid.NewConfig()
+	dataservice, err := datastore.NewData(uuid, syntype, "mysynapses", config)
+	if err != nil {
+		t.Fatalf("Error creating new data instance: %v\n", err)
+	}
+	data, ok := dataservice.(*Data)
+	if !ok {
+		t.Fatalf("Returned new data instance is not synapse.Data\n")
+	}
+
+	// PUT first batch of synapses
+	testJSON, err := json.Marshal(testTagData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	url1 := fmt.Sprintf("%snode/%s/%s/elements", server.WebAPIPath, uuid, data.DataName())
+	server.TestHTTP(t, "POST", url1, strings.NewReader(string(testJSON)))
+
+	// Test Tags
+	expected := Elements{
+		{
+			ElementNR{
+				Pos:  dvid.Point3d{15, 27, 35}, // Label 1
+				Kind: PreSyn,
+				Tags: []Tag{"Synapse1", "Zlt90"},
+				Prop: map[string]string{
+					"Im a T-Bar":         "yes",
+					"I'm not a PSD":      "sure",
+					"i'm really special": "",
+				},
+			},
+			[]Relationship{{Rel: PreSynTo, To: dvid.Point3d{20, 30, 40}}, {Rel: PreSynTo, To: dvid.Point3d{14, 25, 37}}, {Rel: PreSynTo, To: dvid.Point3d{33, 30, 31}}},
+		},
+	}
+	tag := Tag("Synapse1")
+	testResponse(t, expected, "%snode/%s/%s/tag/%s?relationships=true", server.WebAPIPath, uuid, data.DataName(), tag)
+
+	expected = Elements{
+		{
+			ElementNR{
+				Pos:  dvid.Point3d{20, 30, 40}, // Label 2
+				Kind: PostSyn,
+				Tags: []Tag{"Synapse10"},
+			},
+			[]Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
+		},
+	}
+	tag = Tag("Synapse10")
+	testResponse(t, expected, "%snode/%s/%s/tag/%s?relationships=true", server.WebAPIPath, uuid, data.DataName(), tag)
+
+	expected = Elements{
+		{
+			ElementNR{
+				Pos:  dvid.Point3d{14, 25, 37}, // Label 3
+				Kind: PostSyn,
+				Tags: []Tag{"Synapse11", "Zlt90"},
+			},
+			[]Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
+		},
+	}
+	tag = Tag("Synapse11")
+	testResponse(t, expected, "%snode/%s/%s/tag/%s?relationships=true", server.WebAPIPath, uuid, data.DataName(), tag)
+
+	expected = Elements{
+		{
+			ElementNR{
+				Pos:  dvid.Point3d{33, 30, 31},
+				Kind: PostSyn,
+				Tags: []Tag{"Synapse111", "Zlt90"},
+			},
+			[]Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
+		},
+	}
+	tag = Tag("Synapse111")
+	testResponse(t, expected, "%snode/%s/%s/tag/%s?relationships=true", server.WebAPIPath, uuid, data.DataName(), tag)
 }
 
 func getBytesRLE(t *testing.T, rles dvid.RLEs) *bytes.Buffer {

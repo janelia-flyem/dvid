@@ -6,6 +6,7 @@ package annotation
 
 import (
 	"encoding/binary"
+	"fmt"
 
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
@@ -25,16 +26,31 @@ const (
 	keyBlock = 72
 )
 
-func NewTagTKey(tag Tag) storage.TKey {
-	return storage.NewTKey(keyTag, []byte(tag))
+// NewTagTKey returns a TKey for a given tag.
+func NewTagTKey(tag Tag) (storage.TKey, error) {
+	// Make sure the key has no embedded 0 values
+	for i := 0; i < len(tag); i++ {
+		if tag[i] == 0 {
+			return nil, fmt.Errorf("tag cannot have embedded 0 value")
+		}
+	}
+	return storage.NewTKey(keyTag, append([]byte(tag), 0)), nil
 }
 
+// DecodeTagTKey returns the Tag corresponding to this type-specific key.
 func DecodeTagTKey(tk storage.TKey) (Tag, error) {
 	ibytes, err := tk.ClassBytes(keyTag)
 	if err != nil {
 		return "", err
 	}
-	return Tag(ibytes), nil
+	sz := len(ibytes) - 1
+	if sz <= 0 {
+		return "", fmt.Errorf("empty tag")
+	}
+	if ibytes[sz] != 0 {
+		return "", fmt.Errorf("expected 0 byte ending tag key, got %d", ibytes[sz])
+	}
+	return Tag(ibytes[:sz]), nil
 }
 
 func NewLabelTKey(label uint64) storage.TKey {
