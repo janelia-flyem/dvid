@@ -35,7 +35,7 @@ func (d *Data) Shutdown() {
 		wg := new(sync.WaitGroup)
 		wg.Add(1)
 		d.syncDone <- wg
-		wg.Done() // Block until we are done.
+		wg.Wait() // Block until we are done.
 	}
 }
 
