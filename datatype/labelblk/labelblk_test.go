@@ -117,7 +117,7 @@ func TestLabelblkDirectAPI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unable to make new labels Voxels: %v\n", err)
 	}
-	if err = labels.IngestVoxels(versionID, v, ""); err != nil {
+	if err = labels.IngestVoxels(versionID, 1, v, ""); err != nil {
 		t.Errorf("Unable to put labels for %s: %v\n", labelsCtx, err)
 	}
 	if v.NumVoxels() != int64(len(data))/8 {

@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/janelia-flyem/dvid/dvid"
@@ -214,6 +215,9 @@ func (u *Updater) StartUpdate() {
 func (u *Updater) StopUpdate() {
 	u.Lock()
 	u.updates--
+	if u.updates < 0 {
+		dvid.Criticalf("StopUpdate() called more than StartUpdate().  Issue with data instance code.\n")
+	}
 	u.Unlock()
 }
 
@@ -225,7 +229,7 @@ func (u *Updater) Updating() bool {
 	return updating
 }
 
-type updatingData interface {
+type dataUpdater interface {
 	Updating() bool
 }
 
@@ -237,9 +241,9 @@ func BlockOnUpdating(uuid dvid.UUID, name dvid.InstanceName) error {
 	if err != nil {
 		return err
 	}
-	updater, ok := d.(updatingData)
+	updater, ok := d.(dataUpdater)
 	if !ok {
-		return fmt.Errorf("Data %q @ uuid %s does not implement an Updater!", name, uuid)
+		return fmt.Errorf("Data %q @ uuid %s does not embed a datastore.Updater yet called BlockOnUpdating!", name, uuid)
 	}
 	for updater.Updating() {
 		time.Sleep(50 * time.Millisecond)
@@ -281,9 +285,13 @@ type Data struct {
 	// will use the default store.
 	store dvid.Store
 
-	// these sync management vars aren't serialized
-	syncmu     sync.RWMutex
-	syncInited map[dvid.InstanceName]struct{}
+	// an atomic operation ID used for non-persistent operations like coordinating
+	// multiple sync deltas.
+	mutID uint64
+
+	// handle waiting based on operation ID.
+	opWG    map[uint64]*sync.WaitGroup
+	opWG_mu sync.RWMutex
 }
 
 // -- Syncer interface partial implementation for base getters.
@@ -414,6 +422,11 @@ func (d *Data) BackendStore() (dvid.Store, error) {
 		return storage.DefaultStore()
 	}
 	return d.store, nil
+}
+
+func (d *Data) NewMutationID() uint64 {
+	// shouldn't worry about running out of operation IDs during a DVID server's uptime.
+	return atomic.AddUint64(&(d.mutID), 1)
 }
 
 // ---- dvid.DataSetter implementation ----
@@ -647,6 +660,57 @@ func (d *Data) ModifyConfig(config dvid.Config) error {
 // to a remote DVID without any datatype-specific filtering of data.
 func (d *Data) PushData(p *PushSession) error {
 	return PushData(d, p)
+}
+
+// ------ handle operation id waiting --------
+
+// MutAdd adds a wait to this operation.  Returns true if this is a new operation for this Data
+func (d *Data) MutAdd(mutID uint64) (newOp bool) {
+	d.opWG_mu.Lock()
+	if d.opWG == nil {
+		d.opWG = make(map[uint64]*sync.WaitGroup)
+	}
+	wg, found := d.opWG[mutID]
+	if !found || wg == nil {
+		wg = new(sync.WaitGroup)
+		d.opWG[mutID] = wg
+		newOp = true
+	}
+	wg.Add(1)
+	d.opWG_mu.Unlock()
+	return
+}
+
+// MutDone marks the end of operations corresponding to MutAdd.
+func (d *Data) MutDone(mutID uint64) {
+	d.opWG_mu.Lock()
+	defer d.opWG_mu.Unlock()
+	if d.opWG == nil {
+		return
+	}
+	wg, found := d.opWG[mutID]
+	if !found || wg == nil {
+		return
+	}
+	wg.Done()
+}
+
+// MutWait blocks until all operations with the given ID are completed.
+func (d *Data) MutWait(mutID uint64) {
+	d.opWG_mu.RLock()
+	wg, found := d.opWG[mutID]
+	d.opWG_mu.RUnlock()
+	if found && wg != nil {
+		wg.Wait()
+	}
+}
+
+// MutDelete removes a wait for this operation.  Should only be done after all MutWait()
+// have completed.
+func (d *Data) MutDelete(mutID uint64) {
+	d.opWG_mu.Lock()
+	delete(d.opWG, mutID)
+	d.opWG_mu.Unlock()
 }
 
 // ------ storage.Accessor interface implementation -------

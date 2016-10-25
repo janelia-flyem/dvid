@@ -234,8 +234,10 @@ func (i *IndexZYX) ToIZYXString() IZYXString {
 // Hash returns an integer [0, n) where the returned values should be reasonably
 // spread among the range of returned values.  This implementation makes sure
 // that any range query along x, y, or z direction will map to different handlers.
+// The underlying algorithm is identical to use of IZYXString so the has for either
+// an IZYXString or IndexZYX representation will return the identical hash.
 func (i *IndexZYX) Hash(n int) int {
-	return int((*i)[0]+(*i)[1]+(*i)[2]) % n
+	return IZYXString(i.Bytes()).Hash(n)
 }
 
 // MarshalBinary fulfills the encoding.BinaryMarshaler interface and stores

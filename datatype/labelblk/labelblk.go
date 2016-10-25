@@ -149,7 +149,8 @@ POST <api URL>/node/<UUID>/<data name>/sync
     already exist.  Currently, syncs should be created before any annotations are pushed to
     the server.  If annotations already exist, these are currently not synced.
 
-    The labelblk data type only accepts syncs to labelvol data instances.
+    The labelblk data type accepts syncs to labelvol data instances.  It also accepts syncs to
+	labelblk instances for multiscale.
 
 
 GET  <api URL>/node/<UUID>/<data name>/metadata
@@ -540,8 +541,9 @@ type Data struct {
 	syncCh   chan datastore.SyncMessage
 	syncDone chan *sync.WaitGroup
 
-	procCh [numBlockHandlers]chan procMsg // channels into block processors.
-	vcache map[dvid.VersionID]blockCache
+	procCh    [numBlockHandlers]chan procMsg // channels into block processors.
+	vcache    map[dvid.VersionID]blockCache
+	vcache_mu sync.RWMutex
 }
 
 func (d *Data) Equals(d2 *Data) bool {
@@ -953,6 +955,7 @@ func (d *Data) DeleteBlocks(ctx *datastore.VersionedCtx, start dvid.ChunkPoint3d
 		return err
 	}
 
+	mutID := d.NewMutationID()
 	batch := batcher.NewBatch(ctx)
 	uncompress := true
 	for _, kv := range kvs {
@@ -983,13 +986,19 @@ func (d *Data) DeleteBlocks(ctx *datastore.VersionedCtx, start dvid.ChunkPoint3d
 
 		// Notify any subscribers that we've deleted this block.
 		evt := datastore.SyncEvent{d.DataUUID(), labels.DeleteBlockEvent}
-		msg := datastore.SyncMessage{labels.DeleteBlockEvent, ctx.VersionID(), labels.DeleteBlock{izyx, block}}
+		msg := datastore.SyncMessage{labels.DeleteBlockEvent, ctx.VersionID(), labels.DeleteBlock{izyx, block, mutID}}
 		if err := datastore.NotifySubscribers(evt, msg); err != nil {
 			return err
 		}
 
 	}
-	return batch.Commit()
+	if err := batch.Commit(); err != nil {
+		return err
+	}
+
+	// Notify any downstream downres instance that we're done with this op.
+	d.publishDownresCommit(ctx.VersionID(), mutID)
+	return nil
 }
 
 // RavelerSuperpixelBytes returns an encoded slice for Raveler (slice, superpixel) tuple.
@@ -1570,6 +1579,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			server.BadRequest(w, r, "DVID does not accept the %s action on the 'blocks' endpoint", action)
 			return
 		}
+
 	case "pseudocolor":
 		if len(parts) < 7 {
 			server.BadRequest(w, r, "'%s' must be followed by shape/size/offset", parts[3])
@@ -1706,6 +1716,14 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 					server.BadRequest(w, r, err)
 					return
 				}
+
+				totcount := make(map[uint64]int)
+				for i := int64(0); i < d.BlockSize().Prod(); i++ {
+					label := binary.LittleEndian.Uint64(data[i*8 : i*8+8])
+					totcount[label]++
+				}
+				dvid.Infof("Sending GET volume %s @ %s received by %q: %v\n", sizeStr, offsetStr, d.DataName(), totcount)
+
 				if err := sendBinaryData(compression, data, subvol, w); err != nil {
 					server.BadRequest(w, r, err)
 					return
@@ -1731,17 +1749,20 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 					server.BadRequest(w, r, err)
 					return
 				}
+				mutID := d.NewMutationID()
 				if queryStrings.Get("mutate") == "true" {
-					if err = d.MutateVoxels(ctx.VersionID(), lbl.Voxels, roiname); err != nil {
+					if err = d.MutateVoxels(ctx.VersionID(), mutID, lbl.Voxels, roiname); err != nil {
 						server.BadRequest(w, r, err)
 						return
 					}
 				} else {
-					if err = d.IngestVoxels(ctx.VersionID(), lbl.Voxels, roiname); err != nil {
+					if err = d.IngestVoxels(ctx.VersionID(), mutID, lbl.Voxels, roiname); err != nil {
 						server.BadRequest(w, r, err)
 						return
 					}
 				}
+				// Let any synced downres instance that we've completed block-level ops.
+				d.publishDownresCommit(ctx.VersionID(), mutID)
 			}
 			timedLog.Infof("HTTP %s: %s (%s)", r.Method, subvol, r.URL)
 		default:

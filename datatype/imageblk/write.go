@@ -104,14 +104,15 @@ type putOperation struct {
 	voxels   *Voxels
 	indexZYX dvid.IndexZYX
 	version  dvid.VersionID
-	mutate   bool // if false, we just ingest without needing to GET previous value
+	mutate   bool   // if false, we just ingest without needing to GET previous value
+	mutID     uint64 // should be unique within a server's uptime.
 }
 
 // IngestVoxels ingests voxels from a subvolume into the storage engine.
 // The subvolume must be aligned to blocks of the data instance, which simplifies
 // the routine since we are simply replacing a value instead of modifying values (GET + PUT).
-func (d *Data) IngestVoxels(v dvid.VersionID, vox *Voxels, roiname dvid.InstanceName) error {
-	return d.PutVoxels(v, vox, roiname, false)
+func (d *Data) IngestVoxels(v dvid.VersionID, mutID uint64, vox *Voxels, roiname dvid.InstanceName) error {
+	return d.PutVoxels(v, mutID, vox, roiname, false)
 }
 
 // MutateVoxels mutates voxels from a subvolume into the storage engine.  This differs from
@@ -119,14 +120,14 @@ func (d *Data) IngestVoxels(v dvid.VersionID, vox *Voxels, roiname dvid.Instance
 // which tells subscribers that a previous value has changed instead of a completely new
 // key/value being inserted.  There will be some decreased performance due to cleanup of prior
 // denormalizations compared to IngestVoxels.
-func (d *Data) MutateVoxels(v dvid.VersionID, vox *Voxels, roiname dvid.InstanceName) error {
-	return d.PutVoxels(v, vox, roiname, true)
+func (d *Data) MutateVoxels(v dvid.VersionID, mutID uint64, vox *Voxels, roiname dvid.InstanceName) error {
+	return d.PutVoxels(v, mutID, vox, roiname, true)
 }
 
 // PutVoxels persists voxels from a subvolume into the storage engine.
 // The subvolume must be aligned to blocks of the data instance, which simplifies
 // the routine if the PUT is a mutation (signals MutateBlockEvent) instead of ingestion.
-func (d *Data) PutVoxels(v dvid.VersionID, vox *Voxels, roiname dvid.InstanceName, mutate bool) error {
+func (d *Data) PutVoxels(v dvid.VersionID, mutID uint64, vox *Voxels, roiname dvid.InstanceName, mutate bool) error {
 	r, err := GetROI(v, roiname, vox)
 	if err != nil {
 		return err
@@ -200,7 +201,7 @@ func (d *Data) PutVoxels(v dvid.VersionID, vox *Voxels, roiname dvid.InstanceNam
 			}
 
 			kv := &storage.TKeyValue{K: NewTKey(&curIndex)}
-			putOp := &putOperation{vox, curIndex, v, mutate}
+			putOp := &putOperation{vox, curIndex, v, mutate, mutID}
 			op := &storage.ChunkOp{putOp, wg}
 			d.PutChunk(&storage.Chunk{op, kv}, putbuffer)
 		}
@@ -217,7 +218,7 @@ func (d *Data) PutVoxels(v dvid.VersionID, vox *Voxels, roiname dvid.InstanceNam
 }
 
 // PutBlocks stores blocks of data in a span along X
-func (d *Data) PutBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int, data io.ReadCloser, mutate bool) error {
+func (d *Data) PutBlocks(v dvid.VersionID, mutID uint64, start dvid.ChunkPoint3d, span int, data io.ReadCloser, mutate bool) error {
 	batcher, err := d.GetKeyValueBatcher()
 	if err != nil {
 		return err
@@ -277,10 +278,10 @@ func (d *Data) PutBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int, da
 		var delta interface{}
 		if mutate {
 			event = MutateBlockEvent
-			delta = MutatedBlock{&zyx, oldBlock, buf}
+			delta = MutatedBlock{&zyx, oldBlock, buf, mutID}
 		} else {
 			event = IngestBlockEvent
-			delta = Block{&zyx, buf}
+			delta = Block{&zyx, buf, mutID}
 		}
 		evt := datastore.SyncEvent{d.DataUUID(), event}
 		msg := datastore.SyncMessage{event, v, delta}
@@ -394,10 +395,10 @@ func (d *Data) putChunk(chunk *storage.Chunk, putbuffer storage.RequestBuffer) {
 		var delta interface{}
 		if op.mutate {
 			event = MutateBlockEvent
-			delta = MutatedBlock{&op.indexZYX, oldBlock, block.V}
+			delta = MutatedBlock{&op.indexZYX, oldBlock, block.V, op.mutID}
 		} else {
 			event = IngestBlockEvent
-			delta = Block{&op.indexZYX, block.V}
+			delta = Block{&op.indexZYX, block.V, op.mutID}
 		}
 		evt := datastore.SyncEvent{d.DataUUID(), event}
 		msg := datastore.SyncMessage{event, op.version, delta}
@@ -498,6 +499,7 @@ func (d *Data) writeBlocks(v dvid.VersionID, b storage.TKeyValues, wg1, wg2 *syn
 			server.HandlerToken <- 1
 		}()
 
+		mutID := d.NewMutationID()
 		batch := batcher.NewBatch(ctx)
 		for i, block := range b {
 			serialization, err := dvid.SerializeData(block.V, d.Compression(), d.Checksum())
@@ -514,7 +516,7 @@ func (d *Data) writeBlocks(v dvid.VersionID, b storage.TKeyValues, wg1, wg2 *syn
 				dvid.Errorf("Unable to recover index from block key: %v\n", block.K)
 				return
 			}
-			msg := datastore.SyncMessage{IngestBlockEvent, v, Block{indexZYX, block.V}}
+			msg := datastore.SyncMessage{IngestBlockEvent, v, Block{indexZYX, block.V, mutID}}
 			if err := datastore.NotifySubscribers(evt, msg); err != nil {
 				dvid.Errorf("Unable to notify subscribers of ChangeBlockEvent in %s\n", d.DataName())
 				return

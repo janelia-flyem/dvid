@@ -990,7 +990,7 @@ func (d *Data) PutLocal(request datastore.Request, reply *datastore.Response) er
 			return err
 		}
 		storage.FileBytesRead <- len(vox.Data())
-		if err = d.IngestVoxels(versionID, vox, ""); err != nil {
+		if err = d.IngestVoxels(versionID, d.NewMutationID(), vox, ""); err != nil {
 			return err
 		}
 		sliceLog.Debugf("%s put local %s", d.DataName(), slice)
@@ -1515,8 +1515,9 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 				return
 			}
 		} else {
+			mutID := d.NewMutationID()
 			mutate := (queryStrings.Get("mutate") == "true")
-			if err := d.PutBlocks(ctx.VersionID(), blockCoord, span, r.Body, mutate); err != nil {
+			if err := d.PutBlocks(ctx.VersionID(), mutID, blockCoord, span, r.Body, mutate); err != nil {
 				server.BadRequest(w, r, err)
 				return
 			}
@@ -1695,8 +1696,9 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 					server.BadRequest(w, r, err)
 					return
 				}
+				mutID := d.NewMutationID()
 				mutate := (queryStrings.Get("mutate") == "true")
-				if err = d.PutVoxels(ctx.VersionID(), vox, roiname, mutate); err != nil {
+				if err = d.PutVoxels(ctx.VersionID(), mutID, vox, roiname, mutate); err != nil {
 					server.BadRequest(w, r, err)
 					return
 				}

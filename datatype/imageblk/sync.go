@@ -14,6 +14,7 @@ const (
 type Block struct {
 	Index *dvid.IndexZYX
 	Data  []byte
+	MutID  uint64
 }
 
 // MutatedBlock encodes a 3d block coordinate and previous and updated block data.
@@ -22,4 +23,5 @@ type MutatedBlock struct {
 	Index *dvid.IndexZYX
 	Prev  []byte
 	Data  []byte
+	MutID  uint64
 }

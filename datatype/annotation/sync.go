@@ -73,7 +73,6 @@ func (lp LabelPoints) add(label uint64, pt dvid.Point3d) {
 // InitDataHandlers launches goroutines to handle each labelblk instance's syncs.
 func (d *Data) InitDataHandlers() error {
 	if d.syncCh != nil || d.syncDone != nil {
-		dvid.Criticalf("Data %q has multiple calls to InitDataHandlers()\n", d.DataName())
 		return nil
 	}
 	d.syncCh = make(chan datastore.SyncMessage, syncBufferSize)
@@ -97,7 +96,14 @@ func (d *Data) Shutdown() {
 
 // GetSyncSubs implements the datastore.Syncer interface.  Returns a list of subscriptions
 // to the sync data instance that will notify the receiver.
-func (d *Data) GetSyncSubs(synced dvid.Data) (subs datastore.SyncSubs) {
+func (d *Data) GetSyncSubs(synced dvid.Data) (subs datastore.SyncSubs, err error) {
+	if d.syncCh == nil {
+		if err = d.InitDataHandlers(); err != nil {
+			err = fmt.Errorf("unable to initialize handlers for data %q: %v\n", d.DataName(), err)
+			return
+		}
+	}
+
 	// Our syncing depends on the datatype we are syncing.
 	switch synced.TypeName() {
 	case "labelblk":
@@ -132,10 +138,9 @@ func (d *Data) GetSyncSubs(synced dvid.Data) (subs datastore.SyncSubs) {
 			},
 		}
 	default:
-		dvid.Criticalf("Unable to sync %s with %s since datatype %q is not supported.", d.DataName(), synced.DataName(), synced.TypeName())
-		return
+		err = fmt.Errorf("Unable to sync %s with %s since datatype %q is not supported.", d.DataName(), synced.DataName(), synced.TypeName())
 	}
-	return subs
+	return
 }
 
 // Processes each labelblk change as we get it.

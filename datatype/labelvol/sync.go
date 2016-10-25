@@ -2,6 +2,7 @@ package labelvol
 
 import (
 	"encoding/binary"
+	"fmt"
 	"sync"
 
 	"github.com/janelia-flyem/dvid/datastore"
@@ -22,6 +23,9 @@ const syncBufferSize = 100
 
 // InitDataHandlers launches goroutines to handle each labelvol instance's syncs.
 func (d *Data) InitDataHandlers() error {
+	if d.syncCh != nil || d.syncDone != nil {
+		return nil
+	}
 	d.syncCh = make(chan datastore.SyncMessage, syncBufferSize)
 	d.syncDone = make(chan *sync.WaitGroup)
 
@@ -40,7 +44,13 @@ func (d *Data) Shutdown() {
 }
 
 // GetSyncSubs implements the datastore.Syncer interface
-func (d *Data) GetSyncSubs(synced dvid.Data) datastore.SyncSubs {
+func (d *Data) GetSyncSubs(synced dvid.Data) (datastore.SyncSubs, error) {
+	if d.syncCh == nil {
+		if err := d.InitDataHandlers(); err != nil {
+			return nil, fmt.Errorf("unable to initialize handlers for data %q: %v\n", d.DataName(), err)
+		}
+	}
+
 	subs := datastore.SyncSubs{
 		{
 			Event:  datastore.SyncEvent{synced.DataUUID(), labels.IngestBlockEvent},
@@ -58,7 +68,7 @@ func (d *Data) GetSyncSubs(synced dvid.Data) datastore.SyncSubs {
 			Ch:     d.syncCh,
 		},
 	}
-	return subs
+	return subs, nil
 }
 
 // Processes each change as we get it.

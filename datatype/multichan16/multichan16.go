@@ -506,9 +506,10 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 	}
 
 	// PUT each channel of the file into the datastore using a separate data name.
+	mutID := d.NewMutationID()
 	for _, channel := range channels {
 		dvid.Infof("Processing channel %d... \n", channel.channelNum)
-		err = d.IngestVoxels(versionID, channel.Voxels, "")
+		err = d.IngestVoxels(versionID, mutID, channel.Voxels, "")
 		if err != nil {
 			return err
 		}
@@ -517,7 +518,7 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 	// Create a RGB composite from the first 3 channels.  This is considered to be channel 0
 	// or can be accessed with the base data name.
 	dvid.Infof("Creating composite image from channels...\n")
-	err = d.storeComposite(versionID, channels)
+	err = d.storeComposite(versionID, mutID, channels)
 	if err != nil {
 		return err
 	}
@@ -527,7 +528,7 @@ func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) e
 }
 
 // Create a RGB interleaved volume.
-func (d *Data) storeComposite(v dvid.VersionID, channels []*Channel) error {
+func (d *Data) storeComposite(v dvid.VersionID, mutID uint64, channels []*Channel) error {
 	// Setup the composite Channel
 	geom := channels[0].Geometry
 	pixels := int(geom.NumVoxels())
@@ -593,5 +594,5 @@ func (d *Data) storeComposite(v dvid.VersionID, channels []*Channel) error {
 	}
 
 	// Store the result
-	return d.IngestVoxels(v, composite.Voxels, "")
+	return d.IngestVoxels(v, mutID, composite.Voxels, "")
 }

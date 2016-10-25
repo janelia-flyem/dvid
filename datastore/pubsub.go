@@ -57,7 +57,7 @@ type Syncer interface {
 	// GetSyncSubs returns the subscriptions that need to be created to keep this data
 	// synced and may launch goroutines that will consume inbound channels of changes
 	// from associated data.
-	GetSyncSubs(dvid.Data) SyncSubs
+	GetSyncSubs(dvid.Data) (SyncSubs, error)
 
 	// SyncedNames returns the set of data instance UUIDs to which the data is synced.
 	SyncedNames() []dvid.InstanceName

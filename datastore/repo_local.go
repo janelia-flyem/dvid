@@ -461,6 +461,16 @@ func (m *repoManager) loadVersion0() error {
 				return err
 			}
 			dataservice.SetBackendStore(store)
+
+			// Initialize any dataservice that's initializable, e.g., start sync processing goroutines.
+			initializer, initializable := dataservice.(DataInitializer)
+			if initializable {
+				err := initializer.InitDataHandlers()
+				if err != nil {
+					return err
+				}
+				dvid.Infof("Initialized data handlers for instance %q on repo load.\n", dataservice.DataName())
+			}
 		}
 
 		// Recreate the sync graph for this repo, taking into account possible legacy sync names.
@@ -473,7 +483,11 @@ func (m *repoManager) loadVersion0() error {
 						// get the dataservice associated with this synced data.
 						syncedData, found := m.dataByUUID[u]
 						if found {
-							r.addSyncGraph(syncer.GetSyncSubs(syncedData))
+							subs, err := syncer.GetSyncSubs(syncedData)
+							if err != nil {
+								return err
+							}
+							r.addSyncGraph(subs)
 						} else {
 							dvid.Errorf("Skipping bad sync of %q with missing data uuid %s", dataservice.DataName(), u)
 						}
@@ -489,7 +503,11 @@ func (m *repoManager) loadVersion0() error {
 						// get the dataservice associated with this synced data.
 						syncedData, found := r.data[name]
 						if found {
-							r.addSyncGraph(syncer.GetSyncSubs(syncedData))
+							subs, err := syncer.GetSyncSubs(syncedData)
+							if err != nil {
+								return err
+							}
+							r.addSyncGraph(subs)
 							// convert the sync names to data UUIDs
 							syncs[syncedData.DataUUID()] = struct{}{}
 							dvid.Infof("  Converted synced data %q to its UUID: %s\n", name, syncedData.DataUUID())
@@ -516,18 +534,6 @@ func (m *repoManager) loadVersion0() error {
 				if modified {
 					saveRepo = true
 				}
-			}
-		}
-
-		// Allow data instance to do initialization before use.
-		for _, dataservice := range r.data {
-			initializer, initializable := dataservice.(DataInitializer)
-			if initializable {
-				err := initializer.InitDataHandlers()
-				if err != nil {
-					return err
-				}
-				dvid.Infof("Initialized data handlers for instance %q on repo load.\n", dataservice.DataName())
 			}
 		}
 
@@ -1574,7 +1580,11 @@ func (m *repoManager) setSync(d dvid.Data, syncs dvid.UUIDSet) error {
 			if !found {
 				return ErrInvalidDataUUID
 			}
-			r.addSyncGraph(syncer.GetSyncSubs(syncedData))
+			subs, err := syncer.GetSyncSubs(syncedData)
+			if err != nil {
+				return err
+			}
+			r.addSyncGraph(subs)
 		}
 	} else {
 		return fmt.Errorf("Can't create syncs for instance %q, which is not syncable: %v", d.DataName(), d)

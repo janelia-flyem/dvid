@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bytes"
+	"sync/atomic"
 	"testing"
 
 	"github.com/janelia-flyem/dvid/dvid"
@@ -26,6 +27,7 @@ type testData struct {
 	instanceID dvid.InstanceID
 	store      dvid.Store
 	syncData   dvid.UUIDSet
+	mutID      uint64
 }
 
 func (d *testData) DataName() dvid.InstanceName {
@@ -78,6 +80,10 @@ func (d *testData) TypeURL() dvid.URLString {
 
 func (d *testData) TypeVersion() string {
 	return "1.0"
+}
+
+func (d *testData) NewMutationID() uint64 {
+	return atomic.AddUint64(&(d.mutID), 1)
 }
 
 func (d *testData) BackendStore() (dvid.Store, error) {

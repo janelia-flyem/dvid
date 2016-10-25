@@ -16,6 +16,9 @@ const syncBufferSize = 100
 
 // InitDataHandlers launches goroutines to handle each labelblk instance's syncs.
 func (d *Data) InitDataHandlers() error {
+	if d.syncCh != nil || d.syncDone != nil {
+		return nil
+	}
 	d.syncCh = make(chan datastore.SyncMessage, syncBufferSize)
 	d.syncDone = make(chan *sync.WaitGroup)
 
@@ -37,7 +40,13 @@ func (d *Data) Shutdown() {
 
 // GetSyncSubs implements the datastore.Syncer interface.  Returns a list of subscriptions
 // to the sync data instance that will notify the receiver.
-func (d *Data) GetSyncSubs(synced dvid.Data) datastore.SyncSubs {
+func (d *Data) GetSyncSubs(synced dvid.Data) (datastore.SyncSubs, error) {
+	if d.syncCh == nil {
+		if err := d.InitDataHandlers(); err != nil {
+			return nil, fmt.Errorf("unable to initialize handlers for data %q: %v\n", d.DataName(), err)
+		}
+	}
+
 	subs := datastore.SyncSubs{
 		datastore.SyncSub{
 			Event:  datastore.SyncEvent{synced.DataUUID(), annotation.ModifyElementsEvent},
@@ -50,7 +59,7 @@ func (d *Data) GetSyncSubs(synced dvid.Data) datastore.SyncSubs {
 		// 	Ch:     d.SyncCh,
 		// },
 	}
-	return subs
+	return subs, nil
 }
 
 // If annotation elements are added or deleted, adjust the label counts.

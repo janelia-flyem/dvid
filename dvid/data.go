@@ -250,6 +250,9 @@ type Data interface {
 	// BackendStore returns the data store used for this data.
 	BackendStore() (Store, error)
 
+	// Returns a concurrency-friendly unique operations ID for this Data.  Resets to 1 when server is restarted.
+	NewMutationID() uint64
+
 	DataSetter
 }
 

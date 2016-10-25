@@ -15,8 +15,8 @@ import (
 	"io"
 	_ "log"
 
-	lz4 "github.com/janelia-flyem/go/golz4"
 	"github.com/golang/snappy"
+	lz4 "github.com/janelia-flyem/go/golz4"
 )
 
 // Compression is the format of compression for storing data.
@@ -304,41 +304,41 @@ func DeserializeData(s []byte, uncompress bool) ([]byte, CompressionFormat, erro
 	if !uncompress || compression == Uncompressed {
 		return cdata, compression, nil
 	}
-        
-    switch compression {
-    case Snappy:
-        data, err := snappy.Decode(nil, cdata)
-        if err != nil {
-            return nil, 0, err
-        } 
-        return data, compression, nil
-    case LZ4:
-        origSize := binary.LittleEndian.Uint32(cdata[0:4])
-        data := make([]byte, int(origSize))
-        if err := lz4.Uncompress(cdata[4:], data); err != nil {
-            return nil, 0, err
-        } 
-        return data, compression, nil
-    case Gzip:
-        b := bytes.NewBuffer(cdata)
-        var err error
-        r, err := gzip.NewReader(b)
-        if err != nil {
-            return nil, 0, err
-        }
-        var buffer bytes.Buffer
-        _, err = io.Copy(&buffer, r)
-        if err != nil {
-            return nil, 0, err
-        }
-        err = r.Close()
-        if err != nil {
-            return nil, 0, err
-        }
-        return buffer.Bytes(), compression, nil
-    default:
-        return nil, 0, fmt.Errorf("Illegal compression format (%d) in deserialization", compression)
-    }
+
+	switch compression {
+	case Snappy:
+		data, err := snappy.Decode(nil, cdata)
+		if err != nil {
+			return nil, 0, err
+		}
+		return data, compression, nil
+	case LZ4:
+		origSize := binary.LittleEndian.Uint32(cdata[0:4])
+		data := make([]byte, int(origSize))
+		if err := lz4.Uncompress(cdata[4:], data); err != nil {
+			return nil, 0, err
+		}
+		return data, compression, nil
+	case Gzip:
+		b := bytes.NewBuffer(cdata)
+		var err error
+		r, err := gzip.NewReader(b)
+		if err != nil {
+			return nil, 0, err
+		}
+		var buffer bytes.Buffer
+		_, err = io.Copy(&buffer, r)
+		if err != nil {
+			return nil, 0, err
+		}
+		err = r.Close()
+		if err != nil {
+			return nil, 0, err
+		}
+		return buffer.Bytes(), compression, nil
+	default:
+		return nil, 0, fmt.Errorf("Illegal compression format (%d) in deserialization", compression)
+	}
 }
 
 // Deserialize a Go object using Gob encoding

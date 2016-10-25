@@ -196,7 +196,7 @@ func newTestVolume(nx, ny, nz int32) *testVolume {
 }
 
 // Sets voxels in body to given label.
-func (v *testVolume) add(body testBody, label uint64) {
+func (v *testVolume) addBody(body testBody, label uint64) {
 	nx := v.size[0]
 	nxy := nx * v.size[1]
 	for _, span := range body.voxelSpans {
@@ -204,6 +204,23 @@ func (v *testVolume) add(body testBody, label uint64) {
 		p := (z*nxy + y*nx) * 8
 		for i := p + x0*8; i <= p+x1*8; i += 8 {
 			binary.LittleEndian.PutUint64(v.data[i:i+8], label)
+		}
+	}
+}
+
+// Add a label to a subvolume.
+func (v *testVolume) addSubvol(origin, size dvid.Point3d, label uint64) {
+	nx := v.size[0]
+	nxy := nx * v.size[1]
+	spanBytes := size[0] * 8
+	buf := make([]byte, spanBytes)
+	for x := int32(0); x < size[0]; x++ {
+		binary.LittleEndian.PutUint64(buf[x*8:x*8+8], label)
+	}
+	for z := origin[2]; z < origin[2]+size[2]; z++ {
+		for y := origin[1]; y < origin[1]+size[1]; y++ {
+			i := (z*nxy + y*nx + origin[0]) * 8
+			copy(v.data[i:i+spanBytes], buf)
 		}
 	}
 }
@@ -225,6 +242,21 @@ func (v *testVolume) get(t *testing.T, uuid dvid.UUID, name string) {
 	apiStr := fmt.Sprintf("%snode/%s/%s/raw/0_1_2/%d_%d_%d/0_0_0", server.WebAPIPath,
 		uuid, name, v.size[0], v.size[1], v.size[2])
 	v.data = server.TestHTTP(t, "GET", apiStr, nil)
+}
+
+func (v *testVolume) getVoxel(pt dvid.Point3d) uint64 {
+	nx := v.size[0]
+	nxy := nx * v.size[1]
+	i := (pt[2]*nxy + pt[1]*nx + pt[0]) * 8
+	return binary.LittleEndian.Uint64(v.data[i : i+8])
+}
+
+func (v *testVolume) verifyLabel(t *testing.T, expected uint64, x, y, z int32) {
+	pt := dvid.Point3d{x, y, z}
+	label := v.getVoxel(pt)
+	if label != expected {
+		t.Errorf("Expected label %d at %s for first downres but got %d instead\n", expected, pt, label)
+	}
 }
 
 func (v *testVolume) equals(v2 *testVolume) bool {
@@ -287,13 +319,10 @@ func (mjson mergeJSON) send(t *testing.T, uuid dvid.UUID, name string) {
 func createLabelTestVolume(t *testing.T, uuid dvid.UUID, name string) *testVolume {
 	// Setup test label blocks that are non-intersecting.
 	volume := newTestVolume(128, 128, 128)
-	volume.add(body1, 1)
-	volume.add(body2, 2)
-	if !volume.isLabel(2, &body2) {
-		t.Errorf("Label 2 was incorrectly written in createLabelTestVolume!")
-	}
-	volume.add(body3, 3)
-	volume.add(body4, 4)
+	volume.addBody(body1, 1)
+	volume.addBody(body2, 2)
+	volume.addBody(body3, 3)
+	volume.addBody(body4, 4)
 
 	// Send data over HTTP to populate a data instance
 	volume.put(t, uuid, name)
@@ -303,8 +332,8 @@ func createLabelTestVolume(t *testing.T, uuid dvid.UUID, name string) *testVolum
 func createLabelTest2Volume(t *testing.T, uuid dvid.UUID, name string) *testVolume {
 	// Setup test label blocks that are non-intersecting.
 	volume := newTestVolume(128, 128, 128)
-	volume.add(body6, 6)
-	volume.add(body7, 7)
+	volume.addBody(body6, 6)
+	volume.addBody(body7, 7)
 
 	// Send data over HTTP to populate a data instance using mutable flag
 	volume.putMutable(t, uuid, name)
@@ -462,7 +491,7 @@ func TestMergeLabels(t *testing.T) {
 	server.CreateTestSync(t, uuid, "bodies", "labels")
 
 	expected := createLabelTestVolume(t, uuid, "labels")
-	expected.add(body3, 2)
+	expected.addBody(body3, 2)
 
 	if err := datastore.BlockOnUpdating(uuid, "bodies"); err != nil {
 		t.Fatalf("Error blocking on sync of labels -> bodies: %v\n", err)
@@ -529,7 +558,7 @@ func TestSplitLabel(t *testing.T) {
 
 	// Post label volume and setup expected volume after split.
 	expected := createLabelTestVolume(t, uuid, "labels")
-	expected.add(bodysplit, 5)
+	expected.addBody(bodysplit, 5)
 
 	if err := datastore.BlockOnUpdating(uuid, "bodies"); err != nil {
 		t.Fatalf("Error blocking on sync of labels -> bodies: %v\n", err)
@@ -639,8 +668,8 @@ func TestSplitGivenLabel(t *testing.T) {
 
 	// Post label volume and setup expected volume after split.
 	expected := createLabelTestVolume(t, uuid, "labels")
-	expected.add(bodyleft, 4)
-	expected.add(bodysplit, 23)
+	expected.addBody(bodyleft, 4)
+	expected.addBody(bodysplit, 23)
 
 	if err := datastore.BlockOnUpdating(uuid, "bodies"); err != nil {
 		t.Fatalf("Error blocking on sync of labels -> bodies: %v\n", err)
@@ -895,7 +924,7 @@ func TestMergeSplitLabel(t *testing.T) {
 	expected := createLabelTestVolume(t, uuid, "labels")
 
 	// Get expected volume if we add label 3 to 4.
-	expected.add(body3, 4)
+	expected.addBody(body3, 4)
 
 	if err := datastore.BlockOnUpdating(uuid, "bodies"); err != nil {
 		t.Fatalf("Error blocking on sync of labels -> bodies: %v\n", err)
@@ -987,7 +1016,7 @@ func TestMergeSplitLabel(t *testing.T) {
 	if len(retrieved.data) != 8*128*128*128 {
 		t.Errorf("Retrieved post-split volume is incorrect size\n")
 	}
-	expected.add(bodysplit, 5)
+	expected.addBody(bodysplit, 5)
 	if !retrieved.equals(expected) {
 		t.Errorf("Split label volume not equal to expected volume\n")
 	}
@@ -996,6 +1025,71 @@ func TestMergeSplitLabel(t *testing.T) {
 	reqStr = fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid, "bodies", 5)
 	encoding := server.TestHTTP(t, "GET", reqStr, nil)
 	bodysplit.checkSparseVol(t, encoding, dvid.Bounds{})
+}
+
+func TestMultiscaleMergeSplit(t *testing.T) {
+	datastore.OpenTest()
+	defer datastore.CloseTest()
+
+	// Create testbed volume and data instances
+	uuid, _ := initTestRepo()
+	var config dvid.Config
+	server.CreateTestInstance(t, uuid, "labelblk", "labels", config)
+	server.CreateTestInstance(t, uuid, "labelvol", "bodies", config)
+	server.CreateTestSync(t, uuid, "labels", "bodies")
+	server.CreateTestSync(t, uuid, "bodies", "labels")
+
+	// Add multiscale
+	server.CreateTestInstance(t, uuid, "labelblk", "labels_1", config) // 64 x 64 x 64
+	server.CreateTestSync(t, uuid, "labels_1", "labels")
+	server.CreateTestInstance(t, uuid, "labelblk", "labels_2", config) // 32 x 32 x 32
+	server.CreateTestSync(t, uuid, "labels_2", "labels_1")
+	server.CreateTestInstance(t, uuid, "labelblk", "labels_3", config) // 16 x 16 x 16
+	server.CreateTestSync(t, uuid, "labels_3", "labels_2")
+
+	// Create an easily interpreted label volume with a couple of labels.
+	volume := newTestVolume(128, 128, 128)
+	volume.addSubvol(dvid.Point3d{10, 10, 10}, dvid.Point3d{40, 40, 40}, 1)
+	volume.addSubvol(dvid.Point3d{10, 10, 50}, dvid.Point3d{40, 40, 40}, 2)
+	volume.addSubvol(dvid.Point3d{50, 10, 10}, dvid.Point3d{40, 40, 40}, 13)
+	volume.addSubvol(dvid.Point3d{10, 50, 10}, dvid.Point3d{40, 40, 40}, 209)
+	volume.addSubvol(dvid.Point3d{50, 50, 10}, dvid.Point3d{40, 40, 40}, 311)
+	volume.put(t, uuid, "labels")
+
+	// Verify initial ingest for hi-res
+	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
+		t.Fatalf("Error blocking on update for labels: %v\n", err)
+	}
+	hires := newTestVolume(128, 128, 128)
+	hires.get(t, uuid, "labels")
+	hires.verifyLabel(t, 1, 15, 15, 15)
+	hires.verifyLabel(t, 2, 20, 20, 70)
+	hires.verifyLabel(t, 13, 70, 30, 30)
+	hires.verifyLabel(t, 209, 25, 70, 25)
+	hires.verifyLabel(t, 311, 51, 51, 11)
+
+	// Check the first downres: 64^3
+	if err := datastore.BlockOnUpdating(uuid, "labels_1"); err != nil {
+		t.Fatalf("Error blocking on update for labels_1: %v\n", err)
+	}
+	downres1 := newTestVolume(64, 64, 64)
+	downres1.get(t, uuid, "labels_1")
+	downres1.verifyLabel(t, 1, 15, 15, 15)
+	downres1.verifyLabel(t, 2, 6, 6, 30)
+	downres1.verifyLabel(t, 13, 30, 6, 20)
+	downres1.verifyLabel(t, 209, 6, 35, 20)
+	downres1.verifyLabel(t, 311, 30, 40, 20)
+
+	// Check the second downres to voxel: 32^3
+	if err := datastore.BlockOnUpdating(uuid, "labels_2"); err != nil {
+		t.Fatalf("Error blocking on update for labels_2: %v\n", err)
+	}
+
+	// Check the third downres to voxel: 16^3
+	if err := datastore.BlockOnUpdating(uuid, "labels_3"); err != nil {
+		t.Fatalf("Error blocking on update for labels_3: %v\n", err)
+	}
+
 }
 
 // Test that mutable labelblk POST will accurately remove prior bodies.
