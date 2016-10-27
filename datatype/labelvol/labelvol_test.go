@@ -255,7 +255,7 @@ func (v *testVolume) verifyLabel(t *testing.T, expected uint64, x, y, z int32) {
 	pt := dvid.Point3d{x, y, z}
 	label := v.getVoxel(pt)
 	if label != expected {
-		t.Errorf("Expected label %d at %s for first downres but got %d instead\n", expected, pt, label)
+		t.Errorf("Expected label %d at %s but got %d instead\n", expected, pt, label)
 	}
 }
 
@@ -1024,6 +1024,220 @@ func TestMergeSplitLabel(t *testing.T) {
 	reqStr = fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid, "bodies", 5)
 	encoding := server.TestHTTP(t, "GET", reqStr, nil)
 	bodysplit.checkSparseVol(t, encoding, dvid.Bounds{})
+}
+
+func TestMultiscaleMergeSplit(t *testing.T) {
+	datastore.OpenTest()
+	defer datastore.CloseTest()
+
+	// Create testbed volume and data instances
+	uuid, _ := initTestRepo()
+	var config dvid.Config
+	server.CreateTestInstance(t, uuid, "labelblk", "labels", config)
+	server.CreateTestInstance(t, uuid, "labelvol", "bodies", config)
+	server.CreateTestSync(t, uuid, "labels", "bodies")
+	server.CreateTestSync(t, uuid, "bodies", "labels")
+
+	// Add multiscale
+	server.CreateTestInstance(t, uuid, "labelblk", "labels_1", config) // 64 x 64 x 64
+	server.CreateTestSync(t, uuid, "labels_1", "labels")
+	server.CreateTestInstance(t, uuid, "labelblk", "labels_2", config) // 32 x 32 x 32
+	server.CreateTestSync(t, uuid, "labels_2", "labels_1")
+
+	// Create an easily interpreted label volume with a couple of labels.
+	volume := newTestVolume(128, 128, 128)
+	volume.addSubvol(dvid.Point3d{40, 40, 40}, dvid.Point3d{40, 40, 40}, 1)
+	volume.addSubvol(dvid.Point3d{40, 40, 80}, dvid.Point3d{40, 40, 40}, 2)
+	volume.addSubvol(dvid.Point3d{80, 40, 40}, dvid.Point3d{40, 40, 40}, 13)
+	volume.addSubvol(dvid.Point3d{40, 80, 40}, dvid.Point3d{40, 40, 40}, 209)
+	volume.addSubvol(dvid.Point3d{80, 80, 40}, dvid.Point3d{40, 40, 40}, 311)
+	volume.put(t, uuid, "labels")
+
+	// Verify initial ingest for hi-res
+	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
+		t.Fatalf("Error blocking on update for labels: %v\n", err)
+	}
+	hires := newTestVolume(128, 128, 128)
+	hires.get(t, uuid, "labels")
+	hires.verifyLabel(t, 1, 45, 45, 45)
+	hires.verifyLabel(t, 2, 50, 50, 100)
+	hires.verifyLabel(t, 13, 100, 60, 60)
+	hires.verifyLabel(t, 209, 55, 100, 55)
+	hires.verifyLabel(t, 311, 81, 81, 41)
+
+	// Check the first downres: 64^3
+	if err := datastore.BlockOnUpdating(uuid, "labels_1"); err != nil {
+		t.Fatalf("Error blocking on update for labels_1: %v\n", err)
+	}
+	downres1 := newTestVolume(64, 64, 64)
+	downres1.get(t, uuid, "labels_1")
+	downres1.verifyLabel(t, 1, 30, 30, 30)
+	downres1.verifyLabel(t, 2, 21, 21, 45)
+	downres1.verifyLabel(t, 13, 45, 21, 36)
+	downres1.verifyLabel(t, 209, 21, 50, 35)
+	downres1.verifyLabel(t, 311, 45, 55, 35)
+	expected1 := newTestVolume(64, 64, 64)
+	expected1.addSubvol(dvid.Point3d{20, 20, 20}, dvid.Point3d{20, 20, 20}, 1)
+	expected1.addSubvol(dvid.Point3d{20, 20, 40}, dvid.Point3d{20, 20, 20}, 2)
+	expected1.addSubvol(dvid.Point3d{40, 20, 20}, dvid.Point3d{20, 20, 20}, 13)
+	expected1.addSubvol(dvid.Point3d{20, 40, 20}, dvid.Point3d{20, 20, 20}, 209)
+	expected1.addSubvol(dvid.Point3d{40, 40, 20}, dvid.Point3d{20, 20, 20}, 311)
+	if err := downres1.equals(expected1); err != nil {
+		t.Errorf("1st downres 'labels_1' isn't what is expected: %v\n", err)
+	}
+
+	// Check the second downres to voxel: 32^3
+	if err := datastore.BlockOnUpdating(uuid, "labels_2"); err != nil {
+		t.Fatalf("Error blocking on update for labels_2: %v\n", err)
+	}
+	expected2 := newTestVolume(32, 32, 32)
+	expected2.addSubvol(dvid.Point3d{10, 10, 10}, dvid.Point3d{10, 10, 10}, 1)
+	expected2.addSubvol(dvid.Point3d{10, 10, 20}, dvid.Point3d{10, 10, 10}, 2)
+	expected2.addSubvol(dvid.Point3d{20, 10, 10}, dvid.Point3d{10, 10, 10}, 13)
+	expected2.addSubvol(dvid.Point3d{10, 20, 10}, dvid.Point3d{10, 10, 10}, 209)
+	expected2.addSubvol(dvid.Point3d{20, 20, 10}, dvid.Point3d{10, 10, 10}, 311)
+	downres2 := newTestVolume(32, 32, 32)
+	downres2.get(t, uuid, "labels_2")
+	if err := downres2.equals(expected2); err != nil {
+		t.Errorf("2nd downres 'labels_2' isn't what is expected: %v\n", err)
+	}
+
+	// Test merge of 2 and 13 into 1
+	testMerge := mergeJSON(`[1, 2, 13]`)
+	testMerge.send(t, uuid, "bodies")
+
+	// Make sure labels 2 and 13 sparsevol has been removed.
+	reqStr := fmt.Sprintf("%snode/%s/%s/sparsevol/2", server.WebAPIPath, uuid, "bodies")
+	server.TestBadHTTP(t, "GET", reqStr, nil)
+
+	reqStr = fmt.Sprintf("%snode/%s/%s/sparsevol/13", server.WebAPIPath, uuid, "bodies")
+	server.TestBadHTTP(t, "GET", reqStr, nil)
+
+	// Make sure label changes are correct after completion of merge
+	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
+		t.Fatalf("Error blocking on sync of merge bodies -> labels: %v\n", err)
+	}
+	retrieved := newTestVolume(128, 128, 128)
+	retrieved.get(t, uuid, "labels")
+	merged := newTestVolume(128, 128, 128)
+	merged.addSubvol(dvid.Point3d{40, 40, 40}, dvid.Point3d{40, 40, 40}, 1)
+	merged.addSubvol(dvid.Point3d{40, 40, 80}, dvid.Point3d{40, 40, 40}, 1)
+	merged.addSubvol(dvid.Point3d{80, 40, 40}, dvid.Point3d{40, 40, 40}, 1)
+	merged.addSubvol(dvid.Point3d{40, 80, 40}, dvid.Point3d{40, 40, 40}, 209)
+	merged.addSubvol(dvid.Point3d{80, 80, 40}, dvid.Point3d{40, 40, 40}, 311)
+	if err := retrieved.equals(merged); err != nil {
+		t.Errorf("Merged label volume not equal to expected merged volume: %v\n", err)
+	}
+
+	if err := datastore.BlockOnUpdating(uuid, "labels_1"); err != nil {
+		t.Fatalf("Error blocking on sync of merge bodies -> labels: %v\n", err)
+	}
+	retrieved1 := newTestVolume(64, 64, 64)
+	retrieved1.get(t, uuid, "labels_1")
+	merged1 := newTestVolume(64, 64, 64)
+	merged1.addSubvol(dvid.Point3d{20, 20, 20}, dvid.Point3d{20, 20, 20}, 1)
+	merged1.addSubvol(dvid.Point3d{20, 20, 40}, dvid.Point3d{20, 20, 20}, 1)
+	merged1.addSubvol(dvid.Point3d{40, 20, 20}, dvid.Point3d{20, 20, 20}, 1)
+	merged1.addSubvol(dvid.Point3d{20, 40, 20}, dvid.Point3d{20, 20, 20}, 209)
+	merged1.addSubvol(dvid.Point3d{40, 40, 20}, dvid.Point3d{20, 20, 20}, 311)
+	if err := retrieved1.equals(merged1); err != nil {
+		t.Errorf("Merged label volume downres #1 not equal to expected merged volume: %v\n", err)
+	}
+
+	if err := datastore.BlockOnUpdating(uuid, "labels_2"); err != nil {
+		t.Fatalf("Error blocking on sync of merge bodies -> labels: %v\n", err)
+	}
+	retrieved2 := newTestVolume(32, 32, 32)
+	retrieved2.get(t, uuid, "labels_2")
+	merged2 := newTestVolume(32, 32, 32)
+	merged2.addSubvol(dvid.Point3d{10, 10, 10}, dvid.Point3d{10, 10, 10}, 1)
+	merged2.addSubvol(dvid.Point3d{10, 10, 20}, dvid.Point3d{10, 10, 10}, 1)
+	merged2.addSubvol(dvid.Point3d{20, 10, 10}, dvid.Point3d{10, 10, 10}, 1)
+	merged2.addSubvol(dvid.Point3d{10, 20, 10}, dvid.Point3d{10, 10, 10}, 209)
+	merged2.addSubvol(dvid.Point3d{20, 20, 10}, dvid.Point3d{10, 10, 10}, 311)
+	if err := retrieved2.equals(merged2); err != nil {
+		t.Errorf("Merged label volume downres #2 not equal to expected merged volume: %v\n", err)
+	}
+
+	// Create the sparsevol encoding for split area that used to be body 13
+	numspans := 40 * 40
+	rles := make(dvid.RLEs, numspans, numspans)
+	length := int32(40)
+	i := 0
+	for z := int32(40); z < 80; z++ {
+		for y := int32(40); y < 80; y++ {
+			start := dvid.Point3d{80, y, z}
+			rles[i] = dvid.NewRLE(start, length)
+			i++
+		}
+	}
+
+	// Create the split sparse volume binary
+	buf := new(bytes.Buffer)
+	buf.WriteByte(dvid.EncodingBinary)
+	binary.Write(buf, binary.LittleEndian, uint8(3))            // # of dimensions
+	binary.Write(buf, binary.LittleEndian, byte(0))             // dimension of run (X = 0)
+	buf.WriteByte(byte(0))                                      // reserved for later
+	binary.Write(buf, binary.LittleEndian, uint32(numspans*40)) // Placeholder for # voxels
+	binary.Write(buf, binary.LittleEndian, uint32(numspans))    // Placeholder for # spans
+	rleBytes, err := rles.MarshalBinary()
+	if err != nil {
+		t.Errorf("Unable to serialize RLEs: %v\n", err)
+	}
+	buf.Write(rleBytes)
+
+	// Submit the split sparsevol and assign to label 28
+	reqStr = fmt.Sprintf("%snode/%s/%s/split/1?splitlabel=28", server.WebAPIPath, uuid, "bodies")
+	r := server.TestHTTP(t, "POST", reqStr, buf)
+	jsonVal := make(map[string]uint64)
+	if err := json.Unmarshal(r, &jsonVal); err != nil {
+		t.Errorf("Unable to get new label from split.  Instead got: %v\n", jsonVal)
+	}
+
+	// Test all the multiscales for correct split volume.
+
+	// Make sure label changes are correct after completion of merge
+	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
+		t.Fatalf("Error blocking on sync of merge bodies -> labels: %v\n", err)
+	}
+	retrieved.get(t, uuid, "labels")
+	split := newTestVolume(128, 128, 128)
+	split.addSubvol(dvid.Point3d{40, 40, 40}, dvid.Point3d{40, 40, 40}, 1)
+	split.addSubvol(dvid.Point3d{40, 40, 80}, dvid.Point3d{40, 40, 40}, 1)
+	split.addSubvol(dvid.Point3d{80, 40, 40}, dvid.Point3d{40, 40, 40}, 28)
+	split.addSubvol(dvid.Point3d{40, 80, 40}, dvid.Point3d{40, 40, 40}, 209)
+	split.addSubvol(dvid.Point3d{80, 80, 40}, dvid.Point3d{40, 40, 40}, 311)
+	if err := retrieved.equals(split); err != nil {
+		t.Errorf("Split label volume not equal to expected split volume: %v\n", err)
+	}
+
+	if err := datastore.BlockOnUpdating(uuid, "labels_1"); err != nil {
+		t.Fatalf("Error blocking on sync of split bodies -> labels: %v\n", err)
+	}
+	retrieved1.get(t, uuid, "labels_1")
+	split1 := newTestVolume(64, 64, 64)
+	split1.addSubvol(dvid.Point3d{20, 20, 20}, dvid.Point3d{20, 20, 20}, 1)
+	split1.addSubvol(dvid.Point3d{20, 20, 40}, dvid.Point3d{20, 20, 20}, 1)
+	split1.addSubvol(dvid.Point3d{40, 20, 20}, dvid.Point3d{20, 20, 20}, 28)
+	split1.addSubvol(dvid.Point3d{20, 40, 20}, dvid.Point3d{20, 20, 20}, 209)
+	split1.addSubvol(dvid.Point3d{40, 40, 20}, dvid.Point3d{20, 20, 20}, 311)
+	if err := retrieved1.equals(split1); err != nil {
+		t.Errorf("Split label volume downres #1 not equal to expected split volume: %v\n", err)
+	}
+
+	if err := datastore.BlockOnUpdating(uuid, "labels_2"); err != nil {
+		t.Fatalf("Error blocking on sync of merge bodies -> labels: %v\n", err)
+	}
+	retrieved2.get(t, uuid, "labels_2")
+	split2 := newTestVolume(32, 32, 32)
+	split2.addSubvol(dvid.Point3d{10, 10, 10}, dvid.Point3d{10, 10, 10}, 1)
+	split2.addSubvol(dvid.Point3d{10, 10, 20}, dvid.Point3d{10, 10, 10}, 1)
+	split2.addSubvol(dvid.Point3d{20, 10, 10}, dvid.Point3d{10, 10, 10}, 28)
+	split2.addSubvol(dvid.Point3d{10, 20, 10}, dvid.Point3d{10, 10, 10}, 209)
+	split2.addSubvol(dvid.Point3d{20, 20, 10}, dvid.Point3d{10, 10, 10}, 311)
+	if err := retrieved2.equals(split2); err != nil {
+		t.Errorf("Split label volume downres #2 not equal to expected split volume: %v\n", err)
+	}
 }
 
 // Test that mutable labelblk POST will accurately remove prior bodies.

@@ -384,7 +384,6 @@ func (d *Data) processEvents() {
 			switch msg.Event {
 			case DownsizeCommitEvent:
 				d.StopUpdate()
-				dvid.Infof("DownsizeCommitEvent received for data %q\n", d.DataName())
 				mutID := msg.Delta.(uint64)
 				go d.downsizeCommit(msg.Version, mutID) // async since we will wait on any in waitgroup.
 
@@ -454,7 +453,6 @@ func (d *Data) handleEvent(msg datastore.SyncMessage) {
 }
 
 func (d *Data) publishDownresCommit(v dvid.VersionID, mutID uint64) {
-	dvid.Infof("Transmitting DownsizeCommitEvent for data %q\n", d.DataName())
 	evt := datastore.SyncEvent{Data: d.DataUUID(), Event: DownsizeCommitEvent}
 	msg := datastore.SyncMessage{Event: DownsizeCommitEvent, Version: v, Delta: mutID}
 	if err := datastore.NotifySubscribers(evt, msg); err != nil {
@@ -480,7 +478,7 @@ func (d *Data) processMerge(v dvid.VersionID, delta labels.DeltaMerge) {
 	mutID := d.NewMutationID()
 	for izyxStr := range delta.Blocks {
 		n := izyxStr.Hash(numBlockHandlers)
-		d.MutAdd(1)
+		d.MutAdd(mutID)
 		op := mergeOp{mutID: mutID, MergeOp: delta.MergeOp, block: izyxStr}
 		d.procCh[n] <- procMsg{op: op, v: v}
 	}
