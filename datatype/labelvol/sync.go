@@ -51,22 +51,23 @@ func (d *Data) GetSyncSubs(synced dvid.Data) (datastore.SyncSubs, error) {
 		}
 	}
 
-	subs := datastore.SyncSubs{
-		{
-			Event:  datastore.SyncEvent{synced.DataUUID(), labels.IngestBlockEvent},
+	var evts []string
+	switch synced.TypeName() {
+	case "labelblk":
+		evts = []string{
+			labels.IngestBlockEvent, labels.MutateBlockEvent, labels.DeleteBlockEvent,
+		}
+	default:
+		return nil, fmt.Errorf("Unable to sync %s with %s since datatype %q is not supported.", d.DataName(), synced.DataName(), synced.TypeName())
+	}
+
+	subs := make(datastore.SyncSubs, len(evts))
+	for i, evt := range evts {
+		subs[i] = datastore.SyncSub{
+			Event:  datastore.SyncEvent{synced.DataUUID(), evt},
 			Notify: d.DataUUID(),
 			Ch:     d.syncCh,
-		},
-		{
-			Event:  datastore.SyncEvent{synced.DataUUID(), labels.MutateBlockEvent},
-			Notify: d.DataUUID(),
-			Ch:     d.syncCh,
-		},
-		{
-			Event:  datastore.SyncEvent{synced.DataUUID(), labels.DeleteBlockEvent},
-			Notify: d.DataUUID(),
-			Ch:     d.syncCh,
-		},
+		}
 	}
 	return subs, nil
 }

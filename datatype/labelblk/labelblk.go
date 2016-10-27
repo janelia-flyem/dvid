@@ -1716,14 +1716,6 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 					server.BadRequest(w, r, err)
 					return
 				}
-
-				totcount := make(map[uint64]int)
-				for i := int64(0); i < d.BlockSize().Prod(); i++ {
-					label := binary.LittleEndian.Uint64(data[i*8 : i*8+8])
-					totcount[label]++
-				}
-				dvid.Infof("Sending GET volume %s @ %s received by %q: %v\n", sizeStr, offsetStr, d.DataName(), totcount)
-
 				if err := sendBinaryData(compression, data, subvol, w); err != nil {
 					server.BadRequest(w, r, err)
 					return
