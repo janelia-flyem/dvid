@@ -6,7 +6,7 @@ package labelmeta
 
 import (
 	"encoding/binary"
-
+	"encoding/json"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
 )
@@ -23,7 +23,26 @@ const (
 
 	// key is block coordinate.  value is serialization of labelmeta data.
 	keyBlock = 72
+
+	// key is label status. value is serialization of the label status name and all labelmeta data it contains
+	keyStatus = 73
 )
+
+func NewStatusTKey(status LabelmetaStatus) storage.TKey {
+     ibytes, err := json.Marshal(status)
+     if err != nil {
+             return nil
+     }
+     return storage.NewTKey(keyStatus, ibytes)
+}
+
+func DecodeStatusTKey(tk storage.TKey) ([]byte, error) {
+     ibytes, err := tk.ClassBytes(keyStatus)
+     if err != nil {
+             return nil, err
+     }
+     return ibytes, nil
+}
 
 func NewTagTKey(tag Tag) storage.TKey {
 	return storage.NewTKey(keyTag, []byte(tag))
