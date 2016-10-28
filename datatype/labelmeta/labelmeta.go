@@ -98,6 +98,10 @@ GET <api URL>/node/<UUID>/<data name>/label/<label>
 
 	Returns labelmeta for a given label.
 
+GET <api URL>/node/<UUID>/<data name>/status/<status>
+
+        Returns all point labelmeta with the given status as an JSON array of labelmetas. Status must be NotExamined, PartiallyTraced, HardToTrace, Orphan, Traced, Finalized, UnknownStatus.
+
 GET <api URL>/node/<UUID>/<data name>/tag/<tag>
 
 	Returns all point labelmeta with the given tag as an JSON array of labelmetas.
@@ -411,9 +415,10 @@ func (lmetas Labelmetas) Swap(i, j int) {
 
 // LabelID is a unique id for label
 
-//type blockLabelmetas map[dvid.IZYXString]Labelmetas
+type blockLabelmetas map[dvid.IZYXString]Labelmetas
 type labelLabelmetas map[uint64]Labelmetas
 type tagLabelmetas map[Tag]Labelmetas
+type statusLabelmetas map[LabelmetaStatus]Labelmetas
 
 // NewData returns a pointer to labelmeta data.
 func NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.Config) (*Data, error) {
@@ -582,8 +587,46 @@ func (d *Data) GetSyncedLabelvol(v dvid.VersionID) *labelvol.Data {
 	return nil
 }
 
-// delete all reference to given labelmeta point in the slice of tags.
-// This is private method and assumes outer locking.
+func (d *Data) deleteLabelmetaInPos(ctx *datastore.VersionedCtx, pt dvid.Point3d) error {
+     blockSize := d.blockSize(ctx.VersionID())
+     blockCoord := pt.Chunk(blockSize).(dvid.ChunkPoint3d)
+     tk := NewBlockTKey(blockCoord)
+     lmetas, err := getLabelmetas(ctx, tk)
+     if err != nil {
+             return err
+     }
+     deleted, _ := lmetas.delete(pt)
+     if deleted == nil {
+                return fmt.Errorf("Did not find labelmeta %s in datastore", pt)
+     }
+     // Put block key version without given labelmeta
+     if err := putLabelmetas(ctx, tk, lmetas); err != nil {
+                return err
+     }
+     return nil
+}
+
+// delete all reference to a given labelmeta in the slice of status
+// This is a private method and assumes outer locking.
+func (d *Data) deleteLabelmetaInStatus(ctx *datastore.VersionedCtx, label uint64, status LabelmetaStatus) error {
+     ts := NewStatusTKey(status)
+     lmetas, err := getLabelmetas(ctx, ts)
+     if err != nil {
+             return err
+     }
+     // Delete the label
+     if _, changed := lmetas.deleteL(label); !changed {
+             dvid.Errorf("Unable to find deleted labelmeta %d in status ", label)
+     }
+     // Save the tag
+     if err := putLabelmetas(ctx, ts, lmetas); err != nil {
+             return err
+     }
+     return nil
+}
+
+// delete all reference to given labelmeta in the slice of tags.
+// This is a private method and assumes outer locking.
 func (d *Data) deleteLabelmetaInTags(ctx *datastore.VersionedCtx, label uint64, tags []Tag) error {
      for _, tag := range tags {
              tk := NewTagTKey(tag)
@@ -630,20 +673,22 @@ func (d *Data) modifyLabelmetas(ctx *datastore.VersionedCtx, tk storage.TKey, to
 
 // stores labelmetas arranged by block, replacing any
 // labelmetas at same position.
-//func (d *Data) storeBlockLabelmetas(ctx *datastore.VersionedCtx, bm blockLabelmetas) error {
-//	for izyxStr, lmetas := range bm {
-//		blockCoord, err := izyxStr.ToChunkPoint3d()
-//		if err != nil {
-//			return err
-//		}
-//		// Modify the block labelmeta
-//		tk := NewBlockTKey(blockCoord)
-//		if err := d.modifyLabelmetas(ctx, tk, lmetas); err != nil {
-//			return err
-//		}
-//	}
-//	return nil
-//}
+func (d *Data) storeBlockLabelmetas(ctx *datastore.VersionedCtx, bm blockLabelmetas) error {
+	for izyxStr, lmetas := range bm {
+		blockCoord, err := izyxStr.ToChunkPoint3d()
+		if err != nil {
+			return err
+		}
+		// Modify the block labelmeta
+		tk := NewBlockTKey(blockCoord)
+		if err := d.modifyLabelmetas(ctx, tk, lmetas); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// stores labelmetas arranged by status
 
 // stores labelmetas arranged by label, replacing any
 // labelmetas at same position.
@@ -731,8 +776,15 @@ func (d *Data) storeLabelLabelmetas(ctx *datastore.VersionedCtx, lm labelLabelme
 //	return nil
 //}
 
-
-
+func (d *Data) storeStatusLabelmetas(ctx *datastore.VersionedCtx, sm statusLabelmetas) error {
+        for status, lmetas := range sm {
+	        tk := NewStatusTKey(status)
+		if err := d.modifyLabelmetas(ctx, tk, lmetas); err != nil {
+                        return err
+                }
+	}
+	return nil
+}
 
 // stores labelmetas arranged by tag, replacing any
 // labelmetas at same position.
@@ -754,6 +806,15 @@ func (d *Data) GetLabelMeta(ctx *datastore.VersionedCtx, label uint64) (Labelmet
 
 	tk := NewLabelTKey(label)
 	return getLabelmetas(ctx, tk)
+}
+
+// GetStatusLabelMeta returns labelmetas for a given status.
+func (d *Data) GetStatusLabelMeta(ctx *datastore.VersionedCtx, status LabelmetaStatus) (Labelmetas, error) {
+     d.RLock()
+     defer d.RUnlock()
+
+     ts := NewStatusTKey(status)
+     return getLabelmetas(ctx, ts)
 }
 
 // GetTagLabelMeta returns labelmetas for a given tag.
@@ -789,6 +850,38 @@ func (d *Data) GetMultiLabelMeta(ctx *datastore.VersionedCtx, r io.Reader) (Labe
 
 	return lmetas, nil
 }
+func (d *Data) GetLabelByStatus(ctx *datastore.VersionedCtx, checkStatus []byte) (Labelmetas, error) {
+     store, err := d.GetOrderedKeyValueDB()
+     if err != nil {     	    
+            return nil, err
+     }
+     first := storage.MinTKey(keyLabel)
+     last := storage.MaxTKey(keyLabel)
+     keys, err := store.KeysInRange(ctx, first, last)
+     if err != nil {
+            return nil, err
+     }
+     
+     var statuslms Labelmetas
+     for _, key := range keys {
+            keyVal, err := DecodeLabelTKey(key)
+            labelmetas, err := d.GetLabelMeta(ctx, keyVal)
+            if err != nil {
+                   return nil, err
+            }
+            for _, lmeta := range labelmetas {
+                   thisBytes, err := json.Marshal(lmeta.Status)
+                   if err != nil {
+                          return nil, err
+                   }
+                   if bytes.Equal(checkStatus,thisBytes) {
+                          statuslms = append(statuslms, lmeta)
+                   }
+            }
+    }
+    return statuslms, nil
+}
+
 func (d *Data) GetAllLabelMeta(ctx *datastore.VersionedCtx) (Labelmetas, error) {
      store, err := d.GetOrderedKeyValueDB()
      if err != nil {
@@ -911,10 +1004,11 @@ func (d *Data) StoreLabelMeta(ctx *datastore.VersionedCtx, r io.Reader) error {
 
 	dvid.Infof("%d labelmetas received via POST", len(labelmetas))
 
-	//blockSize := d.blockSize(ctx.VersionID())
-	//blockM := make(blockLabelmetas)
+	blockSize := d.blockSize(ctx.VersionID())
+	blockM := make(blockLabelmetas)
 	labelM := make(labelLabelmetas)
 	tagM := make(tagLabelmetas)
+        statusM := make(statusLabelmetas)
 
 	// Iterate through labelmetas, organizing them into blocks and tags.
 	// Note: we do not check for redundancy and guarantee uniqueness at this stage.
@@ -926,15 +1020,21 @@ func (d *Data) StoreLabelMeta(ctx *datastore.VersionedCtx, r io.Reader) error {
 		lm := labelM[label]
 	        lm = append(lm, lmeta)
                 labelM[label] = lm
+
+		// Get Status for this labelmeta.
+		status := lmeta.Status
+		sm := statusM[status]
+		sm = append(sm, lmeta)
+		statusM[status] = sm
 				
 		// Get block coord for this labelmeta. This will need to optional // removing since it doesn't make sense to index using position anymore.
-		//izyxStr := lmeta.Pos.ToIZYXString(blockSize)
+		izyxStr := lmeta.Pos.ToIZYXString(blockSize)
 		// Append to block
-		//if len(izyxStr) > 0 {
-		//   	bm := blockM[izyxStr]
-		//	bm = append(bm, lmeta)
-		//	blockM[izyxStr] = bm
-		//}
+		if len(izyxStr) > 0 {
+		   	bm := blockM[izyxStr]
+			bm = append(bm, lmeta)
+			blockM[izyxStr] = bm
+		}
 
 		// Append to tags if present
 		if len(lmeta.Tags) > 0 {
@@ -947,9 +1047,9 @@ func (d *Data) StoreLabelMeta(ctx *datastore.VersionedCtx, r io.Reader) error {
 	}
 
 	// Store the new block labelmetas. Index with POS if exists in metadata
-	//if err := d.storeBlockLabelmetas(ctx, blockM); err != nil {
-	//	return err
-	//}
+	if err := d.storeBlockLabelmetas(ctx, blockM); err != nil {
+		return err
+	}
 
 	// Store new labelmetas among label denormalizations... 
 	if err := d.storeLabelLabelmetas(ctx, labelM); err != nil {
@@ -959,6 +1059,11 @@ func (d *Data) StoreLabelMeta(ctx *datastore.VersionedCtx, r io.Reader) error {
 	// Store the new tag labelmetas
 	if err := d.storeTagLabelmetas(ctx, tagM); err != nil {
 		return err
+	}
+
+	// Store the labelmetas by status
+	if err := d.storeStatusLabelmetas(ctx, statusM); err != nil {
+	        return err
 	}
 
 	return nil
@@ -988,6 +1093,16 @@ func (d *Data) DeleteLabelMeta(ctx *datastore.VersionedCtx, label uint64) error 
                 return err
         }
 
+	// Delete labelmeta at pos:
+	if err := d.deleteLabelmetaInPos(ctx, deleted.Pos); err != nil {
+	        return err
+	}
+
+	// Delete labelmeta at status:
+	if err := d.deleteLabelmetaInStatus(ctx, label, deleted.Status); err != nil {
+	        return err
+	}
+
 	return nil
 }
 
@@ -1003,7 +1118,7 @@ func GetByUUID(uuid dvid.UUID, name dvid.InstanceName) (*Data, error) {
 	}
 	return data, nil
 }
-// Here Yo
+
 // --- datastore.DataService interface ---------
 
 func (d *Data) Help() string {
@@ -1209,6 +1324,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 
         //case labelids that returns all label ids loaded	
         case "labelids":
+	        // GET <api URL>/node/<UUID>/<data name>/labelids
                 if action != "get" {
                         server.BadRequest(w, r, "Only GET action is available on 'tag' endpoint.")
                         return
@@ -1238,6 +1354,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
                 timedLog.Infof("HTTP %s: get all labelmeta label ids (%s)", r.Method, r.URL)
 
 	case "status":
+	        // GET <api URL>/node/<UUID>/<data name>/status/<string Ex.NotExamined>
 	        if action != "get" {
                         server.BadRequest(w, r, "Only GET action is available on 'tag' endpoint.")
                         return
@@ -1245,20 +1362,6 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		if len(parts) < 5 {
                         server.BadRequest(w, r, "Must include status string after 'status' endpoint.")
                         return
-                }
-
-		store, err := d.GetOrderedKeyValueDB()
-                if err != nil {
-		        server.BadRequest(w, r, err)
-                        return
-                }
-	        first := storage.MinTKey(keyLabel)
-                last := storage.MaxTKey(keyLabel)
-
-                keys, err := store.KeysInRange(ctx, first, last)
-                if err != nil {
-		        server.BadRequest(w, r, err)
-                        return 
                 }
      
                 var thischeck string
@@ -1275,40 +1378,20 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		            server.BadRequest(w, r, err)
                             return
                 }
-		for _, lm := range lms {
-		           fmt.Fprintf(w, "%s", lm.Status)
-                }
-		fmt.Fprintf(w, ",")
+		
+		statuslms, err := d.GetLabelByStatus(ctx,checkBytes)
 
-		if _, err := w.Write(checkBytes); err != nil {
-                            server.BadRequest(w, r, err)
-                            return
+		w.Header().Set("Content-type", "application/json")
+		jsonBytes, err := json.Marshal(statuslms)
+                if err != nil {
+		        server.BadRequest(w, r, err)
+		        return
+		}
+		if _, err := w.Write(jsonBytes); err != nil {
+                        server.BadRequest(w, r, err)
+                        return
                 }
-		fmt.Fprintf(w, "\n")		
-
-                for _, key := range keys {
-                        keyVal, err := DecodeLabelTKey(key)
-	                labelmetas, err := d.GetLabelMeta(ctx, keyVal)
-                        if err != nil {
-			        server.BadRequest(w, r, err)
-	                        return
-                        }
-	                for _, lmeta := range labelmetas {
-			        jsonBytes, err := json.Marshal(lmeta.Status)
-				if err != nil {
-                                   server.BadRequest(w, r, err)
-                                   return
-                        	}
-				if bytes.Equal(checkBytes,jsonBytes) {							
-				      if _, err := w.Write(jsonBytes); err != nil {
-                                           server.BadRequest(w, r, err)
-                                           return
-                                      }
-				      fmt.Fprintf(w, ",")
-                                      fmt.Fprintf(w, "%s", lmeta.Status)
-				}
-                        }	    
-                }		
+		timedLog.Infof("HTTP %s: get labelmeta for status type %s (%s)", r.Method, parts[4] ,r.URL)		
 
 	case "tag":
 		if action != "get" {
