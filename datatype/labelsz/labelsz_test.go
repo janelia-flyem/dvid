@@ -8,7 +8,6 @@ import (
 	"io"
 	"log"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/janelia-flyem/dvid/datastore"
@@ -16,26 +15,6 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 )
-
-var (
-	syntype     datastore.TypeService
-	testMu      sync.Mutex
-	synapseData annotation.Elements
-)
-
-// Sets package-level testRepo and TestVersionID
-func initTestRepo() (dvid.UUID, dvid.VersionID) {
-	testMu.Lock()
-	defer testMu.Unlock()
-	if syntype == nil {
-		var err error
-		syntype, err = datastore.TypeServiceByName(TypeName)
-		if err != nil {
-			log.Fatalf("Can't get synapse type: %s\n", err)
-		}
-	}
-	return datastore.NewTestRepo()
-}
 
 // A slice of bytes representing 3d label volume
 type testVolume struct {
@@ -127,7 +106,7 @@ func TestLabels(t *testing.T) {
 	defer datastore.CloseTest()
 
 	// Create testbed volume and data instances
-	uuid, _ := initTestRepo()
+	uuid, _ := datastore.NewTestRepo()
 	var config dvid.Config
 	server.CreateTestInstance(t, uuid, "labelblk", "labels", config)
 	server.CreateTestInstance(t, uuid, "labelvol", "bodies", config)

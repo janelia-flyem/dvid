@@ -67,8 +67,9 @@ type Syncer interface {
 }
 
 // SetSyncByJSON takes a JSON object of sync names and UUID, and creates the sync graph
-// and sets the data instance's sync.
-func SetSyncByJSON(d dvid.Data, uuid dvid.UUID, in io.ReadCloser) error {
+// and sets the data instance's sync.  If replace is false (default), the new sync
+// is appended to the current syncs.
+func SetSyncByJSON(d dvid.Data, uuid dvid.UUID, replace bool, in io.ReadCloser) error {
 	if manager == nil {
 		return ErrManagerNotInitialized
 	}
@@ -83,7 +84,12 @@ func SetSyncByJSON(d dvid.Data, uuid dvid.UUID, in io.ReadCloser) error {
 	}
 
 	syncedNames := strings.Split(syncedCSV, ",")
-	if len(syncedNames) == 0 {
+	if len(syncedNames) == 0 || (len(syncedNames) == 1 && syncedNames[0] == "") {
+		syncedNames = []string{}
+	}
+
+	if len(syncedNames) == 0 && !replace {
+		dvid.Infof("Ignored attempt to append no syncs to instance %q.\n", d.DataName())
 		return nil
 	}
 
@@ -97,18 +103,19 @@ func SetSyncByJSON(d dvid.Data, uuid dvid.UUID, in io.ReadCloser) error {
 		syncs[data.DataUUID()] = struct{}{}
 	}
 
-	if err := SetSyncData(d, syncs); err != nil {
+	if err := SetSyncData(d, syncs, replace); err != nil {
 		return err
 	}
 	return nil
 }
 
 // SetSyncData modfies the manager sync graphs and data instance's sync list.
-func SetSyncData(data dvid.Data, syncs dvid.UUIDSet) error {
+// If replace is false (default), the new sync is appended to the current syncs.
+func SetSyncData(data dvid.Data, syncs dvid.UUIDSet, replace bool) error {
 	if manager == nil {
 		return ErrManagerNotInitialized
 	}
-	return manager.setSync(data, syncs)
+	return manager.setSync(data, syncs, replace)
 }
 
 // CommitSyncer want to be notified when a node is committed.

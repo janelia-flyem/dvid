@@ -138,19 +138,29 @@ POST  <api URL>/node/<UUID>/<data name>/resolution
   	Extents should be in JSON in the following format:
   	[8,8,8]
 
-POST <api URL>/node/<UUID>/<data name>/sync
+POST <api URL>/node/<UUID>/<data name>/sync?<options>
 
-    Establishes labelvol data instances with which the annotations are synced.  Expects JSON to be POSTed
+    Appends data instances with which this labelblk is synced.  Expects JSON to be POSTed
     with the following format:
 
     { "sync": "bodies" }
+
+	To delete syncs, pass an empty string of names with query string "replace=true":
+
+	{ "sync": "" }
 
     The "sync" property should be followed by a comma-delimited list of data instances that MUST
     already exist.  Currently, syncs should be created before any annotations are pushed to
     the server.  If annotations already exist, these are currently not synced.
 
-    The labelblk data type accepts syncs to labelvol data instances.  It also accepts syncs to
-	labelblk instances for multiscale.
+    The labelblk data type accepts syncs to labelvol and other labelblk data instances.  Syncs to
+	labelblk instances automatically create a 2x downsampling compared to the synced labelblk,
+	for use in multiscale.
+
+    GET Query-string Options:
+
+    replace    Set to "true" if you want passed syncs to replace and not be appended to current syncs.
+			   Default operation is false.
 
 
 GET  <api URL>/node/<UUID>/<data name>/metadata
@@ -1476,7 +1486,8 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			server.BadRequest(w, r, "Only POST allowed to sync endpoint")
 			return
 		}
-		if err := datastore.SetSyncByJSON(d, uuid, r.Body); err != nil {
+		replace := r.URL.Query().Get("replace") == "true"
+		if err := datastore.SetSyncByJSON(d, uuid, replace, r.Body); err != nil {
 			server.BadRequest(w, r, err)
 			return
 		}

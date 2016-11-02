@@ -90,6 +90,16 @@ func (uset UUIDSet) Equals(uset2 UUIDSet) bool {
 	return true
 }
 
+// Add adds a given UUIDSet to the receiver.
+func (uset UUIDSet) Add(uset2 UUIDSet) {
+	if len(uset2) == 0 {
+		return
+	}
+	for uuid := range uset2 {
+		uset[uuid] = struct{}{}
+	}
+}
+
 // Note: TypeString and InstanceName are types to add static checks and prevent conflation
 // of the two types of identifiers.
 

@@ -12,8 +12,10 @@ import (
 	"github.com/janelia-flyem/dvid/server"
 
 	// Declare the data types the DVID server should support
+	"github.com/janelia-flyem/dvid/datatype/annotation"
 	_ "github.com/janelia-flyem/dvid/datatype/keyvalue"
-	_ "github.com/janelia-flyem/dvid/datatype/labelblk"
+	"github.com/janelia-flyem/dvid/datatype/labelblk"
+	"github.com/janelia-flyem/dvid/datatype/labelvol"
 	_ "github.com/janelia-flyem/dvid/datatype/roi"
 )
 
@@ -248,5 +250,91 @@ func TestReloadMetadata(t *testing.T) {
 	_, err = datastore.GetDataByUUIDName(uuid, "someroi")
 	if err != nil {
 		t.Errorf("Couldn't get roi data instance after reload\n")
+	}
+}
+
+func TestSyncs(t *testing.T) {
+	datastore.OpenTest()
+	defer datastore.CloseTest()
+
+	uuid, _ := datastore.NewTestRepo()
+
+	var config dvid.Config
+	server.CreateTestInstance(t, uuid, "labelblk", "labels", config)
+	server.CreateTestInstance(t, uuid, "labelvol", "bodies", config)
+	server.CreateTestInstance(t, uuid, "annotation", "synapses", config)
+
+	server.CreateTestSync(t, uuid, "synapses", "labels,bodies")
+
+	labels, err := labelblk.GetByUUIDName(uuid, "labels")
+	if err != nil {
+		t.Fatalf("Can't obtain data instance via GetByUUIDName: %v\n", err)
+	}
+	bodies, err := labelvol.GetByUUIDName(uuid, "bodies")
+	if err != nil {
+		t.Fatalf("Can't obtain data instance via GetByUUIDName: %v\n", err)
+	}
+	synapses, err := annotation.GetByUUIDName(uuid, "synapses")
+	if err != nil {
+		t.Fatalf("Couldn't get synapses data instance: %v\n", err)
+	}
+
+	syncs := synapses.SyncedData()
+	if len(syncs) != 2 {
+		t.Errorf("Expected 2 syncs, got %d syncs instead.\n", len(syncs))
+	}
+	_, found := syncs[labels.DataUUID()]
+	if !found {
+		t.Errorf("Expected labels UUID (%d) got: %v\n", labels.DataUUID(), syncs)
+	}
+	_, found = syncs[bodies.DataUUID()]
+	if !found {
+		t.Errorf("Expected bodies UUID (%d) got: %v\n", bodies.DataUUID(), syncs)
+	}
+
+	server.CreateTestInstance(t, uuid, "labelvol", "bodies2", config)
+	bodies2, err := labelvol.GetByUUIDName(uuid, "bodies2")
+	if err != nil {
+		t.Fatalf("Can't obtain data instance via GetByUUIDName: %v\n", err)
+	}
+	server.CreateTestSync(t, uuid, "synapses", "bodies2")
+
+	syncs = synapses.SyncedData()
+	if len(syncs) != 3 {
+		t.Errorf("Expected 3 syncs, got %d syncs instead.\n", len(syncs))
+	}
+	_, found = syncs[labels.DataUUID()]
+	if !found {
+		t.Errorf("Expected labels UUID (%d) got: %v\n", labels.DataUUID(), syncs)
+	}
+	_, found = syncs[bodies.DataUUID()]
+	if !found {
+		t.Errorf("Expected bodies UUID (%d) got: %v\n", bodies.DataUUID(), syncs)
+	}
+	_, found = syncs[bodies2.DataUUID()]
+	if !found {
+		t.Errorf("Expected bodies2 UUID (%d) got: %v\n", bodies2.DataUUID(), syncs)
+	}
+
+	server.CreateTestInstance(t, uuid, "labelvol", "bodies3", config)
+	server.CreateTestReplaceSync(t, uuid, "synapses", "bodies3")
+
+	syncs = synapses.SyncedData()
+	if len(syncs) != 1 {
+		t.Errorf("Expected 1 sync, got %d syncs instead.\n", len(syncs))
+	}
+	bodies3, err := labelvol.GetByUUIDName(uuid, "bodies3")
+	if err != nil {
+		t.Fatalf("Can't obtain data instance via GetByUUIDName: %v\n", err)
+	}
+	_, found = syncs[bodies3.DataUUID()]
+	if !found {
+		t.Errorf("Expected bodies3 UUID (%d) got: %v\n", bodies3.DataUUID(), syncs)
+	}
+
+	server.CreateTestReplaceSync(t, uuid, "synapses", "")
+	syncs = synapses.SyncedData()
+	if len(syncs) != 0 {
+		t.Errorf("Expected 0 sync, got instead %v\n", syncs)
 	}
 }

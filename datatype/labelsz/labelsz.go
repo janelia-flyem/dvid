@@ -82,12 +82,16 @@ POST <api URL>/node/<UUID>/<data name>/info
     data name     Name of labelsz data.
 
 
-POST <api URL>/node/<UUID>/<data name>/sync
+POST <api URL>/node/<UUID>/<data name>/sync?<options>
 
     Establishes data instances for which the label sizes are computed.  Expects JSON to be POSTed
     with the following format:
 
     { "sync": "synapses" }
+
+	To delete syncs, pass an empty string of names with query string "replace=true":
+
+	{ "sync": "" }
 
     The "sync" property should be followed by a comma-delimited list of data instances that MUST
     already exist.  After this sync request, the labelsz data are computed for the first time
@@ -95,6 +99,11 @@ POST <api URL>/node/<UUID>/<data name>/sync
 	create a new labelsz data instance and sync it as required.
 
     The labelsz data type only accepts syncs to annotation data instances.
+
+    GET Query-string Options:
+
+    replace    Set to "true" if you want passed syncs to replace and not be appended to current syncs.
+			   Default operation is false.
 
 
 GET <api URL>/node/<UUID>/<data name>/count/<label>/<index type>
@@ -574,7 +583,8 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			server.BadRequest(w, r, "Only POST allowed to sync endpoint")
 			return
 		}
-		if err := datastore.SetSyncByJSON(d, uuid, r.Body); err != nil {
+		replace := r.URL.Query().Get("replace") == "true"
+		if err := datastore.SetSyncByJSON(d, uuid, replace, r.Body); err != nil {
 			server.BadRequest(w, r, err)
 			return
 		}

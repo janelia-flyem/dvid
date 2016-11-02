@@ -12,6 +12,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -39,7 +40,16 @@ func TestHTTPResponse(t *testing.T, method, urlStr string, payload io.Reader) *h
 func TestHTTP(t *testing.T, method, urlStr string, payload io.Reader) []byte {
 	resp := TestHTTPResponse(t, method, urlStr, payload)
 	if resp.Code != http.StatusOK {
-		t.Fatalf("Bad server response (%d) to %s on %q\n", resp.Code, method, urlStr)
+		var retstr string
+		if resp.Body != nil {
+			retbytes, err := ioutil.ReadAll(resp.Body)
+			if err != nil {
+				t.Errorf("Error trying to read response body from request %q: %v\n", urlStr, err)
+			} else {
+				retstr = string(retbytes)
+			}
+		}
+		t.Fatalf("Bad server response (%d) to %s %q: %s\n", resp.Code, method, urlStr, retstr)
 	}
 	return resp.Body.Bytes()
 }
@@ -86,6 +96,12 @@ func CreateTestInstance(t *testing.T, uuid dvid.UUID, typename, name string, con
 
 func CreateTestSync(t *testing.T, uuid dvid.UUID, name string, syncs ...string) {
 	url := fmt.Sprintf("%snode/%s/%s/sync", WebAPIPath, uuid, name)
+	msg := fmt.Sprintf(`{"sync": "%s"}`, strings.Join(syncs, ","))
+	TestHTTP(t, "POST", url, strings.NewReader(msg))
+}
+
+func CreateTestReplaceSync(t *testing.T, uuid dvid.UUID, name string, syncs ...string) {
+	url := fmt.Sprintf("%snode/%s/%s/sync?replace=true", WebAPIPath, uuid, name)
 	msg := fmt.Sprintf(`{"sync": "%s"}`, strings.Join(syncs, ","))
 	TestHTTP(t, "POST", url, strings.NewReader(msg))
 }

@@ -78,18 +78,27 @@ POST <api URL>/node/<UUID>/<data name>/info
     data name     Name of annotation data.
 
 
-POST <api URL>/node/<UUID>/<data name>/sync
+POST <api URL>/node/<UUID>/<data name>/sync?<options>
 
-    Establishes data instances with which the annotations are synced.  Expects JSON to be POSTed
+    Appends to list of data instances with which the annotations are synced.  Expects JSON to be POSTed
     with the following format:
 
     { "sync": "labels,bodies" }
+
+	To delete syncs, pass an empty string of names with query string "replace=true":
+
+	{ "sync": "" }
 
     The "sync" property should be followed by a comma-delimited list of data instances that MUST
     already exist.  Currently, syncs should be created before any annotations are pushed to
     the server.  If annotations already exist, these are currently not synced.
 
     The annotations data type only accepts syncs to labelblk and labelvol data instances.
+
+    GET Query-string Options:
+
+    replace    Set to "true" if you want passed syncs to replace and not be appended to current syncs.
+			   Default operation is false.
 
 
 Note: For the following URL endpoints that return and accept POSTed JSON values, see the JSON format
@@ -1739,7 +1748,8 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			server.BadRequest(w, r, "Only POST allowed to sync endpoint")
 			return
 		}
-		if err := datastore.SetSyncByJSON(d, uuid, r.Body); err != nil {
+		replace := r.URL.Query().Get("replace") == "true"
+		if err := datastore.SetSyncByJSON(d, uuid, replace, r.Body); err != nil {
 			server.BadRequest(w, r, err)
 			return
 		}

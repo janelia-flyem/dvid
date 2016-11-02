@@ -91,18 +91,27 @@ POST <api URL>/node/<UUID>/<data name>/info
     data name     Name of labelvol data.
 
 
-POST <api URL>/node/<UUID>/<data name>/sync
+POST <api URL>/node/<UUID>/<data name>/sync?<options>
 
     Establishes labelblk data instances with which the annotations are synced.  Expects JSON to be POSTed
     with the following format:
 
     { "sync": "labels" }
 
+	To delete syncs, pass an empty string of names with query string "replace=true":
+
+	{ "sync": "" }
+
     The "sync" property should be followed by a comma-delimited list of data instances that MUST
     already exist.  Currently, syncs should be created before any annotations are pushed to
     the server.  If annotations already exist, these are currently not synced.
 
     The labelvol data type only accepts syncs to labelblk data instances.
+
+    GET Query-string Options:
+
+    replace    Set to "true" if you want passed syncs to replace and not be appended to current syncs.
+			   Default operation is false.
 
 
 GET  <api URL>/node/<UUID>/<data name>/sparsevol/<label>?<options>
@@ -868,7 +877,8 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			server.BadRequest(w, r, "Only POST allowed to sync endpoint")
 			return
 		}
-		if err := datastore.SetSyncByJSON(d, uuid, r.Body); err != nil {
+		replace := r.URL.Query().Get("replace") == "true"
+		if err := datastore.SetSyncByJSON(d, uuid, replace, r.Body); err != nil {
 			server.BadRequest(w, r, err)
 			return
 		}
@@ -1305,7 +1315,6 @@ func (d *Data) GetLabelRLEs(v dvid.VersionID, label uint64) (dvid.BlockRLEs, err
 	if err != nil {
 		return nil, err
 	}
-	dvid.Infof("Found %d blocks with label %d\n", len(labelRLEs), label)
 	return labelRLEs, nil
 }
 

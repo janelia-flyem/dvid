@@ -485,7 +485,8 @@ func (m *repoManager) loadVersion0() error {
 						if found {
 							subs, err := syncer.GetSyncSubs(syncedData)
 							if err != nil {
-								return err
+								dvid.Criticalf("Skipping bad sync of data %q to data %q: %v\n", dataservice.DataName(), syncedData.DataName(), err)
+								continue
 							}
 							r.addSyncGraph(subs)
 						} else {
@@ -505,7 +506,8 @@ func (m *repoManager) loadVersion0() error {
 						if found {
 							subs, err := syncer.GetSyncSubs(syncedData)
 							if err != nil {
-								return err
+								dvid.Criticalf("Skipping bad sync of data %q to data %q: %v\n", dataservice.DataName(), syncedData.DataName(), err)
+								continue
 							}
 							r.addSyncGraph(subs)
 							// convert the sync names to data UUIDs
@@ -1561,8 +1563,8 @@ func (m *repoManager) newData(uuid dvid.UUID, t TypeService, name dvid.InstanceN
 	return dataservice, r.save()
 }
 
-// Replaces any previous syncs with given ones and sets up the sync graph for pub/sub.
-func (m *repoManager) setSync(d dvid.Data, syncs dvid.UUIDSet) error {
+// Replaces or appends to any previous syncs the given ones and sets up the sync graph for pub/sub.
+func (m *repoManager) setSync(d dvid.Data, syncs dvid.UUIDSet, replace bool) error {
 	r, err := m.repoFromUUID(d.RootUUID())
 	if err != nil {
 		return err
@@ -1571,29 +1573,57 @@ func (m *repoManager) setSync(d dvid.Data, syncs dvid.UUIDSet) error {
 	r.Lock()
 	defer r.Unlock()
 
-	// Replace the syncs for the data instance with the given syncs.
-	d.SetSync(syncs)
-	syncer, syncable := d.(Syncer)
-	if syncable {
-		for uuid := range syncs {
+	// handle case where we are deleting all syncs.
+	newSyncs := make(dvid.UUIDSet)
+	if len(syncs) == 0 {
+		if !replace {
+			return nil
+		}
+		d.SetSync(dvid.UUIDSet{})
+		r.deleteSyncGraph(d, true)
+		dvid.Infof("Removed all syncs from data instance %q...\n", d.DataName())
+	} else {
+		// handle case where we are modifying syncs.
+		syncer, syncable := d.(Syncer)
+		if !syncable {
+			return fmt.Errorf("Can't create syncs for instance %q, which is not syncable: %v", d.DataName(), d)
+		}
+
+		var errmsg string
+		newSubs := []SyncSubs{}
+		newSyncs.Add(syncs)
+
+		if !replace {
+			newSyncs.Add(syncer.SyncedData())
+		}
+
+		for uuid := range newSyncs {
 			syncedData, found := m.dataByUUID[uuid]
 			if !found {
 				return ErrInvalidDataUUID
 			}
 			subs, err := syncer.GetSyncSubs(syncedData)
 			if err != nil {
-				return err
+				errmsg = errmsg + "\n" + err.Error()
+			} else {
+				newSubs = append(newSubs, subs)
 			}
+		}
+
+		if errmsg != "" {
+			return fmt.Errorf("Unable to set syncs for data %q: %v\n", d.DataName(), errmsg)
+		}
+		r.deleteSyncGraph(d, true)
+		d.SetSync(newSyncs)
+		for _, subs := range newSubs {
 			r.addSyncGraph(subs)
 		}
-	} else {
-		return fmt.Errorf("Can't create syncs for instance %q, which is not syncable: %v", d.DataName(), d)
 	}
 
 	// Add to log and save repo
 	tm := time.Now()
 	r.updated = tm
-	msg := fmt.Sprintf("Data instance %q set to sync wtih %s", d.DataName(), syncs)
+	msg := fmt.Sprintf("Data instance %q set to sync wtih %s", d.DataName(), newSyncs)
 	message := fmt.Sprintf("%s  %s", tm.Format(time.RFC3339), msg)
 	r.log = append(r.log, message)
 	return r.save()
@@ -1717,7 +1747,7 @@ func (m *repoManager) deleteData(r *repoT, name dvid.InstanceName, passcode stri
 	// Delete entries in the sync graph if this data needs to be synced with another data instance.
 	_, syncable := data.(Syncer)
 	if syncable {
-		r.deleteSyncGraph(data)
+		r.deleteSyncGraph(data, false)
 	}
 
 	// Remove this data instance from the repository and persist.
@@ -1789,7 +1819,8 @@ type repoT struct {
 
 	data map[dvid.InstanceName]DataService
 
-	// subs holds subscriptions to change events for each data instance
+	// subs holds subscriptions to change events for each data instance.
+	// This is not persisted.  It is built on load or modification of syncs.
 	subs map[SyncEvent]SyncSubs
 }
 
@@ -2106,9 +2137,10 @@ func (r *repoT) addSyncGraph(subs SyncSubs) {
 	}
 }
 
-// Deletes subscriptions to and from a data instance.
-// Sends done signal to whatever is listening to the subscribed channel.
-func (r *repoT) deleteSyncGraph(data dvid.Data) {
+// Deletes subscriptions to and from a data instance unless the onlyFor parameter is true.
+// This does not close whatever event handlers are running in a data instance, since
+// these are closed on server Shutdown.
+func (r *repoT) deleteSyncGraph(data dvid.Data, onlyFor bool) {
 	if r.subs == nil {
 		return
 	}
@@ -2116,13 +2148,13 @@ func (r *repoT) deleteSyncGraph(data dvid.Data) {
 	todelete := []SyncEvent{}
 	for evt, subs := range r.subs {
 		// Remove all subs to the named instance
-		if evt.Data == data.DataUUID() {
+		if !onlyFor && evt.Data == data.DataUUID() {
 			r.subs[evt] = nil
 			todelete = append(todelete, evt)
 			continue
 		}
 
-		// Remove all subs from the named instance
+		// Remove all subs for the named instance
 		var deletions int
 		for _, sub := range subs {
 			if sub.Notify == data.DataUUID() {
