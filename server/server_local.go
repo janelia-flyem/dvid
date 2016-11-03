@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"net/smtp"
 	"os"
+	"os/exec"
 	"runtime"
 	"strings"
 	"text/template"
@@ -36,7 +37,27 @@ const (
 	ErrorLogFilename = "dvid-errors.log"
 )
 
-var tc tomlConfig
+var (
+	// DefaultHost is the default most understandable alias for this server.
+	DefaultHost = "localhost"
+
+	tc tomlConfig
+)
+
+func init() {
+	// Set default Host name for understandability from user perspective.
+	// Assumes Linux or Mac.  From stackoverflow suggestion.
+	cmd := exec.Command("/bin/hostname", "-f")
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	if err := cmd.Run(); err != nil {
+		dvid.Errorf("Unable to get default Host name via /bin/hostname: %v\n", err)
+		dvid.Errorf("Using 'localhost' as default Host name.\n")
+		return
+	}
+	DefaultHost = out.String()
+	DefaultHost = DefaultHost[:len(DefaultHost)-1] // removes EOL
+}
 
 type tomlConfig struct {
 	Server     serverConfig
@@ -68,6 +89,16 @@ func (c tomlConfig) Stores() (map[storage.Alias]dvid.StoreConfig, error) {
 	return stores, nil
 }
 
+// Host returns the most understandable host alias + any port.
+func (c *tomlConfig) Host() string {
+	parts := strings.Split(c.Server.HTTPAddress, ":")
+	host := c.Server.Host
+	if len(parts) > 1 {
+		host = host + ":" + parts[len(parts)-1]
+	}
+	return host
+}
+
 func (c *tomlConfig) HTTPAddress() string {
 	return c.Server.HTTPAddress
 }
@@ -85,6 +116,7 @@ func (c *tomlConfig) AllowTiming() bool {
 }
 
 type serverConfig struct {
+	Host        string
 	HTTPAddress string
 	RPCAddress  string
 	WebClient   string
@@ -240,6 +272,9 @@ func SendNotification(message string, recipients []string) error {
 // Serve starts HTTP and RPC servers.
 func Serve() {
 	// Use defaults if not set via TOML config file.
+	if tc.Server.Host == "" {
+		tc.Server.Host = DefaultHost
+	}
 	if tc.Server.HTTPAddress == "" {
 		tc.Server.HTTPAddress = DefaultWebAddress
 	}
@@ -249,7 +284,7 @@ func Serve() {
 
 	dvid.Infof("------------------\n")
 	dvid.Infof("DVID code version: %s\n", gitVersion)
-	dvid.Infof("Serving HTTP on %s\n", tc.Server.HTTPAddress)
+	dvid.Infof("Serving HTTP on %s (host alias %q)\n", tc.Server.HTTPAddress, tc.Server.Host)
 	dvid.Infof("Serving command-line use via RPC %s\n", tc.Server.RPCAddress)
 	dvid.Infof("Using web client files from %s\n", tc.Server.WebClient)
 	dvid.Infof("Using %d of %d logical CPUs for DVID.\n", dvid.NumCPU, runtime.NumCPU())

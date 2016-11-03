@@ -3,6 +3,7 @@
 # email notifications, authentication, and backend assignments.
 
 [server]
+# host = "mygreatserver.test.com"  # Lets you specify a user-friendly alias for help messages.
 httpAddress = "localhost:8000"
 rpcAddress = "localhost:8001"
 webClient = "/path/to/webclient"

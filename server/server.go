@@ -16,6 +16,7 @@ import (
 
 // DVID server configuration parameters.  Should be set by platform-specific implementations.
 type Config interface {
+	Host() string // User understandable alias for this server, e.g., "emdata2" instead of "localhost" or "c06u30".
 	HTTPAddress() string
 	RPCAddress() string
 
