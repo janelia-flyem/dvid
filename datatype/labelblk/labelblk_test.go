@@ -787,7 +787,7 @@ func TestLabels(t *testing.T) {
 	datastore.OpenTest()
 	defer datastore.CloseTest()
 
-	uuid := dvid.UUID(server.NewTestRepo(t))
+	uuid, _ := datastore.NewTestRepo()
 	if len(uuid) < 5 {
 		t.Fatalf("Bad root UUID for new repo: %s\n", uuid)
 	}

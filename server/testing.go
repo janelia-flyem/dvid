@@ -19,8 +19,6 @@ import (
 	"testing"
 
 	"github.com/janelia-flyem/dvid/dvid"
-
-	"encoding/json"
 )
 
 // TestHTTPResponse returns a response from a test run of the DVID server.
@@ -65,22 +63,6 @@ func TestBadHTTP(t *testing.T, method, urlStr string, payload io.Reader) {
 	if w.Code == http.StatusOK {
 		t.Fatalf("Expected bad server response to %s on %q, got %d instead.\n", method, urlStr, w.Code)
 	}
-}
-
-// NewTestRepo returns a repo on a running server suitable for testing.
-func NewTestRepo(t *testing.T) (uuid string) {
-	metadata := `{"alias": "testRepo", "description": "A test repository"}`
-	apiStr := WebAPIPath + "repos"
-	response := TestHTTP(t, "POST", apiStr, bytes.NewBufferString(metadata))
-
-	// Parse the returned root UUID
-	parsedResponse := struct {
-		Root string
-	}{}
-	if err := json.Unmarshal(response, &parsedResponse); err != nil {
-		t.Fatalf("Couldn't decode JSON response to new repo request: %v\n", err)
-	}
-	return parsedResponse.Root
 }
 
 func CreateTestInstance(t *testing.T, uuid dvid.UUID, typename, name string, config dvid.Config) {

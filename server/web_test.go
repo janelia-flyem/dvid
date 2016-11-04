@@ -11,25 +11,6 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 )
 
-func createRepo(t *testing.T) dvid.UUID {
-	apiStr := fmt.Sprintf("%srepos", WebAPIPath)
-	r := TestHTTP(t, "POST", apiStr, nil)
-	var jsonResp map[string]interface{}
-
-	if err := json.Unmarshal(r, &jsonResp); err != nil {
-		t.Fatalf("Unable to unmarshal repo creation response: %s\n", string(r))
-	}
-	v, ok := jsonResp["root"]
-	if !ok {
-		t.Fatalf("No 'root' metadata returned: %s\n", string(r))
-	}
-	uuid, ok := v.(string)
-	if !ok {
-		t.Fatalf("Couldn't cast returned 'root' data (%v) into string.\n", v)
-	}
-	return dvid.UUID(uuid)
-}
-
 func testLog(t *testing.T, got, expect string) {
 	re := regexp.MustCompile(`\S+\s+(.+)$`)
 	matches := re.FindStringSubmatch(got)
@@ -46,7 +27,7 @@ func TestLog(t *testing.T) {
 	datastore.OpenTest()
 	defer datastore.CloseTest()
 
-	uuid := createRepo(t)
+	uuid, _ := datastore.NewTestRepo()
 
 	// Post a log
 	payload := bytes.NewBufferString(`{"log": ["line1", "line2", "some more stuff in a line"]}`)
@@ -102,7 +83,7 @@ func TestCommitBranchMergeDelete(t *testing.T) {
 	datastore.OpenTest()
 	defer datastore.CloseTest()
 
-	uuid := createRepo(t)
+	uuid, _ := datastore.NewTestRepo()
 
 	// Shouldn't be able to create branch on open node.
 	branchReq := fmt.Sprintf("%snode/%s/branch", WebAPIPath, uuid)

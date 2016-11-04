@@ -181,9 +181,15 @@ func TestCommitAndBranch(t *testing.T) {
 	server.TestHTTP(t, "POST", apiStr, payload)
 
 	// Make sure committed nodes can only be read.
-	// We shouldn't be able to write to keyvalue..
+	// We shouldn't be able to write to keyvalue.
 	keyReq := fmt.Sprintf("%snode/%s/mykv/key/foo", server.WebAPIPath, uuid)
 	server.TestBadHTTP(t, "POST", keyReq, bytes.NewBufferString("some data"))
+
+	// Create a ROI with an immutable POST request via ptquery.  Should be able to still POST to it.
+	server.CreateTestInstance(t, uuid, "roi", "myroi", dvid.Config{})
+	apiStr = fmt.Sprintf("%snode/%s/myroi/ptquery", server.WebAPIPath, uuid)
+	queryJSON := "[[10, 10, 10], [20, 20, 20], [30, 30, 30], [40, 40, 40], [50, 50, 50]]"
+	server.TestHTTP(t, "POST", apiStr, bytes.NewReader([]byte(queryJSON))) // we have no ROI so just testing HTTP.
 
 	// Should be able to create branch now that we've committed parent.
 	respData := server.TestHTTP(t, "POST", branchReq, nil)

@@ -138,6 +138,13 @@ type DataService interface {
 	// ModifyConfig modifies a configuration in a type-specific way.
 	ModifyConfig(dvid.Config) error
 
+	// IsMutationRequest returns true if the given HTTP method on the endpoint results in mutations.
+	// This allows datatypes to define actions on an endpoint as immutable even if they use POST.
+	// The endpoint is the keyword immediately following a data instance name in the URL:
+	//    /api/node/483f/grayscale/raw/xy/...
+	// In the above URL, "raw" is the endpoint.
+	IsMutationRequest(action, endpoint string) bool
+
 	// DoRPC handles command line and RPC commands specific to a data type
 	DoRPC(Request, *Response) error
 
@@ -579,6 +586,18 @@ func (d *Data) Checksum() dvid.Checksum {
 }
 
 // --- DataService implementation -----
+
+// IsMutationRequest is the default definition of mutation requests.
+// All POST, PUT, and DELETE actions return true, while others return false.
+func (d *Data) IsMutationRequest(action, endpoint string) bool {
+	lc := strings.ToLower(action)
+	switch lc {
+	case "post", "put", "delete":
+		return true
+	default:
+		return false
+	}
+}
 
 func (d *Data) GetType() TypeService {
 	typeservice, err := TypeServiceByURL(d.typeurl)

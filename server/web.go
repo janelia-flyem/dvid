@@ -535,6 +535,7 @@ func initRoutes() {
 	nodeMux := web.New()
 	mainMux.Handle("/api/node/:uuid", nodeMux)
 	mainMux.Handle("/api/node/:uuid/:action", nodeMux)
+	nodeMux.Use(repoRawSelector)
 	nodeMux.Use(nodeSelector)
 	nodeMux.Get("/api/node/:uuid/log", getNodeLogHandler)
 	nodeMux.Post("/api/node/:uuid/note", postNodeNoteHandler)
@@ -546,7 +547,7 @@ func initRoutes() {
 	instanceMux := web.New()
 	mainMux.Handle("/api/node/:uuid/:dataname/:keyword", instanceMux)
 	mainMux.Handle("/api/node/:uuid/:dataname/:keyword/*", instanceMux)
-	instanceMux.Use(nodeSelector)
+	instanceMux.Use(repoRawSelector)
 	instanceMux.Use(instanceSelector)
 	instanceMux.NotFound(NotFound)
 
@@ -657,26 +658,6 @@ func repoRawSelector(c *web.C, h http.Handler) http.Handler {
 		if httpUnavailable(w) {
 			return
 		}
-		var err error
-		var uuid dvid.UUID
-		if uuid, c.Env["versionID"], err = datastore.MatchingUUID(c.URLParams["uuid"]); err != nil {
-			BadRequest(w, r, err)
-			return
-		}
-		c.Env["uuid"] = uuid
-
-		h.ServeHTTP(w, r)
-	}
-	return http.HandlerFunc(fn)
-}
-
-// nodeSelector retrieves the particular repo from a potentially partial string that uniquely
-// identifies a node, and imposes restrictions depending on read-only mode and locked nodes.
-func nodeSelector(c *web.C, h http.Handler) http.Handler {
-	fn := func(w http.ResponseWriter, r *http.Request) {
-		if httpUnavailable(w) {
-			return
-		}
 		action := strings.ToLower(r.Method)
 		if readonly && action != "get" && action != "head" {
 			BadRequest(w, r, "Server in read-only mode and will only accept GET and HEAD requestcs")
@@ -691,12 +672,27 @@ func nodeSelector(c *web.C, h http.Handler) http.Handler {
 		}
 		c.Env["uuid"] = uuid
 
+		h.ServeHTTP(w, r)
+	}
+	return http.HandlerFunc(fn)
+}
+
+// nodeSelector identifies a node, and imposes restrictions depending on read-only mode and locked nodes.
+func nodeSelector(c *web.C, h http.Handler) http.Handler {
+	fn := func(w http.ResponseWriter, r *http.Request) {
+		uuid, ok := c.Env["uuid"].(dvid.UUID)
+		if !ok {
+			msg := fmt.Sprintf("Bad format for UUID %q\n", c.Env["uuid"])
+			BadRequest(w, r, msg)
+			return
+		}
 		// Make sure locked nodes can't use anything besides GET and HEAD unless we are deleting whole repo.
 		locked, err := datastore.LockedUUID(uuid)
 		if err != nil {
 			BadRequest(w, r, err)
 			return
 		}
+		action := strings.ToLower(r.Method)
 		branchRequest := (c.URLParams["action"] == "branch")
 		if locked && !branchRequest && action != "get" && action != "head" {
 			BadRequest(w, r, "Cannot do %s on locked node %s", action, uuid)
@@ -759,8 +755,18 @@ func instanceSelector(c *web.C, h http.Handler) http.Handler {
 			return
 		}
 
-		// Check if this is unversioned.
-		if !data.Versioned() {
+		if data.Versioned() {
+			// Make sure we aren't trying mutable methods on committed nodes.
+			locked, err := datastore.LockedUUID(uuid)
+			if err != nil {
+				BadRequest(w, r, err)
+				return
+			}
+			if locked && data.IsMutationRequest(r.Method, c.URLParams["keyword"]) {
+				BadRequest(w, r, "Cannot do %s on endpoint %q of locked node %s", r.Method, c.URLParams["keyword"], uuid)
+				return
+			}
+		} else {
 			// Map everything to root version.
 			v, err = datastore.GetRepoRootVersion(v)
 			if err != nil {

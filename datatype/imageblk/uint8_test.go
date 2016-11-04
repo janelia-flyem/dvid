@@ -105,7 +105,7 @@ func TestVoxelsInstanceCreation(t *testing.T) {
 	datastore.OpenTest()
 	defer datastore.CloseTest()
 
-	uuid := dvid.UUID(server.NewTestRepo(t))
+	uuid, _ := datastore.NewTestRepo()
 
 	// Create new voxels instance with optional parameters
 	name := "grayscale"

@@ -306,6 +306,16 @@ type Data struct {
 	readyMu sync.RWMutex
 }
 
+// IsMutationRequest overrides the default behavior to specify POST /ptquery as an immutable
+// request.
+func (d *Data) IsMutationRequest(action, endpoint string) bool {
+	lc := strings.ToLower(action)
+	if endpoint == "ptquery" && lc == "post" {
+		return false
+	}
+	return d.Data.IsMutationRequest(action, endpoint) // default for rest.
+}
+
 // CopyPropertiesFrom copies the data instance-specific properties from a given
 // data instance into the receiver's properties.
 func (d *Data) CopyPropertiesFrom(src datastore.DataService, fs storage.FilterSpec) error {
