@@ -428,11 +428,10 @@ func (t Tags) Swap(i, j int) {
 // ElementNR describes a synaptic element's properties with No Relationships (NR),
 // used purely for label and tag annotations.
 type ElementNR struct {
-	Pos   dvid.Point3d
-	Kind  ElementType
-	Label uint64
-	Tags  Tags              // Indexed
-	Prop  map[string]string // Non-Indexed
+	Pos  dvid.Point3d
+	Kind ElementType
+	Tags Tags              // Indexed
+	Prop map[string]string // Non-Indexed
 }
 
 // Element describes a synaptic element's properties, including Relationships.
@@ -445,7 +444,6 @@ func (e Element) Copy() *Element {
 	c := new(Element)
 	c.Pos = e.Pos
 	c.Kind = e.Kind
-	c.Label = e.Label
 	c.Rels = make(Relationships, len(e.Rels))
 	copy(c.Rels, e.Rels)
 	c.Tags = make(Tags, len(e.Tags))
@@ -466,7 +464,6 @@ func (elems ElementsNR) Normalize() ElementsNR {
 	for i, elem := range elems {
 		out[i].Pos = elem.Pos
 		out[i].Kind = elem.Kind
-		out[i].Label = elem.Label
 		out[i].Tags = make(Tags, len(elem.Tags))
 		copy(out[i].Tags, elem.Tags)
 
@@ -523,7 +520,6 @@ func (elems Elements) Normalize() Elements {
 	for i, elem := range elems {
 		out[i].Pos = elem.Pos
 		out[i].Kind = elem.Kind
-		out[i].Label = elem.Label
 		out[i].Rels = make(Relationships, len(elem.Rels))
 		copy(out[i].Rels, elem.Rels)
 		out[i].Tags = make(Tags, len(elem.Tags))
