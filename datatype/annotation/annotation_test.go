@@ -523,6 +523,14 @@ var testTagData = Elements{
 	},
 	{
 		ElementNR{
+			Pos:  dvid.Point3d{21, 33, 40}, // Label 2
+			Kind: PostSyn,
+			Tags: []Tag{"Synapse1"},
+		},
+		[]Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
+	},
+	{
+		ElementNR{
 			Pos:  dvid.Point3d{20, 30, 40}, // Label 2
 			Kind: PostSyn,
 			Tags: []Tag{"Synapse10"},
@@ -568,7 +576,18 @@ func testResponse(t *testing.T, expected Elements, template string, args ...inte
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(expected.Normalize(), got.Normalize()) {
-		t.Fatalf("Expected for %s:\n%v\nGot:\n%v\n", url, expected.Normalize(), got.Normalize())
+		var expectedStr, gotStr string
+		if jsonBytes, err := json.Marshal(expected.Normalize()); err != nil {
+			t.Fatalf("error converting expected to JSON: %v\n", err)
+		} else {
+			expectedStr = string(jsonBytes)
+		}
+		if jsonBytes, err := json.Marshal(got.Normalize()); err != nil {
+			t.Fatalf("error converting got to JSON: %v\n", err)
+		} else {
+			gotStr = string(jsonBytes)
+		}
+		t.Fatalf("Expected for %s:\n%s\nGot:\n%s\n", url, expectedStr, gotStr)
 	}
 }
 
@@ -717,6 +736,14 @@ func TestTagRequests(t *testing.T) {
 			},
 			[]Relationship{{Rel: PreSynTo, To: dvid.Point3d{20, 30, 40}}, {Rel: PreSynTo, To: dvid.Point3d{14, 25, 37}}, {Rel: PreSynTo, To: dvid.Point3d{33, 30, 31}}},
 		},
+		{
+			ElementNR{
+				Pos:  dvid.Point3d{21, 33, 40}, // Label 2
+				Kind: PostSyn,
+				Tags: []Tag{"Synapse1"},
+			},
+			[]Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
+		},
 	}
 	tag := Tag("Synapse1")
 	testResponse(t, expected, "%snode/%s/%s/tag/%s?relationships=true", server.WebAPIPath, uuid, data.DataName(), tag)
@@ -759,6 +786,22 @@ func TestTagRequests(t *testing.T) {
 	}
 	tag = Tag("Synapse111")
 	testResponse(t, expected, "%snode/%s/%s/tag/%s?relationships=true", server.WebAPIPath, uuid, data.DataName(), tag)
+
+	// delete an annotation and check if its deleted in tag
+	delurl := fmt.Sprintf("%snode/%s/%s/element/15_27_35", server.WebAPIPath, uuid, data.DataName())
+	server.TestHTTP(t, "DELETE", delurl, nil)
+
+	expected = Elements{
+		{
+			ElementNR{
+				Pos:  dvid.Point3d{21, 33, 40}, // Label 2
+				Kind: PostSyn,
+				Tags: []Tag{"Synapse1"},
+			},
+			[]Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
+		},
+	}
+	testResponse(t, expected, "%snode/%s/%s/tag/Synapse1?relationships=true", server.WebAPIPath, uuid, data.DataName())
 }
 
 func getBytesRLE(t *testing.T, rles dvid.RLEs) *bytes.Buffer {

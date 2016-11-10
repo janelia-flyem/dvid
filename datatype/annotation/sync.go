@@ -40,9 +40,9 @@ const (
 // Number of change messages we can buffer before blocking on sync channel.
 const syncBufferSize = 100
 
-type LabelElements map[uint64]Elements
+type LabelElements map[uint64]ElementsNR
 
-func (le LabelElements) add(label uint64, elem Element) {
+func (le LabelElements) add(label uint64, elem ElementNR) {
 	if label == 0 {
 		return
 	}
@@ -51,7 +51,7 @@ func (le LabelElements) add(label uint64, elem Element) {
 		elems = append(elems, elem)
 		le[label] = elems
 	} else {
-		le[label] = Elements{elem}
+		le[label] = ElementsNR{elem}
 	}
 }
 
@@ -225,7 +225,7 @@ func (d *Data) ingestBlock(ctx *datastore.VersionedCtx, block imageblk.Block, ba
 	// Get the synaptic elements for this block
 	chunkPt := dvid.ChunkPoint3d(*block.Index)
 	tk := NewBlockTKey(chunkPt)
-	elems, err := getElements(ctx, tk)
+	elems, err := getElementsNR(ctx, tk)
 	if err != nil {
 		dvid.Errorf("err getting elements for block %s: %v\n", chunkPt, err)
 		return
@@ -259,7 +259,7 @@ func (d *Data) ingestBlock(ctx *datastore.VersionedCtx, block imageblk.Block, ba
 	i := 0
 	for label, addElems := range toAdd {
 		tk := NewLabelTKey(label)
-		elems, err := getElements(ctx, tk)
+		elems, err := getElementsNR(ctx, tk)
 		if err != nil {
 			dvid.Errorf("err getting elements for label %d: %v\n", label, err)
 			return
@@ -296,7 +296,7 @@ func (d *Data) mutateBlock(ctx *datastore.VersionedCtx, block imageblk.MutatedBl
 	// Get the synaptic elements for this block
 	chunkPt := dvid.ChunkPoint3d(*block.Index)
 	tk := NewBlockTKey(chunkPt)
-	elems, err := getElements(ctx, tk)
+	elems, err := getElementsNR(ctx, tk)
 	if err != nil {
 		dvid.Errorf("err getting elements for block %s: %v\n", chunkPt, err)
 		return
@@ -342,7 +342,7 @@ func (d *Data) mutateBlock(ctx *datastore.VersionedCtx, block imageblk.MutatedBl
 	// Modify any modified label k/v.
 	for label := range labels {
 		tk := NewLabelTKey(label)
-		elems, err := getElements(ctx, tk)
+		elems, err := getElementsNR(ctx, tk)
 		if err != nil {
 			dvid.Errorf("err getting elements for label %d: %v\n", label, err)
 			return

@@ -434,18 +434,10 @@ type ElementNR struct {
 	Prop map[string]string // Non-Indexed
 }
 
-// Element describes a synaptic element's properties, including Relationships.
-type Element struct {
-	ElementNR
-	Rels Relationships
-}
-
-func (e Element) Copy() *Element {
-	c := new(Element)
+func (e ElementNR) Copy() *ElementNR {
+	c := new(ElementNR)
 	c.Pos = e.Pos
 	c.Kind = e.Kind
-	c.Rels = make(Relationships, len(e.Rels))
-	copy(c.Rels, e.Rels)
 	c.Tags = make(Tags, len(e.Tags))
 	copy(c.Tags, e.Tags)
 	c.Prop = make(map[string]string, len(e.Prop))
@@ -455,6 +447,21 @@ func (e Element) Copy() *Element {
 	return c
 }
 
+// Element describes a synaptic element's properties, including Relationships.
+type Element struct {
+	ElementNR
+	Rels Relationships
+}
+
+func (e Element) Copy() *Element {
+	c := new(Element)
+	c.ElementNR = *(e.ElementNR.Copy())
+	c.Rels = make(Relationships, len(e.Rels))
+	copy(c.Rels, e.Rels)
+	return c
+}
+
+// ElementsNR is a slice of elements without relationships.
 type ElementsNR []ElementNR
 
 // Normalize returns ElementsNR that can be used for DeepEqual because all positions and tags are sorted.
@@ -502,6 +509,59 @@ func (elems ElementsNR) Swap(i, j int) {
 	elems[i], elems[j] = elems[j], elems[i]
 }
 
+// Adds elements but if element at position already exists, it replaces the properties of that element.
+func (elems *ElementsNR) add(toAdd ElementsNR) {
+	emap := make(map[string]int)
+	for i, elem := range *elems {
+		emap[elem.Pos.MapKey()] = i
+	}
+	for _, elem := range toAdd {
+		i, found := emap[elem.Pos.MapKey()]
+		if !found {
+			*elems = append(*elems, elem)
+		} else {
+			(*elems)[i] = elem
+		}
+	}
+}
+
+// Deletes element position as well as relationships that reference that element.
+func (elems *ElementsNR) delete(pt dvid.Point3d) (deleted *ElementNR, changed bool) {
+	// Delete any elements at point.
+	var cut = -1
+	for i, elem := range *elems {
+		if pt.Equals(elem.Pos) {
+			cut = i
+			break
+		}
+	}
+	if cut >= 0 {
+		deleted = (*elems)[cut].Copy()
+		changed = true
+		(*elems)[cut] = (*elems)[len(*elems)-1] // Delete without preserving order.
+		*elems = (*elems)[:len(*elems)-1]
+	}
+	return
+}
+
+// Moves element position as well as relationships.
+func (elems *ElementsNR) move(from, to dvid.Point3d, deleteElement bool) (moved *ElementNR, changed bool) {
+	for i, elem := range *elems {
+		if from.Equals(elem.Pos) {
+			changed = true
+			(*elems)[i].Pos = to
+			moved = (*elems)[i].Copy()
+			if deleteElement {
+				(*elems)[i] = (*elems)[len(*elems)-1] // Delete without preserving order.
+				*elems = (*elems)[:len(*elems)-1]
+				break
+			}
+		}
+	}
+	return
+}
+
+// Elements is a slice of Element, which includes relationships.
 type Elements []Element
 
 // helper function that just returns slice of positions suitable for intersect calcs in dvid package.
@@ -727,7 +787,7 @@ func getElementsNR(ctx *datastore.VersionedCtx, tk storage.TKey) (ElementsNR, er
 	return elems, nil
 }
 
-func putBatchElements(batch storage.Batch, tk storage.TKey, elems Elements) error {
+func putBatchElements(batch storage.Batch, tk storage.TKey, elems interface{}) error {
 	val, err := json.Marshal(elems)
 	if err != nil {
 		return err
@@ -736,7 +796,7 @@ func putBatchElements(batch storage.Batch, tk storage.TKey, elems Elements) erro
 	return nil
 }
 
-func putElements(ctx *datastore.VersionedCtx, tk storage.TKey, elems Elements) error {
+func putElements(ctx *datastore.VersionedCtx, tk storage.TKey, elems interface{}) error {
 	val, err := json.Marshal(elems)
 	if err != nil {
 		return err
@@ -902,24 +962,14 @@ func (d *Data) getExpandedElements(ctx *datastore.VersionedCtx, tk storage.TKey)
 
 // delete all reference to given element point in the slice of tags.
 // This is private method and assumes outer locking.
-func (d *Data) deleteElementInTags(ctx *datastore.VersionedCtx, pt dvid.Point3d, tags []Tag) error {
-	store, err := d.BackendStore()
-	if err != nil {
-		return err
-	}
-	batcher, ok := store.(storage.KeyValueBatcher)
-	if !ok {
-		return fmt.Errorf("Data type annotation requires batch-enabled store, which %q is not\n", store)
-	}
-	batch := batcher.NewBatch(ctx)
-
+func (d *Data) deleteElementInTags(ctx *datastore.VersionedCtx, batch storage.Batch, pt dvid.Point3d, tags []Tag) error {
 	for _, tag := range tags {
 		// Get the elements in tag.
 		tk, err := NewTagTKey(tag)
 		if err != nil {
 			return err
 		}
-		elems, err := getElements(ctx, tk)
+		elems, err := getElementsNR(ctx, tk)
 		if err != nil {
 			return err
 		}
@@ -932,14 +982,14 @@ func (d *Data) deleteElementInTags(ctx *datastore.VersionedCtx, pt dvid.Point3d,
 			}
 		}
 		if len(toDel) == 0 {
-			return nil
+			continue
 		}
 
 		// Delete them from high index to low index due while reusing slice.
 		for i := len(toDel) - 1; i >= 0; i-- {
 			d := toDel[i]
 			elems[d] = elems[len(elems)-1]
-			elems[len(elems)-1] = Element{}
+			elems[len(elems)-1] = ElementNR{}
 			elems = elems[:len(elems)-1]
 		}
 
@@ -948,10 +998,10 @@ func (d *Data) deleteElementInTags(ctx *datastore.VersionedCtx, pt dvid.Point3d,
 			return err
 		}
 	}
-	return batch.Commit()
+	return nil
 }
 
-func (d *Data) deleteElementInLabel(ctx *datastore.VersionedCtx, pt dvid.Point3d) error {
+func (d *Data) deleteElementInLabel(ctx *datastore.VersionedCtx, batch storage.Batch, pt dvid.Point3d) error {
 	labelData := d.GetSyncedLabelblk()
 	if labelData == nil {
 		return nil // no synced labels
@@ -961,7 +1011,7 @@ func (d *Data) deleteElementInLabel(ctx *datastore.VersionedCtx, pt dvid.Point3d
 		return err
 	}
 	tk := NewLabelTKey(label)
-	elems, err := getElements(ctx, tk)
+	elems, err := getElementsNR(ctx, tk)
 	if err != nil {
 		return fmt.Errorf("err getting elements for label %d: %v\n", label, err)
 	}
@@ -983,12 +1033,12 @@ func (d *Data) deleteElementInLabel(ctx *datastore.VersionedCtx, pt dvid.Point3d
 	for i := len(toDel) - 1; i >= 0; i-- {
 		d := toDel[i]
 		elems[d] = elems[len(elems)-1]
-		elems[len(elems)-1] = Element{}
+		elems[len(elems)-1] = ElementNR{}
 		elems = elems[:len(elems)-1]
 	}
 
 	// Put the modified list of elements
-	if err := putElements(ctx, tk, elems); err != nil {
+	if err := putBatchElements(batch, tk, elems); err != nil {
 		return err
 	}
 
@@ -1003,17 +1053,7 @@ func (d *Data) deleteElementInLabel(ctx *datastore.VersionedCtx, pt dvid.Point3d
 
 // delete all reference to given element point in the related points.
 // This is private method and assumes outer locking.
-func (d *Data) deleteElementInRelationships(ctx *datastore.VersionedCtx, pt dvid.Point3d, rels []Relationship) error {
-	store, err := d.BackendStore()
-	if err != nil {
-		return err
-	}
-	batcher, ok := store.(storage.KeyValueBatcher)
-	if !ok {
-		return fmt.Errorf("Data type annotation requires batch-enabled store, which %q is not\n", store)
-	}
-	batch := batcher.NewBatch(ctx)
-
+func (d *Data) deleteElementInRelationships(ctx *datastore.VersionedCtx, batch storage.Batch, pt dvid.Point3d, rels []Relationship) error {
 	blockSize := d.blockSize()
 	for _, rel := range rels {
 		// Get the block elements containing the related element.
@@ -1034,29 +1074,19 @@ func (d *Data) deleteElementInRelationships(ctx *datastore.VersionedCtx, pt dvid
 			return err
 		}
 	}
-	return batch.Commit()
+	return nil
 }
 
 // move all reference to given element point in the slice of tags.
 // This is private method and assumes outer locking.
-func (d *Data) moveElementInTags(ctx *datastore.VersionedCtx, from, to dvid.Point3d, tags []Tag) error {
-	store, err := d.BackendStore()
-	if err != nil {
-		return err
-	}
-	batcher, ok := store.(storage.KeyValueBatcher)
-	if !ok {
-		return fmt.Errorf("Data type annotation requires batch-enabled store, which %q is not\n", store)
-	}
-	batch := batcher.NewBatch(ctx)
-
+func (d *Data) moveElementInTags(ctx *datastore.VersionedCtx, batch storage.Batch, from, to dvid.Point3d, tags []Tag) error {
 	for _, tag := range tags {
 		// Get the elements in tag.
 		tk, err := NewTagTKey(tag)
 		if err != nil {
 			return err
 		}
-		elems, err := getElements(ctx, tk)
+		elems, err := getElementsNR(ctx, tk)
 		if err != nil {
 			return err
 		}
@@ -1072,10 +1102,10 @@ func (d *Data) moveElementInTags(ctx *datastore.VersionedCtx, from, to dvid.Poin
 			return err
 		}
 	}
-	return batch.Commit()
+	return nil
 }
 
-func (d *Data) moveElementInLabels(ctx *datastore.VersionedCtx, from, to dvid.Point3d, moved *Element) error {
+func (d *Data) moveElementInLabels(ctx *datastore.VersionedCtx, batch storage.Batch, from, to dvid.Point3d, moved ElementNR) error {
 	labelData := d.GetSyncedLabelblk()
 	if labelData == nil {
 		return nil // no label denormalization possible
@@ -1091,20 +1121,11 @@ func (d *Data) moveElementInLabels(ctx *datastore.VersionedCtx, from, to dvid.Po
 	if oldLabel == newLabel {
 		return nil
 	}
-	store, err := d.BackendStore()
-	if err != nil {
-		return err
-	}
-	batcher, ok := store.(storage.KeyValueBatcher)
-	if !ok {
-		return fmt.Errorf("Data type annotation requires batch-enabled store, which %q is not\n", store)
-	}
-	batch := batcher.NewBatch(ctx)
 
 	var delta DeltaModifyElements
 	if oldLabel != 0 {
 		tk := NewLabelTKey(oldLabel)
-		elems, err := getElements(ctx, tk)
+		elems, err := getElementsNR(ctx, tk)
 		if err != nil {
 			return fmt.Errorf("err getting elements for label %d: %v", oldLabel, err)
 		}
@@ -1117,11 +1138,11 @@ func (d *Data) moveElementInLabels(ctx *datastore.VersionedCtx, from, to dvid.Po
 	}
 	if newLabel != 0 {
 		tk := NewLabelTKey(newLabel)
-		elems, err := getElements(ctx, tk)
+		elems, err := getElementsNR(ctx, tk)
 		if err != nil {
 			return fmt.Errorf("err getting elements for label %d: %v", newLabel, err)
 		}
-		elems.add(Elements{*moved})
+		elems.add(ElementsNR{moved})
 		if err := putBatchElements(batch, tk, elems); err != nil {
 			return err
 		}
@@ -1137,13 +1158,13 @@ func (d *Data) moveElementInLabels(ctx *datastore.VersionedCtx, from, to dvid.Po
 		}
 	}
 
-	return batch.Commit()
+	return nil
 }
 
 // move all reference to given element point in the related points in different blocks.
 // This is private method and assumes outer locking as well as current "from" block already being modified,
 // including relationships.
-func (d *Data) moveElementInRelationships(ctx *datastore.VersionedCtx, from, to dvid.Point3d, rels []Relationship) error {
+func (d *Data) moveElementInRelationships(ctx *datastore.VersionedCtx, batch storage.Batch, from, to dvid.Point3d, rels []Relationship) error {
 	blockSize := d.blockSize()
 	fromBlockCoord := from.Chunk(blockSize).(dvid.ChunkPoint3d)
 
@@ -1156,16 +1177,6 @@ func (d *Data) moveElementInRelationships(ctx *datastore.VersionedCtx, from, to 
 		}
 		relBlocks[blockCoord.ToIZYXString()] = struct{}{}
 	}
-
-	store, err := d.BackendStore()
-	if err != nil {
-		return err
-	}
-	batcher, ok := store.(storage.KeyValueBatcher)
-	if !ok {
-		return fmt.Errorf("Data type annotation requires batch-enabled store, which %q is not\n", store)
-	}
-	batch := batcher.NewBatch(ctx)
 
 	// Alter the moved points in those related blocks.
 	for izyxstr := range relBlocks {
@@ -1190,10 +1201,10 @@ func (d *Data) moveElementInRelationships(ctx *datastore.VersionedCtx, from, to 
 			return err
 		}
 	}
-	return batch.Commit()
+	return nil
 }
 
-func (d *Data) modifyElements(ctx *datastore.VersionedCtx, tk storage.TKey, toAdd Elements) error {
+func (d *Data) modifyElements(ctx *datastore.VersionedCtx, batch storage.Batch, tk storage.TKey, toAdd Elements) error {
 	storeE, err := getElements(ctx, tk)
 	if err != nil {
 		return err
@@ -1203,12 +1214,12 @@ func (d *Data) modifyElements(ctx *datastore.VersionedCtx, tk storage.TKey, toAd
 	} else {
 		storeE = toAdd
 	}
-	return putElements(ctx, tk, storeE)
+	return putBatchElements(batch, tk, storeE)
 }
 
 // stores synaptic elements arranged by block, replacing any
 // elements at same position.
-func (d *Data) storeBlockElements(ctx *datastore.VersionedCtx, be blockElements) error {
+func (d *Data) storeBlockElements(ctx *datastore.VersionedCtx, batch storage.Batch, be blockElements) error {
 	for izyxStr, elems := range be {
 		blockCoord, err := izyxStr.ToChunkPoint3d()
 		if err != nil {
@@ -1216,7 +1227,7 @@ func (d *Data) storeBlockElements(ctx *datastore.VersionedCtx, be blockElements)
 		}
 		// Modify the block annotations
 		tk := NewBlockTKey(blockCoord)
-		if err := d.modifyElements(ctx, tk, elems); err != nil {
+		if err := d.modifyElements(ctx, batch, tk, elems); err != nil {
 			return err
 		}
 	}
@@ -1225,19 +1236,11 @@ func (d *Data) storeBlockElements(ctx *datastore.VersionedCtx, be blockElements)
 
 // stores synaptic elements arranged by label, replacing any
 // elements at same position.
-func (d *Data) storeLabelElements(ctx *datastore.VersionedCtx, be blockElements) error {
+func (d *Data) storeLabelElements(ctx *datastore.VersionedCtx, batch storage.Batch, be blockElements) error {
 	labelData := d.GetSyncedLabelblk()
 	if labelData == nil {
 		dvid.Infof("No synced labels for annotation %q, skipping label-aware denormalization.\n", d.DataName())
 		return nil // no synced labels
-	}
-	store, err := d.BackendStore()
-	if err != nil {
-		return err
-	}
-	batcher, ok := store.(storage.KeyValueBatcher)
-	if !ok {
-		return fmt.Errorf("Data type annotation requires batch-enabled store, which %q is not\n", store)
 	}
 
 	// Compute the strides (in bytes)
@@ -1271,17 +1274,16 @@ func (d *Data) storeLabelElements(ctx *datastore.VersionedCtx, be blockElements)
 			i := pt[2]*bY + pt[1]*bX + pt[0]*8
 			label := binary.LittleEndian.Uint64(labels[i : i+8])
 			if label != 0 {
-				toAdd.add(label, elem)
+				toAdd.add(label, elem.ElementNR)
 			}
 		}
 	}
 
 	// Store all the added annotations to the appropriate labels.
 	var delta DeltaModifyElements
-	batch := batcher.NewBatch(ctx)
 	for label, additions := range toAdd {
 		tk := NewLabelTKey(label)
-		elems, err := getElements(ctx, tk)
+		elems, err := getElementsNR(ctx, tk)
 		if err != nil {
 			return fmt.Errorf("err getting elements for label %d: %v\n", label, err)
 		}
@@ -1312,18 +1314,18 @@ func (d *Data) storeLabelElements(ctx *datastore.VersionedCtx, be blockElements)
 		return err
 	}
 
-	return batch.Commit()
+	return nil
 }
 
 // stores synaptic elements arranged by tag, replacing any
 // elements at same position.
-func (d *Data) storeTagElements(ctx *datastore.VersionedCtx, te tagElements) error {
+func (d *Data) storeTagElements(ctx *datastore.VersionedCtx, batch storage.Batch, te tagElements) error {
 	for tag, elems := range te {
 		tk, err := NewTagTKey(tag)
 		if err != nil {
 			return err
 		}
-		if err := d.modifyElements(ctx, tk, elems); err != nil {
+		if err := d.modifyElements(ctx, batch, tk, elems); err != nil {
 			return err
 		}
 	}
@@ -1379,18 +1381,6 @@ func (d *Data) GetTagJSON(ctx *datastore.VersionedCtx, tag Tag, addRels bool) (j
 		jsonBytes, err = json.Marshal(elems)
 	}
 	return
-}
-
-// GetTagSynapses returns synapse elements for a given tag.
-func (d *Data) GetTagSynapses(ctx *datastore.VersionedCtx, tag Tag) (Elements, error) {
-	d.RLock()
-	defer d.RUnlock()
-
-	tk, err := NewTagTKey(tag)
-	if err != nil {
-		return nil, err
-	}
-	return d.getExpandedElements(ctx, tk)
 }
 
 // GetRegionSynapses returns synapse elements for a given subvolume of image space.
@@ -1481,25 +1471,33 @@ func (d *Data) StoreSynapses(ctx *datastore.VersionedCtx, r io.Reader) error {
 		}
 	}
 
-	// TODO -- If we group these in batch transaction might be too many k/v mutations.
-	// Really should be done via mutate log + mutation id for long-lived denormalizations.
+	// Do modifications under a batch.
+	store, err := d.BackendStore()
+	if err != nil {
+		return err
+	}
+	batcher, ok := store.(storage.KeyValueBatcher)
+	if !ok {
+		return fmt.Errorf("Data type annotation requires batch-enabled store, which %q is not\n", store)
+	}
+	batch := batcher.NewBatch(ctx)
 
 	// Store the new block elements
-	if err := d.storeBlockElements(ctx, blockE); err != nil {
+	if err := d.storeBlockElements(ctx, batch, blockE); err != nil {
 		return err
 	}
 
 	// Store new elements among label denormalizations
-	if err := d.storeLabelElements(ctx, blockE); err != nil {
+	if err := d.storeLabelElements(ctx, batch, blockE); err != nil {
 		return err
 	}
 
 	// Store the new tag elements
-	if err := d.storeTagElements(ctx, tagE); err != nil {
+	if err := d.storeTagElements(ctx, batch, tagE); err != nil {
 		return err
 	}
 
-	return nil
+	return batch.Commit()
 }
 
 func (d *Data) DeleteElement(ctx *datastore.VersionedCtx, pt dvid.Point3d) error {
@@ -1527,22 +1525,33 @@ func (d *Data) DeleteElement(ctx *datastore.VersionedCtx, pt dvid.Point3d) error
 		return err
 	}
 
+	// Alter all stored versions of this annotation using a batch.
+	store, err := d.BackendStore()
+	if err != nil {
+		return err
+	}
+	batcher, ok := store.(storage.KeyValueBatcher)
+	if !ok {
+		return fmt.Errorf("Data type annotation requires batch-enabled store, which %q is not\n", store)
+	}
+	batch := batcher.NewBatch(ctx)
+
 	// Delete in label key
-	if err := d.deleteElementInLabel(ctx, deleted.Pos); err != nil {
+	if err := d.deleteElementInLabel(ctx, batch, deleted.Pos); err != nil {
 		return err
 	}
 
 	// Delete element in any tags
-	if err := d.deleteElementInTags(ctx, deleted.Pos, deleted.Tags); err != nil {
+	if err := d.deleteElementInTags(ctx, batch, deleted.Pos, deleted.Tags); err != nil {
 		return err
 	}
 
 	// Modify any reference in relationships
-	if err := d.deleteElementInRelationships(ctx, deleted.Pos, deleted.Rels); err != nil {
+	if err := d.deleteElementInRelationships(ctx, batch, deleted.Pos, deleted.Rels); err != nil {
 		return err
 	}
 
-	return nil
+	return batch.Commit()
 }
 
 func (d *Data) MoveElement(ctx *datastore.VersionedCtx, from, to dvid.Point3d) error {
@@ -1557,6 +1566,17 @@ func (d *Data) MoveElement(ctx *datastore.VersionedCtx, from, to dvid.Point3d) e
 	d.Lock()
 	defer d.Unlock()
 
+	// Alter all stored versions of this annotation using a batch.
+	store, err := d.BackendStore()
+	if err != nil {
+		return err
+	}
+	batcher, ok := store.(storage.KeyValueBatcher)
+	if !ok {
+		return fmt.Errorf("Data type annotation requires batch-enabled store, which %q is not\n", store)
+	}
+	batch := batcher.NewBatch(ctx)
+
 	// Handle from block
 	fromElems, err := getElements(ctx, fromTk)
 	if err != nil {
@@ -1568,8 +1588,9 @@ func (d *Data) MoveElement(ctx *datastore.VersionedCtx, from, to dvid.Point3d) e
 	if moved == nil {
 		return fmt.Errorf("Did not find moved element %s in datastore", from)
 	}
+	dvid.Infof("moved element %v from %s -> %s\n", *moved, fromCoord, toCoord)
 
-	if err := putElements(ctx, fromTk, fromElems); err != nil {
+	if err := putBatchElements(batch, fromTk, fromElems); err != nil {
 		return err
 	}
 
@@ -1580,28 +1601,34 @@ func (d *Data) MoveElement(ctx *datastore.VersionedCtx, from, to dvid.Point3d) e
 			return err
 		}
 		toElems.add(Elements{*moved})
+		dvid.Infof("new %s value: %v\n", toCoord, toElems)
 
-		if err := putElements(ctx, toTk, toElems); err != nil {
+		if err := putBatchElements(batch, toTk, toElems); err != nil {
 			return err
 		}
 	}
 
+	if err := batch.Commit(); err != nil {
+		return err
+	}
+	batch = batcher.NewBatch(ctx)
+
 	// Move in label key
-	if err := d.moveElementInLabels(ctx, from, to, moved); err != nil {
+	if err := d.moveElementInLabels(ctx, batch, from, to, moved.ElementNR); err != nil {
 		return err
 	}
 
 	// Move element in any tags
-	if err := d.moveElementInTags(ctx, from, to, moved.Tags); err != nil {
+	if err := d.moveElementInTags(ctx, batch, from, to, moved.Tags); err != nil {
 		return err
 	}
 
 	// Move any reference in relationships
-	if err := d.moveElementInRelationships(ctx, from, to, moved.Rels); err != nil {
+	if err := d.moveElementInRelationships(ctx, batch, from, to, moved.Rels); err != nil {
 		return err
 	}
 
-	return nil
+	return batch.Commit()
 }
 
 // GetByDataUUID returns a pointer to annotation data given a data UUID.
