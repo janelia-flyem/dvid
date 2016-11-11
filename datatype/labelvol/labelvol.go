@@ -1530,7 +1530,9 @@ func (d *Data) GetSparseVol(ctx *datastore.VersionedCtx, label uint64, bounds Bo
 				return nil, err
 			}
 		}
-		dvid.Debugf("Returning sparse volume for label %d, composed of labels %s\n", label, constituents)
+		if len(constituents) > 1 {
+			dvid.Debugf("Returning sparse volume for label %d, composed of labels %s\n", label, constituents)
+		}
 	}
 
 	binary.LittleEndian.PutUint32(encoding[8:12], numRuns)

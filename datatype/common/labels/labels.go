@@ -36,7 +36,7 @@ func LabelMap(iv dvid.InstanceVersion) *Mapping {
 }
 
 // MergeStart handles label map caches during an active merge operation.  Note that if there are
-// multiple synced label instances, the InstanceVersion always be the labelblk instance.
+// multiple synced label instances, the InstanceVersion will always be the labelblk instance.
 func MergeStart(iv dvid.InstanceVersion, op MergeOp) error {
 	// Don't allow a merge to start in the middle of a concurrent split.
 	if labelsSplitting.IsDirty(iv, op.Target) { // we might be able to relax this one.
@@ -63,6 +63,9 @@ func MergeStart(iv dvid.InstanceVersion, op MergeOp) error {
 func MergeStop(iv dvid.InstanceVersion, op MergeOp) {
 	// Adjust the dirty counts on the involved labels.
 	labelsMerging.RemoveMerge(iv, op)
+
+	// Remove the merge from the mapping.
+	mc.Remove(iv, op)
 
 	// If the instance version's dirty cache is empty, we can delete the merge cache.
 	if labelsMerging.Empty(iv) {
@@ -117,6 +120,26 @@ func (mc *mergeCache) Add(iv dvid.InstanceVersion, op MergeOp) error {
 		}
 	}
 	return nil
+}
+
+// Remove removes a merge operation from the given InstanceVersion's cache,
+// allowing us to return no mapping if it's already been processed.
+func (mc *mergeCache) Remove(iv dvid.InstanceVersion, op MergeOp) {
+	mc.Lock()
+	defer mc.Unlock()
+
+	if mc.m == nil {
+		dvid.Errorf("mergeCache.Remove() called with iv %s, op %v there are no mappings for any iv.\n", iv, op)
+		return
+	}
+	mapping, found := mc.m[iv]
+	if !found {
+		dvid.Errorf("mergeCache.Remove() called with iv %s, op %v and there is no mapping for that iv.\n", iv, op)
+		return
+	}
+	for merged := range op.Merged {
+		mapping.delete(merged)
+	}
 }
 
 // LabelMap returns a label mapping for a version of a data instance.

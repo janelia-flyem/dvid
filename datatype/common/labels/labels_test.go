@@ -157,11 +157,92 @@ func TestMergeCache(t *testing.T) {
 		t.Errorf("Bad final mapping of label 1.  Got %d, expected 4\n", label)
 	}
 
-	// Shouldn't be able to do a split when there's a merge going on
+	// Add another merge into label 4
+	op1, err := MergeTuple{4, 1000, 1001, 1002}.Op()
+	if err != nil {
+		t.Errorf("Error converting [4, 1000, 1001, 1002] to MergeOp: %v\n", err)
+	}
+	if err := MergeStart(iv, op1); err != nil {
+		t.Fatalf("Couldn't start merge op %v: %v\n", op1, err)
+	}
 
-	// Mark the end of the merges.
+	constituents := mapping.ConstituentLabels(4)
+	if len(constituents) != 7 {
+		t.Errorf("Expected 7 merged labels into label 4, got: %s\n", constituents)
+	}
+	for _, label := range []uint64{4, 1, 2, 3, 1000, 1001, 1002} {
+		_, found := constituents[label]
+		if !found {
+			t.Errorf("Expected a constituent label for 4 to be %d but wasn't found: %v\n", label, constituents)
+		}
+		if !labelsMerging.IsDirty(iv, label) {
+			t.Errorf("Expected label %d to be marked Dirty but wasn't.\n", label)
+		}
+	}
 
-	// Now should be able to do merge.
+	// Remove the first merge (1,2,3 -> 4) and test that it's gone.
+	op2, err := merges[0].Op()
+	if err != nil {
+		t.Errorf("Error converting tuple %v to MergeOp: %v\n", merges[0], err)
+	}
+	MergeStop(iv, op2)
+
+	constituents = mapping.ConstituentLabels(4)
+	if len(constituents) != 4 {
+		t.Errorf("Stoped merge %v for iv %v, but found weird constituents: %s\n", op2, iv, constituents)
+	}
+	for _, label := range []uint64{4, 1000, 1001, 1002} {
+		_, found := constituents[label]
+		if !found {
+			t.Errorf("Expected constituent label for 4 to be %d but wasn't found: %v\n", label, constituents)
+		}
+		if !labelsMerging.IsDirty(iv, label) {
+			t.Errorf("Expected label %d to be marked Dirty but wasn't.\n", label)
+		}
+	}
+
+	for _, label := range []uint64{1, 2, 3} {
+		_, found := mapping.Get(label)
+		if found {
+			t.Errorf("Found mapping for label %d when it should have been removed\n", label)
+		}
+		_, found = mapping.FinalLabel(label)
+		if found {
+			t.Errorf("Found final mapping for label %d when it should have been removed\n", label)
+		}
+		if labelsMerging.IsDirty(iv, label) {
+			t.Errorf("Expected label %d to be marked NOT Dirty but was marked Dirty.\n", label)
+		}
+	}
+
+	// Remove other merge op into 4 and test there are no more mappings.
+	MergeStop(iv, op1)
+
+	constituents = mapping.ConstituentLabels(4)
+	if len(constituents) != 1 {
+		t.Errorf("Stoped merge %v for iv %v, but found weird constituents: %s\n", op1, iv, constituents)
+	}
+	_, found := constituents[4]
+	if !found {
+		t.Errorf("Expected constituent label for 4 to be just 4 but found: %v\n", constituents)
+	}
+	if labelsMerging.IsDirty(iv, 4) {
+		t.Errorf("Expected label 4 to be marked NOT Dirty but was marked Dirty.\n")
+	}
+
+	for _, label := range []uint64{1001, 1002, 1004} {
+		_, found := mapping.Get(label)
+		if found {
+			t.Errorf("Found mapping for label %d when it should have been removed\n", label)
+		}
+		_, found = mapping.FinalLabel(label)
+		if found {
+			t.Errorf("Found final mapping for label %d when it should have been removed\n", label)
+		}
+		if labelsMerging.IsDirty(iv, label) {
+			t.Errorf("Expected label %d to be marked NOT Dirty but was marked Dirty.\n", label)
+		}
+	}
 }
 
 func TestDirtyCache(t *testing.T) {
