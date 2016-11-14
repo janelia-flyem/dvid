@@ -610,7 +610,9 @@ func (s OrthogSlice) Size() Point {
 }
 
 func (s OrthogSlice) NumVoxels() int64 {
-	return int64(s.size[0] * s.size[1])
+	x := int64(s.size[0])
+	y := int64(s.size[1])
+	return x * y
 }
 
 func (s OrthogSlice) StartPoint() Point {
