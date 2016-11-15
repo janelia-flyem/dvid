@@ -212,7 +212,7 @@ func (d *Data) GetSyncSubs(synced dvid.Data) (datastore.SyncSubs, error) {
 			labels.IngestBlockEvent, labels.MutateBlockEvent, labels.DeleteBlockEvent,
 		}
 	case "labelvol":
-		evts = []string{labels.MergeStartEvent, labels.MergeBlockEvent, labels.SplitLabelEvent}
+		evts = []string{labels.MergeBlockEvent, labels.SplitLabelEvent}
 	default:
 		return nil, fmt.Errorf("Unable to sync %s with %s since datatype %q is not supported.", d.DataName(), synced.DataName(), synced.TypeName())
 	}
@@ -402,13 +402,6 @@ func (d *Data) processEvents() {
 
 func (d *Data) handleEvent(msg datastore.SyncMessage) {
 	switch delta := msg.Delta.(type) {
-	case labels.DeltaMergeStart:
-		// Add this merge into the cached blockRLEs
-		iv := dvid.InstanceVersion{d.DataUUID(), msg.Version}
-		d.StartUpdate()
-		labels.MergeStart(iv, delta.MergeOp)
-		d.StopUpdate()
-
 	case labels.DeltaMerge:
 		d.processMerge(msg.Version, delta)
 
@@ -484,11 +477,9 @@ func (d *Data) processMerge(v dvid.VersionID, delta labels.DeltaMerge) {
 	}
 	// When we've processed all the delta blocks, we can remove this merge op
 	// from the merge cache since all labels will have completed.
-	iv := dvid.InstanceVersion{d.DataUUID(), v}
 	go func() {
 		d.MutWait(mutID)
 		d.MutDelete(mutID)
-		labels.MergeStop(iv, delta.MergeOp)
 		d.publishDownresCommit(v, mutID)
 	}()
 }
@@ -496,13 +487,8 @@ func (d *Data) processMerge(v dvid.VersionID, delta labels.DeltaMerge) {
 func (d *Data) processSplit(v dvid.VersionID, delta labels.DeltaSplit) {
 	timedLog := dvid.NewTimeLog()
 
-	mutID := d.NewMutationID()
-	splitOpStart := labels.DeltaSplitStart{delta.OldLabel, delta.NewLabel}
-	splitOpEnd := labels.DeltaSplitEnd{delta.OldLabel, delta.NewLabel}
-	iv := dvid.InstanceVersion{d.DataUUID(), v}
-	labels.SplitStart(iv, splitOpStart)
-
 	d.StartUpdate()
+	mutID := d.NewMutationID()
 	if delta.Split == nil {
 		// Coarse Split
 		for _, izyxStr := range delta.SortedBlocks {
@@ -535,7 +521,6 @@ func (d *Data) processSplit(v dvid.VersionID, delta labels.DeltaSplit) {
 	go func() {
 		d.MutWait(mutID)
 		d.MutDelete(mutID)
-		labels.SplitStop(iv, splitOpEnd)
 		timedLog.Debugf("labelblk sync complete for split of %d -> %d", delta.OldLabel, delta.NewLabel)
 		d.StopUpdate()
 		d.publishDownresCommit(v, mutID)

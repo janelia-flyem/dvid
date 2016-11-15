@@ -46,26 +46,31 @@ func (d *Data) getMergeIV(v dvid.VersionID) dvid.InstanceVersion {
 // labels.MergeEndEvent occurs at end of merge and transmits labels.DeltaMergeEnd struct.
 //
 func (d *Data) MergeLabels(v dvid.VersionID, m labels.MergeOp) error {
-	dvid.Debugf("Merging %s into label %d ...\n", m.Merged, m.Target)
+	dvid.Infof("Merging data %q (labels %s) into label %d ...\n", d.DataName(), d.DataUUID(), m.Merged, m.Target)
+
+	// Mark these labels as dirty until done, and make sure we can actually initiate the merge.
+	if err := labels.MergeStart(d.getMergeIV(v), m); err != nil {
+		return err
+	}
+	d.StartUpdate()
 
 	// Signal that we are starting a merge.
 	evt := datastore.SyncEvent{d.DataUUID(), labels.MergeStartEvent}
 	msg := datastore.SyncMessage{labels.MergeStartEvent, v, labels.DeltaMergeStart{m}}
 	if err := datastore.NotifySubscribers(evt, msg); err != nil {
+		d.StopUpdate()
 		return err
 	}
 
 	// Asynchronously perform merge and handle any concurrent requests using the cache map until
 	// labelvol and labelblk are updated and consistent.
-	// Mark these labels as dirty until done.
-	if err := labels.MergeStart(d.getMergeIV(v), m); err != nil {
-		return err
-	}
 	go func() {
 		d.asyncMergeLabels(v, m)
 
 		// Remove dirty labels and updating flag when done.
 		labels.MergeStop(d.getMergeIV(v), m)
+		d.StopUpdate()
+		dvid.Infof("Finished with merge of labels %s.\n", m)
 	}()
 
 	return nil

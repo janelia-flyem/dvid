@@ -900,6 +900,10 @@ func TestLabels(t *testing.T) {
 		t.Fatalf("Error blocking on sync of synapses: %v\n", err)
 	}
 
+	if err := datastore.BlockOnUpdating(uuid, "bodies"); err != nil {
+		t.Fatalf("Error blocking on sync of bodies: %v\n", err)
+	}
+
 	testResponseLabel(t, expectedLabel1, "%snode/%s/mysynapses/label/1?relationships=true", server.WebAPIPath, uuid)
 	testResponseLabel(t, expectedLabel2b, "%snode/%s/mysynapses/label/2?relationships=true", server.WebAPIPath, uuid)
 	testResponseLabel(t, nil, "%snode/%s/mysynapses/label/3?relationships=true", server.WebAPIPath, uuid)
@@ -918,7 +922,7 @@ func TestLabels(t *testing.T) {
 	buf := getBytesRLE(t, rles)
 
 	// Submit the split sparsevol
-	reqStr := fmt.Sprintf("%snode/%s/%s/split/%d?splitlabel=7", server.WebAPIPath, uuid, "bodies", 2)
+	reqStr := fmt.Sprintf("%snode/%s/bodies/split/2?splitlabel=7", server.WebAPIPath, uuid)
 	r := server.TestHTTP(t, "POST", reqStr, buf)
 	jsonVal := make(map[string]uint64)
 	if err := json.Unmarshal(r, &jsonVal); err != nil {

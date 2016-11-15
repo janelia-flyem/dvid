@@ -37,14 +37,28 @@ func LabelMap(iv dvid.InstanceVersion) *Mapping {
 
 // MergeStart handles label map caches during an active merge operation.  Note that if there are
 // multiple synced label instances, the InstanceVersion will always be the labelblk instance.
+// Multiple merges into a single label are allowed, but chained merges are not.  For example,
+// you can merge label 1, 2, and 3 into 4, then later merge 6 into 4.  However, you cannot
+// concurrently merge label 4 into some other label because there can be a race condition between
+// 3 -> 4 and 4 -> X.
 func MergeStart(iv dvid.InstanceVersion, op MergeOp) error {
-	// Don't allow a merge to start in the middle of a concurrent split.
+	dvid.Infof("MergeStart starting for iv %v with op %v.  mergeCache: %v\n", iv, op, mc.m)
+
+	// Don't allow a merge to start in the middle of a concurrent merge/split.
 	if labelsSplitting.IsDirty(iv, op.Target) { // we might be able to relax this one.
 		return fmt.Errorf("can't merge into label %d while it has an ongoing split", op.Target)
+	}
+	if mc.MergingToOther(iv, op.Target) {
+		dvid.Errorf("can't merge label %d while it is currently merging into another label", op.Target)
+		return fmt.Errorf("can't merge label %d while it is currently merging into another label", op.Target)
 	}
 	for merged := range op.Merged {
 		if labelsSplitting.IsDirty(iv, merged) {
 			return fmt.Errorf("can't merge label %d while it has an ongoing split", merged)
+		}
+		if labelsMerging.IsDirty(iv, merged) {
+			dvid.Errorf("can't merge label %d while it is currently involved in a merge", merged)
+			return fmt.Errorf("can't merge label %d while it is currently involved in a merge", merged)
 		}
 	}
 
@@ -159,6 +173,22 @@ func (mc *mergeCache) LabelMap(iv dvid.InstanceVersion) *Mapping {
 		return mapping
 	}
 	return nil
+}
+
+// MergingToOther returns true if the label is currently being merged into another label.
+func (mc *mergeCache) MergingToOther(iv dvid.InstanceVersion, label uint64) bool {
+	mc.RLock()
+	defer mc.RUnlock()
+
+	if mc.m == nil {
+		return false
+	}
+	mapping, found := mc.m[iv]
+	if found {
+		_, merging := mapping.f[label]
+		return merging
+	}
+	return false
 }
 
 // DeleteMap removes a mapping of the given InstanceVersion.
@@ -296,10 +326,33 @@ func (m *Mapping) delete(label uint64) {
 // Set is a set of labels.
 type Set map[uint64]struct{}
 
+// Exists returns true if the given uint64 is present in the Set.
+func (s Set) Exists(i uint64) bool {
+	if s == nil {
+		return false
+	}
+	_, found := s[i]
+	return found
+}
+
+// Copy returns a duplicate of the Set.
+func (s Set) Copy() Set {
+	dup := make(Set, len(s))
+	for k := range s {
+		dup[k] = struct{}{}
+	}
+	return dup
+}
+
 func (s Set) String() string {
 	var str string
+	i := 1
 	for k := range s {
-		str += fmt.Sprintf("%d ", k)
+		str += fmt.Sprintf("%d", k)
+		if i < len(s) {
+			str += ", "
+		}
+		i++
 	}
 	return str
 }

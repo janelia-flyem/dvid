@@ -99,26 +99,38 @@ func TestMergeCache(t *testing.T) {
 		MergeTuple{4, 1, 2, 3},
 		MergeTuple{9, 10, 11, 12},
 		MergeTuple{21, 100, 18, 85, 97, 45},
-		MergeTuple{72, 9, 47},
 	}
 	merges2 := []MergeTuple{
 		MergeTuple{9, 5, 11, 6},
-		MergeTuple{4, 9, 3, 22},
+		MergeTuple{9, 100, 3, 22},
 		MergeTuple{21, 44, 55, 66, 77, 88},
 	}
 	expectmap := map[uint64]uint64{
 		1:   4,
 		2:   4,
 		3:   4,
-		10:  72,
-		11:  72,
-		12:  72,
+		10:  9,
+		11:  9,
+		12:  9,
 		100: 21,
 		18:  21,
 		85:  21,
 		97:  21,
 		45:  21,
-		47:  72,
+	}
+
+	expectmap2 := map[uint64]uint64{
+		5:   9,
+		6:   9,
+		11:  9,
+		3:   9,
+		22:  9,
+		100: 9,
+		44:  21,
+		55:  21,
+		66:  21,
+		77:  21,
+		88:  21,
 	}
 
 	iv := dvid.InstanceVersion{"foobar", 23}
@@ -130,6 +142,10 @@ func TestMergeCache(t *testing.T) {
 		if err := MergeStart(iv, op); err != nil {
 			t.Errorf("Error on starting merge (%v): %v\n", op, err)
 		}
+	}
+	badop, _ := MergeTuple{72, 9, 47}.Op()
+	if err := MergeStart(iv, badop); err == nil {
+		t.Errorf("Expected error on starting merge (%v): %v\n", badop, err)
 	}
 
 	iv2 := dvid.InstanceVersion{"foobar", 24}
@@ -155,6 +171,20 @@ func TestMergeCache(t *testing.T) {
 	}
 	if label, ok := mapping.FinalLabel(1); !ok || label != 4 {
 		t.Errorf("Bad final mapping of label 1.  Got %d, expected 4\n", label)
+	}
+
+	mapping2 := LabelMap(iv2)
+	for a, b := range expectmap2 {
+		c, ok := mapping2.Get(a)
+		if !ok || c != b {
+			t.Errorf("Expected mapping of %d -> %d, got %d (%t) instead\n", a, b, c, ok)
+		}
+	}
+	if _, ok := mapping2.Get(12); ok {
+		t.Errorf("Got mapping even though none existed for this version.")
+	}
+	if label, ok := mapping2.Get(100); !ok || label != 9 {
+		t.Errorf("Bad final mapping of label 100.  Got %d, expected 9\n", label)
 	}
 
 	// Add another merge into label 4

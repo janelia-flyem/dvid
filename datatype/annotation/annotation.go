@@ -1601,7 +1601,6 @@ func (d *Data) MoveElement(ctx *datastore.VersionedCtx, from, to dvid.Point3d) e
 			return err
 		}
 		toElems.add(Elements{*moved})
-		dvid.Infof("new %s value: %v\n", toCoord, toElems)
 
 		if err := putBatchElements(batch, toTk, toElems); err != nil {
 			return err
