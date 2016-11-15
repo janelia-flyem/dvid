@@ -556,7 +556,7 @@ func (v *Voxels) GetImage2d() (*dvid.Image, error) {
 	// Make sure each value has same # of bytes or else we can't generate a go image.
 	// If so, we need to make another ExtData that knows how to convert the varying
 	// values into an appropriate go image.
-	valuesPerVoxel := int32(len(v.values))
+	valuesPerVoxel := int64(len(v.values))
 	if valuesPerVoxel < 1 || valuesPerVoxel > 4 {
 		return nil, fmt.Errorf("Standard voxels type can't convert %d values/voxel into image.",
 			valuesPerVoxel)
@@ -574,10 +574,10 @@ func (v *Voxels) GetImage2d() (*dvid.Image, error) {
 	}
 
 	var img image.Image
-	width := v.Size().Value(0)
-	height := v.Size().Value(1)
-	sliceBytes := width * height * valuesPerVoxel * bytesPerValue
-	beg := int32(0)
+	width := int64(v.Size().Value(0))
+	height := int64(v.Size().Value(1))
+	sliceBytes := width * height * valuesPerVoxel * int64(bytesPerValue)
+	beg := int64(0)
 	end := beg + sliceBytes
 	data := v.Data()
 	if int(end) > len(data) {
@@ -1024,7 +1024,7 @@ func (d *Data) NewVoxels(geom dvid.Geometry, img interface{}) (*Voxels, error) {
 			return nil, fmt.Errorf("Illegal geometry requested: %s", geom)
 		}
 		requestSize := int64(bytesPerVoxel) * numVoxels
-		if requestSize > server.MaxDataRequest {
+		if false && requestSize > server.MaxDataRequest {
 			return nil, fmt.Errorf("Requested payload (%d bytes) exceeds this DVID server's set limit (%d)",
 				requestSize, server.MaxDataRequest)
 		}
