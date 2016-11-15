@@ -412,7 +412,7 @@ func (d *Data) handleEvent(msg datastore.SyncMessage) {
 	case deltaBlock: // received downres processing from upstream
 		// NOTE: need to add wait here since there will be delay through channel compared to commit event.
 		if d.MutAdd(delta.mutID) {
-			d.StartUpdate()
+			d.StartUpdate() // stopped when the upstream instance issues a DownsizeCommitEvent: see processEvents()
 		}
 		n := delta.block.Hash(numBlockHandlers)
 		d.procCh[n] <- procMsg{op: delta, v: msg.Version}
@@ -469,6 +469,9 @@ func (d *Data) publishBlockChange(v dvid.VersionID, mutID uint64, block dvid.IZY
 }
 
 func (d *Data) processMerge(v dvid.VersionID, delta labels.DeltaMerge) {
+	timedLog := dvid.NewTimeLog()
+	d.StartUpdate()
+
 	mutID := d.NewMutationID()
 	for izyxStr := range delta.Blocks {
 		n := izyxStr.Hash(numBlockHandlers)
@@ -481,14 +484,16 @@ func (d *Data) processMerge(v dvid.VersionID, delta labels.DeltaMerge) {
 	go func() {
 		d.MutWait(mutID)
 		d.MutDelete(mutID)
+		timedLog.Debugf("labelblk sync complete for merge of %s -> %d", delta.MergeOp.Merged, delta.MergeOp.Target)
+		d.StopUpdate()
 		d.publishDownresCommit(v, mutID)
 	}()
 }
 
 func (d *Data) processSplit(v dvid.VersionID, delta labels.DeltaSplit) {
 	timedLog := dvid.NewTimeLog()
-
 	d.StartUpdate()
+
 	mutID := d.NewMutationID()
 	if delta.Split == nil {
 		// Coarse Split
