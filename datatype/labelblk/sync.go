@@ -109,12 +109,10 @@ func (d *Data) getLoresCache(v dvid.VersionID, block dvid.IZYXString) ([]byte, e
 	return oct[sector], nil
 }
 
-func (d *Data) getBlockCache(v dvid.VersionID) (blockCache, error) {
+func (d *Data) getReadOnlyBlockCache(v dvid.VersionID) (blockCache, error) {
 	if d.vcache == nil {
 		return nil, fmt.Errorf("downsize commit for %q attempted when no prior blocks were sent!\n", d.DataName())
 	}
-	d.vcache_mu.RLock()
-	defer d.vcache_mu.RUnlock()
 
 	bc, found := d.vcache[v]
 	if !found {
@@ -236,7 +234,10 @@ func (d *Data) downsizeCommit(v dvid.VersionID, mutID uint64) {
 	d.MutWait(mutID)
 	d.MutDelete(mutID)
 
-	bc, err := d.getBlockCache(v)
+	d.vcache_mu.RLock()
+	defer d.vcache_mu.RUnlock()
+
+	bc, err := d.getReadOnlyBlockCache(v)
 	if err != nil {
 		dvid.Criticalf("downsize commit for %q: %v\n", d.DataName(), err)
 	}
