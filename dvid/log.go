@@ -128,6 +128,12 @@ func Criticalf(format string, args ...interface{}) {
 	}
 }
 
+// LogImmediately writes a message to the log file immediately, bypassing any queue of
+// log messages.
+func LogImmediately(s string) {
+	logger.Criticalf("%s", s)
+}
+
 // TimeLog adds elapsed time to logging.
 // Example:
 //     mylog := NewTimeLog()
