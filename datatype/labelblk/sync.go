@@ -384,9 +384,11 @@ func (d *Data) processEvents() {
 		case msg := <-d.syncCh:
 			switch msg.Event {
 			case DownsizeCommitEvent:
-				d.StopUpdate()
 				mutID := msg.Delta.(uint64)
-				go d.downsizeCommit(msg.Version, mutID) // async since we will wait on any in waitgroup.
+				go func(v dvid.VersionID, mutID uint64) {
+					d.downsizeCommit(v, mutID) // async since we will wait on any in waitgroup.
+					d.StopUpdate()
+				}(msg.Version, mutID)
 
 			default:
 				d.handleEvent(msg)
