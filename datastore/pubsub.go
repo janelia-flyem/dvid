@@ -64,6 +64,49 @@ type Syncer interface {
 
 	// SyncedNames returns the set of data instance UUIDs to which the data is synced.
 	SyncedData() dvid.UUIDSet
+
+	// SyncPending returns true if there are outstanding sync events in this instance's subscription.
+	SyncPending() bool
+}
+
+// -- Syncer interface partial implementation.  Base Data needs to be supplemented with
+// -- GetSyncSubs() to be a Syncer datatype.
+
+// SyncedNames returns a set of data instance names to which it is synced.
+// Legacy and will be removed after metadata refactor.
+func (d *Data) SyncedNames() []dvid.InstanceName {
+	return d.syncNames
+}
+
+// SyncedData returns a set of data UUIDs to which it is synced.
+func (d *Data) SyncedData() dvid.UUIDSet {
+	return d.syncData
+}
+
+// SyncPending returns true if there are outstanding sync events in this instance's subscription.
+func (d *Data) SyncPending() bool {
+	if manager == nil {
+		return false
+	}
+	r, err := manager.repoFromUUID(d.rootUUID)
+	if err != nil {
+		return false
+	}
+	// Check if this data instance has any subscriptions and if so, are there messages in the channel.
+	for _, subs := range r.subs {
+		for _, sub := range subs {
+			if sub.Notify == d.dataUUID && len(sub.Ch) > 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// CommitSyncer want to be notified when a node is committed.
+type CommitSyncer interface {
+	// SyncOnCommit is an asynchronous function that should be called when a node is committed.
+	SyncOnCommit(dvid.UUID, dvid.VersionID)
 }
 
 // SetSyncByJSON takes a JSON object of sync names and UUID, and creates the sync graph
@@ -116,12 +159,6 @@ func SetSyncData(data dvid.Data, syncs dvid.UUIDSet, replace bool) error {
 		return ErrManagerNotInitialized
 	}
 	return manager.setSync(data, syncs, replace)
-}
-
-// CommitSyncer want to be notified when a node is committed.
-type CommitSyncer interface {
-	// SyncOnCommit is an asynchronous function that should be called when a node is committed.
-	SyncOnCommit(dvid.UUID, dvid.VersionID)
 }
 
 // NotifySubscribers sends a message to any data instances subscribed to the event.

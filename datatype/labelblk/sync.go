@@ -484,7 +484,7 @@ func (d *Data) processMerge(v dvid.VersionID, delta labels.DeltaMerge) {
 	go func() {
 		d.MutWait(mutID)
 		d.MutDelete(mutID)
-		timedLog.Debugf("labelblk sync complete for merge of %s -> %d", delta.MergeOp.Merged, delta.MergeOp.Target)
+		timedLog.Debugf("labelblk sync complete for merge (%d blocks) of %s -> %d", len(delta.Blocks), delta.MergeOp.Merged, delta.MergeOp.Target)
 		d.StopUpdate()
 		d.publishDownresCommit(v, mutID)
 	}()
@@ -527,7 +527,7 @@ func (d *Data) processSplit(v dvid.VersionID, delta labels.DeltaSplit) {
 	go func() {
 		d.MutWait(mutID)
 		d.MutDelete(mutID)
-		timedLog.Debugf("labelblk sync complete for split of %d -> %d", delta.OldLabel, delta.NewLabel)
+		timedLog.Debugf("labelblk sync complete for split (%d blocks) of %d -> %d", len(delta.Split), delta.OldLabel, delta.NewLabel)
 		d.StopUpdate()
 		d.publishDownresCommit(v, mutID)
 	}()

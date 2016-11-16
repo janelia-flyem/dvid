@@ -240,19 +240,19 @@ type dataUpdater interface {
 	Updating() bool
 }
 
-// BlockOnUpdating blocks until the given data is not updating from syncs.
-// This is primarily used during testing.
+// BlockOnUpdating blocks until the given data is not updating from syncs or has events
+// waiting in sync channels.  Primarily used during testing.
 func BlockOnUpdating(uuid dvid.UUID, name dvid.InstanceName) error {
 	time.Sleep(100 * time.Millisecond)
 	d, err := GetDataByUUIDName(uuid, name)
 	if err != nil {
 		return err
 	}
-	updater, ok := d.(dataUpdater)
-	if !ok {
-		return fmt.Errorf("Data %q @ uuid %s does not embed a datastore.Updater yet called BlockOnUpdating!", name, uuid)
-	}
-	for updater.Updating() {
+
+	syncer, isSyncer := d.(Syncer)
+	updater, isUpdater := d.(dataUpdater)
+
+	for (isSyncer && syncer.SyncPending()) || (isUpdater && updater.Updating()) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	return nil
@@ -299,19 +299,6 @@ type Data struct {
 	// handle waiting based on operation ID.
 	opWG    map[uint64]*sync.WaitGroup
 	opWG_mu sync.RWMutex
-}
-
-// -- Syncer interface partial implementation for base getters.
-
-// SyncedData returns a set of data UUIDs to which it is synced.
-func (d *Data) SyncedData() dvid.UUIDSet {
-	return d.syncData
-}
-
-// SyncedNames returns a set of data instance names to which it is synced.
-// Legacy and will be removed after metadata refactor.
-func (d *Data) SyncedNames() []dvid.InstanceName {
-	return d.syncNames
 }
 
 // ---------------------------------------

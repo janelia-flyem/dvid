@@ -278,6 +278,7 @@ type DataSetter interface {
 	SetRootUUID(UUID)
 
 	// SetSync defines a set of data UUIDs for syncing with this data instance.
+	// This could be used by higher software layers to implement pub/sub-style syncing.
 	SetSync(UUIDSet)
 }
 
