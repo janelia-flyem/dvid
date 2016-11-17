@@ -13,6 +13,10 @@ type MergeOp struct {
 	Merged Set
 }
 
+func (op MergeOp) String() string {
+	return fmt.Sprintf("merge %s -> label %d", op.Merged, op.Target)
+}
+
 // MergeTuple represents a merge of labels.  Its first element is the destination label
 // and all later elements in the slice are labels to be merged.  It's an easy JSON
 // representation as a list of labels.

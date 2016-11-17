@@ -19,7 +19,6 @@ import (
 
 var (
 	grayscaleT,
-	rgbaT,
 	roiT datastore.TypeService
 
 	testMu sync.Mutex
@@ -34,10 +33,6 @@ func initTestRepo() (dvid.UUID, dvid.VersionID) {
 		grayscaleT, err = datastore.TypeServiceByName("uint8blk")
 		if err != nil {
 			log.Fatalf("Can't get uint8blk type: %s\n", err)
-		}
-		rgbaT, err = datastore.TypeServiceByName("rgba8blk")
-		if err != nil {
-			log.Fatalf("Can't get rgba8blk type: %s\n", err)
 		}
 		roiT, err = datastore.TypeServiceByName("roi")
 		if err != nil {
@@ -343,108 +338,6 @@ func TestBlockAPI(t *testing.T) {
 	}
 }
 
-/*
-func TestROIMaskGrayscale8(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
-
-	offset := dvid.Point3d{312, 87, 67}
-	size := dvid.Point2d{100, 100}
-	slice, err := dvid.NewOrthogSlice(dvid.XY, offset, size)
-	if err != nil {
-		t.Fatalf("Problem getting new orthogonal slice: %s\n", err)
-	}
-	testData := storeGrayscale(t, "XY", slice, nil)
-
-	// Create ROI
-	config := dvid.NewConfig()
-	dataservice, err := testData.repo.NewData(roiT, "roi", config)
-	if err != nil {
-		t.Fatalf("Error creating new roi instance: %s\n", err)
-	}
-	roiData, ok := dataservice.(*roi.Data)
-	if !ok {
-		t.Fatalf("Returned new data instance is not roi.Data\n")
-	}
-
-	// write ROI
-	if err = roiData.PutJSON(testData.versionID, []byte(testROIJson)); err != nil {
-		t.Fatalf("Unable to PUT test ROI: %s\n", err)
-	}
-
-	// Get the buffer for the retrieved ROI-enabled grayscale slice
-	roiSlice, err := testData.data.NewVoxels(slice, nil)
-	if err != nil {
-		t.Fatalf("Could not create ExtHandler: %s\n", err)
-	}
-
-	// Read without ROI
-	if err := testData.data.GetVoxels(testData.versionID, roiSlice, nil); err != nil {
-		t.Fatalf("Unable to get image for %s: %s\n", testData.ctx, err)
-	}
-
-	// Check points in and outside ROI are set appropriately.
-	roiX := 10*32 + 1 - offset[0]
-	roiY := 3*32 + 1 - offset[1]
-	roiIndex := roiY*roiSlice.Stride() + roiX
-	nonroiData := roiSlice.Data()
-	if nonroiData[roiIndex] != testData.rawData[roiIndex] {
-		t.Fatalf("Stored pixel in slice should be %d but is %d\n", testData.rawData[roiIndex], nonroiData[roiIndex])
-	}
-	if nonroiData[roiIndex] == 0 {
-		t.Fatalf("Expected non-zero pixel in roi slice test")
-	}
-
-	// Initialize ROI iterator
-	var roiObj ROI
-	roiObj.Iter, err = roi.NewIterator("roi", testData.versionID, roiSlice)
-	if err != nil {
-		t.Fatalf("Error making ROI iterator: %s\n", err)
-	}
-
-	// Read grayscale using ROI
-	if err := testData.data.GetVoxels(testData.versionID, roiSlice, &roiObj); err != nil {
-		t.Fatalf("Unable to get image for %s: %s\n", testData.ctx, err)
-	}
-
-	// Make sure few points are zero and others aren't
-	pixels := roiSlice.Data()
-	if pixels[0] != 0 {
-		t.Fatalf("Retrieved ROI-applied XY pixel != 0 and should be 0\n")
-	}
-	if pixels[roiIndex] == 0 {
-		t.Fatalf("Retrieved ROI-applied XY pixel.  Expected non-zero pixel %d got 0\n",
-			testData.rawData[roiIndex])
-	}
-
-	// Add new grayscale that uses mask for PUT.
-	roiObj.Iter.Reset()
-	testData2 := storeGrayscale(t, "maskedPUT", slice, &roiObj)
-
-	// Read grayscale without ROI and make sure area outside ROI is black.
-	// Get the buffer for the retrieved ROI-enabled grayscale slice
-	roiSlice2, err := testData.data.NewVoxels(slice, nil)
-	if err != nil {
-		t.Fatalf("Could not create ExtHandler: %s\n", err)
-	}
-
-	// Read without ROI
-	if err := testData2.data.GetVoxels(testData2.versionID, roiSlice2, nil); err != nil {
-		t.Fatalf("Unable to get image for %s: %s\n", testData2.ctx, err)
-	}
-
-	// Make sure points outside ROI are black and the one inside is on.
-	pixels = roiSlice2.Data()
-	if pixels[0] != 0 {
-		t.Fatalf("Retrieved XY pixel != 0 when PUT should be outside ROI and therefore 0\n")
-	}
-	if pixels[roiIndex] == 0 {
-		t.Fatalf("Retrieved XY pixel == 0 when PUT was within ROI and expected non-zero pixel %d\n",
-			testData2.rawData[roiIndex])
-	}
-}
-*/
-
 func TestGrayscaleRepoPersistence(t *testing.T) {
 	datastore.OpenTest()
 	defer datastore.CloseTest()
@@ -484,74 +377,3 @@ func TestGrayscaleRepoPersistence(t *testing.T) {
 		t.Errorf("Expected %v, got %v\n", oldData, *grayscale2)
 	}
 }
-
-// Should intersect 100x100 image at Z = 67 and Y = 108
-const testROIJson = "[[2,3,10,10],[2,4,12,13]]"
-
-/*
-// Create, store, and retrieve data using HTTP API
-func TestGrayscale8HTTPAPI(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
-
-	_, versionID := initTestRepo()
-	uuid, err := datastore.UUIDFromVersion(versionID)
-	if err != nil {
-		t.Errorf(err)
-	}
-
-	// Create a data instance
-	name := "grayscaleTest"
-	var config dvid.Config
-	config.Set("typename", "uint8")
-	config.Set("dataname", name)
-	apiStr := fmt.Sprintf("%srepo/%s/instance", server.WebAPIPath, uuid)
-	req, err := http.NewRequest("POST", apiStr, config)
-	if err != nil {
-		t.Fatalf("Unsuccessful POST request (%s): %s\n", apiStr, err)
-	}
-	w := httptest.NewRecorder()
-	server.WebMux.ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("Bad server response POST to %s, status %d, for %q: %s\n", apiStr, w.Code, name,
-			string(w.Body.Bytes()))
-	}
-
-	// Test badly formatted API calls return appropriate errors
-	apiStr = fmt.Sprintf("%snode/%s/%s/raw/0_1_2/250_250/0_0_0", server.WebAPIPath, uuid, name)
-	req, err = http.NewRequest("GET", apiStr, nil)
-	if err != nil {
-		t.Fatalf("Unsuccessful POST request (%s): %s\n", apiStr, err)
-	}
-	w = httptest.NewRecorder()
-	server.WebMux.ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Errorf("Bad server response POST to %s, status %d, for %q: %s\n", apiStr, w.Code, name,
-			string(w.Body.Bytes()))
-	}
-
-	// Post data to the instance
-
-	// Get a 2d XY image
-
-	// Get a 2d XZ image
-
-	// Get a 2d YZ image
-
-	// Get a 3d image
-
-	// Create a new version in repo
-
-	// Modify a portion of the preceding grayscale slice
-
-	// Read the first version grayscale
-
-	// Make sure it doesn't have the new stuff
-
-	// Read the second version grayscale
-
-	// Make sure it has modified voxels
-
-	// Use an ROI mask
-}
-*/

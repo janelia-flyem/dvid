@@ -949,8 +949,11 @@ func (p PointNd) Distance(x Point) int32 {
 }
 
 func (p PointNd) Prod() int64 {
-	prod := int64(1)
-	for _, val := range p {
+	if len(p) == 0 {
+		return 0
+	}
+	prod := int64(p[0])
+	for _, val := range p[1:] {
 		prod *= int64(val)
 	}
 	return prod

@@ -20,8 +20,8 @@ import (
 )
 
 var (
-	labelsT, rgbaT datastore.TypeService
-	testMu         sync.Mutex
+	labelsT datastore.TypeService
+	testMu  sync.Mutex
 )
 
 // Sets package-level testRepo and TestVersionID
@@ -33,10 +33,6 @@ func initTestRepo() (dvid.UUID, dvid.VersionID) {
 		labelsT, err = datastore.TypeServiceByName("labelblk")
 		if err != nil {
 			log.Fatalf("Can't get labelblk type: %s\n", err)
-		}
-		rgbaT, err = datastore.TypeServiceByName("rgba8blk")
-		if err != nil {
-			log.Fatalf("Can't get rgba8blk type: %s\n", err)
 		}
 	}
 	return datastore.NewTestRepo()

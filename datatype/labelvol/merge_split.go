@@ -46,7 +46,7 @@ func (d *Data) getMergeIV(v dvid.VersionID) dvid.InstanceVersion {
 // labels.MergeEndEvent occurs at end of merge and transmits labels.DeltaMergeEnd struct.
 //
 func (d *Data) MergeLabels(v dvid.VersionID, m labels.MergeOp) error {
-	dvid.Infof("Merging data %q (labels %s) into label %d ...\n", d.DataName(), d.DataUUID(), m.Merged, m.Target)
+	dvid.Infof("Merging data %q (labels %s) into label %d ...\n", d.DataName(), m.Merged, m.Target)
 
 	// Mark these labels as dirty until done, and make sure we can actually initiate the merge.
 	if err := labels.MergeStart(d.getMergeIV(v), m); err != nil {
