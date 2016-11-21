@@ -34,6 +34,10 @@ func initTestRepo() (dvid.UUID, dvid.VersionID) {
 		if err != nil {
 			log.Fatalf("Can't get uint8blk type: %s\n", err)
 		}
+		floatimgT, err = datastore.TypeServiceByName("float32blk")
+		if err != nil {
+			log.Fatalf("Can't get float32blk type: %s\n", err)
+		}
 		roiT, err = datastore.TypeServiceByName("roi")
 		if err != nil {
 			log.Fatalf("Can't get ROI type: %s\n", err)

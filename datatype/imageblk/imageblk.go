@@ -171,7 +171,8 @@ GET <api URL>/node/<UUID>/<data name>/rawkey?x=<block x>&y=<block y>&z=<block z>
 
 GET  <api URL>/node/<UUID>/<data name>/isotropic/<dims>/<size>/<offset>[/<format>][?queryopts]
 
-    Retrieves either 2d images (PNG by default) or 3d binary data, depending on the dims parameter.  
+    Retrieves either 2d images (PNG by default) or 3d binary data, depending on the dims parameter. 
+	If the underlying data is float32, then the little-endian four byte format is written as RGBA.
     The 3d binary data response has "Content-type" set to "application/octet-stream" and is an array of 
     voxel values in ZYX order (X iterates most rapidly).
 
@@ -212,7 +213,8 @@ GET  <api URL>/node/<UUID>/<data name>/isotropic/<dims>/<size>/<offset>[/<format
 
 GET  <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?queryopts]
 
-    Retrieves either 2d images (PNG by default) or 3d binary data, depending on the dims parameter.  
+    Retrieves either 2d images (PNG by default) or 3d binary data, depending on the dims parameter.
+	If the underlying data is float32, then the little-endian four byte format is written as RGBA.
     The 3d binary data response has "Content-type" set to "application/octet-stream" and is an array of 
     voxel values in ZYX order (X iterates most rapidly).
 
@@ -242,7 +244,7 @@ GET  <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?qu
                     available in server implementation.
                   2D: "png", "jpg" (default: "png")
                     jpg allows lossy quality setting, e.g., "jpg:80"
-                  nD: uses default "octet-stream".
+                  3D: uses default "octet-stream".
 
     Query-string Options:
 
