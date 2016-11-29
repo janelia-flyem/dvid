@@ -9,6 +9,7 @@ import (
 	"encoding/gob"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"reflect"
@@ -615,7 +616,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 		w.Header().Set("Content-type", "application/json")
 		jsonStr := fmt.Sprintf(`{"Label":%d,%q:%d}`, label, i, count)
-		if _, err := w.Write([]byte(jsonStr)); err != nil {
+		if _, err := io.WriteString(w, jsonStr); err != nil {
 			server.BadRequest(w, r, err)
 			return
 		}

@@ -10,6 +10,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io"
 )
 
 var (
@@ -196,19 +197,19 @@ func (values DataValues) ValueBytes(n int) int32 {
 
 // MarshalBinary fulfills the encoding.BinaryMarshaler interface.
 func (values DataValues) MarshalBinary() ([]byte, error) {
-	var buffer bytes.Buffer
+	buffer := new(bytes.Buffer)
 	numValues := int16(len(values))
-	if err := binary.Write(&buffer, binary.LittleEndian, numValues); err != nil {
+	if err := binary.Write(buffer, binary.LittleEndian, numValues); err != nil {
 		return nil, err
 	}
 	for i := int16(0); i < numValues; i++ {
-		if err := binary.Write(&buffer, binary.LittleEndian, values[i].T); err != nil {
+		if err := binary.Write(buffer, binary.LittleEndian, values[i].T); err != nil {
 			return nil, err
 		}
-		if err := binary.Write(&buffer, binary.LittleEndian, uint16(len(values[i].Label))); err != nil {
+		if err := binary.Write(buffer, binary.LittleEndian, uint16(len(values[i].Label))); err != nil {
 			return nil, err
 		}
-		if _, err := buffer.Write([]byte(values[i].Label)); err != nil {
+		if _, err := io.WriteString(buffer, values[i].Label); err != nil {
 			return nil, err
 		}
 	}
