@@ -312,7 +312,7 @@ type mergeJSON string
 
 func (mjson mergeJSON) send(t *testing.T, uuid dvid.UUID, name string) {
 	apiStr := fmt.Sprintf("%snode/%s/%s/merge", server.WebAPIPath, uuid, name)
-	server.TestHTTP(t, "POST", apiStr, bytes.NewBuffer([]byte(mjson)))
+	server.TestHTTP(t, "POST", apiStr, bytes.NewBufferString(string(mjson)))
 }
 
 func createLabelTestVolume(t *testing.T, uuid dvid.UUID, name string) *testVolume {

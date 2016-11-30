@@ -67,7 +67,8 @@ func NewTKeyByTileReq(req TileReq) storage.TKey {
 
 // NewTKey returns an imagetile-specific key component based on the components of a tile request.
 func NewTKey(tile dvid.ChunkPoint3d, plane dvid.DataShape, scale Scaling) storage.TKey {
-	buf := bytes.NewBuffer(plane.Bytes())
+	var buf bytes.Buffer
+	buf.Write(plane.Bytes())
 	buf.WriteByte(byte(scale))
 	buf.WriteByte(byte(3))
 	idx := dvid.IndexZYX(tile)
