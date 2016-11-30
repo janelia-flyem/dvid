@@ -9,6 +9,7 @@ import (
 	"log"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/annotation"
@@ -328,6 +329,7 @@ func TestLabels(t *testing.T) {
 	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
 		t.Fatalf("Error blocking on sync of labels: %v\n", err)
 	}
+	time.Sleep(1 * time.Second)
 	if err := datastore.BlockOnUpdating(uuid, "mysynapses"); err != nil {
 		t.Fatalf("Error blocking on sync of synapses: %v\n", err)
 	}
@@ -419,6 +421,7 @@ func TestLabels(t *testing.T) {
 	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
 		t.Fatalf("Error blocking on sync of labels: %v\n", err)
 	}
+	time.Sleep(1 * time.Second)
 	if err := datastore.BlockOnUpdating(uuid, "mysynapses"); err != nil {
 		t.Fatalf("Error blocking on sync of synapses: %v\n", err)
 	}
@@ -459,6 +462,7 @@ func TestLabels(t *testing.T) {
 	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
 		t.Fatalf("Error blocking on sync of labels: %v\n", err)
 	}
+	time.Sleep(1 * time.Second)
 	if err := datastore.BlockOnUpdating(uuid, "mysynapses"); err != nil {
 		t.Fatalf("Error blocking on sync of synapses: %v\n", err)
 	}
