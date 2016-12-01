@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -810,9 +811,15 @@ func helpHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get help from all compiled-in data types.
-	html := "<ul>"
+	typenames := make([]string, len(datastore.Compiled))
+	i := 0
 	for _, typeservice := range datastore.Compiled {
-		name := typeservice.GetTypeName()
+		typenames[i] = string(typeservice.GetTypeName())
+		i++
+	}
+	sort.Strings(typenames)
+	html := "<ul>"
+	for _, name := range typenames {
 		html += "<li>"
 		html += fmt.Sprintf("<a href='/api/help/%s'>%s</a>", name, name)
 		html += "</li>"
