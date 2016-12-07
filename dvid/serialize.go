@@ -106,14 +106,18 @@ const (
 	DefaultCompression                  = -1
 )
 
-// CompressionFormat specifies the compression algorithm.
+// CompressionFormat specifies the compression algorithm and is limited to 5 bits (31 types)
 type CompressionFormat uint8
+
+// note that compression constants are legacy from when they were originally defined, incorrectly,
+// as powers of two (bit flags).  Since we won't be using multiple compressions without ordering
+// info, we reverted to simple numbering.
 
 const (
 	Uncompressed CompressionFormat = 0
-	Snappy                         = 1 << (iota - 1)
-	Gzip                           // Gzip stores length and checksum automatically.
-	LZ4
+	Snappy                         = 1
+	Gzip                           = 2 // Gzip stores length and checksum automatically.
+	LZ4                            = 4
 )
 
 func (format CompressionFormat) String() string {
@@ -132,12 +136,12 @@ func (format CompressionFormat) String() string {
 }
 
 // Checksum is the type of checksum employed for error checking stored data.
-// NOTE: Should be no more than 4 (2 bits) of checksum types.
+// The maximum number of checksum types is limited to 3 bits (7 types).
 type Checksum uint8
 
 const (
 	NoChecksum Checksum = 0
-	CRC32               = 1 << (iota - 1)
+	CRC32               = 1
 )
 
 // DefaultChecksum is the type of checksum employed for all data operations.
