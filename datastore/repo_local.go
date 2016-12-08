@@ -551,7 +551,15 @@ func (m *repoManager) loadVersion0() error {
 		return err
 	}
 
-	// If we noticed missing cache entries, save current metadata.
+	for id, uuid := range m.repoToUUID {
+		if m.repos[uuid] == nil {
+			dvid.Infof("Found empty repo id %d (uuid %s)... deleting.\n", id, uuid)
+			delete(m.repoToUUID, id)
+			saveCache = true
+		}
+	}
+
+	// If we noticed missing or corrupt cache entries, save current metadata.
 	if saveCache {
 		if err := m.putCaches(); err != nil {
 			return err
