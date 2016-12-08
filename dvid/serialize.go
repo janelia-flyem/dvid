@@ -106,7 +106,7 @@ const (
 	DefaultCompression                  = -1
 )
 
-// CompressionFormat specifies the compression algorithm and is limited to 5 bits (31 types)
+// CompressionFormat specifies the compression algorithm and is limited to 3 bits (7 types)
 type CompressionFormat uint8
 
 // note that compression constants are legacy from when they were originally defined, incorrectly,
@@ -136,7 +136,7 @@ func (format CompressionFormat) String() string {
 }
 
 // Checksum is the type of checksum employed for error checking stored data.
-// The maximum number of checksum types is limited to 3 bits (7 types).
+// The maximum number of checksum types is limited to 2 bits (3 types).
 type Checksum uint8
 
 const (
@@ -161,6 +161,8 @@ func (checksum Checksum) String() string {
 }
 
 // SerializationFormat combines both compression and checksum methods.
+// First 3 bits specifies compression, next 2 bits is the checkum, and
+// the final 3 bits is reserved for future use.
 type SerializationFormat uint8
 
 func EncodeSerializationFormat(compress Compression, checksum Checksum) SerializationFormat {
