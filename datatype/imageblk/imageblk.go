@@ -211,6 +211,67 @@ GET  <api URL>/node/<UUID>/<data name>/isotropic/<dims>/<size>/<offset>[/<format
                     (all API calls that can be throttled) are handled.  If the server can't initiate the API 
                     call right away, a 503 (Service Unavailable) status code is returned.
 
+
+GET  <api URL>/node/<UUID>/<data name>/subvolblocks/<size>/<offset>[?queryopts]
+
+    Retrieves blocks corresponding to the extents specified by the size and offset.  The
+    subvolume request must be block aligned.  This is the most server-efficient way of
+    retrieving imagelblk data, where data read from the underlying storage engine
+    is written directly to the HTTP connection.
+
+    Example: 
+
+    GET <api URL>/node/3f8c/segmentation/subvolblocks/64_64_64/0_0_0
+
+	If block size is 32x32x32, this call retrieves up to 8 blocks where the first potential
+	block is at 0, 0, 0.  The returned byte stream has a list of blocks with a leading block 
+	coordinate (3 x int32) plus int32 giving the # of bytes in this block, and  then the 
+	bytes for the value.  If blocks are unset within the span, they will not appear in the stream,
+	so the returned data will be equal to or less than spanX blocks worth of data.  
+
+    The returned data format has the following format where int32 is in little endian and the bytes of
+    block data have been compressed in JPEG format.
+
+        int32  Block 1 coordinate X (Note that this may not be starting block coordinate if it is unset.)
+        int32  Block 1 coordinate Y
+        int32  Block 1 coordinate Z
+        int32  # bytes for first block (N1)
+        byte0  Bytes of block data in jpeg-compressed format.
+        byte1
+        ...
+        byteN1
+
+        int32  Block 2 coordinate X
+        int32  Block 2 coordinate Y
+        int32  Block 2 coordinate Z
+        int32  # bytes for second block (N2)
+        byte0  Bytes of block data in jpeg-compressed format.
+        byte1
+        ...
+        byteN2
+
+        ...
+
+    If no data is available for given block span, nothing is returned.
+
+    Arguments:
+
+    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    data name     Name of data to add.
+    size          Size in voxels along each dimension specified in <dims>.
+    offset        Gives coordinate of first voxel using dimensionality of data.
+
+    Query-string Options:
+
+    compression   Allows retrieval of block data in "jpeg" (default) or "uncompressed".
+    throttle      If "true", makes sure only N compute-intense operation (all API calls that can be throttled) 
+                    are handled.  If the server can't initiate the API call right away, a 503 (Service Unavailable) 
+                    status code is returned.
+
+
+
+
+
 GET  <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?queryopts]
 
     Retrieves either 2d images (PNG by default) or 3d binary data, depending on the dims parameter.
@@ -1364,6 +1425,157 @@ func debugData(img image.Image, message string) {
 	}
 }
 
+func sendBlockJPEG(w http.ResponseWriter, x, y, z int32, v []byte, compression string) error {
+	// Check internal format and see if it's valid with compression choice.
+	format, checksum := dvid.DecodeSerializationFormat(dvid.SerializationFormat(v[0]))
+	if (compression == "jpeg" || compression == "") && format != dvid.JPEG {
+		return fmt.Errorf("Expected internal block data to be JPEG, was %s instead.", format)
+	}
+
+	// Send block coordinate and size of data.
+	if err := binary.Write(w, binary.LittleEndian, x); err != nil {
+		return err
+	}
+	if err := binary.Write(w, binary.LittleEndian, y); err != nil {
+		return err
+	}
+	if err := binary.Write(w, binary.LittleEndian, z); err != nil {
+		return err
+	}
+
+	// ignore first byte
+	start := 1
+	if checksum == dvid.CRC32 {
+		start += 4
+	}
+
+	// Do any adjustment of sent data based on compression request
+	var data []byte
+	if compression == "uncompressed" {
+		var err error
+		data, _, err = dvid.DeserializeData(v, true)
+		if err != nil {
+			return err
+		}
+	} else {
+		data = v[start:]
+	}
+	n := len(data)
+	if err := binary.Write(w, binary.LittleEndian, int32(n)); err != nil {
+		return err
+	}
+
+	// Send data itself, skipping the first byte for internal format and next 4 for uncompressed length.
+	if written, err := w.Write(data); err != nil || written != n {
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("could not write %d bytes of value: only %d bytes written", n, written)
+	}
+	return nil
+}
+
+// GetBlocks returns a slice of bytes corresponding to all the blocks along a span in X
+func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, subvol *dvid.Subvolume, compression string) error {
+	w.Header().Set("Content-type", "application/octet-stream")
+
+	if compression != "uncompressed" && compression != "jpeg" && compression != "" {
+		return fmt.Errorf("don't understand 'compression' query string value: %s", compression)
+	}
+
+	// convert x,y,z coordinates to block coordinates
+	blocksize := subvol.Size().Div(d.BlockSize())
+	blockoffset := subvol.StartPoint().Div(d.BlockSize())
+
+	timedLog := dvid.NewTimeLog()
+	defer timedLog.Infof("SendBlocks %s, span x %d, span y %d, span z %d", blockoffset, blocksize.Value(0), blocksize.Value(1), blocksize.Value(2))
+
+	store, err := d.GetOrderedKeyValueDB()
+	if err != nil {
+		return fmt.Errorf("Data type labelblk had error initializing store: %v\n", err)
+	}
+
+	// if only one block is requested, avoid the range query
+	if blocksize.Value(0) == int32(1) && blocksize.Value(1) == int32(1) && blocksize.Value(2) == int32(1) {
+		indexBeg := dvid.IndexZYX(dvid.ChunkPoint3d{blockoffset.Value(0), blockoffset.Value(1), blockoffset.Value(2)})
+		keyBeg := NewTKey(&indexBeg)
+
+		value, err := store.Get(ctx, keyBeg)
+		if err != nil {
+			return err
+		}
+		if len(value) > 0 {
+			return sendBlockJPEG(w, blockoffset.Value(0), blockoffset.Value(1), blockoffset.Value(2), value, compression)
+		}
+		return nil
+	}
+
+	// only do one request at a time, although each request can start many goroutines.
+	server.SpawnGoroutineMutex.Lock()
+	defer server.SpawnGoroutineMutex.Unlock()
+
+	okv := store.(storage.BufferableOps)
+	// extract buffer interface
+	req, hasbuffer := okv.(storage.KeyValueRequester)
+	if hasbuffer {
+		okv = req.NewBuffer(ctx)
+	}
+
+	for ziter := int32(0); ziter < blocksize.Value(2); ziter++ {
+		for yiter := int32(0); yiter < blocksize.Value(1); yiter++ {
+			beginPoint := dvid.ChunkPoint3d{blockoffset.Value(0), blockoffset.Value(1) + yiter, blockoffset.Value(2) + ziter}
+			endPoint := dvid.ChunkPoint3d{blockoffset.Value(0) + blocksize.Value(0) - 1, blockoffset.Value(1) + yiter, blockoffset.Value(2) + ziter}
+
+			indexBeg := dvid.IndexZYX(beginPoint)
+			sx, sy, sz := indexBeg.Unpack()
+			begTKey := NewTKey(&indexBeg)
+			indexEnd := dvid.IndexZYX(endPoint)
+			endTKey := NewTKey(&indexEnd)
+
+			// Send the entire range of key-value pairs to chunk processor
+			err = okv.ProcessRange(ctx, begTKey, endTKey, &storage.ChunkOp{}, func(c *storage.Chunk) error {
+				if c == nil || c.TKeyValue == nil {
+					return nil
+				}
+				kv := c.TKeyValue
+				if kv.V == nil {
+					return nil
+				}
+
+				// Determine which block this is.
+				indexZYX, err := DecodeTKey(kv.K)
+				if err != nil {
+					return err
+				}
+				x, y, z := indexZYX.Unpack()
+				if z != sz || y != sy || x < sx || x >= sx+int32(blocksize.Value(0)) {
+					return nil
+				}
+				if err := sendBlockJPEG(w, x, y, z, kv.V, compression); err != nil {
+					return err
+				}
+				return nil
+			})
+
+			if err != nil {
+				return fmt.Errorf("Unable to GET data %s: %v", ctx, err)
+			}
+		}
+	}
+
+	if hasbuffer {
+		// submit the entire buffer to the DB
+		err = okv.(storage.RequestBuffer).Flush()
+
+		if err != nil {
+			return fmt.Errorf("Unable to GET data %s: %v", ctx, err)
+
+		}
+	}
+
+	return err
+}
+
 // ServeHTTP handles all incoming HTTP requests for this data.
 func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {
 	timedLog := dvid.NewTimeLog()
@@ -1484,6 +1696,45 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		// GET <api URL>/node/<UUID>/<data name>/rawkey?x=<block x>&y=<block y>&z=<block z>
 		if len(parts) != 4 {
 			server.BadRequest(w, r, "rawkey endpoint should be followed by query strings (x, y, and z) giving block coord")
+			return
+		}
+
+	case "subvolblocks":
+		// GET <api URL>/node/<UUID>/<data name>/subvolblocks/<coord>/<offset>[?compression=...]
+		sizeStr, offsetStr := parts[4], parts[5]
+
+		if throttle := queryStrings.Get("throttle"); throttle == "on" || throttle == "true" {
+			if server.ThrottledHTTP(w) {
+				return
+			}
+			defer server.ThrottledOpDone()
+		}
+		compression := queryStrings.Get("compression")
+		subvol, err := dvid.NewSubvolumeFromStrings(offsetStr, sizeStr, "_")
+		if err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+
+		if subvol.StartPoint().NumDims() != 3 || subvol.Size().NumDims() != 3 {
+			server.BadRequest(w, r, "must specify 3D subvolumes", subvol.StartPoint(), subvol.EndPoint())
+			return
+		}
+
+		// Make sure subvolume gets align with blocks
+		if !dvid.BlockAligned(subvol, d.BlockSize()) {
+			server.BadRequest(w, r, "cannot store labels in non-block aligned geometry %s -> %s", subvol.StartPoint(), subvol.EndPoint())
+			return
+		}
+
+		if action == "get" {
+			if err := d.SendBlocks(ctx, w, subvol, compression); err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+			timedLog.Infof("HTTP %s: %s (%s)", r.Method, subvol, r.URL)
+		} else {
+			server.BadRequest(w, r, "DVID does not accept the %s action on the 'blocks' endpoint", action)
 			return
 		}
 

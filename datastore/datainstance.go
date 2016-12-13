@@ -611,6 +611,30 @@ func (d *Data) ModifyConfig(config dvid.Config) error {
 			d.compression, _ = dvid.NewCompression(dvid.LZ4, dvid.DefaultCompression)
 		case "gzip":
 			d.compression, _ = dvid.NewCompression(dvid.Gzip, dvid.DefaultCompression)
+		case "jpeg":
+			// Jpeg should only be used on datatypes with a BlockSize property
+			// and should only be used on uint8blk dim1 < 256 -- not enforced
+
+			// default dim1 setting
+			firstdim := 32
+
+			blockstr, found, err := config.GetString("BlockSize")
+			if err != nil {
+				return err
+			}
+			if found {
+				// extract the first block dimension size
+				bparts := strings.Split(blockstr, ",")
+				firstdim, err = strconv.Atoi(bparts[0])
+				if err != nil {
+					return fmt.Errorf("Unable to parse first block dim (%q).", bparts[0])
+				}
+				if firstdim <= 0 {
+					return fmt.Errorf("Invalid blocksize dim for jpeg compression")
+				}
+			}
+			// all data stored must be divisible by firstdim -- which will be the case for block datatypes
+			d.compression, _ = dvid.NewCompression(dvid.JPEG, dvid.CompressionLevel(firstdim))
 		default:
 			// Check for gzip + compression level
 			parts := strings.Split(format, ":")
