@@ -13,9 +13,12 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
@@ -23,6 +26,8 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
+
+	"github.com/janelia-flyem/go/go-humanize"
 
 	lz4 "github.com/janelia-flyem/go/golz4"
 )
@@ -63,8 +68,29 @@ $ dvid repo <UUID> new labelvol <data name> <settings...>
     BlockSize      Size in pixels  (default: %s)
     VoxelSize      Resolution of voxels (default: 8.0, 8.0, 8.0)
     VoxelUnits     Resolution units (default: "nanometers")
+
+$ dvid node <UUID> <data name> dump <server-accessible directory>
+
+	Dumps files, one per 512^3 voxel subvolume, for all block RLEs for each label within the subvolume.
+	File names will be formatted as subvols-X_Y_Z.dat, where (X,Y,Z) is the subvolume index; for example,
+	the file subvols-0_1_2.dat has all label block RLEs for the subvolume with smallest voxel coordinate
+	at (0, 512, 1024).	The encoding has the following format where integers are little endian and the 
+	order of data is exactly as specified below:
+
+	    uint64    Label ID
+	    uint32    # Spans
+	    Repeating unit of:
+	        int32   Coordinate of run start (dimension 0)
+	        int32   Coordinate of run start (dimension 1)
+	        int32   Coordinate of run start (dimension 2)
+	        int32   Length of run
+			  ...
+
+	This is similar to the voxel RLEs returned by the sparsevol endpoint, except the initial 8 byte header
+	is replaced with a label identifier.  Spans are always in X direction.
 	
-    ------------------
+
+------------------
 
 HTTP API (Level 2 REST):
 
@@ -804,12 +830,30 @@ func (d *Data) GobEncode() ([]byte, error) {
 }
 
 // DoRPC acts as a switchboard for RPC commands.
-func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error {
-	switch request.TypeCommand() {
+func (d *Data) DoRPC(req datastore.Request, reply *datastore.Response) error {
+	switch req.TypeCommand() {
+	case "dump":
+		if len(req.Command) < 5 {
+			return fmt.Errorf("Poorly formatted dump command.  See command-line help.")
+		}
+		// Parse the request
+		var uuidStr, dataName, cmdStr, dirStr string
+		req.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &dirStr)
+
+		uuid, versionID, err := datastore.MatchingUUID(uuidStr)
+		if err != nil {
+			return err
+		}
+		go func() {
+			d.DumpSubvols(uuid, versionID, dirStr)
+		}()
+		reply.Text = fmt.Sprintf("Asynchronously dumping sparse volumes in directory: %s\n", dirStr)
+
 	default:
 		return fmt.Errorf("Unknown command.  Data type '%s' [%s] does not support '%s' command.",
-			d.DataName(), d.TypeName(), request.TypeCommand())
+			d.DataName(), d.TypeName(), req.TypeCommand())
 	}
+	return nil
 }
 
 type Bounds struct {
@@ -1773,3 +1817,124 @@ func (d *Data) PutSparseVol(v dvid.VersionID, label uint64, r io.Reader) error {
 	return nil
 }
 */
+
+type DumpFiles struct {
+	files map[dvid.IZYXString]*os.File
+	dir   string
+
+	// debug vars
+	tlog       dvid.TimeLog
+	numKV      uint64
+	lastTime   time.Time
+	lastBytes  uint64
+	totalBytes uint64
+}
+
+func (df DumpFiles) close() {
+	for _, f := range df.files {
+		f.Close()
+	}
+}
+
+func (df DumpFiles) process(kv *storage.KeyValue, blockSize dvid.Point3d) error {
+	tk, err := storage.TKeyFromKey(kv.K)
+	if err != nil {
+		return fmt.Errorf("Couldn't get tkey from key %v: %v\n", kv.K, err)
+	}
+
+	label, block, err := DecodeTKey(tk)
+	if err != nil {
+		return fmt.Errorf("Couldn't decode tkey from key %v\n", kv.K, err)
+	}
+
+	chunkPt, err := block.ToChunkPoint3d()
+	if err != nil {
+		return err
+	}
+	subvolPt := chunkPt
+	subvolPt[0] /= (512 / blockSize[0])
+	subvolPt[1] /= (512 / blockSize[1])
+	subvolPt[2] /= (512 / blockSize[2])
+	subvolZYX := subvolPt.ToIZYXString()
+
+	f, found := df.files[subvolZYX]
+	if !found {
+		fname := filepath.Join(df.dir, fmt.Sprintf("subvols-%3d_%3d_%3d.dat", subvolPt[0], subvolPt[1], subvolPt[2]))
+		f, err = os.OpenFile(fname, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0664)
+		if err != nil {
+			return fmt.Errorf("problem opening file for subvol %s: %v\n", subvolPt, err)
+		}
+		df.files[subvolZYX] = f
+	}
+
+	// Get the # spans from encoding and also the span data
+	if len(kv.V) < 13 {
+		return fmt.Errorf("Bad blockRLE data for block %s -- value only %d bytes", subvolPt, len(kv.V))
+	}
+	numSpans := int32(binary.LittleEndian.Uint32(kv.V[8:12]))
+	spanDataBytes := int32(numSpans * 16)
+	spanData := kv.V[12:]
+	if len(spanData) != int(spanDataBytes) {
+		return fmt.Errorf("Span data for block %s should be %d bytes, got %d bytes\n", subvolPt, spanDataBytes, len(spanData))
+	}
+	binary.Write(f, binary.LittleEndian, label)
+	binary.Write(f, binary.LittleEndian, numSpans)
+	n, err := f.Write(spanData)
+	if err != nil {
+		return fmt.Errorf("Only wrote %d bytes out of %d for RLEs in block %s: %v\n", n, len(spanData), subvolPt)
+	}
+
+	curBytes := uint64(spanDataBytes + 12)
+	df.lastBytes += curBytes
+	df.totalBytes += curBytes
+	df.numKV++
+	if elapsed := time.Since(df.lastTime); elapsed > time.Minute {
+		mb := float64(df.lastBytes) / 1000000
+		sec := elapsed.Seconds()
+		throughput := mb / sec
+		dvid.Debugf("Dump throughput: %5.2f MB/s (%s in %4.1f seconds).  Total %s\n", throughput, humanize.Bytes(df.lastBytes), sec, humanize.Bytes(df.totalBytes))
+
+		df.lastTime = time.Now()
+		df.lastBytes = 0
+	}
+	return nil
+}
+
+func (d *Data) DumpSubvols(uuid dvid.UUID, v dvid.VersionID, dirStr string) {
+	df := DumpFiles{
+		files: make(map[dvid.IZYXString]*os.File),
+		dir:   dirStr,
+		tlog:  dvid.NewTimeLog(),
+	}
+
+	store, err := d.GetOrderedKeyValueDB()
+	if err != nil {
+		dvid.Criticalf("unable to get backing store for data %q: %v\n", d.DataName(), err)
+		return
+	}
+	ctx := datastore.NewVersionedCtx(d, v)
+
+	dataCh := make(chan *storage.KeyValue, 1000)
+	cancelCh := make(chan struct{})
+	go func() {
+		for {
+			kv := <-dataCh
+			if kv == nil {
+				dvid.Infof("Finished subvol dump on instance %q.\n", d.DataName())
+				df.close()
+				return
+			}
+			if err := df.process(kv, d.BlockSize); err != nil {
+				dvid.Errorf("Subvol dump error: %v\n", err)
+				cancelCh <- struct{}{}
+				df.close()
+				return
+			}
+		}
+	}()
+
+	begKey, endKey := ctx.TKeyClassRange(keyLabelBlockRLE)
+	if err := store.RawRangeQuery(begKey, endKey, false, dataCh, cancelCh); err != nil {
+		dvid.Criticalf("Unable to dump subvols from data instance %q: %v\n", d.DataName(), err)
+	}
+}

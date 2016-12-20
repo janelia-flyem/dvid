@@ -332,6 +332,16 @@ func constructDataKey(i dvid.InstanceID, v dvid.VersionID, c dvid.ClientID, tk T
 	return Key(append(key, MarkData))
 }
 
+// TKeyClassRange returns the min and max full keys for this class of TKeys.
+func (ctx *DataContext) TKeyClassRange(c TKeyClass) (min, max Key) {
+	id := ctx.data.InstanceID()
+	min = append([]byte{dataKeyPrefix}, id.Bytes()...)
+	min = append(min, byte(c), 0)
+	max = append([]byte{dataKeyPrefix}, id.Bytes()...)
+	max = append(max, byte(c), 255, 255, 255, 255, 255, 255, 255, 255, 255)
+	return min, max
+}
+
 // KeyRange returns the min and max full keys.  The DataContext can have any version since min/max keys for a data instance
 // is independent of the current context's version.
 func (ctx *DataContext) KeyRange() (min, max Key) {
