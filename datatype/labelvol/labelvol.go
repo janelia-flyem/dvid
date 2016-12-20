@@ -1836,7 +1836,7 @@ func (df DumpFiles) close() {
 	}
 }
 
-func (df DumpFiles) process(kv *storage.KeyValue, blockSize dvid.Point3d) error {
+func (df *DumpFiles) process(kv *storage.KeyValue, blockSize dvid.Point3d) error {
 	tk, err := storage.TKeyFromKey(kv.K)
 	if err != nil {
 		return fmt.Errorf("Couldn't get tkey from key %v: %v\n", kv.K, err)
@@ -1859,7 +1859,7 @@ func (df DumpFiles) process(kv *storage.KeyValue, blockSize dvid.Point3d) error 
 
 	f, found := df.files[subvolZYX]
 	if !found {
-		fname := filepath.Join(df.dir, fmt.Sprintf("subvols-%3d_%3d_%3d.dat", subvolPt[0], subvolPt[1], subvolPt[2]))
+		fname := filepath.Join(df.dir, fmt.Sprintf("subvols-%03d_%03d_%03d.dat", subvolPt[0], subvolPt[1], subvolPt[2]))
 		f, err = os.OpenFile(fname, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0664)
 		if err != nil {
 			return fmt.Errorf("problem opening file for subvol %s: %v\n", subvolPt, err)
@@ -1867,21 +1867,18 @@ func (df DumpFiles) process(kv *storage.KeyValue, blockSize dvid.Point3d) error 
 		df.files[subvolZYX] = f
 	}
 
-	// Get the # spans from encoding and also the span data
-	if len(kv.V) < 13 {
-		return fmt.Errorf("Bad blockRLE data for block %s -- value only %d bytes", subvolPt, len(kv.V))
+	var blockRLEs dvid.RLEs
+	if err := blockRLEs.UnmarshalBinary(kv.V); err != nil {
+		return fmt.Errorf("Unable to unmarshal RLEs for label %d, block %s: %v\n", label, subvolPt, err)
 	}
-	numSpans := int32(binary.LittleEndian.Uint32(kv.V[8:12]))
+	numSpans := int32(len(blockRLEs))
 	spanDataBytes := int32(numSpans * 16)
-	spanData := kv.V[12:]
-	if len(spanData) != int(spanDataBytes) {
-		return fmt.Errorf("Span data for block %s should be %d bytes, got %d bytes\n", subvolPt, spanDataBytes, len(spanData))
-	}
+
 	binary.Write(f, binary.LittleEndian, label)
 	binary.Write(f, binary.LittleEndian, numSpans)
-	n, err := f.Write(spanData)
+	n, err := f.Write(kv.V)
 	if err != nil {
-		return fmt.Errorf("Only wrote %d bytes out of %d for RLEs in block %s: %v\n", n, len(spanData), subvolPt)
+		return fmt.Errorf("Only wrote %d bytes out of %d for RLEs in block %s: %v\n", n, len(kv.V), subvolPt, err)
 	}
 
 	curBytes := uint64(spanDataBytes + 12)
@@ -1904,7 +1901,9 @@ func (d *Data) DumpSubvols(uuid dvid.UUID, v dvid.VersionID, dirStr string) {
 	df := DumpFiles{
 		files: make(map[dvid.IZYXString]*os.File),
 		dir:   dirStr,
-		tlog:  dvid.NewTimeLog(),
+
+		tlog:     dvid.NewTimeLog(),
+		lastTime: time.Now(),
 	}
 
 	store, err := d.GetOrderedKeyValueDB()
@@ -1931,7 +1930,7 @@ func (d *Data) DumpSubvols(uuid dvid.UUID, v dvid.VersionID, dirStr string) {
 				break
 			}
 		}
-		df.tlog.Infof("Finished %q subvol dump of %d kv pairs, %s", d.DataName(), humanize.Bytes(df.totalBytes))
+		df.tlog.Infof("Finished %q subvol dump of %d kv pairs, %s", d.DataName(), df.numKV, humanize.Bytes(df.totalBytes))
 	}()
 
 	begKey, endKey := ctx.TKeyClassRange(keyLabelBlockRLE)
