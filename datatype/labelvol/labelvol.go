@@ -1922,15 +1922,16 @@ func (d *Data) DumpSubvols(uuid dvid.UUID, v dvid.VersionID, dirStr string) {
 			if kv == nil {
 				dvid.Infof("Finished subvol dump on instance %q.\n", d.DataName())
 				df.close()
-				return
+				break
 			}
 			if err := df.process(kv, d.BlockSize); err != nil {
 				dvid.Errorf("Subvol dump error: %v\n", err)
 				cancelCh <- struct{}{}
 				df.close()
-				return
+				break
 			}
 		}
+		df.tlog.Infof("Finished %q subvol dump of %d kv pairs, %s", d.DataName(), humanize.Bytes(df.totalBytes))
 	}()
 
 	begKey, endKey := ctx.TKeyClassRange(keyLabelBlockRLE)
