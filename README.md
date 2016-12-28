@@ -3,7 +3,9 @@ DVID       [![Picture](https://raw.github.com/janelia-flyem/janelia-flyem.github
 
 *Status: In production use at Janelia.  See [wiki page for outside lab use of DVID](https://github.com/janelia-flyem/dvid/wiki/State-of-DVID-for-External-Use).*
 
-[![GoDoc](https://godoc.org/github.com/janelia-flyem/dvid?status.png)](https://godoc.org/github.com/janelia-flyem/dvid) [![CircleCI](https://circleci.com/gh/janelia-flyem/dvid/tree/master.svg?style=svg)](https://circleci.com/gh/janelia-flyem/dvid/tree/master)
+[![Go Report Card](https://goreportcard.com/badge/github.com/janelia-flyem/dvid)](https://goreportcard.com/report/github.com/janelia-flyem/dvid)
+[![GoDoc](https://godoc.org/github.com/janelia-flyem/dvid?status.png)](https://godoc.org/github.com/janelia-flyem/dvid) 
+[![CircleCI](https://circleci.com/gh/janelia-flyem/dvid/tree/master.svg?style=svg)](https://circleci.com/gh/janelia-flyem/dvid/tree/master)
 
 See the [DVID Wiki](https://github.com/janelia-flyem/dvid/wiki) for more information including installation and examples of use.
 
