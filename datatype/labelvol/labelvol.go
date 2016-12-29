@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -1836,13 +1837,11 @@ func (df DumpFiles) close() {
 	}
 }
 
-func (df *DumpFiles) process(kv *storage.KeyValue, blockSize dvid.Point3d) error {
-	tk, err := storage.TKeyFromKey(kv.K)
-	if err != nil {
-		return fmt.Errorf("Couldn't get tkey from key %v: %v\n", kv.K, err)
+func (df *DumpFiles) process(kv *storage.TKeyValue, blockSize dvid.Point3d) error {
+	if kv.K == nil {
+		return fmt.Errorf("Had nil TKey in process() for labelvol dump!")
 	}
-
-	label, block, err := DecodeTKey(tk)
+	label, block, err := DecodeTKey(kv.K)
 	if err != nil {
 		return fmt.Errorf("Couldn't decode tkey from key %v\n", kv.K, err)
 	}
@@ -1913,8 +1912,7 @@ func (d *Data) DumpSubvols(uuid dvid.UUID, v dvid.VersionID, dirStr string) {
 	}
 	ctx := datastore.NewVersionedCtx(d, v)
 
-	dataCh := make(chan *storage.KeyValue, 1000)
-	cancelCh := make(chan struct{})
+	dataCh := make(chan *storage.TKeyValue, 1000)
 	go func() {
 		for {
 			kv := <-dataCh
@@ -1925,7 +1923,6 @@ func (d *Data) DumpSubvols(uuid dvid.UUID, v dvid.VersionID, dirStr string) {
 			}
 			if err := df.process(kv, d.BlockSize); err != nil {
 				dvid.Errorf("Subvol dump error: %v\n", err)
-				cancelCh <- struct{}{}
 				df.close()
 				break
 			}
@@ -1933,8 +1930,17 @@ func (d *Data) DumpSubvols(uuid dvid.UUID, v dvid.VersionID, dirStr string) {
 		df.tlog.Infof("Finished %q subvol dump of %d kv pairs, %s", d.DataName(), df.numKV, humanize.Bytes(df.totalBytes))
 	}()
 
-	begKey, endKey := ctx.TKeyClassRange(keyLabelBlockRLE)
-	if err := store.RawRangeQuery(begKey, endKey, false, dataCh, cancelCh); err != nil {
-		dvid.Criticalf("Unable to dump subvols from data instance %q: %v\n", d.DataName(), err)
+	minTKey := NewTKey(0, dvid.MinIndexZYX.ToIZYXString())
+	maxTKey := NewTKey(math.MaxUint64, dvid.MaxIndexZYX.ToIZYXString())
+	err = store.ProcessRange(ctx, minTKey, maxTKey, &storage.ChunkOp{}, func(c *storage.Chunk) error {
+		if c == nil {
+			return fmt.Errorf("received nil chunk in dump subvol for data %s", d.DataName())
+		}
+		dataCh <- c.TKeyValue
+		return nil
+	})
+	dataCh <- nil
+	if err != nil {
+		dvid.Criticalf("error in dump subvol for data %q: %v", d.DataName(), err)
 	}
 }
