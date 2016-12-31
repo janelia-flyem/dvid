@@ -236,6 +236,19 @@ GET <api URL>/node/<UUID>/<data name>/sparsevol-coarse/<label>
 	have been replaced by block coordinates.
 
 
+DELETE <api URL>/node/<UUID>/<data name>/area/<label>/<size>/<offset>
+
+    NOTE: Does not honor syncs and is intended purely for low-level mods.
+	Deletes all of a label's sparse volume within a given 3d volume from a 3d offset.
+
+	Example: 
+
+    DELETE <api URL>/node/3f8c/bodies/area/23/512_512_512/0_0_128
+
+	The above example deletes all sparsevol associated with label 23 in subvolume
+	that is 512 x 512 x 512 starting at offset (0,0,128).
+
+
 GET <api URL>/node/<UUID>/<data name>/maxlabel
 
 	GET returns the maximum label for the version of data in JSON form:
@@ -1113,6 +1126,50 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 		timedLog.Infof("HTTP %s: sparsevol-coarse on label %d (%s)", r.Method, label, r.URL)
 
+	case "area":
+		// DELETE <api URL>/node/<UUID>/<data name>/area/<label>/<size>/<offset>
+		if len(parts) < 6 {
+			server.BadRequest(w, r, "DVID requires label ID, size, and offset to follow 'area' endpoint")
+			return
+		}
+		label, err := strconv.ParseUint(parts[4], 10, 64)
+		if err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+		if label == 0 {
+			server.BadRequest(w, r, "Label 0 is protected background value and cannot be used as sparse volume.\n")
+			return
+		}
+		sizeStr, offsetStr := parts[5], parts[6]
+
+		subvol, err := dvid.NewSubvolumeFromStrings(offsetStr, sizeStr, "_")
+		if err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+		if subvol.StartPoint().NumDims() != 3 || subvol.Size().NumDims() != 3 {
+			server.BadRequest(w, r, "must specify 3D subvolumes", subvol.StartPoint(), subvol.EndPoint())
+			return
+		}
+
+		// Make sure subvolume gets align with blocks
+		if !dvid.BlockAligned(subvol, d.BlockSize) {
+			server.BadRequest(w, r, "cannot delete sparsevol in non-block aligned geometry %s -> %s", subvol.StartPoint(), subvol.EndPoint())
+			return
+		}
+
+		if action != "delete" {
+			server.BadRequest(w, r, "DVID does not accept the %s action on the 'blocks' endpoint", action)
+			return
+		}
+
+		if err := d.DeleteArea(ctx, label, subvol); err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+		timedLog.Infof("HTTP %s: area %s (%s)", r.Method, subvol, r.URL)
+
 	case "maxlabel":
 		// GET <api URL>/node/<UUID>/<data name>/maxlabel
 		w.Header().Set("Content-Type", "application/json")
@@ -1695,6 +1752,70 @@ func getSparseVolBlocks(ctx *datastore.VersionedCtx, label uint64) (numBlocks ui
 		spans = append(spans, *span)
 	}
 	return
+}
+
+func (d *Data) DeleteArea(ctx *datastore.VersionedCtx, label uint64, subvol *dvid.Subvolume) error {
+	store, err := d.GetOrderedKeyValueDB()
+	if err != nil {
+		return fmt.Errorf("unable to get backing store for data %q: %v\n", d.DataName(), err)
+	}
+	batcher, ok := store.(storage.KeyValueBatcher)
+	if !ok {
+		return fmt.Errorf("Data type labelvol requires batch-enabled store, which %q is not\n", store)
+	}
+
+	begVoxel, ok := subvol.StartPoint().(dvid.Chunkable)
+	if !ok {
+		return fmt.Errorf("delete area StartPoint() cannot handle Chunkable points.")
+	}
+	endVoxel, ok := subvol.EndPoint().(dvid.Chunkable)
+	if !ok {
+		return fmt.Errorf("delete area EndPoint() cannot handle Chunkable points.")
+	}
+	begChunk := begVoxel.Chunk(d.BlockSize).(dvid.ChunkPoint3d)
+	endChunk := endVoxel.Chunk(d.BlockSize).(dvid.ChunkPoint3d)
+	it := dvid.NewIndexZYXIterator(begChunk, endChunk)
+
+	batch := batcher.NewBatch(ctx)
+	for {
+		if !it.Valid() {
+			dvid.Infof("Breaking\n")
+			break
+		}
+
+		indexBeg, indexEnd, err := it.IndexSpan()
+		if err != nil {
+			return err
+		}
+		begBlock := indexBeg.(*dvid.IndexZYX).ToIZYXString()
+		endBlock := indexEnd.(*dvid.IndexZYX).ToIZYXString()
+		dvid.Infof("Deleting from %s -> %s\n", begBlock, endBlock)
+
+		begTKey := NewTKey(label, begBlock)
+		endTKey := NewTKey(label, endBlock)
+
+		err = store.ProcessRange(ctx, begTKey, endTKey, &storage.ChunkOp{}, func(c *storage.Chunk) error {
+			if c == nil {
+				return fmt.Errorf("received nil chunk in delete area for data %s", d.DataName())
+			}
+			label, block, err := DecodeTKey(c.K)
+			if err != nil {
+				return err
+			}
+			dvid.Infof("Deleting label %d from %s\n", label, block)
+			batch.Delete(c.K)
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+		it.NextSpan()
+	}
+
+	if err := batch.Commit(); err != nil {
+		return fmt.Errorf("Batch commit during delete area of %s label %d: %v\n", d.DataName(), label, err)
+	}
+	return nil
 }
 
 // PutSparseVol stores an encoded sparse volume that stays within a given forward label.
