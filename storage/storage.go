@@ -407,7 +407,9 @@ type KeyValueSetter interface {
 	Delete(Context, TKey) error
 
 	// RawPut is a low-level function that puts a key-value pair using full keys.
-	// This can be used in conjunction with RawRangeQuery.
+	// This can be used in conjunction with RawRangeQuery.  It does not automatically
+	// delete any associated tombstone, unlike the Delete() function, so tombstone
+	// deletion must be handled via RawDelete().
 	RawPut(Key, []byte) error
 
 	// RawDelete is a low-level function.  It deletes a key-value pair using full keys
