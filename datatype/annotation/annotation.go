@@ -1743,12 +1743,12 @@ func (d *Data) resync(ctx *datastore.VersionedCtx) {
 	}
 	if numTagE > 0 {
 		if err := d.storeTags(batcher, ctx, tagE); err != nil {
-			dvid.Infof("Error writing final set of tags of data %q: %v", err)
+			dvid.Errorf("Error writing final set of tags of data %q: %v", err)
 		}
 	}
 	if numBlockE > 0 {
 		if err := d.storeLabels(batcher, ctx, blockE); err != nil {
-			dvid.Infof("Error writing final set of label elements of data %q: %v", err)
+			dvid.Errorf("Error writing final set of label elements of data %q: %v", err)
 		}
 	}
 	d.Unlock()
