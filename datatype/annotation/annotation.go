@@ -158,8 +158,9 @@ POST <api URL>/node/<UUID>/<data name>/move/<from_coord>/<to_coord>
 
 POST <api URL>/node/<UUID>/<data name>/reload
 
-	Forces refreshed denormalization of all annotations for labels and tags.  Can be 
-	used to initialize a newly added sync.
+	Forces asynchornous denormalization of all annotations for labels and tags.  Can be 
+	used to initialize a newly added sync.  Note that the annotation will be locked until
+	the denormalization is finished with a log message.
 
 ------
 
@@ -1635,8 +1636,32 @@ func (d *Data) MoveElement(ctx *datastore.VersionedCtx, from, to dvid.Point3d) e
 	return batch.Commit()
 }
 
+func (d *Data) storeTags(batcher storage.KeyValueBatcher, ctx *datastore.VersionedCtx, tagE tagElements) error {
+	batch := batcher.NewBatch(ctx)
+	if err := d.storeTagElements(ctx, batch, tagE); err != nil {
+		return err
+	}
+	if err := batch.Commit(); err != nil {
+		return fmt.Errorf("bad batch commit in reload for data %q: %v", d.DataName(), err)
+	}
+	return nil
+}
+
+func (d *Data) storeLabels(batcher storage.KeyValueBatcher, ctx *datastore.VersionedCtx, blockE blockElements) error {
+	batch := batcher.NewBatch(ctx)
+	if err := d.storeLabelElements(ctx, batch, blockE); err != nil {
+		return err
+	}
+	if err := batch.Commit(); err != nil {
+		return fmt.Errorf("bad batch commit in reload for data %q: %v", d.DataName(), err)
+	}
+	return nil
+}
+
 // Get all keyBlock kv pairs, forcing the label and tag denormalizations.
 func (d *Data) resync(ctx *datastore.VersionedCtx) {
+	timedLog := dvid.NewTimeLog()
+
 	store, err := d.GetOrderedKeyValueDB()
 	if err != nil {
 		dvid.Errorf("Annotation %q had error initializing store: %v\n", d.DataName(), err)
@@ -1653,6 +1678,12 @@ func (d *Data) resync(ctx *datastore.VersionedCtx) {
 
 	d.StartUpdate()
 	d.Lock()
+
+	var numBlockE, numTagE int
+
+	blockE := make(blockElements)
+	tagE := make(tagElements)
+
 	err = store.ProcessRange(ctx, minTKey, maxTKey, &storage.ChunkOp{}, func(c *storage.Chunk) error {
 		if c == nil {
 			return fmt.Errorf("received nil chunk in reload for data %q", d.DataName())
@@ -1669,11 +1700,12 @@ func (d *Data) resync(ctx *datastore.VersionedCtx) {
 		if err := json.Unmarshal(c.V, &elems); err != nil {
 			return fmt.Errorf("couldn't unmarshal elements for data %q", d.DataName())
 		}
+		if len(elems) == 0 {
+			return nil
+		}
 
-		batch := batcher.NewBatch(ctx)
-		blockE := make(blockElements, 1)
 		blockE[chunkPt.ToIZYXString()] = elems
-		tagE := make(tagElements)
+		numBlockE += len(elems)
 
 		// Iterate through elements, organizing them into blocks and tags.
 		// Note: we do not check for redundancy and guarantee uniqueness at this stage.
@@ -1683,27 +1715,46 @@ func (d *Data) resync(ctx *datastore.VersionedCtx) {
 				for _, tag := range elem.Tags {
 					te := tagE[tag]
 					te = append(te, elem)
+					numTagE++
 					tagE[tag] = te
 				}
 			}
 		}
-		if err := d.storeTagElements(ctx, batch, tagE); err != nil {
-			return err
+
+		if numTagE > 1000 {
+			if err := d.storeTags(batcher, ctx, tagE); err != nil {
+				return err
+			}
+			numTagE = 0
+			tagE = make(tagElements)
 		}
-		if err := d.storeLabelElements(ctx, batch, blockE); err != nil {
-			return err
+		if numBlockE > 1000 {
+			if err := d.storeLabels(batcher, ctx, blockE); err != nil {
+				return err
+			}
+			numBlockE = 0
+			blockE = make(blockElements)
 		}
 
-		if err := batch.Commit(); err != nil {
-			return fmt.Errorf("bad batch commit in reload for data %q", d.DataName())
-		}
 		return nil
 	})
 	if err != nil {
 		dvid.Errorf("Error in reload of data %q: %v\n", d.DataName(), err)
 	}
+	if numTagE > 0 {
+		if err := d.storeTags(batcher, ctx, tagE); err != nil {
+			dvid.Infof("Error writing final set of tags of data %q: %v", err)
+		}
+	}
+	if numBlockE > 0 {
+		if err := d.storeLabels(batcher, ctx, blockE); err != nil {
+			dvid.Infof("Error writing final set of label elements of data %q: %v", err)
+		}
+	}
 	d.Unlock()
 	d.StopUpdate()
+
+	timedLog.Infof("Completed asynchronous annotation reload of data %q", d.DataName())
 }
 
 func (d *Data) ReloadData(ctx *datastore.VersionedCtx) {
