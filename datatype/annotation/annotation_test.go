@@ -978,6 +978,94 @@ func TestLabels(t *testing.T) {
 	testResponseLabel(t, afterDeleteOn7, "%snode/%s/%s/label/7?relationships=true", server.WebAPIPath, uuid, "renamedData")
 }
 
+func TestLabelsReload(t *testing.T) {
+	datastore.OpenTest()
+	defer datastore.CloseTest()
+
+	// Create testbed volume and data instances
+	uuid, _ := initTestRepo()
+	var config dvid.Config
+	server.CreateTestInstance(t, uuid, "labelblk", "labels", config)
+	server.CreateTestInstance(t, uuid, "labelvol", "bodies", config)
+
+	// Establish syncs
+	server.CreateTestSync(t, uuid, "labels", "bodies")
+	server.CreateTestSync(t, uuid, "bodies", "labels")
+
+	// Populate the labels, which should automatically populate the labelvol
+	_ = createLabelTestVolume(t, uuid, "labels")
+
+	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
+		t.Fatalf("Error blocking on sync of labels: %v\n", err)
+	}
+
+	// Add annotations without syncing.
+	server.CreateTestInstance(t, uuid, "annotation", "mysynapses", config)
+
+	// PUT first batch of synapses
+	testJSON, err := json.Marshal(testData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	url1 := fmt.Sprintf("%snode/%s/mysynapses/elements", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", url1, strings.NewReader(string(testJSON)))
+
+	// Add the sync
+	server.CreateTestSync(t, uuid, "mysynapses", "labels,bodies")
+
+	// Do a reload asynchronously
+	reloadURL := fmt.Sprintf("%snode/%s/mysynapses/reload", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", reloadURL, nil)
+
+	// Wait until done.
+	if err := datastore.BlockOnUpdating(uuid, "mysynapses"); err != nil {
+		t.Fatalf("Error blocking on sync of annotations: %v\n", err)
+	}
+
+	// Test if labels were properly denormalized.  For the POST we have synchronized label denormalization.
+
+	testResponseLabel(t, expectedLabel1, "%snode/%s/mysynapses/label/1?relationships=true", server.WebAPIPath, uuid)
+	testResponseLabel(t, expectedLabel2, "%snode/%s/mysynapses/label/2?relationships=true", server.WebAPIPath, uuid)
+	testResponseLabel(t, expectedLabel3, "%snode/%s/mysynapses/label/3?relationships=true", server.WebAPIPath, uuid)
+	testResponseLabel(t, expectedLabel3NoRel, "%snode/%s/mysynapses/label/3", server.WebAPIPath, uuid)
+	testResponseLabel(t, expectedLabel4, "%snode/%s/mysynapses/label/4?relationships=true", server.WebAPIPath, uuid)
+
+	// Make change to labelblk and make sure our label synapses have been adjusted (case A)
+	_ = modifyLabelTestVolume(t, uuid, "labels")
+
+	if err := datastore.BlockOnUpdating(uuid, "mysynapses"); err != nil {
+		t.Fatalf("Error blocking on sync of labels->annotations: %v\n", err)
+	}
+
+	testResponseLabel(t, expectedLabel1, "%snode/%s/mysynapses/label/1?relationships=true", server.WebAPIPath, uuid)
+	testResponseLabel(t, expectedLabel2a, "%snode/%s/mysynapses/label/2?relationships=true", server.WebAPIPath, uuid)
+	testResponseLabel(t, expectedLabel3a, "%snode/%s/mysynapses/label/3?relationships=true", server.WebAPIPath, uuid)
+	testResponseLabel(t, expectedLabel4, "%snode/%s/mysynapses/label/4?relationships=true", server.WebAPIPath, uuid)
+	testResponseLabel(t, expectedLabel4NoRel, "%snode/%s/mysynapses/label/4", server.WebAPIPath, uuid)
+
+	// Make change to labelvol and make sure our label synapses have been adjusted (case B).
+	// Merge 3a into 2a.
+	testMerge := mergeJSON(`[2, 3]`)
+	testMerge.send(t, uuid, "bodies")
+
+	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
+		t.Fatalf("Error blocking on sync of labels: %v\n", err)
+	}
+
+	if err := datastore.BlockOnUpdating(uuid, "mysynapses"); err != nil {
+		t.Fatalf("Error blocking on sync of synapses: %v\n", err)
+	}
+
+	if err := datastore.BlockOnUpdating(uuid, "bodies"); err != nil {
+		t.Fatalf("Error blocking on sync of bodies: %v\n", err)
+	}
+
+	testResponseLabel(t, expectedLabel1, "%snode/%s/mysynapses/label/1?relationships=true", server.WebAPIPath, uuid)
+	testResponseLabel(t, expectedLabel2b, "%snode/%s/mysynapses/label/2?relationships=true", server.WebAPIPath, uuid)
+	testResponseLabel(t, nil, "%snode/%s/mysynapses/label/3?relationships=true", server.WebAPIPath, uuid)
+	testResponseLabel(t, expectedLabel4, "%snode/%s/mysynapses/label/4?relationships=true", server.WebAPIPath, uuid)
+}
+
 // A single label block within the volume
 type testBody struct {
 	label        uint64

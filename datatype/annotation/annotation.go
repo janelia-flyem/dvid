@@ -156,6 +156,11 @@ POST <api URL>/node/<UUID>/<data name>/move/<from_coord>/<to_coord>
 	Moves the point annotation from <from_coord> to <to_coord> where
 	<from_coord> and <to_coord> are of the form X_Y_Z.
 
+POST <api URL>/node/<UUID>/<data name>/reload
+
+	Forces refreshed denormalization of all annotations for labels and tags.  Can be 
+	used to initialize a newly added sync.
+
 ------
 
 Example JSON Format of point annotation elements with ... marking omitted elements:
@@ -1630,6 +1635,82 @@ func (d *Data) MoveElement(ctx *datastore.VersionedCtx, from, to dvid.Point3d) e
 	return batch.Commit()
 }
 
+// Get all keyBlock kv pairs, forcing the label and tag denormalizations.
+func (d *Data) resync(ctx *datastore.VersionedCtx) {
+	store, err := d.GetOrderedKeyValueDB()
+	if err != nil {
+		dvid.Errorf("Annotation %q had error initializing store: %v\n", d.DataName(), err)
+		return
+	}
+	batcher, ok := store.(storage.KeyValueBatcher)
+	if !ok {
+		dvid.Errorf("Data type annotation requires batch-enabled store, which %q is not\n", store)
+		return
+	}
+
+	minTKey := NewBlockTKey(dvid.MinChunkPoint3d)
+	maxTKey := NewBlockTKey(dvid.MaxChunkPoint3d)
+
+	d.StartUpdate()
+	d.Lock()
+	err = store.ProcessRange(ctx, minTKey, maxTKey, &storage.ChunkOp{}, func(c *storage.Chunk) error {
+		if c == nil {
+			return fmt.Errorf("received nil chunk in reload for data %q", d.DataName())
+		}
+		if c.V == nil {
+			return nil
+		}
+		chunkPt, err := DecodeBlockTKey(c.K)
+		if err != nil {
+			return fmt.Errorf("couldn't decode chunk key %v for data %q", c.K, d.DataName())
+		}
+
+		var elems Elements
+		if err := json.Unmarshal(c.V, &elems); err != nil {
+			return fmt.Errorf("couldn't unmarshal elements for data %q", d.DataName())
+		}
+
+		batch := batcher.NewBatch(ctx)
+		blockE := make(blockElements, 1)
+		blockE[chunkPt.ToIZYXString()] = elems
+		tagE := make(tagElements)
+
+		// Iterate through elements, organizing them into blocks and tags.
+		// Note: we do not check for redundancy and guarantee uniqueness at this stage.
+		for _, elem := range elems {
+			// Append to tags if present
+			if len(elem.Tags) > 0 {
+				for _, tag := range elem.Tags {
+					te := tagE[tag]
+					te = append(te, elem)
+					tagE[tag] = te
+				}
+			}
+		}
+		if err := d.storeTagElements(ctx, batch, tagE); err != nil {
+			return err
+		}
+		if err := d.storeLabelElements(ctx, batch, blockE); err != nil {
+			return err
+		}
+
+		if err := batch.Commit(); err != nil {
+			return fmt.Errorf("bad batch commit in reload for data %q", d.DataName())
+		}
+		return nil
+	})
+	if err != nil {
+		dvid.Errorf("Error in reload of data %q: %v\n", d.DataName(), err)
+	}
+	d.Unlock()
+	d.StopUpdate()
+}
+
+func (d *Data) ReloadData(ctx *datastore.VersionedCtx) {
+	go d.resync(ctx)
+	dvid.Infof("Started reload of annotations %q...\n", d.DataName())
+}
+
 // GetByDataUUID returns a pointer to annotation data given a data UUID.
 func GetByDataUUID(dataUUID dvid.UUID) (*Data, error) {
 	source, err := datastore.GetDataByDataUUID(dataUUID)
@@ -1917,6 +1998,14 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			return
 		}
 		timedLog.Infof("HTTP %s: move synaptic element from %s to %s (%s)", r.Method, fromPt, toPt, r.URL)
+
+	case "reload":
+		// POST <api URL>/node/<UUID>/<data name>/reload
+		if action != "post" {
+			server.BadRequest(w, r, "Only POST action is available on 'reload' endpoint.")
+			return
+		}
+		d.ReloadData(ctx)
 
 	default:
 		server.BadAPIRequest(w, r, d)

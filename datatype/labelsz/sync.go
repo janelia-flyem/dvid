@@ -166,7 +166,7 @@ func (d *Data) modifyElements(ctx *datastore.VersionedCtx, delta annotation.Delt
 	// Get old counts for the modified labels.
 	counts, err := d.getCounts(ctx, mods)
 	if err != nil {
-		dvid.Errorf("couldn't get counts for modified labels: %v\n", err)
+		dvid.Errorf("labelsz %q couldn't get counts for modified labels: %v\n", d.DataName(), err)
 		return
 	}
 
@@ -190,7 +190,7 @@ func (d *Data) modifyElements(ctx *datastore.VersionedCtx, delta annotation.Delt
 
 		// add new count
 		if change < 0 && -change > int32(count) {
-			dvid.Criticalf("received element mod that would subtract %d with only count %d!  Setting floor at 0.\n", -change, count)
+			dvid.Criticalf("labelsz %q received element mod that would subtract %d with only count %d!  Setting floor at 0.\n", d.DataName(), -change, count)
 			change = int32(-count)
 		}
 		newcount := uint32(int32(count) + change)
