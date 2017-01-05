@@ -12,7 +12,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
-	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -2051,8 +2050,8 @@ func (d *Data) DumpSubvols(uuid dvid.UUID, v dvid.VersionID, dirStr string) {
 		df.tlog.Infof("Finished %q subvol dump of %d kv pairs, %s", d.DataName(), df.numKV, humanize.Bytes(df.totalBytes))
 	}()
 
-	minTKey := NewTKey(0, dvid.MinIndexZYX.ToIZYXString())
-	maxTKey := NewTKey(math.MaxUint64, dvid.MaxIndexZYX.ToIZYXString())
+	minTKey := storage.MinTKey(keyLabelBlockRLE)
+	maxTKey := storage.MaxTKey(keyLabelBlockRLE)
 	err = store.ProcessRange(ctx, minTKey, maxTKey, &storage.ChunkOp{}, func(c *storage.Chunk) error {
 		if c == nil {
 			return fmt.Errorf("received nil chunk in dump subvol for data %s", d.DataName())

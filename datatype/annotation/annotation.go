@@ -1,6 +1,4 @@
-/*
-	Package annotation supports point annotation management and queries.
-*/
+// Package annotation supports point annotation management and queries.
 package annotation
 
 import (
@@ -1673,16 +1671,35 @@ func (d *Data) resync(ctx *datastore.VersionedCtx) {
 		return
 	}
 
-	minTKey := NewBlockTKey(dvid.MinChunkPoint3d)
-	maxTKey := NewBlockTKey(dvid.MaxChunkPoint3d)
-
 	d.StartUpdate()
 	d.Lock()
 
+	minLabelTKey := storage.MinTKey(keyLabel)
+	maxLabelTKey := storage.MaxTKey(keyLabel)
+	if err := store.DeleteRange(ctx, minLabelTKey, maxLabelTKey); err != nil {
+		dvid.Errorf("Unable to delete label denormalization for annotations %q: %v\n", d.DataName(), err)
+		d.Unlock()
+		d.StopUpdate()
+		return
+	}
+
+	minTagTKey := storage.MinTKey(keyTag)
+	maxTagTKey := storage.MaxTKey(keyTag)
+	if err := store.DeleteRange(ctx, minTagTKey, maxTagTKey); err != nil {
+		dvid.Errorf("Unable to delete tag denormalization for annotations %q: %v\n", d.DataName(), err)
+		d.Unlock()
+		d.StopUpdate()
+		return
+	}
+
 	var numBlockE, numTagE int
+	var totBlockE, totTagE int
 
 	blockE := make(blockElements)
 	tagE := make(tagElements)
+
+	minTKey := storage.MinTKey(keyBlock)
+	maxTKey := storage.MaxTKey(keyBlock)
 
 	err = store.ProcessRange(ctx, minTKey, maxTKey, &storage.ChunkOp{}, func(c *storage.Chunk) error {
 		if c == nil {
@@ -1725,6 +1742,7 @@ func (d *Data) resync(ctx *datastore.VersionedCtx) {
 			if err := d.storeTags(batcher, ctx, tagE); err != nil {
 				return err
 			}
+			totTagE += numTagE
 			numTagE = 0
 			tagE = make(tagElements)
 		}
@@ -1732,6 +1750,7 @@ func (d *Data) resync(ctx *datastore.VersionedCtx) {
 			if err := d.storeLabels(batcher, ctx, blockE); err != nil {
 				return err
 			}
+			totBlockE += numBlockE
 			numBlockE = 0
 			blockE = make(blockElements)
 		}
@@ -1742,11 +1761,13 @@ func (d *Data) resync(ctx *datastore.VersionedCtx) {
 		dvid.Errorf("Error in reload of data %q: %v\n", d.DataName(), err)
 	}
 	if numTagE > 0 {
+		totTagE += numTagE
 		if err := d.storeTags(batcher, ctx, tagE); err != nil {
 			dvid.Errorf("Error writing final set of tags of data %q: %v", err)
 		}
 	}
 	if numBlockE > 0 {
+		totBlockE += numBlockE
 		if err := d.storeLabels(batcher, ctx, blockE); err != nil {
 			dvid.Errorf("Error writing final set of label elements of data %q: %v", err)
 		}
@@ -1754,7 +1775,7 @@ func (d *Data) resync(ctx *datastore.VersionedCtx) {
 	d.Unlock()
 	d.StopUpdate()
 
-	timedLog.Infof("Completed asynchronous annotation reload of data %q", d.DataName())
+	timedLog.Infof("Completed asynchronous annotation %q reload of %d block and %d tag elements.", d.DataName(), totBlockE, totTagE)
 }
 
 func (d *Data) ReloadData(ctx *datastore.VersionedCtx) {

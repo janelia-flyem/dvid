@@ -20,12 +20,6 @@ const (
 
 // NewTKey returns the "key" key component.
 func NewTKey(key string) (storage.TKey, error) {
-	// Make sure the key has no embedded 0 values
-	for i := 0; i < len(key); i++ {
-		if key[i] == 0 {
-			return nil, fmt.Errorf("key cannot have embedded 0 value")
-		}
-	}
 	return storage.NewTKey(keyStandard, append([]byte(key), 0)), nil
 }
 

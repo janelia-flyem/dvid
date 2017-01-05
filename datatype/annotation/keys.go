@@ -28,11 +28,8 @@ const (
 
 // NewTagTKey returns a TKey for a given tag.
 func NewTagTKey(tag Tag) (storage.TKey, error) {
-	// Make sure the key has no embedded 0 values
-	for i := 0; i < len(tag); i++ {
-		if tag[i] == 0 {
-			return nil, fmt.Errorf("tag cannot have embedded 0 value")
-		}
+	if len(tag) == 0 {
+		return nil, fmt.Errorf("empty tag not permitted")
 	}
 	return storage.NewTKey(keyTag, append([]byte(tag), 0)), nil
 }
