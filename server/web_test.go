@@ -23,6 +23,37 @@ func testLog(t *testing.T, got, expect string) {
 	}
 }
 
+func TestNote(t *testing.T) {
+	datastore.OpenTest()
+	defer datastore.CloseTest()
+
+	uuid, _ := datastore.NewTestRepo()
+
+	// Post a note
+	note := "everything is awesome"
+	jsonStr := fmt.Sprintf(`{"note": %q}`, note)
+	payload := bytes.NewBufferString(jsonStr)
+	apiStr := fmt.Sprintf("%snode/%s/note", WebAPIPath, uuid)
+	TestHTTP(t, "POST", apiStr, payload)
+
+	// Verify it was saved.
+	r := TestHTTP(t, "GET", apiStr, nil)
+	jsonResp := make(map[string]string)
+	if err := json.Unmarshal(r, &jsonResp); err != nil {
+		t.Fatalf("Unable to unmarshal log response: %s\n", string(r))
+	}
+	if len(jsonResp) != 1 {
+		t.Errorf("Bad note return: %s\n", string(r))
+	}
+	data, ok := jsonResp["note"]
+	if !ok {
+		t.Fatalf("No 'note' data returned: %s\n", string(r))
+	}
+	if data != note {
+		t.Errorf("expected note to be %q, got: %s\n", note, data)
+	}
+}
+
 func TestLog(t *testing.T) {
 	datastore.OpenTest()
 	defer datastore.CloseTest()

@@ -202,5 +202,4 @@ func TestUUIDAssignment(t *testing.T) {
 	if uuid != myuuid {
 		t.Errorf("Error getting back correct UUID %s from %s\n", myuuid, uuid)
 	}
-
 }

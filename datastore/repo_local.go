@@ -1096,6 +1096,24 @@ func (m *repoManager) addToRepoLog(uuid dvid.UUID, msgs []string) error {
 	return r.save()
 }
 
+func (m *repoManager) getNodeNote(uuid dvid.UUID) (string, error) {
+	r, found := m.repos[uuid]
+	if !found {
+		return "", ErrInvalidUUID
+	}
+
+	v, err := m.versionFromUUID(uuid)
+	if err != nil {
+		return "", err
+	}
+
+	node, found := r.dag.nodes[v]
+	if !found {
+		return "", ErrInvalidVersion
+	}
+	return node.note, nil
+}
+
 func (m *repoManager) setNodeNote(uuid dvid.UUID, note string) error {
 	r, found := m.repos[uuid]
 	if !found {

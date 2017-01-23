@@ -283,6 +283,18 @@ Repo-Level REST endpoints
 Node-Level REST endpoints
 -------------------------
 
+  GET /api/node/{uuid}/note
+ POST /api/node/{uuid}/note
+
+	GETs or POSTs note data to the node (version) with given UUID.  The get or post body should 
+	be JSON of the following format: 
+
+	{ "note": "this is a description of what I did on this version" }
+
+	The log is a list of strings that will be appended to the node's log.  They should be
+	data usable by clients to reconstruct the types of operation done to that version
+	of data.
+
   GET /api/node/{uuid}/log
  POST /api/node/{uuid}/log
 
@@ -538,8 +550,9 @@ func initRoutes() {
 	mainMux.Handle("/api/node/:uuid/:action", nodeMux)
 	nodeMux.Use(repoRawSelector)
 	nodeMux.Use(nodeSelector)
-	nodeMux.Get("/api/node/:uuid/log", getNodeLogHandler)
+	nodeMux.Get("/api/node/:uuid/note", getNodeNoteHandler)
 	nodeMux.Post("/api/node/:uuid/note", postNodeNoteHandler)
+	nodeMux.Get("/api/node/:uuid/log", getNodeLogHandler)
 	nodeMux.Post("/api/node/:uuid/log", postNodeLogHandler)
 	nodeMux.Get("/api/node/:uuid/commit", repoCommitStateHandler)
 	nodeMux.Post("/api/node/:uuid/commit", repoCommitHandler)
@@ -1153,6 +1166,26 @@ func postRepoLogHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 		BadRequest(w, r, err)
 		return
 	}
+}
+
+func getNodeNoteHandler(c web.C, w http.ResponseWriter, r *http.Request) {
+	uuid := c.Env["uuid"].(dvid.UUID)
+	note, err := datastore.GetNodeNote(uuid)
+	if err != nil {
+		BadRequest(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	jsonStr, err := json.Marshal(struct {
+		Note string `json:"note"`
+	}{
+		note,
+	})
+	if err != nil {
+		BadRequest(w, r, err)
+		return
+	}
+	fmt.Fprintf(w, string(jsonStr))
 }
 
 func getNodeLogHandler(c web.C, w http.ResponseWriter, r *http.Request) {

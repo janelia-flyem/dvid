@@ -171,6 +171,13 @@ func AddToRepoLog(uuid dvid.UUID, msgs []string) error {
 	return manager.addToRepoLog(uuid, msgs)
 }
 
+func GetNodeNote(uuid dvid.UUID) (string, error) {
+	if manager == nil {
+		return "", ErrManagerNotInitialized
+	}
+	return manager.getNodeNote(uuid)
+}
+
 func SetNodeNote(uuid dvid.UUID, note string) error {
 	if manager == nil {
 		return ErrManagerNotInitialized
