@@ -172,6 +172,12 @@ GET <api URL>/node/<UUID>/<data name>/threshold/<T>/<index type>[?<options>]
 
 	In the above example, the query returns the labels ranked #10,001 to #10,003 in the sorted list, in
 	descending order of # PreSyn >= 10.
+
+POST <api URL>/node/<UUID>/<data name>/reload
+
+	Forces asynchornous denormalization from its synced annotations instance.  Can be 
+	used to initialize a newly added instance.  Note that the labelsz will be locked until
+	the denormalization is finished with a log message.
 `
 
 var (
@@ -309,11 +315,12 @@ func (d *Data) GetSyncedAnnotation() *annotation.Data {
 		if err == nil {
 			return source
 		}
+		dvid.Errorf("Got error accessing synced annotation %s: %v\n", dataUUID, err)
 	}
 	return nil
 }
 
-func (d *Data) inROI(e annotation.ElementPos) bool {
+func (d *Data) inROI(pos dvid.Point3d) bool {
 	if d.StaticROI == "" {
 		return true // no ROI so ROI == everything
 	}
@@ -335,7 +342,7 @@ func (d *Data) inROI(e annotation.ElementPos) bool {
 	if d.iROI == nil {
 		return false // ROI cannot be retrieved so use nothing; makes obvious failure since no ranks.
 	}
-	return d.iROI.VoxelWithin(e.Pos)
+	return d.iROI.VoxelWithin(pos)
 }
 
 // GetCountElementType returns a count of the given ElementType for a given label.
@@ -715,7 +722,92 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 		timedLog.Infof("HTTP %s: get %d labels for index type %s with threshold %d: %s", r.Method, num, i, t, r.URL)
 
+	case "reload":
+		// POST <api URL>/node/<UUID>/<data name>/reload
+		if action != "post" {
+			server.BadRequest(w, r, "Only POST action is available on 'reload' endpoint.")
+			return
+		}
+		d.ReloadData(ctx)
+
 	default:
 		server.BadAPIRequest(w, r, d)
 	}
+}
+
+func (d *Data) ReloadData(ctx *datastore.VersionedCtx) {
+	go d.resync(ctx)
+	dvid.Infof("Started recalculation of labelsz %q...\n", d.DataName())
+}
+
+// Get all labeled annotations from synced annotation instance and repopulate the labelsz.
+func (d *Data) resync(ctx *datastore.VersionedCtx) {
+	timedLog := dvid.NewTimeLog()
+
+	annot := d.GetSyncedAnnotation()
+	if annot == nil {
+		dvid.Errorf("Unable to get synced annotation.  Aborting reload of labelsz %q.\n", d.DataName())
+		return
+	}
+
+	store, err := d.GetOrderedKeyValueDB()
+	if err != nil {
+		dvid.Errorf("Labelsz %q had error initializing store: %v\n", d.DataName(), err)
+		return
+	}
+
+	d.StartUpdate()
+	d.Lock()
+
+	minTSLTKey := storage.MinTKey(keyTypeSizeLabel)
+	maxTSLTKey := storage.MaxTKey(keyTypeSizeLabel)
+	if err := store.DeleteRange(ctx, minTSLTKey, maxTSLTKey); err != nil {
+		dvid.Errorf("Unable to delete type-size-label denormalization for labelsz %q: %v\n", d.DataName(), err)
+		d.Unlock()
+		d.StopUpdate()
+		return
+	}
+
+	minTypeTKey := storage.MinTKey(keyTypeLabel)
+	maxTypeTKey := storage.MaxTKey(keyTypeLabel)
+	if err := store.DeleteRange(ctx, minTypeTKey, maxTypeTKey); err != nil {
+		dvid.Errorf("Unable to delete type-label denormalization for labelsz %q: %v\n", d.DataName(), err)
+		d.Unlock()
+		d.StopUpdate()
+		return
+	}
+
+	buf := make([]byte, 4)
+	var indexMap [AllSyn]uint32
+	var totLabels uint64
+	err = annot.ProcessLabelAnnotations(ctx.VersionID(), func(label uint64, elems annotation.ElementsNR) {
+		totLabels++
+		for i := IndexType(0); i < AllSyn; i++ {
+			indexMap[i] = 0
+		}
+		for _, elem := range elems {
+			if d.inROI(elem.Pos) {
+				indexMap[elementToIndexType(elem.Kind)]++
+			}
+		}
+		var allsyn uint32
+		for i := IndexType(0); i < AllSyn; i++ {
+			if indexMap[i] > 0 {
+				binary.LittleEndian.PutUint32(buf, indexMap[i])
+				store.Put(ctx, NewTypeLabelTKey(i, label), buf)
+				store.Put(ctx, NewTypeSizeLabelTKey(i, indexMap[i], label), nil)
+				allsyn += indexMap[i]
+			}
+		}
+		binary.LittleEndian.PutUint32(buf, allsyn)
+		store.Put(ctx, NewTypeLabelTKey(AllSyn, label), buf)
+		store.Put(ctx, NewTypeSizeLabelTKey(AllSyn, allsyn, label), nil)
+	})
+	if err != nil {
+		dvid.Errorf("Error in reload of labelsz %q: %v\n", d.DataName(), err)
+	}
+	d.Unlock()
+	d.StopUpdate()
+
+	timedLog.Infof("Completed labelsz %q reload of %d labels from annotation %q", d.DataName(), totLabels, annot.DataName())
 }

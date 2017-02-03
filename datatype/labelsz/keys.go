@@ -77,6 +77,22 @@ func StringToIndexType(s string) IndexType {
 	}
 }
 
+func elementToIndexType(e annotation.ElementType) (i IndexType) {
+	switch e {
+	case annotation.PostSyn:
+		i = PostSyn
+	case annotation.PreSyn:
+		i = PreSyn
+	case annotation.Gap:
+		i = Gap
+	case annotation.Note:
+		i = Note
+	default:
+		i = UnknownIndex
+	}
+	return
+}
+
 // can be used as map index and holds serialized (IndexType, Label)
 type indexedLabel string
 
@@ -88,18 +104,7 @@ func (il indexedLabel) String() string {
 }
 
 func toIndexedLabel(e annotation.ElementPos) indexedLabel {
-	var i IndexType
-	switch e.Kind {
-	case annotation.PostSyn:
-		i = PostSyn
-	case annotation.PreSyn:
-		i = PreSyn
-	case annotation.Gap:
-		i = Gap
-	case annotation.Note:
-		i = Note
-	}
-	return newIndexedLabel(i, e.Label)
+	return newIndexedLabel(elementToIndexType(e.Kind), e.Label)
 }
 
 func newIndexedLabel(i IndexType, label uint64) indexedLabel {

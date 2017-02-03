@@ -140,7 +140,7 @@ func (d *Data) getCounts(ctx *datastore.VersionedCtx, labels map[indexedLabel]in
 func (d *Data) modifyElements(ctx *datastore.VersionedCtx, delta annotation.DeltaModifyElements, batcher storage.KeyValueBatcher) {
 	mods := make(map[indexedLabel]int32)
 	for _, elemPos := range delta.Add {
-		if d.inROI(elemPos) {
+		if d.inROI(elemPos.Pos) {
 			i := toIndexedLabel(elemPos)
 			mods[i]++
 			if elemPos.Kind.IsSynaptic() {
@@ -150,7 +150,7 @@ func (d *Data) modifyElements(ctx *datastore.VersionedCtx, delta annotation.Delt
 		}
 	}
 	for _, elemPos := range delta.Del {
-		if d.inROI(elemPos) {
+		if d.inROI(elemPos.Pos) {
 			i := toIndexedLabel(elemPos)
 			mods[i]--
 			if elemPos.Kind.IsSynaptic() {

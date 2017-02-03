@@ -102,93 +102,13 @@ func getBytesRLE(t *testing.T, rles dvid.RLEs) *bytes.Buffer {
 	return buf
 }
 
-func TestLabels(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
-
-	// Create testbed volume and data instances
-	uuid, _ := datastore.NewTestRepo()
-	var config dvid.Config
-	server.CreateTestInstance(t, uuid, "labelblk", "labels", config)
-	server.CreateTestInstance(t, uuid, "labelvol", "bodies", config)
-
-	// Establish syncs
-	server.CreateTestSync(t, uuid, "labels", "bodies")
-	server.CreateTestSync(t, uuid, "bodies", "labels")
-
-	// Populate the labels, which should automatically populate the labelvol
-	_ = createLabelTestVolume(t, uuid, "labels")
-
-	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
-		t.Fatalf("Error blocking on sync of labels: %v\n", err)
-	}
-
-	// Add annotations syncing with "labels" instance.
-	server.CreateTestInstance(t, uuid, "annotation", "mysynapses", config)
-	server.CreateTestSync(t, uuid, "mysynapses", "labels,bodies")
-
-	// Create a ROI that will be used for our labelsz.
-	server.CreateTestInstance(t, uuid, "roi", "myroi", config)
-	roiRequest := fmt.Sprintf("%snode/%s/myroi/roi", server.WebAPIPath, uuid)
-	server.TestHTTP(t, "POST", roiRequest, getROIReader())
-
-	// Create labelsz instances synced to the above annotations.
-	server.CreateTestInstance(t, uuid, "labelsz", "noroi", config)
-	server.CreateTestSync(t, uuid, "noroi", "mysynapses")
-	config.Set("ROI", fmt.Sprintf("myroi,%s", uuid))
-	server.CreateTestInstance(t, uuid, "labelsz", "withroi", config)
-	server.CreateTestSync(t, uuid, "withroi", "mysynapses")
-
-	// PUT first batch of synapses.
-	var synapses annotation.Elements
-	var x, y, z int32
-	// This should put 31x31x31 (29,791) PostSyn in volume with fewer in label 200 than 300.
-	// There will be 15 along each dimension from 0 -> 63, then 16 from 64 -> 127.
-	// Label 100 will have 15 x 31 x 31 = 14415
-	// Label 200 will have 16 x 31 x 15 = 7440
-	// Label 300 will have 16 x 31 x 16 = 7936
-	for z = 4; z < 128; z += 4 {
-		for y = 4; y < 128; y += 4 {
-			for x = 4; x < 128; x += 4 {
-				e := annotation.Element{
-					annotation.ElementNR{
-						Pos:  dvid.Point3d{x, y, z},
-						Kind: annotation.PostSyn,
-					},
-					[]annotation.Relationship{},
-				}
-				synapses = append(synapses, e)
-			}
-		}
-	}
-	// This should put 32x32x32 (32,768) PreSyn in volume split 1/2, 1/4, 1/4
-	for z = 2; z < 128; z += 4 {
-		for y = 2; y < 128; y += 4 {
-			for x = 2; x < 128; x += 4 {
-				e := annotation.Element{
-					annotation.ElementNR{
-						Pos:  dvid.Point3d{x, y, z},
-						Kind: annotation.PreSyn,
-					},
-					[]annotation.Relationship{},
-				}
-				synapses = append(synapses, e)
-			}
-		}
-	}
-	testJSON, err := json.Marshal(synapses)
-	if err != nil {
-		t.Fatal(err)
-	}
-	url := fmt.Sprintf("%snode/%s/mysynapses/elements", server.WebAPIPath, uuid)
-	server.TestHTTP(t, "POST", url, strings.NewReader(string(testJSON)))
-
+func checkSequencing(t *testing.T, uuid dvid.UUID) {
 	// Check if we have correct sequencing for no ROI labelsz.
 	if err := datastore.BlockOnUpdating(uuid, "noroi"); err != nil {
 		t.Fatalf("Error blocking on sync of noroi labelsz: %v\n", err)
 	}
 
-	url = fmt.Sprintf("%snode/%s/noroi/top/3/PreSyn", server.WebAPIPath, uuid)
+	url := fmt.Sprintf("%snode/%s/noroi/top/3/PreSyn", server.WebAPIPath, uuid)
 	data := server.TestHTTP(t, "GET", url, nil)
 	if string(data) != `[{"Label":100,"Size":16384},{"Label":200,"Size":8192},{"Label":300,"Size":8192}]` {
 		t.Errorf("Got back incorrect PreSyn noroi ranking:\n%v\n", string(data))
@@ -524,4 +444,178 @@ func TestLabels(t *testing.T) {
 	if string(data) != `{"Label":100,"AllSyn":4095}` {
 		t.Errorf("Got back incorrect post-coarsesplit AllSyn withroi count of label 100:\n%v\n", string(data))
 	}
+}
+
+func TestLabels(t *testing.T) {
+	datastore.OpenTest()
+	defer datastore.CloseTest()
+
+	// Create testbed volume and data instances
+	uuid, _ := datastore.NewTestRepo()
+	var config dvid.Config
+	server.CreateTestInstance(t, uuid, "labelblk", "labels", config)
+	server.CreateTestInstance(t, uuid, "labelvol", "bodies", config)
+
+	// Establish syncs
+	server.CreateTestSync(t, uuid, "labels", "bodies")
+	server.CreateTestSync(t, uuid, "bodies", "labels")
+
+	// Populate the labels, which should automatically populate the labelvol
+	_ = createLabelTestVolume(t, uuid, "labels")
+
+	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
+		t.Fatalf("Error blocking on sync of labels: %v\n", err)
+	}
+
+	// Add annotations syncing with "labels" instance.
+	server.CreateTestInstance(t, uuid, "annotation", "mysynapses", config)
+	server.CreateTestSync(t, uuid, "mysynapses", "labels,bodies")
+
+	// Create a ROI that will be used for our labelsz.
+	server.CreateTestInstance(t, uuid, "roi", "myroi", config)
+	roiRequest := fmt.Sprintf("%snode/%s/myroi/roi", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", roiRequest, getROIReader())
+
+	// Create labelsz instances synced to the above annotations.
+	server.CreateTestInstance(t, uuid, "labelsz", "noroi", config)
+	server.CreateTestSync(t, uuid, "noroi", "mysynapses")
+	config.Set("ROI", fmt.Sprintf("myroi,%s", uuid))
+	server.CreateTestInstance(t, uuid, "labelsz", "withroi", config)
+	server.CreateTestSync(t, uuid, "withroi", "mysynapses")
+
+	// PUT first batch of synapses.
+	var synapses annotation.Elements
+	var x, y, z int32
+	// This should put 31x31x31 (29,791) PostSyn in volume with fewer in label 200 than 300.
+	// There will be 15 along each dimension from 0 -> 63, then 16 from 64 -> 127.
+	// Label 100 will have 15 x 31 x 31 = 14415
+	// Label 200 will have 16 x 31 x 15 = 7440
+	// Label 300 will have 16 x 31 x 16 = 7936
+	for z = 4; z < 128; z += 4 {
+		for y = 4; y < 128; y += 4 {
+			for x = 4; x < 128; x += 4 {
+				e := annotation.Element{
+					annotation.ElementNR{
+						Pos:  dvid.Point3d{x, y, z},
+						Kind: annotation.PostSyn,
+					},
+					[]annotation.Relationship{},
+				}
+				synapses = append(synapses, e)
+			}
+		}
+	}
+	// This should put 32x32x32 (32,768) PreSyn in volume split 1/2, 1/4, 1/4
+	for z = 2; z < 128; z += 4 {
+		for y = 2; y < 128; y += 4 {
+			for x = 2; x < 128; x += 4 {
+				e := annotation.Element{
+					annotation.ElementNR{
+						Pos:  dvid.Point3d{x, y, z},
+						Kind: annotation.PreSyn,
+					},
+					[]annotation.Relationship{},
+				}
+				synapses = append(synapses, e)
+			}
+		}
+	}
+	testJSON, err := json.Marshal(synapses)
+	if err != nil {
+		t.Fatal(err)
+	}
+	url := fmt.Sprintf("%snode/%s/mysynapses/elements", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", url, strings.NewReader(string(testJSON)))
+
+	checkSequencing(t, uuid)
+}
+
+func TestLabelsResync(t *testing.T) {
+	datastore.OpenTest()
+	defer datastore.CloseTest()
+
+	// Create testbed volume and data instances
+	uuid, _ := datastore.NewTestRepo()
+	var config dvid.Config
+	server.CreateTestInstance(t, uuid, "labelblk", "labels", config)
+	server.CreateTestInstance(t, uuid, "labelvol", "bodies", config)
+
+	// Establish syncs
+	server.CreateTestSync(t, uuid, "labels", "bodies")
+	server.CreateTestSync(t, uuid, "bodies", "labels")
+
+	// Populate the labels, which should automatically populate the labelvol
+	_ = createLabelTestVolume(t, uuid, "labels")
+
+	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
+		t.Fatalf("Error blocking on sync of labels: %v\n", err)
+	}
+
+	// Add annotations syncing with "labels" instance.
+	server.CreateTestInstance(t, uuid, "annotation", "mysynapses", config)
+	server.CreateTestSync(t, uuid, "mysynapses", "labels,bodies")
+
+	// Create a ROI that will be used for our labelsz.
+	server.CreateTestInstance(t, uuid, "roi", "myroi", config)
+	roiRequest := fmt.Sprintf("%snode/%s/myroi/roi", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", roiRequest, getROIReader())
+
+	// PUT first batch of synapses.
+	var synapses annotation.Elements
+	var x, y, z int32
+	// This should put 31x31x31 (29,791) PostSyn in volume with fewer in label 200 than 300.
+	// There will be 15 along each dimension from 0 -> 63, then 16 from 64 -> 127.
+	// Label 100 will have 15 x 31 x 31 = 14415
+	// Label 200 will have 16 x 31 x 15 = 7440
+	// Label 300 will have 16 x 31 x 16 = 7936
+	for z = 4; z < 128; z += 4 {
+		for y = 4; y < 128; y += 4 {
+			for x = 4; x < 128; x += 4 {
+				e := annotation.Element{
+					annotation.ElementNR{
+						Pos:  dvid.Point3d{x, y, z},
+						Kind: annotation.PostSyn,
+					},
+					[]annotation.Relationship{},
+				}
+				synapses = append(synapses, e)
+			}
+		}
+	}
+	// This should put 32x32x32 (32,768) PreSyn in volume split 1/2, 1/4, 1/4
+	for z = 2; z < 128; z += 4 {
+		for y = 2; y < 128; y += 4 {
+			for x = 2; x < 128; x += 4 {
+				e := annotation.Element{
+					annotation.ElementNR{
+						Pos:  dvid.Point3d{x, y, z},
+						Kind: annotation.PreSyn,
+					},
+					[]annotation.Relationship{},
+				}
+				synapses = append(synapses, e)
+			}
+		}
+	}
+	testJSON, err := json.Marshal(synapses)
+	if err != nil {
+		t.Fatal(err)
+	}
+	url := fmt.Sprintf("%snode/%s/mysynapses/elements", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", url, strings.NewReader(string(testJSON)))
+
+	// Create labelsz instances synced to the above annotations AFTER population so need resync.
+	server.CreateTestInstance(t, uuid, "labelsz", "noroi", config)
+	server.CreateTestSync(t, uuid, "noroi", "mysynapses")
+	config.Set("ROI", fmt.Sprintf("myroi,%s", uuid))
+	server.CreateTestInstance(t, uuid, "labelsz", "withroi", config)
+	server.CreateTestSync(t, uuid, "withroi", "mysynapses")
+
+	// Do the reload.
+	url = fmt.Sprintf("%snode/%s/noroi/reload", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", url, nil)
+	url = fmt.Sprintf("%snode/%s/withroi/reload", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", url, nil)
+
+	checkSequencing(t, uuid)
 }

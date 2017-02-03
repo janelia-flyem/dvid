@@ -1336,6 +1336,44 @@ func (d *Data) storeTagElements(ctx *datastore.VersionedCtx, batch storage.Batch
 	return nil
 }
 
+// ProcessLabelAnnotations will pass all annotations, label by label, to the given function.
+func (d *Data) ProcessLabelAnnotations(v dvid.VersionID, f func(label uint64, elems ElementsNR)) error {
+	minTKey := storage.MinTKey(keyLabel)
+	maxTKey := storage.MaxTKey(keyLabel)
+
+	store, err := d.GetOrderedKeyValueDB()
+	if err != nil {
+		return fmt.Errorf("Annotation %q had error initializing store: %v\n", d.DataName(), err)
+	}
+	ctx := datastore.NewVersionedCtx(d, v)
+	err = store.ProcessRange(ctx, minTKey, maxTKey, &storage.ChunkOp{}, func(c *storage.Chunk) error {
+		if c == nil {
+			return fmt.Errorf("received nil chunk in reload for data %q", d.DataName())
+		}
+		if c.V == nil {
+			return nil
+		}
+		label, err := DecodeLabelTKey(c.K)
+		if err != nil {
+			return fmt.Errorf("couldn't decode label key %v for data %q", c.K, d.DataName())
+		}
+
+		var elems ElementsNR
+		if err := json.Unmarshal(c.V, &elems); err != nil {
+			return fmt.Errorf("couldn't unmarshal elements for label %d of data %q", label, d.DataName())
+		}
+		if len(elems) == 0 {
+			return nil
+		}
+		f(label, elems)
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("Unable to get label-based annotations for data %q: %v\n", d.DataName(), err)
+	}
+	return nil
+}
+
 // GetLabelJSON returns JSON for synapse elements in a given label.
 func (d *Data) GetLabelJSON(ctx *datastore.VersionedCtx, label uint64, addRels bool) ([]byte, error) {
 	d.RLock()
