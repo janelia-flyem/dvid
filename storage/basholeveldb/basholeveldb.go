@@ -1054,9 +1054,7 @@ func (db *LevelDB) DeleteRange(ctx storage.Context, kStart, kEnd storage.TKey) e
 	// Consume the key-value pairs.
 	numKV := 0
 	for {
-		dvid.Infof("Waiting for result...\n")
 		result := <-ch
-		dvid.Infof("Got result: %v\n", result)
 		if result.KeyValue == nil {
 			break
 		}
