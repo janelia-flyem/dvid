@@ -1735,8 +1735,9 @@ func (s Span) Includes(block ChunkPoint3d) bool {
 
 type Spans []Span
 
-// MarshalBinary returns a binary serialization of the RLEs for the
-// spans with the first 4 bytes corresponding to the number of spans.
+// MarshalBinary implements the encoding.BinaryMarshaler interface.
+// It returns a binary serialization of the RLEs for the spans with the
+// first 4 bytes corresponding to the number of spans.
 func (s Spans) MarshalBinary() ([]byte, error) {
 	buf := new(bytes.Buffer)
 	if err := binary.Write(buf, binary.LittleEndian, uint32(len(s))); err != nil {
@@ -1761,6 +1762,7 @@ func (s Spans) MarshalBinary() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// UnmarshalBinary implements the encoding.BinaryUnmarshaler interface
 func (s *Spans) UnmarshalBinary(b []byte) error {
 	buf := bytes.NewBuffer(b)
 	var numSpans uint32

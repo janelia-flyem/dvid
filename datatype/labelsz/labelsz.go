@@ -83,6 +83,23 @@ POST <api URL>/node/<UUID>/<data name>/info
     data name     Name of labelsz data.
 
 
+ POST /api/repo/{uuid}/instance
+
+	Creates a new instance of the given data type.  Expects configuration data in JSON
+	as the body of the POST.  Configuration data is a JSON object with each property
+	corresponding to a configuration keyword for the particular data type.  
+
+	JSON name/value pairs:
+
+	REQUIRED "typename"   Should equal "labelsz"
+	REQUIRED "dataname"   Name of the new instance
+	OPTIONAL "versioned"  If "false" or "0", the data is unversioned and acts as if 
+	                      all UUIDs within a repo become the root repo UUID.  (True by default.)
+	
+    OPTIONAL "ROI"        Value must be in "<roiname>,<uuid>" format where <roiname> is the name of the
+				   		  static ROI that defines the extent of tracking and <uuid> is the immutable
+				   		  version used for this labelsz.
+							 
 POST <api URL>/node/<UUID>/<data name>/sync?<options>
 
     Establishes data instances for which the label sizes are computed.  Expects JSON to be POSTed

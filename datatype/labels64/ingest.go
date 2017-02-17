@@ -1,14 +1,17 @@
 /*
-	Functions that support ingestion of data into persistent image blocks.
+	Functions that support ingestion of data into persistent label blocks.
+
+	TODO: DRY this up compared to imageblk ingest once that gets converted to more general nD.
 */
 
-package imageblk
+package labels64
 
 import (
 	"fmt"
 	"sync"
 
 	"github.com/janelia-flyem/dvid/datastore"
+	"github.com/janelia-flyem/dvid/datatype/imageblk"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
@@ -124,7 +127,7 @@ func (d *Data) loadXYImages(load *bulkLoadInfo) error {
 
 		// Transfer data between external<->internal blocks asynchronously
 		layerTransferred[curBlocks].Add(1)
-		go func(vox *Voxels, curBlocks int) {
+		go func(vox *imageblk.Voxels, curBlocks int) {
 			// Track point extents
 			if d.Extents().AdjustPoints(vox.StartPoint(), vox.EndPoint()) {
 				load.extentChanged.SetTrue()
@@ -189,7 +192,7 @@ func (d *Data) loadXYImages(load *bulkLoadInfo) error {
 }
 
 // Loads a XY oriented image at given offset, returning Voxels.
-func (d *Data) loadXYImage(filename string, offset dvid.Point) (*Voxels, error) {
+func (d *Data) loadXYImage(filename string, offset dvid.Point) (*imageblk.Voxels, error) {
 	img, _, err := dvid.GoImageFromFile(filename)
 	if err != nil {
 		return nil, err
@@ -208,48 +211,4 @@ func (d *Data) loadXYImage(filename string, offset dvid.Point) (*Voxels, error) 
 
 func (d *Data) loadHDF(load *bulkLoadInfo) error {
 	return fmt.Errorf("DVID currently does not support HDF5 image import.")
-	// TODO: Use a DVID-specific HDF5 loader that works off HDF5 C library.
-	/*
-			for _, filename := range load.filenames {
-				f, err := hdf5.OpenFile(filename, hdf5.F_ACC_RDONLY)
-				if err != nil {
-					return err
-				}
-				defer f.Close()
-
-				fmt.Printf("Opened HDF5 file: %s\n", filename)
-				numobj, err := f.NumObjects()
-				fmt.Printf("Number of objects: %d\n", numobj)
-				for n := uint(0); n < numobj; n++ {
-					name, err := f.ObjectNameByIndex(n)
-					if err != nil {
-						return err
-					}
-					fmt.Printf("Object name %d: %s\n", n, name)
-					repo, err := f.OpenRepo(name)
-					if err != nil {
-						return err
-					}
-					dtype, err := repo.Datatype()
-					if err != nil {
-						return err
-					}
-					fmt.Printf("Type size: %d\n", dtype.Size())
-					dataspace := repo.Space()
-					dims, maxdims, err := dataspace.SimpleExtentDims()
-					if err != nil {
-						return err
-					}
-					fmt.Printf("Dims: %s\n", dims)
-					fmt.Printf("Maxdims: %s\n", maxdims)
-					data := make([]uint8, dims[0]*dims[1]*dims[2])
-					err = repo.Read(&data)
-					if err != nil {
-						return err
-					}
-					fmt.Printf("Read %d bytes\n", len(data))
-				}
-			}
-		return nil
-	*/
 }

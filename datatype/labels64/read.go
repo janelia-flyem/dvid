@@ -1,4 +1,4 @@
-package labelblk
+package labels64
 
 import (
 	"bytes"
@@ -19,7 +19,7 @@ import (
 // for the data corresponding to the given Block.
 func (v *Labels) ComputeTransform(block *storage.TKeyValue, blockSize dvid.Point) (blockBeg, dataBeg, dataEnd dvid.Point, err error) {
 	var ptIndex *dvid.IndexZYX
-	ptIndex, err = DecodeTKey(block.K)
+	ptIndex, err = DecodeBlockTKey(block.K)
 	if err != nil {
 		return
 	}
@@ -106,8 +106,8 @@ func (d *Data) GetLabels(v dvid.VersionID, vox *Labels, r *imageblk.ROI) error {
 		if err != nil {
 			return err
 		}
-		begTKey := NewTKey(indexBeg)
-		endTKey := NewTKey(indexEnd)
+		begTKey := NewBlockTKey(indexBeg)
+		endTKey := NewBlockTKey(indexEnd)
 
 		// Get set of blocks in ROI if ROI provided
 		var chunkOp *storage.ChunkOp
@@ -167,8 +167,8 @@ func (d *Data) GetBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int) ([
 	end := start
 	end[0] += int32(span - 1)
 	indexEnd := dvid.IndexZYX(end)
-	begTKey := NewTKey(&indexBeg)
-	endTKey := NewTKey(&indexEnd)
+	begTKey := NewBlockTKey(&indexBeg)
+	endTKey := NewBlockTKey(&indexEnd)
 
 	ctx := datastore.NewVersionedCtx(d, v)
 
@@ -251,7 +251,7 @@ func (d *Data) readChunk(chunk *storage.Chunk) {
 
 	// If there's an ROI, if outside ROI, use blank buffer.
 	var zeroOut bool
-	indexZYX, err := DecodeTKey(chunk.K)
+	indexZYX, err := DecodeBlockTKey(chunk.K)
 	if err != nil {
 		dvid.Errorf("Error processing voxel block: %s\n", err)
 		return

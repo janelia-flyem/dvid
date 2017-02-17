@@ -74,16 +74,24 @@ var (
 	zhX, zhY, zhZ [3][3][3]float64
 )
 
-// Bounds holds optional bounds in X, Y, and Z.
+// Bounding provides two levels of optional bounds (voxel and block) as well as
+// whether bounds must be exact to voxel level.
+type Bounds struct {
+	Voxel *OptionalBounds
+	Block *OptionalBounds
+	Exact bool // If false, just screen on blocks.
+}
+
+// OptionalBounds holds optional bounds in X, Y, and Z.
 // This differs from Extents in allowing optional min
 // and max bounds along each dimension.
-type Bounds struct {
+type OptionalBounds struct {
 	minx, maxx, miny, maxy, minz, maxz *int32
 }
 
-// BoundsFromQueryString returns Bounds from a set of query strings.
-func BoundsFromQueryString(r *http.Request) (*Bounds, error) {
-	bounds := new(Bounds)
+// OptionalBoundsFromQueryString returns OptionalBounds from a set of query strings.
+func OptionalBoundsFromQueryString(r *http.Request) (*OptionalBounds, error) {
+	bounds := new(OptionalBounds)
 	queryStrings := r.URL.Query()
 
 	var minx, maxx, miny, maxy, minz, maxz int32
@@ -151,8 +159,8 @@ func nilOrInt32(p *int32) string {
 	return fmt.Sprintf("%d", *p)
 }
 
-func (b *Bounds) String() string {
-	text := "Bounds{\n"
+func (b *OptionalBounds) String() string {
+	text := "OptionalBounds{\n"
 	text += "  minx: " + nilOrInt32(b.minx) + "\n"
 	text += "  maxx: " + nilOrInt32(b.maxx) + "\n"
 	text += "  miny: " + nilOrInt32(b.miny) + "\n"
@@ -163,67 +171,67 @@ func (b *Bounds) String() string {
 	return text
 }
 
-func (b *Bounds) SetMinX(x int32) {
+func (b *OptionalBounds) SetMinX(x int32) {
 	b.minx = &x
 }
 
-func (b *Bounds) SetMaxX(x int32) {
+func (b *OptionalBounds) SetMaxX(x int32) {
 	b.maxx = &x
 }
 
-func (b *Bounds) SetMinY(y int32) {
+func (b *OptionalBounds) SetMinY(y int32) {
 	b.miny = &y
 }
 
-func (b *Bounds) SetMaxY(y int32) {
+func (b *OptionalBounds) SetMaxY(y int32) {
 	b.maxy = &y
 }
 
-func (b *Bounds) SetMinZ(z int32) {
+func (b *OptionalBounds) SetMinZ(z int32) {
 	b.minz = &z
 }
 
-func (b *Bounds) SetMaxZ(z int32) {
+func (b *OptionalBounds) SetMaxZ(z int32) {
 	b.maxz = &z
 }
 
-func (b *Bounds) MinX() (x int32, ok bool) {
-	if b.minx == nil {
+func (b *OptionalBounds) MinX() (x int32, ok bool) {
+	if b == nil || b.minx == nil {
 		return
 	}
 	return *(b.minx), true
 }
 
-func (b *Bounds) MaxX() (x int32, ok bool) {
-	if b.maxx == nil {
+func (b *OptionalBounds) MaxX() (x int32, ok bool) {
+	if b == nil || b.maxx == nil {
 		return
 	}
 	return *(b.maxx), true
 }
 
-func (b *Bounds) MinY() (y int32, ok bool) {
-	if b.miny == nil {
+func (b *OptionalBounds) MinY() (y int32, ok bool) {
+	if b == nil || b.miny == nil {
 		return
 	}
 	return *(b.miny), true
 }
 
-func (b *Bounds) MaxY() (y int32, ok bool) {
-	if b.maxy == nil {
+func (b *OptionalBounds) MaxY() (y int32, ok bool) {
+	if b == nil || b.maxy == nil {
 		return
 	}
 	return *(b.maxy), true
 }
 
-func (b *Bounds) MinZ() (z int32, ok bool) {
-	if b.minz == nil {
+func (b *OptionalBounds) MinZ() (z int32, ok bool) {
+	if b == nil || b.minz == nil {
 		return
 	}
 	return *(b.minz), true
 }
 
-func (b *Bounds) MaxZ() (z int32, ok bool) {
-	if b.maxz == nil {
+func (b *OptionalBounds) MaxZ() (z int32, ok bool) {
+	if b == nil || b.maxz == nil {
 		return
 	}
 	return *(b.maxz), true
@@ -231,8 +239,11 @@ func (b *Bounds) MaxZ() (z int32, ok bool) {
 
 // Divide returns a new bounds that has all optionally set
 // bounds divided by the given point.
-func (b *Bounds) Divide(pt Point3d) *Bounds {
-	newB := new(Bounds)
+func (b *OptionalBounds) Divide(pt Point3d) *OptionalBounds {
+	if b == nil {
+		return nil
+	}
+	newB := new(OptionalBounds)
 	if b.minx != nil {
 		newB.minx = new(int32)
 		*(newB.minx) = *(b.minx) / pt[0]
@@ -260,26 +271,37 @@ func (b *Bounds) Divide(pt Point3d) *Bounds {
 	return newB
 }
 
-func (b *Bounds) BoundedX() bool {
-	return b.minx != nil || b.maxx != nil
+// BoundedX returns true if there is some bound set in the X dimension
+func (b *OptionalBounds) BoundedX() bool {
+	return b != nil && (b.minx != nil || b.maxx != nil)
 }
 
-func (b *Bounds) BoundedY() bool {
-	return b.miny != nil || b.maxy != nil
+// BoundedY returns true if there is some bound set in the Y dimension
+func (b *OptionalBounds) BoundedY() bool {
+	return b != nil && (b.miny != nil || b.maxy != nil)
 }
 
-func (b *Bounds) BoundedZ() bool {
-	return b.minz != nil || b.maxz != nil
+// BoundedZ returns true if there is some bound set in the Z dimension
+func (b *OptionalBounds) BoundedZ() bool {
+	return b != nil && (b.minz != nil || b.maxz != nil)
 }
 
-func (b *Bounds) IsSet() bool {
+// IsSet returns true if at least one bound in some dimension has been set.
+func (b *OptionalBounds) IsSet() bool {
+	if b == nil {
+		return false
+	}
 	if b.minx != nil || b.maxx != nil || b.miny != nil || b.maxy != nil || b.minz != nil || b.maxz != nil {
 		return true
 	}
 	return false
 }
 
-func (b *Bounds) OutsideX(x int32) bool {
+// OutsideX returns true if the given X is outside a set Y bound.
+func (b *OptionalBounds) OutsideX(x int32) bool {
+	if b == nil {
+		return false
+	}
 	if b.minx != nil && x < *(b.minx) {
 		return true
 	}
@@ -289,7 +311,11 @@ func (b *Bounds) OutsideX(x int32) bool {
 	return false
 }
 
-func (b *Bounds) OutsideY(y int32) bool {
+// OutsideY returns true if the given Y is outside a set Y bound.
+func (b *OptionalBounds) OutsideY(y int32) bool {
+	if b == nil {
+		return false
+	}
 	if b.miny != nil && y < *(b.miny) {
 		return true
 	}
@@ -299,7 +325,11 @@ func (b *Bounds) OutsideY(y int32) bool {
 	return false
 }
 
-func (b *Bounds) OutsideZ(z int32) bool {
+// OutsideZ returns true if the given Z is outside a set Z bound.
+func (b *OptionalBounds) OutsideZ(z int32) bool {
+	if b == nil {
+		return false
+	}
 	if b.minz != nil && z < *(b.minz) {
 		return true
 	}
@@ -320,6 +350,31 @@ func NewRLE(start Point3d, length int32) RLE {
 	return RLE{start, length}
 }
 
+// MarshalBinary fulfills the encoding.BinaryMarshaler interface.
+func (rle RLE) MarshalBinary() ([]byte, error) {
+	buf := make([]byte, 16)
+	binary.LittleEndian.PutUint32(buf[0:4], uint32(rle.start[0]))
+	binary.LittleEndian.PutUint32(buf[4:8], uint32(rle.start[1]))
+	binary.LittleEndian.PutUint32(buf[8:12], uint32(rle.start[2]))
+	binary.LittleEndian.PutUint32(buf[12:16], uint32(rle.length))
+	return buf, nil
+}
+
+// UnmarshalBinary fulfills the encoding.BinaryUnmarshaler interface.
+func (rle *RLE) UnmarshalBinary(b []byte) error {
+	lenEncoding := len(b)
+	if lenEncoding != 16 {
+		return fmt.Errorf("RLE encoding # bytes is not 16: %d", len(b))
+	}
+	x := int32(binary.LittleEndian.Uint32(b[0:4]))
+	y := int32(binary.LittleEndian.Uint32(b[4:8]))
+	z := int32(binary.LittleEndian.Uint32(b[8:12]))
+	length := int32(binary.LittleEndian.Uint32(b[12:16]))
+	rle.start = Point3d{x, y, z}
+	rle.length = length
+	return nil
+}
+
 func (rle RLE) StartPt() Point3d {
 	return rle.start
 }
@@ -329,6 +384,17 @@ func (rle RLE) Length() int32 {
 
 func (rle RLE) String() string {
 	return fmt.Sprintf("dvid.NewRLE{%s, %d}", rle.start, rle.length)
+}
+
+func (rle RLE) GetRangeIZYXString() (beg, end IZYXString) {
+	var izyx IndexZYX
+	izyx[0] = rle.start[0]
+	izyx[1] = rle.start[1]
+	izyx[2] = rle.start[2]
+	beg = izyx.ToIZYXString()
+	izyx[0] += rle.length - 1
+	end = izyx.ToIZYXString()
+	return
 }
 
 func (rle RLE) Within(pt Point3d) bool {
@@ -596,8 +662,12 @@ func (rles RLEs) Partition(blockSize Point3d) (BlockRLEs, error) {
 
 // FitToBounds returns a copy that has been adjusted to fit
 // within the given optional bounds.
-func (rles RLEs) FitToBounds(bounds *Bounds) RLEs {
+func (rles RLEs) FitToBounds(bounds *OptionalBounds) RLEs {
 	newRLEs := make(RLEs, 0, len(rles))
+	if bounds == nil {
+		copy(newRLEs, rles)
+		return newRLEs
+	}
 	for _, rle := range rles {
 		if bounds.minz != nil && rle.start[2] < *(bounds.minz) {
 			continue
@@ -788,11 +858,230 @@ func (brles BlockRLEs) NumVoxels() uint64 {
 	return size
 }
 
+// IZYXSlice is a typically sorted slice of IZYXString
 type IZYXSlice []IZYXString
 
 func (i IZYXSlice) Len() int           { return len(i) }
 func (i IZYXSlice) Swap(a, b int)      { i[a], i[b] = i[b], i[a] }
 func (i IZYXSlice) Less(a, b int) bool { return i[a] < i[b] }
+
+// MarshalBinary implements the encoding.BinaryMarshaler interface
+func (i IZYXSlice) MarshalBinary() ([]byte, error) {
+	buf := make([]byte, len(i)*12)
+	off := 0
+	for _, izyxStr := range i {
+		copy(buf[off:off+12], string(izyxStr))
+		off += 12
+	}
+	return buf, nil
+}
+
+// UnmarshalBinary implements the encoding.BinaryUnmarshaler interface.
+func (i *IZYXSlice) UnmarshalBinary(b []byte) error {
+	// TODO -- the serialization is the raw data minus the slice wrapper
+	// yet the deserialization requires a lot of copy.  Is there a way to
+	// simply supply the slice wrapper (ptr, len, cap) where ptr goes to
+	// the serialization?
+	sz := len(b)
+	if sz == 0 {
+		i = &IZYXSlice{}
+		return nil
+	}
+	if sz%12 != 0 {
+		return fmt.Errorf("cannot unmarshal IZYXSlice of %d bytes", sz)
+	}
+	n := sz / 12
+	s := make(IZYXSlice, n)
+	off := 0
+	for j := 0; j < n; j++ {
+		s[j] = IZYXString(b[off : off+12])
+		off += 12
+	}
+	i = &s
+	return nil
+}
+
+// Merge merges one sorted IZYXSlice into another.  Both IZYXSlices should be sorted
+// before use of this function and the result is a copy not a reference.
+func (i IZYXSlice) Merge(i2 IZYXSlice) IZYXSlice {
+	len1 := len(i)
+	len2 := len(i2)
+	if len1 == 0 {
+		dup := make(IZYXSlice, len2)
+		copy(dup, i2)
+		return dup
+	}
+	if len2 == 0 {
+		dup := make(IZYXSlice, len1)
+		copy(dup, i)
+		return dup
+	}
+	out := make(IZYXSlice, len1+len2)
+	n := 0
+	p1 := 0
+	p2 := 0
+	for {
+		izyx1 := i[p1]
+		izyx2 := i2[p2]
+		switch {
+		case izyx1 < izyx2:
+			out[n] = izyx1
+			n++
+			p1++
+			if p1 == len1 {
+				copy(out[n:], i2[p2:])
+				n += len2 - p2
+				break
+			}
+		case izyx2 < izyx1:
+			out[n] = izyx2
+			n++
+			p2++
+			if p2 == len2 {
+				copy(out[n:], i[p1:])
+				n += len1 - p1
+				break
+			}
+		case izyx1 == izyx2:
+			out[n] = izyx1
+			n++
+			p1++
+			p2++
+			if p1 == len1 && p2 == len2 {
+				break
+			}
+			stop := false
+			if p1 == len1 {
+				copy(out[n:], i2[p2:])
+				n += len2 - p2
+				stop = true
+			}
+			if p2 == len2 {
+				copy(out[n:], i[p1:])
+				n += len1 - p1
+				stop = true
+			}
+			if stop {
+				break
+			}
+		}
+	}
+	return out[:n]
+}
+
+// Split removes the IZYXs from the receiver and returns the remainder as a copy.
+// This assumes both deleted blocks and receiver are sorted and the split IZYX
+// are a subset of the receiver, else an error is returned.
+func (i IZYXSlice) Split(rm IZYXSlice) (IZYXSlice, error) {
+	if len(i) == 0 {
+		return IZYXSlice{}, nil
+	}
+	if len(rm) == 0 {
+		dup := make(IZYXSlice, len(i))
+		copy(dup, i)
+		return dup, nil
+	}
+	out := make(IZYXSlice, len(i))
+	outPos := 0
+	rmPos := 0
+	r := rm[rmPos]
+	for n, izyx := range i {
+		if r != izyx {
+			out[outPos] = izyx
+			outPos++
+		} else {
+			rmPos++
+			if rmPos >= len(rm) {
+				n++
+				remain := len(i) - n
+				if remain > 0 {
+					outPos += remain
+					copy(out[outPos:], i[n+1:])
+				}
+				break
+			}
+			r = rm[rmPos]
+		}
+	}
+	if rmPos < len(rm) {
+		return nil, fmt.Errorf("Split has coordinates not in original: %s", rm[rmPos:])
+	}
+	return out[:outPos], nil
+}
+
+// WriteSerializedRLEs writes serialized RLEs and returns the number of spans.
+// Note this function assumes the receiver is already sorted.
+func (i IZYXSlice) WriteSerializedRLEs(w io.Writer) (spans uint32, err error) {
+	var length int32
+	var startPt, chunkPt ChunkPoint3d
+	for _, izyx := range i {
+		chunkPt, err = izyx.ToChunkPoint3d()
+		if err != nil {
+			return
+		}
+		if startPt[2] != chunkPt[2] || startPt[1] != chunkPt[1] || startPt[0]+1 != chunkPt[0] {
+			if length > 0 {
+				binary.Write(w, binary.LittleEndian, startPt[0])
+				binary.Write(w, binary.LittleEndian, startPt[1])
+				binary.Write(w, binary.LittleEndian, startPt[2])
+				binary.Write(w, binary.LittleEndian, length)
+				spans++
+			}
+			length = 1
+			startPt = chunkPt
+		} else {
+			length++
+		}
+	}
+	if length > 0 {
+		binary.Write(w, binary.LittleEndian, startPt[0])
+		binary.Write(w, binary.LittleEndian, startPt[1])
+		binary.Write(w, binary.LittleEndian, startPt[2])
+		binary.Write(w, binary.LittleEndian, length)
+		spans++
+	}
+	return
+}
+
+// FitToBounds returns a copy IZYXSlice that has been adjusted to fit
+// within the given optional block bounds.  The receiver IZYXSlice is
+// assumed to be sorted.
+func (i IZYXSlice) FitToBounds(bounds *OptionalBounds) (IZYXSlice, error) {
+	cropped := make(IZYXSlice, len(i))
+	if bounds == nil {
+		copy(cropped, i)
+		return cropped, nil
+	}
+	num := 0
+	for _, izyxStr := range i {
+		blockPt, err := izyxStr.ToChunkPoint3d()
+		if err != nil {
+			return nil, fmt.Errorf("unable to convert IZYXString to chunk point: %v", err)
+		}
+		if bounds.minz != nil && blockPt[2] < *(bounds.minz) {
+			continue
+		}
+		if bounds.maxz != nil && blockPt[2] > *(bounds.maxz) {
+			break
+		}
+		if bounds.miny != nil && blockPt[1] < *(bounds.miny) {
+			continue
+		}
+		if bounds.maxy != nil && blockPt[1] > *(bounds.maxy) {
+			continue
+		}
+		if bounds.minx != nil && blockPt[0] < *(bounds.minx) {
+			continue
+		}
+		if bounds.maxx != nil && blockPt[0] > *(bounds.maxx) {
+			continue
+		}
+		cropped[num] = izyxStr
+		num++
+	}
+	cropped = cropped[0:num]
+	return cropped, nil
+}
 
 // SortedKeys returns a slice of IZYXString sorted in ascending order.
 func (brles BlockRLEs) SortedKeys() IZYXSlice {

@@ -1,20 +1,13 @@
-// Tests sparsevol variants and merge/split.
-// Test body data is at end of file.
-// TODO: Remove hardwiring of tests to assume block size = 32, including data.
-
-package labelvol
+package labels64
 
 import (
 	"bytes"
 	"compress/gzip"
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"reflect"
-	"sync"
 	"testing"
 
 	"github.com/janelia-flyem/dvid/datastore"
@@ -23,32 +16,6 @@ import (
 
 	lz4 "github.com/janelia-flyem/go/golz4"
 )
-
-var (
-	labelsT   datastore.TypeService
-	labelvolT datastore.TypeService
-	testMu    sync.Mutex
-)
-
-// Sets package-level testRepo and TestVersionID
-func initTestRepo() (dvid.UUID, dvid.VersionID) {
-	testMu.Lock()
-	defer testMu.Unlock()
-	var err error
-	if labelsT == nil {
-		labelsT, err = datastore.TypeServiceByName("labelblk")
-		if err != nil {
-			log.Fatalf("Can't get labelblk type: %v\n", err)
-		}
-	}
-	if labelvolT == nil {
-		labelvolT, err = datastore.TypeServiceByName("labelvol")
-		if err != nil {
-			log.Fatalf("Can't get labelvol type: %v\n", err)
-		}
-	}
-	return datastore.NewTestRepo()
-}
 
 // A single label block within the volume
 type testBody struct {
@@ -112,29 +79,31 @@ func (b testBody) checkSparseVol(t *testing.T, encoding []byte, bounds dvid.Opti
 	gotNorm := spans.Normalize()
 	expectNorm := expected.Normalize()
 	if !reflect.DeepEqual(gotNorm, expectNorm) {
-		for _, got := range gotNorm {
-			bad := true
-			for _, expect := range expectNorm {
-				if reflect.DeepEqual(got, expect) {
-					bad = false
-				}
-			}
-			if bad {
-				fmt.Printf("Got unexpected span: %s\n", got)
-			}
-		}
-		for _, expect := range expectNorm {
-			bad := true
+		/*
 			for _, got := range gotNorm {
-				if reflect.DeepEqual(got, expect) {
-					bad = false
+				bad := true
+				for _, expect := range expectNorm {
+					if reflect.DeepEqual(got, expect) {
+						bad = false
+					}
+				}
+				if bad {
+					fmt.Printf("Got unexpected span: %s\n", got)
 				}
 			}
-			if bad {
-				fmt.Printf("Never got expected span: %s\n", expect)
+			for _, expect := range expectNorm {
+				bad := true
+				for _, got := range gotNorm {
+					if reflect.DeepEqual(got, expect) {
+						bad = false
+					}
+				}
+				if bad {
+					fmt.Printf("Never got expected span: %s\n", expect)
+				}
 			}
-		}
-		t.Errorf("Expected spans for label %d:\n%s\nGot spans:\n%s\nAfter Norm:%s\n", b.label, expectNorm, spans, gotNorm)
+		*/
+		t.Fatalf("Expected spans for label %d:\n%s\nGot spans:\n%s\nAfter Norm:%s\n", b.label, expectNorm, spans, gotNorm)
 	}
 }
 
@@ -182,19 +151,6 @@ func checkSpans(t *testing.T, encoding []byte, minx, maxx int32) {
 	}
 }
 
-// A slice of bytes representing 3d label volume
-type testVolume struct {
-	data []byte
-	size dvid.Point3d
-}
-
-func newTestVolume(nx, ny, nz int32) *testVolume {
-	return &testVolume{
-		data: make([]byte, nx*ny*nz*8),
-		size: dvid.Point3d{nx, ny, nz},
-	}
-}
-
 // Sets voxels in body to given label.
 func (v *testVolume) addBody(body testBody, label uint64) {
 	nx := v.size[0]
@@ -206,72 +162,6 @@ func (v *testVolume) addBody(body testBody, label uint64) {
 			binary.LittleEndian.PutUint64(v.data[i:i+8], label)
 		}
 	}
-}
-
-// Add a label to a subvolume.
-func (v *testVolume) addSubvol(origin, size dvid.Point3d, label uint64) {
-	nx := v.size[0]
-	nxy := nx * v.size[1]
-	spanBytes := size[0] * 8
-	buf := make([]byte, spanBytes)
-	for x := int32(0); x < size[0]; x++ {
-		binary.LittleEndian.PutUint64(buf[x*8:x*8+8], label)
-	}
-	for z := origin[2]; z < origin[2]+size[2]; z++ {
-		for y := origin[1]; y < origin[1]+size[1]; y++ {
-			i := (z*nxy + y*nx + origin[0]) * 8
-			copy(v.data[i:i+spanBytes], buf)
-		}
-	}
-}
-
-// Put label data into given data instance.
-func (v *testVolume) put(t *testing.T, uuid dvid.UUID, name string) {
-	apiStr := fmt.Sprintf("%snode/%s/%s/raw/0_1_2/%d_%d_%d/0_0_0", server.WebAPIPath,
-		uuid, name, v.size[0], v.size[1], v.size[2])
-	server.TestHTTP(t, "POST", apiStr, bytes.NewBuffer(v.data))
-}
-
-func (v *testVolume) putMutable(t *testing.T, uuid dvid.UUID, name string) {
-	apiStr := fmt.Sprintf("%snode/%s/%s/raw/0_1_2/%d_%d_%d/0_0_0?mutate=true", server.WebAPIPath,
-		uuid, name, v.size[0], v.size[1], v.size[2])
-	server.TestHTTP(t, "POST", apiStr, bytes.NewBuffer(v.data))
-}
-
-func (v *testVolume) get(t *testing.T, uuid dvid.UUID, name string) {
-	apiStr := fmt.Sprintf("%snode/%s/%s/raw/0_1_2/%d_%d_%d/0_0_0", server.WebAPIPath,
-		uuid, name, v.size[0], v.size[1], v.size[2])
-	v.data = server.TestHTTP(t, "GET", apiStr, nil)
-}
-
-func (v *testVolume) getVoxel(pt dvid.Point3d) uint64 {
-	nx := v.size[0]
-	nxy := nx * v.size[1]
-	i := (pt[2]*nxy + pt[1]*nx + pt[0]) * 8
-	return binary.LittleEndian.Uint64(v.data[i : i+8])
-}
-
-func (v *testVolume) verifyLabel(t *testing.T, expected uint64, x, y, z int32) {
-	pt := dvid.Point3d{x, y, z}
-	label := v.getVoxel(pt)
-	if label != expected {
-		t.Errorf("Expected label %d at %s but got %d instead\n", expected, pt, label)
-	}
-}
-
-func (v *testVolume) equals(v2 *testVolume) error {
-	if !v.size.Equals(v2.size) {
-		return fmt.Errorf("volume sizes are not equal")
-	}
-	if len(v.data) != len(v2.data) {
-		return fmt.Errorf("data lengths are not equal")
-	}
-	for i, value := range v.data {
-		if value != v2.data[i] {
-			return fmt.Errorf("For element %d, found value %d != %d\n", i, value, v2.data[i])
-		}
-	}
-	return nil
 }
 
 // Returns true if all voxels in test volume for given body has label.
@@ -308,13 +198,6 @@ func (v *testVolume) hasLabel(label uint64, body *testBody) bool {
 	return false
 }
 
-type mergeJSON string
-
-func (mjson mergeJSON) send(t *testing.T, uuid dvid.UUID, name string) {
-	apiStr := fmt.Sprintf("%snode/%s/%s/merge", server.WebAPIPath, uuid, name)
-	server.TestHTTP(t, "POST", apiStr, bytes.NewBufferString(string(mjson)))
-}
-
 func createLabelTestVolume(t *testing.T, uuid dvid.UUID, name string) *testVolume {
 	// Setup test label blocks that are non-intersecting.
 	volume := newTestVolume(128, 128, 128)
@@ -346,31 +229,32 @@ func TestSparseVolumes(t *testing.T) {
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
 	var config dvid.Config
-	server.CreateTestInstance(t, uuid, "labelblk", "labels", config)
-	server.CreateTestInstance(t, uuid, "labelvol", "bodies", config)
-	server.CreateTestSync(t, uuid, "labels", "bodies")
-	server.CreateTestSync(t, uuid, "bodies", "labels")
+	server.CreateTestInstance(t, uuid, "labels64", "labels", config)
+	labelVol := createLabelTestVolume(t, uuid, "labels")
 
-	// Populate the labels, which should automatically populate the labelvol
-	_ = createLabelTestVolume(t, uuid, "labels")
-
-	if err := datastore.BlockOnUpdating(uuid, "bodies"); err != nil {
-		t.Fatalf("Error blocking on sync of labels -> bodies: %v\n", err)
+	gotVol := newTestVolume(128, 128, 128)
+	gotVol.get(t, uuid, "labels")
+	if err := gotVol.equals(labelVol); err != nil {
+		t.Fatalf("Couldn't get back simple 128x128x128 label volume that was written: %v\n", err)
 	}
 
-	badReqStr := fmt.Sprintf("%snode/%s/%s/sparsevol/0", server.WebAPIPath, uuid, "bodies")
+	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
+		t.Fatalf("Error blocking on labels updating: %v\n", err)
+	}
+
+	badReqStr := fmt.Sprintf("%snode/%s/labels/sparsevol/0", server.WebAPIPath, uuid)
 	server.TestBadHTTP(t, "GET", badReqStr, nil)
 
 	for _, label := range []uint64{1, 3, 4} {
 		// Get the coarse sparse volumes for each label and make sure they are correct.
-		reqStr := fmt.Sprintf("%snode/%s/%s/sparsevol-coarse/%d", server.WebAPIPath, uuid, "bodies", label)
+		reqStr := fmt.Sprintf("%snode/%s/labels/sparsevol-coarse/%d", server.WebAPIPath, uuid, label)
 		encoding := server.TestHTTP(t, "GET", reqStr, nil)
 		bodies[label-1].checkCoarse(t, encoding)
 	}
 
 	for _, label := range []uint64{1, 2, 3, 4} {
 		// Check fast HEAD requests
-		reqStr := fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid, "bodies", label)
+		reqStr := fmt.Sprintf("%snode/%s/labels/sparsevol/%d", server.WebAPIPath, uuid, label)
 		resp := server.TestHTTPResponse(t, "HEAD", reqStr, nil)
 		if resp.Code != http.StatusOK {
 			t.Errorf("HEAD on %s did not return OK.  Status = %d\n", reqStr, resp.Code)
@@ -408,7 +292,7 @@ func TestSparseVolumes(t *testing.T) {
 		bodies[label-1].checkSparseVol(t, encoding, dvid.OptionalBounds{})
 
 		// Check Y/Z restriction
-		reqStr = fmt.Sprintf("%snode/%s/%s/sparsevol/%d?miny=30&maxy=50&minz=20&maxz=40", server.WebAPIPath, uuid, "bodies", label)
+		reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/%d?miny=30&maxy=50&minz=20&maxz=40", server.WebAPIPath, uuid, label)
 		encoding = server.TestHTTP(t, "GET", reqStr, nil)
 		var bound dvid.OptionalBounds
 		bound.SetMinY(30)
@@ -420,13 +304,13 @@ func TestSparseVolumes(t *testing.T) {
 		// Check X restriction
 		minx := int32(20)
 		maxx := int32(47)
-		reqStr = fmt.Sprintf("%snode/%s/%s/sparsevol/%d?minx=%d&maxx=%d", server.WebAPIPath, uuid, "bodies", label, minx, maxx)
+		reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/%d?minx=%d&maxx=%d", server.WebAPIPath, uuid, label, minx, maxx)
 		encoding = server.TestHTTP(t, "GET", reqStr, nil)
 		checkSpans(t, encoding, minx, maxx)
 	}
 
 	// Make sure non-existent bodies return proper HEAD responses.
-	headReq := fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid, "bodies", 10)
+	headReq := fmt.Sprintf("%snode/%s/labels/sparsevol/%d", server.WebAPIPath, uuid, 10)
 	resp := server.TestHTTPResponse(t, "HEAD", headReq, nil)
 	if resp.Code != http.StatusNoContent {
 		t.Errorf("HEAD on %s did not return 204 (No Content).  Status = %d\n", headReq, resp.Code)
@@ -437,27 +321,32 @@ func TestSparseVolumes(t *testing.T) {
 		t.Errorf("Unable to lock root node %s: %v\n", uuid, err)
 	}
 
-	uuid2, err := datastore.NewVersion(uuid, "deletion test", nil)
-	if err != nil {
-		t.Fatalf("Unable to create new version off node %s: %v\n", uuid, err)
-	}
-
-	// Delete an area
-	delReq := fmt.Sprintf("%snode/%s/%s/area/2/96_64_32/0_32_32", server.WebAPIPath, uuid2, "bodies")
-	server.TestHTTP(t, "DELETE", delReq, nil)
-
-	// Read the area to make sure they are gone.
-	reqStr := fmt.Sprintf("%snode/%s/%s/sparsevol/2", server.WebAPIPath, uuid2, "bodies")
-	encoding := server.TestHTTP(t, "GET", reqStr, nil)
-	body2cropped.checkSparseVol(t, encoding, dvid.OptionalBounds{})
-
-	delReq = fmt.Sprintf("%snode/%s/%s/area/2/95_64_32/0_32_32", server.WebAPIPath, uuid2, "bodies")
-	server.TestBadHTTP(t, "DELETE", delReq, nil)
-
-	delReq = fmt.Sprintf("%snode/%s/%s/area/2/96_64_32/0_32_31", server.WebAPIPath, uuid2, "bodies")
-	server.TestBadHTTP(t, "DELETE", delReq, nil)
-
 	/*
+		uuid2, err := datastore.NewVersion(uuid, "deletion test", nil)
+		if err != nil {
+			t.Fatalf("Unable to create new version off node %s: %v\n", uuid, err)
+		}
+
+		// Delete a few blocks -- TO BE SUPPORTED
+		delReq := fmt.Sprintf("%snode/%s/%s/blocks/0_1_1/2", server.WebAPIPath, uuid2, "labels")
+		server.TestHTTP(t, "DELETE", delReq, nil)
+
+		if err := BlockOnUpdating(uuid, "bodies"); err != nil {
+			t.Fatalf("Error blocking on sync of labels -> bodies: %v\n", err)
+		}
+
+		// Read those blocks to make sure they are gone.
+		reqStr := fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid2, "bodies", 2)
+		encoding := server.TestHTTP(t, "GET", reqStr, nil)
+		if !bodies[1].isDeleted(t, encoding, dvid.Span{1, 1, 0, 1}) {
+			t.Errorf("Expected RLEs to be deleted from label 2 deleted blocks.  Failed.\n")
+		}
+		reqStr = fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid2, "bodies", 1)
+		encoding = server.TestHTTP(t, "GET", reqStr, nil)
+		if !bodies[0].isDeleted(t, encoding, dvid.Span{1, 1, 0, 1}) {
+			t.Errorf("Expected RLEs to be deleted from label 1 deleted blocks.  Failed.\n")
+		}
+
 		// Make sure those blocks are still in the root uuid.
 		reqStr = fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid, "bodies", 2)
 		encoding = server.TestHTTP(t, "GET", reqStr, nil)
@@ -472,6 +361,7 @@ func TestSparseVolumes(t *testing.T) {
 	*/
 }
 
+/*
 func TestMergeLabels(t *testing.T) {
 	datastore.OpenTest()
 	defer datastore.CloseTest()
@@ -479,20 +369,17 @@ func TestMergeLabels(t *testing.T) {
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
 	var config dvid.Config
-	server.CreateTestInstance(t, uuid, "labelblk", "labels", config)
-	server.CreateTestInstance(t, uuid, "labelvol", "bodies", config)
-	server.CreateTestSync(t, uuid, "labels", "bodies")
-	server.CreateTestSync(t, uuid, "bodies", "labels")
+	server.CreateTestInstance(t, uuid, "labels64", "labels", config)
 
 	expected := createLabelTestVolume(t, uuid, "labels")
 	expected.addBody(body3, 2)
 
-	if err := datastore.BlockOnUpdating(uuid, "bodies"); err != nil {
-		t.Fatalf("Error blocking on sync of labels -> bodies: %v\n", err)
+	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
+		t.Fatalf("Error blocking on sync of labels: %v\n", err)
 	}
 
 	// Make sure max label is consistent
-	reqStr := fmt.Sprintf("%snode/%s/%s/maxlabel", server.WebAPIPath, uuid, "bodies")
+	reqStr := fmt.Sprintf("%snode/%s/labels/maxlabel", server.WebAPIPath, uuid)
 	r := server.TestHTTP(t, "GET", reqStr, nil)
 	jsonVal := make(map[string]uint64)
 	if err := json.Unmarshal(r, &jsonVal); err != nil {
@@ -508,15 +395,15 @@ func TestMergeLabels(t *testing.T) {
 
 	// Test merge of 3 into 2
 	testMerge := mergeJSON(`[2, 3]`)
-	testMerge.send(t, uuid, "bodies")
+	testMerge.send(t, uuid, "labels")
 
 	// Make sure label 3 sparsevol has been removed.
-	reqStr = fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid, "bodies", 3)
+	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/%d", server.WebAPIPath, uuid, 3)
 	server.TestBadHTTP(t, "GET", reqStr, nil)
 
 	// Make sure label changes are correct after completion
 	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
-		t.Fatalf("Error blocking on sync of bodies -> labels: %v\n", err)
+		t.Fatalf("Error blocking on sync of labels: %v\n", err)
 	}
 
 	retrieved := newTestVolume(128, 128, 128)
@@ -545,24 +432,21 @@ func TestSplitLabel(t *testing.T) {
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
 	var config dvid.Config
-	server.CreateTestInstance(t, uuid, "labelblk", "labels", config)
-	server.CreateTestInstance(t, uuid, "labelvol", "bodies", config)
-	server.CreateTestSync(t, uuid, "labels", "bodies")
-	server.CreateTestSync(t, uuid, "bodies", "labels")
+	server.CreateTestInstance(t, uuid, "labels64", "labels", config)
 
 	// Post label volume and setup expected volume after split.
 	expected := createLabelTestVolume(t, uuid, "labels")
 	expected.addBody(bodysplit, 5)
 
-	if err := datastore.BlockOnUpdating(uuid, "bodies"); err != nil {
-		t.Fatalf("Error blocking on sync of labels -> bodies: %v\n", err)
+	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
+		t.Fatalf("Error blocking on sync of labels: %v\n", err)
 	}
 
 	// Make sure sparsevol for original body 4 is correct
-	reqStr := fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid, "bodies", 4)
+	reqStr := fmt.Sprintf("%snode/%s/labels/sparsevol/%d", server.WebAPIPath, uuid, 4)
 	encoding := server.TestHTTP(t, "GET", reqStr, nil)
 	fmt.Printf("Checking original body 4 is correct\n")
-	body4.checkSparseVol(t, encoding, dvid.OptionalBounds{})
+	body4.checkSparseVol(t, encoding, dvid.Bounds{})
 
 	// Create the sparsevol encoding for split area
 	numspans := len(bodysplit.voxelSpans)
@@ -588,7 +472,7 @@ func TestSplitLabel(t *testing.T) {
 	buf.Write(rleBytes)
 
 	// Verify the max label is 4
-	reqStr = fmt.Sprintf("%snode/%s/%s/maxlabel", server.WebAPIPath, uuid, "bodies")
+	reqStr = fmt.Sprintf("%snode/%s/labels/maxlabel", server.WebAPIPath, uuid)
 	jsonStr := server.TestHTTP(t, "GET", reqStr, nil)
 	expectedJSON := `{"maxlabel": 4}`
 	if string(jsonStr) != expectedJSON {
@@ -596,7 +480,7 @@ func TestSplitLabel(t *testing.T) {
 	}
 
 	// Submit the split sparsevol for body 4a
-	reqStr = fmt.Sprintf("%snode/%s/%s/split/%d", server.WebAPIPath, uuid, "bodies", 4)
+	reqStr = fmt.Sprintf("%snode/%s/labels/split/%d", server.WebAPIPath, uuid, 4)
 	r := server.TestHTTP(t, "POST", reqStr, buf)
 	jsonVal := make(map[string]uint64)
 	if err := json.Unmarshal(r, &jsonVal); err != nil {
@@ -611,7 +495,7 @@ func TestSplitLabel(t *testing.T) {
 	}
 
 	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
-		t.Fatalf("Error blocking on sync of bodies -> labels: %v\n", err)
+		t.Fatalf("Error blocking on sync of labels: %v\n", err)
 	}
 
 	retrieved := newTestVolume(128, 128, 128)
@@ -624,27 +508,27 @@ func TestSplitLabel(t *testing.T) {
 	}
 
 	// Make sure new body 5 is what we sent
-	reqStr = fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid, "bodies", 5)
+	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/%d", server.WebAPIPath, uuid, 5)
 	encoding = server.TestHTTP(t, "GET", reqStr, nil)
-	bodysplit.checkSparseVol(t, encoding, dvid.OptionalBounds{})
+	bodysplit.checkSparseVol(t, encoding, dvid.Bounds{})
 
 	// Make sure sparsevol for original body 4 is correct
-	reqStr = fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid, "bodies", 4)
+	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/%d", server.WebAPIPath, uuid, 4)
 	encoding = server.TestHTTP(t, "GET", reqStr, nil)
-	bodyleft.checkSparseVol(t, encoding, dvid.OptionalBounds{})
+	bodyleft.checkSparseVol(t, encoding, dvid.Bounds{})
 
 	// Do a merge of two after the split
 	testMerge := mergeJSON(`[4, 5]`)
-	testMerge.send(t, uuid, "bodies")
+	testMerge.send(t, uuid, "labels")
 
-	if err := datastore.BlockOnUpdating(uuid, "bodies"); err != nil {
+	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
 		t.Fatalf("Error blocking on bodies update: %v\n", err)
 	}
 
 	// Make sure we wind up with original body 4
-	reqStr = fmt.Sprintf("%snode/%s/%s/sparsevol/4", server.WebAPIPath, uuid, "bodies")
+	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/4", server.WebAPIPath, uuid, "labels")
 	encoding = server.TestHTTP(t, "GET", reqStr, nil)
-	body4.checkSparseVol(t, encoding, dvid.OptionalBounds{})
+	body4.checkSparseVol(t, encoding, dvid.Bounds{})
 }
 
 // Same as TestSplitLabel but now designate the actual split label
@@ -655,18 +539,15 @@ func TestSplitGivenLabel(t *testing.T) {
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
 	var config dvid.Config
-	server.CreateTestInstance(t, uuid, "labelblk", "labels", config)
-	server.CreateTestInstance(t, uuid, "labelvol", "bodies", config)
-	server.CreateTestSync(t, uuid, "labels", "bodies")
-	server.CreateTestSync(t, uuid, "bodies", "labels")
+	server.CreateTestInstance(t, uuid, "labels64", "labels", config)
 
 	// Post label volume and setup expected volume after split.
 	expected := createLabelTestVolume(t, uuid, "labels")
 	expected.addBody(bodyleft, 4)
 	expected.addBody(bodysplit, 23)
 
-	if err := datastore.BlockOnUpdating(uuid, "bodies"); err != nil {
-		t.Fatalf("Error blocking on sync of labels -> bodies: %v\n", err)
+	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
+		t.Fatalf("Error blocking on sync of labels: %v\n", err)
 	}
 
 	// Create the sparsevol encoding for split area
@@ -693,7 +574,7 @@ func TestSplitGivenLabel(t *testing.T) {
 	buf.Write(rleBytes)
 
 	// Submit the split sparsevol for body 4a
-	reqStr := fmt.Sprintf("%snode/%s/%s/split/%d?splitlabel=23", server.WebAPIPath, uuid, "bodies", 4)
+	reqStr := fmt.Sprintf("%snode/%s/labels/split/%d?splitlabel=23", server.WebAPIPath, uuid, 4)
 	r := server.TestHTTP(t, "POST", reqStr, buf)
 	jsonVal := make(map[string]uint64)
 	if err := json.Unmarshal(r, &jsonVal); err != nil {
@@ -715,10 +596,7 @@ func TestSplitCoarseLabel(t *testing.T) {
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
 	var config dvid.Config
-	server.CreateTestInstance(t, uuid, "labelblk", "labels", config)
-	server.CreateTestInstance(t, uuid, "labelvol", "bodies", config)
-	server.CreateTestSync(t, uuid, "labels", "bodies")
-	server.CreateTestSync(t, uuid, "bodies", "labels")
+	server.CreateTestInstance(t, uuid, "labels64", "labels", config)
 
 	// Post label volume and setup expected volume after split of block coords (2, 1, 1) and (3, 1, 2)
 	expected := createLabelTestVolume(t, uuid, "labels")
@@ -750,15 +628,15 @@ func TestSplitCoarseLabel(t *testing.T) {
 		}
 	}
 
-	if err := datastore.BlockOnUpdating(uuid, "bodies"); err != nil {
-		t.Fatalf("Error blocking on sync of labels -> bodies: %v\n", err)
+	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
+		t.Fatalf("Error blocking on sync of labels: %v\n", err)
 	}
 
 	// Make sure sparsevol for original body 4 is correct
-	reqStr := fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid, "bodies", 4)
+	reqStr := fmt.Sprintf("%snode/%s/labels/sparsevol/%d", server.WebAPIPath, uuid, 4)
 	encoding := server.TestHTTP(t, "GET", reqStr, nil)
 	fmt.Printf("Checking original body 4 is correct\n")
-	body4.checkSparseVol(t, encoding, dvid.OptionalBounds{})
+	body4.checkSparseVol(t, encoding, dvid.Bounds{})
 
 	// Create the encoding for split area in block coordinates.
 	rles := dvid.RLEs{
@@ -779,7 +657,7 @@ func TestSplitCoarseLabel(t *testing.T) {
 	buf.Write(rleBytes)
 
 	// Submit the coarse split
-	reqStr = fmt.Sprintf("%snode/%s/%s/split-coarse/%d", server.WebAPIPath, uuid, "bodies", 4)
+	reqStr = fmt.Sprintf("%snode/%s/labels/split-coarse/%d", server.WebAPIPath, uuid, 4)
 	r := server.TestHTTP(t, "POST", reqStr, buf)
 	jsonVal := make(map[string]uint64)
 	if err := json.Unmarshal(r, &jsonVal); err != nil {
@@ -794,7 +672,7 @@ func TestSplitCoarseLabel(t *testing.T) {
 	}
 
 	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
-		t.Fatalf("Error blocking on sync of bodies -> labels: %v\n", err)
+		t.Fatalf("Error blocking on sync of labels: %v\n", err)
 	}
 
 	// Make sure labels are correct
@@ -815,10 +693,7 @@ func TestSplitCoarseGivenLabel(t *testing.T) {
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
 	var config dvid.Config
-	server.CreateTestInstance(t, uuid, "labelblk", "labels", config)
-	server.CreateTestInstance(t, uuid, "labelvol", "bodies", config)
-	server.CreateTestSync(t, uuid, "labels", "bodies")
-	server.CreateTestSync(t, uuid, "bodies", "labels")
+	server.CreateTestInstance(t, uuid, "labels64", "labels", config)
 
 	// Post label volume and setup expected volume after split of block coords (2, 1, 1) and (3, 1, 2)
 	expected := createLabelTestVolume(t, uuid, "labels")
@@ -850,8 +725,8 @@ func TestSplitCoarseGivenLabel(t *testing.T) {
 		}
 	}
 
-	if err := datastore.BlockOnUpdating(uuid, "bodies"); err != nil {
-		t.Fatalf("Error blocking on sync of labels -> bodies: %v\n", err)
+	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
+		t.Fatalf("Error blocking on sync of labels: %v\n", err)
 	}
 
 	// Create the encoding for split area in block coordinates.
@@ -873,7 +748,7 @@ func TestSplitCoarseGivenLabel(t *testing.T) {
 	buf.Write(rleBytes)
 
 	// Submit the coarse split
-	reqStr := fmt.Sprintf("%snode/%s/%s/split-coarse/%d?splitlabel=8127", server.WebAPIPath, uuid, "bodies", 4)
+	reqStr := fmt.Sprintf("%snode/%s/labels/split-coarse/%d?splitlabel=8127", server.WebAPIPath, uuid, 4)
 	r := server.TestHTTP(t, "POST", reqStr, buf)
 	jsonVal := make(map[string]uint64)
 	if err := json.Unmarshal(r, &jsonVal); err != nil {
@@ -888,7 +763,7 @@ func TestSplitCoarseGivenLabel(t *testing.T) {
 	}
 
 	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
-		t.Fatalf("Error blocking on sync of bodies -> labels: %v\n", err)
+		t.Fatalf("Error blocking on sync of labels: %v\n", err)
 	}
 
 	// Make sure labels are correct
@@ -909,10 +784,7 @@ func TestMergeSplitLabel(t *testing.T) {
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
 	var config dvid.Config
-	server.CreateTestInstance(t, uuid, "labelblk", "labels", config)
-	server.CreateTestInstance(t, uuid, "labelvol", "bodies", config)
-	server.CreateTestSync(t, uuid, "labels", "bodies")
-	server.CreateTestSync(t, uuid, "bodies", "labels")
+	server.CreateTestInstance(t, uuid, "labels64", "labels", config)
 
 	// Post standard label 1-4 volume
 	expected := createLabelTestVolume(t, uuid, "labels")
@@ -920,21 +792,21 @@ func TestMergeSplitLabel(t *testing.T) {
 	// Get expected volume if we add label 3 to 4.
 	expected.addBody(body3, 4)
 
-	if err := datastore.BlockOnUpdating(uuid, "bodies"); err != nil {
-		t.Fatalf("Error blocking on sync of labels -> bodies: %v\n", err)
+	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
+		t.Fatalf("Error blocking on sync of labels: %v\n", err)
 	}
 
 	// Test merge of 3 into 4
 	testMerge := mergeJSON(`[4, 3]`)
-	testMerge.send(t, uuid, "bodies")
+	testMerge.send(t, uuid, "labels")
 
 	// Make sure label 3 sparsevol has been removed.
-	reqStr := fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid, "bodies", 3)
+	reqStr := fmt.Sprintf("%snode/%s/labels/sparsevol/%d", server.WebAPIPath, uuid, 3)
 	server.TestBadHTTP(t, "GET", reqStr, nil)
 
 	// Make sure label changes are correct after completion
 	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
-		t.Fatalf("Error blocking on sync of bodies -> labels: %v\n", err)
+		t.Fatalf("Error blocking on sync of labels: %v\n", err)
 	}
 
 	retrieved := newTestVolume(128, 128, 128)
@@ -979,7 +851,7 @@ func TestMergeSplitLabel(t *testing.T) {
 	buf.Write(rleBytes)
 
 	// Verify the max label is 4
-	reqStr = fmt.Sprintf("%snode/%s/%s/maxlabel", server.WebAPIPath, uuid, "bodies")
+	reqStr = fmt.Sprintf("%snode/%s/labels/maxlabel", server.WebAPIPath, uuid)
 	jsonStr := server.TestHTTP(t, "GET", reqStr, nil)
 	expectedJSON := `{"maxlabel": 4}`
 	if string(jsonStr) != expectedJSON {
@@ -987,7 +859,7 @@ func TestMergeSplitLabel(t *testing.T) {
 	}
 
 	// Submit the split sparsevol for body 4a (-> 5)
-	reqStr = fmt.Sprintf("%snode/%s/%s/split/4", server.WebAPIPath, uuid, "bodies")
+	reqStr = fmt.Sprintf("%snode/%s/labels/split/4", server.WebAPIPath, uuid)
 	r := server.TestHTTP(t, "POST", reqStr, buf)
 	jsonVal := make(map[string]uint64)
 	if err := json.Unmarshal(r, &jsonVal); err != nil {
@@ -1002,7 +874,7 @@ func TestMergeSplitLabel(t *testing.T) {
 	}
 
 	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
-		t.Fatalf("Error blocking on sync of bodies -> labels: %v\n", err)
+		t.Fatalf("Error blocking on sync of labels: %v\n", err)
 	}
 
 	retrieved = newTestVolume(128, 128, 128)
@@ -1016,9 +888,9 @@ func TestMergeSplitLabel(t *testing.T) {
 	}
 
 	// Make sure new body 5 is what we sent
-	reqStr = fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid, "bodies", 5)
+	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/%d", server.WebAPIPath, uuid, 5)
 	encoding := server.TestHTTP(t, "GET", reqStr, nil)
-	bodysplit.checkSparseVol(t, encoding, dvid.OptionalBounds{})
+	bodysplit.checkSparseVol(t, encoding, dvid.Bounds{})
 }
 
 func TestMultiscaleMergeSplit(t *testing.T) {
@@ -1028,15 +900,12 @@ func TestMultiscaleMergeSplit(t *testing.T) {
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
 	var config dvid.Config
-	server.CreateTestInstance(t, uuid, "labelblk", "labels", config)
-	server.CreateTestInstance(t, uuid, "labelvol", "bodies", config)
-	server.CreateTestSync(t, uuid, "labels", "bodies")
-	server.CreateTestSync(t, uuid, "bodies", "labels")
+	server.CreateTestInstance(t, uuid, "labels64", "labels", config)
 
 	// Add multiscale
-	server.CreateTestInstance(t, uuid, "labelblk", "labels_1", config) // 64 x 64 x 64
+	server.CreateTestInstance(t, uuid, "labels64", "labels_1", config) // 64 x 64 x 64
 	server.CreateTestSync(t, uuid, "labels_1", "labels")
-	server.CreateTestInstance(t, uuid, "labelblk", "labels_2", config) // 32 x 32 x 32
+	server.CreateTestInstance(t, uuid, "labels64", "labels_2", config) // 32 x 32 x 32
 	server.CreateTestSync(t, uuid, "labels_2", "labels_1")
 
 	// Create an easily interpreted label volume with a couple of labels.
@@ -1099,18 +968,18 @@ func TestMultiscaleMergeSplit(t *testing.T) {
 
 	// Test merge of 2 and 13 into 1
 	testMerge := mergeJSON(`[1, 2, 13]`)
-	testMerge.send(t, uuid, "bodies")
+	testMerge.send(t, uuid, "labels")
 
 	// Make sure labels 2 and 13 sparsevol has been removed.
-	reqStr := fmt.Sprintf("%snode/%s/%s/sparsevol/2", server.WebAPIPath, uuid, "bodies")
+	reqStr := fmt.Sprintf("%snode/%s/labels/sparsevol/2", server.WebAPIPath, uuid)
 	server.TestBadHTTP(t, "GET", reqStr, nil)
 
-	reqStr = fmt.Sprintf("%snode/%s/%s/sparsevol/13", server.WebAPIPath, uuid, "bodies")
+	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/13", server.WebAPIPath, uuid)
 	server.TestBadHTTP(t, "GET", reqStr, nil)
 
 	// Make sure label changes are correct after completion of merge
 	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
-		t.Fatalf("Error blocking on sync of merge bodies -> labels: %v\n", err)
+		t.Fatalf("Error blocking on sync of merge on labels: %v\n", err)
 	}
 	retrieved := newTestVolume(128, 128, 128)
 	retrieved.get(t, uuid, "labels")
@@ -1125,7 +994,7 @@ func TestMultiscaleMergeSplit(t *testing.T) {
 	}
 
 	if err := datastore.BlockOnUpdating(uuid, "labels_1"); err != nil {
-		t.Fatalf("Error blocking on sync of merge bodies -> labels: %v\n", err)
+		t.Fatalf("Error blocking on sync of merge on labels_1: %v\n", err)
 	}
 	retrieved1 := newTestVolume(64, 64, 64)
 	retrieved1.get(t, uuid, "labels_1")
@@ -1140,7 +1009,7 @@ func TestMultiscaleMergeSplit(t *testing.T) {
 	}
 
 	if err := datastore.BlockOnUpdating(uuid, "labels_2"); err != nil {
-		t.Fatalf("Error blocking on sync of merge bodies -> labels: %v\n", err)
+		t.Fatalf("Error blocking on sync of merge on labels_2: %v\n", err)
 	}
 	retrieved2 := newTestVolume(32, 32, 32)
 	retrieved2.get(t, uuid, "labels_2")
@@ -1182,7 +1051,7 @@ func TestMultiscaleMergeSplit(t *testing.T) {
 	buf.Write(rleBytes)
 
 	// Submit the split sparsevol and assign to label 28
-	reqStr = fmt.Sprintf("%snode/%s/%s/split/1?splitlabel=28", server.WebAPIPath, uuid, "bodies")
+	reqStr = fmt.Sprintf("%snode/%s/labels/split/1?splitlabel=28", server.WebAPIPath, uuid)
 	r := server.TestHTTP(t, "POST", reqStr, buf)
 	jsonVal := make(map[string]uint64)
 	if err := json.Unmarshal(r, &jsonVal); err != nil {
@@ -1193,7 +1062,7 @@ func TestMultiscaleMergeSplit(t *testing.T) {
 
 	// Make sure label changes are correct after completion of merge
 	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
-		t.Fatalf("Error blocking on sync of merge bodies -> labels: %v\n", err)
+		t.Fatalf("Error blocking on sync of split of labels: %v\n", err)
 	}
 	retrieved.get(t, uuid, "labels")
 	split := newTestVolume(128, 128, 128)
@@ -1207,7 +1076,7 @@ func TestMultiscaleMergeSplit(t *testing.T) {
 	}
 
 	if err := datastore.BlockOnUpdating(uuid, "labels_1"); err != nil {
-		t.Fatalf("Error blocking on sync of split bodies -> labels: %v\n", err)
+		t.Fatalf("Error blocking on sync of split on labels_1: %v\n", err)
 	}
 	retrieved1.get(t, uuid, "labels_1")
 	split1 := newTestVolume(64, 64, 64)
@@ -1221,7 +1090,7 @@ func TestMultiscaleMergeSplit(t *testing.T) {
 	}
 
 	if err := datastore.BlockOnUpdating(uuid, "labels_2"); err != nil {
-		t.Fatalf("Error blocking on sync of merge bodies -> labels: %v\n", err)
+		t.Fatalf("Error blocking on sync of split on labels_2: %v\n", err)
 	}
 	retrieved2.get(t, uuid, "labels_2")
 	split2 := newTestVolume(32, 32, 32)
@@ -1235,7 +1104,7 @@ func TestMultiscaleMergeSplit(t *testing.T) {
 	}
 }
 
-// Test that mutable labelblk POST will accurately remove prior bodies.
+// Test that mutable labels64 POST will accurately remove prior bodies.
 func TestMutableLabelblkPOST(t *testing.T) {
 	datastore.OpenTest()
 	defer datastore.CloseTest()
@@ -1243,22 +1112,19 @@ func TestMutableLabelblkPOST(t *testing.T) {
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
 	var config dvid.Config
-	server.CreateTestInstance(t, uuid, "labelblk", "labels", config)
-	server.CreateTestInstance(t, uuid, "labelvol", "bodies", config)
-	server.CreateTestSync(t, uuid, "labels", "bodies")
-	server.CreateTestSync(t, uuid, "bodies", "labels")
+	server.CreateTestInstance(t, uuid, "labels64", "labels", config)
 
 	// Post labels 1-4
 	createLabelTestVolume(t, uuid, "labels")
 
-	if err := datastore.BlockOnUpdating(uuid, "bodies"); err != nil {
-		t.Fatalf("Error blocking on sync of labels -> bodies: %v\n", err)
+	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
+		t.Fatalf("Error blocking on sync of labels: %v\n", err)
 	}
 
 	// Make sure we have labels 1-4 sparsevol
 	for _, label := range []uint64{1, 2, 3, 4} {
 		// Check fast HEAD requests
-		reqStr := fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid, "bodies", label)
+		reqStr := fmt.Sprintf("%snode/%s/labels/sparsevol/%d", server.WebAPIPath, uuid, label)
 		resp := server.TestHTTPResponse(t, "HEAD", reqStr, nil)
 		if resp.Code != http.StatusOK {
 			t.Errorf("HEAD on %s did not return OK.  Status = %d\n", reqStr, resp.Code)
@@ -1266,20 +1132,20 @@ func TestMutableLabelblkPOST(t *testing.T) {
 
 		// Check full sparse volumes
 		encoding := server.TestHTTP(t, "GET", reqStr, nil)
-		bodies[label-1].checkSparseVol(t, encoding, dvid.OptionalBounds{})
+		bodies[label-1].checkSparseVol(t, encoding, dvid.Bounds{})
 	}
 
 	// Post labels 6-7
 	createLabelTest2Volume(t, uuid, "labels")
 
-	if err := datastore.BlockOnUpdating(uuid, "bodies"); err != nil {
-		t.Fatalf("Error blocking on sync of labels -> bodies: %v\n", err)
+	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
+		t.Fatalf("Error blocking on sync of labels: %v\n", err)
 	}
 
 	// Make sure that labels 1-4 have no more sparse vol.
 	for _, label := range []uint64{1, 2, 3, 4} {
 		// Check full sparse volumes aren't retrievable anymore
-		reqStr := fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid, "bodies", label)
+		reqStr := fmt.Sprintf("%snode/%s/labels/sparsevol/%d", server.WebAPIPath, uuid, label)
 		//server.TestBadHTTP(t, "GET", reqStr, nil)
 		encoding := server.TestHTTP(t, "GET", reqStr, nil)
 		spansEncoding := encoding[8:]
@@ -1301,7 +1167,7 @@ func TestMutableLabelblkPOST(t *testing.T) {
 	// Make sure labels 6-7 are available as sparse vol.
 	for _, label := range []uint64{6, 7} {
 		// Check fast HEAD requests
-		reqStr := fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid, "bodies", label)
+		reqStr := fmt.Sprintf("%snode/%s/labels/sparsevol/%d", server.WebAPIPath, uuid, label)
 		resp := server.TestHTTPResponse(t, "HEAD", reqStr, nil)
 		if resp.Code != http.StatusOK {
 			t.Errorf("HEAD on %s did not return OK.  Status = %d\n", reqStr, resp.Code)
@@ -1309,10 +1175,10 @@ func TestMutableLabelblkPOST(t *testing.T) {
 
 		// Check full sparse volumes
 		encoding := server.TestHTTP(t, "GET", reqStr, nil)
-		bodies[label-1].checkSparseVol(t, encoding, dvid.OptionalBounds{})
+		bodies[label-1].checkSparseVol(t, encoding, dvid.Bounds{})
 	}
 }
-
+*/
 var (
 	body1 = testBody{
 		label:  1,
@@ -2256,162 +2122,6 @@ var (
 			{57, 67, 64, 79}, {57, 68, 64, 79}, {57, 69, 64, 79}, {58, 64, 64, 79}, {58, 65, 64, 79},
 			{58, 66, 64, 79}, {58, 67, 64, 79}, {58, 68, 64, 79}, {58, 69, 64, 79}, {59, 64, 64, 79},
 			{59, 65, 64, 79}, {59, 66, 64, 79}, {59, 67, 64, 79}, {59, 68, 64, 79}, {59, 69, 64, 79},
-		},
-	}
-	body2cropped = testBody{
-		label:  2,
-		offset: dvid.Point3d{30, 20, 40},
-		size:   dvid.Point3d{50, 50, 20},
-		blockSpans: []dvid.Span{
-			{1, 0, 0, 2},
-			// {1, 1, 0, 2},
-			// {1, 2, 0, 2},
-		},
-		voxelSpans: []dvid.Span{
-			{40, 20, 30, 31}, {40, 21, 30, 31}, {40, 22, 30, 31}, {40, 23, 30, 31}, {40, 24, 30, 31},
-			{40, 25, 30, 31}, {40, 26, 30, 31}, {40, 27, 30, 31}, {40, 28, 30, 31}, {40, 29, 30, 31},
-			{40, 30, 30, 31}, {40, 31, 30, 31}, {41, 20, 30, 31}, {41, 21, 30, 31}, {41, 22, 30, 31},
-			{41, 23, 30, 31}, {41, 24, 30, 31}, {41, 25, 30, 31}, {41, 26, 30, 31}, {41, 27, 30, 31},
-			{41, 28, 30, 31}, {41, 29, 30, 31}, {41, 30, 30, 31}, {41, 31, 30, 31}, {42, 20, 30, 31},
-			{42, 21, 30, 31}, {42, 22, 30, 31}, {42, 23, 30, 31}, {42, 24, 30, 31}, {42, 25, 30, 31},
-			{42, 26, 30, 31}, {42, 27, 30, 31}, {42, 28, 30, 31}, {42, 29, 30, 31}, {42, 30, 30, 31},
-			{42, 31, 30, 31}, {43, 20, 30, 31}, {43, 21, 30, 31}, {43, 22, 30, 31}, {43, 23, 30, 31},
-			{43, 24, 30, 31}, {43, 25, 30, 31}, {43, 26, 30, 31}, {43, 27, 30, 31}, {43, 28, 30, 31},
-			{43, 29, 30, 31}, {43, 30, 30, 31}, {43, 31, 30, 31}, {44, 20, 30, 31}, {44, 21, 30, 31},
-			{44, 22, 30, 31}, {44, 23, 30, 31}, {44, 24, 30, 31}, {44, 25, 30, 31}, {44, 26, 30, 31},
-			{44, 27, 30, 31}, {44, 28, 30, 31}, {44, 29, 30, 31}, {44, 30, 30, 31}, {44, 31, 30, 31},
-			{45, 20, 30, 31}, {45, 21, 30, 31}, {45, 22, 30, 31}, {45, 23, 30, 31}, {45, 24, 30, 31},
-			{45, 25, 30, 31}, {45, 26, 30, 31}, {45, 27, 30, 31}, {45, 28, 30, 31}, {45, 29, 30, 31},
-			{45, 30, 30, 31}, {45, 31, 30, 31}, {46, 20, 30, 31}, {46, 21, 30, 31}, {46, 22, 30, 31},
-			{46, 23, 30, 31}, {46, 24, 30, 31}, {46, 25, 30, 31}, {46, 26, 30, 31}, {46, 27, 30, 31},
-			{46, 28, 30, 31}, {46, 29, 30, 31}, {46, 30, 30, 31}, {46, 31, 30, 31}, {47, 20, 30, 31},
-			{47, 21, 30, 31}, {47, 22, 30, 31}, {47, 23, 30, 31}, {47, 24, 30, 31}, {47, 25, 30, 31},
-			{47, 26, 30, 31}, {47, 27, 30, 31}, {47, 28, 30, 31}, {47, 29, 30, 31}, {47, 30, 30, 31},
-			{47, 31, 30, 31}, {48, 20, 30, 31}, {48, 21, 30, 31}, {48, 22, 30, 31}, {48, 23, 30, 31},
-			{48, 24, 30, 31}, {48, 25, 30, 31}, {48, 26, 30, 31}, {48, 27, 30, 31}, {48, 28, 30, 31},
-			{48, 29, 30, 31}, {48, 30, 30, 31}, {48, 31, 30, 31}, {49, 20, 30, 31}, {49, 21, 30, 31},
-			{49, 22, 30, 31}, {49, 23, 30, 31}, {49, 24, 30, 31}, {49, 25, 30, 31}, {49, 26, 30, 31},
-			{49, 27, 30, 31}, {49, 28, 30, 31}, {49, 29, 30, 31}, {49, 30, 30, 31}, {49, 31, 30, 31},
-			{50, 20, 30, 31}, {50, 21, 30, 31}, {50, 22, 30, 31}, {50, 23, 30, 31}, {50, 24, 30, 31},
-			{50, 25, 30, 31}, {50, 26, 30, 31}, {50, 27, 30, 31}, {50, 28, 30, 31}, {50, 29, 30, 31},
-			{50, 30, 30, 31}, {50, 31, 30, 31}, {51, 20, 30, 31}, {51, 21, 30, 31}, {51, 22, 30, 31},
-			{51, 23, 30, 31}, {51, 24, 30, 31}, {51, 25, 30, 31}, {51, 26, 30, 31}, {51, 27, 30, 31},
-			{51, 28, 30, 31}, {51, 29, 30, 31}, {51, 30, 30, 31}, {51, 31, 30, 31}, {52, 20, 30, 31},
-			{52, 21, 30, 31}, {52, 22, 30, 31}, {52, 23, 30, 31}, {52, 24, 30, 31}, {52, 25, 30, 31},
-			{52, 26, 30, 31}, {52, 27, 30, 31}, {52, 28, 30, 31}, {52, 29, 30, 31}, {52, 30, 30, 31},
-			{52, 31, 30, 31}, {53, 20, 30, 31}, {53, 21, 30, 31}, {53, 22, 30, 31}, {53, 23, 30, 31},
-			{53, 24, 30, 31}, {53, 25, 30, 31}, {53, 26, 30, 31}, {53, 27, 30, 31}, {53, 28, 30, 31},
-			{53, 29, 30, 31}, {53, 30, 30, 31}, {53, 31, 30, 31}, {54, 20, 30, 31}, {54, 21, 30, 31},
-			{54, 22, 30, 31}, {54, 23, 30, 31}, {54, 24, 30, 31}, {54, 25, 30, 31}, {54, 26, 30, 31},
-			{54, 27, 30, 31}, {54, 28, 30, 31}, {54, 29, 30, 31}, {54, 30, 30, 31}, {54, 31, 30, 31},
-			{55, 20, 30, 31}, {55, 21, 30, 31}, {55, 22, 30, 31}, {55, 23, 30, 31}, {55, 24, 30, 31},
-			{55, 25, 30, 31}, {55, 26, 30, 31}, {55, 27, 30, 31}, {55, 28, 30, 31}, {55, 29, 30, 31},
-			{55, 30, 30, 31}, {55, 31, 30, 31}, {56, 20, 30, 31}, {56, 21, 30, 31}, {56, 22, 30, 31},
-			{56, 23, 30, 31}, {56, 24, 30, 31}, {56, 25, 30, 31}, {56, 26, 30, 31}, {56, 27, 30, 31},
-			{56, 28, 30, 31}, {56, 29, 30, 31}, {56, 30, 30, 31}, {56, 31, 30, 31}, {57, 20, 30, 31},
-			{57, 21, 30, 31}, {57, 22, 30, 31}, {57, 23, 30, 31}, {57, 24, 30, 31}, {57, 25, 30, 31},
-			{57, 26, 30, 31}, {57, 27, 30, 31}, {57, 28, 30, 31}, {57, 29, 30, 31}, {57, 30, 30, 31},
-			{57, 31, 30, 31}, {58, 20, 30, 31}, {58, 21, 30, 31}, {58, 22, 30, 31}, {58, 23, 30, 31},
-			{58, 24, 30, 31}, {58, 25, 30, 31}, {58, 26, 30, 31}, {58, 27, 30, 31}, {58, 28, 30, 31},
-			{58, 29, 30, 31}, {58, 30, 30, 31}, {58, 31, 30, 31}, {59, 20, 30, 31}, {59, 21, 30, 31},
-			{59, 22, 30, 31}, {59, 23, 30, 31}, {59, 24, 30, 31}, {59, 25, 30, 31}, {59, 26, 30, 31},
-			{59, 27, 30, 31}, {59, 28, 30, 31}, {59, 29, 30, 31}, {59, 30, 30, 31}, {59, 31, 30, 31},
-			{40, 20, 32, 63}, {40, 21, 32, 63}, {40, 22, 32, 63}, {40, 23, 32, 63}, {40, 24, 32, 63},
-			{40, 25, 32, 63}, {40, 26, 32, 63}, {40, 27, 32, 63}, {40, 28, 32, 63}, {40, 29, 32, 63},
-			{40, 30, 32, 63}, {40, 31, 32, 63}, {41, 20, 32, 63}, {41, 21, 32, 63}, {41, 22, 32, 63},
-			{41, 23, 32, 63}, {41, 24, 32, 63}, {41, 25, 32, 63}, {41, 26, 32, 63}, {41, 27, 32, 63},
-			{41, 28, 32, 63}, {41, 29, 32, 63}, {41, 30, 32, 63}, {41, 31, 32, 63}, {42, 20, 32, 63},
-			{42, 21, 32, 63}, {42, 22, 32, 63}, {42, 23, 32, 63}, {42, 24, 32, 63}, {42, 25, 32, 63},
-			{42, 26, 32, 63}, {42, 27, 32, 63}, {42, 28, 32, 63}, {42, 29, 32, 63}, {42, 30, 32, 63},
-			{42, 31, 32, 63}, {43, 20, 32, 63}, {43, 21, 32, 63}, {43, 22, 32, 63}, {43, 23, 32, 63},
-			{43, 24, 32, 63}, {43, 25, 32, 63}, {43, 26, 32, 63}, {43, 27, 32, 63}, {43, 28, 32, 63},
-			{43, 29, 32, 63}, {43, 30, 32, 63}, {43, 31, 32, 63}, {44, 20, 32, 63}, {44, 21, 32, 63},
-			{44, 22, 32, 63}, {44, 23, 32, 63}, {44, 24, 32, 63}, {44, 25, 32, 63}, {44, 26, 32, 63},
-			{44, 27, 32, 63}, {44, 28, 32, 63}, {44, 29, 32, 63}, {44, 30, 32, 63}, {44, 31, 32, 63},
-			{45, 20, 32, 63}, {45, 21, 32, 63}, {45, 22, 32, 63}, {45, 23, 32, 63}, {45, 24, 32, 63},
-			{45, 25, 32, 63}, {45, 26, 32, 63}, {45, 27, 32, 63}, {45, 28, 32, 63}, {45, 29, 32, 63},
-			{45, 30, 32, 63}, {45, 31, 32, 63}, {46, 20, 32, 63}, {46, 21, 32, 63}, {46, 22, 32, 63},
-			{46, 23, 32, 63}, {46, 24, 32, 63}, {46, 25, 32, 63}, {46, 26, 32, 63}, {46, 27, 32, 63},
-			{46, 28, 32, 63}, {46, 29, 32, 63}, {46, 30, 32, 63}, {46, 31, 32, 63}, {47, 20, 32, 63},
-			{47, 21, 32, 63}, {47, 22, 32, 63}, {47, 23, 32, 63}, {47, 24, 32, 63}, {47, 25, 32, 63},
-			{47, 26, 32, 63}, {47, 27, 32, 63}, {47, 28, 32, 63}, {47, 29, 32, 63}, {47, 30, 32, 63},
-			{47, 31, 32, 63}, {48, 20, 32, 63}, {48, 21, 32, 63}, {48, 22, 32, 63}, {48, 23, 32, 63},
-			{48, 24, 32, 63}, {48, 25, 32, 63}, {48, 26, 32, 63}, {48, 27, 32, 63}, {48, 28, 32, 63},
-			{48, 29, 32, 63}, {48, 30, 32, 63}, {48, 31, 32, 63}, {49, 20, 32, 63}, {49, 21, 32, 63},
-			{49, 22, 32, 63}, {49, 23, 32, 63}, {49, 24, 32, 63}, {49, 25, 32, 63}, {49, 26, 32, 63},
-			{49, 27, 32, 63}, {49, 28, 32, 63}, {49, 29, 32, 63}, {49, 30, 32, 63}, {49, 31, 32, 63},
-			{50, 20, 32, 63}, {50, 21, 32, 63}, {50, 22, 32, 63}, {50, 23, 32, 63}, {50, 24, 32, 63},
-			{50, 25, 32, 63}, {50, 26, 32, 63}, {50, 27, 32, 63}, {50, 28, 32, 63}, {50, 29, 32, 63},
-			{50, 30, 32, 63}, {50, 31, 32, 63}, {51, 20, 32, 63}, {51, 21, 32, 63}, {51, 22, 32, 63},
-			{51, 23, 32, 63}, {51, 24, 32, 63}, {51, 25, 32, 63}, {51, 26, 32, 63}, {51, 27, 32, 63},
-			{51, 28, 32, 63}, {51, 29, 32, 63}, {51, 30, 32, 63}, {51, 31, 32, 63}, {52, 20, 32, 63},
-			{52, 21, 32, 63}, {52, 22, 32, 63}, {52, 23, 32, 63}, {52, 24, 32, 63}, {52, 25, 32, 63},
-			{52, 26, 32, 63}, {52, 27, 32, 63}, {52, 28, 32, 63}, {52, 29, 32, 63}, {52, 30, 32, 63},
-			{52, 31, 32, 63}, {53, 20, 32, 63}, {53, 21, 32, 63}, {53, 22, 32, 63}, {53, 23, 32, 63},
-			{53, 24, 32, 63}, {53, 25, 32, 63}, {53, 26, 32, 63}, {53, 27, 32, 63}, {53, 28, 32, 63},
-			{53, 29, 32, 63}, {53, 30, 32, 63}, {53, 31, 32, 63}, {54, 20, 32, 63}, {54, 21, 32, 63},
-			{54, 22, 32, 63}, {54, 23, 32, 63}, {54, 24, 32, 63}, {54, 25, 32, 63}, {54, 26, 32, 63},
-			{54, 27, 32, 63}, {54, 28, 32, 63}, {54, 29, 32, 63}, {54, 30, 32, 63}, {54, 31, 32, 63},
-			{55, 20, 32, 63}, {55, 21, 32, 63}, {55, 22, 32, 63}, {55, 23, 32, 63}, {55, 24, 32, 63},
-			{55, 25, 32, 63}, {55, 26, 32, 63}, {55, 27, 32, 63}, {55, 28, 32, 63}, {55, 29, 32, 63},
-			{55, 30, 32, 63}, {55, 31, 32, 63}, {56, 20, 32, 63}, {56, 21, 32, 63}, {56, 22, 32, 63},
-			{56, 23, 32, 63}, {56, 24, 32, 63}, {56, 25, 32, 63}, {56, 26, 32, 63}, {56, 27, 32, 63},
-			{56, 28, 32, 63}, {56, 29, 32, 63}, {56, 30, 32, 63}, {56, 31, 32, 63}, {57, 20, 32, 63},
-			{57, 21, 32, 63}, {57, 22, 32, 63}, {57, 23, 32, 63}, {57, 24, 32, 63}, {57, 25, 32, 63},
-			{57, 26, 32, 63}, {57, 27, 32, 63}, {57, 28, 32, 63}, {57, 29, 32, 63}, {57, 30, 32, 63},
-			{57, 31, 32, 63}, {58, 20, 32, 63}, {58, 21, 32, 63}, {58, 22, 32, 63}, {58, 23, 32, 63},
-			{58, 24, 32, 63}, {58, 25, 32, 63}, {58, 26, 32, 63}, {58, 27, 32, 63}, {58, 28, 32, 63},
-			{58, 29, 32, 63}, {58, 30, 32, 63}, {58, 31, 32, 63}, {59, 20, 32, 63}, {59, 21, 32, 63},
-			{59, 22, 32, 63}, {59, 23, 32, 63}, {59, 24, 32, 63}, {59, 25, 32, 63}, {59, 26, 32, 63},
-			{59, 27, 32, 63}, {59, 28, 32, 63}, {59, 29, 32, 63}, {59, 30, 32, 63}, {59, 31, 32, 63},
-			{40, 20, 64, 79}, {40, 21, 64, 79}, {40, 22, 64, 79}, {40, 23, 64, 79}, {40, 24, 64, 79},
-			{40, 25, 64, 79}, {40, 26, 64, 79}, {40, 27, 64, 79}, {40, 28, 64, 79}, {40, 29, 64, 79},
-			{40, 30, 64, 79}, {40, 31, 64, 79}, {41, 20, 64, 79}, {41, 21, 64, 79}, {41, 22, 64, 79},
-			{41, 23, 64, 79}, {41, 24, 64, 79}, {41, 25, 64, 79}, {41, 26, 64, 79}, {41, 27, 64, 79},
-			{41, 28, 64, 79}, {41, 29, 64, 79}, {41, 30, 64, 79}, {41, 31, 64, 79}, {42, 20, 64, 79},
-			{42, 21, 64, 79}, {42, 22, 64, 79}, {42, 23, 64, 79}, {42, 24, 64, 79}, {42, 25, 64, 79},
-			{42, 26, 64, 79}, {42, 27, 64, 79}, {42, 28, 64, 79}, {42, 29, 64, 79}, {42, 30, 64, 79},
-			{42, 31, 64, 79}, {43, 20, 64, 79}, {43, 21, 64, 79}, {43, 22, 64, 79}, {43, 23, 64, 79},
-			{43, 24, 64, 79}, {43, 25, 64, 79}, {43, 26, 64, 79}, {43, 27, 64, 79}, {43, 28, 64, 79},
-			{43, 29, 64, 79}, {43, 30, 64, 79}, {43, 31, 64, 79}, {44, 20, 64, 79}, {44, 21, 64, 79},
-			{44, 22, 64, 79}, {44, 23, 64, 79}, {44, 24, 64, 79}, {44, 25, 64, 79}, {44, 26, 64, 79},
-			{44, 27, 64, 79}, {44, 28, 64, 79}, {44, 29, 64, 79}, {44, 30, 64, 79}, {44, 31, 64, 79},
-			{45, 20, 64, 79}, {45, 21, 64, 79}, {45, 22, 64, 79}, {45, 23, 64, 79}, {45, 24, 64, 79},
-			{45, 25, 64, 79}, {45, 26, 64, 79}, {45, 27, 64, 79}, {45, 28, 64, 79}, {45, 29, 64, 79},
-			{45, 30, 64, 79}, {45, 31, 64, 79}, {46, 20, 64, 79}, {46, 21, 64, 79}, {46, 22, 64, 79},
-			{46, 23, 64, 79}, {46, 24, 64, 79}, {46, 25, 64, 79}, {46, 26, 64, 79}, {46, 27, 64, 79},
-			{46, 28, 64, 79}, {46, 29, 64, 79}, {46, 30, 64, 79}, {46, 31, 64, 79}, {47, 20, 64, 79},
-			{47, 21, 64, 79}, {47, 22, 64, 79}, {47, 23, 64, 79}, {47, 24, 64, 79}, {47, 25, 64, 79},
-			{47, 26, 64, 79}, {47, 27, 64, 79}, {47, 28, 64, 79}, {47, 29, 64, 79}, {47, 30, 64, 79},
-			{47, 31, 64, 79}, {48, 20, 64, 79}, {48, 21, 64, 79}, {48, 22, 64, 79}, {48, 23, 64, 79},
-			{48, 24, 64, 79}, {48, 25, 64, 79}, {48, 26, 64, 79}, {48, 27, 64, 79}, {48, 28, 64, 79},
-			{48, 29, 64, 79}, {48, 30, 64, 79}, {48, 31, 64, 79}, {49, 20, 64, 79}, {49, 21, 64, 79},
-			{49, 22, 64, 79}, {49, 23, 64, 79}, {49, 24, 64, 79}, {49, 25, 64, 79}, {49, 26, 64, 79},
-			{49, 27, 64, 79}, {49, 28, 64, 79}, {49, 29, 64, 79}, {49, 30, 64, 79}, {49, 31, 64, 79},
-			{50, 20, 64, 79}, {50, 21, 64, 79}, {50, 22, 64, 79}, {50, 23, 64, 79}, {50, 24, 64, 79},
-			{50, 25, 64, 79}, {50, 26, 64, 79}, {50, 27, 64, 79}, {50, 28, 64, 79}, {50, 29, 64, 79},
-			{50, 30, 64, 79}, {50, 31, 64, 79}, {51, 20, 64, 79}, {51, 21, 64, 79}, {51, 22, 64, 79},
-			{51, 23, 64, 79}, {51, 24, 64, 79}, {51, 25, 64, 79}, {51, 26, 64, 79}, {51, 27, 64, 79},
-			{51, 28, 64, 79}, {51, 29, 64, 79}, {51, 30, 64, 79}, {51, 31, 64, 79}, {52, 20, 64, 79},
-			{52, 21, 64, 79}, {52, 22, 64, 79}, {52, 23, 64, 79}, {52, 24, 64, 79}, {52, 25, 64, 79},
-			{52, 26, 64, 79}, {52, 27, 64, 79}, {52, 28, 64, 79}, {52, 29, 64, 79}, {52, 30, 64, 79},
-			{52, 31, 64, 79}, {53, 20, 64, 79}, {53, 21, 64, 79}, {53, 22, 64, 79}, {53, 23, 64, 79},
-			{53, 24, 64, 79}, {53, 25, 64, 79}, {53, 26, 64, 79}, {53, 27, 64, 79}, {53, 28, 64, 79},
-			{53, 29, 64, 79}, {53, 30, 64, 79}, {53, 31, 64, 79}, {54, 20, 64, 79}, {54, 21, 64, 79},
-			{54, 22, 64, 79}, {54, 23, 64, 79}, {54, 24, 64, 79}, {54, 25, 64, 79}, {54, 26, 64, 79},
-			{54, 27, 64, 79}, {54, 28, 64, 79}, {54, 29, 64, 79}, {54, 30, 64, 79}, {54, 31, 64, 79},
-			{55, 20, 64, 79}, {55, 21, 64, 79}, {55, 22, 64, 79}, {55, 23, 64, 79}, {55, 24, 64, 79},
-			{55, 25, 64, 79}, {55, 26, 64, 79}, {55, 27, 64, 79}, {55, 28, 64, 79}, {55, 29, 64, 79},
-			{55, 30, 64, 79}, {55, 31, 64, 79}, {56, 20, 64, 79}, {56, 21, 64, 79}, {56, 22, 64, 79},
-			{56, 23, 64, 79}, {56, 24, 64, 79}, {56, 25, 64, 79}, {56, 26, 64, 79}, {56, 27, 64, 79},
-			{56, 28, 64, 79}, {56, 29, 64, 79}, {56, 30, 64, 79}, {56, 31, 64, 79}, {57, 20, 64, 79},
-			{57, 21, 64, 79}, {57, 22, 64, 79}, {57, 23, 64, 79}, {57, 24, 64, 79}, {57, 25, 64, 79},
-			{57, 26, 64, 79}, {57, 27, 64, 79}, {57, 28, 64, 79}, {57, 29, 64, 79}, {57, 30, 64, 79},
-			{57, 31, 64, 79}, {58, 20, 64, 79}, {58, 21, 64, 79}, {58, 22, 64, 79}, {58, 23, 64, 79},
-			{58, 24, 64, 79}, {58, 25, 64, 79}, {58, 26, 64, 79}, {58, 27, 64, 79}, {58, 28, 64, 79},
-			{58, 29, 64, 79}, {58, 30, 64, 79}, {58, 31, 64, 79}, {59, 20, 64, 79}, {59, 21, 64, 79},
-			{59, 22, 64, 79}, {59, 23, 64, 79}, {59, 24, 64, 79}, {59, 25, 64, 79}, {59, 26, 64, 79},
-			{59, 27, 64, 79}, {59, 28, 64, 79}, {59, 29, 64, 79}, {59, 30, 64, 79}, {59, 31, 64, 79},
 		},
 	}
 	body3 = testBody{

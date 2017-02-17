@@ -533,9 +533,9 @@ func (v *Voxels) DownRes(magnification dvid.Point) error {
 	return nil
 }
 
-// IndexIterator returns an iterator that can move across the voxel geometry,
+// NewIndexIterator returns an iterator that can move across the voxel geometry,
 // generating indices or index spans.
-func (v *Voxels) IndexIterator(chunkSize dvid.Point) (dvid.IndexIterator, error) {
+func (v *Voxels) NewIndexIterator(chunkSize dvid.Point) (dvid.IndexIterator, error) {
 	// Setup traversal
 	begVoxel, ok := v.StartPoint().(dvid.Chunkable)
 	if !ok {

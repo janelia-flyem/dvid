@@ -214,9 +214,9 @@ func (c *Channel) Index(p dvid.ChunkPoint) dvid.Index {
 	return &dvid.IndexCZYX{c.channelNum, dvid.IndexZYX(p.(dvid.ChunkPoint3d))}
 }
 
-// IndexIterator returns an iterator that can move across the voxel geometry,
+// NewIndexIterator returns an iterator that can move across the voxel geometry,
 // generating indices or index spans.
-func (c *Channel) IndexIterator(chunkSize dvid.Point) (dvid.IndexIterator, error) {
+func (c *Channel) NewIndexIterator(chunkSize dvid.Point) (dvid.IndexIterator, error) {
 	// Setup traversal
 	begVoxel, ok := c.StartPoint().(dvid.Chunkable)
 	if !ok {

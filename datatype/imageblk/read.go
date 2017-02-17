@@ -349,7 +349,7 @@ func (d *Data) GetVoxels(v dvid.VersionID, vox *Voxels, roiname dvid.InstanceNam
 		okv = req.NewBuffer(ctx)
 	}
 
-	for it, err := vox.IndexIterator(d.BlockSize()); err == nil && it.Valid(); it.NextSpan() {
+	for it, err := vox.NewIndexIterator(d.BlockSize()); err == nil && it.Valid(); it.NextSpan() {
 		indexBeg, indexEnd, err := it.IndexSpan()
 		if err != nil {
 			return err
@@ -489,27 +489,8 @@ func xferBlock(buf []byte, chunk *storage.Chunk, wg *sync.WaitGroup) {
 	copy(buf, block)
 }
 
-// load block of data from storage
-func (d *Data) loadOldBlock(v dvid.VersionID, k storage.TKey) ([]byte, error) {
-	store, err := d.GetOrderedKeyValueDB()
-	if err != nil {
-		return nil, fmt.Errorf("Data type imageblk had error initializing store: %v\n", err)
-	}
-
-	ctx := datastore.NewVersionedCtx(d, v)
-	serialization, err := store.Get(ctx, k)
-	if err != nil {
-		return nil, err
-	}
-	data, _, err := dvid.DeserializeData(serialization, true)
-	if err != nil {
-		return nil, fmt.Errorf("Unable to deserialize block, %s: %v", ctx, err)
-	}
-	return data, err
-}
-
-// loads blocks with old data if they exist.
-func (d *Data) loadOldBlocks(v dvid.VersionID, vox *Voxels, blocks storage.TKeyValues) error {
+// LoadOldBlocks loads blocks with old data if they exist.
+func (d *Data) LoadOldBlocks(v dvid.VersionID, vox *Voxels, blocks storage.TKeyValues) error {
 	store, err := d.GetOrderedKeyValueDB()
 	if err != nil {
 		return fmt.Errorf("Data type imageblk had error initializing store: %v\n", err)
@@ -522,7 +503,7 @@ func (d *Data) loadOldBlocks(v dvid.VersionID, vox *Voxels, blocks storage.TKeyV
 	// Iterate through index space for this data using ZYX ordering.
 	blockSize := d.BlockSize()
 	blockNum := 0
-	for it, err := vox.IndexIterator(blockSize); err == nil && it.Valid(); it.NextSpan() {
+	for it, err := vox.NewIndexIterator(blockSize); err == nil && it.Valid(); it.NextSpan() {
 		indexBeg, indexEnd, err := it.IndexSpan()
 		if err != nil {
 			return err
@@ -566,6 +547,25 @@ func (d *Data) loadOldBlocks(v dvid.VersionID, vox *Voxels, blocks storage.TKeyV
 		}
 	}
 	return nil
+}
+
+// GetBlock returns a block with data from this instance's preferred storage.
+func (d *Data) GetBlock(v dvid.VersionID, k storage.TKey) ([]byte, error) {
+	store, err := d.GetOrderedKeyValueDB()
+	if err != nil {
+		return nil, fmt.Errorf("Data type imageblk had error initializing store: %v\n", err)
+	}
+
+	ctx := datastore.NewVersionedCtx(d, v)
+	serialization, err := store.Get(ctx, k)
+	if err != nil {
+		return nil, err
+	}
+	data, _, err := dvid.DeserializeData(serialization, true)
+	if err != nil {
+		return nil, fmt.Errorf("Unable to deserialize block, %s: %v", ctx, err)
+	}
+	return data, err
 }
 
 // ReadChunk reads a chunk of data as part of a mapped operation.

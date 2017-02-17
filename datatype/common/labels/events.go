@@ -72,7 +72,10 @@ type DeltaReplaceSize struct {
 // during a MergeBlockEvent.
 type DeltaMerge struct {
 	MergeOp
-	Blocks map[dvid.IZYXString]struct{}
+	Blocks       dvid.IZYXSlice               // not nil if labels64 used.
+	BlockMap     map[dvid.IZYXString]struct{} // not nil if labelblk used, to be deprecated.
+	TargetVoxels uint64
+	MergedVoxels uint64
 }
 
 // DeltaMergeStart is the data sent during a MergeStartEvent.
@@ -92,6 +95,7 @@ type DeltaSplit struct {
 	NewLabel     uint64
 	Split        dvid.BlockRLEs
 	SortedBlocks dvid.IZYXSlice
+	SplitVoxels  uint64
 }
 
 // DeltaSplitStart is the data sent during a SplitStartEvent.

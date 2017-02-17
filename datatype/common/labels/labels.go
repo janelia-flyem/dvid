@@ -19,13 +19,13 @@ var (
 )
 
 const (
-	// MaxAllowedLabel is the largest label that should be allowed by DVID if we want to take
-	// into account the maximum integer size within Javascript (due to its underlying use of
-	// a double float for numbers, leading to max int = 2^53 - 1).
-	// This would circumvent the need to use strings within JSON (e.g., the Google solution)
-	// to represent integer labels that could exceed the max javascript number.  It would
-	// require adding a value check on each label voxel of a mutation request, which might
-	// be too much of a hit to handle an edge case.
+	// MaxAllowedLabel is the largest label that should be allowed by DVID if we want
+	// to take into account the maximum integer size within Javascript (due to its
+	// underlying use of a double float for numbers, leading to max int = 2^53 - 1).
+	// This would circumvent the need to use strings within JSON (e.g., the Google
+	// solution) to represent integer labels that could exceed the max javascript
+	// number.  It would require adding a value check on each label voxel of a
+	// mutation request, which might be too much of a hit to handle an edge case.
 	MaxAllowedLabel = 9007199254740991
 )
 
@@ -325,6 +325,22 @@ func (m *Mapping) delete(label uint64) {
 
 // Set is a set of labels.
 type Set map[uint64]struct{}
+
+// Merge returns a set made of the given labels.
+func NewSet(lbls ...uint64) Set {
+	s := make(Set, len(lbls))
+	for _, label := range lbls {
+		s[label] = struct{}{}
+	}
+	return s
+}
+
+// Merge adds the elements in the given set to the receiver.
+func (s Set) Merge(s2 Set) {
+	for label := range s2 {
+		s[label] = struct{}{}
+	}
+}
 
 // Exists returns true if the given uint64 is present in the Set.
 func (s Set) Exists(i uint64) bool {

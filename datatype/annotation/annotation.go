@@ -1896,12 +1896,6 @@ func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error
 	}
 }
 
-type Bounds struct {
-	VoxelBounds *dvid.Bounds
-	BlockBounds *dvid.Bounds
-	Exact       bool // All RLEs must respect the voxel bounds.  If false, just screen on blocks.
-}
-
 // ServeHTTP handles all incoming HTTP requests for this data.
 func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {
 	timedLog := dvid.NewTimeLog()

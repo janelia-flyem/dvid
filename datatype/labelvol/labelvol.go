@@ -421,7 +421,7 @@ type Properties struct {
 	// Block size for this repo
 	BlockSize dvid.Point3d
 
-	ml_mu sync.RWMutex // For atomic access of MaxLabel and MaxRepoLabel
+	mlMu sync.RWMutex // For atomic access of MaxLabel and MaxRepoLabel
 
 	// The maximum label id found in each version of this instance.
 	// Can be unset if no new label was added at that version, in which case
@@ -869,12 +869,6 @@ func (d *Data) DoRPC(req datastore.Request, reply *datastore.Response) error {
 	return nil
 }
 
-type Bounds struct {
-	VoxelBounds *dvid.Bounds
-	BlockBounds *dvid.Bounds
-	Exact       bool // All RLEs must respect the voxel bounds.  If false, just screen on blocks.
-}
-
 // ServeHTTP handles all incoming HTTP requests for this data.
 func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {
 	timedLog := dvid.NewTimeLog()
@@ -958,13 +952,13 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			return
 		}
 		queryStrings := r.URL.Query()
-		var b Bounds
-		b.VoxelBounds, err = dvid.BoundsFromQueryString(r)
+		var b dvid.Bounds
+		b.Voxel, err = dvid.OptionalBoundsFromQueryString(r)
 		if err != nil {
 			server.BadRequest(w, r, "Error parsing bounds from query string: %v\n", err)
 			return
 		}
-		b.BlockBounds = b.VoxelBounds.Divide(d.BlockSize)
+		b.Block = b.Voxel.Divide(d.BlockSize)
 		b.Exact = true
 		if queryStrings.Get("exact") == "false" {
 			b.Exact = false
@@ -1076,7 +1070,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			server.BadRequest(w, r, "Label 0 is protected background value and cannot be used as sparse volume.\n")
 			return
 		}
-		data, err := d.GetSparseVol(ctx, label, Bounds{})
+		data, err := d.GetSparseVol(ctx, label, dvid.Bounds{})
 		if err != nil {
 			server.BadRequest(w, r, err)
 			return
@@ -1310,8 +1304,8 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 
 // Given a stored label, make sure our max label tracking is updated.
 func (d *Data) casMaxLabel(batch storage.Batch, v dvid.VersionID, label uint64) {
-	d.ml_mu.Lock()
-	defer d.ml_mu.Unlock()
+	d.mlMu.Lock()
+	defer d.mlMu.Unlock()
 
 	save := false
 	maxLabel, found := d.MaxLabel[v]
@@ -1348,8 +1342,8 @@ func (d *Data) casMaxLabel(batch storage.Batch, v dvid.VersionID, label uint64) 
 
 // NewLabel returns a new label for the given version.
 func (d *Data) NewLabel(v dvid.VersionID) (uint64, error) {
-	d.ml_mu.Lock()
-	defer d.ml_mu.Unlock()
+	d.mlMu.Lock()
+	defer d.mlMu.Unlock()
 
 	// Make sure we aren't trying to increment a label on a locked node.
 	locked, err := datastore.LockedVersion(v)
@@ -1428,7 +1422,7 @@ type sparseOp struct {
 }
 
 // Alter serialized RLEs by the bounds.
-func boundRLEs(b []byte, bounds *dvid.Bounds) ([]byte, error) {
+func boundRLEs(b []byte, bounds *dvid.OptionalBounds) ([]byte, error) {
 	var oldRLEs dvid.RLEs
 	err := oldRLEs.UnmarshalBinary(b)
 	if err != nil {
@@ -1440,7 +1434,7 @@ func boundRLEs(b []byte, bounds *dvid.Bounds) ([]byte, error) {
 
 // FoundSparseVol returns true if a sparse volume is found for the given label
 // within the given bounds.
-func (d *Data) FoundSparseVol(ctx *datastore.VersionedCtx, label uint64, bounds Bounds) (bool, error) {
+func (d *Data) FoundSparseVol(ctx *datastore.VersionedCtx, label uint64, bounds dvid.Bounds) (bool, error) {
 	store, err := d.GetOrderedKeyValueDB()
 	if err != nil {
 		return false, fmt.Errorf("Data type labelvol had error initializing store: %v\n", err)
@@ -1449,14 +1443,10 @@ func (d *Data) FoundSparseVol(ctx *datastore.VersionedCtx, label uint64, bounds 
 	// Get the start/end indices for this body's KeyLabelSpatialMap (b + s) keys.
 	minZYX := dvid.MinIndexZYX
 	maxZYX := dvid.MaxIndexZYX
-	blockBounds := bounds.BlockBounds
-	if blockBounds == nil {
-		blockBounds = new(dvid.Bounds)
-	}
-	if minZ, ok := blockBounds.MinZ(); ok {
+	if minZ, ok := bounds.Block.MinZ(); ok {
 		minZYX[2] = minZ
 	}
-	if maxZ, ok := blockBounds.MaxZ(); ok {
+	if maxZ, ok := bounds.Block.MaxZ(); ok {
 		maxZYX[2] = maxZ
 	}
 
@@ -1480,7 +1470,7 @@ func (d *Data) FoundSparseVol(ctx *datastore.VersionedCtx, label uint64, bounds 
 	shortCircuitErr := fmt.Errorf("Found data, aborting.")
 	var f storage.ChunkFunc = func(chunk *storage.Chunk) error {
 		// Make sure this block is within the optinonal bounding.
-		if blockBounds.BoundedX() || blockBounds.BoundedY() {
+		if bounds.Block.BoundedX() || bounds.Block.BoundedY() {
 			_, blockStr, err := DecodeTKey(chunk.K)
 			if err != nil {
 				return fmt.Errorf("Error decoding sparse volume key (%v): %v\n", chunk.K, err)
@@ -1490,7 +1480,7 @@ func (d *Data) FoundSparseVol(ctx *datastore.VersionedCtx, label uint64, bounds 
 				return fmt.Errorf("Error decoding block coordinate (%v) for sparse volume: %v\n", blockStr, err)
 			}
 			blockX, blockY, _ := indexZYX.Unpack()
-			if blockBounds.OutsideX(blockX) || blockBounds.OutsideY(blockY) {
+			if bounds.Block.OutsideX(blockX) || bounds.Block.OutsideY(blockY) {
 				return nil
 			}
 		}
@@ -1532,7 +1522,7 @@ func (d *Data) FoundSparseVol(ctx *datastore.VersionedCtx, label uint64, bounds 
 //        int32   Length of run
 //        bytes   Optional payload dependent on first byte descriptor
 //
-func (d *Data) GetSparseVol(ctx *datastore.VersionedCtx, label uint64, bounds Bounds) ([]byte, error) {
+func (d *Data) GetSparseVol(ctx *datastore.VersionedCtx, label uint64, bounds dvid.Bounds) ([]byte, error) {
 	iv := d.getMergeIV(ctx.VersionID())
 	mapping := labels.LabelMap(iv)
 	if mapping != nil {
@@ -1560,14 +1550,10 @@ func (d *Data) GetSparseVol(ctx *datastore.VersionedCtx, label uint64, bounds Bo
 	// Get the start/end indices for this body's KeyLabelSpatialMap (b + s) keys.
 	minZYX := dvid.MinIndexZYX
 	maxZYX := dvid.MaxIndexZYX
-	blockBounds := bounds.BlockBounds
-	if blockBounds == nil {
-		blockBounds = new(dvid.Bounds)
-	}
-	if minZ, ok := blockBounds.MinZ(); ok {
+	if minZ, ok := bounds.Block.MinZ(); ok {
 		minZYX[2] = minZ
 	}
-	if maxZ, ok := blockBounds.MaxZ(); ok {
+	if maxZ, ok := bounds.Block.MaxZ(); ok {
 		maxZYX[2] = maxZ
 	}
 	// Process all the b+s keys and their values, which contain RLE runs for that label.
@@ -1578,7 +1564,7 @@ func (d *Data) GetSparseVol(ctx *datastore.VersionedCtx, label uint64, bounds Bo
 
 	var f storage.ChunkFunc = func(chunk *storage.Chunk) error {
 		// Make sure this block is within the optinonal bounding.
-		if blockBounds.BoundedX() || blockBounds.BoundedY() {
+		if bounds.Block.BoundedX() || bounds.Block.BoundedY() {
 			_, blockStr, err := DecodeTKey(chunk.K)
 			if err != nil {
 				return fmt.Errorf("Error decoding sparse volume key (%v): %v\n", chunk.K, err)
@@ -1588,7 +1574,7 @@ func (d *Data) GetSparseVol(ctx *datastore.VersionedCtx, label uint64, bounds Bo
 				return fmt.Errorf("Error decoding block coordinate (%v) for sparse volume: %v\n", blockStr, err)
 			}
 			blockX, blockY, _ := indexZYX.Unpack()
-			if blockBounds.OutsideX(blockX) || blockBounds.OutsideY(blockY) {
+			if bounds.Block.OutsideX(blockX) || bounds.Block.OutsideY(blockY) {
 				return nil
 			}
 		}
@@ -1596,8 +1582,8 @@ func (d *Data) GetSparseVol(ctx *datastore.VersionedCtx, label uint64, bounds Bo
 		// Adjust RLEs within block if we are bounded.
 		var rles []byte
 		var err error
-		if bounds.Exact && bounds.VoxelBounds.IsSet() {
-			rles, err = boundRLEs(chunk.V, bounds.VoxelBounds)
+		if bounds.Exact && bounds.Voxel.IsSet() {
+			rles, err = boundRLEs(chunk.V, bounds.Voxel)
 			if err != nil {
 				return fmt.Errorf("Error in adjusting RLEs to bounds: %v\n", err)
 			}

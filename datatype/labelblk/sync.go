@@ -475,7 +475,7 @@ func (d *Data) processMerge(v dvid.VersionID, delta labels.DeltaMerge) {
 	d.StartUpdate()
 
 	mutID := d.NewMutationID()
-	for izyxStr := range delta.Blocks {
+	for izyxStr := range delta.BlockMap {
 		n := izyxStr.Hash(numBlockHandlers)
 		d.MutAdd(mutID)
 		op := mergeOp{mutID: mutID, MergeOp: delta.MergeOp, block: izyxStr}
@@ -486,7 +486,7 @@ func (d *Data) processMerge(v dvid.VersionID, delta labels.DeltaMerge) {
 	go func() {
 		d.MutWait(mutID)
 		d.MutDelete(mutID)
-		timedLog.Debugf("labelblk sync complete for merge (%d blocks) of %s -> %d", len(delta.Blocks), delta.MergeOp.Merged, delta.MergeOp.Target)
+		timedLog.Debugf("labelblk sync complete for merge (%d blocks) of %s -> %d", len(delta.BlockMap), delta.MergeOp.Merged, delta.MergeOp.Target)
 		d.StopUpdate()
 		d.publishDownresCommit(v, mutID)
 	}()

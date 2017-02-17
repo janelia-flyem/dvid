@@ -71,7 +71,7 @@ type ChunkIndexer interface {
 	DuplicateChunkIndexer() ChunkIndexer
 }
 
-// IndexIterator is a function that returns a sequence of indices and ends with nil.
+// IndexIterator is an interface that can return a sequence of indices.
 type IndexIterator interface {
 	Valid() bool
 	IndexSpan() (beg, end Index, err error)
