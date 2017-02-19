@@ -20,7 +20,7 @@ type putOperation struct {
 	version  dvid.VersionID
 	mutate   bool   // if false, we just ingest without needing to GET previous value
 	mutID    uint64 // should be unique within a server's uptime.
-	ldiff    *labelDiffMap
+	indexCh  chan blockChange
 }
 
 // IngestVoxels ingests voxels from a subvolume into the storage engine.
@@ -90,7 +90,10 @@ func (d *Data) PutVoxels(v dvid.VersionID, vox *imageblk.Voxels, roiname dvid.In
 	// Iterate through index space for this data.
 	mutID := d.NewMutationID()
 	fmt.Printf("Starting PutVoxels, mutation %d\n", mutID)
-	ldm := labelDiffMap{id: mutID, m: make(map[uint64]*blockDiffMap)}
+
+	indexCh := make(chan blockChange, 100)
+	go d.indexLabels(v, indexCh)
+
 	for it, err := vox.NewIndexIterator(d.BlockSize()); err == nil && it.Valid(); it.NextSpan() {
 		i0, i1, err := it.IndexSpan()
 		if err != nil {
@@ -119,15 +122,14 @@ func (d *Data) PutVoxels(v dvid.VersionID, vox *imageblk.Voxels, roiname dvid.In
 			}
 
 			kv := &storage.TKeyValue{K: NewBlockTKey(&curIndex)}
-			putOp := &putOperation{vox, curIndex, v, mutate, mutID, &ldm}
+			putOp := &putOperation{vox, curIndex, v, mutate, mutID, indexCh}
 			op := &storage.ChunkOp{putOp, wg}
 			d.PutChunk(&storage.Chunk{op, kv}, putbuffer)
 		}
 	}
-	fmt.Printf("Waiting for PutVoxels block-level ops, mutation %d\n", mutID)
 	wg.Wait()
-	fmt.Printf("Proceeding with mutation %d...\n", mutID)
-	d.writeIndexMutation(v, ldm)
+	fmt.Printf("Done with PutVoxels block-level ops, mutation %d\n", mutID)
+	close(indexCh)
 
 	// if a bufferable op, flush
 	if putbuffer != nil {
@@ -319,12 +321,12 @@ func (d *Data) putChunk(chunk *storage.Chunk, putbuffer storage.RequestBuffer) {
 		if op.mutate {
 			event = labels.MutateBlockEvent
 			block := imageblk.MutatedBlock{&op.indexZYX, oldBlock, block.V, op.mutID}
-			d.changeIndices(ctx.VersionID(), op.ldiff, block)
+			d.handleIndexBlockMutate(op.indexCh, block)
 			delta = block
 		} else {
 			event = labels.IngestBlockEvent
 			block := imageblk.Block{&op.indexZYX, block.V, op.mutID}
-			d.setIndices(ctx.VersionID(), op.ldiff, block)
+			d.handleIndexBlockIngest(op.indexCh, block)
 			delta = block
 		}
 		evt := datastore.SyncEvent{d.DataUUID(), event}

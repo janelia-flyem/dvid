@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"sort"
-	"sync"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
@@ -77,17 +76,15 @@ func (s slds) Less(i, j int) bool {
 }
 
 // change the block presence map depending on changes.
-func (m *Meta) applyChanges(bdm *blockDiffMap) error {
+func (m *Meta) applyChanges(bdm blockDiffMap) error {
 	// apply # voxel changes, then sort the changes in ascending block order
-	bdm.RLock()
-	s := make(slds, len(bdm.m))
+	s := make(slds, len(bdm))
 	i := 0
-	for block, diff := range bdm.m {
+	for block, diff := range bdm {
 		m.Voxels = uint64(int64(m.Voxels) + int64(diff.delta))
 		s[i] = sld{block: block, labelDiff: diff}
 		i++
 	}
-	bdm.RUnlock()
 	sort.Sort(s)
 
 	if m.Blocks == nil {
@@ -148,168 +145,124 @@ type labelDiff struct {
 	delta   int32 // change in # voxels
 	present bool
 }
-type blockDiffMap struct {
-	m map[dvid.IZYXString]labelDiff
-	sync.RWMutex
-}
+type blockDiffMap map[dvid.IZYXString]labelDiff
 
-type labelDiffMap struct {
-	id uint64
-	m  map[uint64]*blockDiffMap
-	sync.RWMutex
-}
+type labelDiffMap map[uint64]blockDiffMap
 
-func (ldm *labelDiffMap) getBlockDiffMap(label uint64, block ...dvid.IZYXString) *blockDiffMap {
-	ldm.Lock()
-	defer ldm.Unlock()
-	if ldm.m == nil {
-		ldm.m = make(map[uint64]*blockDiffMap)
-	}
-	bdm, found := ldm.m[label]
-	if !found {
-		bdm = &blockDiffMap{m: make(map[dvid.IZYXString]labelDiff)}
-		ldm.m[label] = bdm
-	}
-	return bdm
-}
+const presentOld = uint8(0x01) // bit flag for label presence in old block
+const presentNew = uint8(0x02) // bit flag for label presence in new block
 
 // block-level analysis of mutation to get label changes in a block.  accumulates data for
 // a given mutation into a map per mutation which will then be flushed for each label meta
 // k/v pair at end of mutation.
-func (d *Data) changeIndices(v dvid.VersionID, ldm *labelDiffMap, mut imageblk.MutatedBlock) {
-	presentOld := uint8(0x01)
-	presentNew := uint8(0x02)
-	present := make(map[uint64]uint8)
-
-	// NOTE: can use ldm directly as opposed to making it concurrency safe because for each
-	// mutation we are doing this serially, not concurrently UNTIL PutChunk() is made
-	// concurrent.
-	block := mut.Index.ToIZYXString()
+func (d *Data) handleIndexBlockMutate(ch chan blockChange, mut imageblk.MutatedBlock) {
+	bc := blockChange{
+		block:   mut.Index.ToIZYXString(),
+		present: make(map[uint64]uint8),
+		delta:   make(map[uint64]int32),
+	}
 	blockBytes := int(d.BlockSize().Prod() * 8)
 	for i := 0; i < blockBytes; i += 8 {
 		old := binary.LittleEndian.Uint64(mut.Prev[i : i+8])
 		cur := binary.LittleEndian.Uint64(mut.Data[i : i+8])
-		present[old] |= presentOld
-		present[cur] |= presentNew
+		bc.present[old] |= presentOld
+		bc.present[cur] |= presentNew
 		if old != cur {
-			curbdm := ldm.getBlockDiffMap(cur)
-			curbdm.Lock()
-			diff, found := curbdm.m[block]
-			if !found {
-				diff = labelDiff{}
-			}
-			diff.delta++
-			curbdm.m[block] = diff
-			curbdm.Unlock()
-
-			oldbdm := ldm.getBlockDiffMap(old)
-			oldbdm.Lock()
-			diff2, found := oldbdm.m[block]
-			if !found {
-				diff2 = labelDiff{}
-			}
-			diff2.delta--
-			oldbdm.m[block] = diff2
-			oldbdm.Unlock()
+			bc.delta[cur]++
+			bc.delta[old]--
 		}
 	}
-	ldm.Lock()
-	delete(ldm.m, 0)
-	ldm.Unlock()
-
-	for label, flag := range present {
-		bdm := ldm.getBlockDiffMap(label)
-		bdm.Lock()
-		var diff labelDiff
-		switch flag {
-		case 0x01: // we no longer have this label in the block
-			diff.present = false
-			bdm.m[block] = diff
-		case 0x02: // this is a new label in this block
-			diff.present = true
-			bdm.m[block] = diff
-		case 0x03: // no change
-			diff.present = true
-			bdm.m[block] = diff
-		}
-		bdm.Unlock()
-	}
+	ch <- bc
 }
 
-// block-level analysis of ingest to get set labels in a block.
-func (d *Data) setIndices(v dvid.VersionID, ldm *labelDiffMap, mut imageblk.Block) {
-	block := mut.Index.ToIZYXString()
+// block-level analysis of label ingest
+func (d *Data) handleIndexBlockIngest(ch chan blockChange, mut imageblk.Block) {
+	bc := blockChange{
+		block:   mut.Index.ToIZYXString(),
+		present: make(map[uint64]uint8),
+		delta:   make(map[uint64]int32),
+	}
 	blockBytes := int(d.BlockSize().Prod() * 8)
-	fmt.Printf("setIndices on %s\n", block)
 	for i := 0; i < blockBytes; i += 8 {
 		label := binary.LittleEndian.Uint64(mut.Data[i : i+8])
-		bdm := ldm.getBlockDiffMap(label, block)
-		bdm.Lock()
-		diff, found := bdm.m[block]
-		if !found {
-			diff = labelDiff{}
-		}
-		diff.delta++
-		diff.present = true
-		bdm.m[block] = diff
-		bdm.Unlock()
+		bc.delta[label]++
+		bc.present[label] |= presentNew
 	}
-	ldm.Lock()
-	delete(ldm.m, 0)
-	ldm.Unlock()
+	ch <- bc
 }
 
-type indexMsg struct {
-	v     dvid.VersionID
-	label uint64
-	diff  *blockDiffMap
+type blockChange struct {
+	block   dvid.IZYXString
+	present map[uint64]uint8
+	delta   map[uint64]int32
 }
 
-// at end of mutation, write the accumulated changes for the labels in terms of block indices
-// and # voxels then delete the mutations labelDiffMap.
-func (d *Data) writeIndexMutation(v dvid.VersionID, ldm labelDiffMap) {
-	ldm.Lock()
-	for label, diff := range ldm.m {
-		diff.RLock()
-		fmt.Printf("Applying %d block changes to label %d\n", len(diff.m), label)
-		diff.RUnlock()
-		d.indexCh <- indexMsg{v, label, diff}
-	}
-	ldm.Unlock()
-}
+// goroutine(s) that accepts label change data for a block, then consolidates it and writes label
+// indexing.
+func (d *Data) indexLabels(v dvid.VersionID, ch <-chan blockChange) {
+	ctx := datastore.NewVersionedCtx(d, v)
+	ldm := make(map[uint64]blockDiffMap)
 
-// goroutine(s) that accept map of label changes per block and accumulates into mutationID-specific
-// change sets.
-func (d *Data) indexLabel(ch <-chan indexMsg) {
 	store, err := d.GetOrderedKeyValueDB()
 	if err != nil {
 		dvid.Criticalf("Data %q merge had error initializing store: %v\n", d.DataName(), err)
 		return
 	}
-	for msg := range ch {
-		ctx := datastore.NewVersionedCtx(d, msg.v)
 
-		meta, err := d.GetLabelMeta(ctx, labels.NewSet(msg.label), dvid.Bounds{})
+	for {
+		change, more := <-ch
+		if !more {
+			break
+		}
+		for label, flag := range change.present {
+			bdm, found := ldm[label]
+			if !found {
+				bdm = make(blockDiffMap)
+				ldm[label] = bdm
+			}
+			var diff labelDiff
+			switch flag {
+			case 0x01: // we no longer have this label in the block
+				diff.present = false
+				bdm[change.block] = diff
+			case 0x02: // this is a new label in this block
+				diff.present = true
+				bdm[change.block] = diff
+			case 0x03: // no change
+				diff.present = true
+				bdm[change.block] = diff
+			}
+		}
+		for label, delta := range change.delta {
+			bdm, found := ldm[label]
+			if !found {
+				bdm = make(blockDiffMap)
+				ldm[label] = bdm
+			}
+			diff := bdm[change.block]
+			diff.delta += delta
+		}
+	}
+
+	for label, bdm := range ldm {
+		meta, err := d.GetLabelMeta(ctx, labels.NewSet(label), dvid.Bounds{})
 		if err != nil {
-			dvid.Criticalf("Error trying to read label %d meta for data %q: %v\n", msg.label, d.DataName(), err)
+			dvid.Criticalf("Error trying to read label %d meta for data %q: %v\n", label, d.DataName(), err)
 			continue
 		}
-		oldVoxels := meta.Voxels
-		oldNumBlocks := len(meta.Blocks)
-		if err := meta.applyChanges(msg.diff); err != nil {
-			dvid.Criticalf("Error on applying mutation changes to label %d meta: %v\n", msg.label, err)
+		if err := meta.applyChanges(bdm); err != nil {
+			dvid.Criticalf("Error on applying mutation changes to label %d meta: %v\n", label, err)
 			continue
 		}
-		fmt.Printf("Label %d went from %d -> %d voxels, and %d -> %d blocks\n", msg.label, oldVoxels, meta.Voxels, oldNumBlocks, len(meta.Blocks))
 
-		tk := NewLabelIndexTKey(msg.label)
+		tk := NewLabelIndexTKey(label)
 		data, err := meta.MarshalBinary()
 		if err != nil {
-			dvid.Criticalf("Error trying to serialize meta for label %d, data %q: %v", msg.label, d.DataName(), err)
+			dvid.Criticalf("Error trying to serialize meta for label %d, data %q: %v", label, d.DataName(), err)
 			continue
 		}
 		if err := store.Put(ctx, tk, data); err != nil {
-			dvid.Criticalf("Error trying to put meta for label %d, data %q: %v", msg.label, d.DataName(), err)
+			dvid.Criticalf("Error trying to put meta for label %d, data %q: %v", label, d.DataName(), err)
 		}
 	}
 }

@@ -177,8 +177,6 @@ func (d *Data) InitDataHandlers() error {
 		d.mutateCh[i] = make(chan procMsg, 10)
 		go d.mutateBlock(d.mutateCh[i])
 	}
-	d.indexCh = make(chan indexMsg, 100)
-	go d.indexLabel(d.indexCh)
 
 	dvid.Infof("Launching sync event handler for data %q...\n", d.DataName())
 	go d.processEvents()
