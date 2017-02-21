@@ -1569,11 +1569,10 @@ func (d *Data) GetSparseVol(ctx *datastore.VersionedCtx, label uint64, bounds dv
 			if err != nil {
 				return fmt.Errorf("Error decoding sparse volume key (%v): %v\n", chunk.K, err)
 			}
-			indexZYX, err := blockStr.IndexZYX()
+			blockX, blockY, _, err := blockStr.Unpack()
 			if err != nil {
-				return fmt.Errorf("Error decoding block coordinate (%v) for sparse volume: %v\n", blockStr, err)
+				return fmt.Errorf("Error decoding block %v: %v\n", blockStr, err)
 			}
-			blockX, blockY, _ := indexZYX.Unpack()
 			if bounds.Block.OutsideX(blockX) || bounds.Block.OutsideY(blockY) {
 				return nil
 			}

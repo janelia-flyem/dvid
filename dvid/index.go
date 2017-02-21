@@ -391,6 +391,16 @@ func (i IZYXString) IndexZYX() (IndexZYX, error) {
 	return idx, nil
 }
 
+// Unpack returns the constituent x, y, and z coordinates of the corresponding index.
+func (i IZYXString) Unpack() (x, y, z int32, err error) {
+	var idx IndexZYX
+	if err = idx.IndexFromBytes([]byte(i)); err != nil {
+		return
+	}
+	x, y, z = idx.Unpack()
+	return
+}
+
 func (i IZYXString) Z() (int32, error) {
 	idx, err := i.IndexZYX()
 	if err != nil {

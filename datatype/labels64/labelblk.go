@@ -783,6 +783,8 @@ type Data struct {
 	downresCh [numBlockHandlers]chan procMsg // channels into downres denomralizations.
 	mutateCh  [numBlockHandlers]chan procMsg // channels into mutate (merge/split) ops.
 
+	indexCh [numLabelHandlers]chan labelChange // channels into label indexing
+
 	vcache   map[dvid.VersionID]blockCache
 	vcacheMu sync.RWMutex
 }

@@ -884,7 +884,7 @@ func (i *IZYXSlice) UnmarshalBinary(b []byte) error {
 	// the serialization?
 	sz := len(b)
 	if sz == 0 {
-		i = &IZYXSlice{}
+		*i = IZYXSlice{}
 		return nil
 	}
 	if sz%12 != 0 {
@@ -897,7 +897,7 @@ func (i *IZYXSlice) UnmarshalBinary(b []byte) error {
 		s[j] = IZYXString(b[off : off+12])
 		off += 12
 	}
-	i = &s
+	*i = s
 	return nil
 }
 

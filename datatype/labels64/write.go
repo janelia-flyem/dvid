@@ -91,9 +91,10 @@ func (d *Data) PutVoxels(v dvid.VersionID, vox *imageblk.Voxels, roiname dvid.In
 	mutID := d.NewMutationID()
 	fmt.Printf("Starting PutVoxels, mutation %d\n", mutID)
 
-	indexCh := make(chan blockChange, 100)
-	go d.indexLabels(v, indexCh)
+	blockCh := make(chan blockChange, 100)
+	go d.aggregateBlockChanges(v, blockCh)
 
+	blocks := 0
 	for it, err := vox.NewIndexIterator(d.BlockSize()); err == nil && it.Valid(); it.NextSpan() {
 		i0, i1, err := it.IndexSpan()
 		if err != nil {
@@ -122,14 +123,15 @@ func (d *Data) PutVoxels(v dvid.VersionID, vox *imageblk.Voxels, roiname dvid.In
 			}
 
 			kv := &storage.TKeyValue{K: NewBlockTKey(&curIndex)}
-			putOp := &putOperation{vox, curIndex, v, mutate, mutID, indexCh}
+			putOp := &putOperation{vox, curIndex, v, mutate, mutID, blockCh}
 			op := &storage.ChunkOp{putOp, wg}
 			d.PutChunk(&storage.Chunk{op, kv}, putbuffer)
+			blocks++
 		}
 	}
 	wg.Wait()
-	fmt.Printf("Done with PutVoxels block-level ops, mutation %d\n", mutID)
-	close(indexCh)
+	fmt.Printf("Done with PutVoxels %d block-level ops, mutation %d\n", blocks, mutID)
+	close(blockCh)
 
 	// if a bufferable op, flush
 	if putbuffer != nil {

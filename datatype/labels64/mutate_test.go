@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -45,7 +46,7 @@ func (b testBody) checkCoarse(t *testing.T, encoding []byte) {
 
 	// Check those spans match the body voxels.
 	if !reflect.DeepEqual(spans, b.blockSpans) {
-		t.Errorf("Expected spans for label %d:\n%s\nGot spans:\n%s\n", b.label, b.blockSpans, spans)
+		t.Errorf("Expected coarse spans for label %d:\n%s\nGot spans:\n%s\n", b.label, b.blockSpans, spans)
 	}
 }
 
@@ -79,31 +80,29 @@ func (b testBody) checkSparseVol(t *testing.T, encoding []byte, bounds dvid.Opti
 	gotNorm := spans.Normalize()
 	expectNorm := expected.Normalize()
 	if !reflect.DeepEqual(gotNorm, expectNorm) {
-		/*
-			for _, got := range gotNorm {
-				bad := true
-				for _, expect := range expectNorm {
-					if reflect.DeepEqual(got, expect) {
-						bad = false
-					}
-				}
-				if bad {
-					fmt.Printf("Got unexpected span: %s\n", got)
-				}
-			}
+		for _, got := range gotNorm {
+			bad := true
 			for _, expect := range expectNorm {
-				bad := true
-				for _, got := range gotNorm {
-					if reflect.DeepEqual(got, expect) {
-						bad = false
-					}
-				}
-				if bad {
-					fmt.Printf("Never got expected span: %s\n", expect)
+				if reflect.DeepEqual(got, expect) {
+					bad = false
 				}
 			}
-		*/
-		t.Fatalf("Expected spans for label %d:\n%s\nGot spans:\n%s\nAfter Norm:%s\n", b.label, expectNorm, spans, gotNorm)
+			if bad {
+				fmt.Printf("Got unexpected span: %s\n", got)
+			}
+		}
+		for _, expect := range expectNorm {
+			bad := true
+			for _, got := range gotNorm {
+				if reflect.DeepEqual(got, expect) {
+					bad = false
+				}
+			}
+			if bad {
+				fmt.Printf("Never got expected span: %s\n", expect)
+			}
+		}
+		t.Fatalf("Expected %d fine spans for label %d:\n%s\nGot %d spans:\n%s\nAfter Norm:%s\n", len(expectNorm), b.label, expectNorm, len(spans), spans, gotNorm)
 	}
 }
 
@@ -241,6 +240,7 @@ func TestSparseVolumes(t *testing.T) {
 	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
 		t.Fatalf("Error blocking on labels updating: %v\n", err)
 	}
+	time.Sleep(1 * time.Second)
 
 	badReqStr := fmt.Sprintf("%snode/%s/labels/sparsevol/0", server.WebAPIPath, uuid)
 	server.TestBadHTTP(t, "GET", badReqStr, nil)
@@ -262,6 +262,7 @@ func TestSparseVolumes(t *testing.T) {
 
 		// Check full sparse volumes
 		encoding := server.TestHTTP(t, "GET", reqStr, nil)
+		fmt.Printf("Got %d bytes back from %s\n", len(encoding), reqStr)
 		bodies[label-1].checkSparseVol(t, encoding, dvid.OptionalBounds{})
 
 		// Check with lz4 compression

@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
-	"reflect"
 	"sync"
 	"testing"
 
@@ -36,162 +35,6 @@ func initTestRepo() (dvid.UUID, dvid.VersionID) {
 		}
 	}
 	return datastore.NewTestRepo()
-}
-
-// Data from which to construct repeatable 3d images where adjacent voxels have different values.
-var xdata = []uint64{23, 819229, 757, 100303, 9991}
-var ydata = []uint64{66599, 201, 881067, 5488, 0}
-var zdata = []uint64{1, 734, 43990122, 42, 319596}
-
-// Make a 2d slice of bytes with top left corner at (ox,oy,oz) and size (nx,ny)
-func makeSlice(offset dvid.Point3d, size dvid.Point2d) []byte {
-	numBytes := size[0] * size[1] * 8
-	slice := make([]byte, numBytes, numBytes)
-	i := 0
-	modz := offset[2] % int32(len(zdata))
-	for y := int32(0); y < size[1]; y++ {
-		sy := y + offset[1]
-		mody := sy % int32(len(ydata))
-		sx := offset[0]
-		for x := int32(0); x < size[0]; x++ {
-			modx := sx % int32(len(xdata))
-			binary.BigEndian.PutUint64(slice[i:i+8], xdata[modx]+ydata[mody]+zdata[modz])
-			i += 8
-			sx++
-		}
-	}
-	return slice
-}
-
-// Make a 3d volume of bytes with top left corner at (ox,oy,oz) and size (nx, ny, nz)
-func makeVolume(offset, size dvid.Point3d) []byte {
-	sliceBytes := size[0] * size[1] * 8
-	volumeBytes := sliceBytes * size[2]
-	volume := make([]byte, volumeBytes, volumeBytes)
-	var i int32
-	size2d := dvid.Point2d{size[0], size[1]}
-	startZ := offset[2]
-	endZ := startZ + size[2]
-	for z := startZ; z < endZ; z++ {
-		offset[2] = z
-		copy(volume[i:i+sliceBytes], makeSlice(offset, size2d))
-		i += sliceBytes
-	}
-	return volume
-}
-
-// Creates a new data instance for labels64
-func newDataInstance(uuid dvid.UUID, t *testing.T, name dvid.InstanceName) *Data {
-	config := dvid.NewConfig()
-	dataservice, err := datastore.NewData(uuid, labelsT, name, config)
-	if err != nil {
-		t.Fatalf("Unable to create labels64 instance %q: %v\n", name, err)
-	}
-	labels, ok := dataservice.(*Data)
-	if !ok {
-		t.Fatalf("Can't cast labels data service into Data\n")
-	}
-	return labels
-}
-
-func TestLabelblkDirectAPI(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
-
-	uuid, versionID := initTestRepo()
-	labels := newDataInstance(uuid, t, "mylabels")
-	labelsCtx := datastore.NewVersionedCtx(labels, versionID)
-
-	// Create a fake block-aligned label volume
-	offset := dvid.Point3d{32, 0, 64}
-	size := dvid.Point3d{96, 64, 160}
-	subvol := dvid.NewSubvolume(offset, size)
-	data := makeVolume(offset, size)
-
-	// Store it into datastore at root
-	v, err := labels.NewVoxels(subvol, data)
-	if err != nil {
-		t.Fatalf("Unable to make new labels Voxels: %v\n", err)
-	}
-	if err = labels.IngestVoxels(versionID, v, ""); err != nil {
-		t.Errorf("Unable to put labels for %s: %v\n", labelsCtx, err)
-	}
-	if v.NumVoxels() != int64(len(data))/8 {
-		t.Errorf("# voxels (%d) after PutVoxels != # original voxels (%d)\n",
-			v.NumVoxels(), int64(len(data))/8)
-	}
-
-	// Read the stored image
-	v2, err := labels.NewVoxels(subvol, nil)
-	if err != nil {
-		t.Errorf("Unable to make new labels ExtHandler: %v\n", err)
-	}
-	if err = labels.GetVoxels(versionID, v2, ""); err != nil {
-		t.Errorf("Unable to get voxels for %s: %v\n", labelsCtx, err)
-	}
-
-	// Make sure the retrieved image matches the original
-	if v.Stride() != v2.Stride() {
-		t.Errorf("Stride in retrieved subvol incorrect\n")
-	}
-	if v.Interpolable() != v2.Interpolable() {
-		t.Errorf("Interpolable bool in retrieved subvol incorrect\n")
-	}
-	if !reflect.DeepEqual(v.Size(), v2.Size()) {
-		t.Errorf("Size in retrieved subvol incorrect: %s vs expected %s\n",
-			v2.Size(), v.Size())
-	}
-	if v.NumVoxels() != v2.NumVoxels() {
-		t.Errorf("# voxels in retrieved is different: %d vs expected %d\n",
-			v2.NumVoxels(), v.NumVoxels())
-	}
-	byteData := v2.Data()
-
-	for i := int64(0); i < v2.NumVoxels()*8; i++ {
-		if byteData[i] != data[i] {
-			t.Logf("Size of data: %d bytes from GET, %d bytes in PUT\n", len(data), len(data))
-			t.Fatalf("GET subvol (%d) != PUT subvol (%d) @ uint64 #%d", byteData[i], data[i], i)
-		}
-	}
-}
-func TestLabelblkRepoPersistence(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
-
-	uuid, _ := initTestRepo()
-
-	// Make labels and set various properties
-	config := dvid.NewConfig()
-	config.Set("BlockSize", "12,13,14")
-	config.Set("VoxelSize", "1.1,2.8,11")
-	config.Set("VoxelUnits", "microns,millimeters,nanometers")
-	dataservice, err := datastore.NewData(uuid, labelsT, "mylabels", config)
-	if err != nil {
-		t.Errorf("Unable to create labels instance: %v\n", err)
-	}
-	labels, ok := dataservice.(*Data)
-	if !ok {
-		t.Errorf("Can't cast labels data service into Data\n")
-	}
-	oldData := *labels
-
-	// Restart test datastore and see if datasets are still there.
-	if err = datastore.SaveDataByUUID(uuid, labels); err != nil {
-		t.Fatalf("Unable to save repo during labels persistence test: %v\n", err)
-	}
-	datastore.CloseReopenTest()
-
-	dataservice2, err := datastore.GetDataByUUIDName(uuid, "mylabels")
-	if err != nil {
-		t.Fatalf("Can't get labels instance from reloaded test db: %v\n", err)
-	}
-	labels2, ok := dataservice2.(*Data)
-	if !ok {
-		t.Errorf("Returned new data instance 2 is not imageblk.Data\n")
-	}
-	if !oldData.Equals(labels2) {
-		t.Errorf("Expected %v, got %v\n", oldData, *labels2)
-	}
 }
 
 type tuple [4]int32
@@ -310,80 +153,6 @@ type mergeJSON string
 func (mjson mergeJSON) send(t *testing.T, uuid dvid.UUID, name string) {
 	apiStr := fmt.Sprintf("%snode/%s/%s/merge", server.WebAPIPath, uuid, name)
 	server.TestHTTP(t, "POST", apiStr, bytes.NewBufferString(string(mjson)))
-}
-
-func TestMultiscale(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
-
-	// Create testbed volume and data instances
-	uuid, _ := initTestRepo()
-	var config dvid.Config
-	server.CreateTestInstance(t, uuid, "labels64", "labels", config)
-
-	// Add multiscale
-	server.CreateTestInstance(t, uuid, "labels64", "labels_1", config) // 64 x 64 x 64
-	server.CreateTestSync(t, uuid, "labels_1", "labels")
-	server.CreateTestInstance(t, uuid, "labels64", "labels_2", config) // 32 x 32 x 32
-	server.CreateTestSync(t, uuid, "labels_2", "labels_1")
-
-	// Create an easily interpreted label volume with a couple of labels.
-	volume := newTestVolume(128, 128, 128)
-	volume.addSubvol(dvid.Point3d{40, 40, 40}, dvid.Point3d{40, 40, 40}, 1)
-	volume.addSubvol(dvid.Point3d{40, 40, 80}, dvid.Point3d{40, 40, 40}, 2)
-	volume.addSubvol(dvid.Point3d{80, 40, 40}, dvid.Point3d{40, 40, 40}, 13)
-	volume.addSubvol(dvid.Point3d{40, 80, 40}, dvid.Point3d{40, 40, 40}, 209)
-	volume.addSubvol(dvid.Point3d{80, 80, 40}, dvid.Point3d{40, 40, 40}, 311)
-	volume.put(t, uuid, "labels")
-
-	// Verify initial ingest for hi-res
-	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
-		t.Fatalf("Error blocking on update for labels: %v\n", err)
-	}
-	hires := newTestVolume(128, 128, 128)
-	hires.get(t, uuid, "labels")
-	hires.verifyLabel(t, 1, 45, 45, 45)
-	hires.verifyLabel(t, 2, 50, 50, 100)
-	hires.verifyLabel(t, 13, 100, 60, 60)
-	hires.verifyLabel(t, 209, 55, 100, 55)
-	hires.verifyLabel(t, 311, 81, 81, 41)
-
-	// Check the first downres: 64^3
-	if err := datastore.BlockOnUpdating(uuid, "labels_1"); err != nil {
-		t.Fatalf("Error blocking on update for labels_1: %v\n", err)
-	}
-	downres1 := newTestVolume(64, 64, 64)
-	downres1.get(t, uuid, "labels_1")
-	downres1.verifyLabel(t, 1, 30, 30, 30)
-	downres1.verifyLabel(t, 2, 21, 21, 45)
-	downres1.verifyLabel(t, 13, 45, 21, 36)
-	downres1.verifyLabel(t, 209, 21, 50, 35)
-	downres1.verifyLabel(t, 311, 45, 55, 35)
-	expected1 := newTestVolume(64, 64, 64)
-	expected1.addSubvol(dvid.Point3d{20, 20, 20}, dvid.Point3d{20, 20, 20}, 1)
-	expected1.addSubvol(dvid.Point3d{20, 20, 40}, dvid.Point3d{20, 20, 20}, 2)
-	expected1.addSubvol(dvid.Point3d{40, 20, 20}, dvid.Point3d{20, 20, 20}, 13)
-	expected1.addSubvol(dvid.Point3d{20, 40, 20}, dvid.Point3d{20, 20, 20}, 209)
-	expected1.addSubvol(dvid.Point3d{40, 40, 20}, dvid.Point3d{20, 20, 20}, 311)
-	if err := downres1.equals(expected1); err != nil {
-		t.Errorf("1st downres 'labels_1' isn't what is expected: %v\n", err)
-	}
-
-	// Check the second downres to voxel: 32^3
-	if err := datastore.BlockOnUpdating(uuid, "labels_2"); err != nil {
-		t.Fatalf("Error blocking on update for labels_2: %v\n", err)
-	}
-	expected2 := newTestVolume(32, 32, 32)
-	expected2.addSubvol(dvid.Point3d{10, 10, 10}, dvid.Point3d{10, 10, 10}, 1)
-	expected2.addSubvol(dvid.Point3d{10, 10, 20}, dvid.Point3d{10, 10, 10}, 2)
-	expected2.addSubvol(dvid.Point3d{20, 10, 10}, dvid.Point3d{10, 10, 10}, 13)
-	expected2.addSubvol(dvid.Point3d{10, 20, 10}, dvid.Point3d{10, 10, 10}, 209)
-	expected2.addSubvol(dvid.Point3d{20, 20, 10}, dvid.Point3d{10, 10, 10}, 311)
-	downres2 := newTestVolume(32, 32, 32)
-	downres2.get(t, uuid, "labels_2")
-	if err := downres2.equals(expected2); err != nil {
-		t.Errorf("2nd downres 'labels_2' isn't what is expected: %v\n", err)
-	}
 }
 
 type labelVol struct {
@@ -779,6 +548,237 @@ type labelResp struct {
 	Label uint64
 }
 
+// Data from which to construct repeatable 3d images where adjacent voxels have different values.
+var xdata = []uint64{23, 819229, 757, 100303, 9991}
+var ydata = []uint64{66599, 201, 881067, 5488, 0}
+var zdata = []uint64{1, 734, 43990122, 42, 319596}
+
+// Make a 2d slice of bytes with top left corner at (ox,oy,oz) and size (nx,ny)
+func makeSlice(offset dvid.Point3d, size dvid.Point2d) []byte {
+	numBytes := size[0] * size[1] * 8
+	slice := make([]byte, numBytes, numBytes)
+	i := 0
+	modz := offset[2] % int32(len(zdata))
+	for y := int32(0); y < size[1]; y++ {
+		sy := y + offset[1]
+		mody := sy % int32(len(ydata))
+		sx := offset[0]
+		for x := int32(0); x < size[0]; x++ {
+			modx := sx % int32(len(xdata))
+			binary.BigEndian.PutUint64(slice[i:i+8], xdata[modx]+ydata[mody]+zdata[modz])
+			i += 8
+			sx++
+		}
+	}
+	return slice
+}
+
+// Make a 3d volume of bytes with top left corner at (ox,oy,oz) and size (nx, ny, nz)
+func makeVolume(offset, size dvid.Point3d) []byte {
+	sliceBytes := size[0] * size[1] * 8
+	volumeBytes := sliceBytes * size[2]
+	volume := make([]byte, volumeBytes, volumeBytes)
+	var i int32
+	size2d := dvid.Point2d{size[0], size[1]}
+	startZ := offset[2]
+	endZ := startZ + size[2]
+	for z := startZ; z < endZ; z++ {
+		offset[2] = z
+		copy(volume[i:i+sliceBytes], makeSlice(offset, size2d))
+		i += sliceBytes
+	}
+	return volume
+}
+
+// Creates a new data instance for labels64
+func newDataInstance(uuid dvid.UUID, t *testing.T, name dvid.InstanceName) *Data {
+	config := dvid.NewConfig()
+	dataservice, err := datastore.NewData(uuid, labelsT, name, config)
+	if err != nil {
+		t.Fatalf("Unable to create labels64 instance %q: %v\n", name, err)
+	}
+	labels, ok := dataservice.(*Data)
+	if !ok {
+		t.Fatalf("Can't cast labels data service into Data\n")
+	}
+	return labels
+}
+
+/*
+func TestLabelblkDirectAPI(t *testing.T) {
+	datastore.OpenTest()
+	defer datastore.CloseTest()
+
+	uuid, versionID := initTestRepo()
+	labels := newDataInstance(uuid, t, "mylabels")
+	labelsCtx := datastore.NewVersionedCtx(labels, versionID)
+
+	// Create a fake block-aligned label volume
+	offset := dvid.Point3d{32, 0, 64}
+	size := dvid.Point3d{96, 64, 160}
+	subvol := dvid.NewSubvolume(offset, size)
+	data := makeVolume(offset, size)
+
+	// Store it into datastore at root
+	v, err := labels.NewVoxels(subvol, data)
+	if err != nil {
+		t.Fatalf("Unable to make new labels Voxels: %v\n", err)
+	}
+	if err = labels.IngestVoxels(versionID, v, ""); err != nil {
+		t.Errorf("Unable to put labels for %s: %v\n", labelsCtx, err)
+	}
+	if v.NumVoxels() != int64(len(data))/8 {
+		t.Errorf("# voxels (%d) after PutVoxels != # original voxels (%d)\n",
+			v.NumVoxels(), int64(len(data))/8)
+	}
+
+	// Read the stored image
+	v2, err := labels.NewVoxels(subvol, nil)
+	if err != nil {
+		t.Errorf("Unable to make new labels ExtHandler: %v\n", err)
+	}
+	if err = labels.GetVoxels(versionID, v2, ""); err != nil {
+		t.Errorf("Unable to get voxels for %s: %v\n", labelsCtx, err)
+	}
+
+	// Make sure the retrieved image matches the original
+	if v.Stride() != v2.Stride() {
+		t.Errorf("Stride in retrieved subvol incorrect\n")
+	}
+	if v.Interpolable() != v2.Interpolable() {
+		t.Errorf("Interpolable bool in retrieved subvol incorrect\n")
+	}
+	if !reflect.DeepEqual(v.Size(), v2.Size()) {
+		t.Errorf("Size in retrieved subvol incorrect: %s vs expected %s\n",
+			v2.Size(), v.Size())
+	}
+	if v.NumVoxels() != v2.NumVoxels() {
+		t.Errorf("# voxels in retrieved is different: %d vs expected %d\n",
+			v2.NumVoxels(), v.NumVoxels())
+	}
+	byteData := v2.Data()
+
+	for i := int64(0); i < v2.NumVoxels()*8; i++ {
+		if byteData[i] != data[i] {
+			t.Logf("Size of data: %d bytes from GET, %d bytes in PUT\n", len(data), len(data))
+			t.Fatalf("GET subvol (%d) != PUT subvol (%d) @ uint64 #%d", byteData[i], data[i], i)
+		}
+	}
+}
+func TestLabelblkRepoPersistence(t *testing.T) {
+	datastore.OpenTest()
+	defer datastore.CloseTest()
+
+	uuid, _ := initTestRepo()
+
+	// Make labels and set various properties
+	config := dvid.NewConfig()
+	config.Set("BlockSize", "12,13,14")
+	config.Set("VoxelSize", "1.1,2.8,11")
+	config.Set("VoxelUnits", "microns,millimeters,nanometers")
+	dataservice, err := datastore.NewData(uuid, labelsT, "mylabels", config)
+	if err != nil {
+		t.Errorf("Unable to create labels instance: %v\n", err)
+	}
+	labels, ok := dataservice.(*Data)
+	if !ok {
+		t.Errorf("Can't cast labels data service into Data\n")
+	}
+	oldData := *labels
+
+	// Restart test datastore and see if datasets are still there.
+	if err = datastore.SaveDataByUUID(uuid, labels); err != nil {
+		t.Fatalf("Unable to save repo during labels persistence test: %v\n", err)
+	}
+	datastore.CloseReopenTest()
+
+	dataservice2, err := datastore.GetDataByUUIDName(uuid, "mylabels")
+	if err != nil {
+		t.Fatalf("Can't get labels instance from reloaded test db: %v\n", err)
+	}
+	labels2, ok := dataservice2.(*Data)
+	if !ok {
+		t.Errorf("Returned new data instance 2 is not imageblk.Data\n")
+	}
+	if !oldData.Equals(labels2) {
+		t.Errorf("Expected %v, got %v\n", oldData, *labels2)
+	}
+}
+
+func TestMultiscale(t *testing.T) {
+	datastore.OpenTest()
+	defer datastore.CloseTest()
+
+	// Create testbed volume and data instances
+	uuid, _ := initTestRepo()
+	var config dvid.Config
+	server.CreateTestInstance(t, uuid, "labels64", "labels", config)
+
+	// Add multiscale
+	server.CreateTestInstance(t, uuid, "labels64", "labels_1", config) // 64 x 64 x 64
+	server.CreateTestSync(t, uuid, "labels_1", "labels")
+	server.CreateTestInstance(t, uuid, "labels64", "labels_2", config) // 32 x 32 x 32
+	server.CreateTestSync(t, uuid, "labels_2", "labels_1")
+
+	// Create an easily interpreted label volume with a couple of labels.
+	volume := newTestVolume(128, 128, 128)
+	volume.addSubvol(dvid.Point3d{40, 40, 40}, dvid.Point3d{40, 40, 40}, 1)
+	volume.addSubvol(dvid.Point3d{40, 40, 80}, dvid.Point3d{40, 40, 40}, 2)
+	volume.addSubvol(dvid.Point3d{80, 40, 40}, dvid.Point3d{40, 40, 40}, 13)
+	volume.addSubvol(dvid.Point3d{40, 80, 40}, dvid.Point3d{40, 40, 40}, 209)
+	volume.addSubvol(dvid.Point3d{80, 80, 40}, dvid.Point3d{40, 40, 40}, 311)
+	volume.put(t, uuid, "labels")
+
+	// Verify initial ingest for hi-res
+	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
+		t.Fatalf("Error blocking on update for labels: %v\n", err)
+	}
+	hires := newTestVolume(128, 128, 128)
+	hires.get(t, uuid, "labels")
+	hires.verifyLabel(t, 1, 45, 45, 45)
+	hires.verifyLabel(t, 2, 50, 50, 100)
+	hires.verifyLabel(t, 13, 100, 60, 60)
+	hires.verifyLabel(t, 209, 55, 100, 55)
+	hires.verifyLabel(t, 311, 81, 81, 41)
+
+	// Check the first downres: 64^3
+	if err := datastore.BlockOnUpdating(uuid, "labels_1"); err != nil {
+		t.Fatalf("Error blocking on update for labels_1: %v\n", err)
+	}
+	downres1 := newTestVolume(64, 64, 64)
+	downres1.get(t, uuid, "labels_1")
+	downres1.verifyLabel(t, 1, 30, 30, 30)
+	downres1.verifyLabel(t, 2, 21, 21, 45)
+	downres1.verifyLabel(t, 13, 45, 21, 36)
+	downres1.verifyLabel(t, 209, 21, 50, 35)
+	downres1.verifyLabel(t, 311, 45, 55, 35)
+	expected1 := newTestVolume(64, 64, 64)
+	expected1.addSubvol(dvid.Point3d{20, 20, 20}, dvid.Point3d{20, 20, 20}, 1)
+	expected1.addSubvol(dvid.Point3d{20, 20, 40}, dvid.Point3d{20, 20, 20}, 2)
+	expected1.addSubvol(dvid.Point3d{40, 20, 20}, dvid.Point3d{20, 20, 20}, 13)
+	expected1.addSubvol(dvid.Point3d{20, 40, 20}, dvid.Point3d{20, 20, 20}, 209)
+	expected1.addSubvol(dvid.Point3d{40, 40, 20}, dvid.Point3d{20, 20, 20}, 311)
+	if err := downres1.equals(expected1); err != nil {
+		t.Errorf("1st downres 'labels_1' isn't what is expected: %v\n", err)
+	}
+
+	// Check the second downres to voxel: 32^3
+	if err := datastore.BlockOnUpdating(uuid, "labels_2"); err != nil {
+		t.Fatalf("Error blocking on update for labels_2: %v\n", err)
+	}
+	expected2 := newTestVolume(32, 32, 32)
+	expected2.addSubvol(dvid.Point3d{10, 10, 10}, dvid.Point3d{10, 10, 10}, 1)
+	expected2.addSubvol(dvid.Point3d{10, 10, 20}, dvid.Point3d{10, 10, 10}, 2)
+	expected2.addSubvol(dvid.Point3d{20, 10, 10}, dvid.Point3d{10, 10, 10}, 13)
+	expected2.addSubvol(dvid.Point3d{10, 20, 10}, dvid.Point3d{10, 10, 10}, 209)
+	expected2.addSubvol(dvid.Point3d{20, 20, 10}, dvid.Point3d{10, 10, 10}, 311)
+	downres2 := newTestVolume(32, 32, 32)
+	downres2.get(t, uuid, "labels_2")
+	if err := downres2.equals(expected2); err != nil {
+		t.Errorf("2nd downres 'labels_2' isn't what is expected: %v\n", err)
+	}
+}
+
 func TestLabels(t *testing.T) {
 	datastore.OpenTest()
 	defer datastore.CloseTest()
@@ -1002,3 +1002,5 @@ func TestLabels(t *testing.T) {
 		}
 	}
 }
+
+*/

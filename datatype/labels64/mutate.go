@@ -487,7 +487,12 @@ func (d *Data) splitIndices(v dvid.VersionID, delta labels.DeltaSplit, deleteBlk
 // and the backend is distributed, we can spawn many mutateBlock() goroutines as long as we uniquely
 // shard blocks across them, so the same block will always be directed to the same goroutine.
 func (d *Data) mutateBlock(ch <-chan procMsg) {
-	for msg := range ch {
+	for {
+		msg, more := <-ch
+		if !more {
+			return
+		}
+
 		ctx := datastore.NewVersionedCtx(d, msg.v)
 		switch op := msg.op.(type) {
 		case mergeOp:

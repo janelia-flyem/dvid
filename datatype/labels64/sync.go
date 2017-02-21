@@ -17,7 +17,8 @@ import (
 )
 
 const (
-	numBlockHandlers = 8
+	numBlockHandlers = 8 // goroutines used to process block changes
+	numLabelHandlers = 8 // goroutines used to do get/put tx on label indices
 
 	DownsizeBlockEvent  = "LABELBLK_DOWNSIZE_ADD"
 	DownsizeCommitEvent = "LABELBLK_DOWNSIZE_COMMIT"
@@ -177,6 +178,10 @@ func (d *Data) InitDataHandlers() error {
 		d.mutateCh[i] = make(chan procMsg, 10)
 		go d.mutateBlock(d.mutateCh[i])
 	}
+	for i := 0; i < numLabelHandlers; i++ {
+		d.indexCh[i] = make(chan labelChange, 10)
+		go d.indexLabels(d.indexCh[i])
+	}
 
 	dvid.Infof("Launching sync event handler for data %q...\n", d.DataName())
 	go d.processEvents()
@@ -190,6 +195,13 @@ func (d *Data) Shutdown() {
 		wg.Add(1)
 		d.syncDone <- wg
 		wg.Wait() // Block until we are done.
+	}
+	for i := 0; i < numBlockHandlers; i++ {
+		close(d.downresCh[i])
+		close(d.mutateCh[i])
+	}
+	for i := 0; i < numLabelHandlers; i++ {
+		close(d.indexCh[i])
 	}
 }
 
@@ -329,7 +341,11 @@ func (d *Data) publishBlockChange(v dvid.VersionID, mutID uint64, block dvid.IZY
 // do a GET/PUT without worrying about interleaving PUT from other goroutines, as
 // long as there is only one DVID server.
 func (d *Data) downresBlock(ch <-chan procMsg) {
-	for msg := range ch {
+	for {
+		msg, more := <-ch
+		if !more {
+			return
+		}
 		switch op := msg.op.(type) {
 		case downsizeOp:
 			d.downsizeAdd(msg.v, op)
