@@ -165,11 +165,19 @@ func (d *Data) handleIndexBlockMutate(ch chan blockChange, mut imageblk.MutatedB
 	for i := 0; i < blockBytes; i += 8 {
 		old := binary.LittleEndian.Uint64(mut.Prev[i : i+8])
 		cur := binary.LittleEndian.Uint64(mut.Data[i : i+8])
-		bc.present[old] |= presentOld
-		bc.present[cur] |= presentNew
+		if old != 0 {
+			bc.present[old] |= presentOld
+		}
+		if cur != 0 {
+			bc.present[cur] |= presentNew
+		}
 		if old != cur {
-			bc.delta[cur]++
-			bc.delta[old]--
+			if old != 0 {
+				bc.delta[old]--
+			}
+			if cur != 0 {
+				bc.delta[cur]++
+			}
 		}
 	}
 	ch <- bc
@@ -185,8 +193,10 @@ func (d *Data) handleIndexBlockIngest(ch chan blockChange, mut imageblk.Block) {
 	blockBytes := int(d.BlockSize().Prod() * 8)
 	for i := 0; i < blockBytes; i += 8 {
 		label := binary.LittleEndian.Uint64(mut.Data[i : i+8])
-		bc.delta[label]++
-		bc.present[label] |= presentNew
+		if label != 0 {
+			bc.delta[label]++
+			bc.present[label] |= presentNew
+		}
 	}
 	ch <- bc
 }
@@ -376,8 +386,18 @@ func (d *Data) addBoundedRLEs(w io.Writer, izyx dvid.IZYXString, data []byte, lb
 	var spanStart dvid.Point3d
 	var z, y, x, spanRun int32
 	start := 0
+	yskip := int(d.BlockSize().Value(0) * 8)
+	zskip := int(d.BlockSize().Value(1)) * yskip
 	for z = firstPt.Value(2); z <= lastPt.Value(2); z++ {
+		if bounds.OutsideZ(z) {
+			start += zskip
+			continue
+		}
 		for y = firstPt.Value(1); y <= lastPt.Value(1); y++ {
+			if bounds.OutsideY(y) {
+				start += yskip
+				continue
+			}
 			for x = firstPt.Value(0); x <= lastPt.Value(0); x++ {
 				label = binary.LittleEndian.Uint64(data[start : start+8])
 				start += 8
@@ -386,6 +406,9 @@ func (d *Data) addBoundedRLEs(w io.Writer, izyx dvid.IZYXString, data []byte, lb
 				inSpan := false
 				if label != 0 {
 					_, inSpan = lbls[label]
+					if inSpan && bounds.OutsideX(x) {
+						inSpan = false
+					}
 				}
 				if inSpan {
 					spanRun++
@@ -443,6 +466,9 @@ func (d *Data) FoundSparseVol(ctx *datastore.VersionedCtx, label uint64, bounds 
 		val, err := store.Get(ctx, NewLabelIndexTKey(label))
 		if err != nil {
 			return false, err
+		}
+		if len(val) == 0 {
+			continue
 		}
 		if !bounds.Block.IsSet() && len(val) != 0 {
 			return true, nil
