@@ -1,0 +1,4 @@
+This is not compiled by default using make.
+
+% cd /path/to/dvid/cmd/labeltest
+% go build

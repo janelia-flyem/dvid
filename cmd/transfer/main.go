@@ -40,7 +40,7 @@ Usage: dvid-transfer [options] host uuid name
   Either the -outdir or -url option must be present.
 
 	-outdir         =string   Output directory for file output
-	-url            =string   POST URL for DVID, e.g., "http://dvidserver.com/api/653/dataname"
+	-url            =string   POST URL for DVID, e.g., "http://dvidserver.com/api/node/653/dataname"
 
 	-compress       =string   Compression for output files (not HTTP).  default "gzip" but allows "none".
 
