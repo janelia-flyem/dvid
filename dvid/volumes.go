@@ -917,10 +917,12 @@ func (i IZYXSlice) Merge(i2 IZYXSlice) IZYXSlice {
 		return dup
 	}
 	out := make(IZYXSlice, len1+len2)
+	// Infof("Merging slice %s with %s...\n", i, i2)
 	n := 0
 	p1 := 0
 	p2 := 0
 	for {
+		// Infof("Merge p1 %d, p2 %d, b %d\n", p1, p2, n)
 		izyx1 := i[p1]
 		izyx2 := i2[p2]
 		switch {

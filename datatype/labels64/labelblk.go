@@ -1771,7 +1771,8 @@ func sendBinaryData(compression string, data []byte, subvol *dvid.Subvolume, w h
 	return nil
 }
 
-func getBinaryData(compression string, in io.ReadCloser, estsize int64) ([]byte, error) {
+// GetBinaryData returns label data from a potentially compressed ("lz4", "gzip") reader.
+func GetBinaryData(compression string, in io.ReadCloser, estsize int64) ([]byte, error) {
 	var err error
 	var data []byte
 	switch compression {
@@ -2247,7 +2248,7 @@ func (d *Data) handleDataRequest(ctx *datastore.VersionedCtx, w http.ResponseWri
 				return
 			}
 			estsize := subvol.NumVoxels() * 8
-			data, err := getBinaryData(compression, r.Body, estsize)
+			data, err := GetBinaryData(compression, r.Body, estsize)
 			if err != nil {
 				server.BadRequest(w, r, err)
 				return
@@ -2317,6 +2318,10 @@ func (d *Data) handleSparsevol(ctx *datastore.VersionedCtx, w http.ResponseWrite
 		data, err := d.GetSparseVol(ctx, label, b)
 		if err != nil {
 			server.BadRequest(w, r, err)
+			return
+		}
+		if len(data) == 0 {
+			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 		w.Header().Set("Content-type", "application/octet-stream")
@@ -2424,7 +2429,7 @@ func (d *Data) handleSparsevolByPoint(ctx *datastore.VersionedCtx, w http.Respon
 		server.BadRequest(w, r, err)
 		return
 	}
-	if data == nil {
+	if len(data) == 0 {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}

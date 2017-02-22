@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"sync"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
@@ -297,6 +298,46 @@ func (d *Data) indexLabels(ch <-chan labelChange) {
 	}
 }
 
+type labelBlock struct {
+	block dvid.IZYXString
+	data  []byte
+}
+
+type rleResult struct {
+	runs          uint32
+	serialization []byte
+}
+
+// goroutine to process retrieved label data and generate RLEs, could be sharded by block coordinate
+func (d *Data) processBlocksToRLEs(lbls labels.Set, bounds dvid.Bounds, in chan labelBlock, out chan rleResult) {
+	for {
+		lb, more := <-in
+		if !more {
+			return
+		}
+		var result rleResult
+		blockData, _, err := dvid.DeserializeData(lb.data, true)
+		if err != nil {
+			dvid.Errorf("could not deserialize %d bytes in block %s: %v\n", len(lb.data), lb.block, err)
+			out <- result
+			continue
+		}
+		var newRuns uint32
+		var serialization []byte
+		if bounds.Exact && bounds.Voxel.IsSet() {
+			serialization, newRuns, err = d.addBoundedRLEs(lb.block, blockData, lbls, bounds.Voxel)
+		} else {
+			serialization, newRuns, err = d.addRLEs(lb.block, blockData, lbls)
+		}
+		if err != nil {
+			dvid.Errorf("could not process %d bytes in block %s to create RLEs: %v\n", len(blockData), lb.block, err)
+		} else {
+			result = rleResult{runs: newRuns, serialization: serialization}
+		}
+		out <- result
+	}
+}
+
 func writeRLE(w io.Writer, start dvid.Point3d, run int32) error {
 	rle := dvid.NewRLE(start, run)
 	serialization, err := rle.MarshalBinary()
@@ -310,14 +351,14 @@ func writeRLE(w io.Writer, start dvid.Point3d, run int32) error {
 }
 
 // Scan a block and construct RLEs that will be serialized and added to the given buffer.
-func (d *Data) addRLEs(w io.Writer, izyx dvid.IZYXString, data []byte, lbls labels.Set) (newRuns uint32, err error) {
+func (d *Data) addRLEs(block dvid.IZYXString, data []byte, lbls labels.Set) (serialization []byte, newRuns uint32, err error) {
 	if len(data) != int(d.BlockSize().Prod())*8 {
 		err = fmt.Errorf("Deserialized label block %d bytes, not uint64 size times %d block elements\n",
 			len(data), d.BlockSize().Prod())
 		return
 	}
 	var indexZYX dvid.IndexZYX
-	indexZYX, err = izyx.IndexZYX()
+	indexZYX, err = block.IndexZYX()
 	if err != nil {
 		return
 	}
@@ -328,6 +369,7 @@ func (d *Data) addRLEs(w io.Writer, izyx dvid.IZYXString, data []byte, lbls labe
 	var spanStart dvid.Point3d
 	var z, y, x, spanRun int32
 	start := 0
+	buf := new(bytes.Buffer)
 	for z = firstPt.Value(2); z <= lastPt.Value(2); z++ {
 		for y = firstPt.Value(1); y <= lastPt.Value(1); y++ {
 			for x = firstPt.Value(0); x <= lastPt.Value(0); x++ {
@@ -347,7 +389,7 @@ func (d *Data) addRLEs(w io.Writer, izyx dvid.IZYXString, data []byte, lbls labe
 				} else {
 					if spanRun > 0 {
 						newRuns++
-						if err = writeRLE(w, spanStart, spanRun); err != nil {
+						if err = writeRLE(buf, spanStart, spanRun); err != nil {
 							return
 						}
 					}
@@ -356,7 +398,7 @@ func (d *Data) addRLEs(w io.Writer, izyx dvid.IZYXString, data []byte, lbls labe
 			}
 			// Force break of any runs when we finish x scan.
 			if spanRun > 0 {
-				if err = writeRLE(w, spanStart, spanRun); err != nil {
+				if err = writeRLE(buf, spanStart, spanRun); err != nil {
 					return
 				}
 				newRuns++
@@ -364,18 +406,19 @@ func (d *Data) addRLEs(w io.Writer, izyx dvid.IZYXString, data []byte, lbls labe
 			}
 		}
 	}
+	serialization = buf.Bytes()
 	return
 }
 
 // Scan a block and construct bounded RLEs that will be serialized and added to the given buffer.
-func (d *Data) addBoundedRLEs(w io.Writer, izyx dvid.IZYXString, data []byte, lbls labels.Set, bounds *dvid.OptionalBounds) (newRuns uint32, err error) {
+func (d *Data) addBoundedRLEs(block dvid.IZYXString, data []byte, lbls labels.Set, bounds *dvid.OptionalBounds) (serialization []byte, newRuns uint32, err error) {
 	if len(data) != int(d.BlockSize().Prod())*8 {
 		err = fmt.Errorf("Deserialized label block %d bytes, not uint64 size times %d block elements\n",
 			len(data), d.BlockSize().Prod())
 		return
 	}
 	var indexZYX dvid.IndexZYX
-	indexZYX, err = izyx.IndexZYX()
+	indexZYX, err = block.IndexZYX()
 	if err != nil {
 		return
 	}
@@ -386,6 +429,7 @@ func (d *Data) addBoundedRLEs(w io.Writer, izyx dvid.IZYXString, data []byte, lb
 	var spanStart dvid.Point3d
 	var z, y, x, spanRun int32
 	start := 0
+	buf := new(bytes.Buffer)
 	yskip := int(d.BlockSize().Value(0) * 8)
 	zskip := int(d.BlockSize().Value(1)) * yskip
 	for z = firstPt.Value(2); z <= lastPt.Value(2); z++ {
@@ -418,7 +462,7 @@ func (d *Data) addBoundedRLEs(w io.Writer, izyx dvid.IZYXString, data []byte, lb
 				} else {
 					if spanRun > 0 {
 						newRuns++
-						if err = writeRLE(w, spanStart, spanRun); err != nil {
+						if err = writeRLE(buf, spanStart, spanRun); err != nil {
 							return
 						}
 					}
@@ -427,7 +471,7 @@ func (d *Data) addBoundedRLEs(w io.Writer, izyx dvid.IZYXString, data []byte, lb
 			}
 			// Force break of any runs when we finish x scan.
 			if spanRun > 0 {
-				if err = writeRLE(w, spanStart, spanRun); err != nil {
+				if err = writeRLE(buf, spanStart, spanRun); err != nil {
 					return
 				}
 				newRuns++
@@ -435,6 +479,7 @@ func (d *Data) addBoundedRLEs(w io.Writer, izyx dvid.IZYXString, data []byte, lb
 			}
 		}
 	}
+	serialization = buf.Bytes()
 	return
 }
 
@@ -501,7 +546,7 @@ func (d *Data) GetLabelMeta(ctx *datastore.VersionedCtx, lbls labels.Set, bounds
 	if err != nil {
 		return nil, err
 	}
-	dvid.Infof("GetLabelMeta for labels %s...\n", lbls)
+	// dvid.Infof("GetLabelMeta for labels %s...\n", lbls)
 	var voxels uint64
 	var blocks dvid.IZYXSlice
 	for label := range lbls {
@@ -509,13 +554,13 @@ func (d *Data) GetLabelMeta(ctx *datastore.VersionedCtx, lbls labels.Set, bounds
 		if err != nil {
 			return nil, err
 		}
-		dvid.Infof("Retrieved label meta for label %d: %v\n", label, val)
+		// dvid.Infof("Retrieved label meta for label %d: %v\n", label, val)
 		var meta Meta
 		if len(val) != 0 {
 			if err := meta.UnmarshalBinary(val); err != nil {
 				return nil, err
 			}
-			dvid.Infof("retrieved Meta for label %d: %d blocks, %d voxels\n", label, len(meta.Blocks), meta.Voxels)
+			// dvid.Infof("retrieved Meta for label %d: %d blocks, %d voxels\n", label, len(meta.Blocks), meta.Voxels)
 			if len(lbls) == 1 {
 				blocks = meta.Blocks
 				voxels = meta.Voxels
@@ -538,6 +583,7 @@ func (d *Data) GetLabelMeta(ctx *datastore.VersionedCtx, lbls labels.Set, bounds
 	return &meta, nil
 }
 
+/*
 // WriteSparseVol does a streaming write of an encoded sparse volume given a label.  The encoding has the
 // following format where integers are little endian:
 //    byte     Payload descriptor:
@@ -619,6 +665,7 @@ func (d *Data) WriteSparseVol(w io.Writer, ctx *datastore.VersionedCtx, label ui
 	dvid.Debugf("[%s] labels %v: found %d blocks, %d runs\n", ctx, lbls, numBlocks, numRuns)
 	return nil
 }
+*/
 
 // GetSparseVol returns an encoded sparse volume given a label.  The encoding has the
 // following format where integers are little endian:
@@ -672,12 +719,8 @@ func (d *Data) GetSparseVol(ctx *datastore.VersionedCtx, label uint64, bounds dv
 	binary.Write(buf, binary.LittleEndian, uint32(0)) // Placeholder for # voxels
 	binary.Write(buf, binary.LittleEndian, uint32(0)) // Placeholder for # spans
 
-	store, err := d.GetOrderedKeyValueDB()
-	if err != nil {
-		return nil, err
-	}
-
-	var numRuns, numBlocks uint32
+	blocks := make(dvid.IZYXSlice, len(meta.Blocks))
+	totBlocks := 0
 	for _, izyx := range meta.Blocks {
 		if bounds.Block.BoundedX() || bounds.Block.BoundedY() {
 			blockX, blockY, _, err := izyx.Unpack()
@@ -688,28 +731,65 @@ func (d *Data) GetSparseVol(ctx *datastore.VersionedCtx, label uint64, bounds dv
 				continue
 			}
 		}
+		blocks[totBlocks] = izyx
+		totBlocks++
+	}
+	if totBlocks == 0 {
+		return nil, nil
+	}
+	blocks = blocks[:totBlocks]
 
+	store, err := d.GetOrderedKeyValueDB()
+	if err != nil {
+		return nil, err
+	}
+
+	const blockDecoders = 10
+	getCh := make(chan rleResult, 100)
+	sendCh := make([]chan labelBlock, blockDecoders)
+	for i := 0; i < blockDecoders; i++ {
+		sendCh[i] = make(chan labelBlock, 10)
+		go d.processBlocksToRLEs(lbls, bounds, sendCh[i], getCh)
+	}
+
+	// launch the RLE collector
+	var wg sync.WaitGroup
+	var numRuns uint32
+	numBlocks := 0
+	wg.Add(1)
+	go func() {
+		for {
+			result := <-getCh
+			numBlocks++
+			if len(result.serialization) > 0 {
+				if _, err := buf.Write(result.serialization); err != nil {
+					dvid.Errorf("unable to write result of RLE serialization: %v\n", err)
+					result.runs = 0
+				}
+			}
+			numRuns += result.runs
+			if numBlocks == totBlocks {
+				wg.Done()
+				return
+			}
+		}
+	}()
+
+	for _, izyx := range blocks {
 		tk := NewBlockTKeyByCoord(izyx)
 		data, err := store.Get(ctx, tk)
 		if err != nil {
 			return nil, err
 		}
-		blockData, _, err := dvid.DeserializeData(data, true)
-		if err != nil {
-			return nil, err
-		}
-		numBlocks++
-		dvid.Infof("GetSparseVol on labels %s: block %d: izyx %s, len(data) = %d\n", lbls, numBlocks, izyx, len(blockData))
-		var newRuns uint32
-		if bounds.Exact && bounds.Voxel.IsSet() {
-			newRuns, err = d.addBoundedRLEs(buf, izyx, blockData, lbls, bounds.Voxel)
-		} else {
-			newRuns, err = d.addRLEs(buf, izyx, blockData, lbls)
-		}
-		if err != nil {
-			return nil, err
-		}
-		numRuns += newRuns
+
+		n := izyx.Hash(blockDecoders)
+		sendCh[n] <- labelBlock{block: izyx, data: data}
+	}
+
+	wg.Wait()
+	close(getCh)
+	for i := 0; i < blockDecoders; i++ {
+		close(sendCh[i])
 	}
 
 	serialization := buf.Bytes()

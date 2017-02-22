@@ -447,7 +447,7 @@ func TestSplitLabel(t *testing.T) {
 	reqStr := fmt.Sprintf("%snode/%s/labels/sparsevol/%d", server.WebAPIPath, uuid, 4)
 	encoding := server.TestHTTP(t, "GET", reqStr, nil)
 	fmt.Printf("Checking original body 4 is correct\n")
-	body4.checkSparseVol(t, encoding, dvid.Bounds{})
+	body4.checkSparseVol(t, encoding, dvid.OptionalBounds{})
 
 	// Create the sparsevol encoding for split area
 	numspans := len(bodysplit.voxelSpans)
@@ -511,12 +511,12 @@ func TestSplitLabel(t *testing.T) {
 	// Make sure new body 5 is what we sent
 	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/%d", server.WebAPIPath, uuid, 5)
 	encoding = server.TestHTTP(t, "GET", reqStr, nil)
-	bodysplit.checkSparseVol(t, encoding, dvid.Bounds{})
+	bodysplit.checkSparseVol(t, encoding, dvid.OptionalBounds{})
 
 	// Make sure sparsevol for original body 4 is correct
 	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/%d", server.WebAPIPath, uuid, 4)
 	encoding = server.TestHTTP(t, "GET", reqStr, nil)
-	bodyleft.checkSparseVol(t, encoding, dvid.Bounds{})
+	bodyleft.checkSparseVol(t, encoding, dvid.OptionalBounds{})
 
 	// Do a merge of two after the split
 	testMerge := mergeJSON(`[4, 5]`)
@@ -529,7 +529,7 @@ func TestSplitLabel(t *testing.T) {
 	// Make sure we wind up with original body 4
 	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/4", server.WebAPIPath, uuid, "labels")
 	encoding = server.TestHTTP(t, "GET", reqStr, nil)
-	body4.checkSparseVol(t, encoding, dvid.Bounds{})
+	body4.checkSparseVol(t, encoding, dvid.OptionalBounds{})
 }
 
 // Same as TestSplitLabel but now designate the actual split label
@@ -637,7 +637,7 @@ func TestSplitCoarseLabel(t *testing.T) {
 	reqStr := fmt.Sprintf("%snode/%s/labels/sparsevol/%d", server.WebAPIPath, uuid, 4)
 	encoding := server.TestHTTP(t, "GET", reqStr, nil)
 	fmt.Printf("Checking original body 4 is correct\n")
-	body4.checkSparseVol(t, encoding, dvid.Bounds{})
+	body4.checkSparseVol(t, encoding, dvid.OptionalBounds{})
 
 	// Create the encoding for split area in block coordinates.
 	rles := dvid.RLEs{
@@ -891,9 +891,11 @@ func TestMergeSplitLabel(t *testing.T) {
 	// Make sure new body 5 is what we sent
 	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/%d", server.WebAPIPath, uuid, 5)
 	encoding := server.TestHTTP(t, "GET", reqStr, nil)
-	bodysplit.checkSparseVol(t, encoding, dvid.Bounds{})
+	bodysplit.checkSparseVol(t, encoding, dvid.OptionalBounds{})
 }
+*/
 
+/*
 func TestMultiscaleMergeSplit(t *testing.T) {
 	datastore.OpenTest()
 	defer datastore.CloseTest()
@@ -1104,6 +1106,7 @@ func TestMultiscaleMergeSplit(t *testing.T) {
 		t.Errorf("Split label volume downres #2 not equal to expected split volume: %v\n", err)
 	}
 }
+*/
 
 // Test that mutable labels64 POST will accurately remove prior bodies.
 func TestMutableLabelblkPOST(t *testing.T) {
@@ -1133,7 +1136,7 @@ func TestMutableLabelblkPOST(t *testing.T) {
 
 		// Check full sparse volumes
 		encoding := server.TestHTTP(t, "GET", reqStr, nil)
-		bodies[label-1].checkSparseVol(t, encoding, dvid.Bounds{})
+		bodies[label-1].checkSparseVol(t, encoding, dvid.OptionalBounds{})
 	}
 
 	// Post labels 6-7
@@ -1176,10 +1179,10 @@ func TestMutableLabelblkPOST(t *testing.T) {
 
 		// Check full sparse volumes
 		encoding := server.TestHTTP(t, "GET", reqStr, nil)
-		bodies[label-1].checkSparseVol(t, encoding, dvid.Bounds{})
+		bodies[label-1].checkSparseVol(t, encoding, dvid.OptionalBounds{})
 	}
 }
-*/
+
 var (
 	body1 = testBody{
 		label:  1,
