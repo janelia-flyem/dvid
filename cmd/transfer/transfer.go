@@ -214,6 +214,8 @@ func transferData(host, uuid, name string) {
 		switch dsttype {
 		case "labelblk":
 			fmt.Printf("-- verified that POST URL (%v) is labelblk.\n", *url)
+		case "labels64":
+			fmt.Printf("-- verified that POST URL (%v) is labels64.\n", *url)
 		default:
 			fmt.Printf("POST URL (%v) must be labelblk but is %s data type\n", *url, dsttype)
 			os.Exit(1)
@@ -223,8 +225,8 @@ func transferData(host, uuid, name string) {
 	// Get the source metadata
 	srcURL := fmt.Sprintf("%s/api/node/%s/%s", host, uuid, name)
 	srcMetadata := getLabelMetadata(srcURL)
-	if srcMetadata.Base.TypeName != "labelblk" {
-		fmt.Printf("Source data instance %q is not labelblk type.  Aborting.\n", name)
+	if srcMetadata.Base.TypeName != "labelblk" && srcMetadata.Base.TypeName != "labels64" {
+		fmt.Printf("Source data instance %q is not labelblk or labels64 type.  Aborting.\n", name)
 		os.Exit(1)
 	}
 
