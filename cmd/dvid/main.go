@@ -45,6 +45,9 @@ var (
 	// Read-only server.  Will only allow GET and HEAD requests.
 	readonly = flag.Bool("readonly", false, "")
 
+	// Fully writable server, including locked nodes.  [Expert use only.]
+	fullwrite = flag.Bool("fullwrite", false, "")
+
 	// Run in verbose mode if true.
 	runVerbose = flag.Bool("verbose", false, "")
 
@@ -78,6 +81,7 @@ Usage: dvid [options] <command>
       -numcpu     =number   Number of logical CPUs to use for DVID.
       -stdin      (flag)    Accept and send stdin to server for use in commands.
       -verbose    (flag)    Run in verbose mode.
+      -fullwrite  (flag)    Allow limited ops to all nodes, even committed ones. [Limit to expert use]
   -h, -help       (flag)    Show help message
 
 Commands that can be performed without a running server:
@@ -144,8 +148,18 @@ func main() {
 	if *runVerbose {
 		dvid.SetLogMode(dvid.DebugMode)
 	}
+
+	if *fullwrite && *readonly {
+		fmt.Printf("Can only do -fullwrite or -readonly, not both.\n\n")
+		flag.Usage()
+		os.Exit(0)
+	}
+
 	if *readonly {
 		server.SetReadOnly(true)
+	}
+	if *fullwrite {
+		server.SetFullWrite(true)
 	}
 
 	if *cpuprofile != "" {

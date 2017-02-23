@@ -34,17 +34,27 @@ Commands executed on the server (rpc address = %s):
 			The optional passcode will have to be provided to delete the repo
 			or any contained data instance.
 	
-	repos delete <UUID> <repo passcode if any>
-
 	repo <UUID> branch [optional UUID]
+
+		Create a new child node of the given parent UUID.  If an optional UUID is 
+		specified, the child node is assigned this UUID.
 
 	repo <UUID> new <datatype name> <data name> <datatype-specific config>...
 	
-	repo <UUID> delete <data name> <repo passcode if any>
-
 	repo <UUID> rename <old data name> <new data name> <repo passcode if any>
 
 	node <UUID> <data name> <type-specific commands>
+
+DANGEROUS COMMANDS (only available via command line)
+
+	repos delete <UUID> <repo passcode if any>
+
+		Deletes an entire repo that contains the UUID.
+
+	repo <UUID> delete <data name> <repo passcode if any>
+
+		Delete the given data instance.
+
 
 EXPERIMENTAL COMMANDS
 
@@ -269,6 +279,16 @@ func handleCommand(cmd *datastore.Request) (reply *datastore.Response, err error
 			var typename, dataname string
 			cmd.CommandArgs(3, &typename, &dataname)
 
+			var locked bool
+			locked, err = datastore.LockedUUID(uuid)
+			if err != nil {
+				return
+			}
+			if !fullwrite && locked {
+				reply.Text = fmt.Sprintf("Cannot create new data %q in a locked node %s\n", dataname, uuidStr)
+				return
+			}
+
 			// Get TypeService
 			var typeservice datastore.TypeService
 			if typeservice, err = datastore.TypeServiceByName(dvid.TypeString(typename)); err != nil {
@@ -288,6 +308,16 @@ func handleCommand(cmd *datastore.Request) (reply *datastore.Response, err error
 			cmd.CommandArgs(3, &name1, &name2, &passcode)
 			oldname := dvid.InstanceName(name1)
 			newname := dvid.InstanceName(name2)
+
+			var locked bool
+			locked, err = datastore.LockedUUID(uuid)
+			if err != nil {
+				return
+			}
+			if !fullwrite && locked {
+				reply.Text = fmt.Sprintf("Cannot rename data %q in a locked node %s\n", oldname, uuidStr)
+				return
+			}
 
 			// Make sure this instance exists.
 			if _, err = datastore.GetDataByUUIDName(uuid, oldname); err != nil {

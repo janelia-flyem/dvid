@@ -93,6 +93,9 @@ var (
 	// Read-only mode ignores all HTTP requests but GET and HEAD
 	readonly bool
 
+	// Full write mode allows writes to all nodes, even committed ones.
+	fullwrite bool
+
 	// gitVersion is a git-derived string that allows recovery of the exact source code
 	// used for this version of the DVID server.  This package variable is exposed through
 	// the read-only Version() function and is set by build-time code generation using
@@ -196,6 +199,12 @@ func BlockOnInteractiveRequests(caller ...string) {
 
 func SetReadOnly(on bool) {
 	readonly = on
+	fullwrite = !on
+}
+
+func SetFullWrite(on bool) {
+	fullwrite = on
+	readonly = !on
 }
 
 // AboutJSON returns a JSON string describing the properties of this server.

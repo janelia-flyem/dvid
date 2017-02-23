@@ -453,6 +453,8 @@ func serveHTTP() {
 	var mode string
 	if readonly {
 		mode = " (read-only mode)"
+	} else if fullwrite {
+		mode = " (full write mode)"
 	}
 	dvid.Infof("Web server listening at %s%s ...\n", config.HTTPAddress(), mode)
 	if !webMux.routesSetup {
@@ -710,7 +712,7 @@ func nodeSelector(c *web.C, h http.Handler) http.Handler {
 		}
 		action := strings.ToLower(r.Method)
 		branchRequest := (c.URLParams["action"] == "branch")
-		if locked && !branchRequest && action != "get" && action != "head" {
+		if !fullwrite && locked && !branchRequest && action != "get" && action != "head" {
 			BadRequest(w, r, "Cannot do %s on locked node %s", action, uuid)
 			return
 		}
@@ -731,7 +733,6 @@ func repoSelector(c *web.C, h http.Handler) http.Handler {
 			BadRequest(w, r, "Server in read-only mode and will only accept GET and HEAD requests")
 			return
 		}
-
 		var err error
 		var uuid dvid.UUID
 		if uuid, c.Env["versionID"], err = datastore.MatchingUUID(c.URLParams["uuid"]); err != nil {
@@ -778,7 +779,7 @@ func instanceSelector(c *web.C, h http.Handler) http.Handler {
 				BadRequest(w, r, err)
 				return
 			}
-			if locked && data.IsMutationRequest(r.Method, c.URLParams["keyword"]) {
+			if !fullwrite && locked && data.IsMutationRequest(r.Method, c.URLParams["keyword"]) {
 				BadRequest(w, r, "Cannot do %s on endpoint %q of locked node %s", r.Method, c.URLParams["keyword"], uuid)
 				return
 			}
@@ -1099,6 +1100,17 @@ func repoInfoHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 
 func repoNewDataHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	uuid := c.Env["uuid"].(dvid.UUID)
+
+	locked, err := datastore.LockedUUID(uuid)
+	if err != nil {
+		BadRequest(w, r, err)
+		return
+	}
+	if !fullwrite && locked {
+		BadRequest(w, r, "New data instance cannot be created on locked node %s", uuid)
+		return
+	}
+
 	config := dvid.NewConfig()
 	if err := config.SetByJSON(r.Body); err != nil {
 		BadRequest(w, r, fmt.Sprintf("Error decoding POSTed JSON config for 'new': %v", err))
@@ -1152,6 +1164,17 @@ func getRepoLogHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 
 func postRepoLogHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	uuid := c.Env["uuid"].(dvid.UUID)
+
+	locked, err := datastore.LockedUUID(uuid)
+	if err != nil {
+		BadRequest(w, r, err)
+		return
+	}
+	if !fullwrite && locked {
+		BadRequest(w, r, "Writing into log cannot be done on locked node %s", uuid)
+		return
+	}
+
 	jsonData := make(map[string][]string)
 	decoder := json.NewDecoder(r.Body)
 	if err := decoder.Decode(&jsonData); err != nil && err != io.EOF {
