@@ -405,10 +405,15 @@ func (d *Data) downsizeCommit(v dvid.VersionID, mutID uint64) {
 				continue
 			}
 			uncompress := true
-			deserialized, _, err := dvid.DeserializeData(serialization, uncompress)
+			compressed, _, err := dvid.DeserializeData(serialization, uncompress)
 			if err != nil {
 				dvid.Criticalf("Unable to deserialize data for %q, block %s: %v", d.DataName(), downresBlock, err)
 				continue
+			}
+			deserialized, err := labels.Decompress(compressed, d.BlockSize())
+			if err != nil {
+				dvid.Errorf("Unable to decompress google compression in %q: %v\n", d.DataName(), err)
+				return
 			}
 			copy(blockData, deserialized)
 		}

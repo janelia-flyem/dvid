@@ -306,8 +306,12 @@ func TestSparseVolumes(t *testing.T) {
 		minx := int32(20)
 		maxx := int32(47)
 		reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/%d?minx=%d&maxx=%d", server.WebAPIPath, uuid, label, minx, maxx)
-		encoding = server.TestHTTP(t, "GET", reqStr, nil)
-		checkSpans(t, encoding, minx, maxx)
+		if label != 4 {
+			encoding = server.TestHTTP(t, "GET", reqStr, nil)
+			checkSpans(t, encoding, minx, maxx)
+		} else {
+			server.TestBadHTTP(t, "GET", reqStr, nil) // Should be not found
+		}
 	}
 
 	// Make sure non-existent bodies return proper HEAD responses.
@@ -1106,7 +1110,6 @@ func TestMultiscaleMergeSplit(t *testing.T) {
 		t.Errorf("Split label volume downres #2 not equal to expected split volume: %v\n", err)
 	}
 }
-*/
 
 // Test that mutable labels64 POST will accurately remove prior bodies.
 func TestMutableLabelblkPOST(t *testing.T) {
@@ -1182,6 +1185,7 @@ func TestMutableLabelblkPOST(t *testing.T) {
 		bodies[label-1].checkSparseVol(t, encoding, dvid.OptionalBounds{})
 	}
 }
+*/
 
 var (
 	body1 = testBody{

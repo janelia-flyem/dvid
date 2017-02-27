@@ -1431,9 +1431,13 @@ func (d *Data) DeleteBlocks(ctx *datastore.VersionedCtx, start dvid.ChunkPoint3d
 		batch.Delete(kv.K)
 
 		// Send data to delete associated labelvol for labels in this block
-		block, _, err := dvid.DeserializeData(kv.V, uncompress)
+		compressed, _, err := dvid.DeserializeData(kv.V, uncompress)
 		if err != nil {
 			return fmt.Errorf("Unable to deserialize block, %s (%v): %v", ctx, kv.K, err)
+		}
+		block, err := labels.Decompress(compressed, d.BlockSize())
+		if err != nil {
+			return fmt.Errorf("Unable to decompress google compression in %q: %v\n", d.DataName(), err)
 		}
 		if mapping != nil {
 			n := len(block) / 8
@@ -2321,7 +2325,7 @@ func (d *Data) handleSparsevol(ctx *datastore.VersionedCtx, w http.ResponseWrite
 			return
 		}
 		if len(data) == 0 {
-			w.WriteHeader(http.StatusNoContent)
+			w.WriteHeader(http.StatusNotFound)
 			return
 		}
 		w.Header().Set("Content-type", "application/octet-stream")
@@ -2638,9 +2642,13 @@ func (d *Data) GetLabelBlock(v dvid.VersionID, blockCoord dvid.ChunkPoint3d) ([]
 	if serialization == nil {
 		return []byte{}, nil
 	}
-	labelData, _, err := dvid.DeserializeData(serialization, true)
+	compressed, _, err := dvid.DeserializeData(serialization, true)
 	if err != nil {
 		return nil, fmt.Errorf("Unable to deserialize block %s in '%s': %v\n", blockCoord, d.DataName(), err)
+	}
+	labelData, err := labels.Decompress(compressed, d.BlockSize())
+	if err != nil {
+		return nil, fmt.Errorf("Unable to decompress google compression in %q: %v\n", d.DataName(), err)
 	}
 	return labelData, nil
 }

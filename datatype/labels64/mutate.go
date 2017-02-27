@@ -538,9 +538,14 @@ func (d *Data) mergeBlock(ctx *datastore.VersionedCtx, op mergeOp) {
 		return
 	}
 
-	blockData, _, err := dvid.DeserializeData(data, true)
+	compressed, _, err := dvid.DeserializeData(data, true)
 	if err != nil {
 		dvid.Criticalf("unable to deserialize label block in '%s': %v\n", d.DataName(), err)
+		return
+	}
+	blockData, err := labels.Decompress(compressed, d.BlockSize())
+	if err != nil {
+		dvid.Errorf("Unable to decompress google compression in %q: %v\n", d.DataName(), err)
 		return
 	}
 	blockBytes := int(d.BlockSize().Prod() * 8)
@@ -592,9 +597,14 @@ func (d *Data) splitBlock(ctx *datastore.VersionedCtx, op splitOp) {
 		dvid.Errorf("nil label block where split was done, coord %v\n", []byte(op.block))
 		return
 	}
-	blockData, _, err := dvid.DeserializeData(data, true)
+	compressed, _, err := dvid.DeserializeData(data, true)
 	if err != nil {
 		dvid.Criticalf("unable to deserialize label block in '%s' key %v: %v\n", d.DataName(), []byte(op.block), err)
+		return
+	}
+	blockData, err := labels.Decompress(compressed, d.BlockSize())
+	if err != nil {
+		dvid.Errorf("Unable to decompress google compression in %q: %v\n", d.DataName(), err)
 		return
 	}
 	blockBytes := int(d.BlockSize().Prod() * 8)

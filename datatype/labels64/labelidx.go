@@ -279,12 +279,12 @@ func (d *Data) indexLabels(ch <-chan labelChange) {
 			dvid.Criticalf("Error trying to read label %d meta for data %q: %v\n", change.label, d.DataName(), err)
 			continue
 		}
-		oldblocks := len(meta.Blocks)
+		// oldblocks := len(meta.Blocks)
 		if err := meta.applyChanges(change.bdm); err != nil {
 			dvid.Criticalf("Error on applying mutation changes to label %d meta: %v\n", change.label, err)
 			continue
 		}
-		dvid.Infof("Modified %d blocks for label %d.  Meta went from %d -> %d blocks.\n", len(change.bdm), change.label, oldblocks, len(meta.Blocks))
+		// dvid.Infof("Modified %d blocks for label %d.  Meta went from %d -> %d blocks.\n", len(change.bdm), change.label, oldblocks, len(meta.Blocks))
 
 		tk := NewLabelIndexTKey(change.label)
 		data, err := meta.MarshalBinary()
@@ -316,11 +316,16 @@ func (d *Data) processBlocksToRLEs(lbls labels.Set, bounds dvid.Bounds, in chan 
 			return
 		}
 		var result rleResult
-		blockData, _, err := dvid.DeserializeData(lb.data, true)
+		compressed, _, err := dvid.DeserializeData(lb.data, true)
 		if err != nil {
 			dvid.Errorf("could not deserialize %d bytes in block %s: %v\n", len(lb.data), lb.block, err)
 			out <- result
 			continue
+		}
+		blockData, err := labels.Decompress(compressed, d.BlockSize())
+		if err != nil {
+			dvid.Errorf("Unable to decompress google compression in %q: %v\n", d.DataName(), err)
+			return
 		}
 		var newRuns uint32
 		var serialization []byte
@@ -579,7 +584,7 @@ func (d *Data) GetLabelMeta(ctx *datastore.VersionedCtx, lbls labels.Set, bounds
 		voxels = 0
 	}
 	meta := Meta{Voxels: voxels, Blocks: blocks}
-	dvid.Infof("Returning Meta for labels %s: %d blocks, %d voxels\n", lbls, len(meta.Blocks), meta.Voxels)
+	// dvid.Infof("Returning Meta for labels %s: %d blocks, %d voxels\n", lbls, len(meta.Blocks), meta.Voxels)
 	return &meta, nil
 }
 

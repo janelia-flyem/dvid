@@ -189,9 +189,13 @@ func (d *Data) GetBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int) ([
 	// Write the block indices in XYZ little-endian format + the size of each block
 	uncompress := true
 	for _, kv := range keyvalues {
-		block, _, err := dvid.DeserializeData(kv.V, uncompress)
+		compressed, _, err := dvid.DeserializeData(kv.V, uncompress)
 		if err != nil {
 			return nil, fmt.Errorf("Unable to deserialize block, %s (%v): %v", ctx, kv.K, err)
+		}
+		block, err := labels.Decompress(compressed, d.BlockSize())
+		if err != nil {
+			return nil, fmt.Errorf("Unable to decompress google compression in %q: %v\n", d.DataName(), err)
 		}
 		if mapping != nil {
 			n := len(block) / 8
@@ -270,10 +274,15 @@ func (d *Data) readChunk(chunk *storage.Chunk) {
 	if zeroOut || chunk.V == nil {
 		blockData = d.BackgroundBlock()
 	} else {
-		blockData, _, err = dvid.DeserializeData(chunk.V, true)
+		var compressed []byte
+		compressed, _, err = dvid.DeserializeData(chunk.V, true)
 		if err != nil {
-			dvid.Errorf("Unable to deserialize block in '%s': %v\n", d.DataName(), err)
+			dvid.Errorf("Unable to deserialize block in %q: %v\n", d.DataName(), err)
 			return
+		}
+		blockData, err = labels.Decompress(compressed, d.BlockSize())
+		if err != nil {
+			dvid.Errorf("Unable to decompress google compression in %q: %v\n", d.DataName(), err)
 		}
 	}
 

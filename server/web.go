@@ -1164,17 +1164,6 @@ func getRepoLogHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 
 func postRepoLogHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	uuid := c.Env["uuid"].(dvid.UUID)
-
-	locked, err := datastore.LockedUUID(uuid)
-	if err != nil {
-		BadRequest(w, r, err)
-		return
-	}
-	if !fullwrite && locked {
-		BadRequest(w, r, "Writing into log cannot be done on locked node %s", uuid)
-		return
-	}
-
 	jsonData := make(map[string][]string)
 	decoder := json.NewDecoder(r.Body)
 	if err := decoder.Decode(&jsonData); err != nil && err != io.EOF {

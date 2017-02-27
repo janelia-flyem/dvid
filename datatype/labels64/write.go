@@ -191,7 +191,7 @@ func (d *Data) PutBlocks(v dvid.VersionID, mutID uint64, start dvid.ChunkPoint3d
 		// If we are mutating, get the previous block of data.
 		var oldBlock []byte
 		if mutate {
-			oldBlock, err = d.GetBlock(v, tk)
+			oldBlock, err = d.getLabelBlock(v, tk)
 			if err != nil {
 				return fmt.Errorf("Unable to load previous block in %q, key %v: %v\n", d.DataName(), tk, err)
 			}
@@ -231,6 +231,25 @@ func (d *Data) PutBlocks(v dvid.VersionID, mutID uint64, start dvid.ChunkPoint3d
 		}
 	}
 	return nil
+}
+
+// getLabelBlock returns a block of label data from this instance's preferred storage.
+func (d *Data) getLabelBlock(v dvid.VersionID, k storage.TKey) ([]byte, error) {
+	store, err := d.GetOrderedKeyValueDB()
+	if err != nil {
+		return nil, fmt.Errorf("Data type imageblk had error initializing store: %v\n", err)
+	}
+
+	ctx := datastore.NewVersionedCtx(d, v)
+	serialization, err := store.Get(ctx, k)
+	if err != nil {
+		return nil, err
+	}
+	compressed, _, err := dvid.DeserializeData(serialization, true)
+	if err != nil {
+		return nil, fmt.Errorf("Unable to deserialize block, %s: %v", ctx, err)
+	}
+	return labels.Decompress(compressed, d.BlockSize())
 }
 
 // PutChunk puts a chunk of data as part of a mapped operation.
@@ -275,9 +294,15 @@ func (d *Data) putChunk(chunk *storage.Chunk, putbuffer storage.RequestBuffer) {
 	if chunk.V == nil {
 		blockData = d.BackgroundBlock()
 	} else {
-		blockData, _, err = dvid.DeserializeData(chunk.V, true)
+		var compressed []byte
+		compressed, _, err = dvid.DeserializeData(chunk.V, true)
 		if err != nil {
 			dvid.Errorf("Unable to deserialize block in %q: %v\n", d.DataName(), err)
+			return
+		}
+		blockData, err = labels.Decompress(compressed, d.BlockSize())
+		if err != nil {
+			dvid.Errorf("Unable to decompress google compression in %q: %v\n", d.DataName(), err)
 			return
 		}
 	}
@@ -285,7 +310,7 @@ func (d *Data) putChunk(chunk *storage.Chunk, putbuffer storage.RequestBuffer) {
 	// If we are mutating, get the previous block of data.
 	var oldBlock []byte
 	if op.mutate {
-		oldBlock, err = d.GetBlock(op.version, chunk.K)
+		oldBlock, err = d.getLabelBlock(op.version, chunk.K)
 		if err != nil {
 			dvid.Errorf("Unable to load previous block in %q, key %v: %v\n", d.DataName(), chunk.K, err)
 			return
@@ -298,7 +323,12 @@ func (d *Data) putChunk(chunk *storage.Chunk, putbuffer storage.RequestBuffer) {
 		dvid.Errorf("Unable to WriteBlock() in %q: %v\n", d.DataName(), err)
 		return
 	}
-	serialization, err := dvid.SerializeData(blockData, d.Compression(), d.Checksum())
+	compressed, err := labels.Compress(blockData, d.BlockSize())
+	if err != nil {
+		dvid.Errorf("Unable to google compress block in %q: %v\n", d.DataName(), err)
+		return
+	}
+	serialization, err := dvid.SerializeData(compressed, d.Compression(), d.Checksum())
 	if err != nil {
 		dvid.Errorf("Unable to serialize block in %q: %v\n", d.DataName(), err)
 		return
@@ -431,13 +461,18 @@ func (d *Data) writeBlocks(v dvid.VersionID, b storage.TKeyValues, wg1, wg2 *syn
 		mutID := d.NewMutationID()
 		batch := batcher.NewBatch(ctx)
 		for i, block := range b {
-			serialization, err := dvid.SerializeData(block.V, d.Compression(), d.Checksum())
 			preCompress += len(block.V)
-			postCompress += len(serialization)
+			compressed, err := labels.Compress(block.V, d.BlockSize())
 			if err != nil {
-				dvid.Errorf("Unable to serialize block: %v\n", err)
+				dvid.Errorf("Unable to google compress block in %q: %v\n", d.DataName(), err)
 				return
 			}
+			serialization, err := dvid.SerializeData(compressed, d.Compression(), d.Checksum())
+			if err != nil {
+				dvid.Errorf("Unable to serialize block in %q: %v\n", d.DataName(), err)
+				return
+			}
+			postCompress += len(serialization)
 			batch.Put(block.K, serialization)
 
 			indexZYX, err := DecodeBlockTKey(block.K)

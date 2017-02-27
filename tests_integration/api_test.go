@@ -172,8 +172,9 @@ func TestCommitAndBranch(t *testing.T) {
 	branchReq := fmt.Sprintf("%snode/%s/branch", server.WebAPIPath, uuid)
 	server.TestBadHTTP(t, "POST", branchReq, nil)
 
-	// Add a keyvalue instance.
+	// Add a keyvalue and ROI instance.
 	server.CreateTestInstance(t, uuid, "keyvalue", "mykv", dvid.Config{})
+	server.CreateTestInstance(t, uuid, "roi", "myroi", dvid.Config{})
 
 	// Commit it.
 	payload := bytes.NewBufferString(`{"note": "This is my test commit", "log": ["line1", "line2", "some more stuff in a line"]}`)
@@ -185,8 +186,7 @@ func TestCommitAndBranch(t *testing.T) {
 	keyReq := fmt.Sprintf("%snode/%s/mykv/key/foo", server.WebAPIPath, uuid)
 	server.TestBadHTTP(t, "POST", keyReq, bytes.NewBufferString("some data"))
 
-	// Create a ROI with an immutable POST request via ptquery.  Should be able to still POST to it.
-	server.CreateTestInstance(t, uuid, "roi", "myroi", dvid.Config{})
+	// Should be able to still POST to ROI since this particular type of POST is non-mutating.
 	apiStr = fmt.Sprintf("%snode/%s/myroi/ptquery", server.WebAPIPath, uuid)
 	queryJSON := "[[10, 10, 10], [20, 20, 20], [30, 30, 30], [40, 40, 40], [50, 50, 50]]"
 	server.TestHTTP(t, "POST", apiStr, bytes.NewReader([]byte(queryJSON))) // we have no ROI so just testing HTTP.
