@@ -8,6 +8,7 @@ import (
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
 	"github.com/janelia-flyem/dvid/datatype/imageblk"
+	"github.com/janelia-flyem/dvid/datatype/labelblk"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
 )
@@ -54,6 +55,17 @@ func (d *Data) GetSyncSubs(synced dvid.Data) (datastore.SyncSubs, error) {
 	var evts []string
 	switch synced.TypeName() {
 	case "labelblk":
+		source, err := labelblk.GetByDataUUID(synced.DataUUID())
+		if err != nil {
+			return nil, fmt.Errorf("labelvol %q can't sync with labelblk %q: %v", d.DataName(), synced.DataName(), err)
+		}
+		syncedBlockSize, ok := source.BlockSize().(dvid.Point3d)
+		if !ok {
+			return nil, fmt.Errorf("synced labelblk %q block size is not 3d: %s", synced.DataName(), source.BlockSize())
+		}
+		if !syncedBlockSize.Equals(d.BlockSize) {
+			return nil, fmt.Errorf("labelvol %q block size %s does not equal labelblk %q block size %s", d.DataName(), d.BlockSize, synced.DataName(), syncedBlockSize)
+		}
 		evts = []string{
 			labels.IngestBlockEvent, labels.MutateBlockEvent, labels.DeleteBlockEvent,
 		}

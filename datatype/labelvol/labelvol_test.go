@@ -14,6 +14,7 @@ import (
 	"log"
 	"net/http"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 
@@ -337,6 +338,24 @@ func createLabelTest2Volume(t *testing.T, uuid dvid.UUID, name string) *testVolu
 	// Send data over HTTP to populate a data instance using mutable flag
 	volume.putMutable(t, uuid, name)
 	return volume
+}
+
+func TestBadSyncBlockSize(t *testing.T) {
+	datastore.OpenTest()
+	defer datastore.CloseTest()
+
+	uuid, _ := initTestRepo()
+	var config dvid.Config
+	server.CreateTestInstance(t, uuid, "labelblk", "labels", config)
+	server.CreateTestInstance(t, uuid, "labelvol", "bodies2", config)
+	config.Set("BlockSize", "128,128,128")
+	server.CreateTestInstance(t, uuid, "labelvol", "bodies", config)
+
+	url := fmt.Sprintf("%snode/%s/bodies/sync", server.WebAPIPath, uuid)
+	msg := `{"sync": "labels"}`
+	server.TestBadHTTP(t, "POST", url, strings.NewReader(msg))
+
+	server.CreateTestSync(t, uuid, "bodies2", "labels")
 }
 
 func TestSparseVolumes(t *testing.T) {
