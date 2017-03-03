@@ -12,6 +12,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash/crc32"
+	"image"
+	"image/jpeg"
 	"io"
 	_ "log"
 
@@ -85,6 +87,8 @@ func NewCompression(format CompressionFormat, level CompressionLevel) (Compressi
 		return Compression{format, DefaultCompression}, nil
 	case LZ4:
 		return Compression{format, DefaultCompression}, nil
+	case JPEG:
+		return Compression{format, level}, nil
 	case Gzip:
 		if level != DefaultCompression && (level < 1 || level > 9) {
 			return Compression{}, fmt.Errorf("Gzip compression level must be between 1 and 9")
@@ -118,6 +122,7 @@ const (
 	Snappy                         = 1
 	Gzip                           = 2 // Gzip stores length and checksum automatically.
 	LZ4                            = 4
+	JPEG                           = 5
 )
 
 func (format CompressionFormat) String() string {
@@ -128,6 +133,8 @@ func (format CompressionFormat) String() string {
 		return "Go Snappy compression"
 	case LZ4:
 		return "LZ4 compression"
+	case JPEG:
+		return "jpeg compression"
 	case Gzip:
 		return "gzip compression"
 	default:
@@ -216,6 +223,23 @@ func SerializeData(data []byte, compress Compression, checksum Checksum) ([]byte
 			return nil, err
 		}
 		byteData = byteData[:4+outSize]
+	case JPEG:
+		origSize := int(len(data))
+		length := origSize / int(compress.level)
+
+		if origSize%int(compress.level) != 0 {
+			return nil, fmt.Errorf("Illegal block dimensions on compression")
+		}
+		rect := image.Rectangle{image.Point{0, 0}, image.Point{int(compress.level), int(length)}}
+		//rect := image.Rectangle{image.Point{0, 0}, image.Point{int(length), int(compress.level)}}
+
+		graydata := &image.Gray{[]uint8(data), int(compress.level), rect}
+		//graydata := &image.Gray{[]uint8(data), int(length), rect}
+		var buffer2 bytes.Buffer
+		if err := jpeg.Encode(&buffer2, graydata, &jpeg.Options{DefaultJPEGQuality}); err != nil {
+			return nil, err
+		}
+		byteData = buffer2.Bytes()
 	case Gzip:
 		var b bytes.Buffer
 		w, err := gzip.NewWriterLevel(&b, int(compress.level))
@@ -325,6 +349,15 @@ func DeserializeData(s []byte, uncompress bool) ([]byte, CompressionFormat, erro
 			return nil, 0, err
 		}
 		return data, compression, nil
+	case JPEG:
+		b := bytes.NewBuffer(cdata)
+		imgdata, err := jpeg.Decode(b)
+		if err != nil {
+			return nil, 0, err
+		}
+
+		data2 := imgdata.(*image.Gray)
+		return data2.Pix, compression, nil
 	case Gzip:
 		b := bytes.NewBuffer(cdata)
 		var err error
