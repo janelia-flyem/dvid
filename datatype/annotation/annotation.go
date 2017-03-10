@@ -522,7 +522,7 @@ func (elems *ElementsNR) add(toAdd ElementsNR) {
 	for _, elem := range toAdd {
 		i, found := emap[elem.Pos.MapKey()]
 		if !found {
-			*elems = append(*elems, elem)
+			*elems = append(*elems, *elem.Copy())
 		} else {
 			(*elems)[i] = elem
 		}
@@ -612,7 +612,7 @@ func (elems *Elements) add(toAdd Elements) {
 	for _, elem := range toAdd {
 		i, found := emap[elem.Pos.MapKey()]
 		if !found {
-			*elems = append(*elems, elem)
+			*elems = append(*elems, *elem.Copy())
 		} else {
 			(*elems)[i] = elem
 		}
