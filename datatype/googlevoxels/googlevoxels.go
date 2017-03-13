@@ -707,7 +707,11 @@ func (gsg GoogleSubvolGeom) GetURL(volumeid, formatStr string) (string, error) {
 		}
 	}
 	if gsg.shape == XYZ {
-		url += "/subvolumeFormat=raw_snappy"
+		if formatStr != "" {
+			url += "/subvolumeFormat=SINGLE_IMAGE"
+		} else {
+			url += "/subvolumeFormat=raw_snappy"
+		}
 	}
 	url += "?alt=media"
 
@@ -1032,7 +1036,7 @@ func (d *Data) serveTile(w http.ResponseWriter, r *http.Request, geom *GoogleSub
 	return nil
 }
 
-func (d *Data) serveVolume(w http.ResponseWriter, r *http.Request, geom *GoogleSubvolGeom, noblanks bool) error {
+func (d *Data) serveVolume(w http.ResponseWriter, r *http.Request, geom *GoogleSubvolGeom, noblanks bool, formatstr string) error {
 	// If it's outside, write blank tile unless user wants no blanks.
 	if geom.outside {
 		if noblanks {
@@ -1043,7 +1047,7 @@ func (d *Data) serveVolume(w http.ResponseWriter, r *http.Request, geom *GoogleS
 	}
 
 	// If we are within volume, get data from Google.
-	url, err := geom.GetURL(d.VolumeID, "")
+	url, err := geom.GetURL(d.VolumeID, formatstr)
 	if err != nil {
 		return err
 	}
@@ -1121,7 +1125,7 @@ func (d *Data) serveVolume(w http.ResponseWriter, r *http.Request, geom *GoogleS
 				break
 			}
 		}
-		timedLog.Infof("Proxied snappy-encoded subvolume from Google, %d bytes\n", respBytes)
+		timedLog.Infof("Proxied encoded subvolume from Google, %d bytes\n", respBytes)
 	}
 
 	return nil
@@ -1191,7 +1195,11 @@ func (d *Data) handleImageReq(w http.ResponseWriter, r *http.Request, parts []st
 
 		return d.serveTile(w, r, geom, formatStr, false)
 	case 3:
-		return d.serveVolume(w, r, geom, false)
+		if len(parts) >= 8 {
+			return d.serveVolume(w, r, geom, false, parts[7])
+		} else {
+			return d.serveVolume(w, r, geom, false, "")
+		}
 	}
 	return nil
 }
