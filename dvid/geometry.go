@@ -512,6 +512,29 @@ func (s *Subvolume) String() string {
 	return fmt.Sprintf("%s %s at offset %s", s.shape, s.size, s.offset)
 }
 
+// NewIndexZYXIterator returns an iterator that can move across subvolume.
+func (s *Subvolume) NewIndexZYXIterator(chunkSize Point) (IndexIterator, error) {
+	// Setup traversal
+	begVoxel, ok := s.StartPoint().(Chunkable)
+	if !ok {
+		return nil, fmt.Errorf("Subvolume %s StartPoint() cannot handle Chunkable points.", s)
+	}
+	endVoxel, ok := s.EndPoint().(Chunkable)
+	if !ok {
+		return nil, fmt.Errorf("Subvolume %s EndPoint() cannot handle Chunkable points.", s)
+	}
+	begBlock, ok := begVoxel.Chunk(chunkSize).(ChunkPoint3d)
+	if !ok {
+		return nil, fmt.Errorf("Subvolume %s StartPoint() is not a 3d chunk", s)
+	}
+	endBlock, ok := endVoxel.Chunk(chunkSize).(ChunkPoint3d)
+	if !ok {
+		return nil, fmt.Errorf("Subvolume %s EndPoint() is not a 3d chunk", s)
+	}
+
+	return NewIndexZYXIterator(begBlock, endBlock), nil
+}
+
 // OrthogSlice is a 2d rectangle orthogonal to two axis of the space that is slices.
 // It fulfills a Geometry interface.
 type OrthogSlice struct {

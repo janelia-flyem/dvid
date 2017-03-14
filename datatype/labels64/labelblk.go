@@ -1082,10 +1082,6 @@ func (d *Data) Extents() *dvid.Extents {
 // or slice data, given some geometry and optional image data.
 // If img is passed in, the function will initialize Voxels with data from the image.
 // Otherwise, it will allocate a zero buffer of appropriate size.
-//
-// TODO : Unlike the standard imageblk data.NewVoxels, the labels64 version can modify the
-// labels based on the z-coordinate of the given geometry for Raveler .
-// This will be removed when Raveler-specific labels are moved outside DVID.
 func (d *Data) NewLabels(geom dvid.Geometry, img interface{}) (*Labels, error) {
 	bytesPerVoxel := d.Properties.Values.BytesPerElement()
 	stride := geom.Size().Value(0) * bytesPerVoxel
@@ -2246,32 +2242,16 @@ func (d *Data) handleDataRequest(ctx *datastore.VersionedCtx, w http.ResponseWri
 				server.BadRequest(w, r, "can only POST 'raw' not 'isotropic' images")
 				return
 			}
-			// Make sure posted subvolume is block-aligned
-			if !dvid.BlockAligned(subvol, d.BlockSize()) {
-				server.BadRequest(w, r, "cannot store labels in non-block aligned geometry %s -> %s", subvol.StartPoint(), subvol.EndPoint())
-				return
-			}
 			estsize := subvol.NumVoxels() * 8
 			data, err := GetBinaryData(compression, r.Body, estsize)
 			if err != nil {
 				server.BadRequest(w, r, err)
 				return
 			}
-			lbl, err := d.NewLabels(subvol, data)
-			if err != nil {
+			mutate := queryStrings.Get("mutate") == "true"
+			if err = d.PutLabels(ctx.VersionID(), subvol, data, roiname, mutate); err != nil {
 				server.BadRequest(w, r, err)
 				return
-			}
-			if queryStrings.Get("mutate") == "true" {
-				if err = d.MutateVoxels(ctx.VersionID(), lbl.Voxels, roiname); err != nil {
-					server.BadRequest(w, r, err)
-					return
-				}
-			} else {
-				if err = d.IngestVoxels(ctx.VersionID(), lbl.Voxels, roiname); err != nil {
-					server.BadRequest(w, r, err)
-					return
-				}
 			}
 		}
 	default:

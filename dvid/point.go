@@ -94,6 +94,12 @@ type Chunkable interface {
 	PointInChunk(size Point) Point
 }
 
+// ChunkSizer objects can return their chunk size.  In DVID, a Chunk is the unit of storage,
+// for example, the unit of a value in a key-value store.
+type ChunkSizer interface {
+	ChunkSize() Point
+}
+
 // ChunkPoint describes a particular chunk in chunk space.
 type ChunkPoint interface {
 	SimplePoint

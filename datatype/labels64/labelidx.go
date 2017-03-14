@@ -10,7 +10,6 @@ import (
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
-	"github.com/janelia-flyem/dvid/datatype/imageblk"
 	"github.com/janelia-flyem/dvid/dvid"
 )
 
@@ -156,49 +155,53 @@ const presentNew = uint8(0x02) // bit flag for label presence in new block
 // block-level analysis of mutation to get label changes in a block.  accumulates data for
 // a given mutation into a map per mutation which will then be flushed for each label meta
 // k/v pair at end of mutation.
-func (d *Data) handleIndexBlockMutate(ch chan blockChange, mut imageblk.MutatedBlock) {
+func (d *Data) handleIndexBlockMutate(ch chan blockChange, mut MutatedBlock) {
 	bc := blockChange{
 		block:   mut.Index.ToIZYXString(),
 		present: make(map[uint64]uint8),
 		delta:   make(map[uint64]int32),
 	}
-	blockBytes := int(d.BlockSize().Prod() * 8)
-	for i := 0; i < blockBytes; i += 8 {
-		old := binary.LittleEndian.Uint64(mut.Prev[i : i+8])
-		cur := binary.LittleEndian.Uint64(mut.Data[i : i+8])
-		if old != 0 {
-			bc.present[old] |= presentOld
-		}
-		if cur != 0 {
-			bc.present[cur] |= presentNew
-		}
-		if old != cur {
+	/*
+		blockBytes := int(d.BlockSize().Prod() * 8)
+		for i := 0; i < blockBytes; i += 8 {
+			old := binary.LittleEndian.Uint64(mut.Prev[i : i+8])
+			cur := binary.LittleEndian.Uint64(mut.Data[i : i+8])
 			if old != 0 {
-				bc.delta[old]--
+				bc.present[old] |= presentOld
 			}
 			if cur != 0 {
-				bc.delta[cur]++
+				bc.present[cur] |= presentNew
+			}
+			if old != cur {
+				if old != 0 {
+					bc.delta[old]--
+				}
+				if cur != 0 {
+					bc.delta[cur]++
+				}
 			}
 		}
-	}
+	*/
 	ch <- bc
 }
 
 // block-level analysis of label ingest
-func (d *Data) handleIndexBlockIngest(ch chan blockChange, mut imageblk.Block) {
+func (d *Data) handleIndexBlockIngest(ch chan blockChange, mut IngestedBlock) {
 	bc := blockChange{
 		block:   mut.Index.ToIZYXString(),
 		present: make(map[uint64]uint8),
 		delta:   make(map[uint64]int32),
 	}
-	blockBytes := int(d.BlockSize().Prod() * 8)
-	for i := 0; i < blockBytes; i += 8 {
-		label := binary.LittleEndian.Uint64(mut.Data[i : i+8])
-		if label != 0 {
-			bc.delta[label]++
-			bc.present[label] |= presentNew
+	/*
+		blockBytes := int(d.BlockSize().Prod() * 8)
+		for i := 0; i < blockBytes; i += 8 {
+			label := binary.LittleEndian.Uint64(mut.Data[i : i+8])
+			if label != 0 {
+				bc.delta[label]++
+				bc.present[label] |= presentNew
+			}
 		}
-	}
+	*/
 	ch <- bc
 }
 

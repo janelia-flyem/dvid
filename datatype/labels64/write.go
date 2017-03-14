@@ -3,7 +3,6 @@ package labels64
 import (
 	"fmt"
 	"io"
-	"log"
 	"sync"
 
 	"github.com/janelia-flyem/dvid/datastore"
@@ -15,7 +14,8 @@ import (
 )
 
 type putOperation struct {
-	voxels   *imageblk.Voxels
+	data     []byte // the full label volume sent to PUT
+	subvol   *dvid.Subvolume
 	indexZYX dvid.IndexZYX
 	version  dvid.VersionID
 	mutate   bool   // if false, we just ingest without needing to GET previous value
@@ -23,34 +23,28 @@ type putOperation struct {
 	indexCh  chan blockChange
 }
 
-// IngestVoxels ingests voxels from a subvolume into the storage engine.
-// The subvolume must be aligned to blocks of the data instance, which simplifies
-// the routine since we are simply replacing a value instead of modifying values (GET + PUT).
-func (d *Data) IngestVoxels(v dvid.VersionID, vox *imageblk.Voxels, roiname dvid.InstanceName) error {
-	return d.PutVoxels(v, vox, roiname, false)
-}
-
-// MutateVoxels mutates voxels from a subvolume into the storage engine.  This differs from
-// the IngestVoxels function in firing off a MutateBlockEvent instead of an IngestBlockEvent,
-// which tells subscribers that a previous value has changed instead of a completely new
-// key/value being inserted.  There will be some decreased performance due to cleanup of prior
-// denormalizations compared to IngestVoxels.
-func (d *Data) MutateVoxels(v dvid.VersionID, vox *imageblk.Voxels, roiname dvid.InstanceName) error {
-	return d.PutVoxels(v, vox, roiname, true)
-}
-
-// PutVoxels persists voxels from a subvolume into the storage engine.
-// The subvolume must be aligned to blocks of the data instance, which simplifies
-// the routine if the PUT is a mutation (signals MutateBlockEvent) instead of ingestion.
-func (d *Data) PutVoxels(v dvid.VersionID, vox *imageblk.Voxels, roiname dvid.InstanceName, mutate bool) error {
-	r, err := imageblk.GetROI(v, roiname, vox)
-	if err != nil {
-		return err
+// PutLabels persists voxels from a subvolume into the storage engine.  This involves transforming
+// a supplied volume of uint64 with known geometry into many labels.Block that tiles the subvolume.
+// Messages are sent to subscribers for ingest or mutate events.
+func (d *Data) PutLabels(v dvid.VersionID, subvol *dvid.Subvolume, data []byte, roiname dvid.InstanceName, mutate bool) error {
+	if subvol.DataShape().ShapeDimensions() != 3 {
+		return fmt.Errorf("cannot store labels for data %q in non 3D format", d.DataName())
 	}
 
-	// Make sure vox is block-aligned
-	if !dvid.BlockAligned(vox, d.BlockSize()) {
-		return fmt.Errorf("cannot store voxels in non-block aligned geometry %s -> %s", vox.StartPoint(), vox.EndPoint())
+	// Make sure data is block-aligned
+	if !dvid.BlockAligned(subvol, d.BlockSize()) {
+		return fmt.Errorf("cannot store labels for data %q in non-block aligned geometry %s -> %s", d.DataName(), subvol.StartPoint(), subvol.EndPoint())
+	}
+
+	// Make sure the received data buffer is of appropriate size.
+	labelBytes := subvol.Size().Prod() * 8
+	if labelBytes != int64(len(data)) {
+		return fmt.Errorf("expected %d bytes for data %q label PUT but only received %d bytes", labelBytes, d.DataName(), len(data))
+	}
+
+	r, err := imageblk.GetROI(v, roiname, subvol)
+	if err != nil {
+		return err
 	}
 
 	wg := new(sync.WaitGroup)
@@ -72,7 +66,7 @@ func (d *Data) PutVoxels(v dvid.VersionID, vox *imageblk.Voxels, roiname dvid.In
 
 	// Track point extents
 	extents := d.Extents()
-	if extents.AdjustPoints(vox.StartPoint(), vox.EndPoint()) {
+	if extents.AdjustPoints(subvol.StartPoint(), subvol.EndPoint()) {
 		extentChanged = true
 	}
 
@@ -89,13 +83,13 @@ func (d *Data) PutVoxels(v dvid.VersionID, vox *imageblk.Voxels, roiname dvid.In
 
 	// Iterate through index space for this data.
 	mutID := d.NewMutationID()
-	fmt.Printf("Starting PutVoxels, mutation %d\n", mutID)
+	fmt.Printf("Starting PutLabels, mutation %d\n", mutID)
 
 	blockCh := make(chan blockChange, 100)
 	go d.aggregateBlockChanges(v, blockCh)
 
 	blocks := 0
-	for it, err := vox.NewIndexIterator(d.BlockSize()); err == nil && it.Valid(); it.NextSpan() {
+	for it, err := subvol.NewIndexZYXIterator(d.BlockSize()); err == nil && it.Valid(); it.NextSpan() {
 		i0, i1, err := it.IndexSpan()
 		if err != nil {
 			return err
@@ -122,15 +116,22 @@ func (d *Data) PutVoxels(v dvid.VersionID, vox *imageblk.Voxels, roiname dvid.In
 				continue
 			}
 
-			kv := &storage.TKeyValue{K: NewBlockTKey(&curIndex)}
-			putOp := &putOperation{vox, curIndex, v, mutate, mutID, blockCh}
-			op := &storage.ChunkOp{putOp, wg}
-			d.PutChunk(&storage.Chunk{op, kv}, putbuffer)
+			putOp := &putOperation{
+				data:     data,
+				subvol:   subvol,
+				indexZYX: curIndex,
+				version:  v,
+				mutate:   mutate,
+				mutID:    mutID,
+				indexCh:  blockCh,
+			}
+			<-server.HandlerToken
+			go d.putChunk(putOp, wg, putbuffer)
 			blocks++
 		}
 	}
 	wg.Wait()
-	fmt.Printf("Done with PutVoxels %d block-level ops, mutation %d\n", blocks, mutID)
+	fmt.Printf("Done with PutLabels %d block-level ops, mutation %d\n", blocks, mutID)
 	close(blockCh)
 
 	// if a bufferable op, flush
@@ -149,6 +150,10 @@ func (d *Data) PutBlocks(v dvid.VersionID, mutID uint64, start dvid.ChunkPoint3d
 	batcher, err := d.GetKeyValueBatcher()
 	if err != nil {
 		return err
+	}
+	blockSize, ok := d.BlockSize().(dvid.Point3d)
+	if !ok {
+		return fmt.Errorf("can't PutBlocks() on data %q with non-3d block size: %s", d.DataName(), d.BlockSize())
 	}
 
 	ctx := datastore.NewVersionedCtx(d, v)
@@ -181,7 +186,12 @@ func (d *Data) PutBlocks(v dvid.VersionID, mutID uint64, start dvid.ChunkPoint3d
 			return fmt.Errorf("Expected %d bytes in block read, got %d instead!  Aborting.", numBlockBytes, readBytes)
 		}
 
-		serialization, err := dvid.SerializeData(buf, d.Compression(), d.Checksum())
+		curBlock, err := labels.MakeBlock(buf, blockSize)
+		if err != nil {
+			return err
+		}
+		blockData, _ := curBlock.MarshalBinary()
+		serialization, err := dvid.SerializeData(blockData, d.Compression(), d.Checksum())
 		if err != nil {
 			return err
 		}
@@ -189,10 +199,10 @@ func (d *Data) PutBlocks(v dvid.VersionID, mutID uint64, start dvid.ChunkPoint3d
 		tk := NewBlockTKey(&zyx)
 
 		// If we are mutating, get the previous block of data.
-		var oldBlock []byte
+		var oldBlock *labels.Block
 		if mutate {
-			oldBlock, err = d.getLabelBlock(v, tk)
-			if err != nil {
+			var err error
+			if oldBlock, err = d.getLabelBlock(v, tk); err != nil {
 				return fmt.Errorf("Unable to load previous block in %q, key %v: %v\n", d.DataName(), tk, err)
 			}
 		}
@@ -204,11 +214,11 @@ func (d *Data) PutBlocks(v dvid.VersionID, mutID uint64, start dvid.ChunkPoint3d
 		var event string
 		var delta interface{}
 		if mutate {
-			event = labels.MutateBlockEvent
-			delta = imageblk.MutatedBlock{&zyx, oldBlock, buf, mutID}
+			event = MutateBlockEvent
+			delta = MutatedBlock{&zyx, oldBlock, curBlock, mutID}
 		} else {
-			event = labels.IngestBlockEvent
-			delta = imageblk.Block{&zyx, buf, mutID}
+			event = IngestBlockEvent
+			delta = IngestedBlock{&zyx, curBlock, mutID}
 		}
 		evt := datastore.SyncEvent{d.DataUUID(), event}
 		msg := datastore.SyncMessage{event, v, delta}
@@ -233,8 +243,8 @@ func (d *Data) PutBlocks(v dvid.VersionID, mutID uint64, start dvid.ChunkPoint3d
 	return nil
 }
 
-// getLabelBlock returns a block of label data from this instance's preferred storage.
-func (d *Data) getLabelBlock(v dvid.VersionID, k storage.TKey) ([]byte, error) {
+// getLabelBlock returns a compressed block of label data from this instance's preferred storage.
+func (d *Data) getLabelBlock(v dvid.VersionID, k storage.TKey) (*labels.Block, error) {
 	store, err := d.GetOrderedKeyValueDB()
 	if err != nil {
 		return nil, fmt.Errorf("Data type imageblk had error initializing store: %v\n", err)
@@ -245,90 +255,52 @@ func (d *Data) getLabelBlock(v dvid.VersionID, k storage.TKey) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	compressed, _, err := dvid.DeserializeData(serialization, true)
+	data, _, err := dvid.DeserializeData(serialization, true)
 	if err != nil {
-		return nil, fmt.Errorf("Unable to deserialize block, %s: %v", ctx, err)
+		return nil, fmt.Errorf("Unable to deserialize data for block, %s: %v", ctx, err)
 	}
-	return labels.Decompress(compressed, d.BlockSize())
+	var b labels.Block
+	err = b.UnmarshalBinary(data)
+	return &b, err
 }
 
-// PutChunk puts a chunk of data as part of a mapped operation.
+// Puts a chunk of data as part of a mapped operation.
 // Only some multiple of the # of CPU cores can be used for chunk handling before
 // it waits for chunk processing to abate via the buffered server.HandlerToken channel.
-func (d *Data) PutChunk(chunk *storage.Chunk, putbuffer storage.RequestBuffer) error {
-	<-server.HandlerToken
-	go d.putChunk(chunk, putbuffer)
-	return nil
-}
-
-func (d *Data) putChunk(chunk *storage.Chunk, putbuffer storage.RequestBuffer) {
+func (d *Data) putChunk(op *putOperation, wg *sync.WaitGroup, putbuffer storage.RequestBuffer) {
 	defer func() {
 		// After processing a chunk, return the token.
 		server.HandlerToken <- 1
 
 		// Notify the requestor that this chunk is done.
-		if chunk.Wg != nil {
-			chunk.Wg.Done()
-		}
+		wg.Done()
 	}()
 
-	op, ok := chunk.Op.(*putOperation)
-	if !ok {
-		log.Fatalf("Illegal operation passed to ProcessChunk() for data %s\n", d.DataName())
-	}
+	tkey := NewBlockTKey(&op.indexZYX)
 
-	// Make sure our received chunk is valid.
-	if chunk == nil {
-		dvid.Errorf("Received nil chunk in ProcessChunk.  Ignoring chunk.\n")
-		return
-	}
-	if chunk.K == nil {
-		dvid.Errorf("Received nil chunk key in ProcessChunk.  Ignoring chunk.\n")
-		return
-	}
-
-	// Initialize the block buffer using the chunk of data.  For voxels, this chunk of
-	// data needs to be uncompressed and deserialized.
-	var blockData []byte
-	var err error
-	if chunk.V == nil {
-		blockData = d.BackgroundBlock()
-	} else {
-		var compressed []byte
-		compressed, _, err = dvid.DeserializeData(chunk.V, true)
-		if err != nil {
-			dvid.Errorf("Unable to deserialize block in %q: %v\n", d.DataName(), err)
-			return
-		}
-		blockData, err = labels.Decompress(compressed, d.BlockSize())
-		if err != nil {
-			dvid.Errorf("Unable to decompress google compression in %q: %v\n", d.DataName(), err)
-			return
-		}
-	}
-
-	// If we are mutating, get the previous block of data.
-	var oldBlock []byte
+	// If we are mutating, get the previous label Block
+	var oldBlock *labels.Block
 	if op.mutate {
-		oldBlock, err = d.getLabelBlock(op.version, chunk.K)
-		if err != nil {
-			dvid.Errorf("Unable to load previous block in %q, key %v: %v\n", d.DataName(), chunk.K, err)
+		var err error
+		if oldBlock, err = d.getLabelBlock(op.version, tkey); err != nil {
+			dvid.Errorf("Unable to load previous block in %q, key %v: %v\n", d.DataName(), tkey, err)
 			return
 		}
 	}
 
-	// Perform the operation.
-	block := &storage.TKeyValue{K: chunk.K, V: blockData}
-	if err = op.voxels.WriteBlock(block, d.BlockSize()); err != nil {
-		dvid.Errorf("Unable to WriteBlock() in %q: %v\n", d.DataName(), err)
+	// Get the current label Block from the received label array
+	blockSize, ok := d.BlockSize().(dvid.Point3d)
+	if !ok {
+		dvid.Errorf("can't putChunk() on data %q with non-3d block size: %s", d.DataName(), d.BlockSize())
 		return
 	}
-	compressed, err := labels.Compress(blockData, d.BlockSize())
+	curBlock, err := labels.SubvolumeToBlock(op.subvol, op.data, op.indexZYX, blockSize)
 	if err != nil {
-		dvid.Errorf("Unable to google compress block in %q: %v\n", d.DataName(), err)
+		dvid.Errorf("error creating compressed block from label array at %s", op.subvol)
 		return
 	}
-	serialization, err := dvid.SerializeData(compressed, d.Compression(), d.Checksum())
+	blockData, _ := curBlock.MarshalBinary()
+	serialization, err := dvid.SerializeData(blockData, d.Compression(), d.Checksum())
 	if err != nil {
 		dvid.Errorf("Unable to serialize block in %q: %v\n", d.DataName(), err)
 		return
@@ -344,20 +316,20 @@ func (d *Data) putChunk(chunk *storage.Chunk, putbuffer storage.RequestBuffer) {
 	callback := func(ready chan error) {
 		if ready != nil {
 			if resperr := <-ready; resperr != nil {
-				dvid.Errorf("Unable to PUT voxel data for key %v: %v\n", chunk.K, resperr)
+				dvid.Errorf("Unable to PUT voxel data for key %v: %v\n", tkey, resperr)
 				return
 			}
 		}
 		var event string
 		var delta interface{}
 		if op.mutate {
-			event = labels.MutateBlockEvent
-			block := imageblk.MutatedBlock{&op.indexZYX, oldBlock, block.V, op.mutID}
+			event = MutateBlockEvent
+			block := MutatedBlock{&op.indexZYX, oldBlock, curBlock, op.mutID}
 			d.handleIndexBlockMutate(op.indexCh, block)
 			delta = block
 		} else {
-			event = labels.IngestBlockEvent
-			block := imageblk.Block{&op.indexZYX, block.V, op.mutID}
+			event = IngestBlockEvent
+			block := IngestedBlock{&op.indexZYX, curBlock, op.mutID}
 			d.handleIndexBlockIngest(op.indexCh, block)
 			delta = block
 		}
@@ -371,10 +343,10 @@ func (d *Data) putChunk(chunk *storage.Chunk, putbuffer storage.RequestBuffer) {
 	if putbuffer != nil {
 		ready := make(chan error, 1)
 		go callback(ready)
-		putbuffer.PutCallback(ctx, chunk.K, serialization, ready)
+		putbuffer.PutCallback(ctx, tkey, serialization, ready)
 	} else {
-		if err := store.Put(ctx, chunk.K, serialization); err != nil {
-			dvid.Errorf("Unable to PUT voxel data for key %v: %v\n", chunk.K, err)
+		if err := store.Put(ctx, tkey, serialization); err != nil {
+			dvid.Errorf("Unable to PUT voxel data for key %v: %v\n", tkey, err)
 			return
 		}
 		callback(nil)

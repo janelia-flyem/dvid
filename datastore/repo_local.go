@@ -494,6 +494,7 @@ func (m *repoManager) loadVersion0() error {
 						}
 					}
 				} else {
+					// TODO: Remove when we no longer have to support legacy dvid installs.
 					syncNames := syncer.SyncedNames()
 					if len(syncNames) == 0 {
 						continue

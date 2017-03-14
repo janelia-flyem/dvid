@@ -20,9 +20,30 @@ const (
 	numBlockHandlers = 8 // goroutines used to process block changes
 	numLabelHandlers = 8 // goroutines used to do get/put tx on label indices
 
-	DownsizeBlockEvent  = "LABELBLK_DOWNSIZE_ADD"
-	DownsizeCommitEvent = "LABELBLK_DOWNSIZE_COMMIT"
+	DownsizeBlockEvent  = "LABELS64_DOWNSIZE_ADD"
+	DownsizeCommitEvent = "LABELS64_DOWNSIZE_COMMIT"
+
+	IngestBlockEvent = "LABELS64_BLOCK_INGEST"
+	MutateBlockEvent = "LABELS64_BLOCK_MUTATE"
+	DeleteBlockEvent = "LABELS64_BLOCK_DELETE"
 )
+
+// IngestedBlock encodes a 3d block coordinate and block data.  It is the unit of delta for
+// a IngestBlockEvent.
+type IngestedBlock struct {
+	Index *dvid.IndexZYX
+	Data  *labels.Block
+	MutID uint64
+}
+
+// MutatedBlock encodes a 3d block coordinate and previous and updated block data.
+// It is the unit of delta for a MutateBlockEvent.
+type MutatedBlock struct {
+	Index *dvid.IndexZYX
+	Prev  *labels.Block
+	Data  *labels.Block
+	MutID uint64
+}
 
 type procMsg struct {
 	v  dvid.VersionID

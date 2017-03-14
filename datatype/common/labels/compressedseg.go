@@ -1,10 +1,8 @@
 package labels
 
 import (
-	"errors"
 	"fmt"
 	"math"
-	"unsafe"
 
 	"github.com/janelia-flyem/dvid/dvid"
 )
@@ -13,28 +11,6 @@ type CompressedSegData []uint32
 
 func NewVolSize(x int32, y int32, z int32) dvid.Point3d {
 	return dvid.Point3d{x, y, z}
-}
-
-func byteToUint64(b []byte) (out []uint64, err error) {
-	if len(b)%8 != 0 || cap(b)%8 != 0 || uintptr(unsafe.Pointer(&b[0]))%8 != 0 {
-		return nil, errors.New("bad len or cap or alignment")
-	}
-	return (*[1 << 27]uint64)(unsafe.Pointer(&b[0]))[:len(b)/8 : cap(b)/8], nil
-}
-
-func byteToUint32(b []byte) (out []uint32, err error) {
-	if len(b)%4 != 0 || cap(b)%4 != 0 || uintptr(unsafe.Pointer(&b[0]))%4 != 0 {
-		return nil, errors.New("bad len or cap or alignment")
-	}
-	return (*[1 << 27]uint32)(unsafe.Pointer(&b[0]))[:len(b)/4 : cap(b)/4], nil
-}
-
-func uint32ToByte(seg CompressedSegData) []byte {
-	return (*[1 << 30]byte)(unsafe.Pointer(&seg[0]))[:len(seg)*4 : cap(seg)*4]
-}
-
-func uint64ToByte(in []uint64) []byte {
-	return (*[1 << 30]byte)(unsafe.Pointer(&in[0]))[:len(in)*8 : cap(in)*8]
 }
 
 // Compress takes an input 3D label array of a given volume dimensions and compresses

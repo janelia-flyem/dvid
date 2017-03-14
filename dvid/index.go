@@ -231,6 +231,10 @@ func (i *IndexZYX) ToIZYXString() IZYXString {
 	return IZYXString(i.Bytes())
 }
 
+func (i IndexZYX) ToVoxelOffset(chunkSize Point3d) Point3d {
+	return Point3d{i[0] * chunkSize[0], i[1] * chunkSize[1], i[2] * chunkSize[2]}
+}
+
 // Hash returns an integer [0, n) where the returned values should be reasonably
 // spread among the range of returned values.  This implementation makes sure
 // that any range query along x, y, or z direction will map to different handlers.
