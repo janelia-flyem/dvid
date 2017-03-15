@@ -249,6 +249,7 @@ type Data interface {
 	DataUUID() UUID
 	DataName() InstanceName
 	RootUUID() UUID
+	RootVersionID() (VersionID, error)
 
 	TypeName() TypeString
 	TypeURL() URLString

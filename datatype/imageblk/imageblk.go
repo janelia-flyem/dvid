@@ -1523,42 +1523,77 @@ func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, su
 
 	for ziter := int32(0); ziter < blocksize.Value(2); ziter++ {
 		for yiter := int32(0); yiter < blocksize.Value(1); yiter++ {
-			beginPoint := dvid.ChunkPoint3d{blockoffset.Value(0), blockoffset.Value(1) + yiter, blockoffset.Value(2) + ziter}
-			endPoint := dvid.ChunkPoint3d{blockoffset.Value(0) + blocksize.Value(0) - 1, blockoffset.Value(1) + yiter, blockoffset.Value(2) + ziter}
+			if !hasbuffer {
+				beginPoint := dvid.ChunkPoint3d{blockoffset.Value(0), blockoffset.Value(1) + yiter, blockoffset.Value(2) + ziter}
+				endPoint := dvid.ChunkPoint3d{blockoffset.Value(0) + blocksize.Value(0) - 1, blockoffset.Value(1) + yiter, blockoffset.Value(2) + ziter}
+				indexBeg := dvid.IndexZYX(beginPoint)
+				sx, sy, sz := indexBeg.Unpack()
+				begTKey := NewTKey(&indexBeg)
+				indexEnd := dvid.IndexZYX(endPoint)
+				endTKey := NewTKey(&indexEnd)
 
-			indexBeg := dvid.IndexZYX(beginPoint)
-			sx, sy, sz := indexBeg.Unpack()
-			begTKey := NewTKey(&indexBeg)
-			indexEnd := dvid.IndexZYX(endPoint)
-			endTKey := NewTKey(&indexEnd)
+				// Send the entire range of key-value pairs to chunk processor
+				err = okv.ProcessRange(ctx, begTKey, endTKey, &storage.ChunkOp{}, func(c *storage.Chunk) error {
+					if c == nil || c.TKeyValue == nil {
+						return nil
+					}
+					kv := c.TKeyValue
+					if kv.V == nil {
+						return nil
+					}
 
-			// Send the entire range of key-value pairs to chunk processor
-			err = okv.ProcessRange(ctx, begTKey, endTKey, &storage.ChunkOp{}, func(c *storage.Chunk) error {
-				if c == nil || c.TKeyValue == nil {
+					// Determine which block this is.
+					indexZYX, err := DecodeTKey(kv.K)
+					if err != nil {
+						return err
+					}
+					x, y, z := indexZYX.Unpack()
+					if z != sz || y != sy || x < sx || x >= sx+int32(blocksize.Value(0)) {
+						return nil
+					}
+					if err := sendBlockJPEG(w, x, y, z, kv.V, compression); err != nil {
+						return err
+					}
 					return nil
-				}
-				kv := c.TKeyValue
-				if kv.V == nil {
-					return nil
-				}
+				})
 
-				// Determine which block this is.
-				indexZYX, err := DecodeTKey(kv.K)
 				if err != nil {
-					return err
+					return fmt.Errorf("Unable to GET data %s: %v", ctx, err)
 				}
-				x, y, z := indexZYX.Unpack()
-				if z != sz || y != sy || x < sx || x >= sx+int32(blocksize.Value(0)) {
-					return nil
+			} else {
+				tkeys := make([]storage.TKey, 0)
+				for xiter := int32(0); xiter < blocksize.Value(0); xiter++ {
+					currPoint := dvid.ChunkPoint3d{blockoffset.Value(0) + xiter, blockoffset.Value(1) + yiter, blockoffset.Value(2) + ziter}
+					currPoint2 := dvid.IndexZYX(currPoint)
+					currTKey := NewTKey(&currPoint2)
+					tkeys = append(tkeys, currTKey)
 				}
-				if err := sendBlockJPEG(w, x, y, z, kv.V, compression); err != nil {
-					return err
-				}
-				return nil
-			})
+				// Send the entire range of key-value pairs to chunk processor
+				err = okv.(storage.RequestBuffer).ProcessList(ctx, tkeys, &storage.ChunkOp{}, func(c *storage.Chunk) error {
+					if c == nil || c.TKeyValue == nil {
+						return nil
+					}
+					kv := c.TKeyValue
+					if kv.V == nil {
+						return nil
+					}
 
-			if err != nil {
-				return fmt.Errorf("Unable to GET data %s: %v", ctx, err)
+					// Determine which block this is.
+					indexZYX, err := DecodeTKey(kv.K)
+					if err != nil {
+						return err
+					}
+					x, y, z := indexZYX.Unpack()
+
+					if err := sendBlockJPEG(w, x, y, z, kv.V, compression); err != nil {
+						return err
+					}
+					return nil
+				})
+
+				if err != nil {
+					return fmt.Errorf("Unable to GET data %s: %v", ctx, err)
+				}
 			}
 		}
 	}

@@ -488,6 +488,9 @@ type BufferableOps interface {
 type RequestBuffer interface {
 	BufferableOps
 
+	// ProcessList will process all gets when flush is called
+	ProcessList(ctx Context, tkeys []TKey, op *ChunkOp, f ChunkFunc) error
+
 	// PutCallback writes a value with given key in a possibly versioned context and signals the callback
 	PutCallback(Context, TKey, []byte, chan error) error
 

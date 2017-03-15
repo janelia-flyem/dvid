@@ -403,6 +403,8 @@ func (d *Data) DataUUID() dvid.UUID { return d.dataUUID }
 
 func (d *Data) RootUUID() dvid.UUID { return d.rootUUID }
 
+func (d *Data) RootVersionID() (dvid.VersionID, error) { return VersionFromUUID(d.rootUUID) }
+
 func (d *Data) TypeName() dvid.TypeString { return d.typename }
 
 func (d *Data) TypeURL() dvid.URLString { return d.typeurl }

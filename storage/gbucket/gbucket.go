@@ -21,7 +21,7 @@ It is possible to post an object and not see the object when searching the list.
 */
 import (
 	"bytes"
-	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"io/ioutil"
 	"runtime"
@@ -32,9 +32,10 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
 	"github.com/janelia-flyem/go/semver"
+	"google.golang.org/api/iterator"
 
-	"golang.org/x/net/context"
 	api "cloud.google.com/go/storage"
+	"golang.org/x/net/context"
 )
 
 func init() {
@@ -48,7 +49,7 @@ func init() {
 
 const (
 	// limit the number of parallel requests
-	MAXCONNECTIONS = 100
+	MAXCONNECTIONS = 1000
 	INITKEY        = "initialized"
 	// total connection tries
 	NUM_TRIES = 3
@@ -141,6 +142,7 @@ func (e *Engine) newGBucket(config dvid.StoreConfig) (*GBucket, bool, error) {
 	}
 
 	// otherwise, check if there's been any metadata or we need to initialize it.
+	// ?? would this ever be false in practice
 	metadataExists, err := gb.metadataExists()
 	if err != nil {
 		gb.Close()
@@ -172,11 +174,8 @@ func (db *GBucket) metadataExists() (bool, error) {
 	}
 	var ctx storage.MetadataContext
 	keyBeg, keyEnd := ctx.KeyRange()
-	keys, err := db.getKeysInRangeRaw(keyBeg, keyEnd)
-	if err != nil {
-		return false, err
-	}
-	return len(keys) > 0, nil
+	haskeys := db.hasKeysInRangeRaw(keyBeg, keyEnd)
+	return haskeys, nil
 }
 
 // ---- OrderedKeyValueGetter interface ------
@@ -185,7 +184,7 @@ func (db *GBucket) metadataExists() (bool, error) {
 func (db *GBucket) getV(k storage.Key) ([]byte, error) {
 
 	// gets handle (no network op)
-	obj_handle := db.bucket.Object(base64.URLEncoding.EncodeToString(k))
+	obj_handle := db.bucket.Object(hex.EncodeToString(k))
 
 	var err error
 	for i := 0; i < NUM_TRIES; i++ {
@@ -210,63 +209,30 @@ func (db *GBucket) getV(k storage.Key) ([]byte, error) {
 // put value from a given key or an error if nothing exists
 func (db *GBucket) deleteV(k storage.Key) error {
 	// gets handle (no network op)
-	obj_handle := db.bucket.Object(base64.URLEncoding.EncodeToString(k))
+	obj_handle := db.bucket.Object(hex.EncodeToString(k))
 
 	return obj_handle.Delete(db.ctx)
 }
 
 // put value from a given key or an error if nothing exists
 func (db *GBucket) putV(k storage.Key, value []byte) (err error) {
-	/*
-		for i := 0; i < NUM_TRIES; i++ {
-		    //debug.PrintStack()
-		    // returns error if it doesn't exist
-		    obj := obj_handle.NewWriter(db.ctx)
-
-		    // write data to buffer
-		    numwrite, err2 := obj.Write(value)
-
-		    if err2 == nil {
-			if numwrite != len(value) {
-			    err2 = fmt.Errorf("correct number of bytes not written")
-			}
-		    }
-		    // close will flush buffer
-		    err = obj.Close()
-
-		    if err2 == nil && err == nil {
-			break
-		    }
-
-		    if err2 != nil {
-			err = err2
-		    }
-		}
-	*/
-
 	for i := 0; i < NUM_TRIES; i++ {
 		// gets handle (no network op)
-		obj_handle := db.bucket.Object(base64.URLEncoding.EncodeToString(k))
+		obj_handle := db.bucket.Object(hex.EncodeToString(k))
 
 		// returns error if it doesn't exist
 		obj := obj_handle.NewWriter(db.ctx)
 
 		// write data to buffer
-		obj.Write(value)
+		numwrite, err2 := obj.Write(value)
 
 		// close will flush buffer
-		obj.Close()
+		err = obj.Close()
 
-		// double check post (hopefully unnecessary in future)
-		valcheck, err2 := db.getV(k)
-		if err2 != nil || len(valcheck) != len(value) {
+		if err != nil || err2 != nil || numwrite != len(value) {
 			err = fmt.Errorf("Error writing object to google bucket")
 			time.Sleep(time.Duration(i+1) * time.Second)
-		} else {
-			err = nil
-			break
 		}
-
 	}
 
 	return err
@@ -290,46 +256,39 @@ func (db *GBucket) getSingleVersionedKey(vctx storage.VersionedCtx, k []byte) ([
 	return db.getV(keys[0])
 }
 
+// hasKeysInRangeRaw checks for the existence of any keys in the range
+func (db *GBucket) hasKeysInRangeRaw(minKey, maxKey storage.Key) bool {
+	// extract common prefix
+	prefix := grabPrefix(minKey, maxKey)
+
+	query := &api.Query{Prefix: prefix}
+	// query objects
+	object_list := db.bucket.Objects(db.ctx, query)
+	_, done := object_list.Next()
+	return done != iterator.Done
+}
+
 // getKeysInRangeRaw returns all keys in a range (including multiple keys and tombstones)
 func (db *GBucket) getKeysInRangeRaw(minKey, maxKey storage.Key) ([]storage.Key, error) {
 	keys := make(KeyArray, 0)
 	// extract common prefix
 	prefix := grabPrefix(minKey, maxKey)
 
-	// iterate through query (default 1000 items at a time)
-	extractedlist := false
 	query := &api.Query{Prefix: prefix}
-	for !extractedlist {
-		// query objects
-		object_list, err := db.bucket.List(db.ctx, query)
-		for i := 0; i < (NUM_TRIES - 1); i++ {
-			if err == nil {
-				break
-			}
-			object_list, err = db.bucket.List(db.ctx, query)
-		}
+	// query objects
+	object_list := db.bucket.Objects(db.ctx, query)
 
+	// filter keys that fall into range
+	object_attr, done := object_list.Next()
+	for done != iterator.Done {
+		decstr, err := hex.DecodeString(object_attr.Name)
 		if err != nil {
-			return []storage.Key(keys), err
+			return nil, err
 		}
-
-		// filter keys that fall into range
-		for _, object_attr := range object_list.Results {
-			decstr, err := base64.URLEncoding.DecodeString(object_attr.Name)
-			if err != nil {
-				return nil, err
-			}
-			if bytes.Compare(decstr, minKey) >= 0 && bytes.Compare(decstr, maxKey) <= 0 {
-				keys = append(keys, decstr)
-			}
+		if bytes.Compare(decstr, minKey) >= 0 && bytes.Compare(decstr, maxKey) <= 0 {
+			keys = append(keys, decstr)
 		}
-
-		// make another query if there are lot of keys
-		if object_list.Next == nil {
-			extractedlist = true
-		} else {
-			query = object_list.Next
-		}
+		object_attr, done = object_list.Next()
 	}
 
 	// sort keys
@@ -918,6 +877,25 @@ func (db *goBuffer) ProcessRange(ctx storage.Context, TkBeg, TkEnd storage.TKey,
 	return nil
 }
 
+// ProcessList sends a list of specific key valuues to type-specific chunk handlers,
+// allowing chunk processing to be concurrent with key-value sequential reads.
+// See datatype/imageblk.ProcessChunk() for an example.
+func (db *goBuffer) ProcessList(ctx storage.Context, tkeys []storage.TKey, op *storage.ChunkOp, f storage.ChunkFunc) error {
+	if db == nil {
+		return fmt.Errorf("Can't call GetRange() on nil GBucket")
+	}
+	if ctx == nil {
+		return fmt.Errorf("Received nil context in GetRange()")
+	}
+	db.mutex.Lock()
+	for _, tkey := range tkeys {
+		db.ops = append(db.ops, dbOp{getOp, nil, nil, tkey, nil, op, f, nil})
+	}
+	db.mutex.Unlock()
+
+	return nil
+}
+
 // Put writes a value with given key in a possibly versioned context.
 func (db *goBuffer) Put(ctx storage.Context, tkey storage.TKey, value []byte) error {
 	if db == nil {
@@ -1102,7 +1080,11 @@ func (buffer *goBuffer) Flush() error {
 				storage.StoreValueBytesWritten <- len(opdata.value)
 				opdata.readychan <- err
 			} else if opdata.op == getOp {
-				err = buffer.processRangeLocal(buffer.ctx, opdata.tkBeg, opdata.tkEnd, opdata.chunkop, opdata.chunkfunc, workQueue)
+				if opdata.tkEnd == nil {
+					err = buffer.processGetLocal(buffer.ctx, opdata.tkBeg, opdata.chunkop, opdata.chunkfunc, workQueue)
+				} else {
+					err = buffer.processRangeLocal(buffer.ctx, opdata.tkBeg, opdata.tkEnd, opdata.chunkop, opdata.chunkfunc, workQueue)
+				}
 			} else {
 				err = fmt.Errorf("Incorrect buffer operation specified")
 			}
@@ -1116,15 +1098,16 @@ func (buffer *goBuffer) Flush() error {
 		}(operation, itnum)
 	}
 
-	// check return values
+	var err error
+	// check return values (should wait until all routines are finished)
 	for range buffer.ops {
-		err := <-retVals
-		if err != nil {
-			return err
+		errjob := <-retVals
+		if errjob != nil {
+			err = errjob
 		}
 	}
 
-	return nil
+	return err
 }
 
 // deleteRangeLocal implements DeleteRange but with workQueue awareness.
@@ -1164,6 +1147,59 @@ func (db *goBuffer) deleteRangeLocal(ctx storage.Context, TkBeg, TkEnd storage.T
 
 	// hackish -- reask for resource
 	workQueue <- nil
+
+	return nil
+}
+
+// processGetLocal implements ProcessRange functionality but with workQueue awareness for
+// just one key/value GET
+func (db *goBuffer) processGetLocal(ctx storage.Context, tkey storage.TKey, op *storage.ChunkOp, f storage.ChunkFunc, workQueue chan interface{}) error {
+	var currkey storage.Key
+	if ctx.Versioned() {
+		data := ctx.(storage.VersionedCtx).Data()
+		rootversion, _ := data.RootVersionID()
+		contextversion := ctx.VersionID()
+
+		if !data.Versioned() {
+			// construct key from root
+			newctx := storage.NewDataContext(data, rootversion)
+			currkey = newctx.ConstructKey(tkey)
+
+		} else {
+			if rootversion != contextversion {
+				// grab all keys within versioned range
+				keys, _ := db.db.getKeysInRange(ctx, tkey, tkey)
+				if len(keys) == 0 {
+					return nil
+				}
+				currkey = keys[0]
+			} else {
+				// construct key from root
+				newctx := storage.NewDataContext(data, rootversion)
+				currkey = newctx.ConstructKey(tkey)
+			}
+		}
+
+	} else {
+		currkey = ctx.ConstructKey(tkey)
+	}
+
+	// retrieve value, if error, return as not found
+	val, err := db.db.getV(currkey)
+	if err != nil {
+		return nil
+	}
+
+	// callback might not be thread safe
+	db.mutex.Lock()
+	defer db.mutex.Unlock()
+
+	tkv := storage.TKeyValue{tkey, val}
+	chunk := &storage.Chunk{op, &tkv}
+
+	if err := f(chunk); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -1233,8 +1269,8 @@ func (db *goBuffer) processRangeLocal(ctx storage.Context, TkBeg, TkEnd storage.
 
 func grabPrefix(key1 storage.Key, key2 storage.Key) string {
 	var prefixe storage.Key
-	key1m := base64.URLEncoding.EncodeToString(key1)
-	key2m := base64.URLEncoding.EncodeToString(key2)
+	key1m := hex.EncodeToString(key1)
+	key2m := hex.EncodeToString(key2)
 	for spot := range key1m {
 		if key1m[spot] != key2m[spot] {
 			break
