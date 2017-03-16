@@ -5,7 +5,6 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 )
 
@@ -43,8 +42,8 @@ func (d *testData) RootUUID() dvid.UUID {
 	return d.rootUUID
 }
 
-func (d *testData) RootVersionID() (dvid.UUID, error) {
-	return datastore.VersionFromUUID(d.rootUUID)
+func (d *testData) RootVersionID() (dvid.VersionID, error) {
+	return dvid.VersionID(0), nil
 }
 
 func (d *testData) DataUUID() dvid.UUID {
