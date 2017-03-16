@@ -78,6 +78,9 @@ type VersionedCtx interface {
 	// given a list of key-value pairs across many versions.  If no suitable key-value
 	// pair is found, nil is returned.
 	VersionedKeyValue([]*KeyValue) (*KeyValue, error)
+
+	// Data returns the data associated with this context
+	Data() dvid.Data
 }
 
 // RequestCtx is associated with a particular request (typically a web request) and can

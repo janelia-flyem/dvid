@@ -42,6 +42,10 @@ func (d *testData) RootUUID() dvid.UUID {
 	return d.rootUUID
 }
 
+func (d *testData) RootVersionID() (dvid.VersionID, error) {
+	return dvid.VersionID(0), nil
+}
+
 func (d *testData) DataUUID() dvid.UUID {
 	return d.dataUUID
 }

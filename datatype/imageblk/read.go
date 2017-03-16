@@ -380,10 +380,34 @@ func (d *Data) GetVoxels(v dvid.VersionID, vox *Voxels, roiname dvid.InstanceNam
 			chunkOp = &storage.ChunkOp{&getOperation{vox, nil, 0}, wg}
 		}
 
-		// Send the entire range of key-value pairs to chunk processor
-		err = okv.ProcessRange(ctx, begTKey, endTKey, chunkOp, storage.ChunkFunc(d.ReadChunk))
-		if err != nil {
-			return fmt.Errorf("Unable to GET data %s: %v", ctx, err)
+		if !hasbuffer {
+			// Send the entire range of key-value pairs to chunk processor
+			err = okv.ProcessRange(ctx, begTKey, endTKey, chunkOp, storage.ChunkFunc(d.ReadChunk))
+			if err != nil {
+				return fmt.Errorf("Unable to GET data %s: %v", ctx, err)
+			}
+		} else {
+			// Extract block list
+			tkeys := make([]storage.TKey, 0)
+
+			ptBeg := indexBeg.Duplicate().(dvid.ChunkIndexer)
+			ptEnd := indexEnd.Duplicate().(dvid.ChunkIndexer)
+			begX := ptBeg.Value(0)
+			endX := ptEnd.Value(0)
+
+			c := dvid.ChunkPoint3d{begX, ptBeg.Value(1), ptBeg.Value(2)}
+			for x := begX; x <= endX; x++ {
+				c[0] = x
+				curIndex := dvid.IndexZYX(c)
+				currTKey := NewTKey(&curIndex)
+				tkeys = append(tkeys, currTKey)
+
+			}
+
+			err = okv.(storage.RequestBuffer).ProcessList(ctx, tkeys, chunkOp, storage.ChunkFunc(d.ReadChunk))
+			if err != nil {
+				return fmt.Errorf("Unable to GET data %s: %v", ctx, err)
+			}
 		}
 	}
 
