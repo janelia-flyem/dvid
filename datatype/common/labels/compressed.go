@@ -143,14 +143,14 @@ func (b Block) MarshalBinary() ([]byte, error) {
 // UnmarshalBinary implements the encoding.BinaryUnmarshaler interface.  Note that
 // for efficiency, the receive Block will share memory with the given byte slice.
 func (b *Block) UnmarshalBinary(data []byte) (err error) {
-	if len(data)%8 != 0 {
+	if len(data)%4 != 0 {
 		return fmt.Errorf("can't unmarshal binary into labels.Block with non-aligned data of length %d", len(data))
 	}
 	// Get the sub-blocks along each dimension
 	gx := binary.LittleEndian.Uint32(data[0:4])
 	gy := binary.LittleEndian.Uint32(data[4:8])
 	gz := binary.LittleEndian.Uint32(data[8:12])
-	dvid.Infof("In UnmarshalBinary, got gx %d, gy %d, gz %d\n", gx, gy, gz)
+
 	b.size[0] = int32(gx * SubBlockSize)
 	b.size[1] = int32(gy * SubBlockSize)
 	b.size[2] = int32(gz * SubBlockSize)
