@@ -122,10 +122,24 @@ func sendLabels(src, dst *LabelMetadata, name, srcURL string) {
 	ny := dstBlock[1]
 	blocksInX := maxIndex[0] - minIndex[0] + 1
 	partsPerStrip := blocksInX*srcBlock[0]/640 + 1
-	for oz := minIndex[2] * srcBlock[2]; oz <= maxIndex[2]*srcBlock[2]; oz += nz {
-		for oy := minIndex[1] * srcBlock[1]; oy <= maxIndex[1]*srcBlock[1]; oy += ny {
+
+	startz := minIndex[2] * srcBlock[2]
+	if startz%dstBlock[2] != 0 {
+		startz -= startz % dstBlock[2]
+	}
+	starty := minIndex[1] * srcBlock[1]
+	if starty%dstBlock[1] != 0 {
+		starty -= starty % dstBlock[1]
+	}
+	startx := minIndex[0] * srcBlock[0]
+	if startx%dstBlock[0] != 0 {
+		startx -= startx % dstBlock[0]
+	}
+
+	for oz := startz; oz <= maxIndex[2]*srcBlock[2]; oz += nz {
+		for oy := starty; oy <= maxIndex[1]*srcBlock[1]; oy += ny {
 			for i := 0; i < partsPerStrip; i++ {
-				ox := minIndex[0]*srcBlock[0] + i*640
+				ox := startx + i*640
 				nx := 640
 				if ox+nx >= (maxIndex[0]+1)*srcBlock[0] {
 					nx = (maxIndex[0] + 1) + srcBlock[0] - ox
