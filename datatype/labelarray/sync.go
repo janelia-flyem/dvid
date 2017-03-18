@@ -3,7 +3,7 @@
 	from ingestion syncs that can more effectively batch changes.
 */
 
-package labels64
+package labelarray
 
 import (
 	"encoding/binary"
@@ -52,7 +52,7 @@ type procMsg struct {
 
 type downsizeOp struct {
 	mutID uint64
-	block dvid.IZYXString // block coordinate of the originating labels64 resolution.
+	block dvid.IZYXString // block coordinate of the originating labelarray resolution.
 	data  []byte
 }
 
@@ -82,7 +82,7 @@ func (d *Data) getLoresCache(v dvid.VersionID, block dvid.IZYXString) ([]byte, e
 	// Setup the octant buffer and block cache.
 	downresBlock, err := block.Downres()
 	if err != nil {
-		return nil, fmt.Errorf("unable to downres labels64 %q block: %v\n", d.DataName(), err)
+		return nil, fmt.Errorf("unable to downres labelarray %q block: %v\n", d.DataName(), err)
 	}
 
 	var chunkPt dvid.ChunkPoint3d
@@ -183,7 +183,7 @@ func (d *Data) serializeOctants(oct octant, blockBuf []byte) ([]byte, error) {
 	return dvid.SerializeData(blockBuf, d.Compression(), d.Checksum())
 }
 
-// InitDataHandlers launches goroutines to handle each labels64 instance's syncs.
+// InitDataHandlers launches goroutines to handle each labelarray instance's syncs.
 func (d *Data) InitDataHandlers() error {
 	if d.syncCh != nil || d.syncDone != nil {
 		return nil
@@ -236,7 +236,7 @@ func (d *Data) GetSyncSubs(synced dvid.Data) (datastore.SyncSubs, error) {
 
 	var evts []string
 	switch synced.TypeName() {
-	case "labels64":
+	case "labelarray":
 		evts = []string{
 			// For down-res support
 			DownsizeBlockEvent, DownsizeCommitEvent,
@@ -257,7 +257,7 @@ func (d *Data) GetSyncSubs(synced dvid.Data) (datastore.SyncSubs, error) {
 	return subs, nil
 }
 
-// gets all the changes relevant to labels64, then breaks up any multi-block op into
+// gets all the changes relevant to labelarray, then breaks up any multi-block op into
 // separate block ops and puts them onto channels to index-specific handlers.
 func (d *Data) processEvents() {
 	var stop bool
@@ -331,7 +331,7 @@ func (d *Data) handleEvent(msg datastore.SyncMessage) {
 		d.downresCh[n] <- procMsg{op: downsizeOp{delta.MutID, block, nil}, v: msg.Version}
 
 	default:
-		dvid.Criticalf("Received unknown delta in labels64.processEvents(): %v\n", msg)
+		dvid.Criticalf("Received unknown delta in labelarray.processEvents(): %v\n", msg)
 	}
 }
 
@@ -401,7 +401,7 @@ func (d *Data) downsizeCommit(v dvid.VersionID, mutID uint64) {
 	// For each block, send to downstream if any.
 	store, err := d.GetKeyValueDB()
 	if err != nil {
-		dvid.Errorf("Data type labels64 had error initializing store: %v\n", err)
+		dvid.Errorf("Data type labelarray had error initializing store: %v\n", err)
 		return
 	}
 	ctx := datastore.NewVersionedCtx(d, v)
@@ -459,13 +459,13 @@ func (d *Data) downsizeCommit(v dvid.VersionID, mutID uint64) {
 	d.publishDownresCommit(v, mutID)
 }
 
-// Handle upstream mods on a labels64 we are downresing.
+// Handle upstream mods on a labelarray we are downresing.
 func (d *Data) downsizeAdd(v dvid.VersionID, delta downsizeOp) {
 	defer d.MutDone(delta.mutID)
 
 	lobuf, err := d.getLoresCache(v, delta.block)
 	if err != nil {
-		dvid.Criticalf("unable to initialize block cache for labels64 %q: %v\n", d.DataName(), err)
+		dvid.Criticalf("unable to initialize block cache for labelarray %q: %v\n", d.DataName(), err)
 		return
 	}
 

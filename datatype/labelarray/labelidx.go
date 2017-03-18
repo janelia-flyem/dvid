@@ -1,4 +1,4 @@
-package labels64
+package labelarray
 
 import (
 	"bytes"
@@ -161,27 +161,12 @@ func (d *Data) handleIndexBlockMutate(ch chan blockChange, mut MutatedBlock) {
 		present: make(map[uint64]uint8),
 		delta:   make(map[uint64]int32),
 	}
-	/*
-		blockBytes := int(d.BlockSize().Prod() * 8)
-		for i := 0; i < blockBytes; i += 8 {
-			old := binary.LittleEndian.Uint64(mut.Prev[i : i+8])
-			cur := binary.LittleEndian.Uint64(mut.Data[i : i+8])
-			if old != 0 {
-				bc.present[old] |= presentOld
-			}
-			if cur != 0 {
-				bc.present[cur] |= presentNew
-			}
-			if old != cur {
-				if old != 0 {
-					bc.delta[old]--
-				}
-				if cur != 0 {
-					bc.delta[cur]++
-				}
-			}
-		}
-	*/
+	for _, label := range mut.Prev.Labels {
+		bc.present[label] |= presentOld
+	}
+	for _, label := range mut.Data.Labels {
+		bc.present[label] |= presentNew
+	}
 	ch <- bc
 }
 
@@ -192,16 +177,9 @@ func (d *Data) handleIndexBlockIngest(ch chan blockChange, mut IngestedBlock) {
 		present: make(map[uint64]uint8),
 		delta:   make(map[uint64]int32),
 	}
-	/*
-		blockBytes := int(d.BlockSize().Prod() * 8)
-		for i := 0; i < blockBytes; i += 8 {
-			label := binary.LittleEndian.Uint64(mut.Data[i : i+8])
-			if label != 0 {
-				bc.delta[label]++
-				bc.present[label] |= presentNew
-			}
-		}
-	*/
+	for _, label := range mut.Data.Labels {
+		bc.present[label] |= presentNew
+	}
 	ch <- bc
 }
 
@@ -302,7 +280,7 @@ func (d *Data) indexLabels(ch <-chan labelChange) {
 }
 
 type labelBlock struct {
-	block dvid.IZYXString
+	index dvid.IZYXString
 	data  []byte
 }
 
@@ -319,26 +297,30 @@ func (d *Data) processBlocksToRLEs(lbls labels.Set, bounds dvid.Bounds, in chan 
 			return
 		}
 		var result rleResult
-		compressed, _, err := dvid.DeserializeData(lb.data, true)
+		data, _, err := dvid.DeserializeData(lb.data, true)
 		if err != nil {
-			dvid.Errorf("could not deserialize %d bytes in block %s: %v\n", len(lb.data), lb.block, err)
+			dvid.Errorf("could not deserialize %d bytes in block %s: %v\n", len(lb.data), lb.index, err)
 			out <- result
 			continue
 		}
-		blockData, err := labels.Decompress(compressed, d.BlockSize())
+		var block labels.Block
+		if err := block.UnmarshalBinary(data); err != nil {
+			dvid.Errorf("unable to unmarshal label block %s: %v\n", lb.index, err)
+		}
+		blockData, _, err := block.MakeLabelVolume()
 		if err != nil {
-			dvid.Errorf("Unable to decompress google compression in %q: %v\n", d.DataName(), err)
+			dvid.Errorf("Unable to make label volume from block %s in %q: %v\n", lb.index, d.DataName(), err)
 			return
 		}
 		var newRuns uint32
 		var serialization []byte
 		if bounds.Exact && bounds.Voxel.IsSet() {
-			serialization, newRuns, err = d.addBoundedRLEs(lb.block, blockData, lbls, bounds.Voxel)
+			serialization, newRuns, err = d.addBoundedRLEs(lb.index, blockData, lbls, bounds.Voxel)
 		} else {
-			serialization, newRuns, err = d.addRLEs(lb.block, blockData, lbls)
+			serialization, newRuns, err = d.addRLEs(lb.index, blockData, lbls)
 		}
 		if err != nil {
-			dvid.Errorf("could not process %d bytes in block %s to create RLEs: %v\n", len(blockData), lb.block, err)
+			dvid.Errorf("could not process %d bytes in block %s to create RLEs: %v\n", len(blockData), lb.index, err)
 		} else {
 			result = rleResult{runs: newRuns, serialization: serialization}
 		}
@@ -359,14 +341,14 @@ func writeRLE(w io.Writer, start dvid.Point3d, run int32) error {
 }
 
 // Scan a block and construct RLEs that will be serialized and added to the given buffer.
-func (d *Data) addRLEs(block dvid.IZYXString, data []byte, lbls labels.Set) (serialization []byte, newRuns uint32, err error) {
+func (d *Data) addRLEs(izyx dvid.IZYXString, data []byte, lbls labels.Set) (serialization []byte, newRuns uint32, err error) {
 	if len(data) != int(d.BlockSize().Prod())*8 {
 		err = fmt.Errorf("Deserialized label block %d bytes, not uint64 size times %d block elements\n",
 			len(data), d.BlockSize().Prod())
 		return
 	}
 	var indexZYX dvid.IndexZYX
-	indexZYX, err = block.IndexZYX()
+	indexZYX, err = izyx.IndexZYX()
 	if err != nil {
 		return
 	}
@@ -419,14 +401,14 @@ func (d *Data) addRLEs(block dvid.IZYXString, data []byte, lbls labels.Set) (ser
 }
 
 // Scan a block and construct bounded RLEs that will be serialized and added to the given buffer.
-func (d *Data) addBoundedRLEs(block dvid.IZYXString, data []byte, lbls labels.Set, bounds *dvid.OptionalBounds) (serialization []byte, newRuns uint32, err error) {
+func (d *Data) addBoundedRLEs(izyx dvid.IZYXString, data []byte, lbls labels.Set, bounds *dvid.OptionalBounds) (serialization []byte, newRuns uint32, err error) {
 	if len(data) != int(d.BlockSize().Prod())*8 {
 		err = fmt.Errorf("Deserialized label block %d bytes, not uint64 size times %d block elements\n",
 			len(data), d.BlockSize().Prod())
 		return
 	}
 	var indexZYX dvid.IndexZYX
-	indexZYX, err = block.IndexZYX()
+	indexZYX, err = izyx.IndexZYX()
 	if err != nil {
 		return
 	}
@@ -727,7 +709,7 @@ func (d *Data) GetSparseVol(ctx *datastore.VersionedCtx, label uint64, bounds dv
 	binary.Write(buf, binary.LittleEndian, uint32(0)) // Placeholder for # voxels
 	binary.Write(buf, binary.LittleEndian, uint32(0)) // Placeholder for # spans
 
-	blocks := make(dvid.IZYXSlice, len(meta.Blocks))
+	indices := make(dvid.IZYXSlice, len(meta.Blocks))
 	totBlocks := 0
 	for _, izyx := range meta.Blocks {
 		if bounds.Block.BoundedX() || bounds.Block.BoundedY() {
@@ -739,13 +721,13 @@ func (d *Data) GetSparseVol(ctx *datastore.VersionedCtx, label uint64, bounds dv
 				continue
 			}
 		}
-		blocks[totBlocks] = izyx
+		indices[totBlocks] = izyx
 		totBlocks++
 	}
 	if totBlocks == 0 {
 		return nil, nil
 	}
-	blocks = blocks[:totBlocks]
+	indices = indices[:totBlocks]
 
 	store, err := d.GetOrderedKeyValueDB()
 	if err != nil {
@@ -783,7 +765,7 @@ func (d *Data) GetSparseVol(ctx *datastore.VersionedCtx, label uint64, bounds dv
 		}
 	}()
 
-	for _, izyx := range blocks {
+	for _, izyx := range indices {
 		tk := NewBlockTKeyByCoord(izyx)
 		data, err := store.Get(ctx, tk)
 		if err != nil {
@@ -791,7 +773,7 @@ func (d *Data) GetSparseVol(ctx *datastore.VersionedCtx, label uint64, bounds dv
 		}
 
 		n := izyx.Hash(blockDecoders)
-		sendCh[n] <- labelBlock{block: izyx, data: data}
+		sendCh[n] <- labelBlock{index: izyx, data: data}
 	}
 
 	wg.Wait()

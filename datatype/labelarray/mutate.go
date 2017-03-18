@@ -5,7 +5,7 @@
 	we assume that merge/split ops in a version do not overlap the raw block label mutations.
 */
 
-package labels64
+package labelarray
 
 import (
 	"encoding/binary"
@@ -42,7 +42,7 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp) error {
 	dvid.Debugf("Merging %s into label %d ...\n", op.Merged, op.Target)
 
 	// Asynchronously perform merge and handle any concurrent requests using the cache map until
-	// labels64 is updated and consistent.  Mark these labels as dirty until done.
+	// labelarray is updated and consistent.  Mark these labels as dirty until done.
 	d.StartUpdate()
 	iv := dvid.InstanceVersion{Data: d.DataUUID(), Version: v}
 	if err := labels.MergeStart(iv, op); err != nil {
@@ -112,7 +112,7 @@ func (d *Data) processMerge(v dvid.VersionID, delta labels.DeltaMerge) error {
 	// from the merge cache since all labels will have completed.
 	d.MutWait(mutID)
 	d.MutDelete(mutID)
-	timedLog.Debugf("labels64 block-level merge (%d blocks) of %s -> %d", len(delta.Blocks), delta.MergeOp.Merged, delta.MergeOp.Target)
+	timedLog.Debugf("labelarray block-level merge (%d blocks) of %s -> %d", len(delta.Blocks), delta.MergeOp.Merged, delta.MergeOp.Target)
 
 	store, err := d.GetOrderedKeyValueDB()
 	if err != nil {
@@ -418,7 +418,7 @@ func (d *Data) processSplit(v dvid.VersionID, delta labels.DeltaSplit) error {
 	if err := d.splitIndices(v, delta, deleteBlks); err != nil {
 		return err
 	}
-	timedLog.Debugf("labels64 sync complete for split (%d blocks) of %d -> %d", len(delta.Split), delta.OldLabel, delta.NewLabel)
+	timedLog.Debugf("labelarray sync complete for split (%d blocks) of %d -> %d", len(delta.Split), delta.OldLabel, delta.NewLabel)
 	d.StopUpdate()
 
 	// Publish split event

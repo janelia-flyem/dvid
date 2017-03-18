@@ -1,4 +1,4 @@
-package labels64
+package labelarray
 
 import (
 	"fmt"

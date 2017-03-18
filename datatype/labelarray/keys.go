@@ -2,7 +2,7 @@
 	This file supports keyspaces for label block data types.
 */
 
-package labels64
+package labelarray
 
 import (
 	"encoding/binary"

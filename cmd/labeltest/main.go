@@ -25,7 +25,7 @@ labeltest runs a benchmark for sparse volume GETs.
 
 Usage: labeltest [options] <get URL before label> <label 1> <label 2> ... <label N>
 
-  Example get URL: http://emdata2.int.janelia.org:7000/api/node/e2f02/labels64
+  Example get URL: http://emdata2.int.janelia.org:7000/api/node/e2f02/labelarray
 
   -h, -help       (flag)    Show help message
 `

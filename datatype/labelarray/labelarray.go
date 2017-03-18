@@ -1,9 +1,9 @@
 /*
-	Package labels64 tailors the voxels data type for 64-bit labels and allows loading
+	Package labelarray tailors the voxels data type for 64-bit labels and allows loading
 	of NRGBA images (e.g., Raveler superpixel PNG images) that implicitly use slice Z as
 	part of the label index.
 */
-package labels64
+package labelarray
 
 import (
 	"bytes"
@@ -35,12 +35,12 @@ import (
 
 const (
 	Version  = "0.1"
-	RepoURL  = "github.com/janelia-flyem/dvid/datatype/labels64"
-	TypeName = "labels64"
+	RepoURL  = "github.com/janelia-flyem/dvid/datatype/labelarray"
+	TypeName = "labelarray"
 )
 
 const HelpMessage = `
-API for label block data type (github.com/janelia-flyem/dvid/datatype/labels64)
+API for label block data type (github.com/janelia-flyem/dvid/datatype/labelarray)
 ===============================================================================
 
 Note: Denormalizations like sparse volumes are *not* performed for the "0" label, which is
@@ -50,13 +50,13 @@ sparse labeled structures in a large volume without requiring processing of enti
 
 Command-line:
 
-$ dvid repo <UUID> new labels64 <data name> <settings...>
+$ dvid repo <UUID> new labelarray <data name> <settings...>
 
 	Adds newly named data of the 'type name' to repo with specified UUID.
 
 	Example (note anisotropic resolution specified instead of default 8 nm isotropic):
 
-	$ dvid repo 3f8c new labels64 superpixels VoxelSize=3.2,3.2,40.0
+	$ dvid repo 3f8c new labelarray superpixels VoxelSize=3.2,3.2,40.0
 
     Arguments:
 
@@ -154,8 +154,8 @@ POST <api URL>/node/<UUID>/<data name>/sync?<options>
     already exist.  Currently, syncs should be created before any annotations are pushed to
     the server.  If annotations already exist, these are currently not synced.
 
-    The labels64 data type accepts syncs to labelvol data instances.  It also accepts syncs to
-	labels64 instances for multiscale.
+    The labelarray data type accepts syncs to labelvol data instances.  It also accepts syncs to
+	labelarray instances for multiscale.
 
     GET Query-string Options:
 
@@ -351,7 +351,7 @@ GET  <api URL>/node/<UUID>/<data name>/blocks/<size>/<offset>[?queryopts]
 
     Retrieves blocks corresponding to the extents specified by the size and offset.  The
     subvolume request must be block aligned.  This is the most server-efficient way of
-    retrieving labels64 data, where data read from the underlying storage engine
+    retrieving labelarray data, where data read from the underlying storage engine
     is written directly to the HTTP connection.
 
     Example: 
@@ -407,7 +407,7 @@ GET  <api URL>/node/<UUID>/<data name>/blocks/<size>/<offset>[?queryopts]
 DELETE <api URL>/node/<UUID>/<data name>/blocks/<block coord>/<spanX>
 
     Deletes "spanX" blocks of label data along X starting from given block coordinate.
-    This will delete both the labels64 as well as any associated labelvol structures within this block.
+    This will delete both the labelarray as well as any associated labelvol structures within this block.
 
     Example: 
 
@@ -701,7 +701,7 @@ func (dtype *Type) Help() string {
 
 // -------
 
-// GetByDataUUID returns a pointer to labels64 data given a data UUID.
+// GetByDataUUID returns a pointer to labelarray data given a data UUID.
 func GetByDataUUID(dataUUID dvid.UUID) (*Data, error) {
 	source, err := datastore.GetDataByDataUUID(dataUUID)
 	if err != nil {
@@ -709,12 +709,12 @@ func GetByDataUUID(dataUUID dvid.UUID) (*Data, error) {
 	}
 	data, ok := source.(*Data)
 	if !ok {
-		return nil, fmt.Errorf("Instance '%s' is not a labels64 datatype!", source.DataName())
+		return nil, fmt.Errorf("Instance '%s' is not a labelarray datatype!", source.DataName())
 	}
 	return data, nil
 }
 
-// GetByUUIDName returns a pointer to labels64 data given a UUID and data name.
+// GetByUUIDName returns a pointer to labelarray data given a UUID and data name.
 func GetByUUIDName(uuid dvid.UUID, name dvid.InstanceName) (*Data, error) {
 	source, err := datastore.GetDataByUUIDName(uuid, name)
 	if err != nil {
@@ -722,12 +722,12 @@ func GetByUUIDName(uuid dvid.UUID, name dvid.InstanceName) (*Data, error) {
 	}
 	data, ok := source.(*Data)
 	if !ok {
-		return nil, fmt.Errorf("Instance '%s' is not a labels64 datatype!", name)
+		return nil, fmt.Errorf("Instance '%s' is not a labelarray datatype!", name)
 	}
 	return data, nil
 }
 
-// GetByVersionName returns a pointer to labels64 data given a version and data name.
+// GetByVersionName returns a pointer to labelarray data given a version and data name.
 func GetByVersionName(v dvid.VersionID, name dvid.InstanceName) (*Data, error) {
 	source, err := datastore.GetDataByVersionName(v, name)
 	if err != nil {
@@ -735,7 +735,7 @@ func GetByVersionName(v dvid.VersionID, name dvid.InstanceName) (*Data, error) {
 	}
 	data, ok := source.(*Data)
 	if !ok {
-		return nil, fmt.Errorf("Instance '%s' is not a labels64 datatype!", name)
+		return nil, fmt.Errorf("Instance '%s' is not a labelarray datatype!", name)
 	}
 	return data, nil
 }
@@ -755,7 +755,7 @@ func (l *Labels) Interpolable() bool {
 	return false
 }
 
-// Data of labels64 type is an extended form of imageblk Data
+// Data of labelarray type is an extended form of imageblk Data
 type Data struct {
 	*imageblk.Data
 	datastore.Updater
@@ -801,7 +801,7 @@ func (d *Data) Equals(d2 *Data) bool {
 func (d *Data) CopyPropertiesFrom(src datastore.DataService, fs storage.FilterSpec) error {
 	d2, ok := src.(*Data)
 	if !ok {
-		return fmt.Errorf("unable to copy properties from non-labels64 data %q", src.DataName())
+		return fmt.Errorf("unable to copy properties from non-labelarray data %q", src.DataName())
 	}
 	return d.Data.CopyPropertiesFrom(d2.Data, fs)
 }
@@ -843,7 +843,7 @@ func (d *Data) NewLabel(v dvid.VersionID) (uint64, error) {
 	return d.MaxRepoLabel, nil
 }
 
-// NewData returns a pointer to labels64 data.
+// NewData returns a pointer to labelarray data.
 func NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.Config) (*Data, error) {
 	imgblkData, err := dtype.Type.NewData(uuid, id, name, c)
 	if err != nil {
@@ -896,7 +896,7 @@ func (d *Data) LoadMutable(root dvid.VersionID, storedVersion, expectedVersion u
 	ctx := storage.NewDataContext(d, 0)
 	store, err := d.GetOrderedKeyValueDB()
 	if err != nil {
-		return false, fmt.Errorf("Data type labels64 had error initializing store: %v\n", err)
+		return false, fmt.Errorf("Data type labelarray had error initializing store: %v\n", err)
 	}
 
 	wg := new(sync.WaitGroup)
@@ -910,7 +910,7 @@ func (d *Data) LoadMutable(root dvid.VersionID, storedVersion, expectedVersion u
 	case 0:
 		// Need to update all max labels and set repo-level max label.
 		saveRequired = true
-		dvid.Infof("Migrating old version of labels64 %q to new version\n", d.DataName())
+		dvid.Infof("Migrating old version of labelarray %q to new version\n", d.DataName())
 		go d.migrateMaxLabels(root, wg, ch)
 	default:
 		// Load in each version max label without migration.
@@ -932,7 +932,7 @@ func (d *Data) LoadMutable(root dvid.VersionID, storedVersion, expectedVersion u
 	}
 	wg.Wait()
 
-	dvid.Infof("Loaded max label values for labels64 %q with repo-wide max %d\n", d.DataName(), d.MaxRepoLabel)
+	dvid.Infof("Loaded max label values for labelarray %q with repo-wide max %d\n", d.DataName(), d.MaxRepoLabel)
 	return saveRequired, nil
 }
 
@@ -940,7 +940,7 @@ func (d *Data) migrateMaxLabels(root dvid.VersionID, wg *sync.WaitGroup, ch chan
 	ctx := storage.NewDataContext(d, 0)
 	store, err := d.GetOrderedKeyValueDB()
 	if err != nil {
-		dvid.Errorf("Can't initialize store for labels64 %q: %v\n", d.DataName(), err)
+		dvid.Errorf("Can't initialize store for labelarray %q: %v\n", d.DataName(), err)
 	}
 
 	var maxRepoLabel uint64
@@ -1046,7 +1046,7 @@ func (d *Data) loadMaxLabels(wg *sync.WaitGroup, ch chan *storage.KeyValue) {
 	// Load in the repo-wide max label.
 	store, err := d.GetOrderedKeyValueDB()
 	if err != nil {
-		dvid.Errorf("Data type labels64 had error initializing store: %v\n", err)
+		dvid.Errorf("Data type labelarray had error initializing store: %v\n", err)
 		return
 	}
 	data, err := store.Get(ctx, maxRepoLabelTKey)
@@ -1078,7 +1078,7 @@ func (d *Data) Extents() *dvid.Extents {
 	return &(d.Properties.Extents)
 }
 
-// NewLabels returns labels64 Labels, a representation of externally usable subvolume
+// NewLabels returns labelarray Labels, a representation of externally usable subvolume
 // or slice data, given some geometry and optional image data.
 // If img is passed in, the function will initialize Voxels with data from the image.
 // Otherwise, it will allocate a zero buffer of appropriate size.
@@ -1305,7 +1305,7 @@ func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, su
 
 	store, err := d.GetOrderedKeyValueDB()
 	if err != nil {
-		return fmt.Errorf("Data type labels64 had error initializing store: %v\n", err)
+		return fmt.Errorf("Data type labelarray had error initializing store: %v\n", err)
 	}
 
 	// if only one block is requested, avoid the range query
@@ -1392,11 +1392,11 @@ func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, su
 func (d *Data) DeleteBlocks(ctx *datastore.VersionedCtx, start dvid.ChunkPoint3d, span int) error {
 	store, err := d.GetOrderedKeyValueDB()
 	if err != nil {
-		return fmt.Errorf("Data type labels64 had error initializing store: %v\n", err)
+		return fmt.Errorf("Data type labelarray had error initializing store: %v\n", err)
 	}
 	batcher, ok := store.(storage.KeyValueBatcher)
 	if !ok {
-		return fmt.Errorf("Data type labels64 requires batch-enabled store, which %q is not\n", store)
+		return fmt.Errorf("Data type labelarray requires batch-enabled store, which %q is not\n", store)
 	}
 
 	indexBeg := dvid.IndexZYX(start)
@@ -1423,7 +1423,7 @@ func (d *Data) DeleteBlocks(ctx *datastore.VersionedCtx, start dvid.ChunkPoint3d
 			return err
 		}
 
-		// Delete the labels64 (really tombstones it)
+		// Delete the labelarray (really tombstones it)
 		batch.Delete(kv.K)
 
 		// Send data to delete associated labelvol for labels in this block
@@ -1477,7 +1477,7 @@ func RavelerSuperpixelBytes(slice, superpixel32 uint32) []byte {
 
 // --- datastore.DataService interface ---------
 
-// PushData pushes labels64 data to a remote DVID.
+// PushData pushes labelarray data to a remote DVID.
 func (d *Data) PushData(p *datastore.PushSession) error {
 	// Delegate to imageblk's implementation.
 	return d.Data.PushData(p)
@@ -2603,7 +2603,7 @@ func (d *Data) handleMerge(ctx *datastore.VersionedCtx, w http.ResponseWriter, r
 	}
 }
 
-// --------- Other functions on labels64 Data -----------------
+// --------- Other functions on labelarray Data -----------------
 
 // GetLabelBlock returns a block of labels corresponding to the block coordinate.
 func (d *Data) GetLabelBlock(v dvid.VersionID, blockCoord dvid.ChunkPoint3d) ([]byte, error) {

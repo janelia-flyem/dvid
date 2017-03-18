@@ -1,4 +1,4 @@
-package labels64
+package labelarray
 
 import (
 	"bytes"
@@ -29,9 +29,9 @@ func initTestRepo() (dvid.UUID, dvid.VersionID) {
 	defer testMu.Unlock()
 	if labelsT == nil {
 		var err error
-		labelsT, err = datastore.TypeServiceByName("labels64")
+		labelsT, err = datastore.TypeServiceByName("labelarray")
 		if err != nil {
-			log.Fatalf("Can't get labels64 type: %s\n", err)
+			log.Fatalf("Can't get labelarray type: %s\n", err)
 		}
 	}
 	return datastore.NewTestRepo()
@@ -286,7 +286,7 @@ func (vol *labelVol) getLabelVolume(t *testing.T, uuid dvid.UUID, compression, r
 	default:
 	}
 	if len(data) != int(vol.numBytes()) {
-		t.Errorf("Expected %d uncompressed bytes from 3d labels64 GET.  Got %d instead.", vol.numBytes(), len(data))
+		t.Errorf("Expected %d uncompressed bytes from 3d labelarray GET.  Got %d instead.", vol.numBytes(), len(data))
 	}
 	return data
 }
@@ -499,7 +499,7 @@ func (vol labelVol) testSlices(t *testing.T, uuid dvid.UUID) {
 		t.Errorf("Expected XY labels GET to return %q image, got %q instead.\n", "png", format)
 	}
 	if img.NumBytes() != 67*83*8 {
-		t.Errorf("Expected %d bytes from XY labels64 GET.  Got %d instead.", 160*160*8, img.NumBytes())
+		t.Errorf("Expected %d bytes from XY labelarray GET.  Got %d instead.", 160*160*8, img.NumBytes())
 	}
 	slice.testLabel(t, vol, img)
 
@@ -519,7 +519,7 @@ func (vol labelVol) testSlices(t *testing.T, uuid dvid.UUID) {
 		t.Errorf("Expected XZ labels GET to return %q image, got %q instead.\n", "png", format)
 	}
 	if img.NumBytes() != 67*83*8 {
-		t.Errorf("Expected %d bytes from XZ labels64 GET.  Got %d instead.", 67*83*8, img.NumBytes())
+		t.Errorf("Expected %d bytes from XZ labelarray GET.  Got %d instead.", 67*83*8, img.NumBytes())
 	}
 	slice.testLabel(t, vol, img)
 
@@ -539,7 +539,7 @@ func (vol labelVol) testSlices(t *testing.T, uuid dvid.UUID) {
 		t.Errorf("Expected YZ labels GET to return %q image, got %q instead.\n", "png", format)
 	}
 	if img.NumBytes() != 67*83*8 {
-		t.Errorf("Expected %d bytes from YZ labels64 GET.  Got %d instead.", 67*83*8, img.NumBytes())
+		t.Errorf("Expected %d bytes from YZ labelarray GET.  Got %d instead.", 67*83*8, img.NumBytes())
 	}
 	slice.testLabel(t, vol, img)
 }
@@ -590,12 +590,12 @@ func makeVolume(offset, size dvid.Point3d) []byte {
 	return volume
 }
 
-// Creates a new data instance for labels64
+// Creates a new data instance for labelarray
 func newDataInstance(uuid dvid.UUID, t *testing.T, name dvid.InstanceName) *Data {
 	config := dvid.NewConfig()
 	dataservice, err := datastore.NewData(uuid, labelsT, name, config)
 	if err != nil {
-		t.Fatalf("Unable to create labels64 instance %q: %v\n", name, err)
+		t.Fatalf("Unable to create labelarray instance %q: %v\n", name, err)
 	}
 	labels, ok := dataservice.(*Data)
 	if !ok {
@@ -712,12 +712,12 @@ func TestMultiscale(t *testing.T) {
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
 	var config dvid.Config
-	server.CreateTestInstance(t, uuid, "labels64", "labels", config)
+	server.CreateTestInstance(t, uuid, "labelarray", "labels", config)
 
 	// Add multiscale
-	server.CreateTestInstance(t, uuid, "labels64", "labels_1", config) // 64 x 64 x 64
+	server.CreateTestInstance(t, uuid, "labelarray", "labels_1", config) // 64 x 64 x 64
 	server.CreateTestSync(t, uuid, "labels_1", "labels")
-	server.CreateTestInstance(t, uuid, "labels64", "labels_2", config) // 32 x 32 x 32
+	server.CreateTestInstance(t, uuid, "labelarray", "labels_2", config) // 32 x 32 x 32
 	server.CreateTestSync(t, uuid, "labels_2", "labels_1")
 
 	// Create an easily interpreted label volume with a couple of labels.
@@ -788,8 +788,8 @@ func TestLabels(t *testing.T) {
 		t.Fatalf("Bad root UUID for new repo: %s\n", uuid)
 	}
 
-	// Create a labels64 instance
-	server.CreateTestInstance(t, uuid, "labels64", "labels", dvid.Config{})
+	// Create a labelarray instance
+	server.CreateTestInstance(t, uuid, "labelarray", "labels", dvid.Config{})
 
 	vol := labelVol{
 		startLabel: 2,

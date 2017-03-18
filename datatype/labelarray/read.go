@@ -1,4 +1,4 @@
-package labels64
+package labelarray
 
 import (
 	"bytes"
@@ -17,9 +17,9 @@ import (
 
 // ComputeTransform determines the block coordinate and beginning + ending voxel points
 // for the data corresponding to the given Block.
-func (v *Labels) ComputeTransform(block *storage.TKeyValue, blockSize dvid.Point) (blockBeg, dataBeg, dataEnd dvid.Point, err error) {
+func (v *Labels) ComputeTransform(tkey storage.TKey, blockSize dvid.Point) (blockBeg, dataBeg, dataEnd dvid.Point, err error) {
 	var ptIndex *dvid.IndexZYX
-	ptIndex, err = DecodeBlockTKey(block.K)
+	ptIndex, err = DecodeBlockTKey(tkey)
 	if err != nil {
 		return
 	}
@@ -270,46 +270,57 @@ func (d *Data) readChunk(chunk *storage.Chunk) {
 
 	// Initialize the block buffer using the chunk of data.  For voxels, this chunk of
 	// data needs to be uncompressed and deserialized.
-	var blockData []byte
+	var block labels.Block
 	if zeroOut || chunk.V == nil {
-		blockData = d.BackgroundBlock()
+		blockSize, ok := d.BlockSize().(dvid.Point3d)
+		if !ok {
+			dvid.Errorf("Block size for data %q is not 3d: %s\n", d.BlockSize)
+			return
+		}
+		block = *labels.MakeSolidBlock(0, blockSize)
 	} else {
-		var compressed []byte
-		compressed, _, err = dvid.DeserializeData(chunk.V, true)
+		var data []byte
+		data, _, err = dvid.DeserializeData(chunk.V, true)
 		if err != nil {
 			dvid.Errorf("Unable to deserialize block in %q: %v\n", d.DataName(), err)
 			return
 		}
-		blockData, err = labels.Decompress(compressed, d.BlockSize())
-		if err != nil {
-			dvid.Errorf("Unable to decompress google compression in %q: %v\n", d.DataName(), err)
+		if err := block.UnmarshalBinary(data); err != nil {
+			dvid.Errorf("Unable to unmarshal labels Block compression in %q: %v\n", d.DataName(), err)
+			return
 		}
 	}
 
 	// Perform the operation.
-	block := &storage.TKeyValue{chunk.K, blockData}
 	if op.mapping != nil {
-		err := op.voxels.readMappedBlock(block, d.BlockSize(), op.mapping)
+		err := op.voxels.readMappedBlock(chunk.K, block, d.BlockSize(), op.mapping)
 		if err != nil {
 			dvid.Errorf("readMappedBlock, key %v in %q: %v\n", chunk.K, d.DataName(), err)
 		}
 	} else {
-		err := op.voxels.readBlock(block, d.BlockSize())
+		err := op.voxels.readBlock(chunk.K, block, d.BlockSize())
 		if err != nil {
 			dvid.Errorf("readBlock, key %v in %q: %v\n", chunk.K, d.DataName(), err)
 		}
 	}
 }
 
-func (v *Labels) readMappedBlock(block *storage.TKeyValue, blockSize dvid.Point, m *labels.Mapping) error {
+func (v *Labels) readMappedBlock(tkey storage.TKey, block labels.Block, blockSize dvid.Point, m *labels.Mapping) error {
 	if blockSize.NumDims() > 3 {
 		return fmt.Errorf("DVID voxel blocks currently only supports up to 3d, not 4+ dimensions")
 	}
-	blockBeg, dataBeg, dataEnd, err := v.ComputeTransform(block, blockSize)
+	blockBeg, dataBeg, dataEnd, err := v.ComputeTransform(tkey, blockSize)
 	if err != nil {
 		return err
 	}
-	data := v.Data()
+
+	// TODO -- Refactor this function to make direct use of compressed label Block without
+	// conversion into full label array.
+	labels := v.Data()
+	blabels, _, err := block.MakeLabelVolume()
+	if err != nil {
+		return err
+	}
 
 	// Compute the strides (in bytes)
 	bX := int64(blockSize.Value(0)) * 8
@@ -329,12 +340,12 @@ func (v *Labels) readMappedBlock(block *storage.TKeyValue, blockSize dvid.Point,
 			bI := blockI
 			dI := dataI
 			for x := dataBeg.Value(0); x <= dataEnd.Value(0); x++ {
-				orig := binary.LittleEndian.Uint64(block.V[bI : bI+8])
+				orig := binary.LittleEndian.Uint64(blabels[bI : bI+8])
 				mapped, found := m.FinalLabel(orig)
 				if found {
-					binary.LittleEndian.PutUint64(data[dI:dI+8], mapped)
+					binary.LittleEndian.PutUint64(labels[dI:dI+8], mapped)
 				} else {
-					copy(data[dI:dI+8], block.V[bI:bI+8])
+					copy(labels[dI:dI+8], blabels[bI:bI+8])
 				}
 				bI += 8
 				dI += 8
@@ -350,12 +361,12 @@ func (v *Labels) readMappedBlock(block *storage.TKeyValue, blockSize dvid.Point,
 			bI := blockI
 			dI := dataI
 			for x := dataBeg.Value(0); x <= dataEnd.Value(0); x++ {
-				orig := binary.LittleEndian.Uint64(block.V[bI : bI+8])
+				orig := binary.LittleEndian.Uint64(blabels[bI : bI+8])
 				mapped, found := m.FinalLabel(orig)
 				if found {
-					binary.LittleEndian.PutUint64(data[dI:dI+8], mapped)
+					binary.LittleEndian.PutUint64(labels[dI:dI+8], mapped)
 				} else {
-					copy(data[dI:dI+8], block.V[bI:bI+8])
+					copy(labels[dI:dI+8], blabels[bI:bI+8])
 				}
 				bI += 8
 				dI += 8
@@ -370,12 +381,12 @@ func (v *Labels) readMappedBlock(block *storage.TKeyValue, blockSize dvid.Point,
 			dataI := y*dX + int64(dataBeg.Value(1))*8
 			blockI := bz*bY + blockBegY*bX + blockBegX*8
 			for x := dataBeg.Value(1); x <= dataEnd.Value(1); x++ {
-				orig := binary.LittleEndian.Uint64(block.V[blockI : blockI+8])
+				orig := binary.LittleEndian.Uint64(blabels[blockI : blockI+8])
 				mapped, found := m.FinalLabel(orig)
 				if found {
-					binary.LittleEndian.PutUint64(data[dataI:dataI+8], mapped)
+					binary.LittleEndian.PutUint64(labels[dataI:dataI+8], mapped)
 				} else {
-					copy(data[dataI:dataI+8], block.V[blockI:blockI+8])
+					copy(labels[dataI:dataI+8], blabels[blockI:blockI+8])
 				}
 				blockI += bX
 				dataI += 8
@@ -400,12 +411,12 @@ func (v *Labels) readMappedBlock(block *storage.TKeyValue, blockSize dvid.Point,
 				bI := blockZ*bY + blockY*bX + blockOffset
 				dI := dataZ*dY + dataY*dX + dataOffset
 				for x := dataBeg.Value(0); x <= dataEnd.Value(0); x++ {
-					orig := binary.LittleEndian.Uint64(block.V[bI : bI+8])
+					orig := binary.LittleEndian.Uint64(blabels[bI : bI+8])
 					mapped, found := m.FinalLabel(orig)
 					if found {
-						binary.LittleEndian.PutUint64(data[dI:dI+8], mapped)
+						binary.LittleEndian.PutUint64(labels[dI:dI+8], mapped)
 					} else {
-						copy(data[dI:dI+8], block.V[bI:bI+8])
+						copy(labels[dI:dI+8], blabels[bI:bI+8])
 					}
 					bI += 8
 					dI += 8
@@ -421,15 +432,22 @@ func (v *Labels) readMappedBlock(block *storage.TKeyValue, blockSize dvid.Point,
 	return nil
 }
 
-func (v *Labels) readBlock(block *storage.TKeyValue, blockSize dvid.Point) error {
+func (v *Labels) readBlock(tkey storage.TKey, block labels.Block, blockSize dvid.Point) error {
 	if blockSize.NumDims() > 3 {
 		return fmt.Errorf("DVID voxel blocks currently only supports up to 3d, not 4+ dimensions")
 	}
-	blockBeg, dataBeg, dataEnd, err := v.ComputeTransform(block, blockSize)
+	blockBeg, dataBeg, dataEnd, err := v.ComputeTransform(tkey, blockSize)
 	if err != nil {
 		return err
 	}
-	data := v.Data()
+
+	// TODO -- Refactor this function to make direct use of compressed label Block without
+	// conversion into full label array.
+	labels := v.Data()
+	blabels, _, err := block.MakeLabelVolume()
+	if err != nil {
+		return err
+	}
 
 	// Compute the strides (in bytes)
 	bX := int64(blockSize.Value(0)) * 8
@@ -447,7 +465,7 @@ func (v *Labels) readBlock(block *storage.TKeyValue, blockSize dvid.Point) error
 		blockI := blockBegZ*bY + blockBegY*bX + blockBegX*8
 		bytes := int64(dataEnd.Value(0)-dataBeg.Value(0)+1) * 8
 		for y := dataBeg.Value(1); y <= dataEnd.Value(1); y++ {
-			copy(data[dataI:dataI+bytes], block.V[blockI:blockI+bytes])
+			copy(labels[dataI:dataI+bytes], blabels[blockI:blockI+bytes])
 			blockI += bX
 			dataI += dX
 		}
@@ -457,7 +475,7 @@ func (v *Labels) readBlock(block *storage.TKeyValue, blockSize dvid.Point) error
 		blockI := blockBegZ*bY + blockBegY*bX + blockBegX*8
 		bytes := int64(dataEnd.Value(0)-dataBeg.Value(0)+1) * 8
 		for y := dataBeg.Value(2); y <= dataEnd.Value(2); y++ {
-			copy(data[dataI:dataI+bytes], block.V[blockI:blockI+bytes])
+			copy(labels[dataI:dataI+bytes], blabels[blockI:blockI+bytes])
 			blockI += bY
 			dataI += dX
 		}
@@ -468,7 +486,7 @@ func (v *Labels) readBlock(block *storage.TKeyValue, blockSize dvid.Point) error
 			dataI := y*dX + int64(dataBeg.Value(1))*8
 			blockI := bz*bY + blockBegY*bX + blockBegX*8
 			for x := dataBeg.Value(1); x <= dataEnd.Value(1); x++ {
-				copy(data[dataI:dataI+8], block.V[blockI:blockI+8])
+				copy(labels[dataI:dataI+8], blabels[blockI:blockI+8])
 				blockI += bX
 				dataI += 8
 			}
@@ -492,7 +510,7 @@ func (v *Labels) readBlock(block *storage.TKeyValue, blockSize dvid.Point) error
 			for dataY := int64(dataBeg.Value(1)); dataY <= int64(dataEnd.Value(1)); dataY++ {
 				blockI := blockZ*bY + blockY*bX + blockOffset
 				dataI := dataZ*dY + dataY*dX + dataOffset
-				copy(data[dataI:dataI+bytes], block.V[blockI:blockI+bytes])
+				copy(labels[dataI:dataI+bytes], blabels[blockI:blockI+bytes])
 				blockY++
 			}
 			blockZ++

@@ -1,4 +1,4 @@
-package labels64
+package labelarray
 
 import (
 	"bytes"
@@ -228,7 +228,7 @@ func TestSparseVolumes(t *testing.T) {
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
 	var config dvid.Config
-	server.CreateTestInstance(t, uuid, "labels64", "labels", config)
+	server.CreateTestInstance(t, uuid, "labelarray", "labels", config)
 	labelVol := createLabelTestVolume(t, uuid, "labels")
 
 	gotVol := newTestVolume(128, 128, 128)
@@ -374,7 +374,7 @@ func TestMergeLabels(t *testing.T) {
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
 	var config dvid.Config
-	server.CreateTestInstance(t, uuid, "labels64", "labels", config)
+	server.CreateTestInstance(t, uuid, "labelarray", "labels", config)
 
 	expected := createLabelTestVolume(t, uuid, "labels")
 	expected.addBody(body3, 2)
@@ -437,7 +437,7 @@ func TestSplitLabel(t *testing.T) {
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
 	var config dvid.Config
-	server.CreateTestInstance(t, uuid, "labels64", "labels", config)
+	server.CreateTestInstance(t, uuid, "labelarray", "labels", config)
 
 	// Post label volume and setup expected volume after split.
 	expected := createLabelTestVolume(t, uuid, "labels")
@@ -544,7 +544,7 @@ func TestSplitGivenLabel(t *testing.T) {
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
 	var config dvid.Config
-	server.CreateTestInstance(t, uuid, "labels64", "labels", config)
+	server.CreateTestInstance(t, uuid, "labelarray", "labels", config)
 
 	// Post label volume and setup expected volume after split.
 	expected := createLabelTestVolume(t, uuid, "labels")
@@ -601,7 +601,7 @@ func TestSplitCoarseLabel(t *testing.T) {
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
 	var config dvid.Config
-	server.CreateTestInstance(t, uuid, "labels64", "labels", config)
+	server.CreateTestInstance(t, uuid, "labelarray", "labels", config)
 
 	// Post label volume and setup expected volume after split of block coords (2, 1, 1) and (3, 1, 2)
 	expected := createLabelTestVolume(t, uuid, "labels")
@@ -698,7 +698,7 @@ func TestSplitCoarseGivenLabel(t *testing.T) {
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
 	var config dvid.Config
-	server.CreateTestInstance(t, uuid, "labels64", "labels", config)
+	server.CreateTestInstance(t, uuid, "labelarray", "labels", config)
 
 	// Post label volume and setup expected volume after split of block coords (2, 1, 1) and (3, 1, 2)
 	expected := createLabelTestVolume(t, uuid, "labels")
@@ -789,7 +789,7 @@ func TestMergeSplitLabel(t *testing.T) {
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
 	var config dvid.Config
-	server.CreateTestInstance(t, uuid, "labels64", "labels", config)
+	server.CreateTestInstance(t, uuid, "labelarray", "labels", config)
 
 	// Post standard label 1-4 volume
 	expected := createLabelTestVolume(t, uuid, "labels")
@@ -907,12 +907,12 @@ func TestMultiscaleMergeSplit(t *testing.T) {
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
 	var config dvid.Config
-	server.CreateTestInstance(t, uuid, "labels64", "labels", config)
+	server.CreateTestInstance(t, uuid, "labelarray", "labels", config)
 
 	// Add multiscale
-	server.CreateTestInstance(t, uuid, "labels64", "labels_1", config) // 64 x 64 x 64
+	server.CreateTestInstance(t, uuid, "labelarray", "labels_1", config) // 64 x 64 x 64
 	server.CreateTestSync(t, uuid, "labels_1", "labels")
-	server.CreateTestInstance(t, uuid, "labels64", "labels_2", config) // 32 x 32 x 32
+	server.CreateTestInstance(t, uuid, "labelarray", "labels_2", config) // 32 x 32 x 32
 	server.CreateTestSync(t, uuid, "labels_2", "labels_1")
 
 	// Create an easily interpreted label volume with a couple of labels.
@@ -1111,7 +1111,7 @@ func TestMultiscaleMergeSplit(t *testing.T) {
 	}
 }
 
-// Test that mutable labels64 POST will accurately remove prior bodies.
+// Test that mutable labelarray POST will accurately remove prior bodies.
 func TestMutableLabelblkPOST(t *testing.T) {
 	datastore.OpenTest()
 	defer datastore.CloseTest()
@@ -1119,7 +1119,7 @@ func TestMutableLabelblkPOST(t *testing.T) {
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
 	var config dvid.Config
-	server.CreateTestInstance(t, uuid, "labels64", "labels", config)
+	server.CreateTestInstance(t, uuid, "labelarray", "labels", config)
 
 	// Post labels 1-4
 	createLabelTestVolume(t, uuid, "labels")

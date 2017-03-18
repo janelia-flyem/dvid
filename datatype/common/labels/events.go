@@ -72,7 +72,7 @@ type DeltaReplaceSize struct {
 // during a MergeBlockEvent.
 type DeltaMerge struct {
 	MergeOp
-	Blocks       dvid.IZYXSlice               // not nil if labels64 used.
+	Blocks       dvid.IZYXSlice               // not nil if labelarray used.
 	BlockMap     map[dvid.IZYXString]struct{} // not nil if labelblk used, to be deprecated.
 	TargetVoxels uint64
 	MergedVoxels uint64

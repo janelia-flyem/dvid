@@ -2,7 +2,7 @@
 	Functinos that support compositing label and image blocks into a pseudo-color representation.
 */
 
-package labels64
+package labelarray
 
 import (
 	"bytes"

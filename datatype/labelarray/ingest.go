@@ -4,7 +4,7 @@
 	TODO: DRY this up compared to imageblk ingest once that gets converted to more general nD.
 */
 
-package labels64
+package labelarray
 
 import (
 	"fmt"
