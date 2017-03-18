@@ -639,7 +639,7 @@ var (
 
 	zeroLabelBytes = make([]byte, 8, 8)
 
-	DefaultBlockSize int32   = imageblk.DefaultBlockSize
+	DefaultBlockSize int32   = 64
 	DefaultRes       float32 = imageblk.DefaultRes
 	DefaultUnits             = imageblk.DefaultUnits
 )

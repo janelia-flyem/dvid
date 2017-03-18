@@ -50,8 +50,8 @@ Usage: dvid-transfer [options] host uuid name
 	-maxz           =number   Ending Z slice to process.
 
 	-dryrun         (flag)    Don't write files or send POST requests to DVID
-	-verbose    (flag)    Run in verbose mode.
-	-h, -help   (flag)    Show help message
+	-verbose        (flag)    Run in verbose mode.
+	-h, -help       (flag)    Show help message
 `
 
 func main() {

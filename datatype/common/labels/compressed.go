@@ -266,6 +266,9 @@ func (s subvolumeData) getSubBlockDims() (gx, gy, gz uint32) {
 
 // run checks and do conversions
 func setSubvolume(uint64array []byte, volsize, blockOff dvid.Point, blockSize dvid.Point3d) (*subvolumeData, error) {
+	if volsize.Prod() > (1 << 27) {
+		return nil, fmt.Errorf("Volume %s is too large.  Please make requests below 1 GB uncompressed.", volsize)
+	}
 	if blockSize[0]%SubBlockSize != 0 || blockSize[1]%SubBlockSize != 0 || blockSize[2]%SubBlockSize != 0 {
 		return nil, fmt.Errorf("uint64 array of size %s not supported, must be multiple of %d", blockSize, SubBlockSize)
 	}
