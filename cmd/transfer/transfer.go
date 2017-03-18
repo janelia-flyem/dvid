@@ -120,8 +120,6 @@ func sendLabels(src, dst *LabelMetadata, name, srcURL string) {
 
 	nz := dstBlock[2]
 	ny := dstBlock[1]
-	blocksInX := maxIndex[0] - minIndex[0] + 1
-	partsPerStrip := blocksInX*srcBlock[0]/640 + 1
 
 	startz := minIndex[2] * srcBlock[2]
 	if startz%dstBlock[2] != 0 {
@@ -136,18 +134,19 @@ func sendLabels(src, dst *LabelMetadata, name, srcURL string) {
 		startx -= startx % dstBlock[0]
 	}
 
+	xsize := 2048
 	for oz := startz; oz <= maxIndex[2]*srcBlock[2]; oz += nz {
 		for oy := starty; oy <= maxIndex[1]*srcBlock[1]; oy += ny {
-			for i := 0; i < partsPerStrip; i++ {
-				ox := startx + i*640
-				nx := 640
+			for ox := startx; ox <= maxIndex[0]*srcBlock[0]; ox += xsize {
+				nx := xsize
 				if ox+nx >= (maxIndex[0]+1)*srcBlock[0] {
-					nx = (maxIndex[0] + 1) + srcBlock[0] - ox
+					nx = (maxIndex[0]+1)*srcBlock[0] - ox
 				}
 				if nx%64 != 0 {
 					nx += (nx % 64)
 				}
 				if nx != 0 {
+					fmt.Printf("Sending strip of %d x %d x %d voxels @ offset (%d, %d, %d)\n", nx, ny, nz, ox, oy, oz)
 					sendStrip(name, srcURL, nx, ny, nz, ox, oy, oz)
 				}
 			}
