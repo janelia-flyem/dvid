@@ -122,17 +122,20 @@ func sendLabels(src, dst *LabelMetadata, name, srcURL string) {
 	ny := dstBlock[1]
 	blocksInX := maxIndex[0] - minIndex[0] + 1
 	partsPerStrip := blocksInX*srcBlock[0]/640 + 1
-	for bz := minIndex[2]; bz <= maxIndex[2]; bz++ {
-		oz := bz * srcBlock[2]
-		for by := minIndex[1]; by <= maxIndex[1]; by++ {
-			oy := by * srcBlock[1]
+	for oz := minIndex[2] * srcBlock[2]; oz <= maxIndex[2]*srcBlock[2]; oz += nz {
+		for oy := minIndex[1] * srcBlock[1]; oy <= maxIndex[1]*srcBlock[1]; oy += ny {
 			for i := 0; i < partsPerStrip; i++ {
 				ox := minIndex[0]*srcBlock[0] + i*640
 				nx := 640
-				if ox+nx >= (maxIndex[0]+1)+srcBlock[0] {
+				if ox+nx >= (maxIndex[0]+1)*srcBlock[0] {
 					nx = (maxIndex[0] + 1) + srcBlock[0] - ox
 				}
-				sendStrip(name, srcURL, nx, ny, nz, ox, oy, oz)
+				if nx%64 != 0 {
+					nx += (nx % 64)
+				}
+				if nx != 0 {
+					sendStrip(name, srcURL, nx, ny, nz, ox, oy, oz)
+				}
 			}
 		}
 	}
@@ -155,7 +158,12 @@ func sendStrip(name, srcURL string, vx, vy, vz, ox, oy, oz int) {
 			os.Exit(1)
 		}
 		if resp.StatusCode != http.StatusOK {
-			fmt.Printf("Bad status on receiving data: %d\n", resp.StatusCode)
+			var respnote []byte
+			data, _ := ioutil.ReadAll(resp.Body)
+			if len(data) < 2000 {
+				respnote = data
+			}
+			fmt.Printf("Bad status on receiving data: (%d) %s\n", resp.StatusCode, string(respnote))
 			os.Exit(1)
 		}
 	}
