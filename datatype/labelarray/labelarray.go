@@ -845,12 +845,11 @@ func (d *Data) NewLabel(v dvid.VersionID) (uint64, error) {
 
 // NewData returns a pointer to labelarray data.
 func NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.Config) (*Data, error) {
+	if _, found := c.Get("BlockSize"); !found {
+		c.Set("BlockSize", fmt.Sprintf("%d,%d,%d", DefaultBlockSize, DefaultBlockSize, DefaultBlockSize))
+	}
 	imgblkData, err := dtype.Type.NewData(uuid, id, name, c)
 	if err != nil {
-		return nil, err
-	}
-	size := []int32{DefaultBlockSize, DefaultBlockSize, DefaultBlockSize}
-	if imgblkData.Properties.BlockSize, err = dvid.NewPoint(size); err != nil {
 		return nil, err
 	}
 

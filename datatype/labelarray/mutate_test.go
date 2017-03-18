@@ -228,6 +228,7 @@ func TestSparseVolumes(t *testing.T) {
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
 	var config dvid.Config
+	config.Set("BlockSize", "32,32,32") // Previous test data was on 32^3 blocks
 	server.CreateTestInstance(t, uuid, "labelarray", "labels", config)
 	labelVol := createLabelTestVolume(t, uuid, "labels")
 

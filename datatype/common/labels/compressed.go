@@ -11,6 +11,13 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 )
 
+var maxSliceSize int
+
+const maxSliceSize32 = 1 << 27 // max slice for a 8-byte value (uint64) on 32-bit server
+const maxSliceSize64 = 1 << 34 // max slice, given DVID request bounds, for a 8-byte value (uint64) on 64-bit server
+
+const intSize = 32 << (^uint(0) >> 63) // size in bits of an int
+
 func init() {
 	// If this is not a little-endian machine, exit because this package is only optimized
 	// for these types of machines.
@@ -19,7 +26,21 @@ func init() {
 		fmt.Printf("This machine is not little-endian.  Currently, DVID label compression does not support this machine.\n")
 		os.Exit(1)
 	}
+
+	switch intSize {
+	case 32:
+		maxSliceSize = maxSliceSize32
+	case 64:
+		maxSliceSize = maxSliceSize64
+	default:
+		fmt.Printf("Unknown architecture with int size of %d bits.  DVID works with 32 or 64 bit architectures.\n")
+		os.Exit(1)
+	}
 }
+
+// NOTE: The following slice aliasing functions should be used with caution, particularly
+//       when reusing preallocated slices.  The intended use is for reuse of preallocated
+//       slices.
 
 func byteToUint64(b []byte) (out []uint64, err error) {
 	if len(b)%8 != 0 {
@@ -28,33 +49,51 @@ func byteToUint64(b []byte) (out []uint64, err error) {
 	if uintptr(unsafe.Pointer(&b[0]))%8 != 0 {
 		return nil, fmt.Errorf("bad alignment in byteToUint64: uintptr = %d", uintptr(unsafe.Pointer(&b[0])))
 	}
-	return (*[1 << 27]uint64)(unsafe.Pointer(&b[0]))[:len(b)/8], nil
+	if intSize == 32 {
+		return (*[maxSliceSize32]uint64)(unsafe.Pointer(&b[0]))[:len(b)/8 : cap(b)/8], nil
+	}
+	return (*[maxSliceSize64]uint64)(unsafe.Pointer(&b[0]))[:len(b)/8 : cap(b)/8], nil
 }
 
 func byteToUint32(b []byte) (out []uint32, err error) {
 	if len(b)%4 != 0 || uintptr(unsafe.Pointer(&b[0]))%4 != 0 {
 		return nil, fmt.Errorf("bad len, cap, or alignment of byteToUint32 len %d", len(b))
 	}
-	return (*[1 << 28]uint32)(unsafe.Pointer(&b[0]))[:len(b)/4], nil
+	if intSize == 32 {
+		return (*[maxSliceSize32 << 1]uint32)(unsafe.Pointer(&b[0]))[:len(b)/4 : cap(b)/4], nil
+	}
+	return (*[maxSliceSize64 << 1]uint32)(unsafe.Pointer(&b[0]))[:len(b)/4 : cap(b)/4], nil
 }
 
 func byteToUint16(b []byte) (out []uint16, err error) {
 	if len(b)%2 != 0 || uintptr(unsafe.Pointer(&b[0]))%4 != 0 {
 		return nil, fmt.Errorf("bad len, cap, or alignment of byteToUint16 len %d", len(b))
 	}
-	return (*[1 << 29]uint16)(unsafe.Pointer(&b[0]))[:len(b)/2], nil
+	if intSize == 32 {
+		return (*[maxSliceSize32 << 2]uint16)(unsafe.Pointer(&b[0]))[:len(b)/2 : cap(b)/2], nil
+	}
+	return (*[maxSliceSize64 << 2]uint16)(unsafe.Pointer(&b[0]))[:len(b)/2 : cap(b)/2], nil
 }
 
 func uint16ToByte(in []uint16) []byte {
-	return (*[1 << 30]byte)(unsafe.Pointer(&in[0]))[:len(in)*2]
+	if intSize == 32 {
+		return (*[maxSliceSize32 << 3]byte)(unsafe.Pointer(&in[0]))[:len(in)*2]
+	}
+	return (*[maxSliceSize64 << 3]byte)(unsafe.Pointer(&in[0]))[:len(in)*2]
 }
 
 func uint32ToByte(in []uint32) []byte {
-	return (*[1 << 30]byte)(unsafe.Pointer(&in[0]))[:len(in)*4]
+	if intSize == 32 {
+		return (*[maxSliceSize32 << 3]byte)(unsafe.Pointer(&in[0]))[:len(in)*4]
+	}
+	return (*[maxSliceSize64 << 3]byte)(unsafe.Pointer(&in[0]))[:len(in)*4]
 }
 
 func uint64ToByte(in []uint64) []byte {
-	return (*[1 << 30]byte)(unsafe.Pointer(&in[0]))[:len(in)*8]
+	if intSize == 32 {
+		return (*[maxSliceSize32 << 3]byte)(unsafe.Pointer(&in[0]))[:len(in)*8]
+	}
+	return (*[maxSliceSize64 << 3]byte)(unsafe.Pointer(&in[0]))[:len(in)*8]
 }
 
 // returns the # of bits necessary to hold an index for n values.
@@ -266,8 +305,8 @@ func (s subvolumeData) getSubBlockDims() (gx, gy, gz uint32) {
 
 // run checks and do conversions
 func setSubvolume(uint64array []byte, volsize, blockOff dvid.Point, blockSize dvid.Point3d) (*subvolumeData, error) {
-	if volsize.Prod() > (1 << 27) {
-		return nil, fmt.Errorf("Volume %s is too large.  Please make requests below 1 GB uncompressed.", volsize)
+	if volsize.Prod() >= int64(maxSliceSize) {
+		return nil, fmt.Errorf("Volume %s is too large.  Please decrease array dimensions to have at most %d voxels", volsize, maxSliceSize)
 	}
 	if blockSize[0]%SubBlockSize != 0 || blockSize[1]%SubBlockSize != 0 || blockSize[2]%SubBlockSize != 0 {
 		return nil, fmt.Errorf("uint64 array of size %s not supported, must be multiple of %d", blockSize, SubBlockSize)
