@@ -849,6 +849,10 @@ func NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.
 	if err != nil {
 		return nil, err
 	}
+	size := []int32{DefaultBlockSize, DefaultBlockSize, DefaultBlockSize}
+	if imgblkData.Properties.BlockSize, err = dvid.NewPoint(size); err != nil {
+		return nil, err
+	}
 
 	data := &Data{
 		Data: imgblkData,
