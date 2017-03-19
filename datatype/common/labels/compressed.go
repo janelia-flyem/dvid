@@ -197,7 +197,7 @@ func MakeSolidBlock(label uint64, blockSize dvid.Point3d) *Block {
 //
 //      Labels within gz * gy * gx sub-blocks with each sub-block data in the following format:
 //
-//			Ns[i] * uint32    Ns packed indices into the N labels, padded to a 64-bit words.
+//			Ns[i] * uint32    Ns packed indices into the N labels.
 //          values            512 * ceil(log2(Ns[i])) bits, padded to 32-bit words.
 //                            At most we use 9 bits per voxel for up to the 512 labels in sub-block.
 //                            A value gives the sub-block index which points to the index into
@@ -258,6 +258,165 @@ func solidSubBlocks(numSubBlocks uint32) []SubBlock {
 		s[sb].Index = []uint32{0}
 	}
 	return s
+}
+
+func (b *Block) WriteRLEs(label uint64, w io.Writer) error {
+	return nil
+}
+
+// WriteBinaryBlock returns a serialized Block of just the label voxels or
+// nothing if the given label is not in the Block.  By definition, a binary block
+// has two labels (0 = background, 1 = given label) and encoding is a bit per voxel.
+// The binary format is related to the Google and internal DVID label block compression
+// but is simplified, the DVID space offset of the block is included, and the sub-block
+// data are arranged to allow streaming.
+//
+// Internally, the mask is stored in 8x8x8 sub-blocks.  There are gx * gy * gz sub-blocks where
+// gx = nx / 8; gy = ny / 8; gz = nz / 8.
+//
+// The byte layout will be the following:
+//
+//      3 * uint32      values of gx, gy, and gz
+//      3 * int32       offset of first voxel of Block in DVID space (x, y, z)
+//      uint64          foreground label
+//
+//      Stream of gx * gy * gz sub-blocks with the following data:
+//
+//      byte            0 = background ONLY  (no more data for this sub-block)
+//                      1 = foreground ONLY  (no more data for this sub-block)
+//                      2 = both background and foreground so mask data required.
+//      mask            64 byte bitmask where each voxel is 0 (background) or 1 (foreground)
+
+func (b *Block) WriteBinaryBlock(label uint64, offset dvid.Point3d, w io.Writer) error {
+	var found bool
+	var labelIndex uint32
+	for i, blabel := range b.Labels {
+		if label == blabel {
+			labelIndex = uint32(i)
+			found = true
+			break
+		}
+	}
+	if !found {
+		return nil // label not in block
+	}
+
+	if _, err := w.Write(b.data[0:12]); err != nil {
+		return err
+	}
+	buf := make([]byte, 20)
+	binary.LittleEndian.PutUint32(buf[0:4], uint32(offset[0]))
+	binary.LittleEndian.PutUint32(buf[4:8], uint32(offset[1]))
+	binary.LittleEndian.PutUint32(buf[8:12], uint32(offset[2]))
+	binary.LittleEndian.PutUint64(buf[12:20], label)
+	if _, err := w.Write(buf); err != nil {
+		return err
+	}
+
+	gx, gy, gz := b.size[0]/SubBlockSize, b.size[1]/SubBlockSize, b.size[2]/SubBlockSize
+
+	data := make([]byte, 65) // sub-block data will at most be status byte + 64 bytes (8x8x8 bits).
+
+	var subBlockNum int
+	var sx, sy, sz int32
+	for sz = 0; sz < gz; sz++ {
+		for sy = 0; sy < gy; sy++ {
+			for sx = 0; sx < gx; sx++ {
+				sb := b.SubBlocks[subBlockNum]
+				numSBLabels := uint16(len(sb.Index))
+				bits := int(bitsFor(numSBLabels))
+
+				switch numSBLabels {
+				case 0:
+					data[0] = 0
+					if _, err := w.Write(data[:1]); err != nil {
+						return err
+					}
+					continue
+				case 1:
+					if sb.Index[0] == labelIndex {
+						data[0] = 1
+					} else {
+						data[0] = 0
+					}
+					if _, err := w.Write(data[:1]); err != nil {
+						return err
+					}
+					continue
+				default:
+				}
+
+				outbitpos := int(8) // Start at 2nd byte for output
+
+				var background bool // true if a non-index voxel is in block
+				var foreground bool // true if index is in block
+				var curbyte byte    // byte in values slice under the write head
+
+				var bitpos int
+				var x, y, z int32
+				for z = 0; z < SubBlockSize; z++ {
+					for y = 0; y < SubBlockSize; y++ {
+						for x = 0; x < SubBlockSize; x++ {
+							// read full label sub-block data
+							var index uint16
+							bithead := bitpos % 8
+							bytepos := bitpos >> 3
+							if bithead+bits <= 8 {
+								// index totally within this byte
+								rightshift := uint(8 - bithead - bits)
+								index = uint16((sb.Values[bytepos] & leftBitMask[bithead]) >> rightshift)
+							} else {
+								// index spans byte boundaries
+								index = uint16(sb.Values[bytepos]&leftBitMask[bithead]) << 8
+								index |= uint16(sb.Values[bytepos+1])
+								index >>= uint(16 - bithead - bits)
+							}
+
+							// write binary sub-block data
+							bithead = outbitpos % 8
+							bytepos = outbitpos >> 3
+							var value byte
+							if labelIndex == sb.Index[index] {
+								foreground = true
+								value = 1
+							} else {
+								background = true
+							}
+							leftshift := uint(7 - bithead)
+							curbyte |= value << leftshift
+							data[bytepos] = curbyte
+							if bithead == 7 {
+								curbyte = 0x00
+							}
+
+							bitpos += bits
+							outbitpos++
+						}
+					}
+				}
+
+				if background && foreground {
+					data[0] = 2
+					if _, err := w.Write(data); err != nil {
+						return err
+					}
+				} else if foreground {
+					data[0] = 1
+					if _, err := w.Write(data[:1]); err != nil {
+						return err
+					}
+				} else {
+					data[0] = 0
+					if _, err := w.Write(data[:1]); err != nil {
+						return err
+					}
+				}
+				subBlockNum++
+			}
+		}
+	}
+
+	return nil
 }
 
 // link the SubBlock structs to the underlying serialization.
@@ -339,13 +498,13 @@ func setSubvolume(uint64array []byte, volsize, blockOff dvid.Point, blockSize dv
 }
 
 // iterate through the subvolume corresponding to the Block and do encoding
-func (s *subvolumeData) encodeBlock() (labels map[uint64]uint32, labelNumbers []uint16, subBlockBytes []byte, err error) {
+func (s *subvolumeData) encodeBlock() (labels map[uint64]uint32, numSubBlockLabels []uint16, subBlockBytes []byte, err error) {
 	gx, gy, gz := s.getSubBlockDims()
 	numSubBlocks := gx * gy * gz
 
 	var numLabels uint32
-	labels = make(map[uint64]uint32)            // map of label -> index position in Block
-	labelNumbers = make([]uint16, numSubBlocks) // # of labels in each sub-block
+	labels = make(map[uint64]uint32)                 // map of label -> index position in Block
+	numSubBlockLabels = make([]uint16, numSubBlocks) // # of labels in each sub-block
 
 	slabelList := make([]uint32, 512) // sub-block labels that are index into block-level label list
 	svalues := make([]byte, 512*2)    // max size of sub-block values
@@ -357,10 +516,8 @@ func (s *subvolumeData) encodeBlock() (labels map[uint64]uint32, labelNumbers []
 	var subBlockBuf bytes.Buffer // will hold the serialization of the sub-blocks data
 	for sz := uint32(0); sz < gz; sz++ {
 		uz := sz*SubBlockSize + s.blockOff[2]
-		// uzpos := (sz*SubBlockSize)*s.blockSize[0]*s.blockSize[1]
 		for sy := uint32(0); sy < gy; sy++ {
 			uy := sy*SubBlockSize + s.blockOff[1]
-			// upos := uzpos + (sy*SubBlockSize)*s.blockSize[0]
 			for sx := uint32(0); sx < gx; sx++ {
 				ux := sx*SubBlockSize + s.blockOff[0]
 
@@ -425,7 +582,7 @@ func (s *subvolumeData) encodeBlock() (labels map[uint64]uint32, labelNumbers []
 				}
 
 				// Revise the global labels and convert the sub-block index into the block-level label index
-				labelNumbers[subBlockNum] = numSBLabels
+				numSubBlockLabels[subBlockNum] = numSBLabels
 				slabelList = slabelList[:numSBLabels]
 				for label, sbindex := range slabels {
 					blockIndex, found := labels[label]
@@ -467,12 +624,12 @@ func SubvolumeToBlock(subvol *dvid.Subvolume, uint64array []byte, index dvid.Ind
 	if err != nil {
 		return nil, err
 	}
-	labels, labelNumbers, subBlockBytes, err := s.encodeBlock()
+	labels, numSubBlockLabels, subBlockBytes, err := s.encodeBlock()
 	if err != nil {
 		return nil, err
 	}
 	numLabels := uint32(len(labels))
-	numSubBlocks := uint32(len(labelNumbers))
+	numSubBlocks := uint32(len(numSubBlockLabels))
 
 	// Write the entire Block serialization and link to Block and SubBlock structs
 	b := new(Block)
@@ -509,7 +666,7 @@ func SubvolumeToBlock(subvol *dvid.Subvolume, uint64array []byte, index dvid.Ind
 	if b.Numbers, err = byteToUint16(data[numbersPos:subBlockPos]); err != nil {
 		return nil, err
 	}
-	copy(b.Numbers, labelNumbers)
+	copy(b.Numbers, numSubBlockLabels)
 
 	// -- write all the sub-block data
 	copy(data[subBlockPos:], subBlockBytes)
@@ -529,12 +686,12 @@ func MakeBlock(uint64array []byte, blockSize dvid.Point3d) (*Block, error) {
 	if err != nil {
 		return nil, err
 	}
-	labels, labelNumbers, subBlockBytes, err := s.encodeBlock()
+	labels, numSubBlockLabels, subBlockBytes, err := s.encodeBlock()
 	if err != nil {
 		return nil, err
 	}
 	numLabels := uint32(len(labels))
-	numSubBlocks := uint32(len(labelNumbers))
+	numSubBlocks := uint32(len(numSubBlockLabels))
 
 	// Write the entire Block serialization and link to Block and SubBlock structs
 	b := new(Block)
@@ -571,7 +728,7 @@ func MakeBlock(uint64array []byte, blockSize dvid.Point3d) (*Block, error) {
 	if b.Numbers, err = byteToUint16(data[numbersPos:subBlockPos]); err != nil {
 		return nil, err
 	}
-	copy(b.Numbers, labelNumbers)
+	copy(b.Numbers, numSubBlockLabels)
 
 	// -- write all the sub-block data
 	copy(data[subBlockPos:], subBlockBytes)
@@ -596,8 +753,8 @@ func (b Block) MakeLabelVolume() (uint64array []byte, size dvid.Point3d, err err
 	for sz = 0; sz < gz; sz++ {
 		for sy = 0; sy < gy; sy++ {
 			for sx = 0; sx < gx; sx++ {
-				subBlock := b.SubBlocks[subBlockNum]
-				numSBLabels := uint16(len(subBlock.Index))
+				sb := b.SubBlocks[subBlockNum]
+				numSBLabels := uint16(len(sb.Index))
 				bits := int(bitsFor(numSBLabels))
 
 				pos := sz*SubBlockSize*b.size[0]*b.size[1] + sy*SubBlockSize*b.size[0] + sx*SubBlockSize
@@ -607,11 +764,11 @@ func (b Block) MakeLabelVolume() (uint64array []byte, size dvid.Point3d, err err
 				for z = 0; z < SubBlockSize; z++ {
 					for y = 0; y < SubBlockSize; y++ {
 						for x = 0; x < SubBlockSize; x++ {
-							switch {
-							case numSBLabels == 0:
+							switch numSBLabels {
+							case 0:
 								labeldata[pos] = 0
-							case numSBLabels == 1:
-								labeldata[pos] = b.Labels[subBlock.Index[0]]
+							case 1:
+								labeldata[pos] = b.Labels[sb.Index[0]]
 							default:
 								var index uint16
 								bithead := bitpos % 8
@@ -619,14 +776,14 @@ func (b Block) MakeLabelVolume() (uint64array []byte, size dvid.Point3d, err err
 								if bithead+bits <= 8 {
 									// index totally within this byte
 									rightshift := uint(8 - bithead - bits)
-									index = uint16((subBlock.Values[bytepos] & leftBitMask[bithead]) >> rightshift)
+									index = uint16((sb.Values[bytepos] & leftBitMask[bithead]) >> rightshift)
 								} else {
 									// index spans byte boundaries
-									index = uint16(subBlock.Values[bytepos]&leftBitMask[bithead]) << 8
-									index |= uint16(subBlock.Values[bytepos+1])
+									index = uint16(sb.Values[bytepos]&leftBitMask[bithead]) << 8
+									index |= uint16(sb.Values[bytepos+1])
 									index >>= uint(16 - bithead - bits)
 								}
-								labeldata[pos] = b.Labels[subBlock.Index[index]]
+								labeldata[pos] = b.Labels[sb.Index[index]]
 								bitpos += bits
 							}
 							pos++
