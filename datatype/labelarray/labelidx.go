@@ -7,6 +7,7 @@ import (
 	"io"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
@@ -56,23 +57,70 @@ func (m *Meta) UnmarshalBinary(b []byte) error {
 	return m.Blocks.UnmarshalBinary(b[8:])
 }
 
-type sld struct { // sortable labelDiff
-	block dvid.IZYXString
-	labelDiff
+type timedMeta struct {
+	label uint64
+	meta  *Meta
+	t     time.Time
 }
 
-type slds []sld
+type cacheList []*timedMeta
 
-func (s slds) Len() int {
-	return len(s)
+func (c cacheList) Len() int           { return len(c) }
+func (c cacheList) Swap(a, b int)      { c[a], c[b] = c[b], c[a] }
+func (c cacheList) Less(a, b int) bool { return c[a].t.Before(c[b].t) }
+
+// MetaCache is a label Meta cache based on time since last access.
+type MetaCache struct {
+	size  uint16
+	avail map[uint64]*timedMeta
+	list  cacheList
 }
 
-func (s slds) Swap(i, j int) {
-	s[i], s[j] = s[j], s[i]
+const defaultCacheSize = 50
+
+func MakeMetaCache(size uint16) *MetaCache {
+	if size == 0 {
+		size = defaultCacheSize
+	}
+	m := new(MetaCache)
+	m.size = size
+	m.list = make(cacheList, 0, size)
+	m.avail = make(map[uint64]*timedMeta, size)
+	return m
 }
 
-func (s slds) Less(i, j int) bool {
-	return s[i].block < s[j].block
+// GetLabelMeta returns a label's Meta if in the cache, else returns nil.
+func (m MetaCache) GetLabelMeta(label uint64) *Meta {
+	tm, found := m.avail[label]
+	if found {
+		tm.t = time.Now()
+		return tm.meta
+	}
+	return nil
+}
+
+// AddLabelMeta adds a label's Meta to the cache, possibly evicting older entries.
+func (m MetaCache) AddLabelMeta(label uint64, meta *Meta) {
+	tm, found := m.avail[label]
+	if found {
+		tm.meta = meta // could be updated Meta
+		tm.t = time.Now()
+		return
+	}
+	newtm := new(timedMeta)
+	newtm.label = label
+	newtm.meta = meta
+	newtm.t = time.Now()
+
+	if len(m.list) == int(m.size) {
+		sort.Sort(m.list)
+		evicted := m.list[m.size-1]
+		delete(m.avail, evicted.label)
+
+		m.list[m.size-1] = newtm
+	} else {
+		m.list = append(m.list, newtm)
+	}
 }
 
 // change the block presence map depending on changes.
@@ -139,6 +187,25 @@ Complete:
 		}
 	}
 	return nil
+}
+
+type sld struct { // sortable labelDiff
+	block dvid.IZYXString
+	labelDiff
+}
+
+type slds []sld
+
+func (s slds) Len() int {
+	return len(s)
+}
+
+func (s slds) Swap(i, j int) {
+	s[i], s[j] = s[j], s[i]
+}
+
+func (s slds) Less(i, j int) bool {
+	return s[i].block < s[j].block
 }
 
 type labelDiff struct {
@@ -241,8 +308,10 @@ type labelChange struct {
 }
 
 // goroutines (n = numLabelHandlers) spawned during startup to handle all get/put tx on label indexes,
-// since these txs need to be across all concurrent requests.
+// since these txs need to be across all concurrent requests so we shard label id to a particular goroutine.
+// This also allows us to efficiently cache the last N label Meta
 func (d *Data) indexLabels(ch <-chan labelChange) {
+	cache := MakeMetaCache(100)
 	store, err := d.GetOrderedKeyValueDB()
 	if err != nil {
 		dvid.Criticalf("Data %q merge had error initializing store: %v\n", d.DataName(), err)
@@ -251,21 +320,24 @@ func (d *Data) indexLabels(ch <-chan labelChange) {
 	for {
 		change, more := <-ch
 		if !more {
+			dvid.Infof("Closing index handler for data %q...\n", d.DataName())
 			return
 		}
 		ctx := datastore.NewVersionedCtx(d, change.v)
 
-		meta, err := d.GetLabelMeta(ctx, labels.NewSet(change.label), dvid.Bounds{})
-		if err != nil {
-			dvid.Criticalf("Error trying to read label %d meta for data %q: %v\n", change.label, d.DataName(), err)
-			continue
+		meta := cache.GetLabelMeta(change.label)
+		if meta == nil {
+			meta, err = d.GetLabelMeta(ctx, labels.NewSet(change.label), dvid.Bounds{})
+			if err != nil {
+				dvid.Criticalf("Error trying to read label %d meta for data %q: %v\n", change.label, d.DataName(), err)
+				continue
+			}
 		}
-		// oldblocks := len(meta.Blocks)
 		if err := meta.applyChanges(change.bdm); err != nil {
 			dvid.Criticalf("Error on applying mutation changes to label %d meta: %v\n", change.label, err)
 			continue
 		}
-		// dvid.Infof("Modified %d blocks for label %d.  Meta went from %d -> %d blocks.\n", len(change.bdm), change.label, oldblocks, len(meta.Blocks))
+		cache.AddLabelMeta(change.label, meta)
 
 		tk := NewLabelIndexTKey(change.label)
 		data, err := meta.MarshalBinary()

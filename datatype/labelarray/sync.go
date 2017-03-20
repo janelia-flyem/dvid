@@ -200,7 +200,7 @@ func (d *Data) InitDataHandlers() error {
 		go d.mutateBlock(d.mutateCh[i])
 	}
 	for i := 0; i < numLabelHandlers; i++ {
-		d.indexCh[i] = make(chan labelChange, 10)
+		d.indexCh[i] = make(chan labelChange, 100)
 		go d.indexLabels(d.indexCh[i])
 	}
 
