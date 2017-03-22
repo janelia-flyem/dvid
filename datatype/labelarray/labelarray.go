@@ -431,8 +431,10 @@ GET  <api URL>/node/<UUID>/<data name>/sparsevol/<label>?<options>
 	Returns a sparse volume with voxels of the given label in encoded RLE format.  The returned
 	data can be optionally compressed using the "compression" option below.
 
-	The encoding has the following format where integers are little endian and the order
+	The encoding has the following possible format where integers are little endian and the order
 	of data is exactly as specified below:
+
+	Legacy RLEs ("rles") :
 
 	    byte     Payload descriptor:
 	               Bit 0 (LSB) - 8-bit grayscale
@@ -451,8 +453,34 @@ GET  <api URL>/node/<UUID>/<data name>/sparsevol/<label>?<options>
 	        int32   Length of run
 	        bytes   Optional payload dependent on first byte descriptor
 			  ...
+	
+	Streaming RLEs ("srles"):
+
+	    Repeating unit of:
+	        int32   Coordinate of run start (dimension 0)
+	        int32   Coordinate of run start (dimension 1)
+	        int32   Coordinate of run start (dimension 2)
+	        int32   Length of run
+
+	Streaming Binary Blocks ("blocks"):
+
+      3 * uint32      values of gx, gy, and gz
+      3 * int32       offset of first voxel of Block in DVID space (x, y, z)
+      uint64          foreground label
+
+      Stream of gx * gy * gz sub-blocks with the following data:
+
+      byte            0 = background ONLY  (no more data for this sub-block)
+                      1 = foreground ONLY  (no more data for this sub-block)
+                      2 = both background and foreground so mask data required.
+      mask            64 byte bitmask where each voxel is 0 (background) or 1 (foreground)
 
     GET Query-string Options:
+
+	format  One of the following:
+	          "rles" (default) - legacy RLEs with header including # spans.Data
+			  "srles" - streaming RLEs with each RLE composed of 4 int32 (16 bytes) for x, y, z, run 
+			  "blocks" - binary Block stream
 
     minx    Spans must be equal to or larger than this minimum x voxel coordinate.
     maxx    Spans must be equal to or smaller than this maximum x voxel coordinate.
@@ -643,6 +671,37 @@ var (
 	DefaultRes       float32 = imageblk.DefaultRes
 	DefaultUnits             = imageblk.DefaultUnits
 )
+
+// SparseVolFormat indicates the type of encoding used for sparse volume representation.
+type SparseVolFormat uint8
+
+const (
+	// Legacy RLE encoding with header that gives # spans.
+	FormatLegacyRLE SparseVolFormat = iota
+
+	// Streaming RLE encoding
+	FormatStreamingRLE
+
+	// Streaming set of binary Blocks
+	FormatBinaryBlocks
+
+	// Legacy RLE encoding computed using old system.
+	FormatLegacySlowRLE
+)
+
+// returns default legacy RLE if no options set.
+func svformatFromQueryString(r *http.Request) SparseVolFormat {
+	switch r.URL.Query().Get("format") {
+	case "srles":
+		return FormatStreamingRLE
+	case "blocks":
+		return FormatBinaryBlocks
+	case "old":
+		return FormatLegacySlowRLE
+	default:
+		return FormatLegacyRLE
+	}
+}
 
 func init() {
 	encodeFormat = dvid.DataValues{
@@ -1792,10 +1851,10 @@ func GetBinaryData(compression string, in io.ReadCloser, estsize int64) ([]byte,
 		if err != nil {
 			return nil, err
 		}
+		tlog.Debugf("read 3d lz4 POST: %d bytes", len(data))
 		if len(data) == 0 {
 			return nil, fmt.Errorf("received 0 LZ4 compressed bytes")
 		}
-		tlog.Debugf("read 3d lz4 POST")
 		tlog = dvid.NewTimeLog()
 		uncompressed := make([]byte, estsize)
 		err = lz4.Uncompress(data, uncompressed)
@@ -1803,7 +1862,7 @@ func GetBinaryData(compression string, in io.ReadCloser, estsize int64) ([]byte,
 			return nil, err
 		}
 		data = uncompressed
-		tlog.Debugf("uncompressed 3d lz4 POST")
+		tlog.Debugf("uncompressed 3d lz4 POST: %d bytes", len(data))
 	case "gzip":
 		tlog := dvid.NewTimeLog()
 		gr, err := gzip.NewReader(in)
@@ -1817,7 +1876,7 @@ func GetBinaryData(compression string, in io.ReadCloser, estsize int64) ([]byte,
 		if err = gr.Close(); err != nil {
 			return nil, err
 		}
-		tlog.Debugf("read and uncompress 3d gzip POST")
+		tlog.Debugf("read and uncompress 3d gzip POST: %d bytes", len(data))
 	default:
 		return nil, fmt.Errorf("unknown compression type %q", compression)
 	}
@@ -2263,6 +2322,27 @@ func (d *Data) handleDataRequest(ctx *datastore.VersionedCtx, w http.ResponseWri
 	}
 }
 
+func (d *Data) getSparsevolOptions(r *http.Request) (b dvid.Bounds, compression string, err error) {
+	queryStrings := r.URL.Query()
+	compression = queryStrings.Get("compression")
+
+	if b.Voxel, err = dvid.OptionalBoundsFromQueryString(r); err != nil {
+		err = fmt.Errorf("Error parsing bounds from query string: %v\n", err)
+		return
+	}
+	blockSize, ok := d.BlockSize().(dvid.Point3d)
+	if !ok {
+		err = fmt.Errorf("Error: BlockSize for %s wasn't 3d", d.DataName())
+		return
+	}
+	b.Block = b.Voxel.Divide(blockSize)
+	b.Exact = true
+	if queryStrings.Get("exact") == "false" {
+		b.Exact = false
+	}
+	return
+}
+
 func (d *Data) handleSparsevol(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request, parts []string) {
 	// GET <api URL>/node/<UUID>/<data name>/sparsevol/<label>
 	// POST <api URL>/node/<UUID>/<data name>/sparsevol/<label>
@@ -2280,75 +2360,31 @@ func (d *Data) handleSparsevol(ctx *datastore.VersionedCtx, w http.ResponseWrite
 		server.BadRequest(w, r, "Label 0 is protected background value and cannot be used as sparse volume.\n")
 		return
 	}
-	queryStrings := r.URL.Query()
-	var b dvid.Bounds
-	b.Voxel, err = dvid.OptionalBoundsFromQueryString(r)
+	b, compression, err := d.getSparsevolOptions(r)
 	if err != nil {
-		server.BadRequest(w, r, "Error parsing bounds from query string: %v\n", err)
+		server.BadRequest(w, r, err)
 		return
 	}
-	blockSize, ok := d.BlockSize().(dvid.Point3d)
-	if !ok {
-		server.BadRequest(w, r, "Error: BlockSize for %s wasn't 3d", d.DataName())
-		return
-	}
-	b.Block = b.Voxel.Divide(blockSize)
-	b.Exact = true
-	if queryStrings.Get("exact") == "false" {
-		b.Exact = false
-	}
-
-	compression := queryStrings.Get("compression")
 
 	switch strings.ToLower(r.Method) {
 	case "get":
-		data, err := d.GetSparseVol(ctx, label, b)
+		w.Header().Set("Content-type", "application/octet-stream")
+
+		var found bool
+		format := svformatFromQueryString(r)
+		switch format {
+		case FormatLegacyRLE, FormatLegacySlowRLE:
+			found, err = d.WriteLegacyRLE(ctx, label, b, compression, format, w)
+		case FormatBinaryBlocks:
+		case FormatStreamingRLE:
+			found, err = d.WriteStreamingRLE(ctx, label, b, compression, w)
+		}
 		if err != nil {
 			server.BadRequest(w, r, err)
 			return
 		}
-		if len(data) == 0 {
+		if !found {
 			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-		w.Header().Set("Content-type", "application/octet-stream")
-		switch compression {
-		case "":
-			_, err = w.Write(data)
-			if err != nil {
-				server.BadRequest(w, r, err)
-				return
-			}
-		case "lz4":
-			compressed := make([]byte, lz4.CompressBound(data))
-			var n, outSize int
-			if outSize, err = lz4.Compress(data, compressed); err != nil {
-				server.BadRequest(w, r, err)
-				return
-			}
-			compressed = compressed[:outSize]
-			if n, err = w.Write(compressed); err != nil {
-				server.BadRequest(w, r, err)
-				return
-			}
-			if n != outSize {
-				errmsg := fmt.Sprintf("Only able to write %d of %d lz4 compressed bytes\n", n, outSize)
-				dvid.Errorf(errmsg)
-				server.BadRequest(w, r, errmsg)
-				return
-			}
-		case "gzip":
-			gw := gzip.NewWriter(w)
-			if _, err = gw.Write(data); err != nil {
-				server.BadRequest(w, r, err)
-				return
-			}
-			if err = gw.Close(); err != nil {
-				server.BadRequest(w, r, err)
-				return
-			}
-		default:
-			server.BadRequest(w, r, "unknown compression type %q", compression)
 			return
 		}
 
@@ -2399,32 +2435,29 @@ func (d *Data) handleSparsevolByPoint(ctx *datastore.VersionedCtx, w http.Respon
 		server.BadRequest(w, r, "Label 0 is protected background value and cannot be used as sparse volume.\n")
 		return
 	}
-	var b dvid.Bounds
-	b.Voxel, err = dvid.OptionalBoundsFromQueryString(r)
-	if err != nil {
-		server.BadRequest(w, r, "Error parsing bounds from query string: %v\n", err)
-		return
-	}
-	blockSize, ok := d.BlockSize().(dvid.Point3d)
-	if !ok {
-		server.BadRequest(w, r, "Error: BlockSize for %s wasn't 3d", d.DataName())
-		return
-	}
-	b.Block = b.Voxel.Divide(blockSize)
-	data, err := d.GetSparseVol(ctx, label, b)
+	b, compression, err := d.getSparsevolOptions(r)
 	if err != nil {
 		server.BadRequest(w, r, err)
 		return
 	}
-	if len(data) == 0 {
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
+
 	w.Header().Set("Content-type", "application/octet-stream")
-	_, err = w.Write(data)
+
+	format := svformatFromQueryString(r)
+	var found bool
+	switch format {
+	case FormatLegacyRLE, FormatLegacySlowRLE:
+		found, err = d.WriteLegacyRLE(ctx, label, b, compression, format, w)
+	case FormatBinaryBlocks:
+	case FormatStreamingRLE:
+		found, err = d.WriteStreamingRLE(ctx, label, b, compression, w)
+	}
 	if err != nil {
 		server.BadRequest(w, r, err)
 		return
+	}
+	if !found {
+		w.WriteHeader(http.StatusNotFound)
 	}
 }
 

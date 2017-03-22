@@ -350,6 +350,19 @@ func NewRLE(start Point3d, length int32) RLE {
 	return RLE{start, length}
 }
 
+// WriteTo fulfills the io.WriterTo interface.
+func (rle RLE) WriteTo(w io.Writer) (n int64, err error) {
+	var buf [16]byte
+	binary.LittleEndian.PutUint32(buf[0:4], uint32(rle.start[0]))
+	binary.LittleEndian.PutUint32(buf[4:8], uint32(rle.start[1]))
+	binary.LittleEndian.PutUint32(buf[8:12], uint32(rle.start[2]))
+	binary.LittleEndian.PutUint32(buf[12:16], uint32(rle.length))
+	var numBytes int
+	numBytes, err = w.Write(buf[:])
+	n = int64(numBytes)
+	return
+}
+
 // MarshalBinary fulfills the encoding.BinaryMarshaler interface.
 func (rle RLE) MarshalBinary() ([]byte, error) {
 	buf := make([]byte, 16)
@@ -378,8 +391,13 @@ func (rle *RLE) UnmarshalBinary(b []byte) error {
 func (rle RLE) StartPt() Point3d {
 	return rle.start
 }
+
 func (rle RLE) Length() int32 {
 	return rle.length
+}
+
+func (rle *RLE) Extend(n int32) {
+	rle.length += n
 }
 
 func (rle RLE) String() string {

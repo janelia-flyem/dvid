@@ -80,28 +80,28 @@ func (b testBody) checkSparseVol(t *testing.T, encoding []byte, bounds dvid.Opti
 	gotNorm := spans.Normalize()
 	expectNorm := expected.Normalize()
 	if !reflect.DeepEqual(gotNorm, expectNorm) {
-		// for _, got := range gotNorm {
-		// 	bad := true
-		// 	for _, expect := range expectNorm {
-		// 		if reflect.DeepEqual(got, expect) {
-		// 			bad = false
-		// 		}
-		// 	}
-		// 	if bad {
-		// 		fmt.Printf("Got unexpected span: %s\n", got)
-		// 	}
-		// }
-		// for _, expect := range expectNorm {
-		// 	bad := true
-		// 	for _, got := range gotNorm {
-		// 		if reflect.DeepEqual(got, expect) {
-		// 			bad = false
-		// 		}
-		// 	}
-		// 	if bad {
-		// 		fmt.Printf("Never got expected span: %s\n", expect)
-		// 	}
-		// }
+		for _, got := range gotNorm {
+			bad := true
+			for _, expect := range expectNorm {
+				if reflect.DeepEqual(got, expect) {
+					bad = false
+				}
+			}
+			if bad {
+				fmt.Printf("Got unexpected span: %s\n", got)
+			}
+		}
+		for _, expect := range expectNorm {
+			bad := true
+			for _, got := range gotNorm {
+				if reflect.DeepEqual(got, expect) {
+					bad = false
+				}
+			}
+			if bad {
+				fmt.Printf("Never got expected span: %s\n", expect)
+			}
+		}
 		t.Fatalf("Expected %d fine spans for label %d:\n%s\nGot %d spans:\n%s\nAfter Norm:%s\n", len(expectNorm), b.label, expectNorm, len(spans), spans, gotNorm)
 	}
 }
