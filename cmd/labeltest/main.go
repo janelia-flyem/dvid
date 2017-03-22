@@ -3,20 +3,27 @@
 package main
 
 import (
+	"encoding/binary"
 	"flag"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/janelia-flyem/dvid/dvid"
 )
 
 var (
 	// Display usage if true.
 	showHelp = flag.Bool("help", false, "")
+
+	// Wrote sorted RLEs to output
+	writeRLEs = flag.Bool("rle", false, "")
 )
 
 const helpMessage = `
@@ -28,6 +35,7 @@ Usage: labeltest [options] <get URL before label> <label 1> <label 2> ... <label
   Example get URL: http://emdata2.int.janelia.org:7000/api/node/e2f02/labelarray
 
   -h, -help       (flag)    Show help message
+  -r, -rle        (flag)    Output RLEs in sorted format
 `
 
 var usage = func() {
@@ -45,6 +53,7 @@ func currentDir() string {
 
 func main() {
 	flag.BoolVar(showHelp, "h", false, "Show help message")
+	flag.BoolVar(writeRLEs, "r", false, "Output RLEs in sorted format")
 	flag.Usage = usage
 	flag.Parse()
 
@@ -86,11 +95,39 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Printf("Received status %d, sparsevol for label %d: %s\n", resp.StatusCode, label, time.Since(start))
+		if resp.StatusCode != http.StatusOK {
+			os.Exit(1)
+		}
 		data, err := ioutil.ReadAll(resp.Body)
 		if err != nil {
 			fmt.Printf("error on trying to read sparsevol %d response: %v\n", label, err)
 			os.Exit(1)
 		}
 		fmt.Printf("   --> Read all %d bytes: %s (from request)\n", len(data), time.Since(start))
+
+		if *writeRLEs {
+			if len(data) < 12 {
+				fmt.Printf("Could not parse return data.  Exiting\n")
+				os.Exit(1)
+			}
+			numRuns := binary.LittleEndian.Uint32(data[8:12])
+			fmt.Printf("Number of runs: %d\n", numRuns)
+			rles := make(dvid.RLEs, numRuns)
+			var numVoxels int64
+			for i := uint32(0); i < numRuns; i++ {
+				var rle dvid.RLE
+				if err := rle.UnmarshalBinary(data[12+i*16 : 28+i*16]); err != nil {
+					fmt.Printf("error trying to unmarshal span %d: %v\n", i, err)
+					os.Exit(1)
+				}
+				rles[i] = rle
+				numVoxels += int64(rle.Length())
+			}
+			fmt.Printf("Number of voxels: %d\n", numVoxels)
+			sort.Sort(rles)
+			for i, rle := range rles {
+				fmt.Printf("Span %5d: %s\n", i, rle)
+			}
+		}
 	}
 }
