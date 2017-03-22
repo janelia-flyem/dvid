@@ -879,16 +879,10 @@ func (d *Data) blockSize() dvid.Point3d {
 		return bsize
 	}
 	if lv := d.GetSyncedLabelvol(); lv != nil {
-		if len(bsize) != 0 && !bsize.Equals(lv.BlockSize) {
-			dvid.Errorf("annotations %q is synced to labelblk and labelvol with different block sizes!\n", d.DataName())
-		} else {
-			bsize = lv.BlockSize
-			return bsize
-		}
+		bsize = lv.BlockSize
+		return bsize
 	}
-	if len(bsize) != 0 {
-		bsize = dvid.Point3d{DefaultBlockSize, DefaultBlockSize, DefaultBlockSize}
-	}
+	bsize = dvid.Point3d{DefaultBlockSize, DefaultBlockSize, DefaultBlockSize}
 	return bsize
 }
 
@@ -1960,6 +1954,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			server.BadRequest(w, r, err)
 			return
 		}
+		d.cachedBlockSize = nil
 
 	case "label":
 		if action != "get" {
