@@ -91,6 +91,6 @@ func main() {
 			fmt.Printf("error on trying to read sparsevol %d response: %v\n", label, err)
 			os.Exit(1)
 		}
-		fmt.Printf("   --> Got %d bytes\n", len(data))
+		fmt.Printf("   --> Read all %d bytes: %s (from request)\n", len(data), time.Since(start))
 	}
 }

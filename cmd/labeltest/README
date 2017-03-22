@@ -1,3 +1,7 @@
+Example use:
+
+% labeltest http://emdata2.int.janelia.org:7000/api/node/e2f02/labelarray 59763 30192
+
 This is not compiled by default using make.
 
 % cd /path/to/dvid/cmd/labeltest

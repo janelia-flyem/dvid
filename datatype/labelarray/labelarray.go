@@ -907,6 +907,9 @@ func NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.
 	if _, found := c.Get("BlockSize"); !found {
 		c.Set("BlockSize", fmt.Sprintf("%d,%d,%d", DefaultBlockSize, DefaultBlockSize, DefaultBlockSize))
 	}
+	// if _, found := c.Get("Compression"); !found {
+	// 	c.Set("Compression", "gzip")
+	// }
 	imgblkData, err := dtype.Type.NewData(uuid, id, name, c)
 	if err != nil {
 		return nil, err
