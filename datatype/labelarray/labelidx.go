@@ -126,69 +126,27 @@ func (m MetaCache) AddLabelMeta(label uint64, meta *Meta) {
 	}
 }
 
-// change the block presence map depending on changes.
+// change the block presence map
 func (m *Meta) applyChanges(bdm blockDiffMap) error {
-	// apply # voxel changes, then sort the changes in ascending block order
-	s := make(slds, len(bdm))
-	i := 0
+	var present dvid.IZYXSlice
+	var absent dvid.IZYXSlice
 	for block, diff := range bdm {
 		m.Voxels = uint64(int64(m.Voxels) + int64(diff.delta))
-		s[i] = sld{block: block, labelDiff: diff}
-		i++
+		if diff.present {
+			present = append(present, block)
+		} else {
+			absent = append(absent, block)
+		}
 	}
-	sort.Sort(s)
+	if len(present) > 1 {
+		sort.Sort(present)
+	}
+	if len(absent) > 1 {
+		sort.Sort(absent)
+	}
 
-	if m.Blocks == nil {
-		m.Blocks = dvid.IZYXSlice{}
-	}
-
-	// step through the changes, inserting them when necessary into meta
-	mpos := 0 // position in sorted label blocks
-	dpos := 0 // position in diff blocks
-	for _, diff := range s {
-		var block dvid.IZYXString
-		for {
-			if mpos >= len(m.Blocks) {
-				goto Complete
-			}
-			block = m.Blocks[mpos]
-			if diff.block > block {
-				mpos++
-			} else {
-				break
-			}
-		}
-		if diff.block < block {
-			if diff.present {
-				// insert
-				m.Blocks = append(m.Blocks, "")
-				copy(m.Blocks[mpos+1:], m.Blocks[mpos:])
-				m.Blocks[mpos] = diff.block
-				mpos++
-			} else {
-				dvid.Criticalf("trying to unset block %s that wasn't in label meta to begin with\n", diff.block)
-			}
-		} else if diff.block == block {
-			if !diff.present {
-				// unset
-				copy(m.Blocks[mpos:], m.Blocks[mpos+1:])
-				m.Blocks[len(m.Blocks)-1] = ""
-				m.Blocks = m.Blocks[:len(m.Blocks)-1]
-			}
-		}
-		dpos++
-	}
-Complete:
-	if dpos < len(s) {
-		// we may have blocks to append
-		for i := dpos; i < len(s); i++ {
-			if s[i].present {
-				m.Blocks = append(m.Blocks, s[i].block)
-			} else {
-				dvid.Criticalf("trying to unset block %s that was larger than current blocks in meta\n", s[i].block)
-			}
-		}
-	}
+	m.Blocks.Delete(absent)
+	m.Blocks.Merge(present)
 	return nil
 }
 
@@ -263,11 +221,7 @@ type blockChange struct {
 // indexing.
 func (d *Data) aggregateBlockChanges(v dvid.VersionID, ch <-chan blockChange) {
 	ldm := make(map[uint64]blockDiffMap)
-	for {
-		change, more := <-ch
-		if !more {
-			break
-		}
+	for change := range ch {
 		for label, flag := range change.present {
 			bdm, found := ldm[label]
 			if !found {
@@ -314,18 +268,9 @@ type labelChange struct {
 // since these txs need to be across all concurrent requests so we shard label id to a particular goroutine.
 // This also allows us to efficiently cache the last N label Meta
 func (d *Data) indexLabels(ch <-chan labelChange) {
+	var err error
 	cache := MakeMetaCache(100)
-	store, err := d.GetOrderedKeyValueDB()
-	if err != nil {
-		dvid.Criticalf("Data %q merge had error initializing store: %v\n", d.DataName(), err)
-		return
-	}
-	for {
-		change, more := <-ch
-		if !more {
-			dvid.Infof("Closing index handler for data %q...\n", d.DataName())
-			return
-		}
+	for change := range ch {
 		ctx := datastore.NewVersionedCtx(d, change.v)
 
 		meta := cache.GetLabelMeta(change.label)
@@ -342,16 +287,12 @@ func (d *Data) indexLabels(ch <-chan labelChange) {
 		}
 		cache.AddLabelMeta(change.label, meta)
 
-		tk := NewLabelIndexTKey(change.label)
-		data, err := meta.MarshalBinary()
-		if err != nil {
-			dvid.Criticalf("Error trying to serialize meta for label %d, data %q: %v", change.label, d.DataName(), err)
+		if err := d.PutLabelMeta(ctx, change.label, meta); err != nil {
+			dvid.Criticalf("Error trying to store indexing for label %d, data %q: %v\n", change.label, d.DataName(), err)
 			continue
 		}
-		if err := store.Put(ctx, tk, data); err != nil {
-			dvid.Errorf("Unable to store change to label %d, data %s: %v\n", change.label, d.DataName(), err)
-		}
 	}
+	dvid.Infof("Closing index handler for data %q...\n", d.DataName())
 }
 
 type labelBlock struct {
@@ -640,10 +581,15 @@ func (d *Data) GetLabelMeta(ctx *datastore.VersionedCtx, lbls labels.Set, bounds
 	var voxels uint64
 	var blocks dvid.IZYXSlice
 	for label := range lbls {
-		val, err := store.Get(ctx, NewLabelIndexTKey(label))
+		compressed, err := store.Get(ctx, NewLabelIndexTKey(label))
 		if err != nil {
 			return nil, err
 		}
+		val, _, err := dvid.DeserializeData(compressed, true)
+		if err != nil {
+			return nil, err
+		}
+
 		// dvid.Infof("Retrieved label meta for label %d: %v\n", label, val)
 		var meta Meta
 		if len(val) != 0 {
@@ -656,7 +602,7 @@ func (d *Data) GetLabelMeta(ctx *datastore.VersionedCtx, lbls labels.Set, bounds
 				voxels = meta.Voxels
 			} else if len(meta.Blocks) > 0 {
 				voxels += meta.Voxels
-				blocks = blocks.Merge(meta.Blocks)
+				blocks.Merge(meta.Blocks)
 			}
 		}
 	}
@@ -671,6 +617,28 @@ func (d *Data) GetLabelMeta(ctx *datastore.VersionedCtx, lbls labels.Set, bounds
 	meta := Meta{Voxels: voxels, Blocks: blocks}
 	// dvid.Infof("Returning Meta for labels %s: %d blocks, %d voxels\n", lbls, len(meta.Blocks), meta.Voxels)
 	return &meta, nil
+}
+
+func (d *Data) PutLabelMeta(ctx *datastore.VersionedCtx, label uint64, meta *Meta) error {
+	store, err := d.GetOrderedKeyValueDB()
+	if err != nil {
+		return fmt.Errorf("Data %q PutLabelMeta had error initializing store: %v\n", d.DataName(), err)
+	}
+
+	tk := NewLabelIndexTKey(label)
+	serialization, err := meta.MarshalBinary()
+	if err != nil {
+		return fmt.Errorf("Error trying to serialize meta for label %d, data %q: %v", label, d.DataName(), err)
+	}
+	compressFormat, _ := dvid.NewCompression(dvid.LZ4, dvid.DefaultCompression)
+	compressed, err := dvid.SerializeData(serialization, compressFormat, dvid.NoChecksum)
+	if err != nil {
+		return fmt.Errorf("Error trying to LZ4 compress label %d indexing in data %q\n", label, d.DataName())
+	}
+	if err := store.Put(ctx, tk, compressed); err != nil {
+		return fmt.Errorf("Unable to store indices for label %d, data %s: %v\n", label, d.DataName(), err)
+	}
+	return nil
 }
 
 // WriteStreamingRLE does a streaming write of an encoded sparse volume given a label.
@@ -710,7 +678,7 @@ func (d *Data) WriteStreamingRLE(ctx *datastore.VersionedCtx, label uint64, boun
 	}
 	pbCh := make(chan *labels.PositionedBlock)
 	errCh := make(chan error)
-	go labels.WriteRLEs(lbls, w, pbCh, errCh)
+	go labels.WriteRLEs(lbls, w, pbCh, bounds, errCh)
 	for _, izyx := range indices {
 		tk := NewBlockTKeyByCoord(izyx)
 		data, err := store.Get(ctx, tk)
@@ -935,12 +903,12 @@ func (d *Data) getLegacyRLEs(ctx *datastore.VersionedCtx, meta *Meta, lbls label
 	indices := make(dvid.IZYXSlice, len(meta.Blocks))
 	totBlocks := 0
 	for _, izyx := range meta.Blocks {
-		if bounds.Block.BoundedX() || bounds.Block.BoundedY() {
-			blockX, blockY, _, err := izyx.Unpack()
+		if bounds.Block.BoundedX() || bounds.Block.BoundedY() || bounds.Block.BoundedZ() {
+			blockX, blockY, blockZ, err := izyx.Unpack()
 			if err != nil {
 				return nil, fmt.Errorf("Error decoding block %v: %v\n", izyx, err)
 			}
-			if bounds.Block.OutsideX(blockX) || bounds.Block.OutsideY(blockY) {
+			if bounds.Block.OutsideX(blockX) || bounds.Block.OutsideY(blockY) || bounds.Block.OutsideZ(blockZ) {
 				continue
 			}
 		}
@@ -958,7 +926,7 @@ func (d *Data) getLegacyRLEs(ctx *datastore.VersionedCtx, meta *Meta, lbls label
 	}
 	pbCh := make(chan *labels.PositionedBlock)
 	errCh := make(chan error)
-	go labels.WriteRLEs(lbls, buf, pbCh, errCh)
+	go labels.WriteRLEs(lbls, buf, pbCh, bounds, errCh)
 	for _, izyx := range indices {
 		tk := NewBlockTKeyByCoord(izyx)
 		data, err := store.Get(ctx, tk)

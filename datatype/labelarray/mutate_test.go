@@ -322,49 +322,47 @@ func TestSparseVolumes(t *testing.T) {
 		t.Errorf("HEAD on %s did not return 204 (No Content).  Status = %d\n", headReq, resp.Code)
 	}
 
-	// Commit this node and create branch for deletion testing.
-	if err := datastore.Commit(uuid, "base segmentation", nil); err != nil {
-		t.Errorf("Unable to lock root node %s: %v\n", uuid, err)
-	}
+	// // Commit this node and create branch for deletion testing.
+	// if err := datastore.Commit(uuid, "base segmentation", nil); err != nil {
+	// 	t.Errorf("Unable to lock root node %s: %v\n", uuid, err)
+	// }
 
-	/*
-		uuid2, err := datastore.NewVersion(uuid, "deletion test", nil)
-		if err != nil {
-			t.Fatalf("Unable to create new version off node %s: %v\n", uuid, err)
-		}
+	// uuid2, err := datastore.NewVersion(uuid, "deletion test", nil)
+	// if err != nil {
+	// 	t.Fatalf("Unable to create new version off node %s: %v\n", uuid, err)
+	// }
 
-		// Delete a few blocks -- TO BE SUPPORTED
-		delReq := fmt.Sprintf("%snode/%s/%s/blocks/0_1_1/2", server.WebAPIPath, uuid2, "labels")
-		server.TestHTTP(t, "DELETE", delReq, nil)
+	// // Delete a few blocks -- TO BE SUPPORTED
+	// delReq := fmt.Sprintf("%snode/%s/%s/blocks/0_1_1/2", server.WebAPIPath, uuid2, "labels")
+	// server.TestHTTP(t, "DELETE", delReq, nil)
 
-		if err := BlockOnUpdating(uuid, "bodies"); err != nil {
-			t.Fatalf("Error blocking on sync of labels -> bodies: %v\n", err)
-		}
+	// if err := BlockOnUpdating(uuid, "bodies"); err != nil {
+	// 	t.Fatalf("Error blocking on sync of labels -> bodies: %v\n", err)
+	// }
 
-		// Read those blocks to make sure they are gone.
-		reqStr := fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid2, "bodies", 2)
-		encoding := server.TestHTTP(t, "GET", reqStr, nil)
-		if !bodies[1].isDeleted(t, encoding, dvid.Span{1, 1, 0, 1}) {
-			t.Errorf("Expected RLEs to be deleted from label 2 deleted blocks.  Failed.\n")
-		}
-		reqStr = fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid2, "bodies", 1)
-		encoding = server.TestHTTP(t, "GET", reqStr, nil)
-		if !bodies[0].isDeleted(t, encoding, dvid.Span{1, 1, 0, 1}) {
-			t.Errorf("Expected RLEs to be deleted from label 1 deleted blocks.  Failed.\n")
-		}
+	// // Read those blocks to make sure they are gone.
+	// reqStr := fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid2, "bodies", 2)
+	// encoding := server.TestHTTP(t, "GET", reqStr, nil)
+	// if !bodies[1].isDeleted(t, encoding, dvid.Span{1, 1, 0, 1}) {
+	// 	t.Errorf("Expected RLEs to be deleted from label 2 deleted blocks.  Failed.\n")
+	// }
+	// reqStr = fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid2, "bodies", 1)
+	// encoding = server.TestHTTP(t, "GET", reqStr, nil)
+	// if !bodies[0].isDeleted(t, encoding, dvid.Span{1, 1, 0, 1}) {
+	// 	t.Errorf("Expected RLEs to be deleted from label 1 deleted blocks.  Failed.\n")
+	// }
 
-		// Make sure those blocks are still in the root uuid.
-		reqStr = fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid, "bodies", 2)
-		encoding = server.TestHTTP(t, "GET", reqStr, nil)
-		if bodies[1].isDeleted(t, encoding, dvid.Span{1, 1, 0, 1}) {
-			t.Errorf("Expected RLEs to be presented in label 2 root undeleted blocks.  Failed.\n")
-		}
-		reqStr = fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid, "bodies", 1)
-		encoding = server.TestHTTP(t, "GET", reqStr, nil)
-		if bodies[0].isDeleted(t, encoding, dvid.Span{1, 1, 0, 1}) {
-			t.Errorf("Expected RLEs to be presented in label 1 root undeleted blocks.  Failed.\n")
-		}
-	*/
+	// // Make sure those blocks are still in the root uuid.
+	// reqStr = fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid, "bodies", 2)
+	// encoding = server.TestHTTP(t, "GET", reqStr, nil)
+	// if bodies[1].isDeleted(t, encoding, dvid.Span{1, 1, 0, 1}) {
+	// 	t.Errorf("Expected RLEs to be presented in label 2 root undeleted blocks.  Failed.\n")
+	// }
+	// reqStr = fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid, "bodies", 1)
+	// encoding = server.TestHTTP(t, "GET", reqStr, nil)
+	// if bodies[0].isDeleted(t, encoding, dvid.Span{1, 1, 0, 1}) {
+	// 	t.Errorf("Expected RLEs to be presented in label 1 root undeleted blocks.  Failed.\n")
+	// }
 }
 
 /*

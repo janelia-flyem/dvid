@@ -75,7 +75,7 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp) error {
 
 		delta := labels.DeltaMerge{
 			MergeOp:      op,
-			Blocks:       targetMeta.Blocks.Merge(mergedMeta.Blocks),
+			Blocks:       targetMeta.Blocks.MergeCopy(mergedMeta.Blocks),
 			TargetVoxels: targetMeta.Voxels,
 			MergedVoxels: mergedMeta.Voxels,
 		}

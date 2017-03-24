@@ -47,8 +47,6 @@ func (d *Data) PutLabels(v dvid.VersionID, subvol *dvid.Subvolume, data []byte, 
 		return err
 	}
 
-	wg := new(sync.WaitGroup)
-
 	// Only do one request at a time, although each request can start many goroutines.
 	server.SpawnGoroutineMutex.Lock()
 	defer server.SpawnGoroutineMutex.Unlock()
@@ -85,6 +83,8 @@ func (d *Data) PutLabels(v dvid.VersionID, subvol *dvid.Subvolume, data []byte, 
 	mutID := d.NewMutationID()
 	fmt.Printf("Starting PutLabels, mutation %d\n", mutID)
 
+	wg := new(sync.WaitGroup)
+
 	blockCh := make(chan blockChange, 100)
 	go d.aggregateBlockChanges(v, blockCh)
 
@@ -92,6 +92,7 @@ func (d *Data) PutLabels(v dvid.VersionID, subvol *dvid.Subvolume, data []byte, 
 	for it, err := subvol.NewIndexZYXIterator(d.BlockSize()); err == nil && it.Valid(); it.NextSpan() {
 		i0, i1, err := it.IndexSpan()
 		if err != nil {
+			close(blockCh)
 			return err
 		}
 		ptBeg := i0.Duplicate().(dvid.ChunkIndexer)

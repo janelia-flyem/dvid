@@ -459,7 +459,7 @@ func (r rleBuffer) extend(yz yzString, pt dvid.Point3d) {
 //        int32   Length of run in X direction
 //
 // The offset is the DVID space offset to the first voxel in the Block.
-func WriteRLEs(lbls Set, w io.Writer, pbCh chan *PositionedBlock, errCh chan error) {
+func WriteRLEs(lbls Set, w io.Writer, pbCh chan *PositionedBlock, bounds dvid.Bounds, errCh chan error) {
 	var rleBuf rleBuffer
 	for pb := range pbCh {
 		dvid.Infof("-- New Block -- checking if labels %s are present\n", lbls)
@@ -483,119 +483,138 @@ func WriteRLEs(lbls Set, w io.Writer, pbCh chan *PositionedBlock, errCh chan err
 		if rleBuf.rles == nil { // first target-containing block
 			yzCap := pb.size[1] * pb.size[2]
 			rleBuf.rles = make(map[yzString]dvid.RLE, yzCap)
-			dvid.Infof("Initializing rle buffer...\n")
 		} else {
 			expected := rleBuf.coord
 			expected[0]++
 			if !expected.Equals(pb.Coord) {
-				dvid.Infof("Flushing rle buffer because expected block %s != cur block %s\n", expected, pb.Coord)
 				rleBuf.Flush(w)
 			}
 		}
-		if len(labelIndices) > 1 {
-			if err := pb.writeMultiLabelRLEs(labelIndices, w, &rleBuf); err != nil {
-				errCh <- err
-				return
-			}
-		} else {
-			for labelIndex := range labelIndices {
-				dvid.Infof("calling writeRLEs for label index %d...\n", labelIndex)
-				if err := pb.writeRLEs(labelIndex, w, &rleBuf); err != nil {
-					dvid.Infof("---> returned from writeRLE with err %v\n", err)
-					errCh <- err
-					return
-				}
-				break
-			}
+		if err := pb.writeRLEs(labelIndices, w, &rleBuf, bounds); err != nil {
+			errCh <- err
+			return
 		}
 		rleBuf.coord = pb.Coord
-		dvid.Infof("-- Finished Block %s, rle Buffer coord set to %s\n", pb.Coord, rleBuf.coord)
 	}
 
 	errCh <- nil
 }
 
-func (pb *PositionedBlock) writeRLEs(labelIndex uint32, w io.Writer, rleBuf *rleBuffer) error {
+func (pb *PositionedBlock) writeRLEs(indices map[uint32]struct{}, w io.Writer, rleBuf *rleBuffer, bounds dvid.Bounds) error {
 	offset := pb.OffsetDVID()
-	dvid.Infof("Starting writeRLEs on block %s, offset %s, label index %d\n", pb.Coord, offset, labelIndex)
+
+	var multiForeground bool
+	var labelIndex uint32
+	if len(indices) > 1 {
+		multiForeground = true
+	} else {
+		for labelIndex = range indices {
+			break
+		}
+	}
 
 	// Keep track of the bit position in each sub-blocks values byte slice so we can easily
 	// traverse the sub-blocks in block coordinates.
-	gx, gy, gz := pb.size[0]/SubBlockSize, pb.size[1]/SubBlockSize, pb.size[2]/SubBlockSize
-	bitpos := make([]int, gx*gy*gz)
+	gx, gy := pb.size[0]/SubBlockSize, pb.size[1]/SubBlockSize
 
-	for z := int32(0); z < pb.size[2]; z++ {
-		dvidz := z + offset[2]
+	minPt := offset
+	maxPt := dvid.Point3d{
+		offset[0] + pb.size[0] - 1,
+		offset[1] + pb.size[1] - 1,
+		offset[2] + pb.size[2] - 1,
+	}
+	if bounds.Exact && bounds.Voxel.IsSet() {
+		bounds.Voxel.Adjust(&minPt, &maxPt)
+	}
+
+	for vz := minPt[2]; vz <= maxPt[2]; vz++ {
+		z := vz - offset[2]
+		sbz := z % SubBlockSize
 		dsz := (z / SubBlockSize) * gy * gx
 
-		for y := int32(0); y < pb.size[1]; y++ {
-			dvidy := y + offset[1]
-			yz := getImmutableYZ(dvidy, dvidz)
+		for vy := minPt[1]; vy <= maxPt[1]; vy++ {
+			y := vy - offset[1]
+			sby := y % SubBlockSize
+			sbNumStart := dsz + (y/SubBlockSize)*gx
+			yz := getImmutableYZ(vy, vz)
 			rle, inRun := rleBuf.rles[yz]
 			// dvid.Infof("RLE buffer (%d,%d): rle %s, in run = %t\n", y, z, rle, inRun)
 
-			var sbNum int32
+			var sbNum int32 = -1
 			var numSBLabels uint16
 			var foreground, stepByVoxel bool
-			var bits int
-			var x, dx int32
+			var bitpos, bits int32
 			var sb SubBlock
+			var dx int32
+			vx := minPt[0]
 			for {
-				if x%SubBlockSize == 0 {
-					sbNum = dsz + (y/SubBlockSize)*gx + x/SubBlockSize
+				x := vx - offset[0]
+				// dvid.Infof("Now at block voxel (%d,%d,%d) -> dvid (%d,%d,%d)\n", x, y, z, vx, vy, vz)
+				sbNumCur := sbNumStart + x/SubBlockSize
+				if sbNum != sbNumCur {
+					sbNum = sbNumCur
 					sb = pb.SubBlocks[sbNum]
 					numSBLabels = uint16(len(sb.Index))
-					bits = int(bitsFor(numSBLabels))
+					bits = int32(bitsFor(numSBLabels))
 					switch numSBLabels {
 					case 0:
 						return fmt.Errorf("Sub-block with 0 labels detected: %s\n", pb.Coord)
 					case 1:
-						dx = SubBlockSize
-						foreground = (sb.Index[0] == labelIndex)
+						dx = SubBlockSize - x%SubBlockSize
+						if multiForeground {
+							_, foreground = indices[sb.Index[0]]
+						} else {
+							foreground = (sb.Index[0] == labelIndex)
+						}
 						stepByVoxel = false
 					default:
+						sbx := x % SubBlockSize
+						bitpos = (sbz*SubBlockSize*SubBlockSize + sby*SubBlockSize + sbx) * bits
 						dx = 1
 						stepByVoxel = true
 					}
-					// dvid.Infof("New sub-block %d: num labels %d, dx %d, step %t\n", sbNum, numSBLabels, dx, stepByVoxel)
+					// dvid.Infof("New sub-block %d @ (%d,%d,%d) : num labels %d, dx %d, step %t\n", sbNum, x, y, z, numSBLabels, dx, stepByVoxel)
 				}
 				if stepByVoxel {
 					var index uint16
-					bithead := bitpos[sbNum] % 8
-					bytepos := bitpos[sbNum] >> 3
+					bithead := bitpos % 8
+					bytepos := bitpos >> 3
 					if bithead+bits <= 8 {
 						// index totally within this byte
 						rightshift := uint(8 - bithead - bits)
+						// dvid.Infof("Voxel within byte: bitpos %d, bithead %d, bits %d\n", bitpos, bithead, bits)
 						index = uint16((sb.Values[bytepos] & leftBitMask[bithead]) >> rightshift)
-						// dvid.Infof("Voxel within byte: bitpos %d, bithead %d, bits %d, index %d\n", bitpos[sbNum], bithead, bits, index)
 					} else {
 						// index spans byte boundaries
+						// dvid.Infof("Voxel spans byte: bitpos %d, bithead %d, bits %d\n", bitpos, bithead, bits)
 						index = uint16(sb.Values[bytepos]&leftBitMask[bithead]) << 8
 						index |= uint16(sb.Values[bytepos+1])
 						index >>= uint(16 - bithead - bits)
-						// dvid.Infof("Voxel spans byte: bitpos %d, bithead %d, bits %d, index %d\n", bitpos[sbNum], bithead, bits, index)
 					}
-					bitpos[sbNum] += bits
-					foreground = (sb.Index[index] == labelIndex)
+					bitpos += bits
+					if multiForeground {
+						_, foreground = indices[sb.Index[index]]
+					} else {
+						foreground = (sb.Index[index] == labelIndex)
+					}
 				}
 				if foreground {
 					if inRun {
 						rle.Extend(dx)
 					} else {
-						rle = dvid.NewRLE(dvid.Point3d{x + offset[0], dvidy, dvidz}, dx)
+						rle = dvid.NewRLE(dvid.Point3d{vx, vy, vz}, dx)
 						inRun = true
 					}
 				} else if inRun {
-					// dvid.Infof("Writing rle %s after hitting background at (%d,%d,%d)", rle, x, y, z)
+					// dvid.Infof("Writing rle %s after hitting background at (%d,%d,%d)", rle, vx, vy, vz)
 					if _, err := rle.WriteTo(w); err != nil {
 						return err
 					}
 					inRun = false
 				}
-				x += dx
-				// dvid.Infof("Incremented voxel in block to (%d,%d,%d)\n", x, y, z)
-				if x >= pb.size[0] {
-					// dvid.Infof("---> breaking out of X run since %d >= %d\n", x, pb.size[0])
+				vx += dx
+				// dvid.Infof("Incremented voxel by %d in block to (%d,%d,%d) -> dvid (%d,%d,%d)\n", dx, vx-offset[0], y, z, vx, vy, vz)
+				if vx > maxPt[0] {
 					break
 				}
 			}
@@ -610,12 +629,6 @@ func (pb *PositionedBlock) writeRLEs(labelIndex uint32, w io.Writer, rleBuf *rle
 			// dvid.Infof("End of x loop = %d\n", x)
 		}
 	}
-	dvid.Infof("Finished writeRLE with %d entries in rle buffer\n", len(rleBuf.rles))
-	return nil
-}
-
-func (pb *PositionedBlock) writeMultiLabelRLEs(indices map[uint32]struct{}, w io.Writer, rleBuf *rleBuffer) error {
-
 	return nil
 }
 

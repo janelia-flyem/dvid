@@ -195,6 +195,44 @@ func (b *OptionalBounds) SetMaxZ(z int32) {
 	b.maxz = &z
 }
 
+// Adjust modifies the given minimum and maximum point to reflect additional
+// optional bounds.
+func (b *OptionalBounds) Adjust(minPt, maxPt *Point3d) {
+	if b == nil {
+		return
+	}
+	if b.minx != nil {
+		if *(b.minx) > (*minPt)[0] {
+			(*minPt)[0] = *(b.minx)
+		}
+	}
+	if b.maxx != nil {
+		if *(b.maxx) < (*maxPt)[0] {
+			(*maxPt)[0] = *(b.maxx)
+		}
+	}
+	if b.miny != nil {
+		if *(b.miny) > (*minPt)[1] {
+			(*minPt)[1] = *(b.miny)
+		}
+	}
+	if b.maxy != nil {
+		if *(b.maxy) < (*maxPt)[1] {
+			(*maxPt)[1] = *(b.maxy)
+		}
+	}
+	if b.minz != nil {
+		if *(b.minz) > (*minPt)[2] {
+			(*minPt)[2] = *(b.minz)
+		}
+	}
+	if b.maxz != nil {
+		if *(b.maxz) < (*maxPt)[2] {
+			(*maxPt)[2] = *(b.maxz)
+		}
+	}
+}
+
 func (b *OptionalBounds) MinX() (x int32, ok bool) {
 	if b == nil || b.minx == nil {
 		return
@@ -919,9 +957,63 @@ func (i *IZYXSlice) UnmarshalBinary(b []byte) error {
 	return nil
 }
 
-// Merge merges one sorted IZYXSlice into another.  Both IZYXSlices should be sorted
+// Delete removes the given sorted IZYXSlice from the receiver.
+func (i *IZYXSlice) Delete(i2 IZYXSlice) {
+	len1 := len(*i)
+	len2 := len(i2)
+	if len1 == 0 || len2 == 0 || (*i)[0] > i2[len2-1] || (*i)[len1-1] < i2[0] {
+		return
+	}
+	pos1 := 0
+	pos2 := 0
+	for {
+		if pos1 >= len1 || pos2 >= len2 {
+			break
+		}
+		switch {
+		case (*i)[pos1] == i2[pos2]:
+			*i = append((*i)[:pos1], (*i)[pos1+1:]...)
+			pos1++
+			pos2++
+			len1--
+		case (*i)[pos1] > i2[pos2]:
+			pos2++
+		case (*i)[pos1] < i2[pos2]:
+			pos1++
+		}
+	}
+	*i = (*i)[:len1]
+}
+
+// Merge merges the given sorted IZYXSlice into the receiver.
+func (i *IZYXSlice) Merge(i2 IZYXSlice) {
+	len1 := len(*i)
+	len2 := len(i2)
+	if len2 == 0 {
+		return
+	}
+	if len1 == 0 {
+		*i = make(IZYXSlice, len2)
+		copy(*i, i2)
+		return
+	}
+	if i2[0] > (*i)[len1-1] {
+		*i = append(*i, i2...)
+		return
+	}
+	if (*i)[0] > i2[len2-1] {
+		buf := make(IZYXSlice, len1+len2)
+		copy(buf[:len2], i2)
+		copy(buf[len2:], *i)
+		*i = buf
+		return
+	}
+	*i = (*i).MergeCopy(i2)
+}
+
+// MergeCopy returns a merge of two sorted IZYXSlice.  Both IZYXSlices should be sorted
 // before use of this function and the result is a copy not a reference.
-func (i IZYXSlice) Merge(i2 IZYXSlice) IZYXSlice {
+func (i IZYXSlice) MergeCopy(i2 IZYXSlice) IZYXSlice {
 	len1 := len(i)
 	len2 := len(i2)
 	if len1 == 0 {
@@ -935,17 +1027,13 @@ func (i IZYXSlice) Merge(i2 IZYXSlice) IZYXSlice {
 		return dup
 	}
 	out := make(IZYXSlice, len1+len2)
-	// Infof("Merging slice %s with %s...\n", i, i2)
+
 	n := 0
 	p1 := 0
 	p2 := 0
 	for {
-		// Infof("Merge p1 %d, p2 %d, b %d\n", p1, p2, n)
-		izyx1 := i[p1]
-		izyx2 := i2[p2]
-		switch {
-		case izyx1 < izyx2:
-			out[n] = izyx1
+		if i[p1] < i2[p2] {
+			out[n] = i[p1]
 			n++
 			p1++
 			if p1 == len1 {
@@ -953,8 +1041,8 @@ func (i IZYXSlice) Merge(i2 IZYXSlice) IZYXSlice {
 				n += len2 - p2
 				break
 			}
-		case izyx2 < izyx1:
-			out[n] = izyx2
+		} else if i2[p2] < i[p1] {
+			out[n] = i2[p2]
 			n++
 			p2++
 			if p2 == len2 {
@@ -962,8 +1050,8 @@ func (i IZYXSlice) Merge(i2 IZYXSlice) IZYXSlice {
 				n += len1 - p1
 				break
 			}
-		case izyx1 == izyx2:
-			out[n] = izyx1
+		} else if i[p1] == i2[p2] {
+			out[n] = i[p1]
 			n++
 			p1++
 			p2++

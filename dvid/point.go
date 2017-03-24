@@ -436,6 +436,15 @@ func (p *Point3d) SetMaximum(p2 Point3d) {
 	}
 }
 
+// Add3d returns the addition of a Point3d.
+func (p Point3d) Add3d(p2 Point3d) Point3d {
+	return Point3d{
+		p[0] + p2[0],
+		p[1] + p2[1],
+		p[2] + p2[2],
+	}
+}
+
 // --- Point interface support -----
 
 // NumDims returns the dimensionality of this point.
