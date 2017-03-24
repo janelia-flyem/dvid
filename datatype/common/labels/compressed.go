@@ -412,14 +412,13 @@ func (r rleBuffer) WriteTo(w io.Writer) (n int64, err error) {
 	return
 }
 
-// Flush sends all RLEs in buffer.
-func (r rleBuffer) Flush(w io.Writer) error {
+// sends all RLEs in buffer without clearing.
+func (r rleBuffer) flush(w io.Writer) error {
 	if len(r.rles) != 0 {
 		if _, err := r.WriteTo(w); err != nil {
 			return err
 		}
 	}
-	r.clear()
 	return nil
 }
 
@@ -427,17 +426,6 @@ func (r rleBuffer) clear() {
 	for yz := range r.rles {
 		delete(r.rles, yz)
 	}
-}
-
-func (r rleBuffer) flush(yz yzString, w io.Writer) error {
-	rle, found := r.rles[yz]
-	if found {
-		if _, err := rle.WriteTo(w); err != nil {
-			return err
-		}
-		delete(r.rles, yz)
-	}
-	return nil
 }
 
 func (r rleBuffer) extend(yz yzString, pt dvid.Point3d) {
@@ -462,7 +450,6 @@ func (r rleBuffer) extend(yz yzString, pt dvid.Point3d) {
 func WriteRLEs(lbls Set, w io.Writer, pbCh chan *PositionedBlock, bounds dvid.Bounds, errCh chan error) {
 	var rleBuf rleBuffer
 	for pb := range pbCh {
-		dvid.Infof("-- New Block -- checking if labels %s are present\n", lbls)
 		labelIndices := make(map[uint32]struct{})
 		var inBlock bool
 		for i, label := range pb.Labels {
@@ -475,7 +462,6 @@ func WriteRLEs(lbls Set, w io.Writer, pbCh chan *PositionedBlock, bounds dvid.Bo
 				}
 			}
 		}
-		dvid.Infof("Scanning block %s for labels %s.  In block = %t (%d block labels)\n", pb.Coord, lbls, inBlock, len(labelIndices))
 		if !inBlock {
 			continue
 		}
@@ -487,7 +473,8 @@ func WriteRLEs(lbls Set, w io.Writer, pbCh chan *PositionedBlock, bounds dvid.Bo
 			expected := rleBuf.coord
 			expected[0]++
 			if !expected.Equals(pb.Coord) {
-				rleBuf.Flush(w)
+				rleBuf.flush(w)
+				rleBuf.clear()
 			}
 		}
 		if err := pb.writeRLEs(labelIndices, w, &rleBuf, bounds); err != nil {
@@ -497,7 +484,7 @@ func WriteRLEs(lbls Set, w io.Writer, pbCh chan *PositionedBlock, bounds dvid.Bo
 		rleBuf.coord = pb.Coord
 	}
 
-	errCh <- nil
+	errCh <- rleBuf.flush(w)
 }
 
 func (pb *PositionedBlock) writeRLEs(indices map[uint32]struct{}, w io.Writer, rleBuf *rleBuffer, bounds dvid.Bounds) error {
@@ -612,8 +599,12 @@ func (pb *PositionedBlock) writeRLEs(indices map[uint32]struct{}, w io.Writer, r
 					}
 					inRun = false
 				}
+				// if foreground {
+				// 	dvid.Infof("Foreground voxel, stepped by %d: block coord (%d,%d,%d) -> dvid (%d,%d,%d)\n", dx, vx-offset[0], y, z, vx, vy, vz)
+				// } else {
+				// 	dvid.Infof("Background voxel, stepped by %d: block coord (%d,%d,%d) -> dvid (%d,%d,%d)\n", dx, vx-offset[0], y, z, vx, vy, vz)
+				// }
 				vx += dx
-				// dvid.Infof("Incremented voxel by %d in block to (%d,%d,%d) -> dvid (%d,%d,%d)\n", dx, vx-offset[0], y, z, vx, vy, vz)
 				if vx > maxPt[0] {
 					break
 				}

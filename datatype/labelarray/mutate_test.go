@@ -295,13 +295,17 @@ func TestSparseVolumes(t *testing.T) {
 
 		// Check Y/Z restriction
 		reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/%d?miny=30&maxy=50&minz=20&maxz=40", server.WebAPIPath, uuid, label)
-		encoding = server.TestHTTP(t, "GET", reqStr, nil)
-		var bound dvid.OptionalBounds
-		bound.SetMinY(30)
-		bound.SetMaxY(50)
-		bound.SetMinZ(20)
-		bound.SetMaxZ(40)
-		bodies[label-1].checkSparseVol(t, encoding, bound)
+		if label != 4 {
+			encoding = server.TestHTTP(t, "GET", reqStr, nil)
+			var bound dvid.OptionalBounds
+			bound.SetMinY(30)
+			bound.SetMaxY(50)
+			bound.SetMinZ(20)
+			bound.SetMaxZ(40)
+			bodies[label-1].checkSparseVol(t, encoding, bound)
+		} else {
+			server.TestBadHTTP(t, "GET", reqStr, nil) // Should be not found
+		}
 
 		// Check X restriction
 		minx := int32(20)
@@ -363,6 +367,102 @@ func TestSparseVolumes(t *testing.T) {
 	// if bodies[0].isDeleted(t, encoding, dvid.Span{1, 1, 0, 1}) {
 	// 	t.Errorf("Expected RLEs to be presented in label 1 root undeleted blocks.  Failed.\n")
 	// }
+}
+
+func TestSparseVolumes16x16x16(t *testing.T) {
+	datastore.OpenTest()
+	defer datastore.CloseTest()
+
+	// Create testbed volume and data instances
+	uuid, _ := initTestRepo()
+	var config dvid.Config
+	config.Set("BlockSize", "16,16,16") // Since RLE encoding spans blocks now, should work for smaller block size.
+	server.CreateTestInstance(t, uuid, "labelarray", "labels", config)
+	labelVol := createLabelTestVolume(t, uuid, "labels")
+
+	gotVol := newTestVolume(128, 128, 128)
+	gotVol.get(t, uuid, "labels")
+	if err := gotVol.equals(labelVol); err != nil {
+		t.Fatalf("Couldn't get back simple 128x128x128 label volume that was written: %v\n", err)
+	}
+
+	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
+		t.Fatalf("Error blocking on labels updating: %v\n", err)
+	}
+	time.Sleep(1 * time.Second)
+
+	for _, label := range []uint64{1, 2, 3, 4} {
+		// Check fast HEAD requests
+		reqStr := fmt.Sprintf("%snode/%s/labels/sparsevol/%d", server.WebAPIPath, uuid, label)
+		resp := server.TestHTTPResponse(t, "HEAD", reqStr, nil)
+		if resp.Code != http.StatusOK {
+			t.Errorf("HEAD on %s did not return OK.  Status = %d\n", reqStr, resp.Code)
+		}
+
+		// Check full sparse volumes
+		encoding := server.TestHTTP(t, "GET", reqStr, nil)
+		fmt.Printf("Got %d bytes back from %s\n", len(encoding), reqStr)
+		bodies[label-1].checkSparseVol(t, encoding, dvid.OptionalBounds{})
+
+		// Check with lz4 compression
+		compressed := server.TestHTTP(t, "GET", reqStr+"?compression=lz4", nil)
+		if err := lz4.Uncompress(compressed, encoding); err != nil {
+			t.Fatalf("error uncompressing lz4: %v\n", err)
+		}
+		bodies[label-1].checkSparseVol(t, encoding, dvid.OptionalBounds{})
+
+		// Check with gzip compression
+		compressed = server.TestHTTP(t, "GET", reqStr+"?compression=gzip", nil)
+		b := bytes.NewBuffer(compressed)
+		var err error
+		r, err := gzip.NewReader(b)
+		if err != nil {
+			t.Fatalf("error creating gzip reader: %v\n", err)
+		}
+		var buffer bytes.Buffer
+		_, err = io.Copy(&buffer, r)
+		if err != nil {
+			t.Fatalf("error copying gzip data: %v\n", err)
+		}
+		err = r.Close()
+		if err != nil {
+			t.Fatalf("error closing gzip: %v\n", err)
+		}
+		encoding = buffer.Bytes()
+		bodies[label-1].checkSparseVol(t, encoding, dvid.OptionalBounds{})
+
+		// Check Y/Z restriction
+		reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/%d?miny=30&maxy=50&minz=20&maxz=40", server.WebAPIPath, uuid, label)
+		if label != 4 {
+			encoding = server.TestHTTP(t, "GET", reqStr, nil)
+			var bound dvid.OptionalBounds
+			bound.SetMinY(30)
+			bound.SetMaxY(50)
+			bound.SetMinZ(20)
+			bound.SetMaxZ(40)
+			bodies[label-1].checkSparseVol(t, encoding, bound)
+		} else {
+			server.TestBadHTTP(t, "GET", reqStr, nil) // Should be not found
+		}
+
+		// Check X restriction
+		minx := int32(20)
+		maxx := int32(47)
+		reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/%d?minx=%d&maxx=%d", server.WebAPIPath, uuid, label, minx, maxx)
+		if label != 4 {
+			encoding = server.TestHTTP(t, "GET", reqStr, nil)
+			checkSpans(t, encoding, minx, maxx)
+		} else {
+			server.TestBadHTTP(t, "GET", reqStr, nil) // Should be not found
+		}
+	}
+
+	// Make sure non-existent bodies return proper HEAD responses.
+	headReq := fmt.Sprintf("%snode/%s/labels/sparsevol/%d", server.WebAPIPath, uuid, 10)
+	resp := server.TestHTTPResponse(t, "HEAD", headReq, nil)
+	if resp.Code != http.StatusNoContent {
+		t.Errorf("HEAD on %s did not return 204 (No Content).  Status = %d\n", headReq, resp.Code)
+	}
 }
 
 /*

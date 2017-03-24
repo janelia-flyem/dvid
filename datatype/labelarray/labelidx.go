@@ -590,7 +590,6 @@ func (d *Data) GetLabelMeta(ctx *datastore.VersionedCtx, lbls labels.Set, bounds
 			return nil, err
 		}
 
-		// dvid.Infof("Retrieved label meta for label %d: %v\n", label, val)
 		var meta Meta
 		if len(val) != 0 {
 			if err := meta.UnmarshalBinary(val); err != nil {
@@ -866,6 +865,10 @@ func (d *Data) getLegacySlowRLEs(ctx *datastore.VersionedCtx, meta *Meta, lbls l
 		close(sendCh[i])
 	}
 
+	if numRuns == 0 {
+		return nil, nil // Couldn't find this out until we did voxel-level clipping
+	}
+
 	serialization := buf.Bytes()
 	binary.LittleEndian.PutUint32(serialization[8:12], numRuns)
 	dvid.Infof("[%s] labels %v: found %d blocks, %d runs, buf %d bytes\n", ctx, lbls, numBlocks, numRuns, len(serialization))
@@ -901,6 +904,7 @@ func (d *Data) getLegacyRLEs(ctx *datastore.VersionedCtx, meta *Meta, lbls label
 	binary.Write(buf, binary.LittleEndian, uint32(0)) // Placeholder for # spans
 
 	indices := make(dvid.IZYXSlice, len(meta.Blocks))
+
 	totBlocks := 0
 	for _, izyx := range meta.Blocks {
 		if bounds.Block.BoundedX() || bounds.Block.BoundedY() || bounds.Block.BoundedZ() {
@@ -949,19 +953,20 @@ func (d *Data) getLegacyRLEs(ctx *datastore.VersionedCtx, meta *Meta, lbls label
 			Block: block,
 			Coord: chunkPt,
 		}
-		dvid.Infof("Sending labels %s block %s...\n", lbls, chunkPt)
 		pbCh <- &pb
 	}
 	close(pbCh)
-	dvid.Infof("Waiting for error from WriteRLEs...\n")
 	err = <-errCh
-	dvid.Infof("Got error %v\n", err)
 	if err != nil {
 		return nil, err
 	}
 
 	serialization := buf.Bytes()
 	numRuns := uint32(len(serialization)-12) >> 4
+	if numRuns == 0 {
+		return nil, nil // Couldn't find this out until we did voxel-level clipping
+	}
+
 	binary.LittleEndian.PutUint32(serialization[8:12], numRuns)
 	dvid.Infof("[%s] labels %v: found %d of %d blocks within bounds, %d runs, serialized %d bytes\n", ctx, lbls, totBlocks, len(meta.Blocks), numRuns, len(serialization))
 	return serialization, nil
