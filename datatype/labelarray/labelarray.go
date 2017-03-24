@@ -352,7 +352,9 @@ GET  <api URL>/node/<UUID>/<data name>/blocks/<size>/<offset>[?queryopts]
     Retrieves blocks corresponding to the extents specified by the size and offset.  The
     subvolume request must be block aligned.  This is the most server-efficient way of
     retrieving labelarray data, where data read from the underlying storage engine
-    is written directly to the HTTP connection.
+    is written directly to the HTTP connection.  The default compression returned is lz4,
+	which is the legacy compression format.  Make sure to match the compression format with
+	the actual compression chosen for the labelarray data instance (e.g., default "gzip").
 
     Example: 
 
@@ -365,13 +367,13 @@ GET  <api URL>/node/<UUID>/<data name>/blocks/<size>/<offset>[?queryopts]
 	so the returned data will be equal to or less than spanX blocks worth of data.  
 
     The returned data format has the following format where int32 is in little endian and the bytes of
-    block data have been compressed in LZ4 format.
+    block data have been compressed in the desired output format.
 
         int32  Block 1 coordinate X (Note that this may not be starting block coordinate if it is unset.)
         int32  Block 1 coordinate Y
         int32  Block 1 coordinate Z
         int32  # bytes for first block (N1)
-        byte0  Bytes of block data in LZ4-compressed format.
+        byte0  Bytes of block data in compressed format.
         byte1
         ...
         byteN1
@@ -380,7 +382,7 @@ GET  <api URL>/node/<UUID>/<data name>/blocks/<size>/<offset>[?queryopts]
         int32  Block 2 coordinate Y
         int32  Block 2 coordinate Z
         int32  # bytes for second block (N2)
-        byte0  Bytes of block data in LZ4-compressed format.
+        byte0  Bytes of block data in compressed format.
         byte1
         ...
         byteN2
@@ -398,7 +400,7 @@ GET  <api URL>/node/<UUID>/<data name>/blocks/<size>/<offset>[?queryopts]
 
     Query-string Options:
 
-    compression   Allows retrieval of block data in "lz4" (default) or "uncompressed".
+    compression   Allows retrieval of block data in "lz4" (default), "uncompressed", or "gzip" (native).
     throttle      If "true", makes sure only N compute-intense operation (all API calls that can be throttled) 
                     are handled.  If the server can't initiate the API call right away, a 503 (Service Unavailable) 
                     status code is returned.
@@ -907,9 +909,9 @@ func NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.
 	if _, found := c.Get("BlockSize"); !found {
 		c.Set("BlockSize", fmt.Sprintf("%d,%d,%d", DefaultBlockSize, DefaultBlockSize, DefaultBlockSize))
 	}
-	// if _, found := c.Get("Compression"); !found {
-	// 	c.Set("Compression", "gzip")
-	// }
+	if _, found := c.Get("Compression"); !found {
+		c.Set("Compression", "gzip")
+	}
 	imgblkData, err := dtype.Type.NewData(uuid, id, name, c)
 	if err != nil {
 		return nil, err
@@ -1304,14 +1306,83 @@ func (d *Data) addLabelZ(geom dvid.Geometry, data32 []uint8, stride int32) ([]by
 	return data64, nil
 }
 
-func sendBlockLZ4(w http.ResponseWriter, x, y, z int32, v []byte, compression string) error {
-	// Check internal format and see if it's valid with compression choice.
-	format, checksum := dvid.DecodeSerializationFormat(dvid.SerializationFormat(v[0]))
-	if (compression == "lz4" || compression == "") && format != dvid.LZ4 {
-		return fmt.Errorf("Expected internal block data to be LZ4, was %s instead.", format)
+func sendBlock(w http.ResponseWriter, x, y, z int32, v []byte, formatOut dvid.CompressionFormat) error {
+	// Uncompress then recompress if the saved compression != requested compression.
+	formatIn, checksum := dvid.DecodeSerializationFormat(dvid.SerializationFormat(v[0]))
+
+	var start int
+	if checksum == dvid.CRC32 {
+		start = 5
+	} else {
+		start = 1
 	}
 
-	// Send block coordinate and size of data.
+	var outsize int32
+	var out []byte
+
+	switch formatIn {
+	case dvid.LZ4:
+		outsize = int32(binary.LittleEndian.Uint32(v[start : start+4]))
+		out = v[start+4:]
+		if len(out) != int(outsize) {
+			return fmt.Errorf("block (%d,%d,%d) was corrupted lz4: supposed size %d but had %d bytes", x, y, z, outsize, len(out))
+		}
+	case dvid.Uncompressed, dvid.Gzip:
+		outsize = int32(len(v[start:]))
+		out = v[start:]
+	default:
+		return fmt.Errorf("labelarray data was stored in unknown compressed format: %s\n", formatIn)
+	}
+
+	// Need to do uncompression/recompression if we are changing compression
+	var err error
+	var uncompressed, recompressed []byte
+	if formatIn != formatOut {
+		switch formatIn {
+		case dvid.LZ4:
+			uncompressed = make([]byte, outsize)
+			if err := lz4.Uncompress(out, uncompressed); err != nil {
+				return err
+			}
+		case dvid.Uncompressed:
+			uncompressed = out
+		case dvid.Gzip:
+			gzipIn := bytes.NewBuffer(out)
+			zr, err := gzip.NewReader(gzipIn)
+			if err != nil {
+				return err
+			}
+			uncompressed, err = ioutil.ReadAll(zr)
+			if err != nil {
+				return err
+			}
+			zr.Close()
+		}
+
+		switch formatOut {
+		case dvid.LZ4:
+			recompressed = make([]byte, lz4.CompressBound(uncompressed))
+			var size int
+			if size, err = lz4.Compress(uncompressed, recompressed); err != nil {
+				return err
+			}
+			outsize = int32(size)
+			out = recompressed[:outsize]
+		case dvid.Uncompressed:
+			out = uncompressed
+		case dvid.Gzip:
+			var gzipOut bytes.Buffer
+			zw := gzip.NewWriter(&gzipOut)
+			if _, err = zw.Write(uncompressed); err != nil {
+				return err
+			}
+			zw.Flush()
+			zw.Close()
+			out = gzipOut.Bytes()
+		}
+	}
+
+	// Send block coordinate, size of data, then data
 	if err := binary.Write(w, binary.LittleEndian, x); err != nil {
 		return err
 	}
@@ -1321,34 +1392,14 @@ func sendBlockLZ4(w http.ResponseWriter, x, y, z int32, v []byte, compression st
 	if err := binary.Write(w, binary.LittleEndian, z); err != nil {
 		return err
 	}
-
-	start := 5
-	if checksum == dvid.CRC32 {
-		start += 4
-	}
-
-	// Do any adjustment of sent data based on compression request
-	var data []byte
-	if compression == "uncompressed" {
-		var err error
-		data, _, err = dvid.DeserializeData(v, true)
-		if err != nil {
-			return err
-		}
-	} else {
-		data = v[start:]
-	}
-	n := len(data)
-	if err := binary.Write(w, binary.LittleEndian, int32(n)); err != nil {
+	if err := binary.Write(w, binary.LittleEndian, outsize); err != nil {
 		return err
 	}
-
-	// Send data itself, skipping the first byte for internal format and next 4 for uncompressed length.
-	if written, err := w.Write(data); err != nil || written != n {
+	if written, err := w.Write(out); err != nil || written != int(outsize) {
 		if err != nil {
 			return err
 		}
-		return fmt.Errorf("could not write %d bytes of value: only %d bytes written", n, written)
+		return fmt.Errorf("could not write %d bytes of value: only %d bytes written", outsize, written)
 	}
 	return nil
 }
@@ -1357,8 +1408,16 @@ func sendBlockLZ4(w http.ResponseWriter, x, y, z int32, v []byte, compression st
 func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, subvol *dvid.Subvolume, compression string) error {
 	w.Header().Set("Content-type", "application/octet-stream")
 
-	if compression != "uncompressed" && compression != "lz4" && compression != "" {
-		return fmt.Errorf("don't understand 'compression' query string value: %s", compression)
+	var formatOut dvid.CompressionFormat
+	switch compression {
+	case "", "lz4":
+		formatOut = dvid.LZ4
+	case "gzip":
+		formatOut = dvid.Gzip
+	case "uncompressed":
+		formatOut = dvid.Uncompressed
+	default:
+		return fmt.Errorf(`compression must be "gzip", "lz4", or "uncompressed"`)
 	}
 
 	// convert x,y,z coordinates to block coordinates
@@ -1371,21 +1430,6 @@ func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, su
 	store, err := d.GetOrderedKeyValueDB()
 	if err != nil {
 		return fmt.Errorf("Data type labelarray had error initializing store: %v\n", err)
-	}
-
-	// if only one block is requested, avoid the range query
-	if blocksize.Value(0) == int32(1) && blocksize.Value(1) == int32(1) && blocksize.Value(2) == int32(1) {
-		indexBeg := dvid.IndexZYX(dvid.ChunkPoint3d{blockoffset.Value(0), blockoffset.Value(1), blockoffset.Value(2)})
-		keyBeg := NewBlockTKey(&indexBeg)
-
-		value, err := store.Get(ctx, keyBeg)
-		if err != nil {
-			return err
-		}
-		if len(value) > 0 {
-			return sendBlockLZ4(w, blockoffset.Value(0), blockoffset.Value(1), blockoffset.Value(2), value, compression)
-		}
-		return nil
 	}
 
 	// only do one request at a time, although each request can start many goroutines.
@@ -1429,7 +1473,7 @@ func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, su
 				if z != sz || y != sy || x < sx || x >= sx+int32(blocksize.Value(0)) {
 					return nil
 				}
-				if err := sendBlockLZ4(w, x, y, z, kv.V, compression); err != nil {
+				if err := sendBlock(w, x, y, z, kv.V, formatOut); err != nil {
 					return err
 				}
 				return nil
