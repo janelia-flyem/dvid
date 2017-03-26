@@ -22,6 +22,8 @@ var (
 	minz = flag.Int("minz", 0, "")
 	maxz = flag.Int("maxz", math.MaxInt32, "")
 
+	start = flag.String("start", "", "")
+
 	compression = flag.String("compress", "gzip", "")
 
 	roi = flag.String("roi", "", "")
@@ -48,6 +50,8 @@ Usage: dvid-transfer [options] host uuid name
 
 	-minz           =number   Starting Z slice to process.
 	-maxz           =number   Ending Z slice to process.
+
+	-start          =string   Fast-forward until this voxel coordinate in "x,y,z" format is within strip.
 
 	-dryrun         (flag)    Don't write files or send POST requests to DVID
 	-verbose        (flag)    Run in verbose mode.

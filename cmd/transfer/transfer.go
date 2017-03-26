@@ -107,6 +107,14 @@ func transferData(host, uuid, name string) {
 }
 
 func sendLabels(src, dst *LabelMetadata, name, srcURL string) {
+	var fastForward bool
+	var ffx, ffy, ffz int
+	if *start != "" {
+		if _, err := fmt.Sscanf(*start, "%d,%d,%d", &ffx, &ffy, &ffz); err != nil {
+			fmt.Printf("Can't parse -start coordinate %q: %v\n", *start, err)
+			os.Exit(1)
+		}
+	}
 	minIndex := src.Extended.MinIndex
 	maxIndex := src.Extended.MaxIndex
 	srcBlock := src.Extended.BlockSize
@@ -146,6 +154,19 @@ func sendLabels(src, dst *LabelMetadata, name, srcURL string) {
 					nx += (nx % 64)
 				}
 				if nx != 0 {
+					if fastForward {
+						if oz < ffz {
+							continue
+						} else if oz == ffz {
+							if oy < ffy {
+								continue
+							} else if oy == ffy {
+								if ox+nx < ffx {
+									continue
+								}
+							}
+						}
+					}
 					fmt.Printf("Sending strip of %d x %d x %d voxels @ offset (%d, %d, %d)\n", nx, ny, nz, ox, oy, oz)
 					sendStrip(name, srcURL, nx, ny, nz, ox, oy, oz)
 				}
