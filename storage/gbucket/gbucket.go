@@ -98,8 +98,9 @@ func parseConfig(config dvid.StoreConfig) (*GBucket, error) {
 		return nil, fmt.Errorf("%q setting must be a string (%v)", "bucket", v)
 	}
 	gb := &GBucket{
-		bname: bucket,
-		ctx:   context.Background(),
+		bname:          bucket,
+		ctx:            context.Background(),
+		activeRequests: make(chan interface{}, MAXCONNECTIONS),
 	}
 	return gb, nil
 }
@@ -158,10 +159,11 @@ func (e Engine) Delete(config dvid.StoreConfig) error {
 }
 
 type GBucket struct {
-	bname  string
-	bucket *api.BucketHandle
-	ctx    context.Context
-	client *api.Client
+	bname          string
+	bucket         *api.BucketHandle
+	activeRequests chan interface{}
+	ctx            context.Context
+	client         *api.Client
 }
 
 func (db *GBucket) String() string {
@@ -357,33 +359,51 @@ func (db *GBucket) getKeysInRange(ctx storage.Context, TkBeg, TkEnd storage.TKey
 
 // Get returns a value given a key.
 func (db *GBucket) Get(ctx storage.Context, tk storage.TKey) ([]byte, error) {
+	db.activeRequests <- nil
+	defer func() {
+		<-db.activeRequests
+	}()
 	if db == nil {
 		return nil, fmt.Errorf("Can't call Get() on nil GBucket")
 	}
 	if ctx == nil {
 		return nil, fmt.Errorf("Received nil context in Get()")
 	}
+
+	var currkey storage.Key
 	if ctx.Versioned() {
-		vctx, ok := ctx.(storage.VersionedCtx)
-		if !ok {
-			return nil, fmt.Errorf("Bad Get(): context is versioned but doesn't fulfill interface: %v", ctx)
+		data := ctx.(storage.VersionedCtx).Data()
+		rootversion, _ := data.RootVersionID()
+		contextversion := ctx.VersionID()
+
+		if !data.Versioned() {
+			// construct key from root
+			newctx := storage.NewDataContext(data, rootversion)
+			currkey = newctx.ConstructKey(tk)
+
+		} else {
+			if rootversion != contextversion {
+				// grab all keys within versioned range
+				keys, _ := db.getKeysInRange(ctx, tk, tk)
+				if len(keys) == 0 {
+					return nil, nil
+				}
+				currkey = keys[0]
+			} else {
+				// construct key from root
+				newctx := storage.NewDataContext(data, rootversion)
+				currkey = newctx.ConstructKey(tk)
+			}
 		}
 
-		// Get all versions of this key and return the most recent
-		v, err := db.getSingleVersionedKey(vctx, tk)
-		if err != nil {
-			return nil, err
-		}
-
-		storage.StoreValueBytesRead <- len(v)
-		return v, err
 	} else {
-		key := ctx.ConstructKey(tk)
-		v, err := db.getV(key)
-		storage.StoreValueBytesRead <- len(v)
-		return v, err
+		currkey = ctx.ConstructKey(tk)
 	}
 
+	// retrieve value, if error, return as not found
+	val, _ := db.getV(currkey)
+	storage.StoreValueBytesRead <- len(val)
+	return val, nil
 }
 
 // KeysInRange returns a range of type-specific key components spanning (TkBeg, TkEnd).
@@ -562,6 +582,10 @@ func (db *GBucket) RawRangeQuery(kStart, kEnd storage.Key, keysOnly bool, out ch
 
 // Put writes a value with given key in a possibly versioned context.
 func (db *GBucket) Put(ctx storage.Context, tkey storage.TKey, value []byte) error {
+	db.activeRequests <- nil
+	defer func() {
+		<-db.activeRequests
+	}()
 	// use buffer interface
 	buffer := db.NewBuffer(ctx)
 
@@ -580,6 +604,10 @@ func (db *GBucket) Put(ctx storage.Context, tkey storage.TKey, value []byte) err
 // RawPut is a low-level function that puts a key-value pair using full keys.
 // This can be used in conjunction with RawRangeQuery.
 func (db *GBucket) RawPut(k storage.Key, v []byte) error {
+	db.activeRequests <- nil
+	defer func() {
+		<-db.activeRequests
+	}()
 	// make dummy context for buffer interface
 	ctx := storage.NewMetadataContext()
 

@@ -17,6 +17,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/roi"
@@ -210,6 +211,59 @@ GET  <api URL>/node/<UUID>/<data name>/isotropic/<dims>/<size>/<offset>[/<format
     throttle      Only works for 3d data requests.  If "true", makes sure only N compute-intense operation 
                     (all API calls that can be throttled) are handled.  If the server can't initiate the API 
                     call right away, a 503 (Service Unavailable) status code is returned.
+
+GET  <api URL>/node/<UUID>/<data name>/specificblocks[?queryopts]
+
+    Retrieves blocks corresponding to those specified in the query string.  This interface
+    is useful if the blocks retrieved are not consecutive or if the backend in non ordered.
+
+    Note: this interface only works when compressed a JPEG or if using 'uncompressed' compression.
+
+    Example: 
+
+    GET <api URL>/node/3f8c/grayscale/specificblocks?blocks=x1,y1,z2,x2,y2,z2,x3,y3,z3
+	
+	This will fetch blocks at position (x1,y1,z1), (x2,y2,z2), and (x3,y3,z3).
+	The returned byte stream has a list of blocks with a leading block 
+	coordinate (3 x int32) plus int32 giving the # of bytes in this block, and  then the 
+	bytes for the value.  If blocks are unset within the span, they will not appear in the stream,
+	so the returned data will be equal to or less than spanX blocks worth of data.  
+
+    The returned data format has the following format where int32 is in little endian and the bytes of
+    block data have been compressed in JPEG format.
+
+        int32  Block 1 coordinate X (Note that this may not be starting block coordinate if it is unset.)
+        int32  Block 1 coordinate Y
+        int32  Block 1 coordinate Z
+        int32  # bytes for first block (N1)
+        byte0  Bytes of block data in jpeg-compressed format.
+        byte1
+        ...
+        byteN1
+
+        int32  Block 2 coordinate X
+        int32  Block 2 coordinate Y
+        int32  Block 2 coordinate Z
+        int32  # bytes for second block (N2)
+        byte0  Bytes of block data in jpeg-compressed format.
+        byte1
+        ...
+        byteN2
+
+        ...
+
+    If no data is available for given block span, nothing is returned.
+
+    Arguments:
+
+    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    data name     Name of data to add.
+
+    Query-string Options:
+
+    compression   Allows retrieval of block data in "jpeg" (default) or "uncompressed".
+    blocks	  x,y,z... block string
+    prefetch	  ("on" or "true") Do not actually send data, non-blocking (default "off")
 
 
 GET  <api URL>/node/<UUID>/<data name>/subvolblocks/<size>/<offset>[?queryopts]
@@ -1475,6 +1529,88 @@ func sendBlockJPEG(w http.ResponseWriter, x, y, z int32, v []byte, compression s
 	return nil
 }
 
+// SendBlocksSpecific writes data to the blocks specified -- best for non-ordered backend
+func (d *Data) SendBlocksSpecific(ctx *datastore.VersionedCtx, w http.ResponseWriter, compression string, blockstring string, isprefetch bool) error {
+	w.Header().Set("Content-type", "application/octet-stream")
+
+	if compression != "uncompressed" && compression != "jpeg" && compression != "" {
+		return fmt.Errorf("don't understand 'compression' query string value: %s", compression)
+	}
+	timedLog := dvid.NewTimeLog()
+	defer timedLog.Infof("SendBlocks Specific ")
+
+	// extract querey string
+	if blockstring == "" {
+		return nil
+	}
+	coordarray := strings.Split(blockstring, ",")
+	if len(coordarray)%3 != 0 {
+		return fmt.Errorf("block query string should be three coordinates per block")
+	}
+
+	// make a finished queue
+	finishedRequests := make(chan error, len(coordarray)/3)
+	var mutex sync.Mutex
+
+	// get store
+	store, err := d.GetKeyValueDB()
+	if err != nil {
+		return fmt.Errorf("Data type labelblk had error initializing store: %v\n", err)
+	}
+
+	// iterate through each block and query
+	for i := 0; i < len(coordarray); i += 3 {
+		xloc, err := strconv.Atoi(coordarray[i])
+		if err != nil {
+			return err
+		}
+		yloc, err := strconv.Atoi(coordarray[i+1])
+		if err != nil {
+			return err
+		}
+		zloc, err := strconv.Atoi(coordarray[i+2])
+		if err != nil {
+			return err
+		}
+
+		go func(xloc, yloc, zloc int32, isprefetch bool, finishedRequests chan error, store storage.KeyValueDB) {
+			var err error
+			if !isprefetch {
+				defer func() {
+					finishedRequests <- err
+				}()
+			}
+			indexBeg := dvid.IndexZYX(dvid.ChunkPoint3d{xloc, yloc, zloc})
+			keyBeg := NewTKey(&indexBeg)
+
+			value, err := store.Get(ctx, keyBeg)
+			if err != nil {
+				return
+			}
+			if len(value) > 0 {
+				if !isprefetch {
+					// lock shared resource
+					mutex.Lock()
+					defer mutex.Unlock()
+					sendBlockJPEG(w, xloc, yloc, zloc, value, compression)
+				}
+			}
+		}(int32(xloc), int32(yloc), int32(zloc), isprefetch, finishedRequests, store)
+	}
+
+	if !isprefetch {
+		// wait for everything to finish if not prefetching
+		for i := 0; i < len(coordarray); i += 3 {
+			errjob := <-finishedRequests
+			if errjob != nil {
+				err = errjob
+			}
+		}
+	}
+
+	return err
+}
+
 // GetBlocks returns a slice of bytes corresponding to all the blocks along a span in X
 func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, subvol *dvid.Subvolume, compression string) error {
 	w.Header().Set("Content-type", "application/octet-stream")
@@ -1731,6 +1867,26 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		// GET <api URL>/node/<UUID>/<data name>/rawkey?x=<block x>&y=<block y>&z=<block z>
 		if len(parts) != 4 {
 			server.BadRequest(w, r, "rawkey endpoint should be followed by query strings (x, y, and z) giving block coord")
+			return
+		}
+
+	case "specificblocks":
+		// GET <api URL>/node/<UUID>/<data name>/specificblocks?compression=&prefetch=false&blocks=x,y,z,x,y,z...
+		compression := queryStrings.Get("compression")
+		blocklist := queryStrings.Get("blocks")
+		isprefetch := false
+		if prefetch := queryStrings.Get("prefetch"); prefetch == "on" || prefetch == "true" {
+			isprefetch = true
+		}
+
+		if action == "get" {
+			if err := d.SendBlocksSpecific(ctx, w, compression, blocklist, isprefetch); err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+			timedLog.Infof("HTTP %s: %s", r.Method, r.URL)
+		} else {
+			server.BadRequest(w, r, "DVID does not accept the %s action on the 'specificblocks' endpoint", action)
 			return
 		}
 
