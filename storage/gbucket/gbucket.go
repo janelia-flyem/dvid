@@ -1222,6 +1222,10 @@ func (db *goBuffer) processGetLocal(ctx storage.Context, tkey storage.TKey, op *
 	db.mutex.Lock()
 	defer db.mutex.Unlock()
 
+	if op != nil && op.Wg != nil {
+		op.Wg.Add(1)
+	}
+
 	tkv := storage.TKeyValue{tkey, val}
 	chunk := &storage.Chunk{op, &tkv}
 
