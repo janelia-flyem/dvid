@@ -231,20 +231,20 @@ else ()
         COMMENT     "Generating extra DVID code before building main executable...")
 
     # Build DVID with chosen backend
-    add_custom_target (dvid-exe
+    add_custom_target (dvid
         ${BUILDEM_ENV_STRING} ${GO_ENV} ${CGO_FLAGS} go build -o ${BUILDEM_BIN_DIR}/dvid 
         -v -tags '${DVID_BACKEND}' cmd/dvid/main.go 
         WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
-        DEPENDS     ${DVID_BACKEND_DEPEND} ${DVID_DEP_GO_PACKAGES} dvid-code-gen
+        DEPENDS     ${DVID_BACKEND_DEPEND} ${DVID_DEP_GO_PACKAGES} dvid-code-gen dvid-backup dvid-transfer
         COMMENT     "Compiling and installing dvid executable...")
 
-    # Build DVID with embedded console 
-    add_custom_target (dvid
-        ${BUILDEM_ENV_STRING} nrsc ${BUILDEM_BIN_DIR}/dvid dvid-console
-        WORKING_DIRECTORY   ${BUILDEM_DIR}/src
-        DEPENDS     dvid-exe nrsc dvid-console dvid-backup dvid-transfer
-        COMMENT     "Adding embedded console into dvid executable..."
-    )
+    # # Build DVID with embedded console 
+    # add_custom_target (dvid
+    #     ${BUILDEM_ENV_STRING} nrsc ${BUILDEM_BIN_DIR}/dvid dvid-console
+    #     WORKING_DIRECTORY   ${BUILDEM_DIR}/src
+    #     DEPENDS     dvid-exe nrsc dvid-console dvid-backup dvid-transfer
+    #     COMMENT     "Adding embedded console into dvid executable..."
+    # )
 
     set (DVID_PACKAGES ${DVID_GO}/dvid ${DVID_GO}/storage/... ${DVID_GO}/datastore ${DVID_GO}/server
                        ${DVID_GO}/datatype/... ${DVID_GO}/tests_integration)
