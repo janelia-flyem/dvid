@@ -17,7 +17,7 @@ dependencies:
     - cd $GOPATH/src/github.com/janelia-flyem/dvid/build && cmake -D BUILDEM_DIR=$BUILDEM_DIR ..
     - cd $GOPATH/src/github.com/janelia-flyem/dvid/build && make
     - cd $GOPATH/src/github.com/janelia-flyem/dvid/build && cmake -D BUILDEM_DIR=$BUILDEM_DIR ..
-    - cd $GOPATH/src/github.com/janelia-flyem/dvid/build && make VERBOSE=1 dvid-exe
+    - cd $GOPATH/src/github.com/janelia-flyem/dvid/build && make VERBOSE=1 dvid
 
 test:
   override:
