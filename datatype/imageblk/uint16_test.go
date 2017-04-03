@@ -14,14 +14,14 @@ import (
 )
 
 var (
-	floatimgT datastore.TypeService
+	uint16imgT datastore.TypeService
 )
 
-func newFloatVolume(t *testing.T, offset, size dvid.Point3d) *testVolume {
+func newUint16Volume(t *testing.T, offset, size dvid.Point3d) *testVolume {
 	var buf bytes.Buffer
 	for i := int64(0); i < size.Prod(); i++ {
-		if err := binary.Write(&buf, binary.LittleEndian, float32(i)); err != nil {
-			t.Fatalf("couldn't write to float volume: %v\n", err)
+		if err := binary.Write(&buf, binary.LittleEndian, uint16(i)); err != nil {
+			t.Fatalf("couldn't write to volume: %v\n", err)
 		}
 	}
 	return &testVolume{
@@ -31,24 +31,24 @@ func newFloatVolume(t *testing.T, offset, size dvid.Point3d) *testVolume {
 	}
 }
 
-func createFloatTestVolume(t *testing.T, uuid dvid.UUID, name string, offset, size dvid.Point3d) *testVolume {
-	volume := newFloatVolume(t, offset, size)
+func createUint16TestVolume(t *testing.T, uuid dvid.UUID, name string, offset, size dvid.Point3d) *testVolume {
+	volume := newUint16Volume(t, offset, size)
 
 	// Send data over HTTP to populate a data instance
 	volume.put(t, uuid, name)
 	return volume
 }
 
-func TestFloatInstanceCreation(t *testing.T) {
+func TestUint16InstanceCreation(t *testing.T) {
 	datastore.OpenTest()
 	defer datastore.CloseTest()
 
 	uuid, _ := datastore.NewTestRepo()
 
 	// Create new voxels instance with optional parameters
-	name := "weights"
+	name := "tester"
 	metadata := fmt.Sprintf(`{
-		"typename": "float32blk",
+		"typename": "uint16blk",
 		"dataname": %q,
 		"blocksize": "64,43,28",
 		"VoxelSize": "13.1, 14.2, 15.3",
@@ -77,7 +77,7 @@ func TestFloatInstanceCreation(t *testing.T) {
 		t.Errorf("Parsed new instance has unexpected name: %s != %s (expected)\n",
 			parsed.Base.Name, name)
 	}
-	if parsed.Base.TypeName != "float32blk" {
+	if parsed.Base.TypeName != "uint16blk" {
 		t.Errorf("Parsed new instance has unexpected type name: %s != uint8blk (expected)\n",
 			parsed.Base.TypeName)
 	}
@@ -98,46 +98,46 @@ func TestFloatInstanceCreation(t *testing.T) {
 	}
 }
 
-func TestFloatDirectCalls(t *testing.T) {
+func TestUint16DirectCalls(t *testing.T) {
 	datastore.OpenTest()
 	defer datastore.CloseTest()
 
 	uuid, versionID := initTestRepo()
 
-	server.CreateTestInstance(t, uuid, "float32blk", "floatimg", dvid.Config{})
-	dataservice, err := datastore.GetDataByUUIDName(uuid, "floatimg")
+	server.CreateTestInstance(t, uuid, "uint16blk", "uint16img", dvid.Config{})
+	dataservice, err := datastore.GetDataByUUIDName(uuid, "uint16img")
 	if err != nil {
 		t.Fatal(err)
 	}
-	floatimg, ok := dataservice.(*Data)
+	uint16img, ok := dataservice.(*Data)
 	if !ok {
 		t.Fatalf("Can't convert dataservice %v into imageblk.Data\n", dataservice)
 	}
-	ctx := datastore.NewVersionedCtx(floatimg, versionID)
+	ctx := datastore.NewVersionedCtx(uint16img, versionID)
 
 	// Create a block-aligned 8-bit grayscale image
 	offset := dvid.Point3d{512, 32, 1024}
 	size := dvid.Point3d{128, 96, 64}
 	subvol := dvid.NewSubvolume(offset, size)
-	testvol := createFloatTestVolume(t, uuid, "floatimg", offset, size)
+	testvol := createUint16TestVolume(t, uuid, "uint16img", offset, size)
 	origData := make([]byte, len(testvol.data))
 	copy(origData, testvol.data)
 
 	// Store it into datastore at root
-	v, err := floatimg.NewVoxels(subvol, testvol.data)
+	v, err := uint16img.NewVoxels(subvol, testvol.data)
 	if err != nil {
-		t.Fatalf("Unable to make new floatimg voxels: %v\n", err)
+		t.Fatalf("Unable to make new uintimg voxels: %v\n", err)
 	}
-	if err = floatimg.IngestVoxels(versionID, 1, v, ""); err != nil {
+	if err = uint16img.IngestVoxels(versionID, 1, v, ""); err != nil {
 		t.Errorf("Unable to put voxels for %s: %v\n", ctx, err)
 	}
 
 	// Read the stored image
-	v2, err := floatimg.NewVoxels(subvol, nil)
+	v2, err := uint16img.NewVoxels(subvol, nil)
 	if err != nil {
 		t.Errorf("Unable to make new grayscale ExtHandler: %v\n", err)
 	}
-	if err = floatimg.GetVoxels(versionID, v2, ""); err != nil {
+	if err = uint16img.GetVoxels(versionID, v2, ""); err != nil {
 		t.Errorf("Unable to get voxels for %s: %v\n", ctx, err)
 	}
 
@@ -171,7 +171,7 @@ func TestFloatDirectCalls(t *testing.T) {
 	}
 }
 
-func TestFloat32RepoPersistence(t *testing.T) {
+func TestUint16RepoPersistence(t *testing.T) {
 	datastore.OpenTest()
 	defer datastore.CloseTest()
 
@@ -182,31 +182,31 @@ func TestFloat32RepoPersistence(t *testing.T) {
 	config.Set("BlockSize", "12,13,14")
 	config.Set("VoxelSize", "1.1,2.8,11")
 	config.Set("VoxelUnits", "microns,millimeters,nanometers")
-	dataservice, err := datastore.NewData(uuid, floatimgT, "floatimg", config)
+	dataservice, err := datastore.NewData(uuid, uint16imgT, "uint16img", config)
 	if err != nil {
-		t.Errorf("Unable to create float32 instance: %s\n", err)
+		t.Errorf("Unable to create uint16 instance: %s\n", err)
 	}
-	floatimg, ok := dataservice.(*Data)
+	uint16img, ok := dataservice.(*Data)
 	if !ok {
-		t.Errorf("Can't cast float32 data service into Data\n")
+		t.Errorf("Can't cast uint16 data service into Data\n")
 	}
-	oldData := *floatimg
+	oldData := *uint16img
 
 	// Restart test datastore and see if datasets are still there.
-	if err = datastore.SaveDataByUUID(uuid, floatimg); err != nil {
-		t.Fatalf("Unable to save repo during floatimg persistence test: %v\n", err)
+	if err = datastore.SaveDataByUUID(uuid, uint16img); err != nil {
+		t.Fatalf("Unable to save repo during uint16img persistence test: %v\n", err)
 	}
 	datastore.CloseReopenTest()
 
-	dataservice2, err := datastore.GetDataByUUIDName(uuid, "floatimg")
+	dataservice2, err := datastore.GetDataByUUIDName(uuid, "uint16img")
 	if err != nil {
-		t.Fatalf("Can't get floatimg instance from reloaded test db: %v\n", err)
+		t.Fatalf("Can't get uint16img instance from reloaded test db: %v\n", err)
 	}
-	floatimg2, ok := dataservice2.(*Data)
+	uint16img2, ok := dataservice2.(*Data)
 	if !ok {
 		t.Errorf("Returned new data instance 2 is not imageblk.Data\n")
 	}
-	if !oldData.Equals(floatimg2) {
-		t.Errorf("Expected %v, got %v\n", oldData, *floatimg2)
+	if !oldData.Equals(uint16img2) {
+		t.Errorf("Expected %v, got %v\n", oldData, *uint16img2)
 	}
 }

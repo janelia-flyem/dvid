@@ -38,12 +38,38 @@ func initTestRepo() (dvid.UUID, dvid.VersionID) {
 		if err != nil {
 			log.Fatalf("Can't get float32blk type: %s\n", err)
 		}
+		uint16imgT, err = datastore.TypeServiceByName("uint16blk")
+		if err != nil {
+			log.Fatalf("Can't get uint16blk type: %s\n", err)
+		}
+		// uint32imgT, err = datastore.TypeServiceByName("uint32blk")
+		// if err != nil {
+		// 	log.Fatalf("Can't get uint32blk type: %s\n", err)
+		// }
+		// uint64imgT, err = datastore.TypeServiceByName("uint64blk")
+		// if err != nil {
+		// 	log.Fatalf("Can't get uint64blk type: %s\n", err)
+		// }
 		roiT, err = datastore.TypeServiceByName("roi")
 		if err != nil {
 			log.Fatalf("Can't get ROI type: %s\n", err)
 		}
 	}
 	return datastore.NewTestRepo()
+}
+
+// A slice of bytes representing a 3d float32 volume
+type testVolume struct {
+	data   []byte
+	offset dvid.Point3d
+	size   dvid.Point3d
+}
+
+// Put label data into given data instance.
+func (v *testVolume) put(t *testing.T, uuid dvid.UUID, name string) {
+	apiStr := fmt.Sprintf("%snode/%s/%s/raw/0_1_2/%d_%d_%d/%d_%d_%d?mutate=true", server.WebAPIPath,
+		uuid, name, v.size[0], v.size[1], v.size[2], v.offset[0], v.offset[1], v.offset[2])
+	server.TestHTTP(t, "POST", apiStr, bytes.NewBuffer(v.data))
 }
 
 // Data from which to construct repeatable 3d images where adjacent voxels have different values.
