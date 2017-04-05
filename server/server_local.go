@@ -121,6 +121,7 @@ type serverConfig struct {
 	RPCAddress  string
 	WebClient   string
 	AllowTiming bool
+	Note        string
 
 	IIDGen   string `toml:"instance_id_gen"`
 	IIDStart uint32 `toml:"instance_id_start"`

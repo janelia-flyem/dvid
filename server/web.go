@@ -106,6 +106,10 @@ const WebHelp = `
 
 	Returns JSON for server properties.
 
+ GET  /api/server/note 
+
+    Returns any value of [server.note] from the configuration TOML.
+
  GET  /api/server/types
 
 	Returns JSON with the datatypes of currently stored data instances.  Datatypes are represented
@@ -517,6 +521,8 @@ func initRoutes() {
 
 	mainMux.Get("/api/server/info", serverInfoHandler)
 	mainMux.Get("/api/server/info/", serverInfoHandler)
+	mainMux.Get("/api/server/note", serverNoteHandler)
+	mainMux.Get("/api/server/note/", serverNoteHandler)
 	mainMux.Get("/api/server/types", serverTypesHandler)
 	mainMux.Get("/api/server/types/", serverTypesHandler)
 	mainMux.Get("/api/server/compiled-types", serverCompiledTypesHandler)
@@ -930,6 +936,11 @@ func serverInfoHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, jsonStr)
+}
+
+func serverNoteHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain")
+	fmt.Fprintf(w, tc.Server.Note)
 }
 
 func serverTypesHandler(w http.ResponseWriter, r *http.Request) {
