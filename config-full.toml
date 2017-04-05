@@ -10,7 +10,10 @@ webClient = "/path/to/webclient"
 # to return Timing-Allow-Origin headers in response
 # allowTiming = true
 
-note = "you can put anything you want in here and have it available via /api/server/note"
+note = """
+You can put anything you want in here and have it available via /api/server/note.
+Multiple lines!
+"""
 
 # How new data instance ids are generated.
 # Is one of "random" or "sequential".  If "sequential" can set "start_instance_id" property.
