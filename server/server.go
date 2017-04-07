@@ -218,6 +218,12 @@ func AboutJSON() (jsonStr string, err error) {
 		"Server time":       time.Now().String(),
 		"Server uptime":     time.Since(startupTime).String(),
 	}
+	if readonly {
+		data["Mode"] = "read only"
+	}
+	if fullwrite {
+		data["Mode"] = "allow writes on committed nodes"
+	}
 	m, err := json.Marshal(data)
 	if err != nil {
 		return
