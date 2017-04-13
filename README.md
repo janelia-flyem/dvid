@@ -19,7 +19,7 @@ visualization efforts.  It's goal is to provide:
 * The ability to use a variety of storage systems by either creating a data type for that system or using a storage engine, currently limited to ordered key/value databases.
 * A framework for thinking of distribution and versioning of data similar to distributed version 
 control systems like [git](http://git-scm.com).
-* A stable science-driven API that can be implemented either by native DVID data types and storage engines or by proxying to other connectomics services like Google BrainMaps or OpenConnectome.
+* A stable science-driven API that can be implemented either by native DVID data types and storage engines or by proxying to other connectomics services like Google BrainMaps, BOSS, etc.
 
 DVID aspires to be a "github for large image-oriented data" because each DVID
 server can manage multiple repositories, each of which contains an image-oriented repo
@@ -29,7 +29,7 @@ with a github-like web client + server that can push/pull data to a collaborator
 Although DVID is easily extensible by adding custom *data types*, each of which fulfill a
 minimal interface (e.g., HTTP request handling), DVID's initial focus is on efficiently handling data essential for Janelia's connectomics research:
 
-* image and 64-bit label 3d volumes
+* image and 64-bit label 3d volumes, including multiscale support
 * 2d images in XY, XZ, YZ, and arbitrary orientation
 * multiscale 2d images in XY, XZ, and YZ, similar to quadtrees
 * sparse volumes, corresponding to each unique label in a volume, that can be merged or split
@@ -45,14 +45,20 @@ we typically use the generic *keyvalue* datatype and store JSON-encoded or binar
 until we understand the desired access patterns and API.  When we outgrow the *keyvalue* type's
 GET, POST, and DELETE operations, we create a custom datatype package with a specialized HTTP API.
 
-DVID is primarily written in Go and supports different storage backends, a REST HTTP API,
-and command-line access (likely minimized in near future).  Some components are written in 
-C, e.g., storage engines like Leveldb and fast codecs like lz4.  DVID has been tested on 
-both MacOS X and Linux (Fedora 16, CentOS 6, Ubuntu) but not on Windows.  It comes out-of-the-box
-with an embedded leveldb for storage although you can configure other storage backends.
+DVID is written in Go and supports different storage backends, a REST HTTP API,
+and command-line access (likely minimized in near future).  Some components written in 
+C, e.g., storage engines like Leveldb and fast codecs like lz4, are embedded or linked as a library.  
+DVID has been tested on MacOS X, Linux (Fedora 16, CentOS 6, Ubuntu), and 
+[Windows 10+ Bash Shell](https://msdn.microsoft.com/en-us/commandline/wsl/about).  
+It comes out-of-the-box with an embedded leveldb for storage although you can configure other storage backends.
+
+If you just need nd-array access, consider [DICED](https://github.com/janelia-flyem/diced#diced-diced-is-cloud-enabled-dvid-), which provides a simple python numpy interface to the main image/label datatypes in DVID.
+Because of the limited datatypes within DICED, petabyte-scale distributed computing support will be available sooner using that interface.
 
 Command-line and HTTP API documentation can be 
 found in [help constants within packages](https://github.com/janelia-flyem/dvid/blob/master/datatype/labelvol/labelvol.go#L34) or by visiting the **/api/help**
 HTTP endpoint on a running DVID server.
+
+
 
 ![Web app for 3d inspection being served from and sending requests to DVID](https://raw.githubusercontent.com/janelia-flyem/dvid/master/images/webapp.png)
