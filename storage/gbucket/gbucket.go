@@ -53,6 +53,12 @@ const (
 	INITKEY        = "initialized"
 	// total connection tries
 	NUM_TRIES = 3
+
+	// current version of gbucket (must be >1 byte string)
+	CURVER = "1.0"
+
+	// first gbucket version (must be >1 byte string)
+	ORIGVER = "1.0"
 )
 
 // --- Engine Implementation ------
@@ -131,10 +137,16 @@ func (e *Engine) newGBucket(config dvid.StoreConfig) (*GBucket, bool, error) {
 	// check if value exists
 	if val == nil {
 		created = true
-		err = gb.putV(storage.Key(INITKEY), make([]byte, 1))
+		err = gb.putV(storage.Key(INITKEY), []byte(CURVER))
 		if err != nil {
 			return nil, false, err
 		}
+		gb.version = CURVER
+	} else if len(val) == 1 {
+		// set default version (versionless original wrote out 1 byte)
+		gb.version = ORIGVER
+	} else {
+		gb.version = string(val)
 	}
 
 	// if we know it's newly created, just return.
@@ -164,6 +176,7 @@ type GBucket struct {
 	activeRequests chan interface{}
 	ctx            context.Context
 	client         *api.Client
+	version        string
 }
 
 func (db *GBucket) String() string {
