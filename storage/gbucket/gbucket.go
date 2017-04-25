@@ -24,6 +24,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io/ioutil"
+	"os"
 	"runtime"
 	"sort"
 	"sync"
@@ -36,6 +37,8 @@ import (
 
 	api "cloud.google.com/go/storage"
 	"golang.org/x/net/context"
+	"google.golang.org/api/option"
+	"net/http"
 )
 
 func init() {
@@ -119,7 +122,13 @@ func (e *Engine) newGBucket(config dvid.StoreConfig) (*GBucket, bool, error) {
 	}
 
 	// NewClient uses Application Default Credentials to authenticate.
-	gb.client, err = api.NewClient(gb.ctx)
+	credval := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")
+	if credval == "" {
+		gb.client, err = api.NewClient(gb.ctx, option.WithHTTPClient(http.DefaultClient))
+	} else {
+		gb.client, err = api.NewClient(gb.ctx)
+	}
+
 	if err != nil {
 		return nil, false, err
 	}
@@ -137,6 +146,7 @@ func (e *Engine) newGBucket(config dvid.StoreConfig) (*GBucket, bool, error) {
 	// check if value exists
 	if val == nil {
 		created = true
+
 		err = gb.putV(storage.Key(INITKEY), []byte(CURVER))
 		if err != nil {
 			return nil, false, err
