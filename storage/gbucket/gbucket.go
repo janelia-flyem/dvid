@@ -24,6 +24,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io/ioutil"
+	"os"
 	"runtime"
 	"sort"
 	"sync"
@@ -36,6 +37,8 @@ import (
 
 	api "cloud.google.com/go/storage"
 	"golang.org/x/net/context"
+	"google.golang.org/api/option"
+	"net/http"
 )
 
 func init() {
@@ -53,6 +56,12 @@ const (
 	INITKEY        = "initialized"
 	// total connection tries
 	NUM_TRIES = 3
+
+	// current version of gbucket (must be >1 byte string)
+	CURVER = "1.0"
+
+	// first gbucket version (must be >1 byte string)
+	ORIGVER = "1.0"
 )
 
 // --- Engine Implementation ------
@@ -113,7 +122,13 @@ func (e *Engine) newGBucket(config dvid.StoreConfig) (*GBucket, bool, error) {
 	}
 
 	// NewClient uses Application Default Credentials to authenticate.
-	gb.client, err = api.NewClient(gb.ctx)
+	credval := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")
+	if credval == "" {
+		gb.client, err = api.NewClient(gb.ctx, option.WithHTTPClient(http.DefaultClient))
+	} else {
+		gb.client, err = api.NewClient(gb.ctx)
+	}
+
 	if err != nil {
 		return nil, false, err
 	}
@@ -131,10 +146,17 @@ func (e *Engine) newGBucket(config dvid.StoreConfig) (*GBucket, bool, error) {
 	// check if value exists
 	if val == nil {
 		created = true
-		err = gb.putV(storage.Key(INITKEY), make([]byte, 1))
+
+		err = gb.putV(storage.Key(INITKEY), []byte(CURVER))
 		if err != nil {
 			return nil, false, err
 		}
+		gb.version = CURVER
+	} else if len(val) == 1 {
+		// set default version (versionless original wrote out 1 byte)
+		gb.version = ORIGVER
+	} else {
+		gb.version = string(val)
 	}
 
 	// if we know it's newly created, just return.
@@ -164,6 +186,7 @@ type GBucket struct {
 	activeRequests chan interface{}
 	ctx            context.Context
 	client         *api.Client
+	version        string
 }
 
 func (db *GBucket) String() string {
