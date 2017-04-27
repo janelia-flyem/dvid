@@ -22,18 +22,19 @@ It is possible to post an object and not see the object when searching the list.
 import (
 	"bytes"
 	"encoding/hex"
+	"errors"
 	"fmt"
-	"io/ioutil"
-	"os"
-	"runtime"
-	"sort"
-	"sync"
-	"time"
-
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
 	"github.com/janelia-flyem/go/semver"
 	"google.golang.org/api/iterator"
+	"io/ioutil"
+	"os"
+	"runtime"
+	"sort"
+	"strings"
+	"sync"
+	"time"
 
 	api "cloud.google.com/go/storage"
 	"golang.org/x/net/context"
@@ -63,6 +64,8 @@ const (
 	// first gbucket version (must be >1 byte string)
 	ORIGVER = "1.0"
 )
+
+var ErrCondFail = errors.New("gbucket: condition failed")
 
 // --- Engine Implementation ------
 
@@ -142,6 +145,7 @@ func (e *Engine) newGBucket(config dvid.StoreConfig) (*GBucket, bool, error) {
 
 	var created bool
 	created = false
+
 	val, err := gb.getV(storage.Key(INITKEY))
 	// check if value exists
 	if val == nil {
@@ -210,22 +214,34 @@ func (db *GBucket) getV(k storage.Key) ([]byte, error) {
 
 	// gets handle (no network op)
 	obj_handle := db.bucket.Object(hex.EncodeToString(k))
+	val, err := db.getVhandle(obj_handle)
 
+	// preserve interface where missing value is not an error
+	if err == api.ErrObjectNotExist {
+		return nil, nil
+	}
+	return val, err
+}
+
+// getVhandle retrieves a value from a given key or an error if nothing exists
+func (db *GBucket) getVhandle(obj_handle *api.ObjectHandle) ([]byte, error) {
 	var err error
 	for i := 0; i < NUM_TRIES; i++ {
 		// returns error if it doesn't exist
 		obj, err2 := obj_handle.NewReader(db.ctx)
 
-		// return nil if not found
+		// if object not found return err
 		if err2 == api.ErrObjectNotExist {
-			return nil, nil
+			return nil, err2
 		}
 
+		// no error, read value and return
 		if err2 == nil {
 			value, err2 := ioutil.ReadAll(obj)
 			return value, err2
 		}
 
+		// keep trying if there is another error
 		err = err2
 	}
 	return nil, err
@@ -241,9 +257,16 @@ func (db *GBucket) deleteV(k storage.Key) error {
 
 // put value from a given key or an error if nothing exists
 func (db *GBucket) putV(k storage.Key, value []byte) (err error) {
+	// gets handle (no network op)
+	obj_handle := db.bucket.Object(hex.EncodeToString(k))
+	return db.putVhandle(obj_handle, value)
+
+}
+
+// put value from a given handle or an error if nothing exists
+func (db *GBucket) putVhandle(obj_handle *api.ObjectHandle, value []byte) (err error) {
+	// gets handle (no network op)
 	for i := 0; i < NUM_TRIES; i++ {
-		// gets handle (no network op)
-		obj_handle := db.bucket.Object(hex.EncodeToString(k))
 
 		// returns error if it doesn't exist
 		obj := obj_handle.NewWriter(db.ctx)
@@ -254,9 +277,17 @@ func (db *GBucket) putV(k storage.Key, value []byte) (err error) {
 		// close will flush buffer
 		err = obj.Close()
 
+		if err != nil && strings.Contains(err.Error(), "conditionNotMet") {
+			// failure to write due to generation id mismatch
+			return ErrCondFail
+		}
+
+		// other errors should cause a restart (is this handled properly in the api)
 		if err != nil || err2 != nil || numwrite != len(value) {
 			err = fmt.Errorf("Error writing object to google bucket")
 			time.Sleep(time.Duration(i+1) * time.Second)
+		} else {
+			break
 		}
 	}
 
@@ -620,6 +651,133 @@ func (db *GBucket) Put(ctx storage.Context, tkey storage.TKey, value []byte) err
 
 	// commit changes
 	err = buffer.Flush()
+
+	return err
+}
+
+// retrieveKey finds the latest relevant version for the given Tkey.
+// This runs slowly if the request is not at the root version.
+func (db *GBucket) retrieveKey(ctx storage.Context, tk storage.TKey) (storage.Key, error) {
+	if ctx == nil {
+		return nil, fmt.Errorf("Received nil context in Get()")
+	}
+
+	var currkey storage.Key
+	if ctx.Versioned() {
+		data := ctx.(storage.VersionedCtx).Data()
+		rootversion, _ := data.RootVersionID()
+		contextversion := ctx.VersionID()
+
+		if !data.Versioned() {
+			// construct key from root
+			newctx := storage.NewDataContext(data, rootversion)
+			currkey = newctx.ConstructKey(tk)
+
+		} else {
+			if rootversion != contextversion {
+				// grab all keys within versioned range
+				keys, _ := db.getKeysInRange(ctx, tk, tk)
+				if len(keys) == 0 {
+					return nil, nil
+				}
+				currkey = keys[0]
+			} else {
+				// construct key from root
+				newctx := storage.NewDataContext(data, rootversion)
+				currkey = newctx.ConstructKey(tk)
+			}
+		}
+
+	} else {
+		currkey = ctx.ConstructKey(tk)
+	}
+
+	return currkey, nil
+}
+
+// Patch patches the value at the given key with function f.
+// The patching function should work on uninitialized data.
+func (db *GBucket) Patch(ctx storage.Context, tk storage.TKey, f storage.PatchFunc) error {
+	db.activeRequests <- nil
+	defer func() {
+		<-db.activeRequests
+	}()
+
+	key := ctx.ConstructKey(tk)
+	obj_handle := db.bucket.Object(hex.EncodeToString(key))
+	var err error
+
+	// check current open node version of a value
+	// cost: >=1 object meta request,
+	// cost: >=1 request for data if object exists
+	// cost: >=1 put data
+	// Each write will cost at least 3 back-and-forth reqeuests, and
+	// a key search for the current versioning approach
+	// TODO: fetch meta and data simultaneously (if possible from API)
+	// TODO: use new versioning encoding (will decrease latency for common use case)
+	for true {
+		var val []byte
+		generationid := int64(0)
+		for true {
+			// TODO: fetch in parallel
+			attrs, err := obj_handle.Attrs(db.ctx)
+
+			if err == api.ErrObjectNotExist {
+				// fetch from another version
+				// !! this should occur at most once
+				prevkey, err2 := db.retrieveKey(ctx, tk)
+				if err2 != nil {
+					return err2
+				}
+
+				// key must exist and be different
+				if prevkey != nil && strings.Compare(string(prevkey), string(key)) != 0 {
+					// fetch previous data
+					val, err = db.getV(prevkey)
+					if err != nil {
+						// this value should exist
+						return err
+					}
+				}
+
+				break
+			} else if err == nil {
+				generationid = attrs.Generation
+				// fetch data if object exists
+				obj_handletemp := obj_handle.Generation(generationid)
+
+				val, err = db.getVhandle(obj_handletemp)
+				if err != nil {
+					// refetch if generation id differs or value deleted
+					continue
+				}
+				break
+			} else {
+				// if there is an error grabbing meta from an existing object, return
+				return err
+			}
+		}
+
+		// apply patch to val
+		err = f(val)
+		if err != nil {
+			return err
+		}
+
+		// conditional put on generation id or does not exist
+		var conditions api.Conditions
+		conditions.GenerationMatch = generationid
+		if conditions.GenerationMatch == 0 {
+			conditions.DoesNotExist = true
+		}
+		obj_handletemp := obj_handle.If(conditions)
+
+		// try putting againt with a new generation id
+		err = db.putVhandle(obj_handletemp, val)
+		if err != ErrCondFail {
+			break
+		}
+	}
 
 	return err
 }

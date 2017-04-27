@@ -330,6 +330,9 @@ type Chunk struct {
 // ChunkFunc is a function that accepts a Chunk.
 type ChunkFunc func(*Chunk) error
 
+// PatchFunc is a function that accepts a value and patches that value in place
+type PatchFunc func([]byte) error
+
 // Requirements lists required backend interfaces for a type.
 type Requirements struct {
 	BulkIniter bool
@@ -460,6 +463,13 @@ type KeyValueBatcher interface {
 // more information.)
 type KeyValueRequester interface {
 	NewBuffer(ctx Context) RequestBuffer
+}
+
+// PatchDB implements inteface for patchign a DB value atomically
+type PatchDB interface {
+	// Patch patches the value at the given key with function f
+	// The patching function should work on uninitialized data.
+	Patch(Context, TKey, PatchFunc) error
 }
 
 // RequestBufferSubset implements a subset of the ordered key/value interface.
