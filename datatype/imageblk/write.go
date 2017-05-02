@@ -310,7 +310,10 @@ func (d *Data) PutBlocks(v dvid.VersionID, mutID uint64, start dvid.ChunkPoint3d
 // Only some multiple of the # of CPU cores can be used for chunk handling before
 // it waits for chunk processing to abate via the buffered server.HandlerToken channel.
 func (d *Data) PutChunk(chunk *storage.Chunk, putbuffer storage.RequestBuffer) error {
-	<-server.HandlerToken
+	if putbuffer != nil {
+		// if storage engine handles buffering, limited advantage to throttling here
+		<-server.HandlerToken
+	}
 	go d.putChunk(chunk, putbuffer)
 	return nil
 }
@@ -318,8 +321,9 @@ func (d *Data) PutChunk(chunk *storage.Chunk, putbuffer storage.RequestBuffer) e
 func (d *Data) putChunk(chunk *storage.Chunk, putbuffer storage.RequestBuffer) {
 	defer func() {
 		// After processing a chunk, return the token.
-		server.HandlerToken <- 1
-
+		if putbuffer != nil {
+			server.HandlerToken <- 1
+		}
 		// Notify the requestor that this chunk is done.
 		if chunk.Wg != nil {
 			chunk.Wg.Done()
@@ -409,17 +413,12 @@ func (d *Data) putChunk(chunk *storage.Chunk, putbuffer storage.RequestBuffer) {
 
 	// put data -- use buffer if available
 	ctx := datastore.NewVersionedCtx(d, op.version)
-	if putbuffer != nil {
-		go callback()
-		putbuffer.PutCallback(ctx, chunk.K, serialization, ready)
-	} else {
-		if err := store.Put(ctx, chunk.K, serialization); err != nil {
-			dvid.Errorf("Unable to PUT voxel data for key %v: %v\n", chunk.K, err)
-			return
-		}
-		ready <- nil
-		callback()
+	if err := store.Put(ctx, chunk.K, serialization); err != nil {
+		dvid.Errorf("Unable to PUT voxel data for key %v: %v\n", chunk.K, err)
+		return
 	}
+	ready <- nil
+	callback()
 }
 
 // Writes a XY image into the blocks that intersect it.  This function assumes the
