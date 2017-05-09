@@ -4,3 +4,4 @@ build-*
 *.sublime-*
 config.toml
 server/version.go
+.vscode
