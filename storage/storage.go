@@ -331,7 +331,7 @@ type Chunk struct {
 type ChunkFunc func(*Chunk) error
 
 // PatchFunc is a function that accepts a value and patches that value in place
-type PatchFunc func([]byte) error
+type PatchFunc func([]byte) ([]byte, error)
 
 // Requirements lists required backend interfaces for a type.
 type Requirements struct {
@@ -465,8 +465,8 @@ type KeyValueRequester interface {
 	NewBuffer(ctx Context) RequestBuffer
 }
 
-// PatchDB implements inteface for patchign a DB value atomically
-type PatchDB interface {
+// TransactionDB allows multiple database operations to execute as an atomic transaction
+type TransactionDB interface {
 	// Patch patches the value at the given key with function f
 	// The patching function should work on uninitialized data.
 	Patch(Context, TKey, PatchFunc) error

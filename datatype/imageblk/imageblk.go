@@ -2124,12 +2124,6 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 					server.BadRequest(w, r, err)
 					return
 				}
-				// Make sure vox is block-aligned
-				if !dvid.BlockAligned(subvol, d.BlockSize()) {
-					server.BadRequest(w, r, "cannot store voxels in non-block aligned geometry %s -> %s", subvol.StartPoint(), subvol.EndPoint())
-					return
-				}
-
 				data, err := ioutil.ReadAll(r.Body)
 				if err != nil {
 					server.BadRequest(w, r, err)

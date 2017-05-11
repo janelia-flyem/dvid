@@ -759,7 +759,7 @@ func (db *GBucket) Patch(ctx storage.Context, tk storage.TKey, f storage.PatchFu
 		}
 
 		// apply patch to val
-		err = f(val)
+		val, err = f(val)
 		if err != nil {
 			return err
 		}
