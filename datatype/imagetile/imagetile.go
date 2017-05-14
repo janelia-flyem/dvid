@@ -616,7 +616,7 @@ type Data struct {
 }
 
 // CopyPropertiesFrom copies the data instance-specific properties from a given
-// data instance into the receiver's properties.
+// data instance into the receiver's properties. Fulfills the datastore.PropertyCopier interface.
 func (d *Data) CopyPropertiesFrom(src datastore.DataService, fs storage.FilterSpec) error {
 	d2, ok := src.(*Data)
 	if !ok {

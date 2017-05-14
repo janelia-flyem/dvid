@@ -820,8 +820,8 @@ func getElementsInRLE(ctx *datastore.VersionedCtx, brles dvid.BlockRLEs) (Elemen
 	rleElems := Elements{}
 	for izyx, rles := range brles {
 		// Get elements for this block
-		blockCoord, err := izyx.ToChunkPoint3d()
-		tk := NewBlockTKey(blockCoord)
+		bcoord, err := izyx.ToChunkPoint3d()
+		tk := NewBlockTKey(bcoord)
 		elems, err := getElements(ctx, tk)
 		if err != nil {
 			return nil, err
@@ -1055,8 +1055,8 @@ func (d *Data) deleteElementInRelationships(ctx *datastore.VersionedCtx, batch s
 	blockSize := d.blockSize()
 	for _, rel := range rels {
 		// Get the block elements containing the related element.
-		blockCoord := rel.To.Chunk(blockSize).(dvid.ChunkPoint3d)
-		tk := NewBlockTKey(blockCoord)
+		bcoord := rel.To.Chunk(blockSize).(dvid.ChunkPoint3d)
+		tk := NewBlockTKey(bcoord)
 		elems, err := getElements(ctx, tk)
 		if err != nil {
 			return err
@@ -1169,20 +1169,20 @@ func (d *Data) moveElementInRelationships(ctx *datastore.VersionedCtx, batch sto
 	// Get list of blocks with related points.
 	relBlocks := make(map[dvid.IZYXString]struct{})
 	for _, rel := range rels {
-		blockCoord := rel.To.Chunk(blockSize).(dvid.ChunkPoint3d)
-		if blockCoord.Equals(fromBlockCoord) {
+		bcoord := rel.To.Chunk(blockSize).(dvid.ChunkPoint3d)
+		if bcoord.Equals(fromBlockCoord) {
 			continue // relationships are almoved in from block
 		}
-		relBlocks[blockCoord.ToIZYXString()] = struct{}{}
+		relBlocks[bcoord.ToIZYXString()] = struct{}{}
 	}
 
 	// Alter the moved points in those related blocks.
 	for izyxstr := range relBlocks {
-		blockCoord, err := izyxstr.ToChunkPoint3d()
+		bcoord, err := izyxstr.ToChunkPoint3d()
 		if err != nil {
 			return err
 		}
-		tk := NewBlockTKey(blockCoord)
+		tk := NewBlockTKey(bcoord)
 		elems, err := getElements(ctx, tk)
 		if err != nil {
 			return err
@@ -1190,7 +1190,7 @@ func (d *Data) moveElementInRelationships(ctx *datastore.VersionedCtx, batch sto
 
 		// Move element in related element.
 		if _, changed := elems.move(from, to, false); !changed {
-			dvid.Errorf("Unable to find moved element %s in related element @ block %s:\n%v\n", from, blockCoord, elems)
+			dvid.Errorf("Unable to find moved element %s in related element @ block %s:\n%v\n", from, bcoord, elems)
 			continue
 		}
 
@@ -1219,12 +1219,12 @@ func (d *Data) modifyElements(ctx *datastore.VersionedCtx, batch storage.Batch, 
 // elements at same position.
 func (d *Data) storeBlockElements(ctx *datastore.VersionedCtx, batch storage.Batch, be blockElements) error {
 	for izyxStr, elems := range be {
-		blockCoord, err := izyxStr.ToChunkPoint3d()
+		bcoord, err := izyxStr.ToChunkPoint3d()
 		if err != nil {
 			return err
 		}
 		// Modify the block annotations
-		tk := NewBlockTKey(blockCoord)
+		tk := NewBlockTKey(bcoord)
 		if err := d.modifyElements(ctx, batch, tk, elems); err != nil {
 			return err
 		}
@@ -1249,13 +1249,13 @@ func (d *Data) storeLabelElements(ctx *datastore.VersionedCtx, batch storage.Bat
 
 	toAdd := LabelElements{}
 	for izyxStr, elems := range be {
-		blockCoord, err := izyxStr.ToChunkPoint3d()
+		bcoord, err := izyxStr.ToChunkPoint3d()
 		if err != nil {
 			return err
 		}
 
 		// Get the labels for this block
-		labels, err := labelData.GetLabelBlock(ctx.VersionID(), blockCoord)
+		labels, err := labelData.GetLabelBlock(ctx.VersionID(), bcoord)
 		if err != nil {
 			return err
 		}
@@ -1439,11 +1439,11 @@ func (d *Data) GetRegionSynapses(ctx *datastore.VersionedCtx, ext *dvid.Extents3
 	// Iterate through all synapse elements block k/v, making sure the elements are also within the given subvolume.
 	var elements Elements
 	err = store.ProcessRange(ctx, begTKey, endTKey, nil, func(chunk *storage.Chunk) error {
-		blockCoord, err := DecodeBlockTKey(chunk.K)
+		bcoord, err := DecodeBlockTKey(chunk.K)
 		if err != nil {
 			return err
 		}
-		if !ext.BlockWithin(blockSize, blockCoord) {
+		if !ext.BlockWithin(blockSize, bcoord) {
 			return nil
 		}
 		// Deserialize the JSON value into a slice of elements
@@ -1539,8 +1539,8 @@ func (d *Data) StoreSynapses(ctx *datastore.VersionedCtx, r io.Reader) error {
 func (d *Data) DeleteElement(ctx *datastore.VersionedCtx, pt dvid.Point3d) error {
 	// Get from block key
 	blockSize := d.blockSize()
-	blockCoord := pt.Chunk(blockSize).(dvid.ChunkPoint3d)
-	tk := NewBlockTKey(blockCoord)
+	bcoord := pt.Chunk(blockSize).(dvid.ChunkPoint3d)
+	tk := NewBlockTKey(bcoord)
 
 	d.Lock()
 	defer d.Unlock()

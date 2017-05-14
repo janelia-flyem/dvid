@@ -114,6 +114,7 @@ func sendLabels(src, dst *LabelMetadata, name, srcURL string) {
 			fmt.Printf("Can't parse -start coordinate %q: %v\n", *start, err)
 			os.Exit(1)
 		}
+		fastForward = true
 	}
 	minIndex := src.Extended.MinIndex
 	maxIndex := src.Extended.MaxIndex

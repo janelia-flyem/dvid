@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unsafe"
 )
 
 const (
@@ -29,6 +30,33 @@ var (
 	// NumCPU is the number of cores available to this DVID server.
 	NumCPU int
 )
+
+var maxSliceSize int
+
+const maxSliceSize32 = 1 << 27 // max slice for a 8-byte value (uint64) on 32-bit server
+const maxSliceSize64 = 1 << 34 // max slice, given DVID request bounds, for a 8-byte value (uint64) on 64-bit server
+
+const intSize = 32 << (^uint(0) >> 63) // size in bits of an int
+
+func init() {
+	// If this is not a little-endian machine, exit because this package is only optimized
+	// for these types of machines.
+	var check uint32 = 0x01020304
+	if *(*byte)(unsafe.Pointer(&check)) != 0x04 {
+		fmt.Printf("This machine is not little-endian.  Currently, DVID label compression does not support this machine.\n")
+		os.Exit(1)
+	}
+
+	switch intSize {
+	case 32:
+		maxSliceSize = maxSliceSize32
+	case 64:
+		maxSliceSize = maxSliceSize64
+	default:
+		fmt.Printf("Unknown architecture with int size of %d bits.  DVID works with 32 or 64 bit architectures.\n")
+		os.Exit(1)
+	}
+}
 
 // Bool is a concurrency-safe bool.
 type Bool struct {
@@ -261,4 +289,71 @@ func MakeGzipHandler(fn http.HandlerFunc) http.HandlerFunc {
 		defer gz.Close()
 		fn(gzipResponseWriter{Writer: gz, ResponseWriter: w}, r)
 	}
+}
+
+// NOTE: The following slice aliasing functions should be used with caution, particularly
+//       when reusing preallocated slices.  The intended use is for reuse of preallocated
+//       slices.
+
+// ByteToUint64 returns a uint64 slice that reuses the passed byte slice.  The passed byte slice
+// must be aligned for uint64.
+func ByteToUint64(b []byte) (out []uint64, err error) {
+	if len(b)%8 != 0 {
+		return nil, fmt.Errorf("bad length in dvid.ByteToUint64: len %d", len(b))
+	}
+	if uintptr(unsafe.Pointer(&b[0]))%8 != 0 {
+		return nil, fmt.Errorf("bad alignment in dvid.ByteToUint64: uintptr = %d", uintptr(unsafe.Pointer(&b[0])))
+	}
+	if intSize == 32 {
+		return (*[maxSliceSize32]uint64)(unsafe.Pointer(&b[0]))[:len(b)/8 : cap(b)/8], nil
+	}
+	return (*[maxSliceSize64]uint64)(unsafe.Pointer(&b[0]))[:len(b)/8 : cap(b)/8], nil
+}
+
+// ByteToUint32 returns a uint32 slice that reuses the passed byte slice.  The passed byte slice
+// must be aligned for uint32.
+func ByteToUint32(b []byte) (out []uint32, err error) {
+	if len(b)%4 != 0 || uintptr(unsafe.Pointer(&b[0]))%4 != 0 {
+		return nil, fmt.Errorf("bad len, cap, or alignment of dvid.ByteToUint32 len %d", len(b))
+	}
+	if intSize == 32 {
+		return (*[maxSliceSize32 << 1]uint32)(unsafe.Pointer(&b[0]))[:len(b)/4 : cap(b)/4], nil
+	}
+	return (*[maxSliceSize64 << 1]uint32)(unsafe.Pointer(&b[0]))[:len(b)/4 : cap(b)/4], nil
+}
+
+// ByteToUint16 returns a uint16 slice that reuses the passed byte slice.  The passed byte slice
+// must be aligned for uint16.
+func ByteToUint16(b []byte) (out []uint16, err error) {
+	if len(b)%2 != 0 || uintptr(unsafe.Pointer(&b[0]))%4 != 0 {
+		return nil, fmt.Errorf("bad len, cap, or alignment of dvid.ByteToUint16 len %d", len(b))
+	}
+	if intSize == 32 {
+		return (*[maxSliceSize32 << 2]uint16)(unsafe.Pointer(&b[0]))[:len(b)/2 : cap(b)/2], nil
+	}
+	return (*[maxSliceSize64 << 2]uint16)(unsafe.Pointer(&b[0]))[:len(b)/2 : cap(b)/2], nil
+}
+
+// Uint16ToByte returns the underlying byte slice for a uint16 slice.
+func Uint16ToByte(in []uint16) []byte {
+	if intSize == 32 {
+		return (*[maxSliceSize32 << 3]byte)(unsafe.Pointer(&in[0]))[:len(in)*2]
+	}
+	return (*[maxSliceSize64 << 3]byte)(unsafe.Pointer(&in[0]))[:len(in)*2]
+}
+
+// Uint32ToByte returns the underlying byte slice for a uint32 slice.
+func Uint32ToByte(in []uint32) []byte {
+	if intSize == 32 {
+		return (*[maxSliceSize32 << 3]byte)(unsafe.Pointer(&in[0]))[:len(in)*4]
+	}
+	return (*[maxSliceSize64 << 3]byte)(unsafe.Pointer(&in[0]))[:len(in)*4]
+}
+
+// Uint64ToByte returns the underlying byte slice for a uint64 slice.
+func Uint64ToByte(in []uint64) []byte {
+	if intSize == 32 {
+		return (*[maxSliceSize32 << 3]byte)(unsafe.Pointer(&in[0]))[:len(in)*8]
+	}
+	return (*[maxSliceSize64 << 3]byte)(unsafe.Pointer(&in[0]))[:len(in)*8]
 }

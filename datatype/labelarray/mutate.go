@@ -8,7 +8,6 @@
 package labelarray
 
 import (
-	"encoding/binary"
 	"fmt"
 	"io"
 	"sort"
@@ -16,6 +15,7 @@ import (
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
 	"github.com/janelia-flyem/dvid/dvid"
+	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
 )
 
@@ -40,6 +40,10 @@ type sizeChange struct {
 //
 func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp) error {
 	dvid.Debugf("Merging %s into label %d ...\n", op.Merged, op.Target)
+
+	// Only do one large mutation at a time, although each request can start many goroutines.
+	server.LargeMutationMutex.Lock()
+	defer server.LargeMutationMutex.Unlock()
 
 	// Asynchronously perform merge and handle any concurrent requests using the cache map until
 	// labelarray is updated and consistent.  Mark these labels as dirty until done.
@@ -104,7 +108,7 @@ func (d *Data) processMerge(v dvid.VersionID, delta labels.DeltaMerge) error {
 	for _, izyx := range delta.Blocks {
 		n := izyx.Hash(numBlockHandlers)
 		d.MutAdd(mutID)
-		op := mergeOp{mutID: mutID, MergeOp: delta.MergeOp, block: izyx}
+		op := mergeOp{mutID: mutID, MergeOp: delta.MergeOp, bcoord: izyx}
 		d.mutateCh[n] <- procMsg{op: op, v: v}
 	}
 
@@ -156,18 +160,21 @@ func (d *Data) processMerge(v dvid.VersionID, delta labels.DeltaMerge) error {
 	evt = datastore.SyncEvent{d.DataUUID(), labels.ChangeSizeEvent}
 	msg = datastore.SyncMessage{labels.ChangeSizeEvent, v, deltaRep}
 	if err := datastore.NotifySubscribers(evt, msg); err != nil {
-		dvid.Errorf("can't notify subscribers for event %v: %v\n", evt, err)
+		dvid.Criticalf("can't notify subscribers for event %v: %v\n", evt, err)
 	}
 
 	evt = datastore.SyncEvent{d.DataUUID(), labels.MergeEndEvent}
 	msg = datastore.SyncMessage{labels.MergeEndEvent, v, labels.DeltaMergeEnd{delta.MergeOp}}
 	if err := datastore.NotifySubscribers(evt, msg); err != nil {
-		dvid.Errorf("can't notify subscribers for event %v: %v\n", evt, err)
+		dvid.Criticalf("can't notify subscribers for event %v: %v\n", evt, err)
+	}
+
+	if err := d.publishDownsizeCommit(v, mutID); err != nil {
+		dvid.Criticalf("error during merge %s -> %d: %v\n", delta.Merged, delta.Target, err)
 	}
 
 	dvid.Infof("Merged %s -> %d, data %q, resulting in %d blocks\n", delta.Merged, delta.Target, d.DataName(), len(delta.Blocks))
 
-	d.publishDownresCommit(v, mutID)
 	return nil
 }
 
@@ -198,6 +205,10 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel, splitLabel uint64, r io.
 		}
 		dvid.Debugf("Splitting subset of label %d into new label %d ...\n", fromLabel, toLabel)
 	}
+
+	// Only do one large mutation at a time, although each request can start many goroutines.
+	server.LargeMutationMutex.Lock()
+	defer server.LargeMutationMutex.Unlock()
 
 	evt := datastore.SyncEvent{d.DataUUID(), labels.SplitStartEvent}
 	splitOpStart := labels.DeltaSplitStart{fromLabel, toLabel}
@@ -279,6 +290,10 @@ func (d *Data) SplitCoarseLabels(v dvid.VersionID, fromLabel, splitLabel uint64,
 		dvid.Debugf("Splitting coarse subset of label %d into new label %d ...\n", fromLabel, toLabel)
 	}
 
+	// Only do one request at a time, although each request can start many goroutines.
+	server.LargeMutationMutex.Lock()
+	defer server.LargeMutationMutex.Unlock()
+
 	evt := datastore.SyncEvent{d.DataUUID(), labels.SplitStartEvent}
 	splitOpStart := labels.DeltaSplitStart{fromLabel, toLabel}
 	splitOpEnd := labels.DeltaSplitEnd{fromLabel, toLabel}
@@ -325,6 +340,9 @@ func (d *Data) SplitCoarseLabels(v dvid.VersionID, fromLabel, splitLabel uint64,
 		Split:        nil,
 		SortedBlocks: splitblks,
 	}
+	if err = d.processSplit(v, deltaSplit); err != nil {
+		return
+	}
 	evt = datastore.SyncEvent{d.DataUUID(), labels.SplitLabelEvent}
 	msg = datastore.SyncMessage{labels.SplitLabelEvent, v, deltaSplit}
 	if err := datastore.NotifySubscribers(evt, msg); err != nil {
@@ -349,10 +367,12 @@ func (d *Data) processSplit(v dvid.VersionID, delta labels.DeltaSplit) error {
 			n := izyx.Hash(numBlockHandlers)
 			d.MutAdd(mutID)
 			op := splitOp{
-				mutID:    mutID,
-				oldLabel: delta.OldLabel,
-				newLabel: delta.NewLabel,
-				block:    izyx,
+				mutID: mutID,
+				SplitOp: labels.SplitOp{
+					Target:   delta.OldLabel,
+					NewLabel: delta.NewLabel,
+				},
+				bcoord: izyx,
 			}
 			d.mutateCh[n] <- procMsg{op: op, v: v}
 		}
@@ -377,11 +397,13 @@ func (d *Data) processSplit(v dvid.VersionID, delta labels.DeltaSplit) error {
 			n := izyx.Hash(numBlockHandlers)
 			d.MutAdd(mutID)
 			op := splitOp{
-				mutID:       mutID,
-				oldLabel:    delta.OldLabel,
-				newLabel:    delta.NewLabel,
-				rles:        blockRLEs,
-				block:       izyx,
+				mutID: mutID,
+				SplitOp: labels.SplitOp{
+					Target:   delta.OldLabel,
+					NewLabel: delta.NewLabel,
+					RLEs:     blockRLEs,
+				},
+				bcoord:      izyx,
 				deleteBlkCh: deleteBlkCh,
 			}
 			d.mutateCh[n] <- procMsg{op: op, v: v}
@@ -517,99 +539,45 @@ func (d *Data) mutateBlock(ch <-chan procMsg) {
 	}
 }
 
-// handles relabeling of blocks during a merge operation.
+// relabels a single block during a merge operation.
 func (d *Data) mergeBlock(ctx *datastore.VersionedCtx, op mergeOp) {
 	defer d.MutDone(op.mutID)
 
-	store, err := d.GetKeyValueDB()
+	pb, err := d.getLabelBlock(ctx, op.bcoord)
 	if err != nil {
-		dvid.Errorf("Data type labelblk had error initializing store: %v\n", err)
+		dvid.Errorf("error in merge block %s: %v\n", op.bcoord, err)
 		return
 	}
 
-	tk := NewBlockTKeyByCoord(op.block)
-	data, err := store.Get(ctx, tk)
+	block, err := pb.MergeLabels(op.MergeOp)
 	if err != nil {
-		dvid.Errorf("Error on GET of labelblk with coord string %q\n", op.block)
+		dvid.Errorf("error merging labels %s for data %q: %v\n", op.Merged, d.DataName(), err)
 		return
 	}
-	if data == nil {
-		dvid.Errorf("nil label block where merge was done!\n")
-		return
-	}
+	pb.Block = *block
 
-	compressed, _, err := dvid.DeserializeData(data, true)
-	if err != nil {
-		dvid.Criticalf("unable to deserialize label block in '%s': %v\n", d.DataName(), err)
+	if err := d.putLabelBlock(ctx, pb); err != nil {
+		dvid.Errorf("error putting label block %s for data %q: %v\n", op.bcoord, d.DataName(), err)
 		return
-	}
-	blockData, err := labels.Decompress(compressed, d.BlockSize())
-	if err != nil {
-		dvid.Errorf("Unable to decompress google compression in %q: %v\n", d.DataName(), err)
-		return
-	}
-	blockBytes := int(d.BlockSize().Prod() * 8)
-	if len(blockData) != blockBytes {
-		dvid.Criticalf("After labelblk deserialization got back %d bytes, expected %d bytes\n", len(blockData), blockBytes)
-		return
-	}
-
-	// Iterate through this block of labels and relabel if label in merge.
-	for i := 0; i < blockBytes; i += 8 {
-		label := binary.LittleEndian.Uint64(blockData[i : i+8])
-		if _, merged := op.Merged[label]; merged {
-			binary.LittleEndian.PutUint64(blockData[i:i+8], op.Target)
-		}
-	}
-
-	// Store this block.
-	serialization, err := dvid.SerializeData(blockData, d.Compression(), d.Checksum())
-	if err != nil {
-		dvid.Criticalf("Unable to serialize block in %q: %v\n", d.DataName(), err)
-		return
-	}
-	if err := store.Put(ctx, tk, serialization); err != nil {
-		dvid.Errorf("Error in putting key %v: %v\n", tk, err)
 	}
 
 	// Notify any downstream downres instance.
-	d.publishBlockChange(ctx.VersionID(), op.mutID, op.block, blockData)
+	if err := d.publishDownsizeBlock(ctx.VersionID(), op.mutID, pb.BCoord, &(pb.Block)); err != nil {
+		dvid.Criticalf("data %q block merge: %v\n", d.DataName(), err)
+	}
 }
 
-// Goroutine that handles splits across a lot of blocks for one label.
+// splits a set of voxels to a specified label within a block
 func (d *Data) splitBlock(ctx *datastore.VersionedCtx, op splitOp) {
 	defer d.MutDone(op.mutID)
 
-	store, err := d.GetOrderedKeyValueDB()
+	pb, err := d.getLabelBlock(ctx, op.bcoord)
 	if err != nil {
-		dvid.Errorf("Data type labelblk had error initializing store: %v\n", err)
+		dvid.Errorf("error in merge block %s: %v\n", op.bcoord, err)
 		return
 	}
-
-	// Read the block.
-	tk := NewBlockTKeyByCoord(op.block)
-	data, err := store.Get(ctx, tk)
-	if err != nil {
-		dvid.Errorf("Error on GET of labelblk with coord string %v\n", []byte(op.block))
-		return
-	}
-	if data == nil {
-		dvid.Errorf("nil label block where split was done, coord %v\n", []byte(op.block))
-		return
-	}
-	compressed, _, err := dvid.DeserializeData(data, true)
-	if err != nil {
-		dvid.Criticalf("unable to deserialize label block in '%s' key %v: %v\n", d.DataName(), []byte(op.block), err)
-		return
-	}
-	blockData, err := labels.Decompress(compressed, d.BlockSize())
-	if err != nil {
-		dvid.Errorf("Unable to decompress google compression in %q: %v\n", d.DataName(), err)
-		return
-	}
-	blockBytes := int(d.BlockSize().Prod() * 8)
-	if len(blockData) != blockBytes {
-		dvid.Criticalf("splitBlock: coord %v got back %d bytes, expected %d bytes\n", []byte(op.block), len(blockData), blockBytes)
+	if pb == nil {
+		dvid.Infof("split on block %s attempted but block doesn't exist\n", op.bcoord)
 		return
 	}
 
@@ -619,25 +587,26 @@ func (d *Data) splitBlock(ctx *datastore.VersionedCtx, op splitOp) {
 	// whether block indices can be maintained for fine split until we do split and see if any
 	// old label remains.
 	var toLabelSize uint64
-	if op.rles != nil {
-		var oldRemains bool
-		toLabelSize, oldRemains, err = d.splitLabel(blockData, op)
+	var splitBlock *labels.Block
+	if op.RLEs != nil {
+		var keptSize uint64
+		splitBlock, keptSize, toLabelSize, err = pb.Split(op.SplitOp)
 		if err != nil {
-			dvid.Errorf("can't store label %d RLEs into block %s: %v\n", op.newLabel, op.block, err)
+			dvid.Errorf("can't store label %d RLEs into block %s: %v\n", op.NewLabel, op.bcoord, err)
 			return
 		}
-		if !oldRemains {
-			op.deleteBlkCh <- op.block
+		if keptSize == 0 {
+			op.deleteBlkCh <- op.bcoord
 		}
 	} else {
 		// We are doing coarse split and will replace all
-		toLabelSize, err = d.replaceLabel(blockData, op.oldLabel, op.newLabel)
+		splitBlock, toLabelSize, err = pb.ReplaceLabel(op.Target, op.NewLabel)
 		if err != nil {
-			dvid.Errorf("can't replace label %d with %d in block %s: %v\n", op.oldLabel, op.newLabel, op.block, err)
+			dvid.Errorf("can't replace label %d with %d in block %s: %v\n", op.Target, op.NewLabel, op.bcoord, err)
 			return
 		}
 		delta := labels.DeltaNewSize{
-			Label: op.newLabel,
+			Label: op.Target,
 			Size:  toLabelSize,
 		}
 		evt := datastore.SyncEvent{d.DataUUID(), labels.ChangeSizeEvent}
@@ -647,7 +616,7 @@ func (d *Data) splitBlock(ctx *datastore.VersionedCtx, op splitOp) {
 		}
 
 		delta2 := labels.DeltaModSize{
-			Label:      op.oldLabel,
+			Label:      op.Target,
 			SizeChange: int64(-toLabelSize),
 		}
 		evt = datastore.SyncEvent{d.DataUUID(), labels.ChangeSizeEvent}
@@ -658,66 +627,14 @@ func (d *Data) splitBlock(ctx *datastore.VersionedCtx, op splitOp) {
 
 	}
 
-	// Write the modified block.
-	serialization, err := dvid.SerializeData(blockData, d.Compression(), d.Checksum())
-	if err != nil {
-		dvid.Criticalf("Unable to serialize block %s in %q: %v\n", op.block, d.DataName(), err)
+	splitpb := labels.PositionedBlock{*splitBlock, op.bcoord}
+	if err := d.putLabelBlock(ctx, &splitpb); err != nil {
+		dvid.Errorf("unable to put block %s in split of label %d, data %q: %v\n", op.bcoord, op.Target, d.DataName(), err)
 		return
-	}
-	if err := store.Put(ctx, tk, serialization); err != nil {
-		dvid.Errorf("Error in putting key %v: %v\n", tk, err)
 	}
 
 	// Notify any downstream downres instance.
-	d.publishBlockChange(ctx.VersionID(), op.mutID, op.block, blockData)
-}
-
-// Replace a label in a block.
-func (d *Data) replaceLabel(data []byte, fromLabel, toLabel uint64) (splitVoxels uint64, err error) {
-	n := len(data)
-	if n%8 != 0 {
-		err = fmt.Errorf("label data in block not aligned to uint64: %d bytes", n)
-		return
+	if err := d.publishDownsizeBlock(ctx.VersionID(), op.mutID, op.bcoord, splitBlock); err != nil {
+		dvid.Criticalf("data %q block split: %v\n", d.DataName(), err)
 	}
-	for i := 0; i < n; i += 8 {
-		label := binary.LittleEndian.Uint64(data[i : i+8])
-		if label == fromLabel {
-			splitVoxels++
-			binary.LittleEndian.PutUint64(data[i:i+8], toLabel)
-		}
-	}
-	return
-}
-
-// Split a label defined by RLEs into a block.  If there is old label still in the block after a split,
-// we return true for oldRemains.
-func (d *Data) splitLabel(data []byte, op splitOp) (splitVoxels uint64, oldRemains bool, err error) {
-	var bcoord dvid.ChunkPoint3d
-	bcoord, err = op.block.ToChunkPoint3d()
-	if err != nil {
-		return
-	}
-
-	blockSize := d.BlockSize()
-	offset := bcoord.MinPoint(blockSize)
-
-	nx := blockSize.Value(0) * 8
-	nxy := nx * blockSize.Value(1)
-	for _, rle := range op.rles {
-		p := rle.StartPt().Sub(offset)
-		i := p.Value(2)*nxy + p.Value(1)*nx + p.Value(0)*8
-		for n := int32(0); n < rle.Length(); n++ {
-			binary.LittleEndian.PutUint64(data[i:i+8], op.newLabel)
-			splitVoxels++
-			i += 8
-		}
-	}
-
-	for i := 0; i < len(data); i += 8 {
-		if binary.LittleEndian.Uint64(data[i:i+8]) == op.oldLabel {
-			oldRemains = true
-			return
-		}
-	}
-	return
 }

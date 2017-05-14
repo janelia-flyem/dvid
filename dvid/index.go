@@ -419,6 +419,19 @@ func (i IZYXString) ToChunkPoint3d() (ChunkPoint3d, error) {
 	return ChunkPoint3d(idx), err
 }
 
+func (i IZYXString) VoxelOffset(chunkSize Point3d) (offset Point3d, err error) {
+	var idx IndexZYX
+	if err = idx.IndexFromBytes([]byte(i)); err != nil {
+		return
+	}
+	offset = Point3d{
+		idx[0] * chunkSize[0],
+		idx[1] * chunkSize[1],
+		idx[2] * chunkSize[2],
+	}
+	return
+}
+
 // String returns a nicely formatted string of the 3d block coordinate or "corrupted coordinate".
 func (i IZYXString) String() string {
 	idx, err := i.IndexZYX()
@@ -437,8 +450,8 @@ func (i IZYXString) Hash(n int) int {
 	return int(h.Sum32()) % n
 }
 
-// Downres returns an IZYXString representing a chunk point divided in two.
-func (i IZYXString) Downres() (IZYXString, error) {
+// Halfres returns an IZYXString representing a chunk point divided in two.
+func (i IZYXString) Halfres() (IZYXString, error) {
 	chunkPt, err := i.ToChunkPoint3d()
 	if err != nil {
 		return "", err
@@ -446,8 +459,8 @@ func (i IZYXString) Downres() (IZYXString, error) {
 	dx := chunkPt[0] >> 1
 	dy := chunkPt[1] >> 1
 	dz := chunkPt[2] >> 1
-	downresPt := ChunkPoint3d{dx, dy, dz}
-	return downresPt.ToIZYXString(), nil
+	halfresPt := ChunkPoint3d{dx, dy, dz}
+	return halfresPt.ToIZYXString(), nil
 }
 
 // BlockCounts is a thread-safe type for counting block references.

@@ -187,8 +187,6 @@ func (d *Data) handleSyncMessage(ctx *datastore.VersionedCtx, msg datastore.Sync
 		d.ingestBlock(ctx, delta, batcher)
 	case imageblk.MutatedBlock:
 		d.mutateBlock(ctx, delta, batcher)
-	case labels.DeleteBlock:
-		d.deleteBlock(ctx, delta, batcher)
 
 	case labels.DeltaMergeStart:
 		// ignore
@@ -364,79 +362,6 @@ func (d *Data) mutateBlock(ctx *datastore.VersionedCtx, block imageblk.MutatedBl
 		}
 		batch.Put(tk, val)
 	}
-	if err := batch.Commit(); err != nil {
-		dvid.Criticalf("bad commit in annotations %q after delete block: %v\n", d.DataName(), err)
-		return
-	}
-
-	// Notify any subscribers of label annotation changes.
-	evt := datastore.SyncEvent{Data: d.DataUUID(), Event: ModifyElementsEvent}
-	msg := datastore.SyncMessage{Event: ModifyElementsEvent, Version: ctx.VersionID(), Delta: delta}
-	if err := datastore.NotifySubscribers(evt, msg); err != nil {
-		dvid.Criticalf("unable to notify subscribers of event %s: %v\n", evt, err)
-	}
-}
-
-// If a block of labels is deleted, the associated synapse elements should be changed to zero label elements.
-func (d *Data) deleteBlock(ctx *datastore.VersionedCtx, block labels.DeleteBlock, batcher storage.KeyValueBatcher) {
-	// Get the synaptic elements for this block
-	chunkPt := dvid.ChunkPoint3d(*block.Index)
-	tk := NewBlockTKey(chunkPt)
-	elems, err := getElements(ctx, tk)
-	if err != nil {
-		dvid.Errorf("err getting elements for block %s: %v\n", chunkPt, err)
-		return
-	}
-	if len(elems) == 0 {
-		return
-	}
-	blockSize := d.blockSize()
-	batch := batcher.NewBatch(ctx)
-
-	// Compute the strides (in bytes)
-	bX := blockSize[0] * 8
-	bY := blockSize[1] * bX
-
-	// Iterate through all element positions, finding corresponding label and storing elements.
-	toDel := LabelPoints{}
-	for _, elem := range elems {
-		pt := elem.Pos.Point3dInChunk(blockSize)
-		i := pt[2]*bY + pt[1]*bX + pt[0]*8
-		label := binary.LittleEndian.Uint64(block.Data[i : i+8])
-		toDel.add(label, elem.Pos)
-	}
-
-	// Delete any non-zero label elements from their respective label k/v.
-	var delta DeltaModifyElements
-	for label, pts := range toDel {
-		tk := NewLabelTKey(label)
-		elems, err := getElements(ctx, tk)
-		if err != nil {
-			dvid.Errorf("err getting elements for label %d: %v\n", label, err)
-			return
-		}
-		save := false
-		for _, pt := range pts {
-			deleted, changed := elems.delete(pt)
-			if changed {
-				save = true
-				delta.Del = append(delta.Del, ElementPos{Label: label, Kind: deleted.Kind, Pos: pt})
-			}
-		}
-		if save {
-			if len(elems) == 0 {
-				batch.Delete(tk)
-			} else {
-				val, err := json.Marshal(elems)
-				if err != nil {
-					dvid.Errorf("couldn't serialize annotation elements in instance %q: %v\n", d.DataName(), err)
-					return
-				}
-				batch.Put(tk, val)
-			}
-		}
-	}
-
 	if err := batch.Commit(); err != nil {
 		dvid.Criticalf("bad commit in annotations %q after delete block: %v\n", d.DataName(), err)
 		return

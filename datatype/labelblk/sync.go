@@ -24,9 +24,9 @@ const (
 )
 
 type deltaBlock struct {
-	mutID uint64
-	block dvid.IZYXString // block coordinate of the originating labelblk resolution.
-	data  []byte
+	mutID  uint64
+	bcoord dvid.IZYXString // block coordinate of the originating labelblk resolution.
+	data   []byte
 }
 
 type procMsg struct {
@@ -41,15 +41,13 @@ type blockOp struct {
 type mergeOp struct {
 	mutID uint64
 	labels.MergeOp
-	block dvid.IZYXString
+	bcoord dvid.IZYXString
 }
 
 type splitOp struct {
-	mutID    uint64
-	oldLabel uint64
-	newLabel uint64
-	rles     dvid.RLEs
-	block    dvid.IZYXString
+	mutID uint64
+	labels.SplitOp
+	bcoord dvid.IZYXString
 }
 
 type octant [8][]byte // octant has nil []byte if not modified.
@@ -61,7 +59,7 @@ type blockCache map[dvid.IZYXString]octant
 // Returns the slice to which any down-resolution data should be written for the given higher-res block coord.
 func (d *Data) getLoresCache(v dvid.VersionID, block dvid.IZYXString) ([]byte, error) {
 	// Setup the octant buffer and block cache.
-	downresBlock, err := block.Downres()
+	downresBlock, err := block.Halfres()
 	if err != nil {
 		return nil, fmt.Errorf("unable to downres labelblk %q block: %v\n", d.DataName(), err)
 	}
@@ -307,7 +305,7 @@ func (d *Data) downsizeCommit(v dvid.VersionID, mutID uint64) {
 func (d *Data) downsizeAdd(v dvid.VersionID, delta deltaBlock) {
 	defer d.MutDone(delta.mutID)
 
-	lobuf, err := d.getLoresCache(v, delta.block)
+	lobuf, err := d.getLoresCache(v, delta.bcoord)
 	if err != nil {
 		dvid.Criticalf("unable to initialize block cache for labelblk %q: %v\n", d.DataName(), err)
 		return
@@ -416,7 +414,7 @@ func (d *Data) handleEvent(msg datastore.SyncMessage) {
 		if d.MutAdd(delta.mutID) {
 			d.StartUpdate() // stopped when the upstream instance issues a DownsizeCommitEvent: see processEvents()
 		}
-		n := delta.block.Hash(numBlockHandlers)
+		n := delta.bcoord.Hash(numBlockHandlers)
 		d.procCh[n] <- procMsg{op: delta, v: msg.Version}
 
 	case imageblk.Block:
@@ -435,14 +433,6 @@ func (d *Data) handleEvent(msg datastore.SyncMessage) {
 		block := delta.Index.ToIZYXString()
 		d.procCh[n] <- procMsg{op: deltaBlock{delta.MutID, block, delta.Data}, v: msg.Version}
 
-	case labels.DeleteBlock:
-		if d.MutAdd(delta.MutID) {
-			d.StartUpdate()
-		}
-		n := delta.Index.Hash(numBlockHandlers)
-		block := delta.Index.ToIZYXString()
-		d.procCh[n] <- procMsg{op: deltaBlock{delta.MutID, block, nil}, v: msg.Version}
-
 	default:
 		dvid.Criticalf("Received unknown delta in labelblk.processEvents(): %v\n", msg)
 	}
@@ -460,9 +450,9 @@ func (d *Data) publishDownresCommit(v dvid.VersionID, mutID uint64) {
 func (d *Data) publishBlockChange(v dvid.VersionID, mutID uint64, block dvid.IZYXString, blockData []byte) {
 	evt := datastore.SyncEvent{d.DataUUID(), DownsizeBlockEvent}
 	delta := deltaBlock{
-		mutID: mutID,
-		block: block,
-		data:  blockData,
+		mutID:  mutID,
+		bcoord: block,
+		data:   blockData,
 	}
 	msg := datastore.SyncMessage{DownsizeBlockEvent, v, delta}
 	if err := datastore.NotifySubscribers(evt, msg); err != nil {
@@ -478,7 +468,7 @@ func (d *Data) processMerge(v dvid.VersionID, delta labels.DeltaMerge) {
 	for izyxStr := range delta.BlockMap {
 		n := izyxStr.Hash(numBlockHandlers)
 		d.MutAdd(mutID)
-		op := mergeOp{mutID: mutID, MergeOp: delta.MergeOp, block: izyxStr}
+		op := mergeOp{mutID: mutID, MergeOp: delta.MergeOp, bcoord: izyxStr}
 		d.procCh[n] <- procMsg{op: op, v: v}
 	}
 	// When we've processed all the delta blocks, we can remove this merge op
@@ -503,10 +493,12 @@ func (d *Data) processSplit(v dvid.VersionID, delta labels.DeltaSplit) {
 			n := izyxStr.Hash(numBlockHandlers)
 			d.MutAdd(mutID)
 			op := splitOp{
-				mutID:    mutID,
-				oldLabel: delta.OldLabel,
-				newLabel: delta.NewLabel,
-				block:    izyxStr,
+				mutID: mutID,
+				SplitOp: labels.SplitOp{
+					Target:   delta.OldLabel,
+					NewLabel: delta.NewLabel,
+				},
+				bcoord: izyxStr,
 			}
 			d.procCh[n] <- procMsg{op: op, v: v}
 		}
@@ -516,11 +508,13 @@ func (d *Data) processSplit(v dvid.VersionID, delta labels.DeltaSplit) {
 			n := izyxStr.Hash(numBlockHandlers)
 			d.MutAdd(mutID)
 			op := splitOp{
-				mutID:    mutID,
-				oldLabel: delta.OldLabel,
-				newLabel: delta.NewLabel,
-				rles:     blockRLEs,
-				block:    izyxStr,
+				mutID: mutID,
+				SplitOp: labels.SplitOp{
+					Target:   delta.OldLabel,
+					NewLabel: delta.NewLabel,
+					RLEs:     blockRLEs,
+				},
+				bcoord: izyxStr,
 			}
 			d.procCh[n] <- procMsg{op: op, v: v}
 		}
@@ -568,10 +562,10 @@ func (d *Data) mergeBlock(ctx *datastore.VersionedCtx, op mergeOp) {
 		return
 	}
 
-	tk := NewTKeyByCoord(op.block)
+	tk := NewTKeyByCoord(op.bcoord)
 	data, err := store.Get(ctx, tk)
 	if err != nil {
-		dvid.Errorf("Error on GET of labelblk with coord string %q\n", op.block)
+		dvid.Errorf("Error on GET of labelblk with coord string %s\n", op.bcoord)
 		return
 	}
 	if data == nil {
@@ -609,7 +603,7 @@ func (d *Data) mergeBlock(ctx *datastore.VersionedCtx, op mergeOp) {
 	}
 
 	// Notify any downstream downres instance.
-	d.publishBlockChange(ctx.VersionID(), op.mutID, op.block, blockData)
+	d.publishBlockChange(ctx.VersionID(), op.mutID, op.bcoord, blockData)
 }
 
 // Goroutine that handles splits across a lot of blocks for one label.
@@ -623,37 +617,37 @@ func (d *Data) splitBlock(ctx *datastore.VersionedCtx, op splitOp) {
 	}
 
 	// Read the block.
-	tk := NewTKeyByCoord(op.block)
+	tk := NewTKeyByCoord(op.bcoord)
 	data, err := store.Get(ctx, tk)
 	if err != nil {
-		dvid.Errorf("Error on GET of labelblk with coord string %v\n", []byte(op.block))
+		dvid.Errorf("Error on GET of labelblk with coord string %s\n", op.bcoord)
 		return
 	}
 	if data == nil {
-		dvid.Errorf("nil label block where split was done, coord %v\n", []byte(op.block))
+		dvid.Errorf("nil label block where split was done, coord %s\n", op.bcoord)
 		return
 	}
 	blockData, _, err := dvid.DeserializeData(data, true)
 	if err != nil {
-		dvid.Criticalf("unable to deserialize label block in '%s' key %v: %v\n", d.DataName(), []byte(op.block), err)
+		dvid.Criticalf("unable to deserialize label block in %q key %v: %v\n", d.DataName(), op.bcoord, err)
 		return
 	}
 	blockBytes := int(d.BlockSize().Prod() * 8)
 	if len(blockData) != blockBytes {
-		dvid.Criticalf("splitBlock: coord %v got back %d bytes, expected %d bytes\n", []byte(op.block), len(blockData), blockBytes)
+		dvid.Criticalf("splitBlock: coord %s got back %d bytes, expected %d bytes\n", op.bcoord, len(blockData), blockBytes)
 		return
 	}
 
 	// Modify the block using either voxel-level changes or coarser block-level mods.
-	if op.rles != nil {
-		if err := d.storeRLEs(blockData, op.newLabel, op.block, op.rles); err != nil {
-			dvid.Errorf("can't store label %d RLEs into block %s: %v\n", op.newLabel, op.block, err)
+	if op.RLEs != nil {
+		if err := d.storeRLEs(blockData, op.NewLabel, op.bcoord, op.RLEs); err != nil {
+			dvid.Errorf("can't store label %d RLEs into block %s: %v\n", op.NewLabel, op.bcoord, err)
 			return
 		}
 	} else {
 		// We are doing coarse split and will replace all
-		if err := d.replaceLabel(blockData, op.oldLabel, op.newLabel); err != nil {
-			dvid.Errorf("can't replace label %d with %d in block %s: %v\n", op.oldLabel, op.newLabel, op.block, err)
+		if err := d.replaceLabel(blockData, op.Target, op.NewLabel); err != nil {
+			dvid.Errorf("can't replace label %d with %d in block %s: %v\n", op.Target, op.NewLabel, op.bcoord, err)
 			return
 		}
 	}
@@ -661,7 +655,7 @@ func (d *Data) splitBlock(ctx *datastore.VersionedCtx, op splitOp) {
 	// Write the modified block.
 	serialization, err := dvid.SerializeData(blockData, d.Compression(), d.Checksum())
 	if err != nil {
-		dvid.Criticalf("Unable to serialize block %s in %q: %v\n", op.block, d.DataName(), err)
+		dvid.Criticalf("Unable to serialize block %s in %q: %v\n", op.bcoord, d.DataName(), err)
 		return
 	}
 	if err := store.Put(ctx, tk, serialization); err != nil {
@@ -669,7 +663,7 @@ func (d *Data) splitBlock(ctx *datastore.VersionedCtx, op splitOp) {
 	}
 
 	// Notify any downstream downres instance.
-	d.publishBlockChange(ctx.VersionID(), op.mutID, op.block, blockData)
+	d.publishBlockChange(ctx.VersionID(), op.mutID, op.bcoord, blockData)
 }
 
 // Replace a label in a block.

@@ -69,11 +69,11 @@ var (
 	// See ProcessChunk() in datatype/imageblk for example.
 	HandlerToken = make(chan int, MaxChunkHandlers)
 
-	// SpawnGoroutineMutex is a global lock for compute-intense processes that want to
+	// LargeMutationMutex is a global lock for compute-intense processes that want to
 	// spawn goroutines that consume handler tokens.  This lets processes capture most
 	// if not all available handler tokens in a FIFO basis rather than have multiple
 	// concurrent requests launch a few goroutines each.
-	SpawnGoroutineMutex sync.Mutex
+	LargeMutationMutex sync.Mutex
 
 	// Timeout in seconds for waiting to open a datastore for exclusive access.
 	TimeoutSecs int

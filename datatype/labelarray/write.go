@@ -48,8 +48,8 @@ func (d *Data) PutLabels(v dvid.VersionID, subvol *dvid.Subvolume, data []byte, 
 	}
 
 	// Only do one request at a time, although each request can start many goroutines.
-	server.SpawnGoroutineMutex.Lock()
-	defer server.SpawnGoroutineMutex.Unlock()
+	server.LargeMutationMutex.Lock()
+	defer server.LargeMutationMutex.Unlock()
 
 	// Keep track of changing extents and mark repo as dirty if changed.
 	var extentChanged bool
@@ -141,9 +141,99 @@ func (d *Data) PutLabels(v dvid.VersionID, subvol *dvid.Subvolume, data []byte, 
 	}
 
 	// Let any synced downres instance that we've completed block-level ops.
-	d.publishDownresCommit(v, mutID)
+	d.publishDownsizeCommit(v, mutID)
 
 	return nil
+}
+
+// Puts a chunk of data as part of a mapped operation.
+// Only some multiple of the # of CPU cores can be used for chunk handling before
+// it waits for chunk processing to abate via the buffered server.HandlerToken channel.
+func (d *Data) putChunk(op *putOperation, wg *sync.WaitGroup, putbuffer storage.RequestBuffer) {
+	defer func() {
+		// After processing a chunk, return the token.
+		server.HandlerToken <- 1
+
+		// Notify the requestor that this chunk is done.
+		wg.Done()
+	}()
+
+	bcoord := op.indexZYX.ToIZYXString()
+	ctx := datastore.NewVersionedCtx(d, op.version)
+
+	// If we are mutating, get the previous label Block
+	var oldBlock *labels.PositionedBlock
+	if op.mutate {
+		var err error
+		if oldBlock, err = d.getLabelBlock(ctx, bcoord); err != nil {
+			dvid.Errorf("Unable to load previous block in %q, key %v: %v\n", d.DataName(), bcoord, err)
+			return
+		}
+	}
+
+	// Get the current label Block from the received label array
+	blockSize, ok := d.BlockSize().(dvid.Point3d)
+	if !ok {
+		dvid.Errorf("can't putChunk() on data %q with non-3d block size: %s", d.DataName(), d.BlockSize())
+		return
+	}
+	curBlock, err := labels.SubvolumeToBlock(op.subvol, op.data, op.indexZYX, blockSize)
+	if err != nil {
+		dvid.Errorf("error creating compressed block from label array at %s", op.subvol)
+		return
+	}
+	blockData, _ := curBlock.MarshalBinary()
+	serialization, err := dvid.SerializeData(blockData, d.Compression(), d.Checksum())
+	if err != nil {
+		dvid.Errorf("Unable to serialize block in %q: %v\n", d.DataName(), err)
+		return
+	}
+
+	store, err := d.GetOrderedKeyValueDB()
+	if err != nil {
+		dvid.Errorf("Data type imageblk had error initializing store: %v\n", err)
+		return
+	}
+
+	callback := func(ready chan error) {
+		if ready != nil {
+			if resperr := <-ready; resperr != nil {
+				dvid.Errorf("Unable to PUT voxel data for block %v: %v\n", bcoord, resperr)
+				return
+			}
+		}
+		var event string
+		var delta interface{}
+		if op.mutate {
+			event = MutateBlockEvent
+			block := MutatedBlock{op.mutID, bcoord, &(oldBlock.Block), curBlock}
+			d.handleIndexBlockMutate(op.version, op.indexCh, block)
+			delta = block
+		} else {
+			event = IngestBlockEvent
+			block := IngestedBlock{op.mutID, bcoord, curBlock}
+			d.handleIndexBlockIngest(op.version, op.indexCh, block)
+			delta = block
+		}
+		evt := datastore.SyncEvent{d.DataUUID(), event}
+		msg := datastore.SyncMessage{event, op.version, delta}
+		if err := datastore.NotifySubscribers(evt, msg); err != nil {
+			dvid.Errorf("Unable to notify subscribers of event %s in %s\n", event, d.DataName())
+		}
+	}
+	// put data -- use buffer if available
+	tk := NewBlockTKeyByCoord(bcoord)
+	if putbuffer != nil {
+		ready := make(chan error, 1)
+		go callback(ready)
+		putbuffer.PutCallback(ctx, tk, serialization, ready)
+	} else {
+		if err := store.Put(ctx, tk, serialization); err != nil {
+			dvid.Errorf("Unable to PUT voxel data for block %s: %v\n", bcoord, err)
+			return
+		}
+		callback(nil)
+	}
 }
 
 // PutBlocks stores blocks of data in a span along X
@@ -196,19 +286,19 @@ func (d *Data) PutBlocks(v dvid.VersionID, mutID uint64, start dvid.ChunkPoint3d
 		if err != nil {
 			return err
 		}
-		zyx := dvid.IndexZYX(chunkPt)
-		tk := NewBlockTKey(&zyx)
+		bcoord := chunkPt.ToIZYXString()
 
 		// If we are mutating, get the previous block of data.
-		var oldBlock *labels.Block
+		var oldBlock *labels.PositionedBlock
 		if mutate {
 			var err error
-			if oldBlock, err = d.getLabelBlock(v, tk); err != nil {
-				return fmt.Errorf("Unable to load previous block in %q, key %v: %v\n", d.DataName(), tk, err)
+			if oldBlock, err = d.getLabelBlock(ctx, bcoord); err != nil {
+				return fmt.Errorf("Unable to load previous block in %q, block %s: %v\n", d.DataName(), bcoord, err)
 			}
 		}
 
 		// Write the new block
+		tk := NewBlockTKeyByCoord(bcoord)
 		batch.Put(tk, serialization)
 
 		// Notify any subscribers that you've changed block.
@@ -216,10 +306,10 @@ func (d *Data) PutBlocks(v dvid.VersionID, mutID uint64, start dvid.ChunkPoint3d
 		var delta interface{}
 		if mutate {
 			event = MutateBlockEvent
-			delta = MutatedBlock{&zyx, oldBlock, curBlock, mutID}
+			delta = MutatedBlock{mutID, bcoord, &(oldBlock.Block), curBlock}
 		} else {
 			event = IngestBlockEvent
-			delta = IngestedBlock{&zyx, curBlock, mutID}
+			delta = IngestedBlock{mutID, bcoord, curBlock}
 		}
 		evt := datastore.SyncEvent{d.DataUUID(), event}
 		msg := datastore.SyncMessage{event, v, delta}
@@ -242,116 +332,6 @@ func (d *Data) PutBlocks(v dvid.VersionID, mutID uint64, start dvid.ChunkPoint3d
 		}
 	}
 	return nil
-}
-
-// getLabelBlock returns a compressed block of label data from this instance's preferred storage.
-func (d *Data) getLabelBlock(v dvid.VersionID, k storage.TKey) (*labels.Block, error) {
-	store, err := d.GetOrderedKeyValueDB()
-	if err != nil {
-		return nil, fmt.Errorf("Data type imageblk had error initializing store: %v\n", err)
-	}
-
-	ctx := datastore.NewVersionedCtx(d, v)
-	serialization, err := store.Get(ctx, k)
-	if err != nil {
-		return nil, err
-	}
-	data, _, err := dvid.DeserializeData(serialization, true)
-	if err != nil {
-		return nil, fmt.Errorf("Unable to deserialize data for block, %s: %v", ctx, err)
-	}
-	var b labels.Block
-	err = b.UnmarshalBinary(data)
-	return &b, err
-}
-
-// Puts a chunk of data as part of a mapped operation.
-// Only some multiple of the # of CPU cores can be used for chunk handling before
-// it waits for chunk processing to abate via the buffered server.HandlerToken channel.
-func (d *Data) putChunk(op *putOperation, wg *sync.WaitGroup, putbuffer storage.RequestBuffer) {
-	defer func() {
-		// After processing a chunk, return the token.
-		server.HandlerToken <- 1
-
-		// Notify the requestor that this chunk is done.
-		wg.Done()
-	}()
-
-	tkey := NewBlockTKey(&op.indexZYX)
-
-	// If we are mutating, get the previous label Block
-	var oldBlock *labels.Block
-	if op.mutate {
-		var err error
-		if oldBlock, err = d.getLabelBlock(op.version, tkey); err != nil {
-			dvid.Errorf("Unable to load previous block in %q, key %v: %v\n", d.DataName(), tkey, err)
-			return
-		}
-	}
-
-	// Get the current label Block from the received label array
-	blockSize, ok := d.BlockSize().(dvid.Point3d)
-	if !ok {
-		dvid.Errorf("can't putChunk() on data %q with non-3d block size: %s", d.DataName(), d.BlockSize())
-		return
-	}
-	curBlock, err := labels.SubvolumeToBlock(op.subvol, op.data, op.indexZYX, blockSize)
-	if err != nil {
-		dvid.Errorf("error creating compressed block from label array at %s", op.subvol)
-		return
-	}
-	blockData, _ := curBlock.MarshalBinary()
-	serialization, err := dvid.SerializeData(blockData, d.Compression(), d.Checksum())
-	if err != nil {
-		dvid.Errorf("Unable to serialize block in %q: %v\n", d.DataName(), err)
-		return
-	}
-
-	store, err := d.GetOrderedKeyValueDB()
-	if err != nil {
-		dvid.Errorf("Data type imageblk had error initializing store: %v\n", err)
-		return
-	}
-
-	ctx := datastore.NewVersionedCtx(d, op.version)
-	callback := func(ready chan error) {
-		if ready != nil {
-			if resperr := <-ready; resperr != nil {
-				dvid.Errorf("Unable to PUT voxel data for key %v: %v\n", tkey, resperr)
-				return
-			}
-		}
-		var event string
-		var delta interface{}
-		if op.mutate {
-			event = MutateBlockEvent
-			block := MutatedBlock{&op.indexZYX, oldBlock, curBlock, op.mutID}
-			d.handleIndexBlockMutate(op.indexCh, block)
-			delta = block
-		} else {
-			event = IngestBlockEvent
-			block := IngestedBlock{&op.indexZYX, curBlock, op.mutID}
-			d.handleIndexBlockIngest(op.indexCh, block)
-			delta = block
-		}
-		evt := datastore.SyncEvent{d.DataUUID(), event}
-		msg := datastore.SyncMessage{event, op.version, delta}
-		if err := datastore.NotifySubscribers(evt, msg); err != nil {
-			dvid.Errorf("Unable to notify subscribers of event %s in %s\n", event, d.DataName())
-		}
-	}
-	// put data -- use buffer if available
-	if putbuffer != nil {
-		ready := make(chan error, 1)
-		go callback(ready)
-		putbuffer.PutCallback(ctx, tkey, serialization, ready)
-	} else {
-		if err := store.Put(ctx, tkey, serialization); err != nil {
-			dvid.Errorf("Unable to PUT voxel data for key %v: %v\n", tkey, err)
-			return
-		}
-		callback(nil)
-	}
 }
 
 // Writes a XY image into the blocks that intersect it.  This function assumes the
@@ -418,6 +398,7 @@ func (d *Data) writeBlocks(v dvid.VersionID, b storage.TKeyValues, wg1, wg2 *syn
 	}
 
 	preCompress, postCompress := 0, 0
+	blockSize := d.BlockSize().(dvid.Point3d)
 
 	ctx := datastore.NewVersionedCtx(d, v)
 	evt := datastore.SyncEvent{d.DataUUID(), labels.IngestBlockEvent}
@@ -435,11 +416,12 @@ func (d *Data) writeBlocks(v dvid.VersionID, b storage.TKeyValues, wg1, wg2 *syn
 		batch := batcher.NewBatch(ctx)
 		for i, block := range b {
 			preCompress += len(block.V)
-			compressed, err := labels.Compress(block.V, d.BlockSize())
+			lblBlock, err := labels.MakeBlock(block.V, blockSize)
 			if err != nil {
-				dvid.Errorf("Unable to google compress block in %q: %v\n", d.DataName(), err)
+				dvid.Errorf("unable to compute dvid block compression in %q: %v\n", d.DataName(), err)
 				return
 			}
+			compressed, _ := lblBlock.MarshalBinary()
 			serialization, err := dvid.SerializeData(compressed, d.Compression(), d.Checksum())
 			if err != nil {
 				dvid.Errorf("Unable to serialize block in %q: %v\n", d.DataName(), err)

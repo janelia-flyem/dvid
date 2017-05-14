@@ -562,6 +562,18 @@ func (rles RLEs) Within(pts []Point3d) (in []int) {
 	return
 }
 
+// Offset returns RLEs that have been offset by negative of given point.
+func (rles RLEs) Offset(offset Point3d) (out RLEs) {
+	out = make(RLEs, len(rles))
+	for i, rle := range rles {
+		x := rle.start[0] - offset[0]
+		y := rle.start[1] - offset[1]
+		z := rle.start[2] - offset[2]
+		out[i] = RLE{start: Point3d{x, y, z}, length: rle.length}
+	}
+	return
+}
+
 // --- sort interface
 
 func (rles RLEs) Len() int {

@@ -122,8 +122,6 @@ func (d *Data) handleBlockEvent() {
 				d.ingestBlock(ctx, delta, batcher)
 			case imageblk.MutatedBlock:
 				d.mutateBlock(ctx, delta, batcher)
-			case labels.DeleteBlock:
-				d.deleteBlock(ctx, delta, batcher)
 			default:
 				dvid.Criticalf("Cannot sync labelvol from block event.  Got unexpected delta: %v\n", msg)
 			}
@@ -136,37 +134,6 @@ func (d *Data) handleBlockEvent() {
 			}
 		}
 	}
-}
-
-func (d *Data) deleteBlock(ctx *datastore.VersionedCtx, block labels.DeleteBlock, batcher storage.KeyValueBatcher) {
-	batch := batcher.NewBatch(ctx)
-
-	// Iterate through this block of labels and get set of labels.
-	blockBytes := len(block.Data)
-	if blockBytes != int(d.BlockSize.Prod())*8 {
-		dvid.Criticalf("Deserialized label block %d bytes, not uint64 size times %d block elements\n",
-			blockBytes, d.BlockSize.Prod())
-		return
-	}
-	labelSet := make(map[uint64]struct{})
-	for i := 0; i < blockBytes; i += 8 {
-		label := binary.LittleEndian.Uint64(block.Data[i : i+8])
-		if label != 0 {
-			labelSet[label] = struct{}{}
-		}
-	}
-
-	// Go through all non-zero labels and delete the corresponding labelvol k/v pair.
-	zyx := block.Index.ToIZYXString()
-	for label := range labelSet {
-		tk := NewTKey(label, zyx)
-		batch.Delete(tk)
-	}
-
-	if err := batch.Commit(); err != nil {
-		dvid.Criticalf("Bad sync in labelvol.  Couldn't commit block %s\n", zyx)
-	}
-	return
 }
 
 // Note that this does not delete any removed labels in the block since we only get the CURRENT block
