@@ -249,6 +249,12 @@ func handleCommand(cmd *datastore.Request) (reply *datastore.Response, err error
 			reply.Text = fmt.Sprintf("New repo %q created with head node %s\n", alias, root)
 
 		case "delete":
+			// Apply a global lock (if relevant) and reloads meta
+			if err = datastore.MetadataUniversalLock(); err != nil {
+				return
+			}
+			defer datastore.MetadataUniversalUnlock()
+
 			var uuidStr, passcode string
 			cmd.CommandArgs(2, &uuidStr, &passcode)
 
@@ -417,6 +423,12 @@ func handleCommand(cmd *datastore.Request) (reply *datastore.Response, err error
 			*/
 
 		case "delete":
+			// Apply a global lock (if relevant) and reloads meta
+			if err = datastore.MetadataUniversalLock(); err != nil {
+				return
+			}
+			defer datastore.MetadataUniversalUnlock()
+
 			var dataname, passcode string
 			cmd.CommandArgs(3, &dataname, &passcode)
 

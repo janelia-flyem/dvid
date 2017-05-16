@@ -151,6 +151,8 @@ func (e *Engine) newGBucket(config dvid.StoreConfig) (*GBucket, bool, error) {
 	if val == nil {
 		created = true
 
+		// conditional put is probably not necessary since
+		// all workers should be posting same version
 		err = gb.putV(storage.Key(INITKEY), []byte(CURVER))
 		if err != nil {
 			return nil, false, err
@@ -163,20 +165,9 @@ func (e *Engine) newGBucket(config dvid.StoreConfig) (*GBucket, bool, error) {
 		gb.version = string(val)
 	}
 
-	// if we know it's newly created, just return.
-	if created {
-		return gb, created, nil
-	}
-
-	// otherwise, check if there's been any metadata or we need to initialize it.
-	// ?? would this ever be false in practice
-	metadataExists, err := gb.metadataExists()
-	if err != nil {
-		gb.Close()
-		return nil, false, err
-	}
-
-	return gb, !metadataExists, nil
+	// assume if not newly created that data exists
+	// 'created' not meaningful if concurrent calls
+	return gb, created, nil
 }
 
 // cannot Delete bucket from API
@@ -195,16 +186,6 @@ type GBucket struct {
 
 func (db *GBucket) String() string {
 	return fmt.Sprintf("google cloud storage, bucket %s", db.bname)
-}
-
-func (db *GBucket) metadataExists() (bool, error) {
-	if db == nil {
-		return false, fmt.Errorf("Can't call metadataExists() on nil Google bucket")
-	}
-	var ctx storage.MetadataContext
-	keyBeg, keyEnd := ctx.KeyRange()
-	haskeys := db.hasKeysInRangeRaw(keyBeg, keyEnd)
-	return haskeys, nil
 }
 
 // ---- OrderedKeyValueGetter interface ------
@@ -693,6 +674,37 @@ func (db *GBucket) retrieveKey(ctx storage.Context, tk storage.TKey) (storage.Ke
 	}
 
 	return currkey, nil
+}
+
+// Lockkey tries to write to a new file and if it fails, it keeps trying to query until it is free.
+func (db *GBucket) LockKey(k storage.Key) error {
+	var err error
+	currdelay := 1
+	// conditional put on generation id if it does not exist
+	obj_handle := db.bucket.Object(hex.EncodeToString(k))
+	var conditions api.Conditions
+	conditions.DoesNotExist = true
+	obj_handle = obj_handle.If(conditions)
+
+	for true {
+		// post blank data
+		// try putting againt with a new generation id
+		err = db.putVhandle(obj_handle, []byte(""))
+		if err != ErrCondFail {
+			break
+		}
+
+		// wait some time and retry
+		time.Sleep(time.Duration(currdelay) * time.Second)
+		currdelay += 1
+	}
+
+	return err
+}
+
+// UnlockKey delete the key/value and releases the lock
+func (db *GBucket) UnlockKey(k storage.Key) error {
+	return db.deleteV(k)
 }
 
 // Patch patches the value at the given key with function f.

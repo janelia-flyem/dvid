@@ -29,9 +29,9 @@ import (
 	_ "github.com/janelia-flyem/dvid/datatype/imageblk"
 	_ "github.com/janelia-flyem/dvid/datatype/imagetile"
 	_ "github.com/janelia-flyem/dvid/datatype/keyvalue"
+	_ "github.com/janelia-flyem/dvid/datatype/labelarray"
 	_ "github.com/janelia-flyem/dvid/datatype/labelblk"
 	_ "github.com/janelia-flyem/dvid/datatype/labelgraph"
-	_ "github.com/janelia-flyem/dvid/datatype/labelarray"
 	_ "github.com/janelia-flyem/dvid/datatype/labelsz"
 	_ "github.com/janelia-flyem/dvid/datatype/labelvol"
 	_ "github.com/janelia-flyem/dvid/datatype/multichan16"
@@ -277,8 +277,28 @@ func DoServe(cmd dvid.Command) error {
 	if err != nil {
 		return fmt.Errorf("Unable to initialize storage: %v\n", err)
 	}
+
+	// lock metadata
+	store, _ := storage.MetaDataKVStore()
+	transdb, hastrans := store.(storage.TransactionDB)
+	if hastrans {
+		var ctx storage.MetadataContext
+		key := ctx.ConstructKey(storage.NewTKey(datastore.ServerLockKey, nil))
+		transdb.LockKey(key)
+	}
+
 	if err := datastore.Initialize(initMetadata, instanceConfig); err != nil {
+		if hastrans {
+			var ctx storage.MetadataContext
+			key := ctx.ConstructKey(storage.NewTKey(datastore.ServerLockKey, nil))
+			transdb.UnlockKey(key)
+		}
 		return fmt.Errorf("Unable to initialize datastore: %v\n", err)
+	}
+	if hastrans {
+		var ctx storage.MetadataContext
+		key := ctx.ConstructKey(storage.NewTKey(datastore.ServerLockKey, nil))
+		transdb.UnlockKey(key)
 	}
 
 	// add handlers to help us track memory usage - they don't track memory until they're told to

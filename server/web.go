@@ -1028,10 +1028,12 @@ func serverSettingsHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 }
 
 func serverReload(c web.C, w http.ResponseWriter, r *http.Request) {
-	if err := datastore.ReloadMetadata(); err != nil {
-		BadRequest(w, r, fmt.Sprintf("Can't reload metadata: %v\n", err))
-		dvid.Criticalf("Can't reload metadata: %v\n", err)
+	// Apply a global lock (if relevant) which already reloads meta
+	if err := datastore.MetadataUniversalLock(); err != nil {
+		BadRequest(w, r, err)
+		return
 	}
+	datastore.MetadataUniversalUnlock()
 }
 
 func reposInfoHandler(w http.ResponseWriter, r *http.Request) {
@@ -1047,6 +1049,13 @@ func reposInfoHandler(w http.ResponseWriter, r *http.Request) {
 // TODO -- Maybe allow assignment of child UUID via JSON in POST.  Right now, we only
 // allow this potentially dangerous function via command-line.
 func reposPostHandler(w http.ResponseWriter, r *http.Request) {
+	// Apply a global lock (if relevant) and reloads meta
+	if err := datastore.MetadataUniversalLock(); err != nil {
+		BadRequest(w, r, err)
+		return
+	}
+	defer datastore.MetadataUniversalUnlock()
+
 	if httpUnavailable(w) {
 		return
 	}
@@ -1110,6 +1119,13 @@ func repoInfoHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 }
 
 func repoNewDataHandler(c web.C, w http.ResponseWriter, r *http.Request) {
+	// Apply a global lock (if relevant) and reloads meta
+	if err := datastore.MetadataUniversalLock(); err != nil {
+		BadRequest(w, r, err)
+		return
+	}
+	defer datastore.MetadataUniversalUnlock()
+
 	uuid := c.Env["uuid"].(dvid.UUID)
 
 	locked, err := datastore.LockedUUID(uuid)
@@ -1268,6 +1284,13 @@ func postNodeLogHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 }
 
 func repoCommitStateHandler(c web.C, w http.ResponseWriter, r *http.Request) {
+	// Apply a global lock (if relevant) and reloads meta
+	if err := datastore.MetadataUniversalLock(); err != nil {
+		BadRequest(w, r, err)
+		return
+	}
+	defer datastore.MetadataUniversalUnlock()
+
 	uuid := c.Env["uuid"].(dvid.UUID)
 
 	locked, err := datastore.LockedUUID(uuid)
@@ -1280,7 +1303,23 @@ func repoCommitStateHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 }
 
 func repoCommitHandler(c web.C, w http.ResponseWriter, r *http.Request) {
+	// Apply a global lock (if relevant) and reloads meta
+	if err := datastore.MetadataUniversalLock(); err != nil {
+		BadRequest(w, r, err)
+		return
+	}
+	defer datastore.MetadataUniversalUnlock()
+
 	uuid := c.Env["uuid"].(dvid.UUID)
+	locked, err := datastore.LockedUUID(uuid)
+	if err != nil {
+		BadRequest(w, r, err)
+		return
+	} else if locked {
+		BadRequest(w, r, "Could not post to locked node")
+		return
+	}
+
 	data, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		BadRequest(w, r, err)
@@ -1308,6 +1347,13 @@ func repoCommitHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 // TODO -- Might allow specification of UUID for child via HTTP, or only
 // allow this potentially dangerous op via command line.
 func repoBranchHandler(c web.C, w http.ResponseWriter, r *http.Request) {
+	// Apply a global lock (if relevant) and reloads meta
+	if err := datastore.MetadataUniversalLock(); err != nil {
+		BadRequest(w, r, err)
+		return
+	}
+	defer datastore.MetadataUniversalUnlock()
+
 	uuid := c.Env["uuid"].(dvid.UUID)
 	jsonData := struct {
 		Note string `json:"note"`
