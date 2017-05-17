@@ -193,15 +193,20 @@ func (pb PositionedBlock) Split(op SplitOp) (split *Block, keptSize, splitSize u
 	split = new(Block)
 	split.Size = pb.Size
 	split.data = make([]byte, blockBytes)
-	pos := 16 + numLabels*8
-	copy(split.data[:pos], pb.data[:pos])
+	pos := uint32(16)
+	nbytes := numLabels * 8
+	copy(split.data[:pos+nbytes], pb.data[:pos+nbytes])
 	if !labelPresent {
 		binary.LittleEndian.PutUint32(split.data[12:16], numNewLabels)
-		binary.LittleEndian.PutUint64(split.data[pos:pos+8], op.NewLabel)
-		pos += 8
+		binary.LittleEndian.PutUint64(split.data[pos+nbytes:pos+nbytes+8], op.NewLabel)
+		nbytes += 8
+	}
+	if split.Labels, err = dvid.ByteToUint64(split.data[pos : pos+nbytes]); err != nil {
+		return
 	}
 
-	nbytes := numSubBlocks * 2
+	pos += nbytes
+	nbytes = numSubBlocks * 2
 	if split.NumSBLabels, err = dvid.ByteToUint16(split.data[pos : pos+nbytes]); err != nil {
 		return
 	}
@@ -237,93 +242,6 @@ func (pb PositionedBlock) Split(op SplitOp) (split *Block, keptSize, splitSize u
 
 	return
 }
-
-// Split a label defined by RLEs into a block.  The target label is not necessary since any
-// voxel defined by the RLEs that fall within the block are set to the given split label.
-// TODO: If we continue to use RLEs for splits (which we shouldn't), optimize this function
-// since it is currently simple but slower than optimal.
-/*
-func (pb PositionedBlock) SplitBAD(op SplitOp) (split *Block, keptSize, splitSize uint64, err error) {
-	split = new(Block)
-	var offset dvid.Point3d
-	if offset, err = pb.OffsetDVID(); err != nil {
-		return
-	}
-
-	gx, gy, gz := pb.Size[0]/SubBlockSize, pb.Size[1]/SubBlockSize, pb.Size[2]/SubBlockSize
-	numSubBlocks := uint32(gx * gy * gz)
-
-	// Check if the split label is present.
-	labelPresent := false
-	for i, label := range pb.Labels {
-		if label == op.NewLabel {
-			labelPresent = true
-			labelIndex = i
-		}
-	}
-	if !labelPresent {
-		labelIndex = len(pb.Labels)
-	}
-
-	// get # of sub-blocks in each dimension within this block.
-	nz := pb.Size[2] / SubBlockSize
-	ny := pb.Size[1] / SubBlockSize
-	nx := pb / Size[0] / SubBlockSize
-	numSubBlockVoxels := SubBlockSize * SubBlockSize * SubBlockSize
-
-	sbValuePos := make([]uint32, numSubBlocks)
-	var k uint32
-	for i, n := range pb.NumSBLabels {
-		sbValuePos[i] = k
-		bits := uint32(bitsFor(n))
-		sbBits := uint32(subBlockNumVoxels) * bits
-		valueBytes := sbBits / 8
-		if sbBits%8 != 0 {
-			valueBytes++
-		}
-		k += valueBytes
-	}
-
-	// If not, create a new label and adjust block data slice to be 8 bytes larger.
-	for _, rle := range op.RLEs {
-		pos := rle.StartPt()
-		bz := pos[2] - offset[2]
-		by := pos[1] - offset[1]
-		if by < 0 || by >= pb.Size[1] || bz < 0 || bz >= pb.Size[2] {
-			continue
-		}
-		sz := bz / SubBlockSize
-		sy := by / SubBlockSize
-		goff := sz*ny*nx + sy*nx
-		boff := bz*pb.Size[0]*pb.Size[1] + by*pb.Size[0]
-		for x := pos[0]; x < pos[0]+rle.Length(); x++ {
-			bx := x - offset[0]
-			if bx >= 0 && x < pb.Size[0] {
-				sbNum := goff + bx/SubBlockSize
-				numSBLabels := pb.NumSBLabels[sbNum]
-				bits := int(bitsFor(numSBLabels))
-				if bits < 2 {
-					// Need to modify sub-block and save.
-				}
-				bithead := bitpos % 8
-				bytepos := uint32(bitpos>>3) + sbValuePos[sbNum]
-				if bithead+bits <= 8 {
-					// index totally within this byte
-					leftshift := uint(8 - bits - bithead)
-					pb.SBValues[bytepos] |= byte(labelIndex << leftshift)
-				} else {
-					// this straddles a byte boundary
-					leftshift := uint(16 - bits - bithead)
-					labelIndex <<= leftshift
-					pb.SBValues[bytepos] |= byte((labelIndex & 0xFF00) >> 8)
-					pb.SBValues[bytepos+1] = byte(labelIndex & 0x00FF)
-				}
-			}
-		}
-	}
-	return
-}
-*/
 
 // MakeSolidBlock returns a Block that represents a single label of the given block size.
 func MakeSolidBlock(label uint64, blockSize dvid.Point3d) *Block {
@@ -723,7 +641,8 @@ func (r rleBuffer) extend(yz yzString, pt dvid.Point3d) {
 //        int32   Coordinate of run start (dimension 2)
 //        int32   Length of run in X direction
 //
-// The offset is the DVID space offset to the first voxel in the Block.
+// The offset is the DVID space offset to the first voxel in the Block.  After the RLEs have
+// been written to the io.Writer, an error message is sent down the given errCh.
 func WriteRLEs(lbls Set, w io.Writer, pbCh chan *PositionedBlock, bounds dvid.Bounds, errCh chan error) {
 	var rleBuf rleBuffer
 	for pb := range pbCh {

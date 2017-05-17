@@ -663,9 +663,6 @@ const (
 
 	// FormatBinaryBlocks specifies a streaming set of binary Blocks
 	FormatBinaryBlocks
-
-	// FormatLegacySlowRLE specifies the legacy RLE encoding computed using old system.
-	FormatLegacySlowRLE
 )
 
 // returns default legacy RLE if no options set.
@@ -675,8 +672,6 @@ func svformatFromQueryString(r *http.Request) SparseVolFormat {
 		return FormatStreamingRLE
 	case "blocks":
 		return FormatBinaryBlocks
-	case "old":
-		return FormatLegacySlowRLE
 	default:
 		return FormatLegacyRLE
 	}
@@ -2409,9 +2404,10 @@ func (d *Data) handleSparsevolByPoint(ctx *datastore.VersionedCtx, w http.Respon
 	format := svformatFromQueryString(r)
 	var found bool
 	switch format {
-	case FormatLegacyRLE, FormatLegacySlowRLE:
-		found, err = d.WriteLegacyRLE(ctx, label, b, compression, format, w)
+	case FormatLegacyRLE:
+		found, err = d.WriteLegacyRLE(ctx, label, b, compression, w)
 	case FormatBinaryBlocks:
+		found, err = d.WriteBinaryBlocks(ctx, label, b, compression, w)
 	case FormatStreamingRLE:
 		found, err = d.WriteStreamingRLE(ctx, label, b, compression, w)
 	}

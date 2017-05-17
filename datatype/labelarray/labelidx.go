@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"sort"
-	"sync"
 	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
@@ -700,6 +699,7 @@ func (d *Data) WriteBinaryBlocks(ctx *datastore.VersionedCtx, label uint64, boun
 		}
 		pbCh <- &pb
 	}
+	close(pbCh)
 	err = <-errCh
 	if err != nil {
 		return false, err
@@ -752,6 +752,7 @@ func (d *Data) WriteStreamingRLE(ctx *datastore.VersionedCtx, label uint64, boun
 		}
 		pbCh <- &pb
 	}
+	close(pbCh)
 	err = <-errCh
 	if err != nil {
 		return false, err
@@ -761,10 +762,9 @@ func (d *Data) WriteStreamingRLE(ctx *datastore.VersionedCtx, label uint64, boun
 	return true, nil
 }
 
-func (d *Data) WriteLegacyRLE(ctx *datastore.VersionedCtx, label uint64, b dvid.Bounds, compression string, format SparseVolFormat, w io.Writer) (found bool, err error) {
+func (d *Data) WriteLegacyRLE(ctx *datastore.VersionedCtx, label uint64, b dvid.Bounds, compression string, w io.Writer) (found bool, err error) {
 	var data []byte
-	old := (format == FormatLegacySlowRLE)
-	data, err = d.GetLegacyRLE(ctx, label, b, old)
+	data, err = d.GetLegacyRLE(ctx, label, b)
 	if err != nil {
 		return
 	}
@@ -800,114 +800,12 @@ func (d *Data) WriteLegacyRLE(ctx *datastore.VersionedCtx, label uint64, b dvid.
 }
 
 // GetLegacyRLE returns an encoded sparse volume given a label and an output format.
-// If the old flag is true, the RLEs are computed using label volume instead of directly
-// from the compressed label Blocks.
-func (d *Data) GetLegacyRLE(ctx *datastore.VersionedCtx, label uint64, bounds dvid.Bounds, old bool) ([]byte, error) {
+func (d *Data) GetLegacyRLE(ctx *datastore.VersionedCtx, label uint64, bounds dvid.Bounds) ([]byte, error) {
 	meta, lbls, err := d.GetMappedLabelMeta(ctx, label, bounds)
 	if err != nil {
 		return nil, err
 	}
-	if old {
-		return d.getLegacySlowRLEs(ctx, meta, lbls, bounds)
-	}
 	return d.getLegacyRLEs(ctx, meta, lbls, bounds)
-}
-
-//  The encoding has the following format where integers are little endian:
-//
-//    byte     Payload descriptor:
-//               Bit 0 (LSB) - 8-bit grayscale
-//               Bit 1 - 16-bit grayscale
-//               Bit 2 - 16-bit normal
-//               ...
-//    uint8    Number of dimensions
-//    uint8    Dimension of run (typically 0 = X)
-//    byte     Reserved (to be used later)
-//    uint32    0
-//    uint32    # Spans
-//    Repeating unit of:
-//        int32   Coordinate of run start (dimension 0)
-//        int32   Coordinate of run start (dimension 1)
-//        int32   Coordinate of run start (dimension 2)
-//        int32   Length of run
-//        bytes   Optional payload dependent on first byte descriptor
-//
-func (d *Data) getLegacySlowRLEs(ctx *datastore.VersionedCtx, meta *Meta, lbls labels.Set, bounds dvid.Bounds) ([]byte, error) {
-	// Write the sparse volume header
-	buf := new(bytes.Buffer)
-	buf.WriteByte(dvid.EncodingBinary)
-	binary.Write(buf, binary.LittleEndian, uint8(3))  // # of dimensions
-	binary.Write(buf, binary.LittleEndian, byte(0))   // dimension of run (X = 0)
-	buf.WriteByte(byte(0))                            // reserved for later
-	binary.Write(buf, binary.LittleEndian, uint32(0)) // Placeholder for # voxels
-	binary.Write(buf, binary.LittleEndian, uint32(0)) // Placeholder for # spans
-
-	indices, err := getBoundedBlockIndices(meta, bounds)
-	if err != nil {
-		return nil, err
-	}
-
-	store, err := d.GetOrderedKeyValueDB()
-	if err != nil {
-		return nil, err
-	}
-
-	const blockDecoders = 10
-	getCh := make(chan rleResult, 100)
-	sendCh := make([]chan labelBlock, blockDecoders)
-	for i := 0; i < blockDecoders; i++ {
-		sendCh[i] = make(chan labelBlock, 10)
-		go d.processBlocksToRLEs(lbls, bounds, sendCh[i], getCh)
-	}
-
-	// launch the RLE collector
-	var wg sync.WaitGroup
-	var numRuns uint32
-	numBlocks := 0
-	wg.Add(1)
-	go func() {
-		for {
-			result := <-getCh
-			numBlocks++
-			if len(result.serialization) > 0 {
-				if _, err := buf.Write(result.serialization); err != nil {
-					dvid.Errorf("unable to write result of RLE serialization: %v\n", err)
-					result.runs = 0
-				}
-			}
-			numRuns += result.runs
-			if numBlocks == len(indices) {
-				wg.Done()
-				return
-			}
-		}
-	}()
-
-	for _, izyx := range indices {
-		tk := NewBlockTKeyByCoord(izyx)
-		data, err := store.Get(ctx, tk)
-		if err != nil {
-			return nil, err
-		}
-
-		n := izyx.Hash(blockDecoders)
-		sendCh[n] <- labelBlock{index: izyx, data: data}
-	}
-
-	wg.Wait()
-	close(getCh)
-	for i := 0; i < blockDecoders; i++ {
-		close(sendCh[i])
-	}
-
-	if numRuns == 0 {
-		return nil, nil // Couldn't find this out until we did voxel-level clipping
-	}
-
-	serialization := buf.Bytes()
-	binary.LittleEndian.PutUint32(serialization[8:12], numRuns)
-	dvid.Infof("[%s] labels %v: found %d blocks, %d runs, buf %d bytes\n", ctx, lbls, numBlocks, numRuns, len(serialization))
-	return serialization, nil
 }
 
 //  The encoding has the following format where integers are little endian:
@@ -947,7 +845,7 @@ func (d *Data) getLegacyRLEs(ctx *datastore.VersionedCtx, meta *Meta, lbls label
 	if err != nil {
 		return nil, err
 	}
-	pbCh := make(chan *labels.PositionedBlock)
+	pbCh := make(chan *labels.PositionedBlock, 10000)
 	errCh := make(chan error)
 	go labels.WriteRLEs(lbls, buf, pbCh, bounds, errCh)
 	for _, izyx := range indices {
