@@ -985,7 +985,6 @@ func (i *IZYXSlice) Delete(i2 IZYXSlice) {
 		switch {
 		case (*i)[pos1] == i2[pos2]:
 			*i = append((*i)[:pos1], (*i)[pos1+1:]...)
-			pos1++
 			pos2++
 			len1--
 		case (*i)[pos1] > i2[pos2]:
@@ -1104,23 +1103,27 @@ func (i IZYXSlice) Split(rm IZYXSlice) (IZYXSlice, error) {
 	out := make(IZYXSlice, len(i))
 	outPos := 0
 	rmPos := 0
-	r := rm[rmPos]
+	rzyx := rm[rmPos]
 	for n, izyx := range i {
-		if r != izyx {
-			out[outPos] = izyx
-			outPos++
-		} else {
+		for rzyx < izyx {
 			rmPos++
-			if rmPos >= len(rm) {
-				n++
-				remain := len(i) - n
-				if remain > 0 {
-					outPos += remain
-					copy(out[outPos:], i[n+1:])
-				}
+			if rmPos < len(rm) {
+				rzyx = rm[rmPos]
+			} else {
 				break
 			}
-			r = rm[rmPos]
+		}
+		if rmPos >= len(rm) {
+			remain := len(i) - n
+			if remain > 0 {
+				copy(out[outPos:], i[n:])
+				outPos += remain
+			}
+			break
+		}
+		if rzyx != izyx {
+			out[outPos] = izyx
+			outPos++
 		}
 	}
 	if rmPos < len(rm) {
