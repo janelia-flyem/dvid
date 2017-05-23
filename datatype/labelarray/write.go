@@ -20,7 +20,7 @@ type putOperation struct {
 	version  dvid.VersionID
 	mutate   bool   // if false, we just ingest without needing to GET previous value
 	mutID    uint64 // should be unique within a server's uptime.
-	indexCh  chan blockChange
+	blockCh  chan blockChange
 }
 
 // PutLabels persists voxels from a subvolume into the storage engine.  This involves transforming
@@ -124,7 +124,7 @@ func (d *Data) PutLabels(v dvid.VersionID, subvol *dvid.Subvolume, data []byte, 
 				version:  v,
 				mutate:   mutate,
 				mutID:    mutID,
-				indexCh:  blockCh,
+				blockCh:  blockCh,
 			}
 			<-server.HandlerToken
 			go d.putChunk(putOp, wg, putbuffer)
@@ -207,12 +207,12 @@ func (d *Data) putChunk(op *putOperation, wg *sync.WaitGroup, putbuffer storage.
 		if op.mutate {
 			event = MutateBlockEvent
 			block := MutatedBlock{op.mutID, bcoord, &(oldBlock.Block), curBlock}
-			d.handleIndexBlockMutate(op.version, op.indexCh, block)
+			d.handleIndexBlockMutate(op.version, op.blockCh, block)
 			delta = block
 		} else {
 			event = IngestBlockEvent
 			block := IngestedBlock{op.mutID, bcoord, curBlock}
-			d.handleIndexBlockIngest(op.version, op.indexCh, block)
+			d.handleIndexBlockIngest(op.version, op.blockCh, block)
 			delta = block
 		}
 		evt := datastore.SyncEvent{d.DataUUID(), event}

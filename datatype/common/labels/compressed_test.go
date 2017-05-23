@@ -229,6 +229,82 @@ func TestBlockCompression(t *testing.T) {
 	checkLabels(t, "block compress/uncompress", dvid.Uint64ToByte(testvol), testvol2)
 }
 
+func setLabel(vol []uint64, size, x, y, z int, label uint64) {
+	i := z*size*size + y*size + x
+	vol[i] = label
+}
+
+func TestBlockSplitAndRLEs(t *testing.T) {
+	numVoxels := 32 * 32 * 32
+	testvol := make([]uint64, numVoxels)
+	for i := 0; i < numVoxels; i++ {
+		testvol[i] = uint64(i)
+	}
+	label := uint64(numVoxels * 10) // > previous labels
+	for x := 11; x < 31; x++ {
+		setLabel(testvol, 32, x, 8, 16, label)
+	}
+	block, err := MakeBlock(dvid.Uint64ToByte(testvol), dvid.Point3d{32, 32, 32})
+	if err != nil {
+		t.Fatalf("error making block: %v\n", err)
+	}
+
+	splitRLEs := dvid.RLEs{
+		dvid.NewRLE(dvid.Point3d{81, 40, 80}, 6),
+		dvid.NewRLE(dvid.Point3d{90, 40, 80}, 3),
+	}
+	op := SplitOp{NewLabel: label + 1, Target: label, RLEs: splitRLEs}
+	pb := PositionedBlock{
+		Block:  *block,
+		BCoord: dvid.ChunkPoint3d{2, 1, 2}.ToIZYXString(),
+	}
+	split, keptSize, splitSize, err := pb.Split(op)
+	if err != nil {
+		t.Fatalf("error doing split: %v\n", err)
+	}
+	if keptSize != 11 {
+		t.Errorf("Expected kept size of 11, got %d\n", keptSize)
+	}
+	if splitSize != 9 {
+		t.Errorf("Expected split size of 9, got %d\n", splitSize)
+	}
+
+	var buf bytes.Buffer
+	lbls := Set{}
+	lbls[label] = struct{}{}
+	outOp := NewOutputOp(&buf)
+	go WriteRLEs(lbls, outOp, dvid.Bounds{})
+	pb = PositionedBlock{
+		Block:  *split,
+		BCoord: dvid.ChunkPoint3d{2, 1, 2}.ToIZYXString(),
+	}
+	outOp.Process(&pb)
+	if err = outOp.Finish(); err != nil {
+		t.Fatalf("error writing RLEs: %v\n", err)
+	}
+	output, err := ioutil.ReadAll(&buf)
+	if err != nil {
+		t.Fatalf("error on reading WriteRLEs: %v\n", err)
+	}
+	if len(output) != 3*16 {
+		t.Fatalf("expected 3 RLEs (48 bytes), got %d bytes\n", len(output))
+	}
+	var rles dvid.RLEs
+	if err = rles.UnmarshalBinary(output); err != nil {
+		t.Fatalf("unable to parse binary RLEs: %v\n", err)
+	}
+	expected := dvid.RLEs{
+		dvid.NewRLE(dvid.Point3d{75, 40, 80}, 6),
+		dvid.NewRLE(dvid.Point3d{87, 40, 80}, 3),
+		dvid.NewRLE(dvid.Point3d{93, 40, 80}, 2),
+	}
+	for i, rle := range rles {
+		if rle != expected[i] {
+			t.Errorf("Expected RLE %d: %s, got %s\n", i, expected[i], rle)
+		}
+	}
+}
+
 func BenchmarkGoogleCompress(b *testing.B) {
 	d := make([]testData, len(testFiles))
 	for i, filename := range testFiles {

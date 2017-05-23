@@ -63,15 +63,18 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp) error {
 
 	ctx := datastore.NewVersionedCtx(d, v)
 	go func() {
-		defer d.StopUpdate()
+		defer func() {
+			d.StopUpdate()
+			labels.MergeStop(iv, op)
+		}()
 
 		// Get all the affected blocks in the merge.
-		targetMeta, err := d.GetLabelMeta(ctx, labels.NewSet(op.Target), dvid.Bounds{})
+		targetMeta, err := d.getLabelMeta(ctx, labels.NewSet(op.Target), dvid.Bounds{})
 		if err != nil {
 			dvid.Errorf("can't get block indices of to merge target label %d\n", op.Target)
 			return
 		}
-		mergedMeta, err := d.GetLabelMeta(ctx, op.Merged, dvid.Bounds{})
+		mergedMeta, err := d.getLabelMeta(ctx, op.Merged, dvid.Bounds{})
 		if err != nil {
 			dvid.Errorf("can't get block indices of to merge labels %s\n", op.Merged)
 			return
@@ -86,9 +89,6 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp) error {
 		if err := d.processMerge(v, delta); err != nil {
 			dvid.Criticalf("unable to process merge: %v\n", err)
 		}
-
-		// Remove dirty labels and updating flag when done.
-		labels.MergeStop(iv, op)
 	}()
 
 	return nil
@@ -118,6 +118,15 @@ func (d *Data) processMerge(v dvid.VersionID, delta labels.DeltaMerge) error {
 	d.MutDelete(mutID)
 	timedLog.Debugf("labelarray block-level merge (%d blocks) of %s -> %d", len(delta.Blocks), delta.MergeOp.Merged, delta.MergeOp.Target)
 
+	// Merge the new blocks into the target label block index.
+	mergebdm := make(blockDiffMap, len(delta.Blocks))
+	for _, izyx := range delta.Blocks {
+		mergebdm[izyx] = labelDiff{delta: int32(delta.MergedVoxels), present: true}
+	}
+	shard := delta.Target % numLabelHandlers
+	d.indexCh[shard] <- labelChange{v: v, label: delta.Target, bdm: mergebdm}
+
+	// Delete all the merged label block index kv pairs.
 	store, err := d.GetOrderedKeyValueDB()
 	if err != nil {
 		return fmt.Errorf("Data %q merge had error initializing store: %v\n", d.DataName(), err)
@@ -127,25 +136,10 @@ func (d *Data) processMerge(v dvid.VersionID, delta labels.DeltaMerge) error {
 		return fmt.Errorf("Data %q merge requires batch-enabled store, which %q is not\n", d.DataName(), store)
 	}
 
-	// Merge the new blocks into the target label block index.
 	ctx := datastore.NewVersionedCtx(d, v)
 	batch := batcher.NewBatch(ctx)
-
-	tk := NewLabelIndexTKey(delta.Target)
-	meta := Meta{
-		Voxels: delta.TargetVoxels + delta.MergedVoxels,
-		Blocks: delta.Blocks,
-	}
-	data, err := meta.MarshalBinary()
-	if err != nil {
-		return fmt.Errorf("Unable to serialize label meta for merge on label %d, data %q: %v\n", delta.Target, d.DataName(), err)
-	} else {
-		batch.Put(tk, data)
-	}
-
-	// Delete all the merged label block index kv pairs.
 	for merged := range delta.Merged {
-		tk = NewLabelIndexTKey(merged)
+		tk := NewLabelIndexTKey(merged)
 		batch.Delete(tk)
 	}
 	if err := batch.Commit(); err != nil {
@@ -215,11 +209,16 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel, splitLabel uint64, r io.
 	splitOpEnd := labels.DeltaSplitEnd{fromLabel, toLabel}
 
 	// Make sure we can split given current merges in progress
+	d.StartUpdate()
 	iv := dvid.InstanceVersion{Data: d.DataUUID(), Version: v}
 	if err = labels.SplitStart(iv, splitOpStart); err != nil {
+		d.StopUpdate()
 		return
 	}
-	defer labels.SplitStop(iv, splitOpEnd)
+	defer func() {
+		labels.SplitStop(iv, splitOpEnd)
+		d.StopUpdate()
+	}()
 
 	// Signal that we are starting a split.
 	msg := datastore.SyncMessage{labels.SplitStartEvent, v, splitOpStart}
@@ -355,7 +354,6 @@ func (d *Data) SplitCoarseLabels(v dvid.VersionID, fromLabel, splitLabel uint64,
 
 func (d *Data) processSplit(v dvid.VersionID, delta labels.DeltaSplit) error {
 	timedLog := dvid.NewTimeLog()
-	d.StartUpdate()
 
 	mutID := d.NewMutationID()
 	var doneCh chan struct{}
@@ -376,8 +374,6 @@ func (d *Data) processSplit(v dvid.VersionID, delta labels.DeltaSplit) error {
 			}
 			d.mutateCh[n] <- procMsg{op: op, v: v}
 		}
-		// However we must publish label size changes at the block level since we don't know
-		// how much change occurs until we traverse voxels.
 	} else {
 		// Fine Split could partially split within a block so both old and new labels have same valid block.
 		doneCh = make(chan struct{})
@@ -441,7 +437,6 @@ func (d *Data) processSplit(v dvid.VersionID, delta labels.DeltaSplit) error {
 		return err
 	}
 	timedLog.Debugf("labelarray sync complete for split (%d blocks) of %d -> %d", len(delta.Split), delta.OldLabel, delta.NewLabel)
-	d.StopUpdate()
 
 	// Publish split event
 	evt := datastore.SyncEvent{d.DataUUID(), labels.SplitLabelEvent}
@@ -461,46 +456,21 @@ func (d *Data) processSplit(v dvid.VersionID, delta labels.DeltaSplit) error {
 
 // handles modification of the old and new label's block indices on split.
 func (d *Data) splitIndices(v dvid.VersionID, delta labels.DeltaSplit, deleteBlks dvid.IZYXSlice) error {
-	store, err := d.GetOrderedKeyValueDB()
-	if err != nil {
-		return fmt.Errorf("Data %q merge had error initializing store: %v\n", d.DataName(), err)
+	// note that the blocks to be deleted from old label != split blocks since there
+	// may be partial block split.
+	deletebdm := make(blockDiffMap, len(deleteBlks))
+	for _, izyx := range deleteBlks {
+		deletebdm[izyx] = labelDiff{present: false}
 	}
-	batcher, ok := store.(storage.KeyValueBatcher)
-	if !ok {
-		return fmt.Errorf("Data %q merge requires batch-enabled store, which %q is not\n", d.DataName(), store)
-	}
+	shard := delta.OldLabel % numLabelHandlers
+	d.indexCh[shard] <- labelChange{v: v, label: delta.OldLabel, bdm: deletebdm}
 
-	ctx := datastore.NewVersionedCtx(d, v)
-	batch := batcher.NewBatch(ctx)
-	meta, err := d.GetLabelMeta(ctx, labels.NewSet(delta.OldLabel), dvid.Bounds{})
-	if err != nil {
-		return fmt.Errorf("unable to get block indices for label %d -- aborting label idx denorm: %v\n", delta.OldLabel, err)
+	splitbdm := make(blockDiffMap, len(delta.Split))
+	for izyx := range delta.Split {
+		splitbdm[izyx] = labelDiff{present: true}
 	}
-
-	blocks, err := meta.Blocks.Split(deleteBlks)
-	if err != nil {
-		return fmt.Errorf("unable to split deleted blocks for label %d to %d for data %q: %v\n", delta.OldLabel, delta.NewLabel, d.DataName(), err)
-	}
-	// store meta for old label
-	meta.Voxels = meta.Voxels - delta.SplitVoxels
-	meta.Blocks = blocks
-
-	data, err := meta.MarshalBinary()
-	if err != nil {
-		return fmt.Errorf("unable to serialize block indices for split of label %d, data %q: %v\n", delta.OldLabel, d.DataName(), err)
-	}
-	tk := NewLabelIndexTKey(delta.OldLabel)
-	batch.Put(tk, data)
-
-	// store meta for new label
-	meta.Voxels = delta.SplitVoxels
-	meta.Blocks = delta.SortedBlocks
-	tk = NewLabelIndexTKey(delta.NewLabel)
-	batch.Put(tk, data)
-
-	if err := batch.Commit(); err != nil {
-		return fmt.Errorf("Error on commiting block indices for split of label %d, data %q: %v\n", delta.OldLabel, d.DataName(), err)
-	}
+	shard = delta.NewLabel % numLabelHandlers
+	d.indexCh[shard] <- labelChange{v: v, label: delta.NewLabel, bdm: splitbdm}
 	return nil
 }
 
@@ -593,6 +563,11 @@ func (d *Data) splitBlock(ctx *datastore.VersionedCtx, op splitOp) {
 		splitBlock, keptSize, toLabelSize, err = pb.Split(op.SplitOp)
 		if err != nil {
 			dvid.Errorf("can't store label %d RLEs into block %s: %v\n", op.NewLabel, op.bcoord, err)
+			return
+		}
+		dvid.Infof("Split block %s: kept %d voxels, split %d voxels\n", pb.BCoord, keptSize, toLabelSize)
+		if splitBlock == nil {
+			dvid.Infof("Attempt to split missing label %d in block %s!\n", op.SplitOp.Target, *pb)
 			return
 		}
 		if keptSize == 0 {

@@ -443,16 +443,24 @@ GET  <api URL>/node/<UUID>/<data name>/sparsevol/<label>?<options>
 
 	Streaming Binary Blocks ("blocks"):
 
-      3 * uint32      values of gx, gy, and gz
-      3 * int32       offset of first voxel of Block in DVID space (x, y, z)
+      3 * uint32      values of gx, gy, and gz -- the # of sub-blocks along each dimension in a Block.
       uint64          foreground label
 
-      Stream of gx * gy * gz sub-blocks with the following data:
+      Stream of blocks.  Each block has the following data:
 
-      byte            0 = background ONLY  (no more data for this sub-block)
-                      1 = foreground ONLY  (no more data for this sub-block)
-                      2 = both background and foreground so mask data required.
-      mask            64 byte bitmask where each voxel is 0 (background) or 1 (foreground)
+		3 * int32       offset of first voxel of Block in DVID space (x, y, z)
+		byte            content flag:
+						0 = background ONLY  (no more data for this block)
+						1 = foreground ONLY  (no more data for this block)
+						2 = both background and foreground so stream of sub-blocks required.
+
+		If content is both background and foreground, stream of gx * gy * gz sub-blocks with the following data:
+
+		byte            content flag:
+						0 = background ONLY  (no more data for this sub-block)
+						1 = foreground ONLY  (no more data for this sub-block)
+						2 = both background and foreground so mask data required.
+		mask            64 byte bitmask where each voxel is 0 (background) or 1 (foreground)
 
     GET Query-string Options:
 
@@ -470,8 +478,7 @@ GET  <api URL>/node/<UUID>/<data name>/sparsevol/<label>?<options>
     exact   "false" if RLEs can extend a bit outside voxel bounds within border blocks.
             This will give slightly faster responses. 
 
-    compression   Allows retrieval of data in "lz4" and "gzip"
-                  compressed format.
+    compression   "lz4" and "gzip" compressed format; only applies to "rles" format for now.
 
 
 HEAD <api URL>/node/<UUID>/<data name>/sparsevol/<label>?<options>
@@ -2328,10 +2335,9 @@ func (d *Data) handleSparsevol(ctx *datastore.VersionedCtx, w http.ResponseWrite
 		w.Header().Set("Content-type", "application/octet-stream")
 
 		var found bool
-		format := svformatFromQueryString(r)
-		switch format {
-		case FormatLegacyRLE, FormatLegacySlowRLE:
-			found, err = d.WriteLegacyRLE(ctx, label, b, compression, format, w)
+		switch svformatFromQueryString(r) {
+		case FormatLegacyRLE:
+			found, err = d.WriteLegacyRLE(ctx, label, b, compression, w)
 		case FormatBinaryBlocks:
 			found, err = d.WriteBinaryBlocks(ctx, label, b, compression, w)
 		case FormatStreamingRLE:

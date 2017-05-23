@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"sync"
 
 	"github.com/janelia-flyem/dvid/dvid"
 )
@@ -53,8 +54,9 @@ func (pb PositionedBlock) OffsetDVID() (dvid.Point3d, error) {
 	return pb.BCoord.VoxelOffset(pb.Size)
 }
 
-// Split a label defined by RLEs into a block.  The target label is not necessary since any
-// voxel defined by the RLEs that fall within the block are set to the given split label.
+// Split a target label using RLEs within a block.  Only the target label is split.
+// A nil split block is returned if target label is not within block.
+// TODO: If RLEs continue to be used for splits, refactor / split up to make this more readable.
 func (pb PositionedBlock) Split(op SplitOp) (split *Block, keptSize, splitSize uint64, err error) {
 	var offset dvid.Point3d
 	if offset, err = pb.OffsetDVID(); err != nil {
@@ -71,29 +73,42 @@ func (pb PositionedBlock) Split(op SplitOp) (split *Block, keptSize, splitSize u
 		pt := rle.StartPt()
 		i := pt[2]*pb.Size[1]*pb.Size[0] + pt[1]*pb.Size[0] + pt[0]
 		for x := int32(0); x < rle.Length(); x++ {
+			if i >= int32(len(splitVoxels)) {
+				err = fmt.Errorf("bad RLE / block size: rle %s, block size %s, offset %s\n", rle, pb.Size, offset)
+				return
+			}
+			// fmt.Printf("Added split voxel @ (%d, %d, %d)\n", pt[0]+x+offset[0], pt[1]+offset[1], pt[2]+offset[2])
 			splitVoxels[i] = true
 			i++
 		}
 	}
 
-	// Check if the split label is present.
-	var labelIndex uint32
-	labelPresent := false
+	// Check if the target and split label is present.
+	var splitIndex, targetIndex uint32
+	var splitPresent, targetPresent bool
 	for i, label := range pb.Labels {
 		if label == op.NewLabel {
-			labelPresent = true
-			labelIndex = uint32(i)
+			splitPresent = true
+			splitIndex = uint32(i)
 		}
+		if label == op.Target {
+			targetPresent = true
+			targetIndex = uint32(i)
+		}
+	}
+	if !targetPresent {
+		return
 	}
 	numLabels := uint32(len(pb.Labels))
 	numNewLabels := numLabels
-	if !labelPresent {
-		labelIndex = numLabels
+	if !splitPresent {
+		splitIndex = numLabels
 		numNewLabels++
 	}
 
 	// Iterate through all the sub-blocks, determining if the split label adds to that sub-block's indices
 	// and therefore changes the # of encoding bits necessary for the values.
+	subBlockNumVoxels := uint32(SubBlockSize * SubBlockSize * SubBlockSize)
 	indexAdded := make([]bool, numSubBlocks)    // true if we added index to split label for the sub-block
 	svalues := make([]byte, numSubBlocks*512*2) // max size allocation for sub-blocks' encoded values
 	var sbNum, indexPos uint32
@@ -101,29 +116,48 @@ func (pb PositionedBlock) Split(op SplitOp) (split *Block, keptSize, splitSize u
 	var numNewSubBlockIndices uint32
 	for sz := int32(0); sz < gz; sz++ {
 		for sy := int32(0); sy < gy; sy++ {
-			for sx := int32(0); sx < gx; sx++ {
+			for sx := int32(0); sx < gx; sx, sbNum = sx+1, sbNum+1 {
 				numSBLabels := pb.NumSBLabels[sbNum]
 				bits := bitsFor(numSBLabels)
 				numSBLabelsNew := numSBLabels
+				numNewSubBlockIndices += uint32(numSBLabels)
 
-				// is the split label already in index?
-				found := false
-				var splitIndex uint16
+				// is the target or split label in index?
+				var sbSplitFound, sbTargetFound bool
+				var sbSplitIndex, sbTargetIndex uint16
 				for i := uint16(0); i < numSBLabels; i++ {
 					index := pb.SBIndices[indexPos]
-					if index == labelIndex {
-						found = true
-						splitIndex = i
+					if index == splitIndex {
+						sbSplitFound = true
+						sbSplitIndex = i
+					}
+					if index == targetIndex {
+						sbTargetFound = true
+						sbTargetIndex = i
 					}
 					indexPos++
 				}
-				if !found {
+				if !sbTargetFound {
+					// We can skip this sub-block.
+					bytepos := bitpos >> 3
+					byteposNew := bitposNew >> 3
+					sbBits := bits * subBlockNumVoxels
+					if sbBits%8 != 0 {
+						sbBits += 8 - (sbBits % 8)
+					}
+					sbBytes := sbBits >> 3
+					copy(svalues[byteposNew:byteposNew+sbBytes], pb.SBValues[bytepos:bytepos+sbBytes])
+					bitpos += sbBits
+					bitposNew += sbBits
+					continue
+				}
+				if !sbSplitFound {
 					indexAdded[sbNum] = true
-					splitIndex = numSBLabels
+					sbSplitIndex = numSBLabels
 					numSBLabelsNew++
+					numNewSubBlockIndices++
 				}
 				bitsNew := bitsFor(numSBLabelsNew)
-				numNewSubBlockIndices += uint32(numSBLabelsNew)
 
 				if bitsNew > 0 {
 					// Transfer the data from old to new with possible added index size.
@@ -146,22 +180,26 @@ func (pb PositionedBlock) Split(op SplitOp) (split *Block, keptSize, splitSize u
 									oldIndex >>= uint(16 - bithead - bits)
 								}
 
-								blockPos := blockZ*pb.Size[1]*pb.Size[0] + blockY*pb.Size[0] + sx*SubBlockSize + x
-								if splitVoxels[blockPos] {
-									newIndex = splitIndex
-								} else {
-									newIndex = oldIndex
+								newIndex = oldIndex
+								if oldIndex == sbTargetIndex {
+									blockPos := blockZ*pb.Size[1]*pb.Size[0] + blockY*pb.Size[0] + sx*SubBlockSize + x
+									if splitVoxels[blockPos] {
+										newIndex = sbSplitIndex
+										splitSize++
+									} else {
+										keptSize++
+									}
 								}
 
 								bitheadNew := bitposNew % 8
 								byteposNew := bitposNew >> 3
 								if bithead+bits <= 8 {
 									// index totally within this byte
-									leftshift := uint(8 - bits - bitheadNew)
+									leftshift := uint(8 - bitsNew - bitheadNew)
 									svalues[byteposNew] |= byte(newIndex << leftshift)
 								} else {
 									// this straddles a byte boundary
-									leftshift := uint(16 - bits - bitheadNew)
+									leftshift := uint(16 - bitsNew - bitheadNew)
 									newIndex <<= leftshift
 									svalues[byteposNew] |= byte((newIndex & 0xFF00) >> 8)
 									svalues[byteposNew+1] = byte(newIndex & 0x00FF)
@@ -180,7 +218,6 @@ func (pb PositionedBlock) Split(op SplitOp) (split *Block, keptSize, splitSize u
 						bitposNew += 8 - (bitposNew % 8)
 					}
 				}
-				sbNum++
 			}
 		}
 	}
@@ -196,7 +233,7 @@ func (pb PositionedBlock) Split(op SplitOp) (split *Block, keptSize, splitSize u
 	pos := uint32(16)
 	nbytes := numLabels * 8
 	copy(split.data[:pos+nbytes], pb.data[:pos+nbytes])
-	if !labelPresent {
+	if !splitPresent {
 		binary.LittleEndian.PutUint32(split.data[12:16], numNewLabels)
 		binary.LittleEndian.PutUint64(split.data[pos+nbytes:pos+nbytes+8], op.NewLabel)
 		nbytes += 8
@@ -231,7 +268,7 @@ func (pb PositionedBlock) Split(op SplitOp) (split *Block, keptSize, splitSize u
 			indexPos++
 		}
 		if indexAdded[sbNum] {
-			split.SBIndices[newIndexPos] = labelIndex
+			split.SBIndices[newIndexPos] = splitIndex
 			newIndexPos++
 		}
 	}
@@ -239,7 +276,6 @@ func (pb PositionedBlock) Split(op SplitOp) (split *Block, keptSize, splitSize u
 	pos += subBlockIndexBytes
 	split.SBValues = split.data[pos:]
 	copy(split.SBValues, svalues[:subBlockValueBytes])
-
 	return
 }
 
@@ -531,6 +567,9 @@ func (b Block) MarshalBinary() ([]byte, error) {
 // UnmarshalBinary implements the encoding.BinaryUnmarshaler interface.  Note that
 // for efficiency, the receive Block will share memory with the given byte slice.
 func (b *Block) UnmarshalBinary(data []byte) error {
+	if len(data) < 24 {
+		return fmt.Errorf("can't unmarshal block binary of length %d", len(data))
+	}
 	b.data = data
 	return b.setExportedVars()
 }
@@ -633,6 +672,47 @@ func (r rleBuffer) extend(yz yzString, pt dvid.Point3d) {
 	}
 }
 
+// OutputOp provides a way to communicate with writing goroutines,
+// TODO: concurrency support on the given io.Writer.
+type OutputOp struct {
+	w          io.Writer
+	pbCh       chan *PositionedBlock
+	errCh      chan error
+	sync.Mutex // lock on writing
+}
+
+func NewOutputOp(w io.Writer) *OutputOp {
+	op := new(OutputOp)
+	op.w = w
+	op.pbCh = make(chan *PositionedBlock, 1000)
+	op.errCh = make(chan error)
+	return op
+}
+
+func (op OutputOp) Process(pb *PositionedBlock) {
+	op.pbCh <- pb
+}
+
+// Finish signals all input to an OutputOp is done and waits for completion.
+// Any error from the OutputOp is returned.
+func (op OutputOp) Finish() error {
+	close(op.pbCh)
+	err := <-op.errCh
+	return err
+}
+
+func foo(pb *Block) {
+	fmt.Printf("\nLabels: %v\n", pb.Labels)
+	fmt.Printf("\nNumSBLabels: %v\n", pb.NumSBLabels)
+	fmt.Printf("\nSBIndices: %v\n", pb.SBIndices)
+	data, size := pb.MakeLabelVolume()
+	lbls, _ := dvid.ByteToUint64(data)
+	for x := int32(11); x < 31; x++ {
+		i := (80-64)*size[0]*size[1] + (40-32)*size[0] + x
+		fmt.Printf("(%d,40,80): label %d\n", x+64, lbls[i])
+	}
+}
+
 // WriteRLEs, like WriteBinaryBlocks, writes a compact serialization of a binarized Block to
 // the supplied Writer.  In this case, the serialization uses little-endian encoded integers
 // and RLEs with the repeating units of the following format:
@@ -643,14 +723,19 @@ func (r rleBuffer) extend(yz yzString, pt dvid.Point3d) {
 //
 // The offset is the DVID space offset to the first voxel in the Block.  After the RLEs have
 // been written to the io.Writer, an error message is sent down the given errCh.
-func WriteRLEs(lbls Set, w io.Writer, pbCh chan *PositionedBlock, bounds dvid.Bounds, errCh chan error) {
+func WriteRLEs(lbls Set, op *OutputOp, bounds dvid.Bounds) {
 	var rleBuf rleBuffer
-	for pb := range pbCh {
+	for pb := range op.pbCh {
 		bcoord, err := pb.BCoord.ToChunkPoint3d()
 		if err != nil {
-			errCh <- err
+			op.errCh <- err
 			return
 		}
+
+		// if bcoord[0] == 2 && bcoord[1] == 1 && bcoord[2] == 2 {
+		// 	foo(&(pb.Block))
+		// }
+
 		labelIndices := make(map[uint32]struct{})
 		var inBlock bool
 		for i, label := range pb.Labels {
@@ -674,21 +759,21 @@ func WriteRLEs(lbls Set, w io.Writer, pbCh chan *PositionedBlock, bounds dvid.Bo
 			expected := rleBuf.coord
 			expected[0]++
 			if !expected.Equals(bcoord) {
-				rleBuf.flush(w)
+				rleBuf.flush(op.w)
 				rleBuf.clear()
 			}
 		}
-		if err := pb.writeRLEs(labelIndices, w, &rleBuf, bounds); err != nil {
-			errCh <- err
+		if err := pb.writeRLEs(labelIndices, op, &rleBuf, bounds); err != nil {
+			op.errCh <- err
 			return
 		}
 		rleBuf.coord = bcoord
 	}
 
-	errCh <- rleBuf.flush(w)
+	op.errCh <- rleBuf.flush(op.w)
 }
 
-func (pb *PositionedBlock) writeRLEs(indices map[uint32]struct{}, w io.Writer, rleBuf *rleBuffer, bounds dvid.Bounds) error {
+func (pb *PositionedBlock) writeRLEs(indices map[uint32]struct{}, op *OutputOp, rleBuf *rleBuffer, bounds dvid.Bounds) error {
 	offset, err := pb.OffsetDVID()
 	if err != nil {
 		return err
@@ -717,11 +802,10 @@ func (pb *PositionedBlock) writeRLEs(indices map[uint32]struct{}, w io.Writer, r
 		sbValuePos[i] = k
 		bits := uint32(bitsFor(n))
 		sbBits := uint32(subBlockNumVoxels) * bits
-		valueBytes := sbBits / 8
 		if sbBits%8 != 0 {
-			valueBytes++
+			sbBits += 8 - (sbBits % 8)
 		}
-		k += valueBytes
+		k += sbBits
 	}
 
 	curIndices := make([]uint32, subBlockNumVoxels) // preallocate max # of indices for sub-block
@@ -740,12 +824,12 @@ func (pb *PositionedBlock) writeRLEs(indices map[uint32]struct{}, w io.Writer, r
 
 	for vz := minPt[2]; vz <= maxPt[2]; vz++ {
 		z := vz - offset[2]
-		sbz := vz % SubBlockSize
+		blockz := vz % SubBlockSize
 		dsz := (z / SubBlockSize) * gy * gx
 
 		for vy := minPt[1]; vy <= maxPt[1]; vy++ {
 			y := vy - offset[1]
-			sby := vy % SubBlockSize
+			blocky := vy % SubBlockSize
 			sbNumStart := dsz + (y/SubBlockSize)*gx
 			yz := getImmutableYZ(vy, vz)
 			rle, inRun := rleBuf.rles[yz]
@@ -753,17 +837,18 @@ func (pb *PositionedBlock) writeRLEs(indices map[uint32]struct{}, w io.Writer, r
 			var sbNum int32 = -1
 			var numSBLabels uint16
 			var foreground, stepByVoxel bool
-			var bitpos, bits int32
+			var bitpos, bits uint32
 			var dx int32
 			vx := minPt[0]
+
 			for {
 				x := vx - offset[0]
 				sbNumCur := sbNumStart + x/SubBlockSize
 				if sbNum != sbNumCur {
 					sbNum = sbNumCur
 					numSBLabels = pb.NumSBLabels[sbNum]
-					bits = int32(bitsFor(numSBLabels))
-
+					bits = bitsFor(numSBLabels)
+					bitpos = sbValuePos[sbNum] + uint32(blockz*SubBlockSize*SubBlockSize+blocky*SubBlockSize+vx%SubBlockSize)*bits
 					indexPos := sbIndexPos[sbNum]
 					for i := uint16(0); i < numSBLabels; i++ {
 						curIndices[i] = pb.SBIndices[indexPos]
@@ -782,8 +867,6 @@ func (pb *PositionedBlock) writeRLEs(indices map[uint32]struct{}, w io.Writer, r
 						}
 						stepByVoxel = false
 					default:
-						sbx := vx % SubBlockSize
-						bitpos = (sbz*SubBlockSize*SubBlockSize + sby*SubBlockSize + sbx) * bits
 						dx = 1
 						stepByVoxel = true
 					}
@@ -791,7 +874,7 @@ func (pb *PositionedBlock) writeRLEs(indices map[uint32]struct{}, w io.Writer, r
 				if stepByVoxel {
 					var index uint16
 					bithead := bitpos % 8
-					bytepos := uint32(bitpos>>3) + sbValuePos[sbNum]
+					bytepos := bitpos >> 3
 					if bithead+bits <= 8 {
 						// index totally within this byte
 						rightshift := uint(8 - bithead - bits)
@@ -802,12 +885,12 @@ func (pb *PositionedBlock) writeRLEs(indices map[uint32]struct{}, w io.Writer, r
 						index |= uint16(pb.SBValues[bytepos+1])
 						index >>= uint(16 - bithead - bits)
 					}
-					bitpos += bits
 					if multiForeground {
 						_, foreground = indices[curIndices[index]]
 					} else {
 						foreground = (curIndices[index] == labelIndex)
 					}
+					bitpos += bits
 				}
 				if foreground {
 					if inRun {
@@ -817,7 +900,7 @@ func (pb *PositionedBlock) writeRLEs(indices map[uint32]struct{}, w io.Writer, r
 						inRun = true
 					}
 				} else if inRun {
-					if _, err := rle.WriteTo(w); err != nil {
+					if _, err := rle.WriteTo(op.w); err != nil {
 						return err
 					}
 					inRun = false
@@ -839,15 +922,16 @@ func (pb *PositionedBlock) writeRLEs(indices map[uint32]struct{}, w io.Writer, r
 }
 
 // WriteBinaryBlocks writes a compact serialization of a binarized Block to the
-// supplied Writer.  The serialization is a stream of blocks of the folloing format:
+// supplied Writer.  The serialization is a header + stream of blocks.  The header
+// is the following:
 //
 //   3 * uint32      values of gx, gy, and gz
 //   uint64          foreground label
 //
-//   Stream of binary blocks with format specified by WriteBinaryBlock() function.
+//  The format of each binary block in the stream is detailed by the WriteBinaryBlock() function.
 //
-func WriteBinaryBlocks(lbls Set, w io.Writer, pbCh chan *PositionedBlock, bounds dvid.Bounds, errCh chan error) {
-	for pb := range pbCh {
+func WriteBinaryBlocks(lbls Set, op *OutputOp, bounds dvid.Bounds) {
+	for pb := range op.pbCh {
 		labelIndices := make(map[uint32]struct{})
 		var inBlock bool
 		for i, label := range pb.Labels {
@@ -861,13 +945,13 @@ func WriteBinaryBlocks(lbls Set, w io.Writer, pbCh chan *PositionedBlock, bounds
 			}
 		}
 		if inBlock {
-			if err := pb.WriteBinaryBlock(labelIndices, w, bounds); err != nil {
-				errCh <- err
+			if err := pb.WriteBinaryBlock(labelIndices, op, bounds); err != nil {
+				op.errCh <- err
 				return
 			}
 		}
 	}
-	errCh <- nil
+	op.errCh <- nil
 }
 
 // WriteBinaryBlock writes the binary version of a Block to the supplied Writer, where
@@ -897,7 +981,7 @@ func WriteBinaryBlocks(lbls Set, w io.Writer, pbCh chan *PositionedBlock, bounds
 //                      1 = foreground ONLY  (no more data for this sub-block)
 //                      2 = both background and foreground so mask data required.
 //      mask            64 byte bitmask where each voxel is 0 (background) or 1 (foreground)
-func (pb *PositionedBlock) WriteBinaryBlock(indices map[uint32]struct{}, w io.Writer, bounds dvid.Bounds) error {
+func (pb *PositionedBlock) WriteBinaryBlock(indices map[uint32]struct{}, op *OutputOp, bounds dvid.Bounds) error {
 	var multiForeground bool
 	var labelIndex uint32
 	if len(indices) > 1 {
@@ -927,7 +1011,7 @@ func (pb *PositionedBlock) WriteBinaryBlock(indices map[uint32]struct{}, w io.Wr
 	default:
 		buf[12] = 2
 	}
-	if _, err := w.Write(buf); err != nil {
+	if _, err := op.w.Write(buf); err != nil {
 		return err
 	}
 	if numLabels < 2 {
@@ -959,7 +1043,7 @@ func (pb *PositionedBlock) WriteBinaryBlock(indices map[uint32]struct{}, w io.Wr
 				switch numSBLabels {
 				case 0:
 					data[0] = 0
-					if _, err := w.Write(data[:1]); err != nil {
+					if _, err := op.w.Write(data[:1]); err != nil {
 						return err
 					}
 					continue
@@ -975,7 +1059,7 @@ func (pb *PositionedBlock) WriteBinaryBlock(indices map[uint32]struct{}, w io.Wr
 					} else {
 						data[0] = 0
 					}
-					if _, err := w.Write(data[:1]); err != nil {
+					if _, err := op.w.Write(data[:1]); err != nil {
 						return err
 					}
 					continue
@@ -1034,17 +1118,17 @@ func (pb *PositionedBlock) WriteBinaryBlock(indices map[uint32]struct{}, w io.Wr
 
 				if background && foreground {
 					data[0] = 2
-					if _, err := w.Write(data); err != nil {
+					if _, err := op.w.Write(data); err != nil {
 						return err
 					}
 				} else if foreground {
 					data[0] = 1
-					if _, err := w.Write(data[:1]); err != nil {
+					if _, err := op.w.Write(data[:1]); err != nil {
 						return err
 					}
 				} else {
 					data[0] = 0
-					if _, err := w.Write(data[:1]); err != nil {
+					if _, err := op.w.Write(data[:1]); err != nil {
 						return err
 					}
 				}
@@ -1080,8 +1164,9 @@ func (s subvolumeData) getSubBlockDims() (gx, gy, gz uint32) {
 	return s.blockSize[0] / SubBlockSize, s.blockSize[1] / SubBlockSize, s.blockSize[2] / SubBlockSize
 }
 
-func (s subvolumeData) getSize() dvid.Point3d {
-	return dvid.Point3d{int32(s.volsize[0]), int32(s.volsize[1]), int32(s.volsize[2])}
+// get block size of the subvolume
+func (s subvolumeData) getBlockSize() dvid.Point3d {
+	return dvid.Point3d{int32(s.blockSize[0]), int32(s.blockSize[1]), int32(s.blockSize[2])}
 }
 
 // run checks and do conversions
@@ -1236,7 +1321,7 @@ func (s *subvolumeData) encodeBlock() (*Block, error) {
 	blockBytes := 16 + numLabels*8 + numSubBlocks*2 + subBlockIndexBytes + subBlockValueBytes
 	b.data = make([]byte, blockBytes)
 
-	b.Size = s.getSize()
+	b.Size = s.getBlockSize()
 
 	binary.LittleEndian.PutUint32(b.data[0:4], gx)
 	binary.LittleEndian.PutUint32(b.data[4:8], gy)

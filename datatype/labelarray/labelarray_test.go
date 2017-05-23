@@ -141,9 +141,15 @@ func (v *testVolume) equals(v2 *testVolume) error {
 	if len(v.data) != len(v2.data) {
 		return fmt.Errorf("data lengths are not equal")
 	}
-	for i, value := range v.data {
-		if value != v2.data[i] {
-			return fmt.Errorf("For element %d, found value %d != %d\n", i, value, v2.data[i])
+	for i := 0; i*8+8 < len(v.data); i += 8 {
+		val1 := binary.LittleEndian.Uint64(v.data[i*8 : i*8+8])
+		val2 := binary.LittleEndian.Uint64(v2.data[i*8 : i*8+8])
+		if val1 != val2 {
+			z := int32(i/8) / (v.size[0] * v.size[1])
+			x := int32(i/8) - z*(v.size[0]*v.size[1])
+			y := x / v.size[0]
+			x -= y * v.size[0]
+			return fmt.Errorf("For voxel (%d,%d,%d), found value %d != %d\n", x, y, z, val2, val1)
 		}
 	}
 	return nil

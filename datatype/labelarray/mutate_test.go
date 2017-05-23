@@ -732,7 +732,7 @@ func TestSplitLabel(t *testing.T) {
 		t.Errorf("Expected this JSON returned from maxlabel:\n%s\nGot:\n%s\n", expectedJSON, string(jsonStr))
 	}
 
-	// Submit the split sparsevol for body 4a
+	// Submit the split sparsevol for body 4 using RLES "bodysplit"
 	reqStr = fmt.Sprintf("%snode/%s/labels/split/%d", server.WebAPIPath, uuid, 4)
 	r := server.TestHTTP(t, "POST", reqStr, buf)
 	jsonVal := make(map[string]uint64)
@@ -760,7 +760,7 @@ func TestSplitLabel(t *testing.T) {
 		t.Errorf("Split label volume not equal to expected volume: %v\n", err)
 	}
 
-	// Make sure new body 5 is what we sent
+	// Check split body 5 usine legacy RLEs
 	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/%d", server.WebAPIPath, uuid, 5)
 	encoding = server.TestHTTP(t, "GET", reqStr, nil)
 	bodysplit.checkSparseVol(t, encoding, dvid.OptionalBounds{})
@@ -779,7 +779,7 @@ func TestSplitLabel(t *testing.T) {
 	}
 
 	// Make sure we wind up with original body 4
-	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/4", server.WebAPIPath, uuid, "labels")
+	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/4", server.WebAPIPath, uuid)
 	encoding = server.TestHTTP(t, "GET", reqStr, nil)
 	body4.checkSparseVol(t, encoding, dvid.OptionalBounds{})
 }

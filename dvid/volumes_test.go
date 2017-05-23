@@ -211,6 +211,20 @@ func TestIZYXSlice(t *testing.T) {
 	}
 
 	// test split
+	a := IZYXSlice{
+		ChunkPoint3d{2, 1, 1}.ToIZYXString(), ChunkPoint3d{2, 1, 2}.ToIZYXString(),
+	}
+	b := IZYXSlice{
+		ChunkPoint3d{2, 1, 2}.ToIZYXString(),
+	}
+	c, err := a.Split(b)
+	if err != nil {
+		t.Fatalf("error on simple IZYXSlice.Split: %v\n", err)
+	}
+	if len(c) != 1 {
+		t.Fatalf("bad result of split: %s\n", c)
+	}
+
 	origLen = len(islice3)
 	split, err := islice3.Split(deleteSlice[1:])
 	if err != nil {

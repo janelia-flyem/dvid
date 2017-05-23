@@ -1089,8 +1089,7 @@ func (i IZYXSlice) MergeCopy(i2 IZYXSlice) IZYXSlice {
 }
 
 // Split removes the IZYXs from the receiver and returns the remainder as a copy.
-// This assumes both deleted blocks and receiver are sorted and the split IZYX
-// are a subset of the receiver, else an error is returned.
+// This assumes both deleted blocks and receiver are sorted.
 func (i IZYXSlice) Split(rm IZYXSlice) (IZYXSlice, error) {
 	if len(i) == 0 {
 		return IZYXSlice{}, nil
@@ -1101,35 +1100,28 @@ func (i IZYXSlice) Split(rm IZYXSlice) (IZYXSlice, error) {
 		return dup, nil
 	}
 	out := make(IZYXSlice, len(i))
-	outPos := 0
-	rmPos := 0
-	rzyx := rm[rmPos]
-	for n, izyx := range i {
+	var ipos, outpos, rmpos int
+	rzyx := rm[rmpos]
+	for {
+		if ipos >= len(i) {
+			break
+		}
+		izyx := i[ipos]
 		for rzyx < izyx {
-			rmPos++
-			if rmPos < len(rm) {
-				rzyx = rm[rmPos]
+			rmpos++
+			if rmpos < len(rm) {
+				rzyx = rm[rmpos]
 			} else {
 				break
 			}
 		}
-		if rmPos >= len(rm) {
-			remain := len(i) - n
-			if remain > 0 {
-				copy(out[outPos:], i[n:])
-				outPos += remain
-			}
-			break
+		if izyx != rzyx {
+			out[outpos] = izyx
+			outpos++
 		}
-		if rzyx != izyx {
-			out[outPos] = izyx
-			outPos++
-		}
+		ipos++
 	}
-	if rmPos < len(rm) {
-		return nil, fmt.Errorf("Split has coordinates not in original: %s", rm[rmPos:])
-	}
-	return out[:outPos], nil
+	return out[:outpos], nil
 }
 
 // WriteSerializedRLEs writes serialized RLEs and returns the number of spans.
