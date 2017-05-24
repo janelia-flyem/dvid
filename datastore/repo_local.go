@@ -806,6 +806,10 @@ func (m *repoManager) deleteRepo(uuid dvid.UUID, passcode string) error {
 		return ErrInvalidUUID
 	}
 
+	if r.uuid != uuid {
+		return fmt.Errorf("UUID for repo deletion must match UUID of repo's root")
+	}
+
 	if r.passcode != "" && r.passcode != passcode {
 		return fmt.Errorf("Passcode does not match repo %s passcode", uuid)
 	}
