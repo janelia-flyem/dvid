@@ -28,26 +28,30 @@ func (d *Data) LoadImages(v dvid.VersionID, offset dvid.Point, filenames []strin
 	loadMutex := ctx.Mutex()
 	loadMutex.Lock()
 
+	// default extents
+	vctx := datastore.NewVersionedCtx(d, v)
+	extents, err := d.GetExtents(vctx)
+	if err != nil {
+		return err
+	}
+
 	// Handle cleanup given multiple goroutines still writing data.
 	load := &bulkLoadInfo{filenames: filenames, versionID: v, offset: offset}
 	defer func() {
 		loadMutex.Unlock()
 
 		if load.extentChanged.Value() {
-			err := datastore.SaveDataByVersion(v, d)
-			if err != nil {
-				dvid.Errorf("Error in trying to save repo for voxel extent change: %v\n", err)
-			}
+			// blocking call to save extents
+			d.PostExtents(vctx, extents.StartPoint(), extents.EndPoint())
 		}
 	}()
 
 	// Use different loading techniques if we have a potentially multidimensional HDF5 file
 	// or many 2d images.
-	var err error
 	if dvid.Filename(filenames[0]).HasExtensionPrefix("hdf", "h5") {
 		err = d.loadHDF(load)
 	} else {
-		err = d.loadXYImages(load)
+		err = d.loadXYImages(load, &extents)
 	}
 
 	if err != nil {
@@ -60,7 +64,7 @@ func (d *Data) LoadImages(v dvid.VersionID, offset dvid.Point, filenames []strin
 
 // Optimized bulk loading of XY images by loading all slices for a block before processing.
 // Trades off memory for speed.
-func (d *Data) loadXYImages(load *bulkLoadInfo) error {
+func (d *Data) loadXYImages(load *bulkLoadInfo, extents *dvid.Extents) error {
 	// Load first slice, get dimensions, allocate blocks for whole slice.
 	// Note: We don't need to lock the block slices because goroutines do NOT
 	// access the same elements of a slice.
@@ -126,21 +130,18 @@ func (d *Data) loadXYImages(load *bulkLoadInfo) error {
 		layerTransferred[curBlocks].Add(1)
 		go func(vox *Voxels, curBlocks int) {
 			// Track point extents
-			if d.Extents().AdjustPoints(vox.StartPoint(), vox.EndPoint()) {
+			if extents.AdjustPoints(vox.StartPoint(), vox.EndPoint()) {
 				load.extentChanged.SetTrue()
 			}
 
 			// Process an XY image (slice).
-			changed, err := d.writeXYImage(load.versionID, vox, blocks[curBlocks])
+			err := d.writeXYImage(load.versionID, vox, blocks[curBlocks])
 			if err != nil {
 				err = fmt.Errorf("Error writing XY image: %v\n", err)
 				if len(errs) < 10 {
 					errs <- err
 				}
 				return
-			}
-			if changed {
-				load.extentChanged.SetTrue()
 			}
 			layerTransferred[curBlocks].Done()
 		}(vox, curBlocks)

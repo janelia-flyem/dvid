@@ -163,22 +163,15 @@ func (d *Data) PutVoxels(v dvid.VersionID, mutID uint64, vox *Voxels, roiname dv
 		defer server.SpawnGoroutineMutex.Unlock()
 	}
 
-	// Keep track of changing extents and mark repo as dirty if changed.
-	var extentChanged bool
-	defer func() {
-		if extentChanged {
-			err := datastore.SaveDataByVersion(v, d)
-			if err != nil {
-				dvid.Infof("Error in trying to save repo on change: %v\n", err)
-			}
-		}
+	// Post new extents if there was a change (will always require 1 GET which should
+	// not be a big deal for large posts or for distributed back-ends)
+	// (assumes rest of the command will finish correctly which seems reasonable)
+	ctx := datastore.NewVersionedCtx(d, v)
+	wg.Add(1)
+	go func() {
+		d.PostExtents(ctx, vox.StartPoint(), vox.EndPoint())
+		wg.Done()
 	}()
-
-	// Track point extents
-	extents := d.Extents()
-	if extents.AdjustPoints(vox.StartPoint(), vox.EndPoint()) {
-		extentChanged = true
-	}
 
 	voxstartpt := vox.Geometry.StartPoint()
 	voxendpt := vox.Geometry.EndPoint()
@@ -194,10 +187,6 @@ func (d *Data) PutVoxels(v dvid.VersionID, mutID uint64, vox *Voxels, roiname dv
 
 		begX := ptBeg.Value(0)
 		endX := ptEnd.Value(0)
-
-		if extents.AdjustIndices(ptBeg, ptEnd) {
-			extentChanged = true
-		}
 
 		wg.Add(int(endX-begX) + 1)
 		c := dvid.ChunkPoint3d{begX, ptBeg.Value(1), ptBeg.Value(2)}
@@ -524,7 +513,7 @@ func (d *Data) putChunk(chunk *storage.Chunk, hasbuffer bool, patchgeo *patchGeo
 
 // Writes a XY image into the blocks that intersect it.  This function assumes the
 // blocks have been allocated and if necessary, filled with old data.
-func (d *Data) writeXYImage(v dvid.VersionID, vox *Voxels, b storage.TKeyValues) (extentChanged bool, err error) {
+func (d *Data) writeXYImage(v dvid.VersionID, vox *Voxels, b storage.TKeyValues) (err error) {
 
 	// Setup concurrency in image -> block transfers.
 	var wg sync.WaitGroup
@@ -537,16 +526,11 @@ func (d *Data) writeXYImage(v dvid.VersionID, vox *Voxels, b storage.TKeyValues)
 	for it, err := vox.NewIndexIterator(blockSize); err == nil && it.Valid(); it.NextSpan() {
 		indexBeg, indexEnd, err := it.IndexSpan()
 		if err != nil {
-			return extentChanged, err
+			return err
 		}
 
 		ptBeg := indexBeg.Duplicate().(dvid.ChunkIndexer)
 		ptEnd := indexEnd.Duplicate().(dvid.ChunkIndexer)
-
-		// Track point extents
-		if d.Extents().AdjustIndices(ptBeg, ptEnd) {
-			extentChanged = true
-		}
 
 		// Do image -> block transfers in concurrent goroutines.
 		begX := ptBeg.Value(0)

@@ -9,6 +9,7 @@ import (
 	"encoding/binary"
 	"encoding/gob"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	"io/ioutil"
@@ -517,10 +518,12 @@ func (dtype *Type) NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.Instanc
 	if err := p.setByConfig(c); err != nil {
 		return nil, err
 	}
+
 	data := &Data{
 		Data:       basedata,
 		Properties: p,
 	}
+
 	return data, nil
 }
 
@@ -749,7 +752,8 @@ type Properties struct {
 
 	dvid.Resolution
 
-	dvid.Extents // The only mutable property.  TODO -- move to in-memory store.
+	// leave field in metadata but no longer updated!!
+	dvid.Extents
 
 	// Background value for data
 	Background uint8
@@ -913,32 +917,66 @@ func (p *Properties) NdDataMetadata() (string, error) {
 	return string(m), nil
 }
 
-type extentsJSON struct {
-	MinPoint dvid.Point3d
-	MaxPoint dvid.Point3d
+// serializeExtents takes extents structure and serializes and compresses it
+func (d *Data) serializeExtents(extents ExtentsJSON) ([]byte, error) {
+
+	jsonbytes, err := json.Marshal(extents)
+	if err != nil {
+		return nil, err
+	}
+
+	compression, _ := dvid.NewCompression(dvid.Uncompressed, dvid.DefaultCompression)
+	return dvid.SerializeData(jsonbytes, compression, dvid.NoChecksum)
+
 }
 
-// SetExtents loads JSON data giving MinPoint and MaxPoint.
-func (d *Data) SetExtents(uuid dvid.UUID, jsonBytes []byte) error {
-	blockSize, ok := d.BlockSize().(dvid.Point3d)
-	if !ok {
-		return fmt.Errorf("can't set extents for data instance %q when block size is not 3d", d.DataName())
+// serializeExtents takes extents structure and serializes and compresses it
+func (d *Data) deserializeExtents(serdata []byte) (ExtentsJSON, error) {
+
+	// return blank extents if nothing set
+	var extents ExtentsJSON
+	if serdata == nil || len(serdata) == 0 {
+		return extents, nil
 	}
-	var config extentsJSON
+
+	// deserialize
+	data, _, err := dvid.DeserializeData(serdata, true)
+	if err != nil {
+		return extents, err
+	}
+
+	// unmarshal (hardcode to 3D for now!)
+	var extentstemp extents3D
+	if err = json.Unmarshal(data, &extentstemp); err != nil {
+		return extents, err
+	}
+	extents.MinPoint = extentstemp.MinPoint
+	extents.MaxPoint = extentstemp.MaxPoint
+
+	return extents, nil
+}
+
+// SetExtents saves JSON data giving MinPoint and MaxPoint (put operation)
+func (d *Data) SetExtents(ctx *datastore.VersionedCtx, uuid dvid.UUID, jsonBytes []byte) error {
+	// unmarshal (hardcode to 3D for now!)
+	var config extents3D
+	var config2 ExtentsJSON
+
 	if err := json.Unmarshal(jsonBytes, &config); err != nil {
 		return err
 	}
-	d.MinPoint = config.MinPoint
-	d.MaxPoint = config.MaxPoint
 
-	// derive corresponding block coordinate
-	d.MinIndex = config.MinPoint.ChunkIndexer(blockSize)
-	d.MaxIndex = config.MaxPoint.ChunkIndexer(blockSize)
-
-	if err := datastore.SaveDataByUUID(uuid, d); err != nil {
+	//  call serializae
+	config2.MinPoint = config.MinPoint
+	config2.MaxPoint = config.MaxPoint
+	data, err := d.serializeExtents(config2)
+	if err != nil {
 		return err
 	}
-	return nil
+
+	// put (last one wins)
+	store, _ := d.GetOrderedKeyValueDB()
+	return store.Put(ctx, MetaTKey(), data)
 }
 
 // SetResolution loads JSON data giving Resolution.
@@ -954,10 +992,22 @@ func (d *Data) SetResolution(uuid dvid.UUID, jsonBytes []byte) error {
 	return nil
 }
 
+// ExtentsJSON is extents encoding for imageblk
+type ExtentsJSON struct {
+	MinPoint dvid.Point
+	MaxPoint dvid.Point
+}
+
+type extents3D struct {
+	MinPoint dvid.Point3d
+	MaxPoint dvid.Point3d
+}
+
 // Data embeds the datastore's Data and extends it with voxel-specific properties.
 type Data struct {
 	*datastore.Data
 	Properties
+	sync.Mutex // to protect extent updates
 }
 
 func (d *Data) Equals(d2 *Data) bool {
@@ -1178,8 +1228,115 @@ func (d *Data) BlockSize() dvid.Point {
 	return d.Properties.BlockSize
 }
 
-func (d *Data) Extents() *dvid.Extents {
-	return &(d.Properties.Extents)
+// Extents retrieves crrent extent (and updates extents cache)
+func (d *Data) GetExtents(ctx *datastore.VersionedCtx) (dvid.Extents, error) {
+	// actually fetch extents from datatype storage
+	store, _ := d.GetOrderedKeyValueDB()
+	ser_extents, err := store.Get(ctx, MetaTKey())
+	var dvidextents dvid.Extents
+	if err != nil {
+		return dvidextents, err
+	}
+	extents, err := d.deserializeExtents(ser_extents)
+	if err != nil {
+		return dvidextents, err
+	}
+	dvidextents.MinPoint = extents.MinPoint
+	dvidextents.MaxPoint = extents.MaxPoint
+
+	return dvidextents, nil
+}
+
+// special error for patch failure
+var ExtentsUnchanged = errors.New("extents does not change")
+
+// PostExtents updates extents with the new points (always growing)
+func (d *Data) PostExtents(ctx *datastore.VersionedCtx, start dvid.Point, end dvid.Point) error {
+	store, err := d.GetOrderedKeyValueDB()
+	if err != nil {
+		return err
+	}
+	patchdb, haspatch := store.(storage.TransactionDB)
+
+	if haspatch {
+		// use patch function (do not post if no change)
+		patchfunc := func(data []byte) ([]byte, error) {
+			// will return empty extents if data is empty
+			extentsjson, err := d.deserializeExtents(data)
+			if err != nil {
+				return nil, err
+			}
+
+			var extents dvid.Extents
+			extents.MinPoint = extentsjson.MinPoint
+			extents.MaxPoint = extentsjson.MaxPoint
+
+			// update extents if necessary
+			if mod := extents.AdjustPoints(start, end); mod {
+
+				// serialize extents
+				extentsjson.MinPoint = extents.MinPoint
+				extentsjson.MaxPoint = extents.MaxPoint
+				ser_extents, err := d.serializeExtents(extentsjson)
+				if err != nil {
+					return nil, err
+				}
+				return ser_extents, nil
+			} else {
+				// return an 'error' if no change
+				return nil, ExtentsUnchanged
+			}
+		}
+
+		err = patchdb.Patch(ctx, MetaTKey(), patchfunc)
+		if err != ExtentsUnchanged {
+			return err
+		}
+	} else {
+		// lock datatype to protect GET/PUT
+		d.Lock()
+		defer d.Unlock()
+
+		// retrieve extents
+		data, err := store.Get(ctx, MetaTKey())
+		if err != nil {
+			return err
+		}
+
+		extentsjson, err := d.deserializeExtents(data)
+		if err != nil {
+			return err
+		}
+
+		// update extents if necessary
+		var extents dvid.Extents
+		extents.MinPoint = extentsjson.MinPoint
+		extents.MaxPoint = extentsjson.MaxPoint
+
+		if mod := extents.AdjustPoints(start, end); mod {
+			// serialize extents
+			extentsjson.MinPoint = extents.MinPoint
+			extentsjson.MaxPoint = extents.MaxPoint
+			ser_extents, err := d.serializeExtents(extentsjson)
+			if err != nil {
+				return err
+			}
+
+			// !! update extents only if a non-distributed dvid
+			// TODO: remove this
+			d.Extents = extents
+			err = datastore.SaveDataByVersion(ctx.VersionID(), d)
+			if err != nil {
+				dvid.Infof("Error in trying to save repo on change: %v\n", err)
+			}
+
+			// post actual extents
+			return store.Put(ctx, MetaTKey(), ser_extents)
+		}
+	}
+
+	return nil
+
 }
 
 func (d *Data) Resolution() dvid.Resolution {
@@ -1197,6 +1354,28 @@ func (d *Data) MarshalJSON() ([]byte, error) {
 	}{
 		d.Data,
 		d.Properties,
+	})
+}
+
+func (d *Data) MarshalJSONExtents(ctx *datastore.VersionedCtx) ([]byte, error) {
+	// grab extent property and load
+	extents, err := d.GetExtents(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var extentsJSON ExtentsJSON
+	extentsJSON.MinPoint = extents.MinPoint
+	extentsJSON.MaxPoint = extents.MaxPoint
+
+	return json.Marshal(struct {
+		Base     *datastore.Data
+		Extended Properties
+		Extents  ExtentsJSON
+	}{
+		d.Data,
+		d.Properties,
+		extentsJSON,
 	})
 }
 
@@ -1837,7 +2016,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			server.BadRequest(w, r, err)
 			return
 		}
-		if err := d.SetExtents(uuid, jsonBytes); err != nil {
+		if err := d.SetExtents(ctx, uuid, jsonBytes); err != nil {
 			server.BadRequest(w, r, err)
 			return
 		}
@@ -1854,7 +2033,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 
 	case "info":
-		jsonBytes, err := d.MarshalJSON()
+		jsonBytes, err := d.MarshalJSONExtents(ctx)
 		if err != nil {
 			server.BadRequest(w, r, err)
 			return
