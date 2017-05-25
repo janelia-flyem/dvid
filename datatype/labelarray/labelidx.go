@@ -303,8 +303,6 @@ func (d *Data) indexLabels(ch <-chan labelChange) {
 	for change := range ch {
 		ctx := datastore.NewVersionedCtx(d, change.v)
 
-		dvid.Infof("Processing change to label %d: bdm: %v\n", change.label, change.bdm)
-
 		meta := cache.GetLabelMeta(change.label)
 		if meta == nil {
 			meta, err = d.getLabelMeta(ctx, labels.NewSet(change.label), dvid.Bounds{})
@@ -615,7 +613,6 @@ func (d *Data) getLabelMeta(ctx *datastore.VersionedCtx, lbls labels.Set, bounds
 			return nil, err
 		}
 		if len(compressed) == 0 {
-			dvid.Infof("no label meta for label %d in getting labels %s: skipping", label, lbls)
 			continue
 		}
 		val, _, err := dvid.DeserializeData(compressed, true)

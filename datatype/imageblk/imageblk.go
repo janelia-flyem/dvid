@@ -262,7 +262,7 @@ GET  <api URL>/node/<UUID>/<data name>/specificblocks[?queryopts]
     Query-string Options:
 
     compression   Allows retrieval of block data in "jpeg" (default) or "uncompressed".
-    blocks	  x,y,z... block string
+    blocks	      x,y,z... block string
     prefetch	  ("on" or "true") Do not actually send data, non-blocking (default "off")
 
 

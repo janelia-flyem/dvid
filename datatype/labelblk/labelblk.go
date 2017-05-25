@@ -369,7 +369,7 @@ GET  <api URL>/node/<UUID>/<data name>/blocks/<size>/<offset>[?queryopts]
         int32  Block 1 coordinate Y
         int32  Block 1 coordinate Z
         int32  # bytes for first block (N1)
-        byte0  Bytes of block data in LZ4-compressed format.
+        byte0  Block N1 serialization using chosen compression format (see "compression" option below)
         byte1
         ...
         byteN1
@@ -378,7 +378,7 @@ GET  <api URL>/node/<UUID>/<data name>/blocks/<size>/<offset>[?queryopts]
         int32  Block 2 coordinate Y
         int32  Block 2 coordinate Z
         int32  # bytes for second block (N2)
-        byte0  Bytes of block data in LZ4-compressed format.
+        byte0  Block N2 serialization using chosen compression format (see "compression" option below)
         byte1
         ...
         byteN2
@@ -397,9 +397,9 @@ GET  <api URL>/node/<UUID>/<data name>/blocks/<size>/<offset>[?queryopts]
     Query-string Options:
 
     compression   Allows retrieval of block data in "lz4" (default) or "uncompressed".
-    throttle      If "true", makes sure only N compute-intense operation (all API calls that can be throttled) 
-                    are handled.  If the server can't initiate the API call right away, a 503 (Service Unavailable) 
-                    status code is returned.
+    throttle      If "true", makes sure only N compute-intense operation (all API calls that can be 
+                  throttled) are handled.  If the server can't initiate the API call right away, a 503 
+                  (Service Unavailable) status code is returned.
 `
 
 var (

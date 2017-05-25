@@ -371,7 +371,7 @@ GET  <api URL>/node/<UUID>/<data name>/blocks/<size>/<offset>[?queryopts]
         int32  Block 1 coordinate Y
         int32  Block 1 coordinate Z
         int32  # bytes for first block (N1)
-        byte0  Block N1 serialization using gzip compression.
+        byte0  Block N1 serialization using chosen compression format (see "compression" option below)
         byte1
         ...
         byteN1
@@ -380,7 +380,7 @@ GET  <api URL>/node/<UUID>/<data name>/blocks/<size>/<offset>[?queryopts]
         int32  Block 2 coordinate Y
         int32  Block 2 coordinate Z
         int32  # bytes for second block (N2)
-        byte0  Block N2 serialization using gzip compression.
+        byte0  Block N2 serialization using chosen compression format (see "compression" option below)
         byte1
         ...
         byteN2
@@ -400,9 +400,11 @@ GET  <api URL>/node/<UUID>/<data name>/blocks/<size>/<offset>[?queryopts]
 
     Query-string Options:
 
-    throttle      If "true", makes sure only N compute-intense operation (all API calls that can be throttled) 
-                    are handled.  If the server can't initiate the API call right away, a 503 (Service Unavailable) 
-                    status code is returned.
+    compression   Allows retrieval of block data in "lz4" (default), "gzip", blocks" (native DVID
+	              label blocks) or "uncompressed" (uint64 labels).
+    throttle      If "true", makes sure only N compute-intense operation (all API calls that can be 
+	              throttled) are handled.  If the server can't initiate the API call right away, a 503 
+                  (Service Unavailable) status code is returned.
 
 
 GET  <api URL>/node/<UUID>/<data name>/sparsevol/<label>?<options>
@@ -1309,8 +1311,7 @@ func (d *Data) putLabelBlock(ctx *datastore.VersionedCtx, pb *labels.PositionedB
 	return store.Put(ctx, tk, val)
 }
 
-func sendBlock(w http.ResponseWriter, x, y, z int32, v []byte, formatOut dvid.CompressionFormat) error {
-	// Uncompress then recompress if the saved compression != requested compression.
+func (d *Data) sendBlock(w http.ResponseWriter, x, y, z int32, v []byte, compression string) error {
 	formatIn, checksum := dvid.DecodeSerializationFormat(dvid.SerializationFormat(v[0]))
 
 	var start int
@@ -1320,27 +1321,41 @@ func sendBlock(w http.ResponseWriter, x, y, z int32, v []byte, formatOut dvid.Co
 		start = 1
 	}
 
-	var outsize int32
+	var outsize uint32
 	var out []byte
 
 	switch formatIn {
 	case dvid.LZ4:
-		outsize = int32(binary.LittleEndian.Uint32(v[start : start+4]))
+		outsize = binary.LittleEndian.Uint32(v[start : start+4])
 		out = v[start+4:]
 		if len(out) != int(outsize) {
 			return fmt.Errorf("block (%d,%d,%d) was corrupted lz4: supposed size %d but had %d bytes", x, y, z, outsize, len(out))
 		}
 	case dvid.Uncompressed, dvid.Gzip:
-		outsize = int32(len(v[start:]))
+		outsize = uint32(len(v[start:]))
 		out = v[start:]
 	default:
 		return fmt.Errorf("labelarray data was stored in unknown compressed format: %s\n", formatIn)
 	}
 
+	var formatOut dvid.CompressionFormat
+	switch compression {
+	case "", "lz4":
+		formatOut = dvid.LZ4
+	case "blocks":
+		formatOut = formatIn
+	case "gzip":
+		formatOut = dvid.Gzip
+	case "uncompressed":
+		formatOut = dvid.Uncompressed
+	default:
+		return fmt.Errorf("unknown compression %q requested for blocks", compression)
+	}
+
 	// Need to do uncompression/recompression if we are changing compression
 	var err error
 	var uncompressed, recompressed []byte
-	if formatIn != formatOut {
+	if formatIn != formatOut || compression == "gzip" {
 		switch formatIn {
 		case dvid.LZ4:
 			uncompressed = make([]byte, outsize)
@@ -1362,26 +1377,38 @@ func sendBlock(w http.ResponseWriter, x, y, z int32, v []byte, formatOut dvid.Co
 			zr.Close()
 		}
 
+		var block labels.Block
+		if err = block.UnmarshalBinary(uncompressed); err != nil {
+			return fmt.Errorf("unable to deserialize label block (%d, %d, %d): %v\n", x, y, z, err)
+		}
+		uint64array, size := block.MakeLabelVolume()
+		expectedSize := d.BlockSize().(dvid.Point3d)
+		if !size.Equals(expectedSize) {
+			return fmt.Errorf("deserialized label block size %s does not equal data %q block size %s", size, d.DataName(), expectedSize)
+		}
+
 		switch formatOut {
 		case dvid.LZ4:
-			recompressed = make([]byte, lz4.CompressBound(uncompressed))
+			recompressed = make([]byte, lz4.CompressBound(uint64array))
 			var size int
-			if size, err = lz4.Compress(uncompressed, recompressed); err != nil {
+			if size, err = lz4.Compress(uint64array, recompressed); err != nil {
 				return err
 			}
-			outsize = int32(size)
+			outsize = uint32(size)
 			out = recompressed[:outsize]
 		case dvid.Uncompressed:
-			out = uncompressed
+			out = uint64array
+			outsize = uint32(len(uint64array))
 		case dvid.Gzip:
 			var gzipOut bytes.Buffer
 			zw := gzip.NewWriter(&gzipOut)
-			if _, err = zw.Write(uncompressed); err != nil {
+			if _, err = zw.Write(uint64array); err != nil {
 				return err
 			}
 			zw.Flush()
 			zw.Close()
 			out = gzipOut.Bytes()
+			outsize = uint32(len(out))
 		}
 	}
 
@@ -1402,7 +1429,7 @@ func sendBlock(w http.ResponseWriter, x, y, z int32, v []byte, formatOut dvid.Co
 		if err != nil {
 			return err
 		}
-		return fmt.Errorf("could not write %d bytes of value: only %d bytes written", outsize, written)
+		return fmt.Errorf("could not write %d bytes of block (%d,%d,%d): only %d bytes written", outsize, x, y, z, written)
 	}
 	return nil
 }
@@ -1411,24 +1438,18 @@ func sendBlock(w http.ResponseWriter, x, y, z int32, v []byte, formatOut dvid.Co
 func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, subvol *dvid.Subvolume, compression string) error {
 	w.Header().Set("Content-type", "application/octet-stream")
 
-	var formatOut dvid.CompressionFormat
 	switch compression {
-	case "", "lz4":
-		formatOut = dvid.LZ4
-	case "gzip":
-		formatOut = dvid.Gzip
-	case "uncompressed":
-		formatOut = dvid.Uncompressed
+	case "", "lz4", "gzip", "blocks", "uncompressed":
 	default:
-		return fmt.Errorf(`compression must be "gzip", "lz4", or "uncompressed"`)
+		return fmt.Errorf(`compression must be "lz4" (default), "gzip", "blocks" or "uncompressed"`)
 	}
 
 	// convert x,y,z coordinates to block coordinates
-	blocksize := subvol.Size().Div(d.BlockSize())
-	blockoffset := subvol.StartPoint().Div(d.BlockSize())
+	blocksdims := subvol.Size().Div(d.BlockSize())
+	blocksoff := subvol.StartPoint().Div(d.BlockSize())
 
 	timedLog := dvid.NewTimeLog()
-	defer timedLog.Infof("SendBlocks %s, span x %d, span y %d, span z %d", blockoffset, blocksize.Value(0), blocksize.Value(1), blocksize.Value(2))
+	defer timedLog.Infof("SendBlocks %s, span x %d, span y %d, span z %d", blocksoff, blocksdims.Value(0), blocksdims.Value(1), blocksdims.Value(2))
 
 	store, err := d.GetOrderedKeyValueDB()
 	if err != nil {
@@ -1446,10 +1467,10 @@ func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, su
 		okv = req.NewBuffer(ctx)
 	}
 
-	for ziter := int32(0); ziter < blocksize.Value(2); ziter++ {
-		for yiter := int32(0); yiter < blocksize.Value(1); yiter++ {
-			beginPoint := dvid.ChunkPoint3d{blockoffset.Value(0), blockoffset.Value(1) + yiter, blockoffset.Value(2) + ziter}
-			endPoint := dvid.ChunkPoint3d{blockoffset.Value(0) + blocksize.Value(0) - 1, blockoffset.Value(1) + yiter, blockoffset.Value(2) + ziter}
+	for ziter := int32(0); ziter < blocksdims.Value(2); ziter++ {
+		for yiter := int32(0); yiter < blocksdims.Value(1); yiter++ {
+			beginPoint := dvid.ChunkPoint3d{blocksoff.Value(0), blocksoff.Value(1) + yiter, blocksoff.Value(2) + ziter}
+			endPoint := dvid.ChunkPoint3d{blocksoff.Value(0) + blocksdims.Value(0) - 1, blocksoff.Value(1) + yiter, blocksoff.Value(2) + ziter}
 
 			indexBeg := dvid.IndexZYX(beginPoint)
 			sx, sy, sz := indexBeg.Unpack()
@@ -1473,10 +1494,10 @@ func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, su
 					return err
 				}
 				x, y, z := indexZYX.Unpack()
-				if z != sz || y != sy || x < sx || x >= sx+int32(blocksize.Value(0)) {
+				if z != sz || y != sy || x < sx || x >= sx+int32(blocksdims.Value(0)) {
 					return nil
 				}
-				if err := sendBlock(w, x, y, z, kv.V, formatOut); err != nil {
+				if err := d.sendBlock(w, x, y, z, kv.V, compression); err != nil {
 					return err
 				}
 				return nil
