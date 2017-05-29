@@ -89,26 +89,22 @@ func (m metaCache) AddLabelMeta(label uint64, meta *Meta) {
 	}
 }
 
-// Meta gives a high-level overview of all voxels in a label including the # voxels,
-// block index.
+// Meta gives a high-level overview of a label's voxels.  Some properties are
+// only used if the associated data instance has features enabled, e.g.,
+// size tracking.
 type Meta struct {
-	Voxels    uint64         // Total # of voxels in label.
-	Blocks    dvid.IZYXSlice // Sorted block coordinates occupied by label.
-	NumVoxels []uint32       // Number of voxels for each block in Blocks.
+	Voxels uint64         // Total # of voxels in label.
+	Blocks dvid.IZYXSlice // Sorted block coordinates occupied by label.
 }
 
 // MarshalBinary implements the encoding.BinaryMarshaler interface
 func (m Meta) MarshalBinary() ([]byte, error) {
-	buf := make([]byte, len(m.Blocks)*16+8)
+	buf := make([]byte, len(m.Blocks)*12+8)
 	binary.LittleEndian.PutUint64(buf[0:8], m.Voxels)
 	off := 8
 	for _, izyx := range m.Blocks {
 		copy(buf[off:off+12], string(izyx))
 		off += 12
-	}
-	for _, num := range m.NumVoxels {
-		binary.LittleEndian.PutUint32(buf[off:off+4], num)
-		off += 4
 	}
 	return buf, nil
 }
@@ -119,15 +115,9 @@ func (m *Meta) UnmarshalBinary(b []byte) error {
 		return fmt.Errorf("cannot unmarshal %d bytes into Meta", len(b))
 	}
 	m.Voxels = binary.LittleEndian.Uint64(b[0:8])
-	numBlocks := (len(b) - 8) / 16
+	numBlocks := (len(b) - 8) / 12
 	if err := m.Blocks.UnmarshalBinary(b[8 : 8+numBlocks*12]); err != nil {
 		return err
-	}
-	pos := 8 + numBlocks*12
-	m.NumVoxels = make([]uint32, numBlocks)
-	for i := 0; i < numBlocks; i++ {
-		m.NumVoxels[i] = binary.LittleEndian.Uint32(b[pos : pos+4])
-		pos += 4
 	}
 	return nil
 }
@@ -185,7 +175,6 @@ func (d *Data) handleIndexBlockMutate(v dvid.VersionID, ch chan blockChange, mut
 	bc := blockChange{
 		bcoord:  mut.BCoord,
 		present: make(map[uint64]uint8),
-		delta:   make(map[uint64]int32),
 	}
 	for _, label := range mut.Prev.Labels {
 		if label != 0 {
@@ -196,6 +185,9 @@ func (d *Data) handleIndexBlockMutate(v dvid.VersionID, ch chan blockChange, mut
 		if label != 0 {
 			bc.present[label] |= presentNew
 		}
+	}
+	if d.CountLabels {
+		bc.delta = mut.Data.CalcNumLabels(mut.Prev)
 	}
 	ch <- bc
 
@@ -209,12 +201,14 @@ func (d *Data) handleIndexBlockIngest(v dvid.VersionID, ch chan blockChange, mut
 	bc := blockChange{
 		bcoord:  mut.BCoord,
 		present: make(map[uint64]uint8),
-		delta:   make(map[uint64]int32),
 	}
 	for _, label := range mut.Data.Labels {
 		if label != 0 {
 			bc.present[label] |= presentNew
 		}
+	}
+	if d.CountLabels {
+		bc.delta = mut.Data.CalcNumLabels(nil)
 	}
 	ch <- bc
 

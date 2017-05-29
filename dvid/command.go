@@ -96,7 +96,7 @@ func (c Config) GetString(key string) (s string, found bool, err error) {
 		var ok bool
 		s, ok = param.(string)
 		if !ok {
-			err = fmt.Errorf("Setting for '%s' was not a string: %s", key, param)
+			err = fmt.Errorf("Setting for '%s' was not a string: %v", key, param)
 		}
 		return
 	}

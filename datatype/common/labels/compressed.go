@@ -381,6 +381,110 @@ type Block struct {
 	data []byte // serialized format as described above
 }
 
+// CalcNumLabels calculates the change in the number of voxels under each label.
+// If a previous Block is given, the change is calculated from the previous numbers.
+func (b Block) CalcNumLabels(prev *Block) map[uint64]int32 {
+	delta := make(map[uint64]int32)
+
+	// if previous block given, init those counts as negative
+	if prev != nil {
+		prev.calcNumLabels(delta, false)
+	}
+	b.calcNumLabels(delta, true)
+
+	return delta
+}
+
+func (b Block) calcNumLabels(delta map[uint64]int32, add bool) {
+	numVoxels := int32(b.Size.Prod())
+
+	switch len(b.Labels) {
+	case 0:
+		dvid.Infof("Block has 0 labels!\n")
+		return
+	case 1:
+		if add {
+			delta[b.Labels[0]] += numVoxels
+		} else {
+			delta[b.Labels[0]] -= numVoxels
+		}
+		return
+	default:
+	}
+
+	gx, gy, gz := b.Size[0]/SubBlockSize, b.Size[1]/SubBlockSize, b.Size[2]/SubBlockSize
+	subBlockNumVoxels := int32(SubBlockSize * SubBlockSize * SubBlockSize)
+	sbLabels := make([]uint64, subBlockNumVoxels) // preallocate max # of labels for sub-block
+
+	var indexPos uint32
+	var bitpos, subBlockNum int
+	var sx, sy, sz int32
+	for sz = 0; sz < gz; sz++ {
+		for sy = 0; sy < gy; sy++ {
+			for sx = 0; sx < gx; sx, subBlockNum = sx+1, subBlockNum+1 {
+
+				numSBLabels := b.NumSBLabels[subBlockNum]
+
+				switch numSBLabels {
+				case 0:
+					continue
+				case 1:
+					label := b.Labels[b.SBIndices[indexPos]]
+					indexPos++
+					if add {
+						delta[label] += subBlockNumVoxels
+					} else {
+						delta[label] -= subBlockNumVoxels
+					}
+					continue
+				default:
+				}
+				bits := int(bitsFor(numSBLabels))
+				for i := uint16(0); i < numSBLabels; i++ {
+					sbLabels[i] = b.Labels[b.SBIndices[indexPos]]
+					indexPos++
+				}
+
+				lblpos := sz*SubBlockSize*b.Size[0]*b.Size[1] + sy*SubBlockSize*b.Size[0] + sx*SubBlockSize
+
+				var x, y, z int32
+				for z = 0; z < SubBlockSize; z++ {
+					for y = 0; y < SubBlockSize; y++ {
+						for x = 0; x < SubBlockSize; x++ {
+							var index uint16
+							bithead := bitpos % 8
+							bytepos := bitpos >> 3
+							if bithead+bits <= 8 {
+								// index totally within this byte
+								rightshift := uint(8 - bithead - bits)
+								index = uint16((b.SBValues[bytepos] & leftBitMask[bithead]) >> rightshift)
+							} else {
+								// index spans byte boundaries
+								index = uint16(b.SBValues[bytepos]&leftBitMask[bithead]) << 8
+								index |= uint16(b.SBValues[bytepos+1])
+								index >>= uint(16 - bithead - bits)
+							}
+							label := sbLabels[index]
+							if add {
+								delta[label]++
+							} else {
+								delta[label]--
+							}
+							bitpos += bits
+							lblpos++
+						}
+						lblpos += b.Size[0] - SubBlockSize
+					}
+					lblpos += b.Size[0]*b.Size[1] - b.Size[0]*SubBlockSize
+				}
+				if bitpos%8 != 0 {
+					bitpos += 8 - (bitpos % 8)
+				}
+			}
+		}
+	}
+}
+
 // MergeLabels returns a new block that has computed the given MergeOp.
 func (b Block) MergeLabels(op MergeOp) (merged *Block, err error) {
 	merged = new(Block)

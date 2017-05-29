@@ -733,6 +733,7 @@ func TestLabelarrayRepoPersistence(t *testing.T) {
 	config.Set("BlockSize", "12,13,14")
 	config.Set("VoxelSize", "1.1,2.8,11")
 	config.Set("VoxelUnits", "microns,millimeters,nanometers")
+	config.Set("CountLabels", "true")
 	dataservice, err := datastore.NewData(uuid, labelsT, "mylabels", config)
 	if err != nil {
 		t.Errorf("Unable to create labels instance: %v\n", err)
@@ -740,6 +741,12 @@ func TestLabelarrayRepoPersistence(t *testing.T) {
 	lbls, ok := dataservice.(*Data)
 	if !ok {
 		t.Errorf("Can't cast labels data service into Data\n")
+	}
+	if !lbls.CountLabels {
+		t.Errorf("expected CountLabels to be set true, not default false")
+	}
+	if !lbls.IndexedLabels {
+		t.Errorf("expected IndexedLabels to be true for default but was false")
 	}
 	oldData := *lbls
 

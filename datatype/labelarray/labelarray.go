@@ -816,6 +816,13 @@ type Data struct {
 	// conflict across all versions within this repo.
 	MaxRepoLabel uint64
 
+	// True if sparse volumes (split, merge, sparse volume optimized GET) are supported
+	// for this data instance.  (Default true)
+	IndexedLabels bool
+
+	// True if we keep track of # voxels per label.  (Default false)
+	CountLabels bool
+
 	mlMu sync.RWMutex // For atomic access of MaxLabel and MaxRepoLabel
 
 	// unpersisted data: channels for mutations and downres caching.
@@ -826,6 +833,98 @@ type Data struct {
 	indexCh  [numLabelHandlers]chan labelChange // channels into label indexing
 
 	mutcache mutationCache
+}
+
+// CopyPropertiesFrom copies the data instance-specific properties from a given
+// data instance into the receiver's properties. Fulfills the datastore.PropertyCopier interface.
+func (d *Data) CopyPropertiesFrom(src datastore.DataService, fs storage.FilterSpec) error {
+	d2, ok := src.(*Data)
+	if !ok {
+		return fmt.Errorf("unable to copy properties from non-labelarray data %q", src.DataName())
+	}
+
+	// TODO -- Handle mutable data that could be potentially altered by filter.
+	d.MaxLabel = make(map[dvid.VersionID]uint64, len(d2.MaxLabel))
+	for k, v := range d2.MaxLabel {
+		d.MaxLabel[k] = v
+	}
+	d.MaxRepoLabel = d2.MaxRepoLabel
+
+	d.IndexedLabels = d2.IndexedLabels
+	d.CountLabels = d2.CountLabels
+
+	return d.Data.CopyPropertiesFrom(d2.Data, fs)
+}
+
+// NewData returns a pointer to labelarray data.
+func NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.Config) (*Data, error) {
+	if _, found := c.Get("BlockSize"); !found {
+		c.Set("BlockSize", fmt.Sprintf("%d,%d,%d", DefaultBlockSize, DefaultBlockSize, DefaultBlockSize))
+	}
+	if _, found := c.Get("Compression"); !found {
+		c.Set("Compression", "gzip")
+	}
+	imgblkData, err := dtype.Type.NewData(uuid, id, name, c)
+	if err != nil {
+		return nil, err
+	}
+
+	data := &Data{
+		Data: imgblkData,
+	}
+	indexedLabels := true
+	b, found, err := c.GetBool("IndexedLabels")
+	if err != nil {
+		return nil, err
+	}
+	if found {
+		if !b {
+			return nil, fmt.Errorf("DVID currently does not support turning off indexing of labels")
+		}
+		indexedLabels = b
+	}
+	countLabels := false
+	b, found, err = c.GetBool("CountLabels")
+	if err != nil {
+		return nil, err
+	}
+	if found {
+		countLabels = b
+	}
+	fmt.Printf("b %v, found %t\n", b, found)
+
+	data.MaxLabel = make(map[dvid.VersionID]uint64)
+	data.IndexedLabels = indexedLabels
+	data.CountLabels = countLabels
+	return data, nil
+}
+
+func (d *Data) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Base     *datastore.Data
+		Extended imageblk.Properties
+	}{
+		d.Data.Data,
+		d.Data.Properties,
+	})
+}
+
+func (d *Data) GobDecode(b []byte) error {
+	buf := bytes.NewBuffer(b)
+	dec := gob.NewDecoder(buf)
+	if err := dec.Decode(&(d.Data)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (d *Data) GobEncode() ([]byte, error) {
+	var buf bytes.Buffer
+	enc := gob.NewEncoder(&buf)
+	if err := enc.Encode(d.Data); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 func (d *Data) updateMaxLabel(v dvid.VersionID, label uint64) {
@@ -851,24 +950,6 @@ func (d *Data) Equals(d2 *Data) bool {
 		return false
 	}
 	return true
-}
-
-// CopyPropertiesFrom copies the data instance-specific properties from a given
-// data instance into the receiver's properties. Fulfills the datastore.PropertyCopier interface.
-func (d *Data) CopyPropertiesFrom(src datastore.DataService, fs storage.FilterSpec) error {
-	d2, ok := src.(*Data)
-	if !ok {
-		return fmt.Errorf("unable to copy properties from non-labelarray data %q", src.DataName())
-	}
-
-	// TODO -- Handle mutable data that could be potentially altered by filter.
-	d.MaxLabel = make(map[dvid.VersionID]uint64, len(d2.MaxLabel))
-	for k, v := range d2.MaxLabel {
-		d.MaxLabel[k] = v
-	}
-	d.MaxRepoLabel = d2.MaxRepoLabel
-
-	return d.Data.CopyPropertiesFrom(d2.Data, fs)
 }
 
 // NewLabel returns a new label for the given version.
@@ -906,54 +987,6 @@ func (d *Data) NewLabel(v dvid.VersionID) (uint64, error) {
 	}
 
 	return d.MaxRepoLabel, nil
-}
-
-// NewData returns a pointer to labelarray data.
-func NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.Config) (*Data, error) {
-	if _, found := c.Get("BlockSize"); !found {
-		c.Set("BlockSize", fmt.Sprintf("%d,%d,%d", DefaultBlockSize, DefaultBlockSize, DefaultBlockSize))
-	}
-	if _, found := c.Get("Compression"); !found {
-		c.Set("Compression", "gzip")
-	}
-	imgblkData, err := dtype.Type.NewData(uuid, id, name, c)
-	if err != nil {
-		return nil, err
-	}
-
-	data := &Data{
-		Data: imgblkData,
-	}
-	data.MaxLabel = make(map[dvid.VersionID]uint64)
-	return data, nil
-}
-
-func (d *Data) MarshalJSON() ([]byte, error) {
-	return json.Marshal(struct {
-		Base     *datastore.Data
-		Extended imageblk.Properties
-	}{
-		d.Data.Data,
-		d.Data.Properties,
-	})
-}
-
-func (d *Data) GobDecode(b []byte) error {
-	buf := bytes.NewBuffer(b)
-	dec := gob.NewDecoder(buf)
-	if err := dec.Decode(&(d.Data)); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (d *Data) GobEncode() ([]byte, error) {
-	var buf bytes.Buffer
-	enc := gob.NewEncoder(&buf)
-	if err := enc.Encode(d.Data); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
 }
 
 // --- datastore.InstanceMutator interface -----
