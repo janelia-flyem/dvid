@@ -171,50 +171,52 @@ const presentNew = uint8(0x02) // bit flag for label presence in new block
 // block-level analysis of mutation to get label changes in a block.  accumulates data for
 // a given mutation into a map per mutation which will then be flushed for each label meta
 // k/v pair at end of mutation.
-func (d *Data) handleIndexBlockMutate(v dvid.VersionID, ch chan blockChange, mut MutatedBlock) {
+func (d *Data) handleBlockMutate(v dvid.VersionID, ch chan blockChange, mut MutatedBlock) {
+	if !d.IndexedLabels && !d.CountLabels {
+		return
+	}
 	bc := blockChange{
-		bcoord:  mut.BCoord,
-		present: make(map[uint64]uint8),
+		bcoord: mut.BCoord,
 	}
-	for _, label := range mut.Prev.Labels {
-		if label != 0 {
-			bc.present[label] |= presentOld
+	if d.IndexedLabels {
+		bc.present = make(map[uint64]uint8)
+		for _, label := range mut.Prev.Labels {
+			if label != 0 {
+				bc.present[label] |= presentOld
+			}
 		}
-	}
-	for _, label := range mut.Data.Labels {
-		if label != 0 {
-			bc.present[label] |= presentNew
+		for _, label := range mut.Data.Labels {
+			if label != 0 {
+				bc.present[label] |= presentNew
+			}
 		}
 	}
 	if d.CountLabels {
 		bc.delta = mut.Data.CalcNumLabels(mut.Prev)
 	}
 	ch <- bc
-
-	if err := d.publishDownsizeBlock(v, mut.MutID, mut.BCoord, mut.Data); err != nil {
-		dvid.Criticalf("data %q block ingest: %v\n", d.DataName(), err)
-	}
 }
 
 // block-level analysis of label ingest
-func (d *Data) handleIndexBlockIngest(v dvid.VersionID, ch chan blockChange, mut IngestedBlock) {
-	bc := blockChange{
-		bcoord:  mut.BCoord,
-		present: make(map[uint64]uint8),
+func (d *Data) handleBlockIngest(v dvid.VersionID, ch chan blockChange, mut IngestedBlock) {
+	if !d.IndexedLabels && !d.CountLabels {
+		return
 	}
-	for _, label := range mut.Data.Labels {
-		if label != 0 {
-			bc.present[label] |= presentNew
+	bc := blockChange{
+		bcoord: mut.BCoord,
+	}
+	if d.IndexedLabels {
+		bc.present = make(map[uint64]uint8)
+		for _, label := range mut.Data.Labels {
+			if label != 0 {
+				bc.present[label] |= presentNew
+			}
 		}
 	}
 	if d.CountLabels {
 		bc.delta = mut.Data.CalcNumLabels(nil)
 	}
 	ch <- bc
-
-	if err := d.publishDownsizeBlock(v, mut.MutID, mut.BCoord, mut.Data); err != nil {
-		dvid.Criticalf("data %q block ingest: %v\n", d.DataName(), err)
-	}
 }
 
 // There are two sets of goroutines that handle mutations.  The first accepts block-level changes
@@ -267,10 +269,12 @@ func (d *Data) aggregateBlockChanges(v dvid.VersionID, ch <-chan blockChange) {
 	}
 	d.updateMaxLabel(v, maxLabel)
 
-	for label, bdm := range ldm {
-		change := labelChange{v, label, bdm}
-		shard := label % numLabelHandlers
-		d.indexCh[shard] <- change
+	if d.IndexedLabels {
+		for label, bdm := range ldm {
+			change := labelChange{v, label, bdm}
+			shard := label % numLabelHandlers
+			d.indexCh[shard] <- change
+		}
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"reflect"
@@ -733,7 +734,8 @@ func TestLabelarrayRepoPersistence(t *testing.T) {
 	config.Set("BlockSize", "12,13,14")
 	config.Set("VoxelSize", "1.1,2.8,11")
 	config.Set("VoxelUnits", "microns,millimeters,nanometers")
-	config.Set("CountLabels", "true")
+	config.Set("CountLabels", "false")
+	config.Set("DownresLevels", "6")
 	dataservice, err := datastore.NewData(uuid, labelsT, "mylabels", config)
 	if err != nil {
 		t.Errorf("Unable to create labels instance: %v\n", err)
@@ -742,11 +744,14 @@ func TestLabelarrayRepoPersistence(t *testing.T) {
 	if !ok {
 		t.Errorf("Can't cast labels data service into Data\n")
 	}
-	if !lbls.CountLabels {
-		t.Errorf("expected CountLabels to be set true, not default false")
+	if lbls.CountLabels {
+		t.Errorf("expected CountLabels to be set false, not default true\n")
 	}
 	if !lbls.IndexedLabels {
-		t.Errorf("expected IndexedLabels to be true for default but was false")
+		t.Errorf("expected IndexedLabels to be true for default but was false\n")
+	}
+	if lbls.DownresLevels != 6 {
+		t.Errorf("expected DownresLevels to be 6, not %d\n", lbls.DownresLevels)
 	}
 	oldData := *lbls
 
@@ -845,7 +850,7 @@ func TestMultiscale(t *testing.T) {
 }
 */
 
-func TestLabels(t *testing.T) {
+func testLabels(t *testing.T, labelsIndexed bool) {
 	datastore.OpenTest()
 	defer datastore.CloseTest()
 
@@ -857,6 +862,9 @@ func TestLabels(t *testing.T) {
 	// Create a labelarray instance
 	var config dvid.Config
 	config.Set("BlockSize", "32,32,32")
+	if !labelsIndexed {
+		config.Set("IndexedLabels", "false")
+	}
 	server.CreateTestInstance(t, uuid, "labelarray", "labels", config)
 
 	vol := labelVol{
@@ -999,10 +1007,6 @@ func TestLabels(t *testing.T) {
 		t.Fatalf("Expected first voxel to be label %d and got %d instead\n", labelNoROI, startLabel)
 	}
 
-	// TODO - Use the ROI to retrieve a 2d xy image.
-
-	// TODO - Make sure we aren't getting labels back in non-ROI points.
-
 	// Post again but now with ROI
 	var labelWithROI uint64 = 40000
 	vol.postLabelVolume(t, uuid, "", roiName, labelWithROI)
@@ -1070,4 +1074,54 @@ func TestLabels(t *testing.T) {
 			}
 		}
 	}
+
+	// TODO - Use the ROI to retrieve a 2d xy image.
+
+	// TODO - Make sure we aren't getting labels back in non-ROI points.
+
+	// Verify non-indexed instances can't access indexed endpoints.
+	if !labelsIndexed {
+		methods := []string{
+			"GET",
+			"HEAD",
+			"GET",
+			"GET",
+			"GET",
+			"GET",
+			"POST",
+			"POST",
+			"POST",
+			"POST",
+		}
+		reqs := []string{
+			"sparsevol/20",
+			"sparsevol/20",
+			"sparsevol-by-point/30_89_100",
+			"sparsevol-coarse/20",
+			"maxlabel",
+			"nextlabel",
+			"nextlabel",
+			"merge",
+			"split/20",
+			"split-coarse/20",
+		}
+		var r io.Reader
+		for i, req := range reqs {
+			apiStr = fmt.Sprintf("%snode/%s/labels/%s", server.WebAPIPath, uuid, req)
+			if methods[i] == "POST" {
+				r = bytes.NewBufferString("junkdata that should never be used anyway")
+			} else {
+				r = nil
+			}
+			server.TestBadHTTP(t, methods[i], apiStr, r)
+		}
+	}
+}
+
+func TestLabels(t *testing.T) {
+	testLabels(t, true)
+}
+
+func TestLabelsUnindexed(t *testing.T) {
+	testLabels(t, false)
 }

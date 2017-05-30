@@ -68,6 +68,9 @@ $ dvid repo <UUID> new labelarray <data name> <settings...>
     BlockSize      Size in pixels  (default: %s)
     VoxelSize      Resolution of voxels (default: 8.0, 8.0, 8.0)
     VoxelUnits     Resolution units (default: "nanometers")
+	IndexedLabels  "false" if no sparse volume support is required (default "true")
+	CountLabels    "false" if no voxel counts per label is required (default "true")
+	DownresLevels  Number of down-resolution levels supported.  Each down-res is factor of 2.
 
 $ dvid node <UUID> <data name> load <offset> <image glob> <settings...>
 
@@ -406,6 +409,10 @@ GET  <api URL>/node/<UUID>/<data name>/blocks/<size>/<offset>[?queryopts]
 	              throttled) are handled.  If the server can't initiate the API call right away, a 503 
                   (Service Unavailable) status code is returned.
 
+
+-------------------------------------------------------------------------------------------------------
+--- The following endpoints require the labelarray data instance to have IndexedLabels set to true. ---
+-------------------------------------------------------------------------------------------------------
 
 GET  <api URL>/node/<UUID>/<data name>/sparsevol/<label>?<options>
 
@@ -823,6 +830,10 @@ type Data struct {
 	// True if we keep track of # voxels per label.  (Default false)
 	CountLabels bool
 
+	// Number of down-resolution levels supported.  Each down-res level is 2x scope of
+	// the higher level.
+	DownresLevels uint8
+
 	mlMu sync.RWMutex // For atomic access of MaxLabel and MaxRepoLabel
 
 	// unpersisted data: channels for mutations and downres caching.
@@ -852,6 +863,7 @@ func (d *Data) CopyPropertiesFrom(src datastore.DataService, fs storage.FilterSp
 
 	d.IndexedLabels = d2.IndexedLabels
 	d.CountLabels = d2.CountLabels
+	d.DownresLevels = d2.DownresLevels
 
 	return d.Data.CopyPropertiesFrom(d2.Data, fs)
 }
@@ -878,12 +890,10 @@ func NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.
 		return nil, err
 	}
 	if found {
-		if !b {
-			return nil, fmt.Errorf("DVID currently does not support turning off indexing of labels")
-		}
 		indexedLabels = b
 	}
-	countLabels := false
+
+	countLabels := true
 	b, found, err = c.GetBool("CountLabels")
 	if err != nil {
 		return nil, err
@@ -891,11 +901,23 @@ func NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.
 	if found {
 		countLabels = b
 	}
-	fmt.Printf("b %v, found %t\n", b, found)
+
+	var downresLevels uint8
+	levels, found, err := c.GetInt("DownresLevels")
+	if err != nil {
+		return nil, err
+	}
+	if found {
+		if levels < 0 || levels > 255 {
+			return nil, fmt.Errorf("illegal number of down-res levels specified (%d): must be 0 <= n <= 255", levels)
+		}
+		downresLevels = uint8(levels)
+	}
 
 	data.MaxLabel = make(map[dvid.VersionID]uint64)
 	data.IndexedLabels = indexedLabels
 	data.CountLabels = countLabels
+	data.DownresLevels = downresLevels
 	return data, nil
 }
 
@@ -1964,7 +1986,16 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		return
 	}
 
-	// Process help and info.
+	// Prevent use of APIs that require IndexedLabels when it is not set.
+	if !d.IndexedLabels {
+		switch parts[3] {
+		case "sparsevol", "sparsevol-by-point", "sparsevol-coarse", "maxlabel", "nextlabel", "split", "split-coarse", "merge":
+			server.BadRequest(w, r, "data %q is not label indexed (IndexedLabels=false): %q endpoint is not supported", d.DataName(), parts[3])
+			return
+		}
+	}
+
+	// Handle all requests
 	switch parts[3] {
 	case "help":
 		w.Header().Set("Content-Type", "text/plain")
@@ -2030,7 +2061,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		d.handleDataRequest(ctx, w, r, parts)
 		timedLog.Infof("HTTP %s %s with shape %s, size %s, offset %s", r.Method, parts[3], parts[4], parts[5], parts[6])
 
-	// endpoints after this must have LabelIndex key-value pairs initialized. ---------
+	// endpoints after this must have data instance IndexedLabels = true
 
 	case "sparsevol":
 		d.handleSparsevol(ctx, w, r, parts)
