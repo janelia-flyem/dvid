@@ -13,6 +13,15 @@ type MergeOp struct {
 	Merged Set
 }
 
+// SplitOp is a split for a block.
+type SplitOp struct {
+	Target   uint64
+	NewLabel uint64
+	RLEs     dvid.RLEs // if nil, entire block is being split from target -> new label
+}
+
+// SplitFineOp is a split using RLEs for a block.
+
 func (op MergeOp) String() string {
 	return fmt.Sprintf("merge %s -> label %d", op.Merged, op.Target)
 }
@@ -38,9 +47,6 @@ func (t MergeTuple) Op() (MergeOp, error) {
 	}
 	return op, nil
 }
-
-// DeleteBlock encapsulates data necessary to delete blocks of labels.
-type DeleteBlock imageblk.Block
 
 // DeltaNewSize is a new label being introduced.
 type DeltaNewSize struct {

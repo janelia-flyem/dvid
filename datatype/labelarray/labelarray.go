@@ -1,7 +1,6 @@
 /*
-	Package labelarray tailors the voxels data type for 64-bit labels and allows loading
-	of NRGBA images (e.g., Raveler superpixel PNG images) that implicitly use slice Z as
-	part of the label index.
+	Package labelarray handles both volumes of label data as well as indexing to
+	quickly find and generate sparse volumes of any particular label.
 */
 package labelarray
 
@@ -69,6 +68,9 @@ $ dvid repo <UUID> new labelarray <data name> <settings...>
     BlockSize      Size in pixels  (default: %s)
     VoxelSize      Resolution of voxels (default: 8.0, 8.0, 8.0)
     VoxelUnits     Resolution units (default: "nanometers")
+	IndexedLabels  "false" if no sparse volume support is required (default "true")
+	CountLabels    "false" if no voxel counts per label is required (default "true")
+	DownresLevels  Number of down-resolution levels supported.  Each down-res is factor of 2.
 
 $ dvid node <UUID> <data name> load <offset> <image glob> <settings...>
 
@@ -352,9 +354,8 @@ GET  <api URL>/node/<UUID>/<data name>/blocks/<size>/<offset>[?queryopts]
     Retrieves blocks corresponding to the extents specified by the size and offset.  The
     subvolume request must be block aligned.  This is the most server-efficient way of
     retrieving labelarray data, where data read from the underlying storage engine
-    is written directly to the HTTP connection.  The default compression returned is lz4,
-	which is the legacy compression format.  Make sure to match the compression format with
-	the actual compression chosen for the labelarray data instance (e.g., default "gzip").
+    is written directly to the HTTP connection.  The default compression returned is gzip
+	on compressed DVID label Block serialization.
 
     Example: 
 
@@ -373,7 +374,7 @@ GET  <api URL>/node/<UUID>/<data name>/blocks/<size>/<offset>[?queryopts]
         int32  Block 1 coordinate Y
         int32  Block 1 coordinate Z
         int32  # bytes for first block (N1)
-        byte0  Bytes of block data in compressed format.
+        byte0  Block N1 serialization using chosen compression format (see "compression" option below)
         byte1
         ...
         byteN1
@@ -382,12 +383,14 @@ GET  <api URL>/node/<UUID>/<data name>/blocks/<size>/<offset>[?queryopts]
         int32  Block 2 coordinate Y
         int32  Block 2 coordinate Z
         int32  # bytes for second block (N2)
-        byte0  Bytes of block data in compressed format.
+        byte0  Block N2 serialization using chosen compression format (see "compression" option below)
         byte1
         ...
         byteN2
 
         ...
+
+	The Block serialization format is as follows:
 
     If no data is available for given block span, nothing is returned.
 
@@ -400,33 +403,16 @@ GET  <api URL>/node/<UUID>/<data name>/blocks/<size>/<offset>[?queryopts]
 
     Query-string Options:
 
-    compression   Allows retrieval of block data in "lz4" (default), "uncompressed", or "gzip" (native).
-    throttle      If "true", makes sure only N compute-intense operation (all API calls that can be throttled) 
-                    are handled.  If the server can't initiate the API call right away, a 503 (Service Unavailable) 
-                    status code is returned.
+    compression   Allows retrieval of block data in "lz4" (default), "gzip", blocks" (native DVID
+	              label blocks) or "uncompressed" (uint64 labels).
+    throttle      If "true", makes sure only N compute-intense operation (all API calls that can be 
+	              throttled) are handled.  If the server can't initiate the API call right away, a 503 
+                  (Service Unavailable) status code is returned.
 
 
-DELETE <api URL>/node/<UUID>/<data name>/blocks/<block coord>/<spanX>
-
-    Deletes "spanX" blocks of label data along X starting from given block coordinate.
-    This will delete both the labelarray as well as any associated labelvol structures within this block.
-
-    Example: 
-
-    DELETE <api URL>/node/3f8c/segmentation/blocks/10_20_30/8
-
-    Delete 8 blocks where first block has given block coordinate and number
-    of blocks returned along x axis is "spanX". 
-
-    Arguments:
-
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
-    data name     Name of data to add.
-    block coord   The block coordinate of the first block in X_Y_Z format.  Block coordinates
-                    can be derived from voxel coordinates by dividing voxel coordinates by
-                    the block size for a data type.
-    spanX         The number of blocks along X.
-
+-------------------------------------------------------------------------------------------------------
+--- The following endpoints require the labelarray data instance to have IndexedLabels set to true. ---
+-------------------------------------------------------------------------------------------------------
 
 GET  <api URL>/node/<UUID>/<data name>/sparsevol/<label>?<options>
 
@@ -466,16 +452,24 @@ GET  <api URL>/node/<UUID>/<data name>/sparsevol/<label>?<options>
 
 	Streaming Binary Blocks ("blocks"):
 
-      3 * uint32      values of gx, gy, and gz
-      3 * int32       offset of first voxel of Block in DVID space (x, y, z)
+      3 * uint32      values of gx, gy, and gz -- the # of sub-blocks along each dimension in a Block.
       uint64          foreground label
 
-      Stream of gx * gy * gz sub-blocks with the following data:
+      Stream of blocks.  Each block has the following data:
 
-      byte            0 = background ONLY  (no more data for this sub-block)
-                      1 = foreground ONLY  (no more data for this sub-block)
-                      2 = both background and foreground so mask data required.
-      mask            64 byte bitmask where each voxel is 0 (background) or 1 (foreground)
+		3 * int32       offset of first voxel of Block in DVID space (x, y, z)
+		byte            content flag:
+						0 = background ONLY  (no more data for this block)
+						1 = foreground ONLY  (no more data for this block)
+						2 = both background and foreground so stream of sub-blocks required.
+
+		If content is both background and foreground, stream of gx * gy * gz sub-blocks with the following data:
+
+		byte            content flag:
+						0 = background ONLY  (no more data for this sub-block)
+						1 = foreground ONLY  (no more data for this sub-block)
+						2 = both background and foreground so mask data required.
+		mask            64 byte bitmask where each voxel is 0 (background) or 1 (foreground)
 
     GET Query-string Options:
 
@@ -493,8 +487,7 @@ GET  <api URL>/node/<UUID>/<data name>/sparsevol/<label>?<options>
     exact   "false" if RLEs can extend a bit outside voxel bounds within border blocks.
             This will give slightly faster responses. 
 
-    compression   Allows retrieval of data in "lz4" and "gzip"
-                  compressed format.
+    compression   "lz4" and "gzip" compressed format; only applies to "rles" format for now.
 
 
 HEAD <api URL>/node/<UUID>/<data name>/sparsevol/<label>?<options>
@@ -678,17 +671,14 @@ var (
 type SparseVolFormat uint8
 
 const (
-	// Legacy RLE encoding with header that gives # spans.
+	// FormatLegacyRLE is Legacy RLE encoding with header that gives # spans.
 	FormatLegacyRLE SparseVolFormat = iota
 
-	// Streaming RLE encoding
+	// FormatStreamingRLE specifies Streaming RLE encoding
 	FormatStreamingRLE
 
-	// Streaming set of binary Blocks
+	// FormatBinaryBlocks specifies a streaming set of binary Blocks
 	FormatBinaryBlocks
-
-	// Legacy RLE encoding computed using old system.
-	FormatLegacySlowRLE
 )
 
 // returns default legacy RLE if no options set.
@@ -698,8 +688,6 @@ func svformatFromQueryString(r *http.Request) SparseVolFormat {
 		return FormatStreamingRLE
 	case "blocks":
 		return FormatBinaryBlocks
-	case "old":
-		return FormatLegacySlowRLE
 	default:
 		return FormatLegacyRLE
 	}
@@ -835,19 +823,148 @@ type Data struct {
 	// conflict across all versions within this repo.
 	MaxRepoLabel uint64
 
+	// True if sparse volumes (split, merge, sparse volume optimized GET) are supported
+	// for this data instance.  (Default true)
+	IndexedLabels bool
+
+	// True if we keep track of # voxels per label.  (Default false)
+	CountLabels bool
+
+	// Number of down-resolution levels supported.  Each down-res level is 2x scope of
+	// the higher level.
+	DownresLevels uint8
+
 	mlMu sync.RWMutex // For atomic access of MaxLabel and MaxRepoLabel
 
 	// unpersisted data: channels for mutations and downres caching.
 	syncCh   chan datastore.SyncMessage
 	syncDone chan *sync.WaitGroup
 
-	downresCh [numBlockHandlers]chan procMsg // channels into downres denomralizations.
-	mutateCh  [numBlockHandlers]chan procMsg // channels into mutate (merge/split) ops.
+	mutateCh [numBlockHandlers]chan procMsg     // channels into mutate (merge/split) ops.
+	indexCh  [numLabelHandlers]chan labelChange // channels into label indexing
 
-	indexCh [numLabelHandlers]chan labelChange // channels into label indexing
+	mutcache mutationCache
+}
 
-	vcache   map[dvid.VersionID]blockCache
-	vcacheMu sync.RWMutex
+// CopyPropertiesFrom copies the data instance-specific properties from a given
+// data instance into the receiver's properties. Fulfills the datastore.PropertyCopier interface.
+func (d *Data) CopyPropertiesFrom(src datastore.DataService, fs storage.FilterSpec) error {
+	d2, ok := src.(*Data)
+	if !ok {
+		return fmt.Errorf("unable to copy properties from non-labelarray data %q", src.DataName())
+	}
+
+	// TODO -- Handle mutable data that could be potentially altered by filter.
+	d.MaxLabel = make(map[dvid.VersionID]uint64, len(d2.MaxLabel))
+	for k, v := range d2.MaxLabel {
+		d.MaxLabel[k] = v
+	}
+	d.MaxRepoLabel = d2.MaxRepoLabel
+
+	d.IndexedLabels = d2.IndexedLabels
+	d.CountLabels = d2.CountLabels
+	d.DownresLevels = d2.DownresLevels
+
+	return d.Data.CopyPropertiesFrom(d2.Data, fs)
+}
+
+// NewData returns a pointer to labelarray data.
+func NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.Config) (*Data, error) {
+	if _, found := c.Get("BlockSize"); !found {
+		c.Set("BlockSize", fmt.Sprintf("%d,%d,%d", DefaultBlockSize, DefaultBlockSize, DefaultBlockSize))
+	}
+	if _, found := c.Get("Compression"); !found {
+		c.Set("Compression", "gzip")
+	}
+	imgblkData, err := dtype.Type.NewData(uuid, id, name, c)
+	if err != nil {
+		return nil, err
+	}
+
+	data := &Data{
+		Data: imgblkData,
+	}
+	indexedLabels := true
+	b, found, err := c.GetBool("IndexedLabels")
+	if err != nil {
+		return nil, err
+	}
+	if found {
+		indexedLabels = b
+	}
+
+	countLabels := true
+	b, found, err = c.GetBool("CountLabels")
+	if err != nil {
+		return nil, err
+	}
+	if found {
+		countLabels = b
+	}
+
+	var downresLevels uint8
+	levels, found, err := c.GetInt("DownresLevels")
+	if err != nil {
+		return nil, err
+	}
+	if found {
+		if levels < 0 || levels > 255 {
+			return nil, fmt.Errorf("illegal number of down-res levels specified (%d): must be 0 <= n <= 255", levels)
+		}
+		downresLevels = uint8(levels)
+	}
+
+	data.MaxLabel = make(map[dvid.VersionID]uint64)
+	data.IndexedLabels = indexedLabels
+	data.CountLabels = countLabels
+	data.DownresLevels = downresLevels
+	return data, nil
+}
+
+func (d *Data) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Base     *datastore.Data
+		Extended imageblk.Properties
+	}{
+		d.Data.Data,
+		d.Data.Properties,
+	})
+}
+
+func (d *Data) GobDecode(b []byte) error {
+	buf := bytes.NewBuffer(b)
+	dec := gob.NewDecoder(buf)
+	if err := dec.Decode(&(d.Data)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (d *Data) GobEncode() ([]byte, error) {
+	var buf bytes.Buffer
+	enc := gob.NewEncoder(&buf)
+	if err := enc.Encode(d.Data); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func (d *Data) updateMaxLabel(v dvid.VersionID, label uint64) {
+	var change bool
+	d.mlMu.RLock()
+	curMax, found := d.MaxLabel[v]
+	d.mlMu.RUnlock()
+	if !found || curMax < label {
+		change = true
+	}
+	if change {
+		d.mlMu.Lock()
+		d.MaxLabel[v] = label
+		if label > d.MaxRepoLabel {
+			d.MaxRepoLabel = label
+		}
+		d.mlMu.Unlock()
+	}
 }
 
 func (d *Data) Equals(d2 *Data) bool {
@@ -855,16 +972,6 @@ func (d *Data) Equals(d2 *Data) bool {
 		return false
 	}
 	return true
-}
-
-// CopyPropertiesFrom copies the data instance-specific properties from a given
-// data instance into the receiver's properties.
-func (d *Data) CopyPropertiesFrom(src datastore.DataService, fs storage.FilterSpec) error {
-	d2, ok := src.(*Data)
-	if !ok {
-		return fmt.Errorf("unable to copy properties from non-labelarray data %q", src.DataName())
-	}
-	return d.Data.CopyPropertiesFrom(d2.Data, fs)
 }
 
 // NewLabel returns a new label for the given version.
@@ -902,54 +1009,6 @@ func (d *Data) NewLabel(v dvid.VersionID) (uint64, error) {
 	}
 
 	return d.MaxRepoLabel, nil
-}
-
-// NewData returns a pointer to labelarray data.
-func NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.Config) (*Data, error) {
-	if _, found := c.Get("BlockSize"); !found {
-		c.Set("BlockSize", fmt.Sprintf("%d,%d,%d", DefaultBlockSize, DefaultBlockSize, DefaultBlockSize))
-	}
-	if _, found := c.Get("Compression"); !found {
-		c.Set("Compression", "gzip")
-	}
-	imgblkData, err := dtype.Type.NewData(uuid, id, name, c)
-	if err != nil {
-		return nil, err
-	}
-
-	data := &Data{
-		Data: imgblkData,
-	}
-
-	return data, nil
-}
-
-func (d *Data) MarshalJSON() ([]byte, error) {
-	return json.Marshal(struct {
-		Base     *datastore.Data
-		Extended imageblk.Properties
-	}{
-		d.Data.Data,
-		d.Data.Properties,
-	})
-}
-
-func (d *Data) GobDecode(b []byte) error {
-	buf := bytes.NewBuffer(b)
-	dec := gob.NewDecoder(buf)
-	if err := dec.Decode(&(d.Data)); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (d *Data) GobEncode() ([]byte, error) {
-	var buf bytes.Buffer
-	enc := gob.NewEncoder(&buf)
-	if err := enc.Encode(d.Data); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
 }
 
 // --- datastore.InstanceMutator interface -----
@@ -1263,51 +1322,51 @@ func (d *Data) convertTo64bit(geom dvid.Geometry, data []uint8, bytesPerVoxel, s
 	return data64, nil
 }
 
-// Convert a 32-bit label into a 64-bit label by adding the Z coordinate into high 32 bits.
-// Also drops the high byte (alpha channel) since Raveler labels only use 24-bits.
-func (d *Data) addLabelZ(geom dvid.Geometry, data32 []uint8, stride int32) ([]byte, error) {
-	if len(data32)%4 != 0 {
-		return nil, fmt.Errorf("expected 4 byte/voxel alignment but have %d bytes!", len(data32))
+// returns nil block if no block is at the given block coordinate
+func (d *Data) getLabelBlock(ctx *datastore.VersionedCtx, bcoord dvid.IZYXString) (*labels.PositionedBlock, error) {
+	store, err := d.GetKeyValueDB()
+	if err != nil {
+		return nil, fmt.Errorf("labelarray getLabelBlock() had error initializing store: %v\n", err)
 	}
-	coord := geom.StartPoint()
-	if coord.NumDims() < 3 {
-		return nil, fmt.Errorf("expected n-d (n >= 3) offset for image.  Got %d dimensions.",
-			coord.NumDims())
+	tk := NewBlockTKeyByCoord(bcoord)
+	val, err := store.Get(ctx, tk)
+	if err != nil {
+		return nil, fmt.Errorf("Error on GET of labelarray %q label block @ %s\n", d.DataName(), bcoord)
 	}
-	superpixelBytes := make([]byte, 8, 8)
-	binary.BigEndian.PutUint32(superpixelBytes[0:4], uint32(coord.Value(2)))
-
-	nx := int(geom.Size().Value(0))
-	ny := int(geom.Size().Value(1))
-	numBytes := nx * ny * 8
-	data64 := make([]byte, numBytes, numBytes)
-	dstI := 0
-	for y := 0; y < ny; y++ {
-		srcI := y * int(stride)
-		for x := 0; x < nx; x++ {
-			if data32[srcI] == 0 && data32[srcI+1] == 0 && data32[srcI+2] == 0 {
-				copy(data64[dstI:dstI+8], ZeroBytes())
-			} else {
-				superpixelBytes[5] = data32[srcI+2]
-				superpixelBytes[6] = data32[srcI+1]
-				superpixelBytes[7] = data32[srcI]
-				copy(data64[dstI:dstI+8], superpixelBytes)
-			}
-			// NOTE: we skip the 4th byte (alpha) at srcI+3
-			//a := uint32(data32[srcI+3])
-			//b := uint32(data32[srcI+2])
-			//g := uint32(data32[srcI+1])
-			//r := uint32(data32[srcI+0])
-			//spid := (b << 16) | (g << 8) | r
-			srcI += 4
-			dstI += 8
-		}
+	if val == nil {
+		return nil, nil
 	}
-	return data64, nil
+	data, _, err := dvid.DeserializeData(val, true)
+	if err != nil {
+		return nil, fmt.Errorf("unable to deserialize label block in %q: %v\n", d.DataName(), err)
+	}
+	var block labels.Block
+	if err := block.UnmarshalBinary(data); err != nil {
+		return nil, err
+	}
+	return &labels.PositionedBlock{block, bcoord}, nil
 }
 
-func sendBlock(w http.ResponseWriter, x, y, z int32, v []byte, formatOut dvid.CompressionFormat) error {
-	// Uncompress then recompress if the saved compression != requested compression.
+func (d *Data) putLabelBlock(ctx *datastore.VersionedCtx, pb *labels.PositionedBlock) error {
+	store, err := d.GetKeyValueDB()
+	if err != nil {
+		return fmt.Errorf("labelarray putLabelBlock() had error initializing store: %v\n", err)
+	}
+	tk := NewBlockTKeyByCoord(pb.BCoord)
+
+	data, err := pb.MarshalBinary()
+	if err != nil {
+		return err
+	}
+
+	val, err := dvid.SerializeData(data, d.Compression(), d.Checksum())
+	if err != nil {
+		return fmt.Errorf("Unable to serialize block %s in %q: %v\n", pb.BCoord, d.DataName(), err)
+	}
+	return store.Put(ctx, tk, val)
+}
+
+func (d *Data) sendBlock(w http.ResponseWriter, x, y, z int32, v []byte, compression string) error {
 	formatIn, checksum := dvid.DecodeSerializationFormat(dvid.SerializationFormat(v[0]))
 
 	var start int
@@ -1317,27 +1376,41 @@ func sendBlock(w http.ResponseWriter, x, y, z int32, v []byte, formatOut dvid.Co
 		start = 1
 	}
 
-	var outsize int32
+	var outsize uint32
 	var out []byte
 
 	switch formatIn {
 	case dvid.LZ4:
-		outsize = int32(binary.LittleEndian.Uint32(v[start : start+4]))
+		outsize = binary.LittleEndian.Uint32(v[start : start+4])
 		out = v[start+4:]
 		if len(out) != int(outsize) {
 			return fmt.Errorf("block (%d,%d,%d) was corrupted lz4: supposed size %d but had %d bytes", x, y, z, outsize, len(out))
 		}
 	case dvid.Uncompressed, dvid.Gzip:
-		outsize = int32(len(v[start:]))
+		outsize = uint32(len(v[start:]))
 		out = v[start:]
 	default:
 		return fmt.Errorf("labelarray data was stored in unknown compressed format: %s\n", formatIn)
 	}
 
+	var formatOut dvid.CompressionFormat
+	switch compression {
+	case "", "lz4":
+		formatOut = dvid.LZ4
+	case "blocks":
+		formatOut = formatIn
+	case "gzip":
+		formatOut = dvid.Gzip
+	case "uncompressed":
+		formatOut = dvid.Uncompressed
+	default:
+		return fmt.Errorf("unknown compression %q requested for blocks", compression)
+	}
+
 	// Need to do uncompression/recompression if we are changing compression
 	var err error
 	var uncompressed, recompressed []byte
-	if formatIn != formatOut {
+	if formatIn != formatOut || compression == "gzip" {
 		switch formatIn {
 		case dvid.LZ4:
 			uncompressed = make([]byte, outsize)
@@ -1359,26 +1432,38 @@ func sendBlock(w http.ResponseWriter, x, y, z int32, v []byte, formatOut dvid.Co
 			zr.Close()
 		}
 
+		var block labels.Block
+		if err = block.UnmarshalBinary(uncompressed); err != nil {
+			return fmt.Errorf("unable to deserialize label block (%d, %d, %d): %v\n", x, y, z, err)
+		}
+		uint64array, size := block.MakeLabelVolume()
+		expectedSize := d.BlockSize().(dvid.Point3d)
+		if !size.Equals(expectedSize) {
+			return fmt.Errorf("deserialized label block size %s does not equal data %q block size %s", size, d.DataName(), expectedSize)
+		}
+
 		switch formatOut {
 		case dvid.LZ4:
-			recompressed = make([]byte, lz4.CompressBound(uncompressed))
+			recompressed = make([]byte, lz4.CompressBound(uint64array))
 			var size int
-			if size, err = lz4.Compress(uncompressed, recompressed); err != nil {
+			if size, err = lz4.Compress(uint64array, recompressed); err != nil {
 				return err
 			}
-			outsize = int32(size)
+			outsize = uint32(size)
 			out = recompressed[:outsize]
 		case dvid.Uncompressed:
-			out = uncompressed
+			out = uint64array
+			outsize = uint32(len(uint64array))
 		case dvid.Gzip:
 			var gzipOut bytes.Buffer
 			zw := gzip.NewWriter(&gzipOut)
-			if _, err = zw.Write(uncompressed); err != nil {
+			if _, err = zw.Write(uint64array); err != nil {
 				return err
 			}
 			zw.Flush()
 			zw.Close()
 			out = gzipOut.Bytes()
+			outsize = uint32(len(out))
 		}
 	}
 
@@ -1399,7 +1484,7 @@ func sendBlock(w http.ResponseWriter, x, y, z int32, v []byte, formatOut dvid.Co
 		if err != nil {
 			return err
 		}
-		return fmt.Errorf("could not write %d bytes of value: only %d bytes written", outsize, written)
+		return fmt.Errorf("could not write %d bytes of block (%d,%d,%d): only %d bytes written", outsize, x, y, z, written)
 	}
 	return nil
 }
@@ -1408,24 +1493,18 @@ func sendBlock(w http.ResponseWriter, x, y, z int32, v []byte, formatOut dvid.Co
 func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, subvol *dvid.Subvolume, compression string) error {
 	w.Header().Set("Content-type", "application/octet-stream")
 
-	var formatOut dvid.CompressionFormat
 	switch compression {
-	case "", "lz4":
-		formatOut = dvid.LZ4
-	case "gzip":
-		formatOut = dvid.Gzip
-	case "uncompressed":
-		formatOut = dvid.Uncompressed
+	case "", "lz4", "gzip", "blocks", "uncompressed":
 	default:
-		return fmt.Errorf(`compression must be "gzip", "lz4", or "uncompressed"`)
+		return fmt.Errorf(`compression must be "lz4" (default), "gzip", "blocks" or "uncompressed"`)
 	}
 
 	// convert x,y,z coordinates to block coordinates
-	blocksize := subvol.Size().Div(d.BlockSize())
-	blockoffset := subvol.StartPoint().Div(d.BlockSize())
+	blocksdims := subvol.Size().Div(d.BlockSize())
+	blocksoff := subvol.StartPoint().Div(d.BlockSize())
 
 	timedLog := dvid.NewTimeLog()
-	defer timedLog.Infof("SendBlocks %s, span x %d, span y %d, span z %d", blockoffset, blocksize.Value(0), blocksize.Value(1), blocksize.Value(2))
+	defer timedLog.Infof("SendBlocks %s, span x %d, span y %d, span z %d", blocksoff, blocksdims.Value(0), blocksdims.Value(1), blocksdims.Value(2))
 
 	store, err := d.GetOrderedKeyValueDB()
 	if err != nil {
@@ -1433,8 +1512,8 @@ func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, su
 	}
 
 	// only do one request at a time, although each request can start many goroutines.
-	server.SpawnGoroutineMutex.Lock()
-	defer server.SpawnGoroutineMutex.Unlock()
+	server.LargeMutationMutex.Lock()
+	defer server.LargeMutationMutex.Unlock()
 
 	okv := store.(storage.BufferableOps)
 	// extract buffer interface
@@ -1443,10 +1522,10 @@ func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, su
 		okv = req.NewBuffer(ctx)
 	}
 
-	for ziter := int32(0); ziter < blocksize.Value(2); ziter++ {
-		for yiter := int32(0); yiter < blocksize.Value(1); yiter++ {
-			beginPoint := dvid.ChunkPoint3d{blockoffset.Value(0), blockoffset.Value(1) + yiter, blockoffset.Value(2) + ziter}
-			endPoint := dvid.ChunkPoint3d{blockoffset.Value(0) + blocksize.Value(0) - 1, blockoffset.Value(1) + yiter, blockoffset.Value(2) + ziter}
+	for ziter := int32(0); ziter < blocksdims.Value(2); ziter++ {
+		for yiter := int32(0); yiter < blocksdims.Value(1); yiter++ {
+			beginPoint := dvid.ChunkPoint3d{blocksoff.Value(0), blocksoff.Value(1) + yiter, blocksoff.Value(2) + ziter}
+			endPoint := dvid.ChunkPoint3d{blocksoff.Value(0) + blocksdims.Value(0) - 1, blocksoff.Value(1) + yiter, blocksoff.Value(2) + ziter}
 
 			indexBeg := dvid.IndexZYX(beginPoint)
 			sx, sy, sz := indexBeg.Unpack()
@@ -1470,10 +1549,10 @@ func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, su
 					return err
 				}
 				x, y, z := indexZYX.Unpack()
-				if z != sz || y != sy || x < sx || x >= sx+int32(blocksize.Value(0)) {
+				if z != sz || y != sy || x < sx || x >= sx+int32(blocksdims.Value(0)) {
 					return nil
 				}
-				if err := sendBlock(w, x, y, z, kv.V, formatOut); err != nil {
+				if err := d.sendBlock(w, x, y, z, kv.V, compression); err != nil {
 					return err
 				}
 				return nil
@@ -1496,92 +1575,6 @@ func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, su
 	}
 
 	return err
-}
-
-func (d *Data) DeleteBlocks(ctx *datastore.VersionedCtx, start dvid.ChunkPoint3d, span int) error {
-	store, err := d.GetOrderedKeyValueDB()
-	if err != nil {
-		return fmt.Errorf("Data type labelarray had error initializing store: %v\n", err)
-	}
-	batcher, ok := store.(storage.KeyValueBatcher)
-	if !ok {
-		return fmt.Errorf("Data type labelarray requires batch-enabled store, which %q is not\n", store)
-	}
-
-	indexBeg := dvid.IndexZYX(start)
-	end := start
-	end[0] += int32(span - 1)
-	indexEnd := dvid.IndexZYX(end)
-	begTKey := NewBlockTKey(&indexBeg)
-	endTKey := NewBlockTKey(&indexEnd)
-
-	iv := dvid.InstanceVersion{d.DataUUID(), ctx.VersionID()}
-	mapping := labels.LabelMap(iv)
-
-	kvs, err := store.GetRange(ctx, begTKey, endTKey)
-	if err != nil {
-		return err
-	}
-
-	mutID := d.NewMutationID()
-	batch := batcher.NewBatch(ctx)
-	uncompress := true
-	for _, kv := range kvs {
-		izyx, err := DecodeBlockTKey(kv.K)
-		if err != nil {
-			return err
-		}
-
-		// Delete the labelarray (really tombstones it)
-		batch.Delete(kv.K)
-
-		// Send data to delete associated labelvol for labels in this block
-		compressed, _, err := dvid.DeserializeData(kv.V, uncompress)
-		if err != nil {
-			return fmt.Errorf("Unable to deserialize block, %s (%v): %v", ctx, kv.K, err)
-		}
-		block, err := labels.Decompress(compressed, d.BlockSize())
-		if err != nil {
-			return fmt.Errorf("Unable to decompress google compression in %q: %v\n", d.DataName(), err)
-		}
-		if mapping != nil {
-			n := len(block) / 8
-			for i := 0; i < n; i++ {
-				orig := binary.LittleEndian.Uint64(block[i*8 : i*8+8])
-				mapped, found := mapping.FinalLabel(orig)
-				if !found {
-					mapped = orig
-				}
-				binary.LittleEndian.PutUint64(block[i*8:i*8+8], mapped)
-			}
-		}
-
-		// Notify any subscribers that we've deleted this block.
-		evt := datastore.SyncEvent{d.DataUUID(), labels.DeleteBlockEvent}
-		msg := datastore.SyncMessage{labels.DeleteBlockEvent, ctx.VersionID(), labels.DeleteBlock{izyx, block, mutID}}
-		if err := datastore.NotifySubscribers(evt, msg); err != nil {
-			return err
-		}
-
-	}
-	if err := batch.Commit(); err != nil {
-		return err
-	}
-
-	// Notify any downstream downres instance that we're done with this op.
-	d.publishDownresCommit(ctx.VersionID(), mutID)
-	return nil
-}
-
-// RavelerSuperpixelBytes returns an encoded slice for Raveler (slice, superpixel) tuple.
-// TODO -- Move Raveler-specific functions out of DVID.
-func RavelerSuperpixelBytes(slice, superpixel32 uint32) []byte {
-	b := make([]byte, 8, 8)
-	if superpixel32 != 0 {
-		binary.BigEndian.PutUint32(b[0:4], slice)
-		binary.BigEndian.PutUint32(b[4:8], superpixel32)
-	}
-	return b
 }
 
 // --- datastore.DataService interface ---------
@@ -1993,7 +1986,16 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		return
 	}
 
-	// Process help and info.
+	// Prevent use of APIs that require IndexedLabels when it is not set.
+	if !d.IndexedLabels {
+		switch parts[3] {
+		case "sparsevol", "sparsevol-by-point", "sparsevol-coarse", "maxlabel", "nextlabel", "split", "split-coarse", "merge":
+			server.BadRequest(w, r, "data %q is not label indexed (IndexedLabels=false): %q endpoint is not supported", d.DataName(), parts[3])
+			return
+		}
+	}
+
+	// Handle all requests
 	switch parts[3] {
 	case "help":
 		w.Header().Set("Content-Type", "text/plain")
@@ -2059,7 +2061,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		d.handleDataRequest(ctx, w, r, parts)
 		timedLog.Infof("HTTP %s %s with shape %s, size %s, offset %s", r.Method, parts[3], parts[4], parts[5], parts[6])
 
-	// endpoints after this must have LabelIndex key-value pairs initialized. ---------
+	// endpoints after this must have data instance IndexedLabels = true
 
 	case "sparsevol":
 		d.handleSparsevol(ctx, w, r, parts)
@@ -2418,11 +2420,11 @@ func (d *Data) handleSparsevol(ctx *datastore.VersionedCtx, w http.ResponseWrite
 		w.Header().Set("Content-type", "application/octet-stream")
 
 		var found bool
-		format := svformatFromQueryString(r)
-		switch format {
-		case FormatLegacyRLE, FormatLegacySlowRLE:
-			found, err = d.WriteLegacyRLE(ctx, label, b, compression, format, w)
+		switch svformatFromQueryString(r) {
+		case FormatLegacyRLE:
+			found, err = d.WriteLegacyRLE(ctx, label, b, compression, w)
 		case FormatBinaryBlocks:
+			found, err = d.WriteBinaryBlocks(ctx, label, b, compression, w)
 		case FormatStreamingRLE:
 			found, err = d.WriteStreamingRLE(ctx, label, b, compression, w)
 		}
@@ -2493,9 +2495,10 @@ func (d *Data) handleSparsevolByPoint(ctx *datastore.VersionedCtx, w http.Respon
 	format := svformatFromQueryString(r)
 	var found bool
 	switch format {
-	case FormatLegacyRLE, FormatLegacySlowRLE:
-		found, err = d.WriteLegacyRLE(ctx, label, b, compression, format, w)
+	case FormatLegacyRLE:
+		found, err = d.WriteLegacyRLE(ctx, label, b, compression, w)
 	case FormatBinaryBlocks:
+		found, err = d.WriteBinaryBlocks(ctx, label, b, compression, w)
 	case FormatStreamingRLE:
 		found, err = d.WriteStreamingRLE(ctx, label, b, compression, w)
 	}
@@ -2689,7 +2692,7 @@ func (d *Data) handleMerge(ctx *datastore.VersionedCtx, w http.ResponseWriter, r
 // --------- Other functions on labelarray Data -----------------
 
 // GetLabelBlock returns a block of labels corresponding to the block coordinate.
-func (d *Data) GetLabelBlock(v dvid.VersionID, blockCoord dvid.ChunkPoint3d) ([]byte, error) {
+func (d *Data) GetLabelBlock(v dvid.VersionID, bcoord dvid.ChunkPoint3d) ([]byte, error) {
 	store, err := d.GetOrderedKeyValueDB()
 	if err != nil {
 		return nil, err
@@ -2697,22 +2700,23 @@ func (d *Data) GetLabelBlock(v dvid.VersionID, blockCoord dvid.ChunkPoint3d) ([]
 
 	// Retrieve the block of labels
 	ctx := datastore.NewVersionedCtx(d, v)
-	index := dvid.IndexZYX(blockCoord)
+	index := dvid.IndexZYX(bcoord)
 	serialization, err := store.Get(ctx, NewBlockTKey(&index))
 	if err != nil {
-		return nil, fmt.Errorf("Error getting '%s' block for index %s\n", d.DataName(), blockCoord)
+		return nil, fmt.Errorf("Error getting '%s' block for index %s\n", d.DataName(), bcoord)
 	}
 	if serialization == nil {
 		return []byte{}, nil
 	}
-	compressed, _, err := dvid.DeserializeData(serialization, true)
+	deserialization, _, err := dvid.DeserializeData(serialization, true)
 	if err != nil {
-		return nil, fmt.Errorf("Unable to deserialize block %s in '%s': %v\n", blockCoord, d.DataName(), err)
+		return nil, fmt.Errorf("Unable to deserialize block %s in '%s': %v\n", bcoord, d.DataName(), err)
 	}
-	labelData, err := labels.Decompress(compressed, d.BlockSize())
-	if err != nil {
-		return nil, fmt.Errorf("Unable to decompress google compression in %q: %v\n", d.DataName(), err)
+	var block labels.Block
+	if err = block.UnmarshalBinary(deserialization); err != nil {
+		return nil, err
 	}
+	labelData, _ := block.MakeLabelVolume()
 	return labelData, nil
 }
 
@@ -2723,9 +2727,9 @@ func (d *Data) GetLabelBytesAtPoint(v dvid.VersionID, pt dvid.Point) ([]byte, er
 		return nil, fmt.Errorf("Can't determine block of point %s", pt)
 	}
 	blockSize := d.BlockSize()
-	blockCoord := coord.Chunk(blockSize).(dvid.ChunkPoint3d)
+	bcoord := coord.Chunk(blockSize).(dvid.ChunkPoint3d)
 
-	labelData, err := d.GetLabelBlock(v, blockCoord)
+	labelData, err := d.GetLabelBlock(v, bcoord)
 	if err != nil {
 		return nil, err
 	}

@@ -54,7 +54,7 @@ DANGEROUS COMMANDS (only available via command line)
 
 	repos delete <UUID> <repo passcode if any>
 
-		Deletes an entire repo that contains the UUID.
+		Deletes an entire repo with the given root UUID.
 
 	repo <UUID> delete <data name> <repo passcode if any>
 

@@ -84,8 +84,8 @@ func (d *Data) GetLabels(v dvid.VersionID, vox *Labels, r *imageblk.ROI) error {
 	}
 
 	// Only do one request at a time, although each request can start many goroutines.
-	server.SpawnGoroutineMutex.Lock()
-	defer server.SpawnGoroutineMutex.Unlock()
+	server.LargeMutationMutex.Lock()
+	defer server.LargeMutationMutex.Unlock()
 
 	ctx := datastore.NewVersionedCtx(d, v)
 
@@ -132,10 +132,32 @@ func (d *Data) GetLabels(v dvid.VersionID, vox *Labels, r *imageblk.ROI) error {
 			chunkOp = &storage.ChunkOp{&getOperation{vox, nil, mapping}, wg}
 		}
 
-		// Send the entire range of key-value pairs to chunk processor
-		err = okv.ProcessRange(ctx, begTKey, endTKey, chunkOp, storage.ChunkFunc(d.ReadChunk))
-		if err != nil {
-			return fmt.Errorf("Unable to GET data %s: %v", ctx, err)
+		if !hasbuffer {
+			// Send the entire range of key-value pairs to chunk processor
+			err = okv.ProcessRange(ctx, begTKey, endTKey, chunkOp, storage.ChunkFunc(d.ReadChunk))
+			if err != nil {
+				return fmt.Errorf("Unable to GET data %s: %v", ctx, err)
+			}
+		} else {
+			// Extract block list
+			tkeys := make([]storage.TKey, 0)
+
+			ptBeg := indexBeg.Duplicate().(dvid.ChunkIndexer)
+			ptEnd := indexEnd.Duplicate().(dvid.ChunkIndexer)
+			begX := ptBeg.Value(0)
+			endX := ptEnd.Value(0)
+
+			c := dvid.ChunkPoint3d{begX, ptBeg.Value(1), ptBeg.Value(2)}
+			for x := begX; x <= endX; x++ {
+				c[0] = x
+				tk := NewBlockTKeyByCoord(c.ToIZYXString())
+				tkeys = append(tkeys, tk)
+			}
+
+			err = okv.(storage.RequestBuffer).ProcessList(ctx, tkeys, chunkOp, storage.ChunkFunc(d.ReadChunk))
+			if err != nil {
+				return fmt.Errorf("Unable to GET data %s: %v", ctx, err)
+			}
 		}
 	}
 
@@ -145,7 +167,6 @@ func (d *Data) GetLabels(v dvid.VersionID, vox *Labels, r *imageblk.ROI) error {
 
 		if err != nil {
 			return fmt.Errorf("Unable to GET data %s: %v", ctx, err)
-
 		}
 	}
 
@@ -189,27 +210,28 @@ func (d *Data) GetBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int) ([
 	// Write the block indices in XYZ little-endian format + the size of each block
 	uncompress := true
 	for _, kv := range keyvalues {
-		compressed, _, err := dvid.DeserializeData(kv.V, uncompress)
+		deserialization, _, err := dvid.DeserializeData(kv.V, uncompress)
 		if err != nil {
 			return nil, fmt.Errorf("Unable to deserialize block, %s (%v): %v", ctx, kv.K, err)
 		}
-		block, err := labels.Decompress(compressed, d.BlockSize())
-		if err != nil {
-			return nil, fmt.Errorf("Unable to decompress google compression in %q: %v\n", d.DataName(), err)
+		var block labels.Block
+		if err = block.UnmarshalBinary(deserialization); err != nil {
+			return nil, fmt.Errorf("Unable to unmarshal binary block: %v\n", err)
 		}
+		labelData, _ := block.MakeLabelVolume()
 		if mapping != nil {
-			n := len(block) / 8
+			n := len(labelData) / 8
 			for i := 0; i < n; i++ {
-				orig := binary.LittleEndian.Uint64(block[i*8 : i*8+8])
+				orig := binary.LittleEndian.Uint64(labelData[i*8 : i*8+8])
 				mapped, found := mapping.FinalLabel(orig)
 				if !found {
 					mapped = orig
 				}
-				binary.LittleEndian.PutUint64(block[i*8:i*8+8], mapped)
+				binary.LittleEndian.PutUint64(labelData[i*8:i*8+8], mapped)
 			}
 		}
 
-		_, err = buf.Write(block)
+		_, err = buf.Write(labelData)
 		if err != nil {
 			return nil, err
 		}
@@ -317,10 +339,7 @@ func (v *Labels) readMappedBlock(tkey storage.TKey, block labels.Block, blockSiz
 	// TODO -- Refactor this function to make direct use of compressed label Block without
 	// conversion into full label array.
 	labels := v.Data()
-	blabels, _, err := block.MakeLabelVolume()
-	if err != nil {
-		return err
-	}
+	blabels, _ := block.MakeLabelVolume()
 
 	// Compute the strides (in bytes)
 	bX := int64(blockSize.Value(0)) * 8
@@ -444,10 +463,7 @@ func (v *Labels) readBlock(tkey storage.TKey, block labels.Block, blockSize dvid
 	// TODO -- Refactor this function to make direct use of compressed label Block without
 	// conversion into full label array.
 	labels := v.Data()
-	blabels, _, err := block.MakeLabelVolume()
-	if err != nil {
-		return err
-	}
+	blabels, _ := block.MakeLabelVolume()
 
 	// Compute the strides (in bytes)
 	bX := int64(blockSize.Value(0)) * 8

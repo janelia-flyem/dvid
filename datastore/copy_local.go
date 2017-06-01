@@ -18,13 +18,6 @@ import (
 	"github.com/janelia-flyem/go/go-humanize"
 )
 
-// PropertyCopier are types that can copy data instance properties from another (typically identically typed)
-// data instance with an optional filter.  This is used to create copies of data instances locally or
-// when pushing to a remote DVID.
-type PropertyCopier interface {
-	CopyPropertiesFrom(DataService, storage.FilterSpec) error
-}
-
 type txStats struct {
 	// num key-value pairs
 	numKV uint64

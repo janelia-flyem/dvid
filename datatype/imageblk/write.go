@@ -158,9 +158,10 @@ func (d *Data) PutVoxels(v dvid.VersionID, mutID uint64, vox *Voxels, roiname dv
 	wg := new(sync.WaitGroup)
 
 	// Only do one request at a time, although each request can start many goroutines.
+
 	if !hasbuffer {
-		server.SpawnGoroutineMutex.Lock()
-		defer server.SpawnGoroutineMutex.Unlock()
+		server.LargeMutationMutex.Lock()
+	  defer server.LargeMutationMutex.Unlock()
 	}
 
 	// Post new extents if there was a change (will always require 1 GET which should

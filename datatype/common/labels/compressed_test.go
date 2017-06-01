@@ -35,7 +35,7 @@ func loadData(filename string) (td testData, err error) {
 	if err != nil {
 		return
 	}
-	td.u, err = byteToUint64(td.b)
+	td.u, err = dvid.ByteToUint64(td.b)
 	if err != nil {
 		return
 	}
@@ -49,7 +49,7 @@ func loadTestData(t *testing.T, filename string) (td testData) {
 	if err != nil {
 		t.Fatalf("unable to open test data file %q: %v\n", filename, err)
 	}
-	td.u, err = byteToUint64(td.b)
+	td.u, err = dvid.ByteToUint64(td.b)
 	if err != nil {
 		t.Fatalf("unable to create alias []uint64 for data file %q: %v\n", filename, err)
 	}
@@ -83,8 +83,34 @@ func checkBytes(t *testing.T, text string, expected, got []byte) {
 	}
 	for i, val := range got {
 		if expected[i] != val {
-			t.Error("%s byte mismatch found at index %d, expected %d, got %d\n", text, expected[i], val)
+			t.Errorf("%s byte mismatch found at index %d, expected %d, got %d\n", text, i, expected[i], val)
 			return
+		}
+	}
+}
+
+func checkLabels(t *testing.T, text string, expected, got []byte) {
+	if len(expected) != len(got) {
+		t.Errorf("%s byte mismatch: expected %d bytes, got %d bytes\n", text, len(expected), len(got))
+	}
+	expectLabels, err := dvid.ByteToUint64(expected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotLabels, err := dvid.ByteToUint64(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	errmsg := 0
+	for i, val := range gotLabels {
+		if expectLabels[i] != val {
+			t.Errorf("%s label mismatch found at index %d, expected %d, got %d\n", text, i, expectLabels[i], val)
+			errmsg++
+			if errmsg > 5 {
+				return
+			}
+		} else if errmsg > 0 {
+			t.Errorf("yet no mismatch at index %d, expected %d, got %d\n", i, expectLabels[i], val)
 		}
 	}
 }
@@ -112,11 +138,11 @@ func blockTest(t *testing.T, d testData) {
 		t.Logf("Label %12d: %8d voxels\n", label, voxels)
 	}
 
-	cseg, err := CompressUint64(d.u, dvid.Point3d{64, 64, 64})
+	cseg, err := oldCompressUint64(d.u, dvid.Point3d{64, 64, 64})
 	if err != nil {
 		t.Fatal(err)
 	}
-	csegBytes := uint32ToByte([]uint32(cseg))
+	csegBytes := dvid.Uint32ToByte([]uint32(cseg))
 	block, err := MakeBlock(d.b, dvid.Point3d{64, 64, 64})
 	if err != nil {
 		t.Fatal(err)
@@ -159,14 +185,12 @@ func blockTest(t *testing.T, d testData) {
 	printRatio(t, "DVID LZ4 ", dvidLZ4Size, len(d.b), "Goog LZ4 ", csegLZ4Size)
 
 	// test DVID block output result
-	redata, size, err := block.MakeLabelVolume()
-	if err != nil {
-		t.Error(err)
-	}
+	redata, size := block.MakeLabelVolume()
+
 	if size[0] != 64 || size[1] != 64 || size[2] != 64 {
 		t.Errorf("expected DVID compression size to be 64x64x64, got %s\n", size)
 	}
-	checkBytes(t, "DVID compression", d.b, redata)
+	checkLabels(t, "DVID compression", d.b, redata)
 
 	// make sure the blocks properly Marshal and Unmarshal
 	serialization, _ := block.MarshalBinary()
@@ -176,16 +200,108 @@ func blockTest(t *testing.T, d testData) {
 	if err := block2.UnmarshalBinary(datacopy); err != nil {
 		t.Fatal(err)
 	}
-	redata2, size2, err := block2.MakeLabelVolume()
+	redata2, size2 := block2.MakeLabelVolume()
 	if size2[0] != 64 || size2[1] != 64 || size2[2] != 64 {
 		t.Errorf("expected DVID compression size to be 64x64x64, got %s\n", size2)
 	}
-	checkBytes(t, "marshal/unmarshal copy", redata, redata2)
+	checkLabels(t, "marshal/unmarshal copy", redata, redata2)
 }
 
 func TestBlockCompression(t *testing.T) {
 	for _, filename := range testFiles {
 		blockTest(t, loadTestData(t, filename))
+	}
+
+	numVoxels := 64 * 64 * 64
+	testvol := make([]uint64, numVoxels)
+	for i := 0; i < numVoxels; i++ {
+		testvol[i] = uint64(i)
+	}
+
+	block, err := MakeBlock(dvid.Uint64ToByte(testvol), dvid.Point3d{64, 64, 64})
+	if err != nil {
+		t.Fatalf("error making block: %v\n", err)
+	}
+	testvol2, size := block.MakeLabelVolume()
+	if size[0] != 64 || size[1] != 64 || size[2] != 64 {
+		t.Fatalf("error in size after making block: %v\n", size)
+	}
+	checkLabels(t, "block compress/uncompress", dvid.Uint64ToByte(testvol), testvol2)
+}
+
+func setLabel(vol []uint64, size, x, y, z int, label uint64) {
+	i := z*size*size + y*size + x
+	vol[i] = label
+}
+
+func TestBlockSplitAndRLEs(t *testing.T) {
+	numVoxels := 32 * 32 * 32
+	testvol := make([]uint64, numVoxels)
+	for i := 0; i < numVoxels; i++ {
+		testvol[i] = uint64(i)
+	}
+	label := uint64(numVoxels * 10) // > previous labels
+	for x := 11; x < 31; x++ {
+		setLabel(testvol, 32, x, 8, 16, label)
+	}
+	block, err := MakeBlock(dvid.Uint64ToByte(testvol), dvid.Point3d{32, 32, 32})
+	if err != nil {
+		t.Fatalf("error making block: %v\n", err)
+	}
+
+	splitRLEs := dvid.RLEs{
+		dvid.NewRLE(dvid.Point3d{81, 40, 80}, 6),
+		dvid.NewRLE(dvid.Point3d{90, 40, 80}, 3),
+	}
+	op := SplitOp{NewLabel: label + 1, Target: label, RLEs: splitRLEs}
+	pb := PositionedBlock{
+		Block:  *block,
+		BCoord: dvid.ChunkPoint3d{2, 1, 2}.ToIZYXString(),
+	}
+	split, keptSize, splitSize, err := pb.Split(op)
+	if err != nil {
+		t.Fatalf("error doing split: %v\n", err)
+	}
+	if keptSize != 11 {
+		t.Errorf("Expected kept size of 11, got %d\n", keptSize)
+	}
+	if splitSize != 9 {
+		t.Errorf("Expected split size of 9, got %d\n", splitSize)
+	}
+
+	var buf bytes.Buffer
+	lbls := Set{}
+	lbls[label] = struct{}{}
+	outOp := NewOutputOp(&buf)
+	go WriteRLEs(lbls, outOp, dvid.Bounds{})
+	pb = PositionedBlock{
+		Block:  *split,
+		BCoord: dvid.ChunkPoint3d{2, 1, 2}.ToIZYXString(),
+	}
+	outOp.Process(&pb)
+	if err = outOp.Finish(); err != nil {
+		t.Fatalf("error writing RLEs: %v\n", err)
+	}
+	output, err := ioutil.ReadAll(&buf)
+	if err != nil {
+		t.Fatalf("error on reading WriteRLEs: %v\n", err)
+	}
+	if len(output) != 3*16 {
+		t.Fatalf("expected 3 RLEs (48 bytes), got %d bytes\n", len(output))
+	}
+	var rles dvid.RLEs
+	if err = rles.UnmarshalBinary(output); err != nil {
+		t.Fatalf("unable to parse binary RLEs: %v\n", err)
+	}
+	expected := dvid.RLEs{
+		dvid.NewRLE(dvid.Point3d{75, 40, 80}, 6),
+		dvid.NewRLE(dvid.Point3d{87, 40, 80}, 3),
+		dvid.NewRLE(dvid.Point3d{93, 40, 80}, 2),
+	}
+	for i, rle := range rles {
+		if rle != expected[i] {
+			t.Errorf("Expected RLE %d: %s, got %s\n", i, expected[i], rle)
+		}
 	}
 }
 
@@ -200,7 +316,7 @@ func BenchmarkGoogleCompress(b *testing.B) {
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := CompressUint64(d[i%len(d)].u, dvid.Point3d{64, 64, 64})
+		_, err := oldCompressUint64(d[i%len(d)].u, dvid.Point3d{64, 64, 64})
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -400,20 +516,20 @@ func BenchmarkDvidUnmarshalLZ4(b *testing.B) {
 }
 
 func BenchmarkGoogleReturnArray(b *testing.B) {
-	var compressed [4]CompressedSegData
+	var compressed [4]oldCompressedSegData
 	for i, filename := range testFiles {
 		d, err := loadData(filename)
 		if err != nil {
 			b.Fatal(err)
 		}
-		compressed[i%4], err = CompressUint64(d.u, dvid.Point3d{64, 64, 64})
+		compressed[i%4], err = oldCompressUint64(d.u, dvid.Point3d{64, 64, 64})
 		if err != nil {
 			b.Fatal(err)
 		}
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := DecompressUint64(compressed[i%4], dvid.Point3d{64, 64, 64})
+		_, err := oldDecompressUint64(compressed[i%4], dvid.Point3d{64, 64, 64})
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -434,9 +550,9 @@ func BenchmarkDvidReturnArray(b *testing.B) {
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _, err := block[i%4].MakeLabelVolume()
-		if err != nil {
-			b.Fatal(err)
+		labelarray, size := block[i%4].MakeLabelVolume()
+		if int64(len(labelarray)) != size.Prod()*8 {
+			b.Fatalf("expected label volume returned is %d bytes, got %d instead\n", size.Prod()*8, len(labelarray))
 		}
 	}
 }

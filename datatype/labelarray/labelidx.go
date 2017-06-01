@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"sort"
-	"sync"
 	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
@@ -24,42 +23,6 @@ import (
 // aggregating all changes by label.  Send mods of form (label, delta voxels, block, action)
 // where action is add or delete block from the label index.
 
-// TODO: Make sure # voxels is correct even if people ingest multiple times, i.e., make it
-// an idempotent op.  Or mutate should be standard so there is no ingest.
-
-// Meta gives a high-level overview of all voxels in a label including the # voxels,
-// block index.
-type Meta struct {
-	Voxels uint64         // Total # of voxels in label.
-	Blocks dvid.IZYXSlice // Sorted block coordinates occupied by label.
-
-	// MinBlock dvid.ChunkPoint3d // Minimum block coordinate for label.
-	// MaxBlock dvid.ChunkPoint3d // Maximum block coordinate for label.
-
-	// BlockVoxels []uint32       // Number of voxels for each block in Blocks, respectively.
-}
-
-// MarshalBinary implements the encoding.BinaryMarshaler interface
-func (m Meta) MarshalBinary() ([]byte, error) {
-	buf := make([]byte, len(m.Blocks)*12+8)
-	binary.LittleEndian.PutUint64(buf[0:8], m.Voxels)
-	off := 8
-	for _, izyx := range m.Blocks {
-		copy(buf[off:off+12], string(izyx))
-		off += 12
-	}
-	return buf, nil
-}
-
-// UnmarshalBinary implements the encoding.BinaryUnmarshaler interface.
-func (m *Meta) UnmarshalBinary(b []byte) error {
-	if len(b) < 8 {
-		return fmt.Errorf("cannot unmarshal %d bytes into Meta", len(b))
-	}
-	m.Voxels = binary.LittleEndian.Uint64(b[0:8])
-	return m.Blocks.UnmarshalBinary(b[8:])
-}
-
 type timedMeta struct {
 	label uint64
 	meta  *Meta
@@ -72,8 +35,8 @@ func (c cacheList) Len() int           { return len(c) }
 func (c cacheList) Swap(a, b int)      { c[a], c[b] = c[b], c[a] }
 func (c cacheList) Less(a, b int) bool { return c[a].t.Before(c[b].t) }
 
-// MetaCache is a label Meta cache based on time since last access.
-type MetaCache struct {
+// metaCache is a label Meta cache based on time since last access.
+type metaCache struct {
 	size  uint16
 	avail map[uint64]*timedMeta
 	list  cacheList
@@ -81,11 +44,11 @@ type MetaCache struct {
 
 const defaultCacheSize = 50
 
-func MakeMetaCache(size uint16) *MetaCache {
+func makeMetaCache(size uint16) *metaCache {
 	if size == 0 {
 		size = defaultCacheSize
 	}
-	m := new(MetaCache)
+	m := new(metaCache)
 	m.size = size
 	m.list = make(cacheList, 0, size)
 	m.avail = make(map[uint64]*timedMeta, size)
@@ -93,7 +56,7 @@ func MakeMetaCache(size uint16) *MetaCache {
 }
 
 // GetLabelMeta returns a label's Meta if in the cache, else returns nil.
-func (m MetaCache) GetLabelMeta(label uint64) *Meta {
+func (m metaCache) GetLabelMeta(label uint64) *Meta {
 	tm, found := m.avail[label]
 	if found {
 		tm.t = time.Now()
@@ -103,7 +66,7 @@ func (m MetaCache) GetLabelMeta(label uint64) *Meta {
 }
 
 // AddLabelMeta adds a label's Meta to the cache, possibly evicting older entries.
-func (m MetaCache) AddLabelMeta(label uint64, meta *Meta) {
+func (m metaCache) AddLabelMeta(label uint64, meta *Meta) {
 	tm, found := m.avail[label]
 	if found {
 		tm.meta = meta // could be updated Meta
@@ -124,6 +87,39 @@ func (m MetaCache) AddLabelMeta(label uint64, meta *Meta) {
 	} else {
 		m.list = append(m.list, newtm)
 	}
+}
+
+// Meta gives a high-level overview of a label's voxels.  Some properties are
+// only used if the associated data instance has features enabled, e.g.,
+// size tracking.
+type Meta struct {
+	Voxels uint64         // Total # of voxels in label.
+	Blocks dvid.IZYXSlice // Sorted block coordinates occupied by label.
+}
+
+// MarshalBinary implements the encoding.BinaryMarshaler interface
+func (m Meta) MarshalBinary() ([]byte, error) {
+	buf := make([]byte, len(m.Blocks)*12+8)
+	binary.LittleEndian.PutUint64(buf[0:8], m.Voxels)
+	off := 8
+	for _, izyx := range m.Blocks {
+		copy(buf[off:off+12], string(izyx))
+		off += 12
+	}
+	return buf, nil
+}
+
+// UnmarshalBinary implements the encoding.BinaryUnmarshaler interface.
+func (m *Meta) UnmarshalBinary(b []byte) error {
+	if len(b) < 8 {
+		return fmt.Errorf("cannot unmarshal %d bytes into Meta", len(b))
+	}
+	m.Voxels = binary.LittleEndian.Uint64(b[0:8])
+	numBlocks := (len(b) - 8) / 12
+	if err := m.Blocks.UnmarshalBinary(b[8 : 8+numBlocks*12]); err != nil {
+		return err
+	}
+	return nil
 }
 
 // change the block presence map
@@ -151,7 +147,7 @@ func (m *Meta) applyChanges(bdm blockDiffMap) error {
 }
 
 type sld struct { // sortable labelDiff
-	block dvid.IZYXString
+	bcoord dvid.IZYXString
 	labelDiff
 }
 
@@ -166,16 +162,8 @@ func (s slds) Swap(i, j int) {
 }
 
 func (s slds) Less(i, j int) bool {
-	return s[i].block < s[j].block
+	return s[i].bcoord < s[j].bcoord
 }
-
-type labelDiff struct {
-	delta   int32 // change in # voxels
-	present bool
-}
-type blockDiffMap map[dvid.IZYXString]labelDiff
-
-type labelDiffMap map[uint64]blockDiffMap
 
 const presentOld = uint8(0x01) // bit flag for label presence in old block
 const presentNew = uint8(0x02) // bit flag for label presence in new block
@@ -183,36 +171,60 @@ const presentNew = uint8(0x02) // bit flag for label presence in new block
 // block-level analysis of mutation to get label changes in a block.  accumulates data for
 // a given mutation into a map per mutation which will then be flushed for each label meta
 // k/v pair at end of mutation.
-func (d *Data) handleIndexBlockMutate(ch chan blockChange, mut MutatedBlock) {
+func (d *Data) handleBlockMutate(v dvid.VersionID, ch chan blockChange, mut MutatedBlock) {
+	if !d.IndexedLabels && !d.CountLabels {
+		return
+	}
 	bc := blockChange{
-		block:   mut.Index.ToIZYXString(),
-		present: make(map[uint64]uint8),
-		delta:   make(map[uint64]int32),
+		bcoord: mut.BCoord,
 	}
-	for _, label := range mut.Prev.Labels {
-		bc.present[label] |= presentOld
+	if d.IndexedLabels {
+		bc.present = make(map[uint64]uint8)
+		for _, label := range mut.Prev.Labels {
+			if label != 0 {
+				bc.present[label] |= presentOld
+			}
+		}
+		for _, label := range mut.Data.Labels {
+			if label != 0 {
+				bc.present[label] |= presentNew
+			}
+		}
 	}
-	for _, label := range mut.Data.Labels {
-		bc.present[label] |= presentNew
+	if d.CountLabels {
+		bc.delta = mut.Data.CalcNumLabels(mut.Prev)
 	}
 	ch <- bc
 }
 
 // block-level analysis of label ingest
-func (d *Data) handleIndexBlockIngest(ch chan blockChange, mut IngestedBlock) {
-	bc := blockChange{
-		block:   mut.Index.ToIZYXString(),
-		present: make(map[uint64]uint8),
-		delta:   make(map[uint64]int32),
+func (d *Data) handleBlockIngest(v dvid.VersionID, ch chan blockChange, mut IngestedBlock) {
+	if !d.IndexedLabels && !d.CountLabels {
+		return
 	}
-	for _, label := range mut.Data.Labels {
-		bc.present[label] |= presentNew
+	bc := blockChange{
+		bcoord: mut.BCoord,
+	}
+	if d.IndexedLabels {
+		bc.present = make(map[uint64]uint8)
+		for _, label := range mut.Data.Labels {
+			if label != 0 {
+				bc.present[label] |= presentNew
+			}
+		}
+	}
+	if d.CountLabels {
+		bc.delta = mut.Data.CalcNumLabels(nil)
 	}
 	ch <- bc
 }
 
+// There are two sets of goroutines that handle mutations.  The first accepts block-level changes
+// and segregates all changes by label, and then forwards label-specific changes to the second
+// set of label-sharded goroutines that actually modify the label indices.
+
 type blockChange struct {
-	block   dvid.IZYXString
+	bcoord  dvid.IZYXString
 	present map[uint64]uint8
 	delta   map[uint64]int32
 }
@@ -220,6 +232,7 @@ type blockChange struct {
 // goroutine(s) that accepts label change data for a block, then consolidates it and writes label
 // indexing.
 func (d *Data) aggregateBlockChanges(v dvid.VersionID, ch <-chan blockChange) {
+	var maxLabel uint64
 	ldm := make(map[uint64]blockDiffMap)
 	for change := range ch {
 		for label, flag := range change.present {
@@ -230,15 +243,18 @@ func (d *Data) aggregateBlockChanges(v dvid.VersionID, ch <-chan blockChange) {
 			}
 			var diff labelDiff
 			switch flag {
-			case 0x01: // we no longer have this label in the block
+			case presentOld: // we no longer have this label in the block
 				diff.present = false
-				bdm[change.block] = diff
-			case 0x02: // this is a new label in this block
+				bdm[change.bcoord] = diff
+			case presentNew: // this is a new label in this block
 				diff.present = true
-				bdm[change.block] = diff
-			case 0x03: // no change
+				bdm[change.bcoord] = diff
+				if label > maxLabel {
+					maxLabel = label
+				}
+			case presentOld | presentNew: // no change
 				diff.present = true
-				bdm[change.block] = diff
+				bdm[change.bcoord] = diff
 			}
 		}
 		for label, delta := range change.delta {
@@ -247,16 +263,28 @@ func (d *Data) aggregateBlockChanges(v dvid.VersionID, ch <-chan blockChange) {
 				bdm = make(blockDiffMap)
 				ldm[label] = bdm
 			}
-			diff := bdm[change.block]
+			diff := bdm[change.bcoord]
 			diff.delta += delta
 		}
 	}
-	for label, bdm := range ldm {
-		change := labelChange{v, label, bdm}
-		shard := label % numLabelHandlers
-		d.indexCh[shard] <- change
+	d.updateMaxLabel(v, maxLabel)
+
+	if d.IndexedLabels {
+		for label, bdm := range ldm {
+			change := labelChange{v, label, bdm}
+			shard := label % numLabelHandlers
+			d.indexCh[shard] <- change
+		}
 	}
 }
+
+type labelDiff struct {
+	delta   int32 // change in # voxels
+	present bool
+}
+type blockDiffMap map[dvid.IZYXString]labelDiff
+
+type labelDiffMap map[uint64]blockDiffMap
 
 type labelChange struct {
 	v     dvid.VersionID
@@ -269,13 +297,13 @@ type labelChange struct {
 // This also allows us to efficiently cache the last N label Meta
 func (d *Data) indexLabels(ch <-chan labelChange) {
 	var err error
-	cache := MakeMetaCache(100)
+	cache := makeMetaCache(100)
 	for change := range ch {
 		ctx := datastore.NewVersionedCtx(d, change.v)
 
 		meta := cache.GetLabelMeta(change.label)
 		if meta == nil {
-			meta, err = d.GetLabelMeta(ctx, labels.NewSet(change.label), dvid.Bounds{})
+			meta, err = d.getLabelMeta(ctx, labels.NewSet(change.label), dvid.Bounds{})
 			if err != nil {
 				dvid.Criticalf("Error trying to read label %d meta for data %q: %v\n", change.label, d.DataName(), err)
 				continue
@@ -323,11 +351,8 @@ func (d *Data) processBlocksToRLEs(lbls labels.Set, bounds dvid.Bounds, in chan 
 		if err := block.UnmarshalBinary(data); err != nil {
 			dvid.Errorf("unable to unmarshal label block %s: %v\n", lb.index, err)
 		}
-		blockData, _, err := block.MakeLabelVolume()
-		if err != nil {
-			dvid.Errorf("Unable to make label volume from block %s in %q: %v\n", lb.index, d.DataName(), err)
-			return
-		}
+		blockData, _ := block.MakeLabelVolume()
+
 		var newRuns uint32
 		var serialization []byte
 		if bounds.Exact && bounds.Voxel.IsSet() {
@@ -553,7 +578,7 @@ func (d *Data) GetMappedLabelMeta(ctx *datastore.VersionedCtx, label uint64, bou
 	if mapping != nil {
 		// Check if this label has been merged.
 		if mapped, found := mapping.FinalLabel(label); found {
-			dvid.Debugf("Label %d has already been merged into label %d.  Skipping sparse vol retrieval.\n", label, mapped)
+			err = fmt.Errorf("Label %d has already been merged into label %d.\n", label, mapped)
 			return
 		}
 	}
@@ -566,24 +591,27 @@ func (d *Data) GetMappedLabelMeta(ctx *datastore.VersionedCtx, label uint64, bou
 	}
 
 	// Get the block indices for the set of labels.
-	meta, err = d.GetLabelMeta(ctx, lbls, bounds)
+	meta, err = d.getLabelMeta(ctx, lbls, bounds)
 	return
 }
 
-// GetLabelMeta returns a sorted list of ZYX blocks that contain the given labels.
+// getLabelMeta returns a sorted list of ZYX blocks that contain the given labels.
 // If block bounds are set, the number of voxels is unknown and set to zero.
-func (d *Data) GetLabelMeta(ctx *datastore.VersionedCtx, lbls labels.Set, bounds dvid.Bounds) (*Meta, error) {
+func (d *Data) getLabelMeta(ctx *datastore.VersionedCtx, lbls labels.Set, bounds dvid.Bounds) (*Meta, error) {
 	store, err := d.GetKeyValueDB()
 	if err != nil {
 		return nil, err
 	}
-	// dvid.Infof("GetLabelMeta for labels %s...\n", lbls)
+	// dvid.Infof("getLabelMeta for labels %s...\n", lbls)
 	var voxels uint64
 	var blocks dvid.IZYXSlice
 	for label := range lbls {
 		compressed, err := store.Get(ctx, NewLabelIndexTKey(label))
 		if err != nil {
 			return nil, err
+		}
+		if len(compressed) == 0 {
+			continue
 		}
 		val, _, err := dvid.DeserializeData(compressed, true)
 		if err != nil {
@@ -596,6 +624,7 @@ func (d *Data) GetLabelMeta(ctx *datastore.VersionedCtx, lbls labels.Set, bounds
 				return nil, err
 			}
 			// dvid.Infof("retrieved Meta for label %d: %d blocks, %d voxels\n", label, len(meta.Blocks), meta.Voxels)
+			// dvid.Infof("  blocks: %s\n", meta.Blocks)
 			if len(lbls) == 1 {
 				blocks = meta.Blocks
 				voxels = meta.Voxels
@@ -640,9 +669,9 @@ func (d *Data) PutLabelMeta(ctx *datastore.VersionedCtx, label uint64, meta *Met
 	return nil
 }
 
-// WriteStreamingRLE does a streaming write of an encoded sparse volume given a label.
+// WriteBinaryBlocks does a streaming write of an encoded sparse volume given a label.
 // It returns a bool whether the label was found in the given bounds and any error.
-func (d *Data) WriteStreamingRLE(ctx *datastore.VersionedCtx, label uint64, bounds dvid.Bounds, compression string, w io.Writer) (bool, error) {
+func (d *Data) WriteBinaryBlocks(ctx *datastore.VersionedCtx, label uint64, bounds dvid.Bounds, compression string, w io.Writer) (bool, error) {
 	meta, lbls, err := d.GetMappedLabelMeta(ctx, label, bounds)
 	if err != nil {
 		return false, err
@@ -651,33 +680,17 @@ func (d *Data) WriteStreamingRLE(ctx *datastore.VersionedCtx, label uint64, boun
 		return false, err
 	}
 
-	indices := make(dvid.IZYXSlice, len(meta.Blocks))
-	totBlocks := 0
-	for _, izyx := range meta.Blocks {
-		if bounds.Block.BoundedX() || bounds.Block.BoundedY() {
-			blockX, blockY, _, err := izyx.Unpack()
-			if err != nil {
-				return false, fmt.Errorf("Error decoding block %v: %v\n", izyx, err)
-			}
-			if bounds.Block.OutsideX(blockX) || bounds.Block.OutsideY(blockY) {
-				continue
-			}
-		}
-		indices[totBlocks] = izyx
-		totBlocks++
+	indices, err := getBoundedBlockIndices(meta, bounds)
+	if err != nil {
+		return false, err
 	}
-	if totBlocks == 0 {
-		return false, nil
-	}
-	indices = indices[:totBlocks]
 
 	store, err := d.GetOrderedKeyValueDB()
 	if err != nil {
 		return false, err
 	}
-	pbCh := make(chan *labels.PositionedBlock)
-	errCh := make(chan error)
-	go labels.WriteRLEs(lbls, w, pbCh, bounds, errCh)
+	op := labels.NewOutputOp(w)
+	go labels.WriteBinaryBlocks(lbls, op, bounds)
 	for _, izyx := range indices {
 		tk := NewBlockTKeyByCoord(izyx)
 		data, err := store.Get(ctx, tk)
@@ -692,29 +705,73 @@ func (d *Data) WriteStreamingRLE(ctx *datastore.VersionedCtx, label uint64, boun
 		if err := block.UnmarshalBinary(blockData); err != nil {
 			return false, err
 		}
-		chunkPt, err := izyx.ToChunkPoint3d()
-		if err != nil {
-			return false, err
-		}
 		pb := labels.PositionedBlock{
-			Block: block,
-			Coord: chunkPt,
+			Block:  block,
+			BCoord: izyx,
 		}
-		pbCh <- &pb
+		op.Process(&pb)
 	}
-	err = <-errCh
+	if err = op.Finish(); err != nil {
+		return false, err
+	}
+
+	dvid.Infof("[%s] labels %v: streamed %d of %d blocks within bounds\n", ctx, lbls, len(indices), len(meta.Blocks))
+	return true, nil
+}
+
+// WriteStreamingRLE does a streaming write of an encoded sparse volume given a label.
+// It returns a bool whether the label was found in the given bounds and any error.
+func (d *Data) WriteStreamingRLE(ctx *datastore.VersionedCtx, label uint64, bounds dvid.Bounds, compression string, w io.Writer) (bool, error) {
+	meta, lbls, err := d.GetMappedLabelMeta(ctx, label, bounds)
+	if err != nil {
+		return false, err
+	}
+	if meta == nil || len(meta.Blocks) == 0 || len(lbls) == 0 {
+		return false, err
+	}
+
+	indices, err := getBoundedBlockIndices(meta, bounds)
 	if err != nil {
 		return false, err
 	}
 
-	dvid.Infof("[%s] labels %v: streamed %d of %d blocks within bounds\n", ctx, lbls, totBlocks, len(meta.Blocks))
+	store, err := d.GetOrderedKeyValueDB()
+	if err != nil {
+		return false, err
+	}
+	op := labels.NewOutputOp(w)
+	go labels.WriteRLEs(lbls, op, bounds)
+	for _, izyx := range indices {
+		tk := NewBlockTKeyByCoord(izyx)
+		data, err := store.Get(ctx, tk)
+		if err != nil {
+			return false, err
+		}
+		blockData, _, err := dvid.DeserializeData(data, true)
+		if err != nil {
+			return false, err
+		}
+		var block labels.Block
+		if err := block.UnmarshalBinary(blockData); err != nil {
+			return false, err
+		}
+		pb := labels.PositionedBlock{
+			Block:  block,
+			BCoord: izyx,
+		}
+		op.Process(&pb)
+	}
+	if err = op.Finish(); err != nil {
+		return false, err
+	}
+
+	dvid.Infof("[%s] labels %v: streamed %d of %d blocks within bounds\n", ctx, lbls, len(indices), len(meta.Blocks))
 	return true, nil
 }
 
-func (d *Data) WriteLegacyRLE(ctx *datastore.VersionedCtx, label uint64, b dvid.Bounds, compression string, format SparseVolFormat, w io.Writer) (found bool, err error) {
+func (d *Data) WriteLegacyRLE(ctx *datastore.VersionedCtx, label uint64, b dvid.Bounds, compression string, w io.Writer) (found bool, err error) {
 	var data []byte
-	old := (format == FormatLegacySlowRLE)
-	data, err = d.GetLegacyRLE(ctx, label, b, old)
+	data, err = d.GetLegacyRLE(ctx, label, b)
 	if err != nil {
 		return
 	}
@@ -750,129 +807,12 @@ func (d *Data) WriteLegacyRLE(ctx *datastore.VersionedCtx, label uint64, b dvid.
 }
 
 // GetLegacyRLE returns an encoded sparse volume given a label and an output format.
-// If the old flag is true, the RLEs are computed using label volume instead of directly
-// from the compressed label Blocks.
-func (d *Data) GetLegacyRLE(ctx *datastore.VersionedCtx, label uint64, bounds dvid.Bounds, old bool) ([]byte, error) {
+func (d *Data) GetLegacyRLE(ctx *datastore.VersionedCtx, label uint64, bounds dvid.Bounds) ([]byte, error) {
 	meta, lbls, err := d.GetMappedLabelMeta(ctx, label, bounds)
 	if err != nil {
 		return nil, err
 	}
-	if old {
-		return d.getLegacySlowRLEs(ctx, meta, lbls, bounds)
-	}
 	return d.getLegacyRLEs(ctx, meta, lbls, bounds)
-}
-
-//  The encoding has the following format where integers are little endian:
-//
-//    byte     Payload descriptor:
-//               Bit 0 (LSB) - 8-bit grayscale
-//               Bit 1 - 16-bit grayscale
-//               Bit 2 - 16-bit normal
-//               ...
-//    uint8    Number of dimensions
-//    uint8    Dimension of run (typically 0 = X)
-//    byte     Reserved (to be used later)
-//    uint32    0
-//    uint32    # Spans
-//    Repeating unit of:
-//        int32   Coordinate of run start (dimension 0)
-//        int32   Coordinate of run start (dimension 1)
-//        int32   Coordinate of run start (dimension 2)
-//        int32   Length of run
-//        bytes   Optional payload dependent on first byte descriptor
-//
-func (d *Data) getLegacySlowRLEs(ctx *datastore.VersionedCtx, meta *Meta, lbls labels.Set, bounds dvid.Bounds) ([]byte, error) {
-	// Write the sparse volume header
-	buf := new(bytes.Buffer)
-	buf.WriteByte(dvid.EncodingBinary)
-	binary.Write(buf, binary.LittleEndian, uint8(3))  // # of dimensions
-	binary.Write(buf, binary.LittleEndian, byte(0))   // dimension of run (X = 0)
-	buf.WriteByte(byte(0))                            // reserved for later
-	binary.Write(buf, binary.LittleEndian, uint32(0)) // Placeholder for # voxels
-	binary.Write(buf, binary.LittleEndian, uint32(0)) // Placeholder for # spans
-
-	indices := make(dvid.IZYXSlice, len(meta.Blocks))
-	totBlocks := 0
-	for _, izyx := range meta.Blocks {
-		if bounds.Block.BoundedX() || bounds.Block.BoundedY() {
-			blockX, blockY, _, err := izyx.Unpack()
-			if err != nil {
-				return nil, fmt.Errorf("Error decoding block %v: %v\n", izyx, err)
-			}
-			if bounds.Block.OutsideX(blockX) || bounds.Block.OutsideY(blockY) {
-				continue
-			}
-		}
-		indices[totBlocks] = izyx
-		totBlocks++
-	}
-	if totBlocks == 0 {
-		return nil, nil
-	}
-	indices = indices[:totBlocks]
-
-	store, err := d.GetOrderedKeyValueDB()
-	if err != nil {
-		return nil, err
-	}
-
-	const blockDecoders = 10
-	getCh := make(chan rleResult, 100)
-	sendCh := make([]chan labelBlock, blockDecoders)
-	for i := 0; i < blockDecoders; i++ {
-		sendCh[i] = make(chan labelBlock, 10)
-		go d.processBlocksToRLEs(lbls, bounds, sendCh[i], getCh)
-	}
-
-	// launch the RLE collector
-	var wg sync.WaitGroup
-	var numRuns uint32
-	numBlocks := 0
-	wg.Add(1)
-	go func() {
-		for {
-			result := <-getCh
-			numBlocks++
-			if len(result.serialization) > 0 {
-				if _, err := buf.Write(result.serialization); err != nil {
-					dvid.Errorf("unable to write result of RLE serialization: %v\n", err)
-					result.runs = 0
-				}
-			}
-			numRuns += result.runs
-			if numBlocks == totBlocks {
-				wg.Done()
-				return
-			}
-		}
-	}()
-
-	for _, izyx := range indices {
-		tk := NewBlockTKeyByCoord(izyx)
-		data, err := store.Get(ctx, tk)
-		if err != nil {
-			return nil, err
-		}
-
-		n := izyx.Hash(blockDecoders)
-		sendCh[n] <- labelBlock{index: izyx, data: data}
-	}
-
-	wg.Wait()
-	close(getCh)
-	for i := 0; i < blockDecoders; i++ {
-		close(sendCh[i])
-	}
-
-	if numRuns == 0 {
-		return nil, nil // Couldn't find this out until we did voxel-level clipping
-	}
-
-	serialization := buf.Bytes()
-	binary.LittleEndian.PutUint32(serialization[8:12], numRuns)
-	dvid.Infof("[%s] labels %v: found %d blocks, %d runs, buf %d bytes\n", ctx, lbls, numBlocks, numRuns, len(serialization))
-	return serialization, nil
 }
 
 //  The encoding has the following format where integers are little endian:
@@ -903,8 +843,55 @@ func (d *Data) getLegacyRLEs(ctx *datastore.VersionedCtx, meta *Meta, lbls label
 	binary.Write(buf, binary.LittleEndian, uint32(0)) // Placeholder for # voxels
 	binary.Write(buf, binary.LittleEndian, uint32(0)) // Placeholder for # spans
 
-	indices := make(dvid.IZYXSlice, len(meta.Blocks))
+	indices, err := getBoundedBlockIndices(meta, bounds)
+	if err != nil {
+		return nil, err
+	}
 
+	store, err := d.GetOrderedKeyValueDB()
+	if err != nil {
+		return nil, err
+	}
+	op := labels.NewOutputOp(buf)
+	go labels.WriteRLEs(lbls, op, bounds)
+	for _, izyx := range indices {
+		tk := NewBlockTKeyByCoord(izyx)
+		data, err := store.Get(ctx, tk)
+		if err != nil {
+			return nil, err
+		}
+		blockData, _, err := dvid.DeserializeData(data, true)
+		if err != nil {
+			return nil, err
+		}
+		var block labels.Block
+		if err := block.UnmarshalBinary(blockData); err != nil {
+			return nil, err
+		}
+		pb := labels.PositionedBlock{
+			Block:  block,
+			BCoord: izyx,
+		}
+		op.Process(&pb)
+	}
+	if err = op.Finish(); err != nil {
+		return nil, err
+	}
+
+	serialization := buf.Bytes()
+	numRuns := uint32(len(serialization)-12) >> 4
+	if numRuns == 0 {
+		return nil, nil // Couldn't find this out until we did voxel-level clipping
+	}
+
+	binary.LittleEndian.PutUint32(serialization[8:12], numRuns)
+	dvid.Infof("[%s] labels %v: found %d of %d blocks within bounds, %d runs, serialized %d bytes\n", ctx, lbls, len(indices), len(meta.Blocks), numRuns, len(serialization))
+	return serialization, nil
+}
+
+// apply bounds to list of block indices.
+func getBoundedBlockIndices(meta *Meta, bounds dvid.Bounds) (dvid.IZYXSlice, error) {
+	indices := make(dvid.IZYXSlice, len(meta.Blocks))
 	totBlocks := 0
 	for _, izyx := range meta.Blocks {
 		if bounds.Block.BoundedX() || bounds.Block.BoundedY() || bounds.Block.BoundedZ() {
@@ -922,54 +909,7 @@ func (d *Data) getLegacyRLEs(ctx *datastore.VersionedCtx, meta *Meta, lbls label
 	if totBlocks == 0 {
 		return nil, nil
 	}
-	indices = indices[:totBlocks]
-
-	store, err := d.GetOrderedKeyValueDB()
-	if err != nil {
-		return nil, err
-	}
-	pbCh := make(chan *labels.PositionedBlock)
-	errCh := make(chan error)
-	go labels.WriteRLEs(lbls, buf, pbCh, bounds, errCh)
-	for _, izyx := range indices {
-		tk := NewBlockTKeyByCoord(izyx)
-		data, err := store.Get(ctx, tk)
-		if err != nil {
-			return nil, err
-		}
-		blockData, _, err := dvid.DeserializeData(data, true)
-		if err != nil {
-			return nil, err
-		}
-		var block labels.Block
-		if err := block.UnmarshalBinary(blockData); err != nil {
-			return nil, err
-		}
-		chunkPt, err := izyx.ToChunkPoint3d()
-		if err != nil {
-			return nil, err
-		}
-		pb := labels.PositionedBlock{
-			Block: block,
-			Coord: chunkPt,
-		}
-		pbCh <- &pb
-	}
-	close(pbCh)
-	err = <-errCh
-	if err != nil {
-		return nil, err
-	}
-
-	serialization := buf.Bytes()
-	numRuns := uint32(len(serialization)-12) >> 4
-	if numRuns == 0 {
-		return nil, nil // Couldn't find this out until we did voxel-level clipping
-	}
-
-	binary.LittleEndian.PutUint32(serialization[8:12], numRuns)
-	dvid.Infof("[%s] labels %v: found %d of %d blocks within bounds, %d runs, serialized %d bytes\n", ctx, lbls, totBlocks, len(meta.Blocks), numRuns, len(serialization))
-	return serialization, nil
+	return indices[:totBlocks], nil
 }
 
 // GetSparseCoarseVol returns an encoded sparse volume given a label.  The encoding has the
@@ -1005,7 +945,7 @@ func (d *Data) GetSparseCoarseVol(ctx *datastore.VersionedCtx, label uint64, bou
 	}
 
 	// Get the block indices for the set of labels.
-	meta, err := d.GetLabelMeta(ctx, lbls, bounds)
+	meta, err := d.getLabelMeta(ctx, lbls, bounds)
 	if err != nil {
 		return nil, err
 	}

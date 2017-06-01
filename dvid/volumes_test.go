@@ -89,6 +89,180 @@ func TestNormalization(t *testing.T) {
 	}
 }
 
+func TestIZYXSlice(t *testing.T) {
+	islice := make(IZYXSlice, 1000)
+	i := 0
+	for z := int32(0); z < 10; z++ {
+		for y := int32(0); y < 10; y++ {
+			for x := int32(0); x < 10; x++ {
+				pt := ChunkPoint3d{x, y, z}
+				izyx := pt.ToIZYXString()
+				islice[i] = izyx
+				i++
+			}
+		}
+	}
+
+	// test serialization/deserialization
+	ser, err := islice.MarshalBinary()
+	if err != nil {
+		t.Fatalf("bad IZYXSlice marshalling: %v\n", err)
+	}
+	var islice2 IZYXSlice
+	if err = islice2.UnmarshalBinary(ser); err != nil {
+		t.Fatalf("bad IZYXSlice unmarshaling: %v\n", err)
+	}
+	if len(islice) != len(islice2) {
+		t.Fatalf("Got %d elements after deserialization, not %d elements\n", len(islice2), len(islice))
+	}
+	for i, izyx := range islice {
+		if izyx != islice2[i] {
+			t.Fatalf("bad IZYXSlice after unmarshalling at index %d: got %s, expected %s\n", i, islice2[i], izyx)
+		}
+	}
+
+	// test delete
+	deletePts := []ChunkPoint3d{
+		{10, 3, 2}, // this one not in islice
+		{8, 5, 3},
+		{4, 4, 6},
+		{5, 4, 6},
+		{9, 4, 6},
+		{0, 5, 6},
+		{7, 9, 8},
+	}
+	deleteSlice := make(IZYXSlice, len(deletePts))
+	for i, pt := range deletePts {
+		deleteSlice[i] = pt.ToIZYXString()
+	}
+
+	origLen := len(islice)
+	islice.Delete(deleteSlice)
+
+	if len(islice) != origLen-len(deletePts)+1 {
+		t.Fatalf("IZYXSlice.Delete should have resulted in %d size, got %d instead\n", origLen-len(deletePts)+1, len(islice))
+	}
+	dpos := 0
+	ipos := 0
+	deletePt := deletePts[dpos]
+	deleteIZYX := deletePt.ToIZYXString()
+	for z := int32(0); z < 10; z++ {
+		for y := int32(0); y < 10; y++ {
+			for x := int32(0); x < 10; x++ {
+				pt := ChunkPoint3d{x, y, z}
+				izyx := pt.ToIZYXString()
+				for deleteIZYX < izyx {
+					dpos++
+					if dpos < len(deletePts) {
+						deletePt = deletePts[dpos]
+						deleteIZYX = deletePt.ToIZYXString()
+					} else {
+						break
+					}
+				}
+				if pt.Equals(deletePt) {
+					continue
+				}
+				if islice[ipos] != izyx {
+					t.Fatalf("Expected %s, got %s in IZYXSlice in position %d\n", izyx, islice[ipos], ipos)
+				}
+				ipos++
+			}
+		}
+	}
+
+	// test merge of deleted pts back in.
+	copy(islice2[:len(islice)], islice)
+	islice2 = islice2[:len(islice)]
+	islice.Merge(deleteSlice[1:])
+	if len(islice) != origLen {
+		t.Fatalf("After merge, expected %d elements, got %d instead\n", origLen, len(islice))
+	}
+	ipos = 0
+	for z := int32(0); z < 10; z++ {
+		for y := int32(0); y < 10; y++ {
+			for x := int32(0); x < 10; x++ {
+				pt := ChunkPoint3d{x, y, z}
+				izyx := pt.ToIZYXString()
+				if islice[ipos] != izyx {
+					t.Fatalf("Expected %s in position (%d,%d,%d), got %s instead\n", izyx, x, y, z, islice[ipos])
+				}
+				ipos++
+			}
+		}
+	}
+
+	islice3 := islice2.MergeCopy(deleteSlice[1:])
+	if len(islice3) != origLen {
+		t.Fatalf("After merge, expected %d elements, got %d instead\n", origLen, len(islice3))
+	}
+	ipos = 0
+	for z := int32(0); z < 10; z++ {
+		for y := int32(0); y < 10; y++ {
+			for x := int32(0); x < 10; x++ {
+				pt := ChunkPoint3d{x, y, z}
+				izyx := pt.ToIZYXString()
+				if islice3[ipos] != izyx {
+					t.Fatalf("Expected %s in position (%d,%d,%d), got %s instead\n", izyx, x, y, z, islice3[ipos])
+				}
+				ipos++
+			}
+		}
+	}
+
+	// test split
+	a := IZYXSlice{
+		ChunkPoint3d{2, 1, 1}.ToIZYXString(), ChunkPoint3d{2, 1, 2}.ToIZYXString(),
+	}
+	b := IZYXSlice{
+		ChunkPoint3d{2, 1, 2}.ToIZYXString(),
+	}
+	c, err := a.Split(b)
+	if err != nil {
+		t.Fatalf("error on simple IZYXSlice.Split: %v\n", err)
+	}
+	if len(c) != 1 {
+		t.Fatalf("bad result of split: %s\n", c)
+	}
+
+	origLen = len(islice3)
+	split, err := islice3.Split(deleteSlice[1:])
+	if err != nil {
+		t.Fatalf("error on IZYXSlice split: %v\n", err)
+	}
+	if len(split) != origLen-len(deletePts)+1 {
+		t.Fatalf("IZYXSlice.Split should have resulted in %d size, got %d instead\n", origLen-len(deletePts)+1, len(split))
+	}
+	dpos = 1
+	ipos = 0
+	deletePt = deletePts[dpos]
+	deleteIZYX = deletePt.ToIZYXString()
+	for z := int32(0); z < 10; z++ {
+		for y := int32(0); y < 10; y++ {
+			for x := int32(0); x < 10; x++ {
+				pt := ChunkPoint3d{x, y, z}
+				izyx := pt.ToIZYXString()
+				for deleteIZYX < izyx {
+					dpos++
+					if dpos < len(deletePts) {
+						deletePt = deletePts[dpos]
+						deleteIZYX = deletePt.ToIZYXString()
+					} else {
+						break
+					}
+				}
+				if pt.Equals(deletePt) {
+					continue
+				}
+				if split[ipos] != izyx {
+					t.Fatalf("Expected %s, got %s in IZYXSlice in position %s\n", izyx, split[ipos], izyx)
+				}
+				ipos++
+			}
+		}
+	}
+}
+
 var (
 	denormRLEs = RLEs{
 		NewRLE(Point3d{20, 30, 40}, 10),
@@ -107,7 +281,7 @@ var (
 	}
 )
 
-func TestSplit(t *testing.T) {
+func TestSplitRLEs(t *testing.T) {
 	modified, err := bodyRLEs.Split(splitDupRLEs)
 	if err != nil {
 		t.Errorf("Bad split on dup case: %v\n", err)

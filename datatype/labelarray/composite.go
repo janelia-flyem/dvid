@@ -142,16 +142,17 @@ func (d *Data) createCompositeChunk(chunk *storage.Chunk) {
 	}
 	curZMutex.Unlock()
 
-	compressed, _, err := dvid.DeserializeData(chunk.V, true)
+	deserialization, _, err := dvid.DeserializeData(chunk.V, true)
 	if err != nil {
 		dvid.Errorf("Unable to deserialize block in %q: %v\n", d.DataName(), err)
 		return
 	}
-	labelData, err := labels.Decompress(compressed, d.BlockSize())
-	if err != nil {
-		dvid.Errorf("Unable to decompress google compression in %q: %v\n", d.DataName(), err)
+	var block labels.Block
+	if err = block.UnmarshalBinary(deserialization); err != nil {
+		dvid.Errorf("Unable to unmarshal binary block: %v\n", err)
 		return
 	}
+	labelData, _ := block.MakeLabelVolume()
 	blockBytes := len(labelData)
 	if blockBytes%8 != 0 {
 		dvid.Infof("Retrieved, deserialized block is wrong size: %d bytes\n", blockBytes)

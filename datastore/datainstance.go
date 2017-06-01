@@ -202,6 +202,13 @@ type VersionRemapper interface {
 	RemapVersions(dvid.VersionMap) error
 }
 
+// PropertyCopier are types that can copy data instance properties from another (typically identically typed)
+// data instance with an optional filter.  This is used to create copies of data instances locally or
+// when pushing to a remote DVID.
+type PropertyCopier interface {
+	CopyPropertiesFrom(DataService, storage.FilterSpec) error
+}
+
 // Shutdowner is a data instance that has a function to call during shutdown.
 // Typically, this exits goroutines used for background data processing.
 type Shutdowner interface {

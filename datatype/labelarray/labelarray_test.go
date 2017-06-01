@@ -6,12 +6,15 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
+	"reflect"
 	"sync"
 	"testing"
 
 	"github.com/janelia-flyem/dvid/datastore"
+	"github.com/janelia-flyem/dvid/datatype/common/labels"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 
@@ -140,9 +143,15 @@ func (v *testVolume) equals(v2 *testVolume) error {
 	if len(v.data) != len(v2.data) {
 		return fmt.Errorf("data lengths are not equal")
 	}
-	for i, value := range v.data {
-		if value != v2.data[i] {
-			return fmt.Errorf("For element %d, found value %d != %d\n", i, value, v2.data[i])
+	for i := 0; i*8+8 < len(v.data); i += 8 {
+		val1 := binary.LittleEndian.Uint64(v.data[i*8 : i*8+8])
+		val2 := binary.LittleEndian.Uint64(v2.data[i*8 : i*8+8])
+		if val1 != val2 {
+			z := int32(i/8) / (v.size[0] * v.size[1])
+			x := int32(i/8) - z*(v.size[0]*v.size[1])
+			y := x / v.size[0]
+			x -= y * v.size[0]
+			return fmt.Errorf("For voxel (%d,%d,%d), found value %d != %d\n", x, y, z, val2, val1)
 		}
 	}
 	return nil
@@ -153,6 +162,26 @@ type mergeJSON string
 func (mjson mergeJSON) send(t *testing.T, uuid dvid.UUID, name string) {
 	apiStr := fmt.Sprintf("%snode/%s/%s/merge", server.WebAPIPath, uuid, name)
 	server.TestHTTP(t, "POST", apiStr, bytes.NewBufferString(string(mjson)))
+}
+
+func checkLabels(t *testing.T, text string, expected, got []byte) {
+	if len(expected) != len(got) {
+		t.Errorf("%s byte mismatch: expected %d bytes, got %d bytes\n", text, len(expected), len(got))
+	}
+	expectLabels, err := dvid.ByteToUint64(expected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotLabels, err := dvid.ByteToUint64(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, val := range gotLabels {
+		if expectLabels[i] != val {
+			t.Errorf("%s label mismatch found at index %d, expected %d, got %d\n", text, i, expectLabels[i], val)
+			return
+		}
+	}
 }
 
 type labelVol struct {
@@ -179,12 +208,13 @@ func (vol *labelVol) makeLabelVolume(t *testing.T, uuid dvid.UUID, startLabel ui
 	vol.nz = vol.size[2] * vol.blockSize[2]
 
 	vol.data = make([]byte, vol.numBytes())
-	label := startLabel
 	var x, y, z, v int32
 	for z = 0; z < vol.nz; z++ {
+		lz := z / 3
 		for y = 0; y < vol.ny; y++ {
+			ly := y / 3
 			for x = 0; x < vol.nx; x++ {
-				label++
+				label := startLabel + uint64(x>>2+ly+lz)
 				binary.LittleEndian.PutUint64(vol.data[v:v+8], label)
 				v += 8
 			}
@@ -295,61 +325,67 @@ func (vol *labelVol) testGetLabelVolume(t *testing.T, uuid dvid.UUID, compressio
 	data := vol.getLabelVolume(t, uuid, compression, roi)
 
 	// run test to make sure it's same volume as we posted.
-	label := vol.startLabel
 	var x, y, z, v int32
 	for z = 0; z < vol.nz; z++ {
+		lz := z / 3
 		for y = 0; y < vol.ny; y++ {
+			ly := y / 3
 			for x = 0; x < vol.nx; x++ {
-				label++
+				label := vol.startLabel + uint64(x>>2+ly+lz)
 				got := binary.LittleEndian.Uint64(data[v : v+8])
 				if label != got {
-					t.Fatalf("Error on 3d GET compression (%q): expected %d, got %d\n", compression, label, got)
-					return nil
+					t.Errorf("Error on 3d GET compression (%q): expected %d, got %d\n", compression, label, got)
+					goto foundError
 				}
 				v += 8
 			}
 		}
 	}
 
+foundError:
+
+	checkLabels(t, "testing label volume", vol.data, data)
+
 	return data
 }
 
-func (vol *labelVol) testBlock(t *testing.T, bx, by, bz int32, data []byte) {
+func (vol *labelVol) testBlock(t *testing.T, context string, bx, by, bz int32, data []byte) {
 	// Get offset of this block in label volume
-	ox := bx*32 - vol.offset[0]
-	oy := by*32 - vol.offset[1]
-	oz := bz*32 - vol.offset[2]
+	ox := bx*vol.blockSize[0] - vol.offset[0]
+	oy := by*vol.blockSize[1] - vol.offset[1]
+	oz := bz*vol.blockSize[2] - vol.offset[2]
 
-	// Get label strides over size of this subvolume
-	labelDy := vol.size[0] * vol.blockSize[0]
-	labelDz := labelDy * vol.size[1] * vol.blockSize[1]
-
+	if int64(len(data)) < vol.blockSize.Prod()*8 {
+		t.Fatalf("[%s] got bad uint64 array of len %d for block (%d, %d, %d)\n", context, len(data), bx, by, bz)
+	}
 	p := 0
-	var x, y, z int32
+	var x, y, z, numerrors int32
 	for z = 0; z < 32; z++ {
+		lz := (z + oz) / 3
 		for y = 0; y < 32; y++ {
-			label := vol.startLabel + 1 + uint64((z+oz)*labelDz+(y+oy)*labelDy+ox)
+			ly := (y + oy) / 3
 			for x = 0; x < 32; x++ {
+				lx := x + ox
+				label := vol.startLabel + uint64(lx>>2+ly+lz)
 				got := binary.LittleEndian.Uint64(data[p : p+8])
-				if label != got {
-					t.Fatalf("Error on block (%d,%d,%d) at voxel (%d,%d,%d): expected %d, got %d\n", bx, by, bz, x, y, z, label, got)
+				if label != got && numerrors < 5 {
+					t.Errorf("[%s] error block (%d,%d,%d) at voxel (%d,%d,%d): expected %d, got %d\n", context, bx, by, bz, x, y, z, label, got)
+					numerrors++
 				}
 				p += 8
-				label++
 			}
 		}
 	}
 }
 
-func (vol *labelVol) testBlocks(t *testing.T, uuid dvid.UUID, compression, roi string) {
+func (vol *labelVol) testBlocks(t *testing.T, context string, uuid dvid.UUID, compression, roi string) {
 	span := 5
 	apiStr := fmt.Sprintf("%snode/%s/%s/blocks/%d_%d_%d/%d_%d_%d", server.WebAPIPath,
 		uuid, vol.name, 160, 32, 32, vol.offset[0], vol.offset[1], vol.offset[2])
-	if compression == "uncompressed" {
-		apiStr += "?compression=uncompressed"
+	if compression != "" {
+		apiStr += "?compression=" + compression
 	}
 	data := server.TestHTTP(t, "GET", apiStr, nil)
-	fmt.Printf("Got %d bytes of data\n", len(data))
 
 	blockBytes := 32 * 32 * 32 * 8
 
@@ -372,20 +408,44 @@ func (vol *labelVol) testBlocks(t *testing.T, uuid dvid.UUID, compression, roi s
 		n := int(binary.LittleEndian.Uint32(data[b : b+4]))
 		b += 4
 		if x != bx || y != by || z != bz {
-			t.Errorf("Bad block coordinate: expected (%d,%d,%d), got (%d,%d,%d)\n", bx, by, bz, x, y, z)
+			t.Fatalf("Bad block coordinate: expected (%d,%d,%d), got (%d,%d,%d)\n", bx, by, bz, x, y, z)
 		}
 
 		// Read in the block data as assumed LZ4 and check it.
 		var uncompressed []byte
-		if compression != "uncompressed" {
+		switch compression {
+		case "uncompressed":
+			uncompressed = data[b : b+n]
+		case "", "lz4":
 			uncompressed = make([]byte, blockBytes)
 			if err := lz4.Uncompress(data[b:b+n], uncompressed); err != nil {
 				t.Fatalf("Unable to uncompress LZ4 data (%s), %d bytes: %v\n", apiStr, n, err)
 			}
-		} else {
-			uncompressed = data[b : b+n]
+		case "gzip", "blocks":
+			gzipIn := bytes.NewBuffer(data[b : b+n])
+			zr, err := gzip.NewReader(gzipIn)
+			if err != nil {
+				t.Fatalf("can't uncompress gzip block: %v\n", err)
+			}
+			uncompressed, err = ioutil.ReadAll(zr)
+			if err != nil {
+				t.Fatalf("can't uncompress gzip block: %v\n", err)
+			}
+			zr.Close()
+
+			if compression == "blocks" {
+				var block labels.Block
+				if err = block.UnmarshalBinary(uncompressed); err != nil {
+					t.Errorf("unable to deserialize label block (%d, %d, %d): %v\n", x, y, z, err)
+				}
+				uint64array, size := block.MakeLabelVolume()
+				if !size.Equals(dvid.Point3d{32, 32, 32}) {
+					t.Fatalf("got bad block size from deserialized block (%d, %d, %d): %s\n", x, y, z, size)
+				}
+				uncompressed = uint64array
+			}
 		}
-		vol.testBlock(t, x, y, z, uncompressed)
+		vol.testBlock(t, context, x, y, z, uncompressed)
 		b += n
 		bx++
 	}
@@ -406,9 +466,7 @@ func (vol *labelVol) label(x, y, z int32) uint64 {
 	x -= vol.offset[0]
 	y -= vol.offset[1]
 	z -= vol.offset[2]
-	nx := vol.size[0] * vol.blockSize[0]
-	nxy := nx * vol.size[1] * vol.blockSize[1]
-	return vol.startLabel + uint64(z*nxy) + uint64(y*nx) + uint64(x+1)
+	return vol.startLabel + uint64(x>>2+y/3+z/3)
 }
 
 type sliceTester struct {
@@ -604,28 +662,27 @@ func newDataInstance(uuid dvid.UUID, t *testing.T, name dvid.InstanceName) *Data
 	return labels
 }
 
-/*
-func TestLabelblkDirectAPI(t *testing.T) {
+func TestLabelarrayDirectAPI(t *testing.T) {
 	datastore.OpenTest()
 	defer datastore.CloseTest()
 
 	uuid, versionID := initTestRepo()
-	labels := newDataInstance(uuid, t, "mylabels")
-	labelsCtx := datastore.NewVersionedCtx(labels, versionID)
+	lbls := newDataInstance(uuid, t, "mylabels")
+	labelsCtx := datastore.NewVersionedCtx(lbls, versionID)
 
 	// Create a fake block-aligned label volume
-	offset := dvid.Point3d{32, 0, 64}
-	size := dvid.Point3d{96, 64, 160}
+	offset := dvid.Point3d{DefaultBlockSize, 0, DefaultBlockSize}
+	size := dvid.Point3d{2 * DefaultBlockSize, DefaultBlockSize, 3 * DefaultBlockSize}
 	subvol := dvid.NewSubvolume(offset, size)
 	data := makeVolume(offset, size)
 
 	// Store it into datastore at root
-	v, err := labels.NewVoxels(subvol, data)
+	v, err := lbls.NewVoxels(subvol, data)
 	if err != nil {
 		t.Fatalf("Unable to make new labels Voxels: %v\n", err)
 	}
-	if err = labels.IngestVoxels(versionID, v, ""); err != nil {
-		t.Errorf("Unable to put labels for %s: %v\n", labelsCtx, err)
+	if err = lbls.IngestVoxels(versionID, 1, v, ""); err != nil {
+		t.Fatalf("Unable to put labels for %s: %v\n", labelsCtx, err)
 	}
 	if v.NumVoxels() != int64(len(data))/8 {
 		t.Errorf("# voxels (%d) after PutVoxels != # original voxels (%d)\n",
@@ -633,12 +690,12 @@ func TestLabelblkDirectAPI(t *testing.T) {
 	}
 
 	// Read the stored image
-	v2, err := labels.NewVoxels(subvol, nil)
+	v2, err := lbls.NewVoxels(subvol, nil)
 	if err != nil {
-		t.Errorf("Unable to make new labels ExtHandler: %v\n", err)
+		t.Fatalf("Unable to make new labels ExtHandler: %v\n", err)
 	}
-	if err = labels.GetVoxels(versionID, v2, ""); err != nil {
-		t.Errorf("Unable to get voxels for %s: %v\n", labelsCtx, err)
+	if err = lbls.GetVoxels(versionID, v2, ""); err != nil {
+		t.Fatalf("Unable to get voxels for %s: %v\n", labelsCtx, err)
 	}
 
 	// Make sure the retrieved image matches the original
@@ -665,7 +722,8 @@ func TestLabelblkDirectAPI(t *testing.T) {
 		}
 	}
 }
-func TestLabelblkRepoPersistence(t *testing.T) {
+
+func TestLabelarrayRepoPersistence(t *testing.T) {
 	datastore.OpenTest()
 	defer datastore.CloseTest()
 
@@ -676,18 +734,29 @@ func TestLabelblkRepoPersistence(t *testing.T) {
 	config.Set("BlockSize", "12,13,14")
 	config.Set("VoxelSize", "1.1,2.8,11")
 	config.Set("VoxelUnits", "microns,millimeters,nanometers")
+	config.Set("CountLabels", "false")
+	config.Set("DownresLevels", "6")
 	dataservice, err := datastore.NewData(uuid, labelsT, "mylabels", config)
 	if err != nil {
 		t.Errorf("Unable to create labels instance: %v\n", err)
 	}
-	labels, ok := dataservice.(*Data)
+	lbls, ok := dataservice.(*Data)
 	if !ok {
 		t.Errorf("Can't cast labels data service into Data\n")
 	}
-	oldData := *labels
+	if lbls.CountLabels {
+		t.Errorf("expected CountLabels to be set false, not default true\n")
+	}
+	if !lbls.IndexedLabels {
+		t.Errorf("expected IndexedLabels to be true for default but was false\n")
+	}
+	if lbls.DownresLevels != 6 {
+		t.Errorf("expected DownresLevels to be 6, not %d\n", lbls.DownresLevels)
+	}
+	oldData := *lbls
 
 	// Restart test datastore and see if datasets are still there.
-	if err = datastore.SaveDataByUUID(uuid, labels); err != nil {
+	if err = datastore.SaveDataByUUID(uuid, lbls); err != nil {
 		t.Fatalf("Unable to save repo during labels persistence test: %v\n", err)
 	}
 	datastore.CloseReopenTest()
@@ -696,15 +765,16 @@ func TestLabelblkRepoPersistence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Can't get labels instance from reloaded test db: %v\n", err)
 	}
-	labels2, ok := dataservice2.(*Data)
+	lbls2, ok := dataservice2.(*Data)
 	if !ok {
 		t.Errorf("Returned new data instance 2 is not imageblk.Data\n")
 	}
-	if !oldData.Equals(labels2) {
-		t.Errorf("Expected %v, got %v\n", oldData, *labels2)
+	if !oldData.Equals(lbls2) {
+		t.Errorf("Expected %v, got %v\n", oldData, *lbls2)
 	}
 }
 
+/*
 func TestMultiscale(t *testing.T) {
 	datastore.OpenTest()
 	defer datastore.CloseTest()
@@ -778,8 +848,9 @@ func TestMultiscale(t *testing.T) {
 		t.Errorf("2nd downres 'labels_2' isn't what is expected: %v\n", err)
 	}
 }
+*/
 
-func TestLabels(t *testing.T) {
+func testLabels(t *testing.T, labelsIndexed bool) {
 	datastore.OpenTest()
 	defer datastore.CloseTest()
 
@@ -789,7 +860,12 @@ func TestLabels(t *testing.T) {
 	}
 
 	// Create a labelarray instance
-	server.CreateTestInstance(t, uuid, "labelarray", "labels", dvid.Config{})
+	var config dvid.Config
+	config.Set("BlockSize", "32,32,32")
+	if !labelsIndexed {
+		config.Set("IndexedLabels", "false")
+	}
+	server.CreateTestInstance(t, uuid, "labelarray", "labels", config)
 
 	vol := labelVol{
 		startLabel: 2,
@@ -799,29 +875,32 @@ func TestLabels(t *testing.T) {
 		name:       "labels",
 	}
 	vol.postLabelVolume(t, uuid, "", "", 0)
+	vol.testGetLabelVolume(t, uuid, "", "")
 
 	// Test the blocks API
-	vol.testBlocks(t, uuid, "", "")
-	vol.testBlocks(t, uuid, "uncompressed", "")
+	vol.testBlocks(t, "GET default blocks (lz4)", uuid, "", "")
+	vol.testBlocks(t, "GET uncompressed blocks", uuid, "uncompressed", "")
+	vol.testBlocks(t, "GET DVID compressed label blocks", uuid, "blocks", "")
+	vol.testBlocks(t, "GET gzip blocks", uuid, "gzip", "")
 
 	// Test the "label" endpoint.
 	apiStr := fmt.Sprintf("%snode/%s/%s/label/100_64_96", server.WebAPIPath, uuid, "labels")
 	jsonResp := server.TestHTTP(t, "GET", apiStr, nil)
 	var r labelResp
 	if err := json.Unmarshal(jsonResp, &r); err != nil {
-		t.Errorf("Unable to parse 'label' endpoint response: %s\n", jsonResp)
+		t.Fatalf("Unable to parse 'label' endpoint response: %s\n", jsonResp)
 	}
-	if r.Label != 69 {
-		t.Errorf("Expected label %d @ (100, 64, 96) got label %d\n", vol.label(100, 64, 96), r.Label)
+	if r.Label != vol.label(100, 64, 96) {
+		t.Fatalf("Expected label %d @ (100, 64, 96) got label %d\n", vol.label(100, 64, 96), r.Label)
 	}
 
 	apiStr = fmt.Sprintf("%snode/%s/%s/label/10000_64000_9600121", server.WebAPIPath, uuid, "labels")
 	jsonResp = server.TestHTTP(t, "GET", apiStr, nil)
 	if err := json.Unmarshal(jsonResp, &r); err != nil {
-		t.Errorf("Unable to parse 'label' endpoint response: %s\n", jsonResp)
+		t.Fatalf("Unable to parse 'label' endpoint response: %s\n", jsonResp)
 	}
 	if r.Label != 0 {
-		t.Errorf("Expected label 0 at random huge point, got label %d\n", r.Label)
+		t.Fatalf("Expected label 0 at random huge point, got label %d\n", r.Label)
 	}
 
 	// Test the "labels" endpoint.
@@ -830,16 +909,16 @@ func TestLabels(t *testing.T) {
 	jsonResp = server.TestHTTP(t, "GET", apiStr, bytes.NewBufferString(payload))
 	var labels [3]uint64
 	if err := json.Unmarshal(jsonResp, &labels); err != nil {
-		t.Errorf("Unable to parse 'labels' endpoint response: %s\n", jsonResp)
+		t.Fatalf("Unable to parse 'labels' endpoint response: %s\n", jsonResp)
 	}
 	if labels[0] != vol.label(100, 64, 96) {
-		t.Errorf("Expected label %d @ (100, 64, 96) got label %d\n", vol.label(100, 64, 96), labels[0])
+		t.Fatalf("Expected label %d @ (100, 64, 96) got label %d\n", vol.label(100, 64, 96), labels[0])
 	}
 	if labels[1] != vol.label(78, 93, 156) {
-		t.Errorf("Expected label %d @ (78, 93, 156) got label %d\n", vol.label(78, 93, 156), labels[1])
+		t.Fatalf("Expected label %d @ (78, 93, 156) got label %d\n", vol.label(78, 93, 156), labels[1])
 	}
 	if labels[2] != vol.label(104, 65, 97) {
-		t.Errorf("Expected label %d @ (104, 65, 97) got label %d\n", vol.label(104, 65, 97), labels[2])
+		t.Fatalf("Expected label %d @ (104, 65, 97) got label %d\n", vol.label(104, 65, 97), labels[2])
 	}
 
 	// Repost the label volume 3 more times with increasing starting values.
@@ -924,13 +1003,9 @@ func TestLabels(t *testing.T) {
 	vol.postLabelVolume(t, uuid, "", "", labelNoROI)
 	returned := vol.testGetLabelVolume(t, uuid, "", "")
 	startLabel := binary.LittleEndian.Uint64(returned[0:8])
-	if startLabel != labelNoROI+1 {
-		t.Errorf("Expected first voxel to be label %d and got %d instead\n", labelNoROI+1, startLabel)
+	if startLabel != labelNoROI {
+		t.Fatalf("Expected first voxel to be label %d and got %d instead\n", labelNoROI, startLabel)
 	}
-
-	// TODO - Use the ROI to retrieve a 2d xy image.
-
-	// TODO - Make sure we aren't getting labels back in non-ROI points.
 
 	// Post again but now with ROI
 	var labelWithROI uint64 = 40000
@@ -938,8 +1013,6 @@ func TestLabels(t *testing.T) {
 
 	// Verify ROI masking of POST where anything outside ROI is old labels.
 	returned = vol.getLabelVolume(t, uuid, "", "")
-	var newlabel uint64 = labelWithROI
-	var oldlabel uint64 = labelNoROI
 
 	nx := vol.size[0] * vol.blockSize[0]
 	ny := vol.size[1] * vol.blockSize[1]
@@ -947,23 +1020,24 @@ func TestLabels(t *testing.T) {
 	var x, y, z, v int32
 	for z = 0; z < nz; z++ {
 		voxz := z + vol.offset[2]
-		blockz := voxz / DefaultBlockSize
+		blockz := voxz / vol.blockSize[2]
 		for y = 0; y < ny; y++ {
 			voxy := y + vol.offset[1]
-			blocky := voxy / DefaultBlockSize
+			blocky := voxy / vol.blockSize[1]
 			for x = 0; x < nx; x++ {
 				voxx := x + vol.offset[0]
-				blockx := voxx / DefaultBlockSize
-				oldlabel++
-				newlabel++
+				blockx := voxx / vol.blockSize[0]
+				incr := uint64(x>>2 + y/3 + z/3)
+				oldlabel := labelNoROI + incr
+				newlabel := labelWithROI + incr
 				got := binary.LittleEndian.Uint64(returned[v : v+8])
 				if inroi(blockx, blocky, blockz) {
 					if got != newlabel {
-						t.Fatalf("Expected %d in ROI, got %d\n", newlabel, got)
+						t.Fatalf("Expected %d in ROI (%d,%d,%d), got %d\n", newlabel, blockx, blocky, blockz, got)
 					}
 				} else {
 					if got != oldlabel {
-						t.Fatalf("Expected %d outside ROI, got %d\n", oldlabel, got)
+						t.Fatalf("Expected %d outside ROI (%d,%d,%d), got %d\n", oldlabel, blockx, blocky, blockz, got)
 					}
 				}
 				v += 8
@@ -973,20 +1047,19 @@ func TestLabels(t *testing.T) {
 
 	// Verify that a ROI-enabled GET has zeros everywhere outside ROI.
 	returned = vol.getLabelVolume(t, uuid, "", roiName)
-	newlabel = labelWithROI
 
 	x, y, z, v = 0, 0, 0, 0
 	for z = 0; z < nz; z++ {
 		voxz := z + vol.offset[2]
-		blockz := voxz / DefaultBlockSize
+		blockz := voxz / vol.blockSize[2]
 		for y = 0; y < ny; y++ {
 			voxy := y + vol.offset[1]
-			blocky := voxy / DefaultBlockSize
+			blocky := voxy / vol.blockSize[1]
 			for x = 0; x < nx; x++ {
 				voxx := x + vol.offset[0]
-				blockx := voxx / DefaultBlockSize
-				oldlabel++
-				newlabel++
+				blockx := voxx / vol.blockSize[0]
+				incr := uint64(x>>2 + y/3 + z/3)
+				newlabel := labelWithROI + incr
 				got := binary.LittleEndian.Uint64(returned[v : v+8])
 				if inroi(blockx, blocky, blockz) {
 					if got != newlabel {
@@ -1001,6 +1074,54 @@ func TestLabels(t *testing.T) {
 			}
 		}
 	}
+
+	// TODO - Use the ROI to retrieve a 2d xy image.
+
+	// TODO - Make sure we aren't getting labels back in non-ROI points.
+
+	// Verify non-indexed instances can't access indexed endpoints.
+	if !labelsIndexed {
+		methods := []string{
+			"GET",
+			"HEAD",
+			"GET",
+			"GET",
+			"GET",
+			"GET",
+			"POST",
+			"POST",
+			"POST",
+			"POST",
+		}
+		reqs := []string{
+			"sparsevol/20",
+			"sparsevol/20",
+			"sparsevol-by-point/30_89_100",
+			"sparsevol-coarse/20",
+			"maxlabel",
+			"nextlabel",
+			"nextlabel",
+			"merge",
+			"split/20",
+			"split-coarse/20",
+		}
+		var r io.Reader
+		for i, req := range reqs {
+			apiStr = fmt.Sprintf("%snode/%s/labels/%s", server.WebAPIPath, uuid, req)
+			if methods[i] == "POST" {
+				r = bytes.NewBufferString("junkdata that should never be used anyway")
+			} else {
+				r = nil
+			}
+			server.TestBadHTTP(t, methods[i], apiStr, r)
+		}
+	}
 }
 
-*/
+func TestLabels(t *testing.T) {
+	testLabels(t, true)
+}
+
+func TestLabelsUnindexed(t *testing.T) {
+	testLabels(t, false)
+}

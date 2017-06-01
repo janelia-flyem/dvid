@@ -263,7 +263,7 @@ GET  <api URL>/node/<UUID>/<data name>/specificblocks[?queryopts]
     Query-string Options:
 
     compression   Allows retrieval of block data in "jpeg" (default) or "uncompressed".
-    blocks	  x,y,z... block string
+    blocks	      x,y,z... block string
     prefetch	  ("on" or "true") Do not actually send data, non-blocking (default "off")
 
 
@@ -760,7 +760,7 @@ type Properties struct {
 }
 
 // CopyPropertiesFrom copies the data instance-specific properties from a given
-// data instance into the receiver's properties.
+// data instance into the receiver's properties. Fulfills the datastore.PropertyCopier interface.
 func (d *Data) CopyPropertiesFrom(src datastore.DataService, fs storage.FilterSpec) error {
 	d2, ok := src.(*Data)
 	if !ok {
@@ -1826,8 +1826,8 @@ func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, su
 	}
 
 	// only do one request at a time, although each request can start many goroutines.
-	server.SpawnGoroutineMutex.Lock()
-	defer server.SpawnGoroutineMutex.Unlock()
+	server.LargeMutationMutex.Lock()
+	defer server.LargeMutationMutex.Unlock()
 
 	okv := store.(storage.BufferableOps)
 	// extract buffer interface
@@ -2115,7 +2115,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			server.BadRequest(w, r, "%q must be followed by block-coord/span-x", parts[3])
 			return
 		}
-		blockCoord, err := dvid.StringToChunkPoint3d(parts[4], "_")
+		bcoord, err := dvid.StringToChunkPoint3d(parts[4], "_")
 		if err != nil {
 			server.BadRequest(w, r, err)
 			return
@@ -2126,7 +2126,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			return
 		}
 		if action == "get" {
-			data, err := d.GetBlocks(ctx.VersionID(), blockCoord, int32(span))
+			data, err := d.GetBlocks(ctx.VersionID(), bcoord, int32(span))
 			if err != nil {
 				server.BadRequest(w, r, err)
 				return
@@ -2140,7 +2140,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		} else {
 			mutID := d.NewMutationID()
 			mutate := (queryStrings.Get("mutate") == "true")
-			if err := d.PutBlocks(ctx.VersionID(), mutID, blockCoord, span, r.Body, mutate); err != nil {
+			if err := d.PutBlocks(ctx.VersionID(), mutID, bcoord, span, r.Body, mutate); err != nil {
 				server.BadRequest(w, r, err)
 				return
 			}
