@@ -337,7 +337,26 @@ Node-Level REST endpoints
 
  POST /api/node/{uuid}/branch
 
-	Creates a new child node (version) of the node with given UUID.  
+	Creates a new branch child node (version) of the node with given UUID.
+	The branch name must be unique across the DAG.
+
+	The post body should be in JSON format, where "note" is optional:
+
+	{
+	    "branch": "unique name of new branch",
+	    "note": "this is what we'll be doing on this version"
+	}
+
+	A JSON response will be sent with the following format:
+
+	{ "child": "3f01a8856" }
+
+	The response includes the UUID of the new child node.
+
+ POST /api/node/{uuid}/newversion
+
+	Creates a new child node (version) of the node with given
+	UUID if no open node exists.
 
 	An optional post body should be in JSON format:
 
@@ -348,6 +367,8 @@ Node-Level REST endpoints
 	{ "child": "3f01a8856" }
 
 	The response includes the UUID of the new child node.
+
+
 
 		</pre>
 
@@ -565,6 +586,7 @@ func initRoutes() {
 	nodeMux.Get("/api/node/:uuid/commit", repoCommitStateHandler)
 	nodeMux.Post("/api/node/:uuid/commit", repoCommitHandler)
 	nodeMux.Post("/api/node/:uuid/branch", repoBranchHandler)
+	nodeMux.Post("/api/node/:uuid/newversion", repoNewVersionHandler)
 
 	instanceMux := web.New()
 	mainMux.Handle("/api/node/:uuid/:dataname/:keyword", instanceMux)
@@ -717,7 +739,7 @@ func nodeSelector(c *web.C, h http.Handler) http.Handler {
 			return
 		}
 		action := strings.ToLower(r.Method)
-		branchRequest := (c.URLParams["action"] == "branch")
+		branchRequest := (c.URLParams["action"] == "branch") || (c.URLParams["action"] == "newversion")
 		if !fullwrite && locked && !branchRequest && action != "get" && action != "head" {
 			BadRequest(w, r, "Cannot do %s on locked node %s", action, uuid)
 			return
@@ -1344,9 +1366,8 @@ func repoCommitHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// TODO -- Might allow specification of UUID for child via HTTP, or only
-// allow this potentially dangerous op via command line.
-func repoBranchHandler(c web.C, w http.ResponseWriter, r *http.Request) {
+// repoNewVersionHandler creates a new version node with the same branch as the parent
+func repoNewVersionHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	// Apply a global lock (if relevant) and reloads meta
 	if err := datastore.MetadataUniversalLock(); err != nil {
 		BadRequest(w, r, err)
@@ -1358,6 +1379,7 @@ func repoBranchHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	jsonData := struct {
 		Note string `json:"note"`
 	}{}
+
 	if r.Body != nil {
 		data, err := ioutil.ReadAll(r.Body)
 		if err != nil {
@@ -1373,7 +1395,57 @@ func repoBranchHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 		}
 
 	}
-	newuuid, err := datastore.NewVersion(uuid, jsonData.Note, nil)
+
+	// create new version with empty branch specification
+	newuuid, err := datastore.NewVersion(uuid, jsonData.Note, "", nil)
+	if err != nil {
+		BadRequest(w, r, err)
+	} else {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, "{%q: %q}", "child", newuuid)
+	}
+}
+
+// TODO -- Might allow specification of UUID for child via HTTP, or only
+// allow this potentially dangerous op via command line.
+func repoBranchHandler(c web.C, w http.ResponseWriter, r *http.Request) {
+	// Apply a global lock (if relevant) and reloads meta
+	if err := datastore.MetadataUniversalLock(); err != nil {
+		BadRequest(w, r, err)
+		return
+	}
+	defer datastore.MetadataUniversalUnlock()
+
+	uuid := c.Env["uuid"].(dvid.UUID)
+	jsonData := struct {
+		Branch string `json:"branch"`
+		Note   string `json:"note"`
+	}{}
+
+	// load branch and note option
+	if r.Body != nil {
+		data, err := ioutil.ReadAll(r.Body)
+		if err != nil {
+			BadRequest(w, r, err)
+			return
+		}
+
+		if len(data) > 0 {
+			if err := json.Unmarshal(data, &jsonData); err != nil {
+				BadRequest(w, r, fmt.Sprintf("Malformed JSON request in body: %v", err))
+				return
+			}
+		}
+	}
+
+	// the default or master name should be not be specified
+	if jsonData.Branch == "" || jsonData.Branch == "master" {
+		BadRequest(w, r, fmt.Errorf("Cannot create a master branch"))
+		return
+	}
+
+	// create new branch (will just version node if branch name is the same as the parent)
+	newuuid, err := datastore.NewVersion(uuid, jsonData.Note, jsonData.Branch, nil)
 	if err != nil {
 		BadRequest(w, r, err)
 	} else {

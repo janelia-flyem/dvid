@@ -169,8 +169,13 @@ func TestCommitAndBranch(t *testing.T) {
 	uuid := dvid.UUID(uuidStr)
 
 	// Shouldn't be able to create branch on open node.
+	versionReq := fmt.Sprintf("%snode/%s/newversion", server.WebAPIPath, uuid)
+	server.TestBadHTTP(t, "POST", versionReq, nil)
+
 	branchReq := fmt.Sprintf("%snode/%s/branch", server.WebAPIPath, uuid)
-	server.TestBadHTTP(t, "POST", branchReq, nil)
+	server.TestBadHTTP(t, "POST", branchReq, bytes.NewReader([]byte(`{"branch": "mybranch"}`)))
+
+	apiStr = fmt.Sprintf("%snode/%s/commit", server.WebAPIPath, uuid)
 
 	// Add a keyvalue and ROI instance.
 	server.CreateTestInstance(t, uuid, "keyvalue", "mykv", dvid.Config{})
@@ -178,7 +183,6 @@ func TestCommitAndBranch(t *testing.T) {
 
 	// Commit it.
 	payload := bytes.NewBufferString(`{"note": "This is my test commit", "log": ["line1", "line2", "some more stuff in a line"]}`)
-	apiStr = fmt.Sprintf("%snode/%s/commit", server.WebAPIPath, uuid)
 	server.TestHTTP(t, "POST", apiStr, payload)
 
 	// Make sure committed nodes can only be read.
@@ -191,14 +195,22 @@ func TestCommitAndBranch(t *testing.T) {
 	queryJSON := "[[10, 10, 10], [20, 20, 20], [30, 30, 30], [40, 40, 40], [50, 50, 50]]"
 	server.TestHTTP(t, "POST", apiStr, bytes.NewReader([]byte(queryJSON))) // we have no ROI so just testing HTTP.
 
-	// Should be able to create branch now that we've committed parent.
-	respData := server.TestHTTP(t, "POST", branchReq, nil)
+	// Should be able to create version and branch now that we've committed parent.
+	respData := server.TestHTTP(t, "POST", versionReq, nil)
 	resp := struct {
 		Child dvid.UUID `json:"child"`
 	}{}
 	if err := json.Unmarshal(respData, &resp); err != nil {
 		t.Errorf("Expected 'child' JSON response.  Got %s\n", string(respData))
 	}
+
+	respData = server.TestHTTP(t, "POST", branchReq, bytes.NewReader([]byte(`{"branch": "mybranch"}`)))
+	if err := json.Unmarshal(respData, &resp); err != nil {
+		t.Errorf("Expected 'child' JSON response.  Got %s\n", string(respData))
+	}
+
+	// creating a branch with the same name should fail
+	server.TestBadHTTP(t, "POST", branchReq, bytes.NewReader([]byte(`{"branch": "mybranch"}`)))
 
 	// We should be able to write to that keyvalue now in the child.
 	keyReq = fmt.Sprintf("%snode/%s/mykv/key/foo", server.WebAPIPath, resp.Child)

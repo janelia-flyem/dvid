@@ -257,7 +257,7 @@ func TestKeyvalueUnversioned(t *testing.T) {
 	if err = datastore.Commit(uuid, "my commit msg", []string{"stuff one", "stuff two"}); err != nil {
 		t.Errorf("Unable to lock root node %s: %v\n", uuid, err)
 	}
-	uuid2, err := datastore.NewVersion(uuid, "some child", nil)
+	uuid2, err := datastore.NewVersion(uuid, "some child", "", nil)
 	if err != nil {
 		t.Fatalf("Unable to create new version off node %s: %v\n", uuid, err)
 	}
@@ -303,7 +303,7 @@ func TestKeyvalueUnversioned(t *testing.T) {
 	}
 
 	// Make grandchild of root
-	uuid3, err := datastore.NewVersion(uuid2, "some child", nil)
+	uuid3, err := datastore.NewVersion(uuid2, "some child", "", nil)
 	if err != nil {
 		t.Fatalf("Unable to create new version off node %s: %v\n", uuid2, err)
 	}
@@ -322,7 +322,7 @@ func TestKeyvalueUnversioned(t *testing.T) {
 	if err = datastore.Commit(uuid3, "my 3rd commit msg", []string{"deleted 2nd k/v"}); err != nil {
 		t.Errorf("Unable to commit node %s: %v\n", uuid2, err)
 	}
-	uuid4, err := datastore.NewVersion(uuid3, "some child", nil)
+	uuid4, err := datastore.NewVersion(uuid3, "some child", "", nil)
 	if err != nil {
 		t.Fatalf("Unable to create new version off node %s: %v\n", uuid3, err)
 	}
@@ -387,7 +387,7 @@ func TestKeyvalueVersioning(t *testing.T) {
 	if err = datastore.Commit(uuid, "my commit msg", []string{"stuff one", "stuff two"}); err != nil {
 		t.Errorf("Unable to lock root node %s: %v\n", uuid, err)
 	}
-	uuid2, err := datastore.NewVersion(uuid, "some child", nil)
+	uuid2, err := datastore.NewVersion(uuid, "some child", "", nil)
 	if err != nil {
 		t.Fatalf("Unable to create new version off node %s: %v\n", uuid, err)
 	}
@@ -433,7 +433,7 @@ func TestKeyvalueVersioning(t *testing.T) {
 	}
 
 	// Make grandchild of root
-	uuid3, err := datastore.NewVersion(uuid2, "some child", nil)
+	uuid3, err := datastore.NewVersion(uuid2, "some child", "", nil)
 	if err != nil {
 		t.Fatalf("Unable to create new version off node %s: %v\n", uuid2, err)
 	}
@@ -458,7 +458,7 @@ func TestKeyvalueVersioning(t *testing.T) {
 	if err = datastore.Commit(uuid3, "my 3rd commit msg", []string{"deleted 2nd k/v"}); err != nil {
 		t.Errorf("Unable to commit node %s: %v\n", uuid2, err)
 	}
-	uuid4, err := datastore.NewVersion(uuid3, "some child", nil)
+	uuid4, err := datastore.NewVersion(uuid3, "some child", "", nil)
 	if err != nil {
 		t.Fatalf("Unable to create new version off node %s: %v\n", uuid3, err)
 	}
@@ -490,7 +490,7 @@ func TestKeyvalueVersioning(t *testing.T) {
 	// Let's try a merge!
 
 	// Make a child off the 2nd version from root.
-	uuid5, err := datastore.NewVersion(uuid2, "some child", nil)
+	uuid5, err := datastore.NewVersion(uuid2, "some child", "some child", nil)
 	if err != nil {
 		t.Fatalf("Unable to create new version off node %s: %v\n", uuid2, err)
 	}
@@ -520,7 +520,7 @@ func TestKeyvalueVersioning(t *testing.T) {
 	server.TestBadHTTP(t, "GET", childreq, nil)
 
 	// Manually fix conflict: Branch, and then delete 2nd k/v and commit.
-	uuid6, err := datastore.NewVersion(uuid5, "some child", nil)
+	uuid6, err := datastore.NewVersion(uuid5, "some child", "", nil)
 	if err != nil {
 		t.Fatalf("Unable to create new version off node %s: %v\n", uuid5, err)
 	}
@@ -565,7 +565,7 @@ func TestKeyvalueVersioning(t *testing.T) {
 	}
 
 	// Introduce a child off root but don't add 2nd k/v to it.
-	uuid7, err := datastore.NewVersion(uuid, "2nd child off root", nil)
+	uuid7, err := datastore.NewVersion(uuid, "2nd child off root", "2nd child off root", nil)
 	if err != nil {
 		t.Fatalf("Unable to create new version off node %s: %v\n", uuid, err)
 	}
@@ -600,7 +600,7 @@ func TestKeyvalueVersioning(t *testing.T) {
 	}
 
 	// Create a new keyvalue data instance at an interior non-root node.
-	uuid8, err := datastore.NewVersion(uuid7, "open leaf child", nil)
+	uuid8, err := datastore.NewVersion(uuid7, "open leaf child", "", nil)
 	if err != nil {
 		t.Fatalf("Unable to create new version off %s: %v\n", uuid7, err)
 	}
@@ -681,14 +681,14 @@ func TestDiamondGetOnMerge(t *testing.T) {
 	if err = datastore.Commit(uuid, "my commit msg", []string{"stuff one", "stuff two"}); err != nil {
 		t.Errorf("Unable to lock root node %s: %v\n", uuid, err)
 	}
-	uuid2, err := datastore.NewVersion(uuid, "first child", nil)
+	uuid2, err := datastore.NewVersion(uuid, "first child", "", nil)
 	if err != nil {
 		t.Fatalf("Unable to create 1st child off root %s: %v\n", uuid, err)
 	}
 	if err = datastore.Commit(uuid2, "first child", nil); err != nil {
 		t.Errorf("Unable to commit node %s: %v\n", uuid2, err)
 	}
-	uuid3, err := datastore.NewVersion(uuid, "second child", nil)
+	uuid3, err := datastore.NewVersion(uuid, "second child", "newbranch", nil)
 	if err != nil {
 		t.Fatalf("Unable to create 2nd child off root %s: %v\n", uuid, err)
 	}

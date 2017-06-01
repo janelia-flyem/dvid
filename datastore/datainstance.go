@@ -341,9 +341,11 @@ func (d *Data) MarshalJSON() ([]byte, error) {
 }
 
 var reservedNames = map[string]struct{}{
-	"log":    struct{}{},
-	"lock":   struct{}{},
-	"branch": struct{}{},
+	"log":        struct{}{},
+	"branch":     struct{}{},
+	"note":       struct{}{},
+	"commit":     struct{}{},
+	"newversion": struct{}{},
 }
 
 // NewDataService returns a new Data instance that fulfills the DataService interface.

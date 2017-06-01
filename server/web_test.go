@@ -117,8 +117,8 @@ func TestCommitBranchMergeDelete(t *testing.T) {
 	uuid, _ := datastore.NewTestRepo()
 
 	// Shouldn't be able to create branch on open node.
-	branchReq := fmt.Sprintf("%snode/%s/branch", WebAPIPath, uuid)
-	TestBadHTTP(t, "POST", branchReq, nil)
+	versionReq := fmt.Sprintf("%snode/%s/newversion", WebAPIPath, uuid)
+	TestBadHTTP(t, "POST", versionReq, nil)
 
 	// Check commit status
 	checkReq := fmt.Sprintf("%snode/%s/commit", WebAPIPath, uuid)
@@ -146,7 +146,7 @@ func TestCommitBranchMergeDelete(t *testing.T) {
 	TestBadHTTP(t, "POST", apiStr, payload)
 
 	// Should be able to create branch now that we've committed parent.
-	respData := TestHTTP(t, "POST", branchReq, nil)
+	respData := TestHTTP(t, "POST", versionReq, nil)
 	resp := struct {
 		Child string `json:"child"`
 	}{}
@@ -156,7 +156,9 @@ func TestCommitBranchMergeDelete(t *testing.T) {
 	parent1 := dvid.UUID(resp.Child)
 
 	// Create a sibling.
-	respData = TestHTTP(t, "POST", branchReq, nil)
+	branchReq := fmt.Sprintf("%snode/%s/branch", WebAPIPath, uuid)
+	bpayload := bytes.NewBufferString(`{"branch": "mybranch"}`)
+	respData = TestHTTP(t, "POST", branchReq, bpayload)
 	if err := json.Unmarshal(respData, &resp); err != nil {
 		t.Errorf("Expected 'child' JSON response.  Got %s\n", string(respData))
 	}
