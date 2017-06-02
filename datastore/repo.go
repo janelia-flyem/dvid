@@ -44,4 +44,5 @@ var (
 
 	ErrModifyLockedNode   = errors.New("can't modify locked node")
 	ErrBranchUnlockedNode = errors.New("can't branch an unlocked node")
+	ErrBranchUnique       = errors.New("branch already exists with given name")
 )

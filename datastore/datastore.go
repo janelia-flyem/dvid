@@ -203,11 +203,11 @@ func AddToNodeLog(uuid dvid.UUID, msgs []string) error {
 
 // NewVersion creates a new version as a child of the given parent.  If the
 // assign parameter is not nil, the new node is given the UUID.
-func NewVersion(parent dvid.UUID, note string, assign *dvid.UUID) (dvid.UUID, error) {
+func NewVersion(parent dvid.UUID, note string, branchname string, assign *dvid.UUID) (dvid.UUID, error) {
 	if manager == nil {
 		return dvid.NilUUID, ErrManagerNotInitialized
 	}
-	return manager.newVersion(parent, note, assign)
+	return manager.newVersion(parent, note, branchname, assign)
 }
 
 // GetParents returns the parent nodes of the given version id.
@@ -416,7 +416,9 @@ func deleteConflict(data DataService, extnode *extensionNode, k storage.Key) err
 
 	// Create new node if necessary
 	if extnode.newUUID == dvid.NilUUID {
-		childUUID, err := manager.newVersion(extnode.oldUUID, "Version for deleting conflicts before merge", nil)
+		// create a unique branch for the conflict
+		conflictbranch := fmt.Sprintf("conflict-%d", extnode.oldUUID)
+		childUUID, err := manager.newVersion(extnode.oldUUID, "Version for deleting conflicts before merge", conflictbranch, nil)
 		if err != nil {
 			return err
 		}

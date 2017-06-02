@@ -39,6 +39,7 @@ const (
 	newIDsKey
 	repoKey
 	formatKey
+	ServerLockKey // name of key for locking metadata globally
 )
 
 func Close() error {
@@ -81,6 +82,7 @@ func Initialize(initMetadata bool, iconfig *InstanceConfig) error {
 	if err != nil {
 		return err
 	}
+	_, hastrans := m.store.(storage.TransactionDB)
 
 	// Set the package variable.  We are good to go...
 	manager = m
@@ -89,6 +91,17 @@ func Initialize(initMetadata bool, iconfig *InstanceConfig) error {
 	m.idMutex.Lock()
 	defer m.idMutex.Unlock()
 
+	if hastrans {
+		// check if metadata exists (globally locked so no other requests possible)
+		// cannot trust initial value because of race conditions
+		if found, _ := m.loadData(repoToUUIDKey, &(m.repoToUUID)); !found {
+			initMetadata = true
+		} else {
+			initMetadata = false
+		}
+	}
+
+	// TODO: parallelize metadata init fetches for high-latency backends
 	if initMetadata {
 		// Initialize repo management data in storage
 		dvid.Infof("Initializing repo management data in storage...\n")
@@ -107,6 +120,39 @@ func Initialize(initMetadata bool, iconfig *InstanceConfig) error {
 		}
 	}
 	return nil
+}
+
+// MetadataUniversalLock locks shared databases (currently those implementing transactions)
+func MetadataUniversalLock() error {
+	// if db supports transaction, apply a system-wide lock and reload meta
+	store, _ := storage.MetaDataKVStore()
+	transdb, hastrans := store.(storage.TransactionDB)
+	if hastrans {
+		var ctx storage.MetadataContext
+		key := ctx.ConstructKey(storage.NewTKey(ServerLockKey, nil))
+		// TODO: automatically remove stale locks
+		// to prevent accidentally getting locked out
+		transdb.LockKey(key)
+
+		if err := ReloadMetadata(); err != nil {
+			transdb.UnlockKey(key)
+			dvid.Criticalf("Can't reload metadata: %v\n", err)
+			return fmt.Errorf("Can't reload metadata: %v\n", err)
+		}
+	}
+
+	return nil
+}
+
+// MetadataUniversalUnlock releases the shared lock
+func MetadataUniversalUnlock() {
+	store, _ := storage.MetaDataKVStore()
+	transdb, hastrans := store.(storage.TransactionDB)
+	if hastrans {
+		var ctx storage.MetadataContext
+		key := ctx.ConstructKey(storage.NewTKey(ServerLockKey, nil))
+		transdb.UnlockKey(key)
+	}
 }
 
 // ReloadMetadata reloads the repositories manager from an existing metadata store.
@@ -1298,7 +1344,7 @@ func (m *repoManager) commit(uuid dvid.UUID, note string, log []string) error {
 
 // newVersion creates a new version as a child of the given parent.  If the
 // assign parameter is not nil, the new node is given the UUID.
-func (m *repoManager) newVersion(parent dvid.UUID, note string, assign *dvid.UUID) (dvid.UUID, error) {
+func (m *repoManager) newVersion(parent dvid.UUID, note string, branchname string, assign *dvid.UUID) (dvid.UUID, error) {
 	r, found := m.repos[parent]
 	if !found {
 		return dvid.NilUUID, ErrInvalidUUID
@@ -1324,6 +1370,30 @@ func (m *repoManager) newVersion(parent dvid.UUID, note string, assign *dvid.UUI
 		return dvid.NilUUID, ErrBranchUnlockedNode
 	}
 
+	// check to make sure there are not already
+	// children with the same branch
+	if branchname == "" || branchname == node.branch {
+		// check other children nodes
+		branchname = node.branch
+		for _, sister := range node.children {
+			// check if there is already a branch here
+			sisternode, found := r.dag.nodes[sister]
+			if !found {
+				return dvid.NilUUID, fmt.Errorf("cannot find sibling nodes")
+			}
+			if sisternode.branch == branchname {
+				return dvid.NilUUID, ErrBranchUnique
+			}
+		}
+	} else { // check if branch name used anywhere in DAG
+		for _, othernode := range r.dag.nodes {
+			if othernode.branch == branchname {
+				return dvid.NilUUID, ErrBranchUnique
+			}
+		}
+
+	}
+
 	// Add the child node.  Since it's new and unavailable, no need to lock it.
 	childUUID, childV, err := m.newUUID(assign)
 	if err != nil {
@@ -1332,6 +1402,7 @@ func (m *repoManager) newVersion(parent dvid.UUID, note string, assign *dvid.UUI
 	child := newNode(childUUID, childV)
 	child.parents = []dvid.VersionID{v}
 	child.note = note
+	child.branch = branchname
 
 	m.repos[childUUID] = r
 
@@ -2401,8 +2472,9 @@ func (dag *dagT) getParents(v dvid.VersionID) ([]dvid.VersionID, error) {
 type nodeT struct {
 	sync.RWMutex
 
-	note string
-	log  []string
+	branch string
+	note   string
+	log    []string
 
 	uuid    dvid.UUID
 	version dvid.VersionID
@@ -2424,6 +2496,7 @@ type nodeT struct {
 // are supplied, they must be contiguous and not random nodes in DAG.
 func (node *nodeT) duplicate(versions map[dvid.VersionID]struct{}) *nodeT {
 	dup := new(nodeT)
+	dup.branch = node.branch
 	dup.note = node.note
 	dup.log = make([]string, len(node.log))
 	copy(dup.log, node.log)
@@ -2471,6 +2544,7 @@ func (node *nodeT) GobDecode(b []byte) error {
 
 	buf := bytes.NewBuffer(b)
 	dec := gob.NewDecoder(buf)
+
 	if err := dec.Decode(&(node.note)); err != nil {
 		return err
 	}
@@ -2505,6 +2579,10 @@ func (node *nodeT) GobDecode(b []byte) error {
 	if err := dec.Decode(&(node.updated)); err != nil {
 		return err
 	}
+
+	// support unspecified branches for legacy dvid instances
+	dec.Decode(&(node.branch))
+
 	return nil
 }
 
@@ -2545,11 +2623,15 @@ func (node *nodeT) GobEncode() ([]byte, error) {
 	if err := enc.Encode(node.updated); err != nil {
 		return nil, err
 	}
+	if err := enc.Encode(node.branch); err != nil {
+		return nil, err
+	}
 	return buf.Bytes(), nil
 }
 
 func (node *nodeT) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
+		Branch    string
 		Note      string
 		Log       []string
 		UUID      dvid.UUID
@@ -2560,6 +2642,7 @@ func (node *nodeT) MarshalJSON() ([]byte, error) {
 		Created   time.Time
 		Updated   time.Time
 	}{
+		node.branch,
 		node.note,
 		node.log,
 		node.uuid,

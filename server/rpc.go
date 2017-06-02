@@ -34,7 +34,12 @@ Commands executed on the server (rpc address = %s):
 			The optional passcode will have to be provided to delete the repo
 			or any contained data instance.
 	
-	repo <UUID> branch [optional UUID]
+	repo <UUID> branch name [optional UUID]
+
+		Create a new branch version node of the given parent UUID.  If an optional UUID is 
+		specified, the child node is assigned this UUID.
+
+	repo <UUID> newversion [optional UUID]
 
 		Create a new child node of the given parent UUID.  If an optional UUID is 
 		specified, the child node is assigned this UUID.
@@ -249,6 +254,12 @@ func handleCommand(cmd *datastore.Request) (reply *datastore.Response, err error
 			reply.Text = fmt.Sprintf("New repo %q created with head node %s\n", alias, root)
 
 		case "delete":
+			// Apply a global lock (if relevant) and reloads meta
+			if err = datastore.MetadataUniversalLock(); err != nil {
+				return
+			}
+			defer datastore.MetadataUniversalUnlock()
+
 			var uuidStr, passcode string
 			cmd.CommandArgs(2, &uuidStr, &passcode)
 
@@ -333,6 +344,29 @@ func handleCommand(cmd *datastore.Request) (reply *datastore.Response, err error
 			reply.Text = fmt.Sprintf("Renamed data instance %q to %q from DAG subgraph @ root %s\n", oldname, newname, uuid)
 
 		case "branch":
+			var branchname string
+			cmd.CommandArgs(3, &branchname, &uuidStr)
+
+			var assign *dvid.UUID
+
+			// non-master branch name must be specified
+			if branchname == "" || branchname == "master" {
+				return
+			}
+
+			if uuidStr == "" {
+				assign = nil
+			} else {
+				u := dvid.UUID(uuidStr)
+				assign = &u
+			}
+			var child dvid.UUID
+			if child, err = datastore.NewVersion(uuid, fmt.Sprintf("branch of %s", uuid), branchname, assign); err != nil {
+				return
+			}
+			reply.Text = fmt.Sprintf("Branch %s added to node %s\n", child, uuid)
+			datastore.AddToRepoLog(uuid, []string{cmd.String()})
+		case "newversion":
 			cmd.CommandArgs(3, &uuidStr)
 
 			var assign *dvid.UUID
@@ -343,7 +377,7 @@ func handleCommand(cmd *datastore.Request) (reply *datastore.Response, err error
 				assign = &u
 			}
 			var child dvid.UUID
-			if child, err = datastore.NewVersion(uuid, fmt.Sprintf("branch of %s", uuid), assign); err != nil {
+			if child, err = datastore.NewVersion(uuid, fmt.Sprintf("branch of %s", uuid), "", assign); err != nil {
 				return
 			}
 			reply.Text = fmt.Sprintf("Branch %s added to node %s\n", child, uuid)
@@ -417,6 +451,12 @@ func handleCommand(cmd *datastore.Request) (reply *datastore.Response, err error
 			*/
 
 		case "delete":
+			// Apply a global lock (if relevant) and reloads meta
+			if err = datastore.MetadataUniversalLock(); err != nil {
+				return
+			}
+			defer datastore.MetadataUniversalUnlock()
+
 			var dataname, passcode string
 			cmd.CommandArgs(3, &dataname, &passcode)
 

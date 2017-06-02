@@ -330,6 +330,9 @@ type Chunk struct {
 // ChunkFunc is a function that accepts a Chunk.
 type ChunkFunc func(*Chunk) error
 
+// PatchFunc is a function that accepts a value and patches that value in place
+type PatchFunc func([]byte) ([]byte, error)
+
 // Requirements lists required backend interfaces for a type.
 type Requirements struct {
 	BulkIniter bool
@@ -460,6 +463,20 @@ type KeyValueBatcher interface {
 // more information.)
 type KeyValueRequester interface {
 	NewBuffer(ctx Context) RequestBuffer
+}
+
+// TransactionDB allows multiple database operations to execute as an atomic transaction
+type TransactionDB interface {
+	// LockKey uses atomic get/put to use the key as a shared lock.
+	// If the lock is being used, the lock will be queried with some backoff.
+	LockKey(Key) error
+
+	// Release lock on key
+	UnlockKey(Key) error
+
+	// Patch patches the value at the given key with function f
+	// The patching function should work on uninitialized data.
+	Patch(Context, TKey, PatchFunc) error
 }
 
 // RequestBufferSubset implements a subset of the ordered key/value interface.

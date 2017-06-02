@@ -456,7 +456,7 @@ func TestSparseVolumes(t *testing.T) {
 		t.Errorf("Unable to lock root node %s: %v\n", uuid, err)
 	}
 
-	uuid2, err := datastore.NewVersion(uuid, "deletion test", nil)
+	uuid2, err := datastore.NewVersion(uuid, "deletion test", "", nil)
 	if err != nil {
 		t.Fatalf("Unable to create new version off node %s: %v\n", uuid, err)
 	}

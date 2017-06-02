@@ -18,6 +18,9 @@ const (
 	// use different id from other label-type keys to improve odds that any bad use of
 	// arbitrary key decoding will result in error.
 	keyImageBlock = 23
+
+	// designates where meta data is stored
+	metaKeyClass = 24
 )
 
 // NewTKeyByCoord returns a TKey for a block coord in string format.
@@ -30,6 +33,11 @@ func NewTKeyByCoord(izyx dvid.IZYXString) storage.TKey {
 func NewTKey(idx dvid.Index) storage.TKey {
 	izyx := idx.(*dvid.IndexZYX)
 	return NewTKeyByCoord(izyx.ToIZYXString())
+}
+
+// MetaTKey provides a TKey for metadata (extents)
+func MetaTKey() storage.TKey {
+	return storage.NewTKey(metaKeyClass, nil)
 }
 
 // DecodeTKey returns a spatial index from a image block key.
