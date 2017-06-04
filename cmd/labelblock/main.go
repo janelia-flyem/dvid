@@ -1,6 +1,7 @@
 package main
 
 import (
+	"compress/gzip"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -45,24 +46,25 @@ func main() {
 		os.Exit(0)
 	}
 
+	if len(*compression) != 0 {
+		compress()
+	} else {
+		uncompress()
+	}
+}
+
+func compress() {
 	b, err := ioutil.ReadAll(os.Stdin)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error reading stdin: %v\n", err)
 		os.Exit(1)
 	}
-	if len(*compression) != 0 {
-		var nx, ny, nz int32
-		if n, err := fmt.Sscanf(*compression, "%d,%d,%d", &nx, &ny, &nz); n != 3 || err != nil {
-			fmt.Fprintf(os.Stderr, "Could not interpret block size, should be -compress=nx,ny,nz: %v\n", err)
-			os.Exit(1)
-		}
-		compress(b, dvid.Point3d{nx, ny, nz})
-	} else {
-		uncompress(b)
+	var nx, ny, nz int32
+	if n, err := fmt.Sscanf(*compression, "%d,%d,%d", &nx, &ny, &nz); n != 3 || err != nil {
+		fmt.Fprintf(os.Stderr, "Could not interpret block size, should be -compress=nx,ny,nz: %v\n", err)
+		os.Exit(1)
 	}
-}
-
-func compress(b []byte, bsize dvid.Point3d) {
+	bsize := dvid.Point3d{nx, ny, nz}
 	if len(b) != int(bsize.Prod()*8) {
 		fmt.Fprintf(os.Stderr, "Bad input.  Expected %d bytes, got %d bytes\n", bsize.Prod()*8, len(b))
 		os.Exit(1)
@@ -77,26 +79,39 @@ func compress(b []byte, bsize dvid.Point3d) {
 		fmt.Fprintf(os.Stderr, "unable to serialize Block: %v\n", err)
 		os.Exit(1)
 	}
-	writeOut(serialization)
+	zw := gzip.NewWriter(os.Stdout)
+	if _, err = zw.Write(serialization); err != nil {
+		fmt.Fprintf(os.Stderr, "unable to gzip serialization: %v\n", err)
+		os.Exit(1)
+	}
+	zw.Flush()
+	zw.Close()
 }
 
-func uncompress(b []byte) {
-	var block labels.Block
+func uncompress() {
+	fz, err := gzip.NewReader(os.Stdin)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "unable to use gzip for reading: %v\n", err)
+		os.Exit(1)
+	}
+	defer fz.Close()
 
-	if err := block.UnmarshalBinary(b); err != nil {
+	serialization, err := ioutil.ReadAll(fz)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "unable to uncompress gzip input: %v\n", err)
+		os.Exit(1)
+	}
+
+	var block labels.Block
+	if err := block.UnmarshalBinary(serialization); err != nil {
 		fmt.Fprintf(os.Stderr, "Error trying to deserialize supplied bytes: %v\n", err)
 		os.Exit(1)
 	}
 	uint64array, _ := block.MakeLabelVolume()
-	writeOut(uint64array)
-}
-
-func writeOut(b []byte) {
-	bytesIn := len(b)
+	bytesIn := len(uint64array)
 	var n, bytesOut int
-	var err error
 	for {
-		if n, err = os.Stdout.Write(b); err != nil {
+		if n, err = os.Stdout.Write(uint64array); err != nil {
 			fmt.Fprintf(os.Stderr, "Error trying to write bytes to stdout: %v\n", err)
 			os.Exit(1)
 		}
