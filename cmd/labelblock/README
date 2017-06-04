@@ -1,0 +1,10 @@
+Example use:
+
+% labelblock -compress=64,64,64 < raw-uint64-array > compressed-block
+
+% labelblock < compressed-block > raw-uint64-array
+
+This is not compiled by default using make.
+
+% cd /path/to/dvid/cmd/labeltestlabelblock
+% go build
