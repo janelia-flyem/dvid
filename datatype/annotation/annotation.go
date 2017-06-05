@@ -19,6 +19,7 @@ import (
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/labelblk"
 	"github.com/janelia-flyem/dvid/datatype/labelvol"
+	"github.com/janelia-flyem/dvid/datatype/roi"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
@@ -135,6 +136,14 @@ GET <api URL>/node/<UUID>/<data name>/tag/<tag>[?<options>]
 DELETE <api URL>/node/<UUID>/<data name>/element/<coord>
 
 	Deletes a point annotation given its location.
+
+GET <api URL>/node/<UUID>/<data name>/roi/<ROI specification>
+
+	Returns all point annotations within the ROI.  The ROI specification must be specified
+	using a string of format "roiname,uuid".  Currently, this request will only work
+	for ROIs that have same block size as the annotation data instance.
+
+	The returned point annotations will be an array of elements.
 
 GET <api URL>/node/<UUID>/<data name>/elements/<size>/<offset>
 
@@ -1465,6 +1474,52 @@ func (d *Data) GetRegionSynapses(ctx *datastore.VersionedCtx, ext *dvid.Extents3
 	return elements, nil
 }
 
+// GetROISynapses returns synapse elements for a given ROI.
+func (d *Data) GetROISynapses(ctx *datastore.VersionedCtx, roiSpec storage.FilterSpec) (Elements, error) {
+	roidata, roiV, roiFound, err := roi.DataByFilter(roiSpec)
+	if err != nil {
+		return nil, fmt.Errorf("ROI specification was not parsable (%s): %v\n", roiSpec, err)
+	}
+	if !roiFound {
+		return nil, fmt.Errorf("No ROI found that matches specification %q", roiSpec)
+	}
+	roiSpans, err := roidata.GetSpans(roiV)
+	if err != nil {
+		return nil, fmt.Errorf("Unable to get ROI spans for %q: %v\n", roiSpec, err)
+	}
+	if !d.blockSize().Equals(roidata.BlockSize) {
+		return nil, fmt.Errorf("/roi endpoint currently requires ROI %q to have same block size as annotation %q", roidata.DataName(), d.DataName())
+	}
+
+	store, err := d.GetOrderedKeyValueDB()
+	if err != nil {
+		return nil, err
+	}
+
+	d.RLock()
+	defer d.RUnlock()
+
+	var elements Elements
+	for _, span := range roiSpans {
+		begBlockCoord := dvid.ChunkPoint3d{span[2], span[1], span[0]}
+		endBlockCoord := dvid.ChunkPoint3d{span[3], span[1], span[0]}
+		begTKey := NewBlockTKey(begBlockCoord)
+		endTKey := NewBlockTKey(endBlockCoord)
+		err = store.ProcessRange(ctx, begTKey, endTKey, nil, func(chunk *storage.Chunk) error {
+			var blockElems Elements
+			if err := json.Unmarshal(chunk.V, &blockElems); err != nil {
+				return err
+			}
+			elements = append(elements, blockElems...)
+			return nil
+		})
+		if err != nil {
+			return nil, fmt.Errorf("error retrieving annotations from %s -> %s: %v\n", begBlockCoord, endBlockCoord, err)
+		}
+	}
+	return elements, nil
+}
+
 // StoreSynapses performs a synchronous store of synapses in JSON format, not
 // returning until the data and its denormalizations are complete.
 func (d *Data) StoreSynapses(ctx *datastore.VersionedCtx, r io.Reader) error {
@@ -2009,6 +2064,36 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			return
 		}
 		timedLog.Infof("HTTP %s: get synaptic elements for tag %s (%s)", r.Method, tag, r.URL)
+
+	case "roi":
+		switch action {
+		case "get":
+			// GET <api URL>/node/<UUID>/<data name>/roi/<ROI specification>
+			if len(parts) < 5 {
+				server.BadRequest(w, r, "Expect ROI specification to follow 'roi' in GET request")
+				return
+			}
+			elements, err := d.GetROISynapses(ctx, storage.FilterSpec("roi:"+parts[4]))
+			if err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+			w.Header().Set("Content-type", "application/json")
+			jsonBytes, err := json.Marshal(elements)
+			if err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+			if _, err := w.Write(jsonBytes); err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+			timedLog.Infof("HTTP %s: synapse elements in ROI (%s) (%s)", r.Method, parts[4], r.URL)
+
+		default:
+			server.BadRequest(w, r, "Only GET action is available on 'roi' endpoint.")
+			return
+		}
 
 	case "elements":
 		switch action {

@@ -149,6 +149,46 @@ var testData = Elements{
 	},
 }
 
+var expectedROI = Elements{
+	{
+		ElementNR{
+			Pos:  dvid.Point3d{15, 27, 35}, // Label 1
+			Kind: PreSyn,
+			Tags: []Tag{"Synapse1", "Zlt90"},
+			Prop: map[string]string{
+				"Im a T-Bar":         "yes",
+				"I'm not a PSD":      "sure",
+				"i'm really special": "",
+			},
+		},
+		[]Relationship{{Rel: PreSynTo, To: dvid.Point3d{20, 30, 40}}, {Rel: PreSynTo, To: dvid.Point3d{14, 25, 37}}, {Rel: PreSynTo, To: dvid.Point3d{33, 30, 31}}},
+	},
+	{
+		ElementNR{
+			Pos:  dvid.Point3d{20, 30, 40}, // Label 2
+			Kind: PostSyn,
+			Tags: []Tag{"Synapse1"},
+		},
+		[]Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
+	},
+	{
+		ElementNR{
+			Pos:  dvid.Point3d{14, 25, 37}, // Label 3
+			Kind: PostSyn,
+			Tags: []Tag{"Synapse1", "Zlt90"},
+		},
+		[]Relationship{{Rel: PostSynTo, To: dvid.Point3d{15, 27, 35}}},
+	},
+	{
+		ElementNR{
+			Pos:  dvid.Point3d{88, 47, 80}, // Label 4
+			Kind: PostSyn,
+			Tags: []Tag{"Synapse2"},
+		},
+		[]Relationship{{Rel: GroupedWith, To: dvid.Point3d{14, 25, 37}}, {Rel: PostSynTo, To: dvid.Point3d{127, 63, 99}}, {Rel: GroupedWith, To: dvid.Point3d{20, 30, 40}}},
+	},
+}
+
 var expectedLabel1 = Elements{
 	{
 		ElementNR{
@@ -638,6 +678,20 @@ func testResponseLabel(t *testing.T, expected interface{}, template string, args
 	}
 }
 
+type tuple [4]int32
+
+var labelsROI = []tuple{
+	tuple{1, 0, 0, 1}, tuple{2, 1, 2, 4},
+}
+
+func labelsJSON() string {
+	b, err := json.Marshal(labelsROI)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
 func TestRequests(t *testing.T) {
 	datastore.OpenTest()
 	defer datastore.CloseTest()
@@ -661,6 +715,15 @@ func TestRequests(t *testing.T) {
 	}
 	url1 := fmt.Sprintf("%snode/%s/%s/elements", server.WebAPIPath, uuid, data.DataName())
 	server.TestHTTP(t, "POST", url1, strings.NewReader(string(testJSON)))
+
+	// Check ROI endpoint
+	roiName := "myroi"
+	server.CreateTestInstance(t, uuid, "roi", roiName, dvid.Config{})
+	apiStr := fmt.Sprintf("%snode/%s/%s/roi", server.WebAPIPath, uuid, roiName)
+	server.TestHTTP(t, "POST", apiStr, bytes.NewBufferString(labelsJSON()))
+
+	roiSpec := fmt.Sprintf("myroi,%s", uuid)
+	testResponse(t, expectedROI, "%snode/%s/%s/roi/%s", server.WebAPIPath, uuid, data.DataName(), roiSpec)
 
 	// GET synapses back within superset bounding box and make sure all data is there.
 	testResponse(t, testData, "%snode/%s/%s/elements/1000_1000_1000/0_0_0", server.WebAPIPath, uuid, data.DataName())
