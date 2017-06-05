@@ -1299,16 +1299,7 @@ func TestMutableLabelblkPOST(t *testing.T) {
 	for _, label := range []uint64{1, 2, 3, 4} {
 		// Check full sparse volumes aren't retrievable anymore
 		reqStr := fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid, "bodies", label)
-		//server.TestBadHTTP(t, "GET", reqStr, nil)
-		encoding := server.TestHTTP(t, "GET", reqStr, nil)
-		spansEncoding := encoding[8:]
-		var spans dvid.Spans
-		if err := spans.UnmarshalBinary(spansEncoding); err != nil {
-			t.Fatalf("Error in decoding sparse volume: %v\n", err)
-		}
-		if len(spans) != 0 {
-			t.Errorf("Got %d spans from sparsevol %d GET request after mutate POST\n", len(spans), label)
-		}
+		server.TestBadHTTP(t, "GET", reqStr, nil)
 
 		// Make sure non-existent bodies return proper HEAD responses.
 		resp := server.TestHTTPResponse(t, "HEAD", reqStr, nil)

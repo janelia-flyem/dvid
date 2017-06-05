@@ -186,6 +186,7 @@ HEAD <api URL>/node/<UUID>/<data name>/sparsevol/<label>?<options>
 	Returns:
 		200 (OK) if a sparse volume of the given label exists within any optional bounds.
 		204 (No Content) if there is no sparse volume for the given label within any optional bounds.
+		404 (Not found) if the label has no sparse volume.
 
 	Note that for speed, the optional bounds are always expanded to the block-aligned containing
 	subvolume, i.e., it's as if exact=false for the corresponding GET.
@@ -1563,6 +1564,8 @@ func (d *Data) GetSparseVol(ctx *datastore.VersionedCtx, label uint64, bounds dv
 	encoding := buf.Bytes()
 
 	var f storage.ChunkFunc = func(chunk *storage.Chunk) error {
+		numBlocks++
+
 		// Make sure this block is within the optinonal bounding.
 		if bounds.Block.BoundedX() || bounds.Block.BoundedY() {
 			_, blockStr, err := DecodeTKey(chunk.K)
@@ -1591,7 +1594,6 @@ func (d *Data) GetSparseVol(ctx *datastore.VersionedCtx, label uint64, bounds dv
 		}
 
 		numRuns += uint32(len(rles) / 16)
-		numBlocks++
 		if int64(len(encoding))+int64(len(rles)) > server.MaxDataRequest {
 			return fmt.Errorf("Sparse volume read aborted because length exceeds %d bytes", server.MaxDataRequest)
 		}
@@ -1624,6 +1626,9 @@ func (d *Data) GetSparseVol(ctx *datastore.VersionedCtx, label uint64, bounds dv
 	binary.LittleEndian.PutUint32(encoding[8:12], numRuns)
 
 	dvid.Debugf("[%s] label %d: found %d blocks, %d runs\n", ctx, label, numBlocks, numRuns)
+	if numBlocks == 0 {
+		return nil, nil
+	}
 	return encoding, nil
 }
 
@@ -1682,6 +1687,10 @@ func (d *Data) GetSparseCoarseVol(ctx *datastore.VersionedCtx, label uint64) ([]
 			spans = append(spans, curSpans...)
 		}
 		dvid.Debugf("Returning coarse sparse volume for label %d, composed of labels %s\n", label, constituents)
+	}
+
+	if numBlocks == 0 {
+		return nil, nil
 	}
 
 	spansBytes, err := spans.MarshalBinary()
