@@ -3,12 +3,15 @@ package labels
 import (
 	"bytes"
 	"compress/gzip"
+	"fmt"
 	"io/ioutil"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/janelia-flyem/dvid/dvid"
+
+	"encoding/binary"
 
 	lz4 "github.com/janelia-flyem/go/golz4"
 )
@@ -21,6 +24,17 @@ type testData struct {
 
 func (d testData) String() string {
 	return filepath.Base(d.filename)
+}
+
+func solidTestData(label uint64) (td testData) {
+	numVoxels := 64 * 64 * 64
+	td.u = make([]uint64, numVoxels)
+	td.b = dvid.Uint64ToByte(td.u)
+	td.filename = fmt.Sprintf("solid volume of label %d", label)
+	for i := 0; i < numVoxels; i++ {
+		td.u[i] = label
+	}
+	return
 }
 
 var testFiles = []string{
@@ -208,6 +222,35 @@ func blockTest(t *testing.T, d testData) {
 }
 
 func TestBlockCompression(t *testing.T) {
+	solid2serialization := make([]byte, 24)
+	binary.LittleEndian.PutUint32(solid2serialization[0:4], 8)
+	binary.LittleEndian.PutUint32(solid2serialization[4:8], 8)
+	binary.LittleEndian.PutUint32(solid2serialization[8:12], 8)
+	binary.LittleEndian.PutUint32(solid2serialization[12:16], 1)
+	binary.LittleEndian.PutUint64(solid2serialization[16:24], 2)
+	var block Block
+	if err := block.UnmarshalBinary(solid2serialization); err != nil {
+		t.Fatal(err)
+	}
+
+	solid2, size := block.MakeLabelVolume()
+	if !size.Equals(dvid.Point3d{64, 64, 64}) {
+		t.Errorf("Expected solid2 block size of %s, got %s\n", "(64,64,64)", size)
+	}
+	if len(solid2) != 64*64*64*8 {
+		t.Errorf("Expected solid2 uint64 array to have 64x64x64x8 bytes, got %d bytes instead", len(solid2))
+	}
+	uint64array, err := dvid.ByteToUint64(solid2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 64*64*64; i++ {
+		if uint64array[i] != 2 {
+			t.Fatalf("Expected solid2 label volume to have all 2's, found %d at pos %d\n", uint64array[i], i)
+		}
+	}
+
+	blockTest(t, solidTestData(2))
 	for _, filename := range testFiles {
 		blockTest(t, loadTestData(t, filename))
 	}
@@ -218,11 +261,11 @@ func TestBlockCompression(t *testing.T) {
 		testvol[i] = uint64(i)
 	}
 
-	block, err := MakeBlock(dvid.Uint64ToByte(testvol), dvid.Point3d{64, 64, 64})
+	bptr, err := MakeBlock(dvid.Uint64ToByte(testvol), dvid.Point3d{64, 64, 64})
 	if err != nil {
 		t.Fatalf("error making block: %v\n", err)
 	}
-	testvol2, size := block.MakeLabelVolume()
+	testvol2, size := bptr.MakeLabelVolume()
 	if size[0] != 64 || size[1] != 64 || size[2] != 64 {
 		t.Fatalf("error in size after making block: %v\n", size)
 	}

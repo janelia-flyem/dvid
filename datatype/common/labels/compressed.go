@@ -583,7 +583,8 @@ func (b Block) MakeLabelVolume() (uint64array []byte, size dvid.Point3d) {
 	size = b.Size
 
 	numVoxels := b.Size.Prod()
-	outarray := make([]uint64, numVoxels)
+	uint64array = make([]byte, numVoxels*8)
+	outarray, _ := dvid.ByteToUint64(uint64array)
 
 	gx, gy, gz := b.Size[0]/SubBlockSize, b.Size[1]/SubBlockSize, b.Size[2]/SubBlockSize
 
@@ -595,7 +596,6 @@ func (b Block) MakeLabelVolume() (uint64array []byte, size dvid.Point3d) {
 		for i := int64(0); i < numVoxels; i++ {
 			outarray[i] = label
 		}
-		uint64array = dvid.Uint64ToByte(outarray)
 		return
 	}
 
@@ -658,7 +658,6 @@ func (b Block) MakeLabelVolume() (uint64array []byte, size dvid.Point3d) {
 			}
 		}
 	}
-	uint64array = dvid.Uint64ToByte(outarray)
 	return
 }
 
@@ -692,12 +691,19 @@ func (b *Block) setExportedVars() (err error) {
 
 	numLabels := binary.LittleEndian.Uint32(b.data[12:16])
 
-	pos := uint32(16)
 	b.Labels, err = dvid.ByteToUint64(b.data[16 : 16+numLabels*8])
 	if err != nil {
 		return
 	}
 
+	if len(b.Labels) <= 1 {
+		b.NumSBLabels = nil
+		b.SBIndices = nil
+		b.SBValues = nil
+		return
+	}
+
+	pos := uint32(16)
 	pos += numLabels * 8
 	nbytes := numSubBlocks * 2
 	b.NumSBLabels, err = dvid.ByteToUint16(b.data[pos : pos+nbytes])
