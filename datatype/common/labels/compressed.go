@@ -360,7 +360,7 @@ func MakeBlock(uint64array []byte, bsize dvid.Point3d) (*Block, error) {
 //      Nsb * Ns * uint32   label indices for sub-blocks where Ns = sum of Ns[i] over all sub-blocks.
 //                              For each sub-block i, we have Ns[i] label indices of lBits.
 //
-//		Nsb * values        sub-block indices for each voxel.
+//      Nsb * values        sub-block indices for each voxel.
 //                              Data encompasses 512 * ceil(log2(Ns[i])) bits, padded so no two
 //                              sub-blocks have indices in the same byte.
 //                              At most we use 9 bits per voxel for up to the 512 labels in sub-block.
