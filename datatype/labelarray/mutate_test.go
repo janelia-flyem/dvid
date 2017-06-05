@@ -867,14 +867,14 @@ func TestMergeSplitLabel(t *testing.T) {
 	testMerge := mergeJSON(`[4, 3]`)
 	testMerge.send(t, uuid, "labels")
 
-	// Make sure label 3 sparsevol has been removed.
-	reqStr := fmt.Sprintf("%snode/%s/labels/sparsevol/%d", server.WebAPIPath, uuid, 3)
-	server.TestBadHTTP(t, "GET", reqStr, nil)
-
 	// Make sure label changes are correct after completion
 	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
 		t.Fatalf("Error blocking on sync of labels: %v\n", err)
 	}
+
+	// Make sure label 3 sparsevol has been removed.
+	reqStr := fmt.Sprintf("%snode/%s/labels/sparsevol/%d", server.WebAPIPath, uuid, 3)
+	server.TestBadHTTP(t, "GET", reqStr, nil)
 
 	retrieved := newTestVolume(128, 128, 128)
 	retrieved.get(t, uuid, "labels")
