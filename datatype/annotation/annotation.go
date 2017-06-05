@@ -140,8 +140,9 @@ DELETE <api URL>/node/<UUID>/<data name>/element/<coord>
 GET <api URL>/node/<UUID>/<data name>/roi/<ROI specification>
 
 	Returns all point annotations within the ROI.  The ROI specification must be specified
-	using a string of format "roiname,uuid".  Currently, this request will only work
-	for ROIs that have same block size as the annotation data instance.
+	using a string of format "roiname,uuid".  If just "roiname" is specified without
+	a full UUID string, the current UUID of the request will be used.  Currently, this 
+	request will only work for ROIs that have same block size as the annotation data instance.
 
 	The returned point annotations will be an array of elements.
 
@@ -2073,7 +2074,19 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 				server.BadRequest(w, r, "Expect ROI specification to follow 'roi' in GET request")
 				return
 			}
-			elements, err := d.GetROISynapses(ctx, storage.FilterSpec("roi:"+parts[4]))
+			roiParts := strings.Split(parts[4], ",")
+			var roiSpec string
+			roiSpec = "roi:"
+			switch len(roiParts) {
+			case 1:
+				roiSpec += roiParts[0] + "," + string(uuid)
+			case 2:
+				roiSpec += parts[4]
+			default:
+				server.BadRequest(w, r, "Bad ROI specification: %q", parts[4])
+				return
+			}
+			elements, err := d.GetROISynapses(ctx, storage.FilterSpec(roiSpec))
 			if err != nil {
 				server.BadRequest(w, r, err)
 				return

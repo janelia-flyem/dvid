@@ -724,6 +724,7 @@ func TestRequests(t *testing.T) {
 
 	roiSpec := fmt.Sprintf("myroi,%s", uuid)
 	testResponse(t, expectedROI, "%snode/%s/%s/roi/%s", server.WebAPIPath, uuid, data.DataName(), roiSpec)
+	testResponse(t, expectedROI, "%snode/%s/%s/roi/%s", server.WebAPIPath, uuid, data.DataName(), "myroi")
 
 	// GET synapses back within superset bounding box and make sure all data is there.
 	testResponse(t, testData, "%snode/%s/%s/elements/1000_1000_1000/0_0_0", server.WebAPIPath, uuid, data.DataName())
