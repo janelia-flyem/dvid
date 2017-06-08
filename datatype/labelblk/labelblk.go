@@ -251,7 +251,7 @@ GET  <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?qu
 
     roi           Name of roi data instance used to mask the requested data.
     compression   Allows retrieval or submission of 3d data in "lz4","gzip", "google"
-		    (neuroglancer compression format), "googlegzip" (google + gzip)
+		            (neuroglancer compression format), "googlegzip" (google + gzip)
                     compressed format.  The 2d data will ignore this and use
                     the image-based codec.
     throttle      Only works for 3d data requests.  If "true", makes sure only N compute-intense operation 

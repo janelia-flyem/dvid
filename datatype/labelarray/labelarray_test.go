@@ -9,6 +9,8 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"os"
+	"path/filepath"
 	"reflect"
 	"sync"
 	"testing"
@@ -849,6 +851,167 @@ func TestMultiscale(t *testing.T) {
 	}
 }
 */
+
+func readGzipFile(filename string) ([]byte, error) {
+	f, err := os.Open(filename)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	fz, err := gzip.NewReader(f)
+	if err != nil {
+		return nil, err
+	}
+	defer fz.Close()
+
+	data, err := ioutil.ReadAll(fz)
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
+type testData struct {
+	u        []uint64
+	b        *labels.Block
+	filename string
+}
+
+func (d testData) String() string {
+	return filepath.Base(d.filename)
+}
+
+func solidTestData(label uint64) (td testData) {
+	td.b = labels.MakeSolidBlock(label, dvid.Point3d{64, 64, 64})
+	numVoxels := 64 * 64 * 64
+	td.u = make([]uint64, numVoxels)
+	td.filename = fmt.Sprintf("solid volume of label %d", label)
+	for i := 0; i < numVoxels; i++ {
+		td.u[i] = label
+	}
+	return
+}
+
+var testFiles = []string{
+	"../../test_data/fib19-64x64x64-sample1.dat.gz",
+	"../../test_data/fib19-64x64x64-sample2.dat.gz",
+	"../../test_data/cx-64x64x64-sample1.dat.gz",
+	"../../test_data/cx-64x64x64-sample2.dat.gz",
+}
+
+func loadTestData(t *testing.T, filename string) (td testData) {
+	uint64array, err := readGzipFile(filename)
+	if err != nil {
+		t.Fatalf("unable to open test data file %q: %v\n", filename, err)
+	}
+	td.u, err = dvid.ByteToUint64(uint64array)
+	if err != nil {
+		t.Fatalf("unable to create alias []uint64 for data file %q: %v\n", filename, err)
+	}
+	td.b, err = labels.MakeBlock(uint64array, dvid.Point3d{64, 64, 64})
+	if err != nil {
+		t.Fatalf("unable to convert data from file %q into block: %v\n", filename, err)
+	}
+	td.filename = filename
+	return
+}
+
+func writeInt32(t *testing.T, buf *bytes.Buffer, i int32) {
+	b := make([]byte, 4)
+	binary.LittleEndian.PutUint32(b, uint32(i))
+	n, err := buf.Write(b)
+	if n != 4 || err != nil {
+		t.Fatalf("couldn't write value %d (%d bytes) to buffer: %v\n", i, n, err)
+	}
+}
+
+func TestPostBlocks(t *testing.T) {
+	datastore.OpenTest()
+	defer datastore.CloseTest()
+
+	uuid, _ := datastore.NewTestRepo()
+	if len(uuid) < 5 {
+		t.Fatalf("Bad root UUID for new repo: %s\n", uuid)
+	}
+	server.CreateTestInstance(t, uuid, "labelarray", "labels", dvid.Config{})
+
+	blockCoords := []dvid.Point3d{
+		{1, 2, 3},
+		{2, 2, 3},
+		{1, 3, 4},
+		{2, 3, 4},
+	}
+	var data [4]testData
+	var buf bytes.Buffer
+	for i, fname := range testFiles {
+		writeInt32(t, &buf, blockCoords[i][0])
+		writeInt32(t, &buf, blockCoords[i][1])
+		writeInt32(t, &buf, blockCoords[i][2])
+		data[i] = loadTestData(t, fname)
+		serialization, err := data[i].b.MarshalBinary()
+		if err != nil {
+			t.Fatalf("unable to MarshalBinary block: %v\n", err)
+		}
+		var gzipOut bytes.Buffer
+		zw := gzip.NewWriter(&gzipOut)
+		if _, err = zw.Write(serialization); err != nil {
+			t.Fatal(err)
+		}
+		zw.Flush()
+		zw.Close()
+		gzipped := gzipOut.Bytes()
+		writeInt32(t, &buf, int32(len(gzipped)))
+		fmt.Printf("Wrote %d gzipped block bytes (down from %d bytes) for block %s\n", len(gzipped), len(serialization), blockCoords[i])
+		n, err := buf.Write(gzipped)
+		if err != nil {
+			t.Fatalf("unable to write gzip block: %v\n", err)
+		}
+		if n != len(gzipped) {
+			t.Fatalf("unable to write %d bytes to buffer, only wrote %d bytes\n", len(gzipped), n)
+		}
+	}
+
+	apiStr := fmt.Sprintf("%snode/%s/labels/blocks", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", apiStr, &buf)
+
+	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
+		t.Fatalf("Error blocking on sync of labels: %v\n", err)
+	}
+
+	vol := labelVol{
+		size:      dvid.Point3d{2, 2, 2}, // in blocks
+		nx:        128,
+		ny:        128,
+		nz:        128,
+		blockSize: dvid.Point3d{64, 64, 64},
+		offset:    dvid.Point3d{64, 128, 192},
+		name:      "labels",
+	}
+	got := vol.getLabelVolume(t, uuid, "", "")
+	gotLabels, err := dvid.ByteToUint64(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 4; i++ {
+		x0 := (blockCoords[i][0] - 1) * 64
+		y0 := (blockCoords[i][1] - 2) * 64
+		z0 := (blockCoords[i][2] - 3) * 64
+
+		var x, y, z int32
+		for z = 0; z < 64; z++ {
+			for y = 0; y < 64; y++ {
+				for x = 0; x < 64; x++ {
+					di := z*64*64 + y*64 + x
+					gi := (z+z0)*128*128 + (y+y0)*128 + x + x0
+					if data[i].u[di] != gotLabels[gi] {
+						t.Fatalf("Error in block %s dvid coord (%d,%d,%d): expected %d, got %d\n", blockCoords[i], x+x0, y+y0, z+z0, data[i].u[di], gotLabels[gi])
+					}
+				}
+			}
+		}
+	}
+}
 
 func testLabels(t *testing.T, labelsIndexed bool) {
 	datastore.OpenTest()

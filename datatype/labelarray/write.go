@@ -223,6 +223,7 @@ func (d *Data) putChunk(op *putOperation, wg *sync.WaitGroup, putbuffer storage.
 			dvid.Errorf("Unable to notify subscribers of event %s in %s\n", event, d.DataName())
 		}
 	}
+
 	// put data -- use buffer if available
 	tk := NewBlockTKeyByCoord(bcoord)
 	if putbuffer != nil {

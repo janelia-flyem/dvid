@@ -185,27 +185,12 @@ func DecodeSerializationFormat(s SerializationFormat) (CompressionFormat, Checks
 }
 
 // SerializeData serializes a slice of bytes using optional compression, checksum.
-// Checksum will be ignored if the underlying compression already employs
-// checksums, e.g., Gzip.
+// Checksum will be ignored if the underlying compression already employs checksums, e.g., Gzip.
 func SerializeData(data []byte, compress Compression, checksum Checksum) ([]byte, error) {
 	if data == nil || len(data) == 0 {
 		return []byte{}, nil
 	}
 
-	var buffer bytes.Buffer
-
-	// Don't duplicate checksum if using Gzip, which already has checksum & length checks.
-	if compress.format == Gzip {
-		checksum = NoChecksum
-	}
-
-	// Store the requested compression and checksum
-	format := EncodeSerializationFormat(compress, checksum)
-	if err := binary.Write(&buffer, binary.LittleEndian, format); err != nil {
-		return nil, err
-	}
-
-	// Handle compression if requested
 	var err error
 	var byteData []byte
 	switch compress.format {
@@ -257,24 +242,43 @@ func SerializeData(data []byte, compress Compression, checksum Checksum) ([]byte
 		return nil, fmt.Errorf("Illegal compression (%s) during serialization", compress)
 	}
 
+	return SerializePrecompressedData(byteData, compress, checksum)
+}
+
+// SerializePrecompressedData serializes a slice of bytes that have already been compressed
+// and adds DVID serialization for discerning optional compression and checksum.
+// Checksum will be ignored if the underlying compression already employs checksums, e.g., Gzip.
+func SerializePrecompressedData(data []byte, compress Compression, checksum Checksum) ([]byte, error) {
+	if data == nil || len(data) == 0 {
+		return []byte{}, nil
+	}
+	buf := make([]byte, 5+len(data))
+
+	// Don't duplicate checksum if using Gzip, which already has checksum & length checks.
+	if compress.format == Gzip {
+		checksum = NoChecksum
+	}
+
+	// Store the requested compression and checksum
+	buf[0] = byte(EncodeSerializationFormat(compress, checksum))
+
 	// Handle checksum if requested
+	added := 1
 	switch checksum {
 	case NoChecksum:
 	case CRC32:
-		crcChecksum := crc32.ChecksumIEEE(byteData)
-		if err := binary.Write(&buffer, binary.LittleEndian, crcChecksum); err != nil {
-			return nil, err
-		}
+		crcChecksum := crc32.ChecksumIEEE(data)
+		binary.LittleEndian.PutUint32(buf[1:5], crcChecksum)
+		added += 4
 	default:
 		return nil, fmt.Errorf("Illegal checksum (%s) in serialize.SerializeData()", checksum)
 	}
 
-	// Note the actual data is written last, after any checksum so we don't have to
-	// worry about length when deserializing.
-	if _, err := buffer.Write(byteData); err != nil {
-		return nil, err
+	copy(buf[added:], data)
+	if added == 1 {
+		buf = buf[:1+len(data)]
 	}
-	return buffer.Bytes(), nil
+	return buf, nil
 }
 
 // Serialize an arbitrary Go object using Gob encoding and optional compression, checksum.

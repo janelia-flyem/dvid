@@ -10,34 +10,6 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 )
 
-// returns the # of bits necessary to hold an index for n values.
-// 0 and 1 should return 0.
-func bitsFor(n uint16) (bits uint32) {
-	if n < 2 {
-		return 0
-	}
-	n--
-	for {
-		if n > 0 {
-			bits++
-		} else {
-			return
-		}
-		n >>= 1
-	}
-}
-
-// returns the uint byte size to hold an index.  Can be 1, 2, or 4 bytes.
-func indexBytes(n uint32) (bytes uint32) {
-	if n <= 256 {
-		return 1
-	}
-	if n <= 65536 {
-		return 2
-	}
-	return 4
-}
-
 const SubBlockSize = 8
 const DefaultSubBlocksPerBlock = 8
 const DefaultBlockSize = DefaultSubBlocksPerBlock * SubBlockSize
@@ -575,6 +547,40 @@ func (b *Block) FillUninitialized(src *Block) error {
 	return nil
 }
 
+// Value returns the label for a voxel using its 3d location within block.  If the given
+// location is outside the block extent, label 0 is returned.  Note that this function
+// is inefficient for multi-voxel value retrieval.
+func (b *Block) Value(pos dvid.Point3d) uint64 {
+	if pos[0] < 0 || pos[0] >= b.Size[0] || pos[1] < 0 || pos[1] >= b.Size[1] || pos[2] < 0 || pos[2] >= b.Size[2] {
+		return 0
+	}
+	sbz := pos[2] / SubBlockSize
+	sby := pos[1] / SubBlockSize
+	sbx := pos[0] / SubBlockSize
+	gx, gy := b.Size[0]/SubBlockSize, b.Size[1]/SubBlockSize
+	sbNum := sbz*gx*gy + sby*gx + sbx
+	var bitPos uint32
+	var idxPos int
+	for sb := int32(0); sb < sbNum; sb++ {
+		n := b.NumSBLabels[sb]
+		idxPos += int(n)
+		if n > 1 {
+			bits := bitsFor(n)
+			bitPos += SubBlockSize * SubBlockSize * SubBlockSize * bits
+			if bitPos%8 != 0 {
+				bitPos += 8 - (bitPos % 8)
+			}
+		}
+	}
+	n := b.NumSBLabels[sbNum]
+	bits := bitsFor(n)
+	x, y, z := pos[0]%SubBlockSize, pos[1]%SubBlockSize, pos[2]%SubBlockSize
+	bitPos += uint32(z*SubBlockSize*SubBlockSize+y*SubBlockSize+x) * bits
+	val := getPackedValue(b.SBValues, bitPos, bits)
+	index := b.SBIndices[idxPos+int(val)]
+	return b.Labels[index]
+}
+
 // MakeLabelVolume returns a byte slice with packed little-endian uint64 labels in ZYX order,
 // i.e., a uint64 for each voxel where consecutive values are in the (x,y,z) order:
 // (0,0,0), (1,0,0), (2,0,0) ... (0,1,0)
@@ -602,15 +608,15 @@ func (b Block) MakeLabelVolume() (uint64array []byte, size dvid.Point3d) {
 	subBlockNumVoxels := SubBlockSize * SubBlockSize * SubBlockSize
 	sbLabels := make([]uint64, subBlockNumVoxels) // preallocate max # of labels for sub-block
 
-	var indexPos uint32
-	var bitpos, subBlockNum int
+	var indexPos, bitpos uint32
+	var subBlockNum int
 	var sx, sy, sz int32
 	for sz = 0; sz < gz; sz++ {
 		for sy = 0; sy < gy; sy++ {
 			for sx = 0; sx < gx; sx++ {
 
 				numSBLabels := b.NumSBLabels[subBlockNum]
-				bits := int(bitsFor(numSBLabels))
+				bits := bitsFor(numSBLabels)
 
 				for i := uint16(0); i < numSBLabels; i++ {
 					sbLabels[i] = b.Labels[b.SBIndices[indexPos]]
@@ -629,19 +635,7 @@ func (b Block) MakeLabelVolume() (uint64array []byte, size dvid.Point3d) {
 							case 1:
 								outarray[lblpos] = sbLabels[0]
 							default:
-								var index uint16
-								bithead := bitpos % 8
-								bytepos := bitpos >> 3
-								if bithead+bits <= 8 {
-									// index totally within this byte
-									rightshift := uint(8 - bithead - bits)
-									index = uint16((b.SBValues[bytepos] & leftBitMask[bithead]) >> rightshift)
-								} else {
-									// index spans byte boundaries
-									index = uint16(b.SBValues[bytepos]&leftBitMask[bithead]) << 8
-									index |= uint16(b.SBValues[bytepos+1])
-									index >>= uint(16 - bithead - bits)
-								}
+								index := getPackedValue(b.SBValues, bitpos, bits)
 								outarray[lblpos] = sbLabels[index]
 								bitpos += bits
 							}
@@ -982,19 +976,7 @@ func (pb *PositionedBlock) writeRLEs(indices map[uint32]struct{}, op *OutputOp, 
 					}
 				}
 				if stepByVoxel {
-					var index uint16
-					bithead := bitpos % 8
-					bytepos := bitpos >> 3
-					if bithead+bits <= 8 {
-						// index totally within this byte
-						rightshift := uint(8 - bithead - bits)
-						index = uint16((pb.SBValues[bytepos] & leftBitMask[bithead]) >> rightshift)
-					} else {
-						// index spans byte boundaries
-						index = uint16(pb.SBValues[bytepos]&leftBitMask[bithead]) << 8
-						index |= uint16(pb.SBValues[bytepos+1])
-						index >>= uint(16 - bithead - bits)
-					}
+					index := getPackedValue(pb.SBValues, bitpos, bits)
 					if multiForeground {
 						_, foreground = indices[curIndices[index]]
 					} else {
@@ -1135,15 +1117,15 @@ func (pb *PositionedBlock) WriteBinaryBlock(indices map[uint32]struct{}, op *Out
 
 	data := make([]byte, 65) // sub-block data will at most be status byte + 64 bytes (8x8x8 bits).
 
-	var indexPos uint32
-	var bitpos, subBlockNum int
+	var indexPos, bitpos uint32
+	var subBlockNum int
 	var sx, sy, sz int32
 	for sz = 0; sz < gz; sz++ {
 		for sy = 0; sy < gy; sy++ {
 			for sx = 0; sx < gx; sx++ {
 
 				numSBLabels := pb.NumSBLabels[subBlockNum]
-				bits := int(bitsFor(numSBLabels))
+				bits := bitsFor(numSBLabels)
 
 				for i := uint16(0); i < numSBLabels; i++ {
 					curIndices[i] = pb.SBIndices[indexPos]
@@ -1186,24 +1168,11 @@ func (pb *PositionedBlock) WriteBinaryBlock(indices map[uint32]struct{}, op *Out
 				for z = 0; z < SubBlockSize; z++ {
 					for y = 0; y < SubBlockSize; y++ {
 						for x = 0; x < SubBlockSize; x++ {
-							// read full label sub-block data
-							var index uint16
-							bithead := bitpos % 8
-							bytepos := bitpos >> 3
-							if bithead+bits <= 8 {
-								// index totally within this byte
-								rightshift := uint(8 - bithead - bits)
-								index = uint16((pb.SBValues[bytepos] & leftBitMask[bithead]) >> rightshift)
-							} else {
-								// index spans byte boundaries
-								index = uint16(pb.SBValues[bytepos]&leftBitMask[bithead]) << 8
-								index |= uint16(pb.SBValues[bytepos+1])
-								index >>= uint(16 - bithead - bits)
-							}
+							index := getPackedValue(pb.SBValues, bitpos, bits)
 
 							// write binary sub-block data
-							bithead = outbitpos % 8
-							bytepos = outbitpos >> 3
+							bithead := outbitpos % 8
+							bytepos := outbitpos >> 3
 							var value byte
 							if multiForeground {
 								_, foreground = indices[curIndices[index]]
@@ -1478,4 +1447,51 @@ func (s *subvolumeData) encodeBlock() (*Block, error) {
 	copy(b.SBValues, svalues[:subBlockValueBytes])
 
 	return b, nil
+}
+
+// returns the # of bits necessary to hold an index for n values.
+// 0 and 1 should return 0.
+func bitsFor(n uint16) (bits uint32) {
+	if n < 2 {
+		return 0
+	}
+	n--
+	for {
+		if n > 0 {
+			bits++
+		} else {
+			return
+		}
+		n >>= 1
+	}
+}
+
+// returns the uint byte size to hold an index.  Can be 1, 2, or 4 bytes.
+func indexBytes(n uint32) (bytes uint32) {
+	if n <= 256 {
+		return 1
+	}
+	if n <= 65536 {
+		return 2
+	}
+	return 4
+}
+
+// getPackedValue returns a 9 bit value from a packed array of values of "bits" bits
+// starting from "bithead" bits into the given byte slice.  Values cannot straddle
+// more than 2 bytes.
+func getPackedValue(b []byte, bitHead, bits uint32) (index uint16) {
+	bytePos := bitHead >> 3
+	bitPos := bitHead % 8
+	if bitPos+bits <= 8 {
+		// index totally within this byte
+		rightshift := uint(8 - bitPos - bits)
+		index = uint16((b[bytePos] & leftBitMask[bitPos]) >> rightshift)
+	} else {
+		// index spans byte boundaries
+		index = uint16(b[bytePos]&leftBitMask[bitPos]) << 8
+		index |= uint16(b[bytePos+1])
+		index >>= uint(16 - bitPos - bits)
+	}
+	return
 }
