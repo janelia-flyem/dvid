@@ -16,10 +16,10 @@ const (
 	// keyUnknown should never be used and is a check for corrupt or incorrectly set keys
 	keyUnknown storage.TKeyClass = 0
 
-	// Since we are reusing imageblk read code, need to use the same key.
-	keyLabelBlock = 23
+	// key = scale + block coord
+	keyLabelBlock = 186
 
-	// key = label, value = labels.LabelMeta
+	// key = label. value = labels.LabelMeta
 	keyLabelIndex = 187
 
 	// Used to store max label on commit for each version of the instance.
@@ -36,28 +36,36 @@ var (
 
 // NewBlockTKey returns a TKey for a label block, which is a slice suitable for
 // lexicographical ordering on zyx coordinates.
-func NewBlockTKey(idx dvid.Index) storage.TKey {
+func NewBlockTKey(scale uint8, idx dvid.Index) storage.TKey {
 	izyx := idx.(*dvid.IndexZYX)
-	return NewBlockTKeyByCoord(izyx.ToIZYXString())
+	return NewBlockTKeyByCoord(scale, izyx.ToIZYXString())
 }
 
 // NewBlockTKeyByCoord returns a TKey for a block coord in string format.
-func NewBlockTKeyByCoord(izyx dvid.IZYXString) storage.TKey {
-	return storage.NewTKey(keyLabelBlock, []byte(izyx))
+func NewBlockTKeyByCoord(scale uint8, izyx dvid.IZYXString) storage.TKey {
+	buf := make([]byte, 13)
+	buf[0] = byte(scale)
+	copy(buf[1:], []byte(izyx))
+	return storage.NewTKey(keyLabelBlock, buf)
 }
 
 // DecodeBlockTKey returns a spatial index from a label block key.
 // TODO: Extend this when necessary to allow any form of spatial indexing like CZYX.
-func DecodeBlockTKey(tk storage.TKey) (*dvid.IndexZYX, error) {
+func DecodeBlockTKey(tk storage.TKey) (scale uint8, idx *dvid.IndexZYX, err error) {
 	ibytes, err := tk.ClassBytes(keyLabelBlock)
 	if err != nil {
-		return nil, err
+		return 0, nil, err
 	}
-	var zyx dvid.IndexZYX
-	if err = zyx.IndexFromBytes(ibytes); err != nil {
-		return nil, fmt.Errorf("Cannot recover ZYX index from image block key %v: %v\n", tk, err)
+	if len(ibytes) != 13 {
+		err = fmt.Errorf("bad labelarray block key of %d bytes: %v", len(ibytes), ibytes)
+		return
 	}
-	return &zyx, nil
+	scale = uint8(ibytes[0])
+	idx = new(dvid.IndexZYX)
+	if err = idx.IndexFromBytes(ibytes[1:]); err != nil {
+		err = fmt.Errorf("Cannot recover ZYX index from image block key %v: %v\n", tk, err)
+	}
+	return
 }
 
 // NewLabelIndexTKey returns a TKey corresponding to a label.  Value will hold block coords that contain the label.

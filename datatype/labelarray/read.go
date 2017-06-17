@@ -19,7 +19,7 @@ import (
 // for the data corresponding to the given Block.
 func (v *Labels) ComputeTransform(tkey storage.TKey, blockSize dvid.Point) (blockBeg, dataBeg, dataEnd dvid.Point, err error) {
 	var ptIndex *dvid.IndexZYX
-	ptIndex, err = DecodeBlockTKey(tkey)
+	_, ptIndex, err = DecodeBlockTKey(tkey)
 	if err != nil {
 		return
 	}
@@ -52,7 +52,8 @@ func (d *Data) GetImage(v dvid.VersionID, vox *Labels, roiname dvid.InstanceName
 	if err != nil {
 		return nil, err
 	}
-	if err := d.GetLabels(v, vox, r); err != nil {
+	var scale uint8
+	if err := d.GetLabels(v, scale, vox, r); err != nil {
 		return nil, err
 	}
 	return vox.GetImage2d()
@@ -64,7 +65,8 @@ func (d *Data) GetVolume(v dvid.VersionID, vox *Labels, roiname dvid.InstanceNam
 	if err != nil {
 		return nil, err
 	}
-	if err := d.GetLabels(v, vox, r); err != nil {
+	var scale uint8
+	if err := d.GetLabels(v, scale, vox, r); err != nil {
 		return nil, err
 	}
 	return vox.Data(), nil
@@ -77,7 +79,7 @@ type getOperation struct {
 }
 
 // GetLabels copies labels from the storage engine to Labels, a requested subvolume or 2d image.
-func (d *Data) GetLabels(v dvid.VersionID, vox *Labels, r *imageblk.ROI) error {
+func (d *Data) GetLabels(v dvid.VersionID, scale uint8, vox *Labels, r *imageblk.ROI) error {
 	store, err := d.GetOrderedKeyValueDB()
 	if err != nil {
 		return fmt.Errorf("Data type imageblk had error initializing store: %v\n", err)
@@ -106,8 +108,8 @@ func (d *Data) GetLabels(v dvid.VersionID, vox *Labels, r *imageblk.ROI) error {
 		if err != nil {
 			return err
 		}
-		begTKey := NewBlockTKey(indexBeg)
-		endTKey := NewBlockTKey(indexEnd)
+		begTKey := NewBlockTKey(scale, indexBeg)
+		endTKey := NewBlockTKey(scale, indexEnd)
 
 		// Get set of blocks in ROI if ROI provided
 		var chunkOp *storage.ChunkOp
@@ -140,8 +142,7 @@ func (d *Data) GetLabels(v dvid.VersionID, vox *Labels, r *imageblk.ROI) error {
 			}
 		} else {
 			// Extract block list
-			tkeys := make([]storage.TKey, 0)
-
+			var tkeys []storage.TKey
 			ptBeg := indexBeg.Duplicate().(dvid.ChunkIndexer)
 			ptEnd := indexEnd.Duplicate().(dvid.ChunkIndexer)
 			begX := ptBeg.Value(0)
@@ -150,7 +151,7 @@ func (d *Data) GetLabels(v dvid.VersionID, vox *Labels, r *imageblk.ROI) error {
 			c := dvid.ChunkPoint3d{begX, ptBeg.Value(1), ptBeg.Value(2)}
 			for x := begX; x <= endX; x++ {
 				c[0] = x
-				tk := NewBlockTKeyByCoord(c.ToIZYXString())
+				tk := NewBlockTKeyByCoord(scale, c.ToIZYXString())
 				tkeys = append(tkeys, tk)
 			}
 
@@ -178,7 +179,7 @@ func (d *Data) GetLabels(v dvid.VersionID, vox *Labels, r *imageblk.ROI) error {
 }
 
 // GetBlocks returns a slice of bytes corresponding to all the blocks along a span in X
-func (d *Data) GetBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int) ([]byte, error) {
+func (d *Data) GetBlocks(v dvid.VersionID, scale uint8, start dvid.ChunkPoint3d, span int) ([]byte, error) {
 	store, err := d.GetOrderedKeyValueDB()
 	if err != nil {
 		return nil, fmt.Errorf("Data type imageblk had error initializing store: %v\n", err)
@@ -188,8 +189,8 @@ func (d *Data) GetBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int) ([
 	end := start
 	end[0] += int32(span - 1)
 	indexEnd := dvid.IndexZYX(end)
-	begTKey := NewBlockTKey(&indexBeg)
-	endTKey := NewBlockTKey(&indexEnd)
+	begTKey := NewBlockTKey(scale, &indexBeg)
+	endTKey := NewBlockTKey(scale, &indexEnd)
 
 	ctx := datastore.NewVersionedCtx(d, v)
 
@@ -277,7 +278,7 @@ func (d *Data) readChunk(chunk *storage.Chunk) {
 
 	// If there's an ROI, if outside ROI, use blank buffer.
 	var zeroOut bool
-	indexZYX, err := DecodeBlockTKey(chunk.K)
+	_, indexZYX, err := DecodeBlockTKey(chunk.K)
 	if err != nil {
 		dvid.Errorf("Error processing voxel block: %s\n", err)
 		return

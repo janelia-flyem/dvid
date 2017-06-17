@@ -14,6 +14,7 @@ import (
 
 type putOperation struct {
 	data     []byte // the full label volume sent to PUT
+	scale    uint8
 	subvol   *dvid.Subvolume
 	indexZYX dvid.IndexZYX
 	version  dvid.VersionID
@@ -161,10 +162,11 @@ func (d *Data) putChunk(op *putOperation, wg *sync.WaitGroup, putbuffer storage.
 	ctx := datastore.NewVersionedCtx(d, op.version)
 
 	// If we are mutating, get the previous label Block
+	var scale uint8
 	var oldBlock *labels.PositionedBlock
 	if op.mutate {
 		var err error
-		if oldBlock, err = d.getLabelBlock(ctx, bcoord); err != nil {
+		if oldBlock, err = d.getLabelBlock(ctx, scale, bcoord); err != nil {
 			dvid.Errorf("Unable to load previous block in %q, key %v: %v\n", d.DataName(), bcoord, err)
 			return
 		}
@@ -225,7 +227,7 @@ func (d *Data) putChunk(op *putOperation, wg *sync.WaitGroup, putbuffer storage.
 	}
 
 	// put data -- use buffer if available
-	tk := NewBlockTKeyByCoord(bcoord)
+	tk := NewBlockTKeyByCoord(op.scale, bcoord)
 	if putbuffer != nil {
 		ready := make(chan error, 1)
 		go callback(ready)
@@ -276,7 +278,7 @@ func (d *Data) writeXYImage(v dvid.VersionID, vox *imageblk.Voxels, b storage.TK
 			for x := begX; x <= endX; x++ {
 				c[0] = x
 				curIndex := dvid.IndexZYX(c)
-				b[blockNum].K = NewBlockTKey(&curIndex)
+				b[blockNum].K = NewBlockTKey(0, &curIndex)
 
 				// Write this slice data into the block.
 				vox.WriteBlock(&(b[blockNum]), blockSize)
@@ -338,7 +340,7 @@ func (d *Data) writeBlocks(v dvid.VersionID, b storage.TKeyValues, wg1, wg2 *syn
 			postCompress += len(serialization)
 			batch.Put(block.K, serialization)
 
-			indexZYX, err := DecodeBlockTKey(block.K)
+			_, indexZYX, err := DecodeBlockTKey(block.K)
 			if err != nil {
 				dvid.Errorf("Unable to recover index from block key: %v\n", block.K)
 				return

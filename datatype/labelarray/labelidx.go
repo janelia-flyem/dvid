@@ -671,7 +671,7 @@ func (d *Data) PutLabelMeta(ctx *datastore.VersionedCtx, label uint64, meta *Met
 
 // WriteBinaryBlocks does a streaming write of an encoded sparse volume given a label.
 // It returns a bool whether the label was found in the given bounds and any error.
-func (d *Data) WriteBinaryBlocks(ctx *datastore.VersionedCtx, label uint64, bounds dvid.Bounds, compression string, w io.Writer) (bool, error) {
+func (d *Data) WriteBinaryBlocks(ctx *datastore.VersionedCtx, label uint64, scale uint8, bounds dvid.Bounds, compression string, w io.Writer) (bool, error) {
 	meta, lbls, err := d.GetMappedLabelMeta(ctx, label, bounds)
 	if err != nil {
 		return false, err
@@ -692,7 +692,7 @@ func (d *Data) WriteBinaryBlocks(ctx *datastore.VersionedCtx, label uint64, boun
 	op := labels.NewOutputOp(w)
 	go labels.WriteBinaryBlocks(lbls, op, bounds)
 	for _, izyx := range indices {
-		tk := NewBlockTKeyByCoord(izyx)
+		tk := NewBlockTKeyByCoord(scale, izyx)
 		data, err := store.Get(ctx, tk)
 		if err != nil {
 			return false, err
@@ -721,7 +721,7 @@ func (d *Data) WriteBinaryBlocks(ctx *datastore.VersionedCtx, label uint64, boun
 
 // WriteStreamingRLE does a streaming write of an encoded sparse volume given a label.
 // It returns a bool whether the label was found in the given bounds and any error.
-func (d *Data) WriteStreamingRLE(ctx *datastore.VersionedCtx, label uint64, bounds dvid.Bounds, compression string, w io.Writer) (bool, error) {
+func (d *Data) WriteStreamingRLE(ctx *datastore.VersionedCtx, label uint64, scale uint8, bounds dvid.Bounds, compression string, w io.Writer) (bool, error) {
 	meta, lbls, err := d.GetMappedLabelMeta(ctx, label, bounds)
 	if err != nil {
 		return false, err
@@ -742,7 +742,7 @@ func (d *Data) WriteStreamingRLE(ctx *datastore.VersionedCtx, label uint64, boun
 	op := labels.NewOutputOp(w)
 	go labels.WriteRLEs(lbls, op, bounds)
 	for _, izyx := range indices {
-		tk := NewBlockTKeyByCoord(izyx)
+		tk := NewBlockTKeyByCoord(scale, izyx)
 		data, err := store.Get(ctx, tk)
 		if err != nil {
 			return false, err
@@ -769,9 +769,9 @@ func (d *Data) WriteStreamingRLE(ctx *datastore.VersionedCtx, label uint64, boun
 	return true, nil
 }
 
-func (d *Data) WriteLegacyRLE(ctx *datastore.VersionedCtx, label uint64, b dvid.Bounds, compression string, w io.Writer) (found bool, err error) {
+func (d *Data) WriteLegacyRLE(ctx *datastore.VersionedCtx, label uint64, scale uint8, b dvid.Bounds, compression string, w io.Writer) (found bool, err error) {
 	var data []byte
-	data, err = d.GetLegacyRLE(ctx, label, b)
+	data, err = d.GetLegacyRLE(ctx, label, scale, b)
 	if err != nil {
 		return
 	}
@@ -807,12 +807,12 @@ func (d *Data) WriteLegacyRLE(ctx *datastore.VersionedCtx, label uint64, b dvid.
 }
 
 // GetLegacyRLE returns an encoded sparse volume given a label and an output format.
-func (d *Data) GetLegacyRLE(ctx *datastore.VersionedCtx, label uint64, bounds dvid.Bounds) ([]byte, error) {
+func (d *Data) GetLegacyRLE(ctx *datastore.VersionedCtx, label uint64, scale uint8, bounds dvid.Bounds) ([]byte, error) {
 	meta, lbls, err := d.GetMappedLabelMeta(ctx, label, bounds)
 	if err != nil {
 		return nil, err
 	}
-	return d.getLegacyRLEs(ctx, meta, lbls, bounds)
+	return d.getLegacyRLEs(ctx, meta, lbls, scale, bounds)
 }
 
 //  The encoding has the following format where integers are little endian:
@@ -834,7 +834,7 @@ func (d *Data) GetLegacyRLE(ctx *datastore.VersionedCtx, label uint64, bounds dv
 //        int32   Length of run
 //        bytes   Optional payload dependent on first byte descriptor
 //
-func (d *Data) getLegacyRLEs(ctx *datastore.VersionedCtx, meta *Meta, lbls labels.Set, bounds dvid.Bounds) ([]byte, error) {
+func (d *Data) getLegacyRLEs(ctx *datastore.VersionedCtx, meta *Meta, lbls labels.Set, scale uint8, bounds dvid.Bounds) ([]byte, error) {
 	buf := new(bytes.Buffer)
 	buf.WriteByte(dvid.EncodingBinary)
 	binary.Write(buf, binary.LittleEndian, uint8(3))  // # of dimensions
@@ -855,7 +855,7 @@ func (d *Data) getLegacyRLEs(ctx *datastore.VersionedCtx, meta *Meta, lbls label
 	op := labels.NewOutputOp(buf)
 	go labels.WriteRLEs(lbls, op, bounds)
 	for _, izyx := range indices {
-		tk := NewBlockTKeyByCoord(izyx)
+		tk := NewBlockTKeyByCoord(scale, izyx)
 		data, err := store.Get(ctx, tk)
 		if err != nil {
 			return nil, err

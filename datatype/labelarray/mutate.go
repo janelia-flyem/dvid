@@ -513,7 +513,8 @@ func (d *Data) mutateBlock(ch <-chan procMsg) {
 func (d *Data) mergeBlock(ctx *datastore.VersionedCtx, op mergeOp) {
 	defer d.MutDone(op.mutID)
 
-	pb, err := d.getLabelBlock(ctx, op.bcoord)
+	var scale uint8
+	pb, err := d.getLabelBlock(ctx, scale, op.bcoord)
 	if err != nil {
 		dvid.Errorf("error in merge block %s: %v\n", op.bcoord, err)
 		return
@@ -526,7 +527,7 @@ func (d *Data) mergeBlock(ctx *datastore.VersionedCtx, op mergeOp) {
 	}
 	pb.Block = *block
 
-	if err := d.putLabelBlock(ctx, pb); err != nil {
+	if err := d.putLabelBlock(ctx, scale, pb); err != nil {
 		dvid.Errorf("error putting label block %s for data %q: %v\n", op.bcoord, d.DataName(), err)
 		return
 	}
@@ -541,7 +542,8 @@ func (d *Data) mergeBlock(ctx *datastore.VersionedCtx, op mergeOp) {
 func (d *Data) splitBlock(ctx *datastore.VersionedCtx, op splitOp) {
 	defer d.MutDone(op.mutID)
 
-	pb, err := d.getLabelBlock(ctx, op.bcoord)
+	var scale uint8
+	pb, err := d.getLabelBlock(ctx, scale, op.bcoord)
 	if err != nil {
 		dvid.Errorf("error in merge block %s: %v\n", op.bcoord, err)
 		return
@@ -603,7 +605,7 @@ func (d *Data) splitBlock(ctx *datastore.VersionedCtx, op splitOp) {
 	}
 
 	splitpb := labels.PositionedBlock{*splitBlock, op.bcoord}
-	if err := d.putLabelBlock(ctx, &splitpb); err != nil {
+	if err := d.putLabelBlock(ctx, scale, &splitpb); err != nil {
 		dvid.Errorf("unable to put block %s in split of label %d, data %q: %v\n", op.bcoord, op.Target, d.DataName(), err)
 		return
 	}

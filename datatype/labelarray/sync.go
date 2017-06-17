@@ -280,9 +280,10 @@ func (d *Data) downsizeCommit(v dvid.VersionID, mutID uint64) {
 		d.deleteDownresCache(mutID)
 	}()
 
+	var scale uint8
 	ctx := datastore.NewVersionedCtx(d, v)
 	for downresBCoord, newBlock := range bc.cache {
-		oldBlock, err := d.getLabelBlock(ctx, downresBCoord)
+		oldBlock, err := d.getLabelBlock(ctx, scale, downresBCoord)
 		if err != nil {
 			dvid.Errorf("unable to get %q label block %s: %v\n", d.DataName(), downresBCoord, err)
 			continue
@@ -295,7 +296,7 @@ func (d *Data) downsizeCommit(v dvid.VersionID, mutID uint64) {
 
 		// Write the data.
 		pb := labels.PositionedBlock{Block: *newBlock, BCoord: downresBCoord}
-		if err := d.putLabelBlock(ctx, &pb); err != nil {
+		if err := d.putLabelBlock(ctx, scale, &pb); err != nil {
 			dvid.Errorf("unable to PUT downres block %s for data %q: %v\n", downresBCoord, d.DataName(), err)
 			continue
 		}

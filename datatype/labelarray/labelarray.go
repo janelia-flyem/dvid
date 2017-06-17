@@ -209,6 +209,8 @@ GET  <api URL>/node/<UUID>/<data name>/isotropic/<dims>/<size>/<offset>[/<format
     Query-string Options:
 
     roi       	  Name of roi data instance used to mask the requested data.
+    scale         A number from 0 up to DownresLevels-1 where each level has 1/2 resolution of
+	              previous level.  Level 0 is the highest resolution.
     compression   Allows retrieval or submission of 3d data in "lz4" and "gzip"
                     compressed format.  The 2d data will ignore this and use
                     the image-based codec.
@@ -247,15 +249,17 @@ GET  <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?qu
     offset        Gives coordinate of first voxel using dimensionality of data.
     format        Valid formats depend on the dimensionality of the request and formats
                     available in server implementation.
-                  2D: "png", "jpg" (default: "png")
-                    jpg allows lossy quality setting, e.g., "jpg:80"
-                  nD: uses default "octet-stream".
+                    2D: "png", "jpg" (default: "png")
+                        jpg allows lossy quality setting, e.g., "jpg:80"
+                    nD: uses default "octet-stream".
 
     Query-string Options:
 
     roi           Name of roi data instance used to mask the requested data.
+    scale         A number from 0 up to DownresLevels-1 where each level has 1/2 resolution of
+	              previous level.  Level 0 is the highest resolution.
     compression   Allows retrieval or submission of 3d data in "lz4","gzip", "google"
-		    (neuroglancer compression format), "googlegzip" (google + gzip)
+                    (neuroglancer compression format), "googlegzip" (google + gzip)
                     compressed format.  The 2d data will ignore this and use
                     the image-based codec.
     throttle      Only works for 3d data requests.  If "true", makes sure only N compute-intense operation 
@@ -353,9 +357,10 @@ GET <api URL>/node/<UUID>/<data name>/blocks/<size>/<offset>[?queryopts]
 
     Gets blocks corresponding to the extents specified by the size and offset.  The
     subvolume request must be block aligned.  This is the most server-efficient way of
-    retrieving labelarray data, where data read from the underlying storage engine
-    is written directly to the HTTP connection.  The default compression returned is gzip
-	on compressed DVID label Block serialization.
+    retrieving the labelarray data, where data read from the underlying storage engine is 
+	written directly to the HTTP connection possibly after recompression to match the given 
+	query-string compression option.  The default labelarray compression 
+	is gzip on compressed DVID label Block serialization ("blocks" option).
 
     Example: 
 
@@ -401,6 +406,8 @@ GET <api URL>/node/<UUID>/<data name>/blocks/<size>/<offset>[?queryopts]
 
     Query-string Options:
 
+    scale         A number from 0 up to DownresLevels-1 where each level has 1/2 resolution of
+	              previous level.  Level 0 is the highest resolution.
     compression   Allows retrieval of block data in "lz4" (default), "gzip", blocks" (native DVID
 	              label blocks) or "uncompressed" (uint64 labels).
     throttle      If "true", makes sure only N compute-intense operation (all API calls that can be 
@@ -476,6 +483,8 @@ POST <api URL>/node/<UUID>/<data name>/blocks[?queryopts]
 
     Query-string Options:
 
+    scale         A number from 0 up to DownresLevels-1 where each level has 1/2 resolution of
+	              previous level.  Level 0 is the highest resolution.
     compression   Specifies compression format of block data: default and only option currently is
                   "blocks" (native DVID label blocks).
     throttle      If "true", makes sure only N compute-intense operation (all API calls that can be 
@@ -1396,12 +1405,12 @@ func (d *Data) convertTo64bit(geom dvid.Geometry, data []uint8, bytesPerVoxel, s
 }
 
 // returns nil block if no block is at the given block coordinate
-func (d *Data) getLabelBlock(ctx *datastore.VersionedCtx, bcoord dvid.IZYXString) (*labels.PositionedBlock, error) {
+func (d *Data) getLabelBlock(ctx *datastore.VersionedCtx, scale uint8, bcoord dvid.IZYXString) (*labels.PositionedBlock, error) {
 	store, err := d.GetKeyValueDB()
 	if err != nil {
 		return nil, fmt.Errorf("labelarray getLabelBlock() had error initializing store: %v\n", err)
 	}
-	tk := NewBlockTKeyByCoord(bcoord)
+	tk := NewBlockTKeyByCoord(scale, bcoord)
 	val, err := store.Get(ctx, tk)
 	if err != nil {
 		return nil, fmt.Errorf("Error on GET of labelarray %q label block @ %s\n", d.DataName(), bcoord)
@@ -1420,12 +1429,12 @@ func (d *Data) getLabelBlock(ctx *datastore.VersionedCtx, bcoord dvid.IZYXString
 	return &labels.PositionedBlock{block, bcoord}, nil
 }
 
-func (d *Data) putLabelBlock(ctx *datastore.VersionedCtx, pb *labels.PositionedBlock) error {
+func (d *Data) putLabelBlock(ctx *datastore.VersionedCtx, scale uint8, pb *labels.PositionedBlock) error {
 	store, err := d.GetKeyValueDB()
 	if err != nil {
 		return fmt.Errorf("labelarray putLabelBlock() had error initializing store: %v\n", err)
 	}
-	tk := NewBlockTKeyByCoord(pb.BCoord)
+	tk := NewBlockTKeyByCoord(scale, pb.BCoord)
 
 	data, err := pb.MarshalBinary()
 	if err != nil {
@@ -1562,8 +1571,8 @@ func (d *Data) sendBlock(w http.ResponseWriter, x, y, z int32, v []byte, compres
 	return nil
 }
 
-// GetBlocks returns a slice of bytes corresponding to all the blocks along a span in X
-func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, subvol *dvid.Subvolume, compression string) error {
+// SendBlocks returns a series of blocks covering the given block-aligned subvolume.
+func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, scale uint8, subvol *dvid.Subvolume, compression string) error {
 	w.Header().Set("Content-type", "application/octet-stream")
 
 	switch compression {
@@ -1572,7 +1581,7 @@ func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, su
 		return fmt.Errorf(`compression must be "lz4" (default), "gzip", "blocks" or "uncompressed"`)
 	}
 
-	// convert x,y,z coordinates to block coordinates
+	// convert x,y,z coordinates to block coordinates for this scale
 	blocksdims := subvol.Size().Div(d.BlockSize())
 	blocksoff := subvol.StartPoint().Div(d.BlockSize())
 
@@ -1602,9 +1611,9 @@ func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, su
 
 			indexBeg := dvid.IndexZYX(beginPoint)
 			sx, sy, sz := indexBeg.Unpack()
-			begTKey := NewBlockTKey(&indexBeg)
+			begTKey := NewBlockTKey(scale, &indexBeg)
 			indexEnd := dvid.IndexZYX(endPoint)
-			endTKey := NewBlockTKey(&indexEnd)
+			endTKey := NewBlockTKey(scale, &indexEnd)
 
 			// Send the entire range of key-value pairs to chunk processor
 			err = okv.ProcessRange(ctx, begTKey, endTKey, &storage.ChunkOp{}, func(c *storage.Chunk) error {
@@ -1617,7 +1626,7 @@ func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, su
 				}
 
 				// Determine which block this is.
-				indexZYX, err := DecodeBlockTKey(kv.K)
+				_, indexZYX, err := DecodeBlockTKey(kv.K)
 				if err != nil {
 					return err
 				}
@@ -1651,7 +1660,7 @@ func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, su
 }
 
 // ReceiveBlocks stores a slice of bytes corresponding to specified blocks
-func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, compression string) error {
+func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale uint8, compression string) error {
 	switch compression {
 	case "", "blocks":
 	default:
@@ -1717,7 +1726,7 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, compr
 			bz := int32(binary.LittleEndian.Uint32(hdrBytes[8:12]))
 			numBytes := int(binary.LittleEndian.Uint32(hdrBytes[12:16]))
 			bcoord := dvid.ChunkPoint3d{bx, by, bz}.ToIZYXString()
-			tk := NewBlockTKeyByCoord(bcoord)
+			tk := NewBlockTKeyByCoord(scale, bcoord)
 			compressed := make([]byte, numBytes)
 			n, readErr = r.Read(compressed)
 			if n != numBytes || (readErr != nil && readErr != io.EOF) {
@@ -2369,6 +2378,7 @@ func (d *Data) handleBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, 
 		}
 		defer server.ThrottledOpDone()
 	}
+	scale := uint8(0)
 	compression := queryStrings.Get("compression")
 	if strings.ToLower(r.Method) == "get" {
 		if len(parts) < 6 {
@@ -2392,12 +2402,12 @@ func (d *Data) handleBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, 
 			return
 		}
 
-		if err := d.SendBlocks(ctx, w, subvol, compression); err != nil {
+		if err := d.SendBlocks(ctx, w, scale, subvol, compression); err != nil {
 			server.BadRequest(w, r, err)
 		}
 		timedLog.Infof("HTTP GET blocks at size %s, offset %s (%s)", r.Method, parts[4], parts[5], r.URL)
 	} else {
-		if err := d.ReceiveBlocks(ctx, r.Body, compression); err != nil {
+		if err := d.ReceiveBlocks(ctx, r.Body, scale, compression); err != nil {
 			server.BadRequest(w, r, err)
 		}
 		timedLog.Infof("HTTP POST blocks (%s)", r.URL)
@@ -2608,6 +2618,7 @@ func (d *Data) handleSparsevol(ctx *datastore.VersionedCtx, w http.ResponseWrite
 		return
 	}
 	timedLog := dvid.NewTimeLog()
+	var scale uint8
 
 	label, err := strconv.ParseUint(parts[4], 10, 64)
 	if err != nil {
@@ -2631,11 +2642,11 @@ func (d *Data) handleSparsevol(ctx *datastore.VersionedCtx, w http.ResponseWrite
 		var found bool
 		switch svformatFromQueryString(r) {
 		case FormatLegacyRLE:
-			found, err = d.WriteLegacyRLE(ctx, label, b, compression, w)
+			found, err = d.WriteLegacyRLE(ctx, label, scale, b, compression, w)
 		case FormatBinaryBlocks:
-			found, err = d.WriteBinaryBlocks(ctx, label, b, compression, w)
+			found, err = d.WriteBinaryBlocks(ctx, label, scale, b, compression, w)
 		case FormatStreamingRLE:
-			found, err = d.WriteStreamingRLE(ctx, label, b, compression, w)
+			found, err = d.WriteStreamingRLE(ctx, label, scale, b, compression, w)
 		}
 		if err != nil {
 			server.BadRequest(w, r, err)
@@ -2709,11 +2720,11 @@ func (d *Data) handleSparsevolByPoint(ctx *datastore.VersionedCtx, w http.Respon
 	var found bool
 	switch format {
 	case FormatLegacyRLE:
-		found, err = d.WriteLegacyRLE(ctx, label, b, compression, w)
+		found, err = d.WriteLegacyRLE(ctx, label, 0, b, compression, w)
 	case FormatBinaryBlocks:
-		found, err = d.WriteBinaryBlocks(ctx, label, b, compression, w)
+		found, err = d.WriteBinaryBlocks(ctx, label, 0, b, compression, w)
 	case FormatStreamingRLE:
-		found, err = d.WriteStreamingRLE(ctx, label, b, compression, w)
+		found, err = d.WriteStreamingRLE(ctx, label, 0, b, compression, w)
 	}
 	if err != nil {
 		server.BadRequest(w, r, err)
@@ -2925,7 +2936,7 @@ func (d *Data) handleMerge(ctx *datastore.VersionedCtx, w http.ResponseWriter, r
 // --------- Other functions on labelarray Data -----------------
 
 // GetLabelBlock returns a block of labels corresponding to the block coordinate.
-func (d *Data) GetLabelBlock(v dvid.VersionID, bcoord dvid.ChunkPoint3d) ([]byte, error) {
+func (d *Data) GetLabelBlock(v dvid.VersionID, scale uint8, bcoord dvid.ChunkPoint3d) ([]byte, error) {
 	store, err := d.GetOrderedKeyValueDB()
 	if err != nil {
 		return nil, err
@@ -2934,7 +2945,7 @@ func (d *Data) GetLabelBlock(v dvid.VersionID, bcoord dvid.ChunkPoint3d) ([]byte
 	// Retrieve the block of labels
 	ctx := datastore.NewVersionedCtx(d, v)
 	index := dvid.IndexZYX(bcoord)
-	serialization, err := store.Get(ctx, NewBlockTKey(&index))
+	serialization, err := store.Get(ctx, NewBlockTKey(scale, &index))
 	if err != nil {
 		return nil, fmt.Errorf("Error getting '%s' block for index %s\n", d.DataName(), bcoord)
 	}
@@ -2962,7 +2973,7 @@ func (d *Data) GetLabelBytesAtPoint(v dvid.VersionID, pt dvid.Point) ([]byte, er
 	blockSize := d.BlockSize()
 	bcoord := coord.Chunk(blockSize).(dvid.ChunkPoint3d)
 
-	labelData, err := d.GetLabelBlock(v, bcoord)
+	labelData, err := d.GetLabelBlock(v, 0, bcoord)
 	if err != nil {
 		return nil, err
 	}
