@@ -291,12 +291,24 @@ func MakeGzipHandler(fn http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// New8ByteAlignBytes returns a byte slice that has an 8 byte alignment guarantee
+// based on the Go compiler spec.
+func New8ByteAlignBytes(numBytes uint32) []byte {
+	numWords := numBytes / 8
+	if numBytes%8 != 0 {
+		numWords++
+	}
+	uint64buf := make([]uint64, numWords)
+	bytebuf := Uint64ToByte(uint64buf)
+	return bytebuf[:numBytes]
+}
+
 // NOTE: The following slice aliasing functions should be used with caution, particularly
 //       when reusing preallocated slices.  The intended use is for reuse of preallocated
 //       slices.
 
-// ByteToUint64 returns a uint64 slice that reuses the passed byte slice.  The passed byte slice
-// must be aligned for uint64.
+// ByteToUint64 returns a uint64 slice that reuses the passed byte slice.  NOTE: The passed byte slice
+// must be aligned for uint64.  Use New8ByteAlignBytes() to allocate for guarantee.
 func ByteToUint64(b []byte) (out []uint64, err error) {
 	if len(b)%8 != 0 {
 		return nil, fmt.Errorf("bad length in dvid.ByteToUint64: len %d", len(b))
@@ -310,7 +322,7 @@ func ByteToUint64(b []byte) (out []uint64, err error) {
 	return (*[maxSliceSize64]uint64)(unsafe.Pointer(&b[0]))[:len(b)/8 : cap(b)/8], nil
 }
 
-// ByteToUint32 returns a uint32 slice that reuses the passed byte slice.  The passed byte slice
+// ByteToUint32 returns a uint32 slice that reuses the passed byte slice.  NOTE: The passed byte slice
 // must be aligned for uint32.
 func ByteToUint32(b []byte) (out []uint32, err error) {
 	if len(b)%4 != 0 || uintptr(unsafe.Pointer(&b[0]))%4 != 0 {
@@ -322,7 +334,7 @@ func ByteToUint32(b []byte) (out []uint32, err error) {
 	return (*[maxSliceSize64 << 1]uint32)(unsafe.Pointer(&b[0]))[:len(b)/4 : cap(b)/4], nil
 }
 
-// ByteToUint16 returns a uint16 slice that reuses the passed byte slice.  The passed byte slice
+// ByteToUint16 returns a uint16 slice that reuses the passed byte slice.  NOTE: The passed byte slice
 // must be aligned for uint16.
 func ByteToUint16(b []byte) (out []uint16, err error) {
 	if len(b)%2 != 0 || uintptr(unsafe.Pointer(&b[0]))%4 != 0 {

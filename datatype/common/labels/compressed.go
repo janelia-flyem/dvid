@@ -201,7 +201,7 @@ func (pb PositionedBlock) Split(op SplitOp) (split *Block, keptSize, splitSize u
 
 	split = new(Block)
 	split.Size = pb.Size
-	split.data = make([]byte, blockBytes)
+	split.data = dvid.New8ByteAlignBytes(blockBytes)
 	pos := uint32(16)
 	nbytes := numLabels * 8
 	copy(split.data[:pos+nbytes], pb.data[:pos+nbytes])
@@ -460,7 +460,7 @@ func (b Block) calcNumLabels(delta map[uint64]int32, add bool) {
 // MergeLabels returns a new block that has computed the given MergeOp.
 func (b Block) MergeLabels(op MergeOp) (merged *Block, err error) {
 	merged = new(Block)
-	merged.data = make([]byte, len(b.data)) // should be at most the length of the unmerged Block
+	merged.data = dvid.New8ByteAlignBytes(uint32(len(b.data))) // at most the length of the unmerged Block
 	copy(merged.data, b.data)
 	if err = merged.setExportedVars(); err != nil {
 		merged = nil
@@ -508,7 +508,7 @@ func (b Block) MergeLabels(op MergeOp) (merged *Block, err error) {
 // ReplaceLabel replaces references to the target label with newLabel.
 func (b Block) ReplaceLabel(target, newLabel uint64) (split *Block, splitSize uint64, err error) {
 	split = new(Block)
-	split.data = make([]byte, len(b.data))
+	split.data = dvid.New8ByteAlignBytes(uint32(len(b.data)))
 	copy(split.data, b.data)
 	if err = split.setExportedVars(); err != nil {
 		split = nil
@@ -661,13 +661,16 @@ func (b Block) MarshalBinary() ([]byte, error) {
 	return b.data, nil
 }
 
-// UnmarshalBinary implements the encoding.BinaryUnmarshaler interface.  Note that
-// for efficiency, the receive Block will share memory with the given byte slice.
+// UnmarshalBinary implements the encoding.BinaryUnmarshaler interface.  The source
+// byte slice is copied into a new 8-byte aligned slice so the receiver block does
+// not depend on the passed slice.
 func (b *Block) UnmarshalBinary(data []byte) error {
 	if len(data) < 24 {
 		return fmt.Errorf("can't unmarshal block binary of length %d", len(data))
 	}
-	b.data = data
+	numBytes := uint32(len(data))
+	b.data = dvid.New8ByteAlignBytes(numBytes)
+	copy(b.data, data)
 	return b.setExportedVars()
 }
 
@@ -805,18 +808,6 @@ func (op OutputOp) Finish() error {
 	return err
 }
 
-func foo(pb *Block) {
-	fmt.Printf("\nLabels: %v\n", pb.Labels)
-	fmt.Printf("\nNumSBLabels: %v\n", pb.NumSBLabels)
-	fmt.Printf("\nSBIndices: %v\n", pb.SBIndices)
-	data, size := pb.MakeLabelVolume()
-	lbls, _ := dvid.ByteToUint64(data)
-	for x := int32(11); x < 31; x++ {
-		i := (80-64)*size[0]*size[1] + (40-32)*size[0] + x
-		fmt.Printf("(%d,40,80): label %d\n", x+64, lbls[i])
-	}
-}
-
 // WriteRLEs, like WriteBinaryBlocks, writes a compact serialization of a binarized Block to
 // the supplied Writer.  In this case, the serialization uses little-endian encoded integers
 // and RLEs with the repeating units of the following format:
@@ -835,10 +826,6 @@ func WriteRLEs(lbls Set, op *OutputOp, bounds dvid.Bounds) {
 			op.errCh <- err
 			return
 		}
-
-		// if bcoord[0] == 2 && bcoord[1] == 1 && bcoord[2] == 2 {
-		// 	foo(&(pb.Block))
-		// }
 
 		labelIndices := make(map[uint32]struct{})
 		var inBlock bool
@@ -1398,7 +1385,7 @@ func (s *subvolumeData) encodeBlock() (*Block, error) {
 	subBlockIndexBytes := numSubBlockIndices * 4
 	subBlockValueBytes := uint32(bitpos >> 3)
 	blockBytes := 16 + numLabels*8 + numSubBlocks*2 + subBlockIndexBytes + subBlockValueBytes
-	b.data = make([]byte, blockBytes)
+	b.data = dvid.New8ByteAlignBytes(blockBytes)
 
 	b.Size = s.getBlockSize()
 
