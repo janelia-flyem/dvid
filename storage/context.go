@@ -63,6 +63,9 @@ type VersionedCtx interface {
 	// the column qualifier is the version id.
 	UnversionedKey(TKey) (Key, dvid.VersionID, error)
 
+	// RepoRoot returns the root uuid.
+	RepoRoot() (dvid.UUID, error)
+
 	// TombstoneKey takes a type-specific key component and returns a key that
 	// signals a deletion of any ancestor values.  The returned key must have
 	// as its last byte storage.MarkTombstone.

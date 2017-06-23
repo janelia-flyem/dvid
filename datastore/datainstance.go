@@ -87,6 +87,12 @@ func (vctx *VersionedCtx) VersionedKeyValue(values []*storage.KeyValue) (*storag
 	return kv, err
 }
 
+// RepoRoot returns the root uuid.
+func (vctx *VersionedCtx) RepoRoot() (dvid.UUID, error) {
+	rootversion, _ := UUIDFromVersion(vctx.VersionID())
+	return GetRepoRoot(rootversion)
+}
+
 func (vctx *VersionedCtx) Versioned() bool {
 	return true
 }
