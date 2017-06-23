@@ -22,6 +22,7 @@ It is possible to post an object and not see the object when searching the list.
 import (
 	"bytes"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -32,6 +33,7 @@ import (
 	"os"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -54,16 +56,30 @@ func init() {
 const (
 	// limit the number of parallel requests
 	MAXCONNECTIONS = 1000
-	INITKEY        = "initialized"
+
+	// init file for master gbucket
+	INITKEY = "initialized"
+
 	// total connection tries
 	NUM_TRIES = 3
 
+	// version where multi-bucket was enabled
+	// (separate bucket for each repo)
+	MULTIBUCKET = 1.1
+
+	// Repo root bucket name
+	REPONAME = "-dvidrepo-"
+
 	// current version of gbucket (must be >1 byte string)
-	CURVER = "1.0"
+	CURVER = "1.1"
 
 	// first gbucket version (must be >1 byte string)
 	ORIGVER = "1.0"
 )
+
+type GCredentials struct {
+	ProjectID string `json:"project_id"`
+}
 
 var ErrCondFail = errors.New("gbucket: condition failed")
 
@@ -129,7 +145,18 @@ func (e *Engine) newGBucket(config dvid.StoreConfig) (*GBucket, bool, error) {
 	if credval == "" {
 		gb.client, err = api.NewClient(gb.ctx, option.WithHTTPClient(http.DefaultClient))
 	} else {
+		// use saved credentials
 		gb.client, err = api.NewClient(gb.ctx)
+
+		// grab project_id
+		var credconfig GCredentials
+		rawcred, err := ioutil.ReadFile(credval)
+		if err != nil {
+			return nil, false, err
+		}
+		json.Unmarshal(rawcred, &credconfig)
+
+		gb.projectid = credconfig.ProjectID
 	}
 
 	if err != nil {
@@ -138,7 +165,7 @@ func (e *Engine) newGBucket(config dvid.StoreConfig) (*GBucket, bool, error) {
 
 	// bucket must already exist -- check existence
 	gb.bucket = gb.client.Bucket(gb.bname)
-	_, err = gb.bucket.Attrs(gb.ctx)
+	gb.bucket_attrs, err = gb.bucket.Attrs(gb.ctx)
 	if err != nil {
 		return nil, false, err
 	}
@@ -146,23 +173,35 @@ func (e *Engine) newGBucket(config dvid.StoreConfig) (*GBucket, bool, error) {
 	var created bool
 	created = false
 
-	val, err := gb.getV(storage.Key(INITKEY))
+	val, err := gb.getV(storage.Key(INITKEY), nil)
+	var version string
 	// check if value exists
 	if val == nil {
 		created = true
 
 		// conditional put is probably not necessary since
 		// all workers should be posting same version
-		err = gb.putV(storage.Key(INITKEY), []byte(CURVER))
+		err = gb.putV(storage.Key(INITKEY), []byte(CURVER), nil)
 		if err != nil {
 			return nil, false, err
 		}
-		gb.version = CURVER
+		version = CURVER
 	} else if len(val) == 1 {
 		// set default version (versionless original wrote out 1 byte)
-		gb.version = ORIGVER
+		version = ORIGVER
 	} else {
-		gb.version = string(val)
+		version = string(val)
+	}
+
+	// save version as float
+	if gb.version, err = strconv.ParseFloat(version, 64); err != nil {
+		return nil, false, err
+	}
+
+	// check version enables repo
+	if gb.version >= MULTIBUCKET {
+		gb.repo2bucket = make(map[string]*api.BucketHandle)
+		// TODO: pre-populate based on custom repo names
 	}
 
 	// assume if not newly created that data exists
@@ -178,10 +217,53 @@ func (e Engine) Delete(config dvid.StoreConfig) error {
 type GBucket struct {
 	bname          string
 	bucket         *api.BucketHandle
+	bucket_attrs   *api.BucketAttrs
 	activeRequests chan interface{}
 	ctx            context.Context
 	client         *api.Client
-	version        string
+	version        float64
+	// repo2bucket assumes unique bucket names for now
+	// TODO: handle bucket name conflicts; allow renaming of master bucket
+	repo2bucket map[string]*api.BucketHandle
+	projectid   string
+}
+
+// bucketHandle retrieves the bucket handle based on the context
+func (db *GBucket) bucketHandle(ctx storage.Context) (*api.BucketHandle, error) {
+	if !ctx.Versioned() || db.version < MULTIBUCKET {
+		// unversioned context should be sent to master bucket
+		return db.bucket, nil
+	}
+
+	// grab root uuid
+	rootuuid, err := ctx.(storage.VersionedCtx).RepoRoot()
+	if err != nil {
+		return nil, err
+
+	}
+
+	// create bucket if it does not exist
+	if bucket, ok := db.repo2bucket[string(rootuuid)]; !ok {
+		// !! assume name not previously created
+
+		// choose initial name
+		bucketname := db.bname + REPONAME + string(rootuuid)
+		// create bucket handle
+		bucket = db.client.Bucket(bucketname)
+
+		// check if bucket exists
+		if _, err = bucket.Attrs(db.ctx); err != nil {
+			// create bucket and reuse permissions
+			// ignore error, assume already created
+			bucket.Create(db.ctx, db.projectid, db.bucket_attrs)
+		}
+
+		// if name doesn't exist create new bucket handle and load new key value
+		db.repo2bucket[string(rootuuid)] = bucket
+		return bucket, nil
+	} else {
+		return bucket, nil
+	}
 }
 
 func (db *GBucket) String() string {
@@ -191,10 +273,21 @@ func (db *GBucket) String() string {
 // ---- OrderedKeyValueGetter interface ------
 
 // get retrieves a value from a given key or an error if nothing exists
-func (db *GBucket) getV(k storage.Key) ([]byte, error) {
+func (db *GBucket) getV(k storage.Key, ctx storage.Context) ([]byte, error) {
+	var bucket *api.BucketHandle
+	var err error
+
+	if ctx == nil {
+		// use default buckert
+		bucket = db.bucket
+	} else {
+		if bucket, err = db.bucketHandle(ctx); err != nil {
+			return nil, err
+		}
+	}
 
 	// gets handle (no network op)
-	obj_handle := db.bucket.Object(hex.EncodeToString(k))
+	obj_handle := bucket.Object(hex.EncodeToString(k))
 	val, err := db.getVhandle(obj_handle)
 
 	// preserve interface where missing value is not an error
@@ -229,17 +322,40 @@ func (db *GBucket) getVhandle(obj_handle *api.ObjectHandle) ([]byte, error) {
 }
 
 // put value from a given key or an error if nothing exists
-func (db *GBucket) deleteV(k storage.Key) error {
+func (db *GBucket) deleteV(k storage.Key, ctx storage.Context) error {
+	// retrieve repo bucket
+	var bucket *api.BucketHandle
+	var err error
+	if ctx == nil {
+		// use default buckert
+		bucket = db.bucket
+	} else {
+		if bucket, err = db.bucketHandle(ctx); err != nil {
+			return err
+		}
+	}
+
 	// gets handle (no network op)
-	obj_handle := db.bucket.Object(hex.EncodeToString(k))
+	obj_handle := bucket.Object(hex.EncodeToString(k))
 
 	return obj_handle.Delete(db.ctx)
 }
 
 // put value from a given key or an error if nothing exists
-func (db *GBucket) putV(k storage.Key, value []byte) (err error) {
+func (db *GBucket) putV(k storage.Key, value []byte, ctx storage.Context) (err error) {
+	// retrieve repo bucket
+	var bucket *api.BucketHandle
+	if ctx == nil {
+		// use default buckert
+		bucket = db.bucket
+	} else {
+		if bucket, err = db.bucketHandle(ctx); err != nil {
+			return err
+		}
+	}
+
 	// gets handle (no network op)
-	obj_handle := db.bucket.Object(hex.EncodeToString(k))
+	obj_handle := bucket.Object(hex.EncodeToString(k))
 	return db.putVhandle(obj_handle, value)
 
 }
@@ -290,30 +406,30 @@ func (db *GBucket) getSingleVersionedKey(vctx storage.VersionedCtx, k []byte) ([
 	}
 
 	// retrieve actual data
-	return db.getV(keys[0])
-}
-
-// hasKeysInRangeRaw checks for the existence of any keys in the range
-func (db *GBucket) hasKeysInRangeRaw(minKey, maxKey storage.Key) bool {
-	// extract common prefix
-	prefix := grabPrefix(minKey, maxKey)
-
-	query := &api.Query{Prefix: prefix}
-	// query objects
-	object_list := db.bucket.Objects(db.ctx, query)
-	_, done := object_list.Next()
-	return done != iterator.Done
+	return db.getV(keys[0], vctx)
 }
 
 // getKeysInRangeRaw returns all keys in a range (including multiple keys and tombstones)
-func (db *GBucket) getKeysInRangeRaw(minKey, maxKey storage.Key) ([]storage.Key, error) {
+func (db *GBucket) getKeysInRangeRaw(minKey, maxKey storage.Key, ctx storage.Context) ([]storage.Key, error) {
+	var bucket *api.BucketHandle
+	var err error
+
+	if ctx == nil {
+		// use default buckert
+		bucket = db.bucket
+	} else {
+		if bucket, err = db.bucketHandle(ctx); err != nil {
+			return nil, err
+		}
+	}
+
 	keys := make(KeyArray, 0)
 	// extract common prefix
 	prefix := grabPrefix(minKey, maxKey)
 
 	query := &api.Query{Prefix: prefix}
 	// query objects
-	object_list := db.bucket.Objects(db.ctx, query)
+	object_list := bucket.Objects(db.ctx, query)
 
 	// filter keys that fall into range
 	object_attr, done := object_list.Next()
@@ -355,7 +471,7 @@ func (db *GBucket) getKeysInRange(ctx storage.Context, TkBeg, TkEnd storage.TKey
 		}
 	}
 
-	keys, _ := db.getKeysInRangeRaw(minKey, maxKey)
+	keys, _ := db.getKeysInRangeRaw(minKey, maxKey, ctx)
 
 	// grab latest version if versioned
 	if ctx.Versioned() {
@@ -436,7 +552,7 @@ func (db *GBucket) Get(ctx storage.Context, tk storage.TKey) ([]byte, error) {
 	}
 
 	// retrieve value, if error, return as not found
-	val, _ := db.getV(currkey)
+	val, _ := db.getV(currkey, ctx)
 	storage.StoreValueBytesRead <- len(val)
 	return val, nil
 }
@@ -508,7 +624,7 @@ func (db *GBucket) GetRange(ctx storage.Context, TkBeg, TkEnd storage.TKey) ([]*
 	keyvalchan := make(chan keyvalue_t, len(keys))
 	for _, key := range keys {
 		go func(lkey storage.Key) {
-			value, err := db.getV(lkey)
+			value, err := db.getV(lkey, ctx)
 			if value == nil || err != nil {
 				keyvalchan <- keyvalue_t{lkey, nil}
 			} else {
@@ -574,12 +690,12 @@ func (db *GBucket) RawRangeQuery(kStart, kEnd storage.Key, keysOnly bool, out ch
 	}
 
 	// grab keys
-	keys, _ := db.getKeysInRangeRaw(kStart, kEnd)
+	keys, _ := db.getKeysInRangeRaw(kStart, kEnd, nil)
 
 	keyvalchan := make(chan keyvalue_t, len(keys))
 	for _, key := range keys {
 		go func(lkey storage.Key) {
-			value, err := db.getV(lkey)
+			value, err := db.getV(lkey, nil)
 			if value == nil || err != nil {
 				keyvalchan <- keyvalue_t{lkey, nil}
 			} else {
@@ -704,7 +820,7 @@ func (db *GBucket) LockKey(k storage.Key) error {
 
 // UnlockKey delete the key/value and releases the lock
 func (db *GBucket) UnlockKey(k storage.Key) error {
-	return db.deleteV(k)
+	return db.deleteV(k, nil)
 }
 
 // Patch patches the value at the given key with function f.
@@ -716,8 +832,13 @@ func (db *GBucket) Patch(ctx storage.Context, tk storage.TKey, f storage.PatchFu
 	}()
 
 	key := ctx.ConstructKey(tk)
-	obj_handle := db.bucket.Object(hex.EncodeToString(key))
+
+	var bucket *api.BucketHandle
 	var err error
+	if bucket, err = db.bucketHandle(ctx); err != nil {
+		return err
+	}
+	obj_handle := bucket.Object(hex.EncodeToString(key))
 
 	// check current open node version of a value
 	// cost: >=1 object meta request,
@@ -745,7 +866,7 @@ func (db *GBucket) Patch(ctx storage.Context, tk storage.TKey, f storage.PatchFu
 				// key must exist and be different
 				if prevkey != nil && strings.Compare(string(prevkey), string(key)) != 0 {
 					// fetch previous data
-					val, err = db.getV(prevkey)
+					val, err = db.getV(prevkey, ctx)
 					if err != nil {
 						// this value should exist
 						return err
@@ -924,7 +1045,7 @@ func (db *GBucket) DeleteAll(ctx storage.Context, allVersions bool) error {
 		}
 
 		// fetch all matching keys for context
-		keys, _ := db.getKeysInRangeRaw(minKey, maxKey)
+		keys, _ := db.getKeysInRangeRaw(minKey, maxKey, ctx)
 
 		// wait for all deletes to complete -- batch??
 		var wg sync.WaitGroup
@@ -953,7 +1074,7 @@ func (db *GBucket) DeleteAll(ctx storage.Context, allVersions bool) error {
 		}
 
 		// fetch all matching keys for context
-		keys, err := db.getKeysInRangeRaw(minKey, maxKey)
+		keys, err := db.getKeysInRangeRaw(minKey, maxKey, ctx)
 
 		// wait for all deletes to complete -- batch??
 		var wg sync.WaitGroup
@@ -1286,17 +1407,17 @@ func (buffer *goBuffer) Flush() error {
 			}()
 			var err error
 			if opdata.op == delOp {
-				err = buffer.db.deleteV(opdata.key)
+				err = buffer.db.deleteV(opdata.key, buffer.ctx)
 			} else if opdata.op == delOpIgnoreExists {
-				buffer.db.deleteV(opdata.key)
+				buffer.db.deleteV(opdata.key, buffer.ctx)
 			} else if opdata.op == delRangeOp {
 				err = buffer.deleteRangeLocal(buffer.ctx, opdata.tkBeg, opdata.tkEnd, workQueue)
 			} else if opdata.op == putOp {
-				err = buffer.db.putV(opdata.key, opdata.value)
+				err = buffer.db.putV(opdata.key, opdata.value, buffer.ctx)
 				storage.StoreKeyBytesWritten <- len(opdata.key)
 				storage.StoreValueBytesWritten <- len(opdata.value)
 			} else if opdata.op == putOpCallback {
-				err = buffer.db.putV(opdata.key, opdata.value)
+				err = buffer.db.putV(opdata.key, opdata.value, buffer.ctx)
 				storage.StoreKeyBytesWritten <- len(opdata.key)
 				storage.StoreValueBytesWritten <- len(opdata.value)
 				opdata.readychan <- err
@@ -1406,7 +1527,7 @@ func (db *goBuffer) processGetLocal(ctx storage.Context, tkey storage.TKey, op *
 	}
 
 	// retrieve value, if error, return as not found
-	val, err := db.db.getV(currkey)
+	val, err := db.db.getV(currkey, ctx)
 	if err != nil {
 		return nil
 	}
@@ -1445,7 +1566,7 @@ func (db *goBuffer) processRangeLocal(ctx storage.Context, TkBeg, TkEnd storage.
 			defer func() {
 				<-workQueue
 			}()
-			value, err := db.db.getV(lkey)
+			value, err := db.db.getV(lkey, ctx)
 			if value == nil || err != nil {
 				keyvalchan <- keyvalue_t{lkey, nil}
 			} else {
