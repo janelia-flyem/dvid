@@ -173,7 +173,7 @@ func (e *Engine) newGBucket(config dvid.StoreConfig) (*GBucket, bool, error) {
 	var created bool
 	created = false
 
-	val, err := gb.getV(storage.Key(INITKEY), nil)
+	val, err := gb.getV(nil, storage.Key(INITKEY))
 	var version string
 	// check if value exists
 	if val == nil {
@@ -181,7 +181,7 @@ func (e *Engine) newGBucket(config dvid.StoreConfig) (*GBucket, bool, error) {
 
 		// conditional put is probably not necessary since
 		// all workers should be posting same version
-		err = gb.putV(storage.Key(INITKEY), []byte(CURVER), nil)
+		err = gb.putV(nil, storage.Key(INITKEY), []byte(CURVER))
 		if err != nil {
 			return nil, false, err
 		}
@@ -273,7 +273,7 @@ func (db *GBucket) String() string {
 // ---- OrderedKeyValueGetter interface ------
 
 // get retrieves a value from a given key or an error if nothing exists
-func (db *GBucket) getV(k storage.Key, ctx storage.Context) ([]byte, error) {
+func (db *GBucket) getV(ctx storage.Context, k storage.Key) ([]byte, error) {
 	var bucket *api.BucketHandle
 	var err error
 
@@ -322,7 +322,7 @@ func (db *GBucket) getVhandle(obj_handle *api.ObjectHandle) ([]byte, error) {
 }
 
 // put value from a given key or an error if nothing exists
-func (db *GBucket) deleteV(k storage.Key, ctx storage.Context) error {
+func (db *GBucket) deleteV(ctx storage.Context, k storage.Key) error {
 	// retrieve repo bucket
 	var bucket *api.BucketHandle
 	var err error
@@ -342,7 +342,7 @@ func (db *GBucket) deleteV(k storage.Key, ctx storage.Context) error {
 }
 
 // put value from a given key or an error if nothing exists
-func (db *GBucket) putV(k storage.Key, value []byte, ctx storage.Context) (err error) {
+func (db *GBucket) putV(ctx storage.Context, k storage.Key, value []byte) (err error) {
 	// retrieve repo bucket
 	var bucket *api.BucketHandle
 	if ctx == nil {
@@ -406,11 +406,11 @@ func (db *GBucket) getSingleVersionedKey(vctx storage.VersionedCtx, k []byte) ([
 	}
 
 	// retrieve actual data
-	return db.getV(keys[0], vctx)
+	return db.getV(vctx, keys[0])
 }
 
 // getKeysInRangeRaw returns all keys in a range (including multiple keys and tombstones)
-func (db *GBucket) getKeysInRangeRaw(minKey, maxKey storage.Key, ctx storage.Context) ([]storage.Key, error) {
+func (db *GBucket) getKeysInRangeRaw(ctx storage.Context, minKey, maxKey storage.Key) ([]storage.Key, error) {
 	var bucket *api.BucketHandle
 	var err error
 
@@ -471,7 +471,7 @@ func (db *GBucket) getKeysInRange(ctx storage.Context, TkBeg, TkEnd storage.TKey
 		}
 	}
 
-	keys, _ := db.getKeysInRangeRaw(minKey, maxKey, ctx)
+	keys, _ := db.getKeysInRangeRaw(ctx, minKey, maxKey)
 
 	// grab latest version if versioned
 	if ctx.Versioned() {
@@ -552,7 +552,7 @@ func (db *GBucket) Get(ctx storage.Context, tk storage.TKey) ([]byte, error) {
 	}
 
 	// retrieve value, if error, return as not found
-	val, _ := db.getV(currkey, ctx)
+	val, _ := db.getV(ctx, currkey)
 	storage.StoreValueBytesRead <- len(val)
 	return val, nil
 }
@@ -624,7 +624,7 @@ func (db *GBucket) GetRange(ctx storage.Context, TkBeg, TkEnd storage.TKey) ([]*
 	keyvalchan := make(chan keyvalue_t, len(keys))
 	for _, key := range keys {
 		go func(lkey storage.Key) {
-			value, err := db.getV(lkey, ctx)
+			value, err := db.getV(ctx, lkey)
 			if value == nil || err != nil {
 				keyvalchan <- keyvalue_t{lkey, nil}
 			} else {
@@ -690,12 +690,12 @@ func (db *GBucket) RawRangeQuery(kStart, kEnd storage.Key, keysOnly bool, out ch
 	}
 
 	// grab keys
-	keys, _ := db.getKeysInRangeRaw(kStart, kEnd, nil)
+	keys, _ := db.getKeysInRangeRaw(nil, kStart, kEnd)
 
 	keyvalchan := make(chan keyvalue_t, len(keys))
 	for _, key := range keys {
 		go func(lkey storage.Key) {
-			value, err := db.getV(lkey, nil)
+			value, err := db.getV(nil, lkey)
 			if value == nil || err != nil {
 				keyvalchan <- keyvalue_t{lkey, nil}
 			} else {
@@ -820,7 +820,7 @@ func (db *GBucket) LockKey(k storage.Key) error {
 
 // UnlockKey delete the key/value and releases the lock
 func (db *GBucket) UnlockKey(k storage.Key) error {
-	return db.deleteV(k, nil)
+	return db.deleteV(nil, k)
 }
 
 // Patch patches the value at the given key with function f.
@@ -866,7 +866,7 @@ func (db *GBucket) Patch(ctx storage.Context, tk storage.TKey, f storage.PatchFu
 				// key must exist and be different
 				if prevkey != nil && strings.Compare(string(prevkey), string(key)) != 0 {
 					// fetch previous data
-					val, err = db.getV(prevkey, ctx)
+					val, err = db.getV(ctx, prevkey)
 					if err != nil {
 						// this value should exist
 						return err
@@ -1045,7 +1045,7 @@ func (db *GBucket) DeleteAll(ctx storage.Context, allVersions bool) error {
 		}
 
 		// fetch all matching keys for context
-		keys, _ := db.getKeysInRangeRaw(minKey, maxKey, ctx)
+		keys, _ := db.getKeysInRangeRaw(ctx, minKey, maxKey)
 
 		// wait for all deletes to complete -- batch??
 		var wg sync.WaitGroup
@@ -1074,7 +1074,7 @@ func (db *GBucket) DeleteAll(ctx storage.Context, allVersions bool) error {
 		}
 
 		// fetch all matching keys for context
-		keys, err := db.getKeysInRangeRaw(minKey, maxKey, ctx)
+		keys, err := db.getKeysInRangeRaw(ctx, minKey, maxKey)
 
 		// wait for all deletes to complete -- batch??
 		var wg sync.WaitGroup
@@ -1407,17 +1407,17 @@ func (buffer *goBuffer) Flush() error {
 			}()
 			var err error
 			if opdata.op == delOp {
-				err = buffer.db.deleteV(opdata.key, buffer.ctx)
+				err = buffer.db.deleteV(buffer.ctx, opdata.key)
 			} else if opdata.op == delOpIgnoreExists {
-				buffer.db.deleteV(opdata.key, buffer.ctx)
+				buffer.db.deleteV(buffer.ctx, opdata.key)
 			} else if opdata.op == delRangeOp {
 				err = buffer.deleteRangeLocal(buffer.ctx, opdata.tkBeg, opdata.tkEnd, workQueue)
 			} else if opdata.op == putOp {
-				err = buffer.db.putV(opdata.key, opdata.value, buffer.ctx)
+				err = buffer.db.putV(buffer.ctx, opdata.key, opdata.value)
 				storage.StoreKeyBytesWritten <- len(opdata.key)
 				storage.StoreValueBytesWritten <- len(opdata.value)
 			} else if opdata.op == putOpCallback {
-				err = buffer.db.putV(opdata.key, opdata.value, buffer.ctx)
+				err = buffer.db.putV(buffer.ctx, opdata.key, opdata.value)
 				storage.StoreKeyBytesWritten <- len(opdata.key)
 				storage.StoreValueBytesWritten <- len(opdata.value)
 				opdata.readychan <- err
@@ -1527,7 +1527,7 @@ func (db *goBuffer) processGetLocal(ctx storage.Context, tkey storage.TKey, op *
 	}
 
 	// retrieve value, if error, return as not found
-	val, err := db.db.getV(currkey, ctx)
+	val, err := db.db.getV(ctx, currkey)
 	if err != nil {
 		return nil
 	}
@@ -1566,7 +1566,7 @@ func (db *goBuffer) processRangeLocal(ctx storage.Context, TkBeg, TkEnd storage.
 			defer func() {
 				<-workQueue
 			}()
-			value, err := db.db.getV(lkey, ctx)
+			value, err := db.db.getV(ctx, lkey)
 			if value == nil || err != nil {
 				keyvalchan <- keyvalue_t{lkey, nil}
 			} else {
