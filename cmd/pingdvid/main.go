@@ -69,10 +69,13 @@ func main() {
 		resp, err := http.Get(dvidURL)
 		if err != nil {
 			fmt.Printf("%s: error on GET of %q: %v\n", t, dvidURL, err)
-			os.Exit(1)
+			continue
 		}
 		if resp.StatusCode != http.StatusOK {
 			fmt.Printf("Bad response %s: %v\n", time.Now(), resp)
+		}
+		if err := resp.Body.Close(); err != nil {
+			fmt.Printf("error closing response for GET of %q: %v\n", dvidURL, err)
 		}
 	}
 }
