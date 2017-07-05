@@ -16,6 +16,7 @@ import (
 	"io/ioutil"
 	"math"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,6 +24,7 @@ import (
 	"compress/gzip"
 
 	"github.com/janelia-flyem/dvid/datastore"
+	"github.com/janelia-flyem/dvid/datatype/common/downres"
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
 	"github.com/janelia-flyem/dvid/datatype/imageblk"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -257,7 +259,7 @@ GET  <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?qu
 
     roi           Name of roi data instance used to mask the requested data.
     scale         A number from 0 up to DownresLevels-1 where each level has 1/2 resolution of
-	              previous level.  Level 0 is the highest resolution.
+	                previous level.  Level 0 is the highest resolution.
     compression   Allows retrieval or submission of 3d data in "lz4","gzip", "google"
                     (neuroglancer compression format), "googlegzip" (google + gzip)
                     compressed format.  The 2d data will ignore this and use
@@ -916,6 +918,9 @@ type Data struct {
 	// the higher level.
 	DownresLevels uint8
 
+	updates  []uint32 // tracks updating to each scale of labelarray
+	updateMu sync.RWMutex
+
 	mlMu sync.RWMutex // For atomic access of MaxLabel and MaxRepoLabel
 
 	// unpersisted data: channels for mutations and downres caching.
@@ -924,8 +929,45 @@ type Data struct {
 
 	mutateCh [numBlockHandlers]chan procMsg     // channels into mutate (merge/split) ops.
 	indexCh  [numLabelHandlers]chan labelChange // channels into label indexing
+}
 
-	mutcache mutationCache
+// GetDownresLevels returns the number of down-res levels, where level 0 = high-resolution
+// and each subsequent level has one-half the resolution.
+func (d *Data) GetDownresLevels() uint8 {
+	return d.DownresLevels
+}
+
+func (d *Data) StartScaleUpdate(scale uint8) {
+	d.updateMu.Lock()
+	d.updates[scale]++
+	d.updateMu.Unlock()
+}
+
+func (d *Data) StopScaleUpdate(scale uint8) {
+	d.updateMu.Lock()
+	d.updates[scale]--
+	if d.updates[scale] < 0 {
+		dvid.Criticalf("StopScaleUpdate(%d) called more than StartScaleUpdate.", scale)
+	}
+	d.updateMu.Unlock()
+}
+
+func (d *Data) ScaleUpdating(scale uint8) bool {
+	d.updateMu.RLock()
+	updating := d.updates[scale] > 0
+	d.updateMu.RUnlock()
+	return updating
+}
+
+func (d *Data) AnyScaleUpdating() bool {
+	d.updateMu.RLock()
+	for scale := uint8(0); scale <= d.DownresLevels; scale++ {
+		if d.updates[scale] > 0 {
+			return true
+		}
+	}
+	d.updateMu.RUnlock()
+	return false
 }
 
 // CopyPropertiesFrom copies the data instance-specific properties from a given
@@ -995,6 +1037,7 @@ func NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.
 		}
 		downresLevels = uint8(levels)
 	}
+	data.updates = make([]uint32, downresLevels+1)
 
 	data.MaxLabel = make(map[dvid.VersionID]uint64)
 	data.IndexedLabels = indexedLabels
@@ -1680,6 +1723,7 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 	}
 
 	mutID := d.NewMutationID()
+	downresMut := downres.NewMutation(d, ctx.VersionID(), mutID)
 	fmt.Printf("Starting ReceiveBlocks, mutation %d\n", mutID)
 
 	blockCh := make(chan blockChange, 100)
@@ -1696,10 +1740,10 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 		event := IngestBlockEvent
 		ingestBlock := IngestedBlock{mutID, bcoord, block}
 		d.handleBlockIngest(ctx.VersionID(), blockCh, ingestBlock)
+		if err := downresMut.BlockMutated(bcoord, block); err != nil {
+			dvid.Errorf("data %q publishing downres: %v\n", d.DataName(), err)
+		}
 
-		// if err := d.publishDownsizeBlock(op.version, op.mutID, bcoord, block); err != nil {
-		// 	dvid.Errorf("data %q publishing downres: %v\n", d.DataName(), err)
-		// }
 		evt := datastore.SyncEvent{d.DataUUID(), event}
 		msg := datastore.SyncMessage{event, ctx.VersionID(), ingestBlock}
 		if err := datastore.NotifySubscribers(evt, msg); err != nil {
@@ -1783,6 +1827,7 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 		putbuffer.Flush()
 	}
 
+	downresMut.Done()
 	timedLog.Infof("Received and stored %d blocks for labelarray %q.\n", numBlocks, d.DataName())
 	return nil
 }
@@ -2158,6 +2203,19 @@ func checkContentHash(hash string, data []byte) error {
 	return nil
 }
 
+func getScale(queryStrings url.Values) (scale uint8, err error) {
+	scaleStr := queryStrings.Get("scale")
+	if scaleStr != "" {
+		var scaleInt int
+		scaleInt, err = strconv.Atoi(scaleStr)
+		if err != nil {
+			return
+		}
+		scale = uint8(scaleInt)
+	}
+	return
+}
+
 // ServeHTTP handles all incoming HTTP requests for this data.
 func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {
 	// Get the action (GET, POST)
@@ -2423,6 +2481,11 @@ func (d *Data) handlePseudocolor(ctx *datastore.VersionedCtx, w http.ResponseWri
 
 	queryStrings := r.URL.Query()
 	roiname := dvid.InstanceName(queryStrings.Get("roi"))
+	scale, err := getScale(queryStrings)
+	if err != nil {
+		server.BadRequest(w, r, "bad scale specified: %v", err)
+		return
+	}
 
 	shapeStr, sizeStr, offsetStr := parts[4], parts[5], parts[6]
 	planeStr := dvid.DataShapeString(shapeStr)
@@ -2447,7 +2510,7 @@ func (d *Data) handlePseudocolor(ctx *datastore.VersionedCtx, w http.ResponseWri
 			server.BadRequest(w, r, err)
 			return
 		}
-		img, err := d.GetImage(ctx.VersionID(), lbl, roiname)
+		img, err := d.GetImage(ctx.VersionID(), lbl, scale, roiname)
 		if err != nil {
 			server.BadRequest(w, r, err)
 			return
@@ -2495,6 +2558,12 @@ func (d *Data) handleDataRequest(ctx *datastore.VersionedCtx, w http.ResponseWri
 	queryStrings := r.URL.Query()
 	roiname := dvid.InstanceName(queryStrings.Get("roi"))
 
+	scale, err := getScale(queryStrings)
+	if err != nil {
+		server.BadRequest(w, r, "bad scale specified: %v", err)
+		return
+	}
+
 	switch plane.ShapeDimensions() {
 	case 2:
 		slice, err := dvid.NewSliceFromStrings(planeStr, offsetStr, sizeStr, "_")
@@ -2512,7 +2581,7 @@ func (d *Data) handleDataRequest(ctx *datastore.VersionedCtx, w http.ResponseWri
 			server.BadRequest(w, r, err)
 			return
 		}
-		img, err := d.GetImage(ctx.VersionID(), lbl, roiname)
+		img, err := d.GetImage(ctx.VersionID(), lbl, scale, roiname)
 		if err != nil {
 			server.BadRequest(w, r, err)
 			return
@@ -2555,7 +2624,7 @@ func (d *Data) handleDataRequest(ctx *datastore.VersionedCtx, w http.ResponseWri
 				server.BadRequest(w, r, err)
 				return
 			}
-			data, err := d.GetVolume(ctx.VersionID(), lbl, roiname)
+			data, err := d.GetVolume(ctx.VersionID(), lbl, scale, roiname)
 			if err != nil {
 				server.BadRequest(w, r, err)
 				return

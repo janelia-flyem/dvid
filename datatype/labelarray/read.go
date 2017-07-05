@@ -47,12 +47,11 @@ func (v *Labels) ComputeTransform(tkey storage.TKey, blockSize dvid.Point) (bloc
 }
 
 // GetImage retrieves a 2d image from a version node given a geometry of labels.
-func (d *Data) GetImage(v dvid.VersionID, vox *Labels, roiname dvid.InstanceName) (*dvid.Image, error) {
+func (d *Data) GetImage(v dvid.VersionID, vox *Labels, scale uint8, roiname dvid.InstanceName) (*dvid.Image, error) {
 	r, err := imageblk.GetROI(v, roiname, vox)
 	if err != nil {
 		return nil, err
 	}
-	var scale uint8
 	if err := d.GetLabels(v, scale, vox, r); err != nil {
 		return nil, err
 	}
@@ -60,12 +59,11 @@ func (d *Data) GetImage(v dvid.VersionID, vox *Labels, roiname dvid.InstanceName
 }
 
 // GetVolume retrieves a n-d volume from a version node given a geometry of labels.
-func (d *Data) GetVolume(v dvid.VersionID, vox *Labels, roiname dvid.InstanceName) ([]byte, error) {
+func (d *Data) GetVolume(v dvid.VersionID, vox *Labels, scale uint8, roiname dvid.InstanceName) ([]byte, error) {
 	r, err := imageblk.GetROI(v, roiname, vox)
 	if err != nil {
 		return nil, err
 	}
-	var scale uint8
 	if err := d.GetLabels(v, scale, vox, r); err != nil {
 		return nil, err
 	}
@@ -83,6 +81,9 @@ func (d *Data) GetLabels(v dvid.VersionID, scale uint8, vox *Labels, r *imageblk
 	store, err := d.GetOrderedKeyValueDB()
 	if err != nil {
 		return fmt.Errorf("Data type imageblk had error initializing store: %v\n", err)
+	}
+	if r != nil && scale != 0 {
+		return fmt.Errorf("DVID does not currently support ROI masks on lower-scale GETs")
 	}
 
 	// Only do one request at a time, although each request can start many goroutines.

@@ -534,17 +534,230 @@ func (b Block) ReplaceLabel(target, newLabel uint64) (split *Block, splitSize ui
 	return
 }
 
-// ModifyHighres modifies the portion of a Block corresponding to a Block at 2x higher
-// resolution.  The passed PositionedBlock should have Block coordinates 2x as dense
-// as the Block coordinate of the receiver.
-func (b *Block) ModifyHighres(hiresBCoord dvid.IZYXString, hiresBlock *Block) error {
+// sub-block data after downres.
+type sbData struct {
+	indices []uint32
+	values  []byte
+}
+
+// Downres takes eight Blocks that represent higher-resolution octants (by 2x) of
+// the receiving block, and modifies the receiving Block to be a half-resolution
+// representation.  If a given octant is a nil Block, the receiving Block is not modified
+// for that portion of the higher-resolution octant.
+func (b *Block) Downres(octants [8]*Block) error {
+	if b == nil {
+		return fmt.Errorf("block cannot be nil but can be an empty block")
+	}
+	var gx, gy, gz int32 // # sub-blocks in each dimension
+	var filled, maxLabels, maxSBIndices int
+	for _, oct := range octants {
+		if oct != nil {
+			filled++
+			maxLabels += len(oct.Labels)
+			x, y, z := oct.Size[0]/SubBlockSize, oct.Size[1]/SubBlockSize, oct.Size[2]/SubBlockSize
+			if filled > 1 && (x != gx || y != gy || z != gz) {
+				return fmt.Errorf("can't downres with octants of different size: (%d,%d,%d) vs (%d,%d,%d)", x, y, z, gx, gy, gz)
+			}
+			gx, gy, gz = x, y, z
+			maxSBIndices += len(oct.SBIndices)
+		}
+	}
+	if filled == 0 {
+		return nil
+	}
+	if gx%2 != 0 || gy%2 != 0 || gz%2 != 0 {
+		return fmt.Errorf("downres of octants only works for block-sizes with even # of sub-blocks: not %d x %d x %d", gx, gy, gz)
+	}
+
+	// Allocate temp buffers for lores block, which we need since we'll be visiting them out of order.
+	numSubBlocks := gx * gy * gz
+	loLabels := make(map[uint64]uint32, maxLabels)
+	loNumSBLabels := make([]uint16, numSubBlocks)
+	loSBIndices := make([][]uint32, numSubBlocks)
+	loSBValues := make([][]byte, numSubBlocks)
+
+	// Iterate through all octants, doing downres and filling in corresponding sub-blocks.
+	octIndices := make([][]uint32, numSubBlocks)
+	octValues := make([][]byte, numSubBlocks)
+	var hires [8]sbData
+	for i, oct := range octants {
+		oz := int32(i) >> 2
+		oy := (int32(i) - oz*4) >> 1
+		ox := int32(i) % 2
+		osbz := oz * gz >> 1 // octant sub-block offset
+		osby := oy * gy >> 1
+		osbx := ox * gx >> 1
+
+		if oct == nil || len(oct.Labels) == 0 {
+			// blank out all sub-blocks for this octant.
+		} else {
+			// get the index and value slices for each sub-block.
+			var indexPos, valuePos int
+			for sb := int32(0); sb < numSubBlocks; sb++ {
+				numLabels := int(oct.NumSBLabels[sb])
+				valueBits := SubBlockSize * SubBlockSize * SubBlockSize * int(bitsFor(uint16(numLabels)))
+				valueBytes := valueBits >> 3
+				if valueBits%8 != 0 {
+					valueBytes++
+				}
+				octIndices[sb] = oct.SBIndices[indexPos : indexPos+numLabels]
+				octValues[sb] = oct.SBValues[valuePos : valuePos+valueBytes]
+				indexPos += numLabels
+				valuePos += valueBytes
+			}
+
+			// iterate through sub-blocks for each octant, down-res them, and integrate them into the low-res block.
+			var x, y, z, sbx, sby, sbz int32
+			for sbz = 0; sbz < gz; sbz += 2 {
+				for sby = 0; sby < gy; sby += 2 {
+					for sbx = 0; sbx < gx; sbx += 2 {
+						var i int
+						for z = 0; z < 2; z++ {
+							for y = 0; y < 2; y++ {
+								for x = 0; x < 2; x++ {
+									sbNum := (sbz+z)*gx*gy + (sby+y)*gx + sbx + x
+									hires[i].indices = octIndices[sbNum]
+									hires[i].values = octValues[sbNum]
+									i++
+								}
+							}
+						}
+
+						lores, err := downresSubBlock(hires)
+						if err != nil {
+							return err
+						}
+
+						// set this low-res sub-block where we use index into lo-res block
+						loSBNum := (osbz+(sbz>>1))*gx*gy + (osby+(sby>>1))*gx + osbx + (sbx >> 1)
+						numLabels := uint32(len(lores.indices))
+						loNumSBLabels[loSBNum] = uint16(numLabels)
+						loSBIndices[loSBNum] = make([]uint32, numLabels)
+						loSBValues[loSBNum] = lores.values
+						for i, idx := range lores.indices {
+							lbl := oct.Labels[idx]
+							bindex, found := loLabels[lbl]
+							if !found {
+								bindex = numLabels
+								loLabels[lbl] = numLabels
+								numLabels++
+							}
+							loSBIndices[loSBNum][i] = bindex
+						}
+					}
+				}
+			}
+		}
+	}
+
 	return nil
 }
 
-// FillUninitialized fills in the receiver Block uninitialized sub-blocks with any
-// initialized sub-blocks in the src Block.
-func (b *Block) FillUninitialized(src *Block) error {
-	return nil
+// take eight 3d neighboring sub-blocks and make one 2x downres sub-block.
+// allow missing sub-blocks.
+func downresSubBlock(hires [8]sbData) (lores sbData, err error) {
+	numSBVoxels := uint32(SubBlockSize * SubBlockSize * SubBlockSize)
+	sbValues := make([]uint32, numSBVoxels*8)
+
+	// first pass: write 8 indices for each down-res voxel
+	for i := uint32(0); i < 8; i++ {
+		if len(hires[i].indices) == 0 {
+			continue
+		}
+		oz := i >> 2
+		oy := (i - oz*4) >> 1
+		ox := i % 2
+
+		oz *= SubBlockSize >> 1
+		oy *= SubBlockSize >> 1
+		ox *= SubBlockSize >> 1
+
+		bits := bitsFor(uint16(len(hires[i].indices)))
+		var x, y, z, bitpos uint32
+		for z = 0; z < SubBlockSize; z++ {
+			dz := (z>>1)*SubBlockSize*SubBlockSize + oz
+			offz := (z % 2) >> 2
+			for y = 0; y < SubBlockSize; y++ {
+				dyz := dz + (y>>1)*SubBlockSize + oy
+				offyz := offz + (y%2)>>1
+				for x = 0; x < SubBlockSize; x++ {
+					val := getPackedValue(hires[i].values, bitpos, bits)
+					idx := hires[i].indices[val]
+
+					dx := (x >> 1) + ox
+					off := offyz + x%2
+					v := (dyz+dx)*8 + off
+					sbValues[v] = idx
+					bitpos += bits
+				}
+			}
+		}
+	}
+
+	// second pass: find best index for each down-res voxel and store.
+	var numIndices uint32
+	sbIndices := make(map[uint32]uint32) // cache sub-block index and eventual down-res block index
+	loresValues := make([]uint32, numSBVoxels)
+
+	votemap := make(map[uint32]int, 8)
+	for v := uint32(0); v < numSBVoxels; v++ {
+		for i := uint32(0); i < 8; i++ {
+			idx := sbValues[v*8+i]
+			if idx != 0 {
+				votemap[idx]++
+			}
+		}
+		var winner uint32
+		var winnerVotes int
+		for idx, votes := range votemap {
+			if winnerVotes < votes {
+				winnerVotes = votes
+				winner = idx
+			}
+			delete(votemap, idx)
+		}
+
+		index, found := sbIndices[winner]
+		if !found {
+			index = numIndices
+			sbIndices[winner] = index
+			numIndices++
+		}
+		loresValues[v] = index
+	}
+
+	// third pass: pack indices using minimal bits encoding.
+	bits := bitsFor(uint16(numIndices))
+	valueBits := numSBVoxels * bits
+	valueBytes := valueBits >> 3
+	if valueBits%8 != 0 {
+		valueBytes++
+	}
+
+	lores.indices = make([]uint32, numIndices)
+	for idx, i := range sbIndices {
+		lores.indices[i] = idx
+	}
+	lores.values = make([]byte, valueBytes)
+	var bitpos uint32
+	for v := uint32(0); v < numSBVoxels; v++ {
+		index := loresValues[v]
+		bithead := bitpos % 8
+		bytepos := bitpos >> 3
+		if bithead+bits <= 8 {
+			// index totally within this byte
+			leftshift := uint(8 - bits - bithead)
+			lores.values[bytepos] |= byte(index << leftshift)
+		} else {
+			// this straddles a byte boundary
+			leftshift := uint(16 - bits - bithead)
+			index <<= leftshift
+			lores.values[bytepos] |= byte((index & 0xFF00) >> 8)
+			lores.values[bytepos+1] = byte(index & 0x00FF)
+		}
+		bitpos += bits
+	}
+	return
 }
 
 // Value returns the label for a voxel using its 3d location within block.  If the given

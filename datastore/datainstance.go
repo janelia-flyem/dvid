@@ -187,6 +187,14 @@ type InstanceMutator interface {
 	LoadMutable(root dvid.VersionID, storedVersion, expectedVersion uint64) (saveNeeded bool, err error)
 }
 
+// MutationMutexer is an interface for mutexes on particular mutation IDs.
+type MutationMutexer interface {
+	MutAdd(mutID uint64) (newOp bool)
+	MutDone(mutID uint64)
+	MutWait(mutID uint64)
+	MutDelete(mutID uint64)
+}
+
 // VersionInitializer provides a hook for data instances to receive branch (new version)
 // events and modify their properties as needed.
 type VersionInitializer interface {

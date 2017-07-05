@@ -13,6 +13,7 @@ import (
 	"sort"
 
 	"github.com/janelia-flyem/dvid/datastore"
+	"github.com/janelia-flyem/dvid/datatype/common/downres"
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
@@ -105,10 +106,11 @@ func (d *Data) processMerge(v dvid.VersionID, delta labels.DeltaMerge) error {
 	}
 
 	mutID := d.NewMutationID()
+	downresMut := downres.NewMutation(d, v, mutID)
 	for _, izyx := range delta.Blocks {
 		n := izyx.Hash(numBlockHandlers)
 		d.MutAdd(mutID)
-		op := mergeOp{mutID: mutID, MergeOp: delta.MergeOp, bcoord: izyx}
+		op := mergeOp{mutID: mutID, MergeOp: delta.MergeOp, bcoord: izyx, downresMut: downresMut}
 		d.mutateCh[n] <- procMsg{op: op, v: v}
 	}
 
@@ -163,9 +165,7 @@ func (d *Data) processMerge(v dvid.VersionID, delta labels.DeltaMerge) error {
 		dvid.Criticalf("can't notify subscribers for event %v: %v\n", evt, err)
 	}
 
-	if err := d.publishDownsizeCommit(v, mutID); err != nil {
-		dvid.Criticalf("error during merge %s -> %d: %v\n", delta.Merged, delta.Target, err)
-	}
+	downresMut.Done()
 
 	dvid.Infof("Merged %s -> %d, data %q, resulting in %d blocks\n", delta.Merged, delta.Target, d.DataName(), len(delta.Blocks))
 
@@ -356,6 +356,8 @@ func (d *Data) processSplit(v dvid.VersionID, delta labels.DeltaSplit) error {
 	timedLog := dvid.NewTimeLog()
 
 	mutID := d.NewMutationID()
+	downresMut := downres.NewMutation(d, v, mutID)
+
 	var doneCh chan struct{}
 	var deleteBlks dvid.IZYXSlice
 	if delta.Split == nil {
@@ -370,7 +372,8 @@ func (d *Data) processSplit(v dvid.VersionID, delta labels.DeltaSplit) error {
 					Target:   delta.OldLabel,
 					NewLabel: delta.NewLabel,
 				},
-				bcoord: izyx,
+				bcoord:     izyx,
+				downresMut: downresMut,
 			}
 			d.mutateCh[n] <- procMsg{op: op, v: v}
 		}
@@ -401,6 +404,7 @@ func (d *Data) processSplit(v dvid.VersionID, delta labels.DeltaSplit) error {
 				},
 				bcoord:      izyx,
 				deleteBlkCh: deleteBlkCh,
+				downresMut:  downresMut,
 			}
 			d.mutateCh[n] <- procMsg{op: op, v: v}
 		}
@@ -451,6 +455,8 @@ func (d *Data) processSplit(v dvid.VersionID, delta labels.DeltaSplit) error {
 	if err := datastore.NotifySubscribers(evt, msg); err != nil {
 		return fmt.Errorf("Unable to notify subscribers to data %q for evt %v\n", d.DataName(), evt)
 	}
+
+	downresMut.Done()
 	return nil
 }
 
@@ -532,9 +538,8 @@ func (d *Data) mergeBlock(ctx *datastore.VersionedCtx, op mergeOp) {
 		return
 	}
 
-	// Notify any downstream downres instance.
-	if err := d.publishDownsizeBlock(ctx.VersionID(), op.mutID, pb.BCoord, &(pb.Block)); err != nil {
-		dvid.Criticalf("data %q block merge: %v\n", d.DataName(), err)
+	if err := op.downresMut.BlockMutated(op.bcoord, &(pb.Block)); err != nil {
+		dvid.Errorf("data %q publishing downres: %v\n", d.DataName(), err)
 	}
 }
 
@@ -610,8 +615,7 @@ func (d *Data) splitBlock(ctx *datastore.VersionedCtx, op splitOp) {
 		return
 	}
 
-	// Notify any downstream downres instance.
-	if err := d.publishDownsizeBlock(ctx.VersionID(), op.mutID, op.bcoord, splitBlock); err != nil {
-		dvid.Criticalf("data %q block split: %v\n", d.DataName(), err)
+	if err := op.downresMut.BlockMutated(op.bcoord, splitBlock); err != nil {
+		dvid.Errorf("data %q publishing downres: %v\n", d.DataName(), err)
 	}
 }

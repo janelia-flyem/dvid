@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"github.com/janelia-flyem/dvid/datastore"
+	"github.com/janelia-flyem/dvid/datatype/common/downres"
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
 	"github.com/janelia-flyem/dvid/datatype/imageblk"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -13,14 +14,15 @@ import (
 )
 
 type putOperation struct {
-	data     []byte // the full label volume sent to PUT
-	scale    uint8
-	subvol   *dvid.Subvolume
-	indexZYX dvid.IndexZYX
-	version  dvid.VersionID
-	mutate   bool   // if false, we just ingest without needing to GET previous value
-	mutID    uint64 // should be unique within a server's uptime.
-	blockCh  chan blockChange
+	data       []byte // the full label volume sent to PUT
+	scale      uint8
+	subvol     *dvid.Subvolume
+	indexZYX   dvid.IndexZYX
+	version    dvid.VersionID
+	mutate     bool   // if false, we just ingest without needing to GET previous value
+	mutID      uint64 // should be unique within a server's uptime.
+	downresMut *downres.Mutation
+	blockCh    chan blockChange
 }
 
 // PutLabels persists voxels from a subvolume into the storage engine.  This involves transforming
@@ -81,6 +83,7 @@ func (d *Data) PutLabels(v dvid.VersionID, subvol *dvid.Subvolume, data []byte, 
 
 	// Iterate through index space for this data.
 	mutID := d.NewMutationID()
+	downresMut := downres.NewMutation(d, v, mutID)
 	fmt.Printf("Starting PutLabels, mutation %d\n", mutID)
 
 	wg := new(sync.WaitGroup)
@@ -118,13 +121,14 @@ func (d *Data) PutLabels(v dvid.VersionID, subvol *dvid.Subvolume, data []byte, 
 			}
 
 			putOp := &putOperation{
-				data:     data,
-				subvol:   subvol,
-				indexZYX: curIndex,
-				version:  v,
-				mutate:   mutate,
-				mutID:    mutID,
-				blockCh:  blockCh,
+				data:       data,
+				subvol:     subvol,
+				indexZYX:   curIndex,
+				version:    v,
+				mutate:     mutate,
+				mutID:      mutID,
+				downresMut: downresMut,
+				blockCh:    blockCh,
 			}
 			<-server.HandlerToken
 			go d.putChunk(putOp, wg, putbuffer)
@@ -140,9 +144,7 @@ func (d *Data) PutLabels(v dvid.VersionID, subvol *dvid.Subvolume, data []byte, 
 		putbuffer.Flush()
 	}
 
-	// Let any synced downres instance that we've completed block-level ops.
-	d.publishDownsizeCommit(v, mutID)
-
+	downresMut.Done()
 	return nil
 }
 
@@ -216,7 +218,7 @@ func (d *Data) putChunk(op *putOperation, wg *sync.WaitGroup, putbuffer storage.
 			d.handleBlockIngest(op.version, op.blockCh, block)
 			delta = block
 		}
-		if err := d.publishDownsizeBlock(op.version, op.mutID, bcoord, curBlock); err != nil {
+		if err := op.downresMut.BlockMutated(bcoord, curBlock); err != nil {
 			dvid.Errorf("data %q publishing downres: %v\n", d.DataName(), err)
 		}
 		evt := datastore.SyncEvent{d.DataUUID(), event}
