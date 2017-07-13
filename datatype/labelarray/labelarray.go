@@ -1776,6 +1776,7 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 			if n != numBytes || (readErr != nil && readErr != io.EOF) {
 				return fmt.Errorf("error reading %d bytes for block %s: %d read (%v)\n", numBytes, bcoord, n, readErr)
 			}
+
 			serialization, err := dvid.SerializePrecompressedData(compressed, d.Compression(), d.Checksum())
 			if err != nil {
 				return fmt.Errorf("can't serialize received block %s data: %v\n", bcoord, err)
@@ -1791,7 +1792,9 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 			if err != nil {
 				return fmt.Errorf("can't read all %d bytes from gzipped block %s: %v\n", numBytes, bcoord, err)
 			}
-			zr.Close()
+			if err := zr.Close(); err != nil {
+				return fmt.Errorf("error on closing gzip on block read of data %q: %v\n", d.DataName(), err)
+			}
 
 			var block labels.Block
 			if err = block.UnmarshalBinary(uncompressed); err != nil {

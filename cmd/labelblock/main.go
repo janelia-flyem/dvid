@@ -94,11 +94,14 @@ func uncompress() {
 		fmt.Fprintf(os.Stderr, "unable to use gzip for reading: %v\n", err)
 		os.Exit(1)
 	}
-	defer fz.Close()
 
 	serialization, err := ioutil.ReadAll(fz)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "unable to uncompress gzip input: %v\n", err)
+		os.Exit(1)
+	}
+	if err := fz.Close(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error on close of gzip uncompression of input: %v\n", err)
 		os.Exit(1)
 	}
 

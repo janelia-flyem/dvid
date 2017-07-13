@@ -14,6 +14,9 @@ const SubBlockSize = 8
 const DefaultSubBlocksPerBlock = 8
 const DefaultBlockSize = DefaultSubBlocksPerBlock * SubBlockSize
 
+const MaxBlockSize = 1024 // N^3 < max uint32, so N <= 2^10
+const MaxSubBlockSize = MaxBlockSize / SubBlockSize
+
 // PositionedBlock is a Block that also knows its position in DVID space via a chunk coordinate.
 type PositionedBlock struct {
 	Block
@@ -901,6 +904,13 @@ func (b *Block) setExportedVars() (err error) {
 
 	numLabels := binary.LittleEndian.Uint32(b.data[12:16])
 
+	if gx > MaxSubBlockSize || gy > MaxSubBlockSize || gz > MaxSubBlockSize {
+		return fmt.Errorf("%d x %d x %d sub-blocks exceed max dimension of %d voxels (%d sub-blocks)", gx, gy, gz, MaxBlockSize, MaxSubBlockSize)
+	}
+	if numLabels > MaxBlockSize*MaxBlockSize*MaxBlockSize {
+		return fmt.Errorf("number of labels (%d) exceeds what can be contained in max block size %d", numLabels, MaxBlockSize)
+	}
+
 	b.Labels, err = dvid.ByteToUint64(b.data[16 : 16+numLabels*8])
 	if err != nil {
 		return
@@ -1494,6 +1504,9 @@ type subBlockIndex map[uint64]uint16
 // iterate through the subvolume corresponding to the Block and do encoding
 func (s *subvolumeData) encodeBlock() (*Block, error) {
 	gx, gy, gz := s.getSubBlockDims()
+	if gx > MaxSubBlockSize || gy > MaxSubBlockSize || gz > MaxSubBlockSize {
+		return nil, fmt.Errorf("%d x %d x %d sub-blocks exceed max dimension of %d voxels (%d sub-blocks)", gx, gy, gz, MaxBlockSize, MaxSubBlockSize)
+	}
 	numSubBlocks := gx * gy * gz
 
 	numSubBlockLabels := make([]uint16, numSubBlocks)      // # of labels in each sub-block

@@ -2,6 +2,8 @@ Example use:
 
 % labelblock -compress=64,64,64 < raw-uint64-array > compressed-block
 
+  where compressed-block is a gzipped DVID compressed label block.
+
 % labelblock < compressed-block > raw-uint64-array
 
 This is not compiled by default using make.

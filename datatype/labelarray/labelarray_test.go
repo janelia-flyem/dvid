@@ -1013,6 +1013,73 @@ func TestPostBlocks(t *testing.T) {
 	}
 }
 
+func TestBigPostBlock(t *testing.T) {
+	datastore.OpenTest()
+	defer datastore.CloseTest()
+
+	uuid, _ := datastore.NewTestRepo()
+	if len(uuid) < 5 {
+		t.Fatalf("Bad root UUID for new repo: %s\n", uuid)
+	}
+	server.CreateTestInstance(t, uuid, "labelarray", "labels", dvid.Config{})
+
+	f, err := os.Open("../../test_data/fib19-64x64x64-sample1-block.dat.gz")
+	if err != nil {
+		t.Fatalf("Couldn't open compressed block test data: %v\n", err)
+	}
+	data, err := ioutil.ReadAll(f)
+	if err != nil {
+		t.Fatalf("Couldn't read compressed block test data: %v\n", err)
+	}
+	var buf bytes.Buffer
+	writeInt32(t, &buf, 0)
+	writeInt32(t, &buf, 0)
+	writeInt32(t, &buf, 0)
+	writeInt32(t, &buf, int32(len(data)))
+	fmt.Printf("Writing %d bytes of compressed block\n", len(data))
+	n, err := buf.Write(data)
+	if err != nil {
+		t.Fatalf("unable to write gzip block: %v\n", err)
+	}
+	if n != len(data) {
+		t.Fatalf("unable to write %d bytes to buffer, only wrote %d bytes\n", len(data), n)
+	}
+
+	apiStr := fmt.Sprintf("%snode/%s/labels/blocks", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", apiStr, &buf)
+
+	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
+		t.Fatalf("Error blocking on sync of labels: %v\n", err)
+	}
+}
+
+func TestBigPostBlock2(t *testing.T) {
+	datastore.OpenTest()
+	defer datastore.CloseTest()
+
+	uuid, _ := datastore.NewTestRepo()
+	if len(uuid) < 5 {
+		t.Fatalf("Bad root UUID for new repo: %s\n", uuid)
+	}
+	server.CreateTestInstance(t, uuid, "labelarray", "labels", dvid.Config{})
+
+	f, err := os.Open("../../test_data/stream_1block.dat")
+	if err != nil {
+		t.Fatalf("Couldn't open compressed block test data: %v\n", err)
+	}
+	data, err := ioutil.ReadAll(f)
+	if err != nil {
+		t.Fatalf("Couldn't read compressed block test data: %v\n", err)
+	}
+
+	apiStr := fmt.Sprintf("%snode/%s/labels/blocks", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", apiStr, bytes.NewBuffer(data))
+
+	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
+		t.Fatalf("Error blocking on sync of labels: %v\n", err)
+	}
+}
+
 func testLabels(t *testing.T, labelsIndexed bool) {
 	datastore.OpenTest()
 	defer datastore.CloseTest()
