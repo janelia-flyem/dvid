@@ -7,7 +7,6 @@
 package dvid
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -29,15 +28,6 @@ func NewConfig() Config {
 
 func (c Config) MarshalJSON() ([]byte, error) {
 	return json.Marshal(c.values)
-}
-
-func (c Config) Read(p []byte) (n int, err error) {
-	b, err := c.MarshalJSON()
-	if err != nil {
-		return 0, err
-	}
-	buf := bytes.NewBuffer(b)
-	return buf.Read(p)
 }
 
 // Sets a configuration using valid JSON.  Since Config is case-insensitive, JSON

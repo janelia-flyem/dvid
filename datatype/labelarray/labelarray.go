@@ -1759,7 +1759,7 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 	var numBlocks, pos int
 	hdrBytes := make([]byte, 16)
 	for {
-		n, readErr := r.Read(hdrBytes)
+		n, readErr := io.ReadFull(r, hdrBytes)
 		if n != 0 {
 			pos += n
 			if n != 16 {
@@ -1772,7 +1772,7 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 			bcoord := dvid.ChunkPoint3d{bx, by, bz}.ToIZYXString()
 			tk := NewBlockTKeyByCoord(scale, bcoord)
 			compressed := make([]byte, numBytes)
-			n, readErr = r.Read(compressed)
+			n, readErr = io.ReadFull(r, compressed)
 			if n != numBytes || (readErr != nil && readErr != io.EOF) {
 				return fmt.Errorf("error reading %d bytes for block %s: %d read (%v)\n", numBytes, bcoord, n, readErr)
 			}
