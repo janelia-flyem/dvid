@@ -250,12 +250,15 @@ type repoManager struct {
 }
 
 func (m *repoManager) Shutdown() {
+	wg := new(sync.WaitGroup)
 	for _, data := range m.iids {
 		d, ok := data.(Shutdowner)
 		if ok {
-			d.Shutdown()
+			wg.Add(1)
+			go d.Shutdown(wg)
 		}
 	}
+	wg.Wait()
 	dvid.Infof("All %d data instances shutdown.\n", len(m.iids))
 }
 

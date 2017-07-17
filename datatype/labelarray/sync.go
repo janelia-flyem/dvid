@@ -6,7 +6,6 @@
 package labelarray
 
 import (
-	"fmt"
 	"sync"
 
 	"github.com/janelia-flyem/dvid/datastore"
@@ -71,11 +70,9 @@ type splitOp struct {
 
 // InitDataHandlers launches goroutines to handle each labelarray instance's syncs.
 func (d *Data) InitDataHandlers() error {
-	if d.syncCh != nil || d.syncDone != nil {
+	if d.mutateCh[0] != nil {
 		return nil
 	}
-	d.syncCh = make(chan datastore.SyncMessage, 100)
-	d.syncDone = make(chan *sync.WaitGroup)
 
 	// Start N goroutines to process mutations for each block that will be consistently
 	// assigned to one of the N goroutines.
@@ -88,17 +85,34 @@ func (d *Data) InitDataHandlers() error {
 		go d.indexLabels(d.indexCh[i])
 	}
 
-	dvid.Infof("Launching sync event handler for data %q...\n", d.DataName())
+	dvid.Infof("Launched mutation handlers for data %q...\n", d.DataName())
 	return nil
 }
 
+func (d *Data) queuedSize() int {
+	var queued int
+	for i := 0; i < numBlockHandlers; i++ {
+		queued += len(d.mutateCh[i])
+	}
+	for i := 0; i < numLabelHandlers; i++ {
+		queued += len(d.indexCh[i])
+	}
+	return queued
+}
+
 // Shutdown terminates blocks until syncs are done then terminates background goroutines processing data.
-func (d *Data) Shutdown() {
-	if d.syncDone != nil {
-		wg := new(sync.WaitGroup)
-		wg.Add(1)
-		d.syncDone <- wg
-		wg.Wait() // Block until we are done.
+func (d *Data) Shutdown(wg *sync.WaitGroup) {
+	var elapsed int
+	for {
+		queued := d.queuedSize()
+		if queued > 0 {
+			if elapsed >= datastore.DataShutdownTime {
+				dvid.Infof("Timed out after %d seconds waiting for data %q mutations: %d still to be processed", elapsed, d.DataName(), queued)
+				break
+			}
+			dvid.Infof("After %d seconds, data %q has %d mutations in queue pending.", elapsed, d.DataName(), queued)
+			elapsed++
+		}
 	}
 	for i := 0; i < numBlockHandlers; i++ {
 		close(d.mutateCh[i])
@@ -106,33 +120,5 @@ func (d *Data) Shutdown() {
 	for i := 0; i < numLabelHandlers; i++ {
 		close(d.indexCh[i])
 	}
-}
-
-// GetSyncSubs implements the datastore.Syncer interface
-func (d *Data) GetSyncSubs(synced dvid.Data) (datastore.SyncSubs, error) {
-	if d.syncCh == nil {
-		if err := d.InitDataHandlers(); err != nil {
-			return nil, fmt.Errorf("unable to initialize handlers for data %q: %v\n", d.DataName(), err)
-		}
-	}
-
-	var evts []string
-	switch synced.TypeName() {
-	case "labelarray":
-		evts = []string{
-			DownsizeBlockEvent, DownsizeCommitEvent,
-		}
-	default:
-		return nil, fmt.Errorf("Unable to sync %s with %s since datatype %q is not supported.", d.DataName(), synced.DataName(), synced.TypeName())
-	}
-
-	subs := make(datastore.SyncSubs, len(evts))
-	for i, evt := range evts {
-		subs[i] = datastore.SyncSub{
-			Event:  datastore.SyncEvent{synced.DataUUID(), evt},
-			Notify: d.DataUUID(),
-			Ch:     d.syncCh,
-		}
-	}
-	return subs, nil
+	wg.Done()
 }

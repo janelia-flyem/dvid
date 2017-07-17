@@ -223,10 +223,14 @@ type PropertyCopier interface {
 	CopyPropertiesFrom(DataService, storage.FilterSpec) error
 }
 
+// DataShutdownTime is the maximum number of seconds a data instance can delay when terminating
+// goroutines during Shutdown.
+const DataShutdownTime = 20
+
 // Shutdowner is a data instance that has a function to call during shutdown.
 // Typically, this exits goroutines used for background data processing.
 type Shutdowner interface {
-	Shutdown()
+	Shutdown(wg *sync.WaitGroup) // Expects wg.Done() to be called in Shutdown function.
 }
 
 type Updater struct {

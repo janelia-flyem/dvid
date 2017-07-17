@@ -35,13 +35,14 @@ func (d *Data) InitDataHandlers() error {
 }
 
 // Shutdown terminates blocks until syncs are done then terminates background goroutines processing data.
-func (d *Data) Shutdown() {
+func (d *Data) Shutdown(wg *sync.WaitGroup) {
 	if d.syncDone != nil {
-		wg := new(sync.WaitGroup)
-		wg.Add(1)
-		d.syncDone <- wg
-		wg.Wait() // Block until we are done.
+		dwg := new(sync.WaitGroup)
+		dwg.Add(1)
+		d.syncDone <- dwg
+		dwg.Wait() // Block until we are done.
 	}
+	wg.Done()
 }
 
 // GetSyncSubs implements the datastore.Syncer interface

@@ -51,6 +51,7 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp) error {
 	d.StartUpdate()
 	iv := dvid.InstanceVersion{Data: d.DataUUID(), Version: v}
 	if err := labels.MergeStart(iv, op); err != nil {
+		d.StopUpdate()
 		return err
 	}
 
@@ -90,6 +91,7 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp) error {
 		if err := d.processMerge(v, delta); err != nil {
 			dvid.Criticalf("unable to process merge: %v\n", err)
 		}
+		dvid.Infof("processed merge for %q in gofunc\n", d.DataName())
 	}()
 
 	return nil
