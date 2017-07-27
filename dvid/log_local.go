@@ -68,5 +68,7 @@ func (slog stdLogger) Criticalf(format string, args ...interface{}) {
 
 func (slog stdLogger) Shutdown() {
 	log.Printf("Closing log file...\n")
-	slog.Close()
+	if slog.Logger != nil {
+		slog.Close()
+	}
 }
