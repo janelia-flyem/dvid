@@ -16,7 +16,7 @@ import requests
 import numpy
 import json
 
-DVIDLOCATION = "127.0.0.1:9000"
+DVIDLOCATION = "127.0.0.1:8000"
 
 """ Prints the time and result of the benchmark, terminates early if fails.
 
@@ -305,7 +305,7 @@ def volumetests(ns, uuid, name, data):
  
         try:
             import os
-            os.system("dvid -rpc=127.0.0.1:9001 repo " + uuid + " delete " + name)
+            os.system("dvid -rpc=127.0.0.1:8001 repo " + uuid + " delete " + name)
         except Exception as e:
             return False, str(e)
         try:
@@ -521,7 +521,7 @@ def bench_deleterepo(uuid):
     """
     try:
         import os
-        os.system("dvid -rpc=127.0.0.1:9001 repos delete " + uuid)
+        os.system("dvid -rpc=127.0.0.1:8001 repos delete " + uuid)
     except Exception as e:
         return False, str(e)
     
