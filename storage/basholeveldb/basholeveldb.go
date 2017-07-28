@@ -111,6 +111,10 @@ func (e Engine) GetDescription() string {
 	return e.desc
 }
 
+func (e Engine) IsDistributed() bool {
+	return false
+}
+
 func (e Engine) GetSemVer() semver.Version {
 	return e.semver
 }
@@ -194,12 +198,12 @@ func (e Engine) newLevelDB(config dvid.StoreConfig) (*LevelDB, bool, error) {
 		return nil, false, err
 	}
 	leveldb.ldb = ldb
-	
+
 	// if we know it's newly created, just return.
 	if created {
 		return leveldb, created, nil
 	}
-	
+
 	// otherwise, check if there's been any metadata or we need to initialize it.
 	metadataExists, err := leveldb.metadataExists()
 	if err != nil {
@@ -420,7 +424,7 @@ func (db *LevelDB) metadataExists() (bool, error) {
 				break
 			}
 			return true, nil
-		} 
+		}
 		break
 	}
 	if err := it.GetError(); err != nil {
@@ -575,10 +579,10 @@ func (db *LevelDB) versionedRange(vctx storage.VersionedCtx, begTKey, endTKey st
 	var itValue []byte
 	for {
 		select {
-			case <-done:  // only happens if we don't care about rest of data. 
-				ch <- errorableKV{nil, nil}
-				return
-			default:
+		case <-done: // only happens if we don't care about rest of data.
+			ch <- errorableKV{nil, nil}
+			return
+		default:
 		}
 		if it.Valid() {
 			if !keysOnly {
@@ -629,7 +633,7 @@ func (db *LevelDB) versionedRange(vctx storage.VersionedCtx, begTKey, endTKey st
 }
 
 // unversionedRange sends a range of key-value pairs down a channel.
-func (db *LevelDB) unversionedRange(ctx storage.Context, begTKey, endTKey storage.TKey, ch chan errorableKV,  done <-chan struct{}, keysOnly bool) {
+func (db *LevelDB) unversionedRange(ctx storage.Context, begTKey, endTKey storage.TKey, ch chan errorableKV, done <-chan struct{}, keysOnly bool) {
 	dvid.StartCgo()
 	ro := levigo.NewReadOptions()
 	it := db.ldb.NewIterator(ro)
@@ -664,11 +668,11 @@ func (db *LevelDB) unversionedRange(ctx storage.Context, begTKey, endTKey storag
 				break
 			}
 			select {
-				case <-done:
-					ch <- errorableKV{nil, nil}
-					return
-				case ch <- errorableKV{&storage.KeyValue{K: itKey, V:itValue}, nil}:
-					it.Next()
+			case <-done:
+				ch <- errorableKV{nil, nil}
+				return
+			case ch <- errorableKV{&storage.KeyValue{K: itKey, V: itValue}, nil}:
+				it.Next()
 			}
 		} else {
 			break
@@ -883,8 +887,8 @@ func (db *LevelDB) RawRangeQuery(kStart, kEnd storage.Key, keysOnly bool, out ch
 			}
 			kv := storage.KeyValue{itKey, itValue}
 			select {
-				case out <- &kv:
-				case <-cancel:
+			case out <- &kv:
+			case <-cancel:
 				return nil
 			}
 			//out <- &kv

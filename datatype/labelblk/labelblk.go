@@ -1582,11 +1582,6 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 					server.BadRequest(w, r, "can only POST 'raw' not 'isotropic' images")
 					return
 				}
-				// Make sure posted subvolume is block-aligned
-				if !dvid.BlockAligned(subvol, d.BlockSize()) {
-					server.BadRequest(w, r, "cannot store labels in non-block aligned geometry %s -> %s", subvol.StartPoint(), subvol.EndPoint())
-					return
-				}
 				estsize := subvol.NumVoxels() * 8
 				data, err := getBinaryData(compression, r.Body, estsize)
 				if err != nil {

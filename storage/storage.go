@@ -208,6 +208,9 @@ type Engine interface {
 	// GetName returns a simple driver identifier like "basholeveldb", "kvautobus" or "bigtable".
 	GetName() string
 
+	// IsDistributed returns whether the engine is a distributed DB (engine should manage request throttling)
+	IsDistributed() bool
+
 	// GetSemVer returns the semantic versioning info.
 	GetSemVer() semver.Version
 

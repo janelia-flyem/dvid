@@ -11,13 +11,13 @@ import (
 
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
-    
+
 	"github.com/janelia-flyem/go/semver"
 
-	"golang.org/x/net/context"
-	"google.golang.org/api/option"
 	api "cloud.google.com/go/bigtable"
 	"cloud.google.com/go/bigtable/bttest"
+	"golang.org/x/net/context"
+	"google.golang.org/api/option"
 	"google.golang.org/grpc"
 )
 
@@ -54,6 +54,10 @@ func (e Engine) GetDescription() string {
 	return e.desc
 }
 
+func (e Engine) IsDistributed() bool {
+	return true
+}
+
 func (e Engine) GetSemVer() semver.Version {
 	return e.semver
 }
@@ -75,52 +79,52 @@ func (e Engine) NewStore(config dvid.StoreConfig) (dvid.Store, bool, error) {
 }
 
 func parseConfig(config dvid.StoreConfig) (*BigTable, error) {
-    c := config.GetAll()
-    
-    v, found := c["project"]
-    if !found {
-        return nil, fmt.Errorf("%q must be specified for BigTable configuration", "project")
-    }
-    project, ok := v.(string)
-    if !ok {
-        return nil, fmt.Errorf("%q setting must be a string (%v)", "project", v)
-    }
+	c := config.GetAll()
 
-    v, found = c["zone"]
-    if !found {
-        return nil, fmt.Errorf("%q must be specified for BigTable configuration", "zone")
-    }
-    zone, ok := v.(string)
-    if !ok {
-        return nil, fmt.Errorf("%q setting must be a string (%v)", "zone", v)
-    }
+	v, found := c["project"]
+	if !found {
+		return nil, fmt.Errorf("%q must be specified for BigTable configuration", "project")
+	}
+	project, ok := v.(string)
+	if !ok {
+		return nil, fmt.Errorf("%q setting must be a string (%v)", "project", v)
+	}
 
-    v, found = c["cluster"]
-    if !found {
-        return nil, fmt.Errorf("%q must be specified for BigTable configuration", "cluster")
-    }
-    cluster, ok := v.(string)
-    if !ok {
-        return nil, fmt.Errorf("%q setting must be a string (%v)", "cluster", v)
-    }
+	v, found = c["zone"]
+	if !found {
+		return nil, fmt.Errorf("%q must be specified for BigTable configuration", "zone")
+	}
+	zone, ok := v.(string)
+	if !ok {
+		return nil, fmt.Errorf("%q setting must be a string (%v)", "zone", v)
+	}
 
-    v, found = c["table"]
-    if !found {
-        return nil, fmt.Errorf("%q must be specified for BigTable configuration", "table")
-    }
-    table, ok := v.(string)
-    if !ok {
-        return nil, fmt.Errorf("%q setting must be a string (%v)", "table", v)
-    }
+	v, found = c["cluster"]
+	if !found {
+		return nil, fmt.Errorf("%q must be specified for BigTable configuration", "cluster")
+	}
+	cluster, ok := v.(string)
+	if !ok {
+		return nil, fmt.Errorf("%q setting must be a string (%v)", "cluster", v)
+	}
+
+	v, found = c["table"]
+	if !found {
+		return nil, fmt.Errorf("%q must be specified for BigTable configuration", "table")
+	}
+	table, ok := v.(string)
+	if !ok {
+		return nil, fmt.Errorf("%q setting must be a string (%v)", "table", v)
+	}
 
 	var testing bool
-    v, found = c["testing"]
-    if !found {
+	v, found = c["testing"]
+	if !found {
 		testing, ok = v.(bool)
 		if !ok {
 			return nil, fmt.Errorf("%q setting must be a bool (%v)", "testing", v)
 		}
-    }
+	}
 
 	bt := &BigTable{
 		project: project,
@@ -144,8 +148,8 @@ func (e Engine) GetTestConfig() (*Backend, error) {
         "table":   fmt.Sprintf("dvid-test-%x", uuid.NewV4().Bytes()),
         "testing": true,
     }
-    var c dvid.Config 
-    c.SetAll(tc) 
+    var c dvid.Config
+    c.SetAll(tc)
 	testConfig := map[string]dvid.StoreConfig{
         "default": &dvid.StoreConfig{Config: c, Engine: "bigtable"},
     }
@@ -957,11 +961,11 @@ func (db *BigTable) Close() {
 }
 
 func (db *BigTable) Equal(c dvid.StoreConfig) bool {
-    bt, err := parseConfig(c)
-    if err != nil {
-        dvid.Errorf("unable to compare store config (%v) to BigTable: %v\n", c, err)
-        return false
-    }
+	bt, err := parseConfig(c)
+	if err != nil {
+		dvid.Errorf("unable to compare store config (%v) to BigTable: %v\n", c, err)
+		return false
+	}
 	if db.project == bt.project && db.zone == bt.zone && db.cluster == bt.cluster && db.table == bt.table {
 		return true
 	}

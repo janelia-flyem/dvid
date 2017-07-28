@@ -46,6 +46,10 @@ func (e Engine) GetDescription() string {
 	return e.desc
 }
 
+func (e Engine) IsDistributed() bool {
+	return true
+}
+
 func (e Engine) GetSemVer() semver.Version {
 	return e.semver
 }
