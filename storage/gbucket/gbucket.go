@@ -3,24 +3,34 @@
 package gbucket
 
 /*
-TODO:
-* (maybe) Allow creation of new bucket (using http API)
-* Encode keys with random test prefix for testing
-* Improve error handling (more expressive print statements)
-* Refactor to call batcher for multiple DB requests.  Consider multipart http requests.
-Explore tradeoff between smaller parallel requests and single big requests.
-* Restrict the number of parallel requests.
-* Refactor to call batcher for any calls that require multiple requests
-* DeleteAll should page deletion to avoid memory issues for very large deletes
 Note:
-* Range calls require a list query to find potentially matching objects.  After this
+* Range calls are slow require a list query to find potentially matching objects.  After this
 call, specific objects can be fetched.
 * Lists are eventually consistent and objects are strongly consistent after object post/change.
 It is possible to post an object and not see the object when searching the list.
-* The Batcher implementation does not wrap operations into an atomic transaction.
 */
+
+/* Notes on VALUEVERSION refactor
+
+* Some raw queries used for cloning/distribution have been disabled.  Specialized functionality
+is probably better for transferring data on the cloud.
+* A versioned key/value designated to a versioned address cannot be moved back to the master key
+
+TODO
+
+* Fetch generation id and value in parallel.
+* Split gbucket.go into several files.
+* Refactor datatype code to use standard key value interface (not bufferable interface).
+Throttling is done by gbucket but datatype code can also implement independent throttling.
+* Implement functionality to support lowel-level operations.
+* Allow datatypes to provid PUT with a likely exists hint.
+* Move version encoding to the beginning of the key to potentially accelerate range
+queries and distribution.
+*/
+
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -67,14 +77,20 @@ const (
 	// (separate bucket for each repo)
 	MULTIBUCKET = 1.1
 
+	// value versioning
+	VALUEVERSION = 1.2
+
 	// Repo root bucket name
 	REPONAME = "-dvidrepo-"
 
 	// current version of gbucket (must be >1 byte string)
-	CURVER = "1.1"
+	CURVER = "1.2"
 
 	// first gbucket version (must be >1 byte string)
 	ORIGVER = "1.0"
+
+	// stopping value for version encoded in value prefix
+	STOPVERSIONPREFIX = dvid.VersionID(0)
 )
 
 type GCredentials struct {
@@ -97,6 +113,10 @@ func (e Engine) GetName() string {
 
 func (e Engine) GetDescription() string {
 	return e.desc
+}
+
+func (e Engine) IsDistributed() bool {
+	return true
 }
 
 func (e Engine) GetSemVer() semver.Version {
@@ -198,6 +218,10 @@ func (e *Engine) newGBucket(config dvid.StoreConfig) (*GBucket, bool, error) {
 		return nil, false, err
 	}
 
+	// size of version datatype (this is being kept constant in case the type is changed in dvid, 4 bytes should be sufficient)
+	//gb.vsize := unsafe.Sizeof(ctx.VersionID())
+	gb.vsize = 4
+
 	// check version enables repo
 	if gb.version >= MULTIBUCKET {
 		gb.repo2bucket = make(map[string]*api.BucketHandle)
@@ -222,24 +246,58 @@ type GBucket struct {
 	ctx            context.Context
 	client         *api.Client
 	version        float64
+	vsize          int32
 	// repo2bucket assumes unique bucket names for now
 	// TODO: handle bucket name conflicts; allow renaming of master bucket
 	repo2bucket map[string]*api.BucketHandle
-	projectid   string
+	// mutex is needed to lock repo2bucket
+	mutex     sync.Mutex
+	projectid string
+}
+
+// ---- HELPER FUNCTIONS ----
+
+func grabPrefix(key1 storage.Key, key2 storage.Key) string {
+	var prefixe storage.Key
+	key1m := hex.EncodeToString(key1)
+	key2m := hex.EncodeToString(key2)
+	for spot := range key1m {
+		if key1m[spot] != key2m[spot] {
+			break
+		}
+		prefixe = append(prefixe, key1m[spot])
+	}
+	return string(prefixe)
+}
+
+type KeyArray []storage.Key
+
+func (k KeyArray) Less(i, j int) bool {
+	return string(k[i]) < string(k[j])
+}
+
+func (k KeyArray) Swap(i, j int) {
+	k[i], k[j] = k[j], k[i]
+}
+
+func (k KeyArray) Len() int {
+	return len(k)
 }
 
 // bucketHandle retrieves the bucket handle based on the context
 func (db *GBucket) bucketHandle(ctx storage.Context) (*api.BucketHandle, error) {
-	if !ctx.Versioned() || db.version < MULTIBUCKET {
-		// unversioned context should be sent to master bucket
-		return db.bucket, nil
-	}
+	// lock will cause ~1 second slowness if accessing a new repo
+	db.mutex.Lock()
+	defer db.mutex.Unlock()
 
 	// grab root uuid
-	rootuuid, err := ctx.(storage.VersionedCtx).RepoRoot()
+	rootuuid, err := ctx.RepoRoot()
 	if err != nil {
 		return nil, err
-
+	}
+	if string(rootuuid) == "" || db.version < MULTIBUCKET {
+		// unversioned context should be sent to master bucket
+		return db.bucket, nil
 	}
 
 	// create bucket if it does not exist
@@ -270,7 +328,432 @@ func (db *GBucket) String() string {
 	return fmt.Sprintf("google cloud storage, bucket %s", db.bname)
 }
 
-// ---- OrderedKeyValueGetter interface ------
+func (db *GBucket) initValueVersion(version dvid.VersionID, val []byte) []byte {
+	val2 := make([]byte, 3*db.vsize, 3*db.vsize+int32(len(val)))
+	binary.LittleEndian.PutUint32(val2, uint32(version))
+	binary.LittleEndian.PutUint32(val2[db.vsize:2*db.vsize], uint32(version))
+	binary.LittleEndian.PutUint32(val2[2*db.vsize:3*db.vsize], 0)
+
+	val2 = append(val2, val...)
+	return val2
+}
+
+// valuePatch patches the value at the given key with function f using valueversion prefix
+// The patching function should work on uninitialized data.
+// TODO: accelerate patch conflicts by avoiding unnecessary master reading
+func (db *GBucket) valuePatch(ctx storage.Context, tk storage.TKey, f storage.PatchFunc) error {
+	var bucket *api.BucketHandle
+	var err error
+	if bucket, err = db.bucketHandle(ctx); err != nil {
+		return err
+	}
+	basekey := ctx.ConstructKeyVersion(tk, dvid.VersionID(0))
+
+	initval := false
+
+	// loop until success (similar to POST loop but adds patching code and offval write protection)
+	for true {
+		var genid int64
+		offgenid := int64(0)
+		var offval []byte
+
+		// if the value was already inited (even by accident) -- grab id
+		if initval {
+			_, offgenid, err = db.getValueGen(ctx, ctx.ConstructKey(tk))
+			if err != nil {
+				return err
+			}
+		}
+
+		// perform genid get
+		baseval, genid, err := db.getValueGen(ctx, basekey)
+		if err != nil {
+			return err
+		}
+
+		// check if the value already likely exists and
+		// fetch that value with a genid
+		if baseval != nil {
+			baseversionid := db.baseVersion(baseval)
+			relevantver := dvid.VersionID(0)
+
+			// find most relevant key
+			allkeys := db.extractPrefixKeys(ctx, tk, baseval)
+			tkvs := []*storage.KeyValue{}
+			for _, key := range allkeys {
+				tkvs = append(tkvs, &storage.KeyValue{key, []byte{}})
+			}
+			kv, _ := ctx.(storage.VersionedCtx).VersionedKeyValue(tkvs)
+			if kv != nil {
+				// strip version
+				relevantver, _ = ctx.(storage.VersionedCtx).VersionFromKey(kv.K)
+			}
+
+			// perform another get if another version is more relevant
+			if baseversionid != relevantver {
+				var offgenid2 int64
+				offval, offgenid2, err = db.getValueGen(ctx, ctx.ConstructKeyVersion(tk, relevantver))
+				if err != nil {
+					return err
+				}
+
+				// if current version is what was fetched, set the genid
+				if relevantver == ctx.VersionID() {
+					offgenid = offgenid2
+				}
+			} else {
+				offval = db.sliceDataVersionPrefix(baseval)
+			}
+		}
+
+		// treat it as a post of offval data
+		baseval, offval, offversion, err := db.updateValueVersion(ctx, baseval, offval)
+
+		// set to nil in case these values are len 0 slices
+		if len(offval) == 0 {
+			offval = nil
+		}
+		if len(baseval) == 0 {
+			baseval = nil
+		}
+
+		// offval or baseval must be modified
+		if offversion == ctx.VersionID() {
+			// apply patch to val (offval could be empty)
+			offval, err = f(offval)
+			if err != nil {
+				return err
+			}
+		} else {
+			baseprefix, basevalripped := db.extractValueVersion(baseval)
+			// set to nil if there is no value since that is expected by patch function
+			if len(basevalripped) == 0 {
+				basevalripped = nil
+
+			}
+			basevalripped, err = f(basevalripped)
+			if err != nil {
+				return err
+			}
+			baseval = append(baseprefix, basevalripped...)
+		}
+
+		// post off value
+		if offval != nil {
+			obj_handle := bucket.Object(hex.EncodeToString(ctx.ConstructKey(tk)))
+			// set condition if offdata is patch
+			if offversion == ctx.VersionID() {
+				var conditions api.Conditions
+				conditions.GenerationMatch = offgenid
+				if conditions.GenerationMatch == 0 {
+					conditions.DoesNotExist = true
+				}
+				obj_handle = obj_handle.If(conditions)
+
+				// note that value already exists
+				initval = true
+			}
+			err = db.putVhandle(obj_handle, offval)
+			if err == ErrCondFail {
+				continue
+			} else if err != nil {
+				return err
+			}
+
+		}
+
+		// post main value
+		if baseval != nil {
+			obj_handle := bucket.Object(hex.EncodeToString(basekey))
+			var conditions api.Conditions
+			conditions.GenerationMatch = genid
+			if conditions.GenerationMatch == 0 {
+				conditions.DoesNotExist = true
+			}
+			obj_handle = obj_handle.If(conditions)
+
+			err = db.putVhandle(obj_handle, baseval)
+			if err == nil {
+				break
+			} else if err != ErrCondFail {
+				return err
+			}
+
+		} else {
+			break
+		}
+	}
+
+	return err
+}
+
+// updateValueVersion updates the base value and provides an off value and relevant version
+// Note: returned basevil will be nil if no change; off value will be nil if overwritten
+func (db *GBucket) updateValueVersion(ctx storage.Context, baseval []byte, newval []byte) ([]byte, []byte, dvid.VersionID, error) {
+	ismasterhead := ctx.(storage.VersionedCtx).Head()
+
+	// grab current head prefix
+	currentmaster := dvid.VersionID(0)
+
+	if baseval != nil {
+		currentmaster = db.baseVersion(baseval)
+	}
+
+	// check if master
+	ismaster := false
+	if currentmaster != 0 {
+		ismaster = ctx.(storage.VersionedCtx).MasterVersion(currentmaster)
+	}
+
+	// check if new data
+	if baseval == nil {
+		// newval will also be nil
+		basevalmod := db.initValueVersion(ctx.VersionID(), newval)
+		return basevalmod, nil, 0, nil
+	} else if ctx.VersionID() == currentmaster {
+		// overwrite if same version
+		// replace old value with new value
+		exists, hastombstone := db.hasVersion(baseval, ctx.VersionID())
+		baseprefix, _ := db.extractValueVersion(baseval)
+
+		if !exists {
+			// add key if deleted before
+			baseprefix = db.appendValueVersion(baseprefix, currentmaster)
+		} else if hastombstone {
+			// remove tombstone
+			db.unDeleteValueVersion(baseprefix, currentmaster)
+		}
+
+		// concatentate data to value prefix
+		basevalmod := baseprefix
+		basevalmod = append(baseprefix, newval...)
+
+		// return mod base val
+		return basevalmod, nil, 0, nil
+	} else if exists, hastombstone := db.hasVersion(baseval, ctx.VersionID()); exists {
+		// Data already exists outside of base
+		var basevalmod []byte
+
+		if hastombstone {
+			// if tombstone, untombstone and load new baseval
+			db.unDeleteValueVersion(baseval, ctx.VersionID())
+			basevalmod = baseval
+		}
+		// return basevalmod (might be nil) and off version
+		return basevalmod, newval, ctx.VersionID(), nil
+	} else if ismasterhead || !ismaster {
+		// Eviction if new data has higher priority
+		// create new prefix and data
+		baseprefix, evictvalmod := db.extractValueVersion(baseval)
+		baseprefix = db.appendValueVersion(baseprefix, ctx.VersionID())
+		db.replaceMaster(baseprefix, ctx.VersionID())
+		basevalmod := append(baseprefix, newval...)
+
+		// return new base data and evicted previous master
+		return basevalmod, evictvalmod, currentmaster, nil
+	}
+	// else create a new off critical value version
+
+	// add version to base header (mod base val)
+	baseprefix, baseval := db.extractValueVersion(baseval)
+	baseprefix = db.appendValueVersion(baseprefix, ctx.VersionID())
+	basevalmod := append(baseprefix, baseval...)
+
+	// return new val with version id
+	return basevalmod, newval, ctx.VersionID(), nil
+
+}
+
+// Extracts the base version encoded in the valeu
+func (db *GBucket) baseVersion(val []byte) dvid.VersionID {
+	return dvid.VersionID(binary.LittleEndian.Uint32(val[0:db.vsize]))
+}
+
+// append version to supplied prefix
+func (db *GBucket) appendValueVersion(val []byte, version dvid.VersionID) []byte {
+	tempintbuffer := make([]byte, db.vsize)
+	newprefix := make([]byte, 0, len(val)+int(db.vsize))
+	binary.LittleEndian.PutUint32(tempintbuffer, uint32(version))
+	newprefix = append(newprefix, val[0:len(val)-int(db.vsize)]...)
+	newprefix = append(newprefix, tempintbuffer...)
+	newprefix = append(newprefix, val[len(val)-int(db.vsize):len(val)]...)
+
+	return newprefix
+}
+
+// extractValueVersion extracts and copies the header from the value and returns slice of the value
+func (db *GBucket) extractValueVersion(val []byte) ([]byte, []byte) {
+	currpos := db.vsize
+	for ; currpos < int32(len(val)); currpos += db.vsize {
+		currval := binary.LittleEndian.Uint32(val[currpos : currpos+db.vsize])
+		if dvid.VersionID(currval) == STOPVERSIONPREFIX {
+			currpos += db.vsize
+			break
+		}
+	}
+	valueversion_header := make([]byte, 0, currpos)
+	valueversion_header = append(valueversion_header, val[0:currpos]...)
+
+	return valueversion_header, val[currpos:len(val)]
+}
+
+// replaceMaster replace master with provided version (in-place modification of array)
+func (db *GBucket) replaceMaster(val []byte, version dvid.VersionID) {
+	tempintbuffer := make([]byte, db.vsize)
+	binary.LittleEndian.PutUint32(tempintbuffer, uint32(version))
+	//  overwrite master
+	for i := int32(0); i < db.vsize; i++ {
+		val[i] = tempintbuffer[i]
+	}
+}
+
+// unDeleteValueVersion removes tombstone if it exists
+func (db *GBucket) unDeleteValueVersion(val []byte, version dvid.VersionID) {
+	for currpos := db.vsize; currpos < int32(len(val)); currpos += db.vsize {
+		currval := int32(binary.LittleEndian.Uint32(val[currpos : currpos+db.vsize]))
+		if dvid.VersionID(currval) == STOPVERSIONPREFIX {
+			break
+		}
+
+		if currval < 0 {
+			currval *= -1
+		}
+		if dvid.VersionID(currval) == version {
+			tempintbuffer := make([]byte, db.vsize)
+			binary.LittleEndian.PutUint32(tempintbuffer, uint32(currval))
+			//  overwrite tombstone
+			for i := int32(0); i < db.vsize; i++ {
+				val[currpos+i] = tempintbuffer[i]
+			}
+			break
+		}
+	}
+}
+
+// onlyBaseVersion returns true if only version in the value version is the master
+func (db *GBucket) onlyBaseVersion(val []byte) bool {
+	masterval := int32(binary.LittleEndian.Uint32(val[0:db.vsize]))
+	currpos := db.vsize
+	for ; currpos < int32(len(val)); currpos += db.vsize {
+		currval := int32(binary.LittleEndian.Uint32(val[currpos : currpos+db.vsize]))
+		if dvid.VersionID(currval) == STOPVERSIONPREFIX {
+			break
+		}
+		if currval < 0 {
+			currval *= -1
+		}
+		if currval != masterval {
+			return false
+		}
+	}
+
+	return true
+}
+
+// hasVersion indicates whether version exists and whether it is tombstoned
+func (db *GBucket) hasVersion(val []byte, version dvid.VersionID) (bool, bool) {
+	currpos := db.vsize
+	exists := false
+	hastombstone := false
+	for ; currpos < int32(len(val)); currpos += db.vsize {
+		currval := int32(binary.LittleEndian.Uint32(val[currpos : currpos+db.vsize]))
+		if dvid.VersionID(currval) == STOPVERSIONPREFIX {
+			break
+		}
+
+		temptombstone := false
+		if currval < 0 {
+			currval *= -1
+			temptombstone = true
+		}
+		if dvid.VersionID(currval) == version {
+			hastombstone = temptombstone
+			exists = true
+			break
+		}
+	}
+
+	return exists, hastombstone
+}
+
+func (db *GBucket) sliceDataVersionPrefix(val []byte) []byte {
+	currpos := db.vsize
+	for ; currpos < int32(len(val)); currpos += db.vsize {
+		currval := dvid.VersionID(binary.LittleEndian.Uint32(val[currpos : currpos+db.vsize]))
+		if currval == STOPVERSIONPREFIX {
+			currpos += db.vsize
+			break
+		}
+	}
+	return val[currpos:len(val)]
+}
+
+// Retrieve value at base address and perform another get if data is not there
+// Note: for now, assume writes will guarantee existence of non-master key
+func (db *GBucket) versionedgetV(ctx storage.Context, tk storage.TKey) ([]byte, error) {
+	var bucket *api.BucketHandle
+	var err error
+	var val []byte
+
+	if ctx == nil {
+		// use default buckert
+		bucket = db.bucket
+	} else {
+		if bucket, err = db.bucketHandle(ctx); err != nil {
+			return nil, err
+		}
+	}
+
+	// get base key
+	basekey := ctx.ConstructKeyVersion(tk, 0)
+
+	// gets handle (no network op)
+	obj_handle := bucket.Object(hex.EncodeToString(basekey))
+	val, err = db.getVhandle(obj_handle)
+
+	// preserve interface where missing value is not an error
+	if err == api.ErrObjectNotExist {
+		return nil, nil
+	}
+
+	// grab the most relevant version
+	relevantver := dvid.VersionID(0)
+
+	allkeys := db.extractPrefixKeys(ctx, tk, val)
+	// find most relevant key
+	tkvs := []*storage.KeyValue{}
+	for _, key := range allkeys {
+		tkvs = append(tkvs, &storage.KeyValue{key, []byte{}})
+	}
+	kv, _ := ctx.(storage.VersionedCtx).VersionedKeyValue(tkvs)
+	if kv != nil {
+		// strip version
+		relevantver, _ = ctx.(storage.VersionedCtx).VersionFromKey(kv.K)
+	}
+
+	// check if the current base version is the most relevant version
+	basever := db.baseVersion(val)
+	if relevantver == basever && basever != 0 {
+		// strip header from value
+		val = db.sliceDataVersionPrefix(val)
+		// empty base value
+		if len(val) == 0 {
+			val = nil
+		}
+	} else if relevantver > 0 {
+		// TODO: if a non-head node, the value should probably always exist
+		// so could continue to poll
+		// if match exists but not base, do tradional get
+		// (if it doesn't exist here, should be from legitimate delete)
+		speckey := ctx.ConstructKeyVersion(tk, relevantver)
+		val, err = db.getV(ctx, speckey)
+	} else {
+		// else return blank as per default
+		val = nil
+	}
+
+	return val, err
+}
 
 // get retrieves a value from a given key or an error if nothing exists
 func (db *GBucket) getV(ctx storage.Context, k storage.Key) ([]byte, error) {
@@ -294,6 +777,18 @@ func (db *GBucket) getV(ctx storage.Context, k storage.Key) ([]byte, error) {
 	if err == api.ErrObjectNotExist {
 		return nil, nil
 	}
+
+	if db.version >= VALUEVERSION && ctx.Versioned() {
+		currver, _ := ctx.(storage.VersionedCtx).VersionFromKey(k)
+		if val != nil && int32(currver) == 0 {
+			val = db.sliceDataVersionPrefix(val)
+			// empty base value
+			if len(val) == 0 {
+				val = nil
+			}
+		}
+	}
+
 	return val, err
 }
 
@@ -360,11 +855,95 @@ func (db *GBucket) putV(ctx storage.Context, k storage.Key, value []byte) (err e
 
 }
 
+// putVTKey puts data using valueversion
+/* Note: currently requires 5 network op latency in worst case with no conflicts
+(1 op if first version).
+    1 speculateive put if empty -- TODO provide hint that data is not-empty
+    if put failed
+	-2 ops (fetch generation id and then basevalue) -- TODO should be one op
+	-1 op write evicted/non-base value (if necessary), run before basevalue update unless
+	overwriting old data -- TODO paralelize with basevalue update if evicted data is from
+	a locked node, this requires the GET routine to be slightly smarter
+	-1 op update basevalue (if a change exist for current keys)
+*/
+func (db *GBucket) putVTKey(ctx storage.Context, tk storage.TKey, value []byte) error {
+	// retrieve repo bucket
+	var bucket *api.BucketHandle
+	var err error
+	if ctx == nil {
+		// use default buckert
+		bucket = db.bucket
+	} else {
+		if bucket, err = db.bucketHandle(ctx); err != nil {
+			return err
+		}
+	}
+
+	// try a speculative write
+	basekey := ctx.ConstructKeyVersion(tk, dvid.VersionID(0))
+	obj_handle := bucket.Object(hex.EncodeToString(basekey))
+	var conditions api.Conditions
+	conditions.DoesNotExist = true
+	obj_handle = obj_handle.If(conditions)
+
+	// add versionid, versionid, 0 to val
+	value2 := db.initValueVersion(ctx.VersionID(), value)
+
+	err = db.putVhandle(obj_handle, value2)
+	if err != ErrCondFail {
+		return err
+	}
+
+	for true {
+		// retrieve current valueversion (need entire value to re-post data)
+		baseval, genid, err := db.getValueGen(ctx, basekey)
+		if err != nil {
+			return err
+		}
+		offversion := dvid.VersionID(0)
+		var offval []byte
+
+		// modify the valueversion header and return data to be posted as necessary
+		baseval, offval, offversion, err = db.updateValueVersion(ctx, baseval, value)
+		if err != nil {
+			return err
+		}
+
+		// either old data (if new version data has been posted) or
+		// new data if old data is master and new data is not
+		if offval != nil {
+			// evicted data should not exist beforehand in most cases
+			obj_handle := bucket.Object(hex.EncodeToString(ctx.ConstructKeyVersion(tk, offversion)))
+			if err := db.putVhandle(obj_handle, offval); err != nil {
+				return err
+			}
+		}
+
+		// post base data if overwritten, caused eviction, or if there is a prefix change
+		// this is only nil if non-master data is directly posting to already existing data
+		if baseval != nil {
+			obj_handle := bucket.Object(hex.EncodeToString(basekey))
+			var conditions api.Conditions
+			conditions.GenerationMatch = genid
+			obj_handle_temp := obj_handle.If(conditions)
+			err = db.putVhandle(obj_handle_temp, baseval)
+			if err == nil {
+				break
+			} else if err != ErrCondFail {
+				return err
+			}
+		} else {
+			break
+		}
+	}
+
+	return nil
+}
+
 // put value from a given handle or an error if nothing exists
 func (db *GBucket) putVhandle(obj_handle *api.ObjectHandle, value []byte) (err error) {
 	// gets handle (no network op)
 	for i := 0; i < NUM_TRIES; i++ {
-
 		// returns error if it doesn't exist
 		obj := obj_handle.NewWriter(db.ctx)
 
@@ -391,22 +970,90 @@ func (db *GBucket) putVhandle(obj_handle *api.ObjectHandle, value []byte) (err e
 	return err
 }
 
-// getSingleVersionedKey returns value for latest version
-func (db *GBucket) getSingleVersionedKey(vctx storage.VersionedCtx, k []byte) ([]byte, error) {
-	// grab all keys within versioned range
-	keys, err := db.getKeysInRange(vctx.(storage.Context), k, k)
-	if err != nil {
-		return nil, err
-	}
-	if keys == nil || len(keys) == 0 {
-		return nil, err
-	}
-	if len(keys) > 1 {
-		return nil, fmt.Errorf("More than one key found given prefix")
+// extractVers finds all the versions stored in the provide base key value and returns prefix
+func (db *GBucket) extractVers(ctx storage.Context, baseKey storage.Key) ([]storage.Key, []byte, error) {
+	var bucket *api.BucketHandle
+	var err error
+
+	if ctx == nil {
+		// use default buckert
+		bucket = db.bucket
+	} else {
+		if bucket, err = db.bucketHandle(ctx); err != nil {
+			return nil, nil, err
+		}
 	}
 
-	// retrieve actual data
-	return db.getV(vctx, keys[0])
+	// gets handle (no network op)
+	obj_handle := bucket.Object(hex.EncodeToString(baseKey))
+	var value []byte
+
+	for i := 0; i < NUM_TRIES; i++ {
+		// fetch a little more data than the max prefix size in case a new node is opened
+		// Note: technically someone could rapidly open a lot of nodes and do concurrent
+		// writes that cause evictions that could technically lead to an inconsistent view of data
+		offset := int32(ctx.(storage.VersionedCtx).NumVersions()+2)*db.vsize + (db.vsize)
+
+		// returns error if it doesn't exist
+		obj, err2 := obj_handle.NewRangeReader(db.ctx, 0, int64(offset))
+
+		// if object not found return err
+		if err2 == api.ErrObjectNotExist {
+			return nil, nil, err2
+		}
+
+		// no error, read value and return
+		if err2 == nil {
+			value, err2 = ioutil.ReadAll(obj)
+			if err2 != nil {
+				return nil, nil, err2
+			}
+		}
+
+		// keep trying if there is another error
+		err = err2
+	}
+
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// process value retrieve and extract keys
+	tk, _ := storage.TKeyFromKey(baseKey)
+	vkeys := db.extractPrefixKeys(ctx, tk, value)
+
+	return vkeys, value, nil
+}
+
+// extract keys from value prefix (assume first value is the head and always exists)
+func (db *GBucket) extractPrefixKeys(ctx storage.Context, tk storage.TKey, val []byte) []storage.Key {
+	vkeys := make([]storage.Key, 0)
+	foundend := false
+
+	// read until STOPVERSIONPREFIX or finished byte array
+	for i := db.vsize; i < int32(len(val)); i += db.vsize {
+		currval := int32(binary.LittleEndian.Uint32(val[i : i+db.vsize]))
+		// stop reading if at end of prefix
+		if dvid.VersionID(currval) == STOPVERSIONPREFIX {
+			foundend = true
+			break
+		}
+
+		// deleted values are actually converted to signed ints and should make tombstone
+		if currval > 0 {
+			vkeys = append(vkeys, ctx.(storage.VersionedCtx).ConstructKeyVersion(tk, dvid.VersionID(currval)))
+		} else {
+			currval *= -1
+			vkeys = append(vkeys, ctx.(storage.VersionedCtx).TombstoneKeyVersion(tk, dvid.VersionID(currval)))
+		}
+	}
+
+	// should always find the end of the prefix
+	if !foundend {
+		dvid.Criticalf("End of valueversion prefix not found")
+	}
+
+	return vkeys
 }
 
 // getKeysInRangeRaw returns all keys in a range (including multiple keys and tombstones)
@@ -430,7 +1077,6 @@ func (db *GBucket) getKeysInRangeRaw(ctx storage.Context, minKey, maxKey storage
 	query := &api.Query{Prefix: prefix}
 	// query objects
 	object_list := bucket.Objects(db.ctx, query)
-
 	// filter keys that fall into range
 	object_attr, done := object_list.Next()
 	for done != iterator.Done {
@@ -461,25 +1107,80 @@ func (db *GBucket) getKeysInRange(ctx storage.Context, TkBeg, TkEnd storage.TKey
 		minKey = ctx.ConstructKey(TkBeg)
 		maxKey = ctx.ConstructKey(TkEnd)
 	} else {
-		minKey, err = ctx.(storage.VersionedCtx).MinVersionKey(TkBeg)
-		if err != nil {
-			return nil, err
-		}
-		maxKey, err = ctx.(storage.VersionedCtx).MaxVersionKey(TkEnd)
-		if err != nil {
-			return nil, err
+
+		if db.version >= VALUEVERSION {
+			minKey = ctx.ConstructKeyVersion(TkBeg, dvid.VersionID(0))
+			maxKey = ctx.ConstructKeyVersion(TkEnd, dvid.VersionID(0))
+		} else {
+			minKey, err = ctx.(storage.VersionedCtx).MinVersionKey(TkBeg)
+			if err != nil {
+				return nil, err
+			}
+			maxKey, err = ctx.(storage.VersionedCtx).MaxVersionKey(TkEnd)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 
 	keys, _ := db.getKeysInRangeRaw(ctx, minKey, maxKey)
-
+	if !ctx.Versioned() {
+		return keys, nil
+	}
 	// grab latest version if versioned
-	if ctx.Versioned() {
-		vctx, ok := ctx.(storage.VersionedCtx)
-		if !ok {
-			return nil, fmt.Errorf("Bad Get(): context is versioned but doesn't fulfill interface: %v", ctx)
-		}
+	vctx, ok := ctx.(storage.VersionedCtx)
+	if !ok {
+		return nil, fmt.Errorf("Bad Get(): context is versioned but doesn't fulfill interface: %v", ctx)
+	}
 
+	if db.version >= VALUEVERSION {
+		matchingkeys := make([]storage.Key, 0)
+
+		var wg sync.WaitGroup
+		// grab actual master keys
+		for _, key := range keys {
+			if ver, _ := vctx.VersionFromKey(key); ver == 0 {
+				tk, _ := storage.TKeyFromKey(key)
+				// fetch keys in parallel
+				wg.Add(1)
+				go func(baseKey storage.Key) {
+					db.activeRequests <- nil
+					defer func() {
+						wg.Done()
+						<-db.activeRequests
+					}()
+
+					vkeys, prefix, _ := db.extractVers(ctx, baseKey)
+					//if err != nil {
+					//	return nil, err
+					//}
+
+					// extract relevant version
+					tkvs := []*storage.KeyValue{}
+					for _, key := range vkeys {
+						tkvs = append(tkvs, &storage.KeyValue{key, []byte{}})
+					}
+					kv, _ := vctx.VersionedKeyValue(tkvs)
+
+					if kv != nil {
+						// check if base
+						relevantver, _ := vctx.VersionFromKey(kv.K)
+						baseversionid := db.baseVersion(prefix)
+						if baseversionid == relevantver {
+							matchingkeys = append(matchingkeys, ctx.ConstructKeyVersion(tk, 0))
+						} else {
+							matchingkeys = append(matchingkeys, kv.K)
+						}
+					}
+				}(key)
+
+			}
+		}
+		wg.Wait()
+
+		sort.Sort(KeyArray(matchingkeys))
+		return matchingkeys, nil
+	} else {
 		vkeys := make([]storage.Key, 0)
 		versionkeymap := make(map[string][]storage.Key)
 		for _, key := range keys {
@@ -503,20 +1204,69 @@ func (db *GBucket) getKeysInRange(ctx storage.Context, TkBeg, TkEnd storage.TKey
 		keys = vkeys
 
 		sort.Sort(KeyArray(keys))
-	}
 
-	return keys, nil
+		return keys, nil
+	}
 }
 
-// Get returns a value given a key.
-func (db *GBucket) Get(ctx storage.Context, tk storage.TKey) ([]byte, error) {
-	db.activeRequests <- nil
-	defer func() {
-		<-db.activeRequests
-	}()
+// getVTKey extract a value for the tkey given the context
+func (db *GBucket) getVTKey(ctx storage.Context, tk storage.TKey) ([]byte, error) {
 	if db == nil {
 		return nil, fmt.Errorf("Can't call Get() on nil GBucket")
 	}
+	if ctx == nil {
+		return nil, fmt.Errorf("Received nil context in Get()")
+	}
+	var val []byte
+
+	if db.version < VALUEVERSION || !ctx.Versioned() {
+		var currkey storage.Key
+		if ctx.Versioned() {
+			data := ctx.(storage.VersionedCtx).Data()
+			rootversion, _ := data.RootVersionID()
+			contextversion := ctx.VersionID()
+
+			if !data.Versioned() {
+				// construct key from root
+				newctx := storage.NewDataContext(data, rootversion)
+				currkey = newctx.ConstructKey(tk)
+
+			} else {
+				if rootversion != contextversion {
+					// grab all keys within versioned range
+					keys, _ := db.getKeysInRange(ctx, tk, tk)
+					if len(keys) == 0 {
+						return nil, nil
+					}
+					currkey = keys[0]
+				} else {
+					// construct key from root
+					newctx := storage.NewDataContext(data, rootversion)
+					currkey = newctx.ConstructKey(tk)
+				}
+			}
+
+		} else {
+			currkey = ctx.ConstructKey(tk)
+		}
+		// retrieve value, if error, return as not found
+		val, _ = db.getV(ctx, currkey)
+	} else {
+		// implement double get
+		val, _ = db.versionedgetV(ctx, tk)
+	}
+
+	return val, nil
+}
+
+type keyvalue_t struct {
+	key   storage.Key
+	value []byte
+}
+
+// retrieveKey finds the latest relevant version for the given Tkey.
+// This runs slowly if the request is not at the root version.
+func (db *GBucket) retrieveKey(ctx storage.Context, tk storage.TKey) (storage.Key, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("Received nil context in Get()")
 	}
@@ -551,8 +1301,245 @@ func (db *GBucket) Get(ctx storage.Context, tk storage.TKey) ([]byte, error) {
 		currkey = ctx.ConstructKey(tk)
 	}
 
-	// retrieve value, if error, return as not found
-	val, _ := db.getV(ctx, currkey)
+	return currkey, nil
+}
+
+// getValue gen retrieves the value and the generation id for the given key
+// TODO: fetch generation id and the same time
+func (db *GBucket) getValueGen(ctx storage.Context, basekey storage.Key) ([]byte, int64, error) {
+	var val []byte
+	generationid := int64(0)
+	var err error
+
+	// get object
+	var bucket *api.BucketHandle
+	if bucket, err = db.bucketHandle(ctx); err != nil {
+		return val, generationid, err
+	}
+	obj_handle := bucket.Object(hex.EncodeToString(basekey))
+
+	for true {
+		// grab generation id
+		attrs, err := obj_handle.Attrs(db.ctx)
+		// don't return error if does not exist
+		if err == api.ErrObjectNotExist {
+			return val, generationid, nil
+		}
+		if err != nil {
+			// possible that object does not exist
+			return val, generationid, err
+		}
+
+		generationid = attrs.Generation
+		obj_handletemp := obj_handle.Generation(generationid)
+
+		val, err = db.getVhandle(obj_handletemp)
+		if err == nil || err != ErrCondFail {
+			// refetch if generation id differs or value deleted
+			break
+		}
+	}
+
+	return val, generationid, err
+}
+
+// deleteHeaderVersion removes or tombstones the provided key from the value and indicates whether the specific version needs deletion
+// NOTE: it is currently impossible to self delete completely, but value will be removed
+func (db *GBucket) deleteHeaderVersion(ctx storage.Context, val []byte, version dvid.VersionID, useTombstone bool) ([]byte, bool) {
+	masterver := dvid.VersionID(binary.LittleEndian.Uint32(val[0:db.vsize]))
+	deletemaster := false
+
+	// create a new buffer to store
+	buffersize := int32(len(val))
+	if masterver == version {
+		deletemaster = true
+		if buffersize > int32((int32(ctx.(storage.VersionedCtx).NumVersions())+int32(2))*db.vsize) {
+			buffersize = int32(int32(ctx.(storage.VersionedCtx).NumVersions())+2) * db.vsize
+		}
+	}
+	newbuffer := make([]byte, 0, buffersize)
+
+	// copyheader
+	if deletemaster && !useTombstone {
+		// make ownerless if no tombstone and head deleted
+		tempintbuffer := make([]byte, 4)
+		binary.LittleEndian.PutUint32(tempintbuffer, 0)
+		newbuffer = append(newbuffer, tempintbuffer...)
+	} else {
+		// retain owner
+		newbuffer = append(newbuffer, val[0:db.vsize]...)
+	}
+
+	currpos := db.vsize
+	foundversion := false
+
+	for ; currpos < int32(len(val)); currpos += db.vsize {
+		currval := int32(binary.LittleEndian.Uint32(val[currpos : currpos+db.vsize]))
+
+		// stop reading if at end of prefix
+		if dvid.VersionID(currval) == STOPVERSIONPREFIX {
+			// version not found but tombstone should still be added
+			// (technically not necessary if no previous version is an ancestor)
+			if !foundversion && useTombstone {
+				tempintbuffer := make([]byte, 4)
+				delver := int32(-1 * int32(version))
+				binary.LittleEndian.PutUint32(tempintbuffer, uint32(delver))
+				newbuffer = append(newbuffer, tempintbuffer...)
+			}
+
+			newbuffer = append(newbuffer, val[currpos:currpos+db.vsize]...)
+			currpos += db.vsize
+			break
+		}
+		// if it is alreaedy negated then nothing needs to be done
+		if currval == int32(version) {
+			foundversion = true
+			if useTombstone {
+				// append negate
+				currval *= -1
+				tempintbuffer := make([]byte, 4)
+				binary.LittleEndian.PutUint32(tempintbuffer, uint32(currval))
+				newbuffer = append(newbuffer, tempintbuffer...)
+			} else {
+				continue
+			}
+		} else {
+			// append
+			newbuffer = append(newbuffer, val[currpos:currpos+db.vsize]...)
+		}
+	}
+
+	// copy the rest of the data
+	if !deletemaster {
+		newbuffer = append(newbuffer, val[currpos:len(val)]...)
+	}
+
+	// if a version for deletion was found and it is not the master, a delete will be required
+	return newbuffer, foundversion && !deletemaster
+}
+
+// deleteVersion provide value version safe deletion for given basekey and version id
+func (db *GBucket) deleteVersion(ctx storage.Context, baseKey storage.Key, version dvid.VersionID, useTombstone bool) error {
+	/* Note: Don't worry about delete race conditions because if deleletd with tombstone
+	either the tombstone will be found or an empty value will be found which is the same.
+	If the value is permanently deleted, it probably should have obliterated the version
+	and no writes should have been done.  Worst-case behavior is the delete will behave
+	like a tombstone when it should have been a complete delete.*/
+
+	// grab handle
+	var bucket *api.BucketHandle
+	var err error
+	if bucket, err = db.bucketHandle(ctx); err != nil {
+		return err
+	}
+	obj_handle := bucket.Object(hex.EncodeToString(baseKey))
+
+	// the loop is necessary for potential conflicting, concurrent operations
+	for true {
+		// fetch data
+		val, genid, err := db.getValueGen(ctx, baseKey)
+		if err != nil {
+			return err
+		}
+		if val == nil {
+			// no value, nothing to delete
+			return nil
+		}
+
+		// if no tombstone and only version, do a conditional delete
+		if !useTombstone {
+			if db.onlyBaseVersion(val) && version == db.baseVersion(val) {
+				// transactional delete
+				var conditions api.Conditions
+				conditions.GenerationMatch = genid
+				if conditions.GenerationMatch == 0 {
+					conditions.DoesNotExist = true
+				}
+				obj_handle_temp := obj_handle.If(conditions)
+
+				err = obj_handle_temp.Delete(db.ctx)
+				if err != ErrCondFail {
+					break
+				} else {
+					continue
+				}
+			}
+		}
+
+		// modify header for version (add tombstone, remove if no tombstone)
+		val, hasexternalchange := db.deleteHeaderVersion(ctx, val, version, useTombstone)
+
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// transaction write val (non-block wait group)
+			var conditions api.Conditions
+			conditions.GenerationMatch = genid
+			if conditions.GenerationMatch == 0 {
+				conditions.DoesNotExist = true
+			}
+			obj_handle_temp := obj_handle.If(conditions)
+			// set main function scope error
+			err = db.putVhandle(obj_handle_temp, val)
+		}()
+
+		// Note: could speculatively delete earlier but this saves network ops and also still need to wait for base value to be written
+		// the delete can be done in parallel because in the case of a delete/post
+		// if the value does not exist on either value it is a delete
+		// potentially change behavior in the future!!
+		if hasexternalchange {
+			// delete specific key
+			tk, _ := storage.TKeyFromKey(baseKey)
+			tempkey := ctx.ConstructKeyVersion(tk, version)
+			wg.Add(1)
+			go func(key storage.Key) {
+				defer wg.Done()
+				db.rawDelete(ctx, tempkey)
+			}(tempkey)
+		}
+
+		// wait and check for errors (only repeat if conditional fail
+		wg.Wait()
+		if err != ErrCondFail {
+			break
+		}
+	}
+	return err
+}
+
+func (db *GBucket) rawDelete(ctx storage.Context, fullKey storage.Key) error {
+	// !! Only called now internally (no protection for value versioning)
+	// use buffer interface
+	buffer := db.NewBuffer(ctx)
+
+	err := buffer.RawDelete(fullKey)
+
+	if err != nil {
+		return err
+	}
+
+	// commit changes
+	err = buffer.Flush()
+
+	return err
+}
+
+// ---- OrderedKeyValueGetter interface ------
+
+// Get returns a value given a key.
+func (db *GBucket) Get(ctx storage.Context, tk storage.TKey) ([]byte, error) {
+	db.activeRequests <- nil
+	defer func() {
+		<-db.activeRequests
+	}()
+
+	// fetch data
+	val, err := db.getVTKey(ctx, tk)
+	if err != nil {
+		return nil, err
+	}
+
 	storage.StoreValueBytesRead <- len(val)
 	return val, nil
 }
@@ -584,27 +1571,8 @@ func (db *GBucket) KeysInRange(ctx storage.Context, TkBeg, TkEnd storage.TKey) (
 
 // SendKeysInRange sends a range of full keys down a key channel.
 func (db *GBucket) SendKeysInRange(ctx storage.Context, TkBeg, TkEnd storage.TKey, ch storage.KeyChan) error {
-	if db == nil {
-		return fmt.Errorf("Can't call SendKeysInRange() on nil Google Bucket")
-	}
-	if ctx == nil {
-		return fmt.Errorf("Received nil context in SendKeysInRange()")
-	}
-
-	// grab keys
-	keys, _ := db.getKeysInRange(ctx, TkBeg, TkEnd)
-
-	// grab only object names within range
-	for _, key := range keys {
-		ch <- key
-	}
-	ch <- nil
+	dvid.Criticalf("GBucket does not support SnedKeysInRange")
 	return nil
-}
-
-type keyvalue_t struct {
-	key   storage.Key
-	value []byte
 }
 
 // GetRange returns a range of values spanning (TkBeg, kEnd) keys.
@@ -624,6 +1592,7 @@ func (db *GBucket) GetRange(ctx storage.Context, TkBeg, TkEnd storage.TKey) ([]*
 	keyvalchan := make(chan keyvalue_t, len(keys))
 	for _, key := range keys {
 		go func(lkey storage.Key) {
+			// check if base call then rip out prefix
 			value, err := db.getV(ctx, lkey)
 			if value == nil || err != nil {
 				keyvalchan <- keyvalue_t{lkey, nil}
@@ -680,54 +1649,13 @@ func (db *GBucket) ProcessRange(ctx storage.Context, TkBeg, TkEnd storage.TKey, 
 	return err
 }
 
-// RawRangeQuery sends a range of full keys.  This is to be used for low-level data
+// RawRangeQuery sends a range of full keys [not implemneted).
+// This is to be used for low-level data
 // retrieval like DVID-to-DVID communication and should not be used by data type
 // implementations if possible because each version's key-value pairs are sent
 // without filtering by the current version and its ancestor graph.
 func (db *GBucket) RawRangeQuery(kStart, kEnd storage.Key, keysOnly bool, out chan *storage.KeyValue, cancel <-chan struct{}) error {
-	if db == nil {
-		return fmt.Errorf("Can't call RawRangeQuery() on nil Google bucket")
-	}
-
-	// grab keys
-	keys, _ := db.getKeysInRangeRaw(nil, kStart, kEnd)
-
-	keyvalchan := make(chan keyvalue_t, len(keys))
-	for _, key := range keys {
-		go func(lkey storage.Key) {
-			value, err := db.getV(nil, lkey)
-			if value == nil || err != nil {
-				keyvalchan <- keyvalue_t{lkey, nil}
-			} else {
-				keyvalchan <- keyvalue_t{lkey, value}
-			}
-		}(key)
-	}
-
-	kvmap := make(map[string][]byte)
-	for range keys {
-		keyval := <-keyvalchan
-		kvmap[string(keyval.key)] = keyval.value
-	}
-
-	// return keyvalues
-	for _, key := range keys {
-		if cancel != nil {
-			select {
-			case <-cancel:
-				out <- nil
-				return nil
-			default:
-			}
-		}
-		val := kvmap[string(key)]
-		if val == nil {
-			return fmt.Errorf("Could not retrieve value")
-		}
-		kv := storage.KeyValue{storage.Key(key), val}
-		out <- &kv
-	}
-
+	dvid.Criticalf("GBucket does not support RawRangeQuery")
 	return nil
 }
 
@@ -752,45 +1680,38 @@ func (db *GBucket) Put(ctx storage.Context, tkey storage.TKey, value []byte) err
 	return err
 }
 
-// retrieveKey finds the latest relevant version for the given Tkey.
-// This runs slowly if the request is not at the root version.
-func (db *GBucket) retrieveKey(ctx storage.Context, tk storage.TKey) (storage.Key, error) {
-	if ctx == nil {
-		return nil, fmt.Errorf("Received nil context in Get()")
-	}
-
-	var currkey storage.Key
-	if ctx.Versioned() {
-		data := ctx.(storage.VersionedCtx).Data()
-		rootversion, _ := data.RootVersionID()
-		contextversion := ctx.VersionID()
-
-		if !data.Versioned() {
-			// construct key from root
-			newctx := storage.NewDataContext(data, rootversion)
-			currkey = newctx.ConstructKey(tk)
-
-		} else {
-			if rootversion != contextversion {
-				// grab all keys within versioned range
-				keys, _ := db.getKeysInRange(ctx, tk, tk)
-				if len(keys) == 0 {
-					return nil, nil
-				}
-				currkey = keys[0]
-			} else {
-				// construct key from root
-				newctx := storage.NewDataContext(data, rootversion)
-				currkey = newctx.ConstructKey(tk)
-			}
-		}
-
-	} else {
-		currkey = ctx.ConstructKey(tk)
-	}
-
-	return currkey, nil
+// RawPut is a low-level function that puts a key-value pair using full keys.
+// This can be used in conjunction with RawRangeQuery.
+func (db *GBucket) RawPut(k storage.Key, v []byte) error {
+	dvid.Criticalf("GBucket does not support RawPut")
+	return nil
 }
+
+// Delete deletes a key-value pair so that subsequent Get on the key returns nil.
+func (db *GBucket) Delete(ctx storage.Context, tkey storage.TKey) error {
+	// use buffer interface
+	buffer := db.NewBuffer(ctx)
+
+	err := buffer.Delete(ctx, tkey)
+
+	if err != nil {
+		return err
+	}
+
+	// commit changes
+	err = buffer.Flush()
+
+	return err
+}
+
+// RawDelete is a low-level function.  It deletes a key-value pair using full keys
+// without any context.  This can be used in conjunction with RawRangeQuery.
+func (db *GBucket) RawDelete(fullKey storage.Key) error {
+	dvid.Criticalf("GBucket does not support RawDelete")
+	return nil
+}
+
+// ---- TransactionalDB interface ------
 
 // Lockkey tries to write to a new file and if it fails, it keeps trying to query until it is free.
 func (db *GBucket) LockKey(k storage.Key) error {
@@ -831,150 +1752,90 @@ func (db *GBucket) Patch(ctx storage.Context, tk storage.TKey, f storage.PatchFu
 		<-db.activeRequests
 	}()
 
-	key := ctx.ConstructKey(tk)
-
-	var bucket *api.BucketHandle
 	var err error
-	if bucket, err = db.bucketHandle(ctx); err != nil {
-		return err
-	}
-	obj_handle := bucket.Object(hex.EncodeToString(key))
+	if db.version >= VALUEVERSION && ctx.Versioned() {
+		err = db.valuePatch(ctx, tk, f)
+	} else {
 
-	// check current open node version of a value
-	// cost: >=1 object meta request,
-	// cost: >=1 request for data if object exists
-	// cost: >=1 put data
-	// Each write will cost at least 3 back-and-forth reqeuests, and
-	// a key search for the current versioning approach
-	// TODO: fetch meta and data simultaneously (if possible from API)
-	// TODO: use new versioning encoding (will decrease latency for common use case)
-	for true {
-		var val []byte
-		generationid := int64(0)
+		key := ctx.ConstructKey(tk)
+
+		var bucket *api.BucketHandle
+		if bucket, err = db.bucketHandle(ctx); err != nil {
+			return err
+		}
+		obj_handle := bucket.Object(hex.EncodeToString(key))
+
+		// check current open node version of a value
+		// cost: >=1 object meta request,
+		// cost: >=1 request for data if object exists
+		// cost: >=1 put data
+		// Each write will cost at least 3 back-and-forth reqeuests, and
+		// a key search for the current versioning approach
+		// Note: finding proper version to get can be slow
 		for true {
-			// TODO: fetch in parallel
-			attrs, err := obj_handle.Attrs(db.ctx)
+			var val []byte
+			generationid := int64(0)
+			for true {
+				attrs, err := obj_handle.Attrs(db.ctx)
 
-			if err == api.ErrObjectNotExist {
-				// fetch from another version
-				// !! this should occur at most once
-				prevkey, err2 := db.retrieveKey(ctx, tk)
-				if err2 != nil {
-					return err2
-				}
-
-				// key must exist and be different
-				if prevkey != nil && strings.Compare(string(prevkey), string(key)) != 0 {
-					// fetch previous data
-					val, err = db.getV(ctx, prevkey)
-					if err != nil {
-						// this value should exist
-						return err
+				if err == api.ErrObjectNotExist {
+					// fetch from another version
+					// !! this should occur at most once
+					prevkey, err2 := db.retrieveKey(ctx, tk)
+					if err2 != nil {
+						return err2
 					}
-				}
 
-				break
-			} else if err == nil {
-				generationid = attrs.Generation
-				// fetch data if object exists
-				obj_handletemp := obj_handle.Generation(generationid)
+					// key must exist and be different
+					if prevkey != nil && strings.Compare(string(prevkey), string(key)) != 0 {
+						// fetch previous data
+						val, err = db.getV(ctx, prevkey)
+						if err != nil {
+							// this value should exist
+							return err
+						}
+					}
 
-				val, err = db.getVhandle(obj_handletemp)
-				if err != nil {
-					// refetch if generation id differs or value deleted
-					continue
+					break
+				} else if err == nil {
+					generationid = attrs.Generation
+					// fetch data if object exists
+					obj_handletemp := obj_handle.Generation(generationid)
+
+					val, err = db.getVhandle(obj_handletemp)
+					if err != nil {
+						// refetch if generation id differs or value deleted
+						continue
+					}
+					break
+				} else {
+					// if there is an error grabbing meta from an existing object, return
+					return err
 				}
-				break
-			} else {
-				// if there is an error grabbing meta from an existing object, return
+			}
+
+			// apply patch to val
+			val, err = f(val)
+			if err != nil {
 				return err
+			}
+
+			// conditional put on generation id or does not exist
+			var conditions api.Conditions
+			conditions.GenerationMatch = generationid
+			if conditions.GenerationMatch == 0 {
+				conditions.DoesNotExist = true
+			}
+			obj_handletemp := obj_handle.If(conditions)
+
+			// try putting againt with a new generation id
+			err = db.putVhandle(obj_handletemp, val)
+			if err != ErrCondFail {
+				break
 			}
 		}
 
-		// apply patch to val
-		val, err = f(val)
-		if err != nil {
-			return err
-		}
-
-		// conditional put on generation id or does not exist
-		var conditions api.Conditions
-		conditions.GenerationMatch = generationid
-		if conditions.GenerationMatch == 0 {
-			conditions.DoesNotExist = true
-		}
-		obj_handletemp := obj_handle.If(conditions)
-
-		// try putting againt with a new generation id
-		err = db.putVhandle(obj_handletemp, val)
-		if err != ErrCondFail {
-			break
-		}
 	}
-
-	return err
-}
-
-// RawPut is a low-level function that puts a key-value pair using full keys.
-// This can be used in conjunction with RawRangeQuery.
-func (db *GBucket) RawPut(k storage.Key, v []byte) error {
-	db.activeRequests <- nil
-	defer func() {
-		<-db.activeRequests
-	}()
-	// make dummy context for buffer interface
-	ctx := storage.NewMetadataContext()
-
-	// use buffer interface
-	buffer := db.NewBuffer(ctx)
-
-	err := buffer.RawPut(k, v)
-
-	if err != nil {
-		return err
-	}
-
-	// commit changes
-	err = buffer.Flush()
-
-	return err
-}
-
-// Delete deletes a key-value pair so that subsequent Get on the key returns nil.
-func (db *GBucket) Delete(ctx storage.Context, tkey storage.TKey) error {
-	// use buffer interface
-	buffer := db.NewBuffer(ctx)
-
-	err := buffer.Delete(ctx, tkey)
-
-	if err != nil {
-		return err
-	}
-
-	// commit changes
-	err = buffer.Flush()
-
-	return err
-}
-
-// RawDelete is a low-level function.  It deletes a key-value pair using full keys
-// without any context.  This can be used in conjunction with RawRangeQuery.
-func (db *GBucket) RawDelete(fullKey storage.Key) error {
-	// make dummy context for buffer interface
-	ctx := storage.NewMetadataContext()
-
-	// use buffer interface
-	buffer := db.NewBuffer(ctx)
-
-	err := buffer.RawDelete(fullKey)
-
-	if err != nil {
-		return err
-	}
-
-	// commit changes
-	err = buffer.Flush()
-
 	return err
 }
 
@@ -1051,9 +1912,13 @@ func (db *GBucket) DeleteAll(ctx storage.Context, allVersions bool) error {
 		var wg sync.WaitGroup
 		for _, key := range keys {
 			wg.Add(1)
+			db.activeRequests <- nil
 			go func(lkey storage.Key) {
-				defer wg.Done()
-				db.RawDelete(lkey)
+				defer func() {
+					wg.Done()
+					<-db.activeRequests
+				}()
+				db.rawDelete(ctx, lkey)
 			}(key)
 		}
 		wg.Wait()
@@ -1078,14 +1943,34 @@ func (db *GBucket) DeleteAll(ctx storage.Context, allVersions bool) error {
 
 		// wait for all deletes to complete -- batch??
 		var wg sync.WaitGroup
+
+		currversion := ctx.VersionID()
 		for _, key := range keys {
 			// filter keys that are not current version
-			tkey, _ := storage.TKeyFromKey(key)
-			if string(ctx.ConstructKey(tkey)) == string(key) {
+			keyversion, _ := ctx.(storage.VersionedCtx).VersionFromKey(key)
+			if db.version >= VALUEVERSION && ctx.Versioned() {
+				// if base version, delete or return key to exact version
+				if keyversion == 0 {
+					wg.Add(1)
+					db.activeRequests <- nil
+					go func(lkey storage.Key) {
+						defer func() {
+							wg.Done()
+							<-db.activeRequests
+						}()
+						// delete specific version
+						db.deleteVersion(ctx, key, currversion, false)
+					}(key)
+				}
+			} else if keyversion == currversion {
 				wg.Add(1)
+				db.activeRequests <- nil
 				go func(lkey storage.Key) {
-					defer wg.Done()
-					db.RawDelete(lkey)
+					defer func() {
+						wg.Done()
+						<-db.activeRequests
+					}()
+					db.rawDelete(ctx, lkey)
 				}(key)
 			}
 		}
@@ -1258,9 +2143,12 @@ func (db *goBuffer) Put(ctx storage.Context, tkey storage.TKey, value []byte) er
 		if !ok {
 			return fmt.Errorf("Non-versioned context that says it's versioned received in Put(): %v", ctx)
 		}
-		tombstoneKey := vctx.TombstoneKey(tkey)
 		db.mutex.Lock()
-		db.ops = append(db.ops, dbOp{op: delOpIgnoreExists, key: tombstoneKey})
+		if db.db.version < VALUEVERSION || !ctx.Versioned() {
+			// only use tombstones in old versioning
+			tombstoneKey := vctx.TombstoneKey(tkey)
+			db.ops = append(db.ops, dbOp{op: delOpIgnoreExists, key: tombstoneKey})
+		}
 		db.ops = append(db.ops, dbOp{op: putOp, key: key, value: value})
 		db.mutex.Unlock()
 		if err != nil {
@@ -1293,9 +2181,11 @@ func (db *goBuffer) PutCallback(ctx storage.Context, tkey storage.TKey, value []
 		if !ok {
 			return fmt.Errorf("Non-versioned context that says it's versioned received in Put(): %v", ctx)
 		}
-		tombstoneKey := vctx.TombstoneKey(tkey)
 		db.mutex.Lock()
-		db.ops = append(db.ops, dbOp{op: delOpIgnoreExists, key: tombstoneKey})
+		if db.db.version < VALUEVERSION {
+			tombstoneKey := vctx.TombstoneKey(tkey)
+			db.ops = append(db.ops, dbOp{op: delOpIgnoreExists, key: tombstoneKey})
+		}
 		db.ops = append(db.ops, dbOp{op: putOpCallback, key: key, value: value, readychan: ready})
 		db.mutex.Unlock()
 		if err != nil {
@@ -1311,12 +2201,7 @@ func (db *goBuffer) PutCallback(ctx storage.Context, tkey storage.TKey, value []
 // RawPut is a low-level function that puts a key-value pair using full keys.
 // This can be used in conjunction with RawRangeQuery.
 func (db *goBuffer) RawPut(k storage.Key, v []byte) error {
-	if db == nil {
-		return fmt.Errorf("Can't call Put() on nil Google Bucket")
-	}
-	db.mutex.Lock()
-	db.ops = append(db.ops, dbOp{op: putOp, key: k, value: v})
-	db.mutex.Unlock()
+	dvid.Criticalf("GBucket does not support RawPut")
 	return nil
 }
 
@@ -1341,8 +2226,12 @@ func (db *goBuffer) Delete(ctx storage.Context, tkey storage.TKey) error {
 		}
 		db.mutex.Lock()
 		db.ops = append(db.ops, dbOp{op: delOp, key: key})
-		tombstoneKey := vctx.TombstoneKey(tkey)
-		db.ops = append(db.ops, dbOp{op: putOp, key: tombstoneKey, value: dvid.EmptyValue()})
+
+		// older versions use explicit tombstones
+		if db.db.version < VALUEVERSION {
+			tombstoneKey := vctx.TombstoneKey(tkey)
+			db.ops = append(db.ops, dbOp{op: putOp, key: tombstoneKey, value: dvid.EmptyValue()})
+		}
 		db.mutex.Unlock()
 	}
 
@@ -1351,13 +2240,15 @@ func (db *goBuffer) Delete(ctx storage.Context, tkey storage.TKey) error {
 
 // RawDelete is a low-level function.  It deletes a key-value pair using full keys
 // without any context.  This can be used in conjunction with RawRangeQuery.
+// Note: this function should no longer be called externally
 func (db *goBuffer) RawDelete(fullKey storage.Key) error {
+	//dvid.Criticalf("GBucket does not support RawDelete")
 	if db == nil {
 		return fmt.Errorf("Can't call RawDelete on nil LevelDB")
 	}
 
 	db.mutex.Lock()
-	db.ops = append(db.ops, dbOp{op: delOp, key: fullKey})
+	db.ops = append(db.ops, dbOp{op: delOpIgnoreExists, key: fullKey})
 	db.mutex.Unlock()
 	return nil
 }
@@ -1397,7 +2288,7 @@ func (db *goBuffer) DeleteRange(ctx storage.Context, TkBeg, TkEnd storage.TKey) 
 func (buffer *goBuffer) Flush() error {
 	retVals := make(chan error, len(buffer.ops))
 	// limits the number of simultaneous requests (should this be global)
-	workQueue := make(chan interface{}, MAXCONNECTIONS)
+	workQueue := buffer.db.activeRequests
 
 	for itnum, operation := range buffer.ops {
 		workQueue <- nil
@@ -1407,17 +2298,34 @@ func (buffer *goBuffer) Flush() error {
 			}()
 			var err error
 			if opdata.op == delOp {
-				err = buffer.db.deleteV(buffer.ctx, opdata.key)
+				if buffer.db.version >= VALUEVERSION && buffer.ctx.Versioned() {
+					tk, _ := storage.TKeyFromKey(opdata.key)
+					basekey := buffer.ctx.ConstructKeyVersion(tk, dvid.VersionID(0))
+					// always assume tombstone and in current version context
+					err = buffer.db.deleteVersion(buffer.ctx, basekey, buffer.ctx.VersionID(), true)
+				} else {
+					err = buffer.db.deleteV(buffer.ctx, opdata.key)
+				}
 			} else if opdata.op == delOpIgnoreExists {
 				buffer.db.deleteV(buffer.ctx, opdata.key)
 			} else if opdata.op == delRangeOp {
 				err = buffer.deleteRangeLocal(buffer.ctx, opdata.tkBeg, opdata.tkEnd, workQueue)
 			} else if opdata.op == putOp {
-				err = buffer.db.putV(buffer.ctx, opdata.key, opdata.value)
+				if buffer.db.version >= VALUEVERSION && buffer.ctx.Versioned() {
+					tk, _ := storage.TKeyFromKey(opdata.key)
+					err = buffer.db.putVTKey(buffer.ctx, tk, opdata.value)
+				} else {
+					err = buffer.db.putV(buffer.ctx, opdata.key, opdata.value)
+				}
 				storage.StoreKeyBytesWritten <- len(opdata.key)
 				storage.StoreValueBytesWritten <- len(opdata.value)
 			} else if opdata.op == putOpCallback {
-				err = buffer.db.putV(buffer.ctx, opdata.key, opdata.value)
+				if buffer.db.version >= VALUEVERSION && buffer.ctx.Versioned() {
+					tk, _ := storage.TKeyFromKey(opdata.key)
+					err = buffer.db.putVTKey(buffer.ctx, tk, opdata.value)
+				} else {
+					err = buffer.db.putV(buffer.ctx, opdata.key, opdata.value)
+				}
 				storage.StoreKeyBytesWritten <- len(opdata.key)
 				storage.StoreValueBytesWritten <- len(opdata.value)
 				opdata.readychan <- err
@@ -1482,7 +2390,17 @@ func (db *goBuffer) deleteRangeLocal(ctx storage.Context, TkBeg, TkEnd storage.T
 				wg.Done()
 			}()
 			tk, _ := storage.TKeyFromKey(lkey)
-			db.Delete(ctx, tk)
+
+			if db.db.version >= VALUEVERSION && ctx.Versioned() {
+				basekey := db.ctx.ConstructKeyVersion(tk, dvid.VersionID(0))
+				// always assume tombstone and in current version context
+				db.db.deleteVersion(db.ctx, basekey, ctx.VersionID(), true)
+			} else {
+				// fix (cannot call Delete now)
+				tombstoneKey := ctx.(storage.VersionedCtx).TombstoneKey(tk)
+				err = db.db.putV(db.ctx, tombstoneKey, dvid.EmptyValue())
+				db.db.deleteV(db.ctx, lkey)
+			}
 		}(key)
 	}
 	wg.Wait()
@@ -1496,40 +2414,9 @@ func (db *goBuffer) deleteRangeLocal(ctx storage.Context, TkBeg, TkEnd storage.T
 // processGetLocal implements ProcessRange functionality but with workQueue awareness for
 // just one key/value GET
 func (db *goBuffer) processGetLocal(ctx storage.Context, tkey storage.TKey, op *storage.ChunkOp, f storage.ChunkFunc, workQueue chan interface{}) error {
-	var currkey storage.Key
-	if ctx.Versioned() {
-		data := ctx.(storage.VersionedCtx).Data()
-		rootversion, _ := data.RootVersionID()
-		contextversion := ctx.VersionID()
-
-		if !data.Versioned() {
-			// construct key from root
-			newctx := storage.NewDataContext(data, rootversion)
-			currkey = newctx.ConstructKey(tkey)
-
-		} else {
-			if rootversion != contextversion {
-				// grab all keys within versioned range
-				keys, _ := db.db.getKeysInRange(ctx, tkey, tkey)
-				if len(keys) == 0 {
-					return nil
-				}
-				currkey = keys[0]
-			} else {
-				// construct key from root
-				newctx := storage.NewDataContext(data, rootversion)
-				currkey = newctx.ConstructKey(tkey)
-			}
-		}
-
-	} else {
-		currkey = ctx.ConstructKey(tkey)
-	}
-
-	// retrieve value, if error, return as not found
-	val, err := db.db.getV(ctx, currkey)
+	val, err := db.db.getVTKey(ctx, tkey)
 	if err != nil {
-		return nil
+		return err
 	}
 
 	// callback might not be thread safe
@@ -1609,33 +2496,4 @@ func (db *goBuffer) processRangeLocal(ctx storage.Context, TkBeg, TkEnd storage.
 	}
 
 	return err
-}
-
-// --- Helper function ----
-
-func grabPrefix(key1 storage.Key, key2 storage.Key) string {
-	var prefixe storage.Key
-	key1m := hex.EncodeToString(key1)
-	key2m := hex.EncodeToString(key2)
-	for spot := range key1m {
-		if key1m[spot] != key2m[spot] {
-			break
-		}
-		prefixe = append(prefixe, key1m[spot])
-	}
-	return string(prefixe)
-}
-
-type KeyArray []storage.Key
-
-func (k KeyArray) Less(i, j int) bool {
-	return string(k[i]) < string(k[j])
-}
-
-func (k KeyArray) Swap(i, j int) {
-	k[i], k[j] = k[j], k[i]
-}
-
-func (k KeyArray) Len() int {
-	return len(k)
 }

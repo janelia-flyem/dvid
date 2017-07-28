@@ -32,9 +32,16 @@ type Context interface {
 	// If not versioned, the version is the root ID.
 	VersionID() dvid.VersionID
 
+	// RepoRoot returns the root uuid.
+	RepoRoot() (dvid.UUID, error)
+
 	// ConstructKey takes a type-specific key component, and generates a
 	// namespaced key that fits with the DVID-wide key space partitioning.
 	ConstructKey(TKey) Key
+
+	// ConstructKeyVersion constructs a key like ConstructKey
+	// but using specified version
+	ConstructKeyVersion(TKey, dvid.VersionID) Key
 
 	// KeyRange returns the minimum and maximum keys for this context.
 	KeyRange() (min, max Key)
@@ -63,14 +70,25 @@ type VersionedCtx interface {
 	// the column qualifier is the version id.
 	UnversionedKey(TKey) (Key, dvid.VersionID, error)
 
-	// RepoRoot returns the root uuid.
-	RepoRoot() (dvid.UUID, error)
+	// VersionFromKey returns a version ID from a full key.  Any VersionedContext is sufficient as receiver
+	VersionFromKey(Key) (dvid.VersionID, error)
 
 	// TombstoneKey takes a type-specific key component and returns a key that
 	// signals a deletion of any ancestor values.  The returned key must have
 	// as its last byte storage.MarkTombstone.
 	TombstoneKey(TKey) Key
 
+	// TombstoneKeyVersion implement TombstoneKey but for the specified version
+	TombstoneKeyVersion(TKey, dvid.VersionID) Key
+
+	// Head checks whether this the open head of the master branch
+	Head() bool
+
+	// MasterVersion checks whether current version is on master branch
+	MasterVersion(dvid.VersionID) bool
+
+	// NumVersions returns the number of version in the current DAG
+	NumVersions() int32
 	// Returns lower bound key for versions.
 	MinVersionKey(TKey) (Key, error)
 
@@ -198,10 +216,19 @@ func NewMetadataContext() MetadataContext {
 func (ctx MetadataContext) implementsOpaque() {}
 
 func (ctx MetadataContext) VersionID() dvid.VersionID {
-	return 1 // Only one version of Metadata
+	return 0 // Only one version of Metadata
+}
+
+func (ctx MetadataContext) RepoRoot() (dvid.UUID, error) {
+	return dvid.UUID(""), nil // no repo
 }
 
 func (ctx MetadataContext) ConstructKey(tk TKey) Key {
+	return Key(append([]byte{metadataKeyPrefix}, tk...))
+}
+
+// Note: needed to satisfy interface but should not be called
+func (ctx MetadataContext) ConstructKeyVersion(tk TKey, version dvid.VersionID) Key {
 	return Key(append([]byte{metadataKeyPrefix}, tk...))
 }
 
@@ -318,14 +345,30 @@ func (ctx *DataContext) VersionID() dvid.VersionID {
 	return ctx.version
 }
 
+func (ctx *DataContext) RepoRoot() (dvid.UUID, error) {
+	return ctx.data.DAGRootUUID()
+}
+
 func (ctx *DataContext) ConstructKey(tk TKey) Key {
 	return constructDataKey(ctx.data.InstanceID(), ctx.version, ctx.client, tk)
+}
+
+func (ctx *DataContext) ConstructKeyVersion(tk TKey, version dvid.VersionID) Key {
+	return constructDataKey(ctx.data.InstanceID(), version, ctx.client, tk)
 }
 
 func (ctx *DataContext) TombstoneKey(tk TKey) Key {
 	key := append([]byte{dataKeyPrefix}, ctx.data.InstanceID().Bytes()...)
 	key = append(key, tk...)
 	key = append(key, ctx.version.Bytes()...)
+	key = append(key, ctx.client.Bytes()...)
+	return Key(append(key, MarkTombstone))
+}
+
+func (ctx *DataContext) TombstoneKeyVersion(tk TKey, version dvid.VersionID) Key {
+	key := append([]byte{dataKeyPrefix}, ctx.data.InstanceID().Bytes()...)
+	key = append(key, tk...)
+	key = append(key, version.Bytes()...)
 	key = append(key, ctx.client.Bytes()...)
 	return Key(append(key, MarkTombstone))
 }

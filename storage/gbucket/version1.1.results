@@ -1,0 +1,457 @@
+##### bench_createrepo #####
+Create new dvid repo.
+    
+Runtime: 1.49275684357 seconds
+SUCCESS
+#######################
+
+
+##### bench_reloadmeta #####
+Call dvid meta refresh.
+    
+Runtime: 0.510669946671 seconds
+SUCCESS
+#######################
+
+
+*************Testing Grayscale*************
+
+##### bench_load_gbucket_repo #####
+Measure time it takes to init a new gbucket repo (done on first request).
+        
+Runtime: 1.0732190609 seconds
+SUCCESS
+#######################
+
+
+##### bench_initialize_data #####
+Load cube at 0,0,0
+        
+Runtime: 0.649021148682 seconds
+SUCCESS
+#######################
+
+
+##### bench_get_initial_data #####
+Get cube at 0,0,0.
+        
+Runtime: 0.131989002228 seconds
+SUCCESS
+#######################
+
+
+##### bench_put_versioned_data_offset #####
+Put disjoint cube from initial data (should be fast).
+        
+Runtime: 0.623370885849 seconds
+SUCCESS
+#######################
+
+
+##### bench_get_versioned_data_offset #####
+Get cube at offset (should be fast).
+        
+Runtime: 0.399979114532 seconds
+SUCCESS
+#######################
+
+
+##### bench_put_versioned_data_overwrite #####
+Put cube from initial data (should be 5x slower).
+        
+Runtime: 0.522257089615 seconds
+SUCCESS
+#######################
+
+
+##### bench_get_versioned_data_overwrite #####
+Get overwritten data (should be fast).
+        
+Runtime: 0.334944963455 seconds
+SUCCESS
+#######################
+
+
+##### bench_get_data_branch #####
+Get data from a branch.
+        
+Runtime: 0.364161968231 seconds
+SUCCESS
+#######################
+
+
+##### bench_put_branch_data_offset #####
+Put disjoint cube from initial data (should be fast).
+        
+Runtime: 0.51171708107 seconds
+SUCCESS
+#######################
+
+
+##### bench_get_branch_data_offset #####
+Get branch cube at offset (should be fast).
+        
+Runtime: 0.2911901474 seconds
+SUCCESS
+#######################
+
+
+##### bench_overwrite_branch #####
+Overwrite branch data with master version (should be 5x slower).
+        
+Runtime: 0.469400882721 seconds
+SUCCESS
+#######################
+
+
+##### bench_get_overwrite_branch #####
+Get branch overwritten data from master (should be fast).
+        
+Runtime: 0.347847223282 seconds
+SUCCESS
+#######################
+
+
+##### bench_get_overwrite_branch2 #####
+Re-get branch data (slow). 
+        
+Runtime: 0.35387301445 seconds
+SUCCESS
+#######################
+
+
+##### bench_overwrite_branch_shifted #####
+Overwrite shifted data on branch (slow).
+        
+Runtime: 0.41702413559 seconds
+SUCCESS
+#######################
+
+
+##### bench_get_versioned_again #####
+Get data again from new version should be unchanged (fast)
+        
+Runtime: 0.307246923447 seconds
+SUCCESS
+#######################
+
+
+##### bench_get_branch_shifted #####
+Get branch data that was partially overwritten in place (slow)
+        
+Runtime: 0.29093503952 seconds
+SUCCESS
+#######################
+
+
+##### bench_get_original_master #####
+Make sure versioned master is the same (slow)
+        
+Runtime: 0.121921777725 seconds
+SUCCESS
+#######################
+
+
+Started deletion of data instance "grayscale" from repo with root 328a3ccd017946f3852e27b30a064711
+##### bench_put_nonaligned #####
+Load data in parallel and non-block aligned on branch (very slow).
+        
+Runtime: 3.58617210388 seconds
+SUCCESS
+#######################
+
+
+##### bench_get_nonaligned #####
+Get non-aligned branch data (slow)
+        
+Runtime: 0.290814876556 seconds
+SUCCESS
+#######################
+
+
+##### bench_deletedatatype #####
+Use command line to delete a datatype.  Non-blocking (test not too useful).
+        
+Runtime: 0.620465993881 seconds
+SUCCESS
+#######################
+
+
+************End Testing Grayscale**********
+
+
+
+*************Testing Labels*************
+
+
+
+##### bench_load_gbucket_repo #####
+Measure time it takes to init a new gbucket repo (done on first request).
+        
+Runtime: 0.934420824051 seconds
+SUCCESS
+#######################
+
+
+##### bench_initialize_data #####
+Load cube at 0,0,0
+        
+Runtime: 0.505362033844 seconds
+SUCCESS
+#######################
+
+
+##### bench_get_initial_data #####
+Get cube at 0,0,0.
+        
+Runtime: 0.148991107941 seconds
+SUCCESS
+#######################
+
+
+##### bench_put_versioned_data_offset #####
+Put disjoint cube from initial data (should be fast).
+        
+Runtime: 0.630840063095 seconds
+SUCCESS
+#######################
+
+
+##### bench_get_versioned_data_offset #####
+Get cube at offset (should be fast).
+        
+Runtime: 1.27627897263 seconds
+SUCCESS
+#######################
+
+
+##### bench_put_versioned_data_overwrite #####
+Put cube from initial data (should be 5x slower).
+        
+Runtime: 0.419106960297 seconds
+SUCCESS
+#######################
+
+
+##### bench_get_versioned_data_overwrite #####
+Get overwritten data (should be fast).
+        
+Runtime: 0.406493902206 seconds
+SUCCESS
+#######################
+
+
+##### bench_get_data_branch #####
+Get data from a branch.
+        
+Runtime: 0.307028055191 seconds
+SUCCESS
+#######################
+
+
+##### bench_put_branch_data_offset #####
+Put disjoint cube from initial data (should be fast).
+        
+Runtime: 0.482191085815 seconds
+SUCCESS
+#######################
+
+
+##### bench_get_branch_data_offset #####
+Get branch cube at offset (should be fast).
+        
+Runtime: 0.364382982254 seconds
+SUCCESS
+#######################
+
+
+##### bench_overwrite_branch #####
+Overwrite branch data with master version (should be 5x slower).
+        
+Runtime: 0.520820856094 seconds
+SUCCESS
+#######################
+
+
+##### bench_get_overwrite_branch #####
+Get branch overwritten data from master (should be fast).
+        
+Runtime: 0.524526834488 seconds
+SUCCESS
+#######################
+
+
+##### bench_get_overwrite_branch2 #####
+Re-get branch data (slow). 
+        
+Runtime: 0.295213937759 seconds
+SUCCESS
+#######################
+
+
+##### bench_overwrite_branch_shifted #####
+Overwrite shifted data on branch (slow).
+        
+Runtime: 0.832103013992 seconds
+SUCCESS
+#######################
+
+
+##### bench_get_versioned_again #####
+Get data again from new version should be unchanged (fast)
+        
+Runtime: 0.38045501709 seconds
+SUCCESS
+#######################
+
+
+##### bench_get_branch_shifted #####
+Get branch data that was partially overwritten in place (slow)
+        
+Runtime: 0.395096063614 seconds
+SUCCESS
+#######################
+
+
+##### bench_get_original_master #####
+Make sure versioned master is the same (slow)
+        
+Runtime: 0.218724012375 seconds
+SUCCESS
+#######################
+
+
+Started deletion of data instance "labels" from repo with root 8dd717a0ba014e29a0b574a9c1ca9045
+Started deletion of repo 7c1b1ecc96e444639c892b1967ad7b96.
+##### bench_put_nonaligned #####
+Load data in parallel and non-block aligned on branch (very slow).
+        
+Runtime: 4.32206583023 seconds
+SUCCESS
+#######################
+
+
+##### bench_get_nonaligned #####
+Get non-aligned branch data (slow)
+        
+Runtime: 0.596844911575 seconds
+SUCCESS
+#######################
+
+
+##### bench_deletedatatype #####
+Use command line to delete a datatype.  Non-blocking (test not too useful).
+        
+Runtime: 0.597489118576 seconds
+SUCCESS
+#######################
+
+
+************End Testing Labels**********
+
+
+
+*************Testing KeyValue*************
+
+
+
+##### bench_checkmasterkv #####
+Checks whether a keyvalue at master matches what was posted.
+    
+Runtime: 0.054979801178 seconds
+SUCCESS
+#######################
+
+
+##### bench_checkmasterkeys #####
+Checks master range query.
+    
+Runtime: 0.335670948029 seconds
+SUCCESS
+#######################
+
+
+##### bench_checkversionkeys #####
+Checks version range query.
+    
+Runtime: 0.285678863525 seconds
+SUCCESS
+#######################
+
+
+##### bench_checkbranchkeys #####
+Checks branch range query.
+    
+Runtime: 0.317525863647 seconds
+SUCCESS
+#######################
+
+
+##### bench_delete_version #####
+Delete two version keys.
+    
+Runtime: 0.765908002853 seconds
+SUCCESS
+#######################
+
+
+##### bench_delete_branch #####
+Delete three branch keys.
+    
+Runtime: 0.776692867279 seconds
+SUCCESS
+#######################
+
+
+##### bench_request_deleted_data #####
+Requests data that should be deleted.
+    
+Runtime: 0.307234048843 seconds
+SUCCESS
+#######################
+
+
+##### bench_checkversionkeys2 #####
+Checks version range query.
+    
+Runtime: 0.185866832733 seconds
+SUCCESS
+#######################
+
+
+##### bench_checkbranchkeys2 #####
+Checks version range query.
+    
+Runtime: 0.324515104294 seconds
+SUCCESS
+#######################
+
+
+##### bench_checkmasterkeys2 #####
+Recheck master range query.
+    
+Runtime: 0.308698892593 seconds
+SUCCESS
+#######################
+
+
+##### bench_checkbranch_undelete #####
+Retrieves a value that ovewrites a previous deletion.
+    
+Runtime: 0.356387853622 seconds
+SUCCESS
+#######################
+
+
+************End Testing KeyValue**********
+
+
+
+##### bench_deleterepo #####
+Use command line to delete a repo.  Non-blocking (test not too useful).
+    
+Runtime: 0.588414907455 seconds
+SUCCESS
+#######################
+
+

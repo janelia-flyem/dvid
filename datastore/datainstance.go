@@ -87,6 +87,44 @@ func (vctx *VersionedCtx) VersionedKeyValue(values []*storage.KeyValue) (*storag
 	return kv, err
 }
 
+// Head checks whether this the open head of the master branch
+func (vctx *VersionedCtx) Head() bool {
+
+	rootversion, _ := UUIDFromVersion(vctx.VersionID())
+	r, _ := manager.repos[rootversion]
+	node, _ := r.dag.nodes[vctx.VersionID()]
+
+	if node.locked {
+		return false
+	}
+	if node.branch != "" {
+		// requires branching info in new DVID
+		return false
+	}
+	return true
+}
+
+// Head checks whether specified version is on the  master branch
+func (vctx *VersionedCtx) MasterVersion(version dvid.VersionID) bool {
+
+	rootversion, _ := UUIDFromVersion(version)
+	r, _ := manager.repos[rootversion]
+	node, _ := r.dag.nodes[version]
+
+	if node.branch != "" {
+		// requires branching info in new DVID
+		return false
+	}
+	return true
+}
+
+// NumVersions returns the number of versions for a given
+func (vctx *VersionedCtx) NumVersions() int32 {
+	rootversion, _ := UUIDFromVersion(vctx.VersionID())
+	r, _ := manager.repos[rootversion]
+	return int32(len(r.dag.nodes))
+}
+
 // RepoRoot returns the root uuid.
 func (vctx *VersionedCtx) RepoRoot() (dvid.UUID, error) {
 	rootversion, _ := UUIDFromVersion(vctx.VersionID())
@@ -419,6 +457,10 @@ func (d *Data) DataUUID() dvid.UUID { return d.dataUUID }
 func (d *Data) RootUUID() dvid.UUID { return d.rootUUID }
 
 func (d *Data) RootVersionID() (dvid.VersionID, error) { return VersionFromUUID(d.rootUUID) }
+
+func (d *Data) DAGRootUUID() (dvid.UUID, error) {
+	return GetRepoRoot(d.rootUUID)
+}
 
 func (d *Data) TypeName() dvid.TypeString { return d.typename }
 

@@ -32,6 +32,7 @@ func (d *Data) LoadImages(v dvid.VersionID, offset dvid.Point, filenames []strin
 	vctx := datastore.NewVersionedCtx(d, v)
 	extents, err := d.GetExtents(vctx)
 	if err != nil {
+		loadMutex.Unlock()
 		return err
 	}
 

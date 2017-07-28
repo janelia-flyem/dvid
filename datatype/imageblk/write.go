@@ -161,7 +161,7 @@ func (d *Data) PutVoxels(v dvid.VersionID, mutID uint64, vox *Voxels, roiname dv
 
 	if !hasbuffer {
 		server.LargeMutationMutex.Lock()
-	  defer server.LargeMutationMutex.Unlock()
+		defer server.LargeMutationMutex.Unlock()
 	}
 
 	// Post new extents if there was a change (will always require 1 GET which should

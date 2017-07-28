@@ -250,6 +250,7 @@ type Data interface {
 	DataName() InstanceName
 	RootUUID() UUID
 	RootVersionID() (VersionID, error)
+	DAGRootUUID() (UUID, error)
 
 	TypeName() TypeString
 	TypeURL() URLString
