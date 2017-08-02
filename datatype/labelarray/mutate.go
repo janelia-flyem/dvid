@@ -55,6 +55,13 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp) error {
 		return err
 	}
 
+	mutID := d.NewMutationID()
+	go func() {
+		if err := labels.LogMerge(d, v, mutID, op); err != nil {
+			dvid.Errorf("logging of merge: %v\n", err)
+		}
+	}()
+
 	// Signal that we are starting a merge.
 	evt := datastore.SyncEvent{d.DataUUID(), labels.MergeStartEvent}
 	msg := datastore.SyncMessage{labels.MergeStartEvent, v, labels.DeltaMergeStart{op}}
@@ -236,6 +243,18 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel, splitLabel uint64, r io.
 	}
 	toLabelSize, _ := split.Stats()
 
+	mutID := d.NewMutationID()
+	splitOp := labels.SplitOp{
+		Target:   fromLabel,
+		NewLabel: toLabel,
+		RLEs:     split,
+	}
+	go func() {
+		if err = labels.LogSplit(d, v, mutID, splitOp); err != nil {
+			dvid.Errorf("logging split: %v\n", err)
+		}
+	}()
+
 	// Partition the split spans into blocks.
 	var splitmap dvid.BlockRLEs
 	blockSize, ok := d.BlockSize().(dvid.Point3d)
@@ -259,7 +278,7 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel, splitLabel uint64, r io.
 		SortedBlocks: splitblks,
 		SplitVoxels:  toLabelSize,
 	}
-	if err = d.processSplit(v, deltaSplit); err != nil {
+	if err = d.processSplit(v, mutID, deltaSplit); err != nil {
 		return
 	}
 
@@ -320,6 +339,19 @@ func (d *Data) SplitCoarseLabels(v dvid.VersionID, fromLabel, splitLabel uint64,
 	}
 	numBlocks, _ := splits.Stats()
 
+	mutID := d.NewMutationID()
+	splitOp := labels.SplitOp{
+		Target:   fromLabel,
+		NewLabel: toLabel,
+		RLEs:     splits,
+		Coarse:   true,
+	}
+	go func() {
+		if err = labels.LogSplit(d, v, mutID, splitOp); err != nil {
+			dvid.Errorf("logging split: %v\n", err)
+		}
+	}()
+
 	// Order the split blocks
 	splitblks := make(dvid.IZYXSlice, numBlocks)
 	n := 0
@@ -341,7 +373,7 @@ func (d *Data) SplitCoarseLabels(v dvid.VersionID, fromLabel, splitLabel uint64,
 		Split:        nil,
 		SortedBlocks: splitblks,
 	}
-	if err = d.processSplit(v, deltaSplit); err != nil {
+	if err = d.processSplit(v, mutID, deltaSplit); err != nil {
 		return
 	}
 	evt = datastore.SyncEvent{d.DataUUID(), labels.SplitLabelEvent}
@@ -354,10 +386,9 @@ func (d *Data) SplitCoarseLabels(v dvid.VersionID, fromLabel, splitLabel uint64,
 	return toLabel, nil
 }
 
-func (d *Data) processSplit(v dvid.VersionID, delta labels.DeltaSplit) error {
+func (d *Data) processSplit(v dvid.VersionID, mutID uint64, delta labels.DeltaSplit) error {
 	timedLog := dvid.NewTimeLog()
 
-	mutID := d.NewMutationID()
 	downresMut := downres.NewMutation(d, v, mutID)
 
 	var doneCh chan struct{}

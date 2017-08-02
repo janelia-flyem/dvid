@@ -500,7 +500,7 @@ func (p *pusher) readRepo(m *repoTxMsg) (map[dvid.VersionID]struct{}, error) {
 		if err != nil {
 			return nil, err
 		}
-		d.SetBackendStore(store)
+		d.SetKVStore(store)
 		dvid.Debugf("Assigning as default store of data instance %q @ %s: %s\n", d.DataName(), d.RootUUID(), store)
 	}
 

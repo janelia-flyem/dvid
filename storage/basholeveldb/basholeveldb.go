@@ -214,25 +214,7 @@ func (e Engine) newLevelDB(config dvid.StoreConfig) (*LevelDB, bool, error) {
 	return leveldb, !metadataExists, nil
 }
 
-// ---- TestableEngine interface implementation -------
-
-// GetTestConfig returns a set of store configurations suitable for testing
-// a basholeveldb storage system.
-func (e Engine) GetTestConfig() (*storage.Backend, error) {
-	tc := map[string]interface{}{
-		"path":    fmt.Sprintf("dvid-test-%x", uuid.NewV4().Bytes()),
-		"testing": true,
-	}
-	var c dvid.Config
-	c.SetAll(tc)
-	testConfig := map[storage.Alias]dvid.StoreConfig{
-		"default": dvid.StoreConfig{Config: c, Engine: "basholeveldb"},
-	}
-	backend := storage.Backend{
-		Stores: testConfig,
-	}
-	return &backend, nil
-}
+// ---- RepairableEngine interface implementation ------
 
 // Repair tries to repair a damaged leveldb.  Requires "path" string.  Implements
 // the RepairableEngine interface.
@@ -249,6 +231,34 @@ func (e Engine) Repair(path string) error {
 	if err != nil {
 		return err
 	}
+	return nil
+}
+
+// ---- TestableEngine interface implementation -------
+
+// AddTestConfig sets the basholeveldb as the default key-value backend.  If another
+// engine is already set, it returns an error since only one key-value backend should
+// be tested via tags.
+func (e Engine) AddTestConfig(backend *storage.Backend) error {
+	if backend.DefaultKVDB != "" {
+		return fmt.Errorf("basholeveldb can't be testable key-value.  DefaultKVDB already set to %s", backend.DefaultKVDB)
+	}
+	if backend.Metadata != "" {
+		return fmt.Errorf("basholeveldb can't be testable key-value.  Metadata already set to %s", backend.DefaultKVDB)
+	}
+	alias := storage.Alias("basholeveldb")
+	backend.Metadata = alias
+	backend.DefaultKVDB = alias
+	if backend.Stores == nil {
+		backend.Stores = make(map[storage.Alias]dvid.StoreConfig)
+	}
+	tc := map[string]interface{}{
+		"path":    fmt.Sprintf("dvid-test-basholeveldb-%x", uuid.NewV4().Bytes()),
+		"testing": true,
+	}
+	var c dvid.Config
+	c.SetAll(tc)
+	backend.Stores[alias] = dvid.StoreConfig{Config: c, Engine: "basholeveldb"}
 	return nil
 }
 
@@ -399,10 +409,7 @@ func (db *LevelDB) Equal(config dvid.StoreConfig) bool {
 	if err != nil {
 		return false
 	}
-	if db.directory == path {
-		return true
-	}
-	return false
+	return db.directory == path
 }
 
 func (db *LevelDB) metadataExists() (bool, error) {

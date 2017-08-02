@@ -259,8 +259,8 @@ type Data interface {
 	// Versioned returns false if this data has only one version for an entire repo.
 	Versioned() bool
 
-	// BackendStore returns the data store used for this data.
-	BackendStore() (Store, error)
+	// KVStore returns the key-value store used for this data.
+	KVStore() (Store, error)
 
 	// Returns a concurrency-friendly unique operations ID for this Data.  Resets to 1 when server is restarted.
 	NewMutationID() uint64
@@ -271,8 +271,8 @@ type Data interface {
 // DataSetter provides interface for setting main properties of Data during
 // initialization and remote transmission.
 type DataSetter interface {
-	// SetBackendStore sets the data store used for this data.
-	SetBackendStore(Store)
+	// SetKVStore sets the data store used for this data.
+	SetKVStore(Store)
 
 	SetInstanceID(InstanceID)
 	SetDataUUID(UUID)

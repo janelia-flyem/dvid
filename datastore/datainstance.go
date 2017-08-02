@@ -351,9 +351,10 @@ type Data struct {
 	// UUIDs differently.  (See keyvalue type.)
 	unversioned bool
 
-	// the assigned backend store for a data instance.  If nil, we
+	// the assigned backend kv and log store for a data instance.  If nil, we
 	// will use the default store.
-	store dvid.Store
+	kvStore  dvid.Store       // key-value store
+	logStore storage.WriteLog // append-only log
 
 	// an atomic operation ID used for non-persistent operations like coordinating
 	// multiple sync deltas.
@@ -427,7 +428,11 @@ func NewDataService(t TypeService, rootUUID dvid.UUID, id dvid.InstanceID, name 
 	// }
 
 	// See if a store was defined for a particular data instance.
-	store, err := storage.GetAssignedStore(name, rootUUID, t.GetTypeName())
+	kvStore, err := storage.GetAssignedStore(name, rootUUID, t.GetTypeName())
+	if err != nil {
+		return nil, err
+	}
+	logStore, err := storage.GetAssignedLog(name, rootUUID, t.GetTypeName())
 	if err != nil {
 		return nil, err
 	}
@@ -453,7 +458,8 @@ func NewDataService(t TypeService, rootUUID dvid.UUID, id dvid.InstanceID, name 
 		syncNames:   []dvid.InstanceName{},
 		syncData:    dvid.UUIDSet{},
 		unversioned: false,
-		store:       store,
+		kvStore:     kvStore,
+		logStore:    logStore,
 	}
 	return data, data.ModifyConfig(c)
 }
@@ -482,11 +488,22 @@ func (d *Data) TypeVersion() string { return d.typeversion }
 
 func (d *Data) Versioned() bool { return !d.unversioned }
 
-func (d *Data) BackendStore() (dvid.Store, error) {
-	if d.store == nil {
-		return storage.DefaultStore()
+func (d *Data) KVStore() (dvid.Store, error) {
+	if d.kvStore == nil {
+		return storage.DefaultKVStore()
 	}
-	return d.store, nil
+	return d.kvStore, nil
+}
+
+func (d *Data) LogStore() (storage.WriteLog, error) {
+	if d.logStore == nil {
+		return storage.DefaultLogStore()
+	}
+	return d.logStore, nil
+}
+
+func (d *Data) GetWriteLog() storage.WriteLog {
+	return d.logStore
 }
 
 func (d *Data) NewMutationID() uint64 {
@@ -519,8 +536,12 @@ func (d *Data) SetSync(syncs dvid.UUIDSet) {
 	d.syncNames = nil
 }
 
-func (d *Data) SetBackendStore(store dvid.Store) {
-	d.store = store
+func (d *Data) SetKVStore(kvStore dvid.Store) {
+	d.kvStore = kvStore
+}
+
+func (d *Data) SetLogStore(logStore storage.WriteLog) {
+	d.logStore = logStore
 }
 
 // ---------------
@@ -817,7 +838,7 @@ func (d *Data) MutDelete(mutID uint64) {
 // ------ storage.Accessor interface implementation -------
 
 func getKeyValueDB(d dvid.Data) (db storage.KeyValueDB, err error) {
-	store, err := d.BackendStore()
+	store, err := d.KVStore()
 	if err != nil {
 		return nil, err
 	}
@@ -833,7 +854,7 @@ func getKeyValueDB(d dvid.Data) (db storage.KeyValueDB, err error) {
 }
 
 func getOrderedKeyValueDB(d dvid.Data) (db storage.OrderedKeyValueDB, err error) {
-	store, err := d.BackendStore()
+	store, err := d.KVStore()
 	if err != nil {
 		return nil, err
 	}
@@ -849,7 +870,7 @@ func getOrderedKeyValueDB(d dvid.Data) (db storage.OrderedKeyValueDB, err error)
 }
 
 func getKeyValueBatcher(d dvid.Data) (db storage.KeyValueBatcher, err error) {
-	store, err := d.BackendStore()
+	store, err := d.KVStore()
 	if err != nil {
 		return nil, err
 	}
@@ -865,7 +886,7 @@ func getKeyValueBatcher(d dvid.Data) (db storage.KeyValueBatcher, err error) {
 }
 
 func getGraphDB(d dvid.Data) (db storage.GraphDB, err error) {
-	store, err := d.BackendStore()
+	store, err := d.KVStore()
 	if err != nil {
 		return nil, err
 	}

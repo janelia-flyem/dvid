@@ -13,11 +13,12 @@ type MergeOp struct {
 	Merged Set
 }
 
-// SplitOp is a split for a block.
+// SplitOp represents a split with the sparse volume of the new label.
 type SplitOp struct {
 	Target   uint64
 	NewLabel uint64
-	RLEs     dvid.RLEs // if nil, entire block is being split from target -> new label
+	RLEs     dvid.RLEs
+	Coarse   bool // true if the RLEs are block coords (coarse split), not voxels.
 }
 
 // SplitFineOp is a split using RLEs for a block.

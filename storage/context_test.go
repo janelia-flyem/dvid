@@ -25,7 +25,8 @@ type testData struct {
 	rootUUID   dvid.UUID
 	name       dvid.InstanceName
 	instanceID dvid.InstanceID
-	store      dvid.Store
+	kvStore    dvid.Store
+	logStore   WriteLog
 	syncData   dvid.UUIDSet
 	mutID      uint64
 }
@@ -94,15 +95,26 @@ func (d *testData) NewMutationID() uint64 {
 	return atomic.AddUint64(&(d.mutID), 1)
 }
 
-func (d *testData) BackendStore() (dvid.Store, error) {
-	if d.store != nil {
-		return d.store, nil
+func (d *testData) KVStore() (dvid.Store, error) {
+	if d.kvStore != nil {
+		return d.kvStore, nil
 	}
-	return DefaultStore()
+	return DefaultKVStore()
 }
 
-func (d *testData) SetBackendStore(store dvid.Store) {
-	d.store = store
+func (d *testData) LogStore() (WriteLog, error) {
+	if d.logStore != nil {
+		return d.logStore, nil
+	}
+	return DefaultLogStore()
+}
+
+func (d *testData) SetKVStore(kvStore dvid.Store) {
+	d.kvStore = kvStore
+}
+
+func (d *testData) SetLogStore(logStore WriteLog) {
+	d.logStore = logStore
 }
 
 func GetTestDataContext(uuid dvid.UUID, name string, instanceID dvid.InstanceID) *DataContext {

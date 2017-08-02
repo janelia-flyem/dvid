@@ -509,7 +509,7 @@ func (m *repoManager) loadVersion0() error {
 			if err != nil {
 				return err
 			}
-			dataservice.SetBackendStore(store)
+			dataservice.SetKVStore(store)
 
 			// Initialize any dataservice that's initializable, e.g., start sync processing goroutines.
 			initializer, initializable := dataservice.(DataInitializer)

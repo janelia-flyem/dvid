@@ -1,0 +1,21 @@
+syntax = "proto3";
+package proto;
+
+message MergeOp {
+    uint64 mutid = 1;
+    uint64 target = 2;
+    repeated uint64 merged = 3;
+}
+
+message SplitOp {
+    uint64 mutid = 1;
+    uint64 target = 2;
+    uint64 newlabel = 3;
+    bool coarse = 4;  // true if rles are block coords (coarse split), not voxels
+    bytes rles = 5;
+}
+
+message OpCompleted {
+    uint64 mutid = 1;
+    string stage = 2;
+}

@@ -1564,7 +1564,7 @@ func (d *Data) StoreSynapses(ctx *datastore.VersionedCtx, r io.Reader) error {
 	}
 
 	// Do modifications under a batch.
-	store, err := d.BackendStore()
+	store, err := d.KVStore()
 	if err != nil {
 		return err
 	}
@@ -1618,7 +1618,7 @@ func (d *Data) DeleteElement(ctx *datastore.VersionedCtx, pt dvid.Point3d) error
 	}
 
 	// Alter all stored versions of this annotation using a batch.
-	store, err := d.BackendStore()
+	store, err := d.KVStore()
 	if err != nil {
 		return err
 	}
@@ -1659,7 +1659,7 @@ func (d *Data) MoveElement(ctx *datastore.VersionedCtx, from, to dvid.Point3d) e
 	defer d.Unlock()
 
 	// Alter all stored versions of this annotation using a batch.
-	store, err := d.BackendStore()
+	store, err := d.KVStore()
 	if err != nil {
 		return err
 	}

@@ -17,12 +17,16 @@ type managerT struct {
 	setup bool
 
 	// cache the default stores at both global and datatype level
-	defaultStore  dvid.Store
+	defaultKV     dvid.Store
+	defaultLog    WriteLog
 	metadataStore dvid.Store
 
 	stores        map[Alias]dvid.Store
 	instanceStore map[dvid.DataSpecifier]dvid.Store
 	datatypeStore map[dvid.TypeString]dvid.Store
+
+	instanceLog map[dvid.DataSpecifier]WriteLog
+	datatypeLog map[dvid.TypeString]WriteLog
 
 	// Cached type-asserted interfaces
 	graphEngine Engine
@@ -41,14 +45,24 @@ func AllStores() (map[Alias]dvid.Store, error) {
 	return manager.stores, nil
 }
 
-func DefaultStore() (dvid.Store, error) {
+func DefaultKVStore() (dvid.Store, error) {
 	if !manager.setup {
-		return nil, fmt.Errorf("Storage manager not initialized before requesting default store")
+		return nil, fmt.Errorf("Storage manager not initialized before requesting default kv store")
 	}
-	if manager.defaultStore == nil {
-		return nil, fmt.Errorf("No default store has been initialized")
+	if manager.defaultKV == nil {
+		return nil, fmt.Errorf("No default kv store has been initialized")
 	}
-	return manager.defaultStore, nil
+	return manager.defaultKV, nil
+}
+
+func DefaultLogStore() (WriteLog, error) {
+	if !manager.setup {
+		return nil, fmt.Errorf("Storage manager not initialized before requesting default log store")
+	}
+	if manager.defaultLog == nil {
+		return nil, fmt.Errorf("No default log store has been initialized")
+	}
+	return manager.defaultLog, nil
 }
 
 func MetaDataKVStore() (OrderedKeyValueDB, error) {
@@ -62,24 +76,24 @@ func MetaDataKVStore() (OrderedKeyValueDB, error) {
 	return kvstore, nil
 }
 
-func DefaultKVStore() (KeyValueDB, error) {
+func DefaultKVDB() (KeyValueDB, error) {
 	if !manager.setup {
-		return nil, fmt.Errorf("Storage manager not initialized before requesting DefaultStore")
+		return nil, fmt.Errorf("Storage manager not initialized before requesting DefaultKVDB")
 	}
-	kvstore, ok := manager.defaultStore.(KeyValueDB)
+	kvstore, ok := manager.defaultKV.(KeyValueDB)
 	if !ok {
-		return nil, fmt.Errorf("Default store %q is not a key-value store!", manager.defaultStore)
+		return nil, fmt.Errorf("Default store %q is not a key-value store!", manager.defaultKV)
 	}
 	return kvstore, nil
 }
 
-func DefaultOrderedKVStore() (OrderedKeyValueDB, error) {
+func DefaultOrderedKVDB() (OrderedKeyValueDB, error) {
 	if !manager.setup {
-		return nil, fmt.Errorf("Storage manager not initialized before requesting DefaultStore")
+		return nil, fmt.Errorf("Storage manager not initialized before requesting DefaultKVDB")
 	}
-	kvstore, ok := manager.defaultStore.(OrderedKeyValueDB)
+	kvstore, ok := manager.defaultKV.(OrderedKeyValueDB)
 	if !ok {
-		return nil, fmt.Errorf("Default store %q is not an ordered key-value store!", manager.defaultStore)
+		return nil, fmt.Errorf("Default store %q is not an ordered key-value store!", manager.defaultKV)
 	}
 	return kvstore, nil
 }
@@ -139,7 +153,39 @@ func assignedStoreByType(typename dvid.TypeString) (dvid.Store, error) {
 	}
 	store, found := manager.datatypeStore[typename]
 	if !found {
-		return manager.defaultStore, nil
+		return manager.defaultKV, nil
+	}
+	return store, nil
+}
+
+// GetAssignedLog returns the append-only log assigned based on (instance name, root uuid) or type.
+func GetAssignedLog(dataname dvid.InstanceName, root dvid.UUID, typename dvid.TypeString) (WriteLog, error) {
+	if !manager.setup {
+		return nil, fmt.Errorf("Storage manager not initialized before requesting log for %s/%s", dataname, root)
+	}
+	dataid := dvid.GetDataSpecifier(dataname, root)
+	store, found := manager.instanceLog[dataid]
+	var err error
+	if !found {
+		store, err = assignedLogByType(typename)
+		if err != nil {
+			return nil, fmt.Errorf("Cannot get assigned log for data %q, type %q: %v", dataname, typename, err)
+		}
+	}
+	return store, nil
+}
+
+// assignedLogByType returns the log (can be nil) assigned to a particular datatype.
+func assignedLogByType(typename dvid.TypeString) (WriteLog, error) {
+	if !manager.setup {
+		return nil, fmt.Errorf("Storage manager not initialized before requesting log for %s", typename)
+	}
+	store, found := manager.datatypeLog[typename]
+	if !found {
+		if manager.defaultLog == nil {
+			return nil, nil
+		}
+		return manager.defaultLog, nil
 	}
 	return store, nil
 }
@@ -153,11 +199,7 @@ func Close() {
 		}
 		manager.setup = false
 	}
-	manager.stores = nil
-	manager.instanceStore = nil
-	manager.datatypeStore = nil
-	manager.defaultStore = nil
-	manager.metadataStore = nil
+	manager = managerT{}
 }
 
 // Initialize the storage systems.  Returns a bool + error where the bool is
@@ -165,7 +207,6 @@ func Close() {
 // The map of store configurations should be keyed by either a datatype name,
 // "default", or "metadata".
 func Initialize(cmdline dvid.Config, backend *Backend) (createdMetadata bool, err error) {
-	dvid.Infof("backend:\n%v\n", *backend)
 	// Open all the backend stores
 	manager.stores = make(map[Alias]dvid.Store, len(backend.Stores))
 	var gotDefault, gotMetadata, createdDefault, lastCreated bool
@@ -186,10 +227,17 @@ func Initialize(cmdline dvid.Config, backend *Backend) (createdMetadata bool, er
 			createdMetadata = created
 			manager.metadataStore = store
 		}
-		if alias == backend.Default {
+		if alias == backend.DefaultKVDB {
 			gotDefault = true
 			createdDefault = created
-			manager.defaultStore = store
+			manager.defaultKV = store
+		}
+		if alias == backend.DefaultLog {
+			var ok bool
+			manager.defaultLog, ok = store.(WriteLog)
+			if !ok {
+				return false, fmt.Errorf("Store %q is not valid write log", store)
+			}
 		}
 		manager.stores[alias] = store
 		lastStore = store
@@ -200,17 +248,18 @@ func Initialize(cmdline dvid.Config, backend *Backend) (createdMetadata bool, er
 	// at configuration loading, but here as well as double check.
 	if !gotDefault {
 		if len(backend.Stores) == 1 {
-			manager.defaultStore = lastStore
+			manager.defaultKV = lastStore
 			createdDefault = lastCreated
 		} else {
 			return false, fmt.Errorf("either backend.default or a single store must be set in configuration TOML file")
 		}
 	}
 	if !gotMetadata {
-		manager.metadataStore = manager.defaultStore
+		manager.metadataStore = manager.defaultKV
 		createdMetadata = createdDefault
 	}
-	dvid.Infof("Default store: %s\n", manager.defaultStore)
+	dvid.Infof("Default kv store: %s\n", manager.defaultKV)
+	dvid.Infof("Default log store: %s\n", manager.defaultLog)
 	dvid.Infof("Metadata store: %s\n", manager.metadataStore)
 
 	// Setup the groupcache if specified.
@@ -222,7 +271,7 @@ func Initialize(cmdline dvid.Config, backend *Backend) (createdMetadata bool, er
 	// Make all data instance or datatype-specific store assignments.
 	manager.instanceStore = make(map[dvid.DataSpecifier]dvid.Store)
 	manager.datatypeStore = make(map[dvid.TypeString]dvid.Store)
-	for dataspec, alias := range backend.Mapping {
+	for dataspec, alias := range backend.KVStore {
 		if dataspec == "default" || dataspec == "metadata" {
 			continue
 		}
@@ -240,6 +289,37 @@ func Initialize(cmdline dvid.Config, backend *Backend) (createdMetadata bool, er
 		case 2:
 			dataid := dvid.GetDataSpecifier(dvid.InstanceName(parts[0]), dvid.UUID(parts[1]))
 			manager.instanceStore[dataid] = store
+		default:
+			err = fmt.Errorf("bad backend data specification: %s", dataspec)
+			return
+		}
+	}
+	manager.instanceLog = make(map[dvid.DataSpecifier]WriteLog)
+	manager.datatypeLog = make(map[dvid.TypeString]WriteLog)
+	for dataspec, alias := range backend.LogStore {
+		if dataspec == "default" {
+			continue
+		}
+		store, found := manager.stores[alias]
+		if !found {
+			err = fmt.Errorf("bad backend store alias: %q -> %q", dataspec, alias)
+			return
+		}
+		logstore, ok := store.(WriteLog)
+		if !ok {
+			err = fmt.Errorf("Store %q is not a valid write log.", store)
+			return
+		}
+
+		// Cache the store for mapped datatype or data instance.
+		name := strings.Trim(string(dataspec), "\"")
+		parts := strings.Split(name, ":")
+		switch len(parts) {
+		case 1:
+			manager.datatypeLog[dvid.TypeString(name)] = logstore
+		case 2:
+			dataid := dvid.GetDataSpecifier(dvid.InstanceName(parts[0]), dvid.UUID(parts[1]))
+			manager.instanceLog[dataid] = logstore
 		default:
 			err = fmt.Errorf("bad backend data specification: %s", dataspec)
 			return
@@ -280,7 +360,7 @@ func DeleteDataInstance(data dvid.Data) error {
 	}
 
 	// Get the store for the data instance.
-	store, err := data.BackendStore()
+	store, err := data.KVStore()
 	if err != nil {
 		return err
 	}

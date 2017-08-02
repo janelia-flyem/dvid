@@ -3,7 +3,6 @@
 package datastore
 
 import (
-	"fmt"
 	"log"
 	"sync"
 
@@ -40,22 +39,13 @@ func NewTestRepo() (dvid.UUID, dvid.VersionID) {
 	return uuid, versionID
 }
 
-// getTestStoreConfig returns a configuration, amenable to testing, based on compiled-in engines.
-func getTestStoreConfig() (*storage.Backend, error) {
-	testableEng := storage.GetTestableEngine()
-	if testableEng == nil {
-		return nil, fmt.Errorf("Could not find a storage engine that was testable")
-	}
-	return testableEng.GetTestConfig()
-}
-
 func openStore(create bool) {
 	dvid.Infof("Opening test datastore.  Create = %v\n", create)
 	if create {
 		var err error
-		testStore.backend, err = getTestStoreConfig()
+		testStore.backend, err = storage.GetTestableBackend()
 		if err != nil {
-			log.Fatalf("Unable to get testable storage configuration: %v\n", err)
+			log.Fatal(err)
 		}
 	}
 	initMetadata, err := storage.Initialize(dvid.Config{}, testStore.backend)

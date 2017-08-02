@@ -54,6 +54,13 @@ func (d *Data) MergeLabels(v dvid.VersionID, m labels.MergeOp) error {
 	}
 	d.StartUpdate()
 
+	mutID := d.NewMutationID()
+	go func() {
+		if err := labels.LogMerge(d, v, mutID, m); err != nil {
+			dvid.Errorf("logging merge %q: %v\n", d.DataName(), err)
+		}
+	}()
+
 	// Signal that we are starting a merge.
 	evt := datastore.SyncEvent{d.DataUUID(), labels.MergeStartEvent}
 	msg := datastore.SyncMessage{labels.MergeStartEvent, v, labels.DeltaMergeStart{m}}
@@ -261,6 +268,18 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel, splitLabel uint64, r io.
 	}
 	toLabelSize, _ := split.Stats()
 
+	mutID := d.NewMutationID()
+	splitOp := labels.SplitOp{
+		Target:   fromLabel,
+		NewLabel: toLabel,
+		RLEs:     split,
+	}
+	go func() {
+		if err := labels.LogSplit(d, v, mutID, splitOp); err != nil {
+			dvid.Errorf("logging split %q: %v\n", d.DataName(), err)
+		}
+	}()
+
 	// Partition the split spans into blocks.
 	var splitmap dvid.BlockRLEs
 	splitmap, err = split.Partition(d.BlockSize)
@@ -270,6 +289,21 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel, splitLabel uint64, r io.
 
 	// Get a sorted list of blocks that cover split.
 	splitblks := splitmap.SortedKeys()
+
+	// Publish split event
+	deltaSplit := labels.DeltaSplit{
+		OldLabel:     fromLabel,
+		NewLabel:     toLabel,
+		Split:        splitmap,
+		SortedBlocks: splitblks,
+		SplitVoxels:  toLabelSize,
+	}
+
+	evt = datastore.SyncEvent{d.DataUUID(), labels.SplitLabelEvent}
+	msg = datastore.SyncMessage{labels.SplitLabelEvent, v, deltaSplit}
+	if err = datastore.NotifySubscribers(evt, msg); err != nil {
+		return
+	}
 
 	// Iterate through the split blocks, read the original block.  If the RLEs
 	// are identical, just delete the original.  If not, modify the original.
@@ -314,20 +348,6 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel, splitLabel uint64, r io.
 
 	if err = batch.Commit(); err != nil {
 		err = fmt.Errorf("Batch PUT during split of %q label %d: %v\n", d.DataName(), fromLabel, err)
-		return
-	}
-
-	// Publish split event
-	deltaSplit := labels.DeltaSplit{
-		OldLabel:     fromLabel,
-		NewLabel:     toLabel,
-		Split:        splitmap,
-		SortedBlocks: splitblks,
-		SplitVoxels:  toLabelSize,
-	}
-	evt = datastore.SyncEvent{d.DataUUID(), labels.SplitLabelEvent}
-	msg = datastore.SyncMessage{labels.SplitLabelEvent, v, deltaSplit}
-	if err = datastore.NotifySubscribers(evt, msg); err != nil {
 		return
 	}
 
@@ -426,6 +446,19 @@ func (d *Data) SplitCoarseLabels(v dvid.VersionID, fromLabel, splitLabel uint64,
 		return
 	}
 	numBlocks, _ := splits.Stats()
+
+	mutID := d.NewMutationID()
+	splitOp := labels.SplitOp{
+		Target:   fromLabel,
+		NewLabel: toLabel,
+		RLEs:     splits,
+		Coarse:   true,
+	}
+	go func() {
+		if err := labels.LogSplit(d, v, mutID, splitOp); err != nil {
+			dvid.Errorf("logging split %q: %v\n", d.DataName(), err)
+		}
+	}()
 
 	// Order the split blocks
 	splitblks := make(dvid.IZYXSlice, numBlocks)

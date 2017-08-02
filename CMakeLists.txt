@@ -86,7 +86,7 @@ else ()
     message ("Using DVID_BACKEND: ${DVID_BACKEND}")
 
     # Make sure we have list of all Go package dependencies that we are go getting.
-    set (DVID_DEP_GO_PACKAGES gopackages gojsonschema goji context lumberjack snappy oauth2 gorpc groupcache)
+    set (DVID_DEP_GO_PACKAGES gopackages gojsonschema goji context lumberjack snappy oauth2 protobuf gorpc groupcache)
 
     # Make sure we have all dependencies for the backend
 	# Defaults to standard leveldb
@@ -194,6 +194,12 @@ else ()
     add_custom_target (gorpc
         ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/valyala/gorpc
         COMMENT     "Adding gorpc library...")
+
+    add_custom_target (protobuf
+        COMMAND ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/gogo/protobuf/proto
+        COMMAND ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/gogo/protobuf/gogoproto
+        COMMAND ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/gogo/protobuf/protoc-gen-gogoslick
+        COMMENT     "Adding gogo protobuf packages...")  
 
     add_custom_target (nrsc
         ${BUILDEM_ENV_STRING} ${GO_ENV} go build -o ${BUILDEM_BIN_DIR}/nrsc

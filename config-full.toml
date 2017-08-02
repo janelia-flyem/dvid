@@ -25,9 +25,9 @@ instance_id_start = 100  # new ids start at least from this.
 # Email server to use for notifications and server issuing email-based authorization tokens.
 [email]
 notify = ["foo@someplace.edu"] # Who to send email in case of panic
-username = 
-password = 
-server = 
+username = "myuserid"
+password = "mypassword"
+server = "mail.myserver.com"
 port = 25
 
 [logging]
@@ -49,6 +49,7 @@ max_log_age = 30   # days
 [backend]
     [backend.default]
     store = "raid6"
+    log = "mutationlog"
 
     [backend.labelblk]
     store = "ssd"
@@ -85,6 +86,10 @@ max_log_age = 30   # days
     path = "http://tem-dvid.int.janelia.org:9000"
     collection = "389a22cd85f143f511923bd22aac776b"
     owner = "otherTeam"
+
+    [store.mutationlog]
+    engine = "filelog"
+    path = "/data/mutationlogs"  # directory that holds mutation log per instance-UUID.
 
 # Groupcache support lets you cache GETs from particular data instances.  The
 # configuration below marks some data instances as both immutable and

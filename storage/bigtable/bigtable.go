@@ -139,23 +139,6 @@ func parseConfig(config dvid.StoreConfig) (*BigTable, error) {
 }
 
 // TODO -- Work on testable BigTable implementation.
-/*
-func (e Engine) GetTestConfig() (*Backend, error) {
-    tc := map[string]interface{} {
-        "project": "project",
-        "zone":    "zone",
-        "cluster": "cluster",
-        "table":   fmt.Sprintf("dvid-test-%x", uuid.NewV4().Bytes()),
-        "testing": true,
-    }
-    var c dvid.Config
-    c.SetAll(tc)
-	testConfig := map[string]dvid.StoreConfig{
-        "default": &dvid.StoreConfig{Config: c, Engine: "bigtable"},
-    }
-    return testConfig, nil
-}
-*/
 
 func NewAdminClient(bt *BigTable) (adminClient *api.AdminClient, err error) {
 

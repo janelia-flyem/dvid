@@ -131,6 +131,7 @@ type storeConfig map[string]interface{}
 
 type backendConfig struct {
 	Store storage.Alias
+	Log   storage.Alias
 }
 
 type emailConfig struct {
@@ -166,12 +167,13 @@ func LoadConfig(filename string) (*datastore.InstanceConfig, *dvid.LogConfig, *s
 	// Get default store if there's only one store defined.
 	if len(backend.Stores) == 1 {
 		for k := range backend.Stores {
-			backend.Default = storage.Alias(strings.Trim(string(k), "\""))
+			backend.DefaultKVDB = storage.Alias(strings.Trim(string(k), "\""))
 		}
 	}
 
 	// Create the backend mapping.
-	backend.Mapping = make(map[dvid.DataSpecifier]storage.Alias)
+	backend.KVStore = make(map[dvid.DataSpecifier]storage.Alias)
+	backend.LogStore = make(map[dvid.DataSpecifier]storage.Alias)
 	for k, v := range tc.Backend {
 		// lookup store config
 		_, found := backend.Stores[v.Store]
@@ -179,24 +181,33 @@ func LoadConfig(filename string) (*datastore.InstanceConfig, *dvid.LogConfig, *s
 			return nil, nil, nil, fmt.Errorf("Backend for %q specifies unknown store %q", k, v.Store)
 		}
 		spec := dvid.DataSpecifier(strings.Trim(string(k), "\""))
-		backend.Mapping[spec] = v.Store
+		backend.KVStore[spec] = v.Store
+		dvid.Infof("backend.KVStore[%s] = %s\n", spec, v.Store)
+		if v.Log != "" {
+			backend.LogStore[spec] = v.Log
+		}
 	}
-	defaultAlias, found := backend.Mapping["default"]
+	defaultStore, found := backend.KVStore["default"]
 	if found {
-		backend.Default = defaultAlias
+		backend.DefaultKVDB = defaultStore
 	} else {
-		if backend.Default == "" {
+		if backend.DefaultKVDB == "" {
 			return nil, nil, nil, fmt.Errorf("if no default backend specified, must have exactly one store defined in config file")
 		}
 	}
-	defaultMetadataName, found := backend.Mapping["metadata"]
+	defaultLog, found := backend.LogStore["default"]
+	if found {
+		backend.DefaultLog = defaultLog
+	}
+
+	defaultMetadataName, found := backend.KVStore["metadata"]
 	if found {
 		backend.Metadata = defaultMetadataName
 	} else {
-		if backend.Default == "" {
+		if backend.DefaultKVDB == "" {
 			return nil, nil, nil, fmt.Errorf("can't set metadata if no default backend specified, must have exactly one store defined in config file")
 		}
-		backend.Metadata = backend.Default
+		backend.Metadata = backend.DefaultKVDB
 	}
 
 	// The server config could be local, cluster, gcloud-specific config.  Here it is local.
