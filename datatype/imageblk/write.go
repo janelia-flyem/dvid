@@ -155,31 +155,28 @@ func (d *Data) PutVoxels(v dvid.VersionID, mutID uint64, vox *Voxels, roiname dv
 		return fmt.Errorf("cannot store voxels in non-block aligned geometry %s -> %s", vox.StartPoint(), vox.EndPoint())
 	}
 
-	wg := new(sync.WaitGroup)
-
 	// Only do one request at a time, although each request can start many goroutines.
-
 	if !hasbuffer {
 		server.LargeMutationMutex.Lock()
 		defer server.LargeMutationMutex.Unlock()
 	}
 
+	// create some buffer for handling requests
+	finishedRequests := make(chan error, 1000)
+	putrequests := 0
+
 	// Post new extents if there was a change (will always require 1 GET which should
 	// not be a big deal for large posts or for distributed back-ends)
 	// (assumes rest of the command will finish correctly which seems reasonable)
 	ctx := datastore.NewVersionedCtx(d, v)
-	wg.Add(1)
+	putrequests++
 	go func() {
-		d.PostExtents(ctx, vox.StartPoint(), vox.EndPoint())
-		wg.Done()
+		err := d.PostExtents(ctx, vox.StartPoint(), vox.EndPoint())
+		finishedRequests <- err
 	}()
 
 	voxstartpt := vox.Geometry.StartPoint()
 	voxendpt := vox.Geometry.EndPoint()
-
-	// create some buffer for handling requests
-	finishedRequests := make(chan error, 1000)
-	putrequests := 0
 
 	// Iterate through index space for this data.
 	for it, err := vox.NewIndexIterator(d.BlockSize()); err == nil && it.Valid(); it.NextSpan() {
@@ -193,7 +190,6 @@ func (d *Data) PutVoxels(v dvid.VersionID, mutID uint64, vox *Voxels, roiname dv
 		begX := ptBeg.Value(0)
 		endX := ptEnd.Value(0)
 
-		wg.Add(int(endX-begX) + 1)
 		c := dvid.ChunkPoint3d{begX, ptBeg.Value(1), ptBeg.Value(2)}
 		for x := begX; x <= endX; x++ {
 			c[0] = x
@@ -250,7 +246,6 @@ func (d *Data) PutVoxels(v dvid.VersionID, mutID uint64, vox *Voxels, roiname dv
 
 			// Don't PUT if this index is outside a specified ROI
 			if r != nil && r.Iter != nil && !r.Iter.InsideFast(curIndex) {
-				wg.Done()
 				continue
 			}
 
@@ -260,13 +255,11 @@ func (d *Data) PutVoxels(v dvid.VersionID, mutID uint64, vox *Voxels, roiname dv
 
 			kv := &storage.TKeyValue{K: NewTKey(&curIndex)}
 			putOp := &putOperation{vox, curIndex, v, mutate, mutID}
-			op := &storage.ChunkOp{putOp, wg}
-			putrequests += 1
+			op := &storage.ChunkOp{putOp, nil}
+			putrequests++
 			d.PutChunk(&storage.Chunk{op, kv}, hasbuffer, patchgeo, finishedRequests)
 		}
 	}
-	wg.Wait()
-
 	// wait for everything to finish
 	for i := 0; i < putrequests; i += 1 {
 		errjob := <-finishedRequests
