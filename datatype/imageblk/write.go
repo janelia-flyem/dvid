@@ -155,23 +155,24 @@ func (d *Data) PutVoxels(v dvid.VersionID, mutID uint64, vox *Voxels, roiname dv
 		return fmt.Errorf("cannot store voxels in non-block aligned geometry %s -> %s", vox.StartPoint(), vox.EndPoint())
 	}
 
-	wg := new(sync.WaitGroup)
-
 	// Only do one request at a time, although each request can start many goroutines.
-
 	if !hasbuffer {
 		server.LargeMutationMutex.Lock()
 		defer server.LargeMutationMutex.Unlock()
 	}
 
+	// create some buffer for handling requests
+	finishedRequests := make(chan error, 1000)
+	putrequests := 0
+
 	// Post new extents if there was a change (will always require 1 GET which should
 	// not be a big deal for large posts or for distributed back-ends)
 	// (assumes rest of the command will finish correctly which seems reasonable)
 	ctx := datastore.NewVersionedCtx(d, v)
-	wg.Add(1)
+	putrequests++
 	go func() {
-		d.PostExtents(ctx, vox.StartPoint(), vox.EndPoint())
-		wg.Done()
+		err := d.PostExtents(ctx, vox.StartPoint(), vox.EndPoint())
+		finishedRequests <- err
 	}()
 
 	voxstartpt := vox.Geometry.StartPoint()
@@ -189,7 +190,6 @@ func (d *Data) PutVoxels(v dvid.VersionID, mutID uint64, vox *Voxels, roiname dv
 		begX := ptBeg.Value(0)
 		endX := ptEnd.Value(0)
 
-		wg.Add(int(endX-begX) + 1)
 		c := dvid.ChunkPoint3d{begX, ptBeg.Value(1), ptBeg.Value(2)}
 		for x := begX; x <= endX; x++ {
 			c[0] = x
@@ -246,7 +246,6 @@ func (d *Data) PutVoxels(v dvid.VersionID, mutID uint64, vox *Voxels, roiname dv
 
 			// Don't PUT if this index is outside a specified ROI
 			if r != nil && r.Iter != nil && !r.Iter.InsideFast(curIndex) {
-				wg.Done()
 				continue
 			}
 
@@ -256,13 +255,19 @@ func (d *Data) PutVoxels(v dvid.VersionID, mutID uint64, vox *Voxels, roiname dv
 
 			kv := &storage.TKeyValue{K: NewTKey(&curIndex)}
 			putOp := &putOperation{vox, curIndex, v, mutate, mutID}
-			op := &storage.ChunkOp{putOp, wg}
-			d.PutChunk(&storage.Chunk{op, kv}, hasbuffer, patchgeo)
+			op := &storage.ChunkOp{putOp, nil}
+			putrequests++
+			d.PutChunk(&storage.Chunk{op, kv}, hasbuffer, patchgeo, finishedRequests)
 		}
 	}
-	wg.Wait()
-
-	return nil
+	// wait for everything to finish
+	for i := 0; i < putrequests; i += 1 {
+		errjob := <-finishedRequests
+		if errjob != nil {
+			err = errjob
+		}
+	}
+	return err
 }
 
 // PutBlocks stores blocks of data in a span along X
@@ -357,17 +362,18 @@ func (d *Data) PutBlocks(v dvid.VersionID, mutID uint64, start dvid.ChunkPoint3d
 // PutChunk puts a chunk of data as part of a mapped operation.
 // Only some multiple of the # of CPU cores can be used for chunk handling before
 // it waits for chunk processing to abate via the buffered server.HandlerToken channel.
-func (d *Data) PutChunk(chunk *storage.Chunk, hasbuffer bool, patchgeo *patchGeo) error {
+func (d *Data) PutChunk(chunk *storage.Chunk, hasbuffer bool, patchgeo *patchGeo, finishedRequests chan error) error {
 	if !hasbuffer {
 		// if storage engine handles buffering, limited advantage to throttling here
 		<-server.HandlerToken
 	}
 
-	go d.putChunk(chunk, hasbuffer, patchgeo)
+	go d.putChunk(chunk, hasbuffer, patchgeo, finishedRequests)
 	return nil
 }
 
-func (d *Data) putChunk(chunk *storage.Chunk, hasbuffer bool, patchgeo *patchGeo) {
+func (d *Data) putChunk(chunk *storage.Chunk, hasbuffer bool, patchgeo *patchGeo, finishedRequests chan error) {
+	var err error
 	defer func() {
 		// After processing a chunk, return the token.
 		if !hasbuffer {
@@ -377,6 +383,8 @@ func (d *Data) putChunk(chunk *storage.Chunk, hasbuffer bool, patchgeo *patchGeo
 		if chunk.Wg != nil {
 			chunk.Wg.Done()
 		}
+
+		finishedRequests <- err
 	}()
 
 	op, ok := chunk.Op.(*putOperation)
@@ -388,17 +396,18 @@ func (d *Data) putChunk(chunk *storage.Chunk, hasbuffer bool, patchgeo *patchGeo
 	// Make sure our received chunk is valid.
 	if chunk == nil {
 		dvid.Errorf("Received nil chunk in ProcessChunk.  Ignoring chunk.\n")
+		err = fmt.Errorf("Received nil chunk in ProcessChunk.  Ignoring chunk.\n")
 		return
 	}
 	if chunk.K == nil {
 		dvid.Errorf("Received nil chunk key in ProcessChunk.  Ignoring chunk.\n")
+		err = fmt.Errorf("Received nil chunk key in ProcessChunk.  Ignoring chunk.\n")
 		return
 	}
 
 	// Initialize the block buffer using the chunk of data.  For voxels, this chunk of
 	// data needs to be uncompressed and deserialized.
 	var blockData []byte
-	var err error
 	if chunk.V == nil {
 		blockData = d.BackgroundBlock()
 	} else {
@@ -448,6 +457,7 @@ func (d *Data) putChunk(chunk *storage.Chunk, hasbuffer bool, patchgeo *patchGeo
 		resperr := <-ready
 		if resperr != nil {
 			dvid.Errorf("Unable to PUT voxel data for key %v: %v\n", chunk.K, resperr)
+			err = fmt.Errorf("Unable to PUT voxel data for key %v: %v\n", chunk.K, resperr)
 			return
 		}
 		var event string
@@ -461,7 +471,7 @@ func (d *Data) putChunk(chunk *storage.Chunk, hasbuffer bool, patchgeo *patchGeo
 		}
 		evt := datastore.SyncEvent{d.DataUUID(), event}
 		msg := datastore.SyncMessage{event, op.version, delta}
-		if err := datastore.NotifySubscribers(evt, msg); err != nil {
+		if err = datastore.NotifySubscribers(evt, msg); err != nil {
 			dvid.Errorf("Unable to notify subscribers of event %s in %s\n", event, d.DataName())
 		}
 	}
@@ -470,13 +480,12 @@ func (d *Data) putChunk(chunk *storage.Chunk, hasbuffer bool, patchgeo *patchGeo
 	ctx := datastore.NewVersionedCtx(d, op.version)
 
 	if patchgeo == nil {
-		if err := store.Put(ctx, chunk.K, serialization); err != nil {
+		if err = store.Put(ctx, chunk.K, serialization); err != nil {
 			dvid.Errorf("Unable to PUT voxel data for key %v: %v\n", chunk.K, err)
 			return
 		}
 	} else {
 		patchfunc := func(origdata []byte) ([]byte, error) {
-			var err error
 			if origdata == nil {
 				// use blank default block
 				origdata = blockData
@@ -494,7 +503,8 @@ func (d *Data) putChunk(chunk *storage.Chunk, hasbuffer bool, patchgeo *patchGeo
 			}
 
 			// data returned through data
-			retdata, err := dvid.SerializeData(origdata, d.Compression(), d.Checksum())
+			var retdata []byte
+			retdata, err = dvid.SerializeData(origdata, d.Compression(), d.Checksum())
 			if err != nil {
 				return nil, fmt.Errorf("Unable to serialize block in %q\n", d.DataName())
 			}
@@ -503,7 +513,7 @@ func (d *Data) putChunk(chunk *storage.Chunk, hasbuffer bool, patchgeo *patchGeo
 		}
 
 		patchdb, _ := store.(storage.TransactionDB)
-		if err := patchdb.Patch(ctx, chunk.K, patchfunc); err != nil {
+		if err = patchdb.Patch(ctx, chunk.K, patchfunc); err != nil {
 			dvid.Errorf("Unable to PUT voxel data for key %v: %v\n", chunk.K, err)
 			return
 		}
