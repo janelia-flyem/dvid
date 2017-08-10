@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"sync"
 	"testing"
 
@@ -118,9 +119,18 @@ func (v *testVolume) putMutable(t *testing.T, uuid dvid.UUID, name string) {
 }
 
 func (v *testVolume) get(t *testing.T, uuid dvid.UUID, name string) {
+	t.Logf("Got hires label data %q\n", name)
 	apiStr := fmt.Sprintf("%snode/%s/%s/raw/0_1_2/%d_%d_%d/0_0_0", server.WebAPIPath,
 		uuid, name, v.size[0], v.size[1], v.size[2])
 	v.data = server.TestHTTP(t, "GET", apiStr, nil)
+}
+
+func (v *testVolume) getScale(t *testing.T, uuid dvid.UUID, name string, scale uint8) {
+	t.Logf("Got scale %d label data %q\n", scale, name)
+	apiStr := fmt.Sprintf("%snode/%s/%s/raw/0_1_2/%d_%d_%d/0_0_0?scale=%d", server.WebAPIPath,
+		uuid, name, v.size[0], v.size[1], v.size[2], scale)
+	v.data = server.TestHTTP(t, "GET", apiStr, nil)
+	t.Logf("Returning from getScale scale=%d\n", scale)
 }
 
 func (v *testVolume) getVoxel(pt dvid.Point3d) uint64 {
@@ -134,7 +144,9 @@ func (v *testVolume) verifyLabel(t *testing.T, expected uint64, x, y, z int32) {
 	pt := dvid.Point3d{x, y, z}
 	label := v.getVoxel(pt)
 	if label != expected {
-		t.Errorf("Expected label %d at %s for first downres but got %d instead\n", expected, pt, label)
+		t.Logf("Error expected %d @ (%d,%d,%d), got %d\n", expected, x, y, z, label)
+		_, fn, line, _ := runtime.Caller(1)
+		t.Errorf("Expected label %d at %s for first downres but got %d instead [%s:%d]\n", expected, pt, label, fn, line)
 	}
 }
 
@@ -737,7 +749,7 @@ func TestLabelarrayRepoPersistence(t *testing.T) {
 	config.Set("VoxelSize", "1.1,2.8,11")
 	config.Set("VoxelUnits", "microns,millimeters,nanometers")
 	config.Set("CountLabels", "false")
-	config.Set("DownresLevels", "6")
+	config.Set("MaxDownresLevel", "5")
 	dataservice, err := datastore.NewData(uuid, labelsT, "mylabels", config)
 	if err != nil {
 		t.Errorf("Unable to create labels instance: %v\n", err)
@@ -752,8 +764,8 @@ func TestLabelarrayRepoPersistence(t *testing.T) {
 	if !lbls.IndexedLabels {
 		t.Errorf("expected IndexedLabels to be true for default but was false\n")
 	}
-	if lbls.DownresLevels != 6 {
-		t.Errorf("expected DownresLevels to be 6, not %d\n", lbls.DownresLevels)
+	if lbls.MaxDownresLevel != 5 {
+		t.Errorf("expected MaxDownresLevel to be 5, not %d\n", lbls.MaxDownresLevel)
 	}
 	oldData := *lbls
 
@@ -776,21 +788,15 @@ func TestLabelarrayRepoPersistence(t *testing.T) {
 	}
 }
 
-/*
-func TestMultiscale(t *testing.T) {
+func TestMultiscaleIngest(t *testing.T) {
 	datastore.OpenTest()
 	defer datastore.CloseTest()
 
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
 	var config dvid.Config
+	config.Set("MaxDownresLevel", "2")
 	server.CreateTestInstance(t, uuid, "labelarray", "labels", config)
-
-	// Add multiscale
-	server.CreateTestInstance(t, uuid, "labelarray", "labels_1", config) // 64 x 64 x 64
-	server.CreateTestSync(t, uuid, "labels_1", "labels")
-	server.CreateTestInstance(t, uuid, "labelarray", "labels_2", config) // 32 x 32 x 32
-	server.CreateTestSync(t, uuid, "labels_2", "labels_1")
 
 	// Create an easily interpreted label volume with a couple of labels.
 	volume := newTestVolume(128, 128, 128)
@@ -814,11 +820,8 @@ func TestMultiscale(t *testing.T) {
 	hires.verifyLabel(t, 311, 81, 81, 41)
 
 	// Check the first downres: 64^3
-	if err := datastore.BlockOnUpdating(uuid, "labels_1"); err != nil {
-		t.Fatalf("Error blocking on update for labels_1: %v\n", err)
-	}
 	downres1 := newTestVolume(64, 64, 64)
-	downres1.get(t, uuid, "labels_1")
+	downres1.getScale(t, uuid, "labels", 1)
 	downres1.verifyLabel(t, 1, 30, 30, 30)
 	downres1.verifyLabel(t, 2, 21, 21, 45)
 	downres1.verifyLabel(t, 13, 45, 21, 36)
@@ -831,13 +834,10 @@ func TestMultiscale(t *testing.T) {
 	expected1.addSubvol(dvid.Point3d{20, 40, 20}, dvid.Point3d{20, 20, 20}, 209)
 	expected1.addSubvol(dvid.Point3d{40, 40, 20}, dvid.Point3d{20, 20, 20}, 311)
 	if err := downres1.equals(expected1); err != nil {
-		t.Errorf("1st downres 'labels_1' isn't what is expected: %v\n", err)
+		t.Errorf("1st downres 'labels' isn't what is expected: %v\n", err)
 	}
 
 	// Check the second downres to voxel: 32^3
-	if err := datastore.BlockOnUpdating(uuid, "labels_2"); err != nil {
-		t.Fatalf("Error blocking on update for labels_2: %v\n", err)
-	}
 	expected2 := newTestVolume(32, 32, 32)
 	expected2.addSubvol(dvid.Point3d{10, 10, 10}, dvid.Point3d{10, 10, 10}, 1)
 	expected2.addSubvol(dvid.Point3d{10, 10, 20}, dvid.Point3d{10, 10, 10}, 2)
@@ -845,12 +845,11 @@ func TestMultiscale(t *testing.T) {
 	expected2.addSubvol(dvid.Point3d{10, 20, 10}, dvid.Point3d{10, 10, 10}, 209)
 	expected2.addSubvol(dvid.Point3d{20, 20, 10}, dvid.Point3d{10, 10, 10}, 311)
 	downres2 := newTestVolume(32, 32, 32)
-	downres2.get(t, uuid, "labels_2")
+	downres2.getScale(t, uuid, "labels", 2)
 	if err := downres2.equals(expected2); err != nil {
-		t.Errorf("2nd downres 'labels_2' isn't what is expected: %v\n", err)
+		t.Errorf("2nd downres 'labels' isn't what is expected: %v\n", err)
 	}
 }
-*/
 
 func readGzipFile(filename string) ([]byte, error) {
 	f, err := os.Open(filename)

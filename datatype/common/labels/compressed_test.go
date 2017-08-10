@@ -7,6 +7,7 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/janelia-flyem/dvid/dvid"
@@ -118,7 +119,8 @@ func checkLabels(t *testing.T, text string, expected, got []byte) {
 	errmsg := 0
 	for i, val := range gotLabels {
 		if expectLabels[i] != val {
-			t.Errorf("%s label mismatch found at index %d, expected %d, got %d\n", text, i, expectLabels[i], val)
+			_, fn, line, _ := runtime.Caller(1)
+			t.Errorf("%s label mismatch found at index %d, expected %d, got %d [%s:%d]\n", text, i, expectLabels[i], val, fn, line)
 			errmsg++
 			if errmsg > 5 {
 				return
@@ -270,6 +272,90 @@ func TestBlockCompression(t *testing.T) {
 		t.Fatalf("error in size after making block: %v\n", size)
 	}
 	checkLabels(t, "block compress/uncompress", dvid.Uint64ToByte(testvol), testvol2)
+}
+
+func TestBlockDownres(t *testing.T) {
+	// Test solid blocks
+	solidOctants := [8]*Block{
+		MakeSolidBlock(3, dvid.Point3d{64, 64, 64}),
+		MakeSolidBlock(3, dvid.Point3d{64, 64, 64}),
+		MakeSolidBlock(9, dvid.Point3d{64, 64, 64}),
+		nil,
+		MakeSolidBlock(12, dvid.Point3d{64, 64, 64}),
+		MakeSolidBlock(21, dvid.Point3d{64, 64, 64}),
+		MakeSolidBlock(83, dvid.Point3d{64, 64, 64}),
+		MakeSolidBlock(129, dvid.Point3d{64, 64, 64}),
+	}
+
+	// make reference volume that is downres.
+	gt := make([]uint64, 64*64*64)
+	gtarr := dvid.Uint64ToByte(gt)
+	for z := 0; z < 32; z++ {
+		for y := 0; y < 32; y++ {
+			for x := 0; x < 32; x++ {
+				// octant (0,0,0)
+				i := z*64*64 + y*64 + x
+				gt[i] = 3
+
+				// octant (1,0,0)
+				i = z*64*64 + y*64 + x + 32
+				gt[i] = 3
+
+				// octant (0,1,0)
+				i = z*64*64 + (y+32)*64 + x
+				gt[i] = 9
+
+				// octant (1,1,0)
+				i = z*64*64 + (y+32)*64 + x + 32
+				gt[i] = 0
+
+				// octant (0,0,1)
+				i = (z+32)*64*64 + y*64 + x
+				gt[i] = 12
+
+				// octant (1,0,1)
+				i = (z+32)*64*64 + y*64 + x + 32
+				gt[i] = 21
+
+				// octant (0,1,1)
+				i = (z+32)*64*64 + (y+32)*64 + x
+				gt[i] = 83
+
+				// octant (1,1,1)
+				i = (z+32)*64*64 + (y+32)*64 + x + 32
+				gt[i] = 129
+			}
+		}
+	}
+
+	// run tests using solid block octants
+	var b Block
+	b.Size = dvid.Point3d{64, 64, 64}
+	if err := b.DownresSlow(solidOctants); err != nil {
+		t.Fatalf("bad downres: %v\n", err)
+	}
+	resultBytes, size := b.MakeLabelVolume()
+	if !size.Equals(b.Size) {
+		t.Fatalf("expected downres block size to be %s, got %s\n", b.Size, size)
+	}
+	if len(resultBytes) != 64*64*64*8 {
+		t.Fatalf("expected downres block volume bytes to be 64^3 * 8, not %d\n", len(resultBytes))
+	}
+	checkLabels(t, "checking DownresSlow with ground truth", gtarr, resultBytes)
+
+	var b2 Block
+	b2.Size = dvid.Point3d{64, 64, 64}
+	if err := b2.Downres(solidOctants); err != nil {
+		t.Fatalf("bad downres: %v\n", err)
+	}
+	resultBytes, size = b2.MakeLabelVolume()
+	if !size.Equals(b.Size) {
+		t.Fatalf("expected downres block size to be %s, got %s\n", b2.Size, size)
+	}
+	if len(resultBytes) != 64*64*64*8 {
+		t.Fatalf("expected downres block volume bytes to be 64^3 * 8, not %d\n", len(resultBytes))
+	}
+	checkLabels(t, "checking Downres with ground truth", gtarr, resultBytes)
 }
 
 func setLabel(vol []uint64, size, x, y, z int, label uint64) {

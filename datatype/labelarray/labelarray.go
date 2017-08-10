@@ -61,18 +61,18 @@ $ dvid repo <UUID> new labelarray <data name> <settings...>
 
     Arguments:
 
-    UUID           Hexidecimal string with enough characters to uniquely identify a version node.
-    data name      Name of data to create, e.g., "superpixels"
-    settings       Configuration settings in "key=value" format separated by spaces.
+    UUID            Hexidecimal string with enough characters to uniquely identify a version node.
+    data name       Name of data to create, e.g., "superpixels"
+    settings        Configuration settings in "key=value" format separated by spaces.
 
     Configuration Settings (case-insensitive keys)
 
-    BlockSize      Size in pixels  (default: %s)
-    VoxelSize      Resolution of voxels (default: 8.0, 8.0, 8.0)
-    VoxelUnits     Resolution units (default: "nanometers")
-	IndexedLabels  "false" if no sparse volume support is required (default "true")
-	CountLabels    "false" if no voxel counts per label is required (default "true")
-	DownresLevels  Number of down-resolution levels supported.  Each down-res is factor of 2.
+    BlockSize       Size in pixels  (default: %s)
+    VoxelSize       Resolution of voxels (default: 8.0, 8.0, 8.0)
+    VoxelUnits      Resolution units (default: "nanometers")
+	IndexedLabels   "false" if no sparse volume support is required (default "true")
+	CountLabels     "false" if no voxel counts per label is required (default "true")
+	MaxDownresLevel  The maximum down-res level supported.  Each down-res is factor of 2.
 
 $ dvid node <UUID> <data name> load <offset> <image glob> <settings...>
 
@@ -114,6 +114,26 @@ $ dvid node <UUID> <data name> composite <uint8 data name> <new rgba8 data name>
 
 HTTP API (Level 2 REST):
 
+ POST /api/repo/{uuid}/instance
+
+	Creates a new instance of the labelarray data type.  Expects configuration data in JSON
+	as the body of the POST.  Configuration data is a JSON object with each property
+	corresponding to a configuration keyword for the particular data type.  
+
+	JSON name/value pairs:
+
+	REQUIRED "typename"         Must be "labelarray"
+	REQUIRED "dataname"         Name of the new instance
+	OPTIONAL "versioned"        If "false" or "0", the data is unversioned and acts as if 
+	                             all UUIDs within a repo become the root repo UUID.  (True by default.)
+    OPTIONAL "BlockSize"        Size in pixels  (default: 64,64,64)
+    OPTIONAL "VoxelSize"        Resolution of voxels (default: 8.0,8.0,8.0)
+    OPTIONAL "VoxelUnits"       Resolution units (default: "nanometers")
+	OPTIONAL "IndexedLabels"    "false" if no sparse volume support is required (default "true")
+	OPTIONAL "CountLabels"      "false" if no voxel counts per label is required (default "true")
+	OPTIONAL "MaxDownresLevel"  The maximum down-res level supported.  Each down-res is factor of 2.
+	
+
 GET  <api URL>/node/<UUID>/<data name>/help
 
 	Returns data-specific help message.
@@ -134,7 +154,7 @@ POST <api URL>/node/<UUID>/<data name>/info
     Arguments:
 
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
-    data name     Name of voxels data.
+	data name     Name of voxels data.
 
 POST  <api URL>/node/<UUID>/<data name>/resolution
   
@@ -211,8 +231,8 @@ GET  <api URL>/node/<UUID>/<data name>/isotropic/<dims>/<size>/<offset>[/<format
     Query-string Options:
 
     roi       	  Name of roi data instance used to mask the requested data.
-    scale         A number from 0 up to DownresLevels-1 where each level has 1/2 resolution of
-	              previous level.  Level 0 is the highest resolution.
+    scale         A number from 0 up to MaxDownresLevel where each level beyond 0 has 1/2 resolution
+	                of previous level.  Level 0 is the highest resolution.
     compression   Allows retrieval or submission of 3d data in "lz4" and "gzip"
                     compressed format.  The 2d data will ignore this and use
                     the image-based codec.
@@ -258,8 +278,8 @@ GET  <api URL>/node/<UUID>/<data name>/raw/<dims>/<size>/<offset>[/<format>][?qu
     Query-string Options:
 
     roi           Name of roi data instance used to mask the requested data.
-    scale         A number from 0 up to DownresLevels-1 where each level has 1/2 resolution of
-	                previous level.  Level 0 is the highest resolution.
+    scale         A number from 0 up to MaxDownresLevel where each level beyond 0 has 1/2 resolution
+	                of previous level.  Level 0 is the highest resolution.
     compression   Allows retrieval or submission of 3d data in "lz4","gzip", "google"
                     (neuroglancer compression format), "googlegzip" (google + gzip)
                     compressed format.  The 2d data will ignore this and use
@@ -408,8 +428,8 @@ GET <api URL>/node/<UUID>/<data name>/blocks/<size>/<offset>[?queryopts]
 
     Query-string Options:
 
-    scale         A number from 0 up to DownresLevels-1 where each level has 1/2 resolution of
-	              previous level.  Level 0 is the highest resolution.
+    scale         A number from 0 up to MaxDownresLevel where each level beyond 0 has 1/2 resolution
+	                of previous level.  Level 0 is the highest resolution.
     compression   Allows retrieval of block data in "lz4" (default), "gzip", blocks" (native DVID
 	              label blocks) or "uncompressed" (uint64 labels).
     throttle      If "true", makes sure only N compute-intense operation (all API calls that can be 
@@ -485,13 +505,15 @@ POST <api URL>/node/<UUID>/<data name>/blocks[?queryopts]
 
     Query-string Options:
 
-    scale         A number from 0 up to DownresLevels-1 where each level has 1/2 resolution of
-	              previous level.  Level 0 is the highest resolution.
+    scale         A number from 0 up to MaxDownresLevel where each level beyond 0 has 1/2 resolution
+	                of previous level.  Level 0 is the highest resolution.
+	downres       "false" (default) or "true", specifies whether the given blocks should be
+	               down-sampled to all scales.  If "true", scale must be "0" or absent.
     compression   Specifies compression format of block data: default and only option currently is
-                  "blocks" (native DVID label blocks).
+                   "blocks" (native DVID label blocks).
     throttle      If "true", makes sure only N compute-intense operation (all API calls that can be 
-	              throttled) are handled.  If the server can't initiate the API call right away, a 503 
-                  (Service Unavailable) status code is returned.
+	               throttled) are handled.  If the server can't initiate the API call right away, a 503 
+                   (Service Unavailable) status code is returned.
 
 
 -------------------------------------------------------------------------------------------------------
@@ -914,11 +936,11 @@ type Data struct {
 	// True if we keep track of # voxels per label.  (Default false)
 	CountLabels bool
 
-	// Number of down-resolution levels supported.  Each down-res level is 2x scope of
+	// Maximum down-resolution level supported.  Each down-res level is 2x scope of
 	// the higher level.
-	DownresLevels uint8
+	MaxDownresLevel uint8
 
-	updates  []uint32 // tracks updating to each scale of labelarray
+	updates  []uint32 // tracks updating to each scale of labelarray [0:MaxDownresLevel+1]
 	updateMu sync.RWMutex
 
 	mlMu sync.RWMutex // For atomic access of MaxLabel and MaxRepoLabel
@@ -928,10 +950,10 @@ type Data struct {
 	indexCh  [numLabelHandlers]chan labelChange // channels into label indexing
 }
 
-// GetDownresLevels returns the number of down-res levels, where level 0 = high-resolution
+// GetMaxDownresLevel returns the number of down-res levels, where level 0 = high-resolution
 // and each subsequent level has one-half the resolution.
-func (d *Data) GetDownresLevels() uint8 {
-	return d.DownresLevels
+func (d *Data) GetMaxDownresLevel() uint8 {
+	return d.MaxDownresLevel
 }
 
 func (d *Data) StartScaleUpdate(scale uint8) {
@@ -958,7 +980,7 @@ func (d *Data) ScaleUpdating(scale uint8) bool {
 
 func (d *Data) AnyScaleUpdating() bool {
 	d.updateMu.RLock()
-	for scale := uint8(0); scale <= d.DownresLevels; scale++ {
+	for scale := uint8(0); scale <= d.MaxDownresLevel; scale++ {
 		if d.updates[scale] > 0 {
 			return true
 		}
@@ -984,7 +1006,7 @@ func (d *Data) CopyPropertiesFrom(src datastore.DataService, fs storage.FilterSp
 
 	d.IndexedLabels = d2.IndexedLabels
 	d.CountLabels = d2.CountLabels
-	d.DownresLevels = d2.DownresLevels
+	d.MaxDownresLevel = d2.MaxDownresLevel
 
 	return d.Data.CopyPropertiesFrom(d2.Data, fs)
 }
@@ -1024,7 +1046,7 @@ func NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.
 	}
 
 	var downresLevels uint8
-	levels, found, err := c.GetInt("DownresLevels")
+	levels, found, err := c.GetInt("MaxDownresLevel")
 	if err != nil {
 		return nil, err
 	}
@@ -1039,17 +1061,33 @@ func NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.
 	data.MaxLabel = make(map[dvid.VersionID]uint64)
 	data.IndexedLabels = indexedLabels
 	data.CountLabels = countLabels
-	data.DownresLevels = downresLevels
+	data.MaxDownresLevel = downresLevels
 	return data, nil
+}
+
+type propsJSON struct {
+	imageblk.Properties
+	MaxLabel        map[dvid.VersionID]uint64
+	MaxRepoLabel    uint64
+	IndexedLabels   bool
+	CountLabels     bool
+	MaxDownresLevel uint8
 }
 
 func (d *Data) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		Base     *datastore.Data
-		Extended imageblk.Properties
+		Extended propsJSON
 	}{
 		d.Data.Data,
-		d.Data.Properties,
+		propsJSON{
+			Properties:      d.Data.Properties,
+			MaxLabel:        d.MaxLabel,
+			MaxRepoLabel:    d.MaxRepoLabel,
+			IndexedLabels:   d.IndexedLabels,
+			CountLabels:     d.CountLabels,
+			MaxDownresLevel: d.MaxDownresLevel,
+		},
 	})
 }
 
@@ -1700,7 +1738,11 @@ func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, sc
 }
 
 // ReceiveBlocks stores a slice of bytes corresponding to specified blocks
-func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale uint8, compression string) error {
+func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale uint8, downscale bool, compression string) error {
+	if downscale && scale != 0 {
+		return fmt.Errorf("cannot downscale blocks of scale > 0")
+	}
+
 	switch compression {
 	case "", "blocks":
 	default:
@@ -1720,7 +1762,10 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 	}
 
 	mutID := d.NewMutationID()
-	downresMut := downres.NewMutation(d, ctx.VersionID(), mutID)
+	var downresMut *downres.Mutation
+	if downscale {
+		downresMut = downres.NewMutation(d, ctx.VersionID(), mutID)
+	}
 	fmt.Printf("Starting ReceiveBlocks, mutation %d\n", mutID)
 
 	blockCh := make(chan blockChange, 100)
@@ -1737,8 +1782,10 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 		event := IngestBlockEvent
 		ingestBlock := IngestedBlock{mutID, bcoord, block}
 		d.handleBlockIngest(ctx.VersionID(), blockCh, ingestBlock)
-		if err := downresMut.BlockMutated(bcoord, block); err != nil {
-			dvid.Errorf("data %q publishing downres: %v\n", d.DataName(), err)
+		if downscale {
+			if err := downresMut.BlockMutated(bcoord, block); err != nil {
+				dvid.Errorf("data %q publishing downres: %v\n", d.DataName(), err)
+			}
 		}
 
 		evt := datastore.SyncEvent{d.DataUUID(), event}
@@ -1826,8 +1873,9 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 	if putbuffer != nil {
 		putbuffer.Flush()
 	}
-
-	downresMut.Done()
+	if downscale {
+		downresMut.Done()
+	}
 	timedLog.Infof("Received and stored %d blocks for labelarray %q.\n", numBlocks, d.DataName())
 	return nil
 }
@@ -2438,6 +2486,7 @@ func (d *Data) handleBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, 
 	}
 	scale := uint8(0)
 	compression := queryStrings.Get("compression")
+	downscale := queryStrings.Get("downres") == "true"
 	if strings.ToLower(r.Method) == "get" {
 		if len(parts) < 6 {
 			server.BadRequest(w, r, "must specifiy size and offset with GET /blocks endpoint")
@@ -2465,7 +2514,7 @@ func (d *Data) handleBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, 
 		}
 		timedLog.Infof("HTTP GET blocks at size %s, offset %s (%s)", r.Method, parts[4], parts[5], r.URL)
 	} else {
-		if err := d.ReceiveBlocks(ctx, r.Body, scale, compression); err != nil {
+		if err := d.ReceiveBlocks(ctx, r.Body, scale, downscale, compression); err != nil {
 			server.BadRequest(w, r, err)
 		}
 		timedLog.Infof("HTTP POST blocks (%s)", r.URL)
@@ -2654,7 +2703,7 @@ func (d *Data) handleDataRequest(ctx *datastore.VersionedCtx, w http.ResponseWri
 		server.BadRequest(w, r, "DVID currently supports shapes of only 2 and 3 dimensions")
 		return
 	}
-	timedLog.Infof("HTTP %s %s with shape %s, size %s, offset %s", r.Method, parts[3], parts[4], parts[5], parts[6])
+	timedLog.Infof("HTTP %s %s with shape %s, size %s, offset %s, scale %d", r.Method, parts[3], parts[4], parts[5], parts[6], scale)
 }
 
 func (d *Data) getSparsevolOptions(r *http.Request) (b dvid.Bounds, compression string, err error) {
@@ -3004,8 +3053,40 @@ func (d *Data) handleMerge(ctx *datastore.VersionedCtx, w http.ResponseWriter, r
 
 // --------- Other functions on labelarray Data -----------------
 
-// GetLabelBlock returns a block of labels corresponding to the block coordinate.
-func (d *Data) GetLabelBlock(v dvid.VersionID, scale uint8, bcoord dvid.ChunkPoint3d) ([]byte, error) {
+// GetLabelBlock returns a compressed label Block of the given block coordinate.
+func (d *Data) GetLabelBlock(v dvid.VersionID, scale uint8, bcoord dvid.ChunkPoint3d) (*labels.Block, error) {
+	store, err := d.GetOrderedKeyValueDB()
+	if err != nil {
+		return nil, err
+	}
+
+	// Retrieve the block of labels
+	ctx := datastore.NewVersionedCtx(d, v)
+	index := dvid.IndexZYX(bcoord)
+	serialization, err := store.Get(ctx, NewBlockTKey(scale, &index))
+	if err != nil {
+		return nil, fmt.Errorf("Error getting '%s' block for index %s\n", d.DataName(), bcoord)
+	}
+	if serialization == nil {
+		blockSize, ok := d.BlockSize().(dvid.Point3d)
+		if !ok {
+			return nil, fmt.Errorf("block size for data %q should be 3d, not: %s", d.DataName(), d.BlockSize())
+		}
+		return labels.MakeSolidBlock(0, blockSize), nil
+	}
+	deserialization, _, err := dvid.DeserializeData(serialization, true)
+	if err != nil {
+		return nil, fmt.Errorf("Unable to deserialize block %s in '%s': %v\n", bcoord, d.DataName(), err)
+	}
+	var block labels.Block
+	if err = block.UnmarshalBinary(deserialization); err != nil {
+		return nil, err
+	}
+	return &block, nil
+}
+
+// GetLabelBytes returns a block of labels in packed little-endian uint64 format.
+func (d *Data) GetLabelBytes(v dvid.VersionID, scale uint8, bcoord dvid.ChunkPoint3d) ([]byte, error) {
 	store, err := d.GetOrderedKeyValueDB()
 	if err != nil {
 		return nil, err
@@ -3042,7 +3123,7 @@ func (d *Data) GetLabelBytesAtPoint(v dvid.VersionID, pt dvid.Point) ([]byte, er
 	blockSize := d.BlockSize()
 	bcoord := coord.Chunk(blockSize).(dvid.ChunkPoint3d)
 
-	labelData, err := d.GetLabelBlock(v, 0, bcoord)
+	labelData, err := d.GetLabelBytes(v, 0, bcoord)
 	if err != nil {
 		return nil, err
 	}

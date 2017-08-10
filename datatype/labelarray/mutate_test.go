@@ -960,21 +960,15 @@ func TestMergeSplitLabel(t *testing.T) {
 	bodysplit.checkSparseVol(t, encoding, dvid.OptionalBounds{})
 }
 
-/*
 func TestMultiscaleMergeSplit(t *testing.T) {
 	datastore.OpenTest()
 	defer datastore.CloseTest()
 
-	// Create testbed volume and data instances
+	// Create testbed volume
 	uuid, _ := initTestRepo()
 	var config dvid.Config
+	config.Set("MaxDownresLevel", "2")
 	server.CreateTestInstance(t, uuid, "labelarray", "labels", config)
-
-	// Add multiscale
-	server.CreateTestInstance(t, uuid, "labelarray", "labels_1", config) // 64 x 64 x 64
-	server.CreateTestSync(t, uuid, "labels_1", "labels")
-	server.CreateTestInstance(t, uuid, "labelarray", "labels_2", config) // 32 x 32 x 32
-	server.CreateTestSync(t, uuid, "labels_2", "labels_1")
 
 	// Create an easily interpreted label volume with a couple of labels.
 	volume := newTestVolume(128, 128, 128)
@@ -998,11 +992,8 @@ func TestMultiscaleMergeSplit(t *testing.T) {
 	hires.verifyLabel(t, 311, 81, 81, 41)
 
 	// Check the first downres: 64^3
-	if err := datastore.BlockOnUpdating(uuid, "labels_1"); err != nil {
-		t.Fatalf("Error blocking on update for labels_1: %v\n", err)
-	}
 	downres1 := newTestVolume(64, 64, 64)
-	downres1.get(t, uuid, "labels_1")
+	downres1.getScale(t, uuid, "labels", 1)
 	downres1.verifyLabel(t, 1, 30, 30, 30)
 	downres1.verifyLabel(t, 2, 21, 21, 45)
 	downres1.verifyLabel(t, 13, 45, 21, 36)
@@ -1014,14 +1005,11 @@ func TestMultiscaleMergeSplit(t *testing.T) {
 	expected1.addSubvol(dvid.Point3d{40, 20, 20}, dvid.Point3d{20, 20, 20}, 13)
 	expected1.addSubvol(dvid.Point3d{20, 40, 20}, dvid.Point3d{20, 20, 20}, 209)
 	expected1.addSubvol(dvid.Point3d{40, 40, 20}, dvid.Point3d{20, 20, 20}, 311)
-	if err := downres1.equals(expected1); err != nil {
-		t.Errorf("1st downres 'labels_1' isn't what is expected: %v\n", err)
+	if err := expected1.equals(downres1); err != nil {
+		t.Errorf("1st downres isn't what is expected: %v\n", err)
 	}
 
 	// Check the second downres to voxel: 32^3
-	if err := datastore.BlockOnUpdating(uuid, "labels_2"); err != nil {
-		t.Fatalf("Error blocking on update for labels_2: %v\n", err)
-	}
 	expected2 := newTestVolume(32, 32, 32)
 	expected2.addSubvol(dvid.Point3d{10, 10, 10}, dvid.Point3d{10, 10, 10}, 1)
 	expected2.addSubvol(dvid.Point3d{10, 10, 20}, dvid.Point3d{10, 10, 10}, 2)
@@ -1029,9 +1017,9 @@ func TestMultiscaleMergeSplit(t *testing.T) {
 	expected2.addSubvol(dvid.Point3d{10, 20, 10}, dvid.Point3d{10, 10, 10}, 209)
 	expected2.addSubvol(dvid.Point3d{20, 20, 10}, dvid.Point3d{10, 10, 10}, 311)
 	downres2 := newTestVolume(32, 32, 32)
-	downres2.get(t, uuid, "labels_2")
-	if err := downres2.equals(expected2); err != nil {
-		t.Errorf("2nd downres 'labels_2' isn't what is expected: %v\n", err)
+	downres2.getScale(t, uuid, "labels", 2)
+	if err := expected2.equals(downres2); err != nil {
+		t.Errorf("2nd downres isn't what is expected: %v\n", err)
 	}
 
 	// Test merge of 2 and 13 into 1
@@ -1057,7 +1045,7 @@ func TestMultiscaleMergeSplit(t *testing.T) {
 	merged.addSubvol(dvid.Point3d{80, 40, 40}, dvid.Point3d{40, 40, 40}, 1)
 	merged.addSubvol(dvid.Point3d{40, 80, 40}, dvid.Point3d{40, 40, 40}, 209)
 	merged.addSubvol(dvid.Point3d{80, 80, 40}, dvid.Point3d{40, 40, 40}, 311)
-	if err := retrieved.equals(merged); err != nil {
+	if err := merged.equals(retrieved); err != nil {
 		t.Errorf("Merged label volume not equal to expected merged volume: %v\n", err)
 	}
 
@@ -1065,7 +1053,7 @@ func TestMultiscaleMergeSplit(t *testing.T) {
 		t.Fatalf("Error blocking on sync of merge on labels_1: %v\n", err)
 	}
 	retrieved1 := newTestVolume(64, 64, 64)
-	retrieved1.get(t, uuid, "labels_1")
+	retrieved1.getScale(t, uuid, "labels", 1)
 	merged1 := newTestVolume(64, 64, 64)
 	merged1.addSubvol(dvid.Point3d{20, 20, 20}, dvid.Point3d{20, 20, 20}, 1)
 	merged1.addSubvol(dvid.Point3d{20, 20, 40}, dvid.Point3d{20, 20, 20}, 1)
@@ -1080,7 +1068,7 @@ func TestMultiscaleMergeSplit(t *testing.T) {
 		t.Fatalf("Error blocking on sync of merge on labels_2: %v\n", err)
 	}
 	retrieved2 := newTestVolume(32, 32, 32)
-	retrieved2.get(t, uuid, "labels_2")
+	retrieved2.getScale(t, uuid, "labels", 2)
 	merged2 := newTestVolume(32, 32, 32)
 	merged2.addSubvol(dvid.Point3d{10, 10, 10}, dvid.Point3d{10, 10, 10}, 1)
 	merged2.addSubvol(dvid.Point3d{10, 10, 20}, dvid.Point3d{10, 10, 10}, 1)
@@ -1143,10 +1131,7 @@ func TestMultiscaleMergeSplit(t *testing.T) {
 		t.Errorf("Split label volume not equal to expected split volume: %v\n", err)
 	}
 
-	if err := datastore.BlockOnUpdating(uuid, "labels_1"); err != nil {
-		t.Fatalf("Error blocking on sync of split on labels_1: %v\n", err)
-	}
-	retrieved1.get(t, uuid, "labels_1")
+	retrieved1.getScale(t, uuid, "labels", 1)
 	split1 := newTestVolume(64, 64, 64)
 	split1.addSubvol(dvid.Point3d{20, 20, 20}, dvid.Point3d{20, 20, 20}, 1)
 	split1.addSubvol(dvid.Point3d{20, 20, 40}, dvid.Point3d{20, 20, 20}, 1)
@@ -1157,10 +1142,7 @@ func TestMultiscaleMergeSplit(t *testing.T) {
 		t.Errorf("Split label volume downres #1 not equal to expected split volume: %v\n", err)
 	}
 
-	if err := datastore.BlockOnUpdating(uuid, "labels_2"); err != nil {
-		t.Fatalf("Error blocking on sync of split on labels_2: %v\n", err)
-	}
-	retrieved2.get(t, uuid, "labels_2")
+	retrieved2.getScale(t, uuid, "labels", 2)
 	split2 := newTestVolume(32, 32, 32)
 	split2.addSubvol(dvid.Point3d{10, 10, 10}, dvid.Point3d{10, 10, 10}, 1)
 	split2.addSubvol(dvid.Point3d{10, 10, 20}, dvid.Point3d{10, 10, 10}, 1)
@@ -1246,7 +1228,6 @@ func TestMutableLabelblkPOST(t *testing.T) {
 		bodies[label-1].checkSparseVol(t, encoding, dvid.OptionalBounds{})
 	}
 }
-*/
 
 var (
 	body1 = testBody{

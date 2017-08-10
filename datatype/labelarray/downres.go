@@ -40,7 +40,14 @@ func (d *Data) getHiresChanges(hires downres.BlockMap) (octantMap, error) {
 	return octants, nil
 }
 
-func (d *Data) StoreDownres(v dvid.VersionID, scale uint8, hires downres.BlockMap) (downres.BlockMap, error) {
+func (d *Data) StoreDownres(v dvid.VersionID, hiresScale uint8, hires downres.BlockMap) (downres.BlockMap, error) {
+	if hiresScale >= d.MaxDownresLevel {
+		return nil, fmt.Errorf("can't downres %q scale %d since max downres scale is %d", d.DataName(), hiresScale, d.MaxDownresLevel)
+	}
+	fmt.Printf("Processing down-res from scale %d to %d for BlockMap: %v\n", hiresScale, hiresScale+1, hires)
+	defer func() {
+		fmt.Printf("Finished down-res from scale %d to %d\n", hiresScale, hiresScale+1)
+	}()
 	octants, err := d.getHiresChanges(hires)
 	if err != nil {
 		return nil, err
@@ -49,7 +56,6 @@ func (d *Data) StoreDownres(v dvid.VersionID, scale uint8, hires downres.BlockMa
 	if !ok {
 		return nil, fmt.Errorf("block size for data %q is not 3d: %v\n", d.DataName(), d.BlockSize())
 	}
-
 	downresBMap := make(downres.BlockMap)
 	for loresZYX, octant := range octants {
 		var numBlocks int
@@ -61,7 +67,11 @@ func (d *Data) StoreDownres(v dvid.VersionID, scale uint8, hires downres.BlockMa
 
 		var loresBlock *labels.Block
 		if numBlocks < 8 {
-			// Get old block.
+			chunkPt, err := loresZYX.ToChunkPoint3d()
+			if err != nil {
+				return nil, err
+			}
+			loresBlock, err = d.GetLabelBlock(v, hiresScale+1, chunkPt)
 		} else {
 			loresBlock = labels.MakeSolidBlock(0, blockSize)
 		}
