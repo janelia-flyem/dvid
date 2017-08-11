@@ -193,6 +193,60 @@ GET  <api URL>/node/<UUID>/<data name>/metadata
 	of bytes returned for n-d images.
 
 
+GET  <api URL>/node/<UUID>/<data name>/specificblocks[?queryopts]
+
+    Retrieves blocks corresponding to those specified in the query string.  This interface
+    is useful if the blocks retrieved are not consecutive or if the backend in non ordered.
+
+    TODO: enable arbitrary compression to be specified
+
+    Example: 
+
+    GET <api URL>/node/3f8c/grayscale/specificblocks?blocks=x1,y1,z2,x2,y2,z2,x3,y3,z3
+	
+	This will fetch blocks at position (x1,y1,z1), (x2,y2,z2), and (x3,y3,z3).
+	The returned byte stream has a list of blocks with a leading block 
+	coordinate (3 x int32) plus int32 giving the # of bytes in this block, and  then the 
+	bytes for the value.  If blocks are unset within the span, they will not appear in the stream,
+	so the returned data will be equal to or less than spanX blocks worth of data.  
+
+    The returned data format has the following format where int32 is in little endian and the bytes of
+    block data have been compressed in JPEG format.
+
+        int32  Block 1 coordinate X (Note that this may not be starting block coordinate if it is unset.)
+        int32  Block 1 coordinate Y
+        int32  Block 1 coordinate Z
+        int32  # bytes for first block (N1)
+        byte0  Bytes of block data in jpeg-compressed format.
+        byte1
+        ...
+        byteN1
+
+        int32  Block 2 coordinate X
+        int32  Block 2 coordinate Y
+        int32  Block 2 coordinate Z
+        int32  # bytes for second block (N2)
+        byte0  Bytes of block data in jpeg-compressed format.
+        byte1
+        ...
+        byteN2
+
+        ...
+
+    If no data is available for given block span, nothing is returned.
+
+    Arguments:
+
+    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    data name     Name of data to add.
+
+    Query-string Options:
+
+    blocks	  x,y,z... block string
+    scale         A number from 0 up to MaxDownresLevel where each level has 1/2 resolution of
+	              previous level.  Level 0 (default) is the highest resolution.
+
+
 GET  <api URL>/node/<UUID>/<data name>/isotropic/<dims>/<size>/<offset>[/<format>][?queryopts]
 
     Retrieves either 2d images (PNG by default) or 3d binary data, depending on the dims parameter.  
@@ -1482,6 +1536,75 @@ func (d *Data) convertTo64bit(geom dvid.Geometry, data []uint8, bytesPerVoxel, s
 	return data64, nil
 }
 
+// sendBlocksSpecific writes data to the blocks specified -- best for non-ordered backend
+func (d *Data) sendBlocksSpecific(ctx *datastore.VersionedCtx, w http.ResponseWriter, blockstring string, scale uint8) error {
+	w.Header().Set("Content-type", "application/octet-stream")
+	// extract querey string
+	if blockstring == "" {
+		return nil
+	}
+	coordarray := strings.Split(blockstring, ",")
+	if len(coordarray)%3 != 0 {
+		return fmt.Errorf("block query string should be three coordinates per block")
+	}
+
+	// make a finished queue
+	finishedRequests := make(chan error, len(coordarray)/3)
+	var mutex sync.Mutex
+
+	// get store
+	store, err := d.GetKeyValueDB()
+	if err != nil {
+		return fmt.Errorf("Data type labelblk had error initializing store: %v\n", err)
+	}
+
+	// iterate through each block and query
+	for i := 0; i < len(coordarray); i += 3 {
+		xloc, err := strconv.Atoi(coordarray[i])
+		if err != nil {
+			return err
+		}
+		yloc, err := strconv.Atoi(coordarray[i+1])
+		if err != nil {
+			return err
+		}
+		zloc, err := strconv.Atoi(coordarray[i+2])
+		if err != nil {
+			return err
+		}
+
+		go func(xloc, yloc, zloc int32, finishedRequests chan error, store storage.KeyValueDB) {
+			var err error
+			defer func() {
+				finishedRequests <- err
+			}()
+			indexBeg := dvid.IndexZYX(dvid.ChunkPoint3d{xloc, yloc, zloc})
+			keyBeg := NewBlockTKey(scale, &indexBeg)
+
+			value, err := store.Get(ctx, keyBeg)
+			if err != nil {
+				return
+			}
+			if len(value) > 0 {
+				// lock shared resource
+				mutex.Lock()
+				defer mutex.Unlock()
+				d.SendBlockSimple(w, xloc, yloc, zloc, value, "")
+			}
+		}(int32(xloc), int32(yloc), int32(zloc), finishedRequests, store)
+	}
+
+	// wait for everything to finish
+	for i := 0; i < len(coordarray); i += 3 {
+		errjob := <-finishedRequests
+		if errjob != nil {
+			err = errjob
+		}
+	}
+
+	return err
+}
+
 // returns nil block if no block is at the given block coordinate
 func (d *Data) getLabelBlock(ctx *datastore.VersionedCtx, scale uint8, bcoord dvid.IZYXString) (*labels.PositionedBlock, error) {
 	store, err := d.GetKeyValueDB()
@@ -2343,6 +2466,26 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, string(jsonBytes))
+
+	case "specificblocks":
+		// GET <api URL>/node/<UUID>/<data name>/specificblocks?blocks=x,y,z,x,y,z...
+		blocklist := r.URL.Query().Get("blocks")
+		scale, err := getScale(r.URL.Query())
+		if err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+		if action == "get" {
+			if err := d.sendBlocksSpecific(ctx, w, blocklist, scale); err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+			timedLog := dvid.NewTimeLog()
+			timedLog.Infof("HTTP %s: %s", r.Method, r.URL)
+		} else {
+			server.BadRequest(w, r, "DVID does not accept the %s action on the 'specificblocks' endpoint", action)
+			return
+		}
 
 	case "sync":
 		if action != "post" {

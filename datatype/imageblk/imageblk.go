@@ -218,7 +218,7 @@ GET  <api URL>/node/<UUID>/<data name>/specificblocks[?queryopts]
     Retrieves blocks corresponding to those specified in the query string.  This interface
     is useful if the blocks retrieved are not consecutive or if the backend in non ordered.
 
-    Note: this interface only works when compressed a JPEG or if using 'uncompressed' compression.
+    TODO: enable arbitrary compression to be specified
 
     Example: 
 
@@ -262,8 +262,8 @@ GET  <api URL>/node/<UUID>/<data name>/specificblocks[?queryopts]
 
     Query-string Options:
 
-    compression   Allows retrieval of block data in "jpeg" (default) or "uncompressed".
-    blocks	      x,y,z... block string
+    compression   Allows retrieval of block data in default storage or as "uncompressed".
+    blocks	  x,y,z... block string
     prefetch	  ("on" or "true") Do not actually send data, non-blocking (default "off")
 
 
@@ -1658,10 +1658,11 @@ func debugData(img image.Image, message string) {
 	}
 }
 
-func sendBlockJPEG(w http.ResponseWriter, x, y, z int32, v []byte, compression string) error {
+func (d *Data) SendBlockSimple(w http.ResponseWriter, x, y, z int32, v []byte, compression string) error {
 	// Check internal format and see if it's valid with compression choice.
 	format, checksum := dvid.DecodeSerializationFormat(dvid.SerializationFormat(v[0]))
-	if (compression == "jpeg" || compression == "") && format != dvid.JPEG {
+
+	if (compression == "jpeg") && format != dvid.JPEG {
 		return fmt.Errorf("Expected internal block data to be JPEG, was %s instead.", format)
 	}
 
@@ -1771,7 +1772,7 @@ func (d *Data) SendBlocksSpecific(ctx *datastore.VersionedCtx, w http.ResponseWr
 					// lock shared resource
 					mutex.Lock()
 					defer mutex.Unlock()
-					sendBlockJPEG(w, xloc, yloc, zloc, value, compression)
+					d.SendBlockSimple(w, xloc, yloc, zloc, value, compression)
 				}
 			}
 		}(int32(xloc), int32(yloc), int32(zloc), isprefetch, finishedRequests, store)
@@ -1820,7 +1821,7 @@ func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, su
 			return err
 		}
 		if len(value) > 0 {
-			return sendBlockJPEG(w, blockoffset.Value(0), blockoffset.Value(1), blockoffset.Value(2), value, compression)
+			return d.SendBlockSimple(w, blockoffset.Value(0), blockoffset.Value(1), blockoffset.Value(2), value, compression)
 		}
 		return nil
 	}
@@ -1866,7 +1867,7 @@ func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, su
 					if z != sz || y != sy || x < sx || x >= sx+int32(blocksize.Value(0)) {
 						return nil
 					}
-					if err := sendBlockJPEG(w, x, y, z, kv.V, compression); err != nil {
+					if err := d.SendBlockSimple(w, x, y, z, kv.V, compression); err != nil {
 						return err
 					}
 					return nil
@@ -1900,7 +1901,7 @@ func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, su
 					}
 					x, y, z := indexZYX.Unpack()
 
-					if err := sendBlockJPEG(w, x, y, z, kv.V, compression); err != nil {
+					if err := d.SendBlockSimple(w, x, y, z, kv.V, compression); err != nil {
 						return err
 					}
 					return nil
