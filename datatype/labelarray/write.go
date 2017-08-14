@@ -84,7 +84,6 @@ func (d *Data) PutLabels(v dvid.VersionID, subvol *dvid.Subvolume, data []byte, 
 	// Iterate through index space for this data.
 	mutID := d.NewMutationID()
 	downresMut := downres.NewMutation(d, v, mutID)
-	fmt.Printf("Starting PutLabels, mutation %d\n", mutID)
 
 	wg := new(sync.WaitGroup)
 
@@ -136,7 +135,6 @@ func (d *Data) PutLabels(v dvid.VersionID, subvol *dvid.Subvolume, data []byte, 
 		}
 	}
 	wg.Wait()
-	fmt.Printf("Done with PutLabels %d block-level ops, mutation %d\n", blocks, mutID)
 	close(blockCh)
 
 	// if a bufferable op, flush

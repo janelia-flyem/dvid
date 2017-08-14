@@ -15,6 +15,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -38,16 +39,17 @@ func TestHTTPResponse(t *testing.T, method, urlStr string, payload io.Reader) *h
 func TestHTTP(t *testing.T, method, urlStr string, payload io.Reader) []byte {
 	resp := TestHTTPResponse(t, method, urlStr, payload)
 	if resp.Code != http.StatusOK {
+		_, fn, line, _ := runtime.Caller(1)
 		var retstr string
 		if resp.Body != nil {
 			retbytes, err := ioutil.ReadAll(resp.Body)
 			if err != nil {
-				t.Errorf("Error trying to read response body from request %q: %v\n", urlStr, err)
+				t.Errorf("Error trying to read response body from request %q: %v [%s:%d]\n", urlStr, err, fn, line)
 			} else {
 				retstr = string(retbytes)
 			}
 		}
-		t.Fatalf("Bad server response (%d) to %s %q: %s\n", resp.Code, method, urlStr, retstr)
+		t.Fatalf("Bad server response (%d) to %s %q: %s [%s:%d]\n", resp.Code, method, urlStr, retstr, fn, line)
 	}
 	return resp.Body.Bytes()
 }
@@ -56,12 +58,14 @@ func TestHTTP(t *testing.T, method, urlStr string, payload io.Reader) []byte {
 func TestBadHTTP(t *testing.T, method, urlStr string, payload io.Reader) {
 	req, err := http.NewRequest(method, urlStr, payload)
 	if err != nil {
-		t.Fatalf("Unsuccessful %s on %q: %v\n", method, urlStr, err)
+		_, fn, line, _ := runtime.Caller(1)
+		t.Fatalf("Unsuccessful %s on %q: %v [%s:%d]\n", method, urlStr, err, fn, line)
 	}
 	w := httptest.NewRecorder()
 	ServeSingleHTTP(w, req)
 	if w.Code == http.StatusOK {
-		t.Fatalf("Expected bad server response to %s on %q, got %d instead.\n", method, urlStr, w.Code)
+		_, fn, line, _ := runtime.Caller(1)
+		t.Fatalf("Expected bad server response to %s on %q, got %d instead. [%s:%d]\n", method, urlStr, w.Code, fn, line)
 	}
 }
 

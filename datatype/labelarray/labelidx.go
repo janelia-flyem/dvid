@@ -546,9 +546,6 @@ func (d *Data) FoundSparseVol(ctx *datastore.VersionedCtx, label uint64, bounds 
 		if len(val) == 0 {
 			continue
 		}
-		if !bounds.Block.IsSet() && len(val) != 0 {
-			return true, nil
-		}
 		// Check bounds if one was supplied.
 		var meta Meta
 		if err := meta.UnmarshalBinary(val); err != nil {
@@ -564,6 +561,8 @@ func (d *Data) FoundSparseVol(ctx *datastore.VersionedCtx, label uint64, bounds 
 					return true, nil
 				}
 			}
+		} else if len(meta.Blocks) > 0 {
+			return true, nil
 		}
 	}
 

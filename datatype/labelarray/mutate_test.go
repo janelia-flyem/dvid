@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
+	"github.com/janelia-flyem/dvid/datatype/common/downres"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 
@@ -980,7 +981,7 @@ func TestMultiscaleMergeSplit(t *testing.T) {
 	volume.put(t, uuid, "labels")
 
 	// Verify initial ingest for hi-res
-	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
+	if err := downres.BlockOnUpdating(uuid, "labels"); err != nil {
 		t.Fatalf("Error blocking on update for labels: %v\n", err)
 	}
 	hires := newTestVolume(128, 128, 128)
@@ -994,6 +995,7 @@ func TestMultiscaleMergeSplit(t *testing.T) {
 	// Check the first downres: 64^3
 	downres1 := newTestVolume(64, 64, 64)
 	downres1.getScale(t, uuid, "labels", 1)
+	downres1.verifyLabel(t, 0, 35, 34, 2)
 	downres1.verifyLabel(t, 1, 30, 30, 30)
 	downres1.verifyLabel(t, 2, 21, 21, 45)
 	downres1.verifyLabel(t, 13, 45, 21, 36)
@@ -1010,14 +1012,15 @@ func TestMultiscaleMergeSplit(t *testing.T) {
 	}
 
 	// Check the second downres to voxel: 32^3
+	downres2 := newTestVolume(32, 32, 32)
+	downres2.getScale(t, uuid, "labels", 2)
+	downres2.verifyLabel(t, 0, 15, 16, 2)
 	expected2 := newTestVolume(32, 32, 32)
 	expected2.addSubvol(dvid.Point3d{10, 10, 10}, dvid.Point3d{10, 10, 10}, 1)
 	expected2.addSubvol(dvid.Point3d{10, 10, 20}, dvid.Point3d{10, 10, 10}, 2)
 	expected2.addSubvol(dvid.Point3d{20, 10, 10}, dvid.Point3d{10, 10, 10}, 13)
 	expected2.addSubvol(dvid.Point3d{10, 20, 10}, dvid.Point3d{10, 10, 10}, 209)
 	expected2.addSubvol(dvid.Point3d{20, 20, 10}, dvid.Point3d{10, 10, 10}, 311)
-	downres2 := newTestVolume(32, 32, 32)
-	downres2.getScale(t, uuid, "labels", 2)
 	if err := expected2.equals(downres2); err != nil {
 		t.Errorf("2nd downres isn't what is expected: %v\n", err)
 	}
@@ -1034,8 +1037,8 @@ func TestMultiscaleMergeSplit(t *testing.T) {
 	server.TestBadHTTP(t, "GET", reqStr, nil)
 
 	// Make sure label changes are correct after completion of merge
-	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
-		t.Fatalf("Error blocking on sync of merge on labels: %v\n", err)
+	if err := downres.BlockOnUpdating(uuid, "labels"); err != nil {
+		t.Fatalf("Error blocking on update for labels: %v\n", err)
 	}
 	retrieved := newTestVolume(128, 128, 128)
 	retrieved.get(t, uuid, "labels")
@@ -1049,11 +1052,9 @@ func TestMultiscaleMergeSplit(t *testing.T) {
 		t.Errorf("Merged label volume not equal to expected merged volume: %v\n", err)
 	}
 
-	if err := datastore.BlockOnUpdating(uuid, "labels_1"); err != nil {
-		t.Fatalf("Error blocking on sync of merge on labels_1: %v\n", err)
-	}
 	retrieved1 := newTestVolume(64, 64, 64)
 	retrieved1.getScale(t, uuid, "labels", 1)
+	retrieved1.verifyLabel(t, 0, 35, 34, 2)
 	merged1 := newTestVolume(64, 64, 64)
 	merged1.addSubvol(dvid.Point3d{20, 20, 20}, dvid.Point3d{20, 20, 20}, 1)
 	merged1.addSubvol(dvid.Point3d{20, 20, 40}, dvid.Point3d{20, 20, 20}, 1)
@@ -1064,9 +1065,6 @@ func TestMultiscaleMergeSplit(t *testing.T) {
 		t.Errorf("Merged label volume downres #1 not equal to expected merged volume: %v\n", err)
 	}
 
-	if err := datastore.BlockOnUpdating(uuid, "labels_2"); err != nil {
-		t.Fatalf("Error blocking on sync of merge on labels_2: %v\n", err)
-	}
 	retrieved2 := newTestVolume(32, 32, 32)
 	retrieved2.getScale(t, uuid, "labels", 2)
 	merged2 := newTestVolume(32, 32, 32)
@@ -1117,7 +1115,7 @@ func TestMultiscaleMergeSplit(t *testing.T) {
 	// Test all the multiscales for correct split volume.
 
 	// Make sure label changes are correct after completion of merge
-	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
+	if err := downres.BlockOnUpdating(uuid, "labels"); err != nil {
 		t.Fatalf("Error blocking on sync of split of labels: %v\n", err)
 	}
 	retrieved.get(t, uuid, "labels")
@@ -1132,12 +1130,14 @@ func TestMultiscaleMergeSplit(t *testing.T) {
 	}
 
 	retrieved1.getScale(t, uuid, "labels", 1)
+	retrieved1.verifyLabel(t, 0, 35, 34, 2)
 	split1 := newTestVolume(64, 64, 64)
 	split1.addSubvol(dvid.Point3d{20, 20, 20}, dvid.Point3d{20, 20, 20}, 1)
 	split1.addSubvol(dvid.Point3d{20, 20, 40}, dvid.Point3d{20, 20, 20}, 1)
 	split1.addSubvol(dvid.Point3d{40, 20, 20}, dvid.Point3d{20, 20, 20}, 28)
 	split1.addSubvol(dvid.Point3d{20, 40, 20}, dvid.Point3d{20, 20, 20}, 209)
 	split1.addSubvol(dvid.Point3d{40, 40, 20}, dvid.Point3d{20, 20, 20}, 311)
+	split1.verifyLabel(t, 0, 35, 34, 2)
 	if err := retrieved1.equals(split1); err != nil {
 		t.Errorf("Split label volume downres #1 not equal to expected split volume: %v\n", err)
 	}
@@ -1196,16 +1196,7 @@ func TestMutableLabelblkPOST(t *testing.T) {
 	for _, label := range []uint64{1, 2, 3, 4} {
 		// Check full sparse volumes aren't retrievable anymore
 		reqStr := fmt.Sprintf("%snode/%s/labels/sparsevol/%d", server.WebAPIPath, uuid, label)
-		//server.TestBadHTTP(t, "GET", reqStr, nil)
-		encoding := server.TestHTTP(t, "GET", reqStr, nil)
-		spansEncoding := encoding[8:]
-		var spans dvid.Spans
-		if err := spans.UnmarshalBinary(spansEncoding); err != nil {
-			t.Fatalf("Error in decoding sparse volume: %v\n", err)
-		}
-		if len(spans) != 0 {
-			t.Errorf("Got %d spans from sparsevol %d GET request after mutate POST\n", len(spans), label)
-		}
+		server.TestBadHTTP(t, "GET", reqStr, nil)
 
 		// Make sure non-existent bodies return proper HEAD responses.
 		resp := server.TestHTTPResponse(t, "HEAD", reqStr, nil)

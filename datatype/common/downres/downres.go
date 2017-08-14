@@ -9,7 +9,9 @@ package downres
 import (
 	"fmt"
 	"sync"
+	"time"
 
+	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 )
 
@@ -31,6 +33,25 @@ type Downreser interface {
 	// StoreDownres computes and stores the down-res for the given blocks, returning
 	// the computed down-res blocks at 1/2 resolution.
 	StoreDownres(v dvid.VersionID, hiresScale uint8, hires BlockMap) (BlockMap, error)
+}
+
+// BlockOnUpdating blocks until the given data is not updating from any normal updates or
+// also downres operations.  Primarily used during testing.
+func BlockOnUpdating(uuid dvid.UUID, name dvid.InstanceName) error {
+	time.Sleep(100 * time.Millisecond)
+	if err := datastore.BlockOnUpdating(uuid, name); err != nil {
+		return err
+	}
+	d, err := datastore.GetDataByUUIDName(uuid, name)
+	if err != nil {
+		return err
+	}
+
+	updater, isUpdater := d.(Updater)
+	for isUpdater && updater.AnyScaleUpdating() {
+		time.Sleep(50 * time.Millisecond)
+	}
+	return nil
 }
 
 // Mutation is a stash of changes that will be handled in down-resolution scaling.

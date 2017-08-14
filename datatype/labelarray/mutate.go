@@ -607,7 +607,7 @@ func (d *Data) splitBlock(ctx *datastore.VersionedCtx, op splitOp) {
 		}
 		dvid.Infof("Split block %s: kept %d voxels, split %d voxels\n", pb.BCoord, keptSize, toLabelSize)
 		if splitBlock == nil {
-			dvid.Infof("Attempt to split missing label %d in block %s!\n", op.SplitOp.Target, *pb)
+			dvid.Infof("Attempt to split missing label %d in block %s!\n", op.SplitOp.Target, pb)
 			return
 		}
 		if keptSize == 0 {

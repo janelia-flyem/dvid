@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	"github.com/janelia-flyem/dvid/datastore"
+	"github.com/janelia-flyem/dvid/datatype/common/downres"
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
@@ -144,7 +145,6 @@ func (v *testVolume) verifyLabel(t *testing.T, expected uint64, x, y, z int32) {
 	pt := dvid.Point3d{x, y, z}
 	label := v.getVoxel(pt)
 	if label != expected {
-		t.Logf("Error expected %d @ (%d,%d,%d), got %d\n", expected, x, y, z, label)
 		_, fn, line, _ := runtime.Caller(1)
 		t.Errorf("Expected label %d at %s for first downres but got %d instead [%s:%d]\n", expected, pt, label, fn, line)
 	}
@@ -157,15 +157,18 @@ func (v *testVolume) equals(v2 *testVolume) error {
 	if len(v.data) != len(v2.data) {
 		return fmt.Errorf("data lengths are not equal")
 	}
-	for i := 0; i*8+8 < len(v.data); i += 8 {
-		val1 := binary.LittleEndian.Uint64(v.data[i*8 : i*8+8])
-		val2 := binary.LittleEndian.Uint64(v2.data[i*8 : i*8+8])
-		if val1 != val2 {
-			z := int32(i/8) / (v.size[0] * v.size[1])
-			x := int32(i/8) - z*(v.size[0]*v.size[1])
-			y := x / v.size[0]
-			x -= y * v.size[0]
-			return fmt.Errorf("For voxel (%d,%d,%d), found value %d != %d\n", x, y, z, val2, val1)
+	var i uint64
+	var x, y, z int32
+	for z = 0; z < v.size[2]; z++ {
+		for y = 0; y < v.size[1]; y++ {
+			for x = 0; x < v.size[0]; x++ {
+				val1 := binary.LittleEndian.Uint64(v.data[i : i+8])
+				val2 := binary.LittleEndian.Uint64(v2.data[i : i+8])
+				i += 8
+				if val1 != val2 {
+					return fmt.Errorf("For voxel (%d,%d,%d), found value %d != %d\n", x, y, z, val2, val1)
+				}
+			}
 		}
 	}
 	return nil
@@ -808,7 +811,7 @@ func TestMultiscaleIngest(t *testing.T) {
 	volume.put(t, uuid, "labels")
 
 	// Verify initial ingest for hi-res
-	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
+	if err := downres.BlockOnUpdating(uuid, "labels"); err != nil {
 		t.Fatalf("Error blocking on update for labels: %v\n", err)
 	}
 	hires := newTestVolume(128, 128, 128)

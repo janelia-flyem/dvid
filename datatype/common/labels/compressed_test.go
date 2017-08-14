@@ -234,6 +234,12 @@ func TestBlockCompression(t *testing.T) {
 	if err := block.UnmarshalBinary(solid2serialization); err != nil {
 		t.Fatal(err)
 	}
+	if block.Value(dvid.Point3d{34, 22, 12}) != 2 {
+		t.Errorf("Expected 2, got %d\n", block.Value(dvid.Point3d{34, 22, 12}))
+	}
+	if block.Value(dvid.Point3d{58, 4, 31}) != 2 {
+		t.Errorf("Expected 2, got %d\n", block.Value(dvid.Point3d{58, 4, 31}))
+	}
 
 	solid2, size := block.MakeLabelVolume()
 	if !size.Equals(dvid.Point3d{64, 64, 64}) {
@@ -272,6 +278,14 @@ func TestBlockCompression(t *testing.T) {
 		t.Fatalf("error in size after making block: %v\n", size)
 	}
 	checkLabels(t, "block compress/uncompress", dvid.Uint64ToByte(testvol), testvol2)
+	i := uint64(12*64*64 + 22*64 + 34)
+	if bptr.Value(dvid.Point3d{34, 22, 12}) != i {
+		t.Errorf("Expected %d, got %d\n", bptr.Value(dvid.Point3d{34, 22, 12}))
+	}
+	i = 31*64*64 + 4*64 + 58
+	if bptr.Value(dvid.Point3d{58, 4, 31}) != i {
+		t.Errorf("Expected %d, got %d\n", bptr.Value(dvid.Point3d{58, 4, 31}))
+	}
 }
 
 func TestBlockDownres(t *testing.T) {

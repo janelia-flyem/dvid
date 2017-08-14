@@ -987,7 +987,7 @@ type Data struct {
 	// for this data instance.  (Default true)
 	IndexedLabels bool
 
-	// True if we keep track of # voxels per label.  (Default false)
+	// True if we keep track of # voxels per label.  (Default true)
 	CountLabels bool
 
 	// Maximum down-resolution level supported.  Each down-res level is 2x scope of
@@ -1034,8 +1034,9 @@ func (d *Data) ScaleUpdating(scale uint8) bool {
 
 func (d *Data) AnyScaleUpdating() bool {
 	d.updateMu.RLock()
-	for scale := uint8(0); scale <= d.MaxDownresLevel; scale++ {
+	for scale := uint8(0); scale < d.MaxDownresLevel; scale++ {
 		if d.updates[scale] > 0 {
+			d.updateMu.RUnlock()
 			return true
 		}
 	}
@@ -1889,7 +1890,6 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 	if downscale {
 		downresMut = downres.NewMutation(d, ctx.VersionID(), mutID)
 	}
-	fmt.Printf("Starting ReceiveBlocks, mutation %d\n", mutID)
 
 	blockCh := make(chan blockChange, 100)
 	go d.aggregateBlockChanges(ctx.VersionID(), blockCh)
@@ -2655,7 +2655,7 @@ func (d *Data) handleBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, 
 		if err := d.SendBlocks(ctx, w, scale, subvol, compression); err != nil {
 			server.BadRequest(w, r, err)
 		}
-		timedLog.Infof("HTTP GET blocks at size %s, offset %s (%s)", r.Method, parts[4], parts[5], r.URL)
+		timedLog.Infof("HTTP GET blocks at size %s, offset %s (%s)", parts[4], parts[5], r.URL)
 	} else {
 		if err := d.ReceiveBlocks(ctx, r.Body, scale, downscale, compression); err != nil {
 			server.BadRequest(w, r, err)
