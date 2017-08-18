@@ -64,8 +64,11 @@ func init() {
 }
 
 const (
-	// limit the number of parallel requests
-	MAXCONNECTIONS = 1000
+	// limit the number of total parallel requests
+	MAXCONNECTIONS = 10000
+
+	// limit the number of parallel network ops
+	MAXNETOPS = 1000
 
 	// init file for master gbucket
 	INITKEY = "initialized"
@@ -148,7 +151,8 @@ func parseConfig(config dvid.StoreConfig) (*GBucket, error) {
 	gb := &GBucket{
 		bname:          bucket,
 		ctx:            context.Background(),
-		activeRequests: make(chan interface{}, MAXCONNECTIONS),
+		activeRequests: make(chan chan int, MAXCONNECTIONS),
+		activeOps:      make(chan interface{}, MAXNETOPS),
 	}
 	return gb, nil
 }
@@ -228,6 +232,9 @@ func (e *Engine) newGBucket(config dvid.StoreConfig) (*GBucket, bool, error) {
 		// TODO: pre-populate based on custom repo names
 	}
 
+	// launch background job handler
+	go gb.backgroundRequestHandler()
+
 	// assume if not newly created that data exists
 	// 'created' not meaningful if concurrent calls
 	return gb, created, nil
@@ -242,7 +249,8 @@ type GBucket struct {
 	bname          string
 	bucket         *api.BucketHandle
 	bucket_attrs   *api.BucketAttrs
-	activeRequests chan interface{}
+	activeRequests chan chan int
+	activeOps      chan interface{}
 	ctx            context.Context
 	client         *api.Client
 	version        float64
@@ -282,6 +290,33 @@ func (k KeyArray) Swap(i, j int) {
 
 func (k KeyArray) Len() int {
 	return len(k)
+}
+
+// backgroundReuqestHandler is a background routine for handling queuing
+func (db *GBucket) backgroundRequestHandler() {
+	jobid := int(0)
+	// get request from queue
+	for true {
+		request := <-db.activeRequests
+		// add to job queue
+		db.activeOps <- nil
+
+		// if succesfully added, signal requester
+		request <- jobid
+		jobid += 1
+	}
+}
+
+// grabOpResource is a blocking function to grab a resource and returns jobid
+func (db *GBucket) grabOpResource() int {
+	waitchan := make(chan int, 1)
+	db.activeRequests <- waitchan
+	jobid := <-waitchan
+	return jobid
+}
+
+func (db *GBucket) releaseOpResource() {
+	<-db.activeOps
 }
 
 // bucketHandle retrieves the bucket handle based on the context
@@ -1097,7 +1132,7 @@ func (db *GBucket) getKeysInRangeRaw(ctx storage.Context, minKey, maxKey storage
 }
 
 // getKeysInRange returns all the latest keys in a range (versioned or unversioned)
-func (db *GBucket) getKeysInRange(ctx storage.Context, TkBeg, TkEnd storage.TKey) ([]storage.Key, error) {
+func (db *GBucket) getKeysInRange(ctx storage.Context, TkBeg, TkEnd storage.TKey, hasresource bool) ([]storage.Key, error) {
 	var minKey storage.Key
 	var maxKey storage.Key
 	var err error
@@ -1136,6 +1171,9 @@ func (db *GBucket) getKeysInRange(ctx storage.Context, TkBeg, TkEnd storage.TKey
 	if db.version >= VALUEVERSION {
 		matchingkeys := make([]storage.Key, 0)
 
+		if hasresource {
+			db.releaseOpResource()
+		}
 		var wg sync.WaitGroup
 		// grab actual master keys
 		for _, key := range keys {
@@ -1144,10 +1182,10 @@ func (db *GBucket) getKeysInRange(ctx storage.Context, TkBeg, TkEnd storage.TKey
 				// fetch keys in parallel
 				wg.Add(1)
 				go func(baseKey storage.Key) {
-					db.activeRequests <- nil
+					db.grabOpResource()
 					defer func() {
 						wg.Done()
-						<-db.activeRequests
+						db.releaseOpResource()
 					}()
 
 					vkeys, prefix, _ := db.extractVers(ctx, baseKey)
@@ -1177,6 +1215,9 @@ func (db *GBucket) getKeysInRange(ctx storage.Context, TkBeg, TkEnd storage.TKey
 			}
 		}
 		wg.Wait()
+		if hasresource {
+			db.grabOpResource()
+		}
 
 		sort.Sort(KeyArray(matchingkeys))
 		return matchingkeys, nil
@@ -1210,7 +1251,7 @@ func (db *GBucket) getKeysInRange(ctx storage.Context, TkBeg, TkEnd storage.TKey
 }
 
 // getVTKey extract a value for the tkey given the context
-func (db *GBucket) getVTKey(ctx storage.Context, tk storage.TKey) ([]byte, error) {
+func (db *GBucket) getVTKey(ctx storage.Context, tk storage.TKey, hasresource bool) ([]byte, error) {
 	if db == nil {
 		return nil, fmt.Errorf("Can't call Get() on nil GBucket")
 	}
@@ -1234,7 +1275,7 @@ func (db *GBucket) getVTKey(ctx storage.Context, tk storage.TKey) ([]byte, error
 			} else {
 				if rootversion != contextversion {
 					// grab all keys within versioned range
-					keys, _ := db.getKeysInRange(ctx, tk, tk)
+					keys, _ := db.getKeysInRange(ctx, tk, tk, hasresource)
 					if len(keys) == 0 {
 						return nil, nil
 					}
@@ -1266,7 +1307,7 @@ type keyvalue_t struct {
 
 // retrieveKey finds the latest relevant version for the given Tkey.
 // This runs slowly if the request is not at the root version.
-func (db *GBucket) retrieveKey(ctx storage.Context, tk storage.TKey) (storage.Key, error) {
+func (db *GBucket) retrieveKey(ctx storage.Context, tk storage.TKey, hasresource bool) (storage.Key, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("Received nil context in Get()")
 	}
@@ -1285,7 +1326,7 @@ func (db *GBucket) retrieveKey(ctx storage.Context, tk storage.TKey) (storage.Ke
 		} else {
 			if rootversion != contextversion {
 				// grab all keys within versioned range
-				keys, _ := db.getKeysInRange(ctx, tk, tk)
+				keys, _ := db.getKeysInRange(ctx, tk, tk, hasresource)
 				if len(keys) == 0 {
 					return nil, nil
 				}
@@ -1529,13 +1570,11 @@ func (db *GBucket) rawDelete(ctx storage.Context, fullKey storage.Key) error {
 
 // Get returns a value given a key.
 func (db *GBucket) Get(ctx storage.Context, tk storage.TKey) ([]byte, error) {
-	db.activeRequests <- nil
-	defer func() {
-		<-db.activeRequests
-	}()
+	db.grabOpResource()
+	defer db.releaseOpResource()
 
 	// fetch data
-	val, err := db.getVTKey(ctx, tk)
+	val, err := db.getVTKey(ctx, tk, true)
 	if err != nil {
 		return nil, err
 	}
@@ -1554,7 +1593,7 @@ func (db *GBucket) KeysInRange(ctx storage.Context, TkBeg, TkEnd storage.TKey) (
 	}
 
 	// grab keys
-	keys, _ := db.getKeysInRange(ctx, TkBeg, TkEnd)
+	keys, _ := db.getKeysInRange(ctx, TkBeg, TkEnd, false)
 	tKeys := make([]storage.TKey, 0)
 
 	// grab only object names within range
@@ -1587,7 +1626,7 @@ func (db *GBucket) GetRange(ctx storage.Context, TkBeg, TkEnd storage.TKey) ([]*
 	values := make([]*storage.TKeyValue, 0)
 
 	// grab keys
-	keys, _ := db.getKeysInRange(ctx, TkBeg, TkEnd)
+	keys, _ := db.getKeysInRange(ctx, TkBeg, TkEnd, false)
 
 	keyvalchan := make(chan keyvalue_t, len(keys))
 	for _, key := range keys {
@@ -1661,10 +1700,6 @@ func (db *GBucket) RawRangeQuery(kStart, kEnd storage.Key, keysOnly bool, out ch
 
 // Put writes a value with given key in a possibly versioned context.
 func (db *GBucket) Put(ctx storage.Context, tkey storage.TKey, value []byte) error {
-	db.activeRequests <- nil
-	defer func() {
-		<-db.activeRequests
-	}()
 	// use buffer interface
 	buffer := db.NewBuffer(ctx)
 
@@ -1733,7 +1768,6 @@ func (db *GBucket) LockKey(k storage.Key) error {
 
 		// wait some time and retry
 		time.Sleep(time.Duration(currdelay) * time.Second)
-		currdelay += 1
 	}
 
 	return err
@@ -1747,10 +1781,8 @@ func (db *GBucket) UnlockKey(k storage.Key) error {
 // Patch patches the value at the given key with function f.
 // The patching function should work on uninitialized data.
 func (db *GBucket) Patch(ctx storage.Context, tk storage.TKey, f storage.PatchFunc) error {
-	db.activeRequests <- nil
-	defer func() {
-		<-db.activeRequests
-	}()
+	db.grabOpResource()
+	defer db.releaseOpResource()
 
 	var err error
 	if db.version >= VALUEVERSION && ctx.Versioned() {
@@ -1781,7 +1813,7 @@ func (db *GBucket) Patch(ctx storage.Context, tk storage.TKey, f storage.PatchFu
 				if err == api.ErrObjectNotExist {
 					// fetch from another version
 					// !! this should occur at most once
-					prevkey, err2 := db.retrieveKey(ctx, tk)
+					prevkey, err2 := db.retrieveKey(ctx, tk, true)
 					if err2 != nil {
 						return err2
 					}
@@ -1912,11 +1944,11 @@ func (db *GBucket) DeleteAll(ctx storage.Context, allVersions bool) error {
 		var wg sync.WaitGroup
 		for _, key := range keys {
 			wg.Add(1)
-			db.activeRequests <- nil
+			db.grabOpResource()
 			go func(lkey storage.Key) {
 				defer func() {
 					wg.Done()
-					<-db.activeRequests
+					db.releaseOpResource()
 				}()
 				db.rawDelete(ctx, lkey)
 			}(key)
@@ -1952,11 +1984,11 @@ func (db *GBucket) DeleteAll(ctx storage.Context, allVersions bool) error {
 				// if base version, delete or return key to exact version
 				if keyversion == 0 {
 					wg.Add(1)
-					db.activeRequests <- nil
+					db.grabOpResource()
 					go func(lkey storage.Key) {
 						defer func() {
 							wg.Done()
-							<-db.activeRequests
+							db.releaseOpResource()
 						}()
 						// delete specific version
 						db.deleteVersion(ctx, key, currversion, false)
@@ -1964,11 +1996,11 @@ func (db *GBucket) DeleteAll(ctx storage.Context, allVersions bool) error {
 				}
 			} else if keyversion == currversion {
 				wg.Add(1)
-				db.activeRequests <- nil
+				db.grabOpResource()
 				go func(lkey storage.Key) {
 					defer func() {
 						wg.Done()
-						<-db.activeRequests
+						db.releaseOpResource()
 					}()
 					db.rawDelete(ctx, lkey)
 				}(key)
@@ -2288,13 +2320,12 @@ func (db *goBuffer) DeleteRange(ctx storage.Context, TkBeg, TkEnd storage.TKey) 
 func (buffer *goBuffer) Flush() error {
 	retVals := make(chan error, len(buffer.ops))
 	// limits the number of simultaneous requests (should this be global)
-	workQueue := buffer.db.activeRequests
 
 	for itnum, operation := range buffer.ops {
-		workQueue <- nil
+		opid := buffer.db.grabOpResource()
 		go func(opdata dbOp, currnum int) {
 			defer func() {
-				<-workQueue
+				buffer.db.releaseOpResource()
 			}()
 			var err error
 			if opdata.op == delOp {
@@ -2309,7 +2340,7 @@ func (buffer *goBuffer) Flush() error {
 			} else if opdata.op == delOpIgnoreExists {
 				buffer.db.deleteV(buffer.ctx, opdata.key)
 			} else if opdata.op == delRangeOp {
-				err = buffer.deleteRangeLocal(buffer.ctx, opdata.tkBeg, opdata.tkEnd, workQueue)
+				err = buffer.deleteRangeLocalResource(buffer.ctx, opdata.tkBeg, opdata.tkEnd)
 			} else if opdata.op == putOp {
 				if buffer.db.version >= VALUEVERSION && buffer.ctx.Versioned() {
 					tk, _ := storage.TKeyFromKey(opdata.key)
@@ -2331,15 +2362,16 @@ func (buffer *goBuffer) Flush() error {
 				opdata.readychan <- err
 			} else if opdata.op == getOp {
 				if opdata.tkEnd == nil {
-					err = buffer.processGetLocal(buffer.ctx, opdata.tkBeg, opdata.chunkop, opdata.chunkfunc, workQueue)
+					err = buffer.processGetLocalResource(buffer.ctx, opdata.tkBeg, opdata.chunkop, opdata.chunkfunc)
 				} else {
-					err = buffer.processRangeLocal(buffer.ctx, opdata.tkBeg, opdata.tkEnd, opdata.chunkop, opdata.chunkfunc, workQueue)
+					err = buffer.processRangeLocalResource(buffer.ctx, opdata.tkBeg, opdata.tkEnd, opdata.chunkop, opdata.chunkfunc)
 				}
 			} else {
 				err = fmt.Errorf("Incorrect buffer operation specified")
 			}
 
-			if currnum%MAXCONNECTIONS == (MAXCONNECTIONS - 1) {
+			// !! temporary hack
+			if opid%MAXCONNECTIONS == (MAXCONNECTIONS - 1) {
 				runtime.GC()
 			}
 
@@ -2360,8 +2392,8 @@ func (buffer *goBuffer) Flush() error {
 	return err
 }
 
-// deleteRangeLocal implements DeleteRange but with workQueue awareness.
-func (db *goBuffer) deleteRangeLocal(ctx storage.Context, TkBeg, TkEnd storage.TKey, workQueue chan interface{}) error {
+// deleteRangeLocalResource implements DeleteRange but with workQueue awareness.
+func (db *goBuffer) deleteRangeLocalResource(ctx storage.Context, TkBeg, TkEnd storage.TKey) error {
 	if db == nil {
 		return fmt.Errorf("Can't call DeleteRange() on nil Google bucket")
 	}
@@ -2370,23 +2402,24 @@ func (db *goBuffer) deleteRangeLocal(ctx storage.Context, TkBeg, TkEnd storage.T
 	}
 
 	// get all the keys within range, latest version, no tombstone
-	keys, err := db.db.getKeysInRange(ctx, TkBeg, TkEnd)
+	// !! assumes that function has resource lock
+	keys, err := db.db.getKeysInRange(ctx, TkBeg, TkEnd, true)
 	if err != nil {
 		return err
 	}
 
 	// hackish -- release resource
-	<-workQueue
+	db.db.releaseOpResource()
 
 	// wait for all deletes to complete
 	var wg sync.WaitGroup
 	for _, key := range keys {
 		wg.Add(1)
 		// use available threads
-		workQueue <- nil
+		db.db.grabOpResource()
 		go func(lkey storage.Key) {
 			defer func() {
-				<-workQueue
+				db.db.releaseOpResource()
 				wg.Done()
 			}()
 			tk, _ := storage.TKeyFromKey(lkey)
@@ -2406,15 +2439,16 @@ func (db *goBuffer) deleteRangeLocal(ctx storage.Context, TkBeg, TkEnd storage.T
 	wg.Wait()
 
 	// hackish -- reask for resource
-	workQueue <- nil
+	db.db.grabOpResource()
 
 	return nil
 }
 
 // processGetLocal implements ProcessRange functionality but with workQueue awareness for
 // just one key/value GET
-func (db *goBuffer) processGetLocal(ctx storage.Context, tkey storage.TKey, op *storage.ChunkOp, f storage.ChunkFunc, workQueue chan interface{}) error {
-	val, err := db.db.getVTKey(ctx, tkey)
+func (db *goBuffer) processGetLocalResource(ctx storage.Context, tkey storage.TKey, op *storage.ChunkOp, f storage.ChunkFunc) error {
+	// !! assumes that a resource
+	val, err := db.db.getVTKey(ctx, tkey, true)
 	if err != nil {
 		return err
 	}
@@ -2437,21 +2471,22 @@ func (db *goBuffer) processGetLocal(ctx storage.Context, tkey storage.TKey, op *
 	return nil
 }
 
-// processRangeLocal implements ProcessRange functionality but with workQueue awareness
-func (db *goBuffer) processRangeLocal(ctx storage.Context, TkBeg, TkEnd storage.TKey, op *storage.ChunkOp, f storage.ChunkFunc, workQueue chan interface{}) error {
+// processRangeLocalResource implements ProcessRange functionality but with workQueue awareness
+func (db *goBuffer) processRangeLocalResource(ctx storage.Context, TkBeg, TkEnd storage.TKey, op *storage.ChunkOp, f storage.ChunkFunc) error {
 	// grab keys
-	keys, _ := db.db.getKeysInRange(ctx, TkBeg, TkEnd)
+	// !! assumes that function has resource lock
+	keys, _ := db.db.getKeysInRange(ctx, TkBeg, TkEnd, true)
 
 	// hackish -- release resource
-	<-workQueue
+	db.db.releaseOpResource()
 
 	keyvalchan := make(chan keyvalue_t, len(keys))
 	for _, key := range keys {
 		// use available threads
-		workQueue <- nil
+		db.db.grabOpResource()
 		go func(lkey storage.Key) {
 			defer func() {
-				<-workQueue
+				db.db.releaseOpResource()
 			}()
 			value, err := db.db.getV(ctx, lkey)
 			if value == nil || err != nil {
@@ -2471,7 +2506,7 @@ func (db *goBuffer) processRangeLocal(ctx storage.Context, TkBeg, TkEnd storage.
 	}
 
 	// hackish -- reask for resource
-	workQueue <- nil
+	db.db.grabOpResource()
 
 	var err error
 	for _, key := range keys {
