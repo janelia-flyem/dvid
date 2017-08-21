@@ -2627,7 +2627,12 @@ func (d *Data) handleBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, 
 		}
 		defer server.ThrottledOpDone()
 	}
-	scale := uint8(0)
+	scale, err := getScale(queryStrings)
+	if err != nil {
+		server.BadRequest(w, r, "bad scale specified: %v", err)
+		return
+	}
+
 	compression := queryStrings.Get("compression")
 	downscale := queryStrings.Get("downres") == "true"
 	if strings.ToLower(r.Method) == "get" {
@@ -2648,7 +2653,7 @@ func (d *Data) handleBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, 
 
 		// Make sure subvolume gets align with blocks
 		if !dvid.BlockAligned(subvol, d.BlockSize()) {
-			server.BadRequest(w, r, "cannot store labels in non-block aligned geometry %s -> %s", subvol.StartPoint(), subvol.EndPoint())
+			server.BadRequest(w, r, "cannot use labels via 'block' endpoint in non-block aligned geometry %s -> %s", subvol.StartPoint(), subvol.EndPoint())
 			return
 		}
 

@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 
@@ -172,6 +173,102 @@ func (v *testVolume) equals(v2 *testVolume) error {
 		}
 	}
 	return nil
+}
+
+func (v *testVolume) testBlock(t *testing.T, context string, bx, by, bz int32, data []byte) {
+	if len(data) < int(DefaultBlockSize*DefaultBlockSize*DefaultBlockSize*8) {
+		t.Fatalf("[%s] got bad uint64 array of len %d for block (%d, %d, %d)\n", context, len(data), bx, by, bz)
+	}
+	p := 0
+	var x, y, z, numerrors int32
+	for z = 0; z < DefaultBlockSize; z++ {
+		vz := bz*DefaultBlockSize + z
+		for y = 0; y < DefaultBlockSize; y++ {
+			vy := by*DefaultBlockSize + y
+			for x = 0; x < DefaultBlockSize; x++ {
+				vx := bx*DefaultBlockSize + x
+				i := (vz*v.size[0]*v.size[1] + vy*v.size[0] + vx) * 8
+				label := binary.LittleEndian.Uint64(v.data[i : i+8])
+				got := binary.LittleEndian.Uint64(data[p : p+8])
+				if label != got && numerrors < 5 {
+					t.Errorf("[%s] error block (%d,%d,%d) at voxel (%d,%d,%d): expected %d, got %d\n", context, bx, by, bz, vx, vy, vz, label, got)
+					numerrors++
+				}
+				p += 8
+			}
+		}
+	}
+}
+
+func (v *testVolume) testGetBlocks(t *testing.T, context string, uuid dvid.UUID, name, compression string, scale uint8) {
+	apiStr := fmt.Sprintf("%snode/%s/%s/blocks/%d_%d_%d/0_0_0", server.WebAPIPath, uuid, name, v.size[0], v.size[1], v.size[2])
+	var qstrs []string
+	if compression != "" {
+		qstrs = append(qstrs, "compression="+compression)
+	}
+	if scale > 0 {
+		qstrs = append(qstrs, fmt.Sprintf("scale=%d", scale))
+	}
+	if len(qstrs) > 0 {
+		apiStr += "?" + strings.Join(qstrs, "&")
+	}
+	data := server.TestHTTP(t, "GET", apiStr, nil)
+	blockBytes := DefaultBlockSize * DefaultBlockSize * DefaultBlockSize * 8
+
+	var b int
+	for {
+		// Get block coord + block size
+		if b+16 > len(data) {
+			t.Fatalf("Only got %d bytes back from block API call, yet next coord in span would put index @ %d\n", len(data), b+16)
+		}
+		x := int32(binary.LittleEndian.Uint32(data[b : b+4]))
+		b += 4
+		y := int32(binary.LittleEndian.Uint32(data[b : b+4]))
+		b += 4
+		z := int32(binary.LittleEndian.Uint32(data[b : b+4]))
+		b += 4
+		n := int(binary.LittleEndian.Uint32(data[b : b+4]))
+		b += 4
+
+		var uncompressed []byte
+		switch compression {
+		case "uncompressed":
+			uncompressed = data[b : b+n]
+		case "", "lz4":
+			uncompressed = make([]byte, blockBytes)
+			if err := lz4.Uncompress(data[b:b+n], uncompressed); err != nil {
+				t.Fatalf("Unable to uncompress LZ4 data (%s), %d bytes: %v\n", apiStr, n, err)
+			}
+		case "gzip", "blocks":
+			gzipIn := bytes.NewBuffer(data[b : b+n])
+			zr, err := gzip.NewReader(gzipIn)
+			if err != nil {
+				t.Fatalf("can't uncompress gzip block: %v\n", err)
+			}
+			uncompressed, err = ioutil.ReadAll(zr)
+			if err != nil {
+				t.Fatalf("can't uncompress gzip block: %v\n", err)
+			}
+			zr.Close()
+
+			if compression == "blocks" {
+				var block labels.Block
+				if err = block.UnmarshalBinary(uncompressed); err != nil {
+					t.Errorf("unable to deserialize label block (%d, %d, %d): %v\n", x, y, z, err)
+				}
+				uint64array, size := block.MakeLabelVolume()
+				if !size.Equals(dvid.Point3d{DefaultBlockSize, DefaultBlockSize, DefaultBlockSize}) {
+					t.Fatalf("got bad block size from deserialized block (%d, %d, %d): %s\n", x, y, z, size)
+				}
+				uncompressed = uint64array
+			}
+		}
+		v.testBlock(t, context, x, y, z, uncompressed)
+		b += n
+		if b == len(data) {
+			break
+		}
+	}
 }
 
 type mergeJSON string
@@ -395,21 +492,25 @@ func (vol *labelVol) testBlock(t *testing.T, context string, bx, by, bz int32, d
 	}
 }
 
-func (vol *labelVol) testBlocks(t *testing.T, context string, uuid dvid.UUID, compression, roi string) {
+func (vol *labelVol) testBlocks(t *testing.T, context string, uuid dvid.UUID, compression string) {
 	span := 5
 	apiStr := fmt.Sprintf("%snode/%s/%s/blocks/%d_%d_%d/%d_%d_%d", server.WebAPIPath,
 		uuid, vol.name, 160, 32, 32, vol.offset[0], vol.offset[1], vol.offset[2])
+	var qstrs []string
 	if compression != "" {
-		apiStr += "?compression=" + compression
+		qstrs = append(qstrs, "compression="+compression)
+	}
+	if len(qstrs) > 0 {
+		apiStr += "?" + strings.Join(qstrs, "&")
 	}
 	data := server.TestHTTP(t, "GET", apiStr, nil)
 
-	blockBytes := 32 * 32 * 32 * 8
+	blockBytes := int(vol.blockSize.Prod() * 8)
 
 	// Check if values are what we expect
-	bx := vol.offset[0] / 32
-	by := vol.offset[1] / 32
-	bz := vol.offset[2] / 32
+	bx := vol.offset[0] / vol.blockSize[0]
+	by := vol.offset[1] / vol.blockSize[1]
+	bz := vol.offset[2] / vol.blockSize[2]
 	b := 0
 	for i := 0; i < span; i++ {
 		// Get block coord + block size
@@ -456,7 +557,7 @@ func (vol *labelVol) testBlocks(t *testing.T, context string, uuid dvid.UUID, co
 					t.Errorf("unable to deserialize label block (%d, %d, %d): %v\n", x, y, z, err)
 				}
 				uint64array, size := block.MakeLabelVolume()
-				if !size.Equals(dvid.Point3d{32, 32, 32}) {
+				if !size.Equals(vol.blockSize) {
 					t.Fatalf("got bad block size from deserialized block (%d, %d, %d): %s\n", x, y, z, size)
 				}
 				uncompressed = uint64array
@@ -852,6 +953,28 @@ func TestMultiscaleIngest(t *testing.T) {
 	if err := downres2.equals(expected2); err != nil {
 		t.Errorf("2nd downres 'labels' isn't what is expected: %v\n", err)
 	}
+
+	// // Check blocks endpoint for different scales.
+	volume.testGetBlocks(t, "hi-res block check", uuid, "labels", "", 0)
+	volume.testGetBlocks(t, "hi-res block check", uuid, "labels", "uncompressed", 0)
+	volume.testGetBlocks(t, "hi-res block check", uuid, "labels", "blocks", 0)
+	volume.testGetBlocks(t, "hi-res block check", uuid, "labels", "gzip", 0)
+
+	expected1.testGetBlocks(t, "downres #1 block check", uuid, "labels", "", 1)
+	expected1.testGetBlocks(t, "downres #1 block check", uuid, "labels", "uncompressed", 1)
+	expected1.testGetBlocks(t, "downres #1 block check", uuid, "labels", "blocks", 1)
+	expected1.testGetBlocks(t, "downres #1 block check", uuid, "labels", "gzip", 1)
+
+	expected2a := newTestVolume(64, 64, 64) // can only get block-aligned subvolumes
+	expected2a.addSubvol(dvid.Point3d{10, 10, 10}, dvid.Point3d{10, 10, 10}, 1)
+	expected2a.addSubvol(dvid.Point3d{10, 10, 20}, dvid.Point3d{10, 10, 10}, 2)
+	expected2a.addSubvol(dvid.Point3d{20, 10, 10}, dvid.Point3d{10, 10, 10}, 13)
+	expected2a.addSubvol(dvid.Point3d{10, 20, 10}, dvid.Point3d{10, 10, 10}, 209)
+	expected2a.addSubvol(dvid.Point3d{20, 20, 10}, dvid.Point3d{10, 10, 10}, 311)
+	expected2a.testGetBlocks(t, "downres #2 block check", uuid, "labels", "", 2)
+	expected2a.testGetBlocks(t, "downres #2 block check", uuid, "labels", "uncompressed", 2)
+	expected2a.testGetBlocks(t, "downres #2 block check", uuid, "labels", "blocks", 2)
+	expected2a.testGetBlocks(t, "downres #2 block check", uuid, "labels", "gzip", 2)
 }
 
 func readGzipFile(filename string) ([]byte, error) {
@@ -1110,10 +1233,10 @@ func testLabels(t *testing.T, labelsIndexed bool) {
 	vol.testGetLabelVolume(t, uuid, "", "")
 
 	// Test the blocks API
-	vol.testBlocks(t, "GET default blocks (lz4)", uuid, "", "")
-	vol.testBlocks(t, "GET uncompressed blocks", uuid, "uncompressed", "")
-	vol.testBlocks(t, "GET DVID compressed label blocks", uuid, "blocks", "")
-	vol.testBlocks(t, "GET gzip blocks", uuid, "gzip", "")
+	vol.testBlocks(t, "GET default blocks (lz4)", uuid, "")
+	vol.testBlocks(t, "GET uncompressed blocks", uuid, "uncompressed")
+	vol.testBlocks(t, "GET DVID compressed label blocks", uuid, "blocks")
+	vol.testBlocks(t, "GET gzip blocks", uuid, "gzip")
 
 	// Test the "label" endpoint.
 	apiStr := fmt.Sprintf("%snode/%s/%s/label/100_64_96", server.WebAPIPath, uuid, "labels")
