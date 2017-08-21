@@ -7,6 +7,7 @@ package labelarray
 
 import (
 	"sync"
+	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/downres"
@@ -111,7 +112,10 @@ func (d *Data) Shutdown(wg *sync.WaitGroup) {
 				break
 			}
 			dvid.Infof("After %d seconds, data %q has %d mutations in queue pending.", elapsed, d.DataName(), queued)
+			time.Sleep(1 * time.Second)
 			elapsed++
+		} else {
+			break
 		}
 	}
 	for i := 0; i < numBlockHandlers; i++ {
