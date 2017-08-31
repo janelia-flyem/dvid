@@ -1153,8 +1153,7 @@ func (d *Data) GobDecode(b []byte) error {
 		return err
 	}
 	if err := dec.Decode(&(d.MaxLabel)); err != nil {
-		dvid.Criticalf("Decoding labelarray %q: no MaxLabel, setting to 1 billion", d.DataName())
-		d.MaxLabel = 1000000000
+		dvid.Criticalf("Decoding labelarray %q: no MaxLabel.", d.DataName())
 	}
 	if err := dec.Decode(&(d.MaxRepoLabel)); err != nil {
 		dvid.Errorf("Decoding labelarray %q: no MaxRepoLabel, setting to 1 billion", d.DataName())
