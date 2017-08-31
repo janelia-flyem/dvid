@@ -1152,6 +1152,24 @@ func (d *Data) GobDecode(b []byte) error {
 	if err := dec.Decode(&(d.Data)); err != nil {
 		return err
 	}
+	if err := dec.Decode(&(d.MaxLabel)); err != nil {
+		dvid.Errorf("Decoding labelarray %q: no MaxLabel, setting to 0")
+	}
+	if err := dec.Decode(&(d.MaxRepoLabel)); err != nil {
+		dvid.Errorf("Decoding labelarray %q: no MaxRepoLabel, setting to 0")
+	}
+	if err := dec.Decode(&(d.IndexedLabels)); err != nil {
+		dvid.Errorf("Decoding labelarray %q: no IndexedLabels, setting to true")
+		d.IndexedLabels = true
+	}
+	if err := dec.Decode(&(d.CountLabels)); err != nil {
+		dvid.Errorf("Decoding labelarray %q: no CountLabels, setting to true")
+		d.CountLabels = true
+	}
+	if err := dec.Decode(&(d.MaxDownresLevel)); err != nil {
+		dvid.Errorf("Decoding labelarray %q: no MaxDownresLevel, setting to 7")
+		d.MaxDownresLevel = 7
+	}
 	return nil
 }
 
@@ -1159,6 +1177,21 @@ func (d *Data) GobEncode() ([]byte, error) {
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
 	if err := enc.Encode(d.Data); err != nil {
+		return nil, err
+	}
+	if err := enc.Encode(d.MaxLabel); err != nil {
+		return nil, err
+	}
+	if err := enc.Encode(d.MaxRepoLabel); err != nil {
+		return nil, err
+	}
+	if err := enc.Encode(d.IndexedLabels); err != nil {
+		return nil, err
+	}
+	if err := enc.Encode(d.CountLabels); err != nil {
+		return nil, err
+	}
+	if err := enc.Encode(d.MaxDownresLevel); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil

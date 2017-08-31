@@ -890,6 +890,12 @@ func TestLabelarrayRepoPersistence(t *testing.T) {
 	if !oldData.Equals(lbls2) {
 		t.Errorf("Expected %v, got %v\n", oldData, *lbls2)
 	}
+	if lbls2.MaxDownresLevel != 5 {
+		t.Errorf("Bad MaxDownresLevel: %d\n", lbls2.MaxDownresLevel)
+	}
+	if lbls2.CountLabels != false {
+		t.Errorf("Bad CountLabels: %v\n", lbls2.CountLabels)
+	}
 }
 
 func TestMultiscaleIngest(t *testing.T) {
