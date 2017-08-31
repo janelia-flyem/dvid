@@ -1153,21 +1153,23 @@ func (d *Data) GobDecode(b []byte) error {
 		return err
 	}
 	if err := dec.Decode(&(d.MaxLabel)); err != nil {
-		dvid.Errorf("Decoding labelarray %q: no MaxLabel, setting to 0")
+		dvid.Criticalf("Decoding labelarray %q: no MaxLabel, setting to 1 billion", d.DataName())
+		d.MaxLabel = 1000000000
 	}
 	if err := dec.Decode(&(d.MaxRepoLabel)); err != nil {
-		dvid.Errorf("Decoding labelarray %q: no MaxRepoLabel, setting to 0")
+		dvid.Errorf("Decoding labelarray %q: no MaxRepoLabel, setting to 1 billion", d.DataName())
+		d.MaxRepoLabel = 1000000000
 	}
 	if err := dec.Decode(&(d.IndexedLabels)); err != nil {
-		dvid.Errorf("Decoding labelarray %q: no IndexedLabels, setting to true")
+		dvid.Errorf("Decoding labelarray %q: no IndexedLabels, setting to true", d.DataName())
 		d.IndexedLabels = true
 	}
 	if err := dec.Decode(&(d.CountLabels)); err != nil {
-		dvid.Errorf("Decoding labelarray %q: no CountLabels, setting to true")
+		dvid.Errorf("Decoding labelarray %q: no CountLabels, setting to true", d.DataName())
 		d.CountLabels = true
 	}
 	if err := dec.Decode(&(d.MaxDownresLevel)); err != nil {
-		dvid.Errorf("Decoding labelarray %q: no MaxDownresLevel, setting to 7")
+		dvid.Errorf("Decoding labelarray %q: no MaxDownresLevel, setting to 7", d.DataName())
 		d.MaxDownresLevel = 7
 	}
 	return nil
