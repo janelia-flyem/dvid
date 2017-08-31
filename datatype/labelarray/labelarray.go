@@ -1171,6 +1171,7 @@ func (d *Data) GobDecode(b []byte) error {
 		dvid.Errorf("Decoding labelarray %q: no MaxDownresLevel, setting to 7", d.DataName())
 		d.MaxDownresLevel = 7
 	}
+	d.updates = make([]uint32, d.MaxDownresLevel+1)
 	return nil
 }
 

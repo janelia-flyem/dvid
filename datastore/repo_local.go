@@ -451,7 +451,9 @@ func (m *repoManager) loadVersion0() error {
 		}
 
 		// Cache all UUID from nodes into our high-level cache
+		var dagVersions []dvid.VersionID
 		for v, node := range r.dag.nodes {
+			dagVersions = append(dagVersions, v)
 			uuid, found := m.versionToUUID[v]
 			if !found {
 				dvid.Errorf("Version id %d found in repo %s (id %d) not in cache map. Adding it...", v, r.uuid, r.id)
@@ -477,7 +479,7 @@ func (m *repoManager) loadVersion0() error {
 			migrator, doMigrate := dataservice.(TypeMigrator)
 			if doMigrate {
 				dvid.Infof("Migrating instance %q of type %q to ...\n", dataservice.DataName(), dataservice.TypeName())
-				dataservice, err = migrator.MigrateData()
+				dataservice, err = migrator.MigrateData(dagVersions)
 				if err != nil {
 					return fmt.Errorf("Error migrating data instance: %v", err)
 				}

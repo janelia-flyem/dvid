@@ -206,7 +206,7 @@ type DataService interface {
 // TypeMigrator is an interface for a DataService that can migrate itself to another DataService.
 // A deprecated DataService implementation can implement this interface to auto-convert on metadata load.
 type TypeMigrator interface {
-	MigrateData() (DataService, error)
+	MigrateData([]dvid.VersionID) (DataService, error)
 }
 
 // TypeUpgrader is an interface for a DataService that can upgrade itself to another version of data storage.
