@@ -1152,13 +1152,6 @@ func (d *Data) GobDecode(b []byte) error {
 	if err := dec.Decode(&(d.Data)); err != nil {
 		return err
 	}
-	if err := dec.Decode(&(d.MaxLabel)); err != nil {
-		dvid.Criticalf("Decoding labelarray %q: no MaxLabel.", d.DataName())
-	}
-	if err := dec.Decode(&(d.MaxRepoLabel)); err != nil {
-		dvid.Errorf("Decoding labelarray %q: no MaxRepoLabel, setting to 1 billion", d.DataName())
-		d.MaxRepoLabel = 1000000000
-	}
 	if err := dec.Decode(&(d.IndexedLabels)); err != nil {
 		dvid.Errorf("Decoding labelarray %q: no IndexedLabels, setting to true", d.DataName())
 		d.IndexedLabels = true
@@ -1179,12 +1172,6 @@ func (d *Data) GobEncode() ([]byte, error) {
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
 	if err := enc.Encode(d.Data); err != nil {
-		return nil, err
-	}
-	if err := enc.Encode(d.MaxLabel); err != nil {
-		return nil, err
-	}
-	if err := enc.Encode(d.MaxRepoLabel); err != nil {
 		return nil, err
 	}
 	if err := enc.Encode(d.IndexedLabels); err != nil {
@@ -1312,6 +1299,8 @@ func (d *Data) LoadMutable(root dvid.VersionID, storedVersion, expectedVersion u
 	return saveRequired, nil
 }
 
+const veryLargeLabel = 10000000000 // 10 billion
+
 func (d *Data) migrateMaxLabels(root dvid.VersionID, wg *sync.WaitGroup, ch chan *storage.KeyValue) {
 	ctx := storage.NewDataContext(d, 0)
 	store, err := d.GetOrderedKeyValueDB()
@@ -1408,11 +1397,12 @@ func (d *Data) loadMaxLabels(wg *sync.WaitGroup, ch chan *storage.KeyValue) {
 			dvid.Errorf("Can't decode key when loading mutable data for %s", d.DataName())
 			continue
 		}
+		var label uint64 = veryLargeLabel
 		if len(kv.V) != 8 {
 			dvid.Errorf("Got bad value.  Expected 64-bit label, got %v", kv.V)
-			continue
+		} else {
+			label = binary.LittleEndian.Uint64(kv.V)
 		}
-		label := binary.LittleEndian.Uint64(kv.V)
 		d.MaxLabel[v] = label
 		if label > repoMax {
 			repoMax = label
@@ -1432,6 +1422,9 @@ func (d *Data) loadMaxLabels(wg *sync.WaitGroup, ch chan *storage.KeyValue) {
 	}
 	if data == nil || len(data) != 8 {
 		dvid.Errorf("Could not load repo-wide max label for instance %q.  Only got %d bytes, not 64-bit label.\n", d.DataName(), len(data))
+		if repoMax == 0 {
+			repoMax = veryLargeLabel
+		}
 		dvid.Errorf("Using max label across versions: %d\n", repoMax)
 		d.MaxRepoLabel = repoMax
 	} else {
