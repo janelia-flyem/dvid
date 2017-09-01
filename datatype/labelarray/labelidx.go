@@ -267,7 +267,11 @@ func (d *Data) aggregateBlockChanges(v dvid.VersionID, ch <-chan blockChange) {
 			diff.delta += delta
 		}
 	}
-	d.updateMaxLabel(v, maxLabel)
+	go func() {
+		if err := d.updateMaxLabel(v, maxLabel); err != nil {
+			dvid.Errorf("max label change during block aggregation for %q: %v\n", d.DataName(), err)
+		}
+	}()
 
 	if d.IndexedLabels {
 		for label, bdm := range ldm {

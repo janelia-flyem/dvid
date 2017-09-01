@@ -201,6 +201,9 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel, splitLabel uint64, r io.
 	if splitLabel != 0 {
 		toLabel = splitLabel
 		dvid.Debugf("Splitting subset of label %d into given label %d ...\n", fromLabel, splitLabel)
+		if err = d.updateMaxLabel(v, splitLabel); err != nil {
+			return
+		}
 	} else {
 		toLabel, err = d.NewLabel(v)
 		if err != nil {
@@ -302,6 +305,9 @@ func (d *Data) SplitCoarseLabels(v dvid.VersionID, fromLabel, splitLabel uint64,
 	if splitLabel != 0 {
 		toLabel = splitLabel
 		dvid.Debugf("Splitting coarse subset of label %d into given label %d ...\n", fromLabel, splitLabel)
+		if err = d.updateMaxLabel(v, splitLabel); err != nil {
+			return
+		}
 	} else {
 		toLabel, err = d.NewLabel(v)
 		if err != nil {

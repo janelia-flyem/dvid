@@ -245,6 +245,29 @@ func TestSparseVolumes(t *testing.T) {
 	}
 	time.Sleep(1 * time.Second)
 
+	dataservice, err := datastore.GetDataByUUIDName(uuid, "labels")
+	if err != nil {
+		t.Fatalf("couldn't get labels data instance from datastore: %v\n", err)
+	}
+	labels, ok := dataservice.(*Data)
+	if !ok {
+		t.Fatalf("Returned data instance for 'labels' instance was not labelarray.Data!\n")
+	}
+	if labels.MaxRepoLabel != 4 {
+		t.Errorf("Expected max repo label to be 4, got %d\n", labels.MaxRepoLabel)
+	}
+	v, err := datastore.VersionFromUUID(uuid)
+	if err != nil {
+		t.Errorf("couldn't get version id from uuid %s: %v\n", uuid, err)
+	}
+	if len(labels.MaxLabel) != 1 || labels.MaxLabel[v] != 4 {
+		t.Errorf("bad MaxLabels: %v\n", labels.MaxLabel)
+	}
+	maxLabelResp := server.TestHTTP(t, "GET", fmt.Sprintf("%snode/%s/labels/maxlabel", server.WebAPIPath, uuid), nil)
+	if string(maxLabelResp) != `{"maxlabel": 4}` {
+		t.Errorf("bad response to maxlabel endpoint: %s\n", string(maxLabelResp))
+	}
+
 	badReqStr := fmt.Sprintf("%snode/%s/labels/sparsevol/0", server.WebAPIPath, uuid)
 	server.TestBadHTTP(t, "GET", badReqStr, nil)
 
@@ -574,6 +597,10 @@ func TestSplitCoarseLabel(t *testing.T) {
 	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
 		t.Fatalf("Error blocking on sync of labels: %v\n", err)
 	}
+	maxLabelResp := server.TestHTTP(t, "GET", fmt.Sprintf("%snode/%s/labels/maxlabel", server.WebAPIPath, uuid), nil)
+	if string(maxLabelResp) != `{"maxlabel": 5}` {
+		t.Errorf("bad response to maxlabel endpoint: %s\n", string(maxLabelResp))
+	}
 
 	// Make sure labels are correct
 	retrieved := newTestVolume(128, 128, 128)
@@ -665,6 +692,11 @@ func TestSplitCoarseGivenLabel(t *testing.T) {
 
 	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
 		t.Fatalf("Error blocking on sync of labels: %v\n", err)
+	}
+
+	maxLabelResp := server.TestHTTP(t, "GET", fmt.Sprintf("%snode/%s/labels/maxlabel", server.WebAPIPath, uuid), nil)
+	if string(maxLabelResp) != `{"maxlabel": 8127}` {
+		t.Errorf("bad response to maxlabel endpoint: %s\n", string(maxLabelResp))
 	}
 
 	// Make sure labels are correct

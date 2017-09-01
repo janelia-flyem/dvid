@@ -53,7 +53,7 @@ func (d *Data) PutLabels(v dvid.VersionID, subvol *dvid.Subvolume, data []byte, 
 	server.LargeMutationMutex.Lock()
 	defer server.LargeMutationMutex.Unlock()
 
-	// Keep track of changing extents and mark repo as dirty if changed.
+	// Keep track of changing extents, labels and mark repo as dirty if changed.
 	var extentChanged bool
 	defer func() {
 		if extentChanged {
@@ -183,6 +183,8 @@ func (d *Data) putChunk(op *putOperation, wg *sync.WaitGroup, putbuffer storage.
 		dvid.Errorf("error creating compressed block from label array at %s", op.subvol)
 		return
 	}
+	go d.updateBlockMaxLabel(op.version, curBlock)
+
 	blockData, _ := curBlock.MarshalBinary()
 	serialization, err := dvid.SerializeData(blockData, d.Compression(), d.Checksum())
 	if err != nil {
@@ -331,6 +333,8 @@ func (d *Data) writeBlocks(v dvid.VersionID, b storage.TKeyValues, wg1, wg2 *syn
 				dvid.Errorf("unable to compute dvid block compression in %q: %v\n", d.DataName(), err)
 				return
 			}
+			go d.updateBlockMaxLabel(v, lblBlock)
+
 			compressed, _ := lblBlock.MarshalBinary()
 			serialization, err := dvid.SerializeData(compressed, d.Compression(), d.Checksum())
 			if err != nil {

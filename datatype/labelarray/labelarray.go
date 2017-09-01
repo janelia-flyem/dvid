@@ -498,6 +498,8 @@ POST <api URL>/node/<UUID>/<data name>/blocks[?queryopts]
 	underlying storage.  The default (and currently only supported) compression is gzip on compressed 
 	DVID label Block serialization.
 
+	Note that maximum label and extents are automatically handled during these calls.
+
     Example: 
 
     POST <api URL>/node/3f8c/segmentation/blocks
@@ -568,6 +570,13 @@ POST <api URL>/node/<UUID>/<data name>/blocks[?queryopts]
     throttle      If "true", makes sure only N compute-intense operation (all API calls that can be 
 	               throttled) are handled.  If the server can't initiate the API call right away, a 503 
                    (Service Unavailable) status code is returned.
+
+
+GET <api URL>/node/<UUID>/<data name>/maxlabel
+
+	GET returns the maximum label for the version of data in JSON form:
+
+		{ "maxlabel": <label #> }
 
 
 -------------------------------------------------------------------------------------------------------
@@ -711,13 +720,6 @@ GET <api URL>/node/<UUID>/<data name>/sparsevol-coarse/<label>?<options>
     maxy    Spans must be equal to or smaller than this maximum y voxel coordinate.
     minz    Spans must be equal to or larger than this minimum z voxel coordinate.
     maxz    Spans must be equal to or smaller than this maximum z voxel coordinate.
-
-
-GET <api URL>/node/<UUID>/<data name>/maxlabel
-
-	GET returns the maximum label for the version of data in JSON form:
-
-		{ "maxlabel": <label #> }
 
 
 GET <api URL>/node/<UUID>/<data name>/nextlabel
@@ -1186,19 +1188,58 @@ func (d *Data) GobEncode() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func (d *Data) updateMaxLabel(v dvid.VersionID, label uint64) {
-	var change bool
+// makes database call for any update
+func (d *Data) updateMaxLabel(v dvid.VersionID, label uint64) error {
+	var changed bool
 	d.mlMu.RLock()
 	curMax, found := d.MaxLabel[v]
 	d.mlMu.RUnlock()
 	if !found || curMax < label {
-		change = true
+		changed = true
 	}
-	if change {
+	if changed {
 		d.mlMu.Lock()
 		d.MaxLabel[v] = label
+		if err := d.persistMaxLabel(v); err != nil {
+			return fmt.Errorf("updateMaxLabel of data %q: %v\n", d.DataName(), err)
+		}
 		if label > d.MaxRepoLabel {
 			d.MaxRepoLabel = label
+			if err := d.persistMaxRepoLabel(); err != nil {
+				return fmt.Errorf("updateMaxLabel of data %q: %v\n", d.DataName(), err)
+			}
+		}
+		d.mlMu.Unlock()
+	}
+	return nil
+}
+
+// makes database call for any update
+func (d *Data) updateBlockMaxLabel(v dvid.VersionID, block *labels.Block) {
+	var changed bool
+	d.mlMu.RLock()
+	curMax, found := d.MaxLabel[v]
+	d.mlMu.RUnlock()
+	if !found {
+		curMax = 0
+	}
+	for _, label := range block.Labels {
+		if label > curMax {
+			curMax = label
+			changed = true
+		}
+	}
+	if changed {
+		d.mlMu.Lock()
+		d.MaxLabel[v] = curMax
+		if err := d.persistMaxLabel(v); err != nil {
+			dvid.Errorf("updateBlockMaxLabel of data %q: %v\n", d.DataName(), err)
+		}
+		if curMax > d.MaxRepoLabel {
+			d.MaxRepoLabel = curMax
+			if err := d.persistMaxRepoLabel(); err != nil {
+				dvid.Errorf("updateBlockMaxLabel of data %q: %v\n", d.DataName(), err)
+			}
 		}
 		d.mlMu.Unlock()
 	}
@@ -1209,6 +1250,31 @@ func (d *Data) Equals(d2 *Data) bool {
 		return false
 	}
 	return true
+}
+
+func (d *Data) persistMaxLabel(v dvid.VersionID) error {
+	store, err := d.GetOrderedKeyValueDB()
+	if err != nil {
+		return err
+	}
+	if len(d.MaxLabel) == 0 {
+		return fmt.Errorf("bad attempt to save non-existant max label for version %d\n", v)
+	}
+	buf := make([]byte, 8)
+	binary.LittleEndian.PutUint64(buf, d.MaxLabel[v])
+	ctx := datastore.NewVersionedCtx(d, v)
+	return store.Put(ctx, maxLabelTKey, buf)
+}
+
+func (d *Data) persistMaxRepoLabel() error {
+	store, err := d.GetOrderedKeyValueDB()
+	if err != nil {
+		return err
+	}
+	buf := make([]byte, 8)
+	binary.LittleEndian.PutUint64(buf, d.MaxRepoLabel)
+	ctx := storage.NewDataContext(d, 0)
+	return store.Put(ctx, maxRepoLabelTKey, buf)
 }
 
 // NewLabel returns a new label for the given version.
@@ -1228,23 +1294,12 @@ func (d *Data) NewLabel(v dvid.VersionID) (uint64, error) {
 	// Increment and store.
 	d.MaxRepoLabel++
 	d.MaxLabel[v] = d.MaxRepoLabel
-
-	store, err := d.GetOrderedKeyValueDB()
-	if err != nil {
-		return 0, err
+	if err := d.persistMaxLabel(v); err != nil {
+		return d.MaxRepoLabel, err
 	}
-	buf := make([]byte, 8)
-	binary.LittleEndian.PutUint64(buf, d.MaxRepoLabel)
-	ctx := datastore.NewVersionedCtx(d, v)
-	if err := store.Put(ctx, maxLabelTKey, buf); err != nil {
-		return 0, err
+	if err := d.persistMaxRepoLabel(); err != nil {
+		return d.MaxRepoLabel, err
 	}
-
-	ctx2 := storage.NewDataContext(d, 0)
-	if err := store.Put(ctx2, maxRepoLabelTKey, buf); err != nil {
-		return 0, err
-	}
-
 	return d.MaxRepoLabel, nil
 }
 
@@ -1994,6 +2049,9 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 			var block labels.Block
 			if err = block.UnmarshalBinary(uncompressed); err != nil {
 				return fmt.Errorf("unable to deserialize label block %s: %v\n", bcoord, err)
+			}
+			if scale == 0 {
+				go d.updateBlockMaxLabel(ctx.VersionID(), &block)
 			}
 
 			if err != nil {
