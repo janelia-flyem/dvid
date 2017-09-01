@@ -1944,6 +1944,13 @@ func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, sc
 	return err
 }
 
+func (d *Data) blockChangesExtents(extents *dvid.Extents, bx, by, bz int32) bool {
+	blockSize := d.BlockSize().(dvid.Point3d)
+	start := dvid.Point3d{bx * blockSize[0], by * blockSize[1], bz * blockSize[2]}
+	end := dvid.Point3d{start[0] + blockSize[0] - 1, start[1] + blockSize[1] - 1, start[2] + blockSize[2] - 1}
+	return extents.AdjustPoints(start, end)
+}
+
 // ReceiveBlocks stores a slice of bytes corresponding to specified blocks
 func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale uint8, downscale bool, compression string) error {
 	if downscale && scale != 0 {
@@ -2006,6 +2013,11 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 	if d.Compression().Format() != dvid.Gzip {
 		return fmt.Errorf("labelarray %q cannot accept GZIP /blocks POST since it internally uses %s", d.DataName(), d.Compression().Format())
 	}
+	var extentsChanged bool
+	extents, err := d.GetExtents(ctx)
+	if err != nil {
+		return err
+	}
 	var numBlocks, pos int
 	hdrBytes := make([]byte, 16)
 	for {
@@ -2025,6 +2037,10 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 			n, readErr = io.ReadFull(r, compressed)
 			if n != numBytes || (readErr != nil && readErr != io.EOF) {
 				return fmt.Errorf("error reading %d bytes for block %s: %d read (%v)\n", numBytes, bcoord, n, readErr)
+			}
+
+			if mod := d.blockChangesExtents(&extents, bx, by, bz); mod {
+				extentsChanged = true
 			}
 
 			serialization, err := dvid.SerializePrecompressedData(compressed, d.Compression(), d.Checksum())
@@ -2077,6 +2093,12 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 
 	wg.Wait()
 	close(blockCh)
+
+	if extentsChanged {
+		if err := d.PostExtents(ctx, extents.StartPoint(), extents.EndPoint()); err != nil {
+			dvid.Criticalf("could not modify extents for labelarray %q: %v\n", d.DataName(), err)
+		}
+	}
 
 	// if a bufferable op, flush
 	if putbuffer != nil {

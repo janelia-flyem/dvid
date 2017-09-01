@@ -30,6 +30,7 @@ func (d *Data) LoadImages(v dvid.VersionID, offset dvid.Point, filenames []strin
 	ctx := storage.NewDataContext(d, v)
 	loadMutex := ctx.Mutex()
 	loadMutex.Lock()
+	vctx := datastore.NewVersionedCtx(d, v)
 
 	// Handle cleanup given multiple goroutines still writing data.
 	load := &bulkLoadInfo{filenames: filenames, versionID: v, offset: offset}
@@ -37,6 +38,7 @@ func (d *Data) LoadImages(v dvid.VersionID, offset dvid.Point, filenames []strin
 		loadMutex.Unlock()
 
 		if load.extentChanged.Value() {
+			d.PostExtents(vctx, d.Extents().StartPoint(), d.Extents().EndPoint())
 			err := datastore.SaveDataByVersion(v, d)
 			if err != nil {
 				dvid.Errorf("Error in trying to save repo for voxel extent change: %v\n", err)
@@ -52,7 +54,6 @@ func (d *Data) LoadImages(v dvid.VersionID, offset dvid.Point, filenames []strin
 	} else {
 		err = d.loadXYImages(load)
 	}
-
 	if err != nil {
 		timedLog.Infof("RPC load of %d files had error: %v\n", err)
 	} else {

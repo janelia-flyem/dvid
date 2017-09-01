@@ -1110,6 +1110,10 @@ func TestPostBlocks(t *testing.T) {
 		t.Fatalf("Error blocking on sync of labels: %v\n", err)
 	}
 
+	start := dvid.Point3d{1 * 64, 2 * 64, 3 * 64}
+	end := dvid.Point3d{3*64 - 1, 4*64 - 1, 5*64 - 1}
+	testExtents(t, "labels", uuid, start, end)
+
 	vol := labelVol{
 		size:      dvid.Point3d{2, 2, 2}, // in blocks
 		nx:        128,
@@ -1141,6 +1145,44 @@ func TestPostBlocks(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func testExtents(t *testing.T, name string, uuid dvid.UUID, min, max dvid.Point3d) {
+	apiStr := fmt.Sprintf("%snode/%s/%s/metadata", server.WebAPIPath, uuid, name)
+	r := server.TestHTTP(t, "GET", apiStr, nil)
+	jsonVal := make(map[string]interface{})
+	if err := json.Unmarshal(r, &jsonVal); err != nil {
+		t.Errorf("Unable to get metadata in JSON format.  Instead got: %v\n", jsonVal)
+	}
+	propData, ok := jsonVal["Properties"]
+	if !ok {
+		t.Fatalf("Could not parse Properties out of returned JSON: %v\n", jsonVal)
+	}
+	props, ok := propData.(map[string]interface{})
+	if !ok {
+		t.Fatalf("Could not create properties map: %v\n", propData)
+	}
+	pt, ok := props["MaxPoint"]
+	if !ok {
+		t.Fatalf("Couldn't get MaxPoint from Properties object: %v\n", props)
+	}
+	if pt == nil {
+		t.Fatalf("Couldn't find MaxPoint in Properties object: %v\n", props)
+	}
+	maxPoint, ok := pt.([]interface{})
+	if !ok {
+		t.Fatalf("Couldn't parse MaxPoint %s: %v\n", reflect.TypeOf(pt), pt)
+	}
+	x, y, z := maxPoint[0].(float64), maxPoint[1].(float64), maxPoint[2].(float64)
+	if x != float64(max[0]) {
+		t.Errorf("Bad MaxPoint X: expected %.0f, got %d\n", x, max[0])
+	}
+	if y != float64(max[1]) {
+		t.Errorf("Bad MaxPoint Y: expected %.0f, got %d\n", y, max[1])
+	}
+	if z != float64(max[2]) {
+		t.Errorf("Bad MaxPoint Z: expected %.0f, got %d\n", z, max[2])
 	}
 }
 
@@ -1237,6 +1279,9 @@ func testLabels(t *testing.T, labelsIndexed bool) {
 	}
 	vol.postLabelVolume(t, uuid, "", "", 0)
 	vol.testGetLabelVolume(t, uuid, "", "")
+
+	end := dvid.Point3d{32 + 160 - 1, 64 + 160 - 1, 96 + 160 - 1}
+	testExtents(t, "labels", uuid, vol.offset, end)
 
 	// Test the blocks API
 	vol.testBlocks(t, "GET default blocks (lz4)", uuid, "")
