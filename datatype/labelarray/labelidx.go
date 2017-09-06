@@ -857,22 +857,22 @@ func (d *Data) getLegacyRLEs(ctx *datastore.VersionedCtx, meta *Meta, lbls label
 	}
 	op := labels.NewOutputOp(buf)
 	go labels.WriteRLEs(lbls, op, bounds)
-    var numEmpty int
+	var numEmpty int
 	for _, izyx := range indices {
 		tk := NewBlockTKeyByCoord(scale, izyx)
 		data, err := store.Get(ctx, tk)
 		if err != nil {
 			return nil, err
 		}
-        if len(data) == 0 {
-            numEmpty++
-            if numEmpty < 10 {
-                dvid.Errorf("Block %s included in indices for labels %s but has no data (%d times)... skipping.\n", izyx, lbls, numEmpty)
-            } else if numEmpty == 10 {
-                dvid.Errorf("Over %d blocks included in indices with no data.  Halting error stream.\n", numEmpty)
-            }
-            continue
-        }
+		if len(data) == 0 {
+			numEmpty++
+			if numEmpty < 10 {
+				dvid.Errorf("Block %s included in indices for labels %s but has no data (%d times)... skipping.\n", izyx, lbls, numEmpty)
+			} else if numEmpty == 10 {
+				dvid.Errorf("Over %d blocks included in indices with no data.  Halting error stream.\n", numEmpty)
+			}
+			continue
+		}
 		blockData, _, err := dvid.DeserializeData(data, true)
 		if err != nil {
 			return nil, err
@@ -887,8 +887,10 @@ func (d *Data) getLegacyRLEs(ctx *datastore.VersionedCtx, meta *Meta, lbls label
 		}
 		op.Process(&pb)
 	}
-	if err = op.Finish(); err != nil {
-		return nil, err
+	if numEmpty < len(indices) {
+		if err = op.Finish(); err != nil {
+			return nil, err
+		}
 	}
 
 	serialization := buf.Bytes()
