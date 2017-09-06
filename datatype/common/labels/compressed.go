@@ -1324,10 +1324,12 @@ func (op OutputOp) Process(pb *PositionedBlock) {
 
 // Finish signals all input to an OutputOp is done and waits for completion.
 // Any error from the OutputOp is returned.
-func (op OutputOp) Finish() error {
+func (op OutputOp) Finish() (err error) {
 	close(op.pbCh)
-	err := <-op.errCh
-	return err
+    if len(op.errCh) > 0 {
+	    err = <-op.errCh
+    }
+	return 
 }
 
 // WriteRLEs, like WriteBinaryBlocks, writes a compact serialization of a binarized Block to
