@@ -863,6 +863,9 @@ func (d *Data) getLegacyRLEs(ctx *datastore.VersionedCtx, meta *Meta, lbls label
 		if err != nil {
 			return nil, err
 		}
+		if len(data) == 0 {
+			continue
+		}
 		blockData, _, err := dvid.DeserializeData(data, true)
 		if err != nil {
 			return nil, err

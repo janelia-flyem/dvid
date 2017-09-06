@@ -1391,6 +1391,20 @@ func (pb *PositionedBlock) writeRLEs(indices map[uint32]struct{}, op *OutputOp, 
 	if err != nil {
 		return err
 	}
+	minPt := offset
+	maxPt := dvid.Point3d{
+		offset[0] + pb.Size[0] - 1,
+		offset[1] + pb.Size[1] - 1,
+		offset[2] + pb.Size[2] - 1,
+	}
+	if bounds.Exact && bounds.Voxel.IsSet() {
+		bounds.Voxel.Adjust(&minPt, &maxPt)
+	}
+
+	if len(pb.Labels) == 1 {
+		writeSolidBlockRLEs(minPt, maxPt, offset, op, rleBuf, bounds)
+		return nil
+	}
 
 	var multiForeground bool
 	var labelIndex uint32
@@ -1425,16 +1439,6 @@ func (pb *PositionedBlock) writeRLEs(indices map[uint32]struct{}, op *OutputOp, 
 
 	// Keep track of the bit position in each sub-blocks values byte slice so we can easily
 	// traverse the sub-blocks in block coordinates.
-	minPt := offset
-	maxPt := dvid.Point3d{
-		offset[0] + pb.Size[0] - 1,
-		offset[1] + pb.Size[1] - 1,
-		offset[2] + pb.Size[2] - 1,
-	}
-	if bounds.Exact && bounds.Voxel.IsSet() {
-		bounds.Voxel.Adjust(&minPt, &maxPt)
-	}
-
 	for vz := minPt[2]; vz <= maxPt[2]; vz++ {
 		z := vz - offset[2]
 		blockz := vz % SubBlockSize
@@ -1520,6 +1524,25 @@ func (pb *PositionedBlock) writeRLEs(indices map[uint32]struct{}, op *OutputOp, 
 		}
 	}
 	return nil
+}
+
+// writes RLEs for solid block that is known to be within selected labels.
+func writeSolidBlockRLEs(minPt, maxPt, offset dvid.Point3d, op *OutputOp, rleBuf *rleBuffer, bounds dvid.Bounds) {
+	for vz := minPt[2]; vz <= maxPt[2]; vz++ {
+		for vy := minPt[1]; vy <= maxPt[1]; vy++ {
+			yz := getImmutableYZ(vy, vz)
+			rle, inRun := rleBuf.rles[yz]
+
+			vx := minPt[0]
+			dx := maxPt[0] - vx + 1
+			if inRun {
+				rle.Extend(dx)
+			} else {
+				rle = dvid.NewRLE(dvid.Point3d{vx, vy, vz}, dx)
+			}
+			rleBuf.rles[yz] = rle
+		}
+	}
 }
 
 // WriteBinaryBlocks writes a compact serialization of a binarized Block to the

@@ -377,6 +377,85 @@ func setLabel(vol []uint64, size, x, y, z int, label uint64) {
 	vol[i] = label
 }
 
+func TestSolidBlockRLE(t *testing.T) {
+	var buf bytes.Buffer
+	lbls := Set{}
+	lbls[3] = struct{}{}
+	outOp := NewOutputOp(&buf)
+	go WriteRLEs(lbls, outOp, dvid.Bounds{})
+
+	block := MakeSolidBlock(3, dvid.Point3d{64, 64, 64})
+	pb := PositionedBlock{
+		Block:  *block,
+		BCoord: dvid.ChunkPoint3d{2, 1, 2}.ToIZYXString(),
+	}
+	outOp.Process(&pb)
+
+	pb2 := PositionedBlock{
+		Block:  *block,
+		BCoord: dvid.ChunkPoint3d{3, 1, 2}.ToIZYXString(),
+	}
+	outOp.Process(&pb2)
+
+	// include a solid half-block so we can make sure RLE pasting across blocks works.
+	numVoxels := 64 * 64 * 64
+	testvol := make([]uint64, numVoxels)
+	for z := 0; z < 64; z++ {
+		for y := 0; y < 32; y++ {
+			for x := 0; x < 64; x++ {
+				i := z*64*64 + y*64 + x
+				testvol[i] = 3
+			}
+		}
+	}
+	block2, err := MakeBlock(dvid.Uint64ToByte(testvol), dvid.Point3d{64, 64, 64})
+	if err != nil {
+		t.Fatalf("error making block: %v\n", err)
+	}
+	pb3 := PositionedBlock{
+		Block:  *block2,
+		BCoord: dvid.ChunkPoint3d{4, 1, 2}.ToIZYXString(),
+	}
+	outOp.Process(&pb3)
+
+	if err := outOp.Finish(); err != nil {
+		t.Fatalf("error writing RLEs: %v\n", err)
+	}
+	output, err := ioutil.ReadAll(&buf)
+	if err != nil {
+		t.Fatalf("error on reading WriteRLEs: %v\n", err)
+	}
+
+	expectedNumRLEs := 64 * 64 * 16
+	if len(output) != expectedNumRLEs {
+		t.Fatalf("expected %d RLEs (%d bytes), got %d bytes\n", expectedNumRLEs/16, expectedNumRLEs, len(output))
+	}
+	var rles dvid.RLEs
+	if err = rles.UnmarshalBinary(output); err != nil {
+		t.Fatalf("unable to parse binary RLEs: %v\n", err)
+	}
+	var i int
+	expected := make(dvid.RLEs, 64*64)
+	for z := int32(0); z < 64; z++ {
+		for y := int32(0); y < 32; y++ {
+			expected[i] = dvid.NewRLE(dvid.Point3d{128, y + 64, z + 128}, 192)
+			i++
+		}
+	}
+	for z := int32(0); z < 64; z++ {
+		for y := int32(32); y < 64; y++ {
+			expected[i] = dvid.NewRLE(dvid.Point3d{128, y + 64, z + 128}, 128)
+			i++
+		}
+	}
+	expected = expected.Normalize()
+	for i, rle := range rles.Normalize() {
+		if rle != expected[i] {
+			t.Errorf("Expected RLE %d: %s, got %s\n", i, expected[i], rle)
+		}
+	}
+}
+
 func TestBlockSplitAndRLEs(t *testing.T) {
 	numVoxels := 32 * 32 * 32
 	testvol := make([]uint64, numVoxels)
