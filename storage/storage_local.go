@@ -220,6 +220,7 @@ func Initialize(cmdline dvid.Config, backend *Backend) (createdMetadata bool, er
 		}
 		store, created, err := NewStore(dbconfig)
 		if err != nil {
+			fmt.Errorf("dbconfig: %v\n", dbconfig)
 			return false, fmt.Errorf("bad store %q: %v", alias, err)
 		}
 		if alias == backend.Metadata {
