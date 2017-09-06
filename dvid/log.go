@@ -25,7 +25,7 @@ var (
 	logCh chan logMessage
 )
 
-type logFunc func(format string, args ...interface{})
+type logFunc func(s string)
 
 type logMessage struct {
 	f   logFunc
@@ -84,6 +84,21 @@ type Logger interface {
 	// Criticalf is like Debugf, but at Critical level.
 	Criticalf(format string, args ...interface{})
 
+	// Debug writes a string without formatting using Debug level.
+	Debug(s string)
+
+	// Info writes a string without formatting using Info level.
+	Info(s string)
+
+	// Warning writes a string without formatting using Warning level.
+	Warning(s string)
+
+	// Error writes a string without formatting using Error level.
+	Error(s string)
+
+	// Critical writes a string without formatting using Critical level.
+	Critical(s string)
+
 	// Shutdown makes sure logs are closed.
 	Shutdown()
 }
@@ -100,31 +115,31 @@ func SetLogMode(newMode ModeFlag) {
 
 func Debugf(format string, args ...interface{}) {
 	if mode <= DebugMode {
-		logCh <- logMessage{f: logger.Debugf, msg: fmt.Sprintf(format, args...)}
+		logCh <- logMessage{f: logger.Debug, msg: fmt.Sprintf(format, args...)}
 	}
 }
 
 func Infof(format string, args ...interface{}) {
 	if mode <= InfoMode {
-		logCh <- logMessage{f: logger.Infof, msg: fmt.Sprintf(format, args...)}
+		logCh <- logMessage{f: logger.Info, msg: fmt.Sprintf(format, args...)}
 	}
 }
 
 func Warningf(format string, args ...interface{}) {
 	if mode <= WarningMode {
-		logCh <- logMessage{f: logger.Warningf, msg: fmt.Sprintf(format, args...)}
+		logCh <- logMessage{f: logger.Warning, msg: fmt.Sprintf(format, args...)}
 	}
 }
 
 func Errorf(format string, args ...interface{}) {
 	if mode <= ErrorMode {
-		logCh <- logMessage{f: logger.Errorf, msg: fmt.Sprintf(format, args...)}
+		logCh <- logMessage{f: logger.Error, msg: fmt.Sprintf(format, args...)}
 	}
 }
 
 func Criticalf(format string, args ...interface{}) {
 	if mode <= CriticalMode {
-		logCh <- logMessage{f: logger.Criticalf, msg: fmt.Sprintf(format, args...)}
+		logCh <- logMessage{f: logger.Critical, msg: fmt.Sprintf(format, args...)}
 	}
 }
 
@@ -150,31 +165,31 @@ func NewTimeLog() TimeLog {
 
 func (t TimeLog) Debugf(format string, args ...interface{}) {
 	if mode <= DebugMode {
-		logCh <- logMessage{f: t.logger.Debugf, msg: fmt.Sprintf(format+": %s\n", append(args, time.Since(t.start))...)}
+		logCh <- logMessage{f: t.logger.Debug, msg: fmt.Sprintf(format+": %s\n", append(args, time.Since(t.start))...)}
 	}
 }
 
 func (t TimeLog) Infof(format string, args ...interface{}) {
 	if mode <= InfoMode {
-		logCh <- logMessage{f: t.logger.Infof, msg: fmt.Sprintf(format+": %s\n", append(args, time.Since(t.start))...)}
+		logCh <- logMessage{f: t.logger.Info, msg: fmt.Sprintf(format+": %s\n", append(args, time.Since(t.start))...)}
 	}
 }
 
 func (t TimeLog) Warningf(format string, args ...interface{}) {
 	if mode <= WarningMode {
-		logCh <- logMessage{f: t.logger.Warningf, msg: fmt.Sprintf(format+": %s\n", append(args, time.Since(t.start))...)}
+		logCh <- logMessage{f: t.logger.Warning, msg: fmt.Sprintf(format+": %s\n", append(args, time.Since(t.start))...)}
 	}
 }
 
 func (t TimeLog) Errorf(format string, args ...interface{}) {
 	if mode <= ErrorMode {
-		logCh <- logMessage{f: t.logger.Errorf, msg: fmt.Sprintf(format+": %s\n", append(args, time.Since(t.start))...)}
+		logCh <- logMessage{f: t.logger.Error, msg: fmt.Sprintf(format+": %s\n", append(args, time.Since(t.start))...)}
 	}
 }
 
 func (t TimeLog) Criticalf(format string, args ...interface{}) {
 	if mode <= CriticalMode {
-		logCh <- logMessage{f: t.logger.Criticalf, msg: fmt.Sprintf(format+": %s\n", append(args, time.Since(t.start))...)}
+		logCh <- logMessage{f: t.logger.Critical, msg: fmt.Sprintf(format+": %s\n", append(args, time.Since(t.start))...)}
 	}
 }
 
