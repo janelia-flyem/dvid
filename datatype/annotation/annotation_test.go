@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -655,7 +656,8 @@ func testResponseLabel(t *testing.T, expected interface{}, template string, args
 			t.Fatal(err)
 		}
 		if !reflect.DeepEqual(elems.Normalize(), got.Normalize()) {
-			t.Fatalf("Expected for %s:\n%v\nGot:\n%v\n", url, elems.Normalize(), got.Normalize())
+			_, fn, line, _ := runtime.Caller(1)
+			t.Fatalf("Expected for %s [%s:%d]:\n%v\nGot:\n%v\n", url, fn, line, elems.Normalize(), got.Normalize())
 		}
 	} else {
 		var elems ElementsNR
@@ -673,7 +675,8 @@ func testResponseLabel(t *testing.T, expected interface{}, template string, args
 			t.Fatal(err)
 		}
 		if !reflect.DeepEqual(elems.Normalize(), got.Normalize()) {
-			t.Fatalf("Expected for %s:\n%v\nGot:\n%v\n", url, elems.Normalize(), got.Normalize())
+			_, fn, line, _ := runtime.Caller(1)
+			t.Fatalf("Expected for %s [%s:%d]:\n%v\nGot:\n%v\n", url, fn, line, elems.Normalize(), got.Normalize())
 		}
 	}
 }
@@ -885,7 +888,129 @@ func getBytesRLE(t *testing.T, rles dvid.RLEs) *bytes.Buffer {
 	return buf
 }
 
-func TestLabels(t *testing.T) {
+func testLabels(t *testing.T, uuid dvid.UUID, labelblkName, labelvolName dvid.InstanceName) {
+	// PUT first batch of synapses
+	testJSON, err := json.Marshal(testData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	url1 := fmt.Sprintf("%snode/%s/mysynapses/elements", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", url1, strings.NewReader(string(testJSON)))
+
+	// Test if labels were properly denormalized.  For the POST we have synchronized label denormalization.
+	// If this were to become asynchronous, we'd want to block on updating like the labelblk<->labelvol sync.
+
+	testResponseLabel(t, expectedLabel1, "%snode/%s/mysynapses/label/1?relationships=true", server.WebAPIPath, uuid)
+	testResponseLabel(t, expectedLabel2, "%snode/%s/mysynapses/label/2?relationships=true", server.WebAPIPath, uuid)
+	testResponseLabel(t, expectedLabel3, "%snode/%s/mysynapses/label/3?relationships=true", server.WebAPIPath, uuid)
+	testResponseLabel(t, expectedLabel3NoRel, "%snode/%s/mysynapses/label/3", server.WebAPIPath, uuid)
+	testResponseLabel(t, expectedLabel4, "%snode/%s/mysynapses/label/4?relationships=true", server.WebAPIPath, uuid)
+
+	// Make change to labelblk and make sure our label synapses have been adjusted (case A)
+	_ = modifyLabelTestVolume(t, uuid, string(labelblkName))
+
+	if err := datastore.BlockOnUpdating(uuid, "mysynapses"); err != nil {
+		t.Fatalf("Error blocking on sync of labels->annotations: %v\n", err)
+	}
+
+	testResponseLabel(t, expectedLabel1, "%snode/%s/mysynapses/label/1?relationships=true", server.WebAPIPath, uuid)
+	testResponseLabel(t, expectedLabel2a, "%snode/%s/mysynapses/label/2?relationships=true", server.WebAPIPath, uuid)
+	testResponseLabel(t, expectedLabel3a, "%snode/%s/mysynapses/label/3?relationships=true", server.WebAPIPath, uuid)
+	testResponseLabel(t, expectedLabel4, "%snode/%s/mysynapses/label/4?relationships=true", server.WebAPIPath, uuid)
+	testResponseLabel(t, expectedLabel4NoRel, "%snode/%s/mysynapses/label/4", server.WebAPIPath, uuid)
+
+	// Make change to labelvol and make sure our label synapses have been adjusted (case B).
+	// Merge 3a into 2a.
+	testMerge := mergeJSON(`[2, 3]`)
+	testMerge.send(t, uuid, string(labelvolName))
+
+	if err := datastore.BlockOnUpdating(uuid, labelblkName); err != nil {
+		t.Fatalf("Error blocking on sync of labels: %v\n", err)
+	}
+
+	if err := datastore.BlockOnUpdating(uuid, "mysynapses"); err != nil {
+		t.Fatalf("Error blocking on sync of synapses: %v\n", err)
+	}
+
+	if err := datastore.BlockOnUpdating(uuid, labelvolName); err != nil {
+		t.Fatalf("Error blocking on sync of bodies: %v\n", err)
+	}
+
+	testResponseLabel(t, expectedLabel1, "%snode/%s/mysynapses/label/1?relationships=true", server.WebAPIPath, uuid)
+	testResponseLabel(t, expectedLabel2b, "%snode/%s/mysynapses/label/2?relationships=true", server.WebAPIPath, uuid)
+	testResponseLabel(t, nil, "%snode/%s/mysynapses/label/3?relationships=true", server.WebAPIPath, uuid)
+	testResponseLabel(t, expectedLabel4, "%snode/%s/mysynapses/label/4?relationships=true", server.WebAPIPath, uuid)
+
+	// Now split label 2b off and check if annotations also split
+
+	// Create the sparsevol encoding for split area
+	numspans := len(bodysplit.voxelSpans)
+	rles := make(dvid.RLEs, numspans, numspans)
+	for i, span := range bodysplit.voxelSpans {
+		start := dvid.Point3d{span[2], span[1], span[0]}
+		length := span[3] - span[2] + 1
+		rles[i] = dvid.NewRLE(start, length)
+	}
+	buf := getBytesRLE(t, rles)
+
+	// Submit the split sparsevol
+	reqStr := fmt.Sprintf("%snode/%s/%s/split/2?splitlabel=7", server.WebAPIPath, uuid, labelvolName)
+	r := server.TestHTTP(t, "POST", reqStr, buf)
+	jsonVal := make(map[string]uint64)
+	if err := json.Unmarshal(r, &jsonVal); err != nil {
+		t.Errorf("Unable to get new label from split.  Instead got: %v\n", jsonVal)
+	}
+
+	// Verify that the annotations are correct.
+	if err := datastore.BlockOnUpdating(uuid, "mysynapses"); err != nil {
+		t.Fatalf("Error blocking on sync of split->annotations: %v\n", err)
+	}
+	testResponseLabel(t, expectedLabel2c, "%snode/%s/mysynapses/label/2?relationships=true", server.WebAPIPath, uuid)
+	url2 := fmt.Sprintf("%snode/%s/mysynapses/label/7?relationships=true", server.WebAPIPath, uuid)
+	testResponseLabel(t, expectedLabel7, url2)
+
+	// Change the name of the annotations.
+	if err = datastore.RenameData(uuid, "mysynapses", labelvolName, "foobar"); err == nil {
+		t.Fatalf("Should have been prevented from renaming data 'mysynapses' to existing instance!\n")
+	}
+	if err = datastore.RenameData(uuid, "mysynapses", "renamedData", "foobar"); err != nil {
+		t.Fatalf("Error renaming annotations: %v\n", err)
+	}
+
+	// Make sure the old name is no longer there and the new one is.
+	server.TestBadHTTP(t, "GET", url2, nil)
+	testResponseLabel(t, expectedLabel2c, "%snode/%s/renamedData/label/2?relationships=true", server.WebAPIPath, uuid)
+
+	// Try a coarse split.
+
+	// Create the encoding for split area in block coordinates.
+	rles = dvid.RLEs{
+		dvid.NewRLE(dvid.Point3d{3, 1, 3}, 1),
+	}
+	buf = getBytesRLE(t, rles)
+
+	// Submit the coarse split
+	reqStr = fmt.Sprintf("%snode/%s/%s/split-coarse/2?splitlabel=8", server.WebAPIPath, uuid, labelvolName)
+	r = server.TestHTTP(t, "POST", reqStr, buf)
+	jsonVal = make(map[string]uint64)
+	if err := json.Unmarshal(r, &jsonVal); err != nil {
+		t.Errorf("Unable to get new label from split.  Instead got: %v\n", jsonVal)
+	}
+
+	// Verify that the annotations are correct.
+	if err := datastore.BlockOnUpdating(uuid, "renamedData"); err != nil {
+		t.Fatalf("Error blocking on sync of split->annotations: %v\n", err)
+	}
+	testResponseLabel(t, expectedLabel2c, "%snode/%s/renamedData/label/8?relationships=true", server.WebAPIPath, uuid)
+	testResponseLabel(t, nil, "%snode/%s/renamedData/label/2?relationships=true", server.WebAPIPath, uuid)
+
+	// Delete a labeled annotation and make sure it's not in label
+	delurl := fmt.Sprintf("%snode/%s/%s/element/20_30_40", server.WebAPIPath, uuid, "renamedData")
+	server.TestHTTP(t, "DELETE", delurl, nil)
+	testResponseLabel(t, afterDeleteOn7, "%snode/%s/%s/label/7?relationships=true", server.WebAPIPath, uuid, "renamedData")
+}
+
+func TestOldLabels(t *testing.T) {
 	datastore.OpenTest()
 	defer datastore.CloseTest()
 
@@ -921,16 +1046,42 @@ func TestLabels(t *testing.T) {
 		t.Fatalf("Expected 2 syncs (uuids for labels and bodies], got %v\n", data.SyncedData())
 	}
 
-	// PUT first batch of synapses
-	testJSON, err := json.Marshal(testData)
+	testLabels(t, uuid, "labels", "bodies")
+}
+
+func TestLabels(t *testing.T) {
+	datastore.OpenTest()
+	defer datastore.CloseTest()
+
+	// Create testbed volume and data instances
+	uuid, _ := initTestRepo()
+	var config dvid.Config
+	config.Set("BlockSize", "32,32,32")
+	server.CreateTestInstance(t, uuid, "labelarray", "labels", config)
+
+	// Populate the labels, which should automatically populate the labelvol
+	_ = createLabelTestVolume(t, uuid, "labels")
+
+	// Add annotations syncing with "labels" instance checking for deduplication.
+	server.CreateTestInstance(t, uuid, "annotation", "mysynapses", config)
+	server.CreateTestSync(t, uuid, "mysynapses", "labels,labels,labels")
+	dataservice, err := datastore.GetDataByUUIDName(uuid, "mysynapses")
 	if err != nil {
 		t.Fatal(err)
 	}
-	url1 := fmt.Sprintf("%snode/%s/mysynapses/elements", server.WebAPIPath, uuid)
-	server.TestHTTP(t, "POST", url1, strings.NewReader(string(testJSON)))
+	data, ok := dataservice.(*Data)
+	if !ok {
+		t.Fatalf("Can't convert dataservice %v into datastore.Data\n", dataservice)
+	}
+	if len(data.SyncedData()) != 1 {
+		t.Fatalf("Expected 1 sync (uuid for labels), got %v\n", data.SyncedData())
+	}
 
+	testLabels(t, uuid, "labels", "labels")
+}
+
+func testLabelsReload(t *testing.T, uuid dvid.UUID, labelblkName, labelvolName dvid.InstanceName) {
 	// Test if labels were properly denormalized.  For the POST we have synchronized label denormalization.
-	// If this were to become asynchronous, we'd want to block on updating like the labelblk<->labelvol sync.
 
 	testResponseLabel(t, expectedLabel1, "%snode/%s/mysynapses/label/1?relationships=true", server.WebAPIPath, uuid)
 	testResponseLabel(t, expectedLabel2, "%snode/%s/mysynapses/label/2?relationships=true", server.WebAPIPath, uuid)
@@ -939,7 +1090,7 @@ func TestLabels(t *testing.T) {
 	testResponseLabel(t, expectedLabel4, "%snode/%s/mysynapses/label/4?relationships=true", server.WebAPIPath, uuid)
 
 	// Make change to labelblk and make sure our label synapses have been adjusted (case A)
-	_ = modifyLabelTestVolume(t, uuid, "labels")
+	_ = modifyLabelTestVolume(t, uuid, string(labelblkName))
 
 	if err := datastore.BlockOnUpdating(uuid, "mysynapses"); err != nil {
 		t.Fatalf("Error blocking on sync of labels->annotations: %v\n", err)
@@ -954,9 +1105,9 @@ func TestLabels(t *testing.T) {
 	// Make change to labelvol and make sure our label synapses have been adjusted (case B).
 	// Merge 3a into 2a.
 	testMerge := mergeJSON(`[2, 3]`)
-	testMerge.send(t, uuid, "bodies")
+	testMerge.send(t, uuid, string(labelvolName))
 
-	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
+	if err := datastore.BlockOnUpdating(uuid, labelblkName); err != nil {
 		t.Fatalf("Error blocking on sync of labels: %v\n", err)
 	}
 
@@ -964,7 +1115,7 @@ func TestLabels(t *testing.T) {
 		t.Fatalf("Error blocking on sync of synapses: %v\n", err)
 	}
 
-	if err := datastore.BlockOnUpdating(uuid, "bodies"); err != nil {
+	if err := datastore.BlockOnUpdating(uuid, labelvolName); err != nil {
 		t.Fatalf("Error blocking on sync of bodies: %v\n", err)
 	}
 
@@ -972,77 +1123,9 @@ func TestLabels(t *testing.T) {
 	testResponseLabel(t, expectedLabel2b, "%snode/%s/mysynapses/label/2?relationships=true", server.WebAPIPath, uuid)
 	testResponseLabel(t, nil, "%snode/%s/mysynapses/label/3?relationships=true", server.WebAPIPath, uuid)
 	testResponseLabel(t, expectedLabel4, "%snode/%s/mysynapses/label/4?relationships=true", server.WebAPIPath, uuid)
-
-	// Now split label 2b off and check if annotations also split
-
-	// Create the sparsevol encoding for split area
-	numspans := len(bodysplit.voxelSpans)
-	rles := make(dvid.RLEs, numspans, numspans)
-	for i, span := range bodysplit.voxelSpans {
-		start := dvid.Point3d{span[2], span[1], span[0]}
-		length := span[3] - span[2] + 1
-		rles[i] = dvid.NewRLE(start, length)
-	}
-	buf := getBytesRLE(t, rles)
-
-	// Submit the split sparsevol
-	reqStr := fmt.Sprintf("%snode/%s/bodies/split/2?splitlabel=7", server.WebAPIPath, uuid)
-	r := server.TestHTTP(t, "POST", reqStr, buf)
-	jsonVal := make(map[string]uint64)
-	if err := json.Unmarshal(r, &jsonVal); err != nil {
-		t.Errorf("Unable to get new label from split.  Instead got: %v\n", jsonVal)
-	}
-
-	// Verify that the annotations are correct.
-	if err := datastore.BlockOnUpdating(uuid, "mysynapses"); err != nil {
-		t.Fatalf("Error blocking on sync of split->annotations: %v\n", err)
-	}
-	testResponseLabel(t, expectedLabel2c, "%snode/%s/mysynapses/label/2?relationships=true", server.WebAPIPath, uuid)
-	url2 := fmt.Sprintf("%snode/%s/mysynapses/label/7?relationships=true", server.WebAPIPath, uuid)
-	testResponseLabel(t, expectedLabel7, url2)
-
-	// Change the name of the annotations.
-	if err = datastore.RenameData(uuid, "mysynapses", "bodies", "foobar"); err == nil {
-		t.Fatalf("Should have been prevented from renaming data 'mysynapses' to existing data 'bodies'!\n")
-	}
-	if err = datastore.RenameData(uuid, "mysynapses", "renamedData", "foobar"); err != nil {
-		t.Fatalf("Error renaming annotations: %v\n", err)
-	}
-
-	// Make sure the old name is no longer there and the new one is.
-	server.TestBadHTTP(t, "GET", url2, nil)
-	testResponseLabel(t, expectedLabel2c, "%snode/%s/renamedData/label/2?relationships=true", server.WebAPIPath, uuid)
-
-	// Try a coarse split.
-
-	// Create the encoding for split area in block coordinates.
-	rles = dvid.RLEs{
-		dvid.NewRLE(dvid.Point3d{3, 1, 3}, 1),
-	}
-	buf = getBytesRLE(t, rles)
-
-	// Submit the coarse split
-	reqStr = fmt.Sprintf("%snode/%s/%s/split-coarse/2?splitlabel=8", server.WebAPIPath, uuid, "bodies")
-	r = server.TestHTTP(t, "POST", reqStr, buf)
-	jsonVal = make(map[string]uint64)
-	if err := json.Unmarshal(r, &jsonVal); err != nil {
-		t.Errorf("Unable to get new label from split.  Instead got: %v\n", jsonVal)
-	}
-
-	// Verify that the annotations are correct.
-	if err := datastore.BlockOnUpdating(uuid, "renamedData"); err != nil {
-		t.Fatalf("Error blocking on sync of split->annotations: %v\n", err)
-	}
-	testResponseLabel(t, expectedLabel2c, "%snode/%s/renamedData/label/8?relationships=true", server.WebAPIPath, uuid)
-	testResponseLabel(t, nil, "%snode/%s/renamedData/label/2?relationships=true", server.WebAPIPath, uuid)
-
-	// Delete a labeled annotation and make sure it's not in label
-	delurl := fmt.Sprintf("%snode/%s/%s/element/20_30_40", server.WebAPIPath, uuid, "renamedData")
-	server.TestHTTP(t, "DELETE", delurl, nil)
-	testResponseLabel(t, afterDeleteOn7, "%snode/%s/%s/label/7?relationships=true", server.WebAPIPath, uuid, "renamedData")
 }
 
-func TestLabelsReload(t *testing.T) {
+func TestOldLabelsReload(t *testing.T) {
 	datastore.OpenTest()
 	defer datastore.CloseTest()
 
@@ -1086,48 +1169,49 @@ func TestLabelsReload(t *testing.T) {
 		t.Fatalf("Error blocking on sync of annotations: %v\n", err)
 	}
 
-	// Test if labels were properly denormalized.  For the POST we have synchronized label denormalization.
+	testLabelsReload(t, uuid, "labels", "bodies")
+}
 
-	testResponseLabel(t, expectedLabel1, "%snode/%s/mysynapses/label/1?relationships=true", server.WebAPIPath, uuid)
-	testResponseLabel(t, expectedLabel2, "%snode/%s/mysynapses/label/2?relationships=true", server.WebAPIPath, uuid)
-	testResponseLabel(t, expectedLabel3, "%snode/%s/mysynapses/label/3?relationships=true", server.WebAPIPath, uuid)
-	testResponseLabel(t, expectedLabel3NoRel, "%snode/%s/mysynapses/label/3", server.WebAPIPath, uuid)
-	testResponseLabel(t, expectedLabel4, "%snode/%s/mysynapses/label/4?relationships=true", server.WebAPIPath, uuid)
+func TestLabelsReload(t *testing.T) {
+	datastore.OpenTest()
+	defer datastore.CloseTest()
 
-	// Make change to labelblk and make sure our label synapses have been adjusted (case A)
-	_ = modifyLabelTestVolume(t, uuid, "labels")
+	// Create testbed volume and data instances
+	uuid, _ := initTestRepo()
+	var config dvid.Config
+	config.Set("BlockSize", "32,32,32")
+	server.CreateTestInstance(t, uuid, "labelarray", "labels", config)
 
-	if err := datastore.BlockOnUpdating(uuid, "mysynapses"); err != nil {
-		t.Fatalf("Error blocking on sync of labels->annotations: %v\n", err)
-	}
-
-	testResponseLabel(t, expectedLabel1, "%snode/%s/mysynapses/label/1?relationships=true", server.WebAPIPath, uuid)
-	testResponseLabel(t, expectedLabel2a, "%snode/%s/mysynapses/label/2?relationships=true", server.WebAPIPath, uuid)
-	testResponseLabel(t, expectedLabel3a, "%snode/%s/mysynapses/label/3?relationships=true", server.WebAPIPath, uuid)
-	testResponseLabel(t, expectedLabel4, "%snode/%s/mysynapses/label/4?relationships=true", server.WebAPIPath, uuid)
-	testResponseLabel(t, expectedLabel4NoRel, "%snode/%s/mysynapses/label/4", server.WebAPIPath, uuid)
-
-	// Make change to labelvol and make sure our label synapses have been adjusted (case B).
-	// Merge 3a into 2a.
-	testMerge := mergeJSON(`[2, 3]`)
-	testMerge.send(t, uuid, "bodies")
+	_ = createLabelTestVolume(t, uuid, "labels")
 
 	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
 		t.Fatalf("Error blocking on sync of labels: %v\n", err)
 	}
 
+	// Add annotations without syncing.
+	server.CreateTestInstance(t, uuid, "annotation", "mysynapses", config)
+
+	// PUT first batch of synapses
+	testJSON, err := json.Marshal(testData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	url1 := fmt.Sprintf("%snode/%s/mysynapses/elements", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", url1, strings.NewReader(string(testJSON)))
+
+	// Add the sync
+	server.CreateTestSync(t, uuid, "mysynapses", "labels")
+
+	// Do a reload asynchronously
+	reloadURL := fmt.Sprintf("%snode/%s/mysynapses/reload", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", reloadURL, nil)
+
+	// Wait until done.
 	if err := datastore.BlockOnUpdating(uuid, "mysynapses"); err != nil {
-		t.Fatalf("Error blocking on sync of synapses: %v\n", err)
+		t.Fatalf("Error blocking on sync of annotations: %v\n", err)
 	}
 
-	if err := datastore.BlockOnUpdating(uuid, "bodies"); err != nil {
-		t.Fatalf("Error blocking on sync of bodies: %v\n", err)
-	}
-
-	testResponseLabel(t, expectedLabel1, "%snode/%s/mysynapses/label/1?relationships=true", server.WebAPIPath, uuid)
-	testResponseLabel(t, expectedLabel2b, "%snode/%s/mysynapses/label/2?relationships=true", server.WebAPIPath, uuid)
-	testResponseLabel(t, nil, "%snode/%s/mysynapses/label/3?relationships=true", server.WebAPIPath, uuid)
-	testResponseLabel(t, expectedLabel4, "%snode/%s/mysynapses/label/4?relationships=true", server.WebAPIPath, uuid)
+	testLabelsReload(t, uuid, "labels", "labels")
 }
 
 // A single label block within the volume

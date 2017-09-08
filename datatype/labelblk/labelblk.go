@@ -1621,8 +1621,8 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 
 // --------- Other functions on labelblk Data -----------------
 
-// GetLabelBlock returns a block of labels corresponding to the block coordinate.
-func (d *Data) GetLabelBlock(v dvid.VersionID, bcoord dvid.ChunkPoint3d) ([]byte, error) {
+// GetLabelBytes returns a slice of little-endian uint64 corresponding to the block coordinate.
+func (d *Data) GetLabelBytes(v dvid.VersionID, bcoord dvid.ChunkPoint3d) ([]byte, error) {
 	store, err := d.GetOrderedKeyValueDB()
 	if err != nil {
 		return nil, err
@@ -1654,7 +1654,7 @@ func (d *Data) GetLabelBytesAtPoint(v dvid.VersionID, pt dvid.Point) ([]byte, er
 	blockSize := d.BlockSize()
 	bcoord := coord.Chunk(blockSize).(dvid.ChunkPoint3d)
 
-	labelData, err := d.GetLabelBlock(v, bcoord)
+	labelData, err := d.GetLabelBytes(v, bcoord)
 	if err != nil {
 		return nil, err
 	}

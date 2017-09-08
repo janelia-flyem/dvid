@@ -19,12 +19,6 @@ const (
 	numBlockHandlers = 8 // goroutines used to process block changes
 	numLabelHandlers = 8 // goroutines used to do get/put tx on label indices
 
-	DownsizeBlockEvent  = "LABELS64_DOWNSIZE_ADD"
-	DownsizeCommitEvent = "LABELS64_DOWNSIZE_COMMIT"
-
-	IngestBlockEvent = "LABELS64_BLOCK_INGEST"
-	MutateBlockEvent = "LABELS64_BLOCK_MUTATE"
-	DeleteBlockEvent = "LABELS64_BLOCK_DELETE"
 )
 
 // IngestedBlock is the unit of delta for a IngestBlockEvent.

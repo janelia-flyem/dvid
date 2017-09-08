@@ -207,13 +207,13 @@ func (d *Data) putChunk(op *putOperation, wg *sync.WaitGroup, putbuffer storage.
 		}
 		var event string
 		var delta interface{}
-		if op.mutate {
-			event = MutateBlockEvent
+		if oldBlock != nil && op.mutate {
+			event = labels.MutateBlockEvent
 			block := MutatedBlock{op.mutID, bcoord, &(oldBlock.Block), curBlock}
 			d.handleBlockMutate(op.version, op.blockCh, block)
 			delta = block
 		} else {
-			event = IngestBlockEvent
+			event = labels.IngestBlockEvent
 			block := IngestedBlock{op.mutID, bcoord, curBlock}
 			d.handleBlockIngest(op.version, op.blockCh, block)
 			delta = block
@@ -353,7 +353,7 @@ func (d *Data) writeBlocks(v dvid.VersionID, b storage.TKeyValues, wg1, wg2 *syn
 			block := IngestedBlock{mutID, indexZYX.ToIZYXString(), lblBlock}
 			d.handleBlockIngest(v, blockCh, block)
 
-			msg := datastore.SyncMessage{IngestBlockEvent, v, block}
+			msg := datastore.SyncMessage{labels.IngestBlockEvent, v, block}
 			if err := datastore.NotifySubscribers(evt, msg); err != nil {
 				dvid.Errorf("Unable to notify subscribers of ChangeBlockEvent in %s\n", d.DataName())
 				return

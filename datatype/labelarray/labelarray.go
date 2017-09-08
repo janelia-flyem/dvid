@@ -912,7 +912,7 @@ func (dtype *Type) Help() string {
 
 // -------
 
-// GetByDataUUID returns a pointer to labelarray data given a data UUID.
+// GetByDataUUID returns a pointer to labelarray data given a data UUID.  Returns error if not found.
 func GetByDataUUID(dataUUID dvid.UUID) (*Data, error) {
 	source, err := datastore.GetDataByDataUUID(dataUUID)
 	if err != nil {
@@ -1992,7 +1992,7 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 				return
 			}
 		}
-		event := IngestBlockEvent
+		event := labels.IngestBlockEvent
 		ingestBlock := IngestedBlock{mutID, bcoord, block}
 		d.handleBlockIngest(ctx.VersionID(), blockCh, ingestBlock)
 		if downscale {
@@ -3341,8 +3341,8 @@ func (d *Data) GetLabelBlock(v dvid.VersionID, scale uint8, bcoord dvid.ChunkPoi
 	return &block, nil
 }
 
-// GetLabelBytes returns a block of labels in packed little-endian uint64 format.
-func (d *Data) GetLabelBytes(v dvid.VersionID, scale uint8, bcoord dvid.ChunkPoint3d) ([]byte, error) {
+// GetLabelBytes returns a hi-res block of labels in packed little-endian uint64 format.
+func (d *Data) GetLabelBytes(v dvid.VersionID, bcoord dvid.ChunkPoint3d) ([]byte, error) {
 	store, err := d.GetOrderedKeyValueDB()
 	if err != nil {
 		return nil, err
@@ -3351,7 +3351,7 @@ func (d *Data) GetLabelBytes(v dvid.VersionID, scale uint8, bcoord dvid.ChunkPoi
 	// Retrieve the block of labels
 	ctx := datastore.NewVersionedCtx(d, v)
 	index := dvid.IndexZYX(bcoord)
-	serialization, err := store.Get(ctx, NewBlockTKey(scale, &index))
+	serialization, err := store.Get(ctx, NewBlockTKey(0, &index))
 	if err != nil {
 		return nil, fmt.Errorf("Error getting '%s' block for index %s\n", d.DataName(), bcoord)
 	}
@@ -3379,7 +3379,7 @@ func (d *Data) GetLabelBytesAtPoint(v dvid.VersionID, pt dvid.Point) ([]byte, er
 	blockSize := d.BlockSize()
 	bcoord := coord.Chunk(blockSize).(dvid.ChunkPoint3d)
 
-	labelData, err := d.GetLabelBytes(v, 0, bcoord)
+	labelData, err := d.GetLabelBytes(v, bcoord)
 	if err != nil {
 		return nil, err
 	}

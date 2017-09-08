@@ -17,6 +17,7 @@ import (
 	"sync"
 
 	"github.com/janelia-flyem/dvid/datastore"
+	"github.com/janelia-flyem/dvid/datatype/labelarray"
 	"github.com/janelia-flyem/dvid/datatype/labelblk"
 	"github.com/janelia-flyem/dvid/datatype/labelvol"
 	"github.com/janelia-flyem/dvid/datatype/roi"
@@ -884,7 +885,7 @@ func (d *Data) blockSize() dvid.Point3d {
 	}
 	var bsize dvid.Point3d
 	d.cachedBlockSize = &bsize
-	if lb := d.GetSyncedLabelblk(); lb != nil {
+	if lb := d.GetSyncedLabels(); lb != nil {
 		bsize = lb.BlockSize().(dvid.Point3d)
 		return bsize
 	}
@@ -896,9 +897,9 @@ func (d *Data) blockSize() dvid.Point3d {
 	return bsize
 }
 
-func (d *Data) GetSyncedLabelblk() *labelblk.Data {
+func (d *Data) GetSyncedLabelvol() *labelvol.Data {
 	for dataUUID := range d.SyncedData() {
-		source, err := labelblk.GetByDataUUID(dataUUID)
+		source, err := labelvol.GetByDataUUID(dataUUID)
 		if err == nil {
 			return source
 		}
@@ -906,11 +907,22 @@ func (d *Data) GetSyncedLabelblk() *labelblk.Data {
 	return nil
 }
 
-func (d *Data) GetSyncedLabelvol() *labelvol.Data {
+type labelType interface {
+	GetLabelAtPoint(dvid.VersionID, dvid.Point) (uint64, error)
+	GetLabelBytes(dvid.VersionID, dvid.ChunkPoint3d) ([]byte, error)
+	BlockSize() dvid.Point
+	DataName() dvid.InstanceName
+}
+
+func (d *Data) GetSyncedLabels() labelType {
 	for dataUUID := range d.SyncedData() {
-		source, err := labelvol.GetByDataUUID(dataUUID)
+		source1, err := labelarray.GetByDataUUID(dataUUID)
 		if err == nil {
-			return source
+			return source1
+		}
+		source2, err := labelblk.GetByDataUUID(dataUUID)
+		if err == nil {
+			return source2
 		}
 	}
 	return nil
@@ -1010,7 +1022,7 @@ func (d *Data) deleteElementInTags(ctx *datastore.VersionedCtx, batch storage.Ba
 }
 
 func (d *Data) deleteElementInLabel(ctx *datastore.VersionedCtx, batch storage.Batch, pt dvid.Point3d) error {
-	labelData := d.GetSyncedLabelblk()
+	labelData := d.GetSyncedLabels()
 	if labelData == nil {
 		return nil // no synced labels
 	}
@@ -1114,7 +1126,7 @@ func (d *Data) moveElementInTags(ctx *datastore.VersionedCtx, batch storage.Batc
 }
 
 func (d *Data) moveElementInLabels(ctx *datastore.VersionedCtx, batch storage.Batch, from, to dvid.Point3d, moved ElementNR) error {
-	labelData := d.GetSyncedLabelblk()
+	labelData := d.GetSyncedLabels()
 	if labelData == nil {
 		return nil // no label denormalization possible
 	}
@@ -1245,7 +1257,7 @@ func (d *Data) storeBlockElements(ctx *datastore.VersionedCtx, batch storage.Bat
 // stores synaptic elements arranged by label, replacing any
 // elements at same position.
 func (d *Data) storeLabelElements(ctx *datastore.VersionedCtx, batch storage.Batch, be blockElements) error {
-	labelData := d.GetSyncedLabelblk()
+	labelData := d.GetSyncedLabels()
 	if labelData == nil {
 		dvid.Infof("No synced labels for annotation %q, skipping label-aware denormalization.\n", d.DataName())
 		return nil // no synced labels
@@ -1253,6 +1265,7 @@ func (d *Data) storeLabelElements(ctx *datastore.VersionedCtx, batch storage.Bat
 
 	// Compute the strides (in bytes)
 	blockSize := d.blockSize()
+	dvid.Infof("Arranging elements by label using synced labels %q with block size %s\n", labelData.DataName(), labelData.BlockSize())
 	bX := blockSize[0] * 8
 	bY := blockSize[1] * bX
 	blockBytes := int(blockSize[0] * blockSize[1] * blockSize[2] * 8)
@@ -1265,7 +1278,7 @@ func (d *Data) storeLabelElements(ctx *datastore.VersionedCtx, batch storage.Bat
 		}
 
 		// Get the labels for this block
-		labels, err := labelData.GetLabelBlock(ctx.VersionID(), bcoord)
+		labels, err := labelData.GetLabelBytes(ctx.VersionID(), bcoord)
 		if err != nil {
 			return err
 		}

@@ -9,6 +9,7 @@ import (
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
 	"github.com/janelia-flyem/dvid/datatype/imageblk"
+	"github.com/janelia-flyem/dvid/datatype/labelarray"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
 )
@@ -138,6 +139,34 @@ func (d *Data) GetSyncSubs(synced dvid.Data) (subs datastore.SyncSubs, err error
 				Ch:     d.syncCh,
 			},
 		}
+	case "labelarray":
+		subs = datastore.SyncSubs{
+			{
+				Event:  datastore.SyncEvent{synced.DataUUID(), labels.IngestBlockEvent},
+				Notify: d.DataUUID(),
+				Ch:     d.syncCh,
+			},
+			{
+				Event:  datastore.SyncEvent{synced.DataUUID(), labels.MutateBlockEvent},
+				Notify: d.DataUUID(),
+				Ch:     d.syncCh,
+			},
+			{
+				Event:  datastore.SyncEvent{synced.DataUUID(), labels.DeleteBlockEvent},
+				Notify: d.DataUUID(),
+				Ch:     d.syncCh,
+			},
+			datastore.SyncSub{
+				Event:  datastore.SyncEvent{synced.DataUUID(), labels.MergeBlockEvent},
+				Notify: d.DataUUID(),
+				Ch:     d.syncCh,
+			},
+			datastore.SyncSub{
+				Event:  datastore.SyncEvent{synced.DataUUID(), labels.SplitLabelEvent},
+				Notify: d.DataUUID(),
+				Ch:     d.syncCh,
+			},
+		}
 	default:
 		err = fmt.Errorf("Unable to sync %s with %s since datatype %q is not supported.", d.DataName(), synced.DataName(), synced.TypeName())
 	}
@@ -185,9 +214,23 @@ func (d *Data) handleSyncMessage(ctx *datastore.VersionedCtx, msg datastore.Sync
 	switch delta := msg.Delta.(type) {
 
 	case imageblk.Block:
-		d.ingestBlock(ctx, delta, batcher)
+		chunkPt := dvid.ChunkPoint3d(*delta.Index)
+		d.ingestBlock(ctx, chunkPt, delta.Data, batcher)
+
 	case imageblk.MutatedBlock:
-		d.mutateBlock(ctx, delta, batcher)
+		chunkPt := dvid.ChunkPoint3d(*delta.Index)
+		d.mutateBlock(ctx, chunkPt, delta.Prev, delta.Data, batcher)
+
+	case labelarray.IngestedBlock:
+		chunkPt, _ := delta.BCoord.ToChunkPoint3d()
+		data, _ := delta.Data.MakeLabelVolume()
+		d.ingestBlock(ctx, chunkPt, data, batcher)
+
+	case labelarray.MutatedBlock:
+		chunkPt, _ := delta.BCoord.ToChunkPoint3d()
+		prev, _ := delta.Prev.MakeLabelVolume()
+		data, _ := delta.Data.MakeLabelVolume()
+		d.mutateBlock(ctx, chunkPt, prev, data, batcher)
 
 	case labels.DeltaMergeStart:
 		// ignore
@@ -220,9 +263,8 @@ func (d *Data) handleSyncMessage(ctx *datastore.VersionedCtx, msg datastore.Sync
 }
 
 // If a block of labels is ingested, adjust each label's synaptic element list.
-func (d *Data) ingestBlock(ctx *datastore.VersionedCtx, block imageblk.Block, batcher storage.KeyValueBatcher) {
+func (d *Data) ingestBlock(ctx *datastore.VersionedCtx, chunkPt dvid.ChunkPoint3d, data []byte, batcher storage.KeyValueBatcher) {
 	// Get the synaptic elements for this block
-	chunkPt := dvid.ChunkPoint3d(*block.Index)
 	tk := NewBlockTKey(chunkPt)
 	elems, err := getElementsNR(ctx, tk)
 	if err != nil {
@@ -245,7 +287,7 @@ func (d *Data) ingestBlock(ctx *datastore.VersionedCtx, block imageblk.Block, ba
 	for _, elem := range elems {
 		pt := elem.Pos.Point3dInChunk(blockSize)
 		i := (pt[2]*bY+pt[1])*bX + pt[0]*8
-		label := binary.LittleEndian.Uint64(block.Data[i : i+8])
+		label := binary.LittleEndian.Uint64(data[i : i+8])
 		if label != 0 {
 			toAdd.add(label, elem)
 			added++
@@ -291,9 +333,8 @@ func (d *Data) ingestBlock(ctx *datastore.VersionedCtx, block imageblk.Block, ba
 }
 
 // If a block of labels is mutated, adjust any label that was either removed or added.
-func (d *Data) mutateBlock(ctx *datastore.VersionedCtx, block imageblk.MutatedBlock, batcher storage.KeyValueBatcher) {
+func (d *Data) mutateBlock(ctx *datastore.VersionedCtx, chunkPt dvid.ChunkPoint3d, prev, data []byte, batcher storage.KeyValueBatcher) {
 	// Get the synaptic elements for this block
-	chunkPt := dvid.ChunkPoint3d(*block.Index)
 	tk := NewBlockTKey(chunkPt)
 	elems, err := getElementsNR(ctx, tk)
 	if err != nil {
@@ -318,12 +359,12 @@ func (d *Data) mutateBlock(ctx *datastore.VersionedCtx, block imageblk.MutatedBl
 	for _, elem := range elems {
 		pt := elem.Pos.Point3dInChunk(blockSize)
 		i := pt[2]*bY + pt[1]*bX + pt[0]*8
-		label := binary.LittleEndian.Uint64(block.Data[i : i+8])
-		var prev uint64
-		if len(block.Prev) != 0 {
-			prev = binary.LittleEndian.Uint64(block.Prev[i : i+8])
+		label := binary.LittleEndian.Uint64(data[i : i+8])
+		var old uint64
+		if len(prev) != 0 {
+			old = binary.LittleEndian.Uint64(prev[i : i+8])
 		}
-		if label == prev {
+		if label == old {
 			continue
 		}
 		if label != 0 {
@@ -331,10 +372,10 @@ func (d *Data) mutateBlock(ctx *datastore.VersionedCtx, block imageblk.MutatedBl
 			labels[label] = struct{}{}
 			delta.Add = append(delta.Add, ElementPos{Label: label, Kind: elem.Kind, Pos: elem.Pos})
 		}
-		if prev != 0 {
-			toDel.add(prev, elem.Pos)
-			labels[prev] = struct{}{}
-			delta.Del = append(delta.Del, ElementPos{Label: prev, Kind: elem.Kind, Pos: elem.Pos})
+		if old != 0 {
+			toDel.add(old, elem.Pos)
+			labels[old] = struct{}{}
+			delta.Del = append(delta.Del, ElementPos{Label: old, Kind: elem.Kind, Pos: elem.Pos})
 		}
 	}
 
