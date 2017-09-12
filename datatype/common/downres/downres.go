@@ -66,7 +66,7 @@ type Mutation struct {
 
 // NewMutation returns a new Mutation for stashing changes.
 func NewMutation(d Downreser, v dvid.VersionID, mutID uint64) *Mutation {
-	for scale := uint8(0); scale < d.GetMaxDownresLevel(); scale++ {
+	for scale := uint8(1); scale <= d.GetMaxDownresLevel(); scale++ {
 		d.StartScaleUpdate(scale)
 	}
 	m := Mutation{
@@ -96,13 +96,13 @@ func (m *Mutation) Done() {
 		bm := m.hiresCache
 		var err error
 		for scale := uint8(0); scale < m.d.GetMaxDownresLevel(); scale++ {
-			dvid.Infof("Launching down-resolution processing for data %q at scale %d...\n", m.d.DataName(), scale)
 			bm, err = m.d.StoreDownres(m.v, scale, bm)
 			if err != nil {
 				dvid.Errorf("Mutation %d for data %q: %v\n", m.mutID, m.d.DataName(), err)
 				break
 			}
-			m.d.StopScaleUpdate(scale)
+			dvid.Infof("Finished down-resolution processing for data %q at scale %d.\n", m.d.DataName(), scale+1)
+			m.d.StopScaleUpdate(scale + 1)
 		}
 		m.hiresCache = nil
 		m.Unlock()

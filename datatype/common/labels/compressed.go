@@ -684,7 +684,9 @@ func downresArray(hires, lores []byte, vx, vy, vz int32, blockSize dvid.Point3d)
 						for ix = 0; ix < 2; ix++ {
 							i := (z+iz)*nyx + (y+iy)*blockSize[0] + x + ix
 							lbl := binary.LittleEndian.Uint64(hires[i*8 : i*8+8])
-							votemap[lbl]++
+							if lbl != 0 {
+								votemap[lbl]++
+							}
 						}
 					}
 				}

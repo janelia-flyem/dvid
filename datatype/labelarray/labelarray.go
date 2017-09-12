@@ -654,9 +654,11 @@ GET  <api URL>/node/<UUID>/<data name>/sparsevol/<label>?<options>
     minz    Spans must be equal to or larger than this minimum z voxel coordinate.
     maxz    Spans must be equal to or smaller than this maximum z voxel coordinate.
     exact   "false" if RLEs can extend a bit outside voxel bounds within border blocks.
-            This will give slightly faster responses. 
+             This will give slightly faster responses. 
 
     compression   "lz4" and "gzip" compressed format; only applies to "rles" format for now.
+	scale   A number from 0 up to MaxDownresLevel where each level beyond 0 has 1/2 
+	         resolution of previous level.  Level 0 is the highest resolution.
 
 
 HEAD <api URL>/node/<UUID>/<data name>/sparsevol/<label>?<options>
@@ -2991,8 +2993,12 @@ func (d *Data) handleSparsevol(ctx *datastore.VersionedCtx, w http.ResponseWrite
 		server.BadRequest(w, r, "ERROR: DVID requires label ID to follow 'sparsevol' command")
 		return
 	}
-	timedLog := dvid.NewTimeLog()
-	var scale uint8
+	queryStrings := r.URL.Query()
+	scale, err := getScale(queryStrings)
+	if err != nil {
+		server.BadRequest(w, r, "bad scale specified: %v", err)
+		return
+	}
 
 	label, err := strconv.ParseUint(parts[4], 10, 64)
 	if err != nil {
@@ -3009,6 +3015,7 @@ func (d *Data) handleSparsevol(ctx *datastore.VersionedCtx, w http.ResponseWrite
 		return
 	}
 
+	timedLog := dvid.NewTimeLog()
 	switch strings.ToLower(r.Method) {
 	case "get":
 		w.Header().Set("Content-type", "application/octet-stream")
@@ -3027,6 +3034,7 @@ func (d *Data) handleSparsevol(ctx *datastore.VersionedCtx, w http.ResponseWrite
 			return
 		}
 		if !found {
+			dvid.Infof("GET sparsevol on label %d was not found.\n", label)
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}

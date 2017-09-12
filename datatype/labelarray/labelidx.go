@@ -307,7 +307,7 @@ func (d *Data) indexLabels(ch <-chan labelChange) {
 
 		meta := cache.GetLabelMeta(change.label)
 		if meta == nil {
-			meta, err = d.getLabelMeta(ctx, labels.NewSet(change.label), dvid.Bounds{})
+			meta, err = d.getLabelMeta(ctx, labels.NewSet(change.label), 0, dvid.Bounds{})
 			if err != nil {
 				dvid.Criticalf("Error trying to read label %d meta for data %q: %v\n", change.label, d.DataName(), err)
 				continue
@@ -576,7 +576,7 @@ func (d *Data) FoundSparseVol(ctx *datastore.VersionedCtx, label uint64, bounds 
 // GetMappedLabelMeta returns a sorted list of ZYX blocks that contain the given label,
 // including all labels that could be undergoing merge into that label.
 // If block bounds are set, the number of voxels is unknown and set to zero.
-func (d *Data) GetMappedLabelMeta(ctx *datastore.VersionedCtx, label uint64, bounds dvid.Bounds) (meta *Meta, lbls labels.Set, err error) {
+func (d *Data) GetMappedLabelMeta(ctx *datastore.VersionedCtx, label uint64, scale uint8, bounds dvid.Bounds) (meta *Meta, lbls labels.Set, err error) {
 	mapping := labels.LabelMap(ctx.InstanceVersion())
 	if mapping != nil {
 		// Check if this label has been merged.
@@ -594,13 +594,13 @@ func (d *Data) GetMappedLabelMeta(ctx *datastore.VersionedCtx, label uint64, bou
 	}
 
 	// Get the block indices for the set of labels.
-	meta, err = d.getLabelMeta(ctx, lbls, bounds)
+	meta, err = d.getLabelMeta(ctx, lbls, scale, bounds)
 	return
 }
 
 // getLabelMeta returns a sorted list of ZYX blocks that contain the given labels.
 // If block bounds are set, the number of voxels is unknown and set to zero.
-func (d *Data) getLabelMeta(ctx *datastore.VersionedCtx, lbls labels.Set, bounds dvid.Bounds) (*Meta, error) {
+func (d *Data) getLabelMeta(ctx *datastore.VersionedCtx, lbls labels.Set, scale uint8, bounds dvid.Bounds) (*Meta, error) {
 	store, err := d.GetKeyValueDB()
 	if err != nil {
 		return nil, err
@@ -626,8 +626,6 @@ func (d *Data) getLabelMeta(ctx *datastore.VersionedCtx, lbls labels.Set, bounds
 			if err := meta.UnmarshalBinary(val); err != nil {
 				return nil, err
 			}
-			// dvid.Infof("retrieved Meta for label %d: %d blocks, %d voxels\n", label, len(meta.Blocks), meta.Voxels)
-			// dvid.Infof("  blocks: %s\n", meta.Blocks)
 			if len(lbls) == 1 {
 				blocks = meta.Blocks
 				voxels = meta.Voxels
@@ -645,8 +643,14 @@ func (d *Data) getLabelMeta(ctx *datastore.VersionedCtx, lbls labels.Set, bounds
 		}
 		voxels = 0
 	}
+
+	if scale > 0 {
+		if blocks, err = blocks.Downres(scale); err != nil {
+			return nil, err
+		}
+	}
+
 	meta := Meta{Voxels: voxels, Blocks: blocks}
-	// dvid.Infof("Returning Meta for labels %s: %d blocks, %d voxels\n", lbls, len(meta.Blocks), meta.Voxels)
 	return &meta, nil
 }
 
@@ -675,7 +679,7 @@ func (d *Data) PutLabelMeta(ctx *datastore.VersionedCtx, label uint64, meta *Met
 // WriteBinaryBlocks does a streaming write of an encoded sparse volume given a label.
 // It returns a bool whether the label was found in the given bounds and any error.
 func (d *Data) WriteBinaryBlocks(ctx *datastore.VersionedCtx, label uint64, scale uint8, bounds dvid.Bounds, compression string, w io.Writer) (bool, error) {
-	meta, lbls, err := d.GetMappedLabelMeta(ctx, label, bounds)
+	meta, lbls, err := d.GetMappedLabelMeta(ctx, label, scale, bounds)
 	if err != nil {
 		return false, err
 	}
@@ -725,7 +729,7 @@ func (d *Data) WriteBinaryBlocks(ctx *datastore.VersionedCtx, label uint64, scal
 // WriteStreamingRLE does a streaming write of an encoded sparse volume given a label.
 // It returns a bool whether the label was found in the given bounds and any error.
 func (d *Data) WriteStreamingRLE(ctx *datastore.VersionedCtx, label uint64, scale uint8, bounds dvid.Bounds, compression string, w io.Writer) (bool, error) {
-	meta, lbls, err := d.GetMappedLabelMeta(ctx, label, bounds)
+	meta, lbls, err := d.GetMappedLabelMeta(ctx, label, scale, bounds)
 	if err != nil {
 		return false, err
 	}
@@ -811,7 +815,7 @@ func (d *Data) WriteLegacyRLE(ctx *datastore.VersionedCtx, label uint64, scale u
 
 // GetLegacyRLE returns an encoded sparse volume given a label and an output format.
 func (d *Data) GetLegacyRLE(ctx *datastore.VersionedCtx, label uint64, scale uint8, bounds dvid.Bounds) ([]byte, error) {
-	meta, lbls, err := d.GetMappedLabelMeta(ctx, label, bounds)
+	meta, lbls, err := d.GetMappedLabelMeta(ctx, label, scale, bounds)
 	if err != nil {
 		return nil, err
 	}
@@ -960,7 +964,7 @@ func (d *Data) GetSparseCoarseVol(ctx *datastore.VersionedCtx, label uint64, bou
 	}
 
 	// Get the block indices for the set of labels.
-	meta, err := d.getLabelMeta(ctx, lbls, bounds)
+	meta, err := d.getLabelMeta(ctx, lbls, 0, bounds)
 	if err != nil {
 		return nil, err
 	}

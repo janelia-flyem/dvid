@@ -107,6 +107,35 @@ func (v *testVolume) addSubvol(origin, size dvid.Point3d, label uint64) {
 	}
 }
 
+// downres assumes only binary volume of some label N or label 0.
+func (v *testVolume) downres(scale uint8) {
+	sz := int32(1 << scale)
+	nx := v.size[0] >> scale
+	ny := v.size[1] >> scale
+	nz := v.size[2] >> scale
+
+	var oldpos, x, y, z int32
+	for z = 0; z < v.size[2]; z++ {
+		newz := z >> scale
+		for y = 0; y < v.size[1]; y++ {
+			newy := y >> scale
+			for x = 0; x < v.size[0]; x++ {
+				label := binary.LittleEndian.Uint64(v.data[oldpos*8 : oldpos*8+8])
+				oldpos++
+				if label != 0 || (x%sz == 0 && y%sz == 0 && z%sz == 0) {
+					newx := x >> scale
+					newpos := newz*nx*ny + newy*nx + newx
+					binary.LittleEndian.PutUint64(v.data[newpos*8:newpos*8+8], label)
+				}
+			}
+		}
+	}
+	v.size[0] = nx
+	v.size[1] = ny
+	v.size[2] = nz
+	v.data = v.data[:nx*ny*nz*8]
+}
+
 // Put label data into given data instance.
 func (v *testVolume) put(t *testing.T, uuid dvid.UUID, name string) {
 	apiStr := fmt.Sprintf("%snode/%s/%s/raw/0_1_2/%d_%d_%d/0_0_0", server.WebAPIPath,
@@ -121,7 +150,6 @@ func (v *testVolume) putMutable(t *testing.T, uuid dvid.UUID, name string) {
 }
 
 func (v *testVolume) get(t *testing.T, uuid dvid.UUID, name string) {
-	t.Logf("Got hires label data %q\n", name)
 	apiStr := fmt.Sprintf("%snode/%s/%s/raw/0_1_2/%d_%d_%d/0_0_0", server.WebAPIPath,
 		uuid, name, v.size[0], v.size[1], v.size[2])
 	v.data = server.TestHTTP(t, "GET", apiStr, nil)

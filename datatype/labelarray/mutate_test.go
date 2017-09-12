@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"reflect"
+	"runtime"
 	"testing"
 	"time"
 
@@ -48,7 +49,8 @@ func (b testBody) checkCoarse(t *testing.T, encoding []byte) {
 
 	// Check those spans match the body voxels.
 	if !reflect.DeepEqual(spans, b.blockSpans) {
-		t.Errorf("Expected coarse spans for label %d:\n%s\nGot spans:\n%s\n", b.label, b.blockSpans, spans)
+		_, fn, line, _ := runtime.Caller(1)
+		t.Errorf("Expected coarse spans for label %d:\n%s\nGot spans [%s:%d]:\n%s\n", b.label, b.blockSpans, fn, line, spans)
 	}
 }
 
@@ -104,7 +106,44 @@ func (b testBody) checkSparseVol(t *testing.T, encoding []byte, bounds dvid.Opti
 				fmt.Printf("Never got expected span: %s\n", expect)
 			}
 		}
-		t.Fatalf("Expected %d fine spans for label %d:\n%s\nGot %d spans:\n%s\nAfter Norm:%s\n", len(expectNorm), b.label, expectNorm, len(spans), spans, gotNorm)
+		_, fn, line, _ := runtime.Caller(1)
+		t.Fatalf("Expected %d fine spans for label %d [%s:%d]:\n%s\nGot %d spans:\n%s\nAfter Norm:%s\n", len(expectNorm), b.label, fn, line, expectNorm, len(spans), spans, gotNorm)
+	}
+}
+
+// Makes sure the sparse volume encoding matches a downres of actual body voxels.
+func (b testBody) checkScaledSparseVol(t *testing.T, encoding []byte, scale uint8, bounds dvid.OptionalBounds) {
+	if len(encoding) < 12 {
+		t.Fatalf("Bad encoded sparsevol received.  Only %d bytes\n", len(encoding))
+	}
+
+	// Make down-res volume of body
+	vol := newTestVolume(128, 128, 128)
+	vol.addBody(b, 1)
+	vol.downres(scale)
+
+	// Get to the  # spans and RLE in encoding
+	spansEncoding := encoding[8:]
+	var spans dvid.Spans
+	if err := spans.UnmarshalBinary(spansEncoding); err != nil {
+		t.Fatalf("Error in decoding sparse volume: %v\n", err)
+	}
+
+	// Check those spans are within the body voxels.
+	for _, span := range spans {
+		z, y, x0, x1 := span.Unpack()
+		if x1 >= vol.size[0] || y >= vol.size[1] || z >= vol.size[2] {
+			t.Fatalf("Span %s is outside bound of scale %d volume of size %s\n", span, scale, vol.size)
+		}
+		pos := z*vol.size[0]*vol.size[1] + y*vol.size[0] + x0
+		for x := x0; x <= x1; x++ {
+			label := binary.LittleEndian.Uint64(vol.data[pos*8 : pos*8+8])
+			if label != 1 {
+				t.Fatalf("Received body at scale %d has voxel at (%d,%d,%d) but that voxel is label %d, not in body %d\n", scale, x, y, z, label, b.label)
+				return
+			}
+			pos++
+		}
 	}
 }
 
@@ -230,6 +269,7 @@ func TestSparseVolumes(t *testing.T) {
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
 	var config dvid.Config
+	config.Set("MaxDownresLevel", "2")
 	config.Set("BlockSize", "32,32,32") // Previous test data was on 32^3 blocks
 	server.CreateTestInstance(t, uuid, "labelarray", "labels", config)
 	labelVol := createLabelTestVolume(t, uuid, "labels")
@@ -242,6 +282,9 @@ func TestSparseVolumes(t *testing.T) {
 
 	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
 		t.Fatalf("Error blocking on labels updating: %v\n", err)
+	}
+	if err := downres.BlockOnUpdating(uuid, "labels"); err != nil {
+		t.Fatalf("Error blocking on update for labels: %v\n", err)
 	}
 	time.Sleep(1 * time.Second)
 
@@ -271,7 +314,7 @@ func TestSparseVolumes(t *testing.T) {
 	badReqStr := fmt.Sprintf("%snode/%s/labels/sparsevol/0", server.WebAPIPath, uuid)
 	server.TestBadHTTP(t, "GET", badReqStr, nil)
 
-	for _, label := range []uint64{1, 3, 4} {
+	for _, label := range []uint64{1, 2, 3, 4} {
 		// Get the coarse sparse volumes for each label and make sure they are correct.
 		reqStr := fmt.Sprintf("%snode/%s/labels/sparsevol-coarse/%d", server.WebAPIPath, uuid, label)
 		encoding := server.TestHTTP(t, "GET", reqStr, nil)
@@ -288,15 +331,24 @@ func TestSparseVolumes(t *testing.T) {
 
 		// Check full sparse volumes
 		encoding := server.TestHTTP(t, "GET", reqStr, nil)
-		fmt.Printf("Got %d bytes back from %s\n", len(encoding), reqStr)
+		lenEncoding := len(encoding)
 		bodies[label-1].checkSparseVol(t, encoding, dvid.OptionalBounds{})
 
+		// check one downres
+		encoding = server.TestHTTP(t, "GET", reqStr+"?scale=1", nil)
+		bodies[label-1].checkScaledSparseVol(t, encoding, 1, dvid.OptionalBounds{})
+
+		// check two downres
+		encoding = server.TestHTTP(t, "GET", reqStr+"?scale=2", nil)
+		bodies[label-1].checkScaledSparseVol(t, encoding, 2, dvid.OptionalBounds{})
+
 		// Check with lz4 compression
+		uncompressed := make([]byte, lenEncoding)
 		compressed := server.TestHTTP(t, "GET", reqStr+"?compression=lz4", nil)
-		if err := lz4.Uncompress(compressed, encoding); err != nil {
-			t.Fatalf("error uncompressing lz4: %v\n", err)
+		if err := lz4.Uncompress(compressed, uncompressed); err != nil {
+			t.Fatalf("error uncompressing lz4 for sparsevol %d GET: %v\n", label, err)
 		}
-		bodies[label-1].checkSparseVol(t, encoding, dvid.OptionalBounds{})
+		bodies[label-1].checkSparseVol(t, uncompressed, dvid.OptionalBounds{})
 
 		// Check with gzip compression
 		compressed = server.TestHTTP(t, "GET", reqStr+"?compression=gzip", nil)
@@ -352,7 +404,7 @@ func TestSparseVolumes(t *testing.T) {
 	}
 }
 
-func TestSparseVolumes16x16x16(t *testing.T) {
+func Test16x16x16SparseVolumes(t *testing.T) {
 	datastore.OpenTest()
 	defer datastore.CloseTest()
 

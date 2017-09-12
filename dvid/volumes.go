@@ -1134,7 +1134,7 @@ func (i IZYXSlice) WriteSerializedRLEs(w io.Writer) (spans uint32, err error) {
 		if err != nil {
 			return
 		}
-		if startPt[2] != chunkPt[2] || startPt[1] != chunkPt[1] || startPt[0]+1 != chunkPt[0] {
+		if startPt[2] != chunkPt[2] || startPt[1] != chunkPt[1] || startPt[0]+length != chunkPt[0] {
 			if length > 0 {
 				binary.Write(w, binary.LittleEndian, startPt[0])
 				binary.Write(w, binary.LittleEndian, startPt[1])
@@ -1196,6 +1196,37 @@ func (i IZYXSlice) FitToBounds(bounds *OptionalBounds) (IZYXSlice, error) {
 	}
 	cropped = cropped[0:num]
 	return cropped, nil
+}
+
+// Downres returns a down-resolution version of the IZYXSlice where the factor is 2^scale.
+// The receiver IZYXSlice does not have to be sorted.
+func (i IZYXSlice) Downres(scale uint8) (IZYXSlice, error) {
+	if scale == 0 {
+		downres := make(IZYXSlice, len(i))
+		copy(downres, i)
+		return downres, nil
+	}
+
+	downresMap := make(map[IZYXString]struct{}, len(i))
+	for _, izyxStr := range i {
+		blockPt, err := izyxStr.ToChunkPoint3d()
+		if err != nil {
+			return nil, fmt.Errorf("unable to convert IZYXString to chunk point: %v", err)
+		}
+		blockPt[0] >>= scale
+		blockPt[1] >>= scale
+		blockPt[2] >>= scale
+		izyxStr = blockPt.ToIZYXString()
+		downresMap[izyxStr] = struct{}{}
+	}
+	downres := make(IZYXSlice, len(downresMap))
+	pos := 0
+	for izyxStr := range downresMap {
+		downres[pos] = izyxStr
+		pos++
+	}
+	sort.Sort(downres)
+	return downres, nil
 }
 
 // SortedKeys returns a slice of IZYXString sorted in ascending order.

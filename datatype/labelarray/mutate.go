@@ -78,12 +78,12 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp) error {
 		}()
 
 		// Get all the affected blocks in the merge.
-		targetMeta, err := d.getLabelMeta(ctx, labels.NewSet(op.Target), dvid.Bounds{})
+		targetMeta, err := d.getLabelMeta(ctx, labels.NewSet(op.Target), 0, dvid.Bounds{})
 		if err != nil {
 			dvid.Errorf("can't get block indices of to merge target label %d\n", op.Target)
 			return
 		}
-		mergedMeta, err := d.getLabelMeta(ctx, op.Merged, dvid.Bounds{})
+		mergedMeta, err := d.getLabelMeta(ctx, op.Merged, 0, dvid.Bounds{})
 		if err != nil {
 			dvid.Errorf("can't get block indices of to merge labels %s\n", op.Merged)
 			return
