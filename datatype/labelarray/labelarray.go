@@ -564,12 +564,12 @@ POST <api URL>/node/<UUID>/<data name>/blocks[?queryopts]
     scale         A number from 0 up to MaxDownresLevel where each level beyond 0 has 1/2 resolution
 	                of previous level.  Level 0 is the highest resolution.
 	downres       "false" (default) or "true", specifies whether the given blocks should be
-	               down-sampled to all scales.  If "true", scale must be "0" or absent.
+	                down-sampled to lower resolution.  If "true", scale must be "0" or absent.
     compression   Specifies compression format of block data: default and only option currently is
-                   "blocks" (native DVID label blocks).
+                    "blocks" (native DVID label blocks).
     throttle      If "true", makes sure only N compute-intense operation (all API calls that can be 
-	               throttled) are handled.  If the server can't initiate the API call right away, a 503 
-                   (Service Unavailable) status code is returned.
+	                throttled) are handled.  If the server can't initiate the API call right away, a 503 
+                    (Service Unavailable) status code is returned.
 
 
 GET <api URL>/node/<UUID>/<data name>/maxlabel
@@ -1996,7 +1996,9 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 		}
 		event := labels.IngestBlockEvent
 		ingestBlock := IngestedBlock{mutID, bcoord, block}
-		d.handleBlockIngest(ctx.VersionID(), blockCh, ingestBlock)
+		if scale == 0 {
+			d.handleBlockIndexing(ctx.VersionID(), blockCh, ingestBlock)
+		}
 		if downscale {
 			if err := downresMut.BlockMutated(bcoord, block); err != nil {
 				dvid.Errorf("data %q publishing downres: %v\n", d.DataName(), err)
@@ -2041,8 +2043,10 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 				return fmt.Errorf("error reading %d bytes for block %s: %d read (%v)\n", numBytes, bcoord, n, readErr)
 			}
 
-			if mod := d.blockChangesExtents(&extents, bx, by, bz); mod {
-				extentsChanged = true
+			if scale == 0 {
+				if mod := d.blockChangesExtents(&extents, bx, by, bz); mod {
+					extentsChanged = true
+				}
 			}
 
 			serialization, err := dvid.SerializePrecompressedData(compressed, d.Compression(), d.Checksum())

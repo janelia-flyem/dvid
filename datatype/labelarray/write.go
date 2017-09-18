@@ -215,7 +215,7 @@ func (d *Data) putChunk(op *putOperation, wg *sync.WaitGroup, putbuffer storage.
 		} else {
 			event = labels.IngestBlockEvent
 			block := IngestedBlock{op.mutID, bcoord, curBlock}
-			d.handleBlockIngest(op.version, op.blockCh, block)
+			d.handleBlockIndexing(op.version, op.blockCh, block)
 			delta = block
 		}
 		if err := op.downresMut.BlockMutated(bcoord, curBlock); err != nil {
@@ -351,7 +351,7 @@ func (d *Data) writeBlocks(v dvid.VersionID, b storage.TKeyValues, wg1, wg2 *syn
 			}
 
 			block := IngestedBlock{mutID, indexZYX.ToIZYXString(), lblBlock}
-			d.handleBlockIngest(v, blockCh, block)
+			d.handleBlockIndexing(v, blockCh, block)
 
 			msg := datastore.SyncMessage{labels.IngestBlockEvent, v, block}
 			if err := datastore.NotifySubscribers(evt, msg); err != nil {

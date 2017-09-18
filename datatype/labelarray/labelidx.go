@@ -197,8 +197,8 @@ func (d *Data) handleBlockMutate(v dvid.VersionID, ch chan blockChange, mut Muta
 	ch <- bc
 }
 
-// block-level analysis of label ingest
-func (d *Data) handleBlockIngest(v dvid.VersionID, ch chan blockChange, mut IngestedBlock) {
+// block-level analysis of label ingest to do indexing
+func (d *Data) handleBlockIndexing(v dvid.VersionID, ch chan blockChange, mut IngestedBlock) {
 	if !d.IndexedLabels && !d.CountLabels {
 		return
 	}
