@@ -614,8 +614,8 @@ func recoverHandler(c *web.C, h http.Handler) http.Handler {
 				message := fmt.Sprintf("Panic detected on request %s:\n%+v\nIP: %v, URL: %s\nStack trace:\n%s\n",
 					reqID, err, r.RemoteAddr, r.URL.Path, stackTrace)
 
-				// Bypass the standard logging, which uses channels, and write directly to log file.
-				dvid.LogImmediately(message)
+				os.Stderr.WriteString(message)
+				dvid.LogImmediately(message) // bypass log channels.
 
 				if err := SendNotification(message, nil); err != nil {
 					dvid.LogImmediately(fmt.Sprintf("Couldn't send email notifcation: %v\n", err))

@@ -107,6 +107,44 @@ func (v *testVolume) addSubvol(origin, size dvid.Point3d, label uint64) {
 	}
 }
 
+// add binary blocks, check test volume is sufficient size.
+func (v *testVolume) addBlocks(t *testing.T, blocks []labels.BinaryBlock, label uint64) {
+	for _, block := range blocks {
+		maxx := block.Offset[0] + block.Size[0]
+		maxy := block.Offset[1] + block.Size[1]
+		maxz := block.Offset[2] + block.Size[2]
+		dvid.Infof("Adding block offset %s, size %s, # voxels %d\n", block.Offset, block.Size, len(block.Voxels))
+
+		if maxx > v.size[0] {
+			t.Fatalf("block at offset %s, size %s exceeded test volume size %s\n", block.Offset, block.Size, v.size)
+		}
+		if maxy > v.size[1] {
+			t.Fatalf("block at offset %s, size %s exceeded test volume size %s\n", block.Offset, block.Size, v.size)
+		}
+		if maxz > v.size[2] {
+			t.Fatalf("block at offset %s, size %s exceeded test volume size %s\n", block.Offset, block.Size, v.size)
+		}
+		if len(block.Voxels) != int(block.Size.Prod()) {
+			t.Fatalf("binary block at offset %s, size %s has bad # voxels (%d)\n", block.Offset, block.Size, len(block.Voxels))
+		}
+		bi := 0
+		for z := block.Offset[2]; z < maxz; z++ {
+			for y := block.Offset[1]; y < maxy; y++ {
+				for x := block.Offset[0]; x < maxx; x++ {
+					if block.Voxels[bi] {
+						if x == 16 && y == 40 && z == 8 {
+							dvid.Infof("voxel found and is indeed on\n")
+						}
+						i := (z*v.size[0]*v.size[1] + y*v.size[0] + x) * 8
+						binary.LittleEndian.PutUint64(v.data[i:i+8], label)
+					}
+					bi++
+				}
+			}
+		}
+	}
+}
+
 // downres assumes only binary volume of some label N or label 0.
 func (v *testVolume) downres(scale uint8) {
 	sz := int32(1 << scale)

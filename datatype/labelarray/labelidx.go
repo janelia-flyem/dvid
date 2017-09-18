@@ -95,6 +95,8 @@ func (m metaCache) AddLabelMeta(label uint64, meta *Meta) {
 type Meta struct {
 	Voxels uint64         // Total # of voxels in label.
 	Blocks dvid.IZYXSlice // Sorted block coordinates occupied by label.
+	// LastModTime time.Time
+	// LastModUser string
 }
 
 // MarshalBinary implements the encoding.BinaryMarshaler interface
@@ -697,7 +699,7 @@ func (d *Data) WriteBinaryBlocks(ctx *datastore.VersionedCtx, label uint64, scal
 		return false, err
 	}
 	op := labels.NewOutputOp(w)
-	go labels.WriteBinaryBlocks(lbls, op, bounds)
+	go labels.WriteBinaryBlocks(label, lbls, op, bounds)
 	for _, izyx := range indices {
 		tk := NewBlockTKeyByCoord(scale, izyx)
 		data, err := store.Get(ctx, tk)
@@ -716,6 +718,7 @@ func (d *Data) WriteBinaryBlocks(ctx *datastore.VersionedCtx, label uint64, scal
 			Block:  block,
 			BCoord: izyx,
 		}
+		dvid.Infof("Read from database: block %s\n", izyx)
 		op.Process(&pb)
 	}
 	if err = op.Finish(); err != nil {

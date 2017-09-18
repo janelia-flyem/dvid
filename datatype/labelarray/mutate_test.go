@@ -15,6 +15,7 @@ import (
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/downres"
+	"github.com/janelia-flyem/dvid/datatype/common/labels"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 
@@ -144,6 +145,47 @@ func (b testBody) checkScaledSparseVol(t *testing.T, encoding []byte, scale uint
 			}
 			pos++
 		}
+	}
+}
+
+// checks use of binary blocks format
+func (b testBody) checkBinarySparseVol(t *testing.T, r io.Reader) {
+	binBlocks, err := labels.ReceiveBinaryBlocks(r)
+	if err != nil {
+		_, fn, line, _ := runtime.Caller(1)
+		t.Fatalf("Error trying to decode binary blocks for body %d [%s:%d]: %v\n", b.label, fn, line, err)
+	}
+
+	expected := newTestVolume(128, 128, 128)
+	expected.addBody(b, 1)
+
+	got := newTestVolume(128, 128, 128)
+	got.addBlocks(t, binBlocks, 1)
+
+	if err := expected.equals(got); err != nil {
+		_, fn, line, _ := runtime.Caller(1)
+		t.Fatalf("error getting binary blocks for body %d [%s:%d]: %v\n", b.label, fn, line, err)
+	}
+}
+
+// checks use of binary blocks format + scaling
+func (b testBody) checkScaledBinarySparseVol(t *testing.T, r io.Reader, scale uint8) {
+	binBlocks, err := labels.ReceiveBinaryBlocks(r)
+	if err != nil {
+		t.Fatalf("Error trying to decode binary blocks for body %d: %v\n", b.label, err)
+	}
+
+	expected := newTestVolume(128, 128, 128)
+	expected.addBody(b, 1)
+	expected.downres(scale)
+
+	n := int32(128 >> scale)
+	got := newTestVolume(n, n, n)
+	got.addBlocks(t, binBlocks, 1)
+
+	if err := expected.equals(got); err != nil {
+		_, fn, line, _ := runtime.Caller(1)
+		t.Fatalf("error getting binary blocks for body %d, scale %d [%s:%d]: %v\n", b.label, scale, fn, line, err)
 	}
 }
 
@@ -369,6 +411,17 @@ func TestSparseVolumes(t *testing.T) {
 		}
 		encoding = buffer.Bytes()
 		bodies[label-1].checkSparseVol(t, encoding, dvid.OptionalBounds{})
+
+		// check sparse vol + scaling using binary blocks compression
+		reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/%d?format=blocks", server.WebAPIPath, uuid, label)
+		resp = server.TestHTTPResponse(t, "GET", reqStr, nil)
+		bodies[label-1].checkBinarySparseVol(t, resp.Body)
+
+		resp = server.TestHTTPResponse(t, "GET", reqStr+"?scale=1", nil)
+		bodies[label-1].checkScaledBinarySparseVol(t, resp.Body, 1)
+
+		resp = server.TestHTTPResponse(t, "GET", reqStr+"?scale=2", nil)
+		bodies[label-1].checkScaledBinarySparseVol(t, resp.Body, 2)
 
 		// Check Y/Z restriction
 		reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/%d?miny=30&maxy=50&minz=20&maxz=40", server.WebAPIPath, uuid, label)

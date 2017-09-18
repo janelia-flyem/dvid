@@ -1547,6 +1547,132 @@ func writeSolidBlockRLEs(minPt, maxPt, offset dvid.Point3d, op *OutputOp, rleBuf
 	}
 }
 
+type BinaryBlock struct {
+	Offset dvid.Point3d // voxel offset for the first voxels in this block
+	Size   dvid.Point3d
+	Label  uint64
+	Voxels []bool
+}
+
+func (b *BinaryBlock) Read(r io.Reader, gx, gy, gz int32, label uint64) error {
+	header := make([]byte, 13)
+	if n, err := io.ReadFull(r, header); err != nil {
+		return err
+	} else if n != 13 {
+		return fmt.Errorf("Unable to read header (only %d bytes) of block", n)
+	}
+	nx := gx * SubBlockSize
+	ny := gy * SubBlockSize
+	nz := gz * SubBlockSize
+	ox := int32(binary.LittleEndian.Uint32(header[:4]))
+	oy := int32(binary.LittleEndian.Uint32(header[4:8]))
+	oz := int32(binary.LittleEndian.Uint32(header[8:12]))
+
+	b.Offset = dvid.Point3d{ox, oy, oz}
+	b.Size = dvid.Point3d{nx, ny, nz}
+	b.Label = label
+	b.Voxels = make([]bool, nx*ny*nz)
+	switch header[12] {
+	case 0:
+		// do nothing because all background.
+	case 1:
+		// all foreground
+		for i := 0; i < len(b.Voxels); i++ {
+			b.Voxels[i] = true
+		}
+	case 2:
+		// iterate through all sub-blocks and fill in volume.
+		buf := make([]byte, 64)
+		var vz, x, y, z int32
+		var sx, sy, sz int32 // sub-block pos
+		for sz = 0; sz < gz; sz++ {
+			var vy int32
+			for sy = 0; sy < gy; sy++ {
+				vy = sy * SubBlockSize
+				var vx int32
+				for sx = 0; sx < gx; sx++ {
+					if n, err := r.Read(buf[:1]); err != nil {
+						return err
+					} else if n != 1 {
+						return fmt.Errorf("couldn't get content flag for sub-block (%d,%d,%d)", sx, sy, sz)
+					}
+					switch buf[0] {
+					case 0:
+						// do nothing, all background
+					case 1:
+						for z = 0; z < SubBlockSize; z++ {
+							for y = 0; y < SubBlockSize; y++ {
+								for x = 0; x < SubBlockSize; x++ {
+									i := (vz+z)*nx*ny + (vy+y)*nx + vx + x
+									b.Voxels[i] = true
+								}
+							}
+						}
+					case 2:
+						if n, err := io.ReadFull(r, buf[1:]); err != nil {
+							return err
+						} else if n != 64 {
+							return fmt.Errorf("couldn't get mask for sub-block (%d,%d,%d)", sx, sy, sz)
+						}
+						var bithead int32
+						for z = 0; z < SubBlockSize; z++ {
+							for y = 0; y < SubBlockSize; y++ {
+								for x = 0; x < SubBlockSize; x++ {
+									bytepos := bithead >> 3
+									bitpos := bithead % 8
+									val := buf[1+bytepos] & bitMask[bitpos]
+									i := (vz+z)*nx*ny + (vy+y)*nx + vx + x
+									b.Voxels[i] = (val > 0)
+									bithead++
+								}
+							}
+						}
+					default:
+						return fmt.Errorf("bad content flag (%d) for sub-block (%d,%d,%d)", buf[0], sx, sy, sz)
+					}
+					vx += SubBlockSize
+				}
+				vy += SubBlockSize
+			}
+			vz += SubBlockSize
+		}
+
+	default:
+		return fmt.Errorf("got bad content flag (%d) in block", header[12])
+	}
+	return nil
+}
+
+// ReceiveBinaryBlocks returns a slice of BinaryBlock, easily parseable but not necessarily
+// optimally compressed format.
+func ReceiveBinaryBlocks(r io.Reader) ([]BinaryBlock, error) {
+	header := make([]byte, 20)
+	if n, err := io.ReadFull(r, header); err != nil {
+		return nil, err
+	} else if n != 20 {
+		return nil, fmt.Errorf("Unable to read header (only %d bytes) of binary blocks serialization", n)
+	}
+	gx := int32(binary.LittleEndian.Uint32(header[:4]))
+	gy := int32(binary.LittleEndian.Uint32(header[4:8]))
+	gz := int32(binary.LittleEndian.Uint32(header[8:12]))
+	label := binary.LittleEndian.Uint64(header[12:20])
+	dvid.Infof("binary blocks header: gx %d, gy %d, gz %d, label %d\n", gx, gy, gz, label)
+	var blocks []BinaryBlock
+	for {
+		var block BinaryBlock
+		err := block.Read(r, gx, gy, gz, label)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		dvid.Infof("read binary block with offset %s, size %s, label %d\n", block.Offset, block.Size, block.Label)
+		blocks = append(blocks, block)
+	}
+	return blocks, nil
+}
+
 // WriteBinaryBlocks writes a compact serialization of a binarized Block to the
 // supplied Writer.  The serialization is a header + stream of blocks.  The header
 // is the following:
@@ -1556,10 +1682,11 @@ func writeSolidBlockRLEs(minPt, maxPt, offset dvid.Point3d, op *OutputOp, rleBuf
 //
 //  The format of each binary block in the stream is detailed by the WriteBinaryBlock() function.
 //
-func WriteBinaryBlocks(lbls Set, op *OutputOp, bounds dvid.Bounds) {
+func WriteBinaryBlocks(mainLabel uint64, lbls Set, op *OutputOp, bounds dvid.Bounds) {
+	var blockWritten bool
 	for pb := range op.pbCh {
 		labelIndices := make(map[uint32]struct{})
-		var inBlock bool
+		var inBlock, hasBackground bool
 		for i, label := range pb.Labels {
 			_, found := lbls[label]
 			if found {
@@ -1568,10 +1695,27 @@ func WriteBinaryBlocks(lbls Set, op *OutputOp, bounds dvid.Bounds) {
 				if len(labelIndices) == len(lbls) {
 					break
 				}
+			} else {
+				hasBackground = true // true if any non-targeted label exists
 			}
 		}
 		if inBlock {
-			if err := pb.WriteBinaryBlock(labelIndices, op, bounds); err != nil {
+			if !blockWritten {
+				blockWritten = true
+				gx := uint32(pb.Block.Size[0] / SubBlockSize)
+				gy := uint32(pb.Block.Size[1] / SubBlockSize)
+				gz := uint32(pb.Block.Size[2] / SubBlockSize)
+				buf := make([]byte, 20)
+				binary.LittleEndian.PutUint32(buf[0:4], gx)
+				binary.LittleEndian.PutUint32(buf[4:8], gy)
+				binary.LittleEndian.PutUint32(buf[8:12], gz)
+				binary.LittleEndian.PutUint64(buf[12:20], mainLabel)
+				if _, err := op.w.Write(buf); err != nil {
+					op.errCh <- fmt.Errorf("Unable to write header for block %s: %v\n", pb.BCoord, err)
+					return
+				}
+			}
+			if err := pb.WriteBinaryBlock(labelIndices, hasBackground, op, bounds); err != nil {
 				op.errCh <- err
 				return
 			}
@@ -1607,7 +1751,35 @@ func WriteBinaryBlocks(lbls Set, op *OutputOp, bounds dvid.Bounds) {
 //                      1 = foreground ONLY  (no more data for this sub-block)
 //                      2 = both background and foreground so mask data required.
 //      mask            64 byte bitmask where each voxel is 0 (background) or 1 (foreground)
-func (pb *PositionedBlock) WriteBinaryBlock(indices map[uint32]struct{}, op *OutputOp, bounds dvid.Bounds) error {
+func (pb *PositionedBlock) WriteBinaryBlock(indices map[uint32]struct{}, hasBackground bool, op *OutputOp, bounds dvid.Bounds) error {
+	offset, err := pb.OffsetDVID()
+	if err != nil {
+		return err
+	}
+	buf := make([]byte, 13)
+	binary.LittleEndian.PutUint32(buf[0:4], uint32(offset[0]))
+	binary.LittleEndian.PutUint32(buf[4:8], uint32(offset[1]))
+	binary.LittleEndian.PutUint32(buf[8:12], uint32(offset[2]))
+
+	var mixedData bool
+	if len(indices) == 0 {
+		buf[12] = 0 // background only
+	} else if hasBackground {
+		buf[12] = 2 // background + foreground
+		mixedData = true
+	} else {
+		buf[12] = 1 // foreground only
+	}
+	dvid.Infof("Writing block %s, offset %s, mixedData %t ...\n", pb.BCoord, offset, mixedData)
+	if n, err := op.w.Write(buf); err != nil {
+		return err
+	} else if n != 13 {
+		return fmt.Errorf("couldn't write header for block %s, only %d bytes written", pb.BCoord, n)
+	}
+	if !mixedData {
+		return nil
+	}
+
 	var multiForeground bool
 	var labelIndex uint32
 	if len(indices) > 1 {
@@ -1616,32 +1788,6 @@ func (pb *PositionedBlock) WriteBinaryBlock(indices map[uint32]struct{}, op *Out
 		for labelIndex = range indices {
 			break
 		}
-	}
-
-	offset, err := pb.OffsetDVID()
-	if err != nil {
-		return err
-	}
-
-	buf := make([]byte, 13)
-	binary.LittleEndian.PutUint32(buf[0:4], uint32(offset[0]))
-	binary.LittleEndian.PutUint32(buf[4:8], uint32(offset[1]))
-	binary.LittleEndian.PutUint32(buf[8:12], uint32(offset[2]))
-
-	numLabels := binary.LittleEndian.Uint32(pb.data[12:16])
-	switch numLabels {
-	case 0:
-		buf[12] = 0
-	case 1:
-		buf[12] = 1
-	default:
-		buf[12] = 2
-	}
-	if _, err := op.w.Write(buf); err != nil {
-		return err
-	}
-	if numLabels < 2 {
-		return nil
 	}
 
 	gx, gy, gz := pb.Size[0]/SubBlockSize, pb.Size[1]/SubBlockSize, pb.Size[2]/SubBlockSize
@@ -1660,6 +1806,7 @@ func (pb *PositionedBlock) WriteBinaryBlock(indices map[uint32]struct{}, op *Out
 
 				numSBLabels := pb.NumSBLabels[subBlockNum]
 				bits := bitsFor(numSBLabels)
+				dvid.Infof("In block %s, sub-block (%d,%d,%d), num labels %d, bits %d\n", pb.BCoord, sx, sy, sz, numSBLabels, bits)
 
 				for i := uint16(0); i < numSBLabels; i++ {
 					curIndices[i] = pb.SBIndices[indexPos]
@@ -1820,6 +1967,10 @@ func setSubvolume(uint64array []byte, volsize, blockOff dvid.Point, blockSize dv
 // left mask for bithead at each bit position in a byte
 var leftBitMask [8]byte = [8]byte{
 	0xFF, 0x7F, 0x3F, 0x1F, 0x0F, 0x07, 0x03, 0x01,
+}
+
+var bitMask [8]byte = [8]byte{
+	0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80,
 }
 
 // map of label -> index position in sub-block
