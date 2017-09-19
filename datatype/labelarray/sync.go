@@ -16,8 +16,8 @@ import (
 )
 
 const (
-	numBlockHandlers = 8 // goroutines used to process block changes
-	numLabelHandlers = 8 // goroutines used to do get/put tx on label indices
+	numMutateHandlers = 16  // goroutines used to process mutations on blocks
+	numLabelHandlers  = 256 // goroutines used to do get/put tx on label indices
 
 )
 
@@ -71,7 +71,7 @@ func (d *Data) InitDataHandlers() error {
 
 	// Start N goroutines to process mutations for each block that will be consistently
 	// assigned to one of the N goroutines.
-	for i := 0; i < numBlockHandlers; i++ {
+	for i := 0; i < numMutateHandlers; i++ {
 		d.mutateCh[i] = make(chan procMsg, 10)
 		go d.mutateBlock(d.mutateCh[i])
 	}
@@ -86,7 +86,7 @@ func (d *Data) InitDataHandlers() error {
 
 func (d *Data) queuedSize() int {
 	var queued int
-	for i := 0; i < numBlockHandlers; i++ {
+	for i := 0; i < numMutateHandlers; i++ {
 		queued += len(d.mutateCh[i])
 	}
 	for i := 0; i < numLabelHandlers; i++ {
@@ -112,7 +112,7 @@ func (d *Data) Shutdown(wg *sync.WaitGroup) {
 			break
 		}
 	}
-	for i := 0; i < numBlockHandlers; i++ {
+	for i := 0; i < numMutateHandlers; i++ {
 		close(d.mutateCh[i])
 	}
 	for i := 0; i < numLabelHandlers; i++ {

@@ -1004,8 +1004,10 @@ type Data struct {
 	mlMu sync.RWMutex // For atomic access of MaxLabel and MaxRepoLabel
 
 	// unpersisted data: channels for mutations
-	mutateCh [numBlockHandlers]chan procMsg     // channels into mutate (merge/split) ops.
+	mutateCh [numMutateHandlers]chan procMsg    // channels into mutate (merge/split) ops.
 	indexCh  [numLabelHandlers]chan labelChange // channels into label indexing
+
+	mcache metaCache
 }
 
 // GetMaxDownresLevel returns the number of down-res levels, where level 0 = high-resolution

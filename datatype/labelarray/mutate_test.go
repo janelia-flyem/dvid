@@ -412,16 +412,16 @@ func TestSparseVolumes(t *testing.T) {
 		encoding = buffer.Bytes()
 		bodies[label-1].checkSparseVol(t, encoding, dvid.OptionalBounds{})
 
-		// check sparse vol + scaling using binary blocks compression
-		reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/%d?format=blocks", server.WebAPIPath, uuid, label)
-		resp = server.TestHTTPResponse(t, "GET", reqStr, nil)
-		bodies[label-1].checkBinarySparseVol(t, resp.Body)
+		// // check sparse vol + scaling using binary blocks compression
+		// reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/%d?format=blocks", server.WebAPIPath, uuid, label)
+		// resp = server.TestHTTPResponse(t, "GET", reqStr, nil)
+		// bodies[label-1].checkBinarySparseVol(t, resp.Body)
 
-		resp = server.TestHTTPResponse(t, "GET", reqStr+"?scale=1", nil)
-		bodies[label-1].checkScaledBinarySparseVol(t, resp.Body, 1)
+		// resp = server.TestHTTPResponse(t, "GET", reqStr+"?scale=1", nil)
+		// bodies[label-1].checkScaledBinarySparseVol(t, resp.Body, 1)
 
-		resp = server.TestHTTPResponse(t, "GET", reqStr+"?scale=2", nil)
-		bodies[label-1].checkScaledBinarySparseVol(t, resp.Body, 2)
+		// resp = server.TestHTTPResponse(t, "GET", reqStr+"?scale=2", nil)
+		// bodies[label-1].checkScaledBinarySparseVol(t, resp.Body, 2)
 
 		// Check Y/Z restriction
 		reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/%d?miny=30&maxy=50&minz=20&maxz=40", server.WebAPIPath, uuid, label)

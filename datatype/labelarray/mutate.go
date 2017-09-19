@@ -117,7 +117,7 @@ func (d *Data) processMerge(v dvid.VersionID, delta labels.DeltaMerge) error {
 	mutID := d.NewMutationID()
 	downresMut := downres.NewMutation(d, v, mutID)
 	for _, izyx := range delta.Blocks {
-		n := izyx.Hash(numBlockHandlers)
+		n := izyx.Hash(numMutateHandlers)
 		d.MutAdd(mutID)
 		op := mergeOp{mutID: mutID, MergeOp: delta.MergeOp, bcoord: izyx, downresMut: downresMut}
 		d.mutateCh[n] <- procMsg{op: op, v: v}
@@ -403,7 +403,7 @@ func (d *Data) processSplit(v dvid.VersionID, mutID uint64, delta labels.DeltaSp
 		// Coarse Split so block indexing simple because all split blocks are removed from old label.
 		deleteBlks = delta.SortedBlocks
 		for _, izyx := range delta.SortedBlocks {
-			n := izyx.Hash(numBlockHandlers)
+			n := izyx.Hash(numMutateHandlers)
 			d.MutAdd(mutID)
 			op := splitOp{
 				mutID: mutID,
@@ -432,7 +432,7 @@ func (d *Data) processSplit(v dvid.VersionID, mutID uint64, delta labels.DeltaSp
 		}()
 
 		for izyx, blockRLEs := range delta.Split {
-			n := izyx.Hash(numBlockHandlers)
+			n := izyx.Hash(numMutateHandlers)
 			d.MutAdd(mutID)
 			op := splitOp{
 				mutID: mutID,

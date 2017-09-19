@@ -23,10 +23,16 @@ import (
 // aggregating all changes by label.  Send mods of form (label, delta voxels, block, action)
 // where action is add or delete block from the label index.
 
+// cacheKey is a two tuple (version, label)
+type cacheKey struct {
+	version dvid.VersionID
+	label   uint64
+}
+
 type timedMeta struct {
-	label uint64
-	meta  *Meta
-	t     time.Time
+	key  cacheKey
+	meta *Meta
+	t    time.Time
 }
 
 type cacheList []*timedMeta
@@ -38,7 +44,7 @@ func (c cacheList) Less(a, b int) bool { return c[a].t.Before(c[b].t) }
 // metaCache is a label Meta cache based on time since last access.
 type metaCache struct {
 	size  uint16
-	avail map[uint64]*timedMeta
+	avail map[cacheKey]*timedMeta
 	list  cacheList
 }
 
@@ -51,13 +57,14 @@ func makeMetaCache(size uint16) *metaCache {
 	m := new(metaCache)
 	m.size = size
 	m.list = make(cacheList, 0, size)
-	m.avail = make(map[uint64]*timedMeta, size)
+	m.avail = make(map[cacheKey]*timedMeta, size)
 	return m
 }
 
 // GetLabelMeta returns a label's Meta if in the cache, else returns nil.
-func (m metaCache) GetLabelMeta(label uint64) *Meta {
-	tm, found := m.avail[label]
+func (m metaCache) GetLabelMeta(v dvid.VersionID, label uint64) *Meta {
+	entry := cacheKey{v, label}
+	tm, found := m.avail[entry]
 	if found {
 		tm.t = time.Now()
 		return tm.meta
@@ -66,22 +73,23 @@ func (m metaCache) GetLabelMeta(label uint64) *Meta {
 }
 
 // AddLabelMeta adds a label's Meta to the cache, possibly evicting older entries.
-func (m metaCache) AddLabelMeta(label uint64, meta *Meta) {
-	tm, found := m.avail[label]
+func (m metaCache) AddLabelMeta(v dvid.VersionID, label uint64, meta *Meta) {
+	entry := cacheKey{v, label}
+	tm, found := m.avail[entry]
 	if found {
 		tm.meta = meta // could be updated Meta
 		tm.t = time.Now()
 		return
 	}
 	newtm := new(timedMeta)
-	newtm.label = label
+	newtm.key = entry
 	newtm.meta = meta
 	newtm.t = time.Now()
 
 	if len(m.list) == int(m.size) {
 		sort.Sort(m.list)
 		evicted := m.list[m.size-1]
-		delete(m.avail, evicted.label)
+		delete(m.avail, evicted.key)
 
 		m.list[m.size-1] = newtm
 	} else {
@@ -303,11 +311,11 @@ type labelChange struct {
 // This also allows us to efficiently cache the last N label Meta
 func (d *Data) indexLabels(ch <-chan labelChange) {
 	var err error
-	cache := makeMetaCache(100)
+	cache := makeMetaCache(1000)
 	for change := range ch {
 		ctx := datastore.NewVersionedCtx(d, change.v)
 
-		meta := cache.GetLabelMeta(change.label)
+		meta := cache.GetLabelMeta(change.v, change.label)
 		if meta == nil {
 			meta, err = d.getLabelMeta(ctx, labels.NewSet(change.label), 0, dvid.Bounds{})
 			if err != nil {
@@ -319,7 +327,7 @@ func (d *Data) indexLabels(ch <-chan labelChange) {
 			dvid.Criticalf("Error on applying mutation changes to label %d meta: %v\n", change.label, err)
 			continue
 		}
-		cache.AddLabelMeta(change.label, meta)
+		cache.AddLabelMeta(change.v, change.label, meta)
 
 		if err := d.PutLabelMeta(ctx, change.label, meta); err != nil {
 			dvid.Criticalf("Error trying to store indexing for label %d, data %q: %v\n", change.label, d.DataName(), err)
