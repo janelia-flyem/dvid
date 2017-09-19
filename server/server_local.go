@@ -11,6 +11,7 @@ package server
 import (
 	"bytes"
 	"fmt"
+	"path/filepath"
 	"net/smtp"
 	"os"
 	"os/exec"
@@ -66,6 +67,45 @@ type tomlConfig struct {
 	Store      map[storage.Alias]storeConfig
 	Backend    map[dvid.DataSpecifier]backendConfig
 	Groupcache storage.GroupcacheConfig
+}
+
+// Some settings in the TOML can be given as relative paths.
+// This function converts them in-place to absolute paths,
+// assuming the given paths were relative to the TOML file's own directory.
+func (c *tomlConfig) ConvertPathsToAbsolute(configPath string) error {
+	var err error
+
+	configDir := filepath.Dir(configPath)
+	
+	// [server].webClient
+	c.Server.WebClient, err = dvid.ConvertToAbsolute(c.Server.WebClient, configDir)
+	if err != nil {
+		return fmt.Errorf("Error converting webClient setting to absolute path")
+	}
+	
+	// [logging].logfile
+	c.Logging.Logfile, err = dvid.ConvertToAbsolute(c.Logging.Logfile, configDir)
+	if err != nil {
+		return fmt.Errorf("Error converting logfile setting to absolute path")
+	}
+
+	// [store.foobar].path
+	for alias, sc := range c.Store {
+		p, ok := sc["path"]
+		if !ok {
+			continue
+		}
+		path, ok := p.(string)
+		if !ok {
+			return fmt.Errorf("Don't understand path setting for store %q", alias)
+		}
+		absPath, err := dvid.ConvertToAbsolute(path, configDir)
+		if err != nil {
+			return fmt.Errorf("Error converting store.%s.path to absolute path: %q", alias, path)
+		}
+		sc["path"] = absPath
+	}
+	return nil
 }
 
 func (c tomlConfig) Stores() (map[storage.Alias]dvid.StoreConfig, error) {
@@ -154,11 +194,15 @@ func LoadConfig(filename string) (*datastore.InstanceConfig, *dvid.LogConfig, *s
 	if _, err := toml.DecodeFile(filename, &tc); err != nil {
 		return nil, nil, nil, fmt.Errorf("Could not decode TOML config: %v\n", err)
 	}
+	var err error
+	err = tc.ConvertPathsToAbsolute(filename)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("Could not convert relative paths to absolute paths in TOML config: %v\n", err)
+	}
 
 	// Get all defined stores.
 	backend := new(storage.Backend)
 	backend.Groupcache = tc.Groupcache
-	var err error
 	backend.Stores, err = tc.Stores()
 	if err != nil {
 		return nil, nil, nil, err
