@@ -188,7 +188,8 @@ else ()
         COMMAND ${BUILDEM_ENV_STRING} go get ${GO_GET} cloud.google.com/go/storage
         COMMAND ${BUILDEM_ENV_STRING} go get ${GO_GET} google.golang.org/api/option
         COMMAND ${BUILDEM_ENV_STRING} go get ${GO_GET} google.golang.org/grpc
-        COMMAND ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/golang/protobuf/{proto,protoc-gen-go}
+        COMMAND ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/golang/protobuf/proto
+        COMMAND ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/golang/protobuf/protoc-gen-go
         COMMENT     "Adding gcloud packages...")  
 
     add_custom_target (gorpc
