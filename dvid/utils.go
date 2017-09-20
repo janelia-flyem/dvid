@@ -147,6 +147,22 @@ func (fname Filename) HasExtensionPrefix(exts ...string) bool {
 	return false
 }
 
+// Converts the given (possibly) relative path into an absolute path,
+// relative to the given anchor directory, not the current working directory.
+// If the given relativePath is already an absolute path,
+// it is returned unchanged.
+func ConvertToAbsolute(relativePath string, anchorDir string) (string, error) {
+	if filepath.IsAbs(relativePath) {
+		return relativePath, nil
+	}
+	absDir, err := filepath.Abs(anchorDir)
+	if err != nil {
+		return relativePath, fmt.Errorf("Could not decode TOML config: %v\n", err)
+	}
+	absPath := filepath.Join(absDir, relativePath)
+	return absPath, nil
+}
+
 // DataFromPost returns data submitted in the given key of a POST request.
 func DataFromPost(r *http.Request, key string) ([]byte, error) {
 	f, _, err := r.FormFile(key)
