@@ -583,6 +583,18 @@ GET <api URL>/node/<UUID>/<data name>/maxlabel
 --- The following endpoints require the labelarray data instance to have IndexedLabels set to true. ---
 -------------------------------------------------------------------------------------------------------
 
+GET  <api URL>/node/<UUID>/<data name>/sparsevol-size/<label>?<options>
+
+	Returns JSON giving the number of native blocks and the coarse bounding box in DVID
+	coordinates (voxel space).
+
+	Example return:
+
+	{ "numblocks": 1081, "minvoxel": [886, 513, 744], "maxvoxel": [1723, 1279, 4855]}
+
+	Note that the minvoxel and maxvoxel coordinates are voxel coordinates that are
+	accurate to the block, not the voxel.
+
 GET  <api URL>/node/<UUID>/<data name>/sparsevol/<label>?<options>
 
 	Returns a sparse volume with voxels of the given label in encoded RLE format.  The returned
@@ -2631,6 +2643,9 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 
 	// endpoints after this must have data instance IndexedLabels = true
 
+	case "sparsevol-size":
+		d.handleSparsevolSize(ctx, w, r, parts)
+
 	case "sparsevol":
 		d.handleSparsevol(ctx, w, r, parts)
 
@@ -2989,6 +3004,56 @@ func (d *Data) getSparsevolOptions(r *http.Request) (b dvid.Bounds, compression 
 		b.Exact = false
 	}
 	return
+}
+
+func (d *Data) handleSparsevolSize(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request, parts []string) {
+	// GET <api URL>/node/<UUID>/<data name>/sparsevol-size/<label>
+	if len(parts) < 5 {
+		server.BadRequest(w, r, "ERROR: DVID requires label ID to follow 'sparsevol-size' command")
+		return
+	}
+	label, err := strconv.ParseUint(parts[4], 10, 64)
+	if err != nil {
+		server.BadRequest(w, r, err)
+		return
+	}
+	if label == 0 {
+		server.BadRequest(w, r, "Label 0 is protected background value and cannot be used as sparse volume.\n")
+		return
+	}
+	if strings.ToLower(r.Method) != "get" {
+		server.BadRequest(w, r, "DVID does not support %s on /sparsevol-size endpoint", r.Method)
+		return
+	}
+
+	meta, lbls, err := d.GetMappedLabelMeta(ctx, label, 0, dvid.Bounds{})
+	if err != nil {
+		server.BadRequest(w, r, "problem getting block indexing on labels %: %v", lbls, err)
+		return
+	}
+
+	w.Header().Set("Content-type", "application/octet-stream")
+	fmt.Fprintf(w, "{")
+	fmt.Fprintf(w, `"numblocks": %d, `, len(meta.Blocks))
+	minBlock, maxBlock, err := meta.Blocks.GetBounds()
+	if err != nil {
+		server.BadRequest(w, r, "problem getting bounds on blocks of label %d: %v", label, err)
+		return
+	}
+	blockSize, ok := d.BlockSize().(dvid.Point3d)
+	if !ok {
+		server.BadRequest(w, r, "Error: BlockSize for %s wasn't 3d", d.DataName())
+		return
+	}
+	minx := minBlock[0] * blockSize[0]
+	miny := minBlock[1] * blockSize[1]
+	minz := minBlock[2] * blockSize[2]
+	maxx := (maxBlock[0]+1)*blockSize[0] - 1
+	maxy := (maxBlock[1]+1)*blockSize[1] - 1
+	maxz := (maxBlock[2]+1)*blockSize[2] - 1
+	fmt.Fprintf(w, `"minvoxel": [%d, %d, %d], `, minx, miny, minz)
+	fmt.Fprintf(w, `"maxvoxel": [%d, %d, %d]`, maxx, maxy, maxz)
+	fmt.Fprintf(w, "}")
 }
 
 func (d *Data) handleSparsevol(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request, parts []string) {

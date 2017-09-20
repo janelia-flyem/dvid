@@ -449,6 +449,12 @@ func TestSparseVolumes(t *testing.T) {
 		}
 	}
 
+	reqStr := fmt.Sprintf("%snode/%s/labels/sparsevol-size/1", server.WebAPIPath, uuid)
+	sizeResp := server.TestHTTP(t, "GET", reqStr, nil)
+	if string(sizeResp) != `{"numblocks": 3, "minvoxel": [0, 32, 0], "maxvoxel": [31, 63, 95]}` {
+		t.Errorf("bad response to sparsevol-size endpoint: %s\n", string(sizeResp))
+	}
+
 	// Make sure non-existent bodies return proper HEAD responses.
 	headReq := fmt.Sprintf("%snode/%s/labels/sparsevol/%d", server.WebAPIPath, uuid, 10)
 	resp := server.TestHTTPResponse(t, "HEAD", headReq, nil)

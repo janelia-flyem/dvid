@@ -1158,6 +1158,46 @@ func (i IZYXSlice) WriteSerializedRLEs(w io.Writer) (spans uint32, err error) {
 	return
 }
 
+// GetBounds returns the minimum and maximum coordinate in the IZYXSlice.
+func (i IZYXSlice) GetBounds() (minPt, maxPt Point3d, err error) {
+	if len(i) == 0 {
+		return
+	}
+	minPt[0] = math.MaxInt32
+	minPt[1] = math.MaxInt32
+	minPt[2] = math.MaxInt32
+	maxPt[0] = -math.MaxInt32 + 1
+	maxPt[1] = -math.MaxInt32 + 1
+	maxPt[2] = -math.MaxInt32 + 1
+	for _, izyxStr := range i {
+		var blockPt ChunkPoint3d
+		blockPt, err = izyxStr.ToChunkPoint3d()
+		if err != nil {
+			err = fmt.Errorf("unable to convert IZYXString to chunk point: %v", err)
+			return
+		}
+		if minPt[0] > blockPt[0] {
+			minPt[0] = blockPt[0]
+		}
+		if minPt[1] > blockPt[1] {
+			minPt[1] = blockPt[1]
+		}
+		if minPt[2] > blockPt[2] {
+			minPt[2] = blockPt[2]
+		}
+		if maxPt[0] < blockPt[0] {
+			maxPt[0] = blockPt[0]
+		}
+		if maxPt[1] < blockPt[1] {
+			maxPt[1] = blockPt[1]
+		}
+		if maxPt[2] < blockPt[2] {
+			maxPt[2] = blockPt[2]
+		}
+	}
+	return
+}
+
 // FitToBounds returns a copy IZYXSlice that has been adjusted to fit
 // within the given optional block bounds.  The receiver IZYXSlice is
 // assumed to be sorted.
