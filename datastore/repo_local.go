@@ -1935,6 +1935,7 @@ type repoT struct {
 // setting up the initial DAG with root node.
 func newRepo(uuid dvid.UUID, v dvid.VersionID, id dvid.RepoID, passcode string) *repoT {
 	t := time.Now()
+	t = t.Round(0)
 	dvid.Infof("new repo with passcode %s\n", passcode)
 	repo := &repoT{
 		id:         id,
