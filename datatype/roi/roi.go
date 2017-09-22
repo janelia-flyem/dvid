@@ -840,8 +840,8 @@ func (d *Data) PointQuery(ctx *datastore.VersionedCtx, jsonBytes []byte) ([]byte
 }
 
 type subvolumesT struct {
-	NumTotalBlocks  int32
-	NumActiveBlocks int32
+	NumTotalBlocks  uint64
+	NumActiveBlocks uint64
 	NumSubvolumes   int32
 	ROI             dvid.ChunkExtents3d
 	Subvolumes      []subvolumeT
@@ -850,8 +850,8 @@ type subvolumesT struct {
 type subvolumeT struct {
 	dvid.Extents3d
 	dvid.ChunkExtents3d
-	TotalBlocks  int32
-	ActiveBlocks int32
+	TotalBlocks  uint64
+	ActiveBlocks uint64
 }
 
 type layerT struct {
@@ -940,8 +940,8 @@ func getXRange(blocks []*indexRLE, minY, maxY int32) (minX, maxX int32, actives 
 	return
 }
 
-func findActives(blocks []*indexRLE, minX, maxX int32) int32 {
-	var numActive int32
+func findActives(blocks []*indexRLE, minX, maxX int32) uint64 {
+	var numActive uint64
 	for _, rle := range blocks {
 		spanBeg := rle.start[0]
 		if spanBeg > maxX {
@@ -953,7 +953,7 @@ func findActives(blocks []*indexRLE, minX, maxX int32) int32 {
 		}
 		x0 := dvid.MaxInt32(minX, spanBeg)
 		x1 := dvid.MinInt32(maxX, spanEnd)
-		numActive += x1 - x0 + 1
+		numActive += uint64(x1 - x0 + 1)
 	}
 	return numActive
 }
@@ -1011,10 +1011,10 @@ func findXHoles(blocks []*indexRLE, minX, maxX int32) (bestBeg, bestEnd int32, f
 	return
 }
 
-func totalBlocks(minCorner, maxCorner dvid.ChunkPoint3d) int32 {
-	dx := maxCorner[0] - minCorner[0] + 1
-	dy := maxCorner[1] - minCorner[1] + 1
-	dz := maxCorner[2] - minCorner[2] + 1
+func totalBlocks(minCorner, maxCorner dvid.ChunkPoint3d) uint64 {
+	dx := uint64(maxCorner[0] - minCorner[0] + 1)
+	dy := uint64(maxCorner[1] - minCorner[1] + 1)
+	dz := uint64(maxCorner[2] - minCorner[2] + 1)
 	return dx * dy * dz
 }
 
@@ -1062,7 +1062,7 @@ func (d *Data) addSubvolumes(layer *layerT, subvolumes *subvolumesT, batchsize i
 				minCorner := dvid.ChunkPoint3d{begX, begY, layer.minZ}
 				maxCorner := dvid.ChunkPoint3d{endX, endY, layer.maxZ}
 				holeBeg, holeEnd, found := findXHoles(actives, begX, endX)
-				var numActive, numTotal int32
+				var numActive, numTotal uint64
 				if found && merge {
 					// MinCorner stays same since we are extended in X
 					if holeBeg-1 >= begX {
