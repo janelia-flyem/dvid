@@ -89,6 +89,36 @@ func TestNormalization(t *testing.T) {
 	}
 }
 
+func TestDownres(t *testing.T) {
+	islice := IZYXSlice{
+		ChunkPoint3d{1, 0, 1}.ToIZYXString(),
+		ChunkPoint3d{1, 1, 1}.ToIZYXString(),
+		ChunkPoint3d{3, 2, 3}.ToIZYXString(),
+		ChunkPoint3d{7, 5, 9}.ToIZYXString(),
+		ChunkPoint3d{9, 9, 9}.ToIZYXString(),
+		ChunkPoint3d{10, 10, 10}.ToIZYXString(),
+	}
+	downres1, err := islice.Downres(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := IZYXSlice{
+		ChunkPoint3d{0, 0, 0}.ToIZYXString(),
+		ChunkPoint3d{1, 1, 1}.ToIZYXString(),
+		ChunkPoint3d{3, 2, 4}.ToIZYXString(),
+		ChunkPoint3d{4, 4, 4}.ToIZYXString(),
+		ChunkPoint3d{5, 5, 5}.ToIZYXString(),
+	}
+	if len(downres1) != 5 {
+		t.Errorf("Downres scale 1 failed: %v vs expected %v\n", downres1, expected)
+	}
+	for i, izyx := range downres1 {
+		if expected[i] != izyx {
+			t.Errorf("Downres scale 1 failed: %v vs expected %v\n", downres1, expected)
+		}
+	}
+}
+
 func TestIZYXSlice(t *testing.T) {
 	islice := make(IZYXSlice, 1000)
 	i := 0
