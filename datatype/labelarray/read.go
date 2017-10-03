@@ -1,7 +1,6 @@
 package labelarray
 
 import (
-	"bytes"
 	"encoding/binary"
 	"fmt"
 	"log"
@@ -177,69 +176,6 @@ func (d *Data) GetLabels(v dvid.VersionID, scale uint8, vox *Labels, r *imageblk
 	}
 	wg.Wait()
 	return nil
-}
-
-// GetBlocks returns a slice of bytes corresponding to all the blocks along a span in X
-func (d *Data) GetBlocks(v dvid.VersionID, scale uint8, start dvid.ChunkPoint3d, span int) ([]byte, error) {
-	store, err := d.GetOrderedKeyValueDB()
-	if err != nil {
-		return nil, fmt.Errorf("Data type imageblk had error initializing store: %v\n", err)
-	}
-
-	indexBeg := dvid.IndexZYX(start)
-	end := start
-	end[0] += int32(span - 1)
-	indexEnd := dvid.IndexZYX(end)
-	begTKey := NewBlockTKey(scale, &indexBeg)
-	endTKey := NewBlockTKey(scale, &indexEnd)
-
-	ctx := datastore.NewVersionedCtx(d, v)
-
-	iv := dvid.InstanceVersion{d.DataUUID(), v}
-	mapping := labels.LabelMap(iv)
-
-	keyvalues, err := store.GetRange(ctx, begTKey, endTKey)
-	if err != nil {
-		return nil, err
-	}
-
-	var buf bytes.Buffer
-
-	// Save the # of keyvalues actually obtained.
-	numkv := len(keyvalues)
-	binary.Write(&buf, binary.LittleEndian, int32(numkv))
-
-	// Write the block indices in XYZ little-endian format + the size of each block
-	uncompress := true
-	for _, kv := range keyvalues {
-		deserialization, _, err := dvid.DeserializeData(kv.V, uncompress)
-		if err != nil {
-			return nil, fmt.Errorf("Unable to deserialize block, %s (%v): %v", ctx, kv.K, err)
-		}
-		var block labels.Block
-		if err = block.UnmarshalBinary(deserialization); err != nil {
-			return nil, fmt.Errorf("Unable to unmarshal binary block: %v\n", err)
-		}
-		labelData, _ := block.MakeLabelVolume()
-		if mapping != nil {
-			n := len(labelData) / 8
-			for i := 0; i < n; i++ {
-				orig := binary.LittleEndian.Uint64(labelData[i*8 : i*8+8])
-				mapped, found := mapping.FinalLabel(orig)
-				if !found {
-					mapped = orig
-				}
-				binary.LittleEndian.PutUint64(labelData[i*8:i*8+8], mapped)
-			}
-		}
-
-		_, err = buf.Write(labelData)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return buf.Bytes(), nil
 }
 
 // ReadChunk reads a chunk of data as part of a mapped operation.

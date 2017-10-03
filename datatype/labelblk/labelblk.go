@@ -767,7 +767,7 @@ func sendBlockLZ4(w http.ResponseWriter, x, y, z int32, v []byte, compression st
 	return nil
 }
 
-// GetBlocks returns a slice of bytes corresponding to all the blocks along a span in X
+// SendBlocks writes all blocks within the given subvolume to the http.ResponseWriter.
 func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, subvol *dvid.Subvolume, compression string) error {
 	w.Header().Set("Content-type", "application/octet-stream")
 

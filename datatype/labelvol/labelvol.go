@@ -11,6 +11,7 @@ import (
 	"encoding/gob"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"net/http"
 	"os"
@@ -236,19 +237,6 @@ GET <api URL>/node/<UUID>/<data name>/sparsevol-coarse/<label>
 	have been replaced by block coordinates.
 
 
-DELETE <api URL>/node/<UUID>/<data name>/area/<label>/<size>/<offset>
-
-    NOTE: Does not honor syncs and is intended purely for low-level mods.
-	Deletes all of a label's sparse volume within a given 3d volume from a 3d offset.
-
-	Example: 
-
-    DELETE <api URL>/node/3f8c/bodies/area/23/512_512_512/0_0_128
-
-	The above example deletes all sparsevol associated with label 23 in subvolume
-	that is 512 x 512 x 512 starting at offset (0,0,128).
-
-
 GET <api URL>/node/<UUID>/<data name>/maxlabel
 
 	GET returns the maximum label for the version of data in JSON form:
@@ -349,6 +337,44 @@ POST <api URL>/node/<UUID>/<data name>/split-coarse/<label>[?splitlabel=X]
 	        int32   Length of run
 
 	The Notes for "split" endpoint above are applicable to this "split-coarse" endpoint.
+
+POST <api URL>/node/<UUID>/<data name>/resync/<label>
+
+	Regenerates the sparse volume for the given label from its synced labelblk.
+	This is used to repair databases that have been inadvertantly shutdown or
+	crashed while undergoing merges/splits.
+
+	This request requires a binary sparse volume in the POSTed body with the following 
+	encoded RLE format, which is similar to the "split" request format but uses block
+	instead of voxel coordinates:
+
+		All integers are in little-endian format.
+
+	    byte     Payload descriptor:
+	               Set to 0 to indicate it's a binary sparse volume.
+	    uint8    Number of dimensions
+	    uint8    Dimension of run (typically 0 = X)
+	    byte     Reserved (to be used later)
+	    uint32    # Blocks [TODO.  0 for now]
+	    uint32    # Spans
+	    Repeating unit of:
+	        int32   Coordinate of run start (dimension 0)
+	        int32   Coordinate of run start (dimension 1)
+	        int32   Coordinate of run start (dimension 2)
+			  ...
+	        int32   Length of run
+
+DELETE <api URL>/node/<UUID>/<data name>/area/<label>/<size>/<offset>
+
+	NOTE: Does not honor syncs and is intended purely for low-level mods.
+	Deletes all of a label's sparse volume within a given 3d volume from a 3d offset.
+
+	Example: 
+
+	DELETE <api URL>/node/3f8c/bodies/area/23/512_512_512/0_0_128
+
+	The above example deletes all sparsevol associated with label 23 in subvolume
+	that is 512 x 512 x 512 starting at offset (0,0,128).
 `
 
 var (
@@ -1298,6 +1324,34 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 		timedLog.Infof("HTTP merge request (%s)", r.URL)
 
+	case "resync":
+		// POST <api URL>/node/<UUID>/<data name>/resync/<label>
+		if action != "post" {
+			server.BadRequest(w, r, "resync requests must be POST actions.")
+			return
+		}
+		if len(parts) < 5 {
+			server.BadRequest(w, r, "ERROR: DVID requires label ID to follow 'resync' command")
+			return
+		}
+		relabel, err := strconv.ParseUint(parts[4], 10, 64)
+		if err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+		if relabel == 0 {
+			server.BadRequest(w, r, "Label 0 is protected background value and cannot be used as sparse volume.\n")
+			return
+		}
+		d.StartUpdate()
+		go func() {
+			if err := d.resyncLabel(ctx, relabel, r.Body); err != nil {
+				dvid.Errorf("Error on resync of data %q, label %d: %v\n", d.DataName(), relabel, err)
+			}
+			d.StopUpdate()
+		}()
+		timedLog.Infof("HTTP resync %d started (%s)", relabel, r.URL)
+
 	default:
 		server.BadAPIRequest(w, r, d)
 	}
@@ -1809,6 +1863,116 @@ func (d *Data) DeleteArea(ctx *datastore.VersionedCtx, label uint64, subvol *dvi
 		return fmt.Errorf("Batch commit during delete area of %s label %d: %v\n", d.DataName(), label, err)
 	}
 	return nil
+}
+
+// deletes prior sparsevol for label and recreates based on associated labelblk with the POSTed
+// blocks.
+func (d *Data) resyncLabel(ctx *datastore.VersionedCtx, relabel uint64, r io.ReadCloser) error {
+	timedLog := dvid.NewTimeLog()
+	store, err := d.GetOrderedKeyValueDB()
+	if err != nil {
+		return fmt.Errorf("data %q had error initializing store: %v\n", d.DataName(), err)
+	}
+
+	blkdata, err := d.GetSyncedLabelblk()
+	if err != nil {
+		return err
+	}
+
+	// Read the sparse volume from reader.
+	var resyncROI dvid.RLEs
+	resyncROI, err = dvid.ReadRLEs(r)
+	if err != nil {
+		return err
+	}
+	resyncNumBlocks, _ := resyncROI.Stats()
+
+	var numBlocks int
+	for _, rle := range resyncROI {
+		startPt := dvid.ChunkPoint3d(rle.StartPt())
+		var endPt dvid.ChunkPoint3d
+		endPt[0] = startPt[0] + rle.Length() - 1
+		endPt[1] = startPt[1]
+		endPt[2] = startPt[2]
+
+		begTKey := NewTKey(relabel, startPt.ToIZYXString())
+		endTKey := NewTKey(relabel, endPt.ToIZYXString())
+		if err := store.DeleteRange(ctx, begTKey, endTKey); err != nil {
+			return err
+		}
+
+		blocks, err := blkdata.GetBlocks(ctx.VersionID(), startPt, int(rle.Length()))
+		if err != nil {
+			return err
+		}
+		numBlocks += len(blocks)
+
+		for _, labelBlock := range blocks {
+			tk := NewTKey(relabel, labelBlock.Pos.ToIZYXString())
+			rleBytes, err := d.calcLabelRLEs(relabel, labelBlock)
+			if err != nil {
+				return err
+			}
+			if rleBytes == nil {
+				continue
+			}
+			if err := store.Put(ctx, tk, rleBytes); err != nil {
+				return err
+			}
+		}
+	}
+	timedLog.Infof("Finished resync label %d, %d of %d blocks within data %q\n", relabel, numBlocks, resyncNumBlocks, blkdata.DataName())
+	return nil
+}
+
+func (d *Data) calcLabelRLEs(relabel uint64, block labelblk.Block) ([]byte, error) {
+	blockBytes := len(block.Data)
+	if blockBytes != int(d.BlockSize.Prod())*8 {
+		return nil, fmt.Errorf("Deserialized label block %d bytes, not uint64 size times %d block elements\n",
+			blockBytes, d.BlockSize.Prod())
+	}
+	var labelRLEs dvid.RLEs
+	firstPt := block.Pos.MinPoint(d.BlockSize)
+	lastPt := block.Pos.MaxPoint(d.BlockSize)
+
+	var curStart dvid.Point3d
+	var voxelLabel, curLabel uint64
+	var z, y, x, curRun int32
+	start := 0
+	for z = firstPt.Value(2); z <= lastPt.Value(2); z++ {
+		for y = firstPt.Value(1); y <= lastPt.Value(1); y++ {
+			for x = firstPt.Value(0); x <= lastPt.Value(0); x++ {
+				voxelLabel = binary.LittleEndian.Uint64(block.Data[start : start+8])
+				start += 8
+
+				// If we hit background or have switched label, save old run and start new one.
+				if voxelLabel == 0 || voxelLabel != curLabel {
+					// Save old run
+					if curLabel == relabel && curRun > 0 {
+						labelRLEs = append(labelRLEs, dvid.NewRLE(curStart, curRun))
+					}
+					// Start new one if not zero label.
+					if voxelLabel == relabel {
+						curStart = dvid.Point3d{x, y, z}
+						curRun = 1
+					} else {
+						curRun = 0
+					}
+					curLabel = voxelLabel
+				} else if voxelLabel == relabel {
+					curRun++
+				}
+			}
+			// Force break of any runs when we finish x scan.
+			if curRun > 0 {
+				labelRLEs = append(labelRLEs, dvid.NewRLE(curStart, curRun))
+				curLabel = 0
+				curRun = 0
+			}
+		}
+	}
+
+	return labelRLEs.MarshalBinary()
 }
 
 // PutSparseVol stores an encoded sparse volume that stays within a given forward label.

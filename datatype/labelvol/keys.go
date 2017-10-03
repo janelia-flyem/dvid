@@ -1,5 +1,5 @@
 /*
-	This file supports keyspaces for label block data types.
+	This file supports keyspaces for labelvol data type.
 */
 
 package labelvol

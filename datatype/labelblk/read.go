@@ -1,7 +1,6 @@
 package labelblk
 
 import (
-	"bytes"
 	"encoding/binary"
 	"fmt"
 	"log"
@@ -180,8 +179,13 @@ func (d *Data) GetLabels(v dvid.VersionID, vox *Labels, r *imageblk.ROI) error {
 	return nil
 }
 
-// GetBlocks returns a slice of bytes corresponding to all the blocks along a span in X
-func (d *Data) GetBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int) ([]byte, error) {
+type Block struct {
+	Pos  dvid.ChunkPoint3d
+	Data []byte
+}
+
+// GetBlocks returns any block data along a span in X
+func (d *Data) GetBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int) ([]Block, error) {
 	store, err := d.GetOrderedKeyValueDB()
 	if err != nil {
 		return nil, fmt.Errorf("Data type imageblk had error initializing store: %v\n", err)
@@ -204,15 +208,16 @@ func (d *Data) GetBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int) ([
 		return nil, err
 	}
 
-	var buf bytes.Buffer
-
-	// Save the # of keyvalues actually obtained.
 	numkv := len(keyvalues)
-	binary.Write(&buf, binary.LittleEndian, int32(numkv))
+	blocks := make([]Block, numkv)
 
-	// Write the block indices in XYZ little-endian format + the size of each block
 	uncompress := true
-	for _, kv := range keyvalues {
+	for blocknum, kv := range keyvalues {
+		idx, err := DecodeTKey(kv.K)
+		if err != nil {
+			return nil, err
+		}
+		blockPos := dvid.ChunkPoint3d(*idx)
 		block, _, err := dvid.DeserializeData(kv.V, uncompress)
 		if err != nil {
 			return nil, fmt.Errorf("Unable to deserialize block, %s (%v): %v", ctx, kv.K, err)
@@ -228,14 +233,10 @@ func (d *Data) GetBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int) ([
 				binary.LittleEndian.PutUint64(block[i*8:i*8+8], mapped)
 			}
 		}
-
-		_, err = buf.Write(block)
-		if err != nil {
-			return nil, err
-		}
+		blocks[blocknum].Data = block
+		blocks[blocknum].Pos = blockPos
 	}
-
-	return buf.Bytes(), nil
+	return blocks, nil
 }
 
 // ReadChunk reads a chunk of data as part of a mapped operation.

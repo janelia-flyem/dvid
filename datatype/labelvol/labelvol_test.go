@@ -1323,6 +1323,86 @@ func TestMutableLabelblkPOST(t *testing.T) {
 	}
 }
 
+func TestResyncLabel(t *testing.T) {
+	datastore.OpenTest()
+	defer datastore.CloseTest()
+
+	// Create testbed volume and data instances
+	uuid, _ := initTestRepo()
+	var config dvid.Config
+	server.CreateTestInstance(t, uuid, "labelblk", "labels", config)
+	server.CreateTestInstance(t, uuid, "labelvol", "bodies", config)
+	server.CreateTestSync(t, uuid, "labels", "bodies")
+	server.CreateTestSync(t, uuid, "bodies", "labels")
+
+	createLabelTestVolume(t, uuid, "labels")
+	if err := datastore.BlockOnUpdating(uuid, "bodies"); err != nil {
+		t.Fatalf("Error blocking on sync of labels -> bodies: %v\n", err)
+	}
+
+	reqStr := fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid, "bodies", 1)
+	encoding := server.TestHTTP(t, "GET", reqStr, nil)
+	body1.checkSparseVol(t, encoding, dvid.OptionalBounds{})
+
+	// Delete the labelvol but leave the labelblk.
+	d, err := GetByUUIDName(uuid, "bodies")
+	if err != nil {
+		t.Fatalf("Unable to get labelvol data pointer: %v\n", err)
+	}
+	store, err := d.GetOrderedKeyValueDB()
+	if err != nil {
+		t.Fatalf("data %q had error initializing store: %v\n", d.DataName(), err)
+	}
+	startPt := dvid.ChunkPoint3d{0, 0, 0}
+	endPt := dvid.ChunkPoint3d{10000, 10000, 10000}
+	begTKey := NewTKey(1, startPt.ToIZYXString())
+	endTKey := NewTKey(1, endPt.ToIZYXString())
+	v, err := datastore.VersionFromUUID(uuid)
+	if err != nil {
+		t.Fatalf("bad version from UUID %s: %v\n", uuid, err)
+	}
+	ctx := datastore.NewVersionedCtx(d, v)
+	if err := store.DeleteRange(ctx, begTKey, endTKey); err != nil {
+		t.Fatalf("can't delete labelvol blocks for data %q: %v\n", d.DataName(), err)
+	}
+
+	// We should have bad labelvol at this point.
+	reqStr = fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid, "bodies", 1)
+	server.TestBadHTTP(t, "GET", reqStr, nil)
+
+	// Create the encoding for resync area in block coordinates.
+	rles := dvid.RLEs{
+		dvid.NewRLE(dvid.Point3d{0, 1, 0}, 1), // actually a superset of body 1 blocks
+		dvid.NewRLE(dvid.Point3d{0, 1, 1}, 1),
+		dvid.NewRLE(dvid.Point3d{0, 1, 2}, 1),
+	}
+	buf := new(bytes.Buffer)
+	buf.WriteByte(dvid.EncodingBinary)
+	binary.Write(buf, binary.LittleEndian, uint8(3))  // # of dimensions
+	binary.Write(buf, binary.LittleEndian, byte(0))   // dimension of run (X = 0)
+	buf.WriteByte(byte(0))                            // reserved for later
+	binary.Write(buf, binary.LittleEndian, uint32(0)) // Placeholder for # voxels
+	binary.Write(buf, binary.LittleEndian, uint32(3)) // Placeholder for # spans
+	rleBytes, err := rles.MarshalBinary()
+	if err != nil {
+		t.Errorf("Unable to serialize RLEs: %v\n", err)
+	}
+	buf.Write(rleBytes)
+
+	// Submit the resync
+	reqStr = fmt.Sprintf("%snode/%s/%s/resync/%d", server.WebAPIPath, uuid, "bodies", 1)
+	server.TestHTTP(t, "POST", reqStr, buf)
+
+	if err := datastore.BlockOnUpdating(uuid, "bodies"); err != nil {
+		t.Fatalf("Error blocking on resync of labels: %v\n", err)
+	}
+
+	// Make sure sparsevol for original body 1 is correct
+	reqStr = fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid, "bodies", 1)
+	encoding = server.TestHTTP(t, "GET", reqStr, nil)
+	body1.checkSparseVol(t, encoding, dvid.OptionalBounds{})
+}
+
 var (
 	body1 = testBody{
 		label:  1,
