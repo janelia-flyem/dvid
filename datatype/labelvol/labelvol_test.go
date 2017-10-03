@@ -1397,10 +1397,19 @@ func TestResyncLabel(t *testing.T) {
 		t.Fatalf("Error blocking on resync of labels: %v\n", err)
 	}
 
-	// Make sure sparsevol for original body 1 is correct
-	reqStr = fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid, "bodies", 1)
-	encoding = server.TestHTTP(t, "GET", reqStr, nil)
-	body1.checkSparseVol(t, encoding, dvid.OptionalBounds{})
+	// Make sure sparsevol for all bodies are correct (no inadvertent deletions)
+	for _, label := range []uint64{1, 2, 3, 4} {
+		// Check fast HEAD requests
+		reqStr = fmt.Sprintf("%snode/%s/%s/sparsevol/%d", server.WebAPIPath, uuid, "bodies", label)
+		resp := server.TestHTTPResponse(t, "HEAD", reqStr, nil)
+		if resp.Code != http.StatusOK {
+			t.Errorf("HEAD on %s did not return OK.  Status = %d\n", reqStr, resp.Code)
+		}
+
+		// Check full sparse volumes
+		encoding := server.TestHTTP(t, "GET", reqStr, nil)
+		bodies[label-1].checkSparseVol(t, encoding, dvid.OptionalBounds{})
+	}
 }
 
 var (
