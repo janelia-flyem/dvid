@@ -7,9 +7,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/ioutil"
+	"math/rand"
 	"net/http"
 	"reflect"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 
@@ -22,12 +25,11 @@ import (
 	lz4 "github.com/janelia-flyem/go/golz4"
 )
 
-// A single label block within the volume
 type testBody struct {
 	label        uint64
-	offset, size dvid.Point3d
+	offset, size dvid.Point3d // these are just to give ROI of voxelSpans
 	blockSpans   dvid.Spans
-	voxelSpans   dvid.Spans
+	voxelSpans   dvid.Spans // in DVID coordinates, not relative coordinates
 }
 
 var emptyBody = testBody{
@@ -1361,6 +1363,243 @@ func TestMutableLabelblkPOST(t *testing.T) {
 		encoding := server.TestHTTP(t, "GET", reqStr, nil)
 		bodies[label-1].checkSparseVol(t, encoding, dvid.OptionalBounds{})
 	}
+}
+
+func TestConcurrentMutations(t *testing.T) {
+	datastore.OpenTest()
+	defer datastore.CloseTest()
+
+	// Create testbed volume and data instances
+	uuid, _ := initTestRepo()
+	var config dvid.Config // use native 64^3 blocks
+	server.CreateTestInstance(t, uuid, "labelarray", "labels", config)
+
+	// Make three parallel bodies that are within same blocks to test handling of concurrent
+	// ops on same blocks.
+	tbody1 := testBody{ // 72 x 4 x 4 horizontal bar
+		label:  1,
+		offset: dvid.Point3d{9, 68, 68},
+		size:   dvid.Point3d{72, 4, 4},
+		blockSpans: []dvid.Span{
+			{1, 1, 0, 2},
+		},
+		voxelSpans: []dvid.Span{
+			{68, 68, 9, 80},
+			{68, 69, 9, 80},
+			{68, 70, 9, 80},
+			{68, 71, 9, 80},
+			{69, 68, 9, 80},
+			{69, 69, 9, 80},
+			{69, 70, 9, 80},
+			{69, 71, 9, 80},
+			{70, 68, 9, 80},
+			{70, 69, 9, 80},
+			{70, 70, 9, 80},
+			{70, 71, 9, 80},
+			{71, 68, 9, 80},
+			{71, 69, 9, 80},
+			{71, 70, 9, 80},
+			{71, 71, 9, 80},
+		},
+	}
+	tbody2 := testBody{ // 72 x 4 x 4 horizontal bar
+		label:  2,
+		offset: dvid.Point3d{9, 68, 72},
+		size:   dvid.Point3d{72, 4, 4},
+		blockSpans: []dvid.Span{
+			{1, 1, 0, 2},
+		},
+		voxelSpans: []dvid.Span{
+			{72, 68, 9, 80},
+			{72, 69, 9, 80},
+			{72, 70, 9, 80},
+			{72, 71, 9, 80},
+			{73, 68, 9, 80},
+			{73, 69, 9, 80},
+			{73, 70, 9, 80},
+			{73, 71, 9, 80},
+			{74, 68, 9, 80},
+			{74, 69, 9, 80},
+			{74, 70, 9, 80},
+			{74, 71, 9, 80},
+			{75, 68, 9, 80},
+			{75, 69, 9, 80},
+			{75, 70, 9, 80},
+			{75, 71, 9, 80},
+		},
+	}
+	tbody3 := testBody{ // 72 x 4 x 4 horizontal bar
+		label:  3,
+		offset: dvid.Point3d{9, 68, 76},
+		size:   dvid.Point3d{72, 4, 4},
+		blockSpans: []dvid.Span{
+			{1, 1, 0, 2},
+		},
+		voxelSpans: []dvid.Span{
+			{76, 68, 9, 80},
+			{76, 69, 9, 80},
+			{76, 70, 9, 80},
+			{76, 71, 9, 80},
+			{77, 68, 9, 80},
+			{77, 69, 9, 80},
+			{77, 70, 9, 80},
+			{77, 71, 9, 80},
+			{78, 68, 9, 80},
+			{78, 69, 9, 80},
+			{78, 70, 9, 80},
+			{78, 71, 9, 80},
+			{79, 68, 9, 80},
+			{79, 69, 9, 80},
+			{79, 70, 9, 80},
+			{79, 71, 9, 80},
+		},
+	}
+
+	tvol := newTestVolume(192, 128, 128)
+	tvol.addBody(tbody1, 1)
+	tvol.addBody(tbody2, 2)
+	tvol.addBody(tbody3, 3)
+	tvol.put(t, uuid, "labels")
+
+	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
+		t.Fatalf("Error blocking on sync of labels: %v\n", err)
+	}
+
+	retrieved := newTestVolume(192, 128, 128)
+	retrieved.get(t, uuid, "labels")
+	if len(retrieved.data) != 8*192*128*128 {
+		t.Errorf("Retrieved labelvol volume is incorrect size\n")
+	}
+	if err := retrieved.equals(tvol); err != nil {
+		t.Errorf("Initial put not working: %v\n", err)
+	}
+
+	// Run concurrent split/merge ops on each body where split is random location in X.
+	wg := new(sync.WaitGroup)
+	wg.Add(3000)
+	go func() {
+		for n := 0; n < 1000; n++ {
+			tbody1.splitmerge(t, wg, uuid, "labels")
+		}
+	}()
+	go func() {
+		for n := 0; n < 1000; n++ {
+			tbody2.splitmerge(t, wg, uuid, "labels")
+		}
+	}()
+	go func() {
+		for n := 0; n < 1000; n++ {
+			tbody3.splitmerge(t, wg, uuid, "labels")
+		}
+	}()
+	wg.Wait()
+
+	retrieved2 := newTestVolume(192, 128, 128)
+	retrieved2.get(t, uuid, "labels")
+	if len(retrieved2.data) != 8*192*128*128 {
+		t.Errorf("Retrieved labelvol volume is incorrect size\n")
+	}
+	if err := retrieved2.equals(tvol); err != nil {
+		t.Errorf("Concurrent split/merge producing bad result: %v\n", err)
+	}
+}
+
+func (b testBody) splitmerge(t *testing.T, wg *sync.WaitGroup, uuid dvid.UUID, name dvid.InstanceName) {
+	var rles dvid.RLEs
+	var y, z, length int32
+	length = 15
+	startx := int32(rand.Intn(int(b.offset[0] + b.size[0] - length)))
+	for z = 0; z < 4; z++ {
+		for y = 0; y < 4; y++ {
+			pos := dvid.Point3d{startx, b.offset[1] + y, b.offset[2] + z}
+			rles = append(rles, dvid.NewRLE(pos, length))
+		}
+	}
+	dvid.Infof("Starting split for label %d at x = %d ...\n", b.label, startx)
+
+	buf := new(bytes.Buffer)
+	buf.WriteByte(dvid.EncodingBinary)
+	binary.Write(buf, binary.LittleEndian, uint8(3))   // # of dimensions
+	binary.Write(buf, binary.LittleEndian, byte(0))    // dimension of run (X = 0)
+	buf.WriteByte(byte(0))                             // reserved for later
+	binary.Write(buf, binary.LittleEndian, uint32(0))  // Placeholder for # voxels
+	binary.Write(buf, binary.LittleEndian, uint32(16)) // Placeholder for # spans
+	rleBytes, err := rles.MarshalBinary()
+	if err != nil {
+		t.Errorf("Unable to serialize RLEs: %v\n", err)
+	}
+	buf.Write(rleBytes)
+
+	var newlabel uint64
+	reqStr := fmt.Sprintf("%snode/%s/%s/split/%d", server.WebAPIPath, uuid, name, b.label)
+	tries := 0
+	notDone := true
+	for notDone {
+		tries++
+		dvid.Infof("Trying split %d of label %d ...\n", tries, b.label)
+		resp := server.TestHTTPResponse(t, "POST", reqStr, buf)
+		var retbytes []byte
+		if resp.Body != nil {
+			retbytes, err = ioutil.ReadAll(resp.Body)
+			if err != nil {
+				t.Errorf("could not read response body for split %d of label %d: %v\n", tries, b.label, err)
+			}
+		}
+		switch resp.Code {
+		case http.StatusOK:
+			jsonVal := make(map[string]uint64)
+			if err := json.Unmarshal(retbytes, &jsonVal); err != nil {
+				t.Errorf("Unable to get new label from split.  Instead got: %v\n", jsonVal)
+			}
+			var ok bool
+			newlabel, ok = jsonVal["label"]
+			if !ok {
+				t.Errorf("The split request did not yield label value.  Instead got: %v\n", jsonVal)
+			}
+			notDone = false
+		case http.StatusBadRequest:
+			dvid.Infof("Bad split response.  Waiting...\n")
+			time.Sleep(10 * time.Millisecond)
+		default:
+			var retstr string
+			if retbytes != nil {
+				retstr = string(retbytes)
+			}
+			t.Fatalf("Error in response to split, status code %d: %s\n", resp.Code, retstr)
+		}
+	}
+
+	// Merge them back.
+	testMerge := fmt.Sprintf(`[%d, %d]`, b.label, newlabel)
+	reqStr = fmt.Sprintf("%snode/%s/%s/merge", server.WebAPIPath, uuid, name)
+	dvid.Infof("Starting merge for label %d -> %d\n", newlabel, b.label)
+	tries = 0
+	notDone = true
+	for notDone {
+		tries++
+		dvid.Infof("Trying merge %d for label %d -> %d ...\n", tries, newlabel, b.label)
+		resp := server.TestHTTPResponse(t, "POST", reqStr, bytes.NewBufferString(testMerge))
+		switch resp.Code {
+		case http.StatusOK:
+			notDone = false
+		case http.StatusBadRequest:
+			dvid.Infof("Bad merge response.  Waiting...\n")
+			time.Sleep(10 * time.Millisecond)
+		default:
+			var retstr string
+			if resp.Body != nil {
+				retbytes, err := ioutil.ReadAll(resp.Body)
+				if err != nil {
+					t.Fatalf("Error trying to read response body from request %q: %v\n", reqStr, err)
+					break
+				} else {
+					retstr = string(retbytes)
+				}
+			}
+			t.Fatalf("Error in response to merge, status code %d: %s\n", resp.Code, retstr)
+		}
+	}
+	wg.Done()
 }
 
 var (

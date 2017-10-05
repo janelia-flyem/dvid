@@ -77,7 +77,7 @@ func inroi(x, y, z int32) bool {
 	return false
 }
 
-// A slice of bytes representing 3d label volume
+// A slice of bytes representing 3d label volume always with first voxel at (0,0,0)
 type testVolume struct {
 	data []byte
 	size dvid.Point3d
