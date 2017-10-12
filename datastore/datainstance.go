@@ -379,6 +379,17 @@ func (d *Data) MarshalJSON() ([]byte, error) {
 			syncs = append(syncs, synced.DataName())
 		}
 	}
+	var kvStore, logStore string
+	if d.kvStore != nil {
+		kvStore = d.kvStore.String()
+	} else {
+		kvStore = "no key-value store set"
+	}
+	if d.logStore != nil {
+		logStore = d.logStore.String()
+	} else {
+		logStore = "no mutation log set"
+	}
 	return json.Marshal(struct {
 		TypeName    dvid.TypeString
 		TypeURL     dvid.URLString
@@ -390,6 +401,8 @@ func (d *Data) MarshalJSON() ([]byte, error) {
 		Checksum    string
 		Syncs       []dvid.InstanceName
 		Versioned   bool
+		KVStore     string
+		LogStore    string
 	}{
 		TypeName:    d.typename,
 		TypeURL:     d.typeurl,
@@ -401,6 +414,8 @@ func (d *Data) MarshalJSON() ([]byte, error) {
 		Checksum:    d.checksum.String(),
 		Syncs:       syncs,
 		Versioned:   !d.unversioned,
+		KVStore:     kvStore,
+		LogStore:    logStore,
 	})
 }
 
