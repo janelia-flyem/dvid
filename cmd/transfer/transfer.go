@@ -56,6 +56,8 @@ type LabelMetadata struct {
 	Base     BaseMetadata
 	Extended struct {
 		BlockSize [3]int
+		MinPoint  [3]int
+		MaxPoint  [3]int
 		MinIndex  [3]int
 		MaxIndex  [3]int
 	}
@@ -122,6 +124,19 @@ func sendLabels(src, dst *LabelMetadata, name, srcURL string) {
 	if srcBlock[0] != srcBlock[1] {
 		fmt.Printf("Can't handle non-cubic block sizes as in %q data instance: %v\n", name, srcBlock)
 		os.Exit(1)
+	}
+	if minIndex[0] == 0 && maxIndex[0] == 0 {
+		fmt.Printf("min/max indices seem broken.  computing using min/max point...\n")
+		if src.Extended.MaxPoint[0] == 0 && src.Extended.MaxPoint[1] == 0 && src.Extended.MaxPoint[2] == 0 {
+			fmt.Printf("min point, max point %s unable to be converted to min/max indices\n", src.Extended.MaxPoint)
+			os.Exit(1)
+		}
+		minIndex[0] = src.Extended.MinPoint[0] / srcBlock[0]
+		minIndex[1] = src.Extended.MinPoint[1] / srcBlock[1]
+		minIndex[2] = src.Extended.MinPoint[2] / srcBlock[2]
+		maxIndex[0] = src.Extended.MaxPoint[0] / srcBlock[0]
+		maxIndex[1] = src.Extended.MaxPoint[1] / srcBlock[1]
+		maxIndex[2] = src.Extended.MaxPoint[2] / srcBlock[2]
 	}
 	fmt.Printf("MinIndex: %v\n", minIndex)
 	fmt.Printf("MaxIndex: %v\n", maxIndex)
