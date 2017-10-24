@@ -1554,6 +1554,10 @@ type BinaryBlock struct {
 	Voxels []bool
 }
 
+func (b BinaryBlock) String() string {
+	return fmt.Sprintf("[offset %s, size %s, label %d, voxel array of %d bytes", b.Offset, b.Size, b.Label, len(b.Voxels))
+}
+
 func (b *BinaryBlock) Read(r io.Reader, gx, gy, gz int32, label uint64) error {
 	header := make([]byte, 13)
 	if n, err := io.ReadFull(r, header); err != nil {
@@ -1582,7 +1586,7 @@ func (b *BinaryBlock) Read(r io.Reader, gx, gy, gz int32, label uint64) error {
 		}
 	case 2:
 		// iterate through all sub-blocks and fill in volume.
-		buf := make([]byte, 64)
+		buf := make([]byte, 65)
 		var vz, x, y, z int32
 		var sx, sy, sz int32 // sub-block pos
 		for sz = 0; sz < gz; sz++ {
@@ -1612,7 +1616,7 @@ func (b *BinaryBlock) Read(r io.Reader, gx, gy, gz int32, label uint64) error {
 						if n, err := io.ReadFull(r, buf[1:]); err != nil {
 							return err
 						} else if n != 64 {
-							return fmt.Errorf("couldn't get mask for sub-block (%d,%d,%d)", sx, sy, sz)
+							return fmt.Errorf("couldn't get mask for sub-block (%d,%d,%d), %d bytes received", sx, sy, sz, n)
 						}
 						var bithead int32
 						for z = 0; z < SubBlockSize; z++ {
@@ -1656,7 +1660,6 @@ func ReceiveBinaryBlocks(r io.Reader) ([]BinaryBlock, error) {
 	gy := int32(binary.LittleEndian.Uint32(header[4:8]))
 	gz := int32(binary.LittleEndian.Uint32(header[8:12]))
 	label := binary.LittleEndian.Uint64(header[12:20])
-	dvid.Infof("binary blocks header: gx %d, gy %d, gz %d, label %d\n", gx, gy, gz, label)
 	var blocks []BinaryBlock
 	for {
 		var block BinaryBlock
@@ -1667,7 +1670,6 @@ func ReceiveBinaryBlocks(r io.Reader) ([]BinaryBlock, error) {
 		if err != nil {
 			return nil, err
 		}
-		dvid.Infof("read binary block with offset %s, size %s, label %d\n", block.Offset, block.Size, block.Label)
 		blocks = append(blocks, block)
 	}
 	return blocks, nil
@@ -1770,7 +1772,6 @@ func (pb *PositionedBlock) WriteBinaryBlock(indices map[uint32]struct{}, hasBack
 	} else {
 		buf[12] = 1 // foreground only
 	}
-	dvid.Infof("Writing block %s, offset %s, mixedData %t ...\n", pb.BCoord, offset, mixedData)
 	if n, err := op.w.Write(buf); err != nil {
 		return err
 	} else if n != 13 {
@@ -1802,11 +1803,10 @@ func (pb *PositionedBlock) WriteBinaryBlock(indices map[uint32]struct{}, hasBack
 	var sx, sy, sz int32
 	for sz = 0; sz < gz; sz++ {
 		for sy = 0; sy < gy; sy++ {
-			for sx = 0; sx < gx; sx++ {
+			for sx = 0; sx < gx; sx, subBlockNum = sx+1, subBlockNum+1 {
 
 				numSBLabels := pb.NumSBLabels[subBlockNum]
 				bits := bitsFor(numSBLabels)
-				dvid.Infof("In block %s, sub-block (%d,%d,%d), num labels %d, bits %d\n", pb.BCoord, sx, sy, sz, numSBLabels, bits)
 
 				for i := uint16(0); i < numSBLabels; i++ {
 					curIndices[i] = pb.SBIndices[indexPos]
@@ -1839,11 +1839,11 @@ func (pb *PositionedBlock) WriteBinaryBlock(indices map[uint32]struct{}, hasBack
 				default:
 				}
 
+				outbytepos := int(1)
 				outbitpos := int(8) // Start at 2nd byte for output
 
 				var background bool // true if a non-index voxel is in block
 				var foreground bool // true if index is in block
-				var curbyte byte    // byte in values slice under the write head
 
 				var x, y, z int32
 				for z = 0; z < SubBlockSize; z++ {
@@ -1852,26 +1852,25 @@ func (pb *PositionedBlock) WriteBinaryBlock(indices map[uint32]struct{}, hasBack
 							index := getPackedValue(pb.SBValues, bitpos, bits)
 
 							// write binary sub-block data
-							bithead := outbitpos % 8
-							bytepos := outbitpos >> 3
-							var value byte
+							var curForeground bool
 							if multiForeground {
-								_, foreground = indices[curIndices[index]]
+								_, curForeground = indices[curIndices[index]]
+							} else if curIndices[index] == labelIndex {
+								curForeground = true
+							}
+							if curForeground {
+								data[outbytepos] |= bitMask[outbitpos%8]
+								foreground = true
 							} else {
-								foreground = (curIndices[index] == labelIndex)
-							}
-							if foreground {
-								value = 1
-							}
-							leftshift := uint(7 - bithead)
-							curbyte |= value << leftshift
-							data[bytepos] = curbyte
-							if bithead == 7 {
-								curbyte = 0x00
+								data[outbytepos] &^= bitMask[outbitpos%8]
+								background = true
 							}
 
 							bitpos += bits
 							outbitpos++
+							if outbitpos%8 == 0 {
+								outbytepos++
+							}
 						}
 					}
 				}
@@ -1897,7 +1896,6 @@ func (pb *PositionedBlock) WriteBinaryBlock(indices map[uint32]struct{}, hasBack
 				if rem != 0 {
 					bitpos += 8 - rem
 				}
-				subBlockNum++
 			}
 		}
 	}

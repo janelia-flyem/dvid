@@ -527,6 +527,117 @@ func TestBlockSplitAndRLEs(t *testing.T) {
 	}
 }
 
+func TestBinaryBlocks(t *testing.T) {
+	numVoxels := 64 * 64 * 64
+	blockVol0 := make([]uint64, numVoxels)
+	blockVol1 := make([]uint64, numVoxels)
+
+	background := uint64(1000)
+	target := uint64(7)
+	var i, x, y, z int32
+	for z = 0; z < 64; z++ {
+		for y = 0; y < 64; y++ {
+			for x = 0; x < 64; x++ {
+				if x >= 23 && x <= 34 && y >= 37 && y <= 50 {
+					blockVol0[i] = target
+				} else {
+					blockVol0[i] = background
+				}
+				i++
+			}
+		}
+	}
+	i = 0
+	for z = 0; z < 64; z++ {
+		for y = 0; y < 64; y++ {
+			for x = 0; x < 64; x++ {
+				if x >= 26 && x <= 31 && y >= 39 && y <= 45 {
+					blockVol1[i] = target
+				} else {
+					blockVol1[i] = background
+				}
+				i++
+			}
+		}
+	}
+
+	block0, err := MakeBlock(dvid.Uint64ToByte(blockVol0), dvid.Point3d{64, 64, 64})
+	if err != nil {
+		t.Fatalf("error making block 0: %v\n", err)
+	}
+	block1, err := MakeBlock(dvid.Uint64ToByte(blockVol1), dvid.Point3d{64, 64, 64})
+	if err != nil {
+		t.Fatalf("error making block 0: %v\n", err)
+	}
+
+	pb0 := PositionedBlock{
+		Block:  *block0,
+		BCoord: dvid.ChunkPoint3d{1, 1, 1}.ToIZYXString(),
+	}
+	pb1 := PositionedBlock{
+		Block:  *block1,
+		BCoord: dvid.ChunkPoint3d{1, 1, 2}.ToIZYXString(),
+	}
+
+	var buf bytes.Buffer
+	lbls := Set{}
+	lbls[target] = struct{}{}
+	outOp := NewOutputOp(&buf)
+	go WriteBinaryBlocks(target, lbls, outOp, dvid.Bounds{})
+	outOp.Process(&pb0)
+	outOp.Process(&pb1)
+	if err = outOp.Finish(); err != nil {
+		t.Fatalf("error writing binary blocks: %v\n", err)
+	}
+	got, err := ReceiveBinaryBlocks(&buf)
+	if err != nil {
+		t.Fatalf("error on reading binary blocks: %v\n", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 binary blocks got %d\n", len(got))
+	}
+	if got[0].Label != target {
+		t.Errorf("expected label %d for binary block 0, got %s\n", target, got[0])
+	}
+	if got[1].Label != target {
+		t.Errorf("expected label %d for binary block 1, got %s\n", target, got[0])
+	}
+	i = 0
+	for z = 0; z < 64; z++ {
+		for y = 0; y < 64; y++ {
+			for x = 0; x < 64; x++ {
+				if x >= 23 && x <= 34 && y >= 37 && y <= 50 {
+					if !got[0].Voxels[i] {
+						t.Fatalf("error in binary block 0: bad unset bit @ (%d,%d,%d)\n", x, y, z)
+					}
+				} else {
+					if got[0].Voxels[i] {
+						t.Fatalf("error in binary block 0: bad set bit @ (%d,%d,%d)\n", x, y, z)
+					}
+				}
+				i++
+			}
+		}
+	}
+	i = 0
+	for z = 0; z < 64; z++ {
+		for y = 0; y < 64; y++ {
+			for x = 0; x < 64; x++ {
+				if x >= 26 && x <= 31 && y >= 39 && y <= 45 {
+					if !got[1].Voxels[i] {
+						t.Errorf("error in binary block 1: bad unset bit @ (%d,%d,%d)\n", x, y, z)
+					}
+				} else {
+					if got[1].Voxels[i] {
+						t.Errorf("error in binary block 1: bad set bit @ (%d,%d,%d)\n", x, y, z)
+					}
+				}
+				i++
+			}
+		}
+	}
+}
+
 func BenchmarkGoogleCompress(b *testing.B) {
 	d := make([]testData, len(testFiles))
 	for i, filename := range testFiles {
