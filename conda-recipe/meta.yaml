@@ -1,0 +1,157 @@
+# Set version automatically from the latest tag in git
+{% set tagged_version = GIT_DESCRIBE_TAG %}
+{% if GIT_DESCRIBE_NUMBER|int != 0 %}
+  {% set tagged_version = GIT_DESCRIBE_TAG|replace("v","") %} # drop leading 'v', e.g. from v0.8.13
+{% endif %}
+
+package:
+  name: dvid
+  version: {{tagged_version}}
+
+about:
+  home: http://github.com/janelia-flyem/dvid
+  license: BSD
+  summary: Distributed, Versioned, Image-oriented Dataservice
+
+build:
+  number: 0
+  script_env:
+    - DVID_SKIP_TESTS
+
+requirements:
+  build:
+    - go
+    - snappy
+    - basholeveldb
+    - lz4
+
+  run:
+  # TODO: dvid-console should be packaged in conda and included as a dependency here, right?
+    - snappy
+    - basholeveldb
+    - lz4
+
+source:
+  # Due to a conda-build bug**, we can't use GIT_DESCRIBE_TAG unless the primary repo is cloned
+  # directly to the root work directory.
+  # But we want to clone it into a subdirectory, within $GOPATH/src, so let's clone it twice.
+  # Once into the root work dir, and a second time into it's proper location within the $GOPATH/src.
+  #
+  # **Note: I fixed the bug in conda-build#2477, but we'll have to wait a while for that to be released:
+  #         https://github.com/conda/conda-build/pull/2477
+  - git_url: ../
+    git_tag: master
+
+  # Sceond dvid clone.  (See note above.)
+  - git_url: ../
+    git_tag: master
+    folder:  src/github.com/janelia-flyem/dvid
+
+  # Janelia go packages
+  - git_url: https://github.com/janelia-flyem/go
+    git_tag: master
+    folder: src/github.com/janelia-flyem/go
+    # Includes many:
+    #   basholeveldb cron freetype-go go-humanize go-nanomsg go-uuid
+    #   go.image gocheck goexif goji golz4 gomdb hyperleveldb
+    #   levigo lru lumberjack msgp murmur3 nrsc profiler resize semver
+    #   toml uuid
+
+  # gojsonschema
+  - git_url: https://github.com/janelia-flyem/gojsonschema
+    git_tag: master
+    folder: src/github.com/janelia-flyem/gojsonschema
+
+  # goji
+  - git_url: https://github.com/zenazn/goji
+    git_tag: master
+    folder:  src/github.com/zenazn/goji
+
+  # msgp
+  #  - git_url: https://github.com/tinylib/msgp
+  #    git_tag: master
+  #    folder:  src/github.com/tinylib/msgp
+
+  # net
+  - git_url: https://go.googlesource.com/net
+    git_tag: master
+    folder:  src/golang.org/x/net
+    # Includes:
+    #        src/golang.org/x/net/context
+
+  # lumberjack
+  - git_url: https://gopkg.in/natefinch/lumberjack.v2
+    git_tag: v2.0
+    folder:  src/gopkg.in/natefinch/lumberjack.v2
+
+  # snappy
+  - git_url: https://github.com/golang/snappy
+    git_tag: master
+    folder:  src/github.com/golang/snappy
+
+  # groupcache
+  - git_url: https://github.com/golang/groupcache
+    git_tag: master
+    folder:  src/github.com/golang/groupcache
+
+  # oauth2
+  - git_url: https://go.googlesource.com/oauth2
+    git_tag: master
+    folder:  src/golang.org/x/oauth2
+
+  # gcloud
+  - git_url: https://code.googlesource.com/gocloud
+    git_tag: master
+    folder:  src/cloud.google.com/go
+    # Includes:
+    #        cloud.google.com/go/compute/metadata
+    #        cloud.google.com/go/bigtable
+    #        cloud.google.com/go/storage
+
+  - git_url: https://code.googlesource.com/google-api-go-client
+    git_tag: master
+    folder:  src/google.golang.org/api
+    # Includes:
+    #        src/google.golang.org/api/option
+
+  # grpc (not gorpc)
+  - git_url: https://github.com/grpc/grpc-go
+    git_tag: master
+    folder:  src/google.golang.org/grpc
+
+  # gorpc (not grpc)
+  - git_url: https://github.com/valyala/gorpc
+    git_tag: master
+    folder:  src/github.com/valyala/gorpc
+
+  # protobuf (golang)
+  - git_url: https://github.com/golang/protobuf
+    git_tag: master
+    folder:  src/github.com/golang/protobuf
+    # Includes:
+    #        src/github.com/golang/protobuf/proto
+    #        src/github.com/golang/protobuf/protoc-gen-go
+
+  # protobuf (gogo)
+  - git_url: https://github.com/gogo/protobuf
+    git_tag: master
+    folder:  src/github.com/gogo/protobuf
+    # Includes:
+    #        src/github.com/gogo/protobuf/proto
+    #        src/github.com/gogo/protobuf/gogoproto
+    #        src/github.com/gogo/protobuf/protoc-gen-gogoslick
+
+  # gofuse
+  - git_url: https://github.com/bazil/fuse
+    git_tag: master
+    folder:  src/bazil.org/fuse
+
+  # gobolt
+  - git_url: https://github.com/boltdb/bolt
+    git_tag: master
+    folder:  src/github.com/boltdb/bolt
+
+  # gomdb
+  - git_url: https://github.com/DocSavage/gomdb
+    git_tag: master
+    folder:  src/github.com/DocSavage/gomdb
