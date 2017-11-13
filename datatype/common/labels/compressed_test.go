@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"fmt"
 	"io/ioutil"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -452,6 +453,124 @@ func TestSolidBlockRLE(t *testing.T) {
 	for i, rle := range rles.Normalize() {
 		if rle != expected[i] {
 			t.Errorf("Expected RLE %d: %s, got %s\n", i, expected[i], rle)
+		}
+	}
+}
+
+func TestBlockMerge(t *testing.T) {
+	numVoxels := 64 * 64 * 64
+	testvol := make([]uint64, numVoxels)
+	labels := make([]uint64, 5)
+	mergeSet := make(Set, 3)
+	for i := 0; i < 5; i++ {
+		var newlabel uint64
+		for {
+			newlabel = uint64(rand.Int63())
+			ok := true
+			for j := 0; j < i; j++ {
+				if newlabel == labels[j] {
+					ok = false
+				}
+			}
+			if ok {
+				break
+			}
+		}
+		labels[i] = newlabel
+		if i > 1 {
+			mergeSet[labels[i]] = struct{}{}
+		}
+	}
+	for i := 0; i < numVoxels; i++ {
+		testvol[i] = labels[i%5]
+	}
+	block, err := MakeBlock(dvid.Uint64ToByte(testvol), dvid.Point3d{64, 64, 64})
+	if err != nil {
+		t.Fatalf("error making block: %v\n", err)
+	}
+	op := MergeOp{
+		Target: labels[0],
+		Merged: mergeSet,
+	}
+	mergedBlock, err := block.MergeLabels(op)
+	if err != nil {
+		t.Fatalf("error merging block: %v\n", err)
+	}
+	volbytes, size := mergedBlock.MakeLabelVolume()
+	if size[0] != 64 || size[1] != 64 || size[2] != 64 {
+		t.Fatalf("bad merged block size returned: %s\n", size)
+	}
+	uint64arr, err := dvid.ByteToUint64(volbytes)
+	if err != nil {
+		t.Fatalf("error converting label byte array: %v\n", err)
+	}
+	for i := 0; i < numVoxels; i++ {
+		curlabel := uint64arr[i]
+		_, wasMerged := mergeSet[curlabel]
+		if wasMerged {
+			t.Fatalf("found voxel %d had label %d when it %s merged -> %d\n", i, curlabel, mergeSet, labels[0])
+		} else if curlabel != labels[0] && curlabel != labels[1] {
+			t.Fatalf("found voxel %d had label %d which is not expected labels %d or %d\n", curlabel, labels[0], labels[1])
+		}
+	}
+}
+
+func TestBlockReplaceLabel(t *testing.T) {
+	numVoxels := 64 * 64 * 64
+	testvol := make([]uint64, numVoxels)
+	labels := make([]uint64, 5)
+	for i := 0; i < 5; i++ {
+		var newlabel uint64
+		for {
+			newlabel = uint64(rand.Int63())
+			ok := true
+			for j := 0; j < i; j++ {
+				if newlabel == labels[j] {
+					ok = false
+				}
+			}
+			if ok {
+				break
+			}
+		}
+		labels[i] = newlabel
+	}
+	for i := 0; i < numVoxels; i++ {
+		testvol[i] = labels[i%4]
+	}
+	block, err := MakeBlock(dvid.Uint64ToByte(testvol), dvid.Point3d{64, 64, 64})
+	if err != nil {
+		t.Fatalf("error making block: %v\n", err)
+	}
+	tmpblock, replaceSize, err := block.ReplaceLabel(labels[0], labels[4])
+	if err != nil {
+		t.Fatalf("error merging block: %v\n", err)
+	}
+	if replaceSize != uint64(numVoxels/4) {
+		t.Errorf("expected replaced # voxels with %d = %d, got %d\n", labels[0], numVoxels/4, replaceSize)
+	}
+	replacedBlock, replaceSize, err := tmpblock.ReplaceLabel(labels[1], labels[2])
+	if err != nil {
+		t.Fatalf("error merging block: %v\n", err)
+	}
+	volbytes, size := replacedBlock.MakeLabelVolume()
+	if size[0] != 64 || size[1] != 64 || size[2] != 64 {
+		t.Fatalf("bad replaced block size returned: %s\n", size)
+	}
+	uint64arr, err := dvid.ByteToUint64(volbytes)
+	if err != nil {
+		t.Fatalf("error converting label byte array: %v\n", err)
+	}
+	for i := 0; i < numVoxels; i++ {
+		switch uint64arr[i] {
+		case labels[0]:
+			t.Fatalf("bad label at voxel %d: %d, should have been replaced by label %d\n", i, uint64arr[i], labels[4])
+		case labels[1]:
+			t.Fatalf("bad label at voxel %d: %d, should have been replaced by label %d\n", i, uint64arr[i], labels[2])
+		case labels[2], labels[3], labels[4]:
+			// good
+		default:
+			t.Fatalf("bad label at voxel %d: %d, not in expected labels %v\n", i, uint64arr[i], labels)
 		}
 	}
 }

@@ -468,8 +468,6 @@ func (b Block) calcNumLabels(delta map[uint64]int32, add bool) {
 					indexPos++
 				}
 
-				lblpos := sz*SubBlockSize*b.Size[0]*b.Size[1] + sy*SubBlockSize*b.Size[0] + sx*SubBlockSize
-
 				var x, y, z int32
 				for z = 0; z < SubBlockSize; z++ {
 					for y = 0; y < SubBlockSize; y++ {
@@ -494,11 +492,8 @@ func (b Block) calcNumLabels(delta map[uint64]int32, add bool) {
 								delta[label]--
 							}
 							bitpos += bits
-							lblpos++
 						}
-						lblpos += b.Size[0] - SubBlockSize
 					}
-					lblpos += b.Size[0]*b.Size[1] - b.Size[0]*SubBlockSize
 				}
 				if bitpos%8 != 0 {
 					bitpos += 8 - (bitpos % 8)
@@ -508,8 +503,81 @@ func (b Block) calcNumLabels(delta map[uint64]int32, add bool) {
 	}
 }
 
+// get the # voxels corresponding to a particular label index.
+func (b *Block) getNumVoxels(labelIndex uint32) (labelVoxels uint64) {
+	gx, gy, gz := b.Size[0]/SubBlockSize, b.Size[1]/SubBlockSize, b.Size[2]/SubBlockSize
+	subBlockNumVoxels := uint64(SubBlockSize * SubBlockSize * SubBlockSize)
+
+	var indexPos uint32
+	var bitpos, subBlockNum int
+	var sx, sy, sz int32
+	for sz = 0; sz < gz; sz++ {
+		for sy = 0; sy < gy; sy++ {
+			for sx = 0; sx < gx; sx, subBlockNum = sx+1, subBlockNum+1 {
+
+				numSBLabels := b.NumSBLabels[subBlockNum]
+
+				switch numSBLabels {
+				case 0:
+					continue
+				case 1:
+					if b.SBIndices[indexPos] == labelIndex {
+						labelVoxels += subBlockNumVoxels
+					}
+					indexPos++
+					continue
+				default:
+				}
+
+				var found bool
+				var targetIndex uint16
+				for i := uint16(0); i < numSBLabels; i++ {
+					if b.SBIndices[indexPos] == labelIndex {
+						found = true
+						targetIndex = i
+					}
+					indexPos++
+				}
+				if !found {
+					continue
+				}
+				bits := int(bitsFor(numSBLabels))
+
+				var x, y, z int32
+				for z = 0; z < SubBlockSize; z++ {
+					for y = 0; y < SubBlockSize; y++ {
+						for x = 0; x < SubBlockSize; x++ {
+							var index uint16
+							bithead := bitpos % 8
+							bytepos := bitpos >> 3
+							if bithead+bits <= 8 {
+								// index totally within this byte
+								rightshift := uint(8 - bithead - bits)
+								index = uint16((b.SBValues[bytepos] & leftBitMask[bithead]) >> rightshift)
+							} else {
+								// index spans byte boundaries
+								index = uint16(b.SBValues[bytepos]&leftBitMask[bithead]) << 8
+								index |= uint16(b.SBValues[bytepos+1])
+								index >>= uint(16 - bithead - bits)
+							}
+							if index == targetIndex {
+								labelVoxels++
+							}
+							bitpos += bits
+						}
+					}
+				}
+				if bitpos%8 != 0 {
+					bitpos += 8 - (bitpos % 8)
+				}
+			}
+		}
+	}
+	return
+}
+
 // MergeLabels returns a new block that has computed the given MergeOp.
-func (b Block) MergeLabels(op MergeOp) (merged *Block, err error) {
+func (b *Block) MergeLabels(op MergeOp) (merged *Block, err error) {
 	merged = new(Block)
 	merged.data = dvid.New8ByteAlignBytes(uint32(len(b.data))) // at most the length of the unmerged Block
 	copy(merged.data, b.data)
@@ -544,7 +612,7 @@ func (b Block) MergeLabels(op MergeOp) (merged *Block, err error) {
 		for mergedIndex = range mergedIndices {
 			break
 		}
-		targetIndex = mergedIndex
+		targetIndex = mergedIndex // use the first of the merged labels as target label
 		merged.Labels[targetIndex] = op.Target
 	}
 
@@ -557,18 +625,18 @@ func (b Block) MergeLabels(op MergeOp) (merged *Block, err error) {
 }
 
 // ReplaceLabel replaces references to the target label with newLabel.
-func (b Block) ReplaceLabel(target, newLabel uint64) (split *Block, splitSize uint64, err error) {
-	split = new(Block)
-	split.data = dvid.New8ByteAlignBytes(uint32(len(b.data)))
-	copy(split.data, b.data)
-	if err = split.setExportedVars(); err != nil {
-		split = nil
+func (b *Block) ReplaceLabel(target, newLabel uint64) (replace *Block, replaceSize uint64, err error) {
+	replace = new(Block)
+	replace.data = dvid.New8ByteAlignBytes(uint32(len(b.data)))
+	copy(replace.data, b.data)
+	if err = replace.setExportedVars(); err != nil {
+		replace = nil
 		return
 	}
 
 	var targetFound bool
 	var targetIndex uint32
-	for i, label := range split.Labels {
+	for i, label := range replace.Labels {
 		if label == target {
 			targetFound = true
 			targetIndex = uint32(i)
@@ -577,11 +645,12 @@ func (b Block) ReplaceLabel(target, newLabel uint64) (split *Block, splitSize ui
 	}
 
 	if !targetFound {
-		splitSize = 0
+		replaceSize = 0
 		return
 	}
 
-	split.Labels[targetIndex] = newLabel
+	replace.Labels[targetIndex] = newLabel
+	replaceSize = replace.getNumVoxels(targetIndex)
 	return
 }
 
