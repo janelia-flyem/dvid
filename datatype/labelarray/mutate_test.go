@@ -40,6 +40,32 @@ var emptyBody = testBody{
 	voxelSpans: dvid.Spans{},
 }
 
+func checkSparsevolsCoarse(t *testing.T, encoding []byte) {
+	length := len(encoding)
+	var i int
+	for label := uint64(1); label <= 3; label++ {
+		if i+28 >= length {
+			t.Fatalf("Expected label %d but only %d bytes remain in encoding\n", label, len(encoding[i:]))
+		}
+		gotLabel := binary.LittleEndian.Uint64(encoding[i : i+8])
+		if gotLabel != label {
+			t.Errorf("Expected label %d, got label %d in returned coarse sparsevols\n", label, gotLabel)
+		}
+		i += 8
+		var spans dvid.Spans
+		if err := spans.UnmarshalBinary(encoding[i:]); err != nil {
+			t.Errorf("Error in decoding coarse sparse volume: %v\n", err)
+			return
+		}
+		i += 4 + len(spans)*16
+		b := bodies[label-1]
+		if !reflect.DeepEqual(spans, b.blockSpans) {
+			_, fn, line, _ := runtime.Caller(1)
+			t.Errorf("Expected coarse spans for label %d:\n%s\nGot spans [%s:%d]:\n%s\n", b.label, b.blockSpans, fn, line, spans)
+		}
+	}
+}
+
 // Makes sure the coarse sparse volume encoding matches the body.
 func (b testBody) checkCoarse(t *testing.T, encoding []byte) {
 	// Get to the  # spans and RLE in encoding
@@ -365,16 +391,20 @@ func TestSparseVolumes(t *testing.T) {
 		bodies[label-1].checkCoarse(t, encoding)
 	}
 
+	reqStr := fmt.Sprintf("%snode/%s/labels/sparsevols-coarse/1/3", server.WebAPIPath, uuid)
+	encoding := server.TestHTTP(t, "GET", reqStr, nil)
+	checkSparsevolsCoarse(t, encoding)
+
 	for _, label := range []uint64{1, 2, 3, 4} {
 		// Check fast HEAD requests
-		reqStr := fmt.Sprintf("%snode/%s/labels/sparsevol/%d", server.WebAPIPath, uuid, label)
+		reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/%d", server.WebAPIPath, uuid, label)
 		resp := server.TestHTTPResponse(t, "HEAD", reqStr, nil)
 		if resp.Code != http.StatusOK {
 			t.Errorf("HEAD on %s did not return OK.  Status = %d\n", reqStr, resp.Code)
 		}
 
 		// Check full sparse volumes
-		encoding := server.TestHTTP(t, "GET", reqStr, nil)
+		encoding = server.TestHTTP(t, "GET", reqStr, nil)
 		lenEncoding := len(encoding)
 		bodies[label-1].checkSparseVol(t, encoding, dvid.OptionalBounds{})
 
@@ -451,7 +481,7 @@ func TestSparseVolumes(t *testing.T) {
 		}
 	}
 
-	reqStr := fmt.Sprintf("%snode/%s/labels/sparsevol-size/1", server.WebAPIPath, uuid)
+	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol-size/1", server.WebAPIPath, uuid)
 	sizeResp := server.TestHTTP(t, "GET", reqStr, nil)
 	if string(sizeResp) != `{"numblocks": 3, "minvoxel": [0, 32, 0], "maxvoxel": [31, 63, 95]}` {
 		t.Errorf("bad response to sparsevol-size endpoint: %s\n", string(sizeResp))

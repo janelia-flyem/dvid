@@ -12,6 +12,7 @@ import (
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
 	"github.com/janelia-flyem/dvid/dvid"
+	"github.com/janelia-flyem/dvid/storage"
 
 	lz4 "github.com/janelia-flyem/go/golz4"
 )
@@ -997,4 +998,76 @@ func (d *Data) GetSparseCoarseVol(ctx *datastore.VersionedCtx, label uint64, bou
 	binary.LittleEndian.PutUint32(serialization[8:12], spans) // Placeholder for # spans
 
 	return serialization, nil
+}
+
+// WriteSparseCoarseVols returns a stream of sparse volumes with blocks of the given label
+// in encoded RLE format:
+//
+// 		uint64   label
+// 		<coarse sparse vol as given below>
+//
+// 		uint64   label
+// 		<coarse sparse vol as given below>
+//
+// 		...
+//
+// 	The coarse sparse vol has the following format where integers are little endian and the order
+// 	of data is exactly as specified below:
+//
+// 		int32    # Spans
+// 		Repeating unit of:
+// 			int32   Block coordinate of run start (dimension 0)
+// 			int32   Block coordinate of run start (dimension 1)
+// 			int32   Block coordinate of run start (dimension 2)
+// 			int32   Length of run
+func (d *Data) WriteSparseCoarseVols(ctx *datastore.VersionedCtx, w io.Writer, begLabel, endLabel uint64, bounds dvid.Bounds) error {
+
+	store, err := d.GetOrderedKeyValueDB()
+	if err != nil {
+		return err
+	}
+	begTKey := NewLabelIndexTKey(begLabel)
+	endTKey := NewLabelIndexTKey(endLabel)
+
+	err = store.ProcessRange(ctx, begTKey, endTKey, &storage.ChunkOp{}, func(c *storage.Chunk) error {
+		if c == nil || c.TKeyValue == nil {
+			return nil
+		}
+		kv := c.TKeyValue
+		if kv.V == nil {
+			return nil
+		}
+		label, err := DecodeLabelIndexTKey(kv.K)
+		if err != nil {
+			return err
+		}
+		val, _, err := dvid.DeserializeData(kv.V, true)
+		if err != nil {
+			return err
+		}
+		var meta Meta
+		if len(val) != 0 {
+			if err := meta.UnmarshalBinary(val); err != nil {
+				return err
+			}
+			blocks := meta.Blocks
+			if bounds.Block != nil && bounds.Block.IsSet() {
+				blocks, err = blocks.FitToBounds(bounds.Block)
+				if err != nil {
+					return err
+				}
+			}
+
+			buf := new(bytes.Buffer)
+			spans, err := meta.Blocks.WriteSerializedRLEs(buf)
+			if err != nil {
+				return err
+			}
+			binary.Write(w, binary.LittleEndian, label)
+			binary.Write(w, binary.LittleEndian, int32(spans))
+			w.Write(buf.Bytes())
+		}
+		return nil
+	})
+	return err
 }

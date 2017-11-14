@@ -736,6 +736,32 @@ GET <api URL>/node/<UUID>/<data name>/sparsevol-coarse/<label>?<options>
     maxz    Spans must be equal to or smaller than this maximum z voxel coordinate.
 
 
+GET <api URL>/node/<UUID>/<data name>/sparsevols-coarse/<start label>/<end label>
+
+	Note: this request does not reflect ongoing merges/splits but is meant to be used
+	for various batch operations on a static node.
+
+	Returns a stream of sparse volumes with blocks of the given label in encoded RLE format:
+
+		uint64   label
+		<coarse sparse vol as given below>
+
+		uint64   label
+		<coarse sparse vol as given below>
+
+		...
+
+	The coarse sparse vol has the following format where integers are little endian and the order
+	of data is exactly as specified below:
+
+		int32    # Spans
+		Repeating unit of:
+			int32   Block coordinate of run start (dimension 0)
+			int32   Block coordinate of run start (dimension 1)
+			int32   Block coordinate of run start (dimension 2)
+			int32   Length of run
+
+
 GET <api URL>/node/<UUID>/<data name>/nextlabel
 POST <api URL>/node/<UUID>/<data name>/nextlabel
 
@@ -2655,6 +2681,9 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	case "sparsevol-coarse":
 		d.handleSparsevolCoarse(ctx, w, r, parts)
 
+	case "sparsevols-coarse":
+		d.handleSparsevolsCoarse(ctx, w, r, parts)
+
 	case "maxlabel":
 		d.handleMaxlabel(ctx, w, r)
 
@@ -3234,6 +3263,50 @@ func (d *Data) handleSparsevolCoarse(ctx *datastore.VersionedCtx, w http.Respons
 		return
 	}
 	timedLog.Infof("HTTP %s: sparsevol-coarse on label %s (%s)", r.Method, parts[4], r.URL)
+}
+
+func (d *Data) handleSparsevolsCoarse(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request, parts []string) {
+	// GET <api URL>/node/<UUID>/<data name>/sparsevols-coarse/<start label>/<end label>
+	if len(parts) < 6 {
+		server.BadRequest(w, r, "DVID requires start and end label ID to follow 'sparsevols-coarse' command")
+		return
+	}
+	timedLog := dvid.NewTimeLog()
+
+	begLabel, err := strconv.ParseUint(parts[4], 10, 64)
+	if err != nil {
+		server.BadRequest(w, r, err)
+		return
+	}
+	endLabel, err := strconv.ParseUint(parts[5], 10, 64)
+	if err != nil {
+		server.BadRequest(w, r, err)
+		return
+	}
+	if begLabel == 0 || endLabel == 0 {
+		server.BadRequest(w, r, "Label 0 is protected background value and cannot be used as sparse volume.\n")
+		return
+	}
+
+	var b dvid.Bounds
+	b.Voxel, err = dvid.OptionalBoundsFromQueryString(r)
+	if err != nil {
+		server.BadRequest(w, r, "Error parsing bounds from query string: %v\n", err)
+		return
+	}
+	blockSize, ok := d.BlockSize().(dvid.Point3d)
+	if !ok {
+		server.BadRequest(w, r, "Error: BlockSize for %s wasn't 3d", d.DataName())
+		return
+	}
+	b.Block = b.Voxel.Divide(blockSize)
+
+	w.Header().Set("Content-type", "application/octet-stream")
+	if err := d.WriteSparseCoarseVols(ctx, w, begLabel, endLabel, b); err != nil {
+		server.BadRequest(w, r, err)
+		return
+	}
+	timedLog.Infof("HTTP %s: sparsevols-coarse on label %s to %s (%s)", r.Method, parts[4], parts[5], r.URL)
 }
 
 func (d *Data) handleMaxlabel(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {
