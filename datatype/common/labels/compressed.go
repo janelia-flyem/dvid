@@ -1763,11 +1763,11 @@ func WriteBinaryBlocks(mainLabel uint64, lbls Set, op *OutputOp, bounds dvid.Bou
 			if found {
 				labelIndices[uint32(i)] = struct{}{}
 				inBlock = true
+			} else {
+				hasBackground = true // true if any non-targeted label exists
 				if len(labelIndices) == len(lbls) {
 					break
 				}
-			} else {
-				hasBackground = true // true if any non-targeted label exists
 			}
 		}
 		if inBlock {
