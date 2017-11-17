@@ -1658,7 +1658,7 @@ func (m *repoManager) newData(uuid dvid.UUID, t TypeService, name dvid.InstanceN
 		if err != nil {
 			return nil, err
 		}
-		dvid.Infof("Initialized data handlers for instance %q on repo load.\n", dataservice.DataName())
+		dvid.Infof("Initialized data handlers for instance %q on creating of new data.\n", dataservice.DataName())
 	}
 
 	// Add to log and save repo

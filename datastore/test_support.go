@@ -75,6 +75,7 @@ func CloseReopenTest() {
 
 func CloseTest() {
 	dvid.Infof("Closing and deleting test datastore...\n")
+	Shutdown()
 	testableEng := storage.GetTestableEngine()
 	if testableEng == nil {
 		log.Fatalf("Could not find a storage engine that was testable")

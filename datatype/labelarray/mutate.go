@@ -479,7 +479,11 @@ func (d *Data) processSplit(v dvid.VersionID, mutID uint64, delta labels.DeltaSp
 	if err := d.splitIndices(v, delta, deleteBlks); err != nil {
 		return err
 	}
-	timedLog.Debugf("labelarray sync complete for split (%d blocks) of %d -> %d", len(delta.Split), delta.OldLabel, delta.NewLabel)
+	if delta.Split == nil {
+		timedLog.Debugf("labelarray sync complete for coarse split (%d blocks) of %d -> %d", len(delta.SortedBlocks), delta.OldLabel, delta.NewLabel)
+	} else {
+		timedLog.Debugf("labelarray sync complete for split (%d blocks) of %d -> %d", len(delta.Split), delta.OldLabel, delta.NewLabel)
+	}
 
 	// Publish split event
 	evt := datastore.SyncEvent{d.DataUUID(), labels.SplitLabelEvent}

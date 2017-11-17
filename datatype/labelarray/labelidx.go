@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"sync/atomic"
 	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
@@ -46,7 +47,7 @@ func (c cacheList) Less(a, b int) bool { return c[a].t.Before(c[b].t) }
 type metaCache struct {
 	size  uint16
 	avail map[cacheKey]*timedMeta
-	list  cacheList
+	list  cacheList // sorted based on time
 }
 
 const defaultCacheSize = 50
@@ -86,6 +87,7 @@ func (m metaCache) AddLabelMeta(v dvid.VersionID, label uint64, meta *Meta) {
 	newtm.key = entry
 	newtm.meta = meta
 	newtm.t = time.Now()
+	m.avail[entry] = newtm
 
 	if len(m.list) == int(m.size) {
 		sort.Sort(m.list)
@@ -316,6 +318,7 @@ func (d *Data) indexLabels(ch <-chan labelChange) {
 	for change := range ch {
 		ctx := datastore.NewVersionedCtx(d, change.v)
 
+		atomic.AddUint64(&(d.metaAttempts), 1)
 		meta := cache.GetLabelMeta(change.v, change.label)
 		if meta == nil {
 			meta, err = d.getLabelMeta(ctx, labels.NewSet(change.label), 0, dvid.Bounds{})
@@ -323,6 +326,8 @@ func (d *Data) indexLabels(ch <-chan labelChange) {
 				dvid.Criticalf("Error trying to read label %d meta for data %q: %v\n", change.label, d.DataName(), err)
 				continue
 			}
+		} else {
+			atomic.AddUint64(&(d.metaHits), 1)
 		}
 		if err := meta.applyChanges(change.bdm); err != nil {
 			dvid.Criticalf("Error on applying mutation changes to label %d meta: %v\n", change.label, err)
@@ -335,7 +340,6 @@ func (d *Data) indexLabels(ch <-chan labelChange) {
 			continue
 		}
 	}
-	dvid.Infof("Closing index handler for data %q...\n", d.DataName())
 }
 
 type labelBlock struct {

@@ -118,5 +118,7 @@ func (d *Data) Shutdown(wg *sync.WaitGroup) {
 	for i := 0; i < numLabelHandlers; i++ {
 		close(d.indexCh[i])
 	}
+	hitrate := (float64(d.metaHits) / float64(d.metaAttempts)) * 100.0
+	dvid.Infof("Closing index handler for data %q: got %d meta cache hits on %d attempts (%5.2f)\n", d.DataName(), d.metaHits, d.metaAttempts, hitrate)
 	wg.Done()
 }

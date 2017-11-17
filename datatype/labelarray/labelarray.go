@@ -1045,7 +1045,9 @@ type Data struct {
 	mutateCh [numMutateHandlers]chan procMsg    // channels into mutate (merge/split) ops.
 	indexCh  [numLabelHandlers]chan labelChange // channels into label indexing
 
-	mcache metaCache
+	mcache       metaCache
+	metaHits     uint64 // track utility of metaCache
+	metaAttempts uint64
 }
 
 // GetMaxDownresLevel returns the number of down-res levels, where level 0 = high-resolution
