@@ -41,13 +41,13 @@ type cacheList []*timedMeta
 
 func (c cacheList) Len() int           { return len(c) }
 func (c cacheList) Swap(a, b int)      { c[a], c[b] = c[b], c[a] }
-func (c cacheList) Less(a, b int) bool { return c[a].t.Before(c[b].t) }
+func (c cacheList) Less(a, b int) bool { return c[a].t.After(c[b].t) }
 
 // metaCache is a label Meta cache based on time since last access.
 type metaCache struct {
 	size  uint16
 	avail map[cacheKey]*timedMeta
-	list  cacheList // sorted based on time
+	list  cacheList // sorted based on time where last is most recent
 }
 
 const defaultCacheSize = 50
@@ -75,7 +75,7 @@ func (m metaCache) GetLabelMeta(v dvid.VersionID, label uint64) *Meta {
 }
 
 // AddLabelMeta adds a label's Meta to the cache, possibly evicting older entries.
-func (m metaCache) AddLabelMeta(v dvid.VersionID, label uint64, meta *Meta) {
+func (m *metaCache) AddLabelMeta(v dvid.VersionID, label uint64, meta *Meta) {
 	entry := cacheKey{v, label}
 	tm, found := m.avail[entry]
 	if found {
@@ -93,7 +93,6 @@ func (m metaCache) AddLabelMeta(v dvid.VersionID, label uint64, meta *Meta) {
 		sort.Sort(m.list)
 		evicted := m.list[m.size-1]
 		delete(m.avail, evicted.key)
-
 		m.list[m.size-1] = newtm
 	} else {
 		m.list = append(m.list, newtm)
@@ -314,7 +313,7 @@ type labelChange struct {
 // This also allows us to efficiently cache the last N label Meta
 func (d *Data) indexLabels(ch <-chan labelChange) {
 	var err error
-	cache := makeMetaCache(1000)
+	cache := makeMetaCache(100)
 	for change := range ch {
 		ctx := datastore.NewVersionedCtx(d, change.v)
 
