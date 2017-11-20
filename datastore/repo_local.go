@@ -112,6 +112,9 @@ func Initialize(initMetadata bool, iconfig *InstanceConfig) error {
 			return err
 		}
 		m.formatVersion = RepoFormatVersion
+		if err := m.putData(formatKey, &(m.formatVersion)); err != nil {
+			return err
+		}
 	} else {
 		// Load the repo metadata
 		dvid.Infof("Loading metadata from storage...\n")
