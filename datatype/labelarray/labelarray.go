@@ -2595,7 +2595,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		fmt.Fprintln(w, dtype.Help())
 
 	case "metadata":
-		jsonStr, err := d.NdDataMetadata()
+		jsonStr, err := d.NdDataMetadata(ctx)
 		if err != nil {
 			server.BadRequest(w, r, err)
 			return
@@ -2615,7 +2615,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		}
 
 	case "info":
-		jsonBytes, err := d.MarshalJSON()
+		jsonBytes, err := d.MarshalJSONExtents(ctx)
 		if err != nil {
 			server.BadRequest(w, r, err)
 			return

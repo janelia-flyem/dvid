@@ -759,6 +759,25 @@ type Properties struct {
 	Background uint8
 }
 
+func (d *Data) propertiesWithExtents(ctx *datastore.VersionedCtx) (props Properties, err error) {
+	var verExtents dvid.Extents
+	verExtents, err = d.GetExtents(ctx)
+	if err != nil {
+		return
+	}
+	props.Values = d.Properties.Values
+	props.Interpolable = d.Properties.Interpolable
+	props.BlockSize = d.Properties.BlockSize
+	props.Resolution = d.Properties.Resolution
+
+	props.Extents.MinPoint = verExtents.MinPoint
+	props.Extents.MaxPoint = verExtents.MaxPoint
+	props.Extents.MinIndex = verExtents.MinIndex
+	props.Extents.MaxIndex = verExtents.MaxIndex
+	props.Background = d.Properties.Background
+	return
+}
+
 // CopyPropertiesFrom copies the data instance-specific properties from a given
 // data instance into the receiver's properties. Fulfills the datastore.PropertyCopier interface.
 func (d *Data) CopyPropertiesFrom(src datastore.DataService, fs storage.FilterSpec) error {
@@ -768,9 +787,8 @@ func (d *Data) CopyPropertiesFrom(src datastore.DataService, fs storage.FilterSp
 	}
 	d.Properties.copyImmutable(&(d2.Properties))
 
-	// TODO -- Handle mutable data that could be potentially altered by filter.
+	// TODO -- Extents are no longer used so this should be refactored
 	d.Properties.Extents = d2.Properties.Extents.Duplicate()
-
 	return nil
 }
 
@@ -879,12 +897,16 @@ type axisT struct {
 }
 
 // NdDataSchema returns the metadata in JSON for this Data
-func (p *Properties) NdDataMetadata() (string, error) {
+func (d *Data) NdDataMetadata(ctx *datastore.VersionedCtx) (string, error) {
 	var err error
 	var size, offset dvid.Point
 
-	dims := int(p.BlockSize.NumDims())
-	if p.MinPoint == nil || p.MaxPoint == nil {
+	dims := int(d.BlockSize().NumDims())
+	extents, err := d.GetExtents(ctx)
+	if err != nil {
+		return "", err
+	}
+	if extents.MinPoint == nil || extents.MaxPoint == nil {
 		zeroPt := make([]int32, dims)
 		size, err = dvid.NewPoint(zeroPt)
 		if err != nil {
@@ -892,8 +914,8 @@ func (p *Properties) NdDataMetadata() (string, error) {
 		}
 		offset = size
 	} else {
-		size = p.MaxPoint.Sub(p.MinPoint).AddScalar(1)
-		offset = p.MinPoint
+		size = extents.MaxPoint.Sub(extents.MinPoint).AddScalar(1)
+		offset = extents.MinPoint
 	}
 
 	var axesName = []string{"X", "Y", "Z", "t", "c"}
@@ -902,13 +924,16 @@ func (p *Properties) NdDataMetadata() (string, error) {
 	for dim := 0; dim < dims; dim++ {
 		metadata.Axes = append(metadata.Axes, axisT{
 			Label:      axesName[dim],
-			Resolution: p.Resolution.VoxelSize[dim],
-			Units:      p.Resolution.VoxelUnits[dim],
+			Resolution: d.Properties.Resolution.VoxelSize[dim],
+			Units:      d.Properties.Resolution.VoxelUnits[dim],
 			Size:       size.Value(uint8(dim)),
 			Offset:     offset.Value(uint8(dim)),
 		})
 	}
-	metadata.Properties = *p
+	metadata.Properties, err = d.propertiesWithExtents(ctx)
+	if err != nil {
+		return "", err
+	}
 
 	m, err := json.Marshal(metadata)
 	if err != nil {
@@ -966,7 +991,7 @@ func (d *Data) SetExtents(ctx *datastore.VersionedCtx, uuid dvid.UUID, jsonBytes
 		return err
 	}
 
-	//  call serializae
+	//  call serialize
 	config2.MinPoint = config.MinPoint
 	config2.MaxPoint = config.MaxPoint
 	data, err := d.serializeExtents(config2)
@@ -1228,7 +1253,8 @@ func (d *Data) BlockSize() dvid.Point {
 	return d.Properties.BlockSize
 }
 
-// Extents retrieves crrent extent (and updates extents cache)
+// GetExtents retrieves current extent (and updates extents cache)
+// TODO -- refactor return since MinIndex / MaxIndex not used so should use extents3d.
 func (d *Data) GetExtents(ctx *datastore.VersionedCtx) (dvid.Extents, error) {
 	// actually fetch extents from datatype storage
 	store, _ := d.GetOrderedKeyValueDB()
@@ -1241,9 +1267,27 @@ func (d *Data) GetExtents(ctx *datastore.VersionedCtx) (dvid.Extents, error) {
 	if err != nil {
 		return dvidextents, err
 	}
+	if extents.MinPoint == nil || extents.MaxPoint == nil {
+		return dvidextents, nil
+	}
 	dvidextents.MinPoint = extents.MinPoint
 	dvidextents.MaxPoint = extents.MaxPoint
 
+	// derive corresponding block coordinate
+	blockSize, ok := d.BlockSize().(dvid.Point3d)
+	if !ok {
+		return dvidextents, fmt.Errorf("can't get extents for data instance %q when block size %s isn't 3d", d.DataName(), d.BlockSize())
+	}
+	minPoint, ok := extents.MinPoint.(dvid.Point3d)
+	if !ok {
+		return dvidextents, fmt.Errorf("can't get 3d point %s for data %q", extents.MinPoint, d.DataName())
+	}
+	maxPoint, ok := extents.MaxPoint.(dvid.Point3d)
+	if !ok {
+		return dvidextents, fmt.Errorf("can't get 3d point %s for data %q", extents.MaxPoint, d.DataName())
+	}
+	dvidextents.MinIndex = minPoint.ChunkIndexer(blockSize)
+	dvidextents.MaxIndex = maxPoint.ChunkIndexer(blockSize)
 	return dvidextents, nil
 }
 
@@ -1368,13 +1412,17 @@ func (d *Data) MarshalJSONExtents(ctx *datastore.VersionedCtx) ([]byte, error) {
 	extentsJSON.MinPoint = extents.MinPoint
 	extentsJSON.MaxPoint = extents.MaxPoint
 
+	props, err := d.propertiesWithExtents(ctx)
+	if err != nil {
+		return nil, err
+	}
 	return json.Marshal(struct {
 		Base     *datastore.Data
 		Extended Properties
 		Extents  ExtentsJSON
 	}{
 		d.Data,
-		d.Properties,
+		props,
 		extentsJSON,
 	})
 }
@@ -2002,7 +2050,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		return
 
 	case "metadata":
-		jsonStr, err := d.NdDataMetadata()
+		jsonStr, err := d.NdDataMetadata(ctx)
 		if err != nil {
 			server.BadRequest(w, r, err)
 			return

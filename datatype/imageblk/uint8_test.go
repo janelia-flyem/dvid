@@ -185,6 +185,54 @@ func TestVoxelsInstanceCreation(t *testing.T) {
 	}
 }
 
+func TestExtents(t *testing.T) {
+	datastore.OpenTest()
+	defer datastore.CloseTest()
+
+	uuid, _ := initTestRepo()
+	makeGrayscale(uuid, t, "grayscale")
+
+	extents := `{
+		"MinPoint": [68, 127, 210],
+		"MaxPoint": [1023, 4811, 12187]
+	}`
+	apiStr := fmt.Sprintf("%snode/%s/grayscale/extents", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", apiStr, bytes.NewBufferString(extents))
+
+	apiStr = fmt.Sprintf("%snode/%s/grayscale/info", server.WebAPIPath, uuid)
+	result := server.TestHTTP(t, "GET", apiStr, nil)
+	var parsed = struct {
+		Base struct {
+			TypeName, Name string
+		}
+		Extended struct {
+			BlockSize  dvid.Point3d
+			VoxelSize  dvid.NdFloat32
+			VoxelUnits dvid.NdString
+			MinPoint   dvid.Point3d
+			MaxPoint   dvid.Point3d
+			MinIndex   dvid.Point3d
+			MaxIndex   dvid.Point3d
+		}
+	}{}
+	if err := json.Unmarshal(result, &parsed); err != nil {
+		t.Fatalf("Error parsing JSON response of new instance metadata: %v\n", err)
+	}
+	fmt.Printf("got: %s\n", string(result))
+	if !parsed.Extended.MinPoint.Equals(dvid.Point3d{68, 127, 210}) {
+		t.Errorf("Bad MinPoint in new uint8blk instance: %s\n", parsed.Extended.MinPoint)
+	}
+	if !parsed.Extended.MaxPoint.Equals(dvid.Point3d{1023, 4811, 12187}) {
+		t.Errorf("Bad MaxPoint in new uint8blk instance: %s\n", parsed.Extended.MaxPoint)
+	}
+	if !parsed.Extended.MinIndex.Equals(dvid.Point3d{2, 3, 6}) {
+		t.Errorf("Bad MinIndex in new uint8blk instance: %s\n", parsed.Extended.MinIndex)
+	}
+	if !parsed.Extended.MaxIndex.Equals(dvid.Point3d{31, 150, 380}) {
+		t.Errorf("Bad MaxIndex in new uint8blk instance: %s\n", parsed.Extended.MaxIndex)
+	}
+}
+
 func TestForegroundROI(t *testing.T) {
 	datastore.OpenTest()
 	defer datastore.CloseTest()

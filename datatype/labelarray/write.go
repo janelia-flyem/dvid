@@ -65,9 +65,13 @@ func (d *Data) PutLabels(v dvid.VersionID, subvol *dvid.Subvolume, data []byte, 
 	}()
 
 	// Track point extents
+	ctx := datastore.NewVersionedCtx(d, v)
 	extents := d.Extents()
 	if extents.AdjustPoints(subvol.StartPoint(), subvol.EndPoint()) {
 		extentChanged = true
+		if err := d.PostExtents(ctx, extents.MinPoint, extents.MaxPoint); err != nil {
+			return err
+		}
 	}
 
 	// extract buffer interface if it exists
@@ -77,7 +81,6 @@ func (d *Data) PutLabels(v dvid.VersionID, subvol *dvid.Subvolume, data []byte, 
 		return fmt.Errorf("Data type imageblk had error initializing store: %v\n", err)
 	}
 	if req, ok := store.(storage.KeyValueRequester); ok {
-		ctx := datastore.NewVersionedCtx(d, v)
 		putbuffer = req.NewBuffer(ctx)
 	}
 
