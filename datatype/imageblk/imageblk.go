@@ -759,7 +759,7 @@ type Properties struct {
 	Background uint8
 }
 
-func (d *Data) propertiesWithExtents(ctx *datastore.VersionedCtx) (props Properties, err error) {
+func (d *Data) PropertiesWithExtents(ctx *datastore.VersionedCtx) (props Properties, err error) {
 	var verExtents dvid.Extents
 	verExtents, err = d.GetExtents(ctx)
 	if err != nil {
@@ -930,7 +930,7 @@ func (d *Data) NdDataMetadata(ctx *datastore.VersionedCtx) (string, error) {
 			Offset:     offset.Value(uint8(dim)),
 		})
 	}
-	metadata.Properties, err = d.propertiesWithExtents(ctx)
+	metadata.Properties, err = d.PropertiesWithExtents(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -1412,7 +1412,7 @@ func (d *Data) MarshalJSONExtents(ctx *datastore.VersionedCtx) ([]byte, error) {
 	extentsJSON.MinPoint = extents.MinPoint
 	extentsJSON.MaxPoint = extents.MaxPoint
 
-	props, err := d.propertiesWithExtents(ctx)
+	props, err := d.PropertiesWithExtents(ctx)
 	if err != nil {
 		return nil, err
 	}

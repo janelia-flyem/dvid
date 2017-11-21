@@ -1192,6 +1192,39 @@ func (d *Data) MarshalJSON() ([]byte, error) {
 	})
 }
 
+func (d *Data) MarshalJSONExtents(ctx *datastore.VersionedCtx) ([]byte, error) {
+	// grab extent property and load
+	extents, err := d.GetExtents(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var extentsJSON imageblk.ExtentsJSON
+	extentsJSON.MinPoint = extents.MinPoint
+	extentsJSON.MaxPoint = extents.MaxPoint
+
+	props, err := d.PropertiesWithExtents(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(struct {
+		Base     *datastore.Data
+		Extended propsJSON
+		Extents  imageblk.ExtentsJSON
+	}{
+		d.Data.Data,
+		propsJSON{
+			Properties:      props,
+			MaxLabel:        d.MaxLabel,
+			MaxRepoLabel:    d.MaxRepoLabel,
+			IndexedLabels:   d.IndexedLabels,
+			CountLabels:     d.CountLabels,
+			MaxDownresLevel: d.MaxDownresLevel,
+		},
+		extentsJSON,
+	})
+}
+
 func (d *Data) GobDecode(b []byte) error {
 	buf := bytes.NewBuffer(b)
 	dec := gob.NewDecoder(buf)
