@@ -1268,10 +1268,18 @@ func (d *Data) GetExtents(ctx *datastore.VersionedCtx) (dvid.Extents, error) {
 		return dvidextents, err
 	}
 	if extents.MinPoint == nil || extents.MaxPoint == nil {
-		return dvidextents, nil
+		// assume this is old dataset and try to use values under Properties.
+		if d.Properties.MinPoint == nil || d.Properties.MaxPoint == nil {
+			return dvidextents, nil
+		}
+		dvidextents.MinPoint = d.Properties.MinPoint
+		dvidextents.MaxPoint = d.Properties.MaxPoint
+		extents.MinPoint = d.Properties.MinPoint
+		extents.MaxPoint = d.Properties.MaxPoint
+	} else {
+		dvidextents.MinPoint = extents.MinPoint
+		dvidextents.MaxPoint = extents.MaxPoint
 	}
-	dvidextents.MinPoint = extents.MinPoint
-	dvidextents.MaxPoint = extents.MaxPoint
 
 	// derive corresponding block coordinate
 	blockSize, ok := d.BlockSize().(dvid.Point3d)
