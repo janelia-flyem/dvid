@@ -514,9 +514,17 @@ func (d *Data) splitIndices(v dvid.VersionID, delta labels.DeltaSplit, deleteBlk
 	shard := delta.OldLabel % numLabelHandlers
 	d.indexCh[shard] <- labelChange{v: v, label: delta.OldLabel, bdm: deletebdm}
 
-	splitbdm := make(blockDiffMap, len(delta.Split))
-	for izyx := range delta.Split {
-		splitbdm[izyx] = labelDiff{present: true}
+	var splitbdm blockDiffMap
+	if delta.Split == nil {
+		splitbdm = make(blockDiffMap, len(delta.SortedBlocks))
+		for _, izyx := range delta.SortedBlocks {
+			splitbdm[izyx] = labelDiff{present: true}
+		}
+	} else {
+		splitbdm = make(blockDiffMap, len(delta.Split))
+		for izyx := range delta.Split {
+			splitbdm[izyx] = labelDiff{present: true}
+		}
 	}
 	shard = delta.NewLabel % numLabelHandlers
 	d.indexCh[shard] <- labelChange{v: v, label: delta.NewLabel, bdm: splitbdm}
