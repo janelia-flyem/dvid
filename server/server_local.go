@@ -64,6 +64,7 @@ type tomlConfig struct {
 	Server     serverConfig
 	Email      emailConfig
 	Logging    dvid.LogConfig
+        Kafka      dvid.KafkaConfig
 	Store      map[storage.Alias]storeConfig
 	Backend    map[dvid.DataSpecifier]backendConfig
 	Groupcache storage.GroupcacheConfig
@@ -187,17 +188,17 @@ func (e emailConfig) Host() string {
 }
 
 // LoadConfig loads DVID server configuration from a TOML file.
-func LoadConfig(filename string) (*datastore.InstanceConfig, *dvid.LogConfig, *storage.Backend, error) {
+func LoadConfig(filename string) (*datastore.InstanceConfig, *dvid.LogConfig, *storage.Backend, *dvid.KafkaConfig, error) {
 	if filename == "" {
-		return nil, nil, nil, fmt.Errorf("No server TOML configuration file provided")
+		return nil, nil, nil, nil, fmt.Errorf("No server TOML configuration file provided")
 	}
 	if _, err := toml.DecodeFile(filename, &tc); err != nil {
-		return nil, nil, nil, fmt.Errorf("Could not decode TOML config: %v\n", err)
+		return nil, nil, nil, nil, fmt.Errorf("Could not decode TOML config: %v\n", err)
 	}
 	var err error
 	err = tc.ConvertPathsToAbsolute(filename)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("Could not convert relative paths to absolute paths in TOML config: %v\n", err)
+		return nil, nil, nil, nil, fmt.Errorf("Could not convert relative paths to absolute paths in TOML config: %v\n", err)
 	}
 
 	// Get all defined stores.
@@ -205,7 +206,7 @@ func LoadConfig(filename string) (*datastore.InstanceConfig, *dvid.LogConfig, *s
 	backend.Groupcache = tc.Groupcache
 	backend.Stores, err = tc.Stores()
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 
 	// Get default store if there's only one store defined.
@@ -222,7 +223,7 @@ func LoadConfig(filename string) (*datastore.InstanceConfig, *dvid.LogConfig, *s
 		// lookup store config
 		_, found := backend.Stores[v.Store]
 		if !found {
-			return nil, nil, nil, fmt.Errorf("Backend for %q specifies unknown store %q", k, v.Store)
+			return nil, nil, nil, nil, fmt.Errorf("Backend for %q specifies unknown store %q", k, v.Store)
 		}
 		spec := dvid.DataSpecifier(strings.Trim(string(k), "\""))
 		backend.KVStore[spec] = v.Store
@@ -236,7 +237,7 @@ func LoadConfig(filename string) (*datastore.InstanceConfig, *dvid.LogConfig, *s
 		backend.DefaultKVDB = defaultStore
 	} else {
 		if backend.DefaultKVDB == "" {
-			return nil, nil, nil, fmt.Errorf("if no default backend specified, must have exactly one store defined in config file")
+			return nil, nil, nil, nil, fmt.Errorf("if no default backend specified, must have exactly one store defined in config file")
 		}
 	}
 	defaultLog, found := backend.LogStore["default"]
@@ -249,7 +250,7 @@ func LoadConfig(filename string) (*datastore.InstanceConfig, *dvid.LogConfig, *s
 		backend.Metadata = defaultMetadataName
 	} else {
 		if backend.DefaultKVDB == "" {
-			return nil, nil, nil, fmt.Errorf("can't set metadata if no default backend specified, must have exactly one store defined in config file")
+			return nil, nil, nil, nil, fmt.Errorf("can't set metadata if no default backend specified, must have exactly one store defined in config file")
 		}
 		backend.Metadata = backend.DefaultKVDB
 	}
@@ -260,7 +261,7 @@ func LoadConfig(filename string) (*datastore.InstanceConfig, *dvid.LogConfig, *s
 		Gen:   tc.Server.IIDGen,
 		Start: dvid.InstanceID(tc.Server.IIDStart),
 	}
-	return &ic, &(tc.Logging), backend, nil
+	return &ic, &(tc.Logging), backend, &(tc.Kafka), nil
 }
 
 type emailData struct {

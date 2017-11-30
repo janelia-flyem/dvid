@@ -8,6 +8,7 @@
 package labelarray
 
 import (
+        "encoding/json"
 	"fmt"
 	"io"
 	"sort"
@@ -100,6 +101,35 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp) error {
 		}
 		dvid.Infof("processed merge for %q in gofunc\n", d.DataName())
 	}()
+
+        // send kafka merge event to instance-uuid topic 
+        // msg: {"action": "merge", "target": targetlabel, "labels": [merge labels]}
+
+        // create topic (repo ID + data instance uuid)
+        // NOTE: Kafka server must be configured to allow topic creation from
+        // messages sent to a non-existent topic
+        rootuuid, _ := d.DAGRootUUID()
+        datauuid := d.DataUUID()
+        topic := "dvidrepo-" + string(rootuuid) + "-inst-" + string(datauuid)
+
+        // create msg
+        labels := make([]uint64,0,len(op.Merged))
+	for label := range op.Merged {
+                labels = append(labels, label)
+        }
+
+        versionuuid, _ :=  datastore.UUIDFromVersion(v)
+
+        msginfo := map[string]interface{}{
+            "Action": "merge",
+            "Target":  op.Target,
+            "Labels": labels,
+            "UUID": string(versionuuid),
+        }
+        jsonmsg, _ := json.Marshal(msginfo)
+
+        // send message if kafka initialized
+        dvid.KafkaProduceMsg(jsonmsg, topic)
 
 	return nil
 }

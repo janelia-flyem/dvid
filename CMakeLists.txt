@@ -61,7 +61,7 @@ else ()
 
     ExternalProject_Add(dvid-console-dist
         PREFIX ${BUILDEM_DIR}
-        URL https://github.com/janelia-flyem/dvid-console/archive/v2.0.10.tar.gz
+        URL https://github.com/janelia-flyem/dvid-console/releases/download/v1.13.1/dvid-console-1.13.1.tar.gz
         UPDATE_COMMAND ""
         PATCH_COMMAND ""
         CONFIGURE_COMMAND ""
@@ -86,7 +86,7 @@ else ()
     message ("Using DVID_BACKEND: ${DVID_BACKEND}")
 
     # Make sure we have list of all Go package dependencies that we are go getting.
-    set (DVID_DEP_GO_PACKAGES gopackages gojsonschema goji context lumberjack snappy oauth2 protobuf gorpc groupcache)
+    set (DVID_DEP_GO_PACKAGES gopackages gojsonschema kafka goji context lumberjack snappy oauth2 protobuf gorpc groupcache)
 
     # Make sure we have all dependencies for the backend
 	# Defaults to standard leveldb
@@ -153,6 +153,10 @@ else ()
     add_custom_target (gojsonschema
         ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/janelia-flyem/gojsonschema
         COMMENT     "Adding gojsonschema library...")
+
+    add_custom_target (kafka
+        ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/optiopay/kafka 
+        COMMENT     "Adding kafka library...")
 
     add_custom_target (goji
         ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/zenazn/goji
@@ -291,7 +295,7 @@ else ()
 
     # Build transfer command 
     add_custom_target (dvid-transfer
-        ${BUILDEM_ENV_STRING} ${GO_ENV} ${CGO_FLAGS} go build -o ${BUILDEM_BIN_DIR}/dvid-transfer 
+        ${BUILDEM_ENV_STRING} ${GO_ENV} ${CGO_FLAGS} go build  -o ${BUILDEM_BIN_DIR}/dvid-transfer 
         -v -tags '${DVID_BACKEND}' cmd/transfer/*.go
         WORKING_DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}
         COMMENT     "Compiling and installing dvid transfer command...")

@@ -266,11 +266,13 @@ func DoServe(cmd dvid.Command) error {
 	if configPath == "" {
 		return fmt.Errorf("serve command must be followed by the path to the TOML configuration file")
 	}
-	instanceConfig, logConfig, backend, err := server.LoadConfig(configPath)
+	instanceConfig, logConfig, backend, kafka, err := server.LoadConfig(configPath)
 	if err != nil {
 		return fmt.Errorf("Error loading configuration file %q: %v\n", configPath, err)
 	}
 	logConfig.SetLogger()
+
+        kafka.Initialize()
 
 	// Initialize storage and datastore layer
 	initMetadata, err := storage.Initialize(cmd.Settings(), backend)
