@@ -194,6 +194,13 @@ type Accessor interface {
 	GetGraphDB() (GraphDB, error)
 }
 
+// BlobStore allows writing and retrieving unversioned data.  It differs from KeyValueDB in that
+// it auto-generates and returns a key on writing, typically the content hash.
+type BlobStore interface {
+	PutBlob([]byte) (ref string, err error)
+	GetBlob(ref string) ([]byte, error)
+}
+
 // KeyValueIngestable implementations allow ingestion of data without necessarily allowing
 // immediate reads of the ingested data.
 type KeyValueIngestable interface {

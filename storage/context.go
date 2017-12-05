@@ -204,7 +204,13 @@ func init() {
 const (
 	metadataKeyPrefix byte = iota
 	dataKeyPrefix
+	blobKeyPrefix
 )
+
+// ConstructBlobKey returns a blob Key, partitioned from other key spaces, for a given key.
+func ConstructBlobKey(k []byte) Key {
+	return Key(append([]byte{blobKeyPrefix}, k...))
+}
 
 // MetadataContext is an implementation of Context for MetadataContext persistence.
 type MetadataContext struct{}

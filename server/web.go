@@ -1189,6 +1189,19 @@ func repoNewDataHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, `{%q: "Added %s [%s] to node %s"}`, "result", dataname, typename, uuid)
+
+	// send new instance op to kafka
+	msginfo := map[string]interface{}{
+		"Action":   "newinstance",
+		"UUID":     string(uuid),
+		"Typename": typename,
+		"Dataname": dataname,
+	}
+	jsonmsg, _ := json.Marshal(msginfo)
+	if err := datastore.ProduceKafkaMsg(uuid, jsonmsg); err != nil {
+		BadRequest(w, r, fmt.Sprintf("Error on sending new instance op to kafka: %v\n", err))
+		return
+	}
 }
 
 func getRepoLogHandler(c web.C, w http.ResponseWriter, r *http.Request) {
@@ -1285,6 +1298,17 @@ func postNodeNoteHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 		BadRequest(w, r, err)
 		return
 	}
+
+	msginfo := map[string]interface{}{
+		"Action": "nodenote",
+		"UUID":   string(uuid),
+		"Note":   note,
+	}
+	jsonmsg, _ := json.Marshal(msginfo)
+	if err := datastore.ProduceKafkaMsg(uuid, jsonmsg); err != nil {
+		BadRequest(w, r, fmt.Sprintf("Error on sending node note op to kafka: %v\n", err))
+		return
+	}
 }
 
 func postNodeLogHandler(c web.C, w http.ResponseWriter, r *http.Request) {
@@ -1301,6 +1325,17 @@ func postNodeLogHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	}
 	if err := datastore.AddToNodeLog(uuid, logdata); err != nil {
 		BadRequest(w, r, err)
+		return
+	}
+
+	msginfo := map[string]interface{}{
+		"Action": "nodelog",
+		"UUID":   string(uuid),
+		"Log":    logdata,
+	}
+	jsonmsg, _ := json.Marshal(msginfo)
+	if err := datastore.ProduceKafkaMsg(uuid, jsonmsg); err != nil {
+		BadRequest(w, r, fmt.Sprintf("Error on sending node log op to kafka: %v\n", err))
 		return
 	}
 }
@@ -1364,6 +1399,19 @@ func repoCommitHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, "{%q: %q}", "committed", uuid)
 	}
+
+	// send commit op to kafka
+	msginfo := map[string]interface{}{
+		"Action": "commit",
+		"UUID":   string(uuid),
+		"Note":   jsonData.Note,
+		"Log":    jsonData.Log,
+	}
+	jsonmsg, _ := json.Marshal(msginfo)
+	if err := datastore.ProduceKafkaMsg(uuid, jsonmsg); err != nil {
+		BadRequest(w, r, fmt.Sprintf("Error on sending commit op to kafka: %v\n", err))
+		return
+	}
 }
 
 // repoNewVersionHandler creates a new version node with the same branch as the parent
@@ -1393,7 +1441,6 @@ func repoNewVersionHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-
 	}
 
 	// create new version with empty branch specification
@@ -1403,6 +1450,19 @@ func repoNewVersionHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	} else {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, "{%q: %q}", "child", newuuid)
+	}
+
+	// send newversion op to kafka
+	msginfo := map[string]interface{}{
+		"Action": "newversion",
+		"Parent": string(uuid),
+		"Child":  newuuid,
+		"Note":   jsonData.Note,
+	}
+	jsonmsg, _ := json.Marshal(msginfo)
+	if err := datastore.ProduceKafkaMsg(uuid, jsonmsg); err != nil {
+		BadRequest(w, r, fmt.Sprintf("Error on sending newversion op to kafka: %v\n", err))
+		return
 	}
 }
 
@@ -1451,6 +1511,20 @@ func repoBranchHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	} else {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, "{%q: %q}", "child", newuuid)
+	}
+
+	// send branch op to kafka
+	msginfo := map[string]interface{}{
+		"Action": "branch",
+		"Parent": string(uuid),
+		"Child":  newuuid,
+		"Branch": jsonData.Branch,
+		"Note":   jsonData.Note,
+	}
+	jsonmsg, _ := json.Marshal(msginfo)
+	if err := datastore.ProduceKafkaMsg(uuid, jsonmsg); err != nil {
+		BadRequest(w, r, fmt.Sprintf("Error on sending branch op to kafka: %v\n", err))
+		return
 	}
 }
 

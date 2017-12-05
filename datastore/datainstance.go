@@ -916,6 +916,20 @@ func getGraphDB(d dvid.Data) (db storage.GraphDB, err error) {
 	return
 }
 
+// TODO -- Add configurable option to use a file system.
+func getBlobStore(d dvid.Data) (store storage.BlobStore, err error) {
+	db, err := getKeyValueDB(d)
+	if err != nil {
+		return nil, err
+	}
+	var ok bool
+	store, ok = db.(storage.BlobStore)
+	if !ok {
+		return nil, fmt.Errorf("data %q assigned key-value DB (%s) cannot be used as blob store", d.DataName(), db)
+	}
+	return store, nil
+}
+
 // GetKeyValueDB returns a kv data store assigned to this data instance.
 // If the store is nil or not available, an error is returned.
 func (d *Data) GetKeyValueDB() (storage.KeyValueDB, error) {
@@ -938,4 +952,21 @@ func (d *Data) GetKeyValueBatcher() (storage.KeyValueBatcher, error) {
 // If the store is nil or not available, an error is returned.
 func (d *Data) GetGraphDB() (storage.GraphDB, error) {
 	return getGraphDB(d)
+}
+
+// GetBlobStore returns a blob store or nil if not available.
+func (d *Data) GetBlobStore() (storage.BlobStore, error) {
+	return getBlobStore(d)
+}
+
+func (d *Data) ProduceKafkaMsg(b []byte) error {
+	// create topic (repo ID + data instance uuid)
+	// NOTE: Kafka server must be configured to allow topic creation from
+	// messages sent to a non-existent topic
+	rootuuid, _ := d.DAGRootUUID()
+	datauuid := d.DataUUID()
+	topic := "dvidrepo-" + string(rootuuid) + "-data-" + string(datauuid)
+
+	// send message if kafka initialized
+	return dvid.KafkaProduceMsg(b, topic)
 }

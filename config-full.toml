@@ -91,6 +91,12 @@ max_log_age = 30   # days
     engine = "filelog"
     path = "/data/mutationlogs"  # directory that holds mutation log per instance-UUID.
 
+# Kafka support can be specified.  This allows mutations to be logged and facilitates
+# syncing, etc.
+
+[kafka]
+servers = ["http://foo.bar.com:1234", "http://foo2.bar.com:1234"]
+
 # Groupcache support lets you cache GETs from particular data instances.  The
 # configuration below marks some data instances as both immutable and
 # using a non-ordered key-value store for GETs.  These instances may be versioned.

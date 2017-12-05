@@ -601,3 +601,18 @@ func GetStorageBreakdown() (string, error) {
 	}
 	return string(m), nil
 }
+
+// ProduceKafkaMsg logs a repo operation to kafka
+func ProduceKafkaMsg(uuid dvid.UUID, b []byte) error {
+	if manager == nil {
+		return ErrManagerNotInitialized
+	}
+	rootuuid, err := manager.getRepoRoot(uuid)
+	if err != nil {
+		return err
+	}
+	topic := "dvidrepo-" + string(rootuuid) + "-repo-ops"
+
+	// send message if kafka initialized
+	return dvid.KafkaProduceMsg(b, topic)
+}

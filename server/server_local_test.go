@@ -4,6 +4,7 @@ import (
 	"io/ioutil"
 	"os"
 	"testing"
+
 	"github.com/janelia-flyem/dvid/storage"
 )
 
@@ -20,7 +21,7 @@ func loadConfigFile(t *testing.T, filename string) string {
 }
 
 func TestParseConfig(t *testing.T) {
-	instanceCfg, logCfg, backendCfg, err := LoadConfig("../config-full.toml")
+	instanceCfg, logCfg, backendCfg, kafkaCfg, err := LoadConfig("../config-full.toml")
 	if err != nil {
 		t.Fatalf("bad TOML configuration: %v\n", err)
 	}
@@ -34,6 +35,10 @@ func TestParseConfig(t *testing.T) {
 	}
 	if backendCfg.DefaultKVDB != "raid6" || backendCfg.DefaultLog != "mutationlog" || backendCfg.KVStore["grayscale:99ef22cd85f143f58a623bd22aad0ef7"] != "kvautobus" {
 		t.Errorf("Bad backend configuration retrieval: %v\n", backendCfg)
+	}
+
+	if len(kafkaCfg.Servers) != 2 || kafkaCfg.Servers[0] != "http://foo.bar.com:1234" || kafkaCfg.Servers[1] != "http://foo2.bar.com:1234" {
+		t.Errorf("Bad Kafka config: %v\n", kafkaCfg)
 	}
 }
 

@@ -3,8 +3,10 @@
 package dvid
 
 import (
-        "github.com/optiopay/kafka"
-        "github.com/optiopay/kafka/proto"
+	"fmt"
+
+	"github.com/optiopay/kafka"
+	"github.com/optiopay/kafka/proto"
 )
 
 // global broker
@@ -14,39 +16,39 @@ var broker *kafka.Broker
 const partitionID = 0
 
 type KafkaConfig struct {
-	ServerAddrs []string
+	Servers []string
 }
 
 // InitKafka intializes kafka connection.
 func (c *KafkaConfig) Initialize() {
-	if c == nil || len(c.ServerAddrs) == 0 {
+	if c == nil || len(c.Servers) == 0 {
 		Infof("No Kafka server specified.")
 		return
 	}
 
-        // create kafka connection
-        conf := kafka.NewBrokerConf("dvid-kafkaclient")
-        
-        // note: assume server allows automatic topic creation
-        // when sending a message to a non-existing topic
-        conf.AllowTopicCreation = true
+	// create kafka connection
+	conf := kafka.NewBrokerConf("dvid-kafkaclient")
 
-        // connect to kafka cluster
-        var err error
-        broker, err = kafka.Dial(c.ServerAddrs, conf)
-        if err != nil {
-            Criticalf("cannot connect to kafka cluster: %s", err)
-        }
+	// note: assume server allows automatic topic creation
+	// when sending a message to a non-existing topic
+	conf.AllowTopicCreation = true
+
+	// connect to kafka cluster
+	var err error
+	broker, err = kafka.Dial(c.Servers, conf)
+	if err != nil {
+		Criticalf("cannot connect to kafka cluster: %s", err)
+	}
 }
 
-// KafkaProduceMsg sends a message to kafka 
-func KafkaProduceMsg(msg []byte, topic string) {
-    if (broker != nil) {
-        producer := broker.Producer(kafka.NewProducerConf())
-        pmsg := &proto.Message{Value: msg}
-        if _, err := producer.Produce(topic, partitionID, pmsg); err != nil {
-            Criticalf("cannot produce message to %s:%d: %s", topic, partitionID, err)
-        }
-    }
+// KafkaProduceMsg sends a message to kafka
+func KafkaProduceMsg(msg []byte, topic string) error {
+	if broker != nil {
+		producer := broker.Producer(kafka.NewProducerConf())
+		pmsg := &proto.Message{Value: msg}
+		if _, err := producer.Produce(topic, partitionID, pmsg); err != nil {
+			return fmt.Errorf("cannot produce message to %s:%d: %s", topic, partitionID, err)
+		}
+	}
+	return nil
 }
-

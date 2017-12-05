@@ -61,7 +61,7 @@ else ()
 
     ExternalProject_Add(dvid-console-dist
         PREFIX ${BUILDEM_DIR}
-        URL https://github.com/janelia-flyem/dvid-console/releases/download/v1.13.1/dvid-console-1.13.1.tar.gz
+        URL https://github.com/janelia-flyem/dvid-console/archive/v2.0.10.tar.gz
         UPDATE_COMMAND ""
         PATCH_COMMAND ""
         CONFIGURE_COMMAND ""

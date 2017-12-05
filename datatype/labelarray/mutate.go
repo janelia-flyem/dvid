@@ -8,7 +8,7 @@
 package labelarray
 
 import (
-        "encoding/json"
+	"encoding/json"
 	"fmt"
 	"io"
 	"sort"
@@ -102,36 +102,22 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp) error {
 		dvid.Infof("processed merge for %q in gofunc\n", d.DataName())
 	}()
 
-        // send kafka merge event to instance-uuid topic 
-        // msg: {"action": "merge", "target": targetlabel, "labels": [merge labels]}
-
-        // create topic (repo ID + data instance uuid)
-        // NOTE: Kafka server must be configured to allow topic creation from
-        // messages sent to a non-existent topic
-        rootuuid, _ := d.DAGRootUUID()
-        datauuid := d.DataUUID()
-        topic := "dvidrepo-" + string(rootuuid) + "-inst-" + string(datauuid)
-
-        // create msg
-        labels := make([]uint64,0,len(op.Merged))
+	// send kafka merge event to instance-uuid topic
+	// msg: {"action": "merge", "target": targetlabel, "labels": [merge labels]}
+	labels := make([]uint64, 0, len(op.Merged))
 	for label := range op.Merged {
-                labels = append(labels, label)
-        }
+		labels = append(labels, label)
+	}
 
-        versionuuid, _ :=  datastore.UUIDFromVersion(v)
-
-        msginfo := map[string]interface{}{
-            "Action": "merge",
-            "Target":  op.Target,
-            "Labels": labels,
-            "UUID": string(versionuuid),
-        }
-        jsonmsg, _ := json.Marshal(msginfo)
-
-        // send message if kafka initialized
-        dvid.KafkaProduceMsg(jsonmsg, topic)
-
-	return nil
+	versionuuid, _ := datastore.UUIDFromVersion(v)
+	msginfo := map[string]interface{}{
+		"Action": "merge",
+		"Target": op.Target,
+		"Labels": labels,
+		"UUID":   string(versionuuid),
+	}
+	jsonmsg, _ := json.Marshal(msginfo)
+	return d.ProduceKafkaMsg(jsonmsg)
 }
 
 // handle block and label index mods for a merge.
@@ -282,11 +268,47 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel, splitLabel uint64, r io.
 		NewLabel: toLabel,
 		RLEs:     split,
 	}
+
+	// log the split
 	go func() {
 		if err = labels.LogSplit(d, v, mutID, splitOp); err != nil {
 			dvid.Errorf("logging split: %v\n", err)
 		}
 	}()
+
+	// store split info into separate data.
+	var splitData []byte
+	var splitRef string
+	if splitData, err = split.MarshalBinary(); err != nil {
+		return
+	}
+	var blobStore storage.BlobStore
+	if blobStore, err = d.GetBlobStore(); err != nil {
+		return
+	}
+	if blobStore != nil {
+		var err error
+		splitRef, err = blobStore.PutBlob(splitData)
+		if err != nil {
+			dvid.Errorf("Error storing split data into blob store %s: %v\n", blobStore, err)
+		}
+	}
+
+	// send kafka merge event to instance-uuid topic
+	// msg: {"action": "merge", "target": targetlabel, "labels": [merge labels]}
+	versionuuid, _ := datastore.UUIDFromVersion(v)
+	msginfo := map[string]interface{}{
+		"Action":   "split",
+		"Target":   fromLabel,
+		"NewLabel": toLabel,
+		"Split":    splitRef,
+		"UUID":     string(versionuuid),
+	}
+	jsonmsg, _ := json.Marshal(msginfo)
+	if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
+		err = fmt.Errorf("Error on sending split op to kafka: %v\n", err)
+		return
+	}
 
 	// Partition the split spans into blocks.
 	var splitmap dvid.BlockRLEs

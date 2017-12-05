@@ -3,10 +3,12 @@
 package basholeveldb
 
 import (
+	"encoding/base64"
 	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
+	"hash/fnv"
 
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
@@ -1373,7 +1375,56 @@ func (db *LevelDB) GetApproximateSizes(ranges []storage.KeyRange) ([]uint64, err
 	return sizes, nil
 }
 
-// --- Options ----
+// ---- BlobStore interface ----
+
+// PutBlob writes unversioned data and returns a filename-friendly base64 encoding of the reference.
+func (db *LevelDB) PutBlob(v []byte) (ref string, err error) {
+	if db == nil {
+		return "", fmt.Errorf("Can't call PutBlob on nil LevelDB")
+	}
+	if db.options == nil {
+		return "", fmt.Errorf("Can't call PutBlob on db with nil options: %v", db)
+	}
+	h := fnv.New128()
+	if _, err = h.Write(v); err != nil {
+		return
+	}
+	contentHash := h.Sum(nil)
+	key := storage.ConstructBlobKey(contentHash)
+	dvid.StartCgo()
+	wo := db.options.WriteOptions
+	err = db.ldb.Put(wo, key, v)
+	dvid.StopCgo()
+
+	storage.StoreKeyBytesWritten <- len(key)
+	storage.StoreValueBytesWritten <- len(v)
+
+	b64key := base64.URLEncoding.EncodeToString(contentHash)
+	return b64key, err
+}
+
+// GetBlob returns unversioned data given a reference.
+func (db *LevelDB) GetBlob(ref string) (v []byte, err error) {
+	if db == nil {
+		return nil, fmt.Errorf("Can't call GetBlob on nil LevelDB")
+	}
+	if db.options == nil {
+		return nil, fmt.Errorf("Can't call GetBlob on db with nil options: %v", db)
+	}
+	var contentHash []byte
+	if contentHash, err = base64.URLEncoding.DecodeString(ref); err != nil {
+		return
+	}
+	key := storage.ConstructBlobKey(contentHash)
+	ro := db.options.ReadOptions
+	dvid.StartCgo()
+	v, err = db.ldb.Get(ro, key)
+	dvid.StopCgo()
+	storage.StoreValueBytesRead <- len(v)
+	return
+}
+
+// ---- Options ----
 
 type leveldbOptions struct {
 	*levigo.Options

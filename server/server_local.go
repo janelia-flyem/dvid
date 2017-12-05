@@ -11,10 +11,10 @@ package server
 import (
 	"bytes"
 	"fmt"
-	"path/filepath"
 	"net/smtp"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"text/template"
@@ -64,7 +64,7 @@ type tomlConfig struct {
 	Server     serverConfig
 	Email      emailConfig
 	Logging    dvid.LogConfig
-        Kafka      dvid.KafkaConfig
+	Kafka      dvid.KafkaConfig
 	Store      map[storage.Alias]storeConfig
 	Backend    map[dvid.DataSpecifier]backendConfig
 	Groupcache storage.GroupcacheConfig
@@ -77,13 +77,13 @@ func (c *tomlConfig) ConvertPathsToAbsolute(configPath string) error {
 	var err error
 
 	configDir := filepath.Dir(configPath)
-	
+
 	// [server].webClient
 	c.Server.WebClient, err = dvid.ConvertToAbsolute(c.Server.WebClient, configDir)
 	if err != nil {
 		return fmt.Errorf("Error converting webClient setting to absolute path")
 	}
-	
+
 	// [logging].logfile
 	c.Logging.Logfile, err = dvid.ConvertToAbsolute(c.Logging.Logfile, configDir)
 	if err != nil {
