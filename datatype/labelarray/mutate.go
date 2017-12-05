@@ -295,7 +295,6 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel, splitLabel uint64, r io.
 	}
 
 	// send kafka merge event to instance-uuid topic
-	// msg: {"action": "merge", "target": targetlabel, "labels": [merge labels]}
 	versionuuid, _ := datastore.UUIDFromVersion(v)
 	msginfo := map[string]interface{}{
 		"Action":   "split",

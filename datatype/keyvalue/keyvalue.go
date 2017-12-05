@@ -38,26 +38,26 @@ $ dvid repo <UUID> new keyvalue <data name> <settings...>
 
 	$ dvid repo 3f8c new keyvalue stuff
 
-    Arguments:
+	Arguments:
 
-    UUID           Hexidecimal string with enough characters to uniquely identify a version node.
-    data name      Name of data to create, e.g., "myblobs"
-    settings       Configuration settings in "key=value" format separated by spaces.
+	UUID           Hexidecimal string with enough characters to uniquely identify a version node.
+	data name      Name of data to create, e.g., "myblobs"
+	settings       Configuration settings in "key=value" format separated by spaces.
 
-    Configuration Settings (case-insensitive keys):
+	Configuration Settings (case-insensitive keys):
 
-    Versioned      Set to "false" or "0" if the keyvalue instance is unversioned (repo-wide).
-                   An unversioned keyvalue will only use the UUIDs to look up the repo and
-                   not differentiate between versions in the same repo.  Note that unlike
-                   versioned data, distribution (push/pull) of unversioned data is not defined 
-                   at this time.
+	Versioned      Set to "false" or "0" if the keyvalue instance is unversioned (repo-wide).
+				   An unversioned keyvalue will only use the UUIDs to look up the repo and
+				   not differentiate between versions in the same repo.  Note that unlike
+				   versioned data, distribution (push/pull) of unversioned data is not defined 
+				   at this time.
 
 $ dvid -stdin node <UUID> <data name> put <key> < data
 
 	Puts stdin data into the keyvalue data instance under the given key.
 
 	
-    ------------------
+	------------------
 
 HTTP API (Level 2 REST):
 
@@ -73,18 +73,18 @@ GET  <api URL>/node/<UUID>/<data name>/help
 GET  <api URL>/node/<UUID>/<data name>/info
 POST <api URL>/node/<UUID>/<data name>/info
 
-    Retrieves or puts data properties.
+	Retrieves or puts data properties.
 
-    Example: 
+	Example: 
 
-    GET <api URL>/node/3f8c/stuff/info
+	GET <api URL>/node/3f8c/stuff/info
 
-    Returns JSON with configuration settings.
+	Returns JSON with configuration settings.
 
-    Arguments:
+	Arguments:
 
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
-    data name     Name of keyvalue data instance.
+	UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+	data name     Name of keyvalue data instance.
 
 GET  <api URL>/node/<UUID>/<data name>/keys
 
@@ -98,34 +98,44 @@ GET  <api URL>/node/<UUID>/<data name>/keyrange/<key1>/<key2>
 
 	[key1, key2, ...]
 
-    Arguments:
+	Arguments:
 
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
-    data name     Name of keyvalue data instance.
-    key1          First alphanumeric key in range.
-    key2          Last alphanumeric key in range.
+	UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+	data name     Name of keyvalue data instance.
+	key1          First alphanumeric key in range.
+	key2          Last alphanumeric key in range.
 
 GET  <api URL>/node/<UUID>/<data name>/key/<key>
 POST <api URL>/node/<UUID>/<data name>/key/<key>
 DEL  <api URL>/node/<UUID>/<data name>/key/<key> 
 
-    Performs operations on a key-value pair depending on the HTTP verb.  
+	Performs operations on a key-value pair depending on the HTTP verb.  
 
-    Example: 
+	Example: 
 
-    GET <api URL>/node/3f8c/stuff/key/myfile.dat
+	GET <api URL>/node/3f8c/stuff/key/myfile.dat
 
-    Returns the data associated with the key "myfile.dat" of instance "stuff" in version
-    node 3f8c.
+	Returns the data associated with the key "myfile.dat" of instance "stuff" in version
+	node 3f8c.
 
-    The "Content-type" of the HTTP response (and usually the request) are
-    "application/octet-stream" for arbitrary binary data.
+	The "Content-type" of the HTTP response (and usually the request) are
+	"application/octet-stream" for arbitrary binary data.
 
-    Arguments:
+	Arguments:
 
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
-    data name     Name of keyvalue data instance.
-    key           An alphanumeric key.
+	UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+	data name     Name of keyvalue data instance.
+	key           An alphanumeric key.
+	
+	POSTs will be logged as a Kafka JSON message with the following format:
+	{ 
+		"Action": "postkv",
+		"Key": <key>,
+		"Data": <string reference to data in BlobStore>,
+		"Bytes": <number of bytes in data>,
+		"UUID": <UUID on which POST was done>
+	}
+
 `
 
 func init() {
@@ -227,6 +237,7 @@ func (d *Data) GetKeysInRange(ctx storage.Context, keyBeg, keyEnd string) ([]str
 	}
 	keys, err := db.KeysInRange(ctx, first, last)
 	if err != nil {
+		fmt.Printf("Error detected at GetKeysInRange level: %v\n", err)
 		return nil, err
 	}
 	keyList := []string{}
@@ -494,6 +505,34 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 				server.BadRequest(w, r, err)
 				return
 			}
+
+			go func() {
+				var err error
+				var blobStore storage.BlobStore
+				if blobStore, err = d.GetBlobStore(); err != nil {
+					return
+				}
+				var dataRef string
+				if blobStore != nil {
+					dataRef, err = blobStore.PutBlob(data)
+					if err != nil {
+						dvid.Errorf("Error storing keyvalue POST data into blob store %s: %v\n", blobStore, err)
+						dataRef = ""
+					}
+				}
+				msginfo := map[string]interface{}{
+					"Action": "postkv",
+					"Key":    keyStr,
+					"Data":   dataRef,
+					"Bytes":  len(data),
+					"UUID":   string(uuid),
+				}
+				jsonmsg, _ := json.Marshal(msginfo)
+				if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
+					dvid.Errorf("Error on sending keyvalue POST op to kafka: %v\n", err)
+				}
+			}()
+
 			err = d.PutData(ctx, keyStr, data)
 			if err != nil {
 				server.BadRequest(w, r, err)

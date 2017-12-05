@@ -463,14 +463,11 @@ func (db *LevelDB) Get(ctx storage.Context, tk storage.TKey) ([]byte, error) {
 		}
 
 		// Get all versions of this key and return the most recent
-		// log.Printf("  basholeveldb versioned get of key %v\n", k)
 		values, err := db.getSingleKeyVersions(vctx, tk)
-		// log.Printf("            got back %v\n", values)
 		if err != nil {
 			return nil, err
 		}
 		kv, err := vctx.VersionedKeyValue(values)
-		// log.Printf("  after deversioning: %v\n", kv)
 		if kv != nil {
 			return kv.V, err
 		}
@@ -478,7 +475,6 @@ func (db *LevelDB) Get(ctx storage.Context, tk storage.TKey) ([]byte, error) {
 	} else {
 		key := ctx.ConstructKey(tk)
 		ro := db.options.ReadOptions
-		// log.Printf("  basholeveldb unversioned get of key %v\n", key)
 		dvid.StartCgo()
 		v, err := db.ldb.Get(ro, key)
 		dvid.StopCgo()
@@ -514,17 +510,14 @@ func (db *LevelDB) getSingleKeyVersions(vctx storage.VersionedCtx, tk []byte) ([
 			itKey := it.Key()
 			storage.StoreKeyBytesRead <- len(itKey)
 			if bytes.Compare(itKey, endKey) > 0 {
-				// log.Printf("key past %v\n", kEnd)
 				return values, nil
 			}
 			itValue := it.Value()
-			// log.Printf("got value of length %d\n", len(itValue))
 			storage.StoreValueBytesRead <- len(itValue)
 			values = append(values, &storage.KeyValue{itKey, itValue})
 			it.Next()
 		} else {
 			err = it.GetError()
-			// log.Printf("iteration done, err = %v\n", err)
 			if err == nil {
 				return values, nil
 			}
@@ -539,7 +532,6 @@ type errorableKV struct {
 }
 
 func sendKV(vctx storage.VersionedCtx, values []*storage.KeyValue, ch chan errorableKV) {
-	// fmt.Printf("sendKV: values %v\n", values)
 	if len(values) != 0 {
 		kv, err := vctx.VersionedKeyValue(values)
 		if err != nil {
@@ -547,7 +539,6 @@ func sendKV(vctx storage.VersionedCtx, values []*storage.KeyValue, ch chan error
 			return
 		}
 		if kv != nil {
-			// fmt.Printf("Sending kv: %v\n", kv)
 			ch <- errorableKV{kv, nil}
 		}
 	}
@@ -580,9 +571,6 @@ func (db *LevelDB) versionedRange(vctx storage.VersionedCtx, begTKey, endTKey st
 		ch <- errorableKV{nil, err}
 		return
 	}
-	// log.Printf("         minKey %v\n", minKey)
-	// log.Printf("         maxKey %v\n", maxKey)
-	// log.Printf("  maxVersionKey %v\n", maxVersionKey)
 
 	it.Seek(minKey)
 	var itValue []byte
@@ -599,22 +587,22 @@ func (db *LevelDB) versionedRange(vctx storage.VersionedCtx, begTKey, endTKey st
 				storage.StoreValueBytesRead <- len(itValue)
 			}
 			itKey := it.Key()
-			// log.Printf("   +++valid key %v\n", itKey)
 			storage.StoreKeyBytesRead <- len(itKey)
 
 			// Did we pass all versions for last key read?
 			if bytes.Compare(itKey, maxVersionKey) > 0 {
-				indexBytes, err := storage.TKeyFromKey(itKey)
-				if err != nil {
-					ch <- errorableKV{nil, err}
-					return
+				if storage.Key(itKey).IsDataKey() {
+					indexBytes, err := storage.TKeyFromKey(itKey)
+					if err != nil {
+						ch <- errorableKV{nil, err}
+						return
+					}
+					maxVersionKey, err = vctx.MaxVersionKey(indexBytes)
+					if err != nil {
+						ch <- errorableKV{nil, err}
+						return
+					}
 				}
-				maxVersionKey, err = vctx.MaxVersionKey(indexBytes)
-				if err != nil {
-					ch <- errorableKV{nil, err}
-					return
-				}
-				// log.Printf("->maxVersionKey %v (transmitting %d values)\n", maxVersionKey, len(values))
 				sendKV(vctx, values, ch)
 				values = []*storage.KeyValue{}
 			}
@@ -626,7 +614,6 @@ func (db *LevelDB) versionedRange(vctx storage.VersionedCtx, begTKey, endTKey st
 				ch <- errorableKV{nil, nil}
 				return
 			}
-			// log.Printf("Appending value with key %v\n", itKey)
 			values = append(values, &storage.KeyValue{K: itKey, V: itValue})
 			it.Next()
 		} else {
@@ -655,17 +642,10 @@ func (db *LevelDB) unversionedRange(ctx storage.Context, begTKey, endTKey storag
 	begKey := ctx.ConstructKey(begTKey)
 	endKey := ctx.ConstructKey(endTKey)
 
-	// fmt.Printf("unversionedRange():\n")
-	// fmt.Printf("    index beg: %v\n", kStart)
-	// fmt.Printf("    index end: %v\n", kEnd)
-	// fmt.Printf("    key start: %v\n", keyBeg)
-	// fmt.Printf("      key end: %v\n", keyEnd)
-
 	var itValue []byte
 	it.Seek(begKey)
 	for {
 		if it.Valid() {
-			// fmt.Printf("unversioned found key %v, %d bytes value\n", it.Key(), len(it.Value()))
 			if !keysOnly {
 				itValue = it.Value()
 				storage.StoreValueBytesRead <- len(itValue)
@@ -722,11 +702,11 @@ func (db *LevelDB) KeysInRange(ctx storage.Context, kStart, kEnd storage.TKey) (
 	values := []storage.TKey{}
 	for {
 		result := <-ch
-		if result.KeyValue == nil {
-			return values, nil
-		}
 		if result.error != nil {
 			return nil, result.error
+		}
+		if result.KeyValue == nil {
+			return values, nil
 		}
 		tk, err := storage.TKeyFromKey(result.KeyValue.K)
 		if err != nil {
@@ -763,13 +743,13 @@ func (db *LevelDB) SendKeysInRange(ctx storage.Context, kStart, kEnd storage.TKe
 	// Consume the keys.
 	for {
 		result := <-ch
-		if result.KeyValue == nil {
-			kch <- nil
-			return nil
-		}
 		if result.error != nil {
 			kch <- nil
 			return result.error
+		}
+		if result.KeyValue == nil {
+			kch <- nil
+			return nil
 		}
 		kch <- result.KeyValue.K
 	}
@@ -802,11 +782,11 @@ func (db *LevelDB) GetRange(ctx storage.Context, kStart, kEnd storage.TKey) ([]*
 	values := []*storage.TKeyValue{}
 	for {
 		result := <-ch
-		if result.KeyValue == nil {
-			return values, nil
-		}
 		if result.error != nil {
 			return nil, result.error
+		}
+		if result.KeyValue == nil {
+			return values, nil
 		}
 		tk, err := storage.TKeyFromKey(result.KeyValue.K)
 		if err != nil {
@@ -843,11 +823,11 @@ func (db *LevelDB) ProcessRange(ctx storage.Context, kStart, kEnd storage.TKey, 
 	// Consume the key-value pairs.
 	for {
 		result := <-ch
-		if result.KeyValue == nil {
-			return nil
-		}
 		if result.error != nil {
 			return result.error
+		}
+		if result.KeyValue == nil {
+			return nil
 		}
 		if op != nil && op.Wg != nil {
 			op.Wg.Add(1)

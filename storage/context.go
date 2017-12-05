@@ -140,6 +140,17 @@ func (k Key) IsTombstone() bool {
 	return false
 }
 
+// IsDataKey returns true if the given key is in the data keyspace (instead of metadata or blob).
+func (k Key) IsDataKey() bool {
+	if len(k) < 14 {
+		return false
+	}
+	if k[0] != dataKeyPrefix {
+		return false
+	}
+	return true
+}
+
 // TKeyFromKey returns a type-specific key from a full key.  An error is returned if the key is
 // not one with a type-specific key component.
 func TKeyFromKey(key Key) (TKey, error) {
