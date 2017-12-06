@@ -170,11 +170,18 @@ func (vctx *VersionedCtx) GetGraphDB() (storage.GraphDB, error) {
 	return getGraphDB(d)
 }
 
+// BlobService is an interface for storing and retrieving data based on its content.
+type BlobService interface {
+	GetBlob(ref string) (data []byte, err error)
+	PutBlob(data []byte) (ref string, err error)
+}
+
 // DataService is an interface for operations on an instance of a supported datatype.
 type DataService interface {
 	dvid.Data
 	storage.Accessor
 	json.Marshaler
+	BlobService
 
 	Help() string
 	GetType() TypeService
@@ -928,6 +935,36 @@ func getBlobStore(d dvid.Data) (store storage.BlobStore, err error) {
 		return nil, fmt.Errorf("data %q assigned key-value DB (%s) cannot be used as blob store", d.DataName(), db)
 	}
 	return store, nil
+}
+
+// GetBlob retrieves data given a reference that was received during PutBlob.
+func (d *Data) GetBlob(ref string) (data []byte, err error) {
+	var blobStore storage.BlobStore
+	if blobStore, err = d.GetBlobStore(); err != nil {
+		return
+	}
+	if blobStore != nil {
+		data, err = blobStore.GetBlob(ref)
+		if err != nil {
+			err = fmt.Errorf("bad GET BLOB for blob store %s assigned to data %q: %v", blobStore, d.DataName(), err)
+		}
+	}
+	return
+}
+
+// PutBlob stores data and returns a reference to that data.
+func (d *Data) PutBlob(b []byte) (ref string, err error) {
+	var blobStore storage.BlobStore
+	if blobStore, err = d.GetBlobStore(); err != nil {
+		return
+	}
+	if blobStore != nil {
+		ref, err = blobStore.PutBlob(b)
+		if err != nil {
+			err = fmt.Errorf("bad PUT BLOB for blob store %s assigned to data %q: %v", blobStore, d.DataName(), err)
+		}
+	}
+	return
 }
 
 // GetKeyValueDB returns a kv data store assigned to this data instance.

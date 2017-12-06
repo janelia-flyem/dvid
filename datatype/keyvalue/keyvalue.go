@@ -508,17 +508,9 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 
 			go func() {
 				var err error
-				var blobStore storage.BlobStore
-				if blobStore, err = d.GetBlobStore(); err != nil {
-					return
-				}
 				var dataRef string
-				if blobStore != nil {
-					dataRef, err = blobStore.PutBlob(data)
-					if err != nil {
-						dvid.Errorf("Error storing keyvalue POST data into blob store %s: %v\n", blobStore, err)
-						dataRef = ""
-					}
+				if dataRef, err = d.PutBlob(data); err != nil {
+					dvid.Errorf("post kv data %v\n", err)
 				}
 				msginfo := map[string]interface{}{
 					"Action": "postkv",

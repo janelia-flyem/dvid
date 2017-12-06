@@ -209,7 +209,16 @@ Repo-Level REST endpoints
 	REQUIRED "dataname"   Name of the new instance
 	OPTIONAL "versioned"  If "false" or "0", the data is unversioned and acts as if 
 	                      all UUIDs within a repo become the root repo UUID.  (True by default.)
-	
+
+	A JSON message will be sent to any associated Kafka system with the following format:
+	{ 
+		"Action": "newinstance",
+		"UUID": <UUID>,
+		"Typename": <typename>,
+		"Dataname": <dataname>
+	}
+					  	  
+
   GET /api/repo/{uuid}/log
  POST /api/repo/{uuid}/log
 
@@ -299,6 +308,14 @@ Node-Level REST endpoints
 	data usable by clients to reconstruct the types of operation done to that version
 	of data.
 
+	A JSON message will be sent to any associated Kafka system with the following format:
+	{ 
+		"Action": "nodenote",
+		"UUID": <UUID>,
+		"Note": <note>
+	}
+
+
   GET /api/node/{uuid}/log
  POST /api/node/{uuid}/log
 
@@ -311,7 +328,15 @@ Node-Level REST endpoints
 	data usable by clients to reconstruct the types of operation done to that version
 	of data.
 
-  GET /api/node/{uuid}/commit
+	A JSON message will be sent to any associated Kafka system with the following format:
+	{ 
+		"Action": "nodelog",
+		"UUID": <UUID>,
+		"Log": [<msg 1>, <msg2>, ...]
+	}
+
+
+ GET /api/node/{uuid}/commit
 
     Returns the commit or lock state of the node with given UUID in JSON format:
 
@@ -335,6 +360,15 @@ Node-Level REST endpoints
 
 	{ "committed": "3f01a8856" }
 
+	A JSON message will be sent to any associated Kafka system with the following format:
+	{ 
+		"Action": "commit",
+		"UUID": <UUID of committed node>
+		"Note": <string>,
+		"Log": [<msg 1>, <msg2>, ...]
+	}
+
+
  POST /api/node/{uuid}/branch
 
 	Creates a new branch child node (version) of the node with given UUID.
@@ -353,6 +387,16 @@ Node-Level REST endpoints
 
 	The response includes the UUID of the new child node.
 
+	A JSON message will be sent to any associated Kafka system with the following format:
+	{ 
+		"Action": "branch",
+		"Parent": <UUID of parent>
+		"Child": <UUID of new child>,
+		"Branch": <branch designation as string>,
+		"Note": <string>
+	}
+
+	
  POST /api/node/{uuid}/newversion
 
 	Creates a new child node (version) of the node with given
@@ -368,7 +412,25 @@ Node-Level REST endpoints
 
 	The response includes the UUID of the new child node.
 
+	A JSON message will be sent to any associated Kafka system with the following format:
+	{ 
+		"Action": "newinstance",
+		"Parent": <UUID of parent>
+		"Child": <UUID of new child>,
+		"Note": <string>
+	}
 
+
+ GET /api/node/{uuid}/{data name}/blobstore/{reference}
+ POST /api/node/{uuid}/{data name}/blobstore
+
+	GETs or POSTs data into a blob store associated with the given data instance.
+	The reference is a URL-friendly content hash (FNV-128) of the blob data.
+	The POST will store data and return the folloing JSON:
+
+	{ "reference": "<the content hash of blob data>" }
+
+	Note that POST /blobstore will not be logged in any associated kafka system.
 
 		</pre>
 
@@ -704,8 +766,8 @@ func repoRawSelector(c *web.C, h http.Handler) http.Handler {
 		if httpUnavailable(w) {
 			return
 		}
-		action := strings.ToLower(r.Method)
-		if readonly && action != "get" && action != "head" {
+		method := strings.ToLower(r.Method)
+		if readonly && method != "get" && method != "head" {
 			BadRequest(w, r, "Server in read-only mode and will only accept GET and HEAD requestcs")
 			return
 		}
@@ -738,10 +800,10 @@ func nodeSelector(c *web.C, h http.Handler) http.Handler {
 			BadRequest(w, r, err)
 			return
 		}
-		action := strings.ToLower(r.Method)
+		method := strings.ToLower(r.Method)
 		branchRequest := (c.URLParams["action"] == "branch") || (c.URLParams["action"] == "newversion")
-		if !fullwrite && locked && !branchRequest && action != "get" && action != "head" {
-			BadRequest(w, r, "Cannot do %s on locked node %s", action, uuid)
+		if !fullwrite && locked && !branchRequest && method != "get" && method != "head" {
+			BadRequest(w, r, "Cannot do %s on locked node %s", method, uuid)
 			return
 		}
 		h.ServeHTTP(w, r)
@@ -756,8 +818,8 @@ func repoSelector(c *web.C, h http.Handler) http.Handler {
 		if httpUnavailable(w) {
 			return
 		}
-		action := strings.ToLower(r.Method)
-		if readonly && action != "get" && action != "head" {
+		method := strings.ToLower(r.Method)
+		if readonly && method != "get" && method != "head" {
 			BadRequest(w, r, "Server in read-only mode and will only accept GET and HEAD requests")
 			return
 		}
@@ -794,12 +856,59 @@ func instanceSelector(c *web.C, h http.Handler) http.Handler {
 			BadRequest(w, r, err)
 			return
 		}
+
+		// handle all blobstore requests
+		if c.URLParams["keyword"] == "blobstore" {
+			method := strings.ToLower(r.Method)
+			switch method {
+			case "get":
+				url := r.URL.Path[len(WebAPIPath):]
+				parts := strings.Split(url, "/")
+				if len(parts) != 5 {
+					BadRequest(w, r, fmt.Errorf("GET /blobstore requires reference"))
+					return
+				}
+				ref := parts[4]
+				value, err := data.GetBlob(ref)
+				if err != nil {
+					BadRequest(w, r, err)
+					return
+				}
+				if value != nil || len(value) > 0 {
+					w.Header().Set("Content-Type", "application/octet-stream")
+					_, err = w.Write(value)
+					if err != nil {
+						BadRequest(w, r, err)
+					}
+				} else {
+					http.Error(w, fmt.Sprintf("Reference %q not found", ref), http.StatusNotFound)
+				}
+
+			case "post":
+				value, err := ioutil.ReadAll(r.Body)
+				if err != nil {
+					BadRequest(w, r, err)
+					return
+				}
+				ref, err := data.PutBlob(value)
+				if err != nil {
+					BadRequest(w, r, err)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				fmt.Fprintf(w, `{"reference": %q}`, ref)
+
+			default:
+				BadRequest(w, r, "can only do GET and POST actions on blobstore endpoint")
+			}
+			return
+		}
+
 		v, err := datastore.VersionFromUUID(uuid)
 		if err != nil {
 			BadRequest(w, r, err)
 			return
 		}
-
 		if data.Versioned() {
 			// Make sure we aren't trying mutable methods on committed nodes.
 			locked, err := datastore.LockedUUID(uuid)

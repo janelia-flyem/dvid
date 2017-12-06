@@ -2,9 +2,11 @@ package tests_integration
 
 import (
 	"bytes"
+	"crypto/rand"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"testing"
 
 	"github.com/janelia-flyem/dvid/datastore"
@@ -14,6 +16,7 @@ import (
 	// Declare the data types the DVID server should support
 	"github.com/janelia-flyem/dvid/datatype/annotation"
 	_ "github.com/janelia-flyem/dvid/datatype/keyvalue"
+	_ "github.com/janelia-flyem/dvid/datatype/labelarray"
 	"github.com/janelia-flyem/dvid/datatype/labelblk"
 	"github.com/janelia-flyem/dvid/datatype/labelvol"
 	_ "github.com/janelia-flyem/dvid/datatype/roi"
@@ -354,5 +357,46 @@ func TestSyncs(t *testing.T) {
 	syncs = synapses.SyncedData()
 	if len(syncs) != 0 {
 		t.Errorf("Expected 0 sync, got instead %v\n", syncs)
+	}
+}
+
+func TestBlobStore(t *testing.T) {
+	datastore.OpenTest()
+	defer datastore.CloseTest()
+
+	uuid, _ := datastore.NewTestRepo()
+	var config dvid.Config
+	server.CreateTestInstance(t, uuid, "labelarray", "labels", config)
+
+	// Load up a variety of random data.
+	postURL := fmt.Sprintf("%snode/%s/labels/blobstore", server.WebAPIPath, uuid)
+	n := 20
+	testData := make([][]byte, n)
+	ref := make([]string, n)
+	for i := 0; i < n; i++ {
+		testData[i] = make([]byte, 10+i*10)
+		rand.Read(testData[i])
+
+		payload := bytes.NewBuffer(testData[i])
+		respData := server.TestHTTP(t, "POST", postURL, payload)
+		resp := struct {
+			Reference string `json:"reference"`
+		}{}
+		if err := json.Unmarshal(respData, &resp); err != nil {
+			t.Fatalf("got bad response for POST data %d: %s\n", i, respData)
+		}
+		if len(resp.Reference) == 0 {
+			t.Fatalf("couldn't decipher reference for POST data %d: %s\n", i, respData)
+		}
+		ref[i] = resp.Reference
+	}
+
+	// Retrieve and check data.
+	for i := 0; i < n; i++ {
+		getURL := fmt.Sprintf("%snode/%s/labels/blobstore/%s", server.WebAPIPath, uuid, ref[i])
+		got := server.TestHTTP(t, "GET", getURL, nil)
+		if !reflect.DeepEqual(testData[i], got) {
+			t.Errorf("Expected %d bytes from data %d, ref %s: got %d bytes that didn't match\n", len(testData[i]), i, ref[i], len(got))
+		}
 	}
 }

@@ -278,20 +278,13 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel, splitLabel uint64, r io.
 
 	// store split info into separate data.
 	var splitData []byte
-	var splitRef string
 	if splitData, err = split.MarshalBinary(); err != nil {
 		return
 	}
-	var blobStore storage.BlobStore
-	if blobStore, err = d.GetBlobStore(); err != nil {
+	var splitRef string
+	if splitRef, err = d.PutBlob(splitData); err != nil {
+		err = fmt.Errorf("split data %v\n", err)
 		return
-	}
-	if blobStore != nil {
-		var err error
-		splitRef, err = blobStore.PutBlob(splitData)
-		if err != nil {
-			dvid.Errorf("Error storing split data into blob store %s: %v\n", blobStore, err)
-		}
 	}
 
 	// send kafka merge event to instance-uuid topic
@@ -305,7 +298,7 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel, splitLabel uint64, r io.
 	}
 	jsonmsg, _ := json.Marshal(msginfo)
 	if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
-		err = fmt.Errorf("Error on sending split op to kafka: %v\n", err)
+		err = fmt.Errorf("error on sending split op to kafka: %v", err)
 		return
 	}
 
@@ -313,7 +306,7 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel, splitLabel uint64, r io.
 	var splitmap dvid.BlockRLEs
 	blockSize, ok := d.BlockSize().(dvid.Point3d)
 	if !ok {
-		err = fmt.Errorf("Can't do split because block size for instance %s is not 3d: %v", d.DataName(), d.BlockSize())
+		err = fmt.Errorf("can't do split because block size for instance %s is not 3d: %v", d.DataName(), d.BlockSize())
 		return
 	}
 	splitmap, err = split.Partition(blockSize)
@@ -408,6 +401,32 @@ func (d *Data) SplitCoarseLabels(v dvid.VersionID, fromLabel, splitLabel uint64,
 			dvid.Errorf("logging split: %v\n", err)
 		}
 	}()
+
+	// store split info into separate data.
+	var splitData []byte
+	if splitData, err = splits.MarshalBinary(); err != nil {
+		return
+	}
+	var splitRef string
+	if splitRef, err = d.PutBlob(splitData); err != nil {
+		err = fmt.Errorf("coarse split data %v\n", err)
+		return
+	}
+
+	// send kafka merge event to instance-uuid topic
+	versionuuid, _ := datastore.UUIDFromVersion(v)
+	msginfo := map[string]interface{}{
+		"Action":   "splitcoarse",
+		"Target":   fromLabel,
+		"NewLabel": toLabel,
+		"Split":    splitRef,
+		"UUID":     string(versionuuid),
+	}
+	jsonmsg, _ := json.Marshal(msginfo)
+	if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
+		err = fmt.Errorf("error on sending coarse split op to kafka: %v", err)
+		return
+	}
 
 	// Order the split blocks
 	splitblks := make(dvid.IZYXSlice, numBlocks)
