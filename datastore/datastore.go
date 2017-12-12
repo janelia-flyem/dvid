@@ -566,6 +566,9 @@ func GetStorageBreakdown() (string, error) {
 		if err != nil {
 			return "", err
 		}
+		if s == nil {
+			continue
+		}
 
 		// For each instance ID, populate the instance info if available.
 		sdata := make(map[uint32]interface{}, len(s))

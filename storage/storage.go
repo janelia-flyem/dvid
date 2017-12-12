@@ -200,15 +200,18 @@ type SizeViewer interface {
 // A list of InstanceID can be optionally supplied so only those instances are queried.
 // This requires some scanning of the database so could take longer than normal requests,
 // particularly if a list of instances is not given.
-// Note that the underlying store must support both the OrderedKeyValueGetter and SizeViewer interface.
+// Note that the underlying store must support both the OrderedKeyValueGetter and SizeViewer interface,
+// else this function returns nil.
 func GetDataSizes(store dvid.Store, instances []dvid.InstanceID) (map[dvid.InstanceID]uint64, error) {
 	db, ok := store.(OrderedKeyValueGetter)
 	if !ok {
-		return nil, fmt.Errorf("cannot get data sizes for store %s, which is not an OrderedKeyValueGetter store", db)
+		dvid.Infof("Cannot get data sizes for store %s, which is not an OrderedKeyValueGetter store", db)
+		return nil, nil
 	}
 	sv, ok := db.(SizeViewer)
 	if !ok {
-		return nil, fmt.Errorf("cannot get data sizes for store %s, which is not a SizeViewer store", db)
+		dvid.Infof("Cannot get data sizes for store %s, which is not an SizeViewer store", db)
+		return nil, nil
 	}
 	// Handle prespecified instance IDs.
 	if len(instances) != 0 {
