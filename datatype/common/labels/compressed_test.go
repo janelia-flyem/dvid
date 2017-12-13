@@ -518,6 +518,42 @@ func TestBlockMerge(t *testing.T) {
 func TestBlockReplaceLabel(t *testing.T) {
 	numVoxels := 64 * 64 * 64
 	testvol := make([]uint64, numVoxels)
+	for i := 0; i < numVoxels; i++ {
+		testvol[i] = 4
+	}
+	block, err := MakeBlock(dvid.Uint64ToByte(testvol), dvid.Point3d{64, 64, 64})
+	if err != nil {
+		t.Fatalf("error making block: %v\n", err)
+	}
+	_, replaceSize, err := block.ReplaceLabel(2, 1)
+	if err != nil {
+		t.Fatalf("error replacing block: %v\n", err)
+	}
+	if replaceSize != 0 {
+		t.Errorf("expected replaced # voxels to be zero, got %d\n", replaceSize)
+	}
+	tmpblock, replaceSize, err := block.ReplaceLabel(4, 1)
+	if err != nil {
+		t.Fatalf("error replacing block: %v\n", err)
+	}
+	if replaceSize != uint64(numVoxels) {
+		t.Errorf("expected replaced # voxels to be %d, got %d\n", numVoxels, replaceSize)
+	}
+	volbytes, size := tmpblock.MakeLabelVolume()
+	if size[0] != 64 || size[1] != 64 || size[2] != 64 {
+		t.Fatalf("bad replaced block size returned: %s\n", size)
+	}
+	uint64arr, err := dvid.ByteToUint64(volbytes)
+	if err != nil {
+		t.Fatalf("error converting label byte array: %v\n", err)
+	}
+	for i, label := range uint64arr {
+		if label != 1 {
+			t.Errorf("expected label 1 after replacement in voxel %d, got %d\n", i, label)
+			break
+		}
+	}
+
 	labels := make([]uint64, 5)
 	for i := 0; i < 5; i++ {
 		var newlabel uint64
@@ -538,11 +574,11 @@ func TestBlockReplaceLabel(t *testing.T) {
 	for i := 0; i < numVoxels; i++ {
 		testvol[i] = labels[i%4]
 	}
-	block, err := MakeBlock(dvid.Uint64ToByte(testvol), dvid.Point3d{64, 64, 64})
+	block, err = MakeBlock(dvid.Uint64ToByte(testvol), dvid.Point3d{64, 64, 64})
 	if err != nil {
 		t.Fatalf("error making block: %v\n", err)
 	}
-	tmpblock, replaceSize, err := block.ReplaceLabel(labels[0], labels[4])
+	tmpblock, replaceSize, err = block.ReplaceLabel(labels[0], labels[4])
 	if err != nil {
 		t.Fatalf("error merging block: %v\n", err)
 	}
@@ -553,11 +589,11 @@ func TestBlockReplaceLabel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("error merging block: %v\n", err)
 	}
-	volbytes, size := replacedBlock.MakeLabelVolume()
+	volbytes, size = replacedBlock.MakeLabelVolume()
 	if size[0] != 64 || size[1] != 64 || size[2] != 64 {
 		t.Fatalf("bad replaced block size returned: %s\n", size)
 	}
-	uint64arr, err := dvid.ByteToUint64(volbytes)
+	uint64arr, err = dvid.ByteToUint64(volbytes)
 	if err != nil {
 		t.Fatalf("error converting label byte array: %v\n", err)
 	}

@@ -508,6 +508,15 @@ func (b *Block) getNumVoxels(labelIndex uint32) (labelVoxels uint64) {
 	gx, gy, gz := b.Size[0]/SubBlockSize, b.Size[1]/SubBlockSize, b.Size[2]/SubBlockSize
 	subBlockNumVoxels := uint64(SubBlockSize * SubBlockSize * SubBlockSize)
 
+	if len(b.Labels) == 0 {
+		return 0
+	} else if len(b.Labels) == 1 {
+		if labelIndex == 0 {
+			return uint64(b.Size.Prod())
+		}
+		return 0
+	}
+
 	var indexPos uint32
 	var bitpos, subBlockNum int
 	var sx, sy, sz int32
