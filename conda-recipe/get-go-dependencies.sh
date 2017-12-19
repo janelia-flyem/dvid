@@ -16,6 +16,8 @@ if [[ "$GOPATH" == "" ]]; then
   exit 1
 fi
 
+echo "Fetching third-party go sources..."
+
 # gopackages
 go get github.com/janelia-flyem/go
 cd ${GOPATH}/src/github.com/janelia-flyem/go
@@ -71,3 +73,5 @@ go get github.com/boltdb/bolt
 
 # gomdb
 go get github.com/DocSavage/gomdb
+
+echo "Done fetching third-party go sources."

@@ -5,3 +5,7 @@ build-*
 config.toml
 server/version.go
 .vscode
+.last-build-git-sha
+bin/
+.project
+.settings
