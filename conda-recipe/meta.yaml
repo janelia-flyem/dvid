@@ -36,19 +36,8 @@ requirements:
     - lz4
 
 source:
-  # Due to a conda-build bug**, we can't use GIT_DESCRIBE_TAG unless the primary repo is cloned
-  # directly to the root work directory.
-  # But we want to clone it into a subdirectory, within $GOPATH/src, so let's clone it twice.
-  # Once into the root work dir, and a second time into it's proper location within the $GOPATH/src.
-  #
-  # **Note: I fixed the bug in conda-build#2477, but we'll have to wait a while for that to be released:
-  #         https://github.com/conda/conda-build/pull/2477
   - git_url: ../
-    git_tag: master
-
-  # Sceond dvid clone.  (See note above.)
-  - git_url: ../
-    git_tag: master
+    git_tag: HEAD
     folder:  src/github.com/janelia-flyem/dvid
 
   # Janelia go packages
