@@ -9,7 +9,7 @@ cd ${DVID_REPO}
 
 # In theory, most dependencies were already cloned thanks to the lists in meta.yaml.
 # But the developer is free to add things to get-go-dependencies, too.
-${RECIPE_DIR}/get-go-dependencies.sh
+${DVID_REPO}/scripts/get-go-dependencies.sh
 
 # Build
 make dvid

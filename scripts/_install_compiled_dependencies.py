@@ -5,7 +5,7 @@ print("Determining compiled dependencies...")
 print("(This may take several seconds.)")
 
 recipe_yaml = '/tmp/dvid-rendered-recipe-meta.yaml'
-subprocess.check_call(f'conda render --file {recipe_yaml} ../conda-recipe', shell=True)
+subprocess.check_call(f'conda render --file {recipe_yaml} conda-recipe', shell=True)
 
 with open(recipe_yaml, 'r') as f:
     recipe_meta = yaml.load(f)

@@ -36,7 +36,7 @@ requirements:
     - lz4
 
 source:
-  - git_url: ../
+  - git_url: ../../
     git_tag: HEAD
     folder:  src/github.com/janelia-flyem/dvid
 
