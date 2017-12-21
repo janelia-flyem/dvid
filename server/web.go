@@ -205,10 +205,14 @@ Repo-Level REST endpoints
 
 	JSON name/value pairs:
 
-	REQUIRED "typename"   Type name of the new instance,
-	REQUIRED "dataname"   Name of the new instance
-	OPTIONAL "versioned"  If "false" or "0", the data is unversioned and acts as if 
-	                      all UUIDs within a repo become the root repo UUID.  (True by default.)
+	REQUIRED "typename"     Type name of the new instance,
+	REQUIRED "dataname"     Name of the new instance
+	OPTIONAL "versioned"    If "false" or "0", the data is unversioned and acts as if
+	                        all UUIDs within a repo become the root repo UUID.  (True by default.)
+	OPTIONAL "Compression"  Specify the compression format to use when serializing values to disk.
+	                        (Applies to most instance types, but not all.)
+	                        Choices are: “none”, “snappy”, “lz4”, “gzip”, “jpeg”.
+	                        Where applicable, the compression level can be appended, e.g. "jpeg:80".
 
 	A JSON message will be sent to any associated Kafka system with the following format:
 	{ 
