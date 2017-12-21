@@ -44,20 +44,16 @@ bin/dvid-transfer: $(shell find cmd/transfer -name "*.go")
 	go build -o bin/dvid-transfer -v -tags "${DVID_BACKENDS}" cmd/transfer/*.go
 
 ##
-## TEST -- FIXME!
+## TEST
 ##
-DVID_PACKAGES = dvid/... storage/... datastore/... server/... datatype/...
+DVID_GO = "github.com/janelia-flyem/dvid"
+DVID_PACKAGES = ${DVID_GO}/dvid/... ${DVID_GO}/storage/... ${DVID_GO}/datastore ${DVID_GO}/server ${DVID_GO}/datatype/... ${DVID_GO}/tests_integration
 
-## FIXME: This fails?
-##DVID_PACKAGES="${DVID_PACKAGES} ${DVID_GO}/tests_integration"
-
-# (verbose)
 test: dvid
-	go test -v -tags "${DVID_BACKENDS}" ${DVID_PACKAGES}
+	go test -tags "${DVID_BACKENDS}" ${DVID_PACKAGES}
 
-# For some reason labelvol had its own target in the old CMakelists...
-labelvol:
-	go test -v -tags "${DVID_BACKENDS}" datatype/labelvol
+test-verbose: dvid
+	go test -v -tags "${DVID_BACKENDS}" ${DVID_PACKAGES}
 
 # Coverage (does this repeat the test step above?)
 coverage: dvid
