@@ -34,6 +34,7 @@ requirements:
     - snappy
     - basholeveldb
     - lz4
+    - dvid-web-console
 
 source:
   - git_url: ../../
