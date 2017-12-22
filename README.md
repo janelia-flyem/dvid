@@ -67,3 +67,4 @@ HTTP endpoint on a running DVID server.
 
 
 ![Web app for 3d inspection being served from and sending requests to DVID](https://raw.githubusercontent.com/janelia-flyem/dvid/master/images/webapp.png)
+
