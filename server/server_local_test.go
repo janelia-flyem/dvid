@@ -21,7 +21,7 @@ func loadConfigFile(t *testing.T, filename string) string {
 }
 
 func TestParseConfig(t *testing.T) {
-	instanceCfg, logCfg, backendCfg, kafkaCfg, err := LoadConfig("../config-full.toml")
+	instanceCfg, logCfg, backendCfg, kafkaCfg, err := LoadConfig("../scripts/distro-files/config-full.toml")
 	if err != nil {
 		t.Fatalf("bad TOML configuration: %v\n", err)
 	}

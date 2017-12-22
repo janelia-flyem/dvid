@@ -6,10 +6,10 @@
 # host = "mygreatserver.test.com"  # Lets you specify a user-friendly alias for help messages.
 httpAddress = "localhost:8000"
 rpcAddress = "localhost:8001"
-webClient = "/path/to/webclient"
+webClient = "./http/dvid-web-console"
 
 [logging]
-logfile = "/demo/logs/dvid.log"
+logfile = "/tmp/dvid.log"
 max_log_size = 500 # MB
 max_log_age = 30   # days
 
@@ -25,5 +25,4 @@ max_log_age = 30   # days
 [store]
     [store.raid6]
     engine = "basholeveldb"
-    path = "/demo/dbs/basholeveldb"
-   
+    path = "/tmp/basholeveldb"

@@ -1,0 +1,26 @@
+QUICKSTART INSTRUCTIONS FOR THE DVID BINARY DISTRIBUTION
+========================================================
+
+To launch dvid with a simple example config, run the following
+command from within this directory:
+
+    % ./bin/dvid -verbose serve config-simple.toml
+
+You should be able open a web browser and type in a URL that 
+corresponds to the httpAddress setting specified in config-simple.toml,
+under the [server] section:
+
+    http://localhost:8000
+
+Note: Under the config-simple.toml settings, DVID logs and database files are written to /tmp.
+      Before running in production, edit those settings of config-simple.toml
+      to use different directories of your choosing.
+
+See config-full.toml for a more advanced and complete configuration.
+You will have to edit it for your own use-case and directory structure.
+
+Other useful commands to try:
+
+    % dvid about
+    
+    % dvid help
