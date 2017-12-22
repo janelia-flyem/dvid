@@ -149,3 +149,8 @@ source:
   - git_url: https://github.com/DocSavage/gomdb
     git_tag: master
     folder:  src/github.com/DocSavage/gomdb
+
+  # kafka
+  - git_url: https://github.com/optiopay/kafka
+    git_tag: master
+    folder:  src/github.com/optiopay/kafka

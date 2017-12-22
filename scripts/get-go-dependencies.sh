@@ -74,4 +74,7 @@ go get github.com/boltdb/bolt
 # gomdb
 go get github.com/DocSavage/gomdb
 
+# kafka
+go get github.com/optiopay/kafka
+
 echo "Done fetching third-party go sources."
