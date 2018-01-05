@@ -1638,6 +1638,7 @@ func (b testBody) splitmerge(t *testing.T, wg *sync.WaitGroup, uuid dvid.UUID, n
 		t.Errorf("Unable to serialize RLEs: %v\n", err)
 	}
 	buf.Write(rleBytes)
+	splitBytes := buf.Bytes()
 
 	var newlabel uint64
 	reqStr := fmt.Sprintf("%snode/%s/%s/split/%d", server.WebAPIPath, uuid, name, b.label)
@@ -1646,29 +1647,30 @@ func (b testBody) splitmerge(t *testing.T, wg *sync.WaitGroup, uuid dvid.UUID, n
 	for notDone {
 		tries++
 		dvid.Infof("Trying split %d of label %d ...\n", tries, b.label)
-		resp := server.TestHTTPResponse(t, "POST", reqStr, buf)
+		resp := server.TestHTTPResponse(t, "POST", reqStr, bytes.NewBuffer(splitBytes))
 		var retbytes []byte
 		if resp.Body != nil {
 			retbytes, err = ioutil.ReadAll(resp.Body)
 			if err != nil {
-				t.Errorf("could not read response body for split %d of label %d: %v\n", tries, b.label, err)
+				t.Fatalf("could not read response body for split %d of label %d: %v\n", tries, b.label, err)
 			}
 		}
 		switch resp.Code {
 		case http.StatusOK:
 			jsonVal := make(map[string]uint64)
 			if err := json.Unmarshal(retbytes, &jsonVal); err != nil {
-				t.Errorf("Unable to get new label from split.  Instead got: %v\n", jsonVal)
+				t.Fatalf("Unable to get new label from split.  Instead got: %v\n", jsonVal)
 			}
 			var ok bool
 			newlabel, ok = jsonVal["label"]
 			if !ok {
-				t.Errorf("The split request did not yield label value.  Instead got: %v\n", jsonVal)
+				t.Fatalf("The split request did not yield label value.  Instead got: %v\n", jsonVal)
 			}
 			notDone = false
 		case http.StatusBadRequest:
 			dvid.Infof("Bad split response.  Waiting...\n")
 			time.Sleep(10 * time.Millisecond)
+			buf.Reset()
 		default:
 			var retstr string
 			if retbytes != nil {

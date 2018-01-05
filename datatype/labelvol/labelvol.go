@@ -655,7 +655,7 @@ func GetByVersionName(v dvid.VersionID, name dvid.InstanceName) (*Data, error) {
 // up-to-date key-value pairs for max labels.
 func (d *Data) LoadMutable(root dvid.VersionID, storedVersion, expectedVersion uint64) (bool, error) {
 	ctx := storage.NewDataContext(d, 0)
-	store, err := d.GetOrderedKeyValueDB()
+	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		return false, fmt.Errorf("Data type labelvol had error initializing store: %v\n", err)
 	}
@@ -699,7 +699,7 @@ func (d *Data) LoadMutable(root dvid.VersionID, storedVersion, expectedVersion u
 
 func (d *Data) migrateMaxLabels(root dvid.VersionID, wg *sync.WaitGroup, ch chan *storage.KeyValue) {
 	ctx := storage.NewDataContext(d, 0)
-	store, err := d.GetOrderedKeyValueDB()
+	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		dvid.Errorf("Can't initialize store for labelvol %q: %v\n", d.DataName(), err)
 	}
@@ -805,7 +805,7 @@ func (d *Data) loadMaxLabels(wg *sync.WaitGroup, ch chan *storage.KeyValue) {
 	}
 
 	// Load in the repo-wide max label.
-	store, err := d.GetOrderedKeyValueDB()
+	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		dvid.Errorf("Data type labelvol had error initializing store: %v\n", err)
 		return
@@ -1381,7 +1381,7 @@ func (d *Data) casMaxLabel(batch storage.Batch, v dvid.VersionID, label uint64) 
 		if d.MaxRepoLabel < maxLabel {
 			d.MaxRepoLabel = maxLabel
 			ctx := storage.NewDataContext(d, 0)
-			store, err := d.GetOrderedKeyValueDB()
+			store, err := datastore.GetOrderedKeyValueDB(d)
 			if err != nil {
 				dvid.Errorf("Data type labelvol had error initializing store: %v\n", err)
 			} else {
@@ -1413,7 +1413,7 @@ func (d *Data) NewLabel(v dvid.VersionID) (uint64, error) {
 	d.MaxRepoLabel++
 	d.MaxLabel[v] = d.MaxRepoLabel
 
-	store, err := d.GetOrderedKeyValueDB()
+	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		return 0, err
 	}
@@ -1435,7 +1435,7 @@ func (d *Data) NewLabel(v dvid.VersionID) (uint64, error) {
 // Returns RLEs for a given label where the key of the returned map is the block index
 // in string format.
 func (d *Data) GetLabelRLEs(v dvid.VersionID, label uint64) (dvid.BlockRLEs, error) {
-	store, err := d.GetOrderedKeyValueDB()
+	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		return nil, fmt.Errorf("Data type labelvol had error initializing store: %v\n", err)
 	}
@@ -1490,7 +1490,7 @@ func boundRLEs(b []byte, bounds *dvid.OptionalBounds) ([]byte, error) {
 // FoundSparseVol returns true if a sparse volume is found for the given label
 // within the given bounds.
 func (d *Data) FoundSparseVol(ctx *datastore.VersionedCtx, label uint64, bounds dvid.Bounds) (bool, error) {
-	store, err := d.GetOrderedKeyValueDB()
+	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		return false, fmt.Errorf("Data type labelvol had error initializing store: %v\n", err)
 	}
@@ -1588,7 +1588,7 @@ func (d *Data) GetSparseVol(ctx *datastore.VersionedCtx, label uint64, bounds dv
 		}
 	}
 
-	store, err := d.GetOrderedKeyValueDB()
+	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		return nil, fmt.Errorf("Data type labelvol had error initializing store: %v\n", err)
 	}
@@ -1802,7 +1802,7 @@ func getSparseVolBlocks(ctx *datastore.VersionedCtx, label uint64) (numBlocks ui
 }
 
 func (d *Data) DeleteArea(ctx *datastore.VersionedCtx, label uint64, subvol *dvid.Subvolume) error {
-	store, err := d.GetOrderedKeyValueDB()
+	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		return fmt.Errorf("unable to get backing store for data %q: %v\n", d.DataName(), err)
 	}
@@ -1869,7 +1869,7 @@ func (d *Data) DeleteArea(ctx *datastore.VersionedCtx, label uint64, subvol *dvi
 // blocks.
 func (d *Data) resyncLabel(ctx *datastore.VersionedCtx, relabel uint64, r io.ReadCloser) error {
 	timedLog := dvid.NewTimeLog()
-	store, err := d.GetOrderedKeyValueDB()
+	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		return fmt.Errorf("data %q had error initializing store: %v\n", d.DataName(), err)
 	}
@@ -2183,7 +2183,7 @@ func (d *Data) DumpSubvols(uuid dvid.UUID, v dvid.VersionID, dirStr string) {
 		lastTime: time.Now(),
 	}
 
-	store, err := d.GetOrderedKeyValueDB()
+	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		dvid.Criticalf("unable to get backing store for data %q: %v\n", d.DataName(), err)
 		return

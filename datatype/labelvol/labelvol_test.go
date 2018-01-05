@@ -1349,7 +1349,7 @@ func TestResyncLabel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unable to get labelvol data pointer: %v\n", err)
 	}
-	store, err := d.GetOrderedKeyValueDB()
+	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		t.Fatalf("data %q had error initializing store: %v\n", d.DataName(), err)
 	}

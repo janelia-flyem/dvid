@@ -86,7 +86,7 @@ else ()
     message ("Using DVID_BACKEND: ${DVID_BACKEND}")
 
     # Make sure we have list of all Go package dependencies that we are go getting.
-    set (DVID_DEP_GO_PACKAGES gopackages gojsonschema kafka goji context lumberjack snappy oauth2 protobuf gorpc groupcache)
+    set (DVID_DEP_GO_PACKAGES gopackages gojsonschema kafka goji context lumberjack snappy oauth2 protobuf gorpc groupcache freecache)
 
     # Make sure we have all dependencies for the backend
 	# Defaults to standard leveldb
@@ -154,9 +154,13 @@ else ()
         ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/janelia-flyem/gojsonschema
         COMMENT     "Adding gojsonschema library...")
 
-    add_custom_target (kafka
+		add_custom_target (kafka
         ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/optiopay/kafka 
         COMMENT     "Adding kafka library...")
+
+	add_custom_target (freecache
+        ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/coocood/freecache 
+        COMMENT     "Adding freecache library...")
 
     add_custom_target (goji
         ${BUILDEM_ENV_STRING} go get ${GO_GET} github.com/zenazn/goji

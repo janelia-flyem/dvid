@@ -91,7 +91,7 @@ func (d *Data) GetSyncSubs(synced dvid.Data) (datastore.SyncSubs, error) {
 // might not always hold in future, so stick with incremental update
 // until proven to be a bottleneck.
 func (d *Data) handleBlockEvent() {
-	store, err := d.GetOrderedKeyValueDB()
+	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		dvid.Errorf("Data type labelvol had error initializing store: %v\n", err)
 		return

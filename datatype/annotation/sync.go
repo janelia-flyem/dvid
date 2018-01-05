@@ -175,7 +175,7 @@ func (d *Data) GetSyncSubs(synced dvid.Data) (subs datastore.SyncSubs, err error
 
 // Processes each labelblk change as we get it.
 func (d *Data) processEvents() {
-	batcher, err := d.GetKeyValueBatcher()
+	batcher, err := datastore.GetKeyValueBatcher(d)
 	if err != nil {
 		dvid.Errorf("handleBlockEvent %v\n", err)
 		return

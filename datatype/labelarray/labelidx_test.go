@@ -2,10 +2,8 @@ package labelarray
 
 import (
 	"testing"
-	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
-	"github.com/janelia-flyem/dvid/datatype/common/labels"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 )
@@ -42,49 +40,27 @@ func TestIndexing(t *testing.T) {
 				if bx%5 == 0 {
 					label++
 				}
-				ldm := make(labelDiffMap)
+				ldm := make(map[uint64]blockDiffMap)
 				izyxstr := dvid.ChunkPoint3d{bx, by, bz}.ToIZYXString()
 				for i := uint64(0); i < 4; i++ {
 					j := label + i*maxLabel
 					bdm, found := ldm[j]
 					if !found {
 						bdm = make(blockDiffMap)
+						ldm[j] = bdm
 					}
 					bdm[izyxstr] = labelDiff{numVoxels, true}
-					ldm[j] = bdm
 				}
 				for label, bdm := range ldm {
-					change := labelChange{v, label, bdm}
-					shard := label % numLabelHandlers
-					d.indexCh[shard] <- change
+					ChangeLabelIndex(d, v, label, bdm)
 				}
 			}
 		}
 	}
 
-	// wait
-	for {
-		var maxShard, maxQueued int
-		for i := 0; i < numLabelHandlers; i++ {
-			queued := len(d.indexCh[i])
-			if queued > maxQueued {
-				maxShard = i
-				maxQueued = queued
-			}
-		}
-		if maxQueued > 0 {
-			dvid.Infof("Waiting.  Shard %d had queue %d\n", maxShard, maxQueued)
-			time.Sleep(100 * time.Millisecond)
-		} else {
-			break
-		}
-	}
-	time.Sleep(1 * time.Second)
-
 	// make sure are indexing on disk is correct.
-	ctx := datastore.NewVersionedCtx(d, v)
 	for label = 1; label <= maxLabel*4; label++ {
-		meta, err := d.getLabelMeta(ctx, labels.NewSet(label), 0, dvid.Bounds{})
+		meta, err := GetLabelIndex(d, v, label)
 		if err != nil {
 			t.Fatalf("label %d had no meta data associated with it\n", label)
 		}

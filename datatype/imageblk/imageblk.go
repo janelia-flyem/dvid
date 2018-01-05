@@ -1000,7 +1000,7 @@ func (d *Data) SetExtents(ctx *datastore.VersionedCtx, uuid dvid.UUID, jsonBytes
 	}
 
 	// put (last one wins)
-	store, _ := d.GetOrderedKeyValueDB()
+	store, _ := datastore.GetOrderedKeyValueDB(d)
 	return store.Put(ctx, MetaTKey(), data)
 }
 
@@ -1257,7 +1257,7 @@ func (d *Data) BlockSize() dvid.Point {
 // TODO -- refactor return since MinIndex / MaxIndex not used so should use extents3d.
 func (d *Data) GetExtents(ctx *datastore.VersionedCtx) (dvid.Extents, error) {
 	// actually fetch extents from datatype storage
-	store, _ := d.GetOrderedKeyValueDB()
+	store, _ := datastore.GetOrderedKeyValueDB(d)
 	ser_extents, err := store.Get(ctx, MetaTKey())
 	var dvidextents dvid.Extents
 	if err != nil {
@@ -1304,7 +1304,7 @@ var ExtentsUnchanged = errors.New("extents does not change")
 
 // PostExtents updates extents with the new points (always growing)
 func (d *Data) PostExtents(ctx *datastore.VersionedCtx, start dvid.Point, end dvid.Point) error {
-	store, err := d.GetOrderedKeyValueDB()
+	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		return err
 	}
@@ -1525,7 +1525,7 @@ func (d *Data) ForegroundROI(req datastore.Request, reply *datastore.Response) e
 func (d *Data) foregroundROI(v dvid.VersionID, dest *roi.Data, background dvid.PointNd) {
 	dest.SetReady(v, false)
 
-	store, err := d.GetOrderedKeyValueDB()
+	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		dvid.Criticalf("Data type imageblk had error initializing store: %v\n", err)
 		return
@@ -1789,7 +1789,7 @@ func (d *Data) SendBlocksSpecific(ctx *datastore.VersionedCtx, w http.ResponseWr
 	var mutex sync.Mutex
 
 	// get store
-	store, err := d.GetKeyValueDB()
+	store, err := datastore.GetKeyValueDB(d)
 	if err != nil {
 		return fmt.Errorf("Data type labelblk had error initializing store: %v\n", err)
 	}
@@ -1862,7 +1862,7 @@ func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, su
 	timedLog := dvid.NewTimeLog()
 	defer timedLog.Infof("SendBlocks %s, span x %d, span y %d, span z %d", blockoffset, blocksize.Value(0), blocksize.Value(1), blocksize.Value(2))
 
-	store, err := d.GetOrderedKeyValueDB()
+	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		return fmt.Errorf("Data type labelblk had error initializing store: %v\n", err)
 	}

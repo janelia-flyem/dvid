@@ -596,7 +596,7 @@ func Get(ctx *datastore.VersionedCtx) ([]byte, error) {
 
 // Delete removes an ROI.
 func (d *Data) Delete(ctx storage.VersionedCtx) error {
-	db, err := d.GetOrderedKeyValueDB()
+	db, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		return err
 	}
@@ -624,7 +624,7 @@ func (d *Data) Delete(ctx storage.VersionedCtx) error {
 // writing these spans.
 func (d *Data) PutSpans(versionID dvid.VersionID, spans []dvid.Span, init bool) error {
 	ctx := datastore.NewVersionedCtx(d, versionID)
-	db, err := d.GetOrderedKeyValueDB()
+	db, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		return err
 	}
@@ -1121,7 +1121,7 @@ func (d *Data) Partition(ctx storage.Context, batchsize int32) ([]byte, error) {
 
 	layer := d.newLayer(layerBegZ, layerEndZ)
 
-	db, err := d.GetOrderedKeyValueDB()
+	db, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		return nil, err
 	}
@@ -1263,7 +1263,7 @@ func (d *Data) SimplePartition(ctx storage.Context, batchsize int32) ([]byte, er
 
 	layer := d.newLayer(layerBegZ, layerEndZ)
 
-	db, err := d.GetOrderedKeyValueDB()
+	db, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		return nil, err
 	}

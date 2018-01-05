@@ -22,7 +22,7 @@ type KafkaConfig struct {
 // InitKafka intializes kafka connection.
 func (c *KafkaConfig) Initialize() {
 	if c == nil || len(c.Servers) == 0 {
-		Infof("No Kafka server specified.")
+		Infof("No Kafka server specified.\n")
 		return
 	}
 

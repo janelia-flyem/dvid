@@ -1358,7 +1358,7 @@ func (d *Data) ProcessLabelAnnotations(v dvid.VersionID, f func(label uint64, el
 	minTKey := storage.MinTKey(keyLabel)
 	maxTKey := storage.MaxTKey(keyLabel)
 
-	store, err := d.GetOrderedKeyValueDB()
+	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		return fmt.Errorf("Annotation %q had error initializing store: %v\n", d.DataName(), err)
 	}
@@ -1444,7 +1444,7 @@ func (d *Data) GetTagJSON(ctx *datastore.VersionedCtx, tag Tag, addRels bool) (j
 
 // GetRegionSynapses returns synapse elements for a given subvolume of image space.
 func (d *Data) GetRegionSynapses(ctx *datastore.VersionedCtx, ext *dvid.Extents3d) (Elements, error) {
-	store, err := d.GetOrderedKeyValueDB()
+	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		return nil, err
 	}
@@ -1505,7 +1505,7 @@ func (d *Data) GetROISynapses(ctx *datastore.VersionedCtx, roiSpec storage.Filte
 		return nil, fmt.Errorf("/roi endpoint currently requires ROI %q to have same block size as annotation %q", roidata.DataName(), d.DataName())
 	}
 
-	store, err := d.GetOrderedKeyValueDB()
+	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		return nil, err
 	}
@@ -1761,7 +1761,7 @@ func (d *Data) storeLabels(batcher storage.KeyValueBatcher, ctx *datastore.Versi
 func (d *Data) resync(ctx *datastore.VersionedCtx) {
 	timedLog := dvid.NewTimeLog()
 
-	store, err := d.GetOrderedKeyValueDB()
+	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		dvid.Errorf("Annotation %q had error initializing store: %v\n", d.DataName(), err)
 		return

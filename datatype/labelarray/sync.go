@@ -18,7 +18,6 @@ import (
 const (
 	numMutateHandlers = 16  // goroutines used to process mutations on blocks
 	numLabelHandlers  = 256 // goroutines used to do get/put tx on label indices
-
 )
 
 // IngestedBlock is the unit of delta for a IngestBlockEvent.
@@ -75,10 +74,6 @@ func (d *Data) InitDataHandlers() error {
 		d.mutateCh[i] = make(chan procMsg, 10)
 		go d.mutateBlock(d.mutateCh[i])
 	}
-	for i := 0; i < numLabelHandlers; i++ {
-		d.indexCh[i] = make(chan labelChange, 100)
-		go d.indexLabels(d.indexCh[i])
-	}
 
 	dvid.Infof("Launched mutation handlers for data %q...\n", d.DataName())
 	return nil
@@ -88,9 +83,6 @@ func (d *Data) queuedSize() int {
 	var queued int
 	for i := 0; i < numMutateHandlers; i++ {
 		queued += len(d.mutateCh[i])
-	}
-	for i := 0; i < numLabelHandlers; i++ {
-		queued += len(d.indexCh[i])
 	}
 	return queued
 }
@@ -115,10 +107,10 @@ func (d *Data) Shutdown(wg *sync.WaitGroup) {
 	for i := 0; i < numMutateHandlers; i++ {
 		close(d.mutateCh[i])
 	}
-	for i := 0; i < numLabelHandlers; i++ {
-		close(d.indexCh[i])
+	var hitrate float64
+	if metaAttempts > 0 {
+		hitrate = (float64(metaHits) / float64(metaAttempts)) * 100.0
 	}
-	hitrate := (float64(d.metaHits) / float64(d.metaAttempts)) * 100.0
-	dvid.Infof("Closing index handler for data %q: got %d meta cache hits on %d attempts (%5.2f)\n", d.DataName(), d.metaHits, d.metaAttempts, hitrate)
+	dvid.Infof("Closing index handler for data %q: got %d meta cache hits on %d attempts (%5.2f)\n", d.DataName(), metaHits, metaAttempts, hitrate)
 	wg.Done()
 }

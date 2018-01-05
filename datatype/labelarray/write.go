@@ -76,7 +76,7 @@ func (d *Data) PutLabels(v dvid.VersionID, subvol *dvid.Subvolume, data []byte, 
 
 	// extract buffer interface if it exists
 	var putbuffer storage.RequestBuffer
-	store, err := d.GetOrderedKeyValueDB()
+	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		return fmt.Errorf("Data type imageblk had error initializing store: %v\n", err)
 	}
@@ -195,7 +195,7 @@ func (d *Data) putChunk(op *putOperation, wg *sync.WaitGroup, putbuffer storage.
 		return
 	}
 
-	store, err := d.GetOrderedKeyValueDB()
+	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		dvid.Errorf("Data type imageblk had error initializing store: %v\n", err)
 		return
@@ -304,7 +304,7 @@ const KVWriteSize = 500
 // TODO -- Clean up all the writing and simplify now that we have block-aligned writes.
 // writeBlocks ingests blocks of voxel data asynchronously using batch writes.
 func (d *Data) writeBlocks(v dvid.VersionID, b storage.TKeyValues, wg1, wg2 *sync.WaitGroup) error {
-	batcher, err := d.GetKeyValueBatcher()
+	batcher, err := datastore.GetKeyValueBatcher(d)
 	if err != nil {
 		return err
 	}

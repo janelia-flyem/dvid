@@ -977,7 +977,7 @@ func GetByDataUUID(dataUUID dvid.UUID) (*Data, error) {
 	}
 	data, ok := source.(*Data)
 	if !ok {
-		return nil, fmt.Errorf("Instance '%s' is not a labelarray datatype!", source.DataName())
+		return nil, fmt.Errorf("instance '%s' is not a labelarray datatype", source.DataName())
 	}
 	return data, nil
 }
@@ -990,7 +990,7 @@ func GetByUUIDName(uuid dvid.UUID, name dvid.InstanceName) (*Data, error) {
 	}
 	data, ok := source.(*Data)
 	if !ok {
-		return nil, fmt.Errorf("Instance '%s' is not a labelarray datatype!", name)
+		return nil, fmt.Errorf("instance '%s' is not a labelarray datatype", name)
 	}
 	return data, nil
 }
@@ -1003,7 +1003,7 @@ func GetByVersionName(v dvid.VersionID, name dvid.InstanceName) (*Data, error) {
 	}
 	data, ok := source.(*Data)
 	if !ok {
-		return nil, fmt.Errorf("Instance '%s' is not a labelarray datatype!", name)
+		return nil, fmt.Errorf("instance '%s' is not a labelarray datatype", name)
 	}
 	return data, nil
 }
@@ -1059,12 +1059,7 @@ type Data struct {
 	mlMu sync.RWMutex // For atomic access of MaxLabel and MaxRepoLabel
 
 	// unpersisted data: channels for mutations
-	mutateCh [numMutateHandlers]chan procMsg    // channels into mutate (merge/split) ops.
-	indexCh  [numLabelHandlers]chan labelChange // channels into label indexing
-
-	mcache       metaCache
-	metaHits     uint64 // track utility of metaCache
-	metaAttempts uint64
+	mutateCh [numMutateHandlers]chan procMsg // channels into mutate (merge/split) ops.
 }
 
 // GetMaxDownresLevel returns the number of down-res levels, where level 0 = high-resolution
@@ -1180,6 +1175,8 @@ func NewData(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.
 	data.IndexedLabels = indexedLabels
 	data.CountLabels = countLabels
 	data.MaxDownresLevel = downresLevels
+
+	data.Initialize()
 	return data, nil
 }
 
@@ -1347,7 +1344,7 @@ func (d *Data) Equals(d2 *Data) bool {
 }
 
 func (d *Data) persistMaxLabel(v dvid.VersionID) error {
-	store, err := d.GetOrderedKeyValueDB()
+	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		return err
 	}
@@ -1361,7 +1358,7 @@ func (d *Data) persistMaxLabel(v dvid.VersionID) error {
 }
 
 func (d *Data) persistMaxRepoLabel() error {
-	store, err := d.GetOrderedKeyValueDB()
+	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		return err
 	}
@@ -1406,7 +1403,7 @@ func (d *Data) NewLabel(v dvid.VersionID) (uint64, error) {
 // up-to-date key-value pairs for max labels.
 func (d *Data) LoadMutable(root dvid.VersionID, storedVersion, expectedVersion uint64) (bool, error) {
 	ctx := storage.NewDataContext(d, 0)
-	store, err := d.GetOrderedKeyValueDB()
+	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		return false, fmt.Errorf("Data type labelarray had error initializing store: %v\n", err)
 	}
@@ -1452,7 +1449,7 @@ const veryLargeLabel = 10000000000 // 10 billion
 
 func (d *Data) migrateMaxLabels(root dvid.VersionID, wg *sync.WaitGroup, ch chan *storage.KeyValue) {
 	ctx := storage.NewDataContext(d, 0)
-	store, err := d.GetOrderedKeyValueDB()
+	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		dvid.Errorf("Can't initialize store for labelarray %q: %v\n", d.DataName(), err)
 	}
@@ -1559,7 +1556,7 @@ func (d *Data) loadMaxLabels(wg *sync.WaitGroup, ch chan *storage.KeyValue) {
 	}
 
 	// Load in the repo-wide max label.
-	store, err := d.GetOrderedKeyValueDB()
+	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		dvid.Errorf("Data type labelarray had error initializing store: %v\n", err)
 		return
@@ -1731,7 +1728,7 @@ func (d *Data) sendBlocksSpecific(ctx *datastore.VersionedCtx, w http.ResponseWr
 	var mutex sync.Mutex
 
 	// get store
-	store, err := d.GetKeyValueDB()
+	store, err := datastore.GetKeyValueDB(d)
 	if err != nil {
 		return fmt.Errorf("Data type labelblk had error initializing store: %v\n", err)
 	}
@@ -1785,7 +1782,7 @@ func (d *Data) sendBlocksSpecific(ctx *datastore.VersionedCtx, w http.ResponseWr
 
 // returns nil block if no block is at the given block coordinate
 func (d *Data) getLabelBlock(ctx *datastore.VersionedCtx, scale uint8, bcoord dvid.IZYXString) (*labels.PositionedBlock, error) {
-	store, err := d.GetKeyValueDB()
+	store, err := datastore.GetKeyValueDB(d)
 	if err != nil {
 		return nil, fmt.Errorf("labelarray getLabelBlock() had error initializing store: %v\n", err)
 	}
@@ -1809,7 +1806,7 @@ func (d *Data) getLabelBlock(ctx *datastore.VersionedCtx, scale uint8, bcoord dv
 }
 
 func (d *Data) putLabelBlock(ctx *datastore.VersionedCtx, scale uint8, pb *labels.PositionedBlock) error {
-	store, err := d.GetKeyValueDB()
+	store, err := datastore.GetKeyValueDB(d)
 	if err != nil {
 		return fmt.Errorf("labelarray putLabelBlock() had error initializing store: %v\n", err)
 	}
@@ -1967,7 +1964,7 @@ func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, sc
 	timedLog := dvid.NewTimeLog()
 	defer timedLog.Infof("SendBlocks %s, span x %d, span y %d, span z %d", blocksoff, blocksdims.Value(0), blocksdims.Value(1), blocksdims.Value(2))
 
-	store, err := d.GetOrderedKeyValueDB()
+	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		return fmt.Errorf("Data type labelarray had error initializing store: %v\n", err)
 	}
@@ -2058,7 +2055,7 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 	}
 
 	timedLog := dvid.NewTimeLog()
-	store, err := d.GetOrderedKeyValueDB()
+	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		return fmt.Errorf("Data type labelarray had error initializing store: %v\n", err)
 	}
@@ -3107,7 +3104,7 @@ func (d *Data) handleSparsevolSize(ctx *datastore.VersionedCtx, w http.ResponseW
 		return
 	}
 
-	meta, lbls, err := d.GetMappedLabelMeta(ctx, label, 0, dvid.Bounds{})
+	meta, lbls, err := GetMappedLabelIndex(d, ctx.VersionID(), label, 0, dvid.Bounds{})
 	if err != nil {
 		server.BadRequest(w, r, "problem getting block indexing on labels %: %v", lbls, err)
 		return
@@ -3430,7 +3427,7 @@ func (d *Data) handleSplit(ctx *datastore.VersionedCtx, w http.ResponseWriter, r
 	}
 	toLabel, err := d.SplitLabels(ctx.VersionID(), fromLabel, splitLabel, r.Body)
 	if err != nil {
-		server.BadRequest(w, r, fmt.Sprintf("split: %v", err))
+		server.BadRequest(w, r, fmt.Sprintf("split label %d -> %d: %v", fromLabel, splitLabel, err))
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -3515,7 +3512,7 @@ func (d *Data) handleMerge(ctx *datastore.VersionedCtx, w http.ResponseWriter, r
 
 // GetLabelBlock returns a compressed label Block of the given block coordinate.
 func (d *Data) GetLabelBlock(v dvid.VersionID, scale uint8, bcoord dvid.ChunkPoint3d) (*labels.Block, error) {
-	store, err := d.GetOrderedKeyValueDB()
+	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		return nil, err
 	}
@@ -3547,7 +3544,7 @@ func (d *Data) GetLabelBlock(v dvid.VersionID, scale uint8, bcoord dvid.ChunkPoi
 
 // GetLabelBytes returns a hi-res block of labels in packed little-endian uint64 format.
 func (d *Data) GetLabelBytes(v dvid.VersionID, bcoord dvid.ChunkPoint3d) ([]byte, error) {
-	store, err := d.GetOrderedKeyValueDB()
+	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		return nil, err
 	}

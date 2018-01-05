@@ -364,7 +364,7 @@ func (d *Data) inROI(pos dvid.Point3d) bool {
 
 // GetCountElementType returns a count of the given ElementType for a given label.
 func (d *Data) GetCountElementType(ctx *datastore.VersionedCtx, label uint64, i IndexType) (uint32, error) {
-	store, err := d.GetOrderedKeyValueDB()
+	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		return 0, err
 	}
@@ -395,7 +395,7 @@ func (d *Data) GetTopElementType(ctx *datastore.VersionedCtx, n int, i IndexType
 		return LabelSizes{}, nil
 	}
 
-	store, err := d.GetOrderedKeyValueDB()
+	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		return nil, err
 	}
@@ -444,7 +444,7 @@ func (d *Data) GetLabelsByThreshold(ctx *datastore.VersionedCtx, i IndexType, mi
 		nReturns = num
 	}
 
-	store, err := d.GetOrderedKeyValueDB()
+	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		return nil, err
 	}
@@ -767,7 +767,7 @@ func (d *Data) resync(ctx *datastore.VersionedCtx) {
 		return
 	}
 
-	store, err := d.GetOrderedKeyValueDB()
+	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		dvid.Errorf("Labelsz %q had error initializing store: %v\n", d.DataName(), err)
 		return

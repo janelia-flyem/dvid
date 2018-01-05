@@ -184,16 +184,6 @@ type KeyChan chan Key
 
 // ---- Storage interfaces ------
 
-// Accessor provides a variety of convenience functions for getting
-// different types of stores.  For each accessor function, a nil
-// store means it is not available.
-type Accessor interface {
-	GetKeyValueDB() (KeyValueDB, error)
-	GetOrderedKeyValueDB() (OrderedKeyValueDB, error)
-	GetKeyValueBatcher() (KeyValueBatcher, error)
-	GetGraphDB() (GraphDB, error)
-}
-
 // BlobStore allows writing and retrieving unversioned data.  It differs from KeyValueDB in that
 // it auto-generates and returns a key on writing, typically the content hash.
 type BlobStore interface {

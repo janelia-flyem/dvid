@@ -85,7 +85,7 @@ func (d *Data) MergeLabels(v dvid.VersionID, m labels.MergeOp) error {
 
 func (d *Data) asyncMergeLabels(v dvid.VersionID, m labels.MergeOp) {
 	// Get storage objects
-	store, err := d.GetOrderedKeyValueDB()
+	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		dvid.Errorf("Data type labelvol had error initializing store: %v\n", err)
 		return
@@ -221,7 +221,7 @@ func (d *Data) asyncMergeLabels(v dvid.VersionID, m labels.MergeOp) {
 // labels.SplitEndEvent occurs at end of split and transmits labels.DeltaSplitEnd struct.
 //
 func (d *Data) SplitLabels(v dvid.VersionID, fromLabel, splitLabel uint64, r io.ReadCloser) (toLabel uint64, err error) {
-	store, err := d.GetOrderedKeyValueDB()
+	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		err = fmt.Errorf("Data type labelvol had error initializing store: %v\n", err)
 		return
@@ -400,7 +400,7 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel, splitLabel uint64, r io.
 // labels.SplitEndEvent occurs at end of split and transmits labels.DeltaSplitEnd struct.
 //
 func (d *Data) SplitCoarseLabels(v dvid.VersionID, fromLabel, splitLabel uint64, r io.ReadCloser) (toLabel uint64, err error) {
-	store, err := d.GetOrderedKeyValueDB()
+	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		err = fmt.Errorf("Data type labelvol had error initializing store: %v\n", err)
 		return
@@ -556,7 +556,7 @@ func (d *Data) SplitCoarseLabels(v dvid.VersionID, fromLabel, splitLabel uint64,
 
 // write label volume in sorted order if available.
 func (d *Data) writeLabelVol(v dvid.VersionID, label uint64, brles dvid.BlockRLEs, sortblks []dvid.IZYXString) error {
-	store, err := d.GetOrderedKeyValueDB()
+	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		return fmt.Errorf("Data type labelvol had error initializing store: %v\n", err)
 	}

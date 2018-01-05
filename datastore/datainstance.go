@@ -147,7 +147,7 @@ func (vctx *VersionedCtx) GetKeyValueDB() (storage.KeyValueDB, error) {
 	if d == nil {
 		return nil, fmt.Errorf("invalid data %v in GetKeyValueDB", d)
 	}
-	return getKeyValueDB(d)
+	return GetKeyValueDB(d)
 }
 
 // GetOrderedKeyValueDB returns an ordered key-value store associated with this
@@ -157,7 +157,7 @@ func (vctx *VersionedCtx) GetOrderedKeyValueDB() (storage.OrderedKeyValueDB, err
 	if d == nil {
 		return nil, fmt.Errorf("invalid data %v in GetOrderedKeyValueDB", d)
 	}
-	return getOrderedKeyValueDB(d)
+	return GetOrderedKeyValueDB(d)
 }
 
 // GetGraphDB returns a graph store associated with this context or an error
@@ -167,7 +167,7 @@ func (vctx *VersionedCtx) GetGraphDB() (storage.GraphDB, error) {
 	if d == nil {
 		return nil, fmt.Errorf("invalid data %v in GetGraphDB", d)
 	}
-	return getGraphDB(d)
+	return GetGraphDB(d)
 }
 
 // BlobService is an interface for storing and retrieving data based on its content.
@@ -179,7 +179,6 @@ type BlobService interface {
 // DataService is an interface for operations on an instance of a supported datatype.
 type DataService interface {
 	dvid.Data
-	storage.Accessor
 	json.Marshaler
 	BlobService
 
@@ -276,6 +275,12 @@ const DataShutdownTime = 20
 // Typically, this exits goroutines used for background data processing.
 type Shutdowner interface {
 	Shutdown(wg *sync.WaitGroup) // Expects wg.Done() to be called in Shutdown function.
+}
+
+// Initializer is a data instance that can be initialized.
+// Typically this sets up any goroutines necessary after server configuration, etc.
+type Initializer interface {
+	Initialize()
 }
 
 type Updater struct {
@@ -857,9 +862,9 @@ func (d *Data) MutDelete(mutID uint64) {
 	d.opWG_mu.Unlock()
 }
 
-// ------ storage.Accessor interface implementation -------
-
-func getKeyValueDB(d dvid.Data) (db storage.KeyValueDB, err error) {
+// GetKeyValueDB returns a kv data store assigned to this data instance.
+// If the store is nil or not available, an error is returned.
+func GetKeyValueDB(d dvid.Data) (db storage.KeyValueDB, err error) {
 	store, err := d.KVStore()
 	if err != nil {
 		return nil, err
@@ -875,7 +880,9 @@ func getKeyValueDB(d dvid.Data) (db storage.KeyValueDB, err error) {
 	return
 }
 
-func getOrderedKeyValueDB(d dvid.Data) (db storage.OrderedKeyValueDB, err error) {
+// GetOrderedKeyValueDB returns the ordered kv data store assigned to this data instance.
+// If the store is nil or not available, an error is returned.
+func GetOrderedKeyValueDB(d dvid.Data) (db storage.OrderedKeyValueDB, err error) {
 	store, err := d.KVStore()
 	if err != nil {
 		return nil, err
@@ -891,7 +898,9 @@ func getOrderedKeyValueDB(d dvid.Data) (db storage.OrderedKeyValueDB, err error)
 	return
 }
 
-func getKeyValueBatcher(d dvid.Data) (db storage.KeyValueBatcher, err error) {
+// GetKeyValueBatcher returns a batch-capable kv data store assigned to this data instance.
+// If the store is nil or not available, an error is returned.
+func GetKeyValueBatcher(d dvid.Data) (db storage.KeyValueBatcher, err error) {
 	store, err := d.KVStore()
 	if err != nil {
 		return nil, err
@@ -907,7 +916,9 @@ func getKeyValueBatcher(d dvid.Data) (db storage.KeyValueBatcher, err error) {
 	return
 }
 
-func getGraphDB(d dvid.Data) (db storage.GraphDB, err error) {
+// GetGraphDB returns a graph store assigned to this data instance.
+// If the store is nil or not available, an error is returned.
+func GetGraphDB(d dvid.Data) (db storage.GraphDB, err error) {
 	store, err := d.KVStore()
 	if err != nil {
 		return nil, err
@@ -923,9 +934,10 @@ func getGraphDB(d dvid.Data) (db storage.GraphDB, err error) {
 	return
 }
 
+// GetBlobStore returns a blob store or nil if not available.
 // TODO -- Add configurable option to use a file system.
-func getBlobStore(d dvid.Data) (store storage.BlobStore, err error) {
-	db, err := getKeyValueDB(d)
+func GetBlobStore(d dvid.Data) (store storage.BlobStore, err error) {
+	db, err := GetKeyValueDB(d)
 	if err != nil {
 		return nil, err
 	}
@@ -940,7 +952,7 @@ func getBlobStore(d dvid.Data) (store storage.BlobStore, err error) {
 // GetBlob retrieves data given a reference that was received during PutBlob.
 func (d *Data) GetBlob(ref string) (data []byte, err error) {
 	var blobStore storage.BlobStore
-	if blobStore, err = d.GetBlobStore(); err != nil {
+	if blobStore, err = GetBlobStore(d); err != nil {
 		return
 	}
 	if blobStore != nil {
@@ -955,7 +967,7 @@ func (d *Data) GetBlob(ref string) (data []byte, err error) {
 // PutBlob stores data and returns a reference to that data.
 func (d *Data) PutBlob(b []byte) (ref string, err error) {
 	var blobStore storage.BlobStore
-	if blobStore, err = d.GetBlobStore(); err != nil {
+	if blobStore, err = GetBlobStore(d); err != nil {
 		return
 	}
 	if blobStore != nil {
@@ -965,35 +977,6 @@ func (d *Data) PutBlob(b []byte) (ref string, err error) {
 		}
 	}
 	return
-}
-
-// GetKeyValueDB returns a kv data store assigned to this data instance.
-// If the store is nil or not available, an error is returned.
-func (d *Data) GetKeyValueDB() (storage.KeyValueDB, error) {
-	return getKeyValueDB(d)
-}
-
-// GetOrderedKeyValueDB returns the ordered kv data store assigned to this data instance.
-// If the store is nil or not available, an error is returned.
-func (d *Data) GetOrderedKeyValueDB() (storage.OrderedKeyValueDB, error) {
-	return getOrderedKeyValueDB(d)
-}
-
-// GetKeyValueBatcher returns a batch-capable kv data store assigned to this data instance.
-// If the store is nil or not available, an error is returned.
-func (d *Data) GetKeyValueBatcher() (storage.KeyValueBatcher, error) {
-	return getKeyValueBatcher(d)
-}
-
-// GetGraphDB returns a graph store assigned to this data instance.
-// If the store is nil or not available, an error is returned.
-func (d *Data) GetGraphDB() (storage.GraphDB, error) {
-	return getGraphDB(d)
-}
-
-// GetBlobStore returns a blob store or nil if not available.
-func (d *Data) GetBlobStore() (storage.BlobStore, error) {
-	return getBlobStore(d)
 }
 
 func (d *Data) ProduceKafkaMsg(b []byte) error {

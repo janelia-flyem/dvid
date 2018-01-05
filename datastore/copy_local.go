@@ -114,19 +114,15 @@ func MigrateInstance(uuid dvid.UUID, source dvid.InstanceName, oldStore dvid.Sto
 	}
 
 	// Get the current store for this data instance.
-	storer, ok := d.(storage.Accessor)
-	if !ok {
-		return fmt.Errorf("unable to migrate data %q: unable to access backing store", d.DataName())
-	}
-	curKV, err := storer.GetOrderedKeyValueDB()
+	curKV, err := GetOrderedKeyValueDB(d)
 	if err != nil {
-		return fmt.Errorf("unable to get backing store for data %q: %v\n", source, err)
+		return fmt.Errorf("unable to get backing store for data %q: %v", source, err)
 	}
 
 	// Get the old store.
 	oldKV, ok := oldStore.(storage.OrderedKeyValueDB)
 	if !ok {
-		return fmt.Errorf("unable to migrate data %q from store %s which isn't ordered kv store", source, storer)
+		return fmt.Errorf("unable to migrate data %q from store %s which isn't ordered kv store", source, oldStore)
 	}
 
 	// Abort if the two stores are the same.
@@ -213,21 +209,13 @@ func CopyInstance(uuid dvid.UUID, source, target dvid.InstanceName, c dvid.Confi
 	}
 
 	// We should be able to get the backing store (only ordered kv for now)
-	storer, ok := d1.(storage.Accessor)
-	if !ok {
-		return fmt.Errorf("unable to push data %q: unable to access backing store", d1.DataName())
-	}
-	oldKV, err := storer.GetOrderedKeyValueDB()
+	oldKV, err := GetOrderedKeyValueDB(d1)
 	if err != nil {
-		return fmt.Errorf("unable to get backing store for data %q: %v\n", d1.DataName(), err)
+		return fmt.Errorf("unable to get backing store for data %q: %v", d1.DataName(), err)
 	}
-	storer, ok = d2.(storage.Accessor)
-	if !ok {
-		return fmt.Errorf("unable to push data %q: unable to access backing store", d2.DataName())
-	}
-	newKV, err := storer.GetOrderedKeyValueDB()
+	newKV, err := GetOrderedKeyValueDB(d2)
 	if err != nil {
-		return fmt.Errorf("unable to get backing store for data %q: %v\n", d2.DataName(), err)
+		return fmt.Errorf("unable to get backing store for data %q: %v", d2.DataName(), err)
 	}
 
 	dvid.Infof("Copying data %q (%s) to data %q (%s)...\n", d1.DataName(), oldKV, d2.DataName(), newKV)

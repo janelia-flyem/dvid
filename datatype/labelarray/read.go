@@ -77,7 +77,7 @@ type getOperation struct {
 
 // GetLabels copies labels from the storage engine to Labels, a requested subvolume or 2d image.
 func (d *Data) GetLabels(v dvid.VersionID, scale uint8, vox *Labels, r *imageblk.ROI) error {
-	store, err := d.GetOrderedKeyValueDB()
+	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		return fmt.Errorf("Data type imageblk had error initializing store: %v\n", err)
 	}

@@ -54,7 +54,7 @@ func (d *Data) StoreDownres(v dvid.VersionID, hiresScale uint8, hires downres.Bl
 		return nil, fmt.Errorf("block size for data %q is not 3d: %v\n", d.DataName(), d.BlockSize())
 	}
 
-	batcher, err := d.GetKeyValueBatcher()
+	batcher, err := datastore.GetKeyValueBatcher(d)
 	if err != nil {
 		return nil, err
 	}

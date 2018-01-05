@@ -156,13 +156,20 @@ func (c *tomlConfig) AllowTiming() bool {
 	return c.Server.AllowTiming
 }
 
+// LabelIndexCache returns the number oF bytes reserved for labelarray index caching.
+// If unset via "LabelIndexCache" parameter, will return 0.
+func LabelIndexCache() int {
+	return tc.Server.LabelIndexCache * dvid.Mega
+}
+
 type serverConfig struct {
-	Host        string
-	HTTPAddress string
-	RPCAddress  string
-	WebClient   string
-	AllowTiming bool
-	Note        string
+	Host            string
+	HTTPAddress     string
+	RPCAddress      string
+	WebClient       string
+	AllowTiming     bool
+	Note            string
+	LabelIndexCache int
 
 	IIDGen   string `toml:"instance_id_gen"`
 	IIDStart uint32 `toml:"instance_id_start"`

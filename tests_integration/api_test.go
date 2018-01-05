@@ -274,6 +274,29 @@ func TestReloadMetadata(t *testing.T) {
 	}
 }
 
+func TestNewInstance(t *testing.T) {
+	datastore.OpenTest()
+	defer datastore.CloseTest()
+
+	uuid, _ := datastore.NewTestRepo()
+
+	payload := bytes.NewBufferString(`{"typename": "keyvalue", "dataname": "testkv", "compression": "none"}`)
+	apiStr := fmt.Sprintf("%srepo/%s/instance", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", apiStr, payload)
+
+	payload = bytes.NewBufferString(`{"typename": "keyvalue", "dataname": "testkv2", "compression": "none"}`)
+	apiStr = fmt.Sprintf("%srepo/%s/instance", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", apiStr, payload)
+
+	payload = bytes.NewBufferString(`{"typename": "annotation", "dataname": "testannot", "compression": "none"}`)
+	apiStr = fmt.Sprintf("%srepo/%s/instance", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", apiStr, payload)
+
+	payload = bytes.NewBufferString(`{"typename": "labelarray", "dataname": "testlabelarray"}`)
+	apiStr = fmt.Sprintf("%srepo/%s/instance", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", apiStr, payload)
+}
+
 func TestSyncs(t *testing.T) {
 	datastore.OpenTest()
 	defer datastore.CloseTest()

@@ -1084,7 +1084,7 @@ func (d *Data) PostTile(ctx storage.Context, w http.ResponseWriter, r *http.Requ
 	if err != nil {
 		return err
 	}
-	db, err := d.GetKeyValueDB()
+	db, err := datastore.GetKeyValueDB(d)
 	if err != nil {
 		return fmt.Errorf("Cannot open imagetile store: %v\n", err)
 	}
@@ -1212,7 +1212,7 @@ func (d *Data) getTileData(ctx storage.Context, req TileReq) ([]byte, error) {
 		return nil, nil
 	}
 
-	db, err := d.GetKeyValueDB()
+	db, err := datastore.GetKeyValueDB(d)
 	if err != nil {
 		return nil, err
 	}
@@ -1311,7 +1311,7 @@ func (d *Data) extractTiles(v *imageblk.Voxels, offset dvid.Point, scale Scaling
 
 // Returns function that stores a tile as an optionally compressed PNG image.
 func (d *Data) putTileFunc(versionID dvid.VersionID) (outFunc, error) {
-	db, err := d.GetKeyValueDB()
+	db, err := datastore.GetKeyValueDB(d)
 	if err != nil {
 		return nil, fmt.Errorf("Cannot open imagetile store: %v\n", err)
 	}

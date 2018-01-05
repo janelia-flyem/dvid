@@ -122,6 +122,12 @@ func Initialize(initMetadata bool, iconfig *InstanceConfig) error {
 			return fmt.Errorf("Error loading metadata: %v", err)
 		}
 	}
+	for _, data := range m.iids {
+		d, ok := data.(Initializer)
+		if ok {
+			go d.Initialize()
+		}
+	}
 	return nil
 }
 

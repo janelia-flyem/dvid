@@ -29,7 +29,6 @@ import (
 	_ "github.com/janelia-flyem/dvid/datatype/imageblk"
 	_ "github.com/janelia-flyem/dvid/datatype/imagetile"
 	_ "github.com/janelia-flyem/dvid/datatype/keyvalue"
-	_ "github.com/janelia-flyem/dvid/datatype/labelarray"
 	_ "github.com/janelia-flyem/dvid/datatype/labelblk"
 	_ "github.com/janelia-flyem/dvid/datatype/labelgraph"
 	_ "github.com/janelia-flyem/dvid/datatype/labelsz"
@@ -272,7 +271,7 @@ func DoServe(cmd dvid.Command) error {
 	}
 	logConfig.SetLogger()
 
-        kafka.Initialize()
+	kafka.Initialize()
 
 	// Initialize storage and datastore layer
 	initMetadata, err := storage.Initialize(cmd.Settings(), backend)

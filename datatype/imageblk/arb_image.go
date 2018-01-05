@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
@@ -259,7 +260,7 @@ func (vc *ValueCache) Clear() {
 
 // Calculates value of a 3d real world point in space defined by underlying data resolution.
 func (d *Data) computeValue(pt dvid.Vector3d, ctx storage.Context, keyF KeyFunc, cache *ValueCache) ([]byte, error) {
-	db, err := d.GetOrderedKeyValueDB()
+	db, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		return nil, err
 	}

@@ -47,6 +47,16 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp) error {
 	server.LargeMutationMutex.Lock()
 	defer server.LargeMutationMutex.Unlock()
 
+	// Get all the affected blocks in the merge.
+	targetMeta, _, err := GetMappedLabelIndex(d, v, op.Target, 0, dvid.Bounds{})
+	if err != nil {
+		return fmt.Errorf("can't get block indices of to merge target label %d", op.Target)
+	}
+	mergedMeta, _, err := GetMappedLabelSetIndex(d, v, op.Merged, 0, dvid.Bounds{})
+	if err != nil {
+		return fmt.Errorf("can't get block indices of to merge labels %s", op.Merged)
+	}
+
 	// Asynchronously perform merge and handle any concurrent requests using the cache map until
 	// labelarray is updated and consistent.  Mark these labels as dirty until done.
 	d.StartUpdate()
@@ -55,13 +65,27 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp) error {
 		d.StopUpdate()
 		return err
 	}
-
 	mutID := d.NewMutationID()
-	go func() {
-		if err := labels.LogMerge(d, v, mutID, op); err != nil {
-			dvid.Errorf("logging of merge: %v\n", err)
-		}
-	}()
+
+	// send kafka merge event to instance-uuid topic
+	// msg: {"action": "merge", "target": targetlabel, "labels": [merge labels]}
+	lbls := make([]uint64, 0, len(op.Merged))
+	for label := range op.Merged {
+		lbls = append(lbls, label)
+	}
+
+	versionuuid, _ := datastore.UUIDFromVersion(v)
+	msginfo := map[string]interface{}{
+		"Action":     "merge",
+		"Target":     op.Target,
+		"Labels":     lbls,
+		"UUID":       string(versionuuid),
+		"MutationID": mutID,
+	}
+	jsonmsg, _ := json.Marshal(msginfo)
+	if err := d.ProduceKafkaMsg(jsonmsg); err != nil {
+		return err
+	}
 
 	// Signal that we are starting a merge.
 	evt := datastore.SyncEvent{d.DataUUID(), labels.MergeStartEvent}
@@ -71,57 +95,26 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp) error {
 		return err
 	}
 
-	ctx := datastore.NewVersionedCtx(d, v)
 	go func() {
-		defer func() {
-			d.StopUpdate()
-			labels.MergeStop(iv, op)
-		}()
-
-		// Get all the affected blocks in the merge.
-		targetMeta, err := d.getLabelMeta(ctx, labels.NewSet(op.Target), 0, dvid.Bounds{})
-		if err != nil {
-			dvid.Errorf("can't get block indices of to merge target label %d\n", op.Target)
-			return
-		}
-		mergedMeta, err := d.getLabelMeta(ctx, op.Merged, 0, dvid.Bounds{})
-		if err != nil {
-			dvid.Errorf("can't get block indices of to merge labels %s\n", op.Merged)
-			return
-		}
-
 		delta := labels.DeltaMerge{
 			MergeOp:      op,
 			Blocks:       targetMeta.Blocks.MergeCopy(mergedMeta.Blocks),
 			TargetVoxels: targetMeta.Voxels,
 			MergedVoxels: mergedMeta.Voxels,
 		}
-		if err := d.processMerge(v, delta); err != nil {
+		if err := d.processMerge(v, mutID, delta); err != nil {
 			dvid.Criticalf("unable to process merge: %v\n", err)
 		}
+		d.StopUpdate()
+		labels.MergeStop(iv, op)
+
 		dvid.Infof("processed merge for %q in gofunc\n", d.DataName())
 	}()
-
-	// send kafka merge event to instance-uuid topic
-	// msg: {"action": "merge", "target": targetlabel, "labels": [merge labels]}
-	labels := make([]uint64, 0, len(op.Merged))
-	for label := range op.Merged {
-		labels = append(labels, label)
-	}
-
-	versionuuid, _ := datastore.UUIDFromVersion(v)
-	msginfo := map[string]interface{}{
-		"Action": "merge",
-		"Target": op.Target,
-		"Labels": labels,
-		"UUID":   string(versionuuid),
-	}
-	jsonmsg, _ := json.Marshal(msginfo)
-	return d.ProduceKafkaMsg(jsonmsg)
+	return nil
 }
 
 // handle block and label index mods for a merge.
-func (d *Data) processMerge(v dvid.VersionID, delta labels.DeltaMerge) error {
+func (d *Data) processMerge(v dvid.VersionID, mutID uint64, delta labels.DeltaMerge) error {
 	timedLog := dvid.NewTimeLog()
 
 	evt := datastore.SyncEvent{d.DataUUID(), labels.MergeBlockEvent}
@@ -130,7 +123,6 @@ func (d *Data) processMerge(v dvid.VersionID, delta labels.DeltaMerge) error {
 		return fmt.Errorf("can't notify subscribers for event %v: %v\n", evt, err)
 	}
 
-	mutID := d.NewMutationID()
 	downresMut := downres.NewMutation(d, v, mutID)
 	for _, izyx := range delta.Blocks {
 		n := izyx.Hash(numMutateHandlers)
@@ -150,11 +142,10 @@ func (d *Data) processMerge(v dvid.VersionID, delta labels.DeltaMerge) error {
 	for _, izyx := range delta.Blocks {
 		mergebdm[izyx] = labelDiff{delta: int32(delta.MergedVoxels), present: true}
 	}
-	shard := delta.Target % numLabelHandlers
-	d.indexCh[shard] <- labelChange{v: v, label: delta.Target, bdm: mergebdm}
+	ChangeLabelIndex(d, v, delta.Target, mergebdm)
 
-	// Delete all the merged label block index kv pairs.
-	store, err := d.GetOrderedKeyValueDB()
+	// Wait for index to be merged before deleting all the merged label block index kv pairs.
+	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		return fmt.Errorf("Data %q merge had error initializing store: %v\n", d.DataName(), err)
 	}
@@ -191,10 +182,17 @@ func (d *Data) processMerge(v dvid.VersionID, delta labels.DeltaMerge) error {
 	}
 
 	downresMut.Done()
-
 	dvid.Infof("Merged %s -> %d, data %q, resulting in %d blocks\n", delta.Merged, delta.Target, d.DataName(), len(delta.Blocks))
 
-	return nil
+	// send kafka merge complete event to instance-uuid topic
+	versionuuid, _ := datastore.UUIDFromVersion(v)
+	msginfo := map[string]interface{}{
+		"Action":     "merge-complete",
+		"MutationID": mutID,
+		"UUID":       string(versionuuid),
+	}
+	jsonmsg, _ := json.Marshal(msginfo)
+	return d.ProduceKafkaMsg(jsonmsg)
 }
 
 // SplitLabels splits a portion of a label's voxels into a given split label or, if the given split
@@ -228,9 +226,45 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel, splitLabel uint64, r io.
 		dvid.Debugf("Splitting subset of label %d into new label %d ...\n", fromLabel, toLabel)
 	}
 
+	// Read the sparse volume from reader.
+	var split dvid.RLEs
+	split, err = dvid.ReadRLEs(r)
+	if err != nil {
+		return
+	}
+	toLabelSize, _ := split.Stats()
+
 	// Only do one large mutation at a time, although each request can start many goroutines.
 	server.LargeMutationMutex.Lock()
 	defer server.LargeMutationMutex.Unlock()
+
+	// store split info into separate data.
+	var splitData []byte
+	if splitData, err = split.MarshalBinary(); err != nil {
+		return
+	}
+	var splitRef string
+	if splitRef, err = d.PutBlob(splitData); err != nil {
+		err = fmt.Errorf("error storing split data: %v", err)
+		return
+	}
+
+	// send kafka split event to instance-uuid topic
+	mutID := d.NewMutationID()
+	versionuuid, _ := datastore.UUIDFromVersion(v)
+	msginfo := map[string]interface{}{
+		"Action":     "split",
+		"Target":     fromLabel,
+		"NewLabel":   toLabel,
+		"Split":      splitRef,
+		"MutationID": mutID,
+		"UUID":       string(versionuuid),
+	}
+	jsonmsg, _ := json.Marshal(msginfo)
+	if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
+		err = fmt.Errorf("error on sending split op to kafka: %v", err)
+		return
+	}
 
 	evt := datastore.SyncEvent{d.DataUUID(), labels.SplitStartEvent}
 	splitOpStart := labels.DeltaSplitStart{fromLabel, toLabel}
@@ -251,54 +285,6 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel, splitLabel uint64, r io.
 	// Signal that we are starting a split.
 	msg := datastore.SyncMessage{labels.SplitStartEvent, v, splitOpStart}
 	if err = datastore.NotifySubscribers(evt, msg); err != nil {
-		return
-	}
-
-	// Read the sparse volume from reader.
-	var split dvid.RLEs
-	split, err = dvid.ReadRLEs(r)
-	if err != nil {
-		return
-	}
-	toLabelSize, _ := split.Stats()
-
-	mutID := d.NewMutationID()
-	splitOp := labels.SplitOp{
-		Target:   fromLabel,
-		NewLabel: toLabel,
-		RLEs:     split,
-	}
-
-	// log the split
-	go func() {
-		if err = labels.LogSplit(d, v, mutID, splitOp); err != nil {
-			dvid.Errorf("logging split: %v\n", err)
-		}
-	}()
-
-	// store split info into separate data.
-	var splitData []byte
-	if splitData, err = split.MarshalBinary(); err != nil {
-		return
-	}
-	var splitRef string
-	if splitRef, err = d.PutBlob(splitData); err != nil {
-		err = fmt.Errorf("split data %v\n", err)
-		return
-	}
-
-	// send kafka merge event to instance-uuid topic
-	versionuuid, _ := datastore.UUIDFromVersion(v)
-	msginfo := map[string]interface{}{
-		"Action":   "split",
-		"Target":   fromLabel,
-		"NewLabel": toLabel,
-		"Split":    splitRef,
-		"UUID":     string(versionuuid),
-	}
-	jsonmsg, _ := json.Marshal(msginfo)
-	if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
-		err = fmt.Errorf("error on sending split op to kafka: %v", err)
 		return
 	}
 
@@ -326,6 +312,17 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel, splitLabel uint64, r io.
 		SplitVoxels:  toLabelSize,
 	}
 	if err = d.processSplit(v, mutID, deltaSplit); err != nil {
+		return
+	}
+
+	msginfo = map[string]interface{}{
+		"Action":     "split-complete",
+		"MutationID": mutID,
+		"UUID":       string(versionuuid),
+	}
+	jsonmsg, _ = json.Marshal(msginfo)
+	if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
+		err = fmt.Errorf("error on sending split complete op to kafka: %v", err)
 		return
 	}
 
@@ -360,9 +357,51 @@ func (d *Data) SplitCoarseLabels(v dvid.VersionID, fromLabel, splitLabel uint64,
 		dvid.Debugf("Splitting coarse subset of label %d into new label %d ...\n", fromLabel, toLabel)
 	}
 
+	// Read the sparse volume from reader.
+	var splits dvid.RLEs
+	splits, err = dvid.ReadRLEs(r)
+	if err != nil {
+		return
+	}
+	numBlocks, _ := splits.Stats()
+
 	// Only do one request at a time, although each request can start many goroutines.
 	server.LargeMutationMutex.Lock()
 	defer server.LargeMutationMutex.Unlock()
+
+	splitOp := labels.SplitOp{
+		Target:   fromLabel,
+		NewLabel: toLabel,
+		RLEs:     splits,
+		Coarse:   true,
+	}
+
+	// store split info into separate data.
+	var splitData []byte
+	if splitData, err = splits.MarshalBinary(); err != nil {
+		return
+	}
+	var splitRef string
+	if splitRef, err = d.PutBlob(splitData); err != nil {
+		err = fmt.Errorf("coarse split data %v\n", err)
+		return
+	}
+
+	// send kafka merge event to instance-uuid topic
+	mutID := d.NewMutationID()
+	versionuuid, _ := datastore.UUIDFromVersion(v)
+	msginfo := map[string]interface{}{
+		"Action":   "splitcoarse",
+		"Target":   fromLabel,
+		"NewLabel": toLabel,
+		"Split":    splitRef,
+		"UUID":     string(versionuuid),
+	}
+	jsonmsg, _ := json.Marshal(msginfo)
+	if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
+		err = fmt.Errorf("error on sending coarse split op to kafka: %v", err)
+		return
+	}
 
 	evt := datastore.SyncEvent{d.DataUUID(), labels.SplitStartEvent}
 	splitOpStart := labels.DeltaSplitStart{fromLabel, toLabel}
@@ -381,52 +420,11 @@ func (d *Data) SplitCoarseLabels(v dvid.VersionID, fromLabel, splitLabel uint64,
 		return 0, err
 	}
 
-	// Read the sparse volume from reader.
-	var splits dvid.RLEs
-	splits, err = dvid.ReadRLEs(r)
-	if err != nil {
-		return
-	}
-	numBlocks, _ := splits.Stats()
-
-	mutID := d.NewMutationID()
-	splitOp := labels.SplitOp{
-		Target:   fromLabel,
-		NewLabel: toLabel,
-		RLEs:     splits,
-		Coarse:   true,
-	}
 	go func() {
 		if err = labels.LogSplit(d, v, mutID, splitOp); err != nil {
 			dvid.Errorf("logging split: %v\n", err)
 		}
 	}()
-
-	// store split info into separate data.
-	var splitData []byte
-	if splitData, err = splits.MarshalBinary(); err != nil {
-		return
-	}
-	var splitRef string
-	if splitRef, err = d.PutBlob(splitData); err != nil {
-		err = fmt.Errorf("coarse split data %v\n", err)
-		return
-	}
-
-	// send kafka merge event to instance-uuid topic
-	versionuuid, _ := datastore.UUIDFromVersion(v)
-	msginfo := map[string]interface{}{
-		"Action":   "splitcoarse",
-		"Target":   fromLabel,
-		"NewLabel": toLabel,
-		"Split":    splitRef,
-		"UUID":     string(versionuuid),
-	}
-	jsonmsg, _ := json.Marshal(msginfo)
-	if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
-		err = fmt.Errorf("error on sending coarse split op to kafka: %v", err)
-		return
-	}
 
 	// Order the split blocks
 	splitblks := make(dvid.IZYXSlice, numBlocks)
@@ -581,8 +579,7 @@ func (d *Data) splitIndices(v dvid.VersionID, delta labels.DeltaSplit, deleteBlk
 	for _, izyx := range deleteBlks {
 		deletebdm[izyx] = labelDiff{present: false}
 	}
-	shard := delta.OldLabel % numLabelHandlers
-	d.indexCh[shard] <- labelChange{v: v, label: delta.OldLabel, bdm: deletebdm}
+	ChangeLabelIndex(d, v, delta.OldLabel, deletebdm)
 
 	var splitbdm blockDiffMap
 	if delta.Split == nil {
@@ -596,8 +593,7 @@ func (d *Data) splitIndices(v dvid.VersionID, delta labels.DeltaSplit, deleteBlk
 			splitbdm[izyx] = labelDiff{present: true}
 		}
 	}
-	shard = delta.NewLabel % numLabelHandlers
-	d.indexCh[shard] <- labelChange{v: v, label: delta.NewLabel, bdm: splitbdm}
+	ChangeLabelIndex(d, v, delta.NewLabel, splitbdm)
 	return nil
 }
 

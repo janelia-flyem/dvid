@@ -139,7 +139,7 @@ func (d *Data) PutVoxels(v dvid.VersionID, mutID uint64, vox *Voxels, roiname dv
 	}
 
 	// extract buffer interface if it exists
-	store, err := d.GetOrderedKeyValueDB()
+	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		return fmt.Errorf("Data type imageblk had error initializing store: %v\n", err)
 	}
@@ -272,7 +272,7 @@ func (d *Data) PutVoxels(v dvid.VersionID, mutID uint64, vox *Voxels, roiname dv
 
 // PutBlocks stores blocks of data in a span along X
 func (d *Data) PutBlocks(v dvid.VersionID, mutID uint64, start dvid.ChunkPoint3d, span int, data io.ReadCloser, mutate bool) error {
-	batcher, err := d.GetKeyValueBatcher()
+	batcher, err := datastore.GetKeyValueBatcher(d)
 	if err != nil {
 		return err
 	}
@@ -445,7 +445,7 @@ func (d *Data) putChunk(chunk *storage.Chunk, hasbuffer bool, patchgeo *patchGeo
 		}
 	}
 
-	store, err := d.GetOrderedKeyValueDB()
+	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		dvid.Errorf("Data type imageblk had error initializing store: %v\n", err)
 		return
@@ -575,7 +575,7 @@ const KVWriteSize = 500
 // TODO -- Clean up all the writing and simplify now that we have block-aligned writes.
 // writeBlocks ingests blocks of voxel data asynchronously using batch writes.
 func (d *Data) writeBlocks(v dvid.VersionID, b storage.TKeyValues, wg1, wg2 *sync.WaitGroup) error {
-	batcher, err := d.GetKeyValueBatcher()
+	batcher, err := datastore.GetKeyValueBatcher(d)
 	if err != nil {
 		return err
 	}

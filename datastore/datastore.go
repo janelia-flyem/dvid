@@ -409,7 +409,7 @@ type extensionNode struct {
 }
 
 func deleteConflict(data DataService, extnode *extensionNode, k storage.Key) error {
-	store, err := getOrderedKeyValueDB(data)
+	store, err := GetOrderedKeyValueDB(data)
 	if err != nil {
 		return err
 	}
@@ -528,7 +528,7 @@ func DeleteConflicts(uuid dvid.UUID, data DataService, oldParents, newParents []
 	}()
 
 	// Iterate through all k/v for this data instance.
-	store, err := getOrderedKeyValueDB(data)
+	store, err := GetOrderedKeyValueDB(data)
 	if err != nil {
 		return err
 	}

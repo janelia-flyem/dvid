@@ -167,13 +167,9 @@ func (p *PushSession) EndInstancePush() error {
 // query the ROI to see if this key is ok to send.
 func PushData(d dvid.Data, p *PushSession) error {
 	// We should be able to get the backing store (only ordered kv for now)
-	storer, ok := d.(storage.Accessor)
-	if !ok {
-		return fmt.Errorf("unable to push data %q: unable to access backing store", d.DataName())
-	}
-	store, err := storer.GetOrderedKeyValueDB()
+	store, err := GetOrderedKeyValueDB(d)
 	if err != nil {
-		return fmt.Errorf("unable to get backing store for data %q: %v\n", d.DataName(), err)
+		return fmt.Errorf("unable to get backing store for data %q: %v", d.DataName(), err)
 	}
 
 	// See if this data instance implements a Send filter.

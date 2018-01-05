@@ -247,7 +247,7 @@ func (d *Data) downsizeCommit(v dvid.VersionID, mutID uint64) {
 
 	// Do GET/PUT for each block, unless we have all 8 octants and can just do a PUT.
 	// For each block, send to downstream if any.
-	store, err := d.GetKeyValueDB()
+	store, err := datastore.GetKeyValueDB(d)
 	if err != nil {
 		dvid.Errorf("Data type labelblk had error initializing store: %v\n", err)
 		return
@@ -557,7 +557,7 @@ func (d *Data) processBlock(ch <-chan procMsg) {
 func (d *Data) mergeBlock(ctx *datastore.VersionedCtx, op mergeOp) {
 	defer d.MutDone(op.mutID)
 
-	store, err := d.GetKeyValueDB()
+	store, err := datastore.GetKeyValueDB(d)
 	if err != nil {
 		dvid.Errorf("Data type labelblk had error initializing store: %v\n", err)
 		return
@@ -611,7 +611,7 @@ func (d *Data) mergeBlock(ctx *datastore.VersionedCtx, op mergeOp) {
 func (d *Data) splitBlock(ctx *datastore.VersionedCtx, op splitOp) {
 	defer d.MutDone(op.mutID)
 
-	store, err := d.GetOrderedKeyValueDB()
+	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		dvid.Errorf("Data type labelblk had error initializing store: %v\n", err)
 		return

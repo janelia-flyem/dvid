@@ -65,7 +65,7 @@ func (d *Data) GetSyncSubs(synced dvid.Data) (datastore.SyncSubs, error) {
 
 // If annotation elements are added or deleted, adjust the label counts.
 func (d *Data) processEvents() {
-	batcher, err := d.GetKeyValueBatcher()
+	batcher, err := datastore.GetKeyValueBatcher(d)
 	if err != nil {
 		dvid.Errorf("Exiting sync goroutine for labelsz %q after annotation modifications: %v\n", d.DataName(), err)
 		return
@@ -107,7 +107,7 @@ func (d *Data) processEvents() {
 // returned map will only include labels that had previously been seen (has key)
 func (d *Data) getCounts(ctx *datastore.VersionedCtx, labels map[indexedLabel]int32) (counts map[indexedLabel]uint32, err error) {
 	var store storage.OrderedKeyValueDB
-	store, err = d.GetOrderedKeyValueDB()
+	store, err = datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		return
 	}
@@ -218,7 +218,7 @@ func (d *Data) modifyElements(ctx *datastore.VersionedCtx, delta annotation.Delt
 
 /*
 func (d *Data) syncSet(in <-chan datastore.SyncMessage, done <-chan struct{}) {
-	batcher, err := d.GetKeyValueBatcher()
+	batcher, err := datastore.GetKeyValueBatcher(d)
 	if err != nil {
 		dvid.Errorf("Exiting sync goroutine for labelsz %q after annotation sets: %v\n", d.DataName(), err)
 		return
