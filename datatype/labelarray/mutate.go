@@ -50,11 +50,11 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp) error {
 	// Get all the affected blocks in the merge.
 	targetMeta, _, err := GetMappedLabelIndex(d, v, op.Target, 0, dvid.Bounds{})
 	if err != nil {
-		return fmt.Errorf("can't get block indices of to merge target label %d", op.Target)
+		return fmt.Errorf("can't get block indices of to merge target label %d: %v", op.Target, err)
 	}
 	mergedMeta, _, err := GetMappedLabelSetIndex(d, v, op.Merged, 0, dvid.Bounds{})
 	if err != nil {
-		return fmt.Errorf("can't get block indices of to merge labels %s", op.Merged)
+		return fmt.Errorf("can't get block indices of to merge labels %s: %v", op.Merged, err)
 	}
 
 	// Asynchronously perform merge and handle any concurrent requests using the cache map until

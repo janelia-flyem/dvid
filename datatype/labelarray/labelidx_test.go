@@ -10,8 +10,10 @@ import (
 
 // Stress-test indexing during ingestion handling.
 func TestIndexing(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	uuid, _ := datastore.NewTestRepo()
 	if len(uuid) < 5 {

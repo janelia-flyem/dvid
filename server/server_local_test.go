@@ -5,6 +5,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
 )
 
@@ -26,8 +27,13 @@ func TestParseConfig(t *testing.T) {
 		t.Fatalf("bad TOML configuration: %v\n", err)
 	}
 
+	sz := CacheSize("labelarray")
+	if sz != 10*dvid.Mega {
+		t.Errorf("Expected labelarray cache to be set to 10 (MB), got %d bytes instead\n", sz)
+	}
+
 	if instanceCfg.Gen != "sequential" || instanceCfg.Start != 100 {
-		t.Errorf("Bad instance id retrieval of configuration: %v\n", instanceCfg)
+		t.Errorf("Bad instance id retrieval of configuration: %v\n", *instanceCfg)
 	}
 
 	if logCfg.Logfile != "/demo/logs/dvid.log" || logCfg.MaxSize != 500 || logCfg.MaxAge != 30 {

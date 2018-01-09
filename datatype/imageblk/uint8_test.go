@@ -127,8 +127,10 @@ func makeGrayscale(uuid dvid.UUID, t *testing.T, name string) *Data {
 }
 
 func TestVoxelsInstanceCreation(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	uuid, _ := datastore.NewTestRepo()
 
@@ -186,8 +188,10 @@ func TestVoxelsInstanceCreation(t *testing.T) {
 }
 
 func TestExtents(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	uuid, _ := initTestRepo()
 	makeGrayscale(uuid, t, "grayscale")
@@ -234,8 +238,10 @@ func TestExtents(t *testing.T) {
 }
 
 func TestForegroundROI(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	uuid, _ := initTestRepo()
 	grayscale := makeGrayscale(uuid, t, "grayscale")
@@ -300,8 +306,10 @@ func TestForegroundROI(t *testing.T) {
 }
 
 func TestDirectCalls(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	uuid, versionID := initTestRepo()
 	grayscale := makeGrayscale(uuid, t, "grayscale")
@@ -365,8 +373,10 @@ func TestDirectCalls(t *testing.T) {
 }
 
 func TestBlockAPI(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	uuid, _ := initTestRepo()
 	grayscale := makeGrayscale(uuid, t, "grayscale")
@@ -417,8 +427,10 @@ func TestBlockAPI(t *testing.T) {
 }
 
 func TestGrayscaleRepoPersistence(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	uuid, _ := initTestRepo()
 

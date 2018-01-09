@@ -333,8 +333,10 @@ func createLabelTest2Volume(t *testing.T, uuid dvid.UUID, name string) *testVolu
 }
 
 func TestSparseVolumes(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
@@ -496,8 +498,10 @@ func TestSparseVolumes(t *testing.T) {
 }
 
 func Test16x16x16SparseVolumes(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
@@ -592,8 +596,10 @@ func Test16x16x16SparseVolumes(t *testing.T) {
 }
 
 func TestMergeLabels(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
@@ -655,8 +661,10 @@ func TestMergeLabels(t *testing.T) {
 }
 
 func TestSplitCoarseLabel(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
@@ -784,8 +792,10 @@ func TestSplitCoarseLabel(t *testing.T) {
 }
 
 func TestSplitCoarseGivenLabel(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
@@ -908,8 +918,10 @@ func TestSplitCoarseGivenLabel(t *testing.T) {
 }
 
 func TestSplitLabel(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
@@ -1016,8 +1028,10 @@ func TestSplitLabel(t *testing.T) {
 
 // Same as TestSplitLabel but now designate the actual split label
 func TestSplitGivenLabel(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
@@ -1074,8 +1088,10 @@ func TestSplitGivenLabel(t *testing.T) {
 }
 
 func TestMergeSplitLabel(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
@@ -1191,8 +1207,10 @@ func TestMergeSplitLabel(t *testing.T) {
 }
 
 func TestMultiscaleMergeSplit(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	// Create testbed volume
 	uuid, _ := initTestRepo()
@@ -1385,8 +1403,10 @@ func TestMultiscaleMergeSplit(t *testing.T) {
 
 // Test that mutable labelarray POST will accurately remove prior bodies.
 func TestMutableLabelblkPOST(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
@@ -1450,8 +1470,11 @@ func TestMutableLabelblkPOST(t *testing.T) {
 }
 
 func TestConcurrentMutations(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	testConfig := server.TestConfig{CacheSize: map[string]int{"labelarray": 10}}
+	if err := server.OpenTest(testConfig); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()

@@ -29,8 +29,10 @@ func getROIReader() io.Reader {
 }
 
 func TestFilter(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()

@@ -447,8 +447,10 @@ func checkSequencing(t *testing.T, uuid dvid.UUID) {
 }
 
 func TestLabels(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	// Create testbed volume and data instances
 	uuid, _ := datastore.NewTestRepo()
@@ -531,8 +533,10 @@ func TestLabels(t *testing.T) {
 }
 
 func TestLabelsResync(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	// Create testbed volume and data instances
 	uuid, _ := datastore.NewTestRepo()

@@ -98,8 +98,10 @@ const testMetadata = `
 `
 
 func TestSetMetadata(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	uuid, _ := initTestRepo()
 	server.CreateTestInstance(t, uuid, "imagetile", "tiles", dvid.Config{})
@@ -138,8 +140,10 @@ func TestSetMetadata(t *testing.T) {
 }
 
 func TestMultiscale2dRepoPersistence(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	// Make source
 	uuid, _ := initTestRepo()
@@ -181,8 +185,10 @@ func TestMultiscale2dRepoPersistence(t *testing.T) {
 }
 
 func TestTileKey(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	uuid, _ := initTestRepo()
 	server.CreateTestInstance(t, uuid, "imagetile", "tiles", dvid.Config{})
@@ -252,8 +258,10 @@ func getSpansJSON(spans []dvid.Span) io.Reader {
 }
 
 func TestTileCheck(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	// Make source
 	uuid, _ := initTestRepo()

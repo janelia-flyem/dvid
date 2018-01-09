@@ -37,8 +37,10 @@ func initTestRepo() (dvid.UUID, dvid.VersionID) {
 }
 
 func TestSynapseRepoPersistence(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	uuid, _ := initTestRepo()
 
@@ -696,8 +698,10 @@ func labelsJSON() string {
 }
 
 func TestRequests(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	uuid, _ := initTestRepo()
 
@@ -765,8 +769,10 @@ func TestRequests(t *testing.T) {
 }
 
 func TestTagRequests(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	uuid, _ := initTestRepo()
 
@@ -1011,8 +1017,10 @@ func testLabels(t *testing.T, uuid dvid.UUID, labelblkName, labelvolName dvid.In
 }
 
 func TestOldLabels(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
@@ -1050,8 +1058,10 @@ func TestOldLabels(t *testing.T) {
 }
 
 func TestLabels(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
@@ -1126,8 +1136,10 @@ func testLabelsReload(t *testing.T, uuid dvid.UUID, labelblkName, labelvolName d
 }
 
 func TestOldLabelsReload(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
@@ -1173,8 +1185,10 @@ func TestOldLabelsReload(t *testing.T) {
 }
 
 func TestLabelsReload(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()

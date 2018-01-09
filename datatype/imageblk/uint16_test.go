@@ -40,8 +40,10 @@ func createUint16TestVolume(t *testing.T, uuid dvid.UUID, name string, offset, s
 }
 
 func TestUint16InstanceCreation(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	uuid, _ := datastore.NewTestRepo()
 
@@ -99,8 +101,10 @@ func TestUint16InstanceCreation(t *testing.T) {
 }
 
 func TestUint16DirectCalls(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	uuid, versionID := initTestRepo()
 
@@ -172,8 +176,10 @@ func TestUint16DirectCalls(t *testing.T) {
 }
 
 func TestUint16RepoPersistence(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	uuid, _ := initTestRepo()
 

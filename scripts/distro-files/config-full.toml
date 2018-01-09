@@ -97,8 +97,16 @@ max_log_age = 30   # days
 [kafka]
 servers = ["http://foo.bar.com:1234", "http://foo2.bar.com:1234"]
 
-# Groupcache support lets you cache GETs from particular data instances.  The
-# configuration below marks some data instances as both immutable and
+# Cache support allows setting datatype-specific caching mechanisms.
+# Currently freecache is supported in labelarray and labelmap.
+[cache]
+	[cache.labelarray]
+	size = 10 # MB
+
+# Groupcache support lets you cache GETs from particular data instances using a
+# distributed, immutable key-value cache.
+#
+# The configuration below marks some data instances as both immutable and
 # using a non-ordered key-value store for GETs.  These instances may be versioned.
 # An example case would be imagetile, which is immutable after some initial set
 # of ingestions that may be spread across a few versions at the top of the DAG.

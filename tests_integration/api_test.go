@@ -151,8 +151,10 @@ func (s sliceTester) testLabel(t *testing.T, vol labelVol, img *dvid.Image) {
 // Note: Sync tests between labelblk, labelvol, and annotations are handled in those packages.
 
 func TestCommitAndBranch(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	apiStr := fmt.Sprintf("%srepos", server.WebAPIPath)
 	r := server.TestHTTP(t, "POST", apiStr, nil)
@@ -225,8 +227,10 @@ func TestCommitAndBranch(t *testing.T) {
 }
 
 func TestReloadMetadata(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	uuid, _ := datastore.NewTestRepo()
 
@@ -275,8 +279,10 @@ func TestReloadMetadata(t *testing.T) {
 }
 
 func TestNewInstance(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	uuid, _ := datastore.NewTestRepo()
 
@@ -298,8 +304,10 @@ func TestNewInstance(t *testing.T) {
 }
 
 func TestSyncs(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	uuid, _ := datastore.NewTestRepo()
 
@@ -384,8 +392,10 @@ func TestSyncs(t *testing.T) {
 }
 
 func TestBlobStore(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	uuid, _ := datastore.NewTestRepo()
 	var config dvid.Config

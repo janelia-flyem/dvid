@@ -36,7 +36,7 @@ var (
 // in the server configuration.
 func (d *Data) Initialize() {
 	if indexCache == nil {
-		numBytes := server.LabelIndexCache()
+		numBytes := server.CacheSize("labelarray")
 		if numBytes > 0 {
 			indexCache = freecache.NewCache(numBytes)
 			mbs := numBytes >> 20
@@ -129,7 +129,7 @@ func GetLabelIndex(d dvid.Data, v dvid.VersionID, label uint64) (*Meta, error) {
 	var err error
 	if indexCache != nil {
 		metaBytes, err = indexCache.Get(k.Bytes())
-		if err != nil {
+		if err != nil && err != freecache.ErrNotFound {
 			return nil, err
 		}
 	}
@@ -141,7 +141,20 @@ func GetLabelIndex(d dvid.Data, v dvid.VersionID, label uint64) (*Meta, error) {
 		atomic.AddUint64(&metaHits, 1)
 		return &m, nil
 	}
-	return getLabelMeta(k.VersionedCtx(), label)
+	m, err := getLabelMeta(k.VersionedCtx(), label)
+	if err != nil {
+		return nil, err
+	}
+	if indexCache != nil && m != nil {
+		metaBytes, err := m.MarshalBinary()
+		if err != nil {
+			dvid.Errorf("unable to marshal label %d index for %q: %v\n", label, d.DataName(), err)
+		} else if err := indexCache.Set(k.Bytes(), metaBytes, 0); err != nil {
+			dvid.Errorf("unable to set label %d index cache for %q: %v\n", label, d.DataName(), err)
+		}
+		dvid.Infof("storing label %d index into cache\n", label)
+	}
+	return m, err
 }
 
 // GetLabelProcessedIndex gets label index data from storage for a given data instance
@@ -320,6 +333,7 @@ func SetLabelIndex(d dvid.Data, v dvid.VersionID, label uint64, m *Meta) error {
 		if err := indexCache.Set(k, metaBytes, 0); err != nil {
 			return err
 		}
+		dvid.Infof("storing label %d index into cache\n", label)
 	}
 	return nil
 }
@@ -338,7 +352,7 @@ func ChangeLabelIndex(d dvid.Data, v dvid.VersionID, label uint64, delta blockDi
 	var err error
 	if indexCache != nil {
 		metaBytes, err = indexCache.Get(k.Bytes())
-		if err != nil {
+		if err != nil && err != freecache.ErrNotFound {
 			return err
 		}
 	}
@@ -365,15 +379,16 @@ func ChangeLabelIndex(d dvid.Data, v dvid.VersionID, label uint64, delta blockDi
 	if err = putLabelMeta(ctx, label, m); err != nil {
 		return err
 	}
-	metaBytes, err = m.MarshalBinary()
-	if err != nil {
-		return err
-	}
-	if indexCache != nil {
+	if indexCache != nil && m != nil {
+		metaBytes, err = m.MarshalBinary()
+		if err != nil {
+			return err
+		}
 		k := indexKey{data: d, version: v, label: label}.Bytes()
 		if err := indexCache.Set(k, metaBytes, 0); err != nil {
 			return err
 		}
+		dvid.Infof("storing label %d index into cache\n", label)
 	}
 	return nil
 }
@@ -511,9 +526,8 @@ func (d *Data) handleBlockIndexing(v dvid.VersionID, ch chan blockChange, mut In
 	ch <- bc
 }
 
-// There are two sets of goroutines that handle mutations.  The first accepts block-level changes
-// and segregates all changes by label, and then forwards label-specific changes to the second
-// set of label-sharded goroutines that actually modify the label indices.
+// Goroutines accepts block-level changes and segregates all changes by label, and then
+// sends label-specific changes to concurrency-handling label indexing functions.
 
 type blockChange struct {
 	bcoord  dvid.IZYXString

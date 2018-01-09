@@ -95,8 +95,10 @@ func newDataInstance(uuid dvid.UUID, t *testing.T, name dvid.InstanceName) *Data
 }
 
 func TestLabelblkDirectAPI(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	uuid, versionID := initTestRepo()
 	labels := newDataInstance(uuid, t, "mylabels")
@@ -155,8 +157,10 @@ func TestLabelblkDirectAPI(t *testing.T) {
 	}
 }
 func TestLabelblkRepoPersistence(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	uuid, _ := initTestRepo()
 
@@ -313,8 +317,10 @@ func (mjson mergeJSON) send(t *testing.T, uuid dvid.UUID, name string) {
 }
 
 func TestMultiscale(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
@@ -780,8 +786,10 @@ type labelResp struct {
 }
 
 func TestLabels(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	uuid, _ := datastore.NewTestRepo()
 	if len(uuid) < 5 {

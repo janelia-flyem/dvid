@@ -60,6 +60,34 @@ func init() {
 	DefaultHost = DefaultHost[:len(DefaultHost)-1] // removes EOL
 }
 
+type TestConfig struct {
+	CacheSize map[string]int // MB for caches
+}
+
+// OpenTest initializes the server for testing, setting up caching, datastore, etc.
+// Later configurations will override earlier ones.
+func OpenTest(configs ...TestConfig) error {
+	if len(configs) > 0 {
+		for _, c := range configs {
+			if len(c.CacheSize) != 0 {
+				for id, size := range c.CacheSize {
+					if tc.Cache == nil {
+						tc.Cache = make(map[string]sizeConfig)
+					}
+					tc.Cache[id] = sizeConfig{Size: size}
+				}
+			}
+		}
+	}
+	datastore.OpenTest()
+	return nil
+}
+
+// CloseTest shuts down server for testing.
+func CloseTest() {
+	datastore.CloseTest()
+}
+
 type tomlConfig struct {
 	Server     serverConfig
 	Email      emailConfig
@@ -67,6 +95,7 @@ type tomlConfig struct {
 	Kafka      dvid.KafkaConfig
 	Store      map[storage.Alias]storeConfig
 	Backend    map[dvid.DataSpecifier]backendConfig
+	Cache      map[string]sizeConfig
 	Groupcache storage.GroupcacheConfig
 }
 
@@ -156,23 +185,33 @@ func (c *tomlConfig) AllowTiming() bool {
 	return c.Server.AllowTiming
 }
 
-// LabelIndexCache returns the number oF bytes reserved for labelarray index caching.
-// If unset via "LabelIndexCache" parameter, will return 0.
-func LabelIndexCache() int {
-	return tc.Server.LabelIndexCache * dvid.Mega
+// CacheSize returns the number oF bytes reserved for the given identifier.
+// If unset, will return 0.
+func CacheSize(id string) int {
+	if tc.Cache == nil {
+		return 0
+	}
+	setting, found := tc.Cache[id]
+	if !found {
+		return 0
+	}
+	return setting.Size * dvid.Mega
 }
 
 type serverConfig struct {
-	Host            string
-	HTTPAddress     string
-	RPCAddress      string
-	WebClient       string
-	AllowTiming     bool
-	Note            string
-	LabelIndexCache int
+	Host        string
+	HTTPAddress string
+	RPCAddress  string
+	WebClient   string
+	AllowTiming bool
+	Note        string
 
 	IIDGen   string `toml:"instance_id_gen"`
 	IIDStart uint32 `toml:"instance_id_start"`
+}
+
+type sizeConfig struct {
+	Size int
 }
 
 type storeConfig map[string]interface{}

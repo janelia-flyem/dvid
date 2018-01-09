@@ -847,8 +847,10 @@ func newDataInstance(uuid dvid.UUID, t *testing.T, name dvid.InstanceName) *Data
 }
 
 func TestLabelarrayDirectAPI(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	uuid, versionID := initTestRepo()
 	lbls := newDataInstance(uuid, t, "mylabels")
@@ -908,8 +910,10 @@ func TestLabelarrayDirectAPI(t *testing.T) {
 }
 
 func TestLabelarrayRepoPersistence(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	uuid, _ := initTestRepo()
 
@@ -965,8 +969,10 @@ func TestLabelarrayRepoPersistence(t *testing.T) {
 }
 
 func TestMultiscaleIngest(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
@@ -1124,8 +1130,10 @@ func writeInt32(t *testing.T, buf *bytes.Buffer, i int32) {
 }
 
 func TestPostBlocks(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	uuid, _ := datastore.NewTestRepo()
 	if len(uuid) < 5 {
@@ -1254,8 +1262,10 @@ func testExtents(t *testing.T, name string, uuid dvid.UUID, min, max dvid.Point3
 }
 
 func TestBigPostBlock(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	uuid, _ := datastore.NewTestRepo()
 	if len(uuid) < 5 {
@@ -1294,8 +1304,10 @@ func TestBigPostBlock(t *testing.T) {
 }
 
 func TestBigPostBlock2(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	uuid, _ := datastore.NewTestRepo()
 	if len(uuid) < 5 {
@@ -1321,8 +1333,10 @@ func TestBigPostBlock2(t *testing.T) {
 }
 
 func testLabels(t *testing.T, labelsIndexed bool) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	uuid, _ := datastore.NewTestRepo()
 	if len(uuid) < 5 {

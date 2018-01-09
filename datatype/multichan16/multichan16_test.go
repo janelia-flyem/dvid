@@ -7,6 +7,7 @@ import (
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
+	"github.com/janelia-flyem/dvid/server"
 )
 
 var (
@@ -29,8 +30,10 @@ func initTestRepo() (dvid.UUID, dvid.VersionID) {
 }
 
 func TestBasic(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	uuid, _ := initTestRepo()
 
@@ -42,8 +45,10 @@ func TestBasic(t *testing.T) {
 }
 
 func TestMultichan16RepoPersistence(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	uuid, _ := initTestRepo()
 

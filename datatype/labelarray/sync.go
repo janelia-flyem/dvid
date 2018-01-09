@@ -107,10 +107,12 @@ func (d *Data) Shutdown(wg *sync.WaitGroup) {
 	for i := 0; i < numMutateHandlers; i++ {
 		close(d.mutateCh[i])
 	}
-	var hitrate float64
-	if metaAttempts > 0 {
-		hitrate = (float64(metaHits) / float64(metaAttempts)) * 100.0
+	if indexCache != nil {
+		var hitrate float64
+		if metaAttempts > 0 {
+			hitrate = (float64(metaHits) / float64(metaAttempts)) * 100.0
+		}
+		dvid.Infof("Cache for data %q: got %d meta cache hits on %d attempts (%5.2f)\n", d.DataName(), metaHits, metaAttempts, hitrate)
 	}
-	dvid.Infof("Closing index handler for data %q: got %d meta cache hits on %d attempts (%5.2f)\n", d.DataName(), metaHits, metaAttempts, hitrate)
 	wg.Done()
 }

@@ -341,8 +341,10 @@ func createLabelTest2Volume(t *testing.T, uuid dvid.UUID, name string) *testVolu
 }
 
 func TestBadSyncBlockSize(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	uuid, _ := initTestRepo()
 	var config dvid.Config
@@ -359,8 +361,10 @@ func TestBadSyncBlockSize(t *testing.T) {
 }
 
 func TestSparseVolumes(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
@@ -492,8 +496,10 @@ func TestSparseVolumes(t *testing.T) {
 }
 
 func TestMergeLabels(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
@@ -558,8 +564,10 @@ func TestMergeLabels(t *testing.T) {
 }
 
 func TestSplitLabel(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
@@ -668,8 +676,10 @@ func TestSplitLabel(t *testing.T) {
 
 // Same as TestSplitLabel but now designate the actual split label
 func TestSplitGivenLabel(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
@@ -728,8 +738,10 @@ func TestSplitGivenLabel(t *testing.T) {
 }
 
 func TestSplitCoarseLabel(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
@@ -828,8 +840,10 @@ func TestSplitCoarseLabel(t *testing.T) {
 }
 
 func TestSplitCoarseGivenLabel(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
@@ -922,8 +936,10 @@ func TestSplitCoarseGivenLabel(t *testing.T) {
 }
 
 func TestMergeSplitLabel(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
@@ -1041,8 +1057,10 @@ func TestMergeSplitLabel(t *testing.T) {
 }
 
 func TestMultiscaleMergeSplit(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
@@ -1256,8 +1274,10 @@ func TestMultiscaleMergeSplit(t *testing.T) {
 
 // Test that mutable labelblk POST will accurately remove prior bodies.
 func TestMutableLabelblkPOST(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()
@@ -1324,8 +1344,10 @@ func TestMutableLabelblkPOST(t *testing.T) {
 }
 
 func TestResyncLabel(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	// Create testbed volume and data instances
 	uuid, _ := initTestRepo()

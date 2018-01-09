@@ -40,8 +40,10 @@ func createFloatTestVolume(t *testing.T, uuid dvid.UUID, name string, offset, si
 }
 
 func TestFloatInstanceCreation(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	uuid, _ := datastore.NewTestRepo()
 
@@ -99,8 +101,10 @@ func TestFloatInstanceCreation(t *testing.T) {
 }
 
 func TestFloatDirectCalls(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	uuid, versionID := initTestRepo()
 
@@ -172,8 +176,10 @@ func TestFloatDirectCalls(t *testing.T) {
 }
 
 func TestFloat32RepoPersistence(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	uuid, _ := initTestRepo()
 

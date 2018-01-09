@@ -64,8 +64,10 @@ func initTestRepo() (dvid.UUID, dvid.VersionID) {
 
 // Make sure new labelgraph data have different IDs.
 func TestNewLabelgraphDifferent(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	uuid, _ := initTestRepo()
 
@@ -94,8 +96,10 @@ func TestNewLabelgraphDifferent(t *testing.T) {
 }
 
 func TestLabelgraphRepoPersistence(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	uuid, _ := initTestRepo()
 
@@ -132,8 +136,10 @@ func TestLabelgraphRepoPersistence(t *testing.T) {
 
 // check subgraph endpoint
 func TestLabelgraphPostAndDelete(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	// Create the ROI dataservice.
 	uuid, _ := initTestRepo()

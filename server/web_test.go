@@ -24,8 +24,10 @@ func testLog(t *testing.T, got, expect string) {
 }
 
 func TestNote(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer CloseTest()
 
 	uuid, _ := datastore.NewTestRepo()
 
@@ -55,8 +57,10 @@ func TestNote(t *testing.T) {
 }
 
 func TestLog(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer CloseTest()
 
 	uuid, _ := datastore.NewTestRepo()
 
@@ -111,8 +115,10 @@ func TestLog(t *testing.T) {
 }
 
 func TestCommitBranchMergeDelete(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer CloseTest()
 
 	uuid, _ := datastore.NewTestRepo()
 

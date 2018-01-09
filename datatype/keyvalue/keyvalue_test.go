@@ -35,8 +35,10 @@ func initTestRepo() (dvid.UUID, dvid.VersionID) {
 
 // Make sure new keyvalue data have different IDs.
 func TestNewKeyvalueDifferent(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	uuid, _ := initTestRepo()
 
@@ -71,8 +73,10 @@ func TestNewKeyvalueDifferent(t *testing.T) {
 }
 
 func TestKeyvalueRoundTrip(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	uuid, versionID := initTestRepo()
 
@@ -109,8 +113,10 @@ func TestKeyvalueRoundTrip(t *testing.T) {
 }
 
 func TestKeyvalueRepoPersistence(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	uuid, _ := initTestRepo()
 
@@ -212,8 +218,10 @@ func testRequest(t *testing.T, uuid dvid.UUID, versionID dvid.VersionID, name dv
 }
 
 func TestKeyvalueRequests(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	uuid, versionID := initTestRepo()
 
@@ -225,8 +233,10 @@ type resolveResp struct {
 }
 
 func TestKeyvalueUnversioned(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	uuid, _ := initTestRepo()
 
@@ -356,8 +366,10 @@ func TestKeyvalueUnversioned(t *testing.T) {
 }
 
 func TestKeyvalueVersioning(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	uuid, _ := initTestRepo()
 
@@ -657,8 +669,10 @@ func TestKeyvalueVersioning(t *testing.T) {
 
 // Test added after error in getting two paths to the same ancestor k/v after merge.
 func TestDiamondGetOnMerge(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	uuid, _ := initTestRepo()
 

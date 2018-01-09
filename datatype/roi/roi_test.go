@@ -171,8 +171,10 @@ func TestTuples(t *testing.T) {
 }
 
 func TestROIRequests(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	// Create the ROI dataservice.
 	uuid, _ := initTestRepo()
@@ -311,8 +313,10 @@ func TestROIRequests(t *testing.T) {
 }
 
 func TestROIPostAndDelete(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	// Create the ROI dataservice.
 	uuid, _ := initTestRepo()
@@ -354,8 +358,10 @@ func TestROIPostAndDelete(t *testing.T) {
 }
 
 func TestROICreateAndSerialize(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	uuid, _ := initTestRepo()
 
@@ -414,8 +420,10 @@ func TestROICreateAndSerialize(t *testing.T) {
 }
 
 func TestROIPartition(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	// Create the ROI dataservice.
 	uuid, versionID := initTestRepo()
@@ -468,8 +476,10 @@ func TestROIPartition(t *testing.T) {
 }
 
 func TestROISimplePartition(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	// Create the ROI dataservice.
 	uuid, versionID := initTestRepo()
@@ -877,8 +887,10 @@ const expectedSimplePartition = `
 `
 
 func TestROIRepoPersistence(t *testing.T) {
-	datastore.OpenTest()
-	defer datastore.CloseTest()
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
 
 	uuid, _ := initTestRepo()
 
