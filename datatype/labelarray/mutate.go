@@ -83,7 +83,7 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp) error {
 	}
 	jsonmsg, _ := json.Marshal(msginfo)
 	if err := d.ProduceKafkaMsg(jsonmsg); err != nil {
-		return err
+		dvid.Errorf("can't send merge op for %q to kafka: %v\n", d.DataName(), err)
 	}
 
 	// Signal that we are starting a merge.
@@ -229,8 +229,7 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel, splitLabel uint64, r io.
 	}
 	var splitRef string
 	if splitRef, err = d.PutBlob(splitData); err != nil {
-		err = fmt.Errorf("error storing split data: %v", err)
-		return
+		dvid.Errorf("error storing split data: %v", err)
 	}
 
 	// send kafka split event to instance-uuid topic
@@ -246,8 +245,7 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel, splitLabel uint64, r io.
 	}
 	jsonmsg, _ := json.Marshal(msginfo)
 	if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
-		err = fmt.Errorf("error on sending split op to kafka: %v", err)
-		return
+		dvid.Errorf("error on sending split op to kafka: %v", err)
 	}
 
 	evt := datastore.SyncEvent{d.DataUUID(), labels.SplitStartEvent}
@@ -306,8 +304,7 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel, splitLabel uint64, r io.
 	}
 	jsonmsg, _ = json.Marshal(msginfo)
 	if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
-		err = fmt.Errorf("error on sending split complete op to kafka: %v", err)
-		return
+		dvid.Errorf("error on sending split complete op to kafka: %v", err)
 	}
 
 	return toLabel, nil
@@ -353,13 +350,6 @@ func (d *Data) SplitCoarseLabels(v dvid.VersionID, fromLabel, splitLabel uint64,
 	server.LargeMutationMutex.Lock()
 	defer server.LargeMutationMutex.Unlock()
 
-	splitOp := labels.SplitOp{
-		Target:   fromLabel,
-		NewLabel: toLabel,
-		RLEs:     splits,
-		Coarse:   true,
-	}
-
 	// store split info into separate data.
 	var splitData []byte
 	if splitData, err = splits.MarshalBinary(); err != nil {
@@ -383,8 +373,7 @@ func (d *Data) SplitCoarseLabels(v dvid.VersionID, fromLabel, splitLabel uint64,
 	}
 	jsonmsg, _ := json.Marshal(msginfo)
 	if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
-		err = fmt.Errorf("error on sending coarse split op to kafka: %v", err)
-		return
+		dvid.Errorf("error on sending coarse split op to kafka: %v", err)
 	}
 
 	evt := datastore.SyncEvent{d.DataUUID(), labels.SplitStartEvent}
@@ -403,12 +392,6 @@ func (d *Data) SplitCoarseLabels(v dvid.VersionID, fromLabel, splitLabel uint64,
 	if err := datastore.NotifySubscribers(evt, msg); err != nil {
 		return 0, err
 	}
-
-	go func() {
-		if err = labels.LogSplit(d, v, mutID, splitOp); err != nil {
-			dvid.Errorf("logging split: %v\n", err)
-		}
-	}()
 
 	// Order the split blocks
 	splitblks := make(dvid.IZYXSlice, numBlocks)
@@ -438,6 +421,16 @@ func (d *Data) SplitCoarseLabels(v dvid.VersionID, fromLabel, splitLabel uint64,
 	msg = datastore.SyncMessage{labels.SplitLabelEvent, v, deltaSplit}
 	if err := datastore.NotifySubscribers(evt, msg); err != nil {
 		return 0, err
+	}
+
+	msginfo = map[string]interface{}{
+		"Action":     "splitcoarse-complete",
+		"MutationID": mutID,
+		"UUID":       string(versionuuid),
+	}
+	jsonmsg, _ = json.Marshal(msginfo)
+	if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
+		dvid.Errorf("error on sending coarse split complete op to kafka: %v", err)
 	}
 
 	dvid.Infof("Coarsely split %d blocks from label %d to label %d\n", numBlocks, fromLabel, toLabel)
