@@ -1207,7 +1207,9 @@ func TestMergeSplitLabel(t *testing.T) {
 }
 
 func TestMultiscaleMergeSplit(t *testing.T) {
-	if err := server.OpenTest(); err != nil {
+	testConfig := server.TestConfig{CacheSize: map[string]int{"labelarray": 10}}
+	// var testConfig server.TestConfig
+	if err := server.OpenTest(testConfig); err != nil {
 		t.Fatalf("can't open test server: %v\n", err)
 	}
 	defer server.CloseTest()
@@ -1403,7 +1405,9 @@ func TestMultiscaleMergeSplit(t *testing.T) {
 
 // Test that mutable labelarray POST will accurately remove prior bodies.
 func TestMutableLabelblkPOST(t *testing.T) {
-	if err := server.OpenTest(); err != nil {
+	testConfig := server.TestConfig{CacheSize: map[string]int{"labelarray": 10}}
+	// var testConfig server.TestConfig
+	if err := server.OpenTest(testConfig); err != nil {
 		t.Fatalf("can't open test server: %v\n", err)
 	}
 	defer server.CloseTest()
@@ -1471,6 +1475,7 @@ func TestMutableLabelblkPOST(t *testing.T) {
 
 func TestConcurrentMutations(t *testing.T) {
 	testConfig := server.TestConfig{CacheSize: map[string]int{"labelarray": 10}}
+	// var testConfig server.TestConfig
 	if err := server.OpenTest(testConfig); err != nil {
 		t.Fatalf("can't open test server: %v\n", err)
 	}

@@ -67,6 +67,7 @@ type TestConfig struct {
 // OpenTest initializes the server for testing, setting up caching, datastore, etc.
 // Later configurations will override earlier ones.
 func OpenTest(configs ...TestConfig) error {
+	tc = tomlConfig{}
 	if len(configs) > 0 {
 		for _, c := range configs {
 			if len(c.CacheSize) != 0 {
@@ -79,6 +80,7 @@ func OpenTest(configs ...TestConfig) error {
 			}
 		}
 	}
+	dvid.Infof("OpenTest with %v: cache setting %v\n", configs, tc.Cache)
 	datastore.OpenTest()
 	return nil
 }

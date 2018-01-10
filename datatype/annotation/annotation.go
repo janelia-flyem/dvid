@@ -916,6 +916,10 @@ type labelType interface {
 
 func (d *Data) GetSyncedLabels() labelType {
 	for dataUUID := range d.SyncedData() {
+		// source0, err := labelmap.GetByDataUUID(dataUUID)
+		// if err == nil {
+		// 	return source0
+		// }
 		source1, err := labelarray.GetByDataUUID(dataUUID)
 		if err == nil {
 			return source1

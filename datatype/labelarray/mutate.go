@@ -18,7 +18,6 @@ import (
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
-	"github.com/janelia-flyem/dvid/storage"
 )
 
 type sizeChange struct {
@@ -144,24 +143,9 @@ func (d *Data) processMerge(v dvid.VersionID, mutID uint64, delta labels.DeltaMe
 	}
 	ChangeLabelIndex(d, v, delta.Target, mergebdm)
 
-	// Wait for index to be merged before deleting all the merged label block index kv pairs.
-	store, err := datastore.GetOrderedKeyValueDB(d)
-	if err != nil {
-		return fmt.Errorf("Data %q merge had error initializing store: %v\n", d.DataName(), err)
-	}
-	batcher, ok := store.(storage.KeyValueBatcher)
-	if !ok {
-		return fmt.Errorf("Data %q merge requires batch-enabled store, which %q is not\n", d.DataName(), store)
-	}
-
-	ctx := datastore.NewVersionedCtx(d, v)
-	batch := batcher.NewBatch(ctx)
+	// Delete all the merged label indices.
 	for merged := range delta.Merged {
-		tk := NewLabelIndexTKey(merged)
-		batch.Delete(tk)
-	}
-	if err := batch.Commit(); err != nil {
-		return fmt.Errorf("Error on commiting block indices for label %d, data %q: %v\n", delta.Target, d.DataName(), err)
+		DeleteLabelIndex(d, v, merged)
 	}
 
 	deltaRep := labels.DeltaReplaceSize{

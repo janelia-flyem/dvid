@@ -226,11 +226,22 @@ func (d *Data) handleSyncMessage(ctx *datastore.VersionedCtx, msg datastore.Sync
 		data, _ := delta.Data.MakeLabelVolume()
 		d.ingestBlock(ctx, chunkPt, data, batcher)
 
+	// case labelmap.IngestedBlock:
+	// 	chunkPt, _ := delta.BCoord.ToChunkPoint3d()
+	// 	data, _ := delta.Data.MakeLabelVolume()
+	// 	d.ingestBlock(ctx, chunkPt, data, batcher)
+
 	case labelarray.MutatedBlock:
 		chunkPt, _ := delta.BCoord.ToChunkPoint3d()
 		prev, _ := delta.Prev.MakeLabelVolume()
 		data, _ := delta.Data.MakeLabelVolume()
 		d.mutateBlock(ctx, chunkPt, prev, data, batcher)
+
+	// case labelmap.MutatedBlock:
+	// 	chunkPt, _ := delta.BCoord.ToChunkPoint3d()
+	// 	prev, _ := delta.Prev.MakeLabelVolume()
+	// 	data, _ := delta.Data.MakeLabelVolume()
+	// 	d.mutateBlock(ctx, chunkPt, prev, data, batcher)
 
 	case labels.DeltaMergeStart:
 		// ignore

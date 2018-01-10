@@ -35,13 +35,17 @@ var (
 // Initialize makes sure index caching is initialized if cache size is specified
 // in the server configuration.
 func (d *Data) Initialize() {
+	numBytes := server.CacheSize("labelarray")
 	if indexCache == nil {
-		numBytes := server.CacheSize("labelarray")
 		if numBytes > 0 {
 			indexCache = freecache.NewCache(numBytes)
 			mbs := numBytes >> 20
 			dvid.Infof("Created freecache of ~ %d MB for labelarray instances.\n", mbs)
 		}
+	} else if numBytes == 0 {
+		indexCache = nil
+	} else {
+		indexCache.Clear()
 	}
 }
 
@@ -115,6 +119,19 @@ func putLabelMeta(ctx *datastore.VersionedCtx, label uint64, meta *Meta) error {
 	return nil
 }
 
+func deleteLabelMeta(ctx *datastore.VersionedCtx, label uint64) error {
+	store, err := datastore.GetOrderedKeyValueDB(ctx.Data())
+	if err != nil {
+		return fmt.Errorf("data %q DeleteLabelMeta had error initializing store: %v", ctx.Data().DataName(), err)
+	}
+
+	tk := NewLabelIndexTKey(label)
+	if err := store.Delete(ctx, tk); err != nil {
+		return fmt.Errorf("unable to delete indices for label %d, data %s: %v", label, ctx.Data().DataName(), err)
+	}
+	return nil
+}
+
 // GetLabelIndex gets label index data from storage for a given data instance
 // and version. Concurrency-safe access and supports caching.
 func GetLabelIndex(d dvid.Data, v dvid.VersionID, label uint64) (*Meta, error) {
@@ -152,7 +169,6 @@ func GetLabelIndex(d dvid.Data, v dvid.VersionID, label uint64) (*Meta, error) {
 		} else if err := indexCache.Set(k.Bytes(), metaBytes, 0); err != nil {
 			dvid.Errorf("unable to set label %d index cache for %q: %v\n", label, d.DataName(), err)
 		}
-		dvid.Infof("storing label %d index into cache\n", label)
 	}
 	return m, err
 }
@@ -312,10 +328,30 @@ func GetMappedLabelSetIndex(d dvid.Data, v dvid.VersionID, lbls labels.Set, scal
 	return &meta, lbls2, nil
 }
 
+// DeleteLabelIndex deletes the index for a given label.
+func DeleteLabelIndex(d dvid.Data, v dvid.VersionID, label uint64) error {
+	shard := label % numIndexShards
+	indexMu[shard].Lock()
+	defer indexMu[shard].Unlock()
+
+	ctx := datastore.NewVersionedCtx(d, v)
+	if err := deleteLabelMeta(ctx, label); err != nil {
+		return err
+	}
+	if indexCache != nil {
+		k := indexKey{data: d, version: v, label: label}.Bytes()
+		indexCache.Del(k)
+	}
+	return nil
+}
+
 // SetLabelIndex sets label index data from storage for a given data instance and
 // version. If the given Meta is nil, the label index is deleted.  Concurrency-safe
 // and supports caching.
 func SetLabelIndex(d dvid.Data, v dvid.VersionID, label uint64, m *Meta) error {
+	if m == nil {
+		return DeleteLabelIndex(d, v, label)
+	}
 	shard := label % numIndexShards
 	indexMu[shard].Lock()
 	defer indexMu[shard].Unlock()
@@ -333,7 +369,6 @@ func SetLabelIndex(d dvid.Data, v dvid.VersionID, label uint64, m *Meta) error {
 		if err := indexCache.Set(k, metaBytes, 0); err != nil {
 			return err
 		}
-		dvid.Infof("storing label %d index into cache\n", label)
 	}
 	return nil
 }
@@ -376,19 +411,28 @@ func ChangeLabelIndex(d dvid.Data, v dvid.VersionID, label uint64, delta blockDi
 	}
 
 	ctx := datastore.NewVersionedCtx(d, v)
-	if err = putLabelMeta(ctx, label, m); err != nil {
-		return err
-	}
-	if indexCache != nil && m != nil {
-		metaBytes, err = m.MarshalBinary()
-		if err != nil {
+	if len(m.Blocks) == 0 { // Delete this label's index
+		if err := deleteLabelMeta(ctx, label); err != nil {
 			return err
 		}
-		k := indexKey{data: d, version: v, label: label}.Bytes()
-		if err := indexCache.Set(k, metaBytes, 0); err != nil {
+		if indexCache != nil {
+			k := indexKey{data: d, version: v, label: label}.Bytes()
+			indexCache.Del(k)
+		}
+	} else {
+		if err = putLabelMeta(ctx, label, m); err != nil {
 			return err
 		}
-		dvid.Infof("storing label %d index into cache\n", label)
+		if indexCache != nil && m != nil {
+			metaBytes, err = m.MarshalBinary()
+			if err != nil {
+				return err
+			}
+			k := indexKey{data: d, version: v, label: label}.Bytes()
+			if err := indexCache.Set(k, metaBytes, 0); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
@@ -786,48 +830,15 @@ func (d *Data) addBoundedRLEs(izyx dvid.IZYXString, data []byte, lbls labels.Set
 // FoundSparseVol returns true if a sparse volume is found for the given label
 // within the given bounds.
 func (d *Data) FoundSparseVol(ctx *datastore.VersionedCtx, label uint64, bounds dvid.Bounds) (bool, error) {
-	// Scan through all keys coming from label blocks to see if we have any hits.
-	var constituents labels.Set
-	mapping := labels.LabelMap(ctx.InstanceVersion())
-
-	if mapping == nil {
-		constituents = labels.Set{label: struct{}{}}
-	} else {
-		// Check if this label has been merged.
-		if _, found := mapping.Get(label); found {
-			return false, nil
-		}
-
-		// If not, see if labels have been merged into it.
-		constituents = mapping.ConstituentLabels(label)
+	m, members, err := GetMappedLabelIndex(d, ctx.VersionID(), label, 0, bounds)
+	if err != nil {
+		return false, err
 	}
 
-	// See if any constituent label is within bounds.
-	v := ctx.VersionID()
-	for label := range constituents {
-		meta, err := GetLabelIndex(d, v, label)
-		if err != nil {
-			return false, err
-		}
-		if meta == nil {
-			continue
-		}
-		// Check bounds if one was supplied.
-		if bounds.Block.IsSet() {
-			for _, izyx := range meta.Blocks {
-				chunkPt, err := izyx.ToChunkPoint3d()
-				if err != nil {
-					return false, err
-				}
-				if !(bounds.Block.OutsideX(chunkPt[0]) || bounds.Block.OutsideY(chunkPt[1]) || bounds.Block.OutsideZ(chunkPt[2])) {
-					return true, nil
-				}
-			}
-		} else if len(meta.Blocks) > 0 {
-			return true, nil
-		}
+	if m != nil && len(m.Blocks) > 0 {
+		dvid.Infof("Found %d blocks for label %d with constituents %s\n", len(m.Blocks), label, members)
+		return true, nil
 	}
-
 	return false, nil
 }
 
@@ -974,6 +985,7 @@ func (d *Data) GetLegacyRLE(ctx *datastore.VersionedCtx, label uint64, scale uin
 	if err != nil {
 		return nil, err
 	}
+	dvid.Infof("GetLegacyRLE --> got lbls %s, and meta: %v\n", lbls, meta)
 	return d.getLegacyRLEs(ctx, meta, lbls, scale, bounds)
 }
 
