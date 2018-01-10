@@ -378,11 +378,12 @@ Node-Level REST endpoints
 	Creates a new branch child node (version) of the node with given UUID.
 	The branch name must be unique across the DAG.
 
-	The post body should be in JSON format, where "note" is optional:
+	The post body should be in JSON format, where "note" and "uuid" are optional:
 
 	{
 	    "branch": "unique name of new branch",
-	    "note": "this is what we'll be doing on this version"
+		"note": "this is what we'll be doing on this version",
+		"uuid": <desired UUID>
 	}
 
 	A JSON response will be sent with the following format:
@@ -408,7 +409,10 @@ Node-Level REST endpoints
 
 	An optional post body should be in JSON format:
 
-	{ "note": "this is what we'll be doing on this version" }
+	{ 
+		"note": "this is what we'll be doing on this version",
+		"uuid": <desired UUID>
+	}
 
 	A JSON response will be sent with the following format:
 
@@ -1539,6 +1543,7 @@ func repoNewVersionHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	uuid := c.Env["uuid"].(dvid.UUID)
 	jsonData := struct {
 		Note string `json:"note"`
+		UUID string `json:"uuid"`
 	}{}
 
 	if r.Body != nil {
@@ -1556,8 +1561,18 @@ func repoNewVersionHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	var uuidPtr *dvid.UUID
+	if len(jsonData.UUID) > 0 {
+		uuid, err := dvid.StringToUUID(jsonData.UUID)
+		if err != nil {
+			BadRequest(w, r, fmt.Sprintf("Bad UUID provided: %v", err))
+			return
+		}
+		uuidPtr = &uuid
+	}
+
 	// create new version with empty branch specification
-	newuuid, err := datastore.NewVersion(uuid, jsonData.Note, "", nil)
+	newuuid, err := datastore.NewVersion(uuid, jsonData.Note, "", uuidPtr)
 	if err != nil {
 		BadRequest(w, r, err)
 	} else {
@@ -1593,9 +1608,10 @@ func repoBranchHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	jsonData := struct {
 		Branch string `json:"branch"`
 		Note   string `json:"note"`
+		UUID   string `json:"uuid"`
 	}{}
 
-	// load branch and note option
+	// load branch and note/uuid options
 	if r.Body != nil {
 		data, err := ioutil.ReadAll(r.Body)
 		if err != nil {
@@ -1611,6 +1627,16 @@ func repoBranchHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	var uuidPtr *dvid.UUID
+	if len(jsonData.UUID) > 0 {
+		uuid, err := dvid.StringToUUID(jsonData.UUID)
+		if err != nil {
+			BadRequest(w, r, fmt.Sprintf("Bad UUID provided: %v", err))
+			return
+		}
+		uuidPtr = &uuid
+	}
+
 	// the default or master name should be not be specified
 	if jsonData.Branch == "" || jsonData.Branch == "master" {
 		BadRequest(w, r, fmt.Errorf("Cannot create a master branch"))
@@ -1618,7 +1644,7 @@ func repoBranchHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	}
 
 	// create new branch (will just version node if branch name is the same as the parent)
-	newuuid, err := datastore.NewVersion(uuid, jsonData.Note, jsonData.Branch, nil)
+	newuuid, err := datastore.NewVersion(uuid, jsonData.Note, jsonData.Branch, uuidPtr)
 	if err != nil {
 		BadRequest(w, r, err)
 	} else {

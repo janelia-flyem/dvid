@@ -185,3 +185,58 @@ func TestCommitBranchMergeDelete(t *testing.T) {
 	apiStr = fmt.Sprintf("%srepo/%s/merge", WebAPIPath, parent1)
 	TestHTTP(t, "POST", apiStr, payload)
 }
+
+func TestAssignableUUID(t *testing.T) {
+	if err := OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer CloseTest()
+
+	uuid, _ := datastore.NewTestRepo()
+
+	// Commit it.
+	payload := bytes.NewBufferString(`{"note": "This is my test commit", "log": ["line1", "line2", "some more stuff in a line"]}`)
+	apiStr := fmt.Sprintf("%snode/%s/commit", WebAPIPath, uuid)
+	TestHTTP(t, "POST", apiStr, payload)
+
+	// Test assigned UUID on new version
+	versionReq := fmt.Sprintf("%snode/%s/newversion", WebAPIPath, uuid)
+	payload = bytes.NewBufferString(`{"uuid": "f3870173ad1d4a6a872b9fd860e246b3"}`)
+	respData := TestHTTP(t, "POST", versionReq, payload)
+	resp := struct {
+		Child string `json:"child"`
+	}{}
+	if err := json.Unmarshal(respData, &resp); err != nil {
+		t.Errorf("Expected 'child' JSON response.  Got %s\n", string(respData))
+	}
+	if resp.Child != "f3870173ad1d4a6a872b9fd860e246b3" {
+		t.Errorf("Expected new version UUID to be f3870173ad1d4a6a872b9fd860e246b3, got %s\n", resp.Child)
+	}
+	if _, err := dvid.StringToUUID(resp.Child); err != nil {
+		t.Errorf("bad child uuid: %v\n", err)
+	}
+
+	// Shouldn't be able to request a second node with same UUID.
+	TestBadHTTP(t, "POST", versionReq, payload)
+
+	// Shouldn't be able to request a node with bad UUID.
+	payload = bytes.NewBufferString(`{"uuid": "f3870173ad1d4a6a872b9f0e246b3"}`)
+	TestBadHTTP(t, "POST", versionReq, payload)
+
+	payload = bytes.NewBufferString(`{"uuid": "fXX70173ad1d4a6a872b9fd860e246b3"}`)
+	TestBadHTTP(t, "POST", versionReq, payload)
+
+	// Create a sibling.
+	branchReq := fmt.Sprintf("%snode/%s/branch", WebAPIPath, uuid)
+	payload = bytes.NewBufferString(`{"branch": "mybranch", "uuid": "7487347145aa42d0bda8ae6f27d4605c"}`)
+	respData = TestHTTP(t, "POST", branchReq, payload)
+	if err := json.Unmarshal(respData, &resp); err != nil {
+		t.Errorf("Expected 'child' JSON response.  Got %s\n", string(respData))
+	}
+	if resp.Child != "7487347145aa42d0bda8ae6f27d4605c" {
+		t.Errorf("Expected new version UUID to be 7487347145aa42d0bda8ae6f27d4605c, got %s\n", resp.Child)
+	}
+	if _, err := dvid.StringToUUID(resp.Child); err != nil {
+		t.Errorf("bad child uuid: %v\n", err)
+	}
+}

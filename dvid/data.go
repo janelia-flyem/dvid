@@ -6,6 +6,7 @@ package dvid
 
 import (
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"strings"
 
@@ -73,6 +74,20 @@ func NewUUID() UUID {
 }
 
 const NilUUID = UUID("")
+
+// StringToUUID converts a string to a UUID, checking to make sure it is a 32 character hex string.
+func StringToUUID(s string) (UUID, error) {
+	var err error
+	if len(s) != 32 {
+		err = fmt.Errorf("UUID must be 32 character hexidecimal string")
+	} else {
+		_, err = hex.DecodeString(s)
+	}
+	if err != nil {
+		return NilUUID, err
+	}
+	return UUID(s), nil
+}
 
 // UUIDSet is a set of UUIDs.
 type UUIDSet map[UUID]struct{}
