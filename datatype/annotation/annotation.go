@@ -95,7 +95,7 @@ POST <api URL>/node/<UUID>/<data name>/sync?<options>
 
     The annotations data type only accepts syncs to labelblk and labelvol data instances.
 
-    GET Query-string Options:
+    POST Query-string Options:
 
     replace    Set to "true" if you want passed syncs to replace and not be appended to current syncs.
 			   Default operation is false.
@@ -134,7 +134,7 @@ GET <api URL>/node/<UUID>/<data name>/tag/<tag>[?<options>]
 	GET http://foo.com/api/node/83af/myannotations/tag/goodstuff?relationships=true
 	
 
-DELETE <api URL>/node/<UUID>/<data name>/element/<coord>
+DELETE <api URL>/node/<UUID>/<data name>/element/<coord>[?<options>]
 
 	Deletes a point annotation given its location.
 
@@ -144,7 +144,12 @@ DELETE <api URL>/node/<UUID>/<data name>/element/<coord>
 			"Point": <3d point>,
 			"UUID": <UUID on which delete was done>
 		}
-	
+
+	POST Query-string Options:
+
+	kafkalog    Set to "off" if you don't want this mutation logged to kafka.
+
+
 GET <api URL>/node/<UUID>/<data name>/roi/<ROI specification>
 
 	Returns all point annotations within the ROI.  The ROI specification must be specified
@@ -162,7 +167,7 @@ GET <api URL>/node/<UUID>/<data name>/elements/<size>/<offset>
 
 	The returned point annotations will be an array of elements.
 
-POST <api URL>/node/<UUID>/<data name>/elements
+POST <api URL>/node/<UUID>/<data name>/elements[?<options>]
 
 	Adds or modifies point annotations.  The POSTed content is an array of elements.
 	Note that deletes are handled via a separate API (see above).
@@ -178,8 +183,13 @@ POST <api URL>/node/<UUID>/<data name>/elements
 	this data instance's BlobStore API.  See the node-level HTTP API documentation.
 
 		GET /api/node/{uuid}/{data name}/blobstore/{reference}
-	
-POST <api URL>/node/<UUID>/<data name>/move/<from_coord>/<to_coord>
+
+	POST Query-string Options:
+
+	kafkalog    Set to "off" if you don't want this mutation logged to kafka.
+
+
+POST <api URL>/node/<UUID>/<data name>/move/<from_coord>/<to_coord>[?<options>]
 
 	Moves the point annotation from <from_coord> to <to_coord> where
 	<from_coord> and <to_coord> are of the form X_Y_Z.
@@ -191,7 +201,12 @@ POST <api URL>/node/<UUID>/<data name>/move/<from_coord>/<to_coord>
 			"To": <3d point>,
 			"UUID": <UUID on which move was done>
 		}
-	
+
+	POST Query-string Options:
+
+	kafkalog    Set to "off" if you don't want this mutation logged to kafka.
+
+		
 POST <api URL>/node/<UUID>/<data name>/reload
 
 	Forces asynchornous denormalization of all annotations for labels and tags.  Can be 
@@ -1567,7 +1582,7 @@ func (d *Data) GetROISynapses(ctx *datastore.VersionedCtx, roiSpec storage.Filte
 
 // StoreSynapses performs a synchronous store of synapses in JSON format, not
 // returning until the data and its denormalizations are complete.
-func (d *Data) StoreSynapses(ctx *datastore.VersionedCtx, r io.Reader) error {
+func (d *Data) StoreSynapses(ctx *datastore.VersionedCtx, r io.Reader, kafkaOff bool) error {
 	jsonBytes, err := ioutil.ReadAll(r)
 	if err != nil {
 		return err
@@ -1633,27 +1648,29 @@ func (d *Data) StoreSynapses(ctx *datastore.VersionedCtx, r io.Reader) error {
 		return err
 	}
 
-	// store synapse info into blob store for kakfa reference
-	var postRef string
-	if postRef, err = d.PutBlob(jsonBytes); err != nil {
-		dvid.Errorf("storing posted synapse data %q to kafka: %v", d.DataName(), err)
-	}
+	if !kafkaOff {
+		// store synapse info into blob store for kakfa reference
+		var postRef string
+		if postRef, err = d.PutBlob(jsonBytes); err != nil {
+			dvid.Errorf("storing posted synapse data %q to kafka: %v", d.DataName(), err)
+		}
 
-	versionuuid, _ := datastore.UUIDFromVersion(ctx.VersionID())
-	msginfo := map[string]interface{}{
-		"Action":  "element-post",
-		"DataRef": postRef,
-		"UUID":    string(versionuuid),
-	}
-	jsonmsg, _ := json.Marshal(msginfo)
-	if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
-		dvid.Errorf("error on sending move element op to kafka: %v\n", err)
+		versionuuid, _ := datastore.UUIDFromVersion(ctx.VersionID())
+		msginfo := map[string]interface{}{
+			"Action":  "element-post",
+			"DataRef": postRef,
+			"UUID":    string(versionuuid),
+		}
+		jsonmsg, _ := json.Marshal(msginfo)
+		if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
+			dvid.Errorf("error on sending move element op to kafka: %v\n", err)
+		}
 	}
 
 	return batch.Commit()
 }
 
-func (d *Data) DeleteElement(ctx *datastore.VersionedCtx, pt dvid.Point3d) error {
+func (d *Data) DeleteElement(ctx *datastore.VersionedCtx, pt dvid.Point3d, kafkaOff bool) error {
 	// Get from block key
 	blockSize := d.blockSize()
 	bcoord := pt.Chunk(blockSize).(dvid.ChunkPoint3d)
@@ -1704,21 +1721,23 @@ func (d *Data) DeleteElement(ctx *datastore.VersionedCtx, pt dvid.Point3d) error
 		return err
 	}
 
-	versionuuid, _ := datastore.UUIDFromVersion(ctx.VersionID())
-	msginfo := map[string]interface{}{
-		"Action": "element-delete",
-		"Point":  pt,
-		"UUID":   string(versionuuid),
-	}
-	jsonmsg, _ := json.Marshal(msginfo)
-	if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
-		dvid.Errorf("error on sending delete element op to kafka: %v\n", err)
+	if !kafkaOff {
+		versionuuid, _ := datastore.UUIDFromVersion(ctx.VersionID())
+		msginfo := map[string]interface{}{
+			"Action": "element-delete",
+			"Point":  pt,
+			"UUID":   string(versionuuid),
+		}
+		jsonmsg, _ := json.Marshal(msginfo)
+		if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
+			dvid.Errorf("error on sending delete element op to kafka: %v\n", err)
+		}
 	}
 
 	return batch.Commit()
 }
 
-func (d *Data) MoveElement(ctx *datastore.VersionedCtx, from, to dvid.Point3d) error {
+func (d *Data) MoveElement(ctx *datastore.VersionedCtx, from, to dvid.Point3d, kafkaOff bool) error {
 	// Calc block keys
 	blockSize := d.blockSize()
 	fromCoord := from.Chunk(blockSize).(dvid.ChunkPoint3d)
@@ -1775,16 +1794,18 @@ func (d *Data) MoveElement(ctx *datastore.VersionedCtx, from, to dvid.Point3d) e
 		return err
 	}
 
-	versionuuid, _ := datastore.UUIDFromVersion(ctx.VersionID())
-	msginfo := map[string]interface{}{
-		"Action": "element-move",
-		"From":   from,
-		"To":     to,
-		"UUID":   string(versionuuid),
-	}
-	jsonmsg, _ := json.Marshal(msginfo)
-	if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
-		dvid.Errorf("error on sending move element op to kafka: %v\n", err)
+	if !kafkaOff {
+		versionuuid, _ := datastore.UUIDFromVersion(ctx.VersionID())
+		msginfo := map[string]interface{}{
+			"Action": "element-move",
+			"From":   from,
+			"To":     to,
+			"UUID":   string(versionuuid),
+		}
+		jsonmsg, _ := json.Marshal(msginfo)
+		if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
+			dvid.Errorf("error on sending move element op to kafka: %v\n", err)
+		}
 	}
 
 	batch = batcher.NewBatch(ctx)
@@ -2225,7 +2246,8 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			timedLog.Infof("HTTP %s: synapse elements in subvolume (size %s, offset %s) (%s)", r.Method, sizeStr, offsetStr, r.URL)
 
 		case "post":
-			if err := d.StoreSynapses(ctx, r.Body); err != nil {
+			kafkaOff := r.URL.Query().Get("kafkalog") == "off"
+			if err := d.StoreSynapses(ctx, r.Body, kafkaOff); err != nil {
 				server.BadRequest(w, r, err)
 				return
 			}
@@ -2249,7 +2271,8 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			server.BadRequest(w, r, err)
 			return
 		}
-		if err := d.DeleteElement(ctx, pt); err != nil {
+		kafkaOff := r.URL.Query().Get("kafkalog") == "off"
+		if err := d.DeleteElement(ctx, pt, kafkaOff); err != nil {
 			server.BadRequest(w, r, err)
 			return
 		}
@@ -2275,7 +2298,8 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			server.BadRequest(w, r, err)
 			return
 		}
-		if err := d.MoveElement(ctx, fromPt, toPt); err != nil {
+		kafkaOff := r.URL.Query().Get("kafkalog") == "off"
+		if err := d.MoveElement(ctx, fromPt, toPt, kafkaOff); err != nil {
 			server.BadRequest(w, r, err)
 			return
 		}
