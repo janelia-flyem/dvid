@@ -1661,8 +1661,10 @@ func (d *Data) StoreSynapses(ctx *datastore.VersionedCtx, r io.Reader, kafkaOff 
 			"DataRef": postRef,
 			"UUID":    string(versionuuid),
 		}
-		jsonmsg, _ := json.Marshal(msginfo)
-		if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
+		jsonmsg, err := json.Marshal(msginfo)
+		if err != nil {
+			dvid.Errorf("error marshaling JSON for annotations %q element post: %v\n", d.DataName(), err)
+		} else if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
 			dvid.Errorf("error on sending move element op to kafka: %v\n", err)
 		}
 	}
@@ -1728,8 +1730,10 @@ func (d *Data) DeleteElement(ctx *datastore.VersionedCtx, pt dvid.Point3d, kafka
 			"Point":  pt,
 			"UUID":   string(versionuuid),
 		}
-		jsonmsg, _ := json.Marshal(msginfo)
-		if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
+		jsonmsg, err := json.Marshal(msginfo)
+		if err != nil {
+			dvid.Errorf("error marshaling JSON for annotations %q element delete: %v\n", d.DataName(), err)
+		} else if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
 			dvid.Errorf("error on sending delete element op to kafka: %v\n", err)
 		}
 	}
@@ -1802,8 +1806,10 @@ func (d *Data) MoveElement(ctx *datastore.VersionedCtx, from, to dvid.Point3d, k
 			"To":     to,
 			"UUID":   string(versionuuid),
 		}
-		jsonmsg, _ := json.Marshal(msginfo)
-		if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
+		jsonmsg, err := json.Marshal(msginfo)
+		if err != nil {
+			dvid.Errorf("error marshaling JSON for annotations %q element move: %v\n", d.DataName(), err)
+		} else if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
 			dvid.Errorf("error on sending move element op to kafka: %v\n", err)
 		}
 	}
