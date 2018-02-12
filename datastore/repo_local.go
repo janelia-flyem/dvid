@@ -88,6 +88,8 @@ func Initialize(initMetadata bool, iconfig *InstanceConfig) error {
 	manager = m
 	m.Lock()
 	defer m.Unlock()
+	m.repoMutex.Lock()
+	defer m.repoMutex.Unlock()
 	m.idMutex.Lock()
 	defer m.idMutex.Unlock()
 
@@ -273,6 +275,8 @@ func (m *repoManager) Shutdown() {
 // and value corresponding to repo info.
 func (m *repoManager) MarshalJSON() ([]byte, error) {
 	// Create map of Root UUID -> Repo info
+	m.idMutex.RLock()
+	defer m.idMutex.RUnlock()
 	repos := make(map[dvid.UUID]*repoT, len(m.repoToUUID))
 	for _, uuid := range m.repoToUUID {
 		repos[uuid] = m.repos[uuid]
@@ -290,6 +294,7 @@ func (m *repoManager) MarshalJSON() ([]byte, error) {
 func (m *repoManager) GobDecode(b []byte) error {
 	buf := bytes.NewBuffer(b)
 	dec := gob.NewDecoder(buf)
+
 	if err := dec.Decode(&(m.repoToUUID)); err != nil {
 		return err
 	}
@@ -309,6 +314,7 @@ func (m *repoManager) GobDecode(b []byte) error {
 	if err := dec.Decode(&(m.instanceID)); err != nil {
 		return err
 	}
+
 	if err := dec.Decode(&(m.repos)); err != nil {
 		return err
 	}
@@ -650,10 +656,7 @@ func (m *repoManager) loadMetadata() error {
 	}
 
 	switch m.formatVersion {
-	case 0:
-		err = m.loadVersion0()
-	case 1:
-		// We aren't changing any metadata, just the labelvol datatype props.
+	case 0, 1:
 		err = m.loadVersion0()
 	default:
 		err = fmt.Errorf("Unknown metadata format %d", m.formatVersion)
@@ -832,6 +835,10 @@ func (m *repoManager) matchingUUID(str string) (dvid.UUID, dvid.VersionID, error
 func (m *repoManager) addRepo(r *repoT) error {
 	m.Lock()
 	defer m.Unlock()
+	m.repoMutex.Lock()
+	defer m.repoMutex.Unlock()
+	m.idMutex.Lock()
+	defer m.idMutex.Unlock()
 
 	m.repos[r.uuid] = r
 	m.repoToUUID[r.id] = r.uuid
@@ -855,9 +862,10 @@ func (m *repoManager) addRepo(r *repoT) error {
 func (m *repoManager) deleteRepo(uuid dvid.UUID, passcode string) error {
 	m.Lock()
 	defer m.Unlock()
-
-	m.idMutex.RLock()
-	defer m.idMutex.RUnlock()
+	m.repoMutex.Lock()
+	defer m.repoMutex.Unlock()
+	m.idMutex.Lock()
+	defer m.idMutex.Unlock()
 
 	r, found := m.repos[uuid]
 	if !found {
@@ -908,6 +916,9 @@ func (m *repoManager) deleteRepo(uuid dvid.UUID, passcode string) error {
 
 // repoFromUUID returns a repo given a UUID.  It will return an error if not found.
 func (m *repoManager) repoFromUUID(uuid dvid.UUID) (*repoT, error) {
+	m.repoMutex.RLock()
+	defer m.repoMutex.RUnlock()
+
 	repo, found := m.repos[uuid]
 	if !found {
 		return nil, fmt.Errorf("repo %s not found", uuid)
@@ -929,10 +940,17 @@ func (m *repoManager) repoFromVersion(v dvid.VersionID) (*repoT, error) {
 
 // repoFromID returns a repo given an id.
 func (m *repoManager) repoFromID(repoID dvid.RepoID) (*repoT, error) {
+	m.idMutex.RLock()
+	defer m.idMutex.RUnlock()
+
 	uuid, found := m.repoToUUID[repoID]
 	if !found {
 		return nil, ErrInvalidRepoID
 	}
+
+	m.repoMutex.RLock()
+	defer m.repoMutex.RUnlock()
+
 	repo, found := m.repos[uuid]
 	if !found {
 		return nil, ErrInvalidUUID
@@ -960,6 +978,9 @@ func (m *repoManager) newRepo(alias, description string, assign *dvid.UUID, pass
 
 	m.Lock()
 	defer m.Unlock()
+	m.repoMutex.RLock()
+	defer m.repoMutex.RUnlock()
+
 	m.repos[uuid] = r
 	m.repoToUUID[id] = uuid
 
@@ -974,6 +995,9 @@ func (m *repoManager) newRepo(alias, description string, assign *dvid.UUID, pass
 }
 
 func (m *repoManager) saveRepoByUUID(uuid dvid.UUID) error {
+	m.repoMutex.RLock()
+	defer m.repoMutex.RUnlock()
+
 	r, found := m.repos[uuid]
 	if !found {
 		return ErrInvalidUUID
@@ -982,6 +1006,9 @@ func (m *repoManager) saveRepoByUUID(uuid dvid.UUID) error {
 }
 
 func (m *repoManager) saveRepoByVersion(v dvid.VersionID) error {
+	m.idMutex.RLock()
+	defer m.idMutex.RUnlock()
+
 	uuid, found := m.versionToUUID[v]
 	if !found {
 		return ErrInvalidVersion
@@ -991,6 +1018,9 @@ func (m *repoManager) saveRepoByVersion(v dvid.VersionID) error {
 
 // types returns a list of TypeService needed for this set of repositories
 func (m *repoManager) types() (map[dvid.URLString]TypeService, error) {
+	m.repoMutex.RLock()
+	defer m.repoMutex.RUnlock()
+
 	combinedMap := make(map[dvid.URLString]TypeService)
 	for _, repo := range m.repos {
 		repoMap, err := repo.types()
@@ -1005,6 +1035,9 @@ func (m *repoManager) types() (map[dvid.URLString]TypeService, error) {
 }
 
 func (m *repoManager) getRepoRoot(uuid dvid.UUID) (dvid.UUID, error) {
+	m.repoMutex.RLock()
+	defer m.repoMutex.RUnlock()
+
 	r, found := m.repos[uuid]
 	if !found {
 		return "", ErrInvalidUUID
@@ -1013,10 +1046,17 @@ func (m *repoManager) getRepoRoot(uuid dvid.UUID) (dvid.UUID, error) {
 }
 
 func (m *repoManager) getRepoRootVersion(v dvid.VersionID) (dvid.VersionID, error) {
+	m.idMutex.RLock()
+	defer m.idMutex.RUnlock()
+
 	uuid, found := m.versionToUUID[v]
 	if !found {
 		return 0, ErrInvalidVersion
 	}
+
+	m.repoMutex.RLock()
+	defer m.repoMutex.RUnlock()
+
 	r, found := m.repos[uuid]
 	if !found {
 		return 0, ErrInvalidVersion
@@ -1025,27 +1065,30 @@ func (m *repoManager) getRepoRootVersion(v dvid.VersionID) (dvid.VersionID, erro
 }
 
 func (m *repoManager) getRepoJSON(uuid dvid.UUID) (string, error) {
-	r, found := m.repos[uuid]
-	if !found {
-		return "", ErrInvalidUUID
+	r, err := m.repoFromUUID(uuid)
+	if err != nil {
+		return "", err
 	}
+
 	jsonBytes, err := r.MarshalJSON()
 	return string(jsonBytes), err
 }
 
 func (m *repoManager) getRepoAlias(uuid dvid.UUID) (string, error) {
-	r, found := m.repos[uuid]
-	if !found {
-		return "", ErrInvalidUUID
+	r, err := m.repoFromUUID(uuid)
+	if err != nil {
+		return "", err
 	}
 	return r.alias, nil
 }
 
 func (m *repoManager) setRepoAlias(uuid dvid.UUID, alias string) error {
-	r, found := m.repos[uuid]
-	if !found {
-		return ErrInvalidUUID
+	r, err := m.repoFromUUID(uuid)
+	if err != nil {
+		return err
 	}
+	r.Lock()
+	defer r.Unlock()
 	r.updated = time.Now()
 	r.alias = alias
 
@@ -1053,17 +1096,17 @@ func (m *repoManager) setRepoAlias(uuid dvid.UUID, alias string) error {
 }
 
 func (m *repoManager) getRepoDescription(uuid dvid.UUID) (string, error) {
-	r, found := m.repos[uuid]
-	if !found {
-		return "", ErrInvalidUUID
+	r, err := m.repoFromUUID(uuid)
+	if err != nil {
+		return "", err
 	}
 	return r.description, nil
 }
 
 func (m *repoManager) setRepoDescription(uuid dvid.UUID, desc string) error {
-	r, found := m.repos[uuid]
-	if !found {
-		return ErrInvalidUUID
+	r, err := m.repoFromUUID(uuid)
+	if err != nil {
+		return err
 	}
 
 	r.Lock()
@@ -1074,9 +1117,9 @@ func (m *repoManager) setRepoDescription(uuid dvid.UUID, desc string) error {
 }
 
 func (m *repoManager) getRepoProperty(uuid dvid.UUID, name string) (interface{}, error) {
-	r, found := m.repos[uuid]
-	if !found {
-		return nil, ErrInvalidUUID
+	r, err := m.repoFromUUID(uuid)
+	if err != nil {
+		return nil, err
 	}
 	r.RLock()
 	defer r.RUnlock()
@@ -1088,9 +1131,9 @@ func (m *repoManager) getRepoProperty(uuid dvid.UUID, name string) (interface{},
 }
 
 func (m *repoManager) getRepoProperties(uuid dvid.UUID) (map[string]interface{}, error) {
-	r, found := m.repos[uuid]
-	if !found {
-		return nil, ErrInvalidUUID
+	r, err := m.repoFromUUID(uuid)
+	if err != nil {
+		return nil, err
 	}
 	r.RLock()
 	defer r.RUnlock()
@@ -1102,9 +1145,9 @@ func (m *repoManager) getRepoProperties(uuid dvid.UUID) (map[string]interface{},
 }
 
 func (m *repoManager) setRepoProperty(uuid dvid.UUID, name string, value interface{}) error {
-	r, found := m.repos[uuid]
-	if !found {
-		return ErrInvalidUUID
+	r, err := m.repoFromUUID(uuid)
+	if err != nil {
+		return err
 	}
 
 	r.Lock()
@@ -1115,9 +1158,9 @@ func (m *repoManager) setRepoProperty(uuid dvid.UUID, name string, value interfa
 }
 
 func (m *repoManager) setRepoProperties(uuid dvid.UUID, props map[string]interface{}) error {
-	r, found := m.repos[uuid]
-	if !found {
-		return ErrInvalidUUID
+	r, err := m.repoFromUUID(uuid)
+	if err != nil {
+		return err
 	}
 
 	r.Lock()
@@ -1130,9 +1173,9 @@ func (m *repoManager) setRepoProperties(uuid dvid.UUID, props map[string]interfa
 }
 
 func (m *repoManager) getRepoLog(uuid dvid.UUID) ([]string, error) {
-	r, found := m.repos[uuid]
-	if !found {
-		return nil, ErrInvalidUUID
+	r, err := m.repoFromUUID(uuid)
+	if err != nil {
+		return nil, err
 	}
 
 	r.RLock()
@@ -1143,9 +1186,9 @@ func (m *repoManager) getRepoLog(uuid dvid.UUID) ([]string, error) {
 }
 
 func (m *repoManager) addToRepoLog(uuid dvid.UUID, msgs []string) error {
-	r, found := m.repos[uuid]
-	if !found {
-		return ErrInvalidUUID
+	r, err := m.repoFromUUID(uuid)
+	if err != nil {
+		return err
 	}
 
 	r.Lock()
@@ -1160,9 +1203,9 @@ func (m *repoManager) addToRepoLog(uuid dvid.UUID, msgs []string) error {
 }
 
 func (m *repoManager) getNodeNote(uuid dvid.UUID) (string, error) {
-	r, found := m.repos[uuid]
-	if !found {
-		return "", ErrInvalidUUID
+	r, err := m.repoFromUUID(uuid)
+	if err != nil {
+		return "", err
 	}
 
 	v, err := m.versionFromUUID(uuid)
@@ -1178,9 +1221,9 @@ func (m *repoManager) getNodeNote(uuid dvid.UUID) (string, error) {
 }
 
 func (m *repoManager) setNodeNote(uuid dvid.UUID, note string) error {
-	r, found := m.repos[uuid]
-	if !found {
-		return ErrInvalidUUID
+	r, err := m.repoFromUUID(uuid)
+	if err != nil {
+		return err
 	}
 
 	v, err := m.versionFromUUID(uuid)
@@ -1204,9 +1247,9 @@ func (m *repoManager) setNodeNote(uuid dvid.UUID, note string) error {
 }
 
 func (m *repoManager) getNodeLog(uuid dvid.UUID) ([]string, error) {
-	r, found := m.repos[uuid]
-	if !found {
-		return nil, ErrInvalidUUID
+	r, err := m.repoFromUUID(uuid)
+	if err != nil {
+		return nil, err
 	}
 
 	v, err := m.versionFromUUID(uuid)
@@ -1227,9 +1270,9 @@ func (m *repoManager) getNodeLog(uuid dvid.UUID) ([]string, error) {
 }
 
 func (m *repoManager) addToNodeLog(uuid dvid.UUID, msgs []string) error {
-	r, found := m.repos[uuid]
-	if !found {
-		return ErrInvalidUUID
+	r, err := m.repoFromUUID(uuid)
+	if err != nil {
+		return err
 	}
 
 	v, err := m.versionFromUUID(uuid)
@@ -1357,9 +1400,9 @@ func (m *repoManager) commit(uuid dvid.UUID, note string, log []string) error {
 // newVersion creates a new version as a child of the given parent.  If the
 // assign parameter is not nil, the new node is given the UUID.
 func (m *repoManager) newVersion(parent dvid.UUID, note string, branchname string, assign *dvid.UUID) (dvid.UUID, error) {
-	r, found := m.repos[parent]
-	if !found {
-		return dvid.NilUUID, ErrInvalidUUID
+	r, err := m.repoFromUUID(parent)
+	if err != nil {
+		return dvid.NilUUID, err
 	}
 
 	v, err := m.versionFromUUID(parent)
@@ -1446,20 +1489,24 @@ func (m *repoManager) merge(parents []dvid.UUID, note string, mt MergeType) (dvi
 		return dvid.NilUUID, ErrInvalidUUID
 	}
 
+	m.repoMutex.Lock()
 	r, found := m.repos[parents[0]]
 	if !found {
+		m.repoMutex.Unlock()
 		return dvid.NilUUID, ErrInvalidUUID
 	}
 
 	// Add the child node.  Since it's new and unavailable, no need to lock it.
 	childUUID, childV, err := m.newUUID(nil)
 	if err != nil {
+		m.repoMutex.Unlock()
 		return dvid.NilUUID, err
 	}
 	child := newNode(childUUID, childV)
 	child.note = note
 
 	m.repos[childUUID] = r
+	m.repoMutex.Unlock()
 
 	r.Lock()
 	defer r.Unlock()
@@ -1744,6 +1791,9 @@ func (m *repoManager) setSync(d dvid.Data, syncs dvid.UUIDSet, replace bool) err
 }
 
 func (m *repoManager) getDataByInstanceID(id dvid.InstanceID) (DataService, error) {
+	m.idMutex.RLock()
+	defer m.idMutex.RUnlock()
+
 	d, found := m.iids[id]
 	if !found {
 		return nil, ErrInvalidDataInstance
@@ -1752,6 +1802,9 @@ func (m *repoManager) getDataByInstanceID(id dvid.InstanceID) (DataService, erro
 }
 
 func (m *repoManager) getDataByDataUUID(dataUUID dvid.UUID) (DataService, error) {
+	m.idMutex.RLock()
+	defer m.idMutex.RUnlock()
+
 	d, found := m.dataByUUID[dataUUID]
 	if !found {
 		return nil, ErrInvalidDataUUID
