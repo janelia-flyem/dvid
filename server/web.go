@@ -490,8 +490,8 @@ const (
 
 type WebMux struct {
 	*web.Mux
-	sync.Mutex
-	routesSetup bool
+	sync.RWMutex // Can Lock() to prevent any kind of web requests from initiating actions.
+	routesSetup  bool
 }
 
 var (
@@ -597,6 +597,7 @@ func initRoutes() {
 	webMux.Handle("/*", mainMux)
 	mainMux.Use(middleware.Logger)
 	mainMux.Use(middleware.AutomaticOptions)
+	mainMux.Use(httpAvailHandler)
 	mainMux.Use(recoverHandler)
 	mainMux.Use(corsHandler)
 
@@ -668,6 +669,27 @@ func initRoutes() {
 	mainMux.Get("/*", mainHandler)
 
 	webMux.routesSetup = true
+}
+
+// returns true and sends a 503 (Service Unavailable) status code if unavailable.
+func httpUnavailable(w http.ResponseWriter) bool {
+	if httpAvail {
+		return false
+	}
+	http.Error(w, "DVID server is unavailable.", http.StatusServiceUnavailable)
+	return true
+}
+
+// Middleware that prevents any web requests if httpAvail is false.
+// Allows draconian shutdown of server when doing critical reorg of internals.
+func httpAvailHandler(c *web.C, h http.Handler) http.Handler {
+	fn := func(w http.ResponseWriter, r *http.Request) {
+		if httpUnavailable(w) {
+			return
+		}
+		h.ServeHTTP(w, r)
+	}
+	return http.HandlerFunc(fn)
 }
 
 // Middleware that recovers from panics, sends email if a notification email
@@ -745,15 +767,6 @@ func DecodeJSON(r *http.Request) (dvid.Config, error) {
 	return c, nil
 }
 
-// returns true and sends a 503 (Service Unavailable) status code if unavailable.
-func httpUnavailable(w http.ResponseWriter) bool {
-	if httpAvail {
-		return false
-	}
-	http.Error(w, "DVID server is unavailable.", http.StatusServiceUnavailable)
-	return true
-}
-
 // ---- Middleware -------------
 
 // corsHandler adds CORS support via header
@@ -771,9 +784,6 @@ func corsHandler(c *web.C, h http.Handler) http.Handler {
 // identifies the repo without any access restrictions.
 func repoRawSelector(c *web.C, h http.Handler) http.Handler {
 	fn := func(w http.ResponseWriter, r *http.Request) {
-		if httpUnavailable(w) {
-			return
-		}
 		method := strings.ToLower(r.Method)
 		if readonly && method != "get" && method != "head" {
 			BadRequest(w, r, "Server in read-only mode and will only accept GET and HEAD requestcs")
@@ -823,9 +833,6 @@ func nodeSelector(c *web.C, h http.Handler) http.Handler {
 // identifies the repo and enforces read-only mode.
 func repoSelector(c *web.C, h http.Handler) http.Handler {
 	fn := func(w http.ResponseWriter, r *http.Request) {
-		if httpUnavailable(w) {
-			return
-		}
 		method := strings.ToLower(r.Method)
 		if readonly && method != "get" && method != "head" {
 			BadRequest(w, r, "Server in read-only mode and will only accept GET and HEAD requests")
@@ -847,10 +854,6 @@ func repoSelector(c *web.C, h http.Handler) http.Handler {
 // forwards the request to that instance's HTTP handler.
 func instanceSelector(c *web.C, h http.Handler) http.Handler {
 	fn := func(w http.ResponseWriter, r *http.Request) {
-		if httpUnavailable(w) {
-			return
-		}
-
 		var err error
 		dataname := dvid.InstanceName(c.URLParams["dataname"])
 		uuid, ok := c.Env["uuid"].(dvid.UUID)
@@ -1194,10 +1197,6 @@ func reposPostHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer datastore.MetadataUniversalUnlock()
-
-	if httpUnavailable(w) {
-		return
-	}
 
 	config := dvid.NewConfig()
 	if r.Body != nil {

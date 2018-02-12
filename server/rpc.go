@@ -175,6 +175,10 @@ func handleCommand(cmd *datastore.Request) (reply *datastore.Response, err error
 		err = fmt.Errorf("Server error: got empty command!")
 		return
 	}
+	if !dvid.RequestsOK() {
+		err = fmt.Errorf("Server currently locked from fulfilling requests")
+		return
+	}
 	reply = new(datastore.Response)
 
 	switch cmd.Name() {

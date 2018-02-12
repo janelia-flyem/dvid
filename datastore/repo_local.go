@@ -165,11 +165,14 @@ func MetadataUniversalUnlock() {
 }
 
 // ReloadMetadata reloads the repositories manager from an existing metadata store.
-// This should only be called while no other requests are ongoing to the datastore package.
+// This shuts off all other dvid requests.
 func ReloadMetadata() error {
 	if manager == nil {
 		return ErrManagerNotInitialized
 	}
+	dvid.DenyRequests() // draconian step to make sure no HTTP or RPC requests go through
+	defer dvid.AllowRequests()
+
 	m := &repoManager{
 		repoToUUID:      make(map[dvid.RepoID]dvid.UUID),
 		versionToUUID:   make(map[dvid.VersionID]dvid.UUID),
@@ -195,14 +198,8 @@ func ReloadMetadata() error {
 		return fmt.Errorf("Error loading metadata: %v", err)
 	}
 
-	// Swap the manager out.  This is dangerous and is why no requests on datastore package
-	// should be ongoing at time of this function.
-	old_manager := manager
-	old_manager.Lock()
-	defer old_manager.Unlock()
-	old_manager.idMutex.Lock()
-	defer old_manager.idMutex.Unlock()
-
+	// Swap the manager out.  This is dangerous and is why no requests should be ongoing
+	// at time of this function.
 	manager = m
 
 	return nil
@@ -215,6 +212,10 @@ func ReloadMetadata() error {
 // repoManager manages all the repos in the datastore.
 type repoManager struct {
 	sync.RWMutex // broad mutex should be sufficient since metadata is infrequently updated.
+
+	// Mapping of all UUIDs to the repositories where that node sits.
+	repos     map[dvid.UUID]*repoT
+	repoMutex sync.RWMutex
 
 	// Allows versioning of metadata format
 	formatVersion uint64
@@ -236,9 +237,6 @@ type repoManager struct {
 	versionID  dvid.VersionID
 	instanceID dvid.InstanceID // Can be set by the configuration file.
 
-	// Mapping of all UUIDs to the repositories where that node sits.
-	repos map[dvid.UUID]*repoT
-
 	// Mapping of all instance IDs to the data service they represent.
 	// Not persisted but created on load and maintained.
 	iids map[dvid.InstanceID]DataService
@@ -247,15 +245,15 @@ type repoManager struct {
 	// Not persisted but created on load and maintained.
 	dataByUUID map[dvid.UUID]DataService
 
+	// Mutexes for concurrent use of ids and their maps.
+	idMutex sync.RWMutex
+
 	// instance id generation
 	instanceIDGen   string
 	instanceIDStart dvid.InstanceID
 
 	// Verified metadata storage for ease of use.
 	store storage.OrderedKeyValueDB
-
-	// Mutexes for concurrent use of ids and their maps.
-	idMutex sync.RWMutex
 }
 
 func (m *repoManager) Shutdown() {
