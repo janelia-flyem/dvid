@@ -18,15 +18,15 @@ type managerT struct {
 
 	// cache the default stores at both global and datatype level
 	defaultKV     dvid.Store
-	defaultLog    WriteLog
+	defaultLog    dvid.Store
 	metadataStore dvid.Store
 
 	stores        map[Alias]dvid.Store
 	instanceStore map[dvid.DataSpecifier]dvid.Store
 	datatypeStore map[dvid.TypeString]dvid.Store
 
-	instanceLog map[dvid.DataSpecifier]WriteLog
-	datatypeLog map[dvid.TypeString]WriteLog
+	instanceLog map[dvid.DataSpecifier]dvid.Store
+	datatypeLog map[dvid.TypeString]dvid.Store
 
 	// Cached type-asserted interfaces
 	graphEngine Engine
@@ -55,7 +55,7 @@ func DefaultKVStore() (dvid.Store, error) {
 	return manager.defaultKV, nil
 }
 
-func DefaultLogStore() (WriteLog, error) {
+func DefaultLogStore() (dvid.Store, error) {
 	if !manager.setup {
 		return nil, fmt.Errorf("Storage manager not initialized before requesting default log store")
 	}
@@ -159,7 +159,7 @@ func assignedStoreByType(typename dvid.TypeString) (dvid.Store, error) {
 }
 
 // GetAssignedLog returns the append-only log assigned based on (instance name, root uuid) or type.
-func GetAssignedLog(dataname dvid.InstanceName, root dvid.UUID, typename dvid.TypeString) (WriteLog, error) {
+func GetAssignedLog(dataname dvid.InstanceName, root dvid.UUID, typename dvid.TypeString) (dvid.Store, error) {
 	if !manager.setup {
 		return nil, fmt.Errorf("Storage manager not initialized before requesting log for %s/%s", dataname, root)
 	}
@@ -176,7 +176,7 @@ func GetAssignedLog(dataname dvid.InstanceName, root dvid.UUID, typename dvid.Ty
 }
 
 // assignedLogByType returns the log (can be nil) assigned to a particular datatype.
-func assignedLogByType(typename dvid.TypeString) (WriteLog, error) {
+func assignedLogByType(typename dvid.TypeString) (dvid.Store, error) {
 	if !manager.setup {
 		return nil, fmt.Errorf("Storage manager not initialized before requesting log for %s", typename)
 	}
@@ -190,8 +190,8 @@ func assignedLogByType(typename dvid.TypeString) (WriteLog, error) {
 	return store, nil
 }
 
-// Close handles any storage-specific shutdown procedures.
-func Close() {
+// Shutdown handles any storage-specific shutdown procedures.
+func Shutdown() {
 	if manager.setup {
 		for alias, store := range manager.stores {
 			dvid.Infof("Closing store %q: %s...\n", alias, store)
@@ -234,11 +234,7 @@ func Initialize(cmdline dvid.Config, backend *Backend) (createdMetadata bool, er
 			manager.defaultKV = store
 		}
 		if alias == backend.DefaultLog {
-			var ok bool
-			manager.defaultLog, ok = store.(WriteLog)
-			if !ok {
-				return false, fmt.Errorf("Store %q is not valid write log", store)
-			}
+			manager.defaultLog = store
 		}
 		manager.stores[alias] = store
 		lastStore = store
@@ -295,8 +291,8 @@ func Initialize(cmdline dvid.Config, backend *Backend) (createdMetadata bool, er
 			return
 		}
 	}
-	manager.instanceLog = make(map[dvid.DataSpecifier]WriteLog)
-	manager.datatypeLog = make(map[dvid.TypeString]WriteLog)
+	manager.instanceLog = make(map[dvid.DataSpecifier]dvid.Store)
+	manager.datatypeLog = make(map[dvid.TypeString]dvid.Store)
 	for dataspec, alias := range backend.LogStore {
 		if dataspec == "default" {
 			continue
@@ -306,21 +302,16 @@ func Initialize(cmdline dvid.Config, backend *Backend) (createdMetadata bool, er
 			err = fmt.Errorf("bad backend store alias: %q -> %q", dataspec, alias)
 			return
 		}
-		logstore, ok := store.(WriteLog)
-		if !ok {
-			err = fmt.Errorf("Store %q is not a valid write log.", store)
-			return
-		}
 
 		// Cache the store for mapped datatype or data instance.
 		name := strings.Trim(string(dataspec), "\"")
 		parts := strings.Split(name, ":")
 		switch len(parts) {
 		case 1:
-			manager.datatypeLog[dvid.TypeString(name)] = logstore
+			manager.datatypeLog[dvid.TypeString(name)] = store
 		case 2:
 			dataid := dvid.GetDataSpecifier(dvid.InstanceName(parts[0]), dvid.UUID(parts[1]))
-			manager.instanceLog[dataid] = logstore
+			manager.instanceLog[dataid] = store
 		default:
 			err = fmt.Errorf("bad backend data specification: %s", dataspec)
 			return

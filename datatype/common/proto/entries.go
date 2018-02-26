@@ -8,4 +8,5 @@ const (
 	SplitOpType
 	MergeOpType
 	MutationCompleteType
+	AffinityType
 )

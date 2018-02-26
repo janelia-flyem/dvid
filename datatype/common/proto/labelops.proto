@@ -7,6 +7,10 @@ message MergeOp {
     repeated uint64 merged = 3;
 }
 
+message MergeOps {
+	repeated MergeOp merges = 1;
+}
+
 message SplitOp {
     uint64 mutid = 1;
     uint64 target = 2;
@@ -18,4 +22,30 @@ message SplitOp {
 message OpCompleted {
     uint64 mutid = 1;
     string stage = 2;
+}
+
+message Affinity {
+	uint64 label1 = 1;
+	uint64 label2 = 2;
+	float value = 3;
+}
+
+message Affinities {
+	repeated uint64 labels = 1;
+	repeated float affinities = 2;
+}
+
+message AffinityTable {
+	map<uint64, Affinities> table = 1;
+}
+
+message SVCount {
+	map<uint64, uint32> counts = 1;
+}
+
+message LabelIndex {
+	map<string, SVCount> blocks = 1;  // key is block coord ZYX (3 x little-endian int32) string
+	uint64 last_mutid = 3;
+	string last_mod_time = 4;  // string is time in RFC 3339 format
+	string last_mod_user = 5;
 }

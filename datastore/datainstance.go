@@ -365,8 +365,8 @@ type Data struct {
 
 	// the assigned backend kv and log store for a data instance.  If nil, we
 	// will use the default store.
-	kvStore  dvid.Store       // key-value store
-	logStore storage.WriteLog // append-only log
+	kvStore  dvid.Store // key-value store
+	logStore dvid.Store // append-only log
 
 	// an atomic operation ID used for non-persistent operations like coordinating
 	// multiple sync deltas.
@@ -522,15 +522,40 @@ func (d *Data) KVStore() (dvid.Store, error) {
 	return d.kvStore, nil
 }
 
-func (d *Data) LogStore() (storage.WriteLog, error) {
+func (d *Data) GetWriteLog() storage.WriteLog {
+	var err error
+	var s dvid.Store
 	if d.logStore == nil {
-		return storage.DefaultLogStore()
+		s, err = storage.DefaultLogStore()
+		if err != nil {
+			return nil
+		}
+	} else {
+		s = d.logStore
 	}
-	return d.logStore, nil
+	wl, ok := s.(storage.WriteLog)
+	if ok {
+		return wl
+	}
+	return nil
 }
 
-func (d *Data) GetWriteLog() storage.WriteLog {
-	return d.logStore
+func (d *Data) GetReadLog() storage.ReadLog {
+	var err error
+	var s dvid.Store
+	if d.logStore == nil {
+		s, err = storage.DefaultLogStore()
+		if err != nil {
+			return nil
+		}
+	} else {
+		s = d.logStore
+	}
+	rl, ok := s.(storage.ReadLog)
+	if ok {
+		return rl
+	}
+	return nil
 }
 
 func (d *Data) NewMutationID() uint64 {

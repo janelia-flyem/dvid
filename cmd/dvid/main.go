@@ -32,7 +32,7 @@ import (
 	_ "github.com/janelia-flyem/dvid/datatype/labelarray"
 	_ "github.com/janelia-flyem/dvid/datatype/labelblk"
 	_ "github.com/janelia-flyem/dvid/datatype/labelgraph"
-	// _ "github.com/janelia-flyem/dvid/datatype/labelmap"
+	_ "github.com/janelia-flyem/dvid/datatype/labelmap"
 	_ "github.com/janelia-flyem/dvid/datatype/labelsz"
 	_ "github.com/janelia-flyem/dvid/datatype/labelvol"
 	_ "github.com/janelia-flyem/dvid/datatype/multichan16"

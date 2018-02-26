@@ -335,7 +335,7 @@ func (b *OptionalBounds) IsSet() bool {
 	return false
 }
 
-// OutsideX returns true if the given X is outside a set Y bound.
+// OutsideX returns true if the given X is outside a set X bound.
 func (b *OptionalBounds) OutsideX(x int32) bool {
 	if b == nil {
 		return false
@@ -372,6 +372,43 @@ func (b *OptionalBounds) OutsideZ(z int32) bool {
 		return true
 	}
 	if b.maxz != nil && z > *(b.maxz) {
+		return true
+	}
+	return false
+}
+
+// Outside returns true if the given chunk point is outside any set bound.
+func (b *OptionalBounds) Outside(pt ChunkPoint3d) bool {
+	if b == nil {
+		return false
+	}
+	if b.minx != nil && pt[0] < *(b.minx) {
+		return true
+	}
+	if b.maxx != nil && pt[0] > *(b.maxx) {
+		return true
+	}
+	if b.miny != nil && pt[1] < *(b.miny) {
+		return true
+	}
+	if b.maxy != nil && pt[1] > *(b.maxy) {
+		return true
+	}
+	if b.minz != nil && pt[2] < *(b.minz) {
+		return true
+	}
+	if b.maxz != nil && pt[2] > *(b.maxz) {
+		return true
+	}
+	return false
+}
+
+// BeyondZ returns true if the given Z is beyond a set max Z bound.
+func (b *OptionalBounds) BeyondZ(pt ChunkPoint3d) bool {
+	if b == nil {
+		return false
+	}
+	if b.maxz != nil && pt[2] > *(b.maxz) {
 		return true
 	}
 	return false

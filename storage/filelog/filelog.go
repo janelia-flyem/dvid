@@ -53,7 +53,7 @@ func (e Engine) String() string {
 
 // NewStore returns file-based log. The passed Config must contain "path" setting.
 func (e Engine) NewStore(config dvid.StoreConfig) (dvid.Store, bool, error) {
-	return e.newWriteLogs(config)
+	return e.newLogs(config)
 }
 
 func parseConfig(config dvid.StoreConfig) (path string, testing bool, err error) {
@@ -84,9 +84,9 @@ func parseConfig(config dvid.StoreConfig) (path string, testing bool, err error)
 	return
 }
 
-// newWriteLogs returns a file-based append-only log backend, creating a log
+// newLogs returns a file-based append-only log backend, creating a log
 // at the path if it doesn't already exist.
-func (e Engine) newWriteLogs(config dvid.StoreConfig) (*writeLogs, bool, error) {
+func (e Engine) newLogs(config dvid.StoreConfig) (*fileLogs, bool, error) {
 	path, _, err := parseConfig(config)
 	if err != nil {
 		return nil, false, err
@@ -108,102 +108,159 @@ func (e Engine) newWriteLogs(config dvid.StoreConfig) (*writeLogs, bool, error) 
 	// 	return nil, false, err
 	// }
 
-	log := &writeLogs{
+	log := &fileLogs{
 		path:   path,
 		config: config,
-		files:  make(map[string]*flog),
+		files:  make(map[string]*fileLog),
 	}
 	return log, created, nil
 }
 
-type writeLogs struct {
-	path   string
-	config dvid.StoreConfig
-	files  map[string]*flog // key = data + version UUID
-}
-
-func (wlogs *writeLogs) getLogFile(dataID, version dvid.UUID) (fl *flog, err error) {
-	k := string(dataID + "-" + version)
-	var found bool
-	fl, found = wlogs.files[k]
-	if !found {
-		filename := filepath.Join(wlogs.path, k)
-		var f *os.File
-		f, err = os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_APPEND|os.O_SYNC, 0755)
-		if err != nil {
-			return
-		}
-		fl = &flog{File: f}
-		wlogs.files[k] = fl
-	}
-	return
-}
-
-func (wlogs *writeLogs) Append(entryType uint16, dataID, version dvid.UUID, p []byte) error {
-	fl, err := wlogs.getLogFile(dataID, version)
-	if err != nil {
-		return fmt.Errorf("append log %q: %v", wlogs, err)
-	}
-	fl.Lock()
-	if err = fl.writeHeader(entryType, p); err != nil {
-		fl.Unlock()
-		return fmt.Errorf("bad write of log header to data %s, uuid %s: %v\n", dataID, version, err)
-	}
-	_, err = fl.Write(p)
-	fl.Unlock()
-	if err != nil {
-		err = fmt.Errorf("append log %q: %v", wlogs, err)
-	}
-	return err
-}
-
-func (wlogs *writeLogs) Close() {
-	for _, flog := range wlogs.files {
-		flog.Lock()
-		err := flog.Close()
-		if err != nil {
-			dvid.Errorf("closing log file %q: %v\n", flog.Name(), err)
-		}
-		flog.Unlock()
-	}
-}
-
-func (wlogs *writeLogs) String() string {
-	return fmt.Sprintf("write logs @ path %q", wlogs.path)
-}
-
-// Equal returns true if the write log path matches the given store configuration.
-func (wlogs *writeLogs) Equal(config dvid.StoreConfig) bool {
-	path, _, err := parseConfig(config)
-	if err != nil {
-		return false
-	}
-	return path == wlogs.path
-}
-
-type flog struct {
+type fileLog struct {
 	*os.File
 	sync.RWMutex
 }
 
-func (f *flog) writeHeader(entryType uint16, data []byte) error {
+func (f *fileLog) writeHeader(msg storage.LogMessage) error {
 	buf := make([]byte, 6)
-	binary.LittleEndian.PutUint16(buf[:2], entryType)
-	size := uint32(len(data))
+	binary.LittleEndian.PutUint16(buf[:2], msg.EntryType)
+	size := uint32(len(msg.Data))
 	binary.LittleEndian.PutUint32(buf[2:], size)
 	_, err := f.Write(buf)
 	return err
 }
 
-func (f *flog) readHeader() (entryType uint16, size uint32, err error) {
-	buf := make([]byte, 6)
-	_, err = io.ReadFull(f, buf)
-	if err != nil {
-		return
+func (f *fileLog) readAll() ([]storage.LogMessage, error) {
+	msgs := []storage.LogMessage{}
+	for {
+		hdrbuf := make([]byte, 6)
+		_, err := io.ReadFull(f, hdrbuf)
+		if err == io.EOF {
+			return msgs, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		entryType := binary.LittleEndian.Uint16(hdrbuf[0:2])
+		size := binary.LittleEndian.Uint32(hdrbuf[2:])
+		databuf := make([]byte, size)
+		_, err = io.ReadFull(f, databuf)
+		if err != nil {
+			return nil, err
+		}
+		msg := storage.LogMessage{EntryType: entryType, Data: databuf}
+		msgs = append(msgs, msg)
 	}
-	entryType = binary.LittleEndian.Uint16(buf[0:2])
-	size = binary.LittleEndian.Uint32(buf[2:])
+}
+
+type fileLogs struct {
+	path   string
+	config dvid.StoreConfig
+	files  map[string]*fileLog // key = data + version UUID
+}
+
+func (flogs *fileLogs) ReadAll(dataID, version dvid.UUID) ([]storage.LogMessage, error) {
+	k := string(dataID + "-" + version)
+	filename := filepath.Join(flogs.path, k)
+
+	fl, found := flogs.files[k]
+	if found {
+		// close then reopen later.
+		fl.Lock()
+		fl.Close()
+		delete(flogs.files, k)
+	}
+
+	f, err := os.OpenFile(filename, os.O_RDONLY, 0755)
+	if err != nil {
+		return nil, err
+	}
+	fl2 := &fileLog{File: f}
+	msgs, err := fl2.readAll()
+	fl2.Close()
+
+	if found {
+		f2, err2 := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_APPEND|os.O_SYNC, 0755)
+		if err2 != nil {
+			dvid.Errorf("unable to reopen write log %s: %v\n", k, err)
+		} else {
+			flogs.files[k] = &fileLog{File: f2}
+		}
+		fl.Unlock()
+	}
+	return msgs, err
+}
+
+func (flogs *fileLogs) getWriteLog(dataID, version dvid.UUID) (fl *fileLog, err error) {
+	k := string(dataID + "-" + version)
+	var found bool
+	fl, found = flogs.files[k]
+	if !found {
+		filename := filepath.Join(flogs.path, k)
+		var f *os.File
+		f, err = os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_APPEND|os.O_SYNC, 0755)
+		if err != nil {
+			return
+		}
+		fl = &fileLog{File: f}
+		flogs.files[k] = fl
+	}
 	return
+}
+
+func (flogs *fileLogs) Append(dataID, version dvid.UUID, msg storage.LogMessage) error {
+	fl, err := flogs.getWriteLog(dataID, version)
+	if err != nil {
+		return fmt.Errorf("append log %q: %v", flogs, err)
+	}
+	fl.Lock()
+	if err = fl.writeHeader(msg); err != nil {
+		fl.Unlock()
+		return fmt.Errorf("bad write of log header to data %s, uuid %s: %v\n", dataID, version, err)
+	}
+	_, err = fl.Write(msg.Data)
+	fl.Unlock()
+	if err != nil {
+		err = fmt.Errorf("append log %q: %v", flogs, err)
+	}
+	return err
+}
+
+func (flogs *fileLogs) CloseLog(dataID, version dvid.UUID) error {
+	k := string(dataID + "-" + version)
+	fl, found := flogs.files[k]
+	if found {
+		fl.Lock()
+		err := fl.Close()
+		delete(flogs.files, k)
+		fl.Unlock()
+		return err
+	}
+	return nil
+}
+
+func (flogs *fileLogs) Close() {
+	for _, flogs := range flogs.files {
+		flogs.Lock()
+		err := flogs.Close()
+		if err != nil {
+			dvid.Errorf("closing log file %q: %v\n", flogs.Name(), err)
+		}
+		flogs.Unlock()
+	}
+}
+
+func (flogs *fileLogs) String() string {
+	return fmt.Sprintf("write logs @ path %q", flogs.path)
+}
+
+// Equal returns true if the write log path matches the given store configuration.
+func (flogs *fileLogs) Equal(config dvid.StoreConfig) bool {
+	path, _, err := parseConfig(config)
+	if err != nil {
+		return false
+	}
+	return path == flogs.path
 }
 
 // ---- TestableEngine interface implementation -------

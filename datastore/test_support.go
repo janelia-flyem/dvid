@@ -68,7 +68,7 @@ func OpenTest() {
 // persistence.  We only allow close/reopen when all tests not avaiting close/reopen are finished.
 func CloseReopenTest() {
 	dvid.Infof("Closing test datastore for reopen test...\n")
-	storage.Close()
+	storage.Shutdown()
 	dvid.Infof("Reopening test datastore...\n")
 	openStore(false)
 }

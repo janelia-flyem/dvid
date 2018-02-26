@@ -21,6 +21,28 @@ type SplitOp struct {
 	Coarse   bool // true if the RLEs are block coords (coarse split), not voxels.
 }
 
+// CleaveOp represents a cleave of a label using supervoxels.
+type CleaveOp struct {
+	Target             uint64
+	CleavedLabel       uint64
+	CleavedSupervoxels []uint64
+}
+
+// SplitSupervoxelOp describes a supervoxel split.
+type SplitSupervoxelOp struct {
+	Supervoxel       uint64
+	SplitSupervoxel  uint64
+	RemainSupervoxel uint64
+	Split            dvid.BlockRLEs
+}
+
+// Affinity represents a float value associated with a two-tuple of labels.
+type Affinity struct {
+	Label1 uint64
+	Label2 uint64
+	Value  float32
+}
+
 // SplitFineOp is a split using RLEs for a block.
 
 func (op MergeOp) String() string {

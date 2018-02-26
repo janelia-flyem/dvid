@@ -9,8 +9,14 @@
 
 	It has these top-level messages:
 		MergeOp
+		MergeOps
 		SplitOp
 		OpCompleted
+		Affinity
+		Affinities
+		AffinityTable
+		SVCount
+		LabelIndex
 */
 package proto
 
@@ -22,6 +28,7 @@ import bytes "bytes"
 
 import strings "strings"
 import reflect "reflect"
+import github_com_gogo_protobuf_sortkeys "github.com/gogo/protobuf/sortkeys"
 
 import io "io"
 
@@ -67,6 +74,21 @@ func (m *MergeOp) GetMerged() []uint64 {
 	return nil
 }
 
+type MergeOps struct {
+	Merges []*MergeOp `protobuf:"bytes,1,rep,name=merges" json:"merges,omitempty"`
+}
+
+func (m *MergeOps) Reset()                    { *m = MergeOps{} }
+func (*MergeOps) ProtoMessage()               {}
+func (*MergeOps) Descriptor() ([]byte, []int) { return fileDescriptorLabelops, []int{1} }
+
+func (m *MergeOps) GetMerges() []*MergeOp {
+	if m != nil {
+		return m.Merges
+	}
+	return nil
+}
+
 type SplitOp struct {
 	Mutid    uint64 `protobuf:"varint,1,opt,name=mutid,proto3" json:"mutid,omitempty"`
 	Target   uint64 `protobuf:"varint,2,opt,name=target,proto3" json:"target,omitempty"`
@@ -77,7 +99,7 @@ type SplitOp struct {
 
 func (m *SplitOp) Reset()                    { *m = SplitOp{} }
 func (*SplitOp) ProtoMessage()               {}
-func (*SplitOp) Descriptor() ([]byte, []int) { return fileDescriptorLabelops, []int{1} }
+func (*SplitOp) Descriptor() ([]byte, []int) { return fileDescriptorLabelops, []int{2} }
 
 func (m *SplitOp) GetMutid() uint64 {
 	if m != nil {
@@ -121,7 +143,7 @@ type OpCompleted struct {
 
 func (m *OpCompleted) Reset()                    { *m = OpCompleted{} }
 func (*OpCompleted) ProtoMessage()               {}
-func (*OpCompleted) Descriptor() ([]byte, []int) { return fileDescriptorLabelops, []int{2} }
+func (*OpCompleted) Descriptor() ([]byte, []int) { return fileDescriptorLabelops, []int{3} }
 
 func (m *OpCompleted) GetMutid() uint64 {
 	if m != nil {
@@ -137,10 +159,139 @@ func (m *OpCompleted) GetStage() string {
 	return ""
 }
 
+type Affinity struct {
+	Label1 uint64  `protobuf:"varint,1,opt,name=label1,proto3" json:"label1,omitempty"`
+	Label2 uint64  `protobuf:"varint,2,opt,name=label2,proto3" json:"label2,omitempty"`
+	Value  float32 `protobuf:"fixed32,3,opt,name=value,proto3" json:"value,omitempty"`
+}
+
+func (m *Affinity) Reset()                    { *m = Affinity{} }
+func (*Affinity) ProtoMessage()               {}
+func (*Affinity) Descriptor() ([]byte, []int) { return fileDescriptorLabelops, []int{4} }
+
+func (m *Affinity) GetLabel1() uint64 {
+	if m != nil {
+		return m.Label1
+	}
+	return 0
+}
+
+func (m *Affinity) GetLabel2() uint64 {
+	if m != nil {
+		return m.Label2
+	}
+	return 0
+}
+
+func (m *Affinity) GetValue() float32 {
+	if m != nil {
+		return m.Value
+	}
+	return 0
+}
+
+type Affinities struct {
+	Labels     []uint64  `protobuf:"varint,1,rep,packed,name=labels" json:"labels,omitempty"`
+	Affinities []float32 `protobuf:"fixed32,2,rep,packed,name=affinities" json:"affinities,omitempty"`
+}
+
+func (m *Affinities) Reset()                    { *m = Affinities{} }
+func (*Affinities) ProtoMessage()               {}
+func (*Affinities) Descriptor() ([]byte, []int) { return fileDescriptorLabelops, []int{5} }
+
+func (m *Affinities) GetLabels() []uint64 {
+	if m != nil {
+		return m.Labels
+	}
+	return nil
+}
+
+func (m *Affinities) GetAffinities() []float32 {
+	if m != nil {
+		return m.Affinities
+	}
+	return nil
+}
+
+type AffinityTable struct {
+	Table map[uint64]*Affinities `protobuf:"bytes,1,rep,name=table" json:"table,omitempty" protobuf_key:"varint,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value"`
+}
+
+func (m *AffinityTable) Reset()                    { *m = AffinityTable{} }
+func (*AffinityTable) ProtoMessage()               {}
+func (*AffinityTable) Descriptor() ([]byte, []int) { return fileDescriptorLabelops, []int{6} }
+
+func (m *AffinityTable) GetTable() map[uint64]*Affinities {
+	if m != nil {
+		return m.Table
+	}
+	return nil
+}
+
+type SVCount struct {
+	Counts map[uint64]uint32 `protobuf:"bytes,1,rep,name=counts" json:"counts,omitempty" protobuf_key:"varint,1,opt,name=key,proto3" protobuf_val:"varint,2,opt,name=value,proto3"`
+}
+
+func (m *SVCount) Reset()                    { *m = SVCount{} }
+func (*SVCount) ProtoMessage()               {}
+func (*SVCount) Descriptor() ([]byte, []int) { return fileDescriptorLabelops, []int{7} }
+
+func (m *SVCount) GetCounts() map[uint64]uint32 {
+	if m != nil {
+		return m.Counts
+	}
+	return nil
+}
+
+type LabelIndex struct {
+	Blocks      map[string]*SVCount `protobuf:"bytes,1,rep,name=blocks" json:"blocks,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value"`
+	LastMutid   uint64              `protobuf:"varint,3,opt,name=last_mutid,json=lastMutid,proto3" json:"last_mutid,omitempty"`
+	LastModTime string              `protobuf:"bytes,4,opt,name=last_mod_time,json=lastModTime,proto3" json:"last_mod_time,omitempty"`
+	LastModUser string              `protobuf:"bytes,5,opt,name=last_mod_user,json=lastModUser,proto3" json:"last_mod_user,omitempty"`
+}
+
+func (m *LabelIndex) Reset()                    { *m = LabelIndex{} }
+func (*LabelIndex) ProtoMessage()               {}
+func (*LabelIndex) Descriptor() ([]byte, []int) { return fileDescriptorLabelops, []int{8} }
+
+func (m *LabelIndex) GetBlocks() map[string]*SVCount {
+	if m != nil {
+		return m.Blocks
+	}
+	return nil
+}
+
+func (m *LabelIndex) GetLastMutid() uint64 {
+	if m != nil {
+		return m.LastMutid
+	}
+	return 0
+}
+
+func (m *LabelIndex) GetLastModTime() string {
+	if m != nil {
+		return m.LastModTime
+	}
+	return ""
+}
+
+func (m *LabelIndex) GetLastModUser() string {
+	if m != nil {
+		return m.LastModUser
+	}
+	return ""
+}
+
 func init() {
 	proto1.RegisterType((*MergeOp)(nil), "proto.MergeOp")
+	proto1.RegisterType((*MergeOps)(nil), "proto.MergeOps")
 	proto1.RegisterType((*SplitOp)(nil), "proto.SplitOp")
 	proto1.RegisterType((*OpCompleted)(nil), "proto.OpCompleted")
+	proto1.RegisterType((*Affinity)(nil), "proto.Affinity")
+	proto1.RegisterType((*Affinities)(nil), "proto.Affinities")
+	proto1.RegisterType((*AffinityTable)(nil), "proto.AffinityTable")
+	proto1.RegisterType((*SVCount)(nil), "proto.SVCount")
+	proto1.RegisterType((*LabelIndex)(nil), "proto.LabelIndex")
 }
 func (this *MergeOp) Equal(that interface{}) bool {
 	if that == nil {
@@ -178,6 +329,41 @@ func (this *MergeOp) Equal(that interface{}) bool {
 	}
 	for i := range this.Merged {
 		if this.Merged[i] != that1.Merged[i] {
+			return false
+		}
+	}
+	return true
+}
+func (this *MergeOps) Equal(that interface{}) bool {
+	if that == nil {
+		if this == nil {
+			return true
+		}
+		return false
+	}
+
+	that1, ok := that.(*MergeOps)
+	if !ok {
+		that2, ok := that.(MergeOps)
+		if ok {
+			that1 = &that2
+		} else {
+			return false
+		}
+	}
+	if that1 == nil {
+		if this == nil {
+			return true
+		}
+		return false
+	} else if this == nil {
+		return false
+	}
+	if len(this.Merges) != len(that1.Merges) {
+		return false
+	}
+	for i := range this.Merges {
+		if !this.Merges[i].Equal(that1.Merges[i]) {
 			return false
 		}
 	}
@@ -258,6 +444,199 @@ func (this *OpCompleted) Equal(that interface{}) bool {
 	}
 	return true
 }
+func (this *Affinity) Equal(that interface{}) bool {
+	if that == nil {
+		if this == nil {
+			return true
+		}
+		return false
+	}
+
+	that1, ok := that.(*Affinity)
+	if !ok {
+		that2, ok := that.(Affinity)
+		if ok {
+			that1 = &that2
+		} else {
+			return false
+		}
+	}
+	if that1 == nil {
+		if this == nil {
+			return true
+		}
+		return false
+	} else if this == nil {
+		return false
+	}
+	if this.Label1 != that1.Label1 {
+		return false
+	}
+	if this.Label2 != that1.Label2 {
+		return false
+	}
+	if this.Value != that1.Value {
+		return false
+	}
+	return true
+}
+func (this *Affinities) Equal(that interface{}) bool {
+	if that == nil {
+		if this == nil {
+			return true
+		}
+		return false
+	}
+
+	that1, ok := that.(*Affinities)
+	if !ok {
+		that2, ok := that.(Affinities)
+		if ok {
+			that1 = &that2
+		} else {
+			return false
+		}
+	}
+	if that1 == nil {
+		if this == nil {
+			return true
+		}
+		return false
+	} else if this == nil {
+		return false
+	}
+	if len(this.Labels) != len(that1.Labels) {
+		return false
+	}
+	for i := range this.Labels {
+		if this.Labels[i] != that1.Labels[i] {
+			return false
+		}
+	}
+	if len(this.Affinities) != len(that1.Affinities) {
+		return false
+	}
+	for i := range this.Affinities {
+		if this.Affinities[i] != that1.Affinities[i] {
+			return false
+		}
+	}
+	return true
+}
+func (this *AffinityTable) Equal(that interface{}) bool {
+	if that == nil {
+		if this == nil {
+			return true
+		}
+		return false
+	}
+
+	that1, ok := that.(*AffinityTable)
+	if !ok {
+		that2, ok := that.(AffinityTable)
+		if ok {
+			that1 = &that2
+		} else {
+			return false
+		}
+	}
+	if that1 == nil {
+		if this == nil {
+			return true
+		}
+		return false
+	} else if this == nil {
+		return false
+	}
+	if len(this.Table) != len(that1.Table) {
+		return false
+	}
+	for i := range this.Table {
+		if !this.Table[i].Equal(that1.Table[i]) {
+			return false
+		}
+	}
+	return true
+}
+func (this *SVCount) Equal(that interface{}) bool {
+	if that == nil {
+		if this == nil {
+			return true
+		}
+		return false
+	}
+
+	that1, ok := that.(*SVCount)
+	if !ok {
+		that2, ok := that.(SVCount)
+		if ok {
+			that1 = &that2
+		} else {
+			return false
+		}
+	}
+	if that1 == nil {
+		if this == nil {
+			return true
+		}
+		return false
+	} else if this == nil {
+		return false
+	}
+	if len(this.Counts) != len(that1.Counts) {
+		return false
+	}
+	for i := range this.Counts {
+		if this.Counts[i] != that1.Counts[i] {
+			return false
+		}
+	}
+	return true
+}
+func (this *LabelIndex) Equal(that interface{}) bool {
+	if that == nil {
+		if this == nil {
+			return true
+		}
+		return false
+	}
+
+	that1, ok := that.(*LabelIndex)
+	if !ok {
+		that2, ok := that.(LabelIndex)
+		if ok {
+			that1 = &that2
+		} else {
+			return false
+		}
+	}
+	if that1 == nil {
+		if this == nil {
+			return true
+		}
+		return false
+	} else if this == nil {
+		return false
+	}
+	if len(this.Blocks) != len(that1.Blocks) {
+		return false
+	}
+	for i := range this.Blocks {
+		if !this.Blocks[i].Equal(that1.Blocks[i]) {
+			return false
+		}
+	}
+	if this.LastMutid != that1.LastMutid {
+		return false
+	}
+	if this.LastModTime != that1.LastModTime {
+		return false
+	}
+	if this.LastModUser != that1.LastModUser {
+		return false
+	}
+	return true
+}
 func (this *MergeOp) GoString() string {
 	if this == nil {
 		return "nil"
@@ -267,6 +646,18 @@ func (this *MergeOp) GoString() string {
 	s = append(s, "Mutid: "+fmt.Sprintf("%#v", this.Mutid)+",\n")
 	s = append(s, "Target: "+fmt.Sprintf("%#v", this.Target)+",\n")
 	s = append(s, "Merged: "+fmt.Sprintf("%#v", this.Merged)+",\n")
+	s = append(s, "}")
+	return strings.Join(s, "")
+}
+func (this *MergeOps) GoString() string {
+	if this == nil {
+		return "nil"
+	}
+	s := make([]string, 0, 5)
+	s = append(s, "&proto.MergeOps{")
+	if this.Merges != nil {
+		s = append(s, "Merges: "+fmt.Sprintf("%#v", this.Merges)+",\n")
+	}
 	s = append(s, "}")
 	return strings.Join(s, "")
 }
@@ -292,6 +683,98 @@ func (this *OpCompleted) GoString() string {
 	s = append(s, "&proto.OpCompleted{")
 	s = append(s, "Mutid: "+fmt.Sprintf("%#v", this.Mutid)+",\n")
 	s = append(s, "Stage: "+fmt.Sprintf("%#v", this.Stage)+",\n")
+	s = append(s, "}")
+	return strings.Join(s, "")
+}
+func (this *Affinity) GoString() string {
+	if this == nil {
+		return "nil"
+	}
+	s := make([]string, 0, 7)
+	s = append(s, "&proto.Affinity{")
+	s = append(s, "Label1: "+fmt.Sprintf("%#v", this.Label1)+",\n")
+	s = append(s, "Label2: "+fmt.Sprintf("%#v", this.Label2)+",\n")
+	s = append(s, "Value: "+fmt.Sprintf("%#v", this.Value)+",\n")
+	s = append(s, "}")
+	return strings.Join(s, "")
+}
+func (this *Affinities) GoString() string {
+	if this == nil {
+		return "nil"
+	}
+	s := make([]string, 0, 6)
+	s = append(s, "&proto.Affinities{")
+	s = append(s, "Labels: "+fmt.Sprintf("%#v", this.Labels)+",\n")
+	s = append(s, "Affinities: "+fmt.Sprintf("%#v", this.Affinities)+",\n")
+	s = append(s, "}")
+	return strings.Join(s, "")
+}
+func (this *AffinityTable) GoString() string {
+	if this == nil {
+		return "nil"
+	}
+	s := make([]string, 0, 5)
+	s = append(s, "&proto.AffinityTable{")
+	keysForTable := make([]uint64, 0, len(this.Table))
+	for k, _ := range this.Table {
+		keysForTable = append(keysForTable, k)
+	}
+	github_com_gogo_protobuf_sortkeys.Uint64s(keysForTable)
+	mapStringForTable := "map[uint64]*Affinities{"
+	for _, k := range keysForTable {
+		mapStringForTable += fmt.Sprintf("%#v: %#v,", k, this.Table[k])
+	}
+	mapStringForTable += "}"
+	if this.Table != nil {
+		s = append(s, "Table: "+mapStringForTable+",\n")
+	}
+	s = append(s, "}")
+	return strings.Join(s, "")
+}
+func (this *SVCount) GoString() string {
+	if this == nil {
+		return "nil"
+	}
+	s := make([]string, 0, 5)
+	s = append(s, "&proto.SVCount{")
+	keysForCounts := make([]uint64, 0, len(this.Counts))
+	for k, _ := range this.Counts {
+		keysForCounts = append(keysForCounts, k)
+	}
+	github_com_gogo_protobuf_sortkeys.Uint64s(keysForCounts)
+	mapStringForCounts := "map[uint64]uint32{"
+	for _, k := range keysForCounts {
+		mapStringForCounts += fmt.Sprintf("%#v: %#v,", k, this.Counts[k])
+	}
+	mapStringForCounts += "}"
+	if this.Counts != nil {
+		s = append(s, "Counts: "+mapStringForCounts+",\n")
+	}
+	s = append(s, "}")
+	return strings.Join(s, "")
+}
+func (this *LabelIndex) GoString() string {
+	if this == nil {
+		return "nil"
+	}
+	s := make([]string, 0, 8)
+	s = append(s, "&proto.LabelIndex{")
+	keysForBlocks := make([]string, 0, len(this.Blocks))
+	for k, _ := range this.Blocks {
+		keysForBlocks = append(keysForBlocks, k)
+	}
+	github_com_gogo_protobuf_sortkeys.Strings(keysForBlocks)
+	mapStringForBlocks := "map[string]*SVCount{"
+	for _, k := range keysForBlocks {
+		mapStringForBlocks += fmt.Sprintf("%#v: %#v,", k, this.Blocks[k])
+	}
+	mapStringForBlocks += "}"
+	if this.Blocks != nil {
+		s = append(s, "Blocks: "+mapStringForBlocks+",\n")
+	}
+	s = append(s, "LastMutid: "+fmt.Sprintf("%#v", this.LastMutid)+",\n")
+	s = append(s, "LastModTime: "+fmt.Sprintf("%#v", this.LastModTime)+",\n")
+	s = append(s, "LastModUser: "+fmt.Sprintf("%#v", this.LastModUser)+",\n")
 	s = append(s, "}")
 	return strings.Join(s, "")
 }
@@ -344,6 +827,36 @@ func (m *MergeOp) MarshalTo(dAtA []byte) (int, error) {
 		i++
 		i = encodeVarintLabelops(dAtA, i, uint64(j1))
 		i += copy(dAtA[i:], dAtA2[:j1])
+	}
+	return i, nil
+}
+
+func (m *MergeOps) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *MergeOps) MarshalTo(dAtA []byte) (int, error) {
+	var i int
+	_ = i
+	var l int
+	_ = l
+	if len(m.Merges) > 0 {
+		for _, msg := range m.Merges {
+			dAtA[i] = 0xa
+			i++
+			i = encodeVarintLabelops(dAtA, i, uint64(msg.Size()))
+			n, err := msg.MarshalTo(dAtA[i:])
+			if err != nil {
+				return 0, err
+			}
+			i += n
+		}
 	}
 	return i, nil
 }
@@ -426,6 +939,231 @@ func (m *OpCompleted) MarshalTo(dAtA []byte) (int, error) {
 	return i, nil
 }
 
+func (m *Affinity) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *Affinity) MarshalTo(dAtA []byte) (int, error) {
+	var i int
+	_ = i
+	var l int
+	_ = l
+	if m.Label1 != 0 {
+		dAtA[i] = 0x8
+		i++
+		i = encodeVarintLabelops(dAtA, i, uint64(m.Label1))
+	}
+	if m.Label2 != 0 {
+		dAtA[i] = 0x10
+		i++
+		i = encodeVarintLabelops(dAtA, i, uint64(m.Label2))
+	}
+	if m.Value != 0 {
+		dAtA[i] = 0x1d
+		i++
+		i = encodeFixed32Labelops(dAtA, i, uint32(math.Float32bits(float32(m.Value))))
+	}
+	return i, nil
+}
+
+func (m *Affinities) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *Affinities) MarshalTo(dAtA []byte) (int, error) {
+	var i int
+	_ = i
+	var l int
+	_ = l
+	if len(m.Labels) > 0 {
+		dAtA4 := make([]byte, len(m.Labels)*10)
+		var j3 int
+		for _, num := range m.Labels {
+			for num >= 1<<7 {
+				dAtA4[j3] = uint8(uint64(num)&0x7f | 0x80)
+				num >>= 7
+				j3++
+			}
+			dAtA4[j3] = uint8(num)
+			j3++
+		}
+		dAtA[i] = 0xa
+		i++
+		i = encodeVarintLabelops(dAtA, i, uint64(j3))
+		i += copy(dAtA[i:], dAtA4[:j3])
+	}
+	if len(m.Affinities) > 0 {
+		dAtA[i] = 0x12
+		i++
+		i = encodeVarintLabelops(dAtA, i, uint64(len(m.Affinities)*4))
+		for _, num := range m.Affinities {
+			f5 := math.Float32bits(float32(num))
+			dAtA[i] = uint8(f5)
+			i++
+			dAtA[i] = uint8(f5 >> 8)
+			i++
+			dAtA[i] = uint8(f5 >> 16)
+			i++
+			dAtA[i] = uint8(f5 >> 24)
+			i++
+		}
+	}
+	return i, nil
+}
+
+func (m *AffinityTable) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *AffinityTable) MarshalTo(dAtA []byte) (int, error) {
+	var i int
+	_ = i
+	var l int
+	_ = l
+	if len(m.Table) > 0 {
+		for k, _ := range m.Table {
+			dAtA[i] = 0xa
+			i++
+			v := m.Table[k]
+			msgSize := 0
+			if v != nil {
+				msgSize = v.Size()
+				msgSize += 1 + sovLabelops(uint64(msgSize))
+			}
+			mapSize := 1 + sovLabelops(uint64(k)) + msgSize
+			i = encodeVarintLabelops(dAtA, i, uint64(mapSize))
+			dAtA[i] = 0x8
+			i++
+			i = encodeVarintLabelops(dAtA, i, uint64(k))
+			if v != nil {
+				dAtA[i] = 0x12
+				i++
+				i = encodeVarintLabelops(dAtA, i, uint64(v.Size()))
+				n6, err := v.MarshalTo(dAtA[i:])
+				if err != nil {
+					return 0, err
+				}
+				i += n6
+			}
+		}
+	}
+	return i, nil
+}
+
+func (m *SVCount) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *SVCount) MarshalTo(dAtA []byte) (int, error) {
+	var i int
+	_ = i
+	var l int
+	_ = l
+	if len(m.Counts) > 0 {
+		for k, _ := range m.Counts {
+			dAtA[i] = 0xa
+			i++
+			v := m.Counts[k]
+			mapSize := 1 + sovLabelops(uint64(k)) + 1 + sovLabelops(uint64(v))
+			i = encodeVarintLabelops(dAtA, i, uint64(mapSize))
+			dAtA[i] = 0x8
+			i++
+			i = encodeVarintLabelops(dAtA, i, uint64(k))
+			dAtA[i] = 0x10
+			i++
+			i = encodeVarintLabelops(dAtA, i, uint64(v))
+		}
+	}
+	return i, nil
+}
+
+func (m *LabelIndex) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *LabelIndex) MarshalTo(dAtA []byte) (int, error) {
+	var i int
+	_ = i
+	var l int
+	_ = l
+	if len(m.Blocks) > 0 {
+		for k, _ := range m.Blocks {
+			dAtA[i] = 0xa
+			i++
+			v := m.Blocks[k]
+			msgSize := 0
+			if v != nil {
+				msgSize = v.Size()
+				msgSize += 1 + sovLabelops(uint64(msgSize))
+			}
+			mapSize := 1 + len(k) + sovLabelops(uint64(len(k))) + msgSize
+			i = encodeVarintLabelops(dAtA, i, uint64(mapSize))
+			dAtA[i] = 0xa
+			i++
+			i = encodeVarintLabelops(dAtA, i, uint64(len(k)))
+			i += copy(dAtA[i:], k)
+			if v != nil {
+				dAtA[i] = 0x12
+				i++
+				i = encodeVarintLabelops(dAtA, i, uint64(v.Size()))
+				n7, err := v.MarshalTo(dAtA[i:])
+				if err != nil {
+					return 0, err
+				}
+				i += n7
+			}
+		}
+	}
+	if m.LastMutid != 0 {
+		dAtA[i] = 0x18
+		i++
+		i = encodeVarintLabelops(dAtA, i, uint64(m.LastMutid))
+	}
+	if len(m.LastModTime) > 0 {
+		dAtA[i] = 0x22
+		i++
+		i = encodeVarintLabelops(dAtA, i, uint64(len(m.LastModTime)))
+		i += copy(dAtA[i:], m.LastModTime)
+	}
+	if len(m.LastModUser) > 0 {
+		dAtA[i] = 0x2a
+		i++
+		i = encodeVarintLabelops(dAtA, i, uint64(len(m.LastModUser)))
+		i += copy(dAtA[i:], m.LastModUser)
+	}
+	return i, nil
+}
+
 func encodeFixed64Labelops(dAtA []byte, offset int, v uint64) int {
 	dAtA[offset] = uint8(v)
 	dAtA[offset+1] = uint8(v >> 8)
@@ -472,6 +1210,18 @@ func (m *MergeOp) Size() (n int) {
 	return n
 }
 
+func (m *MergeOps) Size() (n int) {
+	var l int
+	_ = l
+	if len(m.Merges) > 0 {
+		for _, e := range m.Merges {
+			l = e.Size()
+			n += 1 + l + sovLabelops(uint64(l))
+		}
+	}
+	return n
+}
+
 func (m *SplitOp) Size() (n int) {
 	var l int
 	_ = l
@@ -507,6 +1257,100 @@ func (m *OpCompleted) Size() (n int) {
 	return n
 }
 
+func (m *Affinity) Size() (n int) {
+	var l int
+	_ = l
+	if m.Label1 != 0 {
+		n += 1 + sovLabelops(uint64(m.Label1))
+	}
+	if m.Label2 != 0 {
+		n += 1 + sovLabelops(uint64(m.Label2))
+	}
+	if m.Value != 0 {
+		n += 5
+	}
+	return n
+}
+
+func (m *Affinities) Size() (n int) {
+	var l int
+	_ = l
+	if len(m.Labels) > 0 {
+		l = 0
+		for _, e := range m.Labels {
+			l += sovLabelops(uint64(e))
+		}
+		n += 1 + sovLabelops(uint64(l)) + l
+	}
+	if len(m.Affinities) > 0 {
+		n += 1 + sovLabelops(uint64(len(m.Affinities)*4)) + len(m.Affinities)*4
+	}
+	return n
+}
+
+func (m *AffinityTable) Size() (n int) {
+	var l int
+	_ = l
+	if len(m.Table) > 0 {
+		for k, v := range m.Table {
+			_ = k
+			_ = v
+			l = 0
+			if v != nil {
+				l = v.Size()
+				l += 1 + sovLabelops(uint64(l))
+			}
+			mapEntrySize := 1 + sovLabelops(uint64(k)) + l
+			n += mapEntrySize + 1 + sovLabelops(uint64(mapEntrySize))
+		}
+	}
+	return n
+}
+
+func (m *SVCount) Size() (n int) {
+	var l int
+	_ = l
+	if len(m.Counts) > 0 {
+		for k, v := range m.Counts {
+			_ = k
+			_ = v
+			mapEntrySize := 1 + sovLabelops(uint64(k)) + 1 + sovLabelops(uint64(v))
+			n += mapEntrySize + 1 + sovLabelops(uint64(mapEntrySize))
+		}
+	}
+	return n
+}
+
+func (m *LabelIndex) Size() (n int) {
+	var l int
+	_ = l
+	if len(m.Blocks) > 0 {
+		for k, v := range m.Blocks {
+			_ = k
+			_ = v
+			l = 0
+			if v != nil {
+				l = v.Size()
+				l += 1 + sovLabelops(uint64(l))
+			}
+			mapEntrySize := 1 + len(k) + sovLabelops(uint64(len(k))) + l
+			n += mapEntrySize + 1 + sovLabelops(uint64(mapEntrySize))
+		}
+	}
+	if m.LastMutid != 0 {
+		n += 1 + sovLabelops(uint64(m.LastMutid))
+	}
+	l = len(m.LastModTime)
+	if l > 0 {
+		n += 1 + l + sovLabelops(uint64(l))
+	}
+	l = len(m.LastModUser)
+	if l > 0 {
+		n += 1 + l + sovLabelops(uint64(l))
+	}
+	return n
+}
+
 func sovLabelops(x uint64) (n int) {
 	for {
 		n++
@@ -532,6 +1376,16 @@ func (this *MergeOp) String() string {
 	}, "")
 	return s
 }
+func (this *MergeOps) String() string {
+	if this == nil {
+		return "nil"
+	}
+	s := strings.Join([]string{`&MergeOps{`,
+		`Merges:` + strings.Replace(fmt.Sprintf("%v", this.Merges), "MergeOp", "MergeOp", 1) + `,`,
+		`}`,
+	}, "")
+	return s
+}
 func (this *SplitOp) String() string {
 	if this == nil {
 		return "nil"
@@ -553,6 +1407,92 @@ func (this *OpCompleted) String() string {
 	s := strings.Join([]string{`&OpCompleted{`,
 		`Mutid:` + fmt.Sprintf("%v", this.Mutid) + `,`,
 		`Stage:` + fmt.Sprintf("%v", this.Stage) + `,`,
+		`}`,
+	}, "")
+	return s
+}
+func (this *Affinity) String() string {
+	if this == nil {
+		return "nil"
+	}
+	s := strings.Join([]string{`&Affinity{`,
+		`Label1:` + fmt.Sprintf("%v", this.Label1) + `,`,
+		`Label2:` + fmt.Sprintf("%v", this.Label2) + `,`,
+		`Value:` + fmt.Sprintf("%v", this.Value) + `,`,
+		`}`,
+	}, "")
+	return s
+}
+func (this *Affinities) String() string {
+	if this == nil {
+		return "nil"
+	}
+	s := strings.Join([]string{`&Affinities{`,
+		`Labels:` + fmt.Sprintf("%v", this.Labels) + `,`,
+		`Affinities:` + fmt.Sprintf("%v", this.Affinities) + `,`,
+		`}`,
+	}, "")
+	return s
+}
+func (this *AffinityTable) String() string {
+	if this == nil {
+		return "nil"
+	}
+	keysForTable := make([]uint64, 0, len(this.Table))
+	for k, _ := range this.Table {
+		keysForTable = append(keysForTable, k)
+	}
+	github_com_gogo_protobuf_sortkeys.Uint64s(keysForTable)
+	mapStringForTable := "map[uint64]*Affinities{"
+	for _, k := range keysForTable {
+		mapStringForTable += fmt.Sprintf("%v: %v,", k, this.Table[k])
+	}
+	mapStringForTable += "}"
+	s := strings.Join([]string{`&AffinityTable{`,
+		`Table:` + mapStringForTable + `,`,
+		`}`,
+	}, "")
+	return s
+}
+func (this *SVCount) String() string {
+	if this == nil {
+		return "nil"
+	}
+	keysForCounts := make([]uint64, 0, len(this.Counts))
+	for k, _ := range this.Counts {
+		keysForCounts = append(keysForCounts, k)
+	}
+	github_com_gogo_protobuf_sortkeys.Uint64s(keysForCounts)
+	mapStringForCounts := "map[uint64]uint32{"
+	for _, k := range keysForCounts {
+		mapStringForCounts += fmt.Sprintf("%v: %v,", k, this.Counts[k])
+	}
+	mapStringForCounts += "}"
+	s := strings.Join([]string{`&SVCount{`,
+		`Counts:` + mapStringForCounts + `,`,
+		`}`,
+	}, "")
+	return s
+}
+func (this *LabelIndex) String() string {
+	if this == nil {
+		return "nil"
+	}
+	keysForBlocks := make([]string, 0, len(this.Blocks))
+	for k, _ := range this.Blocks {
+		keysForBlocks = append(keysForBlocks, k)
+	}
+	github_com_gogo_protobuf_sortkeys.Strings(keysForBlocks)
+	mapStringForBlocks := "map[string]*SVCount{"
+	for _, k := range keysForBlocks {
+		mapStringForBlocks += fmt.Sprintf("%v: %v,", k, this.Blocks[k])
+	}
+	mapStringForBlocks += "}"
+	s := strings.Join([]string{`&LabelIndex{`,
+		`Blocks:` + mapStringForBlocks + `,`,
+		`LastMutid:` + fmt.Sprintf("%v", this.LastMutid) + `,`,
+		`LastModTime:` + fmt.Sprintf("%v", this.LastModTime) + `,`,
+		`LastModUser:` + fmt.Sprintf("%v", this.LastModUser) + `,`,
 		`}`,
 	}, "")
 	return s
@@ -694,6 +1634,87 @@ func (m *MergeOp) Unmarshal(dAtA []byte) error {
 			} else {
 				return fmt.Errorf("proto: wrong wireType = %d for field Merged", wireType)
 			}
+		default:
+			iNdEx = preIndex
+			skippy, err := skipLabelops(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if skippy < 0 {
+				return ErrInvalidLengthLabelops
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *MergeOps) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowLabelops
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= (uint64(b) & 0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: MergeOps: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: MergeOps: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Merges", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowLabelops
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= (int(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthLabelops
+			}
+			postIndex := iNdEx + msglen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Merges = append(m.Merges, &MergeOp{})
+			if err := m.Merges[len(m.Merges)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
 			skippy, err := skipLabelops(dAtA[iNdEx:])
@@ -971,6 +1992,830 @@ func (m *OpCompleted) Unmarshal(dAtA []byte) error {
 	}
 	return nil
 }
+func (m *Affinity) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowLabelops
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= (uint64(b) & 0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: Affinity: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: Affinity: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Label1", wireType)
+			}
+			m.Label1 = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowLabelops
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.Label1 |= (uint64(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 2:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Label2", wireType)
+			}
+			m.Label2 = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowLabelops
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.Label2 |= (uint64(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 3:
+			if wireType != 5 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Value", wireType)
+			}
+			var v uint32
+			if (iNdEx + 4) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += 4
+			v = uint32(dAtA[iNdEx-4])
+			v |= uint32(dAtA[iNdEx-3]) << 8
+			v |= uint32(dAtA[iNdEx-2]) << 16
+			v |= uint32(dAtA[iNdEx-1]) << 24
+			m.Value = float32(math.Float32frombits(v))
+		default:
+			iNdEx = preIndex
+			skippy, err := skipLabelops(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if skippy < 0 {
+				return ErrInvalidLengthLabelops
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *Affinities) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowLabelops
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= (uint64(b) & 0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: Affinities: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: Affinities: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType == 0 {
+				var v uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return ErrIntOverflowLabelops
+					}
+					if iNdEx >= l {
+						return io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					v |= (uint64(b) & 0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				m.Labels = append(m.Labels, v)
+			} else if wireType == 2 {
+				var packedLen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return ErrIntOverflowLabelops
+					}
+					if iNdEx >= l {
+						return io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					packedLen |= (int(b) & 0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if packedLen < 0 {
+					return ErrInvalidLengthLabelops
+				}
+				postIndex := iNdEx + packedLen
+				if postIndex > l {
+					return io.ErrUnexpectedEOF
+				}
+				for iNdEx < postIndex {
+					var v uint64
+					for shift := uint(0); ; shift += 7 {
+						if shift >= 64 {
+							return ErrIntOverflowLabelops
+						}
+						if iNdEx >= l {
+							return io.ErrUnexpectedEOF
+						}
+						b := dAtA[iNdEx]
+						iNdEx++
+						v |= (uint64(b) & 0x7F) << shift
+						if b < 0x80 {
+							break
+						}
+					}
+					m.Labels = append(m.Labels, v)
+				}
+			} else {
+				return fmt.Errorf("proto: wrong wireType = %d for field Labels", wireType)
+			}
+		case 2:
+			if wireType == 5 {
+				var v uint32
+				if (iNdEx + 4) > l {
+					return io.ErrUnexpectedEOF
+				}
+				iNdEx += 4
+				v = uint32(dAtA[iNdEx-4])
+				v |= uint32(dAtA[iNdEx-3]) << 8
+				v |= uint32(dAtA[iNdEx-2]) << 16
+				v |= uint32(dAtA[iNdEx-1]) << 24
+				v2 := float32(math.Float32frombits(v))
+				m.Affinities = append(m.Affinities, v2)
+			} else if wireType == 2 {
+				var packedLen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return ErrIntOverflowLabelops
+					}
+					if iNdEx >= l {
+						return io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					packedLen |= (int(b) & 0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if packedLen < 0 {
+					return ErrInvalidLengthLabelops
+				}
+				postIndex := iNdEx + packedLen
+				if postIndex > l {
+					return io.ErrUnexpectedEOF
+				}
+				for iNdEx < postIndex {
+					var v uint32
+					if (iNdEx + 4) > l {
+						return io.ErrUnexpectedEOF
+					}
+					iNdEx += 4
+					v = uint32(dAtA[iNdEx-4])
+					v |= uint32(dAtA[iNdEx-3]) << 8
+					v |= uint32(dAtA[iNdEx-2]) << 16
+					v |= uint32(dAtA[iNdEx-1]) << 24
+					v2 := float32(math.Float32frombits(v))
+					m.Affinities = append(m.Affinities, v2)
+				}
+			} else {
+				return fmt.Errorf("proto: wrong wireType = %d for field Affinities", wireType)
+			}
+		default:
+			iNdEx = preIndex
+			skippy, err := skipLabelops(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if skippy < 0 {
+				return ErrInvalidLengthLabelops
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *AffinityTable) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowLabelops
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= (uint64(b) & 0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: AffinityTable: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: AffinityTable: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Table", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowLabelops
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= (int(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthLabelops
+			}
+			postIndex := iNdEx + msglen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if m.Table == nil {
+				m.Table = make(map[uint64]*Affinities)
+			}
+			var mapkey uint64
+			var mapvalue *Affinities
+			for iNdEx < postIndex {
+				entryPreIndex := iNdEx
+				var wire uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return ErrIntOverflowLabelops
+					}
+					if iNdEx >= l {
+						return io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					wire |= (uint64(b) & 0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				fieldNum := int32(wire >> 3)
+				if fieldNum == 1 {
+					for shift := uint(0); ; shift += 7 {
+						if shift >= 64 {
+							return ErrIntOverflowLabelops
+						}
+						if iNdEx >= l {
+							return io.ErrUnexpectedEOF
+						}
+						b := dAtA[iNdEx]
+						iNdEx++
+						mapkey |= (uint64(b) & 0x7F) << shift
+						if b < 0x80 {
+							break
+						}
+					}
+				} else if fieldNum == 2 {
+					var mapmsglen int
+					for shift := uint(0); ; shift += 7 {
+						if shift >= 64 {
+							return ErrIntOverflowLabelops
+						}
+						if iNdEx >= l {
+							return io.ErrUnexpectedEOF
+						}
+						b := dAtA[iNdEx]
+						iNdEx++
+						mapmsglen |= (int(b) & 0x7F) << shift
+						if b < 0x80 {
+							break
+						}
+					}
+					if mapmsglen < 0 {
+						return ErrInvalidLengthLabelops
+					}
+					postmsgIndex := iNdEx + mapmsglen
+					if mapmsglen < 0 {
+						return ErrInvalidLengthLabelops
+					}
+					if postmsgIndex > l {
+						return io.ErrUnexpectedEOF
+					}
+					mapvalue = &Affinities{}
+					if err := mapvalue.Unmarshal(dAtA[iNdEx:postmsgIndex]); err != nil {
+						return err
+					}
+					iNdEx = postmsgIndex
+				} else {
+					iNdEx = entryPreIndex
+					skippy, err := skipLabelops(dAtA[iNdEx:])
+					if err != nil {
+						return err
+					}
+					if skippy < 0 {
+						return ErrInvalidLengthLabelops
+					}
+					if (iNdEx + skippy) > postIndex {
+						return io.ErrUnexpectedEOF
+					}
+					iNdEx += skippy
+				}
+			}
+			m.Table[mapkey] = mapvalue
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipLabelops(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if skippy < 0 {
+				return ErrInvalidLengthLabelops
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *SVCount) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowLabelops
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= (uint64(b) & 0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: SVCount: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: SVCount: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Counts", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowLabelops
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= (int(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthLabelops
+			}
+			postIndex := iNdEx + msglen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if m.Counts == nil {
+				m.Counts = make(map[uint64]uint32)
+			}
+			var mapkey uint64
+			var mapvalue uint32
+			for iNdEx < postIndex {
+				entryPreIndex := iNdEx
+				var wire uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return ErrIntOverflowLabelops
+					}
+					if iNdEx >= l {
+						return io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					wire |= (uint64(b) & 0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				fieldNum := int32(wire >> 3)
+				if fieldNum == 1 {
+					for shift := uint(0); ; shift += 7 {
+						if shift >= 64 {
+							return ErrIntOverflowLabelops
+						}
+						if iNdEx >= l {
+							return io.ErrUnexpectedEOF
+						}
+						b := dAtA[iNdEx]
+						iNdEx++
+						mapkey |= (uint64(b) & 0x7F) << shift
+						if b < 0x80 {
+							break
+						}
+					}
+				} else if fieldNum == 2 {
+					for shift := uint(0); ; shift += 7 {
+						if shift >= 64 {
+							return ErrIntOverflowLabelops
+						}
+						if iNdEx >= l {
+							return io.ErrUnexpectedEOF
+						}
+						b := dAtA[iNdEx]
+						iNdEx++
+						mapvalue |= (uint32(b) & 0x7F) << shift
+						if b < 0x80 {
+							break
+						}
+					}
+				} else {
+					iNdEx = entryPreIndex
+					skippy, err := skipLabelops(dAtA[iNdEx:])
+					if err != nil {
+						return err
+					}
+					if skippy < 0 {
+						return ErrInvalidLengthLabelops
+					}
+					if (iNdEx + skippy) > postIndex {
+						return io.ErrUnexpectedEOF
+					}
+					iNdEx += skippy
+				}
+			}
+			m.Counts[mapkey] = mapvalue
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipLabelops(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if skippy < 0 {
+				return ErrInvalidLengthLabelops
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *LabelIndex) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowLabelops
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= (uint64(b) & 0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: LabelIndex: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: LabelIndex: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Blocks", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowLabelops
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= (int(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthLabelops
+			}
+			postIndex := iNdEx + msglen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if m.Blocks == nil {
+				m.Blocks = make(map[string]*SVCount)
+			}
+			var mapkey string
+			var mapvalue *SVCount
+			for iNdEx < postIndex {
+				entryPreIndex := iNdEx
+				var wire uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return ErrIntOverflowLabelops
+					}
+					if iNdEx >= l {
+						return io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					wire |= (uint64(b) & 0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				fieldNum := int32(wire >> 3)
+				if fieldNum == 1 {
+					var stringLenmapkey uint64
+					for shift := uint(0); ; shift += 7 {
+						if shift >= 64 {
+							return ErrIntOverflowLabelops
+						}
+						if iNdEx >= l {
+							return io.ErrUnexpectedEOF
+						}
+						b := dAtA[iNdEx]
+						iNdEx++
+						stringLenmapkey |= (uint64(b) & 0x7F) << shift
+						if b < 0x80 {
+							break
+						}
+					}
+					intStringLenmapkey := int(stringLenmapkey)
+					if intStringLenmapkey < 0 {
+						return ErrInvalidLengthLabelops
+					}
+					postStringIndexmapkey := iNdEx + intStringLenmapkey
+					if postStringIndexmapkey > l {
+						return io.ErrUnexpectedEOF
+					}
+					mapkey = string(dAtA[iNdEx:postStringIndexmapkey])
+					iNdEx = postStringIndexmapkey
+				} else if fieldNum == 2 {
+					var mapmsglen int
+					for shift := uint(0); ; shift += 7 {
+						if shift >= 64 {
+							return ErrIntOverflowLabelops
+						}
+						if iNdEx >= l {
+							return io.ErrUnexpectedEOF
+						}
+						b := dAtA[iNdEx]
+						iNdEx++
+						mapmsglen |= (int(b) & 0x7F) << shift
+						if b < 0x80 {
+							break
+						}
+					}
+					if mapmsglen < 0 {
+						return ErrInvalidLengthLabelops
+					}
+					postmsgIndex := iNdEx + mapmsglen
+					if mapmsglen < 0 {
+						return ErrInvalidLengthLabelops
+					}
+					if postmsgIndex > l {
+						return io.ErrUnexpectedEOF
+					}
+					mapvalue = &SVCount{}
+					if err := mapvalue.Unmarshal(dAtA[iNdEx:postmsgIndex]); err != nil {
+						return err
+					}
+					iNdEx = postmsgIndex
+				} else {
+					iNdEx = entryPreIndex
+					skippy, err := skipLabelops(dAtA[iNdEx:])
+					if err != nil {
+						return err
+					}
+					if skippy < 0 {
+						return ErrInvalidLengthLabelops
+					}
+					if (iNdEx + skippy) > postIndex {
+						return io.ErrUnexpectedEOF
+					}
+					iNdEx += skippy
+				}
+			}
+			m.Blocks[mapkey] = mapvalue
+			iNdEx = postIndex
+		case 3:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field LastMutid", wireType)
+			}
+			m.LastMutid = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowLabelops
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.LastMutid |= (uint64(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 4:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field LastModTime", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowLabelops
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= (uint64(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthLabelops
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.LastModTime = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 5:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field LastModUser", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowLabelops
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= (uint64(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthLabelops
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.LastModUser = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipLabelops(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if skippy < 0 {
+				return ErrInvalidLengthLabelops
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
 func skipLabelops(dAtA []byte) (n int, err error) {
 	l := len(dAtA)
 	iNdEx := 0
@@ -1079,21 +2924,40 @@ var (
 func init() { proto1.RegisterFile("labelops.proto", fileDescriptorLabelops) }
 
 var fileDescriptorLabelops = []byte{
-	// 246 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x09, 0x6e, 0x88, 0x02, 0xff, 0xe2, 0xe2, 0xcb, 0x49, 0x4c, 0x4a,
-	0xcd, 0xc9, 0x2f, 0x28, 0xd6, 0x2b, 0x28, 0xca, 0x2f, 0xc9, 0x17, 0x62, 0x05, 0x53, 0x4a, 0xfe,
-	0x5c, 0xec, 0xbe, 0xa9, 0x45, 0xe9, 0xa9, 0xfe, 0x05, 0x42, 0x22, 0x5c, 0xac, 0xb9, 0xa5, 0x25,
-	0x99, 0x29, 0x12, 0x8c, 0x0a, 0x8c, 0x1a, 0x2c, 0x41, 0x10, 0x8e, 0x90, 0x18, 0x17, 0x5b, 0x49,
-	0x62, 0x51, 0x7a, 0x6a, 0x89, 0x04, 0x13, 0x58, 0x18, 0xca, 0x03, 0x89, 0xe7, 0x82, 0x34, 0xa6,
-	0x48, 0x30, 0x2b, 0x30, 0x83, 0xc4, 0x21, 0x3c, 0xa5, 0x7a, 0x2e, 0xf6, 0xe0, 0x82, 0x9c, 0xcc,
-	0x12, 0x92, 0x0d, 0x94, 0xe2, 0xe2, 0xc8, 0x4b, 0x2d, 0x07, 0xbb, 0x52, 0x82, 0x19, 0x2c, 0x03,
-	0xe7, 0x83, 0xf4, 0x24, 0xe7, 0x27, 0x16, 0x15, 0xa7, 0x4a, 0xb0, 0x28, 0x30, 0x6a, 0x70, 0x04,
-	0x41, 0x79, 0x42, 0x42, 0x5c, 0x2c, 0x45, 0x39, 0xa9, 0xc5, 0x12, 0xac, 0x0a, 0x8c, 0x1a, 0x3c,
-	0x41, 0x60, 0xb6, 0x92, 0x25, 0x17, 0xb7, 0x7f, 0x81, 0x73, 0x7e, 0x6e, 0x41, 0x4e, 0x6a, 0x49,
-	0x6a, 0x0a, 0x0e, 0x47, 0x88, 0x70, 0xb1, 0x16, 0x97, 0x24, 0xa6, 0xa7, 0x82, 0xdd, 0xc0, 0x19,
-	0x04, 0xe1, 0x38, 0xe9, 0x5c, 0x78, 0x28, 0xc7, 0x70, 0xe3, 0xa1, 0x1c, 0xc3, 0x87, 0x87, 0x72,
-	0x8c, 0x0d, 0x8f, 0xe4, 0x18, 0x57, 0x3c, 0x92, 0x63, 0x3c, 0xf1, 0x48, 0x8e, 0xf1, 0xc2, 0x23,
-	0x39, 0xc6, 0x07, 0x8f, 0xe4, 0x18, 0x5f, 0x3c, 0x92, 0x63, 0xf8, 0xf0, 0x48, 0x8e, 0x71, 0xc2,
-	0x63, 0x39, 0x86, 0x24, 0x36, 0x70, 0x08, 0x1a, 0x03, 0x02, 0x00, 0x00, 0xff, 0xff, 0x7e, 0xdb,
-	0x5a, 0x8b, 0x5a, 0x01, 0x00, 0x00,
+	// 551 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x94, 0x52, 0x4d, 0x6f, 0xd3, 0x40,
+	0x10, 0xcd, 0xc6, 0xcd, 0xd7, 0x98, 0x44, 0xb0, 0x8a, 0x90, 0x15, 0xa9, 0x8b, 0x65, 0x21, 0xc8,
+	0x01, 0x45, 0xc2, 0xa8, 0x12, 0xe5, 0x46, 0x0b, 0x87, 0x0a, 0xaa, 0x20, 0xb7, 0x70, 0xad, 0x9c,
+	0x7a, 0x1b, 0x59, 0xf5, 0x97, 0xbc, 0x6b, 0x68, 0x4e, 0xf0, 0x13, 0x90, 0xf8, 0x13, 0xfc, 0x14,
+	0x8e, 0x3d, 0x72, 0x24, 0xe6, 0xc2, 0xb1, 0x17, 0xee, 0x68, 0x3f, 0x9c, 0xd8, 0x12, 0x1c, 0xb8,
+	0xd8, 0xfb, 0x66, 0xdf, 0xcc, 0xbc, 0x37, 0x3b, 0x30, 0x8a, 0xfc, 0x05, 0x8d, 0xd2, 0x8c, 0xcd,
+	0xb2, 0x3c, 0xe5, 0x29, 0xee, 0xc8, 0x9f, 0x33, 0x87, 0xde, 0x31, 0xcd, 0x97, 0x74, 0x9e, 0xe1,
+	0x31, 0x74, 0xe2, 0x82, 0x87, 0x81, 0x85, 0x6c, 0x34, 0xdd, 0xf1, 0x14, 0xc0, 0x77, 0xa1, 0xcb,
+	0xfd, 0x7c, 0x49, 0xb9, 0xd5, 0x96, 0x61, 0x8d, 0x44, 0x3c, 0x16, 0x89, 0x81, 0x65, 0xd8, 0x86,
+	0x88, 0x2b, 0xe4, 0xb8, 0xd0, 0xd7, 0x05, 0x19, 0x7e, 0xa0, 0x39, 0xcc, 0x42, 0xb6, 0x31, 0x35,
+	0xdd, 0x91, 0xea, 0x3d, 0xd3, 0x04, 0x9d, 0xc3, 0x9c, 0x8f, 0xd0, 0x3b, 0xc9, 0xa2, 0x90, 0xff,
+	0xb7, 0x88, 0x09, 0xf4, 0x13, 0xfa, 0x41, 0x3a, 0xb3, 0x0c, 0x79, 0xb3, 0xc1, 0x22, 0xe7, 0x3c,
+	0xf5, 0x73, 0x46, 0xad, 0x1d, 0x1b, 0x4d, 0xfb, 0x9e, 0x46, 0x18, 0xc3, 0x4e, 0x1e, 0x51, 0x66,
+	0x75, 0x6c, 0x34, 0xbd, 0xe5, 0xc9, 0xb3, 0xb3, 0x0f, 0xe6, 0x3c, 0x3b, 0x4c, 0xe3, 0x2c, 0xa2,
+	0x9c, 0x06, 0xff, 0x10, 0x31, 0x86, 0x0e, 0xe3, 0xfe, 0x92, 0x4a, 0x0d, 0x03, 0x4f, 0x01, 0xe7,
+	0x0d, 0xf4, 0x9f, 0x5f, 0x5c, 0x84, 0x49, 0xc8, 0x57, 0xa2, 0xa5, 0xec, 0xfd, 0x58, 0x27, 0x6a,
+	0xb4, 0x89, 0xbb, 0x95, 0x7c, 0x85, 0x44, 0xc5, 0xf7, 0x7e, 0x54, 0x50, 0xa9, 0xbd, 0xed, 0x29,
+	0xe0, 0xbc, 0x00, 0xd0, 0x15, 0x43, 0xca, 0x36, 0xb9, 0x6a, 0x86, 0x55, 0x2e, 0xc3, 0x04, 0xc0,
+	0xdf, 0xb0, 0xac, 0xb6, 0x6d, 0x4c, 0xdb, 0x5e, 0x2d, 0xe2, 0x7c, 0x41, 0x30, 0xac, 0x84, 0x9d,
+	0xfa, 0x8b, 0x88, 0xe2, 0x3d, 0xe8, 0x70, 0x71, 0xd0, 0x8f, 0x71, 0x4f, 0x3f, 0x46, 0x83, 0x34,
+	0x93, 0xdf, 0x97, 0x09, 0xcf, 0x57, 0x9e, 0x62, 0x4f, 0x5e, 0x01, 0x6c, 0x83, 0xf8, 0x36, 0x18,
+	0x97, 0x74, 0xa5, 0xfd, 0x89, 0x23, 0x7e, 0x58, 0x99, 0x10, 0xde, 0x4c, 0xf7, 0x4e, 0xb3, 0x6c,
+	0x48, 0x99, 0xf6, 0xf5, 0xac, 0xfd, 0x14, 0x39, 0x57, 0xd0, 0x3b, 0x79, 0x77, 0x98, 0x16, 0x09,
+	0xc7, 0xae, 0x78, 0x9f, 0x22, 0xe1, 0xd5, 0x72, 0x4c, 0x74, 0xa2, 0xbe, 0x9f, 0xc9, 0x2f, 0x53,
+	0x52, 0x34, 0x73, 0xb2, 0x0f, 0x66, 0x2d, 0xfc, 0x17, 0x31, 0xe3, 0xba, 0x98, 0x61, 0xbd, 0xf3,
+	0x6f, 0x04, 0xf0, 0x5a, 0x8c, 0xee, 0x28, 0x09, 0xe8, 0x15, 0xde, 0x83, 0xee, 0x22, 0x4a, 0xcf,
+	0x2f, 0xab, 0xee, 0xbb, 0xba, 0xfb, 0x96, 0x32, 0x3b, 0x90, 0xf7, 0x5a, 0x80, 0x22, 0xe3, 0x5d,
+	0x80, 0xc8, 0x67, 0xfc, 0x4c, 0xad, 0x87, 0x5a, 0xb9, 0x81, 0x88, 0x1c, 0xcb, 0x15, 0x71, 0x60,
+	0xa8, 0xae, 0xd3, 0xe0, 0x8c, 0x87, 0xb1, 0x5a, 0xbd, 0x81, 0x67, 0x4a, 0x46, 0x1a, 0x9c, 0x86,
+	0x31, 0x6d, 0x70, 0x0a, 0x46, 0x73, 0xb9, 0x88, 0x5b, 0xce, 0x5b, 0x46, 0xf3, 0xc9, 0x11, 0x98,
+	0xb5, 0xee, 0x75, 0x9f, 0x03, 0xe5, 0xf3, 0x7e, 0x73, 0xe8, 0xa3, 0xe6, 0xec, 0x6a, 0xbe, 0x0f,
+	0x1e, 0x5d, 0xaf, 0x49, 0xeb, 0xfb, 0x9a, 0xb4, 0x6e, 0xd6, 0x04, 0x7d, 0x2a, 0x09, 0xfa, 0x5a,
+	0x12, 0xf4, 0xad, 0x24, 0xe8, 0xba, 0x24, 0xe8, 0x47, 0x49, 0xd0, 0xaf, 0x92, 0xb4, 0x6e, 0x4a,
+	0x82, 0x3e, 0xff, 0x24, 0xad, 0x45, 0x57, 0xd6, 0x79, 0xf2, 0x27, 0x00, 0x00, 0xff, 0xff, 0x1e,
+	0x15, 0x44, 0x93, 0x2e, 0x04, 0x00, 0x00,
 }

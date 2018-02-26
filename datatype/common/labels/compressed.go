@@ -73,6 +73,47 @@ func (pb PositionedBlock) SplitSlow(op SplitOp) (split *Block, keptSize, splitSi
 	return
 }
 
+// SplitSupervoxel splits a target supervoxel using RLEs within a block by doing full expansion of block
+// into uint64 array.  The voxels of the RLEs get the SplitSupervoxel id while all other voxels of the
+// target supervoxel get assigned the RemainSupervoxel id by simply changing the label header.
+func (pb PositionedBlock) SplitSupervoxel(op SplitSupervoxelOp) (split *Block, keptSize, splitSize uint64, err error) {
+	var offset dvid.Point3d
+	if offset, err = pb.OffsetDVID(); err != nil {
+		return
+	}
+	lblarrayBytes, _ := pb.MakeLabelVolume()
+	lblarray, err := dvid.ByteToUint64(lblarrayBytes)
+	if err != nil {
+		return
+	}
+
+	brles, found := op.Split[pb.BCoord]
+	if found {
+		rles := brles.Offset(offset)
+		for _, rle := range rles {
+			pt := rle.StartPt()
+			i := pt[2]*pb.Size[1]*pb.Size[0] + pt[1]*pb.Size[0] + pt[0]
+			for x := int32(0); x < rle.Length(); x++ {
+				if lblarray[i] == op.Supervoxel {
+					lblarray[i] = op.SplitSupervoxel
+					splitSize++
+				}
+				i++
+			}
+		}
+	}
+
+	for i := 0; i < len(lblarray); i++ {
+		if lblarray[i] == op.Supervoxel {
+			lblarray[i] = op.RemainSupervoxel
+			keptSize++
+		}
+	}
+
+	split, err = MakeBlock(lblarrayBytes, pb.Size)
+	return
+}
+
 // Split a target label using RLEs within a block.  Only the target label is split.
 // A nil split block is returned if target label is not within block.
 // TODO: If RLEs continue to be used for splits, refactor / split up to make this more readable.
