@@ -48,9 +48,6 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp) error {
 	timedLog := dvid.NewTimeLog()
 
 	mutID := d.NewMutationID()
-	if err := AddMerge(d, v, mutID, op); err != nil {
-		return err
-	}
 
 	// send kafka merge event to instance-uuid topic
 	// msg: {"action": "merge", "target": targetlabel, "labels": [merge labels]}
@@ -87,6 +84,9 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp) error {
 	mergeIdx, err := GetMultiLabelIndex(d, v, op.Merged, dvid.Bounds{})
 	if err != nil {
 		return fmt.Errorf("can't get block indices of merge labels %s: %v", op.Merged, err)
+	}
+	if err := AddMergeToMapping(d, v, mutID, op.Target, mergeIdx); err != nil {
+		return err
 	}
 
 	delta := labels.DeltaMerge{

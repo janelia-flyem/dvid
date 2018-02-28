@@ -226,13 +226,13 @@ func GetChildrenByVersion(v dvid.VersionID) ([]dvid.VersionID, error) {
 	return manager.getChildrenByVersion(v)
 }
 
-// GetAncestorVersions returns the list of ancestor versions to the given version
-// in order of root to parent.
-func GetAncestorVersions(v dvid.VersionID) ([]dvid.VersionID, error) {
+// GetAncestry returns a list of ancestor versions from the given version
+// to the root.
+func GetAncestry(v dvid.VersionID) ([]dvid.VersionID, error) {
 	if manager == nil {
 		return nil, ErrManagerNotInitialized
 	}
-	return manager.getAncestorVersions(v)
+	return manager.getAncestry(v)
 }
 
 // LockedUUID returns true if a given UUID is locked.

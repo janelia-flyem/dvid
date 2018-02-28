@@ -24,7 +24,7 @@ func (idx Index) NumVoxels() uint64 {
 	return numVoxels
 }
 
-func (idx Index) GetConstituentLabels() Set {
+func (idx Index) GetSupervoxels() Set {
 	if len(idx.Blocks) == 0 {
 		return Set{}
 	}
@@ -153,7 +153,7 @@ type SupervoxelChanges map[uint64]map[dvid.IZYXString]int32
 
 // ModifyBlocks modifies the receiver Index to incorporate supervoxel changes among the given blocks.
 func (idx *Index) ModifyBlocks(sc SupervoxelChanges) error {
-	labelSupervoxels := idx.GetConstituentLabels()
+	labelSupervoxels := idx.GetSupervoxels()
 	for supervoxel, blockChanges := range sc {
 		_, inSet := labelSupervoxels[supervoxel]
 		if inSet {

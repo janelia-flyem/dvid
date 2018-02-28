@@ -69,6 +69,7 @@ func LogSplit(d dvid.Data, v dvid.VersionID, mutID uint64, op SplitOp) error {
 	return log.Append(d.DataUUID(), uuid, msg)
 }
 
+// LogMerge logs the merge of supervoxels to a label.
 func LogMerge(d dvid.Data, v dvid.VersionID, mutID uint64, op MergeOp) error {
 	uuid, err := datastore.UUIDFromVersion(v)
 	if err != nil {
@@ -129,8 +130,8 @@ func serializeSplit(mutID uint64, op SplitOp) (serialization []byte, err error) 
 func serializeMerge(mutID uint64, op MergeOp) (serialization []byte, err error) {
 	merged := make([]uint64, len(op.Merged))
 	var i int
-	for lbl := range op.Merged {
-		merged[i] = lbl
+	for label := range op.Merged {
+		merged[i] = label
 		i++
 	}
 	pop := &proto.MergeOp{

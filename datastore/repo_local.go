@@ -1587,9 +1587,9 @@ func (m *repoManager) invalidateAncestors(kvv kvVersions, v dvid.VersionID) erro
 	return nil
 }
 
-// recursive ancestor path following to determine versions from root to a given version.
-func (m *repoManager) getAncestorVersions(v dvid.VersionID) ([]dvid.VersionID, error) {
-	var ancestors []dvid.VersionID
+// generate ancestor path from current version to root.
+func (m *repoManager) getAncestry(v dvid.VersionID) ([]dvid.VersionID, error) {
+	ancestors := []dvid.VersionID{v}
 	cur := v
 	for {
 		parents, err := m.getParentsByVersion(cur)
@@ -1602,14 +1602,7 @@ func (m *repoManager) getAncestorVersions(v dvid.VersionID) ([]dvid.VersionID, e
 		cur = parents[0]
 		ancestors = append(ancestors, cur)
 	}
-	if len(ancestors) == 0 {
-		return []dvid.VersionID{}, nil
-	}
-	rootToParent := make([]dvid.VersionID, len(ancestors))
-	for i, ancestor := range ancestors {
-		rootToParent[len(ancestors)-1-i] = ancestor
-	}
-	return rootToParent, nil
+	return ancestors, nil
 }
 
 // recursive ancestor path following used to determine appropriate k/v pairs for given version.

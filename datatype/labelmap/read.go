@@ -70,6 +70,7 @@ func (d *Data) GetVolume(v dvid.VersionID, vox *Labels, scale uint8, roiname dvi
 }
 
 type getOperation struct {
+	version     dvid.VersionID
 	voxels      *Labels
 	blocksInROI map[string]bool
 	mapping     *SVMap
@@ -129,9 +130,9 @@ func (d *Data) GetLabels(v dvid.VersionID, scale uint8, vox *Labels, r *imageblk
 					blocksInROI[indexString] = true
 				}
 			}
-			chunkOp = &storage.ChunkOp{&getOperation{vox, blocksInROI, mapping}, wg}
+			chunkOp = &storage.ChunkOp{&getOperation{v, vox, blocksInROI, mapping}, wg}
 		} else {
-			chunkOp = &storage.ChunkOp{&getOperation{vox, nil, mapping}, wg}
+			chunkOp = &storage.ChunkOp{&getOperation{v, vox, nil, mapping}, wg}
 		}
 
 		if !hasbuffer {
@@ -252,8 +253,8 @@ func (d *Data) readChunk(chunk *storage.Chunk) {
 	}
 
 	// Perform the operation.
-	if op.mapping != nil {
-		err := op.voxels.readMappedBlock(chunk.K, block, d.BlockSize(), op.mapping)
+	if op.mapping != nil && op.mapping.Exists(op.version) {
+		err := op.voxels.readMappedBlock(op.version, chunk.K, block, d.BlockSize(), op.mapping)
 		if err != nil {
 			dvid.Errorf("readMappedBlock, key %v in %q: %v\n", chunk.K, d.DataName(), err)
 		}
@@ -265,7 +266,7 @@ func (d *Data) readChunk(chunk *storage.Chunk) {
 	}
 }
 
-func (v *Labels) readMappedBlock(tkey storage.TKey, block labels.Block, blockSize dvid.Point, m *SVMap) error {
+func (v *Labels) readMappedBlock(version dvid.VersionID, tkey storage.TKey, block labels.Block, blockSize dvid.Point, m *SVMap) error {
 	if blockSize.NumDims() > 3 {
 		return fmt.Errorf("DVID voxel blocks currently only supports up to 3d, not 4+ dimensions")
 	}
@@ -288,6 +289,12 @@ func (v *Labels) readMappedBlock(tkey storage.TKey, block labels.Block, blockSiz
 	blockBegY := int64(blockBeg.Value(1))
 	blockBegZ := int64(blockBeg.Value(2))
 
+	ancestry, err := m.GetAncestry(version)
+	if err != nil {
+		return fmt.Errorf("unable to get ancestry for version %d: %v", version, err)
+	}
+	m.RLock()
+
 	// Do the transfers depending on shape of the external voxels.
 	switch {
 	case v.DataShape().Equals(dvid.XY):
@@ -298,7 +305,7 @@ func (v *Labels) readMappedBlock(tkey storage.TKey, block labels.Block, blockSiz
 			dI := dataI
 			for x := dataBeg.Value(0); x <= dataEnd.Value(0); x++ {
 				orig := binary.LittleEndian.Uint64(blabels[bI : bI+8])
-				mapped, found := m.MappedLabel(orig)
+				mapped, found := m.mapLabel(orig, ancestry)
 				if found {
 					binary.LittleEndian.PutUint64(labels[dI:dI+8], mapped)
 				} else {
@@ -319,7 +326,7 @@ func (v *Labels) readMappedBlock(tkey storage.TKey, block labels.Block, blockSiz
 			dI := dataI
 			for x := dataBeg.Value(0); x <= dataEnd.Value(0); x++ {
 				orig := binary.LittleEndian.Uint64(blabels[bI : bI+8])
-				mapped, found := m.MappedLabel(orig)
+				mapped, found := m.mapLabel(orig, ancestry)
 				if found {
 					binary.LittleEndian.PutUint64(labels[dI:dI+8], mapped)
 				} else {
@@ -339,7 +346,7 @@ func (v *Labels) readMappedBlock(tkey storage.TKey, block labels.Block, blockSiz
 			blockI := bz*bY + blockBegY*bX + blockBegX*8
 			for x := dataBeg.Value(1); x <= dataEnd.Value(1); x++ {
 				orig := binary.LittleEndian.Uint64(blabels[blockI : blockI+8])
-				mapped, found := m.MappedLabel(orig)
+				mapped, found := m.mapLabel(orig, ancestry)
 				if found {
 					binary.LittleEndian.PutUint64(labels[dataI:dataI+8], mapped)
 				} else {
@@ -353,6 +360,7 @@ func (v *Labels) readMappedBlock(tkey storage.TKey, block labels.Block, blockSiz
 
 	case v.DataShape().ShapeDimensions() == 2:
 		// TODO: General code for handling 2d ExtData in n-d space.
+		m.Unlock()
 		return fmt.Errorf("DVID currently does not support 2d in n-d space.")
 
 	case v.DataShape().Equals(dvid.Vol3d):
@@ -369,7 +377,7 @@ func (v *Labels) readMappedBlock(tkey storage.TKey, block labels.Block, blockSiz
 				dI := dataZ*dY + dataY*dX + dataOffset
 				for x := dataBeg.Value(0); x <= dataEnd.Value(0); x++ {
 					orig := binary.LittleEndian.Uint64(blabels[bI : bI+8])
-					mapped, found := m.MappedLabel(orig)
+					mapped, found := m.mapLabel(orig, ancestry)
 					if found {
 						binary.LittleEndian.PutUint64(labels[dI:dI+8], mapped)
 					} else {
@@ -384,8 +392,10 @@ func (v *Labels) readMappedBlock(tkey storage.TKey, block labels.Block, blockSiz
 		}
 
 	default:
+		m.Unlock()
 		return fmt.Errorf("Cannot readBlock() unsupported voxels data shape %s", v.DataShape())
 	}
+	m.Unlock()
 	return nil
 }
 

@@ -140,7 +140,7 @@ func GetLabelIndex(d dvid.Data, v dvid.VersionID, label uint64) (*labels.Index, 
 		return nil, err
 	}
 	if mapping != nil {
-		if mapped, found := mapping.MappedLabel(label); found {
+		if mapped, found := mapping.MappedLabel(v, label); found {
 			return nil, fmt.Errorf("label %d has already been merged into label %d", label, mapped)
 		}
 	}
@@ -190,7 +190,7 @@ func GetSupervoxelBlocks(d dvid.Data, v dvid.VersionID, supervoxel uint64) (dvid
 	}
 	label := supervoxel
 	if mapping != nil {
-		if mapped, found := mapping.MappedLabel(supervoxel); found {
+		if mapped, found := mapping.MappedLabel(v, supervoxel); found {
 			label = mapped
 		}
 	}
@@ -308,7 +308,7 @@ func SplitSupervoxelIndex(d dvid.Data, v dvid.VersionID, op labels.SplitSupervox
 	}
 	label := op.Supervoxel
 	if mapping != nil {
-		if mapped, found := mapping.MappedLabel(op.Supervoxel); found {
+		if mapped, found := mapping.MappedLabel(v, op.Supervoxel); found {
 			label = mapped
 		}
 	}
@@ -387,7 +387,7 @@ func CleaveIndex(d dvid.Data, v dvid.VersionID, op labels.CleaveOp) error {
 		return err
 	}
 	if mapping != nil {
-		if mapped, found := mapping.MappedLabel(op.Target); found {
+		if mapped, found := mapping.MappedLabel(v, op.Target); found {
 			return fmt.Errorf("can't cleave label %d which has already been merged into label %d", op.Target, mapped)
 		}
 	}
@@ -564,18 +564,24 @@ type blockChange struct {
 	delta  map[uint64]int32
 }
 
-// goroutine(s) that aggregates supervoxel changes across blocks, then calls
+// goroutine(s) that aggregates supervoxel changes across blocks for one mutation, then calls
 // mutex-guarded label index mutation routine.
 func (d *Data) aggregateBlockChanges(v dvid.VersionID, ch <-chan blockChange) {
 	svmap, err := GetMapping(d, v)
 	if err != nil {
-		dvid.Criticalf("couldn't get mapping for data %q, version %d: %v\n", d.DataName(), v)
+		dvid.Criticalf("couldn't get mapping for data %q, version %d: %v\n", d.DataName(), v, err)
+		return
+	}
+	ancestry, err := svmap.GetAncestry(v)
+	if err != nil {
+		dvid.Criticalf("unable to get ancestry for data %q, version %d: %v\n", d.DataName(), v, err)
 		return
 	}
 	labelset := make(labels.Set)
 	svChanges := make(labels.SupervoxelChanges)
 	var maxLabel uint64
 	for change := range ch {
+		svmap.RLock()
 		for supervoxel, delta := range change.delta {
 			blockChanges, found := svChanges[supervoxel]
 			if !found {
@@ -586,9 +592,10 @@ func (d *Data) aggregateBlockChanges(v dvid.VersionID, ch <-chan blockChange) {
 			if supervoxel > maxLabel {
 				maxLabel = supervoxel
 			}
-			label, _ := svmap.MappedLabel(supervoxel)
+			label, _ := svmap.mapLabel(supervoxel, ancestry)
 			labelset[label] = struct{}{}
 		}
+		svmap.RUnlock()
 	}
 	go func() {
 		if err := d.updateMaxLabel(v, maxLabel); err != nil {
@@ -803,7 +810,7 @@ func (d *Data) FoundSparseVol(ctx *datastore.VersionedCtx, label uint64, bounds 
 	}
 
 	if idx != nil && len(idx.Blocks) > 0 {
-		dvid.Infof("Found %d blocks for label %d with constituents %s\n", len(idx.Blocks), label, idx.GetConstituentLabels())
+		dvid.Infof("Found %d blocks for label %d with constituents %s\n", len(idx.Blocks), label, idx.GetSupervoxels())
 		return true, nil
 	}
 	return false, nil
@@ -830,7 +837,7 @@ func (d *Data) WriteBinaryBlocks(ctx *datastore.VersionedCtx, label uint64, scal
 		return false, err
 	}
 	op := labels.NewOutputOp(w)
-	lbls := idx.GetConstituentLabels()
+	lbls := idx.GetSupervoxels()
 	go labels.WriteBinaryBlocks(label, lbls, op, bounds)
 	for _, izyx := range blocks {
 		tk := NewBlockTKeyByCoord(scale, izyx)
@@ -881,7 +888,7 @@ func (d *Data) WriteStreamingRLE(ctx *datastore.VersionedCtx, label uint64, scal
 		return false, err
 	}
 	op := labels.NewOutputOp(w)
-	lbls := idx.GetConstituentLabels()
+	lbls := idx.GetSupervoxels()
 	go labels.WriteRLEs(lbls, op, bounds)
 	for _, izyx := range blocks {
 		tk := NewBlockTKeyByCoord(scale, izyx)
@@ -995,7 +1002,7 @@ func (d *Data) getLegacyRLEs(ctx *datastore.VersionedCtx, idx *labels.Index, sca
 		return nil, err
 	}
 	op := labels.NewOutputOp(buf)
-	lbls := idx.GetConstituentLabels()
+	lbls := idx.GetSupervoxels()
 	go labels.WriteRLEs(lbls, op, bounds)
 	var numEmpty int
 	for _, izyx := range blocks {
