@@ -18,6 +18,6 @@ cd ${THIS_SCRIPT_DIR}
 CONDA_PYTHON=$(conda info --root)/bin/python
 ${CONDA_PYTHON} _install_compiled_dependencies.py
 
-./get-go-dependencies.py
+./get-go-dependencies.sh
 
 echo "DONE."
