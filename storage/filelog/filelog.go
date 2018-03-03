@@ -173,6 +173,10 @@ func (flogs *fileLogs) ReadAll(dataID, version dvid.UUID) ([]storage.LogMessage,
 
 	f, err := os.OpenFile(filename, os.O_RDONLY, 0755)
 	if err != nil {
+		if os.IsNotExist(err) {
+			dvid.Infof("could not read log %q: doesn't exist\n", filename)
+			return nil, nil
+		}
 		return nil, err
 	}
 	fl2 := &fileLog{File: f}

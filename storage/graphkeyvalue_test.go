@@ -42,7 +42,7 @@ func TestBasicGraph(t *testing.T) {
 		t.Errorf("Can't get vertex: %v\n", err)
 	}
 	if vert1.Weight != float64(5) {
-		t.Errorf("Bad weight.  Should be %f, was %f\n", 5, vert1.Weight)
+		t.Errorf("Bad weight.  Should be %f, was %f\n", 5.0, vert1.Weight)
 	}
 
 	vert2, err := graphDB.GetVertex(ctx, 2)
@@ -50,7 +50,7 @@ func TestBasicGraph(t *testing.T) {
 		t.Errorf("Can't get vertex: %v\n", err)
 	}
 	if vert2.Weight != float64(11) {
-		t.Errorf("Bad weight.  Should be %f, was %f\n", 11, vert1.Weight)
+		t.Errorf("Bad weight.  Should be %f, was %f\n", 11.0, vert1.Weight)
 	}
 
 	edge, err := graphDB.GetEdge(ctx, 1, 2)

@@ -72,6 +72,9 @@ type SVMap struct {
 
 // requires write lock outside
 func (svm *SVMap) getAncestry(v dvid.VersionID) ([]uint8, error) {
+	if svm.ancestry == nil {
+		svm.ancestry = make(map[dvid.VersionID][]uint8)
+	}
 	ancestry, found := svm.ancestry[v]
 	if !found {
 		ancestors, err := datastore.GetAncestry(v)
@@ -120,6 +123,8 @@ func (svm *SVMap) createShortVersion(v dvid.VersionID) (uint8, error) {
 
 func (svm *SVMap) initToVersion(d dvid.Data, v dvid.VersionID) error {
 	svm.Lock()
+	defer svm.Unlock()
+
 	ancestors, err := datastore.GetAncestry(v)
 	if err != nil {
 		return err
@@ -148,7 +153,6 @@ func (svm *SVMap) initToVersion(d dvid.Data, v dvid.VersionID) error {
 	}
 
 	// TODO: Read in affinities
-	svm.Unlock()
 	return nil
 }
 
@@ -243,9 +247,12 @@ var (
 func getMap(d dvid.Data, v dvid.VersionID) (*SVMap, error) {
 	iMap.Lock()
 	defer iMap.Unlock()
+	if iMap.maps == nil {
+		iMap.maps = make(map[dvid.UUID]*SVMap)
+	}
 	m, found := iMap.maps[d.DataUUID()]
 	if !found {
-		m := new(SVMap)
+		m = new(SVMap)
 		m.fm = make(map[uint64]vmap)
 		m.versions = make(map[dvid.VersionID]uint8)
 		m.versionsRev = make(map[uint8]dvid.VersionID)

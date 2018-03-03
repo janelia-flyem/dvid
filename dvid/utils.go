@@ -53,7 +53,7 @@ func init() {
 	case 64:
 		maxSliceSize = maxSliceSize64
 	default:
-		fmt.Printf("Unknown architecture with int size of %d bits.  DVID works with 32 or 64 bit architectures.\n")
+		fmt.Printf("Unknown architecture with int size of %d bits.  DVID works with 32 or 64 bit architectures.\n", intSize)
 		os.Exit(1)
 	}
 }

@@ -54,6 +54,9 @@ func (idx *Index) GetBlockIndices() dvid.IZYXSlice {
 
 // GetProcessedBlockIndices returns the blocks for an index, possibly with bounds and down-res.
 func (idx *Index) GetProcessedBlockIndices(scale uint8, bounds dvid.Bounds) (dvid.IZYXSlice, error) {
+	if idx == nil {
+		return nil, nil
+	}
 	indices := make(dvid.IZYXSlice, len(idx.Blocks))
 	totBlocks := 0
 	for s := range idx.Blocks {
@@ -153,6 +156,9 @@ type SupervoxelChanges map[uint64]map[dvid.IZYXString]int32
 
 // ModifyBlocks modifies the receiver Index to incorporate supervoxel changes among the given blocks.
 func (idx *Index) ModifyBlocks(sc SupervoxelChanges) error {
+	if idx == nil {
+		return fmt.Errorf("cannot pass nil index into ModifyBlocks()")
+	}
 	labelSupervoxels := idx.GetSupervoxels()
 	for supervoxel, blockChanges := range sc {
 		_, inSet := labelSupervoxels[supervoxel]

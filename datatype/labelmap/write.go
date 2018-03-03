@@ -91,7 +91,11 @@ func (d *Data) PutLabels(v dvid.VersionID, subvol *dvid.Subvolume, data []byte, 
 	wg := new(sync.WaitGroup)
 
 	blockCh := make(chan blockChange, 100)
-	go d.aggregateBlockChanges(v, blockCh)
+	svmap, err := GetMapping(d, v)
+	if err != nil {
+		return fmt.Errorf("PutLabels couldn't get mapping for data %q, version %d: %v", d.DataName(), v, err)
+	}
+	go d.aggregateBlockChanges(v, svmap, blockCh)
 
 	blocks := 0
 	for it, err := subvol.NewIndexZYXIterator(d.BlockSize()); err == nil && it.Valid(); it.NextSpan() {
@@ -317,7 +321,11 @@ func (d *Data) writeBlocks(v dvid.VersionID, b storage.TKeyValues, wg1, wg2 *syn
 
 	<-server.HandlerToken
 	blockCh := make(chan blockChange, 100)
-	go d.aggregateBlockChanges(v, blockCh)
+	svmap, err := GetMapping(d, v)
+	if err != nil {
+		return fmt.Errorf("writeBlocks couldn't get mapping for data %q, version %d: %v", d.DataName(), v, err)
+	}
+	go d.aggregateBlockChanges(v, svmap, blockCh)
 	go func() {
 		defer func() {
 			wg1.Done()

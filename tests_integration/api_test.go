@@ -337,11 +337,11 @@ func TestSyncs(t *testing.T) {
 	}
 	_, found := syncs[labels.DataUUID()]
 	if !found {
-		t.Errorf("Expected labels UUID (%d) got: %v\n", labels.DataUUID(), syncs)
+		t.Errorf("Expected labels UUID (%s) got: %v\n", labels.DataUUID(), syncs)
 	}
 	_, found = syncs[bodies.DataUUID()]
 	if !found {
-		t.Errorf("Expected bodies UUID (%d) got: %v\n", bodies.DataUUID(), syncs)
+		t.Errorf("Expected bodies UUID (%s) got: %v\n", bodies.DataUUID(), syncs)
 	}
 
 	server.CreateTestInstance(t, uuid, "labelvol", "bodies2", config)
@@ -357,15 +357,15 @@ func TestSyncs(t *testing.T) {
 	}
 	_, found = syncs[labels.DataUUID()]
 	if !found {
-		t.Errorf("Expected labels UUID (%d) got: %v\n", labels.DataUUID(), syncs)
+		t.Errorf("Expected labels UUID (%s) got: %v\n", labels.DataUUID(), syncs)
 	}
 	_, found = syncs[bodies.DataUUID()]
 	if !found {
-		t.Errorf("Expected bodies UUID (%d) got: %v\n", bodies.DataUUID(), syncs)
+		t.Errorf("Expected bodies UUID (%s) got: %v\n", bodies.DataUUID(), syncs)
 	}
 	_, found = syncs[bodies2.DataUUID()]
 	if !found {
-		t.Errorf("Expected bodies2 UUID (%d) got: %v\n", bodies2.DataUUID(), syncs)
+		t.Errorf("Expected bodies2 UUID (%s) got: %v\n", bodies2.DataUUID(), syncs)
 	}
 
 	server.CreateTestInstance(t, uuid, "labelvol", "bodies3", config)
@@ -381,7 +381,7 @@ func TestSyncs(t *testing.T) {
 	}
 	_, found = syncs[bodies3.DataUUID()]
 	if !found {
-		t.Errorf("Expected bodies3 UUID (%d) got: %v\n", bodies3.DataUUID(), syncs)
+		t.Errorf("Expected bodies3 UUID (%s) got: %v\n", bodies3.DataUUID(), syncs)
 	}
 
 	server.CreateTestReplaceSync(t, uuid, "synapses", "")

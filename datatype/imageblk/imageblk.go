@@ -1462,7 +1462,7 @@ func (d *Data) GobEncode() ([]byte, error) {
 // --- DataService interface ---
 
 func (d *Data) Help() string {
-	return fmt.Sprintf(HelpMessage, DefaultBlockSize)
+	return fmt.Sprintf(HelpMessage, DefaultBlockSize, DefaultRes)
 }
 
 func (d *Data) ModifyConfig(config dvid.Config) error {

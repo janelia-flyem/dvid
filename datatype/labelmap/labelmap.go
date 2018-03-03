@@ -592,7 +592,9 @@ POST <api URL>/node/<UUID>/<data name>/blocks[?queryopts]
 	downres       "false" (default) or "true", specifies whether the given blocks should be
 	                down-sampled to lower resolution.  If "true", scale must be "0" or absent.
     compression   Specifies compression format of block data: default and only option currently is
-                    "blocks" (native DVID label blocks).
+					"blocks" (native DVID label blocks).
+	noindexing	  If "true", will not compute label indices from the received voxel data.  Use this
+					in conjunction with POST /index and /affinities endpoint for faster ingestion.
     throttle      If "true", makes sure only N compute-intense operation (all API calls that can be 
 	                throttled) are handled.  If the server can't initiate the API call right away, a 503 
                     (Service Unavailable) status code is returned.
@@ -1962,7 +1964,7 @@ func (d *Data) blockChangesExtents(extents *dvid.Extents, bx, by, bz int32) bool
 }
 
 // ReceiveBlocks stores a slice of bytes corresponding to specified blocks
-func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale uint8, downscale bool, compression string) error {
+func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale uint8, downscale bool, compression string, indexing bool) error {
 	if downscale && scale != 0 {
 		return fmt.Errorf("cannot downscale blocks of scale > 0")
 	}
@@ -1992,7 +1994,13 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 	}
 
 	blockCh := make(chan blockChange, 100)
-	go d.aggregateBlockChanges(ctx.VersionID(), blockCh)
+	svmap, err := GetMapping(d, ctx.VersionID())
+	if err != nil {
+		return fmt.Errorf("ReceiveBlocks couldn't get mapping for data %q, version %d: %v", d.DataName(), ctx.VersionID(), err)
+	}
+	if indexing {
+		go d.aggregateBlockChanges(ctx.VersionID(), svmap, blockCh)
+	}
 	var wg sync.WaitGroup
 
 	callback := func(bcoord dvid.IZYXString, block *labels.Block, ready chan error) {
@@ -2005,7 +2013,10 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 		event := labels.IngestBlockEvent
 		ingestBlock := IngestedBlock{mutID, bcoord, block}
 		if scale == 0 {
-			d.handleBlockIndexing(ctx.VersionID(), blockCh, ingestBlock)
+			if indexing {
+				d.handleBlockIndexing(ctx.VersionID(), blockCh, ingestBlock)
+			}
+			go d.updateBlockMaxLabel(ctx.VersionID(), ingestBlock.Data)
 		}
 		if downscale {
 			if err := downresMut.BlockMutated(bcoord, block); err != nil {
@@ -2790,7 +2801,11 @@ func (d *Data) handleBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, 
 		}
 		timedLog.Infof("HTTP GET blocks at size %s, offset %s (%s)", parts[4], parts[5], r.URL)
 	} else {
-		if err := d.ReceiveBlocks(ctx, r.Body, scale, downscale, compression); err != nil {
+		var indexing bool
+		if queryStrings.Get("noindexing") != "true" {
+			indexing = true
+		}
+		if err := d.ReceiveBlocks(ctx, r.Body, scale, downscale, compression, indexing); err != nil {
 			server.BadRequest(w, r, err)
 		}
 		timedLog.Infof("HTTP POST blocks (%s)", r.URL)

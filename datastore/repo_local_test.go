@@ -3,7 +3,7 @@
 package datastore
 
 import (
-    "fmt"
+	"fmt"
 	"reflect"
 	"testing"
 
@@ -57,8 +57,8 @@ func TestRepoGobEncoding(t *testing.T) {
 	}
 	repo.properties = nil
 	received.properties = nil
-    fmt.Printf("repo: created %s, updated %s\n", repo.created, repo.updated)
-    fmt.Printf("recv: created %s, updated %s\n", received.created, received.updated)
+	fmt.Printf("repo: created %s, updated %s\n", repo.created, repo.updated)
+	fmt.Printf("recv: created %s, updated %s\n", received.created, received.updated)
 	if !reflect.DeepEqual(*repo, received) {
 		t.Fatalf("Repo Gob messed up:\nOriginal: %v\nReceived: %v\n", *repo, received)
 	}
@@ -156,7 +156,7 @@ func TestNewRepoDifferent(t *testing.T) {
 		t.Fatal(err)
 	}
 	if root1 == root2 {
-		t.Errorf("New repos share uuid: %d\n", root1)
+		t.Errorf("New repos share uuid: %s\n", root1)
 	}
 	if repo1.id == repo2.id {
 		t.Errorf("New repos share repo id: %d\n", repo1.id)

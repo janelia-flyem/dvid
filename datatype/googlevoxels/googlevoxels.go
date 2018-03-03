@@ -884,7 +884,7 @@ func (d *Data) GetVoxelSize(ts *GSpec) (dvid.NdFloat32, error) {
 		return nil, fmt.Errorf("%s has no geometries and therefore no volumes for access", d.DataName())
 	}
 	if d.GeomMap == nil {
-		return nil, fmt.Errorf("%d has not been initialized and can't return voxel sizes", d.DataName())
+		return nil, fmt.Errorf("%s has not been initialized and can't return voxel sizes", d.DataName())
 	}
 	if ts == nil {
 		return nil, fmt.Errorf("Can't get voxel sizes for nil tile spec!")
@@ -943,7 +943,7 @@ func (d *Data) getBlankTileImage(tile *GoogleSubvolGeom) (image.Image, error) {
 		return nil, fmt.Errorf("Can't get blank tile for unknown tile spec")
 	}
 	if d.Scales == nil || len(d.Scales) <= int(tile.gi) {
-		return nil, fmt.Errorf("Scaled volumes for %d not suitable for tile spec", d.DataName())
+		return nil, fmt.Errorf("Scaled volumes for %s not suitable for tile spec: %d scales <= %d tile scales", d.DataName(), len(d.Scales), int(tile.gi))
 	}
 
 	// Generate the blank image

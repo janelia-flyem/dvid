@@ -478,7 +478,7 @@ func (d *Data) GetBlocks(v dvid.VersionID, start dvid.ChunkPoint3d, span int32) 
 		}
 		x, y, z := indexZYX.Unpack()
 		if z != sz || y != sy || x < sx || x >= sx+int32(span) {
-			return fmt.Errorf("Received key-value for %s, not supposed to be within span range %s, length %d", *indexZYX, start, span)
+			return fmt.Errorf("Received key-value for %s, not supposed to be within span range %s, length %d", indexZYX, start, span)
 		}
 		n := x - sx
 		i := n * blockBytes

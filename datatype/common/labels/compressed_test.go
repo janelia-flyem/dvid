@@ -281,11 +281,11 @@ func TestBlockCompression(t *testing.T) {
 	checkLabels(t, "block compress/uncompress", dvid.Uint64ToByte(testvol), testvol2)
 	i := uint64(12*64*64 + 22*64 + 34)
 	if bptr.Value(dvid.Point3d{34, 22, 12}) != i {
-		t.Errorf("Expected %d, got %d\n", bptr.Value(dvid.Point3d{34, 22, 12}))
+		t.Errorf("Expected %d, got %d\n", bptr.Value(dvid.Point3d{34, 22, 12}), i)
 	}
 	i = 31*64*64 + 4*64 + 58
 	if bptr.Value(dvid.Point3d{58, 4, 31}) != i {
-		t.Errorf("Expected %d, got %d\n", bptr.Value(dvid.Point3d{58, 4, 31}))
+		t.Errorf("Expected %d, got %d\n", bptr.Value(dvid.Point3d{58, 4, 31}), i)
 	}
 }
 
@@ -510,7 +510,7 @@ func TestBlockMerge(t *testing.T) {
 		if wasMerged {
 			t.Fatalf("found voxel %d had label %d when it %s merged -> %d\n", i, curlabel, mergeSet, labels[0])
 		} else if curlabel != labels[0] && curlabel != labels[1] {
-			t.Fatalf("found voxel %d had label %d which is not expected labels %d or %d\n", curlabel, labels[0], labels[1])
+			t.Fatalf("found voxel %d had label %d which is not expected labels %d or %d\n", i, curlabel, labels[0], labels[1])
 		}
 	}
 }

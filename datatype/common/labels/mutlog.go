@@ -26,6 +26,9 @@ func ReadMergeLog(d dvid.Data, v dvid.VersionID) ([]MergeOp, error) {
 	if err != nil {
 		return nil, err
 	}
+	if len(msgs) == 0 {
+		return nil, nil
+	}
 	mergeOps := make([]MergeOp, len(msgs))
 	var numMerges int
 	for i, msg := range msgs {

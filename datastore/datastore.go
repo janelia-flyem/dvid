@@ -426,7 +426,7 @@ func deleteConflict(data DataService, extnode *extensionNode, k storage.Key) err
 	// Create new node if necessary
 	if extnode.newUUID == dvid.NilUUID {
 		// create a unique branch for the conflict
-		conflictbranch := fmt.Sprintf("conflict-%d", extnode.oldUUID)
+		conflictbranch := fmt.Sprintf("conflict-%s", extnode.oldUUID)
 		childUUID, err := manager.newVersion(extnode.oldUUID, "Version for deleting conflicts before merge", conflictbranch, nil)
 		if err != nil {
 			return err

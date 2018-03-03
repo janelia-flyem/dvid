@@ -595,22 +595,22 @@ func Test16x16x16SparseVolumes(t *testing.T) {
 	}
 }
 
-func TestMergeLog(t *testing.T) {
-	if err := server.OpenTest(); err != nil {
-		t.Fatalf("can't open test server: %v\n", err)
-	}
-	defer server.CloseTest()
+// func TestMergeLog(t *testing.T) {
+// 	if err := server.OpenTest(); err != nil {
+// 		t.Fatalf("can't open test server: %v\n", err)
+// 	}
+// 	defer server.CloseTest()
 
-	// Create testbed volume and data instances
-	uuid, _ := initTestRepo()
-	var config dvid.Config
-	server.CreateTestInstance(t, uuid, "labelmap", "labels", config)
+// 	// Create testbed volume and data instances
+// 	uuid, _ := initTestRepo()
+// 	var config dvid.Config
+// 	server.CreateTestInstance(t, uuid, "labelmap", "labels", config)
 
-	data, err := GetByUUIDName(uuid, "labels")
-	if err != nil {
-		t.Fatalf("can't get labels instance of labelmap: %v\n", err)
-	}
-}
+// 	data, err := GetByUUIDName(uuid, "labels")
+// 	if err != nil {
+// 		t.Fatalf("can't get labels instance of labelmap: %v\n", err)
+// 	}
+// }
 
 func TestMergeLabels(t *testing.T) {
 	if err := server.OpenTest(); err != nil {

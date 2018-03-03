@@ -489,6 +489,9 @@ func ChangeLabelIndex(d dvid.Data, v dvid.VersionID, label uint64, delta labels.
 		if err != nil {
 			return err
 		}
+		if idx == nil {
+			idx = new(labels.Index)
+		}
 	}
 
 	// Modify the label index
@@ -566,12 +569,7 @@ type blockChange struct {
 
 // goroutine(s) that aggregates supervoxel changes across blocks for one mutation, then calls
 // mutex-guarded label index mutation routine.
-func (d *Data) aggregateBlockChanges(v dvid.VersionID, ch <-chan blockChange) {
-	svmap, err := GetMapping(d, v)
-	if err != nil {
-		dvid.Criticalf("couldn't get mapping for data %q, version %d: %v\n", d.DataName(), v, err)
-		return
-	}
+func (d *Data) aggregateBlockChanges(v dvid.VersionID, svmap *SVMap, ch <-chan blockChange) {
 	ancestry, err := svmap.GetAncestry(v)
 	if err != nil {
 		dvid.Criticalf("unable to get ancestry for data %q, version %d: %v\n", d.DataName(), v, err)
@@ -597,12 +595,6 @@ func (d *Data) aggregateBlockChanges(v dvid.VersionID, ch <-chan blockChange) {
 		}
 		svmap.RUnlock()
 	}
-	go func() {
-		if err := d.updateMaxLabel(v, maxLabel); err != nil {
-			dvid.Errorf("max label change during block aggregation for %q: %v\n", d.DataName(), err)
-		}
-	}()
-
 	if d.IndexedLabels {
 		for label := range labelset {
 			ChangeLabelIndex(d, v, label, svChanges)
@@ -960,6 +952,9 @@ func (d *Data) GetLegacyRLE(ctx *datastore.VersionedCtx, label uint64, scale uin
 	idx, err := GetLabelIndex(d, ctx.VersionID(), label)
 	if err != nil {
 		return nil, err
+	}
+	if idx == nil || len(idx.Blocks) == 0 {
+		return nil, nil
 	}
 	return d.getLegacyRLEs(ctx, idx, scale, bounds)
 }

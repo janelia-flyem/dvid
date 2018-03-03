@@ -167,7 +167,7 @@ func TestLabelgraphPostAndDelete(t *testing.T) {
 
 	// Make sure the two are the same.
 	if !reflect.DeepEqual(retgraph, getTestGraph()) {
-		t.Errorf("Bad PUT/GET ROI roundtrip\nOriginal:\n%s\nReturned:\n%s\n", getTestGraph(), retgraph)
+		t.Errorf("Bad PUT/GET ROI roundtrip\nOriginal:\n%v\nReturned:\n%v\n", getTestGraph(), retgraph)
 	}
 
 	// Delete the labelgraph

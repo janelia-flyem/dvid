@@ -932,9 +932,6 @@ func TestLabelarrayRepoPersistence(t *testing.T) {
 	if !ok {
 		t.Errorf("Can't cast labels data service into Data\n")
 	}
-	if lbls.CountLabels {
-		t.Errorf("expected CountLabels to be set false, not default true\n")
-	}
 	if !lbls.IndexedLabels {
 		t.Errorf("expected IndexedLabels to be true for default but was false\n")
 	}
@@ -962,9 +959,6 @@ func TestLabelarrayRepoPersistence(t *testing.T) {
 	}
 	if lbls2.MaxDownresLevel != 5 {
 		t.Errorf("Bad MaxDownresLevel: %d\n", lbls2.MaxDownresLevel)
-	}
-	if lbls2.CountLabels != false {
-		t.Errorf("Bad CountLabels: %v\n", lbls2.CountLabels)
 	}
 }
 

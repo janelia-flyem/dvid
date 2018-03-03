@@ -102,13 +102,6 @@ func (d *testData) KVStore() (dvid.Store, error) {
 	return DefaultKVStore()
 }
 
-func (d *testData) LogStore() (WriteLog, error) {
-	if d.logStore != nil {
-		return d.logStore, nil
-	}
-	return DefaultLogStore()
-}
-
 func (d *testData) SetKVStore(kvStore dvid.Store) {
 	d.kvStore = kvStore
 }

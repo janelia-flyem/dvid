@@ -2121,7 +2121,7 @@ func (df *DumpFiles) process(kv *storage.TKeyValue, blockSize dvid.Point3d) erro
 	}
 	label, block, err := DecodeTKey(kv.K)
 	if err != nil {
-		return fmt.Errorf("Couldn't decode tkey from key %v\n", kv.K, err)
+		return fmt.Errorf("Couldn't decode tkey from key %x: %v\n", kv.K, err)
 	}
 
 	chunkPt, err := block.ToChunkPoint3d()
