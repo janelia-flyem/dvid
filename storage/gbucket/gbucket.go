@@ -1753,11 +1753,15 @@ func (db *GBucket) LockKey(k storage.Key) error {
 	var err error
 	currdelay := 1
 	// conditional put on generation id if it does not exist
-	obj_handle := db.bucket.Object(hex.EncodeToString(k))
+	obj_handle_orig := db.bucket.Object(hex.EncodeToString(k))
 	var conditions api.Conditions
 	conditions.DoesNotExist = true
-	obj_handle = obj_handle.If(conditions)
+        obj_handle := obj_handle_orig.If(conditions)
+        generationid := int64(0)
+        // 30 second lock held limit
+        timelimit := float64(30)
 
+        var locktime time.Time
 	for true {
 		// post blank data
 		// try putting againt with a new generation id
@@ -1765,9 +1769,24 @@ func (db *GBucket) LockKey(k storage.Key) error {
 		if err != ErrCondFail {
 			break
 		}
+                // check to make sure lock is not stale
+                attrs, err := obj_handle_orig.Attrs(db.ctx)
+                if err == nil {
+                        generationid2 := attrs.Generation
+                        if generationid != generationid2 {
+                                generationid = generationid2
+                                locktime = time.Now()
+                        }
+                        // delete lock if not released in a reasonable amount of time
+                        lockheldtime := time.Since(locktime).Seconds()
+                        if lockheldtime > timelimit {
+                                db.UnlockKey(k)
+                                continue
+                        }
+                }
 
-		// wait some time and retry
-		time.Sleep(time.Duration(currdelay) * time.Second)
+                // wait some time and retry
+                time.Sleep(time.Duration(currdelay) * time.Second)
 	}
 
 	return err
@@ -1775,7 +1794,7 @@ func (db *GBucket) LockKey(k storage.Key) error {
 
 // UnlockKey delete the key/value and releases the lock
 func (db *GBucket) UnlockKey(k storage.Key) error {
-	return db.deleteV(nil, k)
+        return db.deleteV(nil, k)
 }
 
 // Patch patches the value at the given key with function f.
