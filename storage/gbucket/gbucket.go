@@ -1780,7 +1780,10 @@ func (db *GBucket) LockKey(k storage.Key) error {
 			// delete lock if not released in a reasonable amount of time
 			lockheldtime := time.Since(locktime).Seconds()
 			if lockheldtime > timelimit {
-				db.UnlockKey(k)
+				var delconditions api.Conditions
+				delconditions.GenerationMatch = generationid
+				obj_handledel := obj_handle_orig.If(delconditions)
+				obj_handledel.Delete(db.ctx)
 				continue
 			}
 		}
