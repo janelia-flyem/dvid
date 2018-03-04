@@ -154,3 +154,9 @@ source:
   - git_url: https://github.com/optiopay/kafka
     git_tag: master
     folder:  src/github.com/optiopay/kafka
+    
+  # freecache
+  - git_url: https://github.com/coocood/freecache
+    git_tag: master
+    folder:  src/github.com/coocood/freecache
+ 
