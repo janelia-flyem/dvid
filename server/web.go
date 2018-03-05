@@ -731,7 +731,14 @@ func NotFound(w http.ResponseWriter, r *http.Request) {
 // BadAPIRequest writes a standard error message to http.ResponseWriter for a badly formatted API call.
 func BadAPIRequest(w http.ResponseWriter, r *http.Request, d dvid.Data) {
 	helpURL := path.Join("api", "help", string(d.TypeName()))
-	msg := fmt.Sprintf("Bad API call (%s) for data %q.  See API help at http://%s/%s", r.URL.Path, d.DataName(), GetConfig().Host(), helpURL)
+	var host string
+	config := GetConfig()
+	if config == nil {
+		host = "unknown - config unset"
+	} else {
+		host = config.Host()
+	}
+	msg := fmt.Sprintf("Bad API call (%s) for data %q.  See API help at http://%s/%s", r.URL.Path, d.DataName(), host, helpURL)
 	http.Error(w, msg, http.StatusBadRequest)
 	dvid.Errorf("Bad API call (%s) for data %q\n", r.URL.Path, d.DataName())
 }

@@ -80,6 +80,7 @@ func OpenTest(configs ...TestConfig) error {
 			}
 		}
 	}
+	config = &tc
 	dvid.Infof("OpenTest with %v: cache setting %v\n", configs, tc.Cache)
 	datastore.OpenTest()
 	return nil

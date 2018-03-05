@@ -910,6 +910,27 @@ POST <api URL>/node/<UUID>/<data name>/split-supervoxel/<supervoxel>
 			"MutationID": <unique id for mutation>
 			"UUID": <UUID on which split was done>
 		}
+
+POST <api URL>/node/<UUID>/<data name>/index/<label>
+
+	Allows direct storing of indexes (blocks per supervoxel and their voxel count) for any
+	particular label.  Typically, these indices are computed on-the-fly during ingestion of
+	of blocks of label voxels.  If there are cluster systems capable of computing label
+	blocks, indices, and affinities directly, though, it's more efficient to simply load
+	them into dvid.
+
+	The POST expects a protobuf serialization of the following message:
+
+	message SVCount {
+		map<uint64, uint32> counts = 1;
+	}
+
+	message LabelIndex {
+		map<string, SVCount> blocks = 1;  // key is block coord ZYX (3 x little-endian int32) string
+		uint64 last_mutid = 3;
+		string last_mod_time = 4;  // string is time in RFC 3339 format
+		string last_mod_user = 5;
+	}	
 `
 
 var (
@@ -2678,6 +2699,9 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	case "merge":
 		d.handleMerge(ctx, w, r, parts)
 
+	case "index":
+		d.handleIngestIndex(ctx, w, r, parts)
+
 	default:
 		server.BadAPIRequest(w, r, d)
 	}
@@ -2810,6 +2834,41 @@ func (d *Data) handleBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, 
 		}
 		timedLog.Infof("HTTP POST blocks (%s)", r.URL)
 	}
+}
+
+func (d *Data) handleIngestIndex(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request, parts []string) {
+	// POST <api URL>/node/<UUID>/<data name>/index/<label>
+	timedLog := dvid.NewTimeLog()
+
+	queryStrings := r.URL.Query()
+	if throttle := queryStrings.Get("throttle"); throttle == "on" || throttle == "true" {
+		if server.ThrottledHTTP(w) {
+			return
+		}
+		defer server.ThrottledOpDone()
+	}
+
+	if strings.ToLower(r.Method) != "post" {
+		server.BadRequest(w, r, "only POST action allowed for /index endpoint")
+		return
+	}
+	label, err := strconv.ParseUint(parts[4], 10, 64)
+	if err != nil {
+		server.BadRequest(w, r, err)
+		return
+	}
+	serialization, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		server.BadRequest(w, r, err)
+	}
+	idx := new(labels.Index)
+	if err := idx.Unmarshal(serialization); err != nil {
+		server.BadRequest(w, r, err)
+	}
+	if err := putLabelIndex(ctx, label, idx); err != nil {
+		server.BadRequest(w, r, err)
+	}
+	timedLog.Infof("HTTP POST index for label %d (%s)", label, r.URL)
 }
 
 func (d *Data) handlePseudocolor(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request, parts []string) {
