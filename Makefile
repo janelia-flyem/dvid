@@ -21,16 +21,17 @@ endif
 
 ifndef DVID_BACKENDS
 DVID_BACKENDS = basholeveldb gbucket
+$(info Backend not specified. Using default value: DVID_BACKENDS="${DVID_BACKENDS}")
 endif
+
 
 export CGO_CFLAGS = -I${CONDA_PREFIX}/include
 export CGO_LDFLAGS = -L${CONDA_PREFIX}/lib -Wl,-rpath,${CONDA_PREFIX}/lib
 
+
 dvid: bin/dvid
 dvid-backup: bin/dvid-backup
 dvid-transfer: bin/dvid-transfer
-
-#FAKE_PARAM := $(shell )
 
 # Compile the program that generates version.go
 bin/dvid-gen-version: cmd/gen-version/main.go
