@@ -2,22 +2,36 @@ ifndef GOPATH
 $(error GOPATH must be defined)
 endif
 
+
 ifndef CONDA_PREFIX
-$(error Dvid requires an active conda environment (with dependencies already installed)!)
+define ERRMSG
+
+
+ERROR: Dvid requires an active conda environment, with dependencies already installed.
+       See GUIDE.md for details. Here's the gist of it:
+
+    $$ conda create -n dvid-devel && source activate dvid-devel
+    $$ ./scripts/install-developer-dependencies.sh
+
+
+endef
+$(error ${ERRMSG} )
 endif
+
 
 ifndef DVID_BACKENDS
 DVID_BACKENDS = basholeveldb gbucket
+$(info Backend not specified. Using default value: DVID_BACKENDS="${DVID_BACKENDS}")
 endif
+
 
 export CGO_CFLAGS = -I${CONDA_PREFIX}/include
 export CGO_LDFLAGS = -L${CONDA_PREFIX}/lib -Wl,-rpath,${CONDA_PREFIX}/lib
 
+
 dvid: bin/dvid
 dvid-backup: bin/dvid-backup
 dvid-transfer: bin/dvid-transfer
-
-#FAKE_PARAM := $(shell )
 
 # Compile the program that generates version.go
 bin/dvid-gen-version: cmd/gen-version/main.go

@@ -125,3 +125,9 @@ Build Maintenance Notes
   to the `source` section in `scripts/conda-recipe/meta.yaml`.
      
 - Of course, new DVID sources should be listed in the `Makefile` as needed.
+
+
+Memory profiling
+----------------
+
+DVID uses [an integrated memory profiling system](https://github.com/wblakecaldwell/profiler/tree/d0f7b0590a127b0c7ef1abf7c089ef2fa74b47cd).  To start memory profiling, visit `http://path-to-dvid-server/profiler/start`.  You can then visit `http://path-to-dvid-server/profiler/info.html` to view the real-time graph of memory usage.  Stop profiling by visiting `http://path-to-dvid-server/profiler/stop`.
