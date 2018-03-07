@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"sort"
 	"sync"
 	"sync/atomic"
 
@@ -494,10 +495,15 @@ func ChangeLabelIndex(d dvid.Data, v dvid.VersionID, label uint64, delta labels.
 		}
 	}
 
+	dvid.Infof("Index is now: %v\n", idx.Blocks)
+	dvid.Infof("Changing label %d with delta %v\n", label, delta)
+
 	// Modify the label index
-	if err := idx.ModifyBlocks(delta); err != nil {
+	if err := idx.ModifyBlocks(label, delta); err != nil {
 		return err
 	}
+
+	dvid.Infof("Index is now: %v\n", idx.Blocks)
 
 	// Persist the label index changes.
 	ctx := datastore.NewVersionedCtx(d, v)
@@ -540,6 +546,11 @@ func (d *Data) handleBlockMutate(v dvid.VersionID, ch chan blockChange, mut Muta
 		bcoord: mut.BCoord,
 	}
 	if d.IndexedLabels {
+		if mut.Prev == nil {
+			dvid.Infof("block mutate %s has no previous block\n", mut.Prev)
+		} else {
+			dvid.Infof("block mutate %s: block labels %v\n", mut.BCoord, mut.Prev.Labels)
+		}
 		bc.delta = mut.Data.CalcNumLabels(mut.Prev)
 	}
 	ch <- bc
@@ -581,6 +592,7 @@ func (d *Data) aggregateBlockChanges(v dvid.VersionID, svmap *SVMap, ch <-chan b
 	for change := range ch {
 		svmap.RLock()
 		for supervoxel, delta := range change.delta {
+			dvid.Infof("aggregateChanges: label %d -> delta %v\n", supervoxel, delta)
 			blockChanges, found := svChanges[supervoxel]
 			if !found {
 				blockChanges = make(map[dvid.IZYXString]int32)
@@ -597,6 +609,7 @@ func (d *Data) aggregateBlockChanges(v dvid.VersionID, svmap *SVMap, ch <-chan b
 	}
 	if d.IndexedLabels {
 		for label := range labelset {
+			dvid.Infof("For label %d, we have changes: %v\n", label, svChanges)
 			ChangeLabelIndex(d, v, label, svChanges)
 		}
 	}
@@ -823,6 +836,7 @@ func (d *Data) WriteBinaryBlocks(ctx *datastore.VersionedCtx, label uint64, scal
 	if err != nil {
 		return false, err
 	}
+	sort.Sort(blocks)
 
 	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
@@ -874,6 +888,7 @@ func (d *Data) WriteStreamingRLE(ctx *datastore.VersionedCtx, label uint64, scal
 	if err != nil {
 		return false, err
 	}
+	sort.Sort(blocks)
 
 	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
@@ -991,6 +1006,7 @@ func (d *Data) getLegacyRLEs(ctx *datastore.VersionedCtx, idx *labels.Index, sca
 	if err != nil {
 		return nil, err
 	}
+	sort.Sort(blocks)
 
 	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
@@ -1048,7 +1064,7 @@ func (d *Data) getLegacyRLEs(ctx *datastore.VersionedCtx, idx *labels.Index, sca
 
 // GetSparseCoarseVol returns an encoded sparse volume given a label.  This will return nil slice
 // if the given label was not found.  The encoding has the following format where integers are
-// little endian:
+// little endian and blocks are returned in sorted ZYX order (small Z first):
 //
 // 		byte     Set to 0
 // 		uint8    Number of dimensions
@@ -1074,6 +1090,7 @@ func (d *Data) GetSparseCoarseVol(ctx *datastore.VersionedCtx, label uint64, bou
 	if err != nil {
 		return nil, err
 	}
+	sort.Sort(blocks)
 
 	// Create the sparse volume header
 	buf := new(bytes.Buffer)
@@ -1148,6 +1165,7 @@ func (d *Data) WriteSparseCoarseVols(ctx *datastore.VersionedCtx, w io.Writer, b
 			if err != nil {
 				return err
 			}
+			sort.Sort(blocks)
 			buf := new(bytes.Buffer)
 			spans, err := blocks.WriteSerializedRLEs(buf)
 			if err != nil {

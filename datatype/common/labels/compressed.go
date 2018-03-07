@@ -445,7 +445,7 @@ type Block struct {
 	data []byte // serialized format as described above
 }
 
-// CalcNumLabels calculates the change in the number of voxels under each label.
+// CalcNumLabels calculates the change in the number of voxels under each non-zero label.
 // If a previous Block is given, the change is calculated from the previous numbers.
 func (b Block) CalcNumLabels(prev *Block) map[uint64]int32 {
 	delta := make(map[uint64]int32)
@@ -467,6 +467,9 @@ func (b Block) calcNumLabels(delta map[uint64]int32, add bool) {
 		dvid.Infof("Block has 0 labels!\n")
 		return
 	case 1:
+		if b.Labels[0] == 0 {
+			return
+		}
 		if add {
 			delta[b.Labels[0]] += numVoxels
 		} else {
@@ -495,6 +498,9 @@ func (b Block) calcNumLabels(delta map[uint64]int32, add bool) {
 				case 1:
 					label := b.Labels[b.SBIndices[indexPos]]
 					indexPos++
+					if label == 0 {
+						continue
+					}
 					if add {
 						delta[label] += subBlockNumVoxels
 					} else {
@@ -527,10 +533,12 @@ func (b Block) calcNumLabels(delta map[uint64]int32, add bool) {
 								index >>= uint(16 - bithead - bits)
 							}
 							label := sbLabels[index]
-							if add {
-								delta[label]++
-							} else {
-								delta[label]--
+							if label != 0 {
+								if add {
+									delta[label]++
+								} else {
+									delta[label]--
+								}
 							}
 							bitpos += bits
 						}

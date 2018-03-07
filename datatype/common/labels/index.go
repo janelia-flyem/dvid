@@ -13,6 +13,9 @@ type Index struct {
 
 // NumVoxels returns the number of voxels in the given label set index.
 func (idx Index) NumVoxels() uint64 {
+	if len(idx.Blocks) == 0 {
+		return 0
+	}
 	var numVoxels uint64
 	for _, svc := range idx.Blocks {
 		if svc != nil && svc.Counts != nil {
@@ -53,6 +56,7 @@ func (idx *Index) GetBlockIndices() dvid.IZYXSlice {
 }
 
 // GetProcessedBlockIndices returns the blocks for an index, possibly with bounds and down-res.
+// The returned blocks are not sorted.
 func (idx *Index) GetProcessedBlockIndices(scale uint8, bounds dvid.Bounds) (dvid.IZYXSlice, error) {
 	if idx == nil {
 		return nil, nil
@@ -106,8 +110,11 @@ func (idx *Index) FitToBounds(bounds *dvid.OptionalBounds) error {
 
 // Add adds the given Index to the receiver.
 func (idx *Index) Add(idx2 *Index) error {
-	if idx == nil || idx2 == nil {
-		return fmt.Errorf("can't use Index.Add with nil Index")
+	if idx == nil {
+		return fmt.Errorf("can't use Index.Add with nil receiver Index")
+	}
+	if idx2 == nil || len(idx2.Blocks) == 0 {
+		return nil
 	}
 	if idx.Blocks == nil {
 		idx.Blocks = idx2.Blocks
@@ -155,11 +162,17 @@ func (idx *Index) Cleave(toCleave []uint64) *Index {
 type SupervoxelChanges map[uint64]map[dvid.IZYXString]int32
 
 // ModifyBlocks modifies the receiver Index to incorporate supervoxel changes among the given blocks.
-func (idx *Index) ModifyBlocks(sc SupervoxelChanges) error {
+func (idx *Index) ModifyBlocks(label uint64, sc SupervoxelChanges) error {
 	if idx == nil {
 		return fmt.Errorf("cannot pass nil index into ModifyBlocks()")
 	}
+	if idx.Blocks == nil {
+		idx.Blocks = make(map[string]*proto.SVCount)
+	}
 	labelSupervoxels := idx.GetSupervoxels()
+	if len(labelSupervoxels) == 0 {
+		labelSupervoxels[label] = struct{}{} // A new index has at least its original label
+	}
 	for supervoxel, blockChanges := range sc {
 		_, inSet := labelSupervoxels[supervoxel]
 		if inSet {
@@ -172,7 +185,12 @@ func (idx *Index) ModifyBlocks(sc SupervoxelChanges) error {
 						return fmt.Errorf("bad attempt to subtract %d from %d voxels for supervoxel %d in block %s", -delta, oldsz, supervoxel, izyxStr)
 					}
 					newsz = uint32(int64(oldsz) + int64(delta))
-					svc.Counts[supervoxel] = newsz
+					dvid.Infof("block %s: have delta %d for label %d -> new size %d\n", dvid.IZYXString(izyxStr), delta, supervoxel, newsz)
+					if newsz == 0 {
+						delete(svc.Counts, supervoxel)
+					} else {
+						svc.Counts[supervoxel] = newsz
+					}
 				} else {
 					svc = new(proto.SVCount)
 					svc.Counts = make(map[uint64]uint32)
@@ -183,6 +201,12 @@ func (idx *Index) ModifyBlocks(sc SupervoxelChanges) error {
 					idx.Blocks[string(izyxStr)] = svc
 				}
 			}
+		}
+	}
+	// if blocks no longer have any supervoxels, delete them.
+	for zyxStr, svc := range idx.Blocks {
+		if svc == nil || len(svc.Counts) == 0 {
+			delete(idx.Blocks, zyxStr)
 		}
 	}
 	return nil

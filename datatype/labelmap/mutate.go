@@ -81,10 +81,14 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp) error {
 	if err != nil {
 		return fmt.Errorf("can't get block indices of to merge target label %d: %v", op.Target, err)
 	}
+	if targetIdx == nil {
+		return fmt.Errorf("can't merge into a non-existant label %d", op.Target)
+	}
 	mergeIdx, err := GetMultiLabelIndex(d, v, op.Merged, dvid.Bounds{})
 	if err != nil {
 		return fmt.Errorf("can't get block indices of merge labels %s: %v", op.Merged, err)
 	}
+
 	if err := AddMergeToMapping(d, v, mutID, op.Target, mergeIdx); err != nil {
 		return err
 	}
@@ -94,11 +98,13 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp) error {
 		TargetVoxels: targetIdx.NumVoxels(),
 		MergedVoxels: mergeIdx.NumVoxels(),
 	}
-	if err := targetIdx.Add(mergeIdx); err != nil {
-		return err
-	}
-	if err := PutLabelIndex(d, v, op.Target, targetIdx); err != nil {
-		return err
+	if mergeIdx != nil && len(mergeIdx.Blocks) != 0 {
+		if err := targetIdx.Add(mergeIdx); err != nil {
+			return err
+		}
+		if err := PutLabelIndex(d, v, op.Target, targetIdx); err != nil {
+			return err
+		}
 	}
 	for merged := range delta.Merged {
 		DeleteLabelIndex(d, v, merged)

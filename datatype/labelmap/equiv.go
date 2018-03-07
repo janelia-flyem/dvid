@@ -9,8 +9,30 @@ import (
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
+	"github.com/janelia-flyem/dvid/datatype/common/proto"
 	"github.com/janelia-flyem/dvid/dvid"
 )
+
+func (d *Data) ingestMerges(ctx *datastore.VersionedCtx, uuid dvid.UUID, v dvid.VersionID, merges proto.MergeOps) error {
+	// don't allow ingest of an in-memory mapping that already exists, since that's
+	// not a real ingestion, it's a mutation.
+	iMap.RLock()
+	if iMap.maps != nil {
+		m, found := iMap.maps[d.DataUUID()]
+		if found {
+			m.RLock()
+			_, found = m.versions[v]
+			m.RUnlock()
+			if found {
+				iMap.RUnlock()
+				return fmt.Errorf("can't ingest merges into uuid %q that already has in-memory mapping", uuid)
+			}
+		}
+	}
+	iMap.RUnlock()
+
+	return labels.LogMerges(d, uuid, merges)
+}
 
 // versioned map entry for a given supervoxel.
 // All versions are contained where each entry is an 8-bit version id
@@ -107,6 +129,7 @@ func (svm *SVMap) GetAncestry(v dvid.VersionID) (ancestry []uint8, err error) {
 	return
 }
 
+// returns a short version or creates one if it didn't exist before.
 func (svm *SVMap) createShortVersion(v dvid.VersionID) (uint8, error) {
 	vid, found := svm.versions[v]
 	if !found {

@@ -1,7 +1,6 @@
 package labelmap
 
 import (
-	"encoding/binary"
 	"fmt"
 	"log"
 	"sync"
@@ -46,24 +45,24 @@ func (v *Labels) ComputeTransform(tkey storage.TKey, blockSize dvid.Point) (bloc
 }
 
 // GetImage retrieves a 2d image from a version node given a geometry of labels.
-func (d *Data) GetImage(v dvid.VersionID, vox *Labels, scale uint8, roiname dvid.InstanceName) (*dvid.Image, error) {
+func (d *Data) GetImage(v dvid.VersionID, vox *Labels, supervoxels bool, scale uint8, roiname dvid.InstanceName) (*dvid.Image, error) {
 	r, err := imageblk.GetROI(v, roiname, vox)
 	if err != nil {
 		return nil, err
 	}
-	if err := d.GetLabels(v, scale, vox, r); err != nil {
+	if err := d.GetLabels(v, supervoxels, scale, vox, r); err != nil {
 		return nil, err
 	}
 	return vox.GetImage2d()
 }
 
 // GetVolume retrieves a n-d volume from a version node given a geometry of labels.
-func (d *Data) GetVolume(v dvid.VersionID, vox *Labels, scale uint8, roiname dvid.InstanceName) ([]byte, error) {
+func (d *Data) GetVolume(v dvid.VersionID, vox *Labels, supervoxels bool, scale uint8, roiname dvid.InstanceName) ([]byte, error) {
 	r, err := imageblk.GetROI(v, roiname, vox)
 	if err != nil {
 		return nil, err
 	}
-	if err := d.GetLabels(v, scale, vox, r); err != nil {
+	if err := d.GetLabels(v, supervoxels, scale, vox, r); err != nil {
 		return nil, err
 	}
 	return vox.Data(), nil
@@ -77,7 +76,8 @@ type getOperation struct {
 }
 
 // GetLabels copies labels from the storage engine to Labels, a requested subvolume or 2d image.
-func (d *Data) GetLabels(v dvid.VersionID, scale uint8, vox *Labels, r *imageblk.ROI) error {
+// If supervoxels is true, the returned labels are not mapped but are the raw supervoxels.
+func (d *Data) GetLabels(v dvid.VersionID, supervoxels bool, scale uint8, vox *Labels, r *imageblk.ROI) error {
 	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		return fmt.Errorf("Data type imageblk had error initializing store: %v\n", err)
@@ -90,9 +90,11 @@ func (d *Data) GetLabels(v dvid.VersionID, scale uint8, vox *Labels, r *imageblk
 	server.LargeMutationMutex.Lock()
 	defer server.LargeMutationMutex.Unlock()
 
-	mapping, err := GetMapping(d, v)
-	if err != nil {
-		return err
+	var mapping *SVMap
+	if !supervoxels {
+		if mapping, err = GetMapping(d, v); err != nil {
+			return err
+		}
 	}
 	wg := new(sync.WaitGroup)
 	ctx := datastore.NewVersionedCtx(d, v)
@@ -254,148 +256,28 @@ func (d *Data) readChunk(chunk *storage.Chunk) {
 
 	// Perform the operation.
 	if op.mapping != nil && op.mapping.Exists(op.version) {
-		err := op.voxels.readMappedBlock(op.version, chunk.K, block, d.BlockSize(), op.mapping)
+		err = modifyBlockMapping(op.version, &block, op.mapping)
 		if err != nil {
-			dvid.Errorf("readMappedBlock, key %v in %q: %v\n", chunk.K, d.DataName(), err)
+			dvid.Errorf("unable to modify block %s mapping: %v\n", indexZYX, err)
 		}
-	} else {
-		err := op.voxels.readBlock(chunk.K, block, d.BlockSize())
-		if err != nil {
-			dvid.Errorf("readBlock, key %v in %q: %v\n", chunk.K, d.DataName(), err)
-		}
+	}
+	if err = op.voxels.readBlock(chunk.K, block, d.BlockSize()); err != nil {
+		dvid.Errorf("readBlock, key %v in %q: %v\n", chunk.K, d.DataName(), err)
 	}
 }
 
-func (v *Labels) readMappedBlock(version dvid.VersionID, tkey storage.TKey, block labels.Block, blockSize dvid.Point, m *SVMap) error {
-	if blockSize.NumDims() > 3 {
-		return fmt.Errorf("DVID voxel blocks currently only supports up to 3d, not 4+ dimensions")
-	}
-	blockBeg, dataBeg, dataEnd, err := v.ComputeTransform(tkey, blockSize)
+// overwrites labels in header with their mapped values
+func modifyBlockMapping(v dvid.VersionID, block *labels.Block, m *SVMap) error {
+	ancestry, err := m.GetAncestry(v)
 	if err != nil {
-		return err
+		return fmt.Errorf("unable to get ancestry for version %d: %v", v, err)
 	}
-
-	// TODO -- Refactor this function to make direct use of compressed label Block without
-	// conversion into full label array.
-	labels := v.Data()
-	blabels, _ := block.MakeLabelVolume()
-
-	// Compute the strides (in bytes)
-	bX := int64(blockSize.Value(0)) * 8
-	bY := int64(blockSize.Value(1)) * bX
-	dX := int64(v.Stride())
-
-	blockBegX := int64(blockBeg.Value(0))
-	blockBegY := int64(blockBeg.Value(1))
-	blockBegZ := int64(blockBeg.Value(2))
-
-	ancestry, err := m.GetAncestry(version)
-	if err != nil {
-		return fmt.Errorf("unable to get ancestry for version %d: %v", version, err)
+	for i, label := range block.Labels {
+		mapped, found := m.mapLabel(label, ancestry)
+		if found {
+			block.Labels[i] = mapped
+		}
 	}
-	m.RLock()
-
-	// Do the transfers depending on shape of the external voxels.
-	switch {
-	case v.DataShape().Equals(dvid.XY):
-		dataI := int64(dataBeg.Value(1))*dX + int64(dataBeg.Value(0))*8
-		blockI := blockBegZ*bY + blockBegY*bX + blockBegX*8
-		for y := int64(dataBeg.Value(1)); y <= int64(dataEnd.Value(1)); y++ {
-			bI := blockI
-			dI := dataI
-			for x := dataBeg.Value(0); x <= dataEnd.Value(0); x++ {
-				orig := binary.LittleEndian.Uint64(blabels[bI : bI+8])
-				mapped, found := m.mapLabel(orig, ancestry)
-				if found {
-					binary.LittleEndian.PutUint64(labels[dI:dI+8], mapped)
-				} else {
-					copy(labels[dI:dI+8], blabels[bI:bI+8])
-				}
-				bI += 8
-				dI += 8
-			}
-			blockI += bX
-			dataI += dX
-		}
-
-	case v.DataShape().Equals(dvid.XZ):
-		dataI := int64(dataBeg.Value(2))*dX + int64(dataBeg.Value(0))*8
-		blockI := blockBegZ*bY + blockBegY*bX + blockBegX*8
-		for y := int64(dataBeg.Value(2)); y <= int64(dataEnd.Value(2)); y++ {
-			bI := blockI
-			dI := dataI
-			for x := dataBeg.Value(0); x <= dataEnd.Value(0); x++ {
-				orig := binary.LittleEndian.Uint64(blabels[bI : bI+8])
-				mapped, found := m.mapLabel(orig, ancestry)
-				if found {
-					binary.LittleEndian.PutUint64(labels[dI:dI+8], mapped)
-				} else {
-					copy(labels[dI:dI+8], blabels[bI:bI+8])
-				}
-				bI += 8
-				dI += 8
-			}
-			blockI += bY
-			dataI += dX
-		}
-
-	case v.DataShape().Equals(dvid.YZ):
-		bz := blockBegZ
-		for y := int64(dataBeg.Value(2)); y <= int64(dataEnd.Value(2)); y++ {
-			dataI := y*dX + int64(dataBeg.Value(1))*8
-			blockI := bz*bY + blockBegY*bX + blockBegX*8
-			for x := dataBeg.Value(1); x <= dataEnd.Value(1); x++ {
-				orig := binary.LittleEndian.Uint64(blabels[blockI : blockI+8])
-				mapped, found := m.mapLabel(orig, ancestry)
-				if found {
-					binary.LittleEndian.PutUint64(labels[dataI:dataI+8], mapped)
-				} else {
-					copy(labels[dataI:dataI+8], blabels[blockI:blockI+8])
-				}
-				blockI += bX
-				dataI += 8
-			}
-			bz++
-		}
-
-	case v.DataShape().ShapeDimensions() == 2:
-		// TODO: General code for handling 2d ExtData in n-d space.
-		m.Unlock()
-		return fmt.Errorf("DVID currently does not support 2d in n-d space.")
-
-	case v.DataShape().Equals(dvid.Vol3d):
-		blockOffset := blockBegX * 8
-		dX := int64(v.Size().Value(0)) * 8
-		dY := int64(v.Size().Value(1)) * dX
-		dataOffset := int64(dataBeg.Value(0)) * 8
-		blockZ := blockBegZ
-
-		for dataZ := int64(dataBeg.Value(2)); dataZ <= int64(dataEnd.Value(2)); dataZ++ {
-			blockY := blockBegY
-			for dataY := int64(dataBeg.Value(1)); dataY <= int64(dataEnd.Value(1)); dataY++ {
-				bI := blockZ*bY + blockY*bX + blockOffset
-				dI := dataZ*dY + dataY*dX + dataOffset
-				for x := dataBeg.Value(0); x <= dataEnd.Value(0); x++ {
-					orig := binary.LittleEndian.Uint64(blabels[bI : bI+8])
-					mapped, found := m.mapLabel(orig, ancestry)
-					if found {
-						binary.LittleEndian.PutUint64(labels[dI:dI+8], mapped)
-					} else {
-						copy(labels[dI:dI+8], blabels[bI:bI+8])
-					}
-					bI += 8
-					dI += 8
-				}
-				blockY++
-			}
-			blockZ++
-		}
-
-	default:
-		m.Unlock()
-		return fmt.Errorf("Cannot readBlock() unsupported voxels data shape %s", v.DataShape())
-	}
-	m.Unlock()
 	return nil
 }
 

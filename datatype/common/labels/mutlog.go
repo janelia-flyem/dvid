@@ -94,6 +94,29 @@ func LogMerge(d dvid.Data, v dvid.VersionID, mutID uint64, op MergeOp) error {
 	return log.Append(d.DataUUID(), uuid, msg)
 }
 
+// LogMerges logs a collection of merge operations to a UUID.
+func LogMerges(d dvid.Data, uuid dvid.UUID, ops proto.MergeOps) error {
+	logable, ok := d.(storage.Logable)
+	if !ok {
+		return nil // skip logging
+	}
+	log := logable.GetWriteLog()
+	if log == nil {
+		return nil
+	}
+	for _, op := range ops.Merges {
+		serialization, err := op.Marshal()
+		if err != nil {
+			return err
+		}
+		msg := storage.LogMessage{EntryType: proto.MergeOpType, Data: serialization}
+		if err := log.Append(d.DataUUID(), uuid, msg); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func LogAffinity(d dvid.Data, v dvid.VersionID, aff Affinity) error {
 	uuid, err := datastore.UUIDFromVersion(v)
 	if err != nil {

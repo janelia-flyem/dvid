@@ -28,7 +28,7 @@ type putOperation struct {
 // PutLabels persists voxels from a subvolume into the storage engine.  This involves transforming
 // a supplied volume of uint64 with known geometry into many labels.Block that tiles the subvolume.
 // Messages are sent to subscribers for ingest events.
-func (d *Data) PutLabels(v dvid.VersionID, subvol *dvid.Subvolume, data []byte, roiname dvid.InstanceName) error {
+func (d *Data) PutLabels(v dvid.VersionID, subvol *dvid.Subvolume, data []byte, roiname dvid.InstanceName, mutate bool) error {
 	if subvol.DataShape().ShapeDimensions() != 3 {
 		return fmt.Errorf("cannot store labels for data %q in non 3D format", d.DataName())
 	}
@@ -131,7 +131,7 @@ func (d *Data) PutLabels(v dvid.VersionID, subvol *dvid.Subvolume, data []byte, 
 				subvol:     subvol,
 				indexZYX:   curIndex,
 				version:    v,
-				mutate:     false,
+				mutate:     mutate,
 				mutID:      mutID,
 				downresMut: downresMut,
 				blockCh:    blockCh,
@@ -214,6 +214,7 @@ func (d *Data) putChunk(op *putOperation, wg *sync.WaitGroup, putbuffer storage.
 		}
 		var event string
 		var delta interface{}
+		dvid.Infof("PutChunk() oldBlock %v, mutate %t\n", oldBlock, op.mutate)
 		if oldBlock != nil && op.mutate {
 			event = labels.MutateBlockEvent
 			block := MutatedBlock{op.mutID, bcoord, &(oldBlock.Block), curBlock}
