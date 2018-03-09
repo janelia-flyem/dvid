@@ -9,7 +9,8 @@
 
 	It has these top-level messages:
 		MergeOp
-		MergeOps
+		MappingOp
+		MappingOps
 		SplitOp
 		OpCompleted
 		Affinity
@@ -28,7 +29,9 @@ import bytes "bytes"
 
 import strings "strings"
 import reflect "reflect"
-import github_com_gogo_protobuf_sortkeys "github.com/gogo/protobuf/sortkeys"
+import sortkeys "github.com/gogo/protobuf/sortkeys"
+
+import binary "encoding/binary"
 
 import io "io"
 
@@ -74,17 +77,48 @@ func (m *MergeOp) GetMerged() []uint64 {
 	return nil
 }
 
-type MergeOps struct {
-	Merges []*MergeOp `protobuf:"bytes,1,rep,name=merges" json:"merges,omitempty"`
+type MappingOp struct {
+	Mutid    uint64   `protobuf:"varint,1,opt,name=mutid,proto3" json:"mutid,omitempty"`
+	Mapped   uint64   `protobuf:"varint,2,opt,name=mapped,proto3" json:"mapped,omitempty"`
+	Original []uint64 `protobuf:"varint,3,rep,packed,name=original" json:"original,omitempty"`
 }
 
-func (m *MergeOps) Reset()                    { *m = MergeOps{} }
-func (*MergeOps) ProtoMessage()               {}
-func (*MergeOps) Descriptor() ([]byte, []int) { return fileDescriptorLabelops, []int{1} }
+func (m *MappingOp) Reset()                    { *m = MappingOp{} }
+func (*MappingOp) ProtoMessage()               {}
+func (*MappingOp) Descriptor() ([]byte, []int) { return fileDescriptorLabelops, []int{1} }
 
-func (m *MergeOps) GetMerges() []*MergeOp {
+func (m *MappingOp) GetMutid() uint64 {
 	if m != nil {
-		return m.Merges
+		return m.Mutid
+	}
+	return 0
+}
+
+func (m *MappingOp) GetMapped() uint64 {
+	if m != nil {
+		return m.Mapped
+	}
+	return 0
+}
+
+func (m *MappingOp) GetOriginal() []uint64 {
+	if m != nil {
+		return m.Original
+	}
+	return nil
+}
+
+type MappingOps struct {
+	Mappings []*MappingOp `protobuf:"bytes,1,rep,name=mappings" json:"mappings,omitempty"`
+}
+
+func (m *MappingOps) Reset()                    { *m = MappingOps{} }
+func (*MappingOps) ProtoMessage()               {}
+func (*MappingOps) Descriptor() ([]byte, []int) { return fileDescriptorLabelops, []int{2} }
+
+func (m *MappingOps) GetMappings() []*MappingOp {
+	if m != nil {
+		return m.Mappings
 	}
 	return nil
 }
@@ -99,7 +133,7 @@ type SplitOp struct {
 
 func (m *SplitOp) Reset()                    { *m = SplitOp{} }
 func (*SplitOp) ProtoMessage()               {}
-func (*SplitOp) Descriptor() ([]byte, []int) { return fileDescriptorLabelops, []int{2} }
+func (*SplitOp) Descriptor() ([]byte, []int) { return fileDescriptorLabelops, []int{3} }
 
 func (m *SplitOp) GetMutid() uint64 {
 	if m != nil {
@@ -143,7 +177,7 @@ type OpCompleted struct {
 
 func (m *OpCompleted) Reset()                    { *m = OpCompleted{} }
 func (*OpCompleted) ProtoMessage()               {}
-func (*OpCompleted) Descriptor() ([]byte, []int) { return fileDescriptorLabelops, []int{3} }
+func (*OpCompleted) Descriptor() ([]byte, []int) { return fileDescriptorLabelops, []int{4} }
 
 func (m *OpCompleted) GetMutid() uint64 {
 	if m != nil {
@@ -167,7 +201,7 @@ type Affinity struct {
 
 func (m *Affinity) Reset()                    { *m = Affinity{} }
 func (*Affinity) ProtoMessage()               {}
-func (*Affinity) Descriptor() ([]byte, []int) { return fileDescriptorLabelops, []int{4} }
+func (*Affinity) Descriptor() ([]byte, []int) { return fileDescriptorLabelops, []int{5} }
 
 func (m *Affinity) GetLabel1() uint64 {
 	if m != nil {
@@ -197,7 +231,7 @@ type Affinities struct {
 
 func (m *Affinities) Reset()                    { *m = Affinities{} }
 func (*Affinities) ProtoMessage()               {}
-func (*Affinities) Descriptor() ([]byte, []int) { return fileDescriptorLabelops, []int{5} }
+func (*Affinities) Descriptor() ([]byte, []int) { return fileDescriptorLabelops, []int{6} }
 
 func (m *Affinities) GetLabels() []uint64 {
 	if m != nil {
@@ -219,7 +253,7 @@ type AffinityTable struct {
 
 func (m *AffinityTable) Reset()                    { *m = AffinityTable{} }
 func (*AffinityTable) ProtoMessage()               {}
-func (*AffinityTable) Descriptor() ([]byte, []int) { return fileDescriptorLabelops, []int{6} }
+func (*AffinityTable) Descriptor() ([]byte, []int) { return fileDescriptorLabelops, []int{7} }
 
 func (m *AffinityTable) GetTable() map[uint64]*Affinities {
 	if m != nil {
@@ -234,7 +268,7 @@ type SVCount struct {
 
 func (m *SVCount) Reset()                    { *m = SVCount{} }
 func (*SVCount) ProtoMessage()               {}
-func (*SVCount) Descriptor() ([]byte, []int) { return fileDescriptorLabelops, []int{7} }
+func (*SVCount) Descriptor() ([]byte, []int) { return fileDescriptorLabelops, []int{8} }
 
 func (m *SVCount) GetCounts() map[uint64]uint32 {
 	if m != nil {
@@ -252,7 +286,7 @@ type LabelIndex struct {
 
 func (m *LabelIndex) Reset()                    { *m = LabelIndex{} }
 func (*LabelIndex) ProtoMessage()               {}
-func (*LabelIndex) Descriptor() ([]byte, []int) { return fileDescriptorLabelops, []int{8} }
+func (*LabelIndex) Descriptor() ([]byte, []int) { return fileDescriptorLabelops, []int{9} }
 
 func (m *LabelIndex) GetBlocks() map[string]*SVCount {
 	if m != nil {
@@ -284,7 +318,8 @@ func (m *LabelIndex) GetLastModUser() string {
 
 func init() {
 	proto1.RegisterType((*MergeOp)(nil), "proto.MergeOp")
-	proto1.RegisterType((*MergeOps)(nil), "proto.MergeOps")
+	proto1.RegisterType((*MappingOp)(nil), "proto.MappingOp")
+	proto1.RegisterType((*MappingOps)(nil), "proto.MappingOps")
 	proto1.RegisterType((*SplitOp)(nil), "proto.SplitOp")
 	proto1.RegisterType((*OpCompleted)(nil), "proto.OpCompleted")
 	proto1.RegisterType((*Affinity)(nil), "proto.Affinity")
@@ -295,10 +330,7 @@ func init() {
 }
 func (this *MergeOp) Equal(that interface{}) bool {
 	if that == nil {
-		if this == nil {
-			return true
-		}
-		return false
+		return this == nil
 	}
 
 	that1, ok := that.(*MergeOp)
@@ -311,10 +343,7 @@ func (this *MergeOp) Equal(that interface{}) bool {
 		}
 	}
 	if that1 == nil {
-		if this == nil {
-			return true
-		}
-		return false
+		return this == nil
 	} else if this == nil {
 		return false
 	}
@@ -334,17 +363,14 @@ func (this *MergeOp) Equal(that interface{}) bool {
 	}
 	return true
 }
-func (this *MergeOps) Equal(that interface{}) bool {
+func (this *MappingOp) Equal(that interface{}) bool {
 	if that == nil {
-		if this == nil {
-			return true
-		}
-		return false
+		return this == nil
 	}
 
-	that1, ok := that.(*MergeOps)
+	that1, ok := that.(*MappingOp)
 	if !ok {
-		that2, ok := that.(MergeOps)
+		that2, ok := that.(MappingOp)
 		if ok {
 			that1 = &that2
 		} else {
@@ -352,18 +378,50 @@ func (this *MergeOps) Equal(that interface{}) bool {
 		}
 	}
 	if that1 == nil {
-		if this == nil {
-			return true
-		}
-		return false
+		return this == nil
 	} else if this == nil {
 		return false
 	}
-	if len(this.Merges) != len(that1.Merges) {
+	if this.Mutid != that1.Mutid {
 		return false
 	}
-	for i := range this.Merges {
-		if !this.Merges[i].Equal(that1.Merges[i]) {
+	if this.Mapped != that1.Mapped {
+		return false
+	}
+	if len(this.Original) != len(that1.Original) {
+		return false
+	}
+	for i := range this.Original {
+		if this.Original[i] != that1.Original[i] {
+			return false
+		}
+	}
+	return true
+}
+func (this *MappingOps) Equal(that interface{}) bool {
+	if that == nil {
+		return this == nil
+	}
+
+	that1, ok := that.(*MappingOps)
+	if !ok {
+		that2, ok := that.(MappingOps)
+		if ok {
+			that1 = &that2
+		} else {
+			return false
+		}
+	}
+	if that1 == nil {
+		return this == nil
+	} else if this == nil {
+		return false
+	}
+	if len(this.Mappings) != len(that1.Mappings) {
+		return false
+	}
+	for i := range this.Mappings {
+		if !this.Mappings[i].Equal(that1.Mappings[i]) {
 			return false
 		}
 	}
@@ -371,10 +429,7 @@ func (this *MergeOps) Equal(that interface{}) bool {
 }
 func (this *SplitOp) Equal(that interface{}) bool {
 	if that == nil {
-		if this == nil {
-			return true
-		}
-		return false
+		return this == nil
 	}
 
 	that1, ok := that.(*SplitOp)
@@ -387,10 +442,7 @@ func (this *SplitOp) Equal(that interface{}) bool {
 		}
 	}
 	if that1 == nil {
-		if this == nil {
-			return true
-		}
-		return false
+		return this == nil
 	} else if this == nil {
 		return false
 	}
@@ -413,10 +465,7 @@ func (this *SplitOp) Equal(that interface{}) bool {
 }
 func (this *OpCompleted) Equal(that interface{}) bool {
 	if that == nil {
-		if this == nil {
-			return true
-		}
-		return false
+		return this == nil
 	}
 
 	that1, ok := that.(*OpCompleted)
@@ -429,10 +478,7 @@ func (this *OpCompleted) Equal(that interface{}) bool {
 		}
 	}
 	if that1 == nil {
-		if this == nil {
-			return true
-		}
-		return false
+		return this == nil
 	} else if this == nil {
 		return false
 	}
@@ -446,10 +492,7 @@ func (this *OpCompleted) Equal(that interface{}) bool {
 }
 func (this *Affinity) Equal(that interface{}) bool {
 	if that == nil {
-		if this == nil {
-			return true
-		}
-		return false
+		return this == nil
 	}
 
 	that1, ok := that.(*Affinity)
@@ -462,10 +505,7 @@ func (this *Affinity) Equal(that interface{}) bool {
 		}
 	}
 	if that1 == nil {
-		if this == nil {
-			return true
-		}
-		return false
+		return this == nil
 	} else if this == nil {
 		return false
 	}
@@ -482,10 +522,7 @@ func (this *Affinity) Equal(that interface{}) bool {
 }
 func (this *Affinities) Equal(that interface{}) bool {
 	if that == nil {
-		if this == nil {
-			return true
-		}
-		return false
+		return this == nil
 	}
 
 	that1, ok := that.(*Affinities)
@@ -498,10 +535,7 @@ func (this *Affinities) Equal(that interface{}) bool {
 		}
 	}
 	if that1 == nil {
-		if this == nil {
-			return true
-		}
-		return false
+		return this == nil
 	} else if this == nil {
 		return false
 	}
@@ -525,10 +559,7 @@ func (this *Affinities) Equal(that interface{}) bool {
 }
 func (this *AffinityTable) Equal(that interface{}) bool {
 	if that == nil {
-		if this == nil {
-			return true
-		}
-		return false
+		return this == nil
 	}
 
 	that1, ok := that.(*AffinityTable)
@@ -541,10 +572,7 @@ func (this *AffinityTable) Equal(that interface{}) bool {
 		}
 	}
 	if that1 == nil {
-		if this == nil {
-			return true
-		}
-		return false
+		return this == nil
 	} else if this == nil {
 		return false
 	}
@@ -560,10 +588,7 @@ func (this *AffinityTable) Equal(that interface{}) bool {
 }
 func (this *SVCount) Equal(that interface{}) bool {
 	if that == nil {
-		if this == nil {
-			return true
-		}
-		return false
+		return this == nil
 	}
 
 	that1, ok := that.(*SVCount)
@@ -576,10 +601,7 @@ func (this *SVCount) Equal(that interface{}) bool {
 		}
 	}
 	if that1 == nil {
-		if this == nil {
-			return true
-		}
-		return false
+		return this == nil
 	} else if this == nil {
 		return false
 	}
@@ -595,10 +617,7 @@ func (this *SVCount) Equal(that interface{}) bool {
 }
 func (this *LabelIndex) Equal(that interface{}) bool {
 	if that == nil {
-		if this == nil {
-			return true
-		}
-		return false
+		return this == nil
 	}
 
 	that1, ok := that.(*LabelIndex)
@@ -611,10 +630,7 @@ func (this *LabelIndex) Equal(that interface{}) bool {
 		}
 	}
 	if that1 == nil {
-		if this == nil {
-			return true
-		}
-		return false
+		return this == nil
 	} else if this == nil {
 		return false
 	}
@@ -649,14 +665,26 @@ func (this *MergeOp) GoString() string {
 	s = append(s, "}")
 	return strings.Join(s, "")
 }
-func (this *MergeOps) GoString() string {
+func (this *MappingOp) GoString() string {
+	if this == nil {
+		return "nil"
+	}
+	s := make([]string, 0, 7)
+	s = append(s, "&proto.MappingOp{")
+	s = append(s, "Mutid: "+fmt.Sprintf("%#v", this.Mutid)+",\n")
+	s = append(s, "Mapped: "+fmt.Sprintf("%#v", this.Mapped)+",\n")
+	s = append(s, "Original: "+fmt.Sprintf("%#v", this.Original)+",\n")
+	s = append(s, "}")
+	return strings.Join(s, "")
+}
+func (this *MappingOps) GoString() string {
 	if this == nil {
 		return "nil"
 	}
 	s := make([]string, 0, 5)
-	s = append(s, "&proto.MergeOps{")
-	if this.Merges != nil {
-		s = append(s, "Merges: "+fmt.Sprintf("%#v", this.Merges)+",\n")
+	s = append(s, "&proto.MappingOps{")
+	if this.Mappings != nil {
+		s = append(s, "Mappings: "+fmt.Sprintf("%#v", this.Mappings)+",\n")
 	}
 	s = append(s, "}")
 	return strings.Join(s, "")
@@ -719,7 +747,7 @@ func (this *AffinityTable) GoString() string {
 	for k, _ := range this.Table {
 		keysForTable = append(keysForTable, k)
 	}
-	github_com_gogo_protobuf_sortkeys.Uint64s(keysForTable)
+	sortkeys.Uint64s(keysForTable)
 	mapStringForTable := "map[uint64]*Affinities{"
 	for _, k := range keysForTable {
 		mapStringForTable += fmt.Sprintf("%#v: %#v,", k, this.Table[k])
@@ -741,7 +769,7 @@ func (this *SVCount) GoString() string {
 	for k, _ := range this.Counts {
 		keysForCounts = append(keysForCounts, k)
 	}
-	github_com_gogo_protobuf_sortkeys.Uint64s(keysForCounts)
+	sortkeys.Uint64s(keysForCounts)
 	mapStringForCounts := "map[uint64]uint32{"
 	for _, k := range keysForCounts {
 		mapStringForCounts += fmt.Sprintf("%#v: %#v,", k, this.Counts[k])
@@ -763,7 +791,7 @@ func (this *LabelIndex) GoString() string {
 	for k, _ := range this.Blocks {
 		keysForBlocks = append(keysForBlocks, k)
 	}
-	github_com_gogo_protobuf_sortkeys.Strings(keysForBlocks)
+	sortkeys.Strings(keysForBlocks)
 	mapStringForBlocks := "map[string]*SVCount{"
 	for _, k := range keysForBlocks {
 		mapStringForBlocks += fmt.Sprintf("%#v: %#v,", k, this.Blocks[k])
@@ -831,7 +859,7 @@ func (m *MergeOp) MarshalTo(dAtA []byte) (int, error) {
 	return i, nil
 }
 
-func (m *MergeOps) Marshal() (dAtA []byte, err error) {
+func (m *MappingOp) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
 	dAtA = make([]byte, size)
 	n, err := m.MarshalTo(dAtA)
@@ -841,13 +869,58 @@ func (m *MergeOps) Marshal() (dAtA []byte, err error) {
 	return dAtA[:n], nil
 }
 
-func (m *MergeOps) MarshalTo(dAtA []byte) (int, error) {
+func (m *MappingOp) MarshalTo(dAtA []byte) (int, error) {
 	var i int
 	_ = i
 	var l int
 	_ = l
-	if len(m.Merges) > 0 {
-		for _, msg := range m.Merges {
+	if m.Mutid != 0 {
+		dAtA[i] = 0x8
+		i++
+		i = encodeVarintLabelops(dAtA, i, uint64(m.Mutid))
+	}
+	if m.Mapped != 0 {
+		dAtA[i] = 0x10
+		i++
+		i = encodeVarintLabelops(dAtA, i, uint64(m.Mapped))
+	}
+	if len(m.Original) > 0 {
+		dAtA4 := make([]byte, len(m.Original)*10)
+		var j3 int
+		for _, num := range m.Original {
+			for num >= 1<<7 {
+				dAtA4[j3] = uint8(uint64(num)&0x7f | 0x80)
+				num >>= 7
+				j3++
+			}
+			dAtA4[j3] = uint8(num)
+			j3++
+		}
+		dAtA[i] = 0x1a
+		i++
+		i = encodeVarintLabelops(dAtA, i, uint64(j3))
+		i += copy(dAtA[i:], dAtA4[:j3])
+	}
+	return i, nil
+}
+
+func (m *MappingOps) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *MappingOps) MarshalTo(dAtA []byte) (int, error) {
+	var i int
+	_ = i
+	var l int
+	_ = l
+	if len(m.Mappings) > 0 {
+		for _, msg := range m.Mappings {
 			dAtA[i] = 0xa
 			i++
 			i = encodeVarintLabelops(dAtA, i, uint64(msg.Size()))
@@ -967,7 +1040,8 @@ func (m *Affinity) MarshalTo(dAtA []byte) (int, error) {
 	if m.Value != 0 {
 		dAtA[i] = 0x1d
 		i++
-		i = encodeFixed32Labelops(dAtA, i, uint32(math.Float32bits(float32(m.Value))))
+		binary.LittleEndian.PutUint32(dAtA[i:], uint32(math.Float32bits(float32(m.Value))))
+		i += 4
 	}
 	return i, nil
 }
@@ -988,36 +1062,30 @@ func (m *Affinities) MarshalTo(dAtA []byte) (int, error) {
 	var l int
 	_ = l
 	if len(m.Labels) > 0 {
-		dAtA4 := make([]byte, len(m.Labels)*10)
-		var j3 int
+		dAtA6 := make([]byte, len(m.Labels)*10)
+		var j5 int
 		for _, num := range m.Labels {
 			for num >= 1<<7 {
-				dAtA4[j3] = uint8(uint64(num)&0x7f | 0x80)
+				dAtA6[j5] = uint8(uint64(num)&0x7f | 0x80)
 				num >>= 7
-				j3++
+				j5++
 			}
-			dAtA4[j3] = uint8(num)
-			j3++
+			dAtA6[j5] = uint8(num)
+			j5++
 		}
 		dAtA[i] = 0xa
 		i++
-		i = encodeVarintLabelops(dAtA, i, uint64(j3))
-		i += copy(dAtA[i:], dAtA4[:j3])
+		i = encodeVarintLabelops(dAtA, i, uint64(j5))
+		i += copy(dAtA[i:], dAtA6[:j5])
 	}
 	if len(m.Affinities) > 0 {
 		dAtA[i] = 0x12
 		i++
 		i = encodeVarintLabelops(dAtA, i, uint64(len(m.Affinities)*4))
 		for _, num := range m.Affinities {
-			f5 := math.Float32bits(float32(num))
-			dAtA[i] = uint8(f5)
-			i++
-			dAtA[i] = uint8(f5 >> 8)
-			i++
-			dAtA[i] = uint8(f5 >> 16)
-			i++
-			dAtA[i] = uint8(f5 >> 24)
-			i++
+			f7 := math.Float32bits(float32(num))
+			binary.LittleEndian.PutUint32(dAtA[i:], uint32(f7))
+			i += 4
 		}
 	}
 	return i, nil
@@ -1057,11 +1125,11 @@ func (m *AffinityTable) MarshalTo(dAtA []byte) (int, error) {
 				dAtA[i] = 0x12
 				i++
 				i = encodeVarintLabelops(dAtA, i, uint64(v.Size()))
-				n6, err := v.MarshalTo(dAtA[i:])
+				n8, err := v.MarshalTo(dAtA[i:])
 				if err != nil {
 					return 0, err
 				}
-				i += n6
+				i += n8
 			}
 		}
 	}
@@ -1136,11 +1204,11 @@ func (m *LabelIndex) MarshalTo(dAtA []byte) (int, error) {
 				dAtA[i] = 0x12
 				i++
 				i = encodeVarintLabelops(dAtA, i, uint64(v.Size()))
-				n7, err := v.MarshalTo(dAtA[i:])
+				n9, err := v.MarshalTo(dAtA[i:])
 				if err != nil {
 					return 0, err
 				}
-				i += n7
+				i += n9
 			}
 		}
 	}
@@ -1164,24 +1232,6 @@ func (m *LabelIndex) MarshalTo(dAtA []byte) (int, error) {
 	return i, nil
 }
 
-func encodeFixed64Labelops(dAtA []byte, offset int, v uint64) int {
-	dAtA[offset] = uint8(v)
-	dAtA[offset+1] = uint8(v >> 8)
-	dAtA[offset+2] = uint8(v >> 16)
-	dAtA[offset+3] = uint8(v >> 24)
-	dAtA[offset+4] = uint8(v >> 32)
-	dAtA[offset+5] = uint8(v >> 40)
-	dAtA[offset+6] = uint8(v >> 48)
-	dAtA[offset+7] = uint8(v >> 56)
-	return offset + 8
-}
-func encodeFixed32Labelops(dAtA []byte, offset int, v uint32) int {
-	dAtA[offset] = uint8(v)
-	dAtA[offset+1] = uint8(v >> 8)
-	dAtA[offset+2] = uint8(v >> 16)
-	dAtA[offset+3] = uint8(v >> 24)
-	return offset + 4
-}
 func encodeVarintLabelops(dAtA []byte, offset int, v uint64) int {
 	for v >= 1<<7 {
 		dAtA[offset] = uint8(v&0x7f | 0x80)
@@ -1210,11 +1260,30 @@ func (m *MergeOp) Size() (n int) {
 	return n
 }
 
-func (m *MergeOps) Size() (n int) {
+func (m *MappingOp) Size() (n int) {
 	var l int
 	_ = l
-	if len(m.Merges) > 0 {
-		for _, e := range m.Merges {
+	if m.Mutid != 0 {
+		n += 1 + sovLabelops(uint64(m.Mutid))
+	}
+	if m.Mapped != 0 {
+		n += 1 + sovLabelops(uint64(m.Mapped))
+	}
+	if len(m.Original) > 0 {
+		l = 0
+		for _, e := range m.Original {
+			l += sovLabelops(uint64(e))
+		}
+		n += 1 + sovLabelops(uint64(l)) + l
+	}
+	return n
+}
+
+func (m *MappingOps) Size() (n int) {
+	var l int
+	_ = l
+	if len(m.Mappings) > 0 {
+		for _, e := range m.Mappings {
 			l = e.Size()
 			n += 1 + l + sovLabelops(uint64(l))
 		}
@@ -1376,12 +1445,24 @@ func (this *MergeOp) String() string {
 	}, "")
 	return s
 }
-func (this *MergeOps) String() string {
+func (this *MappingOp) String() string {
 	if this == nil {
 		return "nil"
 	}
-	s := strings.Join([]string{`&MergeOps{`,
-		`Merges:` + strings.Replace(fmt.Sprintf("%v", this.Merges), "MergeOp", "MergeOp", 1) + `,`,
+	s := strings.Join([]string{`&MappingOp{`,
+		`Mutid:` + fmt.Sprintf("%v", this.Mutid) + `,`,
+		`Mapped:` + fmt.Sprintf("%v", this.Mapped) + `,`,
+		`Original:` + fmt.Sprintf("%v", this.Original) + `,`,
+		`}`,
+	}, "")
+	return s
+}
+func (this *MappingOps) String() string {
+	if this == nil {
+		return "nil"
+	}
+	s := strings.Join([]string{`&MappingOps{`,
+		`Mappings:` + strings.Replace(fmt.Sprintf("%v", this.Mappings), "MappingOp", "MappingOp", 1) + `,`,
 		`}`,
 	}, "")
 	return s
@@ -1442,7 +1523,7 @@ func (this *AffinityTable) String() string {
 	for k, _ := range this.Table {
 		keysForTable = append(keysForTable, k)
 	}
-	github_com_gogo_protobuf_sortkeys.Uint64s(keysForTable)
+	sortkeys.Uint64s(keysForTable)
 	mapStringForTable := "map[uint64]*Affinities{"
 	for _, k := range keysForTable {
 		mapStringForTable += fmt.Sprintf("%v: %v,", k, this.Table[k])
@@ -1462,7 +1543,7 @@ func (this *SVCount) String() string {
 	for k, _ := range this.Counts {
 		keysForCounts = append(keysForCounts, k)
 	}
-	github_com_gogo_protobuf_sortkeys.Uint64s(keysForCounts)
+	sortkeys.Uint64s(keysForCounts)
 	mapStringForCounts := "map[uint64]uint32{"
 	for _, k := range keysForCounts {
 		mapStringForCounts += fmt.Sprintf("%v: %v,", k, this.Counts[k])
@@ -1482,7 +1563,7 @@ func (this *LabelIndex) String() string {
 	for k, _ := range this.Blocks {
 		keysForBlocks = append(keysForBlocks, k)
 	}
-	github_com_gogo_protobuf_sortkeys.Strings(keysForBlocks)
+	sortkeys.Strings(keysForBlocks)
 	mapStringForBlocks := "map[string]*SVCount{"
 	for _, k := range keysForBlocks {
 		mapStringForBlocks += fmt.Sprintf("%v: %v,", k, this.Blocks[k])
@@ -1655,7 +1736,7 @@ func (m *MergeOp) Unmarshal(dAtA []byte) error {
 	}
 	return nil
 }
-func (m *MergeOps) Unmarshal(dAtA []byte) error {
+func (m *MappingOp) Unmarshal(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
@@ -1678,15 +1759,165 @@ func (m *MergeOps) Unmarshal(dAtA []byte) error {
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
 		if wireType == 4 {
-			return fmt.Errorf("proto: MergeOps: wiretype end group for non-group")
+			return fmt.Errorf("proto: MappingOp: wiretype end group for non-group")
 		}
 		if fieldNum <= 0 {
-			return fmt.Errorf("proto: MergeOps: illegal tag %d (wire type %d)", fieldNum, wire)
+			return fmt.Errorf("proto: MappingOp: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Mutid", wireType)
+			}
+			m.Mutid = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowLabelops
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.Mutid |= (uint64(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 2:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Mapped", wireType)
+			}
+			m.Mapped = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowLabelops
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.Mapped |= (uint64(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 3:
+			if wireType == 0 {
+				var v uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return ErrIntOverflowLabelops
+					}
+					if iNdEx >= l {
+						return io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					v |= (uint64(b) & 0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				m.Original = append(m.Original, v)
+			} else if wireType == 2 {
+				var packedLen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return ErrIntOverflowLabelops
+					}
+					if iNdEx >= l {
+						return io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					packedLen |= (int(b) & 0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if packedLen < 0 {
+					return ErrInvalidLengthLabelops
+				}
+				postIndex := iNdEx + packedLen
+				if postIndex > l {
+					return io.ErrUnexpectedEOF
+				}
+				for iNdEx < postIndex {
+					var v uint64
+					for shift := uint(0); ; shift += 7 {
+						if shift >= 64 {
+							return ErrIntOverflowLabelops
+						}
+						if iNdEx >= l {
+							return io.ErrUnexpectedEOF
+						}
+						b := dAtA[iNdEx]
+						iNdEx++
+						v |= (uint64(b) & 0x7F) << shift
+						if b < 0x80 {
+							break
+						}
+					}
+					m.Original = append(m.Original, v)
+				}
+			} else {
+				return fmt.Errorf("proto: wrong wireType = %d for field Original", wireType)
+			}
+		default:
+			iNdEx = preIndex
+			skippy, err := skipLabelops(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if skippy < 0 {
+				return ErrInvalidLengthLabelops
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *MappingOps) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowLabelops
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= (uint64(b) & 0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: MappingOps: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: MappingOps: illegal tag %d (wire type %d)", fieldNum, wire)
 		}
 		switch fieldNum {
 		case 1:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Merges", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field Mappings", wireType)
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
@@ -1710,8 +1941,8 @@ func (m *MergeOps) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Merges = append(m.Merges, &MergeOp{})
-			if err := m.Merges[len(m.Merges)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+			m.Mappings = append(m.Mappings, &MappingOp{})
+			if err := m.Mappings[len(m.Mappings)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex
@@ -2067,11 +2298,8 @@ func (m *Affinity) Unmarshal(dAtA []byte) error {
 			if (iNdEx + 4) > l {
 				return io.ErrUnexpectedEOF
 			}
+			v = uint32(binary.LittleEndian.Uint32(dAtA[iNdEx:]))
 			iNdEx += 4
-			v = uint32(dAtA[iNdEx-4])
-			v |= uint32(dAtA[iNdEx-3]) << 8
-			v |= uint32(dAtA[iNdEx-2]) << 16
-			v |= uint32(dAtA[iNdEx-1]) << 24
 			m.Value = float32(math.Float32frombits(v))
 		default:
 			iNdEx = preIndex
@@ -2191,11 +2419,8 @@ func (m *Affinities) Unmarshal(dAtA []byte) error {
 				if (iNdEx + 4) > l {
 					return io.ErrUnexpectedEOF
 				}
+				v = uint32(binary.LittleEndian.Uint32(dAtA[iNdEx:]))
 				iNdEx += 4
-				v = uint32(dAtA[iNdEx-4])
-				v |= uint32(dAtA[iNdEx-3]) << 8
-				v |= uint32(dAtA[iNdEx-2]) << 16
-				v |= uint32(dAtA[iNdEx-1]) << 24
 				v2 := float32(math.Float32frombits(v))
 				m.Affinities = append(m.Affinities, v2)
 			} else if wireType == 2 {
@@ -2226,11 +2451,8 @@ func (m *Affinities) Unmarshal(dAtA []byte) error {
 					if (iNdEx + 4) > l {
 						return io.ErrUnexpectedEOF
 					}
+					v = uint32(binary.LittleEndian.Uint32(dAtA[iNdEx:]))
 					iNdEx += 4
-					v = uint32(dAtA[iNdEx-4])
-					v |= uint32(dAtA[iNdEx-3]) << 8
-					v |= uint32(dAtA[iNdEx-2]) << 16
-					v |= uint32(dAtA[iNdEx-1]) << 24
 					v2 := float32(math.Float32frombits(v))
 					m.Affinities = append(m.Affinities, v2)
 				}
@@ -2924,40 +3146,42 @@ var (
 func init() { proto1.RegisterFile("labelops.proto", fileDescriptorLabelops) }
 
 var fileDescriptorLabelops = []byte{
-	// 551 bytes of a gzipped FileDescriptorProto
+	// 585 bytes of a gzipped FileDescriptorProto
 	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x94, 0x52, 0x4d, 0x6f, 0xd3, 0x40,
-	0x10, 0xcd, 0xc6, 0xcd, 0xd7, 0x98, 0x44, 0xb0, 0x8a, 0x90, 0x15, 0xa9, 0x8b, 0x65, 0x21, 0xc8,
-	0x01, 0x45, 0xc2, 0xa8, 0x12, 0xe5, 0x46, 0x0b, 0x87, 0x0a, 0xaa, 0x20, 0xb7, 0x70, 0xad, 0x9c,
-	0x7a, 0x1b, 0x59, 0xf5, 0x97, 0xbc, 0x6b, 0x68, 0x4e, 0xf0, 0x13, 0x90, 0xf8, 0x13, 0xfc, 0x14,
-	0x8e, 0x3d, 0x72, 0x24, 0xe6, 0xc2, 0xb1, 0x17, 0xee, 0x68, 0x3f, 0x9c, 0xd8, 0x12, 0x1c, 0xb8,
-	0xd8, 0xfb, 0x66, 0xdf, 0xcc, 0xbc, 0x37, 0x3b, 0x30, 0x8a, 0xfc, 0x05, 0x8d, 0xd2, 0x8c, 0xcd,
-	0xb2, 0x3c, 0xe5, 0x29, 0xee, 0xc8, 0x9f, 0x33, 0x87, 0xde, 0x31, 0xcd, 0x97, 0x74, 0x9e, 0xe1,
-	0x31, 0x74, 0xe2, 0x82, 0x87, 0x81, 0x85, 0x6c, 0x34, 0xdd, 0xf1, 0x14, 0xc0, 0x77, 0xa1, 0xcb,
-	0xfd, 0x7c, 0x49, 0xb9, 0xd5, 0x96, 0x61, 0x8d, 0x44, 0x3c, 0x16, 0x89, 0x81, 0x65, 0xd8, 0x86,
-	0x88, 0x2b, 0xe4, 0xb8, 0xd0, 0xd7, 0x05, 0x19, 0x7e, 0xa0, 0x39, 0xcc, 0x42, 0xb6, 0x31, 0x35,
-	0xdd, 0x91, 0xea, 0x3d, 0xd3, 0x04, 0x9d, 0xc3, 0x9c, 0x8f, 0xd0, 0x3b, 0xc9, 0xa2, 0x90, 0xff,
-	0xb7, 0x88, 0x09, 0xf4, 0x13, 0xfa, 0x41, 0x3a, 0xb3, 0x0c, 0x79, 0xb3, 0xc1, 0x22, 0xe7, 0x3c,
-	0xf5, 0x73, 0x46, 0xad, 0x1d, 0x1b, 0x4d, 0xfb, 0x9e, 0x46, 0x18, 0xc3, 0x4e, 0x1e, 0x51, 0x66,
-	0x75, 0x6c, 0x34, 0xbd, 0xe5, 0xc9, 0xb3, 0xb3, 0x0f, 0xe6, 0x3c, 0x3b, 0x4c, 0xe3, 0x2c, 0xa2,
-	0x9c, 0x06, 0xff, 0x10, 0x31, 0x86, 0x0e, 0xe3, 0xfe, 0x92, 0x4a, 0x0d, 0x03, 0x4f, 0x01, 0xe7,
-	0x0d, 0xf4, 0x9f, 0x5f, 0x5c, 0x84, 0x49, 0xc8, 0x57, 0xa2, 0xa5, 0xec, 0xfd, 0x58, 0x27, 0x6a,
-	0xb4, 0x89, 0xbb, 0x95, 0x7c, 0x85, 0x44, 0xc5, 0xf7, 0x7e, 0x54, 0x50, 0xa9, 0xbd, 0xed, 0x29,
-	0xe0, 0xbc, 0x00, 0xd0, 0x15, 0x43, 0xca, 0x36, 0xb9, 0x6a, 0x86, 0x55, 0x2e, 0xc3, 0x04, 0xc0,
-	0xdf, 0xb0, 0xac, 0xb6, 0x6d, 0x4c, 0xdb, 0x5e, 0x2d, 0xe2, 0x7c, 0x41, 0x30, 0xac, 0x84, 0x9d,
-	0xfa, 0x8b, 0x88, 0xe2, 0x3d, 0xe8, 0x70, 0x71, 0xd0, 0x8f, 0x71, 0x4f, 0x3f, 0x46, 0x83, 0x34,
-	0x93, 0xdf, 0x97, 0x09, 0xcf, 0x57, 0x9e, 0x62, 0x4f, 0x5e, 0x01, 0x6c, 0x83, 0xf8, 0x36, 0x18,
-	0x97, 0x74, 0xa5, 0xfd, 0x89, 0x23, 0x7e, 0x58, 0x99, 0x10, 0xde, 0x4c, 0xf7, 0x4e, 0xb3, 0x6c,
-	0x48, 0x99, 0xf6, 0xf5, 0xac, 0xfd, 0x14, 0x39, 0x57, 0xd0, 0x3b, 0x79, 0x77, 0x98, 0x16, 0x09,
-	0xc7, 0xae, 0x78, 0x9f, 0x22, 0xe1, 0xd5, 0x72, 0x4c, 0x74, 0xa2, 0xbe, 0x9f, 0xc9, 0x2f, 0x53,
-	0x52, 0x34, 0x73, 0xb2, 0x0f, 0x66, 0x2d, 0xfc, 0x17, 0x31, 0xe3, 0xba, 0x98, 0x61, 0xbd, 0xf3,
-	0x6f, 0x04, 0xf0, 0x5a, 0x8c, 0xee, 0x28, 0x09, 0xe8, 0x15, 0xde, 0x83, 0xee, 0x22, 0x4a, 0xcf,
-	0x2f, 0xab, 0xee, 0xbb, 0xba, 0xfb, 0x96, 0x32, 0x3b, 0x90, 0xf7, 0x5a, 0x80, 0x22, 0xe3, 0x5d,
-	0x80, 0xc8, 0x67, 0xfc, 0x4c, 0xad, 0x87, 0x5a, 0xb9, 0x81, 0x88, 0x1c, 0xcb, 0x15, 0x71, 0x60,
-	0xa8, 0xae, 0xd3, 0xe0, 0x8c, 0x87, 0xb1, 0x5a, 0xbd, 0x81, 0x67, 0x4a, 0x46, 0x1a, 0x9c, 0x86,
-	0x31, 0x6d, 0x70, 0x0a, 0x46, 0x73, 0xb9, 0x88, 0x5b, 0xce, 0x5b, 0x46, 0xf3, 0xc9, 0x11, 0x98,
-	0xb5, 0xee, 0x75, 0x9f, 0x03, 0xe5, 0xf3, 0x7e, 0x73, 0xe8, 0xa3, 0xe6, 0xec, 0x6a, 0xbe, 0x0f,
-	0x1e, 0x5d, 0xaf, 0x49, 0xeb, 0xfb, 0x9a, 0xb4, 0x6e, 0xd6, 0x04, 0x7d, 0x2a, 0x09, 0xfa, 0x5a,
-	0x12, 0xf4, 0xad, 0x24, 0xe8, 0xba, 0x24, 0xe8, 0x47, 0x49, 0xd0, 0xaf, 0x92, 0xb4, 0x6e, 0x4a,
-	0x82, 0x3e, 0xff, 0x24, 0xad, 0x45, 0x57, 0xd6, 0x79, 0xf2, 0x27, 0x00, 0x00, 0xff, 0xff, 0x1e,
-	0x15, 0x44, 0x93, 0x2e, 0x04, 0x00, 0x00,
+	0x10, 0xcd, 0xc6, 0xcd, 0xd7, 0x98, 0x54, 0x65, 0x15, 0x21, 0xcb, 0x52, 0x17, 0xcb, 0x42, 0x22,
+	0x87, 0x2a, 0x12, 0x41, 0x95, 0x68, 0x6f, 0xb4, 0x70, 0xa8, 0x20, 0x0a, 0x72, 0x5b, 0xae, 0x95,
+	0x53, 0x6f, 0x23, 0xab, 0xfe, 0x92, 0x77, 0x03, 0xcd, 0x09, 0x7e, 0x02, 0x12, 0x7f, 0x82, 0x9f,
+	0xc2, 0xb1, 0x47, 0x8e, 0xc4, 0x5c, 0x38, 0xf6, 0xc2, 0x1d, 0xed, 0x87, 0x1d, 0x47, 0x02, 0x24,
+	0x2e, 0xf6, 0xbe, 0xd9, 0x37, 0x33, 0xef, 0xcd, 0x0e, 0x6c, 0x47, 0xfe, 0x8c, 0x46, 0x69, 0xc6,
+	0x46, 0x59, 0x9e, 0xf2, 0x14, 0xb7, 0xe4, 0xcf, 0x9d, 0x42, 0x67, 0x42, 0xf3, 0x39, 0x9d, 0x66,
+	0x78, 0x00, 0xad, 0x78, 0xc1, 0xc3, 0xc0, 0x42, 0x0e, 0x1a, 0x6e, 0x79, 0x0a, 0xe0, 0x07, 0xd0,
+	0xe6, 0x7e, 0x3e, 0xa7, 0xdc, 0x6a, 0xca, 0xb0, 0x46, 0x22, 0x1e, 0x8b, 0xc4, 0xc0, 0x32, 0x1c,
+	0x43, 0xc4, 0x15, 0x72, 0xcf, 0xa1, 0x37, 0xf1, 0xb3, 0x2c, 0x4c, 0xe6, 0xff, 0x2a, 0x19, 0xfb,
+	0x59, 0x46, 0x83, 0xb2, 0xa4, 0x42, 0xd8, 0x86, 0x6e, 0x9a, 0x87, 0xf3, 0x30, 0xf1, 0x23, 0x5d,
+	0xb4, 0xc2, 0xee, 0x21, 0x40, 0x55, 0x96, 0xe1, 0x3d, 0xe8, 0xc6, 0x0a, 0x31, 0x0b, 0x39, 0xc6,
+	0xd0, 0x1c, 0xef, 0x28, 0x5b, 0xa3, 0x8a, 0xe4, 0x55, 0x0c, 0xf7, 0x03, 0x74, 0x4e, 0xb3, 0x28,
+	0xe4, 0xff, 0xed, 0xd1, 0x86, 0x6e, 0x42, 0xdf, 0xcb, 0xc1, 0x59, 0x86, 0xbc, 0xa9, 0xb0, 0xc8,
+	0xb9, 0x4c, 0xfd, 0x9c, 0x51, 0x6b, 0xcb, 0x41, 0xc3, 0xae, 0xa7, 0x11, 0xc6, 0xb0, 0x95, 0x47,
+	0x94, 0x59, 0x2d, 0x07, 0x0d, 0xef, 0x79, 0xf2, 0xec, 0x1e, 0x80, 0x39, 0xcd, 0x8e, 0xd3, 0x38,
+	0x8b, 0x28, 0xa7, 0xc1, 0x5f, 0x44, 0x0c, 0xa0, 0xc5, 0xb8, 0x3f, 0xa7, 0x52, 0x43, 0xcf, 0x53,
+	0xc0, 0x7d, 0x03, 0xdd, 0xe7, 0x57, 0x57, 0x61, 0x12, 0xf2, 0xa5, 0x68, 0x29, 0x7b, 0x3f, 0xd1,
+	0x89, 0x1a, 0x55, 0xf1, 0x71, 0x29, 0x5f, 0x21, 0x51, 0xf1, 0x9d, 0x1f, 0x2d, 0xa8, 0xd4, 0xde,
+	0xf4, 0x14, 0x70, 0x5f, 0x00, 0xe8, 0x8a, 0x21, 0x65, 0x55, 0xae, 0x9a, 0x63, 0x99, 0xcb, 0x30,
+	0x01, 0xf0, 0x2b, 0x96, 0xd5, 0x74, 0x8c, 0x61, 0xd3, 0xab, 0x45, 0xdc, 0xcf, 0x08, 0xfa, 0xa5,
+	0xb0, 0x33, 0x7f, 0x16, 0x51, 0xbc, 0x0f, 0x2d, 0x2e, 0x0e, 0xfa, 0x41, 0x1e, 0xea, 0x07, 0xd9,
+	0x20, 0x8d, 0xe4, 0xf7, 0x65, 0xc2, 0xf3, 0xa5, 0xa7, 0xd8, 0xf6, 0x2b, 0x80, 0x75, 0x10, 0xef,
+	0x80, 0x71, 0x4d, 0x97, 0xda, 0x9f, 0x38, 0xe2, 0xc7, 0xa5, 0x09, 0xe1, 0xcd, 0x1c, 0xdf, 0xdf,
+	0x2c, 0x1b, 0x52, 0xa6, 0x7d, 0x1d, 0x36, 0x9f, 0x21, 0xf7, 0x06, 0x3a, 0xa7, 0x6f, 0x8f, 0xd3,
+	0x45, 0xc2, 0xf1, 0x58, 0xbc, 0xcf, 0x22, 0xe1, 0xe5, 0x82, 0xd8, 0x3a, 0x51, 0xdf, 0x8f, 0xe4,
+	0x97, 0x29, 0x29, 0x9a, 0x69, 0x1f, 0x80, 0x59, 0x0b, 0xff, 0x41, 0xcc, 0xa0, 0x2e, 0xa6, 0x5f,
+	0xef, 0xfc, 0x0b, 0x01, 0xbc, 0x16, 0xa3, 0x3b, 0x49, 0x02, 0x7a, 0x83, 0xf7, 0xa1, 0x3d, 0x8b,
+	0xd2, 0xcb, 0xeb, 0xb2, 0xfb, 0xae, 0xee, 0xbe, 0xa6, 0x8c, 0x8e, 0xe4, 0xbd, 0x16, 0xa0, 0xc8,
+	0x78, 0x17, 0x20, 0xf2, 0x19, 0xbf, 0x50, 0xeb, 0xa1, 0x56, 0xae, 0x27, 0x22, 0x13, 0xb9, 0x22,
+	0x2e, 0xf4, 0xd5, 0x75, 0x1a, 0x5c, 0xf0, 0x30, 0x56, 0xab, 0xd7, 0xf3, 0x4c, 0xc9, 0x48, 0x83,
+	0xb3, 0x30, 0xa6, 0x1b, 0x9c, 0x05, 0xa3, 0xb9, 0x5c, 0xc4, 0x35, 0xe7, 0x9c, 0xd1, 0xdc, 0x3e,
+	0x01, 0xb3, 0xd6, 0xbd, 0xee, 0xb3, 0xa7, 0x7c, 0x3e, 0xda, 0x1c, 0xfa, 0xf6, 0xe6, 0xec, 0x6a,
+	0xbe, 0x8f, 0xf6, 0x6e, 0x57, 0xa4, 0xf1, 0x6d, 0x45, 0x1a, 0x77, 0x2b, 0x82, 0x3e, 0x16, 0x04,
+	0x7d, 0x29, 0x08, 0xfa, 0x5a, 0x10, 0x74, 0x5b, 0x10, 0xf4, 0xbd, 0x20, 0xe8, 0x67, 0x41, 0x1a,
+	0x77, 0x05, 0x41, 0x9f, 0x7e, 0x90, 0xc6, 0xac, 0x2d, 0xeb, 0x3c, 0xfd, 0x1d, 0x00, 0x00, 0xff,
+	0xff, 0xe1, 0x93, 0xdb, 0x4e, 0x8d, 0x04, 0x00, 0x00,
 }

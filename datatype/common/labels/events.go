@@ -3,18 +3,44 @@ package labels
 import (
 	"fmt"
 
+	"github.com/janelia-flyem/dvid/datatype/common/proto"
 	"github.com/janelia-flyem/dvid/datatype/imageblk"
 	"github.com/janelia-flyem/dvid/dvid"
 )
 
 // MergeOp represents the merging of a set of labels into a target label.
 type MergeOp struct {
+	MutID  uint64
 	Target uint64
 	Merged Set
 }
 
+// MappingOp represents a mapping of a set of original labels into a mapped lapel.
+type MappingOp struct {
+	MutID    uint64
+	Mapped   uint64
+	Original Set
+}
+
+// Marshal returns a proto.MappingOp serialization
+func (op MappingOp) Marshal() (serialization []byte, err error) {
+	original := make([]uint64, len(op.Original))
+	var i int
+	for label := range op.Original {
+		original[i] = label
+		i++
+	}
+	pop := &proto.MappingOp{
+		Mutid:    op.MutID,
+		Mapped:   op.Mapped,
+		Original: original,
+	}
+	return pop.Marshal()
+}
+
 // SplitOp represents a split with the sparse volume of the new label.
 type SplitOp struct {
+	MutID    uint64
 	Target   uint64
 	NewLabel uint64
 	RLEs     dvid.RLEs
@@ -23,6 +49,7 @@ type SplitOp struct {
 
 // CleaveOp represents a cleave of a label using supervoxels.
 type CleaveOp struct {
+	MutID              uint64
 	Target             uint64
 	CleavedLabel       uint64
 	CleavedSupervoxels []uint64
@@ -30,6 +57,7 @@ type CleaveOp struct {
 
 // SplitSupervoxelOp describes a supervoxel split.
 type SplitSupervoxelOp struct {
+	MutID            uint64
 	Supervoxel       uint64
 	SplitSupervoxel  uint64
 	RemainSupervoxel uint64

@@ -13,7 +13,7 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 )
 
-func (d *Data) ingestMerges(ctx *datastore.VersionedCtx, uuid dvid.UUID, v dvid.VersionID, merges proto.MergeOps) error {
+func (d *Data) ingestMappings(ctx *datastore.VersionedCtx, uuid dvid.UUID, v dvid.VersionID, mappings proto.MappingOps) error {
 	// don't allow ingest of an in-memory mapping that already exists, since that's
 	// not a real ingestion, it's a mutation.
 	iMap.RLock()
@@ -31,7 +31,7 @@ func (d *Data) ingestMerges(ctx *datastore.VersionedCtx, uuid dvid.UUID, v dvid.
 	}
 	iMap.RUnlock()
 
-	return labels.LogMerges(d, uuid, merges)
+	return labels.LogMappings(d, uuid, mappings)
 }
 
 // versioned map entry for a given supervoxel.
@@ -153,21 +153,21 @@ func (svm *SVMap) initToVersion(d dvid.Data, v dvid.VersionID) error {
 		return err
 	}
 	for _, ancestor := range ancestors {
-		mergeOps, err := labels.ReadMergeLog(d, ancestor)
+		mappingOps, err := labels.ReadMappingLog(d, ancestor)
 		if err != nil {
 			return err
 		}
-		if len(mergeOps) == 0 {
+		if len(mappingOps) == 0 {
 			continue
 		}
 		vid, err := svm.createShortVersion(v)
 		if err != nil {
 			return err
 		}
-		for _, mergeOp := range mergeOps {
-			for supervoxel := range mergeOp.Merged {
+		for _, mappingOp := range mappingOps {
+			for supervoxel := range mappingOp.Original {
 				vm := svm.fm[supervoxel]
-				newvm, changed := vm.modify(vid, mergeOp.Target)
+				newvm, changed := vm.modify(vid, mappingOp.Mapped)
 				if changed {
 					svm.fm[supervoxel] = newvm
 				}
@@ -197,6 +197,23 @@ func (svm *SVMap) MergeIndex(v dvid.VersionID, idx *labels.Index, toLabel uint64
 		if changed {
 			svm.fm[supervoxel] = newvm
 		}
+	}
+	svm.Unlock()
+	return nil
+}
+
+// MapSupervoxel sets the mapping for a supervoxel to a specified label.
+func (svm *SVMap) MapSupervoxel(v dvid.VersionID, supervoxel, label uint64) error {
+	svm.Lock()
+	vid, err := svm.createShortVersion(v)
+	if err != nil {
+		return err
+	}
+	vm := svm.fm[supervoxel]
+	newvm, changed := vm.modify(vid, label)
+	if changed {
+		svm.fm[supervoxel] = newvm
+		dvid.Infof("changed supervoxel %d mapping to incorporate label %d\n", supervoxel, label)
 	}
 	svm.Unlock()
 	return nil
@@ -267,7 +284,7 @@ var (
 	iMap instanceMaps
 )
 
-func getMap(d dvid.Data, v dvid.VersionID) (*SVMap, error) {
+func getMapping(d dvid.Data, v dvid.VersionID) (*SVMap, error) {
 	iMap.Lock()
 	defer iMap.Unlock()
 	if iMap.maps == nil {
@@ -280,20 +297,16 @@ func getMap(d dvid.Data, v dvid.VersionID) (*SVMap, error) {
 		m.versions = make(map[dvid.VersionID]uint8)
 		m.versionsRev = make(map[uint8]dvid.VersionID)
 		iMap.maps[d.DataUUID()] = m
-	}
-	if err := m.initToVersion(d, v); err != nil {
-		return nil, err
+		if err := m.initToVersion(d, v); err != nil {
+			return nil, err
+		}
 	}
 	return m, nil
 }
 
-func GetMapping(d dvid.Data, v dvid.VersionID) (*SVMap, error) {
-	return getMap(d, v)
-}
-
-// AddMergeToMapping adds a merge into the equivalence map for a given instance version.
-func AddMergeToMapping(d dvid.Data, v dvid.VersionID, mutID, toLabel uint64, mergeIdx *labels.Index) error {
-	m, err := getMap(d, v)
+// adds a merge into the equivalence map for a given instance version.
+func addMergeToMapping(d dvid.Data, v dvid.VersionID, mutID, toLabel uint64, mergeIdx *labels.Index) error {
+	m, err := getMapping(d, v)
 	if err != nil {
 		return err
 	}

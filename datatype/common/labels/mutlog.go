@@ -9,7 +9,7 @@ import (
 	"github.com/janelia-flyem/dvid/storage"
 )
 
-func ReadMergeLog(d dvid.Data, v dvid.VersionID) ([]MergeOp, error) {
+func ReadMappingLog(d dvid.Data, v dvid.VersionID) ([]MappingOp, error) {
 	uuid, err := datastore.UUIDFromVersion(v)
 	if err != nil {
 		return nil, err
@@ -29,26 +29,26 @@ func ReadMergeLog(d dvid.Data, v dvid.VersionID) ([]MergeOp, error) {
 	if len(msgs) == 0 {
 		return nil, nil
 	}
-	mergeOps := make([]MergeOp, len(msgs))
-	var numMerges int
+	mappingOps := make([]MappingOp, len(msgs))
+	var numMappings int
 	for i, msg := range msgs {
-		if msg.EntryType != proto.MergeOpType {
+		if msg.EntryType != proto.MappingOpType {
 			continue
 		}
-		var op proto.MergeOp
+		var op proto.MappingOp
 		if err := op.Unmarshal(msg.Data); err != nil {
 			return nil, err
 		}
-		mergeOps[i].Target = op.GetTarget()
-		merged := op.GetMerged()
-		mergeOps[i].Merged = make(Set, len(merged))
-		for _, label := range merged {
-			mergeOps[i].Merged[label] = struct{}{}
+		mappingOps[i].Mapped = op.GetMapped()
+		original := op.GetOriginal()
+		mappingOps[i].Original = make(Set, len(original))
+		for _, label := range original {
+			mappingOps[i].Original[label] = struct{}{}
 		}
-		numMerges++
+		numMappings++
 	}
-	mergeOps = mergeOps[:numMerges]
-	return mergeOps, nil
+	mappingOps = mappingOps[:numMappings]
+	return mappingOps, nil
 }
 
 func LogSplit(d dvid.Data, v dvid.VersionID, mutID uint64, op SplitOp) error {
@@ -94,8 +94,12 @@ func LogMerge(d dvid.Data, v dvid.VersionID, mutID uint64, op MergeOp) error {
 	return log.Append(d.DataUUID(), uuid, msg)
 }
 
-// LogMerges logs a collection of merge operations to a UUID.
-func LogMerges(d dvid.Data, uuid dvid.UUID, ops proto.MergeOps) error {
+// LogMapping logs the mapping of supervoxels to a label.
+func LogMapping(d dvid.Data, v dvid.VersionID, op MappingOp) error {
+	uuid, err := datastore.UUIDFromVersion(v)
+	if err != nil {
+		return err
+	}
 	logable, ok := d.(storage.Logable)
 	if !ok {
 		return nil // skip logging
@@ -104,12 +108,30 @@ func LogMerges(d dvid.Data, uuid dvid.UUID, ops proto.MergeOps) error {
 	if log == nil {
 		return nil
 	}
-	for _, op := range ops.Merges {
-		serialization, err := op.Marshal()
+	data, err := op.Marshal()
+	if err != nil {
+		return err
+	}
+	msg := storage.LogMessage{EntryType: proto.MappingOpType, Data: data}
+	return log.Append(d.DataUUID(), uuid, msg)
+}
+
+// LogMappings logs a collection of mapping operations to a UUID.
+func LogMappings(d dvid.Data, uuid dvid.UUID, ops proto.MappingOps) error {
+	logable, ok := d.(storage.Logable)
+	if !ok {
+		return nil // skip logging
+	}
+	log := logable.GetWriteLog()
+	if log == nil {
+		return nil
+	}
+	for _, op := range ops.Mappings {
+		data, err := op.Marshal()
 		if err != nil {
 			return err
 		}
-		msg := storage.LogMessage{EntryType: proto.MergeOpType, Data: serialization}
+		msg := storage.LogMessage{EntryType: proto.MappingOpType, Data: data}
 		if err := log.Append(d.DataUUID(), uuid, msg); err != nil {
 			return err
 		}

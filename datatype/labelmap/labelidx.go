@@ -136,7 +136,7 @@ func deleteLabelIndex(ctx *datastore.VersionedCtx, label uint64) error {
 // GetLabelIndex gets label set index data from storage for a given data instance
 // and version. Concurrency-safe access and supports caching.
 func GetLabelIndex(d dvid.Data, v dvid.VersionID, label uint64) (*labels.Index, error) {
-	mapping, err := GetMapping(d, v)
+	mapping, err := getMapping(d, v)
 	if err != nil {
 		return nil, err
 	}
@@ -185,7 +185,7 @@ func GetLabelIndex(d dvid.Data, v dvid.VersionID, label uint64) (*labels.Index, 
 
 // GetSupervoxelBlocks gets the blocks corresponding to a supervoxel id.
 func GetSupervoxelBlocks(d dvid.Data, v dvid.VersionID, supervoxel uint64) (dvid.IZYXSlice, error) {
-	mapping, err := GetMapping(d, v)
+	mapping, err := getMapping(d, v)
 	if err != nil {
 		return nil, err
 	}
@@ -303,15 +303,20 @@ func PutLabelIndex(d dvid.Data, v dvid.VersionID, label uint64, idx *labels.Inde
 // that were modified.  NOTE: This assumes the split RLEs are accurate because they are not tested
 // at the voxel level as being a subset of the supervoxel.
 func SplitSupervoxelIndex(d dvid.Data, v dvid.VersionID, op labels.SplitSupervoxelOp) (dvid.IZYXSlice, error) {
-	mapping, err := GetMapping(d, v)
+	mapping, err := getMapping(d, v)
 	if err != nil {
 		return nil, err
 	}
 	label := op.Supervoxel
-	if mapping != nil {
-		if mapped, found := mapping.MappedLabel(v, op.Supervoxel); found {
-			label = mapped
-		}
+	mapped, found := mapping.MappedLabel(v, op.Supervoxel)
+	if found {
+		label = mapped
+	}
+	if err = mapping.MapSupervoxel(v, op.SplitSupervoxel, label); err != nil {
+		return nil, err
+	}
+	if err = mapping.MapSupervoxel(v, op.RemainSupervoxel, label); err != nil {
+		return nil, err
 	}
 
 	atomic.AddUint64(&metaAttempts, 1)
@@ -383,7 +388,8 @@ func SplitSupervoxelIndex(d dvid.Data, v dvid.VersionID, op labels.SplitSupervox
 // CleaveIndex modifies the label index to remove specified supervoxels and create another
 // label index for this cleaved body.
 func CleaveIndex(d dvid.Data, v dvid.VersionID, op labels.CleaveOp) error {
-	mapping, err := GetMapping(d, v)
+	dvid.Infof("Cleaved op starting: %v\n", op)
+	mapping, err := getMapping(d, v)
 	if err != nil {
 		return err
 	}
@@ -424,6 +430,12 @@ func CleaveIndex(d dvid.Data, v dvid.VersionID, op labels.CleaveOp) error {
 
 	// modify and store the target label index after cleaving.
 	cidx := idx.Cleave(op.CleavedSupervoxels)
+	for _, supervoxel := range op.CleavedSupervoxels {
+		if err := mapping.MapSupervoxel(v, supervoxel, op.CleavedLabel); err != nil {
+			return err
+		}
+		dvid.Infof("change cleaved supervoxel %d -> label %d, mapping (%p) %v\n", supervoxel, op.CleavedLabel, mapping, mapping)
+	}
 
 	ctx := datastore.NewVersionedCtx(d, v)
 	if err := putLabelIndex(ctx, op.Target, idx); err != nil {
@@ -441,6 +453,7 @@ func CleaveIndex(d dvid.Data, v dvid.VersionID, op labels.CleaveOp) error {
 	}
 
 	// create a new label index to contain the cleaved supervoxels.
+	// we don't have to worry about mutex here because it's a new index.
 	if err := putLabelIndex(ctx, op.CleavedLabel, cidx); err != nil {
 		return err
 	}

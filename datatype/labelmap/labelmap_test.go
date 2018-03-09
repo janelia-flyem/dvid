@@ -187,9 +187,12 @@ func (v *testVolume) putMutable(t *testing.T, uuid dvid.UUID, name string) {
 	server.TestHTTP(t, "POST", apiStr, bytes.NewBuffer(v.data))
 }
 
-func (v *testVolume) get(t *testing.T, uuid dvid.UUID, name string) {
+func (v *testVolume) get(t *testing.T, uuid dvid.UUID, name string, supervoxels bool) {
 	apiStr := fmt.Sprintf("%snode/%s/%s/raw/0_1_2/%d_%d_%d/0_0_0", server.WebAPIPath,
 		uuid, name, v.size[0], v.size[1], v.size[2])
+	if supervoxels {
+		apiStr += "?supervoxels=true"
+	}
 	v.data = server.TestHTTP(t, "GET", apiStr, nil)
 }
 
@@ -988,7 +991,7 @@ func TestMultiscaleIngest(t *testing.T) {
 		t.Fatalf("Error blocking on update for labels: %v\n", err)
 	}
 	hires := newTestVolume(128, 128, 128)
-	hires.get(t, uuid, "labels")
+	hires.get(t, uuid, "labels", false)
 	hires.verifyLabel(t, 1, 45, 45, 45)
 	hires.verifyLabel(t, 2, 50, 50, 100)
 	hires.verifyLabel(t, 13, 100, 60, 60)

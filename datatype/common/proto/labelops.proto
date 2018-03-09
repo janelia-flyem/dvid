@@ -2,13 +2,19 @@ syntax = "proto3";
 package proto;
 
 message MergeOp {
-    uint64 mutid = 1;
-    uint64 target = 2;
-    repeated uint64 merged = 3;
+	uint64 mutid = 1;
+	uint64 target = 2;
+	repeated uint64 merged = 3;
 }
 
-message MergeOps {
-	repeated MergeOp merges = 1;
+message MappingOp {
+    uint64 mutid = 1;
+    uint64 mapped = 2;
+    repeated uint64 original = 3;
+}
+
+message MappingOps {
+	repeated MappingOp mappings = 1;
 }
 
 message SplitOp {

@@ -89,7 +89,7 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp) error {
 		return fmt.Errorf("can't get block indices of merge labels %s: %v", op.Merged, err)
 	}
 
-	if err := AddMergeToMapping(d, v, mutID, op.Target, mergeIdx); err != nil {
+	if err := addMergeToMapping(d, v, mutID, op.Target, mergeIdx); err != nil {
 		return err
 	}
 
@@ -272,6 +272,7 @@ func (d *Data) SplitSupervoxel(v dvid.VersionID, svlabel uint64, r io.ReadCloser
 		return
 	}
 	op := labels.SplitSupervoxelOp{
+		MutID:            mutID,
 		Supervoxel:       svlabel,
 		SplitSupervoxel:  splitSupervoxel,
 		RemainSupervoxel: remainSupervoxel,

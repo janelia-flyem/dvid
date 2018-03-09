@@ -873,7 +873,8 @@ POST <api URL>/node/<UUID>/<data name>/cleave/<label>[?cleavelabel=X]
 
 POST <api URL>/node/<UUID>/<data name>/split-supervoxel/<supervoxel>
 
-	Splits a portion of a supervoxel into two new supervoxels.  Returns the following JSON:
+	Splits a portion of a supervoxel into two new supervoxels, both of which will still be mapped
+	to the original label.  Returns the following JSON:
 
 		{ 
 			"SplitSupervoxel": <new label of split portion>,
@@ -1891,7 +1892,7 @@ func (d *Data) sendBlock(w http.ResponseWriter, b blockData) error {
 		}
 
 		if !b.supervoxels {
-			mapping, err := GetMapping(d, b.v)
+			mapping, err := getMapping(d, b.v)
 			if err != nil {
 				return err
 			}
@@ -2084,7 +2085,7 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 	}
 
 	blockCh := make(chan blockChange, 100)
-	svmap, err := GetMapping(d, ctx.VersionID())
+	svmap, err := getMapping(d, ctx.VersionID())
 	if err != nil {
 		return fmt.Errorf("ReceiveBlocks couldn't get mapping for data %q, version %d: %v", d.DataName(), ctx.VersionID(), err)
 	}
@@ -2971,14 +2972,14 @@ func (d *Data) handleIngestMappings(ctx *datastore.VersionedCtx, w http.Response
 	if err != nil {
 		server.BadRequest(w, r, err)
 	}
-	var merges proto.MergeOps
-	if err := merges.Unmarshal(serialization); err != nil {
+	var mappings proto.MappingOps
+	if err := mappings.Unmarshal(serialization); err != nil {
 		server.BadRequest(w, r, err)
 	}
-	if err := d.ingestMerges(ctx, uuid, v, merges); err != nil {
+	if err := d.ingestMappings(ctx, uuid, v, mappings); err != nil {
 		server.BadRequest(w, r, err)
 	}
-	timedLog.Infof("HTTP POST %d merges for uuid %s (%s)", len(merges.Merges), uuid, r.URL)
+	timedLog.Infof("HTTP POST %d merges for uuid %s (%s)", len(mappings.Mappings), uuid, r.URL)
 }
 
 func (d *Data) handlePseudocolor(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request, parts []string) {

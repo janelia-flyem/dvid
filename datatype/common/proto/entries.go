@@ -9,4 +9,5 @@ const (
 	MergeOpType
 	MutationCompleteType
 	AffinityType
+	MappingOpType
 )

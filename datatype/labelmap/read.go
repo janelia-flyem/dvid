@@ -92,9 +92,10 @@ func (d *Data) GetLabels(v dvid.VersionID, supervoxels bool, scale uint8, vox *L
 
 	var mapping *SVMap
 	if !supervoxels {
-		if mapping, err = GetMapping(d, v); err != nil {
+		if mapping, err = getMapping(d, v); err != nil {
 			return err
 		}
+		dvid.Infof("GetLabels() using mapping (%p) for version %d: %v\n", mapping, v, mapping)
 	}
 	wg := new(sync.WaitGroup)
 	ctx := datastore.NewVersionedCtx(d, v)
