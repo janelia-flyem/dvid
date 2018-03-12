@@ -623,7 +623,7 @@ func (vol *labelVol) testBlocks(t *testing.T, context string, uuid dvid.UUID, co
 			if compression == "blocks" {
 				var block labels.Block
 				if err = block.UnmarshalBinary(uncompressed); err != nil {
-					t.Errorf("unable to deserialize label block (%d, %d, %d): %v\n", x, y, z, err)
+					t.Fatalf("unable to deserialize label block (%d, %d, %d): %v\n", x, y, z, err)
 				}
 				uint64array, size := block.MakeLabelVolume()
 				if !size.Equals(vol.blockSize) {
@@ -1126,6 +1126,57 @@ func writeInt32(t *testing.T, buf *bytes.Buffer, i int32) {
 	}
 }
 
+func testGetBlock(t *testing.T, uuid dvid.UUID, name string, bcoord dvid.Point3d, td testData) {
+	apiStr := fmt.Sprintf("%snode/%s/%s/blocks/%d_%d_%d/%d_%d_%d?compression=blocks", server.WebAPIPath,
+		uuid, name, 64, 64, 64, bcoord[0]*64, bcoord[1]*64, bcoord[2]*64)
+	data := server.TestHTTP(t, "GET", apiStr, nil)
+
+	b := 0
+	if b+16 > len(data) {
+		t.Fatalf("Only got %d bytes back from block API call\n", len(data))
+	}
+	x := int32(binary.LittleEndian.Uint32(data[b : b+4]))
+	b += 4
+	y := int32(binary.LittleEndian.Uint32(data[b : b+4]))
+	b += 4
+	z := int32(binary.LittleEndian.Uint32(data[b : b+4]))
+	b += 4
+	n := int(binary.LittleEndian.Uint32(data[b : b+4]))
+	b += 4
+	if x != bcoord[0] || y != bcoord[1] || z != bcoord[2] {
+		t.Fatalf("Bad block coordinate: expected %s, got (%d,%d,%d)\n", bcoord, x, y, z)
+	}
+
+	gzipIn := bytes.NewBuffer(data[b : b+n])
+	zr, err := gzip.NewReader(gzipIn)
+	if err != nil {
+		t.Fatalf("can't uncompress gzip block: %v\n", err)
+	}
+	uncompressed, err := ioutil.ReadAll(zr)
+	if err != nil {
+		t.Fatalf("can't uncompress gzip block: %v\n", err)
+	}
+	zr.Close()
+
+	var block labels.Block
+	if err = block.UnmarshalBinary(uncompressed); err != nil {
+		t.Fatalf("unable to deserialize label block (%d, %d, %d): %v\n", x, y, z, err)
+	}
+	bytearray, _ := block.MakeLabelVolume()
+	uint64array, err := dvid.ByteToUint64(bytearray)
+	if err != nil {
+		t.Fatalf("error converting returned block %s to uint64 array: %v\n", bcoord, err)
+	}
+	if len(uint64array) != len(td.u) {
+		t.Fatalf("got block %s with %d labels != expected %d labels\n", bcoord, len(uint64array), len(td.u))
+	}
+	for i, val := range uint64array {
+		if val != td.u[i] {
+			t.Fatalf("error at pos %d: got label %d, expected label %d\n", i, val, td.u[i])
+		}
+	}
+}
+
 func TestPostBlocks(t *testing.T) {
 	if err := server.OpenTest(); err != nil {
 		t.Fatalf("can't open test server: %v\n", err)
@@ -1181,6 +1232,7 @@ func TestPostBlocks(t *testing.T) {
 		t.Fatalf("Error blocking on sync of labels: %v\n", err)
 	}
 
+	// test volume GET
 	start := dvid.Point3d{1 * 64, 2 * 64, 3 * 64}
 	end := dvid.Point3d{3*64 - 1, 4*64 - 1, 5*64 - 1}
 	testExtents(t, "labels", uuid, start, end)
@@ -1216,6 +1268,11 @@ func TestPostBlocks(t *testing.T) {
 				}
 			}
 		}
+	}
+
+	// test GET /blocks
+	for i, td := range data {
+		testGetBlock(t, uuid, "labels", blockCoords[i], td)
 	}
 }
 

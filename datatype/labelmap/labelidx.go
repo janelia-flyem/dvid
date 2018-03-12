@@ -312,12 +312,6 @@ func SplitSupervoxelIndex(d dvid.Data, v dvid.VersionID, op labels.SplitSupervox
 	if found {
 		label = mapped
 	}
-	if err = mapping.MapSupervoxel(v, op.SplitSupervoxel, label); err != nil {
-		return nil, err
-	}
-	if err = mapping.MapSupervoxel(v, op.RemainSupervoxel, label); err != nil {
-		return nil, err
-	}
 
 	atomic.AddUint64(&metaAttempts, 1)
 	k := indexKey{data: d, version: v, label: label}
@@ -388,7 +382,6 @@ func SplitSupervoxelIndex(d dvid.Data, v dvid.VersionID, op labels.SplitSupervox
 // CleaveIndex modifies the label index to remove specified supervoxels and create another
 // label index for this cleaved body.
 func CleaveIndex(d dvid.Data, v dvid.VersionID, op labels.CleaveOp) error {
-	dvid.Infof("Cleaved op starting: %v\n", op)
 	mapping, err := getMapping(d, v)
 	if err != nil {
 		return err
@@ -428,15 +421,6 @@ func CleaveIndex(d dvid.Data, v dvid.VersionID, op labels.CleaveOp) error {
 		}
 	}
 
-	// modify and store the target label index after cleaving.
-	cidx := idx.Cleave(op.CleavedSupervoxels)
-	for _, supervoxel := range op.CleavedSupervoxels {
-		if err := mapping.MapSupervoxel(v, supervoxel, op.CleavedLabel); err != nil {
-			return err
-		}
-		dvid.Infof("change cleaved supervoxel %d -> label %d, mapping (%p) %v\n", supervoxel, op.CleavedLabel, mapping, mapping)
-	}
-
 	ctx := datastore.NewVersionedCtx(d, v)
 	if err := putLabelIndex(ctx, op.Target, idx); err != nil {
 		return err
@@ -454,6 +438,7 @@ func CleaveIndex(d dvid.Data, v dvid.VersionID, op labels.CleaveOp) error {
 
 	// create a new label index to contain the cleaved supervoxels.
 	// we don't have to worry about mutex here because it's a new index.
+	cidx := idx.Cleave(op.CleavedSupervoxels)
 	if err := putLabelIndex(ctx, op.CleavedLabel, cidx); err != nil {
 		return err
 	}
@@ -508,15 +493,10 @@ func ChangeLabelIndex(d dvid.Data, v dvid.VersionID, label uint64, delta labels.
 		}
 	}
 
-	dvid.Infof("Index is now: %v\n", idx.Blocks)
-	dvid.Infof("Changing label %d with delta %v\n", label, delta)
-
 	// Modify the label index
 	if err := idx.ModifyBlocks(label, delta); err != nil {
 		return err
 	}
-
-	dvid.Infof("Index is now: %v\n", idx.Blocks)
 
 	// Persist the label index changes.
 	ctx := datastore.NewVersionedCtx(d, v)
@@ -594,7 +574,7 @@ type blockChange struct {
 // goroutine(s) that aggregates supervoxel changes across blocks for one mutation, then calls
 // mutex-guarded label index mutation routine.
 func (d *Data) aggregateBlockChanges(v dvid.VersionID, svmap *SVMap, ch <-chan blockChange) {
-	ancestry, err := svmap.GetAncestry(v)
+	ancestry, err := svmap.getLockedAncestry(v)
 	if err != nil {
 		dvid.Criticalf("unable to get ancestry for data %q, version %d: %v\n", d.DataName(), v, err)
 		return
@@ -605,7 +585,6 @@ func (d *Data) aggregateBlockChanges(v dvid.VersionID, svmap *SVMap, ch <-chan b
 	for change := range ch {
 		svmap.RLock()
 		for supervoxel, delta := range change.delta {
-			dvid.Infof("aggregateChanges: label %d -> delta %v\n", supervoxel, delta)
 			blockChanges, found := svChanges[supervoxel]
 			if !found {
 				blockChanges = make(map[dvid.IZYXString]int32)
@@ -622,7 +601,6 @@ func (d *Data) aggregateBlockChanges(v dvid.VersionID, svmap *SVMap, ch <-chan b
 	}
 	if d.IndexedLabels {
 		for label := range labelset {
-			dvid.Infof("For label %d, we have changes: %v\n", label, svChanges)
 			ChangeLabelIndex(d, v, label, svChanges)
 		}
 	}

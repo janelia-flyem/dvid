@@ -184,9 +184,13 @@ func (d *Data) CleaveLabel(v dvid.VersionID, label, toLabel uint64, r io.ReadClo
 
 	d.StartUpdate()
 	op := labels.CleaveOp{
+		MutID:              mutID,
 		Target:             label,
 		CleavedLabel:       cleaveLabel,
 		CleavedSupervoxels: cleaveSupervoxels,
+	}
+	if err = addCleaveToMapping(d, v, op); err != nil {
+		return
 	}
 	err = CleaveIndex(d, v, op)
 	d.StopUpdate()
@@ -278,7 +282,10 @@ func (d *Data) SplitSupervoxel(v dvid.VersionID, svlabel uint64, r io.ReadCloser
 		RemainSupervoxel: remainSupervoxel,
 		Split:            splitmap,
 	}
-	if err = d.processSplit(v, mutID, op); err != nil {
+	if err = addSupervoxelSplitToMapping(d, v, op); err != nil {
+		return
+	}
+	if err = d.processSplit(v, op); err != nil {
 		return
 	}
 
@@ -296,9 +303,9 @@ func (d *Data) SplitSupervoxel(v dvid.VersionID, svlabel uint64, r io.ReadCloser
 }
 
 // synchronous mutations of all underlying supervoxel blocks
-func (d *Data) processSplit(v dvid.VersionID, mutID uint64, op labels.SplitSupervoxelOp) error {
+func (d *Data) processSplit(v dvid.VersionID, op labels.SplitSupervoxelOp) error {
 	timedLog := dvid.NewTimeLog()
-	downresMut := downres.NewMutation(d, v, mutID)
+	downresMut := downres.NewMutation(d, v, op.MutID)
 
 	svblocks, err := SplitSupervoxelIndex(d, v, op)
 	if err != nil {
@@ -307,10 +314,10 @@ func (d *Data) processSplit(v dvid.VersionID, mutID uint64, op labels.SplitSuper
 
 	for _, izyx := range svblocks {
 		n := izyx.Hash(numMutateHandlers)
-		d.MutAdd(mutID)
+		d.MutAdd(op.MutID)
 		sop := splitOp{
 			SplitSupervoxelOp: op,
-			mutID:             mutID,
+			mutID:             op.MutID,
 			bcoord:            izyx,
 			downresMut:        downresMut,
 		}
@@ -318,8 +325,8 @@ func (d *Data) processSplit(v dvid.VersionID, mutID uint64, op labels.SplitSuper
 	}
 
 	// Wait for all blocks in supervoxel to be relabeled before returning.
-	d.MutWait(mutID)
-	d.MutDelete(mutID)
+	d.MutWait(op.MutID)
+	d.MutDelete(op.MutID)
 
 	timedLog.Debugf("labelmap supervoxel %d split complete (%d blocks split)", op.Supervoxel, len(op.Split))
 

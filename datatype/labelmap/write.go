@@ -214,7 +214,6 @@ func (d *Data) putChunk(op *putOperation, wg *sync.WaitGroup, putbuffer storage.
 		}
 		var event string
 		var delta interface{}
-		dvid.Infof("PutChunk() oldBlock %v, mutate %t\n", oldBlock, op.mutate)
 		if oldBlock != nil && op.mutate {
 			event = labels.MutateBlockEvent
 			block := MutatedBlock{op.mutID, bcoord, &(oldBlock.Block), curBlock}

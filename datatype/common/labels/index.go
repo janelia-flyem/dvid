@@ -185,7 +185,6 @@ func (idx *Index) ModifyBlocks(label uint64, sc SupervoxelChanges) error {
 						return fmt.Errorf("bad attempt to subtract %d from %d voxels for supervoxel %d in block %s", -delta, oldsz, supervoxel, izyxStr)
 					}
 					newsz = uint32(int64(oldsz) + int64(delta))
-					dvid.Infof("block %s: have delta %d for label %d -> new size %d\n", dvid.IZYXString(izyxStr), delta, supervoxel, newsz)
 					if newsz == 0 {
 						delete(svc.Counts, supervoxel)
 					} else {

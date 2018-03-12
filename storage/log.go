@@ -31,6 +31,11 @@ type LogReadable interface {
 	GetReadLog() ReadLog
 }
 
-type Logable interface {
+type LogWritable interface {
 	GetWriteLog() WriteLog
+}
+
+type Logable interface {
+	LogReadable
+	LogWritable
 }

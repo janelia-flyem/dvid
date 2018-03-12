@@ -95,7 +95,6 @@ func (d *Data) GetLabels(v dvid.VersionID, supervoxels bool, scale uint8, vox *L
 		if mapping, err = getMapping(d, v); err != nil {
 			return err
 		}
-		dvid.Infof("GetLabels() using mapping (%p) for version %d: %v\n", mapping, v, mapping)
 	}
 	wg := new(sync.WaitGroup)
 	ctx := datastore.NewVersionedCtx(d, v)
@@ -256,7 +255,7 @@ func (d *Data) readChunk(chunk *storage.Chunk) {
 	}
 
 	// Perform the operation.
-	if op.mapping != nil && op.mapping.Exists(op.version) {
+	if op.mapping != nil && op.mapping.exists(op.version) {
 		err = modifyBlockMapping(op.version, &block, op.mapping)
 		if err != nil {
 			dvid.Errorf("unable to modify block %s mapping: %v\n", indexZYX, err)
@@ -269,16 +268,18 @@ func (d *Data) readChunk(chunk *storage.Chunk) {
 
 // overwrites labels in header with their mapped values
 func modifyBlockMapping(v dvid.VersionID, block *labels.Block, m *SVMap) error {
-	ancestry, err := m.GetAncestry(v)
+	ancestry, err := m.getLockedAncestry(v)
 	if err != nil {
 		return fmt.Errorf("unable to get ancestry for version %d: %v", v, err)
 	}
+	m.RLock()
 	for i, label := range block.Labels {
 		mapped, found := m.mapLabel(label, ancestry)
 		if found {
 			block.Labels[i] = mapped
 		}
 	}
+	m.RUnlock()
 	return nil
 }
 

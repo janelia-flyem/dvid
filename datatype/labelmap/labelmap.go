@@ -958,14 +958,14 @@ POST <api URL>/node/<UUID>/<data name>/mappings/<uuid>
 
 	The POST expects a protobuf serialization of a MergeOps message defined by:
 
-	message MergeOp {
+	message MappingOp {
 		uint64 mutid = 1;
-		uint64 target = 2;
-		repeated uint64 merged = 3;
+		uint64 mapped = 2;
+		repeated uint64 original = 3;
 	}
 	
-	message MergeOps {
-		repeated MergeOp merges = 1;
+	message MappingOps {
+		repeated MappingOp mappings = 1;
 	}
 `
 
@@ -1861,10 +1861,22 @@ func (d *Data) sendBlock(w http.ResponseWriter, b blockData) error {
 		return fmt.Errorf("unknown compression %q requested for blocks", b.compression)
 	}
 
+	var doMapping bool
+	var mapping *SVMap
+	if !b.supervoxels {
+		var err error
+		if mapping, err = getMapping(d, b.v); err != nil {
+			return err
+		}
+		if mapping != nil && mapping.exists(b.v) {
+			doMapping = true
+		}
+	}
+
 	// Need to do uncompression/recompression if we are changing compression or mapping
 	var err error
 	var uncompressed, recompressed []byte
-	if formatIn != formatOut || b.compression == "gzip" || !b.supervoxels {
+	if formatIn != formatOut || b.compression == "gzip" || doMapping {
 		switch formatIn {
 		case dvid.LZ4:
 			uncompressed = make([]byte, outsize)
@@ -1891,42 +1903,54 @@ func (d *Data) sendBlock(w http.ResponseWriter, b blockData) error {
 			return fmt.Errorf("unable to deserialize label block (%d, %d, %d): %v", b.x, b.y, b.z, err)
 		}
 
-		if !b.supervoxels {
-			mapping, err := getMapping(d, b.v)
-			if err != nil {
-				return err
-			}
+		if doMapping {
 			modifyBlockMapping(b.v, &block, mapping)
 		}
 
-		uint64array, size := block.MakeLabelVolume()
-		expectedSize := d.BlockSize().(dvid.Point3d)
-		if !size.Equals(expectedSize) {
-			return fmt.Errorf("deserialized label block size %s does not equal data %q block size %s", size, d.DataName(), expectedSize)
-		}
-
-		switch formatOut {
-		case dvid.LZ4:
-			recompressed = make([]byte, lz4.CompressBound(uint64array))
-			var size int
-			if size, err = lz4.Compress(uint64array, recompressed); err != nil {
+		if b.compression == "blocks" { // send native DVID block compression with gzip
+			data, err := block.MarshalBinary()
+			if err != nil {
 				return err
 			}
-			outsize = uint32(size)
-			out = recompressed[:outsize]
-		case dvid.Uncompressed:
-			out = uint64array
-			outsize = uint32(len(uint64array))
-		case dvid.Gzip:
 			var gzipOut bytes.Buffer
 			zw := gzip.NewWriter(&gzipOut)
-			if _, err = zw.Write(uint64array); err != nil {
+			if _, err = zw.Write(data); err != nil {
 				return err
 			}
 			zw.Flush()
 			zw.Close()
 			out = gzipOut.Bytes()
 			outsize = uint32(len(out))
+		} else { // we are sending raw block data
+			uint64array, size := block.MakeLabelVolume()
+			expectedSize := d.BlockSize().(dvid.Point3d)
+			if !size.Equals(expectedSize) {
+				return fmt.Errorf("deserialized label block size %s does not equal data %q block size %s", size, d.DataName(), expectedSize)
+			}
+
+			switch formatOut {
+			case dvid.LZ4:
+				recompressed = make([]byte, lz4.CompressBound(uint64array))
+				var size int
+				if size, err = lz4.Compress(uint64array, recompressed); err != nil {
+					return err
+				}
+				outsize = uint32(size)
+				out = recompressed[:outsize]
+			case dvid.Uncompressed:
+				out = uint64array
+				outsize = uint32(len(uint64array))
+			case dvid.Gzip:
+				var gzipOut bytes.Buffer
+				zw := gzip.NewWriter(&gzipOut)
+				if _, err = zw.Write(uint64array); err != nil {
+					return err
+				}
+				zw.Flush()
+				zw.Close()
+				out = gzipOut.Bytes()
+				outsize = uint32(len(out))
+			}
 		}
 	}
 

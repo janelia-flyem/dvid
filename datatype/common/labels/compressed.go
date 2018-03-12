@@ -1331,6 +1331,9 @@ func (b *Block) setExportedVars() (err error) {
 	b.Size[2] = int32(gz * SubBlockSize)
 
 	numLabels := binary.LittleEndian.Uint32(b.data[12:16])
+	if numLabels == 0 {
+		return fmt.Errorf("block has 0 labels, which is not allowed")
+	}
 
 	if gx > MaxSubBlockSize || gy > MaxSubBlockSize || gz > MaxSubBlockSize {
 		return fmt.Errorf("%d x %d x %d sub-blocks exceed max dimension of %d voxels (%d sub-blocks)", gx, gy, gz, MaxBlockSize, MaxSubBlockSize)

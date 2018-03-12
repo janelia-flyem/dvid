@@ -9,6 +9,94 @@ import (
 	"github.com/janelia-flyem/dvid/storage"
 )
 
+func LogSplit(d dvid.Data, v dvid.VersionID, mutID uint64, op SplitOp) error {
+	uuid, err := datastore.UUIDFromVersion(v)
+	if err != nil {
+		return err
+	}
+	logable, ok := d.(storage.LogWritable)
+	if !ok {
+		return nil // skip logging
+	}
+	log := logable.GetWriteLog()
+	if log == nil {
+		return nil
+	}
+	data, err := serializeSplit(mutID, op)
+	if err != nil {
+		return err
+	}
+	msg := storage.LogMessage{EntryType: proto.SplitOpType, Data: data}
+	return log.Append(d.DataUUID(), uuid, msg)
+}
+
+// LogMerge logs the merge of supervoxels to a label.
+func LogMerge(d dvid.Data, v dvid.VersionID, mutID uint64, op MergeOp) error {
+	uuid, err := datastore.UUIDFromVersion(v)
+	if err != nil {
+		return err
+	}
+	logable, ok := d.(storage.LogWritable)
+	if !ok {
+		return nil // skip logging
+	}
+	log := logable.GetWriteLog()
+	if log == nil {
+		return nil
+	}
+	data, err := serializeMerge(mutID, op)
+	if err != nil {
+		return err
+	}
+	msg := storage.LogMessage{EntryType: proto.MergeOpType, Data: data}
+	return log.Append(d.DataUUID(), uuid, msg)
+}
+
+// LogMapping logs the mapping of supervoxels to a label.
+func LogMapping(d dvid.Data, v dvid.VersionID, op MappingOp) error {
+	uuid, err := datastore.UUIDFromVersion(v)
+	if err != nil {
+		return err
+	}
+	logable, ok := d.(storage.LogWritable)
+	if !ok {
+		return nil // skip logging
+	}
+	log := logable.GetWriteLog()
+	if log == nil {
+		return nil
+	}
+	data, err := op.Marshal()
+	if err != nil {
+		return err
+	}
+	msg := storage.LogMessage{EntryType: proto.MappingOpType, Data: data}
+	return log.Append(d.DataUUID(), uuid, msg)
+}
+
+// LogMappings logs a collection of mapping operations to a UUID.
+func LogMappings(d dvid.Data, uuid dvid.UUID, ops proto.MappingOps) error {
+	logable, ok := d.(storage.LogWritable)
+	if !ok {
+		return nil // skip logging
+	}
+	log := logable.GetWriteLog()
+	if log == nil {
+		return nil
+	}
+	for _, op := range ops.Mappings {
+		data, err := op.Marshal()
+		if err != nil {
+			return err
+		}
+		msg := storage.LogMessage{EntryType: proto.MappingOpType, Data: data}
+		if err := log.Append(d.DataUUID(), uuid, msg); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func ReadMappingLog(d dvid.Data, v dvid.VersionID) ([]MappingOp, error) {
 	uuid, err := datastore.UUIDFromVersion(v)
 	if err != nil {
@@ -51,100 +139,12 @@ func ReadMappingLog(d dvid.Data, v dvid.VersionID) ([]MappingOp, error) {
 	return mappingOps, nil
 }
 
-func LogSplit(d dvid.Data, v dvid.VersionID, mutID uint64, op SplitOp) error {
-	uuid, err := datastore.UUIDFromVersion(v)
-	if err != nil {
-		return err
-	}
-	logable, ok := d.(storage.Logable)
-	if !ok {
-		return nil // skip logging
-	}
-	log := logable.GetWriteLog()
-	if log == nil {
-		return nil
-	}
-	data, err := serializeSplit(mutID, op)
-	if err != nil {
-		return err
-	}
-	msg := storage.LogMessage{EntryType: proto.SplitOpType, Data: data}
-	return log.Append(d.DataUUID(), uuid, msg)
-}
-
-// LogMerge logs the merge of supervoxels to a label.
-func LogMerge(d dvid.Data, v dvid.VersionID, mutID uint64, op MergeOp) error {
-	uuid, err := datastore.UUIDFromVersion(v)
-	if err != nil {
-		return err
-	}
-	logable, ok := d.(storage.Logable)
-	if !ok {
-		return nil // skip logging
-	}
-	log := logable.GetWriteLog()
-	if log == nil {
-		return nil
-	}
-	data, err := serializeMerge(mutID, op)
-	if err != nil {
-		return err
-	}
-	msg := storage.LogMessage{EntryType: proto.MergeOpType, Data: data}
-	return log.Append(d.DataUUID(), uuid, msg)
-}
-
-// LogMapping logs the mapping of supervoxels to a label.
-func LogMapping(d dvid.Data, v dvid.VersionID, op MappingOp) error {
-	uuid, err := datastore.UUIDFromVersion(v)
-	if err != nil {
-		return err
-	}
-	logable, ok := d.(storage.Logable)
-	if !ok {
-		return nil // skip logging
-	}
-	log := logable.GetWriteLog()
-	if log == nil {
-		return nil
-	}
-	data, err := op.Marshal()
-	if err != nil {
-		return err
-	}
-	msg := storage.LogMessage{EntryType: proto.MappingOpType, Data: data}
-	return log.Append(d.DataUUID(), uuid, msg)
-}
-
-// LogMappings logs a collection of mapping operations to a UUID.
-func LogMappings(d dvid.Data, uuid dvid.UUID, ops proto.MappingOps) error {
-	logable, ok := d.(storage.Logable)
-	if !ok {
-		return nil // skip logging
-	}
-	log := logable.GetWriteLog()
-	if log == nil {
-		return nil
-	}
-	for _, op := range ops.Mappings {
-		data, err := op.Marshal()
-		if err != nil {
-			return err
-		}
-		msg := storage.LogMessage{EntryType: proto.MappingOpType, Data: data}
-		if err := log.Append(d.DataUUID(), uuid, msg); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func LogAffinity(d dvid.Data, v dvid.VersionID, aff Affinity) error {
 	uuid, err := datastore.UUIDFromVersion(v)
 	if err != nil {
 		return err
 	}
-	logable, ok := d.(storage.Logable)
+	logable, ok := d.(storage.LogWritable)
 	if !ok {
 		return nil // skip logging
 	}

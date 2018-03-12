@@ -92,7 +92,10 @@ type SVMap struct {
 	sync.RWMutex
 }
 
-// requires write lock outside
+// getAncestry returns a slice of short version ids that actually have mappings,
+// from current version to root along ancestry.  Since all ancestors are immutable,
+// we can cache the ancestor slice and check if we should add current short version id.
+// This possible mutation requires a Lock on the receiver from outside or use getLockedAncestry().
 func (svm *SVMap) getAncestry(v dvid.VersionID) ([]uint8, error) {
 	if svm.ancestry == nil {
 		svm.ancestry = make(map[dvid.VersionID][]uint8)
@@ -118,11 +121,8 @@ func (svm *SVMap) getAncestry(v dvid.VersionID) ([]uint8, error) {
 	return ancestry, nil
 }
 
-// GetAncestry returns a slice of short version ids that actually have mappings,
-// from current version to root along ancestry.  Since all ancestors are immutable,
-// we can cache the ancestor slice and check if we should add current short version id.
-// This possible mutation requires a Lock.
-func (svm *SVMap) GetAncestry(v dvid.VersionID) (ancestry []uint8, err error) {
+// getAncestry with a receiver lock built-in.
+func (svm *SVMap) getLockedAncestry(v dvid.VersionID) (ancestry []uint8, err error) {
 	svm.Lock()
 	ancestry, err = svm.getAncestry(v)
 	svm.Unlock()
@@ -179,29 +179,6 @@ func (svm *SVMap) initToVersion(d dvid.Data, v dvid.VersionID) error {
 	return nil
 }
 
-// MergeIndex adjusts the mapping for all the constituent supervoxels in the given index
-// to point the specified label.
-func (svm *SVMap) MergeIndex(v dvid.VersionID, idx *labels.Index, toLabel uint64) error {
-	supervoxels := idx.GetSupervoxels()
-	if len(supervoxels) == 0 {
-		return nil
-	}
-	svm.Lock()
-	vid, err := svm.createShortVersion(v)
-	if err != nil {
-		return err
-	}
-	for supervoxel := range supervoxels {
-		vm := svm.fm[supervoxel]
-		newvm, changed := vm.modify(vid, toLabel)
-		if changed {
-			svm.fm[supervoxel] = newvm
-		}
-	}
-	svm.Unlock()
-	return nil
-}
-
 // MapSupervoxel sets the mapping for a supervoxel to a specified label.
 func (svm *SVMap) MapSupervoxel(v dvid.VersionID, supervoxel, label uint64) error {
 	svm.Lock()
@@ -219,8 +196,9 @@ func (svm *SVMap) MapSupervoxel(v dvid.VersionID, supervoxel, label uint64) erro
 	return nil
 }
 
-// Exists returns true if the given version is likely to have some mappings.
-func (svm *SVMap) Exists(v dvid.VersionID) bool {
+// returns true if the given version is likely to have some mappings.
+// provides receiver locking within.
+func (svm *SVMap) exists(v dvid.VersionID) bool {
 	svm.Lock() // need write lock due to possible caching in getAncestry()
 	defer svm.Unlock()
 	if len(svm.fm) == 0 {
@@ -238,6 +216,7 @@ func (svm *SVMap) Exists(v dvid.VersionID) bool {
 }
 
 // faster inner-loop version of mapping where ancestry should already be provided.
+// receiver RLock should be provided outside.
 func (svm *SVMap) mapLabel(label uint64, ancestry []uint8) (uint64, bool) {
 	vm, found := svm.fm[label]
 	if !found {
@@ -267,7 +246,7 @@ func (svm *SVMap) MappedLabel(v dvid.VersionID, label uint64) (uint64, bool) {
 	}
 	svm.RUnlock()
 
-	ancestry, err := svm.GetAncestry(v)
+	ancestry, err := svm.getAncestry(v)
 	if err != nil {
 		dvid.Criticalf("unable to get ancestry for version %d: %v\n", v, err)
 		return label, false
@@ -284,6 +263,7 @@ var (
 	iMap instanceMaps
 )
 
+// returns or creates an SVMap so nil is never returned unless there's an error
 func getMapping(d dvid.Data, v dvid.VersionID) (*SVMap, error) {
 	iMap.Lock()
 	defer iMap.Unlock()
@@ -304,21 +284,108 @@ func getMapping(d dvid.Data, v dvid.VersionID) (*SVMap, error) {
 	return m, nil
 }
 
-// adds a merge into the equivalence map for a given instance version.
+// adds a merge into the equivalence map for a given instance version and also
+// records the mappings into the log.
 func addMergeToMapping(d dvid.Data, v dvid.VersionID, mutID, toLabel uint64, mergeIdx *labels.Index) error {
 	m, err := getMapping(d, v)
 	if err != nil {
 		return err
 	}
-	if err := m.MergeIndex(v, mergeIdx, toLabel); err != nil {
+	supervoxels := mergeIdx.GetSupervoxels()
+	if len(supervoxels) == 0 {
+		return nil
+	}
+	m.Lock()
+	vid, err := m.createShortVersion(v)
+	if err != nil {
 		return err
 	}
-	op := labels.MergeOp{
-		Target: toLabel,
-		Merged: mergeIdx.GetSupervoxels(),
+	for supervoxel := range supervoxels {
+		vm := m.fm[supervoxel]
+		newvm, changed := vm.modify(vid, toLabel)
+		if changed {
+			m.fm[supervoxel] = newvm
+		}
 	}
-	if err := labels.LogMerge(d, v, mutID, op); err != nil {
+	m.Unlock()
+	op := labels.MappingOp{
+		MutID:    mutID,
+		Mapped:   toLabel,
+		Original: supervoxels,
+	}
+	return labels.LogMapping(d, v, op)
+}
+
+// adds new cleave into the equivalence map for a given instance version and also
+// records the mappings into the log.
+func addCleaveToMapping(d dvid.Data, v dvid.VersionID, op labels.CleaveOp) error {
+	m, err := getMapping(d, v)
+	if err != nil {
 		return err
 	}
-	return nil
+	if len(op.CleavedSupervoxels) == 0 {
+		return nil
+	}
+	m.Lock()
+	vid, err := m.createShortVersion(v)
+	if err != nil {
+		return err
+	}
+	supervoxelSet := make(labels.Set, len(op.CleavedSupervoxels))
+	for _, supervoxel := range op.CleavedSupervoxels {
+		supervoxelSet[supervoxel] = struct{}{}
+		vm := m.fm[supervoxel]
+		newvm, changed := vm.modify(vid, op.CleavedLabel)
+		if changed {
+			m.fm[supervoxel] = newvm
+		}
+	}
+	m.Unlock()
+	mapOp := labels.MappingOp{
+		MutID:    op.MutID,
+		Mapped:   op.CleavedLabel,
+		Original: supervoxelSet,
+	}
+	return labels.LogMapping(d, v, mapOp)
+}
+
+// adds supervoxel split into the equivalence map for a given instance version and also
+// records the mappings into the log.
+func addSupervoxelSplitToMapping(d dvid.Data, v dvid.VersionID, op labels.SplitSupervoxelOp) error {
+	m, err := getMapping(d, v)
+	if err != nil {
+		return err
+	}
+	label := op.Supervoxel
+	mapped, found := m.MappedLabel(v, op.Supervoxel)
+	if found {
+		label = mapped
+	}
+
+	m.Lock()
+	vid, err := m.createShortVersion(v)
+	if err != nil {
+		return err
+	}
+	vm := m.fm[op.SplitSupervoxel]
+	newvm, changed := vm.modify(vid, label)
+	if changed {
+		m.fm[op.SplitSupervoxel] = newvm
+	}
+	vm = m.fm[op.RemainSupervoxel]
+	newvm, changed = vm.modify(vid, label)
+	if changed {
+		m.fm[op.RemainSupervoxel] = newvm
+	}
+	m.Unlock()
+	original := labels.Set{
+		op.SplitSupervoxel:  struct{}{},
+		op.RemainSupervoxel: struct{}{},
+	}
+	mapOp := labels.MappingOp{
+		MutID:    op.MutID,
+		Mapped:   label,
+		Original: original,
+	}
+	return labels.LogMapping(d, v, mapOp)
 }
