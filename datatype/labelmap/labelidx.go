@@ -203,11 +203,11 @@ func GetSupervoxelBlocks(d dvid.Data, v dvid.VersionID, supervoxel uint64) (dvid
 		return nil, nil
 	}
 	var blocks dvid.IZYXSlice
-	for s, svc := range idx.Blocks {
+	for zyx, svc := range idx.Blocks {
 		if svc != nil && svc.Counts != nil {
 			sz, found := svc.Counts[supervoxel]
 			if found && sz > 0 {
-				blocks = append(blocks, dvid.IZYXString(s))
+				blocks = append(blocks, labels.BlockIndexToIZYXString(zyx))
 			}
 		}
 	}
@@ -344,11 +344,11 @@ func SplitSupervoxelIndex(d dvid.Data, v dvid.VersionID, op labels.SplitSupervox
 
 	// modify the index to reflect old supervoxel -> two new supervoxels.
 	var svblocks dvid.IZYXSlice
-	for blockStr, svc := range idx.Blocks {
+	for zyx, svc := range idx.Blocks {
 		origNumVoxels, found := svc.Counts[op.Supervoxel]
 		if found { // split supervoxel is in this block
 			delete(svc.Counts, op.Supervoxel)
-			izyx := dvid.IZYXString(blockStr)
+			izyx := labels.BlockIndexToIZYXString(zyx)
 			svblocks = append(svblocks, izyx)
 			rles, found := op.Split[izyx]
 			if found { // part of split

@@ -11,6 +11,83 @@ type Index struct {
 	proto.LabelIndex
 }
 
+// EncodeBlockIndex converts signed (x,y,z) block coordinate into
+// a single uint64, which is packed in ZYX order with MSB empty,
+// the most-significant 21 bits is Z (21st bit is sign flag), next
+// 21 bits is Y, then least-significant 21 bits is X.
+func EncodeBlockIndex(x, y, z int32) (zyx uint64) {
+	if z < 0 {
+		zyx |= 0x00100000
+		z = -z
+	}
+	zyx |= uint64(z & 0x000FFFFF)
+	zyx <<= 21
+	if y < 0 {
+		zyx |= 0x00100000
+		y = -y
+	}
+	zyx |= uint64(y & 0x000FFFFF)
+	zyx <<= 21
+	if x < 0 {
+		zyx |= 0x00100000
+		x = -x
+	}
+	zyx |= uint64(x & 0x000FFFFF)
+	return
+}
+
+// IZYXStringToBlockIndex returns an encoded Block Index for a given IZYXString,
+// returning an error if the IZYXString is formatted incorrectly.
+func IZYXStringToBlockIndex(s dvid.IZYXString) (zyx uint64, err error) {
+	var blockPt dvid.ChunkPoint3d
+	blockPt, err = s.ToChunkPoint3d()
+	if err != nil {
+		return
+	}
+	return EncodeBlockIndex(blockPt[0], blockPt[1], blockPt[2]), nil
+}
+
+// DecodeBlockIndex decodes a packed block index into int32 coordinates.
+// At most, each block int32 coordinate can be 20 bits.
+func DecodeBlockIndex(zyx uint64) (x, y, z int32) {
+	x = int32(zyx & 0x00000000000FFFFF)
+	if zyx&0x0000000000100000 != 0 {
+		x = -x
+	}
+	zyx >>= 21
+	y = int32(zyx & 0x00000000000FFFFF)
+	if zyx&0x0000000000100000 != 0 {
+		y = -y
+	}
+	zyx >>= 21
+	z = int32(zyx & 0x00000000000FFFFF)
+	if zyx&0x0000000000100000 != 0 {
+		z = -z
+	}
+	return
+}
+
+// BlockIndexToIZYXString decodes a packed block index into an IZYXString.
+// At most, each block int32 coordinate can be 20 bits.
+func BlockIndexToIZYXString(zyx uint64) dvid.IZYXString {
+	var x, y, z int32
+	x = int32(zyx & 0x00000000000FFFFF)
+	if zyx&0x0000000000100000 != 0 {
+		x = -x
+	}
+	zyx >>= 21
+	y = int32(zyx & 0x00000000000FFFFF)
+	if zyx&0x0000000000100000 != 0 {
+		y = -y
+	}
+	zyx >>= 21
+	z = int32(zyx & 0x00000000000FFFFF)
+	if zyx&0x0000000000100000 != 0 {
+		z = -z
+	}
+	return dvid.ChunkPoint3d{x, y, z}.ToIZYXString()
+}
+
 // NumVoxels returns the number of voxels in the given label set index.
 func (idx Index) NumVoxels() uint64 {
 	if len(idx.Blocks) == 0 {
@@ -27,6 +104,7 @@ func (idx Index) NumVoxels() uint64 {
 	return numVoxels
 }
 
+// GetSupervoxels returns a set of supervoxels within the receiver Index.
 func (idx Index) GetSupervoxels() Set {
 	if len(idx.Blocks) == 0 {
 		return Set{}
@@ -48,8 +126,8 @@ func (idx *Index) GetBlockIndices() dvid.IZYXSlice {
 	}
 	blocks := make(dvid.IZYXSlice, len(idx.Blocks))
 	i := 0
-	for izyx := range idx.Blocks {
-		blocks[i] = dvid.IZYXString(izyx)
+	for zyx := range idx.Blocks {
+		blocks[i] = BlockIndexToIZYXString(zyx)
 		i++
 	}
 	return blocks
@@ -63,8 +141,8 @@ func (idx *Index) GetProcessedBlockIndices(scale uint8, bounds dvid.Bounds) (dvi
 	}
 	indices := make(dvid.IZYXSlice, len(idx.Blocks))
 	totBlocks := 0
-	for s := range idx.Blocks {
-		izyx := dvid.IZYXString(s)
+	for zyx := range idx.Blocks {
+		izyx := BlockIndexToIZYXString(zyx)
 		if bounds.Block.IsSet() {
 			blockPt, err := izyx.ToChunkPoint3d()
 			if err != nil {
@@ -92,18 +170,16 @@ func (idx *Index) FitToBounds(bounds *dvid.OptionalBounds) error {
 	if bounds == nil {
 		return nil
 	}
-	for s := range idx.Blocks {
-		blockPt, err := dvid.IZYXString(s).ToChunkPoint3d()
-		if err != nil {
-			return fmt.Errorf("unable to convert IZYXString to chunk point: %v", err)
-		}
+	for zyx := range idx.Blocks {
+		x, y, z := DecodeBlockIndex(zyx)
+		blockPt := dvid.ChunkPoint3d{x, y, z}
 		if bounds.BeyondZ(blockPt) {
 			break
 		}
 		if bounds.Outside(blockPt) {
 			continue
 		}
-		delete(idx.Blocks, s)
+		delete(idx.Blocks, zyx)
 	}
 	return nil
 }
@@ -120,10 +196,10 @@ func (idx *Index) Add(idx2 *Index) error {
 		idx.Blocks = idx2.Blocks
 		return nil
 	}
-	for izyx, svc2 := range idx2.Blocks {
-		svc, found := idx.Blocks[izyx]
+	for zyx, svc2 := range idx2.Blocks {
+		svc, found := idx.Blocks[zyx]
 		if !found || svc == nil || svc.Counts == nil {
-			idx.Blocks[izyx] = svc2
+			idx.Blocks[zyx] = svc2
 		} else {
 			// supervoxels cannot be in more than one set index, so if it's in idx2,
 			// that supervoxel can't be in idx.
@@ -140,9 +216,9 @@ func (idx *Index) Add(idx2 *Index) error {
 func (idx *Index) Cleave(toCleave []uint64) *Index {
 	cleaveSet := NewSet(toCleave...)
 	cidx := new(Index)
-	cidx.Blocks = make(map[string]*proto.SVCount)
+	cidx.Blocks = make(map[uint64]*proto.SVCount)
 
-	for s, svc := range idx.Blocks {
+	for zyx, svc := range idx.Blocks {
 		if svc != nil && svc.Counts != nil {
 			cleavedCounts := make(map[uint64]uint32)
 			for supervoxel, sz := range svc.Counts {
@@ -152,7 +228,7 @@ func (idx *Index) Cleave(toCleave []uint64) *Index {
 					delete(svc.Counts, supervoxel)
 				}
 			}
-			cidx.Blocks[s] = &proto.SVCount{Counts: cleavedCounts}
+			cidx.Blocks[zyx] = &proto.SVCount{Counts: cleavedCounts}
 		}
 	}
 	return cidx
@@ -167,7 +243,7 @@ func (idx *Index) ModifyBlocks(label uint64, sc SupervoxelChanges) error {
 		return fmt.Errorf("cannot pass nil index into ModifyBlocks()")
 	}
 	if idx.Blocks == nil {
-		idx.Blocks = make(map[string]*proto.SVCount)
+		idx.Blocks = make(map[uint64]*proto.SVCount)
 	}
 	labelSupervoxels := idx.GetSupervoxels()
 	if len(labelSupervoxels) == 0 {
@@ -177,7 +253,11 @@ func (idx *Index) ModifyBlocks(label uint64, sc SupervoxelChanges) error {
 		_, inSet := labelSupervoxels[supervoxel]
 		if inSet {
 			for izyxStr, delta := range blockChanges {
-				svc, found := idx.Blocks[string(izyxStr)]
+				zyx, err := IZYXStringToBlockIndex(izyxStr)
+				if err != nil {
+					return err
+				}
+				svc, found := idx.Blocks[zyx]
 				if found && svc != nil {
 					oldsz := svc.Counts[supervoxel]
 					newsz := oldsz
@@ -197,15 +277,15 @@ func (idx *Index) ModifyBlocks(label uint64, sc SupervoxelChanges) error {
 						return fmt.Errorf("bad attempt to subtract %d voxels from supervoxel %d in block %s when it wasn't previously in that block", -delta, supervoxel, izyxStr)
 					}
 					svc.Counts[supervoxel] = uint32(delta)
-					idx.Blocks[string(izyxStr)] = svc
+					idx.Blocks[zyx] = svc
 				}
 			}
 		}
 	}
 	// if blocks no longer have any supervoxels, delete them.
-	for zyxStr, svc := range idx.Blocks {
+	for zyx, svc := range idx.Blocks {
 		if svc == nil || len(svc.Counts) == 0 {
-			delete(idx.Blocks, zyxStr)
+			delete(idx.Blocks, zyx)
 		}
 	}
 	return nil
