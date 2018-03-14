@@ -77,4 +77,7 @@ go get github.com/DocSavage/gomdb
 # kafka
 go get github.com/optiopay/kafka
 
+# freecache
+go get github.com/coocood/freecache
+
 echo "Done fetching third-party go sources."
