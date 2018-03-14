@@ -196,12 +196,13 @@ func (v *testVolume) get(t *testing.T, uuid dvid.UUID, name string, supervoxels 
 	v.data = server.TestHTTP(t, "GET", apiStr, nil)
 }
 
-func (v *testVolume) getScale(t *testing.T, uuid dvid.UUID, name string, scale uint8) {
-	t.Logf("Got scale %d label data %q\n", scale, name)
+func (v *testVolume) getScale(t *testing.T, uuid dvid.UUID, name string, scale uint8, supervoxels bool) {
 	apiStr := fmt.Sprintf("%snode/%s/%s/raw/0_1_2/%d_%d_%d/0_0_0?scale=%d", server.WebAPIPath,
 		uuid, name, v.size[0], v.size[1], v.size[2], scale)
+	if supervoxels {
+		apiStr += "&supervoxels=true"
+	}
 	v.data = server.TestHTTP(t, "GET", apiStr, nil)
-	t.Logf("Returning from getScale scale=%d\n", scale)
 }
 
 func (v *testVolume) getVoxel(pt dvid.Point3d) uint64 {
@@ -1000,7 +1001,7 @@ func TestMultiscaleIngest(t *testing.T) {
 
 	// Check the first downres: 64^3
 	downres1 := newTestVolume(64, 64, 64)
-	downres1.getScale(t, uuid, "labels", 1)
+	downres1.getScale(t, uuid, "labels", 1, false)
 	downres1.verifyLabel(t, 1, 30, 30, 30)
 	downres1.verifyLabel(t, 2, 21, 21, 45)
 	downres1.verifyLabel(t, 13, 45, 21, 36)
@@ -1024,7 +1025,7 @@ func TestMultiscaleIngest(t *testing.T) {
 	expected2.addSubvol(dvid.Point3d{10, 20, 10}, dvid.Point3d{10, 10, 10}, 209)
 	expected2.addSubvol(dvid.Point3d{20, 20, 10}, dvid.Point3d{10, 10, 10}, 311)
 	downres2 := newTestVolume(32, 32, 32)
-	downres2.getScale(t, uuid, "labels", 2)
+	downres2.getScale(t, uuid, "labels", 2, false)
 	if err := downres2.equals(expected2); err != nil {
 		t.Errorf("2nd downres 'labels' isn't what is expected: %v\n", err)
 	}

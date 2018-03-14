@@ -157,18 +157,23 @@ type fileLogs struct {
 	path   string
 	config dvid.StoreConfig
 	files  map[string]*fileLog // key = data + version UUID
+	sync.RWMutex
 }
 
 func (flogs *fileLogs) ReadAll(dataID, version dvid.UUID) ([]storage.LogMessage, error) {
 	k := string(dataID + "-" + version)
 	filename := filepath.Join(flogs.path, k)
 
+	flogs.RLock()
 	fl, found := flogs.files[k]
+	flogs.RUnlock()
 	if found {
 		// close then reopen later.
 		fl.Lock()
 		fl.Close()
+		flogs.Lock()
 		delete(flogs.files, k)
+		flogs.Unlock()
 	}
 
 	f, err := os.OpenFile(filename, os.O_RDONLY, 0755)
@@ -187,7 +192,9 @@ func (flogs *fileLogs) ReadAll(dataID, version dvid.UUID) ([]storage.LogMessage,
 		if err2 != nil {
 			dvid.Errorf("unable to reopen write log %s: %v\n", k, err)
 		} else {
+			flogs.Lock()
 			flogs.files[k] = &fileLog{File: f2}
+			flogs.Unlock()
 		}
 		fl.Unlock()
 	}
@@ -197,7 +204,9 @@ func (flogs *fileLogs) ReadAll(dataID, version dvid.UUID) ([]storage.LogMessage,
 func (flogs *fileLogs) getWriteLog(dataID, version dvid.UUID) (fl *fileLog, err error) {
 	k := string(dataID + "-" + version)
 	var found bool
+	flogs.RLock()
 	fl, found = flogs.files[k]
+	flogs.RUnlock()
 	if !found {
 		filename := filepath.Join(flogs.path, k)
 		var f *os.File
@@ -206,7 +215,9 @@ func (flogs *fileLogs) getWriteLog(dataID, version dvid.UUID) (fl *fileLog, err 
 			return
 		}
 		fl = &fileLog{File: f}
+		flogs.Lock()
 		flogs.files[k] = fl
+		flogs.Unlock()
 	}
 	return
 }
@@ -231,11 +242,15 @@ func (flogs *fileLogs) Append(dataID, version dvid.UUID, msg storage.LogMessage)
 
 func (flogs *fileLogs) CloseLog(dataID, version dvid.UUID) error {
 	k := string(dataID + "-" + version)
+	flogs.Lock()
 	fl, found := flogs.files[k]
+	flogs.Unlock()
 	if found {
 		fl.Lock()
 		err := fl.Close()
+		flogs.Lock()
 		delete(flogs.files, k)
+		flogs.Unlock()
 		fl.Unlock()
 		return err
 	}
@@ -243,14 +258,14 @@ func (flogs *fileLogs) CloseLog(dataID, version dvid.UUID) error {
 }
 
 func (flogs *fileLogs) Close() {
+	flogs.Lock()
 	for _, flogs := range flogs.files {
-		flogs.Lock()
 		err := flogs.Close()
 		if err != nil {
 			dvid.Errorf("closing log file %q: %v\n", flogs.Name(), err)
 		}
-		flogs.Unlock()
 	}
+	flogs.Unlock()
 }
 
 func (flogs *fileLogs) String() string {

@@ -7,11 +7,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"math/rand"
 	"net/http"
 	"reflect"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -934,7 +934,7 @@ func TestMultiscaleMergeCleave(t *testing.T) {
 
 	// Check the first downres: 64^3
 	downres1 := newTestVolume(64, 64, 64)
-	downres1.getScale(t, uuid, "labels", 1)
+	downres1.getScale(t, uuid, "labels", 1, false)
 	downres1.verifyLabel(t, 0, 35, 34, 2)
 	downres1.verifyLabel(t, 1, 30, 30, 30)
 	downres1.verifyLabel(t, 2, 21, 21, 45)
@@ -953,7 +953,7 @@ func TestMultiscaleMergeCleave(t *testing.T) {
 
 	// Check the second downres to voxel: 32^3
 	downres2 := newTestVolume(32, 32, 32)
-	downres2.getScale(t, uuid, "labels", 2)
+	downres2.getScale(t, uuid, "labels", 2, false)
 	downres2.verifyLabel(t, 0, 15, 16, 2)
 	expected2 := newTestVolume(32, 32, 32)
 	expected2.addSubvol(dvid.Point3d{10, 10, 10}, dvid.Point3d{10, 10, 10}, 1)
@@ -989,11 +989,16 @@ func TestMultiscaleMergeCleave(t *testing.T) {
 	merged.addSubvol(dvid.Point3d{40, 80, 40}, dvid.Point3d{40, 40, 40}, 209)
 	merged.addSubvol(dvid.Point3d{80, 80, 40}, dvid.Point3d{40, 40, 40}, 311)
 	if err := merged.equals(retrieved); err != nil {
-		t.Errorf("Merged label volume not equal to expected merged volume: %v\n", err)
+		t.Errorf("Merged label volume not equal to expected label volume: %v\n", err)
+	}
+
+	retrieved.get(t, uuid, "labels", true) // check supervoxels
+	if err := hires.equals(retrieved); err != nil {
+		t.Errorf("Merged supervoxel volume not equal to original supervoxel volume: %v\n", err)
 	}
 
 	retrieved1 := newTestVolume(64, 64, 64)
-	retrieved1.getScale(t, uuid, "labels", 1)
+	retrieved1.getScale(t, uuid, "labels", 1, false)
 	retrieved1.verifyLabel(t, 0, 35, 34, 2)
 	merged1 := newTestVolume(64, 64, 64)
 	merged1.addSubvol(dvid.Point3d{20, 20, 20}, dvid.Point3d{20, 20, 20}, 1)
@@ -1005,8 +1010,13 @@ func TestMultiscaleMergeCleave(t *testing.T) {
 		t.Errorf("Merged label volume downres #1 not equal to expected merged volume: %v\n", err)
 	}
 
+	retrieved1.getScale(t, uuid, "labels", 1, true) // check supervoxels
+	if err := downres1.equals(retrieved1); err != nil {
+		t.Errorf("Merged supervoxel volume @ downres #1 not equal to original supervoxel volume: %v\n", err)
+	}
+
 	retrieved2 := newTestVolume(32, 32, 32)
-	retrieved2.getScale(t, uuid, "labels", 2)
+	retrieved2.getScale(t, uuid, "labels", 2, false)
 	merged2 := newTestVolume(32, 32, 32)
 	merged2.addSubvol(dvid.Point3d{10, 10, 10}, dvid.Point3d{10, 10, 10}, 1)
 	merged2.addSubvol(dvid.Point3d{10, 10, 20}, dvid.Point3d{10, 10, 10}, 1)
@@ -1017,80 +1027,74 @@ func TestMultiscaleMergeCleave(t *testing.T) {
 		t.Errorf("Merged label volume downres #2 not equal to expected merged volume: %v\n", err)
 	}
 
-	// Create the sparsevol encoding for split area that used to be body 13
-	numspans := 40 * 40
-	rles := make(dvid.RLEs, numspans, numspans)
-	length := int32(40)
-	i := 0
-	for z := int32(40); z < 80; z++ {
-		for y := int32(40); y < 80; y++ {
-			start := dvid.Point3d{80, y, z}
-			rles[i] = dvid.NewRLE(start, length)
-			i++
-		}
+	retrieved2.getScale(t, uuid, "labels", 2, true) // check supervoxels
+	if err := downres2.equals(retrieved2); err != nil {
+		t.Errorf("Merged supervoxel volume @ downres #2 not equal to original supervoxel volume: %v\n", err)
 	}
 
-	// Create the split sparse volume binary
-	buf := new(bytes.Buffer)
-	buf.WriteByte(dvid.EncodingBinary)
-	binary.Write(buf, binary.LittleEndian, uint8(3))            // # of dimensions
-	binary.Write(buf, binary.LittleEndian, byte(0))             // dimension of run (X = 0)
-	buf.WriteByte(byte(0))                                      // reserved for later
-	binary.Write(buf, binary.LittleEndian, uint32(numspans*40)) // Placeholder for # voxels
-	binary.Write(buf, binary.LittleEndian, uint32(numspans))    // Placeholder for # spans
-	rleBytes, err := rles.MarshalBinary()
-	if err != nil {
-		t.Errorf("Unable to serialize RLEs: %v\n", err)
+	// Cleave supervoxel 2 and 13 back out of merge label 1, should be 312.
+	reqStr = fmt.Sprintf("%snode/%s/labels/cleave/1", server.WebAPIPath, uuid)
+	r := server.TestHTTP(t, "POST", reqStr, bytes.NewBufferString("[2, 13]"))
+	var jsonVal struct {
+		CleavedLabel uint64
 	}
-	buf.Write(rleBytes)
-
-	// Submit the split sparsevol and assign to label 28
-	reqStr = fmt.Sprintf("%snode/%s/labels/split/1?splitlabel=28", server.WebAPIPath, uuid)
-	r := server.TestHTTP(t, "POST", reqStr, buf)
-	jsonVal := make(map[string]uint64)
 	if err := json.Unmarshal(r, &jsonVal); err != nil {
-		t.Errorf("Unable to get new label from split.  Instead got: %v\n", jsonVal)
+		t.Errorf("Unable to get new label from cleave.  Instead got: %v\n", jsonVal)
 	}
 
-	// Test all the multiscales for correct split volume.
-
-	// Make sure label changes are correct after completion of merge
-	if err := downres.BlockOnUpdating(uuid, "labels"); err != nil {
-		t.Fatalf("Error blocking on sync of split of labels: %v\n", err)
+	reqStr = fmt.Sprintf("%snode/%s/labels/maxlabel", server.WebAPIPath, uuid)
+	jsonStr := server.TestHTTP(t, "GET", reqStr, nil)
+	expectedJSON := `{"maxlabel": 312}`
+	if string(jsonStr) != expectedJSON {
+		t.Errorf("Expected this JSON returned from maxlabel:\n%s\nGot:\n%s\n", expectedJSON, string(jsonStr))
 	}
+
 	retrieved.get(t, uuid, "labels", false)
-	split := newTestVolume(128, 128, 128)
-	split.addSubvol(dvid.Point3d{40, 40, 40}, dvid.Point3d{40, 40, 40}, 1)
-	split.addSubvol(dvid.Point3d{40, 40, 80}, dvid.Point3d{40, 40, 40}, 1)
-	split.addSubvol(dvid.Point3d{80, 40, 40}, dvid.Point3d{40, 40, 40}, 28)
-	split.addSubvol(dvid.Point3d{40, 80, 40}, dvid.Point3d{40, 40, 40}, 209)
-	split.addSubvol(dvid.Point3d{80, 80, 40}, dvid.Point3d{40, 40, 40}, 311)
-	if err := retrieved.equals(split); err != nil {
-		t.Errorf("Split label volume not equal to expected split volume: %v\n", err)
+	cleaved0 := newTestVolume(128, 128, 128)
+	cleaved0.addSubvol(dvid.Point3d{40, 40, 40}, dvid.Point3d{40, 40, 40}, 1)
+	cleaved0.addSubvol(dvid.Point3d{40, 40, 80}, dvid.Point3d{40, 40, 40}, 312)
+	cleaved0.addSubvol(dvid.Point3d{80, 40, 40}, dvid.Point3d{40, 40, 40}, 312)
+	cleaved0.addSubvol(dvid.Point3d{40, 80, 40}, dvid.Point3d{40, 40, 40}, 209)
+	cleaved0.addSubvol(dvid.Point3d{80, 80, 40}, dvid.Point3d{40, 40, 40}, 311)
+	if err := cleaved0.equals(retrieved); err != nil {
+		t.Errorf("Cleaved label volume not equal to expected label volume: %v\n", err)
 	}
 
-	retrieved1.getScale(t, uuid, "labels", 1)
-	retrieved1.verifyLabel(t, 0, 35, 34, 2)
-	split1 := newTestVolume(64, 64, 64)
-	split1.addSubvol(dvid.Point3d{20, 20, 20}, dvid.Point3d{20, 20, 20}, 1)
-	split1.addSubvol(dvid.Point3d{20, 20, 40}, dvid.Point3d{20, 20, 20}, 1)
-	split1.addSubvol(dvid.Point3d{40, 20, 20}, dvid.Point3d{20, 20, 20}, 28)
-	split1.addSubvol(dvid.Point3d{20, 40, 20}, dvid.Point3d{20, 20, 20}, 209)
-	split1.addSubvol(dvid.Point3d{40, 40, 20}, dvid.Point3d{20, 20, 20}, 311)
-	split1.verifyLabel(t, 0, 35, 34, 2)
-	if err := retrieved1.equals(split1); err != nil {
-		t.Errorf("Split label volume downres #1 not equal to expected split volume: %v\n", err)
+	retrieved.get(t, uuid, "labels", true) // check supervoxels
+	if err := hires.equals(retrieved); err != nil {
+		t.Errorf("Cleaved supervoxel volume not equal to original supervoxel volume: %v\n", err)
 	}
 
-	retrieved2.getScale(t, uuid, "labels", 2)
-	split2 := newTestVolume(32, 32, 32)
-	split2.addSubvol(dvid.Point3d{10, 10, 10}, dvid.Point3d{10, 10, 10}, 1)
-	split2.addSubvol(dvid.Point3d{10, 10, 20}, dvid.Point3d{10, 10, 10}, 1)
-	split2.addSubvol(dvid.Point3d{20, 10, 10}, dvid.Point3d{10, 10, 10}, 28)
-	split2.addSubvol(dvid.Point3d{10, 20, 10}, dvid.Point3d{10, 10, 10}, 209)
-	split2.addSubvol(dvid.Point3d{20, 20, 10}, dvid.Point3d{10, 10, 10}, 311)
-	if err := retrieved2.equals(split2); err != nil {
-		t.Errorf("Split label volume downres #2 not equal to expected split volume: %v\n", err)
+	retrieved1.getScale(t, uuid, "labels", 1, false)
+	cleaved1 := newTestVolume(64, 64, 64)
+	cleaved1.addSubvol(dvid.Point3d{20, 20, 20}, dvid.Point3d{20, 20, 20}, 1)
+	cleaved1.addSubvol(dvid.Point3d{20, 20, 40}, dvid.Point3d{20, 20, 20}, 312)
+	cleaved1.addSubvol(dvid.Point3d{40, 20, 20}, dvid.Point3d{20, 20, 20}, 312)
+	cleaved1.addSubvol(dvid.Point3d{20, 40, 20}, dvid.Point3d{20, 20, 20}, 209)
+	cleaved1.addSubvol(dvid.Point3d{40, 40, 20}, dvid.Point3d{20, 20, 20}, 311)
+	if err := retrieved1.equals(cleaved1); err != nil {
+		t.Errorf("Cleaved label volume downres #1 not equal to expected merged volume: %v\n", err)
+	}
+
+	retrieved1.getScale(t, uuid, "labels", 1, true) // check supervoxels
+	if err := downres1.equals(retrieved1); err != nil {
+		t.Errorf("Cleaved supervoxel volume @ downres #1 not equal to original supervoxel volume: %v\n", err)
+	}
+
+	retrieved2.getScale(t, uuid, "labels", 2, false)
+	cleaved2 := newTestVolume(32, 32, 32)
+	cleaved2.addSubvol(dvid.Point3d{10, 10, 10}, dvid.Point3d{10, 10, 10}, 1)
+	cleaved2.addSubvol(dvid.Point3d{10, 10, 20}, dvid.Point3d{10, 10, 10}, 312)
+	cleaved2.addSubvol(dvid.Point3d{20, 10, 10}, dvid.Point3d{10, 10, 10}, 312)
+	cleaved2.addSubvol(dvid.Point3d{10, 20, 10}, dvid.Point3d{10, 10, 10}, 209)
+	cleaved2.addSubvol(dvid.Point3d{20, 20, 10}, dvid.Point3d{10, 10, 10}, 311)
+	if err := retrieved2.equals(cleaved2); err != nil {
+		t.Errorf("Cleaved label volume downres #2 not equal to expected merged volume: %v\n", err)
+	}
+
+	retrieved2.getScale(t, uuid, "labels", 2, true) // check supervoxels
+	if err := downres2.equals(retrieved2); err != nil {
+		t.Errorf("Cleaved supervoxel volume @ downres #2 not equal to original supervoxel volume: %v\n", err)
 	}
 }
 
@@ -1178,92 +1182,43 @@ func TestConcurrentMutations(t *testing.T) {
 	var config dvid.Config // use native 64^3 blocks
 	server.CreateTestInstance(t, uuid, "labelmap", "labels", config)
 
-	// Make three parallel bodies that are within same blocks to test handling of concurrent
-	// ops on same blocks.
-	tbody1 := testBody{ // 72 x 4 x 4 horizontal bar
-		label:  1,
-		offset: dvid.Point3d{9, 68, 68},
-		size:   dvid.Point3d{72, 4, 4},
-		blockSpans: []dvid.Span{
-			{1, 1, 0, 1},
-		},
-		voxelSpans: []dvid.Span{
-			{68, 68, 9, 80},
-			{68, 69, 9, 80},
-			{68, 70, 9, 80},
-			{68, 71, 9, 80},
-			{69, 68, 9, 80},
-			{69, 69, 9, 80},
-			{69, 70, 9, 80},
-			{69, 71, 9, 80},
-			{70, 68, 9, 80},
-			{70, 69, 9, 80},
-			{70, 70, 9, 80},
-			{70, 71, 9, 80},
-			{71, 68, 9, 80},
-			{71, 69, 9, 80},
-			{71, 70, 9, 80},
-			{71, 71, 9, 80},
-		},
+	// Make 12 parallel bodies and do merge/split on 3 groups.
+	tbodies := make([]testBody, 12)
+	for i := 0; i < 12; i++ {
+		z := int32(32 + 4*i)
+		blockz := z / 64
+		tbodies[i] = testBody{ // 72 x 4 x 4 horizontal bar
+			label:  uint64(i + 1),
+			offset: dvid.Point3d{9, 68, z},
+			size:   dvid.Point3d{72, 4, 4},
+			blockSpans: []dvid.Span{
+				{blockz, 1, 0, 1},
+			},
+			voxelSpans: []dvid.Span{
+				{z, 68, 9, 80},
+				{z, 69, 9, 80},
+				{z, 70, 9, 80},
+				{z, 71, 9, 80},
+				{z + 1, 68, 9, 80},
+				{z + 1, 69, 9, 80},
+				{z + 1, 70, 9, 80},
+				{z + 1, 71, 9, 80},
+				{z + 2, 68, 9, 80},
+				{z + 2, 69, 9, 80},
+				{z + 2, 70, 9, 80},
+				{z + 2, 71, 9, 80},
+				{z + 3, 68, 9, 80},
+				{z + 3, 69, 9, 80},
+				{z + 3, 70, 9, 80},
+				{z + 3, 71, 9, 80},
+			},
+		}
 	}
-	tbody2 := testBody{ // 72 x 4 x 4 horizontal bar
-		label:  2,
-		offset: dvid.Point3d{9, 68, 72},
-		size:   dvid.Point3d{72, 4, 4},
-		blockSpans: []dvid.Span{
-			{1, 1, 0, 1},
-		},
-		voxelSpans: []dvid.Span{
-			{72, 68, 9, 80},
-			{72, 69, 9, 80},
-			{72, 70, 9, 80},
-			{72, 71, 9, 80},
-			{73, 68, 9, 80},
-			{73, 69, 9, 80},
-			{73, 70, 9, 80},
-			{73, 71, 9, 80},
-			{74, 68, 9, 80},
-			{74, 69, 9, 80},
-			{74, 70, 9, 80},
-			{74, 71, 9, 80},
-			{75, 68, 9, 80},
-			{75, 69, 9, 80},
-			{75, 70, 9, 80},
-			{75, 71, 9, 80},
-		},
-	}
-	tbody3 := testBody{ // 72 x 4 x 4 horizontal bar
-		label:  3,
-		offset: dvid.Point3d{9, 68, 76},
-		size:   dvid.Point3d{72, 4, 4},
-		blockSpans: []dvid.Span{
-			{1, 1, 0, 1},
-		},
-		voxelSpans: []dvid.Span{
-			{76, 68, 9, 80},
-			{76, 69, 9, 80},
-			{76, 70, 9, 80},
-			{76, 71, 9, 80},
-			{77, 68, 9, 80},
-			{77, 69, 9, 80},
-			{77, 70, 9, 80},
-			{77, 71, 9, 80},
-			{78, 68, 9, 80},
-			{78, 69, 9, 80},
-			{78, 70, 9, 80},
-			{78, 71, 9, 80},
-			{79, 68, 9, 80},
-			{79, 69, 9, 80},
-			{79, 70, 9, 80},
-			{79, 71, 9, 80},
-		},
-	}
-	testbodies := [3]testBody{tbody1, tbody2, tbody3}
 
 	tvol := newTestVolume(192, 128, 128)
-	tvol.addBody(tbody1, 1)
-	tvol.addBody(tbody2, 2)
-	tvol.addBody(tbody3, 3)
+	for i := 0; i < 12; i++ {
+		tvol.addBody(tbodies[i], uint64(i+1))
+	}
 	tvol.put(t, uuid, "labels")
 
 	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
@@ -1279,22 +1234,22 @@ func TestConcurrentMutations(t *testing.T) {
 		t.Errorf("Initial put not working: %v\n", err)
 	}
 
-	// Run concurrent split/merge ops on each body where split is random location in X.
+	// Run concurrent cleave/merge ops on labels 1-4, 5-8, and 9-12.
 	wg := new(sync.WaitGroup)
 	wg.Add(750)
 	go func() {
 		for n := 0; n < 250; n++ {
-			tbody1.splitmerge(t, wg, uuid, "labels")
+			mergeCleave(t, wg, uuid, "labels", tbodies[0:4])
 		}
 	}()
 	go func() {
 		for n := 0; n < 250; n++ {
-			tbody2.splitmerge(t, wg, uuid, "labels")
+			mergeCleave(t, wg, uuid, "labels", tbodies[4:8])
 		}
 	}()
 	go func() {
 		for n := 0; n < 250; n++ {
-			tbody3.splitmerge(t, wg, uuid, "labels")
+			mergeCleave(t, wg, uuid, "labels", tbodies[8:12])
 		}
 	}()
 	wg.Wait()
@@ -1308,10 +1263,10 @@ func TestConcurrentMutations(t *testing.T) {
 		t.Errorf("Concurrent split/merge producing bad result: %v\n", err)
 	}
 
-	reqStr := fmt.Sprintf("%snode/%s/labels/sparsevols-coarse/1/3", server.WebAPIPath, uuid)
+	reqStr := fmt.Sprintf("%snode/%s/labels/sparsevols-coarse/1/12", server.WebAPIPath, uuid)
 	encoding := server.TestHTTP(t, "GET", reqStr, nil)
 	var i int
-	for label := uint64(1); label <= 3; label++ {
+	for label := uint64(1); label <= 12; label++ {
 		if i+28 > len(encoding) {
 			t.Fatalf("Expected label %d but only %d bytes remain in encoding\n", label, len(encoding[i:]))
 		}
@@ -1326,108 +1281,46 @@ func TestConcurrentMutations(t *testing.T) {
 			return
 		}
 		i += 4 + len(spans)*16
-		b := testbodies[label-1]
+		b := tbodies[label-1]
 		if !reflect.DeepEqual(spans, b.blockSpans) {
 			t.Errorf("Expected coarse spans for label %d:\n%s\nGot spans:\n%s\n", b.label, b.blockSpans, spans)
 		}
 	}
 }
 
-func (b testBody) splitmerge(t *testing.T, wg *sync.WaitGroup, uuid dvid.UUID, name dvid.InstanceName) {
-	var rles dvid.RLEs
-	var y, z, length int32
-	length = 15
-	startx := int32(rand.Intn(int(b.offset[0] + b.size[0] - length)))
-	for z = 0; z < 4; z++ {
-		for y = 0; y < 4; y++ {
-			pos := dvid.Point3d{startx, b.offset[1] + y, b.offset[2] + z}
-			rles = append(rles, dvid.NewRLE(pos, length))
-		}
-	}
-	dvid.Infof("Starting split for label %d at x = %d ...\n", b.label, startx)
+// merge a subset of bodies to a target body, then cleave each of them back out to their original label.
+func mergeCleave(t *testing.T, wg *sync.WaitGroup, uuid dvid.UUID, name dvid.InstanceName, tbodies []testBody) {
+	label1 := tbodies[0].label
+	label4 := tbodies[3].label
+	target := label1 + uint64(rand.Int()%4)
 
-	buf := new(bytes.Buffer)
-	buf.WriteByte(dvid.EncodingBinary)
-	binary.Write(buf, binary.LittleEndian, uint8(3))   // # of dimensions
-	binary.Write(buf, binary.LittleEndian, byte(0))    // dimension of run (X = 0)
-	buf.WriteByte(byte(0))                             // reserved for later
-	binary.Write(buf, binary.LittleEndian, uint32(0))  // Placeholder for # voxels
-	binary.Write(buf, binary.LittleEndian, uint32(16)) // Placeholder for # spans
-	rleBytes, err := rles.MarshalBinary()
-	if err != nil {
-		t.Errorf("Unable to serialize RLEs: %v\n", err)
-	}
-	buf.Write(rleBytes)
-	splitBytes := buf.Bytes()
-
-	var newlabel uint64
-	reqStr := fmt.Sprintf("%snode/%s/%s/split/%d", server.WebAPIPath, uuid, name, b.label)
-	tries := 0
-	notDone := true
-	for notDone {
-		tries++
-		dvid.Infof("Trying split %d of label %d ...\n", tries, b.label)
-		resp := server.TestHTTPResponse(t, "POST", reqStr, bytes.NewBuffer(splitBytes))
-		var retbytes []byte
-		if resp.Body != nil {
-			retbytes, err = ioutil.ReadAll(resp.Body)
-			if err != nil {
-				t.Fatalf("could not read response body for split %d of label %d: %v\n", tries, b.label, err)
-			}
-		}
-		switch resp.Code {
-		case http.StatusOK:
-			jsonVal := make(map[string]uint64)
-			if err := json.Unmarshal(retbytes, &jsonVal); err != nil {
-				t.Fatalf("Unable to get new label from split.  Instead got: %v\n", jsonVal)
-			}
-			var ok bool
-			newlabel, ok = jsonVal["label"]
-			if !ok {
-				t.Fatalf("The split request did not yield label value.  Instead got: %v\n", jsonVal)
-			}
-			notDone = false
-		case http.StatusBadRequest:
-			dvid.Infof("Bad split response.  Waiting...\n")
-			time.Sleep(10 * time.Millisecond)
-			buf.Reset()
-		default:
-			var retstr string
-			if retbytes != nil {
-				retstr = string(retbytes)
-			}
-			t.Fatalf("Error in response to split, status code %d: %s\n", resp.Code, retstr)
+	labelset := make(labels.Set)
+	for i := label1; i <= label4; i++ {
+		if i != target {
+			labelset[i] = struct{}{}
 		}
 	}
 
-	// Merge them back.
-	testMerge := fmt.Sprintf(`[%d, %d]`, b.label, newlabel)
-	reqStr = fmt.Sprintf("%snode/%s/%s/merge", server.WebAPIPath, uuid, name)
-	dvid.Infof("Starting merge for label %d -> %d\n", newlabel, b.label)
-	tries = 0
-	notDone = true
-	for notDone {
-		tries++
-		dvid.Infof("Trying merge %d for label %d -> %d ...\n", tries, newlabel, b.label)
-		resp := server.TestHTTPResponse(t, "POST", reqStr, bytes.NewBufferString(testMerge))
-		switch resp.Code {
-		case http.StatusOK:
-			notDone = false
-		case http.StatusBadRequest:
-			dvid.Infof("Bad merge response.  Waiting...\n")
-			time.Sleep(10 * time.Millisecond)
-		default:
-			var retstr string
-			if resp.Body != nil {
-				retbytes, err := ioutil.ReadAll(resp.Body)
-				if err != nil {
-					t.Fatalf("Error trying to read response body from request %q: %v\n", reqStr, err)
-					break
-				} else {
-					retstr = string(retbytes)
-				}
-			}
-			t.Fatalf("Error in response to merge, status code %d: %s\n", resp.Code, retstr)
+	var s []string
+	for label := range labelset {
+		s = append(s, fmt.Sprintf("%d", label))
+	}
+	mergeStr := "[" + fmt.Sprintf("%d", target) + ", " + strings.Join(s, ",") + "]"
+	testMerge := mergeJSON(mergeStr)
+	testMerge.send(t, uuid, "labels")
+
+	for label := range labelset {
+		reqStr := fmt.Sprintf("%snode/%s/labels/cleave/%d?cleavelabel=%d", server.WebAPIPath, uuid, target, label)
+		cleaveStr := fmt.Sprintf("[%d]", label)
+		r := server.TestHTTP(t, "POST", reqStr, bytes.NewBufferString(cleaveStr))
+		var jsonVal struct {
+			CleavedLabel uint64
+		}
+		if err := json.Unmarshal(r, &jsonVal); err != nil {
+			t.Fatalf("Unable to get new label from cleave.  Instead got: %v\n", jsonVal)
+		}
+		if jsonVal.CleavedLabel != label {
+			t.Fatalf("Tried to cleave %s from label %d into label %d, but cleaved label was %d\n", cleaveStr, target, label, jsonVal.CleavedLabel)
 		}
 	}
 	wg.Done()

@@ -131,7 +131,6 @@ DEL  <api URL>/node/<UUID>/<data name>/key/<key>
 	{ 
 		"Action": "postkv",
 		"Key": <key>,
-		"Data": <string reference to data in BlobStore>,
 		"Bytes": <number of bytes in data>,
 		"UUID": <UUID on which POST was done>
 	}
@@ -507,15 +506,9 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			}
 
 			go func() {
-				var err error
-				var dataRef string
-				if dataRef, err = d.PutBlob(data); err != nil {
-					dvid.Errorf("post kv data %v\n", err)
-				}
 				msginfo := map[string]interface{}{
 					"Action": "postkv",
 					"Key":    keyStr,
-					"Data":   dataRef,
 					"Bytes":  len(data),
 					"UUID":   string(uuid),
 				}

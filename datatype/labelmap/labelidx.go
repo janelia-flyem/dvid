@@ -141,7 +141,7 @@ func GetLabelIndex(d dvid.Data, v dvid.VersionID, label uint64) (*labels.Index, 
 		return nil, err
 	}
 	if mapping != nil {
-		if mapped, found := mapping.MappedLabel(v, label); found {
+		if mapped, found := mapping.MappedLabel(v, label); found && mapped != label {
 			return nil, fmt.Errorf("label %d has already been merged into label %d", label, mapped)
 		}
 	}
@@ -387,7 +387,7 @@ func CleaveIndex(d dvid.Data, v dvid.VersionID, op labels.CleaveOp) error {
 		return err
 	}
 	if mapping != nil {
-		if mapped, found := mapping.MappedLabel(v, op.Target); found {
+		if mapped, found := mapping.MappedLabel(v, op.Target); found && mapped != op.Target {
 			return fmt.Errorf("can't cleave label %d which has already been merged into label %d", op.Target, mapped)
 		}
 	}
