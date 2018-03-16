@@ -59,8 +59,8 @@ max_log_age = 30   # days
     [backend."grayscale:99ef22cd85f143f58a623bd22aad0ef7"]
     store = "kvautobus"
 
-	[backend."type:meshes"]
-	store = "raid6"
+    [backend."type:meshes"]
+    store = "raid6"
 
 
 # List the different storage systems available for metadata, data instances, etc.
@@ -105,8 +105,8 @@ servers = ["http://foo.bar.com:1234", "http://foo2.bar.com:1234"]
 # Cache support allows setting datatype-specific caching mechanisms.
 # Currently freecache is supported in labelarray and labelmap.
 [cache]
-	[cache.labelarray]
-	size = 10 # MB
+    [cache.labelarray]
+    size = 10 # MB
 
 # Groupcache support lets you cache GETs from particular data instances using a
 # distributed, immutable key-value cache.

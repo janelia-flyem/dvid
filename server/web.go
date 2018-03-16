@@ -94,7 +94,7 @@ const WebHelp = `
  	Returns a JSON object for each backend store where the key is the backend store name.
 	The store object has local instance ID keys with the following object value:
 
-    {
+	{
 		"Name": "grayscale",
 		"DataType": "uint8blk",
 		"DataUUID": ...,
@@ -108,7 +108,7 @@ const WebHelp = `
 
  GET  /api/server/note 
 
-    Returns any value of [server.note] from the configuration TOML.
+	Returns any value of [server.note] from the configuration TOML.
 
  GET  /api/server/types
 
@@ -136,12 +136,12 @@ POST  /api/server/settings
 	 
 	Possible keys:
 	gc        Garbage collection target percentage.  This is a low-level server tuning
-	            request that can affect overall request latency.
-	            See: https://golang.org/pkg/runtime/debug/#SetGCPercent
+				request that can affect overall request latency.
+				See: https://golang.org/pkg/runtime/debug/#SetGCPercent
 
 	throttle  Maximum number of CPU-intensive requests that can be executed under throttle mode.
-	            See imageblk and labelblk GET 3d voxels and POST voxels.
-	            Default = 1.
+				See imageblk and labelblk GET 3d voxels and POST voxels.
+				Default = 1.
 
 
 POST  /api/server/reload-metadata
@@ -182,7 +182,7 @@ Repo-Level REST endpoints
 
 	Creates a new repository.  Expects configuration data in JSON as the body of the POST.
 	Configuration is a JSON object with optional "alias", "description", and "passcode"
-    properties.  Returns the root UUID of the newly created repo in JSON object: {"root": uuid}
+	properties.  Returns the root UUID of the newly created repo in JSON object: {"root": uuid}
 
  GET  /api/repos/info
 
@@ -208,10 +208,10 @@ Repo-Level REST endpoints
 	REQUIRED "typename"     Type name of the new instance,
 	REQUIRED "dataname"     Name of the new instance
 	OPTIONAL "versioned"    If "false" or "0", the data is unversioned and acts as if
-	                        all UUIDs within a repo become the root repo UUID.  (True by default.)
+							all UUIDs within a repo become the root repo UUID.  (True by default.)
 	OPTIONAL "Compression"  Specify the compression format to use when serializing values to disk.
-	                        (Applies to most instance types, but not all.)
-	                        Choices are: “none”, “snappy”, “lz4”, “gzip”, “jpeg”.
+							(Applies to most instance types, but not all.)
+							Choices are: “none”, “snappy”, “lz4”, “gzip”, “jpeg”.
 							Where applicable, the compression level can be appended, e.g. "jpeg:80".
 	OPTIONAL "Tags"         Can send list of tags as a series of equal statements separated by
 							commas, e.g., "type=meshes,stuff=something-something".  This will
@@ -290,8 +290,8 @@ Repo-Level REST endpoints
 
 		data:       A list of the data instance names to be scanned for possible conflicts.
 		parents:    A list of the parent UUIDs to be merged in order of priority.  If 
-		             there is a conflict between the second and third UUID, the conflicting
-		             data in the third UUID will be deleted in favor of the second UUID.
+					 there is a conflict between the second and third UUID, the conflicting
+					 data in the third UUID will be deleted in favor of the second UUID.
 		note:       Any note that should be set for the child version.
 
 	A JSON response will be sent with the following format:
@@ -347,7 +347,7 @@ Node-Level REST endpoints
 
  GET /api/node/{uuid}/commit
 
-    Returns the commit or lock state of the node with given UUID in JSON format:
+	Returns the commit or lock state of the node with given UUID in JSON format:
 
 	{ "Locked": true }
 
@@ -386,7 +386,7 @@ Node-Level REST endpoints
 	The post body should be in JSON format, where "note" and "uuid" are optional:
 
 	{
-	    "branch": "unique name of new branch",
+		"branch": "unique name of new branch",
 		"note": "this is what we'll be doing on this version",
 		"uuid": <desired UUID>
 	}
