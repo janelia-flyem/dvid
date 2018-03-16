@@ -1617,10 +1617,6 @@ func testLabels(t *testing.T, labelsIndexed bool) {
 		}
 	}
 
-	// TODO - Use the ROI to retrieve a 2d xy image.
-
-	// TODO - Make sure we aren't getting labels back in non-ROI points.
-
 	// Verify non-indexed instances can't access indexed endpoints.
 	if !labelsIndexed {
 		methods := []string{
@@ -1630,7 +1626,6 @@ func testLabels(t *testing.T, labelsIndexed bool) {
 			"GET",
 			"GET",
 			"GET",
-			"POST",
 			"POST",
 			"POST",
 			"POST",
@@ -1644,8 +1639,7 @@ func testLabels(t *testing.T, labelsIndexed bool) {
 			"nextlabel",
 			"nextlabel",
 			"merge",
-			"split/20",
-			"split-coarse/20",
+			"cleave/20",
 		}
 		var r io.Reader
 		for i, req := range reqs {

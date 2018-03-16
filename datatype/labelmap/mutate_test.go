@@ -645,6 +645,38 @@ func TestMergeLabels(t *testing.T) {
 		t.Errorf("Expected max label to be 4, instead got %d\n", maxlabel)
 	}
 
+	// Make sure /label and /labels endpoints work.
+	apiStr := fmt.Sprintf("%snode/%s/%s/label/94_58_89", server.WebAPIPath, uuid, "labels")
+	jsonResp := server.TestHTTP(t, "GET", apiStr, nil)
+	var jsonVal2 struct {
+		Label uint64
+	}
+	if err := json.Unmarshal(jsonResp, &jsonVal2); err != nil {
+		t.Errorf("Unable to parse 'label' endpoint response: %s\n", jsonResp)
+	}
+	if jsonVal2.Label != 4 {
+		t.Errorf("Expected label 4, got label %d\n", jsonVal2.Label)
+	}
+	apiStr = fmt.Sprintf("%snode/%s/%s/labels", server.WebAPIPath, uuid, "labels")
+	payload := `[[20,46,39],[30,25,50],[48,56,39],[80,55,60]]`
+	jsonResp = server.TestHTTP(t, "GET", apiStr, bytes.NewBufferString(payload))
+	var labels [4]uint64
+	if err := json.Unmarshal(jsonResp, &labels); err != nil {
+		t.Fatalf("Unable to parse 'labels' endpoint response: %s\n", jsonResp)
+	}
+	if labels[0] != 1 {
+		t.Errorf("Expected label 1, got label %d\n", labels[0])
+	}
+	if labels[1] != 2 {
+		t.Errorf("Expected label 2, got label %d\n", labels[1])
+	}
+	if labels[2] != 3 {
+		t.Errorf("Expected label 3, got label %d\n", labels[2])
+	}
+	if labels[3] != 4 {
+		t.Errorf("Expected label 4, got label %d\n", labels[3])
+	}
+
 	// Test merge of 3 into 2
 	testMerge := mergeJSON(`[2, 3]`)
 	testMerge.send(t, uuid, "labels")
@@ -656,6 +688,32 @@ func TestMergeLabels(t *testing.T) {
 	// Make sure label changes are correct after completion
 	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
 		t.Fatalf("Error blocking on sync of labels: %v\n", err)
+	}
+
+	apiStr = fmt.Sprintf("%snode/%s/%s/label/59_56_20", server.WebAPIPath, uuid, "labels")
+	jsonResp = server.TestHTTP(t, "GET", apiStr, nil)
+	if err := json.Unmarshal(jsonResp, &jsonVal2); err != nil {
+		t.Errorf("Unable to parse 'label' endpoint response: %s\n", jsonResp)
+	}
+	if jsonVal2.Label != 2 {
+		t.Errorf("Expected label 2, got label %d\n", jsonVal2.Label)
+	}
+	apiStr = fmt.Sprintf("%snode/%s/%s/labels", server.WebAPIPath, uuid, "labels")
+	jsonResp = server.TestHTTP(t, "GET", apiStr, bytes.NewBufferString(payload))
+	if err := json.Unmarshal(jsonResp, &labels); err != nil {
+		t.Fatalf("Unable to parse 'labels' endpoint response: %s\n", jsonResp)
+	}
+	if labels[0] != 1 {
+		t.Errorf("Expected label 1, got label %d\n", labels[0])
+	}
+	if labels[1] != 2 {
+		t.Errorf("Expected label 2, got label %d\n", labels[1])
+	}
+	if labels[2] != 2 {
+		t.Errorf("Expected label 2, got label %d\n", labels[2])
+	}
+	if labels[3] != 4 {
+		t.Errorf("Expected label 4, got label %d\n", labels[3])
 	}
 
 	retrieved := newTestVolume(128, 128, 128)
