@@ -208,6 +208,19 @@ func (dtype *Type) Help() string {
 	return fmt.Sprintf(HelpMessage)
 }
 
+// GetByUUIDName returns a pointer to labelblk data given a UUID and data name.
+func GetByUUIDName(uuid dvid.UUID, name dvid.InstanceName) (*Data, error) {
+	source, err := datastore.GetDataByUUIDName(uuid, name)
+	if err != nil {
+		return nil, err
+	}
+	data, ok := source.(*Data)
+	if !ok {
+		return nil, fmt.Errorf("Instance '%s' is not a keyvalue datatype!", name)
+	}
+	return data, nil
+}
+
 // Data embeds the datastore's Data and extends it with keyvalue properties (none for now).
 type Data struct {
 	*datastore.Data

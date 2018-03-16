@@ -458,16 +458,6 @@ func NewDataService(t TypeService, rootUUID dvid.UUID, id dvid.InstanceID, name 
 	// 	return nil, fmt.Errorf("cannot create data instance %q when one already exists in repo with UUID %s", name, rootUUID)
 	// }
 
-	// See if a store was defined for a particular data instance.
-	kvStore, err := storage.GetAssignedStore(name, rootUUID, t.GetTypeName())
-	if err != nil {
-		return nil, err
-	}
-	logStore, err := storage.GetAssignedLog(name, rootUUID, t.GetTypeName())
-	if err != nil {
-		return nil, err
-	}
-
 	// Make sure we generate a valid UUID for the data instance.
 	dataUUID := dvid.NewUUID()
 	if dataUUID == dvid.NilUUID {
@@ -489,10 +479,23 @@ func NewDataService(t TypeService, rootUUID dvid.UUID, id dvid.InstanceID, name 
 		syncNames:   []dvid.InstanceName{},
 		syncData:    dvid.UUIDSet{},
 		unversioned: false,
-		kvStore:     kvStore,
-		logStore:    logStore,
 	}
-	return data, data.ModifyConfig(c)
+	if err := data.ModifyConfig(c); err != nil {
+		return nil, err
+	}
+
+	// Cache assigned store and/or log.
+	var err error
+	data.kvStore, err = storage.GetAssignedStore(name, rootUUID, data.tags, t.GetTypeName())
+	if err != nil {
+		return nil, err
+	}
+	data.logStore, err = storage.GetAssignedLog(name, rootUUID, data.tags, t.GetTypeName())
+	if err != nil {
+		return nil, err
+	}
+
+	return data, nil
 }
 
 // ---- dvid.Data implementation ----
@@ -516,6 +519,8 @@ func (d *Data) TypeName() dvid.TypeString { return d.typename }
 func (d *Data) TypeURL() dvid.URLString { return d.typeurl }
 
 func (d *Data) TypeVersion() string { return d.typeversion }
+
+func (d *Data) Tags() map[string]string { return d.tags }
 
 func (d *Data) Versioned() bool { return !d.unversioned }
 

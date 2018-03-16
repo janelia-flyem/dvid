@@ -58,6 +58,7 @@ func TestDataGobEncoding(t *testing.T) {
 		compression: compression,
 		checksum:    dvid.DefaultChecksum,
 		syncData:    dvid.UUIDSet{"moo": struct{}{}, "bar": struct{}{}, "baz": struct{}{}},
+		tags:        map[string]string{"type": "meshes"},
 	}}
 
 	encoding, err := data.GobEncode()
@@ -69,6 +70,6 @@ func TestDataGobEncoding(t *testing.T) {
 		t.Fatalf("Couldn't Gob decode test data: %v\n", err)
 	}
 	if !reflect.DeepEqual(data, data2) {
-		t.Errorf("Bad Gob roundtrip:\nOriginal: %v\nReturned: %v\n", data, data2)
+		t.Errorf("Bad Gob roundtrip:\nOriginal: %v\nReturned: %v\n", data.Data, data2.Data)
 	}
 }

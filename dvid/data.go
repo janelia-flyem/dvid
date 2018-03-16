@@ -271,6 +271,8 @@ type Data interface {
 	TypeURL() URLString
 	TypeVersion() string
 
+	Tags() map[string]string
+
 	// Versioned returns false if this data has only one version for an entire repo.
 	Versioned() bool
 

@@ -40,3 +40,8 @@ type DataSpecifier string
 func GetDataSpecifier(name InstanceName, uuid UUID) DataSpecifier {
 	return DataSpecifier(name) + DataSpecifier(uuid)
 }
+
+// GetDataSpecifierByTag returns a DataSpecifier given a tag and its value.
+func GetDataSpecifierByTag(tag, value string) DataSpecifier {
+	return DataSpecifier(tag + "-" + value)
+}

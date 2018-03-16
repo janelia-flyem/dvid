@@ -35,13 +35,15 @@ logfile = "/demo/logs/dvid.log"
 max_log_size = 500 # MB
 max_log_age = 30   # days
 
-# Backends can be specified in three ways:
+# Backends can be specified in many ways.  In decreasing order of precedence:
 #
-# backend.default  = default storage engine if not otherwise specified
-# backend.metadata = store to use for metadata
-# backend.<datatype> = store to use for the given "datatype"
 # backend."<name>:<uuid>" = store to use for a particular data instance, 
 #   where uuid is the full UUID of the data instance's root in the DAG.
+# backend."<tag key>:<tag value>" = store to use for particular data instance
+#   tags.  See "type" tag with value "meshes" below.
+# backend.<datatype> = store to use for the given "datatype"
+# backend.metadata = store to use for metadata
+# backend.default  = default storage engine if not otherwise specified
 #
 # If no backend is specified, DVID will return an error unless there is only
 # one store, which will automatically be backend.default.
@@ -56,6 +58,9 @@ max_log_age = 30   # days
 
     [backend."grayscale:99ef22cd85f143f58a623bd22aad0ef7"]
     store = "kvautobus"
+
+	[backend."type:meshes"]
+	store = "raid6"
 
 
 # List the different storage systems available for metadata, data instances, etc.

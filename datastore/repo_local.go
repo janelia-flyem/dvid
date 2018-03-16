@@ -514,7 +514,7 @@ func (m *repoManager) loadVersion0() error {
 
 			// Cache the assigned store.
 			typename := dataservice.TypeName()
-			store, err := storage.GetAssignedStore(dataname, dataservice.RootUUID(), typename)
+			store, err := storage.GetAssignedStore(dataname, dataservice.RootUUID(), dataservice.Tags(), typename)
 			if err != nil {
 				return err
 			}

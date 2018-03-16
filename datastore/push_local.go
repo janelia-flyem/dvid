@@ -131,6 +131,7 @@ func (p *PushSession) StartInstancePush(d dvid.Data) error {
 		DataName:   d.DataName(),
 		TypeName:   d.TypeName(),
 		InstanceID: d.InstanceID(),
+		Tags:       d.Tags(),
 	}
 	if _, err := p.s.Call()(StartDataMsg, dmsg); err != nil {
 		return fmt.Errorf("couldn't send data instance %q start: %v\n", d.DataName(), err)
@@ -346,6 +347,7 @@ type DataTxInit struct {
 	DataName   dvid.InstanceName
 	TypeName   dvid.TypeString
 	InstanceID dvid.InstanceID
+	Tags       map[string]string
 }
 
 // KVMessage packages a key-value pair for transmission to a remote DVID as well as control
@@ -492,7 +494,7 @@ func (p *pusher) readRepo(m *repoTxMsg) (map[dvid.VersionID]struct{}, error) {
 		}
 
 		// check if we have an assigned store for this data instance.
-		store, err := storage.GetAssignedStore(d.DataName(), d.RootUUID(), d.TypeName())
+		store, err := storage.GetAssignedStore(d.DataName(), d.RootUUID(), d.Tags(), d.TypeName())
 		if err != nil {
 			return nil, err
 		}
@@ -566,7 +568,7 @@ func (p *pusher) startData(d *DataTxInit) error {
 	p.dname = d.DataName
 
 	// Get the store associated with this data instance.
-	store, err := storage.GetAssignedStore(d.DataName, p.uuid, d.TypeName)
+	store, err := storage.GetAssignedStore(d.DataName, p.uuid, d.Tags, d.TypeName)
 	if err != nil {
 		return err
 	}

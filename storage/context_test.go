@@ -29,6 +29,7 @@ type testData struct {
 	logStore   WriteLog
 	syncData   dvid.UUIDSet
 	mutID      uint64
+	tags       map[string]string
 }
 
 func (d *testData) DataName() dvid.InstanceName {
@@ -89,6 +90,10 @@ func (d *testData) TypeURL() dvid.URLString {
 
 func (d *testData) TypeVersion() string {
 	return "1.0"
+}
+
+func (d *testData) Tags() map[string]string {
+	return nil
 }
 
 func (d *testData) NewMutationID() uint64 {
