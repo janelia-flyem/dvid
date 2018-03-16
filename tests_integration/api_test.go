@@ -303,6 +303,34 @@ func TestNewInstance(t *testing.T) {
 	server.TestHTTP(t, "POST", apiStr, payload)
 }
 
+func TestInstanceTags(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+
+	uuid, _ := datastore.NewTestRepo()
+
+	payload := bytes.NewBufferString(`{"typename": "keyvalue", "dataname": "testkv", "compression": "none", "tags": "type=meshes,stuff=something-something"}`)
+	apiStr := fmt.Sprintf("%srepo/%s/instance", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", apiStr, payload)
+
+	getURL := fmt.Sprintf("%snode/%s/testkv/info", server.WebAPIPath, uuid)
+	got := server.TestHTTP(t, "GET", getURL, nil)
+	var jsonResp struct {
+		Base struct {
+			Tags map[string]string
+		}
+	}
+	if err := json.Unmarshal(got, &jsonResp); err != nil {
+		t.Fatalf("couldn't unmarshal response: %s\n", string(got))
+	}
+	if len(jsonResp.Base.Tags) == 0 || jsonResp.Base.Tags["type"] != "meshes" || jsonResp.Base.Tags["stuff"] != "something-something" {
+		t.Errorf("Got bad response: %s\n", string(got))
+		t.Errorf("Parsed jsonResp: %v\n", jsonResp.Base)
+	}
+}
+
 func TestSyncs(t *testing.T) {
 	if err := server.OpenTest(); err != nil {
 		t.Fatalf("can't open test server: %v\n", err)

@@ -212,7 +212,12 @@ Repo-Level REST endpoints
 	OPTIONAL "Compression"  Specify the compression format to use when serializing values to disk.
 	                        (Applies to most instance types, but not all.)
 	                        Choices are: “none”, “snappy”, “lz4”, “gzip”, “jpeg”.
-	                        Where applicable, the compression level can be appended, e.g. "jpeg:80".
+							Where applicable, the compression level can be appended, e.g. "jpeg:80".
+	OPTIONAL "Tags"         Can send list of tags as a series of equal statements separated by
+							commas, e.g., "type=meshes,stuff=something-something".  This will
+							create a tag "type" set to "meshes" and a tag "stuff" set to 
+							"something-something".  Note that the formatting prevents spaces
+							and commas from being part of a tag.
 
 	A JSON message will be sent to any associated Kafka system with the following format:
 	{ 

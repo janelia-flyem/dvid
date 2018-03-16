@@ -340,6 +340,8 @@ type Data struct {
 	typeurl     dvid.URLString
 	typeversion string
 
+	tags map[string]string
+
 	id dvid.InstanceID // local data instance id
 
 	dataUUID dvid.UUID // Unique id for this data instance.
@@ -415,6 +417,7 @@ func (d *Data) MarshalJSON() ([]byte, error) {
 		Versioned   bool
 		KVStore     string
 		LogStore    string
+		Tags        map[string]string
 	}{
 		TypeName:    d.typename,
 		TypeURL:     d.typeurl,
@@ -428,6 +431,7 @@ func (d *Data) MarshalJSON() ([]byte, error) {
 		Versioned:   !d.unversioned,
 		KVStore:     kvStore,
 		LogStore:    logStore,
+		Tags:        d.tags,
 	})
 }
 
@@ -642,6 +646,9 @@ func (d *Data) GobDecode(b []byte) error {
 			dvid.Infof("Data %q has legacy sync names, will convert to data UUIDs...\n", d.name)
 		}
 	}
+	if err := dec.Decode(&(d.tags)); err != nil {
+		dvid.Infof("Serialization of data %q had no tags.  Skipping reading of tags.", d.name)
+	}
 	return nil
 }
 
@@ -685,6 +692,9 @@ func (d *Data) GobEncode() ([]byte, error) {
 	if err := enc.Encode(d.syncData); err != nil {
 		return nil, err
 	}
+	if err := enc.Encode(d.tags); err != nil {
+		return nil, err
+	}
 	return buf.Bytes(), nil
 }
 
@@ -700,6 +710,7 @@ func (d *Data) Equals(d2 *Data) bool {
 		d.rootUUID != d2.rootUUID ||
 		d.compression != d2.compression ||
 		d.checksum != d2.checksum ||
+		len(d.tags) != len(d2.tags) ||
 		!d.syncData.Equals(d2.syncData) {
 		return false
 	}
@@ -827,6 +838,23 @@ func (d *Data) ModifyConfig(config dvid.Config) error {
 			return fmt.Errorf("Illegal setting for 'versioned' (needs to be 'false', '0', 'true', or '1'): %s", s)
 		}
 	}
+
+	// Check for tags
+	s, found, err = config.GetString("Tags")
+	if err != nil {
+		return err
+	}
+	if found {
+		tagassigns := strings.Split(s, ",")
+		d.tags = make(map[string]string, len(tagassigns))
+		for _, tagassign := range tagassigns {
+			elems := strings.Split(tagassign, "=")
+			if len(elems) == 2 && len(elems[0]) != 0 {
+				d.tags[elems[0]] = elems[1]
+			}
+		}
+	}
+
 	return nil
 }
 
