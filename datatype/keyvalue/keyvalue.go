@@ -135,6 +135,35 @@ DEL  <api URL>/node/<UUID>/<data name>/key/<key>
 		"UUID": <UUID on which POST was done>
 	}
 
+POST <api URL>/node/<UUID>/<data name>/keyvalues
+
+	Allows bulk-loading of keyvalue data using a protobuf-encoded payload.  
+
+	Arguments:
+
+	UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+	data name     Name of keyvalue data instance.
+
+	The POSTed data should be the serialization of a protobuf KeyValues message defined by 
+	the following protobuf3 definitions:
+
+		message KeyValue {
+			string key = 1;
+			bytes value = 2;
+		}
+		
+		message KeyValues {
+			repeated KeyValue kvs = 1;
+		}
+	
+	POSTs will be logged as a series of Kafka JSON messages, each with the format equivalent
+	to the single POST /key:
+	{ 
+		"Action": "postkv",
+		"Key": <key>,
+		"Bytes": <number of bytes in data>,
+		"UUID": <UUID on which POST was done>
+	}
 `
 
 func init() {
@@ -166,7 +195,7 @@ func NewType() *Type {
 
 // --- TypeService interface ---
 
-// NewData returns a pointer to new keyvalue data with default values.
+// NewDataService returns a pointer to new keyvalue data with default values.
 func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.InstanceName, c dvid.Config) (datastore.DataService, error) {
 	basedata, err := datastore.NewDataService(dtype, uuid, id, name, c)
 	if err != nil {
@@ -462,6 +491,17 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		fmt.Fprintf(w, string(jsonBytes))
 		comment = fmt.Sprintf("HTTP GET keyrange [%q, %q]", keyBeg, keyEnd)
 
+	case "keyvalues":
+		if action != "post" {
+			server.BadRequest(w, r, "only POST action is supported for the 'keyvalues' endpoint")
+			return
+		}
+		if err := d.handleIngest(r, uuid, ctx); err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+		comment = fmt.Sprintf("HTTP POST keyvalues on data %q", d.DataName())
+
 	case "key":
 		if len(parts) < 5 {
 			server.BadRequest(w, r, "expect key string to follow 'key' endpoint")
@@ -535,4 +575,33 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	}
 
 	timedLog.Infof(comment)
+}
+
+func (d *Data) handleIngest(r *http.Request, uuid dvid.UUID, ctx *datastore.VersionedCtx) error {
+	data, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		return err
+	}
+	var kvs KeyValues
+	if err := kvs.Unmarshal(data); err != nil {
+		return err
+	}
+	for _, kv := range kvs.Kvs {
+		err = d.PutData(ctx, kv.Key, kv.Value)
+		if err != nil {
+			return err
+		}
+
+		msginfo := map[string]interface{}{
+			"Action": "postkv",
+			"Key":    kv.Key,
+			"Bytes":  len(kv.Value),
+			"UUID":   string(uuid),
+		}
+		jsonmsg, _ := json.Marshal(msginfo)
+		if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
+			dvid.Errorf("Error on sending keyvalue POST op to kafka: %v\n", err)
+		}
+	}
+	return nil
 }

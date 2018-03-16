@@ -395,6 +395,26 @@ func TestKeyvalueVersioning(t *testing.T) {
 	key2req := fmt.Sprintf("%snode/%s/%s/key/%s", server.WebAPIPath, uuid, data.DataName(), key2)
 	server.TestHTTP(t, "POST", key2req, strings.NewReader(value2))
 
+	// Use the batch POST
+	var kvs KeyValues
+	kvs.Kvs = make([]*KeyValue, 5)
+	for i := 0; i < 5; i++ {
+		data := make([]byte, i+10)
+		for j := 0; j < i+10; j++ {
+			data[j] = byte(i*20 + j)
+		}
+		kvs.Kvs[i] = &KeyValue{
+			Key:   fmt.Sprintf("batchkey-%d", i),
+			Value: data,
+		}
+	}
+	serialization, err := kvs.Marshal()
+	if err != nil {
+		t.Fatalf("couldn't serialize keyvalues: %v\n", err)
+	}
+	kvsPostReq := fmt.Sprintf("%snode/%s/%s/keyvalues", server.WebAPIPath, uuid, data.DataName())
+	server.TestHTTP(t, "POST", kvsPostReq, bytes.NewReader(serialization))
+
 	// Create a new version in repo
 	if err = datastore.Commit(uuid, "my commit msg", []string{"stuff one", "stuff two"}); err != nil {
 		t.Errorf("Unable to lock root node %s: %v\n", uuid, err)
@@ -437,6 +457,21 @@ func TestKeyvalueVersioning(t *testing.T) {
 	if len(retrievedKeys) != 2 || retrievedKeys[1] != "mykey" && retrievedKeys[0] != "my2ndKey" {
 		t.Errorf("Bad key range request return.  Expected: [%q,%q].  Got: %s\n",
 			key1, key2, string(returnValue))
+	}
+
+	// Check values from batch POST
+	for i := 0; i < 5; i++ {
+		k := fmt.Sprintf("batchkey-%d", i)
+		keyreq := fmt.Sprintf("%snode/%s/%s/key/%s", server.WebAPIPath, uuid, data.DataName(), k)
+		returnValue := server.TestHTTP(t, "GET", keyreq, nil)
+		if len(returnValue) != i+10 {
+			t.Errorf("Expected batch POST key %q to have value with %d bytes, got %d instead\n", k, i+10, len(returnValue))
+		}
+		for j := 0; j < i+10; j++ {
+			if returnValue[j] != byte(i*20+j) {
+				t.Fatalf("Expected byte %d of key %q to have value %d, got %d instead\n", i, k, i*20+j, int(returnValue[j]))
+			}
+		}
 	}
 
 	// Commit the repo
