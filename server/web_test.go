@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"regexp"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -276,4 +279,94 @@ func TestAssignableUUID(t *testing.T) {
 	if _, err := dvid.StringToUUID(resp.Child); err != nil {
 		t.Errorf("bad child uuid: %v\n", err)
 	}
+}
+
+func doMetadataReads(t *testing.T, uuid dvid.UUID, wg *sync.WaitGroup, done chan bool) {
+	for {
+		getURL := fmt.Sprintf("%srepo/%s/info", WebAPIPath, uuid)
+		got := TestHTTP(t, "GET", getURL, nil)
+		var jsonResp struct {
+			DAG struct {
+				Nodes map[string]struct {
+					Branch, Note string
+					Log          []string
+					UUID         string
+					VersionID    int
+					Locked       bool
+					Parents      []int
+					Children     []int
+					Created      string
+					Updated      string
+				}
+			}
+		}
+		if err := json.Unmarshal(got, &jsonResp); err != nil {
+			t.Fatalf("couldn't unmarshal response: %s\n", string(got))
+		}
+
+		for _, meta := range jsonResp.DAG.Nodes {
+			curUUID := dvid.UUID(meta.UUID)
+			TestHTTP(t, "GET", fmt.Sprintf("%srepo/%s/info", WebAPIPath, curUUID), nil)
+			TestHTTP(t, "GET", fmt.Sprintf("%snode/%s/note", WebAPIPath, curUUID), nil)
+			TestHTTP(t, "GET", fmt.Sprintf("%snode/%s/log", WebAPIPath, curUUID), nil)
+		}
+
+		select {
+		case <-done:
+			wg.Done()
+			return
+		default:
+		}
+	}
+}
+
+func commitAndBranch(t *testing.T, uuid dvid.UUID) (child1, child2 dvid.UUID) {
+	payload := bytes.NewBufferString(`{"note": "This is my test commit", "log": ["line1", "line2", "some more stuff in a line"]}`)
+	apiStr := fmt.Sprintf("%snode/%s/commit", WebAPIPath, uuid)
+	TestHTTP(t, "POST", apiStr, payload)
+
+	// Create child
+	versionReq := fmt.Sprintf("%snode/%s/newversion", WebAPIPath, uuid)
+	respData := TestHTTP(t, "POST", versionReq, nil)
+	resp := struct {
+		Child string `json:"child"`
+	}{}
+	if err := json.Unmarshal(respData, &resp); err != nil {
+		t.Fatalf("Expected 'child' JSON response.  Got %s\n", string(respData))
+	}
+	child1 = dvid.UUID(resp.Child)
+
+	// Create a random branch
+	branchData := fmt.Sprintf(`{"branch": "branch-%d"}`, rand.Int())
+	branchReq := fmt.Sprintf("%snode/%s/branch", WebAPIPath, uuid)
+	payload = bytes.NewBufferString(branchData)
+	respData = TestHTTP(t, "POST", branchReq, payload)
+	if err := json.Unmarshal(respData, &resp); err != nil {
+		t.Errorf("Expected 'child' JSON response.  Got %s\n", string(respData))
+	}
+	child2 = dvid.UUID(resp.Child)
+	return
+}
+
+func TestStressConcurrentMetadataOps(t *testing.T) {
+	if err := OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer CloseTest()
+	uuid, _ := datastore.NewTestRepo()
+
+	wg := new(sync.WaitGroup)
+	done := make(chan bool)
+	wg.Add(10)
+	for i := 0; i < 10; i++ {
+		go doMetadataReads(t, uuid, wg, done)
+	}
+
+	for i := 0; i < 100; i++ {
+		child1, _ := commitAndBranch(t, uuid)
+		uuid = child1
+		time.Sleep(10 * time.Millisecond)
+	}
+	close(done)
+	wg.Wait()
 }
