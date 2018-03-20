@@ -92,27 +92,30 @@ func getLabelIndex(ctx *datastore.VersionedCtx, label uint64) (*labels.Index, er
 	if err := idx.Unmarshal(val); err != nil {
 		return nil, err
 	}
+	if idx.Label == 0 {
+		idx.Label = label
+	}
 	return idx, nil
 }
 
-func putLabelIndex(ctx *datastore.VersionedCtx, label uint64, idx *labels.Index) error {
+func putLabelIndex(ctx *datastore.VersionedCtx, idx *labels.Index) error {
 	store, err := datastore.GetOrderedKeyValueDB(ctx.Data())
 	if err != nil {
 		return fmt.Errorf("data %q PutLabelMeta had error initializing store: %v", ctx.Data().DataName(), err)
 	}
 
-	tk := NewLabelIndexTKey(label)
+	tk := NewLabelIndexTKey(idx.Label)
 	serialization, err := idx.Marshal()
 	if err != nil {
-		return fmt.Errorf("error trying to serialize index for label set %d, data %q: %v", label, ctx.Data().DataName(), err)
+		return fmt.Errorf("error trying to serialize index for label set %d, data %q: %v", idx.Label, ctx.Data().DataName(), err)
 	}
 	compressFormat, _ := dvid.NewCompression(dvid.LZ4, dvid.DefaultCompression)
 	compressed, err := dvid.SerializeData(serialization, compressFormat, dvid.NoChecksum)
 	if err != nil {
-		return fmt.Errorf("error trying to LZ4 compress label %d indexing in data %q", label, ctx.Data().DataName())
+		return fmt.Errorf("error trying to LZ4 compress label %d indexing in data %q", idx.Label, ctx.Data().DataName())
 	}
 	if err := store.Put(ctx, tk, compressed); err != nil {
-		return fmt.Errorf("unable to store indices for label %d, data %s: %v", label, ctx.Data().DataName(), err)
+		return fmt.Errorf("unable to store indices for label %d, data %s: %v", idx.Label, ctx.Data().DataName(), err)
 	}
 	return nil
 }
@@ -278,12 +281,13 @@ func PutLabelIndex(d dvid.Data, v dvid.VersionID, label uint64, idx *labels.Inde
 	if idx == nil {
 		return DeleteLabelIndex(d, v, label)
 	}
+	idx.Label = label
 	shard := label % numIndexShards
 	indexMu[shard].Lock()
 	defer indexMu[shard].Unlock()
 
 	ctx := datastore.NewVersionedCtx(d, v)
-	if err := putLabelIndex(ctx, label, idx); err != nil {
+	if err := putLabelIndex(ctx, idx); err != nil {
 		return err
 	}
 	idxBytes, err := idx.Marshal()
@@ -363,7 +367,7 @@ func SplitSupervoxelIndex(d dvid.Data, v dvid.VersionID, op labels.SplitSupervox
 
 	// store the modified index
 	ctx := datastore.NewVersionedCtx(d, v)
-	if err := putLabelIndex(ctx, label, idx); err != nil {
+	if err := putLabelIndex(ctx, idx); err != nil {
 		return nil, err
 	}
 	if indexCache != nil {
@@ -422,7 +426,7 @@ func CleaveIndex(d dvid.Data, v dvid.VersionID, op labels.CleaveOp) error {
 	}
 
 	ctx := datastore.NewVersionedCtx(d, v)
-	if err := putLabelIndex(ctx, op.Target, idx); err != nil {
+	if err := putLabelIndex(ctx, idx); err != nil {
 		return err
 	}
 	if indexCache != nil {
@@ -438,8 +442,8 @@ func CleaveIndex(d dvid.Data, v dvid.VersionID, op labels.CleaveOp) error {
 
 	// create a new label index to contain the cleaved supervoxels.
 	// we don't have to worry about mutex here because it's a new index.
-	cidx := idx.Cleave(op.CleavedSupervoxels)
-	if err := putLabelIndex(ctx, op.CleavedLabel, cidx); err != nil {
+	cidx := idx.Cleave(op.CleavedLabel, op.CleavedSupervoxels)
+	if err := putLabelIndex(ctx, cidx); err != nil {
 		return err
 	}
 	if indexCache != nil {
@@ -490,6 +494,7 @@ func ChangeLabelIndex(d dvid.Data, v dvid.VersionID, label uint64, delta labels.
 		}
 		if idx == nil {
 			idx = new(labels.Index)
+			idx.Label = label
 		}
 	}
 
@@ -509,7 +514,7 @@ func ChangeLabelIndex(d dvid.Data, v dvid.VersionID, label uint64, delta labels.
 			indexCache.Del(k)
 		}
 	} else {
-		if err = putLabelIndex(ctx, label, idx); err != nil {
+		if err = putLabelIndex(ctx, idx); err != nil {
 			return err
 		}
 		if indexCache != nil && idx != nil {

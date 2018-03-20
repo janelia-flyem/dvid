@@ -735,6 +735,50 @@ func TestMergeLabels(t *testing.T) {
 	}
 }
 
+func TestIngest(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+
+	// Create testbed volume and data instances
+	root, _ := initTestRepo()
+	var config dvid.Config
+	config.Set("BlockSize", "32,32,32") // Previous test data was on 32^3 blocks
+	server.CreateTestInstance(t, root, "labelmap", "labels", config)
+
+	// Post supervoxel volume
+	original := createLabelTestVolume(t, root, "labels")
+	if err := datastore.BlockOnUpdating(root, "labels"); err != nil {
+		t.Fatalf("Error blocking on sync of labels: %v\n", err)
+	}
+
+	// commit and create child version
+	payload := bytes.NewBufferString(`{"note": "Base Supervoxels"}`)
+	commitReq := fmt.Sprintf("%snode/%s/commit", server.WebAPIPath, root)
+	server.TestHTTP(t, "POST", commitReq, payload)
+
+	newVersionReq := fmt.Sprintf("%snode/%s/newversion", server.WebAPIPath, root)
+	respData := server.TestHTTP(t, "POST", newVersionReq, nil)
+	resp := struct {
+		Child string `json:"child"`
+	}{}
+	if err := json.Unmarshal(respData, &resp); err != nil {
+		t.Errorf("Expected 'child' JSON response.  Got %s\n", string(respData))
+	}
+	child1 := dvid.UUID(resp.Child)
+
+	// POST new mappings and corresponding label indices
+
+	// Test result
+
+	// Commit and create new version
+
+	// POST second set of mappings and corresponding label indices
+
+	// Test result
+}
+
 func TestSplitSupervoxel(t *testing.T) {
 	if err := server.OpenTest(); err != nil {
 		t.Fatalf("can't open test server: %v\n", err)
@@ -749,7 +793,6 @@ func TestSplitSupervoxel(t *testing.T) {
 
 	// Post supervoxel volume
 	original := createLabelTestVolume(t, uuid, "labels")
-
 	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
 		t.Fatalf("Error blocking on sync of labels: %v\n", err)
 	}

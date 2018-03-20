@@ -75,7 +75,11 @@ func LogMapping(d dvid.Data, v dvid.VersionID, op MappingOp) error {
 }
 
 // LogMappings logs a collection of mapping operations to a UUID.
-func LogMappings(d dvid.Data, uuid dvid.UUID, ops proto.MappingOps) error {
+func LogMappings(d dvid.Data, v dvid.VersionID, ops proto.MappingOps) error {
+	uuid, err := datastore.UUIDFromVersion(v)
+	if err != nil {
+		return err
+	}
 	logable, ok := d.(storage.LogWritable)
 	if !ok {
 		return nil // skip logging

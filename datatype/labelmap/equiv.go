@@ -13,7 +13,7 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 )
 
-func (d *Data) ingestMappings(ctx *datastore.VersionedCtx, uuid dvid.UUID, v dvid.VersionID, mappings proto.MappingOps) error {
+func (d *Data) ingestMappings(ctx *datastore.VersionedCtx, mappings proto.MappingOps) error {
 	// don't allow ingest of an in-memory mapping that already exists, since that's
 	// not a real ingestion, it's a mutation.
 	iMap.RLock()
@@ -21,17 +21,17 @@ func (d *Data) ingestMappings(ctx *datastore.VersionedCtx, uuid dvid.UUID, v dvi
 		m, found := iMap.maps[d.DataUUID()]
 		if found {
 			m.RLock()
-			_, found = m.versions[v]
+			_, found = m.versions[ctx.VersionID()]
 			m.RUnlock()
 			if found {
 				iMap.RUnlock()
-				return fmt.Errorf("can't ingest merges into uuid %q that already has in-memory mapping", uuid)
+				return fmt.Errorf("can't ingest merges into version %d that already has in-memory mapping", ctx.VersionID())
 			}
 		}
 	}
 	iMap.RUnlock()
 
-	return labels.LogMappings(d, uuid, mappings)
+	return labels.LogMappings(d, ctx.VersionID(), mappings)
 }
 
 // versioned map entry for a given supervoxel.

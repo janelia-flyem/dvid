@@ -11,6 +11,10 @@ type Index struct {
 	proto.LabelIndex
 }
 
+type Indices struct {
+	proto.LabelIndices
+}
+
 // EncodeBlockIndex converts signed (x,y,z) block coordinate into
 // a single uint64, which is packed in ZYX order with MSB empty,
 // the most-significant 21 bits is Z (21st bit is sign flag), next
@@ -213,9 +217,10 @@ func (idx *Index) Add(idx2 *Index) error {
 
 // Cleave the given supervoxels from an index and returns a new index, modifying both receiver
 // and creating new cleaved index.
-func (idx *Index) Cleave(toCleave []uint64) *Index {
+func (idx *Index) Cleave(cleaveLabel uint64, toCleave []uint64) *Index {
 	cleaveSet := NewSet(toCleave...)
 	cidx := new(Index)
+	cidx.Label = cleaveLabel
 	cidx.Blocks = make(map[uint64]*proto.SVCount)
 
 	for zyx, svc := range idx.Blocks {

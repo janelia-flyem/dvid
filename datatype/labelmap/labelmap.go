@@ -934,7 +934,7 @@ POST <api URL>/node/<UUID>/<data name>/split-supervoxel/<supervoxel>
 
 POST <api URL>/node/<UUID>/<data name>/index/<label>
 
-	Allows direct storing of indexes (blocks per supervoxel and their voxel count) for any
+	Allows direct storing of an index (blocks per supervoxel and their voxel count) for any
 	particular label.  Typically, these indices are computed on-the-fly during ingestion of
 	of blocks of label voxels.  If there are cluster systems capable of computing label
 	blocks, indices, and affinities directly, though, it's more efficient to simply load
@@ -947,13 +947,30 @@ POST <api URL>/node/<UUID>/<data name>/index/<label>
 	}
 
 	message LabelIndex {
-		map<string, SVCount> blocks = 1;  // key is block coord ZYX (3 x little-endian int32) string
+		map<uint64, SVCount> blocks = 1;  // key is encoded block coord ZYX (packed little-endian 21-bit numbers where MSB is sign flag)
+		uint64 label = 2;
 		uint64 last_mutid = 3;
 		string last_mod_time = 4;  // string is time in RFC 3339 format
 		string last_mod_user = 5;
-	}	
+	}
+	
+POST <api URL>/node/<UUID>/<data name>/indices
 
-POST <api URL>/node/<UUID>/<data name>/mappings/<uuid>
+	Allows bulk storage of indices (blocks per supervoxel and their voxel count) for any
+	particular label.  Typically, these indices are computed on-the-fly during ingestion of
+	of blocks of label voxels.  If there are cluster systems capable of computing label
+	blocks, indices, and affinities directly, though, it's more efficient to simply load
+	them into dvid.
+
+	The POST expects a protobuf serialization of a LabelIndices message defined by:
+	
+	message LabelIndices {
+		repeated LabelIndex indices = 1;
+	}
+
+	where LabelIndex is defined by the protobuf above in the POST /index documentation.
+
+POST <api URL>/node/<UUID>/<data name>/mappings
 
 	Allows direct storing of merge maps for a particular UUID.  Typically, merge
 	maps are stored as part of POST /merge calls, which actually modify label
@@ -2000,12 +2017,8 @@ func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, su
 
 	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
-		return fmt.Errorf("Data type labelmap had error initializing store: %v\n", err)
+		return fmt.Errorf("Data type labelmap had error initializing store: %v", err)
 	}
-
-	// only do one request at a time, although each request can start many goroutines.
-	server.LargeMutationMutex.Lock()
-	defer server.LargeMutationMutex.Unlock()
 
 	okv := store.(storage.BufferableOps)
 	// extract buffer interface
@@ -2051,10 +2064,7 @@ func (d *Data) SendBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, su
 					v:           ctx.VersionID(),
 					data:        kv.V,
 				}
-				if err := d.sendBlock(w, b); err != nil {
-					return err
-				}
-				return nil
+				return d.sendBlock(w, b)
 			})
 
 			if err != nil {
@@ -2098,8 +2108,12 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 	timedLog := dvid.NewTimeLog()
 	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
-		return fmt.Errorf("Data type labelmap had error initializing store: %v\n", err)
+		return fmt.Errorf("Data type labelmap had error initializing store: %v", err)
 	}
+
+	// only do one request at a time, although each request can start many goroutines.
+	server.LargeMutationMutex.Lock()
+	defer server.LargeMutationMutex.Unlock()
 
 	// extract buffer interface if it exists
 	var putbuffer storage.RequestBuffer
@@ -2113,12 +2127,13 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 		downresMut = downres.NewMutation(d, ctx.VersionID(), mutID)
 	}
 
-	blockCh := make(chan blockChange, 100)
 	svmap, err := getMapping(d, ctx.VersionID())
 	if err != nil {
 		return fmt.Errorf("ReceiveBlocks couldn't get mapping for data %q, version %d: %v", d.DataName(), ctx.VersionID(), err)
 	}
+	var blockCh chan blockChange
 	if indexing {
+		blockCh = make(chan blockChange, 100)
 		go d.aggregateBlockChanges(ctx.VersionID(), svmap, blockCh)
 	}
 	var wg sync.WaitGroup
@@ -2168,7 +2183,7 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 		if n != 0 {
 			pos += n
 			if n != 16 {
-				return fmt.Errorf("error reading header bytes at byte %d: %v\n", pos, err)
+				return fmt.Errorf("error reading header bytes at byte %d: %v", pos, err)
 			}
 			bx := int32(binary.LittleEndian.Uint32(hdrBytes[0:4]))
 			by := int32(binary.LittleEndian.Uint32(hdrBytes[4:8]))
@@ -2179,7 +2194,7 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 			compressed := make([]byte, numBytes)
 			n, readErr = io.ReadFull(r, compressed)
 			if n != numBytes || (readErr != nil && readErr != io.EOF) {
-				return fmt.Errorf("error reading %d bytes for block %s: %d read (%v)\n", numBytes, bcoord, n, readErr)
+				return fmt.Errorf("error reading %d bytes for block %s: %d read (%v)", numBytes, bcoord, n, readErr)
 			}
 
 			if scale == 0 {
@@ -2190,33 +2205,33 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 
 			serialization, err := dvid.SerializePrecompressedData(compressed, d.Compression(), d.Checksum())
 			if err != nil {
-				return fmt.Errorf("can't serialize received block %s data: %v\n", bcoord, err)
+				return fmt.Errorf("can't serialize received block %s data: %v", bcoord, err)
 			}
 			pos += n
 
 			gzipIn := bytes.NewBuffer(compressed)
 			zr, err := gzip.NewReader(gzipIn)
 			if err != nil {
-				return fmt.Errorf("can't initiate gzip reader: %v\n", err)
+				return fmt.Errorf("can't initiate gzip reader: %v", err)
 			}
 			uncompressed, err := ioutil.ReadAll(zr)
 			if err != nil {
-				return fmt.Errorf("can't read all %d bytes from gzipped block %s: %v\n", numBytes, bcoord, err)
+				return fmt.Errorf("can't read all %d bytes from gzipped block %s: %v", numBytes, bcoord, err)
 			}
 			if err := zr.Close(); err != nil {
-				return fmt.Errorf("error on closing gzip on block read of data %q: %v\n", d.DataName(), err)
+				return fmt.Errorf("error on closing gzip on block read of data %q: %v", d.DataName(), err)
 			}
 
 			var block labels.Block
 			if err = block.UnmarshalBinary(uncompressed); err != nil {
-				return fmt.Errorf("unable to deserialize label block %s: %v\n", bcoord, err)
+				return fmt.Errorf("unable to deserialize label block %s: %v", bcoord, err)
 			}
 			if scale == 0 {
 				go d.updateBlockMaxLabel(ctx.VersionID(), &block)
 			}
 
 			if err != nil {
-				return fmt.Errorf("Unable to deserialize %d bytes corresponding to block %s: %v\n", n, bcoord, err)
+				return fmt.Errorf("Unable to deserialize %d bytes corresponding to block %s: %v", n, bcoord, err)
 			}
 			wg.Add(1)
 			if putbuffer != nil {
@@ -2225,7 +2240,7 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 				putbuffer.PutCallback(ctx, tk, serialization, ready)
 			} else {
 				if err := store.Put(ctx, tk, serialization); err != nil {
-					return fmt.Errorf("Unable to PUT voxel data for block %s: %v\n", bcoord, err)
+					return fmt.Errorf("Unable to PUT voxel data for block %s: %v", bcoord, err)
 				}
 				go callback(bcoord, &block, nil)
 			}
@@ -2803,7 +2818,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 		d.handleIngestIndex(ctx, w, r, parts)
 
 	case "mapping":
-		d.handleIngestMappings(ctx, w, r, parts)
+		d.handleIngestMappings(ctx, w, r)
 
 	default:
 		server.BadAPIRequest(w, r, d)
@@ -2940,7 +2955,7 @@ func (d *Data) handleBlocks(ctx *datastore.VersionedCtx, w http.ResponseWriter, 
 		if err := d.ReceiveBlocks(ctx, r.Body, scale, downscale, compression, indexing); err != nil {
 			server.BadRequest(w, r, err)
 		}
-		timedLog.Infof("HTTP POST blocks (%s)", r.URL)
+		timedLog.Infof("HTTP POST blocks, indexing = %t (%s)", indexing, r.URL)
 	}
 }
 
@@ -2968,19 +2983,60 @@ func (d *Data) handleIngestIndex(ctx *datastore.VersionedCtx, w http.ResponseWri
 	serialization, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		server.BadRequest(w, r, err)
+		return
 	}
 	idx := new(labels.Index)
 	if err := idx.Unmarshal(serialization); err != nil {
 		server.BadRequest(w, r, err)
 	}
-	if err := putLabelIndex(ctx, label, idx); err != nil {
+	if idx.Label != label {
+		server.BadRequest(w, r, "serialized Index was for label %d yet was POSTed to label %d", idx.Label, label)
+		return
+	}
+	if err := putLabelIndex(ctx, idx); err != nil {
 		server.BadRequest(w, r, err)
+		return
 	}
 	timedLog.Infof("HTTP POST index for label %d (%s)", label, r.URL)
 }
 
-func (d *Data) handleIngestMappings(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request, parts []string) {
-	// POST <api URL>/node/<UUID>/<data name>/mappings/<uuid>
+func (d *Data) handleIngestIndices(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {
+	// POST <api URL>/node/<UUID>/<data name>/indices
+	timedLog := dvid.NewTimeLog()
+
+	queryStrings := r.URL.Query()
+	if throttle := queryStrings.Get("throttle"); throttle == "on" || throttle == "true" {
+		if server.ThrottledHTTP(w) {
+			return
+		}
+		defer server.ThrottledOpDone()
+	}
+
+	if strings.ToLower(r.Method) != "post" {
+		server.BadRequest(w, r, "only POST action allowed for /indices endpoint")
+		return
+	}
+	serialization, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		server.BadRequest(w, r, err)
+	}
+	indices := new(labels.Indices)
+	if err := indices.Unmarshal(serialization); err != nil {
+		server.BadRequest(w, r, err)
+		return
+	}
+	for _, protoIdx := range indices.Indices {
+		idx := labels.Index{*protoIdx}
+		if err := putLabelIndex(ctx, &idx); err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+	}
+	timedLog.Infof("HTTP POST indices for %d labels (%s)", len(indices.Indices), r.URL)
+}
+
+func (d *Data) handleIngestMappings(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request) {
+	// POST <api URL>/node/<UUID>/<data name>/mappings
 	timedLog := dvid.NewTimeLog()
 
 	queryStrings := r.URL.Query()
@@ -2995,11 +3051,6 @@ func (d *Data) handleIngestMappings(ctx *datastore.VersionedCtx, w http.Response
 		server.BadRequest(w, r, "only POST action allowed for /mappings endpoint")
 		return
 	}
-	uuid, v, err := datastore.MatchingUUID(parts[4])
-	if err != nil {
-		server.BadRequest(w, r, err)
-		return
-	}
 	serialization, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		server.BadRequest(w, r, err)
@@ -3008,10 +3059,10 @@ func (d *Data) handleIngestMappings(ctx *datastore.VersionedCtx, w http.Response
 	if err := mappings.Unmarshal(serialization); err != nil {
 		server.BadRequest(w, r, err)
 	}
-	if err := d.ingestMappings(ctx, uuid, v, mappings); err != nil {
+	if err := d.ingestMappings(ctx, mappings); err != nil {
 		server.BadRequest(w, r, err)
 	}
-	timedLog.Infof("HTTP POST %d merges for uuid %s (%s)", len(mappings.Mappings), uuid, r.URL)
+	timedLog.Infof("HTTP POST %d merges (%s)", len(mappings.Mappings), r.URL)
 }
 
 func (d *Data) handlePseudocolor(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request, parts []string) {
