@@ -31,6 +31,26 @@ func (d *Data) ingestMappings(ctx *datastore.VersionedCtx, mappings proto.Mappin
 	}
 	iMap.RUnlock()
 
+	m, err := getMapping(d, ctx.VersionID())
+	if err != nil {
+		return err
+	}
+	m.Lock()
+	vid, err := m.createShortVersion(ctx.VersionID())
+	if err != nil {
+		m.Unlock()
+		return err
+	}
+	for _, mapOp := range mappings.Mappings {
+		for _, supervoxel := range mapOp.Original {
+			vm := m.fm[supervoxel]
+			newvm, changed := vm.modify(vid, mapOp.Mapped)
+			if changed {
+				m.fm[supervoxel] = newvm
+			}
+		}
+	}
+	m.Unlock()
 	return labels.LogMappings(d, ctx.VersionID(), mappings)
 }
 
@@ -92,6 +112,47 @@ type SVMap struct {
 	sync.RWMutex
 }
 
+// makes sure that current map has been initialized with all forward mappings up to
+// given version.
+func (svm *SVMap) initToVersion(d dvid.Data, v dvid.VersionID) error {
+	ancestors, err := datastore.GetAncestry(v)
+	if err != nil {
+		return err
+	}
+	svm.Lock()
+	defer svm.Unlock()
+
+	for _, ancestor := range ancestors {
+		vid, found := svm.versions[ancestor]
+		if found {
+			continue // we have already loaded this version
+		}
+		mappingOps, err := labels.ReadMappingLog(d, ancestor)
+		if err != nil {
+			return err
+		}
+		if len(mappingOps) == 0 {
+			continue
+		}
+		vid, err = svm.createShortVersion(v)
+		if err != nil {
+			return err
+		}
+		for _, mappingOp := range mappingOps {
+			for supervoxel := range mappingOp.Original {
+				vm := svm.fm[supervoxel]
+				newvm, changed := vm.modify(vid, mappingOp.Mapped)
+				if changed {
+					svm.fm[supervoxel] = newvm
+				}
+			}
+		}
+	}
+
+	// TODO: Read in affinities
+	return nil
+}
+
 // getAncestry returns a slice of short version ids that actually have mappings,
 // from current version to root along ancestry.  Since all ancestors are immutable,
 // we can cache the ancestor slice and check if we should add current short version id.
@@ -142,41 +203,6 @@ func (svm *SVMap) createShortVersion(v dvid.VersionID) (uint8, error) {
 		svm.numVersions++
 	}
 	return vid, nil
-}
-
-func (svm *SVMap) initToVersion(d dvid.Data, v dvid.VersionID) error {
-	svm.Lock()
-	defer svm.Unlock()
-
-	ancestors, err := datastore.GetAncestry(v)
-	if err != nil {
-		return err
-	}
-	for _, ancestor := range ancestors {
-		mappingOps, err := labels.ReadMappingLog(d, ancestor)
-		if err != nil {
-			return err
-		}
-		if len(mappingOps) == 0 {
-			continue
-		}
-		vid, err := svm.createShortVersion(v)
-		if err != nil {
-			return err
-		}
-		for _, mappingOp := range mappingOps {
-			for supervoxel := range mappingOp.Original {
-				vm := svm.fm[supervoxel]
-				newvm, changed := vm.modify(vid, mappingOp.Mapped)
-				if changed {
-					svm.fm[supervoxel] = newvm
-				}
-			}
-		}
-	}
-
-	// TODO: Read in affinities
-	return nil
 }
 
 // MapSupervoxel sets the mapping for a supervoxel to a specified label.
@@ -277,9 +303,9 @@ func getMapping(d dvid.Data, v dvid.VersionID) (*SVMap, error) {
 		m.versions = make(map[dvid.VersionID]uint8)
 		m.versionsRev = make(map[uint8]dvid.VersionID)
 		iMap.maps[d.DataUUID()] = m
-		if err := m.initToVersion(d, v); err != nil {
-			return nil, err
-		}
+	}
+	if err := m.initToVersion(d, v); err != nil {
+		return nil, err
 	}
 	return m, nil
 }
@@ -298,6 +324,7 @@ func addMergeToMapping(d dvid.Data, v dvid.VersionID, mutID, toLabel uint64, mer
 	m.Lock()
 	vid, err := m.createShortVersion(v)
 	if err != nil {
+		m.Unlock()
 		return err
 	}
 	for supervoxel := range supervoxels {

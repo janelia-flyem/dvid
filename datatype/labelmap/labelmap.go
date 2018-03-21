@@ -2820,7 +2820,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	case "indices":
 		d.handleIngestIndices(ctx, w, r)
 
-	case "mapping":
+	case "mappings":
 		d.handleIngestMappings(ctx, w, r)
 
 	default:

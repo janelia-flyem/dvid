@@ -19,6 +19,7 @@ import (
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/downres"
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
+	"github.com/janelia-flyem/dvid/datatype/common/proto"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 
@@ -768,9 +769,38 @@ func TestIngest(t *testing.T) {
 	}
 	child1 := dvid.UUID(resp.Child)
 
+	// Test labels in child shouldn't have changed.
+	retrieved := newTestVolume(128, 128, 128)
+	retrieved.get(t, child1, "labels", false)
+	if err := retrieved.equals(original); err != nil {
+		t.Errorf("before mapping: %v\n", err)
+	}
+
 	// POST new mappings and corresponding label indices
+	var m proto.MappingOps
+	m.Mappings = make([]*proto.MappingOp, 2)
+	m.Mappings[0] = &proto.MappingOp{
+		Mutid:    1,
+		Mapped:   7,
+		Original: []uint64{1, 2},
+	}
+	m.Mappings[1] = &proto.MappingOp{
+		Mutid:    2,
+		Mapped:   8,
+		Original: []uint64{3},
+	}
+	serialization, err := m.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mappingReq := fmt.Sprintf("%snode/%s/labels/mappings", server.WebAPIPath, child1)
+	server.TestHTTP(t, "POST", mappingReq, bytes.NewBuffer(serialization))
 
 	// Test result
+	retrieved.get(t, child1, "labels", false)
+	if err := retrieved.equals(original); err == nil {
+		t.Errorf("expected retrieved labels != original but they are identical after mapping\n")
+	}
 
 	// Commit and create new version
 
