@@ -194,6 +194,16 @@ func (d *Data) CleaveLabel(v dvid.VersionID, label, toLabel uint64, r io.ReadClo
 	}
 	err = CleaveIndex(d, v, op)
 	d.StopUpdate()
+
+	msginfo = map[string]interface{}{
+		"Action":     "cleave-complete",
+		"MutationID": mutID,
+		"UUID":       string(versionuuid),
+	}
+	jsonmsg, _ = json.Marshal(msginfo)
+	if err = d.ProduceKafkaMsg(jsonmsg); err != nil {
+		dvid.Errorf("error on sending cleave complete op to kafka: %v", err)
+	}
 	return
 }
 
