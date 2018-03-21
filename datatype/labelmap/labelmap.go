@@ -2817,6 +2817,9 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	case "index":
 		d.handleIngestIndex(ctx, w, r, parts)
 
+	case "indices":
+		d.handleIngestIndices(ctx, w, r)
+
 	case "mapping":
 		d.handleIngestMappings(ctx, w, r)
 
@@ -3020,7 +3023,7 @@ func (d *Data) handleIngestIndices(ctx *datastore.VersionedCtx, w http.ResponseW
 	if err != nil {
 		server.BadRequest(w, r, err)
 	}
-	indices := new(labels.Indices)
+	indices := new(proto.LabelIndices)
 	if err := indices.Unmarshal(serialization); err != nil {
 		server.BadRequest(w, r, err)
 		return

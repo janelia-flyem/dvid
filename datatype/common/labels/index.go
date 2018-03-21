@@ -11,10 +11,6 @@ type Index struct {
 	proto.LabelIndex
 }
 
-type Indices struct {
-	proto.LabelIndices
-}
-
 // EncodeBlockIndex converts signed (x,y,z) block coordinate into
 // a single uint64, which is packed in ZYX order with MSB empty,
 // the most-significant 21 bits is Z (21st bit is sign flag), next
