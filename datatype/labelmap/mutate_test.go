@@ -26,21 +26,6 @@ import (
 	lz4 "github.com/janelia-flyem/go/golz4"
 )
 
-type testBody struct {
-	label        uint64
-	offset, size dvid.Point3d // these are just to give ROI of voxelSpans
-	blockSpans   dvid.Spans
-	voxelSpans   dvid.Spans // in DVID coordinates, not relative coordinates
-}
-
-var emptyBody = testBody{
-	label:      0,
-	offset:     dvid.Point3d{},
-	size:       dvid.Point3d{},
-	blockSpans: dvid.Spans{},
-	voxelSpans: dvid.Spans{},
-}
-
 func checkSparsevolsCoarse(t *testing.T, encoding []byte) {
 	length := len(encoding)
 	var i int
@@ -65,6 +50,202 @@ func checkSparsevolsCoarse(t *testing.T, encoding []byte) {
 			t.Errorf("Expected coarse spans for label %d:\n%s\nGot spans [%s:%d]:\n%s\n", b.label, b.blockSpans, fn, line, spans)
 		}
 	}
+}
+
+func checkNoSparsevol(t *testing.T, uuid dvid.UUID, label uint64) {
+	headReq := fmt.Sprintf("%snode/%s/labels/sparsevol/%d", server.WebAPIPath, uuid, label)
+	resp := server.TestHTTPResponse(t, "HEAD", headReq, nil)
+	if resp.Code != http.StatusNoContent {
+		_, fn, line, _ := runtime.Caller(1)
+		t.Fatalf("HEAD on %s did not return 204 (No Content).  Status = %d [%s:%d]\n", headReq, resp.Code, fn, line)
+	}
+}
+
+func checkSparsevolAPIs(t *testing.T, uuid dvid.UUID) {
+	for _, label := range []uint64{1, 2, 3, 4} {
+		bodies[label-1].checkSparsevolAPIs(t, uuid, label)
+	}
+
+	reqStr := fmt.Sprintf("%snode/%s/labels/sparsevols-coarse/1/3", server.WebAPIPath, uuid)
+	encoding := server.TestHTTP(t, "GET", reqStr, nil)
+	checkSparsevolsCoarse(t, encoding)
+
+	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol-size/1", server.WebAPIPath, uuid)
+	sizeResp := server.TestHTTP(t, "GET", reqStr, nil)
+	if string(sizeResp) != `{"voxels": 32000, "numblocks": 3, "minvoxel": [0, 32, 0], "maxvoxel": [31, 63, 95]}` {
+		t.Errorf("bad response to sparsevol-size endpoint: %s\n", string(sizeResp))
+	}
+
+	// Make sure non-existent bodies return proper HEAD responses.
+	headReq := fmt.Sprintf("%snode/%s/labels/sparsevol/%d", server.WebAPIPath, uuid, 10)
+	resp := server.TestHTTPResponse(t, "HEAD", headReq, nil)
+	if resp.Code != http.StatusNoContent {
+		t.Errorf("HEAD on %s did not return 204 (No Content).  Status = %d\n", headReq, resp.Code)
+	}
+}
+
+func ingestIndex(t *testing.T, uuid dvid.UUID, idx *labels.Index) {
+	serialization, err := idx.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ingestReq := fmt.Sprintf("%snode/%s/labels/index/%d", server.WebAPIPath, uuid, idx.Label)
+	server.TestHTTP(t, "POST", ingestReq, bytes.NewBuffer(serialization))
+}
+
+type testBody struct {
+	label        uint64
+	offset, size dvid.Point3d // these are just to give ROI of voxelSpans
+	blockSpans   dvid.Spans
+	voxelSpans   dvid.Spans // in DVID coordinates, not relative coordinates
+}
+
+var emptyBody = testBody{
+	label:      0,
+	offset:     dvid.Point3d{},
+	size:       dvid.Point3d{},
+	blockSpans: dvid.Spans{},
+	voxelSpans: dvid.Spans{},
+}
+
+func (b testBody) add(b2 testBody) (merged testBody) {
+	blockSpans := make(dvid.Spans, len(b.blockSpans)+len(b2.blockSpans))
+	i := 0
+	for _, span := range b.blockSpans {
+		blockSpans[i] = span
+		i++
+	}
+	for _, span := range b2.blockSpans {
+		blockSpans[i] = span
+		i++
+	}
+
+	voxelSpans := make(dvid.Spans, len(b.voxelSpans)+len(b2.voxelSpans))
+	i = 0
+	for _, span := range b.voxelSpans {
+		voxelSpans[i] = span
+		i++
+	}
+	for _, span := range b2.voxelSpans {
+		voxelSpans[i] = span
+		i++
+	}
+	offset, size := voxelSpans.Extents()
+	merged = testBody{
+		label:      b.label,
+		offset:     offset,
+		size:       size,
+		blockSpans: blockSpans.Normalize(),
+		voxelSpans: voxelSpans.Normalize(),
+	}
+	return
+}
+
+func (b testBody) checkSparsevolAPIs(t *testing.T, uuid dvid.UUID, label uint64) {
+	// Check coarse sparsevol
+	reqStr := fmt.Sprintf("%snode/%s/labels/sparsevol-coarse/%d", server.WebAPIPath, uuid, label)
+	encoding := server.TestHTTP(t, "GET", reqStr, nil)
+	b.checkCoarse(t, encoding)
+
+	// Check fast HEAD requests
+	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/%d", server.WebAPIPath, uuid, label)
+	resp := server.TestHTTPResponse(t, "HEAD", reqStr, nil)
+	if resp.Code != http.StatusOK {
+		t.Errorf("HEAD on %s did not return OK.  Status = %d\n", reqStr, resp.Code)
+	}
+
+	// Check full sparse volumes
+	encoding = server.TestHTTP(t, "GET", reqStr, nil)
+	lenEncoding := len(encoding)
+	b.checkSparseVol(t, encoding, dvid.OptionalBounds{})
+
+	// check one downres
+	encoding = server.TestHTTP(t, "GET", reqStr+"?scale=1", nil)
+	b.checkScaledSparseVol(t, encoding, 1, dvid.OptionalBounds{})
+
+	// check two downres
+	encoding = server.TestHTTP(t, "GET", reqStr+"?scale=2", nil)
+	b.checkScaledSparseVol(t, encoding, 2, dvid.OptionalBounds{})
+
+	// Check with lz4 compression
+	uncompressed := make([]byte, lenEncoding)
+	compressed := server.TestHTTP(t, "GET", reqStr+"?compression=lz4", nil)
+	if err := lz4.Uncompress(compressed, uncompressed); err != nil {
+		t.Fatalf("error uncompressing lz4 for sparsevol %d GET: %v\n", label, err)
+	}
+	b.checkSparseVol(t, uncompressed, dvid.OptionalBounds{})
+
+	// Check with gzip compression
+	compressed = server.TestHTTP(t, "GET", reqStr+"?compression=gzip", nil)
+	buf := bytes.NewBuffer(compressed)
+	var err error
+	r, err := gzip.NewReader(buf)
+	if err != nil {
+		t.Fatalf("error creating gzip reader: %v\n", err)
+	}
+	var buffer bytes.Buffer
+	_, err = io.Copy(&buffer, r)
+	if err != nil {
+		t.Fatalf("error copying gzip data: %v\n", err)
+	}
+	err = r.Close()
+	if err != nil {
+		t.Fatalf("error closing gzip: %v\n", err)
+	}
+	encoding = buffer.Bytes()
+	b.checkSparseVol(t, encoding, dvid.OptionalBounds{})
+
+	// Check Y/Z restriction
+	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/%d?miny=30&maxy=50&minz=20&maxz=40", server.WebAPIPath, uuid, label)
+	if label != 4 {
+		encoding = server.TestHTTP(t, "GET", reqStr, nil)
+		var bound dvid.OptionalBounds
+		bound.SetMinY(30)
+		bound.SetMaxY(50)
+		bound.SetMinZ(20)
+		bound.SetMaxZ(40)
+		b.checkSparseVol(t, encoding, bound)
+	} else {
+		server.TestBadHTTP(t, "GET", reqStr, nil) // Should be not found
+	}
+
+	// Check X restriction
+	minx := int32(20)
+	maxx := int32(47)
+	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/%d?minx=%d&maxx=%d", server.WebAPIPath, uuid, label, minx, maxx)
+	if label != 4 {
+		encoding = server.TestHTTP(t, "GET", reqStr, nil)
+		checkSpans(t, encoding, minx, maxx)
+	} else {
+		server.TestBadHTTP(t, "GET", reqStr, nil) // Should be not found
+	}
+}
+
+func (b testBody) getIndex(t *testing.T) *labels.Index {
+	idx := new(labels.Index)
+	idx.Label = b.label
+	idx.Blocks = make(map[uint64]*proto.SVCount)
+	voxelCounts := b.voxelSpans.VoxelCounts(dvid.Point3d{32, 32, 32})
+	for izyxStr, count := range voxelCounts {
+		zyx, err := labels.IZYXStringToBlockIndex(izyxStr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		svc := new(proto.SVCount)
+		svc.Counts = map[uint64]uint32{b.label: count}
+		idx.Blocks[zyx] = svc
+	}
+	return idx
+}
+
+func (b testBody) postIndex(t *testing.T, uuid dvid.UUID) {
+	idx := b.getIndex(t)
+	serialization, err := idx.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	indexReq := fmt.Sprintf("%snode/%s/labels/index/%d", server.WebAPIPath, uuid, b.label)
+	server.TestHTTP(t, "POST", indexReq, bytes.NewBuffer(serialization))
 }
 
 // Makes sure the coarse sparse volume encoding matches the body.
@@ -387,115 +568,7 @@ func TestSparseVolumes(t *testing.T) {
 	badReqStr := fmt.Sprintf("%snode/%s/labels/sparsevol/0", server.WebAPIPath, uuid)
 	server.TestBadHTTP(t, "GET", badReqStr, nil)
 
-	for _, label := range []uint64{1, 2, 3, 4} {
-		// Get the coarse sparse volumes for each label and make sure they are correct.
-		reqStr := fmt.Sprintf("%snode/%s/labels/sparsevol-coarse/%d", server.WebAPIPath, uuid, label)
-		encoding := server.TestHTTP(t, "GET", reqStr, nil)
-		bodies[label-1].checkCoarse(t, encoding)
-	}
-
-	reqStr := fmt.Sprintf("%snode/%s/labels/sparsevols-coarse/1/3", server.WebAPIPath, uuid)
-	encoding := server.TestHTTP(t, "GET", reqStr, nil)
-	checkSparsevolsCoarse(t, encoding)
-
-	for _, label := range []uint64{1, 2, 3, 4} {
-		// Check fast HEAD requests
-		reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/%d", server.WebAPIPath, uuid, label)
-		resp := server.TestHTTPResponse(t, "HEAD", reqStr, nil)
-		if resp.Code != http.StatusOK {
-			t.Errorf("HEAD on %s did not return OK.  Status = %d\n", reqStr, resp.Code)
-		}
-
-		// Check full sparse volumes
-		encoding = server.TestHTTP(t, "GET", reqStr, nil)
-		lenEncoding := len(encoding)
-		bodies[label-1].checkSparseVol(t, encoding, dvid.OptionalBounds{})
-
-		// check one downres
-		encoding = server.TestHTTP(t, "GET", reqStr+"?scale=1", nil)
-		bodies[label-1].checkScaledSparseVol(t, encoding, 1, dvid.OptionalBounds{})
-
-		// check two downres
-		encoding = server.TestHTTP(t, "GET", reqStr+"?scale=2", nil)
-		bodies[label-1].checkScaledSparseVol(t, encoding, 2, dvid.OptionalBounds{})
-
-		// Check with lz4 compression
-		uncompressed := make([]byte, lenEncoding)
-		compressed := server.TestHTTP(t, "GET", reqStr+"?compression=lz4", nil)
-		if err := lz4.Uncompress(compressed, uncompressed); err != nil {
-			t.Fatalf("error uncompressing lz4 for sparsevol %d GET: %v\n", label, err)
-		}
-		bodies[label-1].checkSparseVol(t, uncompressed, dvid.OptionalBounds{})
-
-		// Check with gzip compression
-		compressed = server.TestHTTP(t, "GET", reqStr+"?compression=gzip", nil)
-		b := bytes.NewBuffer(compressed)
-		var err error
-		r, err := gzip.NewReader(b)
-		if err != nil {
-			t.Fatalf("error creating gzip reader: %v\n", err)
-		}
-		var buffer bytes.Buffer
-		_, err = io.Copy(&buffer, r)
-		if err != nil {
-			t.Fatalf("error copying gzip data: %v\n", err)
-		}
-		err = r.Close()
-		if err != nil {
-			t.Fatalf("error closing gzip: %v\n", err)
-		}
-		encoding = buffer.Bytes()
-		bodies[label-1].checkSparseVol(t, encoding, dvid.OptionalBounds{})
-
-		// // check sparse vol + scaling using binary blocks compression
-		// reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/%d?format=blocks", server.WebAPIPath, uuid, label)
-		// resp = server.TestHTTPResponse(t, "GET", reqStr, nil)
-		// bodies[label-1].checkBinarySparseVol(t, resp.Body)
-
-		// resp = server.TestHTTPResponse(t, "GET", reqStr+"?scale=1", nil)
-		// bodies[label-1].checkScaledBinarySparseVol(t, resp.Body, 1)
-
-		// resp = server.TestHTTPResponse(t, "GET", reqStr+"?scale=2", nil)
-		// bodies[label-1].checkScaledBinarySparseVol(t, resp.Body, 2)
-
-		// Check Y/Z restriction
-		reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/%d?miny=30&maxy=50&minz=20&maxz=40", server.WebAPIPath, uuid, label)
-		if label != 4 {
-			encoding = server.TestHTTP(t, "GET", reqStr, nil)
-			var bound dvid.OptionalBounds
-			bound.SetMinY(30)
-			bound.SetMaxY(50)
-			bound.SetMinZ(20)
-			bound.SetMaxZ(40)
-			bodies[label-1].checkSparseVol(t, encoding, bound)
-		} else {
-			server.TestBadHTTP(t, "GET", reqStr, nil) // Should be not found
-		}
-
-		// Check X restriction
-		minx := int32(20)
-		maxx := int32(47)
-		reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/%d?minx=%d&maxx=%d", server.WebAPIPath, uuid, label, minx, maxx)
-		if label != 4 {
-			encoding = server.TestHTTP(t, "GET", reqStr, nil)
-			checkSpans(t, encoding, minx, maxx)
-		} else {
-			server.TestBadHTTP(t, "GET", reqStr, nil) // Should be not found
-		}
-	}
-
-	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol-size/1", server.WebAPIPath, uuid)
-	sizeResp := server.TestHTTP(t, "GET", reqStr, nil)
-	if string(sizeResp) != `{"voxels": 32000, "numblocks": 3, "minvoxel": [0, 32, 0], "maxvoxel": [31, 63, 95]}` {
-		t.Errorf("bad response to sparsevol-size endpoint: %s\n", string(sizeResp))
-	}
-
-	// Make sure non-existent bodies return proper HEAD responses.
-	headReq := fmt.Sprintf("%snode/%s/labels/sparsevol/%d", server.WebAPIPath, uuid, 10)
-	resp := server.TestHTTPResponse(t, "HEAD", headReq, nil)
-	if resp.Code != http.StatusNoContent {
-		t.Errorf("HEAD on %s did not return 204 (No Content).  Status = %d\n", headReq, resp.Code)
-	}
+	checkSparsevolAPIs(t, uuid)
 }
 
 func Test16x16x16SparseVolumes(t *testing.T) {
@@ -745,6 +818,7 @@ func TestIngest(t *testing.T) {
 	// Create testbed volume and data instances
 	root, _ := initTestRepo()
 	var config dvid.Config
+	config.Set("MaxDownresLevel", "2")
 	config.Set("BlockSize", "32,32,32") // Previous test data was on 32^3 blocks
 	server.CreateTestInstance(t, root, "labelmap", "labels", config)
 
@@ -796,17 +870,95 @@ func TestIngest(t *testing.T) {
 	mappingReq := fmt.Sprintf("%snode/%s/labels/mappings", server.WebAPIPath, child1)
 	server.TestHTTP(t, "POST", mappingReq, bytes.NewBuffer(serialization))
 
+	idx1 := body1.getIndex(t)
+	idx2 := body2.getIndex(t)
+	idx3 := body3.getIndex(t)
+
+	if err := idx1.Add(idx2); err != nil {
+		t.Fatal(err)
+	}
+	idx1.Label = 7
+	idx3.Label = 8
+
+	ingestIndex(t, child1, idx1)
+	ingestIndex(t, child1, idx3)
+
+	blankIdx := new(labels.Index)
+	blankIdx.Label = 2
+	ingestIndex(t, child1, blankIdx)
+	blankIdx.Label = 3
+	ingestIndex(t, child1, blankIdx)
+
+	checkNoSparsevol(t, child1, 2)
+	checkNoSparsevol(t, child1, 3)
+
 	// Test result
 	retrieved.get(t, child1, "labels", false)
 	if err := retrieved.equals(original); err == nil {
 		t.Errorf("expected retrieved labels != original but they are identical after mapping\n")
 	}
+	bodyMerged := body1.add(body2)
+	bodyMerged.checkSparsevolAPIs(t, child1, 7)
+	body3.checkSparsevolAPIs(t, child1, 8)
+	body4.checkSparsevolAPIs(t, child1, 4)
 
 	// Commit and create new version
+	payload = bytes.NewBufferString(`{"note": "First agglo"}`)
+	commitReq = fmt.Sprintf("%snode/%s/commit", server.WebAPIPath, child1)
+	server.TestHTTP(t, "POST", commitReq, payload)
 
-	// POST second set of mappings and corresponding label indices
+	newVersionReq = fmt.Sprintf("%snode/%s/newversion", server.WebAPIPath, child1)
+	respData = server.TestHTTP(t, "POST", newVersionReq, nil)
+	if err := json.Unmarshal(respData, &resp); err != nil {
+		t.Errorf("Expected 'child' JSON response.  Got %s\n", string(respData))
+	}
+	child2 := dvid.UUID(resp.Child)
+
+	// POST second set of mappings to reset supervoxels to original and ingest label indices
+	m.Mappings = make([]*proto.MappingOp, 3)
+	m.Mappings[0] = &proto.MappingOp{
+		Mutid:    3,
+		Mapped:   1,
+		Original: []uint64{1},
+	}
+	m.Mappings[1] = &proto.MappingOp{
+		Mutid:    4,
+		Mapped:   2,
+		Original: []uint64{2},
+	}
+	m.Mappings[2] = &proto.MappingOp{
+		Mutid:    5,
+		Mapped:   3,
+		Original: []uint64{3},
+	}
+	serialization, err = m.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mappingReq = fmt.Sprintf("%snode/%s/labels/mappings", server.WebAPIPath, child2)
+	server.TestHTTP(t, "POST", mappingReq, bytes.NewBuffer(serialization))
+
+	idx1 = body1.getIndex(t)
+	idx2 = body2.getIndex(t)
+	idx3 = body3.getIndex(t)
+
+	ingestIndex(t, child2, idx1)
+	ingestIndex(t, child2, idx2)
+	ingestIndex(t, child2, idx3)
+	blankIdx.Label = 7
+	ingestIndex(t, child2, blankIdx)
+	blankIdx.Label = 8
+	ingestIndex(t, child2, blankIdx)
 
 	// Test result
+	checkSparsevolAPIs(t, child2)
+	checkNoSparsevol(t, child2, 7)
+	checkNoSparsevol(t, child2, 8)
+
+	retrieved.get(t, child2, "labels", false)
+	if err := retrieved.equals(original); err != nil {
+		t.Errorf("after remapping to original: %v\n", err)
+	}
 }
 
 func TestSplitSupervoxel(t *testing.T) {

@@ -14,23 +14,6 @@ import (
 )
 
 func (d *Data) ingestMappings(ctx *datastore.VersionedCtx, mappings proto.MappingOps) error {
-	// don't allow ingest of an in-memory mapping that already exists, since that's
-	// not a real ingestion, it's a mutation.
-	iMap.RLock()
-	if iMap.maps != nil {
-		m, found := iMap.maps[d.DataUUID()]
-		if found {
-			m.RLock()
-			_, found = m.versions[ctx.VersionID()]
-			m.RUnlock()
-			if found {
-				iMap.RUnlock()
-				return fmt.Errorf("can't ingest merges into version %d that already has in-memory mapping", ctx.VersionID())
-			}
-		}
-	}
-	iMap.RUnlock()
-
 	m, err := getMapping(d, ctx.VersionID())
 	if err != nil {
 		return err

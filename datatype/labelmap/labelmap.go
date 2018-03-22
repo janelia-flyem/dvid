@@ -960,6 +960,8 @@ POST <api URL>/node/<UUID>/<data name>/index/<label>
 		string last_mod_time = 4;  // string is time in RFC 3339 format
 		string last_mod_user = 5;
 	}
+
+	If the blocks map is empty, the label index is deleted.
 	
 POST <api URL>/node/<UUID>/<data name>/indices
 
@@ -976,6 +978,8 @@ POST <api URL>/node/<UUID>/<data name>/indices
 	}
 
 	where LabelIndex is defined by the protobuf above in the POST /index documentation.
+	A label index can be deleted as per the POST /index documentation by having an empty
+	blocks map.
 
 POST <api URL>/node/<UUID>/<data name>/mappings
 
@@ -3001,6 +3005,14 @@ func (d *Data) handleIngestIndex(ctx *datastore.VersionedCtx, w http.ResponseWri
 	}
 	if idx.Label != label {
 		server.BadRequest(w, r, "serialized Index was for label %d yet was POSTed to label %d", idx.Label, label)
+		return
+	}
+	if len(idx.Blocks) == 0 {
+		if err := deleteLabelIndex(ctx, label); err != nil {
+			server.BadRequest(w, r, err)
+			return
+		}
+		timedLog.Infof("HTTP POST index for label %d (%s) -- empty index so deleted index", label, r.URL)
 		return
 	}
 	if err := putLabelIndex(ctx, idx); err != nil {

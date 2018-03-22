@@ -1748,7 +1748,127 @@ func (s Span) Includes(block ChunkPoint3d) bool {
 	return true
 }
 
+// Spans is a slice of Span
 type Spans []Span
+
+// Extents returns the offset and size of the bounding box
+// traversed by the receiver Spans.
+func (s Spans) Extents() (offset, size Point3d) {
+	if len(s) == 0 {
+		return
+	}
+	offset = Point3d{s[0][2], s[0][1], s[0][0]}
+	max := Point3d{s[0][3], s[0][1], s[0][0]}
+	for _, span := range s {
+		if span[2] < offset[0] {
+			offset[0] = span[2]
+		}
+		if span[3] > max[0] {
+			max[0] = span[3]
+		}
+		if span[1] < offset[1] {
+			offset[1] = span[1]
+		}
+		if span[1] > max[1] {
+			max[1] = span[1]
+		}
+		if span[0] < offset[2] {
+			offset[2] = span[0]
+		}
+		if span[0] > max[2] {
+			max[2] = span[0]
+		}
+	}
+	size = Point3d{max[0] - offset[0] + 1, max[1] - offset[1] + 1, max[2] - offset[2] + 1}
+	return
+}
+
+// Blocks returns an unsorted list of blocks spanned by the spans.
+func (s Spans) Blocks(size Point3d) IZYXSlice {
+	zyxmap := make(map[IZYXString]struct{})
+	for _, span := range s {
+		var blockX0, blockX1, blockY, blockZ int32
+		if span[2] < 0 {
+			blockX0 = (span[2] - size[0] + 1) / size[0]
+		} else {
+			blockX0 = span[2] / size[0]
+		}
+		if span[3] < 0 {
+			blockX1 = (span[3] - size[0] + 1) / size[0]
+		} else {
+			blockX1 = span[3] / size[0]
+		}
+		if span[1] < 0 {
+			blockY = (span[1] - size[1] + 1) / size[1]
+		} else {
+			blockY = span[1] / size[1]
+		}
+		if span[0] < 0 {
+			blockZ = (span[0] - size[2] + 1) / size[2]
+		} else {
+			blockZ = span[0] / size[2]
+		}
+		for bx := blockX0; bx <= blockX1; bx++ {
+			izyxStr := ChunkPoint3d{bx, blockY, blockZ}.ToIZYXString()
+			zyxmap[izyxStr] = struct{}{}
+		}
+	}
+	blocks := make(IZYXSlice, len(zyxmap))
+	i := 0
+	for izyxStr := range zyxmap {
+		blocks[i] = izyxStr
+		i++
+	}
+	return blocks
+}
+
+// VoxelCounts returns a map of blocks spanned by the spans and the number
+// of voxels within each block encompassed by spans.
+func (s Spans) VoxelCounts(size Point3d) map[IZYXString]uint32 {
+	counts := make(map[IZYXString]uint32)
+	for _, span := range s {
+		var blockX0, blockX1, blockY, blockZ int32
+		var numX0, numX1 uint32
+		if span[2] < 0 {
+			blockX0 = (span[2] - size[0] + 1) / size[0]
+			numX0 = uint32(size[0] - (-span[2] % size[0]))
+		} else {
+			blockX0 = span[2] / size[0]
+			numX0 = uint32(size[0] - (span[2] % size[0]))
+		}
+		if span[3] < 0 {
+			blockX1 = (span[3] - size[0] + 1) / size[0]
+			numX1 = uint32(-span[3]%size[0]) + 1
+		} else {
+			blockX1 = span[3] / size[0]
+			numX1 = uint32(span[3]%size[0]) + 1
+		}
+		if span[1] < 0 {
+			blockY = (span[1] - size[1] + 1) / size[1]
+		} else {
+			blockY = span[1] / size[1]
+		}
+		if span[0] < 0 {
+			blockZ = (span[0] - size[2] + 1) / size[2]
+		} else {
+			blockZ = span[0] / size[2]
+		}
+		if blockX0 == blockX1 {
+			izyxStr := ChunkPoint3d{blockX0, blockY, blockZ}.ToIZYXString()
+			counts[izyxStr] += uint32(span[3] - span[2] + 1)
+		} else {
+			izyxStr := ChunkPoint3d{blockX0, blockY, blockZ}.ToIZYXString()
+			counts[izyxStr] += numX0
+			izyxStr = ChunkPoint3d{blockX1, blockY, blockZ}.ToIZYXString()
+			counts[izyxStr] += numX1
+			for bx := blockX0 + 1; bx < blockX1; bx++ {
+				izyxStr = ChunkPoint3d{bx, blockY, blockZ}.ToIZYXString()
+				counts[izyxStr] += uint32(size[0])
+			}
+		}
+	}
+	return counts
+}
 
 // MarshalBinary implements the encoding.BinaryMarshaler interface.
 // It returns a binary serialization of the RLEs for the spans with the

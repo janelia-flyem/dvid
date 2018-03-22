@@ -137,7 +137,8 @@ func deleteLabelIndex(ctx *datastore.VersionedCtx, label uint64) error {
 // The following public functions are concurrency-safe and support caching.
 
 // GetLabelIndex gets label set index data from storage for a given data instance
-// and version. Concurrency-safe access and supports caching.
+// and version. Concurrency-safe access and supports caching.  If a label has been
+// mapped to another, a nil Index is returned.
 func GetLabelIndex(d dvid.Data, v dvid.VersionID, label uint64) (*labels.Index, error) {
 	mapping, err := getMapping(d, v)
 	if err != nil {
@@ -145,7 +146,7 @@ func GetLabelIndex(d dvid.Data, v dvid.VersionID, label uint64) (*labels.Index, 
 	}
 	if mapping != nil {
 		if mapped, found := mapping.MappedLabel(v, label); found && mapped != label {
-			return nil, fmt.Errorf("label %d has already been merged into label %d", label, mapped)
+			return nil, nil
 		}
 	}
 

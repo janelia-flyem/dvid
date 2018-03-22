@@ -210,8 +210,8 @@ func GetMappedLabelIndex(d dvid.Data, v dvid.VersionID, label uint64, scale uint
 	mapping := labels.LabelMap(iv)
 	if mapping != nil {
 		// Check if this label has been merged.
-		if mapped, found := mapping.FinalLabel(label); found {
-			return nil, nil, fmt.Errorf("label %d has already been merged into label %d", label, mapped)
+		if _, found := mapping.FinalLabel(label); found {
+			return nil, nil, nil
 		}
 	}
 
@@ -270,7 +270,7 @@ func GetMappedLabelSetIndex(d dvid.Data, v dvid.VersionID, lbls labels.Set, scal
 	if mapping != nil {
 		// Check if this label has been merged.
 		for label := range lbls {
-			if mapped, found := mapping.FinalLabel(label); found {
+			if _, found := mapping.FinalLabel(label); found {
 				return nil, nil, fmt.Errorf("label %d has already been merged into label %d", label, mapped)
 			}
 		}

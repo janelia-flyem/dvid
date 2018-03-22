@@ -181,6 +181,37 @@ func TestSpans(t *testing.T) {
 	if !reflect.DeepEqual(normalized, testSpansNorm) {
 		t.Errorf("Expected normalized spans of:\n%v\nGot this:\n%v\n", testSpansNorm, normalized)
 	}
+	s := Spans{
+		{20, 20, 15, 28}, // 14 voxels
+		{20, 21, 14, 30}, // 17 voxels
+		{21, 23, 16, 74}, // 16 voxels + 32 voxels + 11 voxels
+		{22, 23, 30, 60}, // 2 voxels (0, 0, 0) + 29 voxels (1, 0, 0)
+		{48, 30, 40, 65}, // 24 voxels (1, 0, 1) + 2 voxels (2, 0, 1)
+	}
+	counts := s.VoxelCounts(Point3d{32, 32, 32})
+	if len(counts) != 5 {
+		t.Errorf("expected VoxelCounts for 5 blocks got: %v\n", counts)
+	}
+	bcoord := ChunkPoint3d{0, 0, 0}.ToIZYXString()
+	if counts[bcoord] != 49 {
+		t.Errorf("expected # voxels for %s to be 50, got %d voxels\n", bcoord, counts[bcoord])
+	}
+	bcoord = ChunkPoint3d{1, 0, 0}.ToIZYXString()
+	if counts[bcoord] != 61 {
+		t.Errorf("expected # voxels for %s to be 61, got %d voxels\n", bcoord, counts[bcoord])
+	}
+	bcoord = ChunkPoint3d{2, 0, 0}.ToIZYXString()
+	if counts[bcoord] != 11 {
+		t.Errorf("expected # voxels for %s to be 11, got %d voxels\n", bcoord, counts[bcoord])
+	}
+	bcoord = ChunkPoint3d{1, 0, 1}.ToIZYXString()
+	if counts[bcoord] != 24 {
+		t.Errorf("expected # voxels for %s to be 61, got %d voxels\n", bcoord, counts[bcoord])
+	}
+	bcoord = ChunkPoint3d{2, 0, 1}.ToIZYXString()
+	if counts[bcoord] != 2 {
+		t.Errorf("expected # voxels for %s to be 2, got %d voxels\n", bcoord, counts[bcoord])
+	}
 }
 
 func TestTileExtents(t *testing.T) {
