@@ -140,16 +140,6 @@ func deleteLabelIndex(ctx *datastore.VersionedCtx, label uint64) error {
 // and version. Concurrency-safe access and supports caching.  If a label has been
 // mapped to another, a nil Index is returned.
 func GetLabelIndex(d dvid.Data, v dvid.VersionID, label uint64) (*labels.Index, error) {
-	mapping, err := getMapping(d, v)
-	if err != nil {
-		return nil, err
-	}
-	if mapping != nil {
-		if mapped, found := mapping.MappedLabel(v, label); found && mapped != label {
-			return nil, nil
-		}
-	}
-
 	atomic.AddUint64(&metaAttempts, 1)
 	k := indexKey{data: d, version: v, label: label}
 
@@ -157,6 +147,7 @@ func GetLabelIndex(d dvid.Data, v dvid.VersionID, label uint64) (*labels.Index, 
 	indexMu[shard].RLock()
 	defer indexMu[shard].RUnlock()
 
+	var err error
 	var idxBytes []byte
 	if indexCache != nil {
 		idxBytes, err = indexCache.Get(k.Bytes())
@@ -387,16 +378,6 @@ func SplitSupervoxelIndex(d dvid.Data, v dvid.VersionID, op labels.SplitSupervox
 // CleaveIndex modifies the label index to remove specified supervoxels and create another
 // label index for this cleaved body.
 func CleaveIndex(d dvid.Data, v dvid.VersionID, op labels.CleaveOp) error {
-	mapping, err := getMapping(d, v)
-	if err != nil {
-		return err
-	}
-	if mapping != nil {
-		if mapped, found := mapping.MappedLabel(v, op.Target); found && mapped != op.Target {
-			return fmt.Errorf("can't cleave label %d which has already been merged into label %d", op.Target, mapped)
-		}
-	}
-
 	atomic.AddUint64(&metaAttempts, 1)
 	k := indexKey{data: d, version: v, label: op.Target}
 
@@ -405,6 +386,7 @@ func CleaveIndex(d dvid.Data, v dvid.VersionID, op labels.CleaveOp) error {
 	defer indexMu[shard].Unlock()
 
 	// get the index containing this supervoxel
+	var err error
 	var idxBytes []byte
 	if indexCache != nil {
 		idxBytes, err = indexCache.Get(k.Bytes())
