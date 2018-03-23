@@ -719,6 +719,17 @@ func TestMergeLabels(t *testing.T) {
 		t.Errorf("Expected max label to be 4, instead got %d\n", maxlabel)
 	}
 
+	// Check /supervoxels
+	reqStr = fmt.Sprintf("%snode/%s/labels/supervoxels/2", server.WebAPIPath, uuid)
+	r = server.TestHTTP(t, "GET", reqStr, nil)
+	var supervoxels []uint64
+	if err := json.Unmarshal(r, &supervoxels); err != nil {
+		t.Errorf("Unable to parse supervoxels from server.  Got: %v\n", supervoxels)
+	}
+	if len(supervoxels) != 1 && supervoxels[0] != 2 {
+		t.Errorf("expected [2] for supervoxels in body 2, got %v\n", supervoxels)
+	}
+
 	// Make sure /label and /labels endpoints work.
 	apiStr := fmt.Sprintf("%snode/%s/%s/label/94_58_89", server.WebAPIPath, uuid, "labels")
 	jsonResp := server.TestHTTP(t, "GET", apiStr, nil)
@@ -758,6 +769,26 @@ func TestMergeLabels(t *testing.T) {
 	// Make sure label 3 sparsevol has been removed.
 	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/%d", server.WebAPIPath, uuid, 3)
 	server.TestBadHTTP(t, "GET", reqStr, nil)
+
+	// Check /supervoxels
+	reqStr = fmt.Sprintf("%snode/%s/labels/supervoxels/2", server.WebAPIPath, uuid)
+	r = server.TestHTTP(t, "GET", reqStr, nil)
+	if err := json.Unmarshal(r, &supervoxels); err != nil {
+		t.Errorf("Unable to parse supervoxels from server.  Got: %v\n", supervoxels)
+	}
+	if len(supervoxels) != 2 {
+		t.Errorf("expected [2,3] for supervoxels in body 2, got %v\n", supervoxels)
+	}
+	sv := make(map[uint64]struct{}, 2)
+	for _, supervoxel := range supervoxels {
+		sv[supervoxel] = struct{}{}
+	}
+	if _, found := sv[2]; !found {
+		t.Errorf("expected supervoxel 2 within body 2 but didn't find it\n")
+	}
+	if _, found := sv[3]; !found {
+		t.Errorf("expected supervoxel 3 within body 3 but didn't find it\n")
+	}
 
 	// Make sure label changes are correct after completion
 	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {

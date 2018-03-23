@@ -435,38 +435,6 @@ GET <api URL>/node/<UUID>/<data name>/labels[?queryopts]
     hash          MD5 hash of request body content in hexidecimal string format.
 
 
-GET <api URL>/node/<UUID>/<data name>/supervoxel/<coord>
-
-	Returns JSON for the supervoxels (base labeling ignoring previous merge commands) at the given 
-	coordinate:
-
-	{ "Supervoxel": 23 }
-	
-    Arguments:
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
-    data name     Name of labelmap instance.
-    coord     	  Coordinate of voxel with underscore as separator, e.g., 10_20_30
-
-
-GET <api URL>/node/<UUID>/<data name>/supervoxels[?queryopts]
-
-	Returns JSON for the supervoxels (base labeling ignoring previous merge commands) at a list 
-	of coordinates.  Expects JSON in GET body:
-
-	[ [x0, y0, z0], [x1, y1, z1], ...]
-
-	Returns for each POSTed coordinate the corresponding label:
-
-	[ 23, 911, ...]
-	
-    Arguments:
-    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
-    data name     Name of labelmap instance.
-
-    Query-string Options:
-
-    hash          MD5 hash of request body content in hexidecimal string format.
-
 GET <api URL>/node/<UUID>/<data name>/blocks/<size>/<offset>[?queryopts]
 
     Gets blocks corresponding to the extents specified by the size and offset.  The
@@ -623,6 +591,18 @@ GET <api URL>/node/<UUID>/<data name>/maxlabel
 -------------------------------------------------------------------------------------------------------
 --- The following endpoints require the labelmap data instance to have IndexedLabels set to true. ---
 -------------------------------------------------------------------------------------------------------
+
+GET <api URL>/node/<UUID>/<data name>/supervoxels/<label>
+
+	Returns JSON for the supervoxels that have been agglomerated into the given label:
+
+	[ 23, 911, ...]
+	
+    Arguments:
+    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    data name     Name of labelmap instance.
+    label     	  A 64-bit integer label id
+
 
 GET  <api URL>/node/<UUID>/<data name>/sparsevol-size/<label>?<options>
 
@@ -2858,6 +2838,9 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 
 	// endpoints after this must have data instance IndexedLabels = true
 
+	case "supervoxels":
+		d.handleSupervoxels(ctx, w, r, parts)
+
 	case "sparsevol-size":
 		d.handleSparsevolSize(ctx, w, r, parts)
 
@@ -3358,6 +3341,46 @@ func (d *Data) getSparsevolOptions(r *http.Request) (b dvid.Bounds, compression 
 		b.Exact = false
 	}
 	return
+}
+
+func (d *Data) handleSupervoxels(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request, parts []string) {
+	// GET <api URL>/node/<UUID>/<data name>/supervoxels/<label>
+	if len(parts) < 5 {
+		server.BadRequest(w, r, "DVID requires label to follow 'supervoxels' command")
+		return
+	}
+	timedLog := dvid.NewTimeLog()
+
+	label, err := strconv.ParseUint(parts[4], 10, 64)
+	if err != nil {
+		server.BadRequest(w, r, err)
+		return
+	}
+	if label == 0 {
+		server.BadRequest(w, r, "Label 0 is protected background value and cannot be queried as body.\n")
+		return
+	}
+
+	idx, err := GetLabelIndex(d, ctx.VersionID(), label)
+	if err != nil {
+		server.BadRequest(w, r, "unable to get label %d index: %v", label, err)
+		return
+	}
+	supervoxels := idx.GetSupervoxels()
+
+	w.Header().Set("Content-type", "application/json")
+	fmt.Fprintf(w, "[")
+	i := 0
+	for supervoxel := range supervoxels {
+		fmt.Fprintf(w, "%d", supervoxel)
+		i++
+		if i < len(supervoxels) {
+			fmt.Fprintf(w, ",")
+		}
+	}
+	fmt.Fprintf(w, "]")
+
+	timedLog.Infof("HTTP GET supervoxels for label %d (%s)", label, r.URL)
 }
 
 func (d *Data) handleSparsevolSize(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request, parts []string) {
