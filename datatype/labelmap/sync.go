@@ -55,11 +55,23 @@ type mergeOp struct {
 }
 
 type splitOp struct {
+	labels.SplitOp
+	mutID      uint64
+	bcoord     dvid.IZYXString
+	downresMut *downres.Mutation
+	deltaCh    chan blockSplitCounts
+}
+
+type blockSplitCounts struct {
+	bcoord  dvid.IZYXString
+	deleted map[uint64]uint32
+}
+
+type splitSupervoxelOp struct {
 	labels.SplitSupervoxelOp
-	mutID       uint64
-	bcoord      dvid.IZYXString
-	deleteBlkCh chan dvid.IZYXString
-	downresMut  *downres.Mutation
+	mutID      uint64
+	bcoord     dvid.IZYXString
+	downresMut *downres.Mutation
 }
 
 // InitDataHandlers launches goroutines to handle each labelmap instance's syncs.

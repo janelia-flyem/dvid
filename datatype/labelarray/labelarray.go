@@ -848,6 +848,7 @@ POST <api URL>/node/<UUID>/<data name>/split/<label>[?splitlabel=X]
 			"Target": <from label>,
 			"NewLabel": <to label>,
 			"Split": <string for reference to split data in serialized RLE format>,
+			"MutationID": <unique id for mutation>
 			"UUID": <UUID on which split was done>
 		}
 	

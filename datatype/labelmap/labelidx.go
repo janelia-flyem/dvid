@@ -12,6 +12,7 @@ import (
 
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
+	"github.com/janelia-flyem/dvid/datatype/common/proto"
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
@@ -293,6 +294,136 @@ func PutLabelIndex(d dvid.Data, v dvid.VersionID, label uint64, idx *labels.Inde
 		}
 	}
 	return nil
+}
+
+// should be launched as goroutine; locks the index of the split label for duration
+func modifySplitIndex(d dvid.Data, v dvid.VersionID, fromLabel, toLabel uint64, blockCh chan blockSplitCounts, doneCh chan struct{}) {
+	atomic.AddUint64(&metaAttempts, 1)
+	k := indexKey{data: d, version: v, label: fromLabel}
+
+	shard := fromLabel % numIndexShards
+	indexMu[shard].Lock()
+	defer indexMu[shard].Unlock()
+
+	// get the index containing this supervoxel
+	var err error
+	var idxBytes []byte
+	if indexCache != nil {
+		idxBytes, err = indexCache.Get(k.Bytes())
+		if err != nil && err != freecache.ErrNotFound {
+			dvid.Errorf("modify split index for data %q, label %d: %v\n", d.DataName(), fromLabel, err)
+			return
+		}
+	}
+	var idx *labels.Index
+	if idxBytes != nil {
+		idx = new(labels.Index)
+		if err := idx.Unmarshal(idxBytes); err != nil {
+			dvid.Errorf("modify split index for data %q, label %d: %v\n", d.DataName(), fromLabel, err)
+			return
+		}
+		atomic.AddUint64(&metaHits, 1)
+	} else {
+		idx, err = getLabelIndex(k.VersionedCtx(), fromLabel)
+		if err != nil {
+			dvid.Errorf("modify split index for data %q, label %d: %v\n", d.DataName(), fromLabel, err)
+			return
+		}
+	}
+
+	// modify index of split label to remove overwritten supervoxel counts
+	deleted := make(map[uint64]map[uint64]uint32)
+	getFromChannel := true
+	for getFromChannel {
+		select {
+		case removed := <-blockCh:
+			for supervoxel, voxelsRemoved := range removed.deleted {
+				zyx, err := labels.IZYXStringToBlockIndex(removed.bcoord)
+				if err != nil {
+					dvid.Errorf("unable to convert block %s to block index: %v\n", removed.bcoord, err)
+					continue
+				}
+				svc, found := deleted[zyx]
+				if !found {
+					svc = make(map[uint64]uint32)
+				}
+				svc[supervoxel] = voxelsRemoved
+				deleted[zyx] = svc
+			}
+		case <-doneCh:
+			getFromChannel = false
+		}
+	}
+
+	sidx := new(labels.Index)
+	sidx.Label = toLabel
+	sidx.Blocks = make(map[uint64]*proto.SVCount, len(deleted))
+
+	for zyx, deletedCounts := range deleted {
+		cursvc, found := idx.Blocks[zyx]
+		if !found || cursvc == nil || len(cursvc.Counts) == 0 {
+			dvid.Errorf("block %s was overwritten in split of label %d yet this block was not in the index!\n", labels.BlockIndexToIZYXString(zyx))
+			continue
+		}
+		var splitVoxels uint32
+		for supervoxel, deletedVoxels := range deletedCounts {
+			splitVoxels += deletedVoxels
+			numVoxels, found := cursvc.Counts[supervoxel]
+			if !found {
+				dvid.Errorf("block %s had %d voxels written over supervoxel %d in label %d split yet this supervoxel was not in the index!\n", labels.BlockIndexToIZYXString(zyx), deletedVoxels, supervoxel, fromLabel)
+				continue
+			}
+			if numVoxels < deletedVoxels {
+				dvid.Errorf("block %s had %d voxels written over supervoxel %d in label %d split yet this supervoxel only had %d voxels from index!\n", labels.BlockIndexToIZYXString(zyx), deletedVoxels, supervoxel, fromLabel, numVoxels)
+				continue
+			}
+			numVoxels -= deletedVoxels
+			if numVoxels == 0 {
+				delete(cursvc.Counts, supervoxel)
+			} else {
+				cursvc.Counts[supervoxel] = numVoxels
+			}
+		}
+		splitsvc := new(proto.SVCount)
+		splitsvc.Counts = map[uint64]uint32{toLabel: splitVoxels}
+		sidx.Blocks[zyx] = splitsvc
+	}
+
+	// store the modified label index that remains after the split
+	ctx := datastore.NewVersionedCtx(d, v)
+	if err := putLabelIndex(ctx, idx); err != nil {
+		dvid.Errorf("modify split index for data %q, label %d: %v\n", d.DataName(), fromLabel, err)
+		return
+	}
+	if indexCache != nil {
+		idxBytes, err = idx.Marshal()
+		if err != nil {
+			dvid.Errorf("modify split index for data %q, label %d: %v\n", d.DataName(), fromLabel, err)
+			return
+		}
+		k := indexKey{data: d, version: v, label: fromLabel}.Bytes()
+		if err := indexCache.Set(k, idxBytes, 0); err != nil {
+			dvid.Errorf("modify split index for data %q, label %d: %v\n", d.DataName(), fromLabel, err)
+			return
+		}
+	}
+
+	// store the new label index corresponding to the split
+	if err = putLabelIndex(ctx, sidx); err != nil {
+		return
+	}
+	if indexCache != nil {
+		idxBytes, err = sidx.Marshal()
+		if err != nil {
+			dvid.Errorf("create new split index for data %q, label %d: %v\n", d.DataName(), toLabel, err)
+			return
+		}
+		k := indexKey{data: d, version: v, label: toLabel}.Bytes()
+		if err := indexCache.Set(k, idxBytes, 0); err != nil {
+			dvid.Errorf("index cache set for data %q, label %d: %v\n", d.DataName(), toLabel, err)
+			return
+		}
+	}
 }
 
 // SplitSupervoxelIndex modifies the label index for a given supervoxel, returning the slice of blocks

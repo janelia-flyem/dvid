@@ -991,7 +991,7 @@ POST <api URL>/node/<UUID>/<data name>/split-supervoxel/<supervoxel>
 				"UUID": <UUID on which split was done>
 			}
 	
-	POST <api URL>/node/<UUID>/<data name>/index/<label>
+POST <api URL>/node/<UUID>/<data name>/index/<label>
 
 	Allows direct storing of an index (blocks per supervoxel and their voxel count) for any
 	particular label.  Typically, these indices are computed on-the-fly during ingestion of
@@ -1780,6 +1780,7 @@ func (d *Data) sendBlocksSpecific(ctx *datastore.VersionedCtx, w http.ResponseWr
 	case "":
 		compression = "blocks"
 	case "lz4", "gzip", "blocks", "uncompressed":
+		break
 	default:
 		return fmt.Errorf(`compression must be "lz4" (default), "gzip", "blocks" or "uncompressed"`)
 	}

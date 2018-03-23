@@ -33,9 +33,48 @@ func (pb PositionedBlock) OffsetDVID() (dvid.Point3d, error) {
 	return pb.BCoord.VoxelOffset(pb.Size)
 }
 
-// Split a target label using RLEs within a block by doing full expansion of block into uint64 array.
-// Only the target label is split.  A nil split block is returned if target label is not within block.
-func (pb PositionedBlock) SplitSlow(op SplitOp) (split *Block, keptSize, splitSize uint64, err error) {
+// SplitWithStats writes a new label into the RLEs defined by the split and returns how many of
+// each label was overwritten.  This is done by doing full expansion of block into uint64 array.
+func (pb PositionedBlock) SplitWithStats(op SplitOp) (split *Block, counts map[uint64]uint32, err error) {
+	var offset dvid.Point3d
+	if offset, err = pb.OffsetDVID(); err != nil {
+		return
+	}
+	lblarrayBytes, _ := pb.MakeLabelVolume()
+	lblarray, err := dvid.ByteToUint64(lblarrayBytes)
+	if err != nil {
+		return
+	}
+	counts = make(map[uint64]uint32)
+
+	rles := op.RLEs.Offset(offset)
+	for _, rle := range rles {
+		pt := rle.StartPt()
+		i := pt[2]*pb.Size[1]*pb.Size[0] + pt[1]*pb.Size[0] + pt[0]
+		for x := int32(0); x < rle.Length(); x++ {
+			lbl := lblarray[i]
+			counts[lbl]++
+			lblarray[i] = op.NewLabel
+			i++
+		}
+	}
+
+	split, err = MakeBlock(lblarrayBytes, pb.Size)
+	return
+}
+
+// Split a target label using RLEs within a block.  Only the target label is split.
+// A nil split block is returned if target label is not within block.
+// TODO: If RLEs continue to be used for splits, refactor / split up to make this more readable.
+func (pb PositionedBlock) Split(op SplitOp) (split *Block, keptSize, splitSize uint64, err error) {
+	return pb.splitSlow(op)
+	// return pb.splitFast(op)
+}
+
+// splitSlow splits a target label using RLEs within a block by doing full expansion of block into
+// uint64 array.  Only the target label is split.  A nil split block is returned if target label
+// is not within block.
+func (pb PositionedBlock) splitSlow(op SplitOp) (split *Block, keptSize, splitSize uint64, err error) {
 	var offset dvid.Point3d
 	if offset, err = pb.OffsetDVID(); err != nil {
 		return
@@ -70,6 +109,229 @@ func (pb PositionedBlock) SplitSlow(op SplitOp) (split *Block, keptSize, splitSi
 	}
 
 	split, err = MakeBlock(lblarrayBytes, pb.Size)
+	return
+}
+
+// not working at this time.
+func (pb PositionedBlock) splitFast(op SplitOp) (split *Block, keptSize, splitSize uint64, err error) {
+	var offset dvid.Point3d
+	if offset, err = pb.OffsetDVID(); err != nil {
+		return
+	}
+
+	gx, gy, gz := pb.Size[0]/SubBlockSize, pb.Size[1]/SubBlockSize, pb.Size[2]/SubBlockSize
+	numSubBlocks := uint32(gx * gy * gz)
+
+	// Create a bitmask for all split voxels of the Block.
+	rles := op.RLEs.Offset(offset)
+	splitVoxels := make([]bool, pb.Size[0]*pb.Size[1]*pb.Size[2])
+	for _, rle := range rles {
+		pt := rle.StartPt()
+		i := pt[2]*pb.Size[1]*pb.Size[0] + pt[1]*pb.Size[0] + pt[0]
+		for x := int32(0); x < rle.Length(); x++ {
+			if i >= int32(len(splitVoxels)) {
+				err = fmt.Errorf("bad RLE / block size: rle %s, block size %s, offset %s", rle, pb.Size, offset)
+				return
+			}
+			// fmt.Printf("Added split voxel @ (%d, %d, %d)\n", pt[0]+x+offset[0], pt[1]+offset[1], pt[2]+offset[2])
+			splitVoxels[i] = true
+			i++
+		}
+	}
+
+	// Check if the target and split label is present.
+	var splitIndex, targetIndex uint32
+	var splitPresent, targetPresent bool
+	for i, label := range pb.Labels {
+		if label == op.NewLabel {
+			splitPresent = true
+			splitIndex = uint32(i)
+		}
+		if label == op.Target {
+			targetPresent = true
+			targetIndex = uint32(i)
+		}
+	}
+	if !targetPresent {
+		return
+	}
+	numLabels := uint32(len(pb.Labels))
+	numNewLabels := numLabels
+	if !splitPresent {
+		splitIndex = numLabels
+		numNewLabels++
+	}
+
+	// Iterate through all the sub-blocks, determining if the split label adds to that sub-block's indices
+	// and therefore changes the # of encoding bits necessary for the values.
+	subBlockNumVoxels := uint32(SubBlockSize * SubBlockSize * SubBlockSize)
+	indexAdded := make([]bool, numSubBlocks)    // true if we added index to split label for the sub-block
+	svalues := make([]byte, numSubBlocks*512*2) // max size allocation for sub-blocks' encoded values
+	var sbNum, indexPos uint32
+	var bitpos, bitposNew uint32
+	var numNewSubBlockIndices uint32
+	for sz := int32(0); sz < gz; sz++ {
+		for sy := int32(0); sy < gy; sy++ {
+			for sx := int32(0); sx < gx; sx, sbNum = sx+1, sbNum+1 {
+				numSBLabels := pb.NumSBLabels[sbNum]
+				bits := bitsFor(numSBLabels)
+				numSBLabelsNew := numSBLabels
+				numNewSubBlockIndices += uint32(numSBLabels)
+
+				// is the target or split label in index?
+				var sbSplitFound, sbTargetFound bool
+				var sbSplitIndex, sbTargetIndex uint16
+				for i := uint16(0); i < numSBLabels; i++ {
+					index := pb.SBIndices[indexPos]
+					if index == splitIndex {
+						sbSplitFound = true
+						sbSplitIndex = i
+					}
+					if index == targetIndex {
+						sbTargetFound = true
+						sbTargetIndex = i
+					}
+					indexPos++
+				}
+				if !sbTargetFound {
+					// We can skip this sub-block.
+					bytepos := bitpos >> 3
+					byteposNew := bitposNew >> 3
+					sbBits := bits * subBlockNumVoxels
+					if sbBits%8 != 0 {
+						sbBits += 8 - (sbBits % 8)
+					}
+					sbBytes := sbBits >> 3
+					copy(svalues[byteposNew:byteposNew+sbBytes], pb.SBValues[bytepos:bytepos+sbBytes])
+					bitpos += sbBits
+					bitposNew += sbBits
+					continue
+				}
+				if !sbSplitFound {
+					indexAdded[sbNum] = true
+					sbSplitIndex = numSBLabels
+					numSBLabelsNew++
+					numNewSubBlockIndices++
+				}
+				bitsNew := bitsFor(numSBLabelsNew)
+
+				if bitsNew > 0 {
+					// Transfer the data from old to new with possible added index size.
+					for z := int32(0); z < SubBlockSize; z++ {
+						blockZ := sz*SubBlockSize + z
+						for y := int32(0); y < SubBlockSize; y++ {
+							blockY := sy*SubBlockSize + y
+							for x := int32(0); x < SubBlockSize; x++ {
+								var oldIndex, newIndex uint16
+								bithead := bitpos % 8
+								bytepos := bitpos >> 3
+								if bithead+bits <= 8 {
+									// index totally within this byte
+									rightshift := uint(8 - bithead - bits)
+									oldIndex = uint16((pb.SBValues[bytepos] & leftBitMask[bithead]) >> rightshift)
+								} else {
+									// index spans byte boundaries
+									oldIndex = uint16(pb.SBValues[bytepos]&leftBitMask[bithead]) << 8
+									oldIndex |= uint16(pb.SBValues[bytepos+1])
+									oldIndex >>= uint(16 - bithead - bits)
+								}
+
+								newIndex = oldIndex
+								if oldIndex == sbTargetIndex {
+									blockPos := blockZ*pb.Size[1]*pb.Size[0] + blockY*pb.Size[0] + sx*SubBlockSize + x
+									if splitVoxels[blockPos] {
+										newIndex = sbSplitIndex
+										splitSize++
+									} else {
+										keptSize++
+									}
+								}
+
+								bitheadNew := bitposNew % 8
+								byteposNew := bitposNew >> 3
+								if bithead+bits <= 8 {
+									// index totally within this byte
+									leftshift := uint(8 - bitsNew - bitheadNew)
+									svalues[byteposNew] |= byte(newIndex << leftshift)
+								} else {
+									// this straddles a byte boundary
+									leftshift := uint(16 - bitsNew - bitheadNew)
+									newIndex <<= leftshift
+									svalues[byteposNew] |= byte((newIndex & 0xFF00) >> 8)
+									svalues[byteposNew+1] = byte(newIndex & 0x00FF)
+								}
+
+								bitpos += bits
+								bitposNew += bitsNew
+							}
+						}
+					}
+					// make sure a byte doesn't have two sub-blocks' encoded values
+					if bitpos%8 != 0 {
+						bitpos += 8 - (bitpos % 8)
+					}
+					if bitposNew%8 != 0 {
+						bitposNew += 8 - (bitposNew % 8)
+					}
+				}
+			}
+		}
+	}
+
+	// Write all the labels, num sb labels, sb indices, and values to final buffer.
+	subBlockIndexBytes := numNewSubBlockIndices * 4
+	subBlockValueBytes := uint32(bitposNew >> 3)
+	blockBytes := 16 + numNewLabels*8 + numSubBlocks*2 + subBlockIndexBytes + subBlockValueBytes
+
+	split = new(Block)
+	split.Size = pb.Size
+	split.data = dvid.New8ByteAlignBytes(blockBytes)
+	pos := uint32(16)
+	nbytes := numLabels * 8
+	copy(split.data[:pos+nbytes], pb.data[:pos+nbytes])
+	if !splitPresent {
+		binary.LittleEndian.PutUint32(split.data[12:16], numNewLabels)
+		binary.LittleEndian.PutUint64(split.data[pos+nbytes:pos+nbytes+8], op.NewLabel)
+		nbytes += 8
+	}
+	if split.Labels, err = dvid.ByteToUint64(split.data[pos : pos+nbytes]); err != nil {
+		return
+	}
+
+	pos += nbytes
+	nbytes = numSubBlocks * 2
+	if split.NumSBLabels, err = dvid.ByteToUint16(split.data[pos : pos+nbytes]); err != nil {
+		return
+	}
+	for i, num := range pb.NumSBLabels {
+		if indexAdded[i] {
+			split.NumSBLabels[i] = num + 1
+		} else {
+			split.NumSBLabels[i] = num
+		}
+	}
+
+	pos += nbytes
+	if split.SBIndices, err = dvid.ByteToUint32(split.data[pos : pos+subBlockIndexBytes]); err != nil {
+		return
+	}
+	indexPos = 0
+	var newIndexPos uint32
+	for sbNum := uint32(0); sbNum < numSubBlocks; sbNum++ {
+		for i := uint16(0); i < pb.NumSBLabels[sbNum]; i++ {
+			split.SBIndices[newIndexPos] = pb.SBIndices[indexPos]
+			newIndexPos++
+			indexPos++
+		}
+		if indexAdded[sbNum] {
+			split.SBIndices[newIndexPos] = splitIndex
+			newIndexPos++
+		}
+	}
+
+	pos += subBlockIndexBytes
+	split.SBValues = split.data[pos:]
+	copy(split.SBValues, svalues[:subBlockValueBytes])
 	return
 }
 
@@ -112,234 +374,6 @@ func (pb PositionedBlock) SplitSupervoxel(op SplitSupervoxelOp) (split *Block, k
 
 	split, err = MakeBlock(lblarrayBytes, pb.Size)
 	return
-}
-
-// Split a target label using RLEs within a block.  Only the target label is split.
-// A nil split block is returned if target label is not within block.
-// TODO: If RLEs continue to be used for splits, refactor / split up to make this more readable.
-func (pb PositionedBlock) Split(op SplitOp) (split *Block, keptSize, splitSize uint64, err error) {
-	return pb.SplitSlow(op)
-	/*
-		var offset dvid.Point3d
-		if offset, err = pb.OffsetDVID(); err != nil {
-			return
-		}
-
-		gx, gy, gz := pb.Size[0]/SubBlockSize, pb.Size[1]/SubBlockSize, pb.Size[2]/SubBlockSize
-		numSubBlocks := uint32(gx * gy * gz)
-
-		// Create a bitmask for all split voxels of the Block.
-		rles := op.RLEs.Offset(offset)
-		splitVoxels := make([]bool, pb.Size[0]*pb.Size[1]*pb.Size[2])
-		for _, rle := range rles {
-			pt := rle.StartPt()
-			i := pt[2]*pb.Size[1]*pb.Size[0] + pt[1]*pb.Size[0] + pt[0]
-			for x := int32(0); x < rle.Length(); x++ {
-				if i >= int32(len(splitVoxels)) {
-					err = fmt.Errorf("bad RLE / block size: rle %s, block size %s, offset %s\n", rle, pb.Size, offset)
-					return
-				}
-				// fmt.Printf("Added split voxel @ (%d, %d, %d)\n", pt[0]+x+offset[0], pt[1]+offset[1], pt[2]+offset[2])
-				splitVoxels[i] = true
-				i++
-			}
-		}
-
-		// Check if the target and split label is present.
-		var splitIndex, targetIndex uint32
-		var splitPresent, targetPresent bool
-		for i, label := range pb.Labels {
-			if label == op.NewLabel {
-				splitPresent = true
-				splitIndex = uint32(i)
-			}
-			if label == op.Target {
-				targetPresent = true
-				targetIndex = uint32(i)
-			}
-		}
-		if !targetPresent {
-			return
-		}
-		numLabels := uint32(len(pb.Labels))
-		numNewLabels := numLabels
-		if !splitPresent {
-			splitIndex = numLabels
-			numNewLabels++
-		}
-
-		// Iterate through all the sub-blocks, determining if the split label adds to that sub-block's indices
-		// and therefore changes the # of encoding bits necessary for the values.
-		subBlockNumVoxels := uint32(SubBlockSize * SubBlockSize * SubBlockSize)
-		indexAdded := make([]bool, numSubBlocks)    // true if we added index to split label for the sub-block
-		svalues := make([]byte, numSubBlocks*512*2) // max size allocation for sub-blocks' encoded values
-		var sbNum, indexPos uint32
-		var bitpos, bitposNew uint32
-		var numNewSubBlockIndices uint32
-		for sz := int32(0); sz < gz; sz++ {
-			for sy := int32(0); sy < gy; sy++ {
-				for sx := int32(0); sx < gx; sx, sbNum = sx+1, sbNum+1 {
-					numSBLabels := pb.NumSBLabels[sbNum]
-					bits := bitsFor(numSBLabels)
-					numSBLabelsNew := numSBLabels
-					numNewSubBlockIndices += uint32(numSBLabels)
-
-					// is the target or split label in index?
-					var sbSplitFound, sbTargetFound bool
-					var sbSplitIndex, sbTargetIndex uint16
-					for i := uint16(0); i < numSBLabels; i++ {
-						index := pb.SBIndices[indexPos]
-						if index == splitIndex {
-							sbSplitFound = true
-							sbSplitIndex = i
-						}
-						if index == targetIndex {
-							sbTargetFound = true
-							sbTargetIndex = i
-						}
-						indexPos++
-					}
-					if !sbTargetFound {
-						// We can skip this sub-block.
-						bytepos := bitpos >> 3
-						byteposNew := bitposNew >> 3
-						sbBits := bits * subBlockNumVoxels
-						if sbBits%8 != 0 {
-							sbBits += 8 - (sbBits % 8)
-						}
-						sbBytes := sbBits >> 3
-						copy(svalues[byteposNew:byteposNew+sbBytes], pb.SBValues[bytepos:bytepos+sbBytes])
-						bitpos += sbBits
-						bitposNew += sbBits
-						continue
-					}
-					if !sbSplitFound {
-						indexAdded[sbNum] = true
-						sbSplitIndex = numSBLabels
-						numSBLabelsNew++
-						numNewSubBlockIndices++
-					}
-					bitsNew := bitsFor(numSBLabelsNew)
-
-					if bitsNew > 0 {
-						// Transfer the data from old to new with possible added index size.
-						for z := int32(0); z < SubBlockSize; z++ {
-							blockZ := sz*SubBlockSize + z
-							for y := int32(0); y < SubBlockSize; y++ {
-								blockY := sy*SubBlockSize + y
-								for x := int32(0); x < SubBlockSize; x++ {
-									var oldIndex, newIndex uint16
-									bithead := bitpos % 8
-									bytepos := bitpos >> 3
-									if bithead+bits <= 8 {
-										// index totally within this byte
-										rightshift := uint(8 - bithead - bits)
-										oldIndex = uint16((pb.SBValues[bytepos] & leftBitMask[bithead]) >> rightshift)
-									} else {
-										// index spans byte boundaries
-										oldIndex = uint16(pb.SBValues[bytepos]&leftBitMask[bithead]) << 8
-										oldIndex |= uint16(pb.SBValues[bytepos+1])
-										oldIndex >>= uint(16 - bithead - bits)
-									}
-
-									newIndex = oldIndex
-									if oldIndex == sbTargetIndex {
-										blockPos := blockZ*pb.Size[1]*pb.Size[0] + blockY*pb.Size[0] + sx*SubBlockSize + x
-										if splitVoxels[blockPos] {
-											newIndex = sbSplitIndex
-											splitSize++
-										} else {
-											keptSize++
-										}
-									}
-
-									bitheadNew := bitposNew % 8
-									byteposNew := bitposNew >> 3
-									if bithead+bits <= 8 {
-										// index totally within this byte
-										leftshift := uint(8 - bitsNew - bitheadNew)
-										svalues[byteposNew] |= byte(newIndex << leftshift)
-									} else {
-										// this straddles a byte boundary
-										leftshift := uint(16 - bitsNew - bitheadNew)
-										newIndex <<= leftshift
-										svalues[byteposNew] |= byte((newIndex & 0xFF00) >> 8)
-										svalues[byteposNew+1] = byte(newIndex & 0x00FF)
-									}
-
-									bitpos += bits
-									bitposNew += bitsNew
-								}
-							}
-						}
-						// make sure a byte doesn't have two sub-blocks' encoded values
-						if bitpos%8 != 0 {
-							bitpos += 8 - (bitpos % 8)
-						}
-						if bitposNew%8 != 0 {
-							bitposNew += 8 - (bitposNew % 8)
-						}
-					}
-				}
-			}
-		}
-
-		// Write all the labels, num sb labels, sb indices, and values to final buffer.
-		subBlockIndexBytes := numNewSubBlockIndices * 4
-		subBlockValueBytes := uint32(bitposNew >> 3)
-		blockBytes := 16 + numNewLabels*8 + numSubBlocks*2 + subBlockIndexBytes + subBlockValueBytes
-
-		split = new(Block)
-		split.Size = pb.Size
-		split.data = dvid.New8ByteAlignBytes(blockBytes)
-		pos := uint32(16)
-		nbytes := numLabels * 8
-		copy(split.data[:pos+nbytes], pb.data[:pos+nbytes])
-		if !splitPresent {
-			binary.LittleEndian.PutUint32(split.data[12:16], numNewLabels)
-			binary.LittleEndian.PutUint64(split.data[pos+nbytes:pos+nbytes+8], op.NewLabel)
-			nbytes += 8
-		}
-		if split.Labels, err = dvid.ByteToUint64(split.data[pos : pos+nbytes]); err != nil {
-			return
-		}
-
-		pos += nbytes
-		nbytes = numSubBlocks * 2
-		if split.NumSBLabels, err = dvid.ByteToUint16(split.data[pos : pos+nbytes]); err != nil {
-			return
-		}
-		for i, num := range pb.NumSBLabels {
-			if indexAdded[i] {
-				split.NumSBLabels[i] = num + 1
-			} else {
-				split.NumSBLabels[i] = num
-			}
-		}
-
-		pos += nbytes
-		if split.SBIndices, err = dvid.ByteToUint32(split.data[pos : pos+subBlockIndexBytes]); err != nil {
-			return
-		}
-		indexPos = 0
-		var newIndexPos uint32
-		for sbNum := uint32(0); sbNum < numSubBlocks; sbNum++ {
-			for i := uint16(0); i < pb.NumSBLabels[sbNum]; i++ {
-				split.SBIndices[newIndexPos] = pb.SBIndices[indexPos]
-				newIndexPos++
-				indexPos++
-			}
-			if indexAdded[sbNum] {
-				split.SBIndices[newIndexPos] = splitIndex
-				newIndexPos++
-			}
-		}
-
-		pos += subBlockIndexBytes
-		split.SBValues = split.data[pos:]
-		copy(split.SBValues, svalues[:subBlockValueBytes])
-		return
-	*/
 }
 
 // MakeSolidBlock returns a Block that represents a single label of the given block size.

@@ -809,6 +809,114 @@ func TestMergeLabels(t *testing.T) {
 	}
 }
 
+func TestSplitLabel(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+
+	// Create testbed volume and data instances
+	uuid, _ := initTestRepo()
+	var config dvid.Config
+	config.Set("BlockSize", "32,32,32") // Previous test data was on 32^3 blocks
+	server.CreateTestInstance(t, uuid, "labelmap", "labels", config)
+
+	// Post label volume and setup expected volume after split.
+	expected := createLabelTestVolume(t, uuid, "labels")
+	expected.addBody(bodysplit, 5)
+
+	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
+		t.Fatalf("Error blocking on sync of labels: %v\n", err)
+	}
+
+	// Make sure sparsevol for original body 4 is correct
+	reqStr := fmt.Sprintf("%snode/%s/labels/sparsevol/%d", server.WebAPIPath, uuid, 4)
+	encoding := server.TestHTTP(t, "GET", reqStr, nil)
+	fmt.Printf("Checking original body 4 is correct\n")
+	body4.checkSparseVol(t, encoding, dvid.OptionalBounds{})
+
+	// Create the sparsevol encoding for split area
+	numspans := len(bodysplit.voxelSpans)
+	rles := make(dvid.RLEs, numspans, numspans)
+	for i, span := range bodysplit.voxelSpans {
+		start := dvid.Point3d{span[2], span[1], span[0]}
+		length := span[3] - span[2] + 1
+		rles[i] = dvid.NewRLE(start, length)
+	}
+
+	// Create the split sparse volume binary
+	buf := new(bytes.Buffer)
+	buf.WriteByte(dvid.EncodingBinary)
+	binary.Write(buf, binary.LittleEndian, uint8(3))         // # of dimensions
+	binary.Write(buf, binary.LittleEndian, byte(0))          // dimension of run (X = 0)
+	buf.WriteByte(byte(0))                                   // reserved for later
+	binary.Write(buf, binary.LittleEndian, uint32(0))        // Placeholder for # voxels
+	binary.Write(buf, binary.LittleEndian, uint32(numspans)) // Placeholder for # spans
+	rleBytes, err := rles.MarshalBinary()
+	if err != nil {
+		t.Errorf("Unable to serialize RLEs: %v\n", err)
+	}
+	buf.Write(rleBytes)
+
+	// Verify the max label is 4
+	reqStr = fmt.Sprintf("%snode/%s/labels/maxlabel", server.WebAPIPath, uuid)
+	jsonStr := server.TestHTTP(t, "GET", reqStr, nil)
+	expectedJSON := `{"maxlabel": 4}`
+	if string(jsonStr) != expectedJSON {
+		t.Errorf("Expected this JSON returned from maxlabel:\n%s\nGot:\n%s\n", expectedJSON, string(jsonStr))
+	}
+
+	// Submit the split sparsevol for body 4 using RLES "bodysplit"
+	reqStr = fmt.Sprintf("%snode/%s/labels/split/%d", server.WebAPIPath, uuid, 4)
+	r := server.TestHTTP(t, "POST", reqStr, buf)
+	jsonVal := make(map[string]uint64)
+	if err := json.Unmarshal(r, &jsonVal); err != nil {
+		t.Errorf("Unable to get new label from split.  Instead got: %v\n", jsonVal)
+	}
+	newlabel, ok := jsonVal["label"]
+	if !ok {
+		t.Errorf("The split request did not yield label value.  Instead got: %v\n", jsonVal)
+	}
+	if newlabel != 5 {
+		t.Errorf("Expected split label to be 5, instead got %d\n", newlabel)
+	}
+
+	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
+		t.Fatalf("Error blocking on sync of labels: %v\n", err)
+	}
+
+	retrieved := newTestVolume(128, 128, 128)
+	retrieved.get(t, uuid, "labels", false)
+	if len(retrieved.data) != 8*128*128*128 {
+		t.Errorf("Retrieved post-split volume is incorrect size\n")
+	}
+	if err := retrieved.equals(expected); err != nil {
+		t.Errorf("Split label volume not equal to expected volume: %v\n", err)
+	}
+
+	// Check split body 5 usine legacy RLEs
+	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/%d", server.WebAPIPath, uuid, 5)
+	encoding = server.TestHTTP(t, "GET", reqStr, nil)
+	bodysplit.checkSparseVol(t, encoding, dvid.OptionalBounds{})
+
+	// Make sure sparsevol for original body 4 is correct
+	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/%d", server.WebAPIPath, uuid, 4)
+	encoding = server.TestHTTP(t, "GET", reqStr, nil)
+	bodyleft.checkSparseVol(t, encoding, dvid.OptionalBounds{})
+
+	// Do a merge of two after the split
+	testMerge := mergeJSON(`[4, 5]`)
+	testMerge.send(t, uuid, "labels")
+
+	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
+		t.Fatalf("Error blocking on bodies update: %v\n", err)
+	}
+
+	// Make sure we wind up with original body 4
+	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/4", server.WebAPIPath, uuid)
+	encoding = server.TestHTTP(t, "GET", reqStr, nil)
+	body4.checkSparseVol(t, encoding, dvid.OptionalBounds{})
+}
 func TestIngest(t *testing.T) {
 	if err := server.OpenTest(); err != nil {
 		t.Fatalf("can't open test server: %v\n", err)
