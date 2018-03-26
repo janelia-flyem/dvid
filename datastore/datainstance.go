@@ -652,7 +652,7 @@ func (d *Data) GobDecode(b []byte) error {
 		}
 	}
 	if err := dec.Decode(&(d.tags)); err != nil {
-		dvid.Infof("Serialization of data %q had no tags.  Skipping reading of tags.", d.name)
+		dvid.Infof("Serialization of data %q had no tags.  Skipping reading of tags.\n", d.name)
 	}
 	return nil
 }
@@ -787,7 +787,7 @@ func (d *Data) ModifyConfig(config dvid.Config) error {
 				bparts := strings.Split(blockstr, ",")
 				firstdim, err = strconv.Atoi(bparts[0])
 				if err != nil {
-					return fmt.Errorf("Unable to parse first block dim (%q).", bparts[0])
+					return fmt.Errorf("unable to parse first block dim (%q)", bparts[0])
 				}
 				if firstdim <= 0 {
 					return fmt.Errorf("Invalid blocksize dim for jpeg compression")
@@ -801,7 +801,7 @@ func (d *Data) ModifyConfig(config dvid.Config) error {
 			if len(parts) == 2 && parts[0] == "gzip" {
 				level, err := strconv.Atoi(parts[1])
 				if err != nil {
-					return fmt.Errorf("Unable to parse gzip compression level (%q).  Should be 'gzip:<level>'.", parts[1])
+					return fmt.Errorf("unable to parse gzip compression level (%q).  Should be 'gzip:<level>'", parts[1])
 				}
 				d.compression, _ = dvid.NewCompression(dvid.Gzip, dvid.CompressionLevel(level))
 			} else {

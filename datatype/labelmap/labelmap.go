@@ -35,7 +35,7 @@ import (
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
 
-	lz4 "github.com/janelia-flyem/go/golz4"
+	"github.com/pierrec/lz4"
 )
 
 const (
@@ -1954,7 +1954,7 @@ func (d *Data) sendBlock(w http.ResponseWriter, b blockData) error {
 		switch formatIn {
 		case dvid.LZ4:
 			uncompressed = make([]byte, outsize)
-			if err := lz4.Uncompress(out, uncompressed); err != nil {
+			if _, err := lz4.UncompressBlock(out, uncompressed, 0); err != nil {
 				return err
 			}
 		case dvid.Uncompressed:
@@ -2004,9 +2004,9 @@ func (d *Data) sendBlock(w http.ResponseWriter, b blockData) error {
 
 			switch formatOut {
 			case dvid.LZ4:
-				recompressed = make([]byte, lz4.CompressBound(uint64array))
+				recompressed = make([]byte, lz4.CompressBlockBound(len(uint64array)))
 				var size int
-				if size, err = lz4.Compress(uint64array, recompressed); err != nil {
+				if size, err = lz4.CompressBlock(uint64array, recompressed, 0); err != nil {
 					return err
 				}
 				outsize = uint32(size)
@@ -2570,9 +2570,9 @@ func sendBinaryData(compression string, data []byte, subvol *dvid.Subvolume, w h
 			return err
 		}
 	case "lz4":
-		compressed := make([]byte, lz4.CompressBound(data))
+		compressed := make([]byte, lz4.CompressBlockBound(len(data)))
 		var n, outSize int
-		if outSize, err = lz4.Compress(data, compressed); err != nil {
+		if outSize, err = lz4.CompressBlock(data, compressed, 0); err != nil {
 			return err
 		}
 		compressed = compressed[:outSize]
@@ -2643,8 +2643,7 @@ func GetBinaryData(compression string, in io.ReadCloser, estsize int64) ([]byte,
 		}
 		tlog = dvid.NewTimeLog()
 		uncompressed := make([]byte, estsize)
-		err = lz4.Uncompress(data, uncompressed)
-		if err != nil {
+		if _, err = lz4.UncompressBlock(data, uncompressed, 0); err != nil {
 			return nil, err
 		}
 		data = uncompressed
@@ -3327,7 +3326,7 @@ func (d *Data) getSparsevolOptions(r *http.Request) (b dvid.Bounds, compression 
 	compression = queryStrings.Get("compression")
 
 	if b.Voxel, err = dvid.OptionalBoundsFromQueryString(r); err != nil {
-		err = fmt.Errorf("Error parsing bounds from query string: %v\n", err)
+		err = fmt.Errorf("error parsing bounds from query string: %v", err)
 		return
 	}
 	blockSize, ok := d.BlockSize().(dvid.Point3d)

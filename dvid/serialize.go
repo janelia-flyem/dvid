@@ -18,7 +18,7 @@ import (
 	_ "log"
 
 	"github.com/golang/snappy"
-	lz4 "github.com/janelia-flyem/go/golz4"
+	"github.com/pierrec/lz4"
 )
 
 // Compression is the format of compression for storing data.
@@ -200,14 +200,20 @@ func SerializeData(data []byte, compress Compression, checksum Checksum) ([]byte
 		byteData = snappy.Encode(nil, data)
 	case LZ4:
 		origSize := uint32(len(data))
-		byteData = make([]byte, lz4.CompressBound(data)+4)
-		binary.LittleEndian.PutUint32(byteData[0:4], origSize)
+		byteData = make([]byte, lz4.CompressBlockBound(len(data))+4)
 		var outSize int
-		outSize, err = lz4.Compress(data, byteData[4:])
+		outSize, err = lz4.CompressBlock(data, byteData[4:], 0)
 		if err != nil {
 			return nil, err
 		}
-		byteData = byteData[:4+outSize]
+		if outSize == 0 { // incompressible
+			origSize = 0
+			byteData = make([]byte, len(data)+4)
+			copy(byteData[4:], data)
+		} else {
+			byteData = byteData[:4+outSize]
+		}
+		binary.LittleEndian.PutUint32(byteData[0:4], origSize)
 	case JPEG:
 		origSize := int(len(data))
 		length := origSize / int(compress.level)
@@ -347,10 +353,16 @@ func DeserializeData(s []byte, uncompress bool) ([]byte, CompressionFormat, erro
 		}
 		return data, compression, nil
 	case LZ4:
+		var data []byte
 		origSize := binary.LittleEndian.Uint32(cdata[0:4])
-		data := make([]byte, int(origSize))
-		if err := lz4.Uncompress(cdata[4:], data); err != nil {
-			return nil, 0, err
+		if origSize == 0 {
+			data = make([]byte, len(cdata)-4)
+			copy(data, cdata[4:])
+		} else {
+			data = make([]byte, int(origSize))
+			if _, err := lz4.UncompressBlock(cdata[4:], data, 0); err != nil {
+				return nil, 0, err
+			}
 		}
 		return data, compression, nil
 	case JPEG:

@@ -18,7 +18,7 @@ import (
 	"github.com/janelia-flyem/dvid/storage"
 
 	"github.com/coocood/freecache"
-	lz4 "github.com/janelia-flyem/go/golz4"
+	"github.com/pierrec/lz4"
 )
 
 const (
@@ -1050,9 +1050,9 @@ func (d *Data) WriteLegacyRLE(ctx *datastore.VersionedCtx, label uint64, scale u
 	case "":
 		_, err = w.Write(data)
 	case "lz4":
-		compressed := make([]byte, lz4.CompressBound(data))
+		compressed := make([]byte, lz4.CompressBlockBound(len(data)))
 		var n, outSize int
-		if outSize, err = lz4.Compress(data, compressed); err != nil {
+		if outSize, err = lz4.CompressBlock(data, compressed, 0); err != nil {
 			return
 		}
 		compressed = compressed[:outSize]

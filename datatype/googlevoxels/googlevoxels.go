@@ -26,7 +26,7 @@ import (
 	"golang.org/x/oauth2/google"
 
 	"github.com/golang/snappy"
-	lz4 "github.com/janelia-flyem/go/golz4"
+	"github.com/pierrec/lz4"
 )
 
 const (
@@ -1093,8 +1093,8 @@ func (d *Data) serveVolume(w http.ResponseWriter, r *http.Request, geom *GoogleS
 			return err
 		}
 		// Recompress and transmit as lz4
-		lz4data := make([]byte, lz4.CompressBound(data))
-		outSize, err := lz4.Compress(data, lz4data)
+		lz4data := make([]byte, lz4.CompressBlockBound(len(data)))
+		outSize, err := lz4.CompressBlock(data, lz4data, 0)
 		if err != nil {
 			return err
 		}

@@ -2,6 +2,7 @@ package dvid
 
 import (
 	"testing"
+
 	. "github.com/janelia-flyem/go/gocheck"
 )
 
@@ -49,7 +50,9 @@ func (suite *DataSuite) TestSerialization(c *C) {
 				c.Errorf("Bad Serialize() - output length 0")
 			}
 
-			err = Deserialize(s, &returnObj)
+			if err = Deserialize(s, &returnObj); err != nil {
+				c.Errorf("Bad Deserialize() for %q: %v", stringObj, err)
+			}
 			c.Assert(err, IsNil)
 			c.Assert(returnObj, Equals, stringObj)
 

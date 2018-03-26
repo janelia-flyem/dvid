@@ -22,7 +22,7 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 
-	lz4 "github.com/janelia-flyem/go/golz4"
+	"github.com/pierrec/lz4"
 )
 
 var (
@@ -405,7 +405,7 @@ func TestSparseVolumes(t *testing.T) {
 
 		// Check with lz4 compression
 		compressed := server.TestHTTP(t, "GET", reqStr+"?compression=lz4", nil)
-		if err := lz4.Uncompress(compressed, encoding); err != nil {
+		if _, err := lz4.UncompressBlock(compressed, encoding, 0); err != nil {
 			t.Fatalf("error uncompressing lz4: %v\n", err)
 		}
 		bodies[label-1].checkSparseVol(t, encoding, dvid.OptionalBounds{})
