@@ -2304,7 +2304,9 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 	}
 
 	wg.Wait()
-	close(blockCh)
+	if blockCh != nil {
+		close(blockCh)
+	}
 
 	if extentsChanged {
 		if err := d.PostExtents(ctx, extents.StartPoint(), extents.EndPoint()); err != nil {
