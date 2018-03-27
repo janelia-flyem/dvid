@@ -1,3 +1,25 @@
+/*
+Package server configures and launches http/rpc server and storage engines specific
+to the type of DVID platform: local (e.g., running on MacBook Pro), clustered, or
+using cloud-based services like Google Cloud.
+
+Datatypes can use any of the three tiers of storage (MetaData, Mutable, Immutable)
+that provide a layer of storage semantics (latency, mutability, etc) on top of
+underlying storage engines.
+
+The DVID web client is also managed from this package.	For a DVID web console, see the
+repo:
+
+https://github.com/janelia-flyem/dvid-console
+
+The goal of a DVID web console is to provide a GUI for monitoring and performing
+a subset of operations in a nicely formatted view.
+
+DVID command line interaction occurs via the rpc interface to a running server.
+Please see the main DVID documentation:
+
+http://godoc.org/github.com/janelia-flyem/dvid
+*/
 package server
 
 import (
@@ -14,7 +36,7 @@ import (
 	"github.com/janelia-flyem/dvid/storage"
 )
 
-// DVID server configuration parameters.  Should be set by platform-specific implementations.
+// Config provides server configuration parameters.  Should be set by platform-specific implementations.
 type Config interface {
 	Host() string // User understandable alias for this server, e.g., "emdata2" instead of "localhost" or "c06u30".
 	HTTPAddress() string
@@ -27,13 +49,13 @@ type Config interface {
 	AllowTiming() bool
 }
 
-// Returns configuration settings for the server, which is set by each platform-specific server code.
+// GetConfig returns configuration settings for the server, which is set by each platform-specific server code.
 func GetConfig() Config {
 	return config
 }
 
 var (
-	// Don't allow requests that will return more than this amount of data.
+	// MaxDataRequest sets the limit on the amount of data that could be returned for a request
 	MaxDataRequest = int64(3) * dvid.Giga
 
 	// InteractiveOpsPer2Min gives the number of interactive-level requests
@@ -53,7 +75,7 @@ var (
 	// MaxInteractiveOpsBeforeBlock specifies the number of interactive requests
 	// per minute that are allowed before batch-like computation (e.g., loading
 	// of voxel volumes) is blocked.
-	MaxInteractiveOpsBeforeBlock int = 3
+	MaxInteractiveOpsBeforeBlock = 3
 
 	// ActiveHandlers is maximum number of active handlers over last second.
 	ActiveHandlers int
@@ -75,20 +97,20 @@ var (
 	// concurrent requests launch a few goroutines each.
 	LargeMutationMutex sync.Mutex
 
-	// Timeout in seconds for waiting to open a datastore for exclusive access.
+	// TimeoutSecs specifies the seconds waiting to open a datastore for exclusive access.
 	TimeoutSecs int
 
 	// maxThrottledOps sets the maximum number of concurrent CPU-heavy ops that can be
 	// performed on this server when requests are submitted using "throttled=true" query
 	// strings.  See imageblk and labelblk 3d GET/POST voxel requests.
-	maxThrottledOps int = 1
+	maxThrottledOps = 1
 
 	// curThrottleOps is the current number of CPU-heavy ops being performed on the server.
 	curThrottledOps int
 	curThrottleMu   sync.Mutex
 
 	// Keep track of the startup time for uptime.
-	startupTime time.Time = time.Now()
+	startupTime = time.Now()
 
 	// Read-only mode ignores all HTTP requests but GET and HEAD
 	readonly bool
@@ -160,7 +182,7 @@ func init() {
 	}()
 }
 
-func SetMaxThrottleOps(maxOps int) {
+func setMaxThrottleOps(maxOps int) {
 	curThrottleMu.Lock()
 	maxThrottledOps = maxOps
 	curThrottleMu.Unlock()
@@ -197,11 +219,13 @@ func BlockOnInteractiveRequests(caller ...string) {
 	}
 }
 
+// SetReadOnly can put the server in a read-only mode.
 func SetReadOnly(on bool) {
 	readonly = on
 	fullwrite = !on
 }
 
+// SetFullWrite allows mutations on any version.
 func SetFullWrite(on bool) {
 	fullwrite = on
 	readonly = !on
@@ -235,7 +259,7 @@ func AboutJSON() (jsonStr string, err error) {
 // About returns a chart of version identifiers for the DVID source code, DVID datastore, and
 // all component data types for this executable.
 func About() string {
-	var text string = "\nCompile-time version information for this DVID executable:\n\n"
+	var text = "\nCompile-time version information for this DVID executable:\n\n"
 	writeLine := func(name dvid.TypeString, version string) {
 		text += fmt.Sprintf("%-20s   %s\n", name, version)
 	}

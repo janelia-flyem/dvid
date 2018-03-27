@@ -69,6 +69,7 @@ func TestBadHTTP(t *testing.T, method, urlStr string, payload io.Reader) {
 	}
 }
 
+// CreateTestInstance posts a new data instance for testing.
 func CreateTestInstance(t *testing.T, uuid dvid.UUID, typename, name string, config dvid.Config) {
 	config.Set("typename", typename)
 	config.Set("dataname", name)
@@ -80,12 +81,14 @@ func CreateTestInstance(t *testing.T, uuid dvid.UUID, typename, name string, con
 	TestHTTP(t, "POST", apiStr, bytes.NewBuffer(jsonData))
 }
 
+// CreateTestSync posts new syncs for a given data instance / uuid.
 func CreateTestSync(t *testing.T, uuid dvid.UUID, name string, syncs ...string) {
 	url := fmt.Sprintf("%snode/%s/%s/sync", WebAPIPath, uuid, name)
 	msg := fmt.Sprintf(`{"sync": "%s"}`, strings.Join(syncs, ","))
 	TestHTTP(t, "POST", url, strings.NewReader(msg))
 }
 
+// CreateTestReplaceSync replaces syncs for a given data instance / uuid.
 func CreateTestReplaceSync(t *testing.T, uuid dvid.UUID, name string, syncs ...string) {
 	url := fmt.Sprintf("%snode/%s/%s/sync?replace=true", WebAPIPath, uuid, name)
 	msg := fmt.Sprintf(`{"sync": "%s"}`, strings.Join(syncs, ","))

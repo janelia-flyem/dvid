@@ -60,6 +60,7 @@ func init() {
 	DefaultHost = DefaultHost[:len(DefaultHost)-1] // removes EOL
 }
 
+// TestConfig specifies configuration for testing servers.
 type TestConfig struct {
 	CacheSize map[string]int // MB for caches
 }
@@ -242,12 +243,12 @@ func LoadConfig(filename string) (*datastore.InstanceConfig, *dvid.LogConfig, *s
 		return nil, nil, nil, nil, fmt.Errorf("No server TOML configuration file provided")
 	}
 	if _, err := toml.DecodeFile(filename, &tc); err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("Could not decode TOML config: %v\n", err)
+		return nil, nil, nil, nil, fmt.Errorf("could not decode TOML config: %v", err)
 	}
 	var err error
 	err = tc.ConvertPathsToAbsolute(filename)
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("Could not convert relative paths to absolute paths in TOML config: %v\n", err)
+		return nil, nil, nil, nil, fmt.Errorf("could not convert relative paths to absolute paths in TOML config: %v", err)
 	}
 
 	// Get all defined stores.

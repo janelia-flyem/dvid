@@ -31,7 +31,7 @@ import (
 	"github.com/zenazn/goji/web/middleware"
 )
 
-const WebHelp = `
+const webHelp = `
 <!DOCTYPE html>
 <html>
 
@@ -483,7 +483,7 @@ const (
 	// this will be "v1/", "v2/", etc.
 	WebAPIVersion = ""
 
-	// The relative URL path to our Level 2 REST API
+	// WebAPIPath is the relative URL path to our Level 2 REST API
 	WebAPIPath = "/api/" + WebAPIVersion
 
 	// WriteTimeout is the maximum time in seconds DVID will wait to write data down HTTP connection.
@@ -493,15 +493,13 @@ const (
 	ReadTimeout = 300 * time.Second
 )
 
-type WebMux struct {
-	*web.Mux
-	sync.RWMutex // Can Lock() to prevent any kind of web requests from initiating actions.
-	routesSetup  bool
-}
-
 var (
-	webMux    WebMux
-	httpAvail bool // false if we should return 503 (Service Unavailable) to any HTTP request
+	webMux struct {
+		*web.Mux
+		routesSetup bool
+	}
+	webMuxMu  sync.Mutex // Can Lock() to prevent any kind of web requests from initiating actions.
+	httpAvail bool       // false if we should return 503 (Service Unavailable) to any HTTP request
 )
 
 func init() {
@@ -525,7 +523,8 @@ func ThrottledHTTP(w http.ResponseWriter) bool {
 	return true
 }
 
-// ThrottleOpDone marks the end of a throttled operation, allowing another op blocked by ThrottledHTTP() to succeed.
+// ThrottledOpDone marks the end of a throttled operation, allowing another op blocked
+// by ThrottledHTTP() to succeed.
 func ThrottledOpDone() {
 	curThrottleMu.Lock()
 	curThrottledOps--
@@ -586,13 +585,11 @@ func serveHTTP() {
 
 // High-level switchboard for DVID HTTP API.
 func initRoutes() {
-	webMux.Lock()
-	defer webMux.Unlock()
-
 	if webMux.routesSetup {
 		return
 	}
 
+	webMuxMu.Lock()
 	silentMux := web.New()
 	webMux.Handle("/api/load", silentMux)
 	silentMux.Use(corsHandler)
@@ -669,11 +666,12 @@ func initRoutes() {
 	mainMux.Handle("/api/node/:uuid/:dataname/:keyword/*", instanceMux)
 	instanceMux.Use(repoRawSelector)
 	instanceMux.Use(instanceSelector)
-	instanceMux.NotFound(NotFound)
+	instanceMux.NotFound(notFound)
 
 	mainMux.Get("/*", mainHandler)
 
 	webMux.routesSetup = true
+	webMuxMu.Unlock()
 }
 
 // returns true and sends a 503 (Service Unavailable) status code if unavailable.
@@ -727,7 +725,7 @@ func recoverHandler(c *web.C, h http.Handler) http.Handler {
 	return http.HandlerFunc(fn)
 }
 
-func NotFound(w http.ResponseWriter, r *http.Request) {
+func notFound(w http.ResponseWriter, r *http.Request) {
 	errorMsg := fmt.Sprintf("Could not find the URL: %s", r.URL.Path)
 	dvid.Infof(errorMsg)
 	http.Error(w, errorMsg, http.StatusNotFound)
@@ -766,7 +764,7 @@ func BadRequest(w http.ResponseWriter, r *http.Request, format interface{}, args
 		message = fmt.Sprintf(message, args...)
 	}
 	errorMsg := fmt.Sprintf("%s (%s).", message, r.URL.Path)
-	dvid.Errorf(errorMsg)
+	dvid.Errorf(errorMsg + "\n")
 	http.Error(w, errorMsg, http.StatusBadRequest)
 }
 
@@ -1001,7 +999,7 @@ func helpHandler(w http.ResponseWriter, r *http.Request) {
 	html += "</ul>"
 
 	// Return the embedded help page.
-	fmt.Fprintf(w, fmt.Sprintf(WebHelp, hostname, html))
+	fmt.Fprintf(w, fmt.Sprintf(webHelp, hostname, html))
 }
 
 func typehelpHandler(c web.C, w http.ResponseWriter, r *http.Request) {
@@ -1176,7 +1174,7 @@ func serverSettingsHandler(c web.C, w http.ResponseWriter, r *http.Request) {
 	}
 	if found {
 		old := maxThrottledOps
-		SetMaxThrottleOps(maxOps)
+		setMaxThrottleOps(maxOps)
 		fmt.Fprintf(w, "Maximum throttled ops set to %d from %d\n", maxOps, old)
 	}
 }

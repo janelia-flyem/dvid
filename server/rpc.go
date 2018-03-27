@@ -17,7 +17,7 @@ import (
 	"github.com/valyala/gorpc"
 )
 
-const RPCHelpMessage = `
+const rpcHelp = `
 
 Commands executed on the server (rpc address = %s):
 
@@ -172,7 +172,7 @@ func SendRPC(addr string, req datastore.Request) error {
 // switchboard for remote command execution
 func handleCommand(cmd *datastore.Request) (reply *datastore.Response, err error) {
 	if cmd.Name() == "" {
-		err = fmt.Errorf("Server error: got empty command!")
+		err = fmt.Errorf("server error: got empty command")
 		return
 	}
 	if !dvid.RequestsOK() {
@@ -184,7 +184,7 @@ func handleCommand(cmd *datastore.Request) (reply *datastore.Response, err error
 	switch cmd.Name() {
 
 	case "help":
-		reply.Text = fmt.Sprintf(RPCHelpMessage, config.RPCAddress(), config.HTTPAddress())
+		reply.Text = fmt.Sprintf(rpcHelp, config.RPCAddress(), config.HTTPAddress())
 
 	case "shutdown":
 		dvid.Infof("DVID server halting due to 'shutdown' command.")
@@ -198,7 +198,7 @@ func handleCommand(cmd *datastore.Request) (reply *datastore.Response, err error
 			text += "----------------------------------\n"
 			var mapTypes map[dvid.URLString]datastore.TypeService
 			if mapTypes, err = datastore.Types(); err != nil {
-				err = fmt.Errorf("Error trying to retrieve data types within this DVID server!")
+				err = fmt.Errorf("error trying to retrieve data types within this DVID server")
 				return
 			}
 			for url, typeservice := range mapTypes {
