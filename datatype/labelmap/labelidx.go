@@ -1341,7 +1341,7 @@ func (d *Data) countBlockSupervoxels(f *os.File, outPath string, v dvid.VersionI
 	mu := new(sync.Mutex)
 	wg := new(sync.WaitGroup)
 	chunkCh := make(chan *storage.Chunk, 100)
-	for i := 0; i < 64; i++ {
+	for i := 0; i < 100; i++ {
 		go d.countThread(f, mu, wg, chunkCh)
 	}
 
@@ -1367,7 +1367,7 @@ func (d *Data) countBlockSupervoxels(f *os.File, outPath string, v dvid.VersionI
 			return nil
 		}
 		numBlocks++
-		if numBlocks%1000 == 0 {
+		if numBlocks%10000 == 0 {
 			timedLog.Infof("Now counting block %d with chunk channel at %d", numBlocks, len(chunkCh))
 		}
 		chunkCh <- c
