@@ -1291,69 +1291,71 @@ func (d *Data) WriteSparseCoarseVols(ctx *datastore.VersionedCtx, w io.Writer, b
 	return err
 }
 
+func (d *Data) countThread(f *os.File, mu *sync.Mutex, wg *sync.WaitGroup, chunkCh chan *storage.Chunk) {
+	for c := range chunkCh {
+		scale, idx, err := DecodeBlockTKey(c.K)
+		if err != nil {
+			dvid.Errorf("Couldn't decode label key %v for data %q\n", c.K, d.DataName())
+			wg.Done()
+			continue
+		}
+		if scale != 0 {
+			dvid.Errorf("Counts had unexpected error: getting scale %d blocks\n", scale)
+			wg.Done()
+			continue
+		}
+		var data []byte
+		data, _, err = dvid.DeserializeData(c.V, true)
+		if err != nil {
+			dvid.Errorf("Unable to deserialize block %s in data %q: %v\n", idx, d.DataName(), err)
+			wg.Done()
+			continue
+		}
+		var block labels.Block
+		if err := block.UnmarshalBinary(data); err != nil {
+			dvid.Errorf("Unable to unmarshal Block %s in data %q: %v\n", idx, d.DataName(), err)
+			wg.Done()
+			continue
+		}
+		counts := make(map[uint64]uint64, len(block.Labels))
+		bytearray, _ := block.MakeLabelVolume()
+		uint64array, err := dvid.ByteToUint64(bytearray)
+		if err != nil {
+			dvid.Errorf("Error in expanding to uint64 slice for block %s, data %q: %v\n", idx, d.DataName(), err)
+			wg.Done()
+			continue
+		}
+		for _, supervoxel := range uint64array {
+			if supervoxel != 0 {
+				counts[supervoxel]++
+			}
+		}
+		for supervoxel, count := range counts {
+			bx, by, bz := idx.Unpack()
+			line := fmt.Sprintf("%d %d %d %d %d\n", supervoxel, bz, by, bx, count)
+			mu.Lock()
+			_, err := f.WriteString(line)
+			mu.Unlock()
+			if err != nil {
+				dvid.Errorf("Unable to write data for block %s, data %q: %v\n", idx, d.DataName(), err)
+				break
+			}
+		}
+		wg.Done()
+	}
+}
+
 // scan all label blocks in this labelmap instance, writing supervoxel counts into a given file
 func (d *Data) countBlockSupervoxels(f *os.File, outPath string, v dvid.VersionID) {
 	timedLog := dvid.NewTimeLog()
 
 	// Start the counting goroutine
+	mu := new(sync.Mutex)
 	wg := new(sync.WaitGroup)
 	chunkCh := make(chan *storage.Chunk, 100)
-	var numBlocks uint64
-	go func() {
-		for c := range chunkCh {
-			numBlocks++
-			scale, idx, err := DecodeBlockTKey(c.K)
-			if err != nil {
-				dvid.Errorf("Couldn't decode label key %v for data %q\n", c.K, d.DataName())
-				wg.Done()
-				continue
-			}
-			if numBlocks%1000 == 0 {
-				timedLog.Infof("Now counting block %d, coord %s", numBlocks, idx.ToIZYXString())
-			}
-			if scale != 0 {
-				dvid.Errorf("Counts had unexpected error: getting scale %d blocks\n", scale)
-				wg.Done()
-				continue
-			}
-			var data []byte
-			data, _, err = dvid.DeserializeData(c.V, true)
-			if err != nil {
-				dvid.Errorf("Unable to deserialize block %s in data %q: %v\n", idx, d.DataName(), err)
-				wg.Done()
-				continue
-			}
-			var block labels.Block
-			if err := block.UnmarshalBinary(data); err != nil {
-				dvid.Errorf("Unable to unmarshal Block %s in data %q: %v\n", idx, d.DataName(), err)
-				wg.Done()
-				continue
-			}
-			counts := make(map[uint64]uint64, len(block.Labels))
-			bytearray, _ := block.MakeLabelVolume()
-			uint64array, err := dvid.ByteToUint64(bytearray)
-			if err != nil {
-				dvid.Errorf("Error in expanding to uint64 slice for block %s, data %q: %v\n", idx, d.DataName(), err)
-				wg.Done()
-				continue
-			}
-			for _, supervoxel := range uint64array {
-				if supervoxel != 0 {
-					counts[supervoxel]++
-				}
-			}
-			for supervoxel, count := range counts {
-				bx, by, bz := idx.Unpack()
-				line := fmt.Sprintf("%d %d %d %d %d\n", supervoxel, bx, by, bz, count)
-				_, err := f.WriteString(line)
-				if err != nil {
-					dvid.Errorf("Unable to write data for block %s, data %q: %v\n", idx, d.DataName(), err)
-					break
-				}
-			}
-			wg.Done()
-		}
-	}()
+	for i := 0; i < 64; i++ {
+		go d.countThread(f, mu, wg, chunkCh)
+	}
 
 	// Iterate through all label blocks and count them.
 	chunkOp := &storage.ChunkOp{Wg: wg}
@@ -1366,6 +1368,7 @@ func (d *Data) countBlockSupervoxels(f *os.File, outPath string, v dvid.VersionI
 	ctx := datastore.NewVersionedCtx(d, v)
 	begTKey := NewBlockTKeyByCoord(0, dvid.MinIndexZYX.ToIZYXString())
 	endTKey := NewBlockTKeyByCoord(0, dvid.MaxIndexZYX.ToIZYXString())
+	var numBlocks uint64
 	err = store.ProcessRange(ctx, begTKey, endTKey, chunkOp, func(c *storage.Chunk) error {
 		if c == nil {
 			wg.Done()
@@ -1374,6 +1377,10 @@ func (d *Data) countBlockSupervoxels(f *os.File, outPath string, v dvid.VersionI
 		if c.V == nil {
 			wg.Done()
 			return nil
+		}
+		numBlocks++
+		if numBlocks%1000 == 0 {
+			timedLog.Infof("Now counting block %d with chunk channel at %d", numBlocks, len(chunkCh))
 		}
 		chunkCh <- c
 		return nil

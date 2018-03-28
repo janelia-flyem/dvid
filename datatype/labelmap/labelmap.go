@@ -2419,7 +2419,7 @@ func (d *Data) DoRPC(req datastore.Request, reply *datastore.Response) error {
 			return err
 		}
 		go d.countBlockSupervoxels(f, outPath, v)
-		reply.Text = fmt.Sprintf("Asynchronously writing supervoxel counts for data %q, uuid %s to file: %s", d.DataName(), uuid, outPath)
+		reply.Text = fmt.Sprintf("Asynchronously writing supervoxel counts for data %q, uuid %s to file: %s\n", d.DataName(), uuid, outPath)
 		return nil
 
 	default:
