@@ -1309,7 +1309,7 @@ func (d *Data) countBlockSupervoxels(f *os.File, outPath string, v dvid.VersionI
 				continue
 			}
 			if numBlocks%1000 == 0 {
-				timedLog.Infof("Now counting block %d, coord %s", numBlocks, idx)
+				timedLog.Infof("Now counting block %d, coord %s", numBlocks, idx.ToIZYXString())
 			}
 			if scale != 0 {
 				dvid.Errorf("Counts had unexpected error: getting scale %d blocks\n", scale)
@@ -1338,7 +1338,9 @@ func (d *Data) countBlockSupervoxels(f *os.File, outPath string, v dvid.VersionI
 				continue
 			}
 			for _, supervoxel := range uint64array {
-				counts[supervoxel]++
+				if supervoxel != 0 {
+					counts[supervoxel]++
+				}
 			}
 			for supervoxel, count := range counts {
 				bx, by, bz := idx.Unpack()

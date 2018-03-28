@@ -2408,7 +2408,7 @@ func (d *Data) DoRPC(req datastore.Request, reply *datastore.Response) error {
 		var uuidStr, dataName, cmdStr, outPath string
 		req.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &outPath)
 
-		_, v, err := datastore.MatchingUUID(uuidStr)
+		uuid, v, err := datastore.MatchingUUID(uuidStr)
 		if err != nil {
 			return err
 		}
@@ -2419,6 +2419,7 @@ func (d *Data) DoRPC(req datastore.Request, reply *datastore.Response) error {
 			return err
 		}
 		go d.countBlockSupervoxels(f, outPath, v)
+		reply.Text = fmt.Sprintf("Asynchronously writing supervoxel counts for data %q, uuid %s to file: %s", d.DataName(), uuid, outPath)
 		return nil
 
 	default:
