@@ -1292,50 +1292,40 @@ func (d *Data) WriteSparseCoarseVols(ctx *datastore.VersionedCtx, w io.Writer, b
 }
 
 // scan all label blocks in this labelmap instance, writing supervoxel counts into a given file
-func (d *Data) countBlockSupervoxels(request datastore.Request, reply *datastore.Response) error {
+func (d *Data) countBlockSupervoxels(f *os.File, outPath string, v dvid.VersionID) {
 	timedLog := dvid.NewTimeLog()
-
-	// Parse the request
-	var uuidStr, dataName, cmdStr, outPath string
-	request.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &outPath)
-
-	_, v, err := datastore.MatchingUUID(uuidStr)
-	if err != nil {
-		return err
-	}
-
-	// Setup output file
-	f, err := os.OpenFile(outPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0755)
-	if err != nil {
-		return err
-	}
 
 	// Start the counting goroutine
 	wg := new(sync.WaitGroup)
 	chunkCh := make(chan *storage.Chunk, 100)
+	var numBlocks uint64
 	go func() {
 		for c := range chunkCh {
+			numBlocks++
 			scale, idx, err := DecodeBlockTKey(c.K)
 			if err != nil {
-				reply.Text += fmt.Sprintf("Couldn't decode label key %v for data %q\n", c.K, d.DataName())
+				dvid.Errorf("Couldn't decode label key %v for data %q\n", c.K, d.DataName())
 				wg.Done()
 				continue
 			}
+			if numBlocks%1000 == 0 {
+				timedLog.Infof("Now counting block %d, coord %s", numBlocks, idx)
+			}
 			if scale != 0 {
-				reply.Text += fmt.Sprintf("Counts had unexpected error: getting scale %d blocks\n", scale)
+				dvid.Errorf("Counts had unexpected error: getting scale %d blocks\n", scale)
 				wg.Done()
 				continue
 			}
 			var data []byte
 			data, _, err = dvid.DeserializeData(c.V, true)
 			if err != nil {
-				reply.Text += fmt.Sprintf("Unable to deserialize block %s in data %q: %v\n", idx, d.DataName(), err)
+				dvid.Errorf("Unable to deserialize block %s in data %q: %v\n", idx, d.DataName(), err)
 				wg.Done()
 				continue
 			}
 			var block labels.Block
 			if err := block.UnmarshalBinary(data); err != nil {
-				reply.Text += fmt.Sprintf("Unable to unmarshal Block %s in data %q: %v\n", idx, d.DataName(), err)
+				dvid.Errorf("Unable to unmarshal Block %s in data %q: %v\n", idx, d.DataName(), err)
 				wg.Done()
 				continue
 			}
@@ -1343,7 +1333,7 @@ func (d *Data) countBlockSupervoxels(request datastore.Request, reply *datastore
 			bytearray, _ := block.MakeLabelVolume()
 			uint64array, err := dvid.ByteToUint64(bytearray)
 			if err != nil {
-				reply.Text += fmt.Sprintf("Error in expanding to uint64 slice for block %s, data %q: %v\n", idx, d.DataName(), err)
+				dvid.Errorf("Error in expanding to uint64 slice for block %s, data %q: %v\n", idx, d.DataName(), err)
 				wg.Done()
 				continue
 			}
@@ -1355,7 +1345,7 @@ func (d *Data) countBlockSupervoxels(request datastore.Request, reply *datastore
 				line := fmt.Sprintf("%d %d %d %d %d\n", supervoxel, bx, by, bz, count)
 				_, err := f.WriteString(line)
 				if err != nil {
-					reply.Text += fmt.Sprintf("Unable to write data for block %s, data %q: %v\n", idx, d.DataName(), err)
+					dvid.Errorf("Unable to write data for block %s, data %q: %v\n", idx, d.DataName(), err)
 					break
 				}
 			}
@@ -1368,12 +1358,12 @@ func (d *Data) countBlockSupervoxels(request datastore.Request, reply *datastore
 
 	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
-		return err
+		dvid.Errorf("problem getting store for data %q: %v\n", d.DataName(), err)
+		return
 	}
 	ctx := datastore.NewVersionedCtx(d, v)
 	begTKey := NewBlockTKeyByCoord(0, dvid.MinIndexZYX.ToIZYXString())
 	endTKey := NewBlockTKeyByCoord(0, dvid.MaxIndexZYX.ToIZYXString())
-	var numBlocks uint64
 	err = store.ProcessRange(ctx, begTKey, endTKey, chunkOp, func(c *storage.Chunk) error {
 		if c == nil {
 			wg.Done()
@@ -1383,15 +1373,16 @@ func (d *Data) countBlockSupervoxels(request datastore.Request, reply *datastore
 			wg.Done()
 			return nil
 		}
-		numBlocks++
 		chunkCh <- c
 		return nil
 	})
+	if err != nil {
+		dvid.Errorf("problem during process range: %v\n", err)
+	}
 	close(chunkCh)
 	wg.Wait()
-
-	msg := fmt.Sprintf("Finished counting supervoxels in %d blocks.  Sent output to %s\n", numBlocks, outPath)
-	reply.Text += msg
-	timedLog.Infof(msg)
-	return f.Close()
+	if err = f.Close(); err != nil {
+		dvid.Errorf("problem closing file: %v\n", err)
+	}
+	timedLog.Infof("Finished counting supervoxels in %d blocks and sent to output file %q", numBlocks, outPath)
 }

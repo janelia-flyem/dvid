@@ -20,6 +20,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -2395,25 +2396,40 @@ func (d *Data) DoRPC(req datastore.Request, reply *datastore.Response) error {
 
 	case "composite":
 		if len(req.Command) < 6 {
-			return fmt.Errorf("Poorly formatted composite command.  See command-line help.")
+			return fmt.Errorf("poorly formatted composite command.  See command-line help")
 		}
 		return d.createComposite(req, reply)
 
 	case "count":
 		if len(req.Command) < 5 {
-			return fmt.Errorf("Poorly formatted counts command.  See command-line help.")
+			return fmt.Errorf("poorly formatted counts command.  See command-line help")
 		}
-		return d.countBlockSupervoxels(req, reply)
+		// Parse the request
+		var uuidStr, dataName, cmdStr, outPath string
+		req.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &outPath)
+
+		_, v, err := datastore.MatchingUUID(uuidStr)
+		if err != nil {
+			return err
+		}
+
+		// Setup output file
+		f, err := os.OpenFile(outPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0755)
+		if err != nil {
+			return err
+		}
+		go d.countBlockSupervoxels(f, outPath, v)
+		return nil
 
 	default:
-		return fmt.Errorf("Unknown command.  Data type '%s' [%s] does not support '%s' command.",
+		return fmt.Errorf("unknown command.  Data type '%s' [%s] does not support '%s' command",
 			d.DataName(), d.TypeName(), req.TypeCommand())
 	}
 }
 
 func colorImage(labels *dvid.Image) (image.Image, error) {
 	if labels == nil || labels.Which != 3 || labels.NRGBA64 == nil {
-		return nil, fmt.Errorf("writePseudoColor can't use labels image with wrong format: %v\n", labels)
+		return nil, fmt.Errorf("writePseudoColor can't use labels image with wrong format: %v", labels)
 	}
 	src := labels.NRGBA64
 	srcRect := src.Bounds()
