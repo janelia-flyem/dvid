@@ -269,7 +269,7 @@ func (flogs *fileLogs) Close() {
 }
 
 func (flogs *fileLogs) String() string {
-	return fmt.Sprintf("write logs @ path %q", flogs.path)
+	return fmt.Sprintf("write logs @ %s", flogs.path)
 }
 
 // Equal returns true if the write log path matches the given store configuration.

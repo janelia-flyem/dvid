@@ -25,7 +25,7 @@ type compositeOp struct {
 }
 
 // CreateComposite creates a new rgba8 image by combining hash of labels + the grayscale
-func (d *Data) CreateComposite(request datastore.Request, reply *datastore.Response) error {
+func (d *Data) createComposite(request datastore.Request, reply *datastore.Response) error {
 	timedLog := dvid.NewTimeLog()
 
 	// Parse the request

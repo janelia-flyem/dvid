@@ -112,6 +112,21 @@ $ dvid node <UUID> <data name> composite <uint8 data name> <new rgba8 data name>
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add.
 	
+$ dvid node <UUID> <data name> count <file path>
+
+	Creates CSV file where each row has the following:
+		<supervoxel id>  <block x> <block y> <block z> <# voxels>
+
+    Example: 
+
+    $ dvid node 3f8c segmentation count /path/to/counts.csv
+
+    Arguments:
+
+    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+	data name     Name of data to add.
+	file path     Absolute path to a writable file that the dvid server has write privileges to.
+	
 	
     ------------------
 
@@ -2321,7 +2336,7 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 	if downscale {
 		downresMut.Done()
 	}
-	timedLog.Infof("Received and stored %d blocks for labelmap %q.\n", numBlocks, d.DataName())
+	timedLog.Infof("Received and stored %d blocks for labelmap %q", numBlocks, d.DataName())
 	return nil
 }
 
@@ -2382,7 +2397,13 @@ func (d *Data) DoRPC(req datastore.Request, reply *datastore.Response) error {
 		if len(req.Command) < 6 {
 			return fmt.Errorf("Poorly formatted composite command.  See command-line help.")
 		}
-		return d.CreateComposite(req, reply)
+		return d.createComposite(req, reply)
+
+	case "count":
+		if len(req.Command) < 5 {
+			return fmt.Errorf("Poorly formatted counts command.  See command-line help.")
+		}
+		return d.countBlockSupervoxels(req, reply)
 
 	default:
 		return fmt.Errorf("Unknown command.  Data type '%s' [%s] does not support '%s' command.",

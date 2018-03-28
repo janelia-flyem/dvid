@@ -2222,7 +2222,7 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 	if downscale {
 		downresMut.Done()
 	}
-	timedLog.Infof("Received and stored %d blocks for labelarray %q.\n", numBlocks, d.DataName())
+	timedLog.Infof("Received and stored %d blocks for labelarray %q", numBlocks, d.DataName())
 	return nil
 }
 
