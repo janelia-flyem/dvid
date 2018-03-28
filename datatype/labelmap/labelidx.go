@@ -1317,19 +1317,7 @@ func (d *Data) countThread(f *os.File, mu *sync.Mutex, wg *sync.WaitGroup, chunk
 			wg.Done()
 			continue
 		}
-		counts := make(map[uint64]uint64, len(block.Labels))
-		bytearray, _ := block.MakeLabelVolume()
-		uint64array, err := dvid.ByteToUint64(bytearray)
-		if err != nil {
-			dvid.Errorf("Error in expanding to uint64 slice for block %s, data %q: %v\n", idx, d.DataName(), err)
-			wg.Done()
-			continue
-		}
-		for _, supervoxel := range uint64array {
-			if supervoxel != 0 {
-				counts[supervoxel]++
-			}
-		}
+		counts := block.CalcNumLabels(nil)
 		for supervoxel, count := range counts {
 			bx, by, bz := idx.Unpack()
 			line := fmt.Sprintf("%d %d %d %d %d\n", supervoxel, bz, by, bx, count)
