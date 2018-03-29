@@ -20,7 +20,7 @@ endif
 
 
 ifndef DVID_BACKENDS
-DVID_BACKENDS = basholeveldb gbucket
+DVID_BACKENDS = basholeveldb gbucket swift
 $(info Backend not specified. Using default value: DVID_BACKENDS="${DVID_BACKENDS}")
 endif
 
@@ -38,7 +38,7 @@ bin/dvid-gen-version: cmd/gen-version/main.go
 	go build -o bin/dvid-gen-version -v -tags "${DVID_BACKENDS}" cmd/gen-version/main.go
 
 # Actually run the above program; generates version.go
-# The python script here doesn't print anything, but it (potentially) overwrites 
+# The python script here doesn't print anything, but it (potentially) overwrites
 # .last-build-git-sha to force a re-build of server/version.go
 # if the git SHA has changed since the last build
 server/version.go: bin/dvid-gen-version \
@@ -52,7 +52,7 @@ bin/dvid: cmd/dvid/main.go server/version.go .last-build-git-sha ${DVID_SOURCES}
 	go build -o bin/dvid -v -tags "${DVID_BACKENDS}" cmd/dvid/main.go
 
 bin/dvid-backup: cmd/backup/main.go
-	go build -o bin/dvid-backup -v -tags "${DVID_BACKENDS}" cmd/backup/main.go 
+	go build -o bin/dvid-backup -v -tags "${DVID_BACKENDS}" cmd/backup/main.go
 
 bin/dvid-transfer: $(shell find cmd/transfer -name "*.go")
 	go build -o bin/dvid-transfer -v -tags "${DVID_BACKENDS}" cmd/transfer/*.go
