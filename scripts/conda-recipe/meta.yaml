@@ -159,8 +159,3 @@ source:
   - git_url: https://github.com/coocood/freecache
     git_tag: master
     folder:  src/github.com/coocood/freecache
-
-   # native Go lz4
-  - git_url: https://github.com/pierrec/lz4
-    git_tag: master
-    folder:  src/github.com/pierrec/lz4

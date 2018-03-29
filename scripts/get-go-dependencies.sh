@@ -80,7 +80,4 @@ go get github.com/optiopay/kafka
 # freecache
 go get github.com/coocood/freecache
 
-# native Go lz4
-go get github.com/pierrec/lz4
-
 echo "Done fetching third-party go sources."

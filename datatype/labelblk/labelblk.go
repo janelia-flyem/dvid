@@ -27,7 +27,7 @@ import (
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
 
-	"github.com/pierrec/lz4"
+	lz4 "github.com/janelia-flyem/go/golz4"
 )
 
 const (
@@ -1117,9 +1117,9 @@ func sendBinaryData(compression string, data []byte, subvol *dvid.Subvolume, w h
 			return err
 		}
 	case "lz4":
-		compressed := make([]byte, lz4.CompressBlockBound(len(data)))
+		compressed := make([]byte, lz4.CompressBound(data))
 		var n, outSize int
-		if outSize, err = lz4.CompressBlock(data, compressed, 0); err != nil {
+		if outSize, err = lz4.Compress(data, compressed); err != nil {
 			return err
 		}
 		compressed = compressed[:outSize]
@@ -1189,7 +1189,7 @@ func getBinaryData(compression string, in io.ReadCloser, estsize int64) ([]byte,
 		tlog.Debugf("read 3d lz4 POST")
 		tlog = dvid.NewTimeLog()
 		uncompressed := make([]byte, estsize)
-		if _, err = lz4.UncompressBlock(data, uncompressed, 0); err != nil {
+		if err = lz4.Uncompress(data, uncompressed); err != nil {
 			return nil, err
 		}
 		data = uncompressed

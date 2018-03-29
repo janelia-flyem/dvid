@@ -16,7 +16,7 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 
-	"github.com/pierrec/lz4"
+	lz4 "github.com/janelia-flyem/go/golz4"
 )
 
 var (
@@ -448,9 +448,9 @@ func (vol *labelVol) postLabelVolume(t *testing.T, uuid dvid.UUID, compression, 
 	switch compression {
 	case "lz4":
 		apiStr += "?compression=lz4"
-		compressed := make([]byte, lz4.CompressBlockBound(len(vol.data)))
+		compressed := make([]byte, lz4.CompressBound(vol.data))
 		var outSize int
-		if outSize, err = lz4.CompressBlock(vol.data, compressed, 0); err != nil {
+		if outSize, err = lz4.Compress(vol.data, compressed); err != nil {
 			t.Fatal(err)
 		}
 		data = compressed[:outSize]
@@ -502,7 +502,7 @@ func (vol *labelVol) getLabelVolume(t *testing.T, uuid dvid.UUID, compression, r
 	switch compression {
 	case "lz4":
 		uncompressed := make([]byte, vol.numBytes())
-		if _, err := lz4.UncompressBlock(data, uncompressed, 0); err != nil {
+		if err := lz4.Uncompress(data, uncompressed); err != nil {
 			t.Fatalf("Unable to uncompress LZ4 data (%s), %d bytes: %v\n", apiStr, len(data), err)
 		}
 		data = uncompressed
@@ -616,7 +616,7 @@ func (vol *labelVol) testBlocks(t *testing.T, uuid dvid.UUID, compression, roi s
 		var uncompressed []byte
 		if compression != "uncompressed" {
 			uncompressed = make([]byte, blockBytes)
-			if _, err := lz4.UncompressBlock(data[b:b+n], uncompressed, 0); err != nil {
+			if err := lz4.Uncompress(data[b:b+n], uncompressed); err != nil {
 				t.Fatalf("Unable to uncompress LZ4 data (%s), %d bytes: %v\n", apiStr, n, err)
 			}
 		} else {

@@ -30,7 +30,7 @@ import (
 
 	"github.com/janelia-flyem/go/go-humanize"
 
-	"github.com/pierrec/lz4"
+	lz4 "github.com/janelia-flyem/go/golz4"
 )
 
 const (
@@ -1013,9 +1013,9 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 					return
 				}
 			case "lz4":
-				compressed := make([]byte, lz4.CompressBlockBound(len(data)))
+				compressed := make([]byte, lz4.CompressBound(data))
 				var n, outSize int
-				if outSize, err = lz4.CompressBlock(data, compressed, 0); err != nil {
+				if outSize, err = lz4.Compress(data, compressed); err != nil {
 					server.BadRequest(w, r, err)
 					return
 				}

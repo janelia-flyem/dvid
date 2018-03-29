@@ -1,21 +1,30 @@
 package dvid
 
 import (
+	"bytes"
+	"io/ioutil"
+	"math/rand"
+	"os"
+	"reflect"
 	"testing"
 
-	. "github.com/janelia-flyem/go/gocheck"
+	lz4 "github.com/janelia-flyem/go/golz4"
 )
 
-func (s *DataSuite) TestLocalID(c *C) {
+func TestLocalID(t *testing.T) {
 	id := LocalID(41)
 	b := id.Bytes()
 	id2, length := LocalIDFromBytes(b)
 
-	c.Assert(id, Equals, id2)
-	c.Assert(length, Equals, LocalIDSize)
+	if id != id2 {
+		t.Error("bad conversion")
+	}
+	if length != LocalIDSize {
+		t.Errorf("bad length for local id: %d\n", length)
+	}
 }
 
-func (suite *DataSuite) TestSerialization(c *C) {
+func TestSerialization(t *testing.T) {
 	stringObj := "Hi there!"
 	var returnObj string
 
@@ -35,7 +44,9 @@ func (suite *DataSuite) TestSerialization(c *C) {
 	for _, format := range []CompressionFormat{Uncompressed, Snappy, LZ4, Gzip} {
 		for _, checksum := range []Checksum{NoChecksum, CRC32} {
 			compression, err := NewCompression(format, DefaultCompression)
-			c.Assert(err, IsNil)
+			if err != nil {
+				t.Error(err)
+			}
 
 			// Check simple object
 			var csum Checksum
@@ -45,25 +56,33 @@ func (suite *DataSuite) TestSerialization(c *C) {
 				csum = checksum
 			}
 			s, err := Serialize(stringObj, compression, csum)
-			c.Assert(err, IsNil)
+			if err != nil {
+				t.Error(err)
+			}
 			if len(s) == 0 {
-				c.Errorf("Bad Serialize() - output length 0")
+				t.Errorf("Bad Serialize() - output length 0\n")
 			}
 
 			if err = Deserialize(s, &returnObj); err != nil {
-				c.Errorf("Bad Deserialize() for %q: %v", stringObj, err)
+				t.Errorf("Bad Deserialize() for %q: %v\n", stringObj, err)
 			}
-			c.Assert(err, IsNil)
-			c.Assert(returnObj, Equals, stringObj)
+			if returnObj != stringObj {
+				t.Errorf("expected %s, got %s\n", stringObj, returnObj)
+			}
 
 			// Check more complex object
 			s, err = Serialize(complexObj, compression, csum)
-			c.Assert(err, IsNil)
+			if err != nil {
+				t.Error(err)
+			}
 
 			var returnComplexObj ComplexObj
-			err = Deserialize(s, &returnComplexObj)
-			c.Assert(err, IsNil)
-			c.Assert(returnComplexObj, DeepEquals, complexObj)
+			if err = Deserialize(s, &returnComplexObj); err != nil {
+				t.Error(err)
+			}
+			if !reflect.DeepEqual(returnComplexObj, complexObj) {
+				t.Errorf("expected %v, got %v\n", complexObj, returnComplexObj)
+			}
 
 			if csum != NoChecksum || format == Gzip {
 				// Check Checksum on complex object with many bit flips.  If only one or two,
@@ -71,14 +90,52 @@ func (suite *DataSuite) TestSerialization(c *C) {
 				for i := 0; i < len(s); i++ {
 					s[i] = s[i] ^ 0x04
 				}
-				err = Deserialize(s, &returnComplexObj)
-				c.Assert(err, NotNil, Commentf("format %s did not catch checksum error", format))
+				if err = Deserialize(s, &returnComplexObj); err == nil {
+					t.Errorf("for format %s, checksum %s, compresion %s: %v\n", format, checksum, compression, err)
+				}
 			}
 		}
 	}
 }
 
-func (suite *DataSuite) testUncompressed(b *testing.B, checksum Checksum) {
+func readData(t *testing.T, filepath string) []byte {
+	f, err := os.Open(filepath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := ioutil.ReadAll(f)
+	f.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+func TestIncompressibleLZ4(t *testing.T) {
+	incompressibleData := make([]byte, 30)
+	for i := 0; i < 30; i++ {
+		incompressibleData[i] = byte(rand.Int() % 255)
+	}
+	t.Logf("incompressible data size: %d\n", len(incompressibleData))
+	compressed := make([]byte, lz4.CompressBound(incompressibleData))
+	outSize, err := lz4.Compress(incompressibleData, compressed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compressed = compressed[:outSize]
+	t.Logf("lz4 compress was %d bytes\n", outSize)
+
+	out := make([]byte, 30)
+	if err = lz4.Uncompress(compressed, out); err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Compare(out, incompressibleData) != 0 {
+		t.Fatal("bad uncompress lz4")
+	}
+}
+
+func testUncompressed(b *testing.B, checksum Checksum) {
 	stringObj := "Hi there!"
 	var returnObj string
 
@@ -95,7 +152,9 @@ func (suite *DataSuite) testUncompressed(b *testing.B, checksum Checksum) {
 		},
 	}
 	compression, err := NewCompression(Uncompressed, DefaultCompression)
-	b.Error(err)
+	if err != nil {
+		b.Error(err)
+	}
 
 	s, _ := Serialize(stringObj, compression, checksum)
 	_ = Deserialize(s, &returnObj)
@@ -105,8 +164,8 @@ func (suite *DataSuite) testUncompressed(b *testing.B, checksum Checksum) {
 	_ = Deserialize(s, &returnComplexObj)
 }
 
-func (suite *DataSuite) BenchmarkUncompressedNoChecksum(b *testing.B) {
+func BenchmarkUncompressedNoChecksum(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		suite.testUncompressed(b, NoChecksum)
+		testUncompressed(b, NoChecksum)
 	}
 }

@@ -23,7 +23,7 @@ import (
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/server"
 
-	"github.com/pierrec/lz4"
+	lz4 "github.com/janelia-flyem/go/golz4"
 )
 
 func checkSparsevolsCoarse(t *testing.T, encoding []byte) {
@@ -170,7 +170,7 @@ func (b testBody) checkSparsevolAPIs(t *testing.T, uuid dvid.UUID, label uint64)
 	// Check with lz4 compression
 	uncompressed := make([]byte, lenEncoding)
 	compressed := server.TestHTTP(t, "GET", reqStr+"?compression=lz4", nil)
-	if _, err := lz4.UncompressBlock(compressed, uncompressed, 0); err != nil {
+	if err := lz4.Uncompress(compressed, uncompressed); err != nil {
 		t.Fatalf("error uncompressing lz4 for sparsevol %d GET: %v\n", label, err)
 	}
 	b.checkSparseVol(t, uncompressed, dvid.OptionalBounds{})
@@ -610,7 +610,7 @@ func Test16x16x16SparseVolumes(t *testing.T) {
 
 		// Check with lz4 compression
 		compressed := server.TestHTTP(t, "GET", reqStr+"?compression=lz4", nil)
-		if _, err := lz4.UncompressBlock(compressed, encoding, 0); err != nil {
+		if err := lz4.Uncompress(compressed, encoding); err != nil {
 			t.Fatalf("error uncompressing lz4: %v\n", err)
 		}
 		bodies[label-1].checkSparseVol(t, encoding, dvid.OptionalBounds{})

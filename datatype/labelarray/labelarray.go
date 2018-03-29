@@ -31,7 +31,7 @@ import (
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
 
-	"github.com/pierrec/lz4"
+	lz4 "github.com/janelia-flyem/go/golz4"
 )
 
 const (
@@ -1892,7 +1892,7 @@ func (d *Data) sendBlock(w http.ResponseWriter, x, y, z int32, v []byte, compres
 		switch formatIn {
 		case dvid.LZ4:
 			uncompressed = make([]byte, outsize)
-			if _, err := lz4.UncompressBlock(out, uncompressed, 0); err != nil {
+			if err := lz4.Uncompress(out, uncompressed); err != nil {
 				return err
 			}
 		case dvid.Uncompressed:
@@ -1922,9 +1922,9 @@ func (d *Data) sendBlock(w http.ResponseWriter, x, y, z int32, v []byte, compres
 
 		switch formatOut {
 		case dvid.LZ4:
-			recompressed = make([]byte, lz4.CompressBlockBound(len(uint64array)))
+			recompressed = make([]byte, lz4.CompressBound(uint64array))
 			var size int
-			if size, err = lz4.CompressBlock(uint64array, recompressed, 0); err != nil {
+			if size, err = lz4.Compress(uint64array, recompressed); err != nil {
 				return err
 			}
 			outsize = uint32(size)
@@ -2473,9 +2473,9 @@ func sendBinaryData(compression string, data []byte, subvol *dvid.Subvolume, w h
 			return err
 		}
 	case "lz4":
-		compressed := make([]byte, lz4.CompressBlockBound(len(data)))
+		compressed := make([]byte, lz4.CompressBound(data))
 		var n, outSize int
-		if outSize, err = lz4.CompressBlock(data, compressed, 0); err != nil {
+		if outSize, err = lz4.Compress(data, compressed); err != nil {
 			return err
 		}
 		compressed = compressed[:outSize]
@@ -2546,7 +2546,7 @@ func GetBinaryData(compression string, in io.ReadCloser, estsize int64) ([]byte,
 		}
 		tlog = dvid.NewTimeLog()
 		uncompressed := make([]byte, estsize)
-		if _, err = lz4.UncompressBlock(data, uncompressed, 0); err != nil {
+		if err = lz4.Uncompress(data, uncompressed); err != nil {
 			return nil, err
 		}
 		data = uncompressed
