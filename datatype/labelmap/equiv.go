@@ -98,17 +98,17 @@ type SVMap struct {
 // makes sure that current map has been initialized with all forward mappings up to
 // given version.
 func (svm *SVMap) initToVersion(d dvid.Data, v dvid.VersionID) error {
+	svm.Lock()
+	defer svm.Unlock()
+
 	ancestors, err := datastore.GetAncestry(v)
 	if err != nil {
 		return err
 	}
-	svm.Lock()
-	defer svm.Unlock()
-
 	for _, ancestor := range ancestors {
 		vid, found := svm.versions[ancestor]
 		if found {
-			continue // we have already loaded this version
+			return nil // we have already loaded this version and its ancestors
 		}
 		mappingOps, err := labels.ReadMappingLog(d, ancestor)
 		if err != nil {
@@ -117,7 +117,7 @@ func (svm *SVMap) initToVersion(d dvid.Data, v dvid.VersionID) error {
 		if len(mappingOps) == 0 {
 			continue
 		}
-		vid, err = svm.createShortVersion(v)
+		vid, err = svm.createShortVersion(ancestor)
 		if err != nil {
 			return err
 		}
@@ -131,8 +131,6 @@ func (svm *SVMap) initToVersion(d dvid.Data, v dvid.VersionID) error {
 			}
 		}
 	}
-
-	// TODO: Read in affinities
 	return nil
 }
 
@@ -186,23 +184,6 @@ func (svm *SVMap) createShortVersion(v dvid.VersionID) (uint8, error) {
 		svm.numVersions++
 	}
 	return vid, nil
-}
-
-// MapSupervoxel sets the mapping for a supervoxel to a specified label.
-func (svm *SVMap) MapSupervoxel(v dvid.VersionID, supervoxel, label uint64) error {
-	svm.Lock()
-	vid, err := svm.createShortVersion(v)
-	if err != nil {
-		return err
-	}
-	vm := svm.fm[supervoxel]
-	newvm, changed := vm.modify(vid, label)
-	if changed {
-		svm.fm[supervoxel] = newvm
-		dvid.Infof("changed supervoxel %d mapping to incorporate label %d\n", supervoxel, label)
-	}
-	svm.Unlock()
-	return nil
 }
 
 // returns true if the given version is likely to have some mappings.
@@ -272,13 +253,13 @@ var (
 	iMap instanceMaps
 )
 
+func init() {
+	iMap.maps = make(map[dvid.UUID]*SVMap)
+}
+
 // returns or creates an SVMap so nil is never returned unless there's an error
 func getMapping(d dvid.Data, v dvid.VersionID) (*SVMap, error) {
 	iMap.Lock()
-	defer iMap.Unlock()
-	if iMap.maps == nil {
-		iMap.maps = make(map[dvid.UUID]*SVMap)
-	}
 	m, found := iMap.maps[d.DataUUID()]
 	if !found {
 		m = new(SVMap)
@@ -287,6 +268,7 @@ func getMapping(d dvid.Data, v dvid.VersionID) (*SVMap, error) {
 		m.versionsRev = make(map[uint8]dvid.VersionID)
 		iMap.maps[d.DataUUID()] = m
 	}
+	iMap.Unlock()
 	if err := m.initToVersion(d, v); err != nil {
 		return nil, err
 	}
