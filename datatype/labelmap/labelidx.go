@@ -540,25 +540,25 @@ func CleaveIndex(d dvid.Data, v dvid.VersionID, op labels.CleaveOp) error {
 		}
 	}
 
-	ctx := datastore.NewVersionedCtx(d, v)
-	if err := putLabelIndex(ctx, idx); err != nil {
-		return err
+	supervoxels := idx.GetSupervoxels()
+	for _, supervoxel := range op.CleavedSupervoxels {
+		if _, found := supervoxels[supervoxel]; !found {
+			return fmt.Errorf("cannot cleave supervoxel %d, which does not exist in label %d", supervoxel, op.Target)
+		}
+		delete(supervoxels, supervoxel)
 	}
-	if indexCache != nil {
-		idxBytes, err = idx.Marshal()
-		if err != nil {
-			return err
-		}
-		k := indexKey{data: d, version: v, label: op.Target}.Bytes()
-		if err := indexCache.Set(k, idxBytes, 0); err != nil {
-			return err
-		}
+	if len(supervoxels) == 0 {
+		return fmt.Errorf("cannot cleave all supervoxels from the label %d", op.Target)
 	}
 
 	// create a new label index to contain the cleaved supervoxels.
 	// we don't have to worry about mutex here because it's a new index.
+	ctx := datastore.NewVersionedCtx(d, v)
 	cidx := idx.Cleave(op.CleavedLabel, op.CleavedSupervoxels)
 	if err := putLabelIndex(ctx, cidx); err != nil {
+		return err
+	}
+	if err := putLabelIndex(ctx, idx); err != nil {
 		return err
 	}
 	if indexCache != nil {
@@ -567,6 +567,15 @@ func CleaveIndex(d dvid.Data, v dvid.VersionID, op labels.CleaveOp) error {
 			return err
 		}
 		k := indexKey{data: d, version: v, label: op.CleavedLabel}.Bytes()
+		if err := indexCache.Set(k, idxBytes, 0); err != nil {
+			return err
+		}
+
+		idxBytes, err = idx.Marshal()
+		if err != nil {
+			return err
+		}
+		k = indexKey{data: d, version: v, label: op.Target}.Bytes()
 		if err := indexCache.Set(k, idxBytes, 0); err != nil {
 			return err
 		}

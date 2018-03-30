@@ -142,17 +142,10 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp) error {
 // given a new label or the one optionally supplied via the "cleavelabel" query string.
 // A cleave label can be specified via the "toLabel" parameter, which if 0 will have an
 // automatic label ID selected for the cleaved body.
-func (d *Data) CleaveLabel(v dvid.VersionID, label, toLabel uint64, r io.ReadCloser) (cleaveLabel uint64, err error) {
-	if toLabel != 0 {
-		cleaveLabel = toLabel
-		if err = d.updateMaxLabel(v, toLabel); err != nil {
-			return
-		}
-	} else {
-		cleaveLabel, err = d.NewLabel(v)
-		if err != nil {
-			return
-		}
+func (d *Data) CleaveLabel(v dvid.VersionID, label uint64, r io.ReadCloser) (cleaveLabel uint64, err error) {
+	cleaveLabel, err = d.NewLabel(v)
+	if err != nil {
+		return
 	}
 	dvid.Debugf("Cleaving subset of label %d into new label %d.\n", label, cleaveLabel)
 

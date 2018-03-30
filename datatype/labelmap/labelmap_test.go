@@ -348,6 +348,12 @@ func (mjson mergeJSON) send(t *testing.T, uuid dvid.UUID, name string) {
 	server.TestHTTP(t, "POST", apiStr, bytes.NewBufferString(string(mjson)))
 }
 
+func (mjson mergeJSON) sendErr(t *testing.T, uuid dvid.UUID, name string) error {
+	apiStr := fmt.Sprintf("%snode/%s/%s/merge", server.WebAPIPath, uuid, name)
+	_, err := server.TestHTTPError(t, "POST", apiStr, bytes.NewBufferString(string(mjson)))
+	return err
+}
+
 func checkLabels(t *testing.T, text string, expected, got []byte) {
 	if len(expected) != len(got) {
 		t.Errorf("%s byte mismatch: expected %d bytes, got %d bytes\n", text, len(expected), len(got))

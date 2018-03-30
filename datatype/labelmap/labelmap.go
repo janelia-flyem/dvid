@@ -844,15 +844,15 @@ POST <api URL>/node/<UUID>/<data name>/merge
 			"UUID": <UUID on which split was done>
 		}
 
-POST <api URL>/node/<UUID>/<data name>/cleave/<label>[?cleavelabel=X]
+POST <api URL>/node/<UUID>/<data name>/cleave/<label>
 
 	Cleaves a label given supervoxels to be cleaved.  Requires JSON in request body 
 	using the following format:
 
 	[supervoxel1, supervoxel2, ...]
 
-	Each element of the JSON array is a supervoxel to be cleaved from the label and either
-	given a new label or the one optionally supplied via the "cleavelabel" query string.
+	Each element of the JSON array is a supervoxel to be cleaved from the label and is given
+	a new unique label that's provided in the returned JSON.
 
 	Returns the following JSON:
 
@@ -3787,17 +3787,7 @@ func (d *Data) handleCleave(ctx *datastore.VersionedCtx, w http.ResponseWriter, 
 		server.BadRequest(w, r, "Label 0 is protected background value and cannot be used as cleave target\n")
 		return
 	}
-	var cleaveLabel uint64
-	queryStrings := r.URL.Query()
-	cleaveStr := queryStrings.Get("cleavelabel")
-	if cleaveStr != "" {
-		cleaveLabel, err = strconv.ParseUint(cleaveStr, 10, 64)
-		if err != nil {
-			server.BadRequest(w, r, "Bad parameter for 'cleavelabel' query string (%q).  Must be uint64.\n", cleaveStr)
-		}
-	}
-
-	cleaveLabel, err = d.CleaveLabel(ctx.VersionID(), label, cleaveLabel, r.Body)
+	cleaveLabel, err := d.CleaveLabel(ctx.VersionID(), label, r.Body)
 	if err != nil {
 		server.BadRequest(w, r, fmt.Sprintf("cleave label %d -> %d: %v", label, cleaveLabel, err))
 		return

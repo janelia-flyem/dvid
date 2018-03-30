@@ -54,6 +54,26 @@ func TestHTTP(t *testing.T, method, urlStr string, payload io.Reader) []byte {
 	return resp.Body.Bytes()
 }
 
+// TestHTTPError returns the response body bytes for a test request, making sure any response has
+// status OK.
+func TestHTTPError(t *testing.T, method, urlStr string, payload io.Reader) ([]byte, error) {
+	resp := TestHTTPResponse(t, method, urlStr, payload)
+	if resp.Code != http.StatusOK {
+		_, fn, line, _ := runtime.Caller(1)
+		var retstr string
+		if resp.Body != nil {
+			retbytes, err := ioutil.ReadAll(resp.Body)
+			if err != nil {
+				return nil, fmt.Errorf("Error trying to read response body from request %q: %v [%s:%d]", urlStr, err, fn, line)
+			} else {
+				retstr = string(retbytes)
+			}
+		}
+		return nil, fmt.Errorf("bad server response (%d) to %s %q: %s [%s:%d]", resp.Code, method, urlStr, retstr, fn, line)
+	}
+	return resp.Body.Bytes(), nil
+}
+
 // TestBadHTTP expects a HTTP response with an error status code.
 func TestBadHTTP(t *testing.T, method, urlStr string, payload io.Reader) {
 	req, err := http.NewRequest(method, urlStr, payload)
