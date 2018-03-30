@@ -111,10 +111,14 @@ func (svm *SVMap) initToVersion(d dvid.Data, v dvid.VersionID) error {
 		if found {
 			return nil // we have already loaded this version and its ancestors
 		}
+		vid, err = svm.createShortVersion(ancestor)
+		if err != nil {
+			return fmt.Errorf("problem creating mapping version for id %d: %v\n", ancestor, err)
+		}
 		timedLog := dvid.NewTimeLog()
 		ch := make(chan storage.LogMessage, 100)
 		wg := new(sync.WaitGroup)
-		go func(ch chan storage.LogMessage, wg *sync.WaitGroup) {
+		go func(vid uint8, ch chan storage.LogMessage, wg *sync.WaitGroup) {
 			numMsgs := 0
 			for msg := range ch { // expects channel to be closed on completion
 				numMsgs++
@@ -129,14 +133,6 @@ func (svm *SVMap) initToVersion(d dvid.Data, v dvid.VersionID) error {
 					wg.Done()
 					continue
 				}
-				if numMsgs == 1 {
-					vid, err = svm.createShortVersion(ancestor)
-					if err != nil {
-						dvid.Errorf("problem creating mapping version for id %d: %v\n", ancestor, err)
-						wg.Done()
-						continue
-					}
-				}
 				mapped := op.GetMapped()
 				for _, supervoxel := range op.GetOriginal() {
 					vm := svm.fm[supervoxel]
@@ -147,54 +143,15 @@ func (svm *SVMap) initToVersion(d dvid.Data, v dvid.VersionID) error {
 				}
 				wg.Done()
 			}
-		}(ch, wg)
-		if err := labels.StreamMappingLog(d, ancestor, ch, wg); err != nil {
-			return err
+		}(vid, ch, wg)
+		if err = labels.StreamMappingLog(d, ancestor, ch, wg); err != nil {
+			return fmt.Errorf("problem loading mapping logs: %v", err)
 		}
 		wg.Wait()
 		timedLog.Infof("Loaded mappings for data %q, version ID %d", d.DataName(), ancestor)
 	}
 	return nil
 }
-
-// func (svm *SVMap) initToVersion(d dvid.Data, v dvid.VersionID) error {
-// 	svm.Lock()
-// 	defer svm.Unlock()
-
-// 	ancestors, err := datastore.GetAncestry(v)
-// 	if err != nil {
-// 		return err
-// 	}
-// 	for _, ancestor := range ancestors {
-// 		vid, found := svm.versions[ancestor]
-// 		if found {
-// 			return nil // we have already loaded this version and its ancestors
-// 		}
-// 		timedLog := dvid.NewTimeLog()
-// 		mappingOps, err := labels.ReadMappingLog(d, ancestor)
-// 		if err != nil {
-// 			return err
-// 		}
-// 		if len(mappingOps) == 0 {
-// 			continue
-// 		}
-// 		vid, err = svm.createShortVersion(ancestor)
-// 		if err != nil {
-// 			return err
-// 		}
-// 		for _, mappingOp := range mappingOps {
-// 			for supervoxel := range mappingOp.Original {
-// 				vm := svm.fm[supervoxel]
-// 				newvm, changed := vm.modify(vid, mappingOp.Mapped)
-// 				if changed {
-// 					svm.fm[supervoxel] = newvm
-// 				}
-// 			}
-// 		}
-// 		timedLog.Infof("Loaded mappings for data %q, version ID %d", d.DataName(), ancestor)
-// 	}
-// 	return nil
-// }
 
 // getAncestry returns a slice of short version ids that actually have mappings,
 // from current version to root along ancestry.  Since all ancestors are immutable,
