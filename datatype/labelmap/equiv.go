@@ -71,6 +71,10 @@ func (vm vmap) modify(vid uint8, toLabel uint64) (out vmap, changed bool) {
 	for pos := 0; pos < len(vm); pos += 9 {
 		entryvid := uint8(vm[pos])
 		if entryvid == vid {
+			curLabel := binary.LittleEndian.Uint64(vm[pos+1 : pos+9])
+			if curLabel == toLabel {
+				return vm, false
+			}
 			out := make([]byte, len(vm))
 			copy(out, vm)
 			binary.LittleEndian.PutUint64(out[pos+1:pos+9], toLabel)
