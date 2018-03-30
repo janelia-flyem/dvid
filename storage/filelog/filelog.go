@@ -201,6 +201,70 @@ func (flogs *fileLogs) ReadAll(dataID, version dvid.UUID) ([]storage.LogMessage,
 	return msgs, err
 }
 
+// StreamAll sends log messages down channel, adding one for each message to wait group if provided.
+func (flogs *fileLogs) StreamAll(dataID, version dvid.UUID, ch chan storage.LogMessage, wg *sync.WaitGroup) error {
+	k := string(dataID + "-" + version)
+	filename := filepath.Join(flogs.path, k)
+
+	flogs.RLock()
+	fl, found := flogs.files[k]
+	flogs.RUnlock()
+	if found {
+		// close then reopen later.
+		fl.Lock()
+		fl.Close()
+		flogs.Lock()
+		delete(flogs.files, k)
+		flogs.Unlock()
+	}
+
+	f, err := os.OpenFile(filename, os.O_RDONLY, 0755)
+	if err != nil {
+		if os.IsNotExist(err) {
+			err = nil
+		}
+		goto restart
+	}
+	for {
+		hdrbuf := make([]byte, 6)
+		_, err = io.ReadFull(f, hdrbuf)
+		if err == io.EOF {
+			err = nil
+			break
+		}
+		if err != nil {
+			break
+		}
+		entryType := binary.LittleEndian.Uint16(hdrbuf[0:2])
+		size := binary.LittleEndian.Uint32(hdrbuf[2:])
+		databuf := make([]byte, size)
+		_, err = io.ReadFull(f, databuf)
+		if err != nil {
+			break
+		}
+		ch <- storage.LogMessage{EntryType: entryType, Data: databuf}
+		if wg != nil {
+			wg.Add(1)
+		}
+	}
+	close(ch)
+	f.Close()
+
+restart:
+	if found {
+		f2, err2 := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_APPEND|os.O_SYNC, 0755)
+		if err2 != nil {
+			dvid.Errorf("unable to reopen write log %s: %v\n", k, err)
+		} else {
+			flogs.Lock()
+			flogs.files[k] = &fileLog{File: f2}
+			flogs.Unlock()
+		}
+		fl.Unlock()
+	}
+	return err
+}
+
 func (flogs *fileLogs) getWriteLog(dataID, version dvid.UUID) (fl *fileLog, err error) {
 	k := string(dataID + "-" + version)
 	var found bool
