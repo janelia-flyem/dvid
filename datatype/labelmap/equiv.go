@@ -114,7 +114,7 @@ func (svm *SVMap) initToVersion(d dvid.Data, v dvid.VersionID) error {
 		timedLog := dvid.NewTimeLog()
 		ch := make(chan storage.LogMessage, 100)
 		wg := new(sync.WaitGroup)
-		go func() {
+		go func(ch chan storage.LogMessage, wg *sync.WaitGroup) {
 			numMsgs := 0
 			for msg := range ch { // expects channel to be closed on completion
 				numMsgs++
@@ -147,7 +147,7 @@ func (svm *SVMap) initToVersion(d dvid.Data, v dvid.VersionID) error {
 				}
 				wg.Done()
 			}
-		}()
+		}(ch, wg)
 		if err := labels.StreamMappingLog(d, ancestor, ch, wg); err != nil {
 			return err
 		}

@@ -218,6 +218,7 @@ func (flogs *fileLogs) StreamAll(dataID, version dvid.UUID, ch chan storage.LogM
 		flogs.Unlock()
 	}
 
+    msgNum := 0
 	f, err := os.OpenFile(filename, os.O_RDONLY, 0755)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -242,10 +243,11 @@ func (flogs *fileLogs) StreamAll(dataID, version dvid.UUID, ch chan storage.LogM
 		if err != nil {
 			break
 		}
-		ch <- storage.LogMessage{EntryType: entryType, Data: databuf}
+        msgNum++
 		if wg != nil {
 			wg.Add(1)
 		}
+		ch <- storage.LogMessage{EntryType: entryType, Data: databuf}
 	}
 	close(ch)
 	f.Close()
