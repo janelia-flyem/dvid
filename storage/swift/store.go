@@ -89,7 +89,19 @@ func NewStore(config dvid.StoreConfig) (*Store, bool, error) {
 		return nil, false, fmt.Errorf(`Unable to authenticate with the Swift database: %s`, err)
 	}
 
-	return s, false, nil
+	// Check if we already have metadata.
+	var context storage.MetadataContext
+	from, to := context.KeyRange()
+	names, err := s.conn.ObjectNames(s.container, &swift.ObjectsOpts{
+		Limit:     1,
+		Marker:    encodeKey(from),
+		EndMarker: encodeKey(to),
+	})
+	if err != nil {
+		return nil, false, fmt.Errorf(`Unable to check for metadata objects: %s`, err)
+	}
+
+	return s, len(names) == 0, nil
 }
 
 /*********** KeyValueGetter interface ***********/
