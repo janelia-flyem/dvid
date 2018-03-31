@@ -211,6 +211,36 @@ func GetSupervoxelBlocks(d dvid.Data, v dvid.VersionID, supervoxel uint64) (dvid
 	return blocks, nil
 }
 
+// GetLabelSize returns the # of voxels in the given label.  If isSupervoxel = true, the given
+// label is interpreted as a supervoxel id and the size is of a supervoxel.  If a label doesn't
+// exist, a zero (not error) is returned.
+func GetLabelSize(d dvid.Data, v dvid.VersionID, label uint64, isSupervoxel bool) (uint64, error) {
+	var supervoxel uint64
+	if isSupervoxel {
+		supervoxel = label
+		mapping, err := getMapping(d, v)
+		if err != nil {
+			return 0, err
+		}
+		if mapping != nil {
+			if mapped, found := mapping.MappedLabel(v, supervoxel); found {
+				label = mapped
+			}
+		}
+	}
+	idx, err := GetLabelIndex(d, v, label)
+	if err != nil {
+		return 0, err
+	}
+	if idx == nil {
+		return 0, nil
+	}
+	if isSupervoxel {
+		return idx.GetSupervoxelCount(supervoxel), nil
+	}
+	return idx.NumVoxels(), nil
+}
+
 // GetBoundedIndex gets bounded label index data from storage for a given data instance.
 func GetBoundedIndex(d dvid.Data, v dvid.VersionID, label uint64, bounds dvid.Bounds) (*labels.Index, error) {
 	idx, err := GetLabelIndex(d, v, label)
@@ -538,6 +568,9 @@ func CleaveIndex(d dvid.Data, v dvid.VersionID, op labels.CleaveOp) error {
 		if err != nil {
 			return err
 		}
+	}
+	if idx == nil {
+		return fmt.Errorf("cannot cleave non-existent label %d", op.Target)
 	}
 
 	supervoxels := idx.GetSupervoxels()

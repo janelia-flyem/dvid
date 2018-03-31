@@ -930,6 +930,28 @@ func TestSplitLabel(t *testing.T) {
 	encoding = server.TestHTTP(t, "GET", reqStr, nil)
 	bodysplit.checkSparseVol(t, encoding, dvid.OptionalBounds{})
 
+	reqStr = fmt.Sprintf("%snode/%s/labels/size/5", server.WebAPIPath, uuid)
+	r = server.TestHTTP(t, "GET", reqStr, nil)
+	var jsonVal2 struct {
+		Voxels uint64 `json:"voxels"`
+	}
+	if err := json.Unmarshal(r, &jsonVal2); err != nil {
+		t.Fatalf("unable to get size: %v", err)
+	}
+	expectedVoxels := bodysplit.voxelSpans.Count()
+	if jsonVal2.Voxels != expectedVoxels {
+		t.Errorf("thought split body would have %d voxels, got %d\n", expectedVoxels, jsonVal2.Voxels)
+	}
+	reqStr = fmt.Sprintf("%snode/%s/labels/size/4?supervoxels=true", server.WebAPIPath, uuid)
+	r = server.TestHTTP(t, "GET", reqStr, nil)
+	if err := json.Unmarshal(r, &jsonVal2); err != nil {
+		t.Fatalf("unable to get size for supervoxel 4: %v", err)
+	}
+	voxelsIn4 := body4.voxelSpans.Count()
+	if jsonVal2.Voxels != voxelsIn4-expectedVoxels {
+		t.Errorf("thought supervoxel 4 would have %d voxels remaining, got %d\n", voxelsIn4-expectedVoxels, jsonVal2.Voxels)
+	}
+
 	// Make sure sparsevol for original body 4 is correct
 	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/%d", server.WebAPIPath, uuid, 4)
 	encoding = server.TestHTTP(t, "GET", reqStr, nil)
@@ -1238,6 +1260,29 @@ func TestMergeCleave(t *testing.T) {
 		t.Fatalf("Error blocking on sync of labels: %v\n", err)
 	}
 
+	// Check sizes
+	reqStr = fmt.Sprintf("%snode/%s/labels/size/4", server.WebAPIPath, uuid)
+	r := server.TestHTTP(t, "GET", reqStr, nil)
+	var jsonVal struct {
+		Voxels uint64 `json:"voxels"`
+	}
+	if err := json.Unmarshal(r, &jsonVal); err != nil {
+		t.Fatalf("unable to get size for label 4: %v", err)
+	}
+	voxelsIn3 := body3.voxelSpans.Count()
+	voxelsIn4 := body4.voxelSpans.Count()
+	if jsonVal.Voxels != voxelsIn3+voxelsIn4 {
+		t.Errorf("thought label 4 would have %d voxels, got %d\n", voxelsIn3+voxelsIn4, jsonVal.Voxels)
+	}
+	reqStr = fmt.Sprintf("%snode/%s/labels/size/4?supervoxels=true", server.WebAPIPath, uuid)
+	r = server.TestHTTP(t, "GET", reqStr, nil)
+	if err := json.Unmarshal(r, &jsonVal); err != nil {
+		t.Fatalf("unable to get size for supervoxel 4: %v", err)
+	}
+	if jsonVal.Voxels != voxelsIn4 {
+		t.Errorf("thought supervoxel 4 would have %d voxels, got %d\n", voxelsIn4, jsonVal.Voxels)
+	}
+
 	// Make sure label 3 sparsevol has been removed.
 	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/%d", server.WebAPIPath, uuid, 3)
 	server.TestBadHTTP(t, "GET", reqStr, nil)
@@ -1280,12 +1325,12 @@ func TestMergeCleave(t *testing.T) {
 
 	// Cleave supervoxel 3 out of label 4.
 	reqStr = fmt.Sprintf("%snode/%s/labels/cleave/4", server.WebAPIPath, uuid)
-	r := server.TestHTTP(t, "POST", reqStr, bytes.NewBufferString("[3]"))
-	var jsonVal struct {
+	r = server.TestHTTP(t, "POST", reqStr, bytes.NewBufferString("[3]"))
+	var jsonVal2 struct {
 		CleavedLabel uint64
 	}
-	if err := json.Unmarshal(r, &jsonVal); err != nil {
-		t.Errorf("Unable to get new label from cleave.  Instead got: %v\n", jsonVal)
+	if err := json.Unmarshal(r, &jsonVal2); err != nil {
+		t.Errorf("Unable to get new label from cleave.  Instead got: %v\n", jsonVal2)
 	}
 
 	reqStr = fmt.Sprintf("%snode/%s/labels/maxlabel", server.WebAPIPath, uuid)
@@ -1317,6 +1362,10 @@ func TestMergeCleave(t *testing.T) {
 	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/5", server.WebAPIPath, uuid)
 	encoding := server.TestHTTP(t, "GET", reqStr, nil)
 	body3.checkSparseVol(t, encoding, dvid.OptionalBounds{})
+
+	// make sure you can't cleave all supervoxels from a label
+	reqStr = fmt.Sprintf("%snode/%s/labels/cleave/4", server.WebAPIPath, uuid)
+	server.TestBadHTTP(t, "POST", reqStr, bytes.NewBufferString("[4]"))
 }
 
 func TestMultiscaleMergeCleave(t *testing.T) {
@@ -1663,31 +1712,40 @@ func TestConcurrentMutations(t *testing.T) {
 	wg := new(sync.WaitGroup)
 	wg.Add(3)
 	go func() {
+		var err error
 		for n := 0; n < 250; n++ {
-			if err := mergeCleave(t, wg, uuid, "labels", tbodies[0:4], expectedMapping1); err != nil {
-				dvid.Errorf("merge-cleave error: %v\n", err)
+			if err = mergeCleave(t, wg, uuid, "labels", tbodies[0:4], 1, expectedMapping1); err != nil {
 				break
 			}
 		}
 		wg.Done()
+		if err != nil {
+			t.Error(err)
+		}
 	}()
 	go func() {
+		var err error
 		for n := 0; n < 250; n++ {
-			if err := mergeCleave(t, wg, uuid, "labels", tbodies[4:8], expectedMapping2); err != nil {
-				dvid.Errorf("merge-cleave error: %v\n", err)
+			if err = mergeCleave(t, wg, uuid, "labels", tbodies[4:8], 2, expectedMapping2); err != nil {
 				break
 			}
 		}
 		wg.Done()
+		if err != nil {
+			t.Error(err)
+		}
 	}()
 	go func() {
+		var err error
 		for n := 0; n < 250; n++ {
-			if err := mergeCleave(t, wg, uuid, "labels", tbodies[8:12], expectedMapping3); err != nil {
-				dvid.Errorf("merge-cleave error: %v\n", err)
+			if err = mergeCleave(t, wg, uuid, "labels", tbodies[8:12], 3, expectedMapping3); err != nil {
 				break
 			}
 		}
 		wg.Done()
+		if err != nil {
+			t.Error(err)
+		}
 	}()
 	wg.Wait()
 
@@ -1709,26 +1767,41 @@ func TestConcurrentMutations(t *testing.T) {
 		t.Errorf("Concurrent split/merge producing bad result: %v\n", err)
 	}
 
-	reqStr := fmt.Sprintf("%snode/%s/labels/sparsevols-coarse/1/12", server.WebAPIPath, uuid)
+	// get reverse mapping of new bodies to supervoxel: should be 1 to 1 since cleaves are last ops.
+	reverse := make(map[uint64]uint64, 12)
+	for i := uint64(1); i <= 4; i++ {
+		label, found := expectedMapping1[i]
+		if !found {
+			t.Errorf("unlikely that no mapping found for supervoxel %d!\n", i)
+			label = i
+		}
+		reverse[label] = i
+	}
+	for i := uint64(5); i <= 8; i++ {
+		label, found := expectedMapping2[i]
+		if !found {
+			t.Errorf("unlikely that no mapping found for supervoxel %d!\n", i)
+			label = i
+		}
+		reverse[label] = i
+	}
+	for i := uint64(9); i <= 12; i++ {
+		label, found := expectedMapping3[i]
+		if !found {
+			t.Errorf("unlikely that no mapping found for supervoxel %d!\n", i)
+			label = i
+		}
+		reverse[label] = i
+	}
+
+	reqStr := fmt.Sprintf("%snode/%s/labels/sparsevols-coarse/1/3000", server.WebAPIPath, uuid)
 	encoding := server.TestHTTP(t, "GET", reqStr, nil)
 	var i int
-	for supervoxel := uint64(1); supervoxel <= 12; supervoxel++ {
-		var label uint64
-		switch {
-		case supervoxel < 5:
-			label = expectedMapping1[supervoxel]
-		case supervoxel >= 5 && supervoxel <= 8:
-			label = expectedMapping2[supervoxel]
-		case supervoxel >= 9 && supervoxel <= 12:
-			label = expectedMapping3[supervoxel]
-		}
+	for labelNum := 1; labelNum <= 12; labelNum++ {
 		if i+28 > len(encoding) {
-			t.Fatalf("Expected label %d but only %d bytes remain in encoding\n", label, len(encoding[i:]))
+			t.Fatalf("Expected label #%d but only %d bytes remain in encoding\n", labelNum, len(encoding[i:]))
 		}
-		gotLabel := binary.LittleEndian.Uint64(encoding[i : i+8])
-		if gotLabel != label {
-			t.Errorf("Expected label %d, got label %d in returned coarse sparsevols\n", label, gotLabel)
-		}
+		label := binary.LittleEndian.Uint64(encoding[i : i+8])
 		i += 8
 		var spans dvid.Spans
 		if err := spans.UnmarshalBinary(encoding[i:]); err != nil {
@@ -1736,15 +1809,19 @@ func TestConcurrentMutations(t *testing.T) {
 			return
 		}
 		i += 4 + len(spans)*16
-		b := tbodies[label-1]
+		supervoxel, found := reverse[label]
+		if !found {
+			t.Fatalf("Got sparsevol for label %d, yet none of the supervoxels were mapped to it!\n", label)
+		}
+		b := tbodies[supervoxel-1]
 		if !reflect.DeepEqual(spans, b.blockSpans) {
-			t.Errorf("Expected coarse spans for label %d:\n%s\nGot spans:\n%s\n", b.label, b.blockSpans, spans)
+			t.Errorf("Expected coarse spans for supervoxel %d:\n%s\nGot spans:\n%s\n", b.label, b.blockSpans, spans)
 		}
 	}
 }
 
 // merge a subset of bodies, then cleave each of them back out.
-func mergeCleave(t *testing.T, wg *sync.WaitGroup, uuid dvid.UUID, name dvid.InstanceName, tbodies []testBody, mapping map[uint64]uint64) error {
+func mergeCleave(t *testing.T, wg *sync.WaitGroup, uuid dvid.UUID, name dvid.InstanceName, tbodies []testBody, thread int, mapping map[uint64]uint64) error {
 	label1 := tbodies[0].label
 	label4 := tbodies[3].label
 	target := label1 + uint64(rand.Int()%4)
@@ -1762,11 +1839,15 @@ func mergeCleave(t *testing.T, wg *sync.WaitGroup, uuid dvid.UUID, name dvid.Ins
 	}
 	var s []string
 	for label := range labelset {
+		mapped, found = mapping[label]
+		if found {
+			label = mapped
+		}
 		s = append(s, fmt.Sprintf("%d", label))
 	}
 	mergeStr := "[" + fmt.Sprintf("%d", target) + ", " + strings.Join(s, ",") + "]"
 	testMerge := mergeJSON(mergeStr)
-	dvid.Infof("merging %s: target %d came from original supervoxel %d\n", mergeStr, target, targetSupervoxel)
+	dvid.Infof("thread %d> merging %s: target %d came from original supervoxel %d\n", thread, mergeStr, target, targetSupervoxel)
 	if err := testMerge.sendErr(t, uuid, "labels"); err != nil {
 		return err
 	}
@@ -1784,7 +1865,7 @@ func mergeCleave(t *testing.T, wg *sync.WaitGroup, uuid dvid.UUID, name dvid.Ins
 		if err := json.Unmarshal(r, &jsonVal); err != nil {
 			return fmt.Errorf("unable to get new label from cleave.  Instead got: %v", jsonVal)
 		}
-		dvid.Infof("cleaved supervoxel %d now -> label %d\n", label, jsonVal.CleavedLabel)
+		dvid.Infof("thread %d> cleaved supervoxel %d now -> label %d\n", thread, label, jsonVal.CleavedLabel)
 		mapping[label] = jsonVal.CleavedLabel
 
 		// make sure old label doesn't have these supervoxels anymore.
@@ -1801,6 +1882,22 @@ func mergeCleave(t *testing.T, wg *sync.WaitGroup, uuid dvid.UUID, name dvid.Ins
 			if supervoxel == label {
 				return fmt.Errorf("supervoxel %d was supposedly cleaved but still remains in label %d index", label, target)
 			}
+		}
+
+		// make sure cleaved body has just this supervoxel.
+		reqStr = fmt.Sprintf("%snode/%s/labels/supervoxels/%d", server.WebAPIPath, uuid, jsonVal.CleavedLabel)
+		r, err = server.TestHTTPError(t, "GET", reqStr, nil)
+		if err != nil {
+			return err
+		}
+		if err := json.Unmarshal(r, &supervoxels); err != nil {
+			return fmt.Errorf("unable to get supervoxels for cleaved body %d after cleave: %v", jsonVal.CleavedLabel, err)
+		}
+		if len(supervoxels) != 1 {
+			return fmt.Errorf("expected only 1 supervoxel (%d) to remain from cleave of %d into %d.  have: %v", label, target, jsonVal.CleavedLabel, supervoxels)
+		}
+		if supervoxels[0] != label {
+			return fmt.Errorf("expected only supervoxel in cleaved body %d to be %d, got %d", jsonVal.CleavedLabel, label, supervoxels[0])
 		}
 	}
 	return nil

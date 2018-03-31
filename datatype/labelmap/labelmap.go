@@ -613,21 +613,39 @@ GET <api URL>/node/<UUID>/<data name>/supervoxels/<label>
 	Returns JSON for the supervoxels that have been agglomerated into the given label:
 
 	[ 23, 911, ...]
+
+	Returns a status code 404 (Not Found) if label does not exist.
 	
     Arguments:
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
     data name     Name of labelmap instance.
     label     	  A 64-bit integer label id
 
+GET <api URL>/node/<UUID>/<data name>/size/<label>[?supervoxels=true]
+
+	Returns the size in voxels for the given label (or supervoxel) in JSON:
+
+	{ "voxels": 2314 }
+	
+	Returns a status code 404 (Not Found) if label does not exist.
+	
+    Arguments:
+    UUID          Hexidecimal string with enough characters to uniquely identify a version node.
+    data name     Name of labelmap instance.
+    label     	  A 64-bit integer label id
+
+    Query-string Options:
+
+	supervoxels   If "true", interprets the given label as a supervoxel id, not a possibly merged label.
 
 GET  <api URL>/node/<UUID>/<data name>/sparsevol-size/<label>?<options>
 
 	Returns JSON giving the number of voxels, number of native blocks and the coarse bounding box in DVID
-	coordinates (voxel space).
+	coordinates (voxel space):
 
-	Example return:
+	{ "voxels": 231387, numblocks": 1081, "minvoxel": [0, 11, 23], "maxvoxel": [1723, 1279, 4855]}
 
-	{ "voxels": 231387, numblocks": 1081, "minvoxel": [886, 513, 744], "maxvoxel": [1723, 1279, 4855]}
+	Returns a status code 404 (Not Found) if label does not exist.
 
 	Note that the minvoxel and maxvoxel coordinates are voxel coordinates that are
 	accurate to the block, not the voxel.
@@ -637,6 +655,8 @@ GET  <api URL>/node/<UUID>/<data name>/sparsevol/<label>?<options>
 	Returns a sparse volume with voxels of the given label in encoded RLE format.  The returned
 	data can be optionally compressed using the "compression" option below.
 
+	Returns a status code 404 (Not Found) if label does not exist.
+	
 	The encoding has the following possible format where integers are little endian and the order
 	of data is exactly as specified below:
 
@@ -763,7 +783,9 @@ GET <api URL>/node/<UUID>/<data name>/sparsevol-coarse/<label>?<options>
 	Note that the above format is the RLE encoding of sparsevol, where voxel coordinates
 	have been replaced by block coordinates.
 
-    GET Query-string Options:
+	Returns a status code 404 (Not Found) if label does not exist.
+	
+	GET Query-string Options:
 
     minx    Spans must be equal to or larger than this minimum x voxel coordinate.
     maxx    Spans must be equal to or smaller than this maximum x voxel coordinate.
@@ -820,7 +842,8 @@ POST <api URL>/node/<UUID>/<data name>/nextlabel
 
 POST <api URL>/node/<UUID>/<data name>/merge
 
-	Merges labels.  Requires JSON in request body using the following format:
+	Merges labels (not supervoxels).  Requires JSON in request body using the 
+	following format:
 
 	[toLabel1, fromLabel1, fromLabel2, fromLabel3, ...]
 
@@ -852,7 +875,13 @@ POST <api URL>/node/<UUID>/<data name>/cleave/<label>
 	[supervoxel1, supervoxel2, ...]
 
 	Each element of the JSON array is a supervoxel to be cleaved from the label and is given
-	a new unique label that's provided in the returned JSON.
+	a new unique label that's provided in the returned JSON.  Note that unlike the 
+	target label to be cleved, the POSTed data should be supervoxel IDs, not potentially 
+	merged labels.
+	
+	A bad request error (status 400) will be returned if you attempt to cleve on a 
+	non-existent body or attempt to cleve all the supervoxels from a label, i.e., you 
+	are not allowed to create empty labels from the cleave operation.
 
 	Returns the following JSON:
 
@@ -935,57 +964,57 @@ POST <api URL>/node/<UUID>/<data name>/split-supervoxel/<supervoxel>
 			"UUID": <UUID on which split was done>
 		}
 
-	POST <api URL>/node/<UUID>/<data name>/split/<label>
+POST <api URL>/node/<UUID>/<data name>/split/<label>
 
-		Splits a portion of a label's voxels into a new supervoxel with a new label.  
-		Returns the following JSON:
+	Splits a portion of a label's voxels into a new supervoxel with a new label.  
+	Returns the following JSON:
+
+		{ "label": <new label> }
+
+	This request requires a binary sparse volume in the POSTed body with the following 
+	encoded RLE format, which is compatible with the format returned by a GET on the 
+	"sparsevol" endpoint described above:
+
+		All integers are in little-endian format.
+
+		byte     Payload descriptor:
+					Set to 0 to indicate it's a binary sparse volume.
+		uint8    Number of dimensions
+		uint8    Dimension of run (typically 0 = X)
+		byte     Reserved (to be used later)
+		uint32    # Voxels [TODO.  0 for now]
+		uint32    # Spans
+		Repeating unit of:
+			int32   Coordinate of run start (dimension 0)
+			int32   Coordinate of run start (dimension 1)
+			int32   Coordinate of run start (dimension 2)
+				...
+			int32   Length of run
+
+	NOTE 1: The POSTed split sparse volume must be a subset of the given label's voxels.  You cannot
+	give an arbitrary sparse volume that may span multiple labels.
 	
-			{ "label": <new label> }
+	Kafka JSON message generated by this request:
+		{ 
+			"Action": "split",
+			"Target": <from label>,
+			"NewLabel": <to label>,
+			"Split": <string for reference to split data in serialized RLE format>,
+			"MutationID": <unique id for mutation>
+			"UUID": <UUID on which split was done>
+		}
 	
-		This request requires a binary sparse volume in the POSTed body with the following 
-		encoded RLE format, which is compatible with the format returned by a GET on the 
-		"sparsevol" endpoint described above:
+	The split reference above can be used to download the split binary data by calling
+	this data instance's BlobStore API.  See the node-level HTTP API documentation.
+
+		GET /api/node/{uuid}/{data name}/blobstore/{reference}
 	
-			All integers are in little-endian format.
-	
-			byte     Payload descriptor:
-					   Set to 0 to indicate it's a binary sparse volume.
-			uint8    Number of dimensions
-			uint8    Dimension of run (typically 0 = X)
-			byte     Reserved (to be used later)
-			uint32    # Voxels [TODO.  0 for now]
-			uint32    # Spans
-			Repeating unit of:
-				int32   Coordinate of run start (dimension 0)
-				int32   Coordinate of run start (dimension 1)
-				int32   Coordinate of run start (dimension 2)
-				  ...
-				int32   Length of run
-	
-		NOTE 1: The POSTed split sparse volume must be a subset of the given label's voxels.  You cannot
-		give an arbitrary sparse volume that may span multiple labels.
-		
-		Kafka JSON message generated by this request:
-			{ 
-				"Action": "split",
-				"Target": <from label>,
-				"NewLabel": <to label>,
-				"Split": <string for reference to split data in serialized RLE format>,
-				"MutationID": <unique id for mutation>
-				"UUID": <UUID on which split was done>
-			}
-		
-		The split reference above can be used to download the split binary data by calling
-		this data instance's BlobStore API.  See the node-level HTTP API documentation.
-	
-			GET /api/node/{uuid}/{data name}/blobstore/{reference}
-		
-		After completion of the split op, the following JSON message is published:
-			{ 
-				"Action": "split-complete",
-				"MutationID": <unique id for mutation>
-				"UUID": <UUID on which split was done>
-			}
+	After completion of the split op, the following JSON message is published:
+		{ 
+			"Action": "split-complete",
+			"MutationID": <unique id for mutation>
+			"UUID": <UUID on which split was done>
+		}
 	
 POST <api URL>/node/<UUID>/<data name>/index/<label>
 
@@ -2163,6 +2192,10 @@ func (d *Data) blockChangesExtents(extents *dvid.Extents, bx, by, bz int32) bool
 
 // ReceiveBlocks stores a slice of bytes corresponding to specified blocks
 func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale uint8, downscale bool, compression string, indexing bool) error {
+	if r == nil {
+		return fmt.Errorf("no data blocks POSTed")
+	}
+
 	if downscale && scale != 0 {
 		return fmt.Errorf("cannot downscale blocks of scale > 0")
 	}
@@ -2880,6 +2913,9 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	case "supervoxels":
 		d.handleSupervoxels(ctx, w, r, parts)
 
+	case "size":
+		d.handleSize(ctx, w, r, parts)
+
 	case "sparsevol-size":
 		d.handleSparsevolSize(ctx, w, r, parts)
 
@@ -3082,6 +3118,10 @@ func (d *Data) handleIngestIndex(ctx *datastore.VersionedCtx, w http.ResponseWri
 		server.BadRequest(w, r, err)
 		return
 	}
+	if r.Body == nil {
+		server.BadRequest(w, r, fmt.Errorf("no data POSTed"))
+		return
+	}
 	serialization, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		server.BadRequest(w, r, err)
@@ -3126,6 +3166,10 @@ func (d *Data) handleIngestIndices(ctx *datastore.VersionedCtx, w http.ResponseW
 		server.BadRequest(w, r, "only POST action allowed for /indices endpoint")
 		return
 	}
+	if r.Body == nil {
+		server.BadRequest(w, r, fmt.Errorf("no data POSTed"))
+		return
+	}
 	serialization, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		server.BadRequest(w, r, err)
@@ -3159,6 +3203,10 @@ func (d *Data) handleIngestMappings(ctx *datastore.VersionedCtx, w http.Response
 
 	if strings.ToLower(r.Method) != "post" {
 		server.BadRequest(w, r, "only POST action allowed for /mappings endpoint")
+		return
+	}
+	if r.Body == nil {
+		server.BadRequest(w, r, fmt.Errorf("no data POSTed"))
 		return
 	}
 	serialization, err := ioutil.ReadAll(r.Body)
@@ -3405,6 +3453,10 @@ func (d *Data) handleSupervoxels(ctx *datastore.VersionedCtx, w http.ResponseWri
 		server.BadRequest(w, r, "unable to get label %d index: %v", label, err)
 		return
 	}
+	if idx == nil {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
 	supervoxels := idx.GetSupervoxels()
 
 	w.Header().Set("Content-type", "application/json")
@@ -3420,6 +3472,40 @@ func (d *Data) handleSupervoxels(ctx *datastore.VersionedCtx, w http.ResponseWri
 	fmt.Fprintf(w, "]")
 
 	timedLog.Infof("HTTP GET supervoxels for label %d (%s)", label, r.URL)
+}
+
+func (d *Data) handleSize(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request, parts []string) {
+	// GET <api URL>/node/<UUID>/<data name>/size/<label>[?supervoxels=true]
+	if len(parts) < 5 {
+		server.BadRequest(w, r, "DVID requires label to follow 'size' command")
+		return
+	}
+	timedLog := dvid.NewTimeLog()
+
+	label, err := strconv.ParseUint(parts[4], 10, 64)
+	if err != nil {
+		server.BadRequest(w, r, err)
+		return
+	}
+	if label == 0 {
+		server.BadRequest(w, r, "Label 0 is protected background value and cannot be queried as body.\n")
+		return
+	}
+	queryStrings := r.URL.Query()
+	supervoxels := queryStrings.Get("supervoxels") == "true"
+	size, err := GetLabelSize(d, ctx.VersionID(), label, supervoxels)
+	if err != nil {
+		server.BadRequest(w, r, "unable to get label %d size: %v", label, err)
+		return
+	}
+	if size == 0 {
+		w.WriteHeader(http.StatusNotFound)
+	} else {
+		w.Header().Set("Content-type", "application/json")
+		fmt.Fprintf(w, `{"voxels": %d}`, size)
+	}
+
+	timedLog.Infof("HTTP GET size for label %d, supervoxels=%t (%s)", label, supervoxels, r.URL)
 }
 
 func (d *Data) handleSparsevolSize(ctx *datastore.VersionedCtx, w http.ResponseWriter, r *http.Request, parts []string) {
@@ -3445,6 +3531,10 @@ func (d *Data) handleSparsevolSize(ctx *datastore.VersionedCtx, w http.ResponseW
 	idx, err := GetLabelIndex(d, ctx.VersionID(), label)
 	if err != nil {
 		server.BadRequest(w, r, "problem getting label set idx on label %: %v", label, err)
+		return
+	}
+	if idx == nil {
+		w.WriteHeader(http.StatusNotFound)
 		return
 	}
 
@@ -3789,7 +3879,7 @@ func (d *Data) handleCleave(ctx *datastore.VersionedCtx, w http.ResponseWriter, 
 	}
 	cleaveLabel, err := d.CleaveLabel(ctx.VersionID(), label, r.Body)
 	if err != nil {
-		server.BadRequest(w, r, fmt.Sprintf("cleave label %d -> %d: %v", label, cleaveLabel, err))
+		server.BadRequest(w, r, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

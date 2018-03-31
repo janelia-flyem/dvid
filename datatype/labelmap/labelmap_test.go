@@ -972,6 +972,52 @@ func TestLabelarrayRepoPersistence(t *testing.T) {
 	}
 }
 
+func TestBadCalls(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+
+	// Create testbed volume and data instances
+	uuid, _ := initTestRepo()
+	var config dvid.Config
+	config.Set("MaxDownresLevel", "2")
+	server.CreateTestInstance(t, uuid, "labelmap", "labels", config)
+
+	reqStr := fmt.Sprintf("%snode/%s/labels/supervoxels/100", server.WebAPIPath, uuid)
+	server.TestBadHTTP(t, "GET", reqStr, nil)
+
+	reqStr = fmt.Sprintf("%snode/%s/labels/size/100", server.WebAPIPath, uuid)
+	server.TestBadHTTP(t, "GET", reqStr, nil)
+
+	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol-size/100", server.WebAPIPath, uuid)
+	server.TestBadHTTP(t, "GET", reqStr, nil)
+
+	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/100", server.WebAPIPath, uuid)
+	server.TestBadHTTP(t, "GET", reqStr, nil)
+
+	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol-coarse/100", server.WebAPIPath, uuid)
+	server.TestBadHTTP(t, "GET", reqStr, nil)
+
+	reqStr = fmt.Sprintf("%snode/%s/labels/cleave/100", server.WebAPIPath, uuid)
+	server.TestBadHTTP(t, "POST", reqStr, bytes.NewBufferString("[4]"))
+
+	reqStr = fmt.Sprintf("%snode/%s/labels/split-supervoxel/100", server.WebAPIPath, uuid)
+	server.TestBadHTTP(t, "POST", reqStr, nil)
+
+	reqStr = fmt.Sprintf("%snode/%s/labels/split/100", server.WebAPIPath, uuid)
+	server.TestBadHTTP(t, "POST", reqStr, nil)
+
+	reqStr = fmt.Sprintf("%snode/%s/labels/index/100", server.WebAPIPath, uuid)
+	server.TestBadHTTP(t, "POST", reqStr, nil)
+
+	reqStr = fmt.Sprintf("%snode/%s/labels/indices", server.WebAPIPath, uuid)
+	server.TestBadHTTP(t, "POST", reqStr, nil)
+
+	reqStr = fmt.Sprintf("%snode/%s/labels/mappings", server.WebAPIPath, uuid)
+	server.TestBadHTTP(t, "POST", reqStr, nil)
+}
+
 func TestMultiscaleIngest(t *testing.T) {
 	if err := server.OpenTest(); err != nil {
 		t.Fatalf("can't open test server: %v\n", err)
@@ -997,6 +1043,7 @@ func TestMultiscaleIngest(t *testing.T) {
 	if err := downres.BlockOnUpdating(uuid, "labels"); err != nil {
 		t.Fatalf("Error blocking on update for labels: %v\n", err)
 	}
+
 	hires := newTestVolume(128, 128, 128)
 	hires.get(t, uuid, "labels", false)
 	hires.verifyLabel(t, 1, 45, 45, 45)
@@ -1004,6 +1051,23 @@ func TestMultiscaleIngest(t *testing.T) {
 	hires.verifyLabel(t, 13, 100, 60, 60)
 	hires.verifyLabel(t, 209, 55, 100, 55)
 	hires.verifyLabel(t, 311, 81, 81, 41)
+
+	// Verify our label index voxel counts are correct.
+	for _, label := range []uint64{1, 2, 13, 209, 311} {
+		reqStr := fmt.Sprintf("%snode/%s/labels/size/%d", server.WebAPIPath, uuid, label)
+		r := server.TestHTTP(t, "GET", reqStr, nil)
+		var jsonVal struct {
+			Voxels uint64 `json:"voxels"`
+		}
+		if err := json.Unmarshal(r, &jsonVal); err != nil {
+			t.Fatalf("unable to get size for label %d: %v", label, err)
+		}
+		if jsonVal.Voxels != 40*40*40 {
+			t.Errorf("thought label %d would have %d voxels, got %d\n", label, 40*40*40, jsonVal.Voxels)
+		}
+	}
+	reqStr := fmt.Sprintf("%snode/%s/labels/size/3", server.WebAPIPath, uuid)
+	server.TestBadHTTP(t, "GET", reqStr, nil)
 
 	// Check the first downres: 64^3
 	downres1 := newTestVolume(64, 64, 64)

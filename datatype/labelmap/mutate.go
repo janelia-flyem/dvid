@@ -110,6 +110,8 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp) error {
 		DeleteLabelIndex(d, v, merged)
 	}
 
+	dvid.Infof("merged label %d: supervoxels %v\n", op.Target, mergeIdx.GetSupervoxels())
+
 	delta.Blocks = targetIdx.GetBlockIndices()
 	evt = datastore.SyncEvent{d.DataUUID(), labels.MergeBlockEvent}
 	msg = datastore.SyncMessage{labels.MergeBlockEvent, v, delta}
@@ -143,6 +145,10 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp) error {
 // A cleave label can be specified via the "toLabel" parameter, which if 0 will have an
 // automatic label ID selected for the cleaved body.
 func (d *Data) CleaveLabel(v dvid.VersionID, label uint64, r io.ReadCloser) (cleaveLabel uint64, err error) {
+	if r == nil {
+		return 0, fmt.Errorf("no cleave supervoxels JSON was POSTed")
+	}
+
 	cleaveLabel, err = d.NewLabel(v)
 	if err != nil {
 		return
@@ -153,6 +159,9 @@ func (d *Data) CleaveLabel(v dvid.VersionID, label uint64, r io.ReadCloser) (cle
 	data, err = ioutil.ReadAll(r)
 	if err != nil {
 		return cleaveLabel, fmt.Errorf("bad POSTed data for merge; should be JSON parsable: %v", err)
+	}
+	if len(data) == 0 {
+		return cleaveLabel, fmt.Errorf("no cleave supervoxels JSON was POSTed")
 	}
 	var cleaveSupervoxels []uint64
 	if err = json.Unmarshal(data, &cleaveSupervoxels); err != nil {
@@ -176,17 +185,20 @@ func (d *Data) CleaveLabel(v dvid.VersionID, label uint64, r io.ReadCloser) (cle
 	}
 
 	d.StartUpdate()
+	defer d.StopUpdate()
+
 	op := labels.CleaveOp{
 		MutID:              mutID,
 		Target:             label,
 		CleavedLabel:       cleaveLabel,
 		CleavedSupervoxels: cleaveSupervoxels,
 	}
+	if err = CleaveIndex(d, v, op); err != nil {
+		return
+	}
 	if err = addCleaveToMapping(d, v, op); err != nil {
 		return
 	}
-	err = CleaveIndex(d, v, op)
-	d.StopUpdate()
 
 	msginfo = map[string]interface{}{
 		"Action":     "cleave-complete",
@@ -207,6 +219,7 @@ func (d *Data) CleaveLabel(v dvid.VersionID, label uint64, r io.ReadCloser) (cle
 // voxels are within the fromLabel set of voxels and will generate unspecified behavior if this is
 // not the case.
 func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser) (toLabel uint64, err error) {
+
 	timedLog := dvid.NewTimeLog()
 
 	// Create a new label id for this version that will persist to store
@@ -320,6 +333,7 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser) 
 // returned label is assigned to the split voxels while the second returned label is assigned
 // to the remainder voxels.
 func (d *Data) SplitSupervoxel(v dvid.VersionID, svlabel uint64, r io.ReadCloser) (splitSupervoxel, remainSupervoxel uint64, err error) {
+
 	// Create new labels for this split that will persist to store
 	splitSupervoxel, err = d.NewLabel(v)
 	if err != nil {
