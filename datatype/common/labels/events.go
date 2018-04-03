@@ -188,4 +188,7 @@ const (
 	SplitStartEvent     = "SPLIT_START"
 	SplitLabelEvent     = "SPLIT_LABEL"
 	SplitEndEvent       = "SPLIT_END"
+	CleaveStartEvent    = "CLEAVE_START"
+	CleaveLabelEvent    = "CLEAVE_LABEL"
+	CleaveEndEvent      = "CLEAVE_END"
 )

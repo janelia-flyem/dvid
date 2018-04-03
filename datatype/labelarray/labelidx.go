@@ -842,9 +842,9 @@ func (d *Data) FoundSparseVol(ctx *datastore.VersionedCtx, label uint64, bounds 
 	return false, nil
 }
 
-// WriteBinaryBlocks does a streaming write of an encoded sparse volume given a label.
+// writeBinaryBlocks does a streaming write of an encoded sparse volume given a label.
 // It returns a bool whether the label was found in the given bounds and any error.
-func (d *Data) WriteBinaryBlocks(ctx *datastore.VersionedCtx, label uint64, scale uint8, bounds dvid.Bounds, compression string, w io.Writer) (bool, error) {
+func (d *Data) writeBinaryBlocks(ctx *datastore.VersionedCtx, label uint64, scale uint8, bounds dvid.Bounds, compression string, w io.Writer) (bool, error) {
 	meta, lbls, err := GetMappedLabelIndex(d, ctx.VersionID(), label, scale, bounds)
 	if err != nil {
 		return false, err
@@ -857,6 +857,7 @@ func (d *Data) WriteBinaryBlocks(ctx *datastore.VersionedCtx, label uint64, scal
 	if err != nil {
 		return false, err
 	}
+	sort.Sort(indices)
 
 	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
@@ -864,19 +865,27 @@ func (d *Data) WriteBinaryBlocks(ctx *datastore.VersionedCtx, label uint64, scal
 	}
 	op := labels.NewOutputOp(w)
 	go labels.WriteBinaryBlocks(label, lbls, op, bounds)
+	var preErr error
 	for _, izyx := range indices {
 		tk := NewBlockTKeyByCoord(scale, izyx)
 		data, err := store.Get(ctx, tk)
 		if err != nil {
-			return false, err
+			preErr = err
+			break
+		}
+		if data == nil {
+			preErr = fmt.Errorf("expected block %s @ scale %d to have key-value, but found none", izyx, scale)
+			break
 		}
 		blockData, _, err := dvid.DeserializeData(data, true)
 		if err != nil {
-			return false, err
+			preErr = err
+			break
 		}
 		var block labels.Block
 		if err := block.UnmarshalBinary(blockData); err != nil {
-			return false, err
+			preErr = err
+			break
 		}
 		pb := labels.PositionedBlock{
 			Block:  block,
@@ -889,12 +898,12 @@ func (d *Data) WriteBinaryBlocks(ctx *datastore.VersionedCtx, label uint64, scal
 	}
 
 	dvid.Infof("[%s] labels %v: streamed %d of %d blocks within bounds\n", ctx, lbls, len(indices), len(meta.Blocks))
-	return true, nil
+	return true, preErr
 }
 
-// WriteStreamingRLE does a streaming write of an encoded sparse volume given a label.
+// writeStreamingRLE does a streaming write of an encoded sparse volume given a label.
 // It returns a bool whether the label was found in the given bounds and any error.
-func (d *Data) WriteStreamingRLE(ctx *datastore.VersionedCtx, label uint64, scale uint8, bounds dvid.Bounds, compression string, w io.Writer) (bool, error) {
+func (d *Data) writeStreamingRLE(ctx *datastore.VersionedCtx, label uint64, scale uint8, bounds dvid.Bounds, compression string, w io.Writer) (bool, error) {
 	meta, lbls, err := GetMappedLabelIndex(d, ctx.VersionID(), label, scale, bounds)
 	if err != nil {
 		return false, err
@@ -942,7 +951,7 @@ func (d *Data) WriteStreamingRLE(ctx *datastore.VersionedCtx, label uint64, scal
 	return true, nil
 }
 
-func (d *Data) WriteLegacyRLE(ctx *datastore.VersionedCtx, label uint64, scale uint8, b dvid.Bounds, compression string, w io.Writer) (found bool, err error) {
+func (d *Data) writeLegacyRLE(ctx *datastore.VersionedCtx, label uint64, scale uint8, b dvid.Bounds, compression string, w io.Writer) (found bool, err error) {
 	var data []byte
 	data, err = d.GetLegacyRLE(ctx, label, scale, b)
 	if err != nil {

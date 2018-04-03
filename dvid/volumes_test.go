@@ -117,6 +117,23 @@ func TestDownres(t *testing.T) {
 			t.Errorf("Downres scale 1 failed: %v vs expected %v\n", downres1, expected)
 		}
 	}
+	downres2, err := islice.Downres(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected2 := IZYXSlice{
+		ChunkPoint3d{0, 0, 0}.ToIZYXString(),
+		ChunkPoint3d{1, 1, 2}.ToIZYXString(),
+		ChunkPoint3d{2, 2, 2}.ToIZYXString(),
+	}
+	if len(downres2) != 3 {
+		t.Errorf("Downres scale 2 failed: %v vs expected %v\n", downres2, expected2)
+	}
+	for i, izyx := range downres2 {
+		if expected2[i] != izyx {
+			t.Errorf("Downres scale 2 failed: %v vs expected %v\n", downres2, expected2)
+		}
+	}
 }
 
 func TestIZYXSlice(t *testing.T) {

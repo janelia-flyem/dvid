@@ -2290,6 +2290,8 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 			by := int32(binary.LittleEndian.Uint32(hdrBytes[4:8]))
 			bz := int32(binary.LittleEndian.Uint32(hdrBytes[8:12]))
 			numBytes := int(binary.LittleEndian.Uint32(hdrBytes[12:16]))
+			if numBytes == 0 {
+			}
 			bcoord := dvid.ChunkPoint3d{bx, by, bz}.ToIZYXString()
 			tk := NewBlockTKeyByCoord(scale, bcoord)
 			compressed := make([]byte, numBytes)
@@ -3601,11 +3603,11 @@ func (d *Data) handleSparsevol(ctx *datastore.VersionedCtx, w http.ResponseWrite
 		var found bool
 		switch svformatFromQueryString(r) {
 		case FormatLegacyRLE:
-			found, err = d.WriteLegacyRLE(ctx, label, scale, b, compression, w)
+			found, err = d.writeLegacyRLE(ctx, label, scale, b, compression, w)
 		case FormatBinaryBlocks:
-			found, err = d.WriteBinaryBlocks(ctx, label, scale, b, compression, w)
+			found, err = d.writeBinaryBlocks(ctx, label, scale, b, compression, w)
 		case FormatStreamingRLE:
-			found, err = d.WriteStreamingRLE(ctx, label, scale, b, compression, w)
+			found, err = d.writeStreamingRLE(ctx, label, scale, b, compression, w)
 		}
 		if err != nil {
 			server.BadRequest(w, r, err)
@@ -3680,11 +3682,11 @@ func (d *Data) handleSparsevolByPoint(ctx *datastore.VersionedCtx, w http.Respon
 	var found bool
 	switch format {
 	case FormatLegacyRLE:
-		found, err = d.WriteLegacyRLE(ctx, label, 0, b, compression, w)
+		found, err = d.writeLegacyRLE(ctx, label, 0, b, compression, w)
 	case FormatBinaryBlocks:
-		found, err = d.WriteBinaryBlocks(ctx, label, 0, b, compression, w)
+		found, err = d.writeBinaryBlocks(ctx, label, 0, b, compression, w)
 	case FormatStreamingRLE:
-		found, err = d.WriteStreamingRLE(ctx, label, 0, b, compression, w)
+		found, err = d.writeStreamingRLE(ctx, label, 0, b, compression, w)
 	}
 	if err != nil {
 		server.BadRequest(w, r, err)

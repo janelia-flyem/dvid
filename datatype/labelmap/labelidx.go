@@ -86,9 +86,6 @@ func getLabelIndex(ctx *datastore.VersionedCtx, label uint64) (*labels.Index, er
 	if err != nil {
 		return nil, err
 	}
-	if len(val) == 0 {
-		return nil, err
-	}
 
 	idx := new(labels.Index)
 	if err := idx.Unmarshal(val); err != nil {
@@ -829,7 +826,7 @@ func writeRLE(w io.Writer, start dvid.Point3d, run int32) error {
 // Scan a block and construct RLEs that will be serialized and added to the given buffer.
 func (d *Data) addRLEs(izyx dvid.IZYXString, data []byte, lbls labels.Set) (serialization []byte, newRuns uint32, err error) {
 	if len(data) != int(d.BlockSize().Prod())*8 {
-		err = fmt.Errorf("Deserialized label block %d bytes, not uint64 size times %d block elements\n",
+		err = fmt.Errorf("deserialized label block %d bytes, not uint64 size times %d block elements",
 			len(data), d.BlockSize().Prod())
 		return
 	}
@@ -974,9 +971,9 @@ func (d *Data) FoundSparseVol(ctx *datastore.VersionedCtx, label uint64, bounds 
 	return false, nil
 }
 
-// WriteBinaryBlocks does a streaming write of an encoded sparse volume given a label.
+// writeBinaryBlocks does a streaming write of an encoded sparse volume given a label.
 // It returns a bool whether the label was found in the given bounds and any error.
-func (d *Data) WriteBinaryBlocks(ctx *datastore.VersionedCtx, label uint64, scale uint8, bounds dvid.Bounds, compression string, w io.Writer) (bool, error) {
+func (d *Data) writeBinaryBlocks(ctx *datastore.VersionedCtx, label uint64, scale uint8, bounds dvid.Bounds, compression string, w io.Writer) (bool, error) {
 	idx, err := GetLabelIndex(d, ctx.VersionID(), label)
 	if err != nil {
 		return false, err
@@ -985,11 +982,11 @@ func (d *Data) WriteBinaryBlocks(ctx *datastore.VersionedCtx, label uint64, scal
 		return false, err
 	}
 
-	blocks, err := idx.GetProcessedBlockIndices(scale, bounds)
+	indices, err := idx.GetProcessedBlockIndices(scale, bounds)
 	if err != nil {
 		return false, err
 	}
-	sort.Sort(blocks)
+	sort.Sort(indices)
 
 	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
@@ -998,19 +995,27 @@ func (d *Data) WriteBinaryBlocks(ctx *datastore.VersionedCtx, label uint64, scal
 	op := labels.NewOutputOp(w)
 	lbls := idx.GetSupervoxels()
 	go labels.WriteBinaryBlocks(label, lbls, op, bounds)
-	for _, izyx := range blocks {
+	var preErr error
+	for _, izyx := range indices {
 		tk := NewBlockTKeyByCoord(scale, izyx)
 		data, err := store.Get(ctx, tk)
 		if err != nil {
-			return false, err
+			preErr = err
+			break
+		}
+		if data == nil {
+			preErr = fmt.Errorf("expected block %s @ scale %d to have key-value, but found none", izyx, scale)
+			break
 		}
 		blockData, _, err := dvid.DeserializeData(data, true)
 		if err != nil {
-			return false, err
+			preErr = err
+			break
 		}
 		var block labels.Block
 		if err := block.UnmarshalBinary(blockData); err != nil {
-			return false, err
+			preErr = err
+			break
 		}
 		pb := labels.PositionedBlock{
 			Block:  block,
@@ -1022,13 +1027,13 @@ func (d *Data) WriteBinaryBlocks(ctx *datastore.VersionedCtx, label uint64, scal
 		return false, err
 	}
 
-	dvid.Infof("[%s] labels %v: streamed %d of %d blocks within bounds\n", ctx, lbls, len(blocks), len(idx.Blocks))
-	return true, nil
+	dvid.Infof("[%s] labels %v: streamed %d of %d blocks within bounds\n", ctx, lbls, len(indices), len(idx.Blocks))
+	return true, preErr
 }
 
-// WriteStreamingRLE does a streaming write of an encoded sparse volume given a label.
+// writeStreamingRLE does a streaming write of an encoded sparse volume given a label.
 // It returns a bool whether the label was found in the given bounds and any error.
-func (d *Data) WriteStreamingRLE(ctx *datastore.VersionedCtx, label uint64, scale uint8, bounds dvid.Bounds, compression string, w io.Writer) (bool, error) {
+func (d *Data) writeStreamingRLE(ctx *datastore.VersionedCtx, label uint64, scale uint8, bounds dvid.Bounds, compression string, w io.Writer) (bool, error) {
 	idx, err := GetLabelIndex(d, ctx.VersionID(), label)
 	if err != nil {
 		return false, err
@@ -1078,9 +1083,9 @@ func (d *Data) WriteStreamingRLE(ctx *datastore.VersionedCtx, label uint64, scal
 	return true, nil
 }
 
-func (d *Data) WriteLegacyRLE(ctx *datastore.VersionedCtx, label uint64, scale uint8, b dvid.Bounds, compression string, w io.Writer) (found bool, err error) {
+func (d *Data) writeLegacyRLE(ctx *datastore.VersionedCtx, label uint64, scale uint8, b dvid.Bounds, compression string, w io.Writer) (found bool, err error) {
 	var data []byte
-	data, err = d.GetLegacyRLE(ctx, label, scale, b)
+	data, err = d.getLegacyRLEs(ctx, label, scale, b)
 	if err != nil {
 		return
 	}
@@ -1115,18 +1120,6 @@ func (d *Data) WriteLegacyRLE(ctx *datastore.VersionedCtx, label uint64, scale u
 	return
 }
 
-// GetLegacyRLE returns an encoded sparse volume given a label and an output format.
-func (d *Data) GetLegacyRLE(ctx *datastore.VersionedCtx, label uint64, scale uint8, bounds dvid.Bounds) ([]byte, error) {
-	idx, err := GetLabelIndex(d, ctx.VersionID(), label)
-	if err != nil {
-		return nil, err
-	}
-	if idx == nil || len(idx.Blocks) == 0 {
-		return nil, nil
-	}
-	return d.getLegacyRLEs(ctx, idx, scale, bounds)
-}
-
 //  The encoding has the following format where integers are little endian:
 //
 //    byte     Payload descriptor:
@@ -1146,7 +1139,14 @@ func (d *Data) GetLegacyRLE(ctx *datastore.VersionedCtx, label uint64, scale uin
 //        int32   Length of run
 //        bytes   Optional payload dependent on first byte descriptor
 //
-func (d *Data) getLegacyRLEs(ctx *datastore.VersionedCtx, idx *labels.Index, scale uint8, bounds dvid.Bounds) ([]byte, error) {
+func (d *Data) getLegacyRLEs(ctx *datastore.VersionedCtx, label uint64, scale uint8, bounds dvid.Bounds) ([]byte, error) {
+	idx, err := GetLabelIndex(d, ctx.VersionID(), label)
+	if err != nil {
+		return nil, err
+	}
+	if idx == nil || len(idx.Blocks) == 0 {
+		return nil, nil
+	}
 	buf := new(bytes.Buffer)
 	buf.WriteByte(dvid.EncodingBinary)
 	binary.Write(buf, binary.LittleEndian, uint8(3))  // # of dimensions
@@ -1211,7 +1211,7 @@ func (d *Data) getLegacyRLEs(ctx *datastore.VersionedCtx, idx *labels.Index, sca
 	}
 
 	binary.LittleEndian.PutUint32(serialization[8:12], numRuns)
-	dvid.Infof("[%s] labels %v: found %d of %d blocks within bounds excluding %d empty blocks, %d runs, serialized %d bytes\n", ctx, lbls, len(blocks), len(idx.Blocks), numEmpty, numRuns, len(serialization))
+	dvid.Infof("[%s] label %d: sent %d blocks (%d hi-res blocks) within bounds excluding %d empty blocks, %d runs, serialized %d bytes\n", idx.Label, len(blocks), len(idx.Blocks), numEmpty, numRuns, len(serialization))
 	return serialization, nil
 }
 

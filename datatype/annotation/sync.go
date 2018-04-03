@@ -167,6 +167,39 @@ func (d *Data) GetSyncSubs(synced dvid.Data) (subs datastore.SyncSubs, err error
 				Ch:     d.syncCh,
 			},
 		}
+	case "labelmap":
+		subs = datastore.SyncSubs{
+			{
+				Event:  datastore.SyncEvent{synced.DataUUID(), labels.IngestBlockEvent},
+				Notify: d.DataUUID(),
+				Ch:     d.syncCh,
+			},
+			{
+				Event:  datastore.SyncEvent{synced.DataUUID(), labels.MutateBlockEvent},
+				Notify: d.DataUUID(),
+				Ch:     d.syncCh,
+			},
+			{
+				Event:  datastore.SyncEvent{synced.DataUUID(), labels.DeleteBlockEvent},
+				Notify: d.DataUUID(),
+				Ch:     d.syncCh,
+			},
+			datastore.SyncSub{
+				Event:  datastore.SyncEvent{synced.DataUUID(), labels.MergeBlockEvent},
+				Notify: d.DataUUID(),
+				Ch:     d.syncCh,
+			},
+			datastore.SyncSub{
+				Event:  datastore.SyncEvent{synced.DataUUID(), labels.SplitLabelEvent},
+				Notify: d.DataUUID(),
+				Ch:     d.syncCh,
+			},
+			datastore.SyncSub{
+				Event:  datastore.SyncEvent{synced.DataUUID(), labels.CleaveLabelEvent},
+				Notify: d.DataUUID(),
+				Ch:     d.syncCh,
+			},
+		}
 	default:
 		err = fmt.Errorf("Unable to sync %s with %s since datatype %q is not supported.", d.DataName(), synced.DataName(), synced.TypeName())
 	}
