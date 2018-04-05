@@ -41,7 +41,7 @@ const (
 	TypeName = "multichan16"
 )
 
-const HelpMessage = `
+const helpMessage = `
 API for datatypes derived from multichan16 (github.com/janelia-flyem/dvid/datatype/multichan16)
 ===============================================================================================
 
@@ -184,7 +184,7 @@ func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.
 }
 
 func (dtype *Type) Help() string {
-	return HelpMessage
+	return helpMessage
 }
 
 // -------  ExtData interface implementation -------------
@@ -453,7 +453,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 	timedLog.Infof("HTTP %s: %s", r.Method, dataShape)
 }
 
-// LoadLocal adds image data to a version node.  See HelpMessage for example of
+// LoadLocal adds image data to a version node.  See helpMessage for example of
 // command-line use of "load local".
 func (d *Data) LoadLocal(request datastore.Request, reply *datastore.Response) error {
 	timedLog := dvid.NewTimeLog()

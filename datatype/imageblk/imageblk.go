@@ -32,7 +32,7 @@ const (
 	RepoURL = "github.com/janelia-flyem/dvid/datatype/imageblk"
 )
 
-const HelpMessage = `
+const helpMessage = `
 API for image block datatype (github.com/janelia-flyem/dvid/datatype/imageblk)
 ==============================================================================
 
@@ -535,7 +535,7 @@ func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.
 }
 
 func (dtype *Type) Help() string {
-	return fmt.Sprintf(HelpMessage, DefaultBlockSize, DefaultRes)
+	return fmt.Sprintf(helpMessage, DefaultBlockSize, DefaultRes)
 }
 
 type bulkLoadInfo struct {
@@ -1462,7 +1462,7 @@ func (d *Data) GobEncode() ([]byte, error) {
 // --- DataService interface ---
 
 func (d *Data) Help() string {
-	return fmt.Sprintf(HelpMessage, DefaultBlockSize, DefaultRes)
+	return fmt.Sprintf(helpMessage, DefaultBlockSize, DefaultRes)
 }
 
 func (d *Data) ModifyConfig(config dvid.Config) error {

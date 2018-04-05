@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"sort"
 	"sync"
@@ -1337,7 +1338,7 @@ func (d *Data) countThread(f *os.File, mu *sync.Mutex, wg *sync.WaitGroup, chunk
 	for c := range chunkCh {
 		scale, idx, err := DecodeBlockTKey(c.K)
 		if err != nil {
-			dvid.Errorf("Couldn't decode label key %v for data %q\n", c.K, d.DataName())
+			dvid.Errorf("Couldn't decode label block key %v for data %q\n", c.K, d.DataName())
 			wg.Done()
 			continue
 		}
@@ -1376,7 +1377,7 @@ func (d *Data) countThread(f *os.File, mu *sync.Mutex, wg *sync.WaitGroup, chunk
 }
 
 // scan all label blocks in this labelmap instance, writing supervoxel counts into a given file
-func (d *Data) countBlockSupervoxels(f *os.File, outPath string, v dvid.VersionID) {
+func (d *Data) writeSVCounts(f *os.File, outPath string, v dvid.VersionID) {
 	timedLog := dvid.NewTimeLog()
 
 	// Start the counting goroutine
@@ -1421,7 +1422,140 @@ func (d *Data) countBlockSupervoxels(f *os.File, outPath string, v dvid.VersionI
 	close(chunkCh)
 	wg.Wait()
 	if err = f.Close(); err != nil {
-		dvid.Errorf("problem closing file: %v\n", err)
+		dvid.Errorf("problem closing file %q: %v\n", outPath, err)
 	}
 	timedLog.Infof("Finished counting supervoxels in %d blocks and sent to output file %q", numBlocks, outPath)
+}
+
+func (d *Data) writeMappings(f *os.File, outPath string, v dvid.VersionID) {
+	timedLog := dvid.NewTimeLog()
+
+	svm, err := getMapping(d, v)
+	if err != nil {
+		dvid.Errorf("unable to retrieve mappings for data %q, version %d: %v\n", d.DataName(), v, err)
+		return
+	}
+	ancestry, err := svm.getLockedAncestry(v)
+	if err != nil {
+		dvid.Errorf("unable to get ancestry for data %q, version %d: %v\n", d.DataName(), v, err)
+		return
+	}
+	svm.RLock()
+	defer svm.RUnlock()
+	if len(svm.fm) == 0 {
+		dvid.Infof("no mappings found for data %q\n", d.DataName())
+		return
+	}
+	var numMappings, numErrors uint64
+	for supervoxel, vm := range svm.fm {
+		label, present := vm.value(ancestry)
+		if present {
+			numMappings++
+			line := fmt.Sprintf("%d %d\n", supervoxel, label)
+			if _, err := f.WriteString(line); err != nil {
+				numErrors++
+				if numErrors < 100 {
+					dvid.Errorf("Unable to write data for mapping of supervoxel %d -> %d, data %q: %v\n", supervoxel, label, d.DataName(), err)
+				}
+			}
+		}
+	}
+	if err = f.Close(); err != nil {
+		dvid.Errorf("problem closing file %q: %v\n", outPath, err)
+	}
+	timedLog.Infof("Finished writing %d mappings (%d errors) for data %q, version %d to output file %q", numMappings, numErrors, d.DataName(), v, outPath)
+}
+
+func (d *Data) indexThread(f *os.File, mu *sync.Mutex, wg *sync.WaitGroup, chunkCh chan *storage.Chunk) {
+	for c := range chunkCh {
+		label, err := DecodeLabelIndexTKey(c.K)
+		if err != nil {
+			dvid.Errorf("Couldn't decode label index key %v for data %q\n", c.K, d.DataName())
+			wg.Done()
+			continue
+		}
+		var data []byte
+		data, _, err = dvid.DeserializeData(c.V, true)
+		if err != nil {
+			dvid.Errorf("Unable to deserialize label index %d in data %q: %v\n", label, d.DataName(), err)
+			wg.Done()
+			continue
+		}
+		idx := new(labels.Index)
+		if err := idx.Unmarshal(data); err != nil {
+			dvid.Errorf("Unable to unmarshal label index %d in data %q: %v\n", label, d.DataName(), err)
+			wg.Done()
+			continue
+		}
+		if idx.Label == 0 {
+			idx.Label = label
+		}
+		for zyx, svc := range idx.Blocks {
+			bx, by, bz := labels.DecodeBlockIndex(zyx)
+			if svc != nil && len(svc.Counts) != 0 {
+				for supervoxel, count := range svc.Counts {
+					line := fmt.Sprintf("%d %d %d %d %d %d\n", idx.Label, supervoxel, bz, by, bx, count)
+					mu.Lock()
+					_, err := f.WriteString(line)
+					mu.Unlock()
+					if err != nil {
+						dvid.Errorf("Unable to write label index %d line, data %q: %v\n", idx.Label, d.DataName(), err)
+						break
+					}
+				}
+			}
+		}
+		wg.Done()
+	}
+}
+
+// scan all label indices in this labelmap instance, writing Blocks data into a given file
+func (d *Data) writeIndices(f *os.File, outPath string, v dvid.VersionID) {
+	timedLog := dvid.NewTimeLog()
+
+	// Start the counting goroutine
+	mu := new(sync.Mutex)
+	wg := new(sync.WaitGroup)
+	chunkCh := make(chan *storage.Chunk, 100)
+	for i := 0; i < 100; i++ {
+		go d.indexThread(f, mu, wg, chunkCh)
+	}
+
+	// Iterate through all label blocks and count them.
+	chunkOp := &storage.ChunkOp{Wg: wg}
+
+	store, err := datastore.GetOrderedKeyValueDB(d)
+	if err != nil {
+		dvid.Errorf("problem getting store for data %q: %v\n", d.DataName(), err)
+		return
+	}
+	ctx := datastore.NewVersionedCtx(d, v)
+	begTKey := NewLabelIndexTKey(0)
+	endTKey := NewLabelIndexTKey(math.MaxUint64)
+	var numIndices uint64
+	err = store.ProcessRange(ctx, begTKey, endTKey, chunkOp, func(c *storage.Chunk) error {
+		if c == nil {
+			wg.Done()
+			return fmt.Errorf("received nil chunk in dump index for data %q", d.DataName())
+		}
+		if c.V == nil {
+			wg.Done()
+			return nil
+		}
+		numIndices++
+		if numIndices%10000 == 0 {
+			timedLog.Infof("Now dumping label index %d with chunk channel at %d", numIndices, len(chunkCh))
+		}
+		chunkCh <- c
+		return nil
+	})
+	if err != nil {
+		dvid.Errorf("problem during process range: %v\n", err)
+	}
+	close(chunkCh)
+	wg.Wait()
+	if err = f.Close(); err != nil {
+		dvid.Errorf("problem closing file %q: %v\n", outPath, err)
+	}
+	timedLog.Infof("Finished dumping %d label indices to output file %q", numIndices, outPath)
 }

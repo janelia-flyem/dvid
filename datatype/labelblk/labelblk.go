@@ -36,7 +36,7 @@ const (
 	TypeName = "labelblk"
 )
 
-const HelpMessage = `
+const helpMessage = `
 API for label block data type (github.com/janelia-flyem/dvid/datatype/labelblk)
 ===============================================================================
 
@@ -458,7 +458,7 @@ func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.
 }
 
 func (dtype *Type) Help() string {
-	return HelpMessage
+	return helpMessage
 }
 
 // -------

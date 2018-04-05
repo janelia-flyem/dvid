@@ -31,7 +31,7 @@ const (
 	TypeName = "labelsz"
 )
 
-const HelpMessage = `
+const helpMessage = `
 API for labelsz data type (github.com/janelia-flyem/dvid/datatype/labelsz)
 =======================================================================================
 
@@ -290,7 +290,7 @@ func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.
 }
 
 func (dtype *Type) Help() string {
-	return HelpMessage
+	return helpMessage
 }
 
 // Properties are additional properties for data beyond those in standard datastore.Data.
@@ -504,7 +504,7 @@ func GetByUUIDName(uuid dvid.UUID, name dvid.InstanceName) (*Data, error) {
 // --- datastore.DataService interface ---------
 
 func (d *Data) Help() string {
-	return HelpMessage
+	return helpMessage
 }
 
 func (d *Data) MarshalJSON() ([]byte, error) {

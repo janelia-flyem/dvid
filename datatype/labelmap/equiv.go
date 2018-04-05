@@ -259,7 +259,7 @@ func (svm *SVMap) MappedLabel(v dvid.VersionID, label uint64) (uint64, bool) {
 	}
 	svm.RUnlock()
 
-	ancestry, err := svm.getAncestry(v)
+	ancestry, err := svm.getLockedAncestry(v)
 	if err != nil {
 		dvid.Criticalf("unable to get ancestry for version %d: %v\n", v, err)
 		return label, false

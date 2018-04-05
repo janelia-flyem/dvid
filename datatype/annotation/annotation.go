@@ -32,7 +32,7 @@ const (
 	TypeName = "annotation"
 )
 
-const HelpMessage = `
+const helpMessage = `
 API for synapse data type (github.com/janelia-flyem/dvid/datatype/annotation)
 =======================================================================================
 
@@ -794,7 +794,7 @@ func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.
 }
 
 func (dtype *Type) Help() string {
-	return HelpMessage
+	return helpMessage
 }
 
 type formatType uint8
@@ -2012,7 +2012,7 @@ func GetByUUIDName(uuid dvid.UUID, name dvid.InstanceName) (*Data, error) {
 // --- datastore.DataService interface ---------
 
 func (d *Data) Help() string {
-	return HelpMessage
+	return helpMessage
 }
 
 func (d *Data) MarshalJSON() ([]byte, error) {

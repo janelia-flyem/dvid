@@ -37,7 +37,7 @@ const (
 	TypeName = "imagetile"
 )
 
-const HelpMessage = `
+const helpMessage = `
 API for datatypes derived from imagetile (github.com/janelia-flyem/dvid/datatype/imagetile)
 =====================================================================================
 
@@ -415,7 +415,7 @@ func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.
 }
 
 func (dtype *Type) Help() string {
-	return HelpMessage
+	return helpMessage
 }
 
 // Scaling describes the scale level where 0 = original data resolution and
@@ -774,7 +774,7 @@ func (d *Data) GobEncode() ([]byte, error) {
 // --- DataService interface ---
 
 func (d *Data) Help() string {
-	return HelpMessage
+	return helpMessage
 }
 
 // DoRPC handles the 'generate' command.

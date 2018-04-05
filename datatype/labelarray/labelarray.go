@@ -40,7 +40,7 @@ const (
 	TypeName = "labelarray"
 )
 
-const HelpMessage = `
+const helpMessage = `
 API for label block data type (github.com/janelia-flyem/dvid/datatype/labelarray)
 ===============================================================================
 
@@ -984,7 +984,7 @@ func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.
 }
 
 func (dtype *Type) Help() string {
-	return HelpMessage
+	return helpMessage
 }
 
 // -------

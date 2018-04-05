@@ -45,7 +45,7 @@ const (
 	TypeName = "labelmap"
 )
 
-const HelpMessage = `
+const helpMessage = `
 API for label block data type (github.com/janelia-flyem/dvid/datatype/labelmap)
 ===============================================================================
 
@@ -113,19 +113,34 @@ $ dvid node <UUID> <data name> composite <uint8 data name> <new rgba8 data name>
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
     data name     Name of data to add.
 	
-$ dvid node <UUID> <data name> count <file path>
+$ dvid node <UUID> <data name> dump <dump type> <file path>
 
-	Creates CSV file where each row has the following:
-		<supervoxel id>  <block x> <block y> <block z> <# voxels>
+	Dumps the internal state of the specified version of labelmap data into a CSV file.
+	The format of the CSV files are as follows depending on the <dump type>:
+
+	"svcount": Supervoxel counts in a CSV file where each block in a supervoxel has a row:
+		<supervoxel id> <block z> <block y> <block x> <# voxels>
+	
+	"mappings": Supervoxel to agglomerated label mappings in a CSV file where each supervoxel has a row:
+		<supervoxel id> <label>
+	
+	"indices": Label indices in a CSV file where each supervoxel has a row with its agglomerated label:
+		<label> <supervoxel id> <block z> <block y> <block x> <# voxels>
+	
+	Note that the last two dumps can be used by a program to ingest all but the actual voxel labels,
+	using the POST /mappings and POST /indices endpoints.  All three dumps can be used for quality
+	control.  Sorting can be done after the dump by the linux "sort" command:
+	    % sort -g -k1,1 -k2,2 -k3,3 -k4,4 svcount.csv > sorted-svcount.csv
 
     Example: 
 
-    $ dvid node 3f8c segmentation count /path/to/counts.csv
+    $ dvid node 3f8c segmentation dump svcount /path/to/counts.csv
 
     Arguments:
 
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
 	data name     Name of data to add.
+	dump type     One of "svcount", "mappings", or "indices".
 	file path     Absolute path to a writable file that the dvid server has write privileges to.
 	
 	
@@ -1168,7 +1183,7 @@ func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.
 }
 
 func (dtype *Type) Help() string {
-	return HelpMessage
+	return helpMessage
 }
 
 // -------
@@ -2435,13 +2450,13 @@ func (d *Data) DoRPC(req datastore.Request, reply *datastore.Response) error {
 		}
 		return d.createComposite(req, reply)
 
-	case "count":
-		if len(req.Command) < 5 {
-			return fmt.Errorf("poorly formatted counts command.  See command-line help")
+	case "dump":
+		if len(req.Command) < 6 {
+			return fmt.Errorf("poorly formatted dump command.  See command-line help")
 		}
 		// Parse the request
-		var uuidStr, dataName, cmdStr, outPath string
-		req.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &outPath)
+		var uuidStr, dataName, cmdStr, dumpType, outPath string
+		req.CommandArgs(1, &uuidStr, &dataName, &cmdStr, &dumpType, &outPath)
 
 		uuid, v, err := datastore.MatchingUUID(uuidStr)
 		if err != nil {
@@ -2453,8 +2468,18 @@ func (d *Data) DoRPC(req datastore.Request, reply *datastore.Response) error {
 		if err != nil {
 			return err
 		}
-		go d.countBlockSupervoxels(f, outPath, v)
-		reply.Text = fmt.Sprintf("Asynchronously writing supervoxel counts for data %q, uuid %s to file: %s\n", d.DataName(), uuid, outPath)
+		switch dumpType {
+		case "svcount":
+			go d.writeSVCounts(f, outPath, v)
+			reply.Text = fmt.Sprintf("Asynchronously writing supervoxel counts for data %q, uuid %s to file: %s\n", d.DataName(), uuid, outPath)
+		case "mappings":
+			go d.writeMappings(f, outPath, v)
+			reply.Text = fmt.Sprintf("Asynchronously writing mappings for data %q, uuid %s to file: %s\n", d.DataName(), uuid, outPath)
+		case "indices":
+			go d.writeIndices(f, outPath, v)
+			reply.Text = fmt.Sprintf("Asynchronously writing label indices for data %q, uuid %s to file: %s\n", d.DataName(), uuid, outPath)
+		default:
+		}
 		return nil
 
 	default:
