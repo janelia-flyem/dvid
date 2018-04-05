@@ -263,7 +263,14 @@ func (idx *Index) Cleave(cleaveLabel uint64, toCleave []uint64) *Index {
 					delete(svc.Counts, supervoxel)
 				}
 			}
-			cidx.Blocks[zyx] = &proto.SVCount{Counts: cleavedCounts}
+			if len(cleavedCounts) > 0 {
+				cidx.Blocks[zyx] = &proto.SVCount{Counts: cleavedCounts}
+			}
+		}
+	}
+	for zyx, svc := range idx.Blocks {
+		if svc == nil || len(svc.Counts) == 0 {
+			delete(idx.Blocks, zyx)
 		}
 	}
 	return cidx

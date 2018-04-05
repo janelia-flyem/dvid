@@ -221,3 +221,138 @@ func TestIndexOps(t *testing.T) {
 		t.Errorf("expected error in subtracting too many voxels in block, but got none!\n")
 	}
 }
+
+func TestCleaveIndex(t *testing.T) {
+	var idx Index
+	idx.Blocks = make(map[uint64]*proto.SVCount)
+
+	block1 := EncodeBlockIndex(1, 1, 1)
+	svc := new(proto.SVCount)
+	svc.Counts = map[uint64]uint32{
+		23:      100,
+		1001:    899,
+		11890:   357,
+		8473291: 20000,
+	}
+	idx.Blocks[block1] = svc
+
+	block2 := EncodeBlockIndex(10, 24837, 890)
+	svc = new(proto.SVCount)
+	svc.Counts = map[uint64]uint32{
+		87:   289,
+		382:  400,
+		1001: 1000,
+		3829: 10000,
+	}
+	idx.Blocks[block2] = svc
+
+	block3 := EncodeBlockIndex(87, 283, 3855)
+	svc = new(proto.SVCount)
+	svc.Counts = map[uint64]uint32{
+		673:  2389,
+		1001: 5000,
+		8763: 25463,
+	}
+	idx.Blocks[block3] = svc
+	idx.Label = 199
+
+	block4 := EncodeBlockIndex(2, 1, 1)
+	svc = new(proto.SVCount)
+	svc.Counts = map[uint64]uint32{
+		23:      111,
+		41234:   7,
+		8473291: 7381,
+	}
+	idx.Blocks[block4] = svc
+
+	cleaveIdx := idx.Cleave(200, []uint64{87, 382, 1001, 3829, 673, 8763})
+	supervoxels := idx.GetSupervoxels()
+	mainBodySupervoxels := Set{
+		23:      struct{}{},
+		11890:   struct{}{},
+		41234:   struct{}{},
+		8473291: struct{}{},
+	}
+	if !reflect.DeepEqual(supervoxels, mainBodySupervoxels) {
+		t.Errorf("after cleave, remain index is weird.  Expected %v, got %v\n", mainBodySupervoxels, supervoxels)
+	}
+	if len(idx.Blocks) != 2 {
+		t.Fatalf("after cleave, expected remain index to have 2 blocks, got %d\n", len(idx.Blocks))
+	}
+	if len(cleaveIdx.Blocks) != 3 {
+		t.Errorf("after cleave, expected cleaved index to have 3 blocks, got %d\n", len(cleaveIdx.Blocks))
+	}
+	cleaveSupervoxels := Set{
+		87:   struct{}{},
+		382:  struct{}{},
+		673:  struct{}{},
+		1001: struct{}{},
+		3829: struct{}{},
+		8763: struct{}{},
+	}
+	supervoxels = cleaveIdx.GetSupervoxels()
+	if !reflect.DeepEqual(supervoxels, cleaveSupervoxels) {
+		t.Errorf("after cleave, the cleaved index is weird.  Expected %v, got %v\n", cleaveSupervoxels, supervoxels)
+	}
+
+	remainCounts1 := map[uint64]uint32{
+		23:      100,
+		11890:   357,
+		8473291: 20000,
+	}
+	svc, found := idx.Blocks[block1]
+	if !found || svc == nil {
+		t.Fatalf("expected remain index to have block %s\n", BlockIndexToIZYXString(block1))
+	}
+	if !reflect.DeepEqual(svc.Counts, remainCounts1) {
+		t.Errorf("expected remain index to be %v, got %v\n", remainCounts1, svc.Counts)
+	}
+	remainCounts4 := map[uint64]uint32{
+		23:      111,
+		41234:   7,
+		8473291: 7381,
+	}
+	svc, found = idx.Blocks[block4]
+	if !found || svc == nil {
+		t.Fatalf("expected remain index to have block %s\n", BlockIndexToIZYXString(block4))
+	}
+	if !reflect.DeepEqual(svc.Counts, remainCounts4) {
+		t.Errorf("expected remain index to be %v, got %v\n", remainCounts4, svc.Counts)
+	}
+
+	cleaveCounts1 := map[uint64]uint32{
+		1001: 899,
+	}
+	svc, found = cleaveIdx.Blocks[block1]
+	if !found || svc == nil {
+		t.Fatalf("expected cleave index to have block %s\n", BlockIndexToIZYXString(block1))
+	}
+	if !reflect.DeepEqual(svc.Counts, cleaveCounts1) {
+		t.Errorf("expected cleave index for %s to be %v, got %v\n", BlockIndexToIZYXString(block1), cleaveCounts1, svc.Counts)
+	}
+	cleaveCounts2 := map[uint64]uint32{
+		87:   289,
+		382:  400,
+		1001: 1000,
+		3829: 10000,
+	}
+	svc, found = cleaveIdx.Blocks[block2]
+	if !found || svc == nil {
+		t.Fatalf("expected cleave index to have block %s\n", BlockIndexToIZYXString(block2))
+	}
+	if !reflect.DeepEqual(svc.Counts, cleaveCounts2) {
+		t.Errorf("expected cleave index for %s to be %v, got %v\n", BlockIndexToIZYXString(block2), cleaveCounts2, svc.Counts)
+	}
+	cleaveCounts3 := map[uint64]uint32{
+		673:  2389,
+		1001: 5000,
+		8763: 25463,
+	}
+	svc, found = cleaveIdx.Blocks[block3]
+	if !found || svc == nil {
+		t.Fatalf("expected cleave index to have block %s\n", BlockIndexToIZYXString(block3))
+	}
+	if !reflect.DeepEqual(svc.Counts, cleaveCounts3) {
+		t.Errorf("expected cleave index for %s to be %v, got %v\n", BlockIndexToIZYXString(block3), cleaveCounts3, svc.Counts)
+	}
+}
