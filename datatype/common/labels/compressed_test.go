@@ -681,6 +681,47 @@ func TestBlockSplitAndRLEs(t *testing.T) {
 	}
 }
 
+func TestSolidBlockSize(t *testing.T) {
+	testLabel := uint64(9174832)
+	numVoxels := 64 * 64 * 64
+	blockVol := make([]uint64, numVoxels)
+	for i := 0; i < numVoxels; i++ {
+		blockVol[i] = testLabel
+	}
+	block, err := MakeBlock(dvid.Uint64ToByte(blockVol), dvid.Point3d{64, 64, 64})
+	if err != nil {
+		t.Fatalf("error making block 0: %v\n", err)
+	}
+	compressed, err := block.MarshalBinary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(compressed) > 24 {
+		t.Errorf("solid block had %d bytes instead of optimal 24 bytes\n", len(compressed))
+	}
+	solidBlock := MakeSolidBlock(testLabel, dvid.Point3d{64, 64, 64})
+	uint64array, size := solidBlock.MakeLabelVolume()
+	if size[0] != 64 || size[1] != 64 || size[2] != 64 {
+		t.Fatalf("solid block didn't return appropriate size: %v\n", size)
+	}
+	uint64array2, size2 := block.MakeLabelVolume()
+	if size2[0] != 64 || size2[1] != 64 || size2[2] != 64 {
+		t.Fatalf("one label block didn't return appropriate size: %v\n", size2)
+	}
+	if !bytes.Equal(uint64array, uint64array2) {
+		t.Fatalf("solid block path does not equal single label encoded path\n")
+	}
+	labelVol, err := dvid.ByteToUint64(uint64array)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < numVoxels; i++ {
+		if labelVol[i] != testLabel {
+			t.Fatalf("uncompressed label volume had label %d instead of expected label %d @ position %d\n", labelVol[i], testLabel, i)
+		}
+	}
+}
+
 func TestBinaryBlocks(t *testing.T) {
 	numVoxels := 64 * 64 * 64
 	blockVol0 := make([]uint64, numVoxels)

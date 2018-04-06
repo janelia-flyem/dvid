@@ -2242,6 +2242,14 @@ func (s *subvolumeData) encodeBlock() (*Block, error) {
 			}
 		}
 	}
+	if numLabels == 1 {
+		var label uint64
+		for label = range labels {
+			break
+		}
+		blockSize := dvid.Point3d{int32(s.blockSize[0]), int32(s.blockSize[1]), int32(s.blockSize[2])}
+		return MakeSolidBlock(label, blockSize), nil
+	}
 
 	// Write all the data to the Block buffer.
 	b := new(Block)

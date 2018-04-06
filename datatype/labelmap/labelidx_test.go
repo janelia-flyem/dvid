@@ -236,7 +236,6 @@ func TestIngest2(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			td.filename = "solid test block"
 			data[i] = td
 		}
 		serialization, err := data[i].b.MarshalBinary()
