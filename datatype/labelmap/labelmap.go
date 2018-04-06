@@ -3210,6 +3210,7 @@ func (d *Data) handleIngestIndices(ctx *datastore.VersionedCtx, w http.ResponseW
 		server.BadRequest(w, r, err)
 		return
 	}
+	var numDeleted int
 	for i, protoIdx := range indices.Indices {
 		if protoIdx == nil {
 			server.BadRequest(w, r, "indices included a nil index in position %d", i)
@@ -3224,7 +3225,7 @@ func (d *Data) handleIngestIndices(ctx *datastore.VersionedCtx, w http.ResponseW
 				server.BadRequest(w, r, err)
 				return
 			}
-			dvid.Infof("HTTP POST indices for label %d -- empty index so deleted index", protoIdx.Label)
+			numDeleted++
 			continue
 		}
 		idx := labels.Index{LabelIndex: *protoIdx}
@@ -3232,6 +3233,10 @@ func (d *Data) handleIngestIndices(ctx *datastore.VersionedCtx, w http.ResponseW
 			server.BadRequest(w, r, err)
 			return
 		}
+	}
+	if numDeleted > 0 {
+		timedLog.Infof("HTTP POST indices for %d labels, %d deleted (%s)", len(indices.Indices), numDeleted, r.URL)
+		return
 	}
 	timedLog.Infof("HTTP POST indices for %d labels (%s)", len(indices.Indices), r.URL)
 }
