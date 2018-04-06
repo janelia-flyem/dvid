@@ -980,7 +980,7 @@ func (d *Data) writeBinaryBlocks(ctx *datastore.VersionedCtx, label uint64, scal
 		return false, err
 	}
 	if idx == nil || len(idx.Blocks) == 0 {
-		return false, err
+		return false, nil
 	}
 
 	indices, err := idx.GetProcessedBlockIndices(scale, bounds)
@@ -1040,7 +1040,7 @@ func (d *Data) writeStreamingRLE(ctx *datastore.VersionedCtx, label uint64, scal
 		return false, err
 	}
 	if idx == nil || len(idx.Blocks) == 0 {
-		return false, err
+		return false, nil
 	}
 
 	blocks, err := idx.GetProcessedBlockIndices(scale, bounds)

@@ -3145,6 +3145,10 @@ func (d *Data) handleIngestIndex(ctx *datastore.VersionedCtx, w http.ResponseWri
 		server.BadRequest(w, r, err)
 		return
 	}
+	if label == 0 {
+		server.BadRequest(w, r, "cannot ingest protected label 0")
+		return
+	}
 	if r.Body == nil {
 		server.BadRequest(w, r, fmt.Errorf("no data POSTed"))
 		return
@@ -3206,8 +3210,24 @@ func (d *Data) handleIngestIndices(ctx *datastore.VersionedCtx, w http.ResponseW
 		server.BadRequest(w, r, err)
 		return
 	}
-	for _, protoIdx := range indices.Indices {
-		idx := labels.Index{*protoIdx}
+	for i, protoIdx := range indices.Indices {
+		if protoIdx == nil {
+			server.BadRequest(w, r, "indices included a nil index in position %d", i)
+			return
+		}
+		if protoIdx.Label == 0 {
+			server.BadRequest(w, r, "index %d had label 0, which is a reserved label", i)
+			return
+		}
+		if len(protoIdx.Blocks) == 0 {
+			if err := deleteLabelIndex(ctx, protoIdx.Label); err != nil {
+				server.BadRequest(w, r, err)
+				return
+			}
+			dvid.Infof("HTTP POST indices for label %d -- empty index so deleted index", protoIdx.Label)
+			continue
+		}
+		idx := labels.Index{LabelIndex: *protoIdx}
 		if err := putLabelIndex(ctx, &idx); err != nil {
 			server.BadRequest(w, r, err)
 			return
@@ -3480,7 +3500,7 @@ func (d *Data) handleSupervoxels(ctx *datastore.VersionedCtx, w http.ResponseWri
 		server.BadRequest(w, r, "unable to get label %d index: %v", label, err)
 		return
 	}
-	if idx == nil {
+	if idx == nil || len(idx.Blocks) == 0 {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
@@ -3560,7 +3580,7 @@ func (d *Data) handleSparsevolSize(ctx *datastore.VersionedCtx, w http.ResponseW
 		server.BadRequest(w, r, "problem getting label set idx on label %: %v", label, err)
 		return
 	}
-	if idx == nil {
+	if idx == nil || len(idx.Blocks) == 0 {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
