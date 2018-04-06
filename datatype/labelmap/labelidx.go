@@ -1451,11 +1451,13 @@ func (d *Data) writeMappings(f *os.File, outPath string, v dvid.VersionID) {
 		label, present := vm.value(ancestry)
 		if present {
 			numMappings++
-			line := fmt.Sprintf("%d %d\n", supervoxel, label)
-			if _, err := f.WriteString(line); err != nil {
-				numErrors++
-				if numErrors < 100 {
-					dvid.Errorf("Unable to write data for mapping of supervoxel %d -> %d, data %q: %v\n", supervoxel, label, d.DataName(), err)
+			if supervoxel != label {
+				line := fmt.Sprintf("%d %d\n", supervoxel, label)
+				if _, err := f.WriteString(line); err != nil {
+					numErrors++
+					if numErrors < 100 {
+						dvid.Errorf("Unable to write data for mapping of supervoxel %d -> %d, data %q: %v\n", supervoxel, label, d.DataName(), err)
+					}
 				}
 			}
 		}
