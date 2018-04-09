@@ -3,6 +3,8 @@
 package labels
 
 import (
+	"sync"
+
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/common/proto"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -141,6 +143,24 @@ func ReadMappingLog(d dvid.Data, v dvid.VersionID) ([]MappingOp, error) {
 	}
 	mappingOps = mappingOps[:numMappings]
 	return mappingOps, nil
+}
+
+func StreamMappingLog(d dvid.Data, v dvid.VersionID, ch chan storage.LogMessage, wg *sync.WaitGroup) error {
+	uuid, err := datastore.UUIDFromVersion(v)
+	if err != nil {
+		return err
+	}
+	logreadable, ok := d.(storage.LogReadable)
+	if !ok {
+		close(ch)
+		return nil
+	}
+	rl := logreadable.GetReadLog()
+	if rl == nil {
+		close(ch)
+		return nil
+	}
+	return rl.StreamAll(d.DataUUID(), uuid, ch, wg)
 }
 
 func LogAffinity(d dvid.Data, v dvid.VersionID, aff Affinity) error {

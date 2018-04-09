@@ -49,7 +49,7 @@ func (d *Data) PutLabels(v dvid.VersionID, subvol *dvid.Subvolume, data []byte, 
 		return err
 	}
 
-	// Only do one request at a time, although each request can start many goroutines.
+	// Only do one large mutation at a time, although each request can start many goroutines.
 	server.LargeMutationMutex.Lock()
 	defer server.LargeMutationMutex.Unlock()
 

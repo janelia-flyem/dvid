@@ -30,7 +30,7 @@ import (
 
 	"github.com/janelia-flyem/go/go-humanize"
 
-	"github.com/pierrec/lz4"
+	lz4 "github.com/janelia-flyem/go/golz4"
 )
 
 const (
@@ -39,7 +39,7 @@ const (
 	TypeName = "labelvol"
 )
 
-const HelpMessage = `
+const helpMessage = `
 API for label sparse volume data type (github.com/janelia-flyem/dvid/datatype/labelvol)
 =======================================================================================
 
@@ -438,7 +438,7 @@ func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.
 }
 
 func (dtype *Type) Help() string {
-	return HelpMessage
+	return helpMessage
 }
 
 // Properties are additional properties for data beyond those in standard datastore.Data.
@@ -832,7 +832,7 @@ func (d *Data) loadMaxLabels(wg *sync.WaitGroup, ch chan *storage.KeyValue) {
 // --- datastore.DataService interface ---------
 
 func (d *Data) Help() string {
-	return HelpMessage
+	return helpMessage
 }
 
 func (d *Data) MarshalJSON() ([]byte, error) {
@@ -1013,9 +1013,9 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 					return
 				}
 			case "lz4":
-				compressed := make([]byte, lz4.CompressBlockBound(len(data)))
+				compressed := make([]byte, lz4.CompressBound(data))
 				var n, outSize int
-				if outSize, err = lz4.CompressBlock(data, compressed, 0); err != nil {
+				if outSize, err = lz4.Compress(data, compressed); err != nil {
 					server.BadRequest(w, r, err)
 					return
 				}

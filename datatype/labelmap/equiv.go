@@ -11,6 +11,7 @@ import (
 	"github.com/janelia-flyem/dvid/datatype/common/labels"
 	"github.com/janelia-flyem/dvid/datatype/common/proto"
 	"github.com/janelia-flyem/dvid/dvid"
+	"github.com/janelia-flyem/dvid/storage"
 )
 
 func (d *Data) ingestMappings(ctx *datastore.VersionedCtx, mappings proto.MappingOps) error {
@@ -70,6 +71,10 @@ func (vm vmap) modify(vid uint8, toLabel uint64) (out vmap, changed bool) {
 	for pos := 0; pos < len(vm); pos += 9 {
 		entryvid := uint8(vm[pos])
 		if entryvid == vid {
+			curLabel := binary.LittleEndian.Uint64(vm[pos+1 : pos+9])
+			if curLabel == toLabel {
+				return vm, false
+			}
 			out := make([]byte, len(vm))
 			copy(out, vm)
 			binary.LittleEndian.PutUint64(out[pos+1:pos+9], toLabel)
@@ -98,41 +103,57 @@ type SVMap struct {
 // makes sure that current map has been initialized with all forward mappings up to
 // given version.
 func (svm *SVMap) initToVersion(d dvid.Data, v dvid.VersionID) error {
+	svm.Lock()
+	defer svm.Unlock()
+
 	ancestors, err := datastore.GetAncestry(v)
 	if err != nil {
 		return err
 	}
-	svm.Lock()
-	defer svm.Unlock()
-
 	for _, ancestor := range ancestors {
 		vid, found := svm.versions[ancestor]
 		if found {
-			continue // we have already loaded this version
+			return nil // we have already loaded this version and its ancestors
 		}
-		mappingOps, err := labels.ReadMappingLog(d, ancestor)
+		vid, err = svm.createShortVersion(ancestor)
 		if err != nil {
-			return err
+			return fmt.Errorf("problem creating mapping version for id %d: %v\n", ancestor, err)
 		}
-		if len(mappingOps) == 0 {
-			continue
-		}
-		vid, err = svm.createShortVersion(v)
-		if err != nil {
-			return err
-		}
-		for _, mappingOp := range mappingOps {
-			for supervoxel := range mappingOp.Original {
-				vm := svm.fm[supervoxel]
-				newvm, changed := vm.modify(vid, mappingOp.Mapped)
-				if changed {
-					svm.fm[supervoxel] = newvm
+		timedLog := dvid.NewTimeLog()
+		ch := make(chan storage.LogMessage, 100)
+		wg := new(sync.WaitGroup)
+		go func(vid uint8, ch chan storage.LogMessage, wg *sync.WaitGroup) {
+			numMsgs := 0
+			for msg := range ch { // expects channel to be closed on completion
+				numMsgs++
+				if msg.EntryType != proto.MappingOpType {
+					dvid.Errorf("received odd log message not of type Mapping for version %d\n", ancestor)
+					wg.Done()
+					continue
 				}
+				var op proto.MappingOp
+				if err := op.Unmarshal(msg.Data); err != nil {
+					dvid.Errorf("unable to unmarshal mapping log message for version %d: %v\n", ancestor, err)
+					wg.Done()
+					continue
+				}
+				mapped := op.GetMapped()
+				for _, supervoxel := range op.GetOriginal() {
+					vm := svm.fm[supervoxel]
+					newvm, changed := vm.modify(vid, mapped)
+					if changed {
+						svm.fm[supervoxel] = newvm
+					}
+				}
+				wg.Done()
 			}
+		}(vid, ch, wg)
+		if err = labels.StreamMappingLog(d, ancestor, ch, wg); err != nil {
+			return fmt.Errorf("problem loading mapping logs: %v", err)
 		}
+		wg.Wait()
+		timedLog.Infof("Loaded mappings for data %q, version ID %d", d.DataName(), ancestor)
 	}
-
-	// TODO: Read in affinities
 	return nil
 }
 
@@ -188,23 +209,6 @@ func (svm *SVMap) createShortVersion(v dvid.VersionID) (uint8, error) {
 	return vid, nil
 }
 
-// MapSupervoxel sets the mapping for a supervoxel to a specified label.
-func (svm *SVMap) MapSupervoxel(v dvid.VersionID, supervoxel, label uint64) error {
-	svm.Lock()
-	vid, err := svm.createShortVersion(v)
-	if err != nil {
-		return err
-	}
-	vm := svm.fm[supervoxel]
-	newvm, changed := vm.modify(vid, label)
-	if changed {
-		svm.fm[supervoxel] = newvm
-		dvid.Infof("changed supervoxel %d mapping to incorporate label %d\n", supervoxel, label)
-	}
-	svm.Unlock()
-	return nil
-}
-
 // returns true if the given version is likely to have some mappings.
 // provides receiver locking within.
 func (svm *SVMap) exists(v dvid.VersionID) bool {
@@ -255,7 +259,7 @@ func (svm *SVMap) MappedLabel(v dvid.VersionID, label uint64) (uint64, bool) {
 	}
 	svm.RUnlock()
 
-	ancestry, err := svm.getAncestry(v)
+	ancestry, err := svm.getLockedAncestry(v)
 	if err != nil {
 		dvid.Criticalf("unable to get ancestry for version %d: %v\n", v, err)
 		return label, false
@@ -272,13 +276,13 @@ var (
 	iMap instanceMaps
 )
 
+func init() {
+	iMap.maps = make(map[dvid.UUID]*SVMap)
+}
+
 // returns or creates an SVMap so nil is never returned unless there's an error
 func getMapping(d dvid.Data, v dvid.VersionID) (*SVMap, error) {
 	iMap.Lock()
-	defer iMap.Unlock()
-	if iMap.maps == nil {
-		iMap.maps = make(map[dvid.UUID]*SVMap)
-	}
 	m, found := iMap.maps[d.DataUUID()]
 	if !found {
 		m = new(SVMap)
@@ -287,6 +291,7 @@ func getMapping(d dvid.Data, v dvid.VersionID) (*SVMap, error) {
 		m.versionsRev = make(map[uint8]dvid.VersionID)
 		iMap.maps[d.DataUUID()] = m
 	}
+	iMap.Unlock()
 	if err := m.initToVersion(d, v); err != nil {
 		return nil, err
 	}

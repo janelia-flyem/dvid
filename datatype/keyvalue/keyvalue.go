@@ -24,7 +24,7 @@ const (
 	TypeName = "keyvalue"
 )
 
-const HelpMessage = `
+const helpMessage = `
 API for 'keyvalue' datatype (github.com/janelia-flyem/dvid/datatype/keyvalue)
 =============================================================================
 
@@ -205,7 +205,7 @@ func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.
 }
 
 func (dtype *Type) Help() string {
-	return fmt.Sprintf(HelpMessage)
+	return fmt.Sprintf(helpMessage)
 }
 
 // GetByUUIDName returns a pointer to labelblk data given a UUID and data name.
@@ -417,7 +417,7 @@ func (d *Data) JSONString() (jsonStr string, err error) {
 // --- DataService interface ---
 
 func (d *Data) Help() string {
-	return fmt.Sprintf(HelpMessage)
+	return fmt.Sprintf(helpMessage)
 }
 
 // DoRPC acts as a switchboard for RPC commands.

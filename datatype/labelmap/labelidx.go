@@ -6,6 +6,8 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"math"
+	"os"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -18,7 +20,7 @@ import (
 	"github.com/janelia-flyem/dvid/storage"
 
 	"github.com/coocood/freecache"
-	"github.com/pierrec/lz4"
+	lz4 "github.com/janelia-flyem/go/golz4"
 )
 
 const (
@@ -83,9 +85,6 @@ func getLabelIndex(ctx *datastore.VersionedCtx, label uint64) (*labels.Index, er
 	}
 	val, _, err := dvid.DeserializeData(compressed, true)
 	if err != nil {
-		return nil, err
-	}
-	if len(val) == 0 {
 		return nil, err
 	}
 
@@ -208,6 +207,36 @@ func GetSupervoxelBlocks(d dvid.Data, v dvid.VersionID, supervoxel uint64) (dvid
 		}
 	}
 	return blocks, nil
+}
+
+// GetLabelSize returns the # of voxels in the given label.  If isSupervoxel = true, the given
+// label is interpreted as a supervoxel id and the size is of a supervoxel.  If a label doesn't
+// exist, a zero (not error) is returned.
+func GetLabelSize(d dvid.Data, v dvid.VersionID, label uint64, isSupervoxel bool) (uint64, error) {
+	var supervoxel uint64
+	if isSupervoxel {
+		supervoxel = label
+		mapping, err := getMapping(d, v)
+		if err != nil {
+			return 0, err
+		}
+		if mapping != nil {
+			if mapped, found := mapping.MappedLabel(v, supervoxel); found {
+				label = mapped
+			}
+		}
+	}
+	idx, err := GetLabelIndex(d, v, label)
+	if err != nil {
+		return 0, err
+	}
+	if idx == nil {
+		return 0, nil
+	}
+	if isSupervoxel {
+		return idx.GetSupervoxelCount(supervoxel), nil
+	}
+	return idx.NumVoxels(), nil
 }
 
 // GetBoundedIndex gets bounded label index data from storage for a given data instance.
@@ -538,26 +567,29 @@ func CleaveIndex(d dvid.Data, v dvid.VersionID, op labels.CleaveOp) error {
 			return err
 		}
 	}
-
-	ctx := datastore.NewVersionedCtx(d, v)
-	if err := putLabelIndex(ctx, idx); err != nil {
-		return err
+	if idx == nil {
+		return fmt.Errorf("cannot cleave non-existent label %d", op.Target)
 	}
-	if indexCache != nil {
-		idxBytes, err = idx.Marshal()
-		if err != nil {
-			return err
+
+	supervoxels := idx.GetSupervoxels()
+	for _, supervoxel := range op.CleavedSupervoxels {
+		if _, found := supervoxels[supervoxel]; !found {
+			return fmt.Errorf("cannot cleave supervoxel %d, which does not exist in label %d", supervoxel, op.Target)
 		}
-		k := indexKey{data: d, version: v, label: op.Target}.Bytes()
-		if err := indexCache.Set(k, idxBytes, 0); err != nil {
-			return err
-		}
+		delete(supervoxels, supervoxel)
+	}
+	if len(supervoxels) == 0 {
+		return fmt.Errorf("cannot cleave all supervoxels from the label %d", op.Target)
 	}
 
 	// create a new label index to contain the cleaved supervoxels.
 	// we don't have to worry about mutex here because it's a new index.
+	ctx := datastore.NewVersionedCtx(d, v)
 	cidx := idx.Cleave(op.CleavedLabel, op.CleavedSupervoxels)
 	if err := putLabelIndex(ctx, cidx); err != nil {
+		return err
+	}
+	if err := putLabelIndex(ctx, idx); err != nil {
 		return err
 	}
 	if indexCache != nil {
@@ -566,6 +598,15 @@ func CleaveIndex(d dvid.Data, v dvid.VersionID, op labels.CleaveOp) error {
 			return err
 		}
 		k := indexKey{data: d, version: v, label: op.CleavedLabel}.Bytes()
+		if err := indexCache.Set(k, idxBytes, 0); err != nil {
+			return err
+		}
+
+		idxBytes, err = idx.Marshal()
+		if err != nil {
+			return err
+		}
+		k = indexKey{data: d, version: v, label: op.Target}.Bytes()
 		if err := indexCache.Set(k, idxBytes, 0); err != nil {
 			return err
 		}
@@ -786,7 +827,7 @@ func writeRLE(w io.Writer, start dvid.Point3d, run int32) error {
 // Scan a block and construct RLEs that will be serialized and added to the given buffer.
 func (d *Data) addRLEs(izyx dvid.IZYXString, data []byte, lbls labels.Set) (serialization []byte, newRuns uint32, err error) {
 	if len(data) != int(d.BlockSize().Prod())*8 {
-		err = fmt.Errorf("Deserialized label block %d bytes, not uint64 size times %d block elements\n",
+		err = fmt.Errorf("deserialized label block %d bytes, not uint64 size times %d block elements",
 			len(data), d.BlockSize().Prod())
 		return
 	}
@@ -931,22 +972,22 @@ func (d *Data) FoundSparseVol(ctx *datastore.VersionedCtx, label uint64, bounds 
 	return false, nil
 }
 
-// WriteBinaryBlocks does a streaming write of an encoded sparse volume given a label.
+// writeBinaryBlocks does a streaming write of an encoded sparse volume given a label.
 // It returns a bool whether the label was found in the given bounds and any error.
-func (d *Data) WriteBinaryBlocks(ctx *datastore.VersionedCtx, label uint64, scale uint8, bounds dvid.Bounds, compression string, w io.Writer) (bool, error) {
+func (d *Data) writeBinaryBlocks(ctx *datastore.VersionedCtx, label uint64, scale uint8, bounds dvid.Bounds, compression string, w io.Writer) (bool, error) {
 	idx, err := GetLabelIndex(d, ctx.VersionID(), label)
 	if err != nil {
 		return false, err
 	}
 	if idx == nil || len(idx.Blocks) == 0 {
-		return false, err
+		return false, nil
 	}
 
-	blocks, err := idx.GetProcessedBlockIndices(scale, bounds)
+	indices, err := idx.GetProcessedBlockIndices(scale, bounds)
 	if err != nil {
 		return false, err
 	}
-	sort.Sort(blocks)
+	sort.Sort(indices)
 
 	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
@@ -955,19 +996,27 @@ func (d *Data) WriteBinaryBlocks(ctx *datastore.VersionedCtx, label uint64, scal
 	op := labels.NewOutputOp(w)
 	lbls := idx.GetSupervoxels()
 	go labels.WriteBinaryBlocks(label, lbls, op, bounds)
-	for _, izyx := range blocks {
+	var preErr error
+	for _, izyx := range indices {
 		tk := NewBlockTKeyByCoord(scale, izyx)
 		data, err := store.Get(ctx, tk)
 		if err != nil {
-			return false, err
+			preErr = err
+			break
+		}
+		if data == nil {
+			preErr = fmt.Errorf("expected block %s @ scale %d to have key-value, but found none", izyx, scale)
+			break
 		}
 		blockData, _, err := dvid.DeserializeData(data, true)
 		if err != nil {
-			return false, err
+			preErr = err
+			break
 		}
 		var block labels.Block
 		if err := block.UnmarshalBinary(blockData); err != nil {
-			return false, err
+			preErr = err
+			break
 		}
 		pb := labels.PositionedBlock{
 			Block:  block,
@@ -979,19 +1028,19 @@ func (d *Data) WriteBinaryBlocks(ctx *datastore.VersionedCtx, label uint64, scal
 		return false, err
 	}
 
-	dvid.Infof("[%s] labels %v: streamed %d of %d blocks within bounds\n", ctx, lbls, len(blocks), len(idx.Blocks))
-	return true, nil
+	dvid.Infof("[%s] labels %v: streamed %d of %d blocks within bounds\n", ctx, lbls, len(indices), len(idx.Blocks))
+	return true, preErr
 }
 
-// WriteStreamingRLE does a streaming write of an encoded sparse volume given a label.
+// writeStreamingRLE does a streaming write of an encoded sparse volume given a label.
 // It returns a bool whether the label was found in the given bounds and any error.
-func (d *Data) WriteStreamingRLE(ctx *datastore.VersionedCtx, label uint64, scale uint8, bounds dvid.Bounds, compression string, w io.Writer) (bool, error) {
+func (d *Data) writeStreamingRLE(ctx *datastore.VersionedCtx, label uint64, scale uint8, bounds dvid.Bounds, compression string, w io.Writer) (bool, error) {
 	idx, err := GetLabelIndex(d, ctx.VersionID(), label)
 	if err != nil {
 		return false, err
 	}
 	if idx == nil || len(idx.Blocks) == 0 {
-		return false, err
+		return false, nil
 	}
 
 	blocks, err := idx.GetProcessedBlockIndices(scale, bounds)
@@ -1035,9 +1084,9 @@ func (d *Data) WriteStreamingRLE(ctx *datastore.VersionedCtx, label uint64, scal
 	return true, nil
 }
 
-func (d *Data) WriteLegacyRLE(ctx *datastore.VersionedCtx, label uint64, scale uint8, b dvid.Bounds, compression string, w io.Writer) (found bool, err error) {
+func (d *Data) writeLegacyRLE(ctx *datastore.VersionedCtx, label uint64, scale uint8, b dvid.Bounds, compression string, w io.Writer) (found bool, err error) {
 	var data []byte
-	data, err = d.GetLegacyRLE(ctx, label, scale, b)
+	data, err = d.getLegacyRLEs(ctx, label, scale, b)
 	if err != nil {
 		return
 	}
@@ -1050,15 +1099,15 @@ func (d *Data) WriteLegacyRLE(ctx *datastore.VersionedCtx, label uint64, scale u
 	case "":
 		_, err = w.Write(data)
 	case "lz4":
-		compressed := make([]byte, lz4.CompressBlockBound(len(data)))
+		compressed := make([]byte, lz4.CompressBound(data))
 		var n, outSize int
-		if outSize, err = lz4.CompressBlock(data, compressed, 0); err != nil {
+		if outSize, err = lz4.Compress(data, compressed); err != nil {
 			return
 		}
 		compressed = compressed[:outSize]
 		n, err = w.Write(compressed)
 		if n != outSize {
-			err = fmt.Errorf("only able to write %d of %d lz4 compressed bytes\n", n, outSize)
+			err = fmt.Errorf("only able to write %d of %d lz4 compressed bytes", n, outSize)
 		}
 	case "gzip":
 		gw := gzip.NewWriter(w)
@@ -1070,18 +1119,6 @@ func (d *Data) WriteLegacyRLE(ctx *datastore.VersionedCtx, label uint64, scale u
 		err = fmt.Errorf("unknown compression type %q", compression)
 	}
 	return
-}
-
-// GetLegacyRLE returns an encoded sparse volume given a label and an output format.
-func (d *Data) GetLegacyRLE(ctx *datastore.VersionedCtx, label uint64, scale uint8, bounds dvid.Bounds) ([]byte, error) {
-	idx, err := GetLabelIndex(d, ctx.VersionID(), label)
-	if err != nil {
-		return nil, err
-	}
-	if idx == nil || len(idx.Blocks) == 0 {
-		return nil, nil
-	}
-	return d.getLegacyRLEs(ctx, idx, scale, bounds)
 }
 
 //  The encoding has the following format where integers are little endian:
@@ -1103,7 +1140,14 @@ func (d *Data) GetLegacyRLE(ctx *datastore.VersionedCtx, label uint64, scale uin
 //        int32   Length of run
 //        bytes   Optional payload dependent on first byte descriptor
 //
-func (d *Data) getLegacyRLEs(ctx *datastore.VersionedCtx, idx *labels.Index, scale uint8, bounds dvid.Bounds) ([]byte, error) {
+func (d *Data) getLegacyRLEs(ctx *datastore.VersionedCtx, label uint64, scale uint8, bounds dvid.Bounds) ([]byte, error) {
+	idx, err := GetLabelIndex(d, ctx.VersionID(), label)
+	if err != nil {
+		return nil, err
+	}
+	if idx == nil || len(idx.Blocks) == 0 {
+		return nil, nil
+	}
 	buf := new(bytes.Buffer)
 	buf.WriteByte(dvid.EncodingBinary)
 	binary.Write(buf, binary.LittleEndian, uint8(3))  // # of dimensions
@@ -1168,7 +1212,7 @@ func (d *Data) getLegacyRLEs(ctx *datastore.VersionedCtx, idx *labels.Index, sca
 	}
 
 	binary.LittleEndian.PutUint32(serialization[8:12], numRuns)
-	dvid.Infof("[%s] labels %v: found %d of %d blocks within bounds excluding %d empty blocks, %d runs, serialized %d bytes\n", ctx, lbls, len(blocks), len(idx.Blocks), numEmpty, numRuns, len(serialization))
+	dvid.Infof("[%s] label %d: sent %d blocks (%d hi-res blocks) within bounds excluding %d empty blocks, %d runs, serialized %d bytes\n", idx.Label, len(blocks), len(idx.Blocks), numEmpty, numRuns, len(serialization))
 	return serialization, nil
 }
 
@@ -1288,4 +1332,232 @@ func (d *Data) WriteSparseCoarseVols(ctx *datastore.VersionedCtx, w io.Writer, b
 		return nil
 	})
 	return err
+}
+
+func (d *Data) countThread(f *os.File, mu *sync.Mutex, wg *sync.WaitGroup, chunkCh chan *storage.Chunk) {
+	for c := range chunkCh {
+		scale, idx, err := DecodeBlockTKey(c.K)
+		if err != nil {
+			dvid.Errorf("Couldn't decode label block key %v for data %q\n", c.K, d.DataName())
+			wg.Done()
+			continue
+		}
+		if scale != 0 {
+			dvid.Errorf("Counts had unexpected error: getting scale %d blocks\n", scale)
+			wg.Done()
+			continue
+		}
+		var data []byte
+		data, _, err = dvid.DeserializeData(c.V, true)
+		if err != nil {
+			dvid.Errorf("Unable to deserialize block %s in data %q: %v\n", idx, d.DataName(), err)
+			wg.Done()
+			continue
+		}
+		var block labels.Block
+		if err := block.UnmarshalBinary(data); err != nil {
+			dvid.Errorf("Unable to unmarshal Block %s in data %q: %v\n", idx, d.DataName(), err)
+			wg.Done()
+			continue
+		}
+		counts := block.CalcNumLabels(nil)
+		for supervoxel, count := range counts {
+			bx, by, bz := idx.Unpack()
+			line := fmt.Sprintf("%d %d %d %d %d\n", supervoxel, bz, by, bx, count)
+			mu.Lock()
+			_, err := f.WriteString(line)
+			mu.Unlock()
+			if err != nil {
+				dvid.Errorf("Unable to write data for block %s, data %q: %v\n", idx, d.DataName(), err)
+				break
+			}
+		}
+		wg.Done()
+	}
+}
+
+// scan all label blocks in this labelmap instance, writing supervoxel counts into a given file
+func (d *Data) writeSVCounts(f *os.File, outPath string, v dvid.VersionID) {
+	timedLog := dvid.NewTimeLog()
+
+	// Start the counting goroutine
+	mu := new(sync.Mutex)
+	wg := new(sync.WaitGroup)
+	chunkCh := make(chan *storage.Chunk, 100)
+	for i := 0; i < 100; i++ {
+		go d.countThread(f, mu, wg, chunkCh)
+	}
+
+	// Iterate through all label blocks and count them.
+	chunkOp := &storage.ChunkOp{Wg: wg}
+
+	store, err := datastore.GetOrderedKeyValueDB(d)
+	if err != nil {
+		dvid.Errorf("problem getting store for data %q: %v\n", d.DataName(), err)
+		return
+	}
+	ctx := datastore.NewVersionedCtx(d, v)
+	begTKey := NewBlockTKeyByCoord(0, dvid.MinIndexZYX.ToIZYXString())
+	endTKey := NewBlockTKeyByCoord(0, dvid.MaxIndexZYX.ToIZYXString())
+	var numBlocks uint64
+	err = store.ProcessRange(ctx, begTKey, endTKey, chunkOp, func(c *storage.Chunk) error {
+		if c == nil {
+			wg.Done()
+			return fmt.Errorf("received nil chunk in count for data %q", d.DataName())
+		}
+		if c.V == nil {
+			wg.Done()
+			return nil
+		}
+		numBlocks++
+		if numBlocks%10000 == 0 {
+			timedLog.Infof("Now counting block %d with chunk channel at %d", numBlocks, len(chunkCh))
+		}
+		chunkCh <- c
+		return nil
+	})
+	if err != nil {
+		dvid.Errorf("problem during process range: %v\n", err)
+	}
+	close(chunkCh)
+	wg.Wait()
+	if err = f.Close(); err != nil {
+		dvid.Errorf("problem closing file %q: %v\n", outPath, err)
+	}
+	timedLog.Infof("Finished counting supervoxels in %d blocks and sent to output file %q", numBlocks, outPath)
+}
+
+func (d *Data) writeMappings(f *os.File, outPath string, v dvid.VersionID) {
+	timedLog := dvid.NewTimeLog()
+
+	svm, err := getMapping(d, v)
+	if err != nil {
+		dvid.Errorf("unable to retrieve mappings for data %q, version %d: %v\n", d.DataName(), v, err)
+		return
+	}
+	ancestry, err := svm.getLockedAncestry(v)
+	if err != nil {
+		dvid.Errorf("unable to get ancestry for data %q, version %d: %v\n", d.DataName(), v, err)
+		return
+	}
+	svm.RLock()
+	defer svm.RUnlock()
+	if len(svm.fm) == 0 {
+		dvid.Infof("no mappings found for data %q\n", d.DataName())
+		return
+	}
+	var numMappings, numErrors uint64
+	for supervoxel, vm := range svm.fm {
+		label, present := vm.value(ancestry)
+		if present {
+			numMappings++
+			if supervoxel != label {
+				line := fmt.Sprintf("%d %d\n", supervoxel, label)
+				if _, err := f.WriteString(line); err != nil {
+					numErrors++
+					if numErrors < 100 {
+						dvid.Errorf("Unable to write data for mapping of supervoxel %d -> %d, data %q: %v\n", supervoxel, label, d.DataName(), err)
+					}
+				}
+			}
+		}
+	}
+	if err = f.Close(); err != nil {
+		dvid.Errorf("problem closing file %q: %v\n", outPath, err)
+	}
+	timedLog.Infof("Finished writing %d mappings (%d errors) for data %q, version %d to output file %q", numMappings, numErrors, d.DataName(), v, outPath)
+}
+
+func (d *Data) indexThread(f *os.File, mu *sync.Mutex, wg *sync.WaitGroup, chunkCh chan *storage.Chunk) {
+	for c := range chunkCh {
+		label, err := DecodeLabelIndexTKey(c.K)
+		if err != nil {
+			dvid.Errorf("Couldn't decode label index key %v for data %q\n", c.K, d.DataName())
+			wg.Done()
+			continue
+		}
+		var data []byte
+		data, _, err = dvid.DeserializeData(c.V, true)
+		if err != nil {
+			dvid.Errorf("Unable to deserialize label index %d in data %q: %v\n", label, d.DataName(), err)
+			wg.Done()
+			continue
+		}
+		idx := new(labels.Index)
+		if err := idx.Unmarshal(data); err != nil {
+			dvid.Errorf("Unable to unmarshal label index %d in data %q: %v\n", label, d.DataName(), err)
+			wg.Done()
+			continue
+		}
+		if idx.Label == 0 {
+			idx.Label = label
+		}
+		for zyx, svc := range idx.Blocks {
+			bx, by, bz := labels.DecodeBlockIndex(zyx)
+			if svc != nil && len(svc.Counts) != 0 {
+				for supervoxel, count := range svc.Counts {
+					line := fmt.Sprintf("%d %d %d %d %d %d\n", idx.Label, supervoxel, bz, by, bx, count)
+					mu.Lock()
+					_, err := f.WriteString(line)
+					mu.Unlock()
+					if err != nil {
+						dvid.Errorf("Unable to write label index %d line, data %q: %v\n", idx.Label, d.DataName(), err)
+						break
+					}
+				}
+			}
+		}
+		wg.Done()
+	}
+}
+
+// scan all label indices in this labelmap instance, writing Blocks data into a given file
+func (d *Data) writeIndices(f *os.File, outPath string, v dvid.VersionID) {
+	timedLog := dvid.NewTimeLog()
+
+	// Start the counting goroutine
+	mu := new(sync.Mutex)
+	wg := new(sync.WaitGroup)
+	chunkCh := make(chan *storage.Chunk, 100)
+	for i := 0; i < 100; i++ {
+		go d.indexThread(f, mu, wg, chunkCh)
+	}
+
+	// Iterate through all label blocks and count them.
+	chunkOp := &storage.ChunkOp{Wg: wg}
+
+	store, err := datastore.GetOrderedKeyValueDB(d)
+	if err != nil {
+		dvid.Errorf("problem getting store for data %q: %v\n", d.DataName(), err)
+		return
+	}
+	ctx := datastore.NewVersionedCtx(d, v)
+	begTKey := NewLabelIndexTKey(0)
+	endTKey := NewLabelIndexTKey(math.MaxUint64)
+	var numIndices uint64
+	err = store.ProcessRange(ctx, begTKey, endTKey, chunkOp, func(c *storage.Chunk) error {
+		if c == nil {
+			wg.Done()
+			return fmt.Errorf("received nil chunk in dump index for data %q", d.DataName())
+		}
+		if c.V == nil {
+			wg.Done()
+			return nil
+		}
+		numIndices++
+		if numIndices%10000 == 0 {
+			timedLog.Infof("Now dumping label index %d with chunk channel at %d", numIndices, len(chunkCh))
+		}
+		chunkCh <- c
+		return nil
+	})
+	if err != nil {
+		dvid.Errorf("problem during process range: %v\n", err)
+	}
+	close(chunkCh)
+	wg.Wait()
+	if err = f.Close(); err != nil {
+		dvid.Errorf("problem closing file %q: %v\n", outPath, err)
+	}
+	timedLog.Infof("Finished dumping %d label indices to output file %q", numIndices, outPath)
 }

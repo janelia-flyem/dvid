@@ -1783,6 +1783,15 @@ func (s Spans) Extents() (offset, size Point3d) {
 	return
 }
 
+// Count returns the number of elements spanned by the spans.
+func (s Spans) Count() uint64 {
+	var count uint64
+	for _, span := range s {
+		count += uint64(span[3] - span[2] + 1)
+	}
+	return count
+}
+
 // Blocks returns an unsorted list of blocks spanned by the spans.
 func (s Spans) Blocks(size Point3d) IZYXSlice {
 	zyxmap := make(map[IZYXString]struct{})

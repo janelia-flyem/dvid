@@ -31,7 +31,7 @@ import (
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
 
-	"github.com/pierrec/lz4"
+	lz4 "github.com/janelia-flyem/go/golz4"
 )
 
 const (
@@ -40,7 +40,7 @@ const (
 	TypeName = "labelarray"
 )
 
-const HelpMessage = `
+const helpMessage = `
 API for label block data type (github.com/janelia-flyem/dvid/datatype/labelarray)
 ===============================================================================
 
@@ -984,7 +984,7 @@ func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.
 }
 
 func (dtype *Type) Help() string {
-	return HelpMessage
+	return helpMessage
 }
 
 // -------
@@ -1892,7 +1892,7 @@ func (d *Data) sendBlock(w http.ResponseWriter, x, y, z int32, v []byte, compres
 		switch formatIn {
 		case dvid.LZ4:
 			uncompressed = make([]byte, outsize)
-			if _, err := lz4.UncompressBlock(out, uncompressed, 0); err != nil {
+			if err := lz4.Uncompress(out, uncompressed); err != nil {
 				return err
 			}
 		case dvid.Uncompressed:
@@ -1922,9 +1922,9 @@ func (d *Data) sendBlock(w http.ResponseWriter, x, y, z int32, v []byte, compres
 
 		switch formatOut {
 		case dvid.LZ4:
-			recompressed = make([]byte, lz4.CompressBlockBound(len(uint64array)))
+			recompressed = make([]byte, lz4.CompressBound(uint64array))
 			var size int
-			if size, err = lz4.CompressBlock(uint64array, recompressed, 0); err != nil {
+			if size, err = lz4.Compress(uint64array, recompressed); err != nil {
 				return err
 			}
 			outsize = uint32(size)
@@ -2222,7 +2222,7 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 	if downscale {
 		downresMut.Done()
 	}
-	timedLog.Infof("Received and stored %d blocks for labelarray %q.\n", numBlocks, d.DataName())
+	timedLog.Infof("Received and stored %d blocks for labelarray %q", numBlocks, d.DataName())
 	return nil
 }
 
@@ -2473,9 +2473,9 @@ func sendBinaryData(compression string, data []byte, subvol *dvid.Subvolume, w h
 			return err
 		}
 	case "lz4":
-		compressed := make([]byte, lz4.CompressBlockBound(len(data)))
+		compressed := make([]byte, lz4.CompressBound(data))
 		var n, outSize int
-		if outSize, err = lz4.CompressBlock(data, compressed, 0); err != nil {
+		if outSize, err = lz4.Compress(data, compressed); err != nil {
 			return err
 		}
 		compressed = compressed[:outSize]
@@ -2546,7 +2546,7 @@ func GetBinaryData(compression string, in io.ReadCloser, estsize int64) ([]byte,
 		}
 		tlog = dvid.NewTimeLog()
 		uncompressed := make([]byte, estsize)
-		if _, err = lz4.UncompressBlock(data, uncompressed, 0); err != nil {
+		if err = lz4.Uncompress(data, uncompressed); err != nil {
 			return nil, err
 		}
 		data = uncompressed
@@ -3191,11 +3191,11 @@ func (d *Data) handleSparsevol(ctx *datastore.VersionedCtx, w http.ResponseWrite
 		var found bool
 		switch svformatFromQueryString(r) {
 		case FormatLegacyRLE:
-			found, err = d.WriteLegacyRLE(ctx, label, scale, b, compression, w)
+			found, err = d.writeLegacyRLE(ctx, label, scale, b, compression, w)
 		case FormatBinaryBlocks:
-			found, err = d.WriteBinaryBlocks(ctx, label, scale, b, compression, w)
+			found, err = d.writeBinaryBlocks(ctx, label, scale, b, compression, w)
 		case FormatStreamingRLE:
-			found, err = d.WriteStreamingRLE(ctx, label, scale, b, compression, w)
+			found, err = d.writeStreamingRLE(ctx, label, scale, b, compression, w)
 		}
 		if err != nil {
 			server.BadRequest(w, r, err)
@@ -3270,11 +3270,11 @@ func (d *Data) handleSparsevolByPoint(ctx *datastore.VersionedCtx, w http.Respon
 	var found bool
 	switch format {
 	case FormatLegacyRLE:
-		found, err = d.WriteLegacyRLE(ctx, label, 0, b, compression, w)
+		found, err = d.writeLegacyRLE(ctx, label, 0, b, compression, w)
 	case FormatBinaryBlocks:
-		found, err = d.WriteBinaryBlocks(ctx, label, 0, b, compression, w)
+		found, err = d.writeBinaryBlocks(ctx, label, 0, b, compression, w)
 	case FormatStreamingRLE:
-		found, err = d.WriteStreamingRLE(ctx, label, 0, b, compression, w)
+		found, err = d.writeStreamingRLE(ctx, label, 0, b, compression, w)
 	}
 	if err != nil {
 		server.BadRequest(w, r, err)

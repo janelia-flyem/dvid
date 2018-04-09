@@ -561,6 +561,9 @@ func (rle RLE) Less(rle2 RLE) bool {
 type RLEs []RLE
 
 func ReadRLEs(r io.Reader) (RLEs, error) {
+	if r == nil {
+		return nil, fmt.Errorf("nil reader given")
+	}
 	header := make([]byte, 8)
 	if _, err := io.ReadFull(r, header); err != nil {
 		return nil, err

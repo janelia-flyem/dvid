@@ -86,7 +86,7 @@ const graphSchema = `
 }
 `
 
-const HelpMessage = `
+const helpMessage = `
 API for 'labelgraph' datatype (github.com/janelia-flyem/dvid/datatype/labelgraph)
 History and therefore UNDO is not yet supported.  I will need to access the KeyValue
 setter and maintain a transaction log (how to avoid collisions with graph keyspacee
@@ -549,7 +549,7 @@ func (dtype *Type) NewDataService(uuid dvid.UUID, id dvid.InstanceID, name dvid.
 
 // Help returns help mesage for datatype
 func (dtype *Type) Help() string {
-	return fmt.Sprintf(HelpMessage)
+	return fmt.Sprintf(helpMessage)
 }
 
 // Data embeds the datastore's Data and extends it with transaction properties
@@ -596,7 +596,7 @@ func (d *Data) GobEncode() ([]byte, error) {
 
 // Help returns help mesage for datatype
 func (d *Data) Help() string {
-	return fmt.Sprintf(HelpMessage)
+	return fmt.Sprintf(helpMessage)
 }
 
 // initializeLog ensures that the transaction_log has been created

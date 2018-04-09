@@ -26,7 +26,7 @@ import (
 	"golang.org/x/oauth2/google"
 
 	"github.com/golang/snappy"
-	"github.com/pierrec/lz4"
+	lz4 "github.com/janelia-flyem/go/golz4"
 )
 
 const (
@@ -35,7 +35,7 @@ const (
 	TypeName = "googlevoxels"
 )
 
-const HelpMessage = `
+const helpMessage = `
 API for datatypes derived from googlevoxels (github.com/janelia-flyem/dvid/datatype/googlevoxels)
 =================================================================================================
 
@@ -395,7 +395,7 @@ func log2(value float32) Scaling {
 }
 
 func (dtype *Type) Help() string {
-	return HelpMessage
+	return helpMessage
 }
 
 // GSpec encapsulates the scale and orientation of a tile.
@@ -934,7 +934,7 @@ func (d *Data) GobEncode() ([]byte, error) {
 // --- DataService interface ---
 
 func (d *Data) Help() string {
-	return HelpMessage
+	return helpMessage
 }
 
 // getBlankTileData returns a background 2d tile data
@@ -1093,8 +1093,8 @@ func (d *Data) serveVolume(w http.ResponseWriter, r *http.Request, geom *GoogleS
 			return err
 		}
 		// Recompress and transmit as lz4
-		lz4data := make([]byte, lz4.CompressBlockBound(len(data)))
-		outSize, err := lz4.CompressBlock(data, lz4data, 0)
+		lz4data := make([]byte, lz4.CompressBound(data))
+		outSize, err := lz4.Compress(data, lz4data)
 		if err != nil {
 			return err
 		}

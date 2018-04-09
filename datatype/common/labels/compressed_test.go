@@ -14,7 +14,7 @@ import (
 
 	"github.com/janelia-flyem/dvid/dvid"
 
-	"github.com/pierrec/lz4"
+	lz4 "github.com/janelia-flyem/go/golz4"
 )
 
 type testData struct {
@@ -140,8 +140,8 @@ func printRatio(t *testing.T, curDesc string, cur, orig int, compareDesc string,
 func blockTest(t *testing.T, d testData) {
 	var err error
 	var origLZ4Size int
-	origLZ4 := make([]byte, lz4.CompressBlockBound(len(d.b)))
-	if origLZ4Size, err = lz4.CompressBlock(d.b, origLZ4, 0); err != nil {
+	origLZ4 := make([]byte, lz4.CompressBound(d.b))
+	if origLZ4Size, err = lz4.Compress(d.b, origLZ4); err != nil {
 		t.Fatal(err)
 	}
 	printRatio(t, "Orig LZ4", origLZ4Size, len(d.b), "Orig", len(d.b))
@@ -188,12 +188,12 @@ func blockTest(t *testing.T, d testData) {
 	printRatio(t, "DVID GZIP", len(dvidGzip), len(d.b), "Goog GZIP", len(csegGzip))
 
 	var csegLZ4Size, dvidLZ4Size int
-	csegLZ4 := make([]byte, lz4.CompressBlockBound(len(csegBytes)))
-	if csegLZ4Size, err = lz4.CompressBlock(csegBytes, csegLZ4, 0); err != nil {
+	csegLZ4 := make([]byte, lz4.CompressBound(csegBytes))
+	if csegLZ4Size, err = lz4.Compress(csegBytes, csegLZ4); err != nil {
 		t.Fatal(err)
 	}
-	dvidLZ4 := make([]byte, lz4.CompressBlockBound(len(dvidBytes)))
-	if dvidLZ4Size, err = lz4.CompressBlock(dvidBytes, dvidLZ4, 0); err != nil {
+	dvidLZ4 := make([]byte, lz4.CompressBound(dvidBytes))
+	if dvidLZ4Size, err = lz4.Compress(dvidBytes, dvidLZ4); err != nil {
 		t.Fatal(err)
 	}
 
@@ -681,6 +681,47 @@ func TestBlockSplitAndRLEs(t *testing.T) {
 	}
 }
 
+func TestSolidBlockSize(t *testing.T) {
+	testLabel := uint64(9174832)
+	numVoxels := 64 * 64 * 64
+	blockVol := make([]uint64, numVoxels)
+	for i := 0; i < numVoxels; i++ {
+		blockVol[i] = testLabel
+	}
+	block, err := MakeBlock(dvid.Uint64ToByte(blockVol), dvid.Point3d{64, 64, 64})
+	if err != nil {
+		t.Fatalf("error making block 0: %v\n", err)
+	}
+	compressed, err := block.MarshalBinary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(compressed) > 24 {
+		t.Errorf("solid block had %d bytes instead of optimal 24 bytes\n", len(compressed))
+	}
+	solidBlock := MakeSolidBlock(testLabel, dvid.Point3d{64, 64, 64})
+	uint64array, size := solidBlock.MakeLabelVolume()
+	if size[0] != 64 || size[1] != 64 || size[2] != 64 {
+		t.Fatalf("solid block didn't return appropriate size: %v\n", size)
+	}
+	uint64array2, size2 := block.MakeLabelVolume()
+	if size2[0] != 64 || size2[1] != 64 || size2[2] != 64 {
+		t.Fatalf("one label block didn't return appropriate size: %v\n", size2)
+	}
+	if !bytes.Equal(uint64array, uint64array2) {
+		t.Fatalf("solid block path does not equal single label encoded path\n")
+	}
+	labelVol, err := dvid.ByteToUint64(uint64array)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < numVoxels; i++ {
+		if labelVol[i] != testLabel {
+			t.Fatalf("uncompressed label volume had label %d instead of expected label %d @ position %d\n", labelVol[i], testLabel, i)
+		}
+	}
+}
+
 func TestBinaryBlocks(t *testing.T) {
 	numVoxels := 64 * 64 * 64
 	blockVol0 := make([]uint64, numVoxels)
@@ -868,8 +909,8 @@ func BenchmarkDvidCompressLZ4(b *testing.B) {
 			b.Fatal(err)
 		}
 		var n int
-		dvidLZ4 := make([]byte, lz4.CompressBlockBound(len(block.data)))
-		if n, err = lz4.CompressBlock(block.data, dvidLZ4, 0); err != nil {
+		dvidLZ4 := make([]byte, lz4.CompressBound(block.data))
+		if n, err = lz4.Compress(block.data, dvidLZ4); err != nil {
 			b.Fatal(err)
 		}
 		dvidLZ4 = dvidLZ4[:n]
@@ -958,10 +999,10 @@ func BenchmarkDvidMarshalLZ4(b *testing.B) {
 	b.ResetTimer()
 	var totbytes int
 	for i := 0; i < b.N; i++ {
-		data := make([]byte, lz4.CompressBlockBound(len(block[i%4].data)))
+		data := make([]byte, lz4.CompressBound(block[i%4].data))
 		var outsize int
 		var err error
-		if outsize, err = lz4.CompressBlock(block[i%4].data, data, 0); err != nil {
+		if outsize, err = lz4.Compress(block[i%4].data, data); err != nil {
 			b.Fatal(err)
 		}
 		compressed := data[:outsize]
@@ -981,9 +1022,9 @@ func BenchmarkDvidUnmarshalLZ4(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		data := make([]byte, lz4.CompressBlockBound(len(block.data)))
+		data := make([]byte, lz4.CompressBound(block.data))
 		var outsize int
-		if outsize, err = lz4.CompressBlock(block.data, data, 0); err != nil {
+		if outsize, err = lz4.Compress(block.data, data); err != nil {
 			b.Fatal(err)
 		}
 		compressed[i%4] = data[:outsize]
@@ -992,7 +1033,7 @@ func BenchmarkDvidUnmarshalLZ4(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		data := make([]byte, origsize[i%4])
-		if _, err := lz4.UncompressBlock(compressed[i%4], data, 0); err != nil {
+		if err := lz4.Uncompress(compressed[i%4], data); err != nil {
 			b.Fatal(err)
 		}
 		var block Block

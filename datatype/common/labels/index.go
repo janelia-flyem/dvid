@@ -88,7 +88,7 @@ func BlockIndexToIZYXString(zyx uint64) dvid.IZYXString {
 	return dvid.ChunkPoint3d{x, y, z}.ToIZYXString()
 }
 
-// NumVoxels returns the number of voxels in the given label set index.
+// NumVoxels returns the number of voxels for the Index.
 func (idx Index) NumVoxels() uint64 {
 	if len(idx.Blocks) == 0 {
 		return 0
@@ -105,8 +105,8 @@ func (idx Index) NumVoxels() uint64 {
 }
 
 // GetSupervoxels returns a set of supervoxels within the receiver Index.
-func (idx Index) GetSupervoxels() Set {
-	if len(idx.Blocks) == 0 {
+func (idx *Index) GetSupervoxels() Set {
+	if idx == nil || len(idx.Blocks) == 0 {
 		return Set{}
 	}
 	lbls := make(Set, 2*len(idx.Blocks)) // guess 2 supervoxel per block
@@ -120,6 +120,7 @@ func (idx Index) GetSupervoxels() Set {
 	return lbls
 }
 
+// GetBlockIndices returns the block coordinates within the Index.
 func (idx *Index) GetBlockIndices() dvid.IZYXSlice {
 	if idx == nil || len(idx.Blocks) == 0 {
 		return nil
@@ -131,6 +132,39 @@ func (idx *Index) GetBlockIndices() dvid.IZYXSlice {
 		i++
 	}
 	return blocks
+}
+
+// GetSupervoxelCount returns the # of voxels for a supervoxel in an Index.
+// Note that the counts are uint64 because although each block might only hold
+// a # of voxels < max uint32, a massive supervoxel could hold many more.
+func (idx *Index) GetSupervoxelCount(supervoxel uint64) (count uint64) {
+	if idx == nil || len(idx.Blocks) == 0 {
+		return
+	}
+	for _, svc := range idx.Blocks {
+		if svc != nil && svc.Counts != nil {
+			count += uint64(svc.Counts[supervoxel])
+		}
+	}
+	return
+}
+
+// GetSupervoxelCounts returns the # of voxels for each supervoxel in an Index.
+// Note that the counts are uint64 because although each block might only hold
+// a # of voxels < max uint32, a massive supervoxel could hold many more.
+func (idx *Index) GetSupervoxelCounts() (counts map[uint64]uint64) {
+	counts = make(map[uint64]uint64)
+	if idx == nil || len(idx.Blocks) == 0 {
+		return
+	}
+	for _, svc := range idx.Blocks {
+		if svc != nil && svc.Counts != nil {
+			for sv, count := range svc.Counts {
+				counts[sv] += uint64(count)
+			}
+		}
+	}
+	return
 }
 
 // GetProcessedBlockIndices returns the blocks for an index, possibly with bounds and down-res.
@@ -229,7 +263,14 @@ func (idx *Index) Cleave(cleaveLabel uint64, toCleave []uint64) *Index {
 					delete(svc.Counts, supervoxel)
 				}
 			}
-			cidx.Blocks[zyx] = &proto.SVCount{Counts: cleavedCounts}
+			if len(cleavedCounts) > 0 {
+				cidx.Blocks[zyx] = &proto.SVCount{Counts: cleavedCounts}
+			}
+		}
+	}
+	for zyx, svc := range idx.Blocks {
+		if svc == nil || len(svc.Counts) == 0 {
+			delete(idx.Blocks, zyx)
 		}
 	}
 	return cidx
