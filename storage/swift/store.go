@@ -92,16 +92,58 @@ func NewStore(config dvid.StoreConfig) (*Store, bool, error) {
 	// Check if we already have metadata.
 	var context storage.MetadataContext
 	from, to := context.KeyRange()
-	names, err := s.conn.ObjectNames(s.container, &swift.ObjectsOpts{
-		Limit:     1,
-		Marker:    encodeKey(from),
-		EndMarker: encodeKey(to),
-	})
+	keys, err := s.objectNames(from, to)
 	if err != nil {
 		return nil, false, fmt.Errorf(`Unable to check for metadata objects: %s`, err)
 	}
 
-	return s, len(names) == 0, nil
+	return s, len(keys) == 0, nil
+}
+
+// objectNames queries Swift for a range of keys and returns the found keys.
+func (s *Store) objectNames(from, to storage.Key) (keys []storage.Key, err error) {
+	// We're waiting for a fix to https://github.com/ncw/swift/issues/113 so we can
+	// use ObjectNamesAll() again in range requests. But even without the fix, we
+	// should be fine as the default limit is 10,000 results.
+
+	marker := encodeKey(from)
+	endMarker := encodeKey(to)
+
+	// Find starting object name as it's not included in the range request.
+	_, _, err = s.conn.Object(s.container, marker)
+	if err == nil {
+		keys = append(keys, from)
+	} else if err != swift.ObjectNotFound {
+		return nil, err
+	}
+
+	// Run range request.
+	var names []string
+	names, err = s.conn.ObjectNames(s.container, &swift.ObjectsOpts{
+		Marker:    marker,
+		EndMarker: endMarker,
+	})
+	if err != nil {
+		return nil, err
+	}
+	for _, name := range names {
+		key := decodeKey(name)
+		if key == nil {
+			continue
+		}
+		keys = append(keys, key)
+	}
+
+	// Find end object name as it's not included in the range request.
+	_, _, err = s.conn.Object(s.container, endMarker)
+	if err == nil {
+		keys = append(keys, to)
+	} else if err != swift.ObjectNotFound {
+		return nil, err
+	}
+
+	err = nil
+	return
 }
 
 /*********** KeyValueGetter interface ***********/
@@ -124,16 +166,13 @@ func (s *Store) Get(context storage.Context, key storage.TKey) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		names, err := s.conn.ObjectNamesAll(s.container, &swift.ObjectsOpts{
-			Marker:    encodeKey(startKey),
-			EndMarker: encodeKey(endKey),
-		})
+		keys, err := s.objectNames(startKey, endKey)
 		if err != nil {
 			return nil, fmt.Errorf(`Unable to list Swift object names: %s`, err)
 		}
 		var keyValues []*storage.KeyValue
-		for _, name := range names {
-			keyValues = append(keyValues, &storage.KeyValue{K: decodeKey(name)})
+		for _, key := range keys {
+			keyValues = append(keyValues, &storage.KeyValue{K: key})
 		}
 		keyValue, err := versionedContext.VersionedKeyValue(keyValues)
 		if err != nil {
@@ -149,6 +188,8 @@ func (s *Store) Get(context storage.Context, key storage.TKey) ([]byte, error) {
 	contents, err := s.conn.ObjectGetBytes(s.container, encodeKey(accessKey))
 	if err == swift.ObjectNotFound {
 		return nil, nil
+	} else if len(contents) == 0 {
+		return []byte{}, nil
 	}
 	storage.StoreValueBytesRead <- len(contents)
 	return contents, err
@@ -231,18 +272,11 @@ func (s *Store) KeysInRange(context storage.Context, kStart, kEnd storage.TKey) 
 		// Get all unversioned keys in the specified range.
 		from := context.ConstructKey(kStart)
 		to := context.ConstructKey(kEnd)
-		names, err := s.conn.ObjectNamesAll(s.container, &swift.ObjectsOpts{
-			Marker:    encodeKey(from),
-			EndMarker: encodeKey(to),
-		})
+		keys, err := s.objectNames(from, to)
 		if err != nil {
 			return nil, fmt.Errorf("Unable to load object names for range: %s", err)
 		}
-		for _, name := range names {
-			key := decodeKey(name)
-			if len(key) == 0 {
-				continue // Invalid key. Ignore.
-			}
+		for _, key := range keys {
 			typeKey, err := storage.TKeyFromKey(key)
 			if err != nil {
 				return nil, fmt.Errorf("Unable to extract type key from key: %s", err)
@@ -264,18 +298,11 @@ func (s *Store) KeysInRange(context storage.Context, kStart, kEnd storage.TKey) 
 		if err != nil {
 			return nil, fmt.Errorf("Unable to extract maximum key: %s", err)
 		}
-		names, err := s.conn.ObjectNamesAll(s.container, &swift.ObjectsOpts{
-			Marker:    encodeKey(from),
-			EndMarker: encodeKey(to),
-		})
+		keys, err := s.objectNames(from, to)
 		if err != nil {
 			return nil, err
 		}
-		for _, name := range names {
-			key := decodeKey(name)
-			if len(key) == 0 {
-				continue // Invalid key. Ignore.
-			}
+		for _, key := range keys {
 			typeKey, err := storage.TKeyFromKey(key)
 			if err != nil {
 				return nil, fmt.Errorf("Unable to extract type key from key: %s", err)
@@ -284,8 +311,7 @@ func (s *Store) KeysInRange(context storage.Context, kStart, kEnd storage.TKey) 
 			if err != nil {
 				return nil, fmt.Errorf("Unable to extract maximum key: %s", err)
 			}
-			maxName := encodeKey(maxKey)
-			if name == maxName {
+			if encodeKey(key) == encodeKey(maxKey) {
 				typeKeys = append(typeKeys, typeKey)
 			}
 		}
@@ -362,20 +388,16 @@ func (s *Store) ProcessRange(context storage.Context, kStart, kEnd storage.TKey,
 // RawRangeQuery sends a range of full keys.
 func (s *Store) RawRangeQuery(kStart, kEnd storage.Key, keysOnly bool, out chan *storage.KeyValue, cancel <-chan struct{}) error {
 	// Get the object names for this range.
-	names, err := s.conn.ObjectNamesAll(s.container, &swift.ObjectsOpts{
-		Marker:    encodeKey(kStart),
-		EndMarker: encodeKey(kEnd),
-	})
+	keys, err := s.objectNames(kStart, kEnd)
 	if err != nil {
 		return fmt.Errorf("Unable to load object names for range: %s", err)
 	}
 
 	// Load objects for these names and send them over the channel.
-	for _, name := range names {
-		key := decodeKey(name)
+	for _, key := range keys {
 		var value []byte
 		if !keysOnly {
-			value, err = s.conn.ObjectGetBytes(s.container, name)
+			value, err = s.conn.ObjectGetBytes(s.container, encodeKey(key))
 			if err != nil {
 				return fmt.Errorf("Could not read Swift object: %s", err)
 			}
@@ -457,10 +479,7 @@ func (s *Store) DeleteRange(context storage.Context, kStart, kEnd storage.TKey) 
 	}
 
 	// Find existing keys in this range.
-	names, err := s.conn.ObjectNamesAll(s.container, &swift.ObjectsOpts{
-		Marker:    encodeKey(from),
-		EndMarker: encodeKey(to),
-	})
+	keys, err := s.objectNames(from, to)
 	if err != nil {
 		return fmt.Errorf(`Unable to list Swift object names: %s`, err)
 	}
@@ -468,11 +487,7 @@ func (s *Store) DeleteRange(context storage.Context, kStart, kEnd storage.TKey) 
 	// We only want the type keys found.
 	var typeKeys []storage.TKey
 NameLoop:
-	for _, name := range names {
-		key := decodeKey(name)
-		if len(key) == 0 {
-			continue
-		}
+	for _, key := range keys {
 		typeKey, err := storage.TKeyFromKey(key)
 		if err != nil {
 			return fmt.Errorf("Unable to extract type key from key: %s", err)
