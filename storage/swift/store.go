@@ -89,6 +89,17 @@ func NewStore(config dvid.StoreConfig) (*Store, bool, error) {
 		return nil, false, fmt.Errorf(`Unable to authenticate with the Swift database: %s`, err)
 	}
 
+	// Check if container exists.
+	_, _, err = s.conn.Container(s.container)
+	if err == swift.ContainerNotFound {
+		// Create a new container.
+		if err = s.conn.ContainerCreate(s.container, nil); err != nil {
+			return nil, false, fmt.Errorf(`Cannot create Swift container "%s": %s`, s.container, err)
+		}
+	} else if err != nil {
+		return nil, false, fmt.Errorf(`Unable to check if Swift container "%s" exists: %s`, s.container, err)
+	}
+
 	// Check if we already have metadata.
 	var context storage.MetadataContext
 	from, to := context.KeyRange()
