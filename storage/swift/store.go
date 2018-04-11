@@ -21,6 +21,11 @@ type Store struct {
 
 	// The Swift connection.
 	conn *swift.Connection
+
+	// Locks held by batch commits.
+	batchLocks         map[string]int // Maps Swift object names to number of locks held.
+	batchLocksReleased chan struct{}  // One-time-use channel which signals the release of locks of a batch.
+	batchLocksMutex    sync.Mutex     // Synchronize access to the lock map and channel.
 }
 
 func (s *Store) String() string {
@@ -50,7 +55,10 @@ func (s *Store) Equal(config dvid.StoreConfig) bool {
 // NewStore returns a new Swift store.
 func NewStore(config dvid.StoreConfig) (*Store, bool, error) {
 	// Make new store.
-	s := &Store{conn: &swift.Connection{}}
+	s := &Store{
+		conn:       &swift.Connection{},
+		batchLocks: make(map[string]int),
+	}
 
 	// Get configuration values.
 	var err error
@@ -255,23 +263,23 @@ func (s *Store) Put(context storage.Context, typeKey storage.TKey, value []byte)
 func (s *Store) Delete(context storage.Context, typeKey storage.TKey) error {
 	key := context.ConstructKey(typeKey)
 
-	// In a versioned context, we insert a tombstone.
-	if context.Versioned() {
-		versionedContext, ok := context.(storage.VersionedCtx)
-		if !ok {
-			return errors.New("Context is marked as versioned but isn't actually versioned")
-		}
-
-		// Delete tombstone.
-		tombstone := versionedContext.TombstoneKey(typeKey)
-		err := s.RawPut(tombstone, dvid.EmptyValue())
-		if err != nil {
-			return fmt.Errorf(`Could not save tombstone object: %s`, err)
-		}
+	// Delete the given key.
+	if err := s.RawDelete(key); err != nil {
+		return fmt.Errorf(`Coult not delete key: %s`, err)
 	}
 
-	// Delete the given key.
-	return s.RawDelete(key)
+	// If the context is unversioned, we're done.
+	if !context.Versioned() {
+		return nil
+	}
+
+	// In a versioned context, we insert a tombstone.
+	versionedContext, ok := context.(storage.VersionedCtx)
+	if !ok {
+		return errors.New("Context is marked as versioned but isn't actually versioned")
+	}
+	tombstone := versionedContext.TombstoneKey(typeKey)
+	return s.RawPut(tombstone, dvid.EmptyValue())
 }
 
 /*********** OrderedKeyValueGetter interface ***********/
@@ -664,4 +672,101 @@ func (s *Store) DeleteAll(context storage.Context, allVersions bool) error {
 
 		return names, deleteTypeKeys(typeKeys[firstKey:])
 	})
+}
+
+/*********** KeyValueBatcher interface ***********/
+
+func (s *Store) NewBatch(ctx storage.Context) storage.Batch {
+	return newBatch(s, ctx)
+}
+
+// lockBatch locks the keys of the operations contained in the provided batch.
+// If a lock is already held on one of the keys, this function returns as soon
+// as it was able to secure a lock (after the other lock is released).
+func (s *Store) lockBatch(batch *Batch) {
+	// This helper function checks if a lock is held on the keys of this batch.
+	locked := func() bool {
+		for name := range batch.deletes {
+			if locks := s.batchLocks[name]; locks > 0 {
+				return true
+			}
+		}
+		for name := range batch.puts {
+			if locks := s.batchLocks[name]; locks > 0 {
+				return true
+			}
+		}
+		return false
+	}
+
+	// This helper function locks the keys of this batch.
+	lock := func() {
+		for name := range batch.deletes {
+			if _, ok := s.batchLocks[name]; !ok {
+				s.batchLocks[name] = 1
+			} else {
+				s.batchLocks[name]++
+			}
+		}
+		for name := range batch.puts {
+			if _, ok := s.batchLocks[name]; !ok {
+				s.batchLocks[name] = 1
+			} else {
+				s.batchLocks[name]++
+			}
+		}
+	}
+
+	// Acquire lock after locks have been released.
+	s.batchLocksMutex.Lock()
+	for {
+		// Are there locks on our keys?
+		if !locked() {
+			// No. Lock and proceed.
+			lock()
+			break
+		}
+
+		// Someone holds locks on our keys. Wait for a signal to check again.
+		if s.batchLocksReleased == nil {
+			// There's no signal channel yet. Create one.
+			s.batchLocksReleased = make(chan struct{})
+		}
+		signal := s.batchLocksReleased
+
+		// Wait for someone to post a release signal.
+		s.batchLocksMutex.Unlock()
+		<-signal
+		s.batchLocksMutex.Lock()
+	}
+	s.batchLocksMutex.Unlock()
+}
+
+// unlockBatch releases the locks held by the keys of the operations contained
+// in the provided batch.
+func (s *Store) unlockBatch(batch *Batch) {
+	s.batchLocksMutex.Lock()
+	defer s.batchLocksMutex.Unlock()
+
+	// Release locks.
+	for name := range batch.deletes {
+		if locks := s.batchLocks[name]; locks > 0 {
+			s.batchLocks[name]--
+		} else {
+			delete(s.batchLocks, name)
+		}
+	}
+	for name := range batch.puts {
+		if locks := s.batchLocks[name]; locks > 0 {
+			s.batchLocks[name]--
+		} else {
+			delete(s.batchLocks, name)
+		}
+	}
+
+	// Signal any waiting batches.
+	if s.batchLocksReleased != nil {
+		close(s.batchLocksReleased)
+		s.batchLocksReleased = nil
+	}
 }
