@@ -51,7 +51,7 @@ func (d *Data) StoreDownres(v dvid.VersionID, hiresScale uint8, hires downres.Bl
 	}
 	blockSize, ok := d.BlockSize().(dvid.Point3d)
 	if !ok {
-		return nil, fmt.Errorf("block size for data %q is not 3d: %v\n", d.DataName(), d.BlockSize())
+		return nil, fmt.Errorf("block size for data %q is not 3d: %v", d.DataName(), d.BlockSize())
 	}
 
 	batcher, err := datastore.GetKeyValueBatcher(d)
@@ -76,7 +76,7 @@ func (d *Data) StoreDownres(v dvid.VersionID, hiresScale uint8, hires downres.Bl
 			if err != nil {
 				return nil, err
 			}
-			loresBlock, err = d.GetLabelBlock(v, hiresScale+1, chunkPt)
+			loresBlock, err = d.GetLabelBlock(v, chunkPt, hiresScale+1)
 			if err != nil {
 				return nil, err
 			}
@@ -91,13 +91,13 @@ func (d *Data) StoreDownres(v dvid.VersionID, hiresScale uint8, hires downres.Bl
 		compressed, _ := loresBlock.MarshalBinary()
 		serialization, err := dvid.SerializeData(compressed, d.Compression(), d.Checksum())
 		if err != nil {
-			return nil, fmt.Errorf("Unable to serialize downres block in %q: %v\n", d.DataName(), err)
+			return nil, fmt.Errorf("unable to serialize downres block in %q: %v", d.DataName(), err)
 		}
 		tk := NewBlockTKeyByCoord(hiresScale+1, loresZYX)
 		batch.Put(tk, serialization)
 	}
 	if err := batch.Commit(); err != nil {
-		return nil, fmt.Errorf("Error on trying to write downres batch of scale %d->%d: %v\n", hiresScale, hiresScale+1, err)
+		return nil, fmt.Errorf("error on trying to write downres batch of scale %d->%d: %v", hiresScale, hiresScale+1, err)
 	}
 	return downresBMap, nil
 }

@@ -267,6 +267,33 @@ func (svm *SVMap) MappedLabel(v dvid.VersionID, label uint64) (uint64, bool) {
 	return vm.value(ancestry)
 }
 
+// MappedLabels returns an array of mapped labels, which could be the same as the passed slice.
+func (svm *SVMap) MappedLabels(v dvid.VersionID, supervoxels []uint64) ([]uint64, error) {
+	if svm == nil {
+		return supervoxels, nil
+	}
+	ancestry, err := svm.getLockedAncestry(v)
+	if err != nil {
+		return nil, fmt.Errorf("unable to get ancestry for version %d: %v", v, err)
+	}
+	svm.RLock()
+	if len(svm.fm) == 0 {
+		svm.RUnlock()
+		return supervoxels, nil
+	}
+	mapped := make([]uint64, len(supervoxels))
+	for i, supervoxel := range supervoxels {
+		label, found := svm.mapLabel(supervoxel, ancestry)
+		if found {
+			mapped[i] = label
+		} else {
+			mapped[i] = supervoxel
+		}
+	}
+	svm.RUnlock()
+	return mapped, nil
+}
+
 type instanceMaps struct {
 	maps map[dvid.UUID]*SVMap
 	sync.RWMutex

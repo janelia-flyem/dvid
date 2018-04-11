@@ -1154,20 +1154,12 @@ func TestPostBlocks(t *testing.T) {
 		writeInt32(t, &buf, blockCoords[i][1])
 		writeInt32(t, &buf, blockCoords[i][2])
 		data[i] = loadTestData(t, fname)
-		serialization, err := data[i].b.MarshalBinary()
+		gzipped, err := data[i].b.CompressGZIP()
 		if err != nil {
-			t.Fatalf("unable to MarshalBinary block: %v\n", err)
+			t.Fatalf("unable to gzip compress block: %v\n", err)
 		}
-		var gzipOut bytes.Buffer
-		zw := gzip.NewWriter(&gzipOut)
-		if _, err = zw.Write(serialization); err != nil {
-			t.Fatal(err)
-		}
-		zw.Flush()
-		zw.Close()
-		gzipped := gzipOut.Bytes()
 		writeInt32(t, &buf, int32(len(gzipped)))
-		fmt.Printf("Wrote %d gzipped block bytes (down from %d bytes) for block %s\n", len(gzipped), len(serialization), blockCoords[i])
+		fmt.Printf("Wrote %d gzipped block bytes for block %s\n", len(gzipped), blockCoords[i])
 		n, err := buf.Write(gzipped)
 		if err != nil {
 			t.Fatalf("unable to write gzip block: %v\n", err)

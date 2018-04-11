@@ -1,7 +1,12 @@
 package labelmap
 
 import (
+	"bytes"
+	"compress/gzip"
+	"encoding/binary"
 	"fmt"
+	"io"
+	"io/ioutil"
 	"log"
 	"sync"
 
@@ -12,6 +17,56 @@ import (
 	"github.com/janelia-flyem/dvid/server"
 	"github.com/janelia-flyem/dvid/storage"
 )
+
+func readStreamedBlock(r io.Reader, scale uint8) (block *labels.Block, compressed []byte, bx, by, bz int32, err error) {
+	hdrBytes := make([]byte, 16)
+	var n int
+	n, err = io.ReadFull(r, hdrBytes)
+	if n == 0 || err != nil {
+		return
+	}
+	if n != 16 {
+		err = fmt.Errorf("error reading header bytes, only got %d bytes not 16", n)
+		return
+	}
+	bx = int32(binary.LittleEndian.Uint32(hdrBytes[0:4]))
+	by = int32(binary.LittleEndian.Uint32(hdrBytes[4:8]))
+	bz = int32(binary.LittleEndian.Uint32(hdrBytes[8:12]))
+	numBytes := int(binary.LittleEndian.Uint32(hdrBytes[12:16]))
+	if numBytes == 0 {
+		err = fmt.Errorf("illegal zero length block at block (%d, %d, %d) detected", bx, by, bz)
+		return
+	}
+	bcoord := dvid.ChunkPoint3d{bx, by, bz}.ToIZYXString()
+	compressed = make([]byte, numBytes)
+	n, err = io.ReadFull(r, compressed)
+	if n != numBytes || err != nil {
+		err = fmt.Errorf("error reading %d bytes for block %s: %d actually read (%v)", numBytes, bcoord, n, err)
+		return
+	}
+
+	gzipIn := bytes.NewBuffer(compressed)
+	var zr *gzip.Reader
+	zr, err = gzip.NewReader(gzipIn)
+	if err != nil {
+		err = fmt.Errorf("can't initiate gzip reader on compressed data of length %d: %v", len(compressed), err)
+		return
+	}
+	var uncompressed []byte
+	uncompressed, err = ioutil.ReadAll(zr)
+	if err != nil {
+		err = fmt.Errorf("can't read all %d bytes from gzipped block %s: %v", numBytes, bcoord, err)
+		return
+	}
+	if err = zr.Close(); err != nil {
+		err = fmt.Errorf("error on closing gzip on block read: %v", err)
+		return
+	}
+
+	block = new(labels.Block)
+	err = block.UnmarshalBinary(uncompressed)
+	return
+}
 
 // ComputeTransform determines the block coordinate and beginning + ending voxel points
 // for the data corresponding to the given Block.

@@ -81,6 +81,24 @@ func TestIndexOps(t *testing.T) {
 	idx.Blocks[block3] = svc
 	idx.Label = 199
 
+	sidx, err := idx.LimitToSupervoxel(673)
+	if err != nil {
+		t.Error(err)
+	}
+	limitCounts := map[uint64]uint64{
+		673: 2389,
+	}
+	if !reflect.DeepEqual(limitCounts, sidx.GetSupervoxelCounts()) {
+		t.Errorf("after cleave, remain index has incorrect counts:\nExpected %v\nGot %v\n", limitCounts, sidx.GetSupervoxelCounts())
+	}
+	if len(sidx.Blocks) != 1 {
+		t.Errorf("expected supervoxel limites count to be 1, got %d\n", len(sidx.Blocks))
+	}
+	_, found := sidx.Blocks[block3]
+	if !found {
+		t.Errorf("didnt find expected block after LimitToSupervoxel()\n")
+	}
+
 	origCounts := idx.GetSupervoxelCounts()
 
 	cleaveIdx := idx.Cleave(200, []uint64{1001, 26029, 3829})

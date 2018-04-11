@@ -416,8 +416,8 @@ func (b testBody) isDeleted(t *testing.T, encoding []byte, bspan dvid.Span) bool
 		by := span[1] / 32
 		bz := span[0] / 32
 
-		within_x := (bx0 >= bspan[2] && bx0 <= bspan[3]) || (bx1 >= bspan[2] && bx1 <= bspan[3])
-		if bz == bspan[0] && by == bspan[1] && within_x {
+		withinX := (bx0 >= bspan[2] && bx0 <= bspan[3]) || (bx1 >= bspan[2] && bx1 <= bspan[3])
+		if bz == bspan[0] && by == bspan[1] && withinX {
 			return false
 		}
 	}
@@ -1243,23 +1243,86 @@ func TestMultiscaleMergeCleave(t *testing.T) {
 	if err := downres.BlockOnUpdating(uuid, "labels"); err != nil {
 		t.Fatalf("Error blocking on update for labels: %v\n", err)
 	}
+
+	sizeReq := fmt.Sprintf("%snode/%s/labels/sparsevol-size/1", server.WebAPIPath, uuid)
+	sizeResp := server.TestHTTP(t, "GET", sizeReq, nil)
+	if string(sizeResp) != `{"voxels": 64000, "numblocks": 8, "minvoxel": [0, 0, 0], "maxvoxel": [127, 127, 127]}` {
+		t.Errorf("bad response to sparsevol-size endpoint: %s\n", string(sizeResp))
+	}
+
+	testPoints0 := map[uint64][3]int32{
+		0:   {18, 18, 18},
+		1:   {45, 45, 45},
+		2:   {50, 50, 100},
+		13:  {100, 60, 60},
+		209: {55, 100, 55},
+		311: {81, 81, 41},
+	}
+	testPoints1 := map[uint64][3]int32{
+		0:   {35, 34, 2},
+		1:   {30, 30, 30},
+		2:   {21, 21, 45},
+		13:  {45, 21, 36},
+		209: {21, 50, 35},
+		311: {45, 55, 35},
+	}
+	testPoints2 := map[uint64][3]int32{
+		0:   {15, 16, 2},
+		1:   {15, 15, 15},
+		2:   {11, 11, 23},
+		13:  {23, 11, 18},
+		209: {11, 25, 18},
+		311: {23, 28, 18},
+	}
+
 	hires := newTestVolume(128, 128, 128)
 	hires.get(t, uuid, "labels", false)
-	hires.verifyLabel(t, 1, 45, 45, 45)
-	hires.verifyLabel(t, 2, 50, 50, 100)
-	hires.verifyLabel(t, 13, 100, 60, 60)
-	hires.verifyLabel(t, 209, 55, 100, 55)
-	hires.verifyLabel(t, 311, 81, 81, 41)
+
+	strarray := make([]string, len(testPoints0))
+	var sentLabels []uint64
+	i := 0
+	for label, pt := range testPoints0 {
+		hires.verifyLabel(t, label, pt[0], pt[1], pt[2])
+		sentLabels = append(sentLabels, label)
+		strarray[i] = fmt.Sprintf("[%d,%d,%d]", pt[0], pt[1], pt[2])
+		i++
+	}
+	coordsStr := "[" + strings.Join(strarray, ",") + "]"
+	reqStr := fmt.Sprintf("%snode/%s/labels/labels", server.WebAPIPath, uuid)
+	r := server.TestHTTP(t, "GET", reqStr, bytes.NewBufferString(coordsStr))
+	var gotLabels []uint64
+	if err := json.Unmarshal(r, &gotLabels); err != nil {
+		t.Errorf("Unable to get label array from GET /labels.  Instead got: %v\n", string(r))
+	}
+	for i, sent := range sentLabels {
+		if sent != gotLabels[i] {
+			t.Errorf("expected GET /labels to return label %d in position %d, got %d back\n", sent, i, gotLabels[i])
+		}
+	}
 
 	// Check the first downres: 64^3
 	downres1 := newTestVolume(64, 64, 64)
 	downres1.getScale(t, uuid, "labels", 1, false)
-	downres1.verifyLabel(t, 0, 35, 34, 2)
-	downres1.verifyLabel(t, 1, 30, 30, 30)
-	downres1.verifyLabel(t, 2, 21, 21, 45)
-	downres1.verifyLabel(t, 13, 45, 21, 36)
-	downres1.verifyLabel(t, 209, 21, 50, 35)
-	downres1.verifyLabel(t, 311, 45, 55, 35)
+	sentLabels = []uint64{}
+	i = 0
+	for label, pt := range testPoints1 {
+		downres1.verifyLabel(t, label, pt[0], pt[1], pt[2])
+		sentLabels = append(sentLabels, label)
+		strarray[i] = fmt.Sprintf("[%d,%d,%d]", pt[0], pt[1], pt[2])
+		i++
+	}
+	coordsStr = "[" + strings.Join(strarray, ",") + "]"
+	reqStr = fmt.Sprintf("%snode/%s/labels/labels?scale=1", server.WebAPIPath, uuid)
+	r = server.TestHTTP(t, "GET", reqStr, bytes.NewBufferString(coordsStr))
+	gotLabels = []uint64{}
+	if err := json.Unmarshal(r, &gotLabels); err != nil {
+		t.Errorf("Unable to get label array from GET /labels.  Instead got: %v\n", string(r))
+	}
+	for i, sent := range sentLabels {
+		if sent != gotLabels[i] {
+			t.Errorf("expected GET /labels to return label %d in position %d, got %d back\n", sent, i, gotLabels[i])
+		}
+	}
 	expected1 := newTestVolume(64, 64, 64)
 	expected1.addSubvol(dvid.Point3d{20, 20, 20}, dvid.Point3d{20, 20, 20}, 1)
 	expected1.addSubvol(dvid.Point3d{20, 20, 40}, dvid.Point3d{20, 20, 20}, 2)
@@ -1273,7 +1336,9 @@ func TestMultiscaleMergeCleave(t *testing.T) {
 	// Check the second downres to voxel: 32^3
 	downres2 := newTestVolume(32, 32, 32)
 	downres2.getScale(t, uuid, "labels", 2, false)
-	downres2.verifyLabel(t, 0, 15, 16, 2)
+	for label, pt := range testPoints2 {
+		downres2.verifyLabel(t, label, pt[0], pt[1], pt[2])
+	}
 	expected2 := newTestVolume(32, 32, 32)
 	expected2.addSubvol(dvid.Point3d{10, 10, 10}, dvid.Point3d{10, 10, 10}, 1)
 	expected2.addSubvol(dvid.Point3d{10, 10, 20}, dvid.Point3d{10, 10, 10}, 2)
@@ -1284,12 +1349,142 @@ func TestMultiscaleMergeCleave(t *testing.T) {
 		t.Errorf("2nd downres isn't what is expected: %v\n", err)
 	}
 
+	var labelJSON struct {
+		Label uint64
+	}
+	for label, pt := range testPoints0 {
+		labelReq := fmt.Sprintf("%snode/%s/labels/label/%d_%d_%d", server.WebAPIPath, uuid, pt[0], pt[1], pt[2])
+		labelResp := server.TestHTTP(t, "GET", labelReq, nil)
+		if err := json.Unmarshal(labelResp, &labelJSON); err != nil {
+			t.Errorf("problem decoding response (%s): %v\n", string(labelResp), err)
+		}
+		if labelJSON.Label != label {
+			t.Errorf("bad response to label query on (%d, %d, %d): %s\n", pt[0], pt[1], pt[2], string(labelResp))
+		}
+	}
+	for label, pt := range testPoints1 {
+		labelReq := fmt.Sprintf("%snode/%s/labels/label/%d_%d_%d?scale=1", server.WebAPIPath, uuid, pt[0], pt[1], pt[2])
+		labelResp := server.TestHTTP(t, "GET", labelReq, nil)
+		if err := json.Unmarshal(labelResp, &labelJSON); err != nil {
+			t.Errorf("problem decoding response (%s): %v\n", string(labelResp), err)
+		}
+		if labelJSON.Label != label {
+			t.Errorf("bad response to label query on (%d, %d, %d): %s\n", pt[0], pt[1], pt[2], string(labelResp))
+		}
+	}
+	for label, pt := range testPoints2 {
+		labelReq := fmt.Sprintf("%snode/%s/labels/label/%d_%d_%d?scale=2", server.WebAPIPath, uuid, pt[0], pt[1], pt[2])
+		labelResp := server.TestHTTP(t, "GET", labelReq, nil)
+		if err := json.Unmarshal(labelResp, &labelJSON); err != nil {
+			t.Errorf("problem decoding response (%s): %v\n", string(labelResp), err)
+		}
+		if labelJSON.Label != label {
+			t.Errorf("bad response to label query on (%d, %d, %d): %s\n", pt[0], pt[1], pt[2], string(labelResp))
+		}
+	}
+
 	// Test merge of 2 and 13 into 1
 	testMerge := mergeJSON(`[1, 2, 13]`)
 	testMerge.send(t, uuid, "labels")
 
+	sizeReq = fmt.Sprintf("%snode/%s/labels/sparsevol-size/1", server.WebAPIPath, uuid)
+	sizeResp = server.TestHTTP(t, "GET", sizeReq, nil)
+	if string(sizeResp) != `{"voxels": 192000, "numblocks": 8, "minvoxel": [0, 0, 0], "maxvoxel": [127, 127, 127]}` {
+		t.Errorf("bad response to sparsevol-size endpoint: %s\n", string(sizeResp))
+	}
+	sizeReq = fmt.Sprintf("%snode/%s/labels/sparsevol-size/2?supervoxels=true", server.WebAPIPath, uuid)
+	sizeResp = server.TestHTTP(t, "GET", sizeReq, nil)
+	if string(sizeResp) != `{"voxels": 64000, "numblocks": 4, "minvoxel": [0, 0, 64], "maxvoxel": [127, 127, 127]}` {
+		t.Errorf("bad response to sparsevol-size endpoint: %s\n", string(sizeResp))
+	}
+	headReq := fmt.Sprintf("%snode/%s/labels/sparsevol/2?supervoxels=true", server.WebAPIPath, uuid)
+	headResp := server.TestHTTPResponse(t, "HEAD", headReq, nil)
+	if headResp.Code != http.StatusOK {
+		t.Errorf("HEAD on %s did not return OK.  Status = %d\n", headReq, headResp.Code)
+	}
+
+	mapping := map[uint64]uint64{
+		1:   1,
+		2:   1,
+		13:  1,
+		209: 209,
+		311: 311,
+	}
+	sentLabels = []uint64{}
+	i = 0
+	for label, pt := range testPoints0 {
+		labelReq := fmt.Sprintf("%snode/%s/labels/label/%d_%d_%d", server.WebAPIPath, uuid, pt[0], pt[1], pt[2])
+		labelResp := server.TestHTTP(t, "GET", labelReq, nil)
+		if err := json.Unmarshal(labelResp, &labelJSON); err != nil {
+			t.Errorf("problem decoding response (%s): %v\n", string(labelResp), err)
+		}
+		if labelJSON.Label != mapping[label] {
+			t.Errorf("bad response to label query on (%d, %d, %d): %s\n", pt[0], pt[1], pt[2], string(labelResp))
+		}
+		labelReq = fmt.Sprintf("%snode/%s/labels/label/%d_%d_%d?supervoxels=true", server.WebAPIPath, uuid, pt[0], pt[1], pt[2])
+		labelResp = server.TestHTTP(t, "GET", labelReq, nil)
+		if err := json.Unmarshal(labelResp, &labelJSON); err != nil {
+			t.Errorf("problem decoding response (%s): %v\n", string(labelResp), err)
+		}
+		if labelJSON.Label != label {
+			t.Errorf("bad response to label query on (%d, %d, %d): %s\n", pt[0], pt[1], pt[2], string(labelResp))
+		}
+		sentLabels = append(sentLabels, label)
+		strarray[i] = fmt.Sprintf("%d", label)
+		i++
+	}
+	supervoxelsStr := "[" + strings.Join(strarray, ",") + "]"
+	reqStr = fmt.Sprintf("%snode/%s/labels/mapping", server.WebAPIPath, uuid)
+	r = server.TestHTTP(t, "GET", reqStr, bytes.NewBufferString(supervoxelsStr))
+	gotLabels = []uint64{}
+	if err := json.Unmarshal(r, &gotLabels); err != nil {
+		t.Errorf("Unable to get label array from GET /mapping.  Instead got: %v\n", string(r))
+	}
+	for i, sent := range sentLabels {
+		if mapping[sent] != gotLabels[i] {
+			t.Errorf("expected GET /mapping to return label %d in position %d, got %d back\n", mapping[sent], i, gotLabels[i])
+		}
+	}
+
+	for label, pt := range testPoints1 {
+		labelReq := fmt.Sprintf("%snode/%s/labels/label/%d_%d_%d?scale=1", server.WebAPIPath, uuid, pt[0], pt[1], pt[2])
+		labelResp := server.TestHTTP(t, "GET", labelReq, nil)
+		if err := json.Unmarshal(labelResp, &labelJSON); err != nil {
+			t.Errorf("problem decoding response (%s): %v\n", string(labelResp), err)
+		}
+		if labelJSON.Label != mapping[label] {
+			t.Errorf("bad response to label query on (%d, %d, %d): %s\n", pt[0], pt[1], pt[2], string(labelResp))
+		}
+		labelReq = fmt.Sprintf("%snode/%s/labels/label/%d_%d_%d?scale=1&supervoxels=true", server.WebAPIPath, uuid, pt[0], pt[1], pt[2])
+		labelResp = server.TestHTTP(t, "GET", labelReq, nil)
+		if err := json.Unmarshal(labelResp, &labelJSON); err != nil {
+			t.Errorf("problem decoding response (%s): %v\n", string(labelResp), err)
+		}
+		if labelJSON.Label != label {
+			t.Errorf("bad response to label query on (%d, %d, %d): %s\n", pt[0], pt[1], pt[2], string(labelResp))
+		}
+	}
+	for label, pt := range testPoints2 {
+		labelReq := fmt.Sprintf("%snode/%s/labels/label/%d_%d_%d?scale=2", server.WebAPIPath, uuid, pt[0], pt[1], pt[2])
+		labelResp := server.TestHTTP(t, "GET", labelReq, nil)
+		if err := json.Unmarshal(labelResp, &labelJSON); err != nil {
+			t.Errorf("problem decoding response (%s): %v\n", string(labelResp), err)
+		}
+		if labelJSON.Label != mapping[label] {
+			t.Errorf("bad response to label query on (%d, %d, %d): %s\n", pt[0], pt[1], pt[2], string(labelResp))
+		}
+		labelReq = fmt.Sprintf("%snode/%s/labels/label/%d_%d_%d?scale=2&supervoxels=true", server.WebAPIPath, uuid, pt[0], pt[1], pt[2])
+		labelResp = server.TestHTTP(t, "GET", labelReq, nil)
+		if err := json.Unmarshal(labelResp, &labelJSON); err != nil {
+			t.Errorf("problem decoding response (%s): %v\n", string(labelResp), err)
+		}
+		if labelJSON.Label != label {
+			t.Errorf("bad response to label query on (%d, %d, %d): %s\n", pt[0], pt[1], pt[2], string(labelResp))
+		}
+	}
+
 	// Make sure labels 2 and 13 sparsevol has been removed.
-	reqStr := fmt.Sprintf("%snode/%s/labels/sparsevol/2", server.WebAPIPath, uuid)
+	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/2", server.WebAPIPath, uuid)
 	server.TestBadHTTP(t, "GET", reqStr, nil)
 
 	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/13", server.WebAPIPath, uuid)
@@ -1353,7 +1548,7 @@ func TestMultiscaleMergeCleave(t *testing.T) {
 
 	// Cleave supervoxel 2 and 13 back out of merge label 1, should be 312.
 	reqStr = fmt.Sprintf("%snode/%s/labels/cleave/1", server.WebAPIPath, uuid)
-	r := server.TestHTTP(t, "POST", reqStr, bytes.NewBufferString("[2, 13]"))
+	r = server.TestHTTP(t, "POST", reqStr, bytes.NewBufferString("[2, 13]"))
 	var jsonVal struct {
 		CleavedLabel uint64
 	}
@@ -1366,6 +1561,68 @@ func TestMultiscaleMergeCleave(t *testing.T) {
 	expectedJSON := `{"maxlabel": 312}`
 	if string(jsonStr) != expectedJSON {
 		t.Errorf("Expected this JSON returned from maxlabel:\n%s\nGot:\n%s\n", expectedJSON, string(jsonStr))
+	}
+
+	mapping = map[uint64]uint64{
+		1:   1,
+		2:   312,
+		13:  312,
+		209: 209,
+		311: 311,
+	}
+	for label, pt := range testPoints0 {
+		labelReq := fmt.Sprintf("%snode/%s/labels/label/%d_%d_%d", server.WebAPIPath, uuid, pt[0], pt[1], pt[2])
+		labelResp := server.TestHTTP(t, "GET", labelReq, nil)
+		if err := json.Unmarshal(labelResp, &labelJSON); err != nil {
+			t.Errorf("problem decoding response (%s): %v\n", string(labelResp), err)
+		}
+		if labelJSON.Label != mapping[label] {
+			t.Errorf("bad response to label query on (%d, %d, %d): %s\n", pt[0], pt[1], pt[2], string(labelResp))
+		}
+		labelReq = fmt.Sprintf("%snode/%s/labels/label/%d_%d_%d?supervoxels=true", server.WebAPIPath, uuid, pt[0], pt[1], pt[2])
+		labelResp = server.TestHTTP(t, "GET", labelReq, nil)
+		if err := json.Unmarshal(labelResp, &labelJSON); err != nil {
+			t.Errorf("problem decoding response (%s): %v\n", string(labelResp), err)
+		}
+		if labelJSON.Label != label {
+			t.Errorf("bad response to label query on (%d, %d, %d): %s\n", pt[0], pt[1], pt[2], string(labelResp))
+		}
+	}
+	for label, pt := range testPoints1 {
+		labelReq := fmt.Sprintf("%snode/%s/labels/label/%d_%d_%d?scale=1", server.WebAPIPath, uuid, pt[0], pt[1], pt[2])
+		labelResp := server.TestHTTP(t, "GET", labelReq, nil)
+		if err := json.Unmarshal(labelResp, &labelJSON); err != nil {
+			t.Errorf("problem decoding response (%s): %v\n", string(labelResp), err)
+		}
+		if labelJSON.Label != mapping[label] {
+			t.Errorf("bad response to label query on (%d, %d, %d): %s\n", pt[0], pt[1], pt[2], string(labelResp))
+		}
+		labelReq = fmt.Sprintf("%snode/%s/labels/label/%d_%d_%d?scale=1&supervoxels=true", server.WebAPIPath, uuid, pt[0], pt[1], pt[2])
+		labelResp = server.TestHTTP(t, "GET", labelReq, nil)
+		if err := json.Unmarshal(labelResp, &labelJSON); err != nil {
+			t.Errorf("problem decoding response (%s): %v\n", string(labelResp), err)
+		}
+		if labelJSON.Label != label {
+			t.Errorf("bad response to label query on (%d, %d, %d): %s\n", pt[0], pt[1], pt[2], string(labelResp))
+		}
+	}
+	for label, pt := range testPoints2 {
+		labelReq := fmt.Sprintf("%snode/%s/labels/label/%d_%d_%d?scale=2", server.WebAPIPath, uuid, pt[0], pt[1], pt[2])
+		labelResp := server.TestHTTP(t, "GET", labelReq, nil)
+		if err := json.Unmarshal(labelResp, &labelJSON); err != nil {
+			t.Errorf("problem decoding response (%s): %v\n", string(labelResp), err)
+		}
+		if labelJSON.Label != mapping[label] {
+			t.Errorf("bad response to label query on (%d, %d, %d): %s\n", pt[0], pt[1], pt[2], string(labelResp))
+		}
+		labelReq = fmt.Sprintf("%snode/%s/labels/label/%d_%d_%d?scale=2&supervoxels=true", server.WebAPIPath, uuid, pt[0], pt[1], pt[2])
+		labelResp = server.TestHTTP(t, "GET", labelReq, nil)
+		if err := json.Unmarshal(labelResp, &labelJSON); err != nil {
+			t.Errorf("problem decoding response (%s): %v\n", string(labelResp), err)
+		}
+		if labelJSON.Label != label {
+			t.Errorf("bad response to label query on (%d, %d, %d): %s\n", pt[0], pt[1], pt[2], string(labelResp))
+		}
 	}
 
 	retrieved.get(t, uuid, "labels", false)
@@ -1415,6 +1672,7 @@ func TestMultiscaleMergeCleave(t *testing.T) {
 	if err := downres2.equals(retrieved2); err != nil {
 		t.Errorf("Cleaved supervoxel volume @ downres #2 not equal to original supervoxel volume: %v\n", err)
 	}
+
 }
 
 // Test that mutable labelmap POST will accurately remove prior bodies if we overwrite
@@ -1680,7 +1938,7 @@ func mergeCleave(t *testing.T, wg *sync.WaitGroup, uuid dvid.UUID, name dvid.Ins
 			labelset[i] = struct{}{}
 		}
 	}
-	targetSupervoxel := target
+
 	mapped, found := mapping[target]
 	if found {
 		target = mapped
@@ -1695,7 +1953,6 @@ func mergeCleave(t *testing.T, wg *sync.WaitGroup, uuid dvid.UUID, name dvid.Ins
 	}
 	mergeStr := "[" + fmt.Sprintf("%d", target) + ", " + strings.Join(s, ",") + "]"
 	testMerge := mergeJSON(mergeStr)
-	dvid.Infof("thread %d> merging %s: target %d came from original supervoxel %d\n", thread, mergeStr, target, targetSupervoxel)
 	if err := testMerge.sendErr(t, uuid, "labels"); err != nil {
 		return err
 	}
@@ -1713,7 +1970,6 @@ func mergeCleave(t *testing.T, wg *sync.WaitGroup, uuid dvid.UUID, name dvid.Ins
 		if err := json.Unmarshal(r, &jsonVal); err != nil {
 			return fmt.Errorf("unable to get new label from cleave.  Instead got: %v", jsonVal)
 		}
-		dvid.Infof("thread %d> cleaved supervoxel %d now -> label %d\n", thread, label, jsonVal.CleavedLabel)
 		mapping[label] = jsonVal.CleavedLabel
 
 		// make sure old label doesn't have these supervoxels anymore.

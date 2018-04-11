@@ -167,6 +167,31 @@ func (idx *Index) GetSupervoxelCounts() (counts map[uint64]uint64) {
 	return
 }
 
+// LimitToSupervoxel returns a copy of the index but with only the given supervoxel
+func (idx *Index) LimitToSupervoxel(supervoxel uint64) (*Index, error) {
+	if idx == nil || len(idx.Blocks) == 0 {
+		return nil, nil
+	}
+	sidx := new(Index)
+	sidx.Label = idx.Label
+	sidx.LastMutid = idx.LastMutid
+	sidx.LastModTime = idx.LastModTime
+	sidx.LastModUser = idx.LastModUser
+	sidx.Blocks = make(map[uint64]*proto.SVCount)
+	for zyx, svc := range idx.Blocks {
+		if svc != nil && len(svc.Counts) != 0 {
+			count, found := svc.Counts[supervoxel]
+			if found {
+				sidx.Blocks[zyx] = &proto.SVCount{Counts: map[uint64]uint32{supervoxel: count}}
+			}
+		}
+	}
+	if len(sidx.Blocks) == 0 {
+		return nil, nil
+	}
+	return sidx, nil
+}
+
 // GetProcessedBlockIndices returns the blocks for an index, possibly with bounds and down-res.
 // The returned blocks are not sorted.
 func (idx *Index) GetProcessedBlockIndices(scale uint8, bounds dvid.Bounds) (dvid.IZYXSlice, error) {
