@@ -136,10 +136,23 @@ func deleteLabelIndex(ctx *datastore.VersionedCtx, label uint64) error {
 ///////////////////////////////////////////////////////////////////////////
 // The following public functions are concurrency-safe and support caching.
 
-// GetLabelIndex gets label set index data from storage for a given data instance
-// and version. Concurrency-safe access and supports caching.  If a label has been
-// mapped to another, a nil Index is returned.
-func GetLabelIndex(d dvid.Data, v dvid.VersionID, label uint64) (*labels.Index, error) {
+// GetLabelIndex gets label set index data from storage for a given data instance and version.
+// If isSupervoxel is true, the label is interpreted as a supervoxel and the label set index
+// containing the given supervoxel is returned.  Concurrency-safe access and supports caching.
+// If a label has been mapped to another, a nil Index is returned.
+func GetLabelIndex(d dvid.Data, v dvid.VersionID, label uint64, isSupervoxel bool) (*labels.Index, error) {
+	if isSupervoxel {
+		mapping, err := getMapping(d, v)
+		if err != nil {
+			return nil, err
+		}
+		if mapping != nil {
+			if mapped, found := mapping.MappedLabel(v, label); found {
+				label = mapped
+			}
+		}
+	}
+
 	atomic.AddUint64(&metaAttempts, 1)
 	k := indexKey{data: d, version: v, label: label}
 
@@ -180,17 +193,7 @@ func GetLabelIndex(d dvid.Data, v dvid.VersionID, label uint64) (*labels.Index, 
 
 // GetSupervoxelBlocks gets the blocks corresponding to a supervoxel id.
 func GetSupervoxelBlocks(d dvid.Data, v dvid.VersionID, supervoxel uint64) (dvid.IZYXSlice, error) {
-	mapping, err := getMapping(d, v)
-	if err != nil {
-		return nil, err
-	}
-	label := supervoxel
-	if mapping != nil {
-		if mapped, found := mapping.MappedLabel(v, supervoxel); found {
-			label = mapped
-		}
-	}
-	idx, err := GetLabelIndex(d, v, label)
+	idx, err := GetLabelIndex(d, v, supervoxel, true)
 	if err != nil {
 		return nil, err
 	}
@@ -213,20 +216,7 @@ func GetSupervoxelBlocks(d dvid.Data, v dvid.VersionID, supervoxel uint64) (dvid
 // label is interpreted as a supervoxel id and the size is of a supervoxel.  If a label doesn't
 // exist, a zero (not error) is returned.
 func GetLabelSize(d dvid.Data, v dvid.VersionID, label uint64, isSupervoxel bool) (uint64, error) {
-	var supervoxel uint64
-	if isSupervoxel {
-		supervoxel = label
-		mapping, err := getMapping(d, v)
-		if err != nil {
-			return 0, err
-		}
-		if mapping != nil {
-			if mapped, found := mapping.MappedLabel(v, supervoxel); found {
-				label = mapped
-			}
-		}
-	}
-	idx, err := GetLabelIndex(d, v, label)
+	idx, err := GetLabelIndex(d, v, label, isSupervoxel)
 	if err != nil {
 		return 0, err
 	}
@@ -234,14 +224,14 @@ func GetLabelSize(d dvid.Data, v dvid.VersionID, label uint64, isSupervoxel bool
 		return 0, nil
 	}
 	if isSupervoxel {
-		return idx.GetSupervoxelCount(supervoxel), nil
+		return idx.GetSupervoxelCount(label), nil
 	}
 	return idx.NumVoxels(), nil
 }
 
 // GetBoundedIndex gets bounded label index data from storage for a given data instance.
-func GetBoundedIndex(d dvid.Data, v dvid.VersionID, label uint64, bounds dvid.Bounds) (*labels.Index, error) {
-	idx, err := GetLabelIndex(d, v, label)
+func GetBoundedIndex(d dvid.Data, v dvid.VersionID, label uint64, bounds dvid.Bounds, isSupervoxel bool) (*labels.Index, error) {
+	idx, err := GetLabelIndex(d, v, label, isSupervoxel)
 	if err != nil {
 		return nil, err
 	}
@@ -263,7 +253,7 @@ func GetMultiLabelIndex(d dvid.Data, v dvid.VersionID, lbls labels.Set, bounds d
 	}
 	idx := new(labels.Index)
 	for label := range lbls {
-		idx2, err := GetLabelIndex(d, v, label)
+		idx2, err := GetLabelIndex(d, v, label, false)
 		if err != nil {
 			return nil, err
 		}
@@ -887,7 +877,7 @@ func (d *Data) addRLEs(izyx dvid.IZYXString, data []byte, lbls labels.Set) (seri
 // Scan a block and construct bounded RLEs that will be serialized and added to the given buffer.
 func (d *Data) addBoundedRLEs(izyx dvid.IZYXString, data []byte, lbls labels.Set, bounds *dvid.OptionalBounds) (serialization []byte, newRuns uint32, err error) {
 	if len(data) != int(d.BlockSize().Prod())*8 {
-		err = fmt.Errorf("Deserialized label block %d bytes, not uint64 size times %d block elements\n",
+		err = fmt.Errorf("deserialized label block %d bytes, not uint64 size times %d block elements",
 			len(data), d.BlockSize().Prod())
 		return
 	}
@@ -959,8 +949,8 @@ func (d *Data) addBoundedRLEs(izyx dvid.IZYXString, data []byte, lbls labels.Set
 
 // FoundSparseVol returns true if a sparse volume is found for the given label
 // within the given bounds.
-func (d *Data) FoundSparseVol(ctx *datastore.VersionedCtx, label uint64, bounds dvid.Bounds) (bool, error) {
-	idx, err := GetBoundedIndex(d, ctx.VersionID(), label, bounds)
+func (d *Data) FoundSparseVol(ctx *datastore.VersionedCtx, label uint64, bounds dvid.Bounds, isSupervoxel bool) (bool, error) {
+	idx, err := GetBoundedIndex(d, ctx.VersionID(), label, bounds, isSupervoxel)
 	if err != nil {
 		return false, err
 	}
@@ -974,13 +964,20 @@ func (d *Data) FoundSparseVol(ctx *datastore.VersionedCtx, label uint64, bounds 
 
 // writeBinaryBlocks does a streaming write of an encoded sparse volume given a label.
 // It returns a bool whether the label was found in the given bounds and any error.
-func (d *Data) writeBinaryBlocks(ctx *datastore.VersionedCtx, label uint64, scale uint8, bounds dvid.Bounds, compression string, w io.Writer) (bool, error) {
-	idx, err := GetLabelIndex(d, ctx.VersionID(), label)
+func (d *Data) writeBinaryBlocks(ctx *datastore.VersionedCtx, label uint64, scale uint8, bounds dvid.Bounds, compression string, isSupervoxel bool, w io.Writer) (bool, error) {
+	idx, err := GetLabelIndex(d, ctx.VersionID(), label, isSupervoxel)
 	if err != nil {
 		return false, err
 	}
 	if idx == nil || len(idx.Blocks) == 0 {
 		return false, nil
+	}
+	supervoxels := idx.GetSupervoxels()
+	if isSupervoxel {
+		if _, found := supervoxels[label]; !found {
+			return false, nil
+		}
+		supervoxels = labels.Set{label: struct{}{}}
 	}
 
 	indices, err := idx.GetProcessedBlockIndices(scale, bounds)
@@ -994,8 +991,7 @@ func (d *Data) writeBinaryBlocks(ctx *datastore.VersionedCtx, label uint64, scal
 		return false, err
 	}
 	op := labels.NewOutputOp(w)
-	lbls := idx.GetSupervoxels()
-	go labels.WriteBinaryBlocks(label, lbls, op, bounds)
+	go labels.WriteBinaryBlocks(label, supervoxels, op, bounds)
 	var preErr error
 	for _, izyx := range indices {
 		tk := NewBlockTKeyByCoord(scale, izyx)
@@ -1028,19 +1024,26 @@ func (d *Data) writeBinaryBlocks(ctx *datastore.VersionedCtx, label uint64, scal
 		return false, err
 	}
 
-	dvid.Infof("[%s] labels %v: streamed %d of %d blocks within bounds\n", ctx, lbls, len(indices), len(idx.Blocks))
+	dvid.Infof("[%s] labels %v: streamed %d of %d blocks within bounds\n", ctx, supervoxels, len(indices), len(idx.Blocks))
 	return true, preErr
 }
 
 // writeStreamingRLE does a streaming write of an encoded sparse volume given a label.
 // It returns a bool whether the label was found in the given bounds and any error.
-func (d *Data) writeStreamingRLE(ctx *datastore.VersionedCtx, label uint64, scale uint8, bounds dvid.Bounds, compression string, w io.Writer) (bool, error) {
-	idx, err := GetLabelIndex(d, ctx.VersionID(), label)
+func (d *Data) writeStreamingRLE(ctx *datastore.VersionedCtx, label uint64, scale uint8, bounds dvid.Bounds, compression string, isSupervoxel bool, w io.Writer) (bool, error) {
+	idx, err := GetLabelIndex(d, ctx.VersionID(), label, isSupervoxel)
 	if err != nil {
 		return false, err
 	}
 	if idx == nil || len(idx.Blocks) == 0 {
 		return false, nil
+	}
+	supervoxels := idx.GetSupervoxels()
+	if isSupervoxel {
+		if _, found := supervoxels[label]; !found {
+			return false, nil
+		}
+		supervoxels = labels.Set{label: struct{}{}}
 	}
 
 	blocks, err := idx.GetProcessedBlockIndices(scale, bounds)
@@ -1054,8 +1057,7 @@ func (d *Data) writeStreamingRLE(ctx *datastore.VersionedCtx, label uint64, scal
 		return false, err
 	}
 	op := labels.NewOutputOp(w)
-	lbls := idx.GetSupervoxels()
-	go labels.WriteRLEs(lbls, op, bounds)
+	go labels.WriteRLEs(supervoxels, op, bounds)
 	for _, izyx := range blocks {
 		tk := NewBlockTKeyByCoord(scale, izyx)
 		data, err := store.Get(ctx, tk)
@@ -1080,13 +1082,13 @@ func (d *Data) writeStreamingRLE(ctx *datastore.VersionedCtx, label uint64, scal
 		return false, err
 	}
 
-	dvid.Infof("[%s] labels %v: streamed %d of %d blocks within bounds\n", ctx, lbls, len(blocks), len(idx.Blocks))
+	dvid.Infof("[%s] labels %v: streamed %d of %d blocks within bounds\n", ctx, supervoxels, len(blocks), len(idx.Blocks))
 	return true, nil
 }
 
-func (d *Data) writeLegacyRLE(ctx *datastore.VersionedCtx, label uint64, scale uint8, b dvid.Bounds, compression string, w io.Writer) (found bool, err error) {
+func (d *Data) writeLegacyRLE(ctx *datastore.VersionedCtx, label uint64, scale uint8, b dvid.Bounds, compression string, isSupervoxel bool, w io.Writer) (found bool, err error) {
 	var data []byte
-	data, err = d.getLegacyRLEs(ctx, label, scale, b)
+	data, err = d.getLegacyRLEs(ctx, label, scale, b, isSupervoxel)
 	if err != nil {
 		return
 	}
@@ -1140,14 +1142,22 @@ func (d *Data) writeLegacyRLE(ctx *datastore.VersionedCtx, label uint64, scale u
 //        int32   Length of run
 //        bytes   Optional payload dependent on first byte descriptor
 //
-func (d *Data) getLegacyRLEs(ctx *datastore.VersionedCtx, label uint64, scale uint8, bounds dvid.Bounds) ([]byte, error) {
-	idx, err := GetLabelIndex(d, ctx.VersionID(), label)
+func (d *Data) getLegacyRLEs(ctx *datastore.VersionedCtx, label uint64, scale uint8, bounds dvid.Bounds, isSupervoxel bool) ([]byte, error) {
+	idx, err := GetLabelIndex(d, ctx.VersionID(), label, isSupervoxel)
 	if err != nil {
 		return nil, err
 	}
 	if idx == nil || len(idx.Blocks) == 0 {
 		return nil, nil
 	}
+	supervoxels := idx.GetSupervoxels()
+	if isSupervoxel {
+		if _, found := supervoxels[label]; !found {
+			return nil, nil
+		}
+		supervoxels = labels.Set{label: struct{}{}}
+	}
+
 	buf := new(bytes.Buffer)
 	buf.WriteByte(dvid.EncodingBinary)
 	binary.Write(buf, binary.LittleEndian, uint8(3))  // # of dimensions
@@ -1167,8 +1177,7 @@ func (d *Data) getLegacyRLEs(ctx *datastore.VersionedCtx, label uint64, scale ui
 		return nil, err
 	}
 	op := labels.NewOutputOp(buf)
-	lbls := idx.GetSupervoxels()
-	go labels.WriteRLEs(lbls, op, bounds)
+	go labels.WriteRLEs(supervoxels, op, bounds)
 	var numEmpty int
 	for _, izyx := range blocks {
 		tk := NewBlockTKeyByCoord(scale, izyx)
@@ -1179,7 +1188,7 @@ func (d *Data) getLegacyRLEs(ctx *datastore.VersionedCtx, label uint64, scale ui
 		if len(data) == 0 {
 			numEmpty++
 			if numEmpty < 10 {
-				dvid.Errorf("Block %s included in blocks for labels %s but has no data (%d times)... skipping.\n", izyx, lbls, numEmpty)
+				dvid.Errorf("Block %s included in blocks for labels %s but has no data (%d times)... skipping.\n", izyx, supervoxels, numEmpty)
 			} else if numEmpty == 10 {
 				dvid.Errorf("Over %d blocks included in blocks with no data.  Halting error stream.\n", numEmpty)
 			}
@@ -1212,7 +1221,7 @@ func (d *Data) getLegacyRLEs(ctx *datastore.VersionedCtx, label uint64, scale ui
 	}
 
 	binary.LittleEndian.PutUint32(serialization[8:12], numRuns)
-	dvid.Infof("[%s] label %d: sent %d blocks (%d hi-res blocks) within bounds excluding %d empty blocks, %d runs, serialized %d bytes\n", idx.Label, len(blocks), len(idx.Blocks), numEmpty, numRuns, len(serialization))
+	dvid.Infof("label %d: sent %d blocks (%d hi-res blocks) within bounds excluding %d empty blocks, %d runs, serialized %d bytes\n", idx.Label, len(blocks), len(idx.Blocks), numEmpty, numRuns, len(serialization))
 	return serialization, nil
 }
 
@@ -1232,13 +1241,22 @@ func (d *Data) getLegacyRLEs(ctx *datastore.VersionedCtx, label uint64, scale ui
 //     		int32   Block coordinate of run start (dimension 2)
 //     		int32   Length of run
 //
-func (d *Data) GetSparseCoarseVol(ctx *datastore.VersionedCtx, label uint64, bounds dvid.Bounds) ([]byte, error) {
-	idx, err := GetLabelIndex(d, ctx.VersionID(), label)
+func (d *Data) GetSparseCoarseVol(ctx *datastore.VersionedCtx, label uint64, bounds dvid.Bounds, isSupervoxel bool) ([]byte, error) {
+	idx, err := GetLabelIndex(d, ctx.VersionID(), label, isSupervoxel)
 	if err != nil {
 		return nil, err
 	}
 	if idx == nil || len(idx.Blocks) == 0 {
 		return nil, nil
+	}
+	if isSupervoxel {
+		idx, err = idx.LimitToSupervoxel(label)
+		if err != nil {
+			return nil, err
+		}
+		if idx == nil {
+			return nil, nil
+		}
 	}
 	blocks, err := idx.GetProcessedBlockIndices(0, bounds)
 	if err != nil {

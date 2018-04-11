@@ -401,7 +401,7 @@ GET  <api URL>/node/<UUID>/<data name>/pseudocolor/<dims>/<size>/<offset>[?query
                     are handled.  If the server can't initiate the API call right away, a 503 (Service Unavailable) 
                     status code is returned.
 
-GET <api URL>/node/<UUID>/<data name>/label/<coord>
+GET <api URL>/node/<UUID>/<data name>/label/<coord>[?queryopts]
 
 	Returns JSON for the label at the given coordinate:
 	{ "Label": 23 }
@@ -410,6 +410,11 @@ GET <api URL>/node/<UUID>/<data name>/label/<coord>
     UUID          Hexidecimal string with enough characters to uniquely identify a version node.
     data name     Name of label data.
     coord     	  Coordinate of voxel with underscore as separator, e.g., 10_20_30
+
+    Query-string Options:
+
+    scale         A number from 0 up to MaxDownresLevel where each level beyond 0 has 1/2 resolution
+	                of previous level.  Level 0 is the highest resolution.
 
 GET <api URL>/node/<UUID>/<data name>/labels[?queryopts]
 
@@ -427,6 +432,8 @@ GET <api URL>/node/<UUID>/<data name>/labels[?queryopts]
 
     Query-string Options:
 
+    scale         A number from 0 up to MaxDownresLevel where each level beyond 0 has 1/2 resolution
+	                of previous level.  Level 0 is the highest resolution.
     hash          MD5 hash of request body content in hexidecimal string format.
 
 GET <api URL>/node/<UUID>/<data name>/blocks/<size>/<offset>[?queryopts]
@@ -2782,12 +2789,18 @@ func (d *Data) handleLabel(ctx *datastore.VersionedCtx, w http.ResponseWriter, r
 	}
 	timedLog := dvid.NewTimeLog()
 
+	queryStrings := r.URL.Query()
+	scale, err := getScale(queryStrings)
+	if err != nil {
+		server.BadRequest(w, r, "bad scale specified: %v", err)
+		return
+	}
 	coord, err := dvid.StringToPoint(parts[4], "_")
 	if err != nil {
 		server.BadRequest(w, r, err)
 		return
 	}
-	label, err := d.GetLabelAtPoint(ctx.VersionID(), coord)
+	label, err := d.GetLabelAtScaledPoint(ctx.VersionID(), coord, scale)
 	if err != nil {
 		server.BadRequest(w, r, err)
 		return
@@ -2813,6 +2826,11 @@ func (d *Data) handleLabels(ctx *datastore.VersionedCtx, w http.ResponseWriter, 
 		return
 	}
 	queryStrings := r.URL.Query()
+	scale, err := getScale(queryStrings)
+	if err != nil {
+		server.BadRequest(w, r, "bad scale specified: %v", err)
+		return
+	}
 	hash := queryStrings.Get("hash")
 	if err := checkContentHash(hash, data); err != nil {
 		server.BadRequest(w, r, err)
@@ -2827,7 +2845,7 @@ func (d *Data) handleLabels(ctx *datastore.VersionedCtx, w http.ResponseWriter, 
 	fmt.Fprintf(w, "[")
 	sep := false
 	for _, coord := range coords {
-		label, err := d.GetLabelAtPoint(ctx.VersionID(), coord)
+		label, err := d.GetLabelAtScaledPoint(ctx.VersionID(), coord, scale)
 		if err != nil {
 			server.BadRequest(w, r, err)
 			return
@@ -3249,7 +3267,7 @@ func (d *Data) handleSparsevolByPoint(ctx *datastore.VersionedCtx, w http.Respon
 		server.BadRequest(w, r, err)
 		return
 	}
-	label, err := d.GetLabelAtPoint(ctx.VersionID(), coord)
+	label, err := d.GetLabelAtScaledPoint(ctx.VersionID(), coord, 0)
 	if err != nil {
 		server.BadRequest(w, r, err)
 		return
@@ -3530,7 +3548,7 @@ func (d *Data) handleMerge(ctx *datastore.VersionedCtx, w http.ResponseWriter, r
 // --------- Other functions on labelarray Data -----------------
 
 // GetLabelBlock returns a compressed label Block of the given block coordinate.
-func (d *Data) GetLabelBlock(v dvid.VersionID, scale uint8, bcoord dvid.ChunkPoint3d) (*labels.Block, error) {
+func (d *Data) GetLabelBlock(v dvid.VersionID, bcoord dvid.ChunkPoint3d, scale uint8) (*labels.Block, error) {
 	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
 		return nil, err
@@ -3541,7 +3559,7 @@ func (d *Data) GetLabelBlock(v dvid.VersionID, scale uint8, bcoord dvid.ChunkPoi
 	index := dvid.IndexZYX(bcoord)
 	serialization, err := store.Get(ctx, NewBlockTKey(scale, &index))
 	if err != nil {
-		return nil, fmt.Errorf("Error getting '%s' block for index %s\n", d.DataName(), bcoord)
+		return nil, fmt.Errorf("error getting '%s' block for index %s", d.DataName(), bcoord)
 	}
 	if serialization == nil {
 		blockSize, ok := d.BlockSize().(dvid.Point3d)
@@ -3552,7 +3570,7 @@ func (d *Data) GetLabelBlock(v dvid.VersionID, scale uint8, bcoord dvid.ChunkPoi
 	}
 	deserialization, _, err := dvid.DeserializeData(serialization, true)
 	if err != nil {
-		return nil, fmt.Errorf("Unable to deserialize block %s in '%s': %v\n", bcoord, d.DataName(), err)
+		return nil, fmt.Errorf("unable to deserialize block %s in '%s': %v", bcoord, d.DataName(), err)
 	}
 	var block labels.Block
 	if err = block.UnmarshalBinary(deserialization); err != nil {
@@ -3561,37 +3579,18 @@ func (d *Data) GetLabelBlock(v dvid.VersionID, scale uint8, bcoord dvid.ChunkPoi
 	return &block, nil
 }
 
-// GetLabelBytes returns a hi-res block of labels in packed little-endian uint64 format.
-func (d *Data) GetLabelBytes(v dvid.VersionID, bcoord dvid.ChunkPoint3d) ([]byte, error) {
-	store, err := datastore.GetOrderedKeyValueDB(d)
+// GetLabelBytesWithScale returns a block of labels in packed little-endian uint64 format at the given scale.
+func (d *Data) GetLabelBytesWithScale(v dvid.VersionID, bcoord dvid.ChunkPoint3d, scale uint8) ([]byte, error) {
+	block, err := d.GetLabelBlock(v, bcoord, scale)
 	if err != nil {
-		return nil, err
-	}
-
-	// Retrieve the block of labels
-	ctx := datastore.NewVersionedCtx(d, v)
-	index := dvid.IndexZYX(bcoord)
-	serialization, err := store.Get(ctx, NewBlockTKey(0, &index))
-	if err != nil {
-		return nil, fmt.Errorf("Error getting '%s' block for index %s\n", d.DataName(), bcoord)
-	}
-	if serialization == nil {
-		return []byte{}, nil
-	}
-	deserialization, _, err := dvid.DeserializeData(serialization, true)
-	if err != nil {
-		return nil, fmt.Errorf("Unable to deserialize block %s in '%s': %v\n", bcoord, d.DataName(), err)
-	}
-	var block labels.Block
-	if err = block.UnmarshalBinary(deserialization); err != nil {
 		return nil, err
 	}
 	labelData, _ := block.MakeLabelVolume()
 	return labelData, nil
 }
 
-// GetLabelBytesAtPoint returns the 8 byte slice corresponding to a 64-bit label at a point.
-func (d *Data) GetLabelBytesAtPoint(v dvid.VersionID, pt dvid.Point) ([]byte, error) {
+// GetLabelBytesAtScaledPoint returns the 8 byte slice corresponding to a 64-bit label at a point.
+func (d *Data) GetLabelBytesAtScaledPoint(v dvid.VersionID, pt dvid.Point, scale uint8) ([]byte, error) {
 	coord, ok := pt.(dvid.Chunkable)
 	if !ok {
 		return nil, fmt.Errorf("Can't determine block of point %s", pt)
@@ -3599,7 +3598,7 @@ func (d *Data) GetLabelBytesAtPoint(v dvid.VersionID, pt dvid.Point) ([]byte, er
 	blockSize := d.BlockSize()
 	bcoord := coord.Chunk(blockSize).(dvid.ChunkPoint3d)
 
-	labelData, err := d.GetLabelBytes(v, bcoord)
+	labelData, err := d.GetLabelBytesWithScale(v, bcoord, scale)
 	if err != nil {
 		return nil, err
 	}
@@ -3615,11 +3614,23 @@ func (d *Data) GetLabelBytesAtPoint(v dvid.VersionID, pt dvid.Point) ([]byte, er
 	return labelData[i : i+8], nil
 }
 
-// GetLabelAtPoint returns the 64-bit unsigned int label for a given point.
-func (d *Data) GetLabelAtPoint(v dvid.VersionID, pt dvid.Point) (uint64, error) {
-	labelBytes, err := d.GetLabelBytesAtPoint(v, pt)
+// GetLabelAtScaledPoint returns the 64-bit unsigned int label for a given point.
+func (d *Data) GetLabelAtScaledPoint(v dvid.VersionID, pt dvid.Point, scale uint8) (uint64, error) {
+	labelBytes, err := d.GetLabelBytesAtScaledPoint(v, pt, scale)
 	if err != nil {
 		return 0, err
 	}
 	return binary.LittleEndian.Uint64(labelBytes), nil
+}
+
+// The following functions implement an interface to synced data types like annotation.
+
+// GetLabelBytes returns a block of hi-res labels (scale 0) in packed little-endian uint64 format
+func (d *Data) GetLabelBytes(v dvid.VersionID, bcoord dvid.ChunkPoint3d) ([]byte, error) {
+	return d.GetLabelBytesWithScale(v, bcoord, 0)
+}
+
+// GetLabelAtPoint returns the 64-bit unsigned int label for a given point.
+func (d *Data) GetLabelAtPoint(v dvid.VersionID, pt dvid.Point) (uint64, error) {
+	return d.GetLabelAtScaledPoint(v, pt, 0)
 }

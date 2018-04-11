@@ -1,6 +1,8 @@
 package labels
 
 import (
+	"bytes"
+	"compress/gzip"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -477,6 +479,18 @@ type Block struct {
 	SBValues    []byte   // compressed voxel values giving index into SBIndices.
 
 	data []byte // serialized format as described above
+}
+
+// CompressGZIP returns a gzip compressed encoding of the serialized block data.
+func (b Block) CompressGZIP() ([]byte, error) {
+	var gzipOut bytes.Buffer
+	zw := gzip.NewWriter(&gzipOut)
+	if _, err := zw.Write(b.data); err != nil {
+		return nil, err
+	}
+	zw.Flush()
+	zw.Close()
+	return gzipOut.Bytes(), nil
 }
 
 // CalcNumLabels calculates the change in the number of voxels under each non-zero label.
@@ -1522,9 +1536,8 @@ func WriteRLEs(lbls Set, op *OutputOp, bounds dvid.Bounds) {
 			if found {
 				labelIndices[uint32(i)] = struct{}{}
 				inBlock = true
-				if len(labelIndices) == len(lbls) {
-					break
-				}
+				// can't break here because there could be multiple entries for a label in a block
+				// e.g., due to fast merge where a variety of previous labels gets set to merge label.
 			}
 		}
 		if !inBlock {

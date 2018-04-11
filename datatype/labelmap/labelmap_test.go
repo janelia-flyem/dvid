@@ -1273,20 +1273,12 @@ func TestPostBlocks(t *testing.T) {
 		writeInt32(t, &buf, blockCoords[i][1])
 		writeInt32(t, &buf, blockCoords[i][2])
 		data[i] = loadTestData(t, fname)
-		serialization, err := data[i].b.MarshalBinary()
+		gzipped, err := data[i].b.CompressGZIP()
 		if err != nil {
-			t.Fatalf("unable to MarshalBinary block: %v\n", err)
+			t.Fatalf("unable to gzip compress block: %v\n", err)
 		}
-		var gzipOut bytes.Buffer
-		zw := gzip.NewWriter(&gzipOut)
-		if _, err = zw.Write(serialization); err != nil {
-			t.Fatal(err)
-		}
-		zw.Flush()
-		zw.Close()
-		gzipped := gzipOut.Bytes()
 		writeInt32(t, &buf, int32(len(gzipped)))
-		fmt.Printf("Wrote %d gzipped block bytes (down from %d bytes) for block %s\n", len(gzipped), len(serialization), blockCoords[i])
+		fmt.Printf("Wrote %d gzipped block bytes for block %s\n", len(gzipped), blockCoords[i])
 		n, err := buf.Write(gzipped)
 		if err != nil {
 			t.Fatalf("unable to write gzip block: %v\n", err)
@@ -1386,7 +1378,7 @@ func testExtents(t *testing.T, name string, uuid dvid.UUID, min, max dvid.Point3
 	}
 }
 
-func TestBigPostBlock(t *testing.T) {
+func TestPostBlock(t *testing.T) {
 	if err := server.OpenTest(); err != nil {
 		t.Fatalf("can't open test server: %v\n", err)
 	}
@@ -1428,7 +1420,7 @@ func TestBigPostBlock(t *testing.T) {
 	}
 }
 
-func TestBigPostBlock2(t *testing.T) {
+func TestBigPostBlock(t *testing.T) {
 	if err := server.OpenTest(); err != nil {
 		t.Fatalf("can't open test server: %v\n", err)
 	}
@@ -1454,6 +1446,157 @@ func TestBigPostBlock2(t *testing.T) {
 
 	if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
 		t.Fatalf("Error blocking on sync of labels: %v\n", err)
+	}
+}
+
+func TestBlocksWithMerge(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+
+	uuid, _ := datastore.NewTestRepo()
+	if len(uuid) < 5 {
+		t.Fatalf("Bad root UUID for new repo: %s\n", uuid)
+	}
+	server.CreateTestInstance(t, uuid, "labelmap", "labels", dvid.Config{})
+
+	numVoxels := 64 * 64 * 64
+	blockVol0 := make([]uint64, numVoxels)
+	i := 0
+	for z := 0; z < 64; z++ {
+		for y := 0; y < 64; y++ {
+			for x := 0; x < 32; x++ {
+				blockVol0[i] = 2
+				i++
+			}
+			for x := 32; x < 64; x++ {
+				blockVol0[i] = 1
+				i++
+			}
+		}
+	}
+	block0, err := labels.MakeBlock(dvid.Uint64ToByte(blockVol0), dvid.Point3d{64, 64, 64})
+	if err != nil {
+		t.Fatalf("error making block 0: %v\n", err)
+	}
+	block0data, err := block0.CompressGZIP()
+	if err != nil {
+		t.Fatalf("error making block 0: %v\n", err)
+	}
+	blockVol1 := make([]uint64, numVoxels)
+	i = 0
+	for z := 0; z < 64; z++ {
+		for y := 0; y < 64; y++ {
+			for x := 0; x < 32; x++ {
+				blockVol1[i] = 1
+				i++
+			}
+			for x := 32; x < 64; x++ {
+				blockVol1[i] = 2
+				i++
+			}
+		}
+	}
+	block1, err := labels.MakeBlock(dvid.Uint64ToByte(blockVol1), dvid.Point3d{64, 64, 64})
+	if err != nil {
+		t.Fatalf("error making block 0: %v\n", err)
+	}
+	block1data, err := block1.CompressGZIP()
+	if err != nil {
+		t.Fatalf("error making block 0: %v\n", err)
+	}
+	var buf bytes.Buffer
+	writeInt32(t, &buf, 2)
+	writeInt32(t, &buf, 3)
+	writeInt32(t, &buf, 4)
+	writeInt32(t, &buf, int32(len(block0data)))
+	n, err := buf.Write(block0data)
+	if err != nil {
+		t.Fatalf("unable to write gzip block: %v\n", err)
+	}
+	if n != len(block0data) {
+		t.Fatalf("unable to write %d bytes to buffer, only wrote %d bytes\n", len(block0data), n)
+	}
+	writeInt32(t, &buf, 3)
+	writeInt32(t, &buf, 3)
+	writeInt32(t, &buf, 4)
+	writeInt32(t, &buf, int32(len(block1data)))
+	n, err = buf.Write(block1data)
+	if err != nil {
+		t.Fatalf("unable to write gzip block: %v\n", err)
+	}
+	if n != len(block1data) {
+		t.Fatalf("unable to write %d bytes to buffer, only wrote %d bytes\n", len(block1data), n)
+	}
+
+	apiStr := fmt.Sprintf("%snode/%s/labels/blocks", server.WebAPIPath, uuid)
+	server.TestHTTP(t, "POST", apiStr, &buf)
+
+	testMerge := mergeJSON(`[1, 2]`)
+	testMerge.send(t, uuid, "labels")
+
+	apiStr = fmt.Sprintf("%snode/%s/labels/blocks/128_64_64/128_192_256?compression=blocks", server.WebAPIPath, uuid)
+	respRec := server.TestHTTPResponse(t, "GET", apiStr, nil)
+	gotBlock0, _, bx, by, bz, err := readStreamedBlock(respRec.Body, 0)
+	if err != nil {
+		t.Fatalf("problem reading block 0 from stream: %v\n", err)
+	}
+	if bx != 2 || by != 3 || bz != 4 {
+		t.Errorf("got bad block coord on GET /blocks: (%d,%d,%d) when expected (2,3,4)\n", bx, by, bz)
+	}
+	for _, label := range gotBlock0.Labels {
+		if label != 1 {
+			t.Errorf("got bad block with label %d when only 1 should have been present\n", label)
+		}
+	}
+	gotBlock1, _, bx, by, bz, err := readStreamedBlock(respRec.Body, 0)
+	if err != nil {
+		t.Fatalf("problem reading block 1 from stream: %v\n", err)
+	}
+	if bx != 3 || by != 3 || bz != 4 {
+		t.Errorf("got bad block coord on GET /blocks: (%d,%d,%d) when expected (3,3,4)\n", bx, by, bz)
+	}
+	for _, label := range gotBlock1.Labels {
+		if label != 1 {
+			t.Errorf("got bad block with label %d when only 1 should have been present\n", label)
+		}
+	}
+	apiStr = fmt.Sprintf("%snode/%s/labels/blocks/128_64_64/128_192_256?compression=blocks&supervoxels=true", server.WebAPIPath, uuid)
+	respRec = server.TestHTTPResponse(t, "GET", apiStr, nil)
+	gotBlock0, _, bx, by, bz, err = readStreamedBlock(respRec.Body, 0)
+	if bx != 2 || by != 3 || bz != 4 {
+		t.Errorf("got bad block coord on GET /blocks: (%d,%d,%d) when expected (2,3,4)\n", bx, by, bz)
+	}
+	gotLabels := make(labels.Set)
+	for _, label := range gotBlock0.Labels {
+		gotLabels[label] = struct{}{}
+		if label != 1 && label != 2 {
+			t.Errorf("got unexpected label in block: %d\n", label)
+		}
+	}
+	if _, found := gotLabels[1]; !found {
+		t.Errorf("expected label 1 but found none\n")
+	}
+	if _, found := gotLabels[2]; !found {
+		t.Errorf("expected label 1 but found none\n")
+	}
+	gotBlock1, _, bx, by, bz, err = readStreamedBlock(respRec.Body, 0)
+	if bx != 3 || by != 3 || bz != 4 {
+		t.Errorf("got bad block coord on GET /blocks: (%d,%d,%d) when expected (3,3,4)\n", bx, by, bz)
+	}
+	gotLabels = make(labels.Set)
+	for _, label := range gotBlock1.Labels {
+		gotLabels[label] = struct{}{}
+		if label != 1 && label != 2 {
+			t.Errorf("got unexpected label in block: %d\n", label)
+		}
+	}
+	if _, found := gotLabels[1]; !found {
+		t.Errorf("expected label 1 but found none\n")
+	}
+	if _, found := gotLabels[2]; !found {
+		t.Errorf("expected label 1 but found none\n")
 	}
 }
 

@@ -76,7 +76,7 @@ func (d *Data) StoreDownres(v dvid.VersionID, hiresScale uint8, hires downres.Bl
 			if err != nil {
 				return nil, err
 			}
-			loresBlock, err = d.GetLabelBlock(v, hiresScale+1, chunkPt)
+			loresBlock, err = d.GetLabelBlock(v, chunkPt, hiresScale+1)
 			if err != nil {
 				return nil, err
 			}

@@ -77,7 +77,7 @@ func (d *Data) MergeLabels(v dvid.VersionID, op labels.MergeOp) error {
 	}
 
 	// Get all the affected blocks in the merge.
-	targetIdx, err := GetLabelIndex(d, v, op.Target)
+	targetIdx, err := GetLabelIndex(d, v, op.Target, false)
 	if err != nil {
 		return fmt.Errorf("can't get block indices of to merge target label %d: %v", op.Target, err)
 	}
