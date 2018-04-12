@@ -41,7 +41,7 @@ func newBatch(store *Store, context storage.Context) *Batch {
 		var ok bool
 		batch.versionedContext, ok = context.(storage.VersionedCtx)
 		if !ok {
-			dvid.Criticalf("Context is marked as versioned but isn't actually versioned, will revert to unversioned: %s", context)
+			dvid.Criticalf("Context is marked as versioned but isn't actually versioned, will revert to unversioned: %s\n", context)
 		}
 	}
 	return batch
@@ -133,11 +133,12 @@ func (b *Batch) Commit() error {
 			if _, tarErr = tw.Write(value); tarErr != nil {
 				return
 			}
+			storage.StoreValueBytesWritten <- len(value)
 		}
 		tarErr = tw.Close()
 	}()
-	if result, err := b.store.conn.BulkUpload(b.store.container, reader, "UploadTar", nil); err != nil {
-		return fmt.Errorf(`Swift bulk uploads failed (%d of %d succeeded):  / %s`, result.NumberCreated, len(b.puts), err, tarErr)
+	if result, err := b.store.conn.BulkUpload(b.store.container, reader, swift.UploadTar, nil); err != nil {
+		return fmt.Errorf(`Swift bulk uploads failed (%d of %d succeeded): %s / %s`, result.NumberCreated, len(b.puts), err, tarErr)
 	}
 	if tarErr != nil {
 		return fmt.Errorf("Error generating tar file for Swift bulk upload: %s", tarErr)

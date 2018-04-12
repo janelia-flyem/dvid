@@ -96,7 +96,7 @@ func NewStore(config dvid.StoreConfig) (*Store, bool, error) {
 	if err := s.conn.Authenticate(); err != nil {
 		return nil, false, fmt.Errorf(`Unable to authenticate with the Swift database: %s`, err)
 	}
-	dvid.Infof(`Successfully authenticated to Openstack Swift with user "%s", container "%s" via %s`, s.conn.UserName, s.container, s.conn.AuthUrl)
+	dvid.Infof("Successfully authenticated to Openstack Swift with user \"%s\", container \"%s\" via %s\n", s.conn.UserName, s.container, s.conn.AuthUrl)
 
 	// Check if container exists.
 	_, _, err = s.conn.Container(s.container)
