@@ -11,8 +11,12 @@ import (
 	"github.com/ncw/swift"
 )
 
-// The maximum number of concurrent requests to be sent to the Swift database.
-const maxConcurrentRequests = 5
+// The maximum number of write operations sent to Swift in parallel.
+const maxConcurrentOperations = 10
+
+// rateLimit is a buffered channel used to limit the number of concurrent
+// write operations sent to Swift.
+var rateLimit = make(chan struct{}, maxConcurrentOperations)
 
 // Store implements dvid.Store as an Openstack Swift store.
 type Store struct {
@@ -225,12 +229,20 @@ func (s *Store) RawPut(key storage.Key, value []byte) error {
 	defer func() {
 		storage.StoreValueBytesWritten <- len(value)
 	}()
+	rateLimit <- struct{}{}
+	defer func() {
+		<-rateLimit
+	}()
 	return s.conn.ObjectPutBytes(s.container, encodeKey(key), value, "application/octet-stream")
 }
 
 // RawDelete is a low-level function.  It deletes a key-value pair using full
 // keys without any context. This can be used in conjunction with RawRangeQuery.
 func (s *Store) RawDelete(key storage.Key) error {
+	rateLimit <- struct{}{}
+	defer func() {
+		<-rateLimit
+	}()
 	err := s.conn.ObjectDelete(s.container, encodeKey(key))
 	if err == swift.ObjectNotFound {
 		return nil
@@ -446,7 +458,7 @@ func (s *Store) PutRange(context storage.Context, typeKeyValues []storage.TKeyVa
 	)
 
 	jobs := make(chan storage.TKeyValue)
-	for i := 0; i < maxConcurrentRequests; i++ {
+	for i := 0; i < maxConcurrentOperations; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -530,7 +542,7 @@ NameLoop:
 	)
 
 	jobs := make(chan storage.TKey)
-	for i := 0; i < maxConcurrentRequests; i++ {
+	for i := 0; i < maxConcurrentOperations; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -572,16 +584,18 @@ func (s *Store) DeleteAll(context storage.Context, allVersions bool) error {
 		)
 
 		jobs := make(chan string)
-		for i := 0; i < maxConcurrentRequests; i++ {
+		for i := 0; i < maxConcurrentOperations; i++ {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
 				for name := range jobs {
+					rateLimit <- struct{}{}
 					if err := s.conn.ObjectDelete(s.container, name); err != nil {
 						mutex.Lock()
 						e = err
 						mutex.Unlock()
 					}
+					<-rateLimit
 				}
 			}()
 		}
@@ -610,7 +624,7 @@ func (s *Store) DeleteAll(context storage.Context, allVersions bool) error {
 		)
 
 		jobs := make(chan storage.TKey)
-		for i := 0; i < maxConcurrentRequests; i++ {
+		for i := 0; i < maxConcurrentOperations; i++ {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()

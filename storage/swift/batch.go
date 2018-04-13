@@ -1,10 +1,9 @@
 package swift
 
 import (
-	"archive/tar"
 	"fmt"
-	"io"
 	"sync"
+	"time"
 
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
@@ -53,6 +52,9 @@ func (b *Batch) Delete(typeKey storage.TKey) {
 	defer b.Unlock()
 
 	name := encodeKey(b.context.ConstructKey(typeKey))
+	if name == "" {
+		return
+	}
 
 	delete(b.puts, name)
 	b.deletes[name] = struct{}{}
@@ -70,6 +72,9 @@ func (b *Batch) Put(typeKey storage.TKey, value []byte) {
 	defer b.Unlock()
 
 	name := encodeKey(b.context.ConstructKey(typeKey))
+	if name == "" {
+		return
+	}
 
 	// In a versioned context, we delete the tombstone.
 	if b.versionedContext != nil {
@@ -94,74 +99,121 @@ func (b *Batch) Commit() error {
 		b.deletes = make(map[string]struct{})
 	}()
 
-	// Run the bulk deletes first.
+	// Make active queues from the jobs.
 	deletes := make([]string, 0, len(b.deletes))
 	for name := range b.deletes {
 		deletes = append(deletes, name)
 	}
-	if result, err := b.store.conn.BulkDelete(b.store.container, deletes); err != nil && err != swift.Forbidden {
-		// "Not found" is an error in Swift. Only stop if there was a different error.
-		for name, e := range result.Errors {
-			if e != nil && e != swift.ObjectNotFound {
-				return fmt.Errorf(`Swift bulk deletes failed, e.g. "%s" on "%s", skipping bulk uploads`, e, name)
+	puts := make([]string, 0, len(b.puts))
+	for name := range b.puts {
+		puts = append(puts, name)
+	}
+
+	// Helper functions to access the queues.
+	var (
+		mutex         sync.Mutex
+		delay         time.Duration
+		tooManyDelays bool
+	)
+	nextJob := func() (name string, isDelete bool) {
+		mutex.Lock()
+		defer mutex.Unlock()
+		if delay > 0 {
+			time.Sleep(delay)
+		}
+
+		if len(deletes) > 0 {
+			isDelete = true
+			name = deletes[len(deletes)-1]
+			deletes = deletes[:len(deletes)-1]
+			return
+		}
+
+		if len(puts) > 0 {
+			name = puts[len(puts)-1]
+			puts = puts[:len(puts)-1]
+			return
+		}
+
+		return // name is empty if there are no more jobs.
+	}
+	requeue := func(name string, isDelete bool) {
+		mutex.Lock()
+		defer mutex.Unlock()
+
+		if isDelete {
+			deletes = append(deletes, name)
+		} else {
+			puts = append(puts, name)
+		}
+
+		if delay == 0 {
+			delay = 50 * time.Millisecond
+		} else {
+			delay *= 2
+			if delay > 3*time.Minute {
+				tooManyDelays = true
 			}
 		}
-	} else if err == swift.Forbidden {
-		// Bulk operations are not supported. Go to fallback.
-		return b.commitNonBulk()
+	}
+	resetDelay := func() {
+		mutex.Lock()
+		defer mutex.Unlock()
+		delay = 0
 	}
 
-	// Run the bulk puts.
-	reader, writer := io.Pipe()
-	var tarErr error
-	go func() {
-		defer writer.Close()
+	// Start the worker queues.
+	start := time.Now()
+	var wg sync.WaitGroup
+	for worker := 0; worker < maxConcurrentOperations; worker++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				if tooManyDelays {
+					break // We can't continue.
+				}
 
-		// Send a "tar" file to the writer.
-		tw := tar.NewWriter(writer)
-		for name, value := range b.puts {
-			// Write header.
-			if tarErr = tw.WriteHeader(&tar.Header{
-				Name: name,
-				Mode: 0600,
-				Size: int64(len(value)),
-			}); tarErr != nil {
-				return
+				// Get the next job from the queues.
+				name, isDelete := nextJob()
+				if name == "" {
+					return // Nothing more to do.
+				}
+
+				// Perform the operation.
+				rateLimit <- struct{}{}
+				if isDelete {
+					// Delete.
+					if err := b.store.conn.ObjectDelete(b.store.container, name); err != nil && err != swift.ObjectNotFound {
+						dvid.Errorf(`Individual bulk Swift delete failed on "%s": %s (will repeat)`+"\n", name, err)
+						requeue(name, isDelete)
+					} else {
+						resetDelay()
+					}
+				} else {
+					// Upload.
+					value := b.puts[name]
+					if err := b.store.conn.ObjectPutBytes(b.store.container, name, value, "application/octet-stream"); err != nil {
+						dvid.Errorf(`Individual bulk Swift upload failed on "%s": %s (will repeat)`+"\n", name, err)
+						requeue(name, isDelete)
+					} else {
+						resetDelay()
+					}
+					storage.StoreValueBytesWritten <- len(value)
+				}
+				<-rateLimit
 			}
-
-			// Write content.
-			if _, tarErr = tw.Write(value); tarErr != nil {
-				return
-			}
-			storage.StoreValueBytesWritten <- len(value)
-		}
-		tarErr = tw.Close()
-	}()
-	if result, err := b.store.conn.BulkUpload(b.store.container, reader, swift.UploadTar, nil); err != nil {
-		return fmt.Errorf(`Swift bulk uploads failed (%d of %d succeeded): %s / %s`, result.NumberCreated, len(b.puts), err, tarErr)
+		}()
 	}
-	if tarErr != nil {
-		return fmt.Errorf("Error generating tar file for Swift bulk upload: %s", tarErr)
+	wg.Wait()
+
+	// Do we finish with an error?
+	if tooManyDelays {
+		return fmt.Errorf(`Too many errors during bulk upload to Swift, %d of %d deletes / %d of %d puts not completed`, len(deletes), len(b.deletes), len(puts), len(b.puts))
 	}
 
-	return nil
-}
-
-// commitNonBulk commits the batches using individual, non-bulk transactions.
-func (b *Batch) commitNonBulk() error {
-	// Run the deletes.
-	for name := range b.deletes {
-		if err := b.store.conn.ObjectDelete(b.store.container, name); err != nil && err != swift.ObjectNotFound {
-			return fmt.Errorf(`Non-bulk Swift delete failed on "%s": %s`, name, err)
-		}
-	}
-
-	// Run the uploads.
-	for name, value := range b.puts {
-		if err := b.store.conn.ObjectPutBytes(b.store.container, name, value, "application/octet-stream"); err != nil {
-			return fmt.Errorf(`Non-bulk Swift upload failed on "%s": %s`, name, err)
-		}
-	}
+	// Debug stats. TODO: Remove
+	dvid.Infof("Bulk commit done: %d deletes, %d uploads: %s\n", len(b.deletes), len(b.puts), time.Since(start))
 
 	return nil
 }
