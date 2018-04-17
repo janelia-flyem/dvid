@@ -86,15 +86,16 @@ POST <api URL>/node/<UUID>/<data name>/sync?<options>
 
     { "sync": "labels,bodies" }
 
-	To delete syncs, pass an empty string of names with query string "replace=true":
+    To delete syncs, pass an empty string of names with query string "replace=true":
 
-	{ "sync": "" }
+    { "sync": "" }
 
     The "sync" property should be followed by a comma-delimited list of data instances that MUST
     already exist.  Currently, syncs should be created before any annotations are pushed to
     the server.  If annotations already exist, these are currently not synced.
 
-    The annotations data type only accepts syncs to labelblk and labelvol data instances.
+	The annotations data type only accepts syncs to label-oriented datatypes: labelblk, labelvol,
+	labelarray, and labelmap.
 
     POST Query-string Options:
 
@@ -109,7 +110,7 @@ GET <api URL>/node/<UUID>/<data name>/label/<label>[?<options>]
 
 	Returns all point annotations within the given label as an array of elements.
 	This endpoint is only available if the annotation data instance is synced with
-	a labelblk data instance.
+	voxel label data instances (labelblk, labelarray, labelmap).
 	
 	GET Query-string Option:
 
