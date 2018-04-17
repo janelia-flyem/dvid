@@ -19,6 +19,7 @@ import (
 	"github.com/janelia-flyem/dvid/datastore"
 	"github.com/janelia-flyem/dvid/datatype/labelarray"
 	"github.com/janelia-flyem/dvid/datatype/labelblk"
+	"github.com/janelia-flyem/dvid/datatype/labelmap"
 	"github.com/janelia-flyem/dvid/datatype/labelvol"
 	"github.com/janelia-flyem/dvid/datatype/roi"
 	"github.com/janelia-flyem/dvid/dvid"
@@ -485,10 +486,11 @@ func (t Tags) Swap(i, j int) {
 // ElementNR describes a synaptic element's properties with No Relationships (NR),
 // used purely for label and tag annotations.
 type ElementNR struct {
-	Pos  dvid.Point3d
-	Kind ElementType
-	Tags Tags              // Indexed
-	Prop map[string]string // Non-Indexed
+	Pos        dvid.Point3d
+	Kind       ElementType
+	Tags       Tags              // Indexed
+	Prop       map[string]string // Non-Indexed
+	Supervoxel uint64            // only used when synced with supervoxel-aware datatypes like labelmap
 }
 
 func (e ElementNR) Copy() *ElementNR {
@@ -862,10 +864,7 @@ func putElements(ctx *datastore.VersionedCtx, tk storage.TKey, elems interface{}
 	if err != nil {
 		return err
 	}
-	if err := store.Put(ctx, tk, val); err != nil {
-		return err
-	}
-	return nil
+	return store.Put(ctx, tk, val)
 }
 
 // Returns elements within the sparse volume represented by the blocks of RLEs.
@@ -927,7 +926,7 @@ func (d *Data) blockSize() dvid.Point3d {
 	}
 	var bsize dvid.Point3d
 	d.cachedBlockSize = &bsize
-	if lb := d.GetSyncedLabels(); lb != nil {
+	if lb := d.getSyncedLabels(); lb != nil {
 		bsize = lb.BlockSize().(dvid.Point3d)
 		return bsize
 	}
@@ -956,12 +955,17 @@ type labelType interface {
 	DataName() dvid.InstanceName
 }
 
-func (d *Data) GetSyncedLabels() labelType {
+type mappedLabelType interface {
+	GetMappedLabels(dvid.VersionID, []uint64) ([]uint64, error)
+	DataName() dvid.InstanceName
+}
+
+func (d *Data) getSyncedLabels() labelType {
 	for dataUUID := range d.SyncedData() {
-		// source0, err := labelmap.GetByDataUUID(dataUUID)
-		// if err == nil {
-		// 	return source0
-		// }
+		source0, err := labelmap.GetByDataUUID(dataUUID)
+		if err == nil {
+			return source0
+		}
 		source1, err := labelarray.GetByDataUUID(dataUUID)
 		if err == nil {
 			return source1
@@ -1068,7 +1072,7 @@ func (d *Data) deleteElementInTags(ctx *datastore.VersionedCtx, batch storage.Ba
 }
 
 func (d *Data) deleteElementInLabel(ctx *datastore.VersionedCtx, batch storage.Batch, pt dvid.Point3d) error {
-	labelData := d.GetSyncedLabels()
+	labelData := d.getSyncedLabels()
 	if labelData == nil {
 		return nil // no synced labels
 	}
@@ -1172,7 +1176,7 @@ func (d *Data) moveElementInTags(ctx *datastore.VersionedCtx, batch storage.Batc
 }
 
 func (d *Data) moveElementInLabels(ctx *datastore.VersionedCtx, batch storage.Batch, from, to dvid.Point3d, moved ElementNR) error {
-	labelData := d.GetSyncedLabels()
+	labelData := d.getSyncedLabels()
 	if labelData == nil {
 		return nil // no label denormalization possible
 	}
@@ -1303,10 +1307,14 @@ func (d *Data) storeBlockElements(ctx *datastore.VersionedCtx, batch storage.Bat
 // stores synaptic elements arranged by label, replacing any
 // elements at same position.
 func (d *Data) storeLabelElements(ctx *datastore.VersionedCtx, batch storage.Batch, be blockElements) error {
-	labelData := d.GetSyncedLabels()
+	labelData := d.getSyncedLabels()
 	if labelData == nil {
 		dvid.Infof("No synced labels for annotation %q, skipping label-aware denormalization.\n", d.DataName())
 		return nil // no synced labels
+	}
+	lmapData, ok := labelData.(mappedLabelType)
+	if !ok {
+		lmapData = nil
 	}
 
 	// Compute the strides (in bytes)
@@ -1332,7 +1340,7 @@ func (d *Data) storeLabelElements(ctx *datastore.VersionedCtx, batch storage.Bat
 			continue
 		}
 		if len(labels) != blockBytes {
-			return fmt.Errorf("Expected %d bytes in %q label block, got %d instead.  Aborting.", blockBytes, d.DataName(), len(labels))
+			return fmt.Errorf("expected %d bytes in %q label block, got %d instead.  aborting", blockBytes, d.DataName(), len(labels))
 		}
 
 		// Group annotations by label
@@ -1340,9 +1348,21 @@ func (d *Data) storeLabelElements(ctx *datastore.VersionedCtx, batch storage.Bat
 			pt := elem.Pos.Point3dInChunk(blockSize)
 			i := pt[2]*bY + pt[1]*bX + pt[0]*8
 			label := binary.LittleEndian.Uint64(labels[i : i+8])
+			if lmapData != nil {
+				elem.Supervoxel = label
+			}
 			if label != 0 {
 				toAdd.add(label, elem.ElementNR)
 			}
+		}
+	}
+
+	// If synced with a mapped label type, adjust the labels and add supervoxels to each element.
+	if lmapData != nil {
+		var err error
+		toAdd, err = toAdd.applyMapping(lmapData, ctx.VersionID())
+		if err != nil {
+			return err
 		}
 	}
 
@@ -1352,7 +1372,7 @@ func (d *Data) storeLabelElements(ctx *datastore.VersionedCtx, batch storage.Bat
 		tk := NewLabelTKey(label)
 		elems, err := getElementsNR(ctx, tk)
 		if err != nil {
-			return fmt.Errorf("err getting elements for label %d: %v\n", label, err)
+			return fmt.Errorf("err getting elements for label %d: %v", label, err)
 		}
 
 		// Check if these annotations already exist.
@@ -1370,7 +1390,7 @@ func (d *Data) storeLabelElements(ctx *datastore.VersionedCtx, batch storage.Bat
 			}
 		}
 		if err := putBatchElements(batch, tk, elems); err != nil {
-			return fmt.Errorf("couldn't serialize label %d annotations in instance %q: %v\n", label, d.DataName(), err)
+			return fmt.Errorf("couldn't serialize label %d annotations in instance %q: %v", label, d.DataName(), err)
 		}
 	}
 

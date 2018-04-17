@@ -193,6 +193,13 @@ func (d *Data) CleaveLabel(v dvid.VersionID, label uint64, r io.ReadCloser) (cle
 		CleavedLabel:       cleaveLabel,
 		CleavedSupervoxels: cleaveSupervoxels,
 	}
+	evt := datastore.SyncEvent{d.DataUUID(), labels.CleaveLabelEvent}
+	msg := datastore.SyncMessage{labels.CleaveLabelEvent, v, op}
+	if err = datastore.NotifySubscribers(evt, msg); err != nil {
+		err = fmt.Errorf("can't notify subscribers for event %v: %v", evt, err)
+		return
+	}
+
 	if err = CleaveIndex(d, v, op); err != nil {
 		return
 	}
@@ -235,6 +242,7 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser) 
 	if err != nil {
 		return
 	}
+	toLabelSize, _ := split.Stats()
 
 	// Only do one large mutation at a time, although each request can start many goroutines.
 	server.LargeMutationMutex.Lock()
@@ -279,6 +287,22 @@ func (d *Data) SplitLabels(v dvid.VersionID, fromLabel uint64, r io.ReadCloser) 
 	splitmap, err = split.Partition(blockSize)
 	if err != nil {
 		return
+	}
+
+	// Get a sorted list of blocks that cover split.
+	splitblks := splitmap.SortedKeys()
+
+	deltaSplit := labels.DeltaSplit{
+		OldLabel:     fromLabel,
+		NewLabel:     toLabel,
+		Split:        splitmap,
+		SortedBlocks: splitblks,
+		SplitVoxels:  toLabelSize,
+	}
+	evt := datastore.SyncEvent{d.DataUUID(), labels.SplitLabelEvent}
+	msg := datastore.SyncMessage{labels.SplitLabelEvent, v, deltaSplit}
+	if err := datastore.NotifySubscribers(evt, msg); err != nil {
+		dvid.Errorf("can't notify subscribers for event %v: %v\n", evt, err)
 	}
 
 	// Do the split

@@ -960,19 +960,22 @@ func testLabels(t *testing.T, uuid dvid.UUID, labelblkName, labelvolName dvid.In
 	buf := getBytesRLE(t, rles)
 
 	// Submit the split sparsevol
-	reqStr := fmt.Sprintf("%snode/%s/%s/split/2?splitlabel=7", server.WebAPIPath, uuid, labelvolName)
+	reqStr := fmt.Sprintf("%snode/%s/%s/split/2", server.WebAPIPath, uuid, labelvolName)
 	r := server.TestHTTP(t, "POST", reqStr, buf)
-	jsonVal := make(map[string]uint64)
+	var jsonVal struct {
+		Label uint64
+	}
 	if err := json.Unmarshal(r, &jsonVal); err != nil {
 		t.Errorf("Unable to get new label from split.  Instead got: %v\n", jsonVal)
 	}
+	splitLabel := jsonVal.Label
 
 	// Verify that the annotations are correct.
 	if err := datastore.BlockOnUpdating(uuid, "mysynapses"); err != nil {
 		t.Fatalf("Error blocking on sync of split->annotations: %v\n", err)
 	}
 	testResponseLabel(t, expectedLabel2c, "%snode/%s/mysynapses/label/2?relationships=true", server.WebAPIPath, uuid)
-	url2 := fmt.Sprintf("%snode/%s/mysynapses/label/7?relationships=true", server.WebAPIPath, uuid)
+	url2 := fmt.Sprintf("%snode/%s/mysynapses/label/%d?relationships=true", server.WebAPIPath, uuid, splitLabel)
 	testResponseLabel(t, expectedLabel7, url2)
 
 	// Change the name of the annotations.
@@ -987,33 +990,35 @@ func testLabels(t *testing.T, uuid dvid.UUID, labelblkName, labelvolName dvid.In
 	server.TestBadHTTP(t, "GET", url2, nil)
 	testResponseLabel(t, expectedLabel2c, "%snode/%s/renamedData/label/2?relationships=true", server.WebAPIPath, uuid)
 
-	// Try a coarse split.
+	if labelblkName != "mylabelmap" {
+		// Try a coarse split.
 
-	// Create the encoding for split area in block coordinates.
-	rles = dvid.RLEs{
-		dvid.NewRLE(dvid.Point3d{3, 1, 3}, 1),
+		// Create the encoding for split area in block coordinates.
+		rles = dvid.RLEs{
+			dvid.NewRLE(dvid.Point3d{3, 1, 3}, 1),
+		}
+		buf = getBytesRLE(t, rles)
+
+		// Submit the coarse split
+		reqStr = fmt.Sprintf("%snode/%s/%s/split-coarse/2", server.WebAPIPath, uuid, labelvolName)
+		r = server.TestHTTP(t, "POST", reqStr, buf)
+		if err := json.Unmarshal(r, &jsonVal); err != nil {
+			t.Errorf("Unable to get new label from split.  Instead got: %v\n", jsonVal)
+		}
+		splitLabel2 := jsonVal.Label
+
+		// Verify that the annotations are correct.
+		if err := datastore.BlockOnUpdating(uuid, "renamedData"); err != nil {
+			t.Fatalf("Error blocking on sync of split->annotations: %v\n", err)
+		}
+		testResponseLabel(t, expectedLabel2c, "%snode/%s/renamedData/label/%d?relationships=true", server.WebAPIPath, uuid, splitLabel2)
+		testResponseLabel(t, nil, "%snode/%s/renamedData/label/2?relationships=true", server.WebAPIPath, uuid)
+
+		// Delete a labeled annotation and make sure it's not in label
+		delurl := fmt.Sprintf("%snode/%s/%s/element/20_30_40", server.WebAPIPath, uuid, "renamedData")
+		server.TestHTTP(t, "DELETE", delurl, nil)
+		testResponseLabel(t, afterDeleteOn7, "%snode/%s/%s/label/%d?relationships=true", server.WebAPIPath, uuid, "renamedData", splitLabel2)
 	}
-	buf = getBytesRLE(t, rles)
-
-	// Submit the coarse split
-	reqStr = fmt.Sprintf("%snode/%s/%s/split-coarse/2?splitlabel=8", server.WebAPIPath, uuid, labelvolName)
-	r = server.TestHTTP(t, "POST", reqStr, buf)
-	jsonVal = make(map[string]uint64)
-	if err := json.Unmarshal(r, &jsonVal); err != nil {
-		t.Errorf("Unable to get new label from split.  Instead got: %v\n", jsonVal)
-	}
-
-	// Verify that the annotations are correct.
-	if err := datastore.BlockOnUpdating(uuid, "renamedData"); err != nil {
-		t.Fatalf("Error blocking on sync of split->annotations: %v\n", err)
-	}
-	testResponseLabel(t, expectedLabel2c, "%snode/%s/renamedData/label/8?relationships=true", server.WebAPIPath, uuid)
-	testResponseLabel(t, nil, "%snode/%s/renamedData/label/2?relationships=true", server.WebAPIPath, uuid)
-
-	// Delete a labeled annotation and make sure it's not in label
-	delurl := fmt.Sprintf("%snode/%s/%s/element/20_30_40", server.WebAPIPath, uuid, "renamedData")
-	server.TestHTTP(t, "DELETE", delurl, nil)
-	testResponseLabel(t, afterDeleteOn7, "%snode/%s/%s/label/7?relationships=true", server.WebAPIPath, uuid, "renamedData")
 }
 
 func TestOldLabels(t *testing.T) {
@@ -1088,6 +1093,38 @@ func TestLabels(t *testing.T) {
 	}
 
 	testLabels(t, uuid, "labels", "labels")
+}
+
+func TestMappedLabels(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+
+	// Create testbed volume and data instances
+	uuid, _ := initTestRepo()
+	var config dvid.Config
+	config.Set("BlockSize", "32,32,32")
+	server.CreateTestInstance(t, uuid, "labelmap", "mylabelmap", config)
+
+	_ = createLabelTestVolume(t, uuid, "mylabelmap")
+
+	// Add annotations syncing with "labels" instance checking for deduplication.
+	server.CreateTestInstance(t, uuid, "annotation", "mysynapses", config)
+	server.CreateTestSync(t, uuid, "mysynapses", "mylabelmap,mylabelmap,mylabelmap")
+	dataservice, err := datastore.GetDataByUUIDName(uuid, "mysynapses")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, ok := dataservice.(*Data)
+	if !ok {
+		t.Fatalf("Can't convert dataservice %v into datastore.Data\n", dataservice)
+	}
+	if len(data.SyncedData()) != 1 {
+		t.Fatalf("Expected 1 sync (uuid for labels), got %v\n", data.SyncedData())
+	}
+
+	testLabels(t, uuid, "mylabelmap", "mylabelmap")
 }
 
 func testLabelsReload(t *testing.T, uuid dvid.UUID, labelblkName, labelvolName dvid.InstanceName) {

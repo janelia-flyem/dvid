@@ -692,7 +692,7 @@ func (d *Data) handleBlockMutate(v dvid.VersionID, ch chan blockChange, mut Muta
 		if mut.Prev == nil {
 			dvid.Infof("block mutate %s has no previous block\n", mut.Prev)
 		} else {
-			dvid.Infof("block mutate %s: block labels %v\n", mut.BCoord, mut.Prev.Labels)
+			dvid.Infof("block mutate %s: prev labels %v\n", mut.BCoord, mut.Prev.Labels)
 		}
 		bc.delta = mut.Data.CalcNumLabels(mut.Prev)
 	}
@@ -749,6 +749,11 @@ func (d *Data) aggregateBlockChanges(v dvid.VersionID, svmap *SVMap, ch <-chan b
 		}
 		svmap.RUnlock()
 	}
+	go func() {
+		if err := d.updateMaxLabel(v, maxLabel); err != nil {
+			dvid.Errorf("max label change during block aggregation for %q: %v\n", d.DataName(), err)
+		}
+	}()
 	if d.IndexedLabels {
 		for label := range labelset {
 			ChangeLabelIndex(d, v, label, svChanges)

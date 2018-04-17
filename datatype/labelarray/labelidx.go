@@ -1007,7 +1007,7 @@ func (d *Data) writeLegacyRLE(ctx *datastore.VersionedCtx, label uint64, scale u
 //        int32   Length of run
 //        bytes   Optional payload dependent on first byte descriptor
 //
-func (d *Data) getLegacyRLEs(ctx *datastore.VersionedCtx, label uint64, scale uint8, bounds dvid.Bounds) ([]byte, error) {
+func (d *Data) getLegacyRLE(ctx *datastore.VersionedCtx, label uint64, scale uint8, bounds dvid.Bounds) ([]byte, error) {
 	meta, lbls, err := GetMappedLabelIndex(d, ctx.VersionID(), label, scale, bounds)
 	if err != nil {
 		return nil, err

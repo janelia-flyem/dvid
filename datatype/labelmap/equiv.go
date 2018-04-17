@@ -294,6 +294,16 @@ func (svm *SVMap) MappedLabels(v dvid.VersionID, supervoxels []uint64) ([]uint64
 	return mapped, nil
 }
 
+// GetMappedLabels returns an array of mapped labels, which could be the same as the passed slice,
+// for the given version of the data instance.
+func (d *Data) GetMappedLabels(v dvid.VersionID, supervoxels []uint64) ([]uint64, error) {
+	svmap, err := getMapping(d, v)
+	if err != nil {
+		return nil, fmt.Errorf("couldn't get mapping for data %q, version %d: %v", d.DataName(), v, err)
+	}
+	return svmap.MappedLabels(v, supervoxels)
+}
+
 type instanceMaps struct {
 	maps map[dvid.UUID]*SVMap
 	sync.RWMutex
