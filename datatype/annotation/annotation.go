@@ -498,6 +498,7 @@ func (e ElementNR) Copy() *ElementNR {
 	c := new(ElementNR)
 	c.Pos = e.Pos
 	c.Kind = e.Kind
+	c.Supervoxel = e.Supervoxel
 	c.Tags = make(Tags, len(e.Tags))
 	copy(c.Tags, e.Tags)
 	c.Prop = make(map[string]string, len(e.Prop))
@@ -531,6 +532,7 @@ func (elems ElementsNR) Normalize() ElementsNR {
 	for i, elem := range elems {
 		out[i].Pos = elem.Pos
 		out[i].Kind = elem.Kind
+		out[i].Supervoxel = elem.Supervoxel
 		out[i].Tags = make(Tags, len(elem.Tags))
 		copy(out[i].Tags, elem.Tags)
 
@@ -621,6 +623,24 @@ func (elems *ElementsNR) move(from, to dvid.Point3d, deleteElement bool) (moved 
 	return
 }
 
+// if only 1 supervoxel passed, it's used to set all elements
+func (elems ElementsNR) setSupervoxels(supervoxels []uint64) ElementsNR {
+	var supervoxel uint64
+	if len(supervoxels) != len(elems) {
+		supervoxel = supervoxels[0]
+	}
+	dup := make(ElementsNR, len(elems))
+	for i, elem := range elems {
+		dup[i] = *elem.Copy()
+		if supervoxel != 0 {
+			dup[i].Supervoxel = supervoxel
+		} else {
+			dup[i].Supervoxel = supervoxels[i]
+		}
+	}
+	return dup
+}
+
 // Elements is a slice of Element, which includes relationships.
 type Elements []Element
 
@@ -640,6 +660,7 @@ func (elems Elements) Normalize() Elements {
 	for i, elem := range elems {
 		out[i].Pos = elem.Pos
 		out[i].Kind = elem.Kind
+		out[i].Supervoxel = elem.Supervoxel
 		out[i].Rels = make(Relationships, len(elem.Rels))
 		copy(out[i].Rels, elem.Rels)
 		out[i].Tags = make(Tags, len(elem.Tags))
@@ -743,6 +764,24 @@ func (elems *Elements) move(from, to dvid.Point3d, deleteElement bool) (moved *E
 		}
 	}
 	return
+}
+
+// if only 1 supervoxel passed, it's used to set all elements
+func (elems Elements) setSupervoxels(supervoxels []uint64) Elements {
+	var supervoxel uint64
+	if len(supervoxels) != len(elems) {
+		supervoxel = supervoxels[0]
+	}
+	dup := make(Elements, len(elems))
+	for i, elem := range elems {
+		dup[i] = *elem.Copy()
+		if supervoxel != 0 {
+			dup[i].Supervoxel = supervoxel
+		} else {
+			dup[i].Supervoxel = supervoxels[i]
+		}
+	}
+	return dup
 }
 
 // --- Sort interface
@@ -1022,6 +1061,9 @@ func (d *Data) getExpandedElements(ctx *datastore.VersionedCtx, tk storage.TKey)
 		for _, elem := range be {
 			i, found := emap[elem.Pos.MapKey()]
 			if found {
+				if elem.Supervoxel != 0 {
+					relElems[i].Supervoxel = elem.Supervoxel
+				}
 				expanded = append(expanded, relElems[i])
 			} else {
 				dvid.Errorf("Can't expand relationships for data %q, element @ %s, didn't find it in block %s!\n", d.DataName(), elem.Pos, izyx)
@@ -1084,7 +1126,7 @@ func (d *Data) deleteElementInLabel(ctx *datastore.VersionedCtx, batch storage.B
 	tk := NewLabelTKey(label)
 	elems, err := getElementsNR(ctx, tk)
 	if err != nil {
-		return fmt.Errorf("err getting elements for label %d: %v\n", label, err)
+		return fmt.Errorf("err getting elements for label %d: %v", label, err)
 	}
 
 	// Note all elements to be deleted.
@@ -1352,6 +1394,7 @@ func (d *Data) storeLabelElements(ctx *datastore.VersionedCtx, batch storage.Bat
 			if lmapData != nil {
 				elem.Supervoxel = label
 			}
+
 			if label != 0 {
 				toAdd.add(label, elem.ElementNR)
 			}
@@ -1361,7 +1404,7 @@ func (d *Data) storeLabelElements(ctx *datastore.VersionedCtx, batch storage.Bat
 	// If synced with a mapped label type, adjust the labels and add supervoxels to each element.
 	if lmapData != nil {
 		var err error
-		toAdd, err = toAdd.applyMapping(lmapData, ctx.VersionID())
+		toAdd, err = toAdd.applyMapping(lmapData, ctx.VersionID(), false)
 		if err != nil {
 			return err
 		}
@@ -1390,6 +1433,7 @@ func (d *Data) storeLabelElements(ctx *datastore.VersionedCtx, batch storage.Bat
 				elems[i] = elem // replace properties if same position
 			}
 		}
+		elemsBytes, _ := json.Marshal(elems)
 		if err := putBatchElements(batch, tk, elems); err != nil {
 			return fmt.Errorf("couldn't serialize label %d annotations in instance %q: %v", label, d.DataName(), err)
 		}
@@ -2012,7 +2056,7 @@ func GetByDataUUID(dataUUID dvid.UUID) (*Data, error) {
 	}
 	data, ok := source.(*Data)
 	if !ok {
-		return nil, fmt.Errorf("Instance '%s' is not an annotation datatype!", source.DataName())
+		return nil, fmt.Errorf("instance %q is not an annotation datatype", source.DataName())
 	}
 	return data, nil
 }
@@ -2025,7 +2069,7 @@ func GetByUUIDName(uuid dvid.UUID, name dvid.InstanceName) (*Data, error) {
 	}
 	data, ok := source.(*Data)
 	if !ok {
-		return nil, fmt.Errorf("Instance '%s' is not an annotation datatype!", name)
+		return nil, fmt.Errorf("instance %q is not an annotation datatype", name)
 	}
 	return data, nil
 }
@@ -2074,7 +2118,7 @@ func (d *Data) GobEncode() ([]byte, error) {
 func (d *Data) DoRPC(request datastore.Request, reply *datastore.Response) error {
 	switch request.TypeCommand() {
 	default:
-		return fmt.Errorf("Unknown command.  Data type '%s' [%s] does not support '%s' command.",
+		return fmt.Errorf("unknown command.  Data type %q [%s] does not support %q command.",
 			d.DataName(), d.TypeName(), request.TypeCommand())
 	}
 }
@@ -2109,7 +2153,7 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 			server.BadRequest(w, r, err)
 			return
 		}
-		fmt.Fprintf(w, "Changed '%s' based on received configuration:\n%s\n", d.DataName(), config)
+		fmt.Fprintf(w, "Changed %q based on received configuration:\n%s\n", d.DataName(), config)
 		return
 	}
 

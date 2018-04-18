@@ -357,6 +357,9 @@ func modifySplitIndex(d dvid.Data, v dvid.VersionID, fromLabel, toLabel uint64, 
 		select {
 		case removed := <-blockCh:
 			for supervoxel, voxelsRemoved := range removed.deleted {
+				if supervoxel == 0 {
+					continue
+				}
 				zyx, err := labels.IZYXStringToBlockIndex(removed.bcoord)
 				if err != nil {
 					dvid.Errorf("unable to convert block %s to block index: %v\n", removed.bcoord, err)
