@@ -1433,7 +1433,6 @@ func (d *Data) storeLabelElements(ctx *datastore.VersionedCtx, batch storage.Bat
 				elems[i] = elem // replace properties if same position
 			}
 		}
-		elemsBytes, _ := json.Marshal(elems)
 		if err := putBatchElements(batch, tk, elems); err != nil {
 			return fmt.Errorf("couldn't serialize label %d annotations in instance %q: %v", label, d.DataName(), err)
 		}

@@ -133,6 +133,79 @@ func deleteLabelIndex(ctx *datastore.VersionedCtx, label uint64) error {
 	return nil
 }
 
+func getCachedLabelIndex(d dvid.Data, v dvid.VersionID, label uint64) (*labels.Index, error) {
+	atomic.AddUint64(&metaAttempts, 1)
+	k := indexKey{data: d, version: v, label: label}
+
+	var err error
+	var idxBytes []byte
+	if indexCache != nil {
+		idxBytes, err = indexCache.Get(k.Bytes())
+		if err != nil && err != freecache.ErrNotFound {
+			return nil, err
+		}
+	}
+	var idx *labels.Index
+	if idxBytes != nil {
+		idx = new(labels.Index)
+		if err = idx.Unmarshal(idxBytes); err != nil {
+			return nil, err
+		}
+		atomic.AddUint64(&metaHits, 1)
+		return idx, nil
+	}
+	idx, err = getLabelIndex(k.VersionedCtx(), label)
+	if err != nil {
+		return nil, err
+	}
+	if idx == nil {
+		return nil, nil
+	}
+	if indexCache != nil {
+		idxBytes, err := idx.Marshal()
+		if err != nil {
+			dvid.Errorf("unable to marshal label %d index for %q: %v\n", label, d.DataName(), err)
+		} else if err := indexCache.Set(k.Bytes(), idxBytes, 0); err != nil {
+			dvid.Errorf("unable to set label %d index cache for %q: %v\n", label, d.DataName(), err)
+		}
+	}
+	if idx.Label != label {
+		dvid.Criticalf("label index for data %q, label %d has internal label value %d\n", d.DataName(), label, idx.Label)
+		idx.Label = label
+	}
+	return idx, nil
+}
+
+func putCachedLabelIndex(d dvid.Data, v dvid.VersionID, idx *labels.Index) error {
+	ctx := datastore.NewVersionedCtx(d, v)
+	if err := putLabelIndex(ctx, idx); err != nil {
+		return err
+	}
+	if indexCache != nil {
+		idxBytes, err := idx.Marshal()
+		if err != nil {
+			return err
+		}
+		k := indexKey{data: d, version: v, label: idx.Label}.Bytes()
+		if err = indexCache.Set(k, idxBytes, 0); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func deleteCachedLabelIndex(d dvid.Data, v dvid.VersionID, label uint64) error {
+	ctx := datastore.NewVersionedCtx(d, v)
+	if err := deleteLabelIndex(ctx, label); err != nil {
+		return err
+	}
+	if indexCache != nil {
+		k := indexKey{data: d, version: v, label: label}.Bytes()
+		indexCache.Del(k)
+	}
+	return nil
+}
+
 ///////////////////////////////////////////////////////////////////////////
 // The following public functions are concurrency-safe and support caching.
 
@@ -153,41 +226,10 @@ func GetLabelIndex(d dvid.Data, v dvid.VersionID, label uint64, isSupervoxel boo
 		}
 	}
 
-	atomic.AddUint64(&metaAttempts, 1)
-	k := indexKey{data: d, version: v, label: label}
-
 	shard := label % numIndexShards
 	indexMu[shard].RLock()
-	defer indexMu[shard].RUnlock()
-
-	var err error
-	var idxBytes []byte
-	if indexCache != nil {
-		idxBytes, err = indexCache.Get(k.Bytes())
-		if err != nil && err != freecache.ErrNotFound {
-			return nil, err
-		}
-	}
-	if idxBytes != nil {
-		idx := new(labels.Index)
-		if err := idx.Unmarshal(idxBytes); err != nil {
-			return nil, err
-		}
-		atomic.AddUint64(&metaHits, 1)
-		return idx, nil
-	}
-	idx, err := getLabelIndex(k.VersionedCtx(), label)
-	if err != nil {
-		return nil, err
-	}
-	if indexCache != nil && idx != nil {
-		idxBytes, err := idx.Marshal()
-		if err != nil {
-			dvid.Errorf("unable to marshal label %d index for %q: %v\n", label, d.DataName(), err)
-		} else if err := indexCache.Set(k.Bytes(), idxBytes, 0); err != nil {
-			dvid.Errorf("unable to set label %d index cache for %q: %v\n", label, d.DataName(), err)
-		}
-	}
+	idx, err := getCachedLabelIndex(d, v, label)
+	indexMu[shard].RUnlock()
 	return idx, err
 }
 
@@ -273,17 +315,9 @@ func GetMultiLabelIndex(d dvid.Data, v dvid.VersionID, lbls labels.Set, bounds d
 func DeleteLabelIndex(d dvid.Data, v dvid.VersionID, label uint64) error {
 	shard := label % numIndexShards
 	indexMu[shard].Lock()
-	defer indexMu[shard].Unlock()
-
-	ctx := datastore.NewVersionedCtx(d, v)
-	if err := deleteLabelIndex(ctx, label); err != nil {
-		return err
-	}
-	if indexCache != nil {
-		k := indexKey{data: d, version: v, label: label}.Bytes()
-		indexCache.Del(k)
-	}
-	return nil
+	err := deleteCachedLabelIndex(d, v, label)
+	indexMu[shard].Unlock()
+	return err
 }
 
 // PutLabelIndex persists a label index data for a given data instance and
@@ -293,61 +327,29 @@ func PutLabelIndex(d dvid.Data, v dvid.VersionID, label uint64, idx *labels.Inde
 	if idx == nil {
 		return DeleteLabelIndex(d, v, label)
 	}
-	idx.Label = label
 	shard := label % numIndexShards
 	indexMu[shard].Lock()
-	defer indexMu[shard].Unlock()
 
-	ctx := datastore.NewVersionedCtx(d, v)
-	if err := putLabelIndex(ctx, idx); err != nil {
-		return err
-	}
-	idxBytes, err := idx.Marshal()
-	if err != nil {
-		return err
-	}
-	if indexCache != nil {
-		k := indexKey{data: d, version: v, label: label}.Bytes()
-		if err := indexCache.Set(k, idxBytes, 0); err != nil {
-			return err
-		}
-	}
-	return nil
+	idx.Label = label
+	err := putCachedLabelIndex(d, v, idx)
+	indexMu[shard].Unlock()
+	return err
 }
 
 // should be launched as goroutine; locks the index of the split label for duration
 func modifySplitIndex(d dvid.Data, v dvid.VersionID, fromLabel, toLabel uint64, blockCh chan blockSplitCounts, doneCh chan struct{}) {
-	atomic.AddUint64(&metaAttempts, 1)
-	k := indexKey{data: d, version: v, label: fromLabel}
-
 	shard := fromLabel % numIndexShards
 	indexMu[shard].Lock()
 	defer indexMu[shard].Unlock()
 
-	// get the index containing this supervoxel
-	var err error
-	var idxBytes []byte
-	if indexCache != nil {
-		idxBytes, err = indexCache.Get(k.Bytes())
-		if err != nil && err != freecache.ErrNotFound {
-			dvid.Errorf("modify split index for data %q, label %d: %v\n", d.DataName(), fromLabel, err)
-			return
-		}
+	idx, err := getCachedLabelIndex(d, v, fromLabel)
+	if err != nil {
+		dvid.Errorf("modify split index for data %q, label %d: %v\n", err)
+		return
 	}
-	var idx *labels.Index
-	if idxBytes != nil {
-		idx = new(labels.Index)
-		if err := idx.Unmarshal(idxBytes); err != nil {
-			dvid.Errorf("modify split index for data %q, label %d: %v\n", d.DataName(), fromLabel, err)
-			return
-		}
-		atomic.AddUint64(&metaHits, 1)
-	} else {
-		idx, err = getLabelIndex(k.VersionedCtx(), fromLabel)
-		if err != nil {
-			dvid.Errorf("modify split index for data %q, label %d: %v\n", d.DataName(), fromLabel, err)
-			return
-		}
+	if idx == nil {
+		dvid.Errorf("unable to modify split index for data %q: missing label %d\n", d.DataName(), fromLabel)
+		return
 	}
 
 	// modify index of split label to remove overwritten supervoxel counts
@@ -412,39 +414,15 @@ func modifySplitIndex(d dvid.Data, v dvid.VersionID, fromLabel, toLabel uint64, 
 	}
 
 	// store the modified label index that remains after the split
-	ctx := datastore.NewVersionedCtx(d, v)
-	if err := putLabelIndex(ctx, idx); err != nil {
+	if err := putCachedLabelIndex(d, v, idx); err != nil {
 		dvid.Errorf("modify split index for data %q, label %d: %v\n", d.DataName(), fromLabel, err)
 		return
 	}
-	if indexCache != nil {
-		idxBytes, err = idx.Marshal()
-		if err != nil {
-			dvid.Errorf("modify split index for data %q, label %d: %v\n", d.DataName(), fromLabel, err)
-			return
-		}
-		k := indexKey{data: d, version: v, label: fromLabel}.Bytes()
-		if err := indexCache.Set(k, idxBytes, 0); err != nil {
-			dvid.Errorf("modify split index for data %q, label %d: %v\n", d.DataName(), fromLabel, err)
-			return
-		}
-	}
 
 	// store the new label index corresponding to the split
-	if err = putLabelIndex(ctx, sidx); err != nil {
+	if err := putCachedLabelIndex(d, v, sidx); err != nil {
+		dvid.Errorf("create new split index for data %q, label %d: %v\n", d.DataName(), toLabel, err)
 		return
-	}
-	if indexCache != nil {
-		idxBytes, err = sidx.Marshal()
-		if err != nil {
-			dvid.Errorf("create new split index for data %q, label %d: %v\n", d.DataName(), toLabel, err)
-			return
-		}
-		k := indexKey{data: d, version: v, label: toLabel}.Bytes()
-		if err := indexCache.Set(k, idxBytes, 0); err != nil {
-			dvid.Errorf("index cache set for data %q, label %d: %v\n", d.DataName(), toLabel, err)
-			return
-		}
 	}
 }
 
@@ -462,33 +440,16 @@ func SplitSupervoxelIndex(d dvid.Data, v dvid.VersionID, op labels.SplitSupervox
 		label = mapped
 	}
 
-	atomic.AddUint64(&metaAttempts, 1)
-	k := indexKey{data: d, version: v, label: label}
-
 	shard := label % numIndexShards
 	indexMu[shard].Lock()
 	defer indexMu[shard].Unlock()
 
-	// get the index containing this supervoxel
-	var idxBytes []byte
-	if indexCache != nil {
-		idxBytes, err = indexCache.Get(k.Bytes())
-		if err != nil && err != freecache.ErrNotFound {
-			return nil, err
-		}
+	idx, err := getCachedLabelIndex(d, v, label)
+	if err != nil {
+		return nil, fmt.Errorf("split supervoxel index for data %q, supervoxel %d: %v", d.DataName(), op.Supervoxel, err)
 	}
-	var idx *labels.Index
-	if idxBytes != nil {
-		idx = new(labels.Index)
-		if err := idx.Unmarshal(idxBytes); err != nil {
-			return nil, err
-		}
-		atomic.AddUint64(&metaHits, 1)
-	} else {
-		idx, err = getLabelIndex(k.VersionedCtx(), label)
-		if err != nil {
-			return nil, err
-		}
+	if idx == nil {
+		return nil, fmt.Errorf("unable to split supervoxel %d for data %q: missing label index %d", op.Supervoxel, d.DataName(), label)
 	}
 
 	// modify the index to reflect old supervoxel -> two new supervoxels.
@@ -511,19 +472,8 @@ func SplitSupervoxelIndex(d dvid.Data, v dvid.VersionID, op labels.SplitSupervox
 	}
 
 	// store the modified index
-	ctx := datastore.NewVersionedCtx(d, v)
-	if err := putLabelIndex(ctx, idx); err != nil {
-		return nil, err
-	}
-	if indexCache != nil {
-		idxBytes, err = idx.Marshal()
-		if err != nil {
-			return nil, err
-		}
-		k := indexKey{data: d, version: v, label: label}.Bytes()
-		if err := indexCache.Set(k, idxBytes, 0); err != nil {
-			return nil, err
-		}
+	if err := putCachedLabelIndex(d, v, idx); err != nil {
+		return nil, fmt.Errorf("split supervoxel index for data %q, supervoxel %d: %v", d.DataName(), op.Supervoxel, err)
 	}
 	return svblocks, nil
 }
@@ -531,34 +481,13 @@ func SplitSupervoxelIndex(d dvid.Data, v dvid.VersionID, op labels.SplitSupervox
 // CleaveIndex modifies the label index to remove specified supervoxels and create another
 // label index for this cleaved body.
 func CleaveIndex(d dvid.Data, v dvid.VersionID, op labels.CleaveOp) error {
-	atomic.AddUint64(&metaAttempts, 1)
-	k := indexKey{data: d, version: v, label: op.Target}
-
 	shard := op.Target % numIndexShards
 	indexMu[shard].Lock()
 	defer indexMu[shard].Unlock()
 
-	// get the index containing this supervoxel
-	var err error
-	var idxBytes []byte
-	if indexCache != nil {
-		idxBytes, err = indexCache.Get(k.Bytes())
-		if err != nil && err != freecache.ErrNotFound {
-			return err
-		}
-	}
-	var idx *labels.Index
-	if idxBytes != nil {
-		idx = new(labels.Index)
-		if err := idx.Unmarshal(idxBytes); err != nil {
-			return err
-		}
-		atomic.AddUint64(&metaHits, 1)
-	} else {
-		idx, err = getLabelIndex(k.VersionedCtx(), op.Target)
-		if err != nil {
-			return err
-		}
+	idx, err := getCachedLabelIndex(d, v, op.Target)
+	if err != nil {
+		return err
 	}
 	if idx == nil {
 		return fmt.Errorf("cannot cleave non-existent label %d", op.Target)
@@ -577,106 +506,38 @@ func CleaveIndex(d dvid.Data, v dvid.VersionID, op labels.CleaveOp) error {
 
 	// create a new label index to contain the cleaved supervoxels.
 	// we don't have to worry about mutex here because it's a new index.
-	ctx := datastore.NewVersionedCtx(d, v)
 	cidx := idx.Cleave(op.CleavedLabel, op.CleavedSupervoxels)
-	if err := putLabelIndex(ctx, cidx); err != nil {
+	if err := putCachedLabelIndex(d, v, cidx); err != nil {
 		return err
 	}
-	if err := putLabelIndex(ctx, idx); err != nil {
-		return err
-	}
-	if indexCache != nil {
-		idxBytes, err = cidx.Marshal()
-		if err != nil {
-			return err
-		}
-		k := indexKey{data: d, version: v, label: op.CleavedLabel}.Bytes()
-		if err := indexCache.Set(k, idxBytes, 0); err != nil {
-			return err
-		}
-
-		idxBytes, err = idx.Marshal()
-		if err != nil {
-			return err
-		}
-		k = indexKey{data: d, version: v, label: op.Target}.Bytes()
-		if err := indexCache.Set(k, idxBytes, 0); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return putCachedLabelIndex(d, v, idx)
 }
 
 // ChangeLabelIndex applies changes to a label's index and then stores the result.
 // Supervoxel size changes for blocks should be passed into the function.  The passed
 // SupervoxelDelta can contain more supervoxels than the label index.
 func ChangeLabelIndex(d dvid.Data, v dvid.VersionID, label uint64, delta labels.SupervoxelChanges) error {
-	atomic.AddUint64(&metaAttempts, 1)
-	k := indexKey{data: d, version: v, label: label}
-
 	shard := label % numIndexShards
 	indexMu[shard].Lock()
 	defer indexMu[shard].Unlock()
 
-	// get the index
-	var err error
-	var idxBytes []byte
-	if indexCache != nil {
-		idxBytes, err = indexCache.Get(k.Bytes())
-		if err != nil && err != freecache.ErrNotFound {
-			return err
-		}
+	idx, err := getCachedLabelIndex(d, v, label)
+	if err != nil {
+		return err
 	}
-	var idx *labels.Index
-	if idxBytes != nil {
+	if idx == nil {
 		idx = new(labels.Index)
-		if err := idx.Unmarshal(idxBytes); err != nil {
-			return err
-		}
-		atomic.AddUint64(&metaHits, 1)
-	} else {
-		idx, err = getLabelIndex(k.VersionedCtx(), label)
-		if err != nil {
-			return err
-		}
-		if idx == nil {
-			idx = new(labels.Index)
-			idx.Label = label
-		}
+		idx.Label = label
 	}
 
-	// Modify the label index
 	if err := idx.ModifyBlocks(label, delta); err != nil {
 		return err
 	}
 
-	// Persist the label index changes.
-	ctx := datastore.NewVersionedCtx(d, v)
-	if len(idx.Blocks) == 0 { // Delete this label's index
-		if err := deleteLabelIndex(ctx, label); err != nil {
-			return err
-		}
-		if indexCache != nil {
-			k := indexKey{data: d, version: v, label: label}.Bytes()
-			indexCache.Del(k)
-		}
-	} else {
-		if err = putLabelIndex(ctx, idx); err != nil {
-			return err
-		}
-		if indexCache != nil && idx != nil {
-			idxBytes, err = idx.Marshal()
-			if err != nil {
-				return err
-			}
-			k := indexKey{data: d, version: v, label: label}.Bytes()
-			if err := indexCache.Set(k, idxBytes, 0); err != nil {
-				return err
-			}
-		}
+	if len(idx.Blocks) == 0 {
+		return deleteCachedLabelIndex(d, v, label)
 	}
-	return nil
+	return putCachedLabelIndex(d, v, idx)
 }
 
 ///////////////////////////////////////
@@ -692,11 +553,11 @@ func (d *Data) handleBlockMutate(v dvid.VersionID, ch chan blockChange, mut Muta
 		bcoord: mut.BCoord,
 	}
 	if d.IndexedLabels {
-		if mut.Prev == nil {
-			dvid.Infof("block mutate %s has no previous block\n", mut.Prev)
-		} else {
-			dvid.Infof("block mutate %s: prev labels %v\n", mut.BCoord, mut.Prev.Labels)
-		}
+		// if mut.Prev == nil {
+		// 	dvid.Infof("block mutate %s has no previous block\n", mut.Prev)
+		// } else {
+		// 	dvid.Infof("block mutate %s: prev labels %v\n", mut.BCoord, mut.Prev.Labels)
+		// }
 		bc.delta = mut.Data.CalcNumLabels(mut.Prev)
 	}
 	ch <- bc
@@ -759,7 +620,9 @@ func (d *Data) aggregateBlockChanges(v dvid.VersionID, svmap *SVMap, ch <-chan b
 	}()
 	if d.IndexedLabels {
 		for label := range labelset {
-			ChangeLabelIndex(d, v, label, svChanges)
+			if err := ChangeLabelIndex(d, v, label, svChanges); err != nil {
+				dvid.Errorf("indexing label %d: %v\n", label, err)
+			}
 		}
 	}
 }
