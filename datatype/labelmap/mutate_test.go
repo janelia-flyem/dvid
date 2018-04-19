@@ -970,7 +970,8 @@ func TestSplitLabel(t *testing.T) {
 	encoding = server.TestHTTP(t, "GET", reqStr, nil)
 	body4.checkSparseVol(t, encoding, dvid.OptionalBounds{})
 }
-func TestSplitSupervoxel(t *testing.T) {
+
+func testSplitSupervoxel(t *testing.T, testEnclosing bool) {
 	if err := server.OpenTest(); err != nil {
 		t.Fatalf("can't open test server: %v\n", err)
 	}
@@ -988,11 +989,21 @@ func TestSplitSupervoxel(t *testing.T) {
 		t.Fatalf("Error blocking on sync of labels: %v\n", err)
 	}
 
-	// Make sure sparsevol for original body 4 is correct
-	reqStr := fmt.Sprintf("%snode/%s/labels/sparsevol/%d", server.WebAPIPath, uuid, 4)
+	reqStr := fmt.Sprintf("%snode/%s/labels/sparsevol/4", server.WebAPIPath, uuid)
 	encoding := server.TestHTTP(t, "GET", reqStr, nil)
-	fmt.Printf("Checking original body 4 is correct\n")
 	body4.checkSparseVol(t, encoding, dvid.OptionalBounds{})
+
+	if testEnclosing {
+		testMerge := mergeJSON(`[3, 4]`)
+		testMerge.send(t, uuid, "labels")
+
+		if err := datastore.BlockOnUpdating(uuid, "labels"); err != nil {
+			t.Fatalf("Error blocking on bodies update: %v\n", err)
+		}
+
+		reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/3", server.WebAPIPath, uuid)
+		encoding = server.TestHTTP(t, "GET", reqStr, nil)
+	}
 
 	// Create the sparsevol encoding for split area
 	numspans := len(bodysplit.voxelSpans)
@@ -1025,8 +1036,8 @@ func TestSplitSupervoxel(t *testing.T) {
 		t.Errorf("Expected this JSON returned from maxlabel:\n%s\nGot:\n%s\n", expectedJSON, string(jsonStr))
 	}
 
-	// Submit the split sparsevol for body 4 using RLES "bodysplit"
-	reqStr = fmt.Sprintf("%snode/%s/labels/split-supervoxel/%d", server.WebAPIPath, uuid, 4)
+	// Submit the split sparsevol for supervoxel 4 using RLES "bodysplit"
+	reqStr = fmt.Sprintf("%snode/%s/labels/split-supervoxel/4", server.WebAPIPath, uuid)
 	r := server.TestHTTP(t, "POST", reqStr, buf)
 	var jsonVal struct {
 		SplitSupervoxel  uint64
@@ -1058,22 +1069,41 @@ func TestSplitSupervoxel(t *testing.T) {
 	if len(retrieved.data) != 8*128*128*128 {
 		t.Errorf("Retrieved post-split volume is incorrect size\n")
 	}
+	if testEnclosing {
+		original.addBody(body4, 3)
+	}
 	if err := original.equals(retrieved); err != nil {
 		t.Errorf("Post-supervoxel split label volume not equal to expected volume: %v\n", err)
 	}
 
 	// Make sure retrieved supervoxels are correct
 	retrieved.get(t, uuid, "labels", true)
+	if testEnclosing {
+		original.addBody(body4, 4)
+	}
 	original.addBody(bodysplit, 5)
 	original.addBody(bodyleft, 6)
 	if err := original.equals(retrieved); err != nil {
 		t.Errorf("Post-supervoxel split supervoxel volume not equal to expected supervoxels: %v\n", err)
 	}
 
-	// Check split body 4 hasn't changed usine legacy RLEs
-	reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/%d", server.WebAPIPath, uuid, 4)
-	encoding = server.TestHTTP(t, "GET", reqStr, nil)
-	body4.checkSparseVol(t, encoding, dvid.OptionalBounds{})
+	// Check split body hasn't changed usine legacy RLEs
+	if testEnclosing {
+		reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/3", server.WebAPIPath, uuid)
+	} else {
+		reqStr = fmt.Sprintf("%snode/%s/labels/sparsevol/4", server.WebAPIPath, uuid)
+	}
+	splitBody := server.TestHTTP(t, "GET", reqStr, nil)
+	if !bytes.Equal(splitBody, encoding) {
+		t.Errorf("split body after supervoxel split has changed incorrectly!\n")
+	}
+}
+
+func TestSplitSupervoxel(t *testing.T) {
+	dvid.Infof("Testing non-agglomerated supervoxel...\n")
+	testSplitSupervoxel(t, false)
+	dvid.Infof("Testing agglomerated supervoxel...\n")
+	testSplitSupervoxel(t, true)
 }
 
 func TestMergeCleave(t *testing.T) {
