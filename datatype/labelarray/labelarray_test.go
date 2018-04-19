@@ -846,6 +846,21 @@ func newDataInstance(uuid dvid.UUID, t *testing.T, name dvid.InstanceName) *Data
 	return labels
 }
 
+func TestBigNums(t *testing.T) {
+	if err := server.OpenTest(); err != nil {
+		t.Fatalf("can't open test server: %v\n", err)
+	}
+	defer server.CloseTest()
+
+	uuid, v := initTestRepo()
+	lbls := newDataInstance(uuid, t, "mylabels")
+	bigPt := dvid.Point3d{-2147483648, -2147483648, -2147483648}
+	_, err := lbls.GetLabelBytesAtScaledPoint(v, bigPt, 0)
+	if err != nil {
+		t.Errorf("problem getting bytes at %s: %v\n", bigPt, err)
+	}
+}
+
 func TestLabelarrayDirectAPI(t *testing.T) {
 	if err := server.OpenTest(); err != nil {
 		t.Fatalf("can't open test server: %v\n", err)

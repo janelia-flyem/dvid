@@ -73,6 +73,18 @@ func (s *DataSuite) TestPoint3d(c *C) {
 	c.Assert(result, Equals, Point3d{123, 617, 99})
 	result, _ = b.Min(a)
 	c.Assert(result, Equals, Point3d{123, 617, 99})
+
+	result = Point3d{33, 64, 63}.PointInChunk(Point3d{32, 32, 32})
+	c.Assert(result, Equals, Point3d{1, 0, 31})
+
+	result = Point3d{-1, -1, -1}.PointInChunk(Point3d{32, 32, 32})
+	c.Assert(result, Equals, Point3d{31, 31, 31})
+
+	result = Point3d{-32, -64, -96}.PointInChunk(Point3d{32, 32, 32})
+	c.Assert(result, Equals, Point3d{0, 0, 0})
+
+	result2 := Point3d{-31, -64, -97}.Point3dInChunk(Point3d{32, 32, 32})
+	c.Assert(result2, Equals, Point3d{1, 0, 31})
 }
 
 func (s *DataSuite) TestPointNd(c *C) {
@@ -135,6 +147,9 @@ func (s *DataSuite) TestPointNd(c *C) {
 
 	result = d.PointInChunk(blockSize)
 	c.Assert(result, DeepEquals, PointNd{11, 3, 0})
+
+	result2 := PointNd{-31, -64, -97, 1}.PointInChunk(PointNd{32, 32, 32, 64})
+	c.Assert(result2, DeepEquals, PointNd{1, 0, 31, 1})
 }
 
 func (s *DataSuite) TestChunk(c *C) {

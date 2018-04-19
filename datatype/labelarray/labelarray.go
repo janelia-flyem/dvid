@@ -3608,6 +3608,7 @@ func (d *Data) GetLabelBytesAtScaledPoint(v dvid.VersionID, pt dvid.Point, scale
 
 	// Retrieve the particular label within the block.
 	ptInBlock := coord.PointInChunk(blockSize)
+	dvid.Infof("coord: %s, ptInBlock: %s, blockSize: %s\n", coord, ptInBlock, blockSize)
 	nx := int64(blockSize.Value(0))
 	nxy := nx * int64(blockSize.Value(1))
 	i := (int64(ptInBlock.Value(0)) + int64(ptInBlock.Value(1))*nx + int64(ptInBlock.Value(2))*nxy) * 8
