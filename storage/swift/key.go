@@ -25,7 +25,7 @@ func decodeKey(objectName string) storage.Key {
 	if len(objectName) < 3 || objectName[0] != '0' {
 		return nil
 	}
-	key, err := hex.DecodeString(objectName)
+	key, err := hex.DecodeString(objectName[1:])
 	if err != nil {
 		return nil
 	}

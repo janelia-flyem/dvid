@@ -299,25 +299,14 @@ func (s *Store) Delete(context storage.Context, typeKey storage.TKey) error {
 
 /*********** OrderedKeyValueGetter interface ***********/
 
-// KeysInRange returns a range of type-specific key components spanning (kStart,
-// kEnd).
-func (s *Store) KeysInRange(context storage.Context, kStart, kEnd storage.TKey) (typeKeys []storage.TKey, e error) {
+// keyRange returns a range of (non-type) keys to be found for the given
+// type-key range.
+func (s *Store) keyRange(context storage.Context, kStart, kEnd storage.TKey) (k []storage.Key, e error) {
 	if !context.Versioned() {
 		// Get all unversioned keys in the specified range.
 		from := context.ConstructKey(kStart)
 		to := context.ConstructKey(kEnd)
-		keys, err := s.objectNames(from, to)
-		if err != nil {
-			return nil, fmt.Errorf("Unable to load object names for range: %s", err)
-		}
-		for _, key := range keys {
-			typeKey, err := storage.TKeyFromKey(key)
-			if err != nil {
-				return nil, fmt.Errorf("Unable to extract type key from key: %s", err)
-			}
-			typeKeys = append(typeKeys, typeKey)
-		}
-		return typeKeys, nil
+		return s.objectNames(from, to)
 	} else {
 		// For each key in the specified range, get the latest version.
 		versionedContext, ok := context.(storage.VersionedCtx)
@@ -332,36 +321,94 @@ func (s *Store) KeysInRange(context storage.Context, kStart, kEnd storage.TKey) 
 		if err != nil {
 			return nil, fmt.Errorf("Unable to extract maximum key: %s", err)
 		}
+		endBlock, err := versionedContext.MaxVersionKey(kStart)
+		if err != nil {
+			return nil, fmt.Errorf("Unable to extract block end key: %s", err)
+		}
 		keys, err := s.objectNames(from, to)
 		if err != nil {
 			return nil, err
 		}
+		var versionKeys []*storage.KeyValue
 		for _, key := range keys {
-			typeKey, err := storage.TKeyFromKey(key)
-			if err != nil {
-				return nil, fmt.Errorf("Unable to extract type key from key: %s", err)
+			if bytes.Compare(key, endBlock) > 0 {
+				// We're past the block.
+				if len(versionKeys) > 0 {
+					// Extract the correct version.
+					keyValue, err := versionedContext.VersionedKeyValue(versionKeys)
+					if err != nil {
+						return nil, fmt.Errorf("Unable to extract correct version from keys: %s", err)
+					}
+
+					// Store it.
+					if keyValue != nil {
+						k = append(k, keyValue.K)
+					}
+
+					// Reset block.
+					versionKeys = versionKeys[:0]
+				}
+
+				// Determine new block end.
+				typeKey, err := storage.TKeyFromKey(key)
+				if err != nil {
+					return nil, fmt.Errorf("Unable to extract type key from key: %s", err)
+				}
+				endBlock, err = versionedContext.MaxVersionKey(typeKey)
+				if err != nil {
+					return nil, fmt.Errorf("Unable to extract new block end key: %s", err)
+				}
 			}
-			maxKey, err := versionedContext.MaxVersionKey(typeKey)
+
+			// Add this key to the block.
+			versionKeys = append(versionKeys, &storage.KeyValue{K: key})
+		}
+
+		// Process remaining block.
+		if len(versionKeys) > 0 {
+			// Extract the correct version.
+			keyValue, err := versionedContext.VersionedKeyValue(versionKeys)
 			if err != nil {
-				return nil, fmt.Errorf("Unable to extract maximum key: %s", err)
+				return nil, fmt.Errorf("Unable to extract correct version from keys: %s", err)
 			}
-			if encodeKey(key) == encodeKey(maxKey) {
-				typeKeys = append(typeKeys, typeKey)
+
+			// Store it.
+			if keyValue != nil {
+				k = append(k, keyValue.K)
 			}
 		}
-		return typeKeys, nil
+
+		return
 	}
+}
+
+// KeysInRange returns a range of type-specific key components spanning (kStart,
+// kEnd).
+func (s *Store) KeysInRange(context storage.Context, kStart, kEnd storage.TKey) (typeKeys []storage.TKey, e error) {
+	// Get the keys and convert them to type keys.
+	keys, err := s.keyRange(context, kStart, kEnd)
+	if err != nil {
+		return nil, err
+	}
+	for _, key := range keys {
+		typeKey, err := storage.TKeyFromKey(key)
+		if err != nil {
+			return nil, fmt.Errorf("Unable to extract type key from key: %s", err)
+		}
+		typeKeys = append(typeKeys, typeKey)
+	}
+	return
 }
 
 // SendKeysInRange sends a range of keys down a key channel.
 func (s *Store) SendKeysInRange(context storage.Context, kStart, kEnd storage.TKey, ch storage.KeyChan) error {
-	typeKeys, err := s.KeysInRange(context, kStart, kEnd)
+	keys, err := s.keyRange(context, kStart, kEnd)
 	if err != nil {
 		return err
 	}
 
-	for _, key := range typeKeys {
-		ch <- context.ConstructKey(key)
+	for _, key := range keys {
+		ch <- key
 	}
 
 	return nil
@@ -369,20 +416,23 @@ func (s *Store) SendKeysInRange(context storage.Context, kStart, kEnd storage.TK
 
 // GetRange returns a range of values spanning (kStart, kEnd) keys.
 func (s *Store) GetRange(context storage.Context, kStart, kEnd storage.TKey) (keyValues []*storage.TKeyValue, e error) {
-	typeKeys, err := s.KeysInRange(context, kStart, kEnd)
+	keys, err := s.keyRange(context, kStart, kEnd)
 	if err != nil {
 		return nil, err
 	}
 
 	// Load objects for these keys.
-	for _, typeKey := range typeKeys {
-		key := context.ConstructKey(typeKey)
+	for _, key := range keys {
 		name := encodeKey(key)
 		value, err := s.conn.ObjectGetBytes(s.container, name)
 		if err != nil {
 			return nil, fmt.Errorf("Could not read Swift object: %s", err)
 		}
 		storage.StoreValueBytesRead <- len(value)
+		typeKey, err := storage.TKeyFromKey(key)
+		if err != nil {
+			return nil, fmt.Errorf("Unable to extract type key from key: %s", err)
+		}
 		keyValues = append(keyValues, &storage.TKeyValue{K: typeKey, V: value})
 	}
 
@@ -393,14 +443,13 @@ func (s *Store) GetRange(context storage.Context, kStart, kEnd storage.TKey) (ke
 // handlers, allowing chunk processing to be concurrent with key-value
 // sequential reads.
 func (s *Store) ProcessRange(context storage.Context, kStart, kEnd storage.TKey, op *storage.ChunkOp, f storage.ChunkFunc) error {
-	typeKeys, err := s.KeysInRange(context, kStart, kEnd)
+	keys, err := s.keyRange(context, kStart, kEnd)
 	if err != nil {
 		return err
 	}
 
 	// Load objects for these keys and send them to the chunk processing function.
-	for _, typeKey := range typeKeys {
-		key := context.ConstructKey(typeKey)
+	for _, key := range keys {
 		name := encodeKey(key)
 		value, err := s.conn.ObjectGetBytes(s.container, name)
 		if err != nil {
@@ -409,6 +458,10 @@ func (s *Store) ProcessRange(context storage.Context, kStart, kEnd storage.TKey,
 		storage.StoreValueBytesRead <- len(value)
 		if op != nil && op.Wg != nil {
 			op.Wg.Add(1)
+		}
+		typeKey, err := storage.TKeyFromKey(key)
+		if err != nil {
+			return fmt.Errorf("Unable to extract type key from key: %s", err)
 		}
 		typeKeyValue := &storage.TKeyValue{K: typeKey, V: value}
 		if err := f(&storage.Chunk{ChunkOp: op, TKeyValue: typeKeyValue}); err != nil {

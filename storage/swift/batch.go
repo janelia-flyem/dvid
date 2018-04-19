@@ -151,7 +151,7 @@ func (b *Batch) Commit() error {
 			delay = 50 * time.Millisecond
 		} else {
 			delay *= 2
-			if delay > 3*time.Minute {
+			if delay > 5*time.Minute {
 				tooManyDelays = true
 			}
 		}
