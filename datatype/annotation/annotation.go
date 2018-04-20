@@ -1470,7 +1470,7 @@ func (d *Data) ProcessLabelAnnotations(v dvid.VersionID, f func(label uint64, el
 
 	store, err := datastore.GetOrderedKeyValueDB(d)
 	if err != nil {
-		return fmt.Errorf("Annotation %q had error initializing store: %v\n", d.DataName(), err)
+		return fmt.Errorf("annotation %q had error initializing store: %v", d.DataName(), err)
 	}
 	ctx := datastore.NewVersionedCtx(d, v)
 	err = store.ProcessRange(ctx, minTKey, maxTKey, &storage.ChunkOp{}, func(c *storage.Chunk) error {
@@ -1536,18 +1536,20 @@ func (d *Data) GetTagJSON(ctx *datastore.VersionedCtx, tag Tag, addRels bool) (j
 	defer d.RUnlock()
 
 	var tk storage.TKey
-	var elems interface{}
 	tk, err = NewTagTKey(tag)
 	if err != nil {
 		return
 	}
+	var elems interface{}
 	if addRels {
 		elems, err = d.getExpandedElements(ctx, tk)
 	} else {
 		elems, err = getElementsNR(ctx, tk)
 	}
 	if err == nil {
-		jsonBytes, err = json.Marshal(elems)
+		var fullJSON []byte
+		fullJSON, err = json.Marshal(elems)
+		jsonBytes = []byte(strings.Replace(string(fullJSON), `,"Supervoxel":0`, "", -1))
 	}
 	return
 }
@@ -2262,17 +2264,19 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 				server.BadRequest(w, r, "Bad ROI specification: %q", parts[4])
 				return
 			}
-			elements, err := d.GetROISynapses(ctx, storage.FilterSpec(roiSpec))
+			elems, err := d.GetROISynapses(ctx, storage.FilterSpec(roiSpec))
 			if err != nil {
 				server.BadRequest(w, r, err)
 				return
 			}
 			w.Header().Set("Content-type", "application/json")
-			jsonBytes, err := json.Marshal(elements)
+			var fullJSON []byte
+			fullJSON, err = json.Marshal(elems)
 			if err != nil {
 				server.BadRequest(w, r, err)
 				return
 			}
+			jsonBytes := []byte(strings.Replace(string(fullJSON), `,"Supervoxel":0`, "", -1))
 			if _, err := w.Write(jsonBytes); err != nil {
 				server.BadRequest(w, r, err)
 				return
@@ -2298,17 +2302,19 @@ func (d *Data) ServeHTTP(uuid dvid.UUID, ctx *datastore.VersionedCtx, w http.Res
 				server.BadRequest(w, r, err)
 				return
 			}
-			elements, err := d.GetRegionSynapses(ctx, ext3d)
+			elems, err := d.GetRegionSynapses(ctx, ext3d)
 			if err != nil {
 				server.BadRequest(w, r, err)
 				return
 			}
 			w.Header().Set("Content-type", "application/json")
-			jsonBytes, err := json.Marshal(elements)
+			var fullJSON []byte
+			fullJSON, err = json.Marshal(elems)
 			if err != nil {
 				server.BadRequest(w, r, err)
 				return
 			}
+			jsonBytes := []byte(strings.Replace(string(fullJSON), `,"Supervoxel":0`, "", -1))
 			if _, err := w.Write(jsonBytes); err != nil {
 				server.BadRequest(w, r, err)
 				return
