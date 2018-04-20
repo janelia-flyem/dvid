@@ -190,8 +190,12 @@ func (s *Store) getObject(key storage.Key) ([]byte, error) {
 		storage.StoreValueBytesRead <- len(contents)
 		if err == swift.ObjectNotFound {
 			return nil, nil
-		} else if len(contents) == 0 {
-			return []byte{}, nil
+		} else if err == nil {
+			if len(contents) == 0 {
+				return []byte{}, nil
+			} else {
+				return contents, nil
+			}
 		}
 
 		// There was an error. Retry with increasing delays.
