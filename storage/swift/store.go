@@ -5,14 +5,23 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/janelia-flyem/dvid/dvid"
 	"github.com/janelia-flyem/dvid/storage"
 	"github.com/ncw/swift"
 )
 
-// The maximum number of write operations sent to Swift in parallel.
-const maxConcurrentOperations = 10
+const (
+	// The maximum number of write operations sent to Swift in parallel.
+	maxConcurrentOperations = 10
+
+	// The initial delay upon a failure.
+	initialDelay = 50 * time.Millisecond
+
+	// The maximum delay after which we give up and an error is returned.
+	maximumDelay = 5 * time.Minute
+)
 
 // rateLimit is a buffered channel used to limit the number of concurrent
 // write operations sent to Swift.
@@ -170,6 +179,32 @@ func (s *Store) objectNames(from, to storage.Key) (keys []storage.Key, err error
 	return
 }
 
+// getObject retrieves an object for the given key, retrying a few times if
+// there is an error. If the object does not exist, nil is returned.
+func (s *Store) getObject(key storage.Key) ([]byte, error) {
+	delay := initialDelay
+
+	for {
+		// Attempt to get the object.
+		contents, err := s.conn.ObjectGetBytes(s.container, encodeKey(key))
+		storage.StoreValueBytesRead <- len(contents)
+		if err == swift.ObjectNotFound {
+			return nil, nil
+		} else if len(contents) == 0 {
+			return []byte{}, nil
+		}
+
+		// There was an error. Retry with increasing delays.
+		if delay > maximumDelay {
+			return nil, fmt.Errorf(`Maximum object download retries exceeded: %s`, err)
+		}
+		time.Sleep(delay)
+		delay *= 2
+	}
+
+	return nil, nil
+}
+
 /*********** KeyValueGetter interface ***********/
 
 // Get returns a value given a key.
@@ -211,14 +246,7 @@ func (s *Store) Get(context storage.Context, key storage.TKey) ([]byte, error) {
 	}
 
 	// Load the object.
-	contents, err := s.conn.ObjectGetBytes(s.container, encodeKey(accessKey))
-	if err == swift.ObjectNotFound {
-		return nil, nil
-	} else if len(contents) == 0 {
-		return []byte{}, nil
-	}
-	storage.StoreValueBytesRead <- len(contents)
-	return contents, err
+	return s.getObject(accessKey)
 }
 
 /*********** KeyValueSetter interface ***********/
@@ -421,20 +449,56 @@ func (s *Store) GetRange(context storage.Context, kStart, kEnd storage.TKey) (ke
 		return nil, err
 	}
 
-	// Load objects for these keys.
-	for _, key := range keys {
-		name := encodeKey(key)
-		value, err := s.conn.ObjectGetBytes(s.container, name)
-		if err != nil {
-			return nil, fmt.Errorf("Could not read Swift object: %s", err)
-		}
-		storage.StoreValueBytesRead <- len(value)
-		typeKey, err := storage.TKeyFromKey(key)
-		if err != nil {
-			return nil, fmt.Errorf("Unable to extract type key from key: %s", err)
-		}
-		keyValues = append(keyValues, &storage.TKeyValue{K: typeKey, V: value})
+	// Start workers that fetch these keys' objects.
+	var (
+		wg    sync.WaitGroup
+		mutex sync.Mutex
+	)
+	ch := make(chan storage.Key)
+	for index := 0; index < maxConcurrentOperations; index++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for key := range ch {
+				// Load object.
+				value, err := s.getObject(key)
+
+				mutex.Lock()
+				if err != nil {
+					e = err
+				} else {
+					// Store in slice.
+					var typeKey storage.TKey
+					typeKey, err = storage.TKeyFromKey(key)
+					if err != nil {
+						e = err
+					} else {
+						keyValues = append(keyValues, &storage.TKeyValue{K: typeKey, V: value})
+					}
+				}
+				mutex.Unlock()
+
+				// Stop if there was an error.
+				if err != nil {
+					return
+				}
+			}
+		}()
 	}
+
+	// Create jobs for workers.
+	for _, key := range keys {
+		ch <- key
+
+		mutex.Lock()
+		err := e
+		mutex.Unlock()
+		if err != nil {
+			break // One of the workers had an error. Stop.
+		}
+	}
+	close(ch)
+	wg.Wait()
 
 	return
 }
@@ -450,8 +514,7 @@ func (s *Store) ProcessRange(context storage.Context, kStart, kEnd storage.TKey,
 
 	// Load objects for these keys and send them to the chunk processing function.
 	for _, key := range keys {
-		name := encodeKey(key)
-		value, err := s.conn.ObjectGetBytes(s.container, name)
+		value, err := s.getObject(key)
 		if err != nil {
 			return fmt.Errorf("Could not read Swift object: %s", err)
 		}
@@ -484,7 +547,7 @@ func (s *Store) RawRangeQuery(kStart, kEnd storage.Key, keysOnly bool, out chan 
 	for _, key := range keys {
 		var value []byte
 		if !keysOnly {
-			value, err = s.conn.ObjectGetBytes(s.container, encodeKey(key))
+			value, err = s.getObject(key)
 			if err != nil {
 				return fmt.Errorf("Could not read Swift object: %s", err)
 			}

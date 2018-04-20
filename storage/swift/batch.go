@@ -142,16 +142,26 @@ func (b *Batch) Commit() error {
 		defer mutex.Unlock()
 
 		if isDelete {
-			deletes = append(deletes, name)
+			if len(deletes) > 0 {
+				deletes = append(deletes, deletes[0])
+				deletes[0] = name
+			} else {
+				deletes = append(deletes, name)
+			}
 		} else {
-			puts = append(puts, name)
+			if len(puts) > 0 {
+				puts = append(puts, puts[0])
+				puts[0] = name
+			} else {
+				puts = append(puts, name)
+			}
 		}
 
 		if delay == 0 {
-			delay = 50 * time.Millisecond
+			delay = initialDelay
 		} else {
 			delay *= 2
-			if delay > 5*time.Minute {
+			if delay > maximumDelay {
 				tooManyDelays = true
 			}
 		}
