@@ -2275,11 +2275,15 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 		return fmt.Errorf("ReceiveBlocks couldn't get mapping for data %q, version %d: %v", d.DataName(), ctx.VersionID(), err)
 	}
 	var blockCh chan blockChange
+	var putWG, processWG sync.WaitGroup
 	if indexing {
 		blockCh = make(chan blockChange, 100)
-		go d.aggregateBlockChanges(ctx.VersionID(), svmap, blockCh)
+		processWG.Add(1)
+		go func() {
+			d.aggregateBlockChanges(ctx.VersionID(), svmap, blockCh)
+			processWG.Done()
+		}()
 	}
-	var wg sync.WaitGroup
 
 	callback := func(bcoord dvid.IZYXString, block *labels.Block, ready chan error) {
 		if ready != nil {
@@ -2307,8 +2311,7 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 		if err := datastore.NotifySubscribers(evt, msg); err != nil {
 			dvid.Errorf("Unable to notify subscribers of event %s in %s\n", event, d.DataName())
 		}
-
-		wg.Done()
+		putWG.Done()
 	}
 
 	if d.Compression().Format() != dvid.Gzip {
@@ -2340,7 +2343,7 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 		if err != nil {
 			return fmt.Errorf("can't serialize received block %s data: %v", bcoord, err)
 		}
-		wg.Add(1)
+		putWG.Add(1)
 		if putbuffer != nil {
 			ready := make(chan error, 1)
 			go callback(bcoord, block, ready)
@@ -2354,7 +2357,7 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 		numBlocks++
 	}
 
-	wg.Wait()
+	putWG.Wait()
 	if blockCh != nil {
 		close(blockCh)
 	}
@@ -2372,6 +2375,7 @@ func (d *Data) ReceiveBlocks(ctx *datastore.VersionedCtx, r io.ReadCloser, scale
 	if downscale {
 		downresMut.Done()
 	}
+	processWG.Wait()
 	timedLog.Infof("Received and stored %d blocks for labelmap %q", numBlocks, d.DataName())
 	return nil
 }
